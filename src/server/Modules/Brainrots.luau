@@ -337,6 +337,37 @@ local function weightedPick(weights: { [string]: number }): string?
 end
 M.weightedPick = weightedPick
 
+local function weightedLevelInRange(minLevel: number, maxLevel: number): number
+	local total = 0
+	local entries: { { level: number, weight: number } } = {}
+	for lv = minLevel, maxLevel do
+		-- Lower levels within the band are more likely (lv 1 >> lv 10, lv 10 >> lv 20).
+		local w = maxLevel + 1 - lv
+		total += w
+		table.insert(entries, { level = lv, weight = w })
+	end
+	if total <= 0 then
+		return minLevel
+	end
+	local roll = math.random() * total
+	local acc = 0
+	for _, e in ipairs(entries) do
+		acc += e.weight
+		if roll <= acc then
+			return e.level
+		end
+	end
+	return maxLevel
+end
+
+-- Bush harvest: 70% level 1–10, 30% level 10–20 (cap 20). Lower levels favored in each band.
+function M.rollBushHarvestLevel(): number
+	if math.random() < 0.7 then
+		return weightedLevelInRange(1, 10)
+	end
+	return weightedLevelInRange(10, 20)
+end
+
 function M.rollMutation(plot: number): MutationId
 	local chances = M.PLOT_CHANCES[plot]
 	if not chances then

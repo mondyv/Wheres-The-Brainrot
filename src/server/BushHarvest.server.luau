@@ -798,14 +798,15 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 			return
 		end
 		local fallback = templates[math.random(1, #templates)]
+		local harvestLevel = Brainrots.rollBushHarvestLevel()
 		local clone = fallback:Clone()
 		clone.Name = fallback.Name
 		clone:SetAttribute("OwnerUserId", player.UserId)
 		clone:SetAttribute("BrainrotCarryPhase", "Pop")
 		clone:SetAttribute("BrainrotSourcePath", fallback.Parent.Name .. "/" .. fallback.Name)
 		clone:SetAttribute("BrainrotMutation", "normal")
-		clone:SetAttribute("BrainrotLevel", 1)
-		BrainrotCarryVisual.applyScaleForLevel(clone, 1)
+		clone:SetAttribute("BrainrotLevel", harvestLevel)
+		BrainrotCarryVisual.applyScaleForLevel(clone, harvestLevel)
 		local spawnCf = CFrame.new(worldPosition + Vector3.new(0, SPAWN_Y_OFFSET, 0)) * CFrame.Angles(0, math.random() * math.pi * 2, 0)
 		clone.Parent = workspace
 		placeModelAtWorld(clone, spawnCf)
@@ -839,6 +840,7 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 		end
 	end
 
+	local harvestLevel = Brainrots.rollBushHarvestLevel()
 	local clone = template:Clone()
 	clone.Name = pick.name
 	clone:SetAttribute("OwnerUserId", player.UserId)
@@ -848,8 +850,8 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 	clone:SetAttribute("BrainrotRarity", pick.rarity)
 	clone:SetAttribute("BrainrotMutation", actualMutation)
 	clone:SetAttribute("BrainrotBaseIncome", pick.baseIncome)
-	clone:SetAttribute("BrainrotLevel", 1)
-	BrainrotCarryVisual.applyScaleForLevel(clone, 1)
+	clone:SetAttribute("BrainrotLevel", harvestLevel)
+	BrainrotCarryVisual.applyScaleForLevel(clone, harvestLevel)
 	clone:SetAttribute("BrainrotPlot", plot)
 	clone:SetAttribute("BrainrotDisplayLuck", displayLuck)
 
@@ -859,13 +861,13 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 	setAllPartsPhysics(clone, true, false, true, true)
 
 	-- Show BrainrotHeader billboard while the brainrot pops out / floats.
-	local lvl1Income = Brainrots.incomePerSecond(pick, 1, actualMutation)
+	local harvestIncome = Brainrots.incomePerSecond(pick, harvestLevel, actualMutation)
 	BrainrotHeader.attach(clone, {
 		name = pick.name,
 		rarity = pick.rarity,
 		mutation = actualMutation,
-		level = 1,
-		incomePerSecond = lvl1Income,
+		level = harvestLevel,
+		incomePerSecond = harvestIncome,
 	})
 
 	local anchorPos = spawnCf.Position

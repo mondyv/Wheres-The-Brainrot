@@ -309,6 +309,43 @@ local function enrichEntryFromBrainrotsFolder(root: Folder?, entry: BrainrotInvE
 	end
 end
 
+-- Gaps between stacked carry centers on the head.
+local STACK_GAP = 0.012
+
+local function stackHalfHeight(model: Model): number
+	if not model.Parent then
+		return 0.5
+	end
+	local _, bbSize = model:GetBoundingBox()
+	local pp = model.PrimaryPart
+	if pp then
+		local tight = pp.Size.Y * 1.0 + 0.04
+		return math.clamp(math.min(bbSize.Y, tight), 0.45, 3.8) * 0.5
+	end
+	return math.clamp(bbSize.Y, 0.45, 3.8) * 0.5
+end
+
+local function stackLiftFromExistingCarries(plr: Player): number
+	local list = activeCarries[plr]
+	if not list or #list == 0 then
+		return 0
+	end
+	local lift = 0
+	for _, m in ipairs(list) do
+		if m.Parent then
+			lift += stackHalfHeight(m)
+		end
+	end
+	if #list >= 1 then
+		lift += STACK_GAP * #list
+	end
+	return lift
+end
+
+local function getCarryAttachmentWorldCFrame(character: Model, mainPart: BasePart, stackLiftY: number): (BasePart?, CFrame?)
+	return BrainrotCarryVisual.getHeadCarryWorldCFrame(character, mainPart, stackLiftY)
+end
+
 local function modelHasSpawnableGeometry(model: Model): boolean
 	return model:FindFirstChildWhichIsA("BasePart", true) ~= nil
 end
@@ -577,37 +614,6 @@ local function setAllPartsPhysics(model: Model, anchored: boolean, massless: boo
 	end
 end
 
-local hiddenCarryRoot: Folder? = nil
-
-local function getHiddenCarryRoot(): Folder
-	if hiddenCarryRoot and hiddenCarryRoot.Parent then
-		return hiddenCarryRoot
-	end
-	local existing = ServerStorage:FindFirstChild("CarriedBrainrotsHidden")
-	if existing and existing:IsA("Folder") then
-		hiddenCarryRoot = existing
-		return existing
-	end
-	local folder = Instance.new("Folder")
-	folder.Name = "CarriedBrainrotsHidden"
-	folder.Parent = ServerStorage
-	hiddenCarryRoot = folder
-	return folder
-end
-
-local function getPlayerHiddenCarryFolder(player: Player): Folder
-	local root = getHiddenCarryRoot()
-	local name = tostring(player.UserId)
-	local existing = root:FindFirstChild(name)
-	if existing and existing:IsA("Folder") then
-		return existing
-	end
-	local folder = Instance.new("Folder")
-	folder.Name = name
-	folder.Parent = root
-	return folder
-end
-
 local function popSpawnEffect(model: Model, onDone: (() -> ())?)
 	local pivot = model:GetPivot()
 	local duration = POP_DURATION
@@ -658,11 +664,41 @@ local function applyCarryScaleForModel(model: Model)
 end
 
 local function attachCarriedBrainrot(player: Player, clone: Model)
+	local char = player.Character
+	if not char then
+		return
+	end
+	local main = getMainPart(clone)
+	if not main then
+		return
+	end
+
 	applyCarryScaleForModel(clone)
+
+	local stackLift = stackLiftFromExistingCarries(player)
+	local anchorPart, desiredWorld = getCarryAttachmentWorldCFrame(char, main, stackLift)
+	if not anchorPart or not desiredWorld then
+		return
+	end
+
+	setAllPartsPhysics(clone, false, true)
+
+	for _, d in ipairs(main:GetChildren()) do
+		if d.Name == "BrainrotCarryMotor" or d.Name == "BrainrotCarryWeld" then
+			d:Destroy()
+		end
+	end
+
+	clone.Parent = char
+	clone:PivotTo(desiredWorld)
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Name = "BrainrotCarryWeld"
+	weld.Part0 = anchorPart
+	weld.Part1 = main
+	weld.Parent = main
+
 	BrainrotHeader.remove(clone)
-	setAllPartsPhysics(clone, true, true)
-	clone.Parent = getPlayerHiddenCarryFolder(player)
-	clone:PivotTo(CFrame.new(0, -5000, 0))
 
 	clone:SetAttribute("BrainrotCarryPhase", "Carried")
 	local list = activeCarries[player]
@@ -1036,10 +1072,6 @@ Players.PlayerRemoving:Connect(function(p)
 	end
 	pendingFloats[p] = nil
 	activeCarries[p] = nil
-	local hidden = getHiddenCarryRoot():FindFirstChild(tostring(p.UserId))
-	if hidden then
-		hidden:Destroy()
-	end
 	brainrotInventories[p] = nil
 	brainrotParkedInExpandedBackpack[p] = nil
 end)

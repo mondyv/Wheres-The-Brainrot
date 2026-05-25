@@ -17,6 +17,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local CarryGate = require(script.Parent.CarryGate)
+local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 
@@ -792,6 +793,7 @@ function M.init()
 	collectFXRE = (remotes :: Folder):WaitForChild("StandCashCollectedFX", 45) :: RemoteEvent
 
 	collectFXRE.OnClientEvent:Connect(function(stand: any, total: any)
+		GameSoundEffects.playCashGrab()
 		if typeof(stand) ~= "Instance" or not (stand :: Instance):IsA("Model") then
 			return
 		end

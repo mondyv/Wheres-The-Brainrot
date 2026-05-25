@@ -8,6 +8,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
+local GameSoundEffects = require(script.Parent.GameSoundEffects)
 
 local player = Players.LocalPlayer
 
@@ -240,6 +241,7 @@ function M.init()
 			if ok or reason == "" or reason == "debounce" then
 				return
 			end
+			GameSoundEffects.playErrorNotif()
 			warn("[BaseFloorUnlockClick] Unlock failed:", reason)
 		end)
 		local folder = PlotPaths.waitForSpawnAndBasesFolder(120)

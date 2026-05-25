@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local GameSoundEffects = require(script.Parent.GameSoundEffects)
 
 local SwingUpgrades = require(ReplicatedStorage.Shared.SwingUpgrades)
 
@@ -356,6 +357,7 @@ local function wirePurchase(upgradeId: string, buyButtons: Instance, refreshAllR
 		local c = if typeof(cash) == "number" then cash else 0
 		local price = priceForUpgrade(upgradeId)
 		if c < price then
+			GameSoundEffects.playErrorNotif()
 			return
 		end
 
@@ -363,6 +365,7 @@ local function wirePurchase(upgradeId: string, buyButtons: Instance, refreshAllR
 		if ok then
 			refreshAllRows()
 		elseif err then
+			GameSoundEffects.playErrorNotif()
 			warn("[UpgradesController] Purchase failed:", err)
 		end
 	end

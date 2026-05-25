@@ -26,7 +26,7 @@ local PLACE_PROMPT_ATTR = "BrainrotPlacePrompt"
 local DEFAULT_PLACE_DISTANCE = 10
 local DEFAULT_PICKUP_DISTANCE = 14
 local PROMPT_REFRESH_INTERVAL = 0.3
-local PROMPT_MOVE_THRESHOLD = 1.25
+local PROMPT_MOVE_SKIP_THRESHOLD = 2
 
 local player = Players.LocalPlayer
 local MONEY_VFX_HOLD_SEC = 0.14
@@ -210,7 +210,17 @@ local views: { [Model]: StandView } = {}
 local standPlacePromptConns: { [Model]: { RBXScriptConnection } } = {}
 local charPlacePromptConns: { RBXScriptConnection } = {}
 local promptRefreshAccum = 0
-local lastPromptRefreshPos: Vector3? = nil
+local lastHRPPosition: Vector3? = nil
+local cachedTaggedStands: { Model } = {}
+
+local function rebuildCachedTaggedStands()
+	table.clear(cachedTaggedStands)
+	for _, inst in CollectionService:GetTagged(STAND_TAG) do
+		if inst:IsA("Model") then
+			table.insert(cachedTaggedStands, inst :: Model)
+		end
+	end
+end
 
 local function characterHasBrainrotToolEquipped(char: Model?): boolean
 	if not char then
@@ -304,13 +314,16 @@ local function standMatchesAssignedPlot(stand: Model): boolean
 end
 
 -- Only one stand prompt visible at a time (closest). Hide pick-up while holding a brainrot.
-local function refreshStandProximityPromptVisibility()
+local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
 		return
 	end
 	local hrpPos = hrp.Position
+	if not forceRefresh and lastHRPPosition and (hrpPos - lastHRPPosition).Magnitude < PROMPT_MOVE_SKIP_THRESHOLD then
+		return
+	end
 	local holdingTool = canShowPlaceBrainrotPrompt()
 	local ws = workspace
 
@@ -318,11 +331,10 @@ local function refreshStandProximityPromptVisibility()
 	local candidates: { Candidate } = {}
 	local allPrompts: { ProximityPrompt } = {}
 
-	for _, inst in ipairs(CollectionService:GetTagged(STAND_TAG)) do
-		if not inst:IsA("Model") or not inst:IsDescendantOf(ws) then
+	for _, stand in ipairs(cachedTaggedStands) do
+		if not stand.Parent or not stand:IsDescendantOf(ws) then
 			continue
 		end
-		local stand = inst :: Model
 		local pp = getStandProximityPrompt(stand)
 		if not pp then
 			continue
@@ -376,11 +388,13 @@ local function refreshStandProximityPromptVisibility()
 		closest.prompt.Enabled = true
 		ProximityPromptEffects.syncStandPlaceProximityUi(closest.prompt)
 	end
+
+	lastHRPPosition = hrpPos
 end
 
 local function bumpPromptRefreshFromMovement()
-	lastPromptRefreshPos = nil
-	refreshStandProximityPromptVisibility()
+	lastHRPPosition = nil
+	refreshStandProximityPromptVisibility(true)
 end
 
 local function unhookCharPlacePromptListeners()
@@ -393,7 +407,7 @@ end
 local function hookCharPlacePromptListeners(char: Model)
 	unhookCharPlacePromptListeners()
 	local function bump()
-		refreshStandProximityPromptVisibility()
+		refreshStandProximityPromptVisibility(true)
 	end
 	table.insert(charPlacePromptConns, char.ChildAdded:Connect(function(ch)
 		if ch:IsA("Tool") then
@@ -416,8 +430,12 @@ local function wireStandPlacePromptListeners(stand: Model)
 		end
 	end
 	local conns: { RBXScriptConnection } = {}
-	table.insert(conns, stand:GetAttributeChangedSignal("BrainrotName"):Connect(refreshStandProximityPromptVisibility))
-	table.insert(conns, stand:GetAttributeChangedSignal("BrainrotStandLocked"):Connect(refreshStandProximityPromptVisibility))
+	table.insert(conns, stand:GetAttributeChangedSignal("BrainrotName"):Connect(function()
+		refreshStandProximityPromptVisibility(true)
+	end))
+	table.insert(conns, stand:GetAttributeChangedSignal("BrainrotStandLocked"):Connect(function()
+		refreshStandProximityPromptVisibility(true)
+	end))
 	standPlacePromptConns[stand] = conns
 end
 
@@ -788,20 +806,26 @@ function M.init()
 		playMoneyPickupVFX(view.moneyAttachment, if typeof(total) == "number" then total else 0)
 	end)
 
-	for _, m in ipairs(CollectionService:GetTagged(STAND_TAG)) do
-		if m:IsA("Model") then
-			initStand(m :: Model)
-		end
+	rebuildCachedTaggedStands()
+	for _, m in ipairs(cachedTaggedStands) do
+		initStand(m)
 	end
 	CollectionService:GetInstanceAddedSignal(STAND_TAG):Connect(function(inst)
 		if inst:IsA("Model") then
 			initStand(inst :: Model)
+			rebuildCachedTaggedStands()
+			task.defer(bumpPromptRefreshFromMovement)
+		end
+	end)
+	CollectionService:GetInstanceRemovedSignal(STAND_TAG):Connect(function(inst)
+		if inst:IsA("Model") then
+			rebuildCachedTaggedStands()
 			task.defer(bumpPromptRefreshFromMovement)
 		end
 	end)
 
 	player.CharacterAdded:Connect(function(char)
-		lastPromptRefreshPos = nil
+		lastHRPPosition = nil
 		hookCharPlacePromptListeners(char)
 	end)
 	if player.Character then
@@ -814,23 +838,10 @@ function M.init()
 
 	RunService.Heartbeat:Connect(function(dt)
 		promptRefreshAccum += dt
-		local char = player.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
-		if not hrp then
-			return
-		end
-		local pos = hrp.Position
-		local moved = false
-		if lastPromptRefreshPos then
-			moved = (pos - lastPromptRefreshPos).Magnitude >= PROMPT_MOVE_THRESHOLD
-		else
-			moved = true
-		end
-		if not moved and promptRefreshAccum < PROMPT_REFRESH_INTERVAL then
+		if promptRefreshAccum < PROMPT_REFRESH_INTERVAL then
 			return
 		end
 		promptRefreshAccum = 0
-		lastPromptRefreshPos = pos
 		refreshStandProximityPromptVisibility()
 	end)
 

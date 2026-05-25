@@ -212,15 +212,7 @@ local charPlacePromptConns: { RBXScriptConnection } = {}
 local promptRefreshAccum = 0
 local lastHRPPosition: Vector3? = nil
 local cachedTaggedStands: { Model } = {}
-
-local function rebuildCachedTaggedStands()
-	table.clear(cachedTaggedStands)
-	for _, inst in CollectionService:GetTagged(STAND_TAG) do
-		if inst:IsA("Model") then
-			table.insert(cachedTaggedStands, inst :: Model)
-		end
-	end
-end
+local cachedPlotMatch: { [Model]: boolean } = {}
 
 local function characterHasBrainrotToolEquipped(char: Model?): boolean
 	if not char then
@@ -313,6 +305,23 @@ local function standMatchesAssignedPlot(stand: Model): boolean
 	return true
 end
 
+local function rebuildCachedPlotMatch()
+	table.clear(cachedPlotMatch)
+	for _, stand in ipairs(cachedTaggedStands) do
+		cachedPlotMatch[stand] = standMatchesAssignedPlot(stand)
+	end
+end
+
+local function rebuildCachedTaggedStands()
+	table.clear(cachedTaggedStands)
+	for _, inst in CollectionService:GetTagged(STAND_TAG) do
+		if inst:IsA("Model") then
+			table.insert(cachedTaggedStands, inst :: Model)
+		end
+	end
+	rebuildCachedPlotMatch()
+end
+
 -- Only one stand prompt visible at a time (closest). Hide pick-up while holding a brainrot.
 local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 	local char = player.Character
@@ -342,7 +351,7 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 		table.insert(allPrompts, pp)
 
 		local locked = stand:GetAttribute("BrainrotStandLocked") == true
-		if locked or not standMatchesAssignedPlot(stand) then
+		if locked or not cachedPlotMatch[stand] then
 			continue
 		end
 
@@ -832,7 +841,10 @@ function M.init()
 		hookCharPlacePromptListeners(player.Character)
 	end
 
-	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(bumpPromptRefreshFromMovement)
+	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
+		rebuildCachedPlotMatch()
+		bumpPromptRefreshFromMovement()
+	end)
 	player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(bumpPromptRefreshFromMovement)
 	player:GetAttributeChangedSignal("Carry"):Connect(bumpPromptRefreshFromMovement)
 

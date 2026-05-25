@@ -116,4 +116,24 @@ function M.isPlotRoot(inst: Instance): boolean
 	return string.match(inst.Name, "^Plot_%d+$") ~= nil
 end
 
+function M.firstStoryFolder(plot: Instance): Instance?
+	local s = plot:FindFirstChild("1 Story")
+	if s then
+		return s
+	end
+	return plot:FindFirstChild("1st Story")
+end
+
+function M.findPlotForAssignedSlot(player: Player): Instance?
+	local slot = player:GetAttribute("AssignedPlotSlot")
+	if typeof(slot) ~= "number" then
+		return nil
+	end
+	local folder = M.findSpawnAndBasesFolder()
+	if not folder then
+		return nil
+	end
+	return folder:FindFirstChild("Plot_" .. tostring(math.floor(slot)))
+end
+
 return M

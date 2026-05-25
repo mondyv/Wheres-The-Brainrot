@@ -31,6 +31,7 @@ local refreshSellList: () -> ()
 
 local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local SELL_PRICE_TEXT_COLOR = Color3.new(1, 1, 1)
 
 local function waitMain(): ScreenGui?
 	if not player.Character then
@@ -120,47 +121,57 @@ local function headerButtonsOf(frame: Frame): Instance?
 	return header and header:FindFirstChild("Buttons")
 end
 
-local function looksLikeSellPriceText(text: string): boolean
-	if string.find(text, "/s", 1, true) then
-		return false
+local function disableTextGradients(node: Instance)
+	for _, c in node:GetDescendants() do
+		if c:IsA("UIGradient") then
+			c.Enabled = false
+		end
 	end
-	if string.find(text, "+$", 1, true) then
-		return true
+	if node:IsA("UIGradient") then
+		node.Enabled = false
 	end
-	if not string.find(text, "$", 1, true) then
-		return false
+end
+
+local function applySellPriceLabel(node: Instance, priceText: string)
+	local tl = BrainrotHeaderStyle.resolveTextLabel(node)
+	if not tl then
+		return
 	end
-	return string.find(text, "K", 1, true) ~= nil
-		or string.find(text, "M", 1, true) ~= nil
-		or string.find(text, "B", 1, true) ~= nil
-		or string.find(text, "T", 1, true) ~= nil
+	disableTextGradients(tl)
+	tl.Text = priceText
+	tl.TextColor3 = SELL_PRICE_TEXT_COLOR
+	tl.TextTransparency = 0
+end
+
+local function styleSellPriceButton(sellBtn: GuiButton, priceText: string)
+	-- Price lives on Amount; keep the button face empty so its green UIGradient shows through.
+	sellBtn.Text = ""
+	sellBtn.AutoButtonColor = false
+	for _, c in sellBtn:GetChildren() do
+		if c:IsA("UIGradient") then
+			c.Enabled = true
+		end
+	end
+
+	local amount = sellBtn:FindFirstChild("Amount", true)
+	if amount then
+		applySellPriceLabel(amount, priceText)
+	else
+		applySellPriceLabel(sellBtn, priceText)
+	end
 end
 
 local function applySellPriceToRow(row: Frame, priceText: string)
+	local sellBtn = resolveSellButton(row)
+	if sellBtn then
+		styleSellPriceButton(sellBtn, priceText)
+		return
+	end
+
 	for _, name in { "Price", "Amount", "Value", "SellPrice", "SellAmount", "Cash" } do
 		local node = row:FindFirstChild(name, true)
 		if node then
-			BrainrotHeaderStyle.setTextOnNode(node, priceText)
-		end
-	end
-
-	local sellBtn = resolveSellButton(row)
-	if sellBtn then
-		BrainrotHeaderStyle.setTextOnNode(sellBtn, priceText)
-		for _, desc in sellBtn:GetDescendants() do
-			if desc:IsA("TextLabel") or desc:IsA("TextButton") then
-				if looksLikeSellPriceText(desc.Text) then
-					BrainrotHeaderStyle.setTextOnNode(desc, priceText)
-				end
-			end
-		end
-	end
-
-	for _, desc in row:GetDescendants() do
-		if desc:IsA("TextLabel") or desc:IsA("TextButton") then
-			if looksLikeSellPriceText(desc.Text) then
-				BrainrotHeaderStyle.setTextOnNode(desc, priceText)
-			end
+			applySellPriceLabel(node, priceText)
 		end
 	end
 end

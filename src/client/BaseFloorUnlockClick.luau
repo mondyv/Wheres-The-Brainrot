@@ -6,6 +6,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
@@ -45,7 +46,6 @@ local function ensureSurfaceGuiInputChain(leaf: GuiObject)
 		end
 		if w:IsA("SurfaceGui") then
 			local sg = w :: SurfaceGui
-			sg.Enabled = true
 			(sg :: any).Active = true
 			break
 		end
@@ -126,6 +126,27 @@ local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent,
 	end
 	ensureSurfaceGuiInputChain(upgradeFrame)
 
+	local function getScale(): UIScale
+		local s = upgradeFrame:FindFirstChildOfClass("UIScale")
+		if s then
+			return s
+		end
+		s = Instance.new("UIScale")
+		s.Parent = upgradeFrame
+		return s
+	end
+
+	local function wireHoverTarget(target: GuiObject)
+		target.MouseEnter:Connect(function()
+			local sc = getScale()
+			TweenService:Create(sc, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1.06 }):Play()
+		end)
+		target.MouseLeave:Connect(function()
+			local sc = getScale()
+			TweenService:Create(sc, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		end)
+	end
+
 	local function fire()
 		local plot = plotForSign(sign)
 		if not canAffordNextFloor(plot) then
@@ -138,6 +159,7 @@ local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent,
 	if upgradeFrame:IsA("GuiButton") then
 		wiredSigns[upgradeFrame] = true
 		local btn = upgradeFrame :: GuiButton
+		wireHoverTarget(upgradeFrame)
 		btn.Activated:Connect(fire)
 		btn.MouseButton1Click:Connect(fire)
 		upgradeFrame.Destroying:Once(function()
@@ -168,6 +190,7 @@ local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent,
 	end
 	overlay.Active = true
 	wiredSigns[upgradeFrame] = true
+	wireHoverTarget(overlay)
 	overlay.Activated:Connect(fire)
 	overlay.MouseButton1Click:Connect(fire)
 	upgradeFrame.Destroying:Once(function()

@@ -120,19 +120,32 @@ local function pivotBottomToAnchor(root: Instance, posPart: BasePart)
 	model:PivotTo(model:GetPivot() + (anchorTop - bottomWorld))
 end
 
-local function plotUsernameNamePart(story1: Instance): BasePart?
-	local plotUsername = story1:FindFirstChild("PlotUsername")
-	if not plotUsername then
+local function plotUsernameNamePart(plot: Instance, story1: Instance): BasePart?
+	local function findIn(root: Instance): BasePart?
+		for _, d in ipairs(root:GetDescendants()) do
+			if (d:IsA("Folder") or d:IsA("Model")) and string.gsub(string.lower(d.Name), "%s+", "") == "plotusername" then
+				local namePart = d:FindFirstChild("Name")
+				if namePart and namePart:IsA("BasePart") then
+					return namePart :: BasePart
+				end
+			end
+		end
 		return nil
 	end
-	local namePart = plotUsername:FindFirstChild("Name")
-	if namePart and namePart:IsA("BasePart") then
-		return namePart :: BasePart
-	end
-	return nil
+	return findIn(story1) or findIn(plot)
 end
 
 local function findPlotGui(plot: Instance): Instance?
+	local story1 = firstStoryFolder(plot)
+	if story1 then
+		local spawn = story1:FindFirstChild("Spawn")
+		if spawn then
+			local underSpawn = spawn:FindFirstChild("PlotGUI")
+			if underSpawn then
+				return underSpawn
+			end
+		end
+	end
 	for i = 4, 1, -1 do
 		local story = plot:FindFirstChild(tostring(i) .. " Story")
 		if story then
@@ -150,7 +163,7 @@ local function setupPlotGuiOnStory1(plot: Instance)
 	if not story1 then
 		return
 	end
-	local anchor = plotUsernameNamePart(story1)
+	local anchor = plotUsernameNamePart(plot, story1)
 	if not anchor then
 		return
 	end
@@ -176,6 +189,7 @@ local function collectExistingPlots(folder: Instance): boolean
 			if typeof(owner) == "number" and not Players:GetPlayerByUserId(owner) then
 				plot:SetAttribute("PlotOwnerUserId", nil)
 			end
+			setupPlotGuiOnStory1(plot)
 			slotToBase[slot] = plot
 			any = true
 		end

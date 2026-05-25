@@ -513,7 +513,7 @@ local function findUpgradeFrame(stand: Model, useWait: boolean?): Instance?
 end
 
 -- SurfaceGui clicks require Active=true on every GuiObject in the chain AND on the SurfaceGui itself.
--- We do NOT enable AlwaysOnTop, because that would make the panel render through the player's character.
+-- Enabled is controlled by PlotMarkerVisibility — do not force it on here.
 local function ensureSurfaceGuiInputChain(leaf: GuiObject)
 	local w: Instance? = leaf
 	while w do
@@ -521,10 +521,7 @@ local function ensureSurfaceGuiInputChain(leaf: GuiObject)
 			(w :: GuiObject).Active = true
 		end
 		if w:IsA("SurfaceGui") then
-			local sg = w :: SurfaceGui
-			sg.Enabled = true
-			-- Critical: without this, every button inside is unclickable (input is blocked).
-			(sg :: any).Active = true
+			(w :: SurfaceGui).Active = true
 			break
 		end
 		w = w.Parent
@@ -532,6 +529,9 @@ local function ensureSurfaceGuiInputChain(leaf: GuiObject)
 end
 
 local function wireUpgradeButton(stand: Model): GuiButton?
+	if not standMatchesAssignedPlot(stand) then
+		return nil
+	end
 	-- Use the waiting variant so we don't fail before the model finishes replicating.
 	local upgradeFrame = findUpgradeFrame(stand, true)
 	if not upgradeFrame or not upgradeFrame:IsA("GuiObject") then
@@ -754,14 +754,38 @@ local function initStand(stand: Model)
 		view.buttonPart = bp
 		view.cashAnchor = cash
 
-		local upgradeFrame = findUpgradeFrame(stand, true)
-		if upgradeFrame and upgradeFrame:IsA("GuiObject") then
-			view.upgradeFrame = upgradeFrame :: GuiObject
+		if standMatchesAssignedPlot(stand) then
+			local upgradeFrame = findUpgradeFrame(stand, true)
+			if upgradeFrame and upgradeFrame:IsA("GuiObject") then
+				view.upgradeFrame = upgradeFrame :: GuiObject
+			end
+			view.upgradeButton = wireUpgradeButton(stand)
+			hookStandLevelPulse(stand, view)
 		end
-		view.upgradeButton = wireUpgradeButton(stand)
 		view.existingEmitters = collectAndDisableExistingEmitters(view)
-		hookStandLevelPulse(stand, view)
 	end)
+end
+
+local function refreshLocalStandUpgradeWiring()
+	for stand, view in pairs(views) do
+		if not stand.Parent then
+			continue
+		end
+		if not standMatchesAssignedPlot(stand) or view.upgradeButton then
+			continue
+		end
+		task.spawn(function()
+			if view.upgradeButton then
+				return
+			end
+			local upgradeFrame = findUpgradeFrame(stand, true)
+			if upgradeFrame and upgradeFrame:IsA("GuiObject") then
+				view.upgradeFrame = upgradeFrame :: GuiObject
+			end
+			view.upgradeButton = wireUpgradeButton(stand)
+			hookStandLevelPulse(stand, view)
+		end)
+	end
 end
 
 -- ── Init ─────────────────────────────────────────────────────────────────────
@@ -833,6 +857,7 @@ function M.init()
 
 	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
 		rebuildCachedPlotMatch()
+		refreshLocalStandUpgradeWiring()
 		bumpPromptRefreshFromMovement()
 	end)
 	player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(bumpPromptRefreshFromMovement)

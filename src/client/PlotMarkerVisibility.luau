@@ -18,6 +18,7 @@ local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild(
 local player = Players.LocalPlayer
 
 local STAND_TAG = "BrainrotStand"
+local PLOT_GUI_MAX_DISTANCE = 180
 
 local baseMarkerConns: { [Instance]: { RBXScriptConnection } } = {}
 local standNameWatch: { [Model]: RBXScriptConnection } = {}
@@ -114,7 +115,10 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 	if d:IsA("BillboardGui") then
 		if unclaimed or not mine then
 			d.Enabled = false
-		elseif isPlotGuiRelated(d, plotRoot) or isProtectedPlotUi(d, plotRoot) or isStandDisplayModelAncestor(d, plotRoot) then
+		elseif isPlotGuiRelated(d, plotRoot) then
+			d.Enabled = true
+			d.MaxDistance = PLOT_GUI_MAX_DISTANCE
+		elseif isProtectedPlotUi(d, plotRoot) or isStandDisplayModelAncestor(d, plotRoot) then
 			d.Enabled = true
 		else
 			d.Enabled = false

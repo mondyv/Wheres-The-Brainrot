@@ -871,7 +871,7 @@ local function removeBrainrotFromStand(player: Player, state: StandState)
 		local boost = if player:GetAttribute("IndexGoldenQuestComplete") == true then 1.25 else 1
 		local payout = math.floor(state.accumulated * boost)
 		player:SetAttribute("Cash", c + payout)
-		collectVFXRE:FireAllClients(state.stand, payout)
+		collectVFXRE:FireClient(player, state.stand, payout)
 	end
 
 	clearStandState(state)
@@ -911,7 +911,7 @@ local function collectCash(state: StandState, player: Player)
 	player:SetAttribute("Cash", c + amount)
 	state.lastCollectAt = now
 	refreshLabels(state)
-	collectVFXRE:FireAllClients(state.stand, amount)
+	collectVFXRE:FireClient(player, state.stand, amount)
 end
 
 local function upgradeStandBrainrot(state: StandState, player: Player)

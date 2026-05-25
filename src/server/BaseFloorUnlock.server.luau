@@ -429,18 +429,6 @@ local function pulseSignBurst(signData: SignData)
 	TweenService:Create(scale, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 end
 
-local function hookHover(signData: SignData)
-	if not signData.clickDetector then return end
-	signData.clickDetector.MouseHoverEnter:Connect(function()
-		local s = ensureUIScale(signData.hoverTarget)
-		TweenService:Create(s, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1.06 }):Play()
-	end)
-	signData.clickDetector.MouseHoverLeave:Connect(function()
-		local s = ensureUIScale(signData.hoverTarget)
-		TweenService:Create(s, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-	end)
-end
-
 -- ── Click → unlock ───────────────────────────────────────────────────────────
 
 local function tryUnlock(state: BaseState, signData: SignData, player: Player): (boolean, string?)
@@ -567,8 +555,6 @@ local function buildSignData(state: BaseState, storyNumber: number, story: Insta
 			end
 		end
 	end
-	hookHover(signData)
-
 	return signData
 end
 

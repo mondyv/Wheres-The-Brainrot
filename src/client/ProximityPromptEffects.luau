@@ -453,15 +453,28 @@ local function wireClickablePrompt(view: PromptView)
 			end)
 		)
 	else
+		local lastTapAt = 0
+		local function tryTapPrompt()
+			local prompt = view.prompt
+			if not shouldShowPromptUi(prompt) then
+				return
+			end
+			local now = os.clock()
+			if now - lastTapAt < 0.12 then
+				return
+			end
+			lastTapAt = now
+			UIInteractionSounds.playClick()
+			triggerPromptTap(prompt)
+		end
+		table.insert(view.clickConns, clickBtn.Activated:Connect(tryTapPrompt))
+		table.insert(view.clickConns, clickBtn.MouseButton1Down:Connect(tryTapPrompt))
 		table.insert(
 			view.clickConns,
-			clickBtn.Activated:Connect(function()
-				local prompt = view.prompt
-				if not shouldShowPromptUi(prompt) then
-					return
+			clickBtn.InputBegan:Connect(function(input: InputObject)
+				if input.UserInputType == Enum.UserInputType.Touch then
+					tryTapPrompt()
 				end
-				UIInteractionSounds.playClick()
-				triggerPromptTap(prompt)
 			end)
 		)
 	end

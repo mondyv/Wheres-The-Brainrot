@@ -10,6 +10,7 @@ local Workspace = game:GetService("Workspace")
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 
 local HEADER_NAME = "BrainrotInfoBillboard"
+local HEADER_MAX_DISTANCE = 120
 local HEADER_TAG = "BrainrotHeaderTarget"
 local ACTIVE_ATTR = "BrainrotHeaderActive"
 local STAND_DISPLAY_ATTR = "BrainrotStandDisplay"
@@ -179,7 +180,7 @@ local function syncHeader(model: Model): boolean
 	bb.AlwaysOnTop = true
 	bb.Active = false
 	bb.LightInfluence = 0
-	bb.MaxDistance = 500
+	bb.MaxDistance = HEADER_MAX_DISTANCE
 	bb.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	if template.Size.Y.Offset > 4 then
 		bb.Size = template.Size
@@ -335,6 +336,16 @@ function BrainrotHeaderController.init()
 
 	for _, inst in CollectionService:GetTagged(HEADER_TAG) do
 		onHeaderTarget(inst)
+	end
+
+	for _, inst in CollectionService:GetTagged("BrainrotStand") do
+		if inst:IsA("Model") then
+			for _, desc in ipairs(inst:GetDescendants()) do
+				if desc:IsA("Model") and desc:GetAttribute(STAND_DISPLAY_ATTR) == true then
+					hookStandDisplayModel(desc :: Model)
+				end
+			end
+		end
 	end
 end
 

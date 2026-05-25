@@ -75,6 +75,7 @@ local remotesFolder = ensureRemotesFolder()
 local placeRE = ensureRemoteEvent(remotesFolder, "PlaceBrainrotOnStand")   -- (standModel)
 local removeRE = ensureRemoteEvent(remotesFolder, "RemoveBrainrotFromStand") -- (standModel)
 local upgradeRE = ensureRemoteEvent(remotesFolder, "UpgradeStandBrainrot")  -- (standModel)
+local upgradeFeedbackRE = ensureRemoteEvent(remotesFolder, "StandUpgradeFeedback") -- server → client (ok, reason)
 local collectVFXRE = ensureRemoteEvent(remotesFolder, "StandCashCollectedFX") -- server → client (standModel, cashAmount)
 
 -- ── Internal BindableFunction from BushHarvest (inventory mutation) ───────────
@@ -925,7 +926,10 @@ local function upgradeStandBrainrot(state: StandState, player: Player)
 	local cost = recomputeUpgradeCost(state)
 	local cash = player:GetAttribute("Cash")
 	local c = if typeof(cash) == "number" then cash else 0
-	if c < cost then return end
+	if c < cost then
+		upgradeFeedbackRE:FireClient(player, false, "cash")
+		return
+	end
 	player:SetAttribute("Cash", c - cost)
 	state.level += 1
 	state.stand:SetAttribute("BrainrotLevel", state.level)

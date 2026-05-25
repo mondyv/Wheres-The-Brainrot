@@ -70,6 +70,8 @@ local STAND_NAME_ATTR = "BrainrotName"
 local STAND_LEVEL_ATTR = "BrainrotLevel"
 local MIN_TOUCH_PX = 44
 local MIN_TOUCH_PX_MOBILE = 52
+local TOUCH_TAP_ICON = "rbxasset://textures/ui/Controls/TouchTapIcon.png"
+local TOUCH_HOLD_ICON = "rbxasset://textures/ui/Controls/TouchHoldIcon.png"
 
 -- ── State ─────────────────────────────────────────────────────────────────────
 
@@ -81,6 +83,7 @@ type PromptView = {
 	keyBadge: Frame,
 	keyStroke: UIStroke,
 	keyLabel: TextLabel,
+	keyIcon: ImageLabel,
 	holdTrack: Frame,
 	holdFill: Frame,
 	actionLabel: TextLabel,
@@ -219,19 +222,19 @@ local function viewIsActive(view: PromptView): boolean
 	return viewsByPrompt[view.prompt] == view
 end
 
-local function prefersTouchInput(): boolean
-	local last = UserInputService:GetLastInputType()
-	if last == Enum.UserInputType.Touch then
-		return true
-	end
-	return UserInputService.TouchEnabled
-		and not UserInputService.KeyboardEnabled
-		and not UserInputService.GamepadEnabled
-end
-
 local function prefersGamepadInput(): boolean
 	return UserInputService.GamepadEnabled
 		and UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1
+end
+
+local function prefersTouchInput(): boolean
+	if not UserInputService.TouchEnabled then
+		return false
+	end
+	if prefersGamepadInput() then
+		return false
+	end
+	return true
 end
 
 local function gamepadButtonLabel(keyCode: Enum.KeyCode): string
@@ -253,27 +256,46 @@ end
 
 local function refreshKeyLabel(view: PromptView)
 	local prompt = view.prompt
+	local label = view.keyLabel
+	local icon = view.keyIcon
+
+	local function showText(text: string)
+		icon.Visible = false
+		label.Visible = true
+		label.Text = text
+	end
+
+	local function showIcon(image: string)
+		label.Visible = false
+		icon.Visible = true
+		icon.Image = image
+		icon.ImageColor3 = TEXT_PRIMARY
+	end
+
 	if prefersGamepadInput() then
-		view.keyLabel.Text = gamepadButtonLabel(prompt.GamepadKeyCode)
+		showText(gamepadButtonLabel(prompt.GamepadKeyCode))
 		return
 	end
 	if prefersTouchInput() then
-		view.keyLabel.Text = if prompt.HoldDuration > 0 then "Hold" else "Tap"
+		if prompt.HoldDuration > 0 then
+			showIcon(TOUCH_HOLD_ICON)
+		else
+			showIcon(TOUCH_TAP_ICON)
+		end
 		return
 	end
-	-- Hold prompts still show "E"; progress is the green fill inside the badge.
 	local kc = prompt.KeyboardKeyCode
 	if kc == Enum.KeyCode.Unknown or kc == Enum.KeyCode.E then
-		view.keyLabel.Text = "E"
+		showText("E")
 		return
 	end
 	local name = kc.Name
 	if #name == 1 then
-		view.keyLabel.Text = name
+		showText(name)
 	elseif #name <= 3 then
-		view.keyLabel.Text = string.upper(name)
+		showText(string.upper(name))
 	else
-		view.keyLabel.Text = string.sub(name, 1, 1)
+		showText(string.sub(name, 1, 1))
 	end
 end
 
@@ -538,6 +560,7 @@ local function resetKeyBadgeVisuals(view: PromptView)
 	view.keyStroke.Color = ACCENT_STROKE
 	view.keyStroke.Transparency = 0.35
 	view.keyLabel.TextColor3 = TEXT_PRIMARY
+	view.keyIcon.ImageColor3 = TEXT_PRIMARY
 	local trackH = holdTrackHeight(view)
 	view.holdTrack.Size = UDim2.new(1, -BADGE_HOLD_PAD * 2, 1, -BADGE_HOLD_PAD * 2)
 	view.holdFill.Size = UDim2.new(1, 0, 0, 0)
@@ -1076,6 +1099,18 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	keyLabel.ZIndex = 5
 	keyLabel.Parent = keyBadge
 
+	local keyIcon = Instance.new("ImageLabel")
+	keyIcon.Name = "KeyIcon"
+	keyIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+	keyIcon.Position = UDim2.fromScale(0.5, 0.5)
+	keyIcon.Size = UDim2.new(1, -10, 1, -10)
+	keyIcon.BackgroundTransparency = 1
+	keyIcon.ScaleType = Enum.ScaleType.Fit
+	keyIcon.ImageColor3 = TEXT_PRIMARY
+	keyIcon.Visible = false
+	keyIcon.ZIndex = 6
+	keyIcon.Parent = keyBadge
+
 	local textCol = Instance.new("Frame")
 	textCol.Name = "TextColumn"
 	textCol.AnchorPoint = Vector2.new(0, 0.5)
@@ -1119,6 +1154,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 		keyBadge = keyBadge,
 		keyStroke = keyStroke,
 		keyLabel = keyLabel,
+		keyIcon = keyIcon,
 		holdTrack = holdTrack,
 		holdFill = holdFill,
 		actionLabel = actionLabel,

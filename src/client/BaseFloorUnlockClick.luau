@@ -15,6 +15,12 @@ local player = Players.LocalPlayer
 local UNLOCK_REMOTE_NAME = "UnlockBaseFloor"
 local OVERLAY_NAME = "__FloorUnlockOverlay"
 local WIRE_RETRY_SEC = 8
+local MAX_FLOOR = 4
+local FLOOR_UNLOCK_COSTS: { [number]: number } = {
+	[2] = 250_500_000,
+	[3] = 25_500_000_000,
+	[4] = 30_500_000_000_000,
+}
 
 local wiredSigns: { [Instance]: boolean } = {}
 local plotConns: { [Instance]: RBXScriptConnection } = {}
@@ -82,18 +88,56 @@ local function getUnlockRemote(): RemoteEvent?
 	return nil
 end
 
-local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent)
+local function plotForSign(sign: Model): Instance?
+	local folder = PlotPaths.findSpawnAndBasesFolder()
+	if not folder then
+		return nil
+	end
+	local x: Instance? = sign
+	while x do
+		if x.Parent == folder and PlotPaths.isPlotRoot(x) then
+			return x
+		end
+		x = x.Parent
+	end
+	return nil
+end
+
+local function canAffordNextFloor(plot: Instance?): boolean
+	if not plot then
+		return true
+	end
+	local level = plot:GetAttribute("BaseFloorLevel")
+	local floorLevel = if typeof(level) == "number" then math.floor(level) else 1
+	if floorLevel >= MAX_FLOOR then
+		return false
+	end
+	local cost = FLOOR_UNLOCK_COSTS[floorLevel + 1]
+	if not cost then
+		return true
+	end
+	local cash = player:GetAttribute("Cash")
+	return typeof(cash) == "number" and cash >= cost
+end
+
+local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent, sign: Model)
 	if wiredSigns[upgradeFrame] then
 		return true
 	end
 	ensureSurfaceGuiInputChain(upgradeFrame)
 
 	local function fire()
+		local plot = plotForSign(sign)
+		if not canAffordNextFloor(plot) then
+			GameSoundEffects.playErrorNotif()
+			return
+		end
 		unlockRE:FireServer()
 	end
 
 	if upgradeFrame:IsA("GuiButton") then
 		wiredSigns[upgradeFrame] = true
+		(upgradeFrame :: GuiButton).Activated:Connect(fire)
 		(upgradeFrame :: GuiButton).MouseButton1Click:Connect(fire)
 		upgradeFrame.Destroying:Once(function()
 			wiredSigns[upgradeFrame] = nil
@@ -123,6 +167,7 @@ local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent)
 	end
 	overlay.Active = true
 	wiredSigns[upgradeFrame] = true
+	overlay.Activated:Connect(fire)
 	overlay.MouseButton1Click:Connect(fire)
 	upgradeFrame.Destroying:Once(function()
 		wiredSigns[upgradeFrame] = nil
@@ -138,7 +183,7 @@ local function wireSign(sign: Model, unlockRE: RemoteEvent): boolean
 	if not upgradeFrame then
 		return false
 	end
-	if wireUpgradeTarget(upgradeFrame, unlockRE) then
+	if wireUpgradeTarget(upgradeFrame, unlockRE, sign) then
 		wiredSigns[sign] = true
 		sign.Destroying:Once(function()
 			wiredSigns[sign] = nil
@@ -241,7 +286,9 @@ function M.init()
 			if ok or reason == "" or reason == "debounce" then
 				return
 			end
-			GameSoundEffects.playErrorNotif()
+			if reason == "cash" or reason == "max" then
+				GameSoundEffects.playErrorNotif()
+			end
 			warn("[BaseFloorUnlockClick] Unlock failed:", reason)
 		end)
 		local folder = PlotPaths.waitForSpawnAndBasesFolder(120)

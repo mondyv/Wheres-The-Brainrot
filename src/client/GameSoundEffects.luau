@@ -6,20 +6,21 @@
 
 local SoundService = game:GetService("SoundService")
 
-local cashGrabSound: Sound?
-local errorNotifSound: Sound?
+local cashGrabTemplate: Sound?
+local errorNotifTemplate: Sound?
 
 local GameSoundEffects = {}
 
-local function playOneShot(sound: Sound?)
-	if not sound then
+local function playTemplate(template: Sound?)
+	if not template then
 		return
 	end
-	if sound.IsPlaying then
-		sound:Stop()
-	end
-	sound.TimePosition = 0
-	sound:Play()
+	local clone = template:Clone()
+	clone.Parent = SoundService
+	clone:Play()
+	clone.Ended:Once(function()
+		clone:Destroy()
+	end)
 end
 
 function GameSoundEffects.init()
@@ -30,20 +31,20 @@ function GameSoundEffects.init()
 	end
 	local cashFolder = root:FindFirstChild("CashGrab")
 	if cashFolder then
-		cashGrabSound = (cashFolder:FindFirstChild("Cash grab sfx") or cashFolder:FindFirstChildWhichIsA("Sound")) :: Sound?
+		cashGrabTemplate = (cashFolder:FindFirstChild("Cash grab sfx") or cashFolder:FindFirstChildWhichIsA("Sound")) :: Sound?
 	end
 	local errFolder = root:FindFirstChild("ErrorNotif")
 	if errFolder then
-		errorNotifSound = (errFolder:FindFirstChild("Xbox Menu Error") or errFolder:FindFirstChildWhichIsA("Sound")) :: Sound?
+		errorNotifTemplate = (errFolder:FindFirstChild("Xbox Menu Error") or errFolder:FindFirstChildWhichIsA("Sound")) :: Sound?
 	end
 end
 
 function GameSoundEffects.playCashGrab()
-	playOneShot(cashGrabSound)
+	playTemplate(cashGrabTemplate)
 end
 
 function GameSoundEffects.playErrorNotif()
-	playOneShot(errorNotifSound)
+	playTemplate(errorNotifTemplate)
 end
 
 return GameSoundEffects

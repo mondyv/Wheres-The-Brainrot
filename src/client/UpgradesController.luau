@@ -370,6 +370,7 @@ local function wirePurchase(upgradeId: string, buyButtons: Instance, refreshAllR
 		end
 	end
 
+	cashBtn.Activated:Connect(tryBuy)
 	cashBtn.MouseButton1Click:Connect(tryBuy)
 
 	local scale = getOrAddUIScale(cashBtn)

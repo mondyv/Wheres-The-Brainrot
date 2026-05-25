@@ -49,6 +49,7 @@ end
 
 local remotes: Folder? = nil
 local upgradeRE: RemoteEvent? = nil
+local upgradeFeedbackRE: RemoteEvent? = nil
 local collectFXRE: RemoteEvent? = nil
 
 -- ── VFX setup ────────────────────────────────────────────────────────────────
@@ -617,14 +618,6 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 	end)
 
 	local lastFire = 0
-	local holdRepeatConn: RBXScriptConnection? = nil
-
-	local function stopUpgradeHold()
-		if holdRepeatConn then
-			holdRepeatConn:Disconnect()
-			holdRepeatConn = nil
-		end
-	end
 
 	local function tryFireUpgrade()
 		local now = os.clock()
@@ -637,20 +630,7 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 		end
 	end
 
-	local function startUpgradeHold()
-		stopUpgradeHold()
-		tryFireUpgrade()
-		holdRepeatConn = RunService.Heartbeat:Connect(tryFireUpgrade)
-	end
-
-	clickable.MouseButton1Down:Connect(startUpgradeHold)
-	clickable.MouseButton1Up:Connect(stopUpgradeHold)
-	clickable.MouseLeave:Connect(stopUpgradeHold)
-	clickable.InputEnded:Connect(function(input: InputObject)
-		if input.UserInputType == Enum.UserInputType.Touch then
-			stopUpgradeHold()
-		end
-	end)
+	clickable.Activated:Connect(tryFireUpgrade)
 	return clickable
 end
 
@@ -790,7 +770,15 @@ function M.init()
 	remotes = waitStandRemotes()
 	if not remotes then return end
 	upgradeRE = (remotes :: Folder):WaitForChild("UpgradeStandBrainrot", 45) :: RemoteEvent
+	upgradeFeedbackRE = (remotes :: Folder):WaitForChild("StandUpgradeFeedback", 45) :: RemoteEvent
 	collectFXRE = (remotes :: Folder):WaitForChild("StandCashCollectedFX", 45) :: RemoteEvent
+
+	upgradeFeedbackRE.OnClientEvent:Connect(function(ok: boolean, reason: string)
+		if ok or reason ~= "cash" then
+			return
+		end
+		GameSoundEffects.playErrorNotif()
+	end)
 
 	collectFXRE.OnClientEvent:Connect(function(stand: any, total: any)
 		GameSoundEffects.playCashGrab()

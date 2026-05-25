@@ -1,7 +1,8 @@
 --[[
 	0_BasePlotSpawner (server, runs early by name)
-	• Unclaimed slots: lightweight floor stub only (fast load).
-	• Claimed slot: full ServerStorage.Templates.Base clone.
+	• Pre-clones all 7 plot slots at server start (clone + tune + park upper floors once).
+	• Unclaimed slots stay in ServerStorage.__PreBakedPlots (not replicated).
+	• Claimed slot: move pre-built plot into Workspace (Parent change only — no join-time clone).
 	• Bottom of plot aligned to BasePOSPart anchor (not model pivot / random part).
 --]]
 
@@ -19,10 +20,12 @@ local MAX_SLOTS = 7
 local POS_NAME_PREFIX = "BasePOSPart"
 local SPAWNED_ATTR = "_PlotTemplatesSpawned"
 local SPAWN_VERSION_ATTR = "_PlotSpawnVersion"
-local SPAWN_VERSION = 12
-local STUB_ATTR = "PlotFloorStub"
+local SPAWN_VERSION = 13
+local PREBAKE_FOLDER_NAME = "__PreBakedPlots"
+local HIDDEN_FLOORS_NAME = "__HiddenBaseFloors"
 
 local slotToBase: { [number]: Instance } = {}
+local preBakedPlots: { [number]: Model } = {}
 local playerToSlot: { [Player]: number } = {}
 local templateWatchHooked = false
 local bootComplete = false
@@ -92,6 +95,38 @@ local function getBaseTemplate(): Instance?
 		return template
 	end
 	return nil
+end
+
+local function getStoryNumber(name: string): number?
+	local digits = string.match(name, "^(%d+)")
+	if not digits then
+		return nil
+	end
+	local n = tonumber(digits)
+	if n and n >= 1 and n <= 4 then
+		return n
+	end
+	return nil
+end
+
+local function getHiddenFloorsRoot(): Folder
+	local f = ServerStorage:FindFirstChild(HIDDEN_FLOORS_NAME)
+	if not f then
+		f = Instance.new("Folder")
+		f.Name = HIDDEN_FLOORS_NAME
+		f.Parent = ServerStorage
+	end
+	return f :: Folder
+end
+
+local function getPreBakeRoot(): Folder
+	local f = ServerStorage:FindFirstChild(PREBAKE_FOLDER_NAME)
+	if not f then
+		f = Instance.new("Folder")
+		f.Name = PREBAKE_FOLDER_NAME
+		f.Parent = ServerStorage
+	end
+	return f :: Folder
 end
 
 local function firstStoryFolder(root: Instance): Instance?
@@ -166,6 +201,27 @@ local function setupPlotGuiOnStory1(plot: Instance)
 	end
 end
 
+local function tagPlotStories(plot: Instance, slot: number)
+	plot:SetAttribute("PlotSlotId", slot)
+	for _, ch in ipairs(plot:GetChildren()) do
+		local n = getStoryNumber(ch.Name)
+		if n then
+			ch:SetAttribute("PlotSlotId", slot)
+		end
+	end
+end
+
+local function parkStoriesAbove(plot: Instance, slot: number, unlockedFloor: number)
+	local hidden = getHiddenFloorsRoot()
+	for _, ch in ipairs(plot:GetChildren()) do
+		local n = getStoryNumber(ch.Name)
+		if n and n > unlockedFloor then
+			ch:SetAttribute("PlotSlotId", slot)
+			ch.Parent = hidden
+		end
+	end
+end
+
 local function collectExistingPlots(folder: Instance): boolean
 	table.clear(slotToBase)
 	local any = false
@@ -183,81 +239,45 @@ local function collectExistingPlots(folder: Instance): boolean
 	return any
 end
 
-local function sanitizeStubFloor(floorFolder: Instance)
-	local toDestroy: { Instance } = {}
-	for _, d in ipairs(floorFolder:GetDescendants()) do
-		if d.Name == "Stands" or d.Name == "stands" then
-			table.insert(toDestroy, d)
-		elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
-			table.insert(toDestroy, d)
-		elseif d:IsA("ProximityPrompt") or d:IsA("ClickDetector") then
-			table.insert(toDestroy, d)
-		elseif d:IsA("BasePart") then
-			local n = string.lower(d.Name)
-			if n == "spawn" or n == "guipart" or n == "buttonpart" then
-				table.insert(toDestroy, d)
-			end
-		elseif d:IsA("Model") then
-			if d:FindFirstChild("Spawn", true) and (d:FindFirstChild("LevelPanel", true) or d:FindFirstChild("Button", true)) then
-				table.insert(toDestroy, d)
-			elseif d:FindFirstChild("GUIPart", true) and d:FindFirstChildWhichIsA("SurfaceGui", true) then
-				table.insert(toDestroy, d)
-			end
-		end
-	end
-	for _, inst in ipairs(toDestroy) do
-		inst:Destroy()
+local function clearPreBakeStorage()
+	table.clear(preBakedPlots)
+	local root = ServerStorage:FindFirstChild(PREBAKE_FOLDER_NAME)
+	if root then
+		root:ClearAllChildren()
 	end
 end
 
-local function spawnFloorStub(template: Instance, pos: BasePart, slot: number, folder: Instance): Model
-	local plot = Instance.new("Model")
-	plot.Name = "Plot_" .. tostring(slot)
-	plot:SetAttribute("PlotSlotId", slot)
-	plot:SetAttribute(STUB_ATTR, true)
-
-	local story1 = firstStoryFolder(template)
-	if story1 then
-		local storyClone = story1:Clone()
-		for _, ch in ipairs(storyClone:GetChildren()) do
-			if string.lower(ch.Name) ~= "floor" then
-				ch:Destroy()
-			end
-		end
-		local floorFolder = storyClone:FindFirstChild("Floor") or storyClone:FindFirstChild("floor")
-		if floorFolder then
-			sanitizeStubFloor(floorFolder)
-		end
-		storyClone.Parent = plot
-	else
-		local p = Instance.new("Part")
-		p.Name = "Floor"
-		p.Anchored = true
-		p.Size = Vector3.new(48, 1, 48)
-		p.Color = Color3.fromRGB(80, 80, 80)
-		p.Parent = plot
-	end
-
-	plot.Parent = folder
-	pivotBottomToAnchor(plot, pos)
-	hideAnchorPart(pos)
-	return plot
-end
-
-local function spawnFullPlot(template: Instance, pos: BasePart, slot: number, folder: Instance, ownerUserId: number?): Model
+local function buildPreBakedPlot(template: Instance, slot: number): Model
 	local clone = template:Clone() :: Model
 	clone.Name = "Plot_" .. tostring(slot)
-	clone:SetAttribute("PlotSlotId", slot)
-	clone:SetAttribute(STUB_ATTR, nil)
-	if typeof(ownerUserId) == "number" then
-		clone:SetAttribute("PlotOwnerUserId", ownerUserId)
-	end
+	tagPlotStories(clone, slot)
 	setupPlotGuiOnStory1(clone)
 	PlotRuntimeTune.tune(clone)
-	clone.Parent = folder
-	pivotBottomToAnchor(clone, pos)
-	hideAnchorPart(pos)
+	parkStoriesAbove(clone, slot, 1)
 	return clone
+end
+
+local function prebakeAllSlots(template: Instance)
+	local root = getPreBakeRoot()
+	local baked = 0
+	for slot = 1, MAX_SLOTS do
+		if slotToBase[slot] then
+			continue
+		end
+		if preBakedPlots[slot] then
+			continue
+		end
+		local plot = buildPreBakedPlot(template, slot)
+		plot.Parent = root
+		preBakedPlots[slot] = plot
+		baked += 1
+		if slot < MAX_SLOTS then
+			task.wait()
+		end
+	end
+	if baked > 0 then
+		print(string.format("[0_BasePlotSpawner] Pre-baked %d plot slot(s)", baked))
+	end
 end
 
 local function replacePlotSlot(slot: number, plot: Model)
@@ -265,29 +285,55 @@ local function replacePlotSlot(slot: number, plot: Model)
 	scheduleReplaceNotifications(plot)
 end
 
-local function promoteStubToFullPlot(slot: number, player: Player)
+local function assignPreBakedPlot(slot: number, player: Player)
 	local folder = findSpawnFolder()
-	local template = getBaseTemplate()
-	if not folder or not template then
+	if not folder then
 		return
 	end
 	local pos = folder:FindFirstChild(POS_NAME_PREFIX .. tostring(slot))
 	if not pos or not pos:IsA("BasePart") then
 		return
 	end
+
+	local plot = preBakedPlots[slot]
+	if not plot then
+		return
+	end
+	preBakedPlots[slot] = nil
+
 	local existing = folder:FindFirstChild("Plot_" .. tostring(slot))
 	if existing then
 		existing:Destroy()
 	end
-	task.defer(function()
-		if not player.Parent then
-			return
-		end
-		local plot = spawnFullPlot(template, pos, slot, folder, player.UserId)
-		replacePlotSlot(slot, plot)
-		player:SetAttribute("AssignedPlotSlot", slot)
-		playerToSlot[player] = slot
-		print(string.format("[0_BasePlotSpawner] Assigned %s to Plot_%d (full base)", player.Name, slot))
+
+	plot:SetAttribute("PlotOwnerUserId", player.UserId)
+	plot.Parent = folder
+	pivotBottomToAnchor(plot, pos)
+	hideAnchorPart(pos)
+	replacePlotSlot(slot, plot)
+	player:SetAttribute("AssignedPlotSlot", slot)
+	playerToSlot[player] = slot
+	print(string.format("[0_BasePlotSpawner] Assigned %s to Plot_%d (pre-baked)", player.Name, slot))
+end
+
+local function returnSlotToPool(slot: number)
+	local folder = findSpawnFolder()
+	local template = getBaseTemplate()
+	if not template then
+		return
+	end
+
+	local existing = slotToBase[slot]
+	if existing and existing.Parent then
+		existing:Destroy()
+	end
+	slotToBase[slot] = nil
+
+	task.spawn(function()
+		local plot = buildPreBakedPlot(template, slot)
+		plot.Parent = getPreBakeRoot()
+		preBakedPlots[slot] = plot
+		notifyPlotVisibilityRefresh(nil)
 	end)
 end
 
@@ -300,14 +346,12 @@ local function spawnBasesOnce(folder: Instance): boolean
 			end
 		end
 		table.clear(slotToBase)
+		clearPreBakeStorage()
 		folder:SetAttribute(SPAWNED_ATTR, false)
 	end
 
-	if folder:GetAttribute(SPAWNED_ATTR) == true then
-		if collectExistingPlots(folder) then
-			return true
-		end
-		folder:SetAttribute(SPAWNED_ATTR, false)
+	if folder:GetAttribute(SPAWNED_ATTR) == true and folder:GetAttribute(SPAWN_VERSION_ATTR) == SPAWN_VERSION then
+		collectExistingPlots(folder)
 	end
 
 	local template = getBaseTemplate()
@@ -315,57 +359,44 @@ local function spawnBasesOnce(folder: Instance): boolean
 		return false
 	end
 
-	local any = false
-	local stubCount = 0
+	prebakeAllSlots(template)
+
 	for slot = 1, MAX_SLOTS do
 		local pos = folder:FindFirstChild(POS_NAME_PREFIX .. tostring(slot))
-		if not pos or not pos:IsA("BasePart") then
-			continue
-		end
-		local existing = folder:FindFirstChild("Plot_" .. tostring(slot))
-		if existing then
-			existing:Destroy()
-		end
-		local stub = spawnFloorStub(template, pos, slot, folder)
-		slotToBase[slot] = stub
-		stubCount += 1
-		any = true
-		if slot < MAX_SLOTS then
-			task.wait()
+		if pos and pos:IsA("BasePart") then
+			hideAnchorPart(pos)
 		end
 	end
 
-	if any then
-		folder:SetAttribute(SPAWNED_ATTR, true)
-		folder:SetAttribute(SPAWN_VERSION_ATTR, SPAWN_VERSION)
-		print(string.format("[0_BasePlotSpawner] Spawned %d floor stub(s); full base loads on claim", stubCount))
-	end
-	return any
+	folder:SetAttribute(SPAWNED_ATTR, true)
+	folder:SetAttribute(SPAWN_VERSION_ATTR, SPAWN_VERSION)
+	return true
 end
 
 local function tryAssignPlayer(player: Player)
 	if playerToSlot[player] ~= nil then
 		return
 	end
-	if next(slotToBase) == nil then
+	if next(preBakedPlots) == nil and next(slotToBase) == nil then
 		return
 	end
 	for slot = 1, MAX_SLOTS do
-		local base = slotToBase[slot]
-		if base and base.Parent then
-			local owner = base:GetAttribute("PlotOwnerUserId")
-			if owner == nil then
-				if base:GetAttribute(STUB_ATTR) == true then
-					promoteStubToFullPlot(slot, player)
-				else
+		if slotToBase[slot] then
+			local base = slotToBase[slot]
+			if base and base.Parent then
+				local owner = base:GetAttribute("PlotOwnerUserId")
+				if owner == nil then
 					base:SetAttribute("PlotOwnerUserId", player.UserId)
 					player:SetAttribute("AssignedPlotSlot", slot)
 					playerToSlot[player] = slot
 					notifyPlotVisibilityRefresh(base)
 					print(string.format("[0_BasePlotSpawner] Assigned %s to Plot_%d", player.Name, slot))
+					return
 				end
-				return
 			end
+		elseif preBakedPlots[slot] then
+			assignPreBakedPlot(slot, player)
+			return
 		end
 	end
 	player:SetAttribute("AssignedPlotSlot", nil)
@@ -443,24 +474,7 @@ Players.PlayerRemoving:Connect(function(player: Player)
 	if typeof(slot) ~= "number" then
 		return
 	end
-	local folder = findSpawnFolder()
-	local template = getBaseTemplate()
-	local pos = folder and folder:FindFirstChild(POS_NAME_PREFIX .. tostring(slot))
-	if folder and template and pos and pos:IsA("BasePart") then
-		local existing = slotToBase[slot]
-		if existing and existing.Parent then
-			existing:Destroy()
-		end
-		local stub = spawnFloorStub(template, pos, slot, folder)
-		slotToBase[slot] = stub
-		notifyPlotVisibilityRefresh(stub)
-	else
-		local base = slotToBase[slot]
-		if base and base.Parent then
-			base:SetAttribute("PlotOwnerUserId", nil)
-			notifyPlotVisibilityRefresh(base)
-		end
-	end
+	returnSlotToPool(slot)
 end)
 
 hookTemplateWatchers()

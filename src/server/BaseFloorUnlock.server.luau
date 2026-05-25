@@ -89,6 +89,21 @@ local function findStoriesUnderBase(base: Instance): { [number]: Instance }
 			result[n] = child
 		end
 	end
+	-- Upper stories are parked in ServerStorage by 0_BasePlotSpawner / refreshBase.
+	local slot = base:GetAttribute("PlotSlotId")
+	if typeof(slot) == "number" then
+		local hidden = ServerStorage:FindFirstChild("__HiddenBaseFloors")
+		if hidden then
+			local slotInt = math.floor(slot)
+			for _, ch in ipairs(hidden:GetChildren()) do
+				local n = getStoryNumber(ch.Name)
+				local chSlot = ch:GetAttribute("PlotSlotId")
+				if n and typeof(chSlot) == "number" and math.floor(chSlot) == slotInt then
+					result[n] = ch
+				end
+			end
+		end
+	end
 	return result
 end
 

@@ -4,6 +4,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local HUDController = require(script.Parent.HUDController)
@@ -28,6 +29,9 @@ local sellOneRF: RemoteFunction? = nil
 local sellAllRF: RemoteFunction? = nil
 local refreshSellList: () -> ()
 
+local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
 local function waitMain(): ScreenGui?
 	if not player.Character then
 		player.CharacterAdded:Wait()
@@ -46,6 +50,17 @@ local function findGuiButton(root: Instance, names: { string }): GuiButton?
 end
 
 local function resolveSellButton(row: Frame): GuiButton?
+	local sellHost = row:FindFirstChild("SellButton")
+	if sellHost then
+		local inner = sellHost:FindFirstChild("Sell")
+		if inner and inner:IsA("GuiButton") then
+			return inner
+		end
+		local nested = sellHost:FindFirstChildWhichIsA("GuiButton", true)
+		if nested then
+			return nested
+		end
+	end
 	for _, n in { "Sell", "SellButton" } do
 		local inst = row:FindFirstChild(n, true)
 		if not inst then
@@ -60,6 +75,49 @@ local function resolveSellButton(row: Frame): GuiButton?
 		end
 	end
 	return findGuiButton(row, { "Sell", "SellButton" })
+end
+
+local function getOrAddUIScale(parent: Instance): UIScale
+	local s = parent:FindFirstChildOfClass("UIScale")
+	if s then
+		return s
+	end
+	s = Instance.new("UIScale")
+	s.Parent = parent
+	return s
+end
+
+local function bindButtonMicroAnim(gui: GuiButton, hoverPeak: number?, downPeak: number?)
+	local hoverTo = hoverPeak or 1.06
+	local downTo = downPeak or 0.94
+	local scale = getOrAddUIScale(gui)
+	gui.MouseEnter:Connect(function()
+		UIInteractionSounds.playHover()
+		TweenService:Create(scale, HOVER_TWEEN, { Scale = hoverTo }):Play()
+	end)
+	gui.MouseLeave:Connect(function()
+		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.0 }):Play()
+	end)
+	gui.MouseButton1Down:Connect(function()
+		UIInteractionSounds.playClick()
+		TweenService:Create(scale, CLICK_TWEEN, { Scale = downTo }):Play()
+	end)
+	gui.MouseButton1Up:Connect(function()
+		TweenService:Create(scale, HOVER_TWEEN, { Scale = hoverTo }):Play()
+	end)
+end
+
+local function wireButtonAnim(btn: GuiButton?)
+	if not btn or btn:GetAttribute("SellUIAnimWired") then
+		return
+	end
+	btn:SetAttribute("SellUIAnimWired", true)
+	bindButtonMicroAnim(btn)
+end
+
+local function headerButtonsOf(frame: Frame): Instance?
+	local header = frame:FindFirstChild("Header")
+	return header and header:FindFirstChild("Buttons")
 end
 
 local function looksLikeSellPriceText(text: string): boolean
@@ -105,12 +163,6 @@ local function applySellPriceToRow(row: Frame, priceText: string)
 			end
 		end
 	end
-end
-
-local function wireHover(btn: GuiButton)
-	btn.MouseEnter:Connect(function()
-		UIInteractionSounds.playHover()
-	end)
 end
 
 local function getRemotes()
@@ -264,7 +316,7 @@ local function populateRow(row: Frame, entry: InvEntry, idx: number)
 	if sellBtn then
 		if not sellBtn:GetAttribute("SellWired") then
 			sellBtn:SetAttribute("SellWired", true)
-			wireHover(sellBtn)
+			wireButtonAnim(sellBtn)
 			sellBtn.Activated:Connect(function()
 				if busy then
 					return
@@ -343,7 +395,6 @@ local function confirmSell()
 		return
 	end
 	busy = true
-	UIInteractionSounds.playClick()
 	pcall(function()
 		rf:InvokeServer(idx)
 	end)
@@ -384,44 +435,64 @@ function SellController.init()
 			end
 		end
 		nothingLabel = sellFrame:FindFirstChild("NothingToSellText", true) :: TextLabel?
-		sellAllBtn = findGuiButton(sellFrame, { "SellAll", "Sell All" })
-		if sellAllBtn then
-			wireHover(sellAllBtn)
-			sellAllBtn.Activated:Connect(function()
-				if busy then
-					return
-				end
-				local _, allRf = getRemotes()
-				if not allRf then
-					return
-				end
-				busy = true
-				UIInteractionSounds.playClick()
-				pcall(function()
-					allRf:InvokeServer()
+
+		local sellHeaderButtons = headerButtonsOf(sellFrame)
+		if sellHeaderButtons then
+			local closeBtn = sellHeaderButtons:FindFirstChild("Close")
+			if closeBtn and closeBtn:IsA("GuiButton") then
+				wireButtonAnim(closeBtn)
+				closeBtn.Activated:Connect(function()
+					HUDController.closeCurrentFrame()
 				end)
-				busy = false
-				refreshSellList()
-			end)
+			end
+			sellAllBtn = sellHeaderButtons:FindFirstChild("SellAll") :: GuiButton?
+			if sellAllBtn and sellAllBtn:IsA("GuiButton") then
+				wireButtonAnim(sellAllBtn)
+				sellAllBtn.Activated:Connect(function()
+					if busy then
+						return
+					end
+					local _, allRf = getRemotes()
+					if not allRf then
+						return
+					end
+					busy = true
+					pcall(function()
+						allRf:InvokeServer()
+					end)
+					busy = false
+					refreshSellList()
+				end)
+			end
 		end
-		local closeBtn = findGuiButton(sellFrame, { "Close", "CloseButton", "X", "Exit" })
-		if closeBtn then
-			closeBtn.Activated:Connect(function()
-				HUDController.closeCurrentFrame()
-			end)
-		end
+
 		if sellFrame then
 			sellFrame.Visible = false
 		end
 		if sellInfoFrame then
 			sellInfoFrame.Visible = false
-			local yesBtn = findGuiButton(sellInfoFrame, { "Sell", "Yes", "Confirm" })
-			local noBtn = findGuiButton(sellInfoFrame, { "Cancel", "No", "Close", "X" })
-			if yesBtn then
-				yesBtn.Activated:Connect(confirmSell)
+
+			local infoHeaderButtons = headerButtonsOf(sellInfoFrame)
+			if infoHeaderButtons then
+				local infoClose = infoHeaderButtons:FindFirstChild("Close")
+				if infoClose and infoClose:IsA("GuiButton") then
+					wireButtonAnim(infoClose)
+					infoClose.Activated:Connect(cancelSell)
+				end
 			end
-			if noBtn then
-				noBtn.Activated:Connect(cancelSell)
+
+			local infoButtons = sellInfoFrame:FindFirstChild("Buttons")
+			if infoButtons then
+				local yesBtn = infoButtons:FindFirstChild("Sell")
+				if yesBtn and yesBtn:IsA("GuiButton") then
+					wireButtonAnim(yesBtn)
+					yesBtn.Activated:Connect(confirmSell)
+				end
+				local noBtn = infoButtons:FindFirstChild("Cancel")
+				if noBtn and noBtn:IsA("GuiButton") then
+					wireButtonAnim(noBtn)
+					noBtn.Activated:Connect(cancelSell)
+				end
 			end
 		end
 		sellFrame:GetPropertyChangedSignal("Visible"):Connect(function()

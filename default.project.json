@@ -1,0 +1,98 @@
+{
+  "name": "Wheres the Brainrot",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$ignoreUnknownInstances": true,
+      "Shared": {
+        "$path": "src/shared"
+      },
+      "Animations": {
+        "$path": "src/replicatedstorage/Animations"
+      }
+    },
+
+    "ServerStorage": {
+      "$ignoreUnknownInstances": true,
+      "Templates": {
+        "$path": "src/serverstorage/Templates"
+      },
+      "Brainrots": {
+        "$path": "src/serverstorage/Brainrots"
+      },
+      "VFX": {
+        "$path": "src/serverstorage/VFX"
+      }
+    },
+
+    "ServerScriptService": {
+      "Server": {
+        "$path": "src/server"
+      }
+    },
+
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Client": {
+          "$path": "src/client"
+        }
+      },
+      "StarterCharacterScripts": {
+        "SwingSystem": {
+          "$path": "src/character/SwingSystem.client.luau"
+        }
+      }
+    },
+
+    "Workspace": {
+      "$properties": {
+        "FilteringEnabled": true
+      },
+      "Baseplate": {
+        "$className": "Part",
+        "$properties": {
+          "Anchored": true,
+          "Color": [
+            0.38823,
+            0.37254,
+            0.38823
+          ],
+          "Locked": true,
+          "Position": [
+            0,
+            -10,
+            0
+          ],
+          "Size": [
+            512,
+            20,
+            512
+          ]
+        }
+      }
+    },
+    "Lighting": {
+      "$properties": {
+        "Ambient": [0.58039, 0.31373, 0.81176],
+        "Brightness": 3,
+        "ColorShift_Bottom": [0, 0, 0],
+        "ColorShift_Top": [0.77255, 0.75294, 0.23529],
+        "EnvironmentDiffuseScale": 1,
+        "EnvironmentSpecularScale": 1,
+        "GlobalShadows": true,
+        "OutdoorAmbient": [0.80784, 0.32549, 0.8],
+        "PrioritizeLightingQuality": false,
+        "ClockTime": 14.5,
+        "GeographicLatitude": 0,
+        "ExposureCompensation": 0,
+        "Technology": "ShadowMap"
+      }
+    },
+    "SoundService": {
+      "$properties": {
+        "RespectFilteringEnabled": true
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+-- Entry point – boots all client-side controllers
+-- Blur ScreenGui from StarterGui defaults to Enabled; lock it off until a panel calls push().
+require(script.UIModalBackdrop).init()
+require(script.BackgroundMusicController).init()
+require(script.UIInteractionSounds).init()
+-- Bush targeting + custom card; ProximityPromptEffects styles stands and wires bush FX/harvest.
+require(script.BushHoldInteraction).init()
+require(script.ProximityPromptEffects).init()
+require(script.UpgradesController).init()
+require(script.SellController).init()
+require(script.HUDController).init()
+require(script.IndexController).init()
+require(script.SettingsController).init()
+require(script.StandController).init()
+require(script.BrainrotHeaderController).init()
+require(script.ToolbarController).init()
+require(script.PlotMarkerVisibility).init()
+require(script.BaseFloorUnlockClick).init()
+require(script.BrainrotStandController).init()
+require(script.CurrentAreaController).init()

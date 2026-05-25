@@ -137,8 +137,9 @@ local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent,
 
 	if upgradeFrame:IsA("GuiButton") then
 		wiredSigns[upgradeFrame] = true
-		(upgradeFrame :: GuiButton).Activated:Connect(fire)
-		(upgradeFrame :: GuiButton).MouseButton1Click:Connect(fire)
+		local btn = upgradeFrame :: GuiButton
+		btn.Activated:Connect(fire)
+		btn.MouseButton1Click:Connect(fire)
 		upgradeFrame.Destroying:Once(function()
 			wiredSigns[upgradeFrame] = nil
 		end)

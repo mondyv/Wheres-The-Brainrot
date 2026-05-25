@@ -1617,7 +1617,7 @@ reshowEligiblePlaceProximityPrompts = function()
 	for _, inst in CollectionService:GetTagged(STAND_TAG) do
 		if inst:IsA("Model") then
 			local pp = findStandProximityPrompt(inst :: Model)
-			if pp and isPlaceBrainrotPrompt(pp) then
+			if pp and pp.Enabled and isPlaceBrainrotPrompt(pp) then
 				onPromptShown(pp, Enum.ProximityPromptInputType.Keyboard)
 			end
 		end

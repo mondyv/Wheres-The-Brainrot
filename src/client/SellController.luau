@@ -89,6 +89,80 @@ local function setSellInfoVisible(on: boolean)
 	end
 end
 
+local function formatSellConfirmMessage(entry: InvEntry, price: number): string
+	local detailParts: { string } = {}
+	local mut = entry.mutation
+	if typeof(mut) == "string" and mut ~= "" and mut ~= "normal" then
+		local display = BrainrotHeaderStyle.MUTATION_DISPLAY_NAME[mut] or mut
+		table.insert(detailParts, display)
+	end
+	local lv = math.max(1, math.floor(entry.level))
+	if lv > 1 then
+		table.insert(detailParts, "Lvl " .. tostring(lv))
+	end
+	local suffix = ""
+	if #detailParts > 0 then
+		suffix = " (" .. table.concat(detailParts, ", ") .. ")"
+	end
+	return string.format(
+		"Are you sure you want to sell %s%s for %s?",
+		entry.name,
+		suffix,
+		BrainrotEconomy.formatCashShort(price)
+	)
+end
+
+local function populateSellInfoConfirm(entry: InvEntry, price: number)
+	if not sellInfoFrame then
+		return
+	end
+	local message = formatSellConfirmMessage(entry, price)
+
+	local titleRoot = sellInfoFrame:FindFirstChild("Title", true)
+		or sellInfoFrame:FindFirstChild("Header", true)
+		or sellInfoFrame:FindFirstChild("Top", true)
+	if titleRoot then
+		local titleLabel = titleRoot:FindFirstChild("Title", true)
+			or titleRoot:FindFirstChild("Name", true)
+			or titleRoot
+		if titleLabel and (titleLabel:IsA("TextLabel") or titleLabel:IsA("TextButton") or titleLabel:FindFirstChildWhichIsA("TextLabel")) then
+			BrainrotHeaderStyle.setTextOnNode(titleLabel, string.format("Sell %s?", entry.name))
+		end
+	end
+
+	for _, name in { "Message", "Body", "Description", "ConfirmText", "Amount", "Prompt", "Text" } do
+		local node = sellInfoFrame:FindFirstChild(name, true)
+		if node then
+			BrainrotHeaderStyle.setTextOnNode(node, message)
+		end
+	end
+
+	for _, desc in ipairs(sellInfoFrame:GetDescendants()) do
+		if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+			local text = desc.Text
+			if string.find(text, "Are you sure", 1, true) or string.find(text, "sell", 1, true) and string.find(text, "$", 1, true) then
+				BrainrotHeaderStyle.setTextOnNode(desc, message)
+			end
+		end
+	end
+
+	local info = sellInfoFrame:FindFirstChild("Info", true) or sellInfoFrame:FindFirstChild("BrainrotInfo", true)
+	if info then
+		BrainrotHeaderStyle.applyInfoFrame(info, {
+			name = entry.name,
+			rarity = entry.rarity,
+			mutation = entry.mutation,
+			level = entry.level,
+			rateText = BrainrotEconomy.formatCashShort(BrainrotEconomy.incomePerSecond(entry)) .. "/s",
+		})
+	end
+
+	local icon = sellInfoFrame:FindFirstChild("Icon", true)
+	if icon and icon:IsA("ImageLabel") and entry.icon ~= "" then
+		icon.Image = entry.icon
+	end
+end
+
 local function populateRow(row: Frame, entry: InvEntry, idx: number)
 	local icon = row:FindFirstChild("Icon", true)
 	if icon and icon:IsA("ImageLabel") then
@@ -139,14 +213,7 @@ local function populateRow(row: Frame, entry: InvEntry, idx: number)
 				end
 				pendingConfirm = { idx = idx, entry = entry, price = price }
 				if sellInfoFrame then
-					local title = sellInfoFrame:FindFirstChild("Title", true) or sellInfoFrame:FindFirstChild("Name", true)
-					if title then
-						BrainrotHeaderStyle.setTextOnNode(title, string.format("Sell %s?", entry.name))
-					end
-					local amt = sellInfoFrame:FindFirstChild("Amount", true)
-					if amt then
-						BrainrotHeaderStyle.setTextOnNode(amt, BrainrotEconomy.formatCashShort(price))
-					end
+					populateSellInfoConfirm(entry, price)
 					setSellInfoVisible(true)
 				else
 					task.spawn(function()

@@ -27,6 +27,7 @@ local PLACE_PROMPT_ATTR = "BrainrotPlacePrompt"
 local DEFAULT_PLACE_DISTANCE = 10
 local DEFAULT_PICKUP_DISTANCE = 14
 local PROMPT_REFRESH_INTERVAL = 0.3
+local PROMPT_MOVE_SKIP_THRESHOLD = 2
 
 local player = Players.LocalPlayer
 local MONEY_VFX_HOLD_SEC = 0.14
@@ -211,6 +212,7 @@ local views: { [Model]: StandView } = {}
 local standPlacePromptConns: { [Model]: { RBXScriptConnection } } = {}
 local charPlacePromptConns: { RBXScriptConnection } = {}
 local promptRefreshAccum = 0
+local lastHRPPosition: Vector3? = nil
 local cachedTaggedStands: { Model } = {}
 local cachedPlotMatch: { [Model]: boolean } = {}
 
@@ -323,13 +325,16 @@ local function rebuildCachedTaggedStands()
 end
 
 -- Only one stand prompt visible at a time (closest). Hide pick-up while holding a brainrot.
-local function refreshStandProximityPromptVisibility()
+local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
 		return
 	end
 	local hrpPos = hrp.Position
+	if not forceRefresh and lastHRPPosition and (hrpPos - lastHRPPosition).Magnitude < PROMPT_MOVE_SKIP_THRESHOLD then
+		return
+	end
 	local holdingTool = canShowPlaceBrainrotPrompt()
 	local ws = workspace
 
@@ -348,7 +353,7 @@ local function refreshStandProximityPromptVisibility()
 		table.insert(allPrompts, pp)
 
 		local locked = stand:GetAttribute("BrainrotStandLocked") == true
-		if locked or not standMatchesAssignedPlot(stand) then
+		if locked or not cachedPlotMatch[stand] then
 			continue
 		end
 
@@ -394,10 +399,13 @@ local function refreshStandProximityPromptVisibility()
 		closest.prompt.Enabled = true
 		ProximityPromptEffects.syncStandPlaceProximityUi(closest.prompt)
 	end
+
+	lastHRPPosition = hrpPos
 end
 
 local function bumpPromptRefreshFromMovement()
-	refreshStandProximityPromptVisibility()
+	lastHRPPosition = nil
+	refreshStandProximityPromptVisibility(true)
 end
 
 local function unhookCharPlacePromptListeners()
@@ -816,6 +824,7 @@ function M.init()
 	end)
 
 	player.CharacterAdded:Connect(function(char)
+		lastHRPPosition = nil
 		hookCharPlacePromptListeners(char)
 	end)
 	if player.Character then

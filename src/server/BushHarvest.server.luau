@@ -127,10 +127,23 @@ local function ensureInventoryRemotes(): (RemoteEvent, RemoteFunction)
 	return inventorySyncRE, getInventoryRF
 end
 
+local function enrichEntryFromCatalog(entry: BrainrotInvEntry)
+	local def = Brainrots.getByName(entry.name)
+	if not def then
+		return
+	end
+	if (entry.baseIncome or 0) <= 0 then
+		entry.baseIncome = def.baseIncome
+		entry.rarity = def.rarity
+	elseif typeof(entry.rarity) ~= "string" or entry.rarity == "" then
+		entry.rarity = def.rarity
+	end
+end
+
 local function copyInventoryList(list: { BrainrotInvEntry }): { BrainrotInvEntry }
 	local out: { BrainrotInvEntry } = {}
 	for i, e in ipairs(list) do
-		out[i] = {
+		local copy: BrainrotInvEntry = {
 			name = e.name,
 			icon = e.icon,
 			sourcePath = e.sourcePath,
@@ -139,6 +152,8 @@ local function copyInventoryList(list: { BrainrotInvEntry }): { BrainrotInvEntry
 			level = e.level,
 			baseIncome = e.baseIncome,
 		}
+		enrichEntryFromCatalog(copy)
+		out[i] = copy
 	end
 	return out
 end
@@ -937,6 +952,7 @@ local function tryRedeemAllAtDeposit(player: Player)
 		if brainrotsFolder and brainrotsFolder:IsA("Folder") then
 			enrichEntryFromBrainrotsFolder(brainrotsFolder :: Folder, entry)
 		end
+		enrichEntryFromCatalog(entry)
 		if not pushBrainrotInventory(player, entry, true) then
 			-- Inventory full — stop; remaining carries stay for another touch.
 			break
@@ -1607,6 +1623,7 @@ local function consumeInventoryEntry(plr: Player, idx: number): BrainrotInvEntry
 	if not entry then
 		return nil
 	end
+	enrichEntryFromCatalog(entry)
 
 	-- Unequip / destroy any Tool referencing this inventory index.
 	local char = plr.Character
@@ -1704,5 +1721,6 @@ returnBF.OnInvoke = function(player: any, entryArg: any): any
 			enrichEntryFromBrainrotsFolder(brainrotsFolder :: Folder, entry)
 		end
 	end
+	enrichEntryFromCatalog(entry)
 	return pushBrainrotInventory(player :: Player, entry)
 end

@@ -37,12 +37,16 @@ export type InvEntry = {
 	baseIncome: number,
 }
 
+local function normalizeId(value: string): string
+	return string.lower(string.gsub(value, "^%s*(.-)%s*$", "%1"))
+end
+
 function M.incomePerSecond(entry: InvEntry): number
-	local rMax = RARITY_MAX[entry.rarity]
+	local rMax = RARITY_MAX[normalizeId(entry.rarity)]
 	if not rMax then
 		return 0
 	end
-	local mm = MUTATION_MULT[entry.mutation] or 1
+	local mm = MUTATION_MULT[normalizeId(entry.mutation)] or 1
 	local lvl = math.clamp(math.floor(entry.level), 1, MAX_LEVEL)
 	local factor = rMax ^ ((lvl - 1) / (MAX_LEVEL - 1))
 	return entry.baseIncome * mm * factor

@@ -45,6 +45,68 @@ local function findGuiButton(root: Instance, names: { string }): GuiButton?
 	return nil
 end
 
+local function resolveSellButton(row: Frame): GuiButton?
+	for _, n in { "Sell", "SellButton" } do
+		local inst = row:FindFirstChild(n, true)
+		if not inst then
+			continue
+		end
+		if inst:IsA("GuiButton") then
+			return inst
+		end
+		local nested = inst:FindFirstChildWhichIsA("GuiButton", true)
+		if nested then
+			return nested
+		end
+	end
+	return findGuiButton(row, { "Sell", "SellButton" })
+end
+
+local function looksLikeSellPriceText(text: string): boolean
+	if string.find(text, "/s", 1, true) then
+		return false
+	end
+	if string.find(text, "+$", 1, true) then
+		return true
+	end
+	if not string.find(text, "$", 1, true) then
+		return false
+	end
+	return string.find(text, "K", 1, true) ~= nil
+		or string.find(text, "M", 1, true) ~= nil
+		or string.find(text, "B", 1, true) ~= nil
+		or string.find(text, "T", 1, true) ~= nil
+end
+
+local function applySellPriceToRow(row: Frame, priceText: string)
+	for _, name in { "Price", "Amount", "Value", "SellPrice", "SellAmount", "Cash" } do
+		local node = row:FindFirstChild(name, true)
+		if node then
+			BrainrotHeaderStyle.setTextOnNode(node, priceText)
+		end
+	end
+
+	local sellBtn = resolveSellButton(row)
+	if sellBtn then
+		BrainrotHeaderStyle.setTextOnNode(sellBtn, priceText)
+		for _, desc in sellBtn:GetDescendants() do
+			if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+				if looksLikeSellPriceText(desc.Text) then
+					BrainrotHeaderStyle.setTextOnNode(desc, priceText)
+				end
+			end
+		end
+	end
+
+	for _, desc in row:GetDescendants() do
+		if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+			if looksLikeSellPriceText(desc.Text) then
+				BrainrotHeaderStyle.setTextOnNode(desc, priceText)
+			end
+		end
+	end
+end
+
 local function wireHover(btn: GuiButton)
 	btn.MouseEnter:Connect(function()
 		UIInteractionSounds.playHover()
@@ -196,14 +258,10 @@ local function populateRow(row: Frame, entry: InvEntry, idx: number)
 		BrainrotHeaderStyle.setTextOnNode(rateNode, BrainrotEconomy.formatCashShort(BrainrotEconomy.incomePerSecond(entry)) .. "/s")
 	end
 	local price = BrainrotEconomy.sellPrice(entry)
-	local sellBtn = findGuiButton(row, { "Sell", "SellButton" })
+	local priceText = BrainrotEconomy.formatSellButton(price)
+	applySellPriceToRow(row, priceText)
+	local sellBtn = resolveSellButton(row)
 	if sellBtn then
-		local priceLabel = sellBtn:FindFirstChild("Price", true) or sellBtn:FindFirstChild("TextLabel", true)
-		if priceLabel and priceLabel:IsA("TextLabel") then
-			priceLabel.Text = BrainrotEconomy.formatSellButton(price)
-		elseif sellBtn:IsA("TextButton") then
-			sellBtn.Text = BrainrotEconomy.formatSellButton(price)
-		end
 		if not sellBtn:GetAttribute("SellWired") then
 			sellBtn:SetAttribute("SellWired", true)
 			wireHover(sellBtn)

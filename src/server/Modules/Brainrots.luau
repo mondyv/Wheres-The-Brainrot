@@ -153,6 +153,15 @@ M.BRAINROTS = {
 	{ name = "LosTralalelitos",          rarity = "secret",       baseIncome = 1000000 },
 } :: { BrainrotDef }
 
+M.BRAINROT_BY_NAME = {} :: { [string]: BrainrotDef }
+for _, def in ipairs(M.BRAINROTS) do
+	M.BRAINROT_BY_NAME[def.name] = def
+end
+
+function M.getByName(name: string): BrainrotDef?
+	return M.BRAINROT_BY_NAME[name]
+end
+
 -- ── Rarities ──────────────────────────────────────────────────────────────────
 
 M.RARITIES = {

@@ -25,7 +25,7 @@ local HOLD_DURATION = 1.15
 local POST_HARVEST_COOLDOWN_MIN = 10
 local POST_HARVEST_COOLDOWN_MAX = 15
 local BUSH_MANAGED_ATTR = "BushManagedPrompt"
-local AIM_STEP = "BushAimStep"
+local AIM_TICK_INTERVAL = 0.1
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 
 local bushByModel: { [Model]: ProximityPrompt } = {}
@@ -38,6 +38,7 @@ local lastHarvestAt = 0
 local lastHarvestPrompt: ProximityPrompt? = nil
 
 local aimHighlight: Highlight? = nil
+local aimTickAccum = 0
 local harvestRemote: RemoteEvent? = nil
 local hooked = false
 local mapWatchRoot: Instance? = nil
@@ -530,7 +531,14 @@ function BushHoldInteraction.init()
 		aimHighlight.Parent = workspace.CurrentCamera
 	end
 
-	RunService:BindToRenderStep(AIM_STEP, Enum.RenderPriority.Input.Value + 1, tickAim)
+	RunService.Heartbeat:Connect(function(dt)
+		aimTickAccum += dt
+		if aimTickAccum < AIM_TICK_INTERVAL then
+			return
+		end
+		aimTickAccum = 0
+		tickAim()
+	end)
 
 	local function onCarryChanged()
 		if CarryGate.isCarrying() then

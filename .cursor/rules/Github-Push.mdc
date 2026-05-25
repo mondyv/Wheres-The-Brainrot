@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+My GitHub repo is git@github.com:mondyv/Wheres-The-Brainrot.git and SSH is configured on this machine. After finishing any changes, always run git add . && git commit -m "description of what changed" && git push origin master. Never skip the push step.

@@ -63,7 +63,7 @@ local function scheduleClose()
 	end)
 end
 
-local TICK_INTERVAL = 0.12
+local TICK_INTERVAL = 0.2
 local tickAccum = 0
 
 local function tick()

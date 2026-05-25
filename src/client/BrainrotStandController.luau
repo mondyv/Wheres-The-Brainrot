@@ -23,9 +23,10 @@ local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild(
 local STAND_TAG = "BrainrotStand"
 -- Server sets this on the stand's ProximityPrompt while the stand is empty; client gates Enabled.
 local PLACE_PROMPT_ATTR = "BrainrotPlacePrompt"
-local PROMPT_HEARTBEAT = 0.25
 local DEFAULT_PLACE_DISTANCE = 10
 local DEFAULT_PICKUP_DISTANCE = 14
+local PROMPT_REFRESH_INTERVAL = 0.3
+local PROMPT_MOVE_THRESHOLD = 1.25
 
 local player = Players.LocalPlayer
 local MONEY_VFX_HOLD_SEC = 0.14
@@ -208,7 +209,8 @@ local views: { [Model]: StandView } = {}
 
 local standPlacePromptConns: { [Model]: { RBXScriptConnection } } = {}
 local charPlacePromptConns: { RBXScriptConnection } = {}
-local promptHeartbeatAccum = 0
+local promptRefreshAccum = 0
+local lastPromptRefreshPos: Vector3? = nil
 
 local function characterHasBrainrotToolEquipped(char: Model?): boolean
 	if not char then
@@ -374,6 +376,11 @@ local function refreshStandProximityPromptVisibility()
 		closest.prompt.Enabled = true
 		ProximityPromptEffects.syncStandPlaceProximityUi(closest.prompt)
 	end
+end
+
+local function bumpPromptRefreshFromMovement()
+	lastPromptRefreshPos = nil
+	refreshStandProximityPromptVisibility()
 end
 
 local function unhookCharPlacePromptListeners()
@@ -789,30 +796,45 @@ function M.init()
 	CollectionService:GetInstanceAddedSignal(STAND_TAG):Connect(function(inst)
 		if inst:IsA("Model") then
 			initStand(inst :: Model)
+			task.defer(bumpPromptRefreshFromMovement)
 		end
 	end)
 
 	player.CharacterAdded:Connect(function(char)
+		lastPromptRefreshPos = nil
 		hookCharPlacePromptListeners(char)
 	end)
 	if player.Character then
 		hookCharPlacePromptListeners(player.Character)
 	end
 
-	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(refreshStandProximityPromptVisibility)
-	player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(refreshStandProximityPromptVisibility)
-	player:GetAttributeChangedSignal("Carry"):Connect(refreshStandProximityPromptVisibility)
+	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(bumpPromptRefreshFromMovement)
+	player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(bumpPromptRefreshFromMovement)
+	player:GetAttributeChangedSignal("Carry"):Connect(bumpPromptRefreshFromMovement)
 
 	RunService.Heartbeat:Connect(function(dt)
-		promptHeartbeatAccum += dt
-		if promptHeartbeatAccum < PROMPT_HEARTBEAT then
+		promptRefreshAccum += dt
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if not hrp then
 			return
 		end
-		promptHeartbeatAccum = 0
+		local pos = hrp.Position
+		local moved = false
+		if lastPromptRefreshPos then
+			moved = (pos - lastPromptRefreshPos).Magnitude >= PROMPT_MOVE_THRESHOLD
+		else
+			moved = true
+		end
+		if not moved and promptRefreshAccum < PROMPT_REFRESH_INTERVAL then
+			return
+		end
+		promptRefreshAccum = 0
+		lastPromptRefreshPos = pos
 		refreshStandProximityPromptVisibility()
 	end)
 
-	refreshStandProximityPromptVisibility()
+	bumpPromptRefreshFromMovement()
 end
 
 return M

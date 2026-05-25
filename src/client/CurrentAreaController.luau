@@ -15,7 +15,7 @@ local PlotLuck = SwingUpgrades.PlotLuck
 local player = Players.LocalPlayer
 
 local CLOSE_DEBOUNCE = 0.22
-local TICK_INTERVAL = 0.15
+local TICK_INTERVAL = 0.5
 local tickAccum = 0
 
 type LuckZone = {

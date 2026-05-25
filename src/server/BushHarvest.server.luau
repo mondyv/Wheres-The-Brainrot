@@ -18,6 +18,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
 local BrainrotHeader = require(Modules:WaitForChild("BrainrotHeader"))
+local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local PlotLuck = SwingUpgrades.PlotLuck
 
@@ -331,41 +332,9 @@ local function stackLiftFromExistingCarries(plr: Player): number
 	return lift
 end
 
--- Place the brainrot above the character's actual bounding box so big-head / custom rigs don't clip.
--- mainPart is the brainrot's PrimaryPart; stackLiftY offsets for stacked carries (uses same height heuristic).
--- stackLiftY: vertical offset so additional carries stack above existing ones (world-space Y).
+-- Place the brainrot above the character's bounding box (head anchor when available).
 local function getCarryAttachmentWorldCFrame(character: Model, mainPart: BasePart, stackLiftY: number): (BasePart?, CFrame?)
-	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	local head = character:FindFirstChild("Head") :: BasePart?
-	local anchor: BasePart? = head or hrp
-	if not anchor then
-		return nil, nil
-	end
-
-	local charCF, charSize = character:GetBoundingBox()
-	local topY = charCF.Position.Y + charSize.Y * 0.5
-
-	local brHalfY = 0.5
-	local brModel = mainPart and mainPart.Parent
-	if brModel and brModel:IsA("Model") then
-		brHalfY = stackContributionY(brModel :: Model) * 0.5
-	end
-
-	local CLEARANCE = 0.04
-	local centerY = topY + CLEARANCE + brHalfY + stackLiftY
-
-	local face = Vector3.new(0, 0, -1)
-	if hrp then
-		local flat = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
-		if flat.Magnitude > 0.08 then
-			face = flat.Unit
-		end
-	end
-
-	-- Position directly above the character's bounding-box center (X/Z), no forward bias so it sits on the head.
-	local center = Vector3.new(charCF.Position.X, centerY, charCF.Position.Z)
-	local desired = CFrame.lookAt(center, center + face, Vector3.yAxis)
-	return anchor, desired
+	return BrainrotCarryVisual.getHeadCarryWorldCFrame(character, mainPart, stackLiftY)
 end
 
 local function modelHasSpawnableGeometry(model: Model): boolean
@@ -680,23 +649,8 @@ local function clearPlayerHarvestState(player: Player)
 	syncBrainrotCarryCountAttr(player)
 end
 
--- Only shrink genuinely enormous templates; normal brainrots should stay near template scale on the head.
-local CARRY_MAX_DIM = 11
-
 local function clampModelSizeForCarry(model: Model)
-	local _, size = model:GetBoundingBox()
-	local maxDim = math.max(size.X, size.Y, size.Z)
-	if maxDim <= CARRY_MAX_DIM then
-		return
-	end
-	local cur = 1
-	pcall(function()
-		cur = model:GetScale()
-	end)
-	local target = cur * (CARRY_MAX_DIM / maxDim)
-	pcall(function()
-		model:ScaleTo(target)
-	end)
+	BrainrotCarryVisual.scaleTemplateForBushCarry(model)
 end
 
 local function attachCarriedBrainrot(player: Player, clone: Model)
@@ -1390,8 +1344,113 @@ local function removeBrainrotToolAtInventoryIndex(parent: Instance, invIndex: nu
 	end
 end
 
+local EQUIP_RAISE_ANIM_ID = 130977676556002
+local equipRaiseTracks: { [Model]: AnimationTrack } = {}
+
+local function stopEquipRaiseAnim(character: Model?)
+	if not character then
+		return
+	end
+	local track = equipRaiseTracks[character]
+	if track then
+		equipRaiseTracks[character] = nil
+		track:Stop(0.08)
+		track:Destroy()
+	end
+end
+
+local function playEquipRaiseAnim(humanoid: Humanoid)
+	local character = humanoid.Parent
+	if not character or not character:IsA("Model") then
+		return
+	end
+	stopEquipRaiseAnim(character)
+	local anim = Instance.new("Animation")
+	anim.AnimationId = "rbxassetid://" .. tostring(EQUIP_RAISE_ANIM_ID)
+	local track = humanoid:LoadAnimation(anim)
+	equipRaiseTracks[character] = track
+	track.Priority = Enum.AnimationPriority.Action
+	track:Play(0.08)
+	track.Stopped:Once(function()
+		if equipRaiseTracks[character] == track then
+			equipRaiseTracks[character] = nil
+		end
+		track:Destroy()
+	end)
+end
+
+local function findToolRightGrip(character: Model, handle: BasePart): Motor6D?
+	for _, d in character:GetDescendants() do
+		if d:IsA("Motor6D") and d.Part1 == handle then
+			return d
+		end
+	end
+	return nil
+end
+
+local function cleanupBrainrotToolHeadAttach(tool: Tool)
+	local handle = tool:FindFirstChild("Handle")
+	if not handle or not handle:IsA("BasePart") then
+		return
+	end
+	local weld = handle:FindFirstChild("BrainrotToolHeadWeld")
+	if weld then
+		weld:Destroy()
+	end
+end
+
+local function attachBrainrotToolToHead(character: Model, tool: Tool)
+	local handle = tool:FindFirstChild("Handle")
+	if not handle or not handle:IsA("BasePart") then
+		return
+	end
+	cleanupBrainrotToolHeadAttach(tool)
+	local grip = findToolRightGrip(character, handle)
+	if grip then
+		grip:Destroy()
+	end
+	local anchorPart, desiredWorld = BrainrotCarryVisual.getHeadCarryWorldCFrame(character, handle, 0)
+	if not anchorPart or not desiredWorld then
+		return
+	end
+	handle.CFrame = desiredWorld
+	local weld = Instance.new("WeldConstraint")
+	weld.Name = "BrainrotToolHeadWeld"
+	weld.Part0 = anchorPart
+	weld.Part1 = handle
+	weld.Parent = handle
+end
+
+local function wireBrainrotToolHeadCarry(tool: Tool)
+	local equippedCharacter: Model? = nil
+	tool.Equipped:Connect(function()
+		local character = tool.Parent
+		if not character or not character:IsA("Model") then
+			return
+		end
+		equippedCharacter = character
+		local hum = character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			playEquipRaiseAnim(hum)
+		end
+		task.defer(function()
+			if tool.Parent == character then
+				attachBrainrotToolToHead(character, tool)
+			end
+		end)
+	end)
+	tool.Unequipped:Connect(function()
+		if equippedCharacter then
+			stopEquipRaiseAnim(equippedCharacter)
+			equippedCharacter = nil
+		end
+		cleanupBrainrotToolHeadAttach(tool)
+	end)
+end
+
 local function buildBrainrotToolFromTemplate(template: Model, entry: BrainrotInvEntry, invIndex: number): Tool?
 	local clone = template:Clone()
+	BrainrotCarryVisual.scaleTemplateForEquip(clone)
 	for _, d in clone:GetDescendants() do
 		if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ProximityPrompt") then
 			d:Destroy()
@@ -1447,7 +1506,8 @@ local function buildBrainrotToolFromTemplate(template: Model, entry: BrainrotInv
 	end
 
 	clone:Destroy()
-	tool.Grip = CFrame.new(0, -0.1, 0.05) * CFrame.Angles(math.rad(-110), 0, 0)
+	tool.Grip = CFrame.new()
+	wireBrainrotToolHeadCarry(tool)
 	return tool
 end
 

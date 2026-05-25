@@ -7,6 +7,7 @@ local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 
 local SwingUpgrades = require(ReplicatedStorage.Shared.SwingUpgrades)
+local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 
 local player = Players.LocalPlayer
 
@@ -37,17 +38,7 @@ local function displayStatForAttr(attr: string): number
 end
 
 local function formatCash(n: number): string
-	local int = math.floor(math.max(0, n) + 0.5)
-	local s = tostring(int)
-	local pattern = "^(-?%d+)(%d%d%d)"
-	while true do
-		local newS, k = s:gsub(pattern, "%1,%2")
-		s = newS
-		if k == 0 then
-			break
-		end
-	end
-	return "$" .. s
+	return BrainrotEconomy.formatCashShort(n)
 end
 
 local function waitMain(): ScreenGui

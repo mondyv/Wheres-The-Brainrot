@@ -25,7 +25,6 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
-local UIModalBackdrop = require(script.Parent.UIModalBackdrop)
 
 local player    = Players.LocalPlayer
 
@@ -578,13 +577,9 @@ local function setBackpackPanelOpen(open: boolean)
 	if not backpackFrameRef then
 		return
 	end
-	local wasOpen = isBackpackPanelOpen
 	isBackpackPanelOpen = open
 	local f = backpackFrameRef
 	if open then
-		if not wasOpen then
-			UIModalBackdrop.push()
-		end
 		f.Visible = true
 		local sc = getOrAddUIScale(f :: Instance)
 		sc.Scale = 0.92
@@ -595,15 +590,11 @@ local function setBackpackPanelOpen(open: boolean)
 			TweenService:Create(csc, TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 		end
 	else
-		local shouldPopBackdrop = wasOpen
 		local sc = getOrAddUIScale(f :: Instance)
 		local tw = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.92 })
 		tw.Completed:Once(function()
 			if not isBackpackPanelOpen then
 				f.Visible = false
-				if shouldPopBackdrop then
-					UIModalBackdrop.pop()
-				end
 			end
 		end)
 		tw:Play()

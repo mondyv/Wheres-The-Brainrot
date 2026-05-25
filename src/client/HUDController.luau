@@ -9,7 +9,6 @@ local TweenService  = game:GetService("TweenService")
 local SocialService = game:GetService("SocialService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
-local UIModalBackdrop = require(script.Parent.UIModalBackdrop)
 
 local player    = Players.LocalPlayer
 
@@ -40,8 +39,6 @@ local BUTTON_FRAME_MAP = {
 }
 
 local currentFrame: Frame? = nil
--- One backdrop layer for HUD modals — switching Store → Index must not stack extra push() calls.
-local hudBackdropHeld = false
 local closeTweenByFrame: { [Frame]: Tween } = {}
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
@@ -71,23 +68,7 @@ end
 
 -- ── Animation helpers ─────────────────────────────────────────────────────────
 
-local function hudBackdropRelease()
-	if not hudBackdropHeld then
-		return
-	end
-	hudBackdropHeld = false
-	UIModalBackdrop.pop()
-end
-
-local function hudAcquireBackdrop()
-	if not hudBackdropHeld then
-		UIModalBackdrop.push()
-		hudBackdropHeld = true
-	end
-end
-
 local function animateOpen(frame: Frame)
-	hudAcquireBackdrop()
 	frame.Visible = true
 	local scale = getOrAddUIScale(frame)
 	scale.Scale = 0.82
@@ -120,8 +101,6 @@ local function closeFrame(frame: Frame)
 	if currentFrame == frame then
 		currentFrame = nil
 	end
-	-- Do not tie blur to UIScale tween (Cancelled / ordering bugs left refCount elevated).
-	hudBackdropRelease()
 	animateClose(frame)
 end
 
@@ -145,14 +124,12 @@ local function wireFrameVisibleBackdropCleanup(frame: Frame)
 		if frame.Visible then
 			return
 		end
-		-- Panel swap: this frame hides while another HUD frame is already current — keep blur.
 		if currentFrame ~= nil and currentFrame ~= frame then
 			return
 		end
 		if currentFrame == frame then
 			currentFrame = nil
 		end
-		hudBackdropRelease()
 	end)
 end
 

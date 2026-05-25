@@ -7,7 +7,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local HUDController = require(script.Parent.HUDController)
-local UIModalBackdrop = require(script.Parent.UIModalBackdrop)
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 
@@ -71,16 +70,8 @@ local function getRemotes()
 end
 
 local function setSellInfoVisible(on: boolean)
-	local wasInfoVisible = sellInfoFrame and sellInfoFrame.Visible
 	if sellInfoFrame then
 		sellInfoFrame.Visible = on
-	end
-	if sellInfoFrame then
-		if on and not wasInfoVisible then
-			UIModalBackdrop.push()
-		elseif not on and wasInfoVisible then
-			UIModalBackdrop.pop()
-		end
 	end
 	if not sellFrame then
 		return

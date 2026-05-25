@@ -1,6 +1,28 @@
 -- Entry point – boots all client-side controllers
--- Blur ScreenGui from StarterGui defaults to Enabled; lock it off until a panel calls push().
-require(script.UIModalBackdrop).init()
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+
+task.spawn(function()
+	local player = Players.LocalPlayer
+	local pg = player:WaitForChild("PlayerGui", 30)
+	if not pg then
+		return
+	end
+	local function disableBlurGui(gui: Instance)
+		if gui:IsA("ScreenGui") and gui.Name == "Blur" then
+			gui.Enabled = false
+		end
+	end
+	for _, ch in pg:GetChildren() do
+		disableBlurGui(ch)
+	end
+	pg.ChildAdded:Connect(disableBlurGui)
+	local modalBlur = Lighting:FindFirstChild("UIModalBlur")
+	if modalBlur and modalBlur:IsA("BlurEffect") then
+		modalBlur:Destroy()
+	end
+end)
+
 require(script.BackgroundMusicController).init()
 require(script.UIInteractionSounds).init()
 -- Bush targeting + custom card; ProximityPromptEffects styles stands and wires bush FX/harvest.

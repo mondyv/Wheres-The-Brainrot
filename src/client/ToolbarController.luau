@@ -176,6 +176,10 @@ local function styleToolbarSlotButton(btn: GuiButton)
 		btn.AutoButtonColor = false
 		btn.ImageColor3 = SLOT_BUTTON_IMAGE_TINT
 	end
+	local icon = btn:FindFirstChild("Icon")
+	if icon and icon:IsA("ImageLabel") then
+		icon.ScaleType = Enum.ScaleType.Fit
+	end
 end
 
 -- Icon / Rate / Key steal mouse hits unless they are non-interactive.
@@ -691,6 +695,7 @@ local function refreshSlotVisual(index: number)
 			entryForTool = brainrotEntries[ei]
 		end
 		if icon and icon:IsA("ImageLabel") then
+			icon.ScaleType = Enum.ScaleType.Fit
 			icon.BackgroundTransparency = 1
 			local tex = (tool :: any).TextureId
 			if entryForTool and entryForTool.icon ~= "" then
@@ -707,6 +712,7 @@ local function refreshSlotVisual(index: number)
 		end
 	elseif brainrotParkedInUI[index] == true then
 		if icon and icon:IsA("ImageLabel") then
+			icon.ScaleType = Enum.ScaleType.Fit
 			icon.BackgroundTransparency = 1
 			icon.Image = ""
 			icon.Visible = false
@@ -720,6 +726,7 @@ local function refreshSlotVisual(index: number)
 	elseif brainrotEntries[index] ~= nil then
 		local e = brainrotEntries[index] :: { name: string, icon: string, sourcePath: string }
 		if icon and icon:IsA("ImageLabel") then
+			icon.ScaleType = Enum.ScaleType.Fit
 			icon.BackgroundTransparency = 1
 			icon.Image = (e.icon ~= "" and e.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
 			icon.Visible = true
@@ -732,6 +739,7 @@ local function refreshSlotVisual(index: number)
 		end
 	else
 		if icon and icon:IsA("ImageLabel") then
+			icon.ScaleType = Enum.ScaleType.Fit
 			icon.BackgroundTransparency = 1
 			icon.Image = ""
 			icon.Visible = false
@@ -872,6 +880,7 @@ local function refreshBrainrotBackpackUI()
 		end
 		if entry then
 			if icon and icon:IsA("ImageLabel") then
+				icon.ScaleType = Enum.ScaleType.Fit
 				icon.BackgroundTransparency = 1
 				icon.Image = entry.icon ~= "" and entry.icon or "rbxasset://textures/ui/GuiImagePlaceholder.png"
 				icon.Visible = true
@@ -887,6 +896,7 @@ local function refreshBrainrotBackpackUI()
 			end
 		else
 			if icon and icon:IsA("ImageLabel") then
+				icon.ScaleType = Enum.ScaleType.Fit
 				icon.BackgroundTransparency = 1
 				icon.Image = ""
 				icon.Visible = false
@@ -1341,6 +1351,17 @@ function ToolbarController.init()
 		end
 		backpackHeaderLabel = resolveBackpackHeaderLabel(backpackFrame)
 		refreshInventoryHeaderText()
+		if backpackContainer then
+			for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
+				local row = backpackContainer:FindFirstChild(tostring(idx))
+				if row and row:IsA("GuiObject") then
+					local btn = slotPrimaryButton(row :: GuiObject)
+					if btn then
+						styleToolbarSlotButton(btn)
+					end
+				end
+			end
+		end
 		task.defer(refreshBrainrotBackpackUI)
 		wireBrainrotBackpackEquips()
 		wireBackpackSearch(backpackFrame)

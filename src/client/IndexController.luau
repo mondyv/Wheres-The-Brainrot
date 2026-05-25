@@ -26,6 +26,7 @@ local TILT_CLICK = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirectio
 local TILT_RESET = TweenInfo.new(0.2, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
 local QUEST_BAR_TWEEN = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local ROW_HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local INDEX_BADGE_SWAY = TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
 
 local LOCKED_NAME_COLOR = Color3.fromRGB(0, 0, 0)
 
@@ -38,6 +39,8 @@ local progressBar: Frame? = nil
 local progressAmount: TextLabel? = nil
 local indexNotif: GuiObject? = nil
 local indexNotifLabel: TextLabel? = nil
+local indexSidebarNotif: GuiObject? = nil
+local indexBadgeSwayTween: Tween? = nil
 local tooltipLabel: TextLabel? = nil
 local tooltipGui: ScreenGui? = nil
 
@@ -75,6 +78,71 @@ local function findLabel(root: Instance, names: { string }): TextLabel?
 		end
 	end
 	return nil
+end
+
+local function findIndexSidebarNotif(main: ScreenGui): GuiObject?
+	local sideUI = main:FindFirstChild("SideUI")
+	if not sideUI then
+		return nil
+	end
+	local lef1 = sideUI:FindFirstChild("Lef1") or sideUI:FindFirstChild("Left1")
+	if not lef1 then
+		return nil
+	end
+	local buttons = lef1:FindFirstChild("Buttons")
+	local row2 = buttons and buttons:FindFirstChild("Row2")
+	local indexBtn = row2 and row2:FindFirstChild("Index")
+	local notif = indexBtn and indexBtn:FindFirstChild("Notif")
+	if notif and notif:IsA("GuiObject") then
+		return notif :: GuiObject
+	end
+	return nil
+end
+
+local function stopIndexBadgeSway()
+	if indexBadgeSwayTween then
+		indexBadgeSwayTween:Cancel()
+		indexBadgeSwayTween = nil
+	end
+	if indexSidebarNotif then
+		indexSidebarNotif.Rotation = 0
+	end
+end
+
+local function startIndexBadgeSway()
+	if not indexSidebarNotif then
+		return
+	end
+	stopIndexBadgeSway()
+	indexSidebarNotif.Rotation = -11
+	indexBadgeSwayTween = TweenService:Create(indexSidebarNotif, INDEX_BADGE_SWAY, { Rotation = 11 })
+	indexBadgeSwayTween:Play()
+end
+
+local function hideIndexSidebarBadge()
+	stopIndexBadgeSway()
+	if not indexSidebarNotif then
+		return
+	end
+	indexSidebarNotif.Visible = false
+	local scale = indexSidebarNotif:FindFirstChildOfClass("UIScale")
+	if scale then
+		scale.Scale = 1
+	end
+end
+
+local function showIndexSidebarBadge()
+	if not indexSidebarNotif then
+		return
+	end
+	if indexSidebarNotif.Visible and indexBadgeSwayTween then
+		return
+	end
+	local scale = getOrAddUIScale(indexSidebarNotif)
+	indexSidebarNotif.Visible = true
+	scale.Scale = 0.15
+	TweenService:Create(scale, OPEN_NOTIF, { Scale = 1 }):Play()
+	startIndexBadgeSway()
 end
 
 local function setGradientEnabled(root: Instance, enabled: boolean)
@@ -559,6 +627,11 @@ function IndexController.init()
 		end
 	end
 
+	indexSidebarNotif = findIndexSidebarNotif(main)
+	if indexSidebarNotif then
+		indexSidebarNotif.Visible = false
+	end
+
 	ensureTooltip()
 
 	local typeButtons = indexFrame:FindFirstChild("TypeButtons")
@@ -592,6 +665,7 @@ function IndexController.init()
 	local wasVisible = indexFrame.Visible
 	indexFrame:GetPropertyChangedSignal("Visible"):Connect(function()
 		if indexFrame.Visible then
+			hideIndexSidebarBadge()
 			if not wasVisible and HUDController.getCurrentFrame() ~= indexFrame then
 				playPanelOpenAnim()
 			end
@@ -628,6 +702,9 @@ function IndexController.init()
 					local mutation = payload.mutation
 					if typeof(name) == "string" and typeof(mutation) == "string" then
 						showIndexNotif(name, mutation)
+						if not (indexFrame and indexFrame.Visible) then
+							showIndexSidebarBadge()
+						end
 					end
 					if indexFrame and indexFrame.Visible then
 						local state = fetchState()

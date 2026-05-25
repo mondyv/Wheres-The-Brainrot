@@ -280,22 +280,12 @@ local function findTotalCashLabel(stand: Model): (TextLabel | TextButton)?
 	return nil
 end
 
-local function resolveTotalCashLabel(state: StandState): (TextLabel | TextButton)?
-	local label = state.totalLabel
-	if label and label.Parent then
-		return label
-	end
-	label = findTotalCashLabel(state.stand)
-	state.totalLabel = label
-	return label
-end
-
-local function syncCashPadDisplay(state: StandState)
-	state.stand:SetAttribute(STAND_ACCUMULATED_ATTR, state.accumulated)
-	local text = BrainrotEconomy.formatCashAccumulated(state.accumulated)
-	local label = resolveTotalCashLabel(state)
-	if label then
-		setLabelText(label, text)
+local function setLabelText(label: (TextLabel | TextButton)?, text: string)
+	if not label then return end
+	if label:IsA("TextLabel") then
+		(label :: TextLabel).Text = text
+	elseif label:IsA("TextButton") then
+		(label :: TextButton).Text = text
 	end
 end
 
@@ -378,6 +368,25 @@ type StandState = {
 }
 
 local stands: { [Model]: StandState } = {}
+
+local function resolveTotalCashLabel(state: StandState): (TextLabel | TextButton)?
+	local label = state.totalLabel
+	if label and label.Parent then
+		return label
+	end
+	label = findTotalCashLabel(state.stand)
+	state.totalLabel = label
+	return label
+end
+
+local function syncCashPadDisplay(state: StandState)
+	state.stand:SetAttribute(STAND_ACCUMULATED_ATTR, state.accumulated)
+	local text = BrainrotEconomy.formatCashAccumulated(state.accumulated)
+	local label = resolveTotalCashLabel(state)
+	if label then
+		setLabelText(label, text)
+	end
+end
 
 local function isPlayerClosestStandPromptTarget(player: Player, state: StandState, maxDistance: number): boolean
 	local hrp = getPlayerHRP(player)
@@ -471,15 +480,6 @@ local function refreshHeader(state: StandState)
 	}, headerOpts)
 	if not ok then
 		warn("[StandManager] BrainrotHeader.refresh failed for stand display:", state.brainrotName)
-	end
-end
-
-local function setLabelText(label: (TextLabel | TextButton)?, text: string)
-	if not label then return end
-	if label:IsA("TextLabel") then
-		(label :: TextLabel).Text = text
-	elseif label:IsA("TextButton") then
-		(label :: TextButton).Text = text
 	end
 end
 

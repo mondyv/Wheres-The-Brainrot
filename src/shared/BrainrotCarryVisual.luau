@@ -1,10 +1,11 @@
 --[[
-	Shared head-carry placement + equip scale for brainrot models (bush carry + inventory tools).
+	Brainrot world scale: base 0.7× template size, +0.1× per level (stand upgrade / inventory level).
 --]]
 
 local M = {}
 
-M.EQUIP_TOOL_SCALE = 0.82
+M.BASE_SCALE = 0.7
+M.UPGRADE_SCALE_STEP = 0.1
 M.BUSH_CARRY_MAX_DIM = 11
 M.TOOL_CARRY_MAX_DIM = 9
 M.CARRY_CLEARANCE = 0.04
@@ -22,6 +23,18 @@ local function stackContributionY(model: Model): number
 	return math.clamp(bbSize.Y, 0.45, 3.8)
 end
 
+function M.scaleMultiplierForLevel(level: number): number
+	local lv = math.max(1, math.floor(level))
+	return M.BASE_SCALE + (lv - 1) * M.UPGRADE_SCALE_STEP
+end
+
+function M.applyScaleForLevel(model: Model, level: number?)
+	local lv = if typeof(level) == "number" then math.max(1, math.floor(level)) else 1
+	pcall(function()
+		model:ScaleTo(M.scaleMultiplierForLevel(lv))
+	end)
+end
+
 function M.clampModelMaxDim(model: Model, maxDim: number)
 	local _, size = model:GetBoundingBox()
 	local longest = math.max(size.X, size.Y, size.Z)
@@ -35,17 +48,6 @@ function M.clampModelMaxDim(model: Model, maxDim: number)
 	pcall(function()
 		model:ScaleTo(cur * (maxDim / longest))
 	end)
-end
-
-function M.scaleTemplateForEquip(model: Model)
-	pcall(function()
-		model:ScaleTo(M.EQUIP_TOOL_SCALE)
-	end)
-	M.clampModelMaxDim(model, M.TOOL_CARRY_MAX_DIM)
-end
-
-function M.scaleTemplateForBushCarry(model: Model)
-	M.clampModelMaxDim(model, M.BUSH_CARRY_MAX_DIM)
 end
 
 -- stackLiftY: extra vertical offset when stacking multiple bush carries.

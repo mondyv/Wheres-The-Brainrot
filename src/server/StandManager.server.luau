@@ -35,6 +35,7 @@ local BrainrotHeader = require(Modules:WaitForChild("BrainrotHeader"))
 local BrainrotAnimations = require(Modules:WaitForChild("BrainrotAnimations"))
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local PlotStandPlaceholders = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotStandPlaceholders"))
+local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
 
 local STAND_TAG = "BrainrotStand"
 -- Accumulated cash is capped at OFFLINE_CAP_SECONDS * income; tunes how long a player can leave it.
@@ -411,8 +412,6 @@ local function recomputeUpgradeCost(state: StandState): number
 	return Brainrots.upgradeCost(def, state.level, state.mutation or "normal")
 end
 
-local STAND_BRAINROT_MAX_DIM = 14 -- only shrink templates larger than this (matches carry clamp order-of-magnitude)
--- Extra yaw applied AFTER auto-facing the cash pad. 180 if the brainrot template's "front" is +Z, 0 if it's -Z.
 local STAND_YAW_OFFSET = math.rad(0)
 local STAND_PITCH_OFFSET = math.rad(0)
 local STAND_ROLL_OFFSET = math.rad(0)
@@ -645,6 +644,20 @@ local function findBrainrotTemplateForState(state: StandState): Model?
 	return nil
 end
 
+local function repositionDisplayOnSpawn(state: StandState)
+	local clone = state.displayModel
+	if not clone or not clone.Parent or not state.spawnPart then
+		return
+	end
+	local rotatedCenter, rotatedSize = clone:GetBoundingBox()
+	local minY = rotatedCenter.Y - rotatedSize.Y * 0.5
+	local desiredMinY = state.spawnPart.Position.Y + state.spawnPart.Size.Y * 0.5 + 0.05
+	local yShift = desiredMinY - minY
+	if math.abs(yShift) > 0.005 then
+		clone:PivotTo(clone:GetPivot() + Vector3.new(0, yShift, 0))
+	end
+end
+
 -- Place the configured brainrot model on the Spawn part with header billboard.
 local function rebuildDisplay(state: StandState)
 	clearDisplayModel(state)
@@ -675,20 +688,7 @@ local function rebuildDisplay(state: StandState)
 		return
 	end
 
-	-- Only shrink genuinely huge templates; small spawn pads must not force tiny brainrots.
-	local _, bbSize = clone:GetBoundingBox()
-	local maxDim = math.max(bbSize.X, bbSize.Y, bbSize.Z)
-	if maxDim > STAND_BRAINROT_MAX_DIM and maxDim > 0 then
-		local ok, scaleNow = pcall(function()
-			return clone:GetScale()
-		end)
-		if ok then
-			local target = (scaleNow or 1) * (STAND_BRAINROT_MAX_DIM / maxDim)
-			pcall(function()
-				clone:ScaleTo(target)
-			end)
-		end
-	end
+	BrainrotCarryVisual.applyScaleForLevel(clone, state.level)
 
 	-- Build orientation. Prefer auto-facing toward the cash pad / front of the stand so the brainrot
 	-- always looks at the player. Fall back to the Spawn part's own rotation if no reference exists.
@@ -933,6 +933,11 @@ local function upgradeStandBrainrot(state: StandState, player: Player)
 	player:SetAttribute("Cash", c - cost)
 	state.level += 1
 	state.stand:SetAttribute("BrainrotLevel", state.level)
+	if state.displayModel and state.displayModel.Parent then
+		state.displayModel:SetAttribute("BrainrotLevel", state.level)
+		BrainrotCarryVisual.applyScaleForLevel(state.displayModel, state.level)
+		repositionDisplayOnSpawn(state)
+	end
 	refreshHeader(state)
 	refreshLabels(state)
 	setPromptText(state)

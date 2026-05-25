@@ -649,8 +649,10 @@ local function clearPlayerHarvestState(player: Player)
 	syncBrainrotCarryCountAttr(player)
 end
 
-local function clampModelSizeForCarry(model: Model)
-	BrainrotCarryVisual.scaleTemplateForBushCarry(model)
+local function applyCarryScaleForModel(model: Model)
+	local lvAttr = model:GetAttribute("BrainrotLevel")
+	local lv = if typeof(lvAttr) == "number" then lvAttr else 1
+	BrainrotCarryVisual.applyScaleForLevel(model, lv)
 end
 
 local function attachCarriedBrainrot(player: Player, clone: Model)
@@ -664,7 +666,7 @@ local function attachCarriedBrainrot(player: Player, clone: Model)
 	end
 
 	-- Resize BEFORE computing placement so clearance math uses the final size.
-	clampModelSizeForCarry(clone)
+	applyCarryScaleForModel(clone)
 
 	local stackLift = stackLiftFromExistingCarries(player)
 	local anchorPart, desiredWorld = getCarryAttachmentWorldCFrame(char, main, stackLift)
@@ -803,6 +805,7 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 		clone:SetAttribute("BrainrotSourcePath", fallback.Parent.Name .. "/" .. fallback.Name)
 		clone:SetAttribute("BrainrotMutation", "normal")
 		clone:SetAttribute("BrainrotLevel", 1)
+		BrainrotCarryVisual.applyScaleForLevel(clone, 1)
 		local spawnCf = CFrame.new(worldPosition + Vector3.new(0, SPAWN_Y_OFFSET, 0)) * CFrame.Angles(0, math.random() * math.pi * 2, 0)
 		clone.Parent = workspace
 		placeModelAtWorld(clone, spawnCf)
@@ -846,6 +849,7 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 	clone:SetAttribute("BrainrotMutation", actualMutation)
 	clone:SetAttribute("BrainrotBaseIncome", pick.baseIncome)
 	clone:SetAttribute("BrainrotLevel", 1)
+	BrainrotCarryVisual.applyScaleForLevel(clone, 1)
 	clone:SetAttribute("BrainrotPlot", plot)
 	clone:SetAttribute("BrainrotDisplayLuck", displayLuck)
 
@@ -1450,7 +1454,7 @@ end
 
 local function buildBrainrotToolFromTemplate(template: Model, entry: BrainrotInvEntry, invIndex: number): Tool?
 	local clone = template:Clone()
-	BrainrotCarryVisual.scaleTemplateForEquip(clone)
+	BrainrotCarryVisual.applyScaleForLevel(clone, entry.level)
 	for _, d in clone:GetDescendants() do
 		if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ProximityPrompt") then
 			d:Destroy()

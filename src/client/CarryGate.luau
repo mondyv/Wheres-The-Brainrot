@@ -65,7 +65,7 @@ function CarryGate.isFull(): boolean
 	return CarryGate.usedSlots() >= carryCapacity()
 end
 
--- True when any brainrot is on the character (floating, carried on head, etc.).
+-- True when any brainrot is on the character (floating, equipped tool, etc.).
 function CarryGate.isCarrying(): boolean
 	if CarryGate.usedSlots() > 0 then
 		return true

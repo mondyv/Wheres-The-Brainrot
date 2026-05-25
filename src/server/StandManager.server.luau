@@ -608,11 +608,11 @@ local function clearDisplayModel(state: StandState)
 	state.displayModel = nil
 end
 
-local function setAllPartsAnchored(model: Model, anchored: boolean, canCollide: boolean)
+local function setAllPartsAnchored(model: Model, anchored: boolean)
+	BrainrotCarryVisual.applyNonColliding(model)
 	for _, d in ipairs(model:GetDescendants()) do
 		if d:IsA("BasePart") then
 			d.Anchored = anchored
-			d.CanCollide = canCollide
 		end
 	end
 end
@@ -728,7 +728,7 @@ local function rebuildDisplay(state: StandState)
 		clone:MoveTo(pivotCf.Position)
 	end
 
-	setAllPartsAnchored(clone, true, false)
+	setAllPartsAnchored(clone, true)
 	for _, d in ipairs(clone:GetDescendants()) do
 		if d:IsA("BasePart") then
 			d.CanTouch = false

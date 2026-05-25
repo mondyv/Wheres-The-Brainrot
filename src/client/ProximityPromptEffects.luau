@@ -193,7 +193,7 @@ local function isManagedBushPrompt(prompt: ProximityPrompt): boolean
 end
 
 local function managedBushUiEligible(prompt: ProximityPrompt): boolean
-	return isManagedBushPrompt(prompt) and prompt == activeBushSearchPrompt and not CarryGate.isCarrying()
+	return isManagedBushPrompt(prompt) and prompt == activeBushSearchPrompt and not CarryGate.isFull()
 end
 
 local function shouldShowPromptUi(prompt: ProximityPrompt): boolean
@@ -1488,7 +1488,7 @@ function ProximityPromptEffects.hideBushSearch()
 end
 
 function ProximityPromptEffects.suppressBushSearchUi(activePrompt: ProximityPrompt?)
-	local effective = if CarryGate.isCarrying() then nil else activePrompt
+	local effective = if CarryGate.isFull() then nil else activePrompt
 	if effective and effective.Parent then
 		effective.Style = Enum.ProximityPromptStyle.Custom
 		pcall(function()
@@ -1834,7 +1834,7 @@ local function hookCharacterToolListeners(char: Model)
 end
 
 local function refreshCarryHiddenPrompts()
-	if not CarryGate.isCarrying() then
+	if not CarryGate.isFull() then
 		return
 	end
 	activeBushSearchPrompt = nil

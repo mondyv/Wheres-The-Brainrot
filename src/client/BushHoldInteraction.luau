@@ -325,7 +325,7 @@ local function pickClosestCooldownBush(): (Model?, ProximityPrompt?, BasePart?)
 end
 
 local function setActive(bush: Model?, prompt: ProximityPrompt?, _anchor: BasePart?)
-	local carryBlock = CarryGate.isCarrying()
+	local carryBlock = CarryGate.isFull()
 	local effectivePrompt = if carryBlock then nil else prompt
 	local changed = activeBush ~= bush or activePrompt ~= effectivePrompt
 
@@ -360,7 +360,7 @@ local function doHarvest(prompt: ProximityPrompt)
 	if lastHarvestPrompt == prompt and now - lastHarvestAt < 0.35 then
 		return
 	end
-	if CarryGate.isCarrying() then
+	if CarryGate.isFull() then
 		return
 	end
 	lastHarvestPrompt = prompt
@@ -406,10 +406,9 @@ local function tickAim()
 		end
 	end
 
-	-- While carrying a haul, you can’t start a new bush search — but cooldown lock visuals
-	-- (red outline + timer) should stay until you leave range / time ends, not vanish when the brainrot pops in.
+	-- Block new bush search only at carry capacity; cooldown lock visuals still update while partially loaded.
 	local bush: Model?, prompt: ProximityPrompt?, anchor: BasePart?
-	if CarryGate.isCarrying() then
+	if CarryGate.isFull() then
 		bush, prompt, anchor = nil, nil, nil
 	else
 		bush, prompt, anchor = pickClosest()
@@ -541,7 +540,7 @@ function BushHoldInteraction.init()
 	end)
 
 	local function onCarryChanged()
-		if CarryGate.isCarrying() then
+		if CarryGate.isFull() then
 			setActive(nil, nil, nil)
 		end
 	end

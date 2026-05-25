@@ -36,13 +36,14 @@ local BrainrotAnimations = require(Modules:WaitForChild("BrainrotAnimations"))
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local PlotStandPlaceholders = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotStandPlaceholders"))
 local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
+local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 
 local STAND_TAG = "BrainrotStand"
+local STAND_ACCUMULATED_ATTR = "StandAccumulatedCash"
 -- Accumulated cash is capped at OFFLINE_CAP_SECONDS * income; tunes how long a player can leave it.
 local OFFLINE_CAP_SECONDS = 60 * 60 * 4 -- 4 hours of income, then it stops growing
 local COLLECT_TOUCH_DEBOUNCE = 0.5 -- seconds between collect claims on the money pad
 local UPGRADE_DEBOUNCE = 0.05 -- min seconds between level-ups (spam-friendly; still blocks same-frame double fires)
-local INCOME_TICK = 0.5 -- seconds between accumulation updates (label refresh too)
 local PROMPT_PLACE_DISTANCE = 10
 local PROMPT_PICKUP_DISTANCE = 14
 -- When placing on empty stands side-by-side, only the nearest spawn wins (prevents wrong-stand place).
@@ -262,18 +263,40 @@ end
 
 local function findTotalCashLabel(stand: Model): (TextLabel | TextButton)?
 	local btn = stand:FindFirstChild("Button")
-	if not btn then return nil end
-	local bp = btn:FindFirstChild("ButtonPart")
-	if not bp then return nil end
-	local sg = bp:FindFirstChild("SurfaceGui")
-	if not sg then return nil end
-	local frame = sg:FindFirstChild("Frame")
-	if not frame then return nil end
-	local total = frame:FindFirstChild("Total")
+	local bp: Instance? = nil
+	if btn then
+		bp = btn:FindFirstChild("ButtonPart")
+	end
+	if not bp or not bp:IsA("BasePart") then
+		bp = stand:FindFirstChild("ButtonPart", true)
+	end
+	if not bp then
+		return nil
+	end
+	local total = bp:FindFirstChild("Total", true)
 	if total and (total:IsA("TextLabel") or total:IsA("TextButton")) then
 		return total
 	end
 	return nil
+end
+
+local function resolveTotalCashLabel(state: StandState): (TextLabel | TextButton)?
+	local label = state.totalLabel
+	if label and label.Parent then
+		return label
+	end
+	label = findTotalCashLabel(state.stand)
+	state.totalLabel = label
+	return label
+end
+
+local function syncCashPadDisplay(state: StandState)
+	state.stand:SetAttribute(STAND_ACCUMULATED_ATTR, state.accumulated)
+	local text = BrainrotEconomy.formatCashAccumulated(state.accumulated)
+	local label = resolveTotalCashLabel(state)
+	if label then
+		setLabelText(label, text)
+	end
 end
 
 local function findOfflineCashLabel(stand: Model): (TextLabel | TextButton)?
@@ -461,9 +484,7 @@ local function setLabelText(label: (TextLabel | TextButton)?, text: string)
 end
 
 local function refreshLabels(state: StandState)
-	if state.totalLabel then
-		setLabelText(state.totalLabel, formatCashShort(state.accumulated))
-	end
+	syncCashPadDisplay(state)
 	if state.offlineLabel then
 		-- No persistence yet → hide offline label so it doesn't show stale "$0".
 		if state.offlineLabel:IsA("TextLabel") then
@@ -887,9 +908,7 @@ local function tickStand(state: StandState, dt: number)
 	if ips <= 0 then return end
 	local cap = ips * OFFLINE_CAP_SECONDS
 	state.accumulated = math.min(cap, state.accumulated + ips * dt)
-	if state.totalLabel then
-		setLabelText(state.totalLabel, formatCashShort(state.accumulated))
-	end
+	syncCashPadDisplay(state)
 end
 
 local function collectCash(state: StandState, player: Player)
@@ -1061,6 +1080,9 @@ end
 local function initStand(stand: Model)
 	if stands[stand] then
 		PlotStandPlaceholders.ensureStandVisible(stand)
+		local existing = stands[stand]
+		resolveTotalCashLabel(existing)
+		syncCashPadDisplay(existing)
 		return
 	end
 
@@ -1325,15 +1347,9 @@ end)
 
 -- ── Income loop ──────────────────────────────────────────────────────────────
 
-local accum = 0
 RunService.Heartbeat:Connect(function(dt)
-	accum += dt
-	if accum >= INCOME_TICK then
-		local stepped = accum
-		accum = 0
-		for _, state in pairs(stands) do
-			tickStand(state, stepped)
-		end
+	for _, state in pairs(stands) do
+		tickStand(state, dt)
 	end
 end)
 

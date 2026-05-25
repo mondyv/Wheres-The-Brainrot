@@ -71,6 +71,22 @@ function M.formatCashShort(n: number): string
 	return string.format("$%d", math.floor(n + 0.5))
 end
 
+-- Live cash pad total: always show fractional cents / suffix decimals while ticking up.
+function M.formatCashAccumulated(n: number): string
+	if n >= 1e15 then
+		return string.format("$%.2fQa", n / 1e15)
+	elseif n >= 1e12 then
+		return string.format("$%.2fT", n / 1e12)
+	elseif n >= 1e9 then
+		return string.format("$%.2fB", n / 1e9)
+	elseif n >= 1e6 then
+		return string.format("$%.2fM", n / 1e6)
+	elseif n >= 1e3 then
+		return string.format("$%.2fK", n / 1e3)
+	end
+	return string.format("$%.2f", n)
+end
+
 function M.formatSellButton(n: number): string
 	return "+" .. M.formatCashShort(n)
 end

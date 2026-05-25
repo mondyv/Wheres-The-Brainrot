@@ -20,8 +20,10 @@ local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
+local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 
 local STAND_TAG = "BrainrotStand"
+local STAND_ACCUMULATED_ATTR = "StandAccumulatedCash"
 -- Server sets this on the stand's ProximityPrompt while the stand is empty; client gates Enabled.
 local PLACE_PROMPT_ATTR = "BrainrotPlacePrompt"
 local DEFAULT_PLACE_DISTANCE = 10
@@ -198,6 +200,8 @@ type StandView = {
 	stand: Model,
 	buttonPart: BasePart?,
 	cashAnchor: BasePart?,
+	totalLabel: (TextLabel | TextButton)?,
+	accumulatedConn: RBXScriptConnection?,
 	upgradeButton: GuiButton?,
 	upgradeFrame: GuiObject?,
 	moneyAttachment: Attachment?,
@@ -659,6 +663,51 @@ local function pulseOnePart(part: BasePart)
 	}):Play()
 end
 
+local function findTotalCashLabel(stand: Model): (TextLabel | TextButton)?
+	local bp = findButtonPart(stand)
+	if not bp then
+		return nil
+	end
+	local total = bp:FindFirstChild("Total", true)
+	if total and (total:IsA("TextLabel") or total:IsA("TextButton")) then
+		return total
+	end
+	return nil
+end
+
+local function syncCashPadLabel(view: StandView)
+	local amount = view.stand:GetAttribute(STAND_ACCUMULATED_ATTR)
+	if typeof(amount) ~= "number" then
+		return
+	end
+	local label = view.totalLabel
+	if not label or not label.Parent then
+		label = findTotalCashLabel(view.stand)
+		view.totalLabel = label
+	end
+	if not label then
+		return
+	end
+	local text = BrainrotEconomy.formatCashAccumulated(amount)
+	if label:IsA("TextLabel") then
+		label.Text = text
+	elseif label:IsA("TextButton") then
+		label.Text = text
+	end
+end
+
+local function wireCashPadLabel(view: StandView)
+	view.totalLabel = findTotalCashLabel(view.stand)
+	if view.accumulatedConn then
+		view.accumulatedConn:Disconnect()
+		view.accumulatedConn = nil
+	end
+	view.accumulatedConn = view.stand:GetAttributeChangedSignal(STAND_ACCUMULATED_ATTR):Connect(function()
+		syncCashPadLabel(view)
+	end)
+	syncCashPadLabel(view)
+end
+
 local function pulseCashPad(view: StandView)
 	local seen: { [BasePart]: boolean } = {}
 	local function add(p: BasePart?)
@@ -738,6 +787,8 @@ local function initStand(stand: Model)
 		stand = stand,
 		buttonPart = nil,
 		cashAnchor = nil,
+		totalLabel = nil,
+		accumulatedConn = nil,
 		upgradeButton = nil,
 		upgradeFrame = nil,
 		moneyAttachment = nil,
@@ -753,6 +804,7 @@ local function initStand(stand: Model)
 		local cash = findCashMoneyAnchor(stand, true)
 		view.buttonPart = bp
 		view.cashAnchor = cash
+		wireCashPadLabel(view)
 
 		if standMatchesAssignedPlot(stand) then
 			local upgradeFrame = findUpgradeFrame(stand, true)
@@ -842,6 +894,11 @@ function M.init()
 	end)
 	CollectionService:GetInstanceRemovedSignal(STAND_TAG):Connect(function(inst)
 		if inst:IsA("Model") then
+			local view = views[inst :: Model]
+			if view and view.accumulatedConn then
+				view.accumulatedConn:Disconnect()
+			end
+			views[inst :: Model] = nil
 			rebuildCachedTaggedStands()
 			task.defer(bumpPromptRefreshFromMovement)
 		end

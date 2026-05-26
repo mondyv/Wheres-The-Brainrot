@@ -542,6 +542,8 @@ function BushHoldInteraction.init()
 	local function onCarryChanged()
 		if CarryGate.isFull() then
 			setActive(nil, nil, nil)
+		else
+			aimTickAccum = AIM_TICK_INTERVAL
 		end
 	end
 	player:GetAttributeChangedSignal("Carry"):Connect(onCarryChanged)
@@ -555,24 +557,28 @@ function BushHoldInteraction.init()
 		onCarryChanged()
 	end
 
-	task.spawn(function()
-		local map = workspace:WaitForChild("Map", 120)
-		if not map then
-			warn("[BushHoldInteraction] workspace.Map missing — bush search disabled")
-			return
-		end
+	local function startMap(map: Instance)
 		bootMap(map)
 		map.AncestryChanged:Connect(function(_, parent)
 			if parent == nil then
 				mapWatchRoot = nil
 			end
 		end)
-		task.defer(function()
-			if map.Parent then
-				registerAllBushesOnMap(map)
+	end
+
+	local existingMap = workspace:FindFirstChild("Map")
+	if existingMap then
+		startMap(existingMap)
+	else
+		task.spawn(function()
+			local map = workspace:WaitForChild("Map", 120)
+			if not map then
+				warn("[BushHoldInteraction] workspace.Map missing — bush search disabled")
+				return
 			end
+			startMap(map)
 		end)
-	end)
+	end
 end
 
 return BushHoldInteraction

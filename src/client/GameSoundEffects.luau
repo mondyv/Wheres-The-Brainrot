@@ -8,6 +8,7 @@ local SoundService = game:GetService("SoundService")
 
 local cashGrabTemplate: Sound?
 local errorNotifTemplate: Sound?
+local activeCashGrab: Sound? = nil
 
 local GameSoundEffects = {}
 
@@ -40,7 +41,24 @@ function GameSoundEffects.init()
 end
 
 function GameSoundEffects.playCashGrab()
-	playTemplate(cashGrabTemplate)
+	if activeCashGrab then
+		activeCashGrab:Stop()
+		activeCashGrab:Destroy()
+		activeCashGrab = nil
+	end
+	if not cashGrabTemplate then
+		return
+	end
+	local clone = cashGrabTemplate:Clone()
+	clone.Parent = SoundService
+	activeCashGrab = clone
+	clone:Play()
+	clone.Ended:Once(function()
+		if activeCashGrab == clone then
+			activeCashGrab = nil
+		end
+		clone:Destroy()
+	end)
 end
 
 function GameSoundEffects.playErrorNotif()

@@ -56,35 +56,58 @@ function M.sellPrice(entry: InvEntry): number
 	return math.max(1, math.floor(M.incomePerSecond(entry) * M.SELL_INCOME_MULT))
 end
 
+local function formatCashAmount(rounded: number, suffix: string): string
+	if math.abs(rounded - math.floor(rounded + 0.0001)) < 0.005 then
+		return string.format("$%d%s", math.floor(rounded + 0.5), suffix)
+	end
+	local whole = math.floor(rounded)
+	local frac = math.floor((rounded - whole) * 100 + 0.5)
+	if frac >= 100 then
+		whole += 1
+		frac = 0
+	end
+	return string.format("$%d,%02d%s", whole, frac, suffix)
+end
+
+local function formatScaledCash(n: number, divisor: number, suffix: string): string
+	local v = n / divisor
+	local rounded = math.floor(v * 100 + 0.5) / 100
+	return formatCashAmount(rounded, suffix)
+end
+
 function M.formatCashShort(n: number): string
 	if n >= 1e15 then
-		return string.format("$%.2fQa", n / 1e15)
+		return formatScaledCash(n, 1e15, "Qa")
 	elseif n >= 1e12 then
-		return string.format("$%.2fT", n / 1e12)
+		return formatScaledCash(n, 1e12, "T")
 	elseif n >= 1e9 then
-		return string.format("$%.2fB", n / 1e9)
+		return formatScaledCash(n, 1e9, "B")
 	elseif n >= 1e6 then
-		return string.format("$%.2fM", n / 1e6)
+		return formatScaledCash(n, 1e6, "M")
 	elseif n >= 1e3 then
-		return string.format("$%.2fK", n / 1e3)
+		return formatScaledCash(n, 1e3, "K")
 	end
 	return string.format("$%d", math.floor(n + 0.5))
 end
 
--- Live cash pad total: always show fractional cents / suffix decimals while ticking up.
+-- Live cash pad total: show decimals only when needed; empty pad stays "$0".
 function M.formatCashAccumulated(n: number): string
-	if n >= 1e15 then
-		return string.format("$%.2fQa", n / 1e15)
-	elseif n >= 1e12 then
-		return string.format("$%.2fT", n / 1e12)
-	elseif n >= 1e9 then
-		return string.format("$%.2fB", n / 1e9)
-	elseif n >= 1e6 then
-		return string.format("$%.2fM", n / 1e6)
-	elseif n >= 1e3 then
-		return string.format("$%.2fK", n / 1e3)
+	if n <= 0 then
+		return "$0"
 	end
-	return string.format("$%.2f", n)
+	if n >= 1e15 then
+		return formatScaledCash(n, 1e15, "Qa")
+	elseif n >= 1e12 then
+		return formatScaledCash(n, 1e12, "T")
+	elseif n >= 1e9 then
+		return formatScaledCash(n, 1e9, "B")
+	elseif n >= 1e6 then
+		return formatScaledCash(n, 1e6, "M")
+	elseif n >= 1e3 then
+		return formatScaledCash(n, 1e3, "K")
+	end
+	local rounded = math.floor(n * 100 + 0.5) / 100
+	return formatCashAmount(rounded, "")
 end
 
 function M.formatSellButton(n: number): string

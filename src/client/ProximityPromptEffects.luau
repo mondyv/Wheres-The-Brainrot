@@ -346,7 +346,7 @@ local function wireClickablePrompt(view: PromptView)
 		existing:Destroy()
 	end
 
-	-- ImageButton supports MouseButton1Down/Up/Leave (TextButton only has MouseLeave).
+	-- ImageButton: use MouseLeave (not MouseButton1Leave — that event does not exist on ImageButton).
 	local clickBtn = Instance.new("ImageButton")
 	clickBtn.Name = "ClickTarget"
 	clickBtn.Size = UDim2.fromScale(1, 1)
@@ -404,7 +404,7 @@ local function wireClickablePrompt(view: PromptView)
 
 		table.insert(view.clickConns, clickBtn.MouseButton1Down:Connect(beginPointerHold))
 		table.insert(view.clickConns, clickBtn.MouseButton1Up:Connect(endPointerHold))
-		table.insert(view.clickConns, clickBtn.MouseButton1Leave:Connect(endPointerHold))
+		table.insert(view.clickConns, clickBtn.MouseLeave:Connect(endPointerHold))
 		table.insert(
 			view.clickConns,
 			clickBtn.InputBegan:Connect(function(input: InputObject)
@@ -468,7 +468,6 @@ local function wireClickablePrompt(view: PromptView)
 			triggerPromptTap(prompt)
 		end
 		table.insert(view.clickConns, clickBtn.Activated:Connect(tryTapPrompt))
-		table.insert(view.clickConns, clickBtn.MouseButton1Down:Connect(tryTapPrompt))
 		table.insert(
 			view.clickConns,
 			clickBtn.InputBegan:Connect(function(input: InputObject)
@@ -501,6 +500,29 @@ local function getPromptAdornee(prompt: ProximityPrompt): BasePart?
 		return parent:FindFirstChildWhichIsA("BasePart", true)
 	end
 	return nil
+end
+
+local function isUnderBushScripts(inst: Instance?): boolean
+	local node: Instance? = inst
+	while node do
+		if node.Name == "BushSCRIPTs" or node.Name == "BushSCRIPT" then
+			return true
+		end
+		node = node.Parent
+	end
+	return false
+end
+
+local function findBushModelForPrompt(prompt: ProximityPrompt): Model?
+	local node: Instance? = prompt.Parent
+	local best: Model? = nil
+	while node do
+		if node:IsA("Model") and isUnderBushScripts(node) then
+			best = node :: Model
+		end
+		node = node.Parent
+	end
+	return best
 end
 
 local function findStandForPrompt(prompt: ProximityPrompt): Model?
@@ -584,29 +606,6 @@ end
 local function setHoldFillProgress(view: PromptView, progress: number)
 	local t = math.clamp(progress, 0, 1)
 	view.holdFill.Size = UDim2.new(1, 0, t, 0)
-end
-
-local function isUnderBushScripts(inst: Instance?): boolean
-	local node: Instance? = inst
-	while node do
-		if node.Name == "BushSCRIPTs" or node.Name == "BushSCRIPT" then
-			return true
-		end
-		node = node.Parent
-	end
-	return false
-end
-
-local function findBushModelForPrompt(prompt: ProximityPrompt): Model?
-	local node: Instance? = prompt.Parent
-	local best: Model? = nil
-	while node do
-		if node:IsA("Model") and isUnderBushScripts(node) then
-			best = node :: Model
-		end
-		node = node.Parent
-	end
-	return best
 end
 
 local function getLocalHumanoid(): Humanoid?
@@ -920,6 +919,112 @@ local function startBushSharedCardHoldVisual(view: PromptView)
 	end)
 end
 
+-- Managed bush card: engine owns hold/trigger; card must forward touch to InputHoldBegin/End.
+local function wireBushSharedClickable(view: PromptView)
+	if view.clickWired then
+		return
+	end
+	view.clickWired = true
+
+	view.billboard.Active = true
+	view.root.Active = true
+
+	local root = view.root
+	local existing = root:FindFirstChild("ClickTarget")
+	if existing then
+		existing:Destroy()
+	end
+
+	local clickBtn = Instance.new("ImageButton")
+	clickBtn.Name = "ClickTarget"
+	clickBtn.Size = UDim2.fromScale(1, 1)
+	clickBtn.BackgroundTransparency = 1
+	clickBtn.Image = ""
+	clickBtn.ImageTransparency = 1
+	clickBtn.AutoButtonColor = false
+	clickBtn.ZIndex = 20
+	clickBtn.Parent = root
+
+	local touchMinPx = if prefersTouchInput() then MIN_TOUCH_PX_MOBILE else MIN_TOUCH_PX
+	local touchMin = Instance.new("UISizeConstraint")
+	touchMin.MinSize = Vector2.new(touchMinPx, touchMinPx)
+	touchMin.Parent = clickBtn
+
+	local pointerHoldActive = false
+
+	local function canInteractWithBush(): boolean
+		return managedBushUiEligible(view.prompt)
+	end
+
+	local function beginPointerHold()
+		local prompt = view.prompt
+		if not canInteractWithBush() or pointerHoldActive then
+			return
+		end
+		pointerHoldActive = true
+		startBushSharedCardHoldVisual(view)
+		pcall(function()
+			prompt:InputHoldBegin()
+		end)
+	end
+
+	local function endPointerHold()
+		if not pointerHoldActive then
+			return
+		end
+		pointerHoldActive = false
+		stopBushSharedCardHoldVisual(view, false)
+		pcall(function()
+			view.prompt:InputHoldEnd()
+		end)
+	end
+
+	if view.prompt.HoldDuration > 0 then
+		table.insert(view.clickConns, clickBtn.MouseButton1Down:Connect(beginPointerHold))
+		table.insert(view.clickConns, clickBtn.MouseButton1Up:Connect(endPointerHold))
+		table.insert(view.clickConns, clickBtn.MouseLeave:Connect(endPointerHold))
+		table.insert(
+			view.clickConns,
+			clickBtn.InputBegan:Connect(function(input: InputObject)
+				if input.UserInputType == Enum.UserInputType.Touch then
+					beginPointerHold()
+				end
+			end)
+		)
+		table.insert(
+			view.clickConns,
+			clickBtn.InputEnded:Connect(function(input: InputObject)
+				if input.UserInputType == Enum.UserInputType.Touch then
+					endPointerHold()
+				end
+			end)
+		)
+	else
+		local lastTapAt = 0
+		local function tryTapPrompt()
+			if not canInteractWithBush() then
+				return
+			end
+			local now = os.clock()
+			if now - lastTapAt < 0.12 then
+				return
+			end
+			lastTapAt = now
+			UIInteractionSounds.playClick()
+			triggerPromptTap(view.prompt)
+		end
+		table.insert(view.clickConns, clickBtn.Activated:Connect(tryTapPrompt))
+		table.insert(
+			view.clickConns,
+			clickBtn.InputBegan:Connect(function(input: InputObject)
+				if input.UserInputType == Enum.UserInputType.Touch then
+					tryTapPrompt()
+				end
+			end)
+		)
+	end
+end
+
 resetHoldState = function(view: PromptView, celebrate: boolean)
 	stopHoldRender(view)
 	view.holding = false
@@ -987,15 +1092,11 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	billboard.Size = UDim2.fromOffset(MIN_CARD_W, CARD_H)
 	billboard.StudsOffset = Vector3.new(0, 1.8, 0)
 	billboard.Adornee = adornee
-	-- Place Brainrot: parent to PlayerGui so the card isn’t z-fought under Highlight / mesh.
-	if not isDisplayOnly and isPlaceBrainrotPrompt(prompt) then
-		local pg = player:FindFirstChild("PlayerGui")
-		if pg and adornee then
-			billboard.ResetOnSpawn = false
-			billboard.Parent = pg
-		else
-			billboard.Parent = adornee or prompt
-		end
+	-- Parent to PlayerGui so touch/mouse hits the card reliably (world-parented billboards miss on mobile).
+	local pg = player:FindFirstChild("PlayerGui")
+	if pg and adornee then
+		billboard.ResetOnSpawn = false
+		billboard.Parent = pg
 	else
 		billboard.Parent = adornee or prompt
 	end
@@ -1337,13 +1438,22 @@ showBushSharedUi = function(prompt: ProximityPrompt): boolean
 
 	view.prompt = prompt
 	view.billboard.Adornee = adornee
+	view.billboard.StudsOffset = Vector3.new(0, 1.8, 0)
+	local bushModel = findBushModelForPrompt(prompt)
+	if bushModel then
+		local ok, _cf, size = pcall(function()
+			return bushModel:GetBoundingBox()
+		end)
+		if ok and typeof(size) == "Vector3" then
+			view.billboard.StudsOffset = Vector3.new(0, math.max(2.2, size.Y * 0.42 + 0.8), 0)
+		end
+	end
 	view.billboard.Enabled = true
-	view.billboard.Active = false
-	view.root.Active = false
 	applyLabelsToView(view)
 	refreshKeyLabel(view)
 	setHoldTrackVisible(view, view.prompt.HoldDuration > 0)
 	wirePromptLiveUpdates(prompt, view)
+	wireBushSharedClickable(view)
 
 	if not view.holding then
 		view.rootScale.Scale = 0.82
@@ -1519,7 +1629,16 @@ function ProximityPromptEffects.showBushSearchFor(prompt: ProximityPrompt?)
 	end
 	ProximityPromptEffects.hideBushCooldownBanner()
 	activeBushSearchPrompt = prompt
-	if not showBushSharedUi(prompt) then
+	local ok, shown = pcall(function()
+		return showBushSharedUi(prompt)
+	end)
+	if not ok then
+		warn("[ProximityPromptEffects] showBushSharedUi failed:", shown)
+		activeBushSearchPrompt = nil
+		ProximityPromptEffects.hideBushSearch()
+		return
+	end
+	if not shown then
 		activeBushSearchPrompt = nil
 		ProximityPromptEffects.hideBushSearch()
 	end
@@ -1840,10 +1959,8 @@ end
 function ProximityPromptEffects.stylePrompt(prompt: ProximityPrompt)
 	if CarryGate.isBushSearchPrompt(prompt) then
 		if prompt:GetAttribute(BUSH_MANAGED_ATTR) ~= true then
-			hideView(prompt, true)
-			if prompt.Parent then
-				prompt:Destroy()
-			end
+			-- BushHoldInteraction replaces legacy Search prompts; don't destroy during map load race.
+			prompt.Enabled = false
 			return
 		end
 		wireStylePrompt(prompt)
@@ -1949,12 +2066,14 @@ end
 
 function ProximityPromptEffects.init()
 	wireProximityPromptService()
-	local map = Workspace:FindFirstChild("Map")
-	if map then
-		scanForPrompts(map)
-	else
-		scanForPrompts(Workspace)
-	end
+	task.defer(function()
+		local map = Workspace:FindFirstChild("Map")
+		if map then
+			scanForPrompts(map)
+		else
+			scanForPrompts(Workspace)
+		end
+	end)
 
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then
@@ -1966,7 +2085,7 @@ function ProximityPromptEffects.init()
 		end
 	end
 
-	local promptRoot = map or Workspace
+	local promptRoot = Workspace:FindFirstChild("Map") or Workspace
 	promptRoot.DescendantAdded:Connect(function(desc)
 		if desc:IsA("ProximityPrompt") then
 			ProximityPromptEffects.stylePrompt(desc)

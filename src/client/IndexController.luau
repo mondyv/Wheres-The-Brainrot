@@ -26,7 +26,11 @@ local TILT_CLICK = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirectio
 local TILT_RESET = TweenInfo.new(0.2, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
 local QUEST_BAR_TWEEN = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local ROW_HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local INDEX_BADGE_SWAY = TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+local INDEX_BADGE_SWAY = TweenInfo.new(0.72, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+local INDEX_BADGE_INNER_SWAY = TweenInfo.new(0.52, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+local INDEX_BADGE_INNER_PULSE = TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut, -1, true)
+local INDEX_BADGE_SWAY_DEG = 5
+local INDEX_BADGE_INNER_SWAY_DEG = 2.5
 
 local LOCKED_NAME_COLOR = Color3.fromRGB(0, 0, 0)
 
@@ -40,7 +44,10 @@ local progressAmount: TextLabel? = nil
 local indexNotif: GuiObject? = nil
 local indexNotifLabel: TextLabel? = nil
 local indexSidebarNotif: GuiObject? = nil
+local indexSidebarNotifInner: TextLabel? = nil
 local indexBadgeSwayTween: Tween? = nil
+local indexBadgeInnerSwayTween: Tween? = nil
+local indexBadgeInnerPulseTween: Tween? = nil
 local tooltipLabel: TextLabel? = nil
 local tooltipGui: ScreenGui? = nil
 
@@ -99,13 +106,39 @@ local function findIndexSidebarNotif(main: ScreenGui): GuiObject?
 	return nil
 end
 
+local function findNotifInnerLabel(notif: GuiObject): TextLabel?
+	if notif:IsA("TextLabel") then
+		return notif :: TextLabel
+	end
+	local direct = notif:FindFirstChildWhichIsA("TextLabel")
+	if direct then
+		return direct
+	end
+	return findLabel(notif, { "!", "Text", "TextLabel", "Label", "Icon" })
+end
+
 local function stopIndexBadgeSway()
 	if indexBadgeSwayTween then
 		indexBadgeSwayTween:Cancel()
 		indexBadgeSwayTween = nil
 	end
+	if indexBadgeInnerSwayTween then
+		indexBadgeInnerSwayTween:Cancel()
+		indexBadgeInnerSwayTween = nil
+	end
+	if indexBadgeInnerPulseTween then
+		indexBadgeInnerPulseTween:Cancel()
+		indexBadgeInnerPulseTween = nil
+	end
 	if indexSidebarNotif then
 		indexSidebarNotif.Rotation = 0
+	end
+	if indexSidebarNotifInner then
+		indexSidebarNotifInner.Rotation = 0
+		local innerScale = indexSidebarNotifInner:FindFirstChildOfClass("UIScale")
+		if innerScale then
+			innerScale.Scale = 1
+		end
 	end
 end
 
@@ -114,9 +147,28 @@ local function startIndexBadgeSway()
 		return
 	end
 	stopIndexBadgeSway()
-	indexSidebarNotif.Rotation = -11
-	indexBadgeSwayTween = TweenService:Create(indexSidebarNotif, INDEX_BADGE_SWAY, { Rotation = 11 })
+	indexSidebarNotif.Rotation = -INDEX_BADGE_SWAY_DEG
+	indexBadgeSwayTween = TweenService:Create(
+		indexSidebarNotif,
+		INDEX_BADGE_SWAY,
+		{ Rotation = INDEX_BADGE_SWAY_DEG }
+	)
 	indexBadgeSwayTween:Play()
+
+	if indexSidebarNotifInner then
+		indexSidebarNotifInner.Rotation = INDEX_BADGE_INNER_SWAY_DEG
+		indexBadgeInnerSwayTween = TweenService:Create(
+			indexSidebarNotifInner,
+			INDEX_BADGE_INNER_SWAY,
+			{ Rotation = -INDEX_BADGE_INNER_SWAY_DEG }
+		)
+		indexBadgeInnerSwayTween:Play()
+
+		local innerScale = getOrAddUIScale(indexSidebarNotifInner)
+		innerScale.Scale = 0.985
+		indexBadgeInnerPulseTween = TweenService:Create(innerScale, INDEX_BADGE_INNER_PULSE, { Scale = 1.015 })
+		indexBadgeInnerPulseTween:Play()
+	end
 end
 
 local function hideIndexSidebarBadge()
@@ -630,6 +682,7 @@ function IndexController.init()
 	indexSidebarNotif = findIndexSidebarNotif(main)
 	if indexSidebarNotif then
 		indexSidebarNotif.Visible = false
+		indexSidebarNotifInner = findNotifInnerLabel(indexSidebarNotif)
 	end
 
 	ensureTooltip()

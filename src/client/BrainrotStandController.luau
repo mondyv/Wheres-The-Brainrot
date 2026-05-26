@@ -35,6 +35,9 @@ local player = Players.LocalPlayer
 local MONEY_VFX_HOLD_SEC = 0.14
 local UPGRADE_CLICK_INTERVAL = 0.05 -- match server UPGRADE_DEBOUNCE; hold repeats at this rate
 local CHILD_WAIT_TIMEOUT = 8 -- seconds; stand children may not have replicated when the tag arrives
+local CASH_PAD_TICK_INTERVAL = 1
+local BRAINROT_HOP_HEIGHT = 0.34
+local BRAINROT_HOP_COOLDOWN = 0.4
 
 local M = {}
 
@@ -201,6 +204,8 @@ type StandView = {
 	buttonPart: BasePart?,
 	cashAnchor: BasePart?,
 	totalLabel: (TextLabel | TextButton)?,
+	displayedCash: number?,
+	targetCash: number?,
 	accumulatedConn: RBXScriptConnection?,
 	upgradeButton: GuiButton?,
 	upgradeFrame: GuiObject?,
@@ -210,6 +215,8 @@ type StandView = {
 }
 
 local views: { [Model]: StandView } = {}
+local lastBrainrotHopAt: { [Model]: number } = {}
+local cashPadTickAccum = 0
 
 -- ── Empty-stand place prompt: only when holding a brainrot Tool (local Enabled) ─
 
@@ -675,11 +682,7 @@ local function findTotalCashLabel(stand: Model): (TextLabel | TextButton)?
 	return nil
 end
 
-local function syncCashPadLabel(view: StandView)
-	local amount = view.stand:GetAttribute(STAND_ACCUMULATED_ATTR)
-	if typeof(amount) ~= "number" then
-		return
-	end
+local function applyCashPadText(view: StandView, amount: number)
 	local label = view.totalLabel
 	if not label or not label.Parent then
 		label = findTotalCashLabel(view.stand)
@@ -694,6 +697,85 @@ local function syncCashPadLabel(view: StandView)
 	elseif label:IsA("TextButton") then
 		label.Text = text
 	end
+end
+
+local function syncCashPadLabel(view: StandView)
+	local amount = view.stand:GetAttribute(STAND_ACCUMULATED_ATTR)
+	if typeof(amount) ~= "number" then
+		return
+	end
+	view.targetCash = amount
+	local displayed = view.displayedCash
+	if typeof(displayed) ~= "number" then
+		view.displayedCash = amount
+		applyCashPadText(view, amount)
+		return
+	end
+	-- Collection resets accumulated cash — snap immediately instead of waiting for the 1s tick.
+	if amount + 0.01 < displayed then
+		view.displayedCash = amount
+		applyCashPadText(view, amount)
+	end
+end
+
+local function tickCashPadLabels()
+	for _, view in views do
+		local target = view.targetCash
+		if typeof(target) ~= "number" then
+			continue
+		end
+		local displayed = view.displayedCash
+		if typeof(displayed) ~= "number" then
+			view.displayedCash = target
+			applyCashPadText(view, target)
+			continue
+		end
+		if math.abs(displayed - target) < 0.01 then
+			continue
+		end
+		view.displayedCash = target
+		applyCashPadText(view, target)
+	end
+end
+
+local function findStandDisplayModel(stand: Model): Model?
+	for _, ch in stand:GetChildren() do
+		if ch:IsA("Model") and ch:GetAttribute("BrainrotStandDisplay") == true then
+			return ch :: Model
+		end
+	end
+	return nil
+end
+
+local function hopStandBrainrot(stand: Model)
+	local now = os.clock()
+	if (lastBrainrotHopAt[stand] or 0) + BRAINROT_HOP_COOLDOWN > now then
+		return
+	end
+	local model = findStandDisplayModel(stand)
+	if not model or not model.Parent then
+		return
+	end
+	lastBrainrotHopAt[stand] = now
+	local baseCf = model:GetPivot()
+	local startT = os.clock()
+	local conn: RBXScriptConnection? = nil
+	conn = RunService.RenderStepped:Connect(function()
+		if not model.Parent then
+			if conn then conn:Disconnect() end
+			return
+		end
+		local elapsed = os.clock() - startT
+		if elapsed >= 0.26 then
+			model:PivotTo(baseCf)
+			if conn then conn:Disconnect() end
+			return
+		end
+		local y = if elapsed < 0.11
+			then (elapsed / 0.11) * BRAINROT_HOP_HEIGHT
+			else ((0.26 - elapsed) / 0.15) * BRAINROT_HOP_HEIGHT
+		model:PivotTo(baseCf + Vector3.new(0, y, 0))
+	end)
 end
 
 local function wireCashPadLabel(view: StandView)
@@ -777,6 +859,7 @@ local function hookStandLevelPulse(stand: Model, view: StandView)
 			return
 		end
 		pulseUpgradeButton(view)
+		hopStandBrainrot(stand)
 	end)
 end
 
@@ -921,6 +1004,12 @@ function M.init()
 	player:GetAttributeChangedSignal("Carry"):Connect(bumpPromptRefreshFromMovement)
 
 	RunService.Heartbeat:Connect(function(dt)
+		cashPadTickAccum += dt
+		if cashPadTickAccum >= CASH_PAD_TICK_INTERVAL then
+			cashPadTickAccum = 0
+			tickCashPadLabels()
+		end
+
 		promptRefreshAccum += dt
 		if promptRefreshAccum < PROMPT_REFRESH_INTERVAL then
 			return

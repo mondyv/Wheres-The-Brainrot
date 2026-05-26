@@ -1,4 +1,5 @@
 -- Wires Main.Frames.Upgrades rows + SideUI cash counter; purchase via server RemoteFunction
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -12,6 +13,7 @@ local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitFor
 local player = Players.LocalPlayer
 
 local purchaseFn = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("PurchaseSwingUpgrade") :: RemoteFunction
+local prepareRobuxRE = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("PrepareRobuxUpgrade") :: RemoteEvent
 
 local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -349,6 +351,10 @@ local function wirePurchase(upgradeId: string, buyButtons: Instance, refreshAllR
 		local price = priceForUpgrade(upgradeId)
 		if c < price then
 			GameSoundEffects.playErrorNotif()
+			prepareRobuxRE:FireServer(upgradeId)
+			pcall(function()
+				MarketplaceService:PromptProductPurchase(player, SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID)
+			end)
 			return
 		end
 

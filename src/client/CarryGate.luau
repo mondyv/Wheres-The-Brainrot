@@ -44,6 +44,7 @@ local function countBrainrotTools(container: Instance?): number
 	return n
 end
 
+-- Bush haul slots only (floating / head carry). Equipped inventory tools do not count.
 function CarryGate.usedSlots(): number
 	local n = 0
 	local cnt = player:GetAttribute("BrainrotCarryCount")
@@ -53,10 +54,6 @@ function CarryGate.usedSlots(): number
 	local char = player.Character
 	if char then
 		n = math.max(n, countOnCharacter(char))
-	end
-	n = math.max(n, countBrainrotTools(player:FindFirstChild("Backpack")))
-	if char then
-		n = math.max(n, countBrainrotTools(char))
 	end
 	return n
 end

@@ -4,6 +4,8 @@
 	• Slider2 → SoundEffects SoundGroup + UISounds SoundGroup (same slider value).
 	• Button rows → toggles; row whose label contains "ui sound" drives UI hover/click sounds.
 	• Row whose label contains "slow" → SlowWalkEnabled (1× vs 1.75× base walk); default off; softer hover on that row.
+	• Row whose label contains "other" (or Button3) → ShowOtherBrainrots; default on.
+	• Row whose label contains "vfx" (or Button4/5) → BrainrotVFXEnabled; default on.
 --]]
 
 local Players          = game:GetService("Players")
@@ -186,14 +188,56 @@ local function getSliderRowTitle(sliderRow: Instance): string
 end
 
 local function getButtonRowTitle(buttonRow: Instance): string
-	local n = buttonRow:FindFirstChild("Name")
-	if n and n:IsA("TextLabel") then
-		return (n :: TextLabel).Text:lower()
+	local chunks: { string } = {}
+	local function addText(text: string)
+		local t = string.lower(string.gsub(text, "^%s*(.-)%s*$", "%1"))
+		if t ~= "" then
+			table.insert(chunks, t)
+		end
 	end
-	if n and n:IsA("TextButton") then
-		return (n :: TextButton).Text:lower()
+	local nameNode = buttonRow:FindFirstChild("Name", true)
+	if nameNode and (nameNode:IsA("TextLabel") or nameNode:IsA("TextButton")) then
+		addText((nameNode :: TextLabel).Text)
 	end
-	return ""
+	for _, desc in buttonRow:GetDescendants() do
+		if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+			if string.find(desc.Name, "On", 1, true) and desc.Parent and desc.Parent.Name == "On/Off" then
+				continue
+			end
+			if desc.Name == "On" or desc.Name == "Off" then
+				continue
+			end
+			addText((desc :: TextLabel).Text)
+		end
+	end
+	return table.concat(chunks, " ")
+end
+
+local function classifySettingsRow(buttonRow: Instance): string?
+	local title = getButtonRowTitle(buttonRow)
+	if title:find("ui sound", 1, true) then
+		return "ui_sounds"
+	end
+	if title:find("slow", 1, true) then
+		return "slow"
+	end
+	if title:find("other", 1, true) and title:find("brainrot", 1, true) then
+		return "show_others"
+	end
+	if title:find("show", 1, true) and title:find("other", 1, true) then
+		return "show_others"
+	end
+	if title:find("vfx", 1, true) or title:find("visual", 1, true) then
+		return "brainrot_vfx"
+	end
+	local n = buttonRow.Name
+	if n == "Button3" then
+		return "show_others"
+	end
+	if n == "Button4" or n == "Button5" then
+		return "brainrot_vfx"
+	end
+	return nil
 end
 
 local function setSlowRowNameLabel(buttonRow: Instance, slowModeOn: boolean)
@@ -341,27 +385,45 @@ function SettingsController.init()
 
 	local uiSoundsToggleRow: Instance? = nil
 	local slowToggleRow: Instance? = nil
+	local showOthersToggleRow: Instance? = nil
+	local brainrotVfxToggleRow: Instance? = nil
 	for _, child in ipairs(container:GetChildren()) do
 		if child.Name:match("^Button%d+$") then
-			if getSliderRowTitle(child):find("ui sound", 1, true) then
+			local kind = classifySettingsRow(child)
+			if kind == "ui_sounds" then
 				uiSoundsToggleRow = child
 				local oo = getOnOffFolder(child)
 				if oo then
 					UIInteractionSounds.setUISoundsEnabled(readInitialOn(oo))
 				end
-				break
+			elseif kind == "slow" then
+				slowToggleRow = child
+			elseif kind == "show_others" then
+				showOthersToggleRow = child
+			elseif kind == "brainrot_vfx" and not brainrotVfxToggleRow then
+				brainrotVfxToggleRow = child
 			end
-		end
-	end
-	for _, child in ipairs(container:GetChildren()) do
-		if child.Name:match("^Button%d+$") and getButtonRowTitle(child):find("slow", 1, true) then
-			slowToggleRow = child
-			break
 		end
 	end
 	if player:GetAttribute("SlowWalkEnabled") == nil then
 		player:SetAttribute("SlowWalkEnabled", false)
 	end
+	if player:GetAttribute("ShowOtherBrainrots") == nil then
+		player:SetAttribute("ShowOtherBrainrots", true)
+	end
+	if player:GetAttribute("BrainrotVFXEnabled") == nil then
+		player:SetAttribute("BrainrotVFXEnabled", true)
+	end
+
+	local function configureSettingsContainer()
+		for _, ch in container:GetChildren() do
+			if ch.Name == "ScrollBarAdjuster" and ch:IsA("GuiObject") then
+				ch.Active = false
+				ch.ZIndex = 1
+			end
+		end
+	end
+	configureSettingsContainer()
 
 	local function wireSliderIfMatch(sliderRow: Instance)
 		if not sliderRow.Name:match("^Slider%d+$") then
@@ -440,7 +502,15 @@ function SettingsController.init()
 			continue
 		end
 
-		local toggleOn = if child == slowToggleRow then false else readInitialOn(onOff)
+		local toggleOn = if child == slowToggleRow then false
+			elseif child == showOthersToggleRow then true
+			elseif child == brainrotVfxToggleRow then true
+			else readInitialOn(onOff)
+		if child == showOthersToggleRow then
+			toggleOn = player:GetAttribute("ShowOtherBrainrots") ~= false
+		elseif child == brainrotVfxToggleRow then
+			toggleOn = player:GetAttribute("BrainrotVFXEnabled") ~= false
+		end
 		applyToggleVisuals(onOff, toggleOn)
 		setToggleFaceText(onOff, toggleOn)
 		if child == slowToggleRow then
@@ -465,7 +535,7 @@ function SettingsController.init()
 			end
 		end
 
-		clickable.MouseButton1Click:Connect(function()
+		clickable.Activated:Connect(function()
 			toggleOn = not toggleOn
 			applyToggleVisuals(onOff, toggleOn)
 			setToggleFaceText(onOff, toggleOn)
@@ -475,6 +545,12 @@ function SettingsController.init()
 			if child == slowToggleRow then
 				player:SetAttribute("SlowWalkEnabled", toggleOn)
 				setSlowRowNameLabel(child, toggleOn)
+			end
+			if child == showOthersToggleRow then
+				player:SetAttribute("ShowOtherBrainrots", toggleOn)
+			end
+			if child == brainrotVfxToggleRow then
+				player:SetAttribute("BrainrotVFXEnabled", toggleOn)
 			end
 		end)
 	end

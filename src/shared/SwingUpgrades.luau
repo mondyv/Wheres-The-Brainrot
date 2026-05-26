@@ -26,6 +26,8 @@ end
 
 local M = {}
 
+M.SKIP_UPGRADE_DEV_PRODUCT_ID = 3598819972
+
 function M.priceAtTier(def: UpgradeDef, purchaseCount: number): number
 	local n = math.max(0, math.floor(purchaseCount))
 	return math.floor(def.cost * (growth(def) ^ n))

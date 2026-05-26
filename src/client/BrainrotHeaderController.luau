@@ -283,6 +283,32 @@ local function hookStandDisplayModel(model: Model)
 	end
 end
 
+local function clearStandHeaders(stand: Model)
+	for model, bb in headersByModel do
+		local adornee = bb.Adornee
+		if model:IsDescendantOf(stand) or (adornee and adornee:IsDescendantOf(stand)) then
+			removeHeader(model)
+			watchedModels[model] = nil
+		end
+	end
+	for _, child in Workspace:GetChildren() do
+		if child:IsA("BillboardGui") and child.Name == HEADER_NAME then
+			local adornee = child.Adornee
+			if adornee and adornee:IsDescendantOf(stand) then
+				child:Destroy()
+			end
+		end
+	end
+end
+
+local function hookStandHeaderCleanup(stand: Model)
+	stand:GetAttributeChangedSignal("BrainrotName"):Connect(function()
+		if stand:GetAttribute("BrainrotName") == nil then
+			clearStandHeaders(stand)
+		end
+	end)
+end
+
 local BrainrotHeaderController = {}
 
 local function hookHeaderRefreshRemote()
@@ -340,6 +366,7 @@ function BrainrotHeaderController.init()
 
 	for _, inst in CollectionService:GetTagged("BrainrotStand") do
 		if inst:IsA("Model") then
+			hookStandHeaderCleanup(inst :: Model)
 			for _, desc in ipairs(inst:GetDescendants()) do
 				if desc:IsA("Model") and desc:GetAttribute(STAND_DISPLAY_ATTR) == true then
 					hookStandDisplayModel(desc :: Model)
@@ -347,6 +374,12 @@ function BrainrotHeaderController.init()
 			end
 		end
 	end
+
+	CollectionService:GetInstanceAddedSignal("BrainrotStand"):Connect(function(inst)
+		if inst:IsA("Model") then
+			hookStandHeaderCleanup(inst :: Model)
+		end
+	end)
 end
 
 return BrainrotHeaderController

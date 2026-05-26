@@ -43,7 +43,9 @@ local STAND_ACCUMULATED_ATTR = "StandAccumulatedCash"
 -- Accumulated cash is capped at OFFLINE_CAP_SECONDS * income; tunes how long a player can leave it.
 local OFFLINE_CAP_SECONDS = 60 * 60 * 4 -- 4 hours of income, then it stops growing
 local COLLECT_TOUCH_DEBOUNCE = 0.5 -- seconds between collect claims on the money pad
+local CASH_PAD_DISPLAY_INTERVAL = 1 -- cash pad label/attribute refresh cadence (once per second)
 local UPGRADE_DEBOUNCE = 0.05 -- min seconds between level-ups (spam-friendly; still blocks same-frame double fires)
+local PICKUP_DEBOUNCE = 0.35 -- blocks duplicate inventory adds from double prompt triggers
 local PROMPT_PLACE_DISTANCE = 10
 local PROMPT_PICKUP_DISTANCE = 14
 -- When placing on empty stands side-by-side, only the nearest spawn wins (prevents wrong-stand place).
@@ -364,6 +366,8 @@ type StandState = {
 	lastTickAt: number,
 	lastCollectAt: number,
 	lastUpgradeAt: number,
+	lastPickupAt: number,
+	lastCashDisplayAt: number,
 	touchDebouncePerPlayer: { [Player]: number },
 }
 
@@ -379,7 +383,12 @@ local function resolveTotalCashLabel(state: StandState): (TextLabel | TextButton
 	return label
 end
 
-local function syncCashPadDisplay(state: StandState)
+local function syncCashPadDisplay(state: StandState, forceImmediate: boolean?)
+	local now = os.clock()
+	if not forceImmediate and state.lastCashDisplayAt + CASH_PAD_DISPLAY_INTERVAL > now then
+		return
+	end
+	state.lastCashDisplayAt = now
 	state.stand:SetAttribute(STAND_ACCUMULATED_ATTR, state.accumulated)
 	local text = BrainrotEconomy.formatCashAccumulated(state.accumulated)
 	local label = resolveTotalCashLabel(state)
@@ -484,7 +493,7 @@ local function refreshHeader(state: StandState)
 end
 
 local function refreshLabels(state: StandState)
-	syncCashPadDisplay(state)
+	syncCashPadDisplay(state, true)
 	if state.offlineLabel then
 		-- No persistence yet → hide offline label so it doesn't show stale "$0".
 		if state.offlineLabel:IsA("TextLabel") then
@@ -623,9 +632,35 @@ end
 
 local function clearDisplayModel(state: StandState)
 	stopStandIdleAnimation(state)
-	if state.displayModel and state.displayModel.Parent then
-		state.displayModel:Destroy()
+	local stand = state.stand
+	local toDestroy: { Model } = {}
+	local seen: { [Model]: boolean } = {}
+
+	local function queue(model: Model)
+		if seen[model] then
+			return
+		end
+		seen[model] = true
+		table.insert(toDestroy, model)
 	end
+
+	if state.displayModel and state.displayModel.Parent then
+		queue(state.displayModel)
+	end
+
+	for _, desc in stand:GetDescendants() do
+		if desc:IsA("Model") and desc:GetAttribute("BrainrotStandDisplay") == true then
+			queue(desc :: Model)
+		end
+	end
+
+	for _, model in toDestroy do
+		BrainrotHeader.remove(model)
+		if model.Parent then
+			model:Destroy()
+		end
+	end
+
 	state.displayModel = nil
 end
 
@@ -861,10 +896,28 @@ local function getReturnInventoryFn(): BindableFunction?
 	return nil
 end
 
+local function getPlayerMoneyMult(player: Player): number
+	local mult = 1
+	if player:GetAttribute("IndexGoldenQuestComplete") == true then
+		mult *= 1.25
+	end
+	local rebirthMult = player:GetAttribute("RebirthMoneyMult")
+	if typeof(rebirthMult) == "number" and rebirthMult > 0 then
+		mult *= rebirthMult
+	end
+	return mult
+end
+
 local function removeBrainrotFromStand(player: Player, state: StandState)
 	if not state.brainrotName then return end
 	if not isOwner(state, player) then return end
 	if not playerAssignedToStandPlot(player, state.stand) then return end
+
+	local now = os.clock()
+	if state.lastPickupAt + PICKUP_DEBOUNCE > now then
+		return
+	end
+	state.lastPickupAt = now
 
 	local entryToReturn = {
 		name = state.brainrotName,
@@ -881,6 +934,7 @@ local function removeBrainrotFromStand(player: Player, state: StandState)
 			return returnFn:Invoke(player, entryToReturn)
 		end)
 		if not okReturn or returned ~= true then
+			state.lastPickupAt = 0
 			return
 		end
 	end
@@ -889,8 +943,7 @@ local function removeBrainrotFromStand(player: Player, state: StandState)
 	if state.accumulated > 0 then
 		local cash = player:GetAttribute("Cash")
 		local c = if typeof(cash) == "number" then cash else 0
-		local boost = if player:GetAttribute("IndexGoldenQuestComplete") == true then 1.25 else 1
-		local payout = math.floor(state.accumulated * boost)
+		local payout = math.floor(state.accumulated * getPlayerMoneyMult(player))
 		player:SetAttribute("Cash", c + payout)
 		collectVFXRE:FireClient(player, state.stand, payout)
 	end
@@ -906,8 +959,15 @@ local function tickStand(state: StandState, dt: number)
 	end
 	local ips = recomputeIncomePerSecond(state)
 	if ips <= 0 then return end
-	local cap = ips * OFFLINE_CAP_SECONDS
-	state.accumulated = math.min(cap, state.accumulated + ips * dt)
+	local mult = 1
+	if state.ownerUserId then
+		local owner = Players:GetPlayerByUserId(state.ownerUserId)
+		if owner then
+			mult = getPlayerMoneyMult(owner)
+		end
+	end
+	local cap = ips * mult * OFFLINE_CAP_SECONDS
+	state.accumulated = math.min(cap, state.accumulated + ips * mult * dt)
 	syncCashPadDisplay(state)
 end
 
@@ -922,8 +982,7 @@ local function collectCash(state: StandState, player: Player)
 	state.touchDebouncePerPlayer[player] = now
 	local amount = math.floor(state.accumulated)
 	if amount <= 0 then return end
-	local boost = if player:GetAttribute("IndexGoldenQuestComplete") == true then 1.25 else 1
-	amount = math.floor(amount * boost)
+	amount = math.floor(amount * getPlayerMoneyMult(player))
 	state.accumulated -= amount
 	local cash = player:GetAttribute("Cash")
 	local c = if typeof(cash) == "number" then cash else 0
@@ -1082,7 +1141,7 @@ local function initStand(stand: Model)
 		PlotStandPlaceholders.ensureStandVisible(stand)
 		local existing = stands[stand]
 		resolveTotalCashLabel(existing)
-		syncCashPadDisplay(existing)
+		syncCashPadDisplay(existing, true)
 		return
 	end
 
@@ -1142,6 +1201,8 @@ local function initStand(stand: Model)
 		lastTickAt = os.clock(),
 		lastCollectAt = 0,
 		lastUpgradeAt = 0,
+		lastPickupAt = 0,
+		lastCashDisplayAt = 0,
 		touchDebouncePerPlayer = {},
 	}
 	stands[stand] = state

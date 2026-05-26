@@ -1,10 +1,13 @@
 -- Authoritative cash + swing upgrade purchases (attributes replicate to client + SwingSystem)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local SwingUpgrades = require(ReplicatedStorage.Shared.SwingUpgrades)
 
 local STARTING_CASH = 500_000_000 -- default wallet for new joins (500M)
+
+local pendingRobuxUpgrade: { [Player]: string } = {}
 
 local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes") :: Folder?
 if not remotesFolder then
@@ -18,6 +21,13 @@ if not purchaseFn then
 	purchaseFn = Instance.new("RemoteFunction")
 	purchaseFn.Name = "PurchaseSwingUpgrade"
 	purchaseFn.Parent = remotesFolder
+end
+
+local prepareRobuxRE = remotesFolder:FindFirstChild("PrepareRobuxUpgrade") :: RemoteEvent?
+if not prepareRobuxRE then
+	prepareRobuxRE = Instance.new("RemoteEvent")
+	prepareRobuxRE.Name = "PrepareRobuxUpgrade"
+	prepareRobuxRE.Parent = remotesFolder
 end
 
 local function initPlayer(player: Player)
@@ -47,9 +57,30 @@ for _, p in Players:GetPlayers() do
 	initPlayer(p)
 end
 
+Players.PlayerRemoving:Connect(function(player: Player)
+	pendingRobuxUpgrade[player] = nil
+end)
+
 local function getBuys(player: Player, upgradeId: string): number
 	local v = player:GetAttribute(SwingUpgrades.buysAttributeName(upgradeId))
 	return if typeof(v) == "number" then math.floor(v) else 0
+end
+
+local function isValidUpgradeId(upgradeId: string): boolean
+	return (SwingUpgrades :: any)[upgradeId] ~= nil
+end
+
+local function grantSwingUpgrade(player: Player, upgradeId: string): boolean
+	local def = (SwingUpgrades :: any)[upgradeId]
+	if not def then
+		return false
+	end
+	local buys = getBuys(player, upgradeId)
+	player:SetAttribute(SwingUpgrades.buysAttributeName(upgradeId), buys + 1)
+	local cur = player:GetAttribute(def.attr)
+	local base = if typeof(cur) == "number" then cur else 0
+	player:SetAttribute(def.attr, base + def.add)
+	return true
 end
 
 purchaseFn.OnServerInvoke = function(player: Player, upgradeId: any): (boolean, string?)
@@ -57,7 +88,7 @@ purchaseFn.OnServerInvoke = function(player: Player, upgradeId: any): (boolean, 
 		return false, "Invalid"
 	end
 	local id = upgradeId :: string
-	local def = SwingUpgrades[id]
+	local def = (SwingUpgrades :: any)[id]
 	if not def then
 		return false, "Unknown upgrade"
 	end
@@ -71,9 +102,48 @@ purchaseFn.OnServerInvoke = function(player: Player, upgradeId: any): (boolean, 
 		return false, "Not enough cash"
 	end
 	player:SetAttribute("Cash", cash - price)
-	player:SetAttribute(SwingUpgrades.buysAttributeName(id), buys + 1)
-	local cur = player:GetAttribute(def.attr)
-	local base = if typeof(cur) == "number" then cur else 0
-	player:SetAttribute(def.attr, base + def.add)
+	if not grantSwingUpgrade(player, id) then
+		return false, "Grant failed"
+	end
 	return true, nil
+end
+
+prepareRobuxRE.OnServerEvent:Connect(function(player: Player, upgradeId: any)
+	if typeof(upgradeId) ~= "string" or not isValidUpgradeId(upgradeId) then
+		return
+	end
+	pendingRobuxUpgrade[player] = upgradeId
+end)
+
+local function fulfillRobuxUpgradeReceipt(player: Player): boolean
+	local upgradeId = pendingRobuxUpgrade[player]
+	if not upgradeId or not isValidUpgradeId(upgradeId) then
+		return false
+	end
+	pendingRobuxUpgrade[player] = nil
+	return grantSwingUpgrade(player, upgradeId)
+end
+
+local function ensureInternalFolder(): Folder
+	local existing = ServerStorage:FindFirstChild("GameInternal")
+	if existing and existing:IsA("Folder") then
+		return existing
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = "GameInternal"
+	folder.Parent = ServerStorage
+	return folder
+end
+
+local fulfillBF = ensureInternalFolder():FindFirstChild("FulfillRobuxUpgrade")
+if not fulfillBF then
+	fulfillBF = Instance.new("BindableFunction")
+	fulfillBF.Name = "FulfillRobuxUpgrade"
+	fulfillBF.Parent = ensureInternalFolder()
+end
+(fulfillBF :: BindableFunction).OnInvoke = function(playerArg: any): any
+	if typeof(playerArg) ~= "Instance" or not (playerArg :: Instance):IsA("Player") then
+		return false
+	end
+	return fulfillRobuxUpgradeReceipt(playerArg :: Player)
 end

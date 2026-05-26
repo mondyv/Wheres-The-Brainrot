@@ -200,6 +200,13 @@ local function pushBrainrotInventory(player: Player, entry: BrainrotInvEntry, sk
 		local sync = ensureInventoryRemotes()
 		sync:FireClient(player, packInventoryForClient(player, list))
 	end
+	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
+	local refresh = folder and folder:FindFirstChild("RefreshRebirthState")
+	if refresh and refresh:IsA("BindableFunction") then
+		pcall(function()
+			(refresh :: BindableFunction):Invoke(player)
+		end)
+	end
 	return true
 end
 
@@ -1532,10 +1539,16 @@ local function consumeInventoryEntry(plr: Player, idx: number): BrainrotInvEntry
 
 	local sync = ensureInventoryRemotes()
 	sync:FireClient(plr, packInventoryForClient(plr, list))
+	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
+	local refresh = folder and folder:FindFirstChild("RefreshRebirthState")
+	if refresh and refresh:IsA("BindableFunction") then
+		pcall(function()
+			(refresh :: BindableFunction):Invoke(plr)
+		end)
+	end
 	return entry
 end
 
-local ServerStorage = game:GetService("ServerStorage")
 local function ensureInternalFolder(): Folder
 	local existing = ServerStorage:FindFirstChild("BrainrotInternal")
 	if existing and existing:IsA("Folder") then
@@ -1607,4 +1620,22 @@ returnBF.OnInvoke = function(player: any, entryArg: any): any
 	end
 	enrichEntryFromCatalog(entry)
 	return pushBrainrotInventory(player :: Player, entry)
+end
+
+local getListBF = ensureBindable("GetInventoryList")
+getListBF.OnInvoke = function(playerArg: any): any
+	if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+		return {}
+	end
+	local plr = playerArg :: Player
+	local list = brainrotInventories[plr] or {}
+	local out = {}
+	for _, entry in ipairs(list) do
+		table.insert(out, {
+			name = entry.name,
+			rarity = entry.rarity,
+			icon = entry.icon,
+		})
+	end
+	return out
 end

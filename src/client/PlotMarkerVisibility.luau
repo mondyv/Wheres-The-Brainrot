@@ -1,7 +1,8 @@
 --[[
 	PlotMarkerVisibility (client)
-	• Other players' plots: all plot UI off.
-	• Your plot: stand Button / LevelPanel / floor-unlock signs + PlotGUI stay on.
+	• Unclaimed plots: all plot UI off.
+	• Your plot: stand Button / LevelPanel / floor-unlock signs + PlotGUI stay on (interactive).
+	• Other players' claimed plots: same UI visible but non-interactive (view-only).
 	• Empty-stand billboard markers stay off everywhere.
 
 	Plot roots are direct children of Map.Spawn And Bases (e.g. Plot_1 … Plot_7).
@@ -111,34 +112,62 @@ local function isProtectedPlotUi(inst: Instance, plotRoot: Instance): boolean
 	return false
 end
 
+local function setLayerCollectorViewOnly(d: LayerCollector)
+	if d:IsA("SurfaceGui") then
+		d.Active = false
+		for _, desc in ipairs(d:GetDescendants()) do
+			if desc:IsA("GuiObject") then
+				(desc :: GuiObject).Active = false
+			end
+		end
+	elseif d:IsA("BillboardGui") then
+		d.Active = false
+	end
+end
+
+local function shouldEnableStandSurfaceGui(d: LayerCollector, plotRoot: Instance): boolean
+	local stand = findBrainrotStandAncestor(d)
+	if stand and stand:GetAttribute("BrainrotStandLocked") == true then
+		return false
+	end
+	if stand and standIsEmpty(stand) and not isUnderLevelPanel(d) then
+		return false
+	end
+	return true
+end
+
 local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: boolean, unclaimed: boolean)
+	if unclaimed then
+		d.Enabled = false
+		return
+	end
+
 	if d:IsA("BillboardGui") then
-		if unclaimed or not mine then
-			d.Enabled = false
-		elseif isPlotGuiRelated(d, plotRoot) then
-			d.Enabled = true
-			d.MaxDistance = PLOT_GUI_MAX_DISTANCE
+		if isPlotGuiRelated(d, plotRoot) then
+			d.Enabled = mine
+			if mine then
+				d.MaxDistance = PLOT_GUI_MAX_DISTANCE
+			end
 		elseif isProtectedPlotUi(d, plotRoot) or isStandDisplayModelAncestor(d, plotRoot) then
 			d.Enabled = true
 		else
 			d.Enabled = false
 		end
+		if not mine and d.Enabled then
+			setLayerCollectorViewOnly(d)
+		end
 	elseif d:IsA("SurfaceGui") then
-		if unclaimed then
-			d.Enabled = false
-		elseif isProtectedPlotUi(d, plotRoot) then
+		if isPlotGuiRelated(d, plotRoot) then
 			d.Enabled = mine
-		elseif not mine then
-			d.Enabled = false
+		elseif isProtectedPlotUi(d, plotRoot) then
+			d.Enabled = true
+		elseif shouldEnableStandSurfaceGui(d, plotRoot) then
+			d.Enabled = true
 		else
-			local stand = findBrainrotStandAncestor(d)
-			if stand and stand:GetAttribute("BrainrotStandLocked") == true then
-				d.Enabled = false
-			elseif stand and standIsEmpty(stand) and not isUnderLevelPanel(d) then
-				d.Enabled = false
-			else
-				d.Enabled = true
-			end
+			d.Enabled = false
+		end
+		if not mine and d.Enabled then
+			setLayerCollectorViewOnly(d)
 		end
 	end
 end

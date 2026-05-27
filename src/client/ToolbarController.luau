@@ -865,7 +865,7 @@ local function rebuildSlots()
 		refreshSlotVisual(i)
 	end
 
-	-- Highlight: equipped brainrot drives selection; otherwise keep last selected hotbar slot (including empty).
+	-- Highlight follows equipped tool; drop stale ring when that slot no longer has a brainrot (e.g. placed on stand).
 	local equippedSlot: number? = nil
 	if equipped then
 		local invIdx = equipped:GetAttribute("BrainrotInvIndex")
@@ -885,6 +885,13 @@ local function rebuildSlots()
 	end
 	if equippedSlot then
 		uiHotbarHighlight = equippedSlot
+	elseif uiHotbarHighlight ~= nil then
+		local hi = math.clamp(uiHotbarHighlight, 1, HOTBAR_INVENTORY_SLOTS)
+		local slotStillHasBrainrot = slotTools[hi] ~= nil
+			or (brainrotEntries[hi] ~= nil and brainrotParkedInUI[hi] ~= true)
+		if not slotStillHasBrainrot then
+			uiHotbarHighlight = nil
+		end
 	end
 	if uiHotbarHighlight ~= nil then
 		uiHotbarHighlight = math.clamp(uiHotbarHighlight, 1, HOTBAR_INVENTORY_SLOTS)

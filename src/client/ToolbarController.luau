@@ -1171,6 +1171,9 @@ end
 -- ── Equip from slot ───────────────────────────────────────────────────────────
 
 selectSlot = function(index: number)
+	if not brainrotEntries[index] or brainrotParkedInUI[index] then
+		return
+	end
 	local tool = slotTools[index]
 	local hum = getHumanoid()
 	if not hum then
@@ -1302,6 +1305,9 @@ local function bindToolbarHotbarKeybinds()
 			if not idx then
 				return Enum.ContextActionResult.Pass
 			end
+			if not brainrotEntries[idx] or brainrotParkedInUI[idx] then
+				return Enum.ContextActionResult.Pass
+			end
 			UIInteractionSounds.playHover()
 			selectSlot(idx)
 			return Enum.ContextActionResult.Sink
@@ -1372,6 +1378,9 @@ function ToolbarController.init()
 			btn.MouseButton1Click:Connect(function()
 				if dragSuppressedToolbarClick then
 					dragSuppressedToolbarClick = false
+					return
+				end
+				if not brainrotEntries[i] or brainrotParkedInUI[i] then
 					return
 				end
 				selectSlot(i)

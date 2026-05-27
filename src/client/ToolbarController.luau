@@ -1001,6 +1001,14 @@ local function refreshBrainrotBackpackUI()
 	end
 end
 
+local function requestMoveBackpackEntryToHotbar(listIdx: number)
+	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
+	local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
+	if parkEv and parkEv:IsA("RemoteEvent") then
+		parkEv:FireServer(listIdx, false)
+	end
+end
+
 local function requestEquipBrainrotSlot(slotIdx: number)
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
 	local ev = folder and folder:FindFirstChild("EquipBrainrotSlot")
@@ -1029,11 +1037,9 @@ local function wireBrainrotBackpackEquips()
 					return
 				end
 				local listIdx = listIndexForBackpackUiRow(uiRow)
-				local canEquip = listIdx
-					and brainrotEntries[listIdx]
-					and (listIdx > HOTBAR_INVENTORY_SLOTS or brainrotParkedInUI[listIdx])
-				if canEquip then
-					requestEquipBrainrotSlot(listIdx :: number)
+				local entry = brainrotEntryForBackpackSlot(uiRow)
+				if listIdx and entry then
+					requestMoveBackpackEntryToHotbar(listIdx)
 					UIInteractionSounds.playClick()
 				end
 			end)

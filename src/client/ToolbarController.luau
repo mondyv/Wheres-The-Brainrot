@@ -196,6 +196,15 @@ local function resolveHotbarSlotButton(slot: GuiObject): GuiButton?
 	return slotPrimaryButton(slot)
 end
 
+-- Icon / Rate / Key steal mouse hits unless they are non-interactive.
+local function passthroughChildClicks(root: GuiObject)
+	for _, d in root:GetDescendants() do
+		if d:IsA("GuiObject") and d ~= root then
+			d.Active = false
+		end
+	end
+end
+
 -- Parent slot frames and overlay siblings steal mobile taps unless they are explicitly non-interactive.
 local function configureHotbarSlotInput(slot: GuiObject, btn: GuiButton)
 	disableGuiInputCapture(slot)
@@ -301,15 +310,6 @@ local function isTouchPointerInput(): boolean
 	local last = UserInputService:GetLastInputType()
 	return last == Enum.UserInputType.Touch
 		or last == Enum.UserInputType.TouchTap
-end
-
--- Icon / Rate / Key steal mouse hits unless they are non-interactive.
-local function passthroughChildClicks(root: GuiObject)
-	for _, d in root:GetDescendants() do
-		if d:IsA("GuiObject") and d ~= root then
-			d.Active = false
-		end
-	end
 end
 
 local function screenPointInGui(gui: GuiObject, screen: Vector2): boolean

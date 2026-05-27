@@ -90,10 +90,7 @@ local MIN_TOUCH_PX = 44
 local MIN_TOUCH_PX_MOBILE = 52
 local TOUCH_TAP_ICON = "rbxasset://textures/ui/Controls/TouchTapIcon.png"
 local TOUCH_HOLD_ICON = "rbxasset://textures/ui/Controls/TouchHoldIcon.png"
-local KEY_ICON_SIZE_DEFAULT = UDim2.new(1, -10, 1, -10)
-local KEY_ICON_SIZE_BUSH_MOBILE = UDim2.new(1, -2, 1, -2)
-local KEY_LABEL_SIZE_DEFAULT = UDim2.new(1, -6, 1, -6)
-local KEY_LABEL_POS_DEFAULT = UDim2.fromScale(0.5, 0.5)
+local BUSH_MOBILE_FINGER_ICON = "rbxassetid://6026286488"
 
 -- ── State ─────────────────────────────────────────────────────────────────────
 
@@ -331,25 +328,18 @@ local function refreshKeyLabel(view: PromptView)
 	local prompt = view.prompt
 	local label = view.keyLabel
 	local icon = view.keyIcon
-	ensureKeyIcon(view)
 
 	local function showText(text: string)
 		icon.Visible = false
-		icon.Size = KEY_ICON_SIZE_DEFAULT
 		label.Visible = true
-		label.AnchorPoint = Vector2.new(0.5, 0.5)
-		label.Position = KEY_LABEL_POS_DEFAULT
-		label.Size = KEY_LABEL_SIZE_DEFAULT
 		label.Text = text
 	end
 
-	local function showIcon(image: string, large: boolean?)
+	local function showIcon(image: string)
 		label.Visible = false
 		icon.Visible = true
 		icon.Image = image
-		icon.ImageTransparency = 0
-		icon.ImageColor3 = Color3.fromRGB(255, 255, 255)
-		icon.Size = if large then KEY_ICON_SIZE_BUSH_MOBILE else KEY_ICON_SIZE_DEFAULT
+		icon.ImageColor3 = Color3.new(1, 1, 1)
 	end
 
 	if prefersGamepadInput() then
@@ -357,15 +347,14 @@ local function refreshKeyLabel(view: PromptView)
 		return
 	end
 	if shouldShowBushTouchIcon(prompt) then
-		-- Bush search is hold-to-complete; use the tap finger so mobile players know to touch the card.
-		showIcon(TOUCH_TAP_ICON, true)
+		showIcon(BUSH_MOBILE_FINGER_ICON)
 		return
 	end
 	if usesTouchPromptIcon() then
 		if prompt.HoldDuration > 0 then
-			showIcon(TOUCH_HOLD_ICON, false)
+			showIcon(TOUCH_HOLD_ICON)
 		else
-			showIcon(TOUCH_TAP_ICON, false)
+			showIcon(TOUCH_TAP_ICON)
 		end
 		return
 	end
@@ -891,9 +880,6 @@ local function applyStandStrokeGradient(view: PromptView, stand: Model)
 end
 
 local function resolvePromptLabels(prompt: ProximityPrompt): (string, string)
-	if isBushSearchPrompt(prompt) and shouldShowBushTouchIcon(prompt) then
-		return "Search", "Tap & hold"
-	end
 	local stand = findStandForPrompt(prompt)
 	if stand then
 		local name = stand:GetAttribute(STAND_NAME_ATTR)

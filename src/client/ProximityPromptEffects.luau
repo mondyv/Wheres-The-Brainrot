@@ -741,6 +741,10 @@ local function findStandForPrompt(prompt: ProximityPrompt): Model?
 	return nil
 end
 
+local function isStandProximityPrompt(prompt: ProximityPrompt): boolean
+	return findStandForPrompt(prompt) ~= nil
+end
+
 local function resolvePromptLabels(prompt: ProximityPrompt): (string, string)
 	local stand = findStandForPrompt(prompt)
 	if stand then
@@ -1967,6 +1971,7 @@ local function showView(prompt: ProximityPrompt)
 		if existing.billboard.Parent then
 			applyLabelsToView(existing)
 			existing.rootScale.Scale = 1
+			existing.root.Rotation = 0
 			return
 		end
 		destroyView(prompt)
@@ -1979,8 +1984,14 @@ local function showView(prompt: ProximityPrompt)
 	viewsByPrompt[prompt] = view
 
 	applyLabelsToView(view)
-	TweenService:Create(view.rootScale, OPEN_TWEEN, { Scale = 1 }):Play()
-	startIdleSway(view)
+	if isStandProximityPrompt(prompt) then
+		stopIdleSway(view)
+		view.rootScale.Scale = 1
+		view.root.Rotation = 0
+	else
+		TweenService:Create(view.rootScale, OPEN_TWEEN, { Scale = 1 }):Play()
+		startIdleSway(view)
+	end
 end
 
 wirePromptLiveUpdates = function(prompt: ProximityPrompt, view: PromptView)
@@ -2062,6 +2073,10 @@ end
 
 function ProximityPromptEffects.syncStandPlaceProximityUi(prompt: ProximityPrompt?)
 	if not prompt or not prompt.Parent then
+		return
+	end
+	local existing = viewsByPrompt[prompt]
+	if existing and existing.billboard.Parent and existing.billboard.Enabled then
 		return
 	end
 	task.defer(function()

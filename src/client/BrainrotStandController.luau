@@ -31,6 +31,7 @@ local DEFAULT_PLACE_DISTANCE = 10
 local DEFAULT_PICKUP_DISTANCE = 14
 local PROMPT_REFRESH_INTERVAL = 0.3
 local PROMPT_MOVE_SKIP_THRESHOLD = 2
+local lastShownStandPrompt: ProximityPrompt? = nil
 
 local player = Players.LocalPlayer
 local MONEY_VFX_HOLD_SEC = 0.14
@@ -400,11 +401,6 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 		table.insert(candidates, { prompt = pp, dist = dist })
 	end
 
-	for _, pp in allPrompts do
-		pp.Enabled = false
-		ProximityPromptEffects.forceHide(pp)
-	end
-
 	local closest: Candidate? = nil
 	for _, c in candidates do
 		if not closest or c.dist < closest.dist then
@@ -412,12 +408,25 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 		end
 	end
 
+	local closestPrompt = if closest then closest.prompt else nil
+	for _, pp in allPrompts do
+		if pp == closestPrompt then
+			continue
+		end
+		pp.Enabled = false
+		ProximityPromptEffects.forceHide(pp)
+	end
+
 	if closest then
 		closest.prompt.Enabled = true
 		ProximityPromptEffects.syncStandProximityUi(closest.prompt)
-		ProximityPromptEffects.syncStandPlaceProximityUi(closest.prompt)
+		if closest.prompt ~= lastShownStandPrompt then
+			ProximityPromptEffects.syncStandPlaceProximityUi(closest.prompt)
+			lastShownStandPrompt = closest.prompt
+		end
 	else
 		ProximityPromptEffects.syncStandProximityUi(nil)
+		lastShownStandPrompt = nil
 	end
 
 	lastHRPPosition = hrpPos

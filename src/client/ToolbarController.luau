@@ -95,6 +95,7 @@ local pendingToolbarDrag: {
 	start: Vector2,
 	texture: string?,
 	rowButton: GuiButton?,
+	equippedOnDown: boolean?,
 }? = nil
 local dragSuppressedToolbarClick = false
 local DRAG_THRESHOLD_PX = 14
@@ -1031,34 +1032,26 @@ local function wireBrainrotBackpackEquips()
 		if btn then
 			passthroughChildClicks(btn :: GuiObject)
 			styleToolbarSlotButton(btn)
-			btn.MouseButton1Click:Connect(function()
-				if dragSuppressedToolbarClick then
-					dragSuppressedToolbarClick = false
-					return
-				end
-				local listIdx = listIndexForBackpackUiRow(uiRow)
-				local entry = brainrotEntryForBackpackSlot(uiRow)
-				if listIdx and entry then
-					requestMoveBackpackEntryToHotbar(listIdx)
-					UIInteractionSounds.playClick()
-				end
-			end)
 			btn.MouseButton1Down:Connect(function()
 				if pendingToolbarDrag then
 					return
 				end
 				local listIdx = listIndexForBackpackUiRow(uiRow)
-				local e = listIdx and brainrotEntries[listIdx]
-				if e then
-					local tex = (e.icon ~= "" and e.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
-					pendingToolbarDrag = {
-						kind = "backpack",
-						idx = listIdx :: number,
-						start = UserInputService:GetMouseLocation(),
-						texture = tex,
-						rowButton = btn,
-					}
+				local entry = brainrotEntryForBackpackSlot(uiRow)
+				if not listIdx or not entry then
+					return
 				end
+				requestMoveBackpackEntryToHotbar(listIdx)
+				UIInteractionSounds.playClick()
+				local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+				pendingToolbarDrag = {
+					kind = "backpack",
+					idx = listIdx,
+					start = UserInputService:GetMouseLocation(),
+					texture = tex,
+					rowButton = btn,
+					equippedOnDown = true,
+				}
 			end)
 		end
 	end
@@ -1744,9 +1737,11 @@ function ToolbarController.init()
 				return
 			end
 			if overHotbar then
-				-- Backpack → hotbar: server assigns lowest free slot 1..9 (no slot memory).
-				(parkEv :: RemoteEvent):FireServer(pnd.idx, false)
-				UIInteractionSounds.playClick()
+				if not pnd.equippedOnDown then
+					-- Backpack → hotbar: server assigns lowest free slot 1..9 (no slot memory).
+					(parkEv :: RemoteEvent):FireServer(pnd.idx, false)
+					UIInteractionSounds.playClick()
+				end
 			elseif overBackpack and destBackpackRow then
 				local destListIdx = listIndexForBackpackUiRow(destBackpackRow)
 				if not destListIdx then

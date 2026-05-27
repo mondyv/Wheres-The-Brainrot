@@ -178,6 +178,16 @@ end
 
 -- Slot `Button` is often an ImageButton with a light template art layer; only tint (never swap Image id).
 local SLOT_BUTTON_IMAGE_TINT = Color3.fromRGB(58, 60, 72)
+local BACKPACK_SLOT_PANEL_OCCUPIED = Color3.fromRGB(26, 28, 34)
+
+local function applyBackpackSlotPanelTone(btn: GuiButton, occupied: boolean)
+	local color = if occupied then BACKPACK_SLOT_PANEL_OCCUPIED else SLOT_BUTTON_IMAGE_TINT
+	if btn:IsA("ImageButton") then
+		btn.ImageColor3 = color
+	else
+		btn.BackgroundColor3 = color
+	end
+end
 
 local function styleToolbarSlotButton(btn: GuiButton)
 	if btn:IsA("ImageButton") then
@@ -998,6 +1008,10 @@ local function refreshBrainrotBackpackUI()
 			if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
 				key.Text = tostring(idx)
 			end
+		end
+		local btn = slotPrimaryButton(row :: GuiObject)
+		if btn then
+			applyBackpackSlotPanelTone(btn, entry ~= nil)
 		end
 		passthroughChildClicks(surface :: GuiObject)
 	end

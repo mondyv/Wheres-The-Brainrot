@@ -105,6 +105,8 @@ local DRAG_GHOST_THRESHOLD_PX = 6
 local HOTBAR_BULK_DRAG_HOVER_SCALE = 1.06
 
 local backpackSearchText: string = ""
+local backpackGridFrozen = false
+local passthroughWiredSurfaces: { [GuiObject]: boolean } = {}
 
 local dragGhostGui: ScreenGui? = nil
 local dragGhostImage: ImageLabel? = nil
@@ -512,6 +514,52 @@ local function matchesBackpackSearch(itemName: string): boolean
 		return true
 	end
 	return string.find(string.lower(itemName), q, 1, true) ~= nil
+end
+
+-- Remove UIListLayout and pin each slot frame to the position the layout already computed.
+local function freezeBackpackContainerGrid()
+	if backpackGridFrozen or not backpackContainer then
+		return
+	end
+	local container = backpackContainer :: GuiObject
+
+	local frozenPositions: { [number]: UDim2 } = {}
+	local frozenSizes: { [number]: UDim2 } = {}
+	for uiRow = 1, MAX_BACKPACK_BRAINROT_SLOTS do
+		local row = container:FindFirstChild(tostring(uiRow))
+		if row and row:IsA("GuiObject") then
+			frozenPositions[uiRow] = (row :: GuiObject).Position
+			frozenSizes[uiRow] = (row :: GuiObject).Size
+		end
+	end
+
+	local layout = container:FindFirstChildOfClass("UIListLayout")
+	if layout then
+		layout:Destroy()
+	end
+
+	for uiRow = 1, MAX_BACKPACK_BRAINROT_SLOTS do
+		local row = container:FindFirstChild(tostring(uiRow))
+		local pos = frozenPositions[uiRow]
+		if row and row:IsA("GuiObject") and pos then
+			row.AnchorPoint = Vector2.new(0, 0)
+			row.Position = pos
+			local size = frozenSizes[uiRow]
+			if size then
+				row.Size = size
+			end
+		end
+	end
+
+	backpackGridFrozen = true
+end
+
+local function wireBackpackRowPassthroughOnce(surface: GuiObject)
+	if passthroughWiredSurfaces[surface] then
+		return
+	end
+	passthroughChildClicks(surface)
+	passthroughWiredSurfaces[surface] = true
 end
 
 local function resetHotbarSlotHoverScalesAfterDrag()
@@ -1056,7 +1104,7 @@ local function refreshBrainrotBackpackUI()
 		if btn then
 			applyBackpackSlotPanelAppearance(btn, entry ~= nil)
 		end
-		passthroughChildClicks(surface :: GuiObject)
+		wireBackpackRowPassthroughOnce(surface :: GuiObject)
 	end
 end
 
@@ -1630,7 +1678,11 @@ function ToolbarController.init()
 				end
 			end
 		end
-		task.defer(refreshBrainrotBackpackUI)
+		task.defer(function()
+			RunService.Heartbeat:Wait()
+			freezeBackpackContainerGrid()
+			refreshBrainrotBackpackUI()
+		end)
 		wireBrainrotBackpackEquips()
 		wireEquipBestButton(backpackFrame)
 		wireBackpackSearch(backpackFrame)

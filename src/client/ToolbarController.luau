@@ -431,8 +431,15 @@ local function pointOverHotbarDropZoneProbes(dropPoint: Vector2, rawViewport: Ve
 		or pointOverHotbarFromGuiHitScan(rawViewport)
 end
 
+local function isBackpackPanelVisible(): boolean
+	if not isBackpackPanelOpen or not backpackFrameRef then
+		return false
+	end
+	return (backpackFrameRef :: GuiObject).Visible
+end
+
 local function pointOverBackpackProbes(dropPoint: Vector2, rawViewport: Vector2): boolean
-	if not backpackGuiFrame then
+	if not isBackpackPanelVisible() or not backpackGuiFrame then
 		return false
 	end
 	local frame = backpackGuiFrame :: GuiObject
@@ -458,6 +465,9 @@ local function ancestorBackpackRowIndexFromGuiObject(inst: Instance): number?
 end
 
 local function backpackRowIndexFromDropProbes(rawViewport: Vector2, mouseWindow: Vector2, ghostViewport: Vector2?): number?
+	if not isBackpackPanelVisible() then
+		return nil
+	end
 	local probes: { Vector2 } = { rawViewport, mouseWindow }
 	if ghostViewport then
 		table.insert(probes, ghostViewport)
@@ -1502,7 +1512,7 @@ function ToolbarController.init()
 		if btn then
 			passthroughChildClicks(btn :: GuiObject)
 			styleToolbarSlotButton(btn)
-			btn.MouseButton1Click:Connect(function()
+			local function onHotbarSlotTapSelect()
 				if dragSuppressedToolbarClick then
 					dragSuppressedToolbarClick = false
 					return
@@ -1511,7 +1521,8 @@ function ToolbarController.init()
 					return
 				end
 				selectSlot(i)
-			end)
+			end
+			btn.Activated:Connect(onHotbarSlotTapSelect)
 			btn.MouseButton1Down:Connect(function()
 				UIInteractionSounds.playClick()
 				if brainrotEntries[i] and not brainrotParkedInUI[i] then
@@ -1808,7 +1819,7 @@ function ToolbarController.init()
 				-- Hotbar → hotbar swap.
 				(parkEv :: RemoteEvent):FireServer(pnd.idx, false, targetHotbar)
 				UIInteractionSounds.playClick()
-			elseif overBackpack then
+			elseif overBackpack and isBackpackPanelVisible() then
 				-- Hotbar → backpack panel: tuck (hide from hotbar, show in expanded backpack).
 				rebuildBackpackDisplayOrder()
 				local destListIdx = #backpackDisplayOrder + 1

@@ -11,10 +11,11 @@ export type UpgradeDef = {
 
 local DEFS: { [string]: UpgradeDef } = {
 	-- `add` = authoritative gameplay (halved vs earlier tuning); `displayAdd` = UI labels + before→after counters.
-	Power10 = { attr = "SwingForce", add = 1, displayAdd = 10, cost = 10_000, priceGrowth = 1.5 } :: UpgradeDef,
-	Power25 = { attr = "SwingForce", add = 2, displayAdd = 25, cost = 30_000, priceGrowth = 1.5 } :: UpgradeDef,
-	Reach10 = { attr = "SwingRange", add = 1, displayAdd = 10, cost = 10_000, priceGrowth = 1.5 } :: UpgradeDef,
-	Reach25 = { attr = "SwingRange", add = 2, displayAdd = 25, cost = 30_000, priceGrowth = 1.5 } :: UpgradeDef,
+	-- Cash prices for Power / Reach come from upgradeLevelForAttr + cost formulas below (not per-row `cost`).
+	Power10 = { attr = "SwingForce", add = 1, displayAdd = 10 } :: UpgradeDef,
+	Power25 = { attr = "SwingForce", add = 2, displayAdd = 25 } :: UpgradeDef,
+	Reach10 = { attr = "SwingRange", add = 1, displayAdd = 10 } :: UpgradeDef,
+	Reach25 = { attr = "SwingRange", add = 2, displayAdd = 25 } :: UpgradeDef,
 	Carry1 = { attr = "Carry", add = 1, displayAdd = 1, cost = 500_000, priceGrowth = 1.5 } :: UpgradeDef,
 }
 
@@ -28,13 +29,23 @@ local M = {}
 
 M.SKIP_UPGRADE_DEV_PRODUCT_ID = 3598819972
 
+-- Power (SwingForce): separate level from rope; +10 / +25 share PowerUpgradeLevel.
+M.MAX_POWER_UPGRADE_LEVEL = 300
+M.POWER_COST_BASE = 100
+M.POWER_COST_GROWTH = 1.11
+
+-- Rope distance (SwingRange): separate level from power; +10 / +25 share RopeUpgradeLevel.
+M.MAX_ROPE_UPGRADE_LEVEL = 100
+M.ROPE_COST_BASE = 2500
+M.ROPE_COST_GROWTH = 1.22
+
 function M.priceAtTier(def: UpgradeDef, purchaseCount: number): number
 	local n = math.max(0, math.floor(purchaseCount))
-	return math.floor(def.cost * (growth(def) ^ n))
+	return math.floor((def.cost or 0) * (growth(def) ^ n))
 end
 
--- Price tier is shared across +10 / +25 (etc.) for the same stat attribute.
-function M.totalBuysForAttr(attr: string, getBuyCount: (string) -> number): number
+-- How many cash upgrades already bought for this stat (+10 and +25 rows count together).
+function M.upgradeLevelForAttr(attr: string, getBuyCount: (string) -> number): number
 	local sum = 0
 	for _, id in ALL_IDS do
 		local def = DEFS[id]
@@ -45,12 +56,57 @@ function M.totalBuysForAttr(attr: string, getBuyCount: (string) -> number): numb
 	return sum
 end
 
+function M.totalBuysForAttr(attr: string, getBuyCount: (string) -> number): number
+	return M.upgradeLevelForAttr(attr, getBuyCount)
+end
+
+function M.powerUpgradeCost(powerUpgradeLevel: number): number
+	local level = math.max(0, math.floor(powerUpgradeLevel))
+	return math.floor(M.POWER_COST_BASE * (M.POWER_COST_GROWTH ^ level) + 0.5)
+end
+
+function M.ropeUpgradeCost(ropeUpgradeLevel: number): number
+	local level = math.max(0, math.floor(ropeUpgradeLevel))
+	return math.floor(M.ROPE_COST_BASE * (M.ROPE_COST_GROWTH ^ level) + 0.5)
+end
+
+function M.maxLevelForAttr(attr: string): number?
+	if attr == "SwingForce" then
+		return M.MAX_POWER_UPGRADE_LEVEL
+	end
+	if attr == "SwingRange" then
+		return M.MAX_ROPE_UPGRADE_LEVEL
+	end
+	return nil
+end
+
+function M.isUpgradeMaxed(upgradeId: string, getBuyCount: (string) -> number): boolean
+	local def = DEFS[upgradeId]
+	if not def then
+		return true
+	end
+	local cap = M.maxLevelForAttr(def.attr)
+	if not cap then
+		return false
+	end
+	return M.upgradeLevelForAttr(def.attr, getBuyCount) >= cap
+end
+
 function M.priceForUpgradeId(upgradeId: string, getBuyCount: (string) -> number): number
 	local def = DEFS[upgradeId]
 	if not def then
 		return 0
 	end
-	return M.priceAtTier(def, M.totalBuysForAttr(def.attr, getBuyCount))
+	if M.isUpgradeMaxed(upgradeId, getBuyCount) then
+		return 0
+	end
+	if def.attr == "SwingForce" then
+		return M.powerUpgradeCost(M.upgradeLevelForAttr("SwingForce", getBuyCount))
+	end
+	if def.attr == "SwingRange" then
+		return M.ropeUpgradeCost(M.upgradeLevelForAttr("SwingRange", getBuyCount))
+	end
+	return M.priceAtTier(def, math.max(0, math.floor(getBuyCount(upgradeId))))
 end
 
 function M.buysAttributeName(upgradeId: string): string

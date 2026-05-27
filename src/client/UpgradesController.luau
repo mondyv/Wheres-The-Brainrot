@@ -175,14 +175,19 @@ local function setCostLabel(row: Instance, upgradeId: string)
 	local _, cashBtn = resolveBuyButton(buyButtons)
 	local holder = buyButtons:FindFirstChild("Buy")
 	local costInst = holder and (holder:FindFirstChild("Cost") or holder:FindFirstChild("cost", true))
+	local maxed = SwingUpgrades.isUpgradeMaxed(upgradeId, purchaseCount)
 	local price = priceForUpgrade(upgradeId)
 	if costInst and costInst:IsA("TextLabel") then
-		costInst.Text = formatCash(price)
+		costInst.Text = if maxed then "MAX" else formatCash(price)
 	end
 	if cashBtn then
-		local cash = player:GetAttribute("Cash")
-		local c = if typeof(cash) == "number" then cash else 0
-		styleAffordButton(cashBtn, c >= price)
+		if maxed then
+			styleAffordButton(cashBtn, false)
+		else
+			local cash = player:GetAttribute("Cash")
+			local c = if typeof(cash) == "number" then cash else 0
+			styleAffordButton(cashBtn, c >= price)
+		end
 	end
 end
 
@@ -250,10 +255,15 @@ local function refreshUpgradeRow(row: Instance, upgradeId: string)
 	local buy = row:FindFirstChild("BuyButtons", true)
 	if buy then
 		local _, cashBtn = resolveBuyButton(buy)
-		local cash = player:GetAttribute("Cash")
-		local c = if typeof(cash) == "number" then cash else 0
-		local price = priceForUpgrade(upgradeId)
-		styleAffordButton(cashBtn, c >= price)
+		local maxed = SwingUpgrades.isUpgradeMaxed(upgradeId, purchaseCount)
+		if maxed then
+			styleAffordButton(cashBtn, false)
+		else
+			local cash = player:GetAttribute("Cash")
+			local c = if typeof(cash) == "number" then cash else 0
+			local price = priceForUpgrade(upgradeId)
+			styleAffordButton(cashBtn, c >= price)
+		end
 	end
 end
 
@@ -353,6 +363,11 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 		task.delay(0.35, function()
 			busy = false
 		end)
+
+		if SwingUpgrades.isUpgradeMaxed(upgradeId, purchaseCount) then
+			GameSoundEffects.playErrorNotif()
+			return
+		end
 
 		local cash = player:GetAttribute("Cash")
 		local c = if typeof(cash) == "number" then cash else 0

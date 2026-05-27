@@ -75,6 +75,11 @@ local function grantSwingUpgrade(player: Player, upgradeId: string): boolean
 	if not def then
 		return false
 	end
+	if SwingUpgrades.isUpgradeMaxed(upgradeId, function(uid: string)
+		return getBuys(player, uid)
+	end) then
+		return false
+	end
 	local buys = getBuys(player, upgradeId)
 	player:SetAttribute(SwingUpgrades.buysAttributeName(upgradeId), buys + 1)
 	local cur = player:GetAttribute(def.attr)
@@ -91,6 +96,11 @@ purchaseFn.OnServerInvoke = function(player: Player, upgradeId: any): (boolean, 
 	local def = (SwingUpgrades :: any)[id]
 	if not def then
 		return false, "Unknown upgrade"
+	end
+	if SwingUpgrades.isUpgradeMaxed(id, function(upgradeId: string)
+		return getBuys(player, upgradeId)
+	end) then
+		return false, "Max level"
 	end
 	local cash = player:GetAttribute("Cash")
 	if typeof(cash) ~= "number" then

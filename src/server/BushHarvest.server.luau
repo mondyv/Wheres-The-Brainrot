@@ -604,6 +604,13 @@ local function isPlayerInsideDeposit(player: Player): boolean
 end
 
 local equipBrainrotSlotForPlayer: (Player, number) -> boolean
+local findLowestFreeHotbarSlot: (list: { BrainrotInvEntry }, map: { [number]: boolean }) -> number?
+local assignEntryToLowestFreeHotbarSlot: (
+	plr: Player,
+	list: { BrainrotInvEntry },
+	map: { [number]: boolean },
+	srcIdx: number
+) -> number?
 
 local function notifyClientInventorySync(player: Player, autoEquipSlot: number?)
 	local invList = brainrotInventories[player]
@@ -1142,6 +1149,86 @@ local function tryRedeemAllAtDeposit(player: Player)
 	end
 end
 
+-- Award spinning (pending float) brainrots when the player touches the safezone wall.
+local function tryRedeemPendingFloatsAtDeposit(player: Player)
+	local pending = pendingFloats[player]
+	if not pending or #pending == 0 then
+		return
+	end
+
+	local now = os.clock()
+	if (redeemDebounce[player] or 0) + REDEEM_DEBOUNCE > now then
+		return
+	end
+
+	local map = brainrotParkedInExpandedBackpack[player]
+	if not map then
+		map = {}
+		brainrotParkedInExpandedBackpack[player] = map
+	end
+	local list = brainrotInventories[player]
+	if not list or findLowestFreeHotbarSlot(list, map) == nil then
+		return
+	end
+
+	local toRedeem: { Model } = {}
+	for _, clone in ipairs(pending) do
+		if clone.Parent and clone:GetAttribute("OwnerUserId") == player.UserId then
+			table.insert(toRedeem, clone)
+		end
+	end
+	if #toRedeem == 0 then
+		return
+	end
+
+	redeemDebounce[player] = now
+
+	local lastHotbarIdx: number? = nil
+	local addedAny = false
+
+	for _, clone in ipairs(toRedeem) do
+		local conn = floatConnByClone[clone]
+		if conn then
+			conn:Disconnect()
+			floatConnByClone[clone] = nil
+		end
+		removePendingFloat(player, clone)
+
+		if not clone.Parent then
+			continue
+		end
+
+		list = brainrotInventories[player]
+		map = brainrotParkedInExpandedBackpack[player] or map
+		if not list or findLowestFreeHotbarSlot(list, map) == nil then
+			break
+		end
+
+		local newSlot = redeemSingleCarryModel(player, clone)
+		if not newSlot then
+			break
+		end
+
+		list = brainrotInventories[player]
+		if not list then
+			break
+		end
+
+		local hotbarIdx = assignEntryToLowestFreeHotbarSlot(player, list, map, newSlot)
+		if not hotbarIdx then
+			break
+		end
+		lastHotbarIdx = hotbarIdx
+		addedAny = true
+	end
+
+	syncBrainrotCarryCountAttr(player)
+
+	if addedAny then
+		notifyClientInventorySync(player, lastHotbarIdx)
+	end
+end
+
 local function touchedPartToOwnerPlayer(other: BasePart): Player?
 	local ancestor = other:FindFirstAncestorWhichIsA("Model")
 	if not ancestor then
@@ -1190,10 +1277,16 @@ local function hookDepositPart(part: BasePart)
 		if not plr then
 			return
 		end
-		local list = activeCarries[plr]
 		local char = plr.Character
+		local isCharacterTouch = char ~= nil and other:IsDescendantOf(char)
+
+		if isCharacterTouch then
+			tryRedeemPendingFloatsAtDeposit(plr)
+		end
+
+		local list = activeCarries[plr]
 		local carry = carriedBrainrotFromTouch(other, plr)
-		if not carry and list and #list > 0 and char and other:IsDescendantOf(char) then
+		if not carry and list and #list > 0 and isCharacterTouch then
 			-- HRP / body touched deposit while carrying (carry mesh might not be the hit part).
 			carry = list[#list]
 		end
@@ -1395,7 +1488,7 @@ local function isHotbarSlotVisuallyFree(list: { BrainrotInvEntry }, map: { [numb
 	return map[slot] == true
 end
 
-local function findLowestFreeHotbarSlot(list: { BrainrotInvEntry }, map: { [number]: boolean }): number?
+findLowestFreeHotbarSlot = function(list: { BrainrotInvEntry }, map: { [number]: boolean }): number?
 	for i = 1, HOTBAR_UI_SLOTS do
 		if isHotbarSlotVisuallyFree(list, map, i) then
 			return i
@@ -1439,7 +1532,7 @@ local function relocateInventoryEntryToHotbarSlot(
 	return true
 end
 
-local function assignEntryToLowestFreeHotbarSlot(
+assignEntryToLowestFreeHotbarSlot = function(
 	plr: Player,
 	list: { BrainrotInvEntry },
 	map: { [number]: boolean },

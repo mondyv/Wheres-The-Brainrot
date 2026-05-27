@@ -14,6 +14,7 @@ local Workspace = game:GetService("Workspace")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local CarryGate = require(script.Parent.CarryGate)
+local RebirthConfig = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 
 local player = Players.LocalPlayer
 
@@ -49,6 +50,10 @@ local TILT_LEFT = TweenInfo.new(0.09, Enum.EasingStyle.Quad, Enum.EasingDirectio
 local TILT_RIGHT = TweenInfo.new(0.11, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local TILT_CENTER = TweenInfo.new(0.14, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
 local TILT_POP = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local STAND_TILT_LEFT = TweenInfo.new(0.24, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local STAND_TILT_RIGHT = TweenInfo.new(0.28, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+local STAND_TILT_CENTER = TweenInfo.new(0.34, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+local STAND_STROKE_GRAD_ROT_SPEED = 42
 local FLASH_TWEEN = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local POP_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
@@ -69,6 +74,18 @@ local CUSTOM_ATTR = "CustomPromptFX"
 local PLACE_PROMPT_ATTR = "BrainrotPlacePrompt"
 local STAND_NAME_ATTR = "BrainrotName"
 local STAND_LEVEL_ATTR = "BrainrotLevel"
+local STAND_RARITY_ATTR = "BrainrotRarity"
+
+local RARITY_GRADIENT_UI_NAMES: { [string]: string } = {
+	common = "Common",
+	uncommon = "Uncommon",
+	rare = "Rare",
+	epic = "Epic",
+	mythic = "Mythical",
+	legendary = "Legendary",
+	["brainrot god"] = "Godly",
+	secret = "Godly",
+}
 local MIN_TOUCH_PX = 44
 local MIN_TOUCH_PX_MOBILE = 52
 local TOUCH_TAP_ICON = "rbxasset://textures/ui/Controls/TouchTapIcon.png"
@@ -81,6 +98,9 @@ type PromptView = {
 	billboard: BillboardGui,
 	root: Frame,
 	rootScale: UIScale,
+	rootStroke: UIStroke,
+	strokeGrad: UIGradient?,
+	strokeGradConn: RBXScriptConnection?,
 	keyBadge: Frame,
 	keyStroke: UIStroke,
 	keyLabel: TextLabel,
@@ -127,6 +147,7 @@ local bushCooldownBillboard: BillboardGui? = nil
 local bushCooldownConn: RBXScriptConnection? = nil
 local bushCooldownPromptRef: ProximityPrompt? = nil
 local bushCooldownEndClock = 0.0
+local rarityGradientsFolder: Folder? = nil
 
 local BUSH_MANAGED_ATTR = "BushManagedPrompt"
 -- Must match BrainrotStandController — cheap reshow path (never scan all of Workspace).
@@ -745,6 +766,91 @@ local function isStandProximityPrompt(prompt: ProximityPrompt): boolean
 	return findStandForPrompt(prompt) ~= nil
 end
 
+local function cacheRarityGradientsFolder()
+	if rarityGradientsFolder and rarityGradientsFolder.Parent then
+		return rarityGradientsFolder
+	end
+	local pg = player:FindFirstChild("PlayerGui")
+	local main = pg and pg:FindFirstChild("Main")
+	local gameGradients = main and main:FindFirstChild("GameGradients")
+	local rarities = gameGradients and gameGradients:FindFirstChild("Rarity")
+	if rarities and rarities:IsA("Folder") then
+		rarityGradientsFolder = rarities
+	end
+	return rarityGradientsFolder
+end
+
+local function rarityGradientUiName(rarityId: string?): string?
+	if typeof(rarityId) ~= "string" or rarityId == "" then
+		return nil
+	end
+	local key = RebirthConfig.normalizeRarity(rarityId)
+	return RARITY_GRADIENT_UI_NAMES[key]
+end
+
+local function stopStandStrokeGradientCycle(view: PromptView)
+	if view.strokeGradConn then
+		view.strokeGradConn:Disconnect()
+		view.strokeGradConn = nil
+	end
+end
+
+local function clearStandStrokeGradient(view: PromptView)
+	stopStandStrokeGradientCycle(view)
+	if view.strokeGrad then
+		view.strokeGrad:Destroy()
+		view.strokeGrad = nil
+	end
+	view.rootStroke.Color = ACCENT
+	view.rootStroke.Transparency = 0.25
+end
+
+local function startStandStrokeGradientCycle(view: PromptView)
+	stopStandStrokeGradientCycle(view)
+	local grad = view.strokeGrad
+	if not grad or not grad.Parent then
+		return
+	end
+	view.strokeGradConn = RunService.Heartbeat:Connect(function(dt)
+		if grad.Parent then
+			grad.Rotation = (grad.Rotation + dt * STAND_STROKE_GRAD_ROT_SPEED) % 360
+		end
+	end)
+end
+
+local function applyStandStrokeGradient(view: PromptView, stand: Model)
+	if not isStandProximityPrompt(view.prompt) then
+		return
+	end
+
+	clearStandStrokeGradient(view)
+
+	local occupied = typeof(stand:GetAttribute(STAND_NAME_ATTR)) == "string"
+		and stand:GetAttribute(STAND_NAME_ATTR) ~= ""
+	if not occupied then
+		return
+	end
+
+	local gradUiName = rarityGradientUiName(stand:GetAttribute(STAND_RARITY_ATTR) :: string?)
+	if not gradUiName then
+		gradUiName = "Common"
+	end
+
+	local folder = cacheRarityGradientsFolder()
+	local template = folder and folder:FindFirstChild(gradUiName)
+	if not template or not template:IsA("UIGradient") then
+		return
+	end
+
+	view.rootStroke.Color = Color3.new(1, 1, 1)
+	view.rootStroke.Transparency = 0.12
+	local clone = template:Clone()
+	clone.Enabled = true
+	clone.Parent = view.rootStroke
+	view.strokeGrad = clone
+	startStandStrokeGradientCycle(view)
+end
+
 local function resolvePromptLabels(prompt: ProximityPrompt): (string, string)
 	local stand = findStandForPrompt(prompt)
 	if stand then
@@ -773,6 +879,10 @@ local function applyLabelsToView(view: PromptView)
 	view.objectLabel.Text = objectText
 	view.billboard.Size = UDim2.fromOffset(measureCardWidth(actionText, objectText, view.prompt.HoldDuration), CARD_H)
 	refreshKeyLabel(view)
+	local stand = findStandForPrompt(view.prompt)
+	if stand then
+		applyStandStrokeGradient(view, stand)
+	end
 end
 
 local function stopIdleSway(view: PromptView)
@@ -1029,40 +1139,80 @@ local function playPressAnim(view: PromptView)
 	local root = view.root
 	local badge = view.keyBadge
 	local badgeScale = getOrAddUIScale(badge)
+	local isStand = isStandProximityPrompt(view.prompt)
 
 	stopIdleSway(view)
 	root.Rotation = 0
 	badge.Rotation = 0
 	view.rootScale.Scale = 1
-	flashKeyYellow(view, false)
+	flashKeyYellow(view, false, isStand)
 
-	TweenService:Create(badgeScale, TILT_LEFT, { Scale = 0.92 }):Play()
-	task.delay(0.09, function()
-		if not badge.Parent then
+	view.pressAnimToken += 1
+	local token = view.pressAnimToken
+
+	local tiltLeft = if isStand then STAND_TILT_LEFT else TILT_LEFT
+	local tiltRight = if isStand then STAND_TILT_RIGHT else TILT_RIGHT
+	local tiltCenter = if isStand then STAND_TILT_CENTER else TILT_CENTER
+
+	if not isStand then
+		TweenService:Create(badgeScale, TILT_LEFT, { Scale = 0.92 }):Play()
+	end
+
+	local function animAlive(): boolean
+		return view.pressAnimToken == token and root.Parent ~= nil
+	end
+
+	local function finishTilt()
+		if not animAlive() then
 			return
 		end
-		TweenService:Create(root, TILT_LEFT, { Rotation = -7 }):Play()
-		TweenService:Create(badge, TILT_LEFT, { Rotation = -9 }):Play()
-		TweenService:Create(badgeScale, TILT_RIGHT, { Scale = 1.08 }):Play()
-	end)
-	task.delay(0.2, function()
-		if not badge.Parent then
-			return
+		TweenService:Create(root, tiltCenter, { Rotation = 0 }):Play()
+		TweenService:Create(badge, tiltCenter, { Rotation = 0 }):Play()
+		if not isStand then
+			TweenService:Create(badgeScale, tiltCenter, { Scale = 1 }):Play()
 		end
-		TweenService:Create(root, TILT_RIGHT, { Rotation = 6 }):Play()
-		TweenService:Create(badge, TILT_RIGHT, { Rotation = 8 }):Play()
-	end)
-	task.delay(0.34, function()
-		if not root.Parent then
-			return
-		end
-		TweenService:Create(root, TILT_CENTER, { Rotation = 0 }):Play()
-		TweenService:Create(badge, TILT_CENTER, { Rotation = 0 }):Play()
-		TweenService:Create(badgeScale, TILT_CENTER, { Scale = 1 }):Play()
-		if not view.holding and viewIsActive(view) then
+		if not isStand and not view.holding and viewIsActive(view) then
 			startIdleSway(view)
 		end
-	end)
+	end
+
+	local function swingRight()
+		if not animAlive() then
+			return
+		end
+		local tRightRoot = TweenService:Create(root, tiltRight, { Rotation = if isStand then 5 else 6 })
+		local tRightBadge = TweenService:Create(badge, tiltRight, { Rotation = if isStand then 7 else 8 })
+		tRightRoot:Play()
+		tRightBadge:Play()
+		if not isStand then
+			TweenService:Create(badgeScale, tiltRight, { Scale = 1.08 }):Play()
+		end
+		tRightRoot.Completed:Once(function(state)
+			if state == Enum.PlaybackState.Completed then
+				finishTilt()
+			end
+		end)
+	end
+
+	local function swingLeft()
+		if not animAlive() then
+			return
+		end
+		local tLeftRoot = TweenService:Create(root, tiltLeft, { Rotation = if isStand then -6 else -7 })
+		local tLeftBadge = TweenService:Create(badge, tiltLeft, { Rotation = if isStand then -8 else -9 })
+		tLeftRoot:Play()
+		tLeftBadge:Play()
+		if not isStand then
+			TweenService:Create(badgeScale, tiltLeft, { Scale = 0.92 }):Play()
+		end
+		tLeftRoot.Completed:Once(function(state)
+			if state == Enum.PlaybackState.Completed then
+				swingRight()
+			end
+		end)
+	end
+
+	swingLeft()
 end
 
 startIdleSway = function(view: PromptView)
@@ -1569,6 +1719,9 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 		billboard = billboard,
 		root = root,
 		rootScale = rootScale,
+		rootStroke = rootStroke,
+		strokeGrad = nil,
+		strokeGradConn = nil,
 		keyBadge = keyBadge,
 		keyStroke = keyStroke,
 		keyLabel = keyLabel,
@@ -1623,11 +1776,12 @@ hideView = function(prompt: ProximityPrompt, instant: boolean?)
 	end
 
 	stopIdleSway(view)
+	stopStandStrokeGradientCycle(view)
 	stopHoldRender(view)
 	view.holding = false
 	view.holdViaPointer = false
 
-	if instant then
+	if instant or isStandProximityPrompt(prompt) then
 		destroyView(prompt)
 		return
 	end
@@ -1649,6 +1803,8 @@ destroyView = function(prompt: ProximityPrompt)
 	end
 
 	stopIdleSway(view)
+	stopStandStrokeGradientCycle(view)
+	clearStandStrokeGradient(view)
 	stopHoldRender(view)
 	disconnectAll(view.liveConns)
 	disconnectAll(view.clickConns)
@@ -2010,6 +2166,7 @@ wirePromptLiveUpdates = function(prompt: ProximityPrompt, view: PromptView)
 	if stand then
 		table.insert(view.liveConns, stand:GetAttributeChangedSignal(STAND_NAME_ATTR):Connect(refresh))
 		table.insert(view.liveConns, stand:GetAttributeChangedSignal(STAND_LEVEL_ATTR):Connect(refresh))
+		table.insert(view.liveConns, stand:GetAttributeChangedSignal(STAND_RARITY_ATTR):Connect(refresh))
 	end
 end
 
@@ -2454,6 +2611,14 @@ end
 function ProximityPromptEffects.init()
 	wireProximityPromptService()
 	purgeOrphanPromptBillboards()
+
+	task.defer(function()
+		local pg = player:WaitForChild("PlayerGui", 120)
+		if pg then
+			pg:WaitForChild("Main", 120)
+			cacheRarityGradientsFolder()
+		end
+	end)
 
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then

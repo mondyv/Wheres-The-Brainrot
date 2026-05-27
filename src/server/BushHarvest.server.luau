@@ -19,6 +19,7 @@ local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
 local BrainrotHeader = require(Modules:WaitForChild("BrainrotHeader"))
 local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
+local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local PlotLuck = SwingUpgrades.PlotLuck
 
@@ -1718,6 +1719,74 @@ local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number): boo
 end
 
 equipBrainrotSlotForPlayer = equipBrainrotSlotForPlayerImpl
+
+local function inventoryEntryIncome(entry: BrainrotInvEntry): number
+	enrichEntryFromCatalog(entry)
+	return BrainrotEconomy.incomePerSecond({
+		name = entry.name,
+		rarity = if typeof(entry.rarity) == "string" then entry.rarity else "common",
+		mutation = if typeof(entry.mutation) == "string" then entry.mutation else "normal",
+		level = if typeof(entry.level) == "number" then entry.level else 1,
+		baseIncome = if typeof(entry.baseIncome) == "number" then entry.baseIncome else 0,
+	})
+end
+
+local function equipBestBrainrotForPlayer(plr: Player): boolean
+	local list = brainrotInventories[plr]
+	if not list or #list == 0 then
+		return false
+	end
+
+	local bestIdx = 1
+	local bestIncome = -math.huge
+	for i, entry in ipairs(list) do
+		local inc = inventoryEntryIncome(entry)
+		if inc > bestIncome then
+			bestIncome = inc
+			bestIdx = i
+		end
+	end
+
+	local working = copyInventoryList(list)
+	local bestEntry = table.remove(working, bestIdx)
+	if not bestEntry then
+		return false
+	end
+
+	local newList: { BrainrotInvEntry } = { bestEntry }
+	for _, entry in ipairs(working) do
+		table.insert(newList, entry)
+	end
+	brainrotInventories[plr] = newList
+
+	local map: { [number]: boolean } = {}
+	for i = 2, math.min(HOTBAR_UI_SLOTS, #newList) do
+		map[i] = true
+	end
+	brainrotParkedInExpandedBackpack[plr] = map
+
+	destroyAllBrainrotToolsForPlayer(plr)
+
+	local sync = ensureInventoryRemotes()
+	sync:FireClient(plr, packInventoryForClient(plr, newList, 1))
+
+	return equipBrainrotSlotForPlayer(plr, 1)
+end
+
+local function ensureEquipBestBrainrotRemote(): RemoteEvent
+	local folder = getBushRemotesFolder()
+	local ev = folder:FindFirstChild("EquipBestBrainrot")
+	if not ev then
+		ev = Instance.new("RemoteEvent")
+		ev.Name = "EquipBestBrainrot"
+		ev.Parent = folder
+	end
+	return ev :: RemoteEvent
+end
+
+ensureEquipBestBrainrotRemote().OnServerEvent:Connect(function(player: Player)
+	equipBestBrainrotForPlayer(player)
+end)
 
 ensureEquipBrainrotRemote().OnServerEvent:Connect(function(player: Player, slot: any)
 	if typeof(slot) ~= "number" then

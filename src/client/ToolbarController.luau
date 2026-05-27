@@ -85,6 +85,7 @@ local backpackContainer: Instance? = nil
 local backpackGuiFrame: GuiObject? = nil
 local backpackHeaderLabel: Instance? = nil
 local backpackEquipWired = false
+local equipBestWired = false
 
 local brainrotParkedInUI: { [number]: boolean } = {}
 -- UI backpack rows 1..MAX map through this → server list index (tucked + slot >9) so stashed pets fill consecutive rows.
@@ -1002,6 +1003,14 @@ local function refreshBrainrotBackpackUI()
 	end
 end
 
+local function requestEquipBestBrainrot()
+	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
+	local ev = folder and folder:FindFirstChild("EquipBestBrainrot")
+	if ev and ev:IsA("RemoteEvent") then
+		ev:FireServer()
+	end
+end
+
 local function requestMoveBackpackEntryToHotbar(listIdx: number)
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
 	local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
@@ -1055,6 +1064,27 @@ local function wireBrainrotBackpackEquips()
 			end)
 		end
 	end
+end
+
+local function wireEquipBestButton(backpackFrame: Instance)
+	if equipBestWired then
+		return
+	end
+	local otherButtons = backpackFrame:FindFirstChild("OtherButtons")
+	local equipBestInst = otherButtons and otherButtons:FindFirstChild("EquipBest")
+	if not equipBestInst or not equipBestInst:IsA("GuiObject") then
+		return
+	end
+	local btn = slotPrimaryButton(equipBestInst :: GuiObject)
+	if not btn then
+		return
+	end
+	equipBestWired = true
+	passthroughChildClicks(btn :: GuiObject)
+	btn.MouseButton1Down:Connect(function()
+		UIInteractionSounds.playClick()
+		requestEquipBestBrainrot()
+	end)
 end
 
 local function wireBackpackSearch(backpackFrame: Instance)
@@ -1545,6 +1575,7 @@ function ToolbarController.init()
 		end
 		task.defer(refreshBrainrotBackpackUI)
 		wireBrainrotBackpackEquips()
+		wireEquipBestButton(backpackFrame)
 		wireBackpackSearch(backpackFrame)
 		wireBackpackCloseButton(backpackFrame)
 		wireSortCategoryTabs(backpackFrame)

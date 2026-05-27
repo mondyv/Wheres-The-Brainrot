@@ -1736,41 +1736,39 @@ local function equipBestBrainrotForPlayer(plr: Player): boolean
 	if not list or #list == 0 then
 		return false
 	end
-
-	local bestIdx = 1
-	local bestIncome = -math.huge
-	for i, entry in ipairs(list) do
-		local inc = inventoryEntryIncome(entry)
-		if inc > bestIncome then
-			bestIncome = inc
-			bestIdx = i
-		end
+	local map = brainrotParkedInExpandedBackpack[plr]
+	if not map then
+		map = {}
+		brainrotParkedInExpandedBackpack[plr] = map
 	end
 
-	local working = copyInventoryList(list)
-	local bestEntry = table.remove(working, bestIdx)
-	if not bestEntry then
+	if findLowestFreeHotbarSlot(list, map) == nil then
 		return false
 	end
 
-	local newList: { BrainrotInvEntry } = { bestEntry }
-	for _, entry in ipairs(working) do
-		table.insert(newList, entry)
+	local bestIdx: number? = nil
+	local bestIncome = -math.huge
+	for i, entry in ipairs(list) do
+		if i > HOTBAR_UI_SLOTS or map[i] == true then
+			local inc = inventoryEntryIncome(entry)
+			if inc > bestIncome then
+				bestIncome = inc
+				bestIdx = i
+			end
+		end
 	end
-	brainrotInventories[plr] = newList
 
-	local map: { [number]: boolean } = {}
-	for i = 2, math.min(HOTBAR_UI_SLOTS, #newList) do
-		map[i] = true
+	if not bestIdx then
+		return false
 	end
-	brainrotParkedInExpandedBackpack[plr] = map
 
-	destroyAllBrainrotToolsForPlayer(plr)
+	if assignEntryToLowestFreeHotbarSlot(plr, list, map, bestIdx) == nil then
+		return false
+	end
 
 	local sync = ensureInventoryRemotes()
-	sync:FireClient(plr, packInventoryForClient(plr, newList, 1))
-
-	return equipBrainrotSlotForPlayer(plr, 1)
+	sync:FireClient(plr, packInventoryForClient(plr, list))
+	return true
 end
 
 local function ensureEquipBestBrainrotRemote(): RemoteEvent

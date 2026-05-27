@@ -786,12 +786,6 @@ local function boot(character: Model)
 		cacheStamp = os.clock()
 	end
 
-	local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolean
-		local localPt = part.CFrame:PointToObjectSpace(worldPoint)
-		local half = part.Size * 0.5
-		return math.abs(localPt.X) <= half.X and math.abs(localPt.Y) <= half.Y and math.abs(localPt.Z) <= half.Z
-	end
-
 	-- workspace.Map["Spawn And Bases"].Raddie (or SafezoneHitbox) — shared OBB test via SafezoneUtil.
 	local function isHrpInSafezone(): boolean
 		return SafezoneUtil.isCharacterInSafezone(character)

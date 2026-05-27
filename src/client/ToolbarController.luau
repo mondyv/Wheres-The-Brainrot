@@ -248,7 +248,7 @@ end
 local function hotbarSlotIndexUnderPoint(screen: Vector2): number?
 	for si = HOTBAR_INVENTORY_SLOTS, 1, -1 do
 		local slot = slots[si]
-		if not slot then
+		if not slot or not slot.Visible then
 			continue
 		end
 		local surface = toolSlotSurface(slot)
@@ -807,6 +807,44 @@ local function refreshSlotVisual(index: number)
 	end
 end
 
+local function hotbarSlotIsOccupied(index: number): boolean
+	if brainrotParkedInUI[index] then
+		return false
+	end
+	if slotTools[index] ~= nil then
+		return true
+	end
+	return brainrotEntries[index] ~= nil
+end
+
+local hotbarListLayout: UIListLayout? = nil
+
+local function ensureHotbarListLayout(): UIListLayout
+	if hotbarListLayout and hotbarListLayout.Parent == hotbar then
+		return hotbarListLayout
+	end
+	local layout = hotbar:FindFirstChildOfClass("UIListLayout")
+	if not layout then
+		layout = Instance.new("UIListLayout")
+		layout.Parent = hotbar
+	end
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	hotbarListLayout = layout
+	return layout
+end
+
+local function updateHotbarSlotVisibility()
+	ensureHotbarListLayout()
+	for i = 1, #slots do
+		local slot = slots[i]
+		if slot then
+			slot.Visible = hotbarSlotIsOccupied(i)
+		end
+	end
+end
+
 -- ── Tool assignment ───────────────────────────────────────────────────────────
 
 local function rebuildSlots()
@@ -864,6 +902,7 @@ local function rebuildSlots()
 	for i = 1, #slots do
 		refreshSlotVisual(i)
 	end
+	updateHotbarSlotVisibility()
 
 	-- Highlight follows equipped tool; drop stale ring when that slot no longer has a brainrot (e.g. placed on stand).
 	local equippedSlot: number? = nil
@@ -1358,6 +1397,8 @@ function ToolbarController.init()
 	end)
 
 	toolbar.Visible = false
+
+	ensureHotbarListLayout()
 
 	-- Collect slot references (named "1" through "9" inside Hotbar)
 	for i = 1, 9 do

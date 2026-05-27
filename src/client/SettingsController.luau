@@ -561,6 +561,3 @@ function SettingsController.init()
 end
 
 return SettingsController
-
-
-return SettingsController

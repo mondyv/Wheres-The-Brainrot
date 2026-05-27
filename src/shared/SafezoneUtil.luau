@@ -1,13 +1,14 @@
 --[[
-	OBB point test for the plot safe zone (hotbar, deposit, etc.).
-	Map layout: workspace.Map["Spawn And Bases"] — hitbox part name is usually "Raddie" (legacy: SafezoneHitbox).
+	OBB point test for the plot safe zone (hotbar visible, grapple disabled, etc.).
+	Map layout: workspace.Map["Spawn And Bases"].RedWall (Model or Part).
+	Fallbacks: Raddie, SafezoneHitbox.
 ]]
 
 local SafezoneUtil = {}
 
-local SAFEZONE_PART_NAMES = { "Raddie", "SafezoneHitbox" }
+local FALLBACK_PART_NAMES = { "Raddie", "SafezoneHitbox" }
 
-local cachedHitbox: BasePart? = nil
+local cachedParts: { BasePart }? = nil
 
 local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolean
 	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
@@ -17,21 +18,28 @@ local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolea
 		and math.abs(localPt.Z) <= half.Z
 end
 
-local function findSafezonePart(root: Instance): BasePart?
-	for _, name in SAFEZONE_PART_NAMES do
-		local h = root:FindFirstChild(name, true)
-		if h and h:IsA("BasePart") then
-			return h
-		end
-	end
-	return nil
-end
-
-local function refreshHitbox()
-	if cachedHitbox and cachedHitbox.Parent then
+local function collectBasePartsFrom(inst: Instance, out: { BasePart })
+	if inst:IsA("BasePart") then
+		table.insert(out, inst)
 		return
 	end
-	cachedHitbox = nil
+	for _, d in inst:GetDescendants() do
+		if d:IsA("BasePart") then
+			table.insert(out, d)
+		end
+	end
+end
+
+local function refreshHitboxes()
+	if cachedParts then
+		for _, p in cachedParts do
+			if p.Parent then
+				return
+			end
+		end
+	end
+	cachedParts = {}
+
 	local map = workspace:FindFirstChild("Map")
 	if not map then
 		return
@@ -40,19 +48,41 @@ local function refreshHitbox()
 	if not spawnBases then
 		return
 	end
-	cachedHitbox = findSafezonePart(spawnBases)
+
+	local parts: { BasePart } = {}
+	local redWall = spawnBases:FindFirstChild("RedWall")
+	if redWall then
+		collectBasePartsFrom(redWall, parts)
+	end
+
+	if #parts == 0 then
+		for _, name in FALLBACK_PART_NAMES do
+			local h = spawnBases:FindFirstChild(name, true)
+			if h and h:IsA("BasePart") then
+				table.insert(parts, h)
+				break
+			end
+		end
+	end
+
+	cachedParts = parts
 end
 
 function SafezoneUtil.invalidateCache()
-	cachedHitbox = nil
+	cachedParts = nil
 end
 
 function SafezoneUtil.isWorldPointInSafezone(worldPoint: Vector3): boolean
-	refreshHitbox()
-	if not cachedHitbox then
+	refreshHitboxes()
+	if not cachedParts or #cachedParts == 0 then
 		return false
 	end
-	return isPointInsidePartOBB(worldPoint, cachedHitbox)
+	for _, part in cachedParts do
+		if isPointInsidePartOBB(worldPoint, part) then
+			return true
+		end
+	end
+	return false
 end
 
 function SafezoneUtil.isCharacterInSafezone(character: Model?): boolean

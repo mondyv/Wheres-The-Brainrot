@@ -14,7 +14,7 @@ local Debris            = game:GetService("Debris")
 
 local player = Players.LocalPlayer
 local camera: Camera = workspace.CurrentCamera
-local SafezoneUtil = require(ReplicatedStorage:WaitForChild("SafezoneUtil"))
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
 -- Unique name per boot() so BindToRenderStep doesn’t collide across respawns.
 local r6RenderBindSerial = 0
@@ -786,7 +786,7 @@ local function boot(character: Model)
 		cacheStamp = os.clock()
 	end
 
-	-- workspace.Map["Spawn And Bases"].Raddie (or SafezoneHitbox) — shared OBB test via SafezoneUtil.
+	-- workspace.Map["Spawn And Bases"].RedWall — shared OBB test via SafezoneUtil.
 	local function isHrpInSafezone(): boolean
 		return SafezoneUtil.isCharacterInSafezone(character)
 	end

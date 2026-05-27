@@ -26,7 +26,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
-local SafezoneUtil = require(ReplicatedStorage:WaitForChild("SafezoneUtil"))
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
 local player    = Players.LocalPlayer
 
@@ -1444,7 +1444,10 @@ function ToolbarController.init()
 			local spawnBases = map:WaitForChild("Spawn And Bases", 60)
 			if spawnBases then
 				spawnBases.DescendantAdded:Connect(function(desc)
-					if desc:IsA("BasePart") and (desc.Name == "Raddie" or desc.Name == "SafezoneHitbox") then
+					if not desc:IsA("BasePart") then
+						return
+					end
+					if desc.Name == "RedWall" or desc.Name == "RedPart" or desc.Name == "Raddie" or desc.Name == "SafezoneHitbox" then
 						SafezoneUtil.invalidateCache()
 						pollSafezonePresence()
 					end

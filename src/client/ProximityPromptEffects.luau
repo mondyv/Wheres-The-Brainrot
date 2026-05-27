@@ -99,7 +99,7 @@ type PromptView = {
 	root: Frame,
 	rootScale: UIScale,
 	rootStroke: UIStroke,
-	strokeGrad: UIGradient?,
+	strokeGrads: { UIGradient },
 	strokeGradConn: RBXScriptConnection?,
 	keyBadge: Frame,
 	keyStroke: UIStroke,
@@ -788,6 +788,10 @@ local function rarityGradientUiName(rarityId: string?): string?
 	return RARITY_GRADIENT_UI_NAMES[key]
 end
 
+local function hasStandStrokeGradient(view: PromptView): boolean
+	return #view.strokeGrads > 0
+end
+
 local function stopStandStrokeGradientCycle(view: PromptView)
 	if view.strokeGradConn then
 		view.strokeGradConn:Disconnect()
@@ -797,23 +801,35 @@ end
 
 local function clearStandStrokeGradient(view: PromptView)
 	stopStandStrokeGradientCycle(view)
-	if view.strokeGrad then
-		view.strokeGrad:Destroy()
-		view.strokeGrad = nil
+	for _, grad in view.strokeGrads do
+		grad:Destroy()
 	end
+	table.clear(view.strokeGrads)
 	view.rootStroke.Color = ACCENT
 	view.rootStroke.Transparency = 0.25
+	view.keyStroke.Color = ACCENT_STROKE
+	view.keyStroke.Transparency = 0.35
+end
+
+local function attachStrokeGradient(stroke: UIStroke, template: UIGradient, view: PromptView)
+	stroke.Color = Color3.new(1, 1, 1)
+	stroke.Transparency = 0.12
+	local clone = template:Clone()
+	clone.Enabled = true
+	clone.Parent = stroke
+	table.insert(view.strokeGrads, clone)
 end
 
 local function startStandStrokeGradientCycle(view: PromptView)
 	stopStandStrokeGradientCycle(view)
-	local grad = view.strokeGrad
-	if not grad or not grad.Parent then
+	if #view.strokeGrads == 0 then
 		return
 	end
 	view.strokeGradConn = RunService.Heartbeat:Connect(function(dt)
-		if grad.Parent then
-			grad.Rotation = (grad.Rotation + dt * STAND_STROKE_GRAD_ROT_SPEED) % 360
+		for _, grad in view.strokeGrads do
+			if grad.Parent then
+				grad.Rotation = (grad.Rotation + dt * STAND_STROKE_GRAD_ROT_SPEED) % 360
+			end
 		end
 	end)
 end
@@ -842,12 +858,8 @@ local function applyStandStrokeGradient(view: PromptView, stand: Model)
 		return
 	end
 
-	view.rootStroke.Color = Color3.new(1, 1, 1)
-	view.rootStroke.Transparency = 0.12
-	local clone = template:Clone()
-	clone.Enabled = true
-	clone.Parent = view.rootStroke
-	view.strokeGrad = clone
+	attachStrokeGradient(view.rootStroke, template, view)
+	attachStrokeGradient(view.keyStroke, template, view)
 	startStandStrokeGradientCycle(view)
 end
 
@@ -932,8 +944,13 @@ end
 local function resetKeyBadgeVisuals(view: PromptView)
 	view.keyBadge.BackgroundColor3 = BADGE_BG
 	view.keyBadge.BackgroundTransparency = BADGE_BG_TRANSPARENCY
-	view.keyStroke.Color = ACCENT_STROKE
-	view.keyStroke.Transparency = 0.35
+	if hasStandStrokeGradient(view) then
+		view.keyStroke.Color = Color3.new(1, 1, 1)
+		view.keyStroke.Transparency = 0.12
+	else
+		view.keyStroke.Color = ACCENT_STROKE
+		view.keyStroke.Transparency = 0.35
+	end
 	view.keyLabel.TextColor3 = TEXT_PRIMARY
 	ensureKeyIcon(view)
 	view.keyIcon.ImageColor3 = TEXT_PRIMARY
@@ -1720,7 +1737,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 		root = root,
 		rootScale = rootScale,
 		rootStroke = rootStroke,
-		strokeGrad = nil,
+		strokeGrads = {},
 		strokeGradConn = nil,
 		keyBadge = keyBadge,
 		keyStroke = keyStroke,

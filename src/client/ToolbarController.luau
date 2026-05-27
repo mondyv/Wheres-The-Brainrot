@@ -633,25 +633,8 @@ local function hideToolbar()
 	t:Play()
 end
 
-local function toolbarHasInventory(): boolean
-	local char = player.Character
-	local equipped = char and char:FindFirstChildOfClass("Tool")
-	if equipped then
-		return true
-	end
-	local backpack = getBackpack()
-	if backpack then
-		for _, item in ipairs(backpack:GetChildren()) do
-			if item:IsA("Tool") then
-				return true
-			end
-		end
-	end
-	return #brainrotEntries > 0
-end
-
 local function refreshToolbarVisibility()
-	if playerInSafezone and toolbarHasInventory() then
+	if playerInSafezone then
 		showToolbar()
 	else
 		hideToolbar()

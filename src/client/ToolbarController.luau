@@ -180,12 +180,55 @@ end
 local SLOT_BUTTON_IMAGE_TINT = Color3.fromRGB(58, 60, 72)
 local BACKPACK_SLOT_PANEL_OCCUPIED = Color3.fromRGB(26, 28, 34)
 
-local function applyBackpackSlotPanelTone(btn: GuiButton, occupied: boolean)
-	local color = if occupied then BACKPACK_SLOT_PANEL_OCCUPIED else SLOT_BUTTON_IMAGE_TINT
-	if btn:IsA("ImageButton") then
-		btn.ImageColor3 = color
+type BackpackSlotPanelDefaults = {
+	bgTransparency: number,
+	imageTransparency: number?,
+	strokeTransparency: number?,
+}
+
+local backpackSlotPanelDefaults: { [GuiButton]: BackpackSlotPanelDefaults } = {}
+
+local function captureBackpackSlotPanelDefaults(btn: GuiButton): BackpackSlotPanelDefaults
+	local cached = backpackSlotPanelDefaults[btn]
+	if cached then
+		return cached
+	end
+	local stroke = btn:FindFirstChildOfClass("UIStroke")
+	local defaults: BackpackSlotPanelDefaults = {
+		bgTransparency = btn.BackgroundTransparency,
+		imageTransparency = if btn:IsA("ImageButton") then (btn :: ImageButton).ImageTransparency else nil,
+		strokeTransparency = if stroke then stroke.Transparency else nil,
+	}
+	backpackSlotPanelDefaults[btn] = defaults
+	return defaults
+end
+
+local function applyBackpackSlotPanelAppearance(btn: GuiButton, occupied: boolean)
+	local defaults = captureBackpackSlotPanelDefaults(btn)
+	local stroke = btn:FindFirstChildOfClass("UIStroke")
+
+	if occupied then
+		local color = BACKPACK_SLOT_PANEL_OCCUPIED
+		if btn:IsA("ImageButton") then
+			local imageBtn = btn :: ImageButton
+			imageBtn.ImageColor3 = color
+			imageBtn.ImageTransparency = defaults.imageTransparency or 0
+		else
+			btn.BackgroundColor3 = color
+		end
+		btn.BackgroundTransparency = defaults.bgTransparency
+		if stroke then
+			stroke.Enabled = true
+			stroke.Transparency = defaults.strokeTransparency or 0
+		end
 	else
-		btn.BackgroundColor3 = color
+		btn.BackgroundTransparency = 1
+		if btn:IsA("ImageButton") then
+			(btn :: ImageButton).ImageTransparency = 1
+		end
+		if stroke then
+			stroke.Transparency = 1
+		end
 	end
 end
 
@@ -1011,7 +1054,7 @@ local function refreshBrainrotBackpackUI()
 		end
 		local btn = slotPrimaryButton(row :: GuiObject)
 		if btn then
-			applyBackpackSlotPanelTone(btn, entry ~= nil)
+			applyBackpackSlotPanelAppearance(btn, entry ~= nil)
 		end
 		passthroughChildClicks(surface :: GuiObject)
 	end

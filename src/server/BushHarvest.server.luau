@@ -1382,6 +1382,85 @@ local function mergeMapAfterBackpackInsert(m: { [number]: boolean }, insertIdx: 
 	end
 end
 
+local HOTBAR_UI_SLOTS = 9
+
+local function isHotbarSlotVisuallyFree(list: { BrainrotInvEntry }, map: { [number]: boolean }, slot: number): boolean
+	if slot < 1 or slot > HOTBAR_UI_SLOTS then
+		return false
+	end
+	if not list[slot] then
+		return true
+	end
+	return map[slot] == true
+end
+
+local function findLowestFreeHotbarSlot(list: { BrainrotInvEntry }, map: { [number]: boolean }): number?
+	for i = 1, HOTBAR_UI_SLOTS do
+		if isHotbarSlotVisuallyFree(list, map, i) then
+			return i
+		end
+	end
+	return nil
+end
+
+local function relocateInventoryEntryToHotbarSlot(
+	list: { BrainrotInvEntry },
+	map: { [number]: boolean },
+	srcIdx: number,
+	destSlot: number
+): boolean
+	if not list[srcIdx] then
+		return false
+	end
+	if srcIdx == destSlot then
+		if destSlot <= HOTBAR_UI_SLOTS then
+			map[destSlot] = nil
+		end
+		return true
+	end
+
+	shiftParkedMapAfterListRemove(map, srcIdx)
+	local row = table.remove(list, srcIdx)
+	if not row then
+		return false
+	end
+
+	local insertK = destSlot
+	if srcIdx < destSlot then
+		insertK = destSlot - 1
+	end
+	insertK = math.clamp(insertK, 1, #list + 1)
+	table.insert(list, insertK, row)
+	if insertK <= HOTBAR_UI_SLOTS then
+		mergeMapAfterBackpackInsert(map, insertK, false)
+		map[insertK] = nil
+	end
+	return true
+end
+
+local function assignEntryToLowestFreeHotbarSlot(
+	plr: Player,
+	list: { BrainrotInvEntry },
+	map: { [number]: boolean },
+	srcIdx: number
+): number?
+	local destSlot = findLowestFreeHotbarSlot(list, map)
+	if not destSlot then
+		return nil
+	end
+	if srcIdx == destSlot then
+		if srcIdx <= HOTBAR_UI_SLOTS and map[srcIdx] then
+			map[srcIdx] = nil
+		end
+		return srcIdx
+	end
+	if not relocateInventoryEntryToHotbarSlot(list, map, srcIdx, destSlot) then
+		return nil
+	end
+	destroyAllBrainrotToolsForPlayer(plr)
+	return destSlot
+end
+
 local function ensureBrainrotParkedRemote(): RemoteEvent
 	local folder = getBushRemotesFolder()
 	local ev = folder:FindFirstChild("BrainrotSetParkedSlot")
@@ -1435,39 +1514,23 @@ ensureBrainrotParkedRemote().OnServerEvent:Connect(function(plr: Player, idx: an
 				end
 			end
 		end
-		local destKPre: number? = nil
-		if typeof(backpackDestIdx) == "number" then
-			destKPre = math.clamp(math.floor(backpackDestIdx :: number), 1, #list + 1)
-		end
 		shiftParkedMapAfterListRemove(map, i)
 		local row = table.remove(list, i)
 		if not row then
 			return
 		end
-		if destKPre then
-			local insertK = destKPre
-			if i < destKPre then
-				insertK = destKPre - 1
-			end
-			insertK = math.clamp(insertK, 1, #list + 1)
-			table.insert(list, insertK, row)
-			if insertK <= 9 then
-				mergeMapAfterBackpackInsert(map, insertK, true)
-			end
-		else
-			-- Append tucked entry (legacy: no destination index).
-			local newIdx = #list + 1
-			table.insert(list, row)
-			if newIdx <= 9 then
-				map[newIdx] = true
-			end
+		-- Append to backpack list; do not preserve the former hotbar slot index.
+		table.insert(list, row)
+		local newIdx = #list
+		if newIdx <= HOTBAR_UI_SLOTS then
+			mergeMapAfterBackpackInsert(map, newIdx, true)
 		end
 		destroyAllBrainrotToolsForPlayer(plr)
 	else
 		if typeof(backpackDestIdx) == "number" then
 			local destK = math.clamp(math.floor(backpackDestIdx :: number), 1, #list + 1)
 			if destK ~= i then
-				local srcTucked = (i <= 9) and (map[i] == true)
+				local srcTucked = (i <= HOTBAR_UI_SLOTS) and (map[i] == true)
 				shiftParkedMapAfterListRemove(map, i)
 				local row = table.remove(list, i)
 				if not row then
@@ -1483,15 +1546,13 @@ ensureBrainrotParkedRemote().OnServerEvent:Connect(function(plr: Player, idx: an
 				destroyAllBrainrotToolsForPlayer(plr)
 			end
 		elseif typeof(targetSlot) == "number" then
-			-- Clamp to existing range so we never break the contiguous list.
-			local j = math.clamp(math.floor(targetSlot :: number), 1, math.min(9, #list))
+			-- Hotbar → hotbar swap/drag onto a specific slot.
+			local j = math.clamp(math.floor(targetSlot :: number), 1, math.min(HOTBAR_UI_SLOTS, #list))
 			if j ~= i then
 				if list[j] then
-					-- Both positions occupied → SWAP in place (preserves list length & equipped tool).
 					list[i], list[j] = list[j], list[i]
 					swapBrainrotToolIndices(plr, i, j)
 				else
-					-- Defensive: list[j] should always be non-nil due to clamp above.
 					local row = table.remove(list, i)
 					if row then
 						table.insert(list, math.min(j, #list + 1), row)
@@ -1499,12 +1560,12 @@ ensureBrainrotParkedRemote().OnServerEvent:Connect(function(plr: Player, idx: an
 					destroyAllBrainrotToolsForPlayer(plr)
 				end
 			end
-			if j <= 9 then
+			if j <= HOTBAR_UI_SLOTS then
 				map[j] = nil
 			end
-		end
-		if typeof(backpackDestIdx) ~= "number" and i <= 9 then
-			map[i] = nil
+		else
+			-- Backpack → hotbar (or general untuck): always fill the lowest free slot 1..9.
+			assignEntryToLowestFreeHotbarSlot(plr, list, map, i)
 		end
 	end
 
@@ -1598,10 +1659,27 @@ local function buildBrainrotToolFromTemplate(template: Model, entry: BrainrotInv
 end
 
 local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number): boolean
-	local idx = math.clamp(math.floor(slot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
 	local list = brainrotInventories[player]
-	if not list or not list[idx] then
+	if not list then
 		return false
+	end
+	local map = brainrotParkedInExpandedBackpack[player]
+	if not map then
+		map = {}
+		brainrotParkedInExpandedBackpack[player] = map
+	end
+	local idx = math.clamp(math.floor(slot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
+	if not list[idx] then
+		return false
+	end
+	if idx > HOTBAR_UI_SLOTS or map[idx] then
+		local newIdx = assignEntryToLowestFreeHotbarSlot(player, list, map, idx)
+		if not newIdx then
+			return false
+		end
+		idx = newIdx
+		local sync = ensureInventoryRemotes()
+		sync:FireClient(player, packInventoryForClient(player, list))
 	end
 	local entry = list[idx]
 	local char = player.Character

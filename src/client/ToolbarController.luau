@@ -1737,9 +1737,9 @@ function ToolbarController.init()
 			if not entry then
 				return
 			end
-			if targetHotbar then
-				-- Backpack → specific hotbar slot: untuck and/or swap into that slot.
-				(parkEv :: RemoteEvent):FireServer(pnd.idx, false, targetHotbar)
+			if overHotbar then
+				-- Backpack → hotbar: server assigns lowest free slot 1..9 (no slot memory).
+				(parkEv :: RemoteEvent):FireServer(pnd.idx, false)
 				UIInteractionSounds.playClick()
 			elseif overBackpack and destBackpackRow then
 				local destListIdx = listIndexForBackpackUiRow(destBackpackRow)
@@ -1751,10 +1751,6 @@ function ToolbarController.init()
 					(parkEv :: RemoteEvent):FireServer(pnd.idx, false, nil, destListIdx)
 					UIInteractionSounds.playClick()
 				end
-			elseif overHotbar and brainrotParkedInUI[pnd.idx] then
-				-- Backpack → general hotbar area: untuck in place.
-				(parkEv :: RemoteEvent):FireServer(pnd.idx, false)
-				UIInteractionSounds.playClick()
 			end
 		end
 	end)

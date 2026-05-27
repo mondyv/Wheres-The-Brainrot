@@ -17,21 +17,20 @@ local prepareRobuxRE = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("P
 
 local SUCCESS_TWEEN = TweenInfo.new(0.32, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
 
-local function purchaseCount(upgradeId: string): number
-	local v = player:GetAttribute(SwingUpgrades.buysAttributeName(upgradeId))
-	return if typeof(v) == "number" then math.floor(v) else 0
+local LEVEL_ATTRS = {
+	SwingUpgrades.POWER_LEVEL_ATTR,
+	SwingUpgrades.ROPE_LEVEL_ATTR,
+	SwingUpgrades.CARRY_LEVEL_ATTR,
+}
+
+local function readLevels(): SwingUpgrades.UpgradeLevels
+	return SwingUpgrades.readLevels(function(name: string)
+		return player:GetAttribute(name)
+	end)
 end
 
 local function priceForUpgrade(upgradeId: string): number
-	return SwingUpgrades.priceForUpgradeId(upgradeId, purchaseCount)
-end
-
-local function labelBonus(def: any): number
-	return SwingUpgrades.displayBonus(def)
-end
-
-local function displayStatForAttr(attr: string): number
-	return SwingUpgrades.displayStatTotal(attr, purchaseCount)
+	return SwingUpgrades.priceForUpgradeId(upgradeId, readLevels())
 end
 
 local function formatCash(n: number): string
@@ -39,7 +38,6 @@ local function formatCash(n: number): string
 end
 
 local function waitMain(): ScreenGui
-	-- Match other controllers: PlayerGui often mirrors StarterGui after character exists
 	if not player.Character then
 		player.CharacterAdded:Wait()
 	end
@@ -56,7 +54,6 @@ local function findLabelUnder(parent: Instance, names: { string }): TextLabel?
 	return nil
 end
 
--- Prefer the real purchase control: not inside Decor, largest hit target; avoid decorative GuiButtons
 local function resolveBuyButton(buyButtons: Instance): (GuiObject?, GuiButton?)
 	local holder = buyButtons:FindFirstChild("Buy")
 	if not holder then
@@ -94,7 +91,6 @@ local function resolveBuyButton(buyButtons: Instance): (GuiObject?, GuiButton?)
 		end
 	end
 
-	-- Some layouts put the only clickable under Decor; pick largest if nothing found above
 	if not best then
 		bestScore = -1
 		for _, d in holder:GetDescendants() do
@@ -109,7 +105,6 @@ local function resolveBuyButton(buyButtons: Instance): (GuiObject?, GuiButton?)
 		end
 	end
 
-	-- Direct-child ImageButton / TextButton on holder (common layout)
 	if not best then
 		for _, name in { "ImageButton", "TextButton" } do
 			local ch = holder:FindFirstChild(name)
@@ -124,11 +119,9 @@ local function resolveBuyButton(buyButtons: Instance): (GuiObject?, GuiButton?)
 	end
 
 	if best and holder:IsA("GuiObject") then
-		-- Frame "Buy" often sits on top of the real button and steals clicks — don't absorb hits
 		if not holder:IsA("GuiButton") then
 			holder.Active = false
 		end
-		-- Any GuiObject above the button (Decor chain) must not eat inputs
 		local p: Instance? = best.Parent
 		while p and p ~= holder do
 			if p:IsA("GuiObject") then
@@ -136,7 +129,6 @@ local function resolveBuyButton(buyButtons: Instance): (GuiObject?, GuiButton?)
 			end
 			p = p.Parent
 		end
-		-- Decorative layers should not block the purchase button
 		for _, d in holder:GetDescendants() do
 			if d:IsA("GuiObject") and d ~= best and not best:IsDescendantOf(d) and not d:IsAncestorOf(best) then
 				if d:IsA("ImageLabel") or d:IsA("TextLabel") or d:IsA("Frame") then
@@ -175,7 +167,8 @@ local function setCostLabel(row: Instance, upgradeId: string)
 	local _, cashBtn = resolveBuyButton(buyButtons)
 	local holder = buyButtons:FindFirstChild("Buy")
 	local costInst = holder and (holder:FindFirstChild("Cost") or holder:FindFirstChild("cost", true))
-	local maxed = SwingUpgrades.isUpgradeMaxed(upgradeId, purchaseCount)
+	local levels = readLevels()
+	local maxed = SwingUpgrades.isUpgradeMaxed(upgradeId, levels)
 	local price = priceForUpgrade(upgradeId)
 	if costInst and costInst:IsA("TextLabel") then
 		costInst.Text = if maxed then "MAX" else formatCash(price)
@@ -196,8 +189,11 @@ local function refreshUpgradeRow(row: Instance, upgradeId: string)
 	if not def then
 		return
 	end
-	local cur = displayStatForAttr(def.attr)
-	local nxt = SwingUpgrades.displayStatAfterPurchase(cur, labelBonus(def))
+
+	local levels = readLevels()
+	local currentLevel = SwingUpgrades.levelForUpgradeId(upgradeId, levels)
+	local cur = SwingUpgrades.displayStatForLevel(currentLevel)
+	local nxt = SwingUpgrades.displayStatAfterPurchase(currentLevel, def.units)
 
 	if upgradeId == "Carry1" then
 		local curL = findLabelUnder(row, { "CurrentCarry" })
@@ -228,8 +224,7 @@ local function refreshUpgradeRow(row: Instance, upgradeId: string)
 		end
 	end
 
-	-- Studio layout: separate labels — Amount = "+10", Type = "Power" (backend still uses small `def.add`)
-	local bonus = labelBonus(def)
+	local bonus = SwingUpgrades.displayBonus(def)
 	local amt = row:FindFirstChild("Amount")
 	if amt and amt:IsA("TextLabel") then
 		amt.Text = ("+%d"):format(bonus)
@@ -255,7 +250,7 @@ local function refreshUpgradeRow(row: Instance, upgradeId: string)
 	local buy = row:FindFirstChild("BuyButtons", true)
 	if buy then
 		local _, cashBtn = resolveBuyButton(buy)
-		local maxed = SwingUpgrades.isUpgradeMaxed(upgradeId, purchaseCount)
+		local maxed = SwingUpgrades.isUpgradeMaxed(upgradeId, levels)
 		if maxed then
 			styleAffordButton(cashBtn, false)
 		else
@@ -364,7 +359,7 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 			busy = false
 		end)
 
-		if SwingUpgrades.isUpgradeMaxed(upgradeId, purchaseCount) then
+		if SwingUpgrades.isUpgradeMaxed(upgradeId, readLevels()) then
 			GameSoundEffects.playErrorNotif()
 			return
 		end
@@ -418,7 +413,6 @@ local function init()
 	local upgrades = main:WaitForChild("Frames"):WaitForChild("Upgrades")
 	local container = upgrades:WaitForChild("Container")
 
-	-- One frame so AbsoluteSize / layout exist before we pick which GuiButton is the real buy control
 	task.wait()
 
 	local cashFrame = main:WaitForChild("SideUI"):WaitForChild("Counters"):WaitForChild("Cash")
@@ -458,8 +452,8 @@ local function init()
 		player:GetAttributeChangedSignal(attr):Connect(refreshAllRows)
 	end
 
-	for _, id in ROW_IDS do
-		player:GetAttributeChangedSignal(SwingUpgrades.buysAttributeName(id)):Connect(refreshAllRows)
+	for _, levelAttr in LEVEL_ATTRS do
+		player:GetAttributeChangedSignal(levelAttr):Connect(refreshAllRows)
 	end
 
 	refreshAllRows()

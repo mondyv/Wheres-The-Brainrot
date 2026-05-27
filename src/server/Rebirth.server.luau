@@ -13,7 +13,6 @@ local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local IndexService = require(script.Parent:WaitForChild("Modules"):WaitForChild("IndexService"))
 
 local MAX_FLOOR = 4
-local UPGRADE_IDS = { "Power10", "Power25", "Reach10", "Reach25", "Carry1" }
 
 local function getRemotesFolder(): Folder
 	local folder = ReplicatedStorage:FindFirstChild("Remotes")
@@ -102,13 +101,7 @@ local function pushState(player: Player)
 end
 
 local function resetSwingUpgrades(player: Player)
-	player:SetAttribute("SwingForce", 1)
-	player:SetAttribute("SwingRange", 1)
-	player:SetAttribute("Carry", 1)
-	player:SetAttribute("RopeLength", 0)
-	for _, id in UPGRADE_IDS do
-		player:SetAttribute(SwingUpgrades.buysAttributeName(id), 0)
-	end
+	SwingUpgrades.resetLevels(player)
 end
 
 local function grantFloorRebirth(player: Player): boolean

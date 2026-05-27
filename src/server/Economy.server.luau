@@ -30,19 +30,17 @@ if not prepareRobuxRE then
 	prepareRobuxRE.Parent = remotesFolder
 end
 
+local function readLevels(player: Player): SwingUpgrades.UpgradeLevels
+	return SwingUpgrades.readLevels(function(name: string)
+		return player:GetAttribute(name)
+	end)
+end
+
 local function initPlayer(player: Player)
-	-- Cash only if never set (avoid wiping wallet on respawn / duplicate init)
+	SwingUpgrades.initLevelAttributes(player)
+
 	if player:GetAttribute("Cash") == nil then
 		player:SetAttribute("Cash", STARTING_CASH)
-	end
-	if player:GetAttribute("SwingForce") == nil then
-		player:SetAttribute("SwingForce", 1)
-	end
-	if player:GetAttribute("SwingRange") == nil then
-		player:SetAttribute("SwingRange", 1)
-	end
-	if player:GetAttribute("Carry") == nil then
-		player:SetAttribute("Carry", 1)
 	end
 	if player:GetAttribute("BrainrotCarryCount") == nil then
 		player:SetAttribute("BrainrotCarryCount", 0)
@@ -61,31 +59,8 @@ Players.PlayerRemoving:Connect(function(player: Player)
 	pendingRobuxUpgrade[player] = nil
 end)
 
-local function getBuys(player: Player, upgradeId: string): number
-	local v = player:GetAttribute(SwingUpgrades.buysAttributeName(upgradeId))
-	return if typeof(v) == "number" then math.floor(v) else 0
-end
-
 local function isValidUpgradeId(upgradeId: string): boolean
 	return (SwingUpgrades :: any)[upgradeId] ~= nil
-end
-
-local function grantSwingUpgrade(player: Player, upgradeId: string): boolean
-	local def = (SwingUpgrades :: any)[upgradeId]
-	if not def then
-		return false
-	end
-	if SwingUpgrades.isUpgradeMaxed(upgradeId, function(uid: string)
-		return getBuys(player, uid)
-	end) then
-		return false
-	end
-	local buys = getBuys(player, upgradeId)
-	player:SetAttribute(SwingUpgrades.buysAttributeName(upgradeId), buys + 1)
-	local cur = player:GetAttribute(def.attr)
-	local base = if typeof(cur) == "number" then cur else 0
-	player:SetAttribute(def.attr, base + def.add)
-	return true
 end
 
 purchaseFn.OnServerInvoke = function(player: Player, upgradeId: any): (boolean, string?)
@@ -93,27 +68,27 @@ purchaseFn.OnServerInvoke = function(player: Player, upgradeId: any): (boolean, 
 		return false, "Invalid"
 	end
 	local id = upgradeId :: string
-	local def = (SwingUpgrades :: any)[id]
-	if not def then
+	if not isValidUpgradeId(id) then
 		return false, "Unknown upgrade"
 	end
-	if SwingUpgrades.isUpgradeMaxed(id, function(upgradeId: string)
-		return getBuys(player, upgradeId)
-	end) then
+
+	local levels = readLevels(player)
+	if SwingUpgrades.isUpgradeMaxed(id, levels) then
 		return false, "Max level"
 	end
+
 	local cash = player:GetAttribute("Cash")
 	if typeof(cash) ~= "number" then
 		return false, "No cash"
 	end
-	local price = SwingUpgrades.priceForUpgradeId(id, function(upgradeId: string)
-		return getBuys(player, upgradeId)
-	end)
+
+	local price = SwingUpgrades.priceForUpgradeId(id, levels)
 	if cash < price then
 		return false, "Not enough cash"
 	end
+
 	player:SetAttribute("Cash", cash - price)
-	if not grantSwingUpgrade(player, id) then
+	if not SwingUpgrades.grantUpgrade(player, id) then
 		return false, "Grant failed"
 	end
 	return true, nil
@@ -132,7 +107,7 @@ local function fulfillRobuxUpgradeReceipt(player: Player): boolean
 		return false
 	end
 	pendingRobuxUpgrade[player] = nil
-	return grantSwingUpgrade(player, upgradeId)
+	return SwingUpgrades.grantUpgrade(player, upgradeId)
 end
 
 local function ensureInternalFolder(): Folder

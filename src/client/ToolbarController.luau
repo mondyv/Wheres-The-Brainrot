@@ -88,8 +88,11 @@ local backpackEquipWired = false
 local equipBestWired = false
 
 local brainrotParkedInUI: { [number]: boolean } = {}
--- UI backpack rows 1..MAX map through this → server list index (tucked + slot >9) so stashed pets fill consecutive rows.
-local backpackDisplayOrder: { number } = {}
+-- Static UI row assignments: uiRow -> inventory list index (never reparent or reorder frames).
+local backpackUiRowOccupant: { [number]: number? } = {}
+local backpackListIdxUiRow: { [number]: number? } = {}
+local backpackUiInitialized = false
+local passthroughWiredSurfaces: { [GuiObject]: boolean } = {}
 local pendingToolbarDrag: {
 	kind: string,
 	idx: number,
@@ -482,20 +485,52 @@ local function backpackRowIndexFromDropProbes(rawViewport: Vector2, mouseWindow:
 	return nil
 end
 
-local function rebuildBackpackDisplayOrder()
-	backpackDisplayOrder = {}
+local function isBackpackInventoryIndex(listIdx: number, parked: { [number]: boolean }?): boolean
+	local map = parked or brainrotParkedInUI
+	return listIdx > HOTBAR_INVENTORY_SLOTS or map[listIdx] == true
+end
+
+local function countBackpackInventoryEntries(): number
+	local n = 0
 	for ki = 1, #brainrotEntries do
-		if brainrotEntries[ki] and (ki > HOTBAR_INVENTORY_SLOTS or brainrotParkedInUI[ki]) then
-			table.insert(backpackDisplayOrder, ki)
+		if brainrotEntries[ki] and isBackpackInventoryIndex(ki) then
+			n += 1
+		end
+	end
+	return n
+end
+
+local function ensureBackpackContainerLayout()
+	local container = backpackContainer
+	if not container then
+		return
+	end
+	local layout = container:FindFirstChildOfClass("UIListLayout")
+	if layout then
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+	end
+	for uiRow = 1, MAX_BACKPACK_BRAINROT_SLOTS do
+		local row = container:FindFirstChild(tostring(uiRow))
+		if row and row:IsA("GuiObject") then
+			row.LayoutOrder = uiRow
 		end
 	end
 end
 
-local function listIndexForBackpackUiRow(uiRow: number): number?
-	if uiRow < 1 or uiRow > MAX_BACKPACK_BRAINROT_SLOTS then
+local function getBackpackRowFrame(uiRow: number): GuiObject?
+	local container = backpackContainer
+	if not container then
 		return nil
 	end
-	return backpackDisplayOrder[uiRow]
+	local row = container:FindFirstChild(tostring(uiRow))
+	if row and row:IsA("GuiObject") then
+		return row
+	end
+	return nil
+end
+
+local function listIndexForBackpackUiRow(uiRow: number): number?
+	return backpackUiRowOccupant[uiRow]
 end
 
 local function brainrotEntryForBackpackSlot(uiRow: number): { name: string, icon: string, sourcePath: string }?
@@ -504,6 +539,211 @@ local function brainrotEntryForBackpackSlot(uiRow: number): { name: string, icon
 		return nil
 	end
 	return brainrotEntries[li]
+end
+
+local function wireBackpackRowPassthroughOnce(surface: GuiObject)
+	if passthroughWiredSurfaces[surface] then
+		return
+	end
+	passthroughChildClicks(surface)
+	passthroughWiredSurfaces[surface] = true
+end
+
+local function updateBackpackUiRowVisual(uiRow: number, listIdx: number?)
+	local row = getBackpackRowFrame(uiRow)
+	if not row then
+		return
+	end
+	row.Visible = true
+	local surface = toolSlotSurface(row)
+	wireBackpackRowPassthroughOnce(surface)
+
+	local entry = if listIdx then brainrotEntries[listIdx] else nil
+	if entry and backpackSearchText ~= "" and not matchesBackpackSearch(entry.name) then
+		entry = nil
+	end
+
+	local icon = surface:FindFirstChild("Icon")
+	local rate = surface:FindFirstChild("Rate")
+	local key = surface:FindFirstChild("Key")
+	if entry then
+		if icon and icon:IsA("ImageLabel") then
+			icon.ScaleType = Enum.ScaleType.Fit
+			icon.BackgroundTransparency = 1
+			icon.Image = entry.icon ~= "" and entry.icon or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+			icon.Visible = true
+			icon.AnchorPoint = Vector2.new(0.5, 0.5)
+			icon.Position = UDim2.new(0.5, 0, 0.5, 0)
+		end
+		if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
+			rate.Text = entry.name
+		end
+		if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
+			key.Text = if listIdx then tostring(listIdx) else tostring(uiRow)
+		end
+	else
+		if icon and icon:IsA("ImageLabel") then
+			icon.Image = ""
+			icon.Visible = false
+		end
+		if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
+			rate.Text = ""
+		end
+		if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
+			key.Text = tostring(uiRow)
+		end
+	end
+
+	local btn = slotPrimaryButton(row)
+	if btn then
+		applyBackpackSlotPanelAppearance(btn, entry ~= nil)
+	end
+end
+
+local function findLowestEmptyBackpackUiRow(): number?
+	for uiRow = 1, MAX_BACKPACK_BRAINROT_SLOTS do
+		if backpackUiRowOccupant[uiRow] == nil then
+			return uiRow
+		end
+	end
+	return nil
+end
+
+local function clearBackpackUiRow(uiRow: number)
+	local listIdx = backpackUiRowOccupant[uiRow]
+	if listIdx then
+		backpackListIdxUiRow[listIdx] = nil
+	end
+	backpackUiRowOccupant[uiRow] = nil
+	updateBackpackUiRowVisual(uiRow, nil)
+end
+
+local function populateBackpackUiRow(uiRow: number, listIdx: number)
+	backpackUiRowOccupant[uiRow] = listIdx
+	backpackListIdxUiRow[listIdx] = uiRow
+	updateBackpackUiRowVisual(uiRow, listIdx)
+end
+
+local function addBackpackItemToUi(listIdx: number)
+	if backpackListIdxUiRow[listIdx] then
+		updateBackpackUiRowVisual(backpackListIdxUiRow[listIdx] :: number, listIdx)
+		return
+	end
+	local uiRow = findLowestEmptyBackpackUiRow()
+	if not uiRow then
+		return
+	end
+	populateBackpackUiRow(uiRow, listIdx)
+end
+
+local function removeBackpackItemFromUi(listIdx: number)
+	local uiRow = backpackListIdxUiRow[listIdx]
+	if not uiRow then
+		return
+	end
+	clearBackpackUiRow(uiRow)
+end
+
+local function fullBuildBackpackUI()
+	table.clear(backpackUiRowOccupant)
+	table.clear(backpackListIdxUiRow)
+
+	local backpackIndices: { number } = {}
+	for ki = 1, #brainrotEntries do
+		if brainrotEntries[ki] and isBackpackInventoryIndex(ki) then
+			table.insert(backpackIndices, ki)
+		end
+	end
+	table.sort(backpackIndices)
+
+	for _, listIdx in ipairs(backpackIndices) do
+		local uiRow = findLowestEmptyBackpackUiRow()
+		if not uiRow then
+			break
+		end
+		populateBackpackUiRow(uiRow, listIdx)
+	end
+
+	for uiRow = 1, MAX_BACKPACK_BRAINROT_SLOTS do
+		if backpackUiRowOccupant[uiRow] == nil then
+			updateBackpackUiRowVisual(uiRow, nil)
+		end
+	end
+
+	backpackUiInitialized = true
+end
+
+local function collectBackpackIndexSet(entries: typeof(brainrotEntries), parked: { [number]: boolean }): { [number]: boolean }
+	local set: { [number]: boolean } = {}
+	for ki = 1, #entries do
+		if entries[ki] and isBackpackInventoryIndex(ki, parked) then
+			set[ki] = true
+		end
+	end
+	return set
+end
+
+local function syncBackpackUIAfterInventoryChange(
+	prevEntries: typeof(brainrotEntries),
+	prevParked: { [number]: boolean }
+)
+	if not backpackContainer then
+		return
+	end
+
+	if not backpackUiInitialized then
+		fullBuildBackpackUI()
+		return
+	end
+
+	local oldSet = collectBackpackIndexSet(prevEntries, prevParked)
+	local newSet = collectBackpackIndexSet(brainrotEntries, brainrotParkedInUI)
+
+	local added: { number } = {}
+	local removed: { number } = {}
+	for listIdx in newSet do
+		if not oldSet[listIdx] then
+			table.insert(added, listIdx)
+		end
+	end
+	for listIdx in oldSet do
+		if not newSet[listIdx] then
+			table.insert(removed, listIdx)
+		end
+	end
+
+	if #added == 1 and #removed == 0 then
+		addBackpackItemToUi(added[1])
+		return
+	end
+
+	if #removed == 1 and #added == 0 then
+		removeBackpackItemFromUi(removed[1])
+		return
+	end
+
+	if #added == 0 and #removed == 0 then
+		for listIdx, uiRow in backpackListIdxUiRow do
+			if newSet[listIdx] and uiRow then
+				updateBackpackUiRowVisual(uiRow, listIdx)
+			end
+		end
+		return
+	end
+
+	fullBuildBackpackUI()
+end
+
+local function applyBackpackSearchFilter()
+	if not backpackUiInitialized then
+		fullBuildBackpackUI()
+		return
+	end
+	for uiRow, listIdx in backpackUiRowOccupant do
+		if listIdx then
+			updateBackpackUiRowVisual(uiRow, listIdx)
+		end
+	end
 end
 
 local function matchesBackpackSearch(itemName: string): boolean
@@ -1000,66 +1240,6 @@ local function rebuildSlots()
 	refreshToolbarVisibility()
 end
 
-local function refreshBrainrotBackpackUI()
-	local container = backpackContainer
-	if not container then
-		return
-	end
-	rebuildBackpackDisplayOrder()
-	for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
-		local row = container:FindFirstChild(tostring(idx))
-		if not row or not row:IsA("GuiObject") then
-			continue
-		end
-		row.Visible = true
-		local surface = toolSlotSurface(row :: GuiObject)
-		local icon = surface:FindFirstChild("Icon")
-		local rate = surface:FindFirstChild("Rate")
-		local key = surface:FindFirstChild("Key")
-		local entry = brainrotEntryForBackpackSlot(idx)
-		if entry and backpackSearchText ~= "" and not matchesBackpackSearch(entry.name) then
-			entry = nil
-		end
-		if entry then
-			if icon and icon:IsA("ImageLabel") then
-				icon.ScaleType = Enum.ScaleType.Fit
-				icon.BackgroundTransparency = 1
-				icon.Image = entry.icon ~= "" and entry.icon or "rbxasset://textures/ui/GuiImagePlaceholder.png"
-				icon.Visible = true
-				icon.AnchorPoint = Vector2.new(0.5, 0.5)
-				icon.Position = UDim2.new(0.5, 0, 0.5, 0)
-			end
-			if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
-				rate.Text = entry.name
-			end
-			if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
-				local li = listIndexForBackpackUiRow(idx)
-				key.Text = if li then tostring(li) else tostring(idx)
-			end
-		else
-			if icon and icon:IsA("ImageLabel") then
-				icon.ScaleType = Enum.ScaleType.Fit
-				icon.BackgroundTransparency = 1
-				icon.Image = ""
-				icon.Visible = false
-				icon.AnchorPoint = Vector2.new(0.5, 0.5)
-				icon.Position = UDim2.new(0.5, 0, 0.5, 0)
-			end
-			if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
-				rate.Text = ""
-			end
-			if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
-				key.Text = tostring(idx)
-			end
-		end
-		local btn = slotPrimaryButton(row :: GuiObject)
-		if btn then
-			applyBackpackSlotPanelAppearance(btn, entry ~= nil)
-		end
-		passthroughChildClicks(surface :: GuiObject)
-	end
-end
-
 local function requestEquipBestBrainrot()
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
 	local ev = folder and folder:FindFirstChild("EquipBestBrainrot")
@@ -1157,7 +1337,7 @@ local function wireBackpackSearch(backpackFrame: Instance)
 	backpackSearchWired = true
 	local function applySearch()
 		backpackSearchText = tb.Text
-		refreshBrainrotBackpackUI()
+		applyBackpackSearchFilter()
 	end
 	tb:GetPropertyChangedSignal("Text"):Connect(applySearch)
 	tb.FocusLost:Connect(applySearch)
@@ -1256,6 +1436,8 @@ local function setBrainrotEntriesFromServer(payload: any)
 	if typeof(entriesSource) ~= "table" then
 		return
 	end
+	local prevEntries = brainrotEntries
+	local prevParked = brainrotParkedInUI
 	local nextList: { { name: string, icon: string, sourcePath: string, rarity: string?, mutation: string?, level: number?, baseIncome: number? } } = {}
 	for _, e in ipairs(entriesSource :: { any }) do
 		if typeof(e) == "table" then
@@ -1283,7 +1465,7 @@ local function setBrainrotEntriesFromServer(payload: any)
 	brainrotInventoryUsed = usedOverride or #nextList
 	brainrotInventoryMax = maxOverride or DEFAULT_BRAINROT_CAPACITY
 	refreshInventoryHeaderText()
-	refreshBrainrotBackpackUI()
+	syncBackpackUIAfterInventoryChange(prevEntries, prevParked)
 	rebuildSlots()
 	if typeof(payload) == "table" then
 		local equipSlot = (payload :: any).equipSlot
@@ -1620,6 +1802,7 @@ function ToolbarController.init()
 		backpackHeaderLabel = resolveBackpackHeaderLabel(backpackFrame)
 		refreshInventoryHeaderText()
 		if backpackContainer then
+			ensureBackpackContainerLayout()
 			for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
 				local row = backpackContainer:FindFirstChild(tostring(idx))
 				if row and row:IsA("GuiObject") then
@@ -1627,10 +1810,11 @@ function ToolbarController.init()
 					if btn then
 						styleToolbarSlotButton(btn)
 					end
+					wireBackpackRowPassthroughOnce(toolSlotSurface(row :: GuiObject))
 				end
 			end
 		end
-		task.defer(refreshBrainrotBackpackUI)
+		task.defer(fullBuildBackpackUI)
 		wireBrainrotBackpackEquips()
 		wireEquipBestButton(backpackFrame)
 		wireBackpackSearch(backpackFrame)
@@ -1810,13 +1994,8 @@ function ToolbarController.init()
 				UIInteractionSounds.playClick()
 			elseif overBackpack then
 				-- Hotbar → backpack panel: tuck (hide from hotbar, show in expanded backpack).
-				rebuildBackpackDisplayOrder()
-				local destListIdx = #backpackDisplayOrder + 1
+				local destListIdx = countBackpackInventoryEntries() + 1
 				(parkEv :: RemoteEvent):FireServer(pnd.idx, true, nil, destListIdx)
-				brainrotParkedInUI[pnd.idx] = true
-				rebuildBackpackDisplayOrder()
-				refreshBrainrotBackpackUI()
-				rebuildSlots()
 				UIInteractionSounds.playClick()
 			end
 		elseif pnd.kind == "backpack" then

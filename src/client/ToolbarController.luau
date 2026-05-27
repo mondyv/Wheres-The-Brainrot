@@ -658,6 +658,8 @@ local function refreshToolbarVisibility()
 	end
 end
 
+local deselectAllHotbarSlots: () -> ()
+
 local function onSafezonePresenceChanged(inZone: boolean)
 	if playerInSafezone == inZone then
 		return
@@ -667,6 +669,7 @@ local function onSafezonePresenceChanged(inZone: boolean)
 		setBackpackPanelOpen(false)
 		clearDragGhost()
 		pendingToolbarDrag = nil
+		deselectAllHotbarSlots()
 	end
 	refreshToolbarVisibility()
 end
@@ -718,6 +721,25 @@ local function resetAllSlotsToIdle()
 			applyButtonSelectionStyle(btn :: GuiObject, false)
 		end
 	end
+end
+
+-- Leaving the safe zone: unequip held brainrot and clear every hotbar selection ring.
+deselectAllHotbarSlots = function()
+	local hum = getHumanoid()
+	if hum then
+		hum:UnequipTools()
+	end
+	uiHotbarHighlight = nil
+	activeSlot = nil
+	for si = 1, #slots do
+		setSlotHighlight(si, false)
+		local slot = slots[si]
+		if slot then
+			local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
+			sc.Scale = 1
+		end
+	end
+	resetAllSlotsToIdle()
 end
 
 -- ── Slot icon update ──────────────────────────────────────────────────────────

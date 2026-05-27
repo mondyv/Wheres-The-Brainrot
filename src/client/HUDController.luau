@@ -9,6 +9,7 @@ local TweenService  = game:GetService("TweenService")
 local SocialService = game:GetService("SocialService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local UIButtonEffects = require(script.Parent.UIButtonEffects)
 
 local player    = Players.LocalPlayer
 
@@ -168,20 +169,27 @@ end
 
 local function setupFrameButton(button: GuiButton, frame: Frame)
 	frame.Visible = false
-	for _, name in ipairs({ "Close", "CloseButton", "Exit", "X" }) do
-		local btn = frame:FindFirstChild(name, true)
-		if btn and btn:IsA("GuiButton") then
-			btn.MouseEnter:Connect(function()
-				UIInteractionSounds.playHover()
-			end)
-			btn.MouseButton1Down:Connect(function()
-				UIInteractionSounds.playClick()
-			end)
-			btn.MouseButton1Click:Connect(function() closeFrame(frame) end)
-			break
+	local header = frame:FindFirstChild("Header")
+	local buttons = header and header:FindFirstChild("Buttons")
+	local closeBtn = buttons and buttons:FindFirstChild("Close")
+	if closeBtn and closeBtn:IsA("GuiButton") then
+		UIButtonEffects.wireGlistenCloseButton(closeBtn :: GuiButton, function()
+			closeFrame(frame)
+		end)
+	else
+		for _, name in ipairs({ "Close", "CloseButton", "Exit", "X" }) do
+			local btn = frame:FindFirstChild(name, true)
+			if btn and btn:IsA("GuiButton") then
+				UIButtonEffects.wireGlistenCloseButton(btn, function()
+					closeFrame(frame)
+				end)
+				break
+			end
 		end
 	end
-	applyHoverAndClick(button, function() openFrame(frame) end)
+	UIButtonEffects.wireSidebarButton(button, function()
+		openFrame(frame)
+	end)
 	wireFrameVisibleBackdropCleanup(frame)
 end
 
@@ -249,8 +257,10 @@ local function setupSlowButton()
 	btn.MouseEnter:Connect(function()
 		UIInteractionSounds.playHover()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.03 }):Play()
+		UIButtonEffects.playBorderGlisten(slowBtn :: GuiObject)
 	end)
 	btn.MouseLeave:Connect(function()
+		UIButtonEffects.hideHoverEffects(slowBtn :: GuiObject)
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.0 }):Play()
 	end)
 	btn.MouseButton1Down:Connect(function()
@@ -299,7 +309,7 @@ function HUDController.init()
 	-- Invite button → Roblox social invite prompt
 	local inviteBtn = findButton("Invite")
 	if inviteBtn then
-		applyHoverAndClick(inviteBtn, function()
+		UIButtonEffects.wireSidebarButton(inviteBtn, function()
 			pcall(function()
 				SocialService:PromptGameInvite(player)
 			end)
@@ -318,7 +328,7 @@ function HUDController.init()
 		if cashBuy and cashBuy:IsA("GuiButton") then
 			local storeFrame = resolveFrame("Store")
 			if storeFrame then
-				applyHoverAndClick(cashBuy, function()
+				UIButtonEffects.wireAccentButton(cashBuy, function()
 					openFrame(storeFrame)
 				end)
 			end

@@ -4,8 +4,8 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
-local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local UIButtonEffects = require(script.Parent.UIButtonEffects)
 
 local SwingUpgrades = require(ReplicatedStorage.Shared.SwingUpgrades)
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
@@ -15,8 +15,7 @@ local player = Players.LocalPlayer
 local purchaseFn = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("PurchaseSwingUpgrade") :: RemoteFunction
 local prepareRobuxRE = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("PrepareRobuxUpgrade") :: RemoteEvent
 
-local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local SUCCESS_TWEEN = TweenInfo.new(0.32, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
 
 local function purchaseCount(upgradeId: string): number
 	local v = player:GetAttribute(SwingUpgrades.buysAttributeName(upgradeId))
@@ -24,11 +23,7 @@ local function purchaseCount(upgradeId: string): number
 end
 
 local function priceForUpgrade(upgradeId: string): number
-	local def = (SwingUpgrades :: any)[upgradeId]
-	if not def then
-		return 0
-	end
-	return SwingUpgrades.priceAtTier(def, purchaseCount(upgradeId))
+	return SwingUpgrades.priceForUpgradeId(upgradeId, purchaseCount)
 end
 
 local function labelBonus(def: any): number
@@ -196,9 +191,8 @@ local function refreshUpgradeRow(row: Instance, upgradeId: string)
 	if not def then
 		return
 	end
-	-- Before→after counters use front-end display totals (+25 → 1 + 25), not backend attribute steps.
 	local cur = displayStatForAttr(def.attr)
-	local nxt = cur + labelBonus(def)
+	local nxt = SwingUpgrades.displayStatAfterPurchase(cur, labelBonus(def))
 
 	if upgradeId == "Carry1" then
 		local curL = findLabelUnder(row, { "CurrentCarry" })
@@ -278,6 +272,20 @@ local function getOrAddUIScale(obj: GuiObject): UIScale
 	return s
 end
 
+local function playRowPurchasePulse(row: Instance)
+	local changes = row:FindFirstChild("Changes")
+	local pulseTarget = changes or row
+	local sc = getOrAddUIScale(pulseTarget :: GuiObject)
+	sc.Scale = 0.94
+	TweenService:Create(sc, SUCCESS_TWEEN, { Scale = 1 }):Play()
+	local arrow = changes and changes:FindFirstChild("Arrow")
+	if arrow and arrow:IsA("GuiObject") then
+		local asc = getOrAddUIScale(arrow)
+		asc.Scale = 1.2
+		TweenService:Create(asc, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	end
+end
+
 local function playSpendFeedback(amountLabel: TextLabel, spent: boolean)
 	if spent then
 		if not amountBaseColor then
@@ -323,7 +331,7 @@ end
 
 local ROW_IDS = { "Power10", "Power25", "Reach10", "Reach25", "Carry1" }
 
-local function wirePurchase(upgradeId: string, buyButtons: Instance, refreshAllRows: () -> ())
+local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instance, refreshAllRows: () -> ())
 	local def = (SwingUpgrades :: any)[upgradeId]
 	if not def then
 		return
@@ -342,7 +350,7 @@ local function wirePurchase(upgradeId: string, buyButtons: Instance, refreshAllR
 			return
 		end
 		busy = true
-		task.delay(0.05, function()
+		task.delay(0.35, function()
 			busy = false
 		end)
 
@@ -360,31 +368,34 @@ local function wirePurchase(upgradeId: string, buyButtons: Instance, refreshAllR
 
 		local ok, err = purchaseFn:InvokeServer(upgradeId)
 		if ok then
+			setCostLabel(row, upgradeId)
 			refreshAllRows()
+			playRowPurchasePulse(row)
 		elseif err then
 			GameSoundEffects.playErrorNotif()
 			warn("[UpgradesController] Purchase failed:", err)
 		end
 	end
 
-	cashBtn.Activated:Connect(tryBuy)
-	cashBtn.MouseButton1Click:Connect(tryBuy)
+	UIButtonEffects.wireScaleButtonAnim(cashBtn, tryBuy)
 
-	local scale = getOrAddUIScale(cashBtn)
-	cashBtn.MouseEnter:Connect(function()
-		UIInteractionSounds.playHover()
-		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.06 }):Play()
-	end)
-	cashBtn.MouseLeave:Connect(function()
-		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.0 }):Play()
-	end)
-	cashBtn.MouseButton1Down:Connect(function()
-		UIInteractionSounds.playClick()
-		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.94 }):Play()
-	end)
-	cashBtn.MouseButton1Up:Connect(function()
-		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.06 }):Play()
-	end)
+	local robuxHolder = buyButtons:FindFirstChild("BuyRobux")
+	if robuxHolder then
+		local robuxBtn: GuiButton? = nil
+		if robuxHolder:IsA("GuiButton") then
+			robuxBtn = robuxHolder
+		else
+			robuxBtn = robuxHolder:FindFirstChildWhichIsA("GuiButton", true)
+		end
+		if robuxBtn then
+			UIButtonEffects.wireAccentButton(robuxBtn, function()
+				prepareRobuxRE:FireServer(upgradeId)
+				pcall(function()
+					MarketplaceService:PromptProductPurchase(player, SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID)
+				end)
+			end)
+		end
+	end
 end
 
 local function init()
@@ -408,6 +419,7 @@ local function init()
 			local row = container:FindFirstChild(id)
 			if row and row:FindFirstChild("BuyButtons") then
 				refreshUpgradeRow(row, id)
+				setCostLabel(row, id)
 			end
 		end
 	end
@@ -442,7 +454,7 @@ local function init()
 		if row then
 			local buyButtons = row:FindFirstChild("BuyButtons")
 			if buyButtons then
-				wirePurchase(id, buyButtons, refreshAllRows)
+				wirePurchase(id, row, buyButtons, refreshAllRows)
 			end
 		end
 	end
@@ -452,22 +464,7 @@ local function init()
 		local btns = header:FindFirstChild("Buttons")
 		local close = btns and btns:FindFirstChild("Close")
 		if close and close:IsA("GuiButton") then
-			local sc = getOrAddUIScale(close)
-			close.MouseEnter:Connect(function()
-				UIInteractionSounds.playHover()
-				TweenService:Create(sc, HOVER_TWEEN, { Scale = 1.08 }):Play()
-			end)
-			close.MouseLeave:Connect(function()
-				TweenService:Create(sc, HOVER_TWEEN, { Scale = 1 }):Play()
-			end)
-			close.MouseButton1Down:Connect(function()
-				UIInteractionSounds.playClick()
-				TweenService:Create(sc, CLICK_TWEEN, { Scale = 0.92 }):Play()
-			end)
-			close.MouseButton1Up:Connect(function()
-				TweenService:Create(sc, HOVER_TWEEN, { Scale = 1.08 }):Play()
-			end)
-			close.MouseButton1Click:Connect(function()
+			UIButtonEffects.wireGlistenCloseButton(close, function()
 				local HUDController = require(script.Parent.HUDController)
 				HUDController.closeCurrentFrame()
 			end)

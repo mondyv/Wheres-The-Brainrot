@@ -15,6 +15,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
@@ -392,11 +393,16 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 			continue
 		end
 
+		if not ProximityPromptEffects.isPromptFacingCamera(pp) then
+			continue
+		end
+
 		table.insert(candidates, { prompt = pp, dist = dist })
 	end
 
 	for _, pp in allPrompts do
 		pp.Enabled = false
+		ProximityPromptEffects.forceHide(pp)
 	end
 
 	local closest: Candidate? = nil
@@ -408,7 +414,10 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 
 	if closest then
 		closest.prompt.Enabled = true
+		ProximityPromptEffects.syncStandProximityUi(closest.prompt)
 		ProximityPromptEffects.syncStandPlaceProximityUi(closest.prompt)
+	else
+		ProximityPromptEffects.syncStandProximityUi(nil)
 	end
 
 	lastHRPPosition = hrpPos
@@ -532,11 +541,33 @@ local function ensureSurfaceGuiInputChain(leaf: GuiObject)
 			(w :: GuiObject).Active = true
 		end
 		if w:IsA("SurfaceGui") then
-			(w :: SurfaceGui).Active = true
+			local sg = w :: SurfaceGui
+			(sg :: any).Active = true
 			break
 		end
 		w = w.Parent
 	end
+end
+
+-- Decorative icons/labels must not steal touches from the upgrade hit target (especially on mobile).
+local function passthroughChildClicks(root: GuiObject, capture: GuiButton)
+	for _, d in root:GetDescendants() do
+		if d:IsA("GuiObject") and d ~= capture then
+			(d :: GuiObject).Active = false
+		end
+	end
+	capture.Active = true
+	capture.Selectable = true
+end
+
+local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
+	clickable.Activated:Connect(tryFireUpgrade)
+	clickable.MouseButton1Click:Connect(tryFireUpgrade)
+	clickable.InputBegan:Connect(function(input: InputObject)
+		if input.UserInputType == Enum.UserInputType.Touch then
+			tryFireUpgrade()
+		end
+	end)
 end
 
 local function wireUpgradeButton(stand: Model): GuiButton?
@@ -600,8 +631,15 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 			visibleTarget = upgradeFrame :: GuiObject
 		end
 	end
-	clickable.Active = true
 	clickable.AutoButtonColor = false
+	passthroughChildClicks(upgradeFrame :: GuiObject, clickable)
+
+	if clickable:GetAttribute("__UpgradeWired") == true then
+		ensureSurfaceGuiInputChain(clickable)
+		passthroughChildClicks(upgradeFrame :: GuiObject, clickable)
+		return clickable
+	end
+	clickable:SetAttribute("__UpgradeWired", true)
 
 	local function getScale(): UIScale
 		local s = visibleTarget:FindFirstChildOfClass("UIScale")
@@ -641,7 +679,7 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 		end
 	end
 
-	clickable.Activated:Connect(tryFireUpgrade)
+	bindUpgradeClick(clickable, tryFireUpgrade)
 	return clickable
 end
 
@@ -998,6 +1036,15 @@ function M.init()
 	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
 		rebuildCachedPlotMatch()
 		refreshLocalStandUpgradeWiring()
+		task.defer(function()
+			for _, view in pairs(views) do
+				local btn = view.upgradeButton
+				if btn and btn.Parent then
+					ensureSurfaceGuiInputChain(btn)
+					btn.Active = true
+				end
+			end
+		end)
 		bumpPromptRefreshFromMovement()
 	end)
 	player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(bumpPromptRefreshFromMovement)

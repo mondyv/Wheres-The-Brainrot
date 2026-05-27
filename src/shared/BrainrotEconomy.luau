@@ -90,6 +90,38 @@ function M.formatCashShort(n: number): string
 	return string.format("$%d", math.floor(n + 0.5))
 end
 
+local function formatScaledNumber(n: number, divisor: number, suffix: string): string
+	local v = n / divisor
+	local rounded = math.floor(v * 100 + 0.5) / 100
+	if math.abs(rounded - math.floor(rounded + 0.0001)) < 0.005 then
+		return string.format("%d%s", math.floor(rounded + 0.5), suffix)
+	end
+	local whole = math.floor(rounded)
+	local frac = math.floor((rounded - whole) * 100 + 0.5)
+	if frac >= 100 then
+		whole += 1
+		frac = 0
+	end
+	return string.format("%d,%02d%s", whole, frac, suffix)
+end
+
+-- Compact count (rebirths, etc.) — same K/M/B steps as cash, without a $ prefix.
+function M.formatNumberShort(n: number): string
+	local v = math.max(0, math.floor(n + 0.5))
+	if v >= 1e15 then
+		return formatScaledNumber(v, 1e15, "Qa")
+	elseif v >= 1e12 then
+		return formatScaledNumber(v, 1e12, "T")
+	elseif v >= 1e9 then
+		return formatScaledNumber(v, 1e9, "B")
+	elseif v >= 1e6 then
+		return formatScaledNumber(v, 1e6, "M")
+	elseif v >= 1e3 then
+		return formatScaledNumber(v, 1e3, "K")
+	end
+	return tostring(v)
+end
+
 -- Live cash pad total: show decimals only when needed; empty pad stays "$0".
 function M.formatCashAccumulated(n: number): string
 	if n <= 0 then

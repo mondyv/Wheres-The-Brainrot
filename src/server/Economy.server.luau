@@ -96,8 +96,9 @@ purchaseFn.OnServerInvoke = function(player: Player, upgradeId: any): (boolean, 
 	if typeof(cash) ~= "number" then
 		return false, "No cash"
 	end
-	local buys = getBuys(player, id)
-	local price = SwingUpgrades.priceAtTier(def, buys)
+	local price = SwingUpgrades.priceForUpgradeId(id, function(upgradeId: string)
+		return getBuys(player, upgradeId)
+	end)
 	if cash < price then
 		return false, "Not enough cash"
 	end

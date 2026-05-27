@@ -8,6 +8,7 @@ local TweenService = game:GetService("TweenService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local HUDController = require(script.Parent.HUDController)
+local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 
@@ -742,8 +743,7 @@ function SellController.init()
 		if sellHeaderButtons then
 			local closeBtn = sellHeaderButtons:FindFirstChild("Close")
 			if closeBtn and closeBtn:IsA("GuiButton") then
-				wireButtonAnim(closeBtn)
-				wireSellButton(closeBtn, function()
+				UIButtonEffects.wireGlistenCloseButton(closeBtn, function()
 					HUDController.closeCurrentFrame()
 				end)
 			end
@@ -792,8 +792,7 @@ function SellController.init()
 			if infoHeaderButtons then
 				local infoClose = infoHeaderButtons:FindFirstChild("Close")
 				if infoClose and infoClose:IsA("GuiButton") then
-					wireButtonAnim(infoClose)
-					wireSellButton(infoClose, cancelSell)
+					UIButtonEffects.wireGlistenCloseButton(infoClose, cancelSell)
 				end
 			end
 

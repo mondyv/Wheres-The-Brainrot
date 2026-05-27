@@ -5,6 +5,7 @@
 -- Upgrade attributes on the player: SwingRange, SwingForce, RopeLength (all numbers)
 
 local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService        = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local UserInputService  = game:GetService("UserInputService")
@@ -13,6 +14,7 @@ local Debris            = game:GetService("Debris")
 
 local player = Players.LocalPlayer
 local camera: Camera = workspace.CurrentCamera
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("SafezoneUtil"))
 
 -- Unique name per boot() so BindToRenderStep doesn’t collide across respawns.
 local r6RenderBindSerial = 0
@@ -34,7 +36,7 @@ local LAUNCH_CAMERA_BLEND    = 0.42  -- how much camera look steers launch vs cu
 -- After aim is chosen, blend toward flat camera forward and add lift so release feels like a lunge.
 local LAUNCH_FORWARD_CAMERA_MIX = 0.4
 local LAUNCH_UP_BLEND        = 0.34
-local LAUNCH_DURATION        = 0.12  -- seconds FOV treats player as "launched" after detach
+local LAUNCH_DURATION        = 0.35  -- seconds post-release camera/FOV treats player as launched
 local REATTACH_ZIP_MULT      = 0.4   -- zip impulse scale when re-hooking soon after a release
 local REATTACH_ZIP_GRACE      = 0.4   -- seconds after detach where zip is reduced
 local MIN_SWING_HOLD_LAUNCH   = 0.1  -- shorter swings get a softer release (anti spam-fling)
@@ -46,13 +48,20 @@ local REATTACH_AIR_GRACE     = 1.2
 -- Grapple only to vines roughly in front of the camera (blocks snagging behind you).
 local MIN_GRAPPLE_LOOK_DOT = 0.18
 local MAX_SWING_SPEED        = 80
-local FOV_MAX            = 96
-local FOV_SPEED          = 5
-local SHAKE_INTENSITY    = 1.2   -- max camera offset studs on hard landing
-local SHAKE_DURATION     = 0.55  -- seconds the shake lasts
-local SHAKE_SPEED        = 50    -- oscillation frequency
-local SHAKE_VEL_MIN      = 18    -- landing speed that starts shake
-local SHAKE_VEL_MAX      = 65    -- landing speed for full shake
+local FOV_MAX              = 96
+local FOV_SPEED            = 4.2   -- smooth widen while accelerating on the arc
+local LANDING_BLOCK_VEL_MIN = 18  -- landing speed that spawns block burst (no camera shake)
+local LANDING_BLOCK_VEL_MAX = 65
+-- Hanging swing camera: lag + roll only (no positional shake / high-frequency wobble).
+local CAM_LAG_STUDS_MAX      = 0.95
+local CAM_LAG_SMOOTH         = 3.8
+local CAM_ROLL_DEG_MAX       = 2.8
+local CAM_ROLL_SMOOTH        = 6.5
+local ATTACH_PUNCH_DURATION  = 0.3
+local ATTACH_PUNCH_FOV       = 5.5  -- brief zoom-in on hook
+local LAUNCH_FOV_BOOST       = 10
+local LAUNCH_FOV_DURATION    = 0.38
+local SWING_CAM_RENDER_STEP  = "SwingSystem_CameraFX"
 
 local COLOR_NEAR     = Color3.fromRGB(90, 210, 255)
 local COLOR_BEST     = Color3.fromRGB(55, 255, 105)
@@ -261,10 +270,13 @@ local function boot(character: Model)
 		end
 	end
 
-	-- ── Shake state ───────────────────────────────────────────────────────────
-	local shakeTimer      = 0
-	local landingSpeed    = 0
-	local landedFromSwing = false  -- only shake when landing after a swing release
+	-- ── Landing / swing camera state ──────────────────────────────────────────
+	local landingSpeed = 0
+	local landedFromSwing = false
+	local swingCamRoll = 0
+	local swingCamLagWorld = Vector3.zero
+	local attachCamClock = -1e9
+	local launchCamClock = -1e9
 
 	-- ── Upgrade stats ────────────────────────────────────────────────────────
 	-- Per-point gains halved vs earlier tuning (reach + rope felt too strong).
@@ -319,6 +331,75 @@ local function boot(character: Model)
 	local isLaunched  = false
 	local isAirborne  = false
 	local swingTimer  = 0
+
+	local swingCamBindSerial = 0
+	swingCamBindSerial += 1
+	local swingCamBindName = SWING_CAM_RENDER_STEP .. "_" .. tostring(swingCamBindSerial)
+
+	local function expSmoothScalar(current: number, target: number, dt: number, rate: number): number
+		return current + (target - current) * (1 - math.exp(-dt * rate))
+	end
+
+	local function resetSwingCameraState()
+		swingCamRoll = 0
+		swingCamLagWorld = Vector3.zero
+		humanoid.CameraOffset = Vector3.zero
+	end
+
+	local function applySwingCameraFx(dt: number)
+		if not hrp.Parent then
+			return
+		end
+
+		local now = os.clock()
+		local attachAge = now - attachCamClock
+		local launchAge = now - launchCamClock
+		local attachActive = attachAge >= 0 and attachAge < ATTACH_PUNCH_DURATION
+		local launchActive = isLaunched or (launchAge >= 0 and launchAge < LAUNCH_FOV_DURATION)
+
+		if not isSwinging and not attachActive and not launchActive then
+			swingCamRoll = expSmoothScalar(swingCamRoll, 0, dt, 14)
+			swingCamLagWorld = swingCamLagWorld:Lerp(Vector3.zero, math.min(1, dt * 11))
+			if math.abs(swingCamRoll) < 0.0004 and swingCamLagWorld.Magnitude < 0.002 then
+				resetSwingCameraState()
+			end
+			return
+		end
+
+		humanoid.CameraOffset = Vector3.zero
+
+		local vel = hrp.AssemblyLinearVelocity
+		local speedT = math.clamp(vel.Magnitude / math.max(dynMaxSwingSpeed, 1), 0, 1)
+
+		local targetRoll = 0
+		if isSwinging and vel.Magnitude > 4 then
+			local camRight = camera.CFrame.RightVector
+			local flatVel = Vector3.new(vel.X, 0, vel.Z)
+			if flatVel.Magnitude > 0.6 then
+				local lateral = camRight:Dot(flatVel.Unit)
+				local rollMax = math.rad(CAM_ROLL_DEG_MAX)
+				targetRoll = math.clamp(lateral * speedT * rollMax, -rollMax, rollMax)
+			end
+		end
+		swingCamRoll = expSmoothScalar(swingCamRoll, targetRoll, dt, CAM_ROLL_SMOOTH)
+
+		local lagTarget = Vector3.zero
+		if isSwinging and vel.Magnitude > 5 then
+			lagTarget = -vel.Unit * (CAM_LAG_STUDS_MAX * (0.2 + 0.8 * speedT))
+		end
+		swingCamLagWorld = swingCamLagWorld:Lerp(lagTarget, math.min(1, dt * CAM_LAG_SMOOTH))
+
+		local cf = camera.CFrame
+		if swingCamLagWorld.Magnitude > 0.001 then
+			cf = cf + swingCamLagWorld
+		end
+		if math.abs(swingCamRoll) > 0.0001 then
+			cf = cf * CFrame.Angles(0, 0, swingCamRoll)
+		end
+		camera.CFrame = cf
+	end
+
+	RunService:BindToRenderStep(swingCamBindName, Enum.RenderPriority.Camera.Value + 1, applySwingCameraFx)
 
 	-- Swing constraints / force
 	local ropeInst:      SpringConstraint? = nil
@@ -711,33 +792,9 @@ local function boot(character: Model)
 		return math.abs(localPt.X) <= half.X and math.abs(localPt.Y) <= half.Y and math.abs(localPt.Z) <= half.Z
 	end
 
-	-- workspace.Map["Spawn And Bases"].SafezoneHitbox — cached; OBB point test only (no touch queries).
-	local safezoneHitbox: BasePart? = nil
-	local function refreshSafezoneHitbox()
-		if safezoneHitbox and safezoneHitbox.Parent then
-			return
-		end
-		safezoneHitbox = nil
-		local map = workspace:FindFirstChild("Map")
-		if not map then
-			return
-		end
-		local spawnBases = map:FindFirstChild("Spawn And Bases")
-		if not spawnBases then
-			return
-		end
-		local h = spawnBases:FindFirstChild("SafezoneHitbox")
-		if h and h:IsA("BasePart") then
-			safezoneHitbox = h
-		end
-	end
-
+	-- workspace.Map["Spawn And Bases"].Raddie (or SafezoneHitbox) — shared OBB test via SafezoneUtil.
 	local function isHrpInSafezone(): boolean
-		refreshSafezoneHitbox()
-		if not safezoneHitbox then
-			return false
-		end
-		return isPointInsidePartOBB(hrp.Position, safezoneHitbox)
+		return SafezoneUtil.isCharacterInSafezone(character)
 	end
 
 	-- One SwingTarget in range: chosen by where the camera looks (not pure distance — avoids snapping back to the vine you just left).
@@ -853,6 +910,7 @@ local function boot(character: Model)
 
 		isSwinging = true
 		lastSwingAttachClock = os.clock()
+		attachCamClock = os.clock()
 		isLaunched = false
 		swingTimer = 0
 
@@ -920,6 +978,9 @@ local function boot(character: Model)
 
 		destroySwingChargeHud()
 		isSwinging = false
+		if doLaunch then
+			launchCamClock = os.clock()
+		end
 
 		if forceInst     then forceInst:Destroy();     forceInst     = nil end
 		if forceAtt      then forceAtt:Destroy();      forceAtt      = nil end
@@ -1030,17 +1091,19 @@ local function boot(character: Model)
 			isAirborne = true
 		elseif new == Enum.HumanoidStateType.Landed then
 			isAirborne = false
-			-- Only shake + burst blocks when landing after a swing release, not on normal jumps
 			if landedFromSwing then
 				landedFromSwing = false
 				local alpha = math.clamp(
-					(landingSpeed - SHAKE_VEL_MIN) / (SHAKE_VEL_MAX - SHAKE_VEL_MIN), 0, 1)
+					(landingSpeed - LANDING_BLOCK_VEL_MIN) / (LANDING_BLOCK_VEL_MAX - LANDING_BLOCK_VEL_MIN),
+					0,
+					1
+				)
 				if alpha > 0 then
-					shakeTimer = SHAKE_DURATION * alpha
 					spawnLandingBlocks(alpha)
 				end
 			end
 			isLaunched = false
+			resetSwingCameraState()
 		elseif new == Enum.HumanoidStateType.Running
 		or new == Enum.HumanoidStateType.RunningNoPhysics then
 			isAirborne = false
@@ -1194,14 +1257,28 @@ local function boot(character: Model)
 	local heartbeat = RunService.Heartbeat:Connect(function(dt)
 		local vel = hrp.AssemblyLinearVelocity
 
-		-- FOV effect
+		-- FOV: widen with swing speed; attach punch + launch burst layered on top.
+		local fovTarget = fovBase
 		if isSwinging or isLaunched then
 			local t = math.clamp(vel.Magnitude / math.max(dynMaxSwingSpeed, 1), 0, 1)
-			local target = fovBase + (FOV_MAX - fovBase) * t
-			camera.FieldOfView += (target - camera.FieldOfView) * math.min(dt * FOV_SPEED, 1)
-		else
-			camera.FieldOfView += (fovBase - camera.FieldOfView) * math.min(dt * FOV_SPEED, 1)
+			fovTarget = fovBase + (FOV_MAX - fovBase) * t
 		end
+
+		local now = os.clock()
+		local attachAge = now - attachCamClock
+		if attachAge >= 0 and attachAge < ATTACH_PUNCH_DURATION then
+			local u = attachAge / ATTACH_PUNCH_DURATION
+			fovTarget -= ATTACH_PUNCH_FOV * math.sin(u * math.pi)
+		end
+
+		local launchAge = now - launchCamClock
+		if launchAge >= 0 and launchAge < LAUNCH_FOV_DURATION then
+			local u = launchAge / LAUNCH_FOV_DURATION
+			local ease = (1 - u) * (1 - u)
+			fovTarget += LAUNCH_FOV_BOOST * ease
+		end
+
+		camera.FieldOfView += (fovTarget - camera.FieldOfView) * math.min(dt * FOV_SPEED, 1)
 
 		-- Swing physics: camera-steered pendulum on a SpringConstraint.
 		if isSwinging and forceInst and swingTargetPart and swingTargetPart.Parent and ropeAnchorAtt and ropeAnchorAtt.Parent then
@@ -1250,6 +1327,7 @@ local function boot(character: Model)
 				then math.min(1, swingChargeFill + dt / SWING_CHARGE_HOLD_SEC)
 				else math.max(0, swingChargeFill - dt * 3.5)
 			layoutSwingChargeDot()
+			humanoid.CameraOffset = Vector3.zero
 
 			return
 		end
@@ -1259,19 +1337,8 @@ local function boot(character: Model)
 			landingSpeed = vel.Magnitude
 		end
 
-		-- Camera shake on landing
-		if shakeTimer > 0 then
-			shakeTimer = math.max(0, shakeTimer - dt)
-			local progress  = shakeTimer / SHAKE_DURATION
-			local intensity = SHAKE_INTENSITY * progress
-			humanoid.CameraOffset = Vector3.new(
-				math.sin(tick() * SHAKE_SPEED)       * intensity,
-				math.cos(tick() * SHAKE_SPEED * 1.3) * intensity,
-				0
-			)
-		else
-			-- Smoothly reset camera offset when shake ends
-			humanoid.CameraOffset = humanoid.CameraOffset:Lerp(Vector3.zero, math.min(dt * 12, 1))
+		if not isSwinging and not isLaunched then
+			humanoid.CameraOffset = humanoid.CameraOffset:Lerp(Vector3.zero, math.min(dt * 14, 1))
 		end
 
 		-- Single target indicator: best vine in range (camera aim). Safe zone = red, no grapple.
@@ -1339,6 +1406,10 @@ local function boot(character: Model)
 				RunService:UnbindFromRenderStep(r6RenderBindName :: string)
 			end)
 		end
+		pcall(function()
+			RunService:UnbindFromRenderStep(swingCamBindName)
+		end)
+		resetSwingCameraState()
 		heartbeat:Disconnect()
 		for _, c in statConns do c:Disconnect() end
 		if isSwinging then stopSwing(false) end

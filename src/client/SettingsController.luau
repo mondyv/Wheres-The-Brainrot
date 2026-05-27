@@ -14,6 +14,8 @@ local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local HUDController = require(script.Parent.HUDController)
 
 local player = Players.LocalPlayer
 
@@ -366,7 +368,9 @@ function SettingsController.init()
 			local closeBtn: GuiButton? = if close and close:IsA("GuiButton") then close :: GuiButton
 				else close and close:FindFirstChildWhichIsA("GuiButton", true) :: GuiButton?
 			if closeBtn then
-				bindButtonMicroAnim(closeBtn)
+				UIButtonEffects.wireGlistenCloseButton(closeBtn, function()
+					HUDController.closeCurrentFrame()
+				end)
 			end
 		end
 	end
@@ -555,5 +559,8 @@ function SettingsController.init()
 		end)
 	end
 end
+
+return SettingsController
+
 
 return SettingsController

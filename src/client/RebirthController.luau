@@ -13,6 +13,7 @@ local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local HUDController = require(script.Parent.HUDController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local UIButtonEffects = require(script.Parent.UIButtonEffects)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -779,9 +780,17 @@ function RebirthController.init()
 	local headerButtons = header and header:FindFirstChild("Buttons")
 	local closeHost = headerButtons and headerButtons:FindFirstChild("Close")
 	if closeHost then
-		wireFrameButton(closeHost, function()
-			HUDController.closeCurrentFrame()
-		end)
+		local closeBtn: GuiButton? = if closeHost:IsA("GuiButton") then closeHost :: GuiButton
+			else closeHost:FindFirstChildWhichIsA("GuiButton", true)
+		if closeBtn then
+			UIButtonEffects.wireGlistenCloseButton(closeBtn, function()
+				HUDController.closeCurrentFrame()
+			end)
+		else
+			wireFrameButton(closeHost, function()
+				HUDController.closeCurrentFrame()
+			end)
+		end
 	end
 
 	rebirthFrame:GetPropertyChangedSignal("Visible"):Connect(function()

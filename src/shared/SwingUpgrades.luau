@@ -11,17 +11,17 @@ export type UpgradeDef = {
 
 local DEFS: { [string]: UpgradeDef } = {
 	-- `add` = authoritative gameplay (halved vs earlier tuning); `displayAdd` = UI labels + before→after counters.
-	Power10 = { attr = "SwingForce", add = 1, displayAdd = 10, cost = 10_000, priceGrowth = 1.14 } :: UpgradeDef,
-	Power25 = { attr = "SwingForce", add = 2, displayAdd = 25, cost = 30_000, priceGrowth = 1.14 } :: UpgradeDef,
-	Reach10 = { attr = "SwingRange", add = 1, displayAdd = 10, cost = 10_000, priceGrowth = 1.14 } :: UpgradeDef,
-	Reach25 = { attr = "SwingRange", add = 2, displayAdd = 25, cost = 30_000, priceGrowth = 1.14 } :: UpgradeDef,
-	Carry1 = { attr = "Carry", add = 1, displayAdd = 1, cost = 500_000, priceGrowth = 1.12 } :: UpgradeDef,
+	Power10 = { attr = "SwingForce", add = 1, displayAdd = 10, cost = 10_000, priceGrowth = 1.5 } :: UpgradeDef,
+	Power25 = { attr = "SwingForce", add = 2, displayAdd = 25, cost = 30_000, priceGrowth = 1.5 } :: UpgradeDef,
+	Reach10 = { attr = "SwingRange", add = 1, displayAdd = 10, cost = 10_000, priceGrowth = 1.5 } :: UpgradeDef,
+	Reach25 = { attr = "SwingRange", add = 2, displayAdd = 25, cost = 30_000, priceGrowth = 1.5 } :: UpgradeDef,
+	Carry1 = { attr = "Carry", add = 1, displayAdd = 1, cost = 500_000, priceGrowth = 1.5 } :: UpgradeDef,
 }
 
 local ALL_IDS = { "Power10", "Power25", "Reach10", "Reach25", "Carry1" }
 
 local function growth(def: UpgradeDef): number
-	return def.priceGrowth or 1.14
+	return def.priceGrowth or 1.5
 end
 
 local M = {}
@@ -33,6 +33,26 @@ function M.priceAtTier(def: UpgradeDef, purchaseCount: number): number
 	return math.floor(def.cost * (growth(def) ^ n))
 end
 
+-- Price tier is shared across +10 / +25 (etc.) for the same stat attribute.
+function M.totalBuysForAttr(attr: string, getBuyCount: (string) -> number): number
+	local sum = 0
+	for _, id in ALL_IDS do
+		local def = DEFS[id]
+		if def and def.attr == attr then
+			sum += math.max(0, math.floor(getBuyCount(id)))
+		end
+	end
+	return sum
+end
+
+function M.priceForUpgradeId(upgradeId: string, getBuyCount: (string) -> number): number
+	local def = DEFS[upgradeId]
+	if not def then
+		return 0
+	end
+	return M.priceAtTier(def, M.totalBuysForAttr(def.attr, getBuyCount))
+end
+
 function M.buysAttributeName(upgradeId: string): string
 	return "Buys_" .. upgradeId
 end
@@ -41,16 +61,25 @@ function M.displayBonus(def: UpgradeDef): number
 	return if typeof(def.displayAdd) == "number" then def.displayAdd else def.add
 end
 
--- UI stat total (1 base + sum of display bonuses purchased for that attribute).
+-- UI stat total: starter shows 1; after any purchase, sum display bonuses for that attribute.
 function M.displayStatTotal(attr: string, getBuyCount: (string) -> number): number
-	local total = 1
+	local sum = 0
 	for _, id in ALL_IDS do
 		local def = DEFS[id]
 		if def and def.attr == attr then
-			total += M.displayBonus(def) * math.max(0, math.floor(getBuyCount(id)))
+			sum += M.displayBonus(def) * math.max(0, math.floor(getBuyCount(id)))
 		end
 	end
-	return total
+	return if sum > 0 then sum else 1
+end
+
+-- Next tier label: 1 → +25 shows 25 (not 26); +1 carry still goes 1 → 2.
+function M.displayStatAfterPurchase(current: number, bonus: number): number
+	local cur = math.floor(current)
+	if cur <= 1 and bonus > 1 then
+		return bonus
+	end
+	return cur + bonus
 end
 
 for id, def in DEFS do

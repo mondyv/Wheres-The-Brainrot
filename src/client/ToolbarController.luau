@@ -6,8 +6,8 @@
 	  SideUI
 	  └── Toolbar
 	      ├── Hotbar
-	      │   ├── 1 .. 9   (ImageButton slots)
-	      │   └── ToggleBackpack
+	      │   └── 1 .. 9   (slot frames with nested Button)
+	      ├── ToggleBackpack
 	      └── Backpack  (optional expanded view)
 
 	Hotbar slots may use nested `Button` (e.g. Hotbar["1"].Button.Icon).
@@ -25,6 +25,8 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("SafezoneUtil"))
 
 local player    = Players.LocalPlayer
 
@@ -68,6 +70,9 @@ local slotTools: { Tool? }   = {}    -- tool assigned to each slot
 local activeSlot: number?    = nil
 local uiHotbarHighlight: number? = nil -- nil = no slot ring (toggle off); otherwise mirrors selection / equip
 local toolbarShown: boolean  = false
+local playerInSafezone: boolean = false
+local safezonePollAccum = 0.0
+local SAFEZONE_POLL_INTERVAL = 0.12
 
 local MAX_BACKPACK_BRAINROT_SLOTS = 19
 local HOTBAR_INVENTORY_SLOTS = 9
@@ -137,6 +142,7 @@ local function findBrainrotToolAtInvIndex(root: Instance?, invIndex: number): To
 	end
 	for _, c in root:GetChildren() do
 		if c:IsA("Tool") and c:GetAttribute("BrainrotTool") == true then
+			c.ManualActivationOnly = true
 			local a = c:GetAttribute("BrainrotInvIndex")
 			if typeof(a) == "number" and math.floor(a) == invIndex then
 				return c
@@ -627,6 +633,49 @@ local function hideToolbar()
 	t:Play()
 end
 
+local function toolbarHasInventory(): boolean
+	local char = player.Character
+	local equipped = char and char:FindFirstChildOfClass("Tool")
+	if equipped then
+		return true
+	end
+	local backpack = getBackpack()
+	if backpack then
+		for _, item in ipairs(backpack:GetChildren()) do
+			if item:IsA("Tool") then
+				return true
+			end
+		end
+	end
+	return #brainrotEntries > 0
+end
+
+local function refreshToolbarVisibility()
+	if playerInSafezone and toolbarHasInventory() then
+		showToolbar()
+	else
+		hideToolbar()
+	end
+end
+
+local function onSafezonePresenceChanged(inZone: boolean)
+	if playerInSafezone == inZone then
+		return
+	end
+	playerInSafezone = inZone
+	if not inZone then
+		setBackpackPanelOpen(false)
+		clearDragGhost()
+		pendingToolbarDrag = nil
+	end
+	refreshToolbarVisibility()
+end
+
+local function pollSafezonePresence()
+	local char = player.Character
+	onSafezonePresenceChanged(SafezoneUtil.isCharacterInSafezone(char))
+end
+
 -- ── Slot highlight ────────────────────────────────────────────────────────────
 
 -- Selection = UIStroke only. Never touch the slot's own Image / ImageColor3 (that's the slot art designed in Studio).
@@ -842,20 +891,7 @@ local function rebuildSlots()
 		setSlotHighlight(i, uiHotbarHighlight ~= nil and i == uiHotbarHighlight)
 	end
 
-	local hasAnyTool = equipped ~= nil
-	if not hasAnyTool and backpack then
-		for _, item in ipairs(backpack:GetChildren()) do
-			if item:IsA("Tool") then
-				hasAnyTool = true
-				break
-			end
-		end
-	end
-	if hasAnyTool or #brainrotEntries > 0 then
-		showToolbar()
-	else
-		hideToolbar()
-	end
+	refreshToolbarVisibility()
 end
 
 local function refreshBrainrotBackpackUI()
@@ -1011,9 +1047,8 @@ local function wireBackpackCloseButton(backpackFrame: Instance)
 	end
 	backpackCloseWired = true
 	passthroughChildClicks(closeBtn :: GuiObject)
-	closeBtn.MouseButton1Click:Connect(function()
+	UIButtonEffects.wireGlistenCloseButton(closeBtn, function()
 		setBackpackPanelOpen(false)
-		UIInteractionSounds.playClick()
 	end)
 end
 
@@ -1052,6 +1087,7 @@ local function wireSortCategoryTabs(backpackFrame: Instance)
 end
 
 local selectSlot: (number) -> ()
+local applyAutoEquipFromSync: (number) -> ()
 
 local function setBrainrotEntriesFromServer(payload: any)
 	local entriesSource: any = payload
@@ -1115,9 +1151,7 @@ local function setBrainrotEntriesFromServer(payload: any)
 	if typeof(payload) == "table" then
 		local equipSlot = (payload :: any).equipSlot
 		if typeof(equipSlot) == "number" then
-			task.defer(function()
-				selectSlot(math.clamp(math.floor(equipSlot), 1, HOTBAR_INVENTORY_SLOTS))
-			end)
+			applyAutoEquipFromSync(equipSlot)
 		end
 	end
 end
@@ -1189,6 +1223,51 @@ selectSlot = function(index: number)
 		setSlotHighlight(i, i == index)
 	end
 	hum:EquipTool(tool)
+end
+
+-- After deposit, server sends equipSlot = inventory index of the new brainrot (hotbar 1–9 mirror those indices).
+-- Must not use selectSlot here — it toggles off when the server already equipped the matching tool.
+applyAutoEquipFromSync = function(equipSlot: number)
+	local slot = math.clamp(math.floor(equipSlot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
+
+	local function applyHotbarHighlight()
+		if slot > HOTBAR_INVENTORY_SLOTS then
+			return
+		end
+		uiHotbarHighlight = slot
+		activeSlot = slot
+		for i = 1, #slots do
+			setSlotHighlight(i, i == slot)
+		end
+	end
+
+	local function tryHoldBrainrot(): boolean
+		applyHotbarHighlight()
+		local hum = getHumanoid()
+		if not hum then
+			return false
+		end
+		rebuildSlots()
+		applyHotbarHighlight()
+
+		local tool = slotTools[slot]
+		local char = player.Character
+		local equipped = char and char:FindFirstChildOfClass("Tool")
+		if tool then
+			if equipped ~= tool then
+				hum:EquipTool(tool)
+			end
+			return true
+		end
+		if brainrotEntries[slot] and not brainrotParkedInUI[slot] then
+			requestEquipBrainrotSlot(slot)
+		end
+		return false
+	end
+
+	tryHoldBrainrot()
+	task.defer(tryHoldBrainrot)
+	task.delay(0.15, tryHoldBrainrot)
 end
 
 local HOTBAR_KEY_ACTION = "ToolbarHotbarNumberKeys"
@@ -1333,13 +1412,51 @@ function ToolbarController.init()
 	end)
 
 	-- Character spawning
-	player.CharacterAdded:Connect(wireCharacter)
+	player.CharacterAdded:Connect(function(char: Model)
+		wireCharacter(char)
+		task.defer(pollSafezonePresence)
+	end)
 	if player.Character then
 		wireCharacter(player.Character)
 	end
 
+	playerInSafezone = SafezoneUtil.isCharacterInSafezone(player.Character)
+	refreshToolbarVisibility()
+
+	RunService.Heartbeat:Connect(function(dt)
+		safezonePollAccum += dt
+		if safezonePollAccum < SAFEZONE_POLL_INTERVAL then
+			return
+		end
+		safezonePollAccum = 0
+		pollSafezonePresence()
+	end)
+
+	task.spawn(function()
+		local map = workspace:WaitForChild("Map", 120)
+		if map then
+			map.ChildAdded:Connect(function(ch)
+				if ch.Name == "Spawn And Bases" then
+					SafezoneUtil.invalidateCache()
+					pollSafezonePresence()
+				end
+			end)
+			local spawnBases = map:WaitForChild("Spawn And Bases", 60)
+			if spawnBases then
+				spawnBases.DescendantAdded:Connect(function(desc)
+					if desc:IsA("BasePart") and (desc.Name == "Raddie" or desc.Name == "SafezoneHitbox") then
+						SafezoneUtil.invalidateCache()
+						pollSafezonePresence()
+					end
+				end)
+			end
+			SafezoneUtil.invalidateCache()
+			pollSafezonePresence()
+		end
+	end)
+
 	-- ToggleBackpack + brainrot backpack grid (Backpack.Container["1"]..["19"])
-	local toggleBtn = hotbar:FindFirstChild("ToggleBackpack")
+	local toggleBtn = toolbar:FindFirstChild("ToggleBackpack") or hotbar:FindFirstChild("ToggleBackpack")
 	local backpackFrame = toolbar:FindFirstChild("Backpack")
 	if backpackFrame then
 		backpackContainer = backpackFrame:FindFirstChild("Container")

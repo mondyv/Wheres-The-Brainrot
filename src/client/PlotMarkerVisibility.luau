@@ -125,6 +125,19 @@ local function setLayerCollectorViewOnly(d: LayerCollector)
 	end
 end
 
+local function setLayerCollectorInteractive(d: LayerCollector)
+	if d:IsA("SurfaceGui") then
+		d.Active = true
+		for _, desc in ipairs(d:GetDescendants()) do
+			if desc:IsA("GuiObject") then
+				(desc :: GuiObject).Active = true
+			end
+		end
+	elseif d:IsA("BillboardGui") then
+		d.Active = true
+	end
+end
+
 local function shouldEnableStandSurfaceGui(d: LayerCollector, plotRoot: Instance): boolean
 	local stand = findBrainrotStandAncestor(d)
 	if stand and stand:GetAttribute("BrainrotStandLocked") == true then
@@ -153,7 +166,9 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 		else
 			d.Enabled = false
 		end
-		if not mine and d.Enabled then
+		if mine and d.Enabled then
+			setLayerCollectorInteractive(d)
+		elseif not mine and d.Enabled then
 			setLayerCollectorViewOnly(d)
 		end
 	elseif d:IsA("SurfaceGui") then
@@ -166,7 +181,9 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 		else
 			d.Enabled = false
 		end
-		if not mine and d.Enabled then
+		if mine and d.Enabled then
+			setLayerCollectorInteractive(d)
+		elseif not mine and d.Enabled then
 			setLayerCollectorViewOnly(d)
 		end
 	end

@@ -3,9 +3,11 @@
 	Engine ProximityPrompt handles hold/trigger; ProximityPromptEffects draws the custom bush card + FX.
 ]]
 
+local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local CarryGate = require(script.Parent.CarryGate)
@@ -46,6 +48,10 @@ local mapWatchRoot: Instance? = nil
 local activeBush: Model? = nil
 local activePrompt: ProximityPrompt? = nil
 
+local BUSH_SEARCH_HOLD_ACTION = "BushSearchHoldWhileToolEquipped"
+local bushSearchHoldPrompt: ProximityPrompt? = nil
+local bushSearchHoldBeganAt = 0.0
+
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
 local function isBushFolderName(name: string): boolean
@@ -71,6 +77,49 @@ local function anchorFor(model: Model): BasePart?
 		return model.PrimaryPart
 	end
 	return model:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local BUSH_PROMPT_LIFT_SCALE = 0.66
+
+local function bushPromptWorldPosition(root: Model): Vector3?
+	local minX, minY, minZ = math.huge, math.huge, math.huge
+	local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+	local foundPart = false
+
+	for _, desc in root:GetDescendants() do
+		if desc:IsA("BasePart") then
+			foundPart = true
+			local cf = desc.CFrame
+			local h = desc.Size * 0.5
+			for sx = -1, 1, 2 do
+				for sy = -1, 1, 2 do
+					for sz = -1, 1, 2 do
+						local wp = cf:PointToWorldSpace(Vector3.new(h.X * sx, h.Y * sy, h.Z * sz))
+						minX = math.min(minX, wp.X)
+						minY = math.min(minY, wp.Y)
+						minZ = math.min(minZ, wp.Z)
+						maxX = math.max(maxX, wp.X)
+						maxY = math.max(maxY, wp.Y)
+						maxZ = math.max(maxZ, wp.Z)
+					end
+				end
+			end
+		end
+	end
+
+	if foundPart then
+		local center = Vector3.new((minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5)
+		local height = math.max(0.5, maxY - minY)
+		return center + Vector3.new(0, height * BUSH_PROMPT_LIFT_SCALE, 0)
+	end
+
+	local ok, cf, size = pcall(function()
+		return root:GetBoundingBox()
+	end)
+	if ok and typeof(cf) == "CFrame" and typeof(size) == "Vector3" then
+		return cf.Position + Vector3.new(0, size.Y * BUSH_PROMPT_LIFT_SCALE, 0)
+	end
+	return nil
 end
 
 local function promptWorldPos(prompt: ProximityPrompt): Vector3
@@ -126,8 +175,8 @@ local function attachPrompt(root: Model)
 	local att = Instance.new("Attachment")
 	att.Name = "_BushPromptCenter"
 	att.Parent = anchor
-	local center = select(1, root:GetBoundingBox()).Position
-	att.Position = anchor.CFrame:PointToObjectSpace(center)
+	local targetWorld = bushPromptWorldPosition(root) or (anchor.Position + Vector3.new(0, 2, 0))
+	att.Position = anchor.CFrame:PointToObjectSpace(targetWorld)
 
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.Name = "BushHarvestPrompt"
@@ -238,6 +287,31 @@ end
 
 -- ── Targeting ─────────────────────────────────────────────────────────────────
 
+local HIGHLIGHT_READY = Color3.fromRGB(72, 255, 140)
+local HIGHLIGHT_LOCKED = Color3.fromRGB(255, 45, 45)
+
+local function applyBushHighlight(hl: Highlight, bush: Model, locked: boolean)
+	hl.Adornee = bush
+	hl.Enabled = true
+	hl.FillTransparency = 1
+	hl.OutlineTransparency = 0
+	hl.OutlineColor = if locked then HIGHLIGHT_LOCKED else HIGHLIGHT_READY
+	-- AlwaysOnTop can fail to draw on some mobile GPUs; Occluded is more reliable.
+	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+		hl.DepthMode = Enum.HighlightDepthMode.Occluded
+	else
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	end
+end
+
+local function cooldownOutlineMinDistance(): number
+	-- Phones are usually close to the bush; don't hide the red lock outline for being "too near".
+	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+		return 0
+	end
+	return COOLDOWN_VFX_MIN_DIST
+end
+
 local function pickClosest(): (Model?, ProximityPrompt?, BasePart?)
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -310,7 +384,7 @@ local function pickClosestCooldownBush(): (Model?, ProximityPrompt?, BasePart?)
 		end
 		local grace = harvestLockVisualUntil[model]
 		local graceActive = typeof(grace) == "number" and now < grace
-		if not graceActive and d < COOLDOWN_VFX_MIN_DIST then
+		if not graceActive and d < cooldownOutlineMinDistance() then
 			continue
 		end
 		if d < bestD then
@@ -326,6 +400,10 @@ end
 
 local function setActive(bush: Model?, prompt: ProximityPrompt?, _anchor: BasePart?)
 	local carryBlock = CarryGate.isFull()
+	if carryBlock and bushSearchHoldPrompt then
+		ProximityPromptEffects.endManagedBushHold(bushSearchHoldPrompt, false)
+		bushSearchHoldPrompt = nil
+	end
 	local effectivePrompt = if carryBlock then nil else prompt
 	local changed = activeBush ~= bush or activePrompt ~= effectivePrompt
 
@@ -386,14 +464,11 @@ local function doHarvest(prompt: ProximityPrompt)
 	end
 end
 
-local HIGHLIGHT_READY = Color3.fromRGB(72, 255, 140)
--- Match cooldown card stroke so “locked” reads as the same red treatment.
-local HIGHLIGHT_LOCKED = Color3.fromRGB(255, 45, 45)
-
 local function tickAim()
 	local hl = aimHighlight
-	if hl and hl.Parent ~= workspace.CurrentCamera then
-		hl.Parent = workspace.CurrentCamera
+	local cam = workspace.CurrentCamera
+	if hl and cam and hl.Parent ~= cam then
+		hl.Parent = cam
 	end
 
 	if mapWatchRoot and mapWatchRoot.Parent then
@@ -416,9 +491,7 @@ local function tickAim()
 	if bush then
 		ProximityPromptEffects.hideBushCooldownBanner()
 		if hl then
-			hl.Adornee = bush
-			hl.Enabled = true
-			hl.OutlineColor = HIGHLIGHT_READY
+			applyBushHighlight(hl, bush, false)
 		end
 		setActive(bush, prompt, anchor)
 		return
@@ -431,9 +504,7 @@ local function tickAim()
 			ProximityPromptEffects.showBushCooldownBanner(cPrompt, ends)
 		end
 		if hl then
-			hl.Adornee = cBush
-			hl.Enabled = true
-			hl.OutlineColor = HIGHLIGHT_LOCKED
+			applyBushHighlight(hl, cBush, true)
 		end
 		setActive(nil, nil, nil)
 		return
@@ -538,6 +609,55 @@ function BushHoldInteraction.init()
 		aimTickAccum = 0
 		tickAim()
 	end)
+
+	-- Engine ProximityPrompt hold is blocked while a brainrot Tool is equipped; run the hold ourselves.
+	ContextActionService:BindActionAtPriority(
+		BUSH_SEARCH_HOLD_ACTION,
+		function(_name, state, input)
+			if UserInputService:GetFocusedTextBox() ~= nil then
+				return Enum.ContextActionResult.Pass
+			end
+			local prompt = activePrompt
+			if not prompt or not prompt.Parent or not prompt.Enabled or CarryGate.isFull() then
+				if state == Enum.UserInputState.End and bushSearchHoldPrompt then
+					ProximityPromptEffects.endManagedBushHold(bushSearchHoldPrompt, false)
+					bushSearchHoldPrompt = nil
+				end
+				return Enum.ContextActionResult.Pass
+			end
+			if input.UserInputType ~= Enum.UserInputType.Keyboard
+				and input.UserInputType ~= Enum.UserInputType.Gamepad1
+			then
+				return Enum.ContextActionResult.Pass
+			end
+			local keyOk = input.KeyCode == Enum.KeyCode.E
+				or input.KeyCode == prompt.KeyboardKeyCode
+			local padOk = prompt.GamepadKeyCode ~= Enum.KeyCode.Unknown
+				and input.KeyCode == prompt.GamepadKeyCode
+			if not keyOk and not padOk then
+				return Enum.ContextActionResult.Pass
+			end
+
+			if state == Enum.UserInputState.Begin then
+				bushSearchHoldPrompt = prompt
+				bushSearchHoldBeganAt = os.clock()
+				ProximityPromptEffects.beginManagedBushHold(prompt)
+				return Enum.ContextActionResult.Sink
+			end
+			if state == Enum.UserInputState.End and bushSearchHoldPrompt == prompt then
+				local dur = prompt.HoldDuration
+				local completed = dur > 0 and (os.clock() - bushSearchHoldBeganAt) >= dur * 0.92
+				ProximityPromptEffects.endManagedBushHold(prompt, completed)
+				bushSearchHoldPrompt = nil
+				return Enum.ContextActionResult.Sink
+			end
+			return Enum.ContextActionResult.Pass
+		end,
+		false,
+		Enum.ContextActionPriority.High.Value + 1,
+		Enum.KeyCode.E,
+		Enum.KeyCode.ButtonX
+	)
 
 	local function onCarryChanged()
 		if CarryGate.isFull() then

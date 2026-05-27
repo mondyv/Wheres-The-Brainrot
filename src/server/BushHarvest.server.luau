@@ -1,5 +1,5 @@
 --[[
-	Harvest: spawn brainrot → short pop → float ~4s above bush → weld above player → touch deposit to redeem all carried brainrots in one go (until backpack is full).
+	Harvest: spawn brainrot → short pop → float ~4s above bush → weld above player → touch deposit (or stand inside RedWall) to redeem into inventory.
 	Stack count is capped by the Carry upgrade (player attribute Carry, default 1); extras cannot be harvested until redeemed or dropped.
 	Templates: ServerStorage.Brainrots/<Name>/<MutationVariant> (Studio). Deposits: CollectionService tag BrainrotDeposit.
 	Inventory: BrainrotCount matches list size; sync payload includes tuckedSlots (indices 1–9 UI-moved into backpack panel),
@@ -35,9 +35,8 @@ type BrainrotInvEntry = {
 local MAX_HARVEST_RANGE = 14
 local RANGE_SLACK = 5
 local FLOAT_DURATION = 4
--- Vertical lift above prompt/bush center so float phase doesn't clip bush collision.
-local SPAWN_Y_OFFSET = 8.75
 local POP_DURATION = 0.35
+local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 local DEPOSIT_TAG = "BrainrotDeposit"
 local MAX_BACKPACK_BRAINROT_SLOTS = 19
 -- Total brainrot inventory capacity (UI "All Items [used/max]"); distinct from the 19 backpack grid rows.
@@ -316,6 +315,60 @@ local function enrichEntryFromBrainrotsFolder(root: Folder?, entry: BrainrotInvE
 	end
 end
 
+local function carryModelToInventoryEntry(carry: Model): BrainrotInvEntry
+	local srcAttr = carry:GetAttribute("BrainrotSourcePath")
+	local sourcePath = if typeof(srcAttr) == "string" and srcAttr ~= "" then srcAttr else ""
+	local rarityAttr = carry:GetAttribute("BrainrotRarity")
+	local mutationAttr = carry:GetAttribute("BrainrotMutation")
+	local levelAttr = carry:GetAttribute("BrainrotLevel")
+	local baseIncomeAttr = carry:GetAttribute("BrainrotBaseIncome")
+	local entry: BrainrotInvEntry = {
+		name = carry.Name,
+		icon = getIconFromCarryModel(carry),
+		sourcePath = sourcePath,
+		rarity = if typeof(rarityAttr) == "string" then rarityAttr else "common",
+		mutation = if typeof(mutationAttr) == "string" then mutationAttr else "normal",
+		level = if typeof(levelAttr) == "number" then math.max(1, math.floor(levelAttr)) else 1,
+		baseIncome = if typeof(baseIncomeAttr) == "number" then baseIncomeAttr else 0,
+	}
+	local brainrotsFolder = Brainrots.getBrainrotsFolder()
+	if brainrotsFolder and brainrotsFolder:IsA("Folder") then
+		enrichEntryFromBrainrotsFolder(brainrotsFolder :: Folder, entry)
+	end
+	enrichEntryFromCatalog(entry)
+	return entry
+end
+
+-- Returns the new inventory list index on success (used to auto-equip the brainrot just deposited).
+local function redeemSingleCarryModel(player: Player, carry: Model): number?
+	if not carry or not carry.Parent then
+		return nil
+	end
+	if carry:GetAttribute("OwnerUserId") ~= player.UserId then
+		return nil
+	end
+
+	player:SetAttribute("LastCollectedBrainrot", carry.Name)
+	local entry = carryModelToInventoryEntry(carry)
+	if not pushBrainrotInventory(player, entry, true) then
+		return nil
+	end
+
+	local list = brainrotInventories[player]
+	local newSlot = if list then #list else nil
+
+	local indexInternal = ServerStorage:FindFirstChild("IndexInternal")
+	local indexBF = indexInternal and indexInternal:FindFirstChild("OnBrainrotDeposited")
+	if indexBF and indexBF:IsA("BindableFunction") then
+		pcall(function()
+			indexBF:Invoke(player, entry)
+		end)
+	end
+
+	carry:Destroy()
+	return newSlot
+end
+
 -- Gaps between stacked carry centers on the head.
 local STACK_GAP = 0.012
 
@@ -503,6 +556,67 @@ local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolea
 	return math.abs(localPt.X) <= half.X and math.abs(localPt.Y) <= half.Y and math.abs(localPt.Z) <= half.Z
 end
 
+-- RedWall / RedPart deposit zones (CollectionService tag BrainrotDeposit).
+local depositPartSet: { [BasePart]: boolean } = {}
+local depositParts: { BasePart } = {}
+
+local function registerDepositPart(part: BasePart)
+	if depositPartSet[part] then
+		return
+	end
+	depositPartSet[part] = true
+	table.insert(depositParts, part)
+end
+
+local function unregisterDepositPart(part: BasePart)
+	if not depositPartSet[part] then
+		return
+	end
+	depositPartSet[part] = nil
+	for i = #depositParts, 1, -1 do
+		if depositParts[i] == part then
+			table.remove(depositParts, i)
+			break
+		end
+	end
+end
+
+local function isInsideAnyDeposit(worldPoint: Vector3): boolean
+	for _, part in ipairs(depositParts) do
+		if part.Parent and isPointInsidePartOBB(worldPoint, part) then
+			return true
+		end
+	end
+	return false
+end
+
+local function isPlayerInsideDeposit(player: Player): boolean
+	local char = player.Character
+	if not char then
+		return false
+	end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return false
+	end
+	return isInsideAnyDeposit((hrp :: BasePart).Position)
+end
+
+local equipBrainrotSlotForPlayer: (Player, number) -> boolean
+
+local function notifyClientInventorySync(player: Player, autoEquipSlot: number?)
+	local invList = brainrotInventories[player]
+	local slot: number? = nil
+	if typeof(autoEquipSlot) == "number" then
+		slot = math.clamp(math.floor(autoEquipSlot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
+	end
+	if slot and invList and invList[slot] then
+		equipBrainrotSlotForPlayer(player, slot :: number)
+	end
+	local sync = ensureInventoryRemotes()
+	sync:FireClient(player, packInventoryForClient(player, invList or {}, slot))
+end
+
 local function registerLuckHitbox(part: BasePart)
 	if registeredLuckParts[part] then
 		return
@@ -590,6 +704,71 @@ local function resolveHarvestPlot(worldPos: Vector3): (number, number, number)
 	local displayLuck = resolveDisplayLuckForPos(worldPos)
 	local plot = PlotLuck.effectivePlot(basePlot, displayLuck, Brainrots.MAX_PLOT)
 	return plot, basePlot, displayLuck
+end
+
+local function bushTopWorldY(bush: Model?, fallbackY: number): number
+	if not bush or not bush.Parent then
+		return fallbackY
+	end
+	local _, maxV = BrainrotCarryVisual.getWorldAabb(bush)
+	if maxV then
+		return maxV.Y
+	end
+	return fallbackY
+end
+
+local function findNearestBushModel(worldPos: Vector3, maxRange: number): Model?
+	local map = workspace:FindFirstChild("Map")
+	if not map then
+		return nil
+	end
+	local best: Model? = nil
+	local bestDist = maxRange
+	for _, desc in map:GetDescendants() do
+		if desc:IsA("Folder") then
+			local isBushFolder = false
+			for _, name in BUSH_FOLDER_NAMES do
+				if desc.Name == name then
+					isBushFolder = true
+					break
+				end
+			end
+			if isBushFolder then
+				for _, child in desc:GetChildren() do
+					if child:IsA("Model") then
+						local bush = child :: Model
+						local ok, cf = pcall(function()
+							return bush:GetBoundingBox()
+						end)
+						if ok and typeof(cf) == "CFrame" then
+							local dist = (cf.Position - worldPos).Magnitude
+							if dist < bestDist then
+								bestDist = dist
+								best = bush
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return best
+end
+
+local function spawnBrainrotAboveBush(clone: Model, worldPosition: Vector3, harvestLevel: number): (CFrame, number)
+	local bush = findNearestBushModel(worldPosition, MAX_HARVEST_RANGE + RANGE_SLACK)
+	local surfaceTopY = bushTopWorldY(bush, worldPosition.Y)
+	BrainrotCarryVisual.applyScaleForLevel(clone, harvestLevel)
+	local yaw = math.random() * math.pi * 2
+	local spawnCf = BrainrotCarryVisual.spawnCFrameAboveSurface(
+		clone,
+		worldPosition.X,
+		surfaceTopY,
+		worldPosition.Z,
+		nil,
+		yaw
+	)
+	return spawnCf, yaw
 end
 
 local function placeModelAtWorld(model: Model, worldCFrame: CFrame)
@@ -680,6 +859,16 @@ local function attachCarriedBrainrot(player: Player, clone: Model)
 		return
 	end
 
+	-- Already inside RedWall deposit: skip head carry (Touched won't fire if they never left the box).
+	if isPlayerInsideDeposit(player) then
+		local newSlot = redeemSingleCarryModel(player, clone)
+		if newSlot then
+			syncBrainrotCarryCountAttr(player)
+			notifyClientInventorySync(player, newSlot)
+		end
+		return
+	end
+
 	applyCarryScaleForModel(clone)
 
 	local stackLift = stackLiftFromExistingCarries(player)
@@ -754,7 +943,17 @@ local function runFloatThenAttach(player: Player, char: Model, clone: Model, anc
 			conn:Disconnect()
 			floatConnByClone[clone] = nil
 			removePendingFloat(player, clone)
-			attachCarriedBrainrot(player, clone)
+			if isPlayerInsideDeposit(player) then
+				local newSlot = redeemSingleCarryModel(player, clone)
+				if newSlot then
+					syncBrainrotCarryCountAttr(player)
+					notifyClientInventorySync(player, newSlot)
+				else
+					attachCarriedBrainrot(player, clone)
+				end
+			else
+				attachCarriedBrainrot(player, clone)
+			end
 			return
 		end
 
@@ -817,13 +1016,11 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 		clone:SetAttribute("BrainrotSourcePath", fallback.Parent.Name .. "/" .. fallback.Name)
 		clone:SetAttribute("BrainrotMutation", "normal")
 		clone:SetAttribute("BrainrotLevel", harvestLevel)
-		BrainrotCarryVisual.applyScaleForLevel(clone, harvestLevel)
-		local spawnCf = CFrame.new(worldPosition + Vector3.new(0, SPAWN_Y_OFFSET, 0)) * CFrame.Angles(0, math.random() * math.pi * 2, 0)
 		clone.Parent = workspace
+		local spawnCf, baseYaw = spawnBrainrotAboveBush(clone, worldPosition, harvestLevel)
 		placeModelAtWorld(clone, spawnCf)
 		setAllPartsPhysics(clone, true, true)
 		local anchorPos = spawnCf.Position
-		local baseYaw = select(1, spawnCf:ToEulerAnglesYXZ())
 		popSpawnEffect(clone, function()
 			if not clone.Parent or player.Character ~= char then
 				if clone.Parent then clone:Destroy() end
@@ -862,12 +1059,11 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 	clone:SetAttribute("BrainrotMutation", actualMutation)
 	clone:SetAttribute("BrainrotBaseIncome", pick.baseIncome)
 	clone:SetAttribute("BrainrotLevel", harvestLevel)
-	BrainrotCarryVisual.applyScaleForLevel(clone, harvestLevel)
 	clone:SetAttribute("BrainrotPlot", plot)
 	clone:SetAttribute("BrainrotDisplayLuck", displayLuck)
 
-	local spawnCf = CFrame.new(worldPosition + Vector3.new(0, SPAWN_Y_OFFSET, 0)) * CFrame.Angles(0, math.random() * math.pi * 2, 0)
 	clone.Parent = workspace
+	local spawnCf, baseYaw = spawnBrainrotAboveBush(clone, worldPosition, harvestLevel)
 	placeModelAtWorld(clone, spawnCf)
 	setAllPartsPhysics(clone, true, true)
 
@@ -882,7 +1078,6 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 	})
 
 	local anchorPos = spawnCf.Position
-	local baseYaw = select(1, spawnCf:ToEulerAnglesYXZ())
 
 	popSpawnEffect(clone, function()
 		if not clone.Parent or player.Character ~= char then
@@ -900,8 +1095,6 @@ end
 local redeemDebounce: { [Player]: number } = {}
 local REDEEM_DEBOUNCE = 0.45
 
-local equipBrainrotSlotForPlayer: (Player, number) -> boolean
-
 -- Redeem every carried brainrot for this player in one deposit touch (until inventory is full).
 local function tryRedeemAllAtDeposit(player: Player)
 	local now = os.clock()
@@ -915,7 +1108,7 @@ local function tryRedeemAllAtDeposit(player: Player)
 
 	redeemDebounce[player] = now
 
-	local brainrotsFolder = Brainrots.getBrainrotsFolder()
+	local lastAddedIdx = 1
 	local addedAny = false
 
 	for i = #list, 1, -1 do
@@ -928,56 +1121,23 @@ local function tryRedeemAllAtDeposit(player: Player)
 			continue
 		end
 
-		player:SetAttribute("LastCollectedBrainrot", carry.Name)
-
-		local srcAttr = carry:GetAttribute("BrainrotSourcePath")
-		local sourcePath = if typeof(srcAttr) == "string" and srcAttr ~= "" then srcAttr else ""
-		local rarityAttr = carry:GetAttribute("BrainrotRarity")
-		local mutationAttr = carry:GetAttribute("BrainrotMutation")
-		local levelAttr = carry:GetAttribute("BrainrotLevel")
-		local baseIncomeAttr = carry:GetAttribute("BrainrotBaseIncome")
-		local entry: BrainrotInvEntry = {
-			name = carry.Name,
-			icon = getIconFromCarryModel(carry),
-			sourcePath = sourcePath,
-			rarity = if typeof(rarityAttr) == "string" then rarityAttr else "common",
-			mutation = if typeof(mutationAttr) == "string" then mutationAttr else "normal",
-			level = if typeof(levelAttr) == "number" then math.max(1, math.floor(levelAttr)) else 1,
-			baseIncome = if typeof(baseIncomeAttr) == "number" then baseIncomeAttr else 0,
-		}
-		if brainrotsFolder and brainrotsFolder:IsA("Folder") then
-			enrichEntryFromBrainrotsFolder(brainrotsFolder :: Folder, entry)
-		end
-		enrichEntryFromCatalog(entry)
-		if not pushBrainrotInventory(player, entry, true) then
+		if redeemSingleCarryModel(player, carry) then
+			addedAny = true
+			local invList = brainrotInventories[player]
+			if invList then
+				lastAddedIdx = #invList
+			end
+			table.remove(list, i)
+		else
 			-- Inventory full — stop; remaining carries stay for another touch.
 			break
 		end
-		addedAny = true
-
-		local indexInternal = ServerStorage:FindFirstChild("IndexInternal")
-		local indexBF = indexInternal and indexInternal:FindFirstChild("OnBrainrotDeposited")
-		if indexBF and indexBF:IsA("BindableFunction") then
-			pcall(function()
-				indexBF:Invoke(player, entry)
-			end)
-		end
-
-		carry:Destroy()
-		table.remove(list, i)
 	end
 
 	syncBrainrotCarryCountAttr(player)
 
 	if addedAny then
-		local invList = brainrotInventories[player]
-		if invList and invList[1] then
-			task.defer(function()
-				equipBrainrotSlotForPlayer(player, 1)
-			end)
-		end
-		local sync = ensureInventoryRemotes()
-		sync:FireClient(player, packInventoryForClient(player, invList or {}, 1))
+		notifyClientInventorySync(player, lastAddedIdx)
 	end
 end
 
@@ -1017,6 +1177,10 @@ local function carriedBrainrotFromTouch(other: BasePart, plr: Player): Model?
 end
 
 local function hookDepositPart(part: BasePart)
+	registerDepositPart(part)
+	part.Destroying:Connect(function()
+		unregisterDepositPart(part)
+	end)
 	part.Touched:Connect(function(other: BasePart)
 		if not other:IsA("BasePart") then
 			return
@@ -1041,13 +1205,21 @@ end
 
 for _, inst in CollectionService:GetTagged(DEPOSIT_TAG) do
 	if inst:IsA("BasePart") then
+		registerDepositPart(inst)
 		hookDepositPart(inst)
 	end
 end
 
 CollectionService:GetInstanceAddedSignal(DEPOSIT_TAG):Connect(function(inst)
 	if inst:IsA("BasePart") then
+		registerDepositPart(inst)
 		hookDepositPart(inst)
+	end
+end)
+
+CollectionService:GetInstanceRemovedSignal(DEPOSIT_TAG):Connect(function(inst)
+	if inst:IsA("BasePart") then
+		unregisterDepositPart(inst)
 	end
 end)
 
@@ -1394,6 +1566,7 @@ local function buildBrainrotToolFromTemplate(template: Model, entry: BrainrotInv
 	tool:SetAttribute("BrainrotLevel", math.max(1, math.floor(entry.level)))
 	tool:SetAttribute("BrainrotBaseIncome", entry.baseIncome)
 	tool.CanBeDropped = false
+	tool.ManualActivationOnly = true -- keep E for bush Search while a brainrot is equipped in the hotbar
 	if entry.icon ~= "" then
 		pcall(function()
 			tool.TextureId = entry.icon

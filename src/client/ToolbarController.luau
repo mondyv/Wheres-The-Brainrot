@@ -166,6 +166,59 @@ local function slotPrimaryButton(slot: GuiObject): GuiButton?
 	return slot:FindFirstChildWhichIsA("GuiButton", true)
 end
 
+local function disableGuiInputCapture(gui: GuiObject)
+	gui.Active = false
+	if gui:IsA("GuiButton") then
+		gui.Selectable = false
+	end
+end
+
+local function enableGuiButtonInput(btn: GuiButton)
+	btn.Active = true
+	btn.Selectable = true
+end
+
+-- Studio templates sometimes use a plain Frame named `Button`; resolve a real GuiButton for touch input.
+local function resolveHotbarSlotButton(slot: GuiObject): GuiButton?
+	local named = slot:FindFirstChild("Button")
+	if named then
+		if named:IsA("GuiButton") then
+			return named
+		end
+		if named:IsA("GuiObject") then
+			disableGuiInputCapture(named :: GuiObject)
+		end
+		local nested = named:FindFirstChildWhichIsA("GuiButton", true)
+		if nested then
+			return nested
+		end
+	end
+	return slotPrimaryButton(slot)
+end
+
+-- Parent slot frames and overlay siblings steal mobile taps unless they are explicitly non-interactive.
+local function configureHotbarSlotInput(slot: GuiObject, btn: GuiButton)
+	disableGuiInputCapture(slot)
+	for _, d in slot:GetDescendants() do
+		if d:IsA("GuiObject") and d ~= btn and not d:IsDescendantOf(btn) then
+			disableGuiInputCapture(d)
+		end
+	end
+	local topZ = btn.ZIndex
+	for _, ch in slot:GetChildren() do
+		if ch:IsA("GuiObject") and ch ~= btn then
+			topZ = math.max(topZ, (ch :: GuiObject).ZIndex)
+		end
+	end
+	btn.ZIndex = topZ + 1
+	passthroughChildClicks(btn)
+	enableGuiButtonInput(btn)
+end
+
+local function ensureHotbarLayoutPassthrough()
+	disableGuiInputCapture(hotbar)
+end
+
 local function toolSlotSurface(slot: GuiObject): GuiObject
 	local b = slotPrimaryButton(slot)
 	return (b and (b :: GuiObject)) or slot
@@ -233,6 +286,7 @@ local function applyBackpackSlotPanelAppearance(btn: GuiButton, occupied: boolea
 end
 
 local function styleToolbarSlotButton(btn: GuiButton)
+	enableGuiButtonInput(btn)
 	if btn:IsA("ImageButton") then
 		btn.AutoButtonColor = false
 		btn.ImageColor3 = SLOT_BUTTON_IMAGE_TINT
@@ -241,6 +295,12 @@ local function styleToolbarSlotButton(btn: GuiButton)
 	if icon and icon:IsA("ImageLabel") then
 		icon.ScaleType = Enum.ScaleType.Fit
 	end
+end
+
+local function isTouchPointerInput(): boolean
+	local last = UserInputService:GetLastInputType()
+	return last == Enum.UserInputType.Touch
+		or last == Enum.UserInputType.TouchTap
 end
 
 -- Icon / Rate / Key steal mouse hits unless they are non-interactive.
@@ -1506,11 +1566,14 @@ function ToolbarController.init()
 		end
 	end
 
-	-- Click / hover: nested `Button` (SideUI.Toolbar.Hotbar[n].Button) or slot is the button
+	ensureHotbarLayoutPassthrough()
+
+	-- Tap / hover: nested `Button` (SideUI.Toolbar.Hotbar[n].Button) or slot is the button.
+	-- Mobile: only `Activated` selects/equips; parent frames must not capture touch input.
 	for i, slot in ipairs(slots) do
-		local btn = slotPrimaryButton(slot)
+		local btn = resolveHotbarSlotButton(slot)
 		if btn then
-			passthroughChildClicks(btn :: GuiObject)
+			configureHotbarSlotInput(slot, btn)
 			styleToolbarSlotButton(btn)
 			local function onHotbarSlotTapSelect()
 				if dragSuppressedToolbarClick then
@@ -1520,10 +1583,16 @@ function ToolbarController.init()
 				if not brainrotEntries[i] or brainrotParkedInUI[i] then
 					return
 				end
+				UIInteractionSounds.playClick()
 				selectSlot(i)
 			end
 			btn.Activated:Connect(onHotbarSlotTapSelect)
+			print("[ToolbarController] hotbar button connected", i)
+			-- PC-only drag start; touch taps must not enter the drag pipeline (blocks Activated on some devices).
 			btn.MouseButton1Down:Connect(function()
+				if isTouchPointerInput() then
+					return
+				end
 				UIInteractionSounds.playClick()
 				if brainrotEntries[i] and not brainrotParkedInUI[i] then
 					local e = brainrotEntries[i]
@@ -1537,6 +1606,8 @@ function ToolbarController.init()
 					}
 				end
 			end)
+		else
+			warn("[ToolbarController] Hotbar slot '" .. tostring(i) .. "' has no TextButton/ImageButton for tap input")
 		end
 
 		local scale = getOrAddUIScale(hotbarSlotScaleHost(slot))

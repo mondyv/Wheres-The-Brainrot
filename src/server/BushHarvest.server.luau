@@ -35,9 +35,13 @@ type BrainrotInvEntry = {
 
 local MAX_HARVEST_RANGE = 14
 local RANGE_SLACK = 5
--- Per bush search (after hold-to-search only): 30% = empty message, 70% = pop/float above bush.
--- Never pre-spawn visible brainrots in bushes; beginHarvestOutcome is the only spawn path.
-local BUSH_EMPTY_CHANCE = 0.30
+-- Per bush: 30% empty, 70% hidden brainrot (rolled once when bush is assigned, before any search).
+local BUSH_EMPTY_PERCENT = 30
+local BUSH_SEARCH_DEBOUNCE_SEC = 0.4
+local BUSH_HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
+local BUSH_LOOT_ASSIGNED_ATTR = "BushLootAssigned"
+local BUSH_LOOT_RESPAWN_MIN = 10
+local BUSH_LOOT_RESPAWN_MAX = 15
 local FLOAT_DURATION = 4
 local POP_DURATION = 0.35
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
@@ -105,15 +109,15 @@ local function ensureRemote(): RemoteEvent
 	return ev :: RemoteEvent
 end
 
-local function ensureBushSearchEmptyRemote(): RemoteEvent
+local function ensureHarvestFunction(): RemoteFunction
 	local folder = getBushRemotesFolder()
-	local ev = folder:FindFirstChild("BushSearchEmpty")
-	if not ev then
-		ev = Instance.new("RemoteEvent")
-		ev.Name = "BushSearchEmpty"
-		ev.Parent = folder
+	local fn = folder:FindFirstChild("HarvestBush")
+	if not fn then
+		fn = Instance.new("RemoteFunction")
+		fn.Name = "HarvestBush"
+		fn.Parent = folder
 	end
-	return ev :: RemoteEvent
+	return fn :: RemoteFunction
 end
 
 local inventorySyncRE: RemoteEvent? = nil
@@ -992,7 +996,75 @@ local function runFloatThenAttach(player: Player, char: Model, clone: Model, anc
 	floatConnByClone[clone] = conn
 end
 
-local function canAttemptHarvest(player: Player, worldPosition: Vector3): boolean
+local function isLootableBush(inst: Instance): boolean
+	return inst.Name == "BushSCRIPT" and (inst:IsA("Model") or inst:IsA("BasePart"))
+end
+
+local function rollBushHasBrainrot(): boolean
+	return math.random(1, 100) > BUSH_EMPTY_PERCENT
+end
+
+local function assignBushLoot(bush: Instance): boolean
+	if not isLootableBush(bush) or not isValidBushRef(bush) then
+		return false
+	end
+	if bush:GetAttribute(BUSH_LOOT_ASSIGNED_ATTR) == true then
+		return bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
+	end
+	local hasBrainrot = rollBushHasBrainrot()
+	bush:SetAttribute(BUSH_LOOT_ASSIGNED_ATTR, true)
+	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, hasBrainrot)
+	return hasBrainrot
+end
+
+local function scheduleBushLootRespawn(bush: Instance)
+	local delaySec = math.random(BUSH_LOOT_RESPAWN_MIN, BUSH_LOOT_RESPAWN_MAX)
+	task.delay(delaySec, function()
+		if not bush.Parent or not isValidBushRef(bush) then
+			return
+		end
+		bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, rollBushHasBrainrot())
+	end)
+end
+
+local function assignLootUnder(root: Instance)
+	for _, desc in root:GetDescendants() do
+		if isLootableBush(desc) then
+			assignBushLoot(desc)
+		end
+	end
+end
+
+local function isValidBushRef(bushRef: Instance?): boolean
+	if not bushRef or not bushRef.Parent then
+		return false
+	end
+	if bushRef.Name ~= "BushSCRIPT" then
+		return false
+	end
+	if not bushRef:IsA("Model") and not bushRef:IsA("BasePart") then
+		return false
+	end
+	local map = workspace:FindFirstChild("Map")
+	if not map then
+		return false
+	end
+	return bushRef:IsDescendantOf(map)
+end
+
+local function bushSearchPosition(bushRef: Instance?, worldPosition: Vector3): Vector3
+	if bushRef and bushRef.Parent then
+		if bushRef:IsA("BasePart") then
+			return bushRef.Position
+		end
+		if bushRef:IsA("Model") then
+			return (bushRef :: Model):GetPivot().Position
+		end
+	end
+	return worldPosition
+end
+
+local function canAttemptHarvest(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean
 	local char = player.Character
 	if not char then
 		return false
@@ -1001,7 +1073,8 @@ local function canAttemptHarvest(player: Player, worldPosition: Vector3): boolea
 	if not hrp then
 		return false
 	end
-	if (worldPosition - hrp.Position).Magnitude > MAX_HARVEST_RANGE + RANGE_SLACK then
+	local checkPos = bushSearchPosition(bushRef, worldPosition)
+	if (checkPos - hrp.Position).Magnitude > MAX_HARVEST_RANGE + RANGE_SLACK then
 		return false
 	end
 	local cap = carryCapacityForPlayer(player)
@@ -1013,7 +1086,7 @@ local function canAttemptHarvest(player: Player, worldPosition: Vector3): boolea
 end
 
 local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
-	if not canAttemptHarvest(player, worldPosition) then
+	if not canAttemptHarvest(player, worldPosition, nil) then
 		return
 	end
 	local char = player.Character :: Model
@@ -1120,6 +1193,47 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 		setAllPartsPhysics(clone, true, true)
 		runFloatThenAttach(player, char, clone, anchorPos, baseYaw)
 	end)
+end
+
+local lastBushSearchAt: { [Player]: number } = {}
+
+--[[
+	processBushSearch — 30% not found, 70% spawn. Returns true when a brainrot was spawned.
+]]
+local function processBushSearch(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean
+	if typeof(worldPosition) ~= "Vector3" then
+		return false
+	end
+	local bush: Instance? = if typeof(bushRef) == "Instance" then bushRef else nil
+	if bush and not isValidBushRef(bush) then
+		bush = nil
+	end
+
+	local now = os.clock()
+	if (lastBushSearchAt[player] or 0) + BUSH_SEARCH_DEBOUNCE_SEC > now then
+		return false
+	end
+	lastBushSearchAt[player] = now
+
+	if not bush or not isValidBushRef(bush) then
+		return false
+	end
+
+	if not canAttemptHarvest(player, worldPosition, bush) then
+		return false
+	end
+
+	assignBushLoot(bush)
+	if bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) ~= true then
+		return false
+	end
+
+	-- Consumed until respawn cooldown re-rolls loot.
+	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, false)
+
+	beginHarvestOutcome(player, worldPosition)
+	scheduleBushLootRespawn(bush)
+	return true
 end
 
 local redeemDebounce: { [Player]: number } = {}
@@ -1387,29 +1501,17 @@ for _, p in Players:GetPlayers() do
 	end)
 end
 
-local function cleanupLegacyPreSpawnedBrainrots(map: Instance)
-	local legacy = workspace:FindFirstChild("ActiveBrainrots")
-	if legacy then
-		legacy:Destroy()
-	end
-	for _, folder in map:GetDescendants() do
-		if folder.Name ~= "BushSCRIPTs" then
-			continue
-		end
-		for _, bush in folder:GetChildren() do
-			if bush.Name ~= "BushSCRIPT" then
-				continue
-			end
-			for _, desc in bush:GetDescendants() do
-				if desc:IsA("Model") and typeof(desc:GetAttribute("OwnerUserId")) == "number" then
-					desc:Destroy()
-				end
-			end
-		end
-	end
+local harvestRemote = ensureRemote()
+local harvestBushFn = ensureHarvestFunction()
+
+harvestRemote.OnServerEvent:Connect(function(player: Player, worldPosition: Vector3, bushRef: Instance?)
+	processBushSearch(player, worldPosition, bushRef)
+end)
+
+harvestBushFn.OnServerInvoke = function(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean
+	return processBushSearch(player, worldPosition, bushRef)
 end
 
-local harvestRemote = ensureRemote()
 local _, getInvRF = ensureInventoryRemotes()
 
 getInvRF.OnServerInvoke = function(requesting: Player)
@@ -1930,26 +2032,21 @@ ensureEquipBrainrotRemote().OnServerEvent:Connect(function(player: Player, slot:
 	equipBrainrotSlotForPlayer(player, slot :: number)
 end)
 
-harvestRemote.OnServerEvent:Connect(function(player: Player, worldPosition: Vector3)
-	if typeof(worldPosition) ~= "Vector3" then
-		return
-	end
-	if not canAttemptHarvest(player, worldPosition) then
-		return
-	end
-	if math.random() < BUSH_EMPTY_CHANCE then
-		ensureBushSearchEmptyRemote():FireClient(player, worldPosition)
-		return
-	end
-	beginHarvestOutcome(player, worldPosition)
-end)
-
 task.defer(function()
 	local map = workspace:WaitForChild("Map", 120)
 	if not map then
 		return
 	end
-	cleanupLegacyPreSpawnedBrainrots(map)
+
+	assignLootUnder(map)
+	map.DescendantAdded:Connect(function(desc)
+		if isLootableBush(desc) then
+			task.defer(function()
+				assignBushLoot(desc)
+			end)
+		end
+	end)
+
 	for _ = 1, 60 do
 		refreshLuckHitboxes()
 		if #luckHitboxes > 0 then

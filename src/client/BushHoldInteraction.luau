@@ -1,19 +1,16 @@
 --[[
 	Bush harvest — closest-bush targeting, highlight, hold-to-search.
 	Engine ProximityPrompt handles hold/trigger; ProximityPromptEffects draws the custom bush card + FX.
-
-	30% empty: server fires BushSearchEmpty → billboard text only (no physical brainrot).
-	70% found: server BushHarvest spawns above bush (pop / float) — never visible inside the bush before search.
 ]]
 
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
+local BushShiver = require(script.Parent.BushShiver)
 local CarryGate = require(script.Parent.CarryGate)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 
@@ -33,27 +30,24 @@ local POST_HARVEST_COOLDOWN_MAX = 15
 local BUSH_MANAGED_ATTR = "BushManagedPrompt"
 local AIM_TICK_INTERVAL = 0.1
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
-local NO_BRAINROT_MESSAGE = "No brainrot was hiding inside!"
-local EMPTY_MESSAGE_STAY_SEC = 2
-local EMPTY_MESSAGE_FADE_IN_SEC = 0.22
-local EMPTY_MESSAGE_FADE_OUT_SEC = 0.35
 
-local bushByModel: { [Model]: ProximityPrompt } = {}
-local bushAnchor: { [Model]: BasePart } = {}
-local pendingParts: { [Model]: RBXScriptConnection } = {}
-local cooldownUntil: { [Model]: number } = {} -- os.clock() when search is allowed again
+local bushByModel: { [Instance]: ProximityPrompt } = {}
+local bushAnchor: { [Instance]: BasePart } = {}
+local pendingParts: { [Instance]: RBXScriptConnection } = {}
+local cooldownUntil: { [Instance]: number } = {} -- os.clock() when search is allowed again
 -- After harvest: show red + clock at any distance <= MAX_RANGE until this time (then min-dist rule applies).
-local harvestLockVisualUntil: { [Model]: number } = {}
+local harvestLockVisualUntil: { [Instance]: number } = {}
 local lastHarvestAt = 0
 local lastHarvestPrompt: ProximityPrompt? = nil
 
 local aimHighlight: Highlight? = nil
 local aimTickAccum = 0
 local harvestRemote: RemoteEvent? = nil
+local harvestFunction: RemoteFunction? = nil
 local hooked = false
 local mapWatchRoot: Instance? = nil
 
-local activeBush: Model? = nil
+local activeBush: Instance? = nil
 local activePrompt: ProximityPrompt? = nil
 
 local BUSH_SEARCH_HOLD_ACTION = "BushSearchHoldWhileToolEquipped"
@@ -80,89 +74,18 @@ local function isForeignSearchPrompt(d: ProximityPrompt): boolean
 		or CarryGate.isBushSearchPrompt(d)
 end
 
-local function anchorFor(model: Model): BasePart?
-	if model.PrimaryPart then
-		return model.PrimaryPart
+local function anchorFor(root: Instance): BasePart?
+	if root:IsA("BasePart") then
+		return root
 	end
-	return model:FindFirstChildWhichIsA("BasePart", true)
-end
-
---[[
-	showNoBrainrotMessage — per-bush billboard; fade in, hold, fade out, destroy (independent instances).
-]]
-local function showNoBrainrotMessage(bush: Model)
-	task.spawn(function()
-		local anchor = anchorFor(bush)
-		if not anchor or not anchor.Parent then
-			return
+	if root:IsA("Model") then
+		local model = root :: Model
+		if model.PrimaryPart then
+			return model.PrimaryPart
 		end
-
-		local prior = anchor:FindFirstChild("BushEmptyMessage")
-		if prior then
-			prior:Destroy()
-		end
-
-		local billboard = Instance.new("BillboardGui")
-		billboard.Name = "BushEmptyMessage"
-		billboard.Adornee = anchor
-		billboard.AlwaysOnTop = true
-		billboard.LightInfluence = 0
-		billboard.MaxDistance = 72
-		billboard.Size = UDim2.fromOffset(300, 64)
-		billboard.StudsOffset = Vector3.new(0, 3.8, 0)
-		billboard.Parent = anchor
-
-		local frame = Instance.new("Frame")
-		frame.Name = "Bubble"
-		frame.Size = UDim2.fromScale(1, 1)
-		frame.BackgroundColor3 = Color3.fromRGB(48, 28, 72)
-		frame.BackgroundTransparency = 0.12
-		frame.BorderSizePixel = 0
-		frame.Parent = billboard
-
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 14)
-		corner.Parent = frame
-
-		local frameStroke = Instance.new("UIStroke")
-		frameStroke.Color = Color3.fromRGB(255, 210, 90)
-		frameStroke.Thickness = 2.5
-		frameStroke.Transparency = 1
-		frameStroke.Parent = frame
-
-		local label = Instance.new("TextLabel")
-		label.Name = "Message"
-		label.Size = UDim2.new(1, -16, 1, -10)
-		label.Position = UDim2.fromOffset(8, 5)
-		label.BackgroundTransparency = 1
-		label.Font = Enum.Font.FredokaOne
-		label.Text = NO_BRAINROT_MESSAGE
-		label.TextColor3 = Color3.fromRGB(255, 248, 170)
-		label.TextScaled = true
-		label.TextTransparency = 1
-		label.TextStrokeColor3 = Color3.fromRGB(90, 40, 120)
-		label.TextStrokeTransparency = 0.35
-		label.Parent = frame
-
-		local fadeInInfo = TweenInfo.new(EMPTY_MESSAGE_FADE_IN_SEC, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-		TweenService:Create(label, fadeInInfo, { TextTransparency = 0 }):Play()
-		TweenService:Create(frame, fadeInInfo, { BackgroundTransparency = 0.08 }):Play()
-		TweenService:Create(frameStroke, fadeInInfo, { Transparency = 0 }):Play()
-
-		task.wait(EMPTY_MESSAGE_STAY_SEC)
-
-		local fadeOutInfo = TweenInfo.new(EMPTY_MESSAGE_FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-		local tLabel = TweenService:Create(label, fadeOutInfo, { TextTransparency = 1 })
-		local tFrame = TweenService:Create(frame, fadeOutInfo, { BackgroundTransparency = 1 })
-		local tStroke = TweenService:Create(frameStroke, fadeOutInfo, { Transparency = 1 })
-		tLabel:Play()
-		tFrame:Play()
-		tStroke:Play()
-		tStroke.Completed:Wait()
-		if billboard.Parent then
-			billboard:Destroy()
-		end
-	end)
+		return model:FindFirstChildWhichIsA("BasePart", true)
+	end
+	return nil
 end
 
 local BUSH_PROMPT_LIFT_SCALE = 0.66
@@ -219,45 +142,18 @@ local function promptWorldPos(prompt: ProximityPrompt): Vector3
 	return Vector3.zero
 end
 
---[[
-	findBushNearPosition — matches server harvest position to a registered bush model.
-]]
-local function findBushNearPosition(worldPos: Vector3): Model?
-	local best: Model? = nil
-	local bestD = math.huge
-	for model, prompt in bushByModel do
-		if not model.Parent then
-			continue
-		end
-		local wp = promptWorldPos(prompt)
-		if wp == Vector3.zero then
-			local a = bushAnchor[model] or anchorFor(model)
-			if a then
-				wp = a.Position
-			end
-		end
-		local d = (wp - worldPos).Magnitude
-		if d <= MAX_RANGE + 2 and d < bestD then
-			bestD = d
-			best = model
-		end
-	end
-	return best
-end
-
-local function bushRootFromPrompt(prompt: ProximityPrompt): Model?
+local function bushRootFromPrompt(prompt: ProximityPrompt): Instance?
 	local node: Instance? = prompt.Parent
-	local best: Model? = nil
 	while node do
-		if node:IsA("Model") then
-			best = node :: Model
+		if node.Name == "BushSCRIPT" and (node:IsA("Model") or node:IsA("BasePart")) then
+			return node
 		end
 		node = node.Parent
 	end
-	return best
+	return nil
 end
 
-local function stripExtraPrompts(root: Model, keep: ProximityPrompt?)
+local function stripExtraPrompts(root: Instance, keep: ProximityPrompt?)
 	for _, d in root:GetDescendants() do
 		if d:IsA("ProximityPrompt") and d ~= keep then
 			d:Destroy()
@@ -273,7 +169,7 @@ local function setAllBushPromptsEnabled(enabledPrompt: ProximityPrompt?)
 	end
 end
 
-local function attachPrompt(root: Model)
+local function attachPrompt(root: Instance)
 	if bushByModel[root] then
 		return
 	end
@@ -287,7 +183,12 @@ local function attachPrompt(root: Model)
 	local att = Instance.new("Attachment")
 	att.Name = "_BushPromptCenter"
 	att.Parent = anchor
-	local targetWorld = bushPromptWorldPosition(root) or (anchor.Position + Vector3.new(0, 2, 0))
+	local targetWorld: Vector3
+	if root:IsA("Model") then
+		targetWorld = bushPromptWorldPosition(root :: Model) or (anchor.Position + Vector3.new(0, 2, 0))
+	else
+		targetWorld = anchor.Position + Vector3.new(0, anchor.Size.Y * BUSH_PROMPT_LIFT_SCALE + 1, 0)
+	end
 	att.Position = anchor.CFrame:PointToObjectSpace(targetWorld)
 
 	local prompt = Instance.new("ProximityPrompt")
@@ -324,26 +225,11 @@ local function attachPrompt(root: Model)
 	end)
 end
 
---[[
-	Strip artifacts from removed BrainrotBushSpawn (prompts / clones left in Studio).
-]]
-local function purgeLegacyPreSpawnArtifacts(root: Instance)
-	for _, d in root:GetDescendants() do
-		if d:IsA("ProximityPrompt") then
-			if d.Name == "BrainrotBushSpawnPrompt" or d:GetAttribute("BrainrotSpawnManaged") == true then
-				d:Destroy()
-			end
-		elseif d:IsA("Model") and typeof(d:GetAttribute("OwnerUserId")) == "number" then
-			d:Destroy()
-		end
-	end
-end
-
-local function registerBushModel(root: Model)
+local function registerBushRoot(root: Instance)
 	if bushByModel[root] then
 		return
 	end
-	purgeLegacyPreSpawnArtifacts(root)
+	BushShiver.trackBush(root)
 	if anchorFor(root) then
 		attachPrompt(root)
 		return
@@ -360,12 +246,16 @@ local function registerBushModel(root: Model)
 	end)
 end
 
+local function registerBushModel(root: Model)
+	registerBushRoot(root)
+end
+
 local function registerFromSearchPrompt(prompt: ProximityPrompt)
 	local root = bushRootFromPrompt(prompt)
 	if not root then
 		return
 	end
-	registerBushModel(root)
+	registerBushRoot(root)
 end
 
 local function purgeForeignUnder(root: Instance)
@@ -388,7 +278,9 @@ end
 
 local function registerBushesUnderFolder(folder: Folder)
 	for _, child in folder:GetChildren() do
-		if child:IsA("Model") then
+		if child.Name == "BushSCRIPT" and (child:IsA("Model") or child:IsA("BasePart")) then
+			registerBushRoot(child)
+		elseif child:IsA("Model") then
 			registerBushModel(child :: Model)
 		end
 	end
@@ -399,12 +291,17 @@ local function registerBushesUnderFolder(folder: Folder)
 	end
 end
 
+local function purgeLegacyEmptyBushBillboards(map: Instance)
+	for _, desc in map:GetDescendants() do
+		if desc.Name == "BushEmptyMessage" then
+			desc:Destroy()
+		end
+	end
+end
+
 local function registerAllBushesOnMap(map: Instance)
 	purgeForeignUnder(map)
-	local legacyActive = Workspace:FindFirstChild("ActiveBrainrots")
-	if legacyActive then
-		legacyActive:Destroy()
-	end
+	purgeLegacyEmptyBushBillboards(map)
 
 	for _, folder in collectBushFolders(map) do
 		registerBushesUnderFolder(folder)
@@ -422,7 +319,7 @@ end
 local HIGHLIGHT_READY = Color3.fromRGB(72, 255, 140)
 local HIGHLIGHT_LOCKED = Color3.fromRGB(255, 45, 45)
 
-local function applyBushHighlight(hl: Highlight, bush: Model, locked: boolean)
+local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean)
 	hl.Adornee = bush
 	hl.Enabled = true
 	hl.FillTransparency = 1
@@ -444,7 +341,7 @@ local function cooldownOutlineMinDistance(): number
 	return COOLDOWN_VFX_MIN_DIST
 end
 
-local function pickClosest(): (Model?, ProximityPrompt?, BasePart?)
+local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
@@ -452,7 +349,7 @@ local function pickClosest(): (Model?, ProximityPrompt?, BasePart?)
 	end
 	local pos = hrp.Position
 	local now = os.clock()
-	local bestM: Model? = nil
+	local bestM: Instance? = nil
 	local bestP: ProximityPrompt? = nil
 	local bestA: BasePart? = nil
 	local bestD = math.huge
@@ -482,7 +379,7 @@ local function pickClosest(): (Model?, ProximityPrompt?, BasePart?)
 	return bestM, bestP, bestA
 end
 
-local function pickClosestCooldownBush(): (Model?, ProximityPrompt?, BasePart?)
+local function pickClosestCooldownBush(): (Instance?, ProximityPrompt?, BasePart?)
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
@@ -490,7 +387,7 @@ local function pickClosestCooldownBush(): (Model?, ProximityPrompt?, BasePart?)
 	end
 	local pos = hrp.Position
 	local now = os.clock()
-	local bestM: Model? = nil
+	local bestM: Instance? = nil
 	local bestP: ProximityPrompt? = nil
 	local bestA: BasePart? = nil
 	local bestD = math.huge
@@ -530,7 +427,7 @@ local function pickClosestCooldownBush(): (Model?, ProximityPrompt?, BasePart?)
 	return bestM, bestP, bestA
 end
 
-local function setActive(bush: Model?, prompt: ProximityPrompt?, _anchor: BasePart?)
+local function setActive(bush: Instance?, prompt: ProximityPrompt?, _anchor: BasePart?)
 	local carryBlock = CarryGate.isFull()
 	if carryBlock and bushSearchHoldPrompt then
 		ProximityPromptEffects.endManagedBushHold(bushSearchHoldPrompt, false)
@@ -565,6 +462,49 @@ local function getHarvestRemote(): RemoteEvent?
 	return nil
 end
 
+local function getHarvestFunction(): RemoteFunction?
+	if harvestFunction and harvestFunction.Parent then
+		return harvestFunction
+	end
+	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
+	if not folder then
+		return nil
+	end
+	local fn = folder:FindFirstChild("HarvestBush")
+	if fn and fn:IsA("RemoteFunction") then
+		harvestFunction = fn
+		return fn
+	end
+	return nil
+end
+
+local bushSearchInFlight: { [Instance]: boolean } = {}
+
+--[[ Server-authoritative 30/70 roll via HarvestBush RemoteFunction. ]]
+local function requestBushSearch(worldPos: Vector3, bush: Instance)
+	local folder = ReplicatedStorage:FindFirstChild("BushRemotes") or ReplicatedStorage:WaitForChild("BushRemotes", 8)
+	if not folder then
+		return
+	end
+
+	local rf = folder:FindFirstChild("HarvestBush") or folder:WaitForChild("HarvestBush", 8)
+	if rf and rf:IsA("RemoteFunction") then
+		harvestFunction = rf
+		local ok = pcall(function()
+			rf:InvokeServer(worldPos, bush)
+		end)
+		if ok then
+			return
+		end
+	end
+
+	local rem = folder:FindFirstChild("HarvestBrainrot")
+	if rem and rem:IsA("RemoteEvent") then
+		harvestRemote = rem
+		rem:FireServer(worldPos, bush)
+	end
+end
+
 local function doHarvest(prompt: ProximityPrompt)
 	local now = os.clock()
 	if lastHarvestPrompt == prompt and now - lastHarvestAt < 0.35 then
@@ -575,25 +515,31 @@ local function doHarvest(prompt: ProximityPrompt)
 	end
 	lastHarvestPrompt = prompt
 	lastHarvestAt = now
-	local bush: Model? = nil
-	for model, pr in bushByModel do
-		if pr == prompt then
-			bush = model
-			break
+	local bush: Instance? = bushRootFromPrompt(prompt)
+	if not bush then
+		for model, pr in bushByModel do
+			if pr == prompt then
+				bush = model
+				break
+			end
 		end
 	end
 	if not bush then
 		return
 	end
+	if bushSearchInFlight[bush] then
+		return
+	end
+	bushSearchInFlight[bush] = true
+	task.delay(0.5, function()
+		bushSearchInFlight[bush] = nil
+	end)
 
 	cooldownUntil[bush] = now + math.random(POST_HARVEST_COOLDOWN_MIN, POST_HARVEST_COOLDOWN_MAX)
 	harvestLockVisualUntil[bush] = now + POST_HARVEST_LOCK_VFX_SEC
 	setActive(nil, nil, nil)
 
-	local rem = getHarvestRemote()
-	if rem then
-		rem:FireServer(promptWorldPos(prompt))
-	end
+	requestBushSearch(promptWorldPos(prompt), bush)
 end
 
 local function tickAim()
@@ -614,7 +560,7 @@ local function tickAim()
 	end
 
 	-- Block new bush search only at carry capacity; cooldown lock visuals still update while partially loaded.
-	local bush: Model?, prompt: ProximityPrompt?, anchor: BasePart?
+	local bush: Instance?, prompt: ProximityPrompt?, anchor: BasePart?
 	if CarryGate.isFull() then
 		bush, prompt, anchor = nil, nil, nil
 	else
@@ -668,10 +614,16 @@ local function wireMapWatch(map: Instance)
 			task.defer(function()
 				registerFromSearchPrompt(desc)
 			end)
-		elseif desc:IsA("Model") and desc.Parent and desc.Parent:IsA("Folder") and isBushFolderName(desc.Parent.Name) then
-			task.defer(function()
-				registerBushModel(desc :: Model)
-			end)
+		elseif desc.Parent and desc.Parent:IsA("Folder") and isBushFolderName(desc.Parent.Name) then
+			if desc.Name == "BushSCRIPT" and (desc:IsA("Model") or desc:IsA("BasePart")) then
+				task.defer(function()
+					registerBushRoot(desc)
+				end)
+			elseif desc:IsA("Model") then
+				task.defer(function()
+					registerBushModel(desc :: Model)
+				end)
+			end
 		end
 	end)
 end
@@ -717,21 +669,13 @@ function BushHoldInteraction.init()
 		if not folder then
 			return
 		end
+		local fn = folder:WaitForChild("HarvestBush", 30)
+		if fn and fn:IsA("RemoteFunction") then
+			harvestFunction = fn
+		end
 		local ev = folder:WaitForChild("HarvestBrainrot", 30)
 		if ev and ev:IsA("RemoteEvent") then
 			harvestRemote = ev
-		end
-		local emptyEv = folder:WaitForChild("BushSearchEmpty", 30)
-		if emptyEv and emptyEv:IsA("RemoteEvent") then
-			emptyEv.OnClientEvent:Connect(function(worldPosition: Vector3)
-				if typeof(worldPosition) ~= "Vector3" then
-					return
-				end
-				local bush = findBushNearPosition(worldPosition)
-				if bush then
-					showNoBrainrotMessage(bush)
-				end
-			end)
 		end
 	end)
 

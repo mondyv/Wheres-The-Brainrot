@@ -47,6 +47,7 @@ local BUSH_LOOT_RESPAWN_MAX = 15
 local FLOAT_DURATION = 4
 local POP_DURATION = 0.35
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
+local BUSH_EMPTY_MESSAGE_ANCHOR_NAME = "_BushEmptyMessageAnchor"
 local DEPOSIT_TAG = "BrainrotDeposit"
 local MAX_BACKPACK_BRAINROT_SLOTS = 19
 -- Total brainrot inventory capacity (UI "All Items [used/max]"); distinct from the 19 backpack grid rows.
@@ -738,9 +739,25 @@ local function bushTopWorldY(bush: Model?, fallbackY: number): number
 	if not bush or not bush.Parent then
 		return fallbackY
 	end
-	local _, maxV = BrainrotCarryVisual.getWorldAabb(bush)
-	if maxV then
-		return maxV.Y
+	local maxY = -math.huge
+	local found = false
+	for _, desc in bush:GetDescendants() do
+		if desc:IsA("BasePart") and desc.Name ~= BUSH_EMPTY_MESSAGE_ANCHOR_NAME then
+			found = true
+			local cf = desc.CFrame
+			local h = desc.Size * 0.5
+			for sx = -1, 1, 2 do
+				for sy = -1, 1, 2 do
+					for sz = -1, 1, 2 do
+						local wp = cf:PointToWorldSpace(Vector3.new(h.X * sx, h.Y * sy, h.Z * sz))
+						maxY = math.max(maxY, wp.Y)
+					end
+				end
+			end
+		end
+	end
+	if found then
+		return maxY
 	end
 	return fallbackY
 end
@@ -1071,7 +1088,6 @@ local EMPTY_BUSH_MESSAGE_LIFETIME = 4
 local EMPTY_BUSH_FADE_DURATION = 1
 local EMPTY_BUSH_HOLD_DURATION = EMPTY_BUSH_MESSAGE_LIFETIME - EMPTY_BUSH_FADE_DURATION
 local EMPTY_BUSH_BILLBOARD_NAME = "BushEmptyMessage"
-local BUSH_ALERT_ANCHOR_NAME = "_BushEmptyMessageAnchor"
 local BUSH_PROMPT_LIFT_SCALE = 0.66
 local BUSH_MESSAGE_FLOAT_ABOVE_PROMPT = 2.75
 local BUSH_ALERT_RED = Color3.fromRGB(225, 48, 48)
@@ -1143,14 +1159,14 @@ local function ensureEmptyBushBillboardAnchor(bush: Instance): BasePart?
 		return nil
 	end
 
-	local existing = bush:FindFirstChild(BUSH_ALERT_ANCHOR_NAME)
+	local existing = bush:FindFirstChild(BUSH_EMPTY_MESSAGE_ANCHOR_NAME)
 	if existing and existing:IsA("BasePart") then
 		existing.CFrame = CFrame.new(worldPos)
 		return existing
 	end
 
 	local anchor = Instance.new("Part")
-	anchor.Name = BUSH_ALERT_ANCHOR_NAME
+	anchor.Name = BUSH_EMPTY_MESSAGE_ANCHOR_NAME
 	anchor.Anchored = true
 	anchor.CanCollide = false
 	anchor.CanQuery = false
@@ -1163,7 +1179,7 @@ local function ensureEmptyBushBillboardAnchor(bush: Instance): BasePart?
 end
 
 local function isVisibleBushPart(part: BasePart): boolean
-	if part.Name == BUSH_ALERT_ANCHOR_NAME then
+	if part.Name == BUSH_EMPTY_MESSAGE_ANCHOR_NAME then
 		return false
 	end
 	if part.Transparency >= 1 then
@@ -1330,6 +1346,22 @@ local function createEmptyBushBillboard(bush: Instance, anchor: BasePart): Billb
 	return billboard
 end
 
+local function destroyEmptyBushMessageArtifacts(bush: Instance)
+	local billboard = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
+	if billboard and billboard:IsA("BillboardGui") then
+		billboard:Destroy()
+	end
+	local anchor = bush:FindFirstChild(BUSH_EMPTY_MESSAGE_ANCHOR_NAME)
+	if anchor and anchor:IsA("BasePart") then
+		anchor:Destroy()
+	end
+end
+
+local function clearEmptyBushMessageState(bush: Instance)
+	emptyBushMessageHideToken[bush] = (emptyBushMessageHideToken[bush] or 0) + 1
+	destroyEmptyBushMessageArtifacts(bush)
+end
+
 local function fadeOutAndDestroyEmptyBushMessage(bush: Instance, token: number)
 	task.delay(EMPTY_BUSH_HOLD_DURATION, function()
 		if not bush.Parent or emptyBushMessageHideToken[bush] ~= token then
@@ -1364,10 +1396,7 @@ local function fadeOutAndDestroyEmptyBushMessage(bush: Instance, token: number)
 			if not bush.Parent or emptyBushMessageHideToken[bush] ~= token then
 				return
 			end
-			local existing = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
-			if existing and existing:IsA("BillboardGui") then
-				existing:Destroy()
-			end
+			destroyEmptyBushMessageArtifacts(bush)
 			emptyBushMessageHideToken[bush] = nil
 		end)
 	end)
@@ -1560,6 +1589,7 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 		return false
 	end
 
+	clearEmptyBushMessageState(bush)
 	beginHarvestOutcome(player, worldPosition)
 	return true
 end

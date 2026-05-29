@@ -288,6 +288,8 @@ local function purgeLegacyEmptyBushBillboards(map: Instance)
 	for _, desc in map:GetDescendants() do
 		if desc.Name == "BushEmptyMessage" then
 			desc:Destroy()
+		elseif desc.Name == "_BushEmptyMessageAnchor" and desc:IsA("BasePart") then
+			desc:Destroy()
 		end
 	end
 end

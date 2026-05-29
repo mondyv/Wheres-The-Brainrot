@@ -7,6 +7,7 @@ local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
@@ -29,6 +30,10 @@ local POST_HARVEST_COOLDOWN_MAX = 15
 local BUSH_MANAGED_ATTR = "BushManagedPrompt"
 local AIM_TICK_INTERVAL = 0.1
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
+local NO_BRAINROT_MESSAGE = "No brainrot was hiding inside!"
+local EMPTY_MESSAGE_STAY_SEC = 2
+local EMPTY_MESSAGE_FADE_IN_SEC = 0.22
+local EMPTY_MESSAGE_FADE_OUT_SEC = 0.35
 
 local bushByModel: { [Model]: ProximityPrompt } = {}
 local bushAnchor: { [Model]: BasePart } = {}
@@ -77,6 +82,84 @@ local function anchorFor(model: Model): BasePart?
 		return model.PrimaryPart
 	end
 	return model:FindFirstChildWhichIsA("BasePart", true)
+end
+
+--[[
+	showNoBrainrotMessage — per-bush billboard; fade in, hold, fade out, destroy (independent instances).
+]]
+local function showNoBrainrotMessage(bush: Model)
+	task.spawn(function()
+		local anchor = anchorFor(bush)
+		if not anchor or not anchor.Parent then
+			return
+		end
+
+		local prior = anchor:FindFirstChild("BushEmptyMessage")
+		if prior then
+			prior:Destroy()
+		end
+
+		local billboard = Instance.new("BillboardGui")
+		billboard.Name = "BushEmptyMessage"
+		billboard.Adornee = anchor
+		billboard.AlwaysOnTop = true
+		billboard.LightInfluence = 0
+		billboard.MaxDistance = 72
+		billboard.Size = UDim2.fromOffset(300, 64)
+		billboard.StudsOffset = Vector3.new(0, 3.8, 0)
+		billboard.Parent = anchor
+
+		local frame = Instance.new("Frame")
+		frame.Name = "Bubble"
+		frame.Size = UDim2.fromScale(1, 1)
+		frame.BackgroundColor3 = Color3.fromRGB(48, 28, 72)
+		frame.BackgroundTransparency = 0.12
+		frame.BorderSizePixel = 0
+		frame.Parent = billboard
+
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 14)
+		corner.Parent = frame
+
+		local frameStroke = Instance.new("UIStroke")
+		frameStroke.Color = Color3.fromRGB(255, 210, 90)
+		frameStroke.Thickness = 2.5
+		frameStroke.Transparency = 1
+		frameStroke.Parent = frame
+
+		local label = Instance.new("TextLabel")
+		label.Name = "Message"
+		label.Size = UDim2.new(1, -16, 1, -10)
+		label.Position = UDim2.fromOffset(8, 5)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.FredokaOne
+		label.Text = NO_BRAINROT_MESSAGE
+		label.TextColor3 = Color3.fromRGB(255, 248, 170)
+		label.TextScaled = true
+		label.TextTransparency = 1
+		label.TextStrokeColor3 = Color3.fromRGB(90, 40, 120)
+		label.TextStrokeTransparency = 0.35
+		label.Parent = frame
+
+		local fadeInInfo = TweenInfo.new(EMPTY_MESSAGE_FADE_IN_SEC, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		TweenService:Create(label, fadeInInfo, { TextTransparency = 0 }):Play()
+		TweenService:Create(frame, fadeInInfo, { BackgroundTransparency = 0.08 }):Play()
+		TweenService:Create(frameStroke, fadeInInfo, { Transparency = 0 }):Play()
+
+		task.wait(EMPTY_MESSAGE_STAY_SEC)
+
+		local fadeOutInfo = TweenInfo.new(EMPTY_MESSAGE_FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		local tLabel = TweenService:Create(label, fadeOutInfo, { TextTransparency = 1 })
+		local tFrame = TweenService:Create(frame, fadeOutInfo, { BackgroundTransparency = 1 })
+		local tStroke = TweenService:Create(frameStroke, fadeOutInfo, { Transparency = 1 })
+		tLabel:Play()
+		tFrame:Play()
+		tStroke:Play()
+		tStroke.Completed:Wait()
+		if billboard.Parent then
+			billboard:Destroy()
+		end
+	end)
 end
 
 local BUSH_PROMPT_LIFT_SCALE = 0.66
@@ -131,6 +214,32 @@ local function promptWorldPos(prompt: ProximityPrompt): Vector3
 		return p.Position
 	end
 	return Vector3.zero
+end
+
+--[[
+	findBushNearPosition — matches server harvest position to a registered bush model.
+]]
+local function findBushNearPosition(worldPos: Vector3): Model?
+	local best: Model? = nil
+	local bestD = math.huge
+	for model, prompt in bushByModel do
+		if not model.Parent then
+			continue
+		end
+		local wp = promptWorldPos(prompt)
+		if wp == Vector3.zero then
+			local a = bushAnchor[model] or anchorFor(model)
+			if a then
+				wp = a.Position
+			end
+		end
+		local d = (wp - worldPos).Magnitude
+		if d <= MAX_RANGE + 2 and d < bestD then
+			bestD = d
+			best = model
+		end
+	end
+	return best
 end
 
 local function bushRootFromPrompt(prompt: ProximityPrompt): Model?
@@ -582,11 +691,24 @@ function BushHoldInteraction.init()
 
 	task.spawn(function()
 		local folder = ReplicatedStorage:WaitForChild("BushRemotes", 60)
-		if folder then
-			local ev = folder:WaitForChild("HarvestBrainrot", 30)
-			if ev and ev:IsA("RemoteEvent") then
-				harvestRemote = ev
-			end
+		if not folder then
+			return
+		end
+		local ev = folder:WaitForChild("HarvestBrainrot", 30)
+		if ev and ev:IsA("RemoteEvent") then
+			harvestRemote = ev
+		end
+		local emptyEv = folder:WaitForChild("BushSearchEmpty", 30)
+		if emptyEv and emptyEv:IsA("RemoteEvent") then
+			emptyEv.OnClientEvent:Connect(function(worldPosition: Vector3)
+				if typeof(worldPosition) ~= "Vector3" then
+					return
+				end
+				local bush = findBushNearPosition(worldPosition)
+				if bush then
+					showNoBrainrotMessage(bush)
+				end
+			end)
 		end
 	end)
 

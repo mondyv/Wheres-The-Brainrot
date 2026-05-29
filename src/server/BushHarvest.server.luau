@@ -35,6 +35,8 @@ type BrainrotInvEntry = {
 
 local MAX_HARVEST_RANGE = 14
 local RANGE_SLACK = 5
+-- Per bush search: 30% empty, 70% spawn brainrot (server roll).
+local BUSH_EMPTY_CHANCE = 0.30
 local FLOAT_DURATION = 4
 local POP_DURATION = 0.35
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
@@ -97,6 +99,17 @@ local function ensureRemote(): RemoteEvent
 	if not ev then
 		ev = Instance.new("RemoteEvent")
 		ev.Name = "HarvestBrainrot"
+		ev.Parent = folder
+	end
+	return ev :: RemoteEvent
+end
+
+local function ensureBushSearchEmptyRemote(): RemoteEvent
+	local folder = getBushRemotesFolder()
+	local ev = folder:FindFirstChild("BushSearchEmpty")
+	if not ev then
+		ev = Instance.new("RemoteEvent")
+		ev.Name = "BushSearchEmpty"
 		ev.Parent = folder
 	end
 	return ev :: RemoteEvent
@@ -978,23 +991,31 @@ local function runFloatThenAttach(player: Player, char: Model, clone: Model, anc
 	floatConnByClone[clone] = conn
 end
 
-local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
+local function canAttemptHarvest(player: Player, worldPosition: Vector3): boolean
 	local char = player.Character
 	if not char then
-		return
+		return false
 	end
 	local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
-		return
+		return false
 	end
 	if (worldPosition - hrp.Position).Magnitude > MAX_HARVEST_RANGE + RANGE_SLACK then
-		return
+		return false
 	end
 	local cap = carryCapacityForPlayer(player)
 	local held = #(activeCarries[player] or {}) + #(pendingFloats[player] or {})
 	if held >= cap then
+		return false
+	end
+	return true
+end
+
+local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
+	if not canAttemptHarvest(player, worldPosition) then
 		return
 	end
+	local char = player.Character :: Model
 
 	local brainrots = Brainrots.getBrainrotsFolder()
 	if not brainrots then
@@ -1888,6 +1909,13 @@ end)
 
 harvestRemote.OnServerEvent:Connect(function(player: Player, worldPosition: Vector3)
 	if typeof(worldPosition) ~= "Vector3" then
+		return
+	end
+	if not canAttemptHarvest(player, worldPosition) then
+		return
+	end
+	if math.random() < BUSH_EMPTY_CHANCE then
+		ensureBushSearchEmptyRemote():FireClient(player, worldPosition)
 		return
 	end
 	beginHarvestOutcome(player, worldPosition)

@@ -1,4 +1,6 @@
 -- Shared config: cash swing upgrades (must match server + client)
+local SwingProgression = require(script.Parent.SwingProgression)
+
 export type UpgradeId = "Power1" | "Power10" | "Power25" | "Reach1" | "Reach10" | "Reach25" | "Carry1"
 
 export type UpgradeLevels = {
@@ -185,17 +187,27 @@ function M.priceForUpgradeId(upgradeId: string, levels: UpgradeLevels): number
 	return M.batchPriceForUpgradeId(upgradeId, levels)
 end
 
--- Displayed stat total (base 1 + units bought).
-function M.displayStatForLevel(level: number): number
-	return 1 + floorLevel(level)
+function M.displayStatForLevel(level: number, levelAttr: string?): number
+	local lv = floorLevel(level)
+	if levelAttr == M.POWER_LEVEL_ATTR then
+		return SwingProgression.displayPower(lv)
+	end
+	if levelAttr == M.ROPE_LEVEL_ATTR then
+		return SwingProgression.displayReach(lv)
+	end
+	if levelAttr == M.CARRY_LEVEL_ATTR then
+		return SwingProgression.displayCarry(lv)
+	end
+	-- Fallback when attr unknown (legacy callers).
+	return SwingProgression.displayPower(lv)
 end
 
-function M.displayStatAfterPurchase(currentLevel: number, units: number): number
-	return 1 + floorLevel(currentLevel) + units
+function M.displayStatAfterPurchase(currentLevel: number, units: number, levelAttr: string?): number
+	return M.displayStatForLevel(floorLevel(currentLevel) + math.max(0, math.floor(units)), levelAttr)
 end
 
 function M.displayBonus(def: UpgradeDef): number
-	return def.units
+	return SwingProgression.displayBonusForUnits(def.levelAttr, def.units)
 end
 
 function M.batchMatchesSingleUnits(upgradeId: string): boolean
@@ -213,9 +225,9 @@ function M.batchMatchesSingleUnits(upgradeId: string): boolean
 end
 
 function M.syncGameplayStatsFromLevels(player: Player, levels: UpgradeLevels)
-	player:SetAttribute("SwingForce", M.displayStatForLevel(levels.power))
-	player:SetAttribute("SwingRange", M.displayStatForLevel(levels.rope))
-	player:SetAttribute("Carry", M.displayStatForLevel(levels.carry))
+	player:SetAttribute("SwingForce", M.displayStatForLevel(levels.power, M.POWER_LEVEL_ATTR))
+	player:SetAttribute("SwingRange", M.displayStatForLevel(levels.rope, M.ROPE_LEVEL_ATTR))
+	player:SetAttribute("Carry", M.displayStatForLevel(levels.carry, M.CARRY_LEVEL_ATTR))
 end
 
 function M.grantUpgrade(player: Player, upgradeId: string): boolean
@@ -247,27 +259,15 @@ end
 
 function M.initLevelAttributes(player: Player)
 	if player:GetAttribute(M.POWER_LEVEL_ATTR) == nil then
-		local legacy = 0
-		local force = player:GetAttribute("SwingForce")
-		if typeof(force) == "number" then
-			legacy = math.max(0, math.floor(force) - 1)
-		end
+		local legacy = SwingProgression.levelFromLegacyDisplay("SwingForce", player:GetAttribute("SwingForce"))
 		player:SetAttribute(M.POWER_LEVEL_ATTR, legacy)
 	end
 	if player:GetAttribute(M.ROPE_LEVEL_ATTR) == nil then
-		local legacy = 0
-		local reach = player:GetAttribute("SwingRange")
-		if typeof(reach) == "number" then
-			legacy = math.max(0, math.floor(reach) - 1)
-		end
+		local legacy = SwingProgression.levelFromLegacyDisplay("SwingRange", player:GetAttribute("SwingRange"))
 		player:SetAttribute(M.ROPE_LEVEL_ATTR, legacy)
 	end
 	if player:GetAttribute(M.CARRY_LEVEL_ATTR) == nil then
-		local legacy = 0
-		local carry = player:GetAttribute("Carry")
-		if typeof(carry) == "number" then
-			legacy = math.max(0, math.floor(carry) - 1)
-		end
+		local legacy = SwingProgression.levelFromLegacyDisplay("Carry", player:GetAttribute("Carry"))
 		player:SetAttribute(M.CARRY_LEVEL_ATTR, legacy)
 	end
 

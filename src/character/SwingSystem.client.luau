@@ -15,6 +15,8 @@ local Debris            = game:GetService("Debris")
 local player = Players.LocalPlayer
 local camera: Camera = workspace.CurrentCamera
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
+local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
+local SwingProgression = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingProgression"))
 
 -- Unique name per boot() so BindToRenderStep doesn’t collide across respawns.
 local r6RenderBindSerial = 0
@@ -32,25 +34,11 @@ local SPRING_STIFFNESS   = 100
 local SPRING_DAMPING     = 20
 local ZIP_TOWARD_DV          = 19    -- studs/s into the arc on attach
 local LAUNCH_CAMERA_BLEND    = 0.28  -- how much camera look steers launch vs current arc direction
--- Momentum release: preserve swing velocity, add forward impulse scaled by power + speed.
 local LAUNCH_FORWARD_CAMERA_MIX = 0.24
-local LAUNCH_UP_IMPULSE      = 5.5   -- extra upward dv (studs/s) on release
-local LAUNCH_IMPULSE_BASE    = 14    -- subtle forward push at starting power
-local LAUNCH_IMPULSE_LINEAR  = 0.08  -- per power-upgrade level
-local LAUNCH_IMPULSE_CURVE   = 22    -- high-power curved boost (Spider-Man travel)
-local LAUNCH_MOMENTUM_RATIO  = 0.48  -- tangential speed → extra forward impulse (~2.8x prior)
-local LAUNCH_MOMENTUM_CURVE  = 0.11  -- high-power momentum conversion bonus
-local LAUNCH_VELOCITY_CARRY  = 0.30  -- fraction of release speed added along velocity vector
-local LAUNCH_CHARGE_BONUS    = 32    -- max extra dv from full swing-charge hold
-local LAUNCH_DEADHANG_IMPULSE = 32   -- forward push when barely moving at release
 local LAUNCH_DURATION        = 0.42  -- seconds post-release camera/FOV treats player as launched
 local REATTACH_ZIP_MULT      = 0.4   -- zip impulse scale when re-hooking soon after a release
 local REATTACH_ZIP_GRACE      = 0.4   -- seconds after detach where zip is reduced
 local MIN_SWING_HOLD_LAUNCH   = 0.1  -- shorter swings get a softer release (anti spam-fling)
-local LAUNCH_MAX_SPEED_BASE  = 108
-local LAUNCH_MAX_SPEED_LINEAR = 0.72
-local LAUNCH_MAX_SPEED_CURVE = 52
-local LAUNCH_MAX_SPEED_CAP   = 320
 local REATTACH_AIR_GRACE     = 1.2
 	local GRAPPLE_INPUT_COOLDOWN = 0.52
 -- Grapple only to vines roughly in front of the camera (blocks snagging behind you).
@@ -302,49 +290,50 @@ local function boot(character: Model)
 		)
 	end
 
-	-- ── Upgrade stats ────────────────────────────────────────────────────────
-	-- Per-point gains halved vs earlier tuning (reach + rope felt too strong).
-	local REACH_PER_POINT = 7 -- SwingRange → studs (search + rope)
-	local ROPE_PER_ATTR_PT = 2 -- RopeLength attribute bonus per point
-
+	-- ── Upgrade stats (unified curve via SwingProgression) ───────────────────
 	local swingRange = BASE_RANGE
 	local swingForce = BASE_FORCE
 	local ropeLength = BASE_ROPE
 
-	-- SwingForce: steering + attach zip + swing speed cap scale with attribute.
 	local dynMaxSwingSpeed = MAX_SWING_SPEED
 	local dynZipToward = ZIP_TOWARD_DV
-	local dynLaunchImpulseBase = LAUNCH_IMPULSE_BASE
-	local dynLaunchMomentumRatio = LAUNCH_MOMENTUM_RATIO
-	local dynMaxLaunchSpeed = LAUNCH_MAX_SPEED_BASE
+	local dynLaunchImpulseBase = 5
+	local dynLaunchMomentumRatio = 0.10
+	local dynLaunchVelocityCarry = 0.07
+	local dynMaxLaunchSpeed = 78
+	local dynLaunchChargeBonus = 6
+	local dynLaunchUpImpulse = 2.5
+	local dynLaunchDeadhangImpulse = 10
 
 	local function refreshStats()
-		local r = player:GetAttribute("SwingRange")
-		local f = player:GetAttribute("SwingForce")
-		local l = player:GetAttribute("RopeLength")
-		local reachPts = if typeof(r) == "number" then r else 0
-		local ropePts = if typeof(l) == "number" then l else 0
-		local powerPts = if typeof(f) == "number" then f else 1
-		local powerLevel = math.max(0, powerPts - 1)
-		local powerCurve = (powerLevel / 100) ^ 1.38
+		local ropePts = player:GetAttribute("RopeLength")
+		local ropeAttrPts = if typeof(ropePts) == "number" then ropePts else 0
 
-		swingRange = BASE_RANGE + reachPts * REACH_PER_POINT
-		-- Rope must track reach or attachRadius=min(range,rope) stays ~BASE_ROPE forever
-		ropeLength = BASE_ROPE + reachPts * REACH_PER_POINT + ropePts * ROPE_PER_ATTR_PT
-		ropeLength = math.max(ropeLength, 8)
+		local powerLevel = player:GetAttribute(SwingUpgrades.POWER_LEVEL_ATTR)
+		local ropeLevel = player:GetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR)
+		if typeof(powerLevel) ~= "number" then
+			powerLevel = 0
+		end
+		if typeof(ropeLevel) ~= "number" then
+			ropeLevel = 0
+		end
 
-		-- Power scales on upgrade level (not display stat) for ~3x slower progression than before.
-		swingForce = BASE_FORCE + 8 + powerLevel * 5.5
+		local ps = SwingProgression.powerStats(powerLevel)
+		local rs = SwingProgression.ropeStats(ropeLevel)
 
-		local spdBonus = math.min(powerLevel * 1.15 + (powerLevel / 120) ^ 1.25 * 8, 52)
-		dynMaxSwingSpeed = 70 + spdBonus
-		dynZipToward = ZIP_TOWARD_DV + powerLevel * 0.48
-		dynLaunchImpulseBase = LAUNCH_IMPULSE_BASE + powerLevel * LAUNCH_IMPULSE_LINEAR + powerCurve * LAUNCH_IMPULSE_CURVE
-		dynLaunchMomentumRatio = LAUNCH_MOMENTUM_RATIO + powerLevel * 0.0015 + powerCurve * LAUNCH_MOMENTUM_CURVE
-		dynMaxLaunchSpeed = math.min(
-			LAUNCH_MAX_SPEED_BASE + powerLevel * LAUNCH_MAX_SPEED_LINEAR + (powerLevel / 70) ^ 1.32 * (LAUNCH_MAX_SPEED_CURVE / 5),
-			LAUNCH_MAX_SPEED_CAP
-		)
+		swingForce = ps.steeringForce
+		dynMaxSwingSpeed = ps.maxSwingSpeed
+		dynZipToward = ps.zipToward
+		dynLaunchImpulseBase = ps.launchImpulseBase
+		dynLaunchMomentumRatio = ps.launchMomentumRatio
+		dynLaunchVelocityCarry = ps.launchVelocityCarry
+		dynMaxLaunchSpeed = ps.maxLaunchSpeed
+		dynLaunchChargeBonus = ps.launchChargeBonus
+		dynLaunchUpImpulse = ps.launchUpImpulse
+		dynLaunchDeadhangImpulse = ps.launchDeadhangImpulse
+
+		swingRange = rs.reachStuds
+		ropeLength = math.max(rs.reachStuds + ropeAttrPts * 2, 8)
 	end
 	refreshStats()
 
@@ -354,9 +343,11 @@ local function boot(character: Model)
 	end
 
 	local statConns = {
-		player:GetAttributeChangedSignal("SwingRange"):Connect(refreshStats),
-		player:GetAttributeChangedSignal("SwingForce"):Connect(refreshStats),
+		player:GetAttributeChangedSignal(SwingUpgrades.POWER_LEVEL_ATTR):Connect(refreshStats),
+		player:GetAttributeChangedSignal(SwingUpgrades.ROPE_LEVEL_ATTR):Connect(refreshStats),
 		player:GetAttributeChangedSignal("RopeLength"):Connect(refreshStats),
+		player:GetAttributeChangedSignal("SwingForce"):Connect(refreshStats),
+		player:GetAttributeChangedSignal("SwingRange"):Connect(refreshStats),
 	}
 
 	-- ── State ─────────────────────────────────────────────────────────────────
@@ -1120,17 +1111,17 @@ local function boot(character: Model)
 					local dir = blendLaunchDir(launchDir)
 					local forwardDv = dynLaunchImpulseBase * holdMult + (extraForwardDv or 0)
 					local momentumDv = tangSpeed * dynLaunchMomentumRatio * holdMult
-					local chargeDv = chargeFill * LAUNCH_CHARGE_BONUS * holdMult
+					local chargeDv = chargeFill * dynLaunchChargeBonus * holdMult
 					local totalDv = forwardDv + momentumDv + chargeDv
 
 					humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
 					hrp:ApplyImpulse(dir * totalDv * mass)
 					if releaseSpeed > 2.5 then
-						local carryDv = releaseSpeed * LAUNCH_VELOCITY_CARRY * holdMult
+						local carryDv = releaseSpeed * dynLaunchVelocityCarry * holdMult
 						hrp:ApplyImpulse(vel.Unit * carryDv * mass)
 					end
-					if LAUNCH_UP_IMPULSE > 0 then
-						hrp:ApplyImpulse(Vector3.new(0, LAUNCH_UP_IMPULSE * holdMult * mass, 0))
+					if dynLaunchUpImpulse > 0 then
+						hrp:ApplyImpulse(Vector3.new(0, dynLaunchUpImpulse * holdMult * mass, 0))
 					end
 
 					local post = hrp.AssemblyLinearVelocity
@@ -1160,7 +1151,7 @@ local function boot(character: Model)
 							0,
 							speed,
 							snapCharge,
-							LAUNCH_DEADHANG_IMPULSE * holdMult
+							dynLaunchDeadhangImpulse * holdMult
 						)
 					end
 				else
@@ -1190,7 +1181,7 @@ local function boot(character: Model)
 						launchDir = if speed > 0.1 then vel.Unit else camFlatUnit
 					end
 
-					local tangRef = if tangSpeed > 1 then tangSpeed else LAUNCH_DEADHANG_IMPULSE * 0.35
+					local tangRef = if tangSpeed > 1 then tangSpeed else dynLaunchDeadhangImpulse * 0.35
 					applyMomentumLaunch(launchDir, tangRef, speed, snapCharge)
 				end
 			end)

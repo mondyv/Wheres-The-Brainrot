@@ -44,8 +44,7 @@ local CONFIG = {
 	-- Brainrot positioning
 	SpawnHeightOffset = 0, -- studs above bush CFrame to place the brainrot
 
-	-- Path to brainrot templates
-	-- ⚠️ TODO: Confirm this path matches your ReplicatedStorage layout
+	-- Path to brainrot templates (ServerStorage.Brainrots/<Name>/<Variant>)
 	BrainrotFolder = nil :: Instance?, -- set after services load
 }
 
@@ -56,11 +55,10 @@ local EMPTY_POOL_RETRY_SEC = 10
 --  SERVICES & REFERENCES
 -- ══════════════════════════════════════════════════════════════
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
--- ⚠️ TODO: Confirm this path matches your ReplicatedStorage layout
-CONFIG.BrainrotFolder = ReplicatedStorage:WaitForChild("Brainrots")
+CONFIG.BrainrotFolder = ServerStorage:WaitForChild("Brainrots")
 
 local Map = Workspace:WaitForChild("Map")
 local Lands = Map:WaitForChild("Lands")
@@ -136,24 +134,36 @@ local function getPromptHost(bush: Instance): BasePart?
 end
 
 --[[
-	pickRandomBrainrot — returns a template Instance from the pool, not a clone.
+	collectTemplateModels — ServerStorage.Brainrots/<Name>/<Variant> nested layout (same as BushHarvest).
 ]]
-local function pickRandomBrainrot(): Instance?
+local function collectTemplateModels(root: Folder): { Model }
+	local list: { Model } = {}
+	for _, desc in root:GetDescendants() do
+		if not desc:IsA("Model") then
+			continue
+		end
+		local parent = desc.Parent
+		if not parent or not parent:IsA("Folder") then
+			continue
+		end
+		table.insert(list, desc)
+	end
+	return list
+end
+
+--[[
+	pickRandomBrainrot — returns a template Model from the pool, not a clone.
+]]
+local function pickRandomBrainrot(): Model?
 	local folder = CONFIG.BrainrotFolder
-	if not folder then
+	if not folder or not folder:IsA("Folder") then
 		warn("[BrainrotSystem] BrainrotFolder not configured")
 		return nil
 	end
 
-	local pool: { Instance } = {}
-	for _, child in folder:GetChildren() do
-		if child:IsA("Model") then
-			table.insert(pool, child)
-		end
-	end
-
+	local pool = collectTemplateModels(folder :: Folder)
 	if #pool == 0 then
-		warn("[BrainrotSystem] ReplicatedStorage.Brainrots has no Model children — retrying spawn later")
+		warn("[BrainrotSystem] ServerStorage.Brainrots has no spawnable Models — retrying spawn later")
 		return nil
 	end
 
@@ -271,7 +281,7 @@ spawnBrainrot = function(bushState: BushState)
 		return
 	end
 
-	-- ⚠️ TODO: Assumes brainrots are Models in ReplicatedStorage.Brainrots.
+	-- ⚠️ TODO: Assumes brainrots are Models under ServerStorage.Brainrots.
 	-- If they live elsewhere or are a different type, change the path and clone logic here.
 	local clone = template:Clone()
 	if not clone:IsA("Model") then

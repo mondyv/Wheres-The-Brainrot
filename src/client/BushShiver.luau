@@ -1,5 +1,5 @@
 --[[
-	Jagged shiver bursts for bushes with HasHiddenBrainrot == true (server pre-roll).
+	Soft nervous shiver bursts for bushes with HasHiddenBrainrot == true (server pre-roll).
 	Each bush runs its own randomized schedule so bushes never sync up.
 ]]
 
@@ -8,15 +8,16 @@ local M = {}
 local HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
 local ON_COOLDOWN_ATTR = "BushOnCooldown"
 
-local SHIVER_BURST_MIN_SEC = 2
-local SHIVER_BURST_MAX_SEC = 3
+local SHIVER_BURST_MIN_SEC = 1.5
+local SHIVER_BURST_MAX_SEC = 2
 local SHIVER_IDLE_MIN_SEC = 7
 local SHIVER_IDLE_MAX_SEC = 15
 local SHIVER_START_DELAY_MAX_SEC = 12
-local SHIVER_STEP_SEC = 0.042
+local SHIVER_TICK_SEC = 1 / 30
 
-local SHIVER_POS_AMP = 0.07
-local SHIVER_ROT_AMP = math.rad(2.4)
+local SHIVER_POS_AMP = 0.045
+local SHIVER_ROT_AMP = math.rad(1.6)
+local SHIVER_FREQ = 12
 
 local baseTransformByBush: { [Instance]: CFrame } = {}
 local hookedByBush: { [Instance]: boolean } = {}
@@ -55,12 +56,13 @@ local function restoreBushTransform(bush: Instance)
 	end
 end
 
-local function randomJaggedOffset(): CFrame
-	local ox = (math.random() * 2 - 1) * SHIVER_POS_AMP
-	local oz = (math.random() * 2 - 1) * SHIVER_POS_AMP * 0.65
-	local ty = (math.random() * 2 - 1) * SHIVER_ROT_AMP
-	local tz = (math.random() * 2 - 1) * SHIVER_ROT_AMP * 0.75
-	local tx = (math.random() * 2 - 1) * SHIVER_ROT_AMP * 0.45
+local function softShiverOffset(elapsed: number, burstSec: number): CFrame
+	local envelope = math.sin(math.clamp(elapsed / burstSec, 0, 1) * math.pi)
+	local ox = math.sin(elapsed * SHIVER_FREQ) * SHIVER_POS_AMP * envelope
+	local oz = math.sin(elapsed * SHIVER_FREQ * 1.11 + 0.7) * SHIVER_POS_AMP * 0.52 * envelope
+	local ty = math.sin(elapsed * SHIVER_FREQ * 0.94 + 1.1) * SHIVER_ROT_AMP * envelope
+	local tz = math.sin(elapsed * SHIVER_FREQ * 1.06 + 0.35) * SHIVER_ROT_AMP * 0.58 * envelope
+	local tx = math.sin(elapsed * SHIVER_FREQ * 1.19) * SHIVER_ROT_AMP * 0.32 * envelope
 	return CFrame.new(ox, 0, oz) * CFrame.Angles(tx, ty, tz)
 end
 
@@ -81,16 +83,18 @@ local function randomBurstSec(): number
 	return SHIVER_BURST_MIN_SEC + math.random() * (SHIVER_BURST_MAX_SEC - SHIVER_BURST_MIN_SEC)
 end
 
-local function runJaggedBurst(bush: Instance, token: number, burstSec: number)
+local function runSoftBurst(bush: Instance, token: number, burstSec: number)
 	local base = baseTransformByBush[bush]
 	if not base then
 		return
 	end
 
-	local endAt = os.clock() + burstSec
+	local start = os.clock()
+	local endAt = start + burstSec
 	while bush.Parent and token == schedulerTokenByBush[bush] and shouldShiverBush(bush) and os.clock() < endAt do
-		applyTransform(bush, base * randomJaggedOffset())
-		task.wait(SHIVER_STEP_SEC)
+		local elapsed = os.clock() - start
+		applyTransform(bush, base * softShiverOffset(elapsed, burstSec))
+		task.wait(SHIVER_TICK_SEC)
 	end
 
 	if token == schedulerTokenByBush[bush] and bush.Parent then
@@ -134,7 +138,7 @@ local function startShiverScheduler(bush: Instance)
 			end
 			baseTransformByBush[bush] = base
 
-			runJaggedBurst(bush, token, randomBurstSec())
+			runSoftBurst(bush, token, randomBurstSec())
 		end
 
 		if token == schedulerTokenByBush[bush] then

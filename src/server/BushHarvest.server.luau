@@ -155,6 +155,7 @@ local function ensureInventoryRemotes(): (RemoteEvent, RemoteFunction)
 end
 
 local playBrainrotSFXRE: RemoteEvent? = nil
+local safeZoneFlashRE: RemoteEvent? = nil
 
 local function ensurePlayBrainrotSFXRemote(): RemoteEvent
 	if playBrainrotSFXRE and playBrainrotSFXRE.Parent then
@@ -170,11 +171,29 @@ local function ensurePlayBrainrotSFXRemote(): RemoteEvent
 	return playBrainrotSFXRE
 end
 
+local function ensureSafeZoneFlashRemote(): RemoteEvent
+	if safeZoneFlashRE and safeZoneFlashRE.Parent then
+		return safeZoneFlashRE
+	end
+	local ev = ReplicatedStorage:FindFirstChild("SafeZoneFlash")
+	if not ev then
+		ev = Instance.new("RemoteEvent")
+		ev.Name = "SafeZoneFlash"
+		ev.Parent = ReplicatedStorage
+	end
+	safeZoneFlashRE = ev :: RemoteEvent
+	return safeZoneFlashRE
+end
+
 local function firePlayBrainrotSFX(player: Player, brainrotName: string)
 	if typeof(brainrotName) ~= "string" or brainrotName == "" then
 		return
 	end
 	ensurePlayBrainrotSFXRemote():FireClient(player, brainrotName)
+end
+
+local function fireSafeZoneFlash(player: Player)
+	ensureSafeZoneFlashRemote():FireClient(player)
 end
 
 local function brainrotNameFromTemplateModel(template: Model): string?
@@ -221,6 +240,7 @@ local function tryPlaySafeZoneSFXForCarry(player: Player, carry: Model)
 	end
 	safeZoneSfxPlayedForCarry[carry] = true
 	firePlayBrainrotSFX(player, name)
+	fireSafeZoneFlash(player)
 end
 
 local function tryPlaySafeZoneSFXForAllCarries(player: Player)
@@ -2075,6 +2095,7 @@ for _, p in Players:GetPlayers() do
 end
 
 ensurePlayBrainrotSFXRemote()
+ensureSafeZoneFlashRemote()
 
 local harvestRemote = ensureRemote()
 local harvestBushFn = ensureHarvestFunction()

@@ -456,7 +456,7 @@ end
 
 local bushSearchInFlight: { [Instance]: boolean } = {}
 
---[[ Server-authoritative 30/70 roll via HarvestBush RemoteFunction. ]]
+--[[ Server-authoritative 50/50 roll via HarvestBush RemoteFunction. ]]
 local function requestBushSearch(worldPos: Vector3, bush: Instance)
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes") or ReplicatedStorage:WaitForChild("BushRemotes", 8)
 	if not folder then

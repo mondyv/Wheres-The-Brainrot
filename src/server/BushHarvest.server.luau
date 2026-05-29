@@ -36,8 +36,8 @@ type BrainrotInvEntry = {
 
 local MAX_HARVEST_RANGE = 14
 local RANGE_SLACK = 5
--- Per bush: 30% empty, 70% hidden brainrot (rolled when bush becomes available).
-local BUSH_EMPTY_PERCENT = 30
+-- Per bush: 50/50 hidden brainrot vs empty (rolled when bush becomes available or after cooldown).
+local BUSH_BRAINROT_CHANCE = 0.5
 local BUSH_SEARCH_DEBOUNCE_SEC = 0.4
 local BUSH_HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
 local BUSH_ON_COOLDOWN_ATTR = "BushOnCooldown"
@@ -1109,7 +1109,7 @@ local function isLootableBush(inst: Instance): boolean
 end
 
 local function rollBushHasBrainrot(): boolean
-	return math.random(1, 100) > BUSH_EMPTY_PERCENT
+	return math.random() < BUSH_BRAINROT_CHANCE
 end
 
 local function isValidBushRef(bushRef: Instance?): boolean
@@ -1130,7 +1130,7 @@ local function isValidBushRef(bushRef: Instance?): boolean
 end
 
 --[[
-	RollBushState — fresh 70/30 dice. Only call when a bush becomes searchable (init or post-cooldown).
+	RollBushState — fresh 50/50 dice. Only call when a bush becomes searchable (init or post-cooldown).
 ]]
 local function RollBushState(bush: Instance): boolean
 	if not isValidBushRef(bush) then

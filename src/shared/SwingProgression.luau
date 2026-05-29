@@ -4,21 +4,22 @@ local M = {}
 M.POWER_MAX_LEVEL = 300
 M.ROPE_MAX_LEVEL = 100
 
--- UI display uses clean steps of 10 (10 → 20 → 30 … per single upgrade).
+-- UI display: base 10, +1 per upgrade level (Power10 → 10 to 20, label shows +10).
 M.POWER_DISPLAY_BASE = 10
-M.POWER_DISPLAY_STEP = 10
+M.POWER_DISPLAY_STEP = 1
 M.REACH_DISPLAY_BASE = 10
-M.REACH_DISPLAY_STEP = 10
+M.REACH_DISPLAY_STEP = 1
 
 local function floorLevel(n: number): number
 	return math.max(0, math.floor(n))
 end
 
--- Smooth 0→1 curve: incremental early, stronger mid/late, no per-level spikes.
+-- Early levels matter more; late levels soften toward the cap (no flat early grind).
 function M.progressT(level: number, maxLevel: number): number
 	local cap = math.max(1, maxLevel)
-	local t = math.clamp(floorLevel(level) / cap, 0, 1)
-	return t ^ 1.45 * (1.08 - t * 0.08)
+	local linear = math.clamp(floorLevel(level) / cap, 0, 1)
+	local curved = linear ^ 0.55
+	return linear * 0.3 + curved * 0.7
 end
 
 function M.displayPower(level: number): number
@@ -33,15 +34,8 @@ function M.displayCarry(level: number): number
 	return 1 + floorLevel(level)
 end
 
-function M.displayBonusForUnits(levelAttr: string, units: number): number
-	local n = math.max(0, math.floor(units))
-	if levelAttr == "PowerUpgradeLevel" then
-		return n * M.POWER_DISPLAY_STEP
-	end
-	if levelAttr == "RopeUpgradeLevel" then
-		return n * M.REACH_DISPLAY_STEP
-	end
-	return n
+function M.displayBonusForUnits(_levelAttr: string, units: number): number
+	return math.max(0, math.floor(units))
 end
 
 export type PowerStats = {
@@ -63,12 +57,12 @@ export type RopeStats = {
 
 function M.powerStats(powerLevel: number): PowerStats
 	local t = M.progressT(powerLevel, M.POWER_MAX_LEVEL)
-	local maxSwingSpeed = 78 + t * 40
+	local maxSwingSpeed = 78 + t * 45
 
 	return {
-		steeringForce = 78 + t * 72,
+		steeringForce = 78 + t * 75,
 		maxSwingSpeed = maxSwingSpeed,
-		zipToward = 25 + t * 14,
+		zipToward = 25 + t * 16,
 		-- Higher bases for satisfying zero-upgrade swings; t-range trimmed to preserve endgame caps.
 		launchImpulseBase = 14 + t * 7,
 		launchMomentumRatio = 0.18 + t * 0.09,
@@ -94,14 +88,29 @@ function M.levelFromLegacyDisplay(attr: string, value: number): number
 	end
 	local v = math.floor(value)
 	if attr == "SwingForce" then
-		if v >= M.POWER_DISPLAY_BASE and (v - M.POWER_DISPLAY_BASE) % M.POWER_DISPLAY_STEP == 0 then
-			return math.max(0, (v - M.POWER_DISPLAY_BASE) / M.POWER_DISPLAY_STEP)
+		if v >= M.POWER_DISPLAY_BASE then
+			local delta = v - M.POWER_DISPLAY_BASE
+			-- Legacy UI stored +10 display steps (10, 20, 110 …).
+			if delta >= 10 and delta % 10 == 0 and delta // 10 <= M.POWER_MAX_LEVEL then
+				local asStep10 = delta // 10
+				if asStep10 * 10 == delta then
+					return asStep10
+				end
+			end
+			return math.max(0, delta)
 		end
 		return math.max(0, v - 1)
 	end
 	if attr == "SwingRange" then
-		if v >= M.REACH_DISPLAY_BASE and (v - M.REACH_DISPLAY_BASE) % M.REACH_DISPLAY_STEP == 0 then
-			return math.max(0, (v - M.REACH_DISPLAY_BASE) / M.REACH_DISPLAY_STEP)
+		if v >= M.REACH_DISPLAY_BASE then
+			local delta = v - M.REACH_DISPLAY_BASE
+			if delta >= 10 and delta % 10 == 0 and delta // 10 <= M.ROPE_MAX_LEVEL then
+				local asStep10 = delta // 10
+				if asStep10 * 10 == delta then
+					return asStep10
+				end
+			end
+			return math.max(0, delta)
 		end
 		return math.max(0, v - 1)
 	end

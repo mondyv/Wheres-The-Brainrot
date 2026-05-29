@@ -136,26 +136,15 @@ function M.unitCostForLevelAttr(levelAttr: string, level: number): number
 	return 0
 end
 
--- Canonical pricing: N bulk units = sum of the next N single-unit prices from current level.
+-- Bulk price = current single-unit price × batch size (+25 always costs exactly 2.5× +10).
 function M.priceForUnitCount(levelAttr: string, currentLevel: number, unitCount: number): number
 	local start = floorLevel(currentLevel)
 	local count = math.max(0, math.floor(unitCount))
 	if count == 0 then
 		return 0
 	end
-	if levelAttr == M.POWER_LEVEL_ATTR then
-		return M.sumUnitCosts(M.powerUnitCost, start, count)
-	end
-	if levelAttr == M.ROPE_LEVEL_ATTR then
-		return M.sumUnitCosts(M.ropeUnitCost, start, count)
-	end
-	if levelAttr == M.CARRY_LEVEL_ATTR then
-		if count ~= 1 then
-			return 0
-		end
-		return M.carryUnitCost(start)
-	end
-	return 0
+	local unitPrice = M.unitCostForLevelAttr(levelAttr, start)
+	return unitPrice * count
 end
 
 function M.batchPriceForUpgradeId(upgradeId: string, levels: UpgradeLevels): number
@@ -217,11 +206,8 @@ function M.batchMatchesSingleUnits(upgradeId: string): boolean
 	end
 	local probeLevel = 0
 	local batch = M.priceForUnitCount(def.levelAttr, probeLevel, def.units)
-	local singles = 0
-	for i = 0, def.units - 1 do
-		singles += M.unitCostForLevelAttr(def.levelAttr, probeLevel + i)
-	end
-	return batch == singles
+	local unitPrice = M.unitCostForLevelAttr(def.levelAttr, probeLevel)
+	return batch == unitPrice * def.units
 end
 
 function M.syncGameplayStatsFromLevels(player: Player, levels: UpgradeLevels)

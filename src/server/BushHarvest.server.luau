@@ -1143,12 +1143,15 @@ local EMPTY_BUSH_HOLD_DURATION = EMPTY_BUSH_MESSAGE_LIFETIME - EMPTY_BUSH_FADE_D
 local EMPTY_BUSH_BILLBOARD_NAME = "BushEmptyMessage"
 local BUSH_PROMPT_LIFT_SCALE = 0.66
 local BUSH_MESSAGE_FLOAT_ABOVE_PROMPT = 2.75
-local BUSH_ALERT_RED = Color3.fromRGB(225, 48, 48)
-local BUSH_ALERT_RESTORE_DURATION = 1.0
+local BUSH_FLASH_RED = Color3.fromRGB(225, 48, 48)
+local BUSH_FLASH_GREEN = Color3.fromRGB(52, 215, 88)
+local BUSH_FLASH_RESTORE_DURATION = 1.0
+local BUSH_ERROR_SHAKE_DURATION = 0.5
 local emptyBushMessageHideToken: { [Instance]: number } = {}
-local bushAlertToken: { [Instance]: number } = {}
-local bushAlertTweens: { [Instance]: { Tween } } = {}
-local bushAlertOriginalColors: { [Instance]: { [BasePart]: Color3 } } = {}
+local bushFlashToken: { [Instance]: number } = {}
+local bushFlashTweens: { [Instance]: { Tween } } = {}
+local bushFlashOriginalColors: { [Instance]: { [BasePart]: Color3 } } = {}
+local bushErrorShakeToken: { [Instance]: number } = {}
 
 local function findBushPromptCenterWorld(bush: Instance): Vector3?
 	for _, desc in bush:GetDescendants() do
@@ -1258,43 +1261,62 @@ local function collectVisibleBushParts(bush: Instance): { BasePart }
 	return parts
 end
 
-local function cancelBushAlertTweens(bush: Instance)
-	local tweens = bushAlertTweens[bush]
+local function cancelBushFlashTweens(bush: Instance)
+	local tweens = bushFlashTweens[bush]
 	if not tweens then
 		return
 	end
 	for _, tween in tweens do
 		tween:Cancel()
 	end
-	bushAlertTweens[bush] = nil
+	bushFlashTweens[bush] = nil
 end
 
-local function playBushRedAlert(bush: Instance)
-	local token = (bushAlertToken[bush] or 0) + 1
-	bushAlertToken[bush] = token
-	cancelBushAlertTweens(bush)
+local function captureBushTransform(bush: Instance): CFrame?
+	if bush:IsA("Model") then
+		return bush:GetPivot()
+	end
+	if bush:IsA("BasePart") then
+		return bush.CFrame
+	end
+	return nil
+end
+
+local function applyBushTransform(bush: Instance, cf: CFrame)
+	if bush:IsA("Model") then
+		bush:PivotTo(cf)
+	elseif bush:IsA("BasePart") then
+		bush.CFrame = cf
+	end
+end
+
+local function FlashBushColor(bush: Instance, flashColor: Color3, restoreDuration: number?)
+	local duration = restoreDuration or BUSH_FLASH_RESTORE_DURATION
+	local token = (bushFlashToken[bush] or 0) + 1
+	bushFlashToken[bush] = token
+	cancelBushFlashTweens(bush)
 
 	local parts = collectVisibleBushParts(bush)
 	if #parts == 0 then
 		return
 	end
 
-	local originals = bushAlertOriginalColors[bush]
+	local originals = bushFlashOriginalColors[bush]
 	if not originals then
 		originals = {}
-		bushAlertOriginalColors[bush] = originals
+		bushFlashOriginalColors[bush] = originals
 	end
 
 	for _, part in parts do
 		if not originals[part] then
 			originals[part] = part.Color
 		end
-		part.Color = BUSH_ALERT_RED
+		part.Color = flashColor
 	end
 
 	local tweens: { Tween } = {}
-	bushAlertTweens[bush] = tweens
-	local tweenInfo = TweenInfo.new(BUSH_ALERT_RESTORE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	bushFlashTweens[bush] = tweens
+	local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	for _, part in parts do
 		local originalColor = originals[part]
 		if originalColor then
@@ -1303,6 +1325,38 @@ local function playBushRedAlert(bush: Instance)
 			table.insert(tweens, tween)
 		end
 	end
+end
+
+local function ErrorShakeBush(bush: Instance, duration: number?)
+	local shakeDuration = duration or BUSH_ERROR_SHAKE_DURATION
+	local token = (bushErrorShakeToken[bush] or 0) + 1
+	bushErrorShakeToken[bush] = token
+
+	task.spawn(function()
+		local base = captureBushTransform(bush)
+		if not base then
+			return
+		end
+
+		local start = os.clock()
+		local endAt = start + shakeDuration
+		local step = 1 / 40
+		local posAmp = 0.035
+		local rotAmp = math.rad(2.2)
+
+		while bush.Parent and token == bushErrorShakeToken[bush] and os.clock() < endAt do
+			local elapsed = os.clock() - start
+			local fade = 1 - math.clamp(elapsed / shakeDuration, 0, 1)
+			local side = if math.floor(elapsed * 16) % 2 == 0 then 1 else -1
+			local offset = CFrame.new(side * posAmp * fade, 0, 0) * CFrame.Angles(0, 0, side * rotAmp * fade)
+			applyBushTransform(bush, base * offset)
+			task.wait(step)
+		end
+
+		if token == bushErrorShakeToken[bush] and bush.Parent then
+			applyBushTransform(bush, base)
+		end
+	end)
 end
 
 local function getBushAdornee(bush: Instance): BasePart?
@@ -1456,7 +1510,8 @@ local function fadeOutAndDestroyEmptyBushMessage(bush: Instance, token: number)
 end
 
 local function showEmptyBushMessage(bush: Instance)
-	playBushRedAlert(bush)
+	FlashBushColor(bush, BUSH_FLASH_RED, BUSH_FLASH_RESTORE_DURATION)
+	ErrorShakeBush(bush, BUSH_ERROR_SHAKE_DURATION)
 
 	local anchor = ensureEmptyBushBillboardAnchor(bush)
 	if not anchor then
@@ -1653,6 +1708,7 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 
 	if hasBrainrot then
 		clearEmptyBushMessageState(bush)
+		FlashBushColor(bush, BUSH_FLASH_GREEN, BUSH_FLASH_RESTORE_DURATION)
 		beginHarvestOutcome(player, worldPosition)
 		return true
 	end

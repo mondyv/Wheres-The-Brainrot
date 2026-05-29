@@ -70,9 +70,6 @@ local LAUNCH_FOV_BOOST       = 4.5  -- tiny release FOV punch (layered on speed 
 local LAUNCH_FOV_DURATION    = 0.38
 local LAUNCH_CAM_SHAKE_DURATION = 0.24
 local LAUNCH_CAM_SHAKE_MAX   = 0.28
-local LAUNCH_SPEED_LINES_MIN = 52  -- min post-release speed for streak overlay
-local LAUNCH_MOTION_BLUR_MIN = 78  -- min speed for subtle blur
-local LAUNCH_MOTION_BLUR_MAX = 14  -- BlurEffect.Size at high launch speed
 local SWING_CAM_RENDER_STEP  = "SwingSystem_CameraFX"
 
 local COLOR_NEAR     = Color3.fromRGB(90, 210, 255)
@@ -438,130 +435,21 @@ local function boot(character: Model)
 
 	RunService:BindToRenderStep(swingCamBindName, Enum.RenderPriority.Camera.Value + 1, applySwingCameraFx)
 
-	-- High-speed launch polish: streak overlay + subtle motion blur (client-only).
-	local speedLineGui: ScreenGui? = nil
-	local speedLineFrames: { Frame } = {}
-	local launchBlurFx: BlurEffect? = nil
-	local speedLinePhase = 0
-
+	-- Remove legacy launch streak ScreenGui (horizontal speed lines) if left from older builds.
 	local function destroyLaunchSpeedFx()
-		if speedLineGui then
-			speedLineGui:Destroy()
-			speedLineGui = nil
-		end
-		table.clear(speedLineFrames)
-		if launchBlurFx then
-			launchBlurFx:Destroy()
-			launchBlurFx = nil
-		end
-		speedLinePhase = 0
-	end
-
-	local function ensureLaunchSpeedFx()
-		if speedLineGui then
-			return
-		end
-		local pg = player:FindFirstChildOfClass("PlayerGui")
-		if not pg then
-			return
-		end
-
-		local gui = Instance.new("ScreenGui")
-		gui.Name = "SwingLaunchSpeedLines"
-		gui.IgnoreGuiInset = true
-		gui.DisplayOrder = 4
-		gui.ResetOnSpawn = false
-		gui.Parent = pg
-		speedLineGui = gui
-
-		for i = 1, 7 do
-			local stripe = Instance.new("Frame")
-			stripe.Name = "Stripe" .. tostring(i)
-			stripe.AnchorPoint = Vector2.new(0.5, 0.5)
-			stripe.Position = UDim2.fromScale(0.5, 0.12 + (i - 1) * 0.11)
-			stripe.Size = UDim2.fromScale(0.55 + (i % 3) * 0.08, 0.012)
-			stripe.BackgroundColor3 = Color3.fromRGB(235, 245, 255)
-			stripe.BackgroundTransparency = 1
-			stripe.BorderSizePixel = 0
-			stripe.Parent = gui
-			table.insert(speedLineFrames, stripe)
-		end
-
-		local blur = Instance.new("BlurEffect")
-		blur.Name = "SwingLaunchBlur"
-		blur.Size = 0
-		blur.Enabled = false
-		blur.Parent = camera
-		launchBlurFx = blur
-	end
-
-	local function updateLaunchSpeedFx(dt: number, speed: number)
-		if not isLaunched then
-			if speedLineGui or launchBlurFx then
-				local fade = math.min(1, dt * 10)
-				for _, stripe in speedLineFrames do
-					stripe.BackgroundTransparency = math.min(1, stripe.BackgroundTransparency + fade * 0.35)
-				end
-				if launchBlurFx then
-					launchBlurFx.Size = math.max(0, launchBlurFx.Size - fade * LAUNCH_MOTION_BLUR_MAX * 0.5)
-					if launchBlurFx.Size < 0.05 then
-						launchBlurFx.Enabled = false
-					end
-				end
-				local allHidden = true
-				for _, stripe in speedLineFrames do
-					if stripe.BackgroundTransparency < 0.98 then
-						allHidden = false
-						break
-					end
-				end
-				if allHidden and (not launchBlurFx or not launchBlurFx.Enabled) then
-					destroyLaunchSpeedFx()
-				end
-			end
-			return
-		end
-
-		if speed < LAUNCH_SPEED_LINES_MIN then
-			return
-		end
-
-		ensureLaunchSpeedFx()
-		if #speedLineFrames == 0 then
-			return
-		end
-
-		local speedT = math.clamp(
-			(speed - LAUNCH_SPEED_LINES_MIN) / math.max(dynMaxLaunchSpeed - LAUNCH_SPEED_LINES_MIN, 1),
-			0,
-			1
-		)
-		speedLinePhase += dt * (14 + speedT * 26)
-		local baseAlpha = 0.72 - speedT * 0.38
-
-		for i, stripe in speedLineFrames do
-			local wobble = math.sin(speedLinePhase + i * 0.9) * 0.015
-			local baseY = 0.12 + (i - 1) * 0.11
-			stripe.Position = UDim2.fromScale(0.5 + wobble, baseY)
-			stripe.BackgroundTransparency = baseAlpha + (i % 2) * 0.08
-			stripe.Size = UDim2.fromScale(0.42 + speedT * 0.48 + wobble, 0.008 + speedT * 0.01)
-		end
-
-		if launchBlurFx and speed >= LAUNCH_MOTION_BLUR_MIN then
-			local blurT = math.clamp(
-				(speed - LAUNCH_MOTION_BLUR_MIN) / math.max(dynMaxLaunchSpeed - LAUNCH_MOTION_BLUR_MIN, 1),
-				0,
-				1
-			)
-			launchBlurFx.Enabled = true
-			launchBlurFx.Size = expSmoothScalar(launchBlurFx.Size, blurT * LAUNCH_MOTION_BLUR_MAX, dt, 9)
-		elseif launchBlurFx then
-			launchBlurFx.Size = expSmoothScalar(launchBlurFx.Size, 0, dt, 12)
-			if launchBlurFx.Size < 0.05 then
-				launchBlurFx.Enabled = false
+		local pg = player:FindFirstChild("PlayerGui")
+		if pg then
+			local gui = pg:FindFirstChild("SwingLaunchSpeedLines")
+			if gui then
+				gui:Destroy()
 			end
 		end
+		local blur = camera:FindFirstChild("SwingLaunchBlur")
+		if blur and blur:IsA("BlurEffect") then
+			blur:Destroy()
+		end
 	end
+	destroyLaunchSpeedFx()
 
 	-- Swing constraints / force
 	local ropeInst:      SpringConstraint? = nil
@@ -1471,7 +1359,6 @@ local function boot(character: Model)
 		end
 
 		camera.FieldOfView += (fovTarget - camera.FieldOfView) * math.min(dt * FOV_SPEED, 1)
-		updateLaunchSpeedFx(dt, vel.Magnitude)
 
 		-- Swing physics: camera-steered pendulum on a SpringConstraint.
 		if isSwinging and forceInst and swingTargetPart and swingTargetPart.Parent and ropeAnchorAtt and ropeAnchorAtt.Parent then

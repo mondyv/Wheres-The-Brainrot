@@ -271,8 +271,17 @@ local function registerBushesUnderFolder(folder: Folder)
 	end
 end
 
+local function purgeLegacyEmptyBushBillboards(map: Instance)
+	for _, desc in map:GetDescendants() do
+		if desc.Name == "BushEmptyMessage" then
+			desc:Destroy()
+		end
+	end
+end
+
 local function registerAllBushesOnMap(map: Instance)
 	purgeForeignUnder(map)
+	purgeLegacyEmptyBushBillboards(map)
 
 	for _, folder in collectBushFolders(map) do
 		registerBushesUnderFolder(folder)

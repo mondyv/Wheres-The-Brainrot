@@ -1,6 +1,9 @@
 --[[
 	Bush harvest — closest-bush targeting, highlight, hold-to-search.
 	Engine ProximityPrompt handles hold/trigger; ProximityPromptEffects draws the custom bush card + FX.
+
+	30% empty: server fires BushSearchEmpty → billboard text only (no physical brainrot).
+	70% found: server BushHarvest spawns above bush (pop / float) — never visible inside the bush before search.
 ]]
 
 local ContextActionService = game:GetService("ContextActionService")
@@ -321,10 +324,26 @@ local function attachPrompt(root: Model)
 	end)
 end
 
+--[[
+	Strip artifacts from removed BrainrotBushSpawn (prompts / clones left in Studio).
+]]
+local function purgeLegacyPreSpawnArtifacts(root: Instance)
+	for _, d in root:GetDescendants() do
+		if d:IsA("ProximityPrompt") then
+			if d.Name == "BrainrotBushSpawnPrompt" or d:GetAttribute("BrainrotSpawnManaged") == true then
+				d:Destroy()
+			end
+		elseif d:IsA("Model") and typeof(d:GetAttribute("OwnerUserId")) == "number" then
+			d:Destroy()
+		end
+	end
+end
+
 local function registerBushModel(root: Model)
 	if bushByModel[root] then
 		return
 	end
+	purgeLegacyPreSpawnArtifacts(root)
 	if anchorFor(root) then
 		attachPrompt(root)
 		return
@@ -382,6 +401,10 @@ end
 
 local function registerAllBushesOnMap(map: Instance)
 	purgeForeignUnder(map)
+	local legacyActive = Workspace:FindFirstChild("ActiveBrainrots")
+	if legacyActive then
+		legacyActive:Destroy()
+	end
 
 	for _, folder in collectBushFolders(map) do
 		registerBushesUnderFolder(folder)

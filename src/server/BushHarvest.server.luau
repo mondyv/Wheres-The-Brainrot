@@ -35,7 +35,8 @@ type BrainrotInvEntry = {
 
 local MAX_HARVEST_RANGE = 14
 local RANGE_SLACK = 5
--- Per bush search: 30% empty, 70% spawn brainrot (server roll).
+-- Per bush search (after hold-to-search only): 30% = empty message, 70% = pop/float above bush.
+-- Never pre-spawn visible brainrots in bushes; beginHarvestOutcome is the only spawn path.
 local BUSH_EMPTY_CHANCE = 0.30
 local FLOAT_DURATION = 4
 local POP_DURATION = 0.35
@@ -1386,13 +1387,27 @@ for _, p in Players:GetPlayers() do
 	end)
 end
 
--- Removed BrainrotBushSpawn: clear any pre-spawned visible rots left in Workspace from older builds.
-task.defer(function()
+local function cleanupLegacyPreSpawnedBrainrots(map: Instance)
 	local legacy = workspace:FindFirstChild("ActiveBrainrots")
 	if legacy then
 		legacy:Destroy()
 	end
-end)
+	for _, folder in map:GetDescendants() do
+		if folder.Name ~= "BushSCRIPTs" then
+			continue
+		end
+		for _, bush in folder:GetChildren() do
+			if bush.Name ~= "BushSCRIPT" then
+				continue
+			end
+			for _, desc in bush:GetDescendants() do
+				if desc:IsA("Model") and typeof(desc:GetAttribute("OwnerUserId")) == "number" then
+					desc:Destroy()
+				end
+			end
+		end
+	end
+end
 
 local harvestRemote = ensureRemote()
 local _, getInvRF = ensureInventoryRemotes()
@@ -1934,6 +1949,7 @@ task.defer(function()
 	if not map then
 		return
 	end
+	cleanupLegacyPreSpawnedBrainrots(map)
 	for _ = 1, 60 do
 		refreshLuckHitboxes()
 		if #luckHitboxes > 0 then

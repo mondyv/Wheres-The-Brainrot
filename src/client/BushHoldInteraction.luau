@@ -253,7 +253,7 @@ local function registerFromSearchPrompt(prompt: ProximityPrompt)
 	if not root then
 		return
 	end
-	registerBushModel(root)
+	registerBushRoot(root)
 end
 
 local function purgeForeignUnder(root: Instance)

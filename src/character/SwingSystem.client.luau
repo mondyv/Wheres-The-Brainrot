@@ -1,7 +1,7 @@
 -- SwingSystem.client.luau
 -- Double-jump while airborne to attach to the nearest SwingTarget vine.
 -- WASD steers along the arc; vine glide pulls you toward the hook + lighter gravity (Mowgli-style).
--- Release Jump (Space / ButtonA release) to detach on PC & gamepad. Mobile: hold the touch jump button to stay attached, let go to detach (matches PC). Falls back to second-tap detach only if the JumpButton can't be located.
+-- Release Jump (Space / ButtonA release) to detach with a momentum-based launch (preserves arc speed + forward impulse).
 -- Upgrade attributes on the player: SwingRange, SwingForce, RopeLength (all numbers)
 
 local Players           = game:GetService("Players")
@@ -31,18 +31,25 @@ local SPRING_FREE_LENGTH = 0
 local SPRING_STIFFNESS   = 100
 local SPRING_DAMPING     = 20
 local ZIP_TOWARD_DV          = 19    -- studs/s into the arc on attach
-local LAUNCH_SPEED_RATIO     = 0.96  -- detach speed vs swing speed (always slower than dynMaxSwingSpeed cap)
 local LAUNCH_CAMERA_BLEND    = 0.42  -- how much camera look steers launch vs current arc direction
--- After aim is chosen, blend toward flat camera forward and add lift so release feels like a lunge.
-local LAUNCH_FORWARD_CAMERA_MIX = 0.4
-local LAUNCH_UP_BLEND        = 0.34
-local LAUNCH_DURATION        = 0.35  -- seconds post-release camera/FOV treats player as launched
+-- Momentum release: preserve swing velocity, add forward impulse scaled by power + speed.
+local LAUNCH_FORWARD_CAMERA_MIX = 0.36
+local LAUNCH_UP_IMPULSE      = 3.2   -- extra upward dv (studs/s) on release
+local LAUNCH_IMPULSE_BASE    = 5.5   -- subtle forward push at starting power
+local LAUNCH_IMPULSE_LINEAR  = 0.10 -- per power-upgrade level
+local LAUNCH_IMPULSE_CURVE   = 16   -- high-power curved boost (Spider-Man travel)
+local LAUNCH_MOMENTUM_RATIO  = 0.17 -- tangential speed → extra forward impulse
+local LAUNCH_MOMENTUM_CURVE  = 0.05 -- high-power momentum conversion bonus
+local LAUNCH_CHARGE_BONUS    = 13   -- max extra dv from full swing-charge hold
+local LAUNCH_DEADHANG_IMPULSE = 15  -- forward push when barely moving at release
+local LAUNCH_DURATION        = 0.42  -- seconds post-release camera/FOV treats player as launched
 local REATTACH_ZIP_MULT      = 0.4   -- zip impulse scale when re-hooking soon after a release
 local REATTACH_ZIP_GRACE      = 0.4   -- seconds after detach where zip is reduced
 local MIN_SWING_HOLD_LAUNCH   = 0.1  -- shorter swings get a softer release (anti spam-fling)
--- Minimum exit speed so a detach still feels like a lunge when tangential speed reads low.
-local MIN_LAUNCH_EXIT_SPEED   = 24
-local LAUNCH_DEADHANG_SPEED   = 28 -- studs/s when velocity is tiny but player still releases (lunge out)
+local LAUNCH_MAX_SPEED_BASE  = 88
+local LAUNCH_MAX_SPEED_LINEAR = 0.58
+local LAUNCH_MAX_SPEED_CURVE = 42
+local LAUNCH_MAX_SPEED_CAP   = 265
 local REATTACH_AIR_GRACE     = 1.2
 	local GRAPPLE_INPUT_COOLDOWN = 0.52
 -- Grapple only to vines roughly in front of the camera (blocks snagging behind you).
@@ -59,8 +66,13 @@ local CAM_ROLL_DEG_MAX       = 2.8
 local CAM_ROLL_SMOOTH        = 6.5
 local ATTACH_PUNCH_DURATION  = 0.3
 local ATTACH_PUNCH_FOV       = 5.5  -- brief zoom-in on hook
-local LAUNCH_FOV_BOOST       = 10
+local LAUNCH_FOV_BOOST       = 4.5  -- tiny release FOV punch (layered on speed FOV)
 local LAUNCH_FOV_DURATION    = 0.38
+local LAUNCH_CAM_SHAKE_DURATION = 0.24
+local LAUNCH_CAM_SHAKE_MAX   = 0.28
+local LAUNCH_SPEED_LINES_MIN = 52  -- min post-release speed for streak overlay
+local LAUNCH_MOTION_BLUR_MIN = 78  -- min speed for subtle blur
+local LAUNCH_MOTION_BLUR_MAX = 14  -- BlurEffect.Size at high launch speed
 local SWING_CAM_RENDER_STEP  = "SwingSystem_CameraFX"
 
 local COLOR_NEAR     = Color3.fromRGB(90, 210, 255)
@@ -277,6 +289,8 @@ local function boot(character: Model)
 	local swingCamLagWorld = Vector3.zero
 	local attachCamClock = -1e9
 	local launchCamClock = -1e9
+	local launchCamShakeIntensity = 0
+	local launchFovIntensity = 0
 
 	-- ── Upgrade stats ────────────────────────────────────────────────────────
 	-- Per-point gains halved vs earlier tuning (reach + rope felt too strong).
@@ -290,7 +304,9 @@ local function boot(character: Model)
 	-- SwingForce: steering + attach zip + swing speed cap scale with attribute.
 	local dynMaxSwingSpeed = MAX_SWING_SPEED
 	local dynZipToward = ZIP_TOWARD_DV
-	local dynLaunchSpeedRatio = LAUNCH_SPEED_RATIO
+	local dynLaunchImpulseBase = LAUNCH_IMPULSE_BASE
+	local dynLaunchMomentumRatio = LAUNCH_MOMENTUM_RATIO
+	local dynMaxLaunchSpeed = LAUNCH_MAX_SPEED_BASE
 
 	local function refreshStats()
 		local r = player:GetAttribute("SwingRange")
@@ -299,6 +315,8 @@ local function boot(character: Model)
 		local reachPts = if typeof(r) == "number" then r else 0
 		local ropePts = if typeof(l) == "number" then l else 0
 		local powerPts = if typeof(f) == "number" then f else 1
+		local powerLevel = math.max(0, powerPts - 1)
+		local powerCurve = (powerLevel / 100) ^ 1.38
 
 		swingRange = BASE_RANGE + reachPts * REACH_PER_POINT
 		-- Rope must track reach or attachRadius=min(range,rope) stays ~BASE_ROPE forever
@@ -307,11 +325,16 @@ local function boot(character: Model)
 
 		swingForce = BASE_FORCE + powerPts * 17
 
-		-- Swing speed keeps climbing at high power; detach launch stays a fixed ratio below cap.
+		-- Swing speed keeps climbing at high power; release impulse scales on a softer early curve.
 		local spdBonus = math.min(powerPts * 3.5, 150)
 		dynMaxSwingSpeed = 68 + spdBonus
 		dynZipToward = ZIP_TOWARD_DV + powerPts * 1.4
-		dynLaunchSpeedRatio = LAUNCH_SPEED_RATIO
+		dynLaunchImpulseBase = LAUNCH_IMPULSE_BASE + powerLevel * LAUNCH_IMPULSE_LINEAR + powerCurve * LAUNCH_IMPULSE_CURVE
+		dynLaunchMomentumRatio = LAUNCH_MOMENTUM_RATIO + powerLevel * 0.0028 + powerCurve * LAUNCH_MOMENTUM_CURVE
+		dynMaxLaunchSpeed = math.min(
+			LAUNCH_MAX_SPEED_BASE + powerLevel * LAUNCH_MAX_SPEED_LINEAR + (powerLevel / 70) ^ 1.32 * (LAUNCH_MAX_SPEED_CURVE / 5),
+			LAUNCH_MAX_SPEED_CAP
+		)
 	end
 	refreshStats()
 
@@ -369,10 +392,11 @@ local function boot(character: Model)
 		humanoid.CameraOffset = Vector3.zero
 
 		local vel = hrp.AssemblyLinearVelocity
-		local speedT = math.clamp(vel.Magnitude / math.max(dynMaxSwingSpeed, 1), 0, 1)
+		local speedRef = math.max(dynMaxLaunchSpeed, dynMaxSwingSpeed, 1)
+		local speedT = math.clamp(vel.Magnitude / speedRef, 0, 1)
 
 		local targetRoll = 0
-		if isSwinging and vel.Magnitude > 4 then
+		if (isSwinging or isLaunched) and vel.Magnitude > 4 then
 			local camRight = camera.CFrame.RightVector
 			local flatVel = Vector3.new(vel.X, 0, vel.Z)
 			if flatVel.Magnitude > 0.6 then
@@ -384,7 +408,7 @@ local function boot(character: Model)
 		swingCamRoll = expSmoothScalar(swingCamRoll, targetRoll, dt, CAM_ROLL_SMOOTH)
 
 		local lagTarget = Vector3.zero
-		if isSwinging and vel.Magnitude > 5 then
+		if (isSwinging or isLaunched) and vel.Magnitude > 5 then
 			lagTarget = -vel.Unit * (CAM_LAG_STUDS_MAX * (0.2 + 0.8 * speedT))
 		end
 		swingCamLagWorld = swingCamLagWorld:Lerp(lagTarget, math.min(1, dt * CAM_LAG_SMOOTH))
@@ -396,10 +420,148 @@ local function boot(character: Model)
 		if math.abs(swingCamRoll) > 0.0001 then
 			cf = cf * CFrame.Angles(0, 0, swingCamRoll)
 		end
+
+		if launchAge >= 0 and launchAge < LAUNCH_CAM_SHAKE_DURATION and launchCamShakeIntensity > 0.04 then
+			local u = launchAge / LAUNCH_CAM_SHAKE_DURATION
+			local decay = (1 - u) * (1 - u)
+			local shake = launchCamShakeIntensity * decay
+			local t = now * 21
+			cf += Vector3.new(
+				(math.noise(t, 0, 0) - 0.5) * 2 * LAUNCH_CAM_SHAKE_MAX * shake,
+				(math.noise(0, t, 1) - 0.5) * 2 * LAUNCH_CAM_SHAKE_MAX * shake * 0.35,
+				(math.noise(t, 2, 0.5) - 0.5) * 2 * LAUNCH_CAM_SHAKE_MAX * shake * 0.22
+			)
+		end
+
 		camera.CFrame = cf
 	end
 
 	RunService:BindToRenderStep(swingCamBindName, Enum.RenderPriority.Camera.Value + 1, applySwingCameraFx)
+
+	-- High-speed launch polish: streak overlay + subtle motion blur (client-only).
+	local speedLineGui: ScreenGui? = nil
+	local speedLineFrames: { Frame } = {}
+	local launchBlurFx: BlurEffect? = nil
+	local speedLinePhase = 0
+
+	local function destroyLaunchSpeedFx()
+		if speedLineGui then
+			speedLineGui:Destroy()
+			speedLineGui = nil
+		end
+		table.clear(speedLineFrames)
+		if launchBlurFx then
+			launchBlurFx:Destroy()
+			launchBlurFx = nil
+		end
+		speedLinePhase = 0
+	end
+
+	local function ensureLaunchSpeedFx()
+		if speedLineGui then
+			return
+		end
+		local pg = player:FindFirstChildOfClass("PlayerGui")
+		if not pg then
+			return
+		end
+
+		local gui = Instance.new("ScreenGui")
+		gui.Name = "SwingLaunchSpeedLines"
+		gui.IgnoreGuiInset = true
+		gui.DisplayOrder = 4
+		gui.ResetOnSpawn = false
+		gui.Parent = pg
+		speedLineGui = gui
+
+		for i = 1, 7 do
+			local stripe = Instance.new("Frame")
+			stripe.Name = "Stripe" .. tostring(i)
+			stripe.AnchorPoint = Vector2.new(0.5, 0.5)
+			stripe.Position = UDim2.fromScale(0.5, 0.12 + (i - 1) * 0.11)
+			stripe.Size = UDim2.fromScale(0.55 + (i % 3) * 0.08, 0.012)
+			stripe.BackgroundColor3 = Color3.fromRGB(235, 245, 255)
+			stripe.BackgroundTransparency = 1
+			stripe.BorderSizePixel = 0
+			stripe.Parent = gui
+			table.insert(speedLineFrames, stripe)
+		end
+
+		local blur = Instance.new("BlurEffect")
+		blur.Name = "SwingLaunchBlur"
+		blur.Size = 0
+		blur.Enabled = false
+		blur.Parent = camera
+		launchBlurFx = blur
+	end
+
+	local function updateLaunchSpeedFx(dt: number, speed: number)
+		if not isLaunched then
+			if speedLineGui or launchBlurFx then
+				local fade = math.min(1, dt * 10)
+				for _, stripe in speedLineFrames do
+					stripe.BackgroundTransparency = math.min(1, stripe.BackgroundTransparency + fade * 0.35)
+				end
+				if launchBlurFx then
+					launchBlurFx.Size = math.max(0, launchBlurFx.Size - fade * LAUNCH_MOTION_BLUR_MAX * 0.5)
+					if launchBlurFx.Size < 0.05 then
+						launchBlurFx.Enabled = false
+					end
+				end
+				local allHidden = true
+				for _, stripe in speedLineFrames do
+					if stripe.BackgroundTransparency < 0.98 then
+						allHidden = false
+						break
+					end
+				end
+				if allHidden and (not launchBlurFx or not launchBlurFx.Enabled) then
+					destroyLaunchSpeedFx()
+				end
+			end
+			return
+		end
+
+		if speed < LAUNCH_SPEED_LINES_MIN then
+			return
+		end
+
+		ensureLaunchSpeedFx()
+		if #speedLineFrames == 0 then
+			return
+		end
+
+		local speedT = math.clamp(
+			(speed - LAUNCH_SPEED_LINES_MIN) / math.max(dynMaxLaunchSpeed - LAUNCH_SPEED_LINES_MIN, 1),
+			0,
+			1
+		)
+		speedLinePhase += dt * (14 + speedT * 26)
+		local baseAlpha = 0.72 - speedT * 0.38
+
+		for i, stripe in speedLineFrames do
+			local wobble = math.sin(speedLinePhase + i * 0.9) * 0.015
+			local baseY = 0.12 + (i - 1) * 0.11
+			stripe.Position = UDim2.fromScale(0.5 + wobble, baseY)
+			stripe.BackgroundTransparency = baseAlpha + (i % 2) * 0.08
+			stripe.Size = UDim2.fromScale(0.42 + speedT * 0.48 + wobble, 0.008 + speedT * 0.01)
+		end
+
+		if launchBlurFx and speed >= LAUNCH_MOTION_BLUR_MIN then
+			local blurT = math.clamp(
+				(speed - LAUNCH_MOTION_BLUR_MIN) / math.max(dynMaxLaunchSpeed - LAUNCH_MOTION_BLUR_MIN, 1),
+				0,
+				1
+			)
+			launchBlurFx.Enabled = true
+			launchBlurFx.Size = expSmoothScalar(launchBlurFx.Size, blurT * LAUNCH_MOTION_BLUR_MAX, dt, 9)
+		elseif launchBlurFx then
+			launchBlurFx.Size = expSmoothScalar(launchBlurFx.Size, 0, dt, 12)
+			if launchBlurFx.Size < 0.05 then
+				launchBlurFx.Enabled = false
+			end
+		end
+	end
 
 	-- Swing constraints / force
 	local ropeInst:      SpringConstraint? = nil
@@ -994,12 +1156,12 @@ local function boot(character: Model)
 		humanoid.AutoRotate = true
 		hrp.AssemblyAngularVelocity = Vector3.zero
 
-		-- Exit velocity: forward (camera-led) + slight lift. Apply on the next task step so the
-		-- Humanoid doesn't zero AssemblyLinearVelocity the same frame PlatformStand turns off.
+		-- Momentum release: keep arc velocity, add forward impulse scaled by power + swing speed.
 		if doLaunch then
 			local snapVel = hrp.AssemblyLinearVelocity
 			local snapPos = hrp.Position
 			local snapHeld = heldTime
+			local snapCharge = swingChargeFill
 			local snapAnchor = detachAnchorWorld
 			local camLook0 = camera.CFrame.LookVector
 
@@ -1007,25 +1169,61 @@ local function boot(character: Model)
 				if not hrp.Parent then
 					return
 				end
+
+				-- Humanoid can zero velocity when PlatformStand turns off — restore swing momentum first.
+				hrp.AssemblyLinearVelocity = snapVel
+				hrp.AssemblyAngularVelocity = Vector3.zero
+
 				local vel = snapVel
 				local speed = vel.Magnitude
 				local camLook = camLook0
 				local camFlat = Vector3.new(camLook.X, 0, camLook.Z)
 				local camFlatUnit = if camFlat.Magnitude > 0.08 then camFlat.Unit else Vector3.new(0, 0, -1)
+				local holdMult = math.clamp(snapHeld / MIN_SWING_HOLD_LAUNCH, 0.72, 1)
+				local mass = hrp.AssemblyMass
 
-				local function applyLaunch(launchDir: Vector3, targetSpeed: number)
-					local d = launchDir
+				local function blendLaunchDir(baseDir: Vector3): Vector3
+					local d = baseDir
 					if camFlat.Magnitude > 0.08 then
-						local flat = camFlat.Unit
-						d = (d * (1 - LAUNCH_FORWARD_CAMERA_MIX) + flat * LAUNCH_FORWARD_CAMERA_MIX)
+						d = (d * (1 - LAUNCH_FORWARD_CAMERA_MIX) + camFlat.Unit * LAUNCH_FORWARD_CAMERA_MIX)
 					end
-					d = d + Vector3.new(0, LAUNCH_UP_BLEND, 0)
 					if d.Magnitude > 1e-4 then
-						d = d.Unit
+						return d.Unit
 					end
+					return camFlatUnit
+				end
+
+				local function applyMomentumLaunch(
+					launchDir: Vector3,
+					tangSpeed: number,
+					chargeFill: number,
+					extraForwardDv: number?
+				)
+					local dir = blendLaunchDir(launchDir)
+					local forwardDv = dynLaunchImpulseBase * holdMult + (extraForwardDv or 0)
+					local momentumDv = tangSpeed * dynLaunchMomentumRatio * holdMult
+					local chargeDv = chargeFill * LAUNCH_CHARGE_BONUS * holdMult
+					local totalDv = forwardDv + momentumDv + chargeDv
+
 					humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-					hrp.AssemblyLinearVelocity = d * targetSpeed
-					hrp.AssemblyAngularVelocity = Vector3.zero
+					hrp:ApplyImpulse(dir * totalDv * mass)
+					if LAUNCH_UP_IMPULSE > 0 then
+						hrp:ApplyImpulse(Vector3.new(0, LAUNCH_UP_IMPULSE * holdMult * mass, 0))
+					end
+
+					local post = hrp.AssemblyLinearVelocity
+					if post.Magnitude > dynMaxLaunchSpeed then
+						hrp.AssemblyLinearVelocity = post.Unit * dynMaxLaunchSpeed
+						post = hrp.AssemblyLinearVelocity
+					end
+
+					local speedRef = math.max(dynMaxLaunchSpeed, 1)
+					launchCamShakeIntensity = math.clamp(
+						(post.Magnitude / speedRef) * 0.55 + (tangSpeed / math.max(dynMaxSwingSpeed, 1)) * 0.45,
+						0,
+						1
+					)
+					launchFovIntensity = math.clamp(post.Magnitude / speedRef, 0, 1)
 					isLaunched = true
 					task.delay(LAUNCH_DURATION, function()
 						isLaunched = false
@@ -1033,9 +1231,14 @@ local function boot(character: Model)
 				end
 
 				if speed <= 1 then
-					local hangDir = (camFlatUnit + Vector3.new(0, LAUNCH_UP_BLEND + 0.12, 0))
+					local hangDir = camFlatUnit + Vector3.new(0, 0.18, 0)
 					if hangDir.Magnitude > 1e-4 then
-						applyLaunch(hangDir.Unit, math.max(LAUNCH_DEADHANG_SPEED, MIN_LAUNCH_EXIT_SPEED * 0.85))
+						applyMomentumLaunch(
+							hangDir.Unit,
+							0,
+							snapCharge,
+							LAUNCH_DEADHANG_IMPULSE * holdMult
+						)
 					end
 				else
 					local radial = Vector3.yAxis
@@ -1048,7 +1251,6 @@ local function boot(character: Model)
 
 					local tangVel = vel - radial * vel:Dot(radial)
 					local tangSpeed = tangVel.Magnitude
-
 					local camTang = camFlat - radial * camFlat:Dot(radial)
 
 					local launchDir: Vector3
@@ -1065,14 +1267,8 @@ local function boot(character: Model)
 						launchDir = if speed > 0.1 then vel.Unit else camFlatUnit
 					end
 
-					local speedRef = if tangSpeed > 3
-						then tangSpeed
-						else math.min(tangSpeed + speed * 0.35, speed * 0.55, 28)
-					local holdT = math.clamp(snapHeld / MIN_SWING_HOLD_LAUNCH, 0.72, 1)
-					local targetSpeed = math.min(speedRef, dynMaxSwingSpeed) * dynLaunchSpeedRatio * holdT
-					targetSpeed = math.max(targetSpeed, MIN_LAUNCH_EXIT_SPEED * holdT)
-
-					applyLaunch(launchDir, targetSpeed)
+					local tangRef = if tangSpeed > 1 then tangSpeed else LAUNCH_DEADHANG_IMPULSE * 0.35
+					applyMomentumLaunch(launchDir, tangRef, snapCharge)
 				end
 			end)
 		end
@@ -1097,6 +1293,8 @@ local function boot(character: Model)
 				end
 			end
 			isLaunched = false
+			launchCamShakeIntensity = 0
+			launchFovIntensity = 0
 			resetSwingCameraState()
 		elseif new == Enum.HumanoidStateType.Running
 		or new == Enum.HumanoidStateType.RunningNoPhysics then
@@ -1269,10 +1467,11 @@ local function boot(character: Model)
 		if launchAge >= 0 and launchAge < LAUNCH_FOV_DURATION then
 			local u = launchAge / LAUNCH_FOV_DURATION
 			local ease = (1 - u) * (1 - u)
-			fovTarget += LAUNCH_FOV_BOOST * ease
+			fovTarget += LAUNCH_FOV_BOOST * ease * (0.55 + launchFovIntensity * 0.65)
 		end
 
 		camera.FieldOfView += (fovTarget - camera.FieldOfView) * math.min(dt * FOV_SPEED, 1)
+		updateLaunchSpeedFx(dt, vel.Magnitude)
 
 		-- Swing physics: camera-steered pendulum on a SpringConstraint.
 		if isSwinging and forceInst and swingTargetPart and swingTargetPart.Parent and ropeAnchorAtt and ropeAnchorAtt.Parent then
@@ -1404,6 +1603,7 @@ local function boot(character: Model)
 			RunService:UnbindFromRenderStep(swingCamBindName)
 		end)
 		resetSwingCameraState()
+		destroyLaunchSpeedFx()
 		heartbeat:Disconnect()
 		for _, c in statConns do c:Disconnect() end
 		if isSwinging then stopSwing(false) end

@@ -1004,8 +1004,25 @@ local function rollBushHasBrainrot(): boolean
 	return math.random(1, 100) > BUSH_EMPTY_PERCENT
 end
 
+local function isValidBushRef(bushRef: Instance?): boolean
+	if not bushRef or not bushRef.Parent then
+		return false
+	end
+	if bushRef.Name ~= "BushSCRIPT" then
+		return false
+	end
+	if not bushRef:IsA("Model") and not bushRef:IsA("BasePart") then
+		return false
+	end
+	local map = workspace:FindFirstChild("Map")
+	if not map then
+		return false
+	end
+	return bushRef:IsDescendantOf(map)
+end
+
 local function assignBushLoot(bush: Instance): boolean
-	if not isLootableBush(bush) or not isValidBushRef(bush) then
+	if not isValidBushRef(bush) then
 		return false
 	end
 	if bush:GetAttribute(BUSH_LOOT_ASSIGNED_ATTR) == true then
@@ -1033,23 +1050,6 @@ local function assignLootUnder(root: Instance)
 			assignBushLoot(desc)
 		end
 	end
-end
-
-local function isValidBushRef(bushRef: Instance?): boolean
-	if not bushRef or not bushRef.Parent then
-		return false
-	end
-	if bushRef.Name ~= "BushSCRIPT" then
-		return false
-	end
-	if not bushRef:IsA("Model") and not bushRef:IsA("BasePart") then
-		return false
-	end
-	local map = workspace:FindFirstChild("Map")
-	if not map then
-		return false
-	end
-	return bushRef:IsDescendantOf(map)
 end
 
 local function bushSearchPosition(bushRef: Instance?, worldPosition: Vector3): Vector3

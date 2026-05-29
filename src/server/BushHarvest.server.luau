@@ -1386,6 +1386,14 @@ for _, p in Players:GetPlayers() do
 	end)
 end
 
+-- Removed BrainrotBushSpawn: clear any pre-spawned visible rots left in Workspace from older builds.
+task.defer(function()
+	local legacy = workspace:FindFirstChild("ActiveBrainrots")
+	if legacy then
+		legacy:Destroy()
+	end
+end)
+
 local harvestRemote = ensureRemote()
 local _, getInvRF = ensureInventoryRemotes()
 

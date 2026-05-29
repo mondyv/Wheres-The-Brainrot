@@ -1,0 +1,4 @@
+*.luau filter=nocursor
+*.json filter=nocursor
+*.toml filter=nocursor
+

@@ -28,6 +28,7 @@ require(script.UIInteractionSounds).init()
 require(script.GameSoundEffects).init()
 -- Bush targeting + custom card; ProximityPromptEffects styles stands and wires bush FX/harvest.
 require(script.BushHoldInteraction).init()
+require(script.NoBrainrotFoundController).init()
 require(script.ProximityPromptEffects).init()
 require(script.UpgradesController).init()
 require(script.SellController).init()

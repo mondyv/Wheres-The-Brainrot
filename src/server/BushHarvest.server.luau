@@ -35,8 +35,9 @@ type BrainrotInvEntry = {
 
 local MAX_HARVEST_RANGE = 14
 local RANGE_SLACK = 5
--- Per bush: 30% empty, 70% hidden brainrot (rolled once when bush is assigned, before any search).
-local BUSH_EMPTY_PERCENT = 30
+-- Per search: 30% empty, 70% spawn a brainrot (rolled each time a player searches a bush).
+local BUSH_FIND_CHANCE = 0.7
+local BUSH_EMPTY_PERCENT = 30 -- used by shiver hint pre-roll only (assignBushLoot)
 local BUSH_SEARCH_DEBOUNCE_SEC = 0.4
 local BUSH_HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
 local BUSH_LOOT_ASSIGNED_ATTR = "BushLootAssigned"
@@ -118,6 +119,16 @@ local function ensureHarvestFunction(): RemoteFunction
 		fn.Parent = folder
 	end
 	return fn :: RemoteFunction
+end
+
+local function ensureNoBrainrotFoundRemote(): RemoteEvent
+	local ev = ReplicatedStorage:FindFirstChild("NoBrainrotFoundEvent")
+	if not ev then
+		ev = Instance.new("RemoteEvent")
+		ev.Name = "NoBrainrotFoundEvent"
+		ev.Parent = ReplicatedStorage
+	end
+	return ev :: RemoteEvent
 end
 
 local inventorySyncRE: RemoteEvent? = nil
@@ -1198,7 +1209,7 @@ end
 local lastBushSearchAt: { [Player]: number } = {}
 
 --[[
-	processBushSearch — 30% not found, 70% spawn. Returns true when a brainrot was spawned.
+	processBushSearch — each search rolls 70% spawn / 30% empty. Returns true when a brainrot was spawned.
 ]]
 local function processBushSearch(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean
 	if typeof(worldPosition) ~= "Vector3" then
@@ -1223,16 +1234,12 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 		return false
 	end
 
-	assignBushLoot(bush)
-	if bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) ~= true then
+	if math.random() > BUSH_FIND_CHANCE then
+		ensureNoBrainrotFoundRemote():FireClient(player)
 		return false
 	end
 
-	-- Consumed until respawn cooldown re-rolls loot.
-	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, false)
-
 	beginHarvestOutcome(player, worldPosition)
-	scheduleBushLootRespawn(bush)
 	return true
 end
 
@@ -1503,6 +1510,7 @@ end
 
 local harvestRemote = ensureRemote()
 local harvestBushFn = ensureHarvestFunction()
+ensureNoBrainrotFoundRemote()
 
 harvestRemote.OnServerEvent:Connect(function(player: Player, worldPosition: Vector3, bushRef: Instance?)
 	processBushSearch(player, worldPosition, bushRef)

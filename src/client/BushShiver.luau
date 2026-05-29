@@ -1,5 +1,5 @@
 --[[
-	Shiver clue for bushes with HasHiddenBrainrot (70% pre-roll on server).
+	Shiver clue for bushes marked HasHiddenBrainrot (cosmetic hint from server pre-roll).
 	Uses replicated attributes only — no remote flood. Each bush shivers once at a random time (~2s).
 ]]
 

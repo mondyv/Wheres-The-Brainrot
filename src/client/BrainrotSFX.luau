@@ -6,12 +6,19 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 
+local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
+
 local BRAINROT_SFX_FOLDER_NAME = "Brainrot sfx"
 
 local BrainrotSFX = {}
 
 local function playBrainrotSound(brainrotName: string)
 	if typeof(brainrotName) ~= "string" or brainrotName == "" then
+		return
+	end
+
+	local sfxMult = ClientSFXVolume.getVolume()
+	if sfxMult <= 0 then
 		return
 	end
 
@@ -27,7 +34,15 @@ local function playBrainrotSound(brainrotName: string)
 		return
 	end
 
+	local originalVolume = template.Volume
 	local clone = template:Clone()
+	local sfxGroup = ClientSFXVolume.getSoundGroup()
+	if sfxGroup then
+		clone.SoundGroup = sfxGroup
+		clone.Volume = originalVolume
+	else
+		clone.Volume = originalVolume * sfxMult
+	end
 	clone.Parent = SoundService
 	clone:Play()
 	clone.Ended:Once(function()
@@ -36,6 +51,8 @@ local function playBrainrotSound(brainrotName: string)
 end
 
 function BrainrotSFX.init()
+	ClientSFXVolume.syncFromSoundService()
+
 	local ev = ReplicatedStorage:WaitForChild("PlayBrainrotSFX", 60)
 	if not ev or not ev:IsA("RemoteEvent") then
 		warn("[BrainrotSFX] ReplicatedStorage.PlayBrainrotSFX RemoteEvent missing")

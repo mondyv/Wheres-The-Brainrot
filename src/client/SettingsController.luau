@@ -16,6 +16,7 @@ local UserInputService = game:GetService("UserInputService")
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local HUDController = require(script.Parent.HUDController)
+local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
 
 local player = Players.LocalPlayer
 
@@ -387,6 +388,18 @@ function SettingsController.init()
 		warn("[SettingsController] No SoundGroup for SoundEffects or UISounds — Slider2 skipped")
 	end
 
+	ClientSFXVolume.syncFromSoundService()
+
+	local function applySFXSliderVolume(r: number)
+		ClientSFXVolume.setVolume(r)
+		if sfxGroup then
+			syncGroupVolume(sfxGroup, r)
+		end
+		if uiMixerGroup then
+			syncGroupVolume(uiMixerGroup, r)
+		end
+	end
+
 	local uiSoundsToggleRow: Instance? = nil
 	local slowToggleRow: Instance? = nil
 	local showOthersToggleRow: Instance? = nil
@@ -456,13 +469,8 @@ function SettingsController.init()
 		end
 
 		if isSfx and (sfxGroup or uiMixerGroup) then
-			wireVolumeSlider(sliderRow, function(r)
-				if sfxGroup then syncGroupVolume(sfxGroup, r) end
-				if uiMixerGroup then syncGroupVolume(uiMixerGroup, r) end
-			end, function()
-				if sfxGroup then return sfxGroup.Volume end
-				if uiMixerGroup then return uiMixerGroup.Volume end
-				return 1
+			wireVolumeSlider(sliderRow, applySFXSliderVolume, function()
+				return ClientSFXVolume.getVolume()
 			end)
 			return
 		end
@@ -480,13 +488,8 @@ function SettingsController.init()
 				return musicSound.Volume
 			end)
 		elseif sliderRow.Name == "Slider2" and (sfxGroup or uiMixerGroup) then
-			wireVolumeSlider(sliderRow, function(r)
-				if sfxGroup then syncGroupVolume(sfxGroup, r) end
-				if uiMixerGroup then syncGroupVolume(uiMixerGroup, r) end
-			end, function()
-				if sfxGroup then return sfxGroup.Volume end
-				if uiMixerGroup then return uiMixerGroup.Volume end
-				return 1
+			wireVolumeSlider(sliderRow, applySFXSliderVolume, function()
+				return ClientSFXVolume.getVolume()
 			end)
 		end
 	end

@@ -14,6 +14,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
+local TweenService = game:GetService("TweenService")
 
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
@@ -1066,7 +1067,9 @@ local function bushSearchPosition(bushRef: Instance?, worldPosition: Vector3): V
 end
 
 local EMPTY_BUSH_MESSAGE = "No brainrots hiding!"
-local EMPTY_BUSH_MESSAGE_DURATION = 4
+local EMPTY_BUSH_MESSAGE_LIFETIME = 4
+local EMPTY_BUSH_FADE_DURATION = 1
+local EMPTY_BUSH_HOLD_DURATION = EMPTY_BUSH_MESSAGE_LIFETIME - EMPTY_BUSH_FADE_DURATION
 local EMPTY_BUSH_BILLBOARD_NAME = "BushEmptyMessage"
 local emptyBushMessageHideToken: { [Instance]: number } = {}
 
@@ -1095,20 +1098,121 @@ local function bushWorldTopY(bush: Instance, fallbackY: number): number
 	return fallbackY
 end
 
-local function scheduleEmptyBushMessageCleanup(bush: Instance, token: number)
-	task.delay(EMPTY_BUSH_MESSAGE_DURATION, function()
-		if not bush.Parent then
+local function bushEmptyMessageStudsOffset(bush: Instance, adornee: BasePart): Vector3
+	local topY = bushWorldTopY(bush, adornee.Position.Y)
+	local aboveTop = topY - adornee.Position.Y + 3.5
+	return Vector3.new(0, math.max(5.5, aboveTop), 0)
+end
+
+local function resetEmptyBushMessageVisuals(billboard: BillboardGui)
+	local panel = billboard:FindFirstChild("Panel")
+	if not panel or not panel:IsA("Frame") then
+		return
+	end
+	panel.BackgroundTransparency = 0.25
+	local panelStroke = panel:FindFirstChildOfClass("UIStroke")
+	if panelStroke then
+		panelStroke.Transparency = 0
+	end
+	local label = panel:FindFirstChild("Text")
+	if label and label:IsA("TextLabel") then
+		label.TextTransparency = 0
+		local textStroke = label:FindFirstChildOfClass("UIStroke")
+		if textStroke then
+			textStroke.Transparency = 0
+		end
+	end
+end
+
+local function createEmptyBushBillboard(bush: Instance, adornee: BasePart): BillboardGui
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = EMPTY_BUSH_BILLBOARD_NAME
+	billboard.Adornee = adornee
+	billboard.AlwaysOnTop = true
+	billboard.LightInfluence = 0
+	billboard.Size = UDim2.fromOffset(260, 70)
+	billboard.StudsOffset = bushEmptyMessageStudsOffset(bush, adornee)
+	billboard.MaxDistance = 80
+	billboard.Parent = bush
+
+	local panel = Instance.new("Frame")
+	panel.Name = "Panel"
+	panel.Size = UDim2.fromScale(1, 1)
+	panel.BackgroundColor3 = Color3.fromRGB(16, 18, 16)
+	panel.BackgroundTransparency = 0.25
+	panel.BorderSizePixel = 0
+	panel.Parent = billboard
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 12)
+	corner.Parent = panel
+
+	local panelStroke = Instance.new("UIStroke")
+	panelStroke.Color = Color3.fromRGB(72, 230, 105)
+	panelStroke.Thickness = 2
+	panelStroke.Transparency = 0
+	panelStroke.Parent = panel
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Text"
+	label.Size = UDim2.new(1, -20, 1, -14)
+	label.Position = UDim2.fromOffset(10, 7)
+	label.BackgroundTransparency = 1
+	label.Text = EMPTY_BUSH_MESSAGE
+	label.TextScaled = true
+	label.TextColor3 = Color3.fromRGB(240, 255, 244)
+	label.Font = Enum.Font.GothamBold
+	label.Parent = panel
+
+	local textStroke = Instance.new("UIStroke")
+	textStroke.Color = Color3.fromRGB(28, 110, 52)
+	textStroke.Thickness = 1.15
+	textStroke.Transparency = 0
+	textStroke.Parent = label
+
+	return billboard
+end
+
+local function fadeOutAndDestroyEmptyBushMessage(bush: Instance, token: number)
+	task.delay(EMPTY_BUSH_HOLD_DURATION, function()
+		if not bush.Parent or emptyBushMessageHideToken[bush] ~= token then
+			return
+		end
+
+		local billboard = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
+		if not billboard or not billboard:IsA("BillboardGui") then
 			emptyBushMessageHideToken[bush] = nil
 			return
 		end
-		if emptyBushMessageHideToken[bush] ~= token then
-			return
+
+		local fadeInfo = TweenInfo.new(EMPTY_BUSH_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		local panel = billboard:FindFirstChild("Panel")
+		if panel and panel:IsA("Frame") then
+			TweenService:Create(panel, fadeInfo, { BackgroundTransparency = 1 }):Play()
+			local panelStroke = panel:FindFirstChildOfClass("UIStroke")
+			if panelStroke then
+				TweenService:Create(panelStroke, fadeInfo, { Transparency = 1 }):Play()
+			end
+			local label = panel:FindFirstChild("Text")
+			if label and label:IsA("TextLabel") then
+				TweenService:Create(label, fadeInfo, { TextTransparency = 1 }):Play()
+				local textStroke = label:FindFirstChildOfClass("UIStroke")
+				if textStroke then
+					TweenService:Create(textStroke, fadeInfo, { Transparency = 1 }):Play()
+				end
+			end
 		end
-		local billboard = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
-		if billboard and billboard:IsA("BillboardGui") then
-			billboard:Destroy()
-		end
-		emptyBushMessageHideToken[bush] = nil
+
+		task.delay(EMPTY_BUSH_FADE_DURATION, function()
+			if not bush.Parent or emptyBushMessageHideToken[bush] ~= token then
+				return
+			end
+			local existing = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
+			if existing and existing:IsA("BillboardGui") then
+				existing:Destroy()
+			end
+			emptyBushMessageHideToken[bush] = nil
+		end)
 	end)
 end
 
@@ -1118,44 +1222,18 @@ local function showEmptyBushMessage(bush: Instance)
 		return
 	end
 
+	local token = (emptyBushMessageHideToken[bush] or 0) + 1
+	emptyBushMessageHideToken[bush] = token
+
 	local existing = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
 	if existing and existing:IsA("BillboardGui") then
-		local token = (emptyBushMessageHideToken[bush] or 0) + 1
-		emptyBushMessageHideToken[bush] = token
-		scheduleEmptyBushMessageCleanup(bush, token)
-		return
+		existing.StudsOffset = bushEmptyMessageStudsOffset(bush, adornee)
+		resetEmptyBushMessageVisuals(existing)
+	else
+		createEmptyBushBillboard(bush, adornee)
 	end
 
-	local topY = bushWorldTopY(bush, adornee.Position.Y)
-	local offsetY = topY - adornee.Position.Y + 1.25
-
-	local billboard = Instance.new("BillboardGui")
-	billboard.Name = EMPTY_BUSH_BILLBOARD_NAME
-	billboard.Adornee = adornee
-	billboard.AlwaysOnTop = true
-	billboard.LightInfluence = 0
-	billboard.Size = UDim2.fromOffset(220, 56)
-	billboard.StudsOffset = Vector3.new(0, math.max(1.25, offsetY), 0)
-	billboard.MaxDistance = 80
-	billboard.Parent = bush
-
-	local label = Instance.new("TextLabel")
-	label.Name = "Text"
-	label.Size = UDim2.fromScale(1, 1)
-	label.BackgroundTransparency = 1
-	label.Text = EMPTY_BUSH_MESSAGE
-	label.TextScaled = true
-	label.TextColor3 = Color3.fromRGB(255, 255, 255)
-	label.Font = Enum.Font.GothamBold
-	label.Parent = billboard
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(60, 220, 90)
-	stroke.Thickness = 2.5
-	stroke.Parent = label
-
-	emptyBushMessageHideToken[bush] = 1
-	scheduleEmptyBushMessageCleanup(bush, 1)
+	fadeOutAndDestroyEmptyBushMessage(bush, token)
 end
 
 local function canAttemptHarvest(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean

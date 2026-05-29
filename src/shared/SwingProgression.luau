@@ -63,20 +63,20 @@ export type RopeStats = {
 
 function M.powerStats(powerLevel: number): PowerStats
 	local t = M.progressT(powerLevel, M.POWER_MAX_LEVEL)
-	local maxSwingSpeed = 72 + t * 46
+	local maxSwingSpeed = 78 + t * 40
 
 	return {
-		steeringForce = 68 + t * 82,
+		steeringForce = 78 + t * 72,
 		maxSwingSpeed = maxSwingSpeed,
-		zipToward = 19 + t * 20,
-		-- Launch shares the same curve; bases bumped so zero-upgrade throws feel satisfying.
-		launchImpulseBase = 10 + t * 9,
-		launchMomentumRatio = 0.15 + t * 0.11,
-		launchVelocityCarry = 0.12 + t * 0.04,
-		maxLaunchSpeed = maxSwingSpeed + 12 + t * 14,
-		launchChargeBonus = 9 + t * 9,
-		launchUpImpulse = 3.5 + t * 3,
-		launchDeadhangImpulse = 15 + t * 8,
+		zipToward = 25 + t * 14,
+		-- Higher bases for satisfying zero-upgrade swings; t-range trimmed to preserve endgame caps.
+		launchImpulseBase = 14 + t * 7,
+		launchMomentumRatio = 0.18 + t * 0.09,
+		launchVelocityCarry = 0.15 + t * 0.03,
+		maxLaunchSpeed = maxSwingSpeed + 16 + t * 10,
+		launchChargeBonus = 11 + t * 8,
+		launchUpImpulse = 4 + t * 2.5,
+		launchDeadhangImpulse = 18 + t * 6,
 	}
 end
 

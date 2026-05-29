@@ -121,16 +121,6 @@ local function ensureHarvestFunction(): RemoteFunction
 	return fn :: RemoteFunction
 end
 
-local function ensureNoBrainrotFoundRemote(): RemoteEvent
-	local ev = ReplicatedStorage:FindFirstChild("NoBrainrotFoundEvent")
-	if not ev then
-		ev = Instance.new("RemoteEvent")
-		ev.Name = "NoBrainrotFoundEvent"
-		ev.Parent = ReplicatedStorage
-	end
-	return ev :: RemoteEvent
-end
-
 local inventorySyncRE: RemoteEvent? = nil
 local getInventoryRF: RemoteFunction? = nil
 
@@ -1075,6 +1065,99 @@ local function bushSearchPosition(bushRef: Instance?, worldPosition: Vector3): V
 	return worldPosition
 end
 
+local EMPTY_BUSH_MESSAGE = "No brainrots hiding!"
+local EMPTY_BUSH_MESSAGE_DURATION = 4
+local EMPTY_BUSH_BILLBOARD_NAME = "BushEmptyMessage"
+local emptyBushMessageHideToken: { [Instance]: number } = {}
+
+local function getBushAdornee(bush: Instance): BasePart?
+	if bush:IsA("BasePart") then
+		return bush
+	end
+	if bush:IsA("Model") then
+		local model = bush :: Model
+		if model.PrimaryPart then
+			return model.PrimaryPart
+		end
+		return model:FindFirstChildWhichIsA("BasePart", true)
+	end
+	return nil
+end
+
+local function bushWorldTopY(bush: Instance, fallbackY: number): number
+	if bush:IsA("Model") then
+		return bushTopWorldY(bush :: Model, fallbackY)
+	end
+	if bush:IsA("BasePart") then
+		local part = bush :: BasePart
+		return part.Position.Y + part.Size.Y * 0.5
+	end
+	return fallbackY
+end
+
+local function scheduleEmptyBushMessageCleanup(bush: Instance, token: number)
+	task.delay(EMPTY_BUSH_MESSAGE_DURATION, function()
+		if not bush.Parent then
+			emptyBushMessageHideToken[bush] = nil
+			return
+		end
+		if emptyBushMessageHideToken[bush] ~= token then
+			return
+		end
+		local billboard = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
+		if billboard and billboard:IsA("BillboardGui") then
+			billboard:Destroy()
+		end
+		emptyBushMessageHideToken[bush] = nil
+	end)
+end
+
+local function showEmptyBushMessage(bush: Instance)
+	local adornee = getBushAdornee(bush)
+	if not adornee then
+		return
+	end
+
+	local existing = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
+	if existing and existing:IsA("BillboardGui") then
+		local token = (emptyBushMessageHideToken[bush] or 0) + 1
+		emptyBushMessageHideToken[bush] = token
+		scheduleEmptyBushMessageCleanup(bush, token)
+		return
+	end
+
+	local topY = bushWorldTopY(bush, adornee.Position.Y)
+	local offsetY = topY - adornee.Position.Y + 1.25
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = EMPTY_BUSH_BILLBOARD_NAME
+	billboard.Adornee = adornee
+	billboard.AlwaysOnTop = true
+	billboard.LightInfluence = 0
+	billboard.Size = UDim2.fromOffset(220, 56)
+	billboard.StudsOffset = Vector3.new(0, math.max(1.25, offsetY), 0)
+	billboard.MaxDistance = 80
+	billboard.Parent = bush
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Text"
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Text = EMPTY_BUSH_MESSAGE
+	label.TextScaled = true
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.Font = Enum.Font.GothamBold
+	label.Parent = billboard
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(60, 220, 90)
+	stroke.Thickness = 2.5
+	stroke.Parent = label
+
+	emptyBushMessageHideToken[bush] = 1
+	scheduleEmptyBushMessageCleanup(bush, 1)
+end
+
 local function canAttemptHarvest(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean
 	local char = player.Character
 	if not char then
@@ -1235,7 +1318,7 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 	end
 
 	if math.random() > BUSH_FIND_CHANCE then
-		ensureNoBrainrotFoundRemote():FireClient(player)
+		showEmptyBushMessage(bush)
 		return false
 	end
 
@@ -1510,7 +1593,11 @@ end
 
 local harvestRemote = ensureRemote()
 local harvestBushFn = ensureHarvestFunction()
-ensureNoBrainrotFoundRemote()
+
+local legacyNoBrainrotRemote = ReplicatedStorage:FindFirstChild("NoBrainrotFoundEvent")
+if legacyNoBrainrotRemote then
+	legacyNoBrainrotRemote:Destroy()
+end
 
 harvestRemote.OnServerEvent:Connect(function(player: Player, worldPosition: Vector3, bushRef: Instance?)
 	processBushSearch(player, worldPosition, bushRef)

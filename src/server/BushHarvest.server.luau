@@ -104,17 +104,6 @@ local function ensureRemote(): RemoteEvent
 	return ev :: RemoteEvent
 end
 
-local function ensureBushSearchEmptyRemote(): RemoteEvent
-	local folder = getBushRemotesFolder()
-	local ev = folder:FindFirstChild("BushSearchEmpty")
-	if not ev then
-		ev = Instance.new("RemoteEvent")
-		ev.Name = "BushSearchEmpty"
-		ev.Parent = folder
-	end
-	return ev :: RemoteEvent
-end
-
 local inventorySyncRE: RemoteEvent? = nil
 local getInventoryRF: RemoteFunction? = nil
 
@@ -1009,39 +998,6 @@ local function canAttemptHarvest(player: Player, worldPosition: Vector3): boolea
 		return false
 	end
 	return true
-end
-
-local function findBushNearHarvestPosition(worldPos: Vector3): Instance?
-	local map = workspace:FindFirstChild("Map")
-	if not map then
-		return nil
-	end
-	local best: Instance? = nil
-	local bestD = math.huge
-	local maxDist = MAX_HARVEST_RANGE + RANGE_SLACK + 2
-	for _, desc in map:GetDescendants() do
-		if desc.Name ~= "BushSCRIPT" then
-			continue
-		end
-		if not desc:IsA("Model") and not desc:IsA("BasePart") then
-			continue
-		end
-		local anchorPos: Vector3? = nil
-		if desc:IsA("BasePart") then
-			anchorPos = desc.Position
-		elseif desc:IsA("Model") then
-			anchorPos = (desc :: Model):GetPivot().Position
-		end
-		if not anchorPos then
-			continue
-		end
-		local d = (anchorPos - worldPos).Magnitude
-		if d <= maxDist and d < bestD then
-			bestD = d
-			best = desc
-		end
-	end
-	return best
 end
 
 local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
@@ -1948,8 +1904,6 @@ harvestRemote.OnServerEvent:Connect(function(player: Player, worldPosition: Vect
 		return
 	end
 	if math.random() < BUSH_EMPTY_CHANCE then
-		local bush = findBushNearHarvestPosition(worldPosition)
-		ensureBushSearchEmptyRemote():FireClient(player, bush or worldPosition)
 		return
 	end
 	beginHarvestOutcome(player, worldPosition)

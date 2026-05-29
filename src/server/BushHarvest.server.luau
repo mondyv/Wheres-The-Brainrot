@@ -1071,7 +1071,170 @@ local EMPTY_BUSH_MESSAGE_LIFETIME = 4
 local EMPTY_BUSH_FADE_DURATION = 1
 local EMPTY_BUSH_HOLD_DURATION = EMPTY_BUSH_MESSAGE_LIFETIME - EMPTY_BUSH_FADE_DURATION
 local EMPTY_BUSH_BILLBOARD_NAME = "BushEmptyMessage"
+local BUSH_ALERT_ANCHOR_NAME = "_BushEmptyMessageAnchor"
+local BUSH_PROMPT_LIFT_SCALE = 0.66
+local BUSH_MESSAGE_FLOAT_ABOVE_PROMPT = 2.75
+local BUSH_ALERT_RED = Color3.fromRGB(225, 48, 48)
+local BUSH_ALERT_RESTORE_DURATION = 1.0
 local emptyBushMessageHideToken: { [Instance]: number } = {}
+local bushAlertToken: { [Instance]: number } = {}
+local bushAlertTweens: { [Instance]: { Tween } } = {}
+local bushAlertOriginalColors: { [Instance]: { [BasePart]: Color3 } } = {}
+
+local function findBushPromptCenterWorld(bush: Instance): Vector3?
+	for _, desc in bush:GetDescendants() do
+		if desc:IsA("Attachment") and desc.Name == "_BushPromptCenter" then
+			return desc.WorldPosition
+		end
+	end
+	return nil
+end
+
+local function bushAlertFloatWorldPosition(bush: Instance): Vector3?
+	local promptCenter = findBushPromptCenterWorld(bush)
+	if promptCenter then
+		local topY = bushWorldTopY(bush, promptCenter.Y)
+		return Vector3.new(
+			promptCenter.X,
+			math.max(promptCenter.Y + BUSH_MESSAGE_FLOAT_ABOVE_PROMPT, topY + 3.5),
+			promptCenter.Z
+		)
+	end
+
+	if bush:IsA("Model") then
+		local minV, maxV = BrainrotCarryVisual.getWorldAabb(bush :: Model)
+		if minV and maxV then
+			local center = (minV + maxV) * 0.5
+			local height = math.max(0.5, maxV.Y - minV.Y)
+			local promptY = center.Y + height * BUSH_PROMPT_LIFT_SCALE
+			return Vector3.new(
+				center.X,
+				math.max(promptY + BUSH_MESSAGE_FLOAT_ABOVE_PROMPT, maxV.Y + 3.5),
+				center.Z
+			)
+		end
+	elseif bush:IsA("BasePart") then
+		local part = bush :: BasePart
+		local topY = part.Position.Y + part.Size.Y * 0.5
+		local promptY = part.Position.Y + part.Size.Y * BUSH_PROMPT_LIFT_SCALE + 1
+		return Vector3.new(
+			part.Position.X,
+			math.max(promptY + BUSH_MESSAGE_FLOAT_ABOVE_PROMPT, topY + 3.5),
+			part.Position.Z
+		)
+	end
+
+	return nil
+end
+
+local function ensureEmptyBushBillboardAnchor(bush: Instance): BasePart?
+	local worldPos = bushAlertFloatWorldPosition(bush)
+	if not worldPos then
+		if bush:IsA("BasePart") then
+			return bush
+		end
+		if bush:IsA("Model") then
+			local model = bush :: Model
+			if model.PrimaryPart then
+				return model.PrimaryPart
+			end
+			return model:FindFirstChildWhichIsA("BasePart", true)
+		end
+		return nil
+	end
+
+	local existing = bush:FindFirstChild(BUSH_ALERT_ANCHOR_NAME)
+	if existing and existing:IsA("BasePart") then
+		existing.CFrame = CFrame.new(worldPos)
+		return existing
+	end
+
+	local anchor = Instance.new("Part")
+	anchor.Name = BUSH_ALERT_ANCHOR_NAME
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Transparency = 1
+	anchor.Size = Vector3.new(0.15, 0.15, 0.15)
+	anchor.CFrame = CFrame.new(worldPos)
+	anchor.Parent = bush
+	return anchor
+end
+
+local function isVisibleBushPart(part: BasePart): boolean
+	if part.Name == BUSH_ALERT_ANCHOR_NAME then
+		return false
+	end
+	if part.Transparency >= 1 then
+		return false
+	end
+	local lowerName = string.lower(part.Name)
+	if string.find(lowerName, "hitbox", 1, true) or string.find(lowerName, "collision", 1, true) then
+		return false
+	end
+	return true
+end
+
+local function collectVisibleBushParts(bush: Instance): { BasePart }
+	local parts: { BasePart } = {}
+	if bush:IsA("BasePart") and isVisibleBushPart(bush) then
+		table.insert(parts, bush)
+	end
+	for _, desc in bush:GetDescendants() do
+		if desc:IsA("BasePart") and isVisibleBushPart(desc) then
+			table.insert(parts, desc)
+		end
+	end
+	return parts
+end
+
+local function cancelBushAlertTweens(bush: Instance)
+	local tweens = bushAlertTweens[bush]
+	if not tweens then
+		return
+	end
+	for _, tween in tweens do
+		tween:Cancel()
+	end
+	bushAlertTweens[bush] = nil
+end
+
+local function playBushRedAlert(bush: Instance)
+	local token = (bushAlertToken[bush] or 0) + 1
+	bushAlertToken[bush] = token
+	cancelBushAlertTweens(bush)
+
+	local parts = collectVisibleBushParts(bush)
+	if #parts == 0 then
+		return
+	end
+
+	local originals = bushAlertOriginalColors[bush]
+	if not originals then
+		originals = {}
+		bushAlertOriginalColors[bush] = originals
+	end
+
+	for _, part in parts do
+		if not originals[part] then
+			originals[part] = part.Color
+		end
+		part.Color = BUSH_ALERT_RED
+	end
+
+	local tweens: { Tween } = {}
+	bushAlertTweens[bush] = tweens
+	local tweenInfo = TweenInfo.new(BUSH_ALERT_RESTORE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	for _, part in parts do
+		local originalColor = originals[part]
+		if originalColor then
+			local tween = TweenService:Create(part, tweenInfo, { Color = originalColor })
+			tween:Play()
+			table.insert(tweens, tween)
+		end
+	end
+end
 
 local function getBushAdornee(bush: Instance): BasePart?
 	if bush:IsA("BasePart") then
@@ -1098,12 +1261,6 @@ local function bushWorldTopY(bush: Instance, fallbackY: number): number
 	return fallbackY
 end
 
-local function bushEmptyMessageStudsOffset(bush: Instance, adornee: BasePart): Vector3
-	local topY = bushWorldTopY(bush, adornee.Position.Y)
-	local aboveTop = topY - adornee.Position.Y + 3.5
-	return Vector3.new(0, math.max(5.5, aboveTop), 0)
-end
-
 local function resetEmptyBushMessageVisuals(billboard: BillboardGui)
 	local panel = billboard:FindFirstChild("Panel")
 	if not panel or not panel:IsA("Frame") then
@@ -1124,14 +1281,14 @@ local function resetEmptyBushMessageVisuals(billboard: BillboardGui)
 	end
 end
 
-local function createEmptyBushBillboard(bush: Instance, adornee: BasePart): BillboardGui
+local function createEmptyBushBillboard(bush: Instance, anchor: BasePart): BillboardGui
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = EMPTY_BUSH_BILLBOARD_NAME
-	billboard.Adornee = adornee
+	billboard.Adornee = anchor
 	billboard.AlwaysOnTop = true
 	billboard.LightInfluence = 0
 	billboard.Size = UDim2.fromOffset(260, 70)
-	billboard.StudsOffset = bushEmptyMessageStudsOffset(bush, adornee)
+	billboard.StudsOffset = Vector3.zero
 	billboard.MaxDistance = 80
 	billboard.Parent = bush
 
@@ -1217,8 +1374,10 @@ local function fadeOutAndDestroyEmptyBushMessage(bush: Instance, token: number)
 end
 
 local function showEmptyBushMessage(bush: Instance)
-	local adornee = getBushAdornee(bush)
-	if not adornee then
+	playBushRedAlert(bush)
+
+	local anchor = ensureEmptyBushBillboardAnchor(bush)
+	if not anchor then
 		return
 	end
 
@@ -1227,10 +1386,11 @@ local function showEmptyBushMessage(bush: Instance)
 
 	local existing = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
 	if existing and existing:IsA("BillboardGui") then
-		existing.StudsOffset = bushEmptyMessageStudsOffset(bush, adornee)
+		existing.Adornee = anchor
+		existing.StudsOffset = Vector3.zero
 		resetEmptyBushMessageVisuals(existing)
 	else
-		createEmptyBushBillboard(bush, adornee)
+		createEmptyBushBillboard(bush, anchor)
 	end
 
 	fadeOutAndDestroyEmptyBushMessage(bush, token)

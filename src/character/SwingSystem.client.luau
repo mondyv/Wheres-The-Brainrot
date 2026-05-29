@@ -31,25 +31,26 @@ local SPRING_FREE_LENGTH = 0
 local SPRING_STIFFNESS   = 100
 local SPRING_DAMPING     = 20
 local ZIP_TOWARD_DV          = 19    -- studs/s into the arc on attach
-local LAUNCH_CAMERA_BLEND    = 0.42  -- how much camera look steers launch vs current arc direction
+local LAUNCH_CAMERA_BLEND    = 0.28  -- how much camera look steers launch vs current arc direction
 -- Momentum release: preserve swing velocity, add forward impulse scaled by power + speed.
-local LAUNCH_FORWARD_CAMERA_MIX = 0.36
-local LAUNCH_UP_IMPULSE      = 3.2   -- extra upward dv (studs/s) on release
-local LAUNCH_IMPULSE_BASE    = 5.5   -- subtle forward push at starting power
-local LAUNCH_IMPULSE_LINEAR  = 0.10 -- per power-upgrade level
-local LAUNCH_IMPULSE_CURVE   = 16   -- high-power curved boost (Spider-Man travel)
-local LAUNCH_MOMENTUM_RATIO  = 0.17 -- tangential speed → extra forward impulse
-local LAUNCH_MOMENTUM_CURVE  = 0.05 -- high-power momentum conversion bonus
-local LAUNCH_CHARGE_BONUS    = 13   -- max extra dv from full swing-charge hold
-local LAUNCH_DEADHANG_IMPULSE = 15  -- forward push when barely moving at release
+local LAUNCH_FORWARD_CAMERA_MIX = 0.24
+local LAUNCH_UP_IMPULSE      = 5.5   -- extra upward dv (studs/s) on release
+local LAUNCH_IMPULSE_BASE    = 14    -- subtle forward push at starting power
+local LAUNCH_IMPULSE_LINEAR  = 0.08  -- per power-upgrade level
+local LAUNCH_IMPULSE_CURVE   = 22    -- high-power curved boost (Spider-Man travel)
+local LAUNCH_MOMENTUM_RATIO  = 0.48  -- tangential speed → extra forward impulse (~2.8x prior)
+local LAUNCH_MOMENTUM_CURVE  = 0.11  -- high-power momentum conversion bonus
+local LAUNCH_VELOCITY_CARRY  = 0.30  -- fraction of release speed added along velocity vector
+local LAUNCH_CHARGE_BONUS    = 32    -- max extra dv from full swing-charge hold
+local LAUNCH_DEADHANG_IMPULSE = 32   -- forward push when barely moving at release
 local LAUNCH_DURATION        = 0.42  -- seconds post-release camera/FOV treats player as launched
 local REATTACH_ZIP_MULT      = 0.4   -- zip impulse scale when re-hooking soon after a release
 local REATTACH_ZIP_GRACE      = 0.4   -- seconds after detach where zip is reduced
 local MIN_SWING_HOLD_LAUNCH   = 0.1  -- shorter swings get a softer release (anti spam-fling)
-local LAUNCH_MAX_SPEED_BASE  = 88
-local LAUNCH_MAX_SPEED_LINEAR = 0.58
-local LAUNCH_MAX_SPEED_CURVE = 42
-local LAUNCH_MAX_SPEED_CAP   = 265
+local LAUNCH_MAX_SPEED_BASE  = 108
+local LAUNCH_MAX_SPEED_LINEAR = 0.72
+local LAUNCH_MAX_SPEED_CURVE = 52
+local LAUNCH_MAX_SPEED_CAP   = 320
 local REATTACH_AIR_GRACE     = 1.2
 	local GRAPPLE_INPUT_COOLDOWN = 0.52
 -- Grapple only to vines roughly in front of the camera (blocks snagging behind you).
@@ -57,8 +58,10 @@ local MIN_GRAPPLE_LOOK_DOT = 0.18
 local MAX_SWING_SPEED        = 80
 local FOV_MAX              = 96
 local FOV_SPEED            = 4.2   -- smooth widen while accelerating on the arc
-local LANDING_BLOCK_VEL_MIN = 18  -- landing speed that spawns block burst (no camera shake)
-local LANDING_BLOCK_VEL_MAX = 65
+local LANDING_BLOCK_VEL_MIN = 18  -- landing speed that spawns block burst + camera shake
+local LANDING_BLOCK_VEL_MAX = 92
+local LANDING_CAM_SHAKE_DURATION = 0.34
+local LANDING_CAM_SHAKE_MAX = 0.62
 -- Hanging swing camera: lag + roll only (no positional shake / high-frequency wobble).
 local CAM_LAG_STUDS_MAX      = 0.95
 local CAM_LAG_SMOOTH         = 3.8
@@ -291,6 +294,16 @@ local function boot(character: Model)
 	local launchCamClock = -1e9
 	local launchCamShakeIntensity = 0
 	local launchFovIntensity = 0
+	local landingCamClock = -1e9
+	local landingCamShakeIntensity = 0
+
+	local function landingImpactAlpha(speed: number): number
+		return math.clamp(
+			(speed - LANDING_BLOCK_VEL_MIN) / (LANDING_BLOCK_VEL_MAX - LANDING_BLOCK_VEL_MIN),
+			0,
+			1
+		)
+	end
 
 	-- ── Upgrade stats ────────────────────────────────────────────────────────
 	-- Per-point gains halved vs earlier tuning (reach + rope felt too strong).
@@ -323,14 +336,14 @@ local function boot(character: Model)
 		ropeLength = BASE_ROPE + reachPts * REACH_PER_POINT + ropePts * ROPE_PER_ATTR_PT
 		ropeLength = math.max(ropeLength, 8)
 
-		swingForce = BASE_FORCE + powerPts * 17
+		-- Power scales on upgrade level (not display stat) for ~3x slower progression than before.
+		swingForce = BASE_FORCE + 8 + powerLevel * 5.5
 
-		-- Swing speed keeps climbing at high power; release impulse scales on a softer early curve.
-		local spdBonus = math.min(powerPts * 3.5, 150)
-		dynMaxSwingSpeed = 68 + spdBonus
-		dynZipToward = ZIP_TOWARD_DV + powerPts * 1.4
+		local spdBonus = math.min(powerLevel * 1.15 + (powerLevel / 120) ^ 1.25 * 8, 52)
+		dynMaxSwingSpeed = 70 + spdBonus
+		dynZipToward = ZIP_TOWARD_DV + powerLevel * 0.48
 		dynLaunchImpulseBase = LAUNCH_IMPULSE_BASE + powerLevel * LAUNCH_IMPULSE_LINEAR + powerCurve * LAUNCH_IMPULSE_CURVE
-		dynLaunchMomentumRatio = LAUNCH_MOMENTUM_RATIO + powerLevel * 0.0028 + powerCurve * LAUNCH_MOMENTUM_CURVE
+		dynLaunchMomentumRatio = LAUNCH_MOMENTUM_RATIO + powerLevel * 0.0015 + powerCurve * LAUNCH_MOMENTUM_CURVE
 		dynMaxLaunchSpeed = math.min(
 			LAUNCH_MAX_SPEED_BASE + powerLevel * LAUNCH_MAX_SPEED_LINEAR + (powerLevel / 70) ^ 1.32 * (LAUNCH_MAX_SPEED_CURVE / 5),
 			LAUNCH_MAX_SPEED_CAP
@@ -377,10 +390,14 @@ local function boot(character: Model)
 		local now = os.clock()
 		local attachAge = now - attachCamClock
 		local launchAge = now - launchCamClock
+		local landingAge = now - landingCamClock
 		local attachActive = attachAge >= 0 and attachAge < ATTACH_PUNCH_DURATION
 		local launchActive = isLaunched or (launchAge >= 0 and launchAge < LAUNCH_FOV_DURATION)
+		local landingShakeActive = landingAge >= 0
+			and landingAge < LANDING_CAM_SHAKE_DURATION
+			and landingCamShakeIntensity > 0.02
 
-		if not isSwinging and not attachActive and not launchActive then
+		if not isSwinging and not attachActive and not launchActive and not landingShakeActive then
 			swingCamRoll = expSmoothScalar(swingCamRoll, 0, dt, 14)
 			swingCamLagWorld = swingCamLagWorld:Lerp(Vector3.zero, math.min(1, dt * 11))
 			if math.abs(swingCamRoll) < 0.0004 and swingCamLagWorld.Magnitude < 0.002 then
@@ -430,6 +447,18 @@ local function boot(character: Model)
 				(math.noise(t, 0, 0) - 0.5) * 2 * LAUNCH_CAM_SHAKE_MAX * shake,
 				(math.noise(0, t, 1) - 0.5) * 2 * LAUNCH_CAM_SHAKE_MAX * shake * 0.35,
 				(math.noise(t, 2, 0.5) - 0.5) * 2 * LAUNCH_CAM_SHAKE_MAX * shake * 0.22
+			)
+		end
+
+		if landingShakeActive then
+			local u = landingAge / LANDING_CAM_SHAKE_DURATION
+			local decay = (1 - u) * (1 - u)
+			local shake = landingCamShakeIntensity * decay
+			local t = now * 17
+			cf += Vector3.new(
+				(math.noise(t, 1.5, 0) - 0.5) * 2 * LANDING_CAM_SHAKE_MAX * shake,
+				(math.noise(0, t, 2.5) - 0.5) * 2 * LANDING_CAM_SHAKE_MAX * shake * 0.55,
+				(math.noise(t, 3, 1) - 0.5) * 2 * LANDING_CAM_SHAKE_MAX * shake * 0.28
 			)
 		end
 
@@ -1196,6 +1225,7 @@ local function boot(character: Model)
 				local function applyMomentumLaunch(
 					launchDir: Vector3,
 					tangSpeed: number,
+					releaseSpeed: number,
 					chargeFill: number,
 					extraForwardDv: number?
 				)
@@ -1207,6 +1237,10 @@ local function boot(character: Model)
 
 					humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
 					hrp:ApplyImpulse(dir * totalDv * mass)
+					if releaseSpeed > 2.5 then
+						local carryDv = releaseSpeed * LAUNCH_VELOCITY_CARRY * holdMult
+						hrp:ApplyImpulse(vel.Unit * carryDv * mass)
+					end
 					if LAUNCH_UP_IMPULSE > 0 then
 						hrp:ApplyImpulse(Vector3.new(0, LAUNCH_UP_IMPULSE * holdMult * mass, 0))
 					end
@@ -1236,6 +1270,7 @@ local function boot(character: Model)
 						applyMomentumLaunch(
 							hangDir.Unit,
 							0,
+							speed,
 							snapCharge,
 							LAUNCH_DEADHANG_IMPULSE * holdMult
 						)
@@ -1268,7 +1303,7 @@ local function boot(character: Model)
 					end
 
 					local tangRef = if tangSpeed > 1 then tangSpeed else LAUNCH_DEADHANG_IMPULSE * 0.35
-					applyMomentumLaunch(launchDir, tangRef, snapCharge)
+					applyMomentumLaunch(launchDir, tangRef, speed, snapCharge)
 				end
 			end)
 		end
@@ -1283,19 +1318,20 @@ local function boot(character: Model)
 			isAirborne = false
 			if landedFromSwing then
 				landedFromSwing = false
-				local alpha = math.clamp(
-					(landingSpeed - LANDING_BLOCK_VEL_MIN) / (LANDING_BLOCK_VEL_MAX - LANDING_BLOCK_VEL_MIN),
-					0,
-					1
-				)
+				local alpha = landingImpactAlpha(landingSpeed)
 				if alpha > 0 then
 					spawnLandingBlocks(alpha)
+					-- Shake intensity uses same curve as debris; low speeds stay subtle.
+					landingCamShakeIntensity = alpha * alpha * (0.3 + alpha * 0.7)
+					landingCamClock = os.clock()
 				end
 			end
 			isLaunched = false
 			launchCamShakeIntensity = 0
 			launchFovIntensity = 0
-			resetSwingCameraState()
+			if landingCamShakeIntensity <= 0.02 then
+				resetSwingCameraState()
+			end
 		elseif new == Enum.HumanoidStateType.Running
 		or new == Enum.HumanoidStateType.RunningNoPhysics then
 			isAirborne = false

@@ -1,5 +1,5 @@
 -- Shared config: cash swing upgrades (must match server + client)
-export type UpgradeId = "Power10" | "Power25" | "Reach10" | "Reach25" | "Carry1"
+export type UpgradeId = "Power1" | "Power10" | "Power25" | "Reach1" | "Reach10" | "Reach25" | "Carry1"
 
 export type UpgradeLevels = {
 	power: number,
@@ -14,14 +14,16 @@ export type UpgradeDef = {
 }
 
 local DEFS: { [string]: UpgradeDef } = {
+	Power1 = { attr = "SwingForce", units = 1, levelAttr = "PowerUpgradeLevel" } :: UpgradeDef,
 	Power10 = { attr = "SwingForce", units = 10, levelAttr = "PowerUpgradeLevel" } :: UpgradeDef,
 	Power25 = { attr = "SwingForce", units = 25, levelAttr = "PowerUpgradeLevel" } :: UpgradeDef,
+	Reach1 = { attr = "SwingRange", units = 1, levelAttr = "RopeUpgradeLevel" } :: UpgradeDef,
 	Reach10 = { attr = "SwingRange", units = 10, levelAttr = "RopeUpgradeLevel" } :: UpgradeDef,
 	Reach25 = { attr = "SwingRange", units = 25, levelAttr = "RopeUpgradeLevel" } :: UpgradeDef,
 	Carry1 = { attr = "Carry", units = 1, levelAttr = "CarryUpgradeLevel" } :: UpgradeDef,
 }
 
-local ALL_IDS = { "Power10", "Power25", "Reach10", "Reach25", "Carry1" }
+local ALL_IDS = { "Power1", "Power10", "Power25", "Reach1", "Reach10", "Reach25", "Carry1" }
 
 local M = {}
 
@@ -119,22 +121,48 @@ function M.sumUnitCosts(unitCost: (level: number) -> number, startLevel: number,
 	return total
 end
 
+function M.unitCostForLevelAttr(levelAttr: string, level: number): number
+	if levelAttr == M.POWER_LEVEL_ATTR then
+		return M.powerUnitCost(level)
+	end
+	if levelAttr == M.ROPE_LEVEL_ATTR then
+		return M.ropeUnitCost(level)
+	end
+	if levelAttr == M.CARRY_LEVEL_ATTR then
+		return M.carryUnitCost(level)
+	end
+	return 0
+end
+
+-- Canonical pricing: N bulk units = sum of the next N single-unit prices from current level.
+function M.priceForUnitCount(levelAttr: string, currentLevel: number, unitCount: number): number
+	local start = floorLevel(currentLevel)
+	local count = math.max(0, math.floor(unitCount))
+	if count == 0 then
+		return 0
+	end
+	if levelAttr == M.POWER_LEVEL_ATTR then
+		return M.sumUnitCosts(M.powerUnitCost, start, count)
+	end
+	if levelAttr == M.ROPE_LEVEL_ATTR then
+		return M.sumUnitCosts(M.ropeUnitCost, start, count)
+	end
+	if levelAttr == M.CARRY_LEVEL_ATTR then
+		if count ~= 1 then
+			return 0
+		end
+		return M.carryUnitCost(start)
+	end
+	return 0
+end
+
 function M.batchPriceForUpgradeId(upgradeId: string, levels: UpgradeLevels): number
 	local def = DEFS[upgradeId]
 	if not def then
 		return 0
 	end
 	local current = M.levelForUpgradeId(upgradeId, levels)
-	if def.levelAttr == M.POWER_LEVEL_ATTR then
-		return M.sumUnitCosts(M.powerUnitCost, current, def.units)
-	end
-	if def.levelAttr == M.ROPE_LEVEL_ATTR then
-		return M.sumUnitCosts(M.ropeUnitCost, current, def.units)
-	end
-	if def.levelAttr == M.CARRY_LEVEL_ATTR then
-		return M.carryUnitCost(current)
-	end
-	return 0
+	return M.priceForUnitCount(def.levelAttr, current, def.units)
 end
 
 function M.wouldExceedMax(upgradeId: string, levels: UpgradeLevels): boolean
@@ -168,6 +196,20 @@ end
 
 function M.displayBonus(def: UpgradeDef): number
 	return def.units
+end
+
+function M.batchMatchesSingleUnits(upgradeId: string): boolean
+	local def = DEFS[upgradeId]
+	if not def or def.units <= 1 then
+		return true
+	end
+	local probeLevel = 0
+	local batch = M.priceForUnitCount(def.levelAttr, probeLevel, def.units)
+	local singles = 0
+	for i = 0, def.units - 1 do
+		singles += M.unitCostForLevelAttr(def.levelAttr, probeLevel + i)
+	end
+	return batch == singles
 end
 
 function M.syncGameplayStatsFromLevels(player: Player, levels: UpgradeLevels)

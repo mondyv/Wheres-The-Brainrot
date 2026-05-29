@@ -74,10 +74,13 @@ function M.powerStats(powerLevel: number): PowerStats
 	}
 end
 
+-- Backend reach grows ~2.5× slower than power/speed (UI display unchanged).
+local REACH_STUDS_RANGE = 258
+
 function M.ropeStats(ropeLevel: number): RopeStats
 	local t = M.progressT(ropeLevel, M.ROPE_MAX_LEVEL)
 	return {
-		reachStuds = 56 + t * 644,
+		reachStuds = 56 + t * REACH_STUDS_RANGE,
 	}
 end
 

@@ -10,6 +10,7 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
+local BushShiver = require(script.Parent.BushShiver)
 local CarryGate = require(script.Parent.CarryGate)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 
@@ -228,6 +229,7 @@ local function registerBushRoot(root: Instance)
 	if bushByModel[root] then
 		return
 	end
+	BushShiver.trackBush(root)
 	if anchorFor(root) then
 		attachPrompt(root)
 		return

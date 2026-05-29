@@ -35,9 +35,13 @@ type BrainrotInvEntry = {
 
 local MAX_HARVEST_RANGE = 14
 local RANGE_SLACK = 5
--- Per bush search: 30% not found, 70% brainrot spawns (server roll on each search).
+-- Per bush: 30% empty, 70% hidden brainrot (rolled once when bush is assigned, before any search).
 local BUSH_EMPTY_PERCENT = 30
 local BUSH_SEARCH_DEBOUNCE_SEC = 0.4
+local BUSH_HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
+local BUSH_LOOT_ASSIGNED_ATTR = "BushLootAssigned"
+local BUSH_LOOT_RESPAWN_MIN = 10
+local BUSH_LOOT_RESPAWN_MAX = 15
 local FLOAT_DURATION = 4
 local POP_DURATION = 0.35
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
@@ -992,6 +996,45 @@ local function runFloatThenAttach(player: Player, char: Model, clone: Model, anc
 	floatConnByClone[clone] = conn
 end
 
+local function isLootableBush(inst: Instance): boolean
+	return inst.Name == "BushSCRIPT" and (inst:IsA("Model") or inst:IsA("BasePart"))
+end
+
+local function rollBushHasBrainrot(): boolean
+	return math.random(1, 100) > BUSH_EMPTY_PERCENT
+end
+
+local function assignBushLoot(bush: Instance): boolean
+	if not isLootableBush(bush) or not isValidBushRef(bush) then
+		return false
+	end
+	if bush:GetAttribute(BUSH_LOOT_ASSIGNED_ATTR) == true then
+		return bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
+	end
+	local hasBrainrot = rollBushHasBrainrot()
+	bush:SetAttribute(BUSH_LOOT_ASSIGNED_ATTR, true)
+	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, hasBrainrot)
+	return hasBrainrot
+end
+
+local function scheduleBushLootRespawn(bush: Instance)
+	local delaySec = math.random(BUSH_LOOT_RESPAWN_MIN, BUSH_LOOT_RESPAWN_MAX)
+	task.delay(delaySec, function()
+		if not bush.Parent or not isValidBushRef(bush) then
+			return
+		end
+		bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, rollBushHasBrainrot())
+	end)
+end
+
+local function assignLootUnder(root: Instance)
+	for _, desc in root:GetDescendants() do
+		if isLootableBush(desc) then
+			assignBushLoot(desc)
+		end
+	end
+end
+
 local function isValidBushRef(bushRef: Instance?): boolean
 	if not bushRef or not bushRef.Parent then
 		return false
@@ -1172,15 +1215,24 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 	end
 	lastBushSearchAt[player] = now
 
+	if not bush or not isValidBushRef(bush) then
+		return false
+	end
+
 	if not canAttemptHarvest(player, worldPosition, bush) then
 		return false
 	end
 
-	if math.random(1, 100) <= BUSH_EMPTY_PERCENT then
+	assignBushLoot(bush)
+	if bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) ~= true then
 		return false
 	end
 
+	-- Consumed until respawn cooldown re-rolls loot.
+	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, false)
+
 	beginHarvestOutcome(player, worldPosition)
+	scheduleBushLootRespawn(bush)
 	return true
 end
 
@@ -1985,6 +2037,16 @@ task.defer(function()
 	if not map then
 		return
 	end
+
+	assignLootUnder(map)
+	map.DescendantAdded:Connect(function(desc)
+		if isLootableBush(desc) then
+			task.defer(function()
+				assignBushLoot(desc)
+			end)
+		end
+	end)
+
 	for _ = 1, 60 do
 		refreshLuckHitboxes()
 		if #luckHitboxes > 0 then

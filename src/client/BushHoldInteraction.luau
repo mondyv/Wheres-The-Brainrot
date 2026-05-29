@@ -33,7 +33,8 @@ local POST_HARVEST_COOLDOWN_MAX = 15
 local BUSH_MANAGED_ATTR = "BushManagedPrompt"
 local AIM_TICK_INTERVAL = 0.1
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
-local NO_BRAINROT_MESSAGE = "No brainrot was hiding inside!"
+local NO_BRAINROT_MESSAGE = "No brainrots hiding!"
+local EMPTY_OUTLINE_GREEN = Color3.fromRGB(72, 255, 120)
 local EMPTY_MESSAGE_STAY_SEC = 2
 local EMPTY_MESSAGE_FADE_IN_SEC = 0.22
 local EMPTY_MESSAGE_FADE_OUT_SEC = 0.35
@@ -87,84 +88,6 @@ local function anchorFor(model: Model): BasePart?
 	return model:FindFirstChildWhichIsA("BasePart", true)
 end
 
---[[
-	showNoBrainrotMessage — per-bush billboard; fade in, hold, fade out, destroy (independent instances).
-]]
-local function showNoBrainrotMessage(bush: Model)
-	task.spawn(function()
-		local anchor = anchorFor(bush)
-		if not anchor or not anchor.Parent then
-			return
-		end
-
-		local prior = anchor:FindFirstChild("BushEmptyMessage")
-		if prior then
-			prior:Destroy()
-		end
-
-		local billboard = Instance.new("BillboardGui")
-		billboard.Name = "BushEmptyMessage"
-		billboard.Adornee = anchor
-		billboard.AlwaysOnTop = true
-		billboard.LightInfluence = 0
-		billboard.MaxDistance = 72
-		billboard.Size = UDim2.fromOffset(300, 64)
-		billboard.StudsOffset = Vector3.new(0, 3.8, 0)
-		billboard.Parent = anchor
-
-		local frame = Instance.new("Frame")
-		frame.Name = "Bubble"
-		frame.Size = UDim2.fromScale(1, 1)
-		frame.BackgroundColor3 = Color3.fromRGB(48, 28, 72)
-		frame.BackgroundTransparency = 0.12
-		frame.BorderSizePixel = 0
-		frame.Parent = billboard
-
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 14)
-		corner.Parent = frame
-
-		local frameStroke = Instance.new("UIStroke")
-		frameStroke.Color = Color3.fromRGB(255, 210, 90)
-		frameStroke.Thickness = 2.5
-		frameStroke.Transparency = 1
-		frameStroke.Parent = frame
-
-		local label = Instance.new("TextLabel")
-		label.Name = "Message"
-		label.Size = UDim2.new(1, -16, 1, -10)
-		label.Position = UDim2.fromOffset(8, 5)
-		label.BackgroundTransparency = 1
-		label.Font = Enum.Font.FredokaOne
-		label.Text = NO_BRAINROT_MESSAGE
-		label.TextColor3 = Color3.fromRGB(255, 248, 170)
-		label.TextScaled = true
-		label.TextTransparency = 1
-		label.TextStrokeColor3 = Color3.fromRGB(90, 40, 120)
-		label.TextStrokeTransparency = 0.35
-		label.Parent = frame
-
-		local fadeInInfo = TweenInfo.new(EMPTY_MESSAGE_FADE_IN_SEC, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-		TweenService:Create(label, fadeInInfo, { TextTransparency = 0 }):Play()
-		TweenService:Create(frame, fadeInInfo, { BackgroundTransparency = 0.08 }):Play()
-		TweenService:Create(frameStroke, fadeInInfo, { Transparency = 0 }):Play()
-
-		task.wait(EMPTY_MESSAGE_STAY_SEC)
-
-		local fadeOutInfo = TweenInfo.new(EMPTY_MESSAGE_FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-		local tLabel = TweenService:Create(label, fadeOutInfo, { TextTransparency = 1 })
-		local tFrame = TweenService:Create(frame, fadeOutInfo, { BackgroundTransparency = 1 })
-		local tStroke = TweenService:Create(frameStroke, fadeOutInfo, { Transparency = 1 })
-		tLabel:Play()
-		tFrame:Play()
-		tStroke:Play()
-		tStroke.Completed:Wait()
-		if billboard.Parent then
-			billboard:Destroy()
-		end
-	end)
-end
-
 local BUSH_PROMPT_LIFT_SCALE = 0.66
 
 local function bushPromptWorldPosition(root: Model): Vector3?
@@ -206,6 +129,108 @@ local function bushPromptWorldPosition(root: Model): Vector3?
 		return cf.Position + Vector3.new(0, size.Y * BUSH_PROMPT_LIFT_SCALE, 0)
 	end
 	return nil
+end
+
+--[[
+	showNoBrainrotMessage — centered billboard on the bush; green panel + text outlines.
+]]
+local function showNoBrainrotMessage(bush: Model)
+	task.spawn(function()
+		local anchor = anchorFor(bush)
+		if not anchor or not anchor.Parent then
+			return
+		end
+
+		local prior = anchor:FindFirstChild("BushEmptyMessage")
+		if prior then
+			prior:Destroy()
+		end
+
+		local studsOffset = Vector3.new(0, 3.2, 0)
+		local centerWorld = bushPromptWorldPosition(bush)
+		if centerWorld then
+			studsOffset = anchor.CFrame:PointToObjectSpace(centerWorld)
+		end
+
+		local billboard = Instance.new("BillboardGui")
+		billboard.Name = "BushEmptyMessage"
+		billboard.Adornee = anchor
+		billboard.AlwaysOnTop = true
+		billboard.LightInfluence = 0
+		billboard.MaxDistance = 80
+		billboard.Size = UDim2.fromOffset(320, 72)
+		billboard.StudsOffset = studsOffset
+		billboard.Parent = anchor
+
+		local frame = Instance.new("Frame")
+		frame.Name = "Panel"
+		frame.AnchorPoint = Vector2.new(0.5, 0.5)
+		frame.Position = UDim2.fromScale(0.5, 0.5)
+		frame.Size = UDim2.fromScale(1, 1)
+		frame.BackgroundColor3 = Color3.fromRGB(18, 32, 22)
+		frame.BackgroundTransparency = 0.18
+		frame.BorderSizePixel = 0
+		frame.Parent = billboard
+
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 16)
+		corner.Parent = frame
+
+		local frameStroke = Instance.new("UIStroke")
+		frameStroke.Name = "PanelOutline"
+		frameStroke.Color = EMPTY_OUTLINE_GREEN
+		frameStroke.Thickness = 3
+		frameStroke.Transparency = 1
+		frameStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		frameStroke.Parent = frame
+
+		local label = Instance.new("TextLabel")
+		label.Name = "Message"
+		label.AnchorPoint = Vector2.new(0.5, 0.5)
+		label.Position = UDim2.fromScale(0.5, 0.5)
+		label.Size = UDim2.new(1, -24, 1, -16)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.GothamBold
+		label.Text = NO_BRAINROT_MESSAGE
+		label.TextColor3 = Color3.fromRGB(235, 255, 240)
+		label.TextScaled = true
+		label.TextWrapped = true
+		label.TextXAlignment = Enum.TextXAlignment.Center
+		label.TextYAlignment = Enum.TextYAlignment.Center
+		label.TextTransparency = 1
+		label.TextStrokeColor3 = EMPTY_OUTLINE_GREEN
+		label.TextStrokeTransparency = 0
+		label.Parent = frame
+
+		local textStroke = Instance.new("UIStroke")
+		textStroke.Name = "TextOutline"
+		textStroke.Color = EMPTY_OUTLINE_GREEN
+		textStroke.Thickness = 2
+		textStroke.Transparency = 1
+		textStroke.Parent = label
+
+		local fadeInInfo = TweenInfo.new(EMPTY_MESSAGE_FADE_IN_SEC, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		TweenService:Create(label, fadeInInfo, { TextTransparency = 0 }):Play()
+		TweenService:Create(frame, fadeInInfo, { BackgroundTransparency = 0.1 }):Play()
+		TweenService:Create(frameStroke, fadeInInfo, { Transparency = 0 }):Play()
+		TweenService:Create(textStroke, fadeInInfo, { Transparency = 0 }):Play()
+
+		task.wait(EMPTY_MESSAGE_STAY_SEC)
+
+		local fadeOutInfo = TweenInfo.new(EMPTY_MESSAGE_FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		local tLabel = TweenService:Create(label, fadeOutInfo, { TextTransparency = 1, TextStrokeTransparency = 1 })
+		local tFrame = TweenService:Create(frame, fadeOutInfo, { BackgroundTransparency = 1 })
+		local tPanelStroke = TweenService:Create(frameStroke, fadeOutInfo, { Transparency = 1 })
+		local tTextStroke = TweenService:Create(textStroke, fadeOutInfo, { Transparency = 1 })
+		tLabel:Play()
+		tFrame:Play()
+		tPanelStroke:Play()
+		tTextStroke:Play()
+		tTextStroke.Completed:Wait()
+		if billboard.Parent then
+			billboard:Destroy()
+		end
+	end)
 end
 
 local function promptWorldPos(prompt: ProximityPrompt): Vector3

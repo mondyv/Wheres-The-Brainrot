@@ -120,30 +120,6 @@ local function ensureHarvestFunction(): RemoteFunction
 	return fn :: RemoteFunction
 end
 
-local function ensureBushShiverRemote(): RemoteEvent
-	local folder = getBushRemotesFolder()
-	local ev = folder:FindFirstChild("BushBrainrotShiver")
-	if not ev then
-		ev = Instance.new("RemoteEvent")
-		ev.Name = "BushBrainrotShiver"
-		ev.Parent = folder
-	end
-	return ev :: RemoteEvent
-end
-
-local function fireBushShiverToAll(bush: Instance)
-	if bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) ~= true then
-		return
-	end
-	local path = bush:GetFullName()
-	task.delay(0.4, function()
-		if not bush.Parent then
-			return
-		end
-		ensureBushShiverRemote():FireAllClients(bush, path)
-	end)
-end
-
 local inventorySyncRE: RemoteEvent? = nil
 local getInventoryRF: RemoteFunction? = nil
 
@@ -1055,9 +1031,6 @@ local function assignBushLoot(bush: Instance): boolean
 	local hasBrainrot = rollBushHasBrainrot()
 	bush:SetAttribute(BUSH_LOOT_ASSIGNED_ATTR, true)
 	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, hasBrainrot)
-	if hasBrainrot then
-		fireBushShiverToAll(bush)
-	end
 	return hasBrainrot
 end
 
@@ -1067,11 +1040,7 @@ local function scheduleBushLootRespawn(bush: Instance)
 		if not bush.Parent or not isValidBushRef(bush) then
 			return
 		end
-		local hasBrainrot = rollBushHasBrainrot()
-		bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, hasBrainrot)
-		if hasBrainrot then
-			fireBushShiverToAll(bush)
-		end
+		bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, rollBushHasBrainrot())
 	end)
 end
 
@@ -2077,25 +2046,6 @@ task.defer(function()
 			end)
 		end
 	end)
-
-	local function syncShiversForPlayer(plr: Player)
-		task.spawn(function()
-			local m = workspace:FindFirstChild("Map") or workspace:WaitForChild("Map", 90)
-			if not m then
-				return
-			end
-			for _, desc in m:GetDescendants() do
-				if isLootableBush(desc) and isValidBushRef(desc) and desc:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true then
-					ensureBushShiverRemote():FireClient(plr, desc, desc:GetFullName())
-				end
-			end
-		end)
-	end
-
-	for _, plr in Players:GetPlayers() do
-		syncShiversForPlayer(plr)
-	end
-	Players.PlayerAdded:Connect(syncShiversForPlayer)
 
 	for _ = 1, 60 do
 		refreshLuckHitboxes()

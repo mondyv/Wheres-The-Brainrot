@@ -631,8 +631,15 @@ end
 
 local function bootMap(map: Instance)
 	wireMapWatch(map)
-	BushShiver.scanMapForBrainrotBushes(map)
 	registerAllBushesOnMap(map)
+	BushShiver.scanMapForBrainrotBushes(map)
+	-- Server may assign loot slightly after client scan; retry tracking for shiver clues.
+	task.spawn(function()
+		for _ = 1, 20 do
+			task.wait(1)
+			BushShiver.scanMapForBrainrotBushes(map)
+		end
+	end)
 	local n = 0
 	for _, _ in bushByModel do
 		n += 1
@@ -654,6 +661,7 @@ function BushHoldInteraction.init()
 	end
 	hooked = true
 
+	BushShiver.init()
 	ProximityPromptEffects.setBushHoldCompleteHandler(doHarvest)
 
 	local pg = player:FindFirstChild("PlayerGui")

@@ -1,24 +1,23 @@
 --[[
-	Brief shiver on bushes assigned a hidden brainrot (70% outcome, decided before search).
-	Server fires BushBrainrotShiver; this module also watches HasHiddenBrainrot as fallback.
+	Shiver clue for bushes with HasHiddenBrainrot (70% pre-roll on server).
+	Uses replicated attributes only — no remote flood. Each bush shivers once at a random time (~2s).
 ]]
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 
 local M = {}
 
 local HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
-local SHIVER_REMOTE_NAME = "BushBrainrotShiver"
 
 local SHIVER_DURATION = 2
 local SHIVER_FREQ = 9
 local SHIVER_POS_AMP = 0.14
 local SHIVER_ROT_AMP = math.rad(3.2)
+local SHIVER_START_DELAY_MAX = 14
 
 local activeByBush: { [Instance]: boolean } = {}
 local hookedByBush: { [Instance]: boolean } = {}
+local shiverScheduled: { [Instance]: boolean } = {}
 
 local function shiverModelPivot(bush: Model)
 	local basePivot = bush:GetPivot()
@@ -99,10 +98,19 @@ function M.shiverBush(bush: Instance)
 	activeByBush[bush] = nil
 end
 
-local function tryShiverFromAttribute(bush: Instance)
-	if bush.Parent and bush:GetAttribute(HAS_BRAINROT_ATTR) == true then
-		M.shiverBush(bush)
+local function scheduleRandomShiver(bush: Instance)
+	if shiverScheduled[bush] or activeByBush[bush] then
+		return
 	end
+	shiverScheduled[bush] = true
+
+	local delaySec = math.random() * SHIVER_START_DELAY_MAX
+	task.delay(delaySec, function()
+		shiverScheduled[bush] = nil
+		if bush.Parent and bush:GetAttribute(HAS_BRAINROT_ATTR) == true then
+			M.shiverBush(bush)
+		end
+	end)
 end
 
 function M.trackBush(bush: Instance)
@@ -112,12 +120,12 @@ function M.trackBush(bush: Instance)
 	hookedByBush[bush] = true
 
 	if bush:GetAttribute(HAS_BRAINROT_ATTR) == true then
-		task.defer(tryShiverFromAttribute, bush)
+		scheduleRandomShiver(bush)
 	end
 
 	bush:GetAttributeChangedSignal(HAS_BRAINROT_ATTR):Connect(function()
 		if bush:GetAttribute(HAS_BRAINROT_ATTR) == true then
-			M.shiverBush(bush)
+			scheduleRandomShiver(bush)
 		end
 	end)
 
@@ -125,6 +133,7 @@ function M.trackBush(bush: Instance)
 		if parent == nil then
 			activeByBush[bush] = nil
 			hookedByBush[bush] = nil
+			shiverScheduled[bush] = nil
 		end
 	end)
 end
@@ -137,53 +146,8 @@ function M.scanMapForBrainrotBushes(map: Instance)
 	end
 end
 
-local function resolveBushFromPath(bush: Instance?, path: string?): Instance?
-	if typeof(bush) == "Instance" and bush.Parent then
-		return bush
-	end
-	if typeof(path) ~= "string" or path == "" then
-		return nil
-	end
-	local map = Workspace:FindFirstChild("Map")
-	if not map then
-		return nil
-	end
-	local suffix = string.match(path, "^Workspace%.Map%.(.+)$") or string.match(path, "^Map%.(.+)$")
-	if not suffix then
-		return nil
-	end
-	local node: Instance = map
-	for segment in string.split(suffix, ".") do
-		if segment == "" then
-			continue
-		end
-		local child = node:FindFirstChild(segment)
-		if not child then
-			return nil
-		end
-		node = child
-	end
-	return node
+function M.init()
+	-- Reserved for BushHoldInteraction boot; scan runs when Map is ready.
 end
-
-local function connectShiverRemote()
-	local folder = ReplicatedStorage:WaitForChild("BushRemotes", 120)
-	if not folder then
-		return
-	end
-	local ev = folder:WaitForChild(SHIVER_REMOTE_NAME, 60)
-	if not ev or not ev:IsA("RemoteEvent") then
-		return
-	end
-	ev.OnClientEvent:Connect(function(bush: Instance?, path: string?)
-		local resolved = resolveBushFromPath(bush, path)
-		if resolved then
-			M.trackBush(resolved)
-			M.shiverBush(resolved)
-		end
-	end)
-end
-
-task.spawn(connectShiverRemote)
 
 return M

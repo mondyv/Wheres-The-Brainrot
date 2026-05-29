@@ -35,8 +35,9 @@ type BrainrotInvEntry = {
 
 local MAX_HARVEST_RANGE = 14
 local RANGE_SLACK = 5
--- Per bush search: 30% empty, 70% spawn brainrot (server roll).
-local BUSH_EMPTY_CHANCE = 0.30
+-- Per bush search: 30% not found, 70% brainrot spawns (server roll on each search).
+local BUSH_EMPTY_PERCENT = 30
+local BUSH_SEARCH_DEBOUNCE_SEC = 0.4
 local FLOAT_DURATION = 4
 local POP_DURATION = 0.35
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
@@ -991,7 +992,36 @@ local function runFloatThenAttach(player: Player, char: Model, clone: Model, anc
 	floatConnByClone[clone] = conn
 end
 
-local function canAttemptHarvest(player: Player, worldPosition: Vector3): boolean
+local function isValidBushRef(bushRef: Instance?): boolean
+	if not bushRef or not bushRef.Parent then
+		return false
+	end
+	if bushRef.Name ~= "BushSCRIPT" then
+		return false
+	end
+	if not bushRef:IsA("Model") and not bushRef:IsA("BasePart") then
+		return false
+	end
+	local map = workspace:FindFirstChild("Map")
+	if not map then
+		return false
+	end
+	return bushRef:IsDescendantOf(map)
+end
+
+local function bushSearchPosition(bushRef: Instance?, worldPosition: Vector3): Vector3
+	if bushRef and bushRef.Parent then
+		if bushRef:IsA("BasePart") then
+			return bushRef.Position
+		end
+		if bushRef:IsA("Model") then
+			return (bushRef :: Model):GetPivot().Position
+		end
+	end
+	return worldPosition
+end
+
+local function canAttemptHarvest(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean
 	local char = player.Character
 	if not char then
 		return false
@@ -1000,7 +1030,8 @@ local function canAttemptHarvest(player: Player, worldPosition: Vector3): boolea
 	if not hrp then
 		return false
 	end
-	if (worldPosition - hrp.Position).Magnitude > MAX_HARVEST_RANGE + RANGE_SLACK then
+	local checkPos = bushSearchPosition(bushRef, worldPosition)
+	if (checkPos - hrp.Position).Magnitude > MAX_HARVEST_RANGE + RANGE_SLACK then
 		return false
 	end
 	local cap = carryCapacityForPlayer(player)
@@ -1012,7 +1043,7 @@ local function canAttemptHarvest(player: Player, worldPosition: Vector3): boolea
 end
 
 local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
-	if not canAttemptHarvest(player, worldPosition) then
+	if not canAttemptHarvest(player, worldPosition, nil) then
 		return
 	end
 	local char = player.Character :: Model
@@ -1119,6 +1150,38 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 		setAllPartsPhysics(clone, true, true)
 		runFloatThenAttach(player, char, clone, anchorPos, baseYaw)
 	end)
+end
+
+local lastBushSearchAt: { [Player]: number } = {}
+
+--[[
+	processBushSearch — 30% not found, 70% spawn. Returns true when a brainrot was spawned.
+]]
+local function processBushSearch(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean
+	if typeof(worldPosition) ~= "Vector3" then
+		return false
+	end
+	local bush: Instance? = if typeof(bushRef) == "Instance" then bushRef else nil
+	if bush and not isValidBushRef(bush) then
+		bush = nil
+	end
+
+	local now = os.clock()
+	if (lastBushSearchAt[player] or 0) + BUSH_SEARCH_DEBOUNCE_SEC > now then
+		return false
+	end
+	lastBushSearchAt[player] = now
+
+	if not canAttemptHarvest(player, worldPosition, bush) then
+		return false
+	end
+
+	if math.random(1, 100) <= BUSH_EMPTY_PERCENT then
+		return false
+	end
+
+	beginHarvestOutcome(player, worldPosition)
+	return true
 end
 
 local redeemDebounce: { [Player]: number } = {}
@@ -1387,6 +1450,16 @@ for _, p in Players:GetPlayers() do
 end
 
 local harvestRemote = ensureRemote()
+local harvestBushFn = ensureHarvestFunction()
+
+harvestRemote.OnServerEvent:Connect(function(player: Player, worldPosition: Vector3, bushRef: Instance?)
+	processBushSearch(player, worldPosition, bushRef)
+end)
+
+harvestBushFn.OnServerInvoke = function(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean
+	return processBushSearch(player, worldPosition, bushRef)
+end
+
 local _, getInvRF = ensureInventoryRemotes()
 
 getInvRF.OnServerInvoke = function(requesting: Player)
@@ -1906,31 +1979,6 @@ ensureEquipBrainrotRemote().OnServerEvent:Connect(function(player: Player, slot:
 	end
 	equipBrainrotSlotForPlayer(player, slot :: number)
 end)
-
---[[
-	processBushSearch — 30% no brainrot, 70% beginHarvestOutcome. Returns true if a brainrot was spawned.
-]]
-local function processBushSearch(player: Player, worldPosition: Vector3): boolean
-	if typeof(worldPosition) ~= "Vector3" then
-		return false
-	end
-	if not canAttemptHarvest(player, worldPosition) then
-		return false
-	end
-	if math.random() < BUSH_EMPTY_CHANCE then
-		return false
-	end
-	beginHarvestOutcome(player, worldPosition)
-	return true
-end
-
-harvestRemote.OnServerEvent:Connect(function(player: Player, worldPosition: Vector3)
-	processBushSearch(player, worldPosition)
-end)
-
-ensureHarvestFunction().OnServerInvoke = function(player: Player, worldPosition: Vector3): boolean
-	return processBushSearch(player, worldPosition)
-end
 
 task.defer(function()
 	local map = workspace:WaitForChild("Map", 120)

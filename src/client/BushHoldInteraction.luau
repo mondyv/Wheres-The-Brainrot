@@ -476,20 +476,30 @@ local function getHarvestFunction(): RemoteFunction?
 	return nil
 end
 
+local bushSearchInFlight: { [Instance]: boolean } = {}
+
 --[[ Server-authoritative 30/70 roll via HarvestBush RemoteFunction. ]]
-local function requestBushSearch(worldPos: Vector3)
-	local rf = getHarvestFunction()
-	if rf then
-		local ok, _found = pcall(function()
-			return rf:InvokeServer(worldPos)
+local function requestBushSearch(worldPos: Vector3, bush: Instance)
+	local folder = ReplicatedStorage:FindFirstChild("BushRemotes") or ReplicatedStorage:WaitForChild("BushRemotes", 8)
+	if not folder then
+		return
+	end
+
+	local rf = folder:FindFirstChild("HarvestBush") or folder:WaitForChild("HarvestBush", 8)
+	if rf and rf:IsA("RemoteFunction") then
+		harvestFunction = rf
+		local ok = pcall(function()
+			rf:InvokeServer(worldPos, bush)
 		end)
 		if ok then
 			return
 		end
 	end
-	local rem = getHarvestRemote()
-	if rem then
-		rem:FireServer(worldPos)
+
+	local rem = folder:FindFirstChild("HarvestBrainrot")
+	if rem and rem:IsA("RemoteEvent") then
+		harvestRemote = rem
+		rem:FireServer(worldPos, bush)
 	end
 end
 
@@ -515,12 +525,19 @@ local function doHarvest(prompt: ProximityPrompt)
 	if not bush then
 		return
 	end
+	if bushSearchInFlight[bush] then
+		return
+	end
+	bushSearchInFlight[bush] = true
+	task.delay(0.5, function()
+		bushSearchInFlight[bush] = nil
+	end)
 
 	cooldownUntil[bush] = now + math.random(POST_HARVEST_COOLDOWN_MIN, POST_HARVEST_COOLDOWN_MAX)
 	harvestLockVisualUntil[bush] = now + POST_HARVEST_LOCK_VFX_SEC
 	setActive(nil, nil, nil)
 
-	requestBushSearch(promptWorldPos(prompt))
+	requestBushSearch(promptWorldPos(prompt), bush)
 end
 
 local function tickAim()

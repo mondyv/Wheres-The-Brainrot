@@ -35,9 +35,6 @@ type BrainrotInvEntry = {
 
 local MAX_HARVEST_RANGE = 14
 local RANGE_SLACK = 5
--- Per bush search (after hold-to-search only): 30% = empty message, 70% = pop/float above bush.
--- Never pre-spawn visible brainrots in bushes; beginHarvestOutcome is the only spawn path.
-local BUSH_EMPTY_CHANCE = 0.30
 local FLOAT_DURATION = 4
 local POP_DURATION = 0.35
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
@@ -100,17 +97,6 @@ local function ensureRemote(): RemoteEvent
 	if not ev then
 		ev = Instance.new("RemoteEvent")
 		ev.Name = "HarvestBrainrot"
-		ev.Parent = folder
-	end
-	return ev :: RemoteEvent
-end
-
-local function ensureBushSearchEmptyRemote(): RemoteEvent
-	local folder = getBushRemotesFolder()
-	local ev = folder:FindFirstChild("BushSearchEmpty")
-	if not ev then
-		ev = Instance.new("RemoteEvent")
-		ev.Name = "BushSearchEmpty"
 		ev.Parent = folder
 	end
 	return ev :: RemoteEvent
@@ -992,31 +978,23 @@ local function runFloatThenAttach(player: Player, char: Model, clone: Model, anc
 	floatConnByClone[clone] = conn
 end
 
-local function canAttemptHarvest(player: Player, worldPosition: Vector3): boolean
+local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 	local char = player.Character
 	if not char then
-		return false
+		return
 	end
 	local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
-		return false
+		return
 	end
 	if (worldPosition - hrp.Position).Magnitude > MAX_HARVEST_RANGE + RANGE_SLACK then
-		return false
+		return
 	end
 	local cap = carryCapacityForPlayer(player)
 	local held = #(activeCarries[player] or {}) + #(pendingFloats[player] or {})
 	if held >= cap then
-		return false
-	end
-	return true
-end
-
-local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
-	if not canAttemptHarvest(player, worldPosition) then
 		return
 	end
-	local char = player.Character :: Model
 
 	local brainrots = Brainrots.getBrainrotsFolder()
 	if not brainrots then
@@ -1385,28 +1363,6 @@ for _, p in Players:GetPlayers() do
 	p.CharacterRemoving:Connect(function()
 		clearPlayerHarvestState(p)
 	end)
-end
-
-local function cleanupLegacyPreSpawnedBrainrots(map: Instance)
-	local legacy = workspace:FindFirstChild("ActiveBrainrots")
-	if legacy then
-		legacy:Destroy()
-	end
-	for _, folder in map:GetDescendants() do
-		if folder.Name ~= "BushSCRIPTs" then
-			continue
-		end
-		for _, bush in folder:GetChildren() do
-			if bush.Name ~= "BushSCRIPT" then
-				continue
-			end
-			for _, desc in bush:GetDescendants() do
-				if desc:IsA("Model") and typeof(desc:GetAttribute("OwnerUserId")) == "number" then
-					desc:Destroy()
-				end
-			end
-		end
-	end
 end
 
 local harvestRemote = ensureRemote()
@@ -1934,13 +1890,6 @@ harvestRemote.OnServerEvent:Connect(function(player: Player, worldPosition: Vect
 	if typeof(worldPosition) ~= "Vector3" then
 		return
 	end
-	if not canAttemptHarvest(player, worldPosition) then
-		return
-	end
-	if math.random() < BUSH_EMPTY_CHANCE then
-		ensureBushSearchEmptyRemote():FireClient(player, worldPosition)
-		return
-	end
 	beginHarvestOutcome(player, worldPosition)
 end)
 
@@ -1949,7 +1898,6 @@ task.defer(function()
 	if not map then
 		return
 	end
-	cleanupLegacyPreSpawnedBrainrots(map)
 	for _ = 1, 60 do
 		refreshLuckHitboxes()
 		if #luckHitboxes > 0 then

@@ -1,16 +1,12 @@
 --[[
 	Bush harvest — closest-bush targeting, highlight, hold-to-search.
 	Engine ProximityPrompt handles hold/trigger; ProximityPromptEffects draws the custom bush card + FX.
-
-	30% empty: server fires BushSearchEmpty → billboard text only (no physical brainrot).
-	70% found: server BushHarvest spawns above bush (pop / float) — never visible inside the bush before search.
 ]]
 
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
@@ -33,11 +29,6 @@ local POST_HARVEST_COOLDOWN_MAX = 15
 local BUSH_MANAGED_ATTR = "BushManagedPrompt"
 local AIM_TICK_INTERVAL = 0.1
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
-local NO_BRAINROT_MESSAGE = "No brainrots hiding!"
-local EMPTY_OUTLINE_GREEN = Color3.fromRGB(72, 255, 120)
-local EMPTY_MESSAGE_STAY_SEC = 2
-local EMPTY_MESSAGE_FADE_IN_SEC = 0.22
-local EMPTY_MESSAGE_FADE_OUT_SEC = 0.35
 
 local bushByModel: { [Model]: ProximityPrompt } = {}
 local bushAnchor: { [Model]: BasePart } = {}
@@ -131,108 +122,6 @@ local function bushPromptWorldPosition(root: Model): Vector3?
 	return nil
 end
 
---[[
-	showNoBrainrotMessage — centered billboard on the bush; green panel + text outlines.
-]]
-local function showNoBrainrotMessage(bush: Model)
-	task.spawn(function()
-		local anchor = anchorFor(bush)
-		if not anchor or not anchor.Parent then
-			return
-		end
-
-		local prior = anchor:FindFirstChild("BushEmptyMessage")
-		if prior then
-			prior:Destroy()
-		end
-
-		local studsOffset = Vector3.new(0, 3.2, 0)
-		local centerWorld = bushPromptWorldPosition(bush)
-		if centerWorld then
-			studsOffset = anchor.CFrame:PointToObjectSpace(centerWorld)
-		end
-
-		local billboard = Instance.new("BillboardGui")
-		billboard.Name = "BushEmptyMessage"
-		billboard.Adornee = anchor
-		billboard.AlwaysOnTop = true
-		billboard.LightInfluence = 0
-		billboard.MaxDistance = 80
-		billboard.Size = UDim2.fromOffset(320, 72)
-		billboard.StudsOffset = studsOffset
-		billboard.Parent = anchor
-
-		local frame = Instance.new("Frame")
-		frame.Name = "Panel"
-		frame.AnchorPoint = Vector2.new(0.5, 0.5)
-		frame.Position = UDim2.fromScale(0.5, 0.5)
-		frame.Size = UDim2.fromScale(1, 1)
-		frame.BackgroundColor3 = Color3.fromRGB(18, 32, 22)
-		frame.BackgroundTransparency = 0.18
-		frame.BorderSizePixel = 0
-		frame.Parent = billboard
-
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 16)
-		corner.Parent = frame
-
-		local frameStroke = Instance.new("UIStroke")
-		frameStroke.Name = "PanelOutline"
-		frameStroke.Color = EMPTY_OUTLINE_GREEN
-		frameStroke.Thickness = 3
-		frameStroke.Transparency = 1
-		frameStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-		frameStroke.Parent = frame
-
-		local label = Instance.new("TextLabel")
-		label.Name = "Message"
-		label.AnchorPoint = Vector2.new(0.5, 0.5)
-		label.Position = UDim2.fromScale(0.5, 0.5)
-		label.Size = UDim2.new(1, -24, 1, -16)
-		label.BackgroundTransparency = 1
-		label.Font = Enum.Font.GothamBold
-		label.Text = NO_BRAINROT_MESSAGE
-		label.TextColor3 = Color3.fromRGB(235, 255, 240)
-		label.TextScaled = true
-		label.TextWrapped = true
-		label.TextXAlignment = Enum.TextXAlignment.Center
-		label.TextYAlignment = Enum.TextYAlignment.Center
-		label.TextTransparency = 1
-		label.TextStrokeColor3 = EMPTY_OUTLINE_GREEN
-		label.TextStrokeTransparency = 0
-		label.Parent = frame
-
-		local textStroke = Instance.new("UIStroke")
-		textStroke.Name = "TextOutline"
-		textStroke.Color = EMPTY_OUTLINE_GREEN
-		textStroke.Thickness = 2
-		textStroke.Transparency = 1
-		textStroke.Parent = label
-
-		local fadeInInfo = TweenInfo.new(EMPTY_MESSAGE_FADE_IN_SEC, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-		TweenService:Create(label, fadeInInfo, { TextTransparency = 0 }):Play()
-		TweenService:Create(frame, fadeInInfo, { BackgroundTransparency = 0.1 }):Play()
-		TweenService:Create(frameStroke, fadeInInfo, { Transparency = 0 }):Play()
-		TweenService:Create(textStroke, fadeInInfo, { Transparency = 0 }):Play()
-
-		task.wait(EMPTY_MESSAGE_STAY_SEC)
-
-		local fadeOutInfo = TweenInfo.new(EMPTY_MESSAGE_FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-		local tLabel = TweenService:Create(label, fadeOutInfo, { TextTransparency = 1, TextStrokeTransparency = 1 })
-		local tFrame = TweenService:Create(frame, fadeOutInfo, { BackgroundTransparency = 1 })
-		local tPanelStroke = TweenService:Create(frameStroke, fadeOutInfo, { Transparency = 1 })
-		local tTextStroke = TweenService:Create(textStroke, fadeOutInfo, { Transparency = 1 })
-		tLabel:Play()
-		tFrame:Play()
-		tPanelStroke:Play()
-		tTextStroke:Play()
-		tTextStroke.Completed:Wait()
-		if billboard.Parent then
-			billboard:Destroy()
-		end
-	end)
-end
-
 local function promptWorldPos(prompt: ProximityPrompt): Vector3
 	local p = prompt.Parent
 	if p and p:IsA("Attachment") then
@@ -242,32 +131,6 @@ local function promptWorldPos(prompt: ProximityPrompt): Vector3
 		return p.Position
 	end
 	return Vector3.zero
-end
-
---[[
-	findBushNearPosition — matches server harvest position to a registered bush model.
-]]
-local function findBushNearPosition(worldPos: Vector3): Model?
-	local best: Model? = nil
-	local bestD = math.huge
-	for model, prompt in bushByModel do
-		if not model.Parent then
-			continue
-		end
-		local wp = promptWorldPos(prompt)
-		if wp == Vector3.zero then
-			local a = bushAnchor[model] or anchorFor(model)
-			if a then
-				wp = a.Position
-			end
-		end
-		local d = (wp - worldPos).Magnitude
-		if d <= MAX_RANGE + 2 and d < bestD then
-			bestD = d
-			best = model
-		end
-	end
-	return best
 end
 
 local function bushRootFromPrompt(prompt: ProximityPrompt): Model?
@@ -349,26 +212,10 @@ local function attachPrompt(root: Model)
 	end)
 end
 
---[[
-	Strip artifacts from removed BrainrotBushSpawn (prompts / clones left in Studio).
-]]
-local function purgeLegacyPreSpawnArtifacts(root: Instance)
-	for _, d in root:GetDescendants() do
-		if d:IsA("ProximityPrompt") then
-			if d.Name == "BrainrotBushSpawnPrompt" or d:GetAttribute("BrainrotSpawnManaged") == true then
-				d:Destroy()
-			end
-		elseif d:IsA("Model") and typeof(d:GetAttribute("OwnerUserId")) == "number" then
-			d:Destroy()
-		end
-	end
-end
-
 local function registerBushModel(root: Model)
 	if bushByModel[root] then
 		return
 	end
-	purgeLegacyPreSpawnArtifacts(root)
 	if anchorFor(root) then
 		attachPrompt(root)
 		return
@@ -426,10 +273,6 @@ end
 
 local function registerAllBushesOnMap(map: Instance)
 	purgeForeignUnder(map)
-	local legacyActive = Workspace:FindFirstChild("ActiveBrainrots")
-	if legacyActive then
-		legacyActive:Destroy()
-	end
 
 	for _, folder in collectBushFolders(map) do
 		registerBushesUnderFolder(folder)
@@ -739,24 +582,11 @@ function BushHoldInteraction.init()
 
 	task.spawn(function()
 		local folder = ReplicatedStorage:WaitForChild("BushRemotes", 60)
-		if not folder then
-			return
-		end
-		local ev = folder:WaitForChild("HarvestBrainrot", 30)
-		if ev and ev:IsA("RemoteEvent") then
-			harvestRemote = ev
-		end
-		local emptyEv = folder:WaitForChild("BushSearchEmpty", 30)
-		if emptyEv and emptyEv:IsA("RemoteEvent") then
-			emptyEv.OnClientEvent:Connect(function(worldPosition: Vector3)
-				if typeof(worldPosition) ~= "Vector3" then
-					return
-				end
-				local bush = findBushNearPosition(worldPosition)
-				if bush then
-					showNoBrainrotMessage(bush)
-				end
-			end)
+		if folder then
+			local ev = folder:WaitForChild("HarvestBrainrot", 30)
+			if ev and ev:IsA("RemoteEvent") then
+				harvestRemote = ev
+			end
 		end
 	end)
 

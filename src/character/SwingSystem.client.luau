@@ -303,13 +303,13 @@ local function boot(character: Model)
 	local dynSwingArcForce = 34
 	local dynSwingSpeedPump = 0.9
 	local dynZipToward = ZIP_TOWARD_DV
-	local dynLaunchImpulseBase = 14
-	local dynLaunchMomentumRatio = 0.18
-	local dynLaunchVelocityCarry = 0.15
-	local dynMaxLaunchSpeed = 94
-	local dynLaunchChargeBonus = 11
-	local dynLaunchUpImpulse = 4
-	local dynLaunchDeadhangImpulse = 18
+	local dynLaunchImpulseBase = 20
+	local dynLaunchMomentumRatio = 0.24
+	local dynLaunchVelocityCarry = 0.20
+	local dynMaxLaunchSpeed = 100
+	local dynLaunchChargeBonus = 14
+	local dynLaunchUpImpulse = 4.5
+	local dynLaunchDeadhangImpulse = 22
 
 	local function refreshStats()
 		local ropePts = player:GetAttribute("RopeLength")

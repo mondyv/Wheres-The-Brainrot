@@ -22,6 +22,15 @@ function M.progressT(level: number, maxLevel: number): number
 	return linear * 0.3 + curved * 0.7
 end
 
+-- Throw/release scales faster at low power so early upgrades feel rewarding.
+function M.launchProgressT(level: number, maxLevel: number): number
+	local cap = math.max(1, maxLevel)
+	local linear = math.clamp(floorLevel(level) / cap, 0, 1)
+	local early = linear ^ 0.38
+	local base = M.progressT(level, maxLevel)
+	return math.clamp(base * 0.35 + early * 0.65, 0, 1)
+end
+
 function M.displayPower(level: number): number
 	return M.POWER_DISPLAY_BASE + floorLevel(level) * M.POWER_DISPLAY_STEP
 end
@@ -59,6 +68,7 @@ export type RopeStats = {
 
 function M.powerStats(powerLevel: number): PowerStats
 	local t = M.progressT(powerLevel, M.POWER_MAX_LEVEL)
+	local lt = M.launchProgressT(powerLevel, M.POWER_MAX_LEVEL)
 	local maxSwingSpeed = 78 + t * 58
 
 	return {
@@ -67,14 +77,13 @@ function M.powerStats(powerLevel: number): PowerStats
 		swingArcForce = 34 + t * 50,
 		swingSpeedPump = 0.9 + t * 1.4,
 		zipToward = 25 + t * 18,
-		-- Higher bases for satisfying zero-upgrade swings; t-range trimmed to preserve endgame caps.
-		launchImpulseBase = 14 + t * 7,
-		launchMomentumRatio = 0.18 + t * 0.09,
-		launchVelocityCarry = 0.15 + t * 0.03,
-		maxLaunchSpeed = maxSwingSpeed + 16 + t * 10,
-		launchChargeBonus = 11 + t * 8,
-		launchUpImpulse = 4 + t * 2.5,
-		launchDeadhangImpulse = 18 + t * 6,
+		launchImpulseBase = 20 + lt * 14,
+		launchMomentumRatio = 0.24 + lt * 0.12,
+		launchVelocityCarry = 0.20 + lt * 0.06,
+		maxLaunchSpeed = maxSwingSpeed + 22 + lt * 22,
+		launchChargeBonus = 14 + lt * 10,
+		launchUpImpulse = 4.5 + lt * 3,
+		launchDeadhangImpulse = 22 + lt * 8,
 	}
 end
 

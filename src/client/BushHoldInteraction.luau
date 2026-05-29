@@ -19,16 +19,17 @@ local player = Players.LocalPlayer
 -- Must stand near the bush; keep in sync with BushHarvest.server MAX_HARVEST_RANGE.
 local MAX_RANGE = 14
 local HOLD_DURATION = 1.15
-local POST_HARVEST_COOLDOWN_MIN = 10
-local POST_HARVEST_COOLDOWN_MAX = 15
 local BUSH_MANAGED_ATTR = "BushManagedPrompt"
+local BUSH_ON_COOLDOWN_ATTR = "BushOnCooldown"
+local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
+local BUSH_COOLDOWN_ENDS_ATTR = "BushCooldownEndsAt"
+local BUSH_LOOT_PHASE_COOLDOWN = "cooldown"
 local AIM_TICK_INTERVAL = 0.1
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 
 local bushByModel: { [Instance]: ProximityPrompt } = {}
 local bushAnchor: { [Instance]: BasePart } = {}
 local pendingParts: { [Instance]: RBXScriptConnection } = {}
-local cooldownUntil: { [Instance]: number } = {} -- os.clock() when search is allowed again
 local cooldownHighlights: { [Instance]: Highlight } = {}
 local lastHarvestAt = 0
 local lastHarvestPrompt: ProximityPrompt? = nil
@@ -48,6 +49,17 @@ local bushSearchHoldPrompt: ProximityPrompt? = nil
 local bushSearchHoldBeganAt = 0.0
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
+
+local function isBushInSearchCooldown(bush: Instance): boolean
+	if bush:GetAttribute(BUSH_LOOT_PHASE_ATTR) == BUSH_LOOT_PHASE_COOLDOWN then
+		return true
+	end
+	if bush:GetAttribute(BUSH_ON_COOLDOWN_ATTR) == true then
+		return true
+	end
+	local endsAt = bush:GetAttribute(BUSH_COOLDOWN_ENDS_ATTR)
+	return typeof(endsAt) == "number" and Workspace:GetServerTimeNow() < endsAt
+end
 
 local function isBushFolderName(name: string): boolean
 	for _, n in BUSH_FOLDER_NAMES do
@@ -323,34 +335,37 @@ local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 end
 
-local function syncCooldownVisuals(now: number)
+local function syncCooldownVisuals()
 	for bush, hl in cooldownHighlights do
-		local untilT = cooldownUntil[bush]
-		if not bush.Parent or not untilT or now >= untilT then
+		if not bush.Parent or not isBushInSearchCooldown(bush) then
 			hl:Destroy()
 			cooldownHighlights[bush] = nil
 		end
 	end
 
 	local cam = workspace.CurrentCamera
-	for bush, untilT in cooldownUntil do
-		if bush.Parent and now < untilT then
-			local hl = cooldownHighlights[bush]
-			if not hl then
-				hl = Instance.new("Highlight")
-				hl.Name = "BushCooldownHighlight"
-				if cam then
-					hl.Parent = cam
-				end
-				cooldownHighlights[bush] = hl
-			elseif cam and hl.Parent ~= cam then
+	for model in bushByModel do
+		if not model.Parent then
+			continue
+		end
+		if not isBushInSearchCooldown(model) then
+			continue
+		end
+		local hl = cooldownHighlights[model]
+		if not hl then
+			hl = Instance.new("Highlight")
+			hl.Name = "BushCooldownHighlight"
+			if cam then
 				hl.Parent = cam
 			end
-			applyBushHighlight(hl, bush, true)
+			cooldownHighlights[model] = hl
+		elseif cam and hl.Parent ~= cam then
+			hl.Parent = cam
 		end
+		applyBushHighlight(hl, model, true)
 	end
 
-	ProximityPromptEffects.syncBushCooldownBanners(cooldownUntil, bushByModel)
+	ProximityPromptEffects.syncBushCooldownBanners(bushByModel)
 end
 
 local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
@@ -360,7 +375,6 @@ local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 		return nil, nil, nil
 	end
 	local pos = hrp.Position
-	local now = os.clock()
 	local bestM: Instance? = nil
 	local bestP: ProximityPrompt? = nil
 	local bestA: BasePart? = nil
@@ -368,10 +382,9 @@ local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 
 	for model, prompt in bushByModel do
 		if not model.Parent then
-			cooldownUntil[model] = nil
 			continue
 		end
-		if cooldownUntil[model] and now < cooldownUntil[model] then
+		if isBushInSearchCooldown(model) then
 			continue
 		end
 		local wp = promptWorldPos(prompt)
@@ -498,7 +511,6 @@ local function doHarvest(prompt: ProximityPrompt)
 		bushSearchInFlight[bush] = nil
 	end)
 
-	cooldownUntil[bush] = now + math.random(POST_HARVEST_COOLDOWN_MIN, POST_HARVEST_COOLDOWN_MAX)
 	setActive(nil, nil, nil)
 
 	requestBushSearch(promptWorldPos(prompt), bush)
@@ -522,7 +534,7 @@ local function tickAim()
 	end
 
 	local now = os.clock()
-	syncCooldownVisuals(now)
+	syncCooldownVisuals()
 
 	-- Block new bush search only at carry capacity; cooldown lock visuals still update while partially loaded.
 	local bush: Instance?, prompt: ProximityPrompt?, anchor: BasePart?

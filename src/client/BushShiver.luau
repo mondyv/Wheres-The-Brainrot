@@ -7,6 +7,8 @@ local M = {}
 
 local HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
 local ON_COOLDOWN_ATTR = "BushOnCooldown"
+local LOOT_PHASE_ATTR = "BushLootPhase"
+local LOOT_PHASE_COOLDOWN = "cooldown"
 
 local SHIVER_BURST_MIN_SEC = 1.5
 local SHIVER_BURST_MAX_SEC = 2
@@ -25,6 +27,9 @@ local schedulerTokenByBush: { [Instance]: number } = {}
 local loopRunningByBush: { [Instance]: boolean } = {}
 
 local function shouldShiverBush(bush: Instance): boolean
+	if bush:GetAttribute(LOOT_PHASE_ATTR) == LOOT_PHASE_COOLDOWN then
+		return false
+	end
 	if bush:GetAttribute(ON_COOLDOWN_ATTR) == true then
 		return false
 	end
@@ -169,6 +174,9 @@ function M.trackBush(bush: Instance)
 		refreshShiverState(bush)
 	end)
 	bush:GetAttributeChangedSignal(ON_COOLDOWN_ATTR):Connect(function()
+		refreshShiverState(bush)
+	end)
+	bush:GetAttributeChangedSignal(LOOT_PHASE_ATTR):Connect(function()
 		refreshShiverState(bush)
 	end)
 

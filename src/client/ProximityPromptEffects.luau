@@ -2093,7 +2093,7 @@ local function ensureBushCooldownBanner(bush: Instance, prompt: ProximityPrompt,
 		if not entry or entry.bb ~= bb or not bb.Parent then
 			return
 		end
-		local rem = entry.endClock - os.clock()
+		local rem = entry.endClock - Workspace:GetServerTimeNow()
 		if rem <= 0 then
 			timeLabel.Text = "0s"
 			destroyBushCooldownBannerForBush(bush)
@@ -2116,22 +2116,22 @@ function ProximityPromptEffects.hideBushCooldownBanner()
 	destroyAllBushCooldownBanners()
 end
 
-function ProximityPromptEffects.syncBushCooldownBanners(
-	cooldownUntil: { [Instance]: number },
-	bushPrompts: { [Instance]: ProximityPrompt }
-)
-	local now = os.clock()
+function ProximityPromptEffects.syncBushCooldownBanners(bushPrompts: { [Instance]: ProximityPrompt })
+	local now = Workspace:GetServerTimeNow()
 	for bush in bushCooldownBanners do
-		local untilT = cooldownUntil[bush]
-		if not bush.Parent or not untilT or now >= untilT then
+		local endsAt = bush:GetAttribute("BushCooldownEndsAt")
+		if not bush.Parent or typeof(endsAt) ~= "number" or now >= endsAt then
 			destroyBushCooldownBannerForBush(bush)
 		end
 	end
-	for bush, untilT in cooldownUntil do
-		if bush.Parent and now < untilT then
-			local prompt = bushPrompts[bush]
+	for bush, prompt in bushPrompts do
+		if not bush.Parent then
+			continue
+		end
+		local endsAt = bush:GetAttribute("BushCooldownEndsAt")
+		if typeof(endsAt) == "number" and now < endsAt then
 			if prompt and prompt.Parent then
-				ensureBushCooldownBanner(bush, prompt, untilT)
+				ensureBushCooldownBanner(bush, prompt, endsAt)
 			end
 		end
 	end

@@ -69,14 +69,14 @@ function M.powerStats(powerLevel: number): PowerStats
 		steeringForce = 68 + t * 82,
 		maxSwingSpeed = maxSwingSpeed,
 		zipToward = 19 + t * 20,
-		-- Launch uses the same t as steering/speed (no separate explosive curve).
-		launchImpulseBase = 5 + t * 11,
-		launchMomentumRatio = 0.10 + t * 0.14,
-		launchVelocityCarry = 0.07 + t * 0.05,
-		maxLaunchSpeed = maxSwingSpeed + 6 + t * 16,
-		launchChargeBonus = 6 + t * 10,
-		launchUpImpulse = 2.5 + t * 3.5,
-		launchDeadhangImpulse = 10 + t * 8,
+		-- Launch shares the same curve; bases bumped so zero-upgrade throws feel satisfying.
+		launchImpulseBase = 10 + t * 9,
+		launchMomentumRatio = 0.15 + t * 0.11,
+		launchVelocityCarry = 0.12 + t * 0.04,
+		maxLaunchSpeed = maxSwingSpeed + 12 + t * 14,
+		launchChargeBonus = 9 + t * 9,
+		launchUpImpulse = 3.5 + t * 3,
+		launchDeadhangImpulse = 15 + t * 8,
 	}
 end
 

@@ -40,10 +40,10 @@ local RANGE_SLACK = 5
 local BUSH_EMPTY_PERCENT = 30
 local BUSH_SEARCH_DEBOUNCE_SEC = 0.4
 local BUSH_HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
-local BUSH_LOOT_ASSIGNED_ATTR = "BushLootAssigned"
 local BUSH_ON_COOLDOWN_ATTR = "BushOnCooldown"
 local BUSH_LOOT_RESPAWN_MIN = 10
 local BUSH_LOOT_RESPAWN_MAX = 15
+local bushLootRespawnToken: { [Instance]: number } = {}
 local FLOAT_DURATION = 4
 local POP_DURATION = 0.35
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
@@ -1040,34 +1040,53 @@ local function isValidBushRef(bushRef: Instance?): boolean
 	return bushRef:IsDescendantOf(map)
 end
 
-local function assignBushLoot(bush: Instance): boolean
-	if not isValidBushRef(bush) then
-		return false
-	end
-	if bush:GetAttribute(BUSH_LOOT_ASSIGNED_ATTR) == true then
-		return bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
-	end
+--[[
+	Roll a fresh 70/30 state when the bush becomes available (map init or post-cooldown).
+]]
+local function rollBushAvailableState(bush: Instance): boolean
 	local hasBrainrot = rollBushHasBrainrot()
-	bush:SetAttribute(BUSH_LOOT_ASSIGNED_ATTR, true)
+	bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, false)
 	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, hasBrainrot)
 	return hasBrainrot
 end
 
+local function enterBushSearchCooldown(bush: Instance)
+	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, false)
+	bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, true)
+end
+
+local function ensureBushAvailableState(bush: Instance): boolean
+	if not isValidBushRef(bush) then
+		return false
+	end
+	if bush:GetAttribute(BUSH_ON_COOLDOWN_ATTR) == true then
+		return false
+	end
+	if typeof(bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR)) == "boolean" then
+		return bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
+	end
+	return rollBushAvailableState(bush)
+end
+
 local function scheduleBushLootRespawn(bush: Instance)
+	local token = (bushLootRespawnToken[bush] or 0) + 1
+	bushLootRespawnToken[bush] = token
 	local delaySec = math.random(BUSH_LOOT_RESPAWN_MIN, BUSH_LOOT_RESPAWN_MAX)
 	task.delay(delaySec, function()
+		if token ~= bushLootRespawnToken[bush] then
+			return
+		end
 		if not bush.Parent or not isValidBushRef(bush) then
 			return
 		end
-		bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, false)
-		bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, rollBushHasBrainrot())
+		rollBushAvailableState(bush)
 	end)
 end
 
 local function assignLootUnder(root: Instance)
 	for _, desc in root:GetDescendants() do
 		if isLootableBush(desc) then
-			assignBushLoot(desc)
+			ensureBushAvailableState(desc)
 		end
 	end
 end
@@ -1560,7 +1579,7 @@ end
 local lastBushSearchAt: { [Player]: number } = {}
 
 --[[
-	processBushSearch — uses pre-rolled HasHiddenBrainrot on the bush (70% true / 30% false).
+	processBushSearch — uses stored HasHiddenBrainrot; fresh 70/30 roll only after cooldown ends.
 ]]
 local function processBushSearch(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean
 	if typeof(worldPosition) ~= "Vector3" then
@@ -1589,11 +1608,10 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 		return false
 	end
 
-	assignBushLoot(bush)
+	ensureBushAvailableState(bush)
 	local hasBrainrot = bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
 
-	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, false)
-	bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, true)
+	enterBushSearchCooldown(bush)
 	scheduleBushLootRespawn(bush)
 
 	if hasBrainrot then
@@ -2417,7 +2435,7 @@ task.defer(function()
 	map.DescendantAdded:Connect(function(desc)
 		if isLootableBush(desc) then
 			task.defer(function()
-				assignBushLoot(desc)
+				ensureBushAvailableState(desc)
 			end)
 		end
 	end)

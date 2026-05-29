@@ -117,8 +117,7 @@ local function startShiverScheduler(bush: Instance)
 		while bush.Parent and token == schedulerTokenByBush[bush] do
 			if not shouldShiverBush(bush) then
 				restoreBushTransform(bush)
-				task.wait(0.2)
-				continue
+				break
 			end
 
 			if firstCycle then
@@ -151,9 +150,8 @@ end
 
 local function refreshShiverState(bush: Instance)
 	if shouldShiverBush(bush) then
-		if not loopRunningByBush[bush] then
-			startShiverScheduler(bush)
-		end
+		stopShiverLoop(bush)
+		startShiverScheduler(bush)
 	else
 		stopShiverLoop(bush)
 	end

@@ -26,6 +26,7 @@ end)
 require(script.BackgroundMusicController).init()
 require(script.UIInteractionSounds).init()
 require(script.GameSoundEffects).init()
+require(script.BrainrotSFX).init()
 -- Bush targeting + custom card; ProximityPromptEffects styles stands and wires bush FX/harvest.
 require(script.BushHoldInteraction).init()
 require(script.ProximityPromptEffects).init()

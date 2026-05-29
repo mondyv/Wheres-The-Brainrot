@@ -63,6 +63,8 @@ local HRP_CARRY_OFFSET = CFrame.new(0, 3.4, 0.2) * CFrame.Angles(0, math.rad(180
 local pendingFloats: { [Player]: { Model } } = {}
 local activeCarries: { [Player]: { Model } } = {}
 local floatConnByClone: { [Model]: RBXScriptConnection } = {}
+-- Safe-zone SFX: once per carry model instance (avoids RedWall touch spam).
+local safeZoneSfxPlayedForCarry: { [Model]: boolean } = {}
 local brainrotInventories: { [Player]: { BrainrotInvEntry } } = {}
 -- Indices 1–9 only: brainrot shown in expanded backpack grid instead of custom hotbar (client drag).
 local brainrotParkedInExpandedBackpack: { [Player]: { [number]: boolean } } = {}
@@ -150,6 +152,85 @@ local function ensureInventoryRemotes(): (RemoteEvent, RemoteFunction)
 	inventorySyncRE = sync :: RemoteEvent
 	getInventoryRF = getFn :: RemoteFunction
 	return inventorySyncRE, getInventoryRF
+end
+
+local playBrainrotSFXRE: RemoteEvent? = nil
+
+local function ensurePlayBrainrotSFXRemote(): RemoteEvent
+	if playBrainrotSFXRE and playBrainrotSFXRE.Parent then
+		return playBrainrotSFXRE
+	end
+	local ev = ReplicatedStorage:FindFirstChild("PlayBrainrotSFX")
+	if not ev then
+		ev = Instance.new("RemoteEvent")
+		ev.Name = "PlayBrainrotSFX"
+		ev.Parent = ReplicatedStorage
+	end
+	playBrainrotSFXRE = ev :: RemoteEvent
+	return playBrainrotSFXRE
+end
+
+local function firePlayBrainrotSFX(player: Player, brainrotName: string)
+	if typeof(brainrotName) ~= "string" or brainrotName == "" then
+		return
+	end
+	ensurePlayBrainrotSFXRemote():FireClient(player, brainrotName)
+end
+
+local function brainrotNameFromTemplateModel(template: Model): string?
+	local variantFolder = template.Parent
+	if not variantFolder or not variantFolder:IsA("Folder") then
+		return nil
+	end
+	local nameFolder = variantFolder.Parent
+	if not nameFolder or not nameFolder:IsA("Folder") then
+		return nil
+	end
+	return nameFolder.Name
+end
+
+local function getCarryBrainrotName(carry: Model): string?
+	local attr = carry:GetAttribute("BrainrotName")
+	if typeof(attr) == "string" and attr ~= "" then
+		return attr
+	end
+	local srcAttr = carry:GetAttribute("BrainrotSourcePath")
+	if typeof(srcAttr) == "string" and srcAttr ~= "" then
+		local brainrotName = string.match(srcAttr, "^([^/]+)")
+		if brainrotName and brainrotName ~= "" then
+			return brainrotName
+		end
+	end
+	if carry.Name ~= "" then
+		return carry.Name
+	end
+	return nil
+end
+
+local function tryPlaySafeZoneSFXForCarry(player: Player, carry: Model)
+	if not carry or not carry.Parent then
+		return
+	end
+	if safeZoneSfxPlayedForCarry[carry] then
+		return
+	end
+	local name = getCarryBrainrotName(carry)
+	if not name then
+		warn("[BushHarvest] Safe zone SFX: could not resolve brainrot name for carry " .. carry:GetFullName())
+		return
+	end
+	safeZoneSfxPlayedForCarry[carry] = true
+	firePlayBrainrotSFX(player, name)
+end
+
+local function tryPlaySafeZoneSFXForAllCarries(player: Player)
+	local list = activeCarries[player]
+	if not list then
+		return
+	end
+	for _, carry in ipairs(list) do
+		tryPlaySafeZoneSFXForCarry(player, carry)
+	end
 end
 
 local function enrichEntryFromCatalog(entry: BrainrotInvEntry)
@@ -391,6 +472,7 @@ local function redeemSingleCarryModel(player: Player, carry: Model): number?
 		end)
 	end
 
+	safeZoneSfxPlayedForCarry[carry] = nil
 	carry:Destroy()
 	return newSlot
 end
@@ -884,6 +966,7 @@ local function clearPlayerHarvestState(player: Player)
 	end
 	pendingFloats[player] = nil
 	for _, m in activeCarries[player] or {} do
+		safeZoneSfxPlayedForCarry[m] = nil
 		if m.Parent then
 			m:Destroy()
 		end
@@ -910,6 +993,7 @@ local function attachCarriedBrainrot(player: Player, clone: Model)
 
 	-- Already inside RedWall deposit: skip head carry (Touched won't fire if they never left the box).
 	if isPlayerInsideDeposit(player) then
+		tryPlaySafeZoneSFXForCarry(player, clone)
 		local newSlot = redeemSingleCarryModel(player, clone)
 		if newSlot then
 			syncBrainrotCarryCountAttr(player)
@@ -993,6 +1077,7 @@ local function runFloatThenAttach(player: Player, char: Model, clone: Model, anc
 			floatConnByClone[clone] = nil
 			removePendingFloat(player, clone)
 			if isPlayerInsideDeposit(player) then
+				tryPlaySafeZoneSFXForCarry(player, clone)
 				local newSlot = redeemSingleCarryModel(player, clone)
 				if newSlot then
 					syncBrainrotCarryCountAttr(player)
@@ -1580,11 +1665,14 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 			return
 		end
 		local fallback = templates[math.random(1, #templates)]
+		local fallbackName = brainrotNameFromTemplateModel(fallback) or fallback.Name
+		firePlayBrainrotSFX(player, fallbackName)
 		local harvestLevel = Brainrots.rollBushHarvestLevel()
 		local clone = fallback:Clone()
-		clone.Name = fallback.Name
+		clone.Name = fallbackName
 		clone:SetAttribute("OwnerUserId", player.UserId)
 		clone:SetAttribute("BrainrotCarryPhase", "Pop")
+		clone:SetAttribute("BrainrotName", fallbackName)
 		clone:SetAttribute("BrainrotSourcePath", fallback.Parent.Name .. "/" .. fallback.Name)
 		clone:SetAttribute("BrainrotMutation", "normal")
 		clone:SetAttribute("BrainrotLevel", harvestLevel)
@@ -1619,6 +1707,8 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 			break
 		end
 	end
+
+	firePlayBrainrotSFX(player, pick.name)
 
 	local harvestLevel = Brainrots.rollBushHarvestLevel()
 	local clone = template:Clone()
@@ -1804,6 +1894,7 @@ local function tryRedeemPendingFloatsAtDeposit(player: Player)
 	local addedAny = false
 
 	for _, clone in ipairs(toRedeem) do
+		tryPlaySafeZoneSFXForCarry(player, clone)
 		local conn = floatConnByClone[clone]
 		if conn then
 			conn:Disconnect()
@@ -1899,6 +1990,7 @@ local function hookDepositPart(part: BasePart)
 
 		if isCharacterTouch then
 			tryRedeemPendingFloatsAtDeposit(plr)
+			tryPlaySafeZoneSFXForAllCarries(plr)
 		end
 
 		local list = activeCarries[plr]
@@ -1981,6 +2073,8 @@ for _, p in Players:GetPlayers() do
 		clearPlayerHarvestState(p)
 	end)
 end
+
+ensurePlayBrainrotSFXRemote()
 
 local harvestRemote = ensureRemote()
 local harvestBushFn = ensureHarvestFunction()

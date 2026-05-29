@@ -617,6 +617,7 @@ local function wireMapWatch(map: Instance)
 		elseif desc.Parent and desc.Parent:IsA("Folder") and isBushFolderName(desc.Parent.Name) then
 			if desc.Name == "BushSCRIPT" and (desc:IsA("Model") or desc:IsA("BasePart")) then
 				task.defer(function()
+					BushShiver.trackBush(desc)
 					registerBushRoot(desc)
 				end)
 			elseif desc:IsA("Model") then
@@ -630,6 +631,7 @@ end
 
 local function bootMap(map: Instance)
 	wireMapWatch(map)
+	BushShiver.scanMapForBrainrotBushes(map)
 	registerAllBushesOnMap(map)
 	local n = 0
 	for _, _ in bushByModel do

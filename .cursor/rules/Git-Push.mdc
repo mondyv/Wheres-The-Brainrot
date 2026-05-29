@@ -1,0 +1,39 @@
+---
+alwaysApply: true
+---
+
+---
+description: Always sync GitHub before and after changes
+alwaysApply: true
+---
+
+This project uses this GitHub repo:
+
+git@github.com:mondyv/Wheres-The-Brainrot.git
+
+The main branch is:
+
+master
+
+Before starting any coding/editing task, always run:
+
+git status
+git pull origin master
+
+After finishing any changes, always run:
+
+git status
+git add .
+git -c user.name="limeladzs" -c user.email="limeladzs@gmail.com" commit -m "short clear description of what changed"
+git pull --rebase origin master
+git push origin master
+
+Never skip the pull or push step.
+
+Never use force push.
+
+If there are no changes to commit, do not make an empty commit. Say there were no changes.
+
+If git pull or git pull --rebase creates merge conflicts, stop and explain which files conflict before editing them. Do not randomly overwrite files.
+
+If push is rejected because the remote branch changed, run git pull --rebase origin master, resolve safely if needed, then push again.

@@ -144,17 +144,20 @@ local MIN_MOBILE_FACE_DOT = 0.32
 local MOBILE_FACING_REFRESH_INTERVAL = 0.12
 
 -- Post-harvest cooldown banner (clock + seconds) on the bush adornee
-local bushCooldownBillboard: BillboardGui? = nil
-local bushCooldownConn: RBXScriptConnection? = nil
-local bushCooldownPromptRef: ProximityPrompt? = nil
-local bushCooldownEndClock = 0.0
+type BushCooldownBannerEntry = {
+	bb: BillboardGui,
+	conn: RBXScriptConnection,
+	endClock: number,
+	prompt: ProximityPrompt,
+}
+local bushCooldownBanners: { [Instance]: BushCooldownBannerEntry } = {}
 local rarityGradientsFolder: Folder? = nil
 
 local BUSH_MANAGED_ATTR = "BushManagedPrompt"
 -- Must match BrainrotStandController — cheap reshow path (never scan all of Workspace).
 local STAND_TAG = "BrainrotStand"
--- Cooldown billboard can stay visible farther than bush search range.
-local COOLDOWN_BANNER_VIEW_RANGE = 56
+-- 0 = unlimited view distance for cooldown clock banners.
+local COOLDOWN_BANNER_VIEW_RANGE = 0
 -- Lift above model bbox center (world-space offset from adornee part).
 local BUSH_BILLBOARD_LIFT_SCALE = 0.66
 
@@ -1977,40 +1980,41 @@ local function tryGetClockImageAsset(): string
 	return ""
 end
 
-local function destroyBushCooldownBannerInner()
-	if bushCooldownConn then
-		bushCooldownConn:Disconnect()
-		bushCooldownConn = nil
+local function destroyBushCooldownBannerForBush(bush: Instance)
+	local entry = bushCooldownBanners[bush]
+	if not entry then
+		return
 	end
-	if bushCooldownBillboard then
-		bushCooldownBillboard:Destroy()
-		bushCooldownBillboard = nil
-	end
-	bushCooldownPromptRef = nil
-	bushCooldownEndClock = 0
+	entry.conn:Disconnect()
+	entry.bb:Destroy()
+	bushCooldownBanners[bush] = nil
 end
 
-function ProximityPromptEffects.hideBushCooldownBanner()
-	destroyBushCooldownBannerInner()
+local function destroyAllBushCooldownBanners()
+	for bush in bushCooldownBanners do
+		destroyBushCooldownBannerForBush(bush)
+	end
 end
 
-function ProximityPromptEffects.showBushCooldownBanner(prompt: ProximityPrompt, endClock: number)
+local function ensureBushCooldownBanner(bush: Instance, prompt: ProximityPrompt, endClock: number)
+	local existing = bushCooldownBanners[bush]
+	if
+		existing
+		and existing.prompt == prompt
+		and math.abs(existing.endClock - endClock) < 0.05
+		and existing.bb.Parent
+	then
+		existing.endClock = endClock
+		return
+	end
+
+	if existing then
+		destroyBushCooldownBannerForBush(bush)
+	end
+
 	if not prompt.Parent then
 		return
 	end
-	if
-		bushCooldownPromptRef == prompt
-		and math.abs(bushCooldownEndClock - endClock) < 0.05
-		and bushCooldownBillboard
-		and bushCooldownBillboard.Parent
-	then
-		bushCooldownEndClock = endClock
-		return
-	end
-
-	destroyBushCooldownBannerInner()
-	bushCooldownPromptRef = prompt
-	bushCooldownEndClock = endClock
 
 	local adornee = getBushBillboardAdornee(prompt)
 	if not adornee then
@@ -2025,7 +2029,6 @@ function ProximityPromptEffects.showBushCooldownBanner(prompt: ProximityPrompt, 
 	bb.LightInfluence = 0
 	bb.ResetOnSpawn = false
 	bb.ClipsDescendants = false
-	-- BillboardGui has no AutomaticSize; inner Frame uses AutomaticSize. Fixed canvas in pixels.
 	bb.Size = UDim2.fromOffset(300, 56)
 	applyBushBillboardPlacement(bb, prompt, adornee)
 	bb.MaxDistance = COOLDOWN_BANNER_VIEW_RANGE
@@ -2036,7 +2039,6 @@ function ProximityPromptEffects.showBushCooldownBanner(prompt: ProximityPrompt, 
 		bb.Parent = adornee
 	end
 
-	-- No panel / border — only clock + countdown (bush Highlight is the red outline).
 	local cluster = Instance.new("Frame")
 	cluster.Name = "CooldownCluster"
 	cluster.BackgroundTransparency = 1
@@ -2086,33 +2088,67 @@ function ProximityPromptEffects.showBushCooldownBanner(prompt: ProximityPrompt, 
 	tStroke.Parent = timeLabel
 	timeLabel.Parent = cluster
 
-	bushCooldownBillboard = bb
-
 	local function tickCooldownBanner()
-		if not bushCooldownBillboard or not bushCooldownBillboard.Parent then
-			destroyBushCooldownBannerInner()
+		local entry = bushCooldownBanners[bush]
+		if not entry or entry.bb ~= bb or not bb.Parent then
 			return
 		end
-		local rem = bushCooldownEndClock - os.clock()
+		local rem = entry.endClock - os.clock()
 		if rem <= 0 then
 			timeLabel.Text = "0s"
-			destroyBushCooldownBannerInner()
+			destroyBushCooldownBannerForBush(bush)
 			return
 		end
 		timeLabel.Text = string.format("%ds", math.ceil(rem))
 	end
 
 	tickCooldownBanner()
-	bushCooldownConn = RunService.Heartbeat:Connect(tickCooldownBanner)
+	local conn = RunService.Heartbeat:Connect(tickCooldownBanner)
+	bushCooldownBanners[bush] = {
+		bb = bb,
+		conn = conn,
+		endClock = endClock,
+		prompt = prompt,
+	}
+end
+
+function ProximityPromptEffects.hideBushCooldownBanner()
+	destroyAllBushCooldownBanners()
+end
+
+function ProximityPromptEffects.syncBushCooldownBanners(
+	cooldownUntil: { [Instance]: number },
+	bushPrompts: { [Instance]: ProximityPrompt }
+)
+	local now = os.clock()
+	for bush in bushCooldownBanners do
+		local untilT = cooldownUntil[bush]
+		if not bush.Parent or not untilT or now >= untilT then
+			destroyBushCooldownBannerForBush(bush)
+		end
+	end
+	for bush, untilT in cooldownUntil do
+		if bush.Parent and now < untilT then
+			local prompt = bushPrompts[bush]
+			if prompt and prompt.Parent then
+				ensureBushCooldownBanner(bush, prompt, untilT)
+			end
+		end
+	end
+end
+
+function ProximityPromptEffects.showBushCooldownBanner(prompt: ProximityPrompt, endClock: number)
+	local bush = findBushModelForPrompt(prompt)
+	if bush then
+		ensureBushCooldownBanner(bush, prompt, endClock)
+	end
 end
 
 function ProximityPromptEffects.showBushSearchFor(prompt: ProximityPrompt?)
 	if not prompt or not prompt.Parent then
-		ProximityPromptEffects.hideBushCooldownBanner()
 		ProximityPromptEffects.hideBushSearch()
 		return
 	end
-	ProximityPromptEffects.hideBushCooldownBanner()
 	activeBushSearchPrompt = prompt
 	local ok, shown = pcall(function()
 		return showBushSharedUi(prompt)

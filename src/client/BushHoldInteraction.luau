@@ -18,12 +18,6 @@ local player = Players.LocalPlayer
 
 -- Must stand near the bush; keep in sync with BushHarvest.server MAX_HARVEST_RANGE.
 local MAX_RANGE = 14
--- Cooldown timer / red lock can be seen from farther than search range.
-local COOLDOWN_UI_MAX_RANGE = 56
--- Red outline + cooldown clock: after stepping back from point-blank (still within MAX_RANGE).
-local COOLDOWN_VFX_MIN_DIST = 2.5
--- Right after a search, keep lock visuals (red outline + timer) for this long even when still close.
-local POST_HARVEST_LOCK_VFX_SEC = 10
 local HOLD_DURATION = 1.15
 local POST_HARVEST_COOLDOWN_MIN = 10
 local POST_HARVEST_COOLDOWN_MAX = 15
@@ -35,8 +29,7 @@ local bushByModel: { [Instance]: ProximityPrompt } = {}
 local bushAnchor: { [Instance]: BasePart } = {}
 local pendingParts: { [Instance]: RBXScriptConnection } = {}
 local cooldownUntil: { [Instance]: number } = {} -- os.clock() when search is allowed again
--- After harvest: show red + clock at any distance <= MAX_RANGE until this time (then min-dist rule applies).
-local harvestLockVisualUntil: { [Instance]: number } = {}
+local cooldownHighlights: { [Instance]: Highlight } = {}
 local lastHarvestAt = 0
 local lastHarvestPrompt: ProximityPrompt? = nil
 
@@ -325,20 +318,37 @@ local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean
 	hl.FillTransparency = 1
 	hl.OutlineTransparency = 0
 	hl.OutlineColor = if locked then HIGHLIGHT_LOCKED else HIGHLIGHT_READY
-	-- AlwaysOnTop can fail to draw on some mobile GPUs; Occluded is more reliable.
-	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-		hl.DepthMode = Enum.HighlightDepthMode.Occluded
-	else
-		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	end
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 end
 
-local function cooldownOutlineMinDistance(): number
-	-- Phones are usually close to the bush; don't hide the red lock outline for being "too near".
-	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-		return 0
+local function syncCooldownVisuals(now: number)
+	for bush, hl in cooldownHighlights do
+		local untilT = cooldownUntil[bush]
+		if not bush.Parent or not untilT or now >= untilT then
+			hl:Destroy()
+			cooldownHighlights[bush] = nil
+		end
 	end
-	return COOLDOWN_VFX_MIN_DIST
+
+	local cam = workspace.CurrentCamera
+	for bush, untilT in cooldownUntil do
+		if bush.Parent and now < untilT then
+			local hl = cooldownHighlights[bush]
+			if not hl then
+				hl = Instance.new("Highlight")
+				hl.Name = "BushCooldownHighlight"
+				if cam then
+					hl.Parent = cam
+				end
+				cooldownHighlights[bush] = hl
+			elseif cam and hl.Parent ~= cam then
+				hl.Parent = cam
+			end
+			applyBushHighlight(hl, bush, true)
+		end
+	end
+
+	ProximityPromptEffects.syncBushCooldownBanners(cooldownUntil, bushByModel)
 end
 
 local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
@@ -357,7 +367,6 @@ local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 	for model, prompt in bushByModel do
 		if not model.Parent then
 			cooldownUntil[model] = nil
-			harvestLockVisualUntil[model] = nil
 			continue
 		end
 		if cooldownUntil[model] and now < cooldownUntil[model] then
@@ -369,54 +378,6 @@ local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 		end
 		local d = (wp - pos).Magnitude
 		if d <= MAX_RANGE and d < bestD then
-			bestD = d
-			bestM = model
-			bestP = prompt
-			bestA = bushAnchor[model] or anchorFor(model)
-		end
-	end
-
-	return bestM, bestP, bestA
-end
-
-local function pickClosestCooldownBush(): (Instance?, ProximityPrompt?, BasePart?)
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not hrp then
-		return nil, nil, nil
-	end
-	local pos = hrp.Position
-	local now = os.clock()
-	local bestM: Instance? = nil
-	local bestP: ProximityPrompt? = nil
-	local bestA: BasePart? = nil
-	local bestD = math.huge
-
-	for model, prompt in bushByModel do
-		if not model.Parent then
-			cooldownUntil[model] = nil
-			harvestLockVisualUntil[model] = nil
-			continue
-		end
-		local untilT = cooldownUntil[model]
-		if not untilT or now >= untilT then
-			harvestLockVisualUntil[model] = nil
-			continue
-		end
-		local wp = promptWorldPos(prompt)
-		if wp == Vector3.zero then
-			continue
-		end
-		local d = (wp - pos).Magnitude
-		if d > COOLDOWN_UI_MAX_RANGE then
-			continue
-		end
-		local grace = harvestLockVisualUntil[model]
-		local graceActive = typeof(grace) == "number" and now < grace
-		if not graceActive and d < cooldownOutlineMinDistance() then
-			continue
-		end
-		if d < bestD then
 			bestD = d
 			bestM = model
 			bestP = prompt
@@ -536,7 +497,6 @@ local function doHarvest(prompt: ProximityPrompt)
 	end)
 
 	cooldownUntil[bush] = now + math.random(POST_HARVEST_COOLDOWN_MIN, POST_HARVEST_COOLDOWN_MAX)
-	harvestLockVisualUntil[bush] = now + POST_HARVEST_LOCK_VFX_SEC
 	setActive(nil, nil, nil)
 
 	requestBushSearch(promptWorldPos(prompt), bush)
@@ -559,6 +519,9 @@ local function tickAim()
 		end
 	end
 
+	local now = os.clock()
+	syncCooldownVisuals(now)
+
 	-- Block new bush search only at carry capacity; cooldown lock visuals still update while partially loaded.
 	local bush: Instance?, prompt: ProximityPrompt?, anchor: BasePart?
 	if CarryGate.isFull() then
@@ -567,7 +530,6 @@ local function tickAim()
 		bush, prompt, anchor = pickClosest()
 	end
 	if bush then
-		ProximityPromptEffects.hideBushCooldownBanner()
 		if hl then
 			applyBushHighlight(hl, bush, false)
 		end
@@ -575,20 +537,6 @@ local function tickAim()
 		return
 	end
 
-	local cBush, cPrompt, _cAnchor = pickClosestCooldownBush()
-	if cBush and cPrompt then
-		local ends = cooldownUntil[cBush]
-		if typeof(ends) == "number" then
-			ProximityPromptEffects.showBushCooldownBanner(cPrompt, ends)
-		end
-		if hl then
-			applyBushHighlight(hl, cBush, true)
-		end
-		setActive(nil, nil, nil)
-		return
-	end
-
-	ProximityPromptEffects.hideBushCooldownBanner()
 	if hl then
 		hl.Enabled = false
 		hl.Adornee = nil

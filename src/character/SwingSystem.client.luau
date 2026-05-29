@@ -62,6 +62,10 @@ local LAUNCH_FOV_DURATION    = 0.38
 local LAUNCH_CAM_SHAKE_DURATION = 0.24
 local LAUNCH_CAM_SHAKE_MAX   = 0.28
 local SWING_CAM_RENDER_STEP  = "SwingSystem_CameraFX"
+-- Pendulum arc when rope is extended; floor guard avoids slamming into plots.
+local SWING_FLOOR_CLEARANCE = 6
+local SWING_MAX_DROP_BELOW_ANCHOR = 40
+local SWING_EXT_ARC_START = 0.42
 
 local COLOR_NEAR     = Color3.fromRGB(90, 210, 255)
 local COLOR_BEST     = Color3.fromRGB(55, 255, 105)
@@ -296,6 +300,8 @@ local function boot(character: Model)
 	local ropeLength = BASE_ROPE
 
 	local dynMaxSwingSpeed = MAX_SWING_SPEED
+	local dynSwingArcForce = 34
+	local dynSwingSpeedPump = 0.9
 	local dynZipToward = ZIP_TOWARD_DV
 	local dynLaunchImpulseBase = 14
 	local dynLaunchMomentumRatio = 0.18
@@ -323,6 +329,8 @@ local function boot(character: Model)
 
 		swingForce = ps.steeringForce
 		dynMaxSwingSpeed = ps.maxSwingSpeed
+		dynSwingArcForce = ps.swingArcForce
+		dynSwingSpeedPump = ps.swingSpeedPump
 		dynZipToward = ps.zipToward
 		dynLaunchImpulseBase = ps.launchImpulseBase
 		dynLaunchMomentumRatio = ps.launchMomentumRatio
@@ -336,6 +344,74 @@ local function boot(character: Model)
 		ropeLength = math.max(rs.reachStuds + ropeAttrPts * 2, 8)
 	end
 	refreshStats()
+
+	local swingRayParams = RaycastParams.new()
+	swingRayParams.FilterType = Enum.RaycastFilterType.Exclude
+	swingRayParams.FilterDescendantsInstances = { character }
+
+	local function pendulumArcDir(radial: Vector3): Vector3?
+		local grav = Vector3.new(0, -workspace.Gravity, 0)
+		local tangFall = grav - radial * grav:Dot(radial)
+		if tangFall.Magnitude < 0.06 then
+			return nil
+		end
+		return tangFall.Unit
+	end
+
+	local function swingFloorScale(anchorWorld: Vector3): number
+		local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -160, 0), swingRayParams)
+		local floorY = if ray then ray.Position.Y else hrp.Position.Y - 80
+		local minSafeY = math.max(floorY + SWING_FLOOR_CLEARANCE, anchorWorld.Y - SWING_MAX_DROP_BELOW_ANCHOR)
+		local dropMargin = hrp.Position.Y - minSafeY
+		if dropMargin <= 0 then
+			return 0.1
+		end
+		if dropMargin < 10 then
+			return math.clamp(dropMargin / 10, 0.15, 1)
+		end
+		return 1
+	end
+
+	local function computeSwingArcForce(anchorWorld: Vector3, radial: Vector3, extT: number, mult: number, mass: number): Vector3
+		local arcDir = pendulumArcDir(radial)
+		if not arcDir then
+			return Vector3.zero
+		end
+		local extBoost = math.clamp((extT - SWING_EXT_ARC_START) / (1 - SWING_EXT_ARC_START), 0, 1)
+		extBoost = 0.38 + extBoost * 0.92
+		local floorScale = swingFloorScale(anchorWorld)
+		local strength = dynSwingArcForce * mult * extBoost * floorScale
+		return arcDir * strength * mass
+	end
+
+	local function computeSwingSpeedPump(
+		radial: Vector3,
+		arcDir: Vector3,
+		vel: Vector3,
+		extT: number,
+		mult: number,
+		mass: number
+	): Vector3
+		if extT < 0.38 then
+			return Vector3.zero
+		end
+		local tangVel = vel - radial * vel:Dot(radial)
+		local tangSpeed = tangVel.Magnitude
+		local target = dynMaxSwingSpeed * (0.58 + extT * 0.28)
+		if tangSpeed >= target then
+			return Vector3.zero
+		end
+		local pumpDir = arcDir
+		if tangVel.Magnitude > 4 then
+			if tangVel:Dot(arcDir) > 0 then
+				pumpDir = tangVel.Unit
+			elseif tangVel:Dot(arcDir) < -0.2 then
+				return Vector3.zero
+			end
+		end
+		local deficit = target - tangSpeed
+		return pumpDir * deficit * dynSwingSpeedPump * mult * mass * 0.018
+	end
 
 	-- Grapple only works to targets within rope reach (swingRange can be larger from upgrades)
 	local function attachRadius(): number
@@ -1397,7 +1473,11 @@ local function boot(character: Model)
 			local mult = 1 - decay * (1 - FORCE_MIN_MULT)
 
 			local fromAnchor = hrp.Position - ropeAnchorAtt.WorldPosition
-			local radial = if fromAnchor.Magnitude > 0.2 then fromAnchor.Unit else Vector3.yAxis
+			local dist = fromAnchor.Magnitude
+			local radial = if dist > 0.2 then fromAnchor.Unit else Vector3.yAxis
+			local ropeSpan = math.max(ropeLength, 8)
+			local extT = math.clamp(dist / ropeSpan, 0, 1.12)
+			local anchorWorld = ropeAnchorAtt.WorldPosition
 
 			-- Camera-relative steering: where you look is where you swing.
 			local camLook = camera.CFrame.LookVector
@@ -1412,10 +1492,22 @@ local function boot(character: Model)
 			local steerDir = Vector3.new(camLook.X, 0, camLook.Z) + inputBias
 
 			local tang = steerDir - radial * steerDir:Dot(radial)
+			local camSteerForce = Vector3.zero
 			if tang.Magnitude > 0.05 then
-				forceInst.Force = tang.Unit * swingForce * mult * hrp.AssemblyMass
-			else
-				forceInst.Force = Vector3.zero
+				camSteerForce = tang.Unit * swingForce * mult * hrp.AssemblyMass
+			end
+
+			local arcDir = pendulumArcDir(radial) or Vector3.new(0, -1, 0)
+			local arcForce = computeSwingArcForce(anchorWorld, radial, extT, mult, hrp.AssemblyMass)
+			local speedPump = computeSwingSpeedPump(radial, arcDir, vel, extT, mult, hrp.AssemblyMass)
+
+			-- Extended rope: pendulum arc dominates (fixes float); close in: more camera steer.
+			local arcWeight = 0.42 + math.clamp((extT - 0.35) / 0.65, 0, 1) * 0.58
+			forceInst.Force = camSteerForce * (1 - arcWeight * 0.5) + arcForce + speedPump
+
+			local floorScale = swingFloorScale(anchorWorld)
+			if floorScale < 0.3 and vel.Y < -10 then
+				hrp.AssemblyLinearVelocity = Vector3.new(vel.X, vel.Y * 0.82, vel.Z)
 			end
 
 			-- Steering uses VectorForce only. Avoid aiming HRP at the camera here — that rotation

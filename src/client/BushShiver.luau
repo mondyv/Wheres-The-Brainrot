@@ -1,6 +1,6 @@
 --[[
-	Shiver clue for bushes marked HasHiddenBrainrot (cosmetic hint from server pre-roll).
-	Uses replicated attributes only — no remote flood. Each bush shivers once at a random time (~2s).
+	Looping rocky shiver for bushes with HasHiddenBrainrot == true (server pre-roll).
+	Stops while BushOnCooldown is true or HasHiddenBrainrot is false.
 ]]
 
 local RunService = game:GetService("RunService")
@@ -8,109 +8,121 @@ local RunService = game:GetService("RunService")
 local M = {}
 
 local HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
+local ON_COOLDOWN_ATTR = "BushOnCooldown"
 
-local SHIVER_DURATION = 2
-local SHIVER_FREQ = 9
-local SHIVER_POS_AMP = 0.14
-local SHIVER_ROT_AMP = math.rad(3.2)
-local SHIVER_START_DELAY_MAX = 14
+local SHIVER_CYCLE_SEC = 2.4
+local SHIVER_PAUSE_SEC = 0.35
+local SHIVER_FREQ = 22
+local SHIVER_POS_AMP = 0.2
+local SHIVER_ROT_AMP = math.rad(5.2)
 
-local activeByBush: { [Instance]: boolean } = {}
+local loopConnByBush: { [Instance]: RBXScriptConnection } = {}
+local baseTransformByBush: { [Instance]: CFrame } = {}
 local hookedByBush: { [Instance]: boolean } = {}
-local shiverScheduled: { [Instance]: boolean } = {}
 
-local function shiverModelPivot(bush: Model)
-	local basePivot = bush:GetPivot()
-	local start = os.clock()
-
-	local conn: RBXScriptConnection
-	conn = RunService.Heartbeat:Connect(function()
-		if not bush.Parent then
-			conn:Disconnect()
-			activeByBush[bush] = nil
-			return
-		end
-
-		local elapsed = os.clock() - start
-		if elapsed >= SHIVER_DURATION then
-			bush:PivotTo(basePivot)
-			conn:Disconnect()
-			activeByBush[bush] = nil
-			return
-		end
-
-		local fade = 1 - (elapsed / SHIVER_DURATION)
-		local wobble = math.sin(elapsed * SHIVER_FREQ) * SHIVER_POS_AMP * fade
-		local wobbleZ = math.sin(elapsed * SHIVER_FREQ * 1.2 + 0.5) * SHIVER_POS_AMP * 0.4 * fade
-		local tiltY = math.sin(elapsed * SHIVER_FREQ * 0.95 + 1.2) * SHIVER_ROT_AMP * fade
-		local tiltZ = math.sin(elapsed * SHIVER_FREQ * 1.08) * SHIVER_ROT_AMP * 0.5 * fade
-
-		bush:PivotTo(basePivot * CFrame.new(wobble, 0, wobbleZ) * CFrame.Angles(0, tiltY, tiltZ))
-	end)
+local function shouldShiverBush(bush: Instance): boolean
+	if bush:GetAttribute(ON_COOLDOWN_ATTR) == true then
+		return false
+	end
+	return bush:GetAttribute(HAS_BRAINROT_ATTR) == true
 end
 
-local function shiverSinglePart(part: BasePart)
-	local baseCf = part.CFrame
-	local start = os.clock()
-
-	local conn: RBXScriptConnection
-	conn = RunService.Heartbeat:Connect(function()
-		if not part.Parent then
-			conn:Disconnect()
-			activeByBush[part] = nil
-			return
-		end
-
-		local elapsed = os.clock() - start
-		if elapsed >= SHIVER_DURATION then
-			part.CFrame = baseCf
-			conn:Disconnect()
-			activeByBush[part] = nil
-			return
-		end
-
-		local fade = 1 - (elapsed / SHIVER_DURATION)
-		local wobble = math.sin(elapsed * SHIVER_FREQ) * SHIVER_POS_AMP * fade
-		local wobbleZ = math.sin(elapsed * SHIVER_FREQ * 1.2 + 0.5) * SHIVER_POS_AMP * 0.4 * fade
-		local tilt = math.sin(elapsed * SHIVER_FREQ * 0.95 + 1.2) * SHIVER_ROT_AMP * fade
-
-		part.CFrame = baseCf * CFrame.new(wobble, 0, wobbleZ) * CFrame.Angles(0, tilt, tilt * 0.45)
-	end)
-end
-
-function M.shiverBush(bush: Instance)
-	if not bush or not bush.Parent or activeByBush[bush] then
+local function restoreBushTransform(bush: Instance)
+	local base = baseTransformByBush[bush]
+	if not base then
 		return
 	end
+	if bush:IsA("Model") then
+		bush:PivotTo(base)
+	elseif bush:IsA("BasePart") then
+		bush.CFrame = base
+	end
+end
 
-	activeByBush[bush] = true
+local function stopShiverLoop(bush: Instance)
+	local conn = loopConnByBush[bush]
+	if conn then
+		conn:Disconnect()
+		loopConnByBush[bush] = nil
+	end
+	if bush.Parent then
+		restoreBushTransform(bush)
+	end
+	baseTransformByBush[bush] = nil
+end
+
+local function captureBaseTransform(bush: Instance): CFrame?
+	if bush:IsA("Model") then
+		return bush:GetPivot()
+	end
+	if bush:IsA("BasePart") then
+		return bush.CFrame
+	end
+	return nil
+end
+
+local function applyShiverOffset(bush: Instance, base: CFrame, phase: number, envelope: number)
+	local wobbleX = math.sin(phase * SHIVER_FREQ) * SHIVER_POS_AMP * envelope
+	local wobbleZ = math.sin(phase * SHIVER_FREQ * 1.17 + 0.6) * SHIVER_POS_AMP * 0.55 * envelope
+	local tiltY = math.sin(phase * SHIVER_FREQ * 0.93 + 1.1) * SHIVER_ROT_AMP * envelope
+	local tiltZ = math.sin(phase * SHIVER_FREQ * 1.08 + 0.3) * SHIVER_ROT_AMP * 0.62 * envelope
+	local tiltX = math.sin(phase * SHIVER_FREQ * 1.25) * SHIVER_ROT_AMP * 0.35 * envelope
+	local offset = CFrame.new(wobbleX, 0, wobbleZ) * CFrame.Angles(tiltX, tiltY, tiltZ)
 
 	if bush:IsA("Model") then
-		shiverModelPivot(bush :: Model)
-		return
+		bush:PivotTo(base * offset)
+	elseif bush:IsA("BasePart") then
+		bush.CFrame = base * offset
 	end
-
-	if bush:IsA("BasePart") then
-		shiverSinglePart(bush :: BasePart)
-		return
-	end
-
-	activeByBush[bush] = nil
 end
 
-local function scheduleRandomShiver(bush: Instance)
-	if shiverScheduled[bush] or activeByBush[bush] then
+local function startShiverLoop(bush: Instance)
+	if loopConnByBush[bush] or not shouldShiverBush(bush) then
 		return
 	end
-	shiverScheduled[bush] = true
 
-	local delaySec = math.random() * SHIVER_START_DELAY_MAX
-	task.delay(delaySec, function()
-		shiverScheduled[bush] = nil
-		if bush.Parent and bush:GetAttribute(HAS_BRAINROT_ATTR) == true then
-			M.shiverBush(bush)
+	local base = captureBaseTransform(bush)
+	if not base then
+		return
+	end
+
+	baseTransformByBush[bush] = base
+	local cycleStart = os.clock()
+
+	loopConnByBush[bush] = RunService.Heartbeat:Connect(function()
+		if not bush.Parent or not shouldShiverBush(bush) then
+			stopShiverLoop(bush)
+			return
 		end
+
+		local baseCf = baseTransformByBush[bush]
+		if not baseCf then
+			stopShiverLoop(bush)
+			return
+		end
+
+		local elapsed = os.clock() - cycleStart
+		local loopLen = SHIVER_CYCLE_SEC + SHIVER_PAUSE_SEC
+		local phaseInLoop = elapsed % loopLen
+
+		if phaseInLoop >= SHIVER_CYCLE_SEC then
+			restoreBushTransform(bush)
+			return
+		end
+
+		local envelope = math.sin((phaseInLoop / SHIVER_CYCLE_SEC) * math.pi)
+		applyShiverOffset(bush, baseCf, phaseInLoop, envelope)
 	end)
+end
+
+local function refreshShiverState(bush: Instance)
+	if shouldShiverBush(bush) then
+		if not loopConnByBush[bush] then
+			startShiverLoop(bush)
+		end
+	else
+		stopShiverLoop(bush)
+	end
 end
 
 function M.trackBush(bush: Instance)
@@ -119,21 +131,19 @@ function M.trackBush(bush: Instance)
 	end
 	hookedByBush[bush] = true
 
-	if bush:GetAttribute(HAS_BRAINROT_ATTR) == true then
-		scheduleRandomShiver(bush)
-	end
+	refreshShiverState(bush)
 
 	bush:GetAttributeChangedSignal(HAS_BRAINROT_ATTR):Connect(function()
-		if bush:GetAttribute(HAS_BRAINROT_ATTR) == true then
-			scheduleRandomShiver(bush)
-		end
+		refreshShiverState(bush)
+	end)
+	bush:GetAttributeChangedSignal(ON_COOLDOWN_ATTR):Connect(function()
+		refreshShiverState(bush)
 	end)
 
 	bush.AncestryChanged:Connect(function(_, parent)
 		if parent == nil then
-			activeByBush[bush] = nil
+			stopShiverLoop(bush)
 			hookedByBush[bush] = nil
-			shiverScheduled[bush] = nil
 		end
 	end)
 end

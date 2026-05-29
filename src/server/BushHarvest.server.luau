@@ -36,12 +36,12 @@ type BrainrotInvEntry = {
 
 local MAX_HARVEST_RANGE = 14
 local RANGE_SLACK = 5
--- Per search: 30% empty, 70% spawn a brainrot (rolled each time a player searches a bush).
-local BUSH_FIND_CHANCE = 0.7
-local BUSH_EMPTY_PERCENT = 30 -- used by shiver hint pre-roll only (assignBushLoot)
+-- Per bush: 30% empty, 70% hidden brainrot (rolled when bush becomes available).
+local BUSH_EMPTY_PERCENT = 30
 local BUSH_SEARCH_DEBOUNCE_SEC = 0.4
 local BUSH_HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
 local BUSH_LOOT_ASSIGNED_ATTR = "BushLootAssigned"
+local BUSH_ON_COOLDOWN_ATTR = "BushOnCooldown"
 local BUSH_LOOT_RESPAWN_MIN = 10
 local BUSH_LOOT_RESPAWN_MAX = 15
 local FLOAT_DURATION = 4
@@ -1059,6 +1059,7 @@ local function scheduleBushLootRespawn(bush: Instance)
 		if not bush.Parent or not isValidBushRef(bush) then
 			return
 		end
+		bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, false)
 		bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, rollBushHasBrainrot())
 	end)
 end
@@ -1559,7 +1560,7 @@ end
 local lastBushSearchAt: { [Player]: number } = {}
 
 --[[
-	processBushSearch — each search rolls 70% spawn / 30% empty. Returns true when a brainrot was spawned.
+	processBushSearch — uses pre-rolled HasHiddenBrainrot on the bush (70% true / 30% false).
 ]]
 local function processBushSearch(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean
 	if typeof(worldPosition) ~= "Vector3" then
@@ -1584,14 +1585,25 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 		return false
 	end
 
-	if math.random() > BUSH_FIND_CHANCE then
-		showEmptyBushMessage(bush)
+	if bush:GetAttribute(BUSH_ON_COOLDOWN_ATTR) == true then
 		return false
 	end
 
-	clearEmptyBushMessageState(bush)
-	beginHarvestOutcome(player, worldPosition)
-	return true
+	assignBushLoot(bush)
+	local hasBrainrot = bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
+
+	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, false)
+	bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, true)
+	scheduleBushLootRespawn(bush)
+
+	if hasBrainrot then
+		clearEmptyBushMessageState(bush)
+		beginHarvestOutcome(player, worldPosition)
+		return true
+	end
+
+	showEmptyBushMessage(bush)
+	return false
 end
 
 local redeemDebounce: { [Player]: number } = {}

@@ -104,6 +104,17 @@ local function ensureRemote(): RemoteEvent
 	return ev :: RemoteEvent
 end
 
+local function ensureHarvestFunction(): RemoteFunction
+	local folder = getBushRemotesFolder()
+	local fn = folder:FindFirstChild("HarvestBush")
+	if not fn then
+		fn = Instance.new("RemoteFunction")
+		fn.Name = "HarvestBush"
+		fn.Parent = folder
+	end
+	return fn :: RemoteFunction
+end
+
 local inventorySyncRE: RemoteEvent? = nil
 local getInventoryRF: RemoteFunction? = nil
 
@@ -1896,18 +1907,30 @@ ensureEquipBrainrotRemote().OnServerEvent:Connect(function(player: Player, slot:
 	equipBrainrotSlotForPlayer(player, slot :: number)
 end)
 
-harvestRemote.OnServerEvent:Connect(function(player: Player, worldPosition: Vector3)
+--[[
+	processBushSearch — 30% no brainrot, 70% beginHarvestOutcome. Returns true if a brainrot was spawned.
+]]
+local function processBushSearch(player: Player, worldPosition: Vector3): boolean
 	if typeof(worldPosition) ~= "Vector3" then
-		return
+		return false
 	end
 	if not canAttemptHarvest(player, worldPosition) then
-		return
+		return false
 	end
 	if math.random() < BUSH_EMPTY_CHANCE then
-		return
+		return false
 	end
 	beginHarvestOutcome(player, worldPosition)
+	return true
+end
+
+harvestRemote.OnServerEvent:Connect(function(player: Player, worldPosition: Vector3)
+	processBushSearch(player, worldPosition)
 end)
+
+ensureHarvestFunction().OnServerInvoke = function(player: Player, worldPosition: Vector3): boolean
+	return processBushSearch(player, worldPosition)
+end
 
 task.defer(function()
 	local map = workspace:WaitForChild("Map", 120)

@@ -53,6 +53,55 @@ local reviveCompleteRE: RemoteEvent? = nil
 
 local deathSfxTemplate: Sound? = nil
 local earRingingTemplate: Sound? = nil
+local deathSoundGroup: SoundGroup? = nil
+
+local DEFAULT_DEATH_SOUND_IDS = {
+	"rbxasset://sounds/uuhhh.mp3",
+	"rbxasset://sounds/snap.mp3",
+	"rbxasset://sounds/bass.mp3",
+}
+
+local function isDefaultRobloxDeathSound(sound: Sound): boolean
+	local id = string.lower(sound.SoundId)
+	for _, defaultId in DEFAULT_DEATH_SOUND_IDS do
+		if id == defaultId or string.find(id, "uuhhh", 1, true) then
+			return true
+		end
+	end
+	local n = string.lower(sound.Name)
+	return n == "died" or n == "death" or n == "oof"
+end
+
+local function muteDefaultDeathSound(sound: Sound)
+	if not isDefaultRobloxDeathSound(sound) then
+		return
+	end
+	sound.Volume = 0
+	sound:Stop()
+	sound:Destroy()
+end
+
+local function stopRobloxOofSounds()
+	for _, inst in SoundService:GetDescendants() do
+		if inst:IsA("Sound") and isDefaultRobloxDeathSound(inst) then
+			inst:Stop()
+			inst:Destroy()
+		end
+	end
+end
+
+local function suppressDefaultDeathSounds(character: Model)
+	for _, desc in character:GetDescendants() do
+		if desc:IsA("Sound") then
+			muteDefaultDeathSound(desc)
+		end
+	end
+	character.DescendantAdded:Connect(function(desc)
+		if desc:IsA("Sound") then
+			muteDefaultDeathSound(desc)
+		end
+	end)
+end
 
 local function getOrAddUIScale(obj: GuiObject): UIScale
 	local s = obj:FindFirstChildOfClass("UIScale")
@@ -138,11 +187,17 @@ local function setBgmSlowed(slowed: boolean)
 end
 
 local function playDeathSfx()
+	stopRobloxOofSounds()
 	if not deathSfxTemplate then
 		return
 	end
 	local clone = deathSfxTemplate:Clone()
-	clone.Parent = SoundService
+	if deathSoundGroup and deathSoundGroup.Parent then
+		clone.SoundGroup = deathSoundGroup
+		clone.Parent = deathSoundGroup
+	else
+		clone.Parent = SoundService
+	end
 	clone:Play()
 	clone.Ended:Once(function()
 		clone:Destroy()
@@ -164,7 +219,12 @@ local function startEarRinging()
 	end
 	local clone = earRingingTemplate:Clone()
 	clone.Looped = true
-	clone.Parent = SoundService
+	if deathSoundGroup and deathSoundGroup.Parent then
+		clone.SoundGroup = deathSoundGroup
+		clone.Parent = deathSoundGroup
+	else
+		clone.Parent = SoundService
+	end
 	clone:Play()
 	earRingingSound = clone
 end
@@ -499,7 +559,9 @@ local function openRevivePanel(land: number, productId: number, countdownSec: nu
 	showBlur()
 	collectBgmSounds()
 	setBgmSlowed(true)
-	startEarRinging()
+	if not earRingingSound then
+		startEarRinging()
+	end
 	refreshRegionalPrice(productId)
 	animatePanelIn(panel)
 	startCountdown(countdownSec)
@@ -508,6 +570,9 @@ end
 local function resolveSoundTemplates()
 	local deathFolder = SoundService:FindFirstChild("Death")
 	local deathGroup = deathFolder and deathFolder:FindFirstChild("SoundGroup")
+	if deathGroup and deathGroup:IsA("SoundGroup") then
+		deathSoundGroup = deathGroup
+	end
 	if deathGroup then
 		local deathSfx = deathGroup:FindFirstChild("Death SFX")
 		if deathSfx and deathSfx:IsA("Sound") then
@@ -521,7 +586,9 @@ local function resolveSoundTemplates()
 end
 
 local function onLocalDeath(character: Model)
+	stopRobloxOofSounds()
 	playDeathSfx()
+	startEarRinging()
 
 	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	local land = if hrp then LandResolver.resolveLandAtPosition(hrp.Position) else 1
@@ -530,6 +597,8 @@ local function onLocalDeath(character: Model)
 end
 
 local function hookCharacter(character: Model)
+	suppressDefaultDeathSounds(character)
+
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if not humanoid then
 		humanoid = character:WaitForChild("Humanoid", 10) :: Humanoid?
@@ -538,6 +607,8 @@ local function hookCharacter(character: Model)
 		return
 	end
 	humanoid.Died:Connect(function()
+		stopRobloxOofSounds()
+		task.defer(stopRobloxOofSounds)
 		onLocalDeath(character)
 	end)
 end

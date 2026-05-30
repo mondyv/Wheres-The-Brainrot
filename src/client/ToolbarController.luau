@@ -1116,9 +1116,90 @@ end
 
 -- ── Slot highlight ────────────────────────────────────────────────────────────
 
--- Selection = UIStroke only. Never touch the slot's own Image / ImageColor3 (that's the slot art designed in Studio).
+-- Selection ring = UIStroke on the slot button; fill = Decor.Highlight / Selection in the Studio template.
 local SLOT_STROKE_SELECTED = 0
 local SLOT_STROKE_IDLE = 0.6
+local SLOT_SELECTION_LIT_BG_TRANSPARENCY = 0.4
+local SLOT_SELECTION_LIT_IMAGE_TRANSPARENCY = 0.4
+
+type SlotSelectionLayerDefaults = {
+	bgTransparency: number,
+	imageTransparency: number?,
+}
+
+local slotSelectionDefaults: { [GuiObject]: SlotSelectionLayerDefaults } = {}
+
+local function resolveHotbarSlotSelectionLayer(slot: GuiObject, btn: GuiObject?): GuiObject?
+	local candidates: { Instance? } = {}
+	if btn then
+		local decor = btn:FindFirstChild("Decor")
+		if decor then
+			table.insert(candidates, decor:FindFirstChild("Selection"))
+			table.insert(candidates, decor:FindFirstChild("Highlight"))
+			table.insert(candidates, decor:FindFirstChild("Selected"))
+		end
+		table.insert(candidates, btn:FindFirstChild("Selection"))
+		table.insert(candidates, btn:FindFirstChild("Highlight"))
+		table.insert(candidates, btn:FindFirstChild("Selected"))
+	end
+	table.insert(candidates, slot:FindFirstChild("Selection"))
+	table.insert(candidates, slot:FindFirstChild("Highlight"))
+	table.insert(candidates, slot:FindFirstChild("Selected"))
+	for _, candidate in candidates do
+		if candidate and candidate:IsA("GuiObject") then
+			return candidate :: GuiObject
+		end
+	end
+	for _, desc in slot:GetDescendants() do
+		if not desc:IsA("GuiObject") then
+			continue
+		end
+		if desc.Name ~= "Selection" and desc.Name ~= "Highlight" and desc.Name ~= "Selected" then
+			continue
+		end
+		if desc.Name == "Highlight" and desc:FindFirstChild("RarityStroke", true) then
+			continue
+		end
+		return desc :: GuiObject
+	end
+	return nil
+end
+
+local function captureSlotSelectionDefaults(layer: GuiObject): SlotSelectionLayerDefaults
+	local cached = slotSelectionDefaults[layer]
+	if cached then
+		return cached
+	end
+	local litBg = layer.BackgroundTransparency
+	local litImg: number? = nil
+	if layer:IsA("ImageLabel") or layer:IsA("ImageButton") then
+		litImg = (layer :: ImageLabel).ImageTransparency
+	end
+	local defaults: SlotSelectionLayerDefaults = {
+		bgTransparency = if litBg < 0.95 then litBg else SLOT_SELECTION_LIT_BG_TRANSPARENCY,
+		imageTransparency = if litImg and litImg < 0.95 then litImg else SLOT_SELECTION_LIT_IMAGE_TRANSPARENCY,
+	}
+	slotSelectionDefaults[layer] = defaults
+	return defaults
+end
+
+local function applySlotSelectionLayer(layer: GuiObject, lit: boolean)
+	local defaults = captureSlotSelectionDefaults(layer)
+	layer.Visible = true
+	local props: { [string]: number } = {}
+	if layer:IsA("ImageLabel") or layer:IsA("ImageButton") then
+		props.ImageTransparency = if lit then (defaults.imageTransparency or SLOT_SELECTION_LIT_IMAGE_TRANSPARENCY) else 1
+	else
+		props.BackgroundTransparency = if lit then defaults.bgTransparency else 1
+	end
+	TweenService:Create(layer, HIGHLIGHT_TWEEN, props):Play()
+	local layerStroke = layer:FindFirstChildOfClass("UIStroke")
+	if layerStroke then
+		TweenService:Create(layerStroke, HIGHLIGHT_TWEEN, {
+			Transparency = if lit then SLOT_STROKE_SELECTED else 1,
+		}):Play()
+	end
+end
 
 local function applyButtonSelectionStyle(btn: GuiObject, lit: boolean)
 	local stroke = btn:FindFirstChildOfClass("UIStroke")
@@ -1138,23 +1219,32 @@ local function setSlotHighlight(index: number?, lit: boolean)
 	local btn = slotPrimaryButton(slot)
 	if btn then
 		applyButtonSelectionStyle(btn :: GuiObject, lit)
+		local selectionLayer = resolveHotbarSlotSelectionLayer(slot, btn :: GuiObject)
+		if selectionLayer then
+			applySlotSelectionLayer(selectionLayer, lit)
+		end
 	end
 	local scale = getOrAddUIScale(hotbarSlotScaleHost(slot))
 	TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = if lit then 1.08 else 1.0 }):Play()
-	local sel = slot:FindFirstChild("Selection", true) or slot:FindFirstChild("Highlight", true)
-	if sel and sel:IsA("GuiObject") then
-		TweenService:Create(sel, HIGHLIGHT_TWEEN, {
-			BackgroundTransparency = lit and 0 or 1,
-		}):Play()
+end
+
+local function primeHotbarSlotSelectionLayers()
+	for i, slot in ipairs(slots) do
+		local btn = slotPrimaryButton(slot)
+		if not btn then
+			continue
+		end
+		local selectionLayer = resolveHotbarSlotSelectionLayer(slot, btn :: GuiObject)
+		if selectionLayer then
+			captureSlotSelectionDefaults(selectionLayer)
+			applySlotSelectionLayer(selectionLayer, false)
+		end
 	end
 end
 
 local function resetAllSlotsToIdle()
-	for _, slot in ipairs(slots) do
-		local btn = slotPrimaryButton(slot)
-		if btn then
-			applyButtonSelectionStyle(btn :: GuiObject, false)
-		end
+	for i, slot in ipairs(slots) do
+		setSlotHighlight(i, false)
 	end
 end
 
@@ -2206,6 +2296,7 @@ function ToolbarController.init()
 		end)
 	end
 
+	primeHotbarSlotSelectionLayers()
 	resetAllSlotsToIdle()
 	bindToolbarHotbarKeybinds()
 

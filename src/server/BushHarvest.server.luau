@@ -2752,7 +2752,13 @@ local function inventoryEntryIncome(entry: BrainrotInvEntry): number
 end
 
 local function equipBestBrainrotForPlayer(plr: Player): boolean
-	if not playerInInventoryZone(plr) then
+	local char = plr.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local canUse = playerInInventoryZone(plr)
+		or SafezoneUtil.isCharacterInSafezone(char)
+		or SafezoneUtil.isCharacterInToolbarZone(char)
+		or (hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position))
+	if not canUse then
 		return false
 	end
 	local list = brainrotInventories[plr]
@@ -2765,32 +2771,29 @@ local function equipBestBrainrotForPlayer(plr: Player): boolean
 		brainrotParkedInExpandedBackpack[plr] = map
 	end
 
-	if findLowestFreeHotbarSlot(list, map) == nil then
-		return false
-	end
-
 	local bestIdx: number? = nil
 	local bestIncome = -math.huge
 	for i, entry in ipairs(list) do
-		if i > HOTBAR_UI_SLOTS or map[i] == true then
-			local inc = inventoryEntryIncome(entry)
-			if inc > bestIncome then
-				bestIncome = inc
-				bestIdx = i
-			end
+		local inc = inventoryEntryIncome(entry)
+		if inc > bestIncome then
+			bestIncome = inc
+			bestIdx = i
 		end
 	end
-
 	if not bestIdx then
 		return false
 	end
 
-	if assignEntryToLowestFreeHotbarSlot(plr, list, map, bestIdx) == nil then
-		return false
+	local equipSlot = bestIdx
+	if bestIdx > HOTBAR_UI_SLOTS or map[bestIdx] == true then
+		local destSlot = assignEntryToLowestFreeHotbarSlot(plr, list, map, bestIdx)
+		if not destSlot then
+			return false
+		end
+		equipSlot = destSlot
 	end
 
-	local sync = ensureInventoryRemotes()
-	sync:FireClient(plr, packInventoryForClient(plr, list))
+	notifyClientInventorySync(plr, equipSlot, true)
 	return true
 end
 

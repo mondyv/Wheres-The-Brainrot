@@ -188,6 +188,13 @@ local function slotPrimaryButton(slot: GuiObject): GuiButton?
 	return slot:FindFirstChildWhichIsA("GuiButton", true)
 end
 
+local function resolveBackpackActionButton(root: GuiObject): GuiButton?
+	if root:IsA("GuiButton") then
+		return root
+	end
+	return slotPrimaryButton(root)
+end
+
 local function disableGuiInputCapture(gui: GuiObject)
 	gui.Active = false
 	if gui:IsA("GuiButton") then
@@ -1703,15 +1710,18 @@ local function refreshBrainrotBackpackUI()
 		if not row or not row:IsA("GuiObject") then
 			continue
 		end
-		row.Visible = true
-		local surface = toolSlotSurface(row :: GuiObject)
-		local icon = surface:FindFirstChild("Icon")
-		local rate = surface:FindFirstChild("Rate")
-		local key = surface:FindFirstChild("Key")
 		local entry = brainrotEntryForBackpackSlot(idx)
 		if entry and backpackSearchText ~= "" and not matchesBackpackSearch(entry.name) then
 			entry = nil
 		end
+		row.Visible = entry ~= nil
+		if not entry then
+			continue
+		end
+		local surface = toolSlotSurface(row :: GuiObject)
+		local icon = surface:FindFirstChild("Icon")
+		local rate = surface:FindFirstChild("Rate")
+		local key = surface:FindFirstChild("Key")
 		if entry then
 			if icon and icon:IsA("ImageLabel") then
 				icon.ScaleType = Enum.ScaleType.Fit
@@ -1836,14 +1846,14 @@ local function wireEquipBestButton(backpackFrame: Instance)
 	if not equipBestInst or not equipBestInst:IsA("GuiObject") then
 		return
 	end
-	local btn = slotPrimaryButton(equipBestInst :: GuiObject)
+	local btn = resolveBackpackActionButton(equipBestInst :: GuiObject)
 	if not btn then
 		return
 	end
 	equipBestWired = true
 	passthroughChildClicks(btn :: GuiObject)
-	btn.MouseButton1Down:Connect(function()
-		UIInteractionSounds.playClick()
+	enableGuiButtonInput(btn)
+	UIButtonEffects.wireAccentButton(btn, function()
 		requestEquipBestBrainrot()
 	end)
 end
@@ -1859,6 +1869,18 @@ local function wireBackpackSearch(backpackFrame: Instance)
 		return
 	end
 	backpackSearchWired = true
+	tb.Active = true
+	tb.ClearTextOnFocus = false
+	if search and search:IsA("GuiObject") then
+		disableGuiInputCapture(search :: GuiObject)
+		local searchFrame = search :: GuiObject
+		searchFrame.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch then
+				tb:CaptureFocus()
+			end
+		end)
+	end
 	local function applySearch()
 		backpackSearchText = tb.Text
 		refreshBrainrotBackpackUI()
@@ -1915,9 +1937,9 @@ local function wireSortCategoryTabs(backpackFrame: Instance)
 	for _, ch in sorts:GetChildren() do
 		if ch:IsA("GuiButton") then
 			passthroughChildClicks(ch :: GuiObject)
-			ch.MouseButton1Click:Connect(function()
+			enableGuiButtonInput(ch)
+			UIButtonEffects.wireScaleButtonAnim(ch, function()
 				highlight(ch :: GuiObject)
-				UIInteractionSounds.playClick()
 			end)
 		end
 	end

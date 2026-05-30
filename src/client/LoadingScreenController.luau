@@ -33,10 +33,11 @@ local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
 
 local OVERLAY_COLOR = Color3.fromRGB(12, 8, 6)
 
-local NAME_ANIM_SPEED = 0.55
-local NAME_SCALE_AMOUNT = 0.045
-local NAME_TILT_AMOUNT = 3.2
-local NAME_ANIM_SMOOTH = 8
+local NAME_ANIM_SPEED = 0.78
+local NAME_SCALE_AMOUNT = 0.095
+local NAME_TILT_AMOUNT = 7.5
+local NAME_TILT_WOBBLE = 2.8
+local NAME_ANIM_SMOOTH = 11
 local TITLE_DISPLAY_SCALE = 1.22
 local TITLE_MAX_WIDTH_MOBILE = 680
 local TITLE_MAX_WIDTH_DESKTOP = 1100
@@ -1039,6 +1040,10 @@ local function prepareGameplayUIBeforeReveal(playerGui: PlayerGui)
 		return
 	end
 
+	if main:IsA("ScreenGui") then
+		main.ResetOnSpawn = false
+	end
+
 	local frames = main:FindFirstChild("Frames")
 	if frames then
 		for _, ch in frames:GetChildren() do
@@ -1315,8 +1320,10 @@ local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 			return
 		end
 		phase += dt * NAME_ANIM_SPEED
-		local targetScale = 1 + NAME_SCALE_AMOUNT * math.sin(phase)
-		local targetRot = baseRotation + NAME_TILT_AMOUNT * math.sin(phase * 0.86 + 0.45)
+		local breathe = math.sin(phase)
+		local wobble = math.sin(phase * 1.62 + 0.7)
+		local targetScale = 1 + NAME_SCALE_AMOUNT * breathe + NAME_SCALE_AMOUNT * 0.2 * wobble
+		local targetRot = baseRotation + NAME_TILT_AMOUNT * breathe + NAME_TILT_WOBBLE * wobble
 		local blend = math.min(1, dt * NAME_ANIM_SMOOTH)
 		smoothScale += (targetScale - smoothScale) * blend
 		smoothRot += (targetRot - smoothRot) * blend

@@ -8,6 +8,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
+local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 
 local HUDController = require(script.Parent.HUDController)
@@ -26,9 +27,8 @@ local HOVER_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirect
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local FADE_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
-local HUD_HIDE_NAMES = { "SideUI", "Upgrades", "ClockImage" }
-
 local reviveFrame: Frame? = nil
+local wiredFrame: Frame? = nil
 local timerLabel: TextLabel? = nil
 local reviveBtnHost: GuiObject? = nil
 local declineBtnHost: GuiObject? = nil
@@ -203,16 +203,50 @@ local function hideBlur()
 	tween:Play()
 end
 
+local function resolveMainGui(): ScreenGui?
+	local playerGui = player:FindFirstChild("PlayerGui")
+	if not playerGui then
+		return nil
+	end
+	local main = playerGui:FindFirstChild("Main")
+	if main and main:IsA("ScreenGui") then
+		main.ResetOnSpawn = false
+		return main
+	end
+	return nil
+end
+
 local function hideGameplayHud(main: ScreenGui)
 	table.clear(hiddenHud)
 	HUDController.closeCurrentFrame()
-	for _, name in HUD_HIDE_NAMES do
-		local inst = main:FindFirstChild(name)
-		if inst and inst:IsA("GuiObject") then
-			local gui = inst :: GuiObject
-			table.insert(hiddenHud, { inst = gui, wasVisible = gui.Visible })
-			gui.Visible = false
+
+	local sideUI = main:FindFirstChild("SideUI")
+	if sideUI and sideUI:IsA("GuiObject") then
+		local gui = sideUI :: GuiObject
+		table.insert(hiddenHud, { inst = gui, wasVisible = gui.Visible })
+		gui.Visible = false
+	end
+
+	local frames = main:FindFirstChild("Frames")
+	if frames then
+		for _, ch in frames:GetChildren() do
+			if ch:IsA("GuiObject") and ch.Name ~= REVIVE_FRAME_NAME then
+				local gui = ch :: GuiObject
+				table.insert(hiddenHud, { inst = gui, wasVisible = gui.Visible })
+				gui.Visible = false
+			end
 		end
+	end
+
+	local playerGui = player:FindFirstChild("PlayerGui")
+	local clock = if playerGui then playerGui:FindFirstChild("ClockImage") else nil
+	if not clock then
+		clock = StarterGui:FindFirstChild("ClockImage")
+	end
+	if clock and clock:IsA("GuiObject") then
+		local gui = clock :: GuiObject
+		table.insert(hiddenHud, { inst = gui, wasVisible = gui.Visible })
+		gui.Visible = false
 	end
 end
 
@@ -238,8 +272,8 @@ local function animatePanelIn(frame: Frame)
 	frame.Visible = true
 	TweenService:Create(scale, OPEN_TWEEN, { Scale = 1 }):Play()
 
-	for _, childName in { "Revive Button", "Decline Button", "Timer", "Name" } do
-		local child = frame:FindFirstChild(childName, true)
+	for _, childName in { "Revive Button", "Decline Button", "Timer" } do
+		local child = frame:FindFirstChild(childName)
 		if child and child:IsA("GuiObject") then
 			local g = child :: GuiObject
 			if g:IsA("TextLabel") or g:IsA("TextButton") then
@@ -379,25 +413,84 @@ local function tryRevivePurchase()
 	end)
 end
 
-local function openRevivePanel(main: ScreenGui, land: number, productId: number, countdownSec: number)
+local function bindReviveFrame(frame: Frame)
+	if wiredFrame == frame then
+		return
+	end
+	wiredFrame = frame
+	reviveFrame = frame
+
+	timerLabel = frame:FindFirstChild("Timer") :: TextLabel?
+	local reviveBtn = frame:FindFirstChild("Revive Button")
+	local declineBtn = frame:FindFirstChild("Decline Button")
+	reviveBtnHost = if reviveBtn and reviveBtn:IsA("GuiObject") then reviveBtn else nil
+	declineBtnHost = if declineBtn and declineBtn:IsA("GuiObject") then declineBtn else nil
+
+	if reviveBtnHost then
+		local nameLabel = reviveBtnHost:FindFirstChild("Name")
+		if nameLabel and nameLabel:IsA("TextLabel") then
+			revivePriceLabel = nameLabel
+			if not priceLabelTemplate then
+				priceLabelTemplate = nameLabel.Text
+			end
+		end
+		wireReviveButton(reviveBtnHost, tryRevivePurchase)
+	end
+	if declineBtnHost then
+		wireDeclineButton(declineBtnHost, function()
+			closeRevivePanel(true)
+		end)
+	end
+end
+
+local function resolveReviveFrame(main: ScreenGui): Frame?
+	local frames = main:FindFirstChild("Frames")
+	if not frames then
+		return nil
+	end
+	local frame = frames:FindFirstChild(REVIVE_FRAME_NAME)
+	if frame and frame:IsA("Frame") then
+		bindReviveFrame(frame)
+		return frame
+	end
+	return nil
+end
+
+local function openRevivePanel(land: number, productId: number, countdownSec: number)
 	if sessionActive then
 		return
 	end
-	if not reviveFrame then
+
+	local main = resolveMainGui()
+	if not main then
+		warn("[ReviveController] Main ScreenGui missing in PlayerGui")
 		return
+	end
+
+	local frame = resolveReviveFrame(main)
+	if not frame then
+		warn("[ReviveController] Revive PopUP frame missing under Main.Frames")
+		return
+	end
+
+	main.Enabled = true
+	local loading = main.Parent and (main.Parent :: Instance):FindFirstChild("LoadingScreen")
+	if loading and loading:IsA("ScreenGui") then
+		loading.Enabled = false
 	end
 
 	sessionActive = true
 	currentLand = land
 	currentProductId = productId
 
+	frame.Active = false
 	hideGameplayHud(main)
 	showBlur()
 	collectBgmSounds()
 	setBgmSlowed(true)
 	startEarRinging()
 	refreshRegionalPrice(productId)
-	animatePanelIn(reviveFrame)
+	animatePanelIn(frame)
 	startCountdown(countdownSec)
 end
 
@@ -432,76 +525,19 @@ end
 local ReviveController = {}
 
 function ReviveController.init()
-	if not player.Character then
-		player.CharacterAdded:Wait()
-	end
-
-	local main = player:WaitForChild("PlayerGui"):WaitForChild("Main", 120) :: ScreenGui
-	local frames = main:WaitForChild("Frames")
-	reviveFrame = frames:WaitForChild(REVIVE_FRAME_NAME, 30) :: Frame?
-	if not reviveFrame then
-		warn("[ReviveController] Revive PopUP frame missing")
-		return
-	end
-
-	reviveFrame.Visible = false
-	reviveFrame.Active = false
-
-	timerLabel = reviveFrame:FindFirstChild("Timer") :: TextLabel?
-	local reviveBtn = reviveFrame:FindFirstChild("Revive Button")
-	local declineBtn = reviveFrame:FindFirstChild("Decline Button")
-	if reviveBtn and reviveBtn:IsA("GuiObject") then
-		reviveBtnHost = reviveBtn
-		local nameLabel = reviveBtn:FindFirstChild("Name")
-		if nameLabel and nameLabel:IsA("TextLabel") then
-			revivePriceLabel = nameLabel
-			priceLabelTemplate = nameLabel.Text
-		end
-	end
-	if declineBtn and declineBtn:IsA("GuiObject") then
-		declineBtnHost = declineBtn
-	end
-
 	resolveSoundTemplates()
 
-	if reviveBtnHost then
-		wireReviveButton(reviveBtnHost, tryRevivePurchase)
-	end
-	if declineBtnHost then
-		wireDeclineButton(declineBtnHost, function()
-			closeRevivePanel(true)
-		end)
-	end
+	local remotes = ReplicatedStorage:WaitForChild("Remotes", 60)
+	revivePromptRE = remotes:WaitForChild("RevivePrompt", 30) :: RemoteEvent
+	reviveDeclinedRE = remotes:WaitForChild("ReviveDeclined", 30) :: RemoteEvent
+	reviveCompleteRE = remotes:WaitForChild("ReviveComplete", 30) :: RemoteEvent
 
-	local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
-	if remotes then
-		revivePromptRE = remotes:WaitForChild("RevivePrompt", 15) :: RemoteEvent
-		reviveDeclinedRE = remotes:WaitForChild("ReviveDeclined", 15) :: RemoteEvent
-		reviveCompleteRE = remotes:WaitForChild("ReviveComplete", 15) :: RemoteEvent
-	end
+	revivePromptRE.OnClientEvent:Connect(function(land: number, productId: number, countdownSec: number?)
+		local duration = if typeof(countdownSec) == "number" then countdownSec else ReviveConfig.COUNTDOWN_SECONDS
+		openRevivePanel(land, productId, duration)
+	end)
 
-	if revivePromptRE then
-		revivePromptRE.OnClientEvent:Connect(function(land: number, productId: number, countdownSec: number?)
-			local duration = if typeof(countdownSec) == "number" then countdownSec else ReviveConfig.COUNTDOWN_SECONDS
-			openRevivePanel(main, land, productId, duration)
-		end)
-	end
-
-	if reviveCompleteRE then
-		reviveCompleteRE.OnClientEvent:Connect(function()
-			if sessionActive then
-				sessionActive = false
-				cancelCountdown()
-				if reviveFrame then
-					reviveFrame.Visible = false
-				end
-				cleanupReviveSession()
-			end
-		end)
-	end
-
-	player.CharacterAdded:Connect(function(character)
-		hookCharacter(character)
+	reviveCompleteRE.OnClientEvent:Connect(function()
 		if sessionActive then
 			sessionActive = false
 			cancelCountdown()
@@ -510,6 +546,23 @@ function ReviveController.init()
 			end
 			cleanupReviveSession()
 		end
+	end)
+
+	task.spawn(function()
+		local playerGui = player:WaitForChild("PlayerGui", 120)
+		local main = playerGui:WaitForChild("Main", 120) :: ScreenGui
+		main.ResetOnSpawn = false
+		local frame = resolveReviveFrame(main)
+		if not frame then
+			warn("[ReviveController] Revive PopUP frame missing at init")
+			return
+		end
+		frame.Visible = false
+		frame.Active = false
+	end)
+
+	player.CharacterAdded:Connect(function(character)
+		hookCharacter(character)
 	end)
 
 	if player.Character then

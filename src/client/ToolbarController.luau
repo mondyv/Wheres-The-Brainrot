@@ -30,6 +30,7 @@ local UserInputService = game:GetService("UserInputService")
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local CarryGate = require(script.Parent.CarryGate)
+local DropTargets = require(script.Parent.ToolbarDropTargets)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 
@@ -403,311 +404,6 @@ local function resolveToggleBackpackVisual(iconHost: GuiObject, btn: GuiButton):
 	return iconHost
 end
 
-local function isTouchPointerInput(): boolean
-	return UserInputService:GetLastInputType() == Enum.UserInputType.Touch
-end
-
-local function screenPointInGui(gui: GuiObject, screen: Vector2): boolean
-	local p = gui.AbsolutePosition
-	local s = gui.AbsoluteSize
-	if s.X <= 0 or s.Y <= 0 then
-		return false
-	end
-	return screen.X >= p.X and screen.X <= p.X + s.X and screen.Y >= p.Y and screen.Y <= p.Y + s.Y
-end
-
-local function screenPointInGuiWithPad(gui: GuiObject, screen: Vector2, pad: number): boolean
-	local p = gui.AbsolutePosition
-	local s = gui.AbsoluteSize
-	if s.X <= 0 or s.Y <= 0 then
-		return false
-	end
-	local padv = Vector2.new(pad, pad)
-	p = p - padv
-	s = s + padv * 2
-	return screen.X >= p.X and screen.X <= p.X + s.X and screen.Y >= p.Y and screen.Y <= p.Y + s.Y
-end
-
-local function hotbarDragDropPadActive(): boolean
-	if hotbarDragBulkHover then
-		return true
-	end
-	if dragGhostGui and pendingToolbarDrag and pendingToolbarDrag.kind == "hotbar" then
-		return true
-	end
-	return false
-end
-
-local function screenPointInHotbarSurface(surface: GuiObject, screen: Vector2): boolean
-	local pad = if hotbarDragDropPadActive() then 14 else 0
-	if pad > 0 then
-		return screenPointInGuiWithPad(surface, screen, pad)
-	end
-	return screenPointInGui(surface, screen)
-end
-
--- Mouse / touch from UserInputService is in viewport space; GuiObject.Absolute* uses full window (see GuiInset).
-local function screenPointWithGuiInset(screen: Vector2): Vector2
-	local inset = GuiService:GetGuiInset()
-	return screen + Vector2.new(inset.X, inset.Y)
-end
-
--- Which hotbar slot (1–9) is under this screen point, if any. Later slots win if rects overlap (Z-order).
--- Always hit-test the full slot surface (the nested Button), not the Icon — otherwise drops land "outside"
--- the icon on the slot chrome and backpack → hotbar never registers.
-local function hotbarSlotIndexUnderPoint(screen: Vector2): number?
-	for si = HOTBAR_INVENTORY_SLOTS, 1, -1 do
-		local slot = slots[si]
-		if not slot or not slot.Visible then
-			continue
-		end
-		local surface = toolSlotSurface(slot)
-		if screenPointInHotbarSurface(surface, screen) then
-			return si
-		end
-	end
-	return nil
-end
-
--- Uses engine hit-testing in viewport space (same family as GetMouseLocation). Resolves hotbar slot even when
--- manual AbsolutePosition math disagrees with the mouse because different ScreenGuis use different GuiInset modes.
-local function ancestorHotbarSlotIndexFromGuiObject(inst: Instance): number?
-	local w: Instance? = inst
-	while w and w ~= playerGui do
-		if w.Parent == hotbar then
-			local n = tonumber(w.Name)
-			if n and n >= 1 and n <= HOTBAR_INVENTORY_SLOTS then
-				return n
-			end
-		end
-		w = w.Parent
-	end
-	return nil
-end
-
-local function hotbarSlotIndexFromGuiHitScan(rawViewport: Vector2): number?
-	local ok, hitsOrErr = pcall(function()
-		return playerGui:GetGuiObjectsAtPosition(rawViewport.X, rawViewport.Y)
-	end)
-	if not ok or typeof(hitsOrErr) ~= "table" then
-		return nil
-	end
-	for _, hit in hitsOrErr :: { Instance } do
-		if dragGhostGui and hit:IsDescendantOf(dragGhostGui) then
-			continue
-		end
-		local idx = ancestorHotbarSlotIndexFromGuiObject(hit)
-		if idx then
-			return idx
-		end
-	end
-	return nil
-end
-
-local function guiInstanceIsUnder(instance: Instance, potentialAncestor: Instance): boolean
-	local w: Instance? = instance
-	while w do
-		if w == potentialAncestor then
-			return true
-		end
-		w = w.Parent
-	end
-	return false
-end
-
-local function pointOverHotbarFromGuiHitScan(rawViewport: Vector2): boolean
-	local ok, hitsOrErr = pcall(function()
-		return playerGui:GetGuiObjectsAtPosition(rawViewport.X, rawViewport.Y)
-	end)
-	if not ok or typeof(hitsOrErr) ~= "table" then
-		return false
-	end
-	for _, hit in hitsOrErr :: { Instance } do
-		if dragGhostGui and hit:IsDescendantOf(dragGhostGui) then
-			continue
-		end
-		if hit:IsA("GuiObject") and guiInstanceIsUnder(hit, hotbar) then
-			return true
-		end
-	end
-	return false
-end
-
--- Try several points: window-space mouse (matches most GuiObject.AbsolutePosition), ghost center, raw viewport.
-local function hotbarSlotIndexFromDropProbes(mouseWindow: Vector2, rawViewport: Vector2, ghostCenter: Vector2?): number?
-	local inset = GuiService:GetGuiInset()
-	local insetVec = Vector2.new(inset.X, inset.Y)
-
-	local guiFirst = hotbarSlotIndexFromGuiHitScan(rawViewport)
-	if guiFirst then
-		return guiFirst
-	end
-	if ghostCenter then
-		local ghostAsViewport = ghostCenter - insetVec
-		local g2 = hotbarSlotIndexFromGuiHitScan(ghostAsViewport)
-		if g2 then
-			return g2
-		end
-	end
-
-	local probes: { Vector2 } = { mouseWindow, screenPointWithGuiInset(rawViewport), rawViewport }
-	if ghostCenter then
-		table.insert(probes, ghostCenter)
-	end
-	for _, pt in probes do
-		local hit = hotbarSlotIndexUnderPoint(pt)
-		if hit then
-			return hit
-		end
-	end
-	return nil
-end
-
--- Hit test for "dropped anywhere on hotbar" (parent + slots).
-local function pointOverHotbarDropZoneOne(screen: Vector2): boolean
-	if screenPointInHotbarSurface(hotbar :: GuiObject, screen) then
-		return true
-	end
-	for i = 1, HOTBAR_INVENTORY_SLOTS do
-		local slot = slots[i]
-		if slot then
-			local surface = toolSlotSurface(slot)
-			if screenPointInHotbarSurface(surface, screen) then
-				return true
-			end
-		end
-	end
-	return false
-end
-
-local function pointOverHotbarDropZoneProbes(dropPoint: Vector2, rawViewport: Vector2): boolean
-	return pointOverHotbarDropZoneOne(dropPoint)
-		or pointOverHotbarDropZoneOne(screenPointWithGuiInset(rawViewport))
-		or pointOverHotbarFromGuiHitScan(rawViewport)
-end
-
-local function isBackpackPanelVisible(): boolean
-	if not isBackpackPanelOpen or not backpackFrameRef then
-		return false
-	end
-	return (backpackFrameRef :: GuiObject).Visible
-end
-
-local function pointOverBackpackFromGuiHitScan(rawViewport: Vector2): boolean
-	local cont = backpackContainer
-	if not cont then
-		return false
-	end
-	local ok, hitsOrErr = pcall(function()
-		return playerGui:GetGuiObjectsAtPosition(rawViewport.X, rawViewport.Y)
-	end)
-	if not ok or typeof(hitsOrErr) ~= "table" then
-		return false
-	end
-	for _, hit in hitsOrErr :: { Instance } do
-		if dragGhostGui and hit:IsDescendantOf(dragGhostGui) then
-			continue
-		end
-		if hit:IsA("GuiObject") and guiInstanceIsUnder(hit, cont :: GuiObject) then
-			return true
-		end
-	end
-	return false
-end
-
-local function pointOverBackpackProbes(dropPoint: Vector2, rawViewport: Vector2): boolean
-	if not isBackpackPanelVisible() then
-		return false
-	end
-	local insetPt = screenPointWithGuiInset(rawViewport)
-	if pointOverBackpackFromGuiHitScan(rawViewport) or pointOverBackpackFromGuiHitScan(insetPt) then
-		return true
-	end
-	if backpackContainer then
-		local cont = backpackContainer :: GuiObject
-		if screenPointInGui(cont, dropPoint) or screenPointInGui(cont, insetPt) then
-			return true
-		end
-	end
-	if backpackGuiFrame then
-		local frame = backpackGuiFrame :: GuiObject
-		if screenPointInGui(frame, dropPoint) or screenPointInGui(frame, insetPt) then
-			return true
-		end
-	end
-	return false
-end
-
--- Drop target for hotbar → backpack (toggle, open panel, or container rows).
-local function pointOverBackpackDropTarget(dropPoint: Vector2, rawViewport: Vector2): boolean
-	if pointOverBackpackProbes(dropPoint, rawViewport) then
-		return true
-	end
-	local insetPt = screenPointWithGuiInset(rawViewport)
-	local probes = { dropPoint, insetPt }
-	if toggleBackpackRef then
-		for _, pt in probes do
-			if screenPointInGui(toggleBackpackRef :: GuiObject, pt) then
-				return true
-			end
-		end
-	end
-	if isBackpackPanelOpen and backpackFrameRef then
-		for _, pt in probes do
-			if screenPointInGui(backpackFrameRef :: GuiObject, pt) then
-				return true
-			end
-		end
-	end
-	return false
-end
-
-local function ancestorBackpackRowIndexFromGuiObject(inst: Instance): number?
-	local cont = backpackContainer
-	if not cont then
-		return nil
-	end
-	local w: Instance? = inst
-	while w and w ~= playerGui do
-		if w.Parent == cont then
-			local n = tonumber(w.Name)
-			if n and n >= 1 and n <= MAX_BACKPACK_BRAINROT_SLOTS then
-				return n
-			end
-		end
-		w = w.Parent
-	end
-	return nil
-end
-
-local function backpackRowIndexFromDropProbes(rawViewport: Vector2, mouseWindow: Vector2, ghostViewport: Vector2?): number?
-	if not isBackpackPanelVisible() then
-		return nil
-	end
-	local probes: { Vector2 } = { rawViewport, mouseWindow }
-	if ghostViewport then
-		table.insert(probes, ghostViewport)
-	end
-	for _, pt in probes do
-		local ok, hitsOrErr = pcall(function()
-			return playerGui:GetGuiObjectsAtPosition(pt.X, pt.Y)
-		end)
-		if not ok or typeof(hitsOrErr) ~= "table" then
-			continue
-		end
-		for _, hit in hitsOrErr :: { Instance } do
-			if dragGhostGui and hit:IsDescendantOf(dragGhostGui) then
-				continue
-			end
-			local slotIdx = ancestorBackpackRowIndexFromGuiObject(hit)
-			if slotIdx then
-				return slotIdx
-			end
-		end
-	end
-	return nil
-end
-
 local function formatEntryIncomeLabel(entry: {
 	name: string,
 	rarity: string?,
@@ -813,41 +509,6 @@ local function matchesBackpackSearch(itemName: string): boolean
 		return true
 	end
 	return string.find(string.lower(itemName), q, 1, true) ~= nil
-end
-
-local function probeDragHoverTargets(
-	mouseWindow: Vector2,
-	rawEnd: Vector2,
-	ghostCenter: Vector2?,
-	ghostViewport: Vector2?
-): (boolean, boolean, boolean)
-	local overBackpackPanel = false
-	if isBackpackPanelOpen and backpackFrameRef then
-		local insetPt = screenPointWithGuiInset(rawEnd)
-		local bp = backpackFrameRef :: GuiObject
-		overBackpackPanel = screenPointInGui(bp, mouseWindow) or screenPointInGui(bp, insetPt)
-			or pointOverBackpackFromGuiHitScan(rawEnd) or pointOverBackpackFromGuiHitScan(insetPt)
-		if ghostCenter then
-			local ghostInset = screenPointWithGuiInset(ghostCenter)
-			overBackpackPanel = overBackpackPanel
-				or screenPointInGui(bp, ghostCenter)
-				or screenPointInGui(bp, ghostInset)
-				or pointOverBackpackFromGuiHitScan(ghostCenter)
-		end
-		if ghostViewport then
-			overBackpackPanel = overBackpackPanel or pointOverBackpackFromGuiHitScan(ghostViewport)
-		end
-	end
-	local overHotbar = not overBackpackPanel
-		and (
-			hotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter) ~= nil
-				or pointOverHotbarDropZoneProbes(mouseWindow, rawEnd)
-				or (ghostCenter ~= nil and pointOverHotbarDropZoneProbes(ghostCenter, rawEnd))
-				or (ghostViewport ~= nil and pointOverHotbarFromGuiHitScan(ghostViewport))
-		)
-	local overBackpack = pointOverBackpackDropTarget(mouseWindow, rawEnd)
-		or (ghostCenter ~= nil and pointOverBackpackDropTarget(ghostCenter, rawEnd))
-	return overHotbar, overBackpack, overBackpackPanel
 end
 
 local function resetBackpackDragHover()
@@ -2460,6 +2121,39 @@ function ToolbarController.init()
 
 	ensureHotbarLayoutPassthrough()
 
+	DropTargets.configure({
+		playerGui = playerGui,
+		hotbar = hotbar,
+		slots = slots,
+		hotbarInventorySlots = HOTBAR_INVENTORY_SLOTS,
+		maxBackpackSlots = MAX_BACKPACK_BRAINROT_SLOTS,
+		getDragGhostGui = function()
+			return dragGhostGui
+		end,
+		getPendingToolbarDrag = function()
+			return pendingToolbarDrag
+		end,
+		getHotbarDragBulkHover = function()
+			return hotbarDragBulkHover
+		end,
+		getBackpackContainer = function()
+			return backpackContainer
+		end,
+		getBackpackGuiFrame = function()
+			return backpackGuiFrame
+		end,
+		getBackpackFrameRef = function()
+			return backpackFrameRef
+		end,
+		getToggleBackpackRef = function()
+			return toggleBackpackRef
+		end,
+		getIsBackpackPanelOpen = function()
+			return isBackpackPanelOpen
+		end,
+		toolSlotSurface = toolSlotSurface,
+	})
+
 	-- Tap / hover: nested `Button` (SideUI.Toolbar.Hotbar[n].Button) or slot is the button.
 	-- Mobile: only `Activated` selects/equips; parent frames must not capture touch input.
 	for i, slot in ipairs(slots) do
@@ -2491,7 +2185,7 @@ function ToolbarController.init()
 				if not canUseToolbar then
 					return
 				end
-				if isTouchPointerInput() then
+				if DropTargets.isTouchPointerInput() then
 					return
 				end
 				UIInteractionSounds.playClick()
@@ -2706,7 +2400,7 @@ function ToolbarController.init()
 				if not pnd.rowButton then
 					return
 				end
-				local ownerRow = ancestorBackpackRowIndexFromGuiObject(pnd.rowButton :: GuiObject)
+				local ownerRow = DropTargets.ancestorBackpackRowIndexFromGuiObject(pnd.rowButton :: GuiObject)
 				if not ownerRow then
 					return
 				end
@@ -2723,7 +2417,7 @@ function ToolbarController.init()
 						if not hit:IsA("GuiObject") then
 							continue
 						end
-						local rowUnder = ancestorBackpackRowIndexFromGuiObject(hit)
+						local rowUnder = DropTargets.ancestorBackpackRowIndexFromGuiObject(hit)
 						if rowUnder then
 							if rowUnder == ownerRow then
 								allowGhost = true
@@ -2740,11 +2434,11 @@ function ToolbarController.init()
 			end
 			startDragGhost(pnd.texture, m)
 			local probeEnd = m
-			local probeWindow = screenPointWithGuiInset(probeEnd)
+			local probeWindow = DropTargets.screenPointWithGuiInset(probeEnd)
 			local ghostCenter = if dragGhostImage
 				then dragGhostImage.AbsolutePosition + dragGhostImage.AbsoluteSize * 0.5
 				else nil
-			local overHotbar, overBackpack, overBackpackPanel = probeDragHoverTargets(
+			local overHotbar, overBackpack, overBackpackPanel = DropTargets.probeDragHoverTargets(
 				probeWindow,
 				probeEnd,
 				ghostCenter,
@@ -2757,7 +2451,7 @@ function ToolbarController.init()
 		if input.UserInputType == Enum.UserInputType.Touch then
 			rawEnd = Vector2.new(input.Position.X, input.Position.Y)
 		end
-		local mouseWindow = screenPointWithGuiInset(rawEnd)
+		local mouseWindow = DropTargets.screenPointWithGuiInset(rawEnd)
 		local ghostCenter: Vector2? = nil
 		if dragGhostImage then
 			ghostCenter = dragGhostImage.AbsolutePosition + dragGhostImage.AbsoluteSize * 0.5
@@ -2765,7 +2459,7 @@ function ToolbarController.init()
 		local ghostViewport = if ghostCenter
 			then ghostCenter - Vector2.new(GuiService:GetGuiInset().X, GuiService:GetGuiInset().Y)
 			else nil
-		local overHotbar, overBackpack, overBackpackPanel = probeDragHoverTargets(
+		local overHotbar, overBackpack, overBackpackPanel = DropTargets.probeDragHoverTargets(
 			mouseWindow,
 			rawEnd,
 			ghostCenter,
@@ -2805,14 +2499,14 @@ function ToolbarController.init()
 			clearDragGhost()
 			return
 		end
-		local mouseWindow = screenPointWithGuiInset(rawEnd)
+		local mouseWindow = DropTargets.screenPointWithGuiInset(rawEnd)
 		local ghostCenter: Vector2? = nil
 		if dragGhostImage then
 			ghostCenter = dragGhostImage.AbsolutePosition + dragGhostImage.AbsoluteSize * 0.5
 		end
 		local insetProbe = GuiService:GetGuiInset()
 		local ghostViewport = if ghostCenter then ghostCenter - Vector2.new(insetProbe.X, insetProbe.Y) else nil
-		local destBackpackRow = backpackRowIndexFromDropProbes(rawEnd, mouseWindow, ghostViewport)
+		local destBackpackRow = DropTargets.backpackRowIndexFromDropProbes(rawEnd, mouseWindow, ghostViewport)
 		clearDragGhost()
 		dragSuppressedToolbarClick = true
 
@@ -2822,17 +2516,17 @@ function ToolbarController.init()
 			return
 		end
 
-		local overBackpack = pointOverBackpackDropTarget(mouseWindow, rawEnd)
-			or (ghostCenter ~= nil and pointOverBackpackDropTarget(ghostCenter, rawEnd))
-			or (ghostViewport ~= nil and pointOverBackpackFromGuiHitScan(ghostViewport))
+		local overBackpack = DropTargets.pointOverBackpackDropTarget(mouseWindow, rawEnd)
+			or (ghostCenter ~= nil and DropTargets.pointOverBackpackDropTarget(ghostCenter, rawEnd))
+			or (ghostViewport ~= nil and DropTargets.pointOverBackpackFromGuiHitScan(ghostViewport))
 		local targetHotbar: number? = nil
 		if not overBackpack then
-			targetHotbar = hotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter)
+			targetHotbar = DropTargets.hotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter)
 		end
 		local overHotbar = targetHotbar ~= nil
-			or pointOverHotbarDropZoneProbes(mouseWindow, rawEnd)
-			or (ghostCenter ~= nil and pointOverHotbarDropZoneProbes(ghostCenter, rawEnd))
-			or (ghostViewport ~= nil and pointOverHotbarFromGuiHitScan(ghostViewport))
+			or DropTargets.pointOverHotbarDropZoneProbes(mouseWindow, rawEnd)
+			or (ghostCenter ~= nil and DropTargets.pointOverHotbarDropZoneProbes(ghostCenter, rawEnd))
+			or (ghostViewport ~= nil and DropTargets.pointOverHotbarFromGuiHitScan(ghostViewport))
 
 		if pnd.kind == "hotbar" then
 			local hasEntry = brainrotEntries[pnd.idx] and not brainrotParkedInUI[pnd.idx]

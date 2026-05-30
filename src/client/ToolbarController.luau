@@ -13,7 +13,7 @@
 
 	Hotbar slots may use nested `Button` (e.g. Hotbar["1"].Button.Icon).
 	Brainrot pickups: tuck/untuck via drag; ghost drag; search; backpack frame outline + open/close tweens.
-	Backpack UI rows 1..19 mirror the full inventory list in order (scroll for overflow).
+	Backpack UI rows 1..19 show stashed items in dense order (tucked hotbar slots + list indices >9); row labels use server list index.
 
 	Toolbar UI access: spawn safe zone (SafeZoneHitbox / Reddie / Raddie) and RedWall deposit area.
 --]]
@@ -723,30 +723,56 @@ local function findBackpackChild(frame: Instance, name: string): Instance?
 	return nil
 end
 
+local BACKPACK_CHROME_NAMES = { "BackpackButtons", "OtherButtons", "SortButtons", "SortCatagory", "SortCategory" }
+
+local function detachBackpackChromeFromFadeRoot(frame: GuiObject)
+	local fadeRoot = frame:FindFirstChild("_BackpackFadeRoot")
+	if not fadeRoot then
+		return
+	end
+	for _, name in BACKPACK_CHROME_NAMES do
+		local ch = fadeRoot:FindFirstChild(name)
+		if ch then
+			ch.Parent = frame
+		end
+	end
+end
+
 local function ensureBackpackChromeVisible(frame: GuiObject)
 	frame.ClipsDescendants = false
-	local chromeNames = { "BackpackButtons", "OtherButtons", "SortButtons", "SortCatagory", "SortCategory", "Container" }
-	for _, name in chromeNames do
-		local ch = findBackpackChild(frame, name)
+	detachBackpackChromeFromFadeRoot(frame)
+	for _, name in BACKPACK_CHROME_NAMES do
+		local ch = frame:FindFirstChild(name) or findBackpackChild(frame, name)
 		if ch and ch:IsA("GuiObject") then
 			local gui = ch :: GuiObject
 			gui.Visible = true
 			disableGuiInputCapture(gui)
+			if gui.ZIndex < 4 then
+				gui.ZIndex = 4
+			end
 		end
 	end
-	local otherButtons = findBackpackChild(frame, "OtherButtons")
+	local otherButtons = frame:FindFirstChild("OtherButtons")
 	if otherButtons then
 		local equipBest = otherButtons:FindFirstChild("EquipBest")
 		if equipBest and equipBest:IsA("GuiObject") then
-			(equipBest :: GuiObject).Visible = true
+			local bestGui = equipBest :: GuiObject
+			bestGui.Visible = true
+			if bestGui.ZIndex < 5 then
+				bestGui.ZIndex = 5
+			end
 		end
+	end
+	local container = findBackpackChild(frame, "Container")
+	if container and container:IsA("GuiObject") then
+		(container :: GuiObject).Visible = true
 	end
 end
 
 local function rebuildBackpackDisplayOrder()
 	backpackDisplayOrder = {}
 	for ki = 1, #brainrotEntries do
-		if brainrotEntries[ki] then
+		if brainrotEntries[ki] and (ki > HOTBAR_INVENTORY_SLOTS or brainrotParkedInUI[ki]) then
 			table.insert(backpackDisplayOrder, ki)
 		end
 	end
@@ -902,7 +928,16 @@ local function ensureBackpackFadeRoot(frame: GuiObject): CanvasGroup
 	cg.Parent = frame
 	for _, ch in toMove do
 		if ch ~= cg then
-			ch.Parent = cg
+			local skip = false
+			for _, name in BACKPACK_CHROME_NAMES do
+				if ch.Name == name then
+					skip = true
+					break
+				end
+			end
+			if not skip then
+				ch.Parent = cg
+			end
 		end
 	end
 	backpackFadeRoot = cg
@@ -1189,90 +1224,9 @@ end
 
 -- ── Slot highlight ────────────────────────────────────────────────────────────
 
--- Selection ring = UIStroke on the slot button; fill = Decor.Highlight / Selection in the Studio template.
+-- Selection = UIStroke only. Never touch the slot's own Image / ImageColor3 (that's the slot art designed in Studio).
 local SLOT_STROKE_SELECTED = 0
 local SLOT_STROKE_IDLE = 0.6
-local SLOT_SELECTION_LIT_BG_TRANSPARENCY = 0.4
-local SLOT_SELECTION_LIT_IMAGE_TRANSPARENCY = 0.4
-
-type SlotSelectionLayerDefaults = {
-	bgTransparency: number,
-	imageTransparency: number?,
-}
-
-local slotSelectionDefaults: { [GuiObject]: SlotSelectionLayerDefaults } = {}
-
-local function resolveHotbarSlotSelectionLayer(slot: GuiObject, btn: GuiObject?): GuiObject?
-	local candidates: { Instance? } = {}
-	if btn then
-		local decor = btn:FindFirstChild("Decor")
-		if decor then
-			table.insert(candidates, decor:FindFirstChild("Selection"))
-			table.insert(candidates, decor:FindFirstChild("Highlight"))
-			table.insert(candidates, decor:FindFirstChild("Selected"))
-		end
-		table.insert(candidates, btn:FindFirstChild("Selection"))
-		table.insert(candidates, btn:FindFirstChild("Highlight"))
-		table.insert(candidates, btn:FindFirstChild("Selected"))
-	end
-	table.insert(candidates, slot:FindFirstChild("Selection"))
-	table.insert(candidates, slot:FindFirstChild("Highlight"))
-	table.insert(candidates, slot:FindFirstChild("Selected"))
-	for _, candidate in candidates do
-		if candidate and candidate:IsA("GuiObject") then
-			return candidate :: GuiObject
-		end
-	end
-	for _, desc in slot:GetDescendants() do
-		if not desc:IsA("GuiObject") then
-			continue
-		end
-		if desc.Name ~= "Selection" and desc.Name ~= "Highlight" and desc.Name ~= "Selected" then
-			continue
-		end
-		if desc.Name == "Highlight" and desc:FindFirstChild("RarityStroke", true) then
-			continue
-		end
-		return desc :: GuiObject
-	end
-	return nil
-end
-
-local function captureSlotSelectionDefaults(layer: GuiObject): SlotSelectionLayerDefaults
-	local cached = slotSelectionDefaults[layer]
-	if cached then
-		return cached
-	end
-	local litBg = layer.BackgroundTransparency
-	local litImg: number? = nil
-	if layer:IsA("ImageLabel") or layer:IsA("ImageButton") then
-		litImg = (layer :: ImageLabel).ImageTransparency
-	end
-	local defaults: SlotSelectionLayerDefaults = {
-		bgTransparency = if litBg < 0.95 then litBg else SLOT_SELECTION_LIT_BG_TRANSPARENCY,
-		imageTransparency = if litImg and litImg < 0.95 then litImg else SLOT_SELECTION_LIT_IMAGE_TRANSPARENCY,
-	}
-	slotSelectionDefaults[layer] = defaults
-	return defaults
-end
-
-local function applySlotSelectionLayer(layer: GuiObject, lit: boolean)
-	local defaults = captureSlotSelectionDefaults(layer)
-	layer.Visible = true
-	local props: { [string]: number } = {}
-	if layer:IsA("ImageLabel") or layer:IsA("ImageButton") then
-		props.ImageTransparency = if lit then (defaults.imageTransparency or SLOT_SELECTION_LIT_IMAGE_TRANSPARENCY) else 1
-	else
-		props.BackgroundTransparency = if lit then defaults.bgTransparency else 1
-	end
-	TweenService:Create(layer, HIGHLIGHT_TWEEN, props):Play()
-	local layerStroke = layer:FindFirstChildOfClass("UIStroke")
-	if layerStroke then
-		TweenService:Create(layerStroke, HIGHLIGHT_TWEEN, {
-			Transparency = if lit then SLOT_STROKE_SELECTED else 1,
-		}):Play()
-	end
-end
 
 local function applyButtonSelectionStyle(btn: GuiObject, lit: boolean)
 	local stroke = btn:FindFirstChildOfClass("UIStroke")
@@ -1292,27 +1246,9 @@ local function setSlotHighlight(index: number?, lit: boolean)
 	local btn = slotPrimaryButton(slot)
 	if btn then
 		applyButtonSelectionStyle(btn :: GuiObject, lit)
-		local selectionLayer = resolveHotbarSlotSelectionLayer(slot, btn :: GuiObject)
-		if selectionLayer then
-			applySlotSelectionLayer(selectionLayer, lit)
-		end
 	end
 	local scale = getOrAddUIScale(hotbarSlotScaleHost(slot))
 	TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = if lit then 1.08 else 1.0 }):Play()
-end
-
-local function primeHotbarSlotSelectionLayers()
-	for i, slot in ipairs(slots) do
-		local btn = slotPrimaryButton(slot)
-		if not btn then
-			continue
-		end
-		local selectionLayer = resolveHotbarSlotSelectionLayer(slot, btn :: GuiObject)
-		if selectionLayer then
-			captureSlotSelectionDefaults(selectionLayer)
-			applySlotSelectionLayer(selectionLayer, false)
-		end
-	end
 end
 
 local function resetAllSlotsToIdle()
@@ -1407,12 +1343,6 @@ refreshSlotVisual = function(index: number)
 			rate.Text = formatEntryIncomeLabel(e)
 		end
 	else
-		local btn = slotPrimaryButton(slot)
-		if isBackpackPanelOpen and btn then
-			applyBackpackSlotPanelAppearance(btn, true)
-		elseif btn then
-			applyBackpackSlotPanelAppearance(btn, false)
-		end
 		if icon and icon:IsA("ImageLabel") then
 			icon.ScaleType = Enum.ScaleType.Fit
 			icon.BackgroundTransparency = 1
@@ -1913,13 +1843,19 @@ local function wireEquipBestButton(backpackFrame: Instance)
 	if equipBestWired then
 		return
 	end
-	local otherButtons = findBackpackChild(backpackFrame, "OtherButtons")
+	local frameGui = if backpackFrame:IsA("GuiObject") then backpackFrame :: GuiObject else nil
+	if frameGui then
+		ensureBackpackChromeVisible(frameGui)
+	end
+	local otherButtons = backpackFrame:FindFirstChild("OtherButtons") or findBackpackChild(backpackFrame, "OtherButtons")
 	local equipBestInst = otherButtons and otherButtons:FindFirstChild("EquipBest")
 	if not equipBestInst or not equipBestInst:IsA("GuiObject") then
+		warn("[ToolbarController] EquipBest button not found under Backpack.OtherButtons")
 		return
 	end
 	local btn = resolveBackpackActionButton(equipBestInst :: GuiObject)
 	if not btn then
+		warn("[ToolbarController] EquipBest has no GuiButton")
 		return
 	end
 	equipBestWired = true
@@ -2390,7 +2326,6 @@ function ToolbarController.init()
 		end)
 	end
 
-	primeHotbarSlotSelectionLayers()
 	resetAllSlotsToIdle()
 	bindToolbarHotbarKeybinds()
 

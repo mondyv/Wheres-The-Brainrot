@@ -116,6 +116,10 @@ local DRAG_THRESHOLD_PX = 14
 local DRAG_GHOST_THRESHOLD_PX = 6
 -- Shared scale for "whole hotbar" hover while dragging toward slots (slightly subtler than per-slot hover).
 local HOTBAR_BULK_DRAG_HOVER_SCALE = 1.06
+-- Hotbar + backpack-toggle icon display (mobile-friendly touch targets).
+local HOTBAR_UI_SCALE = 1.4
+local HOTBAR_MIN_SLOT_PX = 68
+local TOGGLE_BACKPACK_ICON_TINT = Color3.fromRGB(255, 255, 255)
 
 local backpackSearchText: string = ""
 
@@ -318,6 +322,22 @@ local function styleToolbarSlotButton(btn: GuiButton)
 	local icon = btn:FindFirstChild("Icon")
 	if icon and icon:IsA("ImageLabel") then
 		icon.ScaleType = Enum.ScaleType.Fit
+	end
+end
+
+local function styleToggleBackpackIcon(btn: GuiButton)
+	enableGuiButtonInput(btn)
+	if btn:IsA("ImageButton") then
+		btn.AutoButtonColor = false
+		btn.ImageColor3 = TOGGLE_BACKPACK_ICON_TINT
+		btn.ImageTransparency = 0
+	end
+	for _, d in btn:GetDescendants() do
+		if d:IsA("ImageLabel") then
+			d.ImageColor3 = TOGGLE_BACKPACK_ICON_TINT
+			d.ImageTransparency = 0
+			d.ScaleType = Enum.ScaleType.Fit
+		end
 	end
 end
 
@@ -1160,6 +1180,33 @@ local function ensureHotbarListLayout(): UIListLayout
 	return layout
 end
 
+local function hotbarSlotTargetSize(): UDim2
+	local ref = slots[1]
+	if ref and ref:IsA("GuiObject") then
+		local sz = (ref :: GuiObject).Size
+		if sz.X.Offset >= HOTBAR_MIN_SLOT_PX and sz.Y.Offset >= HOTBAR_MIN_SLOT_PX then
+			return sz
+		end
+	end
+	return UDim2.fromOffset(HOTBAR_MIN_SLOT_PX, HOTBAR_MIN_SLOT_PX)
+end
+
+local function applyHotbarDisplayScale()
+	local sc = getOrAddUIScale(hotbar)
+	sc.Scale = HOTBAR_UI_SCALE
+	local layout = ensureHotbarListLayout()
+	layout.Padding = UDim.new(0, 8)
+	local targetSize = hotbarSlotTargetSize()
+	for _, slot in ipairs(slots) do
+		if slot and slot:IsA("GuiObject") then
+			(slot :: GuiObject).Size = targetSize
+		end
+	end
+	if toggleBackpackIconRef and toggleBackpackIconRef:IsA("GuiObject") then
+		(toggleBackpackIconRef :: GuiObject).Size = targetSize
+	end
+end
+
 local function updateHotbarSlotVisibility()
 	ensureHotbarListLayout()
 	for i = 1, #slots do
@@ -1207,8 +1254,9 @@ local function wireToggleBackpackIcon()
 
 	disableGuiInputCapture(iconHost)
 	enableGuiButtonInput(btn)
-	styleToolbarSlotButton(btn)
+	styleToggleBackpackIcon(btn)
 	UIButtonEffects.wireScaleButtonAnim(btn, toggleBackpackPanel)
+	applyHotbarDisplayScale()
 end
 
 -- ── Tool assignment ───────────────────────────────────────────────────────────
@@ -1841,6 +1889,7 @@ function ToolbarController.init()
 	end
 
 	ensureHotbarLayoutPassthrough()
+	applyHotbarDisplayScale()
 
 	-- Tap / hover: nested `Button` (SideUI.Toolbar.Hotbar[n].Button) or slot is the button.
 	-- Mobile: only `Activated` selects/equips; parent frames must not capture touch input.

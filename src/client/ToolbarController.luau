@@ -316,9 +316,7 @@ local function styleToolbarSlotButton(btn: GuiButton)
 end
 
 local function isTouchPointerInput(): boolean
-	local last = UserInputService:GetLastInputType()
-	return last == Enum.UserInputType.Touch
-		or last == Enum.UserInputType.TouchTap
+	return UserInputService:GetLastInputType() == Enum.UserInputType.Touch
 end
 
 local function screenPointInGui(gui: GuiObject, screen: Vector2): boolean
@@ -1331,7 +1329,6 @@ local function wireBrainrotBackpackEquips()
 				if not listIdx or not entry then
 					return
 				end
-				requestMoveBackpackEntryToHotbar(listIdx)
 				UIInteractionSounds.playClick()
 				local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
 				activeToolbarDrag = true
@@ -1341,7 +1338,7 @@ local function wireBrainrotBackpackEquips()
 					start = UserInputService:GetMouseLocation(),
 					texture = tex,
 					rowButton = btn,
-					equippedOnDown = true,
+					equippedOnDown = false,
 				}
 			end)
 		end
@@ -2064,6 +2061,9 @@ function ToolbarController.init()
 			rawEnd = Vector2.new(input.Position.X, input.Position.Y)
 		end
 		if (rawEnd - pnd.start).Magnitude < DRAG_THRESHOLD_PX then
+			if pnd.kind == "backpack" then
+				requestMoveBackpackEntryToHotbar(pnd.idx)
+			end
 			clearDragGhost()
 			return
 		end
@@ -2102,14 +2102,8 @@ function ToolbarController.init()
 				return
 			end
 			if overBackpack and isBackpackPanelVisible() then
-				-- Hotbar → backpack panel: tuck (hide from hotbar, show in expanded backpack).
-				rebuildBackpackDisplayOrder()
-				local destListIdx = #backpackDisplayOrder + 1
-				(parkEv :: RemoteEvent):FireServer(pnd.idx, true, nil, destListIdx)
-				brainrotParkedInUI[pnd.idx] = true
-				rebuildBackpackDisplayOrder()
-				refreshBrainrotBackpackUI()
-				rebuildSlots()
+				-- Hotbar → backpack panel: tuck (server sync updates UI).
+				(parkEv :: RemoteEvent):FireServer(pnd.idx, true)
 				UIInteractionSounds.playClick()
 			elseif targetHotbar and targetHotbar ~= pnd.idx then
 				-- Hotbar → hotbar swap.
@@ -2122,11 +2116,9 @@ function ToolbarController.init()
 				return
 			end
 			if overHotbar then
-				if not pnd.equippedOnDown then
-					-- Backpack → hotbar: server assigns lowest free slot 1..9 (no slot memory).
-					(parkEv :: RemoteEvent):FireServer(pnd.idx, false)
-					UIInteractionSounds.playClick()
-				end
+				-- Backpack → hotbar: server assigns lowest free slot 1..9 (no slot memory).
+				(parkEv :: RemoteEvent):FireServer(pnd.idx, false)
+				UIInteractionSounds.playClick()
 			elseif overBackpack and destBackpackRow then
 				local destListIdx = listIndexForBackpackUiRow(destBackpackRow)
 				if not destListIdx then

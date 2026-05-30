@@ -32,13 +32,14 @@ local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local CarryGate = require(script.Parent.CarryGate)
 local DropTargets = require(script.Parent.ToolbarDropTargets)
+local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 
 local player    = Players.LocalPlayer
 
-local playerGui = player.PlayerGui
-local mainGui   = playerGui:WaitForChild("Main")
+local playerGui = player:WaitForChild("PlayerGui")
+local mainGui   = PlayerGuiMain.ensure(player)
 local sideUI    = mainGui:WaitForChild("SideUI")
 local toolbar   = sideUI:WaitForChild("Toolbar")
 local hotbar    = toolbar:WaitForChild("Hotbar")

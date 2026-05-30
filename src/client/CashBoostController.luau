@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CashBoostUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("CashBoostUtil"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -29,11 +30,7 @@ local function bindAttribute(attr: string)
 end
 
 local function init()
-	if not player.Character then
-		player.CharacterAdded:Wait()
-	end
-
-	local main = playerGui:WaitForChild("Main", 120)
+	local main = PlayerGuiMain.ensure(player)
 	if not main then
 		warn("[CashBoostController] Main ScreenGui missing")
 		return

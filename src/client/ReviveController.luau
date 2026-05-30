@@ -13,6 +13,7 @@ local TweenService = game:GetService("TweenService")
 
 local HUDController = require(script.Parent.HUDController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 
 local player = Players.LocalPlayer
@@ -204,13 +205,10 @@ local function hideBlur()
 end
 
 local function resolveMainGui(): ScreenGui?
-	local playerGui = player:FindFirstChild("PlayerGui")
-	if not playerGui then
-		return nil
-	end
-	local main = playerGui:FindFirstChild("Main")
-	if main and main:IsA("ScreenGui") then
-		main.ResetOnSpawn = false
+	local ok, main = pcall(function()
+		return PlayerGuiMain.ensure(player)
+	end)
+	if ok and main and main:IsA("ScreenGui") then
 		return main
 	end
 	return nil
@@ -549,9 +547,7 @@ function ReviveController.init()
 	end)
 
 	task.spawn(function()
-		local playerGui = player:WaitForChild("PlayerGui", 120)
-		local main = playerGui:WaitForChild("Main", 120) :: ScreenGui
-		main.ResetOnSpawn = false
+		local main = PlayerGuiMain.ensure(player)
 		local frame = resolveReviveFrame(main)
 		if not frame then
 			warn("[ReviveController] Revive PopUP frame missing at init")

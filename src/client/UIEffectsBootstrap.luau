@@ -2,16 +2,14 @@
 local Players = game:GetService("Players")
 
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
 
 local M = {}
 
 function M.init()
-	if not player.Character then
-		player.CharacterAdded:Wait()
-	end
-	local main = player:WaitForChild("PlayerGui"):WaitForChild("Main", 120)
+	local main = PlayerGuiMain.ensure(player)
 	local frames = main:WaitForChild("Frames", 30)
 	if not frames then
 		return

@@ -990,7 +990,6 @@ local function setBackpackPanelOpen(open: boolean)
 	end
 	if open and isBackpackPanelOpen then
 		ensureBackpackChromeVisible(backpackFrameRef :: GuiObject)
-		syncHotbarWithBackpackPanel()
 		return
 	end
 	isBackpackPanelOpen = open
@@ -1023,7 +1022,6 @@ local function setBackpackPanelOpen(open: boolean)
 			refreshSlotVisual(i)
 		end
 		refreshBrainrotBackpackUI()
-		syncHotbarWithBackpackPanel()
 	else
 		backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.9 })
 		backpackPanelFadeTween = TweenService:Create(fadeRoot, BACKPACK_CLOSE_TWEEN, { GroupTransparency = 1 })
@@ -1046,7 +1044,6 @@ local function setBackpackPanelOpen(open: boolean)
 				for i = 1, #slots do
 					refreshSlotVisual(i)
 				end
-				syncHotbarWithBackpackPanel()
 			end
 			if backpackPanelFadeTween and state == Enum.PlaybackState.Completed then
 				backpackPanelFadeTween = nil
@@ -1379,46 +1376,6 @@ local function hotbarSlotIsOccupied(index: number): boolean
 end
 
 local hotbarListLayout: UIListLayout? = nil
-local hotbarOrigAnchorPoint: Vector2? = nil
-local hotbarOrigPosition: UDim2? = nil
-local hotbarOrigSize: UDim2? = nil
-
-local function captureHotbarLayoutDefaults()
-	if hotbarOrigPosition then
-		return
-	end
-	hotbarOrigAnchorPoint = hotbar.AnchorPoint
-	hotbarOrigPosition = hotbar.Position
-	hotbarOrigSize = hotbar.Size
-end
-
-local function syncHotbarWithBackpackPanel()
-	captureHotbarLayoutDefaults()
-	if not hotbarOrigPosition or not hotbarOrigSize or not hotbarOrigAnchorPoint then
-		return
-	end
-	if isBackpackPanelOpen and backpackFrameRef then
-		local bp = backpackFrameRef :: GuiObject
-		hotbar.AnchorPoint = Vector2.new(0.5, hotbarOrigAnchorPoint.Y)
-		hotbar.Position = UDim2.new(
-			bp.Position.X.Scale,
-			bp.Position.X.Offset,
-			hotbarOrigPosition.Y.Scale,
-			hotbarOrigPosition.Y.Offset
-		)
-		hotbar.Size = UDim2.new(
-			bp.Size.X.Scale,
-			bp.Size.X.Offset,
-			hotbarOrigSize.Y.Scale,
-			hotbarOrigSize.Y.Offset
-		)
-	else
-		hotbar.AnchorPoint = hotbarOrigAnchorPoint
-		hotbar.Position = hotbarOrigPosition
-		hotbar.Size = hotbarOrigSize
-	end
-	task.defer(refreshToggleBackpackIconLayout)
-end
 
 local function ensureHotbarListLayout(): UIListLayout
 	if hotbarListLayout and hotbarListLayout.Parent == hotbar then
@@ -1648,7 +1605,8 @@ local function wireToggleBackpackIcon()
 	if tiltTarget ~= iconHost then
 		prepareToggleTiltPivot(tiltTarget)
 	end
-	UIButtonEffects.wireTiltHoverButton(btn, toggleBackpackPanel, iconHost, tiltTarget, true)
+	-- Tilt + scale hover only (no glisten/spin polish).
+	UIButtonEffects.wireTiltHoverButton(btn, toggleBackpackPanel, iconHost, tiltTarget, false)
 	wireToggleBackpackIconResizeSync()
 	task.defer(refreshToggleBackpackIconLayout)
 end
@@ -2294,7 +2252,6 @@ function ToolbarController.init()
 	getOrAddUIScale(hotbar).Scale = 1
 
 	ensureHotbarListLayout()
-	captureHotbarLayoutDefaults()
 
 	-- Collect slot references (named "1" through "9" inside Hotbar)
 	for i = 1, 9 do

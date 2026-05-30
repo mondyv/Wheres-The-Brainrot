@@ -1,0 +1,1748 @@
+--[[
+	LoadingScreenController — full-screen join overlay:
+	fixed map camera, blur, GameNameImage, LoadingFrame bar; hides other PlayerGui until ready.
+	StarterGui.LoadingScreen: Camera (optional), GameNameImage, LoadingFrame.
+	Moon Animator export: LoadingScreen.Camera["Camera loading"] (Frames / FOV / Settings).
+--]]
+
+local ContentProvider = game:GetService("ContentProvider")
+local HttpService = game:GetService("HttpService")
+local Lighting = game:GetService("Lighting")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local MIN_DISPLAY_SEC = 5.5
+local HOLD_AT_FULL_SEC = 0.4
+local FADE_OUT_SEC = 0.9
+local BAR_LERP_SPEED = 1.75
+local FADE_TWEEN_INFO = TweenInfo.new(FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+local RESOLVE_TIMEOUT = 45
+
+local DEFAULT_CAMERA_POS = Vector3.new(1452.568, 100.564, 518.559)
+local DEFAULT_CAMERA_RAD = Vector3.new(math.rad(4.555), math.rad(18.409), 0)
+
+local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
+	Enum.CoreGuiType.Backpack,
+	Enum.CoreGuiType.Chat,
+	Enum.CoreGuiType.EmotesMenu,
+	Enum.CoreGuiType.Health,
+	Enum.CoreGuiType.PlayerList,
+}
+
+local BAR_BG_DARK = Color3.fromRGB(72, 42, 22)
+local BAR_BG_STUD_TINT = Color3.fromRGB(58, 34, 18)
+local BAR_FILL_COLOR = Color3.fromRGB(255, 198, 48)
+local BAR_FILL_STUD_TINT = Color3.fromRGB(255, 228, 88)
+local OVERLAY_COLOR = Color3.fromRGB(12, 8, 6)
+local STUD_SOURCE_NAMES = { "Stud TextureDecal", "Stud Texture", "StudTexture" }
+
+local NAME_ANIM_SPEED = 0.62
+local NAME_SCALE_AMOUNT = 0.028
+local NAME_TILT_AMOUNT = 2.4
+local NAME_ANIM_SMOOTH = 7.5
+local TITLE_DISPLAY_SCALE = 1.28
+local TITLE_MAX_WIDTH_MOBILE = 720
+local TITLE_MAX_WIDTH_DESKTOP = 1180
+local BAR_PLACEHOLDER_SHRINK = 0.992
+
+local BAR_MIN_FILL_SCALE = 0.03
+local DEFAULT_STUD_TILE_PX = 72
+local STUD_TILE_MIN_PX = 56
+local STUD_TILE_MAX_PX = 200
+
+local LOGO_NAMES = { "GameNameImage", "ImageLabel" }
+local MOON_CAMERA_EXPORT_NAMES = { "Camera loading", "Camera Loading", "CameraLoading" }
+
+local M = {}
+
+local PlotPaths: any = nil
+local savedGuiStates: { [ScreenGui]: boolean }? = nil
+local playerGuiChildConn: RBXScriptConnection? = nil
+local loadingActive = false
+local activeBlurEffect: BlurEffect? = nil
+local stopNameAnim: (() -> ())? = nil
+local stopCameraLock: (() -> ())? = nil
+local fadeCanvas: CanvasGroup? = nil
+
+local function getPlotPaths()
+	if PlotPaths then
+		return PlotPaths
+	end
+	local shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared", 120)
+	PlotPaths = require(shared:WaitForChild("PlotPaths"))
+	return PlotPaths
+end
+
+local function defaultLoadingCFrame(): CFrame
+	return CFrame.new(DEFAULT_CAMERA_POS) * CFrame.fromOrientation(DEFAULT_CAMERA_RAD.X, DEFAULT_CAMERA_RAD.Y, DEFAULT_CAMERA_RAD.Z)
+end
+
+local function findReferenceCamera(root: Instance?): Camera?
+	if not root then
+		return nil
+	end
+	local cam = root:FindFirstChild("Camera")
+	if cam and cam:IsA("Camera") then
+		return cam
+	end
+	return nil
+end
+
+local function resolveLoadingCFrame(_loadingGui: ScreenGui?): CFrame
+	-- Prefer StarterGui template — PlayerGui clone Camera CFrame is often wrong under ScreenGui.
+	local starter = StarterGui:FindFirstChild("LoadingScreen")
+	local ref = findReferenceCamera(starter) or findReferenceCamera(_loadingGui)
+	if ref then
+		local attr = ref:GetAttribute("LoadingWorldCFrame")
+		if typeof(attr) == "CFrame" then
+			return attr
+		end
+		local cf = ref.CFrame
+		if cf.Position.Magnitude > 1 then
+			return cf
+		end
+	end
+	return defaultLoadingCFrame()
+end
+
+local function restoreGameplayCamera(camera: Camera, player: Player)
+	camera.CameraType = Enum.CameraType.Custom
+	local character = player.Character
+	if character then
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			camera.CameraSubject = humanoid
+		end
+	end
+end
+
+type MoonCameraTrack = {
+	frames: { CFrame },
+	fov: { number },
+	fps: number,
+}
+
+local loadedMoonTrack: MoonCameraTrack? = nil
+
+local SKIP_MOON_FRAME_NAMES: { [string]: boolean } = {
+	default = true,
+	Default = true,
+}
+
+local function frameIndexFromName(name: string): number?
+	if SKIP_MOON_FRAME_NAMES[name] then
+		return nil
+	end
+	local direct = tonumber(name)
+	if direct then
+		return direct
+	end
+	local digits = string.match(name, "%d+")
+	if digits then
+		return tonumber(digits)
+	end
+	return nil
+end
+
+local function readSettingNumber(settings: Instance, names: { string }): number?
+	for _, settingName in names do
+		local ch = settings:FindFirstChild(settingName)
+		if not ch then
+			continue
+		end
+		if ch:IsA("NumberValue") or ch:IsA("IntValue") then
+			return ch.Value
+		end
+		if ch:IsA("StringValue") then
+			return tonumber(ch.Value)
+		end
+	end
+	return nil
+end
+
+local function describeLoadingScreenForMoon(root: ScreenGui?): string
+	if not root then
+		return "LoadingScreen missing"
+	end
+	local cameraNode = root:FindFirstChild("Camera")
+	if not cameraNode then
+		local kids = {}
+		for _, ch in root:GetChildren() do
+			table.insert(kids, ch.Name)
+		end
+		return "no Camera child; LoadingScreen has: " .. table.concat(kids, ", ")
+	end
+	local parts = {}
+	for _, ch in cameraNode:GetChildren() do
+		table.insert(parts, ch.Name .. " (" .. ch.ClassName .. ")")
+	end
+	return "Camera children: " .. table.concat(parts, ", ")
+end
+
+local function waitForStarterLoadingScreen(): ScreenGui?
+	local existing = StarterGui:FindFirstChild("LoadingScreen")
+	if existing and existing:IsA("ScreenGui") then
+		return existing
+	end
+	local ok, waited = pcall(function()
+		return StarterGui:WaitForChild("LoadingScreen", 12)
+	end)
+	if ok and waited and waited:IsA("ScreenGui") then
+		return waited
+	end
+	return nil
+end
+
+local function findMoonCameraExport(loadingGui: ScreenGui): Instance?
+	local roots: { ScreenGui } = {}
+	local starterScreen = waitForStarterLoadingScreen()
+	if starterScreen then
+		table.insert(roots, starterScreen)
+	end
+	if loadingGui and loadingGui:IsA("ScreenGui") and loadingGui ~= starterScreen then
+		table.insert(roots, loadingGui)
+	end
+
+	for _, root in roots do
+		for _, exportName in MOON_CAMERA_EXPORT_NAMES do
+			local export = root:FindFirstChild(exportName, true)
+			if export then
+				return export
+			end
+		end
+
+		-- Moon path: LoadingScreen.Camera["Camera loading"]
+		local cameraNode = root:FindFirstChild("Camera")
+		if cameraNode then
+			for _, exportName in MOON_CAMERA_EXPORT_NAMES do
+				local export = cameraNode:FindFirstChild(exportName)
+				if export then
+					return export
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function moonClipDurationSec(track: MoonCameraTrack): number
+	local frameCount = #track.frames
+	if frameCount <= 1 then
+		return 0
+	end
+	return (frameCount - 1) / track.fps
+end
+
+local function computeLoadingDisplaySec(track: MoonCameraTrack?): number
+	if track and #track.frames > 1 then
+		return moonClipDurationSec(track) + HOLD_AT_FULL_SEC
+	end
+	return MIN_DISPLAY_SEC
+end
+
+local function deepSelectMoonPath(root: Instance, path: { string }): any?
+	local current: Instance? = root
+	for _, segment in path do
+		if not current then
+			return nil
+		end
+		if segment == "Value" then
+			if current:IsA("ValueBase") then
+				return current.Value
+			end
+			return nil
+		end
+		current = current:FindFirstChild(segment)
+	end
+	return nil
+end
+
+local function moonRawToCFrame(raw: any): CFrame?
+	if typeof(raw) == "CFrame" then
+		return raw
+	end
+	if type(raw) == "string" then
+		local ok, decoded = pcall(HttpService.JSONDecode, HttpService, raw)
+		if ok then
+			return moonRawToCFrame(decoded)
+		end
+		return nil
+	end
+	if type(raw) ~= "table" then
+		return nil
+	end
+
+	local x = raw.X or raw.x
+	local y = raw.Y or raw.y
+	local z = raw.Z or raw.z
+	if x and y and z then
+		if raw.R00 ~= nil then
+			return CFrame.new(x, y, z, raw.R00, raw.R01, raw.R02, raw.R10, raw.R11, raw.R12, raw.R20, raw.R21, raw.R22)
+		end
+		local rx = raw.RX or raw.rx or raw.Rx
+		local ry = raw.RY or raw.ry or raw.Ry
+		local rz = raw.RZ or raw.rz or raw.Rz
+		if rx and ry and rz then
+			return CFrame.new(x, y, z) * CFrame.fromOrientation(math.rad(rx), math.rad(ry), math.rad(rz))
+		end
+		return CFrame.new(x, y, z)
+	end
+
+	if raw[1] and raw[2] and raw[3] and type(raw[1]) == "number" then
+		if raw[7] and type(raw[7]) == "number" then
+			return CFrame.new(raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7], raw[8], raw[9], raw[10], raw[11], raw[12])
+		end
+		return CFrame.new(raw[1], raw[2], raw[3])
+	end
+
+	return nil
+end
+
+local function tryGetMoon2FrameRaw(saveRoot: Instance, itemIndex: number, prop: string, frame: number): any?
+	return deepSelectMoonPath(saveRoot, {
+		tostring(itemIndex),
+		prop,
+		tostring(frame),
+		"Values",
+		"0",
+		"Value",
+	})
+end
+
+local function findMoonJsonSave(export: Instance): (Instance?, any?)
+	local roots: { Instance } = { export }
+	local frames = export:FindFirstChild("Frames")
+	if frames then
+		table.insert(roots, frames)
+	end
+	if export.Parent then
+		table.insert(roots, export.Parent)
+	end
+
+	for _, root in roots do
+		if root:IsA("StringValue") then
+			local ok, data = pcall(HttpService.JSONDecode, HttpService, root.Value)
+			if ok and type(data) == "table" and data.Information and data.Items then
+				return root, data
+			end
+		end
+		for _, desc in root:GetDescendants() do
+			if desc:IsA("StringValue") and string.sub(desc.Value, 1, 1) == "{" then
+				local ok, data = pcall(HttpService.JSONDecode, HttpService, desc.Value)
+				if ok and type(data) == "table" and data.Information and data.Items then
+					return desc, data
+				end
+			end
+		end
+	end
+	return nil, nil
+end
+
+local function findCameraItemIndex(items: { any }): number?
+	for i, item in items do
+		if type(item) ~= "table" then
+			continue
+		end
+		local path = item.Path
+		if type(path) ~= "table" then
+			continue
+		end
+		local names = path.InstanceNames
+		if type(names) == "table" and #names > 0 then
+			local last = names[#names]
+			if last == "CurrentCamera" or last == "Camera" then
+				return i
+			end
+		end
+		if path.ItemType == "Camera" then
+			return i
+		end
+	end
+	return nil
+end
+
+local function parseMoonJsonFrames(saveRoot: Instance, data: any): { CFrame }?
+	local items = data.Items
+	local info = data.Information
+	if type(items) ~= "table" or type(info) ~= "table" then
+		return nil
+	end
+
+	local itemIdx = findCameraItemIndex(items)
+	if not itemIdx then
+		return nil
+	end
+
+	local length = info.Length
+	if type(length) ~= "number" then
+		length = 120
+	end
+	length = math.max(0, math.floor(length))
+
+	local frames: { CFrame } = {}
+	local lastCf: CFrame? = nil
+	for f = 0, length do
+		local raw = tryGetMoon2FrameRaw(saveRoot, itemIdx, "CFrame", f)
+		local cf = moonRawToCFrame(raw)
+		if cf then
+			lastCf = cf
+		end
+		if lastCf then
+			table.insert(frames, lastCf)
+		end
+	end
+
+	if #frames > 1 then
+		return frames
+	end
+	return nil
+end
+
+local function parseMoonItemFolders(export: Instance, maxFrames: number?): { CFrame }?
+	local limit = maxFrames or 900
+	for itemIdx = 1, 8 do
+		local frames: { CFrame } = {}
+		local lastCf: CFrame? = nil
+		for f = 0, limit do
+			local raw = tryGetMoon2FrameRaw(export, itemIdx, "CFrame", f)
+			if raw == nil then
+				if f == 0 then
+					break
+				end
+				break
+			end
+			local cf = moonRawToCFrame(raw)
+			if cf then
+				lastCf = cf
+			end
+			if lastCf then
+				table.insert(frames, lastCf)
+			end
+		end
+		if #frames > 1 then
+			return frames
+		end
+	end
+	return nil
+end
+
+local function frameSortKey(inst: Instance, framesFolder: Instance, sequence: number): number
+	local idx = frameIndexFromName(inst.Name)
+	if idx then
+		return idx
+	end
+	local parent = inst.Parent
+	while parent and parent ~= framesFolder do
+		idx = frameIndexFromName(parent.Name)
+		if idx then
+			return idx
+		end
+		parent = parent.Parent
+	end
+	return sequence
+end
+
+local function cframeFromMoonFrameFolder(frameFolder: Instance): CFrame?
+	if frameFolder:IsA("CFrameValue") then
+		return frameFolder.Value
+	end
+
+	local attr = frameFolder:GetAttribute("CFrame")
+	if typeof(attr) == "CFrame" then
+		return attr
+	end
+
+	for _, name in { "CFrame", "CF", "Value" } do
+		local ch = frameFolder:FindFirstChild(name)
+		if ch and ch:IsA("CFrameValue") then
+			return ch.Value
+		end
+	end
+
+	for _, desc in frameFolder:GetDescendants() do
+		if desc:IsA("CFrameValue") and not SKIP_MOON_FRAME_NAMES[desc.Name] then
+			return desc.Value
+		end
+	end
+
+	local raw = deepSelectMoonPath(frameFolder, { "CFrame", "Values", "0", "Value" })
+		or deepSelectMoonPath(frameFolder, { "Values", "0", "Value" })
+	if raw then
+		return moonRawToCFrame(raw)
+	end
+
+	return nil
+end
+
+-- Moon export: Frames["0"], Frames["1"], ... each folder holds one keyframe.
+local function parseMoonNumberedFrameFolders(framesFolder: Instance): { CFrame }
+	local keyed: { { sortKey: number, cf: CFrame } } = {}
+
+	for _, child in framesFolder:GetChildren() do
+		if SKIP_MOON_FRAME_NAMES[child.Name] then
+			continue
+		end
+		local idx = tonumber(child.Name)
+		if idx == nil then
+			continue
+		end
+		local cf = cframeFromMoonFrameFolder(child)
+		if cf then
+			table.insert(keyed, { sortKey = idx, cf = cf })
+		end
+	end
+
+	table.sort(keyed, function(a, b)
+		return a.sortKey < b.sortKey
+	end)
+
+	local frames: { CFrame } = {}
+	for i, item in ipairs(keyed) do
+		frames[i] = item.cf
+	end
+	return frames
+end
+
+local function parseMoonFramesOrdered(framesFolder: Instance): { CFrame }
+	local frames: { CFrame } = {}
+	for _, child in framesFolder:GetChildren() do
+		if child:IsA("CFrameValue") and not SKIP_MOON_FRAME_NAMES[child.Name] then
+			table.insert(frames, child.Value)
+		end
+	end
+	return frames
+end
+
+local function parseMoonFramesFolder(framesFolder: Instance): { CFrame }
+	local numbered = parseMoonNumberedFrameFolders(framesFolder)
+	if #numbered > 1 then
+		return numbered
+	end
+
+	-- Moon Studio export: direct CFrameValue children in timeline order.
+	local ordered = parseMoonFramesOrdered(framesFolder)
+	if #ordered > 1 then
+		return ordered
+	end
+
+	-- Moon often nests every keyframe under one subfolder; collect ALL CFrameValues.
+	local keyed: { { sortKey: number, cf: CFrame } } = {}
+	local seenAtKey: { [number]: boolean } = {}
+	local sequence = 0
+
+	for _, desc in framesFolder:GetDescendants() do
+		if not desc:IsA("CFrameValue") or SKIP_MOON_FRAME_NAMES[desc.Name] then
+			continue
+		end
+		sequence += 1
+		local sortKey = frameSortKey(desc, framesFolder, sequence)
+		if seenAtKey[sortKey] then
+			sortKey = sequence + 100000
+		else
+			seenAtKey[sortKey] = true
+		end
+		table.insert(keyed, { sortKey = sortKey, cf = desc.Value })
+	end
+
+	if #keyed == 0 then
+		local order = 0
+		for _, child in framesFolder:GetChildren() do
+			if SKIP_MOON_FRAME_NAMES[child.Name] then
+				continue
+			end
+			if child:IsA("CFrameValue") then
+				order += 1
+				table.insert(keyed, { sortKey = frameIndexFromName(child.Name) or order, cf = child.Value })
+			end
+		end
+	end
+
+	table.sort(keyed, function(a, b)
+		return a.sortKey < b.sortKey
+	end)
+
+	local frames: { CFrame } = {}
+	for i, item in ipairs(keyed) do
+		frames[i] = item.cf
+	end
+	return frames
+end
+
+local function collectMoonCFramesFromRoot(root: Instance, framesFolder: Instance?): { CFrame }
+	local keyed: { { sortKey: number, cf: CFrame } } = {}
+	local seenAtKey: { [number]: boolean } = {}
+	local sequence = 0
+	local sortRoot = framesFolder or root
+
+	for _, desc in root:GetDescendants() do
+		if not desc:IsA("CFrameValue") or SKIP_MOON_FRAME_NAMES[desc.Name] then
+			continue
+		end
+		sequence += 1
+		local sortKey = frameSortKey(desc, sortRoot, sequence)
+		if seenAtKey[sortKey] then
+			sortKey = sequence + 100000
+		else
+			seenAtKey[sortKey] = true
+		end
+		table.insert(keyed, { sortKey = sortKey, cf = desc.Value })
+	end
+
+	table.sort(keyed, function(a, b)
+		return a.sortKey < b.sortKey
+	end)
+
+	local frames: { CFrame } = {}
+	for i, item in ipairs(keyed) do
+		frames[i] = item.cf
+	end
+	return frames
+end
+
+local function framesHaveMotion(frames: { CFrame }): boolean
+	if #frames < 2 then
+		return false
+	end
+	local first = frames[1]
+	for i = 2, #frames do
+		local cf = frames[i]
+		if (cf.Position - first.Position).Magnitude > 0.35 then
+			return true
+		end
+		if cf.LookVector:Dot(first.LookVector) < 0.998 then
+			return true
+		end
+	end
+	return false
+end
+
+local function normalizeMoonFrames(frames: { CFrame }, refCamera: Camera?): { CFrame }
+	if #frames == 0 then
+		return frames
+	end
+
+	local maxPos = 0
+	for _, cf in frames do
+		maxPos = math.max(maxPos, cf.Position.Magnitude)
+	end
+
+	-- Moon sometimes exports camera-local offsets; anchor to the Studio reference camera.
+	if maxPos < 120 and refCamera then
+		local refCf = refCamera.CFrame
+		if refCf.Position.Magnitude > 50 then
+			local out: { CFrame } = table.create(#frames)
+			for i, cf in ipairs(frames) do
+				out[i] = refCf * cf
+			end
+			if framesHaveMotion(out) then
+				return out
+			end
+		end
+	end
+
+	return frames
+end
+
+local function parseMoonFovFolder(fovFolder: Instance?, frameCount: number, defaultFov: number): { number }
+	local fovs = table.create(frameCount, defaultFov)
+	if not fovFolder or frameCount <= 0 then
+		return fovs
+	end
+
+	for _, desc in fovFolder:GetDescendants() do
+		if desc:IsA("NumberValue") or desc:IsA("IntValue") then
+			local idx = frameIndexFromName(desc.Name)
+			if idx then
+				local slot = idx
+				if slot >= 0 and slot < frameCount then
+					slot += 1
+				end
+				if slot >= 1 and slot <= frameCount then
+					fovs[slot] = desc.Value
+				end
+			end
+		end
+	end
+
+	for i = 2, frameCount do
+		if fovs[i] == defaultFov then
+			fovs[i] = fovs[i - 1]
+		end
+	end
+	return fovs
+end
+
+local function loadMoonCameraTrack(export: Instance, defaultFov: number, refCamera: Camera?): MoonCameraTrack?
+	local frames: { CFrame } = {}
+	local framesFolder = export:FindFirstChild("Frames")
+	if framesFolder then
+		frames = parseMoonFramesFolder(framesFolder)
+	end
+
+	if #frames <= 1 then
+		frames = collectMoonCFramesFromRoot(export, framesFolder)
+	end
+
+	local cameraHolder = export.Parent
+	if #frames <= 1 and cameraHolder then
+		frames = collectMoonCFramesFromRoot(cameraHolder, framesFolder)
+	end
+
+	if #frames <= 1 and cameraHolder and cameraHolder ~= export then
+		local holderFrames = parseMoonItemFolders(cameraHolder, nil)
+		if holderFrames then
+			frames = holderFrames
+		end
+	end
+
+	local jsonRoot, jsonData = findMoonJsonSave(export)
+	if #frames <= 1 and jsonRoot and jsonData then
+		local jsonFrames = parseMoonJsonFrames(jsonRoot, jsonData)
+		if jsonFrames then
+			frames = jsonFrames
+		end
+	end
+
+	if #frames <= 1 then
+		local folderFrames = parseMoonItemFolders(export, nil)
+		if folderFrames then
+			frames = folderFrames
+		end
+	end
+
+	if #frames <= 1 and jsonRoot and jsonData then
+		local folderFrames = parseMoonItemFolders(jsonRoot, jsonData.Information and jsonData.Information.Length)
+		if folderFrames then
+			frames = folderFrames
+		end
+	end
+
+	frames = normalizeMoonFrames(frames, refCamera)
+
+	if #frames == 0 then
+		local framesFolder = export:FindFirstChild("Frames")
+		local childCount = if framesFolder then #framesFolder:GetChildren() else 0
+		warn(
+			"[LoadingScreenController] No Moon camera frames parsed from",
+			if framesFolder then framesFolder:GetFullName() else export:GetFullName(),
+			"(",
+			childCount,
+			"frame folders — each needs a CFrameValue inside)"
+		)
+		return nil
+	end
+	if #frames == 1 or not framesHaveMotion(frames) then
+		warn(
+			"[LoadingScreenController] Moon camera has no motion (",
+			#frames,
+			"frames) — re-export with multiple camera keyframes in Moon Animator"
+		)
+		return nil
+	end
+
+	local settings = export:FindFirstChild("Settings")
+	local fps = 60
+	if settings then
+		for _, desc in settings:GetDescendants() do
+			if desc:IsA("NumberValue") or desc:IsA("IntValue") then
+				local nameLower = string.lower(desc.Name)
+				if string.find(nameLower, "fps", 1, true) or nameLower == "framerate" then
+					fps = desc.Value
+					break
+				end
+			end
+		end
+	end
+	if jsonData and jsonData.Information then
+		local info = jsonData.Information
+		if type(info.FPS) == "number" then
+			fps = info.FPS
+		elseif type(info.fps) == "number" then
+			fps = info.fps
+		end
+	end
+	if settings then
+		fps = readSettingNumber(settings, { "FPS", "Framerate", "FrameRate", "fps" }) or fps
+	end
+	fps = math.clamp(fps, 12, 120)
+
+	local fovFolder = export:FindFirstChild("FOV")
+	local fovs = parseMoonFovFolder(fovFolder, #frames, defaultFov)
+
+	return {
+		frames = frames,
+		fov = fovs,
+		fps = fps,
+	}
+end
+
+local function sampleMoonCameraTrack(track: MoonCameraTrack, elapsed: number, loopPlayback: boolean): (CFrame, number)
+	local frameCount = #track.frames
+	if frameCount <= 0 then
+		return defaultLoadingCFrame(), 70
+	end
+	if frameCount == 1 then
+		return track.frames[1], track.fov[1]
+	end
+
+	local clipDuration = (frameCount - 1) / track.fps
+	local t = elapsed
+	if clipDuration > 0.05 then
+		if loopPlayback then
+			t = t % clipDuration
+		else
+			t = math.min(t, clipDuration)
+		end
+	end
+
+	local framePos = math.max(0, t * track.fps)
+	local maxIndex = frameCount - 1
+	local idx0 = math.clamp(math.floor(framePos), 0, maxIndex)
+	local idx1 = math.min(idx0 + 1, maxIndex)
+	local alpha = framePos - idx0
+
+	local cf = track.frames[idx0 + 1]:Lerp(track.frames[idx1 + 1], alpha)
+	local fov = track.fov[idx0 + 1] + (track.fov[idx1 + 1] - track.fov[idx0 + 1]) * alpha
+	return cf, fov
+end
+
+local function startLoadingCameraLock(camera: Camera, loadingGui: ScreenGui): () -> ()
+	loadedMoonTrack = nil
+	local ref = findReferenceCamera(StarterGui:FindFirstChild("LoadingScreen")) or findReferenceCamera(loadingGui)
+	local defaultFov = if ref then ref.FieldOfView else camera.FieldOfView
+
+	local starterScreen = waitForStarterLoadingScreen()
+	local export = findMoonCameraExport(loadingGui)
+	local track = if export then loadMoonCameraTrack(export, defaultFov, ref) else nil
+
+	if track then
+		loadedMoonTrack = track
+		local startedAt = os.clock()
+		local bindName = "LoadingScreenMoonCamera"
+		local clipSec = moonClipDurationSec(track)
+		warn(
+			string.format(
+				"[LoadingScreenController] Moon camera ACTIVE: %d frames @ %d fps (%.2fs) — %s",
+				#track.frames,
+				track.fps,
+				clipSec,
+				export:GetFullName()
+			)
+		)
+
+		local function applyAnimated()
+			camera.CameraType = Enum.CameraType.Scriptable
+			camera.CameraSubject = nil
+			local cf, fov = sampleMoonCameraTrack(track, os.clock() - startedAt, false)
+			camera.CFrame = cf
+			camera.FieldOfView = fov
+			camera.Focus = cf
+		end
+
+		applyAnimated()
+
+		RunService:BindToRenderStep(bindName, Enum.RenderPriority.Last.Value, applyAnimated)
+
+		return function()
+			RunService:UnbindFromRenderStep(bindName)
+		end
+	elseif export then
+		warn(
+			"[LoadingScreenController] Moon export found but not playable — check Camera loading/Frames for multiple CFrameValues"
+		)
+	else
+		warn("[LoadingScreenController] No Moon export — using static loading camera pose")
+		warn("[LoadingScreenController] StarterGui:", describeLoadingScreenForMoon(starterScreen))
+		warn("[LoadingScreenController] PlayerGui:", describeLoadingScreenForMoon(loadingGui))
+		local pgExport = loadingGui:FindFirstChild("Camera loading", true)
+		local sgExport = if starterScreen then starterScreen:FindFirstChild("Camera loading", true) else nil
+		warn(
+			"[LoadingScreenController] Camera loading found?",
+			"PlayerGui=",
+			pgExport ~= nil,
+			"StarterGui=",
+			sgExport ~= nil
+		)
+	end
+
+	local loadingCFrame = resolveLoadingCFrame(loadingGui)
+	local fov = defaultFov
+
+	local function applyStatic()
+		camera.CameraType = Enum.CameraType.Scriptable
+		camera.FieldOfView = fov
+		camera.CFrame = loadingCFrame
+		camera.Focus = loadingCFrame
+	end
+
+	applyStatic()
+
+	local conn = RunService.RenderStepped:Connect(function()
+		applyStatic()
+	end)
+
+	return function()
+		conn:Disconnect()
+	end
+end
+
+local function wrapAsScreenGui(source: Instance, playerGui: PlayerGui): ScreenGui
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "LoadingScreen"
+	screenGui.ResetOnSpawn = false
+	screenGui.IgnoreGuiInset = true
+	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screenGui.DisplayOrder = 1000
+	screenGui.Parent = playerGui
+
+	local copy = source:Clone()
+	for _, child in copy:GetChildren() do
+		child.Parent = screenGui
+	end
+	copy:Destroy()
+
+	return screenGui
+end
+
+local function cloneStarterLoadingScreen(playerGui: PlayerGui): ScreenGui?
+	local template = StarterGui:FindFirstChild("LoadingScreen")
+	if not template then
+		return nil
+	end
+
+	if template:IsA("ScreenGui") then
+		local existing = playerGui:FindFirstChild("LoadingScreen")
+		if existing and existing:IsA("ScreenGui") then
+			return existing
+		end
+		local clone = template:Clone()
+		clone.Parent = playerGui
+		return clone
+	end
+
+	local existing = playerGui:FindFirstChild("LoadingScreen")
+	if existing and existing:IsA("ScreenGui") then
+		return existing
+	end
+	return wrapAsScreenGui(template, playerGui)
+end
+
+local function findLoadingScreenGui(playerGui: PlayerGui): ScreenGui?
+	local direct = playerGui:FindFirstChild("LoadingScreen")
+	if direct and direct:IsA("ScreenGui") then
+		return direct
+	end
+	return cloneStarterLoadingScreen(playerGui)
+end
+
+local function beginLoadingCameraIfPossible()
+	local player = Players.LocalPlayer
+	if not player then
+		return
+	end
+	local playerGui = player:FindFirstChild("PlayerGui")
+	if not playerGui then
+		return
+	end
+	local loadingGui = findLoadingScreenGui(playerGui)
+	if not loadingGui then
+		return
+	end
+	local camera = Workspace.CurrentCamera
+	if not camera then
+		return
+	end
+	if stopCameraLock then
+		stopCameraLock()
+	end
+	stopCameraLock = startLoadingCameraLock(camera, loadingGui)
+end
+
+local function resolveLoadingScreenGui(playerGui: PlayerGui): ScreenGui?
+	local deadline = os.clock() + RESOLVE_TIMEOUT
+
+	while os.clock() < deadline do
+		local direct = playerGui:FindFirstChild("LoadingScreen")
+		if direct and direct:IsA("ScreenGui") then
+			return direct
+		end
+
+		local cloned = cloneStarterLoadingScreen(playerGui)
+		if cloned then
+			return cloned
+		end
+
+		for _, desc in playerGui:GetDescendants() do
+			if desc.Name == "LoadingScreen" and desc:IsA("ScreenGui") then
+				return desc
+			end
+		end
+
+		task.wait(0.05)
+	end
+
+	return cloneStarterLoadingScreen(playerGui)
+end
+
+local function setCoreGuisVisible(visible: boolean)
+	for _, coreType in CORE_GUIS_TO_HIDE do
+		pcall(function()
+			StarterGui:SetCoreGuiEnabled(coreType, visible)
+		end)
+	end
+end
+
+local function hideNonLoadingScreenGuis(playerGui: PlayerGui)
+	for _, child in playerGui:GetChildren() do
+		if child:IsA("ScreenGui") and child.Name ~= "LoadingScreen" then
+			child.Enabled = false
+		end
+	end
+	local blurGui = playerGui:FindFirstChild("Blur")
+	if blurGui and blurGui:IsA("ScreenGui") then
+		blurGui.Enabled = false
+	end
+end
+
+local function enterLoadingIsolation(playerGui: PlayerGui)
+	local loadingGui = playerGui:FindFirstChild("LoadingScreen")
+	if not loadingGui or not loadingGui:IsA("ScreenGui") then
+		return
+	end
+
+	loadingActive = true
+	setCoreGuisVisible(false)
+
+	if not savedGuiStates then
+		savedGuiStates = {}
+		for _, child in playerGui:GetChildren() do
+			if child:IsA("ScreenGui") then
+				savedGuiStates[child] = child.Enabled
+			end
+		end
+	end
+
+	for _, child in playerGui:GetChildren() do
+		if child:IsA("ScreenGui") then
+			child.Enabled = child == loadingGui
+		end
+	end
+	hideNonLoadingScreenGuis(playerGui)
+
+	if not playerGuiChildConn then
+		playerGuiChildConn = playerGui.ChildAdded:Connect(function(child)
+			if not loadingActive then
+				return
+			end
+			if child:IsA("ScreenGui") and child.Name ~= "LoadingScreen" then
+				if savedGuiStates then
+					savedGuiStates[child] = child.Enabled
+				end
+				child.Enabled = false
+			end
+		end)
+	end
+end
+
+local function exitLoadingIsolation(playerGui: PlayerGui)
+	loadingActive = false
+
+	if playerGuiChildConn then
+		playerGuiChildConn:Disconnect()
+		playerGuiChildConn = nil
+	end
+
+	if savedGuiStates then
+		for gui, wasEnabled in savedGuiStates do
+			if gui.Parent and gui.Name ~= "LoadingScreen" then
+				gui.Enabled = wasEnabled
+			end
+		end
+		savedGuiStates = nil
+	end
+
+	setCoreGuisVisible(true)
+
+	local blurGui = playerGui:FindFirstChild("Blur")
+	if blurGui and blurGui:IsA("ScreenGui") then
+		blurGui.Enabled = false
+	end
+end
+
+local function destroyLightingBlurEffects()
+	if activeBlurEffect and activeBlurEffect.Parent then
+		activeBlurEffect:Destroy()
+	end
+	activeBlurEffect = nil
+
+	for _, name in { "LoadingScreenBlur", "UIModalBlur" } do
+		local effect = Lighting:FindFirstChild(name)
+		if effect and effect:IsA("BlurEffect") then
+			effect:Destroy()
+		end
+	end
+end
+
+local function cleanupLoadingVisuals(playerGui: PlayerGui, loadingGui: ScreenGui?, overlay: Frame?)
+	destroyLightingBlurEffects()
+
+	if overlay and overlay.Parent then
+		overlay.Visible = false
+		overlay:Destroy()
+	end
+
+	if loadingGui and loadingGui.Parent then
+		local guiOverlay = loadingGui:FindFirstChild("BlurOverlay")
+		if guiOverlay and guiOverlay:IsA("Frame") then
+			guiOverlay:Destroy()
+		end
+	end
+
+	local blurGui = playerGui:FindFirstChild("Blur")
+	if blurGui and blurGui:IsA("ScreenGui") then
+		blurGui.Enabled = false
+	end
+end
+
+local function ensureBlurOverlay(loadingGui: ScreenGui): Frame
+	local existing = loadingGui:FindFirstChild("BlurOverlay")
+	if existing and existing:IsA("Frame") then
+		existing.Size = UDim2.new(1, 0, 1, 0)
+		existing.Position = UDim2.new(0, 0, 0, 0)
+		existing.AnchorPoint = Vector2.new(0, 0)
+		return existing
+	end
+	local overlay = Instance.new("Frame")
+	overlay.Name = "BlurOverlay"
+	overlay.BackgroundColor3 = OVERLAY_COLOR
+	overlay.BackgroundTransparency = 0.35
+	overlay.BorderSizePixel = 0
+	overlay.AnchorPoint = Vector2.new(0, 0)
+	overlay.Position = UDim2.new(0, 0, 0, 0)
+	overlay.Size = UDim2.new(1, 0, 1, 0)
+	overlay.ZIndex = 0
+	overlay.Parent = loadingGui
+	return overlay
+end
+
+local function findGameNameImage(loadingGui: ScreenGui): ImageLabel?
+	for _, name in LOGO_NAMES do
+		local img = loadingGui:FindFirstChild(name, true)
+		if img and img:IsA("ImageLabel") then
+			return img
+		end
+	end
+	return nil
+end
+
+local function findLoadingFrame(loadingGui: ScreenGui): GuiObject?
+	local frame = loadingGui:FindFirstChild("LoadingFrame")
+	if frame and (frame:IsA("ImageLabel") or frame:IsA("Frame")) then
+		return frame
+	end
+	return nil
+end
+
+local function findBarPlaceholder(loadingGui: ScreenGui): GuiObject?
+	local ph = loadingGui:FindFirstChild("BarPlaceholder")
+	if ph and ph:IsA("GuiObject") then
+		return ph
+	end
+	return nil
+end
+
+local function copyGuiLayout(target: GuiObject, source: GuiObject)
+	target.AnchorPoint = source.AnchorPoint
+	target.Position = source.Position
+	target.Size = source.Size
+	target.ZIndex = source.ZIndex
+	target.Rotation = source.Rotation
+end
+
+local function applyPlaceholderBarBounds(barArea: GuiObject, placeholder: GuiObject)
+	copyGuiLayout(barArea, placeholder)
+	local sz = placeholder.Size
+	barArea.Size = UDim2.new(
+		sz.X.Scale * BAR_PLACEHOLDER_SHRINK,
+		math.floor(sz.X.Offset * BAR_PLACEHOLDER_SHRINK + 0.5),
+		sz.Y.Scale * BAR_PLACEHOLDER_SHRINK,
+		math.floor(sz.Y.Offset * BAR_PLACEHOLDER_SHRINK + 0.5)
+	)
+end
+
+local function setupFadeCanvas(loadingGui: ScreenGui): CanvasGroup
+	local existing = loadingGui:FindFirstChild("LoadingFadeCanvas")
+	if existing and existing:IsA("CanvasGroup") then
+		fadeCanvas = existing
+		existing.GroupTransparency = 0
+		return existing
+	end
+
+	local canvas = Instance.new("CanvasGroup")
+	canvas.Name = "LoadingFadeCanvas"
+	canvas.Size = UDim2.fromScale(1, 1)
+	canvas.Position = UDim2.fromScale(0, 0)
+	canvas.BackgroundTransparency = 1
+	canvas.BorderSizePixel = 0
+	canvas.GroupTransparency = 0
+	canvas.ZIndex = 1
+	canvas.Parent = loadingGui
+
+	local moveList: { GuiObject } = {}
+	for _, child in loadingGui:GetChildren() do
+		if child:IsA("GuiObject") and child ~= canvas and child.Name ~= "Camera" and child.Name ~= "BlurOverlay" then
+			table.insert(moveList, child)
+		end
+	end
+	for _, child in moveList do
+		child.Parent = canvas
+	end
+
+	fadeCanvas = canvas
+	return canvas
+end
+
+local function findStudTextureSource(loadingGui: ScreenGui): ImageLabel?
+	for _, root in { loadingGui, StarterGui:FindFirstChild("LoadingScreen") } do
+		if not root then
+			continue
+		end
+		for _, name in STUD_SOURCE_NAMES do
+			local inst = root:FindFirstChild(name)
+			if inst and inst:IsA("ImageLabel") then
+				return inst
+			end
+		end
+	end
+	return nil
+end
+
+local function hideStudTextureTemplates(loadingGui: ScreenGui)
+	for _, root in { loadingGui, StarterGui:FindFirstChild("LoadingScreen") } do
+		if not root then
+			continue
+		end
+		for _, name in STUD_SOURCE_NAMES do
+			local inst = root:FindFirstChild(name)
+			if inst and inst:IsA("ImageLabel") then
+				inst.Visible = false
+			end
+		end
+	end
+end
+
+local function studTilePxForHost(host: GuiObject): number
+	local h = host.AbsoluteSize.Y
+	local w = host.AbsoluteSize.X
+	local tilePx = DEFAULT_STUD_TILE_PX
+	if h >= 6 then
+		tilePx = math.max(tilePx, math.floor(h * 1.5))
+	end
+	if w >= 24 then
+		tilePx = math.max(tilePx, math.floor(w / 5))
+	end
+	return math.clamp(tilePx, STUD_TILE_MIN_PX, STUD_TILE_MAX_PX)
+end
+
+local function applyStudOverlay(host: GuiObject, loadingGui: ScreenGui, overlayName: string)
+	local source = findStudTextureSource(loadingGui)
+
+	local stud = host:FindFirstChild(overlayName)
+	if not stud or not stud:IsA("ImageLabel") then
+		stud = Instance.new("ImageLabel")
+		stud.Name = overlayName
+		stud.BackgroundTransparency = 1
+		stud.BorderSizePixel = 0
+		stud.Size = UDim2.fromScale(1, 1)
+		stud.Position = UDim2.fromScale(0, 0)
+		stud.AnchorPoint = Vector2.new(0, 0)
+		stud.ZIndex = host.ZIndex + 1
+		stud.Parent = host
+	end
+	local studImg = stud :: ImageLabel
+
+	if source and source.Image ~= "" then
+		studImg.Visible = true
+		studImg.Image = source.Image
+		if overlayName == "StudOverlayFill" then
+			studImg.ImageColor3 = BAR_FILL_STUD_TINT
+			studImg.ImageTransparency = math.clamp(source.ImageTransparency, 0, 0.02)
+		elseif overlayName == "StudOverlay" then
+			studImg.ImageColor3 = BAR_BG_STUD_TINT
+			studImg.ImageTransparency = math.clamp(source.ImageTransparency, 0, 0.08)
+		else
+			studImg.ImageColor3 = source.ImageColor3
+			studImg.ImageTransparency = math.clamp(source.ImageTransparency, 0, 0.2)
+		end
+		studImg.ScaleType = Enum.ScaleType.Tile
+		local tilePx = studTilePxForHost(host)
+		studImg.TileSize = UDim2.fromOffset(tilePx, tilePx)
+		studImg.ResampleMode = source.ResampleMode
+	else
+		studImg.Visible = false
+	end
+end
+
+local function bindStudOverlayLayout(host: GuiObject, loadingGui: ScreenGui, overlayName: string)
+	local tag = "_StudLayout_" .. overlayName
+	if host:GetAttribute(tag) then
+		return
+	end
+	host:SetAttribute(tag, true)
+
+	applyStudOverlay(host, loadingGui, overlayName)
+	task.defer(function()
+		if host.Parent then
+			applyStudOverlay(host, loadingGui, overlayName)
+		end
+	end)
+	host:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		if host.Parent then
+			applyStudOverlay(host, loadingGui, overlayName)
+		end
+	end)
+end
+
+local function clearGeneratedBar(host: GuiObject)
+	for _, name in { "BarArea", "Track", "LoadingBar" } do
+		local child = host:FindFirstChild(name)
+		if child then
+			child:Destroy()
+		end
+	end
+end
+
+local function ensureLoadingBar(loadingGui: ScreenGui): (Frame, Frame, GuiObject)
+	local placeholder = findBarPlaceholder(loadingGui)
+	local loadingFrame = findLoadingFrame(loadingGui)
+
+	if loadingFrame then
+		loadingFrame.Visible = true
+	end
+
+	local legacy = loadingGui:FindFirstChild("LoadingBar")
+	if legacy then
+		legacy:Destroy()
+	end
+
+	clearGeneratedBar(loadingGui)
+	if loadingFrame then
+		clearGeneratedBar(loadingFrame)
+	end
+
+	local barParent: Instance = loadingGui
+	local zBase = 3
+	if placeholder then
+		zBase = placeholder.ZIndex
+	elseif loadingFrame then
+		barParent = loadingFrame
+		loadingFrame.ClipsDescendants = true
+		zBase = math.max(loadingFrame.ZIndex + 1, 3)
+	end
+
+	local barArea = Instance.new("Frame")
+	barArea.Name = "BarArea"
+	barArea.BackgroundColor3 = BAR_BG_DARK
+	barArea.BackgroundTransparency = 0
+	barArea.BorderSizePixel = 0
+	barArea.ClipsDescendants = true
+	barArea.ZIndex = zBase
+	barArea.Parent = barParent
+
+	if placeholder then
+		applyPlaceholderBarBounds(barArea, placeholder)
+	else
+		barArea.AnchorPoint = Vector2.new(0.5, 0.5)
+		barArea.Position = UDim2.fromScale(0.5, 0.84)
+		barArea.Size = UDim2.new(0.5, 0, 0, 24)
+	end
+
+	bindStudOverlayLayout(barArea, loadingGui, "StudOverlay")
+
+	local track = Instance.new("Frame")
+	track.Name = "Track"
+	track.BackgroundTransparency = 1
+	track.BorderSizePixel = 0
+	track.Size = UDim2.fromScale(1, 1)
+	track.Position = UDim2.fromScale(0, 0)
+	track.ClipsDescendants = true
+	track.ZIndex = zBase + 1
+	track.Parent = barArea
+
+	local fill = Instance.new("Frame")
+	fill.Name = "Fill"
+	fill.BackgroundColor3 = BAR_FILL_COLOR
+	fill.BackgroundTransparency = 0.2
+	fill.BorderSizePixel = 0
+	fill.ClipsDescendants = true
+	fill.AnchorPoint = Vector2.new(0, 0)
+	fill.Position = UDim2.fromScale(0, 0)
+	fill.Size = UDim2.new(BAR_MIN_FILL_SCALE, 0, 1, 0)
+	fill.ZIndex = zBase + 2
+	fill.Parent = track
+
+	bindStudOverlayLayout(fill, loadingGui, "StudOverlayFill")
+
+	return track, fill, barArea
+end
+
+local function ensureGameNameVisible(loadingGui: ScreenGui)
+	local logo = findGameNameImage(loadingGui)
+	if not logo then
+		return
+	end
+	logo.Visible = true
+	logo.ScaleType = Enum.ScaleType.Fit
+	logo.BackgroundTransparency = 1
+
+	local studioSize = logo.Size
+	if studioSize.X.Scale > 0 or studioSize.Y.Scale > 0 then
+		logo.Size = UDim2.new(
+			studioSize.X.Scale * TITLE_DISPLAY_SCALE,
+			studioSize.X.Offset,
+			studioSize.Y.Scale * TITLE_DISPLAY_SCALE,
+			studioSize.Y.Offset
+		)
+	elseif studioSize.X.Offset > 0 or studioSize.Y.Offset > 0 then
+		logo.Size = UDim2.new(
+			studioSize.X.Scale,
+			math.floor(studioSize.X.Offset * TITLE_DISPLAY_SCALE),
+			studioSize.Y.Scale,
+			math.floor(studioSize.Y.Offset * TITLE_DISPLAY_SCALE)
+		)
+	else
+		logo.AnchorPoint = Vector2.new(0.5, 0.5)
+		logo.Position = UDim2.new(0.5, 0, 0.4, 0)
+		logo.Size = UDim2.new(0.88, 0, 0.42, 0)
+	end
+
+	local aspectAttr = logo:GetAttribute("AspectRatio")
+	local titleAspect = if typeof(aspectAttr) == "number" and aspectAttr > 0 then aspectAttr else 2.85
+
+	local aspect = logo:FindFirstChild("TitleAspectLock")
+	if not aspect or not aspect:IsA("UIAspectRatioConstraint") then
+		aspect = Instance.new("UIAspectRatioConstraint")
+		aspect.Name = "TitleAspectLock"
+		aspect.Parent = logo
+	end
+	local aspectLock = aspect :: UIAspectRatioConstraint
+	aspectLock.AspectRatio = titleAspect
+	aspectLock.AspectType = Enum.AspectType.FitWithinMaxSize
+	aspectLock.DominantAxis = Enum.DominantAxis.Width
+
+	local sizeConstraint = logo:FindFirstChild("TitleSizeCap")
+	if not sizeConstraint or not sizeConstraint:IsA("UISizeConstraint") then
+		sizeConstraint = Instance.new("UISizeConstraint")
+		sizeConstraint.Name = "TitleSizeCap"
+		sizeConstraint.Parent = logo
+	end
+	local maxW = if UserInputService.TouchEnabled then TITLE_MAX_WIDTH_MOBILE else TITLE_MAX_WIDTH_DESKTOP
+	local sizeCap = sizeConstraint :: UISizeConstraint
+	sizeCap.MaxSize = Vector2.new(maxW, maxW / titleAspect)
+
+	if logo.ZIndex < 2 then
+		logo.ZIndex = 4
+	end
+end
+
+local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
+	local logo = findGameNameImage(loadingGui)
+	if not logo then
+		return function() end
+	end
+
+	local oldScale = logo:FindFirstChildOfClass("UIScale")
+	if oldScale then
+		oldScale:Destroy()
+	end
+
+	local wrapScale = logo:FindFirstChild("TitleAnimScale")
+	if not wrapScale or not wrapScale:IsA("UIScale") then
+		wrapScale = Instance.new("UIScale")
+		wrapScale.Name = "TitleAnimScale"
+		wrapScale.Scale = 1
+		wrapScale.Parent = logo
+	end
+
+	local baseRotation = logo.Rotation
+	local phase = 0
+	local smoothScale = 1
+	local smoothRot = baseRotation
+	local conn = RunService.RenderStepped:Connect(function(dt)
+		if not loadingActive or not logo.Parent then
+			return
+		end
+		phase += dt * NAME_ANIM_SPEED
+		local targetScale = 1 + NAME_SCALE_AMOUNT * math.sin(phase)
+		local targetRot = baseRotation + NAME_TILT_AMOUNT * math.sin(phase * 0.86 + 0.45)
+		local blend = math.min(1, dt * NAME_ANIM_SMOOTH)
+		smoothScale += (targetScale - smoothScale) * blend
+		smoothRot += (targetRot - smoothRot) * blend
+		wrapScale.Scale = smoothScale
+		logo.Rotation = smoothRot
+	end)
+
+	return function()
+		conn:Disconnect()
+		if wrapScale.Parent then
+			wrapScale.Scale = 1
+		end
+		if logo.Parent then
+			logo.Rotation = baseRotation
+		end
+	end
+end
+
+local function preloadGameName(loadingGui: ScreenGui)
+	local logo = findGameNameImage(loadingGui)
+	if logo and logo.Image ~= "" then
+		pcall(function()
+			ContentProvider:PreloadAsync({ logo })
+		end)
+	end
+end
+
+local function fadeOutLoadingTogether(
+	loadingGui: ScreenGui,
+	blur: BlurEffect?,
+	camera: Camera?,
+	player: Player
+)
+	if stopNameAnim then
+		stopNameAnim()
+		stopNameAnim = nil
+	end
+
+	local tweens: { Tween } = {}
+
+	local overlay = loadingGui:FindFirstChild("BlurOverlay")
+	if overlay and overlay:IsA("GuiObject") then
+		table.insert(tweens, TweenService:Create(overlay, FADE_TWEEN_INFO, { BackgroundTransparency = 1 }))
+	end
+
+	local canvas = fadeCanvas or loadingGui:FindFirstChild("LoadingFadeCanvas")
+	if canvas and canvas:IsA("CanvasGroup") then
+		table.insert(tweens, TweenService:Create(canvas, FADE_TWEEN_INFO, { GroupTransparency = 1 }))
+	else
+		for _, desc in loadingGui:GetDescendants() do
+			if desc:IsA("GuiObject") and desc.Name ~= "Camera" then
+				local props: { [string]: number } = { BackgroundTransparency = 1 }
+				if desc:IsA("ImageLabel") or desc:IsA("ImageButton") then
+					props.ImageTransparency = 1
+				end
+				table.insert(tweens, TweenService:Create(desc, FADE_TWEEN_INFO, props))
+			end
+		end
+	end
+
+	if blur and blur.Parent then
+		table.insert(tweens, TweenService:Create(blur, FADE_TWEEN_INFO, { Size = 0 }))
+	end
+
+	for _, tween in tweens do
+		tween:Play()
+	end
+	task.wait(FADE_OUT_SEC)
+
+	loadingGui.Enabled = false
+	fadeCanvas = nil
+
+	if camera then
+		restoreGameplayCamera(camera, player)
+	end
+end
+
+function M.showEarly()
+	local player = Players.LocalPlayer
+	if not player then
+		return
+	end
+	local playerGui = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 10)
+	if not playerGui then
+		return
+	end
+
+	local loadingGui = findLoadingScreenGui(playerGui)
+	if not loadingGui then
+		return
+	end
+
+	loadingGui.Enabled = true
+	loadingGui.DisplayOrder = 1000
+	loadingGui.ResetOnSpawn = false
+	loadingGui.IgnoreGuiInset = true
+	pcall(function()
+		loadingGui.ScreenInsets = Enum.ScreenInsets.None
+	end)
+
+	enterLoadingIsolation(playerGui)
+	beginLoadingCameraIfPossible()
+end
+
+function M.run()
+	local player = Players.LocalPlayer
+	local playerGui = player:WaitForChild("PlayerGui", 30)
+	if not playerGui then
+		warn("[LoadingScreenController] PlayerGui missing")
+		return
+	end
+
+	local loadingGui = resolveLoadingScreenGui(playerGui)
+	if not loadingGui then
+		warn("[LoadingScreenController] No StarterGui.LoadingScreen — add ScreenGui with GameNameImage + LoadingFrame")
+		return
+	end
+
+	loadingGui.Enabled = true
+	loadingGui.ResetOnSpawn = false
+	loadingGui.DisplayOrder = 1000
+	loadingGui.IgnoreGuiInset = true
+	loadingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	pcall(function()
+		loadingGui.ScreenInsets = Enum.ScreenInsets.None
+	end)
+
+	enterLoadingIsolation(playerGui)
+
+	ensureBlurOverlay(loadingGui)
+	ensureGameNameVisible(loadingGui)
+	local _, fillBar, _barHost = ensureLoadingBar(loadingGui)
+	hideStudTextureTemplates(loadingGui)
+
+	local placeholder = findBarPlaceholder(loadingGui)
+	if placeholder then
+		placeholder.Visible = false
+	end
+
+	local loadingFrame = findLoadingFrame(loadingGui)
+	if loadingFrame then
+		loadingFrame.Visible = true
+	end
+
+	setupFadeCanvas(loadingGui)
+
+	stopNameAnim = startGameNameSubtitleAnim(loadingGui)
+	preloadGameName(loadingGui)
+
+	local camera = Workspace.CurrentCamera
+	if not camera then
+		camera = Workspace:WaitForChild("Camera", 10) :: Camera?
+	end
+
+	destroyLightingBlurEffects()
+	local blur = Instance.new("BlurEffect")
+	blur.Name = "LoadingScreenBlur"
+	blur.Size = 24
+	blur.Parent = Lighting
+	activeBlurEffect = blur
+
+	if camera then
+		if stopCameraLock then
+			stopCameraLock()
+		end
+		stopCameraLock = startLoadingCameraLock(camera, loadingGui)
+	end
+
+	local minDisplaySec = computeLoadingDisplaySec(loadedMoonTrack)
+	if loadedMoonTrack then
+		warn(string.format("[LoadingScreenController] Loading duration matched to camera: %.2fs", minDisplaySec))
+	end
+
+	local startedAt = os.clock()
+	local targetProgress = 0.05
+	local shownProgress = 0
+
+	local function setTarget(p: number)
+		local elapsed = os.clock() - startedAt
+		if elapsed >= minDisplaySec then
+			targetProgress = math.max(targetProgress, math.min(p, 1))
+			return
+		end
+		local timeCap = math.clamp(elapsed / minDisplaySec, 0, 1)
+		local capped = math.min(p, timeCap)
+		targetProgress = math.max(targetProgress, capped)
+	end
+
+	task.spawn(function()
+		if not game:IsLoaded() then
+			game.Loaded:Wait()
+		end
+		setTarget(0.22)
+	end)
+
+	task.spawn(function()
+		local map = Workspace:WaitForChild("Map", 90)
+		if map then
+			setTarget(0.5)
+		end
+		local ok, paths = pcall(getPlotPaths)
+		if ok and paths then
+			local folder = paths.waitForSpawnAndBasesFolder(20)
+			if folder then
+				setTarget(0.72)
+			end
+		end
+	end)
+
+	task.spawn(function()
+		if not player.Character then
+			player.CharacterAdded:Wait()
+		end
+		setTarget(0.88)
+	end)
+
+	local heartbeatConn: RBXScriptConnection? = nil
+	heartbeatConn = RunService.Heartbeat:Connect(function(dt)
+		shownProgress += (targetProgress - shownProgress) * math.min(1, dt * BAR_LERP_SPEED)
+		local fillScale = math.max(shownProgress, BAR_MIN_FILL_SCALE)
+		fillBar.Size = UDim2.new(fillScale, 0, 1, 0)
+
+		local elapsed = os.clock() - startedAt
+		if elapsed >= minDisplaySec then
+			setTarget(1)
+		end
+		if shownProgress >= 0.99 and elapsed >= minDisplaySec then
+			if heartbeatConn then
+				heartbeatConn:Disconnect()
+				heartbeatConn = nil
+			end
+		end
+	end)
+
+	while shownProgress < 0.99 or os.clock() - startedAt < minDisplaySec do
+		enterLoadingIsolation(playerGui)
+		task.wait(0.05)
+	end
+	if heartbeatConn then
+		heartbeatConn:Disconnect()
+	end
+
+	fillBar.Size = UDim2.new(1, 0, 1, 0)
+	task.wait(HOLD_AT_FULL_SEC)
+
+	loadingActive = false
+	if stopCameraLock then
+		stopCameraLock()
+		stopCameraLock = nil
+	end
+	if camera then
+		restoreGameplayCamera(camera, player)
+	end
+
+	fadeOutLoadingTogether(loadingGui, blur, camera, player)
+	cleanupLoadingVisuals(playerGui, loadingGui, nil)
+
+	if stopNameAnim then
+		stopNameAnim()
+		stopNameAnim = nil
+	end
+
+	exitLoadingIsolation(playerGui)
+	loadingGui.Enabled = false
+end
+
+return M

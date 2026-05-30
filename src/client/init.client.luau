@@ -2,6 +2,15 @@
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
 
+local LoadingScreenController = require(script.LoadingScreenController)
+LoadingScreenController.showEarly()
+local loadOk, loadErr = pcall(function()
+	LoadingScreenController.run()
+end)
+if not loadOk then
+	warn("[LoadingScreenController] run failed:", loadErr)
+end
+
 task.spawn(function()
 	local player = Players.LocalPlayer
 	local pg = player:WaitForChild("PlayerGui", 30)

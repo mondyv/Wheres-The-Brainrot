@@ -90,7 +90,6 @@ local MIN_TOUCH_PX = 44
 local MIN_TOUCH_PX_MOBILE = 52
 local TOUCH_TAP_ICON = "rbxasset://textures/ui/Controls/TouchTapIcon.png"
 local TOUCH_HOLD_ICON = "rbxasset://textures/ui/Controls/TouchHoldIcon.png"
-local BUSH_MOBILE_FINGER_ICON = "rbxassetid://6026286488"
 
 -- ── State ─────────────────────────────────────────────────────────────────────
 
@@ -350,7 +349,11 @@ local function refreshKeyLabel(view: PromptView)
 		return
 	end
 	if shouldShowBushTouchIcon(prompt) then
-		showIcon(BUSH_MOBILE_FINGER_ICON)
+		if prompt.HoldDuration > 0 then
+			showIcon(TOUCH_HOLD_ICON)
+		else
+			showIcon(TOUCH_TAP_ICON)
+		end
 		return
 	end
 	if usesTouchPromptIcon() then
@@ -1336,6 +1339,11 @@ local function startBushSharedCardHoldVisual(view: PromptView)
 			setHoldFillProgress(view, p)
 			local pulse = 0.04 + math.sin(os.clock() * 14) * 0.03
 			view.holdFill.BackgroundTransparency = math.clamp(0.05 - pulse, 0, 0.2)
+			if p >= HOLD_COMPLETE_THRESHOLD and managedBushHoldActive == view.prompt then
+				stopHoldRender(view)
+				ProximityPromptEffects.endManagedBushHold(view.prompt, true)
+				return
+			end
 		end
 		local t = os.clock()
 		view.root.Rotation = wiggleRotation(view.root, seed, t)

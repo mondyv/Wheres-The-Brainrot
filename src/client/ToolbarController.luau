@@ -1695,8 +1695,8 @@ function ToolbarController.init()
 					if not desc:IsA("BasePart") then
 						return
 					end
-					if desc.Name == "RedWall" or desc.Name == "RedPart" or desc.Name == "Raddie"
-						or desc.Name == "SafezoneHitbox" or desc.Name == "SafeZoneHitbox" then
+					if desc.Name == "RedWall" or desc.Name == "RedPart" or desc.Name == "Reddie"
+						or desc.Name == "Raddie" or desc.Name == "SafezoneHitbox" or desc.Name == "SafeZoneHitbox" then
 						SafezoneUtil.invalidateCache()
 						pollSafezonePresence()
 					end

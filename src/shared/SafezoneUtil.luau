@@ -1,12 +1,12 @@
 --[[
 	OBB point tests for plot zones under workspace.Map["Spawn And Bases"].
-	• SafeZoneHitbox / SafezoneHitbox — inventory + toolbar visible; grapple disabled.
+	• SafeZoneHitbox / SafezoneHitbox / Reddie / Raddie — inventory + toolbar visible; grapple disabled.
 	• RedWall — brainrot deposit only; inventory hidden even if overlapping the hitbox.
 ]]
 
 local SafezoneUtil = {}
 
-local INVENTORY_ZONE_NAMES = { "SafeZoneHitbox", "SafezoneHitbox", "Raddie" }
+local INVENTORY_ZONE_NAMES = { "SafeZoneHitbox", "SafezoneHitbox", "Reddie", "Raddie" }
 local RED_WALL_NAMES = { "RedWall", "RedPart" }
 
 local cachedInventoryParts: { BasePart }? = nil

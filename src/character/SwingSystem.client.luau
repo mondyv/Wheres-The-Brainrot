@@ -932,7 +932,7 @@ local function boot(character: Model)
 		cacheStamp = os.clock()
 	end
 
-	-- workspace.Map["Spawn And Bases"].RedWall — shared OBB test via SafezoneUtil.
+	-- workspace.Map["Spawn And Bases"].SafeZoneHitbox — grapple disabled in the spawn safe zone (not RedWall-only).
 	local function isHrpInSafezone(): boolean
 		return SafezoneUtil.isCharacterInSafezone(character)
 	end

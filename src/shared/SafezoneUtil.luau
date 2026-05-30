@@ -1,14 +1,16 @@
 --[[
-	OBB point test for the plot safe zone (hotbar visible, grapple disabled, etc.).
-	Map layout: workspace.Map["Spawn And Bases"].RedWall (Model or Part).
-	Fallbacks: Raddie, SafezoneHitbox.
+	OBB point tests for plot zones under workspace.Map["Spawn And Bases"].
+	• SafeZoneHitbox / SafezoneHitbox — inventory + toolbar visible; grapple disabled.
+	• RedWall — brainrot deposit only; inventory hidden even if overlapping the hitbox.
 ]]
 
 local SafezoneUtil = {}
 
-local FALLBACK_PART_NAMES = { "Raddie", "SafezoneHitbox" }
+local INVENTORY_ZONE_NAMES = { "SafeZoneHitbox", "SafezoneHitbox", "Raddie" }
+local RED_WALL_NAMES = { "RedWall", "RedPart" }
 
-local cachedParts: { BasePart }? = nil
+local cachedInventoryParts: { BasePart }? = nil
+local cachedRedWallParts: { BasePart }? = nil
 
 local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolean
 	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
@@ -30,59 +32,93 @@ local function collectBasePartsFrom(inst: Instance, out: { BasePart })
 	end
 end
 
-local function refreshHitboxes()
-	if cachedParts then
-		for _, p in cachedParts do
-			if p.Parent then
-				return
-			end
+local function findNamedPartsUnder(root: Instance, names: { string }): { BasePart }
+	local parts: { BasePart } = {}
+	for _, name in names do
+		local inst = root:FindFirstChild(name, true)
+		if inst then
+			collectBasePartsFrom(inst, parts)
 		end
 	end
-	cachedParts = {}
+	return parts
+end
 
+local function getSpawnBasesFolder(): Instance?
 	local map = workspace:FindFirstChild("Map")
 	if not map then
-		return
+		return nil
 	end
-	local spawnBases = map:FindFirstChild("Spawn And Bases")
-	if not spawnBases then
-		return
-	end
-
-	local parts: { BasePart } = {}
-	local redWall = spawnBases:FindFirstChild("RedWall")
-	if redWall then
-		collectBasePartsFrom(redWall, parts)
-	end
-
-	if #parts == 0 then
-		for _, name in FALLBACK_PART_NAMES do
-			local h = spawnBases:FindFirstChild(name, true)
-			if h and h:IsA("BasePart") then
-				table.insert(parts, h)
-				break
-			end
-		end
-	end
-
-	cachedParts = parts
+	return map:FindFirstChild("Spawn And Bases")
 end
 
-function SafezoneUtil.invalidateCache()
-	cachedParts = nil
-end
-
-function SafezoneUtil.isWorldPointInSafezone(worldPoint: Vector3): boolean
-	refreshHitboxes()
-	if not cachedParts or #cachedParts == 0 then
+local function cacheStillValid(cached: { BasePart }?): boolean
+	if not cached then
 		return false
 	end
-	for _, part in cachedParts do
-		if isPointInsidePartOBB(worldPoint, part) then
+	for _, p in cached do
+		if p.Parent then
 			return true
 		end
 	end
 	return false
+end
+
+local function refreshInventoryHitboxes()
+	if cacheStillValid(cachedInventoryParts) then
+		return
+	end
+	cachedInventoryParts = {}
+	local spawnBases = getSpawnBasesFolder()
+	if not spawnBases then
+		return
+	end
+	cachedInventoryParts = findNamedPartsUnder(spawnBases, INVENTORY_ZONE_NAMES)
+end
+
+local function refreshRedWallHitboxes()
+	if cacheStillValid(cachedRedWallParts) then
+		return
+	end
+	cachedRedWallParts = {}
+	local spawnBases = getSpawnBasesFolder()
+	if not spawnBases then
+		return
+	end
+	cachedRedWallParts = findNamedPartsUnder(spawnBases, RED_WALL_NAMES)
+end
+
+function SafezoneUtil.invalidateCache()
+	cachedInventoryParts = nil
+	cachedRedWallParts = nil
+end
+
+local function isWorldPointInsideParts(worldPoint: Vector3, parts: { BasePart }?): boolean
+	if not parts or #parts == 0 then
+		return false
+	end
+	for _, part in parts do
+		if part.Parent and isPointInsidePartOBB(worldPoint, part) then
+			return true
+		end
+	end
+	return false
+end
+
+function SafezoneUtil.isWorldPointInSafezone(worldPoint: Vector3): boolean
+	refreshInventoryHitboxes()
+	return isWorldPointInsideParts(worldPoint, cachedInventoryParts)
+end
+
+function SafezoneUtil.isWorldPointInRedWall(worldPoint: Vector3): boolean
+	refreshRedWallHitboxes()
+	return isWorldPointInsideParts(worldPoint, cachedRedWallParts)
+end
+
+function SafezoneUtil.isWorldPointInInventoryZone(worldPoint: Vector3): boolean
+	if not SafezoneUtil.isWorldPointInSafezone(worldPoint) then
+		return false
+	end
+	return not SafezoneUtil.isWorldPointInRedWall(worldPoint)
 end
 
 function SafezoneUtil.isCharacterInSafezone(character: Model?): boolean
@@ -94,6 +130,17 @@ function SafezoneUtil.isCharacterInSafezone(character: Model?): boolean
 		return false
 	end
 	return SafezoneUtil.isWorldPointInSafezone((hrp :: BasePart).Position)
+end
+
+function SafezoneUtil.isCharacterInInventoryZone(character: Model?): boolean
+	if not character then
+		return false
+	end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return false
+	end
+	return SafezoneUtil.isWorldPointInInventoryZone((hrp :: BasePart).Position)
 end
 
 return SafezoneUtil

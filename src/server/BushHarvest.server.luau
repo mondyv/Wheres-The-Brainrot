@@ -21,6 +21,7 @@ local Brainrots = require(Modules:WaitForChild("Brainrots"))
 local BrainrotHeader = require(Modules:WaitForChild("BrainrotHeader"))
 local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local PlotLuck = SwingUpgrades.PlotLuck
 
@@ -739,13 +740,17 @@ local assignEntryToLowestFreeHotbarSlot: (
 	srcIdx: number
 ) -> number?
 
+local function playerInInventoryZone(player: Player): boolean
+	return SafezoneUtil.isCharacterInInventoryZone(player.Character)
+end
+
 local function notifyClientInventorySync(player: Player, autoEquipSlot: number?)
 	local invList = brainrotInventories[player]
 	local slot: number? = nil
 	if typeof(autoEquipSlot) == "number" then
 		slot = math.clamp(math.floor(autoEquipSlot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
 	end
-	if slot and invList and invList[slot] then
+	if slot and invList and invList[slot] and playerInInventoryZone(player) then
 		equipBrainrotSlotForPlayer(player, slot :: number)
 	end
 	local sync = ensureInventoryRemotes()
@@ -2500,6 +2505,9 @@ local function buildBrainrotToolFromTemplate(template: Model, entry: BrainrotInv
 end
 
 local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number): boolean
+	if not playerInInventoryZone(player) then
+		return false
+	end
 	local list = brainrotInventories[player]
 	if not list then
 		return false
@@ -2572,6 +2580,9 @@ local function inventoryEntryIncome(entry: BrainrotInvEntry): number
 end
 
 local function equipBestBrainrotForPlayer(plr: Player): boolean
+	if not playerInInventoryZone(plr) then
+		return false
+	end
 	local list = brainrotInventories[plr]
 	if not list or #list == 0 then
 		return false

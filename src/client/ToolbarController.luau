@@ -784,7 +784,7 @@ end
 
 local function pollSafezonePresence()
 	local char = player.Character
-	onSafezonePresenceChanged(SafezoneUtil.isCharacterInSafezone(char))
+	onSafezonePresenceChanged(SafezoneUtil.isCharacterInInventoryZone(char))
 end
 
 -- ── Slot highlight ────────────────────────────────────────────────────────────
@@ -1131,6 +1131,9 @@ local function refreshBrainrotBackpackUI()
 end
 
 local function requestEquipBestBrainrot()
+	if not playerInSafezone then
+		return
+	end
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
 	local ev = folder and folder:FindFirstChild("EquipBestBrainrot")
 	if ev and ev:IsA("RemoteEvent") then
@@ -1147,6 +1150,9 @@ local function requestMoveBackpackEntryToHotbar(listIdx: number)
 end
 
 local function requestEquipBrainrotSlot(slotIdx: number)
+	if not playerInSafezone then
+		return
+	end
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
 	local ev = folder and folder:FindFirstChild("EquipBrainrotSlot")
 	if ev and ev:IsA("RemoteEvent") then
@@ -1366,6 +1372,9 @@ end
 -- ── Equip from slot ───────────────────────────────────────────────────────────
 
 selectSlot = function(index: number)
+	if not playerInSafezone then
+		return
+	end
 	if not brainrotEntries[index] or brainrotParkedInUI[index] then
 		return
 	end
@@ -1438,6 +1447,9 @@ end
 -- After deposit, server sends equipSlot = inventory index of the new brainrot (hotbar 1–9 mirror those indices).
 -- Must not use selectSlot here — it toggles off when the server already equipped the matching tool.
 applyAutoEquipFromSync = function(equipSlot: number)
+	if not playerInSafezone then
+		return
+	end
 	local slot = math.clamp(math.floor(equipSlot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
 
 	local function applyHotbarHighlight()
@@ -1491,6 +1503,9 @@ local function bindToolbarHotbarKeybinds()
 				return Enum.ContextActionResult.Pass
 			end
 			if UserInputService:GetFocusedTextBox() ~= nil then
+				return Enum.ContextActionResult.Pass
+			end
+			if not playerInSafezone then
 				return Enum.ContextActionResult.Pass
 			end
 			if input.UserInputType ~= Enum.UserInputType.Keyboard then
@@ -1576,6 +1591,9 @@ function ToolbarController.init()
 			configureHotbarSlotInput(slot, btn)
 			styleToolbarSlotButton(btn)
 			local function onHotbarSlotTapSelect()
+				if not playerInSafezone then
+					return
+				end
 				if dragSuppressedToolbarClick then
 					dragSuppressedToolbarClick = false
 					return
@@ -1650,7 +1668,7 @@ function ToolbarController.init()
 		wireCharacter(player.Character)
 	end
 
-	playerInSafezone = SafezoneUtil.isCharacterInSafezone(player.Character)
+	playerInSafezone = SafezoneUtil.isCharacterInInventoryZone(player.Character)
 	refreshToolbarVisibility()
 
 	RunService.Heartbeat:Connect(function(dt)
@@ -1677,7 +1695,8 @@ function ToolbarController.init()
 					if not desc:IsA("BasePart") then
 						return
 					end
-					if desc.Name == "RedWall" or desc.Name == "RedPart" or desc.Name == "Raddie" or desc.Name == "SafezoneHitbox" then
+					if desc.Name == "RedWall" or desc.Name == "RedPart" or desc.Name == "Raddie"
+						or desc.Name == "SafezoneHitbox" or desc.Name == "SafeZoneHitbox" then
 						SafezoneUtil.invalidateCache()
 						pollSafezonePresence()
 					end

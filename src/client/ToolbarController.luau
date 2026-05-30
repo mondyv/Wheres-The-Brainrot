@@ -54,6 +54,8 @@ local BACKPACK_OPEN_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.Eas
 local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
 local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 44
+-- Fine-tune hotbar horizontal position when inventory is open (pixels right of Container left edge).
+local HOTBAR_BACKPACK_ALIGN_NUDGE_X = 12
 
 -- ── Key → slot index map ──────────────────────────────────────────────────────
 
@@ -1553,7 +1555,7 @@ syncHotbarUnderBackpack = function()
 		if rowMinX == math.huge then
 			rowMinX = hotbar.AbsolutePosition.X
 		end
-		local deltaX = alignLeft - rowMinX
+		local deltaX = alignLeft - rowMinX + HOTBAR_BACKPACK_ALIGN_NUDGE_X
 		if math.abs(deltaX) < 0.5 then
 			return
 		end

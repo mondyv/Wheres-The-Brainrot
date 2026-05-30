@@ -134,6 +134,9 @@ local refreshToggleBackpackIconLayout: () -> ()
 local refreshSlotVisual: (number) -> ()
 local updateHotbarSlotVisibility: () -> ()
 local refreshBrainrotBackpackUI: () -> ()
+local showToolbar: () -> ()
+local hideToolbar: () -> ()
+local refreshToolbarVisibility: () -> ()
 local backpackSearchWired = false
 local backpackCloseWired = false
 local isBackpackPanelOpen = false
@@ -1045,7 +1048,7 @@ local function setBackpackPanelOpen(open: boolean)
 	end
 end
 
-local function showToolbar()
+showToolbar = function()
 	if toolbarShown then
 		return
 	end
@@ -1066,7 +1069,7 @@ local function showToolbar()
 	end)
 end
 
-local function hideToolbar()
+hideToolbar = function()
 	if not toolbarShown then
 		return
 	end

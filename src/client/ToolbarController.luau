@@ -55,10 +55,10 @@ local HIGHLIGHT_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDi
 local BACKPACK_OPEN_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
-local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 36
-local TOGGLE_BACKPACK_ICON_SIZE_SCALE = 0.82
+local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 32
+local TOGGLE_BACKPACK_ICON_SIZE_SCALE = 0.74
 local HOTBAR_UNDER_BACKPACK_GAP_PX = 14
-local HOTBAR_CENTER_NUDGE_X = 10
+local HOTBAR_CENTER_NUDGE_X = 28
 
 -- ── Key → slot index map ──────────────────────────────────────────────────────
 

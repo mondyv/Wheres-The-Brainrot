@@ -137,6 +137,7 @@ local refreshBrainrotBackpackUI: () -> ()
 local showToolbar: () -> ()
 local hideToolbar: () -> ()
 local refreshToolbarVisibility: () -> ()
+local syncHotbarUnderBackpack: () -> ()
 local backpackSearchWired = false
 local backpackCloseWired = false
 local isBackpackPanelOpen = false
@@ -147,6 +148,10 @@ local backpackFadeRoot: CanvasGroup? = nil
 
 -- While dragging toward the hotbar (from backpack, or from hotbar back over the bar), all slots share one hover scale.
 local hotbarDragBulkHover = false
+local backpackDragHover = false
+local BACKPACK_DRAG_HOVER_SCALE = 1.03
+local hotbarOrigAnchorPoint: Vector2? = nil
+local hotbarOrigPosition: UDim2? = nil
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -804,6 +809,37 @@ local function matchesBackpackSearch(itemName: string): boolean
 	return string.find(string.lower(itemName), q, 1, true) ~= nil
 end
 
+local function resetBackpackDragHover()
+	if not backpackDragHover then
+		return
+	end
+	backpackDragHover = false
+	local target = if backpackContainer and backpackContainer:IsA("GuiObject")
+		then backpackContainer :: GuiObject
+		elseif backpackFrameRef then backpackFrameRef :: GuiObject
+		else nil
+	if target then
+		local sc = getOrAddUIScale(target)
+		TweenService:Create(sc, HIGHLIGHT_TWEEN, { Scale = 1 }):Play()
+	end
+end
+
+local function enterBackpackDragHover()
+	if backpackDragHover or not isBackpackPanelOpen then
+		return
+	end
+	local target = if backpackContainer and backpackContainer:IsA("GuiObject")
+		then backpackContainer :: GuiObject
+		elseif backpackFrameRef then backpackFrameRef :: GuiObject
+		else nil
+	if not target then
+		return
+	end
+	backpackDragHover = true
+	local sc = getOrAddUIScale(target)
+	TweenService:Create(sc, HIGHLIGHT_TWEEN, { Scale = BACKPACK_DRAG_HOVER_SCALE }):Play()
+end
+
 local function resetHotbarSlotHoverScalesAfterDrag()
 	hotbarDragBulkHover = false
 	for si = 1, HOTBAR_INVENTORY_SLOTS do
@@ -833,6 +869,19 @@ local function enterHotbarBackpackDragBulkHover()
 	end
 end
 
+local function updateDragHoverTargets(overHotbar: boolean, overBackpack: boolean)
+	if overHotbar then
+		enterHotbarBackpackDragBulkHover()
+	elseif hotbarDragBulkHover then
+		resetHotbarSlotHoverScalesAfterDrag()
+	end
+	if overBackpack and isBackpackPanelOpen then
+		enterBackpackDragHover()
+	else
+		resetBackpackDragHover()
+	end
+end
+
 local function clearDragGhost()
 	if dragGhostConn then
 		dragGhostConn:Disconnect()
@@ -845,6 +894,7 @@ local function clearDragGhost()
 	end
 	dragGhostImage = nil
 	resetHotbarSlotHoverScalesAfterDrag()
+	resetBackpackDragHover()
 end
 
 local function startDragGhost(texture: string, screenPos: Vector2)
@@ -990,6 +1040,7 @@ local function setBackpackPanelOpen(open: boolean)
 	end
 	if open and isBackpackPanelOpen then
 		ensureBackpackChromeVisible(backpackFrameRef :: GuiObject)
+		task.defer(syncHotbarUnderBackpack)
 		return
 	end
 	isBackpackPanelOpen = open
@@ -1022,7 +1073,9 @@ local function setBackpackPanelOpen(open: boolean)
 			refreshSlotVisual(i)
 		end
 		refreshBrainrotBackpackUI()
+		task.defer(syncHotbarUnderBackpack)
 	else
+		task.defer(syncHotbarUnderBackpack)
 		backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.9 })
 		backpackPanelFadeTween = TweenService:Create(fadeRoot, BACKPACK_CLOSE_TWEEN, { GroupTransparency = 1 })
 		backpackPanelScaleTween:Play()
@@ -1044,6 +1097,7 @@ local function setBackpackPanelOpen(open: boolean)
 				for i = 1, #slots do
 					refreshSlotVisual(i)
 				end
+				task.defer(syncHotbarUnderBackpack)
 			end
 			if backpackPanelFadeTween and state == Enum.PlaybackState.Completed then
 				backpackPanelFadeTween = nil
@@ -1377,6 +1431,75 @@ end
 
 local hotbarListLayout: UIListLayout? = nil
 
+local function captureHotbarLayoutDefaults()
+	if hotbarOrigPosition then
+		return
+	end
+	hotbarOrigAnchorPoint = hotbar.AnchorPoint
+	hotbarOrigPosition = hotbar.Position
+end
+
+local function hotbarRowVisualCenterX(): number?
+	local minX = math.huge
+	local maxX = -math.huge
+	for _, ch in hotbar:GetChildren() do
+		if ch:IsA("GuiObject") and (ch :: GuiObject).Visible then
+			local g = ch :: GuiObject
+			local x0 = g.AbsolutePosition.X
+			local x1 = x0 + g.AbsoluteSize.X
+			if x1 > x0 then
+				minX = math.min(minX, x0)
+				maxX = math.max(maxX, x1)
+			end
+		end
+	end
+	if minX == math.huge then
+		local hb = hotbar :: GuiObject
+		if hb.AbsoluteSize.X <= 0 then
+			return nil
+		end
+		return hb.AbsolutePosition.X + hb.AbsoluteSize.X * 0.5
+	end
+	return (minX + maxX) * 0.5
+end
+
+syncHotbarUnderBackpack = function()
+	captureHotbarLayoutDefaults()
+	if not hotbarOrigPosition or not hotbarOrigAnchorPoint then
+		return
+	end
+	hotbar.AnchorPoint = hotbarOrigAnchorPoint
+	hotbar.Position = hotbarOrigPosition
+	if not isBackpackPanelOpen or not backpackFrameRef then
+		return
+	end
+	task.defer(function()
+		RunService.Heartbeat:Wait()
+		if not isBackpackPanelOpen or not backpackFrameRef then
+			return
+		end
+		local bp = backpackFrameRef :: GuiObject
+		if bp.AbsoluteSize.X <= 0 then
+			return
+		end
+		local bpCenterX = bp.AbsolutePosition.X + bp.AbsoluteSize.X * 0.5
+		local hbCenterX = hotbarRowVisualCenterX()
+		if not hbCenterX then
+			return
+		end
+		local deltaX = bpCenterX - hbCenterX
+		if math.abs(deltaX) < 0.5 then
+			return
+		end
+		hotbar.Position = UDim2.new(
+			hotbarOrigPosition.X.Scale,
+			hotbarOrigPosition.X.Offset + math.floor(deltaX + 0.5),
+			hotbarOrigPosition.Y.Scale,
+			hotbarOrigPosition.Y.Offset
+		)
+	end)
+end
+
 local function ensureHotbarListLayout(): UIListLayout
 	if hotbarListLayout and hotbarListLayout.Parent == hotbar then
 		return hotbarListLayout
@@ -1550,6 +1673,7 @@ refreshToggleBackpackIconLayout = function()
 
 	pinToggleIconMinAbsoluteSize(icon)
 	ensureToggleBackpackIconSizeConstraint(icon)
+	task.defer(syncHotbarUnderBackpack)
 end
 
 updateHotbarSlotVisibility = function()
@@ -1563,7 +1687,10 @@ updateHotbarSlotVisibility = function()
 	if toggleBackpackIconRef then
 		toggleBackpackIconRef.Visible = true
 		task.defer(function()
-			task.defer(refreshToggleBackpackIconLayout)
+			task.defer(function()
+				refreshToggleBackpackIconLayout()
+				syncHotbarUnderBackpack()
+			end)
 		end)
 	end
 end
@@ -2252,6 +2379,7 @@ function ToolbarController.init()
 	getOrAddUIScale(hotbar).Scale = 1
 
 	ensureHotbarListLayout()
+	captureHotbarLayoutDefaults()
 
 	-- Collect slot references (named "1" through "9" inside Hotbar)
 	for i = 1, 9 do
@@ -2544,12 +2672,17 @@ function ToolbarController.init()
 				end
 			end
 			startDragGhost(pnd.texture, m)
-			if pnd.kind == "backpack" then
-				enterHotbarBackpackDragBulkHover()
-			end
-			return
-		end
-		if pnd.kind ~= "hotbar" then
+			local probeEnd = m
+			local probeWindow = screenPointWithGuiInset(probeEnd)
+			local ghostCenter = if dragGhostImage
+				then dragGhostImage.AbsolutePosition + dragGhostImage.AbsoluteSize * 0.5
+				else nil
+			local overHotbar = hotbarSlotIndexFromDropProbes(probeWindow, probeEnd, ghostCenter) ~= nil
+				or pointOverHotbarDropZoneProbes(probeWindow, probeEnd)
+				or (ghostCenter ~= nil and pointOverHotbarDropZoneProbes(ghostCenter, probeEnd))
+			local overBackpack = pointOverBackpackDropTarget(probeWindow, probeEnd)
+				or (ghostCenter ~= nil and pointOverBackpackDropTarget(ghostCenter, probeEnd))
+			updateDragHoverTargets(overHotbar, overBackpack)
 			return
 		end
 		local rawEnd = UserInputService:GetMouseLocation()
@@ -2561,24 +2694,19 @@ function ToolbarController.init()
 		if dragGhostImage then
 			ghostCenter = dragGhostImage.AbsolutePosition + dragGhostImage.AbsoluteSize * 0.5
 		end
-		local insetProbe = GuiService:GetGuiInset()
-		local ghostViewport = if ghostCenter then ghostCenter - Vector2.new(insetProbe.X, insetProbe.Y) else nil
-		local targetHotbar = hotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter)
-		local overHotbar = targetHotbar ~= nil
+		local ghostViewport = if ghostCenter
+			then ghostCenter - Vector2.new(GuiService:GetGuiInset().X, GuiService:GetGuiInset().Y)
+			else nil
+		local overHotbar = hotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter) ~= nil
 			or pointOverHotbarDropZoneProbes(mouseWindow, rawEnd)
 			or (ghostCenter ~= nil and pointOverHotbarDropZoneProbes(ghostCenter, rawEnd))
 			or (ghostViewport ~= nil and pointOverHotbarFromGuiHitScan(ghostViewport))
-		if not isBackpackPanelOpen and (
-			pointOverBackpackDropTarget(mouseWindow, rawEnd)
+		local overBackpack = pointOverBackpackDropTarget(mouseWindow, rawEnd)
 			or (ghostCenter ~= nil and pointOverBackpackDropTarget(ghostCenter, rawEnd))
-		) then
+		if pnd.kind == "hotbar" and not isBackpackPanelOpen and overBackpack then
 			setBackpackPanelOpen(true)
 		end
-		if overHotbar then
-			enterHotbarBackpackDragBulkHover()
-		elseif hotbarDragBulkHover then
-			resetHotbarSlotHoverScalesAfterDrag()
-		end
+		updateDragHoverTargets(overHotbar, overBackpack)
 	end)
 
 	UserInputService.InputEnded:Connect(function(input, _gp)

@@ -250,20 +250,13 @@ function M.brainrotRequirements(tier: number): { BrainrotReq }
 	return { def.brainrot1, def.brainrot2 }
 end
 
-function M.inventoryMeetsBrainrotReqs(
-	entries: { { name: string, rarity: string } },
+function M.evaluateBrainrotReqs(
+	isDiscovered: (name: string) -> boolean,
 	reqs: { BrainrotReq }
 ): { BrainrotReqState }
 	local out: { BrainrotReqState } = {}
 	for _, req in reqs do
-		local met = false
-		local need = M.normalizeName(req.name)
-		for _, entry in entries do
-			if typeof(entry.name) == "string" and M.normalizeName(entry.name) == need then
-				met = true
-				break
-			end
-		end
+		local met = isDiscovered(req.name)
 		table.insert(out, {
 			itemIndex = req.itemIndex,
 			name = req.name,
@@ -275,7 +268,7 @@ function M.inventoryMeetsBrainrotReqs(
 	return out
 end
 
-function M.buildSnapshot(player: Player, entries: { { name: string, rarity: string, icon: string? } }): RebirthSnapshot
+function M.buildSnapshot(player: Player, isDiscovered: (name: string) -> boolean): RebirthSnapshot
 	local count = M.getRebirthCount(player)
 	local tier = count + 1
 	local tierDef = M.getTierDef(tier)
@@ -284,7 +277,7 @@ function M.buildSnapshot(player: Player, entries: { { name: string, rarity: stri
 	local cashVal = if typeof(cash) == "number" then cash else 0
 	local cashMet = tierDef ~= nil and cashVal >= cashRequired
 	local brainrotReqs = if tierDef
-		then M.inventoryMeetsBrainrotReqs(entries, M.brainrotRequirements(tier))
+		then M.evaluateBrainrotReqs(isDiscovered, M.brainrotRequirements(tier))
 		else {}
 	local brainrotsMet = tierDef ~= nil
 	for _, req in brainrotReqs do

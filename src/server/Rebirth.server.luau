@@ -50,32 +50,8 @@ local getStateRF = ensureRemoteFunction("GetRebirthState")
 local performRF = ensureRemoteFunction("PerformRebirth")
 local updatedRE = ensureRemoteEvent("RebirthUpdated")
 
-local function getInventoryEntries(player: Player): { { name: string, rarity: string, icon: string? } }
-	local internal = ServerStorage:FindFirstChild("BrainrotInternal")
-	if not internal then
-		return {}
-	end
-	local bf = internal:FindFirstChild("GetInventoryList")
-	if not bf or not bf:IsA("BindableFunction") then
-		return {}
-	end
-	local ok, list = pcall(function()
-		return bf:Invoke(player)
-	end)
-	if not ok or typeof(list) ~= "table" then
-		return {}
-	end
-	local out: { { name: string, rarity: string, icon: string? } } = {}
-	for _, entry in ipairs(list) do
-		if typeof(entry) == "table" and typeof(entry.name) == "string" and typeof(entry.rarity) == "string" then
-			table.insert(out, {
-				name = entry.name,
-				rarity = entry.rarity,
-				icon = if typeof(entry.icon) == "string" then entry.icon else nil,
-			})
-		end
-	end
-	return out
+local function isBrainrotDiscovered(player: Player, name: string): boolean
+	return IndexService.hasDiscoveredBrainrot(player, name)
 end
 
 local function enrichSnapshot(snapshot: RebirthConfig.RebirthSnapshot): RebirthConfig.RebirthSnapshot
@@ -94,7 +70,7 @@ local function syncPlayerRebirthAttrs(player: Player, snapshot: RebirthConfig.Re
 end
 
 local function pushState(player: Player)
-	local snapshot = enrichSnapshot(RebirthConfig.buildSnapshot(player, getInventoryEntries(player)))
+	local snapshot = enrichSnapshot(RebirthConfig.buildSnapshot(player, isBrainrotDiscovered))
 	syncPlayerRebirthAttrs(player, snapshot)
 	updatedRE:FireClient(player, snapshot)
 	return snapshot
@@ -120,7 +96,7 @@ end
 
 local function performRebirth(player: Player, opts: { skipRequirements: boolean?, keepUpgrades: boolean? }?): (boolean, string?)
 	opts = opts or {}
-	local snapshot = RebirthConfig.buildSnapshot(player, getInventoryEntries(player))
+	local snapshot = RebirthConfig.buildSnapshot(player, isBrainrotDiscovered)
 	if not opts.skipRequirements and not snapshot.canRebirth then
 		return false, "requirements"
 	end
@@ -153,9 +129,6 @@ local function initPlayer(player: Player)
 	end
 	pushState(player)
 	player:GetAttributeChangedSignal("Cash"):Connect(function()
-		pushState(player)
-	end)
-	player:GetAttributeChangedSignal("BrainrotCount"):Connect(function()
 		pushState(player)
 	end)
 end

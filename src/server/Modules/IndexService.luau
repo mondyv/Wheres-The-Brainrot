@@ -129,6 +129,16 @@ function M.isUnlocked(player: Player, name: string, mutationId: string): boolean
 	return map[IndexConfig.unlockKey(name, mutationId)] == true
 end
 
+-- True if the player has unlocked this brainrot in the index (any mutation tab).
+function M.hasDiscoveredBrainrot(player: Player, brainrotName: string): boolean
+	for _, mutationId in IndexConfig.MUTATION_TABS do
+		if M.isUnlocked(player, brainrotName, mutationId) then
+			return true
+		end
+	end
+	return false
+end
+
 function M.getUnlockMap(player: Player): UnlockMap
 	ensureMaps(player)
 	return unlockedByPlayer[player] :: UnlockMap

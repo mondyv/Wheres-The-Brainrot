@@ -1,15 +1,18 @@
 --[[
 	OBB point tests for plot zones under workspace.Map["Spawn And Bases"].
-	• SafeZoneHitbox / SafezoneHitbox / Reddie / Raddie — inventory + toolbar visible; grapple disabled.
-	• RedWall — brainrot deposit only; inventory hidden even if overlapping the hitbox.
+	• Reddie — toolbar / backpack access + server equip (Map.Spawn And Bases.Reddie).
+	• SafeZoneHitbox / SafezoneHitbox / Raddie — legacy grapple-disable volume (not toolbar).
+	• RedWall / RedPart — brainrot deposit only (CollectionService + touch); never hides toolbar.
 ]]
 
 local SafezoneUtil = {}
 
-local INVENTORY_ZONE_NAMES = { "SafeZoneHitbox", "SafezoneHitbox", "Reddie", "Raddie" }
+local TOOLBAR_ZONE_NAMES = { "Reddie" }
+local GRAPPLE_SAFEZONE_NAMES = { "SafeZoneHitbox", "SafezoneHitbox", "Reddie", "Raddie" }
 local RED_WALL_NAMES = { "RedWall", "RedPart" }
 
-local cachedInventoryParts: { BasePart }? = nil
+local cachedReddieParts: { BasePart }? = nil
+local cachedGrappleSafezoneParts: { BasePart }? = nil
 local cachedRedWallParts: { BasePart }? = nil
 
 local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolean
@@ -63,16 +66,28 @@ local function cacheStillValid(cached: { BasePart }?): boolean
 	return false
 end
 
-local function refreshInventoryHitboxes()
-	if cacheStillValid(cachedInventoryParts) then
+local function refreshReddieHitboxes()
+	if cacheStillValid(cachedReddieParts) then
 		return
 	end
-	cachedInventoryParts = {}
+	cachedReddieParts = {}
 	local spawnBases = getSpawnBasesFolder()
 	if not spawnBases then
 		return
 	end
-	cachedInventoryParts = findNamedPartsUnder(spawnBases, INVENTORY_ZONE_NAMES)
+	cachedReddieParts = findNamedPartsUnder(spawnBases, TOOLBAR_ZONE_NAMES)
+end
+
+local function refreshGrappleSafezoneHitboxes()
+	if cacheStillValid(cachedGrappleSafezoneParts) then
+		return
+	end
+	cachedGrappleSafezoneParts = {}
+	local spawnBases = getSpawnBasesFolder()
+	if not spawnBases then
+		return
+	end
+	cachedGrappleSafezoneParts = findNamedPartsUnder(spawnBases, GRAPPLE_SAFEZONE_NAMES)
 end
 
 local function refreshRedWallHitboxes()
@@ -88,7 +103,8 @@ local function refreshRedWallHitboxes()
 end
 
 function SafezoneUtil.invalidateCache()
-	cachedInventoryParts = nil
+	cachedReddieParts = nil
+	cachedGrappleSafezoneParts = nil
 	cachedRedWallParts = nil
 end
 
@@ -104,9 +120,18 @@ local function isWorldPointInsideParts(worldPoint: Vector3, parts: { BasePart }?
 	return false
 end
 
+function SafezoneUtil.isWorldPointInReddie(worldPoint: Vector3): boolean
+	refreshReddieHitboxes()
+	return isWorldPointInsideParts(worldPoint, cachedReddieParts)
+end
+
+function SafezoneUtil.isWorldPointInToolbarZone(worldPoint: Vector3): boolean
+	return SafezoneUtil.isWorldPointInReddie(worldPoint)
+end
+
 function SafezoneUtil.isWorldPointInSafezone(worldPoint: Vector3): boolean
-	refreshInventoryHitboxes()
-	return isWorldPointInsideParts(worldPoint, cachedInventoryParts)
+	refreshGrappleSafezoneHitboxes()
+	return isWorldPointInsideParts(worldPoint, cachedGrappleSafezoneParts)
 end
 
 function SafezoneUtil.isWorldPointInRedWall(worldPoint: Vector3): boolean
@@ -115,10 +140,18 @@ function SafezoneUtil.isWorldPointInRedWall(worldPoint: Vector3): boolean
 end
 
 function SafezoneUtil.isWorldPointInInventoryZone(worldPoint: Vector3): boolean
-	if not SafezoneUtil.isWorldPointInSafezone(worldPoint) then
+	return SafezoneUtil.isWorldPointInReddie(worldPoint)
+end
+
+function SafezoneUtil.isCharacterInToolbarZone(character: Model?): boolean
+	if not character then
 		return false
 	end
-	return not SafezoneUtil.isWorldPointInRedWall(worldPoint)
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return false
+	end
+	return SafezoneUtil.isWorldPointInReddie((hrp :: BasePart).Position)
 end
 
 function SafezoneUtil.isCharacterInSafezone(character: Model?): boolean

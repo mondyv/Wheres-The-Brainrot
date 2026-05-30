@@ -932,7 +932,7 @@ local function boot(character: Model)
 		cacheStamp = os.clock()
 	end
 
-	-- workspace.Map["Spawn And Bases"].SafeZoneHitbox — grapple disabled in the spawn safe zone (not RedWall-only).
+	-- Spawn safe zone (Reddie / legacy hitboxes) — grapple disabled; toolbar uses Reddie only.
 	local function isHrpInSafezone(): boolean
 		return SafezoneUtil.isCharacterInSafezone(character)
 	end

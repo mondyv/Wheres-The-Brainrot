@@ -13,6 +13,8 @@
 	Hotbar slots may use nested `Button` (e.g. Hotbar["1"].Button.Icon).
 	Brainrot pickups: tuck/untuck via drag; ghost drag; search; backpack frame outline + open/close tweens.
 	Backpack UI rows 1..19 show stashed items in dense order (tucked hotbar slots + list indices >9); row labels use server list index.
+
+	Toolbar access: workspace.Map["Spawn And Bases"].Reddie (canUseToolbar). RedWall is deposit-only.
 --]]
 
 local Players = game:GetService("Players")
@@ -26,6 +28,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local CarryGate = require(script.Parent.CarryGate)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
 local player    = Players.LocalPlayer
@@ -70,9 +73,12 @@ local slotTools: { Tool? }   = {}    -- tool assigned to each slot
 local activeSlot: number?    = nil
 local uiHotbarHighlight: number? = nil -- nil = no slot ring (toggle off); otherwise mirrors selection / equip
 local toolbarShown: boolean  = false
-local playerInSafezone: boolean = false
+local canUseToolbar: boolean = false
 local safezonePollAccum = 0.0
 local SAFEZONE_POLL_INTERVAL = 0.12
+local REDDIE_ENTER_DEBOUNCE = 0.5
+local lastReddieEnterAttempt = 0.0
+local pendingCarryAutoSelectName: string? = nil
 
 local MAX_BACKPACK_BRAINROT_SLOTS = 19
 local HOTBAR_INVENTORY_SLOTS = 9
@@ -709,6 +715,9 @@ local function refreshInventoryHeaderText()
 end
 
 local function setBackpackPanelOpen(open: boolean)
+	if open and not canUseToolbar then
+		return
+	end
 	if not backpackFrameRef then
 		return
 	end
@@ -759,21 +768,74 @@ local function hideToolbar()
 end
 
 local function refreshToolbarVisibility()
-	if playerInSafezone then
+	if canUseToolbar then
 		showToolbar()
 	else
 		hideToolbar()
 	end
 end
 
+local function getPrimaryCarriedBrainrotName(): string?
+	local char = player.Character
+	if not char then
+		return nil
+	end
+	for _, d in char:GetDescendants() do
+		if d:IsA("Model") then
+			local phase = d:GetAttribute("BrainrotCarryPhase")
+			if phase == "Carried" or phase == "Floating" then
+				local attrName = d:GetAttribute("BrainrotName")
+				if typeof(attrName) == "string" and attrName ~= "" then
+					return attrName
+				end
+				if d.Name ~= "" then
+					return d.Name
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function findHotbarSlotForBrainrotName(itemName: string): number?
+	for i = 1, HOTBAR_INVENTORY_SLOTS do
+		local e = brainrotEntries[i]
+		if e and e.name == itemName and not brainrotParkedInUI[i] then
+			return i
+		end
+	end
+	return nil
+end
+
+local tryAutoSelectReturnedBrainrotOnReddieEnter: () -> ()
+local tryFulfillPendingCarryAutoSelect: (number?) -> ()
+
 local deselectAllHotbarSlots: () -> ()
 
-local function onSafezonePresenceChanged(inZone: boolean)
-	if playerInSafezone == inZone then
+tryAutoSelectReturnedBrainrotOnReddieEnter = function()
+	local now = os.clock()
+	if now - lastReddieEnterAttempt < REDDIE_ENTER_DEBOUNCE then
 		return
 	end
-	playerInSafezone = inZone
-	if not inZone then
+	lastReddieEnterAttempt = now
+	if not CarryGate.isCarrying() then
+		return
+	end
+	local name = getPrimaryCarriedBrainrotName()
+	if name then
+		pendingCarryAutoSelectName = name
+	end
+end
+
+local function onSafezonePresenceChanged(inZone: boolean)
+	if canUseToolbar == inZone then
+		return
+	end
+	canUseToolbar = inZone
+	if inZone then
+		tryAutoSelectReturnedBrainrotOnReddieEnter()
+	else
+		pendingCarryAutoSelectName = nil
 		setBackpackPanelOpen(false)
 		clearDragGhost()
 		pendingToolbarDrag = nil
@@ -784,7 +846,7 @@ end
 
 local function pollSafezonePresence()
 	local char = player.Character
-	onSafezonePresenceChanged(SafezoneUtil.isCharacterInInventoryZone(char))
+	onSafezonePresenceChanged(SafezoneUtil.isCharacterInToolbarZone(char))
 end
 
 -- ── Slot highlight ────────────────────────────────────────────────────────────
@@ -1131,7 +1193,7 @@ local function refreshBrainrotBackpackUI()
 end
 
 local function requestEquipBestBrainrot()
-	if not playerInSafezone then
+	if not canUseToolbar then
 		return
 	end
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
@@ -1142,6 +1204,9 @@ local function requestEquipBestBrainrot()
 end
 
 local function requestMoveBackpackEntryToHotbar(listIdx: number)
+	if not canUseToolbar then
+		return
+	end
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
 	local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
 	if parkEv and parkEv:IsA("RemoteEvent") then
@@ -1150,7 +1215,7 @@ local function requestMoveBackpackEntryToHotbar(listIdx: number)
 end
 
 local function requestEquipBrainrotSlot(slotIdx: number)
-	if not playerInSafezone then
+	if not canUseToolbar then
 		return
 	end
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
@@ -1175,6 +1240,9 @@ local function wireBrainrotBackpackEquips()
 			passthroughChildClicks(btn :: GuiObject)
 			styleToolbarSlotButton(btn)
 			btn.MouseButton1Down:Connect(function()
+				if not canUseToolbar then
+					return
+				end
 				if pendingToolbarDrag then
 					return
 				end
@@ -1363,16 +1431,14 @@ local function setBrainrotEntriesFromServer(payload: any)
 	rebuildSlots()
 	if typeof(payload) == "table" then
 		local equipSlot = (payload :: any).equipSlot
-		if typeof(equipSlot) == "number" then
-			applyAutoEquipFromSync(equipSlot)
-		end
+		tryFulfillPendingCarryAutoSelect(if typeof(equipSlot) == "number" then equipSlot else nil)
 	end
 end
 
 -- ── Equip from slot ───────────────────────────────────────────────────────────
 
 selectSlot = function(index: number)
-	if not playerInSafezone then
+	if not canUseToolbar then
 		return
 	end
 	if not brainrotEntries[index] or brainrotParkedInUI[index] then
@@ -1447,7 +1513,7 @@ end
 -- After deposit, server sends equipSlot = inventory index of the new brainrot (hotbar 1–9 mirror those indices).
 -- Must not use selectSlot here — it toggles off when the server already equipped the matching tool.
 applyAutoEquipFromSync = function(equipSlot: number)
-	if not playerInSafezone then
+	if not canUseToolbar then
 		return
 	end
 	local slot = math.clamp(math.floor(equipSlot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
@@ -1492,6 +1558,26 @@ applyAutoEquipFromSync = function(equipSlot: number)
 	task.delay(0.15, tryHoldBrainrot)
 end
 
+tryFulfillPendingCarryAutoSelect = function(equipSlot: number?)
+	if not canUseToolbar then
+		return
+	end
+	local slot: number? = nil
+	if typeof(equipSlot) == "number" then
+		slot = math.clamp(math.floor(equipSlot), 1, HOTBAR_INVENTORY_SLOTS)
+	elseif pendingCarryAutoSelectName then
+		slot = findHotbarSlotForBrainrotName(pendingCarryAutoSelectName)
+	end
+	if not slot then
+		return
+	end
+	if not brainrotEntries[slot] or brainrotParkedInUI[slot] then
+		return
+	end
+	pendingCarryAutoSelectName = nil
+	applyAutoEquipFromSync(slot)
+end
+
 local HOTBAR_KEY_ACTION = "ToolbarHotbarNumberKeys"
 
 local function bindToolbarHotbarKeybinds()
@@ -1505,15 +1591,15 @@ local function bindToolbarHotbarKeybinds()
 			if UserInputService:GetFocusedTextBox() ~= nil then
 				return Enum.ContextActionResult.Pass
 			end
-			if not playerInSafezone then
-				return Enum.ContextActionResult.Pass
-			end
 			if input.UserInputType ~= Enum.UserInputType.Keyboard then
 				return Enum.ContextActionResult.Pass
 			end
 			local idx = KEY_TO_SLOT[input.KeyCode]
 			if not idx then
 				return Enum.ContextActionResult.Pass
+			end
+			if not canUseToolbar then
+				return Enum.ContextActionResult.Sink
 			end
 			if not brainrotEntries[idx] or brainrotParkedInUI[idx] then
 				return Enum.ContextActionResult.Pass
@@ -1591,7 +1677,7 @@ function ToolbarController.init()
 			configureHotbarSlotInput(slot, btn)
 			styleToolbarSlotButton(btn)
 			local function onHotbarSlotTapSelect()
-				if not playerInSafezone then
+				if not canUseToolbar then
 					return
 				end
 				if dragSuppressedToolbarClick then
@@ -1608,6 +1694,9 @@ function ToolbarController.init()
 			print("[ToolbarController] hotbar button connected", i)
 			-- PC-only drag start; touch taps must not enter the drag pipeline (blocks Activated on some devices).
 			btn.MouseButton1Down:Connect(function()
+				if not canUseToolbar then
+					return
+				end
 				if isTouchPointerInput() then
 					return
 				end
@@ -1668,8 +1757,11 @@ function ToolbarController.init()
 		wireCharacter(player.Character)
 	end
 
-	playerInSafezone = SafezoneUtil.isCharacterInInventoryZone(player.Character)
+	canUseToolbar = SafezoneUtil.isCharacterInToolbarZone(player.Character)
 	refreshToolbarVisibility()
+	if canUseToolbar then
+		tryAutoSelectReturnedBrainrotOnReddieEnter()
+	end
 
 	RunService.Heartbeat:Connect(function(dt)
 		safezonePollAccum += dt
@@ -1695,8 +1787,7 @@ function ToolbarController.init()
 					if not desc:IsA("BasePart") then
 						return
 					end
-					if desc.Name == "RedWall" or desc.Name == "RedPart" or desc.Name == "Reddie"
-						or desc.Name == "Raddie" or desc.Name == "SafezoneHitbox" or desc.Name == "SafeZoneHitbox" then
+					if desc.Name == "Reddie" then
 						SafezoneUtil.invalidateCache()
 						pollSafezonePresence()
 					end
@@ -1748,6 +1839,9 @@ function ToolbarController.init()
 			UIInteractionSounds.playClick()
 		end)
 		toggleBtn.MouseButton1Click:Connect(function()
+			if not canUseToolbar then
+				return
+			end
 			setBackpackPanelOpen(not isBackpackPanelOpen)
 		end)
 	end
@@ -1763,6 +1857,9 @@ function ToolbarController.init()
 				if UserInputService:GetFocusedTextBox() ~= nil then
 					return Enum.ContextActionResult.Pass
 				end
+				if not canUseToolbar then
+					return Enum.ContextActionResult.Sink
+				end
 				setBackpackPanelOpen(not isBackpackPanelOpen)
 				UIInteractionSounds.playClick()
 				return Enum.ContextActionResult.Sink
@@ -1773,7 +1870,20 @@ function ToolbarController.init()
 		)
 	end
 
+	player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(function()
+		if not canUseToolbar or not pendingCarryAutoSelectName then
+			return
+		end
+		if CarryGate.usedSlots() > 0 then
+			return
+		end
+		tryFulfillPendingCarryAutoSelect(nil)
+	end)
+
 	UserInputService.InputChanged:Connect(function(input, _gp)
+		if not canUseToolbar then
+			return
+		end
 		if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
 			return
 		end
@@ -1859,6 +1969,11 @@ function ToolbarController.init()
 
 	UserInputService.InputEnded:Connect(function(input, _gp)
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+		if not canUseToolbar then
+			pendingToolbarDrag = nil
+			clearDragGhost()
 			return
 		end
 		local pnd = pendingToolbarDrag

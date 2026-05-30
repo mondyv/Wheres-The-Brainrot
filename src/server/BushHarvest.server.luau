@@ -741,7 +741,8 @@ local assignEntryToLowestFreeHotbarSlot: (
 ) -> number?
 
 local function playerInInventoryZone(player: Player): boolean
-	return SafezoneUtil.isCharacterInInventoryZone(player.Character)
+	-- Toolbar / equip access: workspace.Map["Spawn And Bases"].Reddie only (not RedWall).
+	return SafezoneUtil.isCharacterInToolbarZone(player.Character)
 end
 
 local function notifyClientInventorySync(player: Player, autoEquipSlot: number?)

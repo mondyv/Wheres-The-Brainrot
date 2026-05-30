@@ -277,8 +277,12 @@ local function toolSlotSurface(slot: GuiObject): GuiObject
 	return (b and (b :: GuiObject)) or slot
 end
 
--- UIScale target: the whole slot frame, so hover/selection grows the entire bar.
+-- UIScale target: slot button (not the whole frame) so hover doesn't resize the hotbar row.
 local function hotbarSlotScaleHost(slot: GuiObject): Instance
+	local btn = slotPrimaryButton(slot)
+	if btn then
+		return btn :: Instance
+	end
 	return slot
 end
 
@@ -562,9 +566,7 @@ local function resetHotbarSlotHoverScalesAfterDrag()
 			continue
 		end
 		local sc = getOrAddUIScale(hotbarSlotScaleHost(slot) :: GuiObject)
-		local sel = uiHotbarHighlight
-		local baseScale = if sel == si then 1.08 else 1.0
-		TweenService:Create(sc, HIGHLIGHT_TWEEN, { Scale = baseScale }):Play()
+		TweenService:Create(sc, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
 	end
 end
 
@@ -754,6 +756,7 @@ local function setBackpackPanelOpen(open: boolean)
 	end
 	if open and isBackpackPanelOpen then
 		ensureBackpackChromeVisible(backpackFrameRef :: GuiObject)
+		task.defer(ensureToolbarCenteredLayout)
 		return
 	end
 	isBackpackPanelOpen = open
@@ -786,8 +789,11 @@ local function setBackpackPanelOpen(open: boolean)
 			refreshSlotVisual(i)
 		end
 		refreshBrainrotBackpackUI()
-		task.defer(function()
-			task.defer(ensureToolbarCenteredLayout)
+		task.defer(ensureToolbarCenteredLayout)
+		task.delay(0.32, function()
+			if isBackpackPanelOpen then
+				ensureToolbarCenteredLayout()
+			end
 		end)
 	else
 		backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.9 })
@@ -1005,6 +1011,7 @@ end
 -- Selection = UIStroke only. Never touch the slot's own Image / ImageColor3 (that's the slot art designed in Studio).
 local SLOT_STROKE_SELECTED = 0
 local SLOT_STROKE_IDLE = 0.6
+local slotStrokeLit: { [number]: boolean } = {}
 
 local function applyButtonSelectionStyle(btn: GuiObject, lit: boolean)
 	local stroke = btn:FindFirstChildOfClass("UIStroke")
@@ -1017,6 +1024,10 @@ local function setSlotHighlight(index: number?, lit: boolean)
 	if not index then
 		return
 	end
+	if slotStrokeLit[index] == lit then
+		return
+	end
+	slotStrokeLit[index] = lit
 	local slot = slots[index]
 	if not slot then
 		return
@@ -1025,8 +1036,19 @@ local function setSlotHighlight(index: number?, lit: boolean)
 	if btn then
 		applyButtonSelectionStyle(btn :: GuiObject, lit)
 	end
-	local scale = getOrAddUIScale(hotbarSlotScaleHost(slot))
-	TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = if lit then 1.08 else 1.0 }):Play()
+end
+
+local function syncAllHotbarSelectionStrokes()
+	for i = 1, #slots do
+		local lit = uiHotbarHighlight ~= nil and i == uiHotbarHighlight
+		setSlotHighlight(i, lit)
+	end
+end
+
+local function setHotbarSelection(index: number?)
+	uiHotbarHighlight = index
+	activeSlot = index
+	syncAllHotbarSelectionStrokes()
 end
 
 local function resetAllSlotsToIdle()
@@ -1043,6 +1065,7 @@ deselectAllHotbarSlots = function()
 	end
 	uiHotbarHighlight = nil
 	activeSlot = nil
+	table.clear(slotStrokeLit)
 	for si = 1, #slots do
 		setSlotHighlight(si, false)
 		local slot = slots[si]
@@ -1051,7 +1074,6 @@ deselectAllHotbarSlots = function()
 			sc.Scale = 1
 		end
 	end
-	resetAllSlotsToIdle()
 end
 
 -- ── Slot icon update ──────────────────────────────────────────────────────────
@@ -1159,25 +1181,38 @@ local function captureHotbarStudioLayout()
 	hotbarStudioPosition = hotbar.Position
 end
 
-local function hotbarRowVisualBounds(): (number?, number?, number?)
+local function hotbarSlotsVisualBoundsX(): (number?, number?)
 	local minX = math.huge
 	local maxX = -math.huge
-	local minY = math.huge
-	for _, ch in hotbar:GetChildren() do
-		if ch:IsA("GuiObject") and (ch :: GuiObject).Visible then
-			local g = ch :: GuiObject
+	for i = 1, HOTBAR_INVENTORY_SLOTS do
+		local slot = slots[i]
+		if slot and slot:IsA("GuiObject") and (slot :: GuiObject).Visible then
+			local g = slot :: GuiObject
 			local x0 = g.AbsolutePosition.X
 			local x1 = x0 + g.AbsoluteSize.X
 			minX = math.min(minX, x0)
 			maxX = math.max(maxX, x1)
-			minY = math.min(minY, g.AbsolutePosition.Y)
 		end
 	end
 	if minX == math.huge then
-		local x0 = hotbar.AbsolutePosition.X
-		return x0, x0 + hotbar.AbsoluteSize.X, hotbar.AbsolutePosition.Y
+		return nil, nil
 	end
-	return minX, maxX, minY
+	return minX, maxX
+end
+
+local function hotbarRowVisualBounds(): (number?, number?, number?)
+	local minX, maxX = hotbarSlotsVisualBoundsX()
+	local minY = math.huge
+	for _, ch in hotbar:GetChildren() do
+		if ch:IsA("GuiObject") and (ch :: GuiObject).Visible then
+			minY = math.min(minY, (ch :: GuiObject).AbsolutePosition.Y)
+		end
+	end
+	if minX and maxX then
+		return minX, maxX, if minY == math.huge then hotbar.AbsolutePosition.Y else minY
+	end
+	local x0 = hotbar.AbsolutePosition.X
+	return x0, x0 + hotbar.AbsoluteSize.X, hotbar.AbsolutePosition.Y
 end
 
 local function centerToolbarChildHorizontally(gui: GuiObject)
@@ -1188,14 +1223,14 @@ local function centerToolbarChildHorizontally(gui: GuiObject)
 end
 
 local function backpackPanelCenterX(): number?
+	if backpackFrameRef and backpackFrameRef.AbsoluteSize.X > 0 then
+		return backpackFrameRef.AbsolutePosition.X + backpackFrameRef.AbsoluteSize.X * 0.5
+	end
 	if backpackContainer and backpackContainer:IsA("GuiObject") then
 		local c = backpackContainer :: GuiObject
 		if c.AbsoluteSize.X > 0 then
 			return c.AbsolutePosition.X + c.AbsoluteSize.X * 0.5
 		end
-	end
-	if backpackFrameRef and backpackFrameRef.AbsoluteSize.X > 0 then
-		return backpackFrameRef.AbsolutePosition.X + backpackFrameRef.AbsoluteSize.X * 0.5
 	end
 	return nil
 end
@@ -1246,7 +1281,7 @@ ensureToolbarCenteredLayout = function()
 
 		local targetCenterX = backpackPanelCenterX()
 		if targetCenterX then
-			for _ = 1, 2 do
+			for _ = 1, 3 do
 				nudgeHotbarRowCenterTo(targetCenterX)
 				RunService.Heartbeat:Wait()
 				if jobId ~= hotbarLayoutJobId then
@@ -1287,6 +1322,9 @@ local function ensureHotbarListLayout(): UIListLayout
 	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
 	hotbarListLayout = layout
+	if hotbar:IsA("GuiObject") then
+		(hotbar :: GuiObject).AutomaticSize = Enum.AutomaticSize.X
+	end
 	return layout
 end
 
@@ -1438,7 +1476,6 @@ refreshToggleBackpackIconLayout = function()
 
 	pinToggleIconMinAbsoluteSize(icon, iconSize.X.Offset, iconSize.Y.Offset)
 	ensureToggleBackpackIconSizeConstraint(icon)
-	task.defer(ensureToolbarCenteredLayout)
 end
 
 updateHotbarSlotVisibility = function()
@@ -1591,9 +1628,7 @@ local function rebuildSlots()
 	else
 		activeSlot = nil
 	end
-	for i = 1, #slots do
-		setSlotHighlight(i, uiHotbarHighlight ~= nil and i == uiHotbarHighlight)
-	end
+	syncAllHotbarSelectionStrokes()
 
 	refreshToolbarVisibility()
 end
@@ -1958,22 +1993,14 @@ selectSlot = function(index: number)
 
 	if tool and equipped == tool then
 		hum:UnequipTools()
-		uiHotbarHighlight = nil
-		activeSlot = nil
-		for si = 1, #slots do
-			setSlotHighlight(si, false)
-		end
+		setHotbarSelection(nil)
 		return
 	end
 
 	if not tool then
 		if uiHotbarHighlight == index then
 			hum:UnequipTools()
-			uiHotbarHighlight = nil
-			activeSlot = nil
-			for si = 1, #slots do
-				setSlotHighlight(si, false)
-			end
+			setHotbarSelection(nil)
 			return
 		end
 		if brainrotEntries[index] and not brainrotParkedInUI[index] then
@@ -1981,64 +2008,35 @@ selectSlot = function(index: number)
 				local invIdx = equipped:GetAttribute("BrainrotInvIndex")
 				if typeof(invIdx) == "number" and math.floor(invIdx) == index and uiHotbarHighlight == index then
 					hum:UnequipTools()
-					uiHotbarHighlight = nil
-					activeSlot = nil
-					for si = 1, #slots do
-						setSlotHighlight(si, false)
-					end
+					setHotbarSelection(nil)
 					return
 				end
 			end
-			uiHotbarHighlight = index
-			activeSlot = index
-			for i = 1, #slots do
-				setSlotHighlight(i, i == index)
-			end
+			setHotbarSelection(index)
 			requestEquipBrainrotSlot(index)
 			return
 		end
-		uiHotbarHighlight = index
-		activeSlot = index
+		setHotbarSelection(index)
 		hum:UnequipTools()
-		for i = 1, #slots do
-			setSlotHighlight(i, i == index)
-		end
 		return
 	end
 
-	uiHotbarHighlight = index
-	activeSlot = index
-	for i = 1, #slots do
-		setSlotHighlight(i, i == index)
-	end
+	setHotbarSelection(index)
 	hum:EquipTool(tool)
 end
 
 -- After deposit, server sends equipSlot = inventory index of the new brainrot (hotbar 1–9 mirror those indices).
 -- Must not use selectSlot here — it toggles off when the server already equipped the matching tool.
 applyAutoEquipFromSync = function(equipSlot: number)
-	local slot = math.clamp(math.floor(equipSlot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
-
-	local function applyHotbarHighlight()
-		if slot > HOTBAR_INVENTORY_SLOTS then
-			return
-		end
-		uiHotbarHighlight = slot
-		activeSlot = slot
-		for i = 1, #slots do
-			setSlotHighlight(i, i == slot)
-		end
-	end
+	local slot = math.clamp(math.floor(equipSlot), 1, HOTBAR_INVENTORY_SLOTS)
+	setHotbarSelection(slot)
 
 	local function tryHoldBrainrot(): boolean
-		applyHotbarHighlight()
+		rebuildSlots()
 		local hum = getHumanoid()
 		if not hum then
 			return false
 		end
-		rebuildSlots()
-		applyHotbarHighlight()
-
 		local tool = slotTools[slot]
 		local char = player.Character
 		local equipped = char and char:FindFirstChildOfClass("Tool")
@@ -2054,7 +2052,9 @@ applyAutoEquipFromSync = function(equipSlot: number)
 		return false
 	end
 
-	tryHoldBrainrot()
+	if tryHoldBrainrot() then
+		return
+	end
 	task.defer(tryHoldBrainrot)
 	task.delay(0.15, tryHoldBrainrot)
 end
@@ -2250,9 +2250,7 @@ function ToolbarController.init()
 			if hotbarDragBulkHover then
 				return
 			end
-			local sel = uiHotbarHighlight
-			local baseScale = if sel == i then 1.08 else 1.0
-			TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = baseScale }):Play()
+			TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
 		end)
 	end
 

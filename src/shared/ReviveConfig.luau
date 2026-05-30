@@ -16,7 +16,7 @@ export type ReviveTier = {
 	productId: number,
 }
 
-M.TIERS: { ReviveTier } = {
+M.TIERS = {
 	{ land = 1, defaultPrice = 9, productId = 3601300199 },
 	{ land = 2, defaultPrice = 19, productId = 3601300494 },
 	{ land = 3, defaultPrice = 29, productId = 3601300562 },

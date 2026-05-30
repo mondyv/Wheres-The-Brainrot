@@ -6,6 +6,7 @@ local Lighting = game:GetService("Lighting")
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 
@@ -34,7 +35,7 @@ local declineBtnHost: GuiObject? = nil
 local revivePriceLabel: TextLabel? = nil
 
 local sessionActive = false
-local countdownThread: thread? = nil
+local countdownConn: RBXScriptConnection? = nil
 local currentProductId: number? = nil
 local currentLand: number? = nil
 
@@ -64,9 +65,14 @@ local function getOrAddUIScale(obj: GuiObject): UIScale
 	return s
 end
 
-local function formatTimer(seconds: number): string
-	local s = math.max(0, math.ceil(seconds))
-	return string.format("0:%02d", s)
+local function formatTimer(remainingSec: number): string
+	local clamped = math.max(0, remainingSec)
+	local secs = math.floor(clamped)
+	local millis = math.floor((clamped - secs) * 100 + 0.5)
+	if millis >= 100 then
+		millis = 99
+	end
+	return string.format("%d:%02d", secs, millis)
 end
 
 local function setRegionalPrice(label: TextLabel, price: number)
@@ -220,9 +226,9 @@ local function restoreGameplayHud()
 end
 
 local function cancelCountdown()
-	if countdownThread then
-		task.cancel(countdownThread)
-		countdownThread = nil
+	if countdownConn then
+		countdownConn:Disconnect()
+		countdownConn = nil
 	end
 end
 
@@ -346,19 +352,19 @@ end
 
 local function startCountdown(duration: number)
 	cancelCountdown()
+	local endAt = os.clock() + duration
 	if timerLabel then
 		timerLabel.Text = formatTimer(duration)
 	end
-	countdownThread = task.spawn(function()
-		local remaining = duration
-		while remaining > 0 and sessionActive do
-			task.wait(1)
-			remaining -= 1
-			if timerLabel and timerLabel.Parent and sessionActive then
-				timerLabel.Text = formatTimer(remaining)
-			end
+	countdownConn = RunService.Heartbeat:Connect(function()
+		if not sessionActive then
+			return
 		end
-		if sessionActive then
+		local remaining = endAt - os.clock()
+		if timerLabel and timerLabel.Parent then
+			timerLabel.Text = formatTimer(remaining)
+		end
+		if remaining <= 0 then
 			closeRevivePanel(true)
 		end
 	end)

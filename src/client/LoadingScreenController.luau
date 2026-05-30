@@ -1051,6 +1051,62 @@ local function enterLoadingIsolation(playerGui: PlayerGui)
 	end
 end
 
+local function prepareGameplayUIBeforeReveal(playerGui: PlayerGui)
+	local main = playerGui:FindFirstChild("Main")
+	if not main then
+		return
+	end
+
+	local frames = main:FindFirstChild("Frames")
+	if frames then
+		for _, ch in frames:GetChildren() do
+			if ch:IsA("GuiObject") then
+				(ch :: GuiObject).Visible = false
+			end
+		end
+	end
+
+	local sideUI = main:FindFirstChild("SideUI")
+	if not sideUI then
+		return
+	end
+
+	local toolbar = sideUI:FindFirstChild("Toolbar")
+	if toolbar and toolbar:IsA("GuiObject") then
+		local toolbarGui = toolbar :: GuiObject
+		toolbarGui.Visible = false
+		local backpack = toolbar:FindFirstChild("Backpack")
+		if backpack and backpack:IsA("GuiObject") then
+			(backpack :: GuiObject).Visible = false
+		end
+		local hotbar = toolbar:FindFirstChild("Hotbar")
+		if hotbar then
+			for i = 1, 9 do
+				local slot = hotbar:FindFirstChild(tostring(i))
+				if slot and slot:IsA("GuiObject") then
+					(slot :: GuiObject).Visible = false
+				end
+			end
+			local hotbarIcon = hotbar:FindFirstChild("ToggleBackpackImage")
+			if hotbarIcon and hotbarIcon:IsA("GuiObject") then
+				(hotbarIcon :: GuiObject).Visible = false
+			end
+		end
+		local toolbarIcon = toolbar:FindFirstChild("ToggleBackpackImage")
+		if toolbarIcon and toolbarIcon:IsA("GuiObject") then
+			(toolbarIcon :: GuiObject).Visible = false
+		end
+	end
+
+	local top = sideUI:FindFirstChild("Top")
+	if top then
+		local currentArea = top:FindFirstChild("CurrentArea")
+		if currentArea and currentArea:IsA("GuiObject") then
+			(currentArea :: GuiObject).Visible = false
+		end
+	end
+end
+
 local function exitLoadingIsolation(playerGui: PlayerGui)
 	loadingActive = false
 
@@ -1058,6 +1114,8 @@ local function exitLoadingIsolation(playerGui: PlayerGui)
 		playerGuiChildConn:Disconnect()
 		playerGuiChildConn = nil
 	end
+
+	prepareGameplayUIBeforeReveal(playerGui)
 
 	if savedGuiStates then
 		for gui, wasEnabled in savedGuiStates do
@@ -1628,6 +1686,7 @@ function M.showEarly()
 	end)
 
 	enterLoadingIsolation(playerGui)
+	prepareGameplayUIBeforeReveal(playerGui)
 end
 
 function M.run()

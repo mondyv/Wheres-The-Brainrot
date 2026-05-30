@@ -37,15 +37,31 @@ local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitFor
 
 local player    = Players.LocalPlayer
 
-if not player.Character then
-	player.CharacterAdded:Wait()
-end
-
 local playerGui = player.PlayerGui
 local mainGui   = playerGui:WaitForChild("Main")
 local sideUI    = mainGui:WaitForChild("SideUI")
 local toolbar   = sideUI:WaitForChild("Toolbar")
 local hotbar    = toolbar:WaitForChild("Hotbar")
+
+local function applyToolbarInitialHiddenState()
+	toolbar.Visible = false
+	local backpack = toolbar:FindFirstChild("Backpack")
+	if backpack and backpack:IsA("GuiObject") then
+		(backpack :: GuiObject).Visible = false
+	end
+	for i = 1, 9 do
+		local slot = hotbar:FindFirstChild(tostring(i))
+		if slot and slot:IsA("GuiObject") then
+			(slot :: GuiObject).Visible = false
+		end
+	end
+	local icon = toolbar:FindFirstChild("ToggleBackpackImage") or hotbar:FindFirstChild("ToggleBackpackImage")
+	if icon and icon:IsA("GuiObject") then
+		(icon :: GuiObject).Visible = false
+	end
+end
+
+applyToolbarInitialHiddenState()
 
 -- ── Tween configs ─────────────────────────────────────────────────────────────
 
@@ -1996,6 +2012,10 @@ end
 
 local ToolbarController = {}
 
+function ToolbarController.prepareEarly()
+	applyToolbarInitialHiddenState()
+end
+
 function ToolbarController.init()
 	-- Disable the default Roblox backpack GUI (defer again — CoreGui can turn on during load).
 	pcall(function()
@@ -2008,6 +2028,7 @@ function ToolbarController.init()
 	end)
 
 	toolbar.Visible = false
+	applyToolbarInitialHiddenState()
 
 	getOrAddUIScale(hotbar).Scale = 1
 

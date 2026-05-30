@@ -55,10 +55,9 @@ local HIGHLIGHT_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDi
 local BACKPACK_OPEN_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
-local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 32
-local TOGGLE_BACKPACK_ICON_SIZE_SCALE = 0.74
+local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 28
+local TOGGLE_BACKPACK_ICON_SIZE_SCALE = 0.68
 local HOTBAR_UNDER_BACKPACK_GAP_PX = 14
-local HOTBAR_CENTER_NUDGE_X = 28
 
 -- ── Key → slot index map ──────────────────────────────────────────────────────
 
@@ -787,7 +786,9 @@ local function setBackpackPanelOpen(open: boolean)
 			refreshSlotVisual(i)
 		end
 		refreshBrainrotBackpackUI()
-		task.defer(ensureToolbarCenteredLayout)
+		task.defer(function()
+			task.defer(ensureToolbarCenteredLayout)
+		end)
 	else
 		backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.9 })
 		backpackPanelFadeTween = TweenService:Create(fadeRoot, BACKPACK_CLOSE_TWEEN, { GroupTransparency = 1 })
@@ -1148,6 +1149,7 @@ end
 local hotbarListLayout: UIListLayout? = nil
 local hotbarStudioAnchor: Vector2? = nil
 local hotbarStudioPosition: UDim2? = nil
+local hotbarLayoutJobId = 0
 
 local function captureHotbarStudioLayout()
 	if hotbarStudioPosition then
@@ -1185,46 +1187,90 @@ local function centerToolbarChildHorizontally(gui: GuiObject)
 	gui.Position = UDim2.new(0.5, 0, pos.Y.Scale, pos.Y.Offset)
 end
 
+local function backpackPanelCenterX(): number?
+	if backpackContainer and backpackContainer:IsA("GuiObject") then
+		local c = backpackContainer :: GuiObject
+		if c.AbsoluteSize.X > 0 then
+			return c.AbsolutePosition.X + c.AbsoluteSize.X * 0.5
+		end
+	end
+	if backpackFrameRef and backpackFrameRef.AbsoluteSize.X > 0 then
+		return backpackFrameRef.AbsolutePosition.X + backpackFrameRef.AbsoluteSize.X * 0.5
+	end
+	return nil
+end
+
+local function nudgeHotbarRowCenterTo(targetCenterX: number)
+	local rowMinX, rowMaxX = hotbarRowVisualBounds()
+	if not rowMinX or not rowMaxX then
+		return
+	end
+	local rowCenterX = (rowMinX + rowMaxX) * 0.5
+	local deltaX = targetCenterX - rowCenterX
+	if math.abs(deltaX) < 0.5 then
+		return
+	end
+	local pos = hotbar.Position
+	hotbar.Position = UDim2.new(pos.X.Scale, pos.X.Offset + math.floor(deltaX + 0.5), pos.Y.Scale, pos.Y.Offset)
+end
+
 ensureToolbarCenteredLayout = function()
 	captureHotbarStudioLayout()
 	if not hotbarStudioPosition or not hotbarStudioAnchor then
 		return
 	end
 
+	hotbarLayoutJobId += 1
+	local jobId = hotbarLayoutJobId
+
 	task.defer(function()
 		RunService.Heartbeat:Wait()
 		RunService.Heartbeat:Wait()
+		if jobId ~= hotbarLayoutJobId then
+			return
+		end
 
 		local basePos = hotbarStudioPosition :: UDim2
 		local baseAnchor = hotbarStudioAnchor :: Vector2
 		hotbar.AnchorPoint = Vector2.new(0.5, baseAnchor.Y)
 		hotbar.Position = UDim2.new(0.5, 0, basePos.Y.Scale, basePos.Y.Offset)
 
-		local offsetX = HOTBAR_CENTER_NUDGE_X
-		local offsetY = 0
-
-		if backpackFrameRef and backpackFrameRef.AbsoluteSize.X > 0 then
+		if backpackFrameRef then
 			centerToolbarChildHorizontally(backpackFrameRef)
-			local bp = backpackFrameRef
-			local bpCenterX = bp.AbsolutePosition.X + bp.AbsoluteSize.X * 0.5
-			local bpBottom = bp.AbsolutePosition.Y + bp.AbsoluteSize.Y
+		end
 
-			local rowMinX, rowMaxX, rowTop = hotbarRowVisualBounds()
-			if rowMinX and rowMaxX and rowTop then
-				local rowCenterX = (rowMinX + rowMaxX) * 0.5
-				offsetX = bpCenterX - rowCenterX + HOTBAR_CENTER_NUDGE_X
-				if isBackpackPanelOpen then
-					offsetY = (bpBottom + HOTBAR_UNDER_BACKPACK_GAP_PX) - rowTop
+		RunService.Heartbeat:Wait()
+		if jobId ~= hotbarLayoutJobId then
+			return
+		end
+
+		local targetCenterX = backpackPanelCenterX()
+		if targetCenterX then
+			for _ = 1, 2 do
+				nudgeHotbarRowCenterTo(targetCenterX)
+				RunService.Heartbeat:Wait()
+				if jobId ~= hotbarLayoutJobId then
+					return
 				end
 			end
 		end
 
-		hotbar.Position = UDim2.new(
-			0.5,
-			math.floor(offsetX + 0.5),
-			basePos.Y.Scale,
-			basePos.Y.Offset + math.floor(offsetY + 0.5)
-		)
+		if isBackpackPanelOpen and backpackFrameRef then
+			local bpBottom = backpackFrameRef.AbsolutePosition.Y + backpackFrameRef.AbsoluteSize.Y
+			local _, _, rowTop = hotbarRowVisualBounds()
+			if rowTop then
+				local deltaY = (bpBottom + HOTBAR_UNDER_BACKPACK_GAP_PX) - rowTop
+				if math.abs(deltaY) >= 0.5 then
+					local pos = hotbar.Position
+					hotbar.Position = UDim2.new(
+						pos.X.Scale,
+						pos.X.Offset,
+						pos.Y.Scale,
+						pos.Y.Offset + math.floor(deltaY + 0.5)
+					)
+				end
+			end
+		end
 	end)
 end
 

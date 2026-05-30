@@ -11,7 +11,7 @@
 	      ├── ToggleBackpackImage  (icon toggle; lives in Hotbar row after visible slots)
 	  └── Backpack  (optional expanded view)
 
-	Studio layout: anchor Hotbar + Backpack at X=0.5 under Toolbar once at init; code does not re-nudge positions at runtime.
+	Studio layout: anchor Hotbar + Backpack at X=0.5 under Toolbar once at init. ToggleBackpackImage hides while the inventory panel is open (close via X).
 	Hotbar slots may use nested `Button` (e.g. Hotbar["1"].Button.Icon).
 	Brainrot pickups: tuck/untuck via drag; ghost drag; search; backpack frame outline + open/close tweens.
 	Backpack UI rows 1..19 show stashed items in dense order (tucked hotbar slots + list indices >9); row labels use server list index.
@@ -1178,39 +1178,6 @@ local function applyToolbarHorizontalCenterOnce()
 	end
 end
 
-local function pinHotbarSlotPixelSizes()
-	local needsRetry = false
-	for i = 1, HOTBAR_INVENTORY_SLOTS do
-		local slot = slots[i]
-		if not slot or not slot:IsA("GuiObject") then
-			continue
-		end
-		local g = slot :: GuiObject
-		local sz = g.Size
-		if sz.X.Offset >= 8 and sz.Y.Offset >= 8 then
-			continue
-		end
-		local abs = g.AbsoluteSize
-		if abs.X >= 8 and abs.Y >= 8 then
-			g.Size = UDim2.fromOffset(abs.X, abs.Y)
-		elseif sz.X.Scale > 0 or sz.Y.Scale > 0 then
-			needsRetry = true
-		end
-	end
-	if needsRetry then
-		task.defer(pinHotbarSlotPixelSizes)
-	end
-end
-
-local function shrinkWrapHotbarWidth()
-	if not hotbar:IsA("GuiObject") then
-		return
-	end
-	local h = hotbar :: GuiObject
-	h.AutomaticSize = Enum.AutomaticSize.X
-	h.Size = UDim2.new(0, 0, h.Size.Y.Scale, h.Size.Y.Offset)
-end
-
 local function ensureHotbarListLayout(): UIListLayout
 	if hotbarListLayout and hotbarListLayout.Parent == hotbar then
 		return hotbarListLayout
@@ -1344,8 +1311,12 @@ refreshToggleBackpackIconLayout = function()
 	if not toggleBackpackIconRef then
 		return
 	end
-	pinHotbarSlotPixelSizes()
 	local icon = toggleBackpackIconRef :: GuiObject
+	if isBackpackPanelOpen then
+		icon.Visible = false
+		return
+	end
+
 	local layout = ensureHotbarListLayout()
 	layout.Padding = UDim.new(0, 6)
 	layout.FillDirection = Enum.FillDirection.Horizontal
@@ -1376,7 +1347,6 @@ refreshToggleBackpackIconLayout = function()
 
 	pinToggleIconMinAbsoluteSize(icon, iconSize.X.Offset, iconSize.Y.Offset)
 	ensureToggleBackpackIconSizeConstraint(icon)
-	shrinkWrapHotbarWidth()
 end
 
 updateHotbarSlotVisibility = function()
@@ -1387,10 +1357,12 @@ updateHotbarSlotVisibility = function()
 			slot.Visible = hotbarSlotIsOccupied(i) or isBackpackPanelOpen
 		end
 	end
-	pinHotbarSlotPixelSizes()
 	if toggleBackpackIconRef then
-		toggleBackpackIconRef.Visible = true
-		task.defer(refreshToggleBackpackIconLayout)
+		local icon = toggleBackpackIconRef :: GuiObject
+		icon.Visible = not isBackpackPanelOpen
+		if not isBackpackPanelOpen then
+			task.defer(refreshToggleBackpackIconLayout)
+		end
 	end
 end
 
@@ -1409,7 +1381,6 @@ local function wireToggleBackpackIcon()
 	if not iconHost or not iconHost:IsA("GuiObject") then
 		return
 	end
-	iconHost.Visible = true
 	toggleBackpackIconRef = iconHost
 	toggleBackpackRef = iconHost
 
@@ -2285,9 +2256,11 @@ function ToolbarController.init()
 	end
 
 	task.defer(function()
-		pinHotbarSlotPixelSizes()
+		if hotbar:IsA("GuiObject") then
+			(hotbar :: GuiObject).AutomaticSize = Enum.AutomaticSize.None
+		end
 		applyToolbarHorizontalCenterOnce()
-		refreshToggleBackpackIconLayout()
+		updateHotbarSlotVisibility()
 	end)
 
 	-- `(`)` key opens / closes the brainrot backpack (matches the on-screen prompt text).

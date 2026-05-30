@@ -1158,25 +1158,25 @@ local function findBarPlaceholder(loadingGui: ScreenGui): GuiObject?
 	return nil
 end
 
-local function hidePlaceholderChrome(placeholder: GuiObject)
-	placeholder.Active = false
-	if placeholder:IsA("ImageLabel") then
-		placeholder.BackgroundTransparency = 1
-		placeholder.ImageTransparency = 1
-	elseif placeholder:IsA("Frame") or placeholder:IsA("TextLabel") then
-		placeholder.BackgroundTransparency = 1
-		if placeholder:IsA("TextLabel") then
-			placeholder.TextTransparency = 1
-		end
-	end
+local function copyGuiLayout(target: GuiObject, source: GuiObject)
+	target.AnchorPoint = source.AnchorPoint
+	target.Position = source.Position
+	target.Size = source.Size
+	target.Rotation = source.Rotation
 end
 
-local function applyBarInsidePlaceholder(barArea: GuiObject, placeholder: GuiObject)
-	barArea.AnchorPoint = Vector2.new(0, 0)
-	barArea.Position = UDim2.fromScale(0, 0)
-	barArea.Size = UDim2.fromScale(1, 1)
-	barArea.Rotation = 0
-	barArea.ZIndex = placeholder.ZIndex
+local function barZIndexAboveFrame(placeholder: GuiObject, loadingFrame: GuiObject?): number
+	local z = placeholder.ZIndex
+	if loadingFrame then
+		z = math.max(z, loadingFrame.ZIndex)
+	end
+	return z + 1
+end
+
+local function applyPlaceholderBarBounds(barArea: GuiObject, placeholder: GuiObject, loadingFrame: GuiObject?)
+	copyGuiLayout(barArea, placeholder)
+	barArea.ZIndex = barZIndexAboveFrame(placeholder, loadingFrame)
+	barArea.Visible = true
 end
 
 local function clearBarLayoutConnections()
@@ -1186,12 +1186,12 @@ local function clearBarLayoutConnections()
 	table.clear(barLayoutConnections)
 end
 
-local function bindBarToPlaceholder(barArea: GuiObject, placeholder: GuiObject)
+local function bindBarToPlaceholder(barArea: GuiObject, placeholder: GuiObject, loadingFrame: GuiObject?)
 	local function sync()
-		if not barArea.Parent or barArea.Parent ~= placeholder then
+		if not barArea.Parent or not placeholder.Parent or barArea.Parent ~= placeholder.Parent then
 			return
 		end
-		applyBarInsidePlaceholder(barArea, placeholder)
+		applyPlaceholderBarBounds(barArea, placeholder, loadingFrame)
 	end
 
 	sync()
@@ -1376,10 +1376,9 @@ local function ensureLoadingBar(loadingGui: ScreenGui): (Frame, Frame, GuiObject
 
 	local barParent: Instance = loadingGui
 	local zBase = 3
-	if placeholder then
-		barParent = placeholder
-		zBase = placeholder.ZIndex
-		hidePlaceholderChrome(placeholder)
+	if placeholder and placeholder.Parent then
+		barParent = placeholder.Parent
+		zBase = barZIndexAboveFrame(placeholder, loadingFrame)
 	elseif loadingFrame then
 		barParent = loadingFrame
 		loadingFrame.ClipsDescendants = true
@@ -1392,12 +1391,14 @@ local function ensureLoadingBar(loadingGui: ScreenGui): (Frame, Frame, GuiObject
 	barArea.BackgroundTransparency = 0
 	barArea.BorderSizePixel = 0
 	barArea.ClipsDescendants = true
+	barArea.Visible = true
 	barArea.ZIndex = zBase
 	barArea.Parent = barParent
 
 	if placeholder then
-		applyBarInsidePlaceholder(barArea, placeholder)
-		bindBarToPlaceholder(barArea, placeholder)
+		applyPlaceholderBarBounds(barArea, placeholder, loadingFrame)
+		bindBarToPlaceholder(barArea, placeholder, loadingFrame)
+		placeholder.Visible = false
 	elseif loadingFrame then
 		barArea.AnchorPoint = Vector2.new(0.5, 0.5)
 		barArea.Position = UDim2.fromScale(0.5, 0.5)
@@ -1417,7 +1418,7 @@ local function ensureLoadingBar(loadingGui: ScreenGui): (Frame, Frame, GuiObject
 	track.Size = UDim2.fromScale(1, 1)
 	track.Position = UDim2.fromScale(0, 0)
 	track.ClipsDescendants = true
-	track.ZIndex = zBase + 1
+	track.ZIndex = 1
 	track.Parent = barArea
 
 	local fill = Instance.new("Frame")
@@ -1429,7 +1430,7 @@ local function ensureLoadingBar(loadingGui: ScreenGui): (Frame, Frame, GuiObject
 	fill.AnchorPoint = Vector2.new(0, 0)
 	fill.Position = UDim2.fromScale(0, 0)
 	fill.Size = UDim2.new(BAR_MIN_FILL_SCALE, 0, 1, 0)
-	fill.ZIndex = zBase + 2
+	fill.ZIndex = 2
 	fill.Parent = track
 
 	bindStudOverlayLayout(fill, loadingGui, "StudOverlayFill")

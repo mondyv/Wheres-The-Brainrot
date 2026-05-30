@@ -1303,24 +1303,29 @@ local function bushSearchPosition(bushRef: Instance?, worldPosition: Vector3): V
 	return worldPosition
 end
 
-local EMPTY_BUSH_MESSAGE = "No brainrots hiding!"
-local EMPTY_BUSH_MESSAGE_LIFETIME = 4
-local EMPTY_BUSH_FADE_DURATION = 1
-local EMPTY_BUSH_HOLD_DURATION = EMPTY_BUSH_MESSAGE_LIFETIME - EMPTY_BUSH_FADE_DURATION
-local EMPTY_BUSH_BILLBOARD_NAME = "BushEmptyMessage"
-local BUSH_PROMPT_LIFT_SCALE = 0.66
-local BUSH_MESSAGE_FLOAT_ABOVE_PROMPT = 2.75
-local BUSH_FLASH_RED = Color3.fromRGB(225, 48, 48)
-local BUSH_FLASH_GREEN = Color3.fromRGB(52, 215, 88)
-local BUSH_FLASH_RESTORE_DURATION = 1.0
-local BUSH_ERROR_SHAKE_DURATION = 0.5
-local emptyBushMessageHideToken: { [Instance]: number } = {}
-local bushFlashToken: { [Instance]: number } = {}
-local bushFlashTweens: { [Instance]: { Tween } } = {}
-local bushFlashOriginalColors: { [Instance]: { [BasePart]: Color3 } } = {}
-local bushErrorShakeToken: { [Instance]: number } = {}
+-- Scoped block: empty-bush billboard/flash helpers (keeps module locals under Luau's 200-register limit).
+local FlashBushColor: (Instance, Color3, number?) -> ()
+local clearEmptyBushMessageState: (Instance) -> ()
+local showEmptyBushMessage: (Instance) -> ()
 
-local function findBushPromptCenterWorld(bush: Instance): Vector3?
+do
+	local EMPTY_BUSH_MESSAGE = "No brainrots hiding!"
+	local EMPTY_BUSH_MESSAGE_LIFETIME = 4
+	local EMPTY_BUSH_FADE_DURATION = 1
+	local EMPTY_BUSH_HOLD_DURATION = EMPTY_BUSH_MESSAGE_LIFETIME - EMPTY_BUSH_FADE_DURATION
+	local EMPTY_BUSH_BILLBOARD_NAME = "BushEmptyMessage"
+	local BUSH_PROMPT_LIFT_SCALE = 0.66
+	local BUSH_MESSAGE_FLOAT_ABOVE_PROMPT = 2.75
+	local BUSH_FLASH_RED = Color3.fromRGB(225, 48, 48)
+	local BUSH_FLASH_RESTORE_DURATION = 1.0
+	local BUSH_ERROR_SHAKE_DURATION = 0.5
+	local emptyBushMessageHideToken: { [Instance]: number } = {}
+	local bushFlashToken: { [Instance]: number } = {}
+	local bushFlashTweens: { [Instance]: { Tween } } = {}
+	local bushFlashOriginalColors: { [Instance]: { [BasePart]: Color3 } } = {}
+	local bushErrorShakeToken: { [Instance]: number } = {}
+
+	local function findBushPromptCenterWorld(bush: Instance): Vector3?
 	for _, desc in bush:GetDescendants() do
 		if desc:IsA("Attachment") and desc.Name == "_BushPromptCenter" then
 			return desc.WorldPosition
@@ -1457,7 +1462,7 @@ local function applyBushTransform(bush: Instance, cf: CFrame)
 	end
 end
 
-local function FlashBushColor(bush: Instance, flashColor: Color3, restoreDuration: number?)
+	local function flashBushColor(bush: Instance, flashColor: Color3, restoreDuration: number?)
 	local duration = restoreDuration or BUSH_FLASH_RESTORE_DURATION
 	local token = (bushFlashToken[bush] or 0) + 1
 	bushFlashToken[bush] = token
@@ -1631,7 +1636,7 @@ local function destroyEmptyBushMessageArtifacts(bush: Instance)
 	end
 end
 
-local function clearEmptyBushMessageState(bush: Instance)
+	local function clearEmptyBushMessageStateImpl(bush: Instance)
 	emptyBushMessageHideToken[bush] = (emptyBushMessageHideToken[bush] or 0) + 1
 	destroyEmptyBushMessageArtifacts(bush)
 end
@@ -1676,28 +1681,33 @@ local function fadeOutAndDestroyEmptyBushMessage(bush: Instance, token: number)
 	end)
 end
 
-local function showEmptyBushMessage(bush: Instance)
-	FlashBushColor(bush, BUSH_FLASH_RED, BUSH_FLASH_RESTORE_DURATION)
-	ErrorShakeBush(bush, BUSH_ERROR_SHAKE_DURATION)
+	local function showEmptyBushMessageImpl(bush: Instance)
+		flashBushColor(bush, BUSH_FLASH_RED, BUSH_FLASH_RESTORE_DURATION)
+		ErrorShakeBush(bush, BUSH_ERROR_SHAKE_DURATION)
 
-	local anchor = ensureEmptyBushBillboardAnchor(bush)
-	if not anchor then
-		return
+		local anchor = ensureEmptyBushBillboardAnchor(bush)
+		if not anchor then
+			return
+		end
+
+		local token = (emptyBushMessageHideToken[bush] or 0) + 1
+		emptyBushMessageHideToken[bush] = token
+
+		local existing = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
+		if existing and existing:IsA("BillboardGui") then
+			existing.Adornee = anchor
+			existing.StudsOffset = Vector3.zero
+			resetEmptyBushMessageVisuals(existing)
+		else
+			createEmptyBushBillboard(bush, anchor)
+		end
+
+		fadeOutAndDestroyEmptyBushMessage(bush, token)
 	end
 
-	local token = (emptyBushMessageHideToken[bush] or 0) + 1
-	emptyBushMessageHideToken[bush] = token
-
-	local existing = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
-	if existing and existing:IsA("BillboardGui") then
-		existing.Adornee = anchor
-		existing.StudsOffset = Vector3.zero
-		resetEmptyBushMessageVisuals(existing)
-	else
-		createEmptyBushBillboard(bush, anchor)
-	end
-
-	fadeOutAndDestroyEmptyBushMessage(bush, token)
+	FlashBushColor = flashBushColor
+	clearEmptyBushMessageState = clearEmptyBushMessageStateImpl
+	showEmptyBushMessage = showEmptyBushMessageImpl
 end
 
 local function canAttemptHarvest(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean
@@ -1880,7 +1890,7 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 
 	if hasBrainrot then
 		clearEmptyBushMessageState(bush)
-		FlashBushColor(bush, BUSH_FLASH_GREEN, BUSH_FLASH_RESTORE_DURATION)
+		FlashBushColor(bush, Color3.fromRGB(52, 215, 88))
 		beginHarvestOutcome(player, worldPosition)
 		return true
 	end

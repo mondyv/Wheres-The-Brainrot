@@ -5,7 +5,7 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local SwingUpgrades = require(ReplicatedStorage.Shared.SwingUpgrades)
 
-local STARTING_CASH = 75_000_000 -- default wallet for new joins (75M)
+local STARTING_CASH = 567_000_000 -- default wallet for new joins (567M)
 
 local pendingRobuxUpgrade: { [Player]: string } = {}
 

@@ -8,7 +8,7 @@
 	      ├── Hotbar
 	      │   └── 1 .. 9   (slot frames with nested Button)
 	      ├── ToggleBackpack
-	      ├── ToggleBackpackImage  (icon toggle; stays under Toolbar, tracks visible hotbar slots)
+	      ├── ToggleBackpackImage  (icon toggle; lives in Hotbar row after visible slots)
 	      └── Backpack  (optional expanded view)
 
 	Hotbar slots may use nested `Button` (e.g. Hotbar["1"].Button.Icon).
@@ -128,6 +128,7 @@ local dragGhostConn: RBXScriptConnection? = nil
 local backpackFrameRef: GuiObject? = nil
 local toggleBackpackRef: GuiObject? = nil
 local toggleBackpackIconRef: GuiObject? = nil
+local refreshToggleBackpackIconLayout: () -> ()
 local backpackSearchWired = false
 local backpackCloseWired = false
 local isBackpackPanelOpen = false
@@ -374,39 +375,6 @@ local function resolveToggleBackpackVisual(iconHost: GuiObject, btn: GuiButton):
 		return btn
 	end
 	return iconHost
-end
-
-local function updateToggleBackpackIconPosition()
-	if not toggleBackpackIconRef or toggleBackpackIconRef.Parent ~= toolbar then
-		return
-	end
-	local icon = toggleBackpackIconRef :: GuiObject
-	icon.Visible = true
-	local pad = 8
-	local lastSlot: GuiObject? = nil
-	for i = 1, HOTBAR_INVENTORY_SLOTS do
-		local slot = slots[i]
-		if slot and slot.Visible and slot:IsA("GuiObject") then
-			lastSlot = slot
-		end
-	end
-	if not lastSlot then
-		local hotbarPos = hotbar.AbsolutePosition
-		local hotbarSize = hotbar.AbsoluteSize
-		local tbPos = toolbar.AbsolutePosition
-		local iconSize = icon.AbsoluteSize
-		local x = hotbarPos.X - tbPos.X + hotbarSize.X + pad
-		local y = hotbarPos.Y - tbPos.Y + (hotbarSize.Y - iconSize.Y) * 0.5
-		icon.Position = UDim2.fromOffset(math.floor(x + 0.5), math.floor(y + 0.5))
-		return
-	end
-	local tbPos = toolbar.AbsolutePosition
-	local slotPos = lastSlot.AbsolutePosition
-	local slotSize = lastSlot.AbsoluteSize
-	local iconSize = icon.AbsoluteSize
-	local x = slotPos.X - tbPos.X + slotSize.X + pad
-	local y = slotPos.Y - tbPos.Y + (slotSize.Y - iconSize.Y) * 0.5
-	icon.Position = UDim2.fromOffset(math.floor(x + 0.5), math.floor(y + 0.5))
 end
 
 local function isTouchPointerInput(): boolean
@@ -984,7 +952,9 @@ local function showToolbar()
 	end
 	toolbarVisibilityTween = TweenService:Create(scale, SHOW_TWEEN, { Scale = 1 })
 	toolbarVisibilityTween:Play()
-	task.defer(updateToggleBackpackIconPosition)
+	task.defer(function()
+		task.defer(refreshToggleBackpackIconLayout)
+	end)
 end
 
 local function hideToolbar()
@@ -1316,6 +1286,62 @@ local function ensureHotbarListLayout(): UIListLayout
 	return layout
 end
 
+local function captureToggleIconPixelSize(icon: GuiObject): (number?, number?)
+	local pinnedW = icon:GetAttribute("_PinnedW")
+	local pinnedH = icon:GetAttribute("_PinnedH")
+	if typeof(pinnedW) == "number" and typeof(pinnedH) == "number" then
+		return pinnedW, pinnedH
+	end
+	local sz = icon.Size
+	if sz.X.Offset >= 8 and sz.Y.Offset >= 8 then
+		return sz.X.Offset, sz.Y.Offset
+	end
+	local abs = icon.AbsoluteSize
+	if abs.X >= 8 and abs.Y >= 8 then
+		return abs.X, abs.Y
+	end
+	for i = 1, HOTBAR_INVENTORY_SLOTS do
+		local slot = slots[i]
+		if slot and slot:IsA("GuiObject") then
+			local rs = (slot :: GuiObject).Size
+			if rs.X.Offset >= 8 and rs.Y.Offset >= 8 then
+				return rs.X.Offset, rs.Y.Offset
+			end
+			local rabs = (slot :: GuiObject).AbsoluteSize
+			if rabs.X >= 8 and rabs.Y >= 8 then
+				return rabs.X, rabs.Y
+			end
+		end
+	end
+	return nil, nil
+end
+
+refreshToggleBackpackIconLayout = function()
+	if not toggleBackpackIconRef then
+		return
+	end
+	local icon = toggleBackpackIconRef :: GuiObject
+	local layout = ensureHotbarListLayout()
+	layout.Padding = UDim.new(0, 6)
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+
+	local w, h = captureToggleIconPixelSize(icon)
+	if w and h then
+		icon:SetAttribute("_PinnedW", w)
+		icon:SetAttribute("_PinnedH", h)
+		icon.Size = UDim2.fromOffset(math.floor(w + 0.5), math.floor(h + 0.5))
+	end
+
+	icon.AnchorPoint = Vector2.new(0, 0)
+	if icon.Parent ~= hotbar then
+		icon.Parent = hotbar
+	end
+	icon.LayoutOrder = 100
+	icon.Visible = true
+end
+
 local function updateHotbarSlotVisibility()
 	ensureHotbarListLayout()
 	for i = 1, #slots do
@@ -1326,7 +1352,9 @@ local function updateHotbarSlotVisibility()
 	end
 	if toggleBackpackIconRef then
 		toggleBackpackIconRef.Visible = true
-		task.defer(updateToggleBackpackIconPosition)
+		task.defer(function()
+			task.defer(refreshToggleBackpackIconLayout)
+		end)
 	end
 end
 
@@ -1344,10 +1372,6 @@ local function wireToggleBackpackIcon()
 	local iconHost = toolbar:FindFirstChild("ToggleBackpackImage") or hotbar:FindFirstChild("ToggleBackpackImage")
 	if not iconHost or not iconHost:IsA("GuiObject") then
 		return
-	end
-	-- Keep Studio size under Toolbar; reparenting into Hotbar shrinks scale-based layouts.
-	if iconHost.Parent ~= toolbar then
-		iconHost.Parent = toolbar
 	end
 	iconHost.Visible = true
 	toggleBackpackIconRef = iconHost
@@ -1370,7 +1394,7 @@ local function wireToggleBackpackIcon()
 	local tiltTarget = resolveToggleBackpackVisual(iconHost, btn)
 	prepareToggleTiltPivot(tiltTarget)
 	UIButtonEffects.wireTiltHoverButton(btn, toggleBackpackPanel, iconHost, tiltTarget, false)
-	task.defer(updateToggleBackpackIconPosition)
+	task.defer(refreshToggleBackpackIconLayout)
 end
 
 -- ── Tool assignment ───────────────────────────────────────────────────────────
@@ -2009,6 +2033,9 @@ function ToolbarController.init()
 	-- Tap / hover: nested `Button` (SideUI.Toolbar.Hotbar[n].Button) or slot is the button.
 	-- Mobile: only `Activated` selects/equips; parent frames must not capture touch input.
 	for i, slot in ipairs(slots) do
+		if slot:IsA("GuiObject") then
+			(slot :: GuiObject).LayoutOrder = i
+		end
 		local btn = resolveHotbarSlotButton(slot)
 		if btn then
 			configureHotbarSlotInput(slot, btn)

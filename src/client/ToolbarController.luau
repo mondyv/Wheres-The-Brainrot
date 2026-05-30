@@ -9,8 +9,9 @@
 	      │   └── 1 .. 9   (slot frames with nested Button)
 	      ├── ToggleBackpack
 	      ├── ToggleBackpackImage  (icon toggle; lives in Hotbar row after visible slots)
-	      └── Backpack  (optional expanded view)
+	  └── Backpack  (optional expanded view)
 
+	Studio layout: anchor Hotbar + Backpack at X=0.5 under Toolbar; code keeps them centered.
 	Hotbar slots may use nested `Button` (e.g. Hotbar["1"].Button.Icon).
 	Brainrot pickups: tuck/untuck via drag; ghost drag; search; backpack frame outline + open/close tweens.
 	Backpack UI rows 1..19 show stashed items in dense order (tucked hotbar slots + list indices >9); row labels use server list index.
@@ -55,8 +56,6 @@ local BACKPACK_OPEN_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.Eas
 local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
 local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 44
--- Fine-tune hotbar horizontal position when inventory is open (pixels right of Container left edge).
-local HOTBAR_BACKPACK_ALIGN_NUDGE_X = 12
 
 -- ── Key → slot index map ──────────────────────────────────────────────────────
 
@@ -140,8 +139,6 @@ local refreshBrainrotBackpackUI: () -> ()
 local showToolbar: () -> ()
 local hideToolbar: () -> ()
 local refreshToolbarVisibility: () -> ()
-local syncHotbarUnderBackpack: () -> ()
-local captureHotbarLayoutDefaults: () -> ()
 local backpackSearchWired = false
 local backpackCloseWired = false
 local isBackpackPanelOpen = false
@@ -155,10 +152,6 @@ local hotbarDragBulkHover = false
 local backpackDragHover = false
 local BACKPACK_FRAME_DRAG_HOVER_SCALE = 1.045
 local BACKPACK_ROW_DRAG_HOVER_SCALE = 1.06
-local hotbarOrigAnchorPoint: Vector2? = nil
-local hotbarOrigPosition: UDim2? = nil
-local hotbarAppliedAlignOffsetX = 0
-local hotbarAlignJobId = 0
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -790,17 +783,7 @@ local function setBackpackPanelOpen(open: boolean)
 			refreshSlotVisual(i)
 		end
 		refreshBrainrotBackpackUI()
-		task.defer(function()
-			task.defer(syncHotbarUnderBackpack)
-		end)
 	else
-		hotbarAlignJobId += 1
-		captureHotbarLayoutDefaults()
-		if hotbarOrigPosition and hotbarOrigAnchorPoint then
-			hotbar.AnchorPoint = hotbarOrigAnchorPoint
-			hotbar.Position = hotbarOrigPosition
-		end
-		hotbarAppliedAlignOffsetX = 0
 		backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.9 })
 		backpackPanelFadeTween = TweenService:Create(fadeRoot, BACKPACK_CLOSE_TWEEN, { GroupTransparency = 1 })
 		backpackPanelScaleTween:Play()
@@ -847,8 +830,10 @@ showToolbar = function()
 	toolbarVisibilityTween = TweenService:Create(scale, SHOW_TWEEN, { Scale = 1 })
 	toolbarVisibilityTween:Play()
 	task.defer(function()
-		captureHotbarLayoutDefaults()
-		task.defer(refreshToggleBackpackIconLayout)
+		task.defer(function()
+			refreshToggleBackpackIconLayout()
+			ensureToolbarCenteredLayout()
+		end)
 	end)
 end
 
@@ -1156,30 +1141,18 @@ end
 
 local hotbarListLayout: UIListLayout? = nil
 
-captureHotbarLayoutDefaults = function()
-	if hotbarOrigPosition then
-		return
-	end
-	hotbarOrigAnchorPoint = hotbar.AnchorPoint
-	hotbarOrigPosition = hotbar.Position
+local function centerToolbarChildHorizontally(gui: GuiObject)
+	local pos = gui.Position
+	local ap = gui.AnchorPoint
+	gui.AnchorPoint = Vector2.new(0.5, ap.Y)
+	gui.Position = UDim2.new(0.5, 0, pos.Y.Scale, pos.Y.Offset)
 end
 
-local function applyHotbarAlignOffset(offsetX: number)
-	if not hotbarOrigPosition or not hotbarOrigAnchorPoint then
-		return
+local function ensureToolbarCenteredLayout()
+	centerToolbarChildHorizontally(hotbar)
+	if backpackFrameRef then
+		centerToolbarChildHorizontally(backpackFrameRef)
 	end
-	local rounded = math.floor(offsetX + 0.5)
-	if rounded == hotbarAppliedAlignOffsetX then
-		return
-	end
-	hotbarAppliedAlignOffsetX = rounded
-	hotbar.AnchorPoint = hotbarOrigAnchorPoint
-	hotbar.Position = UDim2.new(
-		hotbarOrigPosition.X.Scale,
-		hotbarOrigPosition.X.Offset + rounded,
-		hotbarOrigPosition.Y.Scale,
-		hotbarOrigPosition.Y.Offset
-	)
 end
 
 local function ensureHotbarListLayout(): UIListLayout
@@ -1196,58 +1169,6 @@ local function ensureHotbarListLayout(): UIListLayout
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
 	hotbarListLayout = layout
 	return layout
-end
-
-syncHotbarUnderBackpack = function()
-	if not isBackpackPanelOpen or not backpackFrameRef then
-		hotbarAlignJobId += 1
-		captureHotbarLayoutDefaults()
-		if hotbarOrigPosition and hotbarOrigAnchorPoint then
-			hotbar.AnchorPoint = hotbarOrigAnchorPoint
-			hotbar.Position = hotbarOrigPosition
-		end
-		hotbarAppliedAlignOffsetX = 0
-		return
-	end
-
-	hotbarAlignJobId += 1
-	local jobId = hotbarAlignJobId
-
-	task.defer(function()
-		RunService.Heartbeat:Wait()
-		RunService.Heartbeat:Wait()
-		RunService.Heartbeat:Wait()
-		if jobId ~= hotbarAlignJobId or not isBackpackPanelOpen or not backpackFrameRef then
-			return
-		end
-		captureHotbarLayoutDefaults()
-		if not hotbarOrigPosition then
-			return
-		end
-
-		local alignLeft: number? = nil
-		if backpackContainer and backpackContainer:IsA("GuiObject") then
-			local c = backpackContainer :: GuiObject
-			if c.AbsoluteSize.X > 0 then
-				alignLeft = c.AbsolutePosition.X
-			end
-		end
-		if not alignLeft then
-			alignLeft = (backpackFrameRef :: GuiObject).AbsolutePosition.X
-		end
-		local rowMinX = math.huge
-		for _, ch in hotbar:GetChildren() do
-			if ch:IsA("GuiObject") and (ch :: GuiObject).Visible then
-				rowMinX = math.min(rowMinX, (ch :: GuiObject).AbsolutePosition.X)
-			end
-		end
-		if rowMinX == math.huge then
-			rowMinX = hotbar.AbsolutePosition.X
-		end
-		-- Subtract any offset already applied so we never snap back to orig to remeasure.
-		local naturalRowMinX = rowMinX - hotbarAppliedAlignOffsetX
-		applyHotbarAlignOffset(alignLeft - naturalRowMinX + HOTBAR_BACKPACK_ALIGN_NUDGE_X)
-	end)
 end
 
 local function getHotbarSlotSizeTemplate(): UDim2?
@@ -2107,7 +2028,6 @@ function ToolbarController.init()
 	getOrAddUIScale(hotbar).Scale = 1
 
 	ensureHotbarListLayout()
-	captureHotbarLayoutDefaults()
 
 	-- Collect slot references (named "1" through "9" inside Hotbar)
 	for i = 1, 9 do
@@ -2352,6 +2272,10 @@ function ToolbarController.init()
 		end)
 		toggleBtn.Activated:Connect(toggleBackpackPanel)
 	end
+
+	task.defer(function()
+		task.defer(ensureToolbarCenteredLayout)
+	end)
 
 	-- `(`)` key opens / closes the brainrot backpack (matches the on-screen prompt text).
 	if backpackFrame then

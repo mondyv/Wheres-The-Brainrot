@@ -2170,7 +2170,7 @@ function ToolbarController.init()
 			end
 			if overBackpack then
 				-- Hotbar → backpack panel: tuck (server sync updates UI).
-				setBackpackPanelOpen(true)
+				setBackpackPanelOpen(true);
 				(parkEv :: RemoteEvent):FireServer(pnd.idx, true)
 				UIInteractionSounds.playClick()
 			elseif targetHotbar and targetHotbar ~= pnd.idx then

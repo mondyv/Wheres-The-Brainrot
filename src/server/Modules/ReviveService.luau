@@ -1,8 +1,8 @@
 --[[
 	Revive flow (server module):
-	• On death: hold auto-respawn, store death CFrame + land, prompt client.
-	• Decline / timeout: normal respawn at plot.
-	• Dev product receipt: respawn at death location.
+	• On death: store death CFrame + land, prompt client, respawn at plot immediately.
+	• Decline / timeout: clear pending (player already alive at plot).
+	• Dev product receipt: teleport back to death location.
 --]]
 
 local Players = game:GetService("Players")
@@ -48,21 +48,32 @@ local function clearPending(player: Player)
 	pendingByPlayer[player] = nil
 end
 
-local function respawnPlayer(player: Player, reviveCFrame: CFrame?)
-	clearPending(player)
-	if reviveCFrame then
-		player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, reviveCFrame)
-	else
-		player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, nil)
+local function teleportCharacterToCFrame(character: Model, spawnCf: CFrame): boolean
+	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp then
+		hrp = character:WaitForChild("HumanoidRootPart", 8) :: BasePart?
 	end
+	if not hrp then
+		return false
+	end
+
+	if character.PrimaryPart then
+		character:PivotTo(spawnCf)
+	else
+		hrp.CFrame = spawnCf
+	end
+	hrp.AssemblyLinearVelocity = Vector3.zero
+	hrp.AssemblyAngularVelocity = Vector3.zero
+	return true
+end
+
+local function respawnAtPlot(player: Player)
+	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, nil)
 	player:LoadCharacter()
 end
 
 local function finishDecline(player: Player)
-	if not pendingByPlayer[player] then
-		return
-	end
-	respawnPlayer(player, nil)
+	clearPending(player)
 end
 
 local function fulfillRevivePurchase(player: Player): boolean
@@ -70,8 +81,19 @@ local function fulfillRevivePurchase(player: Player): boolean
 	if not pending then
 		return false
 	end
+
 	local cf = pending.cframe
-	respawnPlayer(player, cf)
+	clearPending(player)
+
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if character and humanoid and humanoid.Health > 0 then
+		teleportCharacterToCFrame(character, cf)
+	else
+		player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, cf)
+		player:LoadCharacter()
+	end
+
 	reviveCompleteRE:FireClient(player)
 	return true
 end
@@ -93,6 +115,7 @@ local function onHumanoidDied(player: Player, character: Model)
 	}
 
 	revivePromptRE:FireClient(player, tier.land, tier.productId, ReviveConfig.COUNTDOWN_SECONDS)
+	respawnAtPlot(player)
 end
 
 local function hookCharacter(player: Player, character: Model)
@@ -114,10 +137,6 @@ end
 
 local function hookPlayer(player: Player)
 	player.CharacterAdded:Connect(function(character)
-		if pendingByPlayer[player] then
-			character:Destroy()
-			return
-		end
 		hookCharacter(player, character)
 	end)
 	if player.Character then

@@ -15,6 +15,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
@@ -600,9 +601,20 @@ local function reapplyUpgradeInputForAllViews()
 	end
 end
 
+local function isTouchPointerInput(): boolean
+	local last = UserInputService:GetLastInputType()
+	return last == Enum.UserInputType.Touch or last == Enum.UserInputType.TouchTap
+end
+
 local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 	clickable.Activated:Connect(tryFireUpgrade)
 	clickable.MouseButton1Click:Connect(tryFireUpgrade)
+	-- SurfaceGui on mobile often skips Activated when MouseButton1Down handlers run; Touch end is reliable.
+	clickable.InputEnded:Connect(function(input: InputObject)
+		if input.UserInputType == Enum.UserInputType.Touch then
+			tryFireUpgrade()
+		end
+	end)
 end
 
 local function wireUpgradeButton(stand: Model): GuiButton?
@@ -685,21 +697,56 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 	end
 
 	clickable.MouseEnter:Connect(function()
+		if isTouchPointerInput() then
+			return
+		end
 		local sc = getScale()
 		TweenService:Create(sc, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1.06 }):Play()
 	end)
 	clickable.MouseLeave:Connect(function()
+		if isTouchPointerInput() then
+			return
+		end
 		local sc = getScale()
 		TweenService:Create(sc, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 	end)
-	clickable.MouseButton1Down:Connect(function()
+
+	local function pressUpgradeScale()
 		local sc = getScale()
 		TweenService:Create(sc, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.92 }):Play()
-	end)
-	clickable.MouseButton1Up:Connect(function()
+	end
+
+	local function releaseUpgradeScale()
 		local sc = getScale()
 		TweenService:Create(sc, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.06 }):Play()
+	end
+
+	-- PC mouse press animation only; touch MouseButton1Down blocks Activated on many devices.
+	clickable.MouseButton1Down:Connect(function()
+		if isTouchPointerInput() then
+			return
+		end
+		pressUpgradeScale()
 	end)
+	clickable.MouseButton1Up:Connect(function()
+		if isTouchPointerInput() then
+			return
+		end
+		releaseUpgradeScale()
+	end)
+
+	if UserInputService.TouchEnabled then
+		clickable.InputBegan:Connect(function(input: InputObject)
+			if input.UserInputType == Enum.UserInputType.Touch then
+				pressUpgradeScale()
+			end
+		end)
+		clickable.InputEnded:Connect(function(input: InputObject)
+			if input.UserInputType == Enum.UserInputType.Touch then
+				releaseUpgradeScale()
+			end
+		end)
+	end
 
 	local lastFire = 0
 

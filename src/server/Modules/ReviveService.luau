@@ -105,7 +105,10 @@ local function hookCharacter(player: Player, character: Model)
 	end
 
 	humanoid.Died:Connect(function()
-		onHumanoidDied(player, character)
+		local char = humanoid.Parent
+		if char and char:IsA("Model") then
+			onHumanoidDied(player, char)
+		end
 	end)
 end
 

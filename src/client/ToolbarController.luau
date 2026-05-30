@@ -156,6 +156,8 @@ local BACKPACK_FRAME_DRAG_HOVER_SCALE = 1.045
 local BACKPACK_ROW_DRAG_HOVER_SCALE = 1.06
 local hotbarOrigAnchorPoint: Vector2? = nil
 local hotbarOrigPosition: UDim2? = nil
+local hotbarAppliedAlignOffsetX = 0
+local hotbarAlignJobId = 0
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1095,7 +1097,6 @@ local function setBackpackPanelOpen(open: boolean)
 	end
 	if open and isBackpackPanelOpen then
 		ensureBackpackChromeVisible(backpackFrameRef :: GuiObject)
-		task.defer(syncHotbarUnderBackpack)
 		return
 	end
 	isBackpackPanelOpen = open
@@ -1128,9 +1129,17 @@ local function setBackpackPanelOpen(open: boolean)
 			refreshSlotVisual(i)
 		end
 		refreshBrainrotBackpackUI()
-		task.defer(syncHotbarUnderBackpack)
+		task.defer(function()
+			task.defer(syncHotbarUnderBackpack)
+		end)
 	else
-		task.defer(syncHotbarUnderBackpack)
+		hotbarAlignJobId += 1
+		captureHotbarLayoutDefaults()
+		if hotbarOrigPosition and hotbarOrigAnchorPoint then
+			hotbar.AnchorPoint = hotbarOrigAnchorPoint
+			hotbar.Position = hotbarOrigPosition
+		end
+		hotbarAppliedAlignOffsetX = 0
 		backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.9 })
 		backpackPanelFadeTween = TweenService:Create(fadeRoot, BACKPACK_CLOSE_TWEEN, { GroupTransparency = 1 })
 		backpackPanelScaleTween:Play()
@@ -1152,7 +1161,6 @@ local function setBackpackPanelOpen(open: boolean)
 				for i = 1, #slots do
 					refreshSlotVisual(i)
 				end
-				task.defer(syncHotbarUnderBackpack)
 			end
 			if backpackPanelFadeTween and state == Enum.PlaybackState.Completed then
 				backpackPanelFadeTween = nil
@@ -1495,6 +1503,24 @@ captureHotbarLayoutDefaults = function()
 	hotbarOrigPosition = hotbar.Position
 end
 
+local function applyHotbarAlignOffset(offsetX: number)
+	if not hotbarOrigPosition or not hotbarOrigAnchorPoint then
+		return
+	end
+	local rounded = math.floor(offsetX + 0.5)
+	if rounded == hotbarAppliedAlignOffsetX then
+		return
+	end
+	hotbarAppliedAlignOffsetX = rounded
+	hotbar.AnchorPoint = hotbarOrigAnchorPoint
+	hotbar.Position = UDim2.new(
+		hotbarOrigPosition.X.Scale,
+		hotbarOrigPosition.X.Offset + rounded,
+		hotbarOrigPosition.Y.Scale,
+		hotbarOrigPosition.Y.Offset
+	)
+end
+
 local function ensureHotbarListLayout(): UIListLayout
 	if hotbarListLayout and hotbarListLayout.Parent == hotbar then
 		return hotbarListLayout
@@ -1512,30 +1538,32 @@ local function ensureHotbarListLayout(): UIListLayout
 end
 
 syncHotbarUnderBackpack = function()
-	captureHotbarLayoutDefaults()
-	if not hotbarOrigPosition or not hotbarOrigAnchorPoint then
-		return
-	end
-	hotbar.AnchorPoint = hotbarOrigAnchorPoint
-	hotbar.Position = hotbarOrigPosition
 	if not isBackpackPanelOpen or not backpackFrameRef then
+		hotbarAlignJobId += 1
+		captureHotbarLayoutDefaults()
+		if hotbarOrigPosition and hotbarOrigAnchorPoint then
+			hotbar.AnchorPoint = hotbarOrigAnchorPoint
+			hotbar.Position = hotbarOrigPosition
+		end
+		hotbarAppliedAlignOffsetX = 0
 		return
 	end
-	local layout = ensureHotbarListLayout()
-	if not layout:GetAttribute("_ToolbarAlignWired") then
-		layout:SetAttribute("_ToolbarAlignWired", true)
-		layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-			if isBackpackPanelOpen then
-				task.defer(syncHotbarUnderBackpack)
-			end
-		end)
-	end
+
+	hotbarAlignJobId += 1
+	local jobId = hotbarAlignJobId
+
 	task.defer(function()
 		RunService.Heartbeat:Wait()
 		RunService.Heartbeat:Wait()
-		if not isBackpackPanelOpen or not backpackFrameRef or not hotbarOrigPosition then
+		RunService.Heartbeat:Wait()
+		if jobId ~= hotbarAlignJobId or not isBackpackPanelOpen or not backpackFrameRef then
 			return
 		end
+		captureHotbarLayoutDefaults()
+		if not hotbarOrigPosition then
+			return
+		end
+
 		local alignLeft: number? = nil
 		if backpackContainer and backpackContainer:IsA("GuiObject") then
 			local c = backpackContainer :: GuiObject
@@ -1555,16 +1583,9 @@ syncHotbarUnderBackpack = function()
 		if rowMinX == math.huge then
 			rowMinX = hotbar.AbsolutePosition.X
 		end
-		local deltaX = alignLeft - rowMinX + HOTBAR_BACKPACK_ALIGN_NUDGE_X
-		if math.abs(deltaX) < 0.5 then
-			return
-		end
-		hotbar.Position = UDim2.new(
-			hotbarOrigPosition.X.Scale,
-			hotbarOrigPosition.X.Offset + math.floor(deltaX + 0.5),
-			hotbarOrigPosition.Y.Scale,
-			hotbarOrigPosition.Y.Offset
-		)
+		-- Subtract any offset already applied so we never snap back to orig to remeasure.
+		local naturalRowMinX = rowMinX - hotbarAppliedAlignOffsetX
+		applyHotbarAlignOffset(alignLeft - naturalRowMinX + HOTBAR_BACKPACK_ALIGN_NUDGE_X)
 	end)
 end
 
@@ -1725,7 +1746,6 @@ refreshToggleBackpackIconLayout = function()
 
 	pinToggleIconMinAbsoluteSize(icon)
 	ensureToggleBackpackIconSizeConstraint(icon)
-	task.defer(syncHotbarUnderBackpack)
 end
 
 updateHotbarSlotVisibility = function()
@@ -1738,12 +1758,7 @@ updateHotbarSlotVisibility = function()
 	end
 	if toggleBackpackIconRef then
 		toggleBackpackIconRef.Visible = true
-		task.defer(function()
-			task.defer(function()
-				refreshToggleBackpackIconLayout()
-				syncHotbarUnderBackpack()
-			end)
-		end)
+		task.defer(refreshToggleBackpackIconLayout)
 	end
 end
 

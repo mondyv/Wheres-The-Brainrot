@@ -1301,6 +1301,7 @@ local function pinToggleIconMinAbsoluteSize(icon: GuiObject)
 	if typeof(icon:GetAttribute("_MinW")) == "number" and typeof(icon:GetAttribute("_MinH")) == "number" then
 		return
 	end
+	local measured = false
 	local bestW = TOGGLE_BACKPACK_ICON_MIN_ABS_PX
 	local bestH = TOGGLE_BACKPACK_ICON_MIN_ABS_PX
 	for i = 1, HOTBAR_INVENTORY_SLOTS do
@@ -1308,6 +1309,7 @@ local function pinToggleIconMinAbsoluteSize(icon: GuiObject)
 		if slot and slot:IsA("GuiObject") then
 			local abs = (slot :: GuiObject).AbsoluteSize
 			if abs.X >= 8 and abs.Y >= 8 then
+				measured = true
 				bestW = math.max(bestW, math.floor(abs.X + 0.5))
 				bestH = math.max(bestH, math.floor(abs.Y + 0.5))
 			end
@@ -1315,8 +1317,12 @@ local function pinToggleIconMinAbsoluteSize(icon: GuiObject)
 	end
 	local iconAbs = icon.AbsoluteSize
 	if iconAbs.X >= 8 and iconAbs.Y >= 8 then
+		measured = true
 		bestW = math.max(bestW, math.floor(iconAbs.X + 0.5))
 		bestH = math.max(bestH, math.floor(iconAbs.Y + 0.5))
+	end
+	if not measured then
+		return
 	end
 	icon:SetAttribute("_MinW", bestW)
 	icon:SetAttribute("_MinH", bestH)
@@ -1334,7 +1340,8 @@ local function ensureToggleBackpackIconSizeConstraint(icon: GuiObject)
 		constraint.Name = "ToggleIconSizeConstraint"
 		constraint.Parent = icon
 	end
-	(constraint :: UISizeConstraint).MinSize = Vector2.new(minW, minH)
+	local sizeLock = constraint :: UISizeConstraint
+	sizeLock.MinSize = Vector2.new(minW, minH)
 
 	local slot = slots[1]
 	if slot and slot:IsA("GuiObject") then
@@ -1346,8 +1353,9 @@ local function ensureToggleBackpackIconSizeConstraint(icon: GuiObject)
 				aspect.Name = "ToggleIconAspect"
 				aspect.Parent = icon
 			end
-			(aspect :: UIAspectRatioConstraint).AspectRatio = slotAbs.X / slotAbs.Y
-			(aspect :: UIAspectRatioConstraint).AspectType = Enum.AspectType.ScaleWithParentSize
+			local aspectLock = aspect :: UIAspectRatioConstraint
+			aspectLock.AspectRatio = slotAbs.X / slotAbs.Y
+			aspectLock.AspectType = Enum.AspectType.ScaleWithParentSize
 		end
 	end
 end

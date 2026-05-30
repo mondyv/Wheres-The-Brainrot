@@ -36,7 +36,6 @@ local lastShownStandPrompt: ProximityPrompt? = nil
 
 local player = Players.LocalPlayer
 local MONEY_VFX_HOLD_SEC = 0.14
-local UPGRADE_CLICK_INTERVAL = 0.05 -- match server UPGRADE_DEBOUNCE; hold repeats at this rate
 local CHILD_WAIT_TIMEOUT = 8 -- seconds; stand children may not have replicated when the tag arrives
 local CASH_PAD_TICK_INTERVAL = 1
 local BRAINROT_HOP_HEIGHT = 0.34
@@ -218,6 +217,7 @@ type StandView = {
 }
 
 local views: { [Model]: StandView } = {}
+local upgradeScaleTweens: { [Instance]: Tween } = {}
 local lastBrainrotHopAt: { [Model]: number } = {}
 local cashPadTickAccum = 0
 
@@ -601,20 +601,43 @@ local function reapplyUpgradeInputForAllViews()
 	end
 end
 
-local function isTouchPointerInput(): boolean
-	local last = UserInputService:GetLastInputType()
-	return last == Enum.UserInputType.Touch or last == Enum.UserInputType.TouchTap
+local function cancelUpgradeScaleTween(host: Instance)
+	local tw = upgradeScaleTweens[host]
+	if tw then
+		tw:Cancel()
+		upgradeScaleTweens[host] = nil
+	end
+end
+
+local function playUpgradeScaleTween(host: Instance, scale: UIScale, targetScale: number, tweenInfo: TweenInfo)
+	cancelUpgradeScaleTween(host)
+	local tw = TweenService:Create(scale, tweenInfo, { Scale = targetScale })
+	upgradeScaleTweens[host] = tw
+	tw:Play()
 end
 
 local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
-	clickable.Activated:Connect(tryFireUpgrade)
-	clickable.MouseButton1Click:Connect(tryFireUpgrade)
-	-- SurfaceGui on mobile often skips Activated when MouseButton1Down handlers run; Touch end is reliable.
-	clickable.InputEnded:Connect(function(input: InputObject)
-		if input.UserInputType == Enum.UserInputType.Touch then
-			tryFireUpgrade()
-		end
+	local lastActivatedAt = -1e9
+	clickable.Activated:Connect(function()
+		lastActivatedAt = os.clock()
+		tryFireUpgrade()
 	end)
+	-- PC mouse fallback when Activated does not run (rare on ImageButtons).
+	if not UserInputService.TouchEnabled then
+		clickable.MouseButton1Click:Connect(tryFireUpgrade)
+	end
+	-- Mobile SurfaceGui fallback: one touch end per tap, skip if Activated already fired.
+	if UserInputService.TouchEnabled then
+		clickable.InputEnded:Connect(function(input: InputObject)
+			if input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			if os.clock() - lastActivatedAt < 0.03 then
+				return
+			end
+			tryFireUpgrade()
+		end)
+	end
 end
 
 local function wireUpgradeButton(stand: Model): GuiButton?
@@ -696,66 +719,79 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 		return s
 	end
 
-	clickable.MouseEnter:Connect(function()
-		if isTouchPointerInput() then
-			return
-		end
-		local sc = getScale()
-		TweenService:Create(sc, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1.06 }):Play()
-	end)
-	clickable.MouseLeave:Connect(function()
-		if isTouchPointerInput() then
-			return
-		end
-		local sc = getScale()
-		TweenService:Create(sc, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-	end)
-
 	local function pressUpgradeScale()
-		local sc = getScale()
-		TweenService:Create(sc, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.92 }):Play()
+		playUpgradeScaleTween(
+			visibleTarget,
+			getScale(),
+			0.92,
+			TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		)
 	end
 
 	local function releaseUpgradeScale()
-		local sc = getScale()
-		TweenService:Create(sc, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.06 }):Play()
+		playUpgradeScaleTween(
+			visibleTarget,
+			getScale(),
+			1.06,
+			TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		)
 	end
 
-	-- PC mouse press animation only; touch MouseButton1Down blocks Activated on many devices.
+	clickable.MouseEnter:Connect(function()
+		if UserInputService.TouchEnabled then
+			return
+		end
+		playUpgradeScaleTween(
+			visibleTarget,
+			getScale(),
+			1.06,
+			TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		)
+	end)
+	clickable.MouseLeave:Connect(function()
+		if UserInputService.TouchEnabled then
+			return
+		end
+		playUpgradeScaleTween(
+			visibleTarget,
+			getScale(),
+			1,
+			TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		)
+	end)
+
 	clickable.MouseButton1Down:Connect(function()
-		if isTouchPointerInput() then
+		if UserInputService.TouchEnabled then
 			return
 		end
 		pressUpgradeScale()
 	end)
 	clickable.MouseButton1Up:Connect(function()
-		if isTouchPointerInput() then
+		if UserInputService.TouchEnabled then
 			return
 		end
 		releaseUpgradeScale()
 	end)
 
 	if UserInputService.TouchEnabled then
+		local touchActive = false
 		clickable.InputBegan:Connect(function(input: InputObject)
-			if input.UserInputType == Enum.UserInputType.Touch then
-				pressUpgradeScale()
+			if input.UserInputType ~= Enum.UserInputType.Touch then
+				return
 			end
+			touchActive = true
+			pressUpgradeScale()
 		end)
 		clickable.InputEnded:Connect(function(input: InputObject)
-			if input.UserInputType == Enum.UserInputType.Touch then
-				releaseUpgradeScale()
+			if input.UserInputType ~= Enum.UserInputType.Touch or not touchActive then
+				return
 			end
+			touchActive = false
+			releaseUpgradeScale()
 		end)
 	end
 
-	local lastFire = 0
-
 	local function tryFireUpgrade()
-		local now = os.clock()
-		if now - lastFire < UPGRADE_CLICK_INTERVAL then
-			return
-		end
-		lastFire = now
 		if upgradeRE then
 			upgradeRE:FireServer(stand)
 		end
@@ -774,7 +810,12 @@ local function pulseUpgradeButton(view: StandView)
 		scale.Parent = target
 	end
 	scale.Scale = 1.12
-	TweenService:Create(scale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	playUpgradeScaleTween(
+		target,
+		scale,
+		1,
+		TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	)
 end
 
 local function pulseOnePart(part: BasePart)

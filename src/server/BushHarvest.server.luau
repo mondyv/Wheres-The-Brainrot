@@ -741,8 +741,7 @@ local assignEntryToLowestFreeHotbarSlot: (
 ) -> number?
 
 local function playerInInventoryZone(player: Player): boolean
-	-- Toolbar / equip access: workspace.Map["Spawn And Bases"].Reddie only (not RedWall).
-	return SafezoneUtil.isCharacterInToolbarZone(player.Character)
+	return SafezoneUtil.isCharacterInInventoryZone(player.Character)
 end
 
 local function notifyClientInventorySync(player: Player, autoEquipSlot: number?)
@@ -751,8 +750,16 @@ local function notifyClientInventorySync(player: Player, autoEquipSlot: number?)
 	if typeof(autoEquipSlot) == "number" then
 		slot = math.clamp(math.floor(autoEquipSlot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
 	end
-	if slot and invList and invList[slot] and playerInInventoryZone(player) then
-		equipBrainrotSlotForPlayer(player, slot :: number)
+	-- Always sync inventory after deposit; auto-equip when in spawn safe zone (not gated on Reddie UI).
+	if slot and invList and invList[slot] then
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		local inSpawnSafe = SafezoneUtil.isCharacterInSafezone(char)
+			or (hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position))
+			or playerInInventoryZone(player)
+		if inSpawnSafe then
+			equipBrainrotSlotForPlayer(player, slot :: number)
+		end
 	end
 	local sync = ensureInventoryRemotes()
 	sync:FireClient(player, packInventoryForClient(player, invList or {}, slot))
@@ -2506,7 +2513,12 @@ local function buildBrainrotToolFromTemplate(template: Model, entry: BrainrotInv
 end
 
 local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number): boolean
-	if not playerInInventoryZone(player) then
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local canEquip = playerInInventoryZone(player)
+		or SafezoneUtil.isCharacterInToolbarZone(char)
+		or (hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position))
+	if not canEquip then
 		return false
 	end
 	local list = brainrotInventories[player]
@@ -2532,7 +2544,6 @@ local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number): boo
 		sync:FireClient(player, packInventoryForClient(player, list))
 	end
 	local entry = list[idx]
-	local char = player.Character
 	if not char then
 		return false
 	end

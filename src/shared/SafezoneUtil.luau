@@ -1,18 +1,19 @@
 --[[
 	OBB point tests for plot zones under workspace.Map["Spawn And Bases"].
-	• Reddie — toolbar / backpack access + server equip (Map.Spawn And Bases.Reddie).
-	• SafeZoneHitbox / SafezoneHitbox / Raddie — legacy grapple-disable volume (not toolbar).
-	• RedWall / RedPart — brainrot deposit only (CollectionService + touch); never hides toolbar.
+	• Reddie — toolbar / backpack UI access only (manual hotbar input).
+	• SafeZoneHitbox / SafezoneHitbox / Reddie / Raddie — broad spawn safe zone.
+	• isCharacterInInventoryZone — broad safe zone minus RedWall (return equip / server sync).
+	• RedWall / RedPart — brainrot deposit (touch); does not gate inventory add/sync.
 ]]
 
 local SafezoneUtil = {}
 
 local TOOLBAR_ZONE_NAMES = { "Reddie" }
-local GRAPPLE_SAFEZONE_NAMES = { "SafeZoneHitbox", "SafezoneHitbox", "Reddie", "Raddie" }
+local INVENTORY_ZONE_NAMES = { "SafeZoneHitbox", "SafezoneHitbox", "Reddie", "Raddie" }
 local RED_WALL_NAMES = { "RedWall", "RedPart" }
 
 local cachedReddieParts: { BasePart }? = nil
-local cachedGrappleSafezoneParts: { BasePart }? = nil
+local cachedInventoryParts: { BasePart }? = nil
 local cachedRedWallParts: { BasePart }? = nil
 
 local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolean
@@ -78,16 +79,16 @@ local function refreshReddieHitboxes()
 	cachedReddieParts = findNamedPartsUnder(spawnBases, TOOLBAR_ZONE_NAMES)
 end
 
-local function refreshGrappleSafezoneHitboxes()
-	if cacheStillValid(cachedGrappleSafezoneParts) then
+local function refreshInventoryHitboxes()
+	if cacheStillValid(cachedInventoryParts) then
 		return
 	end
-	cachedGrappleSafezoneParts = {}
+	cachedInventoryParts = {}
 	local spawnBases = getSpawnBasesFolder()
 	if not spawnBases then
 		return
 	end
-	cachedGrappleSafezoneParts = findNamedPartsUnder(spawnBases, GRAPPLE_SAFEZONE_NAMES)
+	cachedInventoryParts = findNamedPartsUnder(spawnBases, INVENTORY_ZONE_NAMES)
 end
 
 local function refreshRedWallHitboxes()
@@ -104,7 +105,7 @@ end
 
 function SafezoneUtil.invalidateCache()
 	cachedReddieParts = nil
-	cachedGrappleSafezoneParts = nil
+	cachedInventoryParts = nil
 	cachedRedWallParts = nil
 end
 
@@ -130,8 +131,8 @@ function SafezoneUtil.isWorldPointInToolbarZone(worldPoint: Vector3): boolean
 end
 
 function SafezoneUtil.isWorldPointInSafezone(worldPoint: Vector3): boolean
-	refreshGrappleSafezoneHitboxes()
-	return isWorldPointInsideParts(worldPoint, cachedGrappleSafezoneParts)
+	refreshInventoryHitboxes()
+	return isWorldPointInsideParts(worldPoint, cachedInventoryParts)
 end
 
 function SafezoneUtil.isWorldPointInRedWall(worldPoint: Vector3): boolean
@@ -140,7 +141,10 @@ function SafezoneUtil.isWorldPointInRedWall(worldPoint: Vector3): boolean
 end
 
 function SafezoneUtil.isWorldPointInInventoryZone(worldPoint: Vector3): boolean
-	return SafezoneUtil.isWorldPointInReddie(worldPoint)
+	if not SafezoneUtil.isWorldPointInSafezone(worldPoint) then
+		return false
+	end
+	return not SafezoneUtil.isWorldPointInRedWall(worldPoint)
 end
 
 function SafezoneUtil.isCharacterInToolbarZone(character: Model?): boolean

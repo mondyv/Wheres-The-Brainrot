@@ -932,7 +932,7 @@ local function boot(character: Model)
 		cacheStamp = os.clock()
 	end
 
-	-- Spawn safe zone (Reddie / legacy hitboxes) — grapple disabled; toolbar uses Reddie only.
+	-- Spawn safe zone (legacy hitboxes + Reddie) — grapple disabled; toolbar UI uses Reddie only.
 	local function isHrpInSafezone(): boolean
 		return SafezoneUtil.isCharacterInSafezone(character)
 	end

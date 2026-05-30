@@ -896,16 +896,10 @@ local function getReturnInventoryFn(): BindableFunction?
 	return nil
 end
 
+local CashBoostUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("CashBoostUtil"))
+
 local function getPlayerMoneyMult(player: Player): number
-	local mult = 1
-	if player:GetAttribute("IndexGoldenQuestComplete") == true then
-		mult *= 1.25
-	end
-	local rebirthMult = player:GetAttribute("RebirthMoneyMult")
-	if typeof(rebirthMult) == "number" and rebirthMult > 0 then
-		mult *= rebirthMult
-	end
-	return mult
+	return CashBoostUtil.getMoneyMultiplier(player)
 end
 
 local function removeBrainrotFromStand(player: Player, state: StandState)

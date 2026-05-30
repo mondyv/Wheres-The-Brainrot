@@ -105,6 +105,8 @@ local pendingToolbarDrag: {
 	rowButton: GuiButton?,
 	equippedOnDown: boolean?,
 }? = nil
+-- Drag started inside the safe zone; finish drop even if zone poll flickers before mouse up.
+local activeToolbarDrag = false
 local dragSuppressedToolbarClick = false
 local DRAG_THRESHOLD_PX = 14
 local DRAG_GHOST_THRESHOLD_PX = 6
@@ -505,12 +507,49 @@ local function isBackpackPanelVisible(): boolean
 	return (backpackFrameRef :: GuiObject).Visible
 end
 
-local function pointOverBackpackProbes(dropPoint: Vector2, rawViewport: Vector2): boolean
-	if not isBackpackPanelVisible() or not backpackGuiFrame then
+local function pointOverBackpackFromGuiHitScan(rawViewport: Vector2): boolean
+	local cont = backpackContainer
+	if not cont then
 		return false
 	end
-	local frame = backpackGuiFrame :: GuiObject
-	return screenPointInGui(frame, dropPoint) or screenPointInGui(frame, screenPointWithGuiInset(rawViewport))
+	local ok, hitsOrErr = pcall(function()
+		return playerGui:GetGuiObjectsAtPosition(rawViewport.X, rawViewport.Y)
+	end)
+	if not ok or typeof(hitsOrErr) ~= "table" then
+		return false
+	end
+	for _, hit in hitsOrErr :: { Instance } do
+		if dragGhostGui and hit:IsDescendantOf(dragGhostGui) then
+			continue
+		end
+		if hit:IsA("GuiObject") and guiInstanceIsUnder(hit, cont :: GuiObject) then
+			return true
+		end
+	end
+	return false
+end
+
+local function pointOverBackpackProbes(dropPoint: Vector2, rawViewport: Vector2): boolean
+	if not isBackpackPanelVisible() then
+		return false
+	end
+	local insetPt = screenPointWithGuiInset(rawViewport)
+	if pointOverBackpackFromGuiHitScan(rawViewport) or pointOverBackpackFromGuiHitScan(insetPt) then
+		return true
+	end
+	if backpackContainer then
+		local cont = backpackContainer :: GuiObject
+		if screenPointInGui(cont, dropPoint) or screenPointInGui(cont, insetPt) then
+			return true
+		end
+	end
+	if backpackGuiFrame then
+		local frame = backpackGuiFrame :: GuiObject
+		if screenPointInGui(frame, dropPoint) or screenPointInGui(frame, insetPt) then
+			return true
+		end
+	end
+	return false
 end
 
 local function ancestorBackpackRowIndexFromGuiObject(inst: Instance): number?
@@ -856,8 +895,10 @@ local function onSafezonePresenceChanged(inZone: boolean)
 	else
 		pendingReturnedBrainrotName = nil
 		setBackpackPanelOpen(false)
-		clearDragGhost()
-		pendingToolbarDrag = nil
+		if not activeToolbarDrag then
+			clearDragGhost()
+			pendingToolbarDrag = nil
+		end
 		deselectAllHotbarSlots()
 	end
 	refreshToolbarVisibility()
@@ -867,6 +908,9 @@ local function isCharacterInToolbarAccessZone(character: Model?): boolean
 	if not character then
 		return false
 	end
+	if SafezoneUtil.isCharacterInToolbarZone(character) then
+		return true
+	end
 	if SafezoneUtil.isCharacterInSafezone(character) then
 		return true
 	end
@@ -875,6 +919,10 @@ local function isCharacterInToolbarAccessZone(character: Model?): boolean
 		return true
 	end
 	return false
+end
+
+local function toolbarInputAllowed(): boolean
+	return canUseToolbar or activeToolbarDrag
 end
 
 local function pollSafezonePresence()
@@ -1286,6 +1334,7 @@ local function wireBrainrotBackpackEquips()
 				requestMoveBackpackEntryToHotbar(listIdx)
 				UIInteractionSounds.playClick()
 				local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+				activeToolbarDrag = true
 				pendingToolbarDrag = {
 					kind = "backpack",
 					idx = listIdx,
@@ -1728,6 +1777,7 @@ function ToolbarController.init()
 				if brainrotEntries[i] and not brainrotParkedInUI[i] then
 					local e = brainrotEntries[i]
 					local tex = (e.icon ~= "" and e.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+					activeToolbarDrag = true
 					pendingToolbarDrag = {
 						kind = "hotbar",
 						idx = i,
@@ -1906,7 +1956,7 @@ function ToolbarController.init()
 	end
 
 	UserInputService.InputChanged:Connect(function(input, _gp)
-		if not canUseToolbar then
+		if not toolbarInputAllowed() then
 			return
 		end
 		if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then
@@ -1996,13 +2046,15 @@ function ToolbarController.init()
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
 			return
 		end
-		if not canUseToolbar then
+		if not toolbarInputAllowed() then
+			activeToolbarDrag = false
 			pendingToolbarDrag = nil
 			clearDragGhost()
 			return
 		end
 		local pnd = pendingToolbarDrag
 		pendingToolbarDrag = nil
+		activeToolbarDrag = false
 		if not pnd then
 			clearDragGhost()
 			return
@@ -2032,24 +2084,24 @@ function ToolbarController.init()
 			return
 		end
 
-		local targetHotbar = hotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter)
+		local overBackpack = pointOverBackpackProbes(mouseWindow, rawEnd)
+			or (ghostCenter ~= nil and pointOverBackpackProbes(ghostCenter, rawEnd))
+			or (ghostViewport ~= nil and pointOverBackpackFromGuiHitScan(ghostViewport))
+		local targetHotbar: number? = nil
+		if not overBackpack then
+			targetHotbar = hotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter)
+		end
 		local overHotbar = targetHotbar ~= nil
 			or pointOverHotbarDropZoneProbes(mouseWindow, rawEnd)
 			or (ghostCenter ~= nil and pointOverHotbarDropZoneProbes(ghostCenter, rawEnd))
 			or (ghostViewport ~= nil and pointOverHotbarFromGuiHitScan(ghostViewport))
-		local overBackpack = pointOverBackpackProbes(mouseWindow, rawEnd)
-			or (ghostCenter ~= nil and pointOverBackpackProbes(ghostCenter, rawEnd))
 
 		if pnd.kind == "hotbar" then
 			local hasEntry = brainrotEntries[pnd.idx] and not brainrotParkedInUI[pnd.idx]
 			if not hasEntry then
 				return
 			end
-			if targetHotbar and targetHotbar ~= pnd.idx then
-				-- Hotbar → hotbar swap.
-				(parkEv :: RemoteEvent):FireServer(pnd.idx, false, targetHotbar)
-				UIInteractionSounds.playClick()
-			elseif overBackpack and isBackpackPanelVisible() then
+			if overBackpack and isBackpackPanelVisible() then
 				-- Hotbar → backpack panel: tuck (hide from hotbar, show in expanded backpack).
 				rebuildBackpackDisplayOrder()
 				local destListIdx = #backpackDisplayOrder + 1
@@ -2058,6 +2110,10 @@ function ToolbarController.init()
 				rebuildBackpackDisplayOrder()
 				refreshBrainrotBackpackUI()
 				rebuildSlots()
+				UIInteractionSounds.playClick()
+			elseif targetHotbar and targetHotbar ~= pnd.idx then
+				-- Hotbar → hotbar swap.
+				(parkEv :: RemoteEvent):FireServer(pnd.idx, false, targetHotbar)
 				UIInteractionSounds.playClick()
 			end
 		elseif pnd.kind == "backpack" then

@@ -7,6 +7,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
+local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 
 local SPAWN_CLEARANCE = 4
 local ASSIGN_WAIT_SEC = 20
@@ -115,17 +116,7 @@ local function waitForAssignedPlot(player: Player, character: Model): Instance?
 	return PlotPaths.findPlotForAssignedSlot(player)
 end
 
-local function teleportToPlotSpawn(player: Player, character: Model)
-	local plot = waitForAssignedPlot(player, character)
-	if not plot or not plot.Parent then
-		return
-	end
-
-	local spawnCf = findFirstFloorSpawnCFrame(plot)
-	if not spawnCf then
-		return
-	end
-
+local function teleportCharacterToCFrame(character: Model, spawnCf: CFrame)
 	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
 		hrp = character:WaitForChild("HumanoidRootPart", 8) :: BasePart?
@@ -141,6 +132,27 @@ local function teleportToPlotSpawn(player: Player, character: Model)
 	end
 	hrp.AssemblyLinearVelocity = Vector3.zero
 	hrp.AssemblyAngularVelocity = Vector3.zero
+end
+
+local function teleportToPlotSpawn(player: Player, character: Model)
+	local reviveCf = player:GetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR)
+	if typeof(reviveCf) == "CFrame" then
+		player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, nil)
+		teleportCharacterToCFrame(character, reviveCf)
+		return
+	end
+
+	local plot = waitForAssignedPlot(player, character)
+	if not plot or not plot.Parent then
+		return
+	end
+
+	local spawnCf = findFirstFloorSpawnCFrame(plot)
+	if not spawnCf then
+		return
+	end
+
+	teleportCharacterToCFrame(character, spawnCf)
 end
 
 local function onCharacter(player: Player, character: Model)

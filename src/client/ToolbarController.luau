@@ -52,6 +52,7 @@ local HIGHLIGHT_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDi
 local BACKPACK_OPEN_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
+local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 44
 
 -- ── Key → slot index map ──────────────────────────────────────────────────────
 
@@ -1286,6 +1287,95 @@ local function ensureHotbarListLayout(): UIListLayout
 	return layout
 end
 
+local function getHotbarSlotSizeTemplate(): UDim2?
+	for i = 1, HOTBAR_INVENTORY_SLOTS do
+		local slot = slots[i]
+		if slot and slot:IsA("GuiObject") then
+			return (slot :: GuiObject).Size
+		end
+	end
+	return nil
+end
+
+local function pinToggleIconMinAbsoluteSize(icon: GuiObject)
+	if typeof(icon:GetAttribute("_MinW")) == "number" and typeof(icon:GetAttribute("_MinH")) == "number" then
+		return
+	end
+	local bestW = TOGGLE_BACKPACK_ICON_MIN_ABS_PX
+	local bestH = TOGGLE_BACKPACK_ICON_MIN_ABS_PX
+	for i = 1, HOTBAR_INVENTORY_SLOTS do
+		local slot = slots[i]
+		if slot and slot:IsA("GuiObject") then
+			local abs = (slot :: GuiObject).AbsoluteSize
+			if abs.X >= 8 and abs.Y >= 8 then
+				bestW = math.max(bestW, math.floor(abs.X + 0.5))
+				bestH = math.max(bestH, math.floor(abs.Y + 0.5))
+			end
+		end
+	end
+	local iconAbs = icon.AbsoluteSize
+	if iconAbs.X >= 8 and iconAbs.Y >= 8 then
+		bestW = math.max(bestW, math.floor(iconAbs.X + 0.5))
+		bestH = math.max(bestH, math.floor(iconAbs.Y + 0.5))
+	end
+	icon:SetAttribute("_MinW", bestW)
+	icon:SetAttribute("_MinH", bestH)
+end
+
+local function ensureToggleBackpackIconSizeConstraint(icon: GuiObject)
+	local minW = icon:GetAttribute("_MinW")
+	local minH = icon:GetAttribute("_MinH")
+	if typeof(minW) ~= "number" or typeof(minH) ~= "number" then
+		return
+	end
+	local constraint = icon:FindFirstChild("ToggleIconSizeConstraint")
+	if not constraint or not constraint:IsA("UISizeConstraint") then
+		constraint = Instance.new("UISizeConstraint")
+		constraint.Name = "ToggleIconSizeConstraint"
+		constraint.Parent = icon
+	end
+	(constraint :: UISizeConstraint).MinSize = Vector2.new(minW, minH)
+
+	local slot = slots[1]
+	if slot and slot:IsA("GuiObject") then
+		local slotAbs = (slot :: GuiObject).AbsoluteSize
+		if slotAbs.X > 0 and slotAbs.Y > 0 then
+			local aspect = icon:FindFirstChild("ToggleIconAspect")
+			if not aspect or not aspect:IsA("UIAspectRatioConstraint") then
+				aspect = Instance.new("UIAspectRatioConstraint")
+				aspect.Name = "ToggleIconAspect"
+				aspect.Parent = icon
+			end
+			(aspect :: UIAspectRatioConstraint).AspectRatio = slotAbs.X / slotAbs.Y
+			(aspect :: UIAspectRatioConstraint).AspectType = Enum.AspectType.ScaleWithParentSize
+		end
+	end
+end
+
+local function wireToggleBackpackIconResizeSync()
+	if hotbar:GetAttribute("_ToggleIconResizeWired") == true then
+		return
+	end
+	hotbar:SetAttribute("_ToggleIconResizeWired", true)
+	hotbar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		task.defer(refreshToggleBackpackIconLayout)
+	end)
+	local camera = workspace.CurrentCamera
+	if camera then
+		camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+			task.defer(refreshToggleBackpackIconLayout)
+		end)
+	end
+	workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+		local cam = workspace.CurrentCamera
+		if cam then
+			cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+				task.defer(refreshToggleBackpackIconLayout)
+			end)
+		end
+	end)
+end
+
 local function captureToggleIconPixelSize(icon: GuiObject): (number?, number?)
 	local pinnedW = icon:GetAttribute("_PinnedW")
 	local pinnedH = icon:GetAttribute("_PinnedH")
@@ -1328,7 +1418,10 @@ refreshToggleBackpackIconLayout = function()
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
 
 	local w, h = captureToggleIconPixelSize(icon)
-	if w and h then
+	local slotTemplate = getHotbarSlotSizeTemplate()
+	if slotTemplate then
+		icon.Size = slotTemplate
+	elseif w and h then
 		icon:SetAttribute("_PinnedW", w)
 		icon:SetAttribute("_PinnedH", h)
 		icon.Size = UDim2.fromOffset(math.floor(w + 0.5), math.floor(h + 0.5))
@@ -1340,6 +1433,9 @@ refreshToggleBackpackIconLayout = function()
 	end
 	icon.LayoutOrder = 100
 	icon.Visible = true
+
+	pinToggleIconMinAbsoluteSize(icon)
+	ensureToggleBackpackIconSizeConstraint(icon)
 end
 
 local function updateHotbarSlotVisibility()
@@ -1394,6 +1490,7 @@ local function wireToggleBackpackIcon()
 	local tiltTarget = resolveToggleBackpackVisual(iconHost, btn)
 	prepareToggleTiltPivot(tiltTarget)
 	UIButtonEffects.wireTiltHoverButton(btn, toggleBackpackPanel, iconHost, tiltTarget, false)
+	wireToggleBackpackIconResizeSync()
 	task.defer(refreshToggleBackpackIconLayout)
 end
 

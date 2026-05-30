@@ -2648,8 +2648,8 @@ local function buildBrainrotToolFromTemplate(template: Model, entry: BrainrotInv
 end
 
 local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number, forceEquip: boolean?): boolean
+	local char = player.Character
 	if not forceEquip then
-		local char = player.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		local canEquip = playerInInventoryZone(player)
 			or SafezoneUtil.isCharacterInToolbarZone(char)

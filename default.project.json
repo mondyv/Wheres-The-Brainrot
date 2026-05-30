@@ -10,6 +10,10 @@
       },
       "Animations": {
         "$path": "src/replicatedstorage/Animations"
+      },
+      "LoadingMoonCamera": {
+        "$path": "src/replicatedstorage/LoadingMoonCamera",
+        "$ignoreUnknownInstances": true
       }
     },
 

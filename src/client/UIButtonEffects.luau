@@ -10,8 +10,11 @@ local RELEASE_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDire
 local GLINT_SEGMENT = 0.22
 local GLINT_THICKNESS = 3
 local SWEEP_WIDTH_PX = 10
+local SWEEP_WIDTH_MAX_PX = 12
 local SWEEP_INSET_PX = 10
-local SWEEP_HEIGHT_SCALE = 0.5
+local SWEEP_LENGTH_DIAG_RATIO = 0.4
+local SWEEP_WIDTH_MIN_RATIO = 0.1
+local SWEEP_FALLBACK_HEIGHT_SCALE = 0.36
 local SWEEP_PATH_START = 0.24
 local SWEEP_PATH_END = 0.76
 local SWEEP_BG_TRANSPARENCY = 0.52
@@ -54,20 +57,24 @@ local function getSweepInset(btn: GuiObject): number
 	return math.max(SWEEP_INSET_PX, getStrokeInset(btn) + 4)
 end
 
--- Sidebar buttons: sweep stays inside the Icon; other buttons use an inset clip on the root.
-local function resolveSweepHost(btn: GuiObject): GuiObject
-	local icon = btn:FindFirstChild("Icon", true)
-	if icon and icon:IsA("GuiObject") then
-		return icon :: GuiObject
-	end
-	return btn
-end
-
 local function resolveOutlineFrame(btn: GuiObject): GuiObject
 	local decor = btn:FindFirstChild("Decor")
 	local highlight = decor and decor:FindFirstChild("Highlight")
 	if highlight and highlight:IsA("GuiObject") then
 		return highlight :: GuiObject
+	end
+	return btn
+end
+
+-- Match glisten bounds: Decor.Highlight when present, else Icon, else the button root.
+local function resolveSweepHost(btn: GuiObject): GuiObject
+	local outline = resolveOutlineFrame(btn)
+	if outline ~= btn then
+		return outline
+	end
+	local icon = btn:FindFirstChild("Icon", true)
+	if icon and icon:IsA("GuiObject") then
+		return icon :: GuiObject
 	end
 	return btn
 end
@@ -123,11 +130,30 @@ local function ensureGlistenTrack(btn: GuiObject): Frame
 	return ensureOverlayFrame(outline, "__GlistenTrack", 15, 0)
 end
 
-local function configureSweepBar(shine: Frame)
+local function configureSweepBar(shine: Frame, clip: Frame)
 	shine.AnchorPoint = Vector2.new(0.5, 0.5)
-	shine.Size = UDim2.new(0, SWEEP_WIDTH_PX, SWEEP_HEIGHT_SCALE, 0)
 	shine.Rotation = 45
 	shine.BackgroundTransparency = SWEEP_BG_TRANSPARENCY
+
+	local w = clip.AbsoluteSize.X
+	local h = clip.AbsoluteSize.Y
+	if w >= 6 and h >= 6 then
+		local minDim = math.min(w, h)
+		local diagonal = math.sqrt(w * w + h * h)
+		local barW = math.clamp(
+			math.floor(minDim * SWEEP_WIDTH_MIN_RATIO + 0.5),
+			5,
+			SWEEP_WIDTH_MAX_PX
+		)
+		local barH = math.clamp(
+			math.floor(diagonal * SWEEP_LENGTH_DIAG_RATIO + 0.5),
+			math.floor(minDim * 0.45),
+			math.floor(diagonal * 0.52)
+		)
+		shine.Size = UDim2.fromOffset(barW, barH)
+	else
+		shine.Size = UDim2.new(0, SWEEP_WIDTH_PX, SWEEP_FALLBACK_HEIGHT_SCALE, 0)
+	end
 
 	local grad = shine:FindFirstChildOfClass("UIGradient")
 	if not grad then
@@ -141,6 +167,32 @@ local function configureSweepBar(shine: Frame)
 		NumberSequenceKeypoint.new(0.62, SWEEP_GRADIENT_CENTER),
 		NumberSequenceKeypoint.new(1, 1),
 	})
+end
+
+local function whenSweepClipReady(clip: Frame, run: () -> ())
+	local fired = false
+	local sizeConn: RBXScriptConnection? = nil
+
+	local function tryRun()
+		if fired or not clip.Parent then
+			return
+		end
+		if clip.AbsoluteSize.X >= 6 and clip.AbsoluteSize.Y >= 6 then
+			fired = true
+			if sizeConn then
+				sizeConn:Disconnect()
+				sizeConn = nil
+			end
+			run()
+		end
+	end
+
+	tryRun()
+	if fired then
+		return
+	end
+	sizeConn = clip:GetPropertyChangedSignal("AbsoluteSize"):Connect(tryRun)
+	task.defer(tryRun)
 end
 
 local function ensureSweepClip(host: GuiObject, btn: GuiObject): Frame
@@ -275,7 +327,8 @@ local function stopSweepOnClip(clip: Instance)
 	local shine = clip:FindFirstChild("__DiagSweep")
 	if shine and shine:IsA("Frame") then
 		shine.Visible = false
-		configureSweepBar(shine :: Frame)
+		local clipFrame = clip :: Frame
+		configureSweepBar(shine :: Frame, clipFrame)
 	end
 end
 
@@ -405,45 +458,52 @@ function M.playDiagonalSweep(btn: GuiObject)
 		shine.ZIndex = clip.ZIndex + 1
 		shine.Parent = clip
 	end
-	configureSweepBar(shine)
 
-	shine.Visible = true
-	shine.Position = UDim2.new(SWEEP_PATH_START, 0, SWEEP_PATH_START, 0)
-
-	local move = TweenService:Create(shine, DIAG_SWEEP_TWEEN, {
-		Position = UDim2.new(SWEEP_PATH_END, 0, SWEEP_PATH_END, 0),
-	})
-	sweepMoveTweenByClip[clip] = move
-	move.Completed:Connect(function(state)
-		if sweepMoveTweenByClip[clip] == move then
-			sweepMoveTweenByClip[clip] = nil
-		end
-		if state ~= Enum.PlaybackState.Completed then
-			return
-		end
-		if not shine.Parent or clip:GetAttribute("__DiagSweepPlaying") ~= true then
-			stopSweepOnClip(clip)
+	whenSweepClipReady(clip, function()
+		if clip:GetAttribute("__DiagSweepPlaying") ~= true or not shine.Parent then
 			return
 		end
 
-		local fade = TweenService:Create(
-			shine,
-			TweenInfo.new(SWEEP_FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ BackgroundTransparency = 1 }
-		)
-		sweepFadeTweenByClip[clip] = fade
-		fade.Completed:Connect(function(fadeState)
-			if sweepFadeTweenByClip[clip] == fade then
-				sweepFadeTweenByClip[clip] = nil
+		configureSweepBar(shine, clip)
+		shine.BackgroundTransparency = SWEEP_BG_TRANSPARENCY
+		shine.Visible = true
+		shine.Position = UDim2.new(SWEEP_PATH_START, 0, SWEEP_PATH_START, 0)
+
+		local move = TweenService:Create(shine, DIAG_SWEEP_TWEEN, {
+			Position = UDim2.new(SWEEP_PATH_END, 0, SWEEP_PATH_END, 0),
+		})
+		sweepMoveTweenByClip[clip] = move
+		move.Completed:Connect(function(state)
+			if sweepMoveTweenByClip[clip] == move then
+				sweepMoveTweenByClip[clip] = nil
 			end
-			if fadeState ~= Enum.PlaybackState.Completed then
+			if state ~= Enum.PlaybackState.Completed then
 				return
 			end
-			stopSweepOnClip(clip)
+			if not shine.Parent or clip:GetAttribute("__DiagSweepPlaying") ~= true then
+				stopSweepOnClip(clip)
+				return
+			end
+
+			local fade = TweenService:Create(
+				shine,
+				TweenInfo.new(SWEEP_FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ BackgroundTransparency = 1 }
+			)
+			sweepFadeTweenByClip[clip] = fade
+			fade.Completed:Connect(function(fadeState)
+				if sweepFadeTweenByClip[clip] == fade then
+					sweepFadeTweenByClip[clip] = nil
+				end
+				if fadeState ~= Enum.PlaybackState.Completed then
+					return
+				end
+				stopSweepOnClip(clip)
+			end)
+			fade:Play()
 		end)
-		fade:Play()
+		move:Play()
 	end)
-	move:Play()
 end
 
 local function playHoverPolish(btn: GuiButton, withSweep: boolean)

@@ -121,6 +121,7 @@ local dragGhostSmoothPos: Vector2? = nil
 local dragGhostConn: RBXScriptConnection? = nil
 
 local backpackFrameRef: GuiObject? = nil
+local toggleBackpackRef: GuiObject? = nil
 local backpackSearchWired = false
 local backpackCloseWired = false
 local isBackpackPanelOpen = false
@@ -545,6 +546,30 @@ local function pointOverBackpackProbes(dropPoint: Vector2, rawViewport: Vector2)
 		local frame = backpackGuiFrame :: GuiObject
 		if screenPointInGui(frame, dropPoint) or screenPointInGui(frame, insetPt) then
 			return true
+		end
+	end
+	return false
+end
+
+-- Drop target for hotbar → backpack (toggle, open panel, or container rows).
+local function pointOverBackpackDropTarget(dropPoint: Vector2, rawViewport: Vector2): boolean
+	if pointOverBackpackProbes(dropPoint, rawViewport) then
+		return true
+	end
+	local insetPt = screenPointWithGuiInset(rawViewport)
+	local probes = { dropPoint, insetPt }
+	if toggleBackpackRef then
+		for _, pt in probes do
+			if screenPointInGui(toggleBackpackRef :: GuiObject, pt) then
+				return true
+			end
+		end
+	end
+	if isBackpackPanelOpen and backpackFrameRef then
+		for _, pt in probes do
+			if screenPointInGui(backpackFrameRef :: GuiObject, pt) then
+				return true
+			end
 		end
 	end
 	return false
@@ -1882,6 +1907,9 @@ function ToolbarController.init()
 
 	-- ToggleBackpack + brainrot backpack grid (Backpack.Container["1"]..["19"])
 	local toggleBtn = toolbar:FindFirstChild("ToggleBackpack") or hotbar:FindFirstChild("ToggleBackpack")
+	if toggleBtn and toggleBtn:IsA("GuiObject") then
+		toggleBackpackRef = toggleBtn :: GuiObject
+	end
 	local backpackFrame = toolbar:FindFirstChild("Backpack")
 	if backpackFrame then
 		backpackContainer = backpackFrame:FindFirstChild("Container")
@@ -2032,6 +2060,10 @@ function ToolbarController.init()
 			or pointOverHotbarDropZoneProbes(mouseWindow, rawEnd)
 			or (ghostCenter ~= nil and pointOverHotbarDropZoneProbes(ghostCenter, rawEnd))
 			or (ghostViewport ~= nil and pointOverHotbarFromGuiHitScan(ghostViewport))
+		if pointOverBackpackDropTarget(mouseWindow, rawEnd)
+			or (ghostCenter ~= nil and pointOverBackpackDropTarget(ghostCenter, rawEnd)) then
+			setBackpackPanelOpen(true)
+		end
 		if overHotbar then
 			enterHotbarBackpackDragBulkHover()
 		elseif hotbarDragBulkHover then
@@ -2084,8 +2116,8 @@ function ToolbarController.init()
 			return
 		end
 
-		local overBackpack = pointOverBackpackProbes(mouseWindow, rawEnd)
-			or (ghostCenter ~= nil and pointOverBackpackProbes(ghostCenter, rawEnd))
+		local overBackpack = pointOverBackpackDropTarget(mouseWindow, rawEnd)
+			or (ghostCenter ~= nil and pointOverBackpackDropTarget(ghostCenter, rawEnd))
 			or (ghostViewport ~= nil and pointOverBackpackFromGuiHitScan(ghostViewport))
 		local targetHotbar: number? = nil
 		if not overBackpack then
@@ -2101,8 +2133,9 @@ function ToolbarController.init()
 			if not hasEntry then
 				return
 			end
-			if overBackpack and isBackpackPanelVisible() then
+			if overBackpack then
 				-- Hotbar → backpack panel: tuck (server sync updates UI).
+				setBackpackPanelOpen(true)
 				(parkEv :: RemoteEvent):FireServer(pnd.idx, true)
 				UIInteractionSounds.playClick()
 			elseif targetHotbar and targetHotbar ~= pnd.idx then

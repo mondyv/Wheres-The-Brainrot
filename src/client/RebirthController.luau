@@ -14,7 +14,6 @@ local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local HUDController = require(script.Parent.HUDController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
-local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -83,7 +82,10 @@ local function getOrAddUIScale(obj: GuiObject): UIScale
 end
 
 local function waitMain(): ScreenGui?
-	return PlayerGuiMain.ensure(player)
+	if not player.Character then
+		player.CharacterAdded:Wait()
+	end
+	return playerGui:WaitForChild("Main", 120) :: ScreenGui?
 end
 
 local function findRebirthSidebarNotif(main: ScreenGui): GuiObject?

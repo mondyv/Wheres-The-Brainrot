@@ -6,7 +6,6 @@ local TweenService = game:GetService("TweenService")
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
-local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local SwingUpgrades = require(ReplicatedStorage.Shared.SwingUpgrades)
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
@@ -39,7 +38,10 @@ local function formatCash(n: number): string
 end
 
 local function waitMain(): ScreenGui
-	return PlayerGuiMain.ensure(player)
+	if not player.Character then
+		player.CharacterAdded:Wait()
+	end
+	return player:WaitForChild("PlayerGui"):WaitForChild("Main", 120) :: ScreenGui
 end
 
 local function findLabelUnder(parent: Instance, names: { string }): TextLabel?

@@ -11,7 +11,6 @@ local TweenService = game:GetService("TweenService")
 
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local PlotLuck = SwingUpgrades.PlotLuck
-local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
 
@@ -520,7 +519,8 @@ end
 local CurrentAreaController = {}
 
 function CurrentAreaController.init()
-	local main = PlayerGuiMain.ensure(player)
+	local playerGui = player:WaitForChild("PlayerGui")
+	local main = playerGui:WaitForChild("Main", 30)
 	if not main then
 		warn("[CurrentAreaController] PlayerGui.Main missing")
 		return

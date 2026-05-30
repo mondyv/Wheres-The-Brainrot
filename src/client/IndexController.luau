@@ -13,7 +13,6 @@ local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local IndexConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("IndexConfig"))
-local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -73,7 +72,10 @@ local function getOrAddUIScale(obj: GuiObject): UIScale
 end
 
 local function waitMain(): ScreenGui?
-	return PlayerGuiMain.ensure(player)
+	if not player.Character then
+		player.CharacterAdded:Wait()
+	end
+	return playerGui:WaitForChild("Main", 120) :: ScreenGui?
 end
 
 local function findLabel(root: Instance, names: { string }): TextLabel?

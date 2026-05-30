@@ -17,12 +17,15 @@ local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local HUDController = require(script.Parent.HUDController)
 local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
-local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
 
-local mainGui      = PlayerGuiMain.ensure(player)
+if not player.Character then
+	player.CharacterAdded:Wait()
+end
+
 local playerGui    = player.PlayerGui
+local mainGui      = playerGui:WaitForChild("Main")
 local framesFolder = mainGui:WaitForChild("Frames")
 local SETTINGS_NAME = "Config/Settings"
 

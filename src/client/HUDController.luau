@@ -10,12 +10,17 @@ local SocialService = game:GetService("SocialService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
-local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player    = Players.LocalPlayer
 
-local mainGui      = PlayerGuiMain.ensure(player)
+-- StarterGui is only copied to PlayerGui after the character loads.
+-- Yielding here guarantees Main and its children exist before we reference them.
+if not player.Character then
+	player.CharacterAdded:Wait()
+end
+
 local playerGui    = player.PlayerGui
+local mainGui      = playerGui:WaitForChild("Main")
 local sideUI       = mainGui:WaitForChild("SideUI")
 local framesFolder = mainGui:WaitForChild("Frames")
 

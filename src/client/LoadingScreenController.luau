@@ -1035,8 +1035,14 @@ local function enterLoadingIsolation(playerGui: PlayerGui)
 end
 
 local function prepareGameplayUIBeforeReveal(playerGui: PlayerGui)
-	local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
-	local main = PlayerGuiMain.ensure(Players.LocalPlayer)
+	local main = playerGui:FindFirstChild("Main")
+	if not main then
+		return
+	end
+
+	if main:IsA("ScreenGui") then
+		main.ResetOnSpawn = false
+	end
 
 	local frames = main:FindFirstChild("Frames")
 	if frames then
@@ -1400,14 +1406,6 @@ function M.showEarly()
 	if not player then
 		return
 	end
-
-	pcall(function()
-		StarterGui.ResetPlayerGuiOnSpawn = false
-	end)
-
-	local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
-	PlayerGuiMain.ensure(player)
-
 	local playerGui = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 10)
 	if not playerGui then
 		return

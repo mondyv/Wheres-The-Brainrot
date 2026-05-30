@@ -122,7 +122,7 @@ function M.formatNumberShort(n: number): string
 	return tostring(v)
 end
 
--- Live cash pad total: show decimals only when needed; empty pad stays "$0".
+-- Live cash pad total: whole dollars under 1K; K/M/B with optional cents above.
 function M.formatCashAccumulated(n: number): string
 	if n <= 0 then
 		return "$0"
@@ -138,8 +138,7 @@ function M.formatCashAccumulated(n: number): string
 	elseif n >= 1e3 then
 		return formatScaledCash(n, 1e3, "K")
 	end
-	local rounded = math.floor(n * 100 + 0.5) / 100
-	return formatCashAmount(rounded, "")
+	return string.format("$%d", math.floor(n + 0.5))
 end
 
 function M.formatSellButton(n: number): string

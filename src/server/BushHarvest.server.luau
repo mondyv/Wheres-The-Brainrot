@@ -227,6 +227,18 @@ local function getCarryBrainrotName(carry: Model): string?
 	return nil
 end
 
+local DEPOSIT_DEBUG = true
+local function depositDebug(...: any)
+	if not DEPOSIT_DEBUG then
+		return
+	end
+	local parts = { "[BushHarvest][RedWall]" }
+	for i = 1, select("#", ...) do
+		table.insert(parts, tostring(select(i, ...)))
+	end
+	warn(table.concat(parts, " "))
+end
+
 local function tryPlaySafeZoneSFXForCarry(player: Player, carry: Model)
 	if not carry or not carry.Parent then
 		return
@@ -450,8 +462,9 @@ local function carryModelToInventoryEntry(carry: Model): BrainrotInvEntry
 	local mutationAttr = carry:GetAttribute("BrainrotMutation")
 	local levelAttr = carry:GetAttribute("BrainrotLevel")
 	local baseIncomeAttr = carry:GetAttribute("BrainrotBaseIncome")
+	local displayName = getCarryBrainrotName(carry) or carry.Name
 	local entry: BrainrotInvEntry = {
-		name = carry.Name,
+		name = displayName,
 		icon = getIconFromCarryModel(carry),
 		sourcePath = sourcePath,
 		rarity = if typeof(rarityAttr) == "string" then rarityAttr else "common",
@@ -470,20 +483,27 @@ end
 -- Returns the new inventory list index on success (used to auto-equip the brainrot just deposited).
 local function redeemSingleCarryModel(player: Player, carry: Model): number?
 	if not carry or not carry.Parent then
+		depositDebug("redeem abort: carry missing parent", player.Name)
 		return nil
 	end
 	if carry:GetAttribute("OwnerUserId") ~= player.UserId then
+		depositDebug("redeem abort: owner mismatch", player.Name, carry:GetFullName())
 		return nil
 	end
 
-	player:SetAttribute("LastCollectedBrainrot", carry.Name)
+	local brainrotName = getCarryBrainrotName(carry) or carry.Name
+	depositDebug("redeem add inventory", player.Name, brainrotName)
+
+	player:SetAttribute("LastCollectedBrainrot", brainrotName)
 	local entry = carryModelToInventoryEntry(carry)
 	if not pushBrainrotInventory(player, entry, true) then
+		depositDebug("redeem FAIL: inventory full or push failed", player.Name, brainrotName)
 		return nil
 	end
 
 	local list = brainrotInventories[player]
 	local newSlot = if list then #list else nil
+	depositDebug("redeem inventory OK slot", player.Name, tostring(newSlot), brainrotName)
 
 	local indexInternal = ServerStorage:FindFirstChild("IndexInternal")
 	local indexBF = indexInternal and indexInternal:FindFirstChild("OnBrainrotDeposited")
@@ -495,6 +515,7 @@ local function redeemSingleCarryModel(player: Player, carry: Model): number?
 
 	safeZoneSfxPlayedForCarry[carry] = nil
 	carry:Destroy()
+	depositDebug("redeem destroyed carry model", player.Name, brainrotName)
 	return newSlot
 end
 
@@ -688,6 +709,7 @@ end
 -- RedWall / RedPart deposit zones (CollectionService tag BrainrotDeposit).
 local depositPartSet: { [BasePart]: boolean } = {}
 local depositParts: { BasePart } = {}
+local depositTouchHooked: { [BasePart]: boolean } = {}
 
 local function registerDepositPart(part: BasePart)
 	if depositPartSet[part] then
@@ -731,7 +753,7 @@ local function isPlayerInsideDeposit(player: Player): boolean
 	return isInsideAnyDeposit((hrp :: BasePart).Position)
 end
 
-local equipBrainrotSlotForPlayer: (Player, number) -> boolean
+local equipBrainrotSlotForPlayer: (Player, number, boolean?) -> boolean
 local findLowestFreeHotbarSlot: (list: { BrainrotInvEntry }, map: { [number]: boolean }) -> number?
 local assignEntryToLowestFreeHotbarSlot: (
 	plr: Player,
@@ -744,25 +766,31 @@ local function playerInInventoryZone(player: Player): boolean
 	return SafezoneUtil.isCharacterInInventoryZone(player.Character)
 end
 
-local function notifyClientInventorySync(player: Player, autoEquipSlot: number?)
+local function notifyClientInventorySync(player: Player, autoEquipSlot: number?, forceEquip: boolean?)
 	local invList = brainrotInventories[player]
 	local slot: number? = nil
 	if typeof(autoEquipSlot) == "number" then
 		slot = math.clamp(math.floor(autoEquipSlot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
 	end
-	-- Always sync inventory after deposit; auto-equip when in spawn safe zone (not gated on Reddie UI).
+	-- Always sync inventory after RedWall delivery; auto-equip is never gated on Reddie toolbar access.
 	if slot and invList and invList[slot] then
-		local char = player.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		local inSpawnSafe = SafezoneUtil.isCharacterInSafezone(char)
-			or (hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position))
-			or playerInInventoryZone(player)
-		if inSpawnSafe then
-			equipBrainrotSlotForPlayer(player, slot :: number)
+		if forceEquip then
+			local equipped = equipBrainrotSlotForPlayer(player, slot :: number, true)
+			depositDebug("auto-equip", player.Name, "slot", slot, if equipped then "OK" else "FAIL")
+		else
+			local char = player.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			local inSpawnSafe = SafezoneUtil.isCharacterInSafezone(char)
+				or (hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position))
+				or playerInInventoryZone(player)
+			if inSpawnSafe then
+				equipBrainrotSlotForPlayer(player, slot :: number, true)
+			end
 		end
 	end
 	local sync = ensureInventoryRemotes()
 	sync:FireClient(player, packInventoryForClient(player, invList or {}, slot))
+	depositDebug("client sync", player.Name, "entries", invList and #invList or 0, "equipSlot", slot)
 end
 
 local function registerLuckHitbox(part: BasePart)
@@ -1029,8 +1057,29 @@ local function attachCarriedBrainrot(player: Player, clone: Model)
 		tryPlaySafeZoneSFXForCarry(player, clone)
 		local newSlot = redeemSingleCarryModel(player, clone)
 		if newSlot then
+			local map = brainrotParkedInExpandedBackpack[player]
+			if not map then
+				map = {}
+				brainrotParkedInExpandedBackpack[player] = map
+			end
+			local invList = brainrotInventories[player]
+			local equipSlot = newSlot
+			if invList then
+				local hotbarIdx = assignEntryToLowestFreeHotbarSlot(player, invList, map, newSlot)
+				if hotbarIdx then
+					equipSlot = hotbarIdx
+				end
+			end
+			local carryList = activeCarries[player]
+			if carryList then
+				for i = #carryList, 1, -1 do
+					if carryList[i] == clone then
+						table.remove(carryList, i)
+					end
+				end
+			end
 			syncBrainrotCarryCountAttr(player)
-			notifyClientInventorySync(player, newSlot)
+			notifyClientInventorySync(player, equipSlot, true)
 		end
 		return
 	end
@@ -1114,7 +1163,7 @@ local function runFloatThenAttach(player: Player, char: Model, clone: Model, anc
 				local newSlot = redeemSingleCarryModel(player, clone)
 				if newSlot then
 					syncBrainrotCarryCountAttr(player)
-					notifyClientInventorySync(player, newSlot)
+					notifyClientInventorySync(player, newSlot, true)
 				else
 					attachCarriedBrainrot(player, clone)
 				end
@@ -1840,52 +1889,107 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 	return false
 end
 
-local redeemDebounce: { [Player]: number } = {}
+local carryRedeemDebounce: { [Player]: number } = {}
+local pendingRedeemDebounce: { [Player]: number } = {}
 local REDEEM_DEBOUNCE = 0.45
 
--- Redeem every carried brainrot for this player in one deposit touch (until inventory is full).
-local function tryRedeemAllAtDeposit(player: Player)
-	local now = os.clock()
-	if (redeemDebounce[player] or 0) + REDEEM_DEBOUNCE > now then
-		return
-	end
+local function removeCarryFromActiveList(player: Player, carry: Model)
 	local list = activeCarries[player]
-	if not list or #list == 0 then
+	if not list then
+		return
+	end
+	for i = #list, 1, -1 do
+		if list[i] == carry then
+			table.remove(list, i)
+		end
+	end
+end
+
+local function collectCarriedBrainrotsForPlayer(plr: Player): { Model }
+	local out: { Model } = {}
+	local seen: { [Model]: boolean } = {}
+	local function tryAdd(m: Model)
+		if seen[m] or not m.Parent then
+			return
+		end
+		if m:GetAttribute("BrainrotCarryPhase") ~= "Carried" then
+			return
+		end
+		if m:GetAttribute("OwnerUserId") ~= plr.UserId then
+			return
+		end
+		seen[m] = true
+		table.insert(out, m)
+	end
+	for _, m in ipairs(activeCarries[plr] or {}) do
+		tryAdd(m)
+	end
+	local char = plr.Character
+	if char then
+		for _, d in char:GetDescendants() do
+			if d:IsA("Model") then
+				tryAdd(d :: Model)
+			end
+		end
+	end
+	return out
+end
+
+-- Redeem every carried brainrot for this player in one RedWall touch (until inventory is full).
+local function tryRedeemAllAtDeposit(player: Player, depositPart: BasePart?)
+	local now = os.clock()
+	if (carryRedeemDebounce[player] or 0) + REDEEM_DEBOUNCE > now then
+		depositDebug("carry redeem debounced", player.Name)
 		return
 	end
 
-	redeemDebounce[player] = now
+	local carries = collectCarriedBrainrotsForPlayer(player)
+	if #carries == 0 then
+		depositDebug("carry redeem: none on character", player.Name)
+		return
+	end
 
-	local lastAddedIdx = 1
+	carryRedeemDebounce[player] = now
+	depositDebug(
+		"RedWall touched",
+		player.Name,
+		depositPart and depositPart:GetFullName() or "deposit",
+		"carries",
+		#carries
+	)
+
+	local map = brainrotParkedInExpandedBackpack[player]
+	if not map then
+		map = {}
+		brainrotParkedInExpandedBackpack[player] = map
+	end
+
+	local lastEquipSlot: number? = nil
 	local addedAny = false
 
-	for i = #list, 1, -1 do
-		local carry = list[i]
-		if not carry or not carry.Parent then
-			table.remove(list, i)
-			continue
-		end
-		if carry:GetAttribute("OwnerUserId") ~= player.UserId then
-			continue
-		end
-
-		if redeemSingleCarryModel(player, carry) then
-			addedAny = true
-			local invList = brainrotInventories[player]
-			if invList then
-				lastAddedIdx = #invList
-			end
-			table.remove(list, i)
-		else
-			-- Inventory full — stop; remaining carries stay for another touch.
+	for _, carry in ipairs(carries) do
+		local brainrotName = getCarryBrainrotName(carry) or carry.Name
+		local newSlot = redeemSingleCarryModel(player, carry)
+		if not newSlot then
+			depositDebug("carry redeem stopped (inventory full?)", player.Name, brainrotName)
 			break
+		end
+		removeCarryFromActiveList(player, carry)
+		addedAny = true
+		local invList = brainrotInventories[player]
+		if invList then
+			local hotbarIdx = assignEntryToLowestFreeHotbarSlot(player, invList, map, newSlot)
+			lastEquipSlot = hotbarIdx or newSlot
+			depositDebug("hotbar assign", player.Name, brainrotName, "list", newSlot, "equip", lastEquipSlot)
+		else
+			lastEquipSlot = newSlot
 		end
 	end
 
 	syncBrainrotCarryCountAttr(player)
 
-	if addedAny then
-		notifyClientInventorySync(player, lastAddedIdx)
+	if addedAny and lastEquipSlot then
+		notifyClientInventorySync(player, lastEquipSlot, true)
 	end
 end
 
@@ -1897,7 +2001,7 @@ local function tryRedeemPendingFloatsAtDeposit(player: Player)
 	end
 
 	local now = os.clock()
-	if (redeemDebounce[player] or 0) + REDEEM_DEBOUNCE > now then
+	if (pendingRedeemDebounce[player] or 0) + REDEEM_DEBOUNCE > now then
 		return
 	end
 
@@ -1921,7 +2025,7 @@ local function tryRedeemPendingFloatsAtDeposit(player: Player)
 		return
 	end
 
-	redeemDebounce[player] = now
+	pendingRedeemDebounce[player] = now
 
 	local lastHotbarIdx: number? = nil
 	local addedAny = false
@@ -1966,7 +2070,7 @@ local function tryRedeemPendingFloatsAtDeposit(player: Player)
 	syncBrainrotCarryCountAttr(player)
 
 	if addedAny then
-		notifyClientInventorySync(player, lastHotbarIdx)
+		notifyClientInventorySync(player, lastHotbarIdx, true)
 	end
 end
 
@@ -2007,8 +2111,13 @@ end
 
 local function hookDepositPart(part: BasePart)
 	registerDepositPart(part)
+	if depositTouchHooked[part] then
+		return
+	end
+	depositTouchHooked[part] = true
 	part.Destroying:Connect(function()
 		unregisterDepositPart(part)
+		depositTouchHooked[part] = nil
 	end)
 	part.Touched:Connect(function(other: BasePart)
 		if not other:IsA("BasePart") then
@@ -2020,23 +2129,39 @@ local function hookDepositPart(part: BasePart)
 		end
 		local char = plr.Character
 		local isCharacterTouch = char ~= nil and other:IsDescendantOf(char)
+		local hasCarry = #collectCarriedBrainrotsForPlayer(plr) > 0
 
-		if isCharacterTouch then
-			tryRedeemPendingFloatsAtDeposit(plr)
+		if not isCharacterTouch and not hasCarry then
+			return
+		end
+
+		depositDebug("Touched event", plr.Name, part:GetFullName(), "from", other:GetFullName())
+
+		if isCharacterTouch or hasCarry then
 			tryPlaySafeZoneSFXForAllCarries(plr)
 		end
 
-		local list = activeCarries[plr]
-		local carry = carriedBrainrotFromTouch(other, plr)
-		if not carry and list and #list > 0 and isCharacterTouch then
-			-- HRP / body touched deposit while carrying (carry mesh might not be the hit part).
-			carry = list[#list]
+		-- Carried brainrots first (separate debounce from pending floats).
+		if hasCarry then
+			tryRedeemAllAtDeposit(plr, part)
 		end
-		if not carry or not carry.Parent then
-			return
+
+		if isCharacterTouch then
+			tryRedeemPendingFloatsAtDeposit(plr)
 		end
-		tryRedeemAllAtDeposit(plr)
 	end)
+	depositDebug("hooked deposit part", part:GetFullName())
+end
+
+local function ensureSpawnRedWallDepositHooks(root: Instance)
+	for _, d in root:GetDescendants() do
+		if d:IsA("BasePart") and (d.Name == "RedWall" or d.Name == "RedPart") then
+			if not CollectionService:HasTag(d, DEPOSIT_TAG) then
+				CollectionService:AddTag(d, DEPOSIT_TAG)
+			end
+			hookDepositPart(d)
+		end
+	end
 end
 
 for _, inst in CollectionService:GetTagged(DEPOSIT_TAG) do
@@ -2512,14 +2637,16 @@ local function buildBrainrotToolFromTemplate(template: Model, entry: BrainrotInv
 	return tool
 end
 
-local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number): boolean
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	local canEquip = playerInInventoryZone(player)
-		or SafezoneUtil.isCharacterInToolbarZone(char)
-		or (hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position))
-	if not canEquip then
-		return false
+local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number, forceEquip: boolean?): boolean
+	if not forceEquip then
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		local canEquip = playerInInventoryZone(player)
+			or SafezoneUtil.isCharacterInToolbarZone(char)
+			or (hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position))
+		if not canEquip then
+			return false
+		end
 	end
 	local list = brainrotInventories[player]
 	if not list then
@@ -2578,7 +2705,9 @@ local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number): boo
 	return true
 end
 
-equipBrainrotSlotForPlayer = equipBrainrotSlotForPlayerImpl
+equipBrainrotSlotForPlayer = function(player: Player, slot: number, forceEquip: boolean?)
+	return equipBrainrotSlotForPlayerImpl(player, slot, forceEquip)
+end
 
 local function inventoryEntryIncome(entry: BrainrotInvEntry): number
 	enrichEntryFromCatalog(entry)
@@ -2660,6 +2789,21 @@ task.defer(function()
 	local map = workspace:WaitForChild("Map", 120)
 	if not map then
 		return
+	end
+
+	local spawnBases = map:WaitForChild("Spawn And Bases", 60)
+	if spawnBases then
+		ensureSpawnRedWallDepositHooks(spawnBases)
+		spawnBases.DescendantAdded:Connect(function(desc)
+			if desc:IsA("BasePart") and (desc.Name == "RedWall" or desc.Name == "RedPart") then
+				task.defer(function()
+					if not CollectionService:HasTag(desc, DEPOSIT_TAG) then
+						CollectionService:AddTag(desc, DEPOSIT_TAG)
+					end
+					hookDepositPart(desc)
+				end)
+			end
+		end)
 	end
 
 	assignLootUnder(map)

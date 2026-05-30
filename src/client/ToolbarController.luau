@@ -1157,8 +1157,8 @@ local function requestMoveBackpackEntryToHotbar(listIdx: number)
 	end
 end
 
-local function requestEquipBrainrotSlot(slotIdx: number)
-	if not canUseToolbar then
+local function requestEquipBrainrotSlot(slotIdx: number, ignoreToolbarGate: boolean?)
+	if not ignoreToolbarGate and not canUseToolbar then
 		return
 	end
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
@@ -1369,6 +1369,14 @@ local function setBrainrotEntriesFromServer(payload: any)
 	brainrotEntries = nextList
 	brainrotInventoryUsed = usedOverride or #nextList
 	brainrotInventoryMax = maxOverride or DEFAULT_BRAINROT_CAPACITY
+	warn(
+		"[ToolbarController] inventory sync entries=",
+		#nextList,
+		"equipSlot=",
+		if typeof(payload) == "table" and typeof((payload :: any).equipSlot) == "number"
+			then tostring((payload :: any).equipSlot)
+			else "nil"
+	)
 	refreshInventoryHeaderText()
 	refreshBrainrotBackpackUI()
 	rebuildSlots()
@@ -1490,7 +1498,7 @@ applyAutoEquipFromSync = function(equipSlot: number)
 			return true
 		end
 		if brainrotEntries[slot] and not brainrotParkedInUI[slot] then
-			requestEquipBrainrotSlot(slot)
+			requestEquipBrainrotSlot(slot, true)
 		end
 		return false
 	end

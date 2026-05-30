@@ -13,7 +13,7 @@
 
 	Hotbar slots may use nested `Button` (e.g. Hotbar["1"].Button.Icon).
 	Brainrot pickups: tuck/untuck via drag; ghost drag; search; backpack frame outline + open/close tweens.
-	Backpack UI rows 1..19 show stashed items in dense order (tucked hotbar slots + list indices >9); row labels use server list index.
+	Backpack UI rows 1..19 mirror the full inventory list in order (scroll for overflow).
 
 	Toolbar UI access: spawn safe zone (SafeZoneHitbox / Reddie / Raddie) and RedWall deposit area.
 --]]
@@ -31,6 +31,7 @@ local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local CarryGate = require(script.Parent.CarryGate)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
+local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 
 local player    = Players.LocalPlayer
 
@@ -130,6 +131,9 @@ local backpackFrameRef: GuiObject? = nil
 local toggleBackpackRef: GuiObject? = nil
 local toggleBackpackIconRef: GuiObject? = nil
 local refreshToggleBackpackIconLayout: () -> ()
+local refreshSlotVisual: (number) -> ()
+local updateHotbarSlotVisibility: () -> ()
+local refreshBrainrotBackpackUI: () -> ()
 local backpackSearchWired = false
 local backpackCloseWired = false
 local isBackpackPanelOpen = false
@@ -690,10 +694,59 @@ local function backpackRowIndexFromDropProbes(rawViewport: Vector2, mouseWindow:
 	return nil
 end
 
+local function formatEntryIncomeLabel(entry: {
+	name: string,
+	rarity: string?,
+	mutation: string?,
+	level: number?,
+	baseIncome: number?,
+}): string
+	local inc = BrainrotEconomy.incomePerSecond({
+		name = entry.name,
+		rarity = if typeof(entry.rarity) == "string" then entry.rarity else "common",
+		mutation = if typeof(entry.mutation) == "string" then entry.mutation else "normal",
+		level = if typeof(entry.level) == "number" then entry.level else 1,
+		baseIncome = if typeof(entry.baseIncome) == "number" then entry.baseIncome else 0,
+	})
+	return BrainrotEconomy.formatCashShort(inc) .. "/s"
+end
+
+local function findBackpackChild(frame: Instance, name: string): Instance?
+	local direct = frame:FindFirstChild(name)
+	if direct then
+		return direct
+	end
+	local fadeRoot = frame:FindFirstChild("_BackpackFadeRoot")
+	if fadeRoot then
+		return fadeRoot:FindFirstChild(name)
+	end
+	return nil
+end
+
+local function ensureBackpackChromeVisible(frame: GuiObject)
+	frame.ClipsDescendants = false
+	local chromeNames = { "BackpackButtons", "OtherButtons", "SortButtons", "SortCatagory", "SortCategory", "Container" }
+	for _, name in chromeNames do
+		local ch = findBackpackChild(frame, name)
+		if ch and ch:IsA("GuiObject") then
+			local gui = ch :: GuiObject
+			gui.Visible = true
+			disableGuiInputCapture(gui)
+		end
+	end
+	local otherButtons = findBackpackChild(frame, "OtherButtons")
+	if otherButtons then
+		local equipBest = otherButtons:FindFirstChild("EquipBest")
+		if equipBest and equipBest:IsA("GuiObject") then
+			(equipBest :: GuiObject).Visible = true
+		end
+	end
+end
+
 local function rebuildBackpackDisplayOrder()
 	backpackDisplayOrder = {}
 	for ki = 1, #brainrotEntries do
-		if brainrotEntries[ki] and (ki > HOTBAR_INVENTORY_SLOTS or brainrotParkedInUI[ki]) then
+		if brainrotEntries[ki] then
 			table.insert(backpackDisplayOrder, ki)
 		end
 	end
@@ -857,7 +910,7 @@ local function ensureBackpackFadeRoot(frame: GuiObject): CanvasGroup
 end
 
 local function resolveBackpackHeaderLabel(backpackFrame: Instance): Instance?
-	local cat = backpackFrame:FindFirstChild("SortCatagory") or backpackFrame:FindFirstChild("SortCategory")
+	local cat = findBackpackChild(backpackFrame, "SortCatagory") or findBackpackChild(backpackFrame, "SortCategory")
 	if cat and (cat:IsA("TextLabel") or cat:IsA("TextButton")) then
 		return cat
 	end
@@ -904,6 +957,7 @@ local function setBackpackPanelOpen(open: boolean)
 	local fadeRoot = ensureBackpackFadeRoot(f)
 	if open then
 		f.Visible = true
+		ensureBackpackChromeVisible(f)
 		fadeRoot.GroupTransparency = 0
 		sc.Scale = 0.94
 		backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_OPEN_TWEEN, { Scale = 1 })
@@ -918,6 +972,14 @@ local function setBackpackPanelOpen(open: boolean)
 			)
 			backpackContainerScaleTween:Play()
 		end
+		if canUseToolbar then
+			showToolbar()
+		end
+		updateHotbarSlotVisibility()
+		for i = 1, #slots do
+			refreshSlotVisual(i)
+		end
+		refreshBrainrotBackpackUI()
 	else
 		backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.9 })
 		backpackPanelFadeTween = TweenService:Create(fadeRoot, BACKPACK_CLOSE_TWEEN, { GroupTransparency = 1 })
@@ -935,6 +997,10 @@ local function setBackpackPanelOpen(open: boolean)
 				fadeRoot.GroupTransparency = 0
 				if backpackContainer and backpackContainer:IsA("GuiObject") then
 					getOrAddUIScale(backpackContainer :: Instance).Scale = 1
+				end
+				updateHotbarSlotVisibility()
+				for i = 1, #slots do
+					refreshSlotVisual(i)
 				end
 			end
 			if backpackPanelFadeTween and state == Enum.PlaybackState.Completed then
@@ -1276,7 +1342,7 @@ end
 
 -- ── Slot icon update ──────────────────────────────────────────────────────────
 
-local function refreshSlotVisual(index: number)
+refreshSlotVisual = function(index: number)
 	local slot = slots[index]
 	if not slot then
 		return
@@ -1311,7 +1377,7 @@ local function refreshSlotVisual(index: number)
 			keyLabel.Text = tostring(index)
 		end
 		if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
-			rate.Text = if entryForTool then entryForTool.name else tool.Name
+			rate.Text = if entryForTool then formatEntryIncomeLabel(entryForTool) else tool.Name
 		end
 	elseif brainrotParkedInUI[index] == true then
 		if icon and icon:IsA("ImageLabel") then
@@ -1338,9 +1404,15 @@ local function refreshSlotVisual(index: number)
 			keyLabel.Text = tostring(index)
 		end
 		if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
-			rate.Text = e.name
+			rate.Text = formatEntryIncomeLabel(e)
 		end
 	else
+		local btn = slotPrimaryButton(slot)
+		if isBackpackPanelOpen and btn then
+			applyBackpackSlotPanelAppearance(btn, true)
+		elseif btn then
+			applyBackpackSlotPanelAppearance(btn, false)
+		end
 		if icon and icon:IsA("ImageLabel") then
 			icon.ScaleType = Enum.ScaleType.Fit
 			icon.BackgroundTransparency = 1
@@ -1543,12 +1615,12 @@ refreshToggleBackpackIconLayout = function()
 	ensureToggleBackpackIconSizeConstraint(icon)
 end
 
-local function updateHotbarSlotVisibility()
+updateHotbarSlotVisibility = function()
 	ensureHotbarListLayout()
 	for i = 1, #slots do
 		local slot = slots[i]
 		if slot then
-			slot.Visible = hotbarSlotIsOccupied(i)
+			slot.Visible = hotbarSlotIsOccupied(i) or isBackpackPanelOpen
 		end
 	end
 	if toggleBackpackIconRef then
@@ -1699,7 +1771,7 @@ local function rebuildSlots()
 	refreshToolbarVisibility()
 end
 
-local function refreshBrainrotBackpackUI()
+refreshBrainrotBackpackUI = function()
 	local container = backpackContainer
 	if not container then
 		return
@@ -1732,7 +1804,7 @@ local function refreshBrainrotBackpackUI()
 				icon.Position = UDim2.new(0.5, 0, 0.5, 0)
 			end
 			if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
-				rate.Text = entry.name
+				rate.Text = formatEntryIncomeLabel(entry)
 			end
 			if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
 				local li = listIndexForBackpackUiRow(idx)
@@ -1841,7 +1913,7 @@ local function wireEquipBestButton(backpackFrame: Instance)
 	if equipBestWired then
 		return
 	end
-	local otherButtons = backpackFrame:FindFirstChild("OtherButtons")
+	local otherButtons = findBackpackChild(backpackFrame, "OtherButtons")
 	local equipBestInst = otherButtons and otherButtons:FindFirstChild("EquipBest")
 	if not equipBestInst or not equipBestInst:IsA("GuiObject") then
 		return
@@ -1862,7 +1934,7 @@ local function wireBackpackSearch(backpackFrame: Instance)
 	if backpackSearchWired then
 		return
 	end
-	local btns = backpackFrame:FindFirstChild("BackpackButtons")
+	local btns = findBackpackChild(backpackFrame, "BackpackButtons")
 	local search = btns and btns:FindFirstChild("Search")
 	local tb = search and search:FindFirstChild("TextBox")
 	if not tb or not tb:IsA("TextBox") then
@@ -1893,7 +1965,7 @@ local function wireBackpackCloseButton(backpackFrame: Instance)
 	if backpackCloseWired then
 		return
 	end
-	local btns = backpackFrame:FindFirstChild("BackpackButtons")
+	local btns = findBackpackChild(backpackFrame, "BackpackButtons")
 	local closeInst = btns and btns:FindFirstChild("Close")
 	if not closeInst or not closeInst:IsA("GuiObject") then
 		return
@@ -1916,7 +1988,7 @@ local function wireBackpackCloseButton(backpackFrame: Instance)
 end
 
 local function wireSortCategoryTabs(backpackFrame: Instance)
-	local sorts = backpackFrame:FindFirstChild("SortButtons")
+	local sorts = findBackpackChild(backpackFrame, "SortButtons")
 	if not sorts then
 		return
 	end
@@ -2411,6 +2483,7 @@ function ToolbarController.init()
 			backpackFrameRef = bf
 			ensureBackpackFrameOutline(bf)
 			ensureBackpackFadeRoot(bf)
+			ensureBackpackChromeVisible(bf)
 		end
 		backpackHeaderLabel = resolveBackpackHeaderLabel(backpackFrame)
 		refreshInventoryHeaderText()

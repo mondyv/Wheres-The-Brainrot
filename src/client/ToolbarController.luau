@@ -14,7 +14,7 @@
 	Brainrot pickups: tuck/untuck via drag; ghost drag; search; backpack frame outline + open/close tweens.
 	Backpack UI rows 1..19 show stashed items in dense order (tucked hotbar slots + list indices >9); row labels use server list index.
 
-	Toolbar UI access: workspace.Map["Spawn And Bases"].Reddie (canUseToolbar). Inventory sync/equip from server is not gated on canUseToolbar.
+	Toolbar UI access: spawn safe zone (SafeZoneHitbox / Reddie / Raddie) and RedWall deposit area.
 --]]
 
 local Players = game:GetService("Players")
@@ -787,9 +787,22 @@ local function onSafezonePresenceChanged(inZone: boolean)
 	refreshToolbarVisibility()
 end
 
+local function isCharacterInToolbarAccessZone(character: Model?): boolean
+	if not character then
+		return false
+	end
+	if SafezoneUtil.isCharacterInSafezone(character) then
+		return true
+	end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position) then
+		return true
+	end
+	return false
+end
+
 local function pollSafezonePresence()
-	local char = player.Character
-	onSafezonePresenceChanged(SafezoneUtil.isCharacterInToolbarZone(char))
+	onSafezonePresenceChanged(isCharacterInToolbarAccessZone(player.Character))
 end
 
 -- ── Slot highlight ────────────────────────────────────────────────────────────
@@ -1380,6 +1393,7 @@ local function setBrainrotEntriesFromServer(payload: any)
 	refreshInventoryHeaderText()
 	refreshBrainrotBackpackUI()
 	rebuildSlots()
+	pollSafezonePresence()
 	if typeof(payload) == "table" then
 		local equipSlot = (payload :: any).equipSlot
 		if typeof(equipSlot) == "number" then
@@ -1687,7 +1701,7 @@ function ToolbarController.init()
 		wireCharacter(player.Character)
 	end
 
-	canUseToolbar = SafezoneUtil.isCharacterInToolbarZone(player.Character)
+	canUseToolbar = isCharacterInToolbarAccessZone(player.Character)
 	refreshToolbarVisibility()
 
 	RunService.Heartbeat:Connect(function(dt)

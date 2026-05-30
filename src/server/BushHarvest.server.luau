@@ -2433,6 +2433,10 @@ assignEntryToLowestFreeHotbarSlot = function(
 	map: { [number]: boolean },
 	srcIdx: number
 ): number?
+	-- Already on a visible hotbar slot (not tucked into backpack UI).
+	if srcIdx >= 1 and srcIdx <= HOTBAR_UI_SLOTS and list[srcIdx] and map[srcIdx] ~= true then
+		return srcIdx
+	end
 	local destSlot = findLowestFreeHotbarSlot(list, map)
 	if not destSlot then
 		return nil

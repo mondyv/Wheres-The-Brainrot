@@ -28,6 +28,7 @@ local UserInputService = game:GetService("UserInputService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local CarryGate = require(script.Parent.CarryGate)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
 local player    = Players.LocalPlayer
@@ -75,6 +76,10 @@ local toolbarShown: boolean  = false
 local canUseToolbar: boolean = false
 local safezonePollAccum = 0.0
 local SAFEZONE_POLL_INTERVAL = 0.12
+local SAFEZONE_AUTO_EQUIP_DEBOUNCE = 0.4
+local lastSafezoneAutoEquipAttempt = 0.0
+local pendingAutoEquipSlot: number? = nil
+local pendingReturnedBrainrotName: string? = nil
 
 local MAX_BACKPACK_BRAINROT_SLOTS = 19
 local HOTBAR_INVENTORY_SLOTS = 9
@@ -772,13 +777,84 @@ local function refreshToolbarVisibility()
 end
 
 local deselectAllHotbarSlots: () -> ()
+local applyAutoEquipFromSync: (number) -> ()
+
+local function getPrimaryCarriedBrainrotName(): string?
+	local char = player.Character
+	if not char then
+		return nil
+	end
+	for _, d in char:GetDescendants() do
+		if d:IsA("Model") then
+			local phase = d:GetAttribute("BrainrotCarryPhase")
+			if phase == "Carried" or phase == "Floating" then
+				local attrName = d:GetAttribute("BrainrotName")
+				if typeof(attrName) == "string" and attrName ~= "" then
+					return attrName
+				end
+				if d.Name ~= "" then
+					return d.Name
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function findHotbarSlotForBrainrotName(itemName: string): number?
+	for i = 1, HOTBAR_INVENTORY_SLOTS do
+		local e = brainrotEntries[i]
+		if e and e.name == itemName and not brainrotParkedInUI[i] then
+			return i
+		end
+	end
+	return nil
+end
+
+local function tryAutoSelectReturnedBrainrot()
+	if not canUseToolbar then
+		return
+	end
+	local now = os.clock()
+	if now - lastSafezoneAutoEquipAttempt < SAFEZONE_AUTO_EQUIP_DEBOUNCE then
+		return
+	end
+	lastSafezoneAutoEquipAttempt = now
+
+	if typeof(pendingAutoEquipSlot) == "number" then
+		local slot = math.clamp(math.floor(pendingAutoEquipSlot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
+		if brainrotEntries[slot] and (slot > HOTBAR_INVENTORY_SLOTS or not brainrotParkedInUI[slot]) then
+			applyAutoEquipFromSync(slot)
+			pendingAutoEquipSlot = nil
+			pendingReturnedBrainrotName = nil
+		end
+		return
+	end
+
+	if pendingReturnedBrainrotName then
+		local slot = findHotbarSlotForBrainrotName(pendingReturnedBrainrotName)
+		if slot then
+			applyAutoEquipFromSync(slot)
+			pendingReturnedBrainrotName = nil
+		end
+	end
+end
 
 local function onSafezonePresenceChanged(inZone: boolean)
 	if canUseToolbar == inZone then
 		return
 	end
 	canUseToolbar = inZone
-	if not inZone then
+	if inZone then
+		if CarryGate.isCarrying() then
+			local name = getPrimaryCarriedBrainrotName()
+			if name then
+				pendingReturnedBrainrotName = name
+			end
+		end
+		tryAutoSelectReturnedBrainrot()
+	else
+		pendingReturnedBrainrotName = nil
 		setBackpackPanelOpen(false)
 		clearDragGhost()
 		pendingToolbarDrag = nil
@@ -1324,7 +1400,6 @@ local function wireSortCategoryTabs(backpackFrame: Instance)
 end
 
 local selectSlot: (number) -> ()
-local applyAutoEquipFromSync: (number) -> ()
 
 local function setBrainrotEntriesFromServer(payload: any)
 	local entriesSource: any = payload
@@ -1397,7 +1472,12 @@ local function setBrainrotEntriesFromServer(payload: any)
 	if typeof(payload) == "table" then
 		local equipSlot = (payload :: any).equipSlot
 		if typeof(equipSlot) == "number" then
+			pendingAutoEquipSlot = equipSlot
+			pendingReturnedBrainrotName = nil
 			applyAutoEquipFromSync(equipSlot)
+			tryAutoSelectReturnedBrainrot()
+		elseif pendingReturnedBrainrotName then
+			tryAutoSelectReturnedBrainrot()
 		end
 	end
 end
@@ -1703,6 +1783,19 @@ function ToolbarController.init()
 
 	canUseToolbar = isCharacterInToolbarAccessZone(player.Character)
 	refreshToolbarVisibility()
+	if canUseToolbar then
+		tryAutoSelectReturnedBrainrot()
+	end
+
+	player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(function()
+		if not canUseToolbar then
+			return
+		end
+		if CarryGate.usedSlots() > 0 then
+			return
+		end
+		tryAutoSelectReturnedBrainrot()
+	end)
 
 	RunService.Heartbeat:Connect(function(dt)
 		safezonePollAccum += dt

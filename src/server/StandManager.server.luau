@@ -1021,6 +1021,10 @@ local function hookProximity(state: StandState)
 	if not state.prompt then
 		return
 	end
+	if state.prompt:GetAttribute("_StandTriggerHooked") == true then
+		return
+	end
+	state.prompt:SetAttribute("_StandTriggerHooked", true)
 	state.prompt.Triggered:Connect(function(player: Player)
 		if state.brainrotName then
 			if not isOwner(state, player) then
@@ -1130,10 +1134,44 @@ end
 
 -- ── Stand init ────────────────────────────────────────────────────────────────
 
+local function refreshStandProximityPromptState(state: StandState)
+	if not state.spawnPart then
+		return
+	end
+	local prompt = ensureStandProximityPrompt(state.stand, state.spawnPart)
+	if not prompt then
+		return
+	end
+	if state.prompt ~= prompt then
+		state.prompt = prompt
+		hookProximity(state)
+	end
+	setPromptText(state)
+end
+
+local function ensureStandPromptDedupWatch(stand: Model)
+	if stand:GetAttribute("_StandPromptDedupWatch") == true then
+		return
+	end
+	stand:SetAttribute("_StandPromptDedupWatch", true)
+	stand.DescendantAdded:Connect(function(desc)
+		if not desc:IsA("ProximityPrompt") then
+			return
+		end
+		task.defer(function()
+			local state = stands[stand]
+			if state and stand.Parent then
+				refreshStandProximityPromptState(state)
+			end
+		end)
+	end)
+end
+
 local function initStand(stand: Model)
 	if stands[stand] then
 		PlotStandPlaceholders.ensureStandVisible(stand)
 		local existing = stands[stand]
+		refreshStandProximityPromptState(existing)
 		resolveTotalCashLabel(existing)
 		syncCashPadDisplay(existing, true)
 		return
@@ -1200,6 +1238,7 @@ local function initStand(stand: Model)
 		touchDebouncePerPlayer = {},
 	}
 	stands[stand] = state
+	ensureStandPromptDedupWatch(stand)
 
 	local plotBaseName = resolvePlotBaseNameForStand(stand)
 	if plotBaseName then

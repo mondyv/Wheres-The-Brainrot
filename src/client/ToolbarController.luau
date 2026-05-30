@@ -76,6 +76,9 @@ local toolbarShown: boolean  = false
 local canUseToolbar: boolean = false
 local safezonePollAccum = 0.0
 local SAFEZONE_POLL_INTERVAL = 0.12
+local SAFEZONE_EXIT_POLLS_REQUIRED = 3
+local safezoneOutStreak = 0
+local toolbarVisibilityTween: Tween? = nil
 local SAFEZONE_AUTO_EQUIP_DEBOUNCE = 0.4
 local lastSafezoneAutoEquipAttempt = 0.0
 local pendingAutoEquipSlot: number? = nil
@@ -809,22 +812,44 @@ local function setBackpackPanelOpen(open: boolean)
 end
 
 local function showToolbar()
-	if toolbarShown then return end
-	toolbarShown   = true
+	if toolbarShown then
+		return
+	end
+	toolbarShown = true
 	toolbar.Visible = true
-	local scale   = getOrAddUIScale(toolbar)
-	scale.Scale   = 0.8
-	TweenService:Create(scale, SHOW_TWEEN, { Scale = 1 }):Play()
+	local scale = getOrAddUIScale(toolbar)
+	if toolbarVisibilityTween then
+		toolbarVisibilityTween:Cancel()
+		toolbarVisibilityTween = nil
+	end
+	if scale.Scale < 0.85 then
+		scale.Scale = 0.8
+	end
+	toolbarVisibilityTween = TweenService:Create(scale, SHOW_TWEEN, { Scale = 1 })
+	toolbarVisibilityTween:Play()
 end
 
 local function hideToolbar()
-	if not toolbarShown then return end
+	if not toolbarShown then
+		return
+	end
+	if activeToolbarDrag then
+		return
+	end
 	toolbarShown = false
-	local scale  = getOrAddUIScale(toolbar)
+	local scale = getOrAddUIScale(toolbar)
+	if toolbarVisibilityTween then
+		toolbarVisibilityTween:Cancel()
+		toolbarVisibilityTween = nil
+	end
 	local t = TweenService:Create(scale, HIDE_TWEEN, { Scale = 0.8 })
+	toolbarVisibilityTween = t
 	t.Completed:Once(function(state)
 		if state == Enum.PlaybackState.Completed and not toolbarShown then
 			toolbar.Visible = false
+		end
+		if toolbarVisibilityTween == t then
+			toolbarVisibilityTween = nil
 		end
 	end)
 	t:Play()
@@ -922,7 +947,6 @@ local function onSafezonePresenceChanged(inZone: boolean)
 			clearDragGhost()
 			pendingToolbarDrag = nil
 		end
-		deselectAllHotbarSlots()
 	end
 	refreshToolbarVisibility()
 end
@@ -949,7 +973,16 @@ local function toolbarInputAllowed(): boolean
 end
 
 local function pollSafezonePresence()
-	onSafezonePresenceChanged(isCharacterInToolbarAccessZone(player.Character))
+	local inZone = isCharacterInToolbarAccessZone(player.Character)
+	if inZone then
+		safezoneOutStreak = 0
+		onSafezonePresenceChanged(true)
+		return
+	end
+	safezoneOutStreak += 1
+	if safezoneOutStreak >= SAFEZONE_EXIT_POLLS_REQUIRED then
+		onSafezonePresenceChanged(false)
+	end
 end
 
 -- ── Slot highlight ────────────────────────────────────────────────────────────
@@ -1539,7 +1572,9 @@ local function setBrainrotEntriesFromServer(payload: any)
 	refreshInventoryHeaderText()
 	refreshBrainrotBackpackUI()
 	rebuildSlots()
-	pollSafezonePresence()
+	if canUseToolbar then
+		refreshToolbarVisibility()
+	end
 	if typeof(payload) == "table" then
 		local equipSlot = (payload :: any).equipSlot
 		if typeof(equipSlot) == "number" then

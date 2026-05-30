@@ -271,6 +271,16 @@ local function getStandProximityPrompt(stand: Model): ProximityPrompt?
 	return stand:FindFirstChildWhichIsA("ProximityPrompt", true)
 end
 
+local function getAllStandProximityPrompts(stand: Model): { ProximityPrompt }
+	local out: { ProximityPrompt } = {}
+	for _, d in stand:GetDescendants() do
+		if d:IsA("ProximityPrompt") then
+			table.insert(out, d)
+		end
+	end
+	return out
+end
+
 local function promptWorldDistance(prompt: ProximityPrompt, hrpPos: Vector3): number?
 	local parent = prompt.Parent
 	if parent and parent:IsA("Attachment") then
@@ -360,11 +370,15 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 		if not stand.Parent or not stand:IsDescendantOf(ws) then
 			continue
 		end
-		local pp = getStandProximityPrompt(stand)
-		if not pp then
+		local canonical = getStandProximityPrompt(stand)
+		if not canonical then
 			continue
 		end
-		table.insert(allPrompts, pp)
+		for _, pp in getAllStandProximityPrompts(stand) do
+			table.insert(allPrompts, pp)
+		end
+
+		local pp = canonical
 
 		local locked = stand:GetAttribute("BrainrotStandLocked") == true
 		if locked or not cachedPlotMatch[stand] then

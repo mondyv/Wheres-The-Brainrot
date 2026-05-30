@@ -753,7 +753,7 @@ local function isPlayerInsideDeposit(player: Player): boolean
 	return isInsideAnyDeposit((hrp :: BasePart).Position)
 end
 
-local equipBrainrotSlotForPlayer: (Player, number, boolean?) -> boolean
+local equipBrainrotSlotForPlayer: (Player, number, boolean?) -> number?
 local findLowestFreeHotbarSlot: (list: { BrainrotInvEntry }, map: { [number]: boolean }) -> number?
 local assignEntryToLowestFreeHotbarSlot: (
 	plr: Player,
@@ -775,8 +775,11 @@ local function notifyClientInventorySync(player: Player, autoEquipSlot: number?,
 	-- Always sync inventory after RedWall delivery; auto-equip is never gated on Reddie toolbar access.
 	if slot and invList and invList[slot] then
 		if forceEquip then
-			local equipped = equipBrainrotSlotForPlayer(player, slot :: number, true)
-			depositDebug("auto-equip", player.Name, "slot", slot, if equipped then "OK" else "FAIL")
+			local equippedIdx = equipBrainrotSlotForPlayer(player, slot :: number, true)
+			if equippedIdx then
+				slot = equippedIdx
+			end
+			depositDebug("auto-equip", player.Name, "slot", slot, if equippedIdx then "OK" else "FAIL")
 		else
 			local char = player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -784,7 +787,10 @@ local function notifyClientInventorySync(player: Player, autoEquipSlot: number?,
 				or (hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position))
 				or playerInInventoryZone(player)
 			if inSpawnSafe then
-				equipBrainrotSlotForPlayer(player, slot :: number, true)
+				local equippedIdx = equipBrainrotSlotForPlayer(player, slot :: number, true)
+				if equippedIdx then
+					slot = equippedIdx
+				end
 			end
 		end
 	end
@@ -1162,8 +1168,21 @@ local function runFloatThenAttach(player: Player, char: Model, clone: Model, anc
 				tryPlaySafeZoneSFXForCarry(player, clone)
 				local newSlot = redeemSingleCarryModel(player, clone)
 				if newSlot then
+					local map = brainrotParkedInExpandedBackpack[player]
+					if not map then
+						map = {}
+						brainrotParkedInExpandedBackpack[player] = map
+					end
+					local invList = brainrotInventories[player]
+					local equipSlot = newSlot
+					if invList then
+						local hotbarIdx = assignEntryToLowestFreeHotbarSlot(player, invList, map, newSlot)
+						if hotbarIdx then
+							equipSlot = hotbarIdx
+						end
+					end
 					syncBrainrotCarryCountAttr(player)
-					notifyClientInventorySync(player, newSlot, true)
+					notifyClientInventorySync(player, equipSlot, true)
 				else
 					attachCarriedBrainrot(player, clone)
 				end
@@ -2651,7 +2670,7 @@ local function buildBrainrotToolFromTemplate(template: Model, entry: BrainrotInv
 	return tool
 end
 
-local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number, forceEquip: boolean?): boolean
+local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number, forceEquip: boolean?): number?
 	local char = player.Character
 	if not forceEquip then
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -2659,12 +2678,12 @@ local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number, forc
 			or SafezoneUtil.isCharacterInToolbarZone(char)
 			or (hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position))
 		if not canEquip then
-			return false
+			return nil
 		end
 	end
 	local list = brainrotInventories[player]
 	if not list then
-		return false
+		return nil
 	end
 	local map = brainrotParkedInExpandedBackpack[player]
 	if not map then
@@ -2673,24 +2692,22 @@ local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number, forc
 	end
 	local idx = math.clamp(math.floor(slot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
 	if not list[idx] then
-		return false
+		return nil
 	end
 	if idx > HOTBAR_UI_SLOTS or map[idx] then
 		local newIdx = assignEntryToLowestFreeHotbarSlot(player, list, map, idx)
 		if not newIdx then
-			return false
+			return nil
 		end
 		idx = newIdx
-		local sync = ensureInventoryRemotes()
-		sync:FireClient(player, packInventoryForClient(player, list))
 	end
 	local entry = list[idx]
 	if not char then
-		return false
+		return nil
 	end
 	local brainrots = Brainrots.getBrainrotsFolder()
 	if not brainrots then
-		return false
+		return nil
 	end
 	local template: Model? = nil
 	if entry.sourcePath ~= "" then
@@ -2700,23 +2717,23 @@ local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number, forc
 		template = findFirstTemplateByModelName(brainrots, entry.name)
 	end
 	if not template then
-		return false
+		return nil
 	end
 	local tool = buildBrainrotToolFromTemplate(template, entry, idx)
 	if not tool then
-		return false
+		return nil
 	end
 	local hum = char:FindFirstChildOfClass("Humanoid")
 	local bp = player:FindFirstChildOfClass("Backpack")
 	if not hum or not bp then
 		tool:Destroy()
-		return false
+		return nil
 	end
 	removeBrainrotToolAtInventoryIndex(bp, idx)
 	removeBrainrotToolAtInventoryIndex(char, idx)
 	tool.Parent = bp
 	hum:EquipTool(tool)
-	return true
+	return idx
 end
 
 equipBrainrotSlotForPlayer = function(player: Player, slot: number, forceEquip: boolean?)

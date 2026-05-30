@@ -2522,6 +2522,7 @@ function ProximityPromptEffects.syncStandProximityUi(activePrompt: ProximityProm
 		end
 		if prompt ~= activePrompt then
 			ProximityPromptEffects.forceHide(prompt)
+			prompt.Enabled = false
 		end
 	end
 end

@@ -50,7 +50,7 @@ local SHOW_TWEEN      = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDi
 local HIDE_TWEEN      = TweenInfo.new(0.2,  Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local HIGHLIGHT_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local BACKPACK_OPEN_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
 
 -- ── Key → slot index map ──────────────────────────────────────────────────────
@@ -116,9 +116,6 @@ local DRAG_THRESHOLD_PX = 14
 local DRAG_GHOST_THRESHOLD_PX = 6
 -- Shared scale for "whole hotbar" hover while dragging toward slots (slightly subtler than per-slot hover).
 local HOTBAR_BULK_DRAG_HOVER_SCALE = 1.06
--- Hotbar + backpack-toggle icon display (mobile-friendly touch targets).
-local HOTBAR_UI_SCALE = 1.4
-local HOTBAR_MIN_SLOT_PX = 68
 local TOGGLE_BACKPACK_ICON_TINT = Color3.fromRGB(255, 255, 255)
 
 local backpackSearchText: string = ""
@@ -134,6 +131,10 @@ local toggleBackpackIconRef: GuiObject? = nil
 local backpackSearchWired = false
 local backpackCloseWired = false
 local isBackpackPanelOpen = false
+local backpackPanelScaleTween: Tween? = nil
+local backpackPanelFadeTween: Tween? = nil
+local backpackContainerScaleTween: Tween? = nil
+local backpackFadeRoot: CanvasGroup? = nil
 
 -- While dragging toward the hotbar (from backpack, or from hotbar back over the bar), all slots share one hover scale.
 local hotbarDragBulkHover = false
@@ -768,6 +769,50 @@ local function ensureBackpackFrameOutline(frame: GuiObject)
 	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 end
 
+local function cancelBackpackPanelTweens()
+	if backpackPanelScaleTween then
+		backpackPanelScaleTween:Cancel()
+		backpackPanelScaleTween = nil
+	end
+	if backpackPanelFadeTween then
+		backpackPanelFadeTween:Cancel()
+		backpackPanelFadeTween = nil
+	end
+	if backpackContainerScaleTween then
+		backpackContainerScaleTween:Cancel()
+		backpackContainerScaleTween = nil
+	end
+end
+
+local function ensureBackpackFadeRoot(frame: GuiObject): CanvasGroup
+	if backpackFadeRoot and backpackFadeRoot.Parent == frame then
+		return backpackFadeRoot
+	end
+	local existing = frame:FindFirstChild("_BackpackFadeRoot")
+	if existing and existing:IsA("CanvasGroup") then
+		backpackFadeRoot = existing
+		return existing
+	end
+	local cg = Instance.new("CanvasGroup")
+	cg.Name = "_BackpackFadeRoot"
+	cg.Size = UDim2.fromScale(1, 1)
+	cg.BackgroundTransparency = 1
+	cg.BorderSizePixel = 0
+	cg.GroupTransparency = 0
+	local toMove: { Instance } = {}
+	for _, ch in frame:GetChildren() do
+		table.insert(toMove, ch)
+	end
+	cg.Parent = frame
+	for _, ch in toMove do
+		if ch ~= cg then
+			ch.Parent = cg
+		end
+	end
+	backpackFadeRoot = cg
+	return cg
+end
+
 local function resolveBackpackHeaderLabel(backpackFrame: Instance): Instance?
 	local cat = backpackFrame:FindFirstChild("SortCatagory") or backpackFrame:FindFirstChild("SortCategory")
 	if cat and (cat:IsA("TextLabel") or cat:IsA("TextButton")) then
@@ -811,25 +856,48 @@ local function setBackpackPanelOpen(open: boolean)
 	end
 	isBackpackPanelOpen = open
 	local f = backpackFrameRef
+	cancelBackpackPanelTweens()
+	local sc = getOrAddUIScale(f :: Instance)
+	local fadeRoot = ensureBackpackFadeRoot(f)
 	if open then
 		f.Visible = true
-		local sc = getOrAddUIScale(f :: Instance)
-		sc.Scale = 0.92
-		TweenService:Create(sc, BACKPACK_OPEN_TWEEN, { Scale = 1 }):Play()
+		fadeRoot.GroupTransparency = 0
+		sc.Scale = 0.94
+		backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_OPEN_TWEEN, { Scale = 1 })
+		backpackPanelScaleTween:Play()
 		if backpackContainer and backpackContainer:IsA("GuiObject") then
 			local csc = getOrAddUIScale(backpackContainer :: Instance)
 			csc.Scale = 0.96
-			TweenService:Create(csc, TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+			backpackContainerScaleTween = TweenService:Create(
+				csc,
+				TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+				{ Scale = 1 }
+			)
+			backpackContainerScaleTween:Play()
 		end
 	else
-		local sc = getOrAddUIScale(f :: Instance)
-		local tw = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.92 })
-		tw.Completed:Once(function()
-			if not isBackpackPanelOpen then
+		backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.9 })
+		backpackPanelFadeTween = TweenService:Create(fadeRoot, BACKPACK_CLOSE_TWEEN, { GroupTransparency = 1 })
+		backpackPanelScaleTween:Play()
+		backpackPanelFadeTween:Play()
+		if backpackContainer and backpackContainer:IsA("GuiObject") then
+			local csc = getOrAddUIScale(backpackContainer :: Instance)
+			backpackContainerScaleTween = TweenService:Create(csc, BACKPACK_CLOSE_TWEEN, { Scale = 0.94 })
+			backpackContainerScaleTween:Play()
+		end
+		backpackPanelFadeTween.Completed:Once(function(state)
+			if state == Enum.PlaybackState.Completed and not isBackpackPanelOpen then
 				f.Visible = false
+				sc.Scale = 1
+				fadeRoot.GroupTransparency = 0
+				if backpackContainer and backpackContainer:IsA("GuiObject") then
+					getOrAddUIScale(backpackContainer :: Instance).Scale = 1
+				end
+			end
+			if backpackPanelFadeTween and state == Enum.PlaybackState.Completed then
+				backpackPanelFadeTween = nil
 			end
 		end)
-		tw:Play()
 	end
 end
 
@@ -1180,33 +1248,6 @@ local function ensureHotbarListLayout(): UIListLayout
 	return layout
 end
 
-local function hotbarSlotTargetSize(): UDim2
-	local ref = slots[1]
-	if ref and ref:IsA("GuiObject") then
-		local sz = (ref :: GuiObject).Size
-		if sz.X.Offset >= HOTBAR_MIN_SLOT_PX and sz.Y.Offset >= HOTBAR_MIN_SLOT_PX then
-			return sz
-		end
-	end
-	return UDim2.fromOffset(HOTBAR_MIN_SLOT_PX, HOTBAR_MIN_SLOT_PX)
-end
-
-local function applyHotbarDisplayScale()
-	local sc = getOrAddUIScale(hotbar)
-	sc.Scale = HOTBAR_UI_SCALE
-	local layout = ensureHotbarListLayout()
-	layout.Padding = UDim.new(0, 8)
-	local targetSize = hotbarSlotTargetSize()
-	for _, slot in ipairs(slots) do
-		if slot and slot:IsA("GuiObject") then
-			(slot :: GuiObject).Size = targetSize
-		end
-	end
-	if toggleBackpackIconRef and toggleBackpackIconRef:IsA("GuiObject") then
-		(toggleBackpackIconRef :: GuiObject).Size = targetSize
-	end
-end
-
 local function updateHotbarSlotVisibility()
 	ensureHotbarListLayout()
 	for i = 1, #slots do
@@ -1255,8 +1296,7 @@ local function wireToggleBackpackIcon()
 	disableGuiInputCapture(iconHost)
 	enableGuiButtonInput(btn)
 	styleToggleBackpackIcon(btn)
-	UIButtonEffects.wireScaleButtonAnim(btn, toggleBackpackPanel)
-	applyHotbarDisplayScale()
+	UIButtonEffects.wireSidebarButton(btn, toggleBackpackPanel)
 end
 
 -- ── Tool assignment ───────────────────────────────────────────────────────────
@@ -1876,6 +1916,8 @@ function ToolbarController.init()
 
 	toolbar.Visible = false
 
+	getOrAddUIScale(hotbar).Scale = 1
+
 	ensureHotbarListLayout()
 
 	-- Collect slot references (named "1" through "9" inside Hotbar)
@@ -1889,7 +1931,6 @@ function ToolbarController.init()
 	end
 
 	ensureHotbarLayoutPassthrough()
-	applyHotbarDisplayScale()
 
 	-- Tap / hover: nested `Button` (SideUI.Toolbar.Hotbar[n].Button) or slot is the button.
 	-- Mobile: only `Activated` selects/equips; parent frames must not capture touch input.

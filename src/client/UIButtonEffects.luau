@@ -549,6 +549,7 @@ function M.wireSidebarButton(btn: GuiButton, onActivated: () -> ())
 	ensureButtonUnclip(btn)
 	local scale = getOrAddUIScale(btn)
 	local icon = btn:FindFirstChild("Icon", true)
+	local tiltTarget: GuiObject = if icon and icon:IsA("GuiObject") then icon else btn
 	local hovering = false
 
 	local TILT_HOVER = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -562,31 +563,25 @@ function M.wireSidebarButton(btn: GuiButton, onActivated: () -> ())
 			hovering = true
 			UIInteractionSounds.playHover()
 			TweenService:Create(scale, HOVER_SCALE, { Scale = 1.1 }):Play()
-			if icon then
-				TweenService:Create(icon, TILT_HOVER, { Rotation = -10 }):Play()
-			end
+			TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -10 }):Play()
 			playHoverPolish(btn, true)
 		end,
 		function()
 			hovering = false
 			hideEffectLayers(btn)
 			TweenService:Create(scale, HOVER_SCALE, { Scale = 1 }):Play()
-			if icon then
-				TweenService:Create(icon, TILT_LEAVE, { Rotation = 0 }):Play()
-			end
+			TweenService:Create(tiltTarget, TILT_LEAVE, { Rotation = 0 }):Play()
 		end
 	)
 	btn.MouseButton1Down:Connect(function()
 		UIInteractionSounds.playClick()
 		TweenService:Create(scale, TILT_CLICK, { Scale = 0.94 }):Play()
-		if icon then
-			TweenService:Create(icon, TILT_CLICK, { Rotation = 6 }):Play()
-		end
+		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 6 }):Play()
 	end)
 	btn.MouseButton1Up:Connect(function()
 		TweenService:Create(scale, HOVER_SCALE, { Scale = if hovering then 1.1 else 1 }):Play()
-		if icon and hovering then
-			TweenService:Create(icon, TILT_HOVER, { Rotation = -10 }):Play()
+		if hovering then
+			TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -10 }):Play()
 		end
 	end)
 	btn.Activated:Connect(onActivated)

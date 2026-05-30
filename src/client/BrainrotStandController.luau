@@ -15,10 +15,10 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
 
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local PlotMarkerVisibility = require(script.Parent.PlotMarkerVisibility)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
@@ -569,14 +569,40 @@ local function passthroughChildClicks(root: GuiObject, capture: GuiButton)
 	capture.Selectable = true
 end
 
+local function passthroughUpgradePanelClicks(upgradeFrame: GuiObject, capture: GuiButton)
+	local panelFrame = upgradeFrame.Parent
+	if panelFrame and panelFrame:IsA("GuiObject") then
+		for _, ch in panelFrame:GetChildren() do
+			if ch:IsA("GuiObject") and ch ~= upgradeFrame then
+				(ch :: GuiObject).Active = false
+			end
+		end
+	end
+	passthroughChildClicks(upgradeFrame, capture)
+end
+
+local function reapplyUpgradeInputForView(view: StandView)
+	local btn = view.upgradeButton
+	local frame = view.upgradeFrame
+	if not btn or not frame or not btn.Parent or not frame.Parent then
+		return
+	end
+	if not standMatchesAssignedPlot(view.stand) then
+		return
+	end
+	ensureSurfaceGuiInputChain(btn)
+	passthroughUpgradePanelClicks(frame, btn)
+end
+
+local function reapplyUpgradeInputForAllViews()
+	for _, view in pairs(views) do
+		reapplyUpgradeInputForView(view)
+	end
+end
+
 local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 	clickable.Activated:Connect(tryFireUpgrade)
 	clickable.MouseButton1Click:Connect(tryFireUpgrade)
-	clickable.InputBegan:Connect(function(input: InputObject)
-		if input.UserInputType == Enum.UserInputType.Touch then
-			tryFireUpgrade()
-		end
-	end)
 end
 
 local function wireUpgradeButton(stand: Model): GuiButton?
@@ -641,11 +667,11 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 		end
 	end
 	clickable.AutoButtonColor = false
-	passthroughChildClicks(upgradeFrame :: GuiObject, clickable)
+	passthroughUpgradePanelClicks(upgradeFrame :: GuiObject, clickable)
 
 	if clickable:GetAttribute("__UpgradeWired") == true then
 		ensureSurfaceGuiInputChain(clickable)
-		passthroughChildClicks(upgradeFrame :: GuiObject, clickable)
+		passthroughUpgradePanelClicks(upgradeFrame :: GuiObject, clickable)
 		return clickable
 	end
 	clickable:SetAttribute("__UpgradeWired", true)
@@ -1045,15 +1071,7 @@ function M.init()
 	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
 		rebuildCachedPlotMatch()
 		refreshLocalStandUpgradeWiring()
-		task.defer(function()
-			for _, view in pairs(views) do
-				local btn = view.upgradeButton
-				if btn and btn.Parent then
-					ensureSurfaceGuiInputChain(btn)
-					btn.Active = true
-				end
-			end
-		end)
+		task.defer(reapplyUpgradeInputForAllViews)
 		bumpPromptRefreshFromMovement()
 	end)
 	player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(bumpPromptRefreshFromMovement)
@@ -1075,6 +1093,7 @@ function M.init()
 	end)
 
 	bumpPromptRefreshFromMovement()
+	PlotMarkerVisibility.onAfterInteractiveApply(reapplyUpgradeInputForAllViews)
 end
 
 return M

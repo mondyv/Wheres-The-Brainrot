@@ -25,6 +25,7 @@ local baseMarkerConns: { [Instance]: { RBXScriptConnection } } = {}
 local standNameWatch: { [Model]: RBXScriptConnection } = {}
 local refreshScheduled: { [Instance]: boolean } = {}
 local plotLayerCollectors: { [Instance]: { LayerCollector } } = {}
+local afterInteractiveApplyCallbacks: { () -> () } = {}
 
 local function plotIsUnclaimed(plotRoot: Instance): boolean
 	return typeof(plotRoot:GetAttribute("PlotOwnerUserId")) ~= "number"
@@ -138,6 +139,17 @@ local function setLayerCollectorInteractive(d: LayerCollector)
 	end
 end
 
+-- LevelPanel upgrade UI: BrainrotStandController owns which descendants receive touches.
+local function setLevelPanelSurfaceGuiInteractive(d: SurfaceGui)
+	d.Active = true
+end
+
+local function notifyAfterInteractiveApply()
+	for _, fn in ipairs(afterInteractiveApplyCallbacks) do
+		task.defer(fn)
+	end
+end
+
 local function shouldEnableStandSurfaceGui(d: LayerCollector, plotRoot: Instance): boolean
 	local stand = findBrainrotStandAncestor(d)
 	if stand and stand:GetAttribute("BrainrotStandLocked") == true then
@@ -182,7 +194,11 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 			d.Enabled = false
 		end
 		if mine and d.Enabled then
-			setLayerCollectorInteractive(d)
+			if isUnderLevelPanel(d) then
+				setLevelPanelSurfaceGuiInteractive(d :: SurfaceGui)
+			else
+				setLayerCollectorInteractive(d)
+			end
 		elseif not mine and d.Enabled then
 			setLayerCollectorViewOnly(d)
 		end
@@ -224,6 +240,9 @@ local function applyPlotMarker(plotRoot: Instance)
 		if d.Parent then
 			applyLayerCollector(d, plotRoot, mine, unclaimed)
 		end
+	end
+	if mine and not unclaimed then
+		notifyAfterInteractiveApply()
 	end
 end
 
@@ -284,6 +303,10 @@ local function refreshAllMarkersInFolder(folder: Instance)
 end
 
 local M = {}
+
+function M.onAfterInteractiveApply(fn: () -> ())
+	table.insert(afterInteractiveApplyCallbacks, fn)
+end
 
 function M.init()
 	local folder = PlotPaths.waitForSpawnAndBasesFolder(120)

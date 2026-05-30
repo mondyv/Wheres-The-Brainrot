@@ -545,11 +545,15 @@ function M.wireScaleButtonAnim(btn: GuiButton, onActivated: () -> ())
 end
 
 -- Sidebar buttons: tilt + scale; glisten + sweep only while hovered.
-function M.wireSidebarButton(btn: GuiButton, onActivated: () -> ())
+function M.wireTiltHoverButton(
+	btn: GuiButton,
+	onActivated: () -> (),
+	scaleRoot: GuiObject,
+	tiltTarget: GuiObject,
+	withPolish: boolean?
+)
 	ensureButtonUnclip(btn)
-	local scale = getOrAddUIScale(btn)
-	local icon = btn:FindFirstChild("Icon", true)
-	local tiltTarget: GuiObject = if icon and icon:IsA("GuiObject") then icon else btn
+	local scale = getOrAddUIScale(scaleRoot)
 	local hovering = false
 
 	local TILT_HOVER = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -564,11 +568,15 @@ function M.wireSidebarButton(btn: GuiButton, onActivated: () -> ())
 			UIInteractionSounds.playHover()
 			TweenService:Create(scale, HOVER_SCALE, { Scale = 1.1 }):Play()
 			TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -10 }):Play()
-			playHoverPolish(btn, true)
+			if withPolish then
+				playHoverPolish(btn, true)
+			end
 		end,
 		function()
 			hovering = false
-			hideEffectLayers(btn)
+			if withPolish then
+				hideEffectLayers(btn)
+			end
 			TweenService:Create(scale, HOVER_SCALE, { Scale = 1 }):Play()
 			TweenService:Create(tiltTarget, TILT_LEAVE, { Rotation = 0 }):Play()
 		end
@@ -582,9 +590,17 @@ function M.wireSidebarButton(btn: GuiButton, onActivated: () -> ())
 		TweenService:Create(scale, HOVER_SCALE, { Scale = if hovering then 1.1 else 1 }):Play()
 		if hovering then
 			TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -10 }):Play()
+		else
+			TweenService:Create(tiltTarget, TILT_LEAVE, { Rotation = 0 }):Play()
 		end
 	end)
 	btn.Activated:Connect(onActivated)
+end
+
+function M.wireSidebarButton(btn: GuiButton, onActivated: () -> ())
+	local icon = btn:FindFirstChild("Icon", true)
+	local tiltTarget: GuiObject = if icon and icon:IsA("GuiObject") then icon else btn
+	M.wireTiltHoverButton(btn, onActivated, btn, tiltTarget, true)
 end
 
 -- Accent / Robux buttons: scale + hover-only polish.

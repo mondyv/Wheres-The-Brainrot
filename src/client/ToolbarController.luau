@@ -139,6 +139,7 @@ local refreshBrainrotBackpackUI: () -> ()
 local showToolbar: () -> ()
 local hideToolbar: () -> ()
 local refreshToolbarVisibility: () -> ()
+local ensureToolbarCenteredLayout: () -> ()
 local backpackSearchWired = false
 local backpackCloseWired = false
 local isBackpackPanelOpen = false
@@ -1148,7 +1149,7 @@ local function centerToolbarChildHorizontally(gui: GuiObject)
 	gui.Position = UDim2.new(0.5, 0, pos.Y.Scale, pos.Y.Offset)
 end
 
-local function ensureToolbarCenteredLayout()
+ensureToolbarCenteredLayout = function()
 	centerToolbarChildHorizontally(hotbar)
 	if backpackFrameRef then
 		centerToolbarChildHorizontally(backpackFrameRef)

@@ -8,6 +8,7 @@
 	      ├── Hotbar
 	      │   └── 1 .. 9   (slot frames with nested Button)
 	      ├── ToggleBackpack
+	      ├── ToggleBackpackImage  (icon toggle; sits after visible hotbar slots)
 	      └── Backpack  (optional expanded view)
 
 	Hotbar slots may use nested `Button` (e.g. Hotbar["1"].Button.Icon).
@@ -125,6 +126,7 @@ local dragGhostConn: RBXScriptConnection? = nil
 
 local backpackFrameRef: GuiObject? = nil
 local toggleBackpackRef: GuiObject? = nil
+local toggleBackpackIconRef: GuiObject? = nil
 local backpackSearchWired = false
 local backpackCloseWired = false
 local isBackpackPanelOpen = false
@@ -1166,6 +1168,47 @@ local function updateHotbarSlotVisibility()
 			slot.Visible = hotbarSlotIsOccupied(i)
 		end
 	end
+	if toggleBackpackIconRef then
+		toggleBackpackIconRef.Visible = true
+	end
+end
+
+local function toggleBackpackPanel()
+	if not canUseToolbar then
+		return
+	end
+	if not backpackFrameRef then
+		return
+	end
+	setBackpackPanelOpen(not isBackpackPanelOpen)
+end
+
+local function wireToggleBackpackIcon()
+	local iconHost = toolbar:FindFirstChild("ToggleBackpackImage") or hotbar:FindFirstChild("ToggleBackpackImage")
+	if not iconHost or not iconHost:IsA("GuiObject") then
+		return
+	end
+	iconHost.Parent = hotbar
+	iconHost.LayoutOrder = 100
+	iconHost.Visible = true
+	toggleBackpackIconRef = iconHost
+	toggleBackpackRef = iconHost
+
+	local btn: GuiButton? = nil
+	if iconHost:IsA("GuiButton") then
+		btn = iconHost :: GuiButton
+	else
+		btn = slotPrimaryButton(iconHost)
+	end
+	if not btn then
+		warn("[ToolbarController] ToggleBackpackImage has no GuiButton")
+		return
+	end
+
+	disableGuiInputCapture(iconHost)
+	enableGuiButtonInput(btn)
+	styleToolbarSlotButton(btn)
+	UIButtonEffects.wireScaleButtonAnim(btn, toggleBackpackPanel)
 end
 
 -- ── Tool assignment ───────────────────────────────────────────────────────────
@@ -1941,9 +1984,14 @@ function ToolbarController.init()
 	end)
 
 	-- ToggleBackpack + brainrot backpack grid (Backpack.Container["1"]..["19"])
+	wireToggleBackpackIcon()
 	local toggleBtn = toolbar:FindFirstChild("ToggleBackpack") or hotbar:FindFirstChild("ToggleBackpack")
 	if toggleBtn and toggleBtn:IsA("GuiObject") then
-		toggleBackpackRef = toggleBtn :: GuiObject
+		if toggleBackpackIconRef then
+			(toggleBtn :: GuiObject).Visible = false
+		else
+			toggleBackpackRef = toggleBtn :: GuiObject
+		end
 	end
 	local backpackFrame = toolbar:FindFirstChild("Backpack")
 	if backpackFrame then
@@ -1973,22 +2021,19 @@ function ToolbarController.init()
 		wireBackpackSearch(backpackFrame)
 		wireBackpackCloseButton(backpackFrame)
 		wireSortCategoryTabs(backpackFrame)
-	end
-	if toggleBtn and backpackFrame and toggleBtn:IsA("GuiButton") then
 		isBackpackPanelOpen = false
-		backpackFrame.Visible = false
+		if backpackFrame:IsA("GuiObject") then
+			(backpackFrame :: GuiObject).Visible = false
+		end
+	end
+	if toggleBtn and toggleBtn:IsA("GuiButton") and not toggleBackpackIconRef then
 		toggleBtn.MouseEnter:Connect(function()
 			UIInteractionSounds.playHover()
 		end)
 		toggleBtn.MouseButton1Down:Connect(function()
 			UIInteractionSounds.playClick()
 		end)
-		toggleBtn.MouseButton1Click:Connect(function()
-			if not canUseToolbar then
-				return
-			end
-			setBackpackPanelOpen(not isBackpackPanelOpen)
-		end)
+		toggleBtn.Activated:Connect(toggleBackpackPanel)
 	end
 
 	-- `(`)` key opens / closes the brainrot backpack (matches the on-screen prompt text).

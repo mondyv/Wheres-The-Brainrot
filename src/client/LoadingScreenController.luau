@@ -1,8 +1,7 @@
 --[[
 	LoadingScreenController — full-screen join overlay:
-	fixed map camera, blur, GameNameImage, LoadingFrame bar; hides other PlayerGui until ready.
-	StarterGui.LoadingScreen: Camera (optional), GameNameImage, LoadingFrame.
-	Moon Animator export: LoadingScreen.Camera["Camera loading"] (Frames / FOV / Settings).
+	Moon camera flyover, blur, centered GameNameImage with breathe/tilt anim; hides other PlayerGui until ready.
+	StarterGui.LoadingScreen + GameNameImage. Moon export: "Camera loading" (Frames/0..N) under LoadingScreen or ReplicatedStorage.
 --]]
 
 local ContentProvider = game:GetService("ContentProvider")
@@ -18,7 +17,6 @@ local Workspace = game:GetService("Workspace")
 local MIN_DISPLAY_SEC = 5.5
 local HOLD_AT_FULL_SEC = 0.4
 local FADE_OUT_SEC = 0.9
-local BAR_LERP_SPEED = 1.75
 local FADE_TWEEN_INFO = TweenInfo.new(FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 local RESOLVE_TIMEOUT = 45
 
@@ -33,31 +31,25 @@ local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
 	Enum.CoreGuiType.PlayerList,
 }
 
-local BAR_BG_DARK = Color3.fromRGB(72, 42, 22)
-local BAR_BG_STUD_TINT = Color3.fromRGB(58, 34, 18)
-local BAR_FILL_COLOR = Color3.fromRGB(255, 198, 48)
-local BAR_FILL_STUD_TINT = Color3.fromRGB(255, 228, 88)
 local OVERLAY_COLOR = Color3.fromRGB(12, 8, 6)
-local STUD_SOURCE_NAMES = { "Stud TextureDecal", "Stud Texture", "StudTexture" }
 
-local NAME_ANIM_SPEED = 0.62
-local NAME_SCALE_AMOUNT = 0.028
-local NAME_TILT_AMOUNT = 2.4
-local NAME_ANIM_SMOOTH = 7.5
-local TITLE_DISPLAY_SCALE = 1.28
-local TITLE_MAX_WIDTH_MOBILE = 720
-local TITLE_MAX_WIDTH_DESKTOP = 1180
-local BAR_MIN_FILL_SCALE = 0.03
-local DEFAULT_STUD_TILE_PX = 72
-local STUD_TILE_MIN_PX = 56
-local STUD_TILE_MAX_PX = 200
+local NAME_ANIM_SPEED = 0.55
+local NAME_SCALE_AMOUNT = 0.045
+local NAME_TILT_AMOUNT = 3.2
+local NAME_ANIM_SMOOTH = 8
+local TITLE_DISPLAY_SCALE = 1.22
+local TITLE_MAX_WIDTH_MOBILE = 680
+local TITLE_MAX_WIDTH_DESKTOP = 1100
+local TITLE_WIDTH_SCALE = 0.58
+local TITLE_HEIGHT_SCALE = 0.28
+
+local HIDE_LOADING_UI_NAMES = { "LoadingFrame", "BarPlaceholder", "LoadingBar", "Stud TextureDecal", "Stud Texture", "StudTexture" }
 
 local LOGO_NAMES = { "GameNameImage", "ImageLabel" }
 local MOON_CAMERA_EXPORT_NAMES = { "Camera loading", "Camera Loading", "CameraLoading" }
 
 local M = {}
 
-local PlotPaths: any = nil
 local savedGuiStates: { [ScreenGui]: boolean }? = nil
 local playerGuiChildConn: RBXScriptConnection? = nil
 local loadingActive = false
@@ -66,16 +58,6 @@ local stopNameAnim: (() -> ())? = nil
 local stopCameraLock: (() -> ())? = nil
 local fadeCanvas: CanvasGroup? = nil
 local cameraClipStartedAt: number? = nil
-local barLayoutConnections: { RBXScriptConnection } = {}
-
-local function getPlotPaths()
-	if PlotPaths then
-		return PlotPaths
-	end
-	local shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared", 120)
-	PlotPaths = require(shared:WaitForChild("PlotPaths"))
-	return PlotPaths
-end
 
 local function defaultLoadingCFrame(): CFrame
 	return CFrame.new(DEFAULT_CAMERA_POS) * CFrame.fromOrientation(DEFAULT_CAMERA_RAD.X, DEFAULT_CAMERA_RAD.Y, DEFAULT_CAMERA_RAD.Z)
@@ -1200,76 +1182,6 @@ local function findGameNameImage(loadingGui: ScreenGui): ImageLabel?
 	return nil
 end
 
-local function findLoadingFrame(loadingGui: ScreenGui): GuiObject?
-	local frame = loadingGui:FindFirstChild("LoadingFrame", true)
-	if frame and (frame:IsA("ImageLabel") or frame:IsA("Frame")) then
-		return frame
-	end
-	return nil
-end
-
-local function findBarPlaceholder(loadingGui: ScreenGui): GuiObject?
-	local ph = loadingGui:FindFirstChild("BarPlaceholder", true)
-	if ph and ph:IsA("GuiObject") then
-		return ph
-	end
-	return nil
-end
-
-local function copyGuiLayout(target: GuiObject, source: GuiObject)
-	target.AnchorPoint = source.AnchorPoint
-	target.Position = source.Position
-	target.Size = source.Size
-	target.Rotation = source.Rotation
-end
-
-local function barZIndexAboveFrame(placeholder: GuiObject, loadingFrame: GuiObject?): number
-	local z = placeholder.ZIndex
-	if loadingFrame then
-		z = math.max(z, loadingFrame.ZIndex)
-	end
-	return z + 1
-end
-
-local function applyPlaceholderBarBounds(barArea: GuiObject, placeholder: GuiObject, loadingFrame: GuiObject?)
-	copyGuiLayout(barArea, placeholder)
-	barArea.ZIndex = barZIndexAboveFrame(placeholder, loadingFrame)
-	barArea.Visible = true
-end
-
-local function clearBarLayoutConnections()
-	for _, conn in barLayoutConnections do
-		conn:Disconnect()
-	end
-	table.clear(barLayoutConnections)
-end
-
-local function bindBarToPlaceholder(barArea: GuiObject, placeholder: GuiObject, loadingFrame: GuiObject?)
-	local function sync()
-		if not barArea.Parent or not placeholder.Parent or barArea.Parent ~= placeholder.Parent then
-			return
-		end
-		applyPlaceholderBarBounds(barArea, placeholder, loadingFrame)
-	end
-
-	sync()
-	task.defer(sync)
-
-	table.insert(barLayoutConnections, placeholder:GetPropertyChangedSignal("Position"):Connect(sync))
-	table.insert(barLayoutConnections, placeholder:GetPropertyChangedSignal("Size"):Connect(sync))
-	table.insert(barLayoutConnections, placeholder:GetPropertyChangedSignal("AnchorPoint"):Connect(sync))
-
-	local layoutParent = placeholder.Parent
-	if layoutParent and layoutParent:IsA("GuiObject") then
-		table.insert(barLayoutConnections, layoutParent:GetPropertyChangedSignal("AbsoluteSize"):Connect(sync))
-	end
-
-	local camera = Workspace.CurrentCamera
-	if camera then
-		table.insert(barLayoutConnections, camera:GetPropertyChangedSignal("ViewportSize"):Connect(sync))
-	end
-end
-
 local function setupFadeCanvas(loadingGui: ScreenGui): CanvasGroup
 	local existing = loadingGui:FindFirstChild("LoadingFadeCanvas")
 	if existing and existing:IsA("CanvasGroup") then
@@ -1302,198 +1214,18 @@ local function setupFadeCanvas(loadingGui: ScreenGui): CanvasGroup
 	return canvas
 end
 
-local function findStudTextureSource(loadingGui: ScreenGui): ImageLabel?
-	for _, root in { loadingGui, StarterGui:FindFirstChild("LoadingScreen") } do
-		if not root then
-			continue
-		end
-		for _, name in STUD_SOURCE_NAMES do
-			local inst = root:FindFirstChild(name)
-			if inst and inst:IsA("ImageLabel") then
-				return inst
-			end
-		end
-	end
-	return nil
-end
-
-local function hideStudTextureTemplates(loadingGui: ScreenGui)
-	for _, root in { loadingGui, StarterGui:FindFirstChild("LoadingScreen") } do
-		if not root then
-			continue
-		end
-		for _, name in STUD_SOURCE_NAMES do
-			local inst = root:FindFirstChild(name)
-			if inst and inst:IsA("ImageLabel") then
-				inst.Visible = false
-			end
-		end
-	end
-end
-
-local function studTilePxForHost(host: GuiObject): number
-	local h = host.AbsoluteSize.Y
-	local w = host.AbsoluteSize.X
-	local tilePx = DEFAULT_STUD_TILE_PX
-	if h >= 6 then
-		tilePx = math.max(tilePx, math.floor(h * 1.5))
-	end
-	if w >= 24 then
-		tilePx = math.max(tilePx, math.floor(w / 5))
-	end
-	return math.clamp(tilePx, STUD_TILE_MIN_PX, STUD_TILE_MAX_PX)
-end
-
-local function applyStudOverlay(host: GuiObject, loadingGui: ScreenGui, overlayName: string)
-	local source = findStudTextureSource(loadingGui)
-
-	local stud = host:FindFirstChild(overlayName)
-	if not stud or not stud:IsA("ImageLabel") then
-		stud = Instance.new("ImageLabel")
-		stud.Name = overlayName
-		stud.BackgroundTransparency = 1
-		stud.BorderSizePixel = 0
-		stud.Size = UDim2.fromScale(1, 1)
-		stud.Position = UDim2.fromScale(0, 0)
-		stud.AnchorPoint = Vector2.new(0, 0)
-		stud.ZIndex = host.ZIndex + 1
-		stud.Parent = host
-	end
-	local studImg = stud :: ImageLabel
-
-	if source and source.Image ~= "" then
-		studImg.Visible = true
-		studImg.Image = source.Image
-		if overlayName == "StudOverlayFill" then
-			studImg.ImageColor3 = BAR_FILL_STUD_TINT
-			studImg.ImageTransparency = math.clamp(source.ImageTransparency, 0, 0.02)
-		elseif overlayName == "StudOverlay" then
-			studImg.ImageColor3 = BAR_BG_STUD_TINT
-			studImg.ImageTransparency = math.clamp(source.ImageTransparency, 0, 0.08)
-		else
-			studImg.ImageColor3 = source.ImageColor3
-			studImg.ImageTransparency = math.clamp(source.ImageTransparency, 0, 0.2)
-		end
-		studImg.ScaleType = Enum.ScaleType.Tile
-		local tilePx = studTilePxForHost(host)
-		studImg.TileSize = UDim2.fromOffset(tilePx, tilePx)
-		studImg.ResampleMode = source.ResampleMode
-	else
-		studImg.Visible = false
-	end
-end
-
-local function bindStudOverlayLayout(host: GuiObject, loadingGui: ScreenGui, overlayName: string)
-	local tag = "_StudLayout_" .. overlayName
-	if host:GetAttribute(tag) then
-		return
-	end
-	host:SetAttribute(tag, true)
-
-	applyStudOverlay(host, loadingGui, overlayName)
-	task.defer(function()
-		if host.Parent then
-			applyStudOverlay(host, loadingGui, overlayName)
-		end
-	end)
-	host:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		if host.Parent then
-			applyStudOverlay(host, loadingGui, overlayName)
-		end
-	end)
-end
-
-local function clearGeneratedBar(root: Instance)
-	local remove: { Instance } = {}
-	for _, desc in root:GetDescendants() do
+local function hideLoadingChrome(loadingGui: ScreenGui)
+	for _, desc in loadingGui:GetDescendants() do
 		if desc.Name == "BarArea" or desc.Name == "LoadingBar" then
-			table.insert(remove, desc)
+			desc:Destroy()
 		end
 	end
-	for _, inst in remove do
-		inst:Destroy()
+	for _, name in HIDE_LOADING_UI_NAMES do
+		local inst = loadingGui:FindFirstChild(name, true)
+		if inst and inst:IsA("GuiObject") then
+			inst.Visible = false
+		end
 	end
-end
-
-local function ensureLoadingBar(loadingGui: ScreenGui): (Frame, Frame, GuiObject)
-	clearBarLayoutConnections()
-
-	local placeholder = findBarPlaceholder(loadingGui)
-	local loadingFrame = findLoadingFrame(loadingGui)
-
-	if loadingFrame then
-		loadingFrame.Visible = true
-	end
-
-	local legacy = loadingGui:FindFirstChild("LoadingBar")
-	if legacy then
-		legacy:Destroy()
-	end
-
-	clearGeneratedBar(loadingGui)
-
-	local barParent: Instance = loadingGui
-	local zBase = 3
-	if placeholder and placeholder.Parent then
-		barParent = placeholder.Parent
-		zBase = barZIndexAboveFrame(placeholder, loadingFrame)
-	elseif loadingFrame then
-		barParent = loadingFrame
-		loadingFrame.ClipsDescendants = true
-		zBase = math.max(loadingFrame.ZIndex + 1, 3)
-	end
-
-	local barArea = Instance.new("Frame")
-	barArea.Name = "BarArea"
-	barArea.BackgroundColor3 = BAR_BG_DARK
-	barArea.BackgroundTransparency = 0
-	barArea.BorderSizePixel = 0
-	barArea.ClipsDescendants = true
-	barArea.Visible = true
-	barArea.ZIndex = zBase
-	barArea.Parent = barParent
-
-	if placeholder then
-		applyPlaceholderBarBounds(barArea, placeholder, loadingFrame)
-		bindBarToPlaceholder(barArea, placeholder, loadingFrame)
-		placeholder.Visible = false
-	elseif loadingFrame then
-		barArea.AnchorPoint = Vector2.new(0.5, 0.5)
-		barArea.Position = UDim2.fromScale(0.5, 0.5)
-		barArea.Size = UDim2.fromScale(1, 1)
-	else
-		barArea.AnchorPoint = Vector2.new(0.5, 0.5)
-		barArea.Position = UDim2.fromScale(0.5, 0.84)
-		barArea.Size = UDim2.new(0.5, 0, 0, 24)
-	end
-
-	bindStudOverlayLayout(barArea, loadingGui, "StudOverlay")
-
-	local track = Instance.new("Frame")
-	track.Name = "Track"
-	track.BackgroundTransparency = 1
-	track.BorderSizePixel = 0
-	track.Size = UDim2.fromScale(1, 1)
-	track.Position = UDim2.fromScale(0, 0)
-	track.ClipsDescendants = true
-	track.ZIndex = 1
-	track.Parent = barArea
-
-	local fill = Instance.new("Frame")
-	fill.Name = "Fill"
-	fill.BackgroundColor3 = BAR_FILL_COLOR
-	fill.BackgroundTransparency = 0.2
-	fill.BorderSizePixel = 0
-	fill.ClipsDescendants = true
-	fill.AnchorPoint = Vector2.new(0, 0)
-	fill.Position = UDim2.fromScale(0, 0)
-	fill.Size = UDim2.new(BAR_MIN_FILL_SCALE, 0, 1, 0)
-	fill.ZIndex = 2
-	fill.Parent = track
-
-	bindStudOverlayLayout(fill, loadingGui, "StudOverlayFill")
-
-	return track, fill, barArea
 end
 
 local function ensureGameNameVisible(loadingGui: ScreenGui)
@@ -1504,6 +1236,8 @@ local function ensureGameNameVisible(loadingGui: ScreenGui)
 	logo.Visible = true
 	logo.ScaleType = Enum.ScaleType.Fit
 	logo.BackgroundTransparency = 1
+	logo.AnchorPoint = Vector2.new(0.5, 0.5)
+	logo.Position = UDim2.fromScale(0.5, 0.5)
 
 	local studioSize = logo.Size
 	if studioSize.X.Scale > 0 or studioSize.Y.Scale > 0 then
@@ -1521,9 +1255,7 @@ local function ensureGameNameVisible(loadingGui: ScreenGui)
 			math.floor(studioSize.Y.Offset * TITLE_DISPLAY_SCALE)
 		)
 	else
-		logo.AnchorPoint = Vector2.new(0.5, 0.5)
-		logo.Position = UDim2.new(0.5, 0, 0.4, 0)
-		logo.Size = UDim2.new(0.88, 0, 0.42, 0)
+		logo.Size = UDim2.fromScale(TITLE_WIDTH_SCALE, TITLE_HEIGHT_SCALE)
 	end
 
 	local aspectAttr = logo:GetAttribute("AspectRatio")
@@ -1699,7 +1431,7 @@ function M.run()
 
 	local loadingGui = findLoadingScreenGui(playerGui) or resolveLoadingScreenGui(playerGui)
 	if not loadingGui then
-		warn("[LoadingScreenController] No StarterGui.LoadingScreen — add ScreenGui with GameNameImage + LoadingFrame")
+		warn("[LoadingScreenController] No StarterGui.LoadingScreen — add ScreenGui with GameNameImage")
 		return
 	end
 
@@ -1716,15 +1448,8 @@ function M.run()
 
 	ensureBlurOverlay(loadingGui)
 	setupFadeCanvas(loadingGui)
+	hideLoadingChrome(loadingGui)
 	ensureGameNameVisible(loadingGui)
-
-	local loadingFrame = findLoadingFrame(loadingGui)
-	if loadingFrame then
-		loadingFrame.Visible = true
-	end
-
-	local _, fillBar, _barHost = ensureLoadingBar(loadingGui)
-	hideStudTextureTemplates(loadingGui)
 
 	stopNameAnim = startGameNameSubtitleAnim(loadingGui)
 	preloadGameName(loadingGui)
@@ -1750,46 +1475,16 @@ function M.run()
 		else MIN_DISPLAY_SEC - HOLD_AT_FULL_SEC
 	local minDisplaySec = clipSec + HOLD_AT_FULL_SEC
 	if loadedMoonTrack then
-		warn(string.format("[LoadingScreenController] Bar synced to camera: %.2fs clip + %.2fs hold", clipSec, HOLD_AT_FULL_SEC))
+		warn(string.format("[LoadingScreenController] Loading duration: %.2fs clip + %.2fs hold", clipSec, HOLD_AT_FULL_SEC))
 	elseif not cameraClipStartedAt then
 		cameraClipStartedAt = os.clock()
 	end
 
 	local startedAt = cameraClipStartedAt or os.clock()
-	local shownProgress = 0
-	fillBar.Size = UDim2.new(BAR_MIN_FILL_SCALE, 0, 1, 0)
-
-	local heartbeatConn: RBXScriptConnection? = nil
-	heartbeatConn = RunService.Heartbeat:Connect(function(dt)
-		local elapsed = os.clock() - startedAt
-		local targetProgress = math.clamp(elapsed / clipSec, 0, 1)
-
-		if loadedMoonTrack then
-			shownProgress = targetProgress
-		else
-			shownProgress += (targetProgress - shownProgress) * math.min(1, dt * BAR_LERP_SPEED)
-		end
-
-		local fillScale = math.max(shownProgress, BAR_MIN_FILL_SCALE)
-		fillBar.Size = UDim2.new(fillScale, 0, 1, 0)
-
-		if shownProgress >= 0.995 and elapsed >= minDisplaySec then
-			if heartbeatConn then
-				heartbeatConn:Disconnect()
-				heartbeatConn = nil
-			end
-		end
-	end)
-
-	while shownProgress < 0.99 or os.clock() - startedAt < minDisplaySec do
+	while os.clock() - startedAt < minDisplaySec do
 		enterLoadingIsolation(playerGui)
 		task.wait(0.05)
 	end
-	if heartbeatConn then
-		heartbeatConn:Disconnect()
-	end
-
-	fillBar.Size = UDim2.new(1, 0, 1, 0)
 	task.wait(HOLD_AT_FULL_SEC)
 
 	loadingActive = false
@@ -1803,7 +1498,6 @@ function M.run()
 	end
 
 	fadeOutLoadingTogether(loadingGui, blur, camera, player)
-	clearBarLayoutConnections()
 	cleanupLoadingVisuals(playerGui, loadingGui, nil)
 
 	if stopNameAnim then

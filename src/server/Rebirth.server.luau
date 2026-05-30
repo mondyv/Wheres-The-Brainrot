@@ -11,6 +11,7 @@ local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild(
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local IndexService = require(script.Parent:WaitForChild("Modules"):WaitForChild("IndexService"))
+local ReviveService = require(script.Parent:WaitForChild("Modules"):WaitForChild("ReviveService"))
 
 local MAX_FLOOR = 4
 
@@ -161,6 +162,11 @@ performRF.OnServerInvoke = function(player: Player)
 end
 
 MarketplaceService.ProcessReceipt = function(receiptInfo)
+	local reviveDecision = ReviveService.processReceipt(receiptInfo)
+	if reviveDecision ~= nil then
+		return reviveDecision
+	end
+
 	local player = Players:GetPlayerByUserId(receiptInfo.PlayerId)
 	if not player then
 		return Enum.ProductPurchaseDecision.NotProcessedYet

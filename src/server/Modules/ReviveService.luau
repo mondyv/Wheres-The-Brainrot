@@ -1,8 +1,8 @@
 --[[
 	Revive flow (server module):
-	• On death: store death position + land tier, prompt client, respawn at plot normally.
+	• On death: store land revive spawn, prompt client, respawn at plot normally.
 	• Decline / timeout: clear pending — player stays at plot.
-	• Dev product receipt: teleport live character back to death location.
+	• Dev product receipt: teleport live character to that land's Spawn.
 --]]
 
 local Players = game:GetService("Players")
@@ -14,7 +14,7 @@ local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 type PendingRevive = {
 	land: number,
 	productId: number,
-	deathCf: CFrame,
+	reviveCf: CFrame,
 }
 
 local pendingByPlayer: { [Player]: PendingRevive } = {}
@@ -79,17 +79,17 @@ local function fulfillRevivePurchase(player: Player): boolean
 		return false
 	end
 
-	local deathCf = pending.deathCf
+	local reviveCf = pending.reviveCf
 	clearPending(player)
 
 	local character = player.Character
 	if character and character.Parent then
-		teleportCharacterToCFrame(character, deathCf)
+		teleportCharacterToCFrame(character, reviveCf)
 		reviveCompleteRE:FireClient(player)
 		return true
 	end
 
-	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, deathCf)
+	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, reviveCf)
 	player:LoadCharacter()
 	reviveCompleteRE:FireClient(player)
 	return true
@@ -102,14 +102,14 @@ local function onHumanoidDied(player: Player, character: Model)
 
 	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	local worldPos = if hrp then hrp.Position else Vector3.zero
-	local land = LandResolver.resolveLandAtPosition(worldPos)
-	local deathCf = if hrp then hrp.CFrame else CFrame.new(worldPos)
+	local land, landSpawnCf = LandResolver.getReviveSpawnCFrame(worldPos)
+	local reviveCf = landSpawnCf or (if hrp then hrp.CFrame else CFrame.new(worldPos))
 	local tier = ReviveConfig.tierForLand(land)
 
 	pendingByPlayer[player] = {
 		land = tier.land,
 		productId = tier.productId,
-		deathCf = deathCf,
+		reviveCf = reviveCf,
 	}
 
 	revivePromptRE:FireClient(player, tier.land, tier.productId, ReviveConfig.COUNTDOWN_SECONDS)

@@ -68,7 +68,7 @@ function EffectsController.money(parent: Instance)
 	SoundController.play(EssentialsConfig.sounds.cashCollect, 1, false)
 end
 
-function EffectsController.confetti(player: Player)
+function EffectsController.celebratePurchase(player: Player)
 	local now = os.clock()
 	if now - lastConfettiAt < CONFETTI_DEBOUNCE_SEC then
 		return
@@ -91,6 +91,10 @@ function EffectsController.confetti(player: Player)
 	else
 		SoundController.play(EssentialsConfig.sounds.confetti, 1, false)
 	end
+end
+
+function EffectsController.confetti(player: Player)
+	EffectsController.celebratePurchase(player)
 end
 
 return EffectsController

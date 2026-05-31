@@ -213,9 +213,12 @@ function PurchaseEffectClient.show(self: PurchaseEffectClient)
 	end
 end
 
-function PurchaseEffectClient.hide(self: PurchaseEffectClient, delaySeconds: number?)
+function PurchaseEffectClient.hide(self: PurchaseEffectClient, delaySeconds: number?, onHidden: (() -> ())?)
 	if not rainbow then
 		exitPurchaseUiIsolation()
+		if onHidden then
+			onHidden()
+		end
 		return
 	end
 
@@ -226,12 +229,13 @@ function PurchaseEffectClient.hide(self: PurchaseEffectClient, delaySeconds: num
 			if token ~= hideToken then
 				return
 			end
-			self:hide()
+			self:hide(nil, onHidden)
 		end)
 		return
 	end
 
-	TweenService:Create(rainbow, fadeOutTween, { ImageTransparency = 1 }):Play()
+	local tween = TweenService:Create(rainbow, fadeOutTween, { ImageTransparency = 1 })
+	tween:Play()
 
 	local camera = workspace.CurrentCamera
 	if camera then
@@ -241,12 +245,23 @@ function PurchaseEffectClient.hide(self: PurchaseEffectClient, delaySeconds: num
 	end
 
 	exitPurchaseUiIsolation()
+
+	if onHidden then
+		tween.Completed:Once(function()
+			if token == hideToken then
+				onHidden()
+			end
+		end)
+	end
+end
+
+local function runPurchaseCelebration()
+	EffectsController.celebratePurchase(Players.LocalPlayer)
 end
 
 function PurchaseEffectClient.onPurchaseFinished(self: PurchaseEffectClient, wasPurchased: boolean)
 	if wasPurchased then
-		EffectsController.confetti(Players.LocalPlayer)
-		self:hide(PurchaseEffectConfig.displayDuration)
+		self:hide(nil, runPurchaseCelebration)
 	else
 		self:hide()
 	end
@@ -265,8 +280,7 @@ function PurchaseEffectClient.init(self: PurchaseEffectClient)
 	end)
 
 	bindRemoteAsync("ProductHandlerConfetti", function()
-		EffectsController.confetti(Players.LocalPlayer)
-		self:hide(PurchaseEffectConfig.displayDuration)
+		self:hide(nil, runPurchaseCelebration)
 	end)
 
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, _gamePassId, wasPurchased)

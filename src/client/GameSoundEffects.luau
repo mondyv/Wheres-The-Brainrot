@@ -37,6 +37,13 @@ local DROP_SHAKE_POS = 0.09
 local DROP_SHAKE_SPEED = 11
 local DROP_SHAKE_DURATION = 0.38
 
+local purchaseShakeStepBound = false
+local purchaseShakeEndAt = 0.0
+local PURCHASE_SHAKE_STEP = "PurchaseCelebrationCameraShake"
+local PURCHASE_SHAKE_POS = 0.14
+local PURCHASE_SHAKE_SPEED = 13
+local PURCHASE_SHAKE_DURATION = 0.42
+
 local BUSH_RANDOM_SHAKE_MAX_DIST = 45
 
 local HIDDEN_RARITY_ATTR = "HiddenBrainrotRarity"
@@ -197,6 +204,48 @@ local function startDropCameraShake()
 	end)
 end
 
+local function stopPurchaseCameraShake()
+	if purchaseShakeStepBound then
+		pcall(function()
+			RunService:UnbindFromRenderStep(PURCHASE_SHAKE_STEP)
+		end)
+		purchaseShakeStepBound = false
+	end
+	local hum = getLocalHumanoid()
+	if hum then
+		hum.CameraOffset = Vector3.zero
+	end
+end
+
+local function startPurchaseCameraShake()
+	if ClientSFXVolume.getVolume() <= 0 then
+		return
+	end
+	purchaseShakeEndAt = os.clock() + PURCHASE_SHAKE_DURATION
+	if purchaseShakeStepBound then
+		return
+	end
+	purchaseShakeStepBound = true
+	RunService:BindToRenderStep(PURCHASE_SHAKE_STEP, Enum.RenderPriority.Camera.Value + 52, function()
+		if os.clock() >= purchaseShakeEndAt then
+			stopPurchaseCameraShake()
+			return
+		end
+		local hum = getLocalHumanoid()
+		if not hum then
+			return
+		end
+		local fade = math.clamp((purchaseShakeEndAt - os.clock()) / PURCHASE_SHAKE_DURATION, 0, 1)
+		local amp = PURCHASE_SHAKE_POS * fade
+		local t = os.clock() * PURCHASE_SHAKE_SPEED
+		hum.CameraOffset = Vector3.new(
+			(math.noise(t, 0.5, 0) - 0.5) * 2 * amp,
+			(math.noise(0.5, t, 1.5) - 0.5) * 2 * amp,
+			(math.noise(t, 2.5, 0.5) - 0.5) * 2 * amp * 0.35
+		)
+	end)
+end
+
 local function cashGrabStartOffset(template: Sound): number
 	local attr = template:GetAttribute("StartOffset")
 	if typeof(attr) == "number" and attr >= 0 then
@@ -270,6 +319,7 @@ function GameSoundEffects.init()
 		local effects = require(essentials:WaitForChild("EffectsController"))
 		effects.setPurchaseSoundHandler(function()
 			GameSoundEffects.playPurchase()
+			GameSoundEffects.playPurchaseShake()
 		end)
 	end
 end
@@ -367,6 +417,10 @@ function GameSoundEffects.playPurchase()
 	clone.Ended:Once(function()
 		clone:Destroy()
 	end)
+end
+
+function GameSoundEffects.playPurchaseShake()
+	startPurchaseCameraShake()
 end
 
 function GameSoundEffects.startBushSearchLoop()

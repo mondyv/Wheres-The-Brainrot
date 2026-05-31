@@ -41,6 +41,7 @@ local declineBtnHost: GuiObject? = nil
 local revivePriceLabel: TextLabel? = nil
 
 local sessionActive = false
+local purchasePromptOpen = false
 local countdownConn: RBXScriptConnection? = nil
 local currentProductId: number? = nil
 local currentLand: number? = nil
@@ -510,7 +511,7 @@ local function startCountdown(duration: number)
 		if timerLabel and timerLabel.Parent then
 			timerLabel.Text = formatTimer(remaining)
 		end
-		if remaining <= 0 then
+		if remaining <= 0 and not purchasePromptOpen then
 			closeRevivePanel(true)
 		end
 	end)
@@ -520,6 +521,7 @@ local function tryRevivePurchase()
 	if not sessionActive or not currentProductId then
 		return
 	end
+	purchasePromptOpen = true
 	pcall(function()
 		PurchasePrompt.promptProduct(currentProductId)
 	end)
@@ -723,17 +725,16 @@ function ReviveController.init()
 	end
 
 	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId: number, productId: number, wasPurchased: boolean)
-		if userId ~= player.UserId or not wasPurchased then
+		if userId ~= player.UserId then
 			return
 		end
-		if ReviveConfig.isReviveProduct(productId) and sessionActive then
-			sessionActive = false
-			cancelCountdown()
-			if revivePanel then
-				revivePanel.Visible = false
-			end
-			cleanupReviveSession()
+		if ReviveConfig.isReviveProduct(productId) then
+			purchasePromptOpen = false
 		end
+		if not wasPurchased or not ReviveConfig.isReviveProduct(productId) or not sessionActive then
+			return
+		end
+		-- Server ReviveComplete closes the panel after teleport.
 	end)
 end
 

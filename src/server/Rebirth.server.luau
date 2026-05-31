@@ -161,6 +161,8 @@ performRF.OnServerInvoke = function(player: Player)
 	return ok, err
 end
 
+local previousProcessReceipt = MarketplaceService.ProcessReceipt
+
 MarketplaceService.ProcessReceipt = function(receiptInfo)
 	local reviveDecision = ReviveService.processReceipt(receiptInfo)
 	if reviveDecision ~= nil then
@@ -186,6 +188,10 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 				return Enum.ProductPurchaseDecision.PurchaseGranted
 			end
 		end
+	end
+
+	if previousProcessReceipt then
+		return previousProcessReceipt(receiptInfo)
 	end
 
 	return Enum.ProductPurchaseDecision.NotProcessedYet

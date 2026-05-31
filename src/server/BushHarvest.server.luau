@@ -3086,3 +3086,71 @@ getListBF.OnInvoke = function(playerArg: any): any
 	end
 	return out
 end
+
+-- Granting brainrots from external systems (e.g. Daily rewards, Lucky Block tool).
+-- Accepts a partial entry table (name required) and best-effort fills in rarity / icon / source
+-- from the Brainrots catalog. Returns true on success and auto-equips the brainrot when possible.
+local grantBF = ensureBindable("GrantBrainrotAndEquip")
+grantBF.OnInvoke = function(playerArg: any, entryArg: any, opts: any): boolean
+	if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+		return false
+	end
+	if typeof(entryArg) ~= "table" then
+		return false
+	end
+	local plr = playerArg :: Player
+	local incoming = entryArg :: any
+	local name = if typeof(incoming.name) == "string" then incoming.name else nil
+	if not name or name == "" then
+		return false
+	end
+
+	local rarity = if typeof(incoming.rarity) == "string" then incoming.rarity else "common"
+	local mutation = if typeof(incoming.mutation) == "string" then incoming.mutation else "normal"
+	local level = if typeof(incoming.level) == "number" then math.max(1, math.floor(incoming.level)) else 1
+	local baseIncome = if typeof(incoming.baseIncome) == "number" then incoming.baseIncome else 0
+	local icon = if typeof(incoming.icon) == "string" then incoming.icon else ""
+	local sourcePath = if typeof(incoming.sourcePath) == "string" then incoming.sourcePath else ""
+
+	local entry: BrainrotInvEntry = {
+		name = name,
+		icon = icon,
+		sourcePath = sourcePath,
+		rarity = rarity,
+		mutation = mutation,
+		level = level,
+		baseIncome = baseIncome,
+	}
+
+	local brainrotsFolder = Brainrots.getBrainrotsFolder()
+	if brainrotsFolder and brainrotsFolder:IsA("Folder") then
+		enrichEntryFromBrainrotsFolder(brainrotsFolder :: Folder, entry)
+	end
+	enrichEntryFromCatalog(entry)
+
+	if not pushBrainrotInventory(plr, entry, true) then
+		return false
+	end
+
+	local list = brainrotInventories[plr]
+	if not list then
+		return true
+	end
+	local newSlot = #list
+
+	-- Mark as discovered in the Index so the unlock toast / sidebar badge fires.
+	local indexInternal = ServerStorage:FindFirstChild("IndexInternal")
+	local indexBF = indexInternal and indexInternal:FindFirstChild("OnBrainrotDeposited")
+	if indexBF and indexBF:IsA("BindableFunction") then
+		pcall(function()
+			indexBF:Invoke(plr, entry)
+		end)
+	end
+
+	local forceEquip = true
+	if typeof(opts) == "table" and opts.equip == false then
+		forceEquip = false
+	end
+	notifyClientInventorySync(plr, newSlot, forceEquip)
+	return true
+end

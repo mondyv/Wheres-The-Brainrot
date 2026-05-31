@@ -21,7 +21,8 @@ local function refreshBoostLabel()
 	local count = RebirthConfig.getRebirthCount(player)
 	local indexComplete = player:GetAttribute("IndexGoldenQuestComplete") == true
 	local friendBoost = player:GetAttribute(CashBoostUtil.FRIEND_BOOST_ATTR) == true
-	local percent = CashBoostUtil.totalDisplayPercent(count, indexComplete, friendBoost)
+	local dailyPercent = CashBoostUtil.dailyBoostPercent(player)
+	local percent = CashBoostUtil.totalDisplayPercent(count, indexComplete, friendBoost, dailyPercent)
 	boostLabel.Text = CashBoostUtil.formatBoostLabel(percent)
 end
 
@@ -49,6 +50,7 @@ local function init()
 	bindAttribute(RebirthConfig.MONEY_MULT_ATTR)
 	bindAttribute("IndexGoldenQuestComplete")
 	bindAttribute(CashBoostUtil.FRIEND_BOOST_ATTR)
+	bindAttribute(CashBoostUtil.DAILY_BOOST_ATTR)
 
 	refreshBoostLabel()
 end

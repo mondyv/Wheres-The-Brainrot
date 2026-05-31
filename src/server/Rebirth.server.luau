@@ -204,6 +204,34 @@ for _, plr in Players:GetPlayers() do
 	end)
 end
 
+-- Expose performRebirth as a BindableFunction so other server systems (e.g. the daily
+-- "free rebirth" reward) can trigger it without circular requires.
+task.spawn(function()
+	local internalFolder = ServerStorage:FindFirstChild("RebirthInternal")
+	if not internalFolder then
+		internalFolder = Instance.new("Folder")
+		internalFolder.Name = "RebirthInternal"
+		internalFolder.Parent = ServerStorage
+	end
+	local bindable = internalFolder:FindFirstChild("PerformRebirth")
+	if not bindable then
+		bindable = Instance.new("BindableFunction")
+		bindable.Name = "PerformRebirth"
+		bindable.Parent = internalFolder
+	end
+	(bindable :: BindableFunction).OnInvoke = function(plr: any, opts: any)
+		if typeof(plr) ~= "Instance" or not (plr :: Instance):IsA("Player") then
+			return false, "invalid_player"
+		end
+		local options: { skipRequirements: boolean?, keepUpgrades: boolean? } = {}
+		if typeof(opts) == "table" then
+			options.skipRequirements = opts.skipRequirements == true
+			options.keepUpgrades = opts.keepUpgrades == true
+		end
+		return performRebirth(plr :: Player, options)
+	end
+end)
+
 return {
 	performRebirth = performRebirth,
 	pushState = pushState,

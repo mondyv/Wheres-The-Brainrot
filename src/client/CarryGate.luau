@@ -97,6 +97,25 @@ function CarryGate.isCarrying(): boolean
 	return false
 end
 
+-- True when a brainrot is welded on the character's head (not floating/pop phase).
+function CarryGate.isCarryingOnHead(): boolean
+	local char = player.Character
+	if not char then
+		return false
+	end
+	for _, d in char:GetDescendants() do
+		if d:IsA("Model") and d:GetAttribute("BrainrotCarryPhase") == "Carried" then
+			return true
+		end
+	end
+	for _, d in char:GetDescendants() do
+		if d:IsA("WeldConstraint") and d.Name == "BrainrotCarryWeld" then
+			return true
+		end
+	end
+	return false
+end
+
 function CarryGate.isBushSearchPrompt(prompt: ProximityPrompt): boolean
 	return prompt.Name == "BushHarvestPrompt"
 		or (prompt.ActionText == "Search" and prompt.ObjectText == "Bush")

@@ -1267,7 +1267,7 @@ local function rollHiddenBrainrotLoot(bush: Instance)
 	if not brainrots then
 		return
 	end
-	local pos = bushSearchPosition(bush, if bush:IsA("BasePart") then bush.Position else (bush :: Model):GetPivot().Position)
+	local pos = if bush:IsA("BasePart") then bush.Position else (bush :: Model):GetPivot().Position
 	local plot = resolveHarvestPlot(pos)
 	local function brainrotIsAvailable(def)
 		return brainrotHasTemplate(brainrots :: Folder, def.name)

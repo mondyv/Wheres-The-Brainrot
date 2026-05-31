@@ -143,7 +143,7 @@ function BackgroundMusicController.init()
 		if SafezoneUtil.isCharacterInSafezone(player.Character) then
 			return "safezone"
 		end
-		if CarryGate.isCarrying() then
+		if CarryGate.isCarryingOnHead() then
 			return "holding"
 		end
 		return "none"

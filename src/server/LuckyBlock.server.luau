@@ -321,12 +321,16 @@ local function ensureBindable(name: string): BindableFunction
 end
 
 local grantBF = ensureBindable("GrantLuckyBlock")
-grantBF.OnInvoke = function(plrArg: any, blockNameArg: any): boolean
+grantBF.OnInvoke = function(plrArg: any, blockNameArg: any, optsArg: any): boolean
 	if typeof(plrArg) ~= "Instance" or not (plrArg :: Instance):IsA("Player") then
 		return false
 	end
 	local plr = plrArg :: Player
 	local blockName = if typeof(blockNameArg) == "string" then blockNameArg else "star rainbow"
+	local shouldEquip = true
+	if typeof(optsArg) == "table" and optsArg.equip == false then
+		shouldEquip = false
+	end
 
 	local template = findLuckyBlockTemplate(blockName)
 	if not template then
@@ -343,11 +347,13 @@ grantBF.OnInvoke = function(plrArg: any, blockNameArg: any): boolean
 		return false
 	end
 	tool.Parent = bp
-	local hum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
-	if hum then
-		pcall(function()
-			(hum :: Humanoid):EquipTool(tool)
-		end)
+	if shouldEquip then
+		local hum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			pcall(function()
+				(hum :: Humanoid):EquipTool(tool)
+			end)
+		end
 	end
 	return true
 end

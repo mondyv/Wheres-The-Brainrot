@@ -3099,6 +3099,12 @@ grantBF.OnInvoke = function(playerArg: any, entryArg: any, opts: any): boolean
 		return false
 	end
 	local plr = playerArg :: Player
+	if not brainrotInventories[plr] then
+		brainrotInventories[plr] = {}
+	end
+	if not brainrotParkedInExpandedBackpack[plr] then
+		brainrotParkedInExpandedBackpack[plr] = {}
+	end
 	local incoming = entryArg :: any
 	local name = if typeof(incoming.name) == "string" then incoming.name else nil
 	if not name or name == "" then

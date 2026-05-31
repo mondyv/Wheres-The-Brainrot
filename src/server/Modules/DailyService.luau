@@ -27,6 +27,15 @@ local function ensureAttributes(player: Player)
 	if player:GetAttribute(DailyConfig.DAY_ATTR) == nil then
 		player:SetAttribute(DailyConfig.DAY_ATTR, 0)
 	end
+	if player:GetAttribute(DailyConfig.CLAIMED_MASK_ATTR) == nil then
+		local last = player:GetAttribute(DailyConfig.DAY_ATTR)
+		local lastClaimed = if typeof(last) == "number" then math.floor(last) else 0
+		local mask = 0
+		for day = 1, math.clamp(lastClaimed, 0, DailyConfig.MAX_DAY) do
+			mask = bit32.bor(mask, bit32.lshift(1, day - 1))
+		end
+		player:SetAttribute(DailyConfig.CLAIMED_MASK_ATTR, mask)
+	end
 	if player:GetAttribute(DailyConfig.NEXT_AT_ATTR) == nil then
 		-- First-time players: day 1 is claimable immediately.
 		player:SetAttribute(DailyConfig.NEXT_AT_ATTR, os.time())
@@ -90,14 +99,10 @@ function DailyService.claim(player: Player, day: number): (boolean, string?, Dai
 		return false, err or "grant_failed", DailyConfig.buildState(player)
 	end
 
-	local prevLast = player:GetAttribute(DailyConfig.DAY_ATTR)
-	local prevClaimed = if typeof(prevLast) == "number" then math.floor(prevLast) else 0
-	local newClaimed = math.max(prevClaimed, day)
-	player:SetAttribute(DailyConfig.DAY_ATTR, newClaimed)
+	DailyConfig.markDayClaimed(player, day)
 
 	local skipAll = player:GetAttribute(DailyConfig.SKIP_ALL_ATTR) == true
 	if skipAll then
-		-- Skip-All collapses cooldown so the next day is immediately claimable.
 		player:SetAttribute(DailyConfig.NEXT_AT_ATTR, os.time())
 	else
 		player:SetAttribute(DailyConfig.NEXT_AT_ATTR, os.time() + DailyConfig.CLAIM_COOLDOWN_SEC)

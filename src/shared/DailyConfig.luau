@@ -22,9 +22,10 @@ M.SKIP_ALL_DEV_PRODUCT_ID = 3601652426
 M.CLAIM_COOLDOWN_SEC = 20 * 3600
 
 -- Attribute names persisted on the player while in-session.
-M.DAY_ATTR = "DailyDayClaimed"             -- last day index claimed (0 = none)
+M.DAY_ATTR = "DailyDayClaimed"             -- last sequential day claimed (normal flow)
+M.CLAIMED_MASK_ATTR = "DailyClaimedMask"   -- bit mask: day N claimed => bit (N-1) set
 M.NEXT_AT_ATTR = "DailyNextAvailableAt"    -- os.time() epoch when next day unlocks
-M.SKIP_ALL_ATTR = "DailySkipAllOwned"      -- true if Skip All gamepass owned
+M.SKIP_ALL_ATTR = "DailySkipAllOwned"      -- true if Skip All dev product purchased
 
 M.NOTIF_ATTR = "DailyHasUnclaimed"         -- mirror flag; HUD reads this for the sidebar !
 
@@ -33,11 +34,9 @@ export type RewardKind = "rebirth_free" | "cash" | "cash_boost_percent" | "rando
 export type DailyReward = {
 	day: number,
 	kind: RewardKind,
-	-- For "cash" rewards this is the flat amount; for "cash_boost_percent" it's the percent.
 	amount: number?,
 	displayAmount: string?,
 	displayName: string?,
-	-- Optional rarity that styles the card (Day 5 → legendary, Day 7 → galaxy / lucky)
 	specialStyle: string?,
 }
 
@@ -97,16 +96,68 @@ for _, r in ipairs(M.REWARDS) do
 	M.REWARD_BY_DAY[r.day] = r
 end
 
--- Player → daily state snapshot for the UI.
 export type DailyState = {
-	currentDay: number,        -- the day that is currently claimable (0 if none yet ready)
-	lastClaimedDay: number,    -- 0..MAX_DAY
-	nextAvailableAt: number,   -- os.time() epoch when currentDay becomes claimable
+	currentDay: number,
+	lastClaimedDay: number,
+	claimedMask: number,
+	nextAvailableAt: number,
 	skipAll: boolean,
 	now: number,
 }
 
+local function dayBit(day: number): number
+	return bit32.lshift(1, day - 1)
+end
+
+function M.getClaimedMask(player: Player): number
+	local raw = player:GetAttribute(M.CLAIMED_MASK_ATTR)
+	return if typeof(raw) == "number" then math.floor(raw) else 0
+end
+
+function M.isDayClaimedMask(mask: number, day: number): boolean
+	if day < 1 or day > M.MAX_DAY then
+		return false
+	end
+	return bit32.band(mask, dayBit(day)) ~= 0
+end
+
+function M.isDayClaimed(player: Player, day: number): boolean
+	return M.isDayClaimedMask(M.getClaimedMask(player), day)
+end
+
+function M.countClaimedDays(mask: number): number
+	local count = 0
+	for day = 1, M.MAX_DAY do
+		if M.isDayClaimedMask(mask, day) then
+			count += 1
+		end
+	end
+	return count
+end
+
+function M.nextUnclaimedDay(mask: number): number
+	for day = 1, M.MAX_DAY do
+		if not M.isDayClaimedMask(mask, day) then
+			return day
+		end
+	end
+	return 0
+end
+
+function M.highestSequentialClaimed(mask: number): number
+	local highest = 0
+	for day = 1, M.MAX_DAY do
+		if M.isDayClaimedMask(mask, day) then
+			highest = day
+		else
+			break
+		end
+	end
+	return highest
+end
+
 function M.buildState(player: Player): DailyState
+	local mask = M.getClaimedMask(player)
 	local last = player:GetAttribute(M.DAY_ATTR)
 	local lastClaimed = if typeof(last) == "number" then math.clamp(math.floor(last), 0, M.MAX_DAY) else 0
 	local nextAt = player:GetAttribute(M.NEXT_AT_ATTR)
@@ -114,40 +165,47 @@ function M.buildState(player: Player): DailyState
 	local skipAll = player:GetAttribute(M.SKIP_ALL_ATTR) == true
 	local now = os.time()
 
-	local currentDay = lastClaimed + 1
-	if currentDay > M.MAX_DAY then
+	local currentDay = M.nextUnclaimedDay(mask)
+	if currentDay == 0 then
 		currentDay = 0
 	end
 
 	return {
 		currentDay = currentDay,
-		lastClaimedDay = lastClaimed,
+		lastClaimedDay = math.max(lastClaimed, M.highestSequentialClaimed(mask)),
+		claimedMask = mask,
 		nextAvailableAt = nextEpoch,
 		skipAll = skipAll,
 		now = now,
 	}
 end
 
--- Returns true if `day` is currently claimable for this player.
 function M.canClaim(player: Player, day: number): boolean
+	if day < 1 or day > M.MAX_DAY then
+		return false
+	end
+	if M.isDayClaimed(player, day) then
+		return false
+	end
+
 	local state = M.buildState(player)
 	if state.skipAll then
-		return day >= 1 and day <= M.MAX_DAY and day > state.lastClaimedDay
+		return true
 	end
+
 	if day ~= state.currentDay then
 		return false
 	end
 	return state.now >= state.nextAvailableAt
 end
 
--- Status for a single card in the UI.
 export type DayStatus = "claimed" | "claim" | "locked"
 
 function M.statusForDay(state: DailyState, day: number): DayStatus
-	if day <= state.lastClaimedDay then
+	if M.isDayClaimedMask(state.claimedMask, day) then
 		return "claimed"
 	end
-	if state.skipAll and day > state.lastClaimedDay then
+	if state.skipAll then
 		return "claim"
 	end
 	if day == state.currentDay and state.now >= state.nextAvailableAt then
@@ -157,12 +215,20 @@ function M.statusForDay(state: DailyState, day: number): DayStatus
 end
 
 function M.hasUnclaimedReady(state: DailyState): boolean
-	if state.skipAll and state.lastClaimedDay < M.MAX_DAY then
-		return true
+	if state.skipAll then
+		return M.countClaimedDays(state.claimedMask) < M.MAX_DAY
 	end
 	return state.currentDay >= 1
 		and state.currentDay <= M.MAX_DAY
 		and state.now >= state.nextAvailableAt
+end
+
+function M.markDayClaimed(player: Player, day: number)
+	local mask = M.getClaimedMask(player)
+	player:SetAttribute(M.CLAIMED_MASK_ATTR, bit32.bor(mask, dayBit(day)))
+	if player:GetAttribute(M.SKIP_ALL_ATTR) ~= true then
+		player:SetAttribute(M.DAY_ATTR, day)
+	end
 end
 
 return M

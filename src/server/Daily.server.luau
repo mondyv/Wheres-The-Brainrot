@@ -145,7 +145,7 @@ local function waitForRebirthBindable(timeoutSec: number?): BindableFunction?
 end
 
 local function tryPerformFreeRebirth(player: Player): boolean
-	local bf = waitForRebirthBindable(5)
+	local bf = waitForRebirthBindable(60)
 	if not bf then
 		return false
 	end
@@ -160,7 +160,7 @@ local function grantBrainrotRandomLegendary(player: Player): boolean
 	if not pick then
 		return false
 	end
-	local grant = waitForBrainrotInternalBF("GrantBrainrotAndEquip", 5)
+	local grant = waitForBrainrotInternalBF("GrantBrainrotAndEquip", 60)
 	if not grant then
 		return false
 	end
@@ -182,7 +182,7 @@ local function grantLuckyBlockStarRainbow(player: Player): boolean
 		return false
 	end
 	local ok, success = pcall(function()
-		return grant:Invoke(player, "star rainbow")
+		return grant:Invoke(player, "star rainbow", { equip = false })
 	end)
 	return ok and success == true
 end

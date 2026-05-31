@@ -117,6 +117,8 @@ local KEY_TO_SLOT: { [Enum.KeyCode]: number } = {
 local slots: { GuiObject }   = {}    -- ordered slot frames (index 1-9)
 local slotTools: { Tool? }   = {}    -- tool assigned to each slot
 local extraToolSlotByIndex: { [number]: Tool } = {} -- non-brainrot hotbar tools (e.g. lucky block)
+local parkedExtraTools: { Tool } = {} -- tucked off hotbar, shown in backpack panel
+local extraToolRowByTool: { [Tool]: GuiObject } = {}
 local activeSlot: number?    = nil
 local uiHotbarHighlight: number? = nil -- nil = no slot ring (toggle off); otherwise mirrors selection / equip
 local toolbarShown: boolean  = false
@@ -155,6 +157,7 @@ local pendingToolbarDrag: {
 	rowButton: GuiButton?,
 	equippedOnDown: boolean?,
 	isExtraTool: boolean?,
+	tool: Tool?,
 }? = nil
 -- Drag started inside the safe zone; finish drop even if zone poll flickers before mouse up.
 local activeToolbarDrag = false
@@ -296,6 +299,49 @@ local function hotbarSlotDragTexture(index: number): string?
 	return nil
 end
 
+local function isExtraToolParked(tool: Tool): boolean
+	for _, t in parkedExtraTools do
+		if t == tool then
+			return true
+		end
+	end
+	return false
+end
+
+local function parkExtraToolInBackpack(tool: Tool, fromSlot: number?)
+	for i, t in ipairs(parkedExtraTools) do
+		if t == tool then
+			table.remove(parkedExtraTools, i)
+			break
+		end
+	end
+	table.insert(parkedExtraTools, tool)
+	if typeof(fromSlot) == "number" then
+		extraToolSlotByIndex[fromSlot] = nil
+	end
+	for idx, mapped in pairs(extraToolSlotByIndex) do
+		if mapped == tool then
+			extraToolSlotByIndex[idx] = nil
+		end
+	end
+	local hum = getHumanoid()
+	if hum and tool.Parent == player.Character then
+		hum:UnequipTools()
+	end
+end
+
+local function unparkExtraToolToHotbar(tool: Tool, toSlot: number)
+	for i, t in ipairs(parkedExtraTools) do
+		if t == tool then
+			table.remove(parkedExtraTools, i)
+			break
+		end
+	end
+	extraToolSlotByIndex[toSlot] = tool
+end
+
+local refreshParkedExtraToolsUI: () -> ()
+
 -- Defined after hotbarSlotScaleHost (see below).
 local playEquipSlotAnimation: (number) -> ()
 
@@ -416,8 +462,109 @@ playEquipSlotAnimation = function(index: number)
 		return
 	end
 	local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
-	sc.Scale = 0.86
-	TweenService:Create(sc, EQUIP_POP_TWEEN, { Scale = 1 }):Play()
+	local target = hotbarSlotRestScale(index)
+	sc.Scale = target * 0.82
+	TweenService:Create(sc, EQUIP_POP_TWEEN, { Scale = target }):Play()
+end
+
+refreshParkedExtraToolsUI = function()
+	local container = backpackContainer
+	if not container then
+		return
+	end
+	for tool, row in pairs(extraToolRowByTool) do
+		if not isExtraToolParked(tool) or not tool.Parent then
+			if row and row.Parent then
+				row:Destroy()
+			end
+			extraToolRowByTool[tool] = nil
+		end
+	end
+	local template = container:FindFirstChild("1")
+	if not template or not template:IsA("GuiObject") then
+		return
+	end
+	local host = container:FindFirstChild("__ExtraTools")
+	if not host then
+		host = Instance.new("Frame")
+		host.Name = "__ExtraTools"
+		host.BackgroundTransparency = 1
+		host.BorderSizePixel = 0
+		host.Size = UDim2.fromScale(1, 0)
+		host.AutomaticSize = Enum.AutomaticSize.Y
+		host.LayoutOrder = 9999
+		host.Parent = container
+		local layout = Instance.new("UIListLayout")
+		layout.FillDirection = Enum.FillDirection.Vertical
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Padding = UDim.new(0, 4)
+		layout.Parent = host
+	end
+	local hostGui = host :: Frame
+	for i = #parkedExtraTools, 1, -1 do
+		local tool = parkedExtraTools[i]
+		if not tool.Parent then
+			table.remove(parkedExtraTools, i)
+		end
+	end
+	for index, tool in ipairs(parkedExtraTools) do
+		local row = extraToolRowByTool[tool]
+		if not row or not row.Parent then
+			row = (template :: GuiObject):Clone()
+			row.Name = "__Extra_" .. tostring(index)
+			row.LayoutOrder = index
+			row.Visible = true
+			row.Parent = hostGui
+			extraToolRowByTool[tool] = row
+			local btn = slotPrimaryButton(row :: GuiObject)
+			if btn then
+				passthroughChildClicks(btn :: GuiObject)
+				styleToolbarSlotButton(btn)
+				local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
+				btn.MouseEnter:Connect(function()
+					if not canUseToolbar then
+						return
+					end
+					UIInteractionSounds.playHover()
+					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.1 }):Play()
+				end)
+				btn.MouseLeave:Connect(function()
+					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
+				end)
+				btn.MouseButton1Down:Connect(function()
+					if not canUseToolbar then
+						return
+					end
+					local tex = (tool :: any).TextureId
+					if typeof(tex) ~= "string" or tex == "" then
+						tex = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+					end
+					activeToolbarDrag = true
+					pendingToolbarDrag = {
+						kind = "backpack_extra",
+						idx = index,
+						start = UserInputService:GetMouseLocation(),
+						texture = tex,
+						rowButton = btn,
+						isExtraTool = true,
+						tool = tool,
+					}
+				end)
+			end
+		end
+		local surface = toolSlotSurface(row :: GuiObject)
+		local tex = (tool :: any).TextureId
+		setSlotIcons(
+			surface,
+			(typeof(tex) == "string" and tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png",
+			true
+		)
+		local rate = surface:FindFirstChild("Rate")
+		if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
+			rate.Text = tool.Name
+		end
+	end
+	hostGui.Visible = #parkedExtraTools > 0
 end
 
 -- Slot `Button` is often an ImageButton with a light template art layer; only tint (never swap Image id).
@@ -1155,7 +1302,28 @@ end
 -- Selection = UIStroke only. Never touch the slot's own Image / ImageColor3 (that's the slot art designed in Studio).
 local SLOT_STROKE_SELECTED = 0
 local SLOT_STROKE_IDLE = 0.6
+local SLOT_SELECTED_SCALE = 1.08
+local SLOT_IDLE_SCALE = 1.0
+local SLOT_HOVER_SCALE = 1.12
 local slotStrokeLit: { [number]: boolean } = {}
+
+local function hotbarSlotRestScale(index: number): number
+	if uiHotbarHighlight ~= nil and index == uiHotbarHighlight then
+		return SLOT_SELECTED_SCALE
+	end
+	return SLOT_IDLE_SCALE
+end
+
+local function applyHotbarSlotScales()
+	for i = 1, #slots do
+		local slot = slots[i]
+		if not slot then
+			continue
+		end
+		local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
+		sc.Scale = hotbarSlotRestScale(i)
+	end
+end
 
 local function applyButtonSelectionStyle(btn: GuiObject, lit: boolean)
 	local stroke = btn:FindFirstChildOfClass("UIStroke")
@@ -1186,6 +1354,13 @@ local function syncAllHotbarSelectionStrokes()
 	for i = 1, #slots do
 		local lit = uiHotbarHighlight ~= nil and i == uiHotbarHighlight
 		setSlotHighlight(i, lit)
+		if not hotbarDragBulkHover then
+			local slot = slots[i]
+			if slot then
+				local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
+				TweenService:Create(sc, HIGHLIGHT_TWEEN, { Scale = hotbarSlotRestScale(i) }):Play()
+			end
+		end
 	end
 end
 
@@ -1216,12 +1391,8 @@ deselectAllHotbarSlots = function()
 	table.clear(slotStrokeLit)
 	for si = 1, #slots do
 		setSlotHighlight(si, false)
-		local slot = slots[si]
-		if slot then
-			local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
-			sc.Scale = 1
-		end
 	end
+	applyHotbarSlotScales()
 end
 
 -- ── Slot icon update ──────────────────────────────────────────────────────────
@@ -1610,6 +1781,9 @@ local function rebuildSlots()
 	end
 
 	for _, tool in ipairs(extras) do
+		if isExtraToolParked(tool) then
+			continue
+		end
 		if not assignedExtras[tool] then
 			for i = 1, maxHotbar do
 				if slotTools[i] == nil and not brainrotParkedInUI[i] and brainrotEntries[i] == nil then
@@ -1726,6 +1900,7 @@ refreshBrainrotBackpackUI = function()
 		end
 		passthroughChildClicks(surface :: GuiObject)
 	end
+	refreshParkedExtraToolsUI()
 end
 
 local function requestEquipBestBrainrot()
@@ -1993,14 +2168,6 @@ local function setBrainrotEntriesFromServer(payload: any)
 	brainrotEntries = nextList
 	brainrotInventoryUsed = usedOverride or #nextList
 	brainrotInventoryMax = maxOverride or DEFAULT_BRAINROT_CAPACITY
-	warn(
-		"[ToolbarController] inventory sync entries=",
-		#nextList,
-		"equipSlot=",
-		if typeof(payload) == "table" and typeof((payload :: any).equipSlot) == "number"
-			then tostring((payload :: any).equipSlot)
-			else "nil"
-	)
 	refreshInventoryHeaderText()
 	refreshBrainrotBackpackUI()
 	rebuildSlots()
@@ -2317,17 +2484,18 @@ function ToolbarController.init()
 				return
 			end
 			UIInteractionSounds.playHover()
-			TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.12 }):Play()
+			TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = SLOT_HOVER_SCALE }):Play()
 		end)
 		hoverTarget.MouseLeave:Connect(function()
 			if hotbarDragBulkHover then
 				return
 			end
-			TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
+			TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = hotbarSlotRestScale(i) }):Play()
 		end)
 	end
 
 	resetAllSlotsToIdle()
+	applyHotbarSlotScales()
 	bindToolbarHotbarKeybinds()
 
 	-- Backpack changes
@@ -2620,64 +2788,84 @@ function ToolbarController.init()
 		clearDragGhost()
 		dragSuppressedToolbarClick = true
 
+		local overHotbar, overBackpack, overBackpackPanel = DropTargets.probeDragHoverTargets(
+			mouseWindow,
+			rawEnd,
+			ghostCenter,
+			ghostViewport
+		)
+		local droppedOnBackpack = overBackpack or overBackpackPanel
+		local targetHotbar: number? = nil
+		if not droppedOnBackpack then
+			targetHotbar = DropTargets.hotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter)
+		end
+
+		if pnd.kind == "hotbar" and pnd.isExtraTool then
+			if droppedOnBackpack then
+				setBackpackPanelOpen(true)
+				local tool = extraToolSlotByIndex[pnd.idx] or slotTools[pnd.idx]
+				if tool then
+					parkExtraToolInBackpack(tool, pnd.idx)
+					task.defer(rebuildSlots)
+					refreshParkedExtraToolsUI()
+				end
+				UIInteractionSounds.playClick()
+			elseif targetHotbar
+				and targetHotbar ~= pnd.idx
+				and brainrotEntries[targetHotbar] == nil
+				and brainrotParkedInUI[targetHotbar] ~= true
+			then
+				local tool = extraToolSlotByIndex[pnd.idx] or slotTools[pnd.idx]
+				local other = extraToolSlotByIndex[targetHotbar]
+				if tool then
+					extraToolSlotByIndex[targetHotbar] = tool
+				else
+					extraToolSlotByIndex[targetHotbar] = nil
+				end
+				if other then
+					extraToolSlotByIndex[pnd.idx] = other
+				else
+					extraToolSlotByIndex[pnd.idx] = nil
+				end
+				task.defer(rebuildSlots)
+				UIInteractionSounds.playClick()
+			end
+			return
+		end
+
+		if pnd.kind == "backpack_extra" and pnd.tool then
+			local tool = pnd.tool :: Tool
+			if targetHotbar
+				and brainrotEntries[targetHotbar] == nil
+				and brainrotParkedInUI[targetHotbar] ~= true
+			then
+				unparkExtraToolToHotbar(tool, targetHotbar)
+				task.defer(rebuildSlots)
+				refreshParkedExtraToolsUI()
+				UIInteractionSounds.playClick()
+			end
+			return
+		end
+
 		local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
 		local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
 		if not parkEv or not parkEv:IsA("RemoteEvent") then
 			return
 		end
 
-		local overBackpack = DropTargets.pointOverBackpackDropTarget(mouseWindow, rawEnd)
-			or (ghostCenter ~= nil and DropTargets.pointOverBackpackDropTarget(ghostCenter, rawEnd))
-			or (ghostViewport ~= nil and DropTargets.pointOverBackpackFromGuiHitScan(ghostViewport))
-		local targetHotbar: number? = nil
-		if not overBackpack then
-			targetHotbar = DropTargets.hotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter)
-		end
-		local overHotbar = targetHotbar ~= nil
+		local overHotbarZone = overHotbar
 			or DropTargets.pointOverHotbarDropZoneProbes(mouseWindow, rawEnd)
 			or (ghostCenter ~= nil and DropTargets.pointOverHotbarDropZoneProbes(ghostCenter, rawEnd))
 			or (ghostViewport ~= nil and DropTargets.pointOverHotbarFromGuiHitScan(ghostViewport))
 
 		if pnd.kind == "hotbar" then
-			if pnd.isExtraTool then
-				if overBackpack then
-					setBackpackPanelOpen(true)
-					local hum = getHumanoid()
-					local tool = extraToolSlotByIndex[pnd.idx] or slotTools[pnd.idx]
-					if hum and tool and tool.Parent == player.Character then
-						hum:UnequipTools()
-					end
-					task.defer(rebuildSlots)
-					UIInteractionSounds.playClick()
-				elseif targetHotbar
-					and targetHotbar ~= pnd.idx
-					and brainrotEntries[targetHotbar] == nil
-					and brainrotParkedInUI[targetHotbar] ~= true
-				then
-					local tool = extraToolSlotByIndex[pnd.idx] or slotTools[pnd.idx]
-					local other = extraToolSlotByIndex[targetHotbar]
-					if tool then
-						extraToolSlotByIndex[targetHotbar] = tool
-					else
-						extraToolSlotByIndex[targetHotbar] = nil
-					end
-					if other then
-						extraToolSlotByIndex[pnd.idx] = other
-					else
-						extraToolSlotByIndex[pnd.idx] = nil
-					end
-					task.defer(rebuildSlots)
-					UIInteractionSounds.playClick()
-				end
-				return
-			end
 			local hasEntry = brainrotEntries[pnd.idx] and not brainrotParkedInUI[pnd.idx]
 			if not hasEntry then
 				return
 			end
-			if overBackpack then
+			if droppedOnBackpack then
 				-- Hotbar → backpack panel: tuck (server sync updates UI).
-				setBackpackPanelOpen(true);
+				setBackpackPanelOpen(true)
 				(parkEv :: RemoteEvent):FireServer(pnd.idx, true)
 				UIInteractionSounds.playClick()
 			elseif targetHotbar and targetHotbar ~= pnd.idx then
@@ -2690,11 +2878,11 @@ function ToolbarController.init()
 			if not entry then
 				return
 			end
-			if overHotbar then
+			if overHotbarZone then
 				-- Backpack → hotbar: server assigns lowest free slot 1..9 (no slot memory).
 				(parkEv :: RemoteEvent):FireServer(pnd.idx, false)
 				UIInteractionSounds.playClick()
-			elseif overBackpack and destBackpackRow then
+			elseif droppedOnBackpack and destBackpackRow then
 				local destListIdx = listIndexForBackpackUiRow(destBackpackRow)
 				if not destListIdx then
 					destListIdx = #brainrotEntries + 1

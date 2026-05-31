@@ -38,7 +38,7 @@ local BADGE_SWAY_DEG = 5
 local BADGE_INNER_SWAY_DEG = 2.5
 
 local DAY7_ICON_SWAY_INFO = TweenInfo.new(4.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
-local DAY7_ICON_SWAY_DEG = 5
+local DAY7_ICON_SWAY_DEG = 3
 local DAY5_QUESTION_PULSE_UP = TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 local DAY5_QUESTION_PULSE_DOWN = TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 local DAY5_QUESTION_CYCLE_GAP = 0.28
@@ -326,21 +326,20 @@ local function startDay7IconSway(icon: GuiObject)
 	icon:SetAttribute("__SwayingDay7Icon", true)
 	icon.ClipsDescendants = true
 	icon.ZIndex = math.min(icon.ZIndex, 2)
+	if icon:IsA("GuiObject") then
+		local iconObj = icon :: GuiObject
+		iconObj.AnchorPoint = Vector2.new(0.5, 0.5)
+		iconObj.Position = UDim2.fromScale(0.5, 0.5)
+		iconObj.Size = UDim2.fromScale(0.82, 0.82)
+	end
 
 	local scale = getOrAddUIScale(icon)
 	scale.Scale = 1
 	icon.Rotation = -DAY7_ICON_SWAY_DEG
 
 	local rotTween = TweenService:Create(icon, DAY7_ICON_SWAY_INFO, { Rotation = DAY7_ICON_SWAY_DEG })
-	local scaleTween = TweenService:Create(
-		scale,
-		TweenInfo.new(5.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-		{ Scale = 1.03 }
-	)
 	rotTween:Play()
-	scaleTween:Play()
 	table.insert(day7IconTweens, rotTween)
-	table.insert(day7IconTweens, scaleTween)
 end
 
 local function refreshDay7CardVisibility()
@@ -702,6 +701,16 @@ applyState = function(state: DailyConfig.DailyState)
 	end
 
 	updateNextRewardLabel(state)
+
+	if headerSkipBtn then
+		local hideSkip = state.skipAll == true
+		local skipHost = headerSkipBtn.Parent
+		if skipHost and skipHost:IsA("GuiObject") then
+			(skipHost :: GuiObject).Visible = not hideSkip
+		else
+			headerSkipBtn.Visible = not hideSkip
+		end
+	end
 end
 
 updateNextRewardLabel = function(state: DailyConfig.DailyState?)
@@ -823,6 +832,14 @@ function DailyController.init()
 			end
 			PurchasePrompt.promptProduct(DailyConfig.SKIP_ALL_DEV_PRODUCT_ID)
 		end)
+		if lastState and lastState.skipAll then
+			local skipHost = headerSkipBtn.Parent
+			if skipHost and skipHost:IsA("GuiObject") then
+				(skipHost :: GuiObject).Visible = false
+			else
+				headerSkipBtn.Visible = false
+			end
+		end
 	end
 
 	if container then

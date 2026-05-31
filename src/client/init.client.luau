@@ -7,12 +7,14 @@ LoadingScreenController.showEarly()
 pcall(function()
 	require(script.ToolbarController).prepareEarly()
 end)
-local loadOk, loadErr = pcall(function()
-	LoadingScreenController.run()
+task.spawn(function()
+	local loadOk, loadErr = pcall(function()
+		LoadingScreenController.run()
+	end)
+	if not loadOk then
+		warn("[LoadingScreenController] run failed:", loadErr)
+	end
 end)
-if not loadOk then
-	warn("[LoadingScreenController] run failed:", loadErr)
-end
 
 task.spawn(function()
 	local player = Players.LocalPlayer
@@ -39,9 +41,14 @@ require(script.BackgroundMusicController).init()
 require(script.UIInteractionSounds).init()
 require(script.GameSoundEffects).init()
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-pcall(function()
-	require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchaseEffect"):WaitForChild("PurchaseEffectClient")):init()
+task.spawn(function()
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local ok, err = pcall(function()
+		require(ReplicatedStorage:WaitForChild("EssentialsShared", 10):WaitForChild("PurchaseEffect"):WaitForChild("PurchaseEffectClient")):init()
+	end)
+	if not ok then
+		warn("[PurchaseEffectClient] init failed:", err)
+	end
 end)
 require(script.BrainrotSFX).init()
 require(script.SafeZoneFlashController).init()

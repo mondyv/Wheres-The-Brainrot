@@ -14,7 +14,7 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
-local MIN_DISPLAY_SEC = 5.5
+local MIN_DISPLAY_SEC = 3
 local HOLD_AT_FULL_SEC = 0.4
 local FADE_OUT_SEC = 0.9
 local FADE_TWEEN_INFO = TweenInfo.new(FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
@@ -45,6 +45,10 @@ local TITLE_WIDTH_SCALE = 0.58
 local TITLE_HEIGHT_SCALE = 0.28
 
 local HIDE_LOADING_UI_NAMES = { "LoadingFrame", "BarPlaceholder", "LoadingBar", "Stud TextureDecal", "Stud Texture", "StudTexture" }
+
+local function isLoadingGuiAllowed(name: string): boolean
+	return name == "LoadingScreen" or name == "Purchasing"
+end
 
 local LOGO_NAMES = { "GameNameImage", "ImageLabel" }
 local MOON_CAMERA_EXPORT_NAMES = { "Camera loading", "Camera Loading", "CameraLoading" }
@@ -984,7 +988,7 @@ end
 
 local function hideNonLoadingScreenGuis(playerGui: PlayerGui)
 	for _, child in playerGui:GetChildren() do
-		if child:IsA("ScreenGui") and child.Name ~= "LoadingScreen" then
+		if child:IsA("ScreenGui") and not isLoadingGuiAllowed(child.Name) then
 			child.Enabled = false
 		end
 	end
@@ -1014,7 +1018,7 @@ local function enterLoadingIsolation(playerGui: PlayerGui)
 
 	for _, child in playerGui:GetChildren() do
 		if child:IsA("ScreenGui") then
-			child.Enabled = child == loadingGui
+			child.Enabled = isLoadingGuiAllowed(child.Name)
 		end
 	end
 	hideNonLoadingScreenGuis(playerGui)
@@ -1024,7 +1028,7 @@ local function enterLoadingIsolation(playerGui: PlayerGui)
 			if not loadingActive then
 				return
 			end
-			if child:IsA("ScreenGui") and child.Name ~= "LoadingScreen" then
+			if child:IsA("ScreenGui") and not isLoadingGuiAllowed(child.Name) then
 				if savedGuiStates then
 					savedGuiStates[child] = child.Enabled
 				end

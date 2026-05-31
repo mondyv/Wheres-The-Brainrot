@@ -24,6 +24,8 @@ local fadeOutTween = TweenInfo.new(
 	Enum.EasingDirection.Out
 )
 
+local REMOTE_WAIT_SEC = 8
+
 local function findEventsFolder(): Instance?
 	for _, folderName in { "EssentialsAssets", "EssentialAssets" } do
 		local assets = ReplicatedStorage:FindFirstChild(folderName)
@@ -40,16 +42,26 @@ end
 local function waitForRemote(name: string): RemoteEvent?
 	local events = findEventsFolder()
 	if not events then
-		events = ReplicatedStorage:WaitForChild("EssentialsAssets", 30)
-		if events then
-			events = events:WaitForChild("Events", 30)
+		local assets = ReplicatedStorage:WaitForChild("EssentialsAssets", REMOTE_WAIT_SEC)
+		if assets then
+			events = assets:WaitForChild("Events", REMOTE_WAIT_SEC)
 		end
 	end
 	if not events then
-		warn("[PurchaseEffect] Events folder missing under EssentialsAssets")
 		return nil
 	end
-	return events:WaitForChild(name, 30) :: RemoteEvent?
+	return events:WaitForChild(name, REMOTE_WAIT_SEC) :: RemoteEvent?
+end
+
+local function bindRemoteAsync(name: string, handler: () -> ())
+	task.spawn(function()
+		local remote = waitForRemote(name)
+		if remote then
+			remote.OnClientEvent:Connect(handler)
+		else
+			warn("[PurchaseEffect]", name, "remote missing — is EssentialsServer running?")
+		end
+	end)
 end
 
 function PurchaseEffectClient.ensureRainbow(self: PurchaseEffectClient)
@@ -93,6 +105,11 @@ function PurchaseEffectClient.show(self: PurchaseEffectClient)
 	self:ensureRainbow()
 	if not rainbow then
 		return
+	end
+
+	local effectGui = rainbow.Parent
+	if effectGui and effectGui:IsA("ScreenGui") then
+		effectGui.Enabled = true
 	end
 
 	hideToken += 1
@@ -152,21 +169,13 @@ function PurchaseEffectClient.init(self: PurchaseEffectClient)
 
 	self:ensureRainbow()
 
-	local effectRemote = waitForRemote("PurchaseEffectShow")
-	if effectRemote then
-		effectRemote.OnClientEvent:Connect(function()
-			self:show()
-		end)
-	else
-		warn("[PurchaseEffect] PurchaseEffectShow remote missing; rainbow will not appear before prompts")
-	end
+	bindRemoteAsync("PurchaseEffectShow", function()
+		self:show()
+	end)
 
-	local confettiRemote = waitForRemote("ProductHandlerConfetti")
-	if confettiRemote then
-		confettiRemote.OnClientEvent:Connect(function()
-			EffectsController.confetti(Players.LocalPlayer)
-		end)
-	end
+	bindRemoteAsync("ProductHandlerConfetti", function()
+		EffectsController.confetti(Players.LocalPlayer)
+	end)
 
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, _gamePassId, wasPurchased)
 		if player == Players.LocalPlayer then
@@ -176,7 +185,6 @@ function PurchaseEffectClient.init(self: PurchaseEffectClient)
 
 	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, _productId, wasPurchased)
 		if userId == Players.LocalPlayer.UserId then
-			-- Dev products celebrate via ProductHandlerConfetti from ProcessReceipt.
 			self:onPurchaseFinished(wasPurchased, false)
 		end
 	end)

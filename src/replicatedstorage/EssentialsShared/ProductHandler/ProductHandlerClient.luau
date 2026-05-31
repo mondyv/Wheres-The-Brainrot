@@ -1,6 +1,10 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local PurchaseEffectClient = require(ReplicatedStorage.EssentialsShared.PurchaseEffect.PurchaseEffectClient)
+
 local ProductHandlerClient = {}
+
+local REMOTE_WAIT_SEC = 8
 
 local function findEventsFolder(): Instance?
 	for _, folderName in { "EssentialsAssets", "EssentialAssets" } do
@@ -16,27 +20,40 @@ local function findEventsFolder(): Instance?
 end
 
 function ProductHandlerClient.init(self: ProductHandlerClient)
-	local events = findEventsFolder()
-	if not events then
-		local assets = ReplicatedStorage:WaitForChild("EssentialsAssets", 30)
-		events = assets and assets:WaitForChild("Events", 30)
-	end
-	if not events then
-		warn("[ProductHandlerClient] Events folder missing")
-		return
-	end
+	task.spawn(function()
+		local events = findEventsFolder()
+		if not events then
+			local assets = ReplicatedStorage:WaitForChild("EssentialsAssets", REMOTE_WAIT_SEC)
+			if assets then
+				events = assets:WaitForChild("Events", REMOTE_WAIT_SEC)
+			end
+		end
+		if not events then
+			warn("[ProductHandlerClient] Events folder missing")
+			return
+		end
 
-	self._purchaseRemote = events:WaitForChild("ProductHandlerPurchase", 30) :: RemoteEvent?
+		self._purchaseRemote = events:WaitForChild("ProductHandlerPurchase", REMOTE_WAIT_SEC) :: RemoteEvent?
+		if not self._purchaseRemote then
+			warn("[ProductHandlerClient] ProductHandlerPurchase remote missing")
+		end
+	end)
 end
 
 function ProductHandlerClient.bindButton(self: ProductHandlerClient, button: GuiButton, productName: string)
-	if not self._purchaseRemote then
-		warn("[ProductHandlerClient] Cannot bind button; purchase remote missing")
-		return
-	end
-
 	button.Activated:Connect(function()
-		self._purchaseRemote:FireServer(productName)
+		PurchaseEffectClient:show()
+
+		local remote = self._purchaseRemote
+		if not remote then
+			local events = findEventsFolder()
+			remote = events and events:FindFirstChild("ProductHandlerPurchase") :: RemoteEvent?
+		end
+		if remote then
+			remote:FireServer(productName)
+		else
+			warn("[ProductHandlerClient] Cannot purchase", productName, "— remote missing")
+		end
 	end)
 end
 

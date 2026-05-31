@@ -1,7 +1,7 @@
 --[[
 	Daily.server
-	Hosts the daily rewards calendar: remotes, claim grant function, Skip-All gamepass
-	ownership sync. Reward delivery delegates to existing systems
+	Hosts the daily rewards calendar: remotes, claim grant function, Skip-All dev product
+	receipt routing. Reward delivery delegates to existing systems
 	(Rebirth.performRebirth, BushHarvest's BrainrotInternal bindables, LuckyBlock).
 ]]
 
@@ -9,6 +9,9 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+
+local ProductHandlerServer =
+	require(game:GetService("ServerScriptService").EssentialsServer.ProductHandler.ProductHandlerServer)
 
 local DailyConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("DailyConfig"))
 local CashBoostUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("CashBoostUtil"))
@@ -230,22 +233,15 @@ claimRF.OnServerInvoke = function(player: Player, dayArg: any)
 	return ok, err, state
 end
 
--- ── Player lifecycle + Skip-All gamepass ────────────────────────────────────
+-- ── Player lifecycle + Skip-All dev product ───────────────────────────────────
 
-local function checkSkipAllOwnership(player: Player)
-	task.spawn(function()
-		local ok, owned = pcall(function()
-			return MarketplaceService:UserOwnsGamePassAsync(player.UserId, DailyConfig.SKIP_ALL_GAMEPASS_ID)
-		end)
-		if ok and owned then
-			DailyService.grantSkipAll(player)
-		end
-	end)
-end
+ProductHandlerServer.registerProductReceipt(DailyConfig.SKIP_ALL_DEV_PRODUCT_ID, function(player: Player)
+	DailyService.grantSkipAll(player)
+	return Enum.ProductPurchaseDecision.PurchaseGranted
+end)
 
 local function onPlayer(player: Player)
 	DailyService.initPlayer(player)
-	checkSkipAllOwnership(player)
 end
 
 Players.PlayerAdded:Connect(onPlayer)
@@ -255,21 +251,13 @@ for _, p in ipairs(Players:GetPlayers()) do
 	end)
 end
 
--- React to gamepass purchase finishing while in-game.
-MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, gamePassId, wasPurchased)
-	if gamePassId ~= DailyConfig.SKIP_ALL_GAMEPASS_ID then
-		return
-	end
-	if not wasPurchased then
-		return
-	end
-	DailyService.grantSkipAll(player)
-end)
-
 -- Client can request a Skip-All prompt without bouncing through ProductHandler so the daily UI
 -- stays self-contained; the actual purchase still goes through MarketplaceService.
 promptSkipRE.OnServerEvent:Connect(function(player: Player)
+	if player:GetAttribute(DailyConfig.SKIP_ALL_ATTR) == true then
+		return
+	end
 	pcall(function()
-		MarketplaceService:PromptGamePassPurchase(player, DailyConfig.SKIP_ALL_GAMEPASS_ID)
+		MarketplaceService:PromptProductPurchase(player, DailyConfig.SKIP_ALL_DEV_PRODUCT_ID)
 	end)
 end)

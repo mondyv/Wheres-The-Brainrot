@@ -18,6 +18,7 @@ local ProductHandlerServer = {}
 
 local initialized = false
 local productHandlerConfig: { [string]: any }? = nil
+local customReceiptHandlers: { [number]: (Player, any) -> Enum.ProductPurchaseDecision? } = {}
 
 local function getProductHandlerConfig(): { [string]: any }
 	if productHandlerConfig then
@@ -197,7 +198,27 @@ function ProductHandlerServer.promptPurchase(
 	end
 end
 
+function ProductHandlerServer.registerProductReceipt(
+	productId: number,
+	handler: (Player, any) -> Enum.ProductPurchaseDecision?
+)
+	customReceiptHandlers[productId] = handler
+end
+
 function ProductHandlerServer.setupProcessReceipt(self: ProductHandlerServer)
+	local ReviveService = nil
+	do
+		local serverFolder = game:GetService("ServerScriptService"):FindFirstChild("Server")
+		local modules = serverFolder and serverFolder:FindFirstChild("Modules")
+		local reviveModule = modules and modules:FindFirstChild("ReviveService")
+		if reviveModule then
+			local ok, loaded = pcall(require, reviveModule)
+			if ok and loaded then
+				ReviveService = loaded
+			end
+		end
+	end
+
 	local productIdToName: { [number]: string } = {}
 	for name, entry in getProductHandlerConfig() do
 		if entry.type == "devproduct" then
@@ -206,6 +227,32 @@ function ProductHandlerServer.setupProcessReceipt(self: ProductHandlerServer)
 	end
 
 	MarketplaceService.ProcessReceipt = function(receiptInfo)
+		if ReviveService and typeof(ReviveService.processReceipt) == "function" then
+			local reviveDecision = ReviveService.processReceipt(receiptInfo)
+			if reviveDecision ~= nil then
+				return reviveDecision
+			end
+		end
+
+		local customHandler = customReceiptHandlers[receiptInfo.ProductId]
+		if customHandler then
+			local customPlayer = Players:GetPlayerByUserId(receiptInfo.PlayerId)
+			if not customPlayer then
+				return Enum.ProductPurchaseDecision.NotProcessedYet
+			end
+			local ok, decision = pcall(customHandler, customPlayer, receiptInfo)
+			if not ok then
+				warn("[ProductHandler] Custom receipt handler failed for", receiptInfo.ProductId, decision)
+				return Enum.ProductPurchaseDecision.NotProcessedYet
+			end
+			if decision == Enum.ProductPurchaseDecision.PurchaseGranted then
+				self._confettiRemote:FireClient(customPlayer)
+			end
+			if decision ~= nil then
+				return decision
+			end
+		end
+
 		if self._limitedStockServer and self._limitedStockServer:ownsProductId(receiptInfo.ProductId) then
 			local decision = self._limitedStockServer:processReceipt(receiptInfo)
 			if decision == Enum.ProductPurchaseDecision.PurchaseGranted then

@@ -16,7 +16,7 @@
 local M = {}
 
 M.MAX_DAY = 7
-M.SKIP_ALL_GAMEPASS_ID = 3601652426
+M.SKIP_ALL_DEV_PRODUCT_ID = 3601652426
 
 -- 20 hours between claims; first day is always claimable on first join.
 M.CLAIM_COOLDOWN_SEC = 20 * 3600

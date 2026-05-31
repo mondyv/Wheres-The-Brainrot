@@ -4,12 +4,12 @@
 
 	Responsibilities:
 	• Read DailyConfig + DailyRemotes; render per-day card state (Claim / Claimed / Locked).
-	• Animate starbust spin, day 5 "???" left → middle → right pulse, day 7 icon sway.
+	• Animate day 5 "???" left → middle → right pulse, day 7 icon sway (days 5/7 only).
 	• Trigger claim flow on click, play confetti + purchase shake for Day 5, animate the
 	  button morph from Claim → Claimed.
 	• Drive the sidebar "!" badge on the Gifts (Daily) button while a reward is ready,
 	  using the same sway/pulse tween used by Index/Rebirth.
-	• Wire Skip-All gamepass prompt button via DailyPromptSkipAll remote.
+	• Wire Skip-All dev product prompt button via DailyPromptSkipAll remote.
 ]]
 
 local Players = game:GetService("Players")
@@ -35,11 +35,11 @@ local BADGE_INNER_PULSE = TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.Easing
 local BADGE_SWAY_DEG = 5
 local BADGE_INNER_SWAY_DEG = 2.5
 
-local STARBUST_REV_SEC = 14
-local DAY7_ICON_SWAY_INFO = TweenInfo.new(0.95, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
-local DAY7_ICON_SWAY_DEG = 12
-local DAY5_QUESTION_PULSE_INFO = TweenInfo.new(0.36, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local DAY5_QUESTION_CYCLE_GAP = 0.32
+local DAY7_ICON_SWAY_INFO = TweenInfo.new(2.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+local DAY7_ICON_SWAY_PX = 10
+local DAY5_QUESTION_PULSE_INFO = TweenInfo.new(0.62, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+local DAY5_QUESTION_CYCLE_GAP = 0.18
+local DAY5_QUESTION_PEAK_SCALE = 1.22
 local CARD_HOVER_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLAIM_BTN_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLAIM_FLASH_TWEEN = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -58,12 +58,12 @@ local badgeSwayTween: Tween? = nil
 local badgeInnerSwayTween: Tween? = nil
 local badgeInnerPulseTween: Tween? = nil
 
-local starbustConns: { RBXScriptConnection } = {}
+local day5Routine: thread? = nil
+local day7SwayConns: { RBXScriptConnection } = {}
 local cardClaimWired: { [Frame]: boolean } = {}
 local cardClaimHandlers: { [Frame]: () -> () } = {}
 local cardClaimButtons: { [Frame]: GuiButton } = {}
 local cardScales: { [Frame]: UIScale } = {}
-local day5Routine: thread? = nil
 local nextRewardConn: RBXScriptConnection? = nil
 
 local lastState: DailyConfig.DailyState? = nil
@@ -87,16 +87,21 @@ local function getOrAddUIScale(obj: Instance): UIScale
 	return s
 end
 
-local function setGradientEnabledDeep(root: Instance?, enabled: boolean)
-	if not root then
+local function setLayerActive(inst: Instance?, active: boolean)
+	if not inst then
 		return
 	end
-	if root:IsA("UIGradient") then
-		root.Enabled = enabled
+	if inst:IsA("GuiObject") then
+		(inst :: GuiObject).Visible = active
 	end
-	for _, d in ipairs(root:GetDescendants()) do
-		if d:IsA("UIGradient") then
-			d.Enabled = enabled
+	if inst:IsA("UIGradient") then
+		(inst :: UIGradient).Enabled = active
+	end
+	for _, d in inst:GetDescendants() do
+		if d:IsA("GuiObject") then
+			(d :: GuiObject).Visible = active
+		elseif d:IsA("UIGradient") then
+			(d :: UIGradient).Enabled = active
 		end
 	end
 end
@@ -243,34 +248,50 @@ local function showSidebarBadge()
 	startBadgeSway()
 end
 
--- ── Starbust / icon / day-specific animations ───────────────────────────────
-
-local function startStarbustSpin(starbust: GuiObject)
-	if starbust:GetAttribute("__SpinningStarbust") == true then
-		return
+local function ensureCardClipping(card: Frame)
+	card.ClipsDescendants = true
+	local decor = card:FindFirstChild("Decor")
+	if decor and decor:IsA("GuiObject") then
+		(decor :: GuiObject).ClipsDescendants = true
 	end
-	starbust:SetAttribute("__SpinningStarbust", true)
-	local start = os.clock()
-	local conn
-	conn = RunService.RenderStepped:Connect(function()
-		if not starbust.Parent then
-			conn:Disconnect()
-			return
-		end
-		local elapsed = os.clock() - start
-		local rot = (elapsed / STARBUST_REV_SEC) * 360
-		starbust.Rotation = rot % 360
-	end)
-	table.insert(starbustConns, conn)
+	local icon = card:FindFirstChild("Icon")
+	if icon and icon:IsA("GuiObject") then
+		local iconObj = icon :: GuiObject
+		iconObj.ClipsDescendants = true
+		-- Keep the lucky block from rendering above sibling cards while swaying.
+		iconObj.ZIndex = math.min(iconObj.ZIndex, card.ZIndex + 2)
+	end
 end
+
+-- ── Starbust / icon / day-specific animations ───────────────────────────────
 
 local function startDay7IconSway(icon: GuiObject)
 	if icon:GetAttribute("__SwayingDay7Icon") == true then
 		return
 	end
 	icon:SetAttribute("__SwayingDay7Icon", true)
-	icon.Rotation = -DAY7_ICON_SWAY_DEG
-	TweenService:Create(icon, DAY7_ICON_SWAY_INFO, { Rotation = DAY7_ICON_SWAY_DEG }):Play()
+	icon.ClipsDescendants = true
+	icon.ZIndex = math.min(icon.ZIndex, 4)
+
+	local basePos = icon.Position
+	local start = os.clock()
+	local conn
+	conn = RunService.RenderStepped:Connect(function()
+		if not icon.Parent then
+			conn:Disconnect()
+			return
+		end
+		local t = os.clock() - start
+		local wave = math.sin(t * (math.pi / DAY7_ICON_SWAY_INFO.Time))
+		icon.Position = UDim2.new(
+			basePos.X.Scale,
+			basePos.X.Offset + wave * DAY7_ICON_SWAY_PX,
+			basePos.Y.Scale,
+			basePos.Y.Offset + math.sin(t * 0.55) * 2
+		)
+		icon.Rotation = wave * 4
+	end)
+	table.insert(day7SwayConns, conn)
 end
 
 local function day5Question(card: Frame, suffix: string): GuiObject?
@@ -305,24 +326,32 @@ local function startDay5QuestionCycle(card: Frame)
 
 	day5Routine = task.spawn(function()
 		while dailyFrame and dailyFrame.Parent do
-			for _, entry in ipairs(nodes) do
+			for index, entry in ipairs(nodes) do
 				local s = entry.scale
-				TweenService:Create(s, DAY5_QUESTION_PULSE_INFO, { Scale = 1.3 }):Play()
-				task.wait(DAY5_QUESTION_PULSE_INFO.Time * 0.6)
-				TweenService:Create(s, DAY5_QUESTION_PULSE_INFO, { Scale = 1 }):Play()
-				task.wait(DAY5_QUESTION_CYCLE_GAP)
+				local up = TweenService:Create(s, DAY5_QUESTION_PULSE_INFO, { Scale = DAY5_QUESTION_PEAK_SCALE })
+				local down = TweenService:Create(s, DAY5_QUESTION_PULSE_INFO, { Scale = 1 })
+				up:Play()
+				up.Completed:Wait()
+				down:Play()
+				if index < #nodes then
+					task.wait(DAY5_QUESTION_CYCLE_GAP)
+				end
 			end
+			task.wait(DAY5_QUESTION_CYCLE_GAP * 1.5)
 		end
 		day5Routine = nil
 	end)
 end
 
 local function decorateCard(card: Frame, day: number, reward: DailyConfig.DailyReward)
+	ensureCardClipping(card)
+
 	local decor = card:FindFirstChild("Decor")
-	if decor then
+	if decor and (day == 5 or day == 7) then
 		local starbust = decor:FindFirstChild("Starbust") or decor:FindFirstChild("Starburst")
 		if starbust and starbust:IsA("GuiObject") then
-			startStarbustSpin(starbust :: GuiObject)
+			(starbust :: GuiObject).ClipsDescendants = true
+			(starbust :: GuiObject).ZIndex = math.min((starbust :: GuiObject).ZIndex, card.ZIndex + 1)
 		end
 	end
 
@@ -365,12 +394,21 @@ local function applyCardStatus(card: Frame, status: DailyConfig.DayStatus)
 		return
 	end
 
-	-- Stud gradients: Claim (green) vs Claimed/Locked (gray)
+	-- Stud layers: green Claim art for Claim + Claimed, gray for Locked only.
 	local decor = clickHost:FindFirstChild("Decor")
 	local stud = decor and decor:FindFirstChild("Stud")
 	if stud then
-		setGradientEnabledDeep(stud:FindFirstChild("Claim"), status == "claim")
-		setGradientEnabledDeep(stud:FindFirstChild("Claimed/Locked"), status ~= "claim")
+		local claimStud = stud:FindFirstChild("Claim")
+		local lockedStud = stud:FindFirstChild("Claimed/Locked")
+		local showGreen = status == "claim" or status == "claimed"
+		setLayerActive(claimStud, showGreen)
+		setLayerActive(lockedStud, status == "locked")
+	end
+
+	-- Host gradients mirror the same state.
+	local hostGradient = clickHost:FindFirstChildOfClass("UIGradient")
+	if hostGradient then
+		hostGradient.Enabled = status == "claim" or status == "claimed"
 	end
 
 	-- Text labels: "Claim" vs "Claimed/Locked"; choose which one to show.
@@ -405,6 +443,8 @@ end
 
 -- ── Claim flow ──────────────────────────────────────────────────────────────
 
+local applyState: (state: DailyConfig.DailyState) -> ()
+
 local function fireConfettiAndShake()
 	-- Reuse the existing purchase celebration (confetti template + camera shake + purchase SFX).
 	GameSoundEffects.playPurchaseShake()
@@ -421,18 +461,22 @@ end
 
 local function tryClaim(day: number, card: Frame)
 	if not claimRF then
+		GameSoundEffects.playErrorNotif()
 		return
 	end
 	local rf = claimRF
 	task.spawn(function()
-		local ok, success = pcall(function()
+		local pcallOk, claimOk, _err, state = pcall(function()
 			return rf:InvokeServer(day)
 		end)
-		if not ok or not success then
+		if not pcallOk or claimOk ~= true then
 			GameSoundEffects.playErrorNotif()
 			return
 		end
 		UIInteractionSounds.playClick()
+		if typeof(state) == "table" then
+			applyState(state :: DailyConfig.DailyState)
+		end
 		applyCardScaleBump(card)
 		fireConfettiAndShake()
 	end)
@@ -459,7 +503,7 @@ local function wireCardClaim(card: Frame, day: number)
 				overlay.Size = UDim2.fromScale(1, 1)
 				overlay.Position = UDim2.fromScale(0, 0)
 				overlay.BorderSizePixel = 0
-				overlay.ZIndex = (clickHost :: GuiObject).ZIndex + 5
+				overlay.ZIndex = math.max(1, (clickHost :: GuiObject).ZIndex + 1)
 				overlay.Active = true
 				overlay.Parent = clickHost
 				btn = overlay
@@ -612,6 +656,9 @@ function DailyController.init()
 	dailyFrame.Visible = false
 
 	container = dailyFrame:FindFirstChild("Container") :: Frame?
+	if container then
+		container.ClipsDescendants = true
+	end
 	nextRewardLabel = dailyFrame:FindFirstChild("NextReward") :: TextLabel?
 	if nextRewardLabel and not nextRewardLabel:IsA("TextLabel") then
 		nextRewardLabel = nil
@@ -629,6 +676,8 @@ function DailyController.init()
 		UIButtonEffects.wireAccentButton(headerSkipBtn, function()
 			if promptSkipRE then
 				promptSkipRE:FireServer()
+			else
+				GameSoundEffects.playErrorNotif()
 			end
 		end)
 	end

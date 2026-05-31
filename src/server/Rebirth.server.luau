@@ -2,7 +2,6 @@
 	Rebirth authority: requirements, rewards, skip dev product, upgrade reset.
 --]]
 
-local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
@@ -11,7 +10,8 @@ local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild(
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local IndexService = require(script.Parent:WaitForChild("Modules"):WaitForChild("IndexService"))
-local ReviveService = require(script.Parent:WaitForChild("Modules"):WaitForChild("ReviveService"))
+local ProductHandlerServer =
+	require(game:GetService("ServerScriptService").EssentialsServer.ProductHandler.ProductHandlerServer)
 
 local MAX_FLOOR = 4
 
@@ -161,41 +161,24 @@ performRF.OnServerInvoke = function(player: Player)
 	return ok, err
 end
 
-local previousProcessReceipt = MarketplaceService.ProcessReceipt
+ProductHandlerServer.registerProductReceipt(RebirthConfig.SKIP_DEV_PRODUCT_ID, function(player: Player)
+	local ok = performRebirth(player, { skipRequirements = true, keepUpgrades = true })
+	return if ok
+		then Enum.ProductPurchaseDecision.PurchaseGranted
+		else Enum.ProductPurchaseDecision.NotProcessedYet
+end)
 
-MarketplaceService.ProcessReceipt = function(receiptInfo)
-	local reviveDecision = ReviveService.processReceipt(receiptInfo)
-	if reviveDecision ~= nil then
-		return reviveDecision
-	end
-
-	local player = Players:GetPlayerByUserId(receiptInfo.PlayerId)
-	if not player then
-		return Enum.ProductPurchaseDecision.NotProcessedYet
-	end
-
-	if receiptInfo.ProductId == RebirthConfig.SKIP_DEV_PRODUCT_ID then
-		local ok = performRebirth(player, { skipRequirements = true, keepUpgrades = true })
+ProductHandlerServer.registerProductReceipt(SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID, function(player: Player)
+	local internal = ServerStorage:FindFirstChild("GameInternal")
+	local fulfill = internal and internal:FindFirstChild("FulfillRobuxUpgrade")
+	if fulfill and fulfill:IsA("BindableFunction") then
+		local ok = (fulfill :: BindableFunction):Invoke(player)
 		if ok then
 			return Enum.ProductPurchaseDecision.PurchaseGranted
 		end
-	elseif receiptInfo.ProductId == SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID then
-		local internal = ServerStorage:FindFirstChild("GameInternal")
-		local fulfill = internal and internal:FindFirstChild("FulfillRobuxUpgrade")
-		if fulfill and fulfill:IsA("BindableFunction") then
-			local ok = (fulfill :: BindableFunction):Invoke(player)
-			if ok then
-				return Enum.ProductPurchaseDecision.PurchaseGranted
-			end
-		end
 	end
-
-	if previousProcessReceipt then
-		return previousProcessReceipt(receiptInfo)
-	end
-
 	return Enum.ProductPurchaseDecision.NotProcessedYet
-end
+end)
 
 Players.PlayerAdded:Connect(initPlayer)
 for _, plr in Players:GetPlayers() do
@@ -206,7 +189,7 @@ end
 
 -- Expose performRebirth as a BindableFunction so other server systems (e.g. the daily
 -- "free rebirth" reward) can trigger it without circular requires.
-task.spawn(function()
+do
 	local internalFolder = ServerStorage:FindFirstChild("RebirthInternal")
 	if not internalFolder then
 		internalFolder = Instance.new("Folder")
@@ -230,7 +213,7 @@ task.spawn(function()
 		end
 		return performRebirth(plr :: Player, options)
 	end
-end)
+end
 
 return {
 	performRebirth = performRebirth,

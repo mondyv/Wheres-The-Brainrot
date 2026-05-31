@@ -14,6 +14,41 @@ local Debris            = game:GetService("Debris")
 
 local player = Players.LocalPlayer
 local camera: Camera = workspace.CurrentCamera
+
+local gameSoundEffects: any = nil
+
+local function getGameSoundEffects()
+	if gameSoundEffects then
+		return gameSoundEffects
+	end
+	local ps = player:FindFirstChild("PlayerScripts")
+	if not ps then
+		return nil
+	end
+	local client = ps:FindFirstChild("Client")
+	if not client then
+		return nil
+	end
+	local mod = client:FindFirstChild("GameSoundEffects")
+	if not mod or not mod:IsA("ModuleScript") then
+		return nil
+	end
+	local ok, loaded = pcall(require, mod)
+	if ok then
+		gameSoundEffects = loaded
+	end
+	return gameSoundEffects
+end
+
+task.defer(function()
+	local ps = player:WaitForChild("PlayerScripts", 20)
+	if not ps then
+		return
+	end
+	ps:WaitForChild("Client", 20)
+	getGameSoundEffects()
+end)
+
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local SwingProgression = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingProgression"))
@@ -48,8 +83,8 @@ local FOV_MAX              = 96
 local FOV_SPEED            = 4.2   -- smooth widen while accelerating on the arc
 local LANDING_BLOCK_VEL_MIN = 18  -- landing speed that spawns block burst + camera shake
 local LANDING_BLOCK_VEL_MAX = 92
-local LANDING_CAM_SHAKE_DURATION = 0.34
-local LANDING_CAM_SHAKE_MAX = 0.62
+local LANDING_CAM_SHAKE_DURATION = 0.45
+local LANDING_CAM_SHAKE_MAX = 0.17
 -- Hanging swing camera: lag + roll only (no positional shake / high-frequency wobble).
 local CAM_LAG_STUDS_MAX      = 0.95
 local CAM_LAG_SMOOTH         = 3.8
@@ -518,11 +553,12 @@ local function boot(character: Model)
 			local u = landingAge / LANDING_CAM_SHAKE_DURATION
 			local decay = (1 - u) * (1 - u)
 			local shake = landingCamShakeIntensity * decay
-			local t = now * 17
-			cf += Vector3.new(
-				(math.noise(t, 1.5, 0) - 0.5) * 2 * LANDING_CAM_SHAKE_MAX * shake,
-				(math.noise(0, t, 2.5) - 0.5) * 2 * LANDING_CAM_SHAKE_MAX * shake * 0.55,
-				(math.noise(t, 3, 1) - 0.5) * 2 * LANDING_CAM_SHAKE_MAX * shake * 0.28
+			local t = now * 20
+			local amp = LANDING_CAM_SHAKE_MAX * shake
+			cf = cf * CFrame.new(
+				(math.noise(t, 1.5, 0) - 0.5) * 2 * amp,
+				(math.noise(0, t, 2.5) - 0.5) * 2 * amp,
+				(math.noise(t, 3, 1) - 0.5) * 2 * amp * 0.45
 			)
 		end
 
@@ -1274,10 +1310,17 @@ local function boot(character: Model)
 			if landedFromSwing then
 				landedFromSwing = false
 				local alpha = landingImpactAlpha(landingSpeed)
+				local sfxAlpha = if alpha > 0 then alpha else math.clamp(landingSpeed / LANDING_BLOCK_VEL_MIN, 0.25, 0.6)
+				local gse = getGameSoundEffects()
+				if gse and gse.playGroundSmash then
+					gse.playGroundSmash(sfxAlpha)
+				end
 				if alpha > 0 then
 					spawnLandingBlocks(alpha)
-					-- Shake intensity uses same curve as debris; low speeds stay subtle.
-					landingCamShakeIntensity = alpha * alpha * (0.3 + alpha * 0.7)
+					landingCamShakeIntensity = math.clamp(alpha * alpha * (0.55 + alpha * 0.85), 0, 1)
+					landingCamClock = os.clock()
+				elseif sfxAlpha > 0 then
+					landingCamShakeIntensity = sfxAlpha * 0.5
 					landingCamClock = os.clock()
 				end
 			end

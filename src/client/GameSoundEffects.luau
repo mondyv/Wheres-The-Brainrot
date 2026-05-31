@@ -1,6 +1,6 @@
 --[[
 	GameSoundEffects — gameplay SFX under SoundService.SoundEffects
-	CashGrab, ErrorNotif, Drops, BushAura, BushRustles, On ProximityPrompts, GroundSmash
+	CashGrab, ErrorNotif, Drops, BushAura, BushRustles, On ProximityPrompts, GroundSmash, Purchase
 --]]
 
 local Players = game:GetService("Players")
@@ -24,6 +24,7 @@ local bushDuringSearchTemplate: Sound?
 local bushRandomShakeTemplate: Sound?
 local proximityPromptTemplate: Sound?
 local groundSmashTemplate: Sound?
+local purchaseTemplate: Sound?
 
 local activeAuraSound: Sound?
 local activeAuraKey: string? = nil
@@ -252,10 +253,23 @@ function GameSoundEffects.init()
 		groundSmashTemplate = groundSmash
 	end
 
+	local purchase = root:FindFirstChild("Purchase")
+	if purchase and purchase:IsA("Sound") then
+		purchaseTemplate = purchase
+	end
+
 	local ev = ReplicatedStorage:WaitForChild("PlayHarvestDropFX", 60)
 	if ev and ev:IsA("RemoteEvent") then
 		(ev :: RemoteEvent).OnClientEvent:Connect(function(rarity: string)
 			GameSoundEffects.playDrop(typeof(rarity) == "string" and rarity or "common")
+		end)
+	end
+
+	local essentials = ReplicatedStorage:WaitForChild("EssentialsShared", 15)
+	if essentials then
+		local effects = require(essentials:WaitForChild("EffectsController"))
+		effects.setPurchaseSoundHandler(function()
+			GameSoundEffects.playPurchase()
 		end)
 	end
 end
@@ -322,8 +336,32 @@ function GameSoundEffects.playGroundSmash(intensity: number?)
 
 	local t = if typeof(intensity) == "number" then math.clamp(intensity, 0, 1) else 1
 	local clone = prepareClone(template)
-	clone.PlaybackSpeed = 0.88 + t * 0.18
-	clone.Volume = clone.Volume * (0.55 + t * 0.45)
+	clone.PlaybackSpeed = 0.92 + t * 0.14
+	clone.Volume = clone.Volume * math.max(0.75, 0.65 + t * 0.35)
+	clone.Parent = SoundService
+	clone:Play()
+	clone.Ended:Once(function()
+		clone:Destroy()
+	end)
+end
+
+function GameSoundEffects.playPurchase()
+	if ClientSFXVolume.getVolume() <= 0 then
+		return
+	end
+	local template = purchaseTemplate
+	if not template then
+		local root = SoundService:FindFirstChild("SoundEffects")
+		local inst = root and root:FindFirstChild("Purchase")
+		if inst and inst:IsA("Sound") then
+			purchaseTemplate = inst
+			template = inst
+		end
+	end
+	if not template then
+		return
+	end
+	local clone = prepareClone(template)
 	clone.Parent = SoundService
 	clone:Play()
 	clone.Ended:Once(function()

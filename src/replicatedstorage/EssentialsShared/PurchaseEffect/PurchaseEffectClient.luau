@@ -264,6 +264,11 @@ function PurchaseEffectClient.init(self: PurchaseEffectClient)
 		self:show()
 	end)
 
+	bindRemoteAsync("ProductHandlerConfetti", function()
+		EffectsController.confetti(Players.LocalPlayer)
+		self:hide(PurchaseEffectConfig.displayDuration)
+	end)
+
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, _gamePassId, wasPurchased)
 		if player == Players.LocalPlayer then
 			self:onPurchaseFinished(wasPurchased)

@@ -8,6 +8,7 @@ local EffectsController = {}
 
 local lastConfettiAt = 0
 local CONFETTI_DEBOUNCE_SEC = 0.35
+local purchaseSoundHandler: (() -> ())? = nil
 
 local function findAssetsFolder(): Instance?
 	return ReplicatedStorage:FindFirstChild("EssentialsAssets")
@@ -51,6 +52,10 @@ local function emitParticles(root: Instance, defaultCount: number)
 	end
 end
 
+function EffectsController.setPurchaseSoundHandler(handler: (() -> ())?)
+	purchaseSoundHandler = handler
+end
+
 function EffectsController.money(parent: Instance)
 	local moneyTemplate = findTemplate("Money")
 	if parent and moneyTemplate then
@@ -81,7 +86,11 @@ function EffectsController.confetti(player: Player)
 		Debris:AddItem(confetti, 3)
 	end
 
-	SoundController.play(EssentialsConfig.sounds.confetti, 1, false)
+	if purchaseSoundHandler then
+		purchaseSoundHandler()
+	else
+		SoundController.play(EssentialsConfig.sounds.confetti, 1, false)
+	end
 end
 
 return EffectsController

@@ -354,6 +354,23 @@ local function packInventoryForClient(plr: Player, list: { BrainrotInvEntry }, e
 	return payload
 end
 
+local function notifyIndexDeposited(player: Player, entry: BrainrotInvEntry)
+	task.spawn(function()
+		local deadline = os.clock() + 30
+		while os.clock() < deadline do
+			local indexInternal = ServerStorage:FindFirstChild("IndexInternal")
+			local indexBF = indexInternal and indexInternal:FindFirstChild("OnBrainrotDeposited")
+			if indexBF and indexBF:IsA("BindableFunction") then
+				pcall(function()
+					(indexBF :: BindableFunction):Invoke(player, entry)
+				end)
+				return
+			end
+			task.wait(0.25)
+		end
+	end)
+end
+
 local function pushBrainrotInventory(player: Player, entry: BrainrotInvEntry, skipSync: boolean?): boolean
 	local list = brainrotInventories[player]
 	if not list then
@@ -416,10 +433,25 @@ local function findTemplateBySourcePath(root: Folder, path: string): Model?
 	return nil
 end
 
+local function normalizeBrainrotLookupName(name: string): string
+	return string.lower((name:gsub("[%s_%-]", "")))
+end
+
 local function findFirstTemplateByModelName(root: Folder, modelName: string): Model?
+	local want = normalizeBrainrotLookupName(modelName)
 	for _, d in root:GetDescendants() do
-		if d:IsA("Model") and d.Name == modelName and d.Parent and d.Parent:IsA("Folder") then
-			return d
+		if d:IsA("Model") and d.Parent and d.Parent:IsA("Folder") then
+			if normalizeBrainrotLookupName(d.Name) == want then
+				return d
+			end
+			local parent = d.Parent
+			if parent.Parent == root and normalizeBrainrotLookupName(parent.Name) == want then
+				return d
+			end
+			local disp = d:GetAttribute("DisplayName")
+			if typeof(disp) == "string" and disp ~= "" and normalizeBrainrotLookupName(disp) == want then
+				return d
+			end
 		end
 	end
 	return nil
@@ -451,6 +483,14 @@ local function displayNameForTemplateModel(model: Model): string
 	return model.Name
 end
 
+local function sourcePathForTemplate(root: Folder, template: Model): string
+	local parent = template.Parent
+	if parent and parent:IsA("Folder") and parent.Parent == root then
+		return parent.Name .. "/" .. template.Name
+	end
+	return ""
+end
+
 -- Match variant Models stored as Brainrots/<Name>/<Variant>; if matched we treat parent folder name as the brainrot name.
 local VARIANT_FOLDER_NAMES = { Normal = true, Gold = true, Diamond = true, Lava = true, Galaxy = true, Rainbow = true }
 
@@ -467,6 +507,9 @@ local function enrichEntryFromBrainrotsFolder(root: Folder?, entry: BrainrotInvE
 	end
 	if not template then
 		return
+	end
+	if entry.sourcePath == "" then
+		entry.sourcePath = sourcePathForTemplate(root, template)
 	end
 	local icon = pickIconFromTemplateModel(template)
 	if icon ~= "" then
@@ -535,13 +578,7 @@ local function redeemSingleCarryModel(player: Player, carry: Model): number?
 	local newSlot = if list then #list else nil
 	depositDebug("redeem inventory OK slot", player.Name, tostring(newSlot), brainrotName)
 
-	local indexInternal = ServerStorage:FindFirstChild("IndexInternal")
-	local indexBF = indexInternal and indexInternal:FindFirstChild("OnBrainrotDeposited")
-	if indexBF and indexBF:IsA("BindableFunction") then
-		pcall(function()
-			indexBF:Invoke(player, entry)
-		end)
-	end
+	notifyIndexDeposited(player, entry)
 
 	safeZoneSfxPlayedForCarry[carry] = nil
 	carry:Destroy()
@@ -2907,7 +2944,10 @@ ensureEquipBrainrotRemote().OnServerEvent:Connect(function(player: Player, slot:
 		return
 	end
 	local forceEquip = forceArg == true
-	equipBrainrotSlotForPlayer(player, slot :: number, forceEquip)
+	local equippedIdx = equipBrainrotSlotForPlayer(player, slot :: number, forceEquip)
+	if equippedIdx then
+		notifyClientInventorySync(player, equippedIdx, false)
+	end
 end)
 
 task.defer(function()
@@ -3154,19 +3194,30 @@ grantBF.OnInvoke = function(playerArg: any, entryArg: any, opts: any): boolean
 	end
 	local newSlot = #list
 
-	-- Mark as discovered in the Index so the unlock toast / sidebar badge fires.
-	local indexInternal = ServerStorage:FindFirstChild("IndexInternal")
-	local indexBF = indexInternal and indexInternal:FindFirstChild("OnBrainrotDeposited")
-	if indexBF and indexBF:IsA("BindableFunction") then
-		pcall(function()
-			indexBF:Invoke(plr, entry)
-		end)
-	end
+	notifyIndexDeposited(plr, entry)
 
 	local forceEquip = true
 	if typeof(opts) == "table" and opts.equip == false then
 		forceEquip = false
 	end
-	notifyClientInventorySync(plr, newSlot, forceEquip)
+	local syncSlot = newSlot
+	if forceEquip then
+		local equippedIdx = equipBrainrotSlotForPlayer(plr, newSlot, true)
+		if typeof(equippedIdx) == "number" then
+			syncSlot = equippedIdx
+		else
+			task.spawn(function()
+				for _ = 1, 24 do
+					local idx = equipBrainrotSlotForPlayer(plr, newSlot, true)
+					if typeof(idx) == "number" then
+						notifyClientInventorySync(plr, idx, false)
+						return
+					end
+					task.wait(0.25)
+				end
+			end)
+		end
+	end
+	notifyClientInventorySync(plr, syncSlot, false)
 	return true
 end

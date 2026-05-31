@@ -182,7 +182,7 @@ local function grantLuckyBlockStarRainbow(player: Player): boolean
 		return false
 	end
 	local ok, success = pcall(function()
-		return grant:Invoke(player, "star rainbow", { equip = false })
+		return grant:Invoke(player, "star rainbow", { equip = true })
 	end)
 	return ok and success == true
 end

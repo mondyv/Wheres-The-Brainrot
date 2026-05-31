@@ -902,8 +902,48 @@ hideToolbar = function()
 	t:Play()
 end
 
+local function playerHasToolbarInventory(): boolean
+	if brainrotInventoryUsed > 0 then
+		return true
+	end
+	local bp = getBackpack()
+	if bp then
+		for _, item in bp:GetChildren() do
+			if item:IsA("Tool") then
+				return true
+			end
+		end
+	end
+	local char = player.Character
+	if char then
+		for _, item in char:GetChildren() do
+			if item:IsA("Tool") then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function canSelectHotbarSlot(): boolean
+	return canUseToolbar or playerHasToolbarInventory()
+end
+
+local function hotbarSlotHasSelectableContent(index: number): boolean
+	if brainrotParkedInUI[index] then
+		return false
+	end
+	if brainrotEntries[index] ~= nil then
+		return true
+	end
+	if slotTools[index] ~= nil then
+		return true
+	end
+	return false
+end
+
 local function refreshToolbarVisibility()
-	if canUseToolbar then
+	if canUseToolbar or playerHasToolbarInventory() then
 		showToolbar()
 	else
 		hideToolbar()
@@ -1631,7 +1671,7 @@ local function requestMoveBackpackEntryToHotbar(listIdx: number)
 end
 
 local function requestEquipBrainrotSlot(slotIdx: number, forceEquip: boolean?)
-	if not forceEquip and not canUseToolbar then
+	if not forceEquip and not canSelectHotbarSlot() then
 		return
 	end
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
@@ -1870,9 +1910,7 @@ local function setBrainrotEntriesFromServer(payload: any)
 	refreshInventoryHeaderText()
 	refreshBrainrotBackpackUI()
 	rebuildSlots()
-	if canUseToolbar then
-		refreshToolbarVisibility()
-	end
+	refreshToolbarVisibility()
 	if typeof(payload) == "table" then
 		local equipSlot = (payload :: any).equipSlot
 		if typeof(equipSlot) == "number" then
@@ -1889,12 +1927,14 @@ end
 -- ── Equip from slot ───────────────────────────────────────────────────────────
 
 selectSlot = function(index: number)
-	if not canUseToolbar then
+	if not canSelectHotbarSlot() then
 		return
 	end
-	if not brainrotEntries[index] or brainrotParkedInUI[index] then
+	if not hotbarSlotHasSelectableContent(index) then
 		return
 	end
+
+	local hasBrainrotEntry = brainrotEntries[index] ~= nil and not brainrotParkedInUI[index]
 	local tool = slotTools[index]
 	local hum = getHumanoid()
 	if not hum then
@@ -1902,6 +1942,18 @@ selectSlot = function(index: number)
 	end
 	local char = player.Character
 	local equipped = char and char:FindFirstChildOfClass("Tool")
+
+	-- Extra tool slot (e.g. lucky block) with no brainrot inventory index.
+	if tool and not hasBrainrotEntry then
+		if equipped == tool then
+			hum:UnequipTools()
+			setHotbarSelection(nil)
+			return
+		end
+		setHotbarSelection(index)
+		hum:EquipTool(tool)
+		return
+	end
 
 	if tool and equipped == tool then
 		hum:UnequipTools()
@@ -1915,7 +1967,7 @@ selectSlot = function(index: number)
 			setHotbarSelection(nil)
 			return
 		end
-		if brainrotEntries[index] and not brainrotParkedInUI[index] then
+		if hasBrainrotEntry then
 			if equipped and equipped:IsA("Tool") and equipped:GetAttribute("BrainrotTool") == true then
 				local invIdx = equipped:GetAttribute("BrainrotInvIndex")
 				if typeof(invIdx) == "number" and math.floor(invIdx) == index and uiHotbarHighlight == index then
@@ -1926,6 +1978,9 @@ selectSlot = function(index: number)
 			end
 			setHotbarSelection(index)
 			requestEquipBrainrotSlot(index, true)
+			task.defer(rebuildSlots)
+			task.delay(0.15, rebuildSlots)
+			task.delay(0.35, rebuildSlots)
 			return
 		end
 		setHotbarSelection(index)
@@ -1991,10 +2046,10 @@ local function bindToolbarHotbarKeybinds()
 			if not idx then
 				return Enum.ContextActionResult.Pass
 			end
-			if not canUseToolbar then
-				return Enum.ContextActionResult.Sink
+			if not canSelectHotbarSlot() then
+				return Enum.ContextActionResult.Pass
 			end
-			if not brainrotEntries[idx] or brainrotParkedInUI[idx] then
+			if not hotbarSlotHasSelectableContent(idx) then
 				return Enum.ContextActionResult.Pass
 			end
 			UIInteractionSounds.playHover()
@@ -2107,14 +2162,14 @@ function ToolbarController.init()
 			configureHotbarSlotInput(slot, btn)
 			styleToolbarSlotButton(btn)
 			local function onHotbarSlotTapSelect()
-				if not canUseToolbar then
+				if not canSelectHotbarSlot() then
 					return
 				end
 				if dragSuppressedToolbarClick then
 					dragSuppressedToolbarClick = false
 					return
 				end
-				if not brainrotEntries[i] or brainrotParkedInUI[i] then
+				if not hotbarSlotHasSelectableContent(i) then
 					return
 				end
 				UIInteractionSounds.playClick()

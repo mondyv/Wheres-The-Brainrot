@@ -145,6 +145,44 @@ local function getMainPart(model: Model): BasePart?
 end
 
 local function pickIconFromModel(model: Model): string
+	local function readIconNode(node: Instance): string
+		if node:IsA("ImageLabel") and node.Image ~= "" then
+			return node.Image
+		end
+		if node:IsA("ImageButton") and node.Image ~= "" then
+			return node.Image
+		end
+		if node:IsA("Decal") and node.Texture ~= "" then
+			return node.Texture
+		end
+		if node:IsA("BillboardGui") or node:IsA("SurfaceGui") then
+			for _, d in node:GetDescendants() do
+				if d:IsA("ImageLabel") and d.Image ~= "" then
+					return d.Image
+				end
+				if d:IsA("ImageButton") and d.Image ~= "" then
+					return d.Image
+				end
+			end
+		end
+		return ""
+	end
+
+	local iconNode = model:FindFirstChild("Icon")
+	if iconNode then
+		local tex = readIconNode(iconNode)
+		if tex ~= "" then
+			return tex
+		end
+	end
+	for _, d in ipairs(model:GetDescendants()) do
+		if d.Name == "Icon" then
+			local tex = readIconNode(d)
+			if tex ~= "" then
+				return tex
+			end
+		end
+	end
 	for _, d in ipairs(model:GetDescendants()) do
 		if d:IsA("ImageLabel") and d.Image ~= "" then
 			return d.Image
@@ -192,7 +230,29 @@ local function buildLuckyBlockTool(template: Model, blockName: string): Tool?
 	for _, d in ipairs(clone:GetDescendants()) do
 		if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ProximityPrompt") then
 			d:Destroy()
+		elseif d.Name == "Icon"
+			and (
+				d:IsA("ImageLabel")
+				or d:IsA("ImageButton")
+				or d:IsA("Decal")
+				or d:IsA("BillboardGui")
+				or d:IsA("SurfaceGui")
+			)
+		then
+			d:Destroy()
 		end
+	end
+	local iconChild = clone:FindFirstChild("Icon")
+	if iconChild
+		and (
+			iconChild:IsA("ImageLabel")
+			or iconChild:IsA("ImageButton")
+			or iconChild:IsA("Decal")
+			or iconChild:IsA("BillboardGui")
+			or iconChild:IsA("SurfaceGui")
+		)
+	then
+		iconChild:Destroy()
 	end
 	local main = getMainPart(clone)
 	if not main then
@@ -216,9 +276,6 @@ local function buildLuckyBlockTool(template: Model, blockName: string): Tool?
 	tool:SetAttribute("LuckyBlockKind", blockName)
 
 	local icon = pickIconFromModel(template)
-	if icon == "" then
-		icon = resolveStarRainbowIconId()
-	end
 	if icon ~= "" then
 		pcall(function()
 			tool.TextureId = icon
@@ -371,10 +428,24 @@ grantBF.OnInvoke = function(plrArg: any, blockNameArg: any, optsArg: any): boole
 	end
 	tool.Parent = bp
 	if shouldEquip then
-		local hum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
-		if hum then
-			pcall(function()
-				(hum :: Humanoid):EquipTool(tool)
+		local function tryEquip(): boolean
+			local hum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+			if hum then
+				pcall(function()
+					(hum :: Humanoid):EquipTool(tool)
+				end)
+				return tool.Parent == plr.Character
+			end
+			return false
+		end
+		if not tryEquip() then
+			task.spawn(function()
+				for _ = 1, 24 do
+					if tryEquip() then
+						return
+					end
+					task.wait(0.25)
+				end
 			end)
 		end
 	end

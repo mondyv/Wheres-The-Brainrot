@@ -64,7 +64,9 @@ local badgeInnerPulseTween: Tween? = nil
 local day5Routine: thread? = nil
 local day7IconTweens: { Tween } = {}
 local day7Icon: GuiObject? = nil
+local day7Starbust: GuiObject? = nil
 local day7Card: Frame? = nil
+local dailyScrollFrame: ScrollingFrame? = nil
 local cardClaimWired: { [Frame]: boolean } = {}
 local cardClaimHandlers: { [Frame]: () -> () } = {}
 local cardClaimButtons: { [Frame]: GuiButton } = {}
@@ -341,17 +343,22 @@ local function startDay7IconSway(icon: GuiObject)
 	table.insert(day7IconTweens, scaleTween)
 end
 
-local function refreshDay7IconVisibility()
-	if not day7Icon or not day7Card then
+local function refreshDay7CardVisibility()
+	if not day7Card then
 		return
 	end
 	local show = (dailyFrame and dailyFrame.Visible) and isCardVisibleInContainer(day7Card)
-	day7Icon.Visible = show
-	if show and day7Icon:GetAttribute("__SwayingDay7Icon") ~= true then
-		startDay7IconSway(day7Icon)
-	elseif not show then
-		stopDay7IconAnimation()
-		day7Icon:SetAttribute("__SwayingDay7Icon", false)
+	if day7Icon then
+		day7Icon.Visible = show
+		if show and day7Icon:GetAttribute("__SwayingDay7Icon") ~= true then
+			startDay7IconSway(day7Icon)
+		elseif not show then
+			stopDay7IconAnimation()
+			day7Icon:SetAttribute("__SwayingDay7Icon", false)
+		end
+	end
+	if day7Starbust then
+		day7Starbust.Visible = show
 	end
 end
 
@@ -442,6 +449,13 @@ local function decorateCard(card: Frame, day: number, reward: DailyConfig.DailyR
 		if icon and icon:IsA("GuiObject") then
 			day7Icon = icon :: GuiObject
 			day7Icon.Visible = false
+		end
+		if decor then
+			local starbust = decor:FindFirstChild("Starbust") or decor:FindFirstChild("Starburst")
+			if starbust and starbust:IsA("GuiObject") then
+				day7Starbust = starbust :: GuiObject
+				day7Starbust.Visible = false
+			end
 		end
 	end
 end
@@ -769,6 +783,26 @@ function DailyController.init()
 	if container then
 		container.ClipsDescendants = true
 		ensureScrollClipping(container)
+		local scrollNode: Instance? = container
+		while scrollNode do
+			if scrollNode:IsA("ScrollingFrame") then
+				dailyScrollFrame = scrollNode :: ScrollingFrame
+				break
+			end
+			scrollNode = scrollNode.Parent
+		end
+		if dailyScrollFrame then
+			dailyScrollFrame:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+				if dailyFrame and dailyFrame.Visible then
+					refreshDay7CardVisibility()
+				end
+			end)
+			dailyScrollFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+				if dailyFrame and dailyFrame.Visible then
+					refreshDay7CardVisibility()
+				end
+			end)
+		end
 	end
 	nextRewardLabel = dailyFrame:FindFirstChild("NextReward") :: TextLabel?
 	if nextRewardLabel and not nextRewardLabel:IsA("TextLabel") then
@@ -851,12 +885,15 @@ function DailyController.init()
 		if dailyFrame.Visible then
 			hideSidebarBadge()
 			fetchState()
-			task.defer(refreshDay7IconVisibility)
+			task.defer(refreshDay7CardVisibility)
 		else
 			stopDay7IconAnimation()
 			if day7Icon then
 				day7Icon.Visible = false
 				day7Icon:SetAttribute("__SwayingDay7Icon", false)
+			end
+			if day7Starbust then
+				day7Starbust.Visible = false
 			end
 			if lastState and DailyConfig.hasUnclaimedReady(lastState) then
 				showSidebarBadge()
@@ -878,7 +915,7 @@ function DailyController.init()
 		lastTickAt = now
 		updateNextRewardLabel(lastState)
 		if dailyFrame and dailyFrame.Visible then
-			refreshDay7IconVisibility()
+			refreshDay7CardVisibility()
 		end
 		-- If a card just became claimable while the panel is closed, surface the badge.
 		if lastState and DailyConfig.hasUnclaimedReady(lastState) then

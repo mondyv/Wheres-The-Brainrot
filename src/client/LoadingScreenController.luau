@@ -14,6 +14,8 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
+local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+
 local MIN_DISPLAY_SEC = 3
 local HOLD_AT_FULL_SEC = 0.4
 local FADE_OUT_SEC = 0.9
@@ -1016,6 +1018,8 @@ local function enterLoadingIsolation(playerGui: PlayerGui)
 	loadingActive = true
 	setCoreGuisVisible(false)
 
+	PlayerGuiMain.dedupe(playerGui)
+
 	if not savedGuiStates then
 		savedGuiStates = {}
 		for _, child in playerGui:GetChildren() do
@@ -1037,6 +1041,9 @@ local function enterLoadingIsolation(playerGui: PlayerGui)
 			if not loadingActive then
 				return
 			end
+			if child:IsA("ScreenGui") and child.Name == "Main" then
+				PlayerGuiMain.dedupe(playerGui)
+			end
 			if child:IsA("ScreenGui") and not isLoadingGuiAllowed(child.Name) then
 				if savedGuiStates then
 					savedGuiStates[child] = child.Enabled
@@ -1048,13 +1055,9 @@ local function enterLoadingIsolation(playerGui: PlayerGui)
 end
 
 local function prepareGameplayUIBeforeReveal(playerGui: PlayerGui)
-	local main = playerGui:FindFirstChild("Main")
+	local main = PlayerGuiMain.finalize(playerGui)
 	if not main then
 		return
-	end
-
-	if main:IsA("ScreenGui") then
-		main.ResetOnSpawn = false
 	end
 
 	local frames = main:FindFirstChild("Frames")
@@ -1125,6 +1128,8 @@ local function exitLoadingIsolation(playerGui: PlayerGui)
 		end
 		savedGuiStates = nil
 	end
+
+	PlayerGuiMain.finalize(playerGui)
 
 	setCoreGuisVisible(true)
 

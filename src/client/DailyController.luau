@@ -6,7 +6,7 @@
 	• Read DailyConfig + DailyRemotes; render per-day card state (Claim / Claimed / Locked).
 	• Animate day 5 "???" left → middle → right pulse, day 7 icon sway (days 5/7 only).
 	• Trigger claim flow on click; play confetti via DailyClaimed (purchase rainbow handles Skip All).
-	  button morph from Claim → Claimed.
+	• Animate the button morph from Claim → Claimed.
 	• Drive the sidebar "!" badge on the Gifts (Daily) button while a reward is ready,
 	  using the same sway/pulse tween used by Index/Rebirth.
 	• Wire Skip-All dev product prompt with the shared purchase rainbow effect.

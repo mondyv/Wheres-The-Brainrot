@@ -1,8 +1,9 @@
 -- SwingSystem.client.luau
--- Double-jump while airborne to attach to the nearest SwingTarget vine.
--- WASD steers along the arc; vine glide pulls you toward the hook + lighter gravity (Mowgli-style).
--- Release Jump (Space / ButtonA release) to detach with a momentum-based launch (preserves arc speed + forward impulse).
--- Upgrade attributes on the player: SwingRange, SwingForce, RopeLength (all numbers)
+-- Hold Jump while AIRBORNE to attach to the nearest SwingTarget vine; release Jump to detach + launch.
+-- Joystick / WASD steers the swing along the rope tangent; rope physics caps travel at
+-- MaxSwingDistance (30 studs + small per RopeUpgradeLevel) and pulls back when stretched.
+-- Power upgrades mainly grow the release launch and slightly improve hooked steering.
+-- Swing UI + ability are gated on the player being airborne (Jumping / Freefall / FallingDown / already swinging).
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -22,16 +23,18 @@ local SwingProgression = require(ReplicatedStorage:WaitForChild("Shared"):WaitFo
 local r6RenderBindSerial = 0
 
 -- ───────────────────────────── TUNABLES ──────────────────────────────────────
-local BASE_RANGE         = 56    -- grapple search radius in studs (starting reach)
-local BASE_ROPE          = 56
-local BASE_FORCE         = 68    -- camera-look tangent steering (starting power)
+local BASE_MAX_SWING_DISTANCE = SwingProgression.BASE_MAX_SWING_DISTANCE -- 30 studs from hook point
+local BASE_FORCE         = 95    -- joystick/WASD tangent steering (starting power)
 local FORCE_DECAY_TIME   = 6.0
-local FORCE_MIN_MULT     = 0.75
+local FORCE_MIN_MULT     = 0.85
 local ANGULAR_DAMP       = 6.0
--- SpringConstraint: FreeLength=0 means force = dist * stiffness, always pulling toward vine, never pushes back
+-- SpringConstraint: gentle centripetal pull so the player hangs naturally on the rope.
 local SPRING_FREE_LENGTH = 0
 local SPRING_STIFFNESS   = 100
 local SPRING_DAMPING     = 20
+-- Rope tension when stretched past MaxSwingDistance — acts like a real rope going taut.
+local ROPE_TENSION_STIFFNESS = 140  -- pull strength per stud of overshoot (force/mass)
+local ROPE_TENSION_DAMPING   = 28   -- brakes outward radial velocity smoothly
 local ZIP_TOWARD_DV          = 19    -- studs/s into the arc on attach
 local MOVEMENT_INPUT_THRESHOLD = 0.05
 local LAUNCH_DURATION        = 0.42  -- seconds post-release camera/FOV treats player as launched
@@ -294,9 +297,8 @@ local function boot(character: Model)
 	end
 
 	-- ── Upgrade stats (unified curve via SwingProgression) ───────────────────
-	local swingRange = BASE_RANGE
 	local swingForce = BASE_FORCE
-	local ropeLength = BASE_ROPE
+	local dynMaxSwingDistance = BASE_MAX_SWING_DISTANCE
 
 	local dynMaxSwingSpeed = MAX_SWING_SPEED
 	local dynSwingArcForce = 34
@@ -311,9 +313,6 @@ local function boot(character: Model)
 	local dynLaunchDeadhangImpulse = 22
 
 	local function refreshStats()
-		local ropePts = player:GetAttribute("RopeLength")
-		local ropeAttrPts = if typeof(ropePts) == "number" then ropePts else 0
-
 		local powerLevel = player:GetAttribute(SwingUpgrades.POWER_LEVEL_ATTR)
 		local ropeLevel = player:GetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR)
 		if typeof(powerLevel) ~= "number" then
@@ -339,8 +338,7 @@ local function boot(character: Model)
 		dynLaunchUpImpulse = ps.launchUpImpulse
 		dynLaunchDeadhangImpulse = ps.launchDeadhangImpulse
 
-		swingRange = rs.reachStuds
-		ropeLength = math.max(rs.reachStuds + ropeAttrPts * 2, 8)
+		dynMaxSwingDistance = math.max(rs.maxSwingDistance, 8)
 	end
 	refreshStats()
 
@@ -412,9 +410,9 @@ local function boot(character: Model)
 		return pumpDir * deficit * dynSwingSpeedPump * mult * mass * 0.018
 	end
 
-	-- Grapple only works to targets within rope reach (swingRange can be larger from upgrades)
+	-- Grapple search radius matches the rope physics cap: you can only hook what the rope can hold.
 	local function attachRadius(): number
-		return math.min(swingRange, ropeLength)
+		return dynMaxSwingDistance
 	end
 
 	local statConns = {
@@ -947,9 +945,7 @@ local function boot(character: Model)
 			rebuildCache()
 		end
 		local look = camera.CFrame.LookVector
-		local maxReach = attachRadius()
-		local ropeLim = ropeLength + 0.35
-		local limit = math.min(maxReach, ropeLim)
+		local limit = attachRadius()
 		local best: BasePart? = nil
 		local bestScore = -math.huge
 		for _, p in partCache do
@@ -985,6 +981,8 @@ local function boot(character: Model)
 	end
 
 	-- Movement input (joystick / WASD) steers swing; fall back to character facing when idle.
+	-- Reads humanoid first (Roblox keeps MoveDirection updated through PlatformStand in modern builds);
+	-- falls back to raw keyboard/gamepad so swing input never goes dead if MoveDirection stalls.
 	local function flatMoveInputDir(): Vector3
 		local md = humanoid.MoveDirection
 		if md.Magnitude > MOVEMENT_INPUT_THRESHOLD then
@@ -993,6 +991,38 @@ local function boot(character: Model)
 				return flat.Unit
 			end
 		end
+
+		local fwd, right = 0, 0
+		if UserInputService.KeyboardEnabled then
+			if UserInputService:IsKeyDown(Enum.KeyCode.W) then fwd += 1 end
+			if UserInputService:IsKeyDown(Enum.KeyCode.S) then fwd -= 1 end
+			if UserInputService:IsKeyDown(Enum.KeyCode.D) then right += 1 end
+			if UserInputService:IsKeyDown(Enum.KeyCode.A) then right -= 1 end
+		end
+		if UserInputService.GamepadEnabled then
+			for _, input in UserInputService:GetGamepadState(Enum.UserInputType.Gamepad1) do
+				if input.KeyCode == Enum.KeyCode.Thumbstick1 then
+					local v = input.Position
+					if math.abs(v.X) > 0.15 then right += v.X end
+					if math.abs(v.Y) > 0.15 then fwd += v.Y end
+				end
+			end
+		end
+
+		if fwd ~= 0 or right ~= 0 then
+			local camLook = camera.CFrame.LookVector
+			local camFlat = Vector3.new(camLook.X, 0, camLook.Z)
+			if camFlat.Magnitude < 0.01 then
+				camFlat = Vector3.new(0, 0, -1)
+			end
+			local camFwd = camFlat.Unit
+			local camRight = Vector3.new(camFwd.Z, 0, -camFwd.X)
+			local dir = camFwd * fwd + camRight * right
+			if dir.Magnitude > MOVEMENT_INPUT_THRESHOLD then
+				return dir.Unit
+			end
+		end
+
 		local look = hrp.CFrame.LookVector
 		local flatLook = Vector3.new(look.X, 0, look.Z)
 		if flatLook.Magnitude > MOVEMENT_INPUT_THRESHOLD then
@@ -1001,15 +1031,30 @@ local function boot(character: Model)
 		return Vector3.new(0, 0, -1)
 	end
 
-	local function canGrappleFromAir(): boolean
-		if isAirborne then
+	-- Swing ability/UI requires being airborne (or already swinging). Walking, running, standing,
+	-- climbing, swimming, sitting, getting up — none of these allow a new grapple.
+	local function isCharacterAirborne(): boolean
+		if isSwinging then
 			return true
 		end
 		local st = humanoid:GetState()
-		if st == Enum.HumanoidStateType.Freefall or st == Enum.HumanoidStateType.Jumping then
+		if st == Enum.HumanoidStateType.Freefall
+			or st == Enum.HumanoidStateType.Jumping
+			or st == Enum.HumanoidStateType.FallingDown
+		then
 			return true
 		end
-		if os.clock() - lastSwingEndClock < REATTACH_AIR_GRACE then
+		-- Short post-swing grace: re-hook while still flying through the air, never while on ground.
+		if os.clock() - lastSwingEndClock < REATTACH_AIR_GRACE
+			and st ~= Enum.HumanoidStateType.Running
+			and st ~= Enum.HumanoidStateType.RunningNoPhysics
+			and st ~= Enum.HumanoidStateType.Landed
+			and st ~= Enum.HumanoidStateType.Seated
+			and st ~= Enum.HumanoidStateType.PlatformStanding
+			and st ~= Enum.HumanoidStateType.Climbing
+			and st ~= Enum.HumanoidStateType.Swimming
+			and st ~= Enum.HumanoidStateType.GettingUp
+		then
 			return true
 		end
 		return false
@@ -1056,10 +1101,13 @@ local function boot(character: Model)
 	local function startSwing(target: BasePart)
 		local attachWorld = closestAttachWorldOnPart(target)
 		local dist = (hrp.Position - attachWorld).Magnitude
-		if dist > ropeLength + 0.5 or dist < 0.08 then
+		if dist > dynMaxSwingDistance + 0.5 or dist < 0.08 then
 			return
 		end
 		if isHrpInSafezone() then
+			return
+		end
+		if not isCharacterAirborne() then
 			return
 		end
 
@@ -1261,13 +1309,17 @@ local function boot(character: Model)
 					local tangSpeed = tangVel.Magnitude
 					local inputTang = flatUnit - radial * flatUnit:Dot(radial)
 
+					-- Launch primarily follows current swing momentum; input gives a light steer.
 					local launchDir: Vector3
-					if inputTang.Magnitude > 0.05 then
-						launchDir = inputTang.Unit
-						if tangSpeed > 2 then
-							launchDir = (tangVel.Unit * 0.35 + inputTang.Unit * 0.65).Unit
+					if tangSpeed > 4 then
+						if inputTang.Magnitude > 0.05 then
+							launchDir = (tangVel.Unit * 0.7 + inputTang.Unit * 0.3).Unit
+						else
+							launchDir = tangVel.Unit
 						end
-					elseif tangSpeed > 2 then
+					elseif inputTang.Magnitude > 0.05 then
+						launchDir = inputTang.Unit
+					elseif tangSpeed > 0.5 then
 						launchDir = tangVel.Unit
 					else
 						launchDir = if speed > 0.1 then vel.Unit else flatUnit
@@ -1320,14 +1372,16 @@ local function boot(character: Model)
 		end
 	end)
 
-	-- Try to hook onto the best visible target. No air-state gating here — if the
-	-- green UI is showing there is a valid target and the player intentionally pressed
-	-- jump; just attach. Cooldown prevents double-fire only after a successful hook.
+	-- Hook only when the player is airborne (jumping / falling / freefall / post-swing grace).
+	-- Forward movement alone is NOT enough — the player must be off the ground.
 	local function tryGrappleAttach()
 		if isSwinging then
 			return
 		end
 		if isHrpInSafezone() then
+			return
+		end
+		if not isCharacterAirborne() then
 			return
 		end
 		local now = os.clock()
@@ -1490,7 +1544,7 @@ local function boot(character: Model)
 
 		camera.FieldOfView += (fovTarget - camera.FieldOfView) * math.min(dt * FOV_SPEED, 1)
 
-		-- Swing physics: camera-steered pendulum on a SpringConstraint.
+		-- Swing physics: rope-tension cap + joystick/WASD steering on a SpringConstraint.
 		if isSwinging and forceInst and swingTargetPart and swingTargetPart.Parent and ropeAnchorAtt and ropeAnchorAtt.Parent then
 			swingTimer += dt
 			humanoid.PlatformStand = true
@@ -1499,28 +1553,45 @@ local function boot(character: Model)
 			local decay = math.clamp(swingTimer / FORCE_DECAY_TIME, 0, 1)
 			local mult = 1 - decay * (1 - FORCE_MIN_MULT)
 
-			local fromAnchor = hrp.Position - ropeAnchorAtt.WorldPosition
+			local anchorWorld = ropeAnchorAtt.WorldPosition
+			local fromAnchor = hrp.Position - anchorWorld
 			local dist = fromAnchor.Magnitude
 			local radial = if dist > 0.2 then fromAnchor.Unit else Vector3.yAxis
-			local ropeSpan = math.max(ropeLength, 8)
-			local extT = math.clamp(dist / ropeSpan, 0, 1.12)
-			local anchorWorld = ropeAnchorAtt.WorldPosition
+			local maxDist = math.max(dynMaxSwingDistance, 8)
+			local extT = math.clamp(dist / maxDist, 0, 1.12)
+			local mass = hrp.AssemblyMass
 
-			-- Movement-input steering: walk direction on the swing tangent plane.
+			-- Joystick / WASD steering: project movement input onto the rope tangent plane.
+			-- Backward input naturally opposes current swing velocity → slows / reverses.
 			local steerDir = flatMoveInputDir()
-			local tang = steerDir - radial * steerDir:Dot(radial)
+			local tangSteer = steerDir - radial * steerDir:Dot(radial)
 			local inputSteerForce = Vector3.zero
-			if tang.Magnitude > 0.05 then
-				inputSteerForce = tang.Unit * swingForce * mult * hrp.AssemblyMass
+			if tangSteer.Magnitude > 0.05 then
+				inputSteerForce = tangSteer.Unit * swingForce * mult * mass
 			end
 
 			local arcDir = pendulumArcDir(radial) or Vector3.new(0, -1, 0)
-			local arcForce = computeSwingArcForce(anchorWorld, radial, extT, mult, hrp.AssemblyMass)
-			local speedPump = computeSwingSpeedPump(radial, arcDir, vel, extT, mult, hrp.AssemblyMass)
+			local arcForce = computeSwingArcForce(anchorWorld, radial, extT, mult, mass)
+			local speedPump = computeSwingSpeedPump(radial, arcDir, vel, extT, mult, mass)
 
-			-- Extended rope: pendulum arc dominates (fixes float); close in: more movement steer.
-			local arcWeight = 0.42 + math.clamp((extT - 0.35) / 0.65, 0, 1) * 0.58
-			forceInst.Force = inputSteerForce * (1 - arcWeight * 0.5) + arcForce + speedPump
+			-- Rope tension: when stretched past MaxSwingDistance, pull inward + brake outward velocity.
+			local ropeTensionForce = Vector3.zero
+			local overshoot = dist - maxDist
+			if overshoot > 0 then
+				local outwardSpeed = math.max(0, vel:Dot(radial))
+				local pullDir = -radial
+				local tension = overshoot * ROPE_TENSION_STIFFNESS * mass
+				local damping = outwardSpeed * ROPE_TENSION_DAMPING * mass
+				ropeTensionForce = pullDir * (tension + damping)
+				-- Cancel input steering that would pull farther outward (rope is taut).
+				if inputSteerForce:Dot(radial) > 0 then
+					inputSteerForce = inputSteerForce - radial * inputSteerForce:Dot(radial)
+				end
+			end
+
+			-- Near the rope cap, arc + pendulum dominate; closer in, player input steers more.
+			local arcWeight = 0.30 + math.clamp((extT - 0.35) / 0.65, 0, 1) * 0.55
+			forceInst.Force = inputSteerForce * (1 - arcWeight * 0.4) + arcForce + speedPump + ropeTensionForce
 
 			local floorScale = swingFloorScale(anchorWorld)
 			if floorScale < 0.3 and vel.Y < -10 then
@@ -1557,10 +1628,12 @@ local function boot(character: Model)
 			humanoid.CameraOffset = humanoid.CameraOffset:Lerp(Vector3.zero, math.min(dt * 14, 1))
 		end
 
-		-- Single target indicator: best vine in range (camera aim). Safe zone = red, no grapple.
+		-- Single target indicator: best vine in range (camera aim). Hidden unless airborne.
+		-- Safe zone shows red while in range; grapple still disabled there.
+		local airborne = isCharacterAirborne()
 		local inSafe = isHrpInSafezone()
-		local aimVisual = cameraPickSwingTarget(false)
-		local grappleOk = not inSafe and aimVisual ~= nil
+		local aimVisual: BasePart? = if airborne then cameraPickSwingTarget(false) else nil
+		local grappleOk = airborne and not inSafe and aimVisual ~= nil
 
 		local inRngNow: { BasePart } = {}
 		if aimVisual then

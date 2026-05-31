@@ -1,7 +1,8 @@
--- Unified swing upgrade curves: one progression factor drives power, speed, zip, and launch.
+-- Unified swing upgrade curves: power mainly drives the release launch,
+-- rope drives the max distance you can travel from the hook point.
 local M = {}
 
--- Reference levels shape the early/mid curve; upgrades beyond these still scale (unlimited).
+-- Reference levels shape the early/mid curve; growth continues past them with diminishing returns.
 M.POWER_REFERENCE_LEVEL = 300
 M.ROPE_REFERENCE_LEVEL = 100
 
@@ -11,8 +12,16 @@ M.POWER_DISPLAY_STEP = 10
 M.REACH_DISPLAY_BASE = 10
 M.REACH_DISPLAY_STEP = 25
 
+-- Rope max distance: physics cap (in studs) for how far the player can travel from the hook point.
+M.BASE_MAX_SWING_DISTANCE = 30
+M.ROPE_DISTANCE_PER_LEVEL = 0.5
+
 local function floorLevel(n: number): number
 	return math.max(0, math.floor(n))
+end
+
+function M.maxSwingDistance(ropeLevel: number): number
+	return M.BASE_MAX_SWING_DISTANCE + floorLevel(ropeLevel) * M.ROPE_DISTANCE_PER_LEVEL
 end
 
 -- Early levels matter more; beyond referenceLevel growth continues with diminishing returns.
@@ -80,35 +89,38 @@ export type PowerStats = {
 
 export type RopeStats = {
 	reachStuds: number,
+	maxSwingDistance: number,
 }
 
 function M.powerStats(powerLevel: number): PowerStats
+	-- Power mainly improves the release LAUNCH. Swing-while-hooked grows only slightly
+	-- so high power doesn't make hooked control feel uncontrollable.
 	local t = M.progressT(powerLevel, M.POWER_REFERENCE_LEVEL)
 	local lt = M.launchProgressT(powerLevel, M.POWER_REFERENCE_LEVEL)
-	local maxSwingSpeed = 78 + t * 58
+
+	local maxSwingSpeed = 78 + t * 18
 
 	return {
-		steeringForce = 78 + t * 75,
+		steeringForce = 95 + t * 28,
 		maxSwingSpeed = maxSwingSpeed,
-		swingArcForce = 34 + t * 50,
-		swingSpeedPump = 0.9 + t * 1.4,
-		zipToward = 25 + t * 18,
-		launchImpulseBase = 20 + lt * 14,
-		launchMomentumRatio = 0.24 + lt * 0.12,
-		launchVelocityCarry = 0.20 + lt * 0.06,
-		maxLaunchSpeed = maxSwingSpeed + 22 + lt * 22,
-		launchChargeBonus = 14 + lt * 10,
-		launchUpImpulse = 4.5 + lt * 3,
-		launchDeadhangImpulse = 22 + lt * 8,
+		swingArcForce = 36 + t * 14,
+		swingSpeedPump = 1.0 + t * 0.45,
+		zipToward = 26 + t * 8,
+		launchImpulseBase = 22 + lt * 78,
+		launchMomentumRatio = 0.32 + lt * 0.48,
+		launchVelocityCarry = 0.28 + lt * 0.22,
+		maxLaunchSpeed = maxSwingSpeed + 60 + lt * 110,
+		launchChargeBonus = 18 + lt * 46,
+		launchUpImpulse = 6 + lt * 9,
+		launchDeadhangImpulse = 26 + lt * 24,
 	}
 end
 
-local REACH_STUDS_RANGE = 258
-
 function M.ropeStats(ropeLevel: number): RopeStats
-	local t = M.progressT(ropeLevel, M.ROPE_REFERENCE_LEVEL)
+	local maxDist = M.maxSwingDistance(ropeLevel)
 	return {
-		reachStuds = 56 + t * REACH_STUDS_RANGE,
+		reachStuds = maxDist,
+		maxSwingDistance = maxDist,
 	}
 end
 

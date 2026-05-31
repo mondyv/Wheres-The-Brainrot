@@ -162,6 +162,23 @@ function M.getByName(name: string): BrainrotDef?
 	return M.BRAINROT_BY_NAME[name]
 end
 
+-- Retired / seasonal brainrots still in Storage should never roll or equip.
+function M.isRetiredBrainrotName(name: string): boolean
+	local lower = string.lower(name)
+	return string.find(lower, "easter", 1, true) ~= nil
+end
+
+function M.isPlayableBrainrotName(name: string): boolean
+	return not M.isRetiredBrainrotName(name)
+end
+
+function M.isRetiredBrainrotInstance(inst: Instance): boolean
+	if M.isRetiredBrainrotName(inst.Name) then
+		return true
+	end
+	return M.isRetiredBrainrotName(inst:GetFullName())
+end
+
 -- ── Rarities ──────────────────────────────────────────────────────────────────
 
 M.RARITIES = {
@@ -407,7 +424,9 @@ function M.brainrotsOfRarity(rarity: RarityId, available: ((BrainrotDef) -> bool
 	for _, b in ipairs(M.BRAINROTS) do
 		if b.rarity == rarity then
 			if available == nil or available(b) then
-				table.insert(out, b)
+				if M.isPlayableBrainrotName(b.name) then
+					table.insert(out, b)
+				end
 			end
 		end
 	end

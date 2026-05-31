@@ -364,7 +364,7 @@ end
 local function pickRandomBrainrotByRarity(rarity: string): { name: string, rarity: string, baseIncome: number }?
 	local candidates = {}
 	for _, def in ipairs(Brainrots.BRAINROTS) do
-		if def.rarity == rarity then
+		if def.rarity == rarity and Brainrots.isPlayableBrainrotName(def.name) then
 			table.insert(candidates, def)
 		end
 	end

@@ -438,9 +438,27 @@ local function normalizeBrainrotLookupName(name: string): string
 end
 
 local function findFirstTemplateByModelName(root: Folder, modelName: string): Model?
+	if Brainrots.isRetiredBrainrotName(modelName) then
+		return nil
+	end
+	local nameFolder = root:FindFirstChild(modelName)
+	if nameFolder and nameFolder:IsA("Folder") and not Brainrots.isRetiredBrainrotInstance(nameFolder) then
+		local normal = nameFolder:FindFirstChild("Normal")
+		if normal and normal:IsA("Model") and not Brainrots.isRetiredBrainrotInstance(normal) then
+			return normal :: Model
+		end
+		for _, c in nameFolder:GetChildren() do
+			if c:IsA("Model") and not Brainrots.isRetiredBrainrotInstance(c) then
+				return c :: Model
+			end
+		end
+	end
 	local want = normalizeBrainrotLookupName(modelName)
 	for _, d in root:GetDescendants() do
 		if d:IsA("Model") and d.Parent and d.Parent:IsA("Folder") then
+			if Brainrots.isRetiredBrainrotInstance(d) then
+				continue
+			end
 			if normalizeBrainrotLookupName(d.Name) == want then
 				return d
 			end
@@ -633,6 +651,9 @@ local function collectTemplateModels(root: Folder): { Model }
 		if not desc:IsA("Model") then
 			continue
 		end
+		if Brainrots.isRetiredBrainrotInstance(desc) then
+			continue
+		end
 		local parent = desc.Parent
 		if not parent or not parent:IsA("Folder") then
 			continue
@@ -648,23 +669,30 @@ end
 -- ServerStorage.Brainrots/<BrainrotName>/<MutationVariant> (e.g. Brainrots/67/Normal).
 -- Fallback chain: requested mutation → Normal → first available child Model.
 local function findBrainrotModelByNameAndMutation(root: Folder, brainrotName: string, mutationId: string): Model?
+	if Brainrots.isRetiredBrainrotName(brainrotName) then
+		return nil
+	end
 	local nameFolder = root:FindFirstChild(brainrotName)
-	if not nameFolder then
+	if not nameFolder or Brainrots.isRetiredBrainrotInstance(nameFolder) then
 		return nil
 	end
 	local variantFolderName = (Brainrots :: any).MUTATION_TEMPLATE_FOLDER[mutationId]
 	if typeof(variantFolderName) == "string" then
 		local exact = nameFolder:FindFirstChild(variantFolderName)
-		if exact and exact:IsA("Model") and modelHasSpawnableGeometry(exact :: Model) then
+		if exact and exact:IsA("Model") and not Brainrots.isRetiredBrainrotInstance(exact)
+			and modelHasSpawnableGeometry(exact :: Model)
+		then
 			return exact :: Model
 		end
 	end
 	local fallback = nameFolder:FindFirstChild("Normal")
-	if fallback and fallback:IsA("Model") and modelHasSpawnableGeometry(fallback :: Model) then
+	if fallback and fallback:IsA("Model") and not Brainrots.isRetiredBrainrotInstance(fallback)
+		and modelHasSpawnableGeometry(fallback :: Model)
+	then
 		return fallback :: Model
 	end
 	for _, c in ipairs(nameFolder:GetChildren()) do
-		if c:IsA("Model") and modelHasSpawnableGeometry(c :: Model) then
+		if c:IsA("Model") and not Brainrots.isRetiredBrainrotInstance(c) and modelHasSpawnableGeometry(c :: Model) then
 			return c :: Model
 		end
 	end

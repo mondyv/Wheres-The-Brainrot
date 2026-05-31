@@ -296,15 +296,8 @@ local function hotbarSlotDragTexture(index: number): string?
 	return nil
 end
 
-local function playEquipSlotAnimation(index: number)
-	local slot = slots[index]
-	if not slot then
-		return
-	end
-	local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
-	sc.Scale = 0.86
-	TweenService:Create(sc, EQUIP_POP_TWEEN, { Scale = 1 }):Play()
-end
+-- Defined after hotbarSlotScaleHost (see below).
+local playEquipSlotAnimation: (number) -> ()
 
 local function findBrainrotToolAtInvIndex(root: Instance?, invIndex: number): Tool?
 	if not root then
@@ -415,6 +408,16 @@ local function hotbarSlotScaleHost(slot: GuiObject): Instance
 		return btn :: Instance
 	end
 	return slot
+end
+
+playEquipSlotAnimation = function(index: number)
+	local slot = slots[index]
+	if not slot then
+		return
+	end
+	local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
+	sc.Scale = 0.86
+	TweenService:Create(sc, EQUIP_POP_TWEEN, { Scale = 1 }):Play()
 end
 
 -- Slot `Button` is often an ImageButton with a light template art layer; only tint (never swap Image id).
@@ -995,31 +998,8 @@ hideToolbar = function()
 	t:Play()
 end
 
-local function playerHasToolbarInventory(): boolean
-	if brainrotInventoryUsed > 0 then
-		return true
-	end
-	local bp = getBackpack()
-	if bp then
-		for _, item in bp:GetChildren() do
-			if item:IsA("Tool") then
-				return true
-			end
-		end
-	end
-	local char = player.Character
-	if char then
-		for _, item in char:GetChildren() do
-			if item:IsA("Tool") then
-				return true
-			end
-		end
-	end
-	return false
-end
-
 local function canSelectHotbarSlot(): boolean
-	return canUseToolbar or playerHasToolbarInventory()
+	return canUseToolbar
 end
 
 local function hotbarSlotHasSelectableContent(index: number): boolean
@@ -1040,7 +1020,7 @@ local function hotbarSlotHasSelectableContent(index: number): boolean
 end
 
 local function refreshToolbarVisibility()
-	if canUseToolbar or playerHasToolbarInventory() then
+	if canUseToolbar then
 		showToolbar()
 	else
 		hideToolbar()
@@ -1127,6 +1107,7 @@ local function onSafezonePresenceChanged(inZone: boolean)
 	else
 		pendingReturnedBrainrotName = nil
 		setBackpackPanelOpen(false)
+		deselectAllHotbarSlots()
 		if not activeToolbarDrag then
 			clearDragGhost()
 			pendingToolbarDrag = nil
@@ -1727,11 +1708,8 @@ refreshBrainrotBackpackUI = function()
 				key.Text = if li then tostring(li) else tostring(idx)
 			end
 		else
-			if icon and icon:IsA("ImageLabel") then
-				icon.ScaleType = Enum.ScaleType.Fit
-				icon.BackgroundTransparency = 1
-				icon.Image = ""
-				icon.Visible = false
+			setSlotIcons(surface, "", false)
+			for _, icon in slotIconTargets(surface) do
 				icon.AnchorPoint = Vector2.new(0.5, 0.5)
 				icon.Position = UDim2.new(0.5, 0, 0.5, 0)
 			end
@@ -1773,7 +1751,7 @@ local function requestMoveBackpackEntryToHotbar(listIdx: number)
 end
 
 local function requestEquipBrainrotSlot(slotIdx: number, forceEquip: boolean?)
-	if not forceEquip and not canSelectHotbarSlot() then
+	if not forceEquip and not canUseToolbar then
 		return
 	end
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
@@ -1797,6 +1775,20 @@ local function wireBrainrotBackpackEquips()
 		if btn then
 			passthroughChildClicks(btn :: GuiObject)
 			styleToolbarSlotButton(btn)
+			local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
+			btn.MouseEnter:Connect(function()
+				if hotbarDragBulkHover or not canUseToolbar then
+					return
+				end
+				UIInteractionSounds.playHover()
+				TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.1 }):Play()
+			end)
+			btn.MouseLeave:Connect(function()
+				if hotbarDragBulkHover then
+					return
+				end
+				TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
+			end)
 			btn.MouseButton1Down:Connect(function()
 				if not canUseToolbar then
 					return
@@ -2012,7 +2004,9 @@ local function setBrainrotEntriesFromServer(payload: any)
 	refreshInventoryHeaderText()
 	refreshBrainrotBackpackUI()
 	rebuildSlots()
-	refreshToolbarVisibility()
+	if canUseToolbar then
+		refreshToolbarVisibility()
+	end
 	if typeof(payload) == "table" then
 		local equipSlot = (payload :: any).equipSlot
 		if typeof(equipSlot) == "number" then

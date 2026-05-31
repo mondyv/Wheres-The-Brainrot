@@ -13,6 +13,7 @@ local TweenService = game:GetService("TweenService")
 
 local HUDController = require(script.Parent.HUDController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 
@@ -513,7 +514,7 @@ local function tryRevivePurchase()
 		return
 	end
 	pcall(function()
-		MarketplaceService:PromptProductPurchase(player, currentProductId)
+		PurchasePrompt.promptProduct(currentProductId)
 	end)
 end
 

@@ -13,9 +13,42 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ProductHandlerConfig = require(ReplicatedStorage.EssentialsShared.ProductHandler.ProductHandlerConfig)
 
 local ProductHandlerServer = {}
+
+local initialized = false
+local productHandlerConfig: { [string]: any }? = nil
+
+local function getProductHandlerConfig(): { [string]: any }
+	if productHandlerConfig then
+		return productHandlerConfig
+	end
+
+	local folder = ReplicatedStorage:FindFirstChild("EssentialsShared")
+		and ReplicatedStorage.EssentialsShared:FindFirstChild("ProductHandler")
+	if not folder then
+		warn("[ProductHandler] EssentialsShared.ProductHandler folder missing")
+		productHandlerConfig = {}
+		return productHandlerConfig
+	end
+
+	local configModule = folder:FindFirstChild("ProductHandlerConfig")
+	if not configModule then
+		warn("[ProductHandler] ProductHandlerConfig missing — add ProductHandlerConfig ModuleScript")
+		productHandlerConfig = {}
+		return productHandlerConfig
+	end
+
+	local ok, loaded = pcall(require, configModule)
+	if not ok or type(loaded) ~= "table" then
+		warn("[ProductHandler] ProductHandlerConfig failed to load:", loaded)
+		productHandlerConfig = {}
+		return productHandlerConfig
+	end
+
+	productHandlerConfig = loaded
+	return productHandlerConfig
+end
 
 local function getAssetsFolder(): Folder
 	local assetsFolder = ReplicatedStorage:FindFirstChild("EssentialsAssets")
@@ -28,6 +61,11 @@ local function getAssetsFolder(): Folder
 end
 
 function ProductHandlerServer.init(self: ProductHandlerServer)
+	if initialized then
+		return
+	end
+	initialized = true
+
 	self._grantCallbacks = {} :: { [string]: (Player) -> () }
 	self._limitedStockServer = nil :: any
 	self:createRemotes()
@@ -74,7 +112,7 @@ function ProductHandlerServer.createRemotes(self: ProductHandlerServer)
 			return
 		end
 
-		local entry = ProductHandlerConfig[productName]
+		local entry = getProductHandlerConfig()[productName]
 		if not entry then
 			warn("[ProductHandler] Client requested unknown product:", productName)
 			return
@@ -87,7 +125,7 @@ end
 function ProductHandlerServer.discoverParts(self: ProductHandlerServer)
 	local touchCooldowns: { [number]: { [string]: boolean } } = {}
 
-	for name, entry in ProductHandlerConfig do
+	for name, entry in getProductHandlerConfig() do
 		local target = entry.part
 		if not target then
 			continue
@@ -134,7 +172,7 @@ function ProductHandlerServer.promptPurchase(
 	self: ProductHandlerServer,
 	player: Player,
 	name: string,
-	entry: ProductHandlerConfig.ProductEntry
+	entry: any
 )
 	if entry.type == "gamepass" then
 		local ownsPass = false
@@ -161,7 +199,7 @@ end
 
 function ProductHandlerServer.setupProcessReceipt(self: ProductHandlerServer)
 	local productIdToName: { [number]: string } = {}
-	for name, entry in ProductHandlerConfig do
+	for name, entry in getProductHandlerConfig() do
 		if entry.type == "devproduct" then
 			productIdToName[entry.id] = name
 		end

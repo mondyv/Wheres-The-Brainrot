@@ -1,6 +1,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local PurchaseEffectClient = require(ReplicatedStorage.EssentialsShared.PurchaseEffect.PurchaseEffectClient)
+local PurchasePrompt = require(ReplicatedStorage.EssentialsShared.PurchasePrompt)
 
 local ProductHandlerClient = {}
 
@@ -55,6 +56,26 @@ function ProductHandlerClient.bindButton(self: ProductHandlerClient, button: Gui
 			warn("[ProductHandlerClient] Cannot purchase", productName, "— remote missing")
 		end
 	end)
+end
+
+function ProductHandlerClient.autoBindPurchaseButtons(self: ProductHandlerClient, root: Instance)
+	for _, desc in root:GetDescendants() do
+		if not desc:IsA("GuiButton") then
+			continue
+		end
+
+		local productName = desc:GetAttribute("ProductHandler")
+		if typeof(productName) == "string" and productName ~= "" then
+			self:bindButton(desc, productName)
+		end
+
+		local gamePassId = desc:GetAttribute("GamePassId")
+		if typeof(gamePassId) == "number" and gamePassId > 0 then
+			desc.Activated:Connect(function()
+				PurchasePrompt.promptGamePass(gamePassId)
+			end)
+		end
+	end
 end
 
 export type ProductHandlerClient = typeof(ProductHandlerClient) & {

@@ -43,8 +43,24 @@ require(script.GameSoundEffects).init()
 
 task.spawn(function()
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local Players = game:GetService("Players")
 	local ok, err = pcall(function()
-		require(ReplicatedStorage:WaitForChild("EssentialsShared", 10):WaitForChild("PurchaseEffect"):WaitForChild("PurchaseEffectClient")):init()
+		local shared = ReplicatedStorage:WaitForChild("EssentialsShared", 10)
+		require(shared:WaitForChild("PurchaseEffect"):WaitForChild("PurchaseEffectClient")):init()
+		local productHandlerClient = require(shared:WaitForChild("ProductHandler"):WaitForChild("ProductHandlerClient"))
+		productHandlerClient:init()
+
+		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui", 30)
+		if playerGui then
+			local main = playerGui:WaitForChild("Main", 60)
+			if main then
+				productHandlerClient:autoBindPurchaseButtons(main)
+			end
+			local hud = playerGui:FindFirstChild("Hud")
+			if hud then
+				productHandlerClient:autoBindPurchaseButtons(hud)
+			end
+		end
 	end)
 	if not ok then
 		warn("[PurchaseEffectClient] init failed:", err)

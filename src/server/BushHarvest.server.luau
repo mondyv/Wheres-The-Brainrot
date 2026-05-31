@@ -227,7 +227,7 @@ local function getCarryBrainrotName(carry: Model): string?
 	return nil
 end
 
-local DEPOSIT_DEBUG = true
+local DEPOSIT_DEBUG = false
 local function depositDebug(...: any)
 	if not DEPOSIT_DEBUG then
 		return

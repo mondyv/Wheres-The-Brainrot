@@ -2046,6 +2046,8 @@ function ToolbarController.init()
 
 	ensureHotbarLayoutPassthrough()
 
+	wireToggleBackpackIcon()
+
 	DropTargets.configure({
 		playerGui = playerGui,
 		hotbar = hotbar,
@@ -2104,7 +2106,6 @@ function ToolbarController.init()
 				selectSlot(i)
 			end
 			btn.Activated:Connect(onHotbarSlotTapSelect)
-			print("[ToolbarController] hotbar button connected", i)
 			-- PC-only drag start; touch taps must not enter the drag pipeline (blocks Activated on some devices).
 			btn.MouseButton1Down:Connect(function()
 				if not canUseToolbar then
@@ -2222,7 +2223,6 @@ function ToolbarController.init()
 	end)
 
 	-- ToggleBackpack + brainrot backpack grid (Backpack.Container["1"]..["19"])
-	wireToggleBackpackIcon()
 	local toggleBtn = toolbar:FindFirstChild("ToggleBackpack") or hotbar:FindFirstChild("ToggleBackpack")
 	if toggleBtn and toggleBtn:IsA("GuiObject") then
 		if toggleBackpackIconRef then
@@ -2282,6 +2282,7 @@ function ToolbarController.init()
 		end
 		applyToolbarHorizontalCenterOnce()
 		updateHotbarSlotVisibility()
+		refreshToolbarVisibility()
 	end)
 
 	-- `(`)` key opens / closes the brainrot backpack (matches the on-screen prompt text).

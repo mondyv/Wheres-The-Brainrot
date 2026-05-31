@@ -1,15 +1,15 @@
 -- Wires Main.Frames.Upgrades rows + SideUI cash counter; purchase via server RemoteFunction
-local MarketplaceService = game:GetService("MarketplaceService")
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 
 local SwingUpgrades = require(ReplicatedStorage.Shared.SwingUpgrades)
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 
+local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
 local purchaseFn = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("PurchaseSwingUpgrade") :: RemoteFunction
@@ -371,7 +371,7 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 			GameSoundEffects.playErrorNotif()
 			prepareRobuxRE:FireServer(upgradeId)
 			pcall(function()
-				MarketplaceService:PromptProductPurchase(player, SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID)
+				PurchasePrompt.promptProduct(SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID)
 			end)
 			return
 		end
@@ -401,7 +401,7 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 			UIButtonEffects.wireAccentButton(robuxBtn, function()
 				prepareRobuxRE:FireServer(upgradeId)
 				pcall(function()
-					MarketplaceService:PromptProductPurchase(player, SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID)
+					PurchasePrompt.promptProduct(SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID)
 				end)
 			end)
 		end

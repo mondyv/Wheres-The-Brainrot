@@ -10,6 +10,7 @@ local TweenService = game:GetService("TweenService")
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local HUDController = require(script.Parent.HUDController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
@@ -699,7 +700,7 @@ local function trySkipPurchase()
 		rebirthBusy = false
 	end)
 	pcall(function()
-		MarketplaceService:PromptProductPurchase(player, RebirthConfig.SKIP_DEV_PRODUCT_ID)
+		PurchasePrompt.promptProduct(RebirthConfig.SKIP_DEV_PRODUCT_ID)
 	end)
 end
 

@@ -3,6 +3,8 @@
 	Each bush runs its own randomized schedule so bushes never sync up.
 ]]
 
+local GameSoundEffects = require(script.Parent.GameSoundEffects)
+
 local M = {}
 
 local HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
@@ -96,6 +98,7 @@ local function runSoftBurst(bush: Instance, token: number, burstSec: number)
 
 	local start = os.clock()
 	local endAt = start + burstSec
+	GameSoundEffects.playBushRandomShakeAt(bush)
 	while bush.Parent and token == schedulerTokenByBush[bush] and shouldShiverBush(bush) and os.clock() < endAt do
 		local elapsed = os.clock() - start
 		applyTransform(bush, base * softShiverOffset(elapsed, burstSec))

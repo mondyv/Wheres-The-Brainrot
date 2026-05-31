@@ -14,6 +14,7 @@ local Workspace = game:GetService("Workspace")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local CarryGate = require(script.Parent.CarryGate)
+local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local RebirthConfig = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 
 local player = Players.LocalPlayer
@@ -1356,6 +1357,7 @@ local function fireManagedBushHoldComplete(prompt: ProximityPrompt)
 		return
 	end
 	bushHoldLockUntil = os.clock() + 0.45
+	GameSoundEffects.stopBushSearchLoop()
 	stopBushCameraShake()
 	stopBushWobble()
 	if bushSharedView and bushSharedView.prompt == prompt then
@@ -1384,6 +1386,7 @@ function ProximityPromptEffects.beginManagedBushHold(prompt: ProximityPrompt)
 		bushSharedView.prompt = prompt
 		startBushSharedCardHoldVisual(bushSharedView)
 	end
+	GameSoundEffects.startBushSearchLoop()
 	startBushCameraShake()
 	beginBushWobble(prompt)
 end
@@ -1393,6 +1396,7 @@ function ProximityPromptEffects.endManagedBushHold(prompt: ProximityPrompt, comp
 		return
 	end
 	managedBushHoldActive = nil
+	GameSoundEffects.stopBushSearchLoop()
 	stopBushCameraShake()
 	stopBushWobble()
 	if bushSharedView and bushSharedView.prompt == prompt then
@@ -1799,6 +1803,7 @@ end
 
 hideView = function(prompt: ProximityPrompt, instant: boolean?)
 	if isManagedBushPrompt(prompt) then
+		GameSoundEffects.stopBushSearchLoop()
 		stopBushCameraShake()
 		stopBushWobble()
 		if bushSharedView and bushSharedView.prompt == prompt then
@@ -1942,6 +1947,7 @@ showBushSharedUi = function(prompt: ProximityPrompt): boolean
 		bushSharedView = view
 	end
 
+	local wasEnabled = view.billboard.Enabled
 	view.prompt = prompt
 	view.billboard.Adornee = adornee
 	applyBushBillboardPlacement(view.billboard, prompt, adornee)
@@ -1954,6 +1960,9 @@ showBushSharedUi = function(prompt: ProximityPrompt): boolean
 	wireBushSharedClickable(view)
 
 	if not view.holding then
+		if not wasEnabled then
+			GameSoundEffects.playProximityPromptAppear()
+		end
 		view.rootScale.Scale = 0.82
 		TweenService:Create(view.rootScale, OPEN_TWEEN, { Scale = 1 }):Play()
 		startIdleSway(view)
@@ -2176,6 +2185,7 @@ end
 function ProximityPromptEffects.hideBushSearch()
 	activeBushSearchPrompt = nil
 	managedBushHoldActive = nil
+	GameSoundEffects.stopBushSearchLoop()
 	stopBushCameraShake()
 	stopBushWobble()
 	hideBushSharedUi(true)
@@ -2221,9 +2231,15 @@ local function showView(prompt: ProximityPrompt)
 		stopIdleSway(view)
 		view.rootScale.Scale = 1
 		view.root.Rotation = 0
+		if not isBushPrompt(prompt) and not isManagedBushPrompt(prompt) then
+			GameSoundEffects.playProximityPromptAppear()
+		end
 	else
 		TweenService:Create(view.rootScale, OPEN_TWEEN, { Scale = 1 }):Play()
 		startIdleSway(view)
+		if not isBushPrompt(prompt) and not isManagedBushPrompt(prompt) then
+			GameSoundEffects.playProximityPromptAppear()
+		end
 	end
 end
 
@@ -2340,6 +2356,7 @@ local function onHoldBegan(prompt: ProximityPrompt, triggerPlayer: Player)
 	end
 	if isManagedBushPrompt(prompt) then
 		if prompt.HoldDuration > 0 then
+			GameSoundEffects.startBushSearchLoop()
 			startBushCameraShake()
 			beginBushWobble(prompt)
 			if bushSharedView and bushSharedView.prompt == prompt then
@@ -2374,6 +2391,7 @@ local function onHoldEnded(prompt: ProximityPrompt, triggerPlayer: Player)
 		return
 	end
 	if isManagedBushPrompt(prompt) then
+		GameSoundEffects.stopBushSearchLoop()
 		stopBushCameraShake()
 		stopBushWobble()
 		if bushSharedView and bushSharedView.prompt == prompt then
@@ -2595,6 +2613,7 @@ local function refreshCarryHiddenPrompts()
 		return
 	end
 	activeBushSearchPrompt = nil
+	GameSoundEffects.stopBushSearchLoop()
 	stopBushCameraShake()
 	stopBushWobble()
 	hideBushSharedUi(true)

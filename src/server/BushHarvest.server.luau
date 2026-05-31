@@ -41,6 +41,9 @@ local RANGE_SLACK = 5
 local BUSH_BRAINROT_CHANCE = 0.5
 local BUSH_SEARCH_DEBOUNCE_SEC = 0.4
 local BUSH_HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
+local BUSH_HIDDEN_RARITY_ATTR = "HiddenBrainrotRarity"
+local BUSH_HIDDEN_NAME_ATTR = "HiddenBrainrotName"
+local BUSH_HIDDEN_MUTATION_ATTR = "HiddenBrainrotMutation"
 local BUSH_ON_COOLDOWN_ATTR = "BushOnCooldown"
 local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
 local BUSH_COOLDOWN_ENDS_ATTR = "BushCooldownEndsAt"
@@ -156,6 +159,7 @@ local function ensureInventoryRemotes(): (RemoteEvent, RemoteFunction)
 end
 
 local playBrainrotSFXRE: RemoteEvent? = nil
+local playHarvestDropFXRE: RemoteEvent? = nil
 local safeZoneFlashRE: RemoteEvent? = nil
 
 local function ensurePlayBrainrotSFXRemote(): RemoteEvent
@@ -186,11 +190,32 @@ local function ensureSafeZoneFlashRemote(): RemoteEvent
 	return safeZoneFlashRE
 end
 
+local function ensurePlayHarvestDropFXRemote(): RemoteEvent
+	if playHarvestDropFXRE and playHarvestDropFXRE.Parent then
+		return playHarvestDropFXRE
+	end
+	local ev = ReplicatedStorage:FindFirstChild("PlayHarvestDropFX")
+	if not ev then
+		ev = Instance.new("RemoteEvent")
+		ev.Name = "PlayHarvestDropFX"
+		ev.Parent = ReplicatedStorage
+	end
+	playHarvestDropFXRE = ev :: RemoteEvent
+	return playHarvestDropFXRE
+end
+
 local function firePlayBrainrotSFX(player: Player, brainrotName: string)
 	if typeof(brainrotName) ~= "string" or brainrotName == "" then
 		return
 	end
 	ensurePlayBrainrotSFXRemote():FireClient(player, brainrotName)
+end
+
+local function fireHarvestDropFX(player: Player, rarity: string)
+	if typeof(rarity) ~= "string" or rarity == "" then
+		return
+	end
+	ensurePlayHarvestDropFXRemote():FireClient(player, rarity)
 end
 
 local function fireSafeZoneFlash(player: Player)
@@ -1230,6 +1255,32 @@ local function isValidBushRef(bushRef: Instance?): boolean
 	return bushRef:IsDescendantOf(map)
 end
 
+local function clearHiddenBrainrotLoot(bush: Instance)
+	bush:SetAttribute(BUSH_HIDDEN_RARITY_ATTR, nil)
+	bush:SetAttribute(BUSH_HIDDEN_NAME_ATTR, nil)
+	bush:SetAttribute(BUSH_HIDDEN_MUTATION_ATTR, nil)
+end
+
+local function rollHiddenBrainrotLoot(bush: Instance)
+	clearHiddenBrainrotLoot(bush)
+	local brainrots = Brainrots.getBrainrotsFolder()
+	if not brainrots then
+		return
+	end
+	local pos = bushSearchPosition(bush, if bush:IsA("BasePart") then bush.Position else (bush :: Model):GetPivot().Position)
+	local plot = resolveHarvestPlot(pos)
+	local function brainrotIsAvailable(def)
+		return brainrotHasTemplate(brainrots :: Folder, def.name)
+	end
+	local pick, mutationId = Brainrots.pickRandomBrainrotForPlot(plot, brainrotIsAvailable)
+	if not pick then
+		return
+	end
+	bush:SetAttribute(BUSH_HIDDEN_RARITY_ATTR, pick.rarity)
+	bush:SetAttribute(BUSH_HIDDEN_NAME_ATTR, pick.name)
+	bush:SetAttribute(BUSH_HIDDEN_MUTATION_ATTR, mutationId)
+end
+
 --[[
 	RollBushState — fresh 50/50 dice. Only call when a bush becomes searchable (init or post-cooldown).
 ]]
@@ -1242,11 +1293,17 @@ local function RollBushState(bush: Instance): boolean
 	bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, false)
 	bush:SetAttribute(BUSH_LOOT_PHASE_ATTR, BUSH_LOOT_PHASE_READY)
 	bush:SetAttribute(BUSH_COOLDOWN_ENDS_ATTR, nil)
+	if hasBrainrot then
+		rollHiddenBrainrotLoot(bush)
+	else
+		clearHiddenBrainrotLoot(bush)
+	end
 	return hasBrainrot
 end
 
 local function beginBushSearchCooldown(bush: Instance, cooldownSec: number)
 	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, false)
+	clearHiddenBrainrotLoot(bush)
 	bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, true)
 	bush:SetAttribute(BUSH_LOOT_PHASE_ATTR, BUSH_LOOT_PHASE_COOLDOWN)
 	bush:SetAttribute(BUSH_COOLDOWN_ENDS_ATTR, workspace:GetServerTimeNow() + cooldownSec)
@@ -1750,8 +1807,29 @@ local function canAttemptHarvest(player: Player, worldPosition: Vector3, bushRef
 	return true
 end
 
-local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
-	if not canAttemptHarvest(player, worldPosition, nil) then
+local function resolveHiddenBrainrotPick(
+	bushRef: Instance?,
+	brainrots: Folder,
+	brainrotIsAvailable: (def: { name: string }) -> boolean
+): ({ name: string, rarity: string, baseIncome: number }?, string?)
+	if not bushRef or bushRef:GetAttribute(BUSH_HAS_BRAINROT_ATTR) ~= true then
+		return nil, nil
+	end
+	local hiddenName = bushRef:GetAttribute(BUSH_HIDDEN_NAME_ATTR)
+	local hiddenMutation = bushRef:GetAttribute(BUSH_HIDDEN_MUTATION_ATTR)
+	if typeof(hiddenName) ~= "string" or hiddenName == "" then
+		return nil, nil
+	end
+	local def = Brainrots.getByName(hiddenName)
+	if not def or not brainrotIsAvailable(def) then
+		return nil, nil
+	end
+	local mutationId = if typeof(hiddenMutation) == "string" and hiddenMutation ~= "" then hiddenMutation else "normal"
+	return def, mutationId
+end
+
+local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushRef: Instance?)
+	if not canAttemptHarvest(player, worldPosition, bushRef) then
 		return
 	end
 	local char = player.Character :: Model
@@ -1767,7 +1845,10 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 	local function brainrotIsAvailable(def)
 		return brainrotHasTemplate(brainrots :: Folder, def.name)
 	end
-	local pick, mutationId = Brainrots.pickRandomBrainrotForPlot(plot, brainrotIsAvailable)
+	local pick, mutationId = resolveHiddenBrainrotPick(bushRef, brainrots :: Folder, brainrotIsAvailable)
+	if not pick then
+		pick, mutationId = Brainrots.pickRandomBrainrotForPlot(plot, brainrotIsAvailable)
+	end
 	if not pick then
 		-- Last-resort: pick any template under Brainrots/ with a child Model.
 		local templates = collectTemplateModels(brainrots :: Folder)
@@ -1777,7 +1858,9 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 		end
 		local fallback = templates[math.random(1, #templates)]
 		local fallbackName = brainrotNameFromTemplateModel(fallback) or fallback.Name
+		local fallbackDef = Brainrots.getByName(fallbackName)
 		firePlayBrainrotSFX(player, fallbackName)
+		fireHarvestDropFX(player, if fallbackDef then fallbackDef.rarity else "common")
 		local harvestLevel = Brainrots.rollBushHarvestLevel()
 		local clone = fallback:Clone()
 		clone.Name = fallbackName
@@ -1820,6 +1903,7 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3)
 	end
 
 	firePlayBrainrotSFX(player, pick.name)
+	fireHarvestDropFX(player, pick.rarity)
 
 	local harvestLevel = Brainrots.rollBushHarvestLevel()
 	local clone = template:Clone()
@@ -1910,7 +1994,7 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 	if hasBrainrot then
 		clearEmptyBushMessageState(bush)
 		FlashBushColor(bush, Color3.fromRGB(52, 215, 88))
-		beginHarvestOutcome(player, worldPosition)
+		beginHarvestOutcome(player, worldPosition, bush)
 		return true
 	end
 
@@ -2262,6 +2346,7 @@ for _, p in Players:GetPlayers() do
 end
 
 ensurePlayBrainrotSFXRemote()
+ensurePlayHarvestDropFXRemote()
 ensureSafeZoneFlashRemote()
 
 local harvestRemote = ensureRemote()

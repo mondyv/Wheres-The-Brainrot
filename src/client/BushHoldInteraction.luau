@@ -12,6 +12,7 @@ local Workspace = game:GetService("Workspace")
 
 local BushShiver = require(script.Parent.BushShiver)
 local CarryGate = require(script.Parent.CarryGate)
+local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 
 local player = Players.LocalPlayer
@@ -417,6 +418,7 @@ local function setActive(bush: Instance?, prompt: ProximityPrompt?, _anchor: Bas
 		activePrompt = effectivePrompt
 		setAllBushPromptsEnabled(effectivePrompt)
 		ProximityPromptEffects.suppressBushSearchUi(effectivePrompt)
+		GameSoundEffects.syncBushAura(bush)
 	end
 end
 
@@ -548,6 +550,7 @@ local function tickAim()
 			applyBushHighlight(hl, bush, false)
 		end
 		setActive(bush, prompt, anchor)
+		GameSoundEffects.syncBushAura(bush)
 		return
 	end
 
@@ -557,6 +560,7 @@ local function tickAim()
 		hl.OutlineColor = HIGHLIGHT_READY
 	end
 	setActive(nil, nil, nil)
+	GameSoundEffects.syncBushAura(nil)
 end
 
 -- ── Map boot ─────────────────────────────────────────────────────────────────-

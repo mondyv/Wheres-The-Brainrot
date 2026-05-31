@@ -1,6 +1,6 @@
 --[[
 	GameSoundEffects — gameplay SFX under SoundService.SoundEffects
-	CashGrab, ErrorNotif, Drops, BushAura, BushRustles, On ProximityPrompts
+	CashGrab, ErrorNotif, Drops, BushAura, BushRustles, On ProximityPrompts, GroundSmash
 --]]
 
 local Players = game:GetService("Players")
@@ -23,6 +23,7 @@ local bushAuraMythLegendTemplate: Sound?
 local bushDuringSearchTemplate: Sound?
 local bushRandomShakeTemplate: Sound?
 local proximityPromptTemplate: Sound?
+local groundSmashTemplate: Sound?
 
 local activeAuraSound: Sound?
 local activeAuraKey: string? = nil
@@ -246,6 +247,11 @@ function GameSoundEffects.init()
 		proximityPromptTemplate = findSoundIn(promptFolder)
 	end
 
+	local groundSmash = root:FindFirstChild("GroundSmash")
+	if groundSmash and groundSmash:IsA("Sound") then
+		groundSmashTemplate = groundSmash
+	end
+
 	local ev = ReplicatedStorage:WaitForChild("PlayHarvestDropFX", 60)
 	if ev and ev:IsA("RemoteEvent") then
 		(ev :: RemoteEvent).OnClientEvent:Connect(function(rarity: string)
@@ -295,6 +301,34 @@ end
 
 function GameSoundEffects.playProximityPromptAppear()
 	playTemplate(proximityPromptTemplate)
+end
+
+function GameSoundEffects.playGroundSmash(intensity: number?)
+	if ClientSFXVolume.getVolume() <= 0 then
+		return
+	end
+	local template = groundSmashTemplate
+	if not template then
+		local root = SoundService:FindFirstChild("SoundEffects")
+		local inst = root and root:FindFirstChild("GroundSmash")
+		if inst and inst:IsA("Sound") then
+			groundSmashTemplate = inst
+			template = inst
+		end
+	end
+	if not template then
+		return
+	end
+
+	local t = if typeof(intensity) == "number" then math.clamp(intensity, 0, 1) else 1
+	local clone = prepareClone(template)
+	clone.PlaybackSpeed = 0.88 + t * 0.18
+	clone.Volume = clone.Volume * (0.55 + t * 0.45)
+	clone.Parent = SoundService
+	clone:Play()
+	clone.Ended:Once(function()
+		clone:Destroy()
+	end)
 end
 
 function GameSoundEffects.startBushSearchLoop()

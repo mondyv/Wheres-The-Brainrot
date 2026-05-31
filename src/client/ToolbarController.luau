@@ -91,6 +91,7 @@ applyToolbarInitialHiddenState()
 local SHOW_TWEEN      = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local HIDE_TWEEN      = TweenInfo.new(0.2,  Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local HIGHLIGHT_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local EQUIP_POP_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local BACKPACK_OPEN_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
@@ -115,6 +116,7 @@ local KEY_TO_SLOT: { [Enum.KeyCode]: number } = {
 
 local slots: { GuiObject }   = {}    -- ordered slot frames (index 1-9)
 local slotTools: { Tool? }   = {}    -- tool assigned to each slot
+local extraToolSlotByIndex: { [number]: Tool } = {} -- non-brainrot hotbar tools (e.g. lucky block)
 local activeSlot: number?    = nil
 local uiHotbarHighlight: number? = nil -- nil = no slot ring (toggle off); otherwise mirrors selection / equip
 local toolbarShown: boolean  = false
@@ -152,6 +154,7 @@ local pendingToolbarDrag: {
 	texture: string?,
 	rowButton: GuiButton?,
 	equippedOnDown: boolean?,
+	isExtraTool: boolean?,
 }? = nil
 -- Drag started inside the safe zone; finish drop even if zone poll flickers before mouse up.
 local activeToolbarDrag = false
@@ -210,6 +213,97 @@ end
 
 local function getBackpack(): Folder?
 	return player:FindFirstChildOfClass("Backpack") :: Folder?
+end
+
+local function isExtraHotbarTool(tool: Tool): boolean
+	if tool:GetAttribute("BrainrotTool") == true then
+		local invIdx = tool:GetAttribute("BrainrotInvIndex")
+		return typeof(invIdx) ~= "number"
+	end
+	return true
+end
+
+local function collectExtraHotbarTools(): { Tool }
+	local seen: { [Tool]: boolean } = {}
+	local out: { Tool } = {}
+	local function addFrom(root: Instance?)
+		if not root then
+			return
+		end
+		for _, item in root:GetChildren() do
+			if item:IsA("Tool") and isExtraHotbarTool(item :: Tool) and not seen[item :: Tool] then
+				seen[item :: Tool] = true
+				table.insert(out, item :: Tool)
+			end
+		end
+	end
+	addFrom(getBackpack())
+	addFrom(player.Character)
+	return out
+end
+
+local function slotIconTargets(surface: GuiObject): { ImageLabel }
+	local out: { ImageLabel } = {}
+	local seen: { [ImageLabel]: boolean } = {}
+	local function push(node: Instance?)
+		if node and node:IsA("ImageLabel") and not seen[node :: ImageLabel] then
+			seen[node :: ImageLabel] = true
+			table.insert(out, node :: ImageLabel)
+		end
+	end
+	push(surface:FindFirstChild("Icon"))
+	for _, d in surface:GetDescendants() do
+		if d:IsA("ImageLabel") and d.Name == "Icon" then
+			push(d)
+		end
+	end
+	if #out == 0 then
+		for _, d in surface:GetDescendants() do
+			if d:IsA("ImageLabel") then
+				push(d)
+				break
+			end
+		end
+	end
+	return out
+end
+
+local function applySlotIconStyle(icon: ImageLabel)
+	icon.ScaleType = Enum.ScaleType.Fit
+	icon.BackgroundTransparency = 1
+end
+
+local function setSlotIcons(surface: GuiObject, image: string, visible: boolean)
+	for _, icon in slotIconTargets(surface) do
+		applySlotIconStyle(icon)
+		icon.Image = image
+		icon.Visible = visible
+	end
+end
+
+local function hotbarSlotDragTexture(index: number): string?
+	if brainrotEntries[index] and not brainrotParkedInUI[index] then
+		local e = brainrotEntries[index] :: { icon: string }
+		return (e.icon ~= "" and e.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+	end
+	local tool = slotTools[index]
+	if tool then
+		local tex = (tool :: any).TextureId
+		if typeof(tex) == "string" and tex ~= "" then
+			return tex
+		end
+	end
+	return nil
+end
+
+local function playEquipSlotAnimation(index: number)
+	local slot = slots[index]
+	if not slot then
+		return
+	end
+	local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
+	sc.Scale = 0.86
+	TweenService:Create(sc, EQUIP_POP_TWEEN, { Scale = 1 }):Play()
 end
 
 local function findBrainrotToolAtInvIndex(root: Instance?, invIndex: number): Tool?
@@ -385,9 +479,8 @@ local function styleToolbarSlotButton(btn: GuiButton)
 		btn.AutoButtonColor = false
 		btn.ImageColor3 = SLOT_BUTTON_IMAGE_TINT
 	end
-	local icon = btn:FindFirstChild("Icon")
-	if icon and icon:IsA("ImageLabel") then
-		icon.ScaleType = Enum.ScaleType.Fit
+	for _, icon in slotIconTargets(btn :: GuiObject) do
+		applySlotIconStyle(icon)
 	end
 end
 
@@ -939,6 +1032,10 @@ local function hotbarSlotHasSelectableContent(index: number): boolean
 	if slotTools[index] ~= nil then
 		return true
 	end
+	local mapped = extraToolSlotByIndex[index]
+	if mapped and mapped.Parent then
+		return true
+	end
 	return false
 end
 
@@ -1111,10 +1208,14 @@ local function syncAllHotbarSelectionStrokes()
 	end
 end
 
-local function setHotbarSelection(index: number?)
+local function setHotbarSelection(index: number?, animateEquip: boolean?)
+	local changed = uiHotbarHighlight ~= index
 	uiHotbarHighlight = index
 	activeSlot = index
 	syncAllHotbarSelectionStrokes()
+	if animateEquip ~= false and changed and typeof(index) == "number" then
+		playEquipSlotAnimation(index)
+	end
 end
 
 local function resetAllSlotsToIdle()
@@ -1151,8 +1252,6 @@ refreshSlotVisual = function(index: number)
 	end
 
 	local surface = toolSlotSurface(slot)
-	local icon = surface:FindFirstChild("Icon") or surface:FindFirstChildOfClass("ImageLabel")
-	-- Do not use FindFirstChildOfClass("TextLabel") — it matches `Rate` before `Key` and leaves $10/s stuck on screen.
 	local keyLabel = surface:FindFirstChild("Key") or surface:FindFirstChild("Number")
 	local rate = surface:FindFirstChild("Rate")
 
@@ -1165,16 +1264,15 @@ refreshSlotVisual = function(index: number)
 			local ei = math.clamp(math.floor(invIdx), 1, math.max(1, #brainrotEntries))
 			entryForTool = brainrotEntries[ei]
 		end
-		if icon and icon:IsA("ImageLabel") then
-			icon.ScaleType = Enum.ScaleType.Fit
-			icon.BackgroundTransparency = 1
-			local tex = (tool :: any).TextureId
-			if entryForTool and entryForTool.icon ~= "" then
-				tex = entryForTool.icon
-			end
-			icon.Image = (tex and tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png"
-			icon.Visible = true
+		local tex = (tool :: any).TextureId
+		if entryForTool and entryForTool.icon ~= "" then
+			tex = entryForTool.icon
 		end
+		setSlotIcons(
+			surface,
+			(tex and tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png",
+			true
+		)
 		if keyLabel and (keyLabel:IsA("TextLabel") or keyLabel:IsA("TextButton")) then
 			keyLabel.Text = tostring(index)
 		end
@@ -1182,12 +1280,7 @@ refreshSlotVisual = function(index: number)
 			rate.Text = if entryForTool then formatEntryIncomeLabel(entryForTool) else tool.Name
 		end
 	elseif brainrotParkedInUI[index] == true then
-		if icon and icon:IsA("ImageLabel") then
-			icon.ScaleType = Enum.ScaleType.Fit
-			icon.BackgroundTransparency = 1
-			icon.Image = ""
-			icon.Visible = false
-		end
+		setSlotIcons(surface, "", false)
 		if keyLabel and (keyLabel:IsA("TextLabel") or keyLabel:IsA("TextButton")) then
 			keyLabel.Text = tostring(index)
 		end
@@ -1196,12 +1289,11 @@ refreshSlotVisual = function(index: number)
 		end
 	elseif brainrotEntries[index] ~= nil then
 		local e = brainrotEntries[index] :: { name: string, icon: string, sourcePath: string }
-		if icon and icon:IsA("ImageLabel") then
-			icon.ScaleType = Enum.ScaleType.Fit
-			icon.BackgroundTransparency = 1
-			icon.Image = (e.icon ~= "" and e.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
-			icon.Visible = true
-		end
+		setSlotIcons(
+			surface,
+			(e.icon ~= "" and e.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png",
+			true
+		)
 		if keyLabel and (keyLabel:IsA("TextLabel") or keyLabel:IsA("TextButton")) then
 			keyLabel.Text = tostring(index)
 		end
@@ -1209,12 +1301,7 @@ refreshSlotVisual = function(index: number)
 			rate.Text = formatEntryIncomeLabel(e)
 		end
 	else
-		if icon and icon:IsA("ImageLabel") then
-			icon.ScaleType = Enum.ScaleType.Fit
-			icon.BackgroundTransparency = 1
-			icon.Image = ""
-			icon.Visible = false
-		end
+		setSlotIcons(surface, "", false)
 		if keyLabel and (keyLabel:IsA("TextLabel") or keyLabel:IsA("TextButton")) then
 			keyLabel.Text = tostring(index)
 		end
@@ -1229,6 +1316,10 @@ local function hotbarSlotIsOccupied(index: number): boolean
 		return false
 	end
 	if slotTools[index] ~= nil then
+		return true
+	end
+	local mapped = extraToolSlotByIndex[index]
+	if mapped and mapped.Parent then
 		return true
 	end
 	return brainrotEntries[index] ~= nil
@@ -1516,27 +1607,37 @@ local function rebuildSlots()
 		end
 	end
 
-	-- Any remaining empty slots: non-brainrot tools, or legacy brainrot tools without BrainrotInvIndex.
-	local extras: { Tool } = {}
-	if backpack then
-		for _, item in ipairs(backpack:GetChildren()) do
-			if item:IsA("Tool") then
-				if item:GetAttribute("BrainrotTool") ~= true then
-					table.insert(extras, item :: Tool)
-				else
-					local invIdx = item:GetAttribute("BrainrotInvIndex")
-					if typeof(invIdx) ~= "number" then
-						table.insert(extras, item :: Tool)
-					end
-				end
+	-- Drop stale extra-tool slot pins; keep equipped tools visible in the hotbar.
+	for idx, tool in pairs(extraToolSlotByIndex) do
+		if not tool.Parent or not isExtraHotbarTool(tool) then
+			extraToolSlotByIndex[idx] = nil
+		end
+	end
+
+	local extras = collectExtraHotbarTools()
+	local assignedExtras: { [Tool]: boolean } = {}
+
+	for idx, tool in pairs(extraToolSlotByIndex) do
+		if idx >= 1 and idx <= maxHotbar and slotTools[idx] == nil and not brainrotParkedInUI[idx] and brainrotEntries[idx] == nil then
+			if tool.Parent then
+				slotTools[idx] = tool
+				assignedExtras[tool] = true
+			else
+				extraToolSlotByIndex[idx] = nil
 			end
 		end
 	end
-	local ei = 1
-	for i = 1, maxHotbar do
-		if slotTools[i] == nil and not brainrotParkedInUI[i] and brainrotEntries[i] == nil and extras[ei] then
-			slotTools[i] = extras[ei]
-			ei += 1
+
+	for _, tool in ipairs(extras) do
+		if not assignedExtras[tool] then
+			for i = 1, maxHotbar do
+				if slotTools[i] == nil and not brainrotParkedInUI[i] and brainrotEntries[i] == nil then
+					slotTools[i] = tool
+					extraToolSlotByIndex[i] = tool
+					assignedExtras[tool] = true
+					break
+				end
+			end
 		end
 	end
 
@@ -1569,6 +1670,7 @@ local function rebuildSlots()
 	elseif uiHotbarHighlight ~= nil then
 		local hi = math.clamp(uiHotbarHighlight, 1, HOTBAR_INVENTORY_SLOTS)
 		local slotStillHasBrainrot = slotTools[hi] ~= nil
+			or extraToolSlotByIndex[hi] ~= nil
 			or (brainrotEntries[hi] ~= nil and brainrotParkedInUI[hi] ~= true)
 		if not slotStillHasBrainrot then
 			uiHotbarHighlight = nil
@@ -1605,15 +1707,15 @@ refreshBrainrotBackpackUI = function()
 			continue
 		end
 		local surface = toolSlotSurface(row :: GuiObject)
-		local icon = surface:FindFirstChild("Icon")
 		local rate = surface:FindFirstChild("Rate")
 		local key = surface:FindFirstChild("Key")
 		if entry then
-			if icon and icon:IsA("ImageLabel") then
-				icon.ScaleType = Enum.ScaleType.Fit
-				icon.BackgroundTransparency = 1
-				icon.Image = entry.icon ~= "" and entry.icon or "rbxasset://textures/ui/GuiImagePlaceholder.png"
-				icon.Visible = true
+			setSlotIcons(
+				surface,
+				entry.icon ~= "" and entry.icon or "rbxasset://textures/ui/GuiImagePlaceholder.png",
+				true
+			)
+			for _, icon in slotIconTargets(surface) do
 				icon.AnchorPoint = Vector2.new(0.5, 0.5)
 				icon.Position = UDim2.new(0.5, 0, 0.5, 0)
 			end
@@ -1947,11 +2049,14 @@ selectSlot = function(index: number)
 	if tool and not hasBrainrotEntry then
 		if equipped == tool then
 			hum:UnequipTools()
-			setHotbarSelection(nil)
+			setHotbarSelection(nil, false)
+			task.defer(rebuildSlots)
 			return
 		end
+		extraToolSlotByIndex[index] = tool
 		setHotbarSelection(index)
 		hum:EquipTool(tool)
+		task.defer(rebuildSlots)
 		return
 	end
 
@@ -1990,6 +2095,7 @@ selectSlot = function(index: number)
 
 	setHotbarSelection(index)
 	hum:EquipTool(tool)
+	task.defer(rebuildSlots)
 end
 
 -- After deposit, server sends equipSlot = inventory index of the new brainrot (hotbar 1–9 mirror those indices).
@@ -2184,19 +2290,27 @@ function ToolbarController.init()
 				if DropTargets.isTouchPointerInput() then
 					return
 				end
-				UIInteractionSounds.playClick()
-				if brainrotEntries[i] and not brainrotParkedInUI[i] then
-					local e = brainrotEntries[i]
-					local tex = (e.icon ~= "" and e.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
-					activeToolbarDrag = true
-					pendingToolbarDrag = {
-						kind = "hotbar",
-						idx = i,
-						start = UserInputService:GetMouseLocation(),
-						texture = tex,
-						rowButton = nil,
-					}
+				local tex = hotbarSlotDragTexture(i)
+				if not tex then
+					return
 				end
+				UIInteractionSounds.playClick()
+				local isExtraTool = not (brainrotEntries[i] and not brainrotParkedInUI[i])
+				local tool = slotTools[i]
+				local equippedOnDown = false
+				if tool and player.Character and tool.Parent == player.Character then
+					equippedOnDown = true
+				end
+				activeToolbarDrag = true
+				pendingToolbarDrag = {
+					kind = "hotbar",
+					idx = i,
+					start = UserInputService:GetMouseLocation(),
+					texture = tex,
+					rowButton = nil,
+					isExtraTool = isExtraTool,
+					equippedOnDown = equippedOnDown,
+				}
 			end)
 		else
 			warn("[ToolbarController] Hotbar slot '" .. tostring(i) .. "' has no TextButton/ImageButton for tap input")
@@ -2531,6 +2645,38 @@ function ToolbarController.init()
 			or (ghostViewport ~= nil and DropTargets.pointOverHotbarFromGuiHitScan(ghostViewport))
 
 		if pnd.kind == "hotbar" then
+			if pnd.isExtraTool then
+				if overBackpack then
+					setBackpackPanelOpen(true)
+					local hum = getHumanoid()
+					local tool = extraToolSlotByIndex[pnd.idx] or slotTools[pnd.idx]
+					if hum and tool and tool.Parent == player.Character then
+						hum:UnequipTools()
+					end
+					task.defer(rebuildSlots)
+					UIInteractionSounds.playClick()
+				elseif targetHotbar
+					and targetHotbar ~= pnd.idx
+					and brainrotEntries[targetHotbar] == nil
+					and brainrotParkedInUI[targetHotbar] ~= true
+				then
+					local tool = extraToolSlotByIndex[pnd.idx] or slotTools[pnd.idx]
+					local other = extraToolSlotByIndex[targetHotbar]
+					if tool then
+						extraToolSlotByIndex[targetHotbar] = tool
+					else
+						extraToolSlotByIndex[targetHotbar] = nil
+					end
+					if other then
+						extraToolSlotByIndex[pnd.idx] = other
+					else
+						extraToolSlotByIndex[pnd.idx] = nil
+					end
+					task.defer(rebuildSlots)
+					UIInteractionSounds.playClick()
+				end
+				return
+			end
 			local hasEntry = brainrotEntries[pnd.idx] and not brainrotParkedInUI[pnd.idx]
 			if not hasEntry then
 				return

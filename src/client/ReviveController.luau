@@ -20,7 +20,10 @@ local player = Players.LocalPlayer
 
 local REVIVE_FRAME_NAME = "Revive PopUP"
 local BLUR_NAME = "ReviveBlur"
-local BLUR_SIZE = 22
+local BLUR_SIZE = 32
+local DIM_GUI_NAME = "ReviveDim"
+local DIM_COLOR = Color3.fromRGB(0, 0, 0)
+local DIM_TRANSPARENCY = 0.38
 
 local OPEN_TWEEN = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_TWEEN = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
@@ -41,6 +44,8 @@ local currentProductId: number? = nil
 local currentLand: number? = nil
 
 local blurEffect: BlurEffect? = nil
+local dimGui: ScreenGui? = nil
+local dimFrame: Frame? = nil
 local earRingingSound: Sound? = nil
 local bgmSounds: { Sound } = {}
 local bgmSpeedBySound: { [Sound]: number } = {}
@@ -229,38 +234,88 @@ local function startEarRinging()
 	earRingingSound = clone
 end
 
-local function showBlur()
-	if blurEffect and blurEffect.Parent then
-		return
-	end
+local function showReviveBackdrop()
 	local existing = Lighting:FindFirstChild(BLUR_NAME)
 	if existing and existing:IsA("BlurEffect") then
 		blurEffect = existing
 	else
 		local blur = Instance.new("BlurEffect")
 		blur.Name = BLUR_NAME
-		blur.Size = 0
+		blur.Size = blurEffect and blurEffect.Size or 0
 		blur.Parent = Lighting
 		blurEffect = blur
 	end
 	TweenService:Create(blurEffect :: BlurEffect, FADE_TWEEN, { Size = BLUR_SIZE }):Play()
-end
 
-local function hideBlur()
-	if not blurEffect or not blurEffect.Parent then
+	local playerGui = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 10)
+	if not playerGui then
 		return
 	end
-	local blur = blurEffect
-	local tween = TweenService:Create(blur, FADE_TWEEN, { Size = 0 })
-	tween.Completed:Once(function()
-		if blur.Parent then
+
+	local gui = playerGui:FindFirstChild(DIM_GUI_NAME)
+	if not gui or not gui:IsA("ScreenGui") then
+		gui = Instance.new("ScreenGui")
+		gui.Name = DIM_GUI_NAME
+		gui.ResetOnSpawn = false
+		gui.DisplayOrder = 49
+		gui.IgnoreGuiInset = true
+		gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+		gui.Parent = playerGui
+
+		local frame = Instance.new("Frame")
+		frame.Name = "Dim"
+		frame.Size = UDim2.fromScale(1, 1)
+		frame.Position = UDim2.fromScale(0, 0)
+		frame.BackgroundColor3 = DIM_COLOR
+		frame.BackgroundTransparency = 1
+		frame.BorderSizePixel = 0
+		frame.ZIndex = 1
+		frame.Parent = gui
+		dimFrame = frame
+	end
+
+	dimGui = gui :: ScreenGui
+	gui.Enabled = true
+	local frame = dimFrame or gui:FindFirstChild("Dim")
+	if frame and frame:IsA("Frame") then
+		dimFrame = frame
+		TweenService:Create(frame, FADE_TWEEN, { BackgroundTransparency = DIM_TRANSPARENCY }):Play()
+	end
+end
+
+local function hideReviveBackdrop()
+	if blurEffect and blurEffect.Parent then
+		local blur = blurEffect
+		local tween = TweenService:Create(blur, FADE_TWEEN, { Size = 0 })
+		tween.Completed:Once(function()
+			if blur.Parent then
+				blur:Destroy()
+			end
+			if blurEffect == blur then
+				blurEffect = nil
+			end
+		end)
+		tween:Play()
+	elseif Lighting:FindFirstChild(BLUR_NAME) then
+		local blur = Lighting:FindFirstChild(BLUR_NAME)
+		if blur and blur:IsA("BlurEffect") then
 			blur:Destroy()
 		end
-		if blurEffect == blur then
-			blurEffect = nil
-		end
-	end)
-	tween:Play()
+		blurEffect = nil
+	end
+
+	if dimFrame and dimFrame.Parent then
+		local frame = dimFrame
+		local tween = TweenService:Create(frame, FADE_TWEEN, { BackgroundTransparency = 1 })
+		tween.Completed:Once(function()
+			if dimGui and dimGui.Parent then
+				dimGui.Enabled = false
+			end
+		end)
+		tween:Play()
+	elseif dimGui and dimGui.Parent then
+		dimGui.Enabled = false
+	end
 end
 
 local function resolveMainGui(): ScreenGui?
@@ -409,7 +464,7 @@ local function cleanupReviveSession()
 	cancelCountdown()
 	stopEarRinging()
 	setBgmSlowed(false)
-	hideBlur()
+	hideReviveBackdrop()
 	restoreGameplayHud()
 	sessionActive = false
 	currentProductId = nil
@@ -556,7 +611,7 @@ local function openRevivePanel(land: number, productId: number, countdownSec: nu
 	end
 
 	hideGameplayHud(main)
-	showBlur()
+	showReviveBackdrop()
 	collectBgmSounds()
 	setBgmSlowed(true)
 	if not earRingingSound then

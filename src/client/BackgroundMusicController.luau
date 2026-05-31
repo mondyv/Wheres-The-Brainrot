@@ -1,17 +1,15 @@
 --[[
 	BackgroundMusicController — context BGM from SoundService.BackgroundMusic.SoundGroup:
-	• Safezone folder — while inside spawn safe zone
-	• WhenHolding folder — while carrying brainrot on head (outside safe zone)
+	• Safezone folder — default world music (plays everywhere)
+	• WhenHolding folder — while carrying a bush brainrot on your head
 	Picks a random track from the active folder; when it ends, picks another random one.
 --]]
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 
 local CarryGate = require(script.Parent.CarryGate)
-local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
 local POLL_INTERVAL = 0.25
 
@@ -140,11 +138,11 @@ function BackgroundMusicController.init()
 	end
 
 	local function resolveMode(): BgmMode
-		if SafezoneUtil.isCharacterInSafezone(player.Character) then
-			return "safezone"
-		end
-		if CarryGate.isCarryingOnHead() then
+		if CarryGate.isCarryingOnHead() and #holdingPlaylist > 0 then
 			return "holding"
+		end
+		if #safezonePlaylist > 0 then
+			return "safezone"
 		end
 		return "none"
 	end
@@ -178,34 +176,6 @@ function BackgroundMusicController.init()
 			return
 		end
 		pollAccum = 0
-		pollState()
-	end)
-
-	task.spawn(function()
-		local map = workspace:WaitForChild("Map", 120)
-		if not map then
-			return
-		end
-		map.ChildAdded:Connect(function(ch)
-			if ch.Name == "Spawn And Bases" then
-				SafezoneUtil.invalidateCache()
-				pollState()
-			end
-		end)
-		local spawnBases = map:WaitForChild("Spawn And Bases", 60)
-		if spawnBases then
-			spawnBases.DescendantAdded:Connect(function(desc)
-				if not desc:IsA("BasePart") then
-					return
-				end
-				if desc.Name == "SafezoneHitbox" or desc.Name == "SafeZoneHitbox"
-					or desc.Name == "Reddie" or desc.Name == "Raddie" then
-					SafezoneUtil.invalidateCache()
-					pollState()
-				end
-			end)
-		end
-		SafezoneUtil.invalidateCache()
 		pollState()
 	end)
 

@@ -47,9 +47,8 @@ local FOV_MAX              = 96
 local FOV_SPEED            = 4.2   -- smooth widen while accelerating on the arc
 local LANDING_BLOCK_VEL_MIN = 18  -- landing speed that spawns block burst + camera shake
 local LANDING_BLOCK_VEL_MAX = 92
-local LANDING_CAM_SHAKE_DURATION = 0.44
-local LANDING_CAM_SHAKE_MAX = 0.84
-local LANDING_CAM_DIP_DEG = 3.4
+local LANDING_CAM_SHAKE_DURATION = 0.4
+local LANDING_CAM_SHAKE_MAX = 0.72
 -- Hanging swing camera: lag + roll only (no positional shake / high-frequency wobble).
 local CAM_LAG_STUDS_MAX      = 0.95
 local CAM_LAG_SMOOTH         = 3.8
@@ -518,15 +517,12 @@ local function boot(character: Model)
 			local u = landingAge / LANDING_CAM_SHAKE_DURATION
 			local decay = (1 - u) * (1 - u)
 			local shake = landingCamShakeIntensity * decay
-			local t = now * 19
+			local t = now * 18
 			cf += Vector3.new(
-				(math.noise(t, 1.5, 0) - 0.5) * 2 * LANDING_CAM_SHAKE_MAX * shake * 0.72,
-				(math.noise(0, t, 2.5) - 0.5) * 2 * LANDING_CAM_SHAKE_MAX * shake * 0.42
-					- LANDING_CAM_SHAKE_MAX * shake * 0.22,
-				(math.noise(t, 3, 1) - 0.5) * 2 * LANDING_CAM_SHAKE_MAX * shake * 0.24
+				(math.noise(t, 1.5, 0) - 0.5) * 2 * LANDING_CAM_SHAKE_MAX * shake,
+				(math.noise(0, t, 2.5) - 0.5) * 2 * LANDING_CAM_SHAKE_MAX * shake,
+				(math.noise(t, 3, 1) - 0.5) * 2 * LANDING_CAM_SHAKE_MAX * shake * 0.35
 			)
-			local impactPitch = math.sin(u * math.pi) * landingCamShakeIntensity * math.rad(LANDING_CAM_DIP_DEG)
-			cf = cf * CFrame.Angles(impactPitch, 0, 0)
 		end
 
 		camera.CFrame = cf

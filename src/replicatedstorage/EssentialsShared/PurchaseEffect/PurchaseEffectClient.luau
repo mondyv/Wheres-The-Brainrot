@@ -18,7 +18,6 @@ local savedGuiStates: { [ScreenGui]: boolean }? = nil
 local playerGuiChildConn: RBXScriptConnection? = nil
 
 local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
-	Enum.CoreGuiType.Backpack,
 	Enum.CoreGuiType.Chat,
 	Enum.CoreGuiType.PlayerList,
 }

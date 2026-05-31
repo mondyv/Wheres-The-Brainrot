@@ -23,8 +23,12 @@ local RESOLVE_TIMEOUT = 45
 local DEFAULT_CAMERA_POS = Vector3.new(1452.568, 100.564, 518.559)
 local DEFAULT_CAMERA_RAD = Vector3.new(math.rad(4.555), math.rad(18.409), 0)
 
-local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
+-- Backpack stays off permanently — custom Toolbar replaces it.
+local CORE_GUIS_ALWAYS_DISABLED: { Enum.CoreGuiType } = {
 	Enum.CoreGuiType.Backpack,
+}
+
+local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
 	Enum.CoreGuiType.Chat,
 	Enum.CoreGuiType.EmotesMenu,
 	Enum.CoreGuiType.Health,
@@ -979,6 +983,11 @@ local function resolveLoadingScreenGui(playerGui: PlayerGui): ScreenGui?
 end
 
 local function setCoreGuisVisible(visible: boolean)
+	for _, coreType in CORE_GUIS_ALWAYS_DISABLED do
+		pcall(function()
+			StarterGui:SetCoreGuiEnabled(coreType, false)
+		end)
+	end
 	for _, coreType in CORE_GUIS_TO_HIDE do
 		pcall(function()
 			StarterGui:SetCoreGuiEnabled(coreType, visible)

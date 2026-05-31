@@ -37,6 +37,28 @@ local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitFor
 
 local player    = Players.LocalPlayer
 
+local defaultBackpackGuardConn: RBXScriptConnection? = nil
+
+local function disableDefaultRobloxBackpack()
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+	end)
+end
+
+local function ensureDefaultRobloxBackpackStaysOff()
+	disableDefaultRobloxBackpack()
+	if defaultBackpackGuardConn then
+		return
+	end
+	defaultBackpackGuardConn = RunService.Heartbeat:Connect(function()
+		pcall(function()
+			if StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.Backpack) then
+				StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+			end
+		end)
+	end)
+end
+
 local playerGui = player.PlayerGui
 local mainGui   = playerGui:WaitForChild("Main")
 local sideUI    = mainGui:WaitForChild("SideUI")
@@ -2013,19 +2035,13 @@ end
 local ToolbarController = {}
 
 function ToolbarController.prepareEarly()
+	disableDefaultRobloxBackpack()
 	applyToolbarInitialHiddenState()
 end
 
 function ToolbarController.init()
-	-- Disable the default Roblox backpack GUI (defer again — CoreGui can turn on during load).
-	pcall(function()
-		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
-	end)
-	task.defer(function()
-		pcall(function()
-			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
-		end)
-	end)
+	ensureDefaultRobloxBackpackStaysOff()
+	task.defer(ensureDefaultRobloxBackpackStaysOff)
 
 	toolbar.Visible = false
 	applyToolbarInitialHiddenState()

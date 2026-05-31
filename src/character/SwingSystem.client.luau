@@ -298,6 +298,7 @@ local function boot(character: Model)
 
 	-- ── Upgrade stats (unified curve via SwingProgression) ───────────────────
 	local swingForce = BASE_FORCE
+	local dynGrappleReach = 56
 	local dynMaxSwingDistance = BASE_MAX_SWING_DISTANCE
 
 	local dynMaxSwingSpeed = MAX_SWING_SPEED
@@ -339,8 +340,11 @@ local function boot(character: Model)
 		dynLaunchDeadhangImpulse = ps.launchDeadhangImpulse
 
 		dynMaxSwingDistance = math.max(rs.maxSwingDistance, 8)
+		dynGrappleReach = math.max(rs.reachStuds, dynMaxSwingDistance + 4)
 	end
 	refreshStats()
+
+	local GROUND_CHECK_DIST = 3.2
 
 	local swingRayParams = RaycastParams.new()
 	swingRayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -410,9 +414,10 @@ local function boot(character: Model)
 		return pumpDir * deficit * dynSwingSpeedPump * mult * mass * 0.018
 	end
 
-	-- Grapple search radius matches the rope physics cap: you can only hook what the rope can hold.
+	-- Grapple search radius: how far away a vine can be to show UI / allow hooking.
+	-- Separate from maxSwingDistance (how far you can travel from the hook while attached).
 	local function attachRadius(): number
-		return dynMaxSwingDistance
+		return dynGrappleReach
 	end
 
 	local statConns = {
@@ -1034,7 +1039,7 @@ local function boot(character: Model)
 	-- Swing ability/UI requires being airborne (or already swinging). Walking, running, standing,
 	-- climbing, swimming, sitting, getting up — none of these allow a new grapple.
 	local function isCharacterAirborne(): boolean
-		if isSwinging then
+		if isSwinging or isLaunched then
 			return true
 		end
 		local st = humanoid:GetState()
@@ -1042,6 +1047,15 @@ local function boot(character: Model)
 			or st == Enum.HumanoidStateType.Jumping
 			or st == Enum.HumanoidStateType.FallingDown
 		then
+			return true
+		end
+		-- Raycast fallback: humanoid state can lag a frame after leaving the ground.
+		local groundRay = workspace:Raycast(hrp.Position, Vector3.new(0, -GROUND_CHECK_DIST, 0), swingRayParams)
+		if not groundRay then
+			return true
+		end
+		local groundClearance = hrp.Position.Y - groundRay.Position.Y
+		if groundClearance > 2.8 then
 			return true
 		end
 		-- Short post-swing grace: re-hook while still flying through the air, never while on ground.
@@ -1054,6 +1068,7 @@ local function boot(character: Model)
 			and st ~= Enum.HumanoidStateType.Climbing
 			and st ~= Enum.HumanoidStateType.Swimming
 			and st ~= Enum.HumanoidStateType.GettingUp
+			and groundClearance > 2.8
 		then
 			return true
 		end
@@ -1101,7 +1116,7 @@ local function boot(character: Model)
 	local function startSwing(target: BasePart)
 		local attachWorld = closestAttachWorldOnPart(target)
 		local dist = (hrp.Position - attachWorld).Magnitude
-		if dist > dynMaxSwingDistance + 0.5 or dist < 0.08 then
+		if dist > dynGrappleReach + 0.5 or dist < 0.08 then
 			return
 		end
 		if isHrpInSafezone() then
@@ -1335,7 +1350,8 @@ local function boot(character: Model)
 	-- ── Input ─────────────────────────────────────────────────────────────────
 	humanoid.StateChanged:Connect(function(_, new)
 		if new == Enum.HumanoidStateType.Freefall
-		or new == Enum.HumanoidStateType.Jumping then
+		or new == Enum.HumanoidStateType.Jumping
+		or new == Enum.HumanoidStateType.FallingDown then
 			isAirborne = true
 		elseif new == Enum.HumanoidStateType.Landed then
 			isAirborne = false

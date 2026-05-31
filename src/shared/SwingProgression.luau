@@ -118,8 +118,12 @@ end
 
 function M.ropeStats(ropeLevel: number): RopeStats
 	local maxDist = M.maxSwingDistance(ropeLevel)
+	-- Grapple search radius (how far away vines can be detected) stays much larger than
+	-- maxSwingDistance (how far you can travel from the hook while attached).
+	local t = M.progressT(ropeLevel, M.ROPE_REFERENCE_LEVEL)
+	local reachStuds = 56 + t * 258
 	return {
-		reachStuds = maxDist,
+		reachStuds = reachStuds,
 		maxSwingDistance = maxDist,
 	}
 end

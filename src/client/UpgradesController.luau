@@ -334,7 +334,7 @@ local function tweenCashLabel(amountLabel: TextLabel, target: number)
 	playSpendFeedback(amountLabel, spent)
 end
 
-local ROW_IDS = { "Power10", "Reach25", "Carry1" }
+local ROW_IDS = { "Power10", "Power25", "Reach10", "Reach25", "Carry1" }
 
 local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instance, refreshAllRows: () -> ())
 	local def = (SwingUpgrades :: any)[upgradeId]

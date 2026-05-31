@@ -168,9 +168,18 @@ local function collectBgmSounds()
 	if not sg then
 		return
 	end
-	for _, c in sg:GetChildren() do
-		if c:IsA("Sound") then
-			table.insert(bgmSounds, c)
+	local function addSoundsFrom(parent: Instance)
+		for _, c in parent:GetChildren() do
+			if c:IsA("Sound") then
+				table.insert(bgmSounds, c)
+			end
+		end
+	end
+	addSoundsFrom(sg)
+	for _, folderName in { "WhenHolding", "Safezone" } do
+		local folder = sg:FindFirstChild(folderName)
+		if folder then
+			addSoundsFrom(folder)
 		end
 	end
 end

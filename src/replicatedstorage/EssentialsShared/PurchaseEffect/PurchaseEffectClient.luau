@@ -280,7 +280,14 @@ function PurchaseEffectClient.init(self: PurchaseEffectClient)
 	end)
 
 	bindRemoteAsync("ProductHandlerConfetti", function()
-		self:hide(nil, runPurchaseCelebration)
+		-- Client-initiated purchases already celebrate via PromptProductPurchaseFinished
+		-- after the rainbow fades; only run confetti here when no rainbow was showing.
+		local rainbowVisible = rainbow and rainbow.ImageTransparency < 0.99
+		if rainbowVisible then
+			self:hide()
+		else
+			self:hide(nil, runPurchaseCelebration)
+		end
 	end)
 
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, _gamePassId, wasPurchased)

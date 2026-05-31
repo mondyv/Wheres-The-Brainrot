@@ -5,7 +5,7 @@
 	Responsibilities:
 	• Read DailyConfig + DailyRemotes; render per-day card state (Claim / Claimed / Locked).
 	• Animate day 5 "???" left → middle → right pulse, day 7 icon sway (days 5/7 only).
-	• Trigger claim flow on click, play confetti + purchase shake for Day 5, animate the
+	• Trigger claim flow on click; play confetti via DailyClaimed (purchase rainbow handles Skip All).
 	  button morph from Claim → Claimed.
 	• Drive the sidebar "!" badge on the Gifts (Daily) button while a reward is ready,
 	  using the same sway/pulse tween used by Index/Rebirth.
@@ -594,7 +594,6 @@ local function tryClaim(day: number, card: Frame)
 			applyState(state :: DailyConfig.DailyState)
 		end
 		applyCardScaleBump(card)
-		fireConfettiAndShake()
 		if reward and (reward.kind == "cash" or reward.kind == "cash_boost_percent") then
 			GameSoundEffects.playCashGrab()
 		end

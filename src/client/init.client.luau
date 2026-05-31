@@ -2,6 +2,8 @@
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
 
+require(script.PlayerGuiMain).ensure(Players.LocalPlayer)
+
 local LoadingScreenController = require(script.LoadingScreenController)
 LoadingScreenController.showEarly()
 pcall(function()
@@ -50,9 +52,10 @@ task.spawn(function()
 		local productHandlerClient = require(shared:WaitForChild("ProductHandler"):WaitForChild("ProductHandlerClient"))
 		productHandlerClient:init()
 
+		local PlayerGuiMain = require(script.PlayerGuiMain)
 		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui", 30)
 		if playerGui then
-			local main = playerGui:WaitForChild("Main", 60)
+			local main = PlayerGuiMain.ensure(Players.LocalPlayer)
 			if main then
 				productHandlerClient:autoBindPurchaseButtons(main)
 			end

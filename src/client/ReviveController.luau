@@ -13,6 +13,7 @@ local TweenService = game:GetService("TweenService")
 
 local HUDController = require(script.Parent.HUDController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
@@ -329,13 +330,10 @@ local function hideReviveBackdrop()
 end
 
 local function resolveMainGui(): ScreenGui?
-	local playerGui = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 30)
-	if not playerGui then
-		return nil
-	end
-	local main = playerGui:FindFirstChild("Main") or playerGui:WaitForChild("Main", 30)
-	if main and main:IsA("ScreenGui") then
-		main.ResetOnSpawn = false
+	local ok, main = pcall(function()
+		return PlayerGuiMain.ensure(player)
+	end)
+	if ok and main and main:IsA("ScreenGui") then
 		return main
 	end
 	return nil

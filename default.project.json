@@ -8,6 +8,10 @@
       "Shared": {
         "$path": "src/shared"
       },
+      "EssentialsShared": {
+        "$path": "src/replicatedstorage/EssentialsShared",
+        "$ignoreUnknownInstances": true
+      },
       "Animations": {
         "$path": "src/replicatedstorage/Animations"
       },
@@ -33,6 +37,10 @@
     "ServerScriptService": {
       "Server": {
         "$path": "src/server"
+      },
+      "EssentialsServer": {
+        "$path": "src/essentials/server",
+        "$ignoreUnknownInstances": true
       }
     },
 

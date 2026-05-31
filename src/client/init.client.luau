@@ -38,6 +38,11 @@ end)
 require(script.BackgroundMusicController).init()
 require(script.UIInteractionSounds).init()
 require(script.GameSoundEffects).init()
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+pcall(function()
+	require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchaseEffect"):WaitForChild("PurchaseEffectClient")):init()
+end)
 require(script.BrainrotSFX).init()
 require(script.SafeZoneFlashController).init()
 -- Bush targeting + custom card; ProximityPromptEffects styles stands and wires bush FX/harvest.

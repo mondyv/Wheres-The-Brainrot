@@ -193,7 +193,7 @@ local function refreshUpgradeRow(row: Instance, upgradeId: string)
 	local levels = readLevels()
 	local currentLevel = SwingUpgrades.levelForUpgradeId(upgradeId, levels)
 	local cur = SwingUpgrades.displayStatForLevel(currentLevel, def.levelAttr)
-	local nxt = SwingUpgrades.displayStatAfterPurchase(currentLevel, def.units, def.levelAttr)
+	local nxt = SwingUpgrades.displayStatAfterPurchase(currentLevel, 1, def.levelAttr)
 
 	if upgradeId == "Carry1" then
 		local curL = findLabelUnder(row, { "CurrentCarry" })
@@ -334,7 +334,7 @@ local function tweenCashLabel(amountLabel: TextLabel, target: number)
 	playSpendFeedback(amountLabel, spent)
 end
 
-local ROW_IDS = { "Power10", "Power25", "Reach10", "Reach25", "Carry1" }
+local ROW_IDS = { "Power10", "Reach25", "Carry1" }
 
 local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instance, refreshAllRows: () -> ())
 	local def = (SwingUpgrades :: any)[upgradeId]

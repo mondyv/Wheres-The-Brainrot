@@ -33,8 +33,7 @@ local SPRING_FREE_LENGTH = 0
 local SPRING_STIFFNESS   = 100
 local SPRING_DAMPING     = 20
 local ZIP_TOWARD_DV          = 19    -- studs/s into the arc on attach
-local LAUNCH_CAMERA_BLEND    = 0.28  -- how much camera look steers launch vs current arc direction
-local LAUNCH_FORWARD_CAMERA_MIX = 0.24
+local MOVEMENT_INPUT_THRESHOLD = 0.05
 local LAUNCH_DURATION        = 0.42  -- seconds post-release camera/FOV treats player as launched
 local REATTACH_ZIP_MULT      = 0.4   -- zip impulse scale when re-hooking soon after a release
 local REATTACH_ZIP_GRACE      = 0.4   -- seconds after detach where zip is reduced
@@ -985,6 +984,23 @@ local function boot(character: Model)
 		return best
 	end
 
+	-- Movement input (joystick / WASD) steers swing; fall back to character facing when idle.
+	local function flatMoveInputDir(): Vector3
+		local md = humanoid.MoveDirection
+		if md.Magnitude > MOVEMENT_INPUT_THRESHOLD then
+			local flat = Vector3.new(md.X, 0, md.Z)
+			if flat.Magnitude > MOVEMENT_INPUT_THRESHOLD then
+				return flat.Unit
+			end
+		end
+		local look = hrp.CFrame.LookVector
+		local flatLook = Vector3.new(look.X, 0, look.Z)
+		if flatLook.Magnitude > MOVEMENT_INPUT_THRESHOLD then
+			return flatLook.Unit
+		end
+		return Vector3.new(0, 0, -1)
+	end
+
 	local function canGrappleFromAir(): boolean
 		if isAirborne then
 			return true
@@ -1006,10 +1022,9 @@ local function boot(character: Model)
 		local fromAnchor = hrp.Position - attachWorld
 		local radial = if fromAnchor.Magnitude > 0.25 then fromAnchor.Unit else Vector3.yAxis
 
-		-- Camera look on the tangent plane, tilted slightly down into the arc.
-		local look = camera.CFrame.LookVector
-		local flatLook = Vector3.new(look.X, 0, look.Z)
-		local fwdTang = flatLook - radial * flatLook:Dot(radial)
+		-- Movement direction on the tangent plane, tilted slightly down into the arc.
+		local moveFlat = flatMoveInputDir()
+		local fwdTang = moveFlat - radial * moveFlat:Dot(radial)
 		local swingDir: Vector3
 		if fwdTang.Magnitude > 0.1 then
 			local down = Vector3.new(fwdTang.X, fwdTang.Y - 0.55, fwdTang.Z)
@@ -1147,7 +1162,7 @@ local function boot(character: Model)
 			local snapHeld = heldTime
 			local snapCharge = swingChargeFill
 			local snapAnchor = detachAnchorWorld
-			local camLook0 = camera.CFrame.LookVector
+			local snapMoveDir = humanoid.MoveDirection
 
 			task.defer(function()
 				if not hrp.Parent then
@@ -1160,22 +1175,25 @@ local function boot(character: Model)
 
 				local vel = snapVel
 				local speed = vel.Magnitude
-				local camLook = camLook0
-				local camFlat = Vector3.new(camLook.X, 0, camLook.Z)
-				local camFlatUnit = if camFlat.Magnitude > 0.08 then camFlat.Unit else Vector3.new(0, 0, -1)
 				local holdMult = math.clamp(snapHeld / MIN_SWING_HOLD_LAUNCH, 0.72, 1)
 				local mass = hrp.AssemblyMass
 
-				local function blendLaunchDir(baseDir: Vector3): Vector3
-					local d = baseDir
-					if camFlat.Magnitude > 0.08 then
-						d = (d * (1 - LAUNCH_FORWARD_CAMERA_MIX) + camFlat.Unit * LAUNCH_FORWARD_CAMERA_MIX)
+				local function releaseFlatDir(): Vector3
+					if snapMoveDir.Magnitude > MOVEMENT_INPUT_THRESHOLD then
+						local flat = Vector3.new(snapMoveDir.X, 0, snapMoveDir.Z)
+						if flat.Magnitude > MOVEMENT_INPUT_THRESHOLD then
+							return flat.Unit
+						end
 					end
-					if d.Magnitude > 1e-4 then
-						return d.Unit
+					local look = hrp.CFrame.LookVector
+					local flatLook = Vector3.new(look.X, 0, look.Z)
+					if flatLook.Magnitude > MOVEMENT_INPUT_THRESHOLD then
+						return flatLook.Unit
 					end
-					return camFlatUnit
+					return Vector3.new(0, 0, -1)
 				end
+
+				local flatUnit = releaseFlatDir()
 
 				local function applyMomentumLaunch(
 					launchDir: Vector3,
@@ -1184,7 +1202,7 @@ local function boot(character: Model)
 					chargeFill: number,
 					extraForwardDv: number?
 				)
-					local dir = blendLaunchDir(launchDir)
+					local dir = if launchDir.Magnitude > 1e-4 then launchDir.Unit else flatUnit
 					local forwardDv = dynLaunchImpulseBase * holdMult + (extraForwardDv or 0)
 					local momentumDv = tangSpeed * dynLaunchMomentumRatio * holdMult
 					local chargeDv = chargeFill * dynLaunchChargeBonus * holdMult
@@ -1220,7 +1238,7 @@ local function boot(character: Model)
 				end
 
 				if speed <= 1 then
-					local hangDir = camFlatUnit + Vector3.new(0, 0.18, 0)
+					local hangDir = flatUnit + Vector3.new(0, 0.18, 0)
 					if hangDir.Magnitude > 1e-4 then
 						applyMomentumLaunch(
 							hangDir.Unit,
@@ -1241,20 +1259,18 @@ local function boot(character: Model)
 
 					local tangVel = vel - radial * vel:Dot(radial)
 					local tangSpeed = tangVel.Magnitude
-					local camTang = camFlat - radial * camFlat:Dot(radial)
+					local inputTang = flatUnit - radial * flatUnit:Dot(radial)
 
 					local launchDir: Vector3
-					if tangSpeed > 2 then
-						local tDir = tangVel.Unit
-						if camTang.Magnitude > 0.05 then
-							launchDir = (tDir * (1 - LAUNCH_CAMERA_BLEND) + camTang.Unit * LAUNCH_CAMERA_BLEND).Unit
-						else
-							launchDir = tDir
+					if inputTang.Magnitude > 0.05 then
+						launchDir = inputTang.Unit
+						if tangSpeed > 2 then
+							launchDir = (tangVel.Unit * 0.35 + inputTang.Unit * 0.65).Unit
 						end
-					elseif camTang.Magnitude > 0.05 then
-						launchDir = camTang.Unit
+					elseif tangSpeed > 2 then
+						launchDir = tangVel.Unit
 					else
-						launchDir = if speed > 0.1 then vel.Unit else camFlatUnit
+						launchDir = if speed > 0.1 then vel.Unit else flatUnit
 					end
 
 					local tangRef = if tangSpeed > 1 then tangSpeed else dynLaunchDeadhangImpulse * 0.35
@@ -1479,31 +1495,21 @@ local function boot(character: Model)
 			local extT = math.clamp(dist / ropeSpan, 0, 1.12)
 			local anchorWorld = ropeAnchorAtt.WorldPosition
 
-			-- Camera-relative steering: where you look is where you swing.
-			local camLook = camera.CFrame.LookVector
-			local camRight = camera.CFrame.RightVector
-			local md = humanoid.MoveDirection
-
-			local inputBias = Vector3.zero
-			if md.Magnitude > 0.05 then
-				local mdFlat = Vector3.new(md.X, 0, md.Z)
-				inputBias = camRight * camRight:Dot(mdFlat) * 0.6
-			end
-			local steerDir = Vector3.new(camLook.X, 0, camLook.Z) + inputBias
-
+			-- Movement-input steering: walk direction on the swing tangent plane.
+			local steerDir = flatMoveInputDir()
 			local tang = steerDir - radial * steerDir:Dot(radial)
-			local camSteerForce = Vector3.zero
+			local inputSteerForce = Vector3.zero
 			if tang.Magnitude > 0.05 then
-				camSteerForce = tang.Unit * swingForce * mult * hrp.AssemblyMass
+				inputSteerForce = tang.Unit * swingForce * mult * hrp.AssemblyMass
 			end
 
 			local arcDir = pendulumArcDir(radial) or Vector3.new(0, -1, 0)
 			local arcForce = computeSwingArcForce(anchorWorld, radial, extT, mult, hrp.AssemblyMass)
 			local speedPump = computeSwingSpeedPump(radial, arcDir, vel, extT, mult, hrp.AssemblyMass)
 
-			-- Extended rope: pendulum arc dominates (fixes float); close in: more camera steer.
+			-- Extended rope: pendulum arc dominates (fixes float); close in: more movement steer.
 			local arcWeight = 0.42 + math.clamp((extT - 0.35) / 0.65, 0, 1) * 0.58
-			forceInst.Force = camSteerForce * (1 - arcWeight * 0.5) + arcForce + speedPump
+			forceInst.Force = inputSteerForce * (1 - arcWeight * 0.5) + arcForce + speedPump
 
 			local floorScale = swingFloorScale(anchorWorld)
 			if floorScale < 0.3 and vel.Y < -10 then

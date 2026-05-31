@@ -63,6 +63,8 @@ local badgeInnerPulseTween: Tween? = nil
 
 local day5Routine: thread? = nil
 local day7IconTweens: { Tween } = {}
+local day7Icon: GuiObject? = nil
+local day7Card: Frame? = nil
 local cardClaimWired: { [Frame]: boolean } = {}
 local cardClaimHandlers: { [Frame]: () -> () } = {}
 local cardClaimButtons: { [Frame]: GuiButton } = {}
@@ -288,14 +290,40 @@ end
 
 -- ── Starbust / icon / day-specific animations ───────────────────────────────
 
+local function stopDay7IconAnimation()
+	for _, tween in day7IconTweens do
+		tween:Cancel()
+	end
+	table.clear(day7IconTweens)
+	if day7Icon then
+		day7Icon.Rotation = 0
+		local s = day7Icon:FindFirstChildOfClass("UIScale")
+		if s then
+			s.Scale = 1
+		end
+	end
+end
+
+local function isCardVisibleInContainer(card: Frame): boolean
+	if not container or not container:IsA("GuiObject") then
+		return true
+	end
+	local host = container :: GuiObject
+	local hostPos = host.AbsolutePosition
+	local hostSize = host.AbsoluteSize
+	local cardPos = card.AbsolutePosition
+	local cardSize = card.AbsoluteSize
+	return cardPos.X + cardSize.X > hostPos.X + 4
+		and cardPos.X < hostPos.X + hostSize.X - 4
+end
+
 local function startDay7IconSway(icon: GuiObject)
 	if icon:GetAttribute("__SwayingDay7Icon") == true then
 		return
 	end
 	icon:SetAttribute("__SwayingDay7Icon", true)
 	icon.ClipsDescendants = true
-	icon.ZIndex = math.min(icon.ZIndex, 3)
-	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.ZIndex = math.min(icon.ZIndex, 2)
 
 	local scale = getOrAddUIScale(icon)
 	scale.Scale = 1
@@ -305,12 +333,26 @@ local function startDay7IconSway(icon: GuiObject)
 	local scaleTween = TweenService:Create(
 		scale,
 		TweenInfo.new(5.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-		{ Scale = 1.04 }
+		{ Scale = 1.03 }
 	)
 	rotTween:Play()
 	scaleTween:Play()
 	table.insert(day7IconTweens, rotTween)
 	table.insert(day7IconTweens, scaleTween)
+end
+
+local function refreshDay7IconVisibility()
+	if not day7Icon or not day7Card then
+		return
+	end
+	local show = (dailyFrame and dailyFrame.Visible) and isCardVisibleInContainer(day7Card)
+	day7Icon.Visible = show
+	if show and day7Icon:GetAttribute("__SwayingDay7Icon") ~= true then
+		startDay7IconSway(day7Icon)
+	elseif not show then
+		stopDay7IconAnimation()
+		day7Icon:SetAttribute("__SwayingDay7Icon", false)
+	end
 end
 
 local function day5Question(card: Frame, suffix: string): GuiObject?
@@ -395,9 +437,11 @@ local function decorateCard(card: Frame, day: number, reward: DailyConfig.DailyR
 	end
 
 	if day == 7 then
+		day7Card = card
 		local icon = card:FindFirstChild("Icon")
 		if icon and icon:IsA("GuiObject") then
-			startDay7IconSway(icon :: GuiObject)
+			day7Icon = icon :: GuiObject
+			day7Icon.Visible = false
 		end
 	end
 end
@@ -408,24 +452,64 @@ local function clickHostForCard(card: Frame): Instance?
 	return card:FindFirstChild("Claim/Claimed/Locked") or card
 end
 
+local function setAllGradientsEnabled(root: Instance?, enabled: boolean)
+	if not root then
+		return
+	end
+	if root:IsA("UIGradient") then
+		(root :: UIGradient).Enabled = enabled
+	end
+	for _, d in root:GetDescendants() do
+		if d:IsA("UIGradient") then
+			d.Enabled = enabled
+		end
+	end
+end
+
 local function applyCardStatus(card: Frame, status: DailyConfig.DayStatus)
 	local clickHost = clickHostForCard(card)
 	if not clickHost then
 		return
 	end
 
-	-- Stud + shadow layers: green only while claimable; gray for claimed and locked.
+	local showGreen = status == "claim"
 	local decor = clickHost:FindFirstChild("Decor")
-	if decor then
-		local showGreen = status == "claim"
-		applyStudPair(decor:FindFirstChild("Stud"), showGreen)
-		applyStudPair(decor:FindFirstChild("Shadow"), showGreen)
+	local stud = decor and decor:FindFirstChild("Stud")
+	local shadow = decor and decor:FindFirstChild("Shadow")
+
+	-- Reset every gradient on the button, then enable only the active stud/shadow layer.
+	setAllGradientsEnabled(clickHost, false)
+
+	local claimStud = stud and stud:FindFirstChild("Claim")
+	local lockedStud = stud and stud:FindFirstChild("Claimed/Locked")
+	setStudPairLayer(claimStud, showGreen)
+	setStudPairLayer(lockedStud, not showGreen)
+	if showGreen then
+		setAllGradientsEnabled(claimStud, true)
+	else
+		setAllGradientsEnabled(lockedStud, true)
 	end
 
-	-- Top-level button gradient matches the active stud layer.
+	if shadow then
+		local claimShadow = shadow:FindFirstChild("Claim")
+		local lockedShadow = shadow:FindFirstChild("Claimed/Locked")
+		if claimShadow or lockedShadow then
+			setStudPairLayer(claimShadow, showGreen)
+			setStudPairLayer(lockedShadow, not showGreen)
+			if showGreen then
+				setAllGradientsEnabled(claimShadow, true)
+			else
+				setAllGradientsEnabled(lockedShadow, true)
+			end
+		else
+			setStudPairLayer(shadow, not showGreen)
+			setAllGradientsEnabled(shadow, not showGreen)
+		end
+	end
+
 	local hostGradient = clickHost:FindFirstChildOfClass("UIGradient")
 	if hostGradient then
-		hostGradient.Enabled = status == "claim"
+		hostGradient.Enabled = showGreen
 	end
 
 	-- Text labels: "Claim" vs "Claimed/Locked"; choose which one to show.
@@ -482,6 +566,7 @@ local function tryClaim(day: number, card: Frame)
 		return
 	end
 	local rf = claimRF
+	local reward = DailyConfig.REWARD_BY_DAY[day]
 	task.spawn(function()
 		local pcallOk, claimOk, _err, state = pcall(function()
 			return rf:InvokeServer(day)
@@ -496,6 +581,9 @@ local function tryClaim(day: number, card: Frame)
 		end
 		applyCardScaleBump(card)
 		fireConfettiAndShake()
+		if reward and (reward.kind == "cash" or reward.kind == "cash_boost_percent") then
+			GameSoundEffects.playCashGrab()
+		end
 	end)
 end
 
@@ -568,7 +656,7 @@ end
 
 local updateNextRewardLabel: (state: DailyConfig.DailyState?) -> ()
 
-local function applyState(state: DailyConfig.DailyState)
+applyState = function(state: DailyConfig.DailyState)
 	lastState = state
 	if not container then
 		return
@@ -745,8 +833,14 @@ function DailyController.init()
 			end)
 		end
 		if claimedRE then
-			claimedRE.OnClientEvent:Connect(function()
-				-- Already handled visually via tryClaim, but fire celebration as a safety net.
+			claimedRE.OnClientEvent:Connect(function(payload)
+				fireConfettiAndShake()
+				if typeof(payload) == "table" and typeof((payload :: any).day) == "number" then
+					local reward = DailyConfig.REWARD_BY_DAY[(payload :: any).day]
+					if reward and (reward.kind == "cash" or reward.kind == "cash_boost_percent") then
+						GameSoundEffects.playCashGrab()
+					end
+				end
 			end)
 		end
 
@@ -757,7 +851,13 @@ function DailyController.init()
 		if dailyFrame.Visible then
 			hideSidebarBadge()
 			fetchState()
+			task.defer(refreshDay7IconVisibility)
 		else
+			stopDay7IconAnimation()
+			if day7Icon then
+				day7Icon.Visible = false
+				day7Icon:SetAttribute("__SwayingDay7Icon", false)
+			end
 			if lastState and DailyConfig.hasUnclaimedReady(lastState) then
 				showSidebarBadge()
 			end
@@ -777,6 +877,9 @@ function DailyController.init()
 		end
 		lastTickAt = now
 		updateNextRewardLabel(lastState)
+		if dailyFrame and dailyFrame.Visible then
+			refreshDay7IconVisibility()
+		end
 		-- If a card just became claimable while the panel is closed, surface the badge.
 		if lastState and DailyConfig.hasUnclaimedReady(lastState) then
 			if not (dailyFrame and dailyFrame.Visible) then

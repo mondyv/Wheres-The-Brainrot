@@ -18,6 +18,7 @@ local TweenService = game:GetService("TweenService")
 
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
+local IndexService = require(Modules:WaitForChild("IndexService"))
 local BrainrotHeader = require(Modules:WaitForChild("BrainrotHeader"))
 local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
@@ -317,6 +318,10 @@ local function copyInventoryList(list: { BrainrotInvEntry }): { BrainrotInvEntry
 			baseIncome = e.baseIncome,
 		}
 		enrichEntryFromCatalog(copy)
+		if copy.icon == "" then
+			local mutationId = if copy.mutation ~= "" then copy.mutation else "normal"
+			copy.icon = IndexService.getIconFor(copy.name, mutationId)
+		end
 		out[i] = copy
 	end
 	return out
@@ -2897,11 +2902,12 @@ ensureEquipBestBrainrotRemote().OnServerEvent:Connect(function(player: Player)
 	equipBestBrainrotForPlayer(player)
 end)
 
-ensureEquipBrainrotRemote().OnServerEvent:Connect(function(player: Player, slot: any)
+ensureEquipBrainrotRemote().OnServerEvent:Connect(function(player: Player, slot: any, forceArg: any)
 	if typeof(slot) ~= "number" then
 		return
 	end
-	equipBrainrotSlotForPlayer(player, slot :: number)
+	local forceEquip = forceArg == true
+	equipBrainrotSlotForPlayer(player, slot :: number, forceEquip)
 end)
 
 task.defer(function()
@@ -3133,6 +3139,10 @@ grantBF.OnInvoke = function(playerArg: any, entryArg: any, opts: any): boolean
 		enrichEntryFromBrainrotsFolder(brainrotsFolder :: Folder, entry)
 	end
 	enrichEntryFromCatalog(entry)
+	if entry.icon == "" then
+		local mutationId = if entry.mutation ~= "" then entry.mutation else "normal"
+		entry.icon = IndexService.getIconFor(entry.name, mutationId)
+	end
 
 	if not pushBrainrotInventory(plr, entry, true) then
 		return false

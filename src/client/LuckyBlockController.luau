@@ -21,9 +21,9 @@ local GameSoundEffects = require(script.Parent.GameSoundEffects)
 
 local player = Players.LocalPlayer
 
-local SHAKE_RADIUS_STUDS = 0.45
-local SHAKE_FREQ_HZ = 22
-local SHAKE_ROT_DEG = 35
+local SHAKE_RADIUS_STUDS = 0.12
+local SHAKE_FREQ_HZ = 7
+local SHAKE_ROT_DEG = 10
 
 local LuckyBlockController = {}
 

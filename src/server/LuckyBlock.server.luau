@@ -150,17 +150,37 @@ local function pickIconFromModel(model: Model): string
 			return d.Image
 		end
 	end
-	-- Lucky Block Icons folder fallback
+	return ""
+end
+
+local function resolveStarRainbowIconId(): string
 	local root = ReplicatedStorage:FindFirstChild("Lucky Blocks")
 	local icons = root and root:FindFirstChild("Lucky Block Icons")
-	if icons then
-		local target = icons:FindFirstChild(model.Name)
-		if target then
-			if target:IsA("ImageLabel") and target.Image ~= "" then
-				return target.Image
+	if not icons then
+		return ""
+	end
+	for _, name in { "star rainbow", "Star Rainbow", "star_rainbow" } do
+		local node = icons:FindFirstChild(name, true)
+		if node then
+			if node:IsA("ImageLabel") and node.Image ~= "" then
+				return node.Image
 			end
-			if target:IsA("Decal") and target.Texture ~= "" then
-				return target.Texture
+			if node:IsA("ImageButton") and node.Image ~= "" then
+				return node.Image
+			end
+			for _, d in node:GetDescendants() do
+				if d:IsA("ImageLabel") and d.Image ~= "" then
+					return d.Image
+				end
+			end
+		end
+	end
+	for _, d in icons:GetDescendants() do
+		if (d:IsA("ImageLabel") or d:IsA("ImageButton")) and d.Image ~= "" then
+			if string.find(string.lower(d.Name), "rainbow", 1, true)
+				or string.find(string.lower(d:GetFullName()), "rainbow", 1, true)
+			then
+				return d.Image
 			end
 		end
 	end
@@ -196,6 +216,9 @@ local function buildLuckyBlockTool(template: Model, blockName: string): Tool?
 	tool:SetAttribute("LuckyBlockKind", blockName)
 
 	local icon = pickIconFromModel(template)
+	if icon == "" then
+		icon = resolveStarRainbowIconId()
+	end
 	if icon ~= "" then
 		pcall(function()
 			tool.TextureId = icon

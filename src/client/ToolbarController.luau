@@ -1494,7 +1494,7 @@ local function rebuildSlots()
 	end
 	local ei = 1
 	for i = 1, maxHotbar do
-		if slotTools[i] == nil and not brainrotParkedInUI[i] and extras[ei] then
+		if slotTools[i] == nil and not brainrotParkedInUI[i] and brainrotEntries[i] == nil and extras[ei] then
 			slotTools[i] = extras[ei]
 			ei += 1
 		end
@@ -1630,14 +1630,14 @@ local function requestMoveBackpackEntryToHotbar(listIdx: number)
 	end
 end
 
-local function requestEquipBrainrotSlot(slotIdx: number, ignoreToolbarGate: boolean?)
-	if not ignoreToolbarGate and not canUseToolbar then
+local function requestEquipBrainrotSlot(slotIdx: number, forceEquip: boolean?)
+	if not forceEquip and not canUseToolbar then
 		return
 	end
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
 	local ev = folder and folder:FindFirstChild("EquipBrainrotSlot")
 	if ev and ev:IsA("RemoteEvent") then
-		ev:FireServer(slotIdx)
+		ev:FireServer(slotIdx, forceEquip == true)
 	end
 end
 
@@ -1925,7 +1925,7 @@ selectSlot = function(index: number)
 				end
 			end
 			setHotbarSelection(index)
-			requestEquipBrainrotSlot(index)
+			requestEquipBrainrotSlot(index, true)
 			return
 		end
 		setHotbarSelection(index)

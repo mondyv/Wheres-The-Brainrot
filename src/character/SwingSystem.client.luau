@@ -83,8 +83,8 @@ local FOV_MAX              = 96
 local FOV_SPEED            = 4.2   -- smooth widen while accelerating on the arc
 local LANDING_BLOCK_VEL_MIN = 18  -- landing speed that spawns block burst + camera shake
 local LANDING_BLOCK_VEL_MAX = 92
-local LANDING_CAM_SHAKE_DURATION = 0.45
-local LANDING_CAM_SHAKE_MAX = 0.17
+local LANDING_CAM_SHAKE_DURATION = 0.36
+local LANDING_CAM_SHAKE_POS = 0.13
 -- Hanging swing camera: lag + roll only (no positional shake / high-frequency wobble).
 local CAM_LAG_STUDS_MAX      = 0.95
 local CAM_LAG_SMOOTH         = 3.8
@@ -320,6 +320,7 @@ local function boot(character: Model)
 	local launchFovIntensity = 0
 	local landingCamClock = -1e9
 	local landingCamShakeIntensity = 0
+	local landingCamSeed = 0
 
 	local function landingImpactAlpha(speed: number): number
 		return math.clamp(
@@ -481,6 +482,31 @@ local function boot(character: Model)
 		humanoid.CameraOffset = Vector3.zero
 	end
 
+	local function isLandingShakeActive(now: number): boolean
+		local landingAge = now - landingCamClock
+		return landingAge >= 0
+			and landingAge < LANDING_CAM_SHAKE_DURATION
+			and landingCamShakeIntensity > 0.02
+	end
+
+	-- View-relative shake via CameraOffset (never touches CFrame — avoids drag / camera fight).
+	local function computeLandingCameraOffset(now: number): Vector3
+		local age = now - landingCamClock
+		if age < 0 or age >= LANDING_CAM_SHAKE_DURATION or landingCamShakeIntensity <= 0.02 then
+			return Vector3.zero
+		end
+		local u = age / LANDING_CAM_SHAKE_DURATION
+		local decay = (1 - u) * (1 - u)
+		local intensity = landingCamShakeIntensity * decay
+		local amp = LANDING_CAM_SHAKE_POS * intensity
+		local seed = landingCamSeed
+		return Vector3.new(
+			math.sin(age * 26 + seed) * amp + math.sin(age * 39 + seed * 1.6) * amp * 0.32,
+			math.sin(age * 22 + seed * 2.1) * amp * 0.88 + math.sin(age * 34 + seed * 0.8) * amp * 0.22,
+			math.sin(age * 31 + seed * 1.3) * amp * 0.18
+		)
+	end
+
 	local function applySwingCameraFx(dt: number)
 		if not hrp.Parent then
 			return
@@ -489,12 +515,16 @@ local function boot(character: Model)
 		local now = os.clock()
 		local attachAge = now - attachCamClock
 		local launchAge = now - launchCamClock
-		local landingAge = now - landingCamClock
 		local attachActive = attachAge >= 0 and attachAge < ATTACH_PUNCH_DURATION
 		local launchActive = isLaunched or (launchAge >= 0 and launchAge < LAUNCH_FOV_DURATION)
-		local landingShakeActive = landingAge >= 0
-			and landingAge < LANDING_CAM_SHAKE_DURATION
-			and landingCamShakeIntensity > 0.02
+		local landingShakeActive = isLandingShakeActive(now)
+
+		if landingShakeActive and not isSwinging and not attachActive and not launchActive then
+			swingCamRoll = expSmoothScalar(swingCamRoll, 0, dt, 20)
+			swingCamLagWorld = swingCamLagWorld:Lerp(Vector3.zero, math.min(1, dt * 20))
+			humanoid.CameraOffset = computeLandingCameraOffset(now)
+			return
+		end
 
 		if not isSwinging and not attachActive and not launchActive and not landingShakeActive then
 			swingCamRoll = expSmoothScalar(swingCamRoll, 0, dt, 14)
@@ -505,7 +535,9 @@ local function boot(character: Model)
 			return
 		end
 
-		humanoid.CameraOffset = Vector3.zero
+		if not landingShakeActive then
+			humanoid.CameraOffset = Vector3.zero
+		end
 
 		local vel = hrp.AssemblyLinearVelocity
 		local speedRef = math.max(dynMaxLaunchSpeed, dynMaxSwingSpeed, 1)
@@ -549,20 +581,10 @@ local function boot(character: Model)
 			)
 		end
 
-		if landingShakeActive then
-			local u = landingAge / LANDING_CAM_SHAKE_DURATION
-			local decay = (1 - u) * (1 - u)
-			local shake = landingCamShakeIntensity * decay
-			local t = now * 20
-			local amp = LANDING_CAM_SHAKE_MAX * shake
-			cf = cf * CFrame.new(
-				(math.noise(t, 1.5, 0) - 0.5) * 2 * amp,
-				(math.noise(0, t, 2.5) - 0.5) * 2 * amp,
-				(math.noise(t, 3, 1) - 0.5) * 2 * amp * 0.45
-			)
-		end
-
 		camera.CFrame = cf
+		if landingShakeActive then
+			humanoid.CameraOffset = computeLandingCameraOffset(now)
+		end
 	end
 
 	RunService:BindToRenderStep(swingCamBindName, Enum.RenderPriority.Camera.Value + 1, applySwingCameraFx)
@@ -1315,12 +1337,16 @@ local function boot(character: Model)
 				if gse and gse.playGroundSmash then
 					gse.playGroundSmash(sfxAlpha)
 				end
+				landingCamSeed = math.random() * 100
+				swingCamLagWorld = Vector3.zero
+				swingCamRoll = 0
+				launchCamClock = -1e9
 				if alpha > 0 then
 					spawnLandingBlocks(alpha)
-					landingCamShakeIntensity = math.clamp(alpha * alpha * (0.55 + alpha * 0.85), 0, 1)
+					landingCamShakeIntensity = math.clamp(0.45 + alpha * 0.55, 0, 1)
 					landingCamClock = os.clock()
 				elseif sfxAlpha > 0 then
-					landingCamShakeIntensity = sfxAlpha * 0.5
+					landingCamShakeIntensity = sfxAlpha * 0.55
 					landingCamClock = os.clock()
 				end
 			end
@@ -1579,7 +1605,7 @@ local function boot(character: Model)
 			landingSpeed = vel.Magnitude
 		end
 
-		if not isSwinging and not isLaunched then
+		if not isSwinging and not isLaunched and not isLandingShakeActive(os.clock()) then
 			humanoid.CameraOffset = humanoid.CameraOffset:Lerp(Vector3.zero, math.min(dt * 14, 1))
 		end
 

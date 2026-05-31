@@ -6,6 +6,9 @@ local SoundController = require(script.Parent.SoundController)
 
 local EffectsController = {}
 
+local lastConfettiAt = 0
+local CONFETTI_DEBOUNCE_SEC = 0.35
+
 local function findAssetsFolder(): Instance?
 	return ReplicatedStorage:FindFirstChild("EssentialsAssets")
 		or ReplicatedStorage:FindFirstChild("EssentialAssets")
@@ -25,14 +28,23 @@ local function findTemplate(name: string): Instance?
 
 	local vfx = ReplicatedStorage:FindFirstChild("VFX")
 	if vfx then
-		return vfx:FindFirstChild(name)
+		local inVfx = vfx:FindFirstChild(name)
+		if inVfx then
+			return inVfx
+		end
+	end
+
+	for _, desc in ReplicatedStorage:GetDescendants() do
+		if desc.Name == name and (desc:IsA("Folder") or desc:IsA("Model") or desc:IsA("Attachment")) then
+			return desc
+		end
 	end
 
 	return nil
 end
 
 local function emitParticles(root: Instance, defaultCount: number)
-	for _, child in root:GetChildren() do
+	for _, child in root:GetDescendants() do
 		if child:IsA("ParticleEmitter") then
 			child:Emit(child:GetAttribute("EmitCount") or defaultCount)
 		end
@@ -52,6 +64,12 @@ function EffectsController.money(parent: Instance)
 end
 
 function EffectsController.confetti(player: Player)
+	local now = os.clock()
+	if now - lastConfettiAt < CONFETTI_DEBOUNCE_SEC then
+		return
+	end
+	lastConfettiAt = now
+
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	local confettiTemplate = findTemplate("Confetti")

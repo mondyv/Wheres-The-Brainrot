@@ -1,4 +1,5 @@
 local MarketplaceService = game:GetService("MarketplaceService")
+local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,6 +13,15 @@ local rainbow: ImageLabel?
 local defaultFov: number?
 local hideToken = 0
 local initialized = false
+local purchaseUiActive = false
+local savedGuiStates: { [ScreenGui]: boolean }? = nil
+local playerGuiChildConn: RBXScriptConnection? = nil
+
+local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
+	Enum.CoreGuiType.Backpack,
+	Enum.CoreGuiType.Chat,
+	Enum.CoreGuiType.PlayerList,
+}
 
 local fadeInTween = TweenInfo.new(
 	PurchaseEffectConfig.fadeInDuration,
@@ -21,7 +31,7 @@ local fadeInTween = TweenInfo.new(
 local fadeOutTween = TweenInfo.new(
 	PurchaseEffectConfig.fadeOutDuration,
 	PurchaseEffectConfig.easingStyle,
-	Enum.EasingDirection.Out
+	Enum.EasingDirection.In
 )
 
 local REMOTE_WAIT_SEC = 8
@@ -62,6 +72,85 @@ local function bindRemoteAsync(name: string, handler: () -> ())
 			warn("[PurchaseEffect]", name, "remote missing — is EssentialsServer running?")
 		end
 	end)
+end
+
+local function setCoreGuisVisible(visible: boolean)
+	for _, coreType in CORE_GUIS_TO_HIDE do
+		pcall(function()
+			StarterGui:SetCoreGuiEnabled(coreType, visible)
+		end)
+	end
+end
+
+local function isPurchaseGui(name: string): boolean
+	return name == "Purchasing"
+end
+
+local function enterPurchaseUiIsolation()
+	local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if not playerGui then
+		return
+	end
+
+	purchaseUiActive = true
+	setCoreGuisVisible(false)
+
+	if not savedGuiStates then
+		savedGuiStates = {}
+		for _, child in playerGui:GetChildren() do
+			if child:IsA("ScreenGui") then
+				savedGuiStates[child] = child.Enabled
+			end
+		end
+	end
+
+	for _, child in playerGui:GetChildren() do
+		if child:IsA("ScreenGui") then
+			child.Enabled = isPurchaseGui(child.Name)
+		end
+	end
+
+	if not playerGuiChildConn then
+		playerGuiChildConn = playerGui.ChildAdded:Connect(function(child)
+			if not purchaseUiActive then
+				return
+			end
+			if child:IsA("ScreenGui") and not isPurchaseGui(child.Name) then
+				if savedGuiStates then
+					savedGuiStates[child] = child.Enabled
+				end
+				child.Enabled = false
+			end
+		end)
+	end
+end
+
+local function exitPurchaseUiIsolation()
+	purchaseUiActive = false
+
+	if playerGuiChildConn then
+		playerGuiChildConn:Disconnect()
+		playerGuiChildConn = nil
+	end
+
+	local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if savedGuiStates then
+		for gui, wasEnabled in savedGuiStates do
+			if gui.Parent and not isPurchaseGui(gui.Name) then
+				gui.Enabled = wasEnabled
+			end
+		end
+		savedGuiStates = nil
+	end
+
+	setCoreGuisVisible(true)
+
+	if playerGui then
+		local purchasing = playerGui:FindFirstChild("Purchasing")
+		if purchasing and purchasing:IsA("ScreenGui") then
+			purchasing.Enabled = true
+		end
+	end
 end
 
 function PurchaseEffectClient.ensureRainbow(self: PurchaseEffectClient)
@@ -107,6 +196,8 @@ function PurchaseEffectClient.show(self: PurchaseEffectClient)
 		return
 	end
 
+	enterPurchaseUiIsolation()
+
 	local effectGui = rainbow.Parent
 	if effectGui and effectGui:IsA("ScreenGui") then
 		effectGui.Enabled = true
@@ -118,13 +209,14 @@ function PurchaseEffectClient.show(self: PurchaseEffectClient)
 	local camera = workspace.CurrentCamera
 	if camera then
 		defaultFov = camera.FieldOfView
-		local targetFov = math.clamp(defaultFov - PurchaseEffectConfig.fovBoost, 1, 120)
+		local targetFov = math.clamp(defaultFov + PurchaseEffectConfig.fovBoost, 1, 120)
 		TweenService:Create(camera, fadeInTween, { FieldOfView = targetFov }):Play()
 	end
 end
 
 function PurchaseEffectClient.hide(self: PurchaseEffectClient, delaySeconds: number?)
 	if not rainbow then
+		exitPurchaseUiIsolation()
 		return
 	end
 
@@ -148,13 +240,13 @@ function PurchaseEffectClient.hide(self: PurchaseEffectClient, delaySeconds: num
 			FieldOfView = defaultFov or 70,
 		}):Play()
 	end
+
+	exitPurchaseUiIsolation()
 end
 
-function PurchaseEffectClient.onPurchaseFinished(self: PurchaseEffectClient, wasPurchased: boolean, playConfetti: boolean?)
+function PurchaseEffectClient.onPurchaseFinished(self: PurchaseEffectClient, wasPurchased: boolean)
 	if wasPurchased then
-		if playConfetti ~= false then
-			EffectsController.confetti(Players.LocalPlayer)
-		end
+		EffectsController.confetti(Players.LocalPlayer)
 		self:hide(PurchaseEffectConfig.displayDuration)
 	else
 		self:hide()
@@ -173,10 +265,6 @@ function PurchaseEffectClient.init(self: PurchaseEffectClient)
 		self:show()
 	end)
 
-	bindRemoteAsync("ProductHandlerConfetti", function()
-		EffectsController.confetti(Players.LocalPlayer)
-	end)
-
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, _gamePassId, wasPurchased)
 		if player == Players.LocalPlayer then
 			self:onPurchaseFinished(wasPurchased)
@@ -185,7 +273,7 @@ function PurchaseEffectClient.init(self: PurchaseEffectClient)
 
 	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, _productId, wasPurchased)
 		if userId == Players.LocalPlayer.UserId then
-			self:onPurchaseFinished(wasPurchased, false)
+			self:onPurchaseFinished(wasPurchased)
 		end
 	end)
 end

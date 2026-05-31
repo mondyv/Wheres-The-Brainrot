@@ -1,5 +1,5 @@
 -- SwingSystem.client.luau
--- Double-jump while airborne to attach to the nearest SwingTarget vine.
+-- Jump to leave the ground; while airborne, swing UI + preview line appear and a second jump attaches to the nearest SwingTarget vine.
 -- WASD steers along the arc; vine glide pulls you toward the hook + lighter gravity (Mowgli-style).
 -- Release Jump (Space / ButtonA release) to detach with a momentum-based launch (preserves arc speed + forward impulse).
 -- Upgrade attributes on the player: SwingRange, SwingForce, RopeLength (all numbers)
@@ -467,6 +467,7 @@ local function boot(character: Model)
 	local isLaunched  = false
 	local isAirborne  = false
 	local swingTimer  = 0
+	local prevInRng: { [BasePart]: boolean } = {}
 
 	local swingCamBindSerial = 0
 	swingCamBindSerial += 1
@@ -1043,18 +1044,14 @@ local function boot(character: Model)
 		return best
 	end
 
-	local function canGrappleFromAir(): boolean
-		if isAirborne then
-			return true
-		end
+	local function isAirborneForSwing(): boolean
 		local st = humanoid:GetState()
-		if st == Enum.HumanoidStateType.Freefall or st == Enum.HumanoidStateType.Jumping then
+		if st == Enum.HumanoidStateType.Freefall
+			or st == Enum.HumanoidStateType.Jumping
+			or st == Enum.HumanoidStateType.FallingDown then
 			return true
 		end
-		if os.clock() - lastSwingEndClock < REATTACH_AIR_GRACE then
-			return true
-		end
-		return false
+		return isAirborne
 	end
 
 	local function applyGrappleMomentumBoost(attachWorld: Vector3)
@@ -1325,9 +1322,14 @@ local function boot(character: Model)
 	-- ── Input ─────────────────────────────────────────────────────────────────
 	humanoid.StateChanged:Connect(function(_, new)
 		if new == Enum.HumanoidStateType.Freefall
-		or new == Enum.HumanoidStateType.Jumping then
+		or new == Enum.HumanoidStateType.Jumping
+		or new == Enum.HumanoidStateType.FallingDown then
 			isAirborne = true
 		elseif new == Enum.HumanoidStateType.Landed then
+			isAirborne = false
+			clearVisuals()
+			destroyPreviewTracer()
+			prevInRng = {}
 			isAirborne = false
 			if landedFromSwing then
 				landedFromSwing = false
@@ -1362,11 +1364,12 @@ local function boot(character: Model)
 		end
 	end)
 
-	-- Try to hook onto the best visible target. No air-state gating here — if the
-	-- green UI is showing there is a valid target and the player intentionally pressed
-	-- jump; just attach. Cooldown prevents double-fire only after a successful hook.
+	-- Second jump while airborne: hook onto the best visible target in front of the camera.
 	local function tryGrappleAttach()
 		if isSwinging then
+			return
+		end
+		if not isAirborneForSwing() then
 			return
 		end
 		if isHrpInSafezone() then
@@ -1504,7 +1507,6 @@ local function boot(character: Model)
 
 	-- ── Heartbeat (physics + visuals) ─────────────────────────────────────────
 	local fovBase   = camera.FieldOfView
-	local prevInRng: { [BasePart]: boolean } = {}
 
 	local heartbeat = RunService.Heartbeat:Connect(function(dt)
 		local vel = hrp.AssemblyLinearVelocity
@@ -1609,52 +1611,59 @@ local function boot(character: Model)
 			humanoid.CameraOffset = humanoid.CameraOffset:Lerp(Vector3.zero, math.min(dt * 14, 1))
 		end
 
-		-- Single target indicator: best vine in range (camera aim). Safe zone = red, no grapple.
-		local inSafe = isHrpInSafezone()
-		local aimVisual = cameraPickSwingTarget(false)
-		local grappleOk = not inSafe and aimVisual ~= nil
+		-- Swing point + preview line only while airborne (jump first, then press jump again to hook).
+		if isAirborneForSwing() and not isSwinging then
+			local inSafe = isHrpInSafezone()
+			local aimVisual = cameraPickSwingTarget(false)
+			local grappleOk = not inSafe and aimVisual ~= nil
 
-		local inRngNow: { BasePart } = {}
-		if aimVisual then
-			table.insert(inRngNow, aimVisual)
-		end
-		local inRngSet: { [BasePart]: boolean } = {}
-		for _, p in ipairs(inRngNow) do
-			inRngSet[p] = true
-		end
-
-		for _, p in inRngNow do
-			if not prevInRng[p] then
-				addVisual(p)
+			local inRngNow: { BasePart } = {}
+			if aimVisual then
+				table.insert(inRngNow, aimVisual)
 			end
-		end
-		for p in prevInRng do
-			if not inRngSet[p] then
-				removeVisual(p)
+			local inRngSet: { [BasePart]: boolean } = {}
+			for _, p in ipairs(inRngNow) do
+				inRngSet[p] = true
 			end
-		end
-		prevInRng = inRngSet
 
-		if aimVisual then
-			local v = visMap[aimVisual]
-			if v then
-				local aimColor = if grappleOk then COLOR_BEST else COLOR_BLOCKED
-				setVisualColor(v, aimColor)
-				v.lbl.Text = if grappleOk then "JUMP  ·  swing" else "SAFE ZONE"
-				if grappleOk and not isSwinging then
-					local w = math.sin(os.clock() * 3.4) * 0.5 + 0.5
-					v.dot.BackgroundTransparency = 0.06 + 0.38 * w
-				else
-					v.dot.BackgroundTransparency = 0
+			for _, p in inRngNow do
+				if not prevInRng[p] then
+					addVisual(p)
 				end
 			end
-		end
+			for p in prevInRng do
+				if not inRngSet[p] then
+					removeVisual(p)
+				end
+			end
+			prevInRng = inRngSet
 
-		if isSwinging then
-			destroyPreviewTracer()
-		elseif aimVisual then
-			updatePreviewTracer(aimVisual, grappleOk)
-		else
+			if aimVisual then
+				local v = visMap[aimVisual]
+				if v then
+					local aimColor = if grappleOk then COLOR_BEST else COLOR_BLOCKED
+					setVisualColor(v, aimColor)
+					v.lbl.Text = if grappleOk then "JUMP  ·  swing" else "SAFE ZONE"
+					if grappleOk then
+						local w = math.sin(os.clock() * 3.4) * 0.5 + 0.5
+						v.dot.BackgroundTransparency = 0.06 + 0.38 * w
+					else
+						v.dot.BackgroundTransparency = 0
+					end
+				end
+			end
+
+			if aimVisual then
+				updatePreviewTracer(aimVisual, grappleOk)
+			else
+				destroyPreviewTracer()
+			end
+		elseif not isSwinging then
+			for p in prevInRng do
+				removeVisual(p)
+			end
+			prevInRng = {}
+			clearVisuals()
 			destroyPreviewTracer()
 		end
 	end)

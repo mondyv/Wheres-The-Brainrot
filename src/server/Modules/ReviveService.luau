@@ -1,8 +1,8 @@
 --[[
 	Revive flow (server module):
-	• On death: store death CFrame + land, prompt client, respawn at plot immediately.
+	• On death: detect land via hitbox, store land Spawn, prompt client, respawn at plot.
 	• Decline / timeout: clear pending (player already alive at plot).
-	• Dev product receipt: teleport back to death location.
+	• Dev product receipt: teleport to that land's Spawn part.
 --]]
 
 local Players = game:GetService("Players")
@@ -12,9 +12,9 @@ local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 
 type PendingRevive = {
-	cframe: CFrame,
 	land: number,
 	productId: number,
+	spawnCf: CFrame,
 }
 
 local pendingByPlayer: { [Player]: PendingRevive } = {}
@@ -82,7 +82,7 @@ local function fulfillRevivePurchase(player: Player): boolean
 		return false
 	end
 
-	local cf = pending.cframe
+	local cf = pending.spawnCf
 	clearPending(player)
 
 	local character = player.Character
@@ -104,14 +104,17 @@ local function onHumanoidDied(player: Player, character: Model)
 	end
 
 	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	local deathCf = if hrp then hrp.CFrame else CFrame.new()
-	local land = if hrp then LandResolver.resolveLandAtPosition(hrp.Position) else 1
+	local worldPos = if hrp then hrp.Position else Vector3.zero
+	local land, spawnCf = LandResolver.getReviveSpawnCFrame(worldPos)
+	if not spawnCf then
+		spawnCf = if hrp then hrp.CFrame else CFrame.new()
+	end
 	local tier = ReviveConfig.tierForLand(land)
 
 	pendingByPlayer[player] = {
-		cframe = deathCf,
 		land = tier.land,
 		productId = tier.productId,
+		spawnCf = spawnCf,
 	}
 
 	revivePromptRE:FireClient(player, tier.land, tier.productId, ReviveConfig.COUNTDOWN_SECONDS)

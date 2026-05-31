@@ -241,7 +241,7 @@ local function showReviveBackdrop()
 	else
 		local blur = Instance.new("BlurEffect")
 		blur.Name = BLUR_NAME
-		blur.Size = blurEffect and blurEffect.Size or 0
+		blur.Size = 0
 		blur.Parent = Lighting
 		blurEffect = blur
 	end

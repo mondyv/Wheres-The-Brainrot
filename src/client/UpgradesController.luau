@@ -193,7 +193,7 @@ local function refreshUpgradeRow(row: Instance, upgradeId: string)
 	local levels = readLevels()
 	local currentLevel = SwingUpgrades.levelForUpgradeId(upgradeId, levels)
 	local cur = SwingUpgrades.displayStatForLevel(currentLevel, def.levelAttr)
-	local nxt = SwingUpgrades.displayStatAfterPurchase(currentLevel, 1, def.levelAttr)
+	local nxt = SwingUpgrades.displayStatAfterPurchase(currentLevel, def.units, def.levelAttr)
 
 	if upgradeId == "Carry1" then
 		local curL = findLabelUnder(row, { "CurrentCarry" })

@@ -1,7 +1,7 @@
 -- Shared config: cash swing upgrades (must match server + client)
 local SwingProgression = require(script.Parent.SwingProgression)
 
-export type UpgradeId = "Power10" | "Reach25" | "Carry1" | "Power1" | "Power25" | "Reach1" | "Reach10"
+export type UpgradeId = "Power10" | "Power25" | "Reach10" | "Reach25" | "Carry1" | "Power1" | "Reach1"
 
 export type UpgradeLevels = {
 	power: number,
@@ -11,22 +11,20 @@ export type UpgradeLevels = {
 
 export type UpgradeDef = {
 	attr: string,
+	units: number,
 	levelAttr: string,
-	statBonus: number, -- display stat added per purchase (+10 power, +25 reach, etc.)
 }
 
 local DEFS: { [string]: UpgradeDef } = {
-	Power10 = { attr = "SwingForce", levelAttr = "PowerUpgradeLevel", statBonus = 10 } :: UpgradeDef,
-	Reach25 = { attr = "SwingRange", levelAttr = "RopeUpgradeLevel", statBonus = 25 } :: UpgradeDef,
-	Carry1 = { attr = "Carry", levelAttr = "CarryUpgradeLevel", statBonus = 1 } :: UpgradeDef,
-	-- Legacy ids (Robux / old UI): same +1 purchase level as the primary rows
-	Power1 = { attr = "SwingForce", levelAttr = "PowerUpgradeLevel", statBonus = 10 } :: UpgradeDef,
-	Power25 = { attr = "SwingForce", levelAttr = "PowerUpgradeLevel", statBonus = 10 } :: UpgradeDef,
-	Reach1 = { attr = "SwingRange", levelAttr = "RopeUpgradeLevel", statBonus = 25 } :: UpgradeDef,
-	Reach10 = { attr = "SwingRange", levelAttr = "RopeUpgradeLevel", statBonus = 25 } :: UpgradeDef,
+	Power10 = { attr = "SwingForce", units = 10, levelAttr = "PowerUpgradeLevel" } :: UpgradeDef,
+	Power25 = { attr = "SwingForce", units = 25, levelAttr = "PowerUpgradeLevel" } :: UpgradeDef,
+	Reach10 = { attr = "SwingRange", units = 10, levelAttr = "RopeUpgradeLevel" } :: UpgradeDef,
+	Reach25 = { attr = "SwingRange", units = 25, levelAttr = "RopeUpgradeLevel" } :: UpgradeDef,
+	Carry1 = { attr = "Carry", units = 1, levelAttr = "CarryUpgradeLevel" } :: UpgradeDef,
+	-- Legacy ids (Robux receipts)
+	Power1 = { attr = "SwingForce", units = 1, levelAttr = "PowerUpgradeLevel" } :: UpgradeDef,
+	Reach1 = { attr = "SwingRange", units = 1, levelAttr = "RopeUpgradeLevel" } :: UpgradeDef,
 }
-
-local ALL_IDS = { "Power10", "Reach25", "Carry1", "Power1", "Power25", "Reach1", "Reach10" }
 
 local M = {}
 
@@ -80,23 +78,12 @@ function M.levelForUpgradeId(upgradeId: string, levels: UpgradeLevels): number
 	return 0
 end
 
-function M.maxLevelForUpgradeId(upgradeId: string): number
-	local def = DEFS[upgradeId]
-	if not def then
-		return 0
-	end
-	if def.levelAttr == M.CARRY_LEVEL_ATTR then
-		return M.MAX_CARRY_UPGRADE_LEVEL
-	end
-	return math.huge
-end
-
-function M.powerUpgradeCost(powerUpgradeLevel: number): number
+function M.powerUnitCost(powerUpgradeLevel: number): number
 	local level = floorLevel(powerUpgradeLevel)
 	return math.floor(M.POWER_COST_BASE * (M.POWER_COST_GROWTH ^ level) + 0.5)
 end
 
-function M.ropeUpgradeCost(ropeUpgradeLevel: number): number
+function M.ropeUnitCost(ropeUpgradeLevel: number): number
 	local level = floorLevel(ropeUpgradeLevel)
 	return math.floor(M.ROPE_COST_BASE * (M.ROPE_COST_GROWTH ^ level) + 0.5)
 end
@@ -106,17 +93,38 @@ function M.carryUnitCost(carryUpgradeLevel: number): number
 	return math.floor(M.CARRY_COST_BASE * (M.CARRY_COST_GROWTH ^ level) + 0.5)
 end
 
+function M.sumUnitCosts(unitCost: (level: number) -> number, startLevel: number, count: number): number
+	local start = floorLevel(startLevel)
+	local n = math.max(0, math.floor(count))
+	local total = 0
+	for i = 0, n - 1 do
+		total += unitCost(start + i)
+	end
+	return total
+end
+
 function M.unitCostForLevelAttr(levelAttr: string, level: number): number
 	if levelAttr == M.POWER_LEVEL_ATTR then
-		return M.powerUpgradeCost(level)
+		return M.powerUnitCost(level)
 	end
 	if levelAttr == M.ROPE_LEVEL_ATTR then
-		return M.ropeUpgradeCost(level)
+		return M.ropeUnitCost(level)
 	end
 	if levelAttr == M.CARRY_LEVEL_ATTR then
 		return M.carryUnitCost(level)
 	end
 	return 0
+end
+
+function M.batchPriceForUpgradeId(upgradeId: string, levels: UpgradeLevels): number
+	local def = DEFS[upgradeId]
+	if not def then
+		return 0
+	end
+	local current = M.levelForUpgradeId(upgradeId, levels)
+	return M.sumUnitCosts(function(level: number)
+		return M.unitCostForLevelAttr(def.levelAttr, level)
+	end, current, def.units)
 end
 
 function M.wouldExceedMax(upgradeId: string, levels: UpgradeLevels): boolean
@@ -125,7 +133,7 @@ function M.wouldExceedMax(upgradeId: string, levels: UpgradeLevels): boolean
 		return true
 	end
 	if def.levelAttr == M.CARRY_LEVEL_ATTR then
-		return levels.carry + 1 > M.MAX_CARRY_UPGRADE_LEVEL
+		return levels.carry + def.units > M.MAX_CARRY_UPGRADE_LEVEL
 	end
 	return false
 end
@@ -138,12 +146,7 @@ function M.priceForUpgradeId(upgradeId: string, levels: UpgradeLevels): number
 	if M.isUpgradeMaxed(upgradeId, levels) then
 		return 0
 	end
-	local def = DEFS[upgradeId]
-	if not def then
-		return 0
-	end
-	local current = M.levelForUpgradeId(upgradeId, levels)
-	return M.unitCostForLevelAttr(def.levelAttr, current)
+	return M.batchPriceForUpgradeId(upgradeId, levels)
 end
 
 function M.displayStatForLevel(level: number, levelAttr: string?): number
@@ -160,57 +163,18 @@ function M.displayStatForLevel(level: number, levelAttr: string?): number
 	return SwingProgression.displayPower(lv)
 end
 
-function M.displayStatAfterPurchase(currentLevel: number, _units: number, levelAttr: string?): number
-	return M.displayStatForLevel(floorLevel(currentLevel) + 1, levelAttr)
+function M.displayStatAfterPurchase(currentLevel: number, units: number, levelAttr: string?): number
+	return M.displayStatForLevel(floorLevel(currentLevel) + math.max(0, math.floor(units)), levelAttr)
 end
 
 function M.displayBonus(def: UpgradeDef): number
-	return def.statBonus
+	return SwingProgression.displayBonusForUnits(def.levelAttr, def.units)
 end
 
 function M.syncGameplayStatsFromLevels(player: Player, levels: UpgradeLevels)
 	player:SetAttribute("SwingForce", M.displayStatForLevel(levels.power, M.POWER_LEVEL_ATTR))
 	player:SetAttribute("SwingRange", M.displayStatForLevel(levels.rope, M.ROPE_LEVEL_ATTR))
 	player:SetAttribute("Carry", M.displayStatForLevel(levels.carry, M.CARRY_LEVEL_ATTR))
-end
-
-local function purchaseLevelFromDisplay(display: number, base: number, step: number, rawLevel: number?): number
-	local delta = math.max(0, math.floor(display) - base)
-	if delta == 0 then
-		return 0
-	end
-	if delta % step == 0 then
-		local asNew = delta // step
-		if typeof(rawLevel) == "number" and floorLevel(rawLevel) == delta then
-			return delta
-		end
-		return asNew
-	end
-	return delta
-end
-
-local function migrateLevelFromDisplay(player: Player, levelAttr: string, displayAttr: string, step: number, base: number)
-	local display = player:GetAttribute(displayAttr)
-	if typeof(display) ~= "number" then
-		return
-	end
-	local raw = player:GetAttribute(levelAttr)
-	local derived = purchaseLevelFromDisplay(display, base, step, if typeof(raw) == "number" then raw else nil)
-	player:SetAttribute(levelAttr, derived)
-end
-
-local function migrateLegacyUnitLevels(player: Player, levelAttr: string, displayAttr: string, step: number)
-	if player:GetAttribute(displayAttr) ~= nil then
-		return
-	end
-	local raw = player:GetAttribute(levelAttr)
-	if typeof(raw) ~= "number" or raw <= 0 then
-		return
-	end
-	local floored = floorLevel(raw)
-	if floored >= step and floored % step == 0 then
-		player:SetAttribute(levelAttr, math.floor(floored / step + 0.5))
-	end
 end
 
 function M.grantUpgrade(player: Player, upgradeId: string): boolean
@@ -226,13 +190,13 @@ function M.grantUpgrade(player: Player, upgradeId: string): boolean
 	end
 
 	if def.levelAttr == M.POWER_LEVEL_ATTR then
-		levels.power += 1
+		levels.power += def.units
 		player:SetAttribute(M.POWER_LEVEL_ATTR, levels.power)
 	elseif def.levelAttr == M.ROPE_LEVEL_ATTR then
-		levels.rope += 1
+		levels.rope += def.units
 		player:SetAttribute(M.ROPE_LEVEL_ATTR, levels.rope)
 	elseif def.levelAttr == M.CARRY_LEVEL_ATTR then
-		levels.carry += 1
+		levels.carry += def.units
 		player:SetAttribute(M.CARRY_LEVEL_ATTR, levels.carry)
 	end
 
@@ -253,11 +217,6 @@ function M.initLevelAttributes(player: Player)
 		local legacy = SwingProgression.levelFromLegacyDisplay("Carry", player:GetAttribute("Carry"))
 		player:SetAttribute(M.CARRY_LEVEL_ATTR, legacy)
 	end
-
-	migrateLevelFromDisplay(player, M.POWER_LEVEL_ATTR, "SwingForce", SwingProgression.POWER_DISPLAY_STEP, SwingProgression.POWER_DISPLAY_BASE)
-	migrateLevelFromDisplay(player, M.ROPE_LEVEL_ATTR, "SwingRange", SwingProgression.REACH_DISPLAY_STEP, SwingProgression.REACH_DISPLAY_BASE)
-	migrateLegacyUnitLevels(player, M.POWER_LEVEL_ATTR, "SwingForce", 10)
-	migrateLegacyUnitLevels(player, M.ROPE_LEVEL_ATTR, "SwingRange", 25)
 
 	local levels = M.readLevels(function(name: string)
 		return player:GetAttribute(name)

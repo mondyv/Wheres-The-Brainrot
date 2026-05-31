@@ -1,53 +1,34 @@
--- Unified swing upgrade curves: power mainly drives the release launch,
--- rope drives the max distance you can travel from the hook point.
+-- Unified swing upgrade curves: one progression factor drives power, speed, zip, and launch.
 local M = {}
 
--- Reference levels shape the early/mid curve; growth continues past them with diminishing returns.
-M.POWER_REFERENCE_LEVEL = 300
-M.ROPE_REFERENCE_LEVEL = 100
+M.POWER_MAX_LEVEL = 300
+M.ROPE_MAX_LEVEL = 100
 
--- UI display: base 10, +10 power / +25 reach per purchase level.
+-- UI display: base 10, +1 per upgrade level (Power10 → 10 to 20, label shows +10).
 M.POWER_DISPLAY_BASE = 10
-M.POWER_DISPLAY_STEP = 10
+M.POWER_DISPLAY_STEP = 1
 M.REACH_DISPLAY_BASE = 10
-M.REACH_DISPLAY_STEP = 25
-
--- Rope max distance: physics cap (in studs) for how far the player can travel from the hook point.
-M.BASE_MAX_SWING_DISTANCE = 30
-M.ROPE_DISTANCE_PER_LEVEL = 0.5
+M.REACH_DISPLAY_STEP = 1
 
 local function floorLevel(n: number): number
 	return math.max(0, math.floor(n))
 end
 
-function M.maxSwingDistance(ropeLevel: number): number
-	return M.BASE_MAX_SWING_DISTANCE + floorLevel(ropeLevel) * M.ROPE_DISTANCE_PER_LEVEL
-end
-
--- Early levels matter more; beyond referenceLevel growth continues with diminishing returns.
-function M.progressT(level: number, referenceLevel: number): number
-	local cap = math.max(1, referenceLevel)
-	local linear = floorLevel(level) / cap
+-- Early levels matter more; late levels soften toward the cap (no flat early grind).
+function M.progressT(level: number, maxLevel: number): number
+	local cap = math.max(1, maxLevel)
+	local linear = math.clamp(floorLevel(level) / cap, 0, 1)
 	local curved = linear ^ 0.55
-	if linear <= 1 then
-		return linear * 0.3 + curved * 0.7
-	end
-	local atCap = 1
-	local excess = linear - 1
-	return atCap + excess ^ 0.48 * 0.42
+	return linear * 0.3 + curved * 0.7
 end
 
-function M.launchProgressT(level: number, referenceLevel: number): number
-	local cap = math.max(1, referenceLevel)
-	local linear = floorLevel(level) / cap
+-- Throw/release scales faster at low power so early upgrades feel rewarding.
+function M.launchProgressT(level: number, maxLevel: number): number
+	local cap = math.max(1, maxLevel)
+	local linear = math.clamp(floorLevel(level) / cap, 0, 1)
 	local early = linear ^ 0.38
-	local base = M.progressT(level, referenceLevel)
-	if linear <= 1 then
-		return math.clamp(base * 0.35 + early * 0.65, 0, 1)
-	end
-	local atCap = math.clamp(base, 0, 1)
-	local excess = linear - 1
-	return atCap + excess ^ 0.42 * 0.38
+	local base = M.progressT(level, maxLevel)
+	return math.clamp(base * 0.35 + early * 0.65, 0, 1)
 end
 
 function M.displayPower(level: number): number
@@ -62,13 +43,7 @@ function M.displayCarry(level: number): number
 	return 1 + floorLevel(level)
 end
 
-function M.displayBonusForUnits(levelAttr: string, units: number): number
-	if levelAttr == "PowerUpgradeLevel" then
-		return M.POWER_DISPLAY_STEP
-	end
-	if levelAttr == "RopeUpgradeLevel" then
-		return M.REACH_DISPLAY_STEP
-	end
+function M.displayBonusForUnits(_levelAttr: string, units: number): number
 	return math.max(0, math.floor(units))
 end
 
@@ -89,42 +64,36 @@ export type PowerStats = {
 
 export type RopeStats = {
 	reachStuds: number,
-	maxSwingDistance: number,
 }
 
 function M.powerStats(powerLevel: number): PowerStats
-	-- Power mainly improves the release LAUNCH. Swing-while-hooked grows only slightly
-	-- so high power doesn't make hooked control feel uncontrollable.
-	local t = M.progressT(powerLevel, M.POWER_REFERENCE_LEVEL)
-	local lt = M.launchProgressT(powerLevel, M.POWER_REFERENCE_LEVEL)
-
-	local maxSwingSpeed = 78 + t * 18
+	local t = M.progressT(powerLevel, M.POWER_MAX_LEVEL)
+	local lt = M.launchProgressT(powerLevel, M.POWER_MAX_LEVEL)
+	local maxSwingSpeed = 78 + t * 58
 
 	return {
-		steeringForce = 95 + t * 28,
+		steeringForce = 78 + t * 75,
 		maxSwingSpeed = maxSwingSpeed,
-		swingArcForce = 36 + t * 14,
-		swingSpeedPump = 1.0 + t * 0.45,
-		zipToward = 26 + t * 8,
-		launchImpulseBase = 22 + lt * 78,
-		launchMomentumRatio = 0.32 + lt * 0.48,
-		launchVelocityCarry = 0.28 + lt * 0.22,
-		maxLaunchSpeed = maxSwingSpeed + 60 + lt * 110,
-		launchChargeBonus = 18 + lt * 46,
-		launchUpImpulse = 6 + lt * 9,
-		launchDeadhangImpulse = 26 + lt * 24,
+		swingArcForce = 34 + t * 50,
+		swingSpeedPump = 0.9 + t * 1.4,
+		zipToward = 25 + t * 18,
+		launchImpulseBase = 20 + lt * 14,
+		launchMomentumRatio = 0.24 + lt * 0.12,
+		launchVelocityCarry = 0.20 + lt * 0.06,
+		maxLaunchSpeed = maxSwingSpeed + 22 + lt * 22,
+		launchChargeBonus = 14 + lt * 10,
+		launchUpImpulse = 4.5 + lt * 3,
+		launchDeadhangImpulse = 22 + lt * 8,
 	}
 end
 
+-- Backend reach grows ~2.5× slower than power/speed (UI display unchanged).
+local REACH_STUDS_RANGE = 258
+
 function M.ropeStats(ropeLevel: number): RopeStats
-	local maxDist = M.maxSwingDistance(ropeLevel)
-	-- Grapple search radius (how far away vines can be detected) stays much larger than
-	-- maxSwingDistance (how far you can travel from the hook while attached).
-	local t = M.progressT(ropeLevel, M.ROPE_REFERENCE_LEVEL)
-	local reachStuds = 56 + t * 258
+	local t = M.progressT(ropeLevel, M.ROPE_MAX_LEVEL)
 	return {
-		reachStuds = reachStuds,
-		maxSwingDistance = maxDist,
+		reachStuds = 56 + t * REACH_STUDS_RANGE,
 	}
 end
 
@@ -137,26 +106,27 @@ function M.levelFromLegacyDisplay(attr: string, value: number): number
 	if attr == "SwingForce" then
 		if v >= M.POWER_DISPLAY_BASE then
 			local delta = v - M.POWER_DISPLAY_BASE
-			if delta > 0 and delta % M.POWER_DISPLAY_STEP == 0 then
-				return delta // M.POWER_DISPLAY_STEP
+			-- Legacy UI stored +10 display steps (10, 20, 110 …).
+			if delta >= 10 and delta % 10 == 0 and delta // 10 <= M.POWER_MAX_LEVEL then
+				local asStep10 = delta // 10
+				if asStep10 * 10 == delta then
+					return asStep10
+				end
 			end
-			if delta >= 10 and delta % 10 == 0 then
-				return delta // 10
-			end
-			return math.max(0, math.floor(delta / M.POWER_DISPLAY_STEP + 0.5))
+			return math.max(0, delta)
 		end
 		return math.max(0, v - 1)
 	end
 	if attr == "SwingRange" then
 		if v >= M.REACH_DISPLAY_BASE then
 			local delta = v - M.REACH_DISPLAY_BASE
-			if delta > 0 and delta % M.REACH_DISPLAY_STEP == 0 then
-				return delta // M.REACH_DISPLAY_STEP
+			if delta >= 10 and delta % 10 == 0 and delta // 10 <= M.ROPE_MAX_LEVEL then
+				local asStep10 = delta // 10
+				if asStep10 * 10 == delta then
+					return asStep10
+				end
 			end
-			if delta >= 10 and delta % 10 == 0 then
-				return delta // 10
-			end
-			return math.max(0, math.floor(delta / M.REACH_DISPLAY_STEP + 0.5))
+			return math.max(0, delta)
 		end
 		return math.max(0, v - 1)
 	end

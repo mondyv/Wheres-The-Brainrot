@@ -462,17 +462,6 @@ local function hotbarSlotScaleHost(slot: GuiObject): Instance
 	return slot
 end
 
-playEquipSlotAnimation = function(index: number)
-	local slot = slots[index]
-	if not slot then
-		return
-	end
-	local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
-	local target = hotbarSlotRestScale(index)
-	sc.Scale = target * 0.82
-	TweenService:Create(sc, EQUIP_POP_TWEEN, { Scale = target }):Play()
-end
-
 refreshParkedExtraToolsUI = function()
 	local container = backpackContainer
 	if not container then
@@ -1318,6 +1307,17 @@ local function hotbarSlotRestScale(index: number): number
 		return SLOT_SELECTED_SCALE
 	end
 	return SLOT_IDLE_SCALE
+end
+
+playEquipSlotAnimation = function(index: number)
+	local slot = slots[index]
+	if not slot then
+		return
+	end
+	local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
+	local target = hotbarSlotRestScale(index)
+	sc.Scale = target * 0.82
+	TweenService:Create(sc, EQUIP_POP_TWEEN, { Scale = target }):Play()
 end
 
 local function applyHotbarSlotScales()

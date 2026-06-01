@@ -32,7 +32,6 @@ local CLOSE_TWEEN = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirect
 local HOVER_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local FADE_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local VIGNETTE_FADE_TWEEN = TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 local revivePanel: GuiObject? = nil
 local wiredPanel: GuiObject? = nil
@@ -54,10 +53,9 @@ local earRingingSound: Sound? = nil
 local bgmSounds: { Sound } = {}
 local bgmSpeedBySound: { [Sound]: number } = {}
 local bgmSpeedTweens: { [Sound]: Tween } = {}
-local vignetteRoot: CanvasGroup? = nil
-local vignetteFadeTween: Tween? = nil
 
 local hiddenHud: { { inst: GuiObject, wasVisible: boolean } } = {}
+local hudRestoredCallbacks: { () -> () } = {}
 local priceLabelTemplate: string? = nil
 
 local reviveDeclinedRE: RemoteEvent? = nil
@@ -272,51 +270,6 @@ local function startEarRinging()
 	earRingingSound = clone
 end
 
-local function ensureVignetteOverlay(parent: Frame): CanvasGroup
-	local existing = parent:FindFirstChild("Vignette")
-	if existing and existing:IsA("CanvasGroup") then
-		return existing
-	end
-
-	local host = Instance.new("CanvasGroup")
-	host.Name = "Vignette"
-	host.Size = UDim2.fromScale(1, 1)
-	host.BackgroundTransparency = 1
-	host.BorderSizePixel = 0
-	host.GroupTransparency = 1
-	host.ZIndex = 2
-	host.Parent = parent
-
-	local corners = {
-		{ Vector2.new(0, 0), 45 },
-		{ Vector2.new(1, 0), 135 },
-		{ Vector2.new(1, 1), 225 },
-		{ Vector2.new(0, 1), 315 },
-	}
-	for i, cfg in corners do
-		local corner = Instance.new("Frame")
-		corner.Name = "Corner" .. tostring(i)
-		corner.AnchorPoint = cfg[1]
-		corner.Position = UDim2.fromScale(cfg[1].X, cfg[1].Y)
-		corner.Size = UDim2.fromScale(0.72, 0.72)
-		corner.BackgroundColor3 = Color3.new(0, 0, 0)
-		corner.BackgroundTransparency = 0.08
-		corner.BorderSizePixel = 0
-		corner.ZIndex = 2
-		corner.Parent = host
-		local grad = Instance.new("UIGradient")
-		grad.Rotation = cfg[2]
-		grad.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.12),
-			NumberSequenceKeypoint.new(0.5, 0.55),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		grad.Parent = corner
-	end
-
-	return host
-end
-
 local function showReviveBackdrop()
 	local existing = Lighting:FindFirstChild(BLUR_NAME)
 	if existing and existing:IsA("BlurEffect") then
@@ -363,13 +316,6 @@ local function showReviveBackdrop()
 	if frame and frame:IsA("Frame") then
 		dimFrame = frame
 		TweenService:Create(frame, FADE_TWEEN, { BackgroundTransparency = DIM_TRANSPARENCY }):Play()
-		vignetteRoot = ensureVignetteOverlay(frame)
-		if vignetteFadeTween then
-			vignetteFadeTween:Cancel()
-			vignetteFadeTween = nil
-		end
-		vignetteFadeTween = TweenService:Create(vignetteRoot, VIGNETTE_FADE_TWEEN, { GroupTransparency = 0 })
-		vignetteFadeTween:Play()
 	end
 end
 
@@ -396,22 +342,10 @@ local function hideReviveBackdrop()
 
 	if dimFrame and dimFrame.Parent then
 		local frame = dimFrame
-		if vignetteRoot and vignetteRoot.Parent then
-			if vignetteFadeTween then
-				vignetteFadeTween:Cancel()
-				vignetteFadeTween = nil
-			end
-			local vTween = TweenService:Create(vignetteRoot, VIGNETTE_FADE_TWEEN, { GroupTransparency = 1 })
-			vignetteFadeTween = vTween
-			vTween:Play()
-		end
 		local tween = TweenService:Create(frame, FADE_TWEEN, { BackgroundTransparency = 1 })
 		tween.Completed:Once(function()
 			if dimGui and dimGui.Parent then
 				dimGui.Enabled = false
-			end
-			if vignetteRoot and vignetteRoot.Parent then
-				vignetteRoot.GroupTransparency = 1
 			end
 		end)
 		tween:Play()
@@ -431,6 +365,10 @@ local function resolveMainGui(): ScreenGui?
 end
 
 local function hideGameplayHud(main: ScreenGui)
+	if #hiddenHud > 0 then
+		return
+	end
+
 	table.clear(hiddenHud)
 	HUDController.closeCurrentFrame()
 
@@ -474,6 +412,35 @@ local function restoreGameplayHud()
 		end
 	end
 	table.clear(hiddenHud)
+
+	local main = resolveMainGui()
+	if main then
+		main.Enabled = true
+		local sideUI = main:FindFirstChild("SideUI")
+		if sideUI and sideUI:IsA("GuiObject") then
+			(sideUI :: GuiObject).Visible = true
+		end
+	end
+
+	local playerGui = player:FindFirstChild("PlayerGui")
+	if playerGui then
+		for _, ch in playerGui:GetChildren() do
+			if ch:IsA("ScreenGui") and (ch.Name == "Hud" or ch.Name == "Main") then
+				ch.Enabled = true
+			end
+		end
+	end
+end
+
+local function fireHudRestoredCallbacks()
+	for _, fn in hudRestoredCallbacks do
+		pcall(fn)
+	end
+end
+
+local function refreshGameplayHudAfterRevive()
+	restoreGameplayHud()
+	fireHudRestoredCallbacks()
 end
 
 local function cancelCountdown()
@@ -557,16 +524,6 @@ local function wireDeclineButton(host: GuiObject, onClick: () -> ())
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.05 }):Play()
 	end)
 	clickBtn.Activated:Connect(onClick)
-end
-
-local function refreshGameplayHudAfterRevive()
-	restoreGameplayHud()
-	pcall(function()
-		local ToolbarController = require(script.Parent.ToolbarController)
-		if ToolbarController.onGameplayHudRestored then
-			ToolbarController.onGameplayHudRestored()
-		end
-	end)
 end
 
 local function cleanupReviveSession()
@@ -685,15 +642,18 @@ local function openRevivePanel(land: number, productId: number, countdownSec: nu
 	if sessionActive then
 		return
 	end
+	sessionActive = true
 
 	local main = resolveMainGui()
 	if not main then
 		warn("[ReviveController] Main ScreenGui missing in PlayerGui")
+		sessionActive = false
 		return
 	end
 
 	local panel = resolveRevivePanel(main)
 	if not panel then
+		sessionActive = false
 		return
 	end
 
@@ -710,7 +670,6 @@ local function openRevivePanel(land: number, productId: number, countdownSec: nu
 		end
 	end
 
-	sessionActive = true
 	currentLand = land
 	currentProductId = productId
 
@@ -779,6 +738,10 @@ local function hookCharacter(character: Model)
 end
 
 local ReviveController = {}
+
+function ReviveController.registerHudRestoredCallback(fn: () -> ())
+	table.insert(hudRestoredCallbacks, fn)
+end
 
 function ReviveController.init()
 	resolveSoundTemplates()

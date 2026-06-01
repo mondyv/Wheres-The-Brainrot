@@ -2398,13 +2398,14 @@ function ToolbarController.prepareEarly()
 	applyToolbarInitialHiddenState()
 end
 
-function ToolbarController.onGameplayHudRestored()
-	task.defer(refreshToolbarAfterWorldChange)
-end
-
 function ToolbarController.init()
 	ensureDefaultRobloxBackpackStaysOff()
 	task.defer(ensureDefaultRobloxBackpackStaysOff)
+
+	local ReviveController = require(script.Parent.ReviveController)
+	ReviveController.registerHudRestoredCallback(function()
+		task.defer(refreshToolbarAfterWorldChange)
+	end)
 
 	toolbar.Visible = false
 	applyToolbarInitialHiddenState()

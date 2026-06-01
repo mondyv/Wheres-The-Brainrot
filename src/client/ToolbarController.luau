@@ -201,8 +201,9 @@ local BACKPACK_ROW_DRAG_HOVER_SCALE = 1.06
 
 local ToolbarController = {}
 
--- Luau allows at most 200 locals per chunk; wrap helpers + init in a do-block.
-do
+-- Luau allows at most 200 locals per function; the module chunk already holds ~100.
+-- Wrap helpers + init in an IIFE so they get their own register scope.
+(function()
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -2920,6 +2921,6 @@ function ToolbarController.init()
 	end)
 end
 
-end -- do (helpers + init scope)
+end)()
 
 return ToolbarController

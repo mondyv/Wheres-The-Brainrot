@@ -199,6 +199,11 @@ local backpackDragHover = false
 local BACKPACK_FRAME_DRAG_HOVER_SCALE = 1.045
 local BACKPACK_ROW_DRAG_HOVER_SCALE = 1.06
 
+local ToolbarController = {}
+
+-- Luau allows at most 200 locals per chunk; wrap helpers + init in a do-block.
+do
+
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
 local function getOrAddUIScale(parent: Instance): UIScale
@@ -2355,8 +2360,6 @@ end
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
 
-local ToolbarController = {}
-
 function ToolbarController.prepareEarly()
 	disableDefaultRobloxBackpack()
 	applyToolbarInitialHiddenState()
@@ -2916,5 +2919,7 @@ function ToolbarController.init()
 		end
 	end)
 end
+
+end -- do (helpers + init scope)
 
 return ToolbarController

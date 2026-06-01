@@ -32,6 +32,7 @@ local CLOSE_TWEEN = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirect
 local HOVER_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local FADE_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local VIGNETTE_FADE_TWEEN = TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 local revivePanel: GuiObject? = nil
 local wiredPanel: GuiObject? = nil
@@ -52,6 +53,9 @@ local dimFrame: Frame? = nil
 local earRingingSound: Sound? = nil
 local bgmSounds: { Sound } = {}
 local bgmSpeedBySound: { [Sound]: number } = {}
+local bgmSpeedTweens: { [Sound]: Tween } = {}
+local vignetteRoot: CanvasGroup? = nil
+local vignetteFadeTween: Tween? = nil
 
 local hiddenHud: { { inst: GuiObject, wasVisible: boolean } } = {}
 local priceLabelTemplate: string? = nil
@@ -186,19 +190,41 @@ local function collectBgmSounds()
 	end
 end
 
+local function bgmSlowFadeTween(): TweenInfo
+	return TweenInfo.new(ReviveConfig.BGM_SLOW_FADE_SECONDS, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+end
+
 local function setBgmSlowed(slowed: boolean)
 	for _, s in bgmSounds do
-		if s.Parent then
-			if slowed then
-				if bgmSpeedBySound[s] == nil then
-					bgmSpeedBySound[s] = s.PlaybackSpeed
-				end
-				s.PlaybackSpeed = ReviveConfig.BGM_PLAYBACK_SPEED
-			else
-				local prev = bgmSpeedBySound[s]
-				s.PlaybackSpeed = if typeof(prev) == "number" then prev else 1
-				bgmSpeedBySound[s] = nil
+		if not s.Parent then
+			continue
+		end
+		local existing = bgmSpeedTweens[s]
+		if existing then
+			existing:Cancel()
+			bgmSpeedTweens[s] = nil
+		end
+		if slowed then
+			if bgmSpeedBySound[s] == nil then
+				bgmSpeedBySound[s] = s.PlaybackSpeed
 			end
+			local tween = TweenService:Create(s, bgmSlowFadeTween(), {
+				PlaybackSpeed = ReviveConfig.BGM_PLAYBACK_SPEED,
+			})
+			bgmSpeedTweens[s] = tween
+			tween:Play()
+		else
+			local prev = bgmSpeedBySound[s]
+			local target = if typeof(prev) == "number" then prev else 1
+			bgmSpeedBySound[s] = nil
+			local tween = TweenService:Create(s, bgmSlowFadeTween(), { PlaybackSpeed = target })
+			bgmSpeedTweens[s] = tween
+			tween.Completed:Once(function()
+				if bgmSpeedTweens[s] == tween then
+					bgmSpeedTweens[s] = nil
+				end
+			end)
+			tween:Play()
 		end
 	end
 end
@@ -244,6 +270,51 @@ local function startEarRinging()
 	end
 	clone:Play()
 	earRingingSound = clone
+end
+
+local function ensureVignetteOverlay(parent: Frame): CanvasGroup
+	local existing = parent:FindFirstChild("Vignette")
+	if existing and existing:IsA("CanvasGroup") then
+		return existing
+	end
+
+	local host = Instance.new("CanvasGroup")
+	host.Name = "Vignette"
+	host.Size = UDim2.fromScale(1, 1)
+	host.BackgroundTransparency = 1
+	host.BorderSizePixel = 0
+	host.GroupTransparency = 1
+	host.ZIndex = 2
+	host.Parent = parent
+
+	local corners = {
+		{ Vector2.new(0, 0), 45 },
+		{ Vector2.new(1, 0), 135 },
+		{ Vector2.new(1, 1), 225 },
+		{ Vector2.new(0, 1), 315 },
+	}
+	for i, cfg in corners do
+		local corner = Instance.new("Frame")
+		corner.Name = "Corner" .. tostring(i)
+		corner.AnchorPoint = cfg[1]
+		corner.Position = UDim2.fromScale(cfg[1].X, cfg[1].Y)
+		corner.Size = UDim2.fromScale(0.72, 0.72)
+		corner.BackgroundColor3 = Color3.new(0, 0, 0)
+		corner.BackgroundTransparency = 0.08
+		corner.BorderSizePixel = 0
+		corner.ZIndex = 2
+		corner.Parent = host
+		local grad = Instance.new("UIGradient")
+		grad.Rotation = cfg[2]
+		grad.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.12),
+			NumberSequenceKeypoint.new(0.5, 0.55),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		grad.Parent = corner
+	end
+
+	return host
 end
 
 local function showReviveBackdrop()
@@ -292,6 +363,13 @@ local function showReviveBackdrop()
 	if frame and frame:IsA("Frame") then
 		dimFrame = frame
 		TweenService:Create(frame, FADE_TWEEN, { BackgroundTransparency = DIM_TRANSPARENCY }):Play()
+		vignetteRoot = ensureVignetteOverlay(frame)
+		if vignetteFadeTween then
+			vignetteFadeTween:Cancel()
+			vignetteFadeTween = nil
+		end
+		vignetteFadeTween = TweenService:Create(vignetteRoot, VIGNETTE_FADE_TWEEN, { GroupTransparency = 0 })
+		vignetteFadeTween:Play()
 	end
 end
 
@@ -318,10 +396,22 @@ local function hideReviveBackdrop()
 
 	if dimFrame and dimFrame.Parent then
 		local frame = dimFrame
+		if vignetteRoot and vignetteRoot.Parent then
+			if vignetteFadeTween then
+				vignetteFadeTween:Cancel()
+				vignetteFadeTween = nil
+			end
+			local vTween = TweenService:Create(vignetteRoot, VIGNETTE_FADE_TWEEN, { GroupTransparency = 1 })
+			vignetteFadeTween = vTween
+			vTween:Play()
+		end
 		local tween = TweenService:Create(frame, FADE_TWEEN, { BackgroundTransparency = 1 })
 		tween.Completed:Once(function()
 			if dimGui and dimGui.Parent then
 				dimGui.Enabled = false
+			end
+			if vignetteRoot and vignetteRoot.Parent then
+				vignetteRoot.GroupTransparency = 1
 			end
 		end)
 		tween:Play()
@@ -469,12 +559,22 @@ local function wireDeclineButton(host: GuiObject, onClick: () -> ())
 	clickBtn.Activated:Connect(onClick)
 end
 
+local function refreshGameplayHudAfterRevive()
+	restoreGameplayHud()
+	pcall(function()
+		local ToolbarController = require(script.Parent.ToolbarController)
+		if ToolbarController.onGameplayHudRestored then
+			ToolbarController.onGameplayHudRestored()
+		end
+	end)
+end
+
 local function cleanupReviveSession()
 	cancelCountdown()
 	stopEarRinging()
 	setBgmSlowed(false)
 	hideReviveBackdrop()
-	restoreGameplayHud()
+	refreshGameplayHudAfterRevive()
 	sessionActive = false
 	currentProductId = nil
 	currentLand = nil

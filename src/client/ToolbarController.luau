@@ -2356,7 +2356,39 @@ local function wireCharacter(character: Model)
 			task.defer(rebuildSlots)
 		end
 	end)
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		humanoid = character:WaitForChild("Humanoid", 10) :: Humanoid?
+	end
+	if humanoid then
+		humanoid.Died:Connect(function()
+			activeToolbarDrag = false
+			pendingToolbarDrag = nil
+			dragSuppressedToolbarClick = false
+			clearDragGhost()
+			setBackpackPanelOpen(false)
+		end)
+	end
+
 	task.defer(rebuildSlots)
+end
+
+local function refreshToolbarAfterWorldChange()
+	activeToolbarDrag = false
+	pendingToolbarDrag = nil
+	dragSuppressedToolbarClick = false
+	clearDragGhost()
+	isBackpackPanelOpen = false
+	if backpackFrameRef and backpackFrameRef:IsA("GuiObject") then
+		(backpackFrameRef :: GuiObject).Visible = false
+	end
+	toolbarShown = false
+	safezoneOutStreak = 0
+	pollSafezonePresence()
+	refreshToolbarVisibility()
+	rebuildSlots()
+	applyHotbarSlotScales()
 end
 
 -- ── Init ──────────────────────────────────────────────────────────────────────
@@ -2364,6 +2396,10 @@ end
 function ToolbarController.prepareEarly()
 	disableDefaultRobloxBackpack()
 	applyToolbarInitialHiddenState()
+end
+
+function ToolbarController.onGameplayHudRestored()
+	task.defer(refreshToolbarAfterWorldChange)
 end
 
 function ToolbarController.init()
@@ -2514,7 +2550,7 @@ function ToolbarController.init()
 	-- Character spawning
 	player.CharacterAdded:Connect(function(char: Model)
 		wireCharacter(char)
-		task.defer(pollSafezonePresence)
+		task.defer(refreshToolbarAfterWorldChange)
 	end)
 	if player.Character then
 		wireCharacter(player.Character)

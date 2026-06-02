@@ -39,8 +39,8 @@ M.MAX_CARRY_UPGRADE_LEVEL = 10
 M.POWER_COST_BASE = 20
 M.POWER_COST_GROWTH = 1.07
 
-M.ROPE_COST_BASE = 20
-M.ROPE_COST_GROWTH = 1.075
+-- Reach costs scale from power at the same level, always slightly higher.
+M.ROPE_COST_PREMIUM = 1.2
 
 M.CARRY_COST_BASE = 1_000_000
 M.CARRY_COST_GROWTH = 2.5
@@ -84,8 +84,8 @@ function M.powerUnitCost(powerUpgradeLevel: number): number
 end
 
 function M.ropeUnitCost(ropeUpgradeLevel: number): number
-	local level = floorLevel(ropeUpgradeLevel)
-	return math.floor(M.ROPE_COST_BASE * (M.ROPE_COST_GROWTH ^ level) + 0.5)
+	local powerCost = M.powerUnitCost(ropeUpgradeLevel)
+	return math.max(powerCost + 1, math.floor(powerCost * M.ROPE_COST_PREMIUM + 0.5))
 end
 
 function M.carryUnitCost(carryUpgradeLevel: number): number

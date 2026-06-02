@@ -1,6 +1,8 @@
 -- SwingSystem.client.luau
 -- Swing UI + attach share SwingDetection.canSwing (same range/rules). Server validates RequestSwingAttach.
--- Pendulum rope (max travel from hook in SwingConfig); WASD nudges along arc; release scales velocity by Power upgrade.
+-- Pendulum rope (max travel from hook in SwingConfig); WASD nudges along arc while attached.
+-- Release launch is deterministic and based on Power level only. Swing physics affects movement while
+-- attached, but does not randomly change launch strength.
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -70,12 +72,16 @@ local SPRING_STIFFNESS   = SwingConfig.SPRING_STIFFNESS
 local SPRING_DAMPING     = SwingConfig.SPRING_DAMPING
 local MAX_ROPE_DISTANCE  = SwingConfig.MAX_ROPE_DISTANCE
 local ZIP_TOWARD_DV          = 19
-local LAUNCH_CAMERA_BLEND    = 0.28  -- how much camera look steers launch vs current arc direction
-local LAUNCH_FORWARD_CAMERA_MIX = 0.24
+-- Deterministic release launch (PowerUpgradeLevel → same speed/distance every release at that level).
+local BASE_LAUNCH_SPEED             = 70
+local LAUNCH_SPEED_PER_POWER_LEVEL  = 2.5
+local MAX_LAUNCH_SPEED              = 180
+local BASE_UPWARD_BOOST             = 22
+local UPWARD_BOOST_PER_POWER_LEVEL  = 0.25
+local MAX_UPWARD_BOOST              = 45
 local LAUNCH_DURATION        = 0.42  -- seconds post-release camera/FOV treats player as launched
 local REATTACH_ZIP_MULT      = 0.4   -- zip impulse scale when re-hooking soon after a release
 local REATTACH_ZIP_GRACE      = 0.4   -- seconds after detach where zip is reduced
-local MIN_SWING_HOLD_LAUNCH   = 0.1  -- shorter swings get a softer release (anti spam-fling)
 local REATTACH_AIR_GRACE     = SwingConfig.REATTACH_AIR_GRACE
 local GRAPPLE_INPUT_COOLDOWN = SwingConfig.GRAPPLE_INPUT_COOLDOWN
 local MAX_SWING_SPEED        = 80
@@ -115,6 +121,37 @@ local BEAM_GREEN_B   = Color3.fromRGB(10, 200, 70)
 local ANIM_HANGING_RIGHT = "rbxassetid://72668212449531"
 local ANIM_HANGING_LEFT = "rbxassetid://85555597079083"
 -- ─────────────────────────────────────────────────────────────────────────────
+
+local function readPowerLevel(getAttr: (string) -> any): number
+	local v = getAttr(SwingUpgrades.POWER_LEVEL_ATTR)
+	if typeof(v) ~= "number" then
+		return 0
+	end
+	return math.clamp(math.floor(v), 0, SwingUpgrades.MAX_POWER_UPGRADE_LEVEL)
+end
+
+local function computeDeterministicLaunch(powerLevel: number): (number, number)
+	local level = math.clamp(math.floor(powerLevel), 0, SwingUpgrades.MAX_POWER_UPGRADE_LEVEL)
+	local launchSpeed = math.clamp(
+		BASE_LAUNCH_SPEED + level * LAUNCH_SPEED_PER_POWER_LEVEL,
+		BASE_LAUNCH_SPEED,
+		MAX_LAUNCH_SPEED
+	)
+	local upwardBoost = math.clamp(
+		BASE_UPWARD_BOOST + level * UPWARD_BOOST_PER_POWER_LEVEL,
+		BASE_UPWARD_BOOST,
+		MAX_UPWARD_BOOST
+	)
+	return launchSpeed, upwardBoost
+end
+
+local function flatHorizontalUnit(v: Vector3, fallback: Vector3): Vector3
+	local flat = Vector3.new(v.X, 0, v.Z)
+	if flat.Magnitude > 0.08 then
+		return flat.Unit
+	end
+	return fallback
+end
 
 local function isJumpReleaseKey(key: Enum.KeyCode): boolean
 	return key == Enum.KeyCode.Space or key == Enum.KeyCode.ButtonA
@@ -337,16 +374,9 @@ local function boot(character: Model)
 
 	local dynMaxSwingSpeed = MAX_SWING_SPEED
 	local dynSwingArcForce = 34
-	local dynSwingSpeedPump = 0.9
 	local dynZipToward = ZIP_TOWARD_DV
-	local dynLaunchImpulseBase = 20
-	local dynLaunchMomentumRatio = 0.24
-	local dynLaunchVelocityCarry = 0.20
-	local dynMaxLaunchSpeed = 100
-	local dynLaunchChargeBonus = 14
-	local dynLaunchUpImpulse = 4.5
-	local dynLaunchDeadhangImpulse = 22
-	local dynLaunchMultiplier = SwingConfig.LAUNCH_BASE_MULTIPLIER
+	local currentLaunchSpeed = BASE_LAUNCH_SPEED
+	local currentUpwardBoost = BASE_UPWARD_BOOST
 
 	local function refreshStats()
 		local ropePts = player:GetAttribute("RopeLength")
@@ -367,16 +397,8 @@ local function boot(character: Model)
 		swingForce = ps.steeringForce
 		dynMaxSwingSpeed = ps.maxSwingSpeed
 		dynSwingArcForce = ps.swingArcForce
-		dynSwingSpeedPump = ps.swingSpeedPump
 		dynZipToward = ps.zipToward
-		dynLaunchImpulseBase = ps.launchImpulseBase
-		dynLaunchMomentumRatio = ps.launchMomentumRatio
-		dynLaunchVelocityCarry = ps.launchVelocityCarry
-		dynMaxLaunchSpeed = ps.maxLaunchSpeed
-		dynLaunchChargeBonus = ps.launchChargeBonus
-		dynLaunchUpImpulse = ps.launchUpImpulse
-		dynLaunchDeadhangImpulse = ps.launchDeadhangImpulse
-		dynLaunchMultiplier = ps.launchMultiplier
+		currentLaunchSpeed, currentUpwardBoost = computeDeterministicLaunch(powerLevel)
 
 		swingRange = rs.reachStuds
 		ropeLength = math.max(rs.reachStuds + ropeAttrPts * 2, 8)
@@ -514,7 +536,7 @@ local function boot(character: Model)
 		end
 
 		local vel = hrp.AssemblyLinearVelocity
-		local speedRef = math.max(dynMaxLaunchSpeed, dynMaxSwingSpeed, 1)
+		local speedRef = math.max(currentLaunchSpeed, dynMaxSwingSpeed, 1)
 		local speedT = math.clamp(vel.Magnitude / speedRef, 0, 1)
 
 		local targetRoll = 0
@@ -1096,7 +1118,6 @@ local function boot(character: Model)
 	local function stopSwing(doLaunch: boolean)
 		if not isSwinging then return end
 
-		local heldTime = swingTimer
 		local detachAnchorWorld: Vector3? = nil
 		if ropeAnchorAtt and ropeAnchorAtt.Parent then
 			detachAnchorWorld = ropeAnchorAtt.WorldPosition
@@ -1127,128 +1148,58 @@ local function boot(character: Model)
 		humanoid.AutoRotate = true
 		hrp.AssemblyAngularVelocity = Vector3.zero
 
-		-- Momentum release: keep arc velocity, add forward impulse scaled by power + swing speed.
 		if doLaunch then
-			local snapVel = hrp.AssemblyLinearVelocity
+			local snapMoveDir = humanoid.MoveDirection
 			local snapPos = hrp.Position
-			local snapHeld = heldTime
-			local snapCharge = swingChargeFill
+			local snapVel = hrp.AssemblyLinearVelocity
 			local snapAnchor = detachAnchorWorld
 			local camLook0 = camera.CFrame.LookVector
-
 			task.defer(function()
 				if not hrp.Parent then
 					return
 				end
 
-				-- Humanoid can zero velocity when PlatformStand turns off — restore swing momentum first.
-				hrp.AssemblyLinearVelocity = snapVel
-				hrp.AssemblyAngularVelocity = Vector3.zero
+				local powerLevel = readPowerLevel(function(name: string)
+					return player:GetAttribute(name)
+				end)
+				local launchSpeed, upwardBoost = computeDeterministicLaunch(powerLevel)
 
-				local vel = snapVel
-				local speed = vel.Magnitude
-				local camLook = camLook0
-				local camFlat = Vector3.new(camLook.X, 0, camLook.Z)
-				local camFlatUnit = if camFlat.Magnitude > 0.08 then camFlat.Unit else Vector3.new(0, 0, -1)
-				local holdMult = math.clamp(snapHeld / MIN_SWING_HOLD_LAUNCH, 0.72, 1)
-				local mass = hrp.AssemblyMass
-
-				local function blendLaunchDir(baseDir: Vector3): Vector3
-					local d = baseDir
-					if camFlat.Magnitude > 0.08 then
-						d = (d * (1 - LAUNCH_FORWARD_CAMERA_MIX) + camFlat.Unit * LAUNCH_FORWARD_CAMERA_MIX)
-					end
-					if d.Magnitude > 1e-4 then
-						return d.Unit
-					end
-					return camFlatUnit
-				end
-
-				local function applyMomentumLaunch(
-					launchDir: Vector3,
-					tangSpeed: number,
-					releaseSpeed: number,
-					chargeFill: number,
-					extraForwardDv: number?
-				)
-					local dir = blendLaunchDir(launchDir)
-					local forwardDv = dynLaunchImpulseBase * holdMult + (extraForwardDv or 0)
-					local momentumDv = tangSpeed * dynLaunchMomentumRatio * holdMult
-					local chargeDv = chargeFill * dynLaunchChargeBonus * holdMult
-					local totalDv = forwardDv + momentumDv + chargeDv
-
-					humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-					hrp.AssemblyLinearVelocity = vel * dynLaunchMultiplier
-					vel = hrp.AssemblyLinearVelocity
-					hrp:ApplyImpulse(dir * totalDv * mass)
-					if releaseSpeed > 2.5 then
-						local carryDv = releaseSpeed * dynLaunchVelocityCarry * holdMult
-						hrp:ApplyImpulse(vel.Unit * carryDv * mass)
-					end
-					if dynLaunchUpImpulse > 0 then
-						hrp:ApplyImpulse(Vector3.new(0, dynLaunchUpImpulse * holdMult * mass, 0))
-					end
-
-					local post = hrp.AssemblyLinearVelocity
-					if post.Magnitude > dynMaxLaunchSpeed then
-						hrp.AssemblyLinearVelocity = post.Unit * dynMaxLaunchSpeed
-						post = hrp.AssemblyLinearVelocity
-					end
-
-					local speedRef = math.max(dynMaxLaunchSpeed, 1)
-					launchCamShakeIntensity = math.clamp(
-						(post.Magnitude / speedRef) * 0.55 + (tangSpeed / math.max(dynMaxSwingSpeed, 1)) * 0.45,
-						0,
-						1
-					)
-					launchFovIntensity = math.clamp(post.Magnitude / speedRef, 0, 1)
-					isLaunched = true
-					task.delay(LAUNCH_DURATION, function()
-						isLaunched = false
-					end)
-				end
-
-				if speed <= 1 then
-					local hangDir = camFlatUnit + Vector3.new(0, 0.18, 0)
-					if hangDir.Magnitude > 1e-4 then
-						applyMomentumLaunch(
-							hangDir.Unit,
-							0,
-							speed,
-							snapCharge,
-							dynLaunchDeadhangImpulse * holdMult
-						)
-					end
+				local moveFlat = Vector3.new(snapMoveDir.X, 0, snapMoveDir.Z)
+				local launchDir: Vector3
+				if moveFlat.Magnitude > 0.08 then
+					launchDir = moveFlat.Unit
 				else
-					local radial = Vector3.yAxis
-					if snapAnchor then
-						local fromAnchor = snapPos - snapAnchor
-						if fromAnchor.Magnitude > 0.2 then
-							radial = fromAnchor.Unit
-						end
-					end
-
-					local tangVel = vel - radial * vel:Dot(radial)
-					local tangSpeed = tangVel.Magnitude
-					local camTang = camFlat - radial * camFlat:Dot(radial)
-
-					local launchDir: Vector3
-					if tangSpeed > 2 then
-						local tDir = tangVel.Unit
-						if camTang.Magnitude > 0.05 then
-							launchDir = (tDir * (1 - LAUNCH_CAMERA_BLEND) + camTang.Unit * LAUNCH_CAMERA_BLEND).Unit
-						else
-							launchDir = tDir
-						end
-					elseif camTang.Magnitude > 0.05 then
-						launchDir = camTang.Unit
+					local camFlat = Vector3.new(camLook0.X, 0, camLook0.Z)
+					if camFlat.Magnitude > 0.08 then
+						launchDir = camFlat.Unit
 					else
-						launchDir = if speed > 0.1 then vel.Unit else camFlatUnit
+						local radial = Vector3.yAxis
+						if snapAnchor then
+							local fromAnchor = snapPos - snapAnchor
+							if fromAnchor.Magnitude > 0.2 then
+								radial = fromAnchor.Unit
+							end
+						end
+						local tangVel = snapVel - radial * snapVel:Dot(radial)
+						launchDir = flatHorizontalUnit(tangVel, Vector3.new(0, 0, -1))
 					end
-
-					local tangRef = if tangSpeed > 1 then tangSpeed else dynLaunchDeadhangImpulse * 0.35
-					applyMomentumLaunch(launchDir, tangRef, speed, snapCharge)
 				end
+
+				humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+				hrp.AssemblyAngularVelocity = Vector3.zero
+				hrp.AssemblyLinearVelocity = launchDir * launchSpeed + Vector3.new(0, upwardBoost, 0)
+
+				local speedRef = math.max(MAX_LAUNCH_SPEED, 1)
+				launchCamShakeIntensity = math.clamp(launchSpeed / speedRef, 0, 1)
+				launchFovIntensity = math.clamp(
+					(launchSpeed + upwardBoost * 0.35) / (speedRef + MAX_UPWARD_BOOST * 0.35),
+					0,
+					1
+				)
+				isLaunched = true
+				task.delay(LAUNCH_DURATION, function()
+					isLaunched = false
+				end)
 			end)
 		end
 	end

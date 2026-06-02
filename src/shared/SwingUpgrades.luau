@@ -122,9 +122,8 @@ function M.batchPriceForUpgradeId(upgradeId: string, levels: UpgradeLevels): num
 		return 0
 	end
 	local current = M.levelForUpgradeId(upgradeId, levels)
-	return M.sumUnitCosts(function(level: number)
-		return M.unitCostForLevelAttr(def.levelAttr, level)
-	end, current, def.units)
+	local pricePerUnit = M.unitCostForLevelAttr(def.levelAttr, current)
+	return pricePerUnit * def.units
 end
 
 function M.wouldExceedMax(upgradeId: string, levels: UpgradeLevels): boolean

@@ -354,21 +354,32 @@ local function packInventoryForClient(plr: Player, list: { BrainrotInvEntry }, e
 	return payload
 end
 
-local function notifyIndexDeposited(player: Player, entry: BrainrotInvEntry)
-	task.spawn(function()
-		local deadline = os.clock() + 30
-		while os.clock() < deadline do
-			local indexInternal = ServerStorage:FindFirstChild("IndexInternal")
-			local indexBF = indexInternal and indexInternal:FindFirstChild("OnBrainrotDeposited")
-			if indexBF and indexBF:IsA("BindableFunction") then
-				pcall(function()
-					(indexBF :: BindableFunction):Invoke(player, entry)
-				end)
-				return
-			end
-			task.wait(0.25)
-		end
-	end)
+local function refreshRebirthState(player: Player)
+	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
+	local refresh = folder and folder:FindFirstChild("RefreshRebirthState")
+	if refresh and refresh:IsA("BindableFunction") then
+		pcall(function()
+			(refresh :: BindableFunction):Invoke(player)
+		end)
+	end
+end
+
+local function recordIndexUnlock(player: Player, entry: BrainrotInvEntry)
+	if typeof(entry.name) ~= "string" or entry.name == "" then
+		return
+	end
+	local indexInternal = ServerStorage:FindFirstChild("IndexInternal")
+	local indexBF = indexInternal and indexInternal:FindFirstChild("OnBrainrotDeposited")
+	if indexBF and indexBF:IsA("BindableFunction") then
+		pcall(function()
+			(indexBF :: BindableFunction):Invoke(player, entry)
+		end)
+		return
+	end
+	local mutation = if typeof(entry.mutation) == "string" and entry.mutation ~= "" then entry.mutation else "normal"
+	if IndexService.recordUnlock(player, entry.name, mutation) then
+		refreshRebirthState(player)
+	end
 end
 
 local function pushBrainrotInventory(player: Player, entry: BrainrotInvEntry, skipSync: boolean?): boolean
@@ -385,13 +396,6 @@ local function pushBrainrotInventory(player: Player, entry: BrainrotInvEntry, sk
 	if not skipSync then
 		local sync = ensureInventoryRemotes()
 		sync:FireClient(player, packInventoryForClient(player, list))
-	end
-	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
-	local refresh = folder and folder:FindFirstChild("RefreshRebirthState")
-	if refresh and refresh:IsA("BindableFunction") then
-		pcall(function()
-			(refresh :: BindableFunction):Invoke(player)
-		end)
 	end
 	return true
 end
@@ -596,7 +600,7 @@ local function redeemSingleCarryModel(player: Player, carry: Model): number?
 	local newSlot = if list then #list else nil
 	depositDebug("redeem inventory OK slot", player.Name, tostring(newSlot), brainrotName)
 
-	notifyIndexDeposited(player, entry)
+	recordIndexUnlock(player, entry)
 
 	safeZoneSfxPlayedForCarry[carry] = nil
 	carry:Destroy()
@@ -3060,13 +3064,6 @@ local function consumeInventoryEntry(plr: Player, idx: number): BrainrotInvEntry
 
 	local sync = ensureInventoryRemotes()
 	sync:FireClient(plr, packInventoryForClient(plr, list))
-	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
-	local refresh = folder and folder:FindFirstChild("RefreshRebirthState")
-	if refresh and refresh:IsA("BindableFunction") then
-		pcall(function()
-			(refresh :: BindableFunction):Invoke(plr)
-		end)
-	end
 	return entry
 end
 
@@ -3222,7 +3219,7 @@ grantBF.OnInvoke = function(playerArg: any, entryArg: any, opts: any): boolean
 	end
 	local newSlot = #list
 
-	notifyIndexDeposited(plr, entry)
+	recordIndexUnlock(plr, entry)
 
 	local forceEquip = true
 	if typeof(opts) == "table" and opts.equip == false then

@@ -821,19 +821,6 @@ function RebirthController.init()
 		end)
 	end
 
-	task.spawn(function()
-		local indexRemotes = ReplicatedStorage:WaitForChild("IndexRemotes", 60)
-		if not indexRemotes then
-			return
-		end
-		local indexUnlocked = indexRemotes:WaitForChild("IndexUnlocked", 30)
-		if indexUnlocked and indexUnlocked:IsA("RemoteEvent") then
-			indexUnlocked.OnClientEvent:Connect(function()
-				fetchAndApply(main)
-			end)
-		end
-	end)
-
 	fetchAndApply(main)
 end
 

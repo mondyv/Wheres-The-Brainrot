@@ -5,7 +5,6 @@
 local ServerStorage = game:GetService("ServerStorage")
 
 local IndexConfig = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("IndexConfig"))
-local RebirthConfig = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local Brainrots = require(script.Parent:WaitForChild("Brainrots"))
 
 local M = {}
@@ -14,19 +13,6 @@ type UnlockMap = { [string]: boolean }
 
 local unlockedByPlayer: { [Player]: UnlockMap } = {}
 local goldenNamesByPlayer: { [Player]: { [string]: boolean } } = {}
-
-local NORMALIZED_BRAINROT_NAMES: { [string]: string } = {}
-for _, def in Brainrots.BRAINROTS do
-	NORMALIZED_BRAINROT_NAMES[RebirthConfig.normalizeName(def.name)] = def.name
-end
-
-local function canonicalBrainrotName(name: string): string
-	if Brainrots.getByName(name) then
-		return name
-	end
-	local normalized = RebirthConfig.normalizeName(name)
-	return NORMALIZED_BRAINROT_NAMES[normalized] or name
-end
 
 local brainrotsFolder: Folder? = nil
 
@@ -140,28 +126,14 @@ function M.isUnlocked(player: Player, name: string, mutationId: string): boolean
 	if not map then
 		return false
 	end
-	local canonical = canonicalBrainrotName(name)
-	return map[IndexConfig.unlockKey(canonical, mutationId)] == true
-		or map[IndexConfig.unlockKey(name, mutationId)] == true
+	return map[IndexConfig.unlockKey(name, mutationId)] == true
 end
 
 -- True if the player has unlocked this brainrot in the index (any mutation tab).
 function M.hasDiscoveredBrainrot(player: Player, brainrotName: string): boolean
-	ensureMaps(player)
-	local canonical = canonicalBrainrotName(brainrotName)
 	for _, mutationId in IndexConfig.MUTATION_TABS do
-		if M.isUnlocked(player, canonical, mutationId) then
+		if M.isUnlocked(player, brainrotName, mutationId) then
 			return true
-		end
-	end
-	local need = RebirthConfig.normalizeName(canonical)
-	local map = unlockedByPlayer[player] :: UnlockMap
-	for key, unlocked in map do
-		if unlocked then
-			local storedName = string.match(key, "^(.+):")
-			if storedName and RebirthConfig.normalizeName(storedName) == need then
-				return true
-			end
 		end
 	end
 	return false
@@ -187,8 +159,7 @@ end
 -- Returns true if this was a newly discovered entry.
 function M.recordUnlock(player: Player, name: string, mutationId: string): boolean
 	ensureMaps(player)
-	local canonical = canonicalBrainrotName(name)
-	local key = IndexConfig.unlockKey(canonical, mutationId)
+	local key = IndexConfig.unlockKey(name, mutationId)
 	local map = unlockedByPlayer[player] :: UnlockMap
 	if map[key] then
 		return false
@@ -197,8 +168,8 @@ function M.recordUnlock(player: Player, name: string, mutationId: string): boole
 
 	if mutationId == "golden" then
 		local golden = goldenNamesByPlayer[player] :: { [string]: boolean }
-		if not golden[canonical] then
-			golden[canonical] = true
+		if not golden[name] then
+			golden[name] = true
 			syncGoldenAttributes(player)
 		end
 	end

@@ -82,13 +82,13 @@ depositBF.OnInvoke = function(player: any, entry: any): boolean
 			goldenCount = IndexService.getGoldenCount(player :: Player),
 			questComplete = (player :: Player):GetAttribute("IndexGoldenQuestComplete") == true,
 		})
-	end
-	local brainrotInternal = ServerStorage:FindFirstChild("BrainrotInternal")
-	local refresh = brainrotInternal and brainrotInternal:FindFirstChild("RefreshRebirthState")
-	if refresh and refresh:IsA("BindableFunction") then
-		pcall(function()
-			(refresh :: BindableFunction):Invoke(player)
-		end)
+		local brainrotInternal = ServerStorage:FindFirstChild("BrainrotInternal")
+		local refresh = brainrotInternal and brainrotInternal:FindFirstChild("RefreshRebirthState")
+		if refresh and refresh:IsA("BindableFunction") then
+			pcall(function()
+				(refresh :: BindableFunction):Invoke(player)
+			end)
+		end
 	end
 	return isNew
 end

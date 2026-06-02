@@ -1,6 +1,4 @@
 -- Unified swing upgrade curves: one progression factor drives power, speed, zip, and launch.
-local SwingConfig = require(script.Parent.SwingConfig)
-
 local M = {}
 
 M.POWER_MAX_LEVEL = 300
@@ -55,7 +53,6 @@ export type PowerStats = {
 	swingArcForce: number,
 	swingSpeedPump: number,
 	zipToward: number,
-	launchMultiplier: number,
 	launchImpulseBase: number,
 	launchMomentumRatio: number,
 	launchVelocityCarry: number,
@@ -65,12 +62,6 @@ export type PowerStats = {
 	launchDeadhangImpulse: number,
 }
 
-function M.launchMultiplier(powerLevel: number): number
-	local level = floorLevel(powerLevel)
-	local mult = SwingConfig.LAUNCH_BASE_MULTIPLIER + level * SwingConfig.LAUNCH_POWER_BONUS_PER_LEVEL
-	return math.min(mult, SwingConfig.LAUNCH_MULTIPLIER_CAP)
-end
-
 export type RopeStats = {
 	reachStuds: number,
 }
@@ -79,22 +70,20 @@ function M.powerStats(powerLevel: number): PowerStats
 	local t = M.progressT(powerLevel, M.POWER_MAX_LEVEL)
 	local lt = M.launchProgressT(powerLevel, M.POWER_MAX_LEVEL)
 	local maxSwingSpeed = 78 + t * 58
-	local launchMult = M.launchMultiplier(powerLevel)
 
 	return {
 		steeringForce = 78 + t * 75,
 		maxSwingSpeed = maxSwingSpeed,
 		swingArcForce = 34 + t * 50,
 		swingSpeedPump = 0.9 + t * 1.4,
-		zipToward = 14 + t * 10,
-		launchMultiplier = launchMult,
-		launchImpulseBase = 26 + lt * 22,
-		launchMomentumRatio = 0.32 + lt * 0.16,
-		launchVelocityCarry = 0.28 + lt * 0.1,
-		maxLaunchSpeed = maxSwingSpeed + 28 + lt * 32,
-		launchChargeBonus = 16 + lt * 14,
-		launchUpImpulse = 5.5 + lt * 4.5,
-		launchDeadhangImpulse = 28 + lt * 12,
+		zipToward = 25 + t * 18,
+		launchImpulseBase = 20 + lt * 14,
+		launchMomentumRatio = 0.24 + lt * 0.12,
+		launchVelocityCarry = 0.20 + lt * 0.06,
+		maxLaunchSpeed = maxSwingSpeed + 22 + lt * 22,
+		launchChargeBonus = 14 + lt * 10,
+		launchUpImpulse = 4.5 + lt * 3,
+		launchDeadhangImpulse = 22 + lt * 8,
 	}
 end
 

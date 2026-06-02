@@ -1,6 +1,8 @@
 -- SwingSystem.client.luau
--- Swing UI + attach share SwingDetection.canSwing (same range/rules). Server validates RequestSwingAttach.
--- Pendulum rope (max travel from hook in SwingConfig); WASD nudges along arc; release scales velocity by Power upgrade.
+-- Jump to leave the ground; while airborne, swing UI + preview line appear and a second jump attaches to the nearest SwingTarget vine.
+-- WASD steers along the arc; vine glide pulls you toward the hook + lighter gravity (Mowgli-style).
+-- Release Jump (Space / ButtonA release) to detach with a momentum-based launch (preserves arc speed + forward impulse).
+-- Upgrade attributes on the player: SwingRange, SwingForce, RopeLength (all numbers)
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -50,11 +52,6 @@ end)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local SwingProgression = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingProgression"))
-local SwingConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingConfig"))
-local SwingDetection = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingDetection"))
-
-local remotesFolder = ReplicatedStorage:WaitForChild("Remotes", 30)
-local swingAttachFn = remotesFolder:WaitForChild("RequestSwingAttach", 30) :: RemoteFunction
 
 -- Unique name per boot() so BindToRenderStep doesn’t collide across respawns.
 local r6RenderBindSerial = 0
@@ -66,18 +63,21 @@ local BASE_FORCE         = 68    -- camera-look tangent steering (starting power
 local FORCE_DECAY_TIME   = 6.0
 local FORCE_MIN_MULT     = 0.75
 local ANGULAR_DAMP       = 6.0
-local SPRING_STIFFNESS   = SwingConfig.SPRING_STIFFNESS
-local SPRING_DAMPING     = SwingConfig.SPRING_DAMPING
-local MAX_ROPE_DISTANCE  = SwingConfig.MAX_ROPE_DISTANCE
-local ZIP_TOWARD_DV          = 19
+-- SpringConstraint: FreeLength=0 means force = dist * stiffness, always pulling toward vine, never pushes back
+local SPRING_FREE_LENGTH = 0
+local SPRING_STIFFNESS   = 100
+local SPRING_DAMPING     = 20
+local ZIP_TOWARD_DV          = 19    -- studs/s into the arc on attach
 local LAUNCH_CAMERA_BLEND    = 0.28  -- how much camera look steers launch vs current arc direction
 local LAUNCH_FORWARD_CAMERA_MIX = 0.24
 local LAUNCH_DURATION        = 0.42  -- seconds post-release camera/FOV treats player as launched
 local REATTACH_ZIP_MULT      = 0.4   -- zip impulse scale when re-hooking soon after a release
 local REATTACH_ZIP_GRACE      = 0.4   -- seconds after detach where zip is reduced
 local MIN_SWING_HOLD_LAUNCH   = 0.1  -- shorter swings get a softer release (anti spam-fling)
-local REATTACH_AIR_GRACE     = SwingConfig.REATTACH_AIR_GRACE
-local GRAPPLE_INPUT_COOLDOWN = SwingConfig.GRAPPLE_INPUT_COOLDOWN
+local REATTACH_AIR_GRACE     = 1.2
+	local GRAPPLE_INPUT_COOLDOWN = 0.52
+-- Grapple only to vines roughly in front of the camera (blocks snagging behind you).
+local MIN_GRAPPLE_LOOK_DOT = 0.18
 local MAX_SWING_SPEED        = 80
 local FOV_MAX              = 96
 local FOV_SPEED            = 4.2   -- smooth widen while accelerating on the arc
@@ -346,7 +346,6 @@ local function boot(character: Model)
 	local dynLaunchChargeBonus = 14
 	local dynLaunchUpImpulse = 4.5
 	local dynLaunchDeadhangImpulse = 22
-	local dynLaunchMultiplier = SwingConfig.LAUNCH_BASE_MULTIPLIER
 
 	local function refreshStats()
 		local ropePts = player:GetAttribute("RopeLength")
@@ -376,7 +375,6 @@ local function boot(character: Model)
 		dynLaunchChargeBonus = ps.launchChargeBonus
 		dynLaunchUpImpulse = ps.launchUpImpulse
 		dynLaunchDeadhangImpulse = ps.launchDeadhangImpulse
-		dynLaunchMultiplier = ps.launchMultiplier
 
 		swingRange = rs.reachStuds
 		ropeLength = math.max(rs.reachStuds + ropeAttrPts * 2, 8)
@@ -420,6 +418,35 @@ local function boot(character: Model)
 		local floorScale = swingFloorScale(anchorWorld)
 		local strength = dynSwingArcForce * mult * extBoost * floorScale
 		return arcDir * strength * mass
+	end
+
+	local function computeSwingSpeedPump(
+		radial: Vector3,
+		arcDir: Vector3,
+		vel: Vector3,
+		extT: number,
+		mult: number,
+		mass: number
+	): Vector3
+		if extT < 0.38 then
+			return Vector3.zero
+		end
+		local tangVel = vel - radial * vel:Dot(radial)
+		local tangSpeed = tangVel.Magnitude
+		local target = dynMaxSwingSpeed * (0.58 + extT * 0.28)
+		if tangSpeed >= target then
+			return Vector3.zero
+		end
+		local pumpDir = arcDir
+		if tangVel.Magnitude > 4 then
+			if tangVel:Dot(arcDir) > 0 then
+				pumpDir = tangVel.Unit
+			elseif tangVel:Dot(arcDir) < -0.2 then
+				return Vector3.zero
+			end
+		end
+		local deficit = target - tangSpeed
+		return pumpDir * deficit * dynSwingSpeedPump * mult * mass * 0.018
 	end
 
 	-- Grapple only works to targets within rope reach (swingRange can be larger from upgrades)
@@ -623,8 +650,15 @@ local function boot(character: Model)
 		)
 	end
 
+	-- Closest point on SwingTarget surface to HRP — rope attaches there (not part center).
 	local function closestAttachWorldOnPart(p: BasePart): Vector3
-		return SwingDetection.closestAttachWorldOnPart(p, hrp.Position)
+		local ok, pt = pcall(function()
+			return p:GetClosestPointOnSurface(hrp.Position)
+		end)
+		if ok and typeof(pt) == "Vector3" then
+			return pt :: Vector3
+		end
+		return p.Position
 	end
 	type VisEntry = { bb: BillboardGui, ring: Frame, dot: Frame, lbl: TextLabel }
 	local visMap: { [BasePart]: VisEntry } = {}
@@ -962,6 +996,54 @@ local function boot(character: Model)
 		return SafezoneUtil.isCharacterInSafezone(character)
 	end
 
+	-- One SwingTarget in range: chosen by where the camera looks (not pure distance — avoids snapping back to the vine you just left).
+	-- respectSafezone: when true, returns nil while HRP is inside SafezoneHitbox (grapple disabled there).
+	local function cameraPickSwingTarget(respectSafezone: boolean?): BasePart?
+		local respectSafe = if respectSafezone == nil then true else respectSafezone :: boolean
+		if respectSafe and isHrpInSafezone() then
+			return nil
+		end
+		if os.clock() - cacheStamp > CACHE_TTL then
+			rebuildCache()
+		end
+		local look = camera.CFrame.LookVector
+		local maxReach = attachRadius()
+		local ropeLim = ropeLength + 0.35
+		local limit = math.min(maxReach, ropeLim)
+		local best: BasePart? = nil
+		local bestScore = -math.huge
+		for _, p in partCache do
+			if not p.Parent then
+				continue
+			end
+			local attachWorld = closestAttachWorldOnPart(p)
+			local dir = attachWorld - hrp.Position
+			local dist = dir.Magnitude
+			if dist < 0.08 or dist > limit then
+				continue
+			end
+			local flatDir = Vector3.new(dir.X, 0, dir.Z)
+			local flatLook = Vector3.new(look.X, 0, look.Z)
+			local align: number
+			if flatDir.Magnitude > 0.05 and flatLook.Magnitude > 0.05 then
+				align = flatDir.Unit:Dot(flatLook.Unit)
+			else
+				align = look:Dot(dir.Unit)
+			end
+			if align < MIN_GRAPPLE_LOOK_DOT then
+				continue
+			end
+			local score = align * 1.15
+				+ (if attachWorld.Y > hrp.Position.Y + 2 then 0.08 else 0)
+				- (dist / math.max(limit, 1)) * 0.06
+			if score > bestScore then
+				bestScore = score
+				best = p
+			end
+		end
+		return best
+	end
+
 	local function isAirborneForSwing(): boolean
 		local st = humanoid:GetState()
 		if st == Enum.HumanoidStateType.Freefall
@@ -972,50 +1054,38 @@ local function boot(character: Model)
 		return isAirborne
 	end
 
-	local function buildSwingQuery(): SwingDetection.SwingQuery
-		if os.clock() - cacheStamp > CACHE_TTL then
-			rebuildCache()
-		end
-		return {
-			hrpPosition = hrp.Position,
-			humanoid = humanoid,
-			isAirborne = isAirborneForSwing(),
-			isSwinging = isSwinging,
-			isDead = humanoid.Health <= 0,
-			inSafezone = isHrpInSafezone(),
-			lastSwingEndClock = lastSwingEndClock,
-			attachRangeStuds = attachRadius(),
-			cameraLook = camera.CFrame.LookVector,
-			partCache = partCache,
-			now = os.clock(),
-		}
-	end
-
-	local function queryCanSwing(): SwingDetection.CanSwingResult
-		return SwingDetection.canSwing(buildSwingQuery())
-	end
-
 	local function applyGrappleMomentumBoost(attachWorld: Vector3)
 		hrp.AssemblyAngularVelocity = Vector3.zero
 
 		local v = hrp.AssemblyLinearVelocity
 		local fromAnchor = hrp.Position - attachWorld
 		local radial = if fromAnchor.Magnitude > 0.25 then fromAnchor.Unit else Vector3.yAxis
+
+		-- Camera look on the tangent plane, tilted slightly down into the arc.
+		local look = camera.CFrame.LookVector
+		local flatLook = Vector3.new(look.X, 0, look.Z)
+		local fwdTang = flatLook - radial * flatLook:Dot(radial)
+		local swingDir: Vector3
+		if fwdTang.Magnitude > 0.1 then
+			local down = Vector3.new(fwdTang.X, fwdTang.Y - 0.55, fwdTang.Z)
+			swingDir = down.Unit
+		else
+			swingDir = Vector3.new(0, -1, 0)
+		end
+
+		-- Only inherit prior tangential motion when not re-hooking right after a release (avoids compounding flings).
 		local recentDetach = os.clock() - lastSwingEndClock < REATTACH_ZIP_GRACE
-
 		local existingTang = v - radial * v:Dot(radial)
-		if existingTang.Magnitude > 2 then
-			hrp.AssemblyLinearVelocity = existingTang + radial * v:Dot(radial) * 0.85
+		if not recentDetach and existingTang.Magnitude > 4 then
+			swingDir = existingTang.Unit
 		end
 
-		local arcDir = pendulumArcDir(radial)
-		if arcDir then
-			local zip = dynZipToward * SwingConfig.ATTACH_ZIP_MULT
-			if recentDetach then
-				zip *= REATTACH_ZIP_MULT
-			end
-			hrp:ApplyImpulse(arcDir * zip * hrp.AssemblyMass)
+		local zip = dynZipToward
+		if recentDetach then
+			zip *= REATTACH_ZIP_MULT
 		end
+
+		hrp:ApplyImpulse(swingDir * zip * hrp.AssemblyMass)
 
 		local post = hrp.AssemblyLinearVelocity
 		if post.Magnitude > dynMaxSwingSpeed then
@@ -1023,16 +1093,13 @@ local function boot(character: Model)
 		end
 	end
 
-	local function startSwing(target: BasePart, precheck: SwingDetection.CanSwingResult?)
-		local swingCheck = precheck or queryCanSwing()
-		if not swingCheck.canAttach or swingCheck.target ~= target then
+	local function startSwing(target: BasePart)
+		local attachWorld = closestAttachWorldOnPart(target)
+		local dist = (hrp.Position - attachWorld).Magnitude
+		if dist > ropeLength + 0.5 or dist < 0.08 then
 			return
 		end
-
-		local attachWorld = swingCheck.attachWorld or closestAttachWorldOnPart(target)
-		local dist = swingCheck.distance
-		local limit = SwingDetection.attachRangeLimit(attachRadius())
-		if dist > limit or dist < SwingConfig.MIN_ATTACH_DIST then
+		if isHrpInSafezone() then
 			return
 		end
 
@@ -1052,11 +1119,13 @@ local function boot(character: Model)
 		bodyAtt.Parent = hrp
 		ropeBodyAtt = bodyAtt
 
-		-- Spring rest length = max rope travel; gravity + arc forces handle the pendulum.
+		-- SpringConstraint: always active tension means no gravity cancel needed.
+		-- LimitsEnabled = false so it pulls when far AND pushes when close, giving
+		-- a natural pendulum feel without any artificial upward force hacks.
 		local spring = Instance.new("SpringConstraint")
 		spring.Attachment0 = anchorAtt
 		spring.Attachment1 = bodyAtt
-		spring.FreeLength   = MAX_ROPE_DISTANCE
+		spring.FreeLength   = SPRING_FREE_LENGTH
 		spring.Stiffness    = SPRING_STIFFNESS
 		spring.Damping      = SPRING_DAMPING
 		spring.MaxForce     = math.huge
@@ -1120,7 +1189,6 @@ local function boot(character: Model)
 		swingTargetPart = nil
 
 		lastSwingEndClock = os.clock()
-		player:SetAttribute("LastSwingEndClock", lastSwingEndClock)
 		if doLaunch then landedFromSwing = true end
 
 		humanoid.PlatformStand = false
@@ -1178,8 +1246,6 @@ local function boot(character: Model)
 					local totalDv = forwardDv + momentumDv + chargeDv
 
 					humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-					hrp.AssemblyLinearVelocity = vel * dynLaunchMultiplier
-					vel = hrp.AssemblyLinearVelocity
 					hrp:ApplyImpulse(dir * totalDv * mass)
 					if releaseSpeed > 2.5 then
 						local carryDv = releaseSpeed * dynLaunchVelocityCarry * holdMult
@@ -1298,29 +1364,26 @@ local function boot(character: Model)
 		end
 	end)
 
+	-- Second jump while airborne: hook onto the best visible target in front of the camera.
 	local function tryGrappleAttach()
 		if isSwinging then
 			return
 		end
+		if not isAirborneForSwing() then
+			return
+		end
+		if isHrpInSafezone() then
+			return
+		end
 		local now = os.clock()
-		if now - lastGrappleInputClock < GRAPPLE_INPUT_COOLDOWN then
+		if now - lastGrappleInputClock < GRAPPLE_INPUT_COOLDOWN then return end
+
+		local best = cameraPickSwingTarget(true)
+		if not best then
 			return
 		end
 
-		local swingCheck = queryCanSwing()
-		if not swingCheck.canAttach or not swingCheck.target then
-			return
-		end
-
-		local ok = false
-		pcall(function()
-			ok = swingAttachFn:InvokeServer(swingCheck.target) == true
-		end)
-		if not ok then
-			return
-		end
-
-		startSwing(swingCheck.target, swingCheck)
+		startSwing(best)
 		if isSwinging then
 			lastGrappleInputClock = now
 		end
@@ -1483,33 +1546,35 @@ local function boot(character: Model)
 			local fromAnchor = hrp.Position - ropeAnchorAtt.WorldPosition
 			local dist = fromAnchor.Magnitude
 			local radial = if dist > 0.2 then fromAnchor.Unit else Vector3.yAxis
-			local extT = math.clamp(dist / MAX_ROPE_DISTANCE, 0, 1.35)
+			local ropeSpan = math.max(ropeLength, 8)
+			local extT = math.clamp(dist / ropeSpan, 0, 1.12)
 			local anchorWorld = ropeAnchorAtt.WorldPosition
-			local mass = hrp.AssemblyMass
 
+			-- Camera-relative steering: where you look is where you swing.
+			local camLook = camera.CFrame.LookVector
+			local camRight = camera.CFrame.RightVector
 			local md = humanoid.MoveDirection
-			local inputSteer = Vector3.zero
+
+			local inputBias = Vector3.zero
 			if md.Magnitude > 0.05 then
 				local mdFlat = Vector3.new(md.X, 0, md.Z)
-				local inputTang = mdFlat - radial * mdFlat:Dot(radial)
-				if inputTang.Magnitude > 0.05 then
-					inputSteer = inputTang.Unit * swingForce * SwingConfig.INPUT_STEER_FORCE_MULT * mult * mass
-				end
+				inputBias = camRight * camRight:Dot(mdFlat) * 0.6
+			end
+			local steerDir = Vector3.new(camLook.X, 0, camLook.Z) + inputBias
+
+			local tang = steerDir - radial * steerDir:Dot(radial)
+			local camSteerForce = Vector3.zero
+			if tang.Magnitude > 0.05 then
+				camSteerForce = tang.Unit * swingForce * mult * hrp.AssemblyMass
 			end
 
 			local arcDir = pendulumArcDir(radial) or Vector3.new(0, -1, 0)
-			local arcForce = computeSwingArcForce(anchorWorld, radial, extT, mult, mass)
+			local arcForce = computeSwingArcForce(anchorWorld, radial, extT, mult, hrp.AssemblyMass)
+			local speedPump = computeSwingSpeedPump(radial, arcDir, vel, extT, mult, hrp.AssemblyMass)
 
-			local ropeTension = Vector3.zero
-			local softLimit = MAX_ROPE_DISTANCE * SwingConfig.ROPE_SOFT_START
-			if dist > softLimit then
-				local over = dist - softLimit
-				local span = MAX_ROPE_DISTANCE * (1 - SwingConfig.ROPE_SOFT_START)
-				local tensionT = math.clamp(over / math.max(span, 0.01), 0, 2.5)
-				ropeTension = -radial * SwingConfig.ROPE_OVERSTRETCH_TENSION * tensionT * mass
-			end
-
-			forceInst.Force = inputSteer + arcForce + ropeTension
+			-- Extended rope: pendulum arc dominates (fixes float); close in: more camera steer.
+			local arcWeight = 0.42 + math.clamp((extT - 0.35) / 0.65, 0, 1) * 0.58
+			forceInst.Force = camSteerForce * (1 - arcWeight * 0.5) + arcForce + speedPump
 
 			local floorScale = swingFloorScale(anchorWorld)
 			if floorScale < 0.3 and vel.Y < -10 then
@@ -1546,10 +1611,11 @@ local function boot(character: Model)
 			humanoid.CameraOffset = humanoid.CameraOffset:Lerp(Vector3.zero, math.min(dt * 14, 1))
 		end
 
-		if not isSwinging then
-			local swingCheck = queryCanSwing()
-			local aimVisual = if swingCheck.canShowUi then swingCheck.target else nil
-			local grappleOk = swingCheck.canAttach
+		-- Swing point + preview line only while airborne (jump first, then press jump again to hook).
+		if isAirborneForSwing() and not isSwinging then
+			local inSafe = isHrpInSafezone()
+			local aimVisual = cameraPickSwingTarget(false)
+			local grappleOk = not inSafe and aimVisual ~= nil
 
 			local inRngNow: { BasePart } = {}
 			if aimVisual then
@@ -1592,14 +1658,14 @@ local function boot(character: Model)
 			else
 				destroyPreviewTracer()
 			end
+		elseif not isSwinging then
+			for p in prevInRng do
+				removeVisual(p)
+			end
+			prevInRng = {}
+			clearVisuals()
+			destroyPreviewTracer()
 		end
-	end)
-
-	local renderUiConn = RunService.RenderStepped:Connect(function()
-		if isSwinging then
-			return
-		end
-		queryCanSwing()
 	end)
 
 	-- ── Cleanup (called on character removal / respawn) ───────────────────────
@@ -1623,7 +1689,6 @@ local function boot(character: Model)
 		resetSwingCameraState()
 		destroyLaunchSpeedFx()
 		heartbeat:Disconnect()
-		renderUiConn:Disconnect()
 		for _, c in statConns do c:Disconnect() end
 		if isSwinging then stopSwing(false) end
 		destroyPreviewTracer()

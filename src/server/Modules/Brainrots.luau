@@ -326,15 +326,29 @@ function M.incomePerSecond(brainrot: BrainrotDef, level: number, mutationId: str
 end
 
 -- Cost to go from level → level+1. Returns 0 if already maxed.
--- First upgrade = $/s at level 1; each later upgrade costs 1.25× the previous (e.g. 6 → 7.5 → 9.37…).
-local UPGRADE_PRICE_GROWTH = 1.25
+-- Scales with current income, level exponent, and a per-rarity multiplier (high rarities cost much more).
+local UPGRADE_LEVEL_EXPONENT = 1.20
+
+local RARITY_UPGRADE_COST_MULT: { [RarityId]: number } = {
+	common = 1.0,
+	uncommon = 1.05,
+	rare = 1.15,
+	epic = 1.3,
+	mythic = 2.5,
+	legendary = 6.0,
+	["brainrot god"] = 10.0,
+	secret = 16.0,
+}
 
 function M.upgradeCost(brainrot: BrainrotDef, currentLevel: number, mutationId: string): number
 	if currentLevel >= M.MAX_LEVEL then
 		return 0
 	end
-	local baseIncome = M.incomePerSecond(brainrot, 1, mutationId)
-	return math.max(1, math.floor(baseIncome * (UPGRADE_PRICE_GROWTH ^ (currentLevel - 1))))
+	local lvl = math.max(1, math.floor(currentLevel))
+	local currentIncome = M.incomePerSecond(brainrot, lvl, mutationId)
+	local rarityMultiplier = RARITY_UPGRADE_COST_MULT[brainrot.rarity] or 1
+	local upgradeCost = currentIncome * (lvl ^ UPGRADE_LEVEL_EXPONENT) * rarityMultiplier
+	return math.max(1, math.floor(upgradeCost + 0.5))
 end
 
 -- ── Rolling helpers ───────────────────────────────────────────────────────────

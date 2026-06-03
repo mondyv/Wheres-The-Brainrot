@@ -29,27 +29,19 @@ local function init()
 		return
 	end
 
-	local previous = TextChatService.OnIncomingMessage
+	-- OnIncomingMessage is a write-only callback — it can't be read back, so we just
+	-- assign ours.
 	TextChatService.OnIncomingMessage = function(message: TextChatMessage)
-		local props: TextChatMessageProperties? = nil
-		if previous then
-			local ok, prev = pcall(previous, message)
-			if ok and typeof(prev) == "Instance" and prev:IsA("TextChatMessageProperties") then
-				props = prev
-			end
-		end
-		if not props then
-			props = Instance.new("TextChatMessageProperties")
-			props.PrefixText = message.PrefixText
-		end
-
 		local source = message.TextSource
-		if source then
-			local sender = Players:GetPlayerByUserId(source.UserId)
-			if sender and sender:GetAttribute(StoreConfig.ATTR.VIP_OWNED) == true then
-				props.PrefixText = '<font color="#FFA500">[VIP]</font> ' .. props.PrefixText
-			end
+		if not source then
+			return nil
 		end
+		local sender = Players:GetPlayerByUserId(source.UserId)
+		if not sender or sender:GetAttribute(StoreConfig.ATTR.VIP_OWNED) ~= true then
+			return nil
+		end
+		local props = Instance.new("TextChatMessageProperties")
+		props.PrefixText = '<font color="#FFA500">[VIP]</font> ' .. message.PrefixText
 		return props
 	end
 end

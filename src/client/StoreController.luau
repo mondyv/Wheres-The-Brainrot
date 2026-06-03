@@ -162,8 +162,22 @@ end
 
 -- ── Wiring ──────────────────────────────────────────────────────────────────────
 
-local function wireGamePass(container: Instance, panelName: string, gamePassId: number)
-	local panel = container:FindFirstChild(panelName)
+-- Gamepass panels are split across two sibling containers ("Gamepasses" and
+-- "Gamepasses2"), so search every provided container for the panel.
+local function findGamePassPanel(containers: { Instance? }, panelName: string): Instance?
+	for _, c in containers do
+		if c then
+			local panel = c:FindFirstChild(panelName)
+			if panel then
+				return panel
+			end
+		end
+	end
+	return nil
+end
+
+local function wireGamePass(containers: { Instance? }, panelName: string, gamePassId: number)
+	local panel = findGamePassPanel(containers, panelName)
 	if not panel then
 		warn("[StoreController] gamepass panel not found:", panelName)
 		return
@@ -343,7 +357,12 @@ local function wireFreeBrainrot(storeFrame: Instance)
 	end)
 
 	local function refresh()
-		setButtonEnabled(freeGui, state, player:GetAttribute(StoreConfig.ATTR.FREE_UNCOMMON_CLAIMED) ~= true)
+		local claimed = player:GetAttribute(StoreConfig.ATTR.FREE_UNCOMMON_CLAIMED) == true
+		setButtonEnabled(freeGui, state, not claimed)
+		-- Once claimed the whole QuickButtons strip is hidden.
+		if quick and quick:IsA("GuiObject") then
+			(quick :: GuiObject).Visible = not claimed
+		end
 	end
 	player:GetAttributeChangedSignal(StoreConfig.ATTR.FREE_UNCOMMON_CLAIMED):Connect(refresh)
 	refresh()
@@ -362,15 +381,13 @@ local function init()
 	local storeFrame = frames:WaitForChild("Store")
 	local container = storeFrame:WaitForChild("StoreFrame"):WaitForChild("Container")
 
-	-- Gamepass panels.
-	local gamepasses = container:FindFirstChild("Gamepasses")
-	if gamepasses then
-		wireGamePass(gamepasses, "2xCash", StoreConfig.GAMEPASS.DOUBLE_CASH)
-		wireGamePass(gamepasses, "2xUpgrades", StoreConfig.GAMEPASS.DOUBLE_UPGRADES)
-		wireGamePass(gamepasses, "SuperLuck", StoreConfig.GAMEPASS.SUPER_LUCK)
-		wireGamePass(gamepasses, "MEGALuck", StoreConfig.GAMEPASS.MEGA_LUCK)
-		wireGamePass(gamepasses, "XrayVision", StoreConfig.GAMEPASS.XRAY)
-	end
+	-- Gamepass panels live across "Gamepasses" and "Gamepasses2".
+	local gamepassContainers = { container:FindFirstChild("Gamepasses"), container:FindFirstChild("Gamepasses2") }
+	wireGamePass(gamepassContainers, "2xCash", StoreConfig.GAMEPASS.DOUBLE_CASH)
+	wireGamePass(gamepassContainers, "2xUpgrades", StoreConfig.GAMEPASS.DOUBLE_UPGRADES)
+	wireGamePass(gamepassContainers, "SuperLuck", StoreConfig.GAMEPASS.SUPER_LUCK)
+	wireGamePass(gamepassContainers, "MEGALuck", StoreConfig.GAMEPASS.MEGA_LUCK)
+	wireGamePass(gamepassContainers, "XrayVision", StoreConfig.GAMEPASS.XRAY)
 
 	-- VIP panel sits directly under Container.
 	do

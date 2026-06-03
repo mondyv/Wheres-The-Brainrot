@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CashBoostUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("CashBoostUtil"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
@@ -23,6 +24,7 @@ local function refreshBoostLabel()
 	local friendBoost = player:GetAttribute(CashBoostUtil.FRIEND_BOOST_ATTR) == true
 	local dailyPercent = CashBoostUtil.dailyBoostPercent(player)
 	local percent = CashBoostUtil.totalDisplayPercent(count, indexComplete, friendBoost, dailyPercent)
+	percent += CashBoostUtil.gamepassBoostPercent(player)
 	boostLabel.Text = CashBoostUtil.formatBoostLabel(percent)
 end
 
@@ -51,6 +53,8 @@ local function init()
 	bindAttribute("IndexGoldenQuestComplete")
 	bindAttribute(CashBoostUtil.FRIEND_BOOST_ATTR)
 	bindAttribute(CashBoostUtil.DAILY_BOOST_ATTR)
+	bindAttribute(StoreConfig.ATTR.VIP_OWNED)
+	bindAttribute(StoreConfig.ATTR.DOUBLE_CASH_OWNED)
 
 	refreshBoostLabel()
 end

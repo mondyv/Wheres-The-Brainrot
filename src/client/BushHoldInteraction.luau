@@ -45,6 +45,14 @@ local mapWatchRoot: Instance? = nil
 local activeBush: Instance? = nil
 local activePrompt: ProximityPrompt? = nil
 
+-- External listeners (e.g. X-Ray Vision) notified whenever the targeted bush changes.
+local activeBushListeners: { (Instance?) -> () } = {}
+local function notifyActiveBushChanged(bush: Instance?)
+	for _, cb in activeBushListeners do
+		task.spawn(cb, bush)
+	end
+end
+
 local BUSH_SEARCH_HOLD_ACTION = "BushSearchHoldWhileToolEquipped"
 local bushSearchHoldPrompt: ProximityPrompt? = nil
 local bushSearchHoldBeganAt = 0.0
@@ -419,6 +427,7 @@ local function setActive(bush: Instance?, prompt: ProximityPrompt?, _anchor: Bas
 		setAllBushPromptsEnabled(effectivePrompt)
 		ProximityPromptEffects.suppressBushSearchUi(effectivePrompt)
 		GameSoundEffects.syncBushAura(bush)
+		notifyActiveBushChanged(bush)
 	end
 end
 
@@ -620,6 +629,16 @@ end
 -- ── Init ─────────────────────────────────────────────────────────────────────-
 
 local BushHoldInteraction = {}
+
+function BushHoldInteraction.getActiveBush(): Instance?
+	return activeBush
+end
+
+-- Register a callback fired with the targeted bush (or nil when none). Fires once immediately.
+function BushHoldInteraction.onActiveBushChanged(callback: (Instance?) -> ())
+	table.insert(activeBushListeners, callback)
+	task.spawn(callback, activeBush)
+end
 
 function BushHoldInteraction.init()
 	if hooked then

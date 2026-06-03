@@ -20,15 +20,26 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 
 local SHAKE_DURATION_SEC = 2.4
 
--- Roll weights for the brainrot that pops out of the lucky block.
+-- Default roll weights for the brainrot that pops out of the (star rainbow) lucky block.
 local RARITY_WEIGHTS: { [string]: number } = {
 	mythic = 60,
 	legendary = 30,
 	["brainrot god"] = 10,
 }
+
+-- Booster-pack lucky blocks roll from their own rarity pools (see StoreConfig).
+local RARITY_WEIGHTS_BY_KIND: { [string]: { [string]: number } } = StoreConfig.LUCKY_BLOCK_RARITY_WEIGHTS
+
+local function weightsForKind(kind: string?): { [string]: number }
+	if typeof(kind) == "string" and RARITY_WEIGHTS_BY_KIND[kind] then
+		return RARITY_WEIGHTS_BY_KIND[kind]
+	end
+	return RARITY_WEIGHTS
+end
 
 -- ── Remotes ─────────────────────────────────────────────────────────────────
 
@@ -345,18 +356,21 @@ local function destroyAllLuckyBlocks(player: Player)
 	end
 end
 
-local function pickRarityWeighted(): string
+local function pickRarityWeighted(weights: { [string]: number }): string
 	local total = 0
-	for _, w in pairs(RARITY_WEIGHTS) do
+	for _, w in pairs(weights) do
 		total += w
 	end
 	local r = math.random() * total
 	local acc = 0
-	for rarity, w in pairs(RARITY_WEIGHTS) do
+	for rarity, w in pairs(weights) do
 		acc += w
 		if r <= acc then
 			return rarity
 		end
+	end
+	for rarity in pairs(weights) do
+		return rarity
 	end
 	return "mythic"
 end
@@ -464,9 +478,10 @@ local function tryRoll(player: Player)
 	if not tool then
 		return
 	end
+	local weights = weightsForKind(tool:GetAttribute("LuckyBlockKind"))
 	local pick: any = nil
 	for _ = 1, 4 do
-		local rarity = pickRarityWeighted()
+		local rarity = pickRarityWeighted(weights)
 		local def = pickRandomBrainrotByRarity(rarity)
 		if def then
 			pick = def

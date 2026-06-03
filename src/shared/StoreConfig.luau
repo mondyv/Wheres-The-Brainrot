@@ -1,0 +1,164 @@
+--[[
+	StoreConfig
+	Single source of truth (client + server) for every Store item:
+	gamepass ids, developer product ids, booster pack definitions,
+	cash bundle reward multipliers, steal rarity → product mapping, and the
+	player-attribute names used to track ownership / one-time grants.
+
+	IMPORTANT: this module must stay require-safe from BOTH the client and the
+	server. It contains data only — no service side effects.
+--]]
+
+local StoreConfig = {}
+
+-- ── Gamepass ids ──────────────────────────────────────────────────────────────
+StoreConfig.GAMEPASS = {
+	VIP = 1862643274,
+	XRAY = 1865098421,
+	DOUBLE_UPGRADES = 1862818467,
+	DOUBLE_CASH = 1866666344,
+	SUPER_LUCK = 1863082382,
+	MEGA_LUCK = 1866440312,
+}
+
+-- ── Developer product ids ───────────────────────────────────────────────────────
+StoreConfig.PRODUCT = {
+	EXCLUSIVE_BRAINROT = 3601996606,
+	SERVER_LUCK = 3601997089,
+
+	CASH_BUNDLE_1 = 3602163836,
+	CASH_BUNDLE_2 = 3602164595,
+	CASH_BUNDLE_3 = 3602164776,
+	CASH_BUNDLE_4 = 3602164890,
+	CASH_BUNDLE_5 = 3602165053,
+
+	STARTER_PACK = 3602172485,
+	MYTHIC_PACK = 3602172591,
+	GODLY_PACK = 3602172812,
+	SECRET_PACK = 3602172984,
+}
+
+-- ── Player attribute names ──────────────────────────────────────────────────────
+StoreConfig.ATTR = {
+	-- Gamepass ownership flags / values
+	VIP_OWNED = "VIPOwned",
+	VIP_LUCK_MULT = "VIPLuckMultiplier",
+	DOUBLE_CASH_OWNED = "DoubleCashOwned",
+	DOUBLE_UPGRADES_OWNED = "DoubleUpgradesOwned",
+	SUPER_LUCK_OWNED = "SuperLuckOwned",
+	MEGA_LUCK_OWNED = "MegaLuckOwned",
+	XRAY_OWNED = "XrayVisionOwned",
+
+	-- One-time / counter grants
+	EXCLUSIVE_OWNED = "ExclusiveBrainrotOwned",
+	FREE_STEAL_COUNT = "FreeStealCount",
+	FREE_UNCOMMON_CLAIMED = "FreeUncommonClaimed",
+
+	-- Booster pack purchase counters (capped at 2)
+	STARTER_PACK_BOUGHT = "StarterPackBought",
+	MYTHIC_PACK_BOUGHT = "MythicPackBought",
+	GODLY_PACK_BOUGHT = "GodlyPackBought",
+	SECRET_PACK_BOUGHT = "SecretPackBought",
+}
+
+-- Replicated (ReplicatedStorage) attributes for server-wide luck.
+StoreConfig.SERVER_LUCK_MULT_ATTR = "ServerLuckMultiplier"
+StoreConfig.SERVER_LUCK_ENDS_ATTR = "ServerLuckEndsAt"
+StoreConfig.SERVER_LUCK_DURATION = 600 -- 10 minutes added per purchase
+
+-- ── Luck multiplier values ──────────────────────────────────────────────────────
+StoreConfig.VIP_LUCK_MULTIPLIER = 4
+StoreConfig.SUPER_LUCK_MULTIPLIER = 2 -- +100%
+StoreConfig.MEGA_LUCK_MULTIPLIER = 3.5 -- +250%
+StoreConfig.VIP_FREE_STEALS = 2
+StoreConfig.VIP_CASH_MULTIPLIER = 1.5
+StoreConfig.DOUBLE_CASH_MULTIPLIER = 2
+
+-- ── Booster packs ───────────────────────────────────────────────────────────────
+-- luckyBlock = Model name under ReplicatedStorage["Lucky Blocks"]["lucky blocks"]
+StoreConfig.PACKS = {
+	{
+		key = "StarterPack",
+		productId = StoreConfig.PRODUCT.STARTER_PACK,
+		boughtAttr = StoreConfig.ATTR.STARTER_PACK_BOUGHT,
+		luckyBlock = "Starter Lucky Block",
+		cash = 250000,
+		brainrot = "Ben",
+		frameName = "StarterPack",
+	},
+	{
+		key = "MythicPack",
+		productId = StoreConfig.PRODUCT.MYTHIC_PACK,
+		boughtAttr = StoreConfig.ATTR.MYTHIC_PACK_BOUGHT,
+		luckyBlock = "Mythic Lucky Block",
+		cash = 167000000,
+		brainrot = "EsokSekolah",
+		frameName = "MythicPack",
+	},
+	{
+		key = "GodlyPack",
+		productId = StoreConfig.PRODUCT.GODLY_PACK,
+		boughtAttr = StoreConfig.ATTR.GODLY_PACK_BOUGHT,
+		luckyBlock = "Godly Luckyblock",
+		cash = 1500000000,
+		brainrot = "CachorritoMelonito",
+		frameName = "GodlyPack",
+	},
+	{
+		key = "SecretPack",
+		productId = StoreConfig.PRODUCT.SECRET_PACK,
+		boughtAttr = StoreConfig.ATTR.SECRET_PACK_BOUGHT,
+		luckyBlock = "Secret Lucky Block",
+		cash = 150000000000,
+		brainrot = "NuclearoDinosauro",
+		frameName = "SecretPack",
+	},
+}
+
+StoreConfig.PACK_PURCHASE_LIMIT = 2
+
+-- Per-lucky-block rarity roll pools (rarity ids match Brainrots.RarityId).
+StoreConfig.LUCKY_BLOCK_RARITY_WEIGHTS = {
+	["Starter Lucky Block"] = { uncommon = 60, rare = 40 },
+	["Mythic Lucky Block"] = { rare = 60, epic = 40 },
+	["Godly Luckyblock"] = { epic = 60, mythic = 40 },
+	["Secret Lucky Block"] = { mythic = 60, legendary = 40 },
+}
+
+StoreConfig.EXCLUSIVE_BRAINROT_NAME = "StrawberryElephant"
+
+-- ── Cash bundles ────────────────────────────────────────────────────────────────
+StoreConfig.MIN_OFFLINE_24H_CASH = 172800
+StoreConfig.CASH_BUNDLE_MULTIPLIERS = {
+	[StoreConfig.PRODUCT.CASH_BUNDLE_1] = 1 / 28.8,
+	[StoreConfig.PRODUCT.CASH_BUNDLE_2] = 0.15625,
+	[StoreConfig.PRODUCT.CASH_BUNDLE_3] = 5 / 6,
+	[StoreConfig.PRODUCT.CASH_BUNDLE_4] = 10 / 3,
+	[StoreConfig.PRODUCT.CASH_BUNDLE_5] = 10,
+}
+
+-- ── Steal system ────────────────────────────────────────────────────────────────
+StoreConfig.STEAL_PRODUCT_BY_RARITY = {
+	common = 3602198445,
+	uncommon = 3602198480,
+	rare = 3602198510,
+	epic = 3602198541,
+	mythic = 3602198574,
+	legendary = 3602198619,
+	["brainrot god"] = 3602198661,
+	secret = 3602198691,
+}
+
+-- Robux prices (display only) for the steal products above.
+StoreConfig.STEAL_PRICE_BY_RARITY = {
+	common = 29,
+	uncommon = 49,
+	rare = 79,
+	epic = 149,
+	mythic = 249,
+	legendary = 399,
+	["brainrot god"] = 699,
+	secret = 999,
+}
+
+return StoreConfig

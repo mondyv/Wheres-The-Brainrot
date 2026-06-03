@@ -1003,7 +1003,9 @@ local function upgradeStandBrainrot(state: StandState, player: Player)
 		return
 	end
 	player:SetAttribute("Cash", c - cost)
-	state.level += 1
+	-- 2x Upgrades gamepass: each upgrade grants two levels instead of one.
+	local levelGain = if player:GetAttribute("DoubleUpgradesOwned") == true then 2 else 1
+	state.level = math.min(Brainrots.MAX_LEVEL, state.level + levelGain)
 	state.stand:SetAttribute("BrainrotLevel", state.level)
 	if state.displayModel and state.displayModel.Parent then
 		state.displayModel:SetAttribute("BrainrotLevel", state.level)
@@ -1457,4 +1459,48 @@ Players.PlayerRemoving:Connect(function(player)
 		end
 	end
 end)
+
+-- ── Steal API (used by StealBrainrot.server) ─────────────────────────────────
+-- Removes the brainrot currently on a stand (without returning it to the owner's
+-- inventory) and reports its stats so the thief's system can grant a copy.
+do
+	local internal = ServerStorage:FindFirstChild("StandInternal")
+	if not internal then
+		internal = Instance.new("Folder")
+		internal.Name = "StandInternal"
+		internal.Parent = ServerStorage
+	end
+
+	local stealBF = internal:FindFirstChild("StealBrainrotFromStand")
+	if not stealBF then
+		stealBF = Instance.new("BindableFunction")
+		stealBF.Name = "StealBrainrotFromStand"
+		stealBF.Parent = internal
+	end
+
+	(stealBF :: BindableFunction).OnInvoke = function(standArg: any, thiefArg: any): any
+		if typeof(standArg) ~= "Instance" then
+			return nil
+		end
+		local state = stands[standArg :: Model]
+		if not state or not state.brainrotName then
+			return nil
+		end
+		-- Don't allow stealing from your own plot.
+		if typeof(thiefArg) == "Instance" and (thiefArg :: Instance):IsA("Player") then
+			if state.ownerUserId == (thiefArg :: Player).UserId then
+				return nil
+			end
+		end
+		local stolen = {
+			name = state.brainrotName,
+			rarity = state.rarity,
+			mutation = state.mutation or "normal",
+			level = state.level,
+			baseIncome = state.baseIncome,
+		}
+		clearStandState(state)
+		return stolen
+	end
+end
 

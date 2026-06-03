@@ -25,6 +25,7 @@ local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitFor
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local PlotLuck = SwingUpgrades.PlotLuck
+local LuckBoost = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckBoost"))
 
 type BrainrotInvEntry = {
 	name: string,
@@ -976,10 +977,13 @@ local function resolveDisplayLuckForPos(worldPos: Vector3): number
 	return best
 end
 
-local function resolveHarvestPlot(worldPos: Vector3): (number, number, number)
+local function resolveHarvestPlot(worldPos: Vector3, luckMultiplier: number?): (number, number, number)
 	local basePlot = resolvePlotForBushPos(worldPos)
 	local displayLuck = resolveDisplayLuckForPos(worldPos)
-	local plot = PlotLuck.effectivePlot(basePlot, displayLuck, Brainrots.MAX_PLOT)
+	-- Gamepass / server-wide luck scales the effective plot luck (VIP, Super/Mega, Server Luck).
+	local mult = if typeof(luckMultiplier) == "number" and luckMultiplier > 1 then luckMultiplier else 1
+	local effectiveDisplayLuck = math.max(displayLuck, displayLuck * mult)
+	local plot = PlotLuck.effectivePlot(basePlot, effectiveDisplayLuck, Brainrots.MAX_PLOT)
 	return plot, basePlot, displayLuck
 end
 
@@ -1910,12 +1914,22 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 		return
 	end
 
-	local plot, _basePlot, displayLuck = resolveHarvestPlot(worldPosition)
+	local luckMultiplier = LuckBoost.totalLuckMultiplier(player)
+	local plot, _basePlot, displayLuck = resolveHarvestPlot(worldPosition, luckMultiplier)
 
 	local function brainrotIsAvailable(def)
 		return brainrotHasTemplate(brainrots :: Folder, def.name)
 	end
 	local pick, mutationId = resolveHiddenBrainrotPick(bushRef, brainrots :: Folder, brainrotIsAvailable)
+	-- When the player has an active luck multiplier, re-roll using the boosted plot so
+	-- gamepass / server luck actually improves the outcome instead of being ignored by
+	-- the pre-rolled hidden loot.
+	if luckMultiplier > 1 then
+		local boostedPick, boostedMutation = Brainrots.pickRandomBrainrotForPlot(plot, brainrotIsAvailable)
+		if boostedPick then
+			pick, mutationId = boostedPick, boostedMutation
+		end
+	end
 	if not pick then
 		pick, mutationId = Brainrots.pickRandomBrainrotForPlot(plot, brainrotIsAvailable)
 	end

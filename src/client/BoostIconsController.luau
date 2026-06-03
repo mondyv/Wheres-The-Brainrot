@@ -1,8 +1,8 @@
 --[[
 	BoostIconsController
 	• Enables/disables the SideUI gamepass boost icons based on ownership.
-	• Hover tooltips (single shared ScreenGui) on every boost icon + the CurrentBoost
-	  label + the Server Luck amount.
+	• Hover tooltips (one shared frame on Main) on every boost icon, CurrentBoost,
+	  and OverallLuck.Amount — title + description with fade-in and mouse follow.
 	• Renders the "Overall Luck" multiplier (VIP × Super × Mega × Server) with a pulse
 	  animation whenever it changes.
 	• Drives the ServerLuckFrame (pop-in when active, MM:SS countdown, hide when off).
@@ -27,92 +27,276 @@ local POP_TWEEN = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirectio
 
 local BoostIconsController = {}
 
--- ── Tooltip ───────────────────────────────────────────────────────────────────
+-- ── Tooltip (one shared frame on Main ScreenGui) ───────────────────────────────
 
-local tooltipGui: ScreenGui? = nil
-local tooltipLabel: TextLabel? = nil
+local TOOLTIP_FADE = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local MOUSE_OFFSET = Vector2.new(16, -8)
+local TOOLTIP_Z = 9999
 
-local function ensureTooltip()
-	if tooltipGui and tooltipGui.Parent then
-		return
-	end
-	local sg = Instance.new("ScreenGui")
-	sg.Name = "BoostTooltip"
-	sg.ResetOnSpawn = false
-	sg.IgnoreGuiInset = true
-	sg.DisplayOrder = 5000
-	sg.Parent = player:WaitForChild("PlayerGui")
+local tooltipRoot: ScreenGui? = nil
+local tooltipFrame: Frame? = nil
+local tooltipTitle: TextLabel? = nil
+local tooltipDesc: TextLabel? = nil
+local positionConn: RBXScriptConnection? = nil
+local tooltipHoverDepth = 0
 
-	local lbl = Instance.new("TextLabel")
-	lbl.Name = "Label"
-	lbl.AutomaticSize = Enum.AutomaticSize.XY
-	lbl.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
-	lbl.BackgroundTransparency = 0.1
-	lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-	lbl.Font = Enum.Font.GothamMedium
-	lbl.TextSize = 15
-	lbl.Visible = false
-	lbl.ZIndex = 5001
-
-	local pad = Instance.new("UIPadding")
-	pad.PaddingTop = UDim.new(0, 6)
-	pad.PaddingBottom = UDim.new(0, 6)
-	pad.PaddingLeft = UDim.new(0, 10)
-	pad.PaddingRight = UDim.new(0, 10)
-	pad.Parent = lbl
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 8)
-	corner.Parent = lbl
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(80, 80, 110)
-	stroke.Thickness = 1.5
-	stroke.Parent = lbl
-
-	lbl.Parent = sg
-	tooltipGui = sg
-	tooltipLabel = lbl
-
-	UserInputService.InputChanged:Connect(function(input)
-		if input.UserInputType ~= Enum.UserInputType.MouseMovement or not tooltipLabel or not tooltipLabel.Visible then
-			return
-		end
-		local pos = UserInputService:GetMouseLocation()
-		tooltipLabel.Position = UDim2.fromOffset(pos.X + 14, pos.Y + 8)
-	end)
+local function colorToRgbTag(c: Color3): string
+	return string.format(
+		"rgb(%d,%d,%d)",
+		math.floor(c.R * 255 + 0.5),
+		math.floor(c.G * 255 + 0.5),
+		math.floor(c.B * 255 + 0.5)
+	)
 end
 
-local function bindTooltip(obj: GuiObject?, text: string)
+-- Pull an accent color already used on this SideUI element (gradient, text, stroke, image).
+local function readGuiAccentColor(obj: GuiObject): Color3
+	for _, d in obj:GetDescendants() do
+		if d:IsA("UIGradient") then
+			local keypoints = d.Color.Keypoints
+			if #keypoints > 0 then
+				return keypoints[math.ceil(#keypoints / 2)].Value
+			end
+		end
+	end
+	for _, d in obj:GetDescendants() do
+		if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" then
+			local tc = d.TextColor3
+			if tc.R + tc.G + tc.B < 2.85 then
+				return tc
+			end
+		end
+	end
+	if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+		return obj.TextColor3
+	end
+	if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+		local ic = obj.ImageColor3
+		if ic.R + ic.G + ic.B < 2.85 then
+			return ic
+		end
+	end
+	local stroke = obj:FindFirstChildOfClass("UIStroke")
+	if stroke then
+		return stroke.Color
+	end
+	if obj.Parent and obj.Parent:IsA("GuiObject") then
+		local parentStroke = obj.Parent:FindFirstChildOfClass("UIStroke")
+		if parentStroke then
+			return parentStroke.Color
+		end
+	end
+	return Color3.fromRGB(255, 255, 255)
+end
+
+local function prepareHoverTarget(obj: GuiObject)
+	-- ImageLabels ignore MouseEnter unless Active; enable input without changing visuals.
+	if not obj:IsA("GuiButton") then
+		obj.Active = true
+	end
+end
+
+local function hideTooltip(force: boolean?)
+	if not force and tooltipHoverDepth > 0 then
+		return
+	end
+	tooltipHoverDepth = 0
+	if positionConn then
+		positionConn:Disconnect()
+		positionConn = nil
+	end
+	if tooltipFrame then
+		tooltipFrame.Visible = false
+	end
+end
+
+local function updateTooltipPosition()
+	if not tooltipFrame then
+		return
+	end
+	local pos = UserInputService:GetMouseLocation()
+	tooltipFrame.Position = UDim2.fromOffset(pos.X + MOUSE_OFFSET.X, pos.Y + MOUSE_OFFSET.Y)
+end
+
+local function ensureTooltip(mainGui: ScreenGui)
+	if tooltipFrame and tooltipFrame.Parent then
+		return
+	end
+
+	tooltipRoot = mainGui
+
+	local frame = Instance.new("Frame")
+	frame.Name = "BoostCounterTooltip"
+	frame.AutomaticSize = Enum.AutomaticSize.XY
+	frame.BackgroundColor3 = Color3.fromRGB(8, 8, 16)
+	frame.BackgroundTransparency = 1
+	frame.Visible = false
+	frame.ZIndex = TOOLTIP_Z
+	frame.BorderSizePixel = 0
+
+	local bgGrad = Instance.new("UIGradient")
+	bgGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(18, 16, 28)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 8, 16)),
+	})
+	bgGrad.Rotation = 90
+	bgGrad.Parent = frame
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 12)
+	corner.Parent = frame
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(100, 70, 180)
+	stroke.Thickness = 1.5
+	stroke.Transparency = 0.2
+	stroke.Parent = frame
+
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop = UDim.new(0, 12)
+	pad.PaddingBottom = UDim.new(0, 12)
+	pad.PaddingLeft = UDim.new(0, 16)
+	pad.PaddingRight = UDim.new(0, 16)
+	pad.Parent = frame
+
+	local layout = Instance.new("UIListLayout")
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 4)
+	layout.Parent = frame
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.LayoutOrder = 1
+	title.BackgroundTransparency = 1
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 16
+	title.RichText = true
+	title.AutomaticSize = Enum.AutomaticSize.XY
+	title.TextColor3 = Color3.fromRGB(255, 255, 255)
+	title.TextTransparency = 1
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.ZIndex = TOOLTIP_Z + 1
+	title.Parent = frame
+
+	local desc = Instance.new("TextLabel")
+	desc.Name = "Description"
+	desc.LayoutOrder = 2
+	desc.BackgroundTransparency = 1
+	desc.Font = Enum.Font.GothamMedium
+	desc.TextSize = 13
+	desc.TextColor3 = Color3.fromRGB(210, 200, 230)
+	desc.AutomaticSize = Enum.AutomaticSize.XY
+	desc.TextTransparency = 1
+	desc.TextWrapped = true
+	desc.TextXAlignment = Enum.TextXAlignment.Left
+	desc.ZIndex = TOOLTIP_Z + 1
+	desc.Parent = frame
+
+	frame.Parent = mainGui
+	tooltipFrame = frame
+	tooltipTitle = title
+	tooltipDesc = desc
+end
+
+local function showTooltip(titleText: string, description: string, accent: Color3)
+	if not tooltipRoot then
+		return
+	end
+	ensureTooltip(tooltipRoot)
+	if not tooltipFrame or not tooltipTitle or not tooltipDesc then
+		return
+	end
+
+	local rgb = colorToRgbTag(accent)
+	tooltipTitle.Text = string.format("<font color='%s'>%s</font>", rgb, titleText)
+	tooltipDesc.Text = description
+
+	tooltipFrame.BackgroundTransparency = 1
+	tooltipTitle.TextTransparency = 1
+	tooltipDesc.TextTransparency = 1
+	tooltipFrame.Visible = true
+	updateTooltipPosition()
+
+	if not positionConn then
+		positionConn = RunService.RenderStepped:Connect(updateTooltipPosition)
+	end
+
+	if tooltipFrame.BackgroundTransparency > 0.5 then
+		TweenService:Create(tooltipFrame, TOOLTIP_FADE, { BackgroundTransparency = 0.05 }):Play()
+		TweenService:Create(tooltipTitle, TOOLTIP_FADE, { TextTransparency = 0 }):Play()
+		TweenService:Create(tooltipDesc, TOOLTIP_FADE, { TextTransparency = 0 }):Play()
+	else
+		tooltipFrame.BackgroundTransparency = 0.05
+		tooltipTitle.TextTransparency = 0
+		tooltipDesc.TextTransparency = 0
+	end
+end
+
+local function onTooltipEnter(titleText: string, description: string, accent: Color3)
+	tooltipHoverDepth += 1
+	showTooltip(titleText, description, accent)
+end
+
+local function onTooltipLeave()
+	tooltipHoverDepth -= 1
+	if tooltipHoverDepth <= 0 then
+		tooltipHoverDepth = 0
+		hideTooltip(true)
+	end
+end
+
+local function bindTooltip(obj: GuiObject?, titleText: string, description: string, accent: Color3?)
 	if not obj then
 		return
 	end
+	prepareHoverTarget(obj)
+	local color = accent or readGuiAccentColor(obj)
 	obj.MouseEnter:Connect(function()
-		ensureTooltip()
-		if tooltipLabel then
-			tooltipLabel.Text = text
-			tooltipLabel.Visible = true
-			local pos = UserInputService:GetMouseLocation()
-			tooltipLabel.Position = UDim2.fromOffset(pos.X + 14, pos.Y + 8)
-		end
+		onTooltipEnter(titleText, description, color)
 	end)
-	obj.MouseLeave:Connect(function()
-		if tooltipLabel then
-			tooltipLabel.Visible = false
-		end
-	end)
+	obj.MouseLeave:Connect(onTooltipLeave)
 end
 
 -- ── Gamepass icons ──────────────────────────────────────────────────────────────
 
--- iconName → { gamePassId, ownedAttr, tooltip }
+-- iconName → { gamePassId, ownedAttr, title, description }
 local ICON_DEFS = {
-	["VIP"] = { id = StoreConfig.GAMEPASS.VIP, attr = StoreConfig.ATTR.VIP_OWNED, tip = "VIP: 1.5x Cash · 4x Luck · Free Steals" },
-	["2x Cash"] = { id = StoreConfig.GAMEPASS.DOUBLE_CASH, attr = StoreConfig.ATTR.DOUBLE_CASH_OWNED, tip = "2x Cash: Double income from brainrots" },
-	["2x Upgrades"] = { id = StoreConfig.GAMEPASS.DOUBLE_UPGRADES, attr = StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED, tip = "2x Upgrades: Each upgrade gives double levels" },
-	["Super Luck"] = { id = StoreConfig.GAMEPASS.SUPER_LUCK, attr = StoreConfig.ATTR.SUPER_LUCK_OWNED, tip = "Super Luck: +100% better brainrot chances" },
-	["Mega Luck"] = { id = StoreConfig.GAMEPASS.MEGA_LUCK, attr = StoreConfig.ATTR.MEGA_LUCK_OWNED, tip = "MEGA Luck: +250% better brainrot chances" },
-	["X-Ray Vision"] = { id = StoreConfig.GAMEPASS.XRAY, attr = StoreConfig.ATTR.XRAY_OWNED, tip = "X-Ray Vision: See what's hiding in bushes" },
+	["VIP"] = {
+		id = StoreConfig.GAMEPASS.VIP,
+		attr = StoreConfig.ATTR.VIP_OWNED,
+		title = "VIP",
+		description = "1.5× cash income · 4× luck · 2 free steals",
+	},
+	["2x Cash"] = {
+		id = StoreConfig.GAMEPASS.DOUBLE_CASH,
+		attr = StoreConfig.ATTR.DOUBLE_CASH_OWNED,
+		title = "2× Cash",
+		description = "Double income from all brainrots on your stands",
+	},
+	["2x Upgrades"] = {
+		id = StoreConfig.GAMEPASS.DOUBLE_UPGRADES,
+		attr = StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED,
+		title = "2× Upgrades",
+		description = "Each stand upgrade grants two levels instead of one",
+	},
+	["Super Luck"] = {
+		id = StoreConfig.GAMEPASS.SUPER_LUCK,
+		attr = StoreConfig.ATTR.SUPER_LUCK_OWNED,
+		title = "Super Luck",
+		description = "+100% better brainrot chances when harvesting bushes",
+	},
+	["Mega Luck"] = {
+		id = StoreConfig.GAMEPASS.MEGA_LUCK,
+		attr = StoreConfig.ATTR.MEGA_LUCK_OWNED,
+		title = "MEGA Luck",
+		description = "+250% better brainrot chances when harvesting bushes",
+	},
+	["X-Ray Vision"] = {
+		id = StoreConfig.GAMEPASS.XRAY,
+		attr = StoreConfig.ATTR.XRAY_OWNED,
+		title = "X-Ray Vision",
+		description = "See what brainrot is hiding inside targeted bushes",
+	},
 }
 
 local function ownsGamePass(gamePassId: number): boolean
@@ -126,7 +310,7 @@ local function setupIcons(iconsFolder: Instance)
 	for iconName, def in ICON_DEFS do
 		local icon = iconsFolder:FindFirstChild(iconName)
 		if icon and icon:IsA("GuiObject") then
-			bindTooltip(icon, def.tip)
+			bindTooltip(icon, def.title, def.description, readGuiAccentColor(icon))
 			local function evaluate()
 				local owned = player:GetAttribute(def.attr) == true
 				icon.Visible = owned
@@ -246,6 +430,9 @@ local function init()
 		warn("[BoostIconsController] Main ScreenGui missing")
 		return
 	end
+	tooltipRoot = main
+	ensureTooltip(main)
+
 	local sideUI = main:WaitForChild("SideUI")
 	local counters = sideUI:WaitForChild("Counters")
 
@@ -258,12 +445,23 @@ local function init()
 	if boost then
 		local currentBoost = boost:FindFirstChild("CurrentBoost")
 		if currentBoost and currentBoost:IsA("GuiObject") then
-			bindTooltip(currentBoost, "Total cash income boost from all sources")
+			bindTooltip(
+				currentBoost,
+				"Cash Boost",
+				"Total cash income boost from rebirths, friends, dailies, and gamepasses",
+				readGuiAccentColor(currentBoost)
+			)
 		end
 		local overall = boost:FindFirstChild("OverallLuck")
 		local amount = overall and overall:FindFirstChild("Amount")
 		if amount and (amount:IsA("TextLabel") or amount:IsA("TextButton")) then
 			overallLuckLabel = amount :: TextLabel
+			bindTooltip(
+				amount :: GuiObject,
+				"Overall Luck",
+				"Combined luck multiplier from VIP, Super Luck, MEGA Luck, and server luck",
+				readGuiAccentColor(amount :: GuiObject)
+			)
 		end
 	end
 
@@ -275,7 +473,6 @@ local function init()
 			local amt = sl:FindFirstChild("Amount")
 			if amt and (amt:IsA("TextLabel") or amt:IsA("TextButton")) then
 				serverLuckAmount = amt :: TextLabel
-				bindTooltip(amt :: GuiObject, "Server-wide luck boost · affects all players")
 			end
 			local timer = sl:FindFirstChild("Timer")
 			if timer and (timer:IsA("TextLabel") or timer:IsA("TextButton")) then

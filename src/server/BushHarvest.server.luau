@@ -1915,6 +1915,17 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 	end
 
 	local luckMultiplier = LuckBoost.totalLuckMultiplier(player)
+	if luckMultiplier > 1 then
+		warn(
+			string.format(
+				"[BushLuck] %s rolling with playerLuck=%.2f serverLuck=%.2f totalMult=%.2f",
+				player.Name,
+				LuckBoost.playerLuckMultiplier(player),
+				LuckBoost.serverLuckMultiplier(),
+				luckMultiplier
+			)
+		)
+	end
 	local plot, _basePlot, displayLuck = resolveHarvestPlot(worldPosition, luckMultiplier)
 
 	local function brainrotIsAvailable(def)

@@ -120,7 +120,20 @@ local function findStarRainbowTemplate(): Model?
 	return nil
 end
 
-local function findLuckyBlockTemplate(blockName: string?): Model?
+local function firstModelChild(container: Instance): Model?
+	for _, c in ipairs(container:GetChildren()) do
+		if c:IsA("Model") then
+			return c
+		end
+	end
+	return nil
+end
+
+-- Booster-pack lucky blocks live under a *container* (e.g. "Starter Lucky Block")
+-- whose children are the visual variants ("basic", "blue", "67", …). The actual tool
+-- model is one of those variants, so when a variant is supplied we resolve it; if the
+-- named node is already a leaf Model we use it directly.
+local function findLuckyBlockTemplate(blockName: string?, variant: string?): Model?
 	if not blockName or blockName == "star rainbow" or blockName == "" then
 		return findStarRainbowTemplate()
 	end
@@ -128,6 +141,43 @@ local function findLuckyBlockTemplate(blockName: string?): Model?
 	if not root then
 		return nil
 	end
+
+	-- Locate the node named blockName (any class — Folder or Model container).
+	local node: Instance? = root:FindFirstChild(blockName)
+	if not node then
+		for _, d in ipairs(root:GetDescendants()) do
+			if d.Name == blockName then
+				node = d
+				break
+			end
+		end
+	end
+
+	if node then
+		local childModel = firstModelChild(node)
+		if childModel then
+			-- node is a container of variant models — pick the requested variant.
+			if typeof(variant) == "string" and variant ~= "" then
+				local exact = node:FindFirstChild(variant)
+				if exact and exact:IsA("Model") then
+					return exact
+				end
+				local lower = string.lower(variant)
+				for _, d in ipairs(node:GetDescendants()) do
+					if d:IsA("Model") and string.lower(d.Name) == lower then
+						return d
+					end
+				end
+				warn("[LuckyBlock] variant", variant, "not found in", blockName, "— using first child Model")
+			end
+			return childModel
+		end
+		if node:IsA("Model") then
+			return node :: Model
+		end
+	end
+
+	-- Legacy fallback: any descendant Model named exactly blockName.
 	for _, d in ipairs(root:GetDescendants()) do
 		if d:IsA("Model") and d.Name == blockName then
 			return d
@@ -422,13 +472,19 @@ grantBF.OnInvoke = function(plrArg: any, blockNameArg: any, optsArg: any): boole
 	local plr = plrArg :: Player
 	local blockName = if typeof(blockNameArg) == "string" then blockNameArg else "star rainbow"
 	local shouldEquip = true
-	if typeof(optsArg) == "table" and optsArg.equip == false then
-		shouldEquip = false
+	local variant: string? = nil
+	if typeof(optsArg) == "table" then
+		if optsArg.equip == false then
+			shouldEquip = false
+		end
+		if typeof(optsArg.variant) == "string" then
+			variant = optsArg.variant
+		end
 	end
 
-	local template = findLuckyBlockTemplate(blockName)
+	local template = findLuckyBlockTemplate(blockName, variant)
 	if not template then
-		warn("[LuckyBlock] No template found for", blockName)
+		warn("[LuckyBlock] No template found for", blockName, "variant:", variant)
 		return false
 	end
 	local tool = buildLuckyBlockTool(template, blockName)

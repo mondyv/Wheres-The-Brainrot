@@ -6,13 +6,13 @@
 	• Cash bundle reward amounts (server-authoritative, refreshed on open).
 	• Booster pack "N/2 available" counters.
 	• Exclusive Brainrot / Free Brainrot disabled states.
-	Also applies the VIP chat tag client-side via TextChatService.
+	• Server Luck store-panel "current → next" text.
+	(The VIP chat tag lives in its own VipChatController.)
 ]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
-local TextChatService = game:GetService("TextChatService")
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
@@ -164,11 +164,17 @@ end
 
 local function wireGamePass(container: Instance, panelName: string, gamePassId: number)
 	local panel = container:FindFirstChild(panelName)
+	if not panel then
+		warn("[StoreController] gamepass panel not found:", panelName)
+		return
+	end
 	local buy = findBuy(panel)
 	if not buy then
+		warn("[StoreController] buy button not found for gamepass panel:", panelName)
 		return
 	end
 	wireBuyButton(buy, function()
+		warn("[StoreController]", panelName, "buy clicked → prompting gamepass", gamePassId)
 		PurchasePrompt.promptGamePass(gamePassId)
 	end)
 end
@@ -187,9 +193,11 @@ local function wireExclusive(container: Instance)
 	local panel = container:FindFirstChild("Exclusive(Ignore)")
 	local buy = findBuy(panel)
 	if not buy then
+		warn("[StoreController] exclusive buy button not found (panel:", panel ~= nil, ")")
 		return
 	end
 	local state = wireBuyButton(buy, function()
+		warn("[Exclusive] purchase attempt, already owned:", player:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED))
 		if player:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) == true then
 			GameSoundEffects.playErrorNotif()
 			return
@@ -284,13 +292,27 @@ end
 local function wireServerLuck(container: Instance)
 	local panel = container:FindFirstChild("ServerLuck")
 	wireProduct(panel, StoreConfig.PRODUCT.SERVER_LUCK)
+
+	-- "current → next" label, e.g. "1x > 2x" inactive, "2x > 4x" while a 2x boost is live.
+	local label = panel and (panel:FindFirstChild("CurrentLuck") or panel:FindFirstChild("TextLabel"))
+	if label and (label:IsA("TextLabel") or label:IsA("TextButton")) then
+		local function refresh()
+			local mult = ReplicatedStorage:GetAttribute(StoreConfig.SERVER_LUCK_MULT_ATTR)
+			local current = if typeof(mult) == "number" and mult > 1 then mult else 1
+			local nextMult = current * 2;
+			(label :: TextLabel).Text = string.format("%dx > %dx", current, nextMult)
+		end
+		ReplicatedStorage:GetAttributeChangedSignal(StoreConfig.SERVER_LUCK_MULT_ATTR):Connect(refresh)
+		refresh()
+	end
 end
 
 local function wireFreeBrainrot(storeFrame: Instance)
 	local quick = storeFrame:FindFirstChild("QuickButtons")
 	local free = quick and quick:FindFirstChild("Free1")
 	if not free or not free:IsA("GuiObject") then
-		return
+		warn("[StoreController] Free1 quick button not found")
+		return function() end
 	end
 	local freeGui = free :: GuiObject
 	local remotesFolder = ReplicatedStorage:FindFirstChild("StoreRemotes")
@@ -325,34 +347,7 @@ local function wireFreeBrainrot(storeFrame: Instance)
 	end
 	player:GetAttributeChangedSignal(StoreConfig.ATTR.FREE_UNCOMMON_CLAIMED):Connect(refresh)
 	refresh()
-end
-
--- ── VIP chat tag ─────────────────────────────────────────────────────────────────
-
-local function setupVipChatTag()
-	local ok = pcall(function()
-		local previous = TextChatService.OnIncomingMessage
-		TextChatService.OnIncomingMessage = function(message: TextChatMessage)
-			local props = Instance.new("TextChatMessageProperties")
-			local source = message.TextSource
-			if source then
-				local sender = Players:GetPlayerByUserId(source.UserId)
-				if sender and sender:GetAttribute(StoreConfig.ATTR.VIP_OWNED) == true then
-					props.PrefixText = '<font color="#FFA500">[VIP]</font> ' .. message.PrefixText
-				end
-			end
-			if previous then
-				local prevProps = previous(message)
-				if prevProps then
-					return prevProps
-				end
-			end
-			return props
-		end
-	end)
-	if not ok then
-		warn("[StoreController] VIP chat tag setup failed")
-	end
+	return refresh
 end
 
 -- ── Init ──────────────────────────────────────────────────────────────────────────
@@ -391,12 +386,13 @@ local function init()
 	wireServerLuck(container)
 	wirePacks(container)
 	collectCashBundlePanels(container)
-	wireFreeBrainrot(storeFrame)
+	local refreshFreeBrainrot = wireFreeBrainrot(storeFrame)
 
 	-- Refresh dynamic labels when the store opens and periodically while open.
 	local function onStoreVisibility()
 		if storeFrame.Visible then
 			refreshCashBundles()
+			refreshFreeBrainrot()
 		end
 	end
 	storeFrame:GetPropertyChangedSignal("Visible"):Connect(onStoreVisibility)
@@ -410,8 +406,6 @@ local function init()
 			end
 		end
 	end)
-
-	setupVipChatTag()
 end
 
 local function boot()

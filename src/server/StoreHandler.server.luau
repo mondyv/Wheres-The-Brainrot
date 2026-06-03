@@ -73,11 +73,12 @@ function StoreServer.grantBrainrot(player: Player, brainrotName: string, opts: {
 	end
 	local bf = grantBrainrotBF or waitInternalBindable("BrainrotInternal", "GrantBrainrotAndEquip", 5)
 	if not bf then
+		warn("[StoreHandler] grantBrainrot failed: BrainrotInternal.GrantBrainrotAndEquip bindable missing")
 		return false
 	end
 	grantBrainrotBF = bf
 	local shouldEquip = not (opts and opts.equip == false)
-	local ok = pcall(function()
+	local ok, err = pcall(function()
 		bf:Invoke(player, {
 			name = def.name,
 			rarity = def.rarity,
@@ -86,19 +87,30 @@ function StoreServer.grantBrainrot(player: Player, brainrotName: string, opts: {
 			baseIncome = def.baseIncome,
 		}, { equip = shouldEquip })
 	end)
+	if not ok then
+		warn("[StoreHandler] grantBrainrot invoke errored for", brainrotName, "->", err)
+	end
 	return ok
 end
 
-function StoreServer.grantLuckyBlock(player: Player, blockName: string): boolean
+function StoreServer.grantLuckyBlock(player: Player, blockName: string, variant: string?): boolean
 	local bf = grantLuckyBlockBF or waitInternalBindable("LuckyBlockInternal", "GrantLuckyBlock", 5)
 	if not bf then
+		warn("[StoreHandler] grantLuckyBlock failed: LuckyBlockInternal.GrantLuckyBlock bindable missing")
 		return false
 	end
 	grantLuckyBlockBF = bf
 	local ok, result = pcall(function()
-		return bf:Invoke(player, blockName, { equip = false })
+		return bf:Invoke(player, blockName, { equip = false, variant = variant })
 	end)
-	return ok and result == true
+	if not ok then
+		warn("[StoreHandler] grantLuckyBlock invoke errored for", blockName, "->", result)
+		return false
+	end
+	if result ~= true then
+		warn("[StoreHandler] grantLuckyBlock returned false for", blockName, "variant:", variant)
+	end
+	return result == true
 end
 
 function StoreServer.addCash(player: Player, amount: number)
@@ -195,7 +207,7 @@ local function publishServerLuck()
 	serverLuckUpdatedRE:FireAllClients(serverLuckMultiplier, remaining)
 end
 
-local function addServerLuck()
+local function addServerLuck(player: Player?)
 	local now = os.time()
 	if serverLuckMultiplier <= 1 or now >= serverLuckEndsAt then
 		-- Fresh activation.
@@ -206,6 +218,14 @@ local function addServerLuck()
 		serverLuckMultiplier *= 2
 		serverLuckEndsAt += StoreConfig.SERVER_LUCK_DURATION
 	end
+	warn(
+		"[ServerLuck] purchased by",
+		player and player.Name or "?",
+		"new multiplier:",
+		serverLuckMultiplier,
+		"ends at:",
+		serverLuckEndsAt
+	)
 	publishServerLuck()
 end
 
@@ -237,8 +257,27 @@ local function applyGamePassEffects(player: Player)
 	local A = StoreConfig.ATTR
 	local G = StoreConfig.GAMEPASS
 
+	local ownsVip = ownsGamePass(player, G.VIP)
+	local ownsCash = ownsGamePass(player, G.DOUBLE_CASH)
+	local ownsUpgrades = ownsGamePass(player, G.DOUBLE_UPGRADES)
+	local ownsSuper = ownsGamePass(player, G.SUPER_LUCK)
+	local ownsMega = ownsGamePass(player, G.MEGA_LUCK)
+	local ownsXray = ownsGamePass(player, G.XRAY)
+	warn(
+		string.format(
+			"[Gamepass] %s: VIP=%s 2xCash=%s 2xUpgrades=%s Super=%s Mega=%s Xray=%s",
+			player.Name,
+			tostring(ownsVip),
+			tostring(ownsCash),
+			tostring(ownsUpgrades),
+			tostring(ownsSuper),
+			tostring(ownsMega),
+			tostring(ownsXray)
+		)
+	)
+
 	-- VIP
-	if ownsGamePass(player, G.VIP) then
+	if ownsVip then
 		if player:GetAttribute(A.VIP_OWNED) ~= true then
 			player:SetAttribute(A.VIP_OWNED, true)
 			player:SetAttribute(A.VIP_LUCK_MULT, StoreConfig.VIP_LUCK_MULTIPLIER)
@@ -249,19 +288,19 @@ local function applyGamePassEffects(player: Player)
 		end
 	end
 
-	if ownsGamePass(player, G.DOUBLE_CASH) then
+	if ownsCash then
 		player:SetAttribute(A.DOUBLE_CASH_OWNED, true)
 	end
-	if ownsGamePass(player, G.DOUBLE_UPGRADES) then
+	if ownsUpgrades then
 		player:SetAttribute(A.DOUBLE_UPGRADES_OWNED, true)
 	end
-	if ownsGamePass(player, G.SUPER_LUCK) then
+	if ownsSuper then
 		player:SetAttribute(A.SUPER_LUCK_OWNED, true)
 	end
-	if ownsGamePass(player, G.MEGA_LUCK) then
+	if ownsMega then
 		player:SetAttribute(A.MEGA_LUCK_OWNED, true)
 	end
-	if ownsGamePass(player, G.XRAY) then
+	if ownsXray then
 		player:SetAttribute(A.XRAY_OWNED, true)
 	end
 end
@@ -341,6 +380,12 @@ local function registerReceipts()
 
 	-- Exclusive Brainrot (one-time).
 	PH.registerProductReceipt(P.EXCLUSIVE_BRAINROT, function(player)
+		warn(
+			"[Exclusive] receipt fired for",
+			player.Name,
+			"already owned:",
+			player:GetAttribute(A.EXCLUSIVE_OWNED)
+		)
 		if player:GetAttribute(A.EXCLUSIVE_OWNED) == true then
 			-- Already owned — refund decision so it isn't re-charged repeatedly.
 			return GRANTED
@@ -349,12 +394,13 @@ local function registerReceipts()
 			player:SetAttribute(A.EXCLUSIVE_OWNED, true)
 			return GRANTED
 		end
+		warn("[Exclusive] grantBrainrot failed for", StoreConfig.EXCLUSIVE_BRAINROT_NAME)
 		return NOT_PROCESSED
 	end)
 
 	-- Server Luck.
-	PH.registerProductReceipt(P.SERVER_LUCK, function()
-		addServerLuck()
+	PH.registerProductReceipt(P.SERVER_LUCK, function(player)
+		addServerLuck(player)
 		return GRANTED
 	end)
 
@@ -363,13 +409,26 @@ local function registerReceipts()
 		PH.registerProductReceipt(pack.productId, function(player)
 			local bought = player:GetAttribute(pack.boughtAttr)
 			local count = if typeof(bought) == "number" then bought else 0
+			warn("[BoosterPack]", pack.key, "receipt fired for", player.Name, "count:", count)
 			if count >= StoreConfig.PACK_PURCHASE_LIMIT then
 				-- Sold out for this account; still mark granted so Roblox doesn't retry.
+				warn("[BoosterPack]", pack.key, "already at purchase limit — granting nothing")
 				return GRANTED
 			end
-			StoreServer.grantLuckyBlock(player, pack.luckyBlock)
+			local gotBlock = StoreServer.grantLuckyBlock(player, pack.luckyBlock, pack.luckyBlockVariant)
 			StoreServer.addCash(player, pack.cash)
-			StoreServer.grantBrainrot(player, pack.brainrot, { equip = false })
+			local gotBrainrot = StoreServer.grantBrainrot(player, pack.brainrot, { equip = false })
+			warn(
+				"[BoosterPack]",
+				pack.key,
+				"granted — luckyBlock:",
+				gotBlock,
+				"cash:",
+				pack.cash,
+				"brainrot:",
+				pack.brainrot,
+				gotBrainrot
+			)
 			player:SetAttribute(pack.boughtAttr, count + 1)
 			return GRANTED
 		end)
@@ -378,10 +437,19 @@ local function registerReceipts()
 	-- Cash bundles.
 	for productId, multiplier in StoreConfig.CASH_BUNDLE_MULTIPLIERS do
 		PH.registerProductReceipt(productId, function(player)
+			warn("[CashBundle] handler fired for product:", productId, "player:", player.Name)
 			local incomePerSecond = StoreServer.placedIncomePerSecond(player)
 			local offline24h = incomePerSecond * 86400
 			local effective = math.max(offline24h, StoreConfig.MIN_OFFLINE_24H_CASH)
 			local reward = math.floor(effective * multiplier)
+			warn(
+				"[CashBundle] incomePerSec:",
+				incomePerSecond,
+				"offline24h:",
+				offline24h,
+				"reward:",
+				reward
+			)
 			StoreServer.addCash(player, reward)
 			return GRANTED
 		end)
@@ -405,12 +473,16 @@ freeBrainrotRE.OnServerEvent:Connect(function(player: Player)
 
 	local pool = Brainrots.brainrotsOfRarity("uncommon")
 	if #pool == 0 then
+		warn("[FreeBrainrot] no uncommon brainrots available to grant")
 		freeBrainrotInFlight[player] = nil
 		return
 	end
 	local pick = pool[math.random(1, #pool)]
+	warn("[FreeBrainrot] granting", pick.name, "to", player.Name)
 	if StoreServer.grantBrainrot(player, pick.name) then
 		player:SetAttribute(StoreConfig.ATTR.FREE_UNCOMMON_CLAIMED, true)
+	else
+		warn("[FreeBrainrot] grant failed for", pick.name)
 	end
 	freeBrainrotInFlight[player] = nil
 end)

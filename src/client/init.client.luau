@@ -44,6 +44,7 @@ task.spawn(function()
 		require(script.BoostIconsController).init()
 		require(script.StealController).init()
 		require(script.XrayController).init()
+		require(script.VipChatController).init()
 
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local shared = ReplicatedStorage:WaitForChild("EssentialsShared", 10)

@@ -75,13 +75,18 @@ StoreConfig.VIP_CASH_MULTIPLIER = 1.5
 StoreConfig.DOUBLE_CASH_MULTIPLIER = 2
 
 -- ── Booster packs ───────────────────────────────────────────────────────────────
--- luckyBlock = Model name under ReplicatedStorage["Lucky Blocks"]["lucky blocks"]
+-- luckyBlock        = container name under ReplicatedStorage["Lucky Blocks"]["lucky blocks"].
+-- luckyBlockVariant = the specific child Model (the actual tool model) inside that
+--                     container. These containers group several visual variants, so we
+--                     must point at one; if it can't be found the grant falls back to
+--                     the container's first child Model.
 StoreConfig.PACKS = {
 	{
 		key = "StarterPack",
 		productId = StoreConfig.PRODUCT.STARTER_PACK,
 		boughtAttr = StoreConfig.ATTR.STARTER_PACK_BOUGHT,
 		luckyBlock = "Starter Lucky Block",
+		luckyBlockVariant = "basic",
 		cash = 250000,
 		brainrot = "Ben",
 		frameName = "StarterPack",
@@ -91,6 +96,7 @@ StoreConfig.PACKS = {
 		productId = StoreConfig.PRODUCT.MYTHIC_PACK,
 		boughtAttr = StoreConfig.ATTR.MYTHIC_PACK_BOUGHT,
 		luckyBlock = "Mythic Lucky Block",
+		luckyBlockVariant = "67",
 		cash = 167000000,
 		brainrot = "EsokSekolah",
 		frameName = "MythicPack",
@@ -100,6 +106,7 @@ StoreConfig.PACKS = {
 		productId = StoreConfig.PRODUCT.GODLY_PACK,
 		boughtAttr = StoreConfig.ATTR.GODLY_PACK_BOUGHT,
 		luckyBlock = "Godly Luckyblock",
+		luckyBlockVariant = "blue",
 		cash = 1500000000,
 		brainrot = "CachorritoMelonito",
 		frameName = "GodlyPack",
@@ -109,6 +116,7 @@ StoreConfig.PACKS = {
 		productId = StoreConfig.PRODUCT.SECRET_PACK,
 		boughtAttr = StoreConfig.ATTR.SECRET_PACK_BOUGHT,
 		luckyBlock = "Secret Lucky Block",
+		luckyBlockVariant = nil, -- use the container's first child Model
 		cash = 150000000000,
 		brainrot = "NuclearoDinosauro",
 		frameName = "SecretPack",

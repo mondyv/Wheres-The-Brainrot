@@ -202,14 +202,18 @@ stealRequestRE.OnServerEvent:Connect(function(thief: Player, standArg: any)
 	end
 	local stand = standArg :: Instance
 	if not canSteal(thief, stand) then
+		warn("[Steal] request denied for", thief.Name, "stand:", stand and stand.Name, "(out of range / own / empty)")
 		return
 	end
 
 	local freeSteals = thief:GetAttribute(StoreConfig.ATTR.FREE_STEAL_COUNT)
+	warn("[Steal] request by", thief.Name, "freeSteals:", freeSteals, "rarity:", standRarity(stand))
 	if typeof(freeSteals) == "number" and freeSteals > 0 then
 		-- Free steal (VIP) — atomic.
 		if executeSteal(thief, stand) then
 			thief:SetAttribute(StoreConfig.ATTR.FREE_STEAL_COUNT, freeSteals - 1)
+		else
+			warn("[Steal] free steal execution failed for", thief.Name)
 		end
 		return
 	end
@@ -217,10 +221,12 @@ stealRequestRE.OnServerEvent:Connect(function(thief: Player, standArg: any)
 	-- Paid steal — prompt the rarity-specific product.
 	local rarity = standRarity(stand)
 	if not rarity then
+		warn("[Steal] no rarity on stand for", thief.Name)
 		return
 	end
 	local productId = StoreConfig.STEAL_PRODUCT_BY_RARITY[rarity]
 	if not productId then
+		warn("[Steal] no steal product mapped for rarity:", rarity)
 		return
 	end
 	pendingSteal[thief] = { stand = stand, rarity = rarity }

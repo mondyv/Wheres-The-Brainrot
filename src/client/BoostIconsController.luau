@@ -293,6 +293,21 @@ local function init()
 		refreshServerLuckFrame()
 	end)
 
+	-- Also react directly to the server's per-second replication event.
+	task.spawn(function()
+		local storeRemotes = ReplicatedStorage:WaitForChild("StoreRemotes", 30)
+		local serverLuckRE = storeRemotes and storeRemotes:WaitForChild("ServerLuckUpdated", 30)
+		if serverLuckRE and serverLuckRE:IsA("RemoteEvent") then
+			serverLuckRE.OnClientEvent:Connect(function(multiplier, remaining)
+				warn("[ServerLuck] received update, multiplier:", multiplier, "remaining:", remaining)
+				refreshOverallLuck()
+				refreshServerLuckFrame()
+			end)
+		else
+			warn("[ServerLuck] StoreRemotes.ServerLuckUpdated remote not found on client")
+		end
+	end)
+
 	refreshOverallLuck()
 	refreshServerLuckFrame()
 

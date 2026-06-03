@@ -6,7 +6,6 @@
 	• Developer-product receipts (Exclusive Brainrot, Server Luck, Booster Packs,
 	  Cash Bundles) registered through ProductHandlerServer.registerProductReceipt.
 	• Server-wide luck timer + replication (ReplicatedStorage attributes + remote).
-	• VIP chat tag.
 	• Shared helpers (grantBrainrot / grantLuckyBlock / placedIncomePerSecond) the
 	  steal system also relies on.
 
@@ -348,9 +347,6 @@ MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, _game
 		end)
 	end
 end)
-
--- VIP chat tag is applied client-side via TextChatService.OnIncomingMessage in
--- StoreController (reads the replicated VIPOwned attribute of each sender).
 
 -- ── Developer-product receipt handlers ────────────────────────────────────────────
 

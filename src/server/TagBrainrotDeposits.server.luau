@@ -1,3 +1,4 @@
+-- [ACTIVE] TagBrainrotDeposits.server
 -- Tags deposit BaseParts so BushHarvest can listen for touches.
 -- Matches parts named RedWall / RedPart, or any BasePart with Attribute BrainrotDeposit = true.
 

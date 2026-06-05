@@ -1,3 +1,4 @@
+-- [ACTIVE] SwingUpgrades
 -- Shared config: cash swing upgrades (must match server + client)
 local SwingProgression = require(script.Parent.SwingProgression)
 

@@ -1,3 +1,4 @@
+-- [ACTIVE] Daily.server
 --[[
 	Daily.server
 	Hosts the daily rewards calendar: remotes, claim grant function, Skip-All dev product

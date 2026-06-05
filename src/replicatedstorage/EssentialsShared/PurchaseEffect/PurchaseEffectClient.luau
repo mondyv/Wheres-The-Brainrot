@@ -1,3 +1,4 @@
+-- [ACTIVE] PurchaseEffectClient
 local MarketplaceService = game:GetService("MarketplaceService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")

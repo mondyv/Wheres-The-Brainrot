@@ -1,3 +1,4 @@
+-- [ACTIVE] PlotStandPlaceholders
 --[[
 	Brainrot stand visibility helpers.
 	• ButtonPart, BlackPart, Decor, and LevelPanel stay visible.

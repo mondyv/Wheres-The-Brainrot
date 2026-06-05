@@ -1,3 +1,4 @@
+-- [ACTIVE] GameSoundEffects
 --[[
 	GameSoundEffects — gameplay SFX under SoundService.SoundEffects
 	CashGrab, ErrorNotif, Drops, BushAura, BushRustles, On ProximityPrompts, GroundSmash, Purchase

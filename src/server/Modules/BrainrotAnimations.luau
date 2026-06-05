@@ -1,3 +1,4 @@
+-- [ACTIVE] BrainrotAnimations
 --[[
 	BrainrotAnimations — stand Idle animation asset IDs (rbxassetid numbers).
 	No ReplicatedStorage.BrainrotAnimations folder required.

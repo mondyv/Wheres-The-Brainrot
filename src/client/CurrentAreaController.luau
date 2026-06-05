@@ -1,3 +1,4 @@
+-- [ACTIVE] CurrentAreaController
 --[[
 	Shows SideUI.Top.CurrentArea when the player enters a land luck hitbox.
 	Enables the matching UIGradient on LuckText + Multiplier (1x = default, no gradient).

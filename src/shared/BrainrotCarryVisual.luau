@@ -1,11 +1,12 @@
+-- [ACTIVE] BrainrotCarryVisual
 --[[
-	Brainrot world scale: base 0.7× template size, +0.01× per level (stand upgrade / inventory level).
+	Brainrot world scale: base 0.7× template size, ×1.1 per level (stand upgrade / inventory level).
 --]]
 
 local M = {}
 
 M.BASE_SCALE = 0.7
-M.UPGRADE_SCALE_STEP = 0.01
+M.UPGRADE_SCALE_MULTIPLIER = 1.1
 M.CARRY_CLEARANCE = 0.04
 -- Hard cap so mis-scaled Studio templates cannot dwarf the map.
 M.MAX_WORLD_LONGEST_AXIS = 5.5
@@ -71,7 +72,7 @@ end
 
 function M.scaleMultiplierForLevel(level: number): number
 	local lv = math.max(1, math.floor(level))
-	return M.BASE_SCALE + (lv - 1) * M.UPGRADE_SCALE_STEP
+	return M.BASE_SCALE * (M.UPGRADE_SCALE_MULTIPLIER ^ (lv - 1))
 end
 
 function M.clampWorldSize(model: Model, maxLongest: number?)

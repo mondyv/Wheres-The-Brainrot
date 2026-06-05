@@ -1,3 +1,4 @@
+-- [ACTIVE] SettingsController
 --[[
 	SettingsController — Config/Settings frame
 	• Slider1 → Background music volume (SoundService.BackgroundMusic.SoundGroup mixer, or Music1 fallback).
@@ -21,10 +22,17 @@ local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
 
-local mainGui      = PlayerGuiMain.ensure(player)
-local playerGui    = player.PlayerGui
-local framesFolder = mainGui:WaitForChild("Frames")
+local mainGui: ScreenGui? = nil
+local framesFolder: Instance? = nil
 local SETTINGS_NAME = "Config/Settings"
+
+local function ensureSettingsRoots()
+	if mainGui then
+		return
+	end
+	mainGui = PlayerGuiMain.ensure(player)
+	framesFolder = mainGui:WaitForChild("Frames")
+end
 
 local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -345,7 +353,8 @@ end
 local SettingsController = {}
 
 function SettingsController.init()
-	local settingsFrame = framesFolder:WaitForChild(SETTINGS_NAME, 15) :: Frame?
+	ensureSettingsRoots()
+	local settingsFrame = (framesFolder :: Instance):WaitForChild(SETTINGS_NAME, 15) :: Frame?
 	if not settingsFrame then
 		warn("[SettingsController] Frame not found: " .. SETTINGS_NAME)
 		return

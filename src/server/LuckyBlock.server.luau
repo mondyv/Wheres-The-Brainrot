@@ -1,3 +1,4 @@
+-- [ACTIVE] LuckyBlock.server
 --[[
 	LuckyBlock.server
 	Authority for the Star-Rainbow lucky block tool.
@@ -341,6 +342,7 @@ local function buildLuckyBlockTool(template: Model, blockName: string): Tool?
 		pcall(function()
 			tool.TextureId = icon
 		end)
+		tool:SetAttribute("ToolbarIcon", icon)
 	end
 
 	main.Name = "Handle"

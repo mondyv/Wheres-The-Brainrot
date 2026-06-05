@@ -1,3 +1,4 @@
+-- [ACTIVE] LoadingScreenController
 --[[
 	LoadingScreenController — full-screen join overlay:
 	Moon camera flyover, blur, centered GameNameImage with breathe/tilt anim; hides other PlayerGui until ready.
@@ -16,7 +17,7 @@ local Workspace = game:GetService("Workspace")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
-local MIN_DISPLAY_SEC = 3
+local MIN_DISPLAY_SEC = 1.2
 local HOLD_AT_FULL_SEC = 0.4
 local FADE_OUT_SEC = 0.9
 local FADE_TWEEN_INFO = TweenInfo.new(FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
@@ -819,16 +820,6 @@ local function startLoadingCameraLock(camera: Camera, loadingGui: ScreenGui): ()
 		end
 		local bindName = "LoadingScreenMoonCamera"
 		local clipSec = moonClipDurationSec(track)
-		warn(
-			string.format(
-				"[LoadingScreenController] Moon camera ACTIVE: %d frames @ %d fps (%.2fs) — %s",
-				#track.frames,
-				track.fps,
-				clipSec,
-				export:GetFullName()
-			)
-		)
-
 		local function applyAnimated()
 			camera.CameraType = Enum.CameraType.Scriptable
 			camera.CameraSubject = nil
@@ -1499,9 +1490,7 @@ function M.run()
 		then math.max(moonClipDurationSec(loadedMoonTrack), 0.05)
 		else MIN_DISPLAY_SEC - HOLD_AT_FULL_SEC
 	local minDisplaySec = clipSec + HOLD_AT_FULL_SEC
-	if loadedMoonTrack then
-		warn(string.format("[LoadingScreenController] Loading duration: %.2fs clip + %.2fs hold", clipSec, HOLD_AT_FULL_SEC))
-	elseif not cameraClipStartedAt then
+	if not loadedMoonTrack and not cameraClipStartedAt then
 		cameraClipStartedAt = os.clock()
 	end
 

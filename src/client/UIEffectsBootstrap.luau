@@ -1,3 +1,4 @@
+-- [ACTIVE] UIEffectsBootstrap
 -- Wires shared UI polish on frames/buttons not covered by a dedicated controller.
 local Players = game:GetService("Players")
 

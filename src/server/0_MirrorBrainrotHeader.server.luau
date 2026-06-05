@@ -1,3 +1,4 @@
+-- [ACTIVE] 0_MirrorBrainrotHeader.server
 --[[
 	Copies ServerStorage.Templates.BrainrotHeader → ReplicatedStorage.Templates.BrainrotHeader
 	so clients can clone the BillboardGui locally (server-only templates do not show on screen).

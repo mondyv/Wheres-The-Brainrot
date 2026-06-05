@@ -1,3 +1,4 @@
+-- [ACTIVE] PlotDiagnostics
 --[[
 	PlotDiagnostics — temporary verbose logging for plot / stand / perf issues.
 	Filter Output with: PlotDiag

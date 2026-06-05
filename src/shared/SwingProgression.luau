@@ -1,3 +1,4 @@
+-- [ACTIVE] SwingProgression
 -- Unified swing upgrade curves: one progression factor drives power, speed, zip, and launch.
 local M = {}
 

@@ -1,3 +1,4 @@
+-- [ACTIVE] TabScreenController
 --[[
 	Roblox's built-in Tab player list reads leaderstats (see PlayerListStats.server.luau).
 	Cash + Rebirth columns appear next to each player's name automatically.

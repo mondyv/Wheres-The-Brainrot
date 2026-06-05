@@ -1,5 +1,7 @@
+-- [ACTIVE] Rebirth.server
 --[[
 	Rebirth authority: requirements, rewards, skip dev product, upgrade reset.
+	Brainrot requirements are satisfied only by Index unlocks (IndexService), not inventory.
 --]]
 
 local Players = game:GetService("Players")
@@ -51,8 +53,10 @@ local getStateRF = ensureRemoteFunction("GetRebirthState")
 local performRF = ensureRemoteFunction("PerformRebirth")
 local updatedRE = ensureRemoteEvent("RebirthUpdated")
 
-local function isBrainrotDiscovered(player: Player, name: string): boolean
-	return IndexService.hasDiscoveredBrainrot(player, name)
+local function makeIndexDiscoveredCheck(player: Player): (name: string) -> boolean
+	return function(name: string): boolean
+		return IndexService.hasDiscoveredBrainrot(player, name)
+	end
 end
 
 local function enrichSnapshot(snapshot: RebirthConfig.RebirthSnapshot): RebirthConfig.RebirthSnapshot
@@ -71,7 +75,7 @@ local function syncPlayerRebirthAttrs(player: Player, snapshot: RebirthConfig.Re
 end
 
 local function pushState(player: Player)
-	local snapshot = enrichSnapshot(RebirthConfig.buildSnapshot(player, isBrainrotDiscovered))
+	local snapshot = enrichSnapshot(RebirthConfig.buildSnapshot(player, makeIndexDiscoveredCheck(player)))
 	syncPlayerRebirthAttrs(player, snapshot)
 	updatedRE:FireClient(player, snapshot)
 	return snapshot
@@ -97,7 +101,7 @@ end
 
 local function performRebirth(player: Player, opts: { skipRequirements: boolean?, keepUpgrades: boolean? }?): (boolean, string?)
 	opts = opts or {}
-	local snapshot = RebirthConfig.buildSnapshot(player, isBrainrotDiscovered)
+	local snapshot = RebirthConfig.buildSnapshot(player, makeIndexDiscoveredCheck(player))
 	if not opts.skipRequirements and not snapshot.canRebirth then
 		return false, "requirements"
 	end
@@ -161,8 +165,19 @@ performRF.OnServerInvoke = function(player: Player)
 	return ok, err
 end
 
+local function notifyCloseStore(player: Player)
+	local folder = ReplicatedStorage:FindFirstChild("StoreRemotes")
+	local re = folder and folder:FindFirstChild("CloseStore")
+	if re and re:IsA("RemoteEvent") then
+		re:FireClient(player)
+	end
+end
+
 ProductHandlerServer.registerProductReceipt(RebirthConfig.SKIP_DEV_PRODUCT_ID, function(player: Player)
 	local ok = performRebirth(player, { skipRequirements = true, keepUpgrades = true })
+	if ok then
+		notifyCloseStore(player)
+	end
 	return if ok
 		then Enum.ProductPurchaseDecision.PurchaseGranted
 		else Enum.ProductPurchaseDecision.NotProcessedYet

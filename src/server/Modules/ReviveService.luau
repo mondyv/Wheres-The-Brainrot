@@ -1,3 +1,4 @@
+-- [ACTIVE] ReviveService
 --[[
 	Revive flow (server module):
 	• On death: store land revive spawn, prompt client, respawn at plot normally.

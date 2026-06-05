@@ -1,3 +1,4 @@
+-- [ACTIVE] init.server
 --[[
 	Essentials server entry — boots ProductHandler (purchase prompts + receipt routing).
 ]]

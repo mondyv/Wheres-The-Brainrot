@@ -1,9 +1,12 @@
+-- [ACTIVE] init.client
 -- Entry point – boots all client-side controllers
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
 local StarterGui = game:GetService("StarterGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LoadingScreenController = require(script.LoadingScreenController)
+local PlayerGuiMain = require(script.PlayerGuiMain)
 
 LoadingScreenController.showEarly()
 
@@ -11,65 +14,77 @@ pcall(function()
 	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
 end)
 
+-- Core HUD (cash, sidebar buttons) — shown as soon as the loading screen dismisses
+local function bootCoreUI()
+	require(script.HUDController).init()
+	require(script.CashBoostController).init()
+	require(script.UIEffectsBootstrap).init()
+	require(script.TabScreenController).init()
+end
+
+-- Store panels, boost icons, gamepass checks, etc. — deferred after core is visible
+local function bootDeferredUI()
+	require(script.UpgradesController).init()
+	require(script.SellController).init()
+	require(script.ReviveController).init()
+	require(script.IndexController).init()
+	require(script.RebirthController).init()
+	require(script.DailyController).init()
+	require(script.LuckyBlockController).init()
+	require(script.BrainrotVisualSettings).init()
+	require(script.SettingsController).init()
+	require(script.StandController).init()
+	require(script.BrainrotHeaderController).init()
+	require(script.ToolbarController).init()
+	require(script.PlotMarkerVisibility).init()
+	require(script.BaseFloorUnlockClick).init()
+	require(script.BrainrotStandController).init()
+	require(script.CurrentAreaController).init()
+	require(script.StoreController).init()
+	require(script.BoostIconsController).init()
+	require(script.StealController).init()
+	require(script.XrayController).init()
+	require(script.ChatTagsController).init()
+
+	local shared = ReplicatedStorage:WaitForChild("EssentialsShared", 10)
+	if shared then
+		require(shared:WaitForChild("PurchaseEffect"):WaitForChild("PurchaseEffectClient")):init()
+		local productHandlerClient = require(shared:WaitForChild("ProductHandler"):WaitForChild("ProductHandlerClient"))
+		productHandlerClient:init()
+
+		local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui", 30)
+		if playerGui then
+			local main = PlayerGuiMain.finalize(playerGui)
+			if main then
+				productHandlerClient:autoBindPurchaseButtons(main)
+			end
+			local hud = playerGui:FindFirstChild("Hud")
+			if hud then
+				productHandlerClient:autoBindPurchaseButtons(hud)
+			end
+		end
+	end
+end
+
 task.spawn(function()
 	local loadOk, loadErr = pcall(function()
 		LoadingScreenController.run()
 	end)
 	if not loadOk then
-		warn("[LoadingScreenController] run failed:", loadErr)
+		warn("[init.client] LoadingScreenController.run failed:", loadErr)
 	end
 
-	local bootOk, bootErr = pcall(function()
-		require(script.UpgradesController).init()
-		require(script.CashBoostController).init()
-		require(script.SellController).init()
-		require(script.HUDController).init()
-		require(script.ReviveController).init()
-		require(script.UIEffectsBootstrap).init()
-		require(script.IndexController).init()
-		require(script.RebirthController).init()
-		require(script.DailyController).init()
-		require(script.LuckyBlockController).init()
-		require(script.BrainrotVisualSettings).init()
-		require(script.SettingsController).init()
-		require(script.StandController).init()
-		require(script.BrainrotHeaderController).init()
-		require(script.ToolbarController).init()
-		require(script.PlotMarkerVisibility).init()
-		require(script.BaseFloorUnlockClick).init()
-		require(script.BrainrotStandController).init()
-		require(script.CurrentAreaController).init()
-		require(script.TabScreenController).init()
-		require(script.StoreController).init()
-		require(script.BoostIconsController).init()
-		require(script.StealController).init()
-		require(script.XrayController).init()
-		require(script.VipChatController).init()
+	local coreOk, coreErr = pcall(bootCoreUI)
+	if not coreOk then
+		warn("[init.client] Core UI boot failed:", coreErr)
+	end
 
-		local ReplicatedStorage = game:GetService("ReplicatedStorage")
-		local shared = ReplicatedStorage:WaitForChild("EssentialsShared", 10)
-		if shared then
-			require(shared:WaitForChild("PurchaseEffect"):WaitForChild("PurchaseEffectClient")):init()
-			local productHandlerClient = require(shared:WaitForChild("ProductHandler"):WaitForChild("ProductHandlerClient"))
-			productHandlerClient:init()
-
-			local PlayerGuiMain = require(script.PlayerGuiMain)
-			local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui", 30)
-			if playerGui then
-				local main = PlayerGuiMain.finalize(playerGui)
-				if main then
-					productHandlerClient:autoBindPurchaseButtons(main)
-				end
-				local hud = playerGui:FindFirstChild("Hud")
-				if hud then
-					productHandlerClient:autoBindPurchaseButtons(hud)
-				end
-			end
+	task.defer(function()
+		local deferOk, deferErr = pcall(bootDeferredUI)
+		if not deferOk then
+			warn("[init.client] Deferred UI boot failed:", deferErr)
 		end
 	end)
-	if not bootOk then
-		warn("[Client] UI controller boot failed:", bootErr)
-	end
 end)
 
 task.spawn(function()

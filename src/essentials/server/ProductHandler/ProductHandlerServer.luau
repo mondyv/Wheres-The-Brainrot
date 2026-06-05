@@ -1,3 +1,4 @@
+-- [ACTIVE] ProductHandlerServer
 --[[
 	Central product/gamepass handler.
 
@@ -13,6 +14,18 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local StoreAccess = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreAccess"))
+
+local GAMEPASS_OWNED_ATTR_BY_ID: { [number]: string } = {
+	[StoreConfig.GAMEPASS.VIP] = StoreConfig.ATTR.VIP_OWNED,
+	[StoreConfig.GAMEPASS.XRAY] = StoreConfig.ATTR.XRAY_OWNED,
+	[StoreConfig.GAMEPASS.DOUBLE_UPGRADES] = StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED,
+	[StoreConfig.GAMEPASS.DOUBLE_CASH] = StoreConfig.ATTR.DOUBLE_CASH_OWNED,
+	[StoreConfig.GAMEPASS.SUPER_LUCK] = StoreConfig.ATTR.SUPER_LUCK_OWNED,
+	[StoreConfig.GAMEPASS.MEGA_LUCK] = StoreConfig.ATTR.MEGA_LUCK_OWNED,
+}
 
 local ProductHandlerServer = {}
 
@@ -175,11 +188,18 @@ end
 function ProductHandlerServer.promptPurchase(self: ProductHandlerServer, player: Player, name: string, entry: any)
 	if entry.type == "gamepass" then
 		local ownsPass = false
-		local success, result = pcall(function()
-			return MarketplaceService:UserOwnsGamePassAsync(player.UserId, entry.id)
-		end)
-		if success then
-			ownsPass = result
+		if StoreAccess.shouldTrustMarketplaceOwnership(player) then
+			local success, result = pcall(function()
+				return MarketplaceService:UserOwnsGamePassAsync(player.UserId, entry.id)
+			end)
+			if success then
+				ownsPass = result == true
+			end
+		else
+			local attr = GAMEPASS_OWNED_ATTR_BY_ID[entry.id]
+			if attr then
+				ownsPass = player:GetAttribute(attr) == true
+			end
 		end
 
 		if ownsPass then

@@ -1,3 +1,4 @@
+-- [ACTIVE] PurchasePrompt
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

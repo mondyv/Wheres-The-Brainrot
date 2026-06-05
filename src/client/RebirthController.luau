@@ -1,3 +1,4 @@
+-- [ACTIVE] RebirthController
 --[[
 	Rebirth2 UI — requirements, rewards preview, rebirth / skip buttons, sidebar badge, plot sign.
 --]]
@@ -820,6 +821,26 @@ function RebirthController.init()
 			end
 		end)
 	end
+
+	local indexRemotes = ReplicatedStorage:WaitForChild("IndexRemotes", 30)
+	if indexRemotes then
+		local indexUnlockedRE = indexRemotes:WaitForChild("IndexUnlocked", 30)
+		if indexUnlockedRE and indexUnlockedRE:IsA("RemoteEvent") then
+			indexUnlockedRE.OnClientEvent:Connect(function()
+				fetchAndApply(main)
+			end)
+		end
+	end
+
+	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId: number, productId: number, wasPurchased: boolean)
+		if userId ~= player.UserId or not wasPurchased then
+			return
+		end
+		if productId == RebirthConfig.SKIP_DEV_PRODUCT_ID then
+			HUDController.closeFrameByName("Rebirth2")
+			HUDController.closeFrameByName("Store")
+		end
+	end)
 
 	fetchAndApply(main)
 end

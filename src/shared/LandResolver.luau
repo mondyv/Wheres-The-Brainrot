@@ -1,3 +1,4 @@
+-- [ACTIVE] LandResolver
 --[[
 	Resolve Land 1–10 from multiplier hitboxes under Map.Lands.Land<N>,
 	and land Spawn parts for Robux revive teleport.

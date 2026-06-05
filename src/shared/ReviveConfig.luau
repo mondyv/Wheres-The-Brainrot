@@ -1,3 +1,4 @@
+-- [ACTIVE] ReviveConfig
 --[[
 	Revive dev products — one per land tier (Land 1–10).
 	Shared by Revive.server + ReviveController (regional price lookup).

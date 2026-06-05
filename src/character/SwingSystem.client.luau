@@ -1,3 +1,4 @@
+-- [ACTIVE] SwingSystem.client
 -- SwingSystem.client.luau
 -- Jump to leave the ground; while airborne, swing UI + preview line appear and a second jump attaches to the nearest SwingTarget vine.
 -- WASD steers along the arc; vine glide pulls you toward the hook + lighter gravity (Mowgli-style).

@@ -1,3 +1,4 @@
+-- [ACTIVE] PlotUnclaimedStoryVisibility.server
 --[[
 	PlotUnclaimedStoryVisibility (server)
 	When PlotOwnerUserId is unset, keep story 1 visible and hide upper stories + floating UI.

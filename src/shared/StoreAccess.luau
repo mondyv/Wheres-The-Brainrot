@@ -1,0 +1,30 @@
+-- [ACTIVE] StoreAccess
+--[[
+	Helpers for store ownership checks.
+	Roblox reports UserOwnsGamePassAsync = true for game/group owners even without a purchase.
+--]]
+
+local M = {}
+
+local GROUP_OWNER_RANK = 254
+
+function M.isPrivilegedMarketplaceTester(player: Player): boolean
+	if game.CreatorType == Enum.CreatorType.User and player.UserId == game.CreatorId then
+		return true
+	end
+	if game.CreatorType == Enum.CreatorType.Group then
+		local ok, rank = pcall(function()
+			return player:GetRankInGroup(game.CreatorId)
+		end)
+		if ok and typeof(rank) == "number" and rank >= GROUP_OWNER_RANK then
+			return true
+		end
+	end
+	return false
+end
+
+function M.shouldTrustMarketplaceOwnership(player: Player): boolean
+	return not M.isPrivilegedMarketplaceTester(player)
+end
+
+return M

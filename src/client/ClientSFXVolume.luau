@@ -1,3 +1,4 @@
+-- [ACTIVE] ClientSFXVolume
 --[[
 	Client SFX volume (0–1) — mirrors Settings Slider2 / SoundService.SoundEffects.SoundGroup.
 	Brainrot SFX and other cloned sounds use this when not routed through the group alone.

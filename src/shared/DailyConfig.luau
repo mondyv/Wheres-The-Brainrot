@@ -1,3 +1,4 @@
+-- [ACTIVE] DailyConfig
 --[[
 	DailyConfig
 	Shared definitions for the 7-day daily rewards calendar.

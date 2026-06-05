@@ -1,3 +1,4 @@
+-- [ACTIVE] BrainrotHeaderController
 --[[
 	Client-side BrainrotHeader billboards.
 	Server fires BrainrotRemotes.HeaderRefresh with the brainrot model after placement/harvest.

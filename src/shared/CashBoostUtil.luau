@@ -1,3 +1,4 @@
+-- [ACTIVE] CashBoostUtil
 --[[
 	Cash boost sources (shared client + server):
 	• Rebirth — cumulative display % from RebirthConfig

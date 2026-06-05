@@ -1,3 +1,4 @@
+-- [ACTIVE] BoostIconsController
 --[[
 	BoostIconsController
 	• Enables/disables the SideUI gamepass boost icons based on ownership.
@@ -8,12 +9,12 @@
 	• Drives the ServerLuckFrame (pop-in when active, MM:SS countdown, hide when off).
 ]]
 
-local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local LuckBoost = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckBoost"))
@@ -30,7 +31,8 @@ local BoostIconsController = {}
 -- ── Tooltip (one shared frame on Main ScreenGui) ───────────────────────────────
 
 local TOOLTIP_FADE = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local MOUSE_OFFSET = Vector2.new(16, -8)
+local MOUSE_OFFSET = Vector2.new(16, 8)
+local MOUSE_OFFSET_ABOVE = Vector2.new(16, -8)
 local TOOLTIP_Z = 9999
 
 local tooltipRoot: ScreenGui? = nil
@@ -94,6 +96,11 @@ local function prepareHoverTarget(obj: GuiObject)
 	if not obj:IsA("GuiButton") then
 		obj.Active = true
 	end
+	for _, d in obj:GetDescendants() do
+		if d:IsA("GuiObject") and not d:IsA("GuiButton") then
+			d.Active = true
+		end
+	end
 end
 
 local function hideTooltip(force: boolean?)
@@ -115,7 +122,23 @@ local function updateTooltipPosition()
 		return
 	end
 	local pos = UserInputService:GetMouseLocation()
-	tooltipFrame.Position = UDim2.fromOffset(pos.X + MOUSE_OFFSET.X, pos.Y + MOUSE_OFFSET.Y)
+	local camera = Workspace.CurrentCamera
+	local viewportY = if camera then camera.ViewportSize.Y else 1080
+	local tooltipHeight = tooltipFrame.AbsoluteSize.Y
+	if tooltipHeight < 1 then
+		tooltipHeight = 72
+	end
+	local offset = MOUSE_OFFSET
+	if pos.Y + offset.Y + tooltipHeight > viewportY then
+		offset = MOUSE_OFFSET_ABOVE
+		local y = pos.Y + offset.Y - tooltipHeight
+		if y < 0 then
+			y = 4
+		end
+		tooltipFrame.Position = UDim2.fromOffset(pos.X + offset.X, y)
+		return
+	end
+	tooltipFrame.Position = UDim2.fromOffset(pos.X + offset.X, pos.Y + offset.Y)
 end
 
 local function ensureTooltip(mainGui: ScreenGui)
@@ -245,8 +268,12 @@ local function onTooltipLeave()
 	end
 end
 
+local function isMobileClient(): boolean
+	return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+end
+
 local function bindTooltip(obj: GuiObject?, titleText: string, description: string, accent: Color3?)
-	if not obj then
+	if not obj or isMobileClient() then
 		return
 	end
 	prepareHoverTarget(obj)
@@ -277,7 +304,7 @@ local ICON_DEFS = {
 		id = StoreConfig.GAMEPASS.DOUBLE_UPGRADES,
 		attr = StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED,
 		title = "2× Upgrades",
-		description = "Each stand upgrade grants two levels instead of one",
+		description = "Each stand upgrade grants two levels for the price of one",
 	},
 	["Super Luck"] = {
 		id = StoreConfig.GAMEPASS.SUPER_LUCK,
@@ -299,51 +326,18 @@ local ICON_DEFS = {
 	},
 }
 
-local function ownsGamePass(gamePassId: number): boolean
-	local ok, result = pcall(function()
-		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, gamePassId)
-	end)
-	return ok and result == true
-end
-
 local function setupIcons(iconsFolder: Instance)
 	for iconName, def in ICON_DEFS do
 		local icon = iconsFolder:FindFirstChild(iconName)
 		if icon and icon:IsA("GuiObject") then
 			bindTooltip(icon, def.title, def.description, readGuiAccentColor(icon))
 			local function evaluate()
-				local owned = player:GetAttribute(def.attr) == true
-				icon.Visible = owned
+				icon.Visible = player:GetAttribute(def.attr) == true
 			end
-			-- Initial: trust attribute if already set, else query the marketplace.
-			task.spawn(function()
-				if player:GetAttribute(def.attr) ~= true then
-					if ownsGamePass(def.id) then
-						player:SetAttribute(def.attr, true)
-					end
-				end
-				evaluate()
-			end)
 			player:GetAttributeChangedSignal(def.attr):Connect(evaluate)
 			evaluate()
 		end
 	end
-
-	-- Re-check after any gamepass purchase in this session.
-	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, gamePassId, wasPurchased)
-		if plr ~= player or not wasPurchased then
-			return
-		end
-		for _, def in ICON_DEFS do
-			if def.id == gamePassId then
-				task.spawn(function()
-					if ownsGamePass(def.id) then
-						player:SetAttribute(def.attr, true)
-					end
-				end)
-			end
-		end
-	end)
 end
 
 -- ── Overall luck ──────────────────────────────────────────────────────────────────
@@ -369,7 +363,7 @@ local function refreshOverallLuck()
 	end
 	local total = LuckBoost.totalLuckMultiplier(player)
 	local rounded = if total >= 10 then math.floor(total + 0.5) else math.floor(total * 10 + 0.5) / 10
-	local text = string.format(if rounded == math.floor(rounded) then "%dx Luck" else "%.1fx Luck", rounded)
+	local text = string.format(if rounded == math.floor(rounded) then "%dx" else "%.1fx", rounded)
 	if overallLuckLabel.Text ~= text then
 		overallLuckLabel.Text = text
 		pulse(overallLuckLabel)
@@ -456,11 +450,13 @@ local function init()
 		local amount = overall and overall:FindFirstChild("Amount")
 		if amount and (amount:IsA("TextLabel") or amount:IsA("TextButton")) then
 			overallLuckLabel = amount :: TextLabel
+		end
+		if overall and overall:IsA("GuiObject") then
 			bindTooltip(
-				amount :: GuiObject,
+				overall :: GuiObject,
 				"Overall Luck",
 				"Combined luck multiplier from VIP, Super Luck, MEGA Luck, and server luck",
-				readGuiAccentColor(amount :: GuiObject)
+				readGuiAccentColor(overall :: GuiObject)
 			)
 		end
 	end
@@ -495,8 +491,7 @@ local function init()
 		local storeRemotes = ReplicatedStorage:WaitForChild("StoreRemotes", 30)
 		local serverLuckRE = storeRemotes and storeRemotes:WaitForChild("ServerLuckUpdated", 30)
 		if serverLuckRE and serverLuckRE:IsA("RemoteEvent") then
-			serverLuckRE.OnClientEvent:Connect(function(multiplier, remaining)
-				warn("[ServerLuck] received update, multiplier:", multiplier, "remaining:", remaining)
+			serverLuckRE.OnClientEvent:Connect(function(_multiplier, _remaining)
 				refreshOverallLuck()
 				refreshServerLuckFrame()
 			end)

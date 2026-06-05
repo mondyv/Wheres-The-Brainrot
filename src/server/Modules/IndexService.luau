@@ -1,7 +1,9 @@
+-- [ACTIVE] IndexService
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local IndexConfig = require(ReplicatedStorage.Shared.IndexConfig)
+local RebirthConfig = require(ReplicatedStorage.Shared.RebirthConfig)
 local Brainrots = require(script.Parent:WaitForChild("Brainrots"))
 
 local M = {}
@@ -126,10 +128,24 @@ function M.isUnlocked(player: Player, name: string, mutationId: string): boolean
 	return map[IndexConfig.unlockKey(name, mutationId)] == true
 end
 
+local function unlockKeyName(unlockKey: string): string
+	local colon = string.find(unlockKey, ":", 1, true)
+	if colon then
+		return string.sub(unlockKey, 1, colon - 1)
+	end
+	return unlockKey
+end
+
 -- True if the player has unlocked this brainrot in the index (any mutation tab).
+-- Rebirth and other systems must use this — not inventory ownership.
 function M.hasDiscoveredBrainrot(player: Player, brainrotName: string): boolean
-	for _, mutationId in IndexConfig.MUTATION_TABS do
-		if M.isUnlocked(player, brainrotName, mutationId) then
+	local map = unlockedByPlayer[player]
+	if not map then
+		return false
+	end
+	local want = RebirthConfig.normalizeName(brainrotName)
+	for key, unlocked in map do
+		if unlocked and RebirthConfig.normalizeName(unlockKeyName(key)) == want then
 			return true
 		end
 	end

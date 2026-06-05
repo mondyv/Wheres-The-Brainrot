@@ -1,3 +1,4 @@
+-- [ACTIVE] IndexController
 --[[
 	Index UI — mutation tabs, catalog grid, golden quest, unlock toast.
 --]]
@@ -50,6 +51,11 @@ local indexSidebarNotifInner: TextLabel? = nil
 local indexBadgeSwayTween: Tween? = nil
 local indexBadgeInnerSwayTween: Tween? = nil
 local indexBadgeInnerPulseTween: Tween? = nil
+local tabNotifNodes: { [string]: GuiObject } = {}
+local tabNotifSwayTweens: { [string]: Tween } = {}
+local tabNotifInnerSwayTweens: { [string]: Tween } = {}
+local tabNotifInnerPulseTweens: { [string]: Tween } = {}
+local pendingTabNotifs: { [string]: boolean } = {}
 local tooltipLabel: TextLabel? = nil
 local tooltipGui: ScreenGui? = nil
 
@@ -60,6 +66,11 @@ local unlockedRE: RemoteEvent? = nil
 local questBarTween: Tween? = nil
 local rowHoverConns: { RBXScriptConnection } = {}
 local selectMutation: (mutationId: string) -> ()
+local stateCache: { [string]: any } = {}
+local sortedCatalogCache: { [string]: { { name: string, rarity: string, baseIncome: number, icon: string } } } = {}
+local gridMutation: string? = nil
+local rebuildToken = 0
+local ROW_BATCH_SIZE = 14
 
 local function getOrAddUIScale(obj: GuiObject): UIScale
 	local s = obj:FindFirstChildOfClass("UIScale")
@@ -179,6 +190,104 @@ local function hideIndexSidebarBadge()
 	local scale = indexSidebarNotif:FindFirstChildOfClass("UIScale")
 	if scale then
 		scale.Scale = 1
+	end
+end
+
+local function stopTabNotifSway(mutationId: string)
+	local sway = tabNotifSwayTweens[mutationId]
+	if sway then
+		sway:Cancel()
+		tabNotifSwayTweens[mutationId] = nil
+	end
+	local innerSway = tabNotifInnerSwayTweens[mutationId]
+	if innerSway then
+		innerSway:Cancel()
+		tabNotifInnerSwayTweens[mutationId] = nil
+	end
+	local innerPulse = tabNotifInnerPulseTweens[mutationId]
+	if innerPulse then
+		innerPulse:Cancel()
+		tabNotifInnerPulseTweens[mutationId] = nil
+	end
+	local notif = tabNotifNodes[mutationId]
+	if notif then
+		notif.Rotation = 0
+		local inner = findNotifInnerLabel(notif)
+		if inner then
+			inner.Rotation = 0
+			local innerScale = inner:FindFirstChildOfClass("UIScale")
+			if innerScale then
+				innerScale.Scale = 1
+			end
+		end
+	end
+end
+
+local function startTabNotifSway(mutationId: string)
+	local notif = tabNotifNodes[mutationId]
+	if not notif then
+		return
+	end
+	stopTabNotifSway(mutationId)
+	notif.Rotation = -INDEX_BADGE_SWAY_DEG
+	tabNotifSwayTweens[mutationId] = TweenService:Create(notif, INDEX_BADGE_SWAY, { Rotation = INDEX_BADGE_SWAY_DEG })
+	tabNotifSwayTweens[mutationId]:Play()
+
+	local inner = findNotifInnerLabel(notif)
+	if inner then
+		inner.Rotation = INDEX_BADGE_INNER_SWAY_DEG
+		tabNotifInnerSwayTweens[mutationId] = TweenService:Create(
+			inner,
+			INDEX_BADGE_INNER_SWAY,
+			{ Rotation = -INDEX_BADGE_INNER_SWAY_DEG }
+		)
+		tabNotifInnerSwayTweens[mutationId]:Play()
+		local innerScale = getOrAddUIScale(inner)
+		innerScale.Scale = 1
+		tabNotifInnerPulseTweens[mutationId] = TweenService:Create(innerScale, INDEX_BADGE_INNER_PULSE, { Scale = 1.08 })
+		tabNotifInnerPulseTweens[mutationId]:Play()
+	end
+end
+
+local function hideTabNotif(mutationId: string)
+	stopTabNotifSway(mutationId)
+	pendingTabNotifs[mutationId] = false
+	local notif = tabNotifNodes[mutationId]
+	if notif then
+		notif.Visible = false
+	end
+end
+
+local function showTabNotif(mutationId: string)
+	local notif = tabNotifNodes[mutationId]
+	if not notif then
+		return
+	end
+	pendingTabNotifs[mutationId] = true
+	notif.Visible = true
+	startTabNotifSway(mutationId)
+end
+
+local function cacheTabNotifs()
+	if not indexFrame then
+		return
+	end
+	for mutationId, notifName in IndexConfig.TAB_NOTIF_NAME do
+		local notif = indexFrame:FindFirstChild(notifName)
+		if notif and notif:IsA("GuiObject") then
+			tabNotifNodes[mutationId] = notif :: GuiObject
+			notif.Visible = false
+		end
+	end
+end
+
+local function onIndexUnlock(mutationId: string)
+	if not IndexConfig.TAB_NOTIF_NAME[mutationId] then
+		return
+	end
+	local indexOpenOnTab = indexFrame and indexFrame.Visible and mutationId == selectedMutation
+	if not indexOpenOnTab then
+		showTabNotif(mutationId)
 	end
 end
 
@@ -344,7 +453,8 @@ local function populateRow(
 	row: Frame,
 	entry: { name: string, rarity: string, baseIncome: number, icon: string },
 	mutationId: string,
-	unlocked: boolean
+	unlocked: boolean,
+	animateRow: boolean?
 )
 	local frame = row:FindFirstChild("Frame") or row
 	local icon = frame:FindFirstChild("Icon", true)
@@ -400,8 +510,12 @@ local function populateRow(
 
 	local rowHost = if frame:IsA("GuiObject") then frame :: GuiObject else row
 	local rowScale = getOrAddUIScale(rowHost)
-	rowScale.Scale = 0.94
-	TweenService:Create(rowScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	if animateRow == true then
+		rowScale.Scale = 0.94
+		TweenService:Create(rowScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	else
+		rowScale.Scale = 1
+	end
 
 	if icon and icon:IsA("GuiObject") then
 		table.insert(
@@ -475,11 +589,30 @@ local function clearGrid()
 	end
 end
 
-local function rebuildGrid(state: any)
+local function buildSortedCatalog(
+	catalog: { any },
+	mutationId: string
+): { { name: string, rarity: string, baseIncome: number, icon: string } }
+	local cached = sortedCatalogCache[mutationId]
+	if cached then
+		return cached
+	end
+
+	local list: { { name: string, rarity: string, baseIncome: number, icon: string } } = {}
+	for _, e in catalog do
+		if typeof(e) == "table" then
+			table.insert(list, e)
+		end
+	end
+	sortCatalog(list, mutationId)
+	sortedCatalogCache[mutationId] = list
+	return list
+end
+
+local function rebuildGrid(state: any, animateRows: boolean?)
 	if not container or not rowTemplate then
 		return
 	end
-	clearGrid()
 	local catalog = state.catalog
 	if typeof(catalog) ~= "table" then
 		return
@@ -489,45 +622,109 @@ local function rebuildGrid(state: any)
 		unlocked = {}
 	end
 
-	local list = {}
-	for _, e in catalog do
-		if typeof(e) == "table" then
-			table.insert(list, e)
+	rebuildToken += 1
+	local token = rebuildToken
+	clearGrid()
+	gridMutation = selectedMutation
+
+	local list = buildSortedCatalog(catalog, selectedMutation)
+	local order = 0
+	local index = 1
+
+	local function spawnBatch()
+		if token ~= rebuildToken or not container or not rowTemplate then
+			return
+		end
+		local batchEnd = math.min(index + ROW_BATCH_SIZE - 1, #list)
+		for i = index, batchEnd do
+			local entry = list[i]
+			order += 1
+			local row = rowTemplate:Clone()
+			row.Name = "Entry_" .. entry.name
+			row.Visible = true
+			row.LayoutOrder = order
+			row.Parent = container
+			local key = IndexConfig.unlockKey(entry.name, selectedMutation)
+			local isUnlocked = unlocked[key] == true
+			populateRow(row, entry, selectedMutation, isUnlocked, animateRows)
+			table.insert(catalogRows, row)
+		end
+		index = batchEnd + 1
+		if index <= #list then
+			task.defer(spawnBatch)
+		else
+			refreshQuest(
+				if typeof(state.goldenCount) == "number" then math.floor(state.goldenCount) else 0,
+				state.questComplete == true
+			)
 		end
 	end
-	sortCatalog(list, selectedMutation)
 
-	local order = 0
-	for _, entry in list do
-		order += 1
-		local row = rowTemplate:Clone()
-		row.Name = "Entry_" .. entry.name
-		row.Visible = true
-		row.LayoutOrder = order
-		row.Parent = container
-		local key = IndexConfig.unlockKey(entry.name, selectedMutation)
-		local isUnlocked = unlocked[key] == true
-		populateRow(row, entry, selectedMutation, isUnlocked)
-		table.insert(catalogRows, row)
-	end
-
-	refreshQuest(
-		if typeof(state.goldenCount) == "number" then math.floor(state.goldenCount) else 0,
-		state.questComplete == true
-	)
+	spawnBatch()
 end
 
-local function fetchState(): any?
+local function fetchStateFor(mutationId: string): any?
 	if not getStateRF then
 		return nil
 	end
 	local ok, result = pcall(function()
-		return getStateRF:InvokeServer(selectedMutation)
+		return getStateRF:InvokeServer(mutationId)
 	end)
 	if ok then
 		return result
 	end
 	return nil
+end
+
+local function applyCachedState(mutationId: string, animateRows: boolean?)
+	local cached = stateCache[mutationId]
+	if cached then
+		rebuildGrid(cached, animateRows)
+	end
+end
+
+local function refreshStateInBackground(mutationId: string, animateRows: boolean?)
+	task.spawn(function()
+		local state = fetchStateFor(mutationId)
+		if not state then
+			return
+		end
+		stateCache[mutationId] = state
+		if selectedMutation == mutationId and indexFrame and indexFrame.Visible then
+			rebuildGrid(state, animateRows)
+		end
+	end)
+end
+
+local function prefetchAllMutations()
+	for _, mutationId in IndexConfig.MUTATION_TABS do
+		if stateCache[mutationId] then
+			continue
+		end
+		task.spawn(function()
+			local state = fetchStateFor(mutationId)
+			if state then
+				stateCache[mutationId] = state
+				if mutationId == selectedMutation and indexFrame and indexFrame.Visible then
+					rebuildGrid(state, false)
+				end
+			end
+		end)
+	end
+end
+
+local function patchCachedUnlock(mutationId: string, name: string, payload: any)
+	local cached = stateCache[mutationId]
+	if not cached or typeof(cached.unlocked) ~= "table" then
+		return
+	end
+	cached.unlocked[IndexConfig.unlockKey(name, mutationId)] = true
+	if typeof(payload.goldenCount) == "number" then
+		cached.goldenCount = math.floor(payload.goldenCount)
+	end
+	if payload.questComplete == true then
+		cached.questComplete = true
+	end
 end
 
 local function updateHeader()
@@ -542,6 +739,7 @@ selectMutation = function(mutationId: string)
 		return
 	end
 	selectedMutation = mutationId
+	hideTabNotif(mutationId)
 	updateHeader()
 	local typeButtons = indexFrame and indexFrame:FindFirstChild("TypeButtons")
 	if typeButtons then
@@ -552,10 +750,8 @@ selectMutation = function(mutationId: string)
 			end
 		end
 	end
-	local state = fetchState()
-	if state then
-		rebuildGrid(state)
-	end
+	applyCachedState(mutationId, false)
+	refreshStateInBackground(mutationId, false)
 end
 
 local function hideIndexNotif()
@@ -684,6 +880,8 @@ function IndexController.init()
 		indexSidebarNotifInner = findNotifInnerLabel(indexSidebarNotif)
 	end
 
+	cacheTabNotifs()
+
 	ensureTooltip()
 
 	local typeButtons = indexFrame:FindFirstChild("TypeButtons")
@@ -713,10 +911,10 @@ function IndexController.init()
 				playPanelOpenAnim()
 			end
 			wasVisible = true
-			local state = fetchState()
-			if state then
-				rebuildGrid(state)
+			if gridMutation ~= selectedMutation or #catalogRows == 0 then
+				applyCachedState(selectedMutation, false)
 			end
+			refreshStateInBackground(selectedMutation, false)
 		else
 			wasVisible = false
 			if tooltipLabel then
@@ -725,7 +923,16 @@ function IndexController.init()
 		end
 	end)
 
-	selectMutation("normal")
+	updateHeader()
+	local typeButtonsInit = indexFrame:FindFirstChild("TypeButtons")
+	if typeButtonsInit then
+		for mutId, btnName in IndexConfig.TAB_BUTTON_NAME do
+			local btn = typeButtonsInit:FindFirstChild(btnName)
+			if btn then
+				applyTabVisual(btn, mutId == selectedMutation)
+			end
+		end
+	end
 
 	task.spawn(function()
 		local remotes = ReplicatedStorage:WaitForChild("IndexRemotes", 60)
@@ -734,6 +941,10 @@ function IndexController.init()
 			local re = remotes:WaitForChild("IndexUnlocked", 30)
 			if rf and rf:IsA("RemoteFunction") then
 				getStateRF = rf
+				local bootState = fetchStateFor("normal")
+				if bootState then
+					stateCache.normal = bootState
+				end
 			end
 			if re and re:IsA("RemoteEvent") then
 				unlockedRE = re
@@ -745,15 +956,17 @@ function IndexController.init()
 					local mutation = payload.mutation
 					if typeof(name) == "string" and typeof(mutation) == "string" then
 						showIndexNotif(name, mutation)
+						onIndexUnlock(mutation)
+						patchCachedUnlock(mutation, name, payload)
 						if not (indexFrame and indexFrame.Visible) then
 							showIndexSidebarBadge()
 						end
 					end
-					if indexFrame and indexFrame.Visible then
-						local state = fetchState()
-						if state then
-							rebuildGrid(state)
+					if indexFrame and indexFrame.Visible and typeof(mutation) == "string" then
+						if mutation == selectedMutation then
+							applyCachedState(mutation, false)
 						end
+						refreshStateInBackground(mutation, false)
 					end
 					refreshQuest(
 						if typeof(payload.goldenCount) == "number" then math.floor(payload.goldenCount) else 0,
@@ -763,10 +976,7 @@ function IndexController.init()
 			end
 		end
 
-		local state = fetchState()
-		if state then
-			rebuildGrid(state)
-		end
+		prefetchAllMutations()
 	end)
 end
 

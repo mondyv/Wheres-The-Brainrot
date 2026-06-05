@@ -1,3 +1,4 @@
+-- [ACTIVE] StoreHandler.server
 --[[
 	StoreHandler.server
 	Wires every Store item that isn't already owned by another system:
@@ -64,7 +65,7 @@ end)
 
 -- ── Shared grant helpers ────────────────────────────────────────────────────────
 
-function StoreServer.grantBrainrot(player: Player, brainrotName: string, opts: { equip: boolean? }?): boolean
+function StoreServer.grantBrainrot(player: Player, brainrotName: string, opts: { equip: boolean?, sourcePath: string? }?): boolean
 	local def = Brainrots.getByName(brainrotName)
 	if not def then
 		warn("[StoreHandler] Unknown brainrot:", brainrotName)
@@ -77,19 +78,25 @@ function StoreServer.grantBrainrot(player: Player, brainrotName: string, opts: {
 	end
 	grantBrainrotBF = bf
 	local shouldEquip = not (opts and opts.equip == false)
-	local ok, err = pcall(function()
-		bf:Invoke(player, {
+	local sourcePath = if opts and typeof(opts.sourcePath) == "string" then opts.sourcePath else ""
+	local ok, granted = pcall(function()
+		return bf:Invoke(player, {
 			name = def.name,
 			rarity = def.rarity,
 			mutation = "normal",
 			level = 1,
 			baseIncome = def.baseIncome,
+			sourcePath = sourcePath,
 		}, { equip = shouldEquip })
 	end)
 	if not ok then
-		warn("[StoreHandler] grantBrainrot invoke errored for", brainrotName, "->", err)
+		warn("[StoreHandler] grantBrainrot invoke errored for", brainrotName, "->", granted)
+		return false
 	end
-	return ok
+	if granted ~= true then
+		warn("[StoreHandler] grantBrainrot returned false for", brainrotName)
+	end
+	return granted == true
 end
 
 function StoreServer.grantLuckyBlock(player: Player, blockName: string, variant: string?): boolean
@@ -169,6 +176,13 @@ end
 
 local serverLuckUpdatedRE = ensureRemoteEvent("ServerLuckUpdated")
 local freeBrainrotRE = ensureRemoteEvent("ClaimFreeBrainrot")
+local closeStoreRE = ensureRemoteEvent("CloseStore")
+
+local function notifyPurchaseComplete(player: Player)
+	if player and player.Parent then
+		closeStoreRE:FireClient(player)
+	end
+end
 
 local function ensureRemoteFunction(name: string): RemoteFunction
 	local folder = ensureRemotesFolder()
@@ -245,16 +259,37 @@ end)
 
 -- ── Gamepass effects ─────────────────────────────────────────────────────────────
 
+local StoreAccess = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreAccess"))
+
 local function ownsGamePass(player: Player, gamePassId: number): boolean
+	if not StoreAccess.shouldTrustMarketplaceOwnership(player) then
+		return false
+	end
 	local ok, result = pcall(function()
 		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, gamePassId)
 	end)
 	return ok and result == true
 end
 
-local function applyGamePassEffects(player: Player)
+local function clearGamePassAttributes(player: Player)
+	local A = StoreConfig.ATTR
+	player:SetAttribute(A.VIP_OWNED, false)
+	player:SetAttribute(A.VIP_LUCK_MULT, 1)
+	player:SetAttribute(A.DOUBLE_CASH_OWNED, false)
+	player:SetAttribute(A.DOUBLE_UPGRADES_OWNED, false)
+	player:SetAttribute(A.SUPER_LUCK_OWNED, false)
+	player:SetAttribute(A.MEGA_LUCK_OWNED, false)
+	player:SetAttribute(A.XRAY_OWNED, false)
+end
+
+local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
 	local A = StoreConfig.ATTR
 	local G = StoreConfig.GAMEPASS
+
+	if not fromPurchase and StoreAccess.isPrivilegedMarketplaceTester(player) then
+		clearGamePassAttributes(player)
+		return
+	end
 
 	local ownsVip = ownsGamePass(player, G.VIP)
 	local ownsCash = ownsGamePass(player, G.DOUBLE_CASH)
@@ -262,46 +297,27 @@ local function applyGamePassEffects(player: Player)
 	local ownsSuper = ownsGamePass(player, G.SUPER_LUCK)
 	local ownsMega = ownsGamePass(player, G.MEGA_LUCK)
 	local ownsXray = ownsGamePass(player, G.XRAY)
-	warn(
-		string.format(
-			"[Gamepass] %s: VIP=%s 2xCash=%s 2xUpgrades=%s Super=%s Mega=%s Xray=%s",
-			player.Name,
-			tostring(ownsVip),
-			tostring(ownsCash),
-			tostring(ownsUpgrades),
-			tostring(ownsSuper),
-			tostring(ownsMega),
-			tostring(ownsXray)
-		)
-	)
 
-	-- VIP
 	if ownsVip then
-		if player:GetAttribute(A.VIP_OWNED) ~= true then
-			player:SetAttribute(A.VIP_OWNED, true)
-			player:SetAttribute(A.VIP_LUCK_MULT, StoreConfig.VIP_LUCK_MULTIPLIER)
-			-- Grant free steals once on first detection.
-			if player:GetAttribute(A.FREE_STEAL_COUNT) == nil then
+		player:SetAttribute(A.VIP_OWNED, true)
+		player:SetAttribute(A.VIP_LUCK_MULT, StoreConfig.VIP_LUCK_MULTIPLIER)
+		if fromPurchase then
+			local current = player:GetAttribute(A.FREE_STEAL_COUNT)
+			local count = if typeof(current) == "number" then current else 0
+			if count < StoreConfig.VIP_FREE_STEALS then
 				player:SetAttribute(A.FREE_STEAL_COUNT, StoreConfig.VIP_FREE_STEALS)
 			end
 		end
+	else
+		player:SetAttribute(A.VIP_OWNED, false)
+		player:SetAttribute(A.VIP_LUCK_MULT, 1)
 	end
 
-	if ownsCash then
-		player:SetAttribute(A.DOUBLE_CASH_OWNED, true)
-	end
-	if ownsUpgrades then
-		player:SetAttribute(A.DOUBLE_UPGRADES_OWNED, true)
-	end
-	if ownsSuper then
-		player:SetAttribute(A.SUPER_LUCK_OWNED, true)
-	end
-	if ownsMega then
-		player:SetAttribute(A.MEGA_LUCK_OWNED, true)
-	end
-	if ownsXray then
-		player:SetAttribute(A.XRAY_OWNED, true)
-	end
+	player:SetAttribute(A.DOUBLE_CASH_OWNED, ownsCash)
+	player:SetAttribute(A.DOUBLE_UPGRADES_OWNED, ownsUpgrades)
+	player:SetAttribute(A.SUPER_LUCK_OWNED, ownsSuper)
+	player:SetAttribute(A.MEGA_LUCK_OWNED, ownsMega)
+	player:SetAttribute(A.XRAY_OWNED, ownsXray)
 end
 
 local function initPlayerAttributes(player: Player)
@@ -343,8 +359,9 @@ end
 MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, _gamePassId, wasPurchased)
 	if wasPurchased and player and player.Parent then
 		task.spawn(function()
-			applyGamePassEffects(player)
+			applyGamePassEffects(player, true)
 		end)
+		notifyPurchaseComplete(player)
 	end
 end)
 
@@ -376,18 +393,17 @@ local function registerReceipts()
 
 	-- Exclusive Brainrot (one-time).
 	PH.registerProductReceipt(P.EXCLUSIVE_BRAINROT, function(player)
-		warn(
-			"[Exclusive] receipt fired for",
-			player.Name,
-			"already owned:",
-			player:GetAttribute(A.EXCLUSIVE_OWNED)
-		)
+		warn("[Exclusive] receipt fired for", player.Name)
 		if player:GetAttribute(A.EXCLUSIVE_OWNED) == true then
-			-- Already owned — refund decision so it isn't re-charged repeatedly.
+			notifyPurchaseComplete(player)
 			return GRANTED
 		end
-		if StoreServer.grantBrainrot(player, StoreConfig.EXCLUSIVE_BRAINROT_NAME) then
+		if StoreServer.grantBrainrot(player, StoreConfig.EXCLUSIVE_BRAINROT_NAME, {
+			equip = true,
+			sourcePath = StoreConfig.EXCLUSIVE_BRAINROT_SOURCE_PATH,
+		}) then
 			player:SetAttribute(A.EXCLUSIVE_OWNED, true)
+			notifyPurchaseComplete(player)
 			return GRANTED
 		end
 		warn("[Exclusive] grantBrainrot failed for", StoreConfig.EXCLUSIVE_BRAINROT_NAME)
@@ -397,6 +413,7 @@ local function registerReceipts()
 	-- Server Luck.
 	PH.registerProductReceipt(P.SERVER_LUCK, function(player)
 		addServerLuck(player)
+		notifyPurchaseComplete(player)
 		return GRANTED
 	end)
 
@@ -409,6 +426,7 @@ local function registerReceipts()
 			if count >= StoreConfig.PACK_PURCHASE_LIMIT then
 				-- Sold out for this account; still mark granted so Roblox doesn't retry.
 				warn("[BoosterPack]", pack.key, "already at purchase limit — granting nothing")
+				notifyPurchaseComplete(player)
 				return GRANTED
 			end
 			local gotBlock = StoreServer.grantLuckyBlock(player, pack.luckyBlock, pack.luckyBlockVariant)
@@ -426,6 +444,7 @@ local function registerReceipts()
 				gotBrainrot
 			)
 			player:SetAttribute(pack.boughtAttr, count + 1)
+			notifyPurchaseComplete(player)
 			return GRANTED
 		end)
 	end
@@ -447,6 +466,7 @@ local function registerReceipts()
 				reward
 			)
 			StoreServer.addCash(player, reward)
+			notifyPurchaseComplete(player)
 			return GRANTED
 		end)
 	end
@@ -477,6 +497,7 @@ freeBrainrotRE.OnServerEvent:Connect(function(player: Player)
 	warn("[FreeBrainrot] granting", pick.name, "to", player.Name)
 	if StoreServer.grantBrainrot(player, pick.name) then
 		player:SetAttribute(StoreConfig.ATTR.FREE_UNCOMMON_CLAIMED, true)
+		notifyPurchaseComplete(player)
 	else
 		warn("[FreeBrainrot] grant failed for", pick.name)
 	end

@@ -1,3 +1,4 @@
+-- [ACTIVE] BrainrotSFX
 --[[
 	Per-brainrot SFX — server fires ReplicatedStorage.PlayBrainrotSFX(brainrotName).
 	Plays matching Sound from SoundService["Brainrot sfx"] locally for this player only.

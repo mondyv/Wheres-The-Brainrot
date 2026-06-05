@@ -1,3 +1,4 @@
+-- [ACTIVE] Economy.server
 -- Authoritative cash + swing upgrade purchases (attributes replicate to client + SwingSystem)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

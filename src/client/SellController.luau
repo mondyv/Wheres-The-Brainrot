@@ -1,3 +1,4 @@
+-- [ACTIVE] SellController
 --[[
 	Sell UI — inventory rows, per-item sell, Sell All, optional SellInfo confirm.
 --]]
@@ -521,7 +522,11 @@ local function fetchInventoryEntries(): { InvEntry }
 	local ok, pack = pcall(function()
 		return getFn:InvokeServer()
 	end)
-	if not ok or typeof(pack) ~= "table" then
+	if not ok then
+		warn("[SellController] fetchInventoryEntries failed:", pack)
+		return {}
+	end
+	if typeof(pack) ~= "table" then
 		return {}
 	end
 	local entries = pack.entries
@@ -615,9 +620,12 @@ local function populateRow(row: Frame, entry: InvEntry, idx: number)
 					return
 				end
 				busy = true
-				pcall(function()
+				local invokeOk, invokeErr = pcall(function()
 					(rf :: RemoteFunction):InvokeServer(idx)
 				end)
+				if not invokeOk then
+					warn("[SellController] sell invoke failed:", invokeErr)
+				end
 				busy = false
 				task.defer(refreshSellList)
 			end)
@@ -649,7 +657,11 @@ local function refreshSellList()
 	local ok, pack = pcall(function()
 		return getFn:InvokeServer()
 	end)
-	if not ok or typeof(pack) ~= "table" then
+	if not ok then
+		warn("[SellController] GetBrainrotInventory failed:", pack)
+		return
+	end
+	if typeof(pack) ~= "table" then
 		return
 	end
 	local entries = pack.entries
@@ -685,9 +697,12 @@ local function confirmSell()
 			return
 		end
 		busy = true
-		pcall(function()
+		local allOk, allErr = pcall(function()
 			allRf:InvokeServer()
 		end)
+		if not allOk then
+			warn("[SellController] sell all failed:", allErr)
+		end
 		busy = false
 		refreshSellList()
 		return
@@ -699,9 +714,12 @@ local function confirmSell()
 		return
 	end
 	busy = true
-	pcall(function()
+	local oneOk, oneErr = pcall(function()
 		rf:InvokeServer(idx)
 	end)
+	if not oneOk then
+		warn("[SellController] sell one failed:", oneErr)
+	end
 	busy = false
 	refreshSellList()
 end
@@ -773,9 +791,12 @@ function SellController.init()
 						return
 					end
 					busy = true
-					pcall(function()
+					local allOk, allErr = pcall(function()
 						allRf:InvokeServer()
 					end)
+					if not allOk then
+						warn("[SellController] sell all failed:", allErr)
+					end
 					busy = false
 					refreshSellList()
 				end)

@@ -1,3 +1,4 @@
+-- [ACTIVE] StealBrainrot.server
 --[[
 	StealBrainrot.server
 	Lets a player steal a brainrot sitting on ANOTHER player's stand.

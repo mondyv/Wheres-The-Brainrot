@@ -1,3 +1,4 @@
+-- [ACTIVE] SafeZoneFlashController
 --[[
 	Full-screen white flash when the local player successfully delivers a carried brainrot
 	to the safe zone. Server fires ReplicatedStorage.SafeZoneFlash for that player only.

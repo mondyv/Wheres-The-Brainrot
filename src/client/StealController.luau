@@ -1,3 +1,4 @@
+-- [ACTIVE] StealController
 --[[
 	StealController
 	Adds a "Steal Brainrot" ProximityPrompt to every OTHER player's stand that

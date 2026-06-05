@@ -1,3 +1,4 @@
+-- [ACTIVE] BushHarvest.server
 --[[
 	Harvest: spawn brainrot → short pop → float ~4s above bush → weld above player → touch deposit (or stand inside RedWall) to redeem into inventory.
 	Stack count is capped by the Carry upgrade (player attribute Carry, default 1); extras cannot be harvested until redeemed or dropped.
@@ -386,13 +387,6 @@ local function pushBrainrotInventory(player: Player, entry: BrainrotInvEntry, sk
 	if not skipSync then
 		local sync = ensureInventoryRemotes()
 		sync:FireClient(player, packInventoryForClient(player, list))
-	end
-	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
-	local refresh = folder and folder:FindFirstChild("RefreshRebirthState")
-	if refresh and refresh:IsA("BindableFunction") then
-		pcall(function()
-			(refresh :: BindableFunction):Invoke(player)
-		end)
 	end
 	return true
 end
@@ -3085,13 +3079,6 @@ local function consumeInventoryEntry(plr: Player, idx: number): BrainrotInvEntry
 
 	local sync = ensureInventoryRemotes()
 	sync:FireClient(plr, packInventoryForClient(plr, list))
-	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
-	local refresh = folder and folder:FindFirstChild("RefreshRebirthState")
-	if refresh and refresh:IsA("BindableFunction") then
-		pcall(function()
-			(refresh :: BindableFunction):Invoke(plr)
-		end)
-	end
 	return entry
 end
 

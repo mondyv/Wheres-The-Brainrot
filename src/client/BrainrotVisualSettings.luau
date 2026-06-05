@@ -1,3 +1,4 @@
+-- [ACTIVE] BrainrotVisualSettings
 --[[
 	Client-only brainrot visibility + mutation VFX toggles (Settings UI).
 	• ShowOtherBrainrots (default on) — hide other players' world brainrots locally.

@@ -1,3 +1,4 @@
+-- [ACTIVE] RebirthConfig
 --[[
 	Rebirth tiers — explicit requirements per rebirth (shared client + server).
 	• Every 3rd rebirth (3, 6, 9 …) also grants +1 base floor.
@@ -250,6 +251,7 @@ function M.brainrotRequirements(tier: number): { BrainrotReq }
 	return { def.brainrot1, def.brainrot2 }
 end
 
+-- isDiscovered must reflect Index unlocks (IndexService.hasDiscoveredBrainrot), not inventory.
 function M.evaluateBrainrotReqs(
 	isDiscovered: (name: string) -> boolean,
 	reqs: { BrainrotReq }

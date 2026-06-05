@@ -1,3 +1,4 @@
+-- [ACTIVE] BackgroundMusicController
 --[[
 	BackgroundMusicController — context BGM from SoundService.BackgroundMusic.SoundGroup:
 	• Safezone folder — default world music (plays everywhere)

@@ -1,3 +1,4 @@
+-- [ACTIVE] BushHoldInteraction
 --[[
 	Bush harvest — closest-bush targeting, highlight, hold-to-search.
 	Engine ProximityPrompt handles hold/trigger; ProximityPromptEffects draws the custom bush card + FX.
@@ -621,8 +622,6 @@ local function bootMap(map: Instance)
 	end
 	if n == 0 then
 		warn("[BushHoldInteraction] No bush prompts yet — waiting for Map/Tycoon to finish loading bushes")
-	else
-		print(string.format("[BushHoldInteraction] Registered %d bush search prompt(s)", n))
 	end
 end
 

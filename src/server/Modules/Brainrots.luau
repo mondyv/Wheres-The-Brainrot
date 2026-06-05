@@ -1,3 +1,4 @@
+-- [ACTIVE] Brainrots
 --[[
 	Brainrots
 	Shared master config: all brainrots, rarity / mutation / plot chances, income formula.
@@ -243,7 +244,7 @@ M.RARITY_GRADIENT_NAME = {
 	mythic         = "MYTHIC",
 	legendary      = "LEGENDARY",
 	["brainrot god"] = "GODLY",
-	secret         = "GODLY", -- no SECRET gradient in template; reuse GODLY for highest-tier visual.
+	secret         = "SECRET",
 } :: { [string]: string }
 
 -- Level tier → gradient name inside BrainrotHeader.Info.Level.
@@ -327,6 +328,7 @@ end
 
 -- Cost to go from level → level+1. Returns 0 if already maxed.
 -- Scales with current income, level exponent, and a per-rarity multiplier (high rarities cost much more).
+-- 2× Upgrades gamepass grants +2 levels per purchase but still uses this single-step cost only.
 local UPGRADE_LEVEL_EXPONENT = 1.20
 
 local RARITY_UPGRADE_COST_MULT: { [RarityId]: number } = {

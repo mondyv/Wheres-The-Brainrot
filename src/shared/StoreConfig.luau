@@ -1,3 +1,4 @@
+-- [ACTIVE] StoreConfig
 --[[
 	StoreConfig
 	Single source of truth (client + server) for every Store item:
@@ -134,6 +135,7 @@ StoreConfig.LUCKY_BLOCK_RARITY_WEIGHTS = {
 }
 
 StoreConfig.EXCLUSIVE_BRAINROT_NAME = "StrawberryElephant"
+StoreConfig.EXCLUSIVE_BRAINROT_SOURCE_PATH = "StrawberryElephant/Normal"
 
 -- ── Cash bundles ────────────────────────────────────────────────────────────────
 StoreConfig.MIN_OFFLINE_24H_CASH = 172800

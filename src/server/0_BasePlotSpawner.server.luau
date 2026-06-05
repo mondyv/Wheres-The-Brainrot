@@ -1,3 +1,4 @@
+-- [ACTIVE] 0_BasePlotSpawner.server
 --[[
 	0_BasePlotSpawner (server, runs early by name)
 	• Unclaimed slots: lightweight floor stub only (fast load).
@@ -301,7 +302,6 @@ local function promoteStubToFullPlot(slot: number, player: Player)
 		replacePlotSlot(slot, plot)
 		player:SetAttribute("AssignedPlotSlot", slot)
 		playerToSlot[player] = slot
-		print(string.format("[0_BasePlotSpawner] Assigned %s to Plot_%d (full base)", player.Name, slot))
 	end)
 end
 
@@ -352,7 +352,6 @@ local function spawnBasesOnce(folder: Instance): boolean
 	if any then
 		folder:SetAttribute(SPAWNED_ATTR, true)
 		folder:SetAttribute(SPAWN_VERSION_ATTR, SPAWN_VERSION)
-		print(string.format("[0_BasePlotSpawner] Spawned %d floor stub(s); full base loads on claim", stubCount))
 	end
 	return any
 end
@@ -376,7 +375,6 @@ local function tryAssignPlayer(player: Player)
 					player:SetAttribute("AssignedPlotSlot", slot)
 					playerToSlot[player] = slot
 					notifyPlotVisibilityRefresh(base)
-					print(string.format("[0_BasePlotSpawner] Assigned %s to Plot_%d", player.Name, slot))
 				end
 				return
 			end

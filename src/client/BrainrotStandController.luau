@@ -1,3 +1,4 @@
+-- [ACTIVE] BrainrotStandController
 --[[
 	BrainrotStandController (client)
 	• Wires a click overlay on every stand's Upgrade SurfaceGui → fires UpgradeStandBrainrot.
@@ -16,7 +17,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
+local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
+local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local PlotMarkerVisibility = require(script.Parent.PlotMarkerVisibility)
@@ -166,17 +170,215 @@ local function ensureFallbackBurstEmitter(att: Attachment): ParticleEmitter
 end
 
 -- Short-lived pickup burst: enable emitters briefly, fire one-shot particles, then turn off.
+local FLOAT_RISE_DURATION = 1.2
+local FLOAT_RISE_STUDS = 6
+local CASH_FLOAT_TEXT_SIZE = 32
+local FLOAT_STROKE_SCALE = 0.65
+local CASH_FLOAT_BURST_COUNT = 24
+local MAX_ACTIVE_CASH_FLOATS = 5
+
+local cachedCashRateStyle: Instance? = nil
+local activeCashFloatCount = 0
+local cashFloatSeq = 0
+
+type RisingFloatTextOpts = {
+	text: string?,
+	level: number?,
+	font: Enum.Font?,
+	textSize: number,
+	styleSource: Instance?,
+	strokeScale: number?,
+	useRateGradient: boolean?,
+	stackOffsetIndex: number?,
+}
+
+local upgradeFloatSeq = 0
+
+local function labelHasGradients(node: Instance): boolean
+	local label = BrainrotHeaderStyle.resolveTextLabel(node)
+	if not label then
+		return false
+	end
+	for _, child in label:GetChildren() do
+		if child:IsA("UIGradient") then
+			return true
+		end
+	end
+	return false
+end
+
+local function playRisingFloatText(worldPosition: Vector3, opts: RisingFloatTextOpts)
+	task.spawn(function()
+		local part = Instance.new("Part")
+		part.Name = "RisingFloatText"
+		part.Anchored = true
+		part.CanCollide = false
+		part.CanQuery = false
+		part.CanTouch = false
+		part.CastShadow = false
+		part.Transparency = 1
+		part.Size = Vector3.new(0.1, 0.1, 0.1)
+		part.CFrame = CFrame.new(worldPosition)
+		part.Parent = Workspace
+
+		local billboard = Instance.new("BillboardGui")
+		billboard.AlwaysOnTop = true
+		billboard.LightInfluence = 0
+		billboard.Size = UDim2.fromOffset(math.max(220, opts.textSize * 8), math.max(48, opts.textSize * 1.4))
+		local stackIndex = opts.stackOffsetIndex
+		if typeof(stackIndex) ~= "number" then
+			stackIndex = 0
+		end
+		billboard.StudsOffset = Vector3.new(0, 2 + (stackIndex % 8) * 0.55, 0)
+		billboard.Parent = part
+
+		local label = Instance.new("TextLabel")
+		label.BackgroundTransparency = 1
+		label.Size = UDim2.fromScale(1, 1)
+		label.TextTransparency = 0
+		label.ZIndex = 10
+		label.Parent = billboard
+
+		local stroke: UIStroke
+		local styleSource = opts.styleSource
+		if styleSource then
+			BrainrotHeaderStyle.prepareFloatTextLabel(label, styleSource, opts.textSize, opts.font)
+			if typeof(opts.level) == "number" then
+				BrainrotHeaderStyle.applyLevelLabel(label, opts.level)
+			else
+				label.Text = opts.text or ""
+				if opts.useRateGradient == true then
+					BrainrotHeaderStyle.applyRateGradient(label)
+				else
+					BrainrotHeaderStyle.copyActiveGradientFromSource(styleSource, label)
+					if not BrainrotHeaderStyle.activeGradientName(label) then
+						BrainrotHeaderStyle.selectGradient(label, "Rate")
+					end
+					if not labelHasGradients(label) then
+						local sourceLabel = BrainrotHeaderStyle.resolveTextLabel(styleSource)
+						if sourceLabel then
+							label.TextColor3 = sourceLabel.TextColor3
+						end
+					end
+				end
+			end
+			stroke = BrainrotHeaderStyle.copyStrokeFromSource(styleSource, label, opts.strokeScale or FLOAT_STROKE_SCALE)
+				or Instance.new("UIStroke")
+		else
+			label.Font = opts.font
+			label.Text = opts.text or ""
+			label.TextSize = opts.textSize
+			label.TextColor3 = Color3.new(1, 1, 1)
+			label.TextStrokeTransparency = 1
+			stroke = Instance.new("UIStroke")
+			stroke.Color = Color3.new(0, 0, 0)
+			stroke.Thickness = 1
+		end
+		if stroke.Parent ~= label then
+			stroke.Parent = label
+		end
+
+		local startCf = part.CFrame
+		local startT = os.clock()
+		local fadeStarted = false
+		local releasedCashSlot = false
+		local function releaseCashFloatSlot()
+			if releasedCashSlot or opts.useRateGradient ~= true then
+				return
+			end
+			releasedCashSlot = true
+			activeCashFloatCount = math.max(0, activeCashFloatCount - 1)
+		end
+
+		local conn: RBXScriptConnection? = nil
+		conn = RunService.Heartbeat:Connect(function()
+			if not part.Parent then
+				releaseCashFloatSlot()
+				if conn then
+					conn:Disconnect()
+				end
+				return
+			end
+			local elapsed = os.clock() - startT
+			if elapsed >= FLOAT_RISE_DURATION then
+				releaseCashFloatSlot()
+				part:Destroy()
+				if conn then
+					conn:Disconnect()
+				end
+				return
+			end
+			local t = elapsed / FLOAT_RISE_DURATION
+			part.CFrame = startCf + Vector3.new(0, FLOAT_RISE_STUDS * t, 0)
+			if elapsed >= 0.5 and not fadeStarted then
+				fadeStarted = true
+				local fadeDur = FLOAT_RISE_DURATION - 0.5
+				local fadeInfo = TweenInfo.new(fadeDur, Enum.EasingStyle.Linear)
+				TweenService:Create(label, fadeInfo, { TextTransparency = 1 }):Play()
+				TweenService:Create(stroke, fadeInfo, { Transparency = 1 }):Play()
+			end
+		end)
+	end)
+end
+
 local function playMoneyPickupVFX(attachment: Attachment?, total: number)
-	if not attachment then return end
+	if not attachment then
+		return
+	end
+	local amount = if typeof(total) == "number" then total else 0
 	setEmittersEnabled(attachment, true)
-	emitBurst(attachment, if typeof(total) == "number" then total else 0)
-	-- Always fire the visible fallback burst so collection has guaranteed feedback even when
-	-- the project's Money template is missing or only has Rate-based emitters.
-	ensureFallbackBurstEmitter(attachment):Emit(60)
+	local usedTemplateEmitters = emitBurst(attachment, amount)
+	if not usedTemplateEmitters then
+		ensureFallbackBurstEmitter(attachment):Emit(CASH_FLOAT_BURST_COUNT)
+	end
 	task.delay(MONEY_VFX_HOLD_SEC, function()
 		if attachment.Parent then
 			setEmittersEnabled(attachment, false)
 		end
+	end)
+end
+
+local function getCashFloatStyleSource(): Instance?
+	if cachedCashRateStyle and cachedCashRateStyle.Parent then
+		return cachedCashRateStyle
+	end
+	cachedCashRateStyle = BrainrotHeaderStyle.getHeaderInfoChild("Rate")
+	return cachedCashRateStyle
+end
+
+local function playCashCollectPresentation(view: StandView, cashAmount: number)
+	task.spawn(function()
+		pulseCashPad(view)
+		ensureMoneyVfxOnView(view)
+		if view.moneyAttachment then
+			playMoneyPickupVFX(view.moneyAttachment, cashAmount)
+		end
+		if cashAmount <= 0 or activeCashFloatCount >= MAX_ACTIVE_CASH_FLOATS then
+			return
+		end
+		local cashPos: Vector3? = nil
+		if view.cashAnchor then
+			cashPos = view.cashAnchor.Position
+		elseif view.buttonPart then
+			cashPos = view.buttonPart.Position
+		end
+		if not cashPos then
+			return
+		end
+		local styleSource = getCashFloatStyleSource()
+		if not styleSource then
+			return
+		end
+		activeCashFloatCount += 1
+		cashFloatSeq += 1
+		playRisingFloatText(cashPos, {
+			text = "+" .. BrainrotEconomy.formatCashAccumulated(cashAmount),
+			textSize = CASH_FLOAT_TEXT_SIZE,
+			styleSource = styleSource,
+			strokeScale = FLOAT_STROKE_SCALE,
+			useRateGradient = true,
+			stackOffsetIndex = cashFloatSeq,
+		})
 	end)
 end
 
@@ -214,6 +416,7 @@ type StandView = {
 	moneyAttachment: Attachment?,
 	existingEmitters: { ParticleEmitter },
 	levelPulseConn: RBXScriptConnection?,
+	lastKnownLevel: number?,
 }
 
 local views: { [Model]: StandView } = {}
@@ -515,6 +718,21 @@ local function findButtonPart(stand: Model, useWait: boolean?): BasePart?
 		return bp :: BasePart
 	end
 	return nil
+end
+
+local function resolveStandVfxRoot(stand: Model): BasePart?
+	local spawn = findSpawnPart(stand)
+	if spawn then
+		return spawn
+	end
+	local button = findButtonPart(stand)
+	if button then
+		return button
+	end
+	if stand.PrimaryPart and stand.PrimaryPart:IsA("BasePart") then
+		return stand.PrimaryPart
+	end
+	return stand:FindFirstChildWhichIsA("BasePart", true)
 end
 
 -- Studio: stand.Button.Cash (often where BillboardGui / money visuals live). Fallback: ButtonPart.
@@ -868,8 +1086,12 @@ local function applyCashPadText(view: StandView, amount: number)
 	end
 	local text = BrainrotEconomy.formatCashAccumulated(amount)
 	if label:IsA("TextLabel") then
+		label.AutoLocalize = false
+		label.TextTruncate = Enum.TextTruncate.None
 		label.Text = text
 	elseif label:IsA("TextButton") then
+		label.AutoLocalize = false
+		label.TextTruncate = Enum.TextTruncate.None
 		label.Text = text
 	end
 end
@@ -1029,9 +1251,38 @@ local function hookStandLevelPulse(stand: Model, view: StandView)
 		view.levelPulseConn:Disconnect()
 		view.levelPulseConn = nil
 	end
+	local initialLevel = stand:GetAttribute("BrainrotLevel")
+	view.lastKnownLevel = if typeof(initialLevel) == "number" then math.floor(initialLevel) else 0
+
 	view.levelPulseConn = stand:GetAttributeChangedSignal("BrainrotLevel"):Connect(function()
 		if stand:GetAttribute("BrainrotName") == nil then
 			return
+		end
+		local newLevelRaw = stand:GetAttribute("BrainrotLevel")
+		if typeof(newLevelRaw) ~= "number" then
+			return
+		end
+		local newLevel = math.floor(newLevelRaw)
+		local prevLevel = view.lastKnownLevel or 0
+		view.lastKnownLevel = newLevel
+		if newLevel <= prevLevel then
+			return
+		end
+		local displayModel = findStandDisplayModel(stand)
+		if displayModel and displayModel.Parent then
+			BrainrotCarryVisual.applyScaleForLevel(displayModel, newLevel)
+		end
+		local vfxRoot = resolveStandVfxRoot(stand)
+		if vfxRoot then
+			local levelStyleSource = BrainrotHeaderStyle.getHeaderInfoChild("Level")
+			upgradeFloatSeq += 1
+			playRisingFloatText(vfxRoot.Position, {
+				level = newLevel,
+				textSize = 28,
+				styleSource = levelStyleSource,
+				strokeScale = FLOAT_STROKE_SCALE,
+				stackOffsetIndex = upgradeFloatSeq,
+			})
 		end
 		pulseUpgradeButton(view)
 		hopStandBrainrot(stand)
@@ -1120,23 +1371,23 @@ function M.init()
 			return
 		end
 		local standModel = stand :: Model
-		if not views[standModel] then
-			initStand(standModel)
-		end
 		local view = views[standModel]
 		if not view then
-			warn("[BrainrotStandController] No view for", standModel:GetFullName())
+			task.defer(function()
+				if not views[standModel] then
+					initStand(standModel)
+				end
+				local deferredView = views[standModel]
+				if deferredView then
+					playCashCollectPresentation(
+						deferredView,
+						if typeof(total) == "number" then total else 0
+					)
+				end
+			end)
 			return
 		end
-		pulseCashPad(view)
-		pulseUpgradeButton(view)
-		pulseExistingEmitters(view.existingEmitters)
-		ensureMoneyVfxOnView(view)
-		if not view.moneyAttachment then
-			warn("[BrainrotStandController] Could not create money attachment for", standModel:GetFullName())
-			return
-		end
-		playMoneyPickupVFX(view.moneyAttachment, if typeof(total) == "number" then total else 0)
+		playCashCollectPresentation(view, if typeof(total) == "number" then total else 0)
 	end)
 
 	rebuildCachedTaggedStands()

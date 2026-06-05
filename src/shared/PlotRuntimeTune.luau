@@ -1,3 +1,4 @@
+-- [ACTIVE] PlotRuntimeTune
 --[[
 	One-pass performance tuning for cloned plot bases (Templates.Base).
 	Called once when a full plot is spawned — not every visibility refresh.

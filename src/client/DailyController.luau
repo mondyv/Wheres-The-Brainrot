@@ -1,3 +1,4 @@
+-- [ACTIVE] DailyController
 --[[
 	DailyController
 	Wires Main.Frames.Daily — the 7-day login calendar.

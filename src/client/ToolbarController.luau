@@ -1,3 +1,4 @@
+-- [ACTIVE] ToolbarController
 --[[
 	ToolbarController
 	Replaces the default Roblox backpack/hotbar with the custom Toolbar frame.
@@ -290,6 +291,18 @@ local function setSlotIcons(surface: GuiObject, image: string, visible: boolean)
 	end
 end
 
+local function toolDisplayTexture(tool: Tool): string
+	local attrIcon = tool:GetAttribute("ToolbarIcon")
+	if typeof(attrIcon) == "string" and attrIcon ~= "" then
+		return attrIcon
+	end
+	local tex = (tool :: any).TextureId
+	if typeof(tex) == "string" and tex ~= "" then
+		return tex
+	end
+	return ""
+end
+
 local function hotbarSlotDragTexture(index: number): string?
 	if brainrotEntries[index] and not brainrotParkedInUI[index] then
 		local e = brainrotEntries[index] :: { icon: string }
@@ -297,8 +310,8 @@ local function hotbarSlotDragTexture(index: number): string?
 	end
 	local tool = slotTools[index]
 	if tool then
-		local tex = (tool :: any).TextureId
-		if typeof(tex) == "string" and tex ~= "" then
+		local tex = toolDisplayTexture(tool)
+		if tex ~= "" then
 			return tex
 		end
 	end
@@ -530,8 +543,8 @@ refreshParkedExtraToolsUI = function()
 					if not canUseToolbar then
 						return
 					end
-					local tex = (tool :: any).TextureId
-					if typeof(tex) ~= "string" or tex == "" then
+					local tex = toolDisplayTexture(tool)
+					if tex == "" then
 						tex = "rbxasset://textures/ui/GuiImagePlaceholder.png"
 					end
 					activeToolbarDrag = true
@@ -548,10 +561,10 @@ refreshParkedExtraToolsUI = function()
 			end
 		end
 		local surface = toolSlotSurface(row :: GuiObject)
-		local tex = (tool :: any).TextureId
+		local tex = toolDisplayTexture(tool)
 		setSlotIcons(
 			surface,
-			(typeof(tex) == "string" and tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png",
+			(tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png",
 			true
 		)
 		local rate = surface:FindFirstChild("Rate")
@@ -1422,13 +1435,13 @@ refreshSlotVisual = function(index: number)
 			local ei = math.clamp(math.floor(invIdx), 1, math.max(1, #brainrotEntries))
 			entryForTool = brainrotEntries[ei]
 		end
-		local tex = (tool :: any).TextureId
+		local tex = toolDisplayTexture(tool)
 		if entryForTool and entryForTool.icon ~= "" then
 			tex = entryForTool.icon
 		end
 		setSlotIcons(
 			surface,
-			(tex and tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png",
+			(tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png",
 			true
 		)
 		if keyLabel and (keyLabel:IsA("TextLabel") or keyLabel:IsA("TextButton")) then

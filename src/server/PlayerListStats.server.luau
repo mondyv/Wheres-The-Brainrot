@@ -1,3 +1,4 @@
+-- [ACTIVE] PlayerListStats.server
 -- Sync Cash + Rebirth into leaderstats so the default Roblox Tab player list shows them.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

@@ -1,3 +1,4 @@
+-- [ACTIVE] BrainrotEconomy
 --[[
 	Shared sell pricing + income helpers (uses inventory entry fields; no server Brainrots require).
 	Sell price = 10× current income per second.
@@ -66,11 +67,16 @@ local function formatCashAmount(rounded: number, suffix: string): string
 		whole += 1
 		frac = 0
 	end
-	return string.format("$%d,%02d%s", whole, frac, suffix)
+	return string.format("$%d.%02d%s", whole, frac, suffix)
 end
 
 local function formatScaledCash(n: number, divisor: number, suffix: string): string
 	local v = n / divisor
+	if v >= 100 then
+		return string.format("$%d%s", math.floor(v + 0.5), suffix)
+	elseif v >= 10 then
+		return string.format("$%.1f%s", math.floor(v * 10 + 0.5) / 10, suffix)
+	end
 	local rounded = math.floor(v * 100 + 0.5) / 100
 	return formatCashAmount(rounded, suffix)
 end
@@ -102,7 +108,7 @@ local function formatScaledNumber(n: number, divisor: number, suffix: string): s
 		whole += 1
 		frac = 0
 	end
-	return string.format("%d,%02d%s", whole, frac, suffix)
+	return string.format("%d.%02d%s", whole, frac, suffix)
 end
 
 -- Compact count (rebirths, etc.) — same K/M/B steps as cash, without a $ prefix.

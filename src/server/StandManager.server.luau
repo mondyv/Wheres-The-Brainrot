@@ -1,3 +1,4 @@
+-- [ACTIVE] StandManager.server
 --[[
 	StandManager (server)
 	Manages every brainrot stand under workspace.Map["Spawn And Bases"].<Base>["<Story>"].stands.<Stand N>.
@@ -19,7 +20,7 @@
 	• Owner standing on prompt again removes the brainrot (returned to inventory).
 	• Stand generates cash at the level/mutation income rate; cap at OFFLINE_CAP if no one collects.
 	• Touch ButtonPart → owner collects accumulated cash; coin VFX bursts.
-	• Owner clicks the Upgrade SurfaceGui → level +1 (if affordable, < MAX_LEVEL).
+	• Owner clicks the Upgrade SurfaceGui → level +1 (or +2 with 2× Upgrades gamepass, same single-step cost).
 --]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -37,6 +38,7 @@ local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild(
 local PlotStandPlaceholders = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotStandPlaceholders"))
 local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 
 local STAND_TAG = "BrainrotStand"
 local STAND_ACCUMULATED_ATTR = "StandAccumulatedCash"
@@ -283,11 +285,19 @@ local function findTotalCashLabel(stand: Model): (TextLabel | TextButton)?
 end
 
 local function setLabelText(label: (TextLabel | TextButton)?, text: string)
-	if not label then return end
+	if not label then
+		return
+	end
 	if label:IsA("TextLabel") then
-		(label :: TextLabel).Text = text
+		local tl = label :: TextLabel
+		tl.AutoLocalize = false
+		tl.TextTruncate = Enum.TextTruncate.None
+		tl.Text = text
 	elseif label:IsA("TextButton") then
-		(label :: TextButton).Text = text
+		local tb = label :: TextButton
+		tb.AutoLocalize = false
+		tb.TextTruncate = Enum.TextTruncate.None
+		tb.Text = text
 	end
 end
 
@@ -441,16 +451,38 @@ local function recomputeIncomePerSecond(state: StandState): number
 	return Brainrots.incomePerSecond(def, state.level, state.mutation or "normal")
 end
 
-local function recomputeUpgradeCost(state: StandState): number
-	if not state.brainrotName or not state.rarity then
-		return 0
-	end
-	local def = {
+local function standBrainrotDef(state: StandState)
+	return {
 		name = state.brainrotName,
 		rarity = state.rarity,
 		baseIncome = state.baseIncome,
 	}
-	return Brainrots.upgradeCost(def, state.level, state.mutation or "normal")
+end
+
+local function upgradeLevelGainForPlayer(player: Player?): number
+	if not player then
+		return 1
+	end
+	if player:GetAttribute(StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED) == true then
+		return 2
+	end
+	return 1
+end
+
+local function upgradeLevelGainForStand(state: StandState): number
+	if not state.ownerUserId then
+		return 1
+	end
+	local owner = Players:GetPlayerByUserId(state.ownerUserId)
+	return upgradeLevelGainForPlayer(owner)
+end
+
+-- One button press always costs a single level step — never sum both steps for 2× Upgrades.
+local function recomputeUpgradeCost(state: StandState): number
+	if not state.brainrotName or not state.rarity then
+		return 0
+	end
+	return Brainrots.upgradeCost(standBrainrotDef(state), state.level, state.mutation or "normal")
 end
 
 local STAND_YAW_OFFSET = math.rad(0)
@@ -520,8 +552,9 @@ local function refreshLabels(state: StandState)
 		elseif state.level >= Brainrots.MAX_LEVEL then
 			setLabelText(state.levelLabel, string.format("Lvl %d", state.level))
 		else
-			-- "Lvl 3 → 4" so the panel shows current and next.
-			setLabelText(state.levelLabel, string.format("Lvl %d → %d", state.level, state.level + 1))
+			local gain = upgradeLevelGainForStand(state)
+			local nextLevel = math.min(Brainrots.MAX_LEVEL, state.level + gain)
+			setLabelText(state.levelLabel, string.format("Lvl %d → %d", state.level, nextLevel))
 		end
 	end
 end
@@ -562,7 +595,7 @@ local function setPromptText(state: StandState)
 	prompt.Enabled = true
 end
 
--- ── Stand display Idle (asset IDs in Shared.BrainrotAnimations) ─────────────
+-- ── Stand display Idle (asset IDs in Modules.BrainrotAnimations) ─────────────
 
 local function findIdleAnimationForBrainrot(brainrotName: string): Animation?
 	return BrainrotAnimations.getIdleAnimation(brainrotName)
@@ -1003,8 +1036,7 @@ local function upgradeStandBrainrot(state: StandState, player: Player)
 		return
 	end
 	player:SetAttribute("Cash", c - cost)
-	-- 2x Upgrades gamepass: each upgrade grants two levels instead of one.
-	local levelGain = if player:GetAttribute("DoubleUpgradesOwned") == true then 2 else 1
+	local levelGain = upgradeLevelGainForPlayer(player)
 	state.level = math.min(Brainrots.MAX_LEVEL, state.level + levelGain)
 	state.stand:SetAttribute("BrainrotLevel", state.level)
 	if state.displayModel and state.displayModel.Parent then

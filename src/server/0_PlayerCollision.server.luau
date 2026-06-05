@@ -1,3 +1,4 @@
+-- [ACTIVE] 0_PlayerCollision.server
 --[[
 	Players should not physically collide with each other (still collide with the world).
 --]]

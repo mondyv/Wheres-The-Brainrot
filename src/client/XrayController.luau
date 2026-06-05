@@ -1,3 +1,4 @@
+-- [ACTIVE] XrayController
 --[[
 	XrayController
 	With the X-Ray Vision gamepass, reveals what brainrot (if any) is hiding inside

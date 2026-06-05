@@ -1,3 +1,4 @@
+-- [ACTIVE] PlotDiagnostics.server
 --[[
 	PlotDiagnostics (server) — perf counters + stand placement traces.
 --]]

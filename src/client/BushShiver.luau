@@ -1,3 +1,4 @@
+-- [ACTIVE] BushShiver
 --[[
 	Soft nervous shiver bursts for bushes with HasHiddenBrainrot == true (server 50/50 pre-roll).
 	Each bush runs its own randomized schedule so bushes never sync up.

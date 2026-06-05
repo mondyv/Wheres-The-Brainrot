@@ -1,3 +1,4 @@
+-- [ACTIVE] PurchaseEffectConfig
 --[[
 	Controls the full-screen rainbow overlay and camera FOV change during purchases.
 ]]

@@ -1,3 +1,4 @@
+-- [ACTIVE] ProductHandlerClient
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local PurchaseEffectClient = require(ReplicatedStorage.EssentialsShared.PurchaseEffect.PurchaseEffectClient)

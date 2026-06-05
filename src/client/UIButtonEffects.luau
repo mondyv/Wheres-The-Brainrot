@@ -1,3 +1,4 @@
+-- [ACTIVE] UIButtonEffects
 -- Shared UI polish: scale hover, in-bounds glisten (hover only), contained diagonal sweep (hover only).
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")

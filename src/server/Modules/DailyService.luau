@@ -1,3 +1,4 @@
+-- [ACTIVE] DailyService
 --[[
 	DailyService
 	Server authority for the 7-day daily reward calendar.

@@ -1,3 +1,4 @@
+-- [ACTIVE] PlotPlayerSpawn.server
 --[[
 	PlotPlayerSpawn (server)
 	Teleports players onto their assigned plot's first floor on join and respawn.

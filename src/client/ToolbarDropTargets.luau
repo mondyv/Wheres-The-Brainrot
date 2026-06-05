@@ -1,3 +1,4 @@
+-- [ACTIVE] ToolbarDropTargets
 --[[
 	Hit-testing for toolbar drag-and-drop (hotbar slots, backpack panel, inventory rows).
 	Extracted from ToolbarController to stay under Luau's per-chunk local register limit.

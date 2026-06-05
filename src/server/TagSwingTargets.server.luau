@@ -1,3 +1,4 @@
+-- [ACTIVE] TagSwingTargets.server
 -- Tags every BasePart named "SwingTarget" (or "SwingPart") under the map
 -- with the CollectionService tag "SwingTarget" so clients can use GetTagged().
 

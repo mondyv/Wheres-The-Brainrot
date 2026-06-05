@@ -1,3 +1,4 @@
+-- [ACTIVE] CashBoostController
 --[[
 	Updates SideUI.Counters.Boost.CurrentBoost with total cash boost %.
 --]]

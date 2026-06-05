@@ -1,3 +1,4 @@
+-- [ACTIVE] Sell.server
 --[[
 	Sell brainrots from inventory for cash (10× current $/s via BrainrotEconomy).
 --]]

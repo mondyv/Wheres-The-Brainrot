@@ -1,3 +1,4 @@
+-- [ACTIVE] HUDController
 --[[
 	HUDController
 	Manages HUD sidebar buttons → frame toggling with slick animations.
@@ -12,12 +13,20 @@ local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
-local player    = Players.LocalPlayer
+local player = Players.LocalPlayer
 
-local mainGui      = PlayerGuiMain.ensure(player)
-local playerGui    = player.PlayerGui
-local sideUI       = mainGui:WaitForChild("SideUI")
-local framesFolder = mainGui:WaitForChild("Frames")
+local mainGui: ScreenGui? = nil
+local sideUI: Instance? = nil
+local framesFolder: Instance? = nil
+
+local function ensureHudRoots()
+	if mainGui then
+		return
+	end
+	mainGui = PlayerGuiMain.ensure(player)
+	sideUI = mainGui:WaitForChild("SideUI")
+	framesFolder = mainGui:WaitForChild("Frames")
+end
 
 -- Tween configs
 local OPEN_TWEEN  = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -48,14 +57,16 @@ local function getOrAddUIScale(parent: Instance): UIScale
 end
 
 local function resolveFrame(name: string): Frame?
-	return framesFolder:FindFirstChild(name) :: Frame?
+	ensureHudRoots()
+	return (framesFolder :: Instance):FindFirstChild(name) :: Frame?
 end
 
 -- Searches sideUI first, then all of mainGui.
 -- If the found instance is a container, grabs the first GuiButton inside it.
 local function findButton(name: string): GuiButton?
-	local inst = sideUI:FindFirstChild(name, true)
-		or mainGui:FindFirstChild(name, true)
+	ensureHudRoots()
+	local inst = (sideUI :: Instance):FindFirstChild(name, true)
+		or (mainGui :: ScreenGui):FindFirstChild(name, true)
 	if not inst then return nil end
 	if inst:IsA("GuiButton") then return inst :: GuiButton end
 	return inst:FindFirstChildOfClass("ImageButton")
@@ -286,6 +297,7 @@ end
 local HUDController = {}
 
 function HUDController.init()
+	ensureHudRoots()
 	-- Frame-opening HUD buttons
 	for buttonName, frameName in pairs(BUTTON_FRAME_MAP) do
 		local button = findButton(buttonName)
@@ -316,19 +328,40 @@ function HUDController.init()
 	-- SlowButton toggle
 	setupSlowButton()
 
-	-- Cash counter Buy button → opens Store frame
+	-- Cash counter + button → opens Store scrolled to cash bundles at the bottom
 	local counters = sideUI:FindFirstChild("Counters")
 	if counters then
-		local cashBuy = counters:FindFirstChild("Buy", true) :: GuiButton?
-		if cashBuy and cashBuy:IsA("GuiButton") then
-			local storeFrame = resolveFrame("Store")
-			if storeFrame then
-				UIButtonEffects.wireAccentButton(cashBuy, function()
-					openFrame(storeFrame)
-				end)
+		local cashFrame = counters:FindFirstChild("Cash")
+		local cashBuy: GuiButton? = nil
+		if cashFrame then
+			for _, name in { "Buy", "+", "Plus" } do
+				local candidate = cashFrame:FindFirstChild(name, true)
+				if candidate and candidate:IsA("GuiButton") then
+					cashBuy = candidate :: GuiButton
+					break
+				end
 			end
+			if not cashBuy then
+				for _, desc in cashFrame:GetDescendants() do
+					if desc:IsA("ImageButton") and (desc.Name == "Buy" or desc.Name == "+" or desc.Name == "Plus") then
+						cashBuy = desc :: GuiButton
+						break
+					end
+				end
+			end
+		end
+		if not cashBuy then
+			local fallback = counters:FindFirstChild("Buy", true)
+			if fallback and fallback:IsA("GuiButton") then
+				cashBuy = fallback :: GuiButton
+			end
+		end
+		if cashBuy then
+			UIButtonEffects.wireAccentButton(cashBuy, function()
+				HUDController.openStoreAtBottom()
+			end)
 		else
-			warn("[HUDController] Cash Buy button not found under Counters")
+			warn("[HUDController] Cash + / Buy button not found under Counters")
 		end
 	end
 end
@@ -346,6 +379,66 @@ function HUDController.closeCurrentFrame()
 	if currentFrame then
 		closeFrame(currentFrame)
 	end
+end
+
+function HUDController.closeFrameByName(frameName: string)
+	local frame = resolveFrame(frameName)
+	if frame then
+		closeFrame(frame)
+	end
+end
+
+local function scrollStoreToBottom(storeFrame: Frame)
+	local bestScroll: ScrollingFrame? = nil
+	local bestCanvas = 0
+	for _, desc in storeFrame:GetDescendants() do
+		if desc:IsA("ScrollingFrame") then
+			local scroll = desc :: ScrollingFrame
+			local canvasH = scroll.CanvasSize.Y.Offset
+			if canvasH > bestCanvas then
+				bestCanvas = canvasH
+				bestScroll = scroll
+			end
+		end
+	end
+	if not bestScroll then
+		return
+	end
+	local scroll = bestScroll
+	local function apply()
+		local maxY = math.max(0, scroll.CanvasSize.Y.Offset - scroll.AbsoluteWindowSize.Y)
+		scroll.CanvasPosition = Vector2.new(0, maxY)
+	end
+	apply()
+	local conn: RBXScriptConnection? = nil
+	conn = scroll:GetPropertyChangedSignal("CanvasSize"):Connect(function()
+		apply()
+	end)
+	task.delay(0.2, function()
+		apply()
+		if conn then
+			conn:Disconnect()
+			conn = nil
+		end
+	end)
+end
+
+function HUDController.openStoreAtBottom()
+	local storeFrame = resolveFrame("Store")
+	if not storeFrame then
+		warn("[HUDController] Store frame not found")
+		return
+	end
+	local alreadyOpen = currentFrame == storeFrame and storeFrame.Visible
+	if not alreadyOpen then
+		openFrame(storeFrame)
+	end
+	task.spawn(function()
+		task.wait()
+		scrollStoreToBottom(storeFrame)
+		task.wait(0.1)
+		scrollStoreToBottom(storeFrame)
+	end)
 end
 
 function HUDController.getCurrentFrame(): Frame?

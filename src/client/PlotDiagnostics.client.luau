@@ -1,3 +1,4 @@
+-- [ACTIVE] PlotDiagnostics.client
 --[[
 	PlotDiagnostics (client) — tracks stand display models + heavy client scans.
 --]]

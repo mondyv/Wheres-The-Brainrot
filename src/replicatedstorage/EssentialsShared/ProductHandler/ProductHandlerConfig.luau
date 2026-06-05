@@ -1,3 +1,4 @@
+-- [ACTIVE] ProductHandlerConfig
 --[[
 	Product / gamepass definitions for ProductHandlerServer.
 	Replace id values with your Creator Hub product / gamepass IDs.

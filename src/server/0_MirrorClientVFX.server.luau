@@ -1,3 +1,4 @@
+-- [ACTIVE] 0_MirrorClientVFX.server
 --[[
 	Copies ServerStorage.VFX → ReplicatedStorage.VFX so client scripts (money collect burst)
 	can clone particle templates. Source stays in ServerStorage; only a runtime copy replicates.

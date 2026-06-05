@@ -1,3 +1,4 @@
+-- [ACTIVE] SoundController
 local SoundService = game:GetService("SoundService")
 
 local SoundController = {}

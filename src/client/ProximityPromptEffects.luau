@@ -1,8 +1,10 @@
+-- [ACTIVE] ProximityPromptEffects
 --[[
 	ProximityPromptEffects — custom proximity prompt billboard UI (client)
 	Managed bush search: engine ProximityPrompt handles hold/trigger; optional displayOnly billboard is visual-only.
 ]]
 
+local ContentProvider = game:GetService("ContentProvider")
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 local ProximityPromptService = game:GetService("ProximityPromptService")
@@ -42,6 +44,7 @@ local PAD_LEFT = 8
 local BADGE_TEXT_GAP = 6
 local PAD_RIGHT = 10
 local MIN_CARD_W = 118
+local MOBILE_MIN_CARD_W = 148
 local MAX_CARD_W = 232
 
 local OPEN_TWEEN = TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -121,6 +124,7 @@ type PromptView = {
 	clickConns: { RBXScriptConnection },
 	clickWired: boolean,
 	displayOnly: boolean,
+	inputType: Enum.ProximityPromptInputType?,
 }
 
 local viewsByPrompt: { [ProximityPrompt]: PromptView } = {}
@@ -268,6 +272,26 @@ local function prefersGamepadInput(): boolean
 		and UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1
 end
 
+local function isMobilePlatform(): boolean
+	return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+end
+
+local function resolvePromptInputType(explicit: Enum.ProximityPromptInputType?): Enum.ProximityPromptInputType
+	if isMobilePlatform() then
+		return Enum.ProximityPromptInputType.Touch
+	end
+	if explicit ~= nil then
+		return explicit
+	end
+	if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then
+		return Enum.ProximityPromptInputType.Touch
+	end
+	if prefersGamepadInput() then
+		return Enum.ProximityPromptInputType.Gamepad
+	end
+	return Enum.ProximityPromptInputType.Keyboard
+end
+
 local function prefersTouchInput(): boolean
 	if not UserInputService.TouchEnabled then
 		return false
@@ -278,8 +302,11 @@ local function prefersTouchInput(): boolean
 	return true
 end
 
-local function isMobileTouchDevice(): boolean
-	return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local function effectiveMinCardWidth(): number
+	if isMobilePlatform() then
+		return MOBILE_MIN_CARD_W
+	end
+	return MIN_CARD_W
 end
 
 -- Phones/tablets should show Roblox touch icons even before the first touch event.
@@ -290,7 +317,7 @@ local function usesTouchPromptIcon(): boolean
 	if prefersGamepadInput() then
 		return false
 	end
-	if isMobileTouchDevice() then
+	if isMobilePlatform() then
 		return true
 	end
 	if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then
@@ -320,17 +347,37 @@ local function isBushSearchPrompt(prompt: ProximityPrompt): boolean
 	return CarryGate.isBushSearchPrompt(prompt)
 end
 
-local function shouldShowBushTouchIcon(prompt: ProximityPrompt): boolean
-	if not UserInputService.TouchEnabled or prefersGamepadInput() then
+local function shouldShowBushTouchIcon(prompt: ProximityPrompt, inputType: Enum.ProximityPromptInputType): boolean
+	if prefersGamepadInput() then
 		return false
 	end
-	return isBushSearchPrompt(prompt)
+	if not isBushSearchPrompt(prompt) then
+		return false
+	end
+	return inputType == Enum.ProximityPromptInputType.Touch or usesTouchPromptIcon()
+end
+
+local function showTouchKeyIcon(view: PromptView, hold: boolean)
+	local label = view.keyLabel
+	local icon = view.keyIcon
+	label.Text = ""
+	label.Visible = false
+	icon.Visible = true
+	icon.ImageTransparency = 0
+	icon.ImageColor3 = Color3.new(1, 1, 1)
+	icon.ScaleType = Enum.ScaleType.Fit
+	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.Position = UDim2.fromScale(0.5, 0.5)
+	icon.Size = UDim2.fromOffset(28, 34)
+	icon.ZIndex = 10
+	icon.Image = if hold then TOUCH_HOLD_ICON else TOUCH_TAP_ICON
 end
 
 local function refreshKeyLabel(view: PromptView)
 	local prompt = view.prompt
 	local label = view.keyLabel
 	local icon = view.keyIcon
+	local inputType = resolvePromptInputType(view.inputType)
 
 	local function showText(text: string)
 		icon.Visible = false
@@ -339,30 +386,25 @@ local function refreshKeyLabel(view: PromptView)
 	end
 
 	local function showIcon(image: string)
+		label.Text = ""
 		label.Visible = false
 		icon.Visible = true
+		icon.ImageTransparency = 0
 		icon.Image = image
 		icon.ImageColor3 = Color3.new(1, 1, 1)
+		icon.ScaleType = Enum.ScaleType.Fit
+		icon.AnchorPoint = Vector2.new(0.5, 0.5)
+		icon.Position = UDim2.fromScale(0.5, 0.5)
+		icon.Size = UDim2.new(1, -10, 1, -10)
+		icon.ZIndex = 10
 	end
 
-	if prefersGamepadInput() then
+	if inputType == Enum.ProximityPromptInputType.Gamepad then
 		showText(gamepadButtonLabel(prompt.GamepadKeyCode))
 		return
 	end
-	if shouldShowBushTouchIcon(prompt) then
-		if prompt.HoldDuration > 0 then
-			showIcon(TOUCH_HOLD_ICON)
-		else
-			showIcon(TOUCH_TAP_ICON)
-		end
-		return
-	end
-	if usesTouchPromptIcon() then
-		if prompt.HoldDuration > 0 then
-			showIcon(TOUCH_HOLD_ICON)
-		else
-			showIcon(TOUCH_TAP_ICON)
-		end
+	if inputType == Enum.ProximityPromptInputType.Touch or shouldShowBushTouchIcon(prompt, inputType) or usesTouchPromptIcon() then
+		showTouchKeyIcon(view, prompt.HoldDuration > 0)
 		return
 	end
 	local kc = prompt.KeyboardKeyCode
@@ -749,7 +791,7 @@ local function getPromptFocusWorld(prompt: ProximityPrompt): Vector3?
 end
 
 isPromptFacingCamera = function(prompt: ProximityPrompt): boolean
-	if not isMobileTouchDevice() then
+	if not isMobilePlatform() then
 		return true
 	end
 	local cam = workspace.CurrentCamera
@@ -905,11 +947,20 @@ local function measureCardWidth(actionText: string, objectText: string, _holdDur
 	local objectSize = TextService:GetTextSize(objectText, 14, Enum.Font.Gotham, measureBounds)
 	local textW = math.max(actionSize.X, objectSize.X)
 	local total = PAD_LEFT + BADGE_SIZE + BADGE_TEXT_GAP + math.ceil(textW) + PAD_RIGHT
-	return math.clamp(total, MIN_CARD_W, MAX_CARD_W)
+	return math.clamp(total, effectiveMinCardWidth(), MAX_CARD_W)
 end
 
 local function applyLabelsToView(view: PromptView)
 	local actionText, objectText = resolvePromptLabels(view.prompt)
+	if actionText == "" then
+		actionText = view.prompt.ActionText
+	end
+	if actionText == "" then
+		actionText = if view.prompt.HoldDuration > 0 then "Hold" else "Interact"
+	end
+	if objectText == "" then
+		objectText = view.prompt.ObjectText
+	end
 	view.actionLabel.Text = actionText
 	view.objectLabel.Text = objectText
 	view.billboard.Size = UDim2.fromOffset(measureCardWidth(actionText, objectText, view.prompt.HoldDuration), CARD_H)
@@ -957,9 +1008,10 @@ local function ensureKeyIcon(view: PromptView)
 	icon.Size = UDim2.new(1, -10, 1, -10)
 	icon.BackgroundTransparency = 1
 	icon.ScaleType = Enum.ScaleType.Fit
-	icon.ImageColor3 = TEXT_PRIMARY
+	icon.ImageColor3 = Color3.new(1, 1, 1)
+	icon.ImageTransparency = 0
 	icon.Visible = false
-	icon.ZIndex = 8
+	icon.ZIndex = 10
 	icon.Parent = badge
 	view.keyIcon = icon :: ImageLabel
 end
@@ -976,7 +1028,7 @@ local function resetKeyBadgeVisuals(view: PromptView)
 	end
 	view.keyLabel.TextColor3 = TEXT_PRIMARY
 	ensureKeyIcon(view)
-	view.keyIcon.ImageColor3 = TEXT_PRIMARY
+	view.keyIcon.ImageColor3 = Color3.new(1, 1, 1)
 	local trackH = holdTrackHeight(view)
 	view.holdTrack.Size = UDim2.new(1, -BADGE_HOLD_PAD * 2, 1, -BADGE_HOLD_PAD * 2)
 	view.holdFill.Size = UDim2.new(1, 0, 0, 0)
@@ -1586,7 +1638,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	billboard.AlwaysOnTop = true
 	billboard.LightInfluence = 0
 	billboard.MaxDistance = math.max(prompt.MaxActivationDistance * 1.5, 40)
-	billboard.Size = UDim2.fromOffset(MIN_CARD_W, CARD_H)
+	billboard.Size = UDim2.fromOffset(effectiveMinCardWidth(), CARD_H)
 	billboard.Adornee = adornee
 	if isBushPrompt(prompt) and adornee then
 		applyBushBillboardPlacement(billboard, prompt, adornee)
@@ -1710,8 +1762,10 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	keyLabel.Size = UDim2.new(1, -6, 1, -6)
 	keyLabel.BackgroundTransparency = 1
 	keyLabel.Font = Enum.Font.GothamBold
-	keyLabel.TextSize = 22
+	keyLabel.Text = ""
+	keyLabel.TextSize = if isMobilePlatform() then 18 else 22
 	keyLabel.TextColor3 = TEXT_PRIMARY
+	keyLabel.AutoLocalize = false
 	keyLabel.ZIndex = 5
 	keyLabel.Parent = keyBadge
 
@@ -1722,9 +1776,10 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	keyIcon.Size = UDim2.new(1, -10, 1, -10)
 	keyIcon.BackgroundTransparency = 1
 	keyIcon.ScaleType = Enum.ScaleType.Fit
-	keyIcon.ImageColor3 = TEXT_PRIMARY
+	keyIcon.ImageColor3 = Color3.new(1, 1, 1)
+	keyIcon.ImageTransparency = 0
 	keyIcon.Visible = false
-	keyIcon.ZIndex = 6
+	keyIcon.ZIndex = 10
 	keyIcon.Parent = keyBadge
 
 	local textCol = Instance.new("Frame")
@@ -1740,12 +1795,14 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	actionLabel.Size = UDim2.new(1, 0, 0.52, 0)
 	actionLabel.BackgroundTransparency = 1
 	actionLabel.Font = Enum.Font.GothamBold
+	actionLabel.Text = ""
+	actionLabel.AutoLocalize = false
 	actionLabel.TextSize = 17
 	actionLabel.TextXAlignment = Enum.TextXAlignment.Left
 	actionLabel.TextYAlignment = Enum.TextYAlignment.Bottom
 	actionLabel.TextColor3 = TEXT_PRIMARY
-	actionLabel.TextWrapped = false
 	actionLabel.TextTruncate = Enum.TextTruncate.AtEnd
+	actionLabel.TextWrapped = true
 	actionLabel.Parent = textCol
 
 	local objectLabel = Instance.new("TextLabel")
@@ -1754,12 +1811,14 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	objectLabel.Size = UDim2.new(1, 0, 0.52, 0)
 	objectLabel.BackgroundTransparency = 1
 	objectLabel.Font = Enum.Font.Gotham
+	objectLabel.Text = ""
+	objectLabel.AutoLocalize = false
 	objectLabel.TextSize = 14
 	objectLabel.TextXAlignment = Enum.TextXAlignment.Left
 	objectLabel.TextYAlignment = Enum.TextYAlignment.Top
 	objectLabel.TextColor3 = TEXT_SECONDARY
-	objectLabel.TextWrapped = false
 	objectLabel.TextTruncate = Enum.TextTruncate.AtEnd
+	objectLabel.TextWrapped = true
 	objectLabel.Parent = textCol
 
 	local view: PromptView = {
@@ -1789,6 +1848,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 		clickConns = {},
 		clickWired = false,
 		displayOnly = isDisplayOnly,
+		inputType = nil,
 	}
 
 	applyLabelsToView(view)
@@ -2263,7 +2323,7 @@ wirePromptLiveUpdates = function(prompt: ProximityPrompt, view: PromptView)
 	end
 end
 
-local function onPromptShown(prompt: ProximityPrompt, _inputType: Enum.ProximityPromptInputType)
+local function onPromptShown(prompt: ProximityPrompt, inputType: Enum.ProximityPromptInputType?)
 	if prompt:GetAttribute(CUSTOM_ATTR) ~= true then
 		return
 	end
@@ -2278,6 +2338,7 @@ local function onPromptShown(prompt: ProximityPrompt, _inputType: Enum.Proximity
 		view = viewsByPrompt[prompt]
 	end
 	if view then
+		view.inputType = inputType
 		if isBushPrompt(prompt) then
 			local adornee = getBushBillboardAdornee(prompt)
 			if adornee then
@@ -2287,6 +2348,8 @@ local function onPromptShown(prompt: ProximityPrompt, _inputType: Enum.Proximity
 		end
 		wirePromptLiveUpdates(prompt, view)
 		applyLabelsToView(view)
+		ensureKeyIcon(view)
+		refreshKeyLabel(view)
 		setHoldTrackVisible(view, prompt.HoldDuration > 0)
 	end
 end
@@ -2315,7 +2378,7 @@ reshowEligiblePlaceProximityPrompts = function()
 		if inst:IsA("Model") then
 			local pp = findStandProximityPrompt(inst :: Model)
 			if pp and pp.Enabled and isPlaceBrainrotPrompt(pp) then
-				onPromptShown(pp, Enum.ProximityPromptInputType.Keyboard)
+				onPromptShown(pp, nil)
 			end
 		end
 	end
@@ -2339,11 +2402,11 @@ function ProximityPromptEffects.syncStandPlaceProximityUi(prompt: ProximityPromp
 		if prompt:GetAttribute(CUSTOM_ATTR) ~= true or not shouldShowPromptUi(prompt) then
 			return
 		end
-		onPromptShown(prompt, Enum.ProximityPromptInputType.Keyboard)
+		onPromptShown(prompt, nil)
 	end)
 end
 
-local function onPromptHidden(prompt: ProximityPrompt, _inputType: Enum.ProximityPromptInputType)
+local function onPromptHidden(prompt: ProximityPrompt, _inputType: Enum.ProximityPromptInputType?)
 	if isManagedBushPrompt(prompt) then
 		return
 	end
@@ -2468,7 +2531,7 @@ local function wireStylePrompt(prompt: ProximityPrompt)
 			if prompt:GetAttribute(CUSTOM_ATTR) ~= true or not shouldShowPromptUi(prompt) then
 				return
 			end
-			onPromptShown(prompt, Enum.ProximityPromptInputType.Keyboard)
+			onPromptShown(prompt, nil)
 		end)
 	end))
 
@@ -2675,7 +2738,7 @@ local function hookCarryListeners()
 end
 
 local function refreshMobileFacingPromptVisibility()
-	if not isMobileTouchDevice() then
+	if not isMobilePlatform() then
 		return
 	end
 
@@ -2688,7 +2751,7 @@ local function refreshMobileFacingPromptVisibility()
 		local want = shouldShowPromptUi(prompt)
 
 		if want and not visible and prompt.Enabled and prompt:GetAttribute(CUSTOM_ATTR) == true then
-			onPromptShown(prompt, Enum.ProximityPromptInputType.Keyboard)
+			onPromptShown(prompt, nil)
 		elseif not want and visible then
 			hideView(prompt, true)
 		end
@@ -2706,6 +2769,15 @@ local function refreshMobileFacingPromptVisibility()
 end
 
 function ProximityPromptEffects.init()
+	task.spawn(function()
+		local ok, err = pcall(function()
+			ContentProvider:PreloadAsync({ TOUCH_TAP_ICON, TOUCH_HOLD_ICON })
+		end)
+		if not ok then
+			warn("[ProximityPromptEffects] touch icon preload failed:", err)
+		end
+	end)
+
 	wireProximityPromptService()
 	purgeOrphanPromptBillboards()
 
@@ -2745,6 +2817,9 @@ function ProximityPromptEffects.init()
 	end)
 
 	UserInputService.LastInputTypeChanged:Connect(refreshAllKeyLabels)
+	if isMobilePlatform() then
+		task.defer(refreshAllKeyLabels)
+	end
 
 	hookCarryListeners()
 	player.CharacterAdded:Connect(function(char: Model)
@@ -2761,7 +2836,7 @@ function ProximityPromptEffects.init()
 
 	local facingRefreshAccum = 0
 	RunService.Heartbeat:Connect(function(dt)
-		if not isMobileTouchDevice() then
+		if not isMobilePlatform() then
 			return
 		end
 		facingRefreshAccum += dt

@@ -1,3 +1,4 @@
+-- [ACTIVE] LuckBoost
 --[[
 	LuckBoost
 	Shared (client + server) calculation of a player's total luck multiplier.

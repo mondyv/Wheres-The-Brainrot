@@ -1,3 +1,4 @@
+-- [ACTIVE] LuckyBlockController
 --[[
 	LuckyBlockController
 	Client side of the Star-Rainbow lucky block tool.

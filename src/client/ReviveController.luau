@@ -1,3 +1,4 @@
+-- [ACTIVE] ReviveController
 --[[
 	Revive PopUP — death panel with 5s countdown, blur, HUD hide, sfx, and Robux revive.
 --]]

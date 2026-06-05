@@ -1,3 +1,4 @@
+-- [ACTIVE] CarryGate
 -- Client carry capacity checks (bushes, prompt UI, etc.)
 local Players = game:GetService("Players")
 

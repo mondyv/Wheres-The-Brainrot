@@ -1,3 +1,4 @@
+-- [ACTIVE] IndexConfig
 --[[
 	Index UI + golden quest tuning (shared client/server).
 --]]
@@ -25,6 +26,15 @@ M.TAB_DISPLAY_NAME = {
 	lava = "Lava",
 	galaxy = "Galaxy",
 	rainbow = "Rainbow",
+}
+
+M.TAB_NOTIF_NAME = {
+	normal = "Notif Normal",
+	golden = "Notif Gold",
+	diamond = "Notif Diamond",
+	lava = "Notif Lava",
+	galaxy = "Notif Galaxy",
+	rainbow = "Notif Rainbow",
 }
 
 M.RARITY_SORT = {

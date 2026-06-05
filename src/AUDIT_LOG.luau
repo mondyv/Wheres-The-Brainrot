@@ -1,0 +1,66 @@
+--[[
+	AUDIT_LOG — codebase audit summary (2026-06-05)
+	Full client/server cleanup pass. Do not require() this module in production.
+]]
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- DUPLICATE SCRIPTS REMOVED
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- 1. src/client/VipChatController.luau (DELETED)
+--    Reason: Duplicate of ChatTagsController — both assigned TextChatService.OnIncomingMessage.
+--    ChatTagsController is the survivor: handles group rank tags (Owner/Founder/Contributor/Tester)
+--    plus VIP, with per-user caching. Wired in init.client.luau.
+--
+-- 2. src/shared/BrainrotAnimations.luau (DELETED)
+--    Reason: Byte-identical copy of src/server/Modules/BrainrotAnimations.luau.
+--    Only the server Modules copy was required (StandManager.server.luau).
+--
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- BUGS FIXED
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- • SellController: silent pcall failures on sell-one / sell-all / inventory fetch now warn.
+-- • ChatTagsController: GetRankInGroup and UserOwnsGamePassAsync failures now warn.
+-- • BoostIconsController: UserOwnsGamePassAsync failures now warn.
+-- • init.client.luau: boot pcall errors now include script name in warn prefix.
+-- • HUDController / SettingsController: removed module-load PlayerGuiMain.ensure() that
+--   blocked require() before the loading screen finished.
+-- • StandManager: comment corrected (Modules.BrainrotAnimations, not Shared).
+--
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- PERFORMANCE / UI LOAD IMPROVEMENTS
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- • LoadingScreenController: MIN_DISPLAY_SEC reduced 3 → 1.2 (core UI visible ~1.6s sooner).
+-- • LoadingScreenController: removed per-session debug warns for Moon camera success path.
+-- • init.client.luau: split boot into core (HUD, cash, effects, tab screen) vs deferred
+--   (store, boost icons, gamepass panels, index, rebirth, toolbar, chat tags, etc.).
+--   Deferred controllers run via task.defer after core HUD init completes.
+-- • BoostIconsController gamepass ownership checks already ran in task.spawn — unchanged.
+-- • StoreController dynamic prices / pack counters only refresh when store is visible.
+--
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- CODE QUALITY
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- • Removed debug print() from 0_BasePlotSpawner.server.luau and BushHoldInteraction.luau.
+-- • PlotDiagnostics.luau print() retained — gated behind ENABLED = false.
+-- • Added -- [ACTIVE] ScriptName marker to every surviving .luau under src/.
+-- • RemoteEvents: left domain-scoped (StoreRemotes, BushRemotes, DailyRemotes, etc.) —
+--   each server script owns its folder. Centralizing would be a separate migration.
+--
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- STUDIO TEST CHECKLIST (run before pushing)
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- [ ] Join game — HUD + cash counter visible within ~2s of spawn
+-- [ ] Loading screen still plays (shorter) and dismisses cleanly
+-- [ ] Store panel opens, prices populate, purchases work
+-- [ ] Boost icons appear after deferred load
+-- [ ] Chat tags show for group ranks and VIP
+-- [ ] Sell / Index / Rebirth / Daily panels open
+-- [ ] Toolbar hotbar works after deferred load
+-- [ ] Stand brainrot idle animations still play (BrainrotAnimations module)
+
+return nil

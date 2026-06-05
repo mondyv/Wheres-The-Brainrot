@@ -1,3 +1,4 @@
+-- [ACTIVE] StandController
 --[[
 	StandController
 	• Hitbox detection: uses workspace:GetPartsInPart() every frame — works

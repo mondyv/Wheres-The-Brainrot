@@ -1,5 +1,8 @@
+-- [ACTIVE] UpgradesController
 -- Wires Main.Frames.Upgrades rows + SideUI cash counter; purchase via server RemoteFunction
+local MarketplaceService = game:GetService("MarketplaceService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
@@ -8,6 +11,7 @@ local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 
 local SwingUpgrades = require(ReplicatedStorage.Shared.SwingUpgrades)
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 
 local Players = game:GetService("Players")
@@ -263,6 +267,14 @@ end
 local lastShownCash = 0
 local cashTween: Tween? = nil
 local amountBaseColor: Color3? = nil
+local cashAmountLabel: TextLabel? = nil
+local bundleAnimConn: RBXScriptConnection? = nil
+local bundleAnimUntil = 0
+local pendingCashBundlePurchase = false
+
+local function isCashBundleProduct(productId: number): boolean
+	return StoreConfig.CASH_BUNDLE_MULTIPLIERS[productId] ~= nil
+end
 
 local function getOrAddUIScale(obj: GuiObject): UIScale
 	local s = obj:FindFirstChildOfClass("UIScale")
@@ -310,6 +322,10 @@ local function tweenCashLabel(amountLabel: TextLabel, target: number)
 	local start = lastShownCash
 	local spent = target < start - 0.5
 
+	if bundleAnimConn then
+		bundleAnimConn:Disconnect()
+		bundleAnimConn = nil
+	end
 	if cashTween then
 		cashTween:Cancel()
 		cashTween = nil
@@ -330,6 +346,37 @@ local function tweenCashLabel(amountLabel: TextLabel, target: number)
 	end)
 	cashTween:Play()
 	playSpendFeedback(amountLabel, spent)
+end
+
+local function tweenCashBundleGrant(amountLabel: TextLabel, target: number, duration: number)
+	if bundleAnimConn then
+		bundleAnimConn:Disconnect()
+		bundleAnimConn = nil
+	end
+	if cashTween then
+		cashTween:Cancel()
+		cashTween = nil
+	end
+
+	local start = lastShownCash
+	local startTime = os.clock()
+	bundleAnimUntil = startTime + duration + 0.25
+
+	bundleAnimConn = RunService.Heartbeat:Connect(function()
+		local elapsed = os.clock() - startTime
+		local t = math.clamp(elapsed / duration, 0, 1)
+		local eased = 1 - (1 - t) * (1 - t)
+		local value = start + (target - start) * eased
+		amountLabel.Text = formatCash(math.floor(value + 0.5))
+		if t >= 1 then
+			if bundleAnimConn then
+				bundleAnimConn:Disconnect()
+				bundleAnimConn = nil
+			end
+			lastShownCash = target
+			amountLabel.Text = formatCash(target)
+		end
+	end)
 end
 
 local ROW_IDS = { "Power10", "Power25", "Reach10", "Reach25", "Carry1" }
@@ -415,11 +462,35 @@ local function init()
 
 	local cashFrame = main:WaitForChild("SideUI"):WaitForChild("Counters"):WaitForChild("Cash")
 	local amountLabel = cashFrame:WaitForChild("Amount") :: TextLabel
+	cashAmountLabel = amountLabel
 	amountBaseColor = amountLabel.TextColor3
 
 	local cash0 = player:GetAttribute("Cash")
 	lastShownCash = if typeof(cash0) == "number" then cash0 else 0
 	amountLabel.Text = formatCash(lastShownCash)
+
+	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId: number, productId: number, wasPurchased: boolean)
+		if userId ~= player.UserId or not isCashBundleProduct(productId) then
+			return
+		end
+		pendingCashBundlePurchase = false
+		if not wasPurchased or not cashAmountLabel then
+			return
+		end
+		local label = cashAmountLabel
+		local startCash = lastShownCash
+		task.spawn(function()
+			for _ = 1, 25 do
+				local newTotal = player:GetAttribute("Cash")
+				if typeof(newTotal) == "number" and newTotal > startCash + 0.5 then
+					GameSoundEffects.playCashGrab()
+					tweenCashBundleGrant(label, newTotal, 1.5)
+					return
+				end
+				task.wait(0.1)
+			end
+		end)
+	end)
 
 	local function refreshAllRows()
 		for _, id in ROW_IDS do
@@ -441,6 +512,9 @@ local function init()
 	player:GetAttributeChangedSignal("Cash"):Connect(function()
 		local v = player:GetAttribute("Cash")
 		if typeof(v) == "number" then
+			if pendingCashBundlePurchase or os.clock() < bundleAnimUntil then
+				return
+			end
 			tweenCashLabel(amountLabel, v)
 			refreshAllRows()
 		end
@@ -486,4 +560,9 @@ local function boot()
 	end
 end
 
-return { init = boot }
+return {
+	init = boot,
+	markCashBundlePurchasePending = function()
+		pendingCashBundlePurchase = true
+	end,
+}

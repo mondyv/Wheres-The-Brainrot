@@ -1,3 +1,4 @@
+-- [ACTIVE] 0_PurchaseEffectBootstrap.server
 --[[
 	Creates purchase-effect remotes as early as possible so clients never stall waiting.
 	ProductHandlerServer hooks these remotes when EssentialsServer init runs.

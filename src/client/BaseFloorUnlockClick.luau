@@ -1,3 +1,4 @@
+-- [ACTIVE] BaseFloorUnlockClick
 --[[
 	BaseFloorUnlockClick (client)
 	Wires the Upgrade/Add sign SurfaceGui on the local player's plot.

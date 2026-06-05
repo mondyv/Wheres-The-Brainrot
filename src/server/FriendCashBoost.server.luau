@@ -1,3 +1,4 @@
+-- [ACTIVE] FriendCashBoost.server
 --[[
 	Tracks whether each player has a friend in the server (+10% cash boost).
 --]]

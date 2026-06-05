@@ -1,3 +1,4 @@
+-- [ACTIVE] EssentialsConfig
 --[[
 	Shared Essentials settings. Edit sound asset IDs to match your game.
 ]]

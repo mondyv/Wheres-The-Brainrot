@@ -1,3 +1,4 @@
+-- [ACTIVE] PlayerGuiMain
 --[[
 	Resolves PlayerGui.Main reliably:
 	1. Wait for character so Roblox can replicate StarterGui → PlayerGui

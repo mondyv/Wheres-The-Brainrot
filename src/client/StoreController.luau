@@ -1,3 +1,4 @@
+-- [ACTIVE] StoreController
 --[[
 	StoreController
 	Wires every Store panel buy button with the standard hover / click animation
@@ -7,7 +8,7 @@
 	• Booster pack "N/2 available" counters.
 	• Exclusive Brainrot / Free Brainrot disabled states.
 	• Server Luck store-panel "current → next" text.
-	(The VIP chat tag lives in its own VipChatController.)
+	(Chat tags live in ChatTagsController.)
 ]]
 
 local Players = game:GetService("Players")
@@ -19,6 +20,8 @@ local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitFor
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local HUDController = require(script.Parent.HUDController)
+local UpgradesController = require(script.Parent.UpgradesController)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
@@ -269,7 +272,34 @@ local function collectCashBundlePanels(container: Instance)
 		local panel = column and column:FindFirstChild(entry[2])
 		if panel then
 			table.insert(cashBundlePanels, { panel = panel, productId = entry[3] })
-			wireProduct(panel, entry[3])
+			local buy = findBuy(panel)
+			if buy then
+				wireBuyButton(buy, function()
+					if UpgradesController.markCashBundlePurchasePending then
+						UpgradesController.markCashBundlePurchasePending()
+					end
+					PurchasePrompt.promptProduct(entry[3])
+				end)
+			end
+		end
+	end
+end
+
+local function setCashBundleLabel(panel: Instance, productId: number, reward: number)
+	local info = panel:FindFirstChild("Info")
+	local amount = info and info:FindFirstChild("Amount")
+	if amount and (amount:IsA("TextLabel") or amount:IsA("TextButton")) then
+		(amount :: TextLabel).Text = BrainrotEconomy.formatCashShort(reward)
+	end
+end
+
+local function applyFloorCashBundleLabels()
+	local effective = StoreConfig.MIN_OFFLINE_24H_CASH
+	for _, entry in cashBundlePanels do
+		local multiplier = StoreConfig.CASH_BUNDLE_MULTIPLIERS[entry.productId]
+		if multiplier then
+			local reward = math.floor(effective * multiplier)
+			setCashBundleLabel(entry.panel, entry.productId, reward)
 		end
 	end
 end
@@ -278,6 +308,7 @@ local function refreshCashBundles()
 	if #cashBundlePanels == 0 then
 		return
 	end
+	applyFloorCashBundleLabels()
 	local folder = ReplicatedStorage:FindFirstChild("StoreRemotes")
 	local rf = folder and folder:FindFirstChild("GetCashBundleRewards")
 	if not rf or not rf:IsA("RemoteFunction") then
@@ -287,17 +318,17 @@ local function refreshCashBundles()
 		local ok, rewards = pcall(function()
 			return rf:InvokeServer()
 		end)
-		if not ok or typeof(rewards) ~= "table" then
+		if not ok then
+			warn("[StoreController] GetCashBundleRewards failed:", rewards)
+			return
+		end
+		if typeof(rewards) ~= "table" then
 			return
 		end
 		for _, entry in cashBundlePanels do
 			local reward = rewards[entry.productId]
 			if typeof(reward) == "number" then
-				local info = entry.panel:FindFirstChild("Info")
-				local amount = info and info:FindFirstChild("Amount")
-				if amount and (amount:IsA("TextLabel") or amount:IsA("TextButton")) then
-					(amount :: TextLabel).Text = BrainrotEconomy.formatCashShort(reward)
-				end
+				setCashBundleLabel(entry.panel, entry.productId, reward)
 			end
 		end
 	end)
@@ -332,12 +363,25 @@ local function wireFreeBrainrot(storeFrame: Instance)
 	local remotesFolder = ReplicatedStorage:FindFirstChild("StoreRemotes")
 	local claimRE = remotesFolder and remotesFolder:FindFirstChild("ClaimFreeBrainrot")
 
+	local freeCelebrated = false
+
+	local function celebrateFreeClaim()
+		if freeCelebrated then
+			return
+		end
+		freeCelebrated = true
+		GameSoundEffects.playPurchase()
+		GameSoundEffects.playPurchaseShake()
+		pcall(function()
+			require(ReplicatedStorage.EssentialsShared.EffectsController).celebratePurchase(player)
+		end)
+	end
+
 	local state = wireBuyButton(freeGui, function()
 		if player:GetAttribute(StoreConfig.ATTR.FREE_UNCOMMON_CLAIMED) == true then
 			GameSoundEffects.playErrorNotif()
 			return
 		end
-		-- Satisfying scale pulse before celebrating.
 		local scale = getOrAddUIScale(freeGui)
 		local pulse = TweenService:Create(scale, CLICK_TWEEN, { Scale = 1.12 })
 		pulse.Completed:Once(function()
@@ -349,15 +393,13 @@ local function wireFreeBrainrot(storeFrame: Instance)
 		if re and re:IsA("RemoteEvent") then
 			re:FireServer()
 		end
-		GameSoundEffects.playPurchase()
-		GameSoundEffects.playPurchaseShake()
-		pcall(function()
-			require(ReplicatedStorage.EssentialsShared.EffectsController).celebratePurchase(player)
-		end)
 	end)
 
 	local function refresh()
 		local claimed = player:GetAttribute(StoreConfig.ATTR.FREE_UNCOMMON_CLAIMED) == true
+		if claimed then
+			celebrateFreeClaim()
+		end
 		setButtonEnabled(freeGui, state, not claimed)
 		-- Once claimed the whole QuickButtons strip is hidden.
 		if quick and quick:IsA("GuiObject") then
@@ -403,7 +445,18 @@ local function init()
 	wireServerLuck(container)
 	wirePacks(container)
 	collectCashBundlePanels(container)
+	applyFloorCashBundleLabels()
 	local refreshFreeBrainrot = wireFreeBrainrot(storeFrame)
+
+	task.spawn(function()
+		local storeRemotes = ReplicatedStorage:WaitForChild("StoreRemotes", 30)
+		local closeRE = storeRemotes and storeRemotes:WaitForChild("CloseStore", 30)
+		if closeRE and closeRE:IsA("RemoteEvent") then
+			closeRE.OnClientEvent:Connect(function()
+				HUDController.closeFrameByName("Store")
+			end)
+		end
+	end)
 
 	-- Refresh dynamic labels when the store opens and periodically while open.
 	local function onStoreVisibility()

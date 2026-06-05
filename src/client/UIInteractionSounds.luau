@@ -1,3 +1,4 @@
+-- [ACTIVE] UIInteractionSounds
 --[[
 	UIInteractionSounds — UIClick / UIHover from SoundService.UISounds.SoundGroup
 	Respects Settings: "UI Sounds" toggle + SFX slider drives SoundGroup volumes.

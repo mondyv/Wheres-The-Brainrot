@@ -1,3 +1,4 @@
+-- [ACTIVE] BrainrotHeaderStyle
 --[[
 	Gradient / tier names for BrainrotHeader billboards + Sell UI rows (client + server).
 	UIGradient children live on the TextLabel that renders the text (not UIStroke).
@@ -13,13 +14,13 @@ M.RARITY_GRADIENT_NAME = {
 	mythic = "MYTHIC",
 	legendary = "LEGENDARY",
 	["brainrot god"] = "GODLY",
-	secret = "GODLY",
+	secret = "SECRET",
 }
 
 M.RARITY_GRADIENT_ALIASES = {
 	mythic = { "MYTHICAL" },
 	["brainrot god"] = { "BrainrotGod" },
-	secret = { "BrainrotGod", "SECRET" },
+	secret = { "Secret" },
 }
 
 M.RARITY_DISPLAY_NAME = {
@@ -189,9 +190,77 @@ function M.setTextOnNode(node: Instance, text: string)
 	end
 end
 
+local gameGradientsRarityFolder: Folder? = nil
+
+local function getGameGradientsRarityFolder(): Folder?
+	if gameGradientsRarityFolder and gameGradientsRarityFolder.Parent then
+		return gameGradientsRarityFolder
+	end
+	local RunService = game:GetService("RunService")
+	if not RunService:IsClient() then
+		return nil
+	end
+	local Players = game:GetService("Players")
+	local player = Players.LocalPlayer
+	if not player then
+		return nil
+	end
+	local main = player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("Main")
+	local gameGradients = main and main:FindFirstChild("GameGradients")
+	local rarities = gameGradients and gameGradients:FindFirstChild("Rarity")
+	if rarities and rarities:IsA("Folder") then
+		gameGradientsRarityFolder = rarities
+	end
+	return gameGradientsRarityFolder
+end
+
+local function findGameGradientTemplate(names: { string }): UIGradient?
+	local folder = getGameGradientsRarityFolder()
+	if not folder then
+		return nil
+	end
+	for _, name in names do
+		local template = folder:FindFirstChild(name)
+		if template and template:IsA("UIGradient") then
+			return template
+		end
+		local title = string.sub(name, 1, 1) .. string.lower(string.sub(name, 2))
+		template = folder:FindFirstChild(title)
+		if template and template:IsA("UIGradient") then
+			return template
+		end
+		local upper = string.upper(name)
+		template = folder:FindFirstChild(upper)
+		if template and template:IsA("UIGradient") then
+			return template
+		end
+	end
+	return nil
+end
+
+function M.ensureRarityGradient(node: Instance, rarityId: string)
+	local names = M.rarityGradientNames(rarityId)
+	local host = M.gradientHost(node)
+	for _, name in names do
+		for _, gradient in collectGradientChildren(node) do
+			if gradientNameMatches(gradient.Name, { name }) then
+				return
+			end
+		end
+	end
+	local template = findGameGradientTemplate(names)
+	if not template then
+		return
+	end
+	local clone = template:Clone()
+	clone.Enabled = true
+	clone.Parent = host
+end
+
 function M.applyRarityLabel(node: Instance, rarityId: string)
 	local display = M.RARITY_DISPLAY_NAME[rarityId] or string.upper(rarityId)
 	M.setTextOnNode(node, display)
+	M.ensureRarityGradient(node, rarityId)
 	M.selectGradient(node, M.rarityGradientNames(rarityId))
 	if node:IsA("GuiObject") then
 		(node :: GuiObject).Visible = true
@@ -224,19 +293,99 @@ function M.applyLevelLabel(node: Instance, level: number)
 	end
 end
 
-function M.applyRateLabel(node: Instance, rateText: string)
-	M.setTextOnNode(node, rateText)
+function M.applyRateGradient(node: Instance)
 	local gradients = collectGradientChildren(node)
 	if #gradients == 1 then
 		for _, gradient in gradients do
 			gradient.Enabled = true
 		end
-	elseif #gradients > 1 then
+	elseif #gradients > 0 then
 		M.selectGradient(node, "Rate")
 	end
+end
+
+function M.applyRateLabel(node: Instance, rateText: string)
+	M.setTextOnNode(node, rateText)
+	M.applyRateGradient(node)
 	if node:IsA("GuiObject") then
 		(node :: GuiObject).Visible = true
 	end
+end
+
+local headerInfoCache: { [string]: Instance } = {}
+
+function M.getHeaderInfoChild(childName: string): Instance?
+	local cached = headerInfoCache[childName]
+	if cached and cached.Parent then
+		return cached
+	end
+
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local templates = ReplicatedStorage:FindFirstChild("Templates")
+	local header = templates and templates:FindFirstChild("BrainrotHeader")
+	local billboard = header and header:FindFirstChild("BillboardGui")
+	local info = billboard and billboard:FindFirstChild("Info", true)
+	local node = info and (info:FindFirstChild(childName) or info:FindFirstChild(childName, true))
+	if node then
+		headerInfoCache[childName] = node
+	end
+	return node
+end
+
+function M.cloneGradientChildren(source: Instance, target: TextLabel)
+	local sourceHost = M.gradientHost(source)
+	for _, child in sourceHost:GetChildren() do
+		if child:IsA("UIGradient") then
+			local clone = child:Clone()
+			clone.Parent = target
+		end
+	end
+end
+
+function M.activeGradientName(source: Instance): string?
+	for _, gradient in collectGradientChildren(source) do
+		if gradient.Enabled then
+			return gradient.Name
+		end
+	end
+	local all = collectGradientChildren(source)
+	if #all == 1 then
+		return all[1].Name
+	end
+	return nil
+end
+
+function M.copyActiveGradientFromSource(source: Instance, target: Instance)
+	local gradientName = M.activeGradientName(source)
+	if gradientName then
+		M.selectGradient(target, gradientName)
+	end
+end
+
+function M.copyStrokeFromSource(source: Instance, target: TextLabel, thicknessScale: number?): UIStroke?
+	local sourceLabel = M.resolveTextLabel(source)
+	if not sourceLabel then
+		return nil
+	end
+	local sourceStroke = sourceLabel:FindFirstChildOfClass("UIStroke")
+	if not sourceStroke then
+		return nil
+	end
+	local stroke = sourceStroke:Clone()
+	if typeof(thicknessScale) == "number" then
+		stroke.Thickness = sourceStroke.Thickness * thicknessScale
+	end
+	stroke.Parent = target
+	return stroke
+end
+
+function M.prepareFloatTextLabel(label: TextLabel, styleSource: Instance, textSize: number, font: Enum.Font?)
+	local sourceLabel = M.resolveTextLabel(styleSource)
+	label.Font = font or (if sourceLabel then sourceLabel.Font else Enum.Font.GothamBold)
+	label.TextSize = textSize
+	label.TextStrokeTransparency = 1
+	prepareLabelForGradient(label)
+	M.cloneGradientChildren(styleSource, label)
 end
 
 function M.applyInfoFrame(infoFrame: Instance, data: {

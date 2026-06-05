@@ -8,10 +8,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local REMOTE_NAMES = { "PurchaseEffectShow", "ProductHandlerConfetti", "ProductHandlerPurchase" }
 
 local function ensureEventsFolder(): Folder
-	local assets = ReplicatedStorage:FindFirstChild("EssentialsAssets")
+	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
 	if not assets then
 		assets = Instance.new("Folder")
-		assets.Name = "EssentialsAssets"
+		assets.Name = "EssentialAssets"
 		assets.Parent = ReplicatedStorage
 	end
 

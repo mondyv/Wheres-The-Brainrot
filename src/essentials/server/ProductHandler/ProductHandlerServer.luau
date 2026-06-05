@@ -17,10 +17,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ProductHandlerServer = {}
 
 local initialized = false
-local productHandlerConfig: { [string]: any }? = nil
-local customReceiptHandlers: { [number]: (Player, any) -> Enum.ProductPurchaseDecision? } = {}
+local productHandlerConfig = nil
+local customReceiptHandlers = {}
 
-local function getProductHandlerConfig(): { [string]: any }
+local function getProductHandlerConfig()
 	if productHandlerConfig then
 		return productHandlerConfig
 	end
@@ -51,24 +51,25 @@ local function getProductHandlerConfig(): { [string]: any }
 	return productHandlerConfig
 end
 
-local function getAssetsFolder(): Folder
-	local assetsFolder = ReplicatedStorage:FindFirstChild("EssentialsAssets")
+local function getAssetsFolder()
+	local assetsFolder = ReplicatedStorage:FindFirstChild("EssentialAssets")
 	if not assetsFolder then
 		assetsFolder = Instance.new("Folder")
-		assetsFolder.Name = "EssentialsAssets"
+		assetsFolder.Name = "EssentialAssets"
 		assetsFolder.Parent = ReplicatedStorage
 	end
-	return assetsFolder :: Folder
+	return assetsFolder
 end
 
 function ProductHandlerServer.init(self: ProductHandlerServer)
 	if initialized then
 		return
 	end
+
 	initialized = true
 
-	self._grantCallbacks = {} :: { [string]: (Player) -> () }
-	self._limitedStockServer = nil :: any
+	self._grantCallbacks = {}
+	self._limitedStockServer = nil
 	self:createRemotes()
 	self:discoverParts()
 	self:setupProcessReceipt()
@@ -90,7 +91,7 @@ function ProductHandlerServer.createRemotes(self: ProductHandlerServer)
 		remote.Name = "ProductHandlerPurchase"
 		remote.Parent = eventsFolder
 	end
-	self._purchaseRemote = remote :: RemoteEvent
+	self._purchaseRemote = remote
 
 	local confettiRemote = eventsFolder:FindFirstChild("ProductHandlerConfetti")
 	if not confettiRemote then
@@ -98,7 +99,8 @@ function ProductHandlerServer.createRemotes(self: ProductHandlerServer)
 		confettiRemote.Name = "ProductHandlerConfetti"
 		confettiRemote.Parent = eventsFolder
 	end
-	self._confettiRemote = confettiRemote :: RemoteEvent
+
+	self._confettiRemote = confettiRemote
 
 	local effectRemote = eventsFolder:FindFirstChild("PurchaseEffectShow")
 	if not effectRemote then
@@ -106,9 +108,10 @@ function ProductHandlerServer.createRemotes(self: ProductHandlerServer)
 		effectRemote.Name = "PurchaseEffectShow"
 		effectRemote.Parent = eventsFolder
 	end
-	self._effectRemote = effectRemote :: RemoteEvent
 
-	self._purchaseRemote.OnServerEvent:Connect(function(player: Player, productName: string)
+	self._effectRemote = effectRemote
+
+	self._purchaseRemote.OnServerEvent:Connect(function(player, productName)
 		if typeof(productName) ~= "string" then
 			return
 		end
@@ -169,12 +172,7 @@ function ProductHandlerServer.discoverParts(self: ProductHandlerServer)
 	end)
 end
 
-function ProductHandlerServer.promptPurchase(
-	self: ProductHandlerServer,
-	player: Player,
-	name: string,
-	entry: any
-)
+function ProductHandlerServer.promptPurchase(self: ProductHandlerServer, player: Player, name: string, entry: any)
 	if entry.type == "gamepass" then
 		local ownsPass = false
 		local success, result = pcall(function()
@@ -304,4 +302,4 @@ export type ProductHandlerServer = typeof(ProductHandlerServer) & {
 	_effectRemote: RemoteEvent,
 }
 
-return ProductHandlerServer :: ProductHandlerServer
+return ProductHandlerServer

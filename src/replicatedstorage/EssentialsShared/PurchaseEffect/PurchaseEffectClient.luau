@@ -22,21 +22,15 @@ local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
 	Enum.CoreGuiType.PlayerList,
 }
 
-local fadeInTween = TweenInfo.new(
-	PurchaseEffectConfig.fadeInDuration,
-	PurchaseEffectConfig.easingStyle,
-	Enum.EasingDirection.Out
-)
-local fadeOutTween = TweenInfo.new(
-	PurchaseEffectConfig.fadeOutDuration,
-	PurchaseEffectConfig.easingStyle,
-	Enum.EasingDirection.In
-)
+local fadeInTween =
+	TweenInfo.new(PurchaseEffectConfig.fadeInDuration, PurchaseEffectConfig.easingStyle, Enum.EasingDirection.Out)
+local fadeOutTween =
+	TweenInfo.new(PurchaseEffectConfig.fadeOutDuration, PurchaseEffectConfig.easingStyle, Enum.EasingDirection.In)
 
 local REMOTE_WAIT_SEC = 8
 
 local function findEventsFolder(): Instance?
-	for _, folderName in { "EssentialsAssets", "EssentialAssets" } do
+	for _, folderName in { "EssentialAssets", "EssentialAssets" } do
 		local assets = ReplicatedStorage:FindFirstChild(folderName)
 		if assets then
 			local events = assets:FindFirstChild("Events")
@@ -51,7 +45,7 @@ end
 local function waitForRemote(name: string): RemoteEvent?
 	local events = findEventsFolder()
 	if not events then
-		local assets = ReplicatedStorage:WaitForChild("EssentialsAssets", REMOTE_WAIT_SEC)
+		local assets = ReplicatedStorage:WaitForChild("EssentialAssets", REMOTE_WAIT_SEC)
 		if assets then
 			events = assets:WaitForChild("Events", REMOTE_WAIT_SEC)
 		end

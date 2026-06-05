@@ -1,10 +1,7 @@
---[[
-	Server authority: index unlocks per brainrot + mutation, golden quest progress.
---]]
-
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
-local IndexConfig = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("IndexConfig"))
+local IndexConfig = require(ReplicatedStorage.Shared.IndexConfig)
 local Brainrots = require(script.Parent:WaitForChild("Brainrots"))
 
 local M = {}
@@ -188,7 +185,10 @@ function M.buildCatalog(): { { name: string, rarity: string, baseIncome: number 
 	return out
 end
 
-function M.packStateForClient(player: Player, mutationId: string): {
+function M.packStateForClient(
+	player: Player,
+	mutationId: string
+): {
 	unlocked: { [string]: boolean },
 	goldenCount: number,
 	questComplete: boolean,

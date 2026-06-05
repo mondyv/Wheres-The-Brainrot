@@ -8,7 +8,7 @@ local ProductHandlerClient = {}
 local REMOTE_WAIT_SEC = 8
 
 local function findEventsFolder(): Instance?
-	for _, folderName in { "EssentialsAssets", "EssentialAssets" } do
+	for _, folderName in { "EssentialAssets", "EssentialAssets" } do
 		local assets = ReplicatedStorage:FindFirstChild(folderName)
 		if assets then
 			local events = assets:FindFirstChild("Events")
@@ -24,7 +24,7 @@ function ProductHandlerClient.init(self: ProductHandlerClient)
 	task.spawn(function()
 		local events = findEventsFolder()
 		if not events then
-			local assets = ReplicatedStorage:WaitForChild("EssentialsAssets", REMOTE_WAIT_SEC)
+			local assets = ReplicatedStorage:WaitForChild("EssentialAssets", REMOTE_WAIT_SEC)
 			if assets then
 				events = assets:WaitForChild("Events", REMOTE_WAIT_SEC)
 			end

@@ -1,1448 +1,2259 @@
--- [ACTIVE] SwingSystem.client
--- SwingSystem.client.luau
--- Jump to leave the ground; while airborne, swing UI + preview line appear and a second jump attaches to the nearest SwingTarget vine.
--- WASD steers along the arc; vine glide pulls you toward the hook + lighter gravity (Mowgli-style).
--- Release Jump (Space / ButtonA release) to detach with a momentum-based launch (preserves arc speed + forward impulse).
--- Upgrade attributes on the player: SwingRange, SwingForce, RopeLength (all numbers)
+-- MergedFriendSwingSystem.client.lua
+-- Drop this LocalScript into StarterPlayerScripts.
+-- Swing targets come from your friend's setup.
+-- Performance mode uses CollectionService tag "SwingTarget" only.
+-- The old workspace.Map.Vine name fallback exists below, but is off by default
+-- because huge Vine folders can hard-freeze the client while scanning.
+--
+-- Controls:
+-- PC: hold Space near a close visible target, or jump/hold Space for longer reach.
+-- Gamepad: hold R2 near a close visible target, or jump/hold R2 for longer reach.
+-- Mobile: hold the Jump button near a close visible target, or jump/hold it for longer reach.
 
-local Players           = game:GetService("Players")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService        = game:GetService("RunService")
+local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
-local UserInputService  = game:GetService("UserInputService")
-local TweenService      = game:GetService("TweenService")
-local Debris            = game:GetService("Debris")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Debris = game:GetService("Debris")
 
 local player = Players.LocalPlayer
-local camera: Camera = workspace.CurrentCamera
+local camera = workspace.CurrentCamera
 
-local gameSoundEffects: any = nil
+local sharedFolder = ReplicatedStorage:FindFirstChild("Shared") or ReplicatedStorage:WaitForChild("Shared", 10)
 
-local function getGameSoundEffects()
-	if gameSoundEffects then
-		return gameSoundEffects
-	end
-	local ps = player:FindFirstChild("PlayerScripts")
-	if not ps then
+local function tryRequireModule(parent, name)
+	local module = parent and parent:FindFirstChild(name)
+	if not module or not module:IsA("ModuleScript") then
 		return nil
 	end
-	local client = ps:FindFirstChild("Client")
-	if not client then
-		return nil
-	end
-	local mod = client:FindFirstChild("GameSoundEffects")
-	if not mod or not mod:IsA("ModuleScript") then
-		return nil
-	end
-	local ok, loaded = pcall(require, mod)
+
+	local ok, result = pcall(require, module)
 	if ok then
-		gameSoundEffects = loaded
+		return result
 	end
-	return gameSoundEffects
+
+	warn("[MergedFriendSwingSystem] Failed to load module:", name, result)
+	return nil
 end
 
-task.defer(function()
-	local ps = player:WaitForChild("PlayerScripts", 20)
-	if not ps then
-		return
+local SafezoneUtil = tryRequireModule(sharedFolder, "SafezoneUtil")
+local SwingUpgrades = tryRequireModule(sharedFolder, "SwingUpgrades")
+local SwingProgression = tryRequireModule(sharedFolder, "SwingProgression")
+
+-- Target setup from the original friend script.
+local SWING_TARGET_TAG = "SwingTarget"
+local SWING_TARGET_NAME = "SwingTarget"
+local MAP_FOLDER_NAME = "Map"
+local VINE_FOLDER_NAME = "Vine"
+
+-- Tuning.
+local SWING_RANGE = 64
+local ROPE_MAX_LENGTH = 56
+local ROPE_MIN_LENGTH = 13
+local ROPE_REST_LENGTH_MULT = 0.5
+local ROPE_MOMENTUM_LENGTH_MULT = 0.24
+local ROPE_DISTANCE_STRETCH_MULT = 0.055
+local ROPE_LENGTH_RESPONSE = 9
+local ROPE_ATTACH_START_MULT = 0.9
+local MIN_LOOK_DOT = 0.3
+local AIRBORNE_TARGET_LOOK_DOT = 0.18
+local TARGET_SCREEN_RADIUS_LIMIT = 0.52
+local MIN_TARGET_HEIGHT_OFFSET = -8
+local TARGET_SCAN_INTERVAL = 0.08
+local TARGET_CANDIDATE_EXTRA_RADIUS = 8
+local TARGET_GRID_CELL_SIZE = 64
+local TARGET_MAX_CANDIDATES_PER_SCAN = 90
+local TARGET_FULL_SCAN_FALLBACK_LIMIT = 180
+local TARGET_ENABLE_VINE_NAME_FALLBACK = false
+local TARGET_BACKGROUND_SEED_ENABLED = false
+local TARGET_SKIP_VINE_SEED_WHEN_TAGGED = true
+local TARGET_SEED_BATCH_SIZE = 12
+local TARGET_SEED_MAX_SLICE_TIME = 0.004
+local TARGET_SEED_STEP_WAIT = 0.05
+local ENABLE_TARGET_HIGHLIGHT = false
+local ATTACH_RETRY_TIME = 0.08
+local ATTACH_COOLDOWN = 0.18
+local MIN_SWING_LOCK_TIME = 0.28
+-- Swinging is air-gated: ground never shows UI and never attaches.
+local AIRBORNE_TARGET_UI_EXTRA = 18
+
+local STEER_FORCE = 70
+local ARC_FORCE = 44
+local SPEED_PUMP = 1.1
+local MAX_SWING_SPEED = 94
+local FORCE_DECAY_TIME = 6
+local FORCE_MIN_MULT = 0.76
+local ANGULAR_DAMP = 7.5
+local FLOOR_CLEARANCE = 5
+
+local ZIP_SPRING_STIFFNESS = 22
+local ZIP_SPRING_DAMPING = 16
+local ZIP_SPRING_MAX_ACCEL = 700
+local ATTACH_ZIP_DV = 13
+local ZIP_PULL_TIME = 0.5
+
+local LAUNCH_FORWARD_DV = 72
+local LAUNCH_MOMENTUM_RATIO = 0.14
+local LAUNCH_UP_DV = 31
+local LAUNCH_CHARGE_DV = 8
+local LAUNCH_FORWARD_INPUT_DV = 18
+local LAUNCH_SPEED_CAP = 120
+local MIN_HOLD_FOR_FULL_LAUNCH = 0.14
+local CHARGE_TIME = 0.95
+local FORWARD_CHARGE_TIME = 1.05
+local SWING_MOMENTUM_BUILD_RATE = 0.68
+local SWING_MOMENTUM_FORWARD_BUILD_RATE = 0.34
+local SWING_MOMENTUM_IDLE_DECAY_RATE = 0.82
+local SWING_MOMENTUM_BAD_INPUT_DECAY_RATE = 0.7
+local SWING_DEAD_HANG_MOMENTUM_BUILD_RATE = 0.54
+local SWING_RHYTHM_BUILD_RATE = 0.58
+local SWING_RHYTHM_DECAY_RATE = 1.25
+local SWING_REVERSAL_BUILD_RATE = 0.46
+local SWING_RHYTHM_FORCE = 54
+local SWING_REVERSAL_FORCE = 62
+local SWING_INPUT_ORBIT_FORCE = 42
+local SWING_MOMENTUM_SPEED_BONUS = 0.36
+local SWING_MOMENTUM_LAUNCH_BONUS = 0.3
+
+local FOV_SPEED = 4.5
+local FOV_MAX = 96
+local ATTACH_FOV_PUNCH = 5
+local ATTACH_FOV_TIME = 0.28
+local LAUNCH_FOV_BOOST = 7
+local LAUNCH_FOV_TIME = 0.34
+local LANDING_FOV_KICK = 5
+local LANDING_FOV_TIME = 0.34
+
+-- Set this false if you decide the grounded camera assist feels annoying.
+local ENABLE_GROUNDED_CAMERA_ASSIST = false
+local CAMERA_ASSIST_RANGE = 50
+local CAMERA_ASSIST_STRENGTH = 0.72
+local CAMERA_ASSIST_MIN_LOOK_DOT = 0.52
+
+local DEAD_HANG_MOVE_FORCE = 68
+local AVATAR_TURN_RESPONSIVENESS = 38
+local AVATAR_FAST_TURN_DOT = -0.12
+local AVATAR_NATURAL_FACE_TURN_RATE = 12
+local AVATAR_NATURAL_FACE_FAST_TURN_RATE = 22
+
+local SWING_CAMERA_ROLL_MAX = math.rad(5)
+local SWING_CAMERA_LAG_MAX = 0.72
+local SWING_CAMERA_EFFECT_SPEED = 7
+local LAUNCH_CAMERA_SHAKE_TIME = 0.3
+local LAUNCH_CAMERA_SHAKE_STRENGTH = 0.22
+local LANDING_CAMERA_SHAKE_TIME = 0.46
+local LANDING_CAMERA_SHAKE_STRENGTH = 0.62
+
+local PREVIEW_COLOR = Color3.fromRGB(90, 220, 255)
+local READY_COLOR = Color3.fromRGB(70, 255, 115)
+local NOT_READY_COLOR = Color3.fromRGB(255, 70, 70)
+local TARGET_VISUAL_SMOOTH_SPEED = 10
+local PREVIEW_FADE_SPEED = 12
+local READY_TEXT_BOB_SPEED = 8
+local READY_TEXT_BOB_PIXELS = 5
+local ROPE_COLOR_A = Color3.fromRGB(255, 255, 255)
+local ROPE_COLOR_B = Color3.fromRGB(90, 220, 255)
+
+-- Hanging animation. If Roblox refuses to load it in your place, swinging still works.
+-- If this asset is not shared with the experience yet, Roblox will warn in Studio.
+local ENABLE_HANG_ANIMATIONS = true
+local HANG_ANIM_RIGHT = "rbxassetid://89340798605235"
+local HANG_ANIM_LEFT = "rbxassetid://89340798605235"
+
+local function flatUnit(v)
+	local f = Vector3.new(v.X, 0, v.Z)
+	if f.Magnitude > 0.05 then
+		return f.Unit
 	end
-	ps:WaitForChild("Client", 20)
-	getGameSoundEffects()
-end)
-
-local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
-local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
-local SwingProgression = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingProgression"))
-
--- Unique name per boot() so BindToRenderStep doesn’t collide across respawns.
-local r6RenderBindSerial = 0
-
--- ───────────────────────────── TUNABLES ──────────────────────────────────────
-local BASE_RANGE         = 56    -- grapple search radius in studs (starting reach)
-local BASE_ROPE          = 56
-local BASE_FORCE         = 68    -- camera-look tangent steering (starting power)
-local FORCE_DECAY_TIME   = 6.0
-local FORCE_MIN_MULT     = 0.75
-local ANGULAR_DAMP       = 6.0
--- SpringConstraint: FreeLength=0 means force = dist * stiffness, always pulling toward vine, never pushes back
-local SPRING_FREE_LENGTH = 0
-local SPRING_STIFFNESS   = 100
-local SPRING_DAMPING     = 20
-local ZIP_TOWARD_DV          = 19    -- studs/s into the arc on attach
-local LAUNCH_CAMERA_BLEND    = 0.28  -- how much camera look steers launch vs current arc direction
-local LAUNCH_FORWARD_CAMERA_MIX = 0.24
-local LAUNCH_DURATION        = 0.42  -- seconds post-release camera/FOV treats player as launched
-local REATTACH_ZIP_MULT      = 0.4   -- zip impulse scale when re-hooking soon after a release
-local REATTACH_ZIP_GRACE      = 0.4   -- seconds after detach where zip is reduced
-local MIN_SWING_HOLD_LAUNCH   = 0.1  -- shorter swings get a softer release (anti spam-fling)
-local REATTACH_AIR_GRACE     = 1.2
-	local GRAPPLE_INPUT_COOLDOWN = 0.52
--- Grapple only to vines roughly in front of the camera (blocks snagging behind you).
-local MIN_GRAPPLE_LOOK_DOT = 0.18
-local MAX_SWING_SPEED        = 80
-local FOV_MAX              = 96
-local FOV_SPEED            = 4.2   -- smooth widen while accelerating on the arc
-local LANDING_BLOCK_VEL_MIN = 18  -- landing speed that spawns block burst + camera shake
-local LANDING_BLOCK_VEL_MAX = 92
-local LANDING_CAM_SHAKE_DURATION = 0.36
-local LANDING_CAM_SHAKE_POS = 0.13
--- Hanging swing camera: lag + roll only (no positional shake / high-frequency wobble).
-local CAM_LAG_STUDS_MAX      = 0.95
-local CAM_LAG_SMOOTH         = 3.8
-local CAM_ROLL_DEG_MAX       = 2.8
-local CAM_ROLL_SMOOTH        = 6.5
-local ATTACH_PUNCH_DURATION  = 0.3
-local ATTACH_PUNCH_FOV       = 5.5  -- brief zoom-in on hook
-local LAUNCH_FOV_BOOST       = 4.5  -- tiny release FOV punch (layered on speed FOV)
-local LAUNCH_FOV_DURATION    = 0.38
-local LAUNCH_CAM_SHAKE_DURATION = 0.24
-local LAUNCH_CAM_SHAKE_MAX   = 0.28
-local SWING_CAM_RENDER_STEP  = "SwingSystem_CameraFX"
--- Pendulum arc when rope is extended; floor guard avoids slamming into plots.
-local SWING_FLOOR_CLEARANCE = 6
-local SWING_MAX_DROP_BELOW_ANCHOR = 40
-local SWING_EXT_ARC_START = 0.42
-
-local COLOR_NEAR     = Color3.fromRGB(90, 210, 255)
-local COLOR_BEST     = Color3.fromRGB(55, 255, 105)
-local COLOR_BLOCKED  = Color3.fromRGB(255, 72, 88) -- safe zone: in range but grapple disabled
-local BEAM_GREEN_A   = Color3.fromRGB(30, 255, 100)
-local BEAM_GREEN_B   = Color3.fromRGB(10, 200, 70)
-
---[[  R6 swing hang clips (camera-right vine → RightHand clip index 1; camera-left → Left clip index 2):
-	HangingRight  rbxassetid://72668212449531
-	HangingLeft   rbxassetid://85555597079083
-]]
-local ANIM_HANGING_RIGHT = "rbxassetid://72668212449531"
-local ANIM_HANGING_LEFT = "rbxassetid://85555597079083"
--- ─────────────────────────────────────────────────────────────────────────────
-
-local function isJumpReleaseKey(key: Enum.KeyCode): boolean
-	return key == Enum.KeyCode.Space or key == Enum.KeyCode.ButtonA
+	return nil
 end
 
-local function boot(character: Model)
-	local hrp      = character:WaitForChild("HumanoidRootPart", 30) :: BasePart
-	local humanoid = character:WaitForChild("Humanoid",          30) :: Humanoid
-	local baseWalkSpeed = humanoid.WalkSpeed
-	humanoid:SetAttribute("BrainrotBaseWalkSpeed", baseWalkSpeed)
-	local function applyBrainrotWalkSpeed()
-		local slow = player:GetAttribute("SlowWalkEnabled") == true
-		humanoid.WalkSpeed = baseWalkSpeed * (if slow then 1 else 1.75)
-	end
-	applyBrainrotWalkSpeed()
-	local walkSpeedAttrConn = player:GetAttributeChangedSignal("SlowWalkEnabled"):Connect(applyBrainrotWalkSpeed)
+local function safeIsKeyDown(keyCode)
+	local ok, down = pcall(function()
+		return UserInputService:IsKeyDown(keyCode)
+	end)
+	return ok and down == true
+end
 
-	-- ── Animations / R6 Motor6D fallback ─────────────────────────────────────
-	-- Load the hang clip first. If it succeeds, use Animator-only (no Motor6D wrestling).
-	-- Procedural shoulders run only when the clip fails and we have classic R6 joints.
-	local animateScript: Instance? = character:FindFirstChild("Animate")
-	local function setDefaultAnimateEnabled(on: boolean)
-		local animSc = animateScript or character:FindFirstChild("Animate")
-		if animSc then
-			animateScript = animSc
-		end
-		if animSc and animSc:IsA("LocalScript") then
-			(animSc :: LocalScript).Disabled = not on
+local function getFirstNumberAttribute(names)
+	for _, name in ipairs(names) do
+		local value = player:GetAttribute(name)
+		if typeof(value) == "number" then
+			return value
 		end
 	end
+	return nil
+end
 
-	local useR6Procedural = false
-	local shoulderSwingAlpha = 0
-	local r6Pose = {
-		rs = nil :: Motor6D?,
-		ls = nil :: Motor6D?,
-		baseRS = nil :: CFrame?,
-		baseLS = nil :: CFrame?,
-		swingIdx = 1,
-	}
-
-	local animTracks: { AnimationTrack } = {}
-	local activeTrack: AnimationTrack? = nil
-	--- Camera-relative side index (1 right / 2 left): matches animTracks[1]/[2] and procedural pose.
-	local lastSwingAnimIdx: number? = nil
-
-	local animator = humanoid:WaitForChild("Animator") :: Animator
-	for _, assetId in { ANIM_HANGING_RIGHT, ANIM_HANGING_LEFT } do
-		local anim = Instance.new("Animation")
-		anim.AnimationId = assetId
-		local ok, trackOrErr = pcall(function()
-			return animator:LoadAnimation(anim)
-		end)
-		if ok and typeof(trackOrErr) == "Instance" and trackOrErr:IsA("AnimationTrack") then
-			local tr = trackOrErr :: AnimationTrack
-			tr.Priority = Enum.AnimationPriority.Action4
-			tr.Looped = true
-			table.insert(animTracks, tr)
-		else
-			warn(
-				"[SwingSystem] Failed to load swing animation:",
-				assetId,
-				trackOrErr,
-				"(permissions / deleted asset / wrong rig vs character)"
-			)
-		end
+local function getPowerStats()
+	if not (SwingProgression and SwingUpgrades) then
+		return nil
+	end
+	if typeof(SwingProgression.powerStats) ~= "function" then
+		return nil
 	end
 
-	local hasR6Shoulders = false
-	if humanoid.RigType == Enum.HumanoidRigType.R6 then
-		local torso = character:WaitForChild("Torso", 10)
-		if torso then
-			local rs = torso:FindFirstChild("Right Shoulder")
-			local ls = torso:FindFirstChild("Left Shoulder")
-			if rs and ls and rs:IsA("Motor6D") and ls:IsA("Motor6D") then
-				hasR6Shoulders = true
-				r6Pose.rs = rs
-				r6Pose.ls = ls
-				r6Pose.baseRS = rs.C0
-				r6Pose.baseLS = ls.C0
-			end
-		end
+	local attrName = SwingUpgrades.POWER_LEVEL_ATTR
+	local level = nil
+	if typeof(attrName) == "string" then
+		level = player:GetAttribute(attrName)
+	end
+	if typeof(level) ~= "number" then
+		level = getFirstNumberAttribute({ "SwingPowerLevel", "PowerLevel" }) or 0
 	end
 
-	useR6Procedural = hasR6Shoulders and (#animTracks == 0)
+	local ok, stats = pcall(function()
+		return SwingProgression.powerStats(level)
+	end)
+	if ok and typeof(stats) == "table" then
+		return stats
+	end
+	return nil
+end
 
-	if #animTracks == 0 and not useR6Procedural then
-		warn("[SwingSystem] No hang animation and no R6 shoulder fallback — swinging has no arm pose.")
+local function getRopeStats()
+	if not (SwingProgression and SwingUpgrades) then
+		return nil
+	end
+	if typeof(SwingProgression.ropeStats) ~= "function" then
+		return nil
 	end
 
-	local function swingSideIdx(attachWorld: Vector3): number
-		local idx = 1
-		local flatT = Vector3.new(attachWorld.X - hrp.Position.X, 0, attachWorld.Z - hrp.Position.Z)
-		local flatR = Vector3.new(camera.CFrame.RightVector.X, 0, camera.CFrame.RightVector.Z)
-		if flatT.Magnitude > 0.2 and flatR.Magnitude > 0.05 then
-			idx = if flatT.Unit:Dot(flatR.Unit) >= 0 then 1 else 2
-		end
-		return idx
+	local attrName = SwingUpgrades.ROPE_LEVEL_ATTR
+	local level = nil
+	if typeof(attrName) == "string" then
+		level = player:GetAttribute(attrName)
+	end
+	if typeof(level) ~= "number" then
+		level = getFirstNumberAttribute({ "RopeLevel", "SwingRopeLevel" }) or 0
 	end
 
-	local function r6HangTargets(idx: number): (CFrame, CFrame)
-		local br = r6Pose.baseRS :: CFrame
-		local bl = r6Pose.baseLS :: CFrame
-		if idx == 1 then
-			local upRR = CFrame.Angles(math.rad(-128), math.rad(-38), math.rad(12))
-			local upLR = CFrame.Angles(math.rad(-108), math.rad(22), math.rad(-6))
-			return br * upRR, bl * upLR
-		end
-		local upRL = CFrame.Angles(math.rad(-108), math.rad(-22), math.rad(6))
-		local upLL = CFrame.Angles(math.rad(-128), math.rad(38), math.rad(-12))
-		return br * upRL, bl * upLL
+	local ok, stats = pcall(function()
+		return SwingProgression.ropeStats(level)
+	end)
+	if ok and typeof(stats) == "table" then
+		return stats
 	end
+	return nil
+end
 
-	local function playSwingAnim(attachWorld: Vector3)
-		local idx = swingSideIdx(attachWorld)
-		if useR6Procedural then
-			r6Pose.swingIdx = idx
-			lastSwingAnimIdx = idx
-			return
+local function getPowerScale()
+	local stats = getPowerStats()
+	if stats then
+		if typeof(stats.maxSwingSpeed) == "number" and stats.maxSwingSpeed > 0 then
+			return math.clamp(stats.maxSwingSpeed / MAX_SWING_SPEED, 0.75, 1.7)
 		end
-		if #animTracks == 0 then
-			return
-		end
-		idx = math.clamp(idx, 1, #animTracks)
-		lastSwingAnimIdx = idx
-		local track = animTracks[idx] :: AnimationTrack
-		for _, t in animTracks do
-			if t ~= track then
-				t:Stop(0)
-			end
-		end
-		track:Play(0.12)
-		activeTrack = track
-	end
-
-	local function stopSwingAnim()
-		lastSwingAnimIdx = nil
-		if useR6Procedural then
-			return
-		end
-		for _, t in animTracks do
-			t:Stop(0.2)
-		end
-		activeTrack = nil
-	end
-
-	-- ── Landing block burst ───────────────────────────────────────────────────
-	-- Grass/dirt chunk colours — top face green, body earthy brown
-	local BLOCK_COLORS = {
-		Color3.fromRGB(106, 127,  63),  -- dark grass green
-		Color3.fromRGB( 82, 109,  39),  -- olive grass
-		Color3.fromRGB(121, 152,  57),  -- medium grass
-		Color3.fromRGB( 91,  65,  43),  -- dirt brown
-		Color3.fromRGB(110,  82,  50),  -- light dirt
-	}
-
-	local function spawnLandingBlocks(intensity: number)
-		-- Raycast straight down to find the floor
-		local origin    = hrp.Position
-		local rayResult = workspace:Raycast(origin, Vector3.new(0, -8, 0),
-			RaycastParams.new())
-		local floorY = rayResult and rayResult.Position.Y or (origin.Y - 3)
-		local spawnPos = Vector3.new(origin.X, floorY, origin.Z)
-
-		local count = math.floor(5 + intensity * 7)  -- 5–12 blocks
-		for _ = 1, count do
-			local size = math.random(45, 120) / 100  -- 0.45–1.2 studs — chunky blocks
-			local p = Instance.new("Part")
-			p.Size             = Vector3.new(size, size * math.random(60, 140) / 100, size)
-			p.Color            = BLOCK_COLORS[math.random(1, #BLOCK_COLORS)]
-			p.Material         = Enum.Material.Grass
-			p.CastShadow       = false
-			p.CanCollide       = false
-			p.Anchored         = false
-			p.CFrame           = CFrame.new(spawnPos + Vector3.new(
-				math.random(-20, 20) / 10, 0.2, math.random(-20, 20) / 10))
-				* CFrame.Angles(math.random() * math.pi, math.random() * math.pi, math.random() * math.pi)
-			p.Parent           = workspace
-
-			-- Outward + upward velocity with some tumble
-			local angle  = math.random() * math.pi * 2
-			local speed  = math.random(14, 28) * (0.7 + intensity * 0.3)
-			local upward = math.random(12, 22) * (0.7 + intensity * 0.3)
-			p.AssemblyLinearVelocity  = Vector3.new(math.cos(angle) * speed, upward, math.sin(angle) * speed)
-			p.AssemblyAngularVelocity = Vector3.new(
-				math.random(-8, 8), math.random(-8, 8), math.random(-8, 8))
-
-			-- Fade + shrink then auto-clean
-			TweenService:Create(p, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ Transparency = 1, Size = Vector3.one * 0.05 }):Play()
-			Debris:AddItem(p, 0.75)
+		if typeof(stats.steeringForce) == "number" and stats.steeringForce > 0 then
+			return math.clamp(stats.steeringForce / STEER_FORCE, 0.75, 1.7)
 		end
 	end
 
-	-- ── Landing / swing camera state ──────────────────────────────────────────
-	local landingSpeed = 0
-	local landedFromSwing = false
-	local swingCamRoll = 0
-	local swingCamLagWorld = Vector3.zero
-	local attachCamClock = -1e9
-	local launchCamClock = -1e9
-	local launchCamShakeIntensity = 0
-	local launchFovIntensity = 0
-	local landingCamClock = -1e9
-	local landingCamShakeIntensity = 0
-	local landingCamSeed = 0
-
-	local function landingImpactAlpha(speed: number): number
-		return math.clamp(
-			(speed - LANDING_BLOCK_VEL_MIN) / (LANDING_BLOCK_VEL_MAX - LANDING_BLOCK_VEL_MIN),
-			0,
-			1
-		)
-	end
-
-	-- ── Upgrade stats (unified curve via SwingProgression) ───────────────────
-	local swingRange = BASE_RANGE
-	local swingForce = BASE_FORCE
-	local ropeLength = BASE_ROPE
-
-	local dynMaxSwingSpeed = MAX_SWING_SPEED
-	local dynSwingArcForce = 34
-	local dynSwingSpeedPump = 0.9
-	local dynZipToward = ZIP_TOWARD_DV
-	local dynLaunchImpulseBase = 20
-	local dynLaunchMomentumRatio = 0.24
-	local dynLaunchVelocityCarry = 0.20
-	local dynMaxLaunchSpeed = 100
-	local dynLaunchChargeBonus = 14
-	local dynLaunchUpImpulse = 4.5
-	local dynLaunchDeadhangImpulse = 22
-
-	local function refreshStats()
-		local ropePts = player:GetAttribute("RopeLength")
-		local ropeAttrPts = if typeof(ropePts) == "number" then ropePts else 0
-
-		local powerLevel = player:GetAttribute(SwingUpgrades.POWER_LEVEL_ATTR)
-		local ropeLevel = player:GetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR)
-		if typeof(powerLevel) ~= "number" then
-			powerLevel = 0
-		end
-		if typeof(ropeLevel) ~= "number" then
-			ropeLevel = 0
-		end
-
-		local ps = SwingProgression.powerStats(powerLevel)
-		local rs = SwingProgression.ropeStats(ropeLevel)
-
-		swingForce = ps.steeringForce
-		dynMaxSwingSpeed = ps.maxSwingSpeed
-		dynSwingArcForce = ps.swingArcForce
-		dynSwingSpeedPump = ps.swingSpeedPump
-		dynZipToward = ps.zipToward
-		dynLaunchImpulseBase = ps.launchImpulseBase
-		dynLaunchMomentumRatio = ps.launchMomentumRatio
-		dynLaunchVelocityCarry = ps.launchVelocityCarry
-		dynMaxLaunchSpeed = ps.maxLaunchSpeed
-		dynLaunchChargeBonus = ps.launchChargeBonus
-		dynLaunchUpImpulse = ps.launchUpImpulse
-		dynLaunchDeadhangImpulse = ps.launchDeadhangImpulse
-
-		swingRange = rs.reachStuds
-		ropeLength = math.max(rs.reachStuds + ropeAttrPts * 2, 8)
-	end
-	refreshStats()
-
-	local swingRayParams = RaycastParams.new()
-	swingRayParams.FilterType = Enum.RaycastFilterType.Exclude
-	swingRayParams.FilterDescendantsInstances = { character }
-
-	local function pendulumArcDir(radial: Vector3): Vector3?
-		local grav = Vector3.new(0, -workspace.Gravity, 0)
-		local tangFall = grav - radial * grav:Dot(radial)
-		if tangFall.Magnitude < 0.06 then
-			return nil
-		end
-		return tangFall.Unit
-	end
-
-	local function swingFloorScale(anchorWorld: Vector3): number
-		local ray = workspace:Raycast(hrp.Position, Vector3.new(0, -160, 0), swingRayParams)
-		local floorY = if ray then ray.Position.Y else hrp.Position.Y - 80
-		local minSafeY = math.max(floorY + SWING_FLOOR_CLEARANCE, anchorWorld.Y - SWING_MAX_DROP_BELOW_ANCHOR)
-		local dropMargin = hrp.Position.Y - minSafeY
-		if dropMargin <= 0 then
-			return 0.1
-		end
-		if dropMargin < 10 then
-			return math.clamp(dropMargin / 10, 0.15, 1)
+	local rawPower = getFirstNumberAttribute({ "SwingPower", "Power" })
+	if not rawPower then
+		local force = getFirstNumberAttribute({ "SwingForce" })
+		if force and force > 0 then
+			return math.clamp(force / STEER_FORCE, 0.75, 1.7)
 		end
 		return 1
 	end
 
-	local function computeSwingArcForce(anchorWorld: Vector3, radial: Vector3, extT: number, mult: number, mass: number): Vector3
-		local arcDir = pendulumArcDir(radial)
-		if not arcDir then
-			return Vector3.zero
-		end
-		local extBoost = math.clamp((extT - SWING_EXT_ARC_START) / (1 - SWING_EXT_ARC_START), 0, 1)
-		extBoost = 0.38 + extBoost * 0.92
-		local floorScale = swingFloorScale(anchorWorld)
-		local strength = dynSwingArcForce * mult * extBoost * floorScale
-		return arcDir * strength * mass
+	if rawPower > 10 then
+		rawPower = rawPower / 100
 	end
 
-	local function computeSwingSpeedPump(
-		radial: Vector3,
-		arcDir: Vector3,
-		vel: Vector3,
-		extT: number,
-		mult: number,
-		mass: number
-	): Vector3
-		if extT < 0.38 then
-			return Vector3.zero
-		end
-		local tangVel = vel - radial * vel:Dot(radial)
-		local tangSpeed = tangVel.Magnitude
-		local target = dynMaxSwingSpeed * (0.58 + extT * 0.28)
-		if tangSpeed >= target then
-			return Vector3.zero
-		end
-		local pumpDir = arcDir
-		if tangVel.Magnitude > 4 then
-			if tangVel:Dot(arcDir) > 0 then
-				pumpDir = tangVel.Unit
-			elseif tangVel:Dot(arcDir) < -0.2 then
-				return Vector3.zero
-			end
-		end
-		local deficit = target - tangSpeed
-		return pumpDir * deficit * dynSwingSpeedPump * mult * mass * 0.018
+	return math.clamp(rawPower, 0.65, 1.55)
+end
+
+local function getSwingRange()
+	local ropeStats = getRopeStats()
+	if ropeStats and typeof(ropeStats.reachStuds) == "number" and ropeStats.reachStuds > 0 then
+		return math.clamp(ropeStats.reachStuds, 32, 140)
 	end
 
-	-- Grapple only works to targets within rope reach (swingRange can be larger from upgrades)
-	local function attachRadius(): number
-		return math.min(swingRange, ropeLength)
+	local rangeAttr = getFirstNumberAttribute({ "SwingRange", "ReachDistance", "Reach_Distance" })
+	if rangeAttr and rangeAttr > 0 then
+		return math.clamp(rangeAttr, 32, 140)
 	end
 
-	local statConns = {
-		player:GetAttributeChangedSignal(SwingUpgrades.POWER_LEVEL_ATTR):Connect(refreshStats),
-		player:GetAttributeChangedSignal(SwingUpgrades.ROPE_LEVEL_ATTR):Connect(refreshStats),
-		player:GetAttributeChangedSignal("RopeLength"):Connect(refreshStats),
-		player:GetAttributeChangedSignal("SwingForce"):Connect(refreshStats),
-		player:GetAttributeChangedSignal("SwingRange"):Connect(refreshStats),
-	}
+	local powerScale = getPowerScale()
+	return math.clamp(SWING_RANGE * (0.9 + (powerScale - 1) * 0.25), 42, 100)
+end
 
-	-- ── State ─────────────────────────────────────────────────────────────────
-	local isSwinging  = false
-	local isLaunched  = false
-	local isAirborne  = false
-	local swingTimer  = 0
-	local prevInRng: { [BasePart]: boolean } = {}
-
-	local swingCamBindSerial = 0
-	swingCamBindSerial += 1
-	local swingCamBindName = SWING_CAM_RENDER_STEP .. "_" .. tostring(swingCamBindSerial)
-
-	local function expSmoothScalar(current: number, target: number, dt: number, rate: number): number
-		return current + (target - current) * (1 - math.exp(-dt * rate))
+local function getRopeMaxLength()
+	local ropeStats = getRopeStats()
+	if ropeStats and typeof(ropeStats.reachStuds) == "number" and ropeStats.reachStuds > 0 then
+		local ropePts = getFirstNumberAttribute({ "RopeLength", "RopeLenght" }) or 0
+		return math.clamp(ropeStats.reachStuds + ropePts * 2, ROPE_MIN_LENGTH + 6, 150)
 	end
 
-	local function resetSwingCameraState()
-		swingCamRoll = 0
-		swingCamLagWorld = Vector3.zero
-		humanoid.CameraOffset = Vector3.zero
+	local ropeAttr = getFirstNumberAttribute({ "RopeLength", "RopeLenght" })
+	if ropeAttr and ropeAttr > 0 then
+		return math.clamp(ropeAttr, ROPE_MIN_LENGTH + 6, 150)
 	end
 
-	local function isLandingShakeActive(now: number): boolean
-		local landingAge = now - landingCamClock
-		return landingAge >= 0
-			and landingAge < LANDING_CAM_SHAKE_DURATION
-			and landingCamShakeIntensity > 0.02
+	local powerScale = getPowerScale()
+	return math.clamp(ROPE_MAX_LENGTH * (0.86 + (powerScale - 1) * 0.25), 36, 100)
+end
+
+local function getLaunchScale()
+	local stats = getPowerStats()
+	if stats and typeof(stats.maxLaunchSpeed) == "number" and stats.maxLaunchSpeed > 0 then
+		return math.clamp(stats.maxLaunchSpeed / LAUNCH_SPEED_CAP, 0.86, 1.4)
 	end
+	return math.clamp(0.92 + (getPowerScale() - 1) * 0.32, 0.86, 1.35)
+end
 
-	-- View-relative shake via CameraOffset (never touches CFrame — avoids drag / camera fight).
-	local function computeLandingCameraOffset(now: number): Vector3
-		local age = now - landingCamClock
-		if age < 0 or age >= LANDING_CAM_SHAKE_DURATION or landingCamShakeIntensity <= 0.02 then
-			return Vector3.zero
-		end
-		local u = age / LANDING_CAM_SHAKE_DURATION
-		local decay = (1 - u) * (1 - u)
-		local intensity = landingCamShakeIntensity * decay
-		local amp = LANDING_CAM_SHAKE_POS * intensity
-		local seed = landingCamSeed
-		return Vector3.new(
-			math.sin(age * 26 + seed) * amp + math.sin(age * 39 + seed * 1.6) * amp * 0.32,
-			math.sin(age * 22 + seed * 2.1) * amp * 0.88 + math.sin(age * 34 + seed * 0.8) * amp * 0.22,
-			math.sin(age * 31 + seed * 1.3) * amp * 0.18
-		)
+local function getSteerForce()
+	local stats = getPowerStats()
+	if stats and typeof(stats.steeringForce) == "number" and stats.steeringForce > 0 then
+		return stats.steeringForce
 	end
-
-	local function applySwingCameraFx(dt: number)
-		if not hrp.Parent then
-			return
-		end
-
-		local now = os.clock()
-		local attachAge = now - attachCamClock
-		local launchAge = now - launchCamClock
-		local attachActive = attachAge >= 0 and attachAge < ATTACH_PUNCH_DURATION
-		local launchActive = isLaunched or (launchAge >= 0 and launchAge < LAUNCH_FOV_DURATION)
-		local landingShakeActive = isLandingShakeActive(now)
-
-		if landingShakeActive and not isSwinging and not attachActive and not launchActive then
-			swingCamRoll = expSmoothScalar(swingCamRoll, 0, dt, 20)
-			swingCamLagWorld = swingCamLagWorld:Lerp(Vector3.zero, math.min(1, dt * 20))
-			humanoid.CameraOffset = computeLandingCameraOffset(now)
-			return
-		end
-
-		if not isSwinging and not attachActive and not launchActive and not landingShakeActive then
-			swingCamRoll = expSmoothScalar(swingCamRoll, 0, dt, 14)
-			swingCamLagWorld = swingCamLagWorld:Lerp(Vector3.zero, math.min(1, dt * 11))
-			if math.abs(swingCamRoll) < 0.0004 and swingCamLagWorld.Magnitude < 0.002 then
-				resetSwingCameraState()
-			end
-			return
-		end
-
-		if not landingShakeActive then
-			humanoid.CameraOffset = Vector3.zero
-		end
-
-		local vel = hrp.AssemblyLinearVelocity
-		local speedRef = math.max(dynMaxLaunchSpeed, dynMaxSwingSpeed, 1)
-		local speedT = math.clamp(vel.Magnitude / speedRef, 0, 1)
-
-		local targetRoll = 0
-		if (isSwinging or isLaunched) and vel.Magnitude > 4 then
-			local camRight = camera.CFrame.RightVector
-			local flatVel = Vector3.new(vel.X, 0, vel.Z)
-			if flatVel.Magnitude > 0.6 then
-				local lateral = camRight:Dot(flatVel.Unit)
-				local rollMax = math.rad(CAM_ROLL_DEG_MAX)
-				targetRoll = math.clamp(lateral * speedT * rollMax, -rollMax, rollMax)
-			end
-		end
-		swingCamRoll = expSmoothScalar(swingCamRoll, targetRoll, dt, CAM_ROLL_SMOOTH)
-
-		local lagTarget = Vector3.zero
-		if (isSwinging or isLaunched) and vel.Magnitude > 5 then
-			lagTarget = -vel.Unit * (CAM_LAG_STUDS_MAX * (0.2 + 0.8 * speedT))
-		end
-		swingCamLagWorld = swingCamLagWorld:Lerp(lagTarget, math.min(1, dt * CAM_LAG_SMOOTH))
-
-		local cf = camera.CFrame
-		if swingCamLagWorld.Magnitude > 0.001 then
-			cf = cf + swingCamLagWorld
-		end
-		if math.abs(swingCamRoll) > 0.0001 then
-			cf = cf * CFrame.Angles(0, 0, swingCamRoll)
-		end
-
-		if launchAge >= 0 and launchAge < LAUNCH_CAM_SHAKE_DURATION and launchCamShakeIntensity > 0.04 then
-			local u = launchAge / LAUNCH_CAM_SHAKE_DURATION
-			local decay = (1 - u) * (1 - u)
-			local shake = launchCamShakeIntensity * decay
-			local t = now * 21
-			cf += Vector3.new(
-				(math.noise(t, 0, 0) - 0.5) * 2 * LAUNCH_CAM_SHAKE_MAX * shake,
-				(math.noise(0, t, 1) - 0.5) * 2 * LAUNCH_CAM_SHAKE_MAX * shake * 0.35,
-				(math.noise(t, 2, 0.5) - 0.5) * 2 * LAUNCH_CAM_SHAKE_MAX * shake * 0.22
-			)
-		end
-
-		camera.CFrame = cf
-		if landingShakeActive then
-			humanoid.CameraOffset = computeLandingCameraOffset(now)
-		end
+	local attr = getFirstNumberAttribute({ "SwingForce" })
+	if attr and attr > 0 then
+		return attr
 	end
+	return STEER_FORCE * getPowerScale()
+end
 
-	RunService:BindToRenderStep(swingCamBindName, Enum.RenderPriority.Camera.Value + 1, applySwingCameraFx)
-
-	-- Remove legacy launch streak ScreenGui (horizontal speed lines) if left from older builds.
-	local function destroyLaunchSpeedFx()
-		local pg = player:FindFirstChild("PlayerGui")
-		if pg then
-			local gui = pg:FindFirstChild("SwingLaunchSpeedLines")
-			if gui then
-				gui:Destroy()
-			end
-		end
-		local blur = camera:FindFirstChild("SwingLaunchBlur")
-		if blur and blur:IsA("BlurEffect") then
-			blur:Destroy()
-		end
+local function getMaxSwingSpeed()
+	local stats = getPowerStats()
+	if stats and typeof(stats.maxSwingSpeed) == "number" and stats.maxSwingSpeed > 0 then
+		return stats.maxSwingSpeed
 	end
-	destroyLaunchSpeedFx()
+	return MAX_SWING_SPEED * getLaunchScale()
+end
 
-	-- Swing constraints / force
-	local ropeInst:      SpringConstraint? = nil
-	local ropeBodyAtt:   Attachment?       = nil
-	local ropeAnchorAtt: Attachment?       = nil
-	local forceInst:     VectorForce?      = nil
-	local forceAtt:      Attachment?       = nil
-
-	local swingTargetPart: BasePart? = nil
-	local beamInst: Beam?       = nil
-	local beamA0:   Attachment? = nil
-	local beamA1:   Attachment? = nil
-	local lastSwingEndClock = -1e9
-	local lastGrappleInputClock = -1e9
-	local lastSwingAttachClock = -1e9
-	local SWING_ATTACH_JUMP_DEBOUNCE = 0.14 -- ignore duplicate JumpRequest right after hooking (same tap)
-	-- Touch jump button does not set IsKeyDown(Space); Heartbeat uses this for swing-charge ring fill.
-	local mobileJumpHeld = false
-
-	-- R6: Animator applies Motor6D.Transform after Heartbeat — must override last frame via RenderStep + clear Transform.
-	local r6RenderBindName: string? = nil
-	if useR6Procedural then
-		r6RenderBindSerial += 1
-		r6RenderBindName = "SwingSystem_R6Hang_" .. tostring(r6RenderBindSerial)
-		RunService:BindToRenderStep(
-			r6RenderBindName,
-			Enum.RenderPriority.Last.Value + 10,
-			function(dt: number)
-				if not r6Pose.rs or not r6Pose.ls or not r6Pose.baseRS or not r6Pose.baseLS then
-					return
-				end
-				local targetAlpha = if isSwinging then 1 else 0
-				shoulderSwingAlpha += (targetAlpha - shoulderSwingAlpha) * math.min(1, dt * 14)
-				if shoulderSwingAlpha < 0.001 then
-					return
-				end
-				local trs, tls = r6HangTargets(r6Pose.swingIdx)
-				r6Pose.rs.Transform = CFrame.new()
-				r6Pose.ls.Transform = CFrame.new()
-				r6Pose.rs.C0 = r6Pose.baseRS:Lerp(trs, shoulderSwingAlpha)
-				r6Pose.ls.C0 = r6Pose.baseLS:Lerp(tls, shoulderSwingAlpha)
-			end
-		)
+local function getArcForce()
+	local stats = getPowerStats()
+	if stats and typeof(stats.swingArcForce) == "number" and stats.swingArcForce > 0 then
+		return stats.swingArcForce
 	end
+	return ARC_FORCE * getPowerScale()
+end
 
-	-- Closest point on SwingTarget surface to HRP — rope attaches there (not part center).
-	local function closestAttachWorldOnPart(p: BasePart): Vector3
-		local ok, pt = pcall(function()
-			return p:GetClosestPointOnSurface(hrp.Position)
+local function getSpeedPump()
+	local stats = getPowerStats()
+	if stats and typeof(stats.swingSpeedPump) == "number" and stats.swingSpeedPump > 0 then
+		return stats.swingSpeedPump
+	end
+	return SPEED_PUMP * getPowerScale()
+end
+
+local function getZipDv()
+	local stats = getPowerStats()
+	if stats and typeof(stats.zipToward) == "number" and stats.zipToward > 0 then
+		return stats.zipToward
+	end
+	return ATTACH_ZIP_DV * getPowerScale()
+end
+
+local function playOptionalSound(name)
+	local s = script:FindFirstChild(name)
+	if s and s:IsA("Sound") then
+		pcall(function()
+			s:Play()
 		end)
-		if ok and typeof(pt) == "Vector3" then
-			return pt :: Vector3
+	end
+end
+
+local function stopOptionalSound(name)
+	local s = script:FindFirstChild(name)
+	if s and s:IsA("Sound") then
+		pcall(function()
+			s:Stop()
+		end)
+	end
+end
+
+local function boot(character)
+	camera = workspace.CurrentCamera or camera
+
+	local humanoid = character:WaitForChild("Humanoid", 30)
+	local hrp = character:WaitForChild("HumanoidRootPart", 30)
+	if not humanoid or not hrp then
+		return function() end
+	end
+
+	local function isHrpInSafezone()
+		if not SafezoneUtil or typeof(SafezoneUtil.isCharacterInSafezone) ~= "function" then
+			return false
 		end
-		return p.Position
-	end
-	type VisEntry = { bb: BillboardGui, ring: Frame, dot: Frame, lbl: TextLabel }
-	local visMap: { [BasePart]: VisEntry } = {}
 
-	-- During swing: Space hold fills inner dot toward outer ring (visual only)
-	type SwingChargeHud = { bb: BillboardGui, ring: Frame, dot: Frame }
-	local swingChargeHud: SwingChargeHud? = nil
-	local swingChargeFill = 0
-	local SWING_CHARGE_HOLD_SEC = 1.15
-	local CHARGE_DOT_MIN = 8
-	-- Ring outer ~56px; stroke eats ~5px — fill nearly flush with inner edge
-	local CHARGE_DOT_MAX = 52
-
-	local function makeVisual(part: BasePart, color: Color3): VisEntry
-		-- BillboardGui tall enough to hold ring (56px) + gap + label (20px)
-		local bb = Instance.new("BillboardGui")
-		bb.Adornee         = part
-		bb.Size            = UDim2.fromOffset(110, 88)
-		bb.StudsOffset     = Vector3.new(0, part.Size.Y * 0.5 + 0.5, 0)
-		bb.AlwaysOnTop     = true
-		bb.LightInfluence  = 0
-		bb.Parent          = workspace
-
-		-- Ring (top 56×56, horizontally centered)
-		local ring = Instance.new("Frame")
-		ring.Size                   = UDim2.fromOffset(56, 56)
-		ring.Position               = UDim2.new(0.5, -28, 0, 0)
-		ring.BackgroundTransparency = 1
-		ring.BorderSizePixel        = 0
-		ring.Parent                 = bb
-
-		local ringCorner = Instance.new("UICorner")
-		ringCorner.CornerRadius = UDim.new(1, 0)
-		ringCorner.Parent       = ring
-
-		local ringStroke = Instance.new("UIStroke")
-		ringStroke.Color        = color
-		ringStroke.Thickness    = 2.5
-		ringStroke.Transparency = 0.08
-		ringStroke.Parent       = ring
-
-		-- Center dot
-		local dot = Instance.new("Frame")
-		dot.Size                   = UDim2.fromOffset(8, 8)
-		dot.Position               = UDim2.new(0.5, -4, 0.5, -4)
-		dot.BackgroundColor3       = color
-		dot.BackgroundTransparency = 0
-		dot.BorderSizePixel        = 0
-		dot.Parent                 = ring
-
-		local dotCorner = Instance.new("UICorner")
-		dotCorner.CornerRadius = UDim.new(1, 0)
-		dotCorner.Parent       = dot
-
-		-- Label below ring (fits inside billboard)
-		local lbl = Instance.new("TextLabel")
-		lbl.Size                = UDim2.new(1, 0, 0, 22)
-		lbl.Position            = UDim2.new(0, 0, 0, 62)
-		lbl.BackgroundTransparency = 1
-		lbl.Text                = "JUMP  ·  swing"
-		lbl.TextColor3          = color
-		lbl.TextTransparency    = 0.08
-		lbl.TextSize            = 12
-		lbl.Font                = Enum.Font.GothamBold
-		lbl.TextXAlignment      = Enum.TextXAlignment.Center
-		lbl.Parent              = bb
-
-		return { bb = bb, ring = ring, dot = dot, lbl = lbl }
+		local ok, blocked = pcall(function()
+			return SafezoneUtil.isCharacterInSafezone(character)
+		end)
+		return ok and blocked == true
 	end
 
-	local function setVisualColor(v: VisEntry, color: Color3)
-		local stroke = v.ring:FindFirstChildOfClass("UIStroke")
-		if stroke then stroke.Color = color end
-		v.dot.BackgroundColor3 = color
-		v.lbl.TextColor3       = color
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = humanoid
 	end
 
-	local function addVisual(part: BasePart)
-		if visMap[part] then return end
-		visMap[part] = makeVisual(part, COLOR_NEAR)
-	end
+	local originalFov = camera and camera.FieldOfView or 70
+	local isSwinging = false
+	local isLaunched = false
+	local isAirborne = false
+	local landedFromSwing = false
+	local landingSpeed = 0
+	local swingTimer = 0
+	local swingCharge = 0
+	local forwardSwingCharge = 0
+	local forwardHoldTime = 0
+	local swingMomentum = 0
+	local swingRhythmBoost = 0
+	local lastPumpInputSign = 0
+	local lastPumpSwitchClock = -1e9
+	local swingFaceDir = nil
+	local lastTryClock = -1e9
+	local lastAttachClock = -1e9
+	local lastGroundJumpClock = -1e9
+	local airborneStartedClock = -1e9
+	local lastLaunchClock = -1e9
+	local lastLandingClock = -1e9
+	local landingShakeStrength = 0
+	local landingShakeSeed = math.random() * 1000
+	local swingCamRoll = 0
+	local swingCamLag = Vector3.new(0, 0, 0)
+	local renderBindName = "UnifiedSwingCameraFX_" .. tostring(os.clock()) .. "_" .. tostring(math.random(1, 1000000))
 
-	local function removeVisual(part: BasePart)
-		local v = visMap[part]
-		if not v then return end
-		v.bb:Destroy()
-		visMap[part] = nil
-	end
+	local spaceHeld = false
+	local gamepadHeld = false
+	local mobileJumpHeld = false
+	local mobileJumpBound = false
 
-	local function clearVisuals()
-		for part in visMap do
-			removeVisual(part)
+	local targetCache = {}
+	local targetSet = {}
+	local targetGrid = {}
+	local targetGridKeyByPart = {}
+	local boundVines = {}
+	local targetCacheReady = false
+	local lastTargetScanClock = -1e9
+	local lastTargetScanMode = "none"
+	local scannedVisualTarget = nil
+	local scannedVisualCanSwing = false
+
+	local currentTarget = nil
+	local highlightedTarget = nil
+	local highlightedPoint = nil
+	local targetVisualShown = false
+	local anchorAttachment = nil
+	local bodyAttachment = nil
+	local ropeConstraint = nil
+	local activeRopeMaxLength = nil
+	local zipSpring = nil
+	local forceAttachment = nil
+	local steerForce = nil
+	local orientationAttachment = nil
+	local swingOrientation = nil
+	local handAttachment = nil
+	local swingBeam = nil
+	local previewAnchorPart = nil
+	local previewFrom = nil
+	local previewTo = nil
+	local previewBeam = nil
+	local previewTarget = nil
+	local previewFade = 0
+	local previewFadeGoal = 0
+	local highlight = nil
+	local markerAnchorPart = nil
+	local markerGui = nil
+	local markerLabel = nil
+	local markerRing = nil
+	local markerStroke = nil
+	local markerDot = nil
+	local lastMarkerText = nil
+	local lastVisualTarget = nil
+	local lastVisualCanSwing = nil
+	local targetReadyVisual = 0
+	local targetReadyGoal = 0
+	local targetVisualColor = NOT_READY_COLOR
+	local chargeGui = nil
+	local chargeDot = nil
+	local fallbackMobileGui = nil
+	local activeAnim = nil
+	local rightHangTrack = nil
+	local leftHangTrack = nil
+	local trails = {}
+	local conns = {}
+	local mobileConns = {}
+
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = { character }
+
+	local function loadTrack(id)
+		if not ENABLE_HANG_ANIMATIONS then
+			return nil
 		end
-	end
-
-	local function destroySwingChargeHud()
-		if swingChargeHud then
-			swingChargeHud.bb:Destroy()
-			swingChargeHud = nil
+		if id == "" then
+			return nil
 		end
-		swingChargeFill = 0
-	end
-
-	local function layoutSwingChargeDot()
-		if not swingChargeHud then
-			return
-		end
-		local t = swingChargeFill
-		local px = CHARGE_DOT_MIN + (CHARGE_DOT_MAX - CHARGE_DOT_MIN) * t
-		px = math.floor(px + 0.5)
-		local dot = swingChargeHud.dot
-		dot.Size = UDim2.fromOffset(px, px)
-		dot.Position = UDim2.new(0.5, -px * 0.5, 0.5, -px * 0.5)
-	end
-
-	local function ensureSwingChargeHud(vinePart: BasePart)
-		if swingChargeHud then
-			return
-		end
-		local bb = Instance.new("BillboardGui")
-		bb.Name = "SwingChargeHud"
-		bb.Adornee = vinePart
-		bb.AlwaysOnTop = true
-		bb.LightInfluence = 0
-		bb.Size = UDim2.fromOffset(110, 88)
-		bb.StudsOffset = Vector3.new(0, vinePart.Size.Y * 0.5 + 0.5, 0)
-		bb.Parent = workspace
-
-		local ring = Instance.new("Frame")
-		ring.Size = UDim2.fromOffset(56, 56)
-		ring.Position = UDim2.new(0.5, -28, 0, 0)
-		ring.BackgroundTransparency = 1
-		ring.BorderSizePixel = 0
-		ring.Parent = bb
-
-		local ringCorner = Instance.new("UICorner")
-		ringCorner.CornerRadius = UDim.new(1, 0)
-		ringCorner.Parent = ring
-
-		local ringStroke = Instance.new("UIStroke")
-		ringStroke.Color = BEAM_GREEN_A
-		ringStroke.Thickness = 2.5
-		ringStroke.Transparency = 0.06
-		ringStroke.Parent = ring
-
-		local dot = Instance.new("Frame")
-		dot.Size = UDim2.fromOffset(CHARGE_DOT_MIN, CHARGE_DOT_MIN)
-		dot.Position = UDim2.new(0.5, -4, 0.5, -4)
-		dot.BackgroundColor3 = BEAM_GREEN_A
-		dot.BorderSizePixel = 0
-		dot.Parent = ring
-
-		local dotCorner = Instance.new("UICorner")
-		dotCorner.CornerRadius = UDim.new(1, 0)
-		dotCorner.Parent = dot
-
-		local lbl = Instance.new("TextLabel")
-		lbl.Size = UDim2.new(1, 0, 0, 22)
-		lbl.Position = UDim2.new(0, 0, 0, 62)
-		lbl.BackgroundTransparency = 1
-		lbl.Text = "JUMP  ·  swing"
-		lbl.TextColor3 = BEAM_GREEN_A
-		lbl.TextTransparency = 0.08
-		lbl.TextSize = 12
-		lbl.Font = Enum.Font.GothamBold
-		lbl.TextXAlignment = Enum.TextXAlignment.Center
-		lbl.Parent = bb
-
-		swingChargeHud = { bb = bb, ring = ring, dot = dot }
-		layoutSwingChargeDot()
-	end
-
-	-- ── Rope beam (visual: wire from R6 hand to vine; physics stay on HRP) ─────
-	local BEAM_GRIP_R6 = Vector3.new(0, -1.15, 0)
-
-	local function handPartForSwingSide(sideIdx: number): BasePart?
-		local n = if sideIdx == 1 then "Right Arm" else "Left Arm"
-		local p = character:FindFirstChild(n)
-		if p and p:IsA("BasePart") then
-			return p
+		local anim = Instance.new("Animation")
+		anim.AnimationId = id
+		local ok, track = pcall(function()
+			return animator:LoadAnimation(anim)
+		end)
+		anim:Destroy()
+		if ok and track then
+			track.Priority = Enum.AnimationPriority.Action4
+			track.Looped = true
+			return track
 		end
 		return nil
 	end
 
-	local function placeBeamGripAttachment(att: Attachment, sideIdx: number)
-		local hand = handPartForSwingSide(sideIdx)
-		if hand then
-			att.Parent = hand
-			att.Position = BEAM_GRIP_R6
+	rightHangTrack = loadTrack(HANG_ANIM_RIGHT)
+	if HANG_ANIM_LEFT == HANG_ANIM_RIGHT then
+		leftHangTrack = rightHangTrack
+	else
+		leftHangTrack = loadTrack(HANG_ANIM_LEFT)
+	end
+
+	local function addConn(conn)
+		table.insert(conns, conn)
+		return conn
+	end
+
+	local function addMobileConn(conn)
+		table.insert(mobileConns, conn)
+		return conn
+	end
+
+	local function handPartForSide(side)
+		local names
+		if side == "Left" then
+			names = { "LeftHand", "Left Arm", "LeftLowerArm", "LeftUpperArm" }
 		else
-			att.Parent = hrp
-			att.Position = Vector3.new(0, 1.25, 0)
+			names = { "RightHand", "Right Arm", "RightLowerArm", "RightUpperArm" }
+		end
+		for _, name in ipairs(names) do
+			local p = character:FindFirstChild(name, true)
+			if p and p:IsA("BasePart") then
+				return p
+			end
+		end
+		return hrp
+	end
+
+	local function getSwingSide(attachWorld)
+		camera = workspace.CurrentCamera or camera
+		if not camera then
+			return "Right"
+		end
+		local toTarget = Vector3.new(attachWorld.X - hrp.Position.X, 0, attachWorld.Z - hrp.Position.Z)
+		local camRight = Vector3.new(camera.CFrame.RightVector.X, 0, camera.CFrame.RightVector.Z)
+		if toTarget.Magnitude > 0.1 and camRight.Magnitude > 0.1 and toTarget.Unit:Dot(camRight.Unit) < 0 then
+			return "Left"
+		end
+		return "Right"
+	end
+
+	local function playHangAnim(attachWorld)
+		local side = getSwingSide(attachWorld)
+		local track = side == "Left" and leftHangTrack or rightHangTrack
+		if activeAnim and activeAnim ~= track then
+			activeAnim:Stop(0.12)
+		end
+		activeAnim = track
+		if activeAnim then
+			activeAnim:Play(0.12)
 		end
 	end
 
-	local function spawnBeam(attachWorld: Vector3)
-		local a0 = Instance.new("Attachment")
-		placeBeamGripAttachment(a0, swingSideIdx(attachWorld))
-		beamA0 = a0
-
-		beamA1 = nil -- vine end uses rope anchor attachment (same point as rope)
-
-		local b = Instance.new("Beam")
-		b.Attachment0 = a0
-		b.Attachment1 = ropeAnchorAtt
-		b.Width0        = 0.14
-		b.Width1        = 0.1
-		b.Color         = ColorSequence.new(BEAM_GREEN_A, BEAM_GREEN_B)
-		b.Transparency  = NumberSequence.new(0.08)
-		b.LightEmission = 0.55
-		b.FaceCamera    = true
-		b.Segments      = 16
-		b.CurveSize0    = 0
-		b.CurveSize1    = 0
-		b.Parent        = character
-		beamInst        = b
+	local function stopHangAnim()
+		if rightHangTrack then
+			rightHangTrack:Stop(0.16)
+		end
+		if leftHangTrack then
+			leftHangTrack:Stop(0.16)
+		end
+		activeAnim = nil
 	end
 
-	local function destroyBeam()
-		if beamA0 then beamA0:Destroy(); beamA0 = nil end
-		if beamInst then beamInst:Destroy(); beamInst = nil end
+	local function makeTrails()
+		local limbNames = {
+			"Right Arm",
+			"Left Arm",
+			"Right Leg",
+			"Left Leg",
+			"RightHand",
+			"LeftHand",
+			"RightFoot",
+			"LeftFoot",
+		}
+		local seen = {}
+		for _, name in ipairs(limbNames) do
+			local part = character:FindFirstChild(name, true)
+			if part and part:IsA("BasePart") and not seen[part] then
+				seen[part] = true
+				local a0 = Instance.new("Attachment")
+				a0.Position = Vector3.new(0, 0.22, 0)
+				a0.Parent = part
+				local a1 = Instance.new("Attachment")
+				a1.Position = Vector3.new(0, -0.22, 0)
+				a1.Parent = part
+				local trail = Instance.new("Trail")
+				trail.Attachment0 = a0
+				trail.Attachment1 = a1
+				trail.Color = ColorSequence.new(Color3.new(1, 1, 1))
+				trail.Transparency = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.68),
+					NumberSequenceKeypoint.new(1, 1),
+				})
+				trail.WidthScale = NumberSequence.new({
+					NumberSequenceKeypoint.new(0, 0.8),
+					NumberSequenceKeypoint.new(1, 0),
+				})
+				trail.Lifetime = 0.26
+				trail.Enabled = false
+				trail.Parent = part
+				table.insert(trails, trail)
+			end
+		end
 	end
 
-	-- Preview tracer: transparent line to the grapple point whenever the swing UI shows (hidden while swinging).
-	local previewBeam: Beam? = nil
-	local previewAttFrom: Attachment? = nil
-	local previewAttTo: Attachment? = nil
-	local previewTarget: BasePart? = nil
+	makeTrails()
 
-	local PREVIEW_WHITE = Color3.new(1, 1, 1)
-	local PREVIEW_TRANSPARENCY_OK = 0.12
-	local PREVIEW_TRANSPARENCY_BLOCKED = 0.4
-	local PREVIEW_WIDTH = 0.1
-	local PREVIEW_DASH_COUNT = 18
-
-	local function previewDashedTransparency(alpha: number): NumberSequence
-		local keypoints: { NumberSequenceKeypoint } = {}
-		for i = 0, PREVIEW_DASH_COUNT do
-			local t = i / PREVIEW_DASH_COUNT
-			local solid = i % 2 == 0
-			table.insert(keypoints, NumberSequenceKeypoint.new(t, if solid then alpha else 1))
+	local function setTrailsEnabled(on)
+		for _, trail in ipairs(trails) do
+			if trail and trail.Parent then
+				trail.Enabled = on
+			end
 		end
-		return NumberSequence.new(keypoints)
 	end
 
-	local function destroyPreviewTracer()
-		if previewAttFrom then
-			previewAttFrom:Destroy()
-			previewAttFrom = nil
+	local function closestAttachWorldOnPart(part)
+		local ok, point = pcall(function()
+			return part:GetClosestPointOnSurface(hrp.Position)
+		end)
+		if ok and typeof(point) == "Vector3" then
+			return point
 		end
-		if previewAttTo then
-			previewAttTo:Destroy()
-			previewAttTo = nil
-		end
-		if previewBeam then
-			previewBeam:Destroy()
-			previewBeam = nil
-		end
-		previewTarget = nil
+		return part.Position
 	end
 
-	local function updatePreviewTracer(target: BasePart?, grappleOk: boolean)
-		if isSwinging or not target or not target.Parent then
-			destroyPreviewTracer()
+	local function targetCellCoord(value)
+		return math.floor(value / TARGET_GRID_CELL_SIZE)
+	end
+
+	local function targetGridKeyFromCoords(x, y, z)
+		return tostring(x) .. ":" .. tostring(y) .. ":" .. tostring(z)
+	end
+
+	local function targetGridKeyForPosition(pos)
+		return targetGridKeyFromCoords(targetCellCoord(pos.X), targetCellCoord(pos.Y), targetCellCoord(pos.Z))
+	end
+
+	local function removeTargetFromGrid(part)
+		local oldKey = targetGridKeyByPart[part]
+		if not oldKey then
 			return
 		end
 
-		local attachWorld = closestAttachWorldOnPart(target)
-
-		if previewTarget ~= target or not previewBeam or not previewAttFrom or not previewAttTo then
-			destroyPreviewTracer()
-			previewTarget = target
-
-			previewAttFrom = Instance.new("Attachment")
-			previewAttFrom.Name = "SwingPreviewFrom"
-			previewAttFrom.Parent = hrp
-			previewAttFrom.Position = Vector3.new(0, 0.6, 0)
-
-			previewAttTo = Instance.new("Attachment")
-			previewAttTo.Name = "SwingPreviewTo"
-			previewAttTo.Parent = target
-
-			previewBeam = Instance.new("Beam")
-			previewBeam.Name = "SwingPreviewTracer"
-			previewBeam.Attachment0 = previewAttFrom
-			previewBeam.Attachment1 = previewAttTo
-			previewBeam.Width0 = PREVIEW_WIDTH
-			previewBeam.Width1 = PREVIEW_WIDTH * 0.75
-			previewBeam.Color = ColorSequence.new(PREVIEW_WHITE)
-			previewBeam.Texture = ""
-			previewBeam.LightEmission = 0.12
-			previewBeam.FaceCamera = true
-			previewBeam.Segments = 1
-			previewBeam.CurveSize0 = 0
-			previewBeam.CurveSize1 = 0
-			previewBeam.Parent = character
+		targetGridKeyByPart[part] = nil
+		local cell = targetGrid[oldKey]
+		if not cell then
+			return
 		end
 
-		previewAttTo.Position = target.CFrame:PointToObjectSpace(attachWorld)
-		local lineAlpha = if grappleOk then PREVIEW_TRANSPARENCY_OK else PREVIEW_TRANSPARENCY_BLOCKED
-		previewBeam.Transparency = previewDashedTransparency(lineAlpha)
-		previewBeam.Color = ColorSequence.new(PREVIEW_WHITE)
+		cell[part] = nil
+		if not next(cell) then
+			targetGrid[oldKey] = nil
+		end
 	end
 
-	-- ── Target scan ───────────────────────────────────────────────────────────
-	local partCache:  { BasePart } = {}
-	local cacheStamp = 0
-	local CACHE_TTL  = 1.0
+	local function addTargetToGrid(part)
+		removeTargetFromGrid(part)
 
-	local function rebuildCache()
-		table.clear(partCache)
-		local seen: { [BasePart]: boolean } = {}
+		local key = targetGridKeyForPosition(part.Position)
+		targetGridKeyByPart[part] = key
 
-		for _, obj in CollectionService:GetTagged("SwingTarget") do
-			if obj:IsA("BasePart") and obj.Parent then
-				seen[obj]             = true
-				table.insert(partCache, obj)
+		local cell = targetGrid[key]
+		if not cell then
+			cell = {}
+			targetGrid[key] = cell
+		end
+		cell[part] = true
+	end
+
+	local function addSwingTarget(obj)
+		if not obj:IsA("BasePart") or not obj.Parent then
+			return
+		end
+		if targetSet[obj] then
+			return
+		end
+
+		targetSet[obj] = true
+		table.insert(targetCache, obj)
+		addTargetToGrid(obj)
+	end
+
+	local function removeSwingTarget(obj)
+		if not targetSet[obj] then
+			return
+		end
+
+		targetSet[obj] = nil
+		for i = #targetCache, 1, -1 do
+			if targetCache[i] == obj then
+				table.remove(targetCache, i)
+				break
+			end
+		end
+		removeTargetFromGrid(obj)
+	end
+
+	local function seedVineTargets(vine)
+		if not vine or not TARGET_BACKGROUND_SEED_ENABLED then
+			return
+		end
+
+		task.spawn(function()
+			local stack = { vine }
+			local processed = 0
+			local sliceStarted = os.clock()
+
+			while #stack > 0 and vine.Parent do
+				local obj = table.remove(stack)
+				if obj:IsA("BasePart") and obj.Name == SWING_TARGET_NAME then
+					addSwingTarget(obj)
+				end
+
+				if not obj:IsA("BasePart") then
+					for _, child in ipairs(obj:GetChildren()) do
+						table.insert(stack, child)
+					end
+				end
+
+				processed += 1
+				if
+					processed % TARGET_SEED_BATCH_SIZE == 0
+					or os.clock() - sliceStarted >= TARGET_SEED_MAX_SLICE_TIME
+				then
+					task.wait(TARGET_SEED_STEP_WAIT)
+					sliceStarted = os.clock()
+				end
+			end
+		end)
+	end
+
+	local function bindVineFolder(vine, seedExisting)
+		if not vine or not TARGET_ENABLE_VINE_NAME_FALLBACK then
+			return
+		end
+		if boundVines[vine] then
+			return
+		end
+		boundVines[vine] = true
+
+		if seedExisting ~= false then
+			seedVineTargets(vine)
+		end
+		addConn(vine.DescendantAdded:Connect(function(obj)
+			if obj:IsA("BasePart") and obj.Name == SWING_TARGET_NAME then
+				addSwingTarget(obj)
+			end
+		end))
+		addConn(vine.DescendantRemoving:Connect(function(obj)
+			removeSwingTarget(obj)
+		end))
+	end
+
+	local function initializeTargetCache()
+		if targetCacheReady then
+			return
+		end
+		targetCacheReady = true
+
+		local taggedTargets = CollectionService:GetTagged(SWING_TARGET_TAG)
+		for _, obj in ipairs(taggedTargets) do
+			addSwingTarget(obj)
+		end
+		local hasTaggedTargets = #taggedTargets > 0
+
+		addConn(CollectionService:GetInstanceAddedSignal(SWING_TARGET_TAG):Connect(addSwingTarget))
+		addConn(CollectionService:GetInstanceRemovedSignal(SWING_TARGET_TAG):Connect(removeSwingTarget))
+
+		local map = workspace:FindFirstChild(MAP_FOLDER_NAME)
+		local vine = map and map:FindFirstChild(VINE_FOLDER_NAME)
+		bindVineFolder(vine, not (TARGET_SKIP_VINE_SEED_WHEN_TAGGED and hasTaggedTargets))
+
+		if TARGET_ENABLE_VINE_NAME_FALLBACK and not vine then
+			addConn(workspace.DescendantAdded:Connect(function(obj)
+				if obj.Name == VINE_FOLDER_NAME then
+					local parent = obj.Parent
+					if parent and parent.Name == MAP_FOLDER_NAME then
+						bindVineFolder(obj, not (TARGET_SKIP_VINE_SEED_WHEN_TAGGED and hasTaggedTargets))
+					end
+				elseif obj:IsA("BasePart") and obj.Name == SWING_TARGET_NAME then
+					local ancestor = obj.Parent
+					while ancestor do
+						if ancestor.Name == VINE_FOLDER_NAME then
+							addSwingTarget(obj)
+							break
+						end
+						ancestor = ancestor.Parent
+					end
+				end
+			end))
+		end
+
+		if not hasTaggedTargets and not TARGET_ENABLE_VINE_NAME_FALLBACK then
+			warn(
+				"[MergedFriendSwingSystem] No CollectionService 'SwingTarget' tags found. Tag the real swing parts to avoid scanning huge Vine folders."
+			)
+		end
+	end
+
+	local function getTargets()
+		initializeTargetCache()
+
+		for i = #targetCache, 1, -1 do
+			local part = targetCache[i]
+			if not part.Parent or not part:IsDescendantOf(workspace) then
+				targetSet[part] = nil
+				removeTargetFromGrid(part)
+				table.remove(targetCache, i)
 			end
 		end
 
-		local map  = workspace:FindFirstChild("Map")
-		local vine = map and map:FindFirstChild("Vine")
-		if vine then
-			for _, d in vine:GetDescendants() do
-				if d:IsA("BasePart") and d.Name == "SwingTarget" and not seen[d] then
-					table.insert(partCache, d)
+		return targetCache
+	end
+
+	task.defer(initializeTargetCache)
+
+	local function getCandidateTargets(maxDistance)
+		initializeTargetCache()
+		if #targetCache == 0 and not TARGET_ENABLE_VINE_NAME_FALLBACK then
+			return {}
+		end
+
+		local radius = math.max(2, (maxDistance or getSwingRange()) + TARGET_CANDIDATE_EXTRA_RADIUS)
+		local origin = hrp.Position
+		local candidates = {}
+		local seen = {}
+		local invalidTargets = {}
+
+		local centerX = targetCellCoord(origin.X)
+		local centerY = targetCellCoord(origin.Y)
+		local centerZ = targetCellCoord(origin.Z)
+		local cellRadius = math.max(1, math.ceil(radius / TARGET_GRID_CELL_SIZE))
+		local candidateLimitHit = false
+
+		for x = centerX - cellRadius, centerX + cellRadius do
+			if candidateLimitHit then
+				break
+			end
+			for y = centerY - cellRadius, centerY + cellRadius do
+				if candidateLimitHit then
+					break
+				end
+				for z = centerZ - cellRadius, centerZ + cellRadius do
+					if candidateLimitHit then
+						break
+					end
+					local cell = targetGrid[targetGridKeyFromCoords(x, y, z)]
+					if cell then
+						for part in pairs(cell) do
+							if not seen[part] then
+								seen[part] = true
+								if not part.Parent or not part:IsDescendantOf(workspace) then
+									table.insert(invalidTargets, part)
+									continue
+								end
+								if not targetSet[part] or part:IsDescendantOf(character) then
+									continue
+								end
+
+								local halfSize = part.Size.Magnitude * 0.5
+								if (part.Position - origin).Magnitude <= radius + halfSize then
+									table.insert(candidates, part)
+									if #candidates >= TARGET_MAX_CANDIDATES_PER_SCAN then
+										candidateLimitHit = true
+										break
+									end
+								end
+							end
+						end
+					end
 				end
 			end
 		end
-		cacheStamp = os.clock()
+
+		for _, part in ipairs(invalidTargets) do
+			removeSwingTarget(part)
+		end
+
+		if #candidates == 0 and #targetCache <= TARGET_FULL_SCAN_FALLBACK_LIMIT then
+			for _, part in ipairs(getTargets()) do
+				if
+					not seen[part]
+					and part.Parent
+					and part:IsDescendantOf(workspace)
+					and not part:IsDescendantOf(character)
+				then
+					local halfSize = part.Size.Magnitude * 0.5
+					if (part.Position - origin).Magnitude <= radius + halfSize then
+						seen[part] = true
+						table.insert(candidates, part)
+					end
+				end
+			end
+		end
+
+		return candidates
 	end
 
-	-- Spawn safe zone (legacy hitboxes + Reddie) — grapple disabled; toolbar UI uses Reddie only.
-	local function isHrpInSafezone(): boolean
-		return SafezoneUtil.isCharacterInSafezone(character)
+	local function hasLineOfSight(part, attachWorld)
+		camera = workspace.CurrentCamera or camera
+		if not camera then
+			return true
+		end
+
+		local origin = camera.CFrame.Position
+		local delta = attachWorld - origin
+		if delta.Magnitude < 0.5 then
+			return true
+		end
+
+		local ignored = { character }
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+
+		for _ = 1, 8 do
+			params.FilterDescendantsInstances = ignored
+			local hit = workspace:Raycast(origin, delta, params)
+			if not hit then
+				return true
+			end
+
+			local inst = hit.Instance
+			if inst == part or inst:IsDescendantOf(part) then
+				return true
+			end
+
+			if inst.CanCollide and inst.Transparency < 0.85 then
+				return false
+			end
+
+			table.insert(ignored, inst)
+		end
+
+		return false
 	end
 
-	-- One SwingTarget in range: chosen by where the camera looks (not pure distance — avoids snapping back to the vine you just left).
-	-- respectSafezone: when true, returns nil while HRP is inside SafezoneHitbox (grapple disabled there).
-	local function cameraPickSwingTarget(respectSafezone: boolean?): BasePart?
-		local respectSafe = if respectSafezone == nil then true else respectSafezone :: boolean
-		if respectSafe and isHrpInSafezone() then
+	local function pickSwingTarget(requireLineOfSight, maxDistanceOverride, minLookDotOverride, maxScreenRadiusOverride)
+		camera = workspace.CurrentCamera or camera
+		if not camera or not hrp.Parent or isHrpInSafezone() then
 			return nil
 		end
-		if os.clock() - cacheStamp > CACHE_TTL then
-			rebuildCache()
-		end
+
 		local look = camera.CFrame.LookVector
-		local maxReach = attachRadius()
-		local ropeLim = ropeLength + 0.35
-		local limit = math.min(maxReach, ropeLim)
-		local best: BasePart? = nil
+		local flatLook = flatUnit(look)
+		local reach = maxDistanceOverride or getSwingRange()
+		local minLookDot = minLookDotOverride or MIN_LOOK_DOT
+		local maxScreenRadius = maxScreenRadiusOverride or TARGET_SCREEN_RADIUS_LIMIT
+		local best = nil
 		local bestScore = -math.huge
-		for _, p in partCache do
-			if not p.Parent then
+
+		for _, part in ipairs(getCandidateTargets(reach)) do
+			if not part.Parent or not part:IsDescendantOf(workspace) then
 				continue
 			end
-			local attachWorld = closestAttachWorldOnPart(p)
-			local dir = attachWorld - hrp.Position
-			local dist = dir.Magnitude
-			if dist < 0.08 or dist > limit then
+			if part:IsDescendantOf(character) then
 				continue
 			end
-			local flatDir = Vector3.new(dir.X, 0, dir.Z)
-			local flatLook = Vector3.new(look.X, 0, look.Z)
-			local align: number
-			if flatDir.Magnitude > 0.05 and flatLook.Magnitude > 0.05 then
-				align = flatDir.Unit:Dot(flatLook.Unit)
-			else
-				align = look:Dot(dir.Unit)
-			end
-			if align < MIN_GRAPPLE_LOOK_DOT then
+
+			local attachWorld = closestAttachWorldOnPart(part)
+			local offset = attachWorld - hrp.Position
+			local dist = offset.Magnitude
+			if dist < 2 or dist > reach then
 				continue
 			end
-			local score = align * 1.15
-				+ (if attachWorld.Y > hrp.Position.Y + 2 then 0.08 else 0)
-				- (dist / math.max(limit, 1)) * 0.06
+			if attachWorld.Y < hrp.Position.Y + MIN_TARGET_HEIGHT_OFFSET then
+				continue
+			end
+
+			local toCameraTarget = attachWorld - camera.CFrame.Position
+			if toCameraTarget.Magnitude < 0.5 then
+				continue
+			end
+
+			local viewDot = toCameraTarget.Unit:Dot(look)
+			if viewDot < minLookDot then
+				continue
+			end
+
+			local viewportPoint, onScreen = camera:WorldToViewportPoint(attachWorld)
+			if not onScreen then
+				continue
+			end
+
+			local vp = camera.ViewportSize
+			local dx = (viewportPoint.X - vp.X * 0.5) / math.max(vp.X, 1)
+			local dy = (viewportPoint.Y - vp.Y * 0.5) / math.max(vp.Y, 1)
+			local screenRadius = math.sqrt(dx * dx + dy * dy)
+			if screenRadius > maxScreenRadius then
+				continue
+			end
+
+			local align = viewDot
+			local flatDir = flatUnit(offset)
+			if flatDir and flatLook then
+				align = math.max(viewDot, flatDir:Dot(flatLook) * 0.92)
+			end
+			if requireLineOfSight and not hasLineOfSight(part, attachWorld) then
+				continue
+			end
+
+			local heightBonus = 0
+			if attachWorld.Y > hrp.Position.Y + 5 then
+				heightBonus = 0.16
+			end
+
+			local centerBias = -screenRadius * 0.45
+
+			local score = align * 1.45 + heightBonus + centerBias - (dist / reach) * 0.12
 			if score > bestScore then
 				bestScore = score
-				best = p
+				best = part
 			end
 		end
+
 		return best
 	end
 
-	local function isAirborneForSwing(): boolean
-		local st = humanoid:GetState()
-		if st == Enum.HumanoidStateType.Freefall
-			or st == Enum.HumanoidStateType.Jumping
-			or st == Enum.HumanoidStateType.FallingDown then
+	local function getAirborneTargetUiRange()
+		return math.clamp(getSwingRange() + AIRBORNE_TARGET_UI_EXTRA, 42, 138)
+	end
+
+	local function targetDistanceAndPoint(target)
+		if not target or not target.Parent or not target:IsDescendantOf(workspace) then
+			return nil, nil
+		end
+		if target:IsDescendantOf(character) then
+			return nil, nil
+		end
+
+		local attachWorld = closestAttachWorldOnPart(target)
+		if attachWorld.Y < hrp.Position.Y + MIN_TARGET_HEIGHT_OFFSET then
+			return nil, nil
+		end
+
+		return (attachWorld - hrp.Position).Magnitude, attachWorld
+	end
+
+	local function pickNearbySwingTarget(maxDistance, preferredTarget)
+		if isHrpInSafezone() then
+			return nil, nil, nil
+		end
+
+		local function validCandidate(target)
+			local dist, point = targetDistanceAndPoint(target)
+			if not dist or dist < 2 or dist > maxDistance then
+				return nil, nil
+			end
+			return dist, point
+		end
+
+		if preferredTarget then
+			local dist, point = validCandidate(preferredTarget)
+			if dist then
+				return preferredTarget, dist, point
+			end
+		end
+
+		local best = nil
+		local bestDist = math.huge
+		local bestPoint = nil
+		for _, part in ipairs(getCandidateTargets(maxDistance)) do
+			local dist, point = validCandidate(part)
+			if dist and dist < bestDist then
+				best = part
+				bestDist = dist
+				bestPoint = point
+			end
+		end
+
+		return best, bestDist, bestPoint
+	end
+
+	local function isSpecificSwingTargetReady(
+		target,
+		requireLineOfSight,
+		maxDistanceOverride,
+		minLookDotOverride,
+		maxScreenRadiusOverride
+	)
+		camera = workspace.CurrentCamera or camera
+		if not camera or not hrp.Parent or isHrpInSafezone() then
+			return false
+		end
+
+		local dist, attachWorld = targetDistanceAndPoint(target)
+		local reach = maxDistanceOverride or getSwingRange()
+		if not dist or dist < 2 or dist > reach then
+			return false
+		end
+
+		local look = camera.CFrame.LookVector
+		local minLookDot = minLookDotOverride or MIN_LOOK_DOT
+		local maxScreenRadius = maxScreenRadiusOverride or TARGET_SCREEN_RADIUS_LIMIT
+		local toCameraTarget = attachWorld - camera.CFrame.Position
+		if toCameraTarget.Magnitude < 0.5 or toCameraTarget.Unit:Dot(look) < minLookDot then
+			return false
+		end
+
+		local viewportPoint, onScreen = camera:WorldToViewportPoint(attachWorld)
+		if not onScreen then
+			return false
+		end
+
+		local vp = camera.ViewportSize
+		local dx = (viewportPoint.X - vp.X * 0.5) / math.max(vp.X, 1)
+		local dy = (viewportPoint.Y - vp.Y * 0.5) / math.max(vp.Y, 1)
+		if math.sqrt(dx * dx + dy * dy) > maxScreenRadius then
+			return false
+		end
+
+		if requireLineOfSight and not hasLineOfSight(target, attachWorld) then
+			return false
+		end
+
+		return true
+	end
+
+	local function isAirborneForSwing()
+		local state = humanoid:GetState()
+		if
+			state == Enum.HumanoidStateType.Freefall
+			or state == Enum.HumanoidStateType.Jumping
+			or state == Enum.HumanoidStateType.FallingDown
+		then
+			return true
+		end
+		if humanoid.FloorMaterial == Enum.Material.Air and hrp.AssemblyLinearVelocity.Y < 5 then
 			return true
 		end
 		return isAirborne
 	end
 
-	local function applyGrappleMomentumBoost(attachWorld: Vector3)
-		hrp.AssemblyAngularVelocity = Vector3.zero
+	local function isGroundedForSwing()
+		if isSwinging or isLaunched or isAirborneForSwing() then
+			return false
+		end
+		if humanoid.FloorMaterial == Enum.Material.Air then
+			return false
+		end
 
-		local v = hrp.AssemblyLinearVelocity
-		local fromAnchor = hrp.Position - attachWorld
-		local radial = if fromAnchor.Magnitude > 0.25 then fromAnchor.Unit else Vector3.yAxis
+		local state = humanoid:GetState()
+		return state == Enum.HumanoidStateType.Running
+			or state == Enum.HumanoidStateType.RunningNoPhysics
+			or state == Enum.HumanoidStateType.Landed
+			or state == Enum.HumanoidStateType.None
+	end
 
-		-- Camera look on the tangent plane, tilted slightly down into the arc.
-		local look = camera.CFrame.LookVector
-		local flatLook = Vector3.new(look.X, 0, look.Z)
-		local fwdTang = flatLook - radial * flatLook:Dot(radial)
-		local swingDir: Vector3
-		if fwdTang.Magnitude > 0.1 then
-			local down = Vector3.new(fwdTang.X, fwdTang.Y - 0.55, fwdTang.Z)
-			swingDir = down.Unit
+	local function isGroundedForCameraAssist()
+		if not ENABLE_GROUNDED_CAMERA_ASSIST then
+			return false
+		end
+		return isGroundedForSwing()
+	end
+
+	local function closestGroundCameraTarget()
+		if not isGroundedForCameraAssist() then
+			return nil, nil
+		end
+
+		camera = workspace.CurrentCamera or camera
+		if not camera or not targetVisualShown or not highlightedTarget or not highlightedTarget.Parent then
+			return nil, nil
+		end
+		if highlight and not highlight.Enabled then
+			return nil, nil
+		end
+
+		local point = highlightedPoint or closestAttachWorldOnPart(highlightedTarget)
+		if (point - hrp.Position).Magnitude > CAMERA_ASSIST_RANGE then
+			return nil, nil
+		end
+
+		local toPoint = point - camera.CFrame.Position
+		if toPoint.Magnitude < 0.5 then
+			return nil, nil
+		end
+		if camera.CFrame.LookVector:Dot(toPoint.Unit) < CAMERA_ASSIST_MIN_LOOK_DOT then
+			return nil, nil
+		end
+		if not hasLineOfSight(highlightedTarget, point) then
+			return nil, nil
+		end
+
+		return highlightedTarget, point
+	end
+
+	local function holdIsActive()
+		return spaceHeld
+			or gamepadHeld
+			or mobileJumpHeld
+			or safeIsKeyDown(Enum.KeyCode.Space)
+			or safeIsKeyDown(Enum.KeyCode.ButtonA)
+			or safeIsKeyDown(Enum.KeyCode.ButtonR2)
+	end
+
+	local function readyPromptText()
+		if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+			return "[HOLD JUMP] TO SWING"
+		end
+		if UserInputService.GamepadEnabled and not UserInputService.KeyboardEnabled then
+			return "[HOLD R2] TO SWING"
+		end
+		return "[HOLD SPACE] TO SWING"
+	end
+
+	local function noteJumpPressed()
+		local now = os.clock()
+		local freshGroundJump = now - lastGroundJumpClock <= 0.2 and now - airborneStartedClock <= 0.2
+		if isAirborneForSwing() and not freshGroundJump then
+			return true
 		else
-			swingDir = Vector3.new(0, -1, 0)
-		end
-
-		-- Only inherit prior tangential motion when not re-hooking right after a release (avoids compounding flings).
-		local recentDetach = os.clock() - lastSwingEndClock < REATTACH_ZIP_GRACE
-		local existingTang = v - radial * v:Dot(radial)
-		if not recentDetach and existingTang.Magnitude > 4 then
-			swingDir = existingTang.Unit
-		end
-
-		local zip = dynZipToward
-		if recentDetach then
-			zip *= REATTACH_ZIP_MULT
-		end
-
-		hrp:ApplyImpulse(swingDir * zip * hrp.AssemblyMass)
-
-		local post = hrp.AssemblyLinearVelocity
-		if post.Magnitude > dynMaxSwingSpeed then
-			hrp.AssemblyLinearVelocity = post.Unit * dynMaxSwingSpeed
+			lastGroundJumpClock = now
+			return false
 		end
 	end
 
-	local function startSwing(target: BasePart)
+	local function forwardInputAmount()
+		camera = workspace.CurrentCamera or camera
+		local moveDir = humanoid.MoveDirection
+		if moveDir.Magnitude < 0.05 then
+			return 0
+		end
+
+		local facing = nil
+		if camera then
+			facing = flatUnit(camera.CFrame.LookVector)
+		end
+		facing = facing or flatUnit(hrp.CFrame.LookVector)
+		if not facing then
+			return math.clamp(moveDir.Magnitude, 0, 1)
+		end
+
+		local md = Vector3.new(moveDir.X, 0, moveDir.Z)
+		if md.Magnitude < 0.05 then
+			return 0
+		end
+
+		local amount = md.Unit:Dot(facing)
+		if safeIsKeyDown(Enum.KeyCode.W) then
+			amount = math.max(amount, 1)
+		end
+		return math.clamp(amount, 0, 1)
+	end
+
+	local previewTransparency
+
+	local function makeVisualAnchor(name)
+		local part = Instance.new("Part")
+		part.Name = name
+		part.Size = Vector3.new(0.2, 0.2, 0.2)
+		part.Transparency = 1
+		part.Anchored = true
+		part.CanCollide = false
+		part.CanTouch = false
+		part.CanQuery = false
+		part.CastShadow = false
+		part.Parent = workspace
+		return part
+	end
+
+	local function ensurePreviewObjects()
+		if not previewAnchorPart or not previewAnchorPart.Parent then
+			previewAnchorPart = makeVisualAnchor("SwingPreviewAnchor")
+		end
+		if not previewFrom or not previewFrom.Parent then
+			previewFrom = Instance.new("Attachment")
+			previewFrom.Name = "SwingPreviewFrom"
+			previewFrom.Position = Vector3.new(0, 0.8, 0)
+			previewFrom.Parent = hrp
+		end
+		if not previewTo or not previewTo.Parent then
+			previewTo = Instance.new("Attachment")
+			previewTo.Name = "SwingPreviewTo"
+			previewTo.Parent = previewAnchorPart
+		end
+		if not previewBeam or not previewBeam.Parent then
+			previewBeam = Instance.new("Beam")
+			previewBeam.Name = "SwingPreviewBeam"
+			previewBeam.Attachment0 = previewFrom
+			previewBeam.Attachment1 = previewTo
+			previewBeam.Width0 = 0.08
+			previewBeam.Width1 = 0.06
+			previewBeam.LightEmission = 0.35
+			previewBeam.FaceCamera = true
+			previewBeam.Segments = 1
+			previewBeam.Color = ColorSequence.new(PREVIEW_COLOR)
+			previewBeam.Transparency = previewTransparency(previewFade)
+			previewBeam.Enabled = false
+			previewBeam.Parent = character
+		end
+	end
+
+	local function hidePreview()
+		previewFadeGoal = 0
+		previewTarget = nil
+		if previewBeam and previewFade <= 0.025 then
+			previewBeam.Enabled = false
+		end
+	end
+
+	local function destroyPreview(force)
+		if not force then
+			hidePreview()
+			return
+		end
+		if previewBeam then
+			previewBeam:Destroy()
+			previewBeam = nil
+		end
+		if previewFrom then
+			previewFrom:Destroy()
+			previewFrom = nil
+		end
+		if previewTo then
+			previewTo:Destroy()
+			previewTo = nil
+		end
+		if previewAnchorPart then
+			previewAnchorPart:Destroy()
+			previewAnchorPart = nil
+		end
+		previewTarget = nil
+	end
+
+	previewTransparency = function(alpha)
+		alpha = math.clamp(alpha, 0, 1)
+		return NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1 - alpha * 0.82),
+			NumberSequenceKeypoint.new(0.5, 1 - alpha * 0.35),
+			NumberSequenceKeypoint.new(1, 1 - alpha * 0.82),
+		})
+	end
+
+	local function applyPreviewVisual()
+		if not previewBeam then
+			return
+		end
+
+		previewBeam.Enabled = previewFade > 0.025
+		previewBeam.Transparency = previewTransparency(previewFade)
+		previewBeam.Color = ColorSequence.new(targetVisualColor:Lerp(PREVIEW_COLOR, 0.45))
+	end
+
+	local function updatePreview(target)
+		if isSwinging or not target or not target.Parent then
+			hidePreview()
+			return
+		end
+
 		local attachWorld = closestAttachWorldOnPart(target)
-		local dist = (hrp.Position - attachWorld).Magnitude
-		if dist > ropeLength + 0.5 or dist < 0.08 then
+		ensurePreviewObjects()
+		if previewTarget ~= target then
+			previewTarget = target
+		end
+
+		previewAnchorPart.CFrame = CFrame.new(attachWorld)
+		previewTo.Position = Vector3.new(0, 0, 0)
+		applyPreviewVisual()
+	end
+
+	local function ensureVisuals()
+		if ENABLE_TARGET_HIGHLIGHT and not highlight then
+			highlight = Instance.new("Highlight")
+			highlight.Name = "SwingTargetHighlight"
+			highlight.FillTransparency = 0.72
+			highlight.OutlineTransparency = 0
+			highlight.FillColor = READY_COLOR
+			highlight.OutlineColor = READY_COLOR
+			highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+			highlight.Enabled = false
+			highlight.Parent = workspace
+		end
+
+		if not markerAnchorPart or not markerAnchorPart.Parent then
+			markerAnchorPart = makeVisualAnchor("SwingMarkerAnchor")
+		end
+
+		if not markerGui then
+			local playerGui = player:WaitForChild("PlayerGui")
+			markerGui = Instance.new("BillboardGui")
+			markerGui.Name = "SwingTargetMarker"
+			markerGui.Size = UDim2.fromOffset(128, 82)
+			markerGui.AlwaysOnTop = true
+			markerGui.LightInfluence = 0
+			markerGui.Enabled = false
+			markerGui.Adornee = markerAnchorPart
+			markerGui.Parent = playerGui
+
+			local ring = Instance.new("Frame")
+			ring.Name = "Ring"
+			ring.Size = UDim2.fromOffset(42, 42)
+			ring.Position = UDim2.new(0.5, -21, 0, 0)
+			ring.BackgroundTransparency = 1
+			ring.BorderSizePixel = 0
+			ring.Parent = markerGui
+			markerRing = ring
+
+			local corner = Instance.new("UICorner")
+			corner.CornerRadius = UDim.new(1, 0)
+			corner.Parent = ring
+
+			local stroke = Instance.new("UIStroke")
+			stroke.Color = READY_COLOR
+			stroke.Thickness = 2
+			stroke.Parent = ring
+			markerStroke = stroke
+
+			local dot = Instance.new("Frame")
+			dot.Name = "Dot"
+			dot.Size = UDim2.fromOffset(9, 9)
+			dot.Position = UDim2.new(0.5, -4.5, 0.5, -4.5)
+			dot.BackgroundColor3 = READY_COLOR
+			dot.BorderSizePixel = 0
+			dot.Parent = ring
+			markerDot = dot
+
+			local dotCorner = Instance.new("UICorner")
+			dotCorner.CornerRadius = UDim.new(1, 0)
+			dotCorner.Parent = dot
+
+			markerLabel = Instance.new("TextLabel")
+			markerLabel.Name = "Label"
+			markerLabel.Size = UDim2.new(1, 0, 0, 24)
+			markerLabel.Position = UDim2.new(0, 0, 0, 48)
+			markerLabel.BackgroundTransparency = 1
+			markerLabel.Font = Enum.Font.GothamBold
+			markerLabel.TextColor3 = READY_COLOR
+			markerLabel.TextStrokeTransparency = 0.35
+			markerLabel.TextSize = 12
+			markerLabel.Text = "[HOLD SPACE] TO SWING"
+			markerLabel.Parent = markerGui
+		end
+	end
+
+	local function updateTargetVisual(target, canSwingNow, inactiveText)
+		ensureVisuals()
+
+		if target and not isSwinging then
+			local attachWorld = closestAttachWorldOnPart(target)
+			local markerOffset = Vector3.new(0, target.Size.Y * 0.5 + 0.9, 0)
+			targetReadyGoal = canSwingNow and 1 or 0
+			previewFadeGoal = canSwingNow and 1 or 0
+			highlightedTarget = target
+			highlightedPoint = attachWorld
+			targetVisualShown = true
+
+			markerAnchorPart.CFrame = CFrame.new(attachWorld + markerOffset)
+			if ENABLE_TARGET_HIGHLIGHT and highlight and lastVisualTarget ~= target then
+				highlight.Adornee = target
+			end
+			if ENABLE_TARGET_HIGHLIGHT and highlight and not highlight.Enabled then
+				highlight.Enabled = true
+			end
+			if markerGui.Adornee ~= markerAnchorPart then
+				markerGui.Adornee = markerAnchorPart
+			end
+			if markerGui.StudsOffset ~= Vector3.new(0, 0, 0) then
+				markerGui.StudsOffset = Vector3.new(0, 0, 0)
+			end
+			if not markerGui.Enabled then
+				markerGui.Enabled = true
+			end
+
+			if canSwingNow then
+				local text = readyPromptText()
+				if lastMarkerText ~= text then
+					markerLabel.Text = text
+					lastMarkerText = text
+				end
+				updatePreview(target)
+			else
+				if lastMarkerText ~= "SWING BLOCKED" then
+					markerLabel.Text = "SWING BLOCKED"
+					lastMarkerText = "SWING BLOCKED"
+				end
+				hidePreview()
+			end
+			lastVisualTarget = target
+			lastVisualCanSwing = canSwingNow
+
+			return attachWorld
+		end
+
+		targetReadyGoal = 0
+		previewFadeGoal = 0
+		targetVisualColor = NOT_READY_COLOR
+		if not targetVisualShown and not highlightedTarget then
+			hidePreview()
+			return nil
+		end
+		if ENABLE_TARGET_HIGHLIGHT and highlight and highlight.Enabled then
+			highlight.Enabled = false
+			highlight.Adornee = nil
+		end
+		highlightedTarget = nil
+		highlightedPoint = nil
+		targetVisualShown = false
+		if markerGui then
+			markerGui.Enabled = false
+		end
+		lastVisualTarget = nil
+		lastVisualCanSwing = nil
+		hidePreview()
+		return nil
+	end
+
+	local function hideSwingTargetUi()
+		lastTargetScanMode = "none"
+		scannedVisualTarget = nil
+		scannedVisualCanSwing = false
+		if targetVisualShown or highlightedTarget or previewFadeGoal > 0 or (markerGui and markerGui.Enabled) then
+			updateTargetVisual(nil, false)
+		else
+			hidePreview()
+		end
+	end
+
+	local function stepTargetVisual(dt)
+		local colorAlpha = math.clamp(dt * TARGET_VISUAL_SMOOTH_SPEED, 0, 1)
+		local fadeAlpha = math.clamp(dt * PREVIEW_FADE_SPEED, 0, 1)
+
+		targetReadyVisual += (targetReadyGoal - targetReadyVisual) * colorAlpha
+		previewFade += (previewFadeGoal - previewFade) * fadeAlpha
+		if math.abs(previewFade - previewFadeGoal) < 0.01 then
+			previewFade = previewFadeGoal
+		end
+
+		targetVisualColor = NOT_READY_COLOR:Lerp(READY_COLOR, math.clamp(targetReadyVisual, 0, 1))
+
+		if targetVisualShown and markerGui and markerLabel then
+			local pulse = math.sin(os.clock() * 7) * 0.5 + 0.5
+			local readyBob = math.sin(os.clock() * READY_TEXT_BOB_SPEED)
+				* READY_TEXT_BOB_PIXELS
+				* math.clamp(targetReadyVisual, 0, 1)
+			if ENABLE_TARGET_HIGHLIGHT then
+				if highlight then
+					highlight.FillColor = targetVisualColor
+					highlight.OutlineColor = targetVisualColor
+					highlight.FillTransparency = 0.62 + pulse * 0.18
+				end
+			end
+			markerLabel.TextColor3 = targetVisualColor
+			markerLabel.Position = UDim2.new(0, 0, 0, 48 - readyBob)
+
+			if markerStroke then
+				markerStroke.Color = targetVisualColor
+			end
+			if markerDot then
+				markerDot.BackgroundColor3 = targetVisualColor
+				markerDot.BackgroundTransparency = 0.05 + pulse * 0.38
+			end
+		end
+
+		if previewBeam then
+			applyPreviewVisual()
+			if previewFadeGoal <= 0 and previewFade <= 0.025 then
+				previewBeam.Enabled = false
+			end
+		end
+	end
+
+	task.defer(function()
+		task.wait(0.4)
+		if not hrp.Parent then
+			return
+		end
+		ensureVisuals()
+		ensurePreviewObjects()
+		hidePreview()
+	end)
+
+	local function destroyChargeGui()
+		if chargeGui then
+			chargeGui:Destroy()
+			chargeGui = nil
+			chargeDot = nil
+		end
+		swingCharge = 0
+	end
+
+	local function ensureChargeGui(target)
+		if chargeGui or not target then
+			return
+		end
+
+		local playerGui = player:WaitForChild("PlayerGui")
+		chargeGui = Instance.new("BillboardGui")
+		chargeGui.Name = "SwingHoldCharge"
+		chargeGui.Adornee = target
+		chargeGui.Size = UDim2.fromOffset(96, 70)
+		chargeGui.StudsOffset = Vector3.new(0, target.Size.Y * 0.5 + 0.9, 0)
+		chargeGui.AlwaysOnTop = true
+		chargeGui.LightInfluence = 0
+		chargeGui.Parent = playerGui
+
+		local ring = Instance.new("Frame")
+		ring.Size = UDim2.fromOffset(46, 46)
+		ring.Position = UDim2.new(0.5, -23, 0, 0)
+		ring.BackgroundTransparency = 1
+		ring.BorderSizePixel = 0
+		ring.Parent = chargeGui
+
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(1, 0)
+		corner.Parent = ring
+
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = READY_COLOR
+		stroke.Thickness = 2.4
+		stroke.Transparency = 0.05
+		stroke.Parent = ring
+
+		chargeDot = Instance.new("Frame")
+		chargeDot.Size = UDim2.fromOffset(8, 8)
+		chargeDot.Position = UDim2.new(0.5, -4, 0.5, -4)
+		chargeDot.BackgroundColor3 = READY_COLOR
+		chargeDot.BorderSizePixel = 0
+		chargeDot.Parent = ring
+
+		local dotCorner = Instance.new("UICorner")
+		dotCorner.CornerRadius = UDim.new(1, 0)
+		dotCorner.Parent = chargeDot
+	end
+
+	local function layoutCharge()
+		if not chargeDot then
+			return
+		end
+		local px = 8 + 34 * math.clamp(swingCharge, 0, 1)
+		chargeDot.Size = UDim2.fromOffset(px, px)
+		chargeDot.Position = UDim2.new(0.5, -px * 0.5, 0.5, -px * 0.5)
+	end
+
+	local function spawnSwingBeam(attachWorld)
+		local side = getSwingSide(attachWorld)
+		local hand = handPartForSide(side)
+
+		handAttachment = Instance.new("Attachment")
+		handAttachment.Name = "SwingHandAttachment"
+		handAttachment.Parent = hand
+		if hand == hrp then
+			handAttachment.Position = Vector3.new(0, 1.1, 0)
+		else
+			handAttachment.Position = Vector3.new(0, -0.85, 0)
+		end
+
+		swingBeam = Instance.new("Beam")
+		swingBeam.Name = "SwingRopeBeam"
+		swingBeam.Attachment0 = handAttachment
+		swingBeam.Attachment1 = anchorAttachment
+		swingBeam.Width0 = 0.14
+		swingBeam.Width1 = 0.09
+		swingBeam.Color = ColorSequence.new(ROPE_COLOR_A, ROPE_COLOR_B)
+		swingBeam.Transparency = NumberSequence.new(0.08)
+		swingBeam.LightEmission = 0.35
+		swingBeam.FaceCamera = true
+		swingBeam.Segments = 18
+		swingBeam.Parent = character
+	end
+
+	local function destroySwingObjects()
+		if swingBeam then
+			swingBeam:Destroy()
+			swingBeam = nil
+		end
+		if handAttachment then
+			handAttachment:Destroy()
+			handAttachment = nil
+		end
+		if steerForce then
+			steerForce:Destroy()
+			steerForce = nil
+		end
+		if swingOrientation then
+			swingOrientation:Destroy()
+			swingOrientation = nil
+		end
+		if orientationAttachment then
+			orientationAttachment:Destroy()
+			orientationAttachment = nil
+		end
+		if forceAttachment then
+			forceAttachment:Destroy()
+			forceAttachment = nil
+		end
+		if ropeConstraint then
+			ropeConstraint:Destroy()
+			ropeConstraint = nil
+		end
+		activeRopeMaxLength = nil
+		if zipSpring then
+			zipSpring:Destroy()
+			zipSpring = nil
+		end
+		if anchorAttachment then
+			anchorAttachment:Destroy()
+			anchorAttachment = nil
+		end
+		if bodyAttachment then
+			bodyAttachment:Destroy()
+			bodyAttachment = nil
+		end
+		swingFaceDir = nil
+		destroyChargeGui()
+	end
+
+	local function pendulumArcDir(radial)
+		local gravity = Vector3.new(0, -workspace.Gravity, 0)
+		local tangent = gravity - radial * gravity:Dot(radial)
+		if tangent.Magnitude < 0.05 then
+			return nil
+		end
+		return tangent.Unit
+	end
+
+	local function floorScale(anchorWorld, ropeLength)
+		rayParams.FilterDescendantsInstances = { character }
+		local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -130, 0), rayParams)
+		local floorY = hit and hit.Position.Y or (hrp.Position.Y - 80)
+		local minSafeY = math.max(floorY + FLOOR_CLEARANCE, anchorWorld.Y - (ropeLength or getRopeMaxLength()) * 0.72)
+		local margin = hrp.Position.Y - minSafeY
+		if margin <= 0 then
+			return 0.18
+		end
+		if margin < 10 then
+			return math.clamp(margin / 10, 0.2, 1)
+		end
+		return 1
+	end
+
+	local function applyAttachBoost(attachWorld)
+		camera = workspace.CurrentCamera or camera
+		if not camera then
+			return
+		end
+
+		hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+		local velocity = hrp.AssemblyLinearVelocity
+		local fromAnchor = hrp.Position - attachWorld
+		local radial = fromAnchor.Magnitude > 0.25 and fromAnchor.Unit or Vector3.new(0, 1, 0)
+
+		local look = camera.CFrame.LookVector
+		local desired = Vector3.new(look.X, -0.16, look.Z)
+		local tangent = desired - radial * desired:Dot(radial)
+		if tangent.Magnitude < 0.08 then
+			local currentTang = velocity - radial * velocity:Dot(radial)
+			tangent = currentTang.Magnitude > 0.08 and currentTang
+				or Vector3.new(camera.CFrame.LookVector.X, 0, camera.CFrame.LookVector.Z)
+		end
+
+		if tangent.Magnitude > 0.08 then
+			hrp:ApplyImpulse(tangent.Unit * getZipDv() * hrp.AssemblyMass)
+		end
+	end
+
+	local function startSwing(target)
+		if isSwinging or not target or not target.Parent then
 			return
 		end
 		if isHrpInSafezone() then
 			return
 		end
 
+		local now = os.clock()
+		if now - lastAttachClock < ATTACH_COOLDOWN then
+			return
+		end
+
+		local attachWorld = closestAttachWorldOnPart(target)
+		local dist = (attachWorld - hrp.Position).Magnitude
+		local reach = getSwingRange()
+		local baseRopeMax = getRopeMaxLength()
+		local attachLimit = reach
+		if dist < 2 or dist > attachLimit then
+			return
+		end
+		local ropeMax = math.clamp(dist * 1.08, ROPE_MIN_LENGTH + 4, math.max(baseRopeMax, reach))
+		activeRopeMaxLength = ropeMax
+
 		isSwinging = true
-		lastSwingAttachClock = os.clock()
-		attachCamClock = os.clock()
 		isLaunched = false
+		landedFromSwing = false
+		currentTarget = target
+		lastAttachClock = now
 		swingTimer = 0
+		swingCharge = 0
+		forwardSwingCharge = 0
+		forwardHoldTime = 0
+		swingMomentum = 0
+		swingRhythmBoost = 0
+		lastPumpInputSign = 0
+		lastPumpSwitchClock = now
+		swingFaceDir = nil
 
-		local anchorAtt = Instance.new("Attachment")
-		anchorAtt.Parent = target
-		anchorAtt.Position = target.CFrame:PointToObjectSpace(attachWorld)
-		ropeAnchorAtt = anchorAtt
+		anchorAttachment = Instance.new("Attachment")
+		anchorAttachment.Name = "SwingAnchorAttachment"
+		anchorAttachment.Position = target.CFrame:PointToObjectSpace(attachWorld)
+		anchorAttachment.Parent = target
 
-		local bodyAtt = Instance.new("Attachment")
-		bodyAtt.Position = Vector3.zero
-		bodyAtt.Parent = hrp
-		ropeBodyAtt = bodyAtt
+		bodyAttachment = Instance.new("Attachment")
+		bodyAttachment.Name = "SwingBodyAttachment"
+		bodyAttachment.Parent = hrp
 
-		-- SpringConstraint: always active tension means no gravity cancel needed.
-		-- LimitsEnabled = false so it pulls when far AND pushes when close, giving
-		-- a natural pendulum feel without any artificial upward force hacks.
-		local spring = Instance.new("SpringConstraint")
-		spring.Attachment0 = anchorAtt
-		spring.Attachment1 = bodyAtt
-		spring.FreeLength   = SPRING_FREE_LENGTH
-		spring.Stiffness    = SPRING_STIFFNESS
-		spring.Damping      = SPRING_DAMPING
-		spring.MaxForce     = math.huge
-		spring.LimitsEnabled = false
-		spring.Parent = hrp
-		ropeInst = spring
+		local elasticRestLength = math.clamp(ropeMax * ROPE_REST_LENGTH_MULT, ROPE_MIN_LENGTH, ropeMax)
+		local startLength =
+			math.clamp(math.max(dist * ROPE_ATTACH_START_MULT, elasticRestLength), ROPE_MIN_LENGTH, ropeMax)
+		ropeConstraint = Instance.new("RopeConstraint")
+		ropeConstraint.Name = "SwingRopeConstraint"
+		ropeConstraint.Attachment0 = anchorAttachment
+		ropeConstraint.Attachment1 = bodyAttachment
+		ropeConstraint.Length = startLength
+		ropeConstraint.Thickness = 0.08
+		ropeConstraint.Visible = false
+		ropeConstraint.Restitution = 0.05
+		ropeConstraint.Parent = hrp
 
-		swingTargetPart = target
+		pcall(function()
+			ropeConstraint.WinchEnabled = true
+			ropeConstraint.WinchResponsiveness = 48
+			ropeConstraint.WinchSpeed = 12
+			ropeConstraint.WinchForce = hrp.AssemblyMass * 1850
+			ropeConstraint.WinchTarget = elasticRestLength
+		end)
+
+		if math.abs(dist - elasticRestLength) > 1.5 then
+			zipSpring = Instance.new("SpringConstraint")
+			zipSpring.Name = "SwingZipSpring"
+			zipSpring.Attachment0 = anchorAttachment
+			zipSpring.Attachment1 = bodyAttachment
+			zipSpring.FreeLength = elasticRestLength
+			zipSpring.Stiffness = ZIP_SPRING_STIFFNESS
+			zipSpring.Damping = ZIP_SPRING_DAMPING
+			zipSpring.MaxForce = hrp.AssemblyMass * ZIP_SPRING_MAX_ACCEL
+			zipSpring.Parent = hrp
+		end
+
+		forceAttachment = Instance.new("Attachment")
+		forceAttachment.Name = "SwingForceAttachment"
+		forceAttachment.Parent = hrp
+
+		steerForce = Instance.new("VectorForce")
+		steerForce.Name = "SwingSteerForce"
+		steerForce.Attachment0 = forceAttachment
+		steerForce.RelativeTo = Enum.ActuatorRelativeTo.World
+		steerForce.ApplyAtCenterOfMass = true
+		steerForce.Force = Vector3.new(0, 0, 0)
+		steerForce.Parent = hrp
+
+		orientationAttachment = Instance.new("Attachment")
+		orientationAttachment.Name = "SwingOrientationAttachment"
+		orientationAttachment.Parent = hrp
+
+		swingOrientation = Instance.new("AlignOrientation")
+		swingOrientation.Name = "SwingFaceDirection"
+		swingOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
+		swingOrientation.Attachment0 = orientationAttachment
+		swingOrientation.RigidityEnabled = false
+		swingOrientation.Responsiveness = AVATAR_TURN_RESPONSIVENESS
+		swingOrientation.MaxTorque = hrp.AssemblyMass * 18000
+		swingOrientation.Enabled = true
+		swingOrientation.Parent = hrp
 
 		humanoid.PlatformStand = true
-
 		humanoid.AutoRotate = false
+		humanoid.Jump = false
+		hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 
-		local fa = Instance.new("Attachment")
-		fa.Parent = hrp
-		forceAtt = fa
-
-		local vf = Instance.new("VectorForce")
-		vf.Attachment0 = fa
-		vf.RelativeTo = Enum.ActuatorRelativeTo.World
-		vf.Force = Vector3.zero
-		vf.Parent = hrp
-		forceInst = vf
-
-		hrp.AssemblyAngularVelocity = Vector3.zero
-		applyGrappleMomentumBoost(anchorAtt.WorldPosition)
-		setDefaultAnimateEnabled(false)
-		playSwingAnim(attachWorld)
-
-		spawnBeam(attachWorld)
-		destroyPreviewTracer()
-		clearVisuals()
-		swingChargeFill = 0
-		ensureSwingChargeHud(target)
+		applyAttachBoost(attachWorld)
+		playHangAnim(attachWorld)
+		spawnSwingBeam(attachWorld)
+		ensureChargeGui(target)
+		updateTargetVisual(nil, false)
+		playOptionalSound("Catch")
+		playOptionalSound("Wind")
 	end
 
-	local function stopSwing(doLaunch: boolean)
-		if not isSwinging then return end
+	local function applyReleaseLaunch(
+		snapVelocity,
+		snapPosition,
+		snapAnchorWorld,
+		heldTime,
+		charge,
+		forwardCharge,
+		forwardHeldTime,
+		momentum
+	)
+		camera = workspace.CurrentCamera or camera
+		if not camera or not hrp.Parent then
+			return
+		end
+
+		hrp.AssemblyLinearVelocity = snapVelocity
+		hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+		humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+
+		local velocity = snapVelocity
+		local camLook = camera.CFrame.LookVector
+		local camFlat = Vector3.new(camLook.X, 0, camLook.Z)
+		local camFlatUnit = camFlat.Magnitude > 0.08 and camFlat.Unit or Vector3.new(0, 0, -1)
+		local holdMult = math.clamp(heldTime / MIN_HOLD_FOR_FULL_LAUNCH, 0.92, 1)
+		local launchScale = getLaunchScale()
+		local radial = Vector3.new(0, 1, 0)
+
+		if snapAnchorWorld then
+			local fromAnchor = snapPosition - snapAnchorWorld
+			if fromAnchor.Magnitude > 0.25 then
+				radial = fromAnchor.Unit
+			end
+		end
+
+		local tangVelocity = velocity - radial * velocity:Dot(radial)
+		local tangSpeed = tangVelocity.Magnitude
+		local facingDir = camFlatUnit
+		local launchDir = facingDir
+
+		if tangSpeed > 2 then
+			local tangentBlend = math.clamp(LAUNCH_MOMENTUM_RATIO + tangSpeed / 260, 0, 0.22)
+			launchDir = facingDir * (1 - tangentBlend) + tangVelocity.Unit * tangentBlend
+		end
+		if launchDir.Magnitude > 0.05 then
+			launchDir = launchDir.Unit
+		else
+			launchDir = facingDir
+		end
+
+		local forwardHoldBonus = math.clamp(forwardHeldTime / FORWARD_CHARGE_TIME, 0, 1)
+		local inputBoost = math.clamp(forwardCharge + forwardHoldBonus * 0.35, 0, 1.35)
+		local momentumBoost = math.clamp(momentum or 0, 0, 1)
+		local cap = LAUNCH_SPEED_CAP
+			* math.clamp(0.95 + (launchScale - 1) * 0.45, 0.9, 1.15)
+			* (1 + momentumBoost * SWING_MOMENTUM_LAUNCH_BONUS)
+
+		local horizontalSpeed = (
+			LAUNCH_FORWARD_DV
+			+ LAUNCH_FORWARD_INPUT_DV * inputBoost
+			+ LAUNCH_CHARGE_DV * charge * 0.35
+			+ LAUNCH_FORWARD_DV * SWING_MOMENTUM_LAUNCH_BONUS * momentumBoost
+		)
+			* holdMult
+			* launchScale
+		local upwardSpeed = (LAUNCH_UP_DV + LAUNCH_CHARGE_DV * charge * 0.45 + inputBoost * 3 + momentumBoost * 4)
+			* holdMult
+			* launchScale
+		local targetVelocity = launchDir * horizontalSpeed + Vector3.new(0, upwardSpeed, 0)
+
+		if targetVelocity.Magnitude > cap then
+			targetVelocity = targetVelocity.Unit * cap
+		end
+		hrp.AssemblyLinearVelocity = targetVelocity
+	end
+
+	local function stopSwing(doLaunch)
+		if not isSwinging then
+			return
+		end
 
 		local heldTime = swingTimer
-		local detachAnchorWorld: Vector3? = nil
-		if ropeAnchorAtt and ropeAnchorAtt.Parent then
-			detachAnchorWorld = ropeAnchorAtt.WorldPosition
-		end
+		local charge = swingCharge
+		local forwardCharge = forwardSwingCharge
+		local forwardHeld = forwardHoldTime
+		local releaseMomentum = swingMomentum
+		local snapVelocity = hrp.AssemblyLinearVelocity
+		local snapPosition = hrp.Position
+		local snapAnchorWorld = anchorAttachment and anchorAttachment.Parent and anchorAttachment.WorldPosition or nil
 
-		destroySwingChargeHud()
 		isSwinging = false
-		if doLaunch then
-			launchCamClock = os.clock()
-		end
-
-		if forceInst     then forceInst:Destroy();     forceInst     = nil end
-		if forceAtt      then forceAtt:Destroy();      forceAtt      = nil end
-		if ropeAnchorAtt then ropeAnchorAtt:Destroy(); ropeAnchorAtt = nil end
-		if ropeBodyAtt   then ropeBodyAtt:Destroy();   ropeBodyAtt   = nil end
-		if ropeInst      then ropeInst:Destroy();      ropeInst      = nil end
-		destroyBeam()
-		stopSwingAnim()
-		setDefaultAnimateEnabled(true)
-
-		swingTargetPart = nil
-
-		lastSwingEndClock = os.clock()
-		if doLaunch then landedFromSwing = true end
+		currentTarget = nil
+		stopHangAnim()
+		destroySwingObjects()
+		stopOptionalSound("Wind")
 
 		humanoid.PlatformStand = false
 		humanoid.AutoRotate = true
-		hrp.AssemblyAngularVelocity = Vector3.zero
+		hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 
-		-- Momentum release: keep arc velocity, add forward impulse scaled by power + swing speed.
 		if doLaunch then
-			local snapVel = hrp.AssemblyLinearVelocity
-			local snapPos = hrp.Position
-			local snapHeld = heldTime
-			local snapCharge = swingChargeFill
-			local snapAnchor = detachAnchorWorld
-			local camLook0 = camera.CFrame.LookVector
-
+			isLaunched = true
+			landedFromSwing = true
+			lastLaunchClock = os.clock()
+			playOptionalSound("Launch")
 			task.defer(function()
-				if not hrp.Parent then
-					return
-				end
-
-				-- Humanoid can zero velocity when PlatformStand turns off — restore swing momentum first.
-				hrp.AssemblyLinearVelocity = snapVel
-				hrp.AssemblyAngularVelocity = Vector3.zero
-
-				local vel = snapVel
-				local speed = vel.Magnitude
-				local camLook = camLook0
-				local camFlat = Vector3.new(camLook.X, 0, camLook.Z)
-				local camFlatUnit = if camFlat.Magnitude > 0.08 then camFlat.Unit else Vector3.new(0, 0, -1)
-				local holdMult = math.clamp(snapHeld / MIN_SWING_HOLD_LAUNCH, 0.72, 1)
-				local mass = hrp.AssemblyMass
-
-				local function blendLaunchDir(baseDir: Vector3): Vector3
-					local d = baseDir
-					if camFlat.Magnitude > 0.08 then
-						d = (d * (1 - LAUNCH_FORWARD_CAMERA_MIX) + camFlat.Unit * LAUNCH_FORWARD_CAMERA_MIX)
-					end
-					if d.Magnitude > 1e-4 then
-						return d.Unit
-					end
-					return camFlatUnit
-				end
-
-				local function applyMomentumLaunch(
-					launchDir: Vector3,
-					tangSpeed: number,
-					releaseSpeed: number,
-					chargeFill: number,
-					extraForwardDv: number?
+				applyReleaseLaunch(
+					snapVelocity,
+					snapPosition,
+					snapAnchorWorld,
+					heldTime,
+					charge,
+					forwardCharge,
+					forwardHeld,
+					releaseMomentum
 				)
-					local dir = blendLaunchDir(launchDir)
-					local forwardDv = dynLaunchImpulseBase * holdMult + (extraForwardDv or 0)
-					local momentumDv = tangSpeed * dynLaunchMomentumRatio * holdMult
-					local chargeDv = chargeFill * dynLaunchChargeBonus * holdMult
-					local totalDv = forwardDv + momentumDv + chargeDv
-
-					humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
-					hrp:ApplyImpulse(dir * totalDv * mass)
-					if releaseSpeed > 2.5 then
-						local carryDv = releaseSpeed * dynLaunchVelocityCarry * holdMult
-						hrp:ApplyImpulse(vel.Unit * carryDv * mass)
-					end
-					if dynLaunchUpImpulse > 0 then
-						hrp:ApplyImpulse(Vector3.new(0, dynLaunchUpImpulse * holdMult * mass, 0))
-					end
-
-					local post = hrp.AssemblyLinearVelocity
-					if post.Magnitude > dynMaxLaunchSpeed then
-						hrp.AssemblyLinearVelocity = post.Unit * dynMaxLaunchSpeed
-						post = hrp.AssemblyLinearVelocity
-					end
-
-					local speedRef = math.max(dynMaxLaunchSpeed, 1)
-					launchCamShakeIntensity = math.clamp(
-						(post.Magnitude / speedRef) * 0.55 + (tangSpeed / math.max(dynMaxSwingSpeed, 1)) * 0.45,
-						0,
-						1
-					)
-					launchFovIntensity = math.clamp(post.Magnitude / speedRef, 0, 1)
-					isLaunched = true
-					task.delay(LAUNCH_DURATION, function()
-						isLaunched = false
-					end)
-				end
-
-				if speed <= 1 then
-					local hangDir = camFlatUnit + Vector3.new(0, 0.18, 0)
-					if hangDir.Magnitude > 1e-4 then
-						applyMomentumLaunch(
-							hangDir.Unit,
-							0,
-							speed,
-							snapCharge,
-							dynLaunchDeadhangImpulse * holdMult
-						)
-					end
-				else
-					local radial = Vector3.yAxis
-					if snapAnchor then
-						local fromAnchor = snapPos - snapAnchor
-						if fromAnchor.Magnitude > 0.2 then
-							radial = fromAnchor.Unit
-						end
-					end
-
-					local tangVel = vel - radial * vel:Dot(radial)
-					local tangSpeed = tangVel.Magnitude
-					local camTang = camFlat - radial * camFlat:Dot(radial)
-
-					local launchDir: Vector3
-					if tangSpeed > 2 then
-						local tDir = tangVel.Unit
-						if camTang.Magnitude > 0.05 then
-							launchDir = (tDir * (1 - LAUNCH_CAMERA_BLEND) + camTang.Unit * LAUNCH_CAMERA_BLEND).Unit
-						else
-							launchDir = tDir
-						end
-					elseif camTang.Magnitude > 0.05 then
-						launchDir = camTang.Unit
-					else
-						launchDir = if speed > 0.1 then vel.Unit else camFlatUnit
-					end
-
-					local tangRef = if tangSpeed > 1 then tangSpeed else dynLaunchDeadhangImpulse * 0.35
-					applyMomentumLaunch(launchDir, tangRef, speed, snapCharge)
-				end
 			end)
 		end
 	end
 
-	-- ── Input ─────────────────────────────────────────────────────────────────
-	humanoid.StateChanged:Connect(function(_, new)
-		if new == Enum.HumanoidStateType.Freefall
-		or new == Enum.HumanoidStateType.Jumping
-		or new == Enum.HumanoidStateType.FallingDown then
-			isAirborne = true
-		elseif new == Enum.HumanoidStateType.Landed then
-			isAirborne = false
-			clearVisuals()
-			destroyPreviewTracer()
-			prevInRng = {}
-			isAirborne = false
-			if landedFromSwing then
-				landedFromSwing = false
-				local alpha = landingImpactAlpha(landingSpeed)
-				local sfxAlpha = if alpha > 0 then alpha else math.clamp(landingSpeed / LANDING_BLOCK_VEL_MIN, 0.25, 0.6)
-				local gse = getGameSoundEffects()
-				if gse and gse.playGroundSmash then
-					gse.playGroundSmash(sfxAlpha)
-				end
-				landingCamSeed = math.random() * 100
-				swingCamLagWorld = Vector3.zero
-				swingCamRoll = 0
-				launchCamClock = -1e9
-				if alpha > 0 then
-					spawnLandingBlocks(alpha)
-					landingCamShakeIntensity = math.clamp(0.45 + alpha * 0.55, 0, 1)
-					landingCamClock = os.clock()
-				elseif sfxAlpha > 0 then
-					landingCamShakeIntensity = sfxAlpha * 0.55
-					landingCamClock = os.clock()
-				end
-			end
-			isLaunched = false
-			launchCamShakeIntensity = 0
-			launchFovIntensity = 0
-			if landingCamShakeIntensity <= 0.02 then
-				resetSwingCameraState()
-			end
-		elseif new == Enum.HumanoidStateType.Running
-		or new == Enum.HumanoidStateType.RunningNoPhysics then
-			isAirborne = false
-		end
-	end)
-
-	-- Second jump while airborne: hook onto the best visible target in front of the camera.
-	local function tryGrappleAttach()
-		if isSwinging then
-			return
-		end
-		if not isAirborneForSwing() then
-			return
-		end
-		if isHrpInSafezone() then
-			return
-		end
-		local now = os.clock()
-		if now - lastGrappleInputClock < GRAPPLE_INPUT_COOLDOWN then return end
-
-		local best = cameraPickSwingTarget(true)
-		if not best then
+	local function spawnLandingBlocks(speed)
+		local alpha = math.clamp((speed - 16) / 86, 0, 1)
+		if alpha <= 0 then
 			return
 		end
 
-		startSwing(best)
-		if isSwinging then
-			lastGrappleInputClock = now
+		rayParams.FilterDescendantsInstances = { character }
+		local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -10, 0), rayParams)
+		local pos = hit and hit.Position or (hrp.Position - Vector3.new(0, 3, 0))
+		local color = hit and hit.Instance and hit.Instance.Color or Color3.fromRGB(120, 120, 120)
+		local material = hit and hit.Material or Enum.Material.Concrete
+		local count = math.floor(10 + alpha * 24)
+
+		local ring = Instance.new("Part")
+		ring.Name = "SwingImpactRing"
+		ring.Shape = Enum.PartType.Cylinder
+		ring.Anchored = true
+		ring.CanCollide = false
+		ring.CastShadow = false
+		ring.Material = Enum.Material.SmoothPlastic
+		ring.Color = color:Lerp(Color3.new(1, 1, 1), 0.35)
+		ring.Transparency = 0.58
+		ring.Size = Vector3.new(0.08, 2.5 + alpha * 2.5, 2.5 + alpha * 2.5)
+		ring.CFrame = CFrame.new(pos + Vector3.new(0, 0.08, 0)) * CFrame.Angles(0, 0, math.rad(90))
+		ring.Parent = workspace
+		TweenService:Create(ring, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = Vector3.new(0.08, 12 + alpha * 11, 12 + alpha * 11),
+			Transparency = 1,
+		}):Play()
+		Debris:AddItem(ring, 0.5)
+
+		for _ = 1, count do
+			local size = math.random(42, 135) / 100
+			local part = Instance.new("Part")
+			part.Name = "SwingLandingChunk"
+			part.Size = Vector3.new(size, size * math.random(70, 130) / 100, size)
+			part.Material = material
+			part.Color = color
+			part.CanCollide = false
+			part.CastShadow = false
+			part.CFrame = CFrame.new(pos + Vector3.new(math.random(-22, 22) / 10, 0.2, math.random(-22, 22) / 10))
+				* CFrame.Angles(math.random() * math.pi, math.random() * math.pi, math.random() * math.pi)
+			part.Parent = workspace
+
+			local angle = math.random() * math.pi * 2
+			local outSpeed = math.random(18, 42) * (0.78 + alpha * 0.5)
+			local upSpeed = math.random(14, 34) * (0.78 + alpha * 0.5)
+			part.AssemblyLinearVelocity = Vector3.new(math.cos(angle) * outSpeed, upSpeed, math.sin(angle) * outSpeed)
+			part.AssemblyAngularVelocity = Vector3.new(math.random(-13, 13), math.random(-13, 13), math.random(-13, 13))
+
+			TweenService:Create(part, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				Transparency = 1,
+				Size = Vector3.new(0.06, 0.06, 0.06),
+			}):Play()
+			Debris:AddItem(part, 0.9)
+		end
+
+		local chipCount = math.floor(8 + alpha * 18)
+		for _ = 1, chipCount do
+			local size = math.random(16, 36) / 100
+			local chip = Instance.new("Part")
+			chip.Name = "SwingLandingChip"
+			chip.Size = Vector3.new(size, size, size)
+			chip.Material = material
+			chip.Color = color:Lerp(Color3.new(1, 1, 1), math.random(0, 18) / 100)
+			chip.CanCollide = false
+			chip.CastShadow = false
+			chip.CFrame = CFrame.new(pos + Vector3.new(math.random(-18, 18) / 10, 0.16, math.random(-18, 18) / 10))
+			chip.Parent = workspace
+
+			local angle = math.random() * math.pi * 2
+			local outSpeed = math.random(24, 54) * (0.8 + alpha * 0.55)
+			local upSpeed = math.random(18, 42) * (0.75 + alpha * 0.55)
+			chip.AssemblyLinearVelocity = Vector3.new(math.cos(angle) * outSpeed, upSpeed, math.sin(angle) * outSpeed)
+			chip.AssemblyAngularVelocity = Vector3.new(math.random(-18, 18), math.random(-18, 18), math.random(-18, 18))
+
+			TweenService:Create(chip, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				Transparency = 1,
+				Size = Vector3.new(0.03, 0.03, 0.03),
+			}):Play()
+			Debris:AddItem(chip, 0.65)
 		end
 	end
 
-	-- Mobile: bind the Roblox touch JumpButton so press = attach, release = detach (same feel as PC Space).
-	-- Tap-detach via JumpRequest is kept as a fallback only when the button can't be located.
-	local mobileJumpBound = false
-	local mobileBoundConns: { RBXScriptConnection } = {}
+	local function tryAttach()
+		if isSwinging or not hrp.Parent then
+			return
+		end
 
-	local function disconnectMobileBound()
-		for _, c in mobileBoundConns do c:Disconnect() end
-		table.clear(mobileBoundConns)
+		local now = os.clock()
+		if now - lastTryClock < ATTACH_RETRY_TIME then
+			return
+		end
+		lastTryClock = now
+
+		local maxDistance = getSwingRange()
+		local lookDot = AIRBORNE_TARGET_LOOK_DOT
+		local screenLimit = TARGET_SCREEN_RADIUS_LIMIT
+		if not isAirborneForSwing() then
+			return
+		end
+
+		local target = pickSwingTarget(true, maxDistance, lookDot, screenLimit)
+		if target then
+			startSwing(target)
+		end
+	end
+
+	local function disconnectMobileJumpButton()
+		for _, conn in ipairs(mobileConns) do
+			conn:Disconnect()
+		end
+		table.clear(mobileConns)
 		mobileJumpBound = false
 		mobileJumpHeld = false
 	end
 
-	local function tryBindMobileJumpButton(): boolean
-		if mobileJumpBound then return true end
-		if not UserInputService.TouchEnabled then return false end
-		local pg = player:FindFirstChildOfClass("PlayerGui")
-		if not pg then return false end
-		local touchGui = pg:FindFirstChild("TouchGui")
-		if not touchGui then return false end
-		local frame = touchGui:FindFirstChild("TouchControlFrame")
-		if not frame then return false end
-		local btn = frame:FindFirstChild("JumpButton")
-		if not (btn and btn:IsA("GuiButton")) then return false end
+	local function destroyMobileFallbackButton()
+		if fallbackMobileGui then
+			fallbackMobileGui:Destroy()
+			fallbackMobileGui = nil
+		end
+	end
 
-		mobileJumpBound = true
-		local pressDown = false
+	local function createMobileFallbackButton()
+		if fallbackMobileGui or mobileJumpBound or not UserInputService.TouchEnabled then
+			return
+		end
 
-		table.insert(mobileBoundConns, btn.InputBegan:Connect(function(input)
-			if input.UserInputType ~= Enum.UserInputType.Touch then return end
-			if pressDown then return end
-			pressDown = true
-			mobileJumpHeld = true
-			if not isSwinging then
-				tryGrappleAttach()
+		local playerGui = player:FindFirstChildOfClass("PlayerGui")
+		if not playerGui then
+			return
+		end
+
+		fallbackMobileGui = Instance.new("ScreenGui")
+		fallbackMobileGui.Name = "SwingMobileFallback"
+		fallbackMobileGui.ResetOnSpawn = false
+		fallbackMobileGui.IgnoreGuiInset = true
+		fallbackMobileGui.Parent = playerGui
+
+		local button = Instance.new("TextButton")
+		button.Name = "SwingHoldButton"
+		button.AnchorPoint = Vector2.new(1, 1)
+		button.Position = UDim2.new(1, -104, 1, -172)
+		button.Size = UDim2.fromOffset(82, 82)
+		button.BackgroundColor3 = Color3.fromRGB(28, 31, 36)
+		button.BackgroundTransparency = 0.18
+		button.BorderSizePixel = 0
+		button.Text = "SWING"
+		button.TextColor3 = Color3.new(1, 1, 1)
+		button.TextStrokeTransparency = 0.45
+		button.TextSize = 13
+		button.Font = Enum.Font.GothamBold
+		button.Parent = fallbackMobileGui
+
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(1, 0)
+		corner.Parent = button
+
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = READY_COLOR
+		stroke.Thickness = 2
+		stroke.Transparency = 0.15
+		stroke.Parent = button
+
+		addMobileConn(button.InputBegan:Connect(function(input)
+			if
+				input.UserInputType ~= Enum.UserInputType.Touch
+				and input.UserInputType ~= Enum.UserInputType.MouseButton1
+			then
+				return
 			end
+			noteJumpPressed()
+			mobileJumpHeld = true
+			button.BackgroundTransparency = 0.04
+			tryAttach()
 		end))
 
-		table.insert(mobileBoundConns, btn.InputEnded:Connect(function(input)
-			if input.UserInputType ~= Enum.UserInputType.Touch then return end
-			if not pressDown then return end
-			pressDown = false
+		addMobileConn(button.InputEnded:Connect(function(input)
+			if
+				input.UserInputType ~= Enum.UserInputType.Touch
+				and input.UserInputType ~= Enum.UserInputType.MouseButton1
+			then
+				return
+			end
 			mobileJumpHeld = false
-			if isSwinging then
+			button.BackgroundTransparency = 0.18
+			if isSwinging and os.clock() - lastAttachClock > MIN_SWING_LOCK_TIME then
+				stopSwing(true)
+			end
+		end))
+	end
+
+	local function bindMobileJumpButton()
+		if mobileJumpBound then
+			return true
+		end
+		if not UserInputService.TouchEnabled then
+			return false
+		end
+
+		local playerGui = player:FindFirstChildOfClass("PlayerGui")
+		if not playerGui then
+			return false
+		end
+
+		local touchGui = playerGui:FindFirstChild("TouchGui")
+		local frame = touchGui and touchGui:FindFirstChild("TouchControlFrame")
+		local button = frame and frame:FindFirstChild("JumpButton", true)
+		if not (button and button:IsA("GuiButton")) then
+			return false
+		end
+
+		mobileJumpBound = true
+		destroyMobileFallbackButton()
+		local buttonDown = false
+
+		addMobileConn(button.InputBegan:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			if buttonDown then
+				return
+			end
+			buttonDown = true
+			noteJumpPressed()
+			mobileJumpHeld = true
+			tryAttach()
+		end))
+
+		addMobileConn(button.InputEnded:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			buttonDown = false
+			mobileJumpHeld = false
+			if isSwinging and os.clock() - lastAttachClock > MIN_SWING_LOCK_TIME then
 				stopSwing(true)
 			end
 		end))
 
-		table.insert(mobileBoundConns, btn.AncestryChanged:Connect(function(_, parent)
+		addMobileConn(button.AncestryChanged:Connect(function(_, parent)
 			if not parent then
-				disconnectMobileBound()
+				disconnectMobileJumpButton()
 				task.defer(function()
-					-- Roblox rebuilds TouchGui on respawn / device changes; reattach to the new button.
-					tryBindMobileJumpButton()
+					if not bindMobileJumpButton() then
+						createMobileFallbackButton()
+					end
 				end)
 			end
 		end))
@@ -1450,277 +2261,640 @@ local function boot(character: Model)
 		return true
 	end
 
-	local pgWatchConns: { RBXScriptConnection } = {}
 	if UserInputService.TouchEnabled then
-		local pg = player:FindFirstChildOfClass("PlayerGui")
-		if pg and not tryBindMobileJumpButton() then
-			table.insert(pgWatchConns, pg.DescendantAdded:Connect(function(d)
-				if d.Name == "JumpButton" and d:IsA("GuiButton") then
-					task.defer(tryBindMobileJumpButton)
+		task.defer(function()
+			task.wait(0.35)
+			if not bindMobileJumpButton() then
+				task.wait(1)
+				if not bindMobileJumpButton() then
+					createMobileFallbackButton()
 				end
-			end))
-		end
+			end
+		end)
+		local playerGui = player:WaitForChild("PlayerGui")
+		addConn(playerGui.DescendantAdded:Connect(function(desc)
+			if desc.Name == "JumpButton" and desc:IsA("GuiButton") then
+				task.defer(bindMobileJumpButton)
+			end
+		end))
 	end
 
-	local function onJumpRequest()
-		if isSwinging then
-			-- Fallback only: pure-touch device where we couldn't bind to the JumpButton.
-			-- Without this, the player would be stuck swinging since they have no key to release.
-			if not mobileJumpBound
-				and UserInputService.TouchEnabled
-				and not UserInputService.KeyboardEnabled
-				and os.clock() - lastSwingAttachClock >= SWING_ATTACH_JUMP_DEBOUNCE
-			then
+	addConn(UserInputService.InputBegan:Connect(function(input, processed)
+		if UserInputService:GetFocusedTextBox() then
+			return
+		end
+
+		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space then
+			noteJumpPressed()
+			spaceHeld = true
+			if not processed then
+				tryAttach()
+			end
+		elseif
+			input.UserInputType == Enum.UserInputType.Gamepad1
+			and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
+		then
+			noteJumpPressed()
+			gamepadHeld = true
+			if not processed then
+				tryAttach()
+			end
+		end
+	end))
+
+	addConn(UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space then
+			spaceHeld = false
+			if isSwinging and os.clock() - lastAttachClock > MIN_SWING_LOCK_TIME then
 				stopSwing(true)
 			end
+		elseif
+			input.UserInputType == Enum.UserInputType.Gamepad1
+			and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
+		then
+			gamepadHeld = false
+			if isSwinging and os.clock() - lastAttachClock > MIN_SWING_LOCK_TIME then
+				stopSwing(true)
+			end
+		end
+	end))
+
+	addConn(UserInputService.JumpRequest:Connect(function()
+		if UserInputService:GetFocusedTextBox() then
 			return
 		end
-		tryGrappleAttach()
-	end
-
-	local jumpConn = UserInputService.JumpRequest:Connect(onJumpRequest)
-
-	local beginConn = UserInputService.InputBegan:Connect(function(input: InputObject, processed: boolean)
-		if processed or isSwinging then return end
-		if input.UserInputType == Enum.UserInputType.Gamepad1 and isJumpReleaseKey(input.KeyCode) then
-			tryGrappleAttach()
+		noteJumpPressed()
+		if not isSwinging then
+			tryAttach()
 		end
-	end)
+	end))
 
-	local releaseConn = UserInputService.InputEnded:Connect(function(input: InputObject, processed: boolean)
-		if processed or not isSwinging then
-			return
+	addConn(humanoid.StateChanged:Connect(function(_, newState)
+		if
+			newState == Enum.HumanoidStateType.Freefall
+			or newState == Enum.HumanoidStateType.Jumping
+			or newState == Enum.HumanoidStateType.FallingDown
+		then
+			isAirborne = true
+			airborneStartedClock = os.clock()
+		elseif newState == Enum.HumanoidStateType.Landed then
+			isAirborne = false
+			local impactSpeed = landingSpeed
+			if landedFromSwing then
+				spawnLandingBlocks(impactSpeed)
+				playOptionalSound("Land")
+				local impactAlpha = math.clamp((impactSpeed - 16) / 86, 0.2, 1)
+				lastLandingClock = os.clock()
+				landingShakeStrength = math.clamp(0.28 + impactAlpha * 0.72, 0, 1)
+				landingShakeSeed = math.random() * 1000
+			end
+			landedFromSwing = false
+			isLaunched = false
+			landingSpeed = 0
+			hideSwingTargetUi()
+		elseif newState == Enum.HumanoidStateType.Running or newState == Enum.HumanoidStateType.RunningNoPhysics then
+			isAirborne = false
+			hideSwingTargetUi()
 		end
-		if input.UserInputType == Enum.UserInputType.Keyboard and isJumpReleaseKey(input.KeyCode) then
-			stopSwing(true)
-			return
-		end
-		if input.UserInputType == Enum.UserInputType.Gamepad1 and isJumpReleaseKey(input.KeyCode) then
-			stopSwing(true)
-		end
-	end)
+	end))
 
-	local diedConn = humanoid.Died:Connect(function()
+	addConn(humanoid.Died:Connect(function()
 		if isSwinging then
 			stopSwing(false)
 		end
-	end)
+	end))
 
-	-- ── Heartbeat (physics + visuals) ─────────────────────────────────────────
-	local fovBase   = camera.FieldOfView
-
-	local heartbeat = RunService.Heartbeat:Connect(function(dt)
-		local vel = hrp.AssemblyLinearVelocity
-
-		-- FOV: widen with swing speed; attach punch + launch burst layered on top.
-		local fovTarget = fovBase
-		if isSwinging or isLaunched then
-			local t = math.clamp(vel.Magnitude / math.max(dynMaxSwingSpeed, 1), 0, 1)
-			fovTarget = fovBase + (FOV_MAX - fovBase) * t
-		end
-
-		local now = os.clock()
-		local attachAge = now - attachCamClock
-		if attachAge >= 0 and attachAge < ATTACH_PUNCH_DURATION then
-			local u = attachAge / ATTACH_PUNCH_DURATION
-			fovTarget -= ATTACH_PUNCH_FOV * math.sin(u * math.pi)
-		end
-
-		local launchAge = now - launchCamClock
-		if launchAge >= 0 and launchAge < LAUNCH_FOV_DURATION then
-			local u = launchAge / LAUNCH_FOV_DURATION
-			local ease = (1 - u) * (1 - u)
-			fovTarget += LAUNCH_FOV_BOOST * ease * (0.55 + launchFovIntensity * 0.65)
-		end
-
-		camera.FieldOfView += (fovTarget - camera.FieldOfView) * math.min(dt * FOV_SPEED, 1)
-
-		-- Swing physics: camera-steered pendulum on a SpringConstraint.
-		if isSwinging and forceInst and swingTargetPart and swingTargetPart.Parent and ropeAnchorAtt and ropeAnchorAtt.Parent then
-			swingTimer += dt
-			humanoid.PlatformStand = true
-			humanoid.Jump = false
-
-			local decay = math.clamp(swingTimer / FORCE_DECAY_TIME, 0, 1)
-			local mult = 1 - decay * (1 - FORCE_MIN_MULT)
-
-			local fromAnchor = hrp.Position - ropeAnchorAtt.WorldPosition
-			local dist = fromAnchor.Magnitude
-			local radial = if dist > 0.2 then fromAnchor.Unit else Vector3.yAxis
-			local ropeSpan = math.max(ropeLength, 8)
-			local extT = math.clamp(dist / ropeSpan, 0, 1.12)
-			local anchorWorld = ropeAnchorAtt.WorldPosition
-
-			-- Camera-relative steering: where you look is where you swing.
-			local camLook = camera.CFrame.LookVector
-			local camRight = camera.CFrame.RightVector
-			local md = humanoid.MoveDirection
-
-			local inputBias = Vector3.zero
-			if md.Magnitude > 0.05 then
-				local mdFlat = Vector3.new(md.X, 0, md.Z)
-				inputBias = camRight * camRight:Dot(mdFlat) * 0.6
-			end
-			local steerDir = Vector3.new(camLook.X, 0, camLook.Z) + inputBias
-
-			local tang = steerDir - radial * steerDir:Dot(radial)
-			local camSteerForce = Vector3.zero
-			if tang.Magnitude > 0.05 then
-				camSteerForce = tang.Unit * swingForce * mult * hrp.AssemblyMass
-			end
-
-			local arcDir = pendulumArcDir(radial) or Vector3.new(0, -1, 0)
-			local arcForce = computeSwingArcForce(anchorWorld, radial, extT, mult, hrp.AssemblyMass)
-			local speedPump = computeSwingSpeedPump(radial, arcDir, vel, extT, mult, hrp.AssemblyMass)
-
-			-- Extended rope: pendulum arc dominates (fixes float); close in: more camera steer.
-			local arcWeight = 0.42 + math.clamp((extT - 0.35) / 0.65, 0, 1) * 0.58
-			forceInst.Force = camSteerForce * (1 - arcWeight * 0.5) + arcForce + speedPump
-
-			local floorScale = swingFloorScale(anchorWorld)
-			if floorScale < 0.3 and vel.Y < -10 then
-				hrp.AssemblyLinearVelocity = Vector3.new(vel.X, vel.Y * 0.82, vel.Z)
-			end
-
-			-- Steering uses VectorForce only. Avoid aiming HRP at the camera here — that rotation
-			-- fights the hang animation and twists arms into the torso.
-
-			hrp.AssemblyAngularVelocity = hrp.AssemblyAngularVelocity * math.exp(-ANGULAR_DAMP * dt)
-
-			if vel.Magnitude > dynMaxSwingSpeed then
-				hrp.AssemblyLinearVelocity = vel.Unit * dynMaxSwingSpeed
-			end
-
-			local spaceHeld = UserInputService:IsKeyDown(Enum.KeyCode.Space)
-				or UserInputService:IsKeyDown(Enum.KeyCode.ButtonA)
-				or mobileJumpHeld
-			swingChargeFill = if spaceHeld
-				then math.min(1, swingChargeFill + dt / SWING_CHARGE_HOLD_SEC)
-				else math.max(0, swingChargeFill - dt * 3.5)
-			layoutSwingChargeDot()
-			humanoid.CameraOffset = Vector3.zero
-
+	RunService:BindToRenderStep(renderBindName, Enum.RenderPriority.Camera.Value + 1, function(dt)
+		camera = workspace.CurrentCamera or camera
+		if not camera or not hrp.Parent then
 			return
 		end
 
-		-- Track speed in air so we know how hard the landing will be
-		if isAirborne then
-			landingSpeed = vel.Magnitude
+		local now = os.clock()
+		local launchShakeActive = now - lastLaunchClock >= 0 and now - lastLaunchClock < LAUNCH_CAMERA_SHAKE_TIME
+		local landingShakeActive = now - lastLandingClock >= 0 and now - lastLandingClock < LANDING_CAMERA_SHAKE_TIME
+		if
+			not ENABLE_GROUNDED_CAMERA_ASSIST
+			and not isSwinging
+			and not isLaunched
+			and not launchShakeActive
+			and not landingShakeActive
+			and swingCamLag.Magnitude <= 0.001
+			and math.abs(swingCamRoll) <= 0.0001
+		then
+			return
 		end
 
-		if not isSwinging and not isLaunched and not isLandingShakeActive(os.clock()) then
-			humanoid.CameraOffset = humanoid.CameraOffset:Lerp(Vector3.zero, math.min(dt * 14, 1))
+		local cf = camera.CFrame
+		local _, assistPoint = closestGroundCameraTarget()
+		if assistPoint then
+			local toPoint = assistPoint - cf.Position
+			if toPoint.Magnitude > 0.5 then
+				local assistAlpha = math.clamp(dt * CAMERA_ASSIST_STRENGTH, 0, 0.035)
+				local look = cf.LookVector:Lerp(toPoint.Unit, assistAlpha)
+				if look.Magnitude > 0.05 then
+					cf = CFrame.lookAt(cf.Position, cf.Position + look.Unit, cf.UpVector)
+				end
+			end
 		end
 
-		-- Swing point + preview line only while airborne (jump first, then press jump again to hook).
-		if isAirborneForSwing() and not isSwinging then
-			local inSafe = isHrpInSafezone()
-			local aimVisual = cameraPickSwingTarget(false)
-			local grappleOk = not inSafe and aimVisual ~= nil
+		local velocity = hrp.AssemblyLinearVelocity
+		local speed = velocity.Magnitude
+		local targetRoll = 0
+		local targetLag = Vector3.new(0, 0, 0)
 
-			local inRngNow: { BasePart } = {}
-			if aimVisual then
-				table.insert(inRngNow, aimVisual)
+		if isSwinging then
+			local swingSpeedRef = math.max(getMaxSwingSpeed(), 1)
+			local lateral = math.clamp(velocity:Dot(cf.RightVector) / swingSpeedRef, -1, 1)
+			targetRoll = -lateral * SWING_CAMERA_ROLL_MAX
+			targetLag = -cf.LookVector * math.clamp(speed / swingSpeedRef, 0, 1) * SWING_CAMERA_LAG_MAX
+			targetLag += Vector3.new(0, math.clamp(-velocity.Y / 160, -0.18, 0.28), 0)
+		elseif isLaunched then
+			local lateral = math.clamp(velocity:Dot(cf.RightVector) / math.max(LAUNCH_SPEED_CAP, 1), -1, 1)
+			targetRoll = -lateral * SWING_CAMERA_ROLL_MAX * 0.55
+		end
+
+		local smooth = math.min(dt * SWING_CAMERA_EFFECT_SPEED, 1)
+		swingCamRoll += (targetRoll - swingCamRoll) * smooth
+		swingCamLag = swingCamLag:Lerp(targetLag, smooth)
+
+		if swingCamLag.Magnitude > 0.001 or math.abs(swingCamRoll) > 0.0001 then
+			local pos = cf.Position + swingCamLag
+			cf = CFrame.lookAt(pos, pos + cf.LookVector, cf.UpVector) * CFrame.Angles(0, 0, swingCamRoll)
+		end
+
+		local shakeOffset = Vector3.new(0, 0, 0)
+		local shakeRot = Vector3.new(0, 0, 0)
+		local function addShake(startClock, duration, strength, seed, rotScale)
+			local age = now - startClock
+			if age < 0 or age > duration then
+				return
 			end
-			local inRngSet: { [BasePart]: boolean } = {}
-			for _, p in ipairs(inRngNow) do
-				inRngSet[p] = true
+			local fade = (1 - age / duration) ^ 2
+			local s = strength * fade
+			local t = now * 34
+			shakeOffset += Vector3.new(math.noise(seed, t, 0), math.noise(seed, t, 9), math.noise(seed, t, 18)) * s
+			shakeRot += Vector3.new(
+				math.noise(seed + 13, t, 4),
+				math.noise(seed + 27, t, 12),
+				math.noise(seed + 41, t, 20)
+			) * s * rotScale
+		end
+
+		local launchAge = now - lastLaunchClock
+		if launchAge >= 0 and launchAge < LAUNCH_CAMERA_SHAKE_TIME then
+			local speedAlpha = math.clamp(speed / math.max(LAUNCH_SPEED_CAP, 1), 0.25, 1)
+			addShake(lastLaunchClock, LAUNCH_CAMERA_SHAKE_TIME, LAUNCH_CAMERA_SHAKE_STRENGTH * speedAlpha, 240.5, 0.045)
+		end
+		addShake(
+			lastLandingClock,
+			LANDING_CAMERA_SHAKE_TIME,
+			LANDING_CAMERA_SHAKE_STRENGTH * landingShakeStrength,
+			landingShakeSeed,
+			0.055
+		)
+
+		if shakeOffset.Magnitude > 0.0001 or shakeRot.Magnitude > 0.0001 then
+			cf = cf * CFrame.new(shakeOffset) * CFrame.Angles(shakeRot.X, shakeRot.Y, shakeRot.Z)
+		end
+
+		camera.CFrame = cf
+	end)
+
+	local heartbeatConn = RunService.Heartbeat:Connect(function(dt)
+		camera = workspace.CurrentCamera or camera
+		local now = os.clock()
+		local velocity = hrp.AssemblyLinearVelocity
+		local speed = velocity.Magnitude
+
+		if isAirborneForSwing() then
+			landingSpeed = math.max(landingSpeed, speed)
+		end
+
+		if isSwinging then
+			if not currentTarget or not currentTarget.Parent or not anchorAttachment or not anchorAttachment.Parent then
+				stopSwing(true)
+				return
+			end
+			if swingTimer > MIN_SWING_LOCK_TIME and not holdIsActive() then
+				stopSwing(true)
+				return
 			end
 
-			for _, p in inRngNow do
-				if not prevInRng[p] then
-					addVisual(p)
+			swingTimer += dt
+			humanoid.PlatformStand = true
+			humanoid.AutoRotate = false
+			humanoid.Jump = false
+
+			local anchorWorld = anchorAttachment.WorldPosition
+			local fromAnchor = hrp.Position - anchorWorld
+			local dist = fromAnchor.Magnitude
+			local radial = dist > 0.2 and fromAnchor.Unit or Vector3.new(0, 1, 0)
+			local ropeMax = activeRopeMaxLength or getRopeMaxLength()
+			local speedCap = getMaxSwingSpeed() * (1 + swingMomentum * SWING_MOMENTUM_SPEED_BONUS)
+			local extT = math.clamp(dist / math.max(ropeMax, 1), 0, 1.15)
+			local decay = math.clamp(swingTimer / FORCE_DECAY_TIME, 0, 1)
+			local mult = 1 - decay * (1 - FORCE_MIN_MULT)
+
+			if zipSpring then
+				local zipAlpha = math.clamp(1 - swingTimer / ZIP_PULL_TIME, 0, 1)
+				if zipAlpha <= 0 then
+					zipSpring:Destroy()
+					zipSpring = nil
+				else
+					zipSpring.MaxForce = hrp.AssemblyMass * ZIP_SPRING_MAX_ACCEL * zipAlpha
 				end
 			end
-			for p in prevInRng do
-				if not inRngSet[p] then
-					removeVisual(p)
+
+			if ropeConstraint then
+				local baseRestLength = math.clamp(ropeMax * ROPE_REST_LENGTH_MULT, ROPE_MIN_LENGTH, ropeMax)
+				local speedStretch = math.clamp((speed - 18) / math.max(speedCap - 18, 1), 0, 1)
+				local stretchAlpha =
+					math.clamp(swingMomentum * 0.72 + speedStretch * 0.28 + forwardSwingCharge * 0.1, 0, 1)
+				local elasticRestLength = math.clamp(
+					baseRestLength + ropeMax * ROPE_MOMENTUM_LENGTH_MULT * stretchAlpha,
+					ROPE_MIN_LENGTH,
+					ropeMax
+				)
+				local stretchExtra = math.clamp(dist - elasticRestLength, 0, ropeMax)
+					* ROPE_DISTANCE_STRETCH_MULT
+					* (0.35 + stretchAlpha * 0.65)
+				local targetLength = math.clamp(elasticRestLength + stretchExtra, elasticRestLength, ropeMax)
+				local lengthAlpha = math.clamp(dt * ROPE_LENGTH_RESPONSE, 0, 1)
+				ropeConstraint.Length += (targetLength - ropeConstraint.Length) * lengthAlpha
+				pcall(function()
+					ropeConstraint.WinchTarget = elasticRestLength
+					ropeConstraint.WinchSpeed = 10 + swingCharge * 4 + swingMomentum * 3
+				end)
+				if ropeConstraint.Length > ropeMax then
+					ropeConstraint.Length = ropeMax
 				end
 			end
-			prevInRng = inRngSet
 
-			if aimVisual then
-				local v = visMap[aimVisual]
-				if v then
-					local aimColor = if grappleOk then COLOR_BEST else COLOR_BLOCKED
-					setVisualColor(v, aimColor)
-					v.lbl.Text = if grappleOk then "JUMP  ·  swing" else "SAFE ZONE"
-					if grappleOk then
-						local w = math.sin(os.clock() * 3.4) * 0.5 + 0.5
-						v.dot.BackgroundTransparency = 0.06 + 0.38 * w
+			local camLook = camera and camera.CFrame.LookVector or hrp.CFrame.LookVector
+			local camRight = camera and camera.CFrame.RightVector or hrp.CFrame.RightVector
+			local moveDir = humanoid.MoveDirection
+			local camFlat = flatUnit(camLook) or flatUnit(hrp.CFrame.LookVector)
+			local moveFlat = Vector3.new(moveDir.X, 0, moveDir.Z)
+			local moveFlatUnit = moveFlat.Magnitude > 0.05 and moveFlat.Unit or nil
+			local forwardInput = forwardInputAmount()
+			if forwardInput > 0.08 then
+				forwardHoldTime += dt * forwardInput
+				forwardSwingCharge = math.min(1, forwardSwingCharge + dt * forwardInput / FORWARD_CHARGE_TIME)
+			else
+				forwardHoldTime = math.max(0, forwardHoldTime - dt * 0.55)
+				forwardSwingCharge = math.max(0, forwardSwingCharge - dt * 0.7)
+			end
+
+			swingRhythmBoost = math.max(0, swingRhythmBoost - SWING_RHYTHM_DECAY_RATE * dt)
+			local pumpInputSign = 0
+			if camFlat and moveFlatUnit then
+				local inputDot = moveFlatUnit:Dot(camFlat)
+				if inputDot > 0.28 then
+					pumpInputSign = 1
+				elseif inputDot < -0.28 then
+					pumpInputSign = -1
+				end
+			end
+			if pumpInputSign ~= 0 then
+				if lastPumpInputSign ~= 0 and pumpInputSign ~= lastPumpInputSign then
+					local switchAge = now - lastPumpSwitchClock
+					if switchAge > 0.1 and switchAge < 1.25 then
+						local timing = 1 - math.clamp(math.abs(switchAge - 0.48) / 0.77, 0, 1)
+						swingRhythmBoost = math.min(1, swingRhythmBoost + 0.24 + timing * 0.2)
+					end
+					lastPumpSwitchClock = now
+				end
+				lastPumpInputSign = pumpInputSign
+			end
+
+			local inputBias = Vector3.new(0, 0, 0)
+			local moveTangent = Vector3.new(0, 0, 0)
+			if moveFlatUnit then
+				inputBias = camRight * camRight:Dot(moveFlat) * 0.58
+				moveTangent = moveDir - radial * moveDir:Dot(radial)
+			end
+
+			local steerDir = Vector3.new(camLook.X, 0, camLook.Z) + inputBias
+			local tangent = steerDir - radial * steerDir:Dot(radial)
+			local camSteerForce = Vector3.new(0, 0, 0)
+			if tangent.Magnitude > 0.05 then
+				local steerInputScale = 0.42 + math.clamp(moveDir.Magnitude, 0, 1) * 0.58
+				camSteerForce = tangent.Unit * getSteerForce() * mult * steerInputScale * hrp.AssemblyMass
+			end
+
+			local arcDir = pendulumArcDir(radial)
+			local arcForce = Vector3.new(0, 0, 0)
+			local pumpForce = Vector3.new(0, 0, 0)
+			local deadHangForce = Vector3.new(0, 0, 0)
+			local orbitInputForce = Vector3.new(0, 0, 0)
+			if arcDir then
+				local floorMult = floorScale(anchorWorld, ropeMax)
+				local arcStrength = getArcForce() * mult * (0.42 + extT * 0.78) * floorMult
+				arcForce = arcDir * arcStrength * hrp.AssemblyMass
+
+				local tangVel = velocity - radial * velocity:Dot(radial)
+				local tangSpeed = tangVel.Magnitude
+				local targetTangSpeed = speedCap * (0.52 + math.clamp(extT, 0, 1) * 0.24)
+				if moveTangent.Magnitude > 0.05 and tangSpeed < targetTangSpeed then
+					local lowSpeedBoost = 1 - math.clamp(tangSpeed / 28, 0, 1)
+					deadHangForce = moveTangent.Unit
+						* DEAD_HANG_MOVE_FORCE
+						* (0.35 + lowSpeedBoost * 0.65)
+						* mult
+						* hrp.AssemblyMass
+					swingMomentum = math.min(
+						1,
+						swingMomentum
+							+ SWING_DEAD_HANG_MOMENTUM_BUILD_RATE
+								* moveTangent.Magnitude
+								* (0.25 + lowSpeedBoost * 0.75)
+								* dt
+					)
+				end
+
+				local moveAlongTangent = 0
+				if moveFlatUnit and tangVel.Magnitude > 0.05 then
+					moveAlongTangent = moveFlatUnit:Dot(tangVel.Unit)
+				end
+
+				local movingWithArc = tangVel.Magnitude > 4 and tangVel:Dot(arcDir) > 0
+				local pumpQuality = 0
+				local rhythmQuality = swingRhythmBoost * (0.35 + math.abs(moveAlongTangent) * 0.65)
+				local lowSpeedPump = 1 - math.clamp(tangSpeed / 30, 0, 1)
+				if moveTangent.Magnitude > 0.05 then
+					local orbitGrip = 0.58 + math.clamp(moveAlongTangent, -0.25, 1) * 0.22
+					orbitGrip += lowSpeedPump * 0.25 + swingRhythmBoost * 0.18
+					orbitInputForce = moveTangent.Unit
+						* SWING_INPUT_ORBIT_FORCE
+						* math.clamp(orbitGrip, 0.35, 1.25)
+						* mult
+						* hrp.AssemblyMass
+				end
+				if movingWithArc and moveFlatUnit then
+					pumpQuality = math.max(pumpQuality, 0.35)
+				end
+				if moveFlatUnit then
+					pumpQuality = math.max(pumpQuality, math.clamp(moveAlongTangent, 0, 1))
+					if moveAlongTangent < -0.12 and (tangSpeed < targetTangSpeed * 0.58 or swingRhythmBoost > 0.12) then
+						local reversalQuality = math.abs(moveAlongTangent) * (0.35 + lowSpeedPump * 0.65)
+						pumpQuality = math.max(pumpQuality, reversalQuality * 0.72 + rhythmQuality * 0.55)
 					else
-						v.dot.BackgroundTransparency = 0
+						pumpQuality = math.max(pumpQuality, rhythmQuality * 0.85)
+					end
+				end
+				pumpQuality = math.max(pumpQuality, forwardInput * 0.55)
+
+				if pumpQuality > 0.08 and tangSpeed > 4 then
+					local speedFactor = math.clamp(tangSpeed / math.max(speedCap * 0.7, 1), 0.28, 1)
+					local build = (
+						SWING_MOMENTUM_BUILD_RATE * pumpQuality * speedFactor
+						+ SWING_MOMENTUM_FORWARD_BUILD_RATE * forwardInput
+						+ SWING_RHYTHM_BUILD_RATE * rhythmQuality
+					) * dt
+					swingMomentum = math.min(1, swingMomentum + build)
+				elseif not moveFlatUnit or tangSpeed < 5 then
+					swingMomentum = math.max(0, swingMomentum - SWING_MOMENTUM_IDLE_DECAY_RATE * dt)
+				elseif moveAlongTangent < -0.2 then
+					if tangSpeed < targetTangSpeed * 0.62 or swingRhythmBoost > 0.12 then
+						local reversalBuild = SWING_REVERSAL_BUILD_RATE
+							* math.abs(moveAlongTangent)
+							* (0.35 + lowSpeedPump * 0.65 + swingRhythmBoost * 0.35)
+							* dt
+						swingMomentum = math.min(1, swingMomentum + reversalBuild)
+					else
+						swingMomentum = math.max(
+							0,
+							swingMomentum - SWING_MOMENTUM_BAD_INPUT_DECAY_RATE * math.abs(moveAlongTangent) * 0.38 * dt
+						)
+					end
+				else
+					swingMomentum = math.max(0, swingMomentum - SWING_MOMENTUM_BAD_INPUT_DECAY_RATE * 0.28 * dt)
+				end
+
+				if tangSpeed < targetTangSpeed and extT > 0.28 then
+					local pumpDir = arcDir
+					if tangSpeed > 4 and tangVel:Dot(arcDir) > 0 then
+						pumpDir = tangVel.Unit
+					end
+					local deficit = targetTangSpeed - tangSpeed
+					pumpForce = pumpDir
+						* deficit
+						* getSpeedPump()
+						* (1 + forwardInput * 0.3 + swingMomentum * 0.22)
+						* mult
+						* hrp.AssemblyMass
+						* 0.02
+					if moveTangent.Magnitude > 0.05 and swingRhythmBoost > 0.03 then
+						pumpForce += moveTangent.Unit * SWING_RHYTHM_FORCE * swingRhythmBoost * (0.45 + math.abs(
+							moveAlongTangent
+						) * 0.55) * mult * hrp.AssemblyMass
+					end
+					if
+						moveTangent.Magnitude > 0.05
+						and moveAlongTangent < -0.12
+						and (tangSpeed < targetTangSpeed * 0.62 or swingRhythmBoost > 0.12)
+					then
+						pumpForce += moveTangent.Unit * SWING_REVERSAL_FORCE * math.abs(moveAlongTangent) * (0.35 + lowSpeedPump * 0.65) * mult * hrp.AssemblyMass
+					end
+				end
+
+				if floorMult < 0.3 and velocity.Y < -10 then
+					hrp.AssemblyLinearVelocity = Vector3.new(velocity.X, velocity.Y * 0.84, velocity.Z)
+				end
+			else
+				if moveTangent.Magnitude > 0.05 then
+					deadHangForce = moveTangent.Unit * DEAD_HANG_MOVE_FORCE * 0.72 * mult * hrp.AssemblyMass
+					swingMomentum =
+						math.min(1, swingMomentum + SWING_DEAD_HANG_MOMENTUM_BUILD_RATE * moveTangent.Magnitude * dt)
+				else
+					swingMomentum = math.max(0, swingMomentum - SWING_MOMENTUM_IDLE_DECAY_RATE * dt)
+				end
+			end
+
+			local arcWeight = 0.36 + math.clamp((extT - 0.25) / 0.75, 0, 1) * 0.56
+			if steerForce then
+				steerForce.Force = camSteerForce * (1 - arcWeight * 0.45)
+					+ arcForce
+					+ pumpForce
+					+ deadHangForce
+					+ orbitInputForce
+			end
+
+			if swingOrientation then
+				local currentFace = flatUnit(hrp.CFrame.LookVector)
+				local flatVel = Vector3.new(velocity.X, 0, velocity.Z)
+				local desiredUnit = nil
+				if moveFlatUnit then
+					desiredUnit = moveFlatUnit
+					if flatVel.Magnitude > 8 then
+						local blendedFace = moveFlatUnit * 0.72 + flatVel.Unit * 0.28
+						if blendedFace.Magnitude > 0.05 then
+							desiredUnit = blendedFace.Unit
+						end
+					end
+				elseif flatVel.Magnitude > 5 then
+					desiredUnit = flatVel.Unit
+				end
+
+				if desiredUnit and desiredUnit.Magnitude > 0.05 then
+					local quickTurn = currentFace and desiredUnit:Dot(currentFace) < AVATAR_FAST_TURN_DOT
+					local turnRate = quickTurn and AVATAR_NATURAL_FACE_FAST_TURN_RATE or AVATAR_NATURAL_FACE_TURN_RATE
+					if moveFlatUnit then
+						turnRate += 8
+					end
+					local faceAlpha = math.clamp(dt * turnRate, 0, 1)
+					if swingFaceDir and swingFaceDir.Magnitude > 0.05 then
+						swingFaceDir = swingFaceDir:Lerp(desiredUnit, faceAlpha)
+					else
+						swingFaceDir = desiredUnit
+					end
+
+					if swingFaceDir.Magnitude > 0.05 then
+						swingOrientation.Responsiveness = AVATAR_TURN_RESPONSIVENESS + (quickTurn and 14 or 0)
+						swingOrientation.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + swingFaceDir.Unit)
 					end
 				end
 			end
 
-			if aimVisual then
-				updatePreviewTracer(aimVisual, grappleOk)
+			hrp.AssemblyAngularVelocity = hrp.AssemblyAngularVelocity * math.exp(-ANGULAR_DAMP * dt)
+			if speed > speedCap then
+				hrp.AssemblyLinearVelocity = velocity.Unit * speedCap
+			end
+
+			swingCharge = math.min(1, swingCharge + dt / CHARGE_TIME)
+			layoutCharge()
+		else
+			if holdIsActive() then
+				tryAttach()
+			end
+
+			local scanMode = isAirborneForSwing() and "air" or "none"
+
+			if scanMode == "none" then
+				hideSwingTargetUi()
 			else
-				destroyPreviewTracer()
+				local needsScan = scanMode ~= lastTargetScanMode
+					or now - lastTargetScanClock >= TARGET_SCAN_INTERVAL
+					or not scannedVisualTarget
+					or not scannedVisualTarget.Parent
+
+				if needsScan then
+					lastTargetScanClock = now
+					lastTargetScanMode = scanMode
+					local readyTarget =
+						pickSwingTarget(false, getSwingRange(), AIRBORNE_TARGET_LOOK_DOT, TARGET_SCREEN_RADIUS_LIMIT)
+					if readyTarget then
+						scannedVisualTarget = readyTarget
+						scannedVisualCanSwing = true
+					else
+						scannedVisualTarget = pickNearbySwingTarget(getAirborneTargetUiRange(), highlightedTarget)
+						scannedVisualCanSwing = false
+					end
+					updateTargetVisual(scannedVisualTarget, scannedVisualCanSwing)
+				end
 			end
-		elseif not isSwinging then
-			for p in prevInRng do
-				removeVisual(p)
+		end
+
+		stepTargetVisual(dt)
+
+		local trailOn = (isSwinging or isLaunched or isAirborneForSwing()) and (speed > 62 or velocity.Y < -78)
+		setTrailsEnabled(trailOn)
+
+		if camera then
+			local targetFov = originalFov
+			if isSwinging or isLaunched then
+				local t = math.clamp(speed / math.max(getMaxSwingSpeed(), 1), 0, 1)
+				targetFov = originalFov + (FOV_MAX - originalFov) * t
 			end
-			prevInRng = {}
-			clearVisuals()
-			destroyPreviewTracer()
+
+			local attachAge = os.clock() - lastAttachClock
+			if isSwinging and attachAge >= 0 and attachAge < ATTACH_FOV_TIME then
+				local u = attachAge / ATTACH_FOV_TIME
+				targetFov -= ATTACH_FOV_PUNCH * math.sin(u * math.pi)
+			end
+
+			local launchAge = os.clock() - lastLaunchClock
+			if launchAge >= 0 and launchAge < LAUNCH_FOV_TIME then
+				local u = 1 - launchAge / LAUNCH_FOV_TIME
+				targetFov += LAUNCH_FOV_BOOST * u * u
+			end
+
+			local landingAge = os.clock() - lastLandingClock
+			if landingAge >= 0 and landingAge < LANDING_FOV_TIME then
+				local u = 1 - landingAge / LANDING_FOV_TIME
+				targetFov -= LANDING_FOV_KICK * u * u * landingShakeStrength
+			end
+
+			camera.FieldOfView += (targetFov - camera.FieldOfView) * math.min(dt * FOV_SPEED, 1)
 		end
 	end)
 
-	-- ── Cleanup (called on character removal / respawn) ───────────────────────
+	addConn(heartbeatConn)
+
 	return function()
-		walkSpeedAttrConn:Disconnect()
-		jumpConn:Disconnect()
-		beginConn:Disconnect()
-		releaseConn:Disconnect()
-		diedConn:Disconnect()
-		disconnectMobileBound()
-		for _, c in pgWatchConns do c:Disconnect() end
-		table.clear(pgWatchConns)
-		if r6RenderBindName then
-			pcall(function()
-				RunService:UnbindFromRenderStep(r6RenderBindName :: string)
-			end)
-		end
 		pcall(function()
-			RunService:UnbindFromRenderStep(swingCamBindName)
+			RunService:UnbindFromRenderStep(renderBindName)
 		end)
-		resetSwingCameraState()
-		destroyLaunchSpeedFx()
-		heartbeat:Disconnect()
-		for _, c in statConns do c:Disconnect() end
-		if isSwinging then stopSwing(false) end
-		destroyPreviewTracer()
-		stopSwingAnim()
-		clearVisuals()
-		pcall(function() camera.FieldOfView = fovBase end)
+		for _, conn in ipairs(conns) do
+			conn:Disconnect()
+		end
+		table.clear(conns)
+		disconnectMobileJumpButton()
+		if isSwinging then
+			stopSwing(false)
+		end
+		destroySwingObjects()
+		destroyPreview(true)
+		if highlight then
+			highlight:Destroy()
+			highlight = nil
+		end
+		if markerGui then
+			markerGui:Destroy()
+			markerGui = nil
+		end
+		if markerAnchorPart then
+			markerAnchorPart:Destroy()
+			markerAnchorPart = nil
+		end
+		destroyMobileFallbackButton()
+		setTrailsEnabled(false)
+		for _, trail in ipairs(trails) do
+			if trail and trail.Parent then
+				local a0 = trail.Attachment0
+				local a1 = trail.Attachment1
+				trail:Destroy()
+				if a0 then
+					a0:Destroy()
+				end
+				if a1 then
+					a1:Destroy()
+				end
+			end
+		end
+		stopHangAnim()
+		stopOptionalSound("Wind")
 		pcall(function()
 			humanoid.PlatformStand = false
 			humanoid.AutoRotate = true
 		end)
 		pcall(function()
-			local animSc = animateScript
-			if animSc and animSc:IsA("LocalScript") then
-				animSc.Disabled = false
+			if camera then
+				camera.FieldOfView = originalFov
 			end
 		end)
-		if useR6Procedural and r6Pose.rs and r6Pose.baseRS then
-			r6Pose.rs.C0 = r6Pose.baseRS
-		end
-		if useR6Procedural and r6Pose.ls and r6Pose.baseLS then
-			r6Pose.ls.C0 = r6Pose.baseLS
-		end
 	end
 end
 
--- ── Entry point ───────────────────────────────────────────────────────────────
-local dispose: (() -> ())?
+local dispose = nil
 
-local function onCharacter(char: Model)
-	if dispose then dispose(); dispose = nil end
-	dispose = boot(char)
+local function onCharacter(character)
+	if dispose then
+		dispose()
+		dispose = nil
+	end
+	dispose = boot(character)
 end
 
 player.CharacterAdded:Connect(onCharacter)

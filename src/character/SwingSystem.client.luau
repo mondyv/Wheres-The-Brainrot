@@ -156,11 +156,15 @@ local READY_TEXT_BOB_PIXELS = 5
 local ROPE_COLOR_A = Color3.fromRGB(255, 255, 255)
 local ROPE_COLOR_B = Color3.fromRGB(90, 220, 255)
 
--- Hanging animation. If Roblox refuses to load it in your place, swinging still works.
--- If this asset is not shared with the experience yet, Roblox will warn in Studio.
-local ENABLE_HANG_ANIMATIONS = true
-local HANG_ANIM_RIGHT = "rbxassetid://89340798605235"
-local HANG_ANIM_LEFT = "rbxassetid://89340798605235"
+-- Swing animations live in ReplicatedStorage/Animations/Player.
+-- Expected Animation names: Hang_Left, Hang_Right, Falling, Landed.
+local ENABLE_SWING_ANIMATIONS = true
+local ANIMATIONS_FOLDER_NAME = "Animations"
+local PLAYER_ANIMATIONS_FOLDER_NAME = "Player"
+local HANG_ANIM_RIGHT_NAME = "Hang_Right"
+local HANG_ANIM_LEFT_NAME = "Hang_Left"
+local FALLING_ANIM_NAME = "Falling"
+local LANDED_ANIM_NAME = "Landed"
 
 local function flatUnit(v)
 	local f = Vector3.new(v.X, 0, v.Z)
@@ -474,9 +478,12 @@ local function boot(character)
 	local chargeGui = nil
 	local chargeDot = nil
 	local fallbackMobileGui = nil
-	local activeAnim = nil
+	local activeHangTrack = nil
 	local rightHangTrack = nil
 	local leftHangTrack = nil
+	local fallingTrack = nil
+	local landedTrack = nil
+	local lastLandedAnimClock = -1e9
 	local trails = {}
 	local conns = {}
 	local mobileConns = {}
@@ -485,33 +492,157 @@ local function boot(character)
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.FilterDescendantsInstances = { character }
 
-	local function loadTrack(id)
-		if not ENABLE_HANG_ANIMATIONS then
+	local function normalizeAnimationId(id)
+		if typeof(id) == "Instance" then
+			if id:IsA("Animation") then
+				return id.AnimationId
+			end
+			if id:IsA("StringValue") then
+				return id.Value
+			end
+			if id:IsA("NumberValue") or id:IsA("IntValue") then
+				return id.Value
+			end
+			return ""
+		end
+		if typeof(id) == "number" then
+			return "rbxassetid://" .. tostring(math.floor(id))
+		end
+		if typeof(id) ~= "string" then
+			return ""
+		end
+
+		local cleaned = id:gsub("%s+", "")
+		if cleaned == "" or cleaned == "0" then
+			return ""
+		end
+		if cleaned:match("^%d+$") then
+			return "rbxassetid://" .. cleaned
+		end
+		if cleaned:match("^rbxassetid://%d+$") then
+			return cleaned
+		end
+
+		local assetId = cleaned:match("id=(%d+)") or cleaned:match("(%d+)")
+		if assetId then
+			return "rbxassetid://" .. assetId
+		end
+
+		return cleaned
+	end
+
+	local playerAnimationsFolder = nil
+	local playerAnimationsFolderSearched = false
+
+	local function getPlayerAnimationsFolder()
+		if playerAnimationsFolder and playerAnimationsFolder.Parent then
+			return playerAnimationsFolder
+		end
+		if playerAnimationsFolderSearched then
 			return nil
 		end
-		if id == "" then
+		playerAnimationsFolderSearched = true
+
+		local animationsFolder = ReplicatedStorage:FindFirstChild(ANIMATIONS_FOLDER_NAME)
+			or ReplicatedStorage:WaitForChild(ANIMATIONS_FOLDER_NAME, 5)
+		playerAnimationsFolder = animationsFolder
+			and (
+				animationsFolder:FindFirstChild(PLAYER_ANIMATIONS_FOLDER_NAME)
+				or animationsFolder:WaitForChild(PLAYER_ANIMATIONS_FOLDER_NAME, 5)
+			)
+		if not playerAnimationsFolder then
+			warn(
+				"[MergedFriendSwingSystem] Missing animation folder:",
+				ANIMATIONS_FOLDER_NAME .. "/" .. PLAYER_ANIMATIONS_FOLDER_NAME
+			)
+		end
+		return playerAnimationsFolder
+	end
+
+	local function findPlayerAnimation(name)
+		local folder = getPlayerAnimationsFolder()
+		local anim = folder and folder:FindFirstChild(name)
+		if not anim then
+			warn(
+				"[MergedFriendSwingSystem] Missing animation:",
+				ANIMATIONS_FOLDER_NAME .. "/" .. PLAYER_ANIMATIONS_FOLDER_NAME .. "/" .. name
+			)
 			return nil
 		end
+		if not anim:IsA("Animation") then
+			warn("[MergedFriendSwingSystem] Animation object is not an Animation:", anim:GetFullName())
+			return nil
+		end
+		return anim
+	end
+
+	local function loadAnimTrack(source, looped, priority, name)
+		if not ENABLE_SWING_ANIMATIONS then
+			return nil
+		end
+
+		local animId = normalizeAnimationId(source)
+		if animId == "" then
+			return nil
+		end
+
 		local anim = Instance.new("Animation")
-		anim.AnimationId = id
+		anim.Name = name or "SwingAnimation"
+		anim.AnimationId = animId
 		local ok, track = pcall(function()
 			return animator:LoadAnimation(anim)
 		end)
 		anim:Destroy()
 		if ok and track then
-			track.Priority = Enum.AnimationPriority.Action4
-			track.Looped = true
+			track.Priority = priority or Enum.AnimationPriority.Action4
+			track.Looped = looped == true
 			return track
 		end
+		warn("[MergedFriendSwingSystem] Failed to load animation:", name or animId, track)
 		return nil
 	end
 
-	rightHangTrack = loadTrack(HANG_ANIM_RIGHT)
-	if HANG_ANIM_LEFT == HANG_ANIM_RIGHT then
+	local function playTrack(track, fadeTime, weight, speed)
+		if not track then
+			return
+		end
+		local ok, err = pcall(function()
+			if not track.IsPlaying then
+				track:Play(fadeTime or 0.12, weight or 1, speed or 1)
+			else
+				track:AdjustWeight(weight or 1, fadeTime or 0.08)
+				track:AdjustSpeed(speed or 1)
+			end
+		end)
+		if not ok then
+			warn("[MergedFriendSwingSystem] Failed to play animation:", track.Name, err)
+		end
+	end
+
+	local function stopTrack(track, fadeTime)
+		if not track then
+			return
+		end
+		pcall(function()
+			if track.IsPlaying then
+				track:Stop(fadeTime or 0.14)
+			end
+		end)
+	end
+
+	local hangRightAnim = findPlayerAnimation(HANG_ANIM_RIGHT_NAME)
+	local hangLeftAnim = findPlayerAnimation(HANG_ANIM_LEFT_NAME)
+	local fallingAnim = findPlayerAnimation(FALLING_ANIM_NAME)
+	local landedAnim = findPlayerAnimation(LANDED_ANIM_NAME)
+
+	rightHangTrack = loadAnimTrack(hangRightAnim, true, Enum.AnimationPriority.Action4, "HangRight")
+	if normalizeAnimationId(hangLeftAnim) == normalizeAnimationId(hangRightAnim) then
 		leftHangTrack = rightHangTrack
 	else
-		leftHangTrack = loadTrack(HANG_ANIM_LEFT)
+		leftHangTrack = loadAnimTrack(hangLeftAnim, true, Enum.AnimationPriority.Action4, "HangLeft")
 	end
+	fallingTrack = loadAnimTrack(fallingAnim, true, Enum.AnimationPriority.Action3, "SwingFalling")
+	landedTrack = loadAnimTrack(landedAnim, false, Enum.AnimationPriority.Action4, "SwingLanded")
 
 	local function addConn(conn)
 		table.insert(conns, conn)
@@ -553,25 +684,54 @@ local function boot(character)
 	end
 
 	local function playHangAnim(attachWorld)
+		stopTrack(fallingTrack, 0.1)
+		stopTrack(landedTrack, 0.08)
 		local side = getSwingSide(attachWorld)
 		local track = side == "Left" and leftHangTrack or rightHangTrack
-		if activeAnim and activeAnim ~= track then
-			activeAnim:Stop(0.12)
+		if activeHangTrack and activeHangTrack ~= track then
+			stopTrack(activeHangTrack, 0.12)
 		end
-		activeAnim = track
-		if activeAnim then
-			activeAnim:Play(0.12)
+		activeHangTrack = track
+		if activeHangTrack then
+			playTrack(activeHangTrack, 0.12, 1, 1)
 		end
 	end
 
 	local function stopHangAnim()
-		if rightHangTrack then
-			rightHangTrack:Stop(0.16)
+		stopTrack(rightHangTrack, 0.16)
+		if leftHangTrack ~= rightHangTrack then
+			stopTrack(leftHangTrack, 0.16)
 		end
-		if leftHangTrack then
-			leftHangTrack:Stop(0.16)
+		activeHangTrack = nil
+	end
+
+	local function playFallingAnim()
+		if isSwinging or not (isLaunched or landedFromSwing) then
+			return
 		end
-		activeAnim = nil
+		stopHangAnim()
+		stopTrack(landedTrack, 0.08)
+		playTrack(fallingTrack, 0.14, 1, 1)
+	end
+
+	local function stopFallingAnim()
+		stopTrack(fallingTrack, 0.14)
+	end
+
+	local function playLandedAnim()
+		stopHangAnim()
+		stopFallingAnim()
+		local now = os.clock()
+		if now - lastLandedAnimClock < 0.12 then
+			return
+		end
+		lastLandedAnimClock = now
+		if landedTrack then
+			pcall(function()
+				landedTrack.TimePosition = 0
+			end)
+			playTrack(landedTrack, 0.06, 1, 1)
+		end
 	end
 
 	local function makeTrails()
@@ -1990,6 +2150,7 @@ local function boot(character)
 			isLaunched = true
 			landedFromSwing = true
 			lastLaunchClock = os.clock()
+			playFallingAnim()
 			playOptionalSound("Launch")
 			task.defer(function()
 				applyReleaseLaunch(
@@ -2337,8 +2498,15 @@ local function boot(character)
 		then
 			isAirborne = true
 			airborneStartedClock = os.clock()
+			if not isSwinging and (isLaunched or landedFromSwing) then
+				playFallingAnim()
+			end
 		elseif newState == Enum.HumanoidStateType.Landed then
 			isAirborne = false
+			local swingLanding = landedFromSwing or isLaunched
+			if not isSwinging and swingLanding then
+				playLandedAnim()
+			end
 			local impactSpeed = landingSpeed
 			if landedFromSwing then
 				spawnLandingBlocks(impactSpeed)
@@ -2354,6 +2522,7 @@ local function boot(character)
 			hideSwingTargetUi()
 		elseif newState == Enum.HumanoidStateType.Running or newState == Enum.HumanoidStateType.RunningNoPhysics then
 			isAirborne = false
+			stopFallingAnim()
 			hideSwingTargetUi()
 		end
 	end))
@@ -2362,6 +2531,9 @@ local function boot(character)
 		if isSwinging then
 			stopSwing(false)
 		end
+		stopHangAnim()
+		stopFallingAnim()
+		stopTrack(landedTrack, 0.08)
 	end))
 
 	RunService:BindToRenderStep(renderBindName, Enum.RenderPriority.Camera.Value + 1, function(dt)
@@ -2874,6 +3046,8 @@ local function boot(character)
 			end
 		end
 		stopHangAnim()
+		stopFallingAnim()
+		stopTrack(landedTrack, 0.12)
 		stopOptionalSound("Wind")
 		pcall(function()
 			humanoid.PlatformStand = false

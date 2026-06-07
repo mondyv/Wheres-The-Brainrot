@@ -65,7 +65,11 @@ end)
 
 -- ── Shared grant helpers ────────────────────────────────────────────────────────
 
-function StoreServer.grantBrainrot(player: Player, brainrotName: string, opts: { equip: boolean?, sourcePath: string? }?): boolean
+function StoreServer.grantBrainrot(
+	player: Player,
+	brainrotName: string,
+	opts: { equip: boolean?, sourcePath: string? }?
+): boolean
 	local def = Brainrots.getByName(brainrotName)
 	if not def then
 		warn("[StoreHandler] Unknown brainrot:", brainrotName)
@@ -322,13 +326,15 @@ end
 
 local function initPlayerAttributes(player: Player)
 	local A = StoreConfig.ATTR
-	for _, attr in {
-		A.EXCLUSIVE_OWNED,
-		A.STARTER_PACK_BOUGHT,
-		A.MYTHIC_PACK_BOUGHT,
-		A.GODLY_PACK_BOUGHT,
-		A.SECRET_PACK_BOUGHT,
-	} do
+	for _, attr in
+		{
+			A.EXCLUSIVE_OWNED,
+			A.STARTER_PACK_BOUGHT,
+			A.MYTHIC_PACK_BOUGHT,
+			A.GODLY_PACK_BOUGHT,
+			A.SECRET_PACK_BOUGHT,
+		}
+	do
 		if player:GetAttribute(attr) == nil then
 			player:SetAttribute(attr, if attr == A.EXCLUSIVE_OWNED then false else 0)
 		end
@@ -358,6 +364,7 @@ end
 
 MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, _gamePassId, wasPurchased)
 	if wasPurchased and player and player.Parent then
+		print(wasPurchased)
 		task.spawn(function()
 			applyGamePassEffects(player, true)
 		end)
@@ -398,10 +405,12 @@ local function registerReceipts()
 			notifyPurchaseComplete(player)
 			return GRANTED
 		end
-		if StoreServer.grantBrainrot(player, StoreConfig.EXCLUSIVE_BRAINROT_NAME, {
-			equip = true,
-			sourcePath = StoreConfig.EXCLUSIVE_BRAINROT_SOURCE_PATH,
-		}) then
+		if
+			StoreServer.grantBrainrot(player, StoreConfig.EXCLUSIVE_BRAINROT_NAME, {
+				equip = true,
+				sourcePath = StoreConfig.EXCLUSIVE_BRAINROT_SOURCE_PATH,
+			})
+		then
 			player:SetAttribute(A.EXCLUSIVE_OWNED, true)
 			notifyPurchaseComplete(player)
 			return GRANTED
@@ -457,14 +466,7 @@ local function registerReceipts()
 			local offline24h = incomePerSecond * 86400
 			local effective = math.max(offline24h, StoreConfig.MIN_OFFLINE_24H_CASH)
 			local reward = math.floor(effective * multiplier)
-			warn(
-				"[CashBundle] incomePerSec:",
-				incomePerSecond,
-				"offline24h:",
-				offline24h,
-				"reward:",
-				reward
-			)
+			warn("[CashBundle] incomePerSec:", incomePerSecond, "offline24h:", offline24h, "reward:", reward)
 			StoreServer.addCash(player, reward)
 			notifyPurchaseComplete(player)
 			return GRANTED

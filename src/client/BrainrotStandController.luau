@@ -67,11 +67,17 @@ local collectFXRE: RemoteEvent? = nil
 
 local function findMoneyVFXTemplate(): Instance?
 	local vfxFolder = ReplicatedStorage:FindFirstChild("VFX")
-	if not vfxFolder then return nil end
+	if not vfxFolder then
+		return nil
+	end
 	local plot = vfxFolder:FindFirstChild("PlotVFX")
-	if not plot then return nil end
+	if not plot then
+		return nil
+	end
 	local money = plot:FindFirstChild("Money")
-	if money then return money end
+	if money then
+		return money
+	end
 	return nil
 end
 
@@ -106,7 +112,9 @@ local function cloneMoneyAttachmentInto(parentPart: BasePart): Attachment
 end
 
 local function setEmittersEnabled(attachment: Attachment?, enabled: boolean)
-	if not attachment then return end
+	if not attachment then
+		return
+	end
 	for _, e in ipairs(attachment:GetDescendants()) do
 		if e:IsA("ParticleEmitter") then
 			e.Enabled = enabled
@@ -262,8 +270,11 @@ local function playRisingFloatText(worldPosition: Vector3, opts: RisingFloatText
 					end
 				end
 			end
-			stroke = BrainrotHeaderStyle.copyStrokeFromSource(styleSource, label, opts.strokeScale or FLOAT_STROKE_SCALE)
-				or Instance.new("UIStroke")
+			stroke = BrainrotHeaderStyle.copyStrokeFromSource(
+				styleSource,
+				label,
+				opts.strokeScale or FLOAT_STROKE_SCALE
+			) or Instance.new("UIStroke")
 		else
 			label.Font = opts.font
 			label.Text = opts.text or ""
@@ -382,8 +393,10 @@ local function playCashCollectPresentation(view: StandView, cashAmount: number)
 	end)
 end
 
-local function pulseExistingEmitters(emitters: { ParticleEmitter })
-	if #emitters == 0 then return end
+function pulseExistingEmitters(emitters: { ParticleEmitter })
+	if #emitters == 0 then
+		return
+	end
 	for _, e in ipairs(emitters) do
 		if e.Parent then
 			e.Enabled = true
@@ -667,16 +680,22 @@ local function hookCharPlacePromptListeners(char: Model)
 	local function bump()
 		refreshStandProximityPromptVisibility(true)
 	end
-	table.insert(charPlacePromptConns, char.ChildAdded:Connect(function(ch)
-		if ch:IsA("Tool") then
-			bump()
-		end
-	end))
-	table.insert(charPlacePromptConns, char.ChildRemoved:Connect(function(ch)
-		if ch:IsA("Tool") then
-			bump()
-		end
-	end))
+	table.insert(
+		charPlacePromptConns,
+		char.ChildAdded:Connect(function(ch)
+			if ch:IsA("Tool") then
+				bump()
+			end
+		end)
+	)
+	table.insert(
+		charPlacePromptConns,
+		char.ChildRemoved:Connect(function(ch)
+			if ch:IsA("Tool") then
+				bump()
+			end
+		end)
+	)
 	bump()
 end
 
@@ -688,12 +707,18 @@ local function wireStandPlacePromptListeners(stand: Model)
 		end
 	end
 	local conns: { RBXScriptConnection } = {}
-	table.insert(conns, stand:GetAttributeChangedSignal("BrainrotName"):Connect(function()
-		refreshStandProximityPromptVisibility(true)
-	end))
-	table.insert(conns, stand:GetAttributeChangedSignal("BrainrotStandLocked"):Connect(function()
-		refreshStandProximityPromptVisibility(true)
-	end))
+	table.insert(
+		conns,
+		stand:GetAttributeChangedSignal("BrainrotName"):Connect(function()
+			refreshStandProximityPromptVisibility(true)
+		end)
+	)
+	table.insert(
+		conns,
+		stand:GetAttributeChangedSignal("BrainrotStandLocked"):Connect(function()
+			refreshStandProximityPromptVisibility(true)
+		end)
+	)
 	standPlacePromptConns[stand] = conns
 end
 
@@ -711,9 +736,15 @@ local function findSpawnPart(stand: Model): BasePart?
 end
 
 local function findButtonPart(stand: Model, useWait: boolean?): BasePart?
-	local btn: Instance? = if useWait then stand:WaitForChild("Button", CHILD_WAIT_TIMEOUT) else stand:FindFirstChild("Button")
-	if not btn then return nil end
-	local bp: Instance? = if useWait then btn:WaitForChild("ButtonPart", CHILD_WAIT_TIMEOUT) else btn:FindFirstChild("ButtonPart")
+	local btn: Instance? = if useWait
+		then stand:WaitForChild("Button", CHILD_WAIT_TIMEOUT)
+		else stand:FindFirstChild("Button")
+	if not btn then
+		return nil
+	end
+	local bp: Instance? = if useWait
+		then btn:WaitForChild("ButtonPart", CHILD_WAIT_TIMEOUT)
+		else btn:FindFirstChild("ButtonPart")
 	if bp and bp:IsA("BasePart") then
 		return bp :: BasePart
 	end
@@ -737,10 +768,16 @@ end
 
 -- Studio: stand.Button.Cash (often where BillboardGui / money visuals live). Fallback: ButtonPart.
 local function findCashMoneyAnchor(stand: Model, useWait: boolean?): BasePart?
-	local btn: Instance? = if useWait then stand:WaitForChild("Button", CHILD_WAIT_TIMEOUT) else stand:FindFirstChild("Button")
-	if not btn then return nil end
+	local btn: Instance? = if useWait
+		then stand:WaitForChild("Button", CHILD_WAIT_TIMEOUT)
+		else stand:FindFirstChild("Button")
+	if not btn then
+		return nil
+	end
 	local cash: Instance? = if useWait then btn:WaitForChild("Cash", CHILD_WAIT_TIMEOUT) else btn:FindFirstChild("Cash")
-	if not cash then return nil end
+	if not cash then
+		return nil
+	end
 	if cash:IsA("BasePart") then
 		return cash :: BasePart
 	end
@@ -767,10 +804,22 @@ local function findUpgradeFrame(stand: Model, useWait: boolean?): Instance?
 		end
 		return parent:FindFirstChild(name)
 	end
-	local panel = step(stand, "LevelPanel"); if not panel then return nil end
-	local level = step(panel, "Level"); if not level then return nil end
-	local sg = step(level, "SurfaceGui"); if not sg then return nil end
-	local frame = step(sg, "Frame"); if not frame then return nil end
+	local panel = step(stand, "LevelPanel")
+	if not panel then
+		return nil
+	end
+	local level = step(panel, "Level")
+	if not level then
+		return nil
+	end
+	local sg = step(level, "SurfaceGui")
+	if not sg then
+		return nil
+	end
+	local frame = step(sg, "Frame")
+	if not frame then
+		return nil
+	end
 	return step(frame, "Upgrade")
 end
 
@@ -893,7 +942,9 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 		visibleTarget = upgradeFrame :: GuiObject
 		-- Remove any old overlay we may have added in a previous run.
 		local stale = (upgradeFrame :: Instance):FindFirstChild("__UpgradeOverlay")
-		if stale then stale:Destroy() end
+		if stale then
+			stale:Destroy()
+		end
 	else
 		-- Frame/ImageLabel etc. → wrap with a transparent TextButton overlay so we can capture clicks.
 		local nestedBtn: GuiButton? = nil
@@ -912,7 +963,9 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 			if overlayExisting and overlayExisting:IsA("TextButton") then
 				overlay = overlayExisting
 			else
-				if overlayExisting then overlayExisting:Destroy() end
+				if overlayExisting then
+					overlayExisting:Destroy()
+				end
 				local btn = Instance.new("TextButton")
 				btn.Name = "__UpgradeOverlay"
 				btn.Text = ""
@@ -945,7 +998,9 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 
 	local function getScale(): UIScale
 		local s = visibleTarget:FindFirstChildOfClass("UIScale")
-		if s then return s end
+		if s then
+			return s
+		end
 		s = Instance.new("UIScale")
 		s.Parent = visibleTarget
 		return s
@@ -1035,19 +1090,16 @@ end
 
 local function pulseUpgradeButton(view: StandView)
 	local target = view.upgradeFrame or (view.upgradeButton :: GuiObject?)
-	if not target then return end
+	if not target then
+		return
+	end
 	local scale = target:FindFirstChildOfClass("UIScale")
 	if not scale then
 		scale = Instance.new("UIScale")
 		scale.Parent = target
 	end
 	scale.Scale = 1.12
-	playUpgradeScaleTween(
-		target,
-		scale,
-		1,
-		TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-	)
+	playUpgradeScaleTween(target, scale, 1, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
 end
 
 local function pulseOnePart(part: BasePart)
@@ -1159,13 +1211,17 @@ local function hopStandBrainrot(stand: Model)
 	local conn: RBXScriptConnection? = nil
 	conn = RunService.RenderStepped:Connect(function()
 		if not model.Parent then
-			if conn then conn:Disconnect() end
+			if conn then
+				conn:Disconnect()
+			end
 			return
 		end
 		local elapsed = os.clock() - startT
 		if elapsed >= 0.26 then
 			model:PivotTo(baseCf)
-			if conn then conn:Disconnect() end
+			if conn then
+				conn:Disconnect()
+			end
 			return
 		end
 		local y = if elapsed < 0.11
@@ -1187,10 +1243,12 @@ local function wireCashPadLabel(view: StandView)
 	syncCashPadLabel(view)
 end
 
-local function pulseCashPad(view: StandView)
+function pulseCashPad(view: StandView)
 	local seen: { [BasePart]: boolean } = {}
 	local function add(p: BasePart?)
-		if not p or seen[p] then return end
+		if not p or seen[p] then
+			return
+		end
 		seen[p] = true
 		pulseOnePart(p)
 	end
@@ -1200,28 +1258,39 @@ end
 
 -- Lazy: re-resolve a part if the cached lookup was nil (children may have arrived after init).
 local function resolveButtonPart(view: StandView): BasePart?
-	if view.buttonPart and view.buttonPart.Parent then return view.buttonPart end
+	if view.buttonPart and view.buttonPart.Parent then
+		return view.buttonPart
+	end
 	local bp = findButtonPart(view.stand)
-	if bp then view.buttonPart = bp end
+	if bp then
+		view.buttonPart = bp
+	end
 	return view.buttonPart
 end
 
 local function resolveCashAnchor(view: StandView): BasePart?
-	if view.cashAnchor and view.cashAnchor.Parent then return view.cashAnchor end
+	if view.cashAnchor and view.cashAnchor.Parent then
+		return view.cashAnchor
+	end
 	local cash = findCashMoneyAnchor(view.stand)
-	if cash then view.cashAnchor = cash end
+	if cash then
+		view.cashAnchor = cash
+	end
 	return view.cashAnchor
 end
 
-local function ensureMoneyVfxOnView(view: StandView)
+function ensureMoneyVfxOnView(view: StandView)
 	-- Use the visible cash pad (ButtonPart, where the player actually walks) so the burst is seen
 	-- exactly where they triggered it. Fall back to the Cash anchor if no ButtonPart was found.
 	local anchor = resolveButtonPart(view) or resolveCashAnchor(view)
-	if not anchor then return end
-	if view.moneyAttachment and view.moneyAttachment.Parent then return end
+	if not anchor then
+		return
+	end
+	if view.moneyAttachment and view.moneyAttachment.Parent then
+		return
+	end
 	view.moneyAttachment = cloneMoneyAttachmentInto(anchor)
 end
-
 
 -- Walk the cash button / cash anchor and disable every particle emitter we find so the
 -- stand isn't constantly spraying money particles. We re-enable them briefly on collect.
@@ -1229,12 +1298,20 @@ local function collectAndDisableExistingEmitters(view: StandView): { ParticleEmi
 	local result: { ParticleEmitter } = {}
 	local roots: { Instance } = {}
 	local btn = view.stand:FindFirstChild("Button")
-	if btn then table.insert(roots, btn) end
-	if view.cashAnchor then table.insert(roots, view.cashAnchor) end
-	if view.buttonPart then table.insert(roots, view.buttonPart) end
+	if btn then
+		table.insert(roots, btn)
+	end
+	if view.cashAnchor then
+		table.insert(roots, view.cashAnchor)
+	end
+	if view.buttonPart then
+		table.insert(roots, view.buttonPart)
+	end
 	local seen: { [Instance]: boolean } = {}
 	for _, root in ipairs(roots) do
-		if seen[root] then continue end
+		if seen[root] then
+			continue
+		end
 		seen[root] = true
 		for _, d in ipairs(root:GetDescendants()) do
 			if d:IsA("ParticleEmitter") then
@@ -1290,7 +1367,9 @@ local function hookStandLevelPulse(stand: Model, view: StandView)
 end
 
 local function initStand(stand: Model)
-	if views[stand] then return end
+	if views[stand] then
+		return
+	end
 	wireStandPlacePromptListeners(stand)
 	local view: StandView = {
 		stand = stand,
@@ -1353,7 +1432,9 @@ end
 
 function M.init()
 	remotes = waitStandRemotes()
-	if not remotes then return end
+	if not remotes then
+		return
+	end
 	upgradeRE = (remotes :: Folder):WaitForChild("UpgradeStandBrainrot", 45) :: RemoteEvent
 	upgradeFeedbackRE = (remotes :: Folder):WaitForChild("StandUpgradeFeedback", 45) :: RemoteEvent
 	collectFXRE = (remotes :: Folder):WaitForChild("StandCashCollectedFX", 45) :: RemoteEvent
@@ -1379,10 +1460,7 @@ function M.init()
 				end
 				local deferredView = views[standModel]
 				if deferredView then
-					playCashCollectPresentation(
-						deferredView,
-						if typeof(total) == "number" then total else 0
-					)
+					playCashCollectPresentation(deferredView, if typeof(total) == "number" then total else 0)
 				end
 			end)
 			return

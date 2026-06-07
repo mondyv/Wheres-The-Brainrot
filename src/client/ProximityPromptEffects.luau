@@ -226,8 +226,7 @@ local function canShowPlaceBrainrotUi(): boolean
 end
 
 local function isPlaceBrainrotPrompt(prompt: ProximityPrompt): boolean
-	return prompt:GetAttribute(PLACE_PROMPT_ATTR) == true
-		or prompt.ActionText == "Place Brainrot"
+	return prompt:GetAttribute(PLACE_PROMPT_ATTR) == true or prompt.ActionText == "Place Brainrot"
 end
 
 local function isManagedBushPrompt(prompt: ProximityPrompt): boolean
@@ -235,10 +234,7 @@ local function isManagedBushPrompt(prompt: ProximityPrompt): boolean
 end
 
 local function managedBushUiEligible(prompt: ProximityPrompt): boolean
-	return isManagedBushPrompt(prompt)
-		and prompt.Enabled
-		and not CarryGate.isFull()
-		and isPromptFacingCamera(prompt)
+	return isManagedBushPrompt(prompt) and prompt.Enabled and not CarryGate.isFull() and isPromptFacingCamera(prompt)
 end
 
 local function shouldShowPromptUi(prompt: ProximityPrompt): boolean
@@ -268,8 +264,7 @@ local function viewIsActive(view: PromptView): boolean
 end
 
 local function prefersGamepadInput(): boolean
-	return UserInputService.GamepadEnabled
-		and UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1
+	return UserInputService.GamepadEnabled and UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1
 end
 
 local function isMobilePlatform(): boolean
@@ -403,7 +398,11 @@ local function refreshKeyLabel(view: PromptView)
 		showText(gamepadButtonLabel(prompt.GamepadKeyCode))
 		return
 	end
-	if inputType == Enum.ProximityPromptInputType.Touch or shouldShowBushTouchIcon(prompt, inputType) or usesTouchPromptIcon() then
+	if
+		inputType == Enum.ProximityPromptInputType.Touch
+		or shouldShowBushTouchIcon(prompt, inputType)
+		or usesTouchPromptIcon()
+	then
 		showTouchKeyIcon(view, prompt.HoldDuration > 0)
 		return
 	end
@@ -2510,51 +2509,63 @@ local function wireStylePrompt(prompt: ProximityPrompt)
 
 	local conns: { RBXScriptConnection } = {}
 
-	table.insert(conns, prompt:GetPropertyChangedSignal("Enabled"):Connect(function()
-		if isManagedBushPrompt(prompt) then
+	table.insert(
+		conns,
+		prompt:GetPropertyChangedSignal("Enabled"):Connect(function()
+			if isManagedBushPrompt(prompt) then
+				if not prompt.Enabled then
+					stopBushCameraShake()
+					stopBushWobble()
+				end
+				return
+			end
 			if not prompt.Enabled then
-				stopBushCameraShake()
-				stopBushWobble()
-			end
-			return
-		end
-		if not prompt.Enabled then
-			hideView(prompt, true)
-			return
-		end
-		-- Stand place prompts (and other client-gated prompts) toggle Enabled without a fresh
-		-- PromptShown; Custom style would otherwise stay invisible while E still works.
-		task.defer(function()
-			if not prompt.Parent or not prompt.Enabled then
+				hideView(prompt, true)
 				return
 			end
-			if prompt:GetAttribute(CUSTOM_ATTR) ~= true or not shouldShowPromptUi(prompt) then
-				return
-			end
-			onPromptShown(prompt, nil)
+			-- Stand place prompts (and other client-gated prompts) toggle Enabled without a fresh
+			-- PromptShown; Custom style would otherwise stay invisible while E still works.
+			task.defer(function()
+				if not prompt.Parent or not prompt.Enabled then
+					return
+				end
+				if prompt:GetAttribute(CUSTOM_ATTR) ~= true or not shouldShowPromptUi(prompt) then
+					return
+				end
+				onPromptShown(prompt, nil)
+			end)
 		end)
-	end))
+	)
 
 	if prompt.HoldDuration > 0 then
 		if not isManagedBushPrompt(prompt) then
-			table.insert(conns, prompt.PromptButtonHoldBegan:Connect(function(triggerPlayer: Player)
-				onHoldBegan(prompt, triggerPlayer)
-			end))
-			table.insert(conns, prompt.PromptButtonHoldEnded:Connect(function(triggerPlayer: Player)
-				onHoldEnded(prompt, triggerPlayer)
-			end))
+			table.insert(
+				conns,
+				prompt.PromptButtonHoldBegan:Connect(function(triggerPlayer: Player)
+					onHoldBegan(prompt, triggerPlayer)
+				end)
+			)
+			table.insert(
+				conns,
+				prompt.PromptButtonHoldEnded:Connect(function(triggerPlayer: Player)
+					onHoldEnded(prompt, triggerPlayer)
+				end)
+			)
 		end
 	end
 
-	table.insert(conns, prompt.Destroying:Connect(function()
-		hideView(prompt, true)
-		styledPrompts[prompt] = nil
-		local old = promptStyleConns[prompt]
-		if old then
-			disconnectAll(old)
-			promptStyleConns[prompt] = nil
-		end
-	end))
+	table.insert(
+		conns,
+		prompt.Destroying:Connect(function()
+			hideView(prompt, true)
+			styledPrompts[prompt] = nil
+			local old = promptStyleConns[prompt]
+			if old then
+				disconnectAll(old)
+				promptStyleConns[prompt] = nil
+			end
+		end)
+	)
 
 	promptStyleConns[prompt] = conns
 end
@@ -2791,7 +2802,15 @@ function ProximityPromptEffects.init()
 
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then
-		for _, name in { "BushSearchSharedPrompt", "BushSearchUI", "BushSearchPrompt", "CustomProximityPrompt", "BushCooldownBanner" } do
+		for _, name in
+			{
+				"BushSearchSharedPrompt",
+				"BushSearchUI",
+				"BushSearchPrompt",
+				"CustomProximityPrompt",
+				"BushCooldownBanner",
+			}
+		do
 			local legacy = pg:FindFirstChild(name)
 			if legacy then
 				legacy:Destroy()

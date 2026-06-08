@@ -151,4 +151,20 @@ function M.formatSellButton(n: number): string
 	return "+" .. M.formatCashShort(n)
 end
 
+function M.formatPlayTime(seconds: number): string
+	local s = math.max(0, math.floor(seconds))
+	if s >= 86400 then
+		local d = math.floor(s / 86400)
+		local h = math.floor((s % 86400) / 3600)
+		return string.format("%dd %dh", d, h)
+	elseif s >= 3600 then
+		local h = math.floor(s / 3600)
+		local m = math.floor((s % 3600) / 60)
+		return string.format("%dh %dm", h, m)
+	elseif s >= 60 then
+		return string.format("%dm", math.floor(s / 60))
+	end
+	return string.format("%ds", s)
+end
+
 return M

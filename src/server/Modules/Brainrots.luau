@@ -13,6 +13,8 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+
 local M = {}
 
 export type RarityId = "common" | "uncommon" | "rare" | "epic" | "mythic" | "legendary" | "brainrot god" | "secret"
@@ -169,7 +171,14 @@ function M.isRetiredBrainrotName(name: string): boolean
 	return string.find(lower, "easter", 1, true) ~= nil
 end
 
+function M.isExclusiveBrainrotName(name: string): boolean
+	return string.lower(name) == string.lower(StoreConfig.EXCLUSIVE_BRAINROT_NAME)
+end
+
 function M.isPlayableBrainrotName(name: string): boolean
+	if M.isExclusiveBrainrotName(name) then
+		return false
+	end
 	return not M.isRetiredBrainrotName(name)
 end
 

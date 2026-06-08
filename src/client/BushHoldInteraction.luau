@@ -12,6 +12,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local BushShiver = require(script.Parent.BushShiver)
+local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
@@ -72,12 +73,7 @@ local function isBushInSearchCooldown(bush: Instance): boolean
 end
 
 local function isBushFolderName(name: string): boolean
-	for _, n in BUSH_FOLDER_NAMES do
-		if name == n then
-			return true
-		end
-	end
-	return false
+	return BushRootUtil.isBushFolderName(name)
 end
 
 local function isForeignSearchPrompt(d: ProximityPrompt): boolean
@@ -90,6 +86,10 @@ local function isForeignSearchPrompt(d: ProximityPrompt): boolean
 end
 
 local function anchorFor(root: Instance): BasePart?
+	local centerAnchor = BushRootUtil.ensurePromptAnchorPart(root)
+	if centerAnchor then
+		return centerAnchor
+	end
 	if root:IsA("BasePart") then
 		return root
 	end
@@ -106,44 +106,7 @@ end
 local BUSH_PROMPT_LIFT_SCALE = 0.66
 
 local function bushPromptWorldPosition(root: Model): Vector3?
-	local minX, minY, minZ = math.huge, math.huge, math.huge
-	local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
-	local foundPart = false
-
-	for _, desc in root:GetDescendants() do
-		if desc:IsA("BasePart") then
-			foundPart = true
-			local cf = desc.CFrame
-			local h = desc.Size * 0.5
-			for sx = -1, 1, 2 do
-				for sy = -1, 1, 2 do
-					for sz = -1, 1, 2 do
-						local wp = cf:PointToWorldSpace(Vector3.new(h.X * sx, h.Y * sy, h.Z * sz))
-						minX = math.min(minX, wp.X)
-						minY = math.min(minY, wp.Y)
-						minZ = math.min(minZ, wp.Z)
-						maxX = math.max(maxX, wp.X)
-						maxY = math.max(maxY, wp.Y)
-						maxZ = math.max(maxZ, wp.Z)
-					end
-				end
-			end
-		end
-	end
-
-	if foundPart then
-		local center = Vector3.new((minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5)
-		local height = math.max(0.5, maxY - minY)
-		return center + Vector3.new(0, height * BUSH_PROMPT_LIFT_SCALE, 0)
-	end
-
-	local ok, cf, size = pcall(function()
-		return root:GetBoundingBox()
-	end)
-	if ok and typeof(cf) == "CFrame" and typeof(size) == "Vector3" then
-		return cf.Position + Vector3.new(0, size.Y * BUSH_PROMPT_LIFT_SCALE, 0)
-	end
-	return nil
+	return BushRootUtil.focusWorldPosition(root, BUSH_PROMPT_LIFT_SCALE)
 end
 
 local function promptWorldPos(prompt: ProximityPrompt): Vector3
@@ -158,14 +121,7 @@ local function promptWorldPos(prompt: ProximityPrompt): Vector3
 end
 
 local function bushRootFromPrompt(prompt: ProximityPrompt): Instance?
-	local node: Instance? = prompt.Parent
-	while node do
-		if node.Name == "BushSCRIPT" and (node:IsA("Model") or node:IsA("BasePart")) then
-			return node
-		end
-		node = node.Parent
-	end
-	return nil
+	return BushRootUtil.resolveBushRootFromPrompt(prompt)
 end
 
 local function stripExtraPrompts(root: Instance, keep: ProximityPrompt?)
@@ -240,11 +196,40 @@ local function attachPrompt(root: Instance)
 	end)
 end
 
+local bushCooldownConns: { [Instance]: { RBXScriptConnection } } = {}
+
+local function wireBushCooldownSignals(root: Instance)
+	if bushCooldownConns[root] then
+		return
+	end
+	local conns: { RBXScriptConnection } = {}
+	local function bump()
+		task.defer(syncCooldownVisuals)
+	end
+	table.insert(conns, root:GetAttributeChangedSignal(BUSH_LOOT_PHASE_ATTR):Connect(bump))
+	table.insert(conns, root:GetAttributeChangedSignal(BUSH_ON_COOLDOWN_ATTR):Connect(bump))
+	table.insert(conns, root:GetAttributeChangedSignal(BUSH_COOLDOWN_ENDS_ATTR):Connect(bump))
+	bushCooldownConns[root] = conns
+	root.Destroying:Once(function()
+		local existing = bushCooldownConns[root]
+		if existing then
+			for _, conn in existing do
+				conn:Disconnect()
+			end
+			bushCooldownConns[root] = nil
+		end
+	end)
+end
+
 local function registerBushRoot(root: Instance)
+	if not BushRootUtil.isDirectBushRoot(root) then
+		return
+	end
 	if bushByModel[root] then
 		return
 	end
 	BushShiver.trackBush(root)
+	wireBushCooldownSignals(root)
 	if anchorFor(root) then
 		attachPrompt(root)
 		return
@@ -262,7 +247,9 @@ local function registerBushRoot(root: Instance)
 end
 
 local function registerBushModel(root: Model)
-	registerBushRoot(root)
+	if BushRootUtil.isDirectBushRoot(root) then
+		registerBushRoot(root)
+	end
 end
 
 local function registerFromSearchPrompt(prompt: ProximityPrompt)
@@ -402,7 +389,7 @@ local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 			continue
 		end
 		local d = (wp - pos).Magnitude
-		if d <= MAX_RANGE and d < bestD then
+		if d <= MAX_RANGE and d < bestD and ProximityPromptEffects.isBushSearchUiInRange(prompt) then
 			bestD = d
 			bestM = model
 			bestP = prompt
@@ -546,6 +533,11 @@ local function tickAim()
 	end
 
 	local now = os.clock()
+	for model in bushByModel do
+		if model.Parent and (model == activeBush or isBushInSearchCooldown(model)) then
+			BushRootUtil.ensurePromptAnchorPart(model)
+		end
+	end
 	syncCooldownVisuals()
 
 	-- Block new bush search only at carry capacity; cooldown lock visuals still update while partially loaded.
@@ -596,7 +588,7 @@ local function wireMapWatch(map: Instance)
 					BushShiver.trackBush(desc)
 					registerBushRoot(desc)
 				end)
-			elseif desc:IsA("Model") then
+			elseif desc:IsA("Model") and BushRootUtil.isDirectBushRoot(desc) then
 				task.defer(function()
 					registerBushModel(desc :: Model)
 				end)

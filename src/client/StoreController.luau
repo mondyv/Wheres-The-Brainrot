@@ -12,6 +12,7 @@
 ]]
 
 local Players = game:GetService("Players")
+local MarketplaceService = game:GetService("MarketplaceService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
@@ -22,6 +23,7 @@ local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local HUDController = require(script.Parent.HUDController)
 local UpgradesController = require(script.Parent.UpgradesController)
+local MainGradientButtons = require(script.Parent.MainGradientButtons)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
@@ -29,6 +31,14 @@ local player = Players.LocalPlayer
 local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local POP_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+type OwnedBuyEntry = {
+	buy: GuiObject,
+	state: BuyButtonState,
+	ownedAttr: string,
+}
+local ownedBuyByGamePassId: { [number]: OwnedBuyEntry } = {}
+local ownedBuyByProductId: { [number]: OwnedBuyEntry } = {}
 
 local StoreController = {}
 
@@ -206,12 +216,29 @@ local function wireProduct(panel: Instance?, productId: number)
 	end)
 end
 
+local function findExclusivePanel(container: Instance): Instance?
+	local brainrot1 = container:FindFirstChild("Brainrot1")
+	if brainrot1 then
+		return brainrot1
+	end
+	return container:FindFirstChild("Exclusive(Ignore)")
+end
+
 local function wireExclusive(container: Instance)
-	local panel = container:FindFirstChild("Exclusive(Ignore)")
+	local panel = findExclusivePanel(container)
 	local buy = findBuy(panel)
 	if not buy then
 		warn("[StoreController] exclusive buy button not found (panel:", panel ~= nil, ")")
 		return
+	end
+	local nameLabel = panel and panel:FindFirstChild("Name")
+	if nameLabel and (nameLabel:IsA("TextLabel") or nameLabel:IsA("TextButton")) then
+		(nameLabel :: TextLabel).Text = StoreConfig.EXCLUSIVE_BRAINROT_NAME
+	end
+	local infoFrame = panel and panel:FindFirstChild("InfoFrame")
+	local info = infoFrame and infoFrame:FindFirstChild("Info")
+	if info and (info:IsA("TextLabel") or info:IsA("TextButton")) then
+		(info :: TextLabel).Text = "Exclusive brainrot"
 	end
 	local state = wireBuyButton(buy, function()
 		warn("[Exclusive] purchase attempt, already owned:", player:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED))
@@ -221,10 +248,16 @@ local function wireExclusive(container: Instance)
 		end
 		PurchasePrompt.promptProduct(StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT)
 	end)
+	local entry: OwnedBuyEntry = {
+		buy = buy,
+		state = state,
+		ownedAttr = StoreConfig.ATTR.EXCLUSIVE_OWNED,
+	}
 	local function refresh()
-		setButtonEnabled(buy, state, player:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) ~= true)
+		refreshOwnedBuy(entry)
 	end
 	player:GetAttributeChangedSignal(StoreConfig.ATTR.EXCLUSIVE_OWNED):Connect(refresh)
+	ownedBuyByProductId[StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT] = entry
 	refresh()
 end
 
@@ -237,6 +270,11 @@ local function wirePacks(container: Instance)
 				PurchasePrompt.promptProduct(pack.productId)
 			end)
 			local availableLabel = panel:FindFirstChild("Available")
+			local entry: OwnedBuyEntry = {
+				buy = buy,
+				state = state,
+				ownedAttr = pack.boughtAttr,
+			}
 			local function refresh()
 				local bought = player:GetAttribute(pack.boughtAttr)
 				local count = if typeof(bought) == "number" then bought else 0
@@ -244,9 +282,16 @@ local function wirePacks(container: Instance)
 				if availableLabel and (availableLabel:IsA("TextLabel") or availableLabel:IsA("TextButton")) then
 					(availableLabel :: TextLabel).Text = string.format("%d/%d available", remaining, StoreConfig.PACK_PURCHASE_LIMIT)
 				end
-				setButtonEnabled(buy, state, remaining > 0)
+				local soldOut = remaining <= 0
+				if soldOut then
+					MainGradientButtons.applyPurchased(buy)
+				else
+					MainGradientButtons.applyDefault(buy)
+				end
+				setButtonEnabled(buy, state, not soldOut, soldOut)
 			end
 			player:GetAttributeChangedSignal(pack.boughtAttr):Connect(refresh)
+			ownedBuyByProductId[pack.productId] = entry
 			refresh()
 		end
 	end
@@ -441,12 +486,56 @@ local function init()
 		end
 	end
 
-	wireExclusive(container)
+	wireExclusive(container, purchasedTemplate)
 	wireServerLuck(container)
-	wirePacks(container)
+	wirePacks(container, purchasedTemplate)
 	collectCashBundlePanels(container)
 	applyFloorCashBundleLabels()
 	local refreshFreeBrainrot = wireFreeBrainrot(storeFrame)
+
+	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, gamePassId, wasPurchased)
+		if plr ~= player or not wasPurchased then
+			return
+		end
+		local entry = ownedBuyByGamePassId[gamePassId]
+		if entry then
+			applyOptimisticPurchase(entry)
+		end
+		task.defer(function()
+			local deferredEntry = ownedBuyByGamePassId[gamePassId]
+			if deferredEntry then
+				refreshOwnedBuy(deferredEntry)
+			end
+		end)
+	end)
+
+	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, wasPurchased)
+		if userId ~= player.UserId or not wasPurchased then
+			return
+		end
+		local entry = ownedBuyByProductId[productId]
+		if not entry then
+			return
+		end
+		if entry.ownedAttr == StoreConfig.ATTR.EXCLUSIVE_OWNED then
+			applyOptimisticPurchase(entry)
+			task.defer(function()
+				refreshOwnedBuy(entry)
+			end)
+			return
+		end
+		task.defer(function()
+			local bought = player:GetAttribute(entry.ownedAttr)
+			local count = if typeof(bought) == "number" then bought else 0
+			local remaining = math.max(0, StoreConfig.PACK_PURCHASE_LIMIT - count)
+			if remaining <= 0 then
+				MainGradientButtons.applyPurchased(entry.buy)
+				setButtonEnabled(entry.buy, entry.state, false, true)
+			else
+				MainGradientButtons.applyDefault(entry.buy)
+			end
+		end)
+	end)
 
 	task.spawn(function()
 		local storeRemotes = ReplicatedStorage:WaitForChild("StoreRemotes", 30)

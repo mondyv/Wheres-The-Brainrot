@@ -7,6 +7,7 @@ local TweenService = game:GetService("TweenService")
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local MainGradientButtons = require(script.Parent.MainGradientButtons)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 
@@ -150,10 +151,27 @@ local function styleAffordButton(btn: GuiButton?, canAfford: boolean)
 	btn.Active = true
 	btn.Selectable = true
 	btn.AutoButtonColor = canAfford
-	if canAfford then
-		btn.BackgroundTransparency = 0
+	btn.BackgroundTransparency = 0
+end
+
+local function applyUpgradeBuyVisual(buyButtons: Instance, upgradeId: string)
+	local holder = buyButtons:FindFirstChild("Buy")
+	if not holder or not holder:IsA("GuiObject") then
+		return
+	end
+	local host = holder :: GuiObject
+	local levels = readLevels()
+	if SwingUpgrades.isUpgradeMaxed(upgradeId, levels) then
+		MainGradientButtons.applyPurchased(host, "MAX")
+		return
+	end
+	local price = priceForUpgrade(upgradeId)
+	local cash = player:GetAttribute("Cash")
+	local balance = if typeof(cash) == "number" then cash else 0
+	if balance < price then
+		MainGradientButtons.applyPurchasedGradient(host)
 	else
-		btn.BackgroundTransparency = 0.45
+		MainGradientButtons.applyDefault(host)
 	end
 end
 
@@ -184,6 +202,7 @@ local function setCostLabel(row: Instance, upgradeId: string)
 			styleAffordButton(cashBtn, c >= price)
 		end
 	end
+	applyUpgradeBuyVisual(buyButtons, upgradeId)
 end
 
 local function refreshUpgradeRow(row: Instance, upgradeId: string)
@@ -261,6 +280,7 @@ local function refreshUpgradeRow(row: Instance, upgradeId: string)
 			local price = priceForUpgrade(upgradeId)
 			styleAffordButton(cashBtn, c >= price)
 		end
+		applyUpgradeBuyVisual(buy, upgradeId)
 	end
 end
 
@@ -455,6 +475,7 @@ end
 
 local function init()
 	local main = waitMain()
+	MainGradientButtons.init(main)
 	local upgrades = main:WaitForChild("Frames"):WaitForChild("Upgrades")
 	local container = upgrades:WaitForChild("Container")
 
@@ -502,6 +523,18 @@ local function init()
 		end
 	end
 
+	local rowRefreshScheduled = false
+	local function queueRefreshAllRows()
+		if rowRefreshScheduled then
+			return
+		end
+		rowRefreshScheduled = true
+		task.delay(0.1, function()
+			rowRefreshScheduled = false
+			refreshAllRows()
+		end)
+	end
+
 	for _, id in ROW_IDS do
 		local row = container:FindFirstChild(id)
 		if row and row:FindFirstChild("BuyButtons") then
@@ -516,6 +549,14 @@ local function init()
 				return
 			end
 			tweenCashLabel(amountLabel, v)
+			if upgrades.Visible then
+				queueRefreshAllRows()
+			end
+		end
+	end)
+
+	upgrades:GetPropertyChangedSignal("Visible"):Connect(function()
+		if upgrades.Visible then
 			refreshAllRows()
 		end
 	end)

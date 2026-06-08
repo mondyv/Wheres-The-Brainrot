@@ -5,6 +5,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local SwingUpgrades = require(ReplicatedStorage.Shared.SwingUpgrades)
+local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 
 local STARTING_CASH = 500 -- default wallet for new joins
 
@@ -38,6 +39,7 @@ local function readLevels(player: Player): SwingUpgrades.UpgradeLevels
 end
 
 local function initPlayer(player: Player)
+	PlayerDataService.waitUntilLoaded(player)
 	SwingUpgrades.initLevelAttributes(player)
 
 	if player:GetAttribute("Cash") == nil then

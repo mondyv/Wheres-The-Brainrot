@@ -122,6 +122,53 @@ local function applyStudPair(root: Instance?, showClaim: boolean)
 	setStudPairLayer(lockedLayer, not showClaim)
 end
 
+local function formatDayTimer(remainingSec: number): string
+	local clamped = math.max(0, math.floor(remainingSec))
+	local hours = math.floor(clamped / 3600)
+	local minutes = math.floor((clamped % 3600) / 60)
+	return string.format("%dH %02dM", hours, minutes)
+end
+
+local function findCardTimer(card: Frame): TextLabel?
+	local timer = card:FindFirstChild("Timer")
+	if timer and timer:IsA("TextLabel") then
+		return timer
+	end
+	return nil
+end
+
+local function updateCardTimers(state: DailyConfig.DailyState)
+	if not container then
+		return
+	end
+	local timerDay: number? = nil
+	local remaining = 0
+	if not state.skipAll and state.currentDay >= 1 and state.currentDay <= DailyConfig.MAX_DAY then
+		if not DailyConfig.isDayClaimedMask(state.claimedMask, state.currentDay) then
+			remaining = math.max(0, state.nextAvailableAt - state.now)
+			if remaining > 0 then
+				timerDay = state.currentDay
+			end
+		end
+	end
+	for day = 1, DailyConfig.MAX_DAY do
+		local card = container:FindFirstChild(tostring(day))
+		if not (card and card:IsA("Frame")) then
+			continue
+		end
+		local timer = findCardTimer(card)
+		if not timer then
+			continue
+		end
+		if day == timerDay then
+			timer.Visible = true
+			timer.Text = formatDayTimer(remaining)
+		else
+			timer.Visible = false
+		end
+	end
+end
+
 local function setVisible(inst: Instance?, visible: boolean)
 	if not inst then
 		return
@@ -702,6 +749,7 @@ applyState = function(state: DailyConfig.DailyState)
 	end
 
 	updateNextRewardLabel(state)
+	updateCardTimers(state)
 
 	if headerSkipBtn then
 		local hideSkip = state.skipAll == true
@@ -746,10 +794,8 @@ updateNextRewardLabel = function(state: DailyConfig.DailyState?)
 	local hours = math.floor(remaining / 3600)
 	local minutes = math.floor((remaining % 3600) / 60)
 	local seconds = remaining % 60
-	if hours > 0 then
-		nextRewardLabel.Text = string.format("Next Reward: %dh %dm %ds", hours, minutes, seconds)
-	elseif minutes > 0 then
-		nextRewardLabel.Text = string.format("Next Reward: %dm %ds", minutes, seconds)
+	if hours > 0 or minutes > 0 then
+		nextRewardLabel.Text = string.format("Next Reward: %s", formatDayTimer(remaining))
 	else
 		nextRewardLabel.Text = string.format("Next Reward: %ds", seconds)
 	end
@@ -930,7 +976,13 @@ function DailyController.init()
 			return
 		end
 		lastTickAt = now
+		if lastState then
+			lastState.now = os.time()
+		end
 		updateNextRewardLabel(lastState)
+		if lastState then
+			updateCardTimers(lastState)
+		end
 		if dailyFrame and dailyFrame.Visible then
 			refreshDay7CardVisibility()
 		end

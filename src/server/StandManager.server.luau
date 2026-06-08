@@ -10,7 +10,7 @@
 	    ├── Button (folder/model)
 	    │     ├── ButtonPart      (BasePart; touch with body → collect cash)
 	    │     │     └── SurfaceGui.Frame.Total  (TextLabel — accumulated cash)
-	    │     └── Cash.BillboardGui.Offline.Purple  (offline cash label — hidden for now)
+	    │     └── Cash.BillboardGui.Offline.Purple  (offline cash earned while away)
 	    └── LevelPanel.Level.SurfaceGui.Frame.Upgrade
 	          └── Info.Cost      (TextLabel — upgrade cost)
 
@@ -19,7 +19,9 @@
 	  Tool/inventory entry consumed, stand now owned by the placer.
 	• Owner standing on prompt again removes the brainrot (returned to inventory).
 	• Stand generates cash at the level/mutation income rate; cap at OFFLINE_CAP if no one collects.
-	• Touch ButtonPart → owner collects accumulated cash; coin VFX bursts.
+	• After a saved logout, returning players earn offline income (up to OFFLINE_CAP) on occupied stands;
+	  Cash.BillboardGui.Offline shows the away earnings until the pad is collected.
+	• Touch ButtonPart → owner collects accumulated cash (online + offline); coin VFX bursts.
 	• Owner clicks the Upgrade SurfaceGui → level +1 (or +2 with 2× Upgrades gamepass, same single-step cost).
 --]]
 
@@ -46,7 +48,7 @@ local STAND_ACCUMULATED_ATTR = "StandAccumulatedCash"
 local OFFLINE_CAP_SECONDS = 60 * 60 * 4 -- 4 hours of income, then it stops growing
 local COLLECT_TOUCH_DEBOUNCE = 0.5 -- seconds between collect claims on the money pad
 local CASH_PAD_DISPLAY_INTERVAL = 1 -- cash pad label/attribute refresh cadence (once per second)
-local UPGRADE_DEBOUNCE = 0.05 -- min seconds between level-ups (spam-friendly; still blocks same-frame double fires)
+local UPGRADE_DEBOUNCE = 0.2 -- blocks duplicate upgrade fires from GUI + remote on the same click
 local PICKUP_DEBOUNCE = 0.35 -- blocks duplicate inventory adds from double prompt triggers
 local PROMPT_PLACE_DISTANCE = 10
 local PROMPT_PICKUP_DISTANCE = 14
@@ -126,6 +128,10 @@ end
 
 -- When bases use PlotSlotId + player AssignedPlotSlot, reject all stand actions off-plot.
 local function playerAssignedToStandPlot(player: Player, stand: Model): boolean
+	local plot = PlotPaths.findPlotForAssignedSlot(player)
+	if plot then
+		return stand:IsDescendantOf(plot)
+	end
 	local root = plotRootForStand(stand)
 	if not root then
 		return true
@@ -136,6 +142,22 @@ local function playerAssignedToStandPlot(player: Player, stand: Model): boolean
 	end
 	local assigned = player:GetAttribute("AssignedPlotSlot")
 	return typeof(assigned) == "number" and math.floor(assigned :: number) == math.floor(slot :: number)
+end
+
+local function storyNameForStand(stand: Model): string?
+	local standsFolder = stand.Parent
+	if not standsFolder or (standsFolder.Name ~= "Stands" and standsFolder.Name ~= "stands") then
+		return nil
+	end
+	local story = standsFolder.Parent
+	if story then
+		return story.Name
+	end
+	return nil
+end
+
+local function standSaveKey(standName: string, storyName: string?): string
+	return (storyName or "") .. "\0" .. standName
 end
 
 local function formatCashShort(n: number): string
@@ -301,24 +323,32 @@ local function setLabelText(label: (TextLabel | TextButton)?, text: string)
 	end
 end
 
-local function findOfflineCashLabel(stand: Model): (TextLabel | TextButton)?
+local function findStandOfflineUi(stand: Model): (BillboardGui?, GuiObject?, (TextLabel | TextButton)?)
 	local btn = stand:FindFirstChild("Button")
-	if not btn then return nil end
-	local cash = btn:FindFirstChild("Cash")
-	if not cash then return nil end
-	local bb = cash:FindFirstChild("BillboardGui")
-	if not bb then return nil end
-	local offline = bb:FindFirstChild("Offline")
-	if offline then
-		local purple = offline:FindFirstChild("Purple")
-		if purple and (purple:IsA("TextLabel") or purple:IsA("TextButton")) then
-			return purple
-		end
-		if offline:IsA("TextLabel") or offline:IsA("TextButton") then
-			return offline
-		end
+	if not btn then
+		return nil, nil, nil
 	end
-	return nil
+	local cash = btn:FindFirstChild("Cash")
+	if not cash then
+		return nil, nil, nil
+	end
+	local bb = cash:FindFirstChild("BillboardGui")
+	if not bb or not bb:IsA("BillboardGui") then
+		return nil, nil, nil
+	end
+	local offline = bb:FindFirstChild("Offline")
+	if not offline then
+		return bb, nil, nil
+	end
+	local offlineRoot: GuiObject? = if offline:IsA("GuiObject") then offline else nil
+	local purple = offline:FindFirstChild("Purple")
+	if purple and (purple:IsA("TextLabel") or purple:IsA("TextButton")) then
+		return bb, offlineRoot, purple
+	end
+	if offline:IsA("TextLabel") or offline:IsA("TextButton") then
+		return bb, offlineRoot, offline
+	end
+	return bb, offlineRoot, nil
 end
 
 local function findUpgradeFrameAndLabels(stand: Model): (Instance?, (TextLabel | TextButton)?, (TextLabel | TextButton)?)
@@ -358,6 +388,9 @@ type StandState = {
 	buttonPart: BasePart?,
 	totalLabel: (TextLabel | TextButton)?,
 	offlineLabel: (TextLabel | TextButton)?,
+	offlineFrame: GuiObject?,
+	offlineBillboard: BillboardGui?,
+	offlinePending: number,
 	upgradeFrame: Instance?,
 	costLabel: (TextLabel | TextButton)?,
 	levelLabel: (TextLabel | TextButton)?,
@@ -404,6 +437,48 @@ local function syncCashPadDisplay(state: StandState, forceImmediate: boolean?)
 	local label = resolveTotalCashLabel(state)
 	if label then
 		setLabelText(label, text)
+	end
+end
+
+local function resolveOfflineUi(state: StandState): (BillboardGui?, GuiObject?, (TextLabel | TextButton)?)
+	if state.offlineBillboard and state.offlineBillboard.Parent then
+		return state.offlineBillboard, state.offlineFrame, state.offlineLabel
+	end
+	local bb, frame, label = findStandOfflineUi(state.stand)
+	state.offlineBillboard = bb
+	state.offlineFrame = frame
+	state.offlineLabel = label
+	return bb, frame, label
+end
+
+local function syncOfflineDisplay(state: StandState)
+	local bb, frame, label = resolveOfflineUi(state)
+	local pending = state.offlinePending
+	local show = state.brainrotName ~= nil and pending > 0.5
+	if bb then
+		bb.Enabled = show
+		if show and not bb.Adornee then
+			local btn = state.stand:FindFirstChild("Button")
+			local cash = if btn then btn:FindFirstChild("Cash") else nil
+			if cash and cash:IsA("BasePart") then
+				bb.Adornee = cash :: BasePart
+			elseif state.buttonPart then
+				bb.Adornee = state.buttonPart
+			end
+		end
+	end
+	if frame then
+		frame.Visible = show
+	end
+	if label then
+		if show then
+			setLabelText(label, "+" .. BrainrotEconomy.formatCashAccumulated(pending) .. " Offline")
+			if label:IsA("GuiObject") then
+				(label :: GuiObject).Visible = true
+			end
+		elseif label:IsA("GuiObject") then
+			(label :: GuiObject).Visible = false
+		end
 	end
 end
 
@@ -526,23 +601,19 @@ end
 
 local function refreshLabels(state: StandState)
 	syncCashPadDisplay(state, true)
-	if state.offlineLabel then
-		-- No persistence yet → hide offline label so it doesn't show stale "$0".
-		if state.offlineLabel:IsA("TextLabel") then
-			(state.offlineLabel :: TextLabel).Visible = false
-		elseif state.offlineLabel:IsA("TextButton") then
-			(state.offlineLabel :: TextButton).Visible = false
-		end
-	end
+	syncOfflineDisplay(state)
 	if state.costLabel then
 		if not state.brainrotName then
 			setLabelText(state.costLabel, "—")
+			state.stand:SetAttribute("StandUpgradeCost", 0)
 		else
 			local cost = recomputeUpgradeCost(state)
 			if state.level >= Brainrots.MAX_LEVEL then
 				setLabelText(state.costLabel, "MAX")
+				state.stand:SetAttribute("StandUpgradeCost", 0)
 			else
 				setLabelText(state.costLabel, formatCashShort(cost))
+				state.stand:SetAttribute("StandUpgradeCost", cost)
 			end
 		end
 	end
@@ -831,6 +902,179 @@ local function rebuildDisplay(state: StandState)
 	playStandIdleAnimation(state, clone, state.brainrotName :: string)
 end
 
+local function applyStandFromSave(player: Player, state: StandState, entry: {
+	standName: string,
+	brainrotName: string,
+	rarity: string,
+	mutation: string,
+	level: number,
+	baseIncome: number,
+	sourcePath: string,
+	accumulated: number,
+})
+	if not playerAssignedToStandPlot(player, state.stand) then
+		return
+	end
+	if state.stand.Name ~= entry.standName then
+		return
+	end
+	if entry.storyName and storyNameForStand(state.stand) ~= entry.storyName then
+		return
+	end
+	if state.ownerUserId ~= nil and state.ownerUserId ~= player.UserId then
+		return
+	end
+
+	state.ownerUserId = player.UserId
+	state.brainrotName = entry.brainrotName
+	state.rarity = entry.rarity
+	state.mutation = entry.mutation
+	state.level = math.max(1, math.floor(entry.level))
+	state.baseIncome = entry.baseIncome
+	state.sourcePath = entry.sourcePath
+	state.accumulated = math.max(0, entry.accumulated)
+	state.offlinePending = 0
+	state.lastTickAt = os.clock()
+
+	state.stand:SetAttribute("StandOwnerUserId", state.ownerUserId)
+	state.stand:SetAttribute("BrainrotName", state.brainrotName)
+	state.stand:SetAttribute("BrainrotRarity", state.rarity)
+	state.stand:SetAttribute("BrainrotMutation", state.mutation)
+	state.stand:SetAttribute("BrainrotLevel", state.level)
+	state.stand:SetAttribute("BrainrotBaseIncome", state.baseIncome)
+
+	rebuildDisplay(state)
+	setPromptText(state)
+	refreshLabels(state)
+end
+
+local function buildStandSaveEntryFromState(state: StandState): { any }
+	return {
+		standName = state.stand.Name,
+		storyName = storyNameForStand(state.stand),
+		brainrotName = state.brainrotName,
+		rarity = state.rarity or "common",
+		mutation = state.mutation or "normal",
+		level = state.level,
+		baseIncome = state.baseIncome,
+		sourcePath = state.sourcePath,
+		accumulated = state.accumulated,
+	}
+end
+
+local function buildStandSaveEntryFromModel(stand: Model, ownerUserId: number): { any }?
+	local owner = stand:GetAttribute("StandOwnerUserId")
+	local brainrotName = stand:GetAttribute("BrainrotName")
+	if owner ~= ownerUserId or typeof(brainrotName) ~= "string" or brainrotName == "" then
+		return nil
+	end
+	local level = stand:GetAttribute("BrainrotLevel")
+	local baseIncome = stand:GetAttribute("BrainrotBaseIncome")
+	return {
+		standName = stand.Name,
+		storyName = storyNameForStand(stand),
+		brainrotName = brainrotName,
+		rarity = if typeof(stand:GetAttribute("BrainrotRarity")) == "string" then stand:GetAttribute("BrainrotRarity") else "common",
+		mutation = if typeof(stand:GetAttribute("BrainrotMutation")) == "string" then stand:GetAttribute("BrainrotMutation") else "normal",
+		level = if typeof(level) == "number" then math.max(1, math.floor(level)) else 1,
+		baseIncome = if typeof(baseIncome) == "number" then baseIncome else 0,
+		sourcePath = "",
+		accumulated = if typeof(stand:GetAttribute(STAND_ACCUMULATED_ATTR)) == "number" then stand:GetAttribute(STAND_ACCUMULATED_ATTR) else 0,
+	}
+end
+
+local function exportStandEntriesFromPlot(player: Player): { any }
+	local out: { any } = {}
+	local plot = PlotPaths.findPlotForAssignedSlot(player)
+	if not plot then
+		return out
+	end
+	for _, story in ipairs(plot:GetChildren()) do
+		local standsFolder = PlotStandPlaceholders.findStandsFolder(story)
+		if not standsFolder then
+			continue
+		end
+		for _, child in ipairs(standsFolder:GetChildren()) do
+			if child:IsA("Model") then
+				local entry = buildStandSaveEntryFromModel(child :: Model, player.UserId)
+				if entry then
+					table.insert(out, entry)
+				end
+			end
+		end
+	end
+	return out
+end
+
+local function exportStandsForPlayer(player: Player): { any }
+	local merged: { [string]: any } = {}
+	for _, state in pairs(stands) do
+		if state.ownerUserId == player.UserId and state.brainrotName and state.stand.Parent then
+			if playerAssignedToStandPlot(player, state.stand) then
+				local entry = buildStandSaveEntryFromState(state)
+				merged[standSaveKey(entry.standName, entry.storyName)] = entry
+			end
+		end
+	end
+	for _, entry in exportStandEntriesFromPlot(player) do
+		local key = standSaveKey(entry.standName, entry.storyName)
+		if not merged[key] then
+			merged[key] = entry
+		else
+			local existing = merged[key]
+			if (existing.accumulated or 0) <= 0 and (entry.accumulated or 0) > 0 then
+				existing.accumulated = entry.accumulated
+			end
+		end
+	end
+	local out = {}
+	for _, entry in pairs(merged) do
+		table.insert(out, entry)
+	end
+	return out
+end
+
+local function grantOfflineEarningsForStand(state: StandState, player: Player, lastSavedAt: number): number
+	if not state.brainrotName or lastSavedAt <= 0 then
+		return 0
+	end
+	if state.ownerUserId ~= player.UserId then
+		return 0
+	end
+	if not playerAssignedToStandPlot(player, state.stand) then
+		return 0
+	end
+	local elapsed = os.time() - lastSavedAt
+	if elapsed <= 0 then
+		return 0
+	end
+	local offlineSec = math.min(elapsed, OFFLINE_CAP_SECONDS)
+	local ips = recomputeIncomePerSecond(state)
+	if ips <= 0 then
+		return 0
+	end
+	local mult = getPlayerMoneyMult(player)
+	local cap = ips * mult * OFFLINE_CAP_SECONDS
+	local before = state.accumulated
+	local gain = ips * mult * offlineSec
+	state.accumulated = math.min(cap, before + gain)
+	state.lastTickAt = os.clock()
+	return math.max(0, state.accumulated - before)
+end
+
+local function applyOfflineEarningsForPlayer(player: Player, lastSavedAt: number)
+	if typeof(lastSavedAt) ~= "number" or lastSavedAt <= 0 then
+		return
+	end
+	for _, state in pairs(stands) do
+		if state.ownerUserId == player.UserId and state.brainrotName then
+			local added = grantOfflineEarningsForStand(state, player, lastSavedAt)
+			state.offlinePending = added
+			refreshLabels(state)
+		end
+	end
+end
+
 local function clearStandState(state: StandState)
 	clearDisplayModel(state)
 	state.ownerUserId = nil
@@ -841,6 +1085,7 @@ local function clearStandState(state: StandState)
 	state.baseIncome = 0
 	state.sourcePath = ""
 	state.accumulated = 0
+	state.offlinePending = 0
 	state.lastTickAt = os.clock()
 	state.stand:SetAttribute("StandOwnerUserId", nil)
 	state.stand:SetAttribute("BrainrotName", nil)
@@ -850,6 +1095,52 @@ local function clearStandState(state: StandState)
 	state.stand:SetAttribute("BrainrotBaseIncome", nil)
 	setPromptText(state)
 	refreshLabels(state)
+end
+
+local function countStandsOnPlayerPlot(player: Player): number
+	local count = 0
+	for _, state in pairs(stands) do
+		if playerAssignedToStandPlot(player, state.stand) then
+			count += 1
+		end
+	end
+	return count
+end
+
+local function clearPlayerPlotStands(player: Player)
+	for _, state in pairs(stands) do
+		if not playerAssignedToStandPlot(player, state.stand) then
+			continue
+		end
+		if state.ownerUserId == nil or state.ownerUserId == player.UserId then
+			clearStandState(state)
+		end
+	end
+end
+
+local function importStandsForPlayer(player: Player, entries: { any })
+	if typeof(entries) ~= "table" then
+		return
+	end
+	clearPlayerPlotStands(player)
+	for _, entry in entries do
+		if typeof(entry) ~= "table" or typeof(entry.standName) ~= "string" then
+			continue
+		end
+		for _, state in pairs(stands) do
+			if state.stand.Name ~= entry.standName then
+				continue
+			end
+			if not playerAssignedToStandPlot(player, state.stand) then
+				continue
+			end
+			if entry.storyName and storyNameForStand(state.stand) ~= entry.storyName then
+				continue
+			end
+			applyStandFromSave(player, state, entry :: any)
+			break
+		end
+	end
 end
 
 local function placeBrainrotOnStand(player: Player, state: StandState)
@@ -905,6 +1196,7 @@ local function placeBrainrotOnStand(player: Player, state: StandState)
 	state.baseIncome = entry.baseIncome or toolBaseIncome or 0
 	state.sourcePath = entry.sourcePath or toolSourcePath or ""
 	state.accumulated = 0
+	state.offlinePending = 0
 	state.lastTickAt = os.clock()
 
 	state.stand:SetAttribute("StandOwnerUserId", state.ownerUserId)
@@ -1009,8 +1301,8 @@ local function collectCash(state: StandState, player: Player)
 	state.touchDebouncePerPlayer[player] = now
 	local amount = math.floor(state.accumulated)
 	if amount <= 0 then return end
-	amount = math.floor(amount * getPlayerMoneyMult(player))
-	state.accumulated -= amount
+	state.accumulated = 0
+	state.offlinePending = 0
 	local cash = player:GetAttribute("Cash")
 	local c = if typeof(cash) == "number" then cash else 0
 	player:SetAttribute("Cash", c + amount)
@@ -1044,9 +1336,14 @@ local function upgradeStandBrainrot(state: StandState, player: Player)
 		BrainrotCarryVisual.applyScaleForLevel(state.displayModel, state.level)
 		repositionDisplayOnSpawn(state)
 	end
-	refreshHeader(state)
 	refreshLabels(state)
 	setPromptText(state)
+	task.defer(function()
+		if state.displayModel and state.displayModel.Parent then
+			refreshHeader(state)
+		end
+	end)
+	upgradeFeedbackRE:FireClient(player, true, "ok")
 end
 
 -- ── Hooks ─────────────────────────────────────────────────────────────────────
@@ -1241,7 +1538,7 @@ local function initStand(stand: Model)
 	local prompt = ensureStandProximityPrompt(stand, spawnPart)
 	local buttonPart = findButtonPart(stand)
 	local totalLabel = findTotalCashLabel(stand)
-	local offlineLabel = findOfflineCashLabel(stand)
+	local offlineBillboard, offlineFrame, offlineLabel = findStandOfflineUi(stand)
 	local upgradeFrame, costLabel, levelLabel = findUpgradeFrameAndLabels(stand)
 
 	local state: StandState = {
@@ -1251,6 +1548,9 @@ local function initStand(stand: Model)
 		buttonPart = buttonPart,
 		totalLabel = totalLabel,
 		offlineLabel = offlineLabel,
+		offlineFrame = offlineFrame,
+		offlineBillboard = offlineBillboard,
+		offlinePending = 0,
 		upgradeFrame = upgradeFrame,
 		costLabel = costLabel,
 		levelLabel = levelLabel,
@@ -1393,6 +1693,71 @@ local function ensureStandRescanRequestBindable()
 	if bf:IsA("BindableFunction") then
 		(bf :: BindableFunction).OnInvoke = requestStandRescan
 	end
+
+	local exportBF = folder:FindFirstChild("ExportStandsForSave")
+	if not exportBF then
+		exportBF = Instance.new("BindableFunction")
+		exportBF.Name = "ExportStandsForSave"
+		exportBF.Parent = folder
+	end
+	if exportBF:IsA("BindableFunction") then
+		(exportBF :: BindableFunction).OnInvoke = function(playerArg: any)
+			if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+				return {}
+			end
+			return exportStandsForPlayer(playerArg :: Player)
+		end
+	end
+
+	local importBF = folder:FindFirstChild("ImportStandsFromSave")
+	if not importBF then
+		importBF = Instance.new("BindableFunction")
+		importBF.Name = "ImportStandsFromSave"
+		importBF.Parent = folder
+	end
+	if importBF:IsA("BindableFunction") then
+		(importBF :: BindableFunction).OnInvoke = function(playerArg: any, entries: any)
+			if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+				return false
+			end
+			importStandsForPlayer(playerArg :: Player, entries)
+			return true
+		end
+	end
+
+	local offlineBF = folder:FindFirstChild("ApplyStandOfflineEarnings")
+	if not offlineBF then
+		offlineBF = Instance.new("BindableFunction")
+		offlineBF.Name = "ApplyStandOfflineEarnings"
+		offlineBF.Parent = folder
+	end
+	if offlineBF:IsA("BindableFunction") then
+		(offlineBF :: BindableFunction).OnInvoke = function(playerArg: any, lastSavedAt: any)
+			if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+				return false
+			end
+			if typeof(lastSavedAt) ~= "number" then
+				return false
+			end
+			applyOfflineEarningsForPlayer(playerArg :: Player, lastSavedAt)
+			return true
+		end
+	end
+
+	local countBF = folder:FindFirstChild("CountPlayerPlotStands")
+	if not countBF then
+		countBF = Instance.new("BindableFunction")
+		countBF.Name = "CountPlayerPlotStands"
+		countBF.Parent = folder
+	end
+	if countBF:IsA("BindableFunction") then
+		(countBF :: BindableFunction).OnInvoke = function(playerArg: any)
+			if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+				return 0
+			end
+			return countStandsOnPlayerPlot(playerArg :: Player)
+		end
+	end
 end
 
 CollectionService:GetInstanceAddedSignal(STAND_TAG):Connect(function(inst)
@@ -1413,8 +1778,9 @@ ServerStorage.ChildAdded:Connect(function(ch)
 	end
 end)
 
+ensureStandRescanRequestBindable()
+
 task.spawn(function()
-	ensureStandRescanRequestBindable()
 	ensureHiddenFloorsHooked()
 	-- Map may stream in late.
 	for _ = 1, 5 do

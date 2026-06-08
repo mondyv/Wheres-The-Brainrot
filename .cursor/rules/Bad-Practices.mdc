@@ -1,0 +1,38 @@
+---
+alwaysApply: true
+---
+
+Never use task.wait() with no arguments or task.wait(0) in a loop — always use a meaningful delay or switch to event-driven logic.
+
+
+Never connect to RunService.Heartbeat, RenderStepped, or Stepped without storing the connection and disconnecting it when no longer needed.
+
+
+Never fire a RemoteEvent without first checking the remote exists. Always nil-check before firing.
+
+
+Never create UI instances (frames, labels, buttons) inside a loop or event handler that fires repeatedly. Create once on boot, reuse by toggling Visible or updating Text/properties.
+
+
+Never use wait() — always use task.wait(). Never use spawn() — always use task.spawn(). Never use delay() — always use task.delay().
+
+
+Never swallow pcall errors silently. Always warn the error: if not ok then warn("[ScriptName] error:", err) end.
+
+
+Never hardcode player UserId or player Name as a string anywhere in server logic. Always read it from the player object at runtime.
+
+
+Never write to the same DataStore key from more than one script. One script owns one key.
+
+
+Never index game.Players:GetPlayerByUserId() without checking if the result is nil before using it.
+
+
+Never parent a new Instance to the game tree before fully configuring it. Set all properties first, then set Parent last.
+
+
+Always disconnect events when a player leaves. Store connections in a per-player table and clean up in Players.PlayerRemoving.
+
+
+Never use game:GetService() inside a loop or frequently-called function. Cache all services at the top of the script.

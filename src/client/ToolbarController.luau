@@ -1662,7 +1662,10 @@ local ToolbarController = {}
 		end
 
 		local layout = ensureHotbarListLayout()
-		layout.Padding = UDim.new(0, 6)
+local HOTBAR_SLOT_PADDING_PX = 10
+			hotbarListLayout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
+		layout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
+		layout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
 		layout.FillDirection = Enum.FillDirection.Horizontal
 		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 		layout.VerticalAlignment = Enum.VerticalAlignment.Center

@@ -451,28 +451,31 @@ end)
 Players.PlayerRemoving:Connect(function(player: Player)
 	local slot = playerToSlot[player]
 	playerToSlot[player] = nil
-	player:SetAttribute("AssignedPlotSlot", nil)
-	if typeof(slot) ~= "number" then
-		return
-	end
-	local folder = findSpawnFolder()
-	local template = getBaseTemplate()
-	local pos = folder and folder:FindFirstChild(POS_NAME_PREFIX .. tostring(slot))
-	if folder and template and pos and pos:IsA("BasePart") then
-		local existing = slotToBase[slot]
-		if existing and existing.Parent then
-			existing:Destroy()
+	-- Defer plot teardown so PlayerDataService can export stand brainrots before models are destroyed.
+	task.defer(function()
+		player:SetAttribute("AssignedPlotSlot", nil)
+		if typeof(slot) ~= "number" then
+			return
 		end
-		local stub = spawnFloorStub(template, pos, slot, folder)
-		slotToBase[slot] = stub
-		notifyPlotVisibilityRefresh(stub)
-	else
-		local base = slotToBase[slot]
-		if base and base.Parent then
-			base:SetAttribute("PlotOwnerUserId", nil)
-			notifyPlotVisibilityRefresh(base)
+		local folder = findSpawnFolder()
+		local template = getBaseTemplate()
+		local pos = folder and folder:FindFirstChild(POS_NAME_PREFIX .. tostring(slot))
+		if folder and template and pos and pos:IsA("BasePart") then
+			local existing = slotToBase[slot]
+			if existing and existing.Parent then
+				existing:Destroy()
+			end
+			local stub = spawnFloorStub(template, pos, slot, folder)
+			slotToBase[slot] = stub
+			notifyPlotVisibilityRefresh(stub)
+		else
+			local base = slotToBase[slot]
+			if base and base.Parent then
+				base:SetAttribute("PlotOwnerUserId", nil)
+				notifyPlotVisibilityRefresh(base)
+			end
 		end
-	end
+	end)
 end)
 
 hookTemplateWatchers()

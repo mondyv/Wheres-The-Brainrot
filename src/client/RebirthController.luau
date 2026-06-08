@@ -72,6 +72,7 @@ local rebirthBusy = false
 local getStateRF: RemoteFunction? = nil
 local performRF: RemoteFunction? = nil
 local updatedRE: RemoteEvent? = nil
+local lastRebirthSignShow: boolean? = nil
 
 local function getOrAddUIScale(obj: GuiObject): UIScale
 	local s = obj:FindFirstChildOfClass("UIScale")
@@ -457,6 +458,10 @@ end
 
 local function refreshPlotRebirthSign(snapshot: RebirthConfig.RebirthSnapshot)
 	local show = snapshot.canRebirth and snapshot.isFloorRebirth
+	if lastRebirthSignShow == show then
+		return
+	end
+	lastRebirthSignShow = show
 	local plot = PlotPaths.findPlotForAssignedSlot(player)
 	if not plot then
 		return
@@ -559,9 +564,31 @@ local function setRegionalPrice(label: TextLabel, price: number)
 end
 
 local function applySnapshot(snapshot: RebirthConfig.RebirthSnapshot, main: ScreenGui)
+	local prev = lastSnapshot
 	lastSnapshot = snapshot
 	local frame = rebirthFrame
 	if not frame then
+		return
+	end
+
+	local frameOpen = frame.Visible
+	local canRebirthChanged = not prev or prev.canRebirth ~= snapshot.canRebirth
+	local cashMetChanged = not prev or prev.cashMet ~= snapshot.cashMet
+	if not frameOpen then
+		if canRebirthChanged or cashMetChanged then
+			if canRebirthChanged then
+				refreshPlotRebirthSign(snapshot)
+			end
+			if snapshot.canRebirth then
+				if not lastCanRebirth then
+					UIInteractionSounds.playNotif()
+				end
+				showSidebarBadge()
+			else
+				hideSidebarBadge()
+			end
+			lastCanRebirth = snapshot.canRebirth
+		end
 		return
 	end
 
@@ -643,7 +670,6 @@ local function applySnapshot(snapshot: RebirthConfig.RebirthSnapshot, main: Scre
 
 	refreshPlotRebirthSign(snapshot)
 
-	local frameOpen = frame.Visible
 	if snapshot.canRebirth and not frameOpen then
 		if not lastCanRebirth then
 			UIInteractionSounds.playNotif()
@@ -802,12 +828,6 @@ function RebirthController.init()
 		end
 	end)
 
-	player:GetAttributeChangedSignal("Cash"):Connect(function()
-		fetchAndApply(main)
-	end)
-	player:GetAttributeChangedSignal(RebirthConfig.CAN_REBIRTH_ATTR):Connect(function()
-		fetchAndApply(main)
-	end)
 	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
 		if lastSnapshot then
 			refreshPlotRebirthSign(lastSnapshot)

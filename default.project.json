@@ -53,6 +53,9 @@
       "StarterCharacterScripts": {
         "SwingSystem": {
           "$path": "src/character/SwingSystem.client.luau"
+        },
+        "SlowWalk": {
+          "$path": "src/character/SlowWalk.client.luau"
         }
       }
     },

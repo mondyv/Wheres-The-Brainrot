@@ -45,6 +45,7 @@ local function bootDeferredUI()
 	require(script.StealController).init()
 	require(script.XrayController).init()
 	require(script.ChatTagsController).init()
+	require(script.AdminCommandBar).init()
 
 	local shared = ReplicatedStorage:WaitForChild("EssentialsShared", 10)
 	if shared then
@@ -116,3 +117,4 @@ require(script.BrainrotSFX).init()
 require(script.SafeZoneFlashController).init()
 require(script.BushHoldInteraction).init()
 require(script.ProximityPromptEffects).init()
+require(script.LeaderboardsController).init()

@@ -2,8 +2,12 @@
 --[[
 	Soft nervous shiver bursts for bushes with HasHiddenBrainrot == true (server 50/50 pre-roll).
 	Each bush runs its own randomized schedule so bushes never sync up.
-]]
+	Grouped bushes shake every child Model in the cluster together.
+--]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 
 local M = {}
@@ -24,7 +28,9 @@ local SHIVER_POS_AMP = 0.045
 local SHIVER_ROT_AMP = math.rad(1.6)
 local SHIVER_FREQ = 12
 
-local baseTransformByBush: { [Instance]: CFrame } = {}
+type ShakeBases = { [Instance]: CFrame }
+
+local baseTransformByBush: { [Instance]: ShakeBases } = {}
 local hookedByBush: { [Instance]: boolean } = {}
 local schedulerTokenByBush: { [Instance]: number } = {}
 local loopRunningByBush: { [Instance]: boolean } = {}
@@ -39,28 +45,50 @@ local function shouldShiverBush(bush: Instance): boolean
 	return bush:GetAttribute(HAS_BRAINROT_ATTR) == true
 end
 
-local function captureBaseTransform(bush: Instance): CFrame?
-	if bush:IsA("Model") then
-		return bush:GetPivot()
+local function captureBaseTransforms(bush: Instance): ShakeBases?
+	local bases: ShakeBases = {}
+	for _, target in BushRootUtil.getShakeTargets(bush) do
+		if target:IsA("Model") then
+			bases[target] = target:GetPivot()
+		elseif target:IsA("BasePart") then
+			bases[target] = target.CFrame
+		end
 	end
-	if bush:IsA("BasePart") then
-		return bush.CFrame
+	if next(bases) == nil then
+		return nil
 	end
-	return nil
+	return bases
 end
 
-local function applyTransform(bush: Instance, cf: CFrame)
-	if bush:IsA("Model") then
-		bush:PivotTo(cf)
-	elseif bush:IsA("BasePart") then
-		bush.CFrame = cf
+local function applyTransform(target: Instance, cf: CFrame)
+	if target:IsA("Model") then
+		target:PivotTo(cf)
+	elseif target:IsA("BasePart") then
+		target.CFrame = cf
 	end
 end
 
-local function restoreBushTransform(bush: Instance)
-	local base = baseTransformByBush[bush]
-	if base and bush.Parent then
-		applyTransform(bush, base)
+local function restoreBushTransforms(bush: Instance)
+	local bases = baseTransformByBush[bush]
+	if not bases then
+		return
+	end
+	for target, base in bases do
+		if target.Parent then
+			applyTransform(target, base)
+		end
+	end
+end
+
+local function applyShiverOffset(bush: Instance, offset: CFrame)
+	local bases = baseTransformByBush[bush]
+	if not bases then
+		return
+	end
+	for target, base in bases do
+		if target.Parent then
+			applyTransform(target, base * offset)
+		end
 	end
 end
 
@@ -78,7 +106,7 @@ local function stopShiverLoop(bush: Instance)
 	schedulerTokenByBush[bush] = (schedulerTokenByBush[bush] or 0) + 1
 	loopRunningByBush[bush] = nil
 	if bush.Parent then
-		restoreBushTransform(bush)
+		restoreBushTransforms(bush)
 	end
 	baseTransformByBush[bush] = nil
 end
@@ -92,8 +120,8 @@ local function randomBurstSec(): number
 end
 
 local function runSoftBurst(bush: Instance, token: number, burstSec: number)
-	local base = baseTransformByBush[bush]
-	if not base then
+	local bases = baseTransformByBush[bush]
+	if not bases then
 		return
 	end
 
@@ -102,12 +130,12 @@ local function runSoftBurst(bush: Instance, token: number, burstSec: number)
 	GameSoundEffects.playBushRandomShakeAt(bush)
 	while bush.Parent and token == schedulerTokenByBush[bush] and shouldShiverBush(bush) and os.clock() < endAt do
 		local elapsed = os.clock() - start
-		applyTransform(bush, base * softShiverOffset(elapsed, burstSec))
+		applyShiverOffset(bush, softShiverOffset(elapsed, burstSec))
 		task.wait(SHIVER_TICK_SEC)
 	end
 
 	if token == schedulerTokenByBush[bush] and bush.Parent then
-		restoreBushTransform(bush)
+		restoreBushTransforms(bush)
 	end
 end
 
@@ -125,7 +153,7 @@ local function startShiverScheduler(bush: Instance)
 
 		while bush.Parent and token == schedulerTokenByBush[bush] do
 			if not shouldShiverBush(bush) then
-				restoreBushTransform(bush)
+				restoreBushTransforms(bush)
 				break
 			end
 
@@ -140,18 +168,18 @@ local function startShiverScheduler(bush: Instance)
 				break
 			end
 
-			local base = captureBaseTransform(bush)
-			if not base then
+			local bases = captureBaseTransforms(bush)
+			if not bases then
 				break
 			end
-			baseTransformByBush[bush] = base
+			baseTransformByBush[bush] = bases
 
 			runSoftBurst(bush, token, randomBurstSec())
 		end
 
 		if token == schedulerTokenByBush[bush] then
 			loopRunningByBush[bush] = nil
-			restoreBushTransform(bush)
+			restoreBushTransforms(bush)
 			baseTransformByBush[bush] = nil
 		end
 	end)
@@ -167,6 +195,9 @@ local function refreshShiverState(bush: Instance)
 end
 
 function M.trackBush(bush: Instance)
+	if not BushRootUtil.isDirectBushRoot(bush) then
+		return
+	end
 	if hookedByBush[bush] then
 		return
 	end
@@ -194,8 +225,12 @@ end
 
 function M.scanMapForBrainrotBushes(map: Instance)
 	for _, desc in map:GetDescendants() do
-		if desc.Name == "BushSCRIPT" and (desc:IsA("Model") or desc:IsA("BasePart")) then
-			M.trackBush(desc)
+		if desc:IsA("Folder") and BushRootUtil.isBushFolderName(desc.Name) then
+			for _, child in desc:GetChildren() do
+				if BushRootUtil.isDirectBushRoot(child) then
+					M.trackBush(child)
+				end
+			end
 		end
 	end
 end

@@ -4,7 +4,7 @@
 	• Slider1 → Background music volume (SoundService.BackgroundMusic.SoundGroup mixer, or Music1 fallback).
 	• Slider2 → SoundEffects SoundGroup + UISounds SoundGroup (same slider value).
 	• Button rows → toggles; row whose label contains "ui sound" drives UI hover/click sounds.
-	• Row whose label contains "slow" → SlowWalkEnabled (1× vs 1.75× base walk); default off; softer hover on that row.
+	• Row whose label contains "slow" → SlowWalkEnabled (0.8× vs 1.15× Humanoid.WalkSpeed at spawn); default off; softer hover on that row.
 	• Row whose label contains "other" (or Button3) → ShowOtherBrainrots; default on.
 	• Row whose label contains "vfx" (or Button4/5) → BrainrotVFXEnabled; default on.
 --]]
@@ -515,7 +515,7 @@ function SettingsController.init()
 			continue
 		end
 
-		local toggleOn = if child == slowToggleRow then false
+		local toggleOn = if child == slowToggleRow then player:GetAttribute("SlowWalkEnabled") == true
 			elseif child == showOthersToggleRow then true
 			elseif child == brainrotVfxToggleRow then true
 			else readInitialOn(onOff)
@@ -523,11 +523,13 @@ function SettingsController.init()
 			toggleOn = player:GetAttribute("ShowOtherBrainrots") ~= false
 		elseif child == brainrotVfxToggleRow then
 			toggleOn = player:GetAttribute("BrainrotVFXEnabled") ~= false
+		elseif child == slowToggleRow then
+			toggleOn = player:GetAttribute("SlowWalkEnabled") == true
 		end
 		applyToggleVisuals(onOff, toggleOn)
 		setToggleFaceText(onOff, toggleOn)
 		if child == slowToggleRow then
-			setSlowRowNameLabel(child, false)
+			setSlowRowNameLabel(child, toggleOn)
 		end
 
 		local clickable = findClickable(child)

@@ -17,83 +17,12 @@ local Workspace = game:GetService("Workspace")
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
-local RebirthConfig = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+local C = require(script.Parent.ProximityPromptEffectsConfig)
 
 local player = Players.LocalPlayer
 
--- ── Visual constants ───────────────────────────────────────────────────────────
-
-local ACCENT = Color3.fromRGB(72, 255, 140)
-local ACCENT_BRIGHT = Color3.fromRGB(130, 255, 175)
-local ACCENT_STROKE = Color3.fromRGB(48, 220, 110)
-local BG_COLOR = Color3.fromRGB(10, 12, 16)
-local BG_TRANSPARENCY = 0.4
-local BADGE_BG = Color3.fromRGB(24, 28, 34)
-local BADGE_BG_TRANSPARENCY = 0.12
-local HOLD_GREEN = Color3.fromRGB(36, 165, 88)
-local HOLD_GREEN_BRIGHT = Color3.fromRGB(95, 255, 145)
-local PRESS_FLASH = Color3.fromRGB(255, 228, 88)
-local HOLD_COMPLETE_FLASH = Color3.fromRGB(210, 255, 230)
-local TEXT_PRIMARY = Color3.fromRGB(248, 250, 252)
-local TEXT_SECONDARY = Color3.fromRGB(168, 178, 192)
-
-local CARD_H = 58
-local BADGE_SIZE = 44
-local BADGE_HOLD_PAD = 3
-local PAD_LEFT = 8
-local BADGE_TEXT_GAP = 6
-local PAD_RIGHT = 10
-local MIN_CARD_W = 118
-local MOBILE_MIN_CARD_W = 148
-local MAX_CARD_W = 232
-
-local OPEN_TWEEN = TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local CLOSE_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
-local BADGE_TWEEN = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local TILT_LEFT = TweenInfo.new(0.09, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local TILT_RIGHT = TweenInfo.new(0.11, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local TILT_CENTER = TweenInfo.new(0.14, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
-local TILT_POP = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local STAND_TILT_LEFT = TweenInfo.new(0.24, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local STAND_TILT_RIGHT = TweenInfo.new(0.28, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
-local STAND_TILT_CENTER = TweenInfo.new(0.34, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
-local STAND_STROKE_GRAD_ROT_SPEED = 42
-local FLASH_TWEEN = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local POP_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-
-local SWAY_FREQ = 1.35
-local SWAY_AMP = 2.2
-local WIGGLE_ROT = math.rad(4.5)
-local WIGGLE_SPEED = 13
-local HOLD_COMPLETE_THRESHOLD = 0.98
-
-local BUSH_CAM_SHAKE_STEP = "BushSearchCameraShake"
-local BUSH_WOBBLE_STEP = "BushSearchModelWobble"
-local BUSH_CAM_SHAKE_POS = 0.14
-local BUSH_CAM_SHAKE_SPEED = 9
-local BUSH_WOBBLE_POS = 0.11
-local BUSH_WOBBLE_ROT = math.rad(3.4)
-
-local CUSTOM_ATTR = "CustomPromptFX"
-local PLACE_PROMPT_ATTR = "BrainrotPlacePrompt"
-local STAND_NAME_ATTR = "BrainrotName"
-local STAND_LEVEL_ATTR = "BrainrotLevel"
-local STAND_RARITY_ATTR = "BrainrotRarity"
-
-local RARITY_GRADIENT_UI_NAMES: { [string]: string } = {
-	common = "Common",
-	uncommon = "Uncommon",
-	rare = "Rare",
-	epic = "Epic",
-	mythic = "Mythical",
-	legendary = "Legendary",
-	["brainrot god"] = "Godly",
-	secret = "Godly",
-}
-local MIN_TOUCH_PX = 44
-local MIN_TOUCH_PX_MOBILE = 52
-local TOUCH_TAP_ICON = "rbxasset://textures/ui/Controls/TouchTapIcon.png"
-local TOUCH_HOLD_ICON = "rbxasset://textures/ui/Controls/TouchHoldIcon.png"
 
 -- ── State ─────────────────────────────────────────────────────────────────────
 
@@ -133,8 +62,7 @@ local promptStyleConns: { [ProximityPrompt]: { RBXScriptConnection } } = {}
 local serviceWired = false
 local activeBushSearchPrompt: ProximityPrompt? = nil
 local bushSharedView: PromptView? = nil
-local bushWobbleModel: Model? = nil
-local bushWobbleBasePivot: CFrame? = nil
+local bushWobbleBases: { [Instance]: CFrame }? = nil
 local bushWobbleSeed = 0.0
 local bushWobbleStepBound = false
 local cameraShakeActive = false
@@ -142,10 +70,6 @@ local bushCameraShakeStepBound = false
 local bushHoldLockUntil = 0
 local bushHoldCompleteHandler: ((ProximityPrompt) -> ())? = nil
 local managedBushHoldActive: ProximityPrompt? = nil
-
--- Mobile-only: prompt UI only when the camera is looking toward the target.
-local MIN_MOBILE_FACE_DOT = 0.32
-local MOBILE_FACING_REFRESH_INTERVAL = 0.12
 
 -- Post-harvest cooldown banner (clock + seconds) on the bush adornee
 type BushCooldownBannerEntry = {
@@ -156,14 +80,6 @@ type BushCooldownBannerEntry = {
 }
 local bushCooldownBanners: { [Instance]: BushCooldownBannerEntry } = {}
 local rarityGradientsFolder: Folder? = nil
-
-local BUSH_MANAGED_ATTR = "BushManagedPrompt"
--- Must match BrainrotStandController — cheap reshow path (never scan all of Workspace).
-local STAND_TAG = "BrainrotStand"
--- 0 = unlimited view distance for cooldown clock banners.
-local COOLDOWN_BANNER_VIEW_RANGE = 0
--- Lift above model bbox center (world-space offset from adornee part).
-local BUSH_BILLBOARD_LIFT_SCALE = 0.66
 
 local ProximityPromptEffects = {}
 
@@ -226,15 +142,35 @@ local function canShowPlaceBrainrotUi(): boolean
 end
 
 local function isPlaceBrainrotPrompt(prompt: ProximityPrompt): boolean
-	return prompt:GetAttribute(PLACE_PROMPT_ATTR) == true or prompt.ActionText == "Place Brainrot"
+	return prompt:GetAttribute(C.PLACE_PROMPT_ATTR) == true or prompt.ActionText == "Place Brainrot"
 end
 
 local function isManagedBushPrompt(prompt: ProximityPrompt): boolean
-	return CarryGate.isBushSearchPrompt(prompt) and prompt:GetAttribute(BUSH_MANAGED_ATTR) == true
+	return CarryGate.isBushSearchPrompt(prompt) and prompt:GetAttribute(C.BUSH_MANAGED_ATTR) == true
+end
+
+local function bushBillboardMaxDistance(prompt: ProximityPrompt): number
+	return math.max(prompt.MaxActivationDistance * 1.5, C.BUSH_BILLBOARD_MIN_MAX_DISTANCE)
+end
+
+local function isBushSearchInCameraRange(prompt: ProximityPrompt): boolean
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return true
+	end
+	local focus = getPromptFocusWorld(prompt)
+	if not focus then
+		return false
+	end
+	return (focus - cam.CFrame.Position).Magnitude <= bushBillboardMaxDistance(prompt)
 end
 
 local function managedBushUiEligible(prompt: ProximityPrompt): boolean
-	return isManagedBushPrompt(prompt) and prompt.Enabled and not CarryGate.isFull() and isPromptFacingCamera(prompt)
+	return isManagedBushPrompt(prompt)
+		and prompt.Enabled
+		and not CarryGate.isFull()
+		and isPromptFacingCamera(prompt)
+		and isBushSearchInCameraRange(prompt)
 end
 
 local function shouldShowPromptUi(prompt: ProximityPrompt): boolean
@@ -299,9 +235,9 @@ end
 
 local function effectiveMinCardWidth(): number
 	if isMobilePlatform() then
-		return MOBILE_MIN_CARD_W
+		return C.MOBILE_MIN_CARD_W
 	end
-	return MIN_CARD_W
+	return C.MIN_CARD_W
 end
 
 -- Phones/tablets should show Roblox touch icons even before the first touch event.
@@ -365,7 +301,7 @@ local function showTouchKeyIcon(view: PromptView, hold: boolean)
 	icon.Position = UDim2.fromScale(0.5, 0.5)
 	icon.Size = UDim2.fromOffset(28, 34)
 	icon.ZIndex = 10
-	icon.Image = if hold then TOUCH_HOLD_ICON else TOUCH_TAP_ICON
+	icon.Image = if hold then C.TOUCH_HOLD_ICON else C.TOUCH_TAP_ICON
 end
 
 local function refreshKeyLabel(view: PromptView)
@@ -486,7 +422,7 @@ local function wireClickablePrompt(view: PromptView)
 	clickBtn.ZIndex = 20
 	clickBtn.Parent = root
 
-	local touchMinPx = if prefersTouchInput() then MIN_TOUCH_PX_MOBILE else MIN_TOUCH_PX
+	local touchMinPx = if prefersTouchInput() then C.MIN_TOUCH_PX_MOBILE else C.MIN_TOUCH_PX
 	local touchMin = Instance.new("UISizeConstraint")
 	touchMin.MinSize = Vector2.new(touchMinPx, touchMinPx)
 	touchMin.Parent = clickBtn
@@ -642,69 +578,22 @@ local function isUnderBushScripts(inst: Instance?): boolean
 	return false
 end
 
-local function findBushModelForPrompt(prompt: ProximityPrompt): Model?
-	-- Match BushHoldInteraction: one bush model per child of BushSCRIPTs (not nested sub-models).
-	local node: Instance? = prompt.Parent
-	local fallback: Model? = nil
-	while node do
-		if node:IsA("Model") then
-			local m = node :: Model
-			if isUnderBushScripts(m) then
-				local parent = m.Parent
-				if parent and (parent.Name == "BushSCRIPTs" or parent.Name == "BushSCRIPT") then
-					return m
-				end
-				fallback = m
-			end
-		end
-		node = node.Parent
-	end
-	return fallback
+local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
+
+local function findBushRootForPrompt(prompt: ProximityPrompt): Instance?
+	return BushRootUtil.resolveBushRootFromPrompt(prompt)
 end
 
-local function bushFocusWorldPosition(bush: Model): Vector3?
-	if not bush.Parent then
-		return nil
-	end
-
-	local minX, minY, minZ = math.huge, math.huge, math.huge
-	local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
-	local foundPart = false
-
-	for _, desc in bush:GetDescendants() do
-		if desc:IsA("BasePart") then
-			foundPart = true
-			local cf = desc.CFrame
-			local h = desc.Size * 0.5
-			for sx = -1, 1, 2 do
-				for sy = -1, 1, 2 do
-					for sz = -1, 1, 2 do
-						local wp = cf:PointToWorldSpace(Vector3.new(h.X * sx, h.Y * sy, h.Z * sz))
-						minX = math.min(minX, wp.X)
-						minY = math.min(minY, wp.Y)
-						minZ = math.min(minZ, wp.Z)
-						maxX = math.max(maxX, wp.X)
-						maxY = math.max(maxY, wp.Y)
-						maxZ = math.max(maxZ, wp.Z)
-					end
-				end
-			end
-		end
-	end
-
-	if foundPart then
-		local center = Vector3.new((minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5)
-		local height = math.max(0.5, maxY - minY)
-		return center + Vector3.new(0, height * BUSH_BILLBOARD_LIFT_SCALE, 0)
-	end
-
-	local ok, cf, size = pcall(function()
-		return bush:GetBoundingBox()
-	end)
-	if ok and typeof(cf) == "CFrame" and typeof(size) == "Vector3" then
-		return cf.Position + Vector3.new(0, size.Y * BUSH_BILLBOARD_LIFT_SCALE, 0)
+local function findBushModelForPrompt(prompt: ProximityPrompt): Model?
+	local root = findBushRootForPrompt(prompt)
+	if root and root:IsA("Model") then
+		return root
 	end
 	return nil
+end
+
+local function bushFocusWorldPosition(bush: Instance): Vector3?
+	return BushRootUtil.focusWorldPosition(bush, C.BUSH_BILLBOARD_LIFT_SCALE)
 end
 
 local function refreshBushPromptAttachment(prompt: ProximityPrompt)
@@ -717,7 +606,7 @@ local function refreshBushPromptAttachment(prompt: ProximityPrompt)
 	if not anchor or not anchor:IsA("BasePart") then
 		return
 	end
-	local bush = findBushModelForPrompt(prompt)
+	local bush = findBushRootForPrompt(prompt)
 	local target = if bush then bushFocusWorldPosition(bush) else nil
 	if not target then
 		return
@@ -740,9 +629,9 @@ local function bushBillboardStudsOffset(prompt: ProximityPrompt?, bushModel: Mod
 		return (attParent :: Attachment).Position
 	end
 
-	local bush = bushModel
+	local bush: Instance? = bushModel
 	if not bush and prompt then
-		bush = findBushModelForPrompt(prompt)
+		bush = findBushRootForPrompt(prompt)
 	end
 	local target = if bush then bushFocusWorldPosition(bush) else nil
 	if target then
@@ -767,11 +656,11 @@ local function applyBushBillboardPlacement(billboard: BillboardGui, prompt: Prox
 end
 
 local function isBushPrompt(prompt: ProximityPrompt): boolean
-	return CarryGate.isBushSearchPrompt(prompt) or findBushModelForPrompt(prompt) ~= nil
+	return CarryGate.isBushSearchPrompt(prompt) or findBushRootForPrompt(prompt) ~= nil
 end
 
 local function getPromptFocusWorld(prompt: ProximityPrompt): Vector3?
-	local bush = findBushModelForPrompt(prompt)
+	local bush = findBushRootForPrompt(prompt)
 	local adornee = getPromptAdornee(prompt)
 	if bush and adornee then
 		local focus = bushFocusWorldPosition(bush)
@@ -805,11 +694,21 @@ isPromptFacingCamera = function(prompt: ProximityPrompt): boolean
 	if toTarget.Magnitude < 0.08 then
 		return true
 	end
-	return cam.CFrame.LookVector:Dot(toTarget.Unit) >= MIN_MOBILE_FACE_DOT
+	return cam.CFrame.LookVector:Dot(toTarget.Unit) >= C.MIN_MOBILE_FACE_DOT
 end
 
 function ProximityPromptEffects.isPromptFacingCamera(prompt: ProximityPrompt): boolean
 	return isPromptFacingCamera(prompt)
+end
+
+function ProximityPromptEffects.isBushSearchUiInRange(prompt: ProximityPrompt): boolean
+	if not prompt.Parent or CarryGate.isFull() then
+		return false
+	end
+	if not isPromptFacingCamera(prompt) then
+		return false
+	end
+	return isBushSearchInCameraRange(prompt)
 end
 
 local function findStandForPrompt(prompt: ProximityPrompt): Model?
@@ -817,7 +716,7 @@ local function findStandForPrompt(prompt: ProximityPrompt): Model?
 	while node do
 		if node:IsA("Model") then
 			local m = node :: Model
-			if m:GetAttribute(STAND_NAME_ATTR) ~= nil or m:FindFirstChild("Spawn", true) then
+			if m:GetAttribute(C.STAND_NAME_ATTR) ~= nil or m:FindFirstChild("Spawn", true) then
 				return m
 			end
 		end
@@ -849,7 +748,7 @@ local function rarityGradientUiName(rarityId: string?): string?
 		return nil
 	end
 	local key = RebirthConfig.normalizeRarity(rarityId)
-	return RARITY_GRADIENT_UI_NAMES[key]
+	return C.RARITY_GRADIENT_UI_NAMES[key]
 end
 
 local function hasStandStrokeGradient(view: PromptView): boolean
@@ -869,9 +768,9 @@ local function clearStandStrokeGradient(view: PromptView)
 		grad:Destroy()
 	end
 	table.clear(view.strokeGrads)
-	view.rootStroke.Color = ACCENT
+	view.rootStroke.Color = C.ACCENT
 	view.rootStroke.Transparency = 0.25
-	view.keyStroke.Color = ACCENT_STROKE
+	view.keyStroke.Color = C.ACCENT_STROKE
 	view.keyStroke.Transparency = 0.35
 end
 
@@ -892,7 +791,7 @@ local function startStandStrokeGradientCycle(view: PromptView)
 	view.strokeGradConn = RunService.Heartbeat:Connect(function(dt)
 		for _, grad in view.strokeGrads do
 			if grad.Parent then
-				grad.Rotation = (grad.Rotation + dt * STAND_STROKE_GRAD_ROT_SPEED) % 360
+				grad.Rotation = (grad.Rotation + dt * C.STAND_STROKE_GRAD_ROT_SPEED) % 360
 			end
 		end
 	end)
@@ -905,13 +804,13 @@ local function applyStandStrokeGradient(view: PromptView, stand: Model)
 
 	clearStandStrokeGradient(view)
 
-	local occupied = typeof(stand:GetAttribute(STAND_NAME_ATTR)) == "string"
-		and stand:GetAttribute(STAND_NAME_ATTR) ~= ""
+	local occupied = typeof(stand:GetAttribute(C.STAND_NAME_ATTR)) == "string"
+		and stand:GetAttribute(C.STAND_NAME_ATTR) ~= ""
 	if not occupied then
 		return
 	end
 
-	local gradUiName = rarityGradientUiName(stand:GetAttribute(STAND_RARITY_ATTR) :: string?)
+	local gradUiName = rarityGradientUiName(stand:GetAttribute(C.STAND_RARITY_ATTR) :: string?)
 	if not gradUiName then
 		gradUiName = "Common"
 	end
@@ -930,9 +829,9 @@ end
 local function resolvePromptLabels(prompt: ProximityPrompt): (string, string)
 	local stand = findStandForPrompt(prompt)
 	if stand then
-		local name = stand:GetAttribute(STAND_NAME_ATTR)
+		local name = stand:GetAttribute(C.STAND_NAME_ATTR)
 		if typeof(name) == "string" and name ~= "" then
-			local level = stand:GetAttribute(STAND_LEVEL_ATTR)
+			local level = stand:GetAttribute(C.STAND_LEVEL_ATTR)
 			local lvl = if typeof(level) == "number" then math.max(1, math.floor(level)) else 1
 			return "Pick Up", string.format("Lvl %d %s", lvl, name)
 		end
@@ -945,8 +844,8 @@ local function measureCardWidth(actionText: string, objectText: string, _holdDur
 	local actionSize = TextService:GetTextSize(actionText, 17, Enum.Font.GothamBold, measureBounds)
 	local objectSize = TextService:GetTextSize(objectText, 14, Enum.Font.Gotham, measureBounds)
 	local textW = math.max(actionSize.X, objectSize.X)
-	local total = PAD_LEFT + BADGE_SIZE + BADGE_TEXT_GAP + math.ceil(textW) + PAD_RIGHT
-	return math.clamp(total, effectiveMinCardWidth(), MAX_CARD_W)
+	local total = C.PAD_LEFT + C.BADGE_SIZE + C.BADGE_TEXT_GAP + math.ceil(textW) + C.PAD_RIGHT
+	return math.clamp(total, effectiveMinCardWidth(), C.MAX_CARD_W)
 end
 
 local function applyLabelsToView(view: PromptView)
@@ -962,7 +861,7 @@ local function applyLabelsToView(view: PromptView)
 	end
 	view.actionLabel.Text = actionText
 	view.objectLabel.Text = objectText
-	view.billboard.Size = UDim2.fromOffset(measureCardWidth(actionText, objectText, view.prompt.HoldDuration), CARD_H)
+	view.billboard.Size = UDim2.fromOffset(measureCardWidth(actionText, objectText, view.prompt.HoldDuration), C.CARD_H)
 	refreshKeyLabel(view)
 	local stand = findStandForPrompt(view.prompt)
 	if stand then
@@ -987,7 +886,7 @@ local function setHoldTrackVisible(view: PromptView, visible: boolean)
 end
 
 local function holdTrackHeight(_view: PromptView): number
-	return math.max(8, BADGE_SIZE - BADGE_HOLD_PAD * 2)
+	return math.max(8, C.BADGE_SIZE - C.BADGE_HOLD_PAD * 2)
 end
 
 local function ensureKeyIcon(view: PromptView)
@@ -1016,20 +915,20 @@ local function ensureKeyIcon(view: PromptView)
 end
 
 local function resetKeyBadgeVisuals(view: PromptView)
-	view.keyBadge.BackgroundColor3 = BADGE_BG
-	view.keyBadge.BackgroundTransparency = BADGE_BG_TRANSPARENCY
+	view.keyBadge.BackgroundColor3 = C.BADGE_BG
+	view.keyBadge.BackgroundTransparency = C.BADGE_BG_TRANSPARENCY
 	if hasStandStrokeGradient(view) then
 		view.keyStroke.Color = Color3.new(1, 1, 1)
 		view.keyStroke.Transparency = 0.12
 	else
-		view.keyStroke.Color = ACCENT_STROKE
+		view.keyStroke.Color = C.ACCENT_STROKE
 		view.keyStroke.Transparency = 0.35
 	end
-	view.keyLabel.TextColor3 = TEXT_PRIMARY
+	view.keyLabel.TextColor3 = C.TEXT_PRIMARY
 	ensureKeyIcon(view)
 	view.keyIcon.ImageColor3 = Color3.new(1, 1, 1)
 	local trackH = holdTrackHeight(view)
-	view.holdTrack.Size = UDim2.new(1, -BADGE_HOLD_PAD * 2, 1, -BADGE_HOLD_PAD * 2)
+	view.holdTrack.Size = UDim2.new(1, -C.BADGE_HOLD_PAD * 2, 1, -C.BADGE_HOLD_PAD * 2)
 	view.holdFill.Size = UDim2.new(1, 0, 0, 0)
 	view.holdFill.BackgroundTransparency = 0.05
 	setHoldTrackVisible(view, view.prompt.HoldDuration > 0)
@@ -1052,7 +951,7 @@ end
 local function stopBushWobbleRenderStep()
 	if bushWobbleStepBound then
 		pcall(function()
-			RunService:UnbindFromRenderStep(BUSH_WOBBLE_STEP)
+			RunService:UnbindFromRenderStep(C.BUSH_WOBBLE_STEP)
 		end)
 		bushWobbleStepBound = false
 	end
@@ -1061,7 +960,7 @@ end
 local function stopBushCameraShake()
 	if bushCameraShakeStepBound then
 		pcall(function()
-			RunService:UnbindFromRenderStep(BUSH_CAM_SHAKE_STEP)
+			RunService:UnbindFromRenderStep(C.BUSH_CAM_SHAKE_STEP)
 		end)
 		bushCameraShakeStepBound = false
 	end
@@ -1081,7 +980,7 @@ local function startBushCameraShake()
 		return
 	end
 	bushCameraShakeStepBound = true
-	RunService:BindToRenderStep(BUSH_CAM_SHAKE_STEP, Enum.RenderPriority.Camera.Value + 50, function()
+	RunService:BindToRenderStep(C.BUSH_CAM_SHAKE_STEP, Enum.RenderPriority.Camera.Value + 50, function()
 		if not cameraShakeActive then
 			stopBushCameraShake()
 			return
@@ -1090,11 +989,11 @@ local function startBushCameraShake()
 		if not hum then
 			return
 		end
-		local t = os.clock() * BUSH_CAM_SHAKE_SPEED
+		local t = os.clock() * C.BUSH_CAM_SHAKE_SPEED
 		hum.CameraOffset = Vector3.new(
-			(math.noise(t, 0, 0) - 0.5) * 2 * BUSH_CAM_SHAKE_POS,
-			(math.noise(0, t, 1) - 0.5) * 2 * BUSH_CAM_SHAKE_POS,
-			(math.noise(t, 2, 0.5) - 0.5) * 2 * BUSH_CAM_SHAKE_POS * 0.35
+			(math.noise(t, 0, 0) - 0.5) * 2 * C.BUSH_CAM_SHAKE_POS,
+			(math.noise(0, t, 1) - 0.5) * 2 * C.BUSH_CAM_SHAKE_POS,
+			(math.noise(t, 2, 0.5) - 0.5) * 2 * C.BUSH_CAM_SHAKE_POS * 0.35
 		)
 	end)
 end
@@ -1105,12 +1004,12 @@ local function applyBushWobble(t: number, seed: number)
 	if not bush or not base or not bush.Parent then
 		return
 	end
-	local nx = math.noise(t * 9, seed, 0) * BUSH_WOBBLE_POS
-	local ny = math.noise(seed + 1, t * 9, 0.5) * BUSH_WOBBLE_POS * 0.6
-	local nz = math.noise(t * 9, seed + 2, 1) * BUSH_WOBBLE_POS
-	local rx = math.noise(t * 7, seed + 3, 2) * BUSH_WOBBLE_ROT
-	local ry = math.noise(seed + 4, t * 7, 3) * BUSH_WOBBLE_ROT * 1.2
-	local rz = math.noise(t * 7, seed + 5, 4) * BUSH_WOBBLE_ROT * 0.7
+	local nx = math.noise(t * 9, seed, 0) * C.BUSH_WOBBLE_POS
+	local ny = math.noise(seed + 1, t * 9, 0.5) * C.BUSH_WOBBLE_POS * 0.6
+	local nz = math.noise(t * 9, seed + 2, 1) * C.BUSH_WOBBLE_POS
+	local rx = math.noise(t * 7, seed + 3, 2) * C.BUSH_WOBBLE_ROT
+	local ry = math.noise(seed + 4, t * 7, 3) * C.BUSH_WOBBLE_ROT * 1.2
+	local rz = math.noise(t * 7, seed + 5, 4) * C.BUSH_WOBBLE_ROT * 0.7
 	pcall(function()
 		bush:PivotTo(base * CFrame.new(nx, ny, nz) * CFrame.Angles(rx, ry, rz))
 	end)
@@ -1138,7 +1037,7 @@ local function beginBushWobble(prompt: ProximityPrompt)
 	bushWobbleBasePivot = bush:GetPivot()
 	bushWobbleSeed = math.random() * 10
 	bushWobbleStepBound = true
-	RunService:BindToRenderStep(BUSH_WOBBLE_STEP, Enum.RenderPriority.Last.Value, function()
+	RunService:BindToRenderStep(C.BUSH_WOBBLE_STEP, Enum.RenderPriority.Last.Value, function()
 		if not bushWobbleModel or not bushWobbleBasePivot then
 			stopBushWobbleRenderStep()
 			return
@@ -1174,14 +1073,14 @@ endHoldVisual = function(view: PromptView, completed: boolean?)
 	if not view.holding then
 		return
 	end
-	local done = if completed == nil then view.holdProgress >= HOLD_COMPLETE_THRESHOLD else completed
+	local done = if completed == nil then view.holdProgress >= C.HOLD_COMPLETE_THRESHOLD else completed
 	resetHoldState(view, done)
 end
 
 applyHoldBadgeActive = function(view: PromptView)
-	view.keyBadge.BackgroundColor3 = BADGE_BG
+	view.keyBadge.BackgroundColor3 = C.BADGE_BG
 	view.keyBadge.BackgroundTransparency = 0.2
-	view.keyStroke.Color = HOLD_GREEN_BRIGHT
+	view.keyStroke.Color = C.HOLD_GREEN_BRIGHT
 	view.keyStroke.Transparency = 0.1
 	view.holdTrack.BackgroundTransparency = 0.15
 end
@@ -1189,8 +1088,8 @@ end
 -- Bush-style noisy wiggle on a GuiObject rotation
 local function wiggleRotation(target: GuiObject, seed: number, t: number): number
 	return math.deg(
-		math.noise(t * WIGGLE_SPEED, seed, 0.5) * WIGGLE_ROT
-			+ math.noise(t * WIGGLE_SPEED * 0.7, seed + 2, 1.2) * WIGGLE_ROT * 0.55
+		math.noise(t * C.WIGGLE_SPEED, seed, 0.5) * C.WIGGLE_ROT
+			+ math.noise(t * C.WIGGLE_SPEED * 0.7, seed + 2, 1.2) * C.WIGGLE_ROT * 0.55
 	)
 end
 
@@ -1200,14 +1099,14 @@ local function flashKeyYellow(view: PromptView, holdGreenAfter: boolean?, skipBa
 	local badge = view.keyBadge
 	local badgeScale = getOrAddUIScale(badge)
 
-	badge.BackgroundColor3 = PRESS_FLASH
+	badge.BackgroundColor3 = C.PRESS_FLASH
 	badge.BackgroundTransparency = 0.05
-	view.keyStroke.Color = PRESS_FLASH
+	view.keyStroke.Color = C.PRESS_FLASH
 	view.keyLabel.TextColor3 = Color3.new(0.12, 0.1, 0.05)
 
-	TweenService:Create(view.keyLabel, FLASH_TWEEN, { TextColor3 = PRESS_FLASH }):Play()
+	TweenService:Create(view.keyLabel, C.FLASH_TWEEN, { TextColor3 = C.PRESS_FLASH }):Play()
 	if not skipBadgeScale then
-		TweenService:Create(badgeScale, TILT_POP, { Scale = 1.08 }):Play()
+		TweenService:Create(badgeScale, C.TILT_POP, { Scale = 1.08 }):Play()
 	end
 
 	task.delay(0.16, function()
@@ -1219,9 +1118,9 @@ local function flashKeyYellow(view: PromptView, holdGreenAfter: boolean?, skipBa
 		else
 			resetKeyBadgeVisuals(view)
 		end
-		TweenService:Create(view.keyLabel, BADGE_TWEEN, { TextColor3 = TEXT_PRIMARY }):Play()
+		TweenService:Create(view.keyLabel, C.BADGE_TWEEN, { TextColor3 = C.TEXT_PRIMARY }):Play()
 		if not skipBadgeScale then
-			TweenService:Create(badgeScale, BADGE_TWEEN, { Scale = 1 }):Play()
+			TweenService:Create(badgeScale, C.BADGE_TWEEN, { Scale = 1 }):Play()
 		end
 	end)
 end
@@ -1241,12 +1140,12 @@ local function playPressAnim(view: PromptView)
 	view.pressAnimToken += 1
 	local token = view.pressAnimToken
 
-	local tiltLeft = if isStand then STAND_TILT_LEFT else TILT_LEFT
-	local tiltRight = if isStand then STAND_TILT_RIGHT else TILT_RIGHT
-	local tiltCenter = if isStand then STAND_TILT_CENTER else TILT_CENTER
+	local tiltLeft = if isStand then C.STAND_TILT_LEFT else C.TILT_LEFT
+	local tiltRight = if isStand then C.STAND_TILT_RIGHT else C.TILT_RIGHT
+	local tiltCenter = if isStand then C.STAND_TILT_CENTER else C.TILT_CENTER
 
 	if not isStand then
-		TweenService:Create(badgeScale, TILT_LEFT, { Scale = 0.92 }):Play()
+		TweenService:Create(badgeScale, C.TILT_LEFT, { Scale = 0.92 }):Play()
 	end
 
 	local function animAlive(): boolean
@@ -1313,8 +1212,8 @@ startIdleSway = function(view: PromptView)
 
 	task.spawn(function()
 		while viewIsActive(view) and view.swayToken == token and not view.holding do
-			local t = os.clock() * SWAY_FREQ + phase
-			view.root.Rotation = math.sin(t) * SWAY_AMP
+			local t = os.clock() * C.SWAY_FREQ + phase
+			view.root.Rotation = math.sin(t) * C.SWAY_AMP
 			RunService.Heartbeat:Wait()
 		end
 		if view.swayToken == token and not view.holding and viewIsActive(view) then
@@ -1332,18 +1231,18 @@ local function playHoldComplete(view: PromptView)
 	view.root.Rotation = 0
 	view.keyBadge.Rotation = 0
 
-	view.keyBadge.BackgroundColor3 = HOLD_GREEN_BRIGHT
+	view.keyBadge.BackgroundColor3 = C.HOLD_GREEN_BRIGHT
 	view.keyBadge.BackgroundTransparency = 0
-	view.keyStroke.Color = ACCENT_BRIGHT
+	view.keyStroke.Color = C.ACCENT_BRIGHT
 	view.keyStroke.Transparency = 0
-	view.keyLabel.TextColor3 = HOLD_COMPLETE_FLASH
+	view.keyLabel.TextColor3 = C.HOLD_COMPLETE_FLASH
 
-	TweenService:Create(badgeScale, POP_TWEEN, { Scale = 1.22 }):Play()
+	TweenService:Create(badgeScale, C.POP_TWEEN, { Scale = 1.22 }):Play()
 	task.delay(0.16, function()
 		if not view.keyBadge.Parent then
 			return
 		end
-		TweenService:Create(badgeScale, POP_TWEEN, { Scale = 1 }):Play()
+		TweenService:Create(badgeScale, C.POP_TWEEN, { Scale = 1 }):Play()
 	end)
 	task.delay(0.28, function()
 		if not viewIsActive(view) then
@@ -1391,7 +1290,7 @@ local function startBushSharedCardHoldVisual(view: PromptView)
 			setHoldFillProgress(view, p)
 			local pulse = 0.04 + math.sin(os.clock() * 14) * 0.03
 			view.holdFill.BackgroundTransparency = math.clamp(0.05 - pulse, 0, 0.2)
-			if p >= HOLD_COMPLETE_THRESHOLD and managedBushHoldActive == view.prompt then
+			if p >= C.HOLD_COMPLETE_THRESHOLD and managedBushHoldActive == view.prompt then
 				stopHoldRender(view)
 				ProximityPromptEffects.endManagedBushHold(view.prompt, true)
 				return
@@ -1492,7 +1391,7 @@ local function wireBushSharedClickable(view: PromptView)
 	clickBtn.ZIndex = 20
 	clickBtn.Parent = root
 
-	local touchMinPx = if prefersTouchInput() then MIN_TOUCH_PX_MOBILE else MIN_TOUCH_PX
+	local touchMinPx = if prefersTouchInput() then C.MIN_TOUCH_PX_MOBILE else C.MIN_TOUCH_PX
 	local touchMin = Instance.new("UISizeConstraint")
 	touchMin.MinSize = Vector2.new(touchMinPx, touchMinPx)
 	touchMin.Parent = clickBtn
@@ -1606,7 +1505,7 @@ startHoldRender = function(view: PromptView)
 			local pulse = 0.04 + math.sin(os.clock() * 14) * 0.03
 			view.holdFill.BackgroundTransparency = math.clamp(0.05 - pulse, 0, 0.2)
 
-			if view.holdProgress >= HOLD_COMPLETE_THRESHOLD then
+			if view.holdProgress >= C.HOLD_COMPLETE_THRESHOLD then
 				stopHoldRender(view)
 				pcall(function()
 					view.prompt:InputHoldEnd()
@@ -1636,8 +1535,8 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	billboard.Active = promptBillboardInputActive()
 	billboard.AlwaysOnTop = true
 	billboard.LightInfluence = 0
-	billboard.MaxDistance = math.max(prompt.MaxActivationDistance * 1.5, 40)
-	billboard.Size = UDim2.fromOffset(effectiveMinCardWidth(), CARD_H)
+	billboard.MaxDistance = bushBillboardMaxDistance(prompt)
+	billboard.Size = UDim2.fromOffset(effectiveMinCardWidth(), C.CARD_H)
 	billboard.Adornee = adornee
 	if isBushPrompt(prompt) and adornee then
 		applyBushBillboardPlacement(billboard, prompt, adornee)
@@ -1660,8 +1559,8 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	root.AnchorPoint = Vector2.new(0.5, 0.5)
 	root.Position = UDim2.fromScale(0.5, 0.5)
 	root.Size = UDim2.fromScale(1, 1)
-	root.BackgroundColor3 = BG_COLOR
-	root.BackgroundTransparency = BG_TRANSPARENCY
+	root.BackgroundColor3 = C.BG_COLOR
+	root.BackgroundTransparency = C.BG_TRANSPARENCY
 	root.BorderSizePixel = 0
 	root.Parent = billboard
 
@@ -1670,7 +1569,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	rootCorner.Parent = root
 
 	local rootStroke = Instance.new("UIStroke")
-	rootStroke.Color = ACCENT
+	rootStroke.Color = C.ACCENT
 	rootStroke.Thickness = 1.5
 	rootStroke.Transparency = 0.25
 	rootStroke.Parent = root
@@ -1689,10 +1588,10 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	local keyBadge = Instance.new("Frame")
 	keyBadge.Name = "KeyBadge"
 	keyBadge.AnchorPoint = Vector2.new(0, 0.5)
-	keyBadge.Position = UDim2.new(0, PAD_LEFT, 0.5, 0)
-	keyBadge.Size = UDim2.fromOffset(BADGE_SIZE, BADGE_SIZE)
-	keyBadge.BackgroundColor3 = BADGE_BG
-	keyBadge.BackgroundTransparency = BADGE_BG_TRANSPARENCY
+	keyBadge.Position = UDim2.new(0, C.PAD_LEFT, 0.5, 0)
+	keyBadge.Size = UDim2.fromOffset(C.BADGE_SIZE, C.BADGE_SIZE)
+	keyBadge.BackgroundColor3 = C.BADGE_BG
+	keyBadge.BackgroundTransparency = C.BADGE_BG_TRANSPARENCY
 	keyBadge.BorderSizePixel = 0
 	keyBadge.Parent = root
 
@@ -1701,7 +1600,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	badgeCorner.Parent = keyBadge
 
 	local keyStroke = Instance.new("UIStroke")
-	keyStroke.Color = ACCENT_STROKE
+	keyStroke.Color = C.ACCENT_STROKE
 	keyStroke.Thickness = 1.5
 	keyStroke.Transparency = 0.35
 	keyStroke.Parent = keyBadge
@@ -1710,7 +1609,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	holdTrack.Name = "HoldTrack"
 	holdTrack.AnchorPoint = Vector2.new(0.5, 0.5)
 	holdTrack.Position = UDim2.fromScale(0.5, 0.5)
-	holdTrack.Size = UDim2.new(1, -BADGE_HOLD_PAD * 2, 1, -BADGE_HOLD_PAD * 2)
+	holdTrack.Size = UDim2.new(1, -C.BADGE_HOLD_PAD * 2, 1, -C.BADGE_HOLD_PAD * 2)
 	holdTrack.BackgroundColor3 = Color3.fromRGB(8, 20, 12)
 	holdTrack.BackgroundTransparency = 0.15
 	holdTrack.BorderSizePixel = 0
@@ -1724,7 +1623,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	trackCorner.Parent = holdTrack
 
 	local trackStroke = Instance.new("UIStroke")
-	trackStroke.Color = ACCENT_STROKE
+	trackStroke.Color = C.ACCENT_STROKE
 	trackStroke.Thickness = 1.25
 	trackStroke.Transparency = 0.35
 	trackStroke.Parent = holdTrack
@@ -1734,7 +1633,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	holdFill.AnchorPoint = Vector2.new(0.5, 1)
 	holdFill.Position = UDim2.new(0.5, 0, 1, 0)
 	holdFill.Size = UDim2.new(1, 0, 0, 0)
-	holdFill.BackgroundColor3 = HOLD_GREEN_BRIGHT
+	holdFill.BackgroundColor3 = C.HOLD_GREEN_BRIGHT
 	holdFill.BackgroundTransparency = 0.08
 	holdFill.BorderSizePixel = 0
 	holdFill.ZIndex = 2
@@ -1747,9 +1646,9 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 
 	local fillGrad = Instance.new("UIGradient")
 	fillGrad.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, HOLD_GREEN),
-		ColorSequenceKeypoint.new(0.5, HOLD_GREEN_BRIGHT),
-		ColorSequenceKeypoint.new(1, ACCENT_BRIGHT),
+		ColorSequenceKeypoint.new(0, C.HOLD_GREEN),
+		ColorSequenceKeypoint.new(0.5, C.HOLD_GREEN_BRIGHT),
+		ColorSequenceKeypoint.new(1, C.ACCENT_BRIGHT),
 	})
 	fillGrad.Rotation = 90
 	fillGrad.Parent = holdFill
@@ -1763,7 +1662,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	keyLabel.Font = Enum.Font.GothamBold
 	keyLabel.Text = ""
 	keyLabel.TextSize = if isMobilePlatform() then 18 else 22
-	keyLabel.TextColor3 = TEXT_PRIMARY
+	keyLabel.TextColor3 = C.TEXT_PRIMARY
 	keyLabel.AutoLocalize = false
 	keyLabel.ZIndex = 5
 	keyLabel.Parent = keyBadge
@@ -1784,8 +1683,8 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	local textCol = Instance.new("Frame")
 	textCol.Name = "TextColumn"
 	textCol.AnchorPoint = Vector2.new(0, 0.5)
-	textCol.Position = UDim2.new(0, PAD_LEFT + BADGE_SIZE + BADGE_TEXT_GAP, 0.5, 0)
-	textCol.Size = UDim2.new(1, -(PAD_LEFT + BADGE_SIZE + BADGE_TEXT_GAP + PAD_RIGHT), 1, -8)
+	textCol.Position = UDim2.new(0, C.PAD_LEFT + C.BADGE_SIZE + C.BADGE_TEXT_GAP, 0.5, 0)
+	textCol.Size = UDim2.new(1, -(C.PAD_LEFT + C.BADGE_SIZE + C.BADGE_TEXT_GAP + C.PAD_RIGHT), 1, -8)
 	textCol.BackgroundTransparency = 1
 	textCol.Parent = root
 
@@ -1799,7 +1698,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	actionLabel.TextSize = 17
 	actionLabel.TextXAlignment = Enum.TextXAlignment.Left
 	actionLabel.TextYAlignment = Enum.TextYAlignment.Bottom
-	actionLabel.TextColor3 = TEXT_PRIMARY
+	actionLabel.TextColor3 = C.TEXT_PRIMARY
 	actionLabel.TextTruncate = Enum.TextTruncate.AtEnd
 	actionLabel.TextWrapped = true
 	actionLabel.Parent = textCol
@@ -1815,7 +1714,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	objectLabel.TextSize = 14
 	objectLabel.TextXAlignment = Enum.TextXAlignment.Left
 	objectLabel.TextYAlignment = Enum.TextYAlignment.Top
-	objectLabel.TextColor3 = TEXT_SECONDARY
+	objectLabel.TextColor3 = C.TEXT_SECONDARY
 	objectLabel.TextTruncate = Enum.TextTruncate.AtEnd
 	objectLabel.TextWrapped = true
 	objectLabel.Parent = textCol
@@ -1895,7 +1794,7 @@ hideView = function(prompt: ProximityPrompt, instant: boolean?)
 	end
 
 	local scale = view.rootScale
-	local t = TweenService:Create(scale, CLOSE_TWEEN, { Scale = 0.72 })
+	local t = TweenService:Create(scale, C.CLOSE_TWEEN, { Scale = 0.72 })
 	t.Completed:Once(function(state)
 		if state == Enum.PlaybackState.Completed and viewsByPrompt[prompt] == view then
 			destroyView(prompt)
@@ -1958,7 +1857,7 @@ hideBushSharedUi = function(instant: boolean?)
 	end
 
 	local scale = view.rootScale
-	local t = TweenService:Create(scale, CLOSE_TWEEN, { Scale = 0.72 })
+	local t = TweenService:Create(scale, C.CLOSE_TWEEN, { Scale = 0.72 })
 	t.Completed:Once(function(state)
 		if state == Enum.PlaybackState.Completed and bushSharedView == view then
 			view.billboard.Enabled = false
@@ -2023,7 +1922,7 @@ showBushSharedUi = function(prompt: ProximityPrompt): boolean
 			GameSoundEffects.playProximityPromptAppear()
 		end
 		view.rootScale.Scale = 0.82
-		TweenService:Create(view.rootScale, OPEN_TWEEN, { Scale = 1 }):Play()
+		TweenService:Create(view.rootScale, C.OPEN_TWEEN, { Scale = 1 }):Play()
 		startIdleSway(view)
 	end
 
@@ -2107,7 +2006,7 @@ local function ensureBushCooldownBanner(bush: Instance, prompt: ProximityPrompt,
 	bb.ClipsDescendants = false
 	bb.Size = UDim2.fromOffset(300, 56)
 	applyBushBillboardPlacement(bb, prompt, adornee)
-	bb.MaxDistance = COOLDOWN_BANNER_VIEW_RANGE
+	bb.MaxDistance = C.COOLDOWN_BANNER_VIEW_RANGE
 	bb.Adornee = adornee
 	if pg then
 		bb.Parent = pg
@@ -2153,7 +2052,7 @@ local function ensureBushCooldownBanner(bush: Instance, prompt: ProximityPrompt,
 	timeLabel.Size = UDim2.fromOffset(0, 0)
 	timeLabel.Font = Enum.Font.GothamBold
 	timeLabel.TextSize = 28
-	timeLabel.TextColor3 = TEXT_PRIMARY
+	timeLabel.TextColor3 = C.TEXT_PRIMARY
 	timeLabel.TextXAlignment = Enum.TextXAlignment.Left
 	timeLabel.Text = "0s"
 	timeLabel.LayoutOrder = 1
@@ -2214,7 +2113,7 @@ function ProximityPromptEffects.syncBushCooldownBanners(bushPrompts: { [Instance
 end
 
 function ProximityPromptEffects.showBushCooldownBanner(prompt: ProximityPrompt, endClock: number)
-	local bush = findBushModelForPrompt(prompt)
+	local bush = findBushRootForPrompt(prompt)
 	if bush then
 		ensureBushCooldownBanner(bush, prompt, endClock)
 	end
@@ -2294,7 +2193,7 @@ local function showView(prompt: ProximityPrompt)
 			GameSoundEffects.playProximityPromptAppear()
 		end
 	else
-		TweenService:Create(view.rootScale, OPEN_TWEEN, { Scale = 1 }):Play()
+		TweenService:Create(view.rootScale, C.OPEN_TWEEN, { Scale = 1 }):Play()
 		startIdleSway(view)
 		if not isBushPrompt(prompt) and not isManagedBushPrompt(prompt) then
 			GameSoundEffects.playProximityPromptAppear()
@@ -2316,14 +2215,14 @@ wirePromptLiveUpdates = function(prompt: ProximityPrompt, view: PromptView)
 
 	local stand = findStandForPrompt(prompt)
 	if stand then
-		table.insert(view.liveConns, stand:GetAttributeChangedSignal(STAND_NAME_ATTR):Connect(refresh))
-		table.insert(view.liveConns, stand:GetAttributeChangedSignal(STAND_LEVEL_ATTR):Connect(refresh))
-		table.insert(view.liveConns, stand:GetAttributeChangedSignal(STAND_RARITY_ATTR):Connect(refresh))
+		table.insert(view.liveConns, stand:GetAttributeChangedSignal(C.STAND_NAME_ATTR):Connect(refresh))
+		table.insert(view.liveConns, stand:GetAttributeChangedSignal(C.STAND_LEVEL_ATTR):Connect(refresh))
+		table.insert(view.liveConns, stand:GetAttributeChangedSignal(C.STAND_RARITY_ATTR):Connect(refresh))
 	end
 end
 
 local function onPromptShown(prompt: ProximityPrompt, inputType: Enum.ProximityPromptInputType?)
-	if prompt:GetAttribute(CUSTOM_ATTR) ~= true then
+	if prompt:GetAttribute(C.CUSTOM_ATTR) ~= true then
 		return
 	end
 	if not shouldShowPromptUi(prompt) then
@@ -2373,7 +2272,7 @@ local function findStandProximityPrompt(stand: Model): ProximityPrompt?
 end
 
 reshowEligiblePlaceProximityPrompts = function()
-	for _, inst in CollectionService:GetTagged(STAND_TAG) do
+	for _, inst in CollectionService:GetTagged(C.STAND_TAG) do
 		if inst:IsA("Model") then
 			local pp = findStandProximityPrompt(inst :: Model)
 			if pp and pp.Enabled and isPlaceBrainrotPrompt(pp) then
@@ -2398,7 +2297,7 @@ function ProximityPromptEffects.syncStandPlaceProximityUi(prompt: ProximityPromp
 		if not isPlaceBrainrotPrompt(prompt) then
 			return
 		end
-		if prompt:GetAttribute(CUSTOM_ATTR) ~= true or not shouldShowPromptUi(prompt) then
+		if prompt:GetAttribute(C.CUSTOM_ATTR) ~= true or not shouldShowPromptUi(prompt) then
 			return
 		end
 		onPromptShown(prompt, nil)
@@ -2427,7 +2326,7 @@ local function onHoldBegan(prompt: ProximityPrompt, triggerPlayer: Player)
 		end
 		return
 	end
-	if prompt:GetAttribute(CUSTOM_ATTR) ~= true then
+	if prompt:GetAttribute(C.CUSTOM_ATTR) ~= true then
 		return
 	end
 	if prompt.HoldDuration <= 0 then
@@ -2461,7 +2360,7 @@ local function onHoldEnded(prompt: ProximityPrompt, triggerPlayer: Player)
 		end
 		return
 	end
-	if prompt:GetAttribute(CUSTOM_ATTR) ~= true then
+	if prompt:GetAttribute(C.CUSTOM_ATTR) ~= true then
 		return
 	end
 	if prompt.HoldDuration <= 0 then
@@ -2482,7 +2381,7 @@ local function onPromptTriggered(prompt: ProximityPrompt, triggerPlayer: Player)
 		fireManagedBushHoldComplete(prompt)
 		return
 	end
-	if prompt:GetAttribute(CUSTOM_ATTR) ~= true then
+	if prompt:GetAttribute(C.CUSTOM_ATTR) ~= true then
 		return
 	end
 
@@ -2529,7 +2428,7 @@ local function wireStylePrompt(prompt: ProximityPrompt)
 				if not prompt.Parent or not prompt.Enabled then
 					return
 				end
-				if prompt:GetAttribute(CUSTOM_ATTR) ~= true or not shouldShowPromptUi(prompt) then
+				if prompt:GetAttribute(C.CUSTOM_ATTR) ~= true or not shouldShowPromptUi(prompt) then
 					return
 				end
 				onPromptShown(prompt, nil)
@@ -2621,7 +2520,7 @@ end
 
 local function applyCustomPromptStyle(prompt: ProximityPrompt)
 	prompt.Style = Enum.ProximityPromptStyle.Custom
-	prompt:SetAttribute(CUSTOM_ATTR, true)
+	prompt:SetAttribute(C.CUSTOM_ATTR, true)
 	pcall(function()
 		(prompt :: any).ClickablePrompt = true
 	end)
@@ -2641,7 +2540,7 @@ end
 
 function ProximityPromptEffects.stylePrompt(prompt: ProximityPrompt)
 	if CarryGate.isBushSearchPrompt(prompt) then
-		if prompt:GetAttribute(BUSH_MANAGED_ATTR) ~= true then
+		if prompt:GetAttribute(C.BUSH_MANAGED_ATTR) ~= true then
 			-- BushHoldInteraction replaces legacy Search prompts; don't destroy during map load race.
 			prompt.Enabled = false
 			return
@@ -2653,7 +2552,8 @@ function ProximityPromptEffects.stylePrompt(prompt: ProximityPrompt)
 	applyCustomPromptStyle(prompt)
 end
 
-local function scanForPrompts(root: Instance)
+function ProximityPromptEffects.init()
+	local function scanForPrompts(root: Instance)
 	for _, desc in ipairs(root:GetDescendants()) do
 		if desc:IsA("ProximityPrompt") then
 			ProximityPromptEffects.stylePrompt(desc)
@@ -2661,7 +2561,7 @@ local function scanForPrompts(root: Instance)
 	end
 end
 
-local function wireProximityPromptService()
+	local function wireProximityPromptService()
 	if serviceWired then
 		return
 	end
@@ -2674,7 +2574,7 @@ local function wireProximityPromptService()
 	ProximityPromptService.PromptButtonHoldEnded:Connect(onHoldEnded)
 end
 
-local function hookCharacterToolListeners(char: Model)
+	local function hookCharacterToolListeners(char: Model)
 	char.ChildRemoved:Connect(function(ch)
 		if ch:IsA("Tool") and ch:GetAttribute("BrainrotTool") == true then
 			hidePlacePromptViewsIfNeeded()
@@ -2682,7 +2582,7 @@ local function hookCharacterToolListeners(char: Model)
 	end)
 end
 
-local function refreshCarryHiddenPrompts()
+	local function refreshCarryHiddenPrompts()
 	if not CarryGate.isFull() then
 		return
 	end
@@ -2694,8 +2594,8 @@ local function refreshCarryHiddenPrompts()
 	clearBushPerPromptViews()
 end
 
-local function hookCarryListeners()
-	local function onCarryChanged()
+	local function hookCarryListeners()
+		local function onCarryChanged()
 		refreshCarryHiddenPrompts()
 		hidePlacePromptViewsIfNeeded()
 		if canShowPlaceBrainrotUi() and reshowEligiblePlaceProximityPrompts then
@@ -2704,7 +2604,7 @@ local function hookCarryListeners()
 	end
 
 	local carryBumpPending = false
-	local function scheduleCarryBump()
+		local function scheduleCarryBump()
 		if carryBumpPending then
 			return
 		end
@@ -2715,7 +2615,7 @@ local function hookCarryListeners()
 		end)
 	end
 
-	local function wireCharCarryBumps(char: Model)
+		local function wireCharCarryBumps(char: Model)
 		char.ChildAdded:Connect(function(ch)
 			if ch:IsA("Tool") or ch:IsA("Model") then
 				scheduleCarryBump()
@@ -2748,7 +2648,7 @@ local function hookCarryListeners()
 	scheduleCarryBump()
 end
 
-local function refreshMobileFacingPromptVisibility()
+	local function refreshMobileFacingPromptVisibility()
 	if not isMobilePlatform() then
 		return
 	end
@@ -2761,7 +2661,7 @@ local function refreshMobileFacingPromptVisibility()
 		local visible = view ~= nil and view.billboard.Parent ~= nil and view.billboard.Enabled
 		local want = shouldShowPromptUi(prompt)
 
-		if want and not visible and prompt.Enabled and prompt:GetAttribute(CUSTOM_ATTR) == true then
+		if want and not visible and prompt.Enabled and prompt:GetAttribute(C.CUSTOM_ATTR) == true then
 			onPromptShown(prompt, nil)
 		elseif not want and visible then
 			hideView(prompt, true)
@@ -2779,10 +2679,9 @@ local function refreshMobileFacingPromptVisibility()
 	end
 end
 
-function ProximityPromptEffects.init()
 	task.spawn(function()
 		local ok, err = pcall(function()
-			ContentProvider:PreloadAsync({ TOUCH_TAP_ICON, TOUCH_HOLD_ICON })
+			ContentProvider:PreloadAsync({ C.TOUCH_TAP_ICON, C.TOUCH_HOLD_ICON })
 		end)
 		if not ok then
 			warn("[ProximityPromptEffects] touch icon preload failed:", err)
@@ -2859,7 +2758,7 @@ function ProximityPromptEffects.init()
 			return
 		end
 		facingRefreshAccum += dt
-		if facingRefreshAccum < MOBILE_FACING_REFRESH_INTERVAL then
+		if facingRefreshAccum < C.MOBILE_FACING_REFRESH_INTERVAL then
 			return
 		end
 		facingRefreshAccum = 0

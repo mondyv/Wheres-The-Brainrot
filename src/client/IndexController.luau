@@ -286,7 +286,9 @@ local function onIndexUnlock(mutationId: string)
 		return
 	end
 	local indexOpenOnTab = indexFrame and indexFrame.Visible and mutationId == selectedMutation
-	if not indexOpenOnTab then
+	if indexOpenOnTab then
+		hideTabNotif(mutationId)
+	else
 		showTabNotif(mutationId)
 	end
 end
@@ -907,6 +909,7 @@ function IndexController.init()
 	indexFrame:GetPropertyChangedSignal("Visible"):Connect(function()
 		if indexFrame.Visible then
 			hideIndexSidebarBadge()
+			hideTabNotif(selectedMutation)
 			if not wasVisible and HUDController.getCurrentFrame() ~= indexFrame then
 				playPanelOpenAnim()
 			end

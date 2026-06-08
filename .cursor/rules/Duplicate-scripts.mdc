@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+Before creating any new script, search the entire project for existing scripts with the same name or that handle the same system. If one exists, edit it in place using str_replace. Never create a duplicate. If unsure whether a script already exists, list the relevant directory first and check before writing any new file.

@@ -12,6 +12,7 @@ local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild(
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local IndexService = require(script.Parent:WaitForChild("Modules"):WaitForChild("IndexService"))
+local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 local ProductHandlerServer =
 	require(game:GetService("ServerScriptService").EssentialsServer.ProductHandler.ProductHandlerServer)
 
@@ -74,11 +75,64 @@ local function syncPlayerRebirthAttrs(player: Player, snapshot: RebirthConfig.Re
 	player:SetAttribute(RebirthConfig.MONEY_MULT_ATTR, snapshot.moneyMultiplier)
 end
 
-local function pushState(player: Player)
+local lastPushedSnapshot: { [Player]: RebirthConfig.RebirthSnapshot } = {}
+
+local function snapshotNeedsClientPush(
+	prev: RebirthConfig.RebirthSnapshot,
+	next: RebirthConfig.RebirthSnapshot
+): boolean
+	if prev.canRebirth ~= next.canRebirth then
+		return true
+	end
+	if prev.cashMet ~= next.cashMet then
+		return true
+	end
+	if prev.isFloorRebirth ~= next.isFloorRebirth then
+		return true
+	end
+	if prev.nextTier ~= next.nextTier then
+		return true
+	end
+	if prev.cashRequired ~= next.cashRequired then
+		return true
+	end
+	if #prev.brainrotReqs ~= #next.brainrotReqs then
+		return true
+	end
+	for i, req in ipairs(prev.brainrotReqs) do
+		local other = next.brainrotReqs[i]
+		if not other or req.met ~= other.met or req.name ~= other.name then
+			return true
+		end
+	end
+	return false
+end
+
+local function pushState(player: Player, force: boolean?)
 	local snapshot = enrichSnapshot(RebirthConfig.buildSnapshot(player, makeIndexDiscoveredCheck(player)))
+	local prev = lastPushedSnapshot[player]
+	if not force and prev and not snapshotNeedsClientPush(prev, snapshot) then
+		return snapshot
+	end
+	lastPushedSnapshot[player] = snapshot
 	syncPlayerRebirthAttrs(player, snapshot)
 	updatedRE:FireClient(player, snapshot)
 	return snapshot
+end
+
+local function onPlayerCashChanged(player: Player)
+	local prev = lastPushedSnapshot[player]
+	if not prev then
+		pushState(player)
+		return
+	end
+	local cash = player:GetAttribute("Cash")
+	local cashVal = if typeof(cash) == "number" then cash else 0
+	local cashMet = cashVal >= prev.cashRequired
+	if cashMet == prev.cashMet then
+		return
+	end
+	pushState(player)
 end
 
 local function resetSwingUpgrades(player: Player)
@@ -123,6 +177,7 @@ local function performRebirth(player: Player, opts: { skipRequirements: boolean?
 end
 
 local function initPlayer(player: Player)
+	PlayerDataService.waitUntilLoaded(player)
 	if player:GetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR) == nil then
 		player:SetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR, 0)
 	end
@@ -132,9 +187,9 @@ local function initPlayer(player: Player)
 			RebirthConfig.moneyMultiplierForCount(0)
 		)
 	end
-	pushState(player)
+	pushState(player, true)
 	player:GetAttributeChangedSignal("Cash"):Connect(function()
-		pushState(player)
+		onPlayerCashChanged(player)
 	end)
 end
 
@@ -193,6 +248,10 @@ ProductHandlerServer.registerProductReceipt(SwingUpgrades.SKIP_UPGRADE_DEV_PRODU
 		end
 	end
 	return Enum.ProductPurchaseDecision.NotProcessedYet
+end)
+
+Players.PlayerRemoving:Connect(function(player: Player)
+	lastPushedSnapshot[player] = nil
 end)
 
 Players.PlayerAdded:Connect(initPlayer)

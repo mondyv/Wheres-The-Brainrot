@@ -157,6 +157,39 @@ function M.getUnlockMap(player: Player): UnlockMap
 	return unlockedByPlayer[player] :: UnlockMap
 end
 
+function M.exportGoldenNames(player: Player): { string }
+	local names = goldenNamesByPlayer[player]
+	local out: { string } = {}
+	if not names then
+		return out
+	end
+	for name in names do
+		table.insert(out, name)
+	end
+	table.sort(out)
+	return out
+end
+
+function M.importUnlocks(player: Player, unlockKeys: { string }, goldenNames: { string })
+	ensureMaps(player)
+	local map: UnlockMap = {}
+	for _, key in unlockKeys do
+		if typeof(key) == "string" and key ~= "" then
+			map[key] = true
+		end
+	end
+	unlockedByPlayer[player] = map
+
+	local golden: { [string]: boolean } = {}
+	for _, name in goldenNames do
+		if typeof(name) == "string" and name ~= "" then
+			golden[name] = true
+		end
+	end
+	goldenNamesByPlayer[player] = golden
+	syncGoldenAttributes(player)
+end
+
 function M.getGoldenCount(player: Player): number
 	local names = goldenNamesByPlayer[player]
 	if not names then

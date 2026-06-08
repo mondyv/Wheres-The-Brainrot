@@ -20,8 +20,10 @@ local TweenService = game:GetService("TweenService")
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
 local IndexService = require(Modules:WaitForChild("IndexService"))
+local PlayerDataService = require(Modules:WaitForChild("PlayerDataService"))
 local BrainrotHeader = require(Modules:WaitForChild("BrainrotHeader"))
 local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
+local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
@@ -649,6 +651,10 @@ local function collectTemplateModels(root: Folder): { Model }
 		if Brainrots.isRetiredBrainrotInstance(desc) then
 			continue
 		end
+		local templateName = brainrotNameFromTemplateModel(desc)
+		if templateName and not Brainrots.isPlayableBrainrotName(templateName) then
+			continue
+		end
 		local parent = desc.Parent
 		if not parent or not parent:IsA("Folder") then
 			continue
@@ -664,7 +670,7 @@ end
 -- ServerStorage.Brainrots/<BrainrotName>/<MutationVariant> (e.g. Brainrots/67/Normal).
 -- Fallback chain: requested mutation → Normal → first available child Model.
 local function findBrainrotModelByNameAndMutation(root: Folder, brainrotName: string, mutationId: string): Model?
-	if Brainrots.isRetiredBrainrotName(brainrotName) then
+	if Brainrots.isRetiredBrainrotName(brainrotName) or not Brainrots.isPlayableBrainrotName(brainrotName) then
 		return nil
 	end
 	local nameFolder = root:FindFirstChild(brainrotName)
@@ -1299,7 +1305,11 @@ local function runFloatThenAttach(player: Player, char: Model, clone: Model, anc
 end
 
 local function isLootableBush(inst: Instance): boolean
-	return inst.Name == "BushSCRIPT" and (inst:IsA("Model") or inst:IsA("BasePart"))
+	if not inst:IsA("Model") and not inst:IsA("BasePart") then
+		return false
+	end
+	local parent = inst.Parent
+	return parent ~= nil and BushRootUtil.isBushFolderName(parent.Name)
 end
 
 local function rollBushHasBrainrot(): boolean
@@ -1310,10 +1320,11 @@ local function isValidBushRef(bushRef: Instance?): boolean
 	if not bushRef or not bushRef.Parent then
 		return false
 	end
-	if bushRef.Name ~= "BushSCRIPT" then
+	if not bushRef:IsA("Model") and not bushRef:IsA("BasePart") then
 		return false
 	end
-	if not bushRef:IsA("Model") and not bushRef:IsA("BasePart") then
+	local parent = bushRef.Parent
+	if not parent or not BushRootUtil.isBushFolderName(parent.Name) then
 		return false
 	end
 	local map = workspace:FindFirstChild("Map")
@@ -1338,7 +1349,7 @@ local function rollHiddenBrainrotLoot(bush: Instance)
 	local pos = if bush:IsA("BasePart") then bush.Position else (bush :: Model):GetPivot().Position
 	local plot = resolveHarvestPlot(pos)
 	local function brainrotIsAvailable(def)
-		return brainrotHasTemplate(brainrots :: Folder, def.name)
+		return Brainrots.isPlayableBrainrotName(def.name) and brainrotHasTemplate(brainrots :: Folder, def.name)
 	end
 	local pick, mutationId = Brainrots.pickRandomBrainrotForPlot(plot, brainrotIsAvailable)
 	if not pick then
@@ -1429,8 +1440,12 @@ end
 
 local function assignLootUnder(root: Instance)
 	for _, desc in root:GetDescendants() do
-		if isLootableBush(desc) then
-			registerBushLootState(desc)
+		if desc:IsA("Folder") and BushRootUtil.isBushFolderName(desc.Name) then
+			for _, child in desc:GetChildren() do
+				if isLootableBush(child) then
+					registerBushLootState(child)
+				end
+			end
 		end
 	end
 end
@@ -1923,7 +1938,7 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 	local plot, _basePlot, displayLuck = resolveHarvestPlot(worldPosition, luckMultiplier)
 
 	local function brainrotIsAvailable(def)
-		return brainrotHasTemplate(brainrots :: Folder, def.name)
+		return Brainrots.isPlayableBrainrotName(def.name) and brainrotHasTemplate(brainrots :: Folder, def.name)
 	end
 	local pick, mutationId = resolveHiddenBrainrotPick(bushRef, brainrots :: Folder, brainrotIsAvailable)
 	-- When the player has an active luck multiplier, re-roll using the boosted plot so
@@ -2387,9 +2402,16 @@ CollectionService:GetInstanceRemovedSignal(DEPOSIT_TAG):Connect(function(inst)
 end)
 
 Players.PlayerAdded:Connect(function(p)
-	brainrotInventories[p] = {}
-	brainrotParkedInExpandedBackpack[p] = {}
-	p:SetAttribute("BrainrotCount", 0)
+	PlayerDataService.waitUntilLoaded(p)
+	if not brainrotInventories[p] then
+		brainrotInventories[p] = {}
+	end
+	if not brainrotParkedInExpandedBackpack[p] then
+		brainrotParkedInExpandedBackpack[p] = {}
+	end
+	if typeof(p:GetAttribute("BrainrotCount")) ~= "number" then
+		p:SetAttribute("BrainrotCount", #brainrotInventories[p])
+	end
 	syncBrainrotCarryCountAttr(p)
 	p.CharacterRemoving:Connect(function()
 		clearPlayerHarvestState(p)
@@ -2414,8 +2436,11 @@ Players.PlayerRemoving:Connect(function(p)
 	end
 	pendingFloats[p] = nil
 	activeCarries[p] = nil
-	brainrotInventories[p] = nil
-	brainrotParkedInExpandedBackpack[p] = nil
+	-- Defer inventory wipe so PlayerDataService can export on PlayerRemoving first.
+	task.defer(function()
+		brainrotInventories[p] = nil
+		brainrotParkedInExpandedBackpack[p] = nil
+	end)
 end)
 
 for _, p in Players:GetPlayers() do
@@ -3020,6 +3045,16 @@ task.defer(function()
 
 	assignLootUnder(map)
 	map.DescendantAdded:Connect(function(desc)
+		if desc:IsA("Folder") and BushRootUtil.isBushFolderName(desc.Name) then
+			for _, child in desc:GetChildren() do
+				if isLootableBush(child) then
+					task.defer(function()
+						registerBushLootState(child)
+					end)
+				end
+			end
+			return
+		end
 		if isLootableBush(desc) then
 			task.defer(function()
 				registerBushLootState(desc)
@@ -3153,6 +3188,87 @@ returnBF.OnInvoke = function(player: any, entryArg: any): any
 	end
 	enrichEntryFromCatalog(entry)
 	return pushBrainrotInventory(player :: Player, entry)
+end
+
+local exportSaveBF = ensureBindable("ExportInventoryForSave")
+exportSaveBF.OnInvoke = function(playerArg: any): any
+	if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+		return { entries = {}, parkedSlots = {}, equipSlot = nil }
+	end
+	local plr = playerArg :: Player
+	local list = brainrotInventories[plr] or {}
+	local entries = {}
+	for _, entry in ipairs(list) do
+		table.insert(entries, {
+			name = entry.name,
+			icon = entry.icon,
+			sourcePath = entry.sourcePath,
+			rarity = entry.rarity,
+			mutation = entry.mutation,
+			level = entry.level,
+			baseIncome = entry.baseIncome,
+		})
+	end
+	local parked: { number } = {}
+	local map = brainrotParkedInExpandedBackpack[plr] or {}
+	for slot in map do
+		table.insert(parked, slot)
+	end
+	table.sort(parked)
+	return {
+		entries = entries,
+		parkedSlots = parked,
+		equipSlot = plr:GetAttribute("BrainrotEquipSlot"),
+	}
+end
+
+local importSaveBF = ensureBindable("ImportInventoryFromSave")
+importSaveBF.OnInvoke = function(playerArg: any, payloadArg: any): boolean
+	if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+		return false
+	end
+	if typeof(payloadArg) ~= "table" then
+		return false
+	end
+	local plr = playerArg :: Player
+	local payload = payloadArg :: any
+	local rebuilt: { BrainrotInvEntry } = {}
+	if typeof(payload.entries) == "table" then
+		for _, raw in payload.entries do
+			if typeof(raw) == "table" and typeof(raw.name) == "string" and raw.name ~= "" then
+				local entry: BrainrotInvEntry = {
+					name = raw.name,
+					icon = if typeof(raw.icon) == "string" then raw.icon else "",
+					sourcePath = if typeof(raw.sourcePath) == "string" then raw.sourcePath else "",
+					rarity = if typeof(raw.rarity) == "string" then raw.rarity else "common",
+					mutation = if typeof(raw.mutation) == "string" then raw.mutation else "normal",
+					level = if typeof(raw.level) == "number" then math.max(1, math.floor(raw.level)) else 1,
+					baseIncome = if typeof(raw.baseIncome) == "number" then raw.baseIncome else 0,
+				}
+				enrichEntryFromCatalog(entry)
+				table.insert(rebuilt, entry)
+			end
+		end
+	end
+	brainrotInventories[plr] = rebuilt
+	local parked: { [number]: boolean } = {}
+	if typeof(payload.parkedSlots) == "table" then
+		for _, slot in payload.parkedSlots do
+			if typeof(slot) == "number" then
+				parked[math.floor(slot)] = true
+			end
+		end
+	end
+	brainrotParkedInExpandedBackpack[plr] = parked
+	plr:SetAttribute("BrainrotCount", #rebuilt)
+	syncBrainrotCarryCountAttr(plr)
+	local equipSlot = if typeof(payload.equipSlot) == "number" then math.floor(payload.equipSlot) else nil
+	if equipSlot then
+		plr:SetAttribute("BrainrotEquipSlot", equipSlot)
+	end
+	local sync = ensureInventoryRemotes()
+	sync:FireClient(plr, packInventoryForClient(plr, rebuilt, equipSlot))
+	return true
 end
 
 local getListBF = ensureBindable("GetInventoryList")

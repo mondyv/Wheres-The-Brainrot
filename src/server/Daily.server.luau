@@ -241,7 +241,10 @@ ProductHandlerServer.registerProductReceipt(DailyConfig.SKIP_ALL_DEV_PRODUCT_ID,
 	return Enum.ProductPurchaseDecision.PurchaseGranted
 end)
 
+local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
+
 local function onPlayer(player: Player)
+	PlayerDataService.waitUntilLoaded(player)
 	DailyService.initPlayer(player)
 end
 

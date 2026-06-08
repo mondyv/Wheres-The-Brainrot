@@ -9,6 +9,7 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local Modules = script.Parent:WaitForChild("Modules")
 local IndexService = require(Modules:WaitForChild("IndexService"))
+local PlayerDataService = require(Modules:WaitForChild("PlayerDataService"))
 local IndexConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("IndexConfig"))
 
 local function ensureRemotes(): Folder
@@ -96,6 +97,7 @@ depositBF.OnInvoke = function(player: any, entry: any): boolean
 end
 
 local function onPlayer(player: Player)
+	PlayerDataService.waitUntilLoaded(player)
 	IndexService.initPlayer(player)
 end
 
@@ -105,5 +107,7 @@ for _, p in Players:GetPlayers() do
 end
 
 Players.PlayerRemoving:Connect(function(player)
-	IndexService.clearPlayer(player)
+	task.defer(function()
+		IndexService.clearPlayer(player)
+	end)
 end)

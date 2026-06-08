@@ -22,6 +22,11 @@ local STAND_FRAME_NAMES: { [string]: string } = {
 	["Secret Stand"] = "SecretPack",
 }
 
+local EXCLUSIVE_STAND_PRODUCTS: { [string]: number } = {
+	["StrawbeerryElephantStand"] = StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT,
+	["StrawberryElephantStand"] = StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT,
+}
+
 local packByFrameName: { [string]: typeof(StoreConfig.PACKS[1]) } = {}
 for _, pack in StoreConfig.PACKS do
 	packByFrameName[pack.frameName] = pack
@@ -50,6 +55,43 @@ local function promptPackPurchase(player: Player, pack: typeof(StoreConfig.PACKS
 	end
 	firePurchaseEffect(player)
 	MarketplaceService:PromptProductPurchase(player, pack.productId)
+end
+
+local function wireExclusiveHitbox(standFolder: Instance, productId: number)
+	local hitbox = standFolder:FindFirstChild("Hitbox")
+	if not hitbox or not hitbox:IsA("BasePart") then
+		warn("[BoosterPackShowers] Hitbox missing on", standFolder:GetFullName())
+		return
+	end
+	hitbox.CanTouch = true
+	local standKey = standFolder.Name
+	hitbox.Touched:Connect(function(other: BasePart)
+		local character = other.Parent
+		if not character then
+			return
+		end
+		local plr = Players:GetPlayerFromCharacter(character)
+		if not plr then
+			return
+		end
+		if plr:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) == true then
+			return
+		end
+		if not touchCooldown[plr] then
+			touchCooldown[plr] = {}
+		end
+		if touchCooldown[plr][standKey] then
+			return
+		end
+		touchCooldown[plr][standKey] = true
+		firePurchaseEffect(plr)
+		MarketplaceService:PromptProductPurchase(plr, productId)
+		task.delay(TOUCH_COOLDOWN_SEC, function()
+			if touchCooldown[plr] then
+				touchCooldown[plr][standKey] = nil
+			end
+		end)
+	end)
 end
 
 local function wireHitbox(standFolder: Instance, pack: typeof(StoreConfig.PACKS[1]))
@@ -97,6 +139,12 @@ local function wireShowersRoot(root: Instance)
 			wireHitbox(stand, pack)
 		else
 			warn("[BoosterPackShowers] Stand not found:", standName, "under", root:GetFullName())
+		end
+	end
+	for standName, productId in EXCLUSIVE_STAND_PRODUCTS do
+		local stand = root:FindFirstChild(standName)
+		if stand then
+			wireExclusiveHitbox(stand, productId)
 		end
 	end
 end

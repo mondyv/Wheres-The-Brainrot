@@ -23,6 +23,8 @@ local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):Wai
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local MainGradientButtons = require(script.Parent.MainGradientButtons)
+local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local PlotMarkerVisibility = require(script.Parent.PlotMarkerVisibility)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
@@ -30,6 +32,8 @@ local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitFor
 
 local STAND_TAG = "BrainrotStand"
 local STAND_ACCUMULATED_ATTR = "StandAccumulatedCash"
+local STAND_UPGRADE_COST_ATTR = "StandUpgradeCost"
+local BRAINROT_MAX_LEVEL = 90
 -- Server sets this on the stand's ProximityPrompt while the stand is empty; client gates Enabled.
 local PLACE_PROMPT_ATTR = "BrainrotPlacePrompt"
 local DEFAULT_PLACE_DISTANCE = 10
@@ -184,6 +188,7 @@ local CASH_FLOAT_TEXT_SIZE = 32
 local FLOAT_STROKE_SCALE = 0.65
 local CASH_FLOAT_BURST_COUNT = 24
 local MAX_ACTIVE_CASH_FLOATS = 5
+local AFFORD_REFRESH_DEBOUNCE = 0.15
 
 local cachedCashRateStyle: Instance? = nil
 local activeCashFloatCount = 0
@@ -290,7 +295,6 @@ local function playRisingFloatText(worldPosition: Vector3, opts: RisingFloatText
 		end
 
 		local startCf = part.CFrame
-		local startT = os.clock()
 		local fadeStarted = false
 		local releasedCashSlot = false
 		local function releaseCashFloatSlot()
@@ -301,27 +305,17 @@ local function playRisingFloatText(worldPosition: Vector3, opts: RisingFloatText
 			activeCashFloatCount = math.max(0, activeCashFloatCount - 1)
 		end
 
-		local conn: RBXScriptConnection? = nil
-		conn = RunService.Heartbeat:Connect(function()
+		local riseProxy = Instance.new("NumberValue")
+		riseProxy.Value = 0
+		local riseConn = riseProxy:GetPropertyChangedSignal("Value"):Connect(function()
 			if not part.Parent then
 				releaseCashFloatSlot()
-				if conn then
-					conn:Disconnect()
-				end
+				riseConn:Disconnect()
 				return
 			end
-			local elapsed = os.clock() - startT
-			if elapsed >= FLOAT_RISE_DURATION then
-				releaseCashFloatSlot()
-				part:Destroy()
-				if conn then
-					conn:Disconnect()
-				end
-				return
-			end
-			local t = elapsed / FLOAT_RISE_DURATION
+			local t = riseProxy.Value
 			part.CFrame = startCf + Vector3.new(0, FLOAT_RISE_STUDS * t, 0)
-			if elapsed >= 0.5 and not fadeStarted then
+			if t >= 0.42 and not fadeStarted then
 				fadeStarted = true
 				local fadeDur = FLOAT_RISE_DURATION - 0.5
 				local fadeInfo = TweenInfo.new(fadeDur, Enum.EasingStyle.Linear)
@@ -329,6 +323,20 @@ local function playRisingFloatText(worldPosition: Vector3, opts: RisingFloatText
 				TweenService:Create(stroke, fadeInfo, { Transparency = 1 }):Play()
 			end
 		end)
+		local riseTween = TweenService:Create(
+			riseProxy,
+			TweenInfo.new(FLOAT_RISE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Value = 1 }
+		)
+		riseTween.Completed:Connect(function()
+			riseConn:Disconnect()
+			riseProxy:Destroy()
+			releaseCashFloatSlot()
+			if part.Parent then
+				part:Destroy()
+			end
+		end)
+		riseTween:Play()
 	end)
 end
 
@@ -435,7 +443,12 @@ type StandView = {
 local views: { [Model]: StandView } = {}
 local upgradeScaleTweens: { [Instance]: Tween } = {}
 local lastBrainrotHopAt: { [Model]: number } = {}
+local lastUpgradeRequestAt: { [Model]: number } = {}
+local affordVisualByView: { [StandView]: string } = {}
+local cashAffordToken = 0
+local UPGRADE_REQUEST_COOLDOWN = 0.22
 local cashPadTickAccum = 0
+local standHeartbeatConn: RBXScriptConnection? = nil
 
 -- ── Empty-stand place prompt: only when holding a brainrot Tool (local Enabled) ─
 
@@ -899,24 +912,25 @@ end
 
 local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 	local lastActivatedAt = -1e9
-	clickable.Activated:Connect(function()
-		lastActivatedAt = os.clock()
+	local function requestUpgrade()
+		local now = os.clock()
+		if now - lastActivatedAt < UPGRADE_REQUEST_COOLDOWN then
+			return
+		end
+		lastActivatedAt = now
 		tryFireUpgrade()
-	end)
-	-- PC mouse fallback when Activated does not run (rare on ImageButtons).
-	if not UserInputService.TouchEnabled then
-		clickable.MouseButton1Click:Connect(tryFireUpgrade)
 	end
-	-- Mobile SurfaceGui fallback: one touch end per tap, skip if Activated already fired.
+	clickable.Activated:Connect(requestUpgrade)
+	-- Mobile SurfaceGui fallback when Activated does not run on some devices.
 	if UserInputService.TouchEnabled then
 		clickable.InputEnded:Connect(function(input: InputObject)
 			if input.UserInputType ~= Enum.UserInputType.Touch then
 				return
 			end
-			if os.clock() - lastActivatedAt < 0.03 then
+			if os.clock() - lastActivatedAt < 0.05 then
 				return
 			end
-			tryFireUpgrade()
+			requestUpgrade()
 		end)
 	end
 end
@@ -1079,6 +1093,11 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 	end
 
 	local function tryFireUpgrade()
+		local now = os.clock()
+		if (lastUpgradeRequestAt[stand] or 0) + UPGRADE_REQUEST_COOLDOWN > now then
+			return
+		end
+		lastUpgradeRequestAt[stand] = now
 		if upgradeRE then
 			upgradeRE:FireServer(stand)
 		end
@@ -1086,6 +1105,82 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 
 	bindUpgradeClick(clickable, tryFireUpgrade)
 	return clickable
+end
+
+local function affordVisualKey(view: StandView): string
+	local upgradeFrame = view.upgradeFrame
+	if not upgradeFrame or not upgradeFrame:IsA("GuiObject") then
+		return "none"
+	end
+	if not standMatchesAssignedPlot(view.stand) then
+		return "none"
+	end
+	local brainrotName = view.stand:GetAttribute("BrainrotName")
+	if typeof(brainrotName) ~= "string" or brainrotName == "" then
+		return "empty"
+	end
+	local level = view.stand:GetAttribute("BrainrotLevel")
+	if typeof(level) == "number" and math.floor(level) >= BRAINROT_MAX_LEVEL then
+		return "max"
+	end
+	local cost = view.stand:GetAttribute(STAND_UPGRADE_COST_ATTR)
+	if typeof(cost) ~= "number" or cost <= 0 then
+		return "default"
+	end
+	local cash = player:GetAttribute("Cash")
+	local balance = if typeof(cash) == "number" then cash else 0
+	if balance < cost then
+		return "cant_afford"
+	end
+	return "default"
+end
+
+local function refreshStandUpgradeAfford(view: StandView)
+	local upgradeFrame = view.upgradeFrame
+	if not upgradeFrame or not upgradeFrame:IsA("GuiObject") then
+		return
+	end
+	local visualKey = affordVisualKey(view)
+	if affordVisualByView[view] == visualKey then
+		return
+	end
+	affordVisualByView[view] = visualKey
+	if visualKey == "none" or visualKey == "empty" then
+		MainGradientButtons.applyDefault(upgradeFrame)
+		return
+	end
+	if visualKey == "max" then
+		MainGradientButtons.applyPurchased(upgradeFrame, "MAX")
+		return
+	end
+	if visualKey == "cant_afford" then
+		MainGradientButtons.applyPurchasedGradient(upgradeFrame)
+	else
+		MainGradientButtons.applyDefault(upgradeFrame)
+	end
+end
+
+local function refreshPlotStandAffordIfChanged()
+	for stand, view in pairs(views) do
+		if not standMatchesAssignedPlot(stand) then
+			continue
+		end
+		local key = affordVisualKey(view)
+		if affordVisualByView[view] ~= key then
+			refreshStandUpgradeAfford(view)
+		end
+	end
+end
+
+local function queuePlotStandAffordIfChanged()
+	cashAffordToken += 1
+	local token = cashAffordToken
+	task.delay(AFFORD_REFRESH_DEBOUNCE, function()
+		if token ~= cashAffordToken then
+			return
+		end
+		refreshPlotStandAffordIfChanged()
+	end)
 end
 
 local function pulseUpgradeButton(view: StandView)
@@ -1168,7 +1263,10 @@ local function syncCashPadLabel(view: StandView)
 end
 
 local function tickCashPadLabels()
-	for _, view in views do
+	for stand, view in pairs(views) do
+		if not standMatchesAssignedPlot(stand) then
+			continue
+		end
 		local target = view.targetCash
 		if typeof(target) ~= "number" then
 			continue
@@ -1207,28 +1305,31 @@ local function hopStandBrainrot(stand: Model)
 	end
 	lastBrainrotHopAt[stand] = now
 	local baseCf = model:GetPivot()
-	local startT = os.clock()
-	local conn: RBXScriptConnection? = nil
-	conn = RunService.RenderStepped:Connect(function()
+	local hopProxy = Instance.new("NumberValue")
+	hopProxy.Value = 0
+	local hopConn = hopProxy:GetPropertyChangedSignal("Value"):Connect(function()
 		if not model.Parent then
-			if conn then
-				conn:Disconnect()
-			end
 			return
 		end
-		local elapsed = os.clock() - startT
-		if elapsed >= 0.26 then
-			model:PivotTo(baseCf)
-			if conn then
-				conn:Disconnect()
-			end
-			return
-		end
-		local y = if elapsed < 0.11
-			then (elapsed / 0.11) * BRAINROT_HOP_HEIGHT
-			else ((0.26 - elapsed) / 0.15) * BRAINROT_HOP_HEIGHT
+		local t = hopProxy.Value
+		local y = if t < 0.42
+			then (t / 0.42) * BRAINROT_HOP_HEIGHT
+			else ((1 - t) / 0.58) * BRAINROT_HOP_HEIGHT
 		model:PivotTo(baseCf + Vector3.new(0, y, 0))
 	end)
+	local hopTween = TweenService:Create(
+		hopProxy,
+		TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Value = 1 }
+	)
+	hopTween.Completed:Connect(function()
+		hopConn:Disconnect()
+		hopProxy:Destroy()
+		if model.Parent then
+			model:PivotTo(baseCf)
+		end
+	end)
+	hopTween:Play()
 end
 
 local function wireCashPadLabel(view: StandView)
@@ -1362,8 +1463,32 @@ local function hookStandLevelPulse(stand: Model, view: StandView)
 			})
 		end
 		pulseUpgradeButton(view)
+		affordVisualByView[view] = nil
+		refreshStandUpgradeAfford(view)
 		hopStandBrainrot(stand)
 	end)
+end
+
+local standUpgradeAffordConns: { [Model]: { RBXScriptConnection } } = {}
+
+local function hookStandUpgradeAfford(stand: Model, view: StandView)
+	local existing = standUpgradeAffordConns[stand]
+	if existing then
+		for _, conn in existing do
+			conn:Disconnect()
+		end
+	end
+	local conns: { RBXScriptConnection } = {}
+	table.insert(conns, stand:GetAttributeChangedSignal(STAND_UPGRADE_COST_ATTR):Connect(function()
+		affordVisualByView[view] = nil
+		refreshStandUpgradeAfford(view)
+	end))
+	table.insert(conns, stand:GetAttributeChangedSignal("BrainrotName"):Connect(function()
+		affordVisualByView[view] = nil
+		refreshStandUpgradeAfford(view)
+	end))
+	standUpgradeAffordConns[stand] = conns
+	refreshStandUpgradeAfford(view)
 end
 
 local function initStand(stand: Model)
@@ -1392,7 +1517,9 @@ local function initStand(stand: Model)
 		local cash = findCashMoneyAnchor(stand, true)
 		view.buttonPart = bp
 		view.cashAnchor = cash
-		wireCashPadLabel(view)
+		if standMatchesAssignedPlot(stand) then
+			wireCashPadLabel(view)
+		end
 
 		if standMatchesAssignedPlot(stand) then
 			local upgradeFrame = findUpgradeFrame(stand, true)
@@ -1401,6 +1528,7 @@ local function initStand(stand: Model)
 			end
 			view.upgradeButton = wireUpgradeButton(stand)
 			hookStandLevelPulse(stand, view)
+			hookStandUpgradeAfford(stand, view)
 		end
 		view.existingEmitters = collectAndDisableExistingEmitters(view)
 	end)
@@ -1424,6 +1552,7 @@ local function refreshLocalStandUpgradeWiring()
 			end
 			view.upgradeButton = wireUpgradeButton(stand)
 			hookStandLevelPulse(stand, view)
+			hookStandUpgradeAfford(stand, view)
 		end)
 	end
 end
@@ -1431,6 +1560,9 @@ end
 -- ── Init ─────────────────────────────────────────────────────────────────────
 
 function M.init()
+	local main = PlayerGuiMain.ensure(player)
+	MainGradientButtons.init(main)
+
 	remotes = waitStandRemotes()
 	if not remotes then
 		return
@@ -1452,6 +1584,7 @@ function M.init()
 			return
 		end
 		local standModel = stand :: Model
+		local amount = if typeof(total) == "number" then total else 0
 		local view = views[standModel]
 		if not view then
 			task.defer(function()
@@ -1460,12 +1593,12 @@ function M.init()
 				end
 				local deferredView = views[standModel]
 				if deferredView then
-					playCashCollectPresentation(deferredView, if typeof(total) == "number" then total else 0)
+					playCashCollectPresentation(deferredView, amount)
 				end
 			end)
 			return
 		end
-		playCashCollectPresentation(view, if typeof(total) == "number" then total else 0)
+		playCashCollectPresentation(view, amount)
 	end)
 
 	rebuildCachedTaggedStands()
@@ -1481,11 +1614,19 @@ function M.init()
 	end)
 	CollectionService:GetInstanceRemovedSignal(STAND_TAG):Connect(function(inst)
 		if inst:IsA("Model") then
-			local view = views[inst :: Model]
+			local standModel = inst :: Model
+			local affordConns = standUpgradeAffordConns[standModel]
+			if affordConns then
+				for _, conn in affordConns do
+					conn:Disconnect()
+				end
+				standUpgradeAffordConns[standModel] = nil
+			end
+			local view = views[standModel]
 			if view and view.accumulatedConn then
 				view.accumulatedConn:Disconnect()
 			end
-			views[inst :: Model] = nil
+			views[standModel] = nil
 			rebuildCachedTaggedStands()
 			task.defer(bumpPromptRefreshFromMovement)
 		end
@@ -1503,12 +1644,18 @@ function M.init()
 		rebuildCachedPlotMatch()
 		refreshLocalStandUpgradeWiring()
 		task.defer(reapplyUpgradeInputForAllViews)
+		task.defer(queuePlotStandAffordIfChanged)
 		bumpPromptRefreshFromMovement()
 	end)
+	player:GetAttributeChangedSignal("Cash"):Connect(queuePlotStandAffordIfChanged)
 	player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(bumpPromptRefreshFromMovement)
 	player:GetAttributeChangedSignal("Carry"):Connect(bumpPromptRefreshFromMovement)
 
-	RunService.Heartbeat:Connect(function(dt)
+	if standHeartbeatConn then
+		standHeartbeatConn:Disconnect()
+		standHeartbeatConn = nil
+	end
+	standHeartbeatConn = RunService.Heartbeat:Connect(function(dt)
 		cashPadTickAccum += dt
 		if cashPadTickAccum >= CASH_PAD_TICK_INTERVAL then
 			cashPadTickAccum = 0

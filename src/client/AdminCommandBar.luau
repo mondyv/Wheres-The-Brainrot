@@ -12,6 +12,8 @@ local M = {}
 
 local ACTION_NAME = "ToggleAdminCommandBar"
 local COMMAND_REMOTE_NAME = "AdminCommand"
+-- Set server-side only when the player's UserId is on the allowlist.
+local ADMIN_ALLOWED_ATTR = "AdminPanelAllowed"
 
 local gui: ScreenGui? = nil
 local inputBox: TextBox? = nil
@@ -183,8 +185,27 @@ local function toggleOpen()
 	setOpen(not (gui and gui.Enabled))
 end
 
+local function waitForAdminAccess(): boolean
+	if player:GetAttribute(ADMIN_ALLOWED_ATTR) == true then
+		return true
+	end
+	local deadline = os.clock() + 20
+	while os.clock() < deadline do
+		if player:GetAttribute(ADMIN_ALLOWED_ATTR) == true then
+			return true
+		end
+		task.wait(0.15)
+	end
+	return false
+end
+
 function M.init()
 	if initialized then
+		return
+	end
+
+	if not waitForAdminAccess() then
+		-- Not on the server allowlist — do not bind F5 or create the command UI.
 		return
 	end
 

@@ -3,13 +3,15 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
 
+local AdminAllowlist = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminAllowlist"))
 local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Brainrots"))
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 
 local COMMAND_REMOTE_NAME = "AdminCommand"
+-- Replicated flag: true only when server allowlist grants access (clients cannot forge this).
+local ADMIN_ALLOWED_ATTR = "AdminPanelAllowed"
 local MAX_GRANT_COUNT = 25
 
 local function getRemotesFolder(): Folder
@@ -37,24 +39,15 @@ end
 
 local commandRF = ensureRemoteFunction(COMMAND_REMOTE_NAME)
 
-local function isAdmin(player: Player): boolean
-	if RunService:IsStudio() then
-		return true
+local function syncAdminAccess(player: Player)
+	if AdminAllowlist.isPlayerAllowed(player) then
+		player:SetAttribute(ADMIN_ALLOWED_ATTR, true)
 	end
-	if game.CreatorType == Enum.CreatorType.User then
-		return player.UserId == game.CreatorId
-	end
-	if game.CreatorType == Enum.CreatorType.Group then
-		local ok, rank = pcall(function()
-			return player:GetRankInGroup(game.CreatorId)
-		end)
-		if not ok then
-			warn("[AdminCommands] group rank check failed:", rank)
-			return false
-		end
-		return typeof(rank) == "number" and rank >= 250
-	end
-	return false
+end
+
+Players.PlayerAdded:Connect(syncAdminAccess)
+for _, plr in Players:GetPlayers() do
+	syncAdminAccess(plr)
 end
 
 local function splitWords(raw: string): { string }
@@ -232,7 +225,8 @@ commands.resetdata = {
 commands.reset = commands.resetdata
 
 local function runCommand(sender: Player, raw: any): { ok: boolean, message: string }
-	if not isAdmin(sender) then
+	if not AdminAllowlist.isPlayerAllowed(sender) then
+		warn("[AdminCommands] blocked admin invoke from", sender.Name, sender.UserId)
 		return { ok = false, message = "You are not allowed to use admin commands." }
 	end
 	if typeof(raw) ~= "string" or raw == "" then

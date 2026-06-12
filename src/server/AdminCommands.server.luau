@@ -40,14 +40,26 @@ end
 local commandRF = ensureRemoteFunction(COMMAND_REMOTE_NAME)
 
 local function syncAdminAccess(player: Player)
+	if not player.Parent then
+		return
+	end
 	if AdminAllowlist.isPlayerAllowed(player) then
 		player:SetAttribute(ADMIN_ALLOWED_ATTR, true)
+	else
+		player:SetAttribute(ADMIN_ALLOWED_ATTR, nil)
 	end
 end
 
-Players.PlayerAdded:Connect(syncAdminAccess)
+Players.PlayerAdded:Connect(function(player)
+	-- PlayerData and other boot scripts may run first; defer so allowlist always applies.
+	task.defer(function()
+		syncAdminAccess(player)
+	end)
+end)
 for _, plr in Players:GetPlayers() do
-	syncAdminAccess(plr)
+	task.defer(function()
+		syncAdminAccess(plr)
+	end)
 end
 
 local function splitWords(raw: string): { string }

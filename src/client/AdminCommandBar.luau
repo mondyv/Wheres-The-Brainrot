@@ -189,14 +189,27 @@ local function waitForAdminAccess(): boolean
 	if player:GetAttribute(ADMIN_ALLOWED_ATTR) == true then
 		return true
 	end
-	local deadline = os.clock() + 20
-	while os.clock() < deadline do
+
+	local granted = false
+	local conn: RBXScriptConnection? = nil
+	conn = player:GetAttributeChangedSignal(ADMIN_ALLOWED_ATTR):Connect(function()
 		if player:GetAttribute(ADMIN_ALLOWED_ATTR) == true then
-			return true
+			granted = true
 		end
-		task.wait(0.15)
+	end)
+
+	local deadline = os.clock() + 45
+	while not granted and os.clock() < deadline do
+		if player:GetAttribute(ADMIN_ALLOWED_ATTR) == true then
+			granted = true
+			break
+		end
+		task.wait(0.1)
 	end
-	return false
+	if conn then
+		conn:Disconnect()
+	end
+	return granted
 end
 
 function M.init()
@@ -205,7 +218,6 @@ function M.init()
 	end
 
 	if not waitForAdminAccess() then
-		-- Not on the server allowlist — do not bind F5 or create the command UI.
 		return
 	end
 
@@ -216,20 +228,6 @@ function M.init()
 	end
 	buildGui(playerGui)
 
-	-- UserInputService is the reliable path; ContextActionService is a backup.
-	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if input.KeyCode == Enum.KeyCode.F5 then
-			if gameProcessed then
-				return
-			end
-			toggleOpen()
-			return
-		end
-		if input.KeyCode == Enum.KeyCode.Escape and gui and gui.Enabled then
-			setOpen(false)
-		end
-	end)
-
 	ContextActionService:BindActionAtPriority(ACTION_NAME, function(_name, state, _input)
 		if state ~= Enum.UserInputState.Begin then
 			return Enum.ContextActionResult.Pass
@@ -237,6 +235,20 @@ function M.init()
 		toggleOpen()
 		return Enum.ContextActionResult.Sink
 	end, false, 2000, Enum.KeyCode.F5)
+
+	-- F5 must not use gameProcessed — Studio often marks it true and blocks the bar.
+	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if input.KeyCode == Enum.KeyCode.F5 then
+			toggleOpen()
+			return
+		end
+		if gameProcessed then
+			return
+		end
+		if input.KeyCode == Enum.KeyCode.Escape and gui and gui.Enabled then
+			setOpen(false)
+		end
+	end)
 
 	initialized = true
 end

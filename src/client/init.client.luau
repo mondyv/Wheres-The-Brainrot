@@ -20,13 +20,15 @@ local function bootCoreUI()
 	require(script.CashBoostController).init()
 	require(script.UIEffectsBootstrap).init()
 	require(script.TabScreenController).init()
-	-- Boot early so F5 works even if a later deferred controller errors.
-	local adminOk, adminErr = pcall(function()
-		require(script.AdminCommandBar).init()
+	-- Boot in background; waits for server AdminPanelAllowed without blocking HUD.
+	task.spawn(function()
+		local adminOk, adminErr = pcall(function()
+			require(script.AdminCommandBar).init()
+		end)
+		if not adminOk then
+			warn("[init.client] AdminCommandBar init failed:", adminErr)
+		end
 	end)
-	if not adminOk then
-		warn("[init.client] AdminCommandBar init failed:", adminErr)
-	end
 end
 
 -- Store panels, boost icons, gamepass checks, etc. — deferred after core is visible

@@ -45,7 +45,6 @@ local lastShownStandPrompt: ProximityPrompt? = nil
 local player = Players.LocalPlayer
 local MONEY_VFX_HOLD_SEC = 0.14
 local CHILD_WAIT_TIMEOUT = 8 -- seconds; stand children may not have replicated when the tag arrives
-local CASH_PAD_TICK_INTERVAL = 1
 local BRAINROT_HOP_HEIGHT = 0.34
 local BRAINROT_HOP_COOLDOWN = 0.4
 
@@ -106,7 +105,7 @@ local function cloneMoneyAttachmentInto(parentPart: BasePart): Attachment
 	end
 	newAtt.Name = "StandMoneyVFX"
 	newAtt.Parent = parentPart
-	newAtt.Position = Vector3.new(0, parentPart.Size.Y * 0.6, 0)
+	newAtt.Position = Vector3.new(0, parentPart.Size.Y * 0.22, 0)
 	for _, e in ipairs(newAtt:GetDescendants()) do
 		if e:IsA("ParticleEmitter") then
 			e.Enabled = false
@@ -126,73 +125,104 @@ local function setEmittersEnabled(attachment: Attachment?, enabled: boolean)
 	end
 end
 
+local CASH_VFX_TEMPLATE_EMITTER_LIMIT = 3
+local CASH_VFX_BASE_EMIT = 4
+local CASH_VFX_MIN_EMIT = 3
+local CASH_VFX_MAX_EMIT = 8
+
+local function getCashBurstCount(total: number): number
+	local amount = if typeof(total) == "number" then math.max(total, 0) else 0
+	-- Tiny scaling only: this keeps big cash claims from creating huge particle storms.
+	local extra = math.clamp(math.floor(amount / 25000), 0, 3)
+	return math.clamp(CASH_VFX_BASE_EMIT + extra, CASH_VFX_MIN_EMIT, CASH_VFX_MAX_EMIT)
+end
+
 local function emitBurst(attachment: Attachment?, total: number): boolean
 	if not attachment then
 		return false
 	end
-	local found = false
+
+	local emitCount = getCashBurstCount(total)
+	local emitted = 0
+
 	for _, e in ipairs(attachment:GetDescendants()) do
-		if e:IsA("ParticleEmitter") then
-			found = true
-			pcall(function()
-				e:Emit(math.clamp(math.floor(total / 500 + 12), 10, 64))
-			end)
+		if not e:IsA("ParticleEmitter") or e.Name == "_CashPickupBurst" then
+			continue
+		end
+
+		emitted += 1
+		pcall(function()
+			e:Emit(emitCount)
+		end)
+
+		if emitted >= CASH_VFX_TEMPLATE_EMITTER_LIMIT then
+			break
 		end
 	end
-	return found
+
+	return emitted > 0
 end
 
 -- Big, colourful one-shot emitter so the burst is obvious even when the project's Money template is missing.
 local function ensureFallbackBurstEmitter(att: Attachment): ParticleEmitter
 	local existing = att:FindFirstChild("_CashPickupBurst")
+	local pe: ParticleEmitter
+
 	if existing and existing:IsA("ParticleEmitter") then
-		return existing
+		pe = existing
+	else
+		if existing then
+			existing:Destroy()
+		end
+		pe = Instance.new("ParticleEmitter")
+		pe.Name = "_CashPickupBurst"
+		pe.Parent = att
 	end
-	if existing then
-		existing:Destroy()
-	end
-	local pe = Instance.new("ParticleEmitter")
-	pe.Name = "_CashPickupBurst"
+
+	pe.Enabled = false
 	pe.Rate = 0
-	pe.Lifetime = NumberRange.new(0.5, 0.95)
-	pe.Speed = NumberRange.new(8, 18)
-	pe.SpreadAngle = Vector2.new(180, 180)
+	pe.Lifetime = NumberRange.new(0.35, 0.65)
+	pe.Speed = NumberRange.new(4, 9)
+	pe.SpreadAngle = Vector2.new(110, 110)
 	pe.Rotation = NumberRange.new(0, 360)
-	pe.RotSpeed = NumberRange.new(-180, 180)
+	pe.RotSpeed = NumberRange.new(-120, 120)
 	pe.Size = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.9),
-		NumberSequenceKeypoint.new(1, 0.2),
+		NumberSequenceKeypoint.new(0, 0.45),
+		NumberSequenceKeypoint.new(1, 0.08),
 	})
 	pe.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0),
-		NumberSequenceKeypoint.new(0.7, 0.2),
+		NumberSequenceKeypoint.new(0, 0.05),
+		NumberSequenceKeypoint.new(0.65, 0.35),
 		NumberSequenceKeypoint.new(1, 1),
 	})
 	pe.Color = ColorSequence.new({
 		ColorSequenceKeypoint.new(0, Color3.fromRGB(150, 255, 130)),
-		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 230, 90)),
+		ColorSequenceKeypoint.new(0.55, Color3.fromRGB(255, 230, 90)),
 		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
 	})
-	pe.LightEmission = 0.8
+	pe.LightEmission = 0.35
 	pe.LightInfluence = 0
 	pe.Texture = "rbxasset://textures/particles/sparkles_main.dds"
-	pe.Acceleration = Vector3.new(0, -10, 0)
-	pe.Parent = att
+	pe.Acceleration = Vector3.new(0, -6, 0)
+
 	return pe
 end
 
--- Short-lived pickup burst: enable emitters briefly, fire one-shot particles, then turn off.
-local FLOAT_RISE_DURATION = 1.2
-local FLOAT_RISE_STUDS = 6
-local CASH_FLOAT_TEXT_SIZE = 32
-local FLOAT_STROKE_SCALE = 0.65
-local CASH_FLOAT_BURST_COUNT = 24
-local MAX_ACTIVE_CASH_FLOATS = 5
+-- Short-lived pickup burst: low-cost one-shot particles only.
+local FLOAT_RISE_DURATION = 0.85
+local FLOAT_RISE_STUDS = 3.2
+local CASH_FLOAT_TEXT_SIZE = 26
+local FLOAT_STROKE_SCALE = 0.55
+local CASH_FLOAT_BURST_COUNT = 8
+local MAX_ACTIVE_CASH_FLOATS = 2
+local CASH_FLOAT_START_Y_DROP = 0.65
+local CASH_COLLECT_VFX_COOLDOWN = 0.18
 local AFFORD_REFRESH_DEBOUNCE = 0.15
 
 local cachedCashRateStyle: Instance? = nil
 local activeCashFloatCount = 0
 local cashFloatSeq = 0
+local lastCashCollectVfxAt: { [any]: number } = {}
 
 type RisingFloatTextOpts = {
 	text: string?,
@@ -242,7 +272,7 @@ local function playRisingFloatText(worldPosition: Vector3, opts: RisingFloatText
 		if typeof(stackIndex) ~= "number" then
 			stackIndex = 0
 		end
-		billboard.StudsOffset = Vector3.new(0, 2 + (stackIndex % 8) * 0.55, 0)
+		billboard.StudsOffset = Vector3.new(0, 0.75 + (stackIndex % 4) * 0.32, 0)
 		billboard.Parent = part
 
 		local label = Instance.new("TextLabel")
@@ -344,17 +374,17 @@ local function playMoneyPickupVFX(attachment: Attachment?, total: number)
 	if not attachment then
 		return
 	end
+
 	local amount = if typeof(total) == "number" then total else 0
-	setEmittersEnabled(attachment, true)
+
+	-- Keep emitters disabled so Rate-based particles do not spray extra particles.
+	-- ParticleEmitter:Emit() still creates the one-shot burst while Enabled is false.
+	setEmittersEnabled(attachment, false)
+
 	local usedTemplateEmitters = emitBurst(attachment, amount)
 	if not usedTemplateEmitters then
-		ensureFallbackBurstEmitter(attachment):Emit(CASH_FLOAT_BURST_COUNT)
+		ensureFallbackBurstEmitter(attachment):Emit(getCashBurstCount(amount))
 	end
-	task.delay(MONEY_VFX_HOLD_SEC, function()
-		if attachment.Parent then
-			setEmittersEnabled(attachment, false)
-		end
-	end)
 end
 
 local function getCashFloatStyleSource(): Instance?
@@ -367,6 +397,12 @@ end
 
 local function playCashCollectPresentation(view: StandView, cashAmount: number)
 	task.spawn(function()
+		local now = os.clock()
+		if (lastCashCollectVfxAt[view] or 0) + CASH_COLLECT_VFX_COOLDOWN > now then
+			return
+		end
+		lastCashCollectVfxAt[view] = now
+
 		pulseCashPad(view)
 		ensureMoneyVfxOnView(view)
 		if view.moneyAttachment then
@@ -384,6 +420,7 @@ local function playCashCollectPresentation(view: StandView, cashAmount: number)
 		if not cashPos then
 			return
 		end
+		cashPos -= Vector3.new(0, CASH_FLOAT_START_Y_DROP, 0)
 		local styleSource = getCashFloatStyleSource()
 		if not styleSource then
 			return
@@ -405,21 +442,23 @@ function pulseExistingEmitters(emitters: { ParticleEmitter })
 	if #emitters == 0 then
 		return
 	end
+
+	local emitted = 0
 	for _, e in ipairs(emitters) do
-		if e.Parent then
-			e.Enabled = true
-			pcall(function()
-				e:Emit(20)
-			end)
+		if not e.Parent then
+			continue
+		end
+
+		e.Enabled = false
+		pcall(function()
+			e:Emit(CASH_VFX_BASE_EMIT)
+		end)
+
+		emitted += 1
+		if emitted >= CASH_VFX_TEMPLATE_EMITTER_LIMIT then
+			break
 		end
 	end
-	task.delay(MONEY_VFX_HOLD_SEC, function()
-		for _, e in ipairs(emitters) do
-			if e.Parent then
-				e.Enabled = false
-			end
-		end
-	end)
 end
 
 -- ── Stand state ──────────────────────────────────────────────────────────────
@@ -447,8 +486,8 @@ local lastUpgradeRequestAt: { [Model]: number } = {}
 local affordVisualByView: { [StandView]: string } = {}
 local cashAffordToken = 0
 local UPGRADE_REQUEST_COOLDOWN = 0.22
-local cashPadTickAccum = 0
 local standHeartbeatConn: RBXScriptConnection? = nil
+local cachedSpawnBasesFolder: Instance? = nil
 
 -- ── Empty-stand place prompt: only when holding a brainrot Tool (local Enabled) ─
 
@@ -458,6 +497,12 @@ local promptRefreshAccum = 0
 local lastHRPPosition: Vector3? = nil
 local cachedTaggedStands: { Model } = {}
 local cachedPlotMatch: { [Model]: boolean } = {}
+
+type StandPromptCache = {
+	canonical: ProximityPrompt?,
+	prompts: { ProximityPrompt },
+}
+local standPromptCache: { [Model]: StandPromptCache } = {}
 
 local function characterHasBrainrotToolEquipped(char: Model?): boolean
 	if not char then
@@ -482,32 +527,69 @@ local function standHasBrainrot(stand: Model): boolean
 end
 
 local function getStandProximityPrompt(stand: Model): ProximityPrompt?
+	local cache = standPromptCache[stand]
+	if not cache then
+		return nil
+	end
+	return cache.canonical
+end
+
+local function getAllStandProximityPrompts(stand: Model): { ProximityPrompt }
+	local cache = standPromptCache[stand]
+	if not cache then
+		return {}
+	end
+	return cache.prompts
+end
+
+local function rebuildStandPromptCache(stand: Model)
+	local prompts: { ProximityPrompt } = {}
+	local seen: { [ProximityPrompt]: boolean } = {}
+	local canonical: ProximityPrompt? = nil
+
+	local function addPrompt(prompt: ProximityPrompt)
+		if seen[prompt] then
+			return
+		end
+		seen[prompt] = true
+		table.insert(prompts, prompt)
+		if not canonical then
+			canonical = prompt
+		end
+	end
+
 	local decor = stand:FindFirstChild("Decor")
 	if decor then
 		for _, d in ipairs(decor:GetDescendants()) do
 			if d:IsA("ProximityPrompt") then
-				return d
+				addPrompt(d :: ProximityPrompt)
 			end
 		end
 	end
+
 	local spawn = stand:FindFirstChild("Spawn", true)
 	if spawn and spawn:IsA("BasePart") then
 		local onSpawn = (spawn :: BasePart):FindFirstChildWhichIsA("ProximityPrompt")
 		if onSpawn then
-			return onSpawn
+			addPrompt(onSpawn :: ProximityPrompt)
 		end
 	end
-	return stand:FindFirstChildWhichIsA("ProximityPrompt", true)
-end
 
-local function getAllStandProximityPrompts(stand: Model): { ProximityPrompt }
-	local out: { ProximityPrompt } = {}
 	for _, d in stand:GetDescendants() do
 		if d:IsA("ProximityPrompt") then
-			table.insert(out, d)
+			addPrompt(d :: ProximityPrompt)
 		end
 	end
-	return out
+
+	standPromptCache[stand] = {
+		canonical = canonical,
+		prompts = prompts,
+	}
+end
+
+local function invalidateStandPromptCache(stand: Model)
+	standPromptCache[stand] = nil
+	rebuildStandPromptCache(stand)
 end
 
 local function promptWorldDistance(prompt: ProximityPrompt, hrpPos: Vector3): number?
@@ -522,7 +604,11 @@ local function promptWorldDistance(prompt: ProximityPrompt, hrpPos: Vector3): nu
 end
 
 local function findSpawnBasesFolder(): Instance?
-	return PlotPaths.findSpawnAndBasesFolder()
+	if cachedSpawnBasesFolder and cachedSpawnBasesFolder.Parent then
+		return cachedSpawnBasesFolder
+	end
+	cachedSpawnBasesFolder = PlotPaths.findSpawnAndBasesFolder()
+	return cachedSpawnBasesFolder
 end
 
 -- Slot-assigned plots: hide place prompt unless this stand belongs to our AssignedPlotSlot.
@@ -567,11 +653,23 @@ local function rebuildCachedPlotMatch()
 	end
 end
 
+local function standMatchesAssignedPlotCached(stand: Model): boolean
+	local cached = cachedPlotMatch[stand]
+	if cached ~= nil then
+		return cached
+	end
+	local matches = standMatchesAssignedPlot(stand)
+	cachedPlotMatch[stand] = matches
+	return matches
+end
+
 local function rebuildCachedTaggedStands()
 	table.clear(cachedTaggedStands)
 	for _, inst in CollectionService:GetTagged(STAND_TAG) do
 		if inst:IsA("Model") then
-			table.insert(cachedTaggedStands, inst :: Model)
+			local stand = inst :: Model
+			table.insert(cachedTaggedStands, stand)
+			rebuildStandPromptCache(stand)
 		end
 	end
 	rebuildCachedPlotMatch()
@@ -600,11 +698,17 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 			continue
 		end
 		local canonical = getStandProximityPrompt(stand)
+		if canonical and not canonical.Parent then
+			invalidateStandPromptCache(stand)
+			canonical = getStandProximityPrompt(stand)
+		end
 		if not canonical then
 			continue
 		end
 		for _, pp in getAllStandProximityPrompts(stand) do
-			table.insert(allPrompts, pp)
+			if pp.Parent then
+				table.insert(allPrompts, pp)
+			end
 		end
 
 		local pp = canonical
@@ -713,6 +817,7 @@ local function hookCharPlacePromptListeners(char: Model)
 end
 
 local function wireStandPlacePromptListeners(stand: Model)
+	rebuildStandPromptCache(stand)
 	local prev = standPlacePromptConns[stand]
 	if prev then
 		for _, c in ipairs(prev) do
@@ -730,6 +835,28 @@ local function wireStandPlacePromptListeners(stand: Model)
 		conns,
 		stand:GetAttributeChangedSignal("BrainrotStandLocked"):Connect(function()
 			refreshStandProximityPromptVisibility(true)
+		end)
+	)
+	table.insert(
+		conns,
+		stand.DescendantAdded:Connect(function(desc)
+			if desc:IsA("ProximityPrompt") then
+				invalidateStandPromptCache(stand)
+				refreshStandProximityPromptVisibility(true)
+			end
+		end)
+	)
+	table.insert(
+		conns,
+		stand.DescendantRemoving:Connect(function(desc)
+			if desc:IsA("ProximityPrompt") then
+				task.defer(function()
+					if stand.Parent then
+						invalidateStandPromptCache(stand)
+						refreshStandProximityPromptVisibility(true)
+					end
+				end)
+			end
 		end)
 	)
 	standPlacePromptConns[stand] = conns
@@ -882,7 +1009,7 @@ local function reapplyUpgradeInputForView(view: StandView)
 	if not btn or not frame or not btn.Parent or not frame.Parent then
 		return
 	end
-	if not standMatchesAssignedPlot(view.stand) then
+	if not standMatchesAssignedPlotCached(view.stand) then
 		return
 	end
 	ensureSurfaceGuiInputChain(btn)
@@ -936,7 +1063,7 @@ local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 end
 
 local function wireUpgradeButton(stand: Model): GuiButton?
-	if not standMatchesAssignedPlot(stand) then
+	if not standMatchesAssignedPlotCached(stand) then
 		return nil
 	end
 	-- Use the waiting variant so we don't fail before the model finishes replicating.
@@ -1112,7 +1239,7 @@ local function affordVisualKey(view: StandView): string
 	if not upgradeFrame or not upgradeFrame:IsA("GuiObject") then
 		return "none"
 	end
-	if not standMatchesAssignedPlot(view.stand) then
+	if not standMatchesAssignedPlotCached(view.stand) then
 		return "none"
 	end
 	local brainrotName = view.stand:GetAttribute("BrainrotName")
@@ -1162,7 +1289,7 @@ end
 
 local function refreshPlotStandAffordIfChanged()
 	for stand, view in pairs(views) do
-		if not standMatchesAssignedPlot(stand) then
+		if not standMatchesAssignedPlotCached(stand) then
 			continue
 		end
 		local key = affordVisualKey(view)
@@ -1255,33 +1382,10 @@ local function syncCashPadLabel(view: StandView)
 		applyCashPadText(view, amount)
 		return
 	end
-	-- Collection resets accumulated cash — snap immediately instead of waiting for the 1s tick.
-	if amount + 0.01 < displayed then
+	-- Server staggers this attribute, so apply changes as they arrive instead of batching all labels together.
+	if math.abs(displayed - amount) >= 0.01 then
 		view.displayedCash = amount
 		applyCashPadText(view, amount)
-	end
-end
-
-local function tickCashPadLabels()
-	for stand, view in pairs(views) do
-		if not standMatchesAssignedPlot(stand) then
-			continue
-		end
-		local target = view.targetCash
-		if typeof(target) ~= "number" then
-			continue
-		end
-		local displayed = view.displayedCash
-		if typeof(displayed) ~= "number" then
-			view.displayedCash = target
-			applyCashPadText(view, target)
-			continue
-		end
-		if math.abs(displayed - target) < 0.01 then
-			continue
-		end
-		view.displayedCash = target
-		applyCashPadText(view, target)
 	end
 end
 
@@ -1312,9 +1416,7 @@ local function hopStandBrainrot(stand: Model)
 			return
 		end
 		local t = hopProxy.Value
-		local y = if t < 0.42
-			then (t / 0.42) * BRAINROT_HOP_HEIGHT
-			else ((1 - t) / 0.58) * BRAINROT_HOP_HEIGHT
+		local y = if t < 0.42 then (t / 0.42) * BRAINROT_HOP_HEIGHT else ((1 - t) / 0.58) * BRAINROT_HOP_HEIGHT
 		model:PivotTo(baseCf + Vector3.new(0, y, 0))
 	end)
 	local hopTween = TweenService:Create(
@@ -1479,14 +1581,20 @@ local function hookStandUpgradeAfford(stand: Model, view: StandView)
 		end
 	end
 	local conns: { RBXScriptConnection } = {}
-	table.insert(conns, stand:GetAttributeChangedSignal(STAND_UPGRADE_COST_ATTR):Connect(function()
-		affordVisualByView[view] = nil
-		refreshStandUpgradeAfford(view)
-	end))
-	table.insert(conns, stand:GetAttributeChangedSignal("BrainrotName"):Connect(function()
-		affordVisualByView[view] = nil
-		refreshStandUpgradeAfford(view)
-	end))
+	table.insert(
+		conns,
+		stand:GetAttributeChangedSignal(STAND_UPGRADE_COST_ATTR):Connect(function()
+			affordVisualByView[view] = nil
+			refreshStandUpgradeAfford(view)
+		end)
+	)
+	table.insert(
+		conns,
+		stand:GetAttributeChangedSignal("BrainrotName"):Connect(function()
+			affordVisualByView[view] = nil
+			refreshStandUpgradeAfford(view)
+		end)
+	)
 	standUpgradeAffordConns[stand] = conns
 	refreshStandUpgradeAfford(view)
 end
@@ -1517,11 +1625,11 @@ local function initStand(stand: Model)
 		local cash = findCashMoneyAnchor(stand, true)
 		view.buttonPart = bp
 		view.cashAnchor = cash
-		if standMatchesAssignedPlot(stand) then
+		if standMatchesAssignedPlotCached(stand) then
 			wireCashPadLabel(view)
 		end
 
-		if standMatchesAssignedPlot(stand) then
+		if standMatchesAssignedPlotCached(stand) then
 			local upgradeFrame = findUpgradeFrame(stand, true)
 			if upgradeFrame and upgradeFrame:IsA("GuiObject") then
 				view.upgradeFrame = upgradeFrame :: GuiObject
@@ -1539,7 +1647,7 @@ local function refreshLocalStandUpgradeWiring()
 		if not stand.Parent then
 			continue
 		end
-		if not standMatchesAssignedPlot(stand) or view.upgradeButton then
+		if not standMatchesAssignedPlotCached(stand) or view.upgradeButton then
 			continue
 		end
 		task.spawn(function()
@@ -1626,6 +1734,14 @@ function M.init()
 			if view and view.accumulatedConn then
 				view.accumulatedConn:Disconnect()
 			end
+			local promptConns = standPlacePromptConns[standModel]
+			if promptConns then
+				for _, conn in promptConns do
+					conn:Disconnect()
+				end
+				standPlacePromptConns[standModel] = nil
+			end
+			standPromptCache[standModel] = nil
 			views[standModel] = nil
 			rebuildCachedTaggedStands()
 			task.defer(bumpPromptRefreshFromMovement)
@@ -1656,12 +1772,6 @@ function M.init()
 		standHeartbeatConn = nil
 	end
 	standHeartbeatConn = RunService.Heartbeat:Connect(function(dt)
-		cashPadTickAccum += dt
-		if cashPadTickAccum >= CASH_PAD_TICK_INTERVAL then
-			cashPadTickAccum = 0
-			tickCashPadLabels()
-		end
-
 		promptRefreshAccum += dt
 		if promptRefreshAccum < PROMPT_REFRESH_INTERVAL then
 			return

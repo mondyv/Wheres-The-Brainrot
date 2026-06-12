@@ -23,6 +23,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 local ServerStorage = game:GetService("ServerStorage")
 
+local PlayerDataService = require(script.Parent.Modules:WaitForChild("PlayerDataService"))
+
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Brainrots"))
 
@@ -33,6 +35,20 @@ local NOT_PROCESSED = Enum.ProductPurchaseDecision.NotProcessedYet
 local StoreServer = {}
 
 -- ── BindableFunction lookups (created by LuckyBlock.server / brainrot system) ────
+
+local function savePurchaseStateSoon(player: Player)
+	task.defer(function()
+		if not player.Parent then
+			return
+		end
+
+		PlayerDataService.waitUntilLoaded(player)
+
+		if player.Parent then
+			PlayerDataService.savePlayerData(player)
+		end
+	end)
+end
 
 local function waitInternalBindable(folderName: string, bindableName: string, timeout: number?): BindableFunction?
 	local deadline = os.clock() + (timeout or 15)
@@ -251,11 +267,9 @@ publishServerLuck()
 task.spawn(function()
 	while true do
 		task.wait(1)
-		if serverLuckMultiplier > 1 then
-			if os.time() >= serverLuckEndsAt then
-				serverLuckMultiplier = 1
-				serverLuckEndsAt = 0
-			end
+		if serverLuckMultiplier > 1 and os.time() >= serverLuckEndsAt then
+			serverLuckMultiplier = 1
+			serverLuckEndsAt = 0
 			publishServerLuck()
 		end
 	end
@@ -453,6 +467,7 @@ local function registerReceipts()
 				gotBrainrot
 			)
 			player:SetAttribute(pack.boughtAttr, count + 1)
+			savePurchaseStateSoon(player)
 			notifyPurchaseComplete(player)
 			return GRANTED
 		end)

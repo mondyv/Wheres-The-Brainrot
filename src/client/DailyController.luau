@@ -215,8 +215,7 @@ local function findSidebarNotif(main: ScreenGui): (GuiObject?, TextLabel?)
 		return nil, nil
 	end
 	-- The Daily / Gifts HUD button lives somewhere under SideUI; HUDController maps Gifts → Daily.
-	local giftsHost = sideUI:FindFirstChild("Gifts", true)
-		or sideUI:FindFirstChild("Daily", true)
+	local giftsHost = sideUI:FindFirstChild("Gifts", true) or sideUI:FindFirstChild("Daily", true)
 	if not giftsHost then
 		return nil, nil
 	end
@@ -268,19 +267,16 @@ local function startBadgeSway()
 	end
 	stopBadgeSway()
 	sidebarNotif.Rotation = -BADGE_SWAY_DEG
-	badgeSwayTween = TweenService:Create(sidebarNotif, BADGE_SWAY, { Rotation = BADGE_SWAY_DEG })
+	local badgeSwayTween = TweenService:Create(sidebarNotif, BADGE_SWAY, { Rotation = BADGE_SWAY_DEG })
 	badgeSwayTween:Play()
 	if sidebarNotifInner then
 		sidebarNotifInner.Rotation = BADGE_INNER_SWAY_DEG
-		badgeInnerSwayTween = TweenService:Create(
-			sidebarNotifInner,
-			BADGE_INNER_SWAY,
-			{ Rotation = -BADGE_INNER_SWAY_DEG }
-		)
+		local badgeInnerSwayTween =
+			TweenService:Create(sidebarNotifInner, BADGE_INNER_SWAY, { Rotation = -BADGE_INNER_SWAY_DEG })
 		badgeInnerSwayTween:Play()
 		local s = getOrAddUIScale(sidebarNotifInner)
 		s.Scale = 0.985
-		badgeInnerPulseTween = TweenService:Create(s, BADGE_INNER_PULSE, { Scale = 1.015 })
+		local badgeInnerPulseTween = TweenService:Create(s, BADGE_INNER_PULSE, { Scale = 1.015 })
 		badgeInnerPulseTween:Play()
 	end
 end
@@ -363,31 +359,25 @@ local function isCardVisibleInContainer(card: Frame): boolean
 	local hostSize = host.AbsoluteSize
 	local cardPos = card.AbsolutePosition
 	local cardSize = card.AbsoluteSize
-	return cardPos.X + cardSize.X > hostPos.X + 4
-		and cardPos.X < hostPos.X + hostSize.X - 4
+	return cardPos.X + cardSize.X > hostPos.X + 4 and cardPos.X < hostPos.X + hostSize.X - 4
 end
 
 local function startDay7IconSway(icon: GuiObject)
 	if icon:GetAttribute("__SwayingDay7Icon") == true then
 		return
 	end
+
 	icon:SetAttribute("__SwayingDay7Icon", true)
 	icon.ClipsDescendants = true
 	icon.ZIndex = math.min(icon.ZIndex, 2)
-	if icon:IsA("GuiObject") then
-		local iconObj = icon :: GuiObject
-		iconObj.AnchorPoint = Vector2.new(0.5, 0.5)
-		iconObj.Position = UDim2.fromScale(0.5, 0.5)
-		iconObj.Size = UDim2.fromScale(0.82, 0.82)
-	end
+	icon.Rotation = 0
+
+	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.Position = UDim2.fromScale(0.5, 0.5)
+	icon.Size = UDim2.fromScale(0.82, 0.82)
 
 	local scale = getOrAddUIScale(icon)
 	scale.Scale = 1
-	icon.Rotation = -DAY7_ICON_SWAY_DEG
-
-	local rotTween = TweenService:Create(icon, DAY7_ICON_SWAY_INFO, { Rotation = DAY7_ICON_SWAY_DEG })
-	rotTween:Play()
-	table.insert(day7IconTweens, rotTween)
 end
 
 local function refreshDay7CardVisibility()
@@ -494,13 +484,13 @@ local function decorateCard(card: Frame, day: number, reward: DailyConfig.DailyR
 		day7Card = card
 		local icon = card:FindFirstChild("Icon")
 		if icon and icon:IsA("GuiObject") then
-			day7Icon = icon :: GuiObject
+			local day7Icon = icon :: GuiObject
 			day7Icon.Visible = false
 		end
 		if decor then
 			local starbust = decor:FindFirstChild("Starbust") or decor:FindFirstChild("Starburst")
 			if starbust and starbust:IsA("GuiObject") then
-				day7Starbust = starbust :: GuiObject
+				local day7Starbust = starbust :: GuiObject
 				day7Starbust.Visible = false
 			end
 		end
@@ -587,9 +577,7 @@ local function applyCardStatus(card: Frame, status: DailyConfig.DayStatus)
 		claimedLabel.Text = if status == "claimed" then "Claimed" else "Locked"
 	end
 	if comboLabel and comboLabel:IsA("TextLabel") then
-		comboLabel.Text = if status == "claim" then "Claim"
-			elseif status == "claimed" then "Claimed"
-			else "Locked"
+		comboLabel.Text = if status == "claim" then "Claim" elseif status == "claimed" then "Claimed" else "Locked"
 	end
 end
 
@@ -688,11 +676,15 @@ local function wireCardClaim(card: Frame, day: number)
 	btn.MouseEnter:Connect(function()
 		UIInteractionSounds.playHover()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.06 }):Play()
-		UIButtonEffects.playBorderGlisten(if clickHost and clickHost:IsA("GuiObject") then clickHost :: GuiObject else btn)
+		UIButtonEffects.playBorderGlisten(
+			if clickHost and clickHost:IsA("GuiObject") then clickHost :: GuiObject else btn
+		)
 	end)
 	btn.MouseLeave:Connect(function()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1 }):Play()
-		UIButtonEffects.hideHoverEffects(if clickHost and clickHost:IsA("GuiObject") then clickHost :: GuiObject else btn)
+		UIButtonEffects.hideHoverEffects(
+			if clickHost and clickHost:IsA("GuiObject") then clickHost :: GuiObject else btn
+		)
 	end)
 	btn.MouseButton1Down:Connect(function()
 		UIInteractionSounds.playClick()
@@ -753,12 +745,7 @@ applyState = function(state: DailyConfig.DailyState)
 
 	if headerSkipBtn then
 		local hideSkip = state.skipAll == true
-		local skipHost = headerSkipBtn.Parent
-		if skipHost and skipHost:IsA("GuiObject") then
-			(skipHost :: GuiObject).Visible = not hideSkip
-		else
-			headerSkipBtn.Visible = not hideSkip
-		end
+		headerSkipBtn.Visible = not hideSkip
 	end
 end
 
@@ -832,7 +819,6 @@ function DailyController.init()
 	end
 	dailyFrame.Active = false
 	dailyFrame.Visible = false
-	dailyFrame.ClipsDescendants = true
 
 	container = dailyFrame:FindFirstChild("Container") :: Frame?
 	if container then

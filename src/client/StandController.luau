@@ -9,7 +9,7 @@
 	Top buttons:     StarterGui.Main.SideUI.Top.Buttons.Buy / Sell
 --]]
 
-local Players    = game:GetService("Players")
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
@@ -23,8 +23,8 @@ local HUDController = require(script.Parent.HUDController)
 -- ── Stand config ──────────────────────────────────────────────────────────────
 
 local STAND_CONFIG = {
-	{ standName = "Shop Stand",    hitboxName = "ShopPadHitbox",    frameName = "Shop2"    },
-	{ standName = "Sell Stand",    hitboxName = "SellPadHitbox",    frameName = "Sell"     },
+	{ standName = "Shop Stand", hitboxName = "ShopPadHitbox", frameName = "Shop2" },
+	{ standName = "Sell Stand", hitboxName = "SellPadHitbox", frameName = "Sell" },
 	{ standName = "Upgrade Stand", hitboxName = "UpgradePadHitbox", frameName = "Upgrades" },
 }
 
@@ -36,17 +36,7 @@ local CLOSE_DEBOUNCE = 0.22
 
 local stands: { { hitbox: BasePart, frameName: string } } = {}
 local activeStandFrame: string? = nil
-local closePending: thread?    = nil  -- delayed-close task
-
-local overlapParams = OverlapParams.new()
-overlapParams.FilterType = Enum.RaycastFilterType.Include
-
-local function rebuildOverlapFilter()
-	local char = player.Character
-	if char then
-		overlapParams.FilterDescendantsInstances = { char }
-	end
-end
+local closePending: thread? = nil -- delayed-close task
 
 local function cancelPendingClose()
 	if closePending then
@@ -67,18 +57,30 @@ end
 local TICK_INTERVAL = 0.2
 local tickAccum = 0
 
+local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart, padding: number): boolean
+	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
+	local half = part.Size * 0.5 + Vector3.new(padding, padding, padding)
+	return math.abs(localPt.X) <= half.X and math.abs(localPt.Y) <= half.Y and math.abs(localPt.Z) <= half.Z
+end
+
 local function tick()
 	local char = player.Character
-	if not char then return end
-
-	rebuildOverlapFilter()
+	if not char then
+		return
+	end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return
+	end
+	local hrpPos = (hrp :: BasePart).Position
 
 	local insideFrame: string? = nil
 
 	for _, stand in ipairs(stands) do
-		if not stand.hitbox.Parent then continue end
-		local parts = workspace:GetPartsInPart(stand.hitbox, overlapParams)
-		if #parts > 0 then
+		if not stand.hitbox.Parent then
+			continue
+		end
+		if isPointInsidePartOBB(hrpPos, stand.hitbox, 2.75) then
 			insideFrame = stand.frameName
 			break
 		end
@@ -141,11 +143,8 @@ function StandController.init()
 	player.CharacterAdded:Connect(function()
 		cancelPendingClose()
 		activeStandFrame = nil
-		task.wait()
-		rebuildOverlapFilter()
 	end)
 
-	rebuildOverlapFilter()
 	RunService.Heartbeat:Connect(function(dt)
 		tickAccum += dt
 		if tickAccum < TICK_INTERVAL then

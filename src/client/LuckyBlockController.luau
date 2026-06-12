@@ -120,9 +120,7 @@ local function startShake(tool: Tool, durationSec: number)
 		local jitterY = (math.noise(rotPhase, t * 0.13, 0.5) - 0.5) * 2 * SHAKE_RADIUS_STUDS * amp
 		local jitterZ = (math.noise(t * 0.13, 0.5, rotPhase + 1) - 0.5) * 2 * SHAKE_RADIUS_STUDS * amp
 		local rot = math.sin(t) * math.rad(SHAKE_ROT_DEG) * amp
-		tool.Grip = baseGrip
-			* CFrame.new(jitterX, jitterY, jitterZ)
-			* CFrame.Angles(rot, rot * 0.5, rot * 0.3)
+		tool.Grip = baseGrip * CFrame.new(jitterX, jitterY, jitterZ) * CFrame.Angles(rot, rot * 0.5, rot * 0.3)
 		if elapsed >= durationSec then
 			tool.Grip = baseGrip
 			stopShake()
@@ -182,7 +180,7 @@ local function bindTool(tool: Tool)
 		if not rollRE then
 			return
 		end
-		rollRE:FireServer()
+		rollRE:FireServer(tool)
 	end)
 end
 

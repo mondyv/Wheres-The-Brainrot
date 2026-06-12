@@ -28,6 +28,7 @@ type LuckZone = {
 
 local zones: { LuckZone } = {}
 local registeredHitboxes: { [BasePart]: boolean } = {}
+local hookedLuckRoots: { [Instance]: boolean } = {}
 local currentArea: GuiObject? = nil
 local luckText: TextLabel? = nil
 local multiplier: TextLabel? = nil
@@ -39,9 +40,6 @@ local closePending: thread? = nil
 local introToken = 0
 local idleToken = 0
 local swingConn: RBXScriptConnection? = nil
-
-local overlapParams = OverlapParams.new()
-overlapParams.FilterType = Enum.RaycastFilterType.Include
 
 local function cancelClose()
 	if closePending then
@@ -260,12 +258,7 @@ local function startTierIdle(tierIndex: number, motion: TierMotion)
 	end)
 end
 
-local function chainTilt(
-	token: number,
-	angles: { number },
-	durations: { number },
-	onDone: () -> ()
-)
+local function chainTilt(token: number, angles: { number }, durations: { number }, onDone: () -> ())
 	local step = 0
 	local function nextStep()
 		if token ~= introToken or not currentArea then
@@ -324,11 +317,9 @@ local function playIntro(displayLuck: number, tierIndex: number)
 			return
 		end
 
-		TweenService:Create(
-			areaScale,
-			TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ Scale = 1 }
-		):Play()
+		TweenService
+			:Create(areaScale, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
+			:Play()
 
 		chainTilt(myIntro, motion.settleAngles, motion.settleTimes, function()
 			if myIntro ~= introToken then
@@ -391,11 +382,10 @@ local function scheduleHide()
 	end)
 end
 
-local function rebuildOverlapFilter()
-	local char = player.Character
-	if char then
-		overlapParams.FilterDescendantsInstances = { char }
-	end
+local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart, padding: number): boolean
+	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
+	local half = part.Size * 0.5 + Vector3.new(padding, padding, padding)
+	return math.abs(localPt.X) <= half.X and math.abs(localPt.Y) <= half.Y and math.abs(localPt.Z) <= half.Z
 end
 
 local function findActiveZone(): LuckZone?
@@ -403,16 +393,18 @@ local function findActiveZone(): LuckZone?
 	if not char then
 		return nil
 	end
-
-	rebuildOverlapFilter()
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return nil
+	end
+	local pos = (hrp :: BasePart).Position
 
 	local best: LuckZone? = nil
 	for _, zone in ipairs(zones) do
 		if not zone.hitbox.Parent then
 			continue
 		end
-		local parts = workspace:GetPartsInPart(zone.hitbox, overlapParams)
-		if #parts > 0 and (not best or zone.displayLuck > best.displayLuck) then
+		if isPointInsidePartOBB(pos, zone.hitbox, 2.75) and (not best or zone.displayLuck > best.displayLuck) then
 			best = zone
 		end
 	end
@@ -454,66 +446,53 @@ local function scanLuckHitboxes(root: Instance)
 	end
 end
 
-local function hookLandsForLuck(lands: Instance)
-	scanLuckHitboxes(lands)
-	lands.DescendantAdded:Connect(function(ch)
+local function hookLuckRoot(root: Instance)
+	if hookedLuckRoots[root] then
+		return
+	end
+	hookedLuckRoots[root] = true
+	scanLuckHitboxes(root)
+	root.DescendantAdded:Connect(function(ch)
 		if ch:IsA("BasePart") then
 			tryRegisterHitbox(ch)
 		end
 	end)
-	lands.ChildAdded:Connect(function()
-		task.defer(function()
-			scanLuckHitboxes(lands)
-		end)
+	root.AncestryChanged:Connect(function(_, parent)
+		if parent == nil then
+			hookedLuckRoots[root] = nil
+		end
 	end)
 end
 
 local function beginLuckDiscovery(map: Instance)
-	local function scanAll()
-		local lands = map:FindFirstChild("Lands")
-		if lands then
-			scanLuckHitboxes(lands)
+	local function hookNamedRoot(name: string)
+		local root = map:FindFirstChild(name)
+		if root then
+			hookLuckRoot(root)
+			return
 		end
-		local spawnBases = map:FindFirstChild("Spawn And Bases")
-		if spawnBases then
-			scanLuckHitboxes(spawnBases)
-		end
-	end
-
-	scanAll()
-
-	local lands = map:FindFirstChild("Lands")
-	if lands then
-		hookLandsForLuck(lands)
-	else
 		task.spawn(function()
-			local container = map:WaitForChild("Lands", 120)
+			local container = map:WaitForChild(name, 120)
 			if container then
-				hookLandsForLuck(container)
+				hookLuckRoot(container)
 			end
 		end)
 	end
+
+	hookNamedRoot("Lands")
+	hookNamedRoot("Spawn And Bases")
 
 	map.ChildAdded:Connect(function(child)
-		task.defer(function()
-			if child.Name == "Lands" then
-				hookLandsForLuck(child)
-			end
-			scanAll()
-		end)
+		if child.Name == "Lands" or child.Name == "Spawn And Bases" then
+			task.defer(hookLuckRoot, child)
+		end
 	end)
 
-	-- Lands / hitboxes often stream in after client boot — keep retrying quietly.
-	task.spawn(function()
-		for _ = 1, 60 do
-			if #zones > 0 then
-				return
-			end
-			scanAll()
-			task.wait(1)
-		end
+	task.delay(8, function()
 		if #zones == 0 then
-			warn("[CurrentAreaController] No *xHitbox parts found under workspace.Map.Lands (check streaming / hitbox names like 1xHitbox, 10xHitbox)")
+			warn(
+				"[CurrentAreaController] No *xHitbox parts found under workspace.Map.Lands or Spawn And Bases (check streaming / hitbox names like 1xHitbox, 10xHitbox)"
+			)
 		end
 	end)
 end
@@ -561,11 +540,8 @@ function CurrentAreaController.init()
 	player.CharacterAdded:Connect(function()
 		cancelClose()
 		hideArea()
-		task.wait()
-		rebuildOverlapFilter()
 	end)
 
-	rebuildOverlapFilter()
 	RunService.Heartbeat:Connect(function(dt)
 		tickAccum += dt
 		if tickAccum < TICK_INTERVAL then

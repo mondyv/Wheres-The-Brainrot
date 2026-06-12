@@ -25,6 +25,13 @@ export type StandSaveEntry = {
 	accumulated: number,
 }
 
+export type StorePurchasesSaveData = {
+	exclusiveOwned: boolean,
+	freeUncommonClaimed: boolean,
+	freeStealCount: number,
+	packPurchases: { [string]: number },
+}
+
 export type PlayerSaveData = {
 	version: number,
 	cash: number,
@@ -46,6 +53,7 @@ export type PlayerSaveData = {
 	equipSlot: number?,
 	stands: { StandSaveEntry },
 	lastSavedAt: number,
+	storePurchases: StorePurchasesSaveData?,
 }
 
 local M = {}

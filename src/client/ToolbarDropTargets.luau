@@ -173,7 +173,11 @@ function DropTargets.pointOverHotbarFromGuiHitScan(rawViewport: Vector2): boolea
 	return false
 end
 
-function DropTargets.hotbarSlotIndexFromDropProbes(mouseWindow: Vector2, rawViewport: Vector2, ghostCenter: Vector2?): number?
+function DropTargets.hotbarSlotIndexFromDropProbes(
+	mouseWindow: Vector2,
+	rawViewport: Vector2,
+	ghostCenter: Vector2?
+): number?
 	local inset = GuiService:GetGuiInset()
 	local insetVec = Vector2.new(inset.X, inset.Y)
 
@@ -267,7 +271,9 @@ local function pointOverBackpackProbes(dropPoint: Vector2, rawViewport: Vector2)
 	end
 	local c = requireCfg()
 	local insetPt = DropTargets.screenPointWithGuiInset(rawViewport)
-	if DropTargets.pointOverBackpackFromGuiHitScan(rawViewport) or DropTargets.pointOverBackpackFromGuiHitScan(insetPt) then
+	if
+		DropTargets.pointOverBackpackFromGuiHitScan(rawViewport) or DropTargets.pointOverBackpackFromGuiHitScan(insetPt)
+	then
 		return true
 	end
 	local cont = c.getBackpackContainer()
@@ -331,7 +337,11 @@ function DropTargets.ancestorBackpackRowIndexFromGuiObject(inst: Instance): numb
 	return nil
 end
 
-function DropTargets.backpackRowIndexFromDropProbes(rawViewport: Vector2, mouseWindow: Vector2, ghostViewport: Vector2?): number?
+function DropTargets.backpackRowIndexFromDropProbes(
+	rawViewport: Vector2,
+	mouseWindow: Vector2,
+	ghostViewport: Vector2?
+): number?
 	if not isBackpackPanelVisible() then
 		return nil
 	end
@@ -372,7 +382,8 @@ function DropTargets.probeDragHoverTargets(
 	local frame = c.getBackpackFrameRef()
 	if c.getIsBackpackPanelOpen() and frame then
 		local insetPt = DropTargets.screenPointWithGuiInset(rawEnd)
-		overBackpackPanel = screenPointInGui(frame, mouseWindow) or screenPointInGui(frame, insetPt)
+		overBackpackPanel = screenPointInGui(frame, mouseWindow)
+			or screenPointInGui(frame, insetPt)
 			or DropTargets.pointOverBackpackFromGuiHitScan(rawEnd)
 			or DropTargets.pointOverBackpackFromGuiHitScan(insetPt)
 		if ghostCenter then
@@ -389,9 +400,9 @@ function DropTargets.probeDragHoverTargets(
 	local overHotbar = not overBackpackPanel
 		and (
 			DropTargets.hotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter) ~= nil
-				or DropTargets.pointOverHotbarDropZoneProbes(mouseWindow, rawEnd)
-				or (ghostCenter ~= nil and DropTargets.pointOverHotbarDropZoneProbes(ghostCenter, rawEnd))
-				or (ghostViewport ~= nil and DropTargets.pointOverHotbarFromGuiHitScan(ghostViewport))
+			or DropTargets.pointOverHotbarDropZoneProbes(mouseWindow, rawEnd)
+			or (ghostCenter ~= nil and DropTargets.pointOverHotbarDropZoneProbes(ghostCenter, rawEnd))
+			or (ghostViewport ~= nil and DropTargets.pointOverHotbarFromGuiHitScan(ghostViewport))
 		)
 	local overBackpack = DropTargets.pointOverBackpackDropTarget(mouseWindow, rawEnd)
 		or (ghostCenter ~= nil and DropTargets.pointOverBackpackDropTarget(ghostCenter, rawEnd))

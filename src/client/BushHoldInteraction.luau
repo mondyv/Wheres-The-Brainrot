@@ -6,6 +6,7 @@
 
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
+local ProximityPromptService = game:GetService("ProximityPromptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -27,7 +28,9 @@ local BUSH_ON_COOLDOWN_ATTR = "BushOnCooldown"
 local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
 local BUSH_COOLDOWN_ENDS_ATTR = "BushCooldownEndsAt"
 local BUSH_LOOT_PHASE_COOLDOWN = "cooldown"
-local AIM_TICK_INTERVAL = 0.1
+local AIM_TICK_INTERVAL = 0.05
+local PICK_FULL_SCAN_INTERVAL = 0.5
+local COOLDOWN_VISUAL_SYNC_INTERVAL = 0.5
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 
 local bushByModel: { [Instance]: ProximityPrompt } = {}
@@ -43,6 +46,10 @@ local harvestRemote: RemoteEvent? = nil
 local harvestFunction: RemoteFunction? = nil
 local hooked = false
 local mapWatchRoot: Instance? = nil
+local EMPTY_BUSH_RESCAN_INTERVAL = 3
+local lastEmptyBushScanAt = 0
+local lastPickFullScanAt = 0
+local lastCooldownVisualSyncAt = 0
 
 local activeBush: Instance? = nil
 local activePrompt: ProximityPrompt? = nil
@@ -58,6 +65,7 @@ end
 local BUSH_SEARCH_HOLD_ACTION = "BushSearchHoldWhileToolEquipped"
 local bushSearchHoldPrompt: ProximityPrompt? = nil
 local bushSearchHoldBeganAt = 0.0
+local bushSearchHoldToken = 0
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -120,6 +128,102 @@ local function promptWorldPos(prompt: ProximityPrompt): Vector3
 	return Vector3.zero
 end
 
+local localEmptyMessages: { [Instance]: BillboardGui } = {}
+
+local function getPromptAdorneePart(prompt: ProximityPrompt, bush: Instance?): BasePart?
+	local parent = prompt.Parent
+	if parent and parent:IsA("Attachment") then
+		local part = parent.Parent
+		if part and part:IsA("BasePart") then
+			return part
+		end
+	elseif parent and parent:IsA("BasePart") then
+		return parent
+	end
+	if bush then
+		local anchor = bushAnchor[bush] or anchorFor(bush)
+		if anchor then
+			return anchor
+		end
+	end
+	return nil
+end
+
+local function clearLocalEmptyMessage(bush: Instance)
+	local old = localEmptyMessages[bush]
+	if old then
+		old:Destroy()
+		localEmptyMessages[bush] = nil
+	end
+end
+
+local function showLocalEmptyMessage(prompt: ProximityPrompt, bush: Instance, text: string?)
+	clearLocalEmptyMessage(bush)
+
+	local adornee = getPromptAdorneePart(prompt, bush)
+	local pg = player:FindFirstChild("PlayerGui")
+	if not adornee or not pg then
+		return
+	end
+
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "BushEmptyMessageLocal"
+	bb.Adornee = adornee
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.ResetOnSpawn = false
+	bb.Size = UDim2.fromOffset(270, 70)
+	bb.StudsOffset = Vector3.zero
+	bb.StudsOffsetWorldSpace = Vector3.new(0, 3.65, 0)
+	bb.MaxDistance = 90
+	bb.Parent = pg
+
+	local panel = Instance.new("Frame")
+	panel.Name = "Panel"
+	panel.Size = UDim2.fromScale(1, 1)
+	panel.BackgroundColor3 = Color3.fromRGB(16, 18, 16)
+	panel.BackgroundTransparency = 0.18
+	panel.BorderSizePixel = 0
+	panel.Parent = bb
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 12)
+	corner.Parent = panel
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(72, 230, 105)
+	stroke.Thickness = 2
+	stroke.Transparency = 0
+	stroke.Parent = panel
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Text"
+	label.Size = UDim2.new(1, -20, 1, -14)
+	label.Position = UDim2.fromOffset(10, 7)
+	label.BackgroundTransparency = 1
+	label.Text = text or "No brainrots hiding!"
+	label.TextScaled = true
+	label.TextColor3 = Color3.fromRGB(240, 255, 244)
+	label.Font = Enum.Font.GothamBold
+	label.Parent = panel
+
+	local textStroke = Instance.new("UIStroke")
+	textStroke.Color = Color3.fromRGB(28, 110, 52)
+	textStroke.Thickness = 1.15
+	textStroke.Transparency = 0
+	textStroke.Parent = label
+
+	localEmptyMessages[bush] = bb
+	task.delay(4, function()
+		if localEmptyMessages[bush] == bb then
+			localEmptyMessages[bush] = nil
+		end
+		if bb.Parent then
+			bb:Destroy()
+		end
+	end)
+end
+
 local function bushRootFromPrompt(prompt: ProximityPrompt): Instance?
 	return BushRootUtil.resolveBushRootFromPrompt(prompt)
 end
@@ -153,14 +257,8 @@ local function attachPrompt(root: Instance)
 
 	local att = Instance.new("Attachment")
 	att.Name = "_BushPromptCenter"
+	att.Position = Vector3.zero
 	att.Parent = anchor
-	local targetWorld: Vector3
-	if root:IsA("Model") then
-		targetWorld = bushPromptWorldPosition(root :: Model) or (anchor.Position + Vector3.new(0, 2, 0))
-	else
-		targetWorld = anchor.Position + Vector3.new(0, anchor.Size.Y * BUSH_PROMPT_LIFT_SCALE + 1, 0)
-	end
-	att.Position = anchor.CFrame:PointToObjectSpace(targetWorld)
 
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.Name = "BushHarvestPrompt"
@@ -197,6 +295,7 @@ local function attachPrompt(root: Instance)
 end
 
 local bushCooldownConns: { [Instance]: { RBXScriptConnection } } = {}
+local syncCooldownVisuals: () -> () = function() end
 
 local function wireBushCooldownSignals(root: Instance)
 	if bushCooldownConns[root] then
@@ -332,7 +431,7 @@ local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 end
 
-local function syncCooldownVisuals()
+syncCooldownVisuals = function()
 	for bush, hl in cooldownHighlights do
 		if not bush.Parent or not isBushInSearchCooldown(bush) then
 			hl:Destroy()
@@ -365,6 +464,15 @@ local function syncCooldownVisuals()
 	ProximityPromptEffects.syncBushCooldownBanners(bushByModel)
 end
 
+local function syncCooldownVisualsIfDue(force: boolean?)
+	local now = os.clock()
+	if not force and now - lastCooldownVisualSyncAt < COOLDOWN_VISUAL_SYNC_INTERVAL then
+		return
+	end
+	lastCooldownVisualSyncAt = now
+	syncCooldownVisuals()
+end
+
 local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -372,6 +480,20 @@ local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 		return nil, nil, nil
 	end
 	local pos = hrp.Position
+	local now = os.clock()
+	if now - lastPickFullScanAt < PICK_FULL_SCAN_INTERVAL then
+		local bush = activeBush
+		local prompt = activePrompt
+		if bush and prompt and bush.Parent and prompt.Parent and not isBushInSearchCooldown(bush) then
+			local wp = promptWorldPos(prompt)
+			if wp ~= Vector3.zero and (wp - pos).Magnitude <= MAX_RANGE then
+				return bush, prompt, bushAnchor[bush] or anchorFor(bush)
+			end
+		end
+		return nil, nil, nil
+	end
+	lastPickFullScanAt = now
+
 	local bestM: Instance? = nil
 	local bestP: ProximityPrompt? = nil
 	local bestA: BasePart? = nil
@@ -389,7 +511,7 @@ local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 			continue
 		end
 		local d = (wp - pos).Magnitude
-		if d <= MAX_RANGE and d < bestD and ProximityPromptEffects.isBushSearchUiInRange(prompt) then
+		if d <= MAX_RANGE and d < bestD then
 			bestD = d
 			bestM = model
 			bestP = prompt
@@ -456,28 +578,32 @@ end
 local bushSearchInFlight: { [Instance]: boolean } = {}
 
 --[[ Server-authoritative 50/50 roll via HarvestBush RemoteFunction. ]]
-local function requestBushSearch(worldPos: Vector3, bush: Instance)
+local function requestBushSearch(worldPos: Vector3, bush: Instance): any
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes") or ReplicatedStorage:WaitForChild("BushRemotes", 8)
 	if not folder then
-		return
+		return nil
 	end
 
 	local rf = folder:FindFirstChild("HarvestBush") or folder:WaitForChild("HarvestBush", 8)
 	if rf and rf:IsA("RemoteFunction") then
 		harvestFunction = rf
-		local ok = pcall(function()
-			rf:InvokeServer(worldPos, bush)
+		local ok, result = pcall(function()
+			return rf:InvokeServer(worldPos, bush)
 		end)
 		if ok then
-			return
+			return result
 		end
+		warn("[BushHoldInteraction] HarvestBush InvokeServer failed:", result)
 	end
 
 	local rem = folder:FindFirstChild("HarvestBrainrot")
 	if rem and rem:IsA("RemoteEvent") then
 		harvestRemote = rem
 		rem:FireServer(worldPos, bush)
+		return { ok = true, viaRemoteEvent = true }
 	end
+
+	return nil
 end
 
 local function doHarvest(prompt: ProximityPrompt)
@@ -499,6 +625,9 @@ local function doHarvest(prompt: ProximityPrompt)
 			end
 		end
 	end
+	if bush then
+		bush = BushRootUtil.resolveBushRoot(bush) or bush
+	end
 	if not bush then
 		return
 	end
@@ -512,7 +641,21 @@ local function doHarvest(prompt: ProximityPrompt)
 
 	setActive(nil, nil, nil)
 
-	requestBushSearch(promptWorldPos(prompt), bush)
+	local result = requestBushSearch(promptWorldPos(prompt), bush)
+	if typeof(result) == "table" then
+		local cooldownEndsAt = result.cooldownEndsAt
+		if typeof(cooldownEndsAt) == "number" and cooldownEndsAt > Workspace:GetServerTimeNow() then
+			-- Attributes replicate from server, but set them locally too so the timer appears instantly.
+			bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, true)
+			bush:SetAttribute(BUSH_LOOT_PHASE_ATTR, BUSH_LOOT_PHASE_COOLDOWN)
+			bush:SetAttribute(BUSH_COOLDOWN_ENDS_ATTR, cooldownEndsAt)
+			ProximityPromptEffects.showBushCooldownBanner(prompt, cooldownEndsAt)
+		end
+
+		if result.found == false or result.message ~= nil then
+			showLocalEmptyMessage(prompt, bush, tostring(result.message or "No brainrots hiding!"))
+		end
+	end
 end
 
 local function tickAim()
@@ -528,7 +671,11 @@ local function tickAim()
 			bushN += 1
 		end
 		if bushN == 0 then
-			registerAllBushesOnMap(mapWatchRoot)
+			local now = os.clock()
+			if now - lastEmptyBushScanAt >= EMPTY_BUSH_RESCAN_INTERVAL then
+				lastEmptyBushScanAt = now
+				registerAllBushesOnMap(mapWatchRoot)
+			end
 		end
 	end
 
@@ -538,7 +685,7 @@ local function tickAim()
 			BushRootUtil.ensurePromptAnchorPart(model)
 		end
 	end
-	syncCooldownVisuals()
+	syncCooldownVisualsIfDue(false)
 
 	-- Block new bush search only at carry capacity; cooldown lock visuals still update while partially loaded.
 	local bush: Instance?, prompt: ProximityPrompt?, anchor: BasePart?
@@ -600,14 +747,7 @@ end
 local function bootMap(map: Instance)
 	wireMapWatch(map)
 	registerAllBushesOnMap(map)
-	BushShiver.scanMapForBrainrotBushes(map)
-	-- Server may assign loot slightly after client scan; retry tracking for shiver clues.
-	task.spawn(function()
-		for _ = 1, 20 do
-			task.wait(1)
-			BushShiver.scanMapForBrainrotBushes(map)
-		end
-	end)
+	lastEmptyBushScanAt = os.clock()
 	local n = 0
 	for _, _ in bushByModel do
 		n += 1
@@ -642,7 +782,15 @@ function BushHoldInteraction.init()
 
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then
-		for _, name in { "BushSearchUI", "BushSearchPrompt", "BushSearchSharedPrompt", "CustomProximityPrompt", "BushCooldownBanner" } do
+		for _, name in
+			{
+				"BushSearchUI",
+				"BushSearchPrompt",
+				"BushSearchSharedPrompt",
+				"CustomProximityPrompt",
+				"BushCooldownBanner",
+			}
+		do
 			local legacy = pg:FindFirstChild(name)
 			if legacy then
 				legacy:Destroy()
@@ -686,53 +834,89 @@ function BushHoldInteraction.init()
 	end)
 
 	-- Engine ProximityPrompt hold is blocked while a brainrot Tool is equipped; run the hold ourselves.
-	ContextActionService:BindActionAtPriority(
-		BUSH_SEARCH_HOLD_ACTION,
-		function(_name, state, input)
-			if UserInputService:GetFocusedTextBox() ~= nil then
-				return Enum.ContextActionResult.Pass
-			end
-			local prompt = activePrompt
-			if not prompt or not prompt.Parent or not prompt.Enabled or CarryGate.isFull() then
-				if state == Enum.UserInputState.End and bushSearchHoldPrompt then
-					ProximityPromptEffects.endManagedBushHold(bushSearchHoldPrompt, false)
-					bushSearchHoldPrompt = nil
-				end
-				return Enum.ContextActionResult.Pass
-			end
-			if input.UserInputType ~= Enum.UserInputType.Keyboard
-				and input.UserInputType ~= Enum.UserInputType.Gamepad1
-			then
-				return Enum.ContextActionResult.Pass
-			end
-			local keyOk = input.KeyCode == Enum.KeyCode.E
-				or input.KeyCode == prompt.KeyboardKeyCode
-			local padOk = prompt.GamepadKeyCode ~= Enum.KeyCode.Unknown
-				and input.KeyCode == prompt.GamepadKeyCode
-			if not keyOk and not padOk then
-				return Enum.ContextActionResult.Pass
-			end
-
-			if state == Enum.UserInputState.Begin then
-				bushSearchHoldPrompt = prompt
-				bushSearchHoldBeganAt = os.clock()
-				ProximityPromptEffects.beginManagedBushHold(prompt)
-				return Enum.ContextActionResult.Sink
-			end
-			if state == Enum.UserInputState.End and bushSearchHoldPrompt == prompt then
-				local dur = prompt.HoldDuration
-				local completed = dur > 0 and (os.clock() - bushSearchHoldBeganAt) >= dur * 0.92
-				ProximityPromptEffects.endManagedBushHold(prompt, completed)
+	ContextActionService:BindActionAtPriority(BUSH_SEARCH_HOLD_ACTION, function(_name, state, input)
+		if UserInputService:GetFocusedTextBox() ~= nil then
+			return Enum.ContextActionResult.Pass
+		end
+		local prompt = activePrompt
+		if not prompt or not prompt.Parent or not prompt.Enabled or CarryGate.isFull() then
+			if state == Enum.UserInputState.End and bushSearchHoldPrompt then
+				ProximityPromptEffects.endManagedBushHold(bushSearchHoldPrompt, false)
 				bushSearchHoldPrompt = nil
-				return Enum.ContextActionResult.Sink
 			end
 			return Enum.ContextActionResult.Pass
-		end,
-		false,
-		Enum.ContextActionPriority.High.Value + 1,
-		Enum.KeyCode.E,
-		Enum.KeyCode.ButtonX
-	)
+		end
+		if
+			input.UserInputType ~= Enum.UserInputType.Keyboard
+			and input.UserInputType ~= Enum.UserInputType.Gamepad1
+		then
+			return Enum.ContextActionResult.Pass
+		end
+		local keyOk = input.KeyCode == Enum.KeyCode.E or input.KeyCode == prompt.KeyboardKeyCode
+		local padOk = prompt.GamepadKeyCode ~= Enum.KeyCode.Unknown and input.KeyCode == prompt.GamepadKeyCode
+		if not keyOk and not padOk then
+			return Enum.ContextActionResult.Pass
+		end
+
+		if state == Enum.UserInputState.Begin then
+			bushSearchHoldPrompt = prompt
+			bushSearchHoldBeganAt = os.clock()
+			bushSearchHoldToken += 1
+			local token = bushSearchHoldToken
+			local holdPrompt = prompt
+
+			ProximityPromptEffects.beginManagedBushHold(holdPrompt)
+
+			-- Hard completion path: do not depend on the custom UI, PromptTriggered, or key release.
+			-- If the player keeps holding long enough, the harvest request fires exactly once.
+			task.delay(math.max(0.05, holdPrompt.HoldDuration), function()
+				if bushSearchHoldToken ~= token then
+					return
+				end
+				if bushSearchHoldPrompt ~= holdPrompt then
+					return
+				end
+				if not holdPrompt.Parent or not holdPrompt.Enabled or CarryGate.isFull() then
+					return
+				end
+
+				ProximityPromptEffects.endManagedBushHold(holdPrompt, true)
+				task.defer(doHarvest, holdPrompt)
+				bushSearchHoldPrompt = nil
+			end)
+
+			return Enum.ContextActionResult.Sink
+		end
+
+		if state == Enum.UserInputState.End and bushSearchHoldPrompt == prompt then
+			local dur = prompt.HoldDuration
+			local completed = dur > 0 and (os.clock() - bushSearchHoldBeganAt) >= dur * 0.92
+			bushSearchHoldToken += 1
+			ProximityPromptEffects.endManagedBushHold(prompt, completed)
+
+			-- Backup for normal release completion. The timed completion above handles the
+			-- common case where the player keeps holding until the bar finishes.
+			if completed then
+				task.defer(doHarvest, prompt)
+			end
+
+			bushSearchHoldPrompt = nil
+			return Enum.ContextActionResult.Sink
+		end
+		return Enum.ContextActionResult.Pass
+	end, false, Enum.ContextActionPriority.High.Value + 1, Enum.KeyCode.E, Enum.KeyCode.ButtonX)
+
+	-- Extra safety: if Roblox's real ProximityPrompt fires, harvest directly here too.
+	-- doHarvest has a debounce, so this will not duplicate rewards.
+	ProximityPromptService.PromptTriggered:Connect(function(prompt: ProximityPrompt, triggerPlayer: Player)
+		if triggerPlayer ~= player then
+			return
+		end
+		if prompt:GetAttribute(BUSH_MANAGED_ATTR) ~= true then
+			return
+		end
+		task.defer(doHarvest, prompt)
+	end)
 
 	local function onCarryChanged()
 		if CarryGate.isFull() then

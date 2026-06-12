@@ -5,6 +5,7 @@
 	Grouped bushes shake every child Model in the cluster together.
 --]]
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
@@ -17,12 +18,15 @@ local ON_COOLDOWN_ATTR = "BushOnCooldown"
 local LOOT_PHASE_ATTR = "BushLootPhase"
 local LOOT_PHASE_COOLDOWN = "cooldown"
 
-local SHIVER_BURST_MIN_SEC = 1.5
-local SHIVER_BURST_MAX_SEC = 2
+local SHIVER_BURST_MIN_SEC = 1.1
+local SHIVER_BURST_MAX_SEC = 1.5
 local SHIVER_IDLE_MIN_SEC = 7
 local SHIVER_IDLE_MAX_SEC = 15
 local SHIVER_START_DELAY_MAX_SEC = 12
-local SHIVER_TICK_SEC = 1 / 30
+local SHIVER_TICK_SEC = 1 / 12
+local SHIVER_ACTIVE_RANGE = 90
+local MAX_SIMULTANEOUS_SHIVERS = 2
+local ENABLE_IDLE_RANDOM_SHIVER = false -- keep bushes still unless the player is actively searching
 
 local SHIVER_POS_AMP = 0.045
 local SHIVER_ROT_AMP = math.rad(1.6)
@@ -34,8 +38,15 @@ local baseTransformByBush: { [Instance]: ShakeBases } = {}
 local hookedByBush: { [Instance]: boolean } = {}
 local schedulerTokenByBush: { [Instance]: number } = {}
 local loopRunningByBush: { [Instance]: boolean } = {}
+local activeShiverBursts = 0
+local localPlayer = Players.LocalPlayer
 
 local function shouldShiverBush(bush: Instance): boolean
+	-- Disabled idle random shiver. Bushes now only move during actual interaction
+	-- through ProximityPromptEffects.beginBushWobble(), or during server feedback effects.
+	if not ENABLE_IDLE_RANDOM_SHIVER then
+		return false
+	end
 	if bush:GetAttribute(LOOT_PHASE_ATTR) == LOOT_PHASE_COOLDOWN then
 		return false
 	end
@@ -92,6 +103,35 @@ local function applyShiverOffset(bush: Instance, offset: CFrame)
 	end
 end
 
+local function bushApproxPosition(bush: Instance): Vector3?
+	if bush:IsA("BasePart") then
+		return (bush :: BasePart).Position
+	end
+	if bush:IsA("Model") then
+		local ok, pivot = pcall(function()
+			return (bush :: Model):GetPivot()
+		end)
+		if ok and typeof(pivot) == "CFrame" then
+			return (pivot :: CFrame).Position
+		end
+	end
+	local part = bush:FindFirstChildWhichIsA("BasePart", true)
+	return if part then part.Position else nil
+end
+
+local function isBushNearPlayer(bush: Instance): boolean
+	local char = localPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return false
+	end
+	local pos = bushApproxPosition(bush)
+	if not pos then
+		return false
+	end
+	return (pos - (hrp :: BasePart).Position).Magnitude <= SHIVER_ACTIVE_RANGE
+end
+
 local function softShiverOffset(elapsed: number, burstSec: number): CFrame
 	local envelope = math.sin(math.clamp(elapsed / burstSec, 0, 1) * math.pi)
 	local ox = math.sin(elapsed * SHIVER_FREQ) * SHIVER_POS_AMP * envelope
@@ -124,15 +164,23 @@ local function runSoftBurst(bush: Instance, token: number, burstSec: number)
 	if not bases then
 		return
 	end
+	if activeShiverBursts >= MAX_SIMULTANEOUS_SHIVERS or not isBushNearPlayer(bush) then
+		return
+	end
 
+	activeShiverBursts += 1
 	local start = os.clock()
 	local endAt = start + burstSec
 	GameSoundEffects.playBushRandomShakeAt(bush)
 	while bush.Parent and token == schedulerTokenByBush[bush] and shouldShiverBush(bush) and os.clock() < endAt do
+		if not isBushNearPlayer(bush) then
+			break
+		end
 		local elapsed = os.clock() - start
 		applyShiverOffset(bush, softShiverOffset(elapsed, burstSec))
 		task.wait(SHIVER_TICK_SEC)
 	end
+	activeShiverBursts = math.max(0, activeShiverBursts - 1)
 
 	if token == schedulerTokenByBush[bush] and bush.Parent then
 		restoreBushTransforms(bush)
@@ -166,6 +214,9 @@ local function startShiverScheduler(bush: Instance)
 
 			if token ~= schedulerTokenByBush[bush] or not bush.Parent or not shouldShiverBush(bush) then
 				break
+			end
+			if not isBushNearPlayer(bush) or activeShiverBursts >= MAX_SIMULTANEOUS_SHIVERS then
+				continue
 			end
 
 			local bases = captureBaseTransforms(bush)

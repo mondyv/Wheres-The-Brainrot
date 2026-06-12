@@ -52,7 +52,13 @@ local function ensureDefaultRobloxBackpackStaysOff()
 	if defaultBackpackGuardConn then
 		return
 	end
-	defaultBackpackGuardConn = RunService.Heartbeat:Connect(function()
+	local guardAccum = 0
+	defaultBackpackGuardConn = RunService.Heartbeat:Connect(function(dt)
+		guardAccum += dt
+		if guardAccum < 5 then
+			return
+		end
+		guardAccum = 0
 		pcall(function()
 			if StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.Backpack) then
 				StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
@@ -125,7 +131,7 @@ local uiHotbarHighlight: number? = nil -- nil = no slot ring (toggle off); other
 local toolbarShown: boolean = false
 local canUseToolbar: boolean = false
 local safezonePollAccum = 0.0
-local SAFEZONE_POLL_INTERVAL = 0.12
+local SAFEZONE_POLL_INTERVAL = 0.25
 local SAFEZONE_EXIT_POLLS_REQUIRED = 3
 local safezoneOutStreak = 0
 local toolbarVisibilityTween: Tween? = nil
@@ -159,6 +165,10 @@ local backpackEquipWired = false
 local equipBestWired = false
 
 local brainrotParkedInUI: { [number]: boolean } = {}
+-- Normal brainrots are stored by server inventory index, but their visible hotbar
+-- slot can now be different. Example: inventory index 3 can display in hotbar slot 8.
+local brainrotHotbarSlotByIndex: { [number]: number } = {}
+local brainrotIndexByHotbarSlot: { [number]: number } = {}
 -- UI backpack rows 1..MAX map through this → server list index (tucked + slot >9) so stashed pets fill consecutive rows.
 local backpackDisplayOrder: { number } = {}
 local pendingToolbarDrag: {
@@ -173,6 +183,9 @@ local pendingToolbarDrag: {
 }? =
 	nil
 -- Drag started inside the safe zone; finish drop even if zone poll flickers before mouse up.
+-- Cached while dragging so mouse-up still lands in the selected slot even if the ghost/touch
+-- endpoint briefly misses the button on the final frame.
+local lastResolvedHotbarDropSlot: number? = nil
 local activeToolbarDrag = false
 local dragSuppressedToolbarClick = false
 local DRAG_THRESHOLD_PX = 14
@@ -315,9 +328,167 @@ local ToolbarController = {}
 		return ""
 	end
 
+	local function rebuildBrainrotHotbarReverseMap()
+		brainrotIndexByHotbarSlot = {}
+		for rawIdx, rawSlot in pairs(brainrotHotbarSlotByIndex) do
+			if typeof(rawIdx) == "number" and typeof(rawSlot) == "number" then
+				local idx = math.floor(rawIdx)
+				local slot = math.floor(rawSlot)
+				if idx >= 1 and brainrotEntries[idx] ~= nil and slot >= 1 and slot <= HOTBAR_INVENTORY_SLOTS then
+					brainrotIndexByHotbarSlot[slot] = idx
+				else
+					brainrotHotbarSlotByIndex[rawIdx] = nil
+				end
+			else
+				brainrotHotbarSlotByIndex[rawIdx] = nil
+			end
+		end
+	end
+
+	local function brainrotIndexForHotbarSlot(slot: number): number?
+		if slot < 1 or slot > HOTBAR_INVENTORY_SLOTS then
+			return nil
+		end
+		rebuildBrainrotHotbarReverseMap()
+		local explicit = brainrotIndexByHotbarSlot[slot]
+		if explicit and brainrotEntries[explicit] ~= nil then
+			return explicit
+		end
+		-- Legacy/default path: index 1..9 appears in the matching slot unless it
+		-- was tucked or explicitly moved elsewhere.
+		if
+			brainrotEntries[slot] ~= nil
+			and brainrotParkedInUI[slot] ~= true
+			and brainrotHotbarSlotByIndex[slot] == nil
+		then
+			return slot
+		end
+		return nil
+	end
+
+	local function hotbarSlotForBrainrotIndex(invIndex: number): number?
+		if invIndex < 1 or brainrotEntries[invIndex] == nil or brainrotParkedInUI[invIndex] == true then
+			return nil
+		end
+		local mapped = brainrotHotbarSlotByIndex[invIndex]
+		if typeof(mapped) == "number" then
+			local slot = math.floor(mapped)
+			if slot >= 1 and slot <= HOTBAR_INVENTORY_SLOTS then
+				return slot
+			end
+		end
+		if invIndex <= HOTBAR_INVENTORY_SLOTS then
+			rebuildBrainrotHotbarReverseMap()
+			local owner = brainrotIndexByHotbarSlot[invIndex]
+			if owner and owner ~= invIndex then
+				return nil
+			end
+			return invIndex
+		end
+		return nil
+	end
+
+	local function pointOverHotbarHitScan(rawViewport: Vector2?): boolean
+		if rawViewport == nil then
+			return false
+		end
+		local fn = (DropTargets :: any).pointOverHotbarFromGuiHitScan
+		if typeof(fn) ~= "function" then
+			return false
+		end
+		local ok, result = pcall(fn, rawViewport)
+		return ok and result == true
+	end
+
+	-- Compatibility wrappers: if Studio is still using an older ToolbarDropTargets
+	-- module, drag/drop must fail safely instead of throwing an "attempt to call
+	-- a nil value" inside the InputEnded callback.
+	local function dtScreenPointWithGuiInset(screen: Vector2): Vector2
+		local fn = (DropTargets :: any).screenPointWithGuiInset
+		if typeof(fn) == "function" then
+			local ok, result = pcall(fn, screen)
+			if ok and typeof(result) == "Vector2" then
+				return result
+			end
+		end
+		local inset = GuiService:GetGuiInset()
+		return screen + Vector2.new(inset.X, inset.Y)
+	end
+
+	local function dtIsTouchPointerInput(): boolean
+		local fn = (DropTargets :: any).isTouchPointerInput
+		if typeof(fn) == "function" then
+			local ok, result = pcall(fn)
+			return ok and result == true
+		end
+		return UserInputService:GetLastInputType() == Enum.UserInputType.Touch
+	end
+
+	local function dtProbeDragHoverTargets(
+		mouseWindow: Vector2,
+		rawEnd: Vector2,
+		ghostCenter: Vector2?,
+		ghostViewport: Vector2?
+	): (boolean, boolean, boolean)
+		local fn = (DropTargets :: any).probeDragHoverTargets
+		if typeof(fn) == "function" then
+			local ok, a, b, c = pcall(fn, mouseWindow, rawEnd, ghostCenter, ghostViewport)
+			if ok then
+				return a == true, b == true, c == true
+			end
+		end
+		return false, false, false
+	end
+
+	local function dtHotbarSlotIndexFromDropProbes(
+		mouseWindow: Vector2,
+		rawEnd: Vector2,
+		ghostCenter: Vector2?
+	): number?
+		local fn = (DropTargets :: any).hotbarSlotIndexFromDropProbes
+		if typeof(fn) == "function" then
+			local ok, result = pcall(fn, mouseWindow, rawEnd, ghostCenter)
+			if ok and typeof(result) == "number" then
+				local slot = math.floor(result)
+				if slot >= 1 and slot <= HOTBAR_INVENTORY_SLOTS then
+					return slot
+				end
+			end
+		end
+		return nil
+	end
+
+	local function dtBackpackRowIndexFromDropProbes(
+		rawEnd: Vector2,
+		mouseWindow: Vector2,
+		ghostViewport: Vector2?
+	): number?
+		local fn = (DropTargets :: any).backpackRowIndexFromDropProbes
+		if typeof(fn) == "function" then
+			local ok, result = pcall(fn, rawEnd, mouseWindow, ghostViewport)
+			if ok and typeof(result) == "number" then
+				local row = math.floor(result)
+				if row >= 1 and row <= MAX_BACKPACK_BRAINROT_SLOTS then
+					return row
+				end
+			end
+		end
+		return nil
+	end
+
+	local function dtPointOverHotbarDropZoneProbes(dropPoint: Vector2, rawEnd: Vector2): boolean
+		local fn = (DropTargets :: any).pointOverHotbarDropZoneProbes
+		if typeof(fn) == "function" then
+			local ok, result = pcall(fn, dropPoint, rawEnd)
+			return ok and result == true
+		end
+		return false
+	end
+
 	local function hotbarSlotDragTexture(index: number): string?
-		if brainrotEntries[index] and not brainrotParkedInUI[index] then
-			local e = brainrotEntries[index] :: { icon: string }
+		local brainrotIdx = brainrotIndexForHotbarSlot(index)
+		if brainrotIdx and brainrotEntries[brainrotIdx] and not brainrotParkedInUI[brainrotIdx] then
+			local e = brainrotEntries[brainrotIdx] :: { icon: string }
 			return (e.icon ~= "" and e.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
 		end
 		local tool = slotTools[index]
@@ -339,36 +510,129 @@ local ToolbarController = {}
 		return false
 	end
 
-	local function parkExtraToolInBackpack(tool: Tool, fromSlot: number?)
-		for i, t in ipairs(parkedExtraTools) do
-			if t == tool then
+	local function removeExtraToolFromParkedList(tool: Tool)
+		for i = #parkedExtraTools, 1, -1 do
+			if parkedExtraTools[i] == tool then
 				table.remove(parkedExtraTools, i)
-				break
 			end
 		end
-		table.insert(parkedExtraTools, tool)
-		if typeof(fromSlot) == "number" then
-			extraToolSlotByIndex[fromSlot] = nil
-		end
+	end
+
+	local function removeExtraToolFromAllHotbarSlots(tool: Tool)
 		for idx, mapped in pairs(extraToolSlotByIndex) do
 			if mapped == tool then
 				extraToolSlotByIndex[idx] = nil
 			end
 		end
+	end
+
+	local function slotIndexIsHotbar(index: number): boolean
+		return index >= 1 and index <= HOTBAR_INVENTORY_SLOTS
+	end
+
+	local function slotHasActiveBrainrot(index: number): boolean
+		local brainrotIdx = brainrotIndexForHotbarSlot(index)
+		return slotIndexIsHotbar(index)
+			and brainrotIdx ~= nil
+			and brainrotEntries[brainrotIdx] ~= nil
+			and brainrotParkedInUI[brainrotIdx] ~= true
+	end
+
+	local function slotCanHoldExtraTool(index: number): boolean
+		if not slotIndexIsHotbar(index) then
+			return false
+		end
+		local brainrotIdx = brainrotIndexForHotbarSlot(index)
+		return brainrotIdx == nil or brainrotParkedInUI[brainrotIdx] == true
+	end
+
+	local function slotCanAcceptExtraToolDrop(index: number): boolean
+		-- Drops are allowed on active brainrot cells too. The brainrot gets tucked
+		-- into the expanded backpack first, then the extra tool owns the hotbar slot.
+		return slotIndexIsHotbar(index)
+	end
+
+	local function requestTuckBrainrotHotbarSlot(index: number)
+		local brainrotIdx = brainrotIndexForHotbarSlot(index)
+		if not brainrotIdx or not slotHasActiveBrainrot(index) then
+			return
+		end
+		brainrotParkedInUI[brainrotIdx] = true
+		brainrotHotbarSlotByIndex[brainrotIdx] = nil
+		rebuildBrainrotHotbarReverseMap()
+		local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
+		local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
+		if parkEv and parkEv:IsA("RemoteEvent") then
+			(parkEv :: RemoteEvent):FireServer(brainrotIdx, true)
+		end
+	end
+
+	local function extraToolAtHotbarSlot(index: number): Tool?
+		local mapped = extraToolSlotByIndex[index]
+		if mapped and mapped.Parent and isExtraHotbarTool(mapped) then
+			return mapped
+		end
+		local shown = slotTools[index]
+		if shown and shown.Parent and isExtraHotbarTool(shown) and slotCanHoldExtraTool(index) then
+			return shown
+		end
+		return nil
+	end
+
+	local function sanitizeExtraToolSlotPins()
+		local firstSlotForTool: { [Tool]: number } = {}
+		for idx, tool in pairs(extraToolSlotByIndex) do
+			if
+				idx < 1
+				or idx > HOTBAR_INVENTORY_SLOTS
+				or not tool.Parent
+				or not isExtraHotbarTool(tool)
+				or not slotCanHoldExtraTool(idx)
+			then
+				extraToolSlotByIndex[idx] = nil
+			elseif firstSlotForTool[tool] then
+				-- One Tool instance can never own two hotbar cells. This was the Lucky Block
+				-- “dupe” visual when a stale mapping survived a swap.
+				extraToolSlotByIndex[idx] = nil
+			else
+				firstSlotForTool[tool] = idx
+			end
+		end
+		for i = #parkedExtraTools, 1, -1 do
+			local tool = parkedExtraTools[i]
+			if not tool.Parent or firstSlotForTool[tool] then
+				table.remove(parkedExtraTools, i)
+			end
+		end
+	end
+
+	local function parkExtraToolInBackpack(tool: Tool, fromSlot: number?)
+		removeExtraToolFromParkedList(tool)
+		removeExtraToolFromAllHotbarSlots(tool)
+		if typeof(fromSlot) == "number" then
+			extraToolSlotByIndex[fromSlot] = nil
+		end
+		table.insert(parkedExtraTools, tool)
 		local hum = getHumanoid()
 		if hum and tool.Parent == player.Character then
 			hum:UnequipTools()
 		end
+		sanitizeExtraToolSlotPins()
 	end
 
-	local function unparkExtraToolToHotbar(tool: Tool, toSlot: number)
-		for i, t in ipairs(parkedExtraTools) do
-			if t == tool then
-				table.remove(parkedExtraTools, i)
-				break
-			end
+	local function unparkExtraToolToHotbar(tool: Tool, toSlot: number): boolean
+		if not slotCanAcceptExtraToolDrop(toSlot) then
+			return false
 		end
+		requestTuckBrainrotHotbarSlot(toSlot)
+		if not slotCanHoldExtraTool(toSlot) then
+			return false
+		end
+		removeExtraToolFromParkedList(tool)
+		removeExtraToolFromAllHotbarSlots(tool)
 		extraToolSlotByIndex[toSlot] = tool
+		sanitizeExtraToolSlotPins()
+		return true
 	end
 
 	local refreshParkedExtraToolsUI: () -> ()
@@ -506,6 +770,22 @@ local ToolbarController = {}
 		if not container then
 			return
 		end
+
+		local template = container:FindFirstChild("1")
+		if not template or not template:IsA("GuiObject") then
+			return
+		end
+
+		-- Older versions placed lucky blocks inside a __ExtraTools Frame. That frame
+		-- does not size correctly inside UIGridLayout/UIListLayout containers, which
+		-- made the lucky-block buttons huge/tiny and unreliable. Keep extra tools as
+		-- direct container rows so they inherit the same layout behavior as normal
+		-- backpack cells.
+		local oldHost = container:FindFirstChild("__ExtraTools")
+		if oldHost then
+			oldHost:Destroy()
+		end
+
 		for tool, row in pairs(extraToolRowByTool) do
 			if not isExtraToolParked(tool) or not tool.Parent then
 				if row and row.Parent then
@@ -514,46 +794,27 @@ local ToolbarController = {}
 				extraToolRowByTool[tool] = nil
 			end
 		end
-		local template = container:FindFirstChild("1")
-		if not template or not template:IsA("GuiObject") then
-			return
-		end
-		local host = container:FindFirstChild("__ExtraTools")
-		if not host then
-			host = Instance.new("Frame")
-			host.Name = "__ExtraTools"
-			host.BackgroundTransparency = 1
-			host.BorderSizePixel = 0
-			host.Size = UDim2.fromScale(1, 0)
-			host.AutomaticSize = Enum.AutomaticSize.Y
-			host.LayoutOrder = 9999
-			host.Parent = container
-			local layout = Instance.new("UIListLayout")
-			layout.FillDirection = Enum.FillDirection.Vertical
-			layout.SortOrder = Enum.SortOrder.LayoutOrder
-			layout.Padding = UDim.new(0, 4)
-			layout.Parent = host
-		end
-		local hostGui = host :: Frame
+
 		for i = #parkedExtraTools, 1, -1 do
 			local tool = parkedExtraTools[i]
 			if not tool.Parent then
 				table.remove(parkedExtraTools, i)
 			end
 		end
+
 		for index, tool in ipairs(parkedExtraTools) do
 			local row = extraToolRowByTool[tool]
 			if not row or not row.Parent then
 				row = (template :: GuiObject):Clone()
-				row.Name = "__Extra_" .. tostring(index)
-				row.LayoutOrder = index
 				row.Visible = true
-				row.Parent = hostGui
+				row.Parent = container
 				extraToolRowByTool[tool] = row
+
 				local btn = slotPrimaryButton(row :: GuiObject)
 				if btn then
 					passthroughChildClicks(btn :: GuiObject)
 					styleToolbarSlotButton(btn)
+
 					local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
 					btn.MouseEnter:Connect(function()
 						if not canUseToolbar then
@@ -569,10 +830,15 @@ local ToolbarController = {}
 						if not canUseToolbar then
 							return
 						end
+						if pendingToolbarDrag then
+							return
+						end
 						local tex = toolDisplayTexture(tool)
 						if tex == "" then
 							tex = "rbxasset://textures/ui/GuiImagePlaceholder.png"
 						end
+						UIInteractionSounds.playClick()
+						lastResolvedHotbarDropSlot = nil
 						activeToolbarDrag = true
 						pendingToolbarDrag = {
 							kind = "backpack_extra",
@@ -586,15 +852,30 @@ local ToolbarController = {}
 					end)
 				end
 			end
+
+			row.Name = "__Extra_" .. tostring(index)
+			row.LayoutOrder = MAX_BACKPACK_BRAINROT_SLOTS + index
+			row.Size = (template :: GuiObject).Size
+			row.AutomaticSize = Enum.AutomaticSize.None
+			row.Visible = true
+
 			local surface = toolSlotSurface(row :: GuiObject)
 			local tex = toolDisplayTexture(tool)
 			setSlotIcons(surface, (tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png", true)
+			for _, icon in slotIconTargets(surface) do
+				icon.AnchorPoint = Vector2.new(0.5, 0.5)
+				icon.Position = UDim2.new(0.5, 0, 0.5, 0)
+			end
+
 			local rate = surface:FindFirstChild("Rate")
 			if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
 				rate.Text = tool.Name
 			end
+			local key = surface:FindFirstChild("Key")
+			if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
+				key.Text = "LB"
+			end
 		end
-		hostGui.Visible = #parkedExtraTools > 0
 	end
 
 	type BackpackSlotPanelDefaults = {
@@ -777,7 +1058,7 @@ local ToolbarController = {}
 	local function rebuildBackpackDisplayOrder()
 		backpackDisplayOrder = {}
 		for ki = 1, #brainrotEntries do
-			if brainrotEntries[ki] and (ki > HOTBAR_INVENTORY_SLOTS or brainrotParkedInUI[ki]) then
+			if brainrotEntries[ki] and (brainrotParkedInUI[ki] == true or hotbarSlotForBrainrotIndex(ki) == nil) then
 				table.insert(backpackDisplayOrder, ki)
 			end
 		end
@@ -1169,12 +1450,6 @@ local ToolbarController = {}
 	end
 
 	local function hotbarSlotHasSelectableContent(index: number): boolean
-		if brainrotParkedInUI[index] then
-			return false
-		end
-		if brainrotEntries[index] ~= nil then
-			return true
-		end
 		if slotTools[index] ~= nil then
 			return true
 		end
@@ -1182,7 +1457,8 @@ local ToolbarController = {}
 		if mapped and mapped.Parent then
 			return true
 		end
-		return false
+		local brainrotIdx = brainrotIndexForHotbarSlot(index)
+		return brainrotIdx ~= nil and brainrotEntries[brainrotIdx] ~= nil and brainrotParkedInUI[brainrotIdx] ~= true
 	end
 
 	local function refreshToolbarVisibility()
@@ -1219,10 +1495,21 @@ local ToolbarController = {}
 	end
 
 	local function findHotbarSlotForBrainrotName(itemName: string): number?
-		for i = 1, HOTBAR_INVENTORY_SLOTS do
-			local e = brainrotEntries[i]
-			if e and e.name == itemName and not brainrotParkedInUI[i] then
-				return i
+		for invIndex = 1, #brainrotEntries do
+			local e = brainrotEntries[invIndex]
+			local slot = hotbarSlotForBrainrotIndex(invIndex)
+			if e and slot and e.name == itemName and not brainrotParkedInUI[invIndex] then
+				return slot
+			end
+		end
+		return nil
+	end
+
+	local function findInventoryIndexForBrainrotName(itemName: string): number?
+		for invIndex = 1, #brainrotEntries do
+			local e = brainrotEntries[invIndex]
+			if e and e.name == itemName and not brainrotParkedInUI[invIndex] then
+				return invIndex
 			end
 		end
 		return nil
@@ -1249,9 +1536,9 @@ local ToolbarController = {}
 		end
 
 		if pendingReturnedBrainrotName then
-			local slot = findHotbarSlotForBrainrotName(pendingReturnedBrainrotName)
-			if slot then
-				applyAutoEquipFromSync(slot)
+			local invIndex = findInventoryIndexForBrainrotName(pendingReturnedBrainrotName)
+			if invIndex then
+				applyAutoEquipFromSync(invIndex)
 				pendingReturnedBrainrotName = nil
 			end
 		end
@@ -1436,8 +1723,9 @@ local ToolbarController = {}
 		local surface = toolSlotSurface(slot)
 		local keyLabel = surface:FindFirstChild("Key") or surface:FindFirstChild("Number")
 		local rate = surface:FindFirstChild("Rate")
+		local brainrotIdx = brainrotIndexForHotbarSlot(index)
+		local brainrotEntry = if brainrotIdx then brainrotEntries[brainrotIdx] else nil
 
-		-- 1. slotTools[index] → tool icon  2. parked → blank  3. brainrotEntries[index] → entry  4. else blank
 		if slotTools[index] ~= nil then
 			local tool = slotTools[index] :: Tool
 			local invIdx = tool:GetAttribute("BrainrotInvIndex")
@@ -1457,16 +1745,8 @@ local ToolbarController = {}
 			if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
 				rate.Text = if entryForTool then formatEntryIncomeLabel(entryForTool) else tool.Name
 			end
-		elseif brainrotParkedInUI[index] == true then
-			setSlotIcons(surface, "", false)
-			if keyLabel and (keyLabel:IsA("TextLabel") or keyLabel:IsA("TextButton")) then
-				keyLabel.Text = tostring(index)
-			end
-			if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
-				rate.Text = ""
-			end
-		elseif brainrotEntries[index] ~= nil then
-			local e = brainrotEntries[index] :: { name: string, icon: string, sourcePath: string }
+		elseif brainrotEntry ~= nil and brainrotIdx and brainrotParkedInUI[brainrotIdx] ~= true then
+			local e = brainrotEntry :: { name: string, icon: string, sourcePath: string }
 			setSlotIcons(surface, (e.icon ~= "" and e.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png", true)
 			if keyLabel and (keyLabel:IsA("TextLabel") or keyLabel:IsA("TextButton")) then
 				keyLabel.Text = tostring(index)
@@ -1486,9 +1766,6 @@ local ToolbarController = {}
 	end
 
 	local function hotbarSlotIsOccupied(index: number): boolean
-		if brainrotParkedInUI[index] then
-			return false
-		end
 		if slotTools[index] ~= nil then
 			return true
 		end
@@ -1496,7 +1773,8 @@ local ToolbarController = {}
 		if mapped and mapped.Parent then
 			return true
 		end
-		return brainrotEntries[index] ~= nil
+		local brainrotIdx = brainrotIndexForHotbarSlot(index)
+		return brainrotIdx ~= nil and brainrotEntries[brainrotIdx] ~= nil and brainrotParkedInUI[brainrotIdx] ~= true
 	end
 
 	local hotbarListLayout: UIListLayout? = nil
@@ -1662,8 +1940,8 @@ local ToolbarController = {}
 		end
 
 		local layout = ensureHotbarListLayout()
-local HOTBAR_SLOT_PADDING_PX = 10
-			hotbarListLayout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
+		local HOTBAR_SLOT_PADDING_PX = 10
+		hotbarListLayout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
 		layout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
 		layout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
 		layout.FillDirection = Enum.FillDirection.Horizontal
@@ -1771,20 +2049,22 @@ local HOTBAR_SLOT_PADDING_PX = 10
 		end
 
 		local maxHotbar = math.min(HOTBAR_INVENTORY_SLOTS, #slots)
-		-- Hotbar 1..9 mirrors brainrot inventory indices 1..9 (like Roblox's first toolbar slots).
+		-- Hotbar 1..9 displays whichever server inventory index is mapped to that slot.
 		for i = 1, maxHotbar do
-			if brainrotParkedInUI[i] then
-				slotTools[i] = nil
-			else
-				local t = if char then findBrainrotToolAtInvIndex(char, i) else nil
+			local invIndex = brainrotIndexForHotbarSlot(i)
+			if invIndex and brainrotParkedInUI[invIndex] ~= true then
+				local t = if char then findBrainrotToolAtInvIndex(char, invIndex) else nil
 				if not t and backpack then
-					t = findBrainrotToolAtInvIndex(backpack, i)
+					t = findBrainrotToolAtInvIndex(backpack, invIndex)
 				end
 				slotTools[i] = t
+			else
+				slotTools[i] = nil
 			end
 		end
 
 		-- Drop stale extra-tool slot pins; keep equipped tools visible in the hotbar.
+		sanitizeExtraToolSlotPins()
 		for idx, tool in pairs(extraToolSlotByIndex) do
 			if not tool.Parent or not isExtraHotbarTool(tool) then
 				extraToolSlotByIndex[idx] = nil
@@ -1795,13 +2075,7 @@ local HOTBAR_SLOT_PADDING_PX = 10
 		local assignedExtras: { [Tool]: boolean } = {}
 
 		for idx, tool in pairs(extraToolSlotByIndex) do
-			if
-				idx >= 1
-				and idx <= maxHotbar
-				and slotTools[idx] == nil
-				and not brainrotParkedInUI[idx]
-				and brainrotEntries[idx] == nil
-			then
+			if idx >= 1 and idx <= maxHotbar and slotTools[idx] == nil and slotCanHoldExtraTool(idx) then
 				if tool.Parent then
 					slotTools[idx] = tool
 					assignedExtras[tool] = true
@@ -1815,13 +2089,28 @@ local HOTBAR_SLOT_PADDING_PX = 10
 			if isExtraToolParked(tool) then
 				continue
 			end
+
 			if not assignedExtras[tool] then
+				local placedInHotbar = false
+
 				for i = 1, maxHotbar do
-					if slotTools[i] == nil and not brainrotParkedInUI[i] and brainrotEntries[i] == nil then
+					if slotTools[i] == nil and slotCanHoldExtraTool(i) then
 						slotTools[i] = tool
 						extraToolSlotByIndex[i] = tool
 						assignedExtras[tool] = true
+						placedInHotbar = true
 						break
+					end
+				end
+
+				-- IMPORTANT:
+				-- If there is no hotbar slot available, do NOT let the Lucky Block become invisible.
+				-- Park it in the backpack UI instead.
+				if not placedInHotbar and tool.Parent then
+					removeExtraToolFromAllHotbarSlots(tool)
+
+					if not isExtraToolParked(tool) then
+						table.insert(parkedExtraTools, tool)
 					end
 				end
 			end
@@ -1832,6 +2121,7 @@ local HOTBAR_SLOT_PADDING_PX = 10
 			refreshSlotVisual(i)
 		end
 		updateHotbarSlotVisibility()
+		refreshParkedExtraToolsUI()
 
 		-- Highlight follows equipped tool; drop stale ring when that slot no longer has a brainrot (e.g. placed on stand).
 		local equippedSlot: number? = nil
@@ -1839,9 +2129,7 @@ local HOTBAR_SLOT_PADDING_PX = 10
 			local invIdx = equipped:GetAttribute("BrainrotInvIndex")
 			if typeof(invIdx) == "number" then
 				local raw = math.floor(invIdx)
-				if raw >= 1 and raw <= HOTBAR_INVENTORY_SLOTS then
-					equippedSlot = raw
-				end
+				equippedSlot = hotbarSlotForBrainrotIndex(raw)
 			else
 				for i = 1, #slots do
 					if slotTools[i] == equipped then
@@ -1855,9 +2143,14 @@ local HOTBAR_SLOT_PADDING_PX = 10
 			uiHotbarHighlight = equippedSlot
 		elseif uiHotbarHighlight ~= nil then
 			local hi = math.clamp(uiHotbarHighlight, 1, HOTBAR_INVENTORY_SLOTS)
+			local hiBrainrotIdx = brainrotIndexForHotbarSlot(hi)
 			local slotStillHasBrainrot = slotTools[hi] ~= nil
 				or extraToolSlotByIndex[hi] ~= nil
-				or (brainrotEntries[hi] ~= nil and brainrotParkedInUI[hi] ~= true)
+				or (
+					hiBrainrotIdx ~= nil
+					and brainrotEntries[hiBrainrotIdx] ~= nil
+					and brainrotParkedInUI[hiBrainrotIdx] ~= true
+				)
 			if not slotStillHasBrainrot then
 				uiHotbarHighlight = nil
 			end
@@ -1956,6 +2249,70 @@ local HOTBAR_SLOT_PADDING_PX = 10
 		end
 	end
 
+	local function refreshAfterLocalBrainrotMove()
+		for si = 1, #slots do
+			refreshSlotVisual(si)
+		end
+		updateHotbarSlotVisibility()
+		refreshBrainrotBackpackUI()
+		task.defer(rebuildSlots)
+	end
+
+	local function setLocalBrainrotTucked(index: number, tucked: boolean)
+		if index < 1 or index > HOTBAR_INVENTORY_SLOTS then
+			return
+		end
+		if brainrotEntries[index] == nil then
+			brainrotParkedInUI[index] = nil
+			return
+		end
+		brainrotParkedInUI[index] = if tucked then true else nil
+	end
+
+	local function localBrainrotIsBackpackVisible(index: number): boolean
+		return brainrotParkedInUI[index] == true or hotbarSlotForBrainrotIndex(index) == nil
+	end
+
+	local function optimisticBrainrotTuckToBackpack(listIdx: number)
+		if not brainrotEntries[listIdx] then
+			return
+		end
+		brainrotParkedInUI[listIdx] = true
+		brainrotHotbarSlotByIndex[listIdx] = nil
+		rebuildBrainrotHotbarReverseMap()
+		refreshAfterLocalBrainrotMove()
+	end
+
+	local function optimisticBrainrotMoveToHotbar(listIdx: number, targetSlot: number)
+		if not brainrotEntries[listIdx] then
+			return
+		end
+		local target = math.clamp(math.floor(targetSlot), 1, HOTBAR_INVENTORY_SLOTS)
+		local oldSlot = hotbarSlotForBrainrotIndex(listIdx)
+		local displacedIdx = brainrotIndexForHotbarSlot(target)
+
+		if displacedIdx and displacedIdx ~= listIdx then
+			if oldSlot then
+				brainrotHotbarSlotByIndex[displacedIdx] = oldSlot
+				brainrotParkedInUI[displacedIdx] = nil
+			else
+				brainrotHotbarSlotByIndex[displacedIdx] = nil
+				brainrotParkedInUI[displacedIdx] = true
+			end
+		end
+
+		brainrotHotbarSlotByIndex[listIdx] = target
+		brainrotParkedInUI[listIdx] = nil
+		rebuildBrainrotHotbarReverseMap()
+		refreshAfterLocalBrainrotMove()
+	end
+
+	local function optimisticBrainrotMoveToBackpackIndex(listIdx: number, _destListIdx: number)
+		-- Keep server inventory order authoritative. Locally, just remove it from
+		-- the visible hotbar so it does not snap back while waiting for sync.
+		optimisticBrainrotTuckToBackpack(listIdx)
+	end
+
 	local function requestEquipBrainrotSlot(slotIdx: number, forceEquip: boolean?)
 		if not forceEquip and not canUseToolbar then
 			return
@@ -2009,6 +2366,7 @@ local HOTBAR_SLOT_PADDING_PX = 10
 					end
 					UIInteractionSounds.playClick()
 					local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+					lastResolvedHotbarDropSlot = nil
 					activeToolbarDrag = true
 					pendingToolbarDrag = {
 						kind = "backpack",
@@ -2164,13 +2522,34 @@ local HOTBAR_SLOT_PADDING_PX = 10
 					brainrotParkedInUI = {}
 					for _, n in ipairs(t.tuckedSlots :: { any }) do
 						if typeof(n) == "number" then
-							local ii = math.clamp(math.floor(n), 1, HOTBAR_INVENTORY_SLOTS)
-							brainrotParkedInUI[ii] = true
+							local ii = math.floor(n)
+							if ii >= 1 then
+								brainrotParkedInUI[ii] = true
+							end
 						end
 					end
 				else
 					brainrotParkedInUI = {}
 				end
+
+				if typeof(t.hotbarSlots) == "table" then
+					brainrotHotbarSlotByIndex = {}
+
+					for rawIdx, rawSlot in pairs(t.hotbarSlots :: any) do
+						local idxNum = if typeof(rawIdx) == "number" then rawIdx else tonumber(rawIdx)
+
+						if typeof(idxNum) == "number" and typeof(rawSlot) == "number" then
+							local idx = math.floor(idxNum)
+							local slot = math.floor(rawSlot)
+
+							if idx >= 1 and slot >= 1 and slot <= HOTBAR_INVENTORY_SLOTS then
+								brainrotHotbarSlotByIndex[idx] = slot
+							end
+						end
+					end
+				end
+
+				rebuildBrainrotHotbarReverseMap()
 			end
 		end
 		if typeof(entriesSource) ~= "table" then
@@ -2211,6 +2590,7 @@ local HOTBAR_SLOT_PADDING_PX = 10
 			end
 		end
 		brainrotEntries = nextList
+		rebuildBrainrotHotbarReverseMap()
 		brainrotInventoryUsed = usedOverride or #nextList
 		brainrotInventoryMax = maxOverride or DEFAULT_BRAINROT_CAPACITY
 		refreshInventoryHeaderText()
@@ -2242,7 +2622,10 @@ local HOTBAR_SLOT_PADDING_PX = 10
 			return
 		end
 
-		local hasBrainrotEntry = brainrotEntries[index] ~= nil and not brainrotParkedInUI[index]
+		local brainrotIdx = brainrotIndexForHotbarSlot(index)
+		local hasBrainrotEntry = brainrotIdx ~= nil
+			and brainrotEntries[brainrotIdx] ~= nil
+			and not brainrotParkedInUI[brainrotIdx]
 		local tool = slotTools[index]
 		local hum = getHumanoid()
 		if not hum then
@@ -2281,14 +2664,19 @@ local HOTBAR_SLOT_PADDING_PX = 10
 			if hasBrainrotEntry then
 				if equipped and equipped:IsA("Tool") and equipped:GetAttribute("BrainrotTool") == true then
 					local invIdx = equipped:GetAttribute("BrainrotInvIndex")
-					if typeof(invIdx) == "number" and math.floor(invIdx) == index and uiHotbarHighlight == index then
+					if
+						typeof(invIdx) == "number"
+						and brainrotIdx ~= nil
+						and math.floor(invIdx) == brainrotIdx
+						and uiHotbarHighlight == index
+					then
 						hum:UnequipTools()
 						setHotbarSelection(nil)
 						return
 					end
 				end
 				setHotbarSelection(index)
-				requestEquipBrainrotSlot(index, true)
+				requestEquipBrainrotSlot(brainrotIdx :: number, true)
 				task.defer(rebuildSlots)
 				task.delay(0.15, rebuildSlots)
 				task.delay(0.35, rebuildSlots)
@@ -2307,7 +2695,15 @@ local HOTBAR_SLOT_PADDING_PX = 10
 	-- After deposit, server sends equipSlot = inventory index of the new brainrot (hotbar 1–9 mirror those indices).
 	-- Must not use selectSlot here — it toggles off when the server already equipped the matching tool.
 	applyAutoEquipFromSync = function(equipSlot: number)
-		local slot = math.clamp(math.floor(equipSlot), 1, HOTBAR_INVENTORY_SLOTS)
+		local invIndex = math.floor(equipSlot)
+		if not brainrotEntries[invIndex] and invIndex >= 1 and invIndex <= HOTBAR_INVENTORY_SLOTS then
+			invIndex = brainrotIndexForHotbarSlot(invIndex) or invIndex
+		end
+		if not brainrotEntries[invIndex] then
+			return
+		end
+
+		local slot = hotbarSlotForBrainrotIndex(invIndex) or math.clamp(invIndex, 1, HOTBAR_INVENTORY_SLOTS)
 		setHotbarSelection(slot)
 
 		local function tryHoldBrainrot(): boolean
@@ -2325,8 +2721,8 @@ local HOTBAR_SLOT_PADDING_PX = 10
 				end
 				return true
 			end
-			if brainrotEntries[slot] and not brainrotParkedInUI[slot] then
-				requestEquipBrainrotSlot(slot, true)
+			if brainrotEntries[invIndex] and not brainrotParkedInUI[invIndex] then
+				requestEquipBrainrotSlot(invIndex, true)
 			end
 			return false
 		end
@@ -2465,38 +2861,41 @@ local HOTBAR_SLOT_PADDING_PX = 10
 
 		ensureHotbarLayoutPassthrough()
 
-		DropTargets.configure({
-			playerGui = playerGui,
-			hotbar = hotbar,
-			slots = slots,
-			hotbarInventorySlots = HOTBAR_INVENTORY_SLOTS,
-			maxBackpackSlots = MAX_BACKPACK_BRAINROT_SLOTS,
-			getDragGhostGui = function()
-				return dragGhostGui
-			end,
-			getPendingToolbarDrag = function()
-				return pendingToolbarDrag
-			end,
-			getHotbarDragBulkHover = function()
-				return hotbarDragBulkHover
-			end,
-			getBackpackContainer = function()
-				return backpackContainer
-			end,
-			getBackpackGuiFrame = function()
-				return backpackGuiFrame
-			end,
-			getBackpackFrameRef = function()
-				return backpackFrameRef
-			end,
-			getToggleBackpackRef = function()
-				return toggleBackpackRef
-			end,
-			getIsBackpackPanelOpen = function()
-				return isBackpackPanelOpen
-			end,
-			toolSlotSurface = toolSlotSurface,
-		})
+		local configureDropTargets = (DropTargets :: any).configure
+		if typeof(configureDropTargets) == "function" then
+			configureDropTargets({
+				playerGui = playerGui,
+				hotbar = hotbar,
+				slots = slots,
+				hotbarInventorySlots = HOTBAR_INVENTORY_SLOTS,
+				maxBackpackSlots = MAX_BACKPACK_BRAINROT_SLOTS,
+				getDragGhostGui = function()
+					return dragGhostGui
+				end,
+				getPendingToolbarDrag = function()
+					return pendingToolbarDrag
+				end,
+				getHotbarDragBulkHover = function()
+					return hotbarDragBulkHover
+				end,
+				getBackpackContainer = function()
+					return backpackContainer
+				end,
+				getBackpackGuiFrame = function()
+					return backpackGuiFrame
+				end,
+				getBackpackFrameRef = function()
+					return backpackFrameRef
+				end,
+				getToggleBackpackRef = function()
+					return toggleBackpackRef
+				end,
+				getIsBackpackPanelOpen = function()
+					return isBackpackPanelOpen
+				end,
+				toolSlotSurface = toolSlotSurface,
+			})
+		end
 
 		-- Tap / hover: nested `Button` (SideUI.Toolbar.Hotbar[n].Button) or slot is the button.
 		-- Mobile: only `Activated` selects/equips; parent frames must not capture touch input.
@@ -2528,7 +2927,7 @@ local HOTBAR_SLOT_PADDING_PX = 10
 					if not canUseToolbar then
 						return
 					end
-					if DropTargets.isTouchPointerInput() then
+					if dtIsTouchPointerInput() then
 						return
 					end
 					local tex = hotbarSlotDragTexture(i)
@@ -2536,16 +2935,18 @@ local HOTBAR_SLOT_PADDING_PX = 10
 						return
 					end
 					UIInteractionSounds.playClick()
-					local isExtraTool = not (brainrotEntries[i] and not brainrotParkedInUI[i])
+					local dragBrainrotIdx = brainrotIndexForHotbarSlot(i)
+					local isExtraTool = dragBrainrotIdx == nil or brainrotParkedInUI[dragBrainrotIdx] == true
 					local tool = slotTools[i]
 					local equippedOnDown = false
 					if tool and player.Character and tool.Parent == player.Character then
 						equippedOnDown = true
 					end
+					lastResolvedHotbarDropSlot = nil
 					activeToolbarDrag = true
 					pendingToolbarDrag = {
 						kind = "hotbar",
-						idx = i,
+						idx = if isExtraTool then i else dragBrainrotIdx :: number,
 						start = UserInputService:GetMouseLocation(),
 						texture = tex,
 						rowButton = nil,
@@ -2766,49 +3167,24 @@ local HOTBAR_SLOT_PADDING_PX = 10
 					return
 				end
 				if pnd.kind == "backpack" then
-					if not pnd.rowButton then
-						return
-					end
-					local ownerRow = DropTargets.ancestorBackpackRowIndexFromGuiObject(pnd.rowButton :: GuiObject)
-					if not ownerRow then
-						return
-					end
-					local allowGhost = input.UserInputType == Enum.UserInputType.Touch
+					-- Normal brainrots used to only start a ghost while the cursor was still
+					-- over the original backpack row. In a tight grid, the first movement
+					-- event after crossing the threshold is often already over another row,
+					-- so dragging brainrots inside the backpack/hotbar felt completely dead.
+					local stillHolding = input.UserInputType == Enum.UserInputType.Touch
 						or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-					local ok, hitsOrErr = pcall(function()
-						return playerGui:GetGuiObjectsAtPosition(m.X, m.Y)
-					end)
-					if ok and typeof(hitsOrErr) == "table" then
-						for _, hit in hitsOrErr :: { Instance } do
-							if dragGhostGui and hit:IsDescendantOf(dragGhostGui) then
-								continue
-							end
-							if not hit:IsA("GuiObject") then
-								continue
-							end
-							local rowUnder = DropTargets.ancestorBackpackRowIndexFromGuiObject(hit)
-							if rowUnder then
-								if rowUnder == ownerRow then
-									allowGhost = true
-								else
-									allowGhost = false
-								end
-								break
-							end
-						end
-					end
-					if not allowGhost then
+					if not stillHolding then
 						return
 					end
 				end
 				startDragGhost(pnd.texture, m)
 				local probeEnd = m
-				local probeWindow = DropTargets.screenPointWithGuiInset(probeEnd)
+				local probeWindow = dtScreenPointWithGuiInset(probeEnd)
 				local ghostCenter = if dragGhostImage
 					then dragGhostImage.AbsolutePosition + dragGhostImage.AbsoluteSize * 0.5
 					else nil
 				local overHotbar, overBackpack, overBackpackPanel =
-					DropTargets.probeDragHoverTargets(probeWindow, probeEnd, ghostCenter, nil)
+					dtProbeDragHoverTargets(probeWindow, probeEnd, ghostCenter, nil)
 				updateDragHoverTargets(overHotbar, overBackpack, overBackpackPanel)
 				return
 			end
@@ -2816,7 +3192,7 @@ local HOTBAR_SLOT_PADDING_PX = 10
 			if input.UserInputType == Enum.UserInputType.Touch then
 				rawEnd = Vector2.new(input.Position.X, input.Position.Y)
 			end
-			local mouseWindow = DropTargets.screenPointWithGuiInset(rawEnd)
+			local mouseWindow = dtScreenPointWithGuiInset(rawEnd)
 			local ghostCenter: Vector2? = nil
 			if dragGhostImage then
 				ghostCenter = dragGhostImage.AbsolutePosition + dragGhostImage.AbsoluteSize * 0.5
@@ -2825,7 +3201,11 @@ local HOTBAR_SLOT_PADDING_PX = 10
 				then ghostCenter - Vector2.new(GuiService:GetGuiInset().X, GuiService:GetGuiInset().Y)
 				else nil
 			local overHotbar, overBackpack, overBackpackPanel =
-				DropTargets.probeDragHoverTargets(mouseWindow, rawEnd, ghostCenter, ghostViewport)
+				dtProbeDragHoverTargets(mouseWindow, rawEnd, ghostCenter, ghostViewport)
+			local hoveringHotbarSlot = dtHotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter)
+			if hoveringHotbarSlot then
+				lastResolvedHotbarDropSlot = hoveringHotbarSlot
+			end
 			if pnd.kind == "hotbar" and not isBackpackPanelOpen and overBackpack then
 				setBackpackPanelOpen(true)
 			end
@@ -2842,6 +3222,7 @@ local HOTBAR_SLOT_PADDING_PX = 10
 			if not toolbarInputAllowed() then
 				activeToolbarDrag = false
 				pendingToolbarDrag = nil
+				lastResolvedHotbarDropSlot = nil
 				clearDragGhost()
 				return
 			end
@@ -2849,6 +3230,7 @@ local HOTBAR_SLOT_PADDING_PX = 10
 			pendingToolbarDrag = nil
 			activeToolbarDrag = false
 			if not pnd then
+				lastResolvedHotbarDropSlot = nil
 				clearDragGhost()
 				return
 			end
@@ -2863,29 +3245,45 @@ local HOTBAR_SLOT_PADDING_PX = 10
 				clearDragGhost()
 				return
 			end
-			local mouseWindow = DropTargets.screenPointWithGuiInset(rawEnd)
+			local mouseWindow = dtScreenPointWithGuiInset(rawEnd)
 			local ghostCenter: Vector2? = nil
 			if dragGhostImage then
 				ghostCenter = dragGhostImage.AbsolutePosition + dragGhostImage.AbsoluteSize * 0.5
 			end
 			local insetProbe = GuiService:GetGuiInset()
 			local ghostViewport = if ghostCenter then ghostCenter - Vector2.new(insetProbe.X, insetProbe.Y) else nil
-			local destBackpackRow = DropTargets.backpackRowIndexFromDropProbes(rawEnd, mouseWindow, ghostViewport)
+			local destBackpackRow = dtBackpackRowIndexFromDropProbes(rawEnd, mouseWindow, ghostViewport)
 			clearDragGhost()
 			dragSuppressedToolbarClick = true
 
 			local overHotbar, overBackpack, overBackpackPanel =
-				DropTargets.probeDragHoverTargets(mouseWindow, rawEnd, ghostCenter, ghostViewport)
-			local droppedOnBackpack = overBackpack or overBackpackPanel
-			local targetHotbar: number? = nil
-			if not droppedOnBackpack then
-				targetHotbar = DropTargets.hotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter)
+				dtProbeDragHoverTargets(mouseWindow, rawEnd, ghostCenter, ghostViewport)
+
+			-- Resolve exact hotbar drops, but DO NOT reuse the cached hotbar slot when
+			-- the release is over the backpack. That stale cache was why normal brainrots
+			-- snapped back instead of saving into the bag: it thought you dropped back on
+			-- the old hotbar slot.
+			local targetHotbar: number? = dtHotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter)
+			local releaseOverBackpack = (overBackpack or overBackpackPanel or destBackpackRow ~= nil)
+			local releaseOverHotbarZone = overHotbar
+				or dtPointOverHotbarDropZoneProbes(mouseWindow, rawEnd)
+				or (ghostCenter ~= nil and dtPointOverHotbarDropZoneProbes(ghostCenter, rawEnd))
+				or pointOverHotbarHitScan(ghostViewport)
+			if
+				not targetHotbar
+				and lastResolvedHotbarDropSlot
+				and releaseOverHotbarZone
+				and not releaseOverBackpack
+			then
+				targetHotbar = lastResolvedHotbarDropSlot
 			end
+			lastResolvedHotbarDropSlot = nil
+			local droppedOnBackpack = releaseOverBackpack and targetHotbar == nil
 
 			if pnd.kind == "hotbar" and pnd.isExtraTool then
+				local tool = extraToolAtHotbarSlot(pnd.idx) or extraToolSlotByIndex[pnd.idx] or slotTools[pnd.idx]
 				if droppedOnBackpack then
 					setBackpackPanelOpen(true)
-					local tool = extraToolSlotByIndex[pnd.idx] or slotTools[pnd.idx]
 					if tool then
 						parkExtraToolInBackpack(tool, pnd.idx)
 						task.defer(rebuildSlots)
@@ -2895,22 +3293,24 @@ local HOTBAR_SLOT_PADDING_PX = 10
 				elseif
 					targetHotbar
 					and targetHotbar ~= pnd.idx
-					and brainrotEntries[targetHotbar] == nil
-					and brainrotParkedInUI[targetHotbar] ~= true
+					and tool
+					and slotCanAcceptExtraToolDrop(targetHotbar)
 				then
-					local tool = extraToolSlotByIndex[pnd.idx] or slotTools[pnd.idx]
-					local other = extraToolSlotByIndex[targetHotbar]
-					if tool then
-						extraToolSlotByIndex[targetHotbar] = tool
-					else
-						extraToolSlotByIndex[targetHotbar] = nil
+					local other = extraToolAtHotbarSlot(targetHotbar)
+					if not other then
+						requestTuckBrainrotHotbarSlot(targetHotbar)
 					end
-					if other then
+					removeExtraToolFromParkedList(tool)
+					removeExtraToolFromAllHotbarSlots(tool)
+					if other and other ~= tool then
+						removeExtraToolFromParkedList(other)
+						removeExtraToolFromAllHotbarSlots(other)
 						extraToolSlotByIndex[pnd.idx] = other
-					else
-						extraToolSlotByIndex[pnd.idx] = nil
 					end
+					extraToolSlotByIndex[targetHotbar] = tool
+					sanitizeExtraToolSlotPins()
 					task.defer(rebuildSlots)
+					refreshParkedExtraToolsUI()
 					UIInteractionSounds.playClick()
 				end
 				return
@@ -2918,15 +3318,16 @@ local HOTBAR_SLOT_PADDING_PX = 10
 
 			if pnd.kind == "backpack_extra" and pnd.tool then
 				local tool = pnd.tool :: Tool
-				if
-					targetHotbar
-					and brainrotEntries[targetHotbar] == nil
-					and brainrotParkedInUI[targetHotbar] ~= true
-				then
-					unparkExtraToolToHotbar(tool, targetHotbar)
-					task.defer(rebuildSlots)
-					refreshParkedExtraToolsUI()
-					UIInteractionSounds.playClick()
+				if targetHotbar and slotCanAcceptExtraToolDrop(targetHotbar) then
+					local occupying = extraToolAtHotbarSlot(targetHotbar)
+					if occupying and occupying ~= tool then
+						parkExtraToolInBackpack(occupying, targetHotbar)
+					end
+					if unparkExtraToolToHotbar(tool, targetHotbar) then
+						task.defer(rebuildSlots)
+						refreshParkedExtraToolsUI()
+						UIInteractionSounds.playClick()
+					end
 				end
 				return
 			end
@@ -2937,24 +3338,28 @@ local HOTBAR_SLOT_PADDING_PX = 10
 				return
 			end
 
-			local overHotbarZone = overHotbar
-				or DropTargets.pointOverHotbarDropZoneProbes(mouseWindow, rawEnd)
-				or (ghostCenter ~= nil and DropTargets.pointOverHotbarDropZoneProbes(ghostCenter, rawEnd))
-				or (ghostViewport ~= nil and DropTargets.pointOverHotbarFromGuiHitScan(ghostViewport))
+			local remote = parkEv :: RemoteEvent
+
+			local overHotbarZone = targetHotbar ~= nil or (releaseOverHotbarZone and not releaseOverBackpack)
 
 			if pnd.kind == "hotbar" then
-				local hasEntry = brainrotEntries[pnd.idx] and not brainrotParkedInUI[pnd.idx]
+				local sourceHotbarSlot = hotbarSlotForBrainrotIndex(pnd.idx)
+				local hasEntry = brainrotEntries[pnd.idx]
+					and not brainrotParkedInUI[pnd.idx]
+					and sourceHotbarSlot ~= nil
 				if not hasEntry then
 					return
 				end
 				if droppedOnBackpack then
-					-- Hotbar → backpack panel: tuck (server sync updates UI).
-					setBackpackPanelOpen(true);
-					(parkEv :: RemoteEvent):FireServer(pnd.idx, true)
+					-- Hotbar → backpack panel: tuck immediately, then let server confirm.
+					setBackpackPanelOpen(true)
+					optimisticBrainrotTuckToBackpack(pnd.idx)
+					remote:FireServer(pnd.idx, true)
 					UIInteractionSounds.playClick()
-				elseif targetHotbar and targetHotbar ~= pnd.idx then
+				elseif targetHotbar and targetHotbar ~= sourceHotbarSlot then
 					-- Hotbar → hotbar swap.
-					(parkEv :: RemoteEvent):FireServer(pnd.idx, false, targetHotbar)
+					optimisticBrainrotMoveToHotbar(pnd.idx, targetHotbar)
+					remote:FireServer(pnd.idx, false, targetHotbar)
 					UIInteractionSounds.playClick()
 				end
 			elseif pnd.kind == "backpack" then
@@ -2962,8 +3367,16 @@ local HOTBAR_SLOT_PADDING_PX = 10
 				if not entry then
 					return
 				end
-				if overHotbarZone then
-					-- Backpack → hotbar: server assigns lowest free slot 1..9 (no slot memory).
+				if targetHotbar then
+					-- Backpack → exact hotbar slot.
+					optimisticBrainrotMoveToHotbar(pnd.idx, targetHotbar)(parkEv :: RemoteEvent):FireServer(
+						pnd.idx,
+						false,
+						targetHotbar
+					)
+					UIInteractionSounds.playClick()
+				elseif overHotbarZone then
+					-- Fallback: dropped over the hotbar row but not a specific cell.
 					(parkEv :: RemoteEvent):FireServer(pnd.idx, false)
 					UIInteractionSounds.playClick()
 				elseif droppedOnBackpack and destBackpackRow then
@@ -2972,8 +3385,9 @@ local HOTBAR_SLOT_PADDING_PX = 10
 						destListIdx = #brainrotEntries + 1
 					end
 					if destListIdx ~= pnd.idx then
-						-- Insert at server list index (pushes existing entries to the right; no swap/replace).
-						(parkEv :: RemoteEvent):FireServer(pnd.idx, false, nil, destListIdx)
+						-- Backpack row → backpack row reorder.
+						optimisticBrainrotMoveToBackpackIndex(pnd.idx, destListIdx)
+						remote:FireServer(pnd.idx, false, nil, destListIdx)
 						UIInteractionSounds.playClick()
 					end
 				end

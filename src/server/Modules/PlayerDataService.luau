@@ -9,6 +9,7 @@ local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+local RunService = game:GetService("RunService")
 
 local CashBoostUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("CashBoostUtil"))
 local DailyConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("DailyConfig"))
@@ -16,14 +17,17 @@ local LiveDataStores = require(ReplicatedStorage:WaitForChild("Shared"):WaitForC
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 
 local IndexService = require(script.Parent:WaitForChild("IndexService"))
 
 local M = {}
 
-local DATA_STORE_NAME = "PlayerData_v1"
-local AUTOSAVE_INTERVAL_SEC = 120
+local ENVIRONMENT = RunService:IsStudio() and "Development" or "Production"
+local DATA_STORE_NAME = ENVIRONMENT .. "_#003"
+
+local AUTOSAVE_INTERVAL_SEC = 300
 local LOADED_ATTR = PlayerDataSchema.LOADED_ATTR
 local PLAY_TIME_ATTR = PlayerDataSchema.TOTAL_PLAY_TIME_ATTR
 
@@ -86,6 +90,103 @@ local function readStringArray(raw: any): { string }
 	return out
 end
 
+local function readBool(raw: any, default: boolean): boolean
+	if typeof(raw) == "boolean" then
+		return raw
+	end
+	return default
+end
+
+local function getPackLimit(): number
+	local limit = StoreConfig.PACK_PURCHASE_LIMIT
+	if typeof(limit) == "number" then
+		return math.max(0, math.floor(limit))
+	end
+	return 1
+end
+
+local function clampPackCount(raw: any): number
+	return math.clamp(floorNum(raw, 0), 0, getPackLimit())
+end
+
+local function getPackSaveKey(pack: any): string
+	if typeof(pack.key) == "string" and pack.key ~= "" then
+		return pack.key
+	end
+
+	if typeof(pack.productId) == "number" then
+		return tostring(pack.productId)
+	end
+
+	if typeof(pack.boughtAttr) == "string" and pack.boughtAttr ~= "" then
+		return pack.boughtAttr
+	end
+
+	return "UnknownPack"
+end
+
+local function collectStorePurchases(player: Player): { [string]: any }
+	local A = StoreConfig.ATTR
+
+	local packPurchases: { [string]: number } = {}
+
+	for _, pack in StoreConfig.PACKS do
+		if typeof(pack.boughtAttr) == "string" then
+			packPurchases[getPackSaveKey(pack)] = clampPackCount(player:GetAttribute(pack.boughtAttr))
+		end
+	end
+
+	return {
+		exclusiveOwned = player:GetAttribute(A.EXCLUSIVE_OWNED) == true,
+		freeUncommonClaimed = player:GetAttribute(A.FREE_UNCOMMON_CLAIMED) == true,
+		freeStealCount = floorNum(player:GetAttribute(A.FREE_STEAL_COUNT), 0),
+		packPurchases = packPurchases,
+	}
+end
+
+local function normalizeStorePurchases(raw: any): { [string]: any }
+	local out = {
+		exclusiveOwned = false,
+		freeUncommonClaimed = false,
+		freeStealCount = 0,
+		packPurchases = {},
+	}
+
+	if typeof(raw) ~= "table" then
+		return out
+	end
+
+	out.exclusiveOwned = readBool(raw.exclusiveOwned, false)
+	out.freeUncommonClaimed = readBool(raw.freeUncommonClaimed, false)
+	out.freeStealCount = floorNum(raw.freeStealCount, 0)
+
+	local rawPacks = raw.packPurchases
+	if typeof(rawPacks) == "table" then
+		for _, pack in StoreConfig.PACKS do
+			local key = getPackSaveKey(pack)
+			out.packPurchases[key] = clampPackCount(rawPacks[key])
+		end
+	end
+
+	return out
+end
+
+local function applyStorePurchases(player: Player, raw: any)
+	local data = normalizeStorePurchases(raw)
+	local A = StoreConfig.ATTR
+
+	player:SetAttribute(A.EXCLUSIVE_OWNED, data.exclusiveOwned == true)
+	player:SetAttribute(A.FREE_UNCOMMON_CLAIMED, data.freeUncommonClaimed == true)
+	player:SetAttribute(A.FREE_STEAL_COUNT, floorNum(data.freeStealCount, 0))
+
+	for _, pack in StoreConfig.PACKS do
+		if typeof(pack.boughtAttr) == "string" then
+			local key = getPackSaveKey(pack)
+			player:SetAttribute(pack.boughtAttr, clampPackCount(data.packPurchases[key]))
+		end
+	end
+end
+
 local function collectInventory(player: Player): ({ PlayerDataSchema.BrainrotInvSaveEntry }, { number }, number?)
 	local packed = invokeInternal("ExportInventoryForSave", player)
 	if typeof(packed) ~= "table" then
@@ -132,6 +233,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 	local cash = player:GetAttribute("Cash")
 	local rebirth = player:GetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR)
 	local dailyBoost = player:GetAttribute(CashBoostUtil.DAILY_BOOST_ATTR)
+	local storePurchases = collectStorePurchases(player)
 
 	return {
 		version = PlayerDataSchema.VERSION,
@@ -147,6 +249,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		dailyNextAt = floorNum(player:GetAttribute(DailyConfig.NEXT_AT_ATTR), os.time()),
 		dailySkipAllOwned = player:GetAttribute(DailyConfig.SKIP_ALL_ATTR) == true,
 		dailyCashBoostPercent = if typeof(dailyBoost) == "number" then math.max(0, dailyBoost) else 0,
+		storePurchases = storePurchases,
 		indexUnlocks = unlockKeys,
 		goldenNames = goldenNames,
 		inventory = inventory,
@@ -170,10 +273,7 @@ end
 local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSaveData)
 	player:SetAttribute("Cash", data.cash)
 	player:SetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR, data.rebirthCount)
-	player:SetAttribute(
-		RebirthConfig.MONEY_MULT_ATTR,
-		RebirthConfig.moneyMultiplierForCount(data.rebirthCount)
-	)
+	player:SetAttribute(RebirthConfig.MONEY_MULT_ATTR, RebirthConfig.moneyMultiplierForCount(data.rebirthCount))
 	player:SetAttribute(SwingUpgrades.POWER_LEVEL_ATTR, data.powerLevel)
 	player:SetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR, data.ropeLevel)
 	player:SetAttribute(SwingUpgrades.CARRY_LEVEL_ATTR, data.carryLevel)
@@ -183,6 +283,8 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	player:SetAttribute(DailyConfig.NEXT_AT_ATTR, data.dailyNextAt)
 	player:SetAttribute(DailyConfig.SKIP_ALL_ATTR, data.dailySkipAllOwned)
 	player:SetAttribute(CashBoostUtil.DAILY_BOOST_ATTR, data.dailyCashBoostPercent)
+
+	applyStorePurchases(player, (data :: any).storePurchases)
 
 	SwingUpgrades.syncGameplayStatsFromLevels(player, {
 		power = data.powerLevel,
@@ -276,7 +378,11 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 	local stands: { PlayerDataSchema.StandSaveEntry } = {}
 	if typeof(raw.stands) == "table" then
 		for _, entry in raw.stands do
-			if typeof(entry) == "table" and typeof(entry.standName) == "string" and typeof(entry.brainrotName) == "string" then
+			if
+				typeof(entry) == "table"
+				and typeof(entry.standName) == "string"
+				and typeof(entry.brainrotName) == "string"
+			then
 				table.insert(stands, {
 					standName = entry.standName,
 					storyName = if typeof(entry.storyName) == "string" then entry.storyName else nil,
@@ -305,7 +411,11 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		dailyClaimedMask = floorNum(raw.dailyClaimedMask, 0),
 		dailyNextAt = floorNum(raw.dailyNextAt, os.time()),
 		dailySkipAllOwned = raw.dailySkipAllOwned == true,
-		dailyCashBoostPercent = math.max(0, if typeof(raw.dailyCashBoostPercent) == "number" then raw.dailyCashBoostPercent else 0),
+		dailyCashBoostPercent = math.max(
+			0,
+			if typeof(raw.dailyCashBoostPercent) == "number" then raw.dailyCashBoostPercent else 0
+		),
+		storePurchases = normalizeStorePurchases(raw.storePurchases),
 		indexUnlocks = readStringArray(raw.indexUnlocks),
 		goldenNames = readStringArray(raw.goldenNames),
 		inventory = inventory,

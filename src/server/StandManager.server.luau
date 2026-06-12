@@ -30,7 +30,6 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
-local Workspace = game:GetService("Workspace")
 
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
@@ -46,14 +45,25 @@ local STAND_TAG = "BrainrotStand"
 local STAND_ACCUMULATED_ATTR = "StandAccumulatedCash"
 -- Accumulated cash is capped at OFFLINE_CAP_SECONDS * income; tunes how long a player can leave it.
 local OFFLINE_CAP_SECONDS = 60 * 60 * 4 -- 4 hours of income, then it stops growing
-local COLLECT_TOUCH_DEBOUNCE = 0.5 -- seconds between collect claims on the money pad
+local COLLECT_TOUCH_DEBOUNCE = 0.5 -- seconds between successful collect claims on the money pad
+local COLLECT_TOUCH_CHARACTER_DEBOUNCE = 0.2 -- blocks limb/accessory spam before collectCash even runs
+local COLLECT_VFX_MIN_INTERVAL = 0.25 -- prevents duplicate collect remotes from stacking in one moment
 local CASH_PAD_DISPLAY_INTERVAL = 1 -- cash pad label/attribute refresh cadence (once per second)
+local CASH_PAD_DISPLAY_STAGGER_BUCKETS = 16
+local INCOME_TICK_INTERVAL = 0.25
+local INCOME_STANDS_PER_HEARTBEAT = 4
 local UPGRADE_DEBOUNCE = 0.2 -- blocks duplicate upgrade fires from GUI + remote on the same click
 local PICKUP_DEBOUNCE = 0.35 -- blocks duplicate inventory adds from double prompt triggers
 local PROMPT_PLACE_DISTANCE = 10
 local PROMPT_PICKUP_DISTANCE = 14
 -- When placing on empty stands side-by-side, only the nearest spawn wins (prevents wrong-stand place).
 local PROMPT_CLOSEST_MARGIN = 1.25
+local nextCashDisplayBucket = 0
+
+local function nextCashDisplayPhase(): number
+	nextCashDisplayBucket = (nextCashDisplayBucket % CASH_PAD_DISPLAY_STAGGER_BUCKETS) + 1
+	return (nextCashDisplayBucket / CASH_PAD_DISPLAY_STAGGER_BUCKETS) * CASH_PAD_DISPLAY_INTERVAL
+end
 
 -- ── Remote folder + events ────────────────────────────────────────────────────
 
@@ -80,9 +90,9 @@ local function ensureRemoteEvent(folder: Folder, name: string): RemoteEvent
 end
 
 local remotesFolder = ensureRemotesFolder()
-local placeRE = ensureRemoteEvent(remotesFolder, "PlaceBrainrotOnStand")   -- (standModel)
+local placeRE = ensureRemoteEvent(remotesFolder, "PlaceBrainrotOnStand") -- (standModel)
 local removeRE = ensureRemoteEvent(remotesFolder, "RemoveBrainrotFromStand") -- (standModel)
-local upgradeRE = ensureRemoteEvent(remotesFolder, "UpgradeStandBrainrot")  -- (standModel)
+local upgradeRE = ensureRemoteEvent(remotesFolder, "UpgradeStandBrainrot") -- (standModel)
 local upgradeFeedbackRE = ensureRemoteEvent(remotesFolder, "StandUpgradeFeedback") -- server → client (ok, reason)
 local collectVFXRE = ensureRemoteEvent(remotesFolder, "StandCashCollectedFX") -- server → client (standModel, cashAmount)
 
@@ -175,7 +185,7 @@ local function formatCashShort(n: number): string
 	return string.format("$%d", math.floor(n + 0.5))
 end
 
-local function findDescendantByName(root: Instance, name: string): Instance?
+local function _findDescendantByName(root: Instance, name: string): Instance?
 	if root.Name == name then
 		return root
 	end
@@ -351,17 +361,29 @@ local function findStandOfflineUi(stand: Model): (BillboardGui?, GuiObject?, (Te
 	return bb, offlineRoot, nil
 end
 
-local function findUpgradeFrameAndLabels(stand: Model): (Instance?, (TextLabel | TextButton)?, (TextLabel | TextButton)?)
+local function findUpgradeFrameAndLabels(
+	stand: Model
+): (Instance?, (TextLabel | TextButton)?, (TextLabel | TextButton)?)
 	local panel = stand:FindFirstChild("LevelPanel")
-	if not panel then return nil, nil, nil end
+	if not panel then
+		return nil, nil, nil
+	end
 	local level = panel:FindFirstChild("Level")
-	if not level then return nil, nil, nil end
+	if not level then
+		return nil, nil, nil
+	end
 	local sg = level:FindFirstChild("SurfaceGui")
-	if not sg then return nil, nil, nil end
+	if not sg then
+		return nil, nil, nil
+	end
 	local frame = sg:FindFirstChild("Frame")
-	if not frame then return nil, nil, nil end
+	if not frame then
+		return nil, nil, nil
+	end
 	local upgrade = frame:FindFirstChild("Upgrade")
-	if not upgrade then return nil, nil, nil end
+	if not upgrade then
+		return nil, nil, nil
+	end
 	local info = upgrade:FindFirstChild("Info")
 	local costLabel: (TextLabel | TextButton)? = nil
 	local levelLabel: (TextLabel | TextButton)? = nil
@@ -408,9 +430,11 @@ type StandState = {
 	accumulated: number,
 	lastTickAt: number,
 	lastCollectAt: number,
+	lastCollectVfxAt: number,
 	lastUpgradeAt: number,
 	lastPickupAt: number,
 	lastCashDisplayAt: number,
+	cashDisplayPhase: number,
 	touchDebouncePerPlayer: { [Player]: number },
 }
 
@@ -431,11 +455,19 @@ local function syncCashPadDisplay(state: StandState, forceImmediate: boolean?)
 	if not forceImmediate and state.lastCashDisplayAt + CASH_PAD_DISPLAY_INTERVAL > now then
 		return
 	end
-	state.lastCashDisplayAt = now
-	state.stand:SetAttribute(STAND_ACCUMULATED_ATTR, state.accumulated)
-	local text = BrainrotEconomy.formatCashAccumulated(state.accumulated)
+	if forceImmediate then
+		state.lastCashDisplayAt = now - state.cashDisplayPhase
+	else
+		state.lastCashDisplayAt = now
+	end
+
+	local displayAmount = math.floor(state.accumulated + 0.5)
+	if state.stand:GetAttribute(STAND_ACCUMULATED_ATTR) ~= displayAmount then
+		state.stand:SetAttribute(STAND_ACCUMULATED_ATTR, displayAmount)
+	end
+	local text = BrainrotEconomy.formatCashAccumulated(displayAmount)
 	local label = resolveTotalCashLabel(state)
-	if label then
+	if label and label.Text ~= text then
 		setLabelText(label, text)
 	end
 end
@@ -566,14 +598,20 @@ local STAND_ROLL_OFFSET = math.rad(0)
 
 -- Pick a reference part in front of the stand so we can auto-face the brainrot toward the player.
 local function findFrontReferencePart(state: StandState): BasePart?
-	if state.buttonPart then return state.buttonPart end
+	if state.buttonPart then
+		return state.buttonPart
+	end
 	local panel = state.stand:FindFirstChild("LevelPanel")
 	if panel then
 		local level = panel:FindFirstChild("Level")
-		if level and level:IsA("BasePart") then return level :: BasePart end
+		if level and level:IsA("BasePart") then
+			return level :: BasePart
+		end
 		if level then
 			local any = level:FindFirstChildWhichIsA("BasePart", true)
-			if any then return any end
+			if any then
+				return any
+			end
 		end
 	end
 	return nil
@@ -659,10 +697,7 @@ local function setPromptText(state: StandState)
 		prompt.ObjectText = "Stand"
 		prompt.MaxActivationDistance = PROMPT_PLACE_DISTANCE
 	end
-	configureStandProximityPrompt(
-		prompt,
-		if state.brainrotName then PROMPT_PICKUP_DISTANCE else PROMPT_PLACE_DISTANCE
-	)
+	configureStandProximityPrompt(prompt, if state.brainrotName then PROMPT_PICKUP_DISTANCE else PROMPT_PLACE_DISTANCE)
 	prompt.Enabled = true
 end
 
@@ -778,7 +813,9 @@ local function setAllPartsAnchored(model: Model, anchored: boolean)
 end
 
 local function getMainPart(model: Model): BasePart?
-	if model.PrimaryPart then return model.PrimaryPart end
+	if model.PrimaryPart then
+		return model.PrimaryPart
+	end
 	local p = model:FindFirstChildWhichIsA("BasePart", true)
 	if p and not model.PrimaryPart then
 		model.PrimaryPart = p
@@ -788,18 +825,28 @@ end
 
 local function findBrainrotTemplateForState(state: StandState): Model?
 	local brainrots = Brainrots.getBrainrotsFolder()
-	if not brainrots or not brainrots:IsA("Folder") then return nil end
+	if not brainrots or not brainrots:IsA("Folder") then
+		return nil
+	end
 	local nameFolder = brainrots:FindFirstChild(state.brainrotName or "")
-	if not nameFolder then return nil end
+	if not nameFolder then
+		return nil
+	end
 	local variantName = (Brainrots :: any).MUTATION_TEMPLATE_FOLDER[state.mutation or "normal"]
 	if typeof(variantName) == "string" then
 		local v = nameFolder:FindFirstChild(variantName)
-		if v and v:IsA("Model") then return v :: Model end
+		if v and v:IsA("Model") then
+			return v :: Model
+		end
 	end
 	local normal = nameFolder:FindFirstChild("Normal")
-	if normal and normal:IsA("Model") then return normal :: Model end
+	if normal and normal:IsA("Model") then
+		return normal :: Model
+	end
 	for _, c in ipairs(nameFolder:GetChildren()) do
-		if c:IsA("Model") then return c :: Model end
+		if c:IsA("Model") then
+			return c :: Model
+		end
 	end
 	return nil
 end
@@ -821,11 +868,19 @@ end
 -- Place the configured brainrot model on the Spawn part with header billboard.
 local function rebuildDisplay(state: StandState)
 	clearDisplayModel(state)
-	if not state.brainrotName then return end
+	if not state.brainrotName then
+		return
+	end
 
 	local template = findBrainrotTemplateForState(state)
 	if not template then
-		warn(string.format("[StandManager] No template for %s (%s)", tostring(state.brainrotName), tostring(state.mutation)))
+		warn(
+			string.format(
+				"[StandManager] No template for %s (%s)",
+				tostring(state.brainrotName),
+				tostring(state.mutation)
+			)
+		)
 		return
 	end
 
@@ -902,16 +957,21 @@ local function rebuildDisplay(state: StandState)
 	playStandIdleAnimation(state, clone, state.brainrotName :: string)
 end
 
-local function applyStandFromSave(player: Player, state: StandState, entry: {
-	standName: string,
-	brainrotName: string,
-	rarity: string,
-	mutation: string,
-	level: number,
-	baseIncome: number,
-	sourcePath: string,
-	accumulated: number,
-})
+local function applyStandFromSave(
+	player: Player,
+	state: StandState,
+	entry: {
+		storyName: string?,
+		standName: string,
+		brainrotName: string,
+		rarity: string,
+		mutation: string,
+		level: number,
+		baseIncome: number,
+		sourcePath: string,
+		accumulated: number,
+	}
+)
 	if not playerAssignedToStandPlot(player, state.stand) then
 		return
 	end
@@ -974,12 +1034,18 @@ local function buildStandSaveEntryFromModel(stand: Model, ownerUserId: number): 
 		standName = stand.Name,
 		storyName = storyNameForStand(stand),
 		brainrotName = brainrotName,
-		rarity = if typeof(stand:GetAttribute("BrainrotRarity")) == "string" then stand:GetAttribute("BrainrotRarity") else "common",
-		mutation = if typeof(stand:GetAttribute("BrainrotMutation")) == "string" then stand:GetAttribute("BrainrotMutation") else "normal",
+		rarity = if typeof(stand:GetAttribute("BrainrotRarity")) == "string"
+			then stand:GetAttribute("BrainrotRarity")
+			else "common",
+		mutation = if typeof(stand:GetAttribute("BrainrotMutation")) == "string"
+			then stand:GetAttribute("BrainrotMutation")
+			else "normal",
 		level = if typeof(level) == "number" then math.max(1, math.floor(level)) else 1,
 		baseIncome = if typeof(baseIncome) == "number" then baseIncome else 0,
 		sourcePath = "",
-		accumulated = if typeof(stand:GetAttribute(STAND_ACCUMULATED_ATTR)) == "number" then stand:GetAttribute(STAND_ACCUMULATED_ATTR) else 0,
+		accumulated = if typeof(stand:GetAttribute(STAND_ACCUMULATED_ATTR)) == "number"
+			then stand:GetAttribute(STAND_ACCUMULATED_ATTR)
+			else 0,
 	}
 end
 
@@ -1147,18 +1213,28 @@ local function placeBrainrotOnStand(player: Player, state: StandState)
 	if state.brainrotName ~= nil then
 		return -- Already occupied.
 	end
-	if isStandLocked(state) then return end
-	if not playerAssignedToStandPlot(player, state.stand) then return end
+	if isStandLocked(state) then
+		return
+	end
+	if not playerAssignedToStandPlot(player, state.stand) then
+		return
+	end
 	local char = player.Character
-	if not char then return end
+	if not char then
+		return
+	end
 	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not hum then return end
+	if not hum then
+		return
+	end
 	local tool = char:FindFirstChildOfClass("Tool")
 	if not tool or tool:GetAttribute("BrainrotTool") ~= true then
 		return
 	end
 	local invIdx = tool:GetAttribute("BrainrotInvIndex")
-	if typeof(invIdx) ~= "number" then return end
+	if typeof(invIdx) ~= "number" then
+		return
+	end
 
 	-- Distance check to prevent remote exploits.
 	local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -1213,7 +1289,9 @@ end
 
 local function getReturnInventoryFn(): BindableFunction?
 	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
-	if not folder then return nil end
+	if not folder then
+		return nil
+	end
 	local bf = folder:FindFirstChild("ReturnInventoryEntry")
 	if bf and bf:IsA("BindableFunction") then
 		return bf
@@ -1223,14 +1301,20 @@ end
 
 local CashBoostUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("CashBoostUtil"))
 
-local function getPlayerMoneyMult(player: Player): number
+function getPlayerMoneyMult(player: Player): number
 	return CashBoostUtil.getMoneyMultiplier(player)
 end
 
 local function removeBrainrotFromStand(player: Player, state: StandState)
-	if not state.brainrotName then return end
-	if not isOwner(state, player) then return end
-	if not playerAssignedToStandPlot(player, state.stand) then return end
+	if not state.brainrotName then
+		return
+	end
+	if not isOwner(state, player) then
+		return
+	end
+	if not playerAssignedToStandPlot(player, state.stand) then
+		return
+	end
 
 	local now = os.clock()
 	if state.lastPickupAt + PICKUP_DEBOUNCE > now then
@@ -1277,7 +1361,9 @@ local function tickStand(state: StandState, dt: number)
 		return
 	end
 	local ips = recomputeIncomePerSecond(state)
-	if ips <= 0 then return end
+	if ips <= 0 then
+		return
+	end
 	local mult = 1
 	if state.ownerUserId then
 		local owner = Players:GetPlayerByUserId(state.ownerUserId)
@@ -1291,34 +1377,70 @@ local function tickStand(state: StandState, dt: number)
 end
 
 local function collectCash(state: StandState, player: Player)
-	if not isOwner(state, player) then return end
-	if not playerAssignedToStandPlot(player, state.stand) then return end
-	if state.accumulated <= 0 then return end
+	if not isOwner(state, player) then
+		return
+	end
+	if not playerAssignedToStandPlot(player, state.stand) then
+		return
+	end
+
 	local now = os.clock()
-	if state.touchDebouncePerPlayer[player] and (state.touchDebouncePerPlayer[player] + COLLECT_TOUCH_DEBOUNCE > now) then
+	local lastTouch = state.touchDebouncePerPlayer[player]
+	if lastTouch and (lastTouch + COLLECT_TOUCH_DEBOUNCE > now) then
 		return
 	end
 	state.touchDebouncePerPlayer[player] = now
+
 	local amount = math.floor(state.accumulated)
-	if amount <= 0 then return end
-	state.accumulated = 0
+	if amount <= 0 then
+		return
+	end
+
+	-- Keep any tiny fractional income instead of destroying it, but remove the whole-number payout.
+	state.accumulated = math.max(0, state.accumulated - amount)
 	state.offlinePending = 0
+
 	local cash = player:GetAttribute("Cash")
 	local c = if typeof(cash) == "number" then cash else 0
 	player:SetAttribute("Cash", c + amount)
 	state.lastCollectAt = now
-	refreshLabels(state)
-	collectVFXRE:FireClient(player, state.stand, amount)
+
+	-- Cash collection only needs the money pad + offline label updated.
+	-- refreshLabels(state) also touches upgrade cost/level UI and stand attributes, which is unnecessary here.
+	syncCashPadDisplay(state, true)
+	syncOfflineDisplay(state)
+
+	-- Defer the client-side presentation so payout/labels finish first, and hard-throttle duplicates.
+	if now - (state.lastCollectVfxAt or 0) >= COLLECT_VFX_MIN_INTERVAL then
+		state.lastCollectVfxAt = now
+		task.defer(function()
+			if player.Parent and state.stand.Parent then
+				collectVFXRE:FireClient(player, state.stand, amount)
+			end
+		end)
+	end
 end
 
 local function upgradeStandBrainrot(state: StandState, player: Player)
-	if not isOwner(state, player) then return end
-	if not playerAssignedToStandPlot(player, state.stand) then return end
-	if not state.brainrotName then return end
-	if isStandLocked(state) then return end
-	if state.level >= Brainrots.MAX_LEVEL then return end
+	if not isOwner(state, player) then
+		return
+	end
+	if not playerAssignedToStandPlot(player, state.stand) then
+		return
+	end
+	if not state.brainrotName then
+		return
+	end
+	if isStandLocked(state) then
+		return
+	end
+	if state.level >= Brainrots.MAX_LEVEL then
+		return
+	end
 	local now = os.clock()
-	if state.lastUpgradeAt + UPGRADE_DEBOUNCE > now then return end
+	if state.lastUpgradeAt + UPGRADE_DEBOUNCE > now then
+		return
+	end
 	state.lastUpgradeAt = now
 	local cost = recomputeUpgradeCost(state)
 	local cash = player:GetAttribute("Cash")
@@ -1382,7 +1504,9 @@ local function ensureClickDetector(part: BasePart, name: string, maxDist: number
 		(existing :: ClickDetector).MaxActivationDistance = maxDist
 		return existing
 	end
-	if existing then existing:Destroy() end
+	if existing then
+		existing:Destroy()
+	end
 	local cd = Instance.new("ClickDetector")
 	cd.Name = name
 	cd.MaxActivationDistance = maxDist
@@ -1392,7 +1516,9 @@ end
 
 local function findUpgradePart(stand: Model): BasePart?
 	local panel = stand:FindFirstChild("LevelPanel")
-	if not panel then return nil end
+	if not panel then
+		return nil
+	end
 	local level = panel:FindFirstChild("Level")
 	if level and level:IsA("BasePart") then
 		return level :: BasePart
@@ -1407,27 +1533,54 @@ local function findUpgradePart(stand: Model): BasePart?
 	return nil
 end
 
+local cashPadTouchByCharacter: { [Model]: number } = setmetatable({}, { __mode = "k" }) :: any
+
 local function hookButtonTouch(state: StandState)
 	local part = state.buttonPart
-	if not part then return end
-	-- Touched only fires when physics reports contact; many cash pads are non-collidable.
+	if not part then
+		return
+	end
+
+	-- Touched can fire for several character parts/accessories in the same instant.
+	-- Debounce per character BEFORE calling collectCash so the server doesn't run the full claim path repeatedly.
 	part.CanTouch = true
 	part.Touched:Connect(function(other: BasePart)
-		if not other:IsA("BasePart") then return end
+		if not other:IsA("BasePart") then
+			return
+		end
+
 		local char = other:FindFirstAncestorWhichIsA("Model")
-		if not char then return end
+		if not char then
+			return
+		end
+
 		local plr = Players:GetPlayerFromCharacter(char)
-		if not plr then return end
+		if not plr then
+			return
+		end
+
+		local now = os.clock()
+		local lastTouch = cashPadTouchByCharacter[char]
+		if lastTouch and now - lastTouch < COLLECT_TOUCH_CHARACTER_DEBOUNCE then
+			return
+		end
+		cashPadTouchByCharacter[char] = now
+
 		collectCash(state, plr)
 	end)
+
 	-- No ClickDetector on the cash pad: collection is walk-over only.
 	local stale = part:FindFirstChild("_StandCashClick")
-	if stale then stale:Destroy() end
+	if stale then
+		stale:Destroy()
+	end
 end
 
 local function hookUpgradeClick(state: StandState)
 	local part = findUpgradePart(state.stand)
-	if not part then return end
+	if not part then
+		return
+	end
 	local cd = ensureClickDetector(part, "_StandUpgradeClick", 22)
 	cd.MouseClick:Connect(function(plr)
 		upgradeStandBrainrot(state, plr)
@@ -1566,9 +1719,11 @@ local function initStand(stand: Model)
 		accumulated = 0,
 		lastTickAt = os.clock(),
 		lastCollectAt = 0,
+		lastCollectVfxAt = 0,
 		lastUpgradeAt = 0,
 		lastPickupAt = 0,
 		lastCashDisplayAt = 0,
+		cashDisplayPhase = nextCashDisplayPhase(),
 		touchDebouncePerPlayer = {},
 	}
 	stands[stand] = state
@@ -1595,11 +1750,21 @@ end
 -- ── Stand discovery: auto-detect any descendant of Map matching the structure ─
 
 local function isStandModel(inst: Instance): boolean
-	if not inst:IsA("Model") then return false end
-	if not inst.Parent then return false end
-	if not (inst.Parent.Name == "stands" or inst.Parent.Name == "Stands") then return false end
-	if findSpawnPart(inst :: Model) then return true end
-	if inst:FindFirstChild("Button", true) or inst:FindFirstChild("LevelPanel", true) then return true end
+	if not inst:IsA("Model") then
+		return false
+	end
+	if not inst.Parent then
+		return false
+	end
+	if not (inst.Parent.Name == "stands" or inst.Parent.Name == "Stands") then
+		return false
+	end
+	if findSpawnPart(inst :: Model) then
+		return true
+	end
+	if inst:FindFirstChild("Button", true) or inst:FindFirstChild("LevelPanel", true) then
+		return true
+	end
 	return string.match(inst.Name, "^[Ss]tand") ~= nil
 end
 
@@ -1814,7 +1979,9 @@ end
 
 placeRE.OnServerEvent:Connect(function(player: Player, standArg: any)
 	local state = resolveStandFromArg(standArg)
-	if not state then return end
+	if not state then
+		return
+	end
 	placeBrainrotOnStand(player, state)
 end)
 
@@ -1835,15 +2002,49 @@ end)
 
 upgradeRE.OnServerEvent:Connect(function(player: Player, standArg: any)
 	local state = resolveStandFromArg(standArg)
-	if not state then return end
+	if not state then
+		return
+	end
 	upgradeStandBrainrot(state, player)
 end)
 
 -- ── Income loop ──────────────────────────────────────────────────────────────
 
-RunService.Heartbeat:Connect(function(dt)
+local incomeStandOrder: { StandState } = {}
+local incomeTickCursor = 1
+local nextIncomeOrderRebuildAt = 0
+
+local function rebuildIncomeStandOrder()
+	table.clear(incomeStandOrder)
 	for _, state in pairs(stands) do
-		tickStand(state, dt)
+		table.insert(incomeStandOrder, state)
+	end
+	incomeTickCursor = 1
+	nextIncomeOrderRebuildAt = os.clock() + 1
+end
+
+RunService.Heartbeat:Connect(function()
+	local now = os.clock()
+	if now >= nextIncomeOrderRebuildAt or incomeTickCursor > #incomeStandOrder then
+		rebuildIncomeStandOrder()
+	end
+	local count = #incomeStandOrder
+	if count == 0 then
+		return
+	end
+
+	local processed = 0
+	while processed < INCOME_STANDS_PER_HEARTBEAT and incomeTickCursor <= count do
+		local state = incomeStandOrder[incomeTickCursor]
+		incomeTickCursor += 1
+		processed += 1
+		if state.stand.Parent then
+			local elapsed = now - state.lastTickAt
+			if elapsed >= INCOME_TICK_INTERVAL then
+				state.lastTickAt = now
+				tickStand(state, elapsed)
+			end
+		end
 	end
 end)
 
@@ -1901,4 +2102,3 @@ do
 		return stolen
 	end
 end
-

@@ -1,15 +1,3 @@
--- MergedFriendSwingSystem.client.lua
--- Drop this LocalScript into StarterPlayerScripts.
--- Swing targets come from your friend's setup.
--- Performance mode uses CollectionService tag "SwingTarget" only.
--- The old workspace.Map.Vine name fallback exists below, but is off by default
--- because huge Vine folders can hard-freeze the client while scanning.
---
--- Controls:
--- PC: hold Space near a close visible target, or jump/hold Space for longer reach.
--- Gamepad: hold R2 near a close visible target, or jump/hold R2 for longer reach.
--- Mobile: hold the Jump button near a close visible target, or jump/hold it for longer reach.
-
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -19,9 +7,6 @@ local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
 local SoundService = game:GetService("SoundService")
 
--- Cache this outside boot() so the huge boot function does not spend extra local registers.
--- Luau functions can only have 200 local registers; adding locals near the bottom of boot() can break compilation.
--- Constants/config table. Keeps Luau from exceeding the 200 local-register limit.
 local C = {}
 C.PRE_SIMULATION_SIGNAL = nil
 pcall(function()
@@ -108,7 +93,8 @@ C.TARGET_VISUAL_STEP_INTERVAL = 1 / 30
 C.TARGET_VISUAL_HIDDEN_POSITION = Vector3.new(0, -100000, 0)
 C.ATTACH_RETRY_TIME = 0.12
 C.ATTACH_COOLDOWN = 0.18
-C.MIN_SWING_LOCK_TIME = 0.28
+C.MIN_SWING_LOCK_TIME = 0.18
+C.MOBILE_JUMP_HOLD_GRACE = 0.06
 -- Grounded range should match actual swing reach, otherwise the UI can show red even when attach is allowed.
 -- These are fallback floors only; the live grounded ready distance uses getSwingRange().
 C.GROUNDED_READY_RANGE = 75
@@ -140,19 +126,39 @@ C.ZIP_PULL_TIME = 0.5
 
 C.LAUNCH_FORWARD_DV = 124
 C.LAUNCH_MOMENTUM_RATIO = 0.12
-C.LAUNCH_UP_DV = 38
-C.LAUNCH_CHARGE_DV = 16
-C.LAUNCH_FORWARD_INPUT_DV = 62
-C.LAUNCH_SPEED_CAP = 140
-C.LAUNCH_STYLE_TIME = 1.15
-C.LAUNCH_STYLE_TILT_TIME = 0.2
-C.LAUNCH_STYLE_ORIENT_RESPONSIVENESS = 48
-C.LAUNCH_STYLE_ORIENT_TORQUE = 19000
-C.LAUNCH_STYLE_UP_AIM = 1.18
-C.LAUNCH_STYLE_DOWN_AIM = 1.08
-C.LAUNCH_DROP_DELAY = 0.34
-C.LAUNCH_DROP_ACCEL = 38
-C.LAUNCH_DROP_MAX_SPEED = -92
+C.LAUNCH_UP_DV = 62
+C.LAUNCH_CHARGE_DV = 22
+C.LAUNCH_FORWARD_INPUT_DV = 68
+C.LAUNCH_SPEED_CAP = 175
+C.LAUNCH_STYLE_TIME = 1.85
+C.LAUNCH_STYLE_TILT_TIME = 0.38
+C.LAUNCH_STYLE_ORIENT_RESPONSIVENESS = 62
+C.LAUNCH_STYLE_ORIENT_TORQUE = 26000
+C.LAUNCH_STYLE_UP_AIM = 1.42
+C.LAUNCH_STYLE_DOWN_AIM = 2.65
+C.LAUNCH_DROP_DELAY = 0.62
+C.LAUNCH_DROP_ACCEL = 31
+C.LAUNCH_DROP_MAX_SPEED = -124
+C.LAUNCH_HANG_RELEASE_FADE = 0.24
+C.LAUNCH_FALL_ANIM_FADE = 0.28
+C.LAUNCH_FALL_STOP_FADE = 0.18
+C.LAUNCH_LAND_ANIM_FADE = 0.14
+-- Landed animation should be a quick impact pose, not a full 3-second body lock.
+-- If this is too short/long, tune only this value.
+C.LAUNCH_LAND_MAX_PLAY_TIME = 0.55
+C.LAUNCH_LAND_CONTROL_RELEASE_DELAY = 0.02
+-- Roblox can sometimes enter FallingDown/Ragdoll/Physics after a fast angled swing landing.
+-- These keep landing snappy and immediately controllable instead of waiting for the default get-up delay.
+C.SWING_DISABLE_FALLDOWN_STATES = true
+C.SWING_LANDING_GROUND_RAY = 7.5
+C.SWING_LANDING_RECOVERY_DELAY = 0.06
+C.SWING_LANDING_RECOVERY_REPEAT_DELAY = 0.35
+C.SWING_LANDING_MAX_Y_SPEED_FOR_RECOVERY = 14
+C.SWING_LANDED_ANIM_WEIGHT = 0.85
+C.SWING_ENABLE_LANDED_IMPACT_ANIM = true
+C.LAUNCH_VELOCITY_AIM_BLEND = 1.35
+C.LAUNCH_FALL_EXTRA_DOWN_AIM = 1.15
+C.LAUNCH_MAX_ROLL_DEG = 22
 C.MIN_HOLD_FOR_FULL_LAUNCH = 0.14
 C.CHARGE_TIME = 0.95
 C.FORWARD_CHARGE_TIME = 1.05
@@ -186,6 +192,11 @@ C.CAMERA_ASSIST_STRENGTH = 0.72
 C.CAMERA_ASSIST_MIN_LOOK_DOT = 0.52
 
 C.DEAD_HANG_MOVE_FORCE = 68
+C.SWING_IDLE_FLOW_DAMPING = 0.78
+C.SWING_IDLE_FLOW_MIN_SPEED = 1.45
+C.SWING_IDLE_SWAY_DELAY = 0.65
+C.SWING_IDLE_SWAY_FORCE = 6.5
+C.SWING_IDLE_SWAY_SPEED = 1.25
 C.AVATAR_TURN_RESPONSIVENESS = 44
 C.AVATAR_FAST_TURN_DOT = -0.12
 C.AVATAR_NATURAL_FACE_TURN_RATE = 18
@@ -893,12 +904,13 @@ local function createReleaseStyleController(humanoid, hrp)
 			* math.clamp(0.96 + (launchScale - 1) * 0.36, 0.9, 1.72)
 		local upwardSpeed = (
 			C.LAUNCH_UP_DV
-			+ C.LAUNCH_CHARGE_DV * charge * 0.45
-			+ inputBoost * 5.8
-			+ momentumBoost * 6.8
+			+ C.LAUNCH_CHARGE_DV * charge * 0.72
+			+ inputBoost * 9.5
+			+ momentumBoost * 12.5
 		)
 			* holdMult
 			* launchScale
+			* math.clamp(1 + momentumBoost * 0.22, 1, 1.28)
 		local targetVelocity = launchDir * horizontalSpeed + Vector3.new(0, upwardSpeed, 0)
 
 		if targetVelocity.Magnitude > cap then
@@ -910,13 +922,14 @@ local function createReleaseStyleController(humanoid, hrp)
 		local bodyRight = Vector3.new(hrp.CFrame.RightVector.X, 0, hrp.CFrame.RightVector.Z)
 		local rollDot = bodyRight.Magnitude > 0.05 and targetVelocity:Dot(bodyRight.Unit) or 0
 		state.rollSign = rollDot ~= 0 and math.sign(rollDot) or 1
-		state.untilClock = os.clock() + C.LAUNCH_STYLE_TIME
+		state.untilClock = os.clock() + C.LAUNCH_STYLE_TIME + math.clamp(momentumBoost * 0.35, 0, 0.35)
 
 		local orient = ensure()
 		if orient then
-			local lookDir = launchDir * 0.62 + Vector3.new(0, C.LAUNCH_STYLE_UP_AIM, 0)
+			local initialVelocityDir = targetVelocity.Magnitude > 1 and targetVelocity.Unit or launchDir
+			local lookDir = launchDir * 0.5 + initialVelocityDir * 0.35 + Vector3.new(0, C.LAUNCH_STYLE_UP_AIM, 0)
 			if lookDir.Magnitude > 0.05 then
-				orient.CFrame = launchLookCFrame(lookDir.Unit, math.rad(8) * state.rollSign)
+				orient.CFrame = launchLookCFrame(lookDir.Unit, math.rad(10) * state.rollSign)
 			end
 		end
 	end
@@ -941,31 +954,49 @@ local function createReleaseStyleController(humanoid, hrp)
 
 		humanoid.AutoRotate = false
 		humanoid.PlatformStand = false
+
 		local launchDir = state.launchDir.Magnitude > 0.05 and state.launchDir.Unit
 			or flatUnit(hrp.CFrame.LookVector)
 			or Vector3.new(0, 0, -1)
 		local velocity = hrp.AssemblyLinearVelocity
+		local speed = velocity.Magnitude
+		local velocityDir = speed > 1 and velocity.Unit or launchDir
+
 		local spinFade = 1 - math.clamp(age / C.LAUNCH_STYLE_TIME, 0, 1)
 		local upAlpha = 1 - smoothStep(age / C.LAUNCH_STYLE_TILT_TIME)
-		local fallCue = math.clamp((-velocity.Y + 8) / 48, 0, 1)
-		local downAlpha = math.max(
-			smoothStep(
-				(age - C.LAUNCH_STYLE_TILT_TIME * 0.8)
-					/ math.max(C.LAUNCH_STYLE_TIME - C.LAUNCH_STYLE_TILT_TIME * 0.8, 0.05)
-			),
-			fallCue
+		local fallCue = math.clamp((-velocity.Y + 10) / 68, 0, 1)
+		local fallSpeedAlpha = math.clamp(-velocity.Y / 105, 0, 1)
+		local timeDownAlpha = smoothStep(
+			(age - C.LAUNCH_STYLE_TILT_TIME * 0.72)
+				/ math.max(C.LAUNCH_STYLE_TIME - C.LAUNCH_STYLE_TILT_TIME * 0.72, 0.05)
 		)
-		local verticalAim = C.LAUNCH_STYLE_UP_AIM * upAlpha - C.LAUNCH_STYLE_DOWN_AIM * downAlpha
-		local lookDir = launchDir * (0.7 + downAlpha * 0.35) + Vector3.new(0, verticalAim, 0)
+		local downAlpha = math.max(timeDownAlpha, fallCue)
+
+		-- Aim with the actual velocity, not only the original launch direction.
+		-- This makes the avatar pitch down harder when falling straight down.
+		local velocityBlend = math.clamp(downAlpha * C.LAUNCH_VELOCITY_AIM_BLEND, 0, 1.55)
+		local horizontalBlend = math.clamp(1 - fallSpeedAlpha * 0.62, 0.22, 1)
+		local verticalAim = C.LAUNCH_STYLE_UP_AIM * upAlpha
+			- (C.LAUNCH_STYLE_DOWN_AIM + C.LAUNCH_FALL_EXTRA_DOWN_AIM * fallSpeedAlpha) * downAlpha
+
+		local lookDir = launchDir * (0.62 * horizontalBlend)
+			+ velocityDir * velocityBlend
+			+ Vector3.new(0, verticalAim, 0)
+
 		if lookDir.Magnitude > 0.05 then
 			local orient = ensure()
 			if orient then
-				local roll = math.rad(12) * state.rollSign * spinFade
-				orient.Responsiveness = C.LAUNCH_STYLE_ORIENT_RESPONSIVENESS + downAlpha * 14
-				orient.CFrame = launchLookCFrame(lookDir.Unit, roll)
+				local rollAmount = math.rad(C.LAUNCH_MAX_ROLL_DEG)
+					* state.rollSign
+					* spinFade
+					* math.clamp(0.45 + downAlpha * 0.75, 0, 1.15)
+				orient.Responsiveness = C.LAUNCH_STYLE_ORIENT_RESPONSIVENESS + downAlpha * 24 + fallSpeedAlpha * 18
+				orient.MaxTorque = hrp.AssemblyMass * C.LAUNCH_STYLE_ORIENT_TORQUE * (1 + downAlpha * 0.35)
+				orient.CFrame = launchLookCFrame(lookDir.Unit, rollAmount)
 			end
 		end
-		hrp.AssemblyAngularVelocity = hrp.AssemblyAngularVelocity * math.exp(-10 * dt)
+
+		hrp.AssemblyAngularVelocity = hrp.AssemblyAngularVelocity * math.exp(-12 * dt)
 
 		if age >= C.LAUNCH_DROP_DELAY then
 			local dropAlpha = math.clamp(
@@ -974,7 +1005,7 @@ local function createReleaseStyleController(humanoid, hrp)
 				1
 			)
 			local nextY =
-				math.max(C.LAUNCH_DROP_MAX_SPEED, velocity.Y - C.LAUNCH_DROP_ACCEL * (0.35 + dropAlpha * 0.65) * dt)
+				math.max(C.LAUNCH_DROP_MAX_SPEED, velocity.Y - C.LAUNCH_DROP_ACCEL * (0.22 + dropAlpha * 0.78) * dt)
 			hrp.AssemblyLinearVelocity = Vector3.new(velocity.X, nextY, velocity.Z)
 		end
 	end
@@ -1029,6 +1060,7 @@ local function boot(character)
 	local swingRhythmBoost = 0
 	local lastPumpInputSign = 0
 	local lastPumpSwitchClock = -1e9
+	local lastSwingInputClock = os.clock()
 	local swingFaceDir = nil
 	local swingPose = createSwingPose(character, hrp)
 	local lastTryClock = -1e9
@@ -1054,8 +1086,8 @@ local function boot(character)
 
 	local spaceHeld = false
 	local gamepadHeld = false
+	local mobileJumpHoldUntil = -1e9
 	local mobileJumpHeld = false
-	local mobileJumpBound = false
 
 	local targetCache = {}
 	local targetSet = {}
@@ -1116,7 +1148,6 @@ local function boot(character)
 	local targetVisualColor = C.NOT_READY_COLOR
 	local chargeGui = nil
 	local chargeDot = nil
-	local fallbackMobileGui = nil
 	local activeHangTrack = nil
 	local currentHangSide = "Right"
 	local rightHangTrack = nil
@@ -1126,11 +1157,54 @@ local function boot(character)
 	local lastLandedAnimClock = -1e9
 	local trails = {}
 	local conns = {}
-	local mobileConns = {}
 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.FilterDescendantsInstances = { character }
+
+	if C.SWING_DISABLE_FALLDOWN_STATES then
+		pcall(function()
+			humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+		end)
+		pcall(function()
+			humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+		end)
+	end
+
+	local function isSwingLandingRecoveryState(state)
+		return state == Enum.HumanoidStateType.FallingDown
+			or state == Enum.HumanoidStateType.Ragdoll
+			or state == Enum.HumanoidStateType.Physics
+			or state == Enum.HumanoidStateType.GettingUp
+	end
+
+	local function isCloseToGroundForSwingLanding()
+		if humanoid.FloorMaterial ~= Enum.Material.Air then
+			return true
+		end
+		rayParams.FilterDescendantsInstances = { character }
+		local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -C.SWING_LANDING_GROUND_RAY, 0), rayParams)
+		return hit ~= nil
+	end
+
+	local function forceSwingHumanoidControl()
+		releaseStyle.cancel()
+		swingPose.clear()
+		humanoid.PlatformStand = false
+		humanoid.AutoRotate = true
+		humanoid.Sit = false
+		hrp.AssemblyAngularVelocity = Vector3.zero
+		if humanoid.Health > 0 then
+			pcall(function()
+				local state = humanoid:GetState()
+				if isSwingLandingRecoveryState(state) then
+					humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+				else
+					humanoid:ChangeState(Enum.HumanoidStateType.Running)
+				end
+			end)
+		end
+	end
 
 	local function normalizeAnimationId(id)
 		if typeof(id) == "Instance" then
@@ -1287,17 +1361,15 @@ local function boot(character)
 		leftHangTrack = loadAnimTrack(hangLeftAnim, true, Enum.AnimationPriority.Action4, "HangLeft")
 	end
 	fallingTrack = loadAnimTrack(fallingAnim, true, Enum.AnimationPriority.Action4, "SwingFalling")
-	landedTrack = loadAnimTrack(landedAnim, false, Enum.AnimationPriority.Action4, "SwingLanded")
+	-- Use Action instead of Action4 so the landing clip does not overpower normal movement for several seconds.
+	landedTrack = loadAnimTrack(landedAnim, false, Enum.AnimationPriority.Action2, "SwingLanded")
 
 	local function addConn(conn)
 		table.insert(conns, conn)
 		return conn
 	end
 
-	local function addMobileConn(conn)
-		table.insert(mobileConns, conn)
-		return conn
-	end
+	-- Mobile fallback button removed in no-register build.
 
 	local function handPartForSide(side)
 		local names
@@ -1359,38 +1431,108 @@ local function boot(character)
 		if isSwinging or not (isLaunched or landedFromSwing) then
 			return
 		end
+
 		local fade = fadeTime
 		if fade == nil then
-			fade = 0.04
+			fade = C.LAUNCH_FALL_ANIM_FADE
 		end
-		stopHangAnim(0)
-		stopTrack(landedTrack, 0.04)
+
+		-- Smoothly crossfade from the hanging pose into the falling pose.
+		-- The old version stopped hang instantly and restarted Falling every state change,
+		-- which made release -> fall -> land feel rushed/snappy.
+		stopHangAnim(C.LAUNCH_HANG_RELEASE_FADE)
+		stopTrack(landedTrack, C.LAUNCH_LAND_ANIM_FADE)
+
 		if fallingTrack then
 			pcall(function()
-				fallingTrack.TimePosition = 0
+				if not fallingTrack.IsPlaying then
+					fallingTrack.TimePosition = 0
+				end
 			end)
 		end
+
 		playTrack(fallingTrack, fade, 1, 1)
 	end
 
-	local function stopFallingAnim()
-		stopTrack(fallingTrack, 0.08)
+	local function stopFallingAnim(fadeTime)
+		local fade = fadeTime
+		if fade == nil then
+			fade = C.LAUNCH_FALL_STOP_FADE
+		end
+		stopTrack(fallingTrack, fade)
 	end
 
 	local function playLandedAnim()
-		stopHangAnim(0)
-		stopFallingAnim()
+		stopHangAnim(C.LAUNCH_HANG_RELEASE_FADE)
+		stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
+
 		local now = os.clock()
 		if now - lastLandedAnimClock < 0.12 then
 			return
 		end
+
 		lastLandedAnimClock = now
+		forceSwingHumanoidControl()
+
+		if not C.SWING_ENABLE_LANDED_IMPACT_ANIM then
+			stopTrack(landedTrack, 0.05)
+			return
+		end
+
 		if landedTrack then
 			pcall(function()
 				landedTrack.TimePosition = 0
 			end)
-			playTrack(landedTrack, 0.06, 1, 1)
+			-- Low weight + short lifetime = quick impact flavor without stealing movement control.
+			playTrack(landedTrack, C.LAUNCH_LAND_ANIM_FADE, C.SWING_LANDED_ANIM_WEIGHT, 0.9)
+
+			local playToken = lastLandedAnimClock
+			task.spawn(function()
+				local stopAt = os.clock() + C.LAUNCH_LAND_MAX_PLAY_TIME
+				while os.clock() < stopAt do
+					if lastLandedAnimClock ~= playToken then
+						return
+					end
+					if isSwinging then
+						stopTrack(landedTrack, 0.05)
+						return
+					end
+					-- If the player tries to move/jump, instantly fade the impact pose out.
+					local playedFor = os.clock() - playToken
+
+					if humanoid.Jump then
+						stopTrack(landedTrack, 0.05)
+						return
+					end
+
+					if playedFor > 0.28 and humanoid.MoveDirection.Magnitude > 0.35 then
+						stopTrack(landedTrack, 0.08)
+						return
+					end
+
+					RunService.Heartbeat:Wait()
+				end
+				if lastLandedAnimClock == playToken then
+					stopTrack(landedTrack, 0.1)
+				end
+			end)
 		end
+
+		-- Extra delayed recovery catches the frames where Roblox briefly switches to GettingUp/Physics after impact.
+		task.delay(C.LAUNCH_LAND_CONTROL_RELEASE_DELAY, function()
+			if humanoid.Parent and not isSwinging then
+				forceSwingHumanoidControl()
+			end
+		end)
+		task.delay(C.SWING_LANDING_RECOVERY_REPEAT_DELAY, function()
+			if humanoid.Parent and not isSwinging then
+				forceSwingHumanoidControl()
+
+				if os.clock() - lastLandedAnimClock >= C.LAUNCH_LAND_MAX_PLAY_TIME then
+					stopTrack(landedTrack, 0.08)
+				end
+			end
+		end)
 	end
 
 	local function makeTrails()
@@ -2164,10 +2306,10 @@ local function boot(character)
 	local function holdIsActive()
 		return spaceHeld
 			or gamepadHeld
-			or mobileJumpHeld
 			or safeIsKeyDown(Enum.KeyCode.Space)
 			or safeIsKeyDown(Enum.KeyCode.ButtonA)
 			or safeIsKeyDown(Enum.KeyCode.ButtonR2)
+			or (UserInputService.TouchEnabled and (mobileJumpHeld or os.clock() <= mobileJumpHoldUntil))
 	end
 
 	local function readyPromptText()
@@ -3056,7 +3198,7 @@ local function boot(character)
 		scannedVisualTarget = nil
 		scannedVisualCanSwing = false
 		lastTargetScanClock = -1e9
-		stopHangAnim(doLaunch and 0 or 0.08)
+		stopHangAnim(doLaunch and C.LAUNCH_HANG_RELEASE_FADE or 0.08)
 		swingPose.clear()
 		destroySwingObjects()
 		stopOptionalSound("Wind")
@@ -3069,12 +3211,9 @@ local function boot(character)
 			isLaunched = true
 			landedFromSwing = true
 			lastLaunchClock = os.clock()
-			playFallingAnim(0.03)
+			playFallingAnim(C.LAUNCH_FALL_ANIM_FADE)
 			playOptionalSound("Launch")
-			task.defer(function()
-				if isSwinging or not hrp.Parent then
-					return
-				end
+			if not isSwinging and hrp.Parent then
 				camera = workspace.CurrentCamera or camera
 				releaseStyle.apply(
 					camera,
@@ -3087,10 +3226,56 @@ local function boot(character)
 					forwardHeld,
 					releaseMomentum
 				)
-			end)
+			end
 		else
 			releaseStyle.cancel()
 		end
+	end
+
+	if UserInputService.TouchEnabled then
+		task.defer(function()
+			local playerGui = player:WaitForChild("PlayerGui", 10)
+			if not playerGui then
+				return
+			end
+
+			local touchGui = playerGui:WaitForChild("TouchGui", 10)
+			local touchFrame = touchGui and touchGui:WaitForChild("TouchControlFrame", 10)
+			local jumpButton = touchFrame and touchFrame:WaitForChild("JumpButton", 10)
+
+			if not jumpButton or not jumpButton:IsA("GuiButton") then
+				return
+			end
+
+			local function mobileJumpPressed()
+				mobileJumpHeld = true
+				mobileJumpHoldUntil = os.clock() + C.MOBILE_JUMP_HOLD_GRACE
+			end
+
+			local function mobileJumpReleased()
+				mobileJumpHeld = false
+				mobileJumpHoldUntil = -1e9
+
+				if isSwinging and os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
+					stopSwing(true)
+				end
+			end
+
+			addConn(jumpButton.MouseButton1Down:Connect(mobileJumpPressed))
+			addConn(jumpButton.MouseButton1Up:Connect(mobileJumpReleased))
+
+			addConn(jumpButton.InputBegan:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.Touch then
+					mobileJumpPressed()
+				end
+			end))
+
+			addConn(jumpButton.InputEnded:Connect(function(input)
+				if input.UserInputType == Enum.UserInputType.Touch then
+					mobileJumpReleased()
+				end
+			end))
+		end)
 	end
 
 	local function spawnLandingBlocks(speed)
@@ -3503,170 +3688,7 @@ local function boot(character)
 		end
 	end
 
-	local function disconnectMobileJumpButton()
-		for _, conn in ipairs(mobileConns) do
-			conn:Disconnect()
-		end
-		table.clear(mobileConns)
-		mobileJumpBound = false
-		mobileJumpHeld = false
-	end
-
-	local function destroyMobileFallbackButton()
-		if fallbackMobileGui then
-			fallbackMobileGui:Destroy()
-			fallbackMobileGui = nil
-		end
-	end
-
-	local function createMobileFallbackButton()
-		if fallbackMobileGui or mobileJumpBound or not UserInputService.TouchEnabled then
-			return
-		end
-
-		local playerGui = player:FindFirstChildOfClass("PlayerGui")
-		if not playerGui then
-			return
-		end
-
-		fallbackMobileGui = Instance.new("ScreenGui")
-		fallbackMobileGui.Name = "SwingMobileFallback"
-		fallbackMobileGui.ResetOnSpawn = false
-		fallbackMobileGui.IgnoreGuiInset = true
-		fallbackMobileGui.Parent = playerGui
-
-		local button = Instance.new("TextButton")
-		button.Name = "SwingHoldButton"
-		button.AnchorPoint = Vector2.new(1, 1)
-		button.Position = UDim2.new(1, -104, 1, -172)
-		button.Size = UDim2.fromOffset(82, 82)
-		button.BackgroundColor3 = Color3.fromRGB(28, 31, 36)
-		button.BackgroundTransparency = 0.18
-		button.BorderSizePixel = 0
-		button.Text = "SWING"
-		button.TextColor3 = Color3.new(1, 1, 1)
-		button.TextStrokeTransparency = 0.45
-		button.TextSize = 13
-		button.Font = Enum.Font.GothamBold
-		button.Parent = fallbackMobileGui
-
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(1, 0)
-		corner.Parent = button
-
-		local stroke = Instance.new("UIStroke")
-		stroke.Color = C.READY_COLOR
-		stroke.Thickness = 2
-		stroke.Transparency = 0.15
-		stroke.Parent = button
-
-		addMobileConn(button.InputBegan:Connect(function(input)
-			if
-				input.UserInputType ~= Enum.UserInputType.Touch
-				and input.UserInputType ~= Enum.UserInputType.MouseButton1
-			then
-				return
-			end
-			noteJumpPressed()
-			mobileJumpHeld = true
-			button.BackgroundTransparency = 0.04
-			tryAttach()
-		end))
-
-		addMobileConn(button.InputEnded:Connect(function(input)
-			if
-				input.UserInputType ~= Enum.UserInputType.Touch
-				and input.UserInputType ~= Enum.UserInputType.MouseButton1
-			then
-				return
-			end
-			mobileJumpHeld = false
-			button.BackgroundTransparency = 0.18
-			if isSwinging and os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
-				stopSwing(true)
-			end
-		end))
-	end
-
-	local function bindMobileJumpButton()
-		if mobileJumpBound then
-			return true
-		end
-		if not UserInputService.TouchEnabled then
-			return false
-		end
-
-		local playerGui = player:FindFirstChildOfClass("PlayerGui")
-		if not playerGui then
-			return false
-		end
-
-		local touchGui = playerGui:FindFirstChild("TouchGui")
-		local frame = touchGui and touchGui:FindFirstChild("TouchControlFrame")
-		local button = frame and frame:FindFirstChild("JumpButton", true)
-		if not (button and button:IsA("GuiButton")) then
-			return false
-		end
-
-		mobileJumpBound = true
-		destroyMobileFallbackButton()
-		local buttonDown = false
-
-		addMobileConn(button.InputBegan:Connect(function(input)
-			if input.UserInputType ~= Enum.UserInputType.Touch then
-				return
-			end
-			if buttonDown then
-				return
-			end
-			buttonDown = true
-			noteJumpPressed()
-			mobileJumpHeld = true
-			tryAttach()
-		end))
-
-		addMobileConn(button.InputEnded:Connect(function(input)
-			if input.UserInputType ~= Enum.UserInputType.Touch then
-				return
-			end
-			buttonDown = false
-			mobileJumpHeld = false
-			if isSwinging and os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
-				stopSwing(true)
-			end
-		end))
-
-		addMobileConn(button.AncestryChanged:Connect(function(_, parent)
-			if not parent then
-				disconnectMobileJumpButton()
-				task.defer(function()
-					if not bindMobileJumpButton() then
-						createMobileFallbackButton()
-					end
-				end)
-			end
-		end))
-
-		return true
-	end
-
-	if UserInputService.TouchEnabled then
-		task.defer(function()
-			task.wait(0.35)
-			if not bindMobileJumpButton() then
-				task.wait(1)
-				if not bindMobileJumpButton() then
-					createMobileFallbackButton()
-				end
-			end
-		end)
-		local playerGui = player:WaitForChild("PlayerGui")
-		addConn(playerGui.DescendantAdded:Connect(function(desc)
-			if desc.Name == "JumpButton" and desc:IsA("GuiButton") then
-				task.defer(bindMobileJumpButton)
-			end
-		end))
-	end
+	-- Mobile fallback removed to keep Luau boot() under the 200 local-register limit.
 
 	addConn(UserInputService.InputBegan:Connect(function(input, processed)
 		if UserInputService:GetFocusedTextBox() then
@@ -3712,10 +3734,23 @@ local function boot(character)
 		if UserInputService:GetFocusedTextBox() then
 			return
 		end
-		noteJumpPressed()
-		if not isSwinging then
-			tryAttach()
+
+		if UserInputService.TouchEnabled then
+			mobileJumpHeld = true
+			mobileJumpHoldUntil = os.clock() + C.MOBILE_JUMP_HOLD_GRACE
+			humanoid.Jump = false
 		end
+
+		noteJumpPressed()
+
+		if isSwinging then
+			return
+		end
+
+		stopTrack(landedTrack, 0.08)
+		humanoid.PlatformStand = false
+		humanoid.AutoRotate = true
+		tryAttach()
 	end))
 
 	if C.PRE_SIMULATION_SIGNAL then
@@ -3753,11 +3788,42 @@ local function boot(character)
 	end
 
 	addConn(humanoid.StateChanged:Connect(function(_, newState)
-		if
-			newState == Enum.HumanoidStateType.Freefall
-			or newState == Enum.HumanoidStateType.Jumping
-			or newState == Enum.HumanoidStateType.FallingDown
-		then
+		if isSwingLandingRecoveryState(newState) then
+			-- Fast angled landings can put the Humanoid into Roblox's get-up/ragdoll states.
+			-- During swing launch recovery, skip that delay and immediately restore player control.
+			if
+				not isSwinging
+				and (isLaunched or landedFromSwing or os.clock() - lastLaunchClock < C.LAUNCH_STYLE_TIME + 0.45)
+			then
+				local wasLandedFromSwing = landedFromSwing
+				local impactSpeed = landingSpeed
+				landedFromSwing = false
+				isLaunched = false
+				landingSpeed = 0
+				isAirborne = false
+				forceSwingHumanoidControl()
+				stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
+
+				if wasLandedFromSwing then
+					playLandedAnim()
+					spawnLandingBlocks(impactSpeed)
+					playOptionalSound("GroundSmash")
+					local impactAlpha = math.clamp((impactSpeed - 8) / 70, 0.58, 1)
+					lastLandingClock = os.clock()
+					landingShakeStrength = math.clamp(0.42 + impactAlpha * 0.86, 0, 1.22)
+					landingShakeSeed = math.random() * 1000
+				else
+					stopTrack(landedTrack, 0.05)
+				end
+				hideSwingTargetUi()
+				task.delay(C.SWING_LANDING_RECOVERY_DELAY, function()
+					if humanoid.Parent and not isSwinging then
+						forceSwingHumanoidControl()
+					end
+				end)
+				return
+			end
+		elseif newState == Enum.HumanoidStateType.Freefall or newState == Enum.HumanoidStateType.Jumping then
 			isAirborne = true
 			airborneStartedClock = os.clock()
 			if not isSwinging and (isLaunched or landedFromSwing) then
@@ -3768,16 +3834,23 @@ local function boot(character)
 			if isSwinging then
 				return
 			end
+
 			local swingLanding = landedFromSwing or isLaunched
-			releaseStyle.cancel()
-			swingPose.clear()
-			humanoid.PlatformStand = false
-			humanoid.AutoRotate = true
-			if not isSwinging and swingLanding then
+			local wasLandedFromSwing = landedFromSwing
+			local impactSpeed = landingSpeed
+
+			-- Clear the swing flags BEFORE playing the landing animation.
+			-- Otherwise the landing auto-stop task can think the launch is still active and leave the clip running.
+			landedFromSwing = false
+			isLaunched = false
+			landingSpeed = 0
+
+			forceSwingHumanoidControl()
+			if swingLanding then
 				playLandedAnim()
 			end
-			local impactSpeed = landingSpeed
-			if landedFromSwing then
+
+			if wasLandedFromSwing then
 				spawnLandingBlocks(impactSpeed)
 				playOptionalSound("GroundSmash")
 				local impactAlpha = math.clamp((impactSpeed - 8) / 70, 0.58, 1)
@@ -3785,19 +3858,27 @@ local function boot(character)
 				landingShakeStrength = math.clamp(0.42 + impactAlpha * 0.86, 0, 1.22)
 				landingShakeSeed = math.random() * 1000
 			end
-			landedFromSwing = false
-			isLaunched = false
-			landingSpeed = 0
+
 			hideSwingTargetUi()
+			task.delay(C.SWING_LANDING_RECOVERY_DELAY, function()
+				if humanoid.Parent and not isSwinging then
+					forceSwingHumanoidControl()
+				end
+			end)
 		elseif newState == Enum.HumanoidStateType.Running or newState == Enum.HumanoidStateType.RunningNoPhysics then
 			isAirborne = false
+
 			if not isSwinging then
-				releaseStyle.cancel()
-				swingPose.clear()
-				humanoid.PlatformStand = false
-				humanoid.AutoRotate = true
+				forceSwingHumanoidControl()
 			end
+
 			stopFallingAnim()
+
+			local landingAnimRecentlyPlayed = os.clock() - lastLandedAnimClock < C.LAUNCH_LAND_MAX_PLAY_TIME
+			if not landingAnimRecentlyPlayed then
+				stopTrack(landedTrack, 0.08)
+			end
+
 			hideSwingTargetUi()
 		end
 	end))
@@ -3933,6 +4014,36 @@ local function boot(character)
 			landingSpeed = math.max(landingSpeed, speed)
 		end
 
+		-- Landing watchdog: sometimes Roblox skips the clean Landed state and leaves the character
+		-- briefly in Physics/FallingDown/GettingUp. If the launched player is now grounded or close
+		-- to ground while no longer moving upward, instantly return control.
+		if
+			not isSwinging
+			and (isLaunched or landedFromSwing)
+			and now - lastLaunchClock > 0.16
+			and velocity.Y <= C.SWING_LANDING_MAX_Y_SPEED_FOR_RECOVERY
+			and isCloseToGroundForSwingLanding()
+		then
+			local wasLandedFromSwing = landedFromSwing
+			local impactSpeed = landingSpeed
+			landedFromSwing = false
+			isLaunched = false
+			landingSpeed = 0
+			isAirborne = false
+			forceSwingHumanoidControl()
+			stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
+			if wasLandedFromSwing then
+				playLandedAnim()
+				spawnLandingBlocks(impactSpeed)
+				playOptionalSound("GroundSmash")
+				local impactAlpha = math.clamp((impactSpeed - 8) / 70, 0.58, 1)
+				lastLandingClock = now
+				landingShakeStrength = math.clamp(0.42 + impactAlpha * 0.86, 0, 1.22)
+				landingShakeSeed = math.random() * 1000
+			end
+			hideSwingTargetUi()
+		end
+
 		if isSwinging then
 			if not currentTarget or not currentTarget.Parent or not anchorAttachment or not anchorAttachment.Parent then
 				stopSwing(true)
@@ -4028,6 +4139,10 @@ local function boot(character)
 			else
 				forwardHoldTime = math.max(0, forwardHoldTime - dt * 0.55)
 				forwardSwingCharge = math.max(0, forwardSwingCharge - dt * 0.7)
+			end
+
+			if moveFlatUnit or forwardInput > 0.08 then
+				lastSwingInputClock = now
 			end
 			poseInputs.radial = radial
 			poseInputs.moveFlatUnit = moveFlatUnit
@@ -4194,11 +4309,27 @@ local function boot(character)
 				end
 			else
 				if moveTangent.Magnitude > 0.05 then
+					lastSwingInputClock = now
+
 					deadHangForce = moveTangent.Unit * C.DEAD_HANG_MOVE_FORCE * 0.72 * mult * hrp.AssemblyMass
 					swingMomentum =
 						math.min(1, swingMomentum + C.SWING_DEAD_HANG_MOMENTUM_BUILD_RATE * moveTangent.Magnitude * dt)
 				else
-					swingMomentum = math.max(0, swingMomentum - C.SWING_MOMENTUM_IDLE_DECAY_RATE * dt)
+					-- No input: keep the swing flowing, then slowly bleed speed away.
+					swingMomentum = math.max(0, swingMomentum - C.SWING_MOMENTUM_IDLE_DECAY_RATE * 0.32 * dt)
+
+					local tangVelocity = velocity - radial * velocity:Dot(radial)
+					local tangSpeed = tangVelocity.Magnitude
+
+					if tangSpeed > C.SWING_IDLE_FLOW_MIN_SPEED then
+						deadHangForce = -tangVelocity * C.SWING_IDLE_FLOW_DAMPING * hrp.AssemblyMass
+					elseif now - lastSwingInputClock > C.SWING_IDLE_SWAY_DELAY and arcDir then
+						deadHangForce = arcDir
+							* math.sin(now * C.SWING_IDLE_SWAY_SPEED)
+							* C.SWING_IDLE_SWAY_FORCE
+							* mult
+							* hrp.AssemblyMass
+					end
 				end
 			end
 
@@ -4372,7 +4503,6 @@ local function boot(character)
 			conn:Disconnect()
 		end
 		table.clear(conns)
-		disconnectMobileJumpButton()
 		if isSwinging then
 			stopSwing(false)
 		end
@@ -4401,7 +4531,6 @@ local function boot(character)
 		end
 		cleanupWorkspaceHelpersByName("SwingMarkerAnchor", nil)
 		cleanupWorkspaceHelpersByName("SwingPreviewAnchor", nil)
-		destroyMobileFallbackButton()
 		setTrailsEnabled(false)
 		for _, trail in ipairs(trails) do
 			if trail and trail.Parent then

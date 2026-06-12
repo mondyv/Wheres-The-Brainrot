@@ -32,11 +32,16 @@ local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirect
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local POP_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
+type BuyButtonState = {
+	enabled: boolean,
+}
+
 type OwnedBuyEntry = {
 	buy: GuiObject,
 	state: BuyButtonState,
 	ownedAttr: string,
 }
+
 local ownedBuyByGamePassId: { [number]: OwnedBuyEntry } = {}
 local ownedBuyByProductId: { [number]: OwnedBuyEntry } = {}
 
@@ -86,8 +91,6 @@ local function highlightOn(host: GuiObject): GuiObject?
 	end
 	return nil
 end
-
-type BuyButtonState = { enabled: boolean }
 
 -- Wires standard hover/click anim + SFX onto a buy-button host. Returns a state table
 -- so callers can enable/disable the button (e.g. owned / sold out).
@@ -161,6 +164,60 @@ local function setButtonEnabled(host: GuiObject, state: BuyButtonState, enabled:
 	end
 end
 
+local function removeStoreDisabledOverlay(host: GuiObject)
+	local overlay = host:FindFirstChild("_StoreDisabled")
+	if overlay then
+		overlay:Destroy()
+	end
+end
+
+local function setButtonEnabledNoOverlay(host: GuiObject, state: BuyButtonState, enabled: boolean)
+	state.enabled = enabled
+	removeStoreDisabledOverlay(host)
+end
+
+local function applyPackPurchasedRed(buy: GuiObject)
+	MainGradientButtons.applyPurchased(buy)
+
+	removeStoreDisabledOverlay(buy)
+
+	if buy:IsA("Frame") or buy:IsA("TextButton") or buy:IsA("ImageButton") then
+		buy.BackgroundColor3 = Color3.fromRGB(220, 45, 45)
+		buy.BackgroundTransparency = 0
+	end
+
+	local gradient = buy:FindFirstChildOfClass("UIGradient")
+	if gradient then
+		gradient.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 90, 90)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 20, 20)),
+		})
+	end
+
+	for _, descendant in buy:GetDescendants() do
+		if descendant:IsA("UIGradient") then
+			descendant.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 90, 90)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 20, 20)),
+			})
+		elseif descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
+			if
+				descendant.Text == "Buy"
+				or descendant.Text == "BUY"
+				or descendant.Text == "Purchase"
+				or descendant.Text == "PURCHASE"
+			then
+				descendant.Text = "Purchased"
+			end
+		end
+	end
+end
+
+local function applyPackAvailableDefault(buy: GuiObject)
+	MainGradientButtons.applyDefault(buy)
+	removeStoreDisabledOverlay(buy)
+end
+
 local function findBuy(panel: Instance?): GuiObject?
 	if not panel then
 		return nil
@@ -171,6 +228,23 @@ local function findBuy(panel: Instance?): GuiObject?
 		return one :: GuiObject
 	end
 	return nil
+end
+
+local function refreshOwnedBuy(entry: OwnedBuyEntry)
+	local owned = player:GetAttribute(entry.ownedAttr) == true
+
+	if owned then
+		MainGradientButtons.applyPurchased(entry.buy)
+		setButtonEnabled(entry.buy, entry.state, false)
+	else
+		MainGradientButtons.applyDefault(entry.buy)
+		setButtonEnabled(entry.buy, entry.state, true)
+	end
+end
+
+local function applyOptimisticPurchase(entry: OwnedBuyEntry)
+	MainGradientButtons.applyPurchased(entry.buy)
+	setButtonEnabled(entry.buy, entry.state, false)
 end
 
 -- ── Wiring ──────────────────────────────────────────────────────────────────────
@@ -280,15 +354,21 @@ local function wirePacks(container: Instance)
 				local count = if typeof(bought) == "number" then bought else 0
 				local remaining = math.max(0, StoreConfig.PACK_PURCHASE_LIMIT - count)
 				if availableLabel and (availableLabel:IsA("TextLabel") or availableLabel:IsA("TextButton")) then
-					(availableLabel :: TextLabel).Text = string.format("%d/%d available", remaining, StoreConfig.PACK_PURCHASE_LIMIT)
+					(availableLabel :: TextLabel).Text =
+						string.format("%d/%d available", remaining, StoreConfig.PACK_PURCHASE_LIMIT)
 				end
 				local soldOut = remaining <= 0
 				if soldOut then
-					MainGradientButtons.applyPurchased(buy)
+					if availableLabel and (availableLabel:IsA("TextLabel") or availableLabel:IsA("TextButton")) then
+						(availableLabel :: TextLabel).Text = "Purchased"
+					end
+
+					applyPackPurchasedRed(buy)
+					setButtonEnabledNoOverlay(buy, state, false)
 				else
-					MainGradientButtons.applyDefault(buy)
+					applyPackAvailableDefault(buy)
+					setButtonEnabledNoOverlay(buy, state, true)
 				end
-				setButtonEnabled(buy, state, not soldOut, soldOut)
 			end
 			player:GetAttributeChangedSignal(pack.boughtAttr):Connect(refresh)
 			ownedBuyByProductId[pack.productId] = entry
@@ -389,7 +469,7 @@ local function wireServerLuck(container: Instance)
 		local function refresh()
 			local mult = ReplicatedStorage:GetAttribute(StoreConfig.SERVER_LUCK_MULT_ATTR)
 			local current = if typeof(mult) == "number" and mult > 1 then mult else 1
-			local nextMult = current * 2;
+			local nextMult = current * 2
 			(label :: TextLabel).Text = string.format("%dx > %dx", current, nextMult)
 		end
 		ReplicatedStorage:GetAttributeChangedSignal(StoreConfig.SERVER_LUCK_MULT_ATTR):Connect(refresh)
@@ -434,7 +514,11 @@ local function wireFreeBrainrot(storeFrame: Instance)
 		end)
 		pulse:Play()
 
-		local re = claimRE or (ReplicatedStorage:FindFirstChild("StoreRemotes") and ReplicatedStorage.StoreRemotes:FindFirstChild("ClaimFreeBrainrot"))
+		local re = claimRE
+			or (
+				ReplicatedStorage:FindFirstChild("StoreRemotes")
+				and ReplicatedStorage.StoreRemotes:FindFirstChild("ClaimFreeBrainrot")
+			)
 		if re and re:IsA("RemoteEvent") then
 			re:FireServer()
 		end
@@ -486,11 +570,13 @@ local function init()
 		end
 	end
 
-	wireExclusive(container, purchasedTemplate)
+	wireExclusive(container)
 	wireServerLuck(container)
-	wirePacks(container, purchasedTemplate)
+	wirePacks(container)
+
 	collectCashBundlePanels(container)
 	applyFloorCashBundleLabels()
+
 	local refreshFreeBrainrot = wireFreeBrainrot(storeFrame)
 
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, gamePassId, wasPurchased)
@@ -529,10 +615,11 @@ local function init()
 			local count = if typeof(bought) == "number" then bought else 0
 			local remaining = math.max(0, StoreConfig.PACK_PURCHASE_LIMIT - count)
 			if remaining <= 0 then
-				MainGradientButtons.applyPurchased(entry.buy)
-				setButtonEnabled(entry.buy, entry.state, false, true)
+				applyPackPurchasedRed(entry.buy)
+				setButtonEnabledNoOverlay(entry.buy, entry.state, false)
 			else
-				MainGradientButtons.applyDefault(entry.buy)
+				applyPackAvailableDefault(entry.buy)
+				setButtonEnabledNoOverlay(entry.buy, entry.state, true)
 			end
 		end)
 	end)

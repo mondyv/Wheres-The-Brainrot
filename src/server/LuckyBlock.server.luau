@@ -253,6 +253,30 @@ local function pickIconFromModel(model: Model): string
 	return ""
 end
 
+local function getActivatedLuckyBlock(player: Player, toolArg: any): Tool?
+	if typeof(toolArg) ~= "Instance" then
+		return nil
+	end
+
+	if not toolArg:IsA("Tool") then
+		return nil
+	end
+
+	local tool = toolArg :: Tool
+
+	if tool:GetAttribute("LuckyBlockTool") ~= true then
+		return nil
+	end
+
+	-- Only allow equipped Lucky Blocks to roll.
+	-- This prevents backpack Lucky Blocks from randomly being consumed.
+	if tool.Parent ~= player.Character then
+		return nil
+	end
+
+	return tool
+end
+
 local function resolveStarRainbowIconId(): string
 	local root = ReplicatedStorage:FindFirstChild("Lucky Blocks")
 	local icons = root and root:FindFirstChild("Lucky Block Icons")
@@ -277,7 +301,8 @@ local function resolveStarRainbowIconId(): string
 	end
 	for _, d in icons:GetDescendants() do
 		if (d:IsA("ImageLabel") or d:IsA("ImageButton")) and d.Image ~= "" then
-			if string.find(string.lower(d.Name), "rainbow", 1, true)
+			if
+				string.find(string.lower(d.Name), "rainbow", 1, true)
 				or string.find(string.lower(d:GetFullName()), "rainbow", 1, true)
 			then
 				return d.Image
@@ -292,7 +317,8 @@ local function buildLuckyBlockTool(template: Model, blockName: string): Tool?
 	for _, d in ipairs(clone:GetDescendants()) do
 		if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ProximityPrompt") then
 			d:Destroy()
-		elseif d.Name == "Icon"
+		elseif
+			d.Name == "Icon"
 			and (
 				d:IsA("ImageLabel")
 				or d:IsA("ImageButton")
@@ -305,7 +331,8 @@ local function buildLuckyBlockTool(template: Model, blockName: string): Tool?
 		end
 	end
 	local iconChild = clone:FindFirstChild("Icon")
-	if iconChild
+	if
+		iconChild
 		and (
 			iconChild:IsA("ImageLabel")
 			or iconChild:IsA("ImageButton")
@@ -369,7 +396,32 @@ local function buildLuckyBlockTool(template: Model, blockName: string): Tool?
 	return tool
 end
 
-local function findEquippedOrBackpackLuckyBlock(player: Player): Tool?
+local function playerOwnsLuckyBlockTool(player: Player, tool: Instance?): boolean
+	if not tool or not tool:IsA("Tool") then
+		return false
+	end
+	if tool:GetAttribute("LuckyBlockTool") ~= true then
+		return false
+	end
+
+	local char = player.Character
+	if char and tool.Parent == char then
+		return true
+	end
+
+	local bp = player:FindFirstChildOfClass("Backpack")
+	if bp and tool.Parent == bp then
+		return true
+	end
+
+	return false
+end
+
+local function findEquippedOrBackpackLuckyBlock(player: Player, preferredTool: Instance?): Tool?
+	if playerOwnsLuckyBlockTool(player, preferredTool) then
+		return preferredTool :: Tool
+	end
+
 	local char = player.Character
 	if char then
 		for _, c in ipairs(char:GetChildren()) do
@@ -389,22 +441,9 @@ local function findEquippedOrBackpackLuckyBlock(player: Player): Tool?
 	return nil
 end
 
-local function destroyAllLuckyBlocks(player: Player)
-	local char = player.Character
-	if char then
-		for _, c in ipairs(char:GetChildren()) do
-			if c:IsA("Tool") and c:GetAttribute("LuckyBlockTool") == true then
-				c:Destroy()
-			end
-		end
-	end
-	local bp = player:FindFirstChildOfClass("Backpack")
-	if bp then
-		for _, c in ipairs(bp:GetChildren()) do
-			if c:IsA("Tool") and c:GetAttribute("LuckyBlockTool") == true then
-				c:Destroy()
-			end
-		end
+local function destroyRolledLuckyBlock(player: Player, tool: Tool)
+	if playerOwnsLuckyBlockTool(player, tool) then
+		tool:Destroy()
 	end
 end
 
@@ -528,11 +567,12 @@ end
 
 local rollInFlight: { [Player]: boolean } = {}
 
-local function tryRoll(player: Player)
+local function tryRoll(player: Player, requestedTool: Instance?)
 	if rollInFlight[player] then
 		return
 	end
-	local tool = findEquippedOrBackpackLuckyBlock(player)
+
+	local tool = getActivatedLuckyBlock(player, requestedTool)
 	if not tool then
 		return
 	end
@@ -566,7 +606,7 @@ local function tryRoll(player: Player)
 
 	task.delay(SHAKE_DURATION_SEC, function()
 		rollInFlight[player] = nil
-		destroyAllLuckyBlocks(player)
+		destroyRolledLuckyBlock(player, tool)
 
 		local grant = brainrotInternalBF("GrantBrainrotAndEquip")
 		if grant then
@@ -588,8 +628,8 @@ local function tryRoll(player: Player)
 	end)
 end
 
-rollRE.OnServerEvent:Connect(function(player: Player)
-	tryRoll(player)
+rollRE.OnServerEvent:Connect(function(player: Player, requestedTool: Instance?)
+	tryRoll(player, requestedTool)
 end)
 
 Players.PlayerRemoving:Connect(function(player)

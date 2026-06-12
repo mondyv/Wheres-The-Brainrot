@@ -9,6 +9,7 @@
 	• Drives the ServerLuckFrame (pop-in when active, MM:SS countdown, hide when off).
 ]]
 
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -326,18 +327,77 @@ local ICON_DEFS = {
 	},
 }
 
-local function setupIcons(iconsFolder: Instance)
-	for iconName, def in ICON_DEFS do
-		local icon = iconsFolder:FindFirstChild(iconName)
-		if icon and icon:IsA("GuiObject") then
-			bindTooltip(icon, def.title, def.description, readGuiAccentColor(icon))
-			local function evaluate()
-				icon.Visible = player:GetAttribute(def.attr) == true
-			end
-			player:GetAttributeChangedSignal(def.attr):Connect(evaluate)
-			evaluate()
+local function normalizeIconName(name: string): string
+	return string.gsub(string.lower(name), "%s+", "")
+end
+
+local function resolveBoostIcon(iconsFolder: Instance, iconName: string): GuiObject?
+	local direct = iconsFolder:FindFirstChild(iconName)
+	if direct and direct:IsA("GuiObject") then
+		return direct
+	end
+	local want = normalizeIconName(iconName)
+	for _, child in iconsFolder:GetChildren() do
+		if child:IsA("GuiObject") and normalizeIconName(child.Name) == want then
+			return child
 		end
 	end
+	return nil
+end
+
+local function isGamePassOwned(def: { id: number, attr: string }): boolean
+	if player:GetAttribute(def.attr) == true then
+		return true
+	end
+	local ok, result = pcall(function()
+		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, def.id)
+	end)
+	if not ok then
+		warn("[BoostIconsController] UserOwnsGamePassAsync failed for", def.id, ":", result)
+	end
+	return ok and result == true
+end
+
+local function setupIcons(iconsFolder: Instance)
+	for iconName, def in ICON_DEFS do
+		local icon = resolveBoostIcon(iconsFolder, iconName)
+		if not icon then
+			warn("[BoostIconsController] boost icon not found:", iconName)
+			continue
+		end
+		bindTooltip(icon, def.title, def.description, readGuiAccentColor(icon))
+		local function evaluate()
+			icon.Visible = isGamePassOwned(def)
+		end
+		player:GetAttributeChangedSignal(def.attr):Connect(evaluate)
+		evaluate()
+		task.spawn(evaluate)
+	end
+
+	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, gamePassId, wasPurchased)
+		if plr ~= player or not wasPurchased then
+			return
+		end
+		for iconName, def in ICON_DEFS do
+			if def.id ~= gamePassId then
+				continue
+			end
+			local icon = resolveBoostIcon(iconsFolder, iconName)
+			if icon then
+				icon.Visible = true
+			end
+		end
+		task.defer(function()
+			for iconName, def in ICON_DEFS do
+				if def.id == gamePassId then
+					local icon = resolveBoostIcon(iconsFolder, iconName)
+					if icon then
+						icon.Visible = isGamePassOwned(def)
+					end
+				end
+			end
+		end)
+	end)
 end
 
 -- ── Overall luck ──────────────────────────────────────────────────────────────────
@@ -430,9 +490,11 @@ local function init()
 	local sideUI = main:WaitForChild("SideUI")
 	local counters = sideUI:WaitForChild("Counters")
 
-	local iconsFolder = counters:FindFirstChild("GamepassBoostIcons")
+	local iconsFolder = counters:WaitForChild("GamepassBoostIcons", 30)
 	if iconsFolder then
 		setupIcons(iconsFolder)
+	else
+		warn("[BoostIconsController] SideUI.Counters.GamepassBoostIcons missing")
 	end
 
 	local boost = counters:FindFirstChild("Boost")

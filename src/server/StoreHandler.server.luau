@@ -279,6 +279,31 @@ end)
 
 local StoreAccess = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreAccess"))
 
+local GAMEPASS_OWNED_ATTR_BY_ID: { [number]: string } = {
+	[StoreConfig.GAMEPASS.VIP] = StoreConfig.ATTR.VIP_OWNED,
+	[StoreConfig.GAMEPASS.XRAY] = StoreConfig.ATTR.XRAY_OWNED,
+	[StoreConfig.GAMEPASS.DOUBLE_UPGRADES] = StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED,
+	[StoreConfig.GAMEPASS.DOUBLE_CASH] = StoreConfig.ATTR.DOUBLE_CASH_OWNED,
+	[StoreConfig.GAMEPASS.SUPER_LUCK] = StoreConfig.ATTR.SUPER_LUCK_OWNED,
+	[StoreConfig.GAMEPASS.MEGA_LUCK] = StoreConfig.ATTR.MEGA_LUCK_OWNED,
+}
+
+local function applyPurchasedGamePassAttributes(player: Player, gamePassId: number)
+	local ownedAttr = GAMEPASS_OWNED_ATTR_BY_ID[gamePassId]
+	if not ownedAttr then
+		return
+	end
+	player:SetAttribute(ownedAttr, true)
+	if gamePassId == StoreConfig.GAMEPASS.VIP then
+		player:SetAttribute(StoreConfig.ATTR.VIP_LUCK_MULT, StoreConfig.VIP_LUCK_MULTIPLIER)
+		local current = player:GetAttribute(StoreConfig.ATTR.FREE_STEAL_COUNT)
+		local count = if typeof(current) == "number" then current else 0
+		if count < StoreConfig.VIP_FREE_STEALS then
+			player:SetAttribute(StoreConfig.ATTR.FREE_STEAL_COUNT, StoreConfig.VIP_FREE_STEALS)
+		end
+	end
+end
+
 local function ownsGamePass(player: Player, gamePassId: number): boolean
 	if not StoreAccess.shouldTrustMarketplaceOwnership(player) then
 		return false
@@ -287,6 +312,16 @@ local function ownsGamePass(player: Player, gamePassId: number): boolean
 		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, gamePassId)
 	end)
 	return ok and result == true
+end
+
+local function isGamePassOwnedForEffects(player: Player, gamePassId: number, fromPurchase: boolean?): boolean
+	if fromPurchase then
+		local ownedAttr = GAMEPASS_OWNED_ATTR_BY_ID[gamePassId]
+		if ownedAttr and player:GetAttribute(ownedAttr) == true then
+			return true
+		end
+	end
+	return ownsGamePass(player, gamePassId)
 end
 
 local function clearGamePassAttributes(player: Player)
@@ -309,12 +344,12 @@ local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
 		return
 	end
 
-	local ownsVip = ownsGamePass(player, G.VIP)
-	local ownsCash = ownsGamePass(player, G.DOUBLE_CASH)
-	local ownsUpgrades = ownsGamePass(player, G.DOUBLE_UPGRADES)
-	local ownsSuper = ownsGamePass(player, G.SUPER_LUCK)
-	local ownsMega = ownsGamePass(player, G.MEGA_LUCK)
-	local ownsXray = ownsGamePass(player, G.XRAY)
+	local ownsVip = isGamePassOwnedForEffects(player, G.VIP, fromPurchase)
+	local ownsCash = isGamePassOwnedForEffects(player, G.DOUBLE_CASH, fromPurchase)
+	local ownsUpgrades = isGamePassOwnedForEffects(player, G.DOUBLE_UPGRADES, fromPurchase)
+	local ownsSuper = isGamePassOwnedForEffects(player, G.SUPER_LUCK, fromPurchase)
+	local ownsMega = isGamePassOwnedForEffects(player, G.MEGA_LUCK, fromPurchase)
+	local ownsXray = isGamePassOwnedForEffects(player, G.XRAY, fromPurchase)
 
 	if ownsVip then
 		player:SetAttribute(A.VIP_OWNED, true)
@@ -376,9 +411,11 @@ for _, p in Players:GetPlayers() do
 	onPlayerAdded(p)
 end
 
-MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, _gamePassId, wasPurchased)
+MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, gamePassId, wasPurchased)
 	if wasPurchased and player and player.Parent then
-		print(wasPurchased)
+		-- Set owned attrs immediately so SideUI boost icons update without waiting
+		-- for UserOwnsGamePassAsync to catch up after the purchase prompt closes.
+		applyPurchasedGamePassAttributes(player, gamePassId)
 		task.spawn(function()
 			applyGamePassEffects(player, true)
 		end)

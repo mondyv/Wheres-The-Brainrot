@@ -19,8 +19,8 @@ local M = {}
 M.MAX_DAY = 7
 M.SKIP_ALL_DEV_PRODUCT_ID = 3601652426
 
--- 20 hours between claims; first day is always claimable on first join.
-M.CLAIM_COOLDOWN_SEC = 20 * 3600
+-- 24 hours between claims; first day is always claimable on first join.
+M.CLAIM_COOLDOWN_SEC = 24 * 3600
 
 -- Attribute names persisted on the player while in-session.
 M.DAY_ATTR = "DailyDayClaimed"             -- last sequential day claimed (normal flow)

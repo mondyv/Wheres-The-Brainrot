@@ -13,7 +13,6 @@ local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChil
 
 local SHOWERS_FOLDER_NAME = "Booster Pack Showers"
 local TOUCH_COOLDOWN_SEC = 3
-local WIRED_ATTR = "_BoosterShowerHitboxWired"
 
 -- Studio stand folder name → StoreConfig.PACKS frameName
 local STAND_FRAME_NAMES: { [string]: string } = {
@@ -76,17 +75,24 @@ local function findStandHitbox(stand: Instance): BasePart?
 	if nested and nested:IsA("BasePart") then
 		return nested
 	end
+	for _, desc in stand:GetDescendants() do
+		if desc:IsA("BasePart") and string.lower(desc.Name) == "hitbox" then
+			return desc
+		end
+	end
 	return nil
 end
 
 local function bindHitboxTouch(stand: Instance, hitbox: BasePart, onPrompt: (Player) -> ())
-	if wiredStands[stand] or stand:GetAttribute(WIRED_ATTR) == true then
+	if wiredStands[stand] then
 		return
 	end
 	wiredStands[stand] = true
-	stand:SetAttribute(WIRED_ATTR, true)
+	-- Legacy attribute from an older build could block re-wiring after a place save.
+	stand:SetAttribute("_BoosterShowerHitboxWired", nil)
 
 	hitbox.CanTouch = true
+	hitbox.CanQuery = true
 	local standKey = stand.Name
 	hitbox.Touched:Connect(function(other: BasePart)
 		if not other:IsA("BasePart") then
@@ -117,7 +123,7 @@ local function bindHitboxTouch(stand: Instance, hitbox: BasePart, onPrompt: (Pla
 end
 
 local function ensureHitboxWired(stand: Instance, onPrompt: (Player) -> ())
-	if wiredStands[stand] or stand:GetAttribute(WIRED_ATTR) == true then
+	if wiredStands[stand] then
 		return
 	end
 
@@ -185,7 +191,7 @@ local function wirePackStand(stand: Instance, pack: typeof(StoreConfig.PACKS[1])
 end
 
 local function tryWireStand(stand: Instance)
-	if not stand:IsA("Model") and not stand:IsA("Folder") then
+	if not stand:IsA("Model") and not stand:IsA("Folder") and not stand:IsA("BasePart") then
 		return
 	end
 
@@ -237,6 +243,7 @@ local function wireShowersRoot(root: Instance)
 end
 
 local hookedShowersRoot: Instance? = nil
+local mapHooked = false
 
 local function hookShowersFolder(showers: Instance)
 	if hookedShowersRoot == showers then
@@ -246,34 +253,54 @@ local function hookShowersFolder(showers: Instance)
 	wireShowersRoot(showers)
 end
 
-local function tryInit(): boolean
-	local map = Workspace:FindFirstChild("Map")
-	if not map then
-		return false
-	end
+local function hookMap(map: Instance)
 	local showers = map:FindFirstChild(SHOWERS_FOLDER_NAME)
-	if not showers then
-		return false
-	end
-	hookShowersFolder(showers)
-	return true
-end
-
-if not tryInit() then
-	task.spawn(function()
-		local map = Workspace:WaitForChild("Map", 120)
-		if not map then
-			warn("[BoosterPackShowers] Workspace.Map missing")
-			return
-		end
-		local showers = map:WaitForChild(SHOWERS_FOLDER_NAME, 120)
-		if not showers then
-			warn("[BoosterPackShowers] Map.Booster Pack Showers missing")
-			return
-		end
+	if showers then
 		hookShowersFolder(showers)
+	end
+	map.ChildAdded:Connect(function(child)
+		if child.Name == SHOWERS_FOLDER_NAME then
+			hookShowersFolder(child)
+		end
 	end)
 end
+
+local function ensureMapHooked()
+	if mapHooked then
+		return
+	end
+	local map = Workspace:FindFirstChild("Map")
+	if map then
+		mapHooked = true
+		hookMap(map)
+		return
+	end
+	Workspace.ChildAdded:Connect(function(child)
+		if child.Name == "Map" and not mapHooked then
+			mapHooked = true
+			hookMap(child)
+		end
+	end)
+end
+
+ensureMapHooked()
+task.spawn(function()
+	local map = Workspace:WaitForChild("Map", 120)
+	if not map then
+		warn("[BoosterPackShowers] Workspace.Map missing")
+		return
+	end
+	if not mapHooked then
+		mapHooked = true
+		hookMap(map)
+	end
+	local showers = map:WaitForChild(SHOWERS_FOLDER_NAME, 120)
+	if not showers then
+		warn("[BoosterPackShowers] Map.Booster Pack Showers missing")
+		return
+	end
+	hookShowersFolder(showers)
+end)
 
 Players.PlayerRemoving:Connect(function(player)
 	touchCooldown[player] = nil

@@ -20,6 +20,13 @@ local function bootCoreUI()
 	require(script.CashBoostController).init()
 	require(script.UIEffectsBootstrap).init()
 	require(script.TabScreenController).init()
+	-- Boot early so F5 works even if a later deferred controller errors.
+	local adminOk, adminErr = pcall(function()
+		require(script.AdminCommandBar).init()
+	end)
+	if not adminOk then
+		warn("[init.client] AdminCommandBar init failed:", adminErr)
+	end
 end
 
 -- Store panels, boost icons, gamepass checks, etc. — deferred after core is visible
@@ -45,7 +52,6 @@ local function bootDeferredUI()
 	require(script.StealController).init()
 	require(script.XrayController).init()
 	require(script.ChatTagsController).init()
-	require(script.AdminCommandBar).init()
 
 	local shared = ReplicatedStorage:WaitForChild("EssentialsShared", 10)
 	if shared then

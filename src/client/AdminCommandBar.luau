@@ -175,38 +175,49 @@ local function buildGui(parent: PlayerGui)
 	statusLabel = label
 end
 
+local function toggleOpen()
+	local box = inputBox
+	if box and UserInputService:GetFocusedTextBox() == box then
+		return
+	end
+	setOpen(not (gui and gui.Enabled))
+end
+
 function M.init()
 	if initialized then
 		return
 	end
-	initialized = true
 
 	local playerGui = player:WaitForChild("PlayerGui", 30)
 	if not playerGui then
+		warn("[AdminCommandBar] PlayerGui missing; F5 admin bar not wired")
 		return
 	end
 	buildGui(playerGui)
 
-	ContextActionService:BindActionAtPriority(ACTION_NAME, function(_name, state, _input)
-		if state ~= Enum.UserInputState.Begin then
-			return Enum.ContextActionResult.Pass
-		end
-		local box = inputBox
-		if box and UserInputService:GetFocusedTextBox() == box then
-			return Enum.ContextActionResult.Sink
-		end
-		setOpen(not (gui and gui.Enabled))
-		return Enum.ContextActionResult.Sink
-	end, false, 2000, Enum.KeyCode.F5)
-
+	-- UserInputService is the reliable path; ContextActionService is a backup.
 	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if gameProcessed then
+		if input.KeyCode == Enum.KeyCode.F5 then
+			if gameProcessed then
+				return
+			end
+			toggleOpen()
 			return
 		end
 		if input.KeyCode == Enum.KeyCode.Escape and gui and gui.Enabled then
 			setOpen(false)
 		end
 	end)
+
+	ContextActionService:BindActionAtPriority(ACTION_NAME, function(_name, state, _input)
+		if state ~= Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Pass
+		end
+		toggleOpen()
+		return Enum.ContextActionResult.Sink
+	end, false, 2000, Enum.KeyCode.F5)
+
+	initialized = true
 end
 
 return M

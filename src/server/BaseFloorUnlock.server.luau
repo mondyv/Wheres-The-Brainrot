@@ -650,11 +650,14 @@ end
 task.spawn(function()
 	for _ = 1, 30 do
 		if tryStart() then
-			break
+			-- Don't call tryStart() again on success: it would wire a duplicate ChildAdded connection.
+			return
 		end
 		task.wait(1)
 	end
-	tryStart()
+	if not tryStart() then
+		warn("[BaseFloorUnlock] 'Spawn And Bases' folder never appeared; floor unlock not wired")
+	end
 end)
 
 local function findPlayerPlot(player: Player): Instance?

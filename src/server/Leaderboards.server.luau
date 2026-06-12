@@ -98,7 +98,7 @@ local function pushScore(store: OrderedDataStore?, userId: number, score: number
 	end
 	local key = tostring(userId)
 	local value = math.max(0, math.floor(score))
-	pcall(function()
+	local ok, err = pcall(function()
 		store:UpdateAsync(key, function(oldValue)
 			if typeof(oldValue) == "number" and oldValue >= value then
 				return oldValue
@@ -106,6 +106,9 @@ local function pushScore(store: OrderedDataStore?, userId: number, score: number
 			return value
 		end)
 	end)
+	if not ok then
+		warn("[Leaderboards] UpdateAsync failed for key", key, ":", err)
+	end
 end
 
 local function pushPlayerScores(player: Player)
@@ -242,6 +245,8 @@ Players.PlayerRemoving:Connect(function(player)
 	task.defer(refreshPublishedBoards)
 end)
 
+local loadedConns: { [Player]: RBXScriptConnection } = {}
+
 Players.PlayerAdded:Connect(function(player)
 	local function tryPush()
 		pushPlayerScores(player)
@@ -256,9 +261,19 @@ Players.PlayerAdded:Connect(function(player)
 				if conn then
 					conn:Disconnect()
 				end
+				loadedConns[player] = nil
 				task.defer(tryPush)
 			end
 		end)
+		loadedConns[player] = conn
+	end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	local conn = loadedConns[player]
+	if conn then
+		conn:Disconnect()
+		loadedConns[player] = nil
 	end
 end)
 

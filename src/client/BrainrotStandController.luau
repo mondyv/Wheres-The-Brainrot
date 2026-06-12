@@ -1654,6 +1654,10 @@ local function refreshLocalStandUpgradeWiring()
 			if view.upgradeButton then
 				return
 			end
+			-- Plot was assigned after initStand ran: cash pad label was skipped there, wire it now.
+			if not view.accumulatedConn then
+				wireCashPadLabel(view)
+			end
 			local upgradeFrame = findUpgradeFrame(stand, true)
 			if upgradeFrame and upgradeFrame:IsA("GuiObject") then
 				view.upgradeFrame = upgradeFrame :: GuiObject
@@ -1678,6 +1682,10 @@ function M.init()
 	upgradeRE = (remotes :: Folder):WaitForChild("UpgradeStandBrainrot", 45) :: RemoteEvent
 	upgradeFeedbackRE = (remotes :: Folder):WaitForChild("StandUpgradeFeedback", 45) :: RemoteEvent
 	collectFXRE = (remotes :: Folder):WaitForChild("StandCashCollectedFX", 45) :: RemoteEvent
+	if not upgradeRE or not upgradeFeedbackRE or not collectFXRE then
+		warn("[BrainrotStandController] stand remotes missing after wait; init aborted")
+		return
+	end
 
 	upgradeFeedbackRE.OnClientEvent:Connect(function(ok: boolean, reason: string)
 		if ok or reason ~= "cash" then
@@ -1734,6 +1742,9 @@ function M.init()
 			if view and view.accumulatedConn then
 				view.accumulatedConn:Disconnect()
 			end
+			if view and view.levelPulseConn then
+				view.levelPulseConn:Disconnect()
+			end
 			local promptConns = standPlacePromptConns[standModel]
 			if promptConns then
 				for _, conn in promptConns do
@@ -1743,6 +1754,11 @@ function M.init()
 			end
 			standPromptCache[standModel] = nil
 			views[standModel] = nil
+			lastBrainrotHopAt[standModel] = nil
+			lastUpgradeRequestAt[standModel] = nil
+			if view then
+				lastCashCollectVfxAt[view] = nil
+			end
 			rebuildCachedTaggedStands()
 			task.defer(bumpPromptRefreshFromMovement)
 		end

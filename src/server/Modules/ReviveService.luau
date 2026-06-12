@@ -133,8 +133,13 @@ local function hookCharacter(player: Player, character: Model)
 	end)
 end
 
+local charAddedConns: { [Player]: RBXScriptConnection } = {}
+
 local function hookPlayer(player: Player)
-	player.CharacterAdded:Connect(function(character)
+	if charAddedConns[player] then
+		return
+	end
+	charAddedConns[player] = player.CharacterAdded:Connect(function(character)
 		hookCharacter(player, character)
 	end)
 	if player.Character then
@@ -182,6 +187,11 @@ function ReviveService.init()
 	Players.PlayerAdded:Connect(hookPlayer)
 	Players.PlayerRemoving:Connect(function(player)
 		clearPending(player)
+		local conn = charAddedConns[player]
+		if conn then
+			conn:Disconnect()
+			charAddedConns[player] = nil
+		end
 	end)
 
 	for _, player in Players:GetPlayers() do

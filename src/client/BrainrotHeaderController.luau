@@ -20,6 +20,17 @@ local DEFAULT_BB_SIZE = UDim2.fromOffset(280, 130)
 local templateCache: BillboardGui? = nil
 local headersByModel: { [Model]: BillboardGui } = {}
 local watchedModels: { [Model]: boolean } = {}
+local watchConns: { [Model]: { RBXScriptConnection } } = {}
+
+local function disconnectWatchConns(model: Model)
+	local conns = watchConns[model]
+	if conns then
+		for _, conn in conns do
+			conn:Disconnect()
+		end
+		watchConns[model] = nil
+	end
+end
 
 local function formatCash(n: number): string
 	if n >= 1e15 then
@@ -234,19 +245,28 @@ local function watchModel(model: Model)
 		return
 	end
 	watchedModels[model] = true
+	local conns: { RBXScriptConnection } = {}
+	watchConns[model] = conns
 
 	for _, attrName in HEADER_ATTRS do
-		model:GetAttributeChangedSignal(attrName):Connect(function()
-			syncHeader(model)
-		end)
+		table.insert(
+			conns,
+			model:GetAttributeChangedSignal(attrName):Connect(function()
+				syncHeader(model)
+			end)
+		)
 	end
 
-	model.AncestryChanged:Connect(function(_, parent)
-		if not parent then
-			removeHeader(model)
-			watchedModels[model] = nil
-		end
-	end)
+	table.insert(
+		conns,
+		model.AncestryChanged:Connect(function(_, parent)
+			if not parent then
+				removeHeader(model)
+				watchedModels[model] = nil
+				disconnectWatchConns(model)
+			end
+		end)
+	)
 
 	-- Retry while attributes / template stream in.
 	task.spawn(function()
@@ -290,6 +310,7 @@ local function clearStandHeaders(stand: Model)
 		if model:IsDescendantOf(stand) or (adornee and adornee:IsDescendantOf(stand)) then
 			removeHeader(model)
 			watchedModels[model] = nil
+			disconnectWatchConns(model)
 		end
 	end
 	for _, child in Workspace:GetChildren() do

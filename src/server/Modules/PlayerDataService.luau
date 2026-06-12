@@ -493,9 +493,12 @@ function M.applyLoadedData(player: Player, data: PlayerDataSchema.PlayerSaveData
 	task.defer(function()
 		local refresh = getInternalFolder():FindFirstChild("RefreshRebirthState")
 		if refresh and refresh:IsA("BindableFunction") and player.Parent then
-			pcall(function()
+			local okRefresh, errRefresh = pcall(function()
 				(refresh :: BindableFunction):Invoke(player)
 			end)
+			if not okRefresh then
+				warn("[PlayerDataService] RefreshRebirthState invoke failed:", errRefresh)
+			end
 		end
 	end)
 end
@@ -521,6 +524,12 @@ function M.bindPlayer(player: Player)
 end
 
 function M.unbindPlayer(player: Player)
+	-- If an autosave is mid-flight, wait for it to finish so the final leave-save
+	-- isn't silently skipped (savePlayerData returns false while saveInFlight is set).
+	local deadline = os.clock() + 10
+	while saveInFlight[player] and os.clock() < deadline do
+		task.wait(0.1)
+	end
 	M.savePlayerData(player)
 	sessionJoinAt[player] = nil
 	sessionPlayBase[player] = nil
@@ -576,6 +585,11 @@ end)
 
 game:BindToClose(function()
 	for _, player in Players:GetPlayers() do
+		-- Wait out any in-flight autosave so the shutdown save isn't silently skipped.
+		local deadline = os.clock() + 10
+		while saveInFlight[player] and os.clock() < deadline do
+			task.wait(0.1)
+		end
 		M.savePlayerData(player)
 	end
 end)

@@ -163,18 +163,25 @@ local function onCharacter(player: Player, character: Model)
 	end)
 end
 
+local playerConns: { [Player]: { RBXScriptConnection } } = {}
+
 local function hookPlayer(player: Player)
-	player.CharacterAdded:Connect(function(character)
-		onCharacter(player, character)
-	end)
-	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
-		local char = player.Character
-		if char then
-			task.defer(function()
-				teleportToPlotSpawn(player, char)
-			end)
-		end
-	end)
+	if playerConns[player] then
+		return
+	end
+	playerConns[player] = {
+		player.CharacterAdded:Connect(function(character)
+			onCharacter(player, character)
+		end),
+		player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
+			local char = player.Character
+			if char then
+				task.defer(function()
+					teleportToPlotSpawn(player, char)
+				end)
+			end
+		end),
+	}
 	if player.Character then
 		onCharacter(player, player.Character)
 	end
@@ -184,3 +191,13 @@ for _, player in Players:GetPlayers() do
 	hookPlayer(player)
 end
 Players.PlayerAdded:Connect(hookPlayer)
+
+Players.PlayerRemoving:Connect(function(player)
+	local conns = playerConns[player]
+	if conns then
+		for _, conn in conns do
+			conn:Disconnect()
+		end
+		playerConns[player] = nil
+	end
+end)

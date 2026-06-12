@@ -34,16 +34,28 @@ end
 
 ensureGroups()
 
-Players.PlayerAdded:Connect(function(player)
-	player.CharacterAdded:Connect(wireCharacter)
+local charConns: { [Player]: RBXScriptConnection } = {}
+
+local function bindPlayer(player: Player)
+	if charConns[player] then
+		return
+	end
+	charConns[player] = player.CharacterAdded:Connect(wireCharacter)
 	if player.Character then
 		wireCharacter(player.Character)
+	end
+end
+
+Players.PlayerAdded:Connect(bindPlayer)
+
+Players.PlayerRemoving:Connect(function(player)
+	local conn = charConns[player]
+	if conn then
+		conn:Disconnect()
+		charConns[player] = nil
 	end
 end)
 
 for _, player in Players:GetPlayers() do
-	player.CharacterAdded:Connect(wireCharacter)
-	if player.Character then
-		wireCharacter(player.Character)
-	end
+	bindPlayer(player)
 end

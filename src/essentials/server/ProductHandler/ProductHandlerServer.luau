@@ -194,6 +194,8 @@ function ProductHandlerServer.promptPurchase(self: ProductHandlerServer, player:
 			end)
 			if success then
 				ownsPass = result == true
+			else
+				warn("[ProductHandlerServer] UserOwnsGamePassAsync failed for", entry.id, ":", result)
 			end
 		else
 			local attr = GAMEPASS_OWNED_ATTR_BY_ID[entry.id]

@@ -267,16 +267,17 @@ local function startBadgeSway()
 	end
 	stopBadgeSway()
 	sidebarNotif.Rotation = -BADGE_SWAY_DEG
-	local badgeSwayTween = TweenService:Create(sidebarNotif, BADGE_SWAY, { Rotation = BADGE_SWAY_DEG })
+	-- Assign the module-level refs (no `local`) so stopBadgeSway/showSidebarBadge can see them.
+	badgeSwayTween = TweenService:Create(sidebarNotif, BADGE_SWAY, { Rotation = BADGE_SWAY_DEG })
 	badgeSwayTween:Play()
 	if sidebarNotifInner then
 		sidebarNotifInner.Rotation = BADGE_INNER_SWAY_DEG
-		local badgeInnerSwayTween =
+		badgeInnerSwayTween =
 			TweenService:Create(sidebarNotifInner, BADGE_INNER_SWAY, { Rotation = -BADGE_INNER_SWAY_DEG })
 		badgeInnerSwayTween:Play()
 		local s = getOrAddUIScale(sidebarNotifInner)
 		s.Scale = 0.985
-		local badgeInnerPulseTween = TweenService:Create(s, BADGE_INNER_PULSE, { Scale = 1.015 })
+		badgeInnerPulseTween = TweenService:Create(s, BADGE_INNER_PULSE, { Scale = 1.015 })
 		badgeInnerPulseTween:Play()
 	end
 end
@@ -484,13 +485,14 @@ local function decorateCard(card: Frame, day: number, reward: DailyConfig.DailyR
 		day7Card = card
 		local icon = card:FindFirstChild("Icon")
 		if icon and icon:IsA("GuiObject") then
-			local day7Icon = icon :: GuiObject
+			-- Assign the module-level ref (no `local`) so refreshDay7CardVisibility can toggle it.
+			day7Icon = icon :: GuiObject
 			day7Icon.Visible = false
 		end
 		if decor then
 			local starbust = decor:FindFirstChild("Starbust") or decor:FindFirstChild("Starburst")
 			if starbust and starbust:IsA("GuiObject") then
-				local day7Starbust = starbust :: GuiObject
+				day7Starbust = starbust :: GuiObject
 				day7Starbust.Visible = false
 			end
 		end
@@ -799,6 +801,8 @@ local function fetchState()
 	end)
 	if ok and typeof(snapshot) == "table" then
 		applyState(snapshot :: DailyConfig.DailyState)
+	elseif not ok then
+		warn("[DailyController] GetDailyState failed:", snapshot)
 	end
 end
 

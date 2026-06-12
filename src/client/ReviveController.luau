@@ -748,9 +748,17 @@ function ReviveController.init()
 	resolveSoundTemplates()
 
 	local remotes = ReplicatedStorage:WaitForChild("Remotes", 60)
+	if not remotes then
+		warn("[ReviveController] Remotes folder missing after wait; init aborted")
+		return
+	end
 	local revivePromptRE = remotes:WaitForChild("RevivePrompt", 30) :: RemoteEvent
 	reviveDeclinedRE = remotes:WaitForChild("ReviveDeclined", 30) :: RemoteEvent
 	reviveCompleteRE = remotes:WaitForChild("ReviveComplete", 30) :: RemoteEvent
+	if not revivePromptRE or not reviveDeclinedRE or not reviveCompleteRE then
+		warn("[ReviveController] revive remotes missing after wait; init aborted")
+		return
+	end
 
 	revivePromptRE.OnClientEvent:Connect(function(land: number, productId: number, countdownSec: number?)
 		local duration = if typeof(countdownSec) == "number" then countdownSec else ReviveConfig.COUNTDOWN_SECONDS

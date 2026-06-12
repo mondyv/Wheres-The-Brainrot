@@ -3369,11 +3369,8 @@ local ToolbarController = {}
 				end
 				if targetHotbar then
 					-- Backpack → exact hotbar slot.
-					optimisticBrainrotMoveToHotbar(pnd.idx, targetHotbar)(parkEv :: RemoteEvent):FireServer(
-						pnd.idx,
-						false,
-						targetHotbar
-					)
+					optimisticBrainrotMoveToHotbar(pnd.idx, targetHotbar)
+					remote:FireServer(pnd.idx, false, targetHotbar)
 					UIInteractionSounds.playClick()
 				elseif overHotbarZone then
 					-- Fallback: dropped over the hotbar row but not a specific cell.

@@ -405,9 +405,12 @@ local function notifyIndexDeposited(player: Player, entry: BrainrotInvEntry)
 			local indexInternal = ServerStorage:FindFirstChild("IndexInternal")
 			local indexBF = indexInternal and indexInternal:FindFirstChild("OnBrainrotDeposited")
 			if indexBF and indexBF:IsA("BindableFunction") then
-				pcall(function()
+				local okInvoke, errInvoke = pcall(function()
 					(indexBF :: BindableFunction):Invoke(player, entry)
 				end)
+				if not okInvoke then
+					warn("[BushHarvest] OnBrainrotDeposited invoke failed:", errInvoke)
+				end
 				return
 			end
 			task.wait(0.25)
@@ -1148,6 +1151,11 @@ local function popSpawnEffect(model: Model, onDone: (() -> ())?)
 	local t0 = os.clock()
 	local conn: RBXScriptConnection
 	conn = RunService.Heartbeat:Connect(function()
+		if not model.Parent then
+			-- Model was destroyed mid-effect; stop so the Heartbeat connection doesn't run forever.
+			conn:Disconnect()
+			return
+		end
 		local t = (os.clock() - t0) / duration
 		if t >= 1 then
 			conn:Disconnect()
@@ -2486,6 +2494,17 @@ CollectionService:GetInstanceRemovedSignal(DEPOSIT_TAG):Connect(function(inst)
 	end
 end)
 
+local charRemovingConns: { [Player]: RBXScriptConnection } = {}
+
+local function hookCharacterRemoving(p: Player)
+	if charRemovingConns[p] then
+		return
+	end
+	charRemovingConns[p] = p.CharacterRemoving:Connect(function()
+		clearPlayerHarvestState(p)
+	end)
+end
+
 Players.PlayerAdded:Connect(function(p)
 	PlayerDataService.waitUntilLoaded(p)
 	if not brainrotInventories[p] then
@@ -2498,9 +2517,7 @@ Players.PlayerAdded:Connect(function(p)
 		p:SetAttribute("BrainrotCount", #brainrotInventories[p])
 	end
 	syncBrainrotCarryCountAttr(p)
-	p.CharacterRemoving:Connect(function()
-		clearPlayerHarvestState(p)
-	end)
+	hookCharacterRemoving(p)
 end)
 
 Players.PlayerRemoving:Connect(function(p)
@@ -2521,6 +2538,11 @@ Players.PlayerRemoving:Connect(function(p)
 	end
 	pendingFloats[p] = nil
 	activeCarries[p] = nil
+	local charConn = charRemovingConns[p]
+	if charConn then
+		charConn:Disconnect()
+		charRemovingConns[p] = nil
+	end
 	-- Defer inventory wipe so PlayerDataService can export on PlayerRemoving first.
 	task.defer(function()
 		brainrotInventories[p] = nil
@@ -2540,9 +2562,7 @@ for _, p in Players:GetPlayers() do
 		p:SetAttribute("BrainrotCount", #brainrotInventories[p])
 	end
 	syncBrainrotCarryCountAttr(p)
-	p.CharacterRemoving:Connect(function()
-		clearPlayerHarvestState(p)
-	end)
+	hookCharacterRemoving(p)
 end
 
 ensurePlayBrainrotSFXRemote()

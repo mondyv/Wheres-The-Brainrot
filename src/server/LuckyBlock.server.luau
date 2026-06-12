@@ -607,10 +607,14 @@ local function tryRoll(player: Player, requestedTool: Instance?)
 	task.delay(SHAKE_DURATION_SEC, function()
 		rollInFlight[player] = nil
 		destroyRolledLuckyBlock(player, tool)
+		if player.Parent == nil then
+			-- Player left during the shake; nothing to grant or fire.
+			return
+		end
 
 		local grant = brainrotInternalBF("GrantBrainrotAndEquip")
 		if grant then
-			pcall(function()
+			local okGrant, errGrant = pcall(function()
 				grant:Invoke(player, {
 					name = pick.name,
 					rarity = pick.rarity,
@@ -619,6 +623,9 @@ local function tryRoll(player: Player, requestedTool: Instance?)
 					baseIncome = pick.baseIncome,
 				}, { equip = true })
 			end)
+			if not okGrant then
+				warn("[LuckyBlock] GrantBrainrotAndEquip failed for", player.Name, ":", errGrant)
+			end
 		end
 
 		local sfxRE = ensurePlayBrainrotSFXRemote()

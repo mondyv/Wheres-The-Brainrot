@@ -50,17 +50,35 @@ local function syncPlayer(player: Player)
 	rebirthVal.Value = BrainrotEconomy.formatNumberShort(if typeof(rebirth) == "number" then math.max(0, math.floor(rebirth)) else 0)
 end
 
+local statConns: { [Player]: { RBXScriptConnection } } = {}
+
 local function bindPlayer(player: Player)
+	if statConns[player] then
+		return
+	end
 	syncPlayer(player)
-	player:GetAttributeChangedSignal(CASH_ATTR):Connect(function()
-		syncPlayer(player)
-	end)
-	player:GetAttributeChangedSignal(REBIRTH_ATTR):Connect(function()
-		syncPlayer(player)
-	end)
+	statConns[player] = {
+		player:GetAttributeChangedSignal(CASH_ATTR):Connect(function()
+			syncPlayer(player)
+		end),
+		player:GetAttributeChangedSignal(REBIRTH_ATTR):Connect(function()
+			syncPlayer(player)
+		end),
+	}
 end
 
 Players.PlayerAdded:Connect(bindPlayer)
+
+Players.PlayerRemoving:Connect(function(player)
+	local conns = statConns[player]
+	if conns then
+		for _, conn in conns do
+			conn:Disconnect()
+		end
+		statConns[player] = nil
+	end
+end)
+
 for _, player in Players:GetPlayers() do
 	bindPlayer(player)
 end

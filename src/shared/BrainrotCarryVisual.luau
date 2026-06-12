@@ -99,9 +99,12 @@ end
 
 function M.applyScaleForLevel(model: Model, level: number?)
 	local lv = if typeof(level) == "number" then math.max(1, math.floor(level)) else 1
-	pcall(function()
+	local okScale, errScale = pcall(function()
 		model:ScaleTo(M.scaleMultiplierForLevel(lv))
 	end)
+	if not okScale then
+		warn("[BrainrotCarryVisual] ScaleTo failed for", model.Name, ":", errScale)
+	end
 	M.clampWorldSize(model)
 end
 

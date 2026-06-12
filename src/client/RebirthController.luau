@@ -461,11 +461,12 @@ local function refreshPlotRebirthSign(snapshot: RebirthConfig.RebirthSnapshot)
 	if lastRebirthSignShow == show then
 		return
 	end
-	lastRebirthSignShow = show
 	local plot = PlotPaths.findPlotForAssignedSlot(player)
 	if not plot then
+		-- Don't cache: the plot may not have streamed in yet, retry on the next refresh.
 		return
 	end
+	lastRebirthSignShow = show
 	for _, desc in plot:GetDescendants() do
 		if desc:IsA("Model") and (desc.Name == "RebirthSign" or string.find(desc.Name, "RebirthSign", 1, true)) then
 			setGuiTreeVisible(desc, show)
@@ -576,9 +577,8 @@ local function applySnapshot(snapshot: RebirthConfig.RebirthSnapshot, main: Scre
 	local cashMetChanged = not prev or prev.cashMet ~= snapshot.cashMet
 	if not frameOpen then
 		if canRebirthChanged or cashMetChanged then
-			if canRebirthChanged then
-				refreshPlotRebirthSign(snapshot)
-			end
+			-- The sign depends on isFloorRebirth too; refreshPlotRebirthSign caches and early-outs itself.
+			refreshPlotRebirthSign(snapshot)
 			if snapshot.canRebirth then
 				if not lastCanRebirth then
 					UIInteractionSounds.playNotif()
@@ -690,6 +690,8 @@ local function fetchAndApply(main: ScreenGui)
 	end)
 	if ok and typeof(snapshot) == "table" then
 		applySnapshot(snapshot :: RebirthConfig.RebirthSnapshot, main)
+	elseif not ok then
+		warn("[RebirthController] GetRebirthState failed:", snapshot)
 	end
 end
 
@@ -702,8 +704,15 @@ local function tryRebirth(main: ScreenGui)
 		return
 	end
 	rebirthBusy = true
-	local ok, err = performRF:InvokeServer()
+	local invoked, ok, err = pcall(function()
+		return performRF:InvokeServer()
+	end)
 	rebirthBusy = false
+	if not invoked then
+		warn("[RebirthController] PerformRebirth invoke failed:", ok)
+		GameSoundEffects.playErrorNotif()
+		return
+	end
 	if ok then
 		UIInteractionSounds.playClick()
 		HUDController.closeCurrentFrame()
@@ -829,6 +838,8 @@ function RebirthController.init()
 	end)
 
 	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
+		-- New plot: clear the cached sign state so the refresh applies to the new plot's signs.
+		lastRebirthSignShow = nil
 		if lastSnapshot then
 			refreshPlotRebirthSign(lastSnapshot)
 		end

@@ -161,8 +161,8 @@ local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent,
 		wiredSigns[upgradeFrame] = true
 		local btn = upgradeFrame :: GuiButton
 		wireHoverTarget(upgradeFrame)
+		-- Activated already covers mouse clicks; a second MouseButton1Click handler double-fired the remote.
 		btn.Activated:Connect(fire)
-		btn.MouseButton1Click:Connect(fire)
 		upgradeFrame.Destroying:Once(function()
 			wiredSigns[upgradeFrame] = nil
 		end)
@@ -192,8 +192,8 @@ local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent,
 	overlay.Active = true
 	wiredSigns[upgradeFrame] = true
 	wireHoverTarget(overlay)
+	-- Activated already covers mouse clicks; a second MouseButton1Click handler double-fired the remote.
 	overlay.Activated:Connect(fire)
-	overlay.MouseButton1Click:Connect(fire)
 	upgradeFrame.Destroying:Once(function()
 		wiredSigns[upgradeFrame] = nil
 	end)

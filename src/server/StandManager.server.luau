@@ -1332,21 +1332,27 @@ local function removeBrainrotFromStand(player: Player, state: StandState)
 		baseIncome = state.baseIncome,
 	}
 	local returnFn = getReturnInventoryFn()
-	if returnFn then
-		local okReturn, returned = pcall(function()
-			return returnFn:Invoke(player, entryToReturn)
-		end)
-		if not okReturn or returned ~= true then
-			state.lastPickupAt = 0
-			return
-		end
+	if not returnFn then
+		-- Without the inventory bindable the brainrot would be destroyed and lost; abort pick-up.
+		warn("[StandManager] ReturnInventoryEntry bindable missing; pick-up aborted for", player.Name)
+		state.lastPickupAt = 0
+		return
+	end
+	local okReturn, returned = pcall(function()
+		return returnFn:Invoke(player, entryToReturn)
+	end)
+	if not okReturn or returned ~= true then
+		state.lastPickupAt = 0
+		return
 	end
 
 	-- Auto-pay any unclaimed cash on pick-up so the owner never loses it.
+	-- Note: the money multiplier is already applied while cash accumulates in tickStand,
+	-- so pay accumulated flat here (same as pad collection) instead of multiplying twice.
 	if state.accumulated > 0 then
 		local cash = player:GetAttribute("Cash")
 		local c = if typeof(cash) == "number" then cash else 0
-		local payout = math.floor(state.accumulated * getPlayerMoneyMult(player))
+		local payout = math.floor(state.accumulated)
 		player:SetAttribute("Cash", c + payout)
 		collectVFXRE:FireClient(player, state.stand, payout)
 	end
@@ -1658,6 +1664,15 @@ local function initStand(stand: Model)
 		refreshStandProximityPromptState(existing)
 		resolveTotalCashLabel(existing)
 		syncCashPadDisplay(existing, true)
+		-- The cash pad may have streamed in after the first init; without this the
+		-- pad's Touched is never wired and collection on this stand never works.
+		if not existing.buttonPart then
+			local lateButton = findButtonPart(stand)
+			if lateButton then
+				existing.buttonPart = lateButton
+				hookButtonTouch(existing)
+			end
+		end
 		return
 	end
 

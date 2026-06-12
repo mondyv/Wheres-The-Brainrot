@@ -263,7 +263,7 @@ local function findGamePassPanel(containers: { Instance? }, panelName: string): 
 	return nil
 end
 
-local function wireGamePass(containers: { Instance? }, panelName: string, gamePassId: number)
+local function wireGamePass(containers: { Instance? }, panelName: string, gamePassId: number, ownedAttr: string?)
 	local panel = findGamePassPanel(containers, panelName)
 	if not panel then
 		warn("[StoreController] gamepass panel not found:", panelName)
@@ -274,10 +274,24 @@ local function wireGamePass(containers: { Instance? }, panelName: string, gamePa
 		warn("[StoreController] buy button not found for gamepass panel:", panelName)
 		return
 	end
-	wireBuyButton(buy, function()
+	local state = wireBuyButton(buy, function()
 		warn("[StoreController]", panelName, "buy clicked → prompting gamepass", gamePassId)
 		PurchasePrompt.promptGamePass(gamePassId)
 	end)
+	-- Register for owned/optimistic refresh; without this, PromptGamePassPurchaseFinished
+	-- finds no entry in ownedBuyByGamePassId and the button never shows as purchased.
+	if ownedAttr then
+		local entry: OwnedBuyEntry = {
+			buy = buy,
+			state = state,
+			ownedAttr = ownedAttr,
+		}
+		ownedBuyByGamePassId[gamePassId] = entry
+		player:GetAttributeChangedSignal(ownedAttr):Connect(function()
+			refreshOwnedBuy(entry)
+		end)
+		refreshOwnedBuy(entry)
+	end
 end
 
 local function wireProduct(panel: Instance?, productId: number)
@@ -554,19 +568,34 @@ local function init()
 
 	-- Gamepass panels live across "Gamepasses" and "Gamepasses2".
 	local gamepassContainers = { container:FindFirstChild("Gamepasses"), container:FindFirstChild("Gamepasses2") }
-	wireGamePass(gamepassContainers, "2xCash", StoreConfig.GAMEPASS.DOUBLE_CASH)
-	wireGamePass(gamepassContainers, "2xUpgrades", StoreConfig.GAMEPASS.DOUBLE_UPGRADES)
-	wireGamePass(gamepassContainers, "SuperLuck", StoreConfig.GAMEPASS.SUPER_LUCK)
-	wireGamePass(gamepassContainers, "MEGALuck", StoreConfig.GAMEPASS.MEGA_LUCK)
-	wireGamePass(gamepassContainers, "XrayVision", StoreConfig.GAMEPASS.XRAY)
+	wireGamePass(gamepassContainers, "2xCash", StoreConfig.GAMEPASS.DOUBLE_CASH, StoreConfig.ATTR.DOUBLE_CASH_OWNED)
+	wireGamePass(
+		gamepassContainers,
+		"2xUpgrades",
+		StoreConfig.GAMEPASS.DOUBLE_UPGRADES,
+		StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED
+	)
+	wireGamePass(gamepassContainers, "SuperLuck", StoreConfig.GAMEPASS.SUPER_LUCK, StoreConfig.ATTR.SUPER_LUCK_OWNED)
+	wireGamePass(gamepassContainers, "MEGALuck", StoreConfig.GAMEPASS.MEGA_LUCK, StoreConfig.ATTR.MEGA_LUCK_OWNED)
+	wireGamePass(gamepassContainers, "XrayVision", StoreConfig.GAMEPASS.XRAY, StoreConfig.ATTR.XRAY_OWNED)
 
 	-- VIP panel sits directly under Container.
 	do
 		local vipBuy = findBuy(container:FindFirstChild("VIP"))
 		if vipBuy then
-			wireBuyButton(vipBuy, function()
+			local vipState = wireBuyButton(vipBuy, function()
 				PurchasePrompt.promptGamePass(StoreConfig.GAMEPASS.VIP)
 			end)
+			local vipEntry: OwnedBuyEntry = {
+				buy = vipBuy,
+				state = vipState,
+				ownedAttr = StoreConfig.ATTR.VIP_OWNED,
+			}
+			ownedBuyByGamePassId[StoreConfig.GAMEPASS.VIP] = vipEntry
+			player:GetAttributeChangedSignal(StoreConfig.ATTR.VIP_OWNED):Connect(function()
+				refreshOwnedBuy(vipEntry)
+			end)
+			refreshOwnedBuy(vipEntry)
 		end
 	end
 

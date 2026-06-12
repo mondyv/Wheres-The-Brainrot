@@ -176,8 +176,14 @@ local function performRebirth(player: Player, opts: { skipRequirements: boolean?
 	return true, nil
 end
 
+local cashConns: { [Player]: RBXScriptConnection } = {}
+
 local function initPlayer(player: Player)
 	PlayerDataService.waitUntilLoaded(player)
+	if player.Parent == nil then
+		-- Player left while data was loading.
+		return
+	end
 	if player:GetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR) == nil then
 		player:SetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR, 0)
 	end
@@ -188,9 +194,11 @@ local function initPlayer(player: Player)
 		)
 	end
 	pushState(player, true)
-	player:GetAttributeChangedSignal("Cash"):Connect(function()
-		onPlayerCashChanged(player)
-	end)
+	if not cashConns[player] then
+		cashConns[player] = player:GetAttributeChangedSignal("Cash"):Connect(function()
+			onPlayerCashChanged(player)
+		end)
+	end
 end
 
 task.spawn(function()
@@ -252,6 +260,11 @@ end)
 
 Players.PlayerRemoving:Connect(function(player: Player)
 	lastPushedSnapshot[player] = nil
+	local conn = cashConns[player]
+	if conn then
+		conn:Disconnect()
+		cashConns[player] = nil
+	end
 end)
 
 Players.PlayerAdded:Connect(initPlayer)

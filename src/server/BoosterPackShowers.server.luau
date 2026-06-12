@@ -1,7 +1,7 @@
 -- [ACTIVE] BoosterPackShowers.server
 --[[
 	Map.Booster Pack Showers — walking onto a stand Hitbox prompts that pack's dev product.
-	Stand folders: Starter Stand, Mythic Stand, Godly Stand, Secret Stand (each has Hitbox).
+	Stand folders: Starter Stand, Mythic Stand, Godly Stand, Secret Stand, StrawbeerryElephantStand.
 ]]
 
 local MarketplaceService = game:GetService("MarketplaceService")
@@ -13,6 +13,7 @@ local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChil
 
 local SHOWERS_FOLDER_NAME = "Booster Pack Showers"
 local TOUCH_COOLDOWN_SEC = 3
+local WIRED_ATTR = "_BoosterShowerHitboxWired"
 
 -- Studio stand folder name → StoreConfig.PACKS frameName
 local STAND_FRAME_NAMES: { [string]: string } = {
@@ -33,6 +34,7 @@ for _, pack in StoreConfig.PACKS do
 end
 
 local touchCooldown: { [Player]: { [string]: boolean } } = {}
+local wiredStands: { [Instance]: boolean } = {}
 
 local function firePurchaseEffect(player: Player)
 	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
@@ -57,24 +59,41 @@ local function promptPackPurchase(player: Player, pack: typeof(StoreConfig.PACKS
 	MarketplaceService:PromptProductPurchase(player, pack.productId)
 end
 
-local function wireExclusiveHitbox(standFolder: Instance, productId: number)
-	local hitbox = standFolder:FindFirstChild("Hitbox")
-	if not hitbox or not hitbox:IsA("BasePart") then
-		warn("[BoosterPackShowers] Hitbox missing on", standFolder:GetFullName())
+local function playerFromTouchPart(other: BasePart): Player?
+	local character = other:FindFirstAncestorWhichIsA("Model")
+	if not character then
+		return nil
+	end
+	return Players:GetPlayerFromCharacter(character)
+end
+
+local function findStandHitbox(stand: Instance): BasePart?
+	local direct = stand:FindFirstChild("Hitbox")
+	if direct and direct:IsA("BasePart") then
+		return direct
+	end
+	local nested = stand:FindFirstChild("Hitbox", true)
+	if nested and nested:IsA("BasePart") then
+		return nested
+	end
+	return nil
+end
+
+local function bindHitboxTouch(stand: Instance, hitbox: BasePart, onPrompt: (Player) -> ())
+	if wiredStands[stand] or stand:GetAttribute(WIRED_ATTR) == true then
 		return
 	end
+	wiredStands[stand] = true
+	stand:SetAttribute(WIRED_ATTR, true)
+
 	hitbox.CanTouch = true
-	local standKey = standFolder.Name
+	local standKey = stand.Name
 	hitbox.Touched:Connect(function(other: BasePart)
-		local character = other.Parent
-		if not character then
+		if not other:IsA("BasePart") then
 			return
 		end
-		local plr = Players:GetPlayerFromCharacter(character)
+		local plr = playerFromTouchPart(other)
 		if not plr then
-			return
-		end
-		if plr:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) == true then
 			return
 		end
 		if not touchCooldown[plr] then
@@ -84,72 +103,150 @@ local function wireExclusiveHitbox(standFolder: Instance, productId: number)
 			return
 		end
 		touchCooldown[plr][standKey] = true
-		firePurchaseEffect(plr)
-		MarketplaceService:PromptProductPurchase(plr, productId)
+		onPrompt(plr)
 		task.delay(TOUCH_COOLDOWN_SEC, function()
 			if touchCooldown[plr] then
 				touchCooldown[plr][standKey] = nil
 			end
 		end)
+	end)
+
+	stand.Destroying:Once(function()
+		wiredStands[stand] = nil
 	end)
 end
 
-local function wireHitbox(standFolder: Instance, pack: typeof(StoreConfig.PACKS[1]))
-	local hitbox = standFolder:FindFirstChild("Hitbox")
-	if not hitbox or not hitbox:IsA("BasePart") then
-		warn("[BoosterPackShowers] Hitbox missing on", standFolder:GetFullName())
+local function ensureHitboxWired(stand: Instance, onPrompt: (Player) -> ())
+	if wiredStands[stand] or stand:GetAttribute(WIRED_ATTR) == true then
 		return
 	end
-	hitbox.CanTouch = true
-	local standKey = standFolder.Name
-	hitbox.Touched:Connect(function(other: BasePart)
-		local character = other.Parent
-		if not character then
-			return
+
+	local function tryWire(): boolean
+		local hitbox = findStandHitbox(stand)
+		if hitbox then
+			bindHitboxTouch(stand, hitbox, onPrompt)
+			return wiredStands[stand] == true
 		end
-		local plr = Players:GetPlayerFromCharacter(character)
-		if not plr then
-			return
-		end
-		if not touchCooldown[plr] then
-			touchCooldown[plr] = {}
-		end
-		if touchCooldown[plr][standKey] then
-			return
-		end
-		touchCooldown[plr][standKey] = true
-		promptPackPurchase(plr, pack)
-		task.delay(TOUCH_COOLDOWN_SEC, function()
-			if touchCooldown[plr] then
-				touchCooldown[plr][standKey] = nil
+		return false
+	end
+
+	if tryWire() then
+		return
+	end
+
+	local conn: RBXScriptConnection?
+	conn = stand.DescendantAdded:Connect(function(desc)
+		if desc.Name == "Hitbox" and desc:IsA("BasePart") then
+			if tryWire() and conn then
+				conn:Disconnect()
+				conn = nil
 			end
-		end)
+		end
 	end)
+	stand.Destroying:Once(function()
+		if conn then
+			conn:Disconnect()
+		end
+	end)
+end
+
+local function isStrawberryElephantStandName(name: string): boolean
+	local lower = string.lower(name)
+	return string.find(lower, "elephant", 1, true) ~= nil
+		and string.find(lower, "stand", 1, true) ~= nil
+		and string.find(lower, "straw", 1, true) ~= nil
+end
+
+local function exclusiveProductForStand(standName: string): number?
+	local direct = EXCLUSIVE_STAND_PRODUCTS[standName]
+	if direct then
+		return direct
+	end
+	if isStrawberryElephantStandName(standName) then
+		return StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT
+	end
+	return nil
+end
+
+local function wireExclusiveStand(stand: Instance, productId: number)
+	ensureHitboxWired(stand, function(plr: Player)
+		if plr:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) == true then
+			return
+		end
+		firePurchaseEffect(plr)
+		MarketplaceService:PromptProductPurchase(plr, productId)
+	end)
+end
+
+local function wirePackStand(stand: Instance, pack: typeof(StoreConfig.PACKS[1]))
+	ensureHitboxWired(stand, function(plr: Player)
+		promptPackPurchase(plr, pack)
+	end)
+end
+
+local function tryWireStand(stand: Instance)
+	if not stand:IsA("Model") and not stand:IsA("Folder") then
+		return
+	end
+
+	local frameName = STAND_FRAME_NAMES[stand.Name]
+	if frameName then
+		local pack = packByFrameName[frameName]
+		if pack then
+			wirePackStand(stand, pack)
+		else
+			warn("[BoosterPackShowers] No pack config for frame:", frameName)
+		end
+		return
+	end
+
+	local productId = exclusiveProductForStand(stand.Name)
+	if productId then
+		wireExclusiveStand(stand, productId)
+	end
 end
 
 local function wireShowersRoot(root: Instance)
 	for standName, frameName in STAND_FRAME_NAMES do
-		local pack = packByFrameName[frameName]
-		if not pack then
-			warn("[BoosterPackShowers] No pack config for frame:", frameName)
-			continue
-		end
 		local stand = root:FindFirstChild(standName)
 		if stand then
-			wireHitbox(stand, pack)
+			tryWireStand(stand)
 		else
 			warn("[BoosterPackShowers] Stand not found:", standName, "under", root:GetFullName())
 		end
 	end
-	for standName, productId in EXCLUSIVE_STAND_PRODUCTS do
+
+	for standName in EXCLUSIVE_STAND_PRODUCTS do
 		local stand = root:FindFirstChild(standName)
 		if stand then
-			wireExclusiveHitbox(stand, productId)
+			tryWireStand(stand)
 		end
 	end
+
+	for _, child in root:GetChildren() do
+		if exclusiveProductForStand(child.Name) and not STAND_FRAME_NAMES[child.Name] then
+			tryWireStand(child)
+		end
+	end
+
+	root.ChildAdded:Connect(function(child)
+		task.defer(function()
+			tryWireStand(child)
+		end)
+	end)
 end
 
-local function tryInit()
+local hookedShowersRoot: Instance? = nil
+
+local function hookShowersFolder(showers: Instance)
+	if hookedShowersRoot == showers then
+		return
+	end
+	hookedShowersRoot = showers
+	wireShowersRoot(showers)
+end
+
+local function tryInit(): boolean
 	local map = Workspace:FindFirstChild("Map")
 	if not map then
 		return false
@@ -158,7 +255,7 @@ local function tryInit()
 	if not showers then
 		return false
 	end
-	wireShowersRoot(showers)
+	hookShowersFolder(showers)
 	return true
 end
 
@@ -174,7 +271,7 @@ if not tryInit() then
 			warn("[BoosterPackShowers] Map.Booster Pack Showers missing")
 			return
 		end
-		wireShowersRoot(showers)
+		hookShowersFolder(showers)
 	end)
 end
 

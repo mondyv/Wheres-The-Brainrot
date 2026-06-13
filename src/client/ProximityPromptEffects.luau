@@ -628,6 +628,20 @@ local function applyBushBillboardPlacement(billboard: BillboardGui, _prompt: Pro
 	billboard.StudsOffset = Vector3.zero
 end
 
+local function floatingClaimBillboardOffset(adornee: BasePart): Vector3
+	local model = adornee:FindFirstAncestorWhichIsA("Model")
+	if not model then
+		return Vector3.zero
+	end
+	local pivot = model:GetPivot().Position
+	return adornee.CFrame:PointToObjectSpace(pivot)
+end
+
+local function applyFloatingClaimBillboardPlacement(billboard: BillboardGui, _prompt: ProximityPrompt?, adornee: BasePart)
+	billboard.StudsOffsetWorldSpace = Vector3.zero
+	billboard.StudsOffset = floatingClaimBillboardOffset(adornee)
+end
+
 local function isBushPrompt(prompt: ProximityPrompt): boolean
 	return CarryGate.isBushSearchPrompt(prompt) or findBushRootForPrompt(prompt) ~= nil
 end
@@ -681,11 +695,14 @@ function ProximityPromptEffects.isBushSearchUiInRange(prompt: ProximityPrompt): 
 end
 
 local function findStandForPrompt(prompt: ProximityPrompt): Model?
+	if prompt:GetAttribute("BrainrotFloatingClaim") == true then
+		return nil
+	end
 	local node: Instance? = prompt.Parent
 	while node do
 		if node:IsA("Model") then
 			local m = node :: Model
-			if m:GetAttribute(C.STAND_NAME_ATTR) ~= nil or m:FindFirstChild("Spawn", true) then
+			if CollectionService:HasTag(m, C.STAND_TAG) then
 				return m
 			end
 		end
@@ -796,6 +813,9 @@ local function applyStandStrokeGradient(view: PromptView, stand: Model)
 end
 
 local function resolvePromptLabels(prompt: ProximityPrompt): (string, string)
+	if prompt:GetAttribute("BrainrotFloatingClaim") == true then
+		return prompt.ActionText, prompt.ObjectText
+	end
 	local stand = findStandForPrompt(prompt)
 	if stand then
 		local name = stand:GetAttribute(C.STAND_NAME_ATTR)
@@ -1547,6 +1567,8 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	billboard.Adornee = adornee
 	if isBushPrompt(prompt) and adornee then
 		applyBushBillboardPlacement(billboard, prompt, adornee)
+	elseif prompt:GetAttribute("BrainrotFloatingClaim") == true and adornee and adornee:IsA("BasePart") then
+		applyFloatingClaimBillboardPlacement(billboard, prompt, adornee :: BasePart)
 	else
 		billboard.StudsOffset = Vector3.new(0, 1.8, 0)
 		billboard.StudsOffsetWorldSpace = Vector3.zero
@@ -1612,6 +1634,12 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	keyStroke.Thickness = 1.5
 	keyStroke.Transparency = 0.35
 	keyStroke.Parent = keyBadge
+
+	if prompt:GetAttribute("BrainrotFloatingClaim") == true then
+		local gold = Color3.fromRGB(255, 210, 80)
+		rootStroke.Color = gold
+		keyStroke.Color = gold
+	end
 
 	local holdTrack = Instance.new("Frame")
 	holdTrack.Name = "HoldTrack"
@@ -2334,6 +2362,12 @@ local function onPromptShown(prompt: ProximityPrompt, inputType: Enum.ProximityP
 			if adornee then
 				view.billboard.Adornee = adornee
 				applyBushBillboardPlacement(view.billboard, prompt, adornee)
+			end
+		elseif prompt:GetAttribute("BrainrotFloatingClaim") == true then
+			local adornee = getPromptAdornee(prompt)
+			if adornee and adornee:IsA("BasePart") then
+				view.billboard.Adornee = adornee
+				applyFloatingClaimBillboardPlacement(view.billboard, prompt, adornee :: BasePart)
 			end
 		end
 		wirePromptLiveUpdates(prompt, view)

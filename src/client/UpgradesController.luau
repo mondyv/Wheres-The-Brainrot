@@ -413,16 +413,12 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 		return
 	end
 
-	local busy = false
+	local purchaseInFlight = false
 
 	local function tryBuy()
-		if busy then
+		if purchaseInFlight then
 			return
 		end
-		busy = true
-		task.delay(0.35, function()
-			busy = false
-		end)
 
 		if SwingUpgrades.isUpgradeMaxed(upgradeId, readLevels()) then
 			GameSoundEffects.playErrorNotif()
@@ -441,7 +437,10 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 			return
 		end
 
+		purchaseInFlight = true
 		local ok, err = purchaseFn:InvokeServer(upgradeId)
+		purchaseInFlight = false
+
 		if ok then
 			setCostLabel(row, upgradeId)
 			refreshAllRows()

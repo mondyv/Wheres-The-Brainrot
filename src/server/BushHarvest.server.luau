@@ -59,7 +59,6 @@ local BUSH_LOOT_PHASE_COOLDOWN = "cooldown"
 local BUSH_LOOT_RESPAWN_MIN = 10
 local BUSH_LOOT_RESPAWN_MAX = 15
 local bushLootRespawnToken: { [Instance]: number } = {}
-local FLOAT_DURATION = 4
 local POP_DURATION = 0.35
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 local BUSH_EMPTY_MESSAGE_ANCHOR_NAME = "_BushEmptyMessageAnchor"
@@ -1175,17 +1174,16 @@ local function popSpawnEffect(model: Model, onDone: (() -> ())?)
 end
 
 local function clearPlayerHarvestState(player: Player)
-	for _, clone in pendingFloats[player] or {} do
-		local c = floatConnByClone[clone]
-		if c then
-			c:Disconnect()
-			floatConnByClone[clone] = nil
-		end
-		if clone.Parent then
-			clone:Destroy()
-		end
-	end
-	pendingFloats[player] = nil
+	local floatingClones = table.clone(pendingFloats[player] or {})
+	require(Modules:WaitForChild("BushHarvestFloating")).cleanupAllForPlayer({
+		pendingFloats = pendingFloats,
+		floatConnByClone = floatConnByClone,
+		removePendingFloat = removePendingFloat,
+		syncBrainrotCarryCountAttr = syncBrainrotCarryCountAttr,
+		attachCarriedBrainrot = attachCarriedBrainrot,
+		getMainPart = getMainPart,
+		setAllPartsPhysics = setAllPartsPhysics,
+	}, player, floatingClones)
 	for _, m in activeCarries[player] or {} do
 		safeZoneSfxPlayedForCarry[m] = nil
 		if m.Parent then
@@ -1281,82 +1279,16 @@ local function attachCarriedBrainrot(player: Player, clone: Model)
 	syncBrainrotCarryCountAttr(player)
 end
 
-local function runFloatThenAttach(player: Player, char: Model, clone: Model, anchorPos: Vector3, baseYaw: number)
-	local plist = pendingFloats[player]
-	if not plist then
-		plist = {}
-		pendingFloats[player] = plist
-	end
-	table.insert(plist, clone)
-	syncBrainrotCarryCountAttr(player)
-
-	local t0 = os.clock()
-	local conn: RBXScriptConnection
-	conn = RunService.Heartbeat:Connect(function()
-		if not clone.Parent then
-			conn:Disconnect()
-			floatConnByClone[clone] = nil
-			removePendingFloat(player, clone)
-			return
-		end
-		if player.Character ~= char then
-			conn:Disconnect()
-			floatConnByClone[clone] = nil
-			clearPlayerHarvestState(player)
-			return
-		end
-		local hum = char:FindFirstChildOfClass("Humanoid")
-		if not hum or hum.Health <= 0 then
-			conn:Disconnect()
-			floatConnByClone[clone] = nil
-			clearPlayerHarvestState(player)
-			return
-		end
-
-		local elapsed = os.clock() - t0
-		if elapsed >= FLOAT_DURATION then
-			conn:Disconnect()
-			floatConnByClone[clone] = nil
-			removePendingFloat(player, clone)
-			if isPlayerInsideDeposit(player) then
-				tryPlaySafeZoneSFXForCarry(player, clone)
-				local newSlot = redeemSingleCarryModel(player, clone)
-				if newSlot then
-					local map = brainrotParkedInExpandedBackpack[player]
-					if not map then
-						map = {}
-						brainrotParkedInExpandedBackpack[player] = map
-					end
-					local invList = brainrotInventories[player]
-					local equipSlot = newSlot
-					if invList then
-						local hotbarIdx = assignEntryToLowestFreeHotbarSlot(player, invList, map, newSlot)
-						if hotbarIdx then
-							equipSlot = hotbarIdx
-						end
-					end
-					syncBrainrotCarryCountAttr(player)
-					notifyClientInventorySync(player, equipSlot, true)
-				else
-					attachCarriedBrainrot(player, clone)
-				end
-			else
-				attachCarriedBrainrot(player, clone)
-			end
-			return
-		end
-
-		local t = elapsed
-		local bob = math.sin(t * 2.4) * 0.32
-		local panX = math.sin(t * 0.75) * 0.55
-		local panZ = math.cos(t * 0.62) * 0.55
-		local yaw = baseYaw + t * 0.42
-		local tilt = math.sin(t * 1.9) * 0.07
-		-- Keep float path mostly above the anchor (bob can dip slightly but stays high)
-		local pos = anchorPos + Vector3.new(panX, math.max(0.15, bob), panZ)
-		clone:PivotTo(CFrame.new(pos) * CFrame.Angles(tilt * 0.35, yaw, tilt))
-	end)
-	floatConnByClone[clone] = conn
+local function startFloatingClaimOffer(player: Player, char: Model, clone: Model, anchorPos: Vector3, baseYaw: number)
+	require(Modules:WaitForChild("BushHarvestFloating")).startOffer({
+		pendingFloats = pendingFloats,
+		floatConnByClone = floatConnByClone,
+		removePendingFloat = removePendingFloat,
+		syncBrainrotCarryCountAttr = syncBrainrotCarryCountAttr,
+		attachCarriedBrainrot = attachCarriedBrainrot,
+		getMainPart = getMainPart,
+		setAllPartsPhysics = setAllPartsPhysics,
+	}, player, char, clone, anchorPos, baseYaw)
 end
 
 local function isLootableBush(inst: Instance): boolean
@@ -2040,6 +1972,11 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 		clone:SetAttribute("BrainrotSourcePath", fallback.Parent.Name .. "/" .. fallback.Name)
 		clone:SetAttribute("BrainrotMutation", "normal")
 		clone:SetAttribute("BrainrotLevel", harvestLevel)
+		for _, d in clone:GetDescendants() do
+			if d:IsA("ProximityPrompt") then
+				d:Destroy()
+			end
+		end
 		clone.Parent = workspace
 		local spawnCf, baseYaw = spawnBrainrotAboveBush(clone, worldPosition, harvestLevel)
 		placeModelAtWorld(clone, spawnCf)
@@ -2054,7 +1991,7 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 			end
 			clone:SetAttribute("BrainrotCarryPhase", "Floating")
 			setAllPartsPhysics(clone, true, true)
-			runFloatThenAttach(player, char, clone, anchorPos, baseYaw)
+			startFloatingClaimOffer(player, char, clone, anchorPos, baseYaw)
 		end)
 		return
 	end
@@ -2091,6 +2028,12 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 	clone:SetAttribute("BrainrotPlot", plot)
 	clone:SetAttribute("BrainrotDisplayLuck", displayLuck)
 
+	for _, d in clone:GetDescendants() do
+		if d:IsA("ProximityPrompt") then
+			d:Destroy()
+		end
+	end
+
 	clone.Parent = workspace
 	local spawnCf, baseYaw = spawnBrainrotAboveBush(clone, worldPosition, harvestLevel)
 	placeModelAtWorld(clone, spawnCf)
@@ -2117,7 +2060,7 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 		end
 		clone:SetAttribute("BrainrotCarryPhase", "Floating")
 		setAllPartsPhysics(clone, true, true)
-		runFloatThenAttach(player, char, clone, anchorPos, baseYaw)
+		startFloatingClaimOffer(player, char, clone, anchorPos, baseYaw)
 	end)
 end
 

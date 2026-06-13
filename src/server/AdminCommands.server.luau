@@ -8,11 +8,14 @@ local ServerStorage = game:GetService("ServerStorage")
 local AdminAllowlist = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminAllowlist"))
 local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Brainrots"))
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
+local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 
 local COMMAND_REMOTE_NAME = "AdminCommand"
+local CATALOG_REMOTE_NAME = "AdminAutocomplete"
 -- Replicated flag: true only when server allowlist grants access (clients cannot forge this).
 local ADMIN_ALLOWED_ATTR = "AdminPanelAllowed"
 local MAX_GRANT_COUNT = 25
+local MAX_CASH_GRANT = 1_000_000_000_000_000
 
 local function getRemotesFolder(): Folder
 	local folder = ReplicatedStorage:FindFirstChild("Remotes")
@@ -38,6 +41,7 @@ local function ensureRemoteFunction(name: string): RemoteFunction
 end
 
 local commandRF = ensureRemoteFunction(COMMAND_REMOTE_NAME)
+local catalogRF = ensureRemoteFunction(CATALOG_REMOTE_NAME)
 
 local function syncAdminAccess(player: Player)
 	if not player.Parent then
@@ -121,17 +125,65 @@ local function resolveTargets(sender: Player, query: string, allowAll: boolean):
 	return nil, "Player not found in this server."
 end
 
-local function waitForBrainrotBindable(name: string): BindableFunction?
-	local deadline = os.clock() + 10
+local function waitForBindable(folderName: string, bindableName: string, timeoutSec: number?): BindableFunction?
+	local deadline = os.clock() + (timeoutSec or 10)
 	while os.clock() < deadline do
-		local folder = ServerStorage:FindFirstChild("BrainrotInternal")
-		local bf = folder and folder:FindFirstChild(name)
+		local folder = ServerStorage:FindFirstChild(folderName)
+		local bf = folder and folder:FindFirstChild(bindableName)
 		if bf and bf:IsA("BindableFunction") then
 			return bf
 		end
 		task.wait(0.1)
 	end
 	return nil
+end
+
+local function waitForBrainrotBindable(name: string): BindableFunction?
+	return waitForBindable("BrainrotInternal", name, 10)
+end
+
+local function waitForLuckyBlockBindable(name: string): BindableFunction?
+	return waitForBindable("LuckyBlockInternal", name, 10)
+end
+
+local function waitForRebirthBindable(name: string): BindableFunction?
+	return waitForBindable("RebirthInternal", name, 10)
+end
+
+local LUCKY_BLOCK_NAMES = {
+	"star rainbow",
+	"Starter Lucky Block",
+	"Mythic Lucky Block",
+	"Godly Luckyblock",
+	"Secret Lucky Block",
+}
+
+local MUTATION_NAMES = { "normal", "golden", "diamond", "lava", "galaxy", "rainbow" }
+
+local function buildAutocompleteCatalog(sender: Player)
+	local players = { "me", "all" }
+	for _, plr in Players:GetPlayers() do
+		table.insert(players, plr.Name)
+		if plr.DisplayName ~= plr.Name then
+			table.insert(players, plr.DisplayName)
+		end
+	end
+
+	local brainrots: { string } = {}
+	for _, def in ipairs(Brainrots.BRAINROTS) do
+		if Brainrots.isPlayableBrainrotName(def.name) then
+			table.insert(brainrots, def.name)
+		end
+	end
+	table.sort(brainrots)
+
+	return {
+		players = players,
+		brainrots = brainrots,
+		luckyBlocks = LUCKY_BLOCK_NAMES,
+		mutations = MUTATION_NAMES,
+		allowed = AdminAllowlist.isPlayerAllowed(sender),
+	}
 end
 
 local commands = {}
@@ -141,7 +193,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory <player|me|all> <brainrot> [count] [mutation] [level], resetdata <player|me|all>, help"
+			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, help"
 	end,
 }
 
@@ -236,6 +288,124 @@ commands.resetdata = {
 
 commands.reset = commands.resetdata
 
+commands.addcash = {
+	usage = "addcash <player|me|all> <amount>",
+	description = "Add cash to a player.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		if not args[1] or not args[2] then
+			return false, "Usage: " .. commands.addcash.usage
+		end
+		local amount = tonumber(args[2])
+		if not amount then
+			return false, "Amount must be a number."
+		end
+		amount = math.clamp(math.floor(amount), 1, MAX_CASH_GRANT)
+
+		local targets, targetErr = resolveTargets(sender, args[1], true)
+		if not targets then
+			return false, targetErr or "No target."
+		end
+
+		for _, target in targets do
+			PlayerDataService.waitUntilLoaded(target)
+			local cash = target:GetAttribute("Cash")
+			local current = if typeof(cash) == "number" then cash else 0
+			target:SetAttribute("Cash", current + amount)
+			if target:GetAttribute("PlayerDataLoaded") == true then
+				PlayerDataService.savePlayerData(target)
+			end
+		end
+
+		return true, string.format("Added %d cash to %d player(s).", amount, #targets)
+	end,
+}
+
+commands.cash = commands.addcash
+
+commands.addluckyblock = {
+	usage = "addluckyblock <player|me|all> <blockName> [count] [variant]",
+	description = "Grant a lucky block tool.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		if not args[1] or not args[2] then
+			return false, "Usage: " .. commands.addluckyblock.usage
+		end
+
+		local targets, targetErr = resolveTargets(sender, args[1], true)
+		if not targets then
+			return false, targetErr or "No target."
+		end
+
+		local blockName = args[2]
+		local count = 1
+		local variant: string? = nil
+		if tonumber(args[3]) then
+			count = math.clamp(math.floor(tonumber(args[3]) :: number), 1, MAX_GRANT_COUNT)
+			variant = args[4]
+		else
+			variant = args[3]
+		end
+
+		local grant = waitForLuckyBlockBindable("GrantLuckyBlock")
+		if not grant then
+			return false, "Lucky block grant service is not ready."
+		end
+
+		local granted = 0
+		for _, target in targets do
+			PlayerDataService.waitUntilLoaded(target)
+			for _ = 1, count do
+				local ok = (grant :: BindableFunction):Invoke(target, blockName, {
+					equip = true,
+					variant = variant,
+				})
+				if ok then
+					granted += 1
+				end
+			end
+		end
+
+		return true, string.format("Granted %d lucky block(s) (%s) to %d player(s).", granted, blockName, #targets)
+	end,
+}
+
+commands.giveluckyblock = commands.addluckyblock
+
+commands.rebirth = {
+	usage = "rebirth <player|me>",
+	description = "Force rebirth (skips requirements).",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		if not args[1] then
+			return false, "Usage: " .. commands.rebirth.usage
+		end
+
+		local targets, targetErr = resolveTargets(sender, args[1], false)
+		if not targets then
+			return false, targetErr or "No target."
+		end
+		if #targets ~= 1 then
+			return false, "Rebirth only supports one player at a time."
+		end
+
+		local perform = waitForRebirthBindable("PerformRebirth")
+		if not perform then
+			return false, "Rebirth service is not ready."
+		end
+
+		local target = targets[1]
+		PlayerDataService.waitUntilLoaded(target)
+		local ok, err = (perform :: BindableFunction):Invoke(target, {
+			skipRequirements = true,
+		})
+		if not ok then
+			if err == "max_rebirth" then
+				return false, string.format("%s is already at max rebirth (%d).", target.Name, RebirthConfig.MAX_TIER)
+			end
+			return false, string.format("Rebirth failed for %s: %s", target.Name, tostring(err))
+		end
+		return true, string.format("Rebirthed %s.", target.Name)
+	end,
+}
+
 local function runCommand(sender: Player, raw: any): { ok: boolean, message: string }
 	if not AdminAllowlist.isPlayerAllowed(sender) then
 		warn("[AdminCommands] blocked admin invoke from", sender.Name, sender.UserId)
@@ -266,4 +436,11 @@ end
 
 commandRF.OnServerInvoke = function(sender: Player, raw: any)
 	return runCommand(sender, raw)
+end
+
+catalogRF.OnServerInvoke = function(sender: Player)
+	if not AdminAllowlist.isPlayerAllowed(sender) then
+		return { allowed = false }
+	end
+	return buildAutocompleteCatalog(sender)
 end

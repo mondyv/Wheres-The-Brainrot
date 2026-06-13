@@ -56,6 +56,7 @@ local activePrompt: ProximityPrompt? = nil
 
 -- External listeners (e.g. X-Ray Vision) notified whenever the targeted bush changes.
 local activeBushListeners: { (Instance?) -> () } = {}
+local bushOutlineColorProvider: ((Instance) -> Color3?)? = nil
 local function notifyActiveBushChanged(bush: Instance?)
 	for _, cb in activeBushListeners do
 		task.spawn(cb, bush)
@@ -126,102 +127,6 @@ local function promptWorldPos(prompt: ProximityPrompt): Vector3
 		return p.Position
 	end
 	return Vector3.zero
-end
-
-local localEmptyMessages: { [Instance]: BillboardGui } = {}
-
-local function getPromptAdorneePart(prompt: ProximityPrompt, bush: Instance?): BasePart?
-	local parent = prompt.Parent
-	if parent and parent:IsA("Attachment") then
-		local part = parent.Parent
-		if part and part:IsA("BasePart") then
-			return part
-		end
-	elseif parent and parent:IsA("BasePart") then
-		return parent
-	end
-	if bush then
-		local anchor = bushAnchor[bush] or anchorFor(bush)
-		if anchor then
-			return anchor
-		end
-	end
-	return nil
-end
-
-local function clearLocalEmptyMessage(bush: Instance)
-	local old = localEmptyMessages[bush]
-	if old then
-		old:Destroy()
-		localEmptyMessages[bush] = nil
-	end
-end
-
-local function showLocalEmptyMessage(prompt: ProximityPrompt, bush: Instance, text: string?)
-	clearLocalEmptyMessage(bush)
-
-	local adornee = getPromptAdorneePart(prompt, bush)
-	local pg = player:FindFirstChild("PlayerGui")
-	if not adornee or not pg then
-		return
-	end
-
-	local bb = Instance.new("BillboardGui")
-	bb.Name = "BushEmptyMessageLocal"
-	bb.Adornee = adornee
-	bb.AlwaysOnTop = true
-	bb.LightInfluence = 0
-	bb.ResetOnSpawn = false
-	bb.Size = UDim2.fromOffset(270, 70)
-	bb.StudsOffset = Vector3.zero
-	bb.StudsOffsetWorldSpace = Vector3.new(0, 3.65, 0)
-	bb.MaxDistance = 90
-	bb.Parent = pg
-
-	local panel = Instance.new("Frame")
-	panel.Name = "Panel"
-	panel.Size = UDim2.fromScale(1, 1)
-	panel.BackgroundColor3 = Color3.fromRGB(16, 18, 16)
-	panel.BackgroundTransparency = 0.18
-	panel.BorderSizePixel = 0
-	panel.Parent = bb
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 12)
-	corner.Parent = panel
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(72, 230, 105)
-	stroke.Thickness = 2
-	stroke.Transparency = 0
-	stroke.Parent = panel
-
-	local label = Instance.new("TextLabel")
-	label.Name = "Text"
-	label.Size = UDim2.new(1, -20, 1, -14)
-	label.Position = UDim2.fromOffset(10, 7)
-	label.BackgroundTransparency = 1
-	label.Text = text or "No brainrots hiding!"
-	label.TextScaled = true
-	label.TextColor3 = Color3.fromRGB(240, 255, 244)
-	label.Font = Enum.Font.GothamBold
-	label.Parent = panel
-
-	local textStroke = Instance.new("UIStroke")
-	textStroke.Color = Color3.fromRGB(28, 110, 52)
-	textStroke.Thickness = 1.15
-	textStroke.Transparency = 0
-	textStroke.Parent = label
-
-	localEmptyMessages[bush] = bb
-	task.delay(4, function()
-		if localEmptyMessages[bush] == bb then
-			localEmptyMessages[bush] = nil
-		end
-		if bb.Parent then
-			bb:Destroy()
-		end
-	end)
 end
 
 local function bushRootFromPrompt(prompt: ProximityPrompt): Instance?
@@ -427,7 +332,12 @@ local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean
 	hl.Enabled = true
 	hl.FillTransparency = 1
 	hl.OutlineTransparency = 0
-	hl.OutlineColor = if locked then HIGHLIGHT_LOCKED else HIGHLIGHT_READY
+	if locked then
+		hl.OutlineColor = HIGHLIGHT_LOCKED
+	else
+		local custom = if bushOutlineColorProvider then bushOutlineColorProvider(bush) else nil
+		hl.OutlineColor = custom or HIGHLIGHT_READY
+	end
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 end
 
@@ -651,10 +561,7 @@ local function doHarvest(prompt: ProximityPrompt)
 			bush:SetAttribute(BUSH_COOLDOWN_ENDS_ATTR, cooldownEndsAt)
 			ProximityPromptEffects.showBushCooldownBanner(prompt, cooldownEndsAt)
 		end
-
-		if result.found == false or result.message ~= nil then
-			showLocalEmptyMessage(prompt, bush, tostring(result.message or "No brainrots hiding!"))
-		end
+		-- Empty-bush message is shown server-side (BushHarvest.showEmptyBushMessage).
 	end
 end
 
@@ -769,6 +676,10 @@ end
 function BushHoldInteraction.onActiveBushChanged(callback: (Instance?) -> ())
 	table.insert(activeBushListeners, callback)
 	task.spawn(callback, activeBush)
+end
+
+function BushHoldInteraction.setBushOutlineColorProvider(provider: ((Instance) -> Color3?)?)
+	bushOutlineColorProvider = provider
 end
 
 function BushHoldInteraction.init()

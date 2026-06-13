@@ -72,7 +72,6 @@ local bushHoldLockUntil = 0
 local bushHoldCompleteHandler: ((ProximityPrompt) -> ())? = nil
 local managedBushHoldActive: ProximityPrompt? = nil
 local directBushHoldPrompt: ProximityPrompt? = nil
-local BUSH_UI_STATIC_OFFSET = Vector3.new(0, 2.75, 0)
 
 -- Post-harvest cooldown banner (clock + seconds) on the bush adornee
 type BushCooldownBannerEntry = {
@@ -617,13 +616,13 @@ local function bushBillboardStudsOffset(_prompt: ProximityPrompt?, _bushModel: M
 	-- HARD STABILITY FIX: do not calculate this from bush bounding boxes.
 	-- Some bush models wobble/pivot while searching, and recomputing focus height
 	-- makes the UI step upward repeatedly. Use one fixed local offset instead.
-	return BUSH_UI_STATIC_OFFSET
+	return C.BUSH_UI_STATIC_OFFSET
 end
 
 local function applyBushBillboardPlacement(billboard: BillboardGui, _prompt: ProximityPrompt?, adornee: Instance)
 	billboard.StudsOffsetWorldSpace = Vector3.zero
 	if adornee:IsA("BasePart") then
-		billboard.StudsOffset = BUSH_UI_STATIC_OFFSET
+		billboard.StudsOffset = C.BUSH_UI_STATIC_OFFSET
 		return
 	end
 	billboard.StudsOffset = Vector3.zero

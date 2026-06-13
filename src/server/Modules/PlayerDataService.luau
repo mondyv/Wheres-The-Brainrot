@@ -28,6 +28,7 @@ local ENVIRONMENT = RunService:IsStudio() and "Development" or "Production"
 local DATA_STORE_NAME = ENVIRONMENT .. "_#003"
 
 local AUTOSAVE_INTERVAL_SEC = 300
+local DEFAULT_CASH = 500
 local LOADED_ATTR = PlayerDataSchema.LOADED_ATTR
 local PLAY_TIME_ATTR = PlayerDataSchema.TOTAL_PLAY_TIME_ATTR
 
@@ -482,6 +483,93 @@ function M.savePlayerData(player: Player): boolean
 	sessionPlayBase[player] = payload.totalPlayTimeSeconds
 	sessionJoinAt[player] = os.clock()
 	return true
+end
+
+function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
+	return {
+		version = PlayerDataSchema.VERSION,
+		cash = DEFAULT_CASH,
+		rebirthCount = 0,
+		powerLevel = 0,
+		ropeLevel = 0,
+		carryLevel = 0,
+		totalPlayTimeSeconds = 0,
+		baseFloorLevel = 1,
+		dailyDayClaimed = 0,
+		dailyClaimedMask = 0,
+		dailyNextAt = os.time(),
+		dailySkipAllOwned = false,
+		dailyCashBoostPercent = 0,
+		storePurchases = normalizeStorePurchases(nil),
+		indexUnlocks = {},
+		goldenNames = {},
+		inventory = {},
+		parkedSlots = {},
+		equipSlot = nil,
+		stands = {},
+		lastSavedAt = os.time(),
+	}
+end
+
+local function clearStandsForPlayer(player: Player)
+	task.spawn(function()
+		local deadline = os.clock() + 60
+		while os.clock() < deadline do
+			if not player.Parent then
+				return
+			end
+			if typeof(player:GetAttribute("AssignedPlotSlot")) == "number" then
+				invokeInternal("RequestStandRescan")
+				local standCount = invokeInternal("CountPlayerPlotStands", player)
+				if typeof(standCount) == "number" and standCount > 0 then
+					break
+				end
+			end
+			task.wait(0.25)
+		end
+		invokeInternal("RequestStandRescan")
+		invokeInternal("ImportStandsFromSave", player, {})
+	end)
+end
+
+function M.resetPlayerData(player: Player): (boolean, string?)
+	if not player.Parent then
+		return false, "player_left"
+	end
+
+	M.waitUntilLoaded(player)
+	local fresh = M.makeDefaultSaveData(player)
+
+	IndexService.importUnlocks(player, {}, {})
+	applyAttributes(player, fresh)
+	SwingUpgrades.resetLevels(player)
+	player:SetAttribute("BrainrotCarryCount", 0)
+	applyPlotFloor(player, fresh.baseFloorLevel)
+
+	invokeInternal("ImportInventoryFromSave", player, {
+		entries = {},
+		parkedSlots = {},
+		equipSlot = nil,
+	})
+	clearStandsForPlayer(player)
+
+	task.defer(function()
+		if not player.Parent then
+			return
+		end
+		local refresh = getInternalFolder():FindFirstChild("RefreshRebirthState")
+		if refresh and refresh:IsA("BindableFunction") then
+			local okRefresh, errRefresh = pcall(function()
+				(refresh :: BindableFunction):Invoke(player)
+			end)
+			if not okRefresh then
+				warn("[PlayerDataService] RefreshRebirthState invoke failed:", errRefresh)
+			end
+		end
+	end)
+
+	M.savePlayerData(player)
+	return true, nil
 end
 
 function M.applyLoadedData(player: Player, data: PlayerDataSchema.PlayerSaveData)

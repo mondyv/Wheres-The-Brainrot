@@ -14,6 +14,7 @@ local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local HUDController = require(script.Parent.HUDController)
+local MainGradientButtons = require(script.Parent.MainGradientButtons)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -57,6 +58,8 @@ local RARITY_DISPLAY_TEXT: { [string]: string } = {
 local REBIRTH_BUTTON_TEXT = "REBIRTH"
 
 local rebirthFrame: Frame? = nil
+local rebirthBtnHost: GuiObject? = nil
+local skipBtnHost: GuiObject? = nil
 local rarityGradientsFolder: Folder? = nil
 local rebirthSidebarNotif: GuiObject? = nil
 local rebirthSidebarNotifInner: TextLabel? = nil
@@ -564,6 +567,59 @@ local function setRegionalPrice(label: TextLabel, price: number)
 	label.Text = string.gsub(template, "%d+", tostring(price), 1)
 end
 
+local function setRebirthActionEnabled(enabled: boolean)
+	for _, host in { rebirthBtnHost, skipBtnHost } do
+		if not host or not host:IsA("GuiObject") then
+			continue
+		end
+		local overlay = host:FindFirstChild(CLICK_OVERLAY_NAME)
+		if overlay and overlay:IsA("GuiButton") then
+			overlay.Active = enabled
+			overlay.AutoButtonColor = enabled
+		end
+		host.Active = enabled
+	end
+end
+
+local function applyMaxRebirthUi(frame: Frame, snapshot: RebirthConfig.RebirthSnapshot, moneyIcon: string)
+	local req = frame:FindFirstChild("Requirements")
+	if req and req:IsA("GuiObject") then
+		req.Visible = false
+	end
+
+	local moneyRewardText = RebirthConfig.moneyRewardTextForTier(snapshot.rebirthCount)
+	local floorCard, moneyCard = findRewardCards(frame)
+	setCardText(floorCard, nil, nil, nil, false)
+	setCardText(moneyCard, moneyRewardText, "Money (MAX)", moneyIcon, true)
+	applyMoneyRewardText(frame, moneyRewardText)
+
+	local headerName = frame:FindFirstChild("Header", true)
+	headerName = headerName and headerName:FindFirstChild("Name")
+	if headerName and headerName:IsA("TextLabel") then
+		headerName.Text = ("Rebirth #%d — MAX"):format(snapshot.rebirthCount)
+	end
+
+	local rebirthInfoHost = frame:FindFirstChild("Buttons", true)
+	rebirthInfoHost = rebirthInfoHost and rebirthInfoHost:FindFirstChild("Rebirth")
+	local rebirthInfo = rebirthInfoHost and rebirthInfoHost:FindFirstChild("Info")
+	if rebirthBtnHost and rebirthBtnHost:IsA("GuiObject") then
+		MainGradientButtons.applyPurchased(rebirthBtnHost :: GuiObject, "MAX")
+	elseif rebirthInfo then
+		setLabelText(rebirthInfo:FindFirstChild("Name"), "MAX")
+	end
+
+	if skipBtnHost and skipBtnHost:IsA("GuiObject") then
+		MainGradientButtons.applyPurchasedGradient(skipBtnHost :: GuiObject)
+	end
+
+	local skipSubtitle = skipBtnHost and skipBtnHost:FindFirstChild("TextLabel")
+	if skipSubtitle and skipSubtitle:IsA("TextLabel") then
+		skipSubtitle.Text = "Max rebirth reached"
+	end
+
+	setRebirthActionEnabled(false)
+end
+
 local function applySnapshot(snapshot: RebirthConfig.RebirthSnapshot, main: ScreenGui)
 	local prev = lastSnapshot
 	lastSnapshot = snapshot
@@ -576,7 +632,10 @@ local function applySnapshot(snapshot: RebirthConfig.RebirthSnapshot, main: Scre
 	local canRebirthChanged = not prev or prev.canRebirth ~= snapshot.canRebirth
 	local cashMetChanged = not prev or prev.cashMet ~= snapshot.cashMet
 	if not frameOpen then
-		if canRebirthChanged or cashMetChanged then
+		if snapshot.isMaxRebirth then
+			hideSidebarBadge()
+			lastCanRebirth = false
+		elseif canRebirthChanged or cashMetChanged then
 			-- The sign depends on isFloorRebirth too; refreshPlotRebirthSign caches and early-outs itself.
 			refreshPlotRebirthSign(snapshot)
 			if snapshot.canRebirth then
@@ -590,6 +649,33 @@ local function applySnapshot(snapshot: RebirthConfig.RebirthSnapshot, main: Scre
 			lastCanRebirth = snapshot.canRebirth
 		end
 		return
+	end
+
+	if snapshot.isMaxRebirth then
+		hideSidebarBadge()
+		lastCanRebirth = false
+		if frameOpen then
+			local moneyIcon = getMoneyIconFromRequirements(frame)
+			applyMaxRebirthUi(frame, snapshot, moneyIcon)
+		end
+		refreshPlotRebirthSign(snapshot)
+		return
+	end
+
+	setRebirthActionEnabled(true)
+	if rebirthBtnHost and rebirthBtnHost:IsA("GuiObject") then
+		MainGradientButtons.applyDefault(rebirthBtnHost :: GuiObject)
+	end
+	if skipBtnHost and skipBtnHost:IsA("GuiObject") then
+		MainGradientButtons.applyDefault(skipBtnHost :: GuiObject)
+	end
+	local skipSubtitle = skipBtnHost and skipBtnHost:FindFirstChild("TextLabel")
+	if skipSubtitle and skipSubtitle:IsA("TextLabel") then
+		skipSubtitle.Text = SKIP_SUBTITLE_TEXT
+	end
+	local req = frame:FindFirstChild("Requirements")
+	if req and req:IsA("GuiObject") then
+		req.Visible = true
 	end
 
 	local carryIcon = getCarryUpgradeIcon(main)
@@ -699,7 +785,7 @@ local function tryRebirth(main: ScreenGui)
 	if rebirthBusy or not performRF then
 		return
 	end
-	if not lastSnapshot or not lastSnapshot.canRebirth then
+	if not lastSnapshot or not lastSnapshot.canRebirth or lastSnapshot.isMaxRebirth then
 		GameSoundEffects.playErrorNotif()
 		return
 	end
@@ -726,7 +812,10 @@ local function tryRebirth(main: ScreenGui)
 end
 
 local function trySkipPurchase()
-	if rebirthBusy then
+	if rebirthBusy or (lastSnapshot and lastSnapshot.isMaxRebirth) then
+		if lastSnapshot and lastSnapshot.isMaxRebirth then
+			GameSoundEffects.playErrorNotif()
+		end
 		return
 	end
 	rebirthBusy = true
@@ -763,6 +852,8 @@ function RebirthController.init()
 		return
 	end
 
+	MainGradientButtons.init(main)
+
 	local frames = main:WaitForChild("Frames")
 	rebirthFrame = frames:WaitForChild("Rebirth2") :: Frame
 	-- Never leave the frames container absorbing mouse input (breaks camera + plot SurfaceGuis).
@@ -790,8 +881,8 @@ function RebirthController.init()
 	end
 
 	local buttons = rebirthFrame:FindFirstChild("Buttons")
-	local rebirthBtnHost = buttons and buttons:FindFirstChild("Rebirth")
-	local skipBtnHost = buttons and buttons:FindFirstChild("Skip")
+	rebirthBtnHost = if buttons then buttons:FindFirstChild("Rebirth") :: GuiObject? else nil
+	skipBtnHost = if buttons then buttons:FindFirstChild("Skip") :: GuiObject? else nil
 
 	wireFrameButton(rebirthBtnHost, function()
 		tryRebirth(main)

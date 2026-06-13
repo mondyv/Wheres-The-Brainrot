@@ -159,6 +159,9 @@ local function performRebirth(player: Player, opts: { skipRequirements: boolean?
 	if not opts.skipRequirements and not snapshot.canRebirth then
 		return false, "requirements"
 	end
+	if RebirthConfig.isMaxRebirthCount(snapshot.rebirthCount) then
+		return false, "max_rebirth"
+	end
 
 	local newCount = snapshot.rebirthCount + 1
 	player:SetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR, newCount)

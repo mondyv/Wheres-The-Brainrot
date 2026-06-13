@@ -178,39 +178,7 @@ end
 
 local function applyPackPurchasedRed(buy: GuiObject)
 	MainGradientButtons.applyPurchased(buy)
-
 	removeStoreDisabledOverlay(buy)
-
-	if buy:IsA("Frame") or buy:IsA("TextButton") or buy:IsA("ImageButton") then
-		buy.BackgroundColor3 = Color3.fromRGB(220, 45, 45)
-		buy.BackgroundTransparency = 0
-	end
-
-	local gradient = buy:FindFirstChildOfClass("UIGradient")
-	if gradient then
-		gradient.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 90, 90)),
-			ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 20, 20)),
-		})
-	end
-
-	for _, descendant in buy:GetDescendants() do
-		if descendant:IsA("UIGradient") then
-			descendant.Color = ColorSequence.new({
-				ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 90, 90)),
-				ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 20, 20)),
-			})
-		elseif descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
-			if
-				descendant.Text == "Buy"
-				or descendant.Text == "BUY"
-				or descendant.Text == "Purchase"
-				or descendant.Text == "PURCHASE"
-			then
-				descendant.Text = "Purchased"
-			end
-		end
-	end
 end
 
 local function applyPackAvailableDefault(buy: GuiObject)
@@ -235,7 +203,7 @@ local function refreshOwnedBuy(entry: OwnedBuyEntry)
 
 	if owned then
 		MainGradientButtons.applyPurchased(entry.buy)
-		setButtonEnabled(entry.buy, entry.state, false)
+		setButtonEnabledNoOverlay(entry.buy, entry.state, false)
 	else
 		MainGradientButtons.applyDefault(entry.buy)
 		setButtonEnabled(entry.buy, entry.state, true)
@@ -244,7 +212,7 @@ end
 
 local function applyOptimisticPurchase(entry: OwnedBuyEntry)
 	MainGradientButtons.applyPurchased(entry.buy)
-	setButtonEnabled(entry.buy, entry.state, false)
+	setButtonEnabledNoOverlay(entry.buy, entry.state, false)
 end
 
 -- ── Wiring ──────────────────────────────────────────────────────────────────────

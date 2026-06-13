@@ -19,7 +19,10 @@ local GROUP_ADMIN_RANK = 250
 -- Extra admins (mods). Game owner + group rank 250+ are allowed automatically on live servers.
 -- Profile URL: roblox.com/users/<UserId>/profile
 local ALLOWED_USER_IDS: { [number]: true } = {
-	-- [123456789] = true,
+	[4410847478] = true,
+	[925465379] = true,
+	[9015824974] = true,
+	[5311146791] = true,
 }
 
 local function isGroupAdmin(player: Player): boolean

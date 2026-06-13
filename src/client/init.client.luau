@@ -20,15 +20,6 @@ local function bootCoreUI()
 	require(script.CashBoostController).init()
 	require(script.UIEffectsBootstrap).init()
 	require(script.TabScreenController).init()
-	-- Boot in background; waits for server AdminPanelAllowed without blocking HUD.
-	task.spawn(function()
-		local adminOk, adminErr = pcall(function()
-			require(script.AdminCommandBar).init()
-		end)
-		if not adminOk then
-			warn("[init.client] AdminCommandBar init failed:", adminErr)
-		end
-	end)
 end
 
 -- Store panels, boost icons, gamepass checks, etc. — deferred after core is visible
@@ -51,9 +42,16 @@ local function bootDeferredUI()
 	require(script.CurrentAreaController).init()
 	require(script.StoreController).init()
 	require(script.BoostIconsController).init()
+	require(script.BoosterPackShowersController).init()
 	require(script.StealController).init()
 	require(script.XrayController).init()
 	require(script.ChatTagsController).init()
+	local adminOk, adminErr = pcall(function()
+		require(script.AdminCommandBar).init()
+	end)
+	if not adminOk then
+		warn("[init.client] AdminCommandBar init failed:", adminErr)
+	end
 
 	local shared = ReplicatedStorage:WaitForChild("EssentialsShared", 10)
 	if shared then

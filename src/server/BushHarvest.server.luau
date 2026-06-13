@@ -49,6 +49,8 @@ local BUSH_HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
 local BUSH_HIDDEN_RARITY_ATTR = "HiddenBrainrotRarity"
 local BUSH_HIDDEN_NAME_ATTR = "HiddenBrainrotName"
 local BUSH_HIDDEN_MUTATION_ATTR = "HiddenBrainrotMutation"
+local BUSH_HIDDEN_LEVEL_ATTR = "HiddenBrainrotLevel"
+local BUSH_HIDDEN_BASE_INCOME_ATTR = "HiddenBrainrotBaseIncome"
 local BUSH_ON_COOLDOWN_ATTR = "BushOnCooldown"
 local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
 local BUSH_COOLDOWN_ENDS_ATTR = "BushCooldownEndsAt"
@@ -1395,6 +1397,8 @@ local function clearHiddenBrainrotLoot(bush: Instance)
 	bush:SetAttribute(BUSH_HIDDEN_RARITY_ATTR, nil)
 	bush:SetAttribute(BUSH_HIDDEN_NAME_ATTR, nil)
 	bush:SetAttribute(BUSH_HIDDEN_MUTATION_ATTR, nil)
+	bush:SetAttribute(BUSH_HIDDEN_LEVEL_ATTR, nil)
+	bush:SetAttribute(BUSH_HIDDEN_BASE_INCOME_ATTR, nil)
 end
 
 local function rollHiddenBrainrotLoot(bush: Instance)
@@ -1404,7 +1408,7 @@ local function rollHiddenBrainrotLoot(bush: Instance)
 		return
 	end
 	local pos = if bush:IsA("BasePart") then bush.Position else (bush :: Model):GetPivot().Position
-	local plot = resolveHarvestPlot(pos)
+	local plot = resolveHarvestPlot(pos, LuckBoost.serverLuckMultiplier())
 	local function brainrotIsAvailable(def)
 		return Brainrots.isPlayableBrainrotName(def.name) and brainrotHasTemplate(brainrots :: Folder, def.name)
 	end
@@ -1415,6 +1419,8 @@ local function rollHiddenBrainrotLoot(bush: Instance)
 	bush:SetAttribute(BUSH_HIDDEN_RARITY_ATTR, pick.rarity)
 	bush:SetAttribute(BUSH_HIDDEN_NAME_ATTR, pick.name)
 	bush:SetAttribute(BUSH_HIDDEN_MUTATION_ATTR, mutationId)
+	bush:SetAttribute(BUSH_HIDDEN_LEVEL_ATTR, Brainrots.rollBushHarvestLevel())
+	bush:SetAttribute(BUSH_HIDDEN_BASE_INCOME_ATTR, pick.baseIncome)
 end
 
 --[[
@@ -1970,6 +1976,16 @@ local function resolveHiddenBrainrotPick(
 	return def, mutationId
 end
 
+local function resolveHiddenHarvestLevel(bushRef: Instance?): number
+	if bushRef then
+		local stored = bushRef:GetAttribute(BUSH_HIDDEN_LEVEL_ATTR)
+		if typeof(stored) == "number" and stored >= 1 then
+			return math.clamp(math.floor(stored), 1, Brainrots.MAX_LEVEL)
+		end
+	end
+	return Brainrots.rollBushHarvestLevel()
+end
+
 local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushRef: Instance?)
 	if not canAttemptHarvest(player, worldPosition, bushRef) then
 		return
@@ -2000,15 +2016,6 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 		return Brainrots.isPlayableBrainrotName(def.name) and brainrotHasTemplate(brainrots :: Folder, def.name)
 	end
 	local pick, mutationId = resolveHiddenBrainrotPick(bushRef, brainrots :: Folder, brainrotIsAvailable)
-	-- When the player has an active luck multiplier, re-roll using the boosted plot so
-	-- gamepass / server luck actually improves the outcome instead of being ignored by
-	-- the pre-rolled hidden loot.
-	if luckMultiplier > 1 then
-		local boostedPick, boostedMutation = Brainrots.pickRandomBrainrotForPlot(plot, brainrotIsAvailable)
-		if boostedPick then
-			pick, mutationId = boostedPick, boostedMutation
-		end
-	end
 	if not pick then
 		pick, mutationId = Brainrots.pickRandomBrainrotForPlot(plot, brainrotIsAvailable)
 	end
@@ -2024,7 +2031,7 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 		local fallbackDef = Brainrots.getByName(fallbackName)
 		firePlayBrainrotSFX(player, fallbackName)
 		fireHarvestDropFX(player, if fallbackDef then fallbackDef.rarity else "common")
-		local harvestLevel = Brainrots.rollBushHarvestLevel()
+		local harvestLevel = resolveHiddenHarvestLevel(bushRef)
 		local clone = fallback:Clone()
 		clone.Name = fallbackName
 		clone:SetAttribute("OwnerUserId", player.UserId)
@@ -2070,7 +2077,7 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 	firePlayBrainrotSFX(player, pick.name)
 	fireHarvestDropFX(player, pick.rarity)
 
-	local harvestLevel = Brainrots.rollBushHarvestLevel()
+	local harvestLevel = resolveHiddenHarvestLevel(bushRef)
 	local clone = template:Clone()
 	clone.Name = pick.name
 	clone:SetAttribute("OwnerUserId", player.UserId)
@@ -2173,14 +2180,21 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 	end
 
 	local hasBrainrot = bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
+
+	-- Harvest while hidden-loot attributes are still set. beginBushSearchCooldown clears them.
+	if hasBrainrot then
+		clearEmptyBushMessageState(bush)
+		FlashBushColor(bush, Color3.fromRGB(52, 215, 88))
+		beginHarvestOutcome(player, worldPosition, bush)
+	else
+		showEmptyBushMessage(bush)
+	end
+
 	local cooldownSec = math.random(BUSH_LOOT_RESPAWN_MIN, BUSH_LOOT_RESPAWN_MAX)
 	local cooldownEndsAt = beginBushSearchCooldown(bush, cooldownSec)
 	scheduleRollAfterCooldown(bush, cooldownSec)
 
 	if hasBrainrot then
-		clearEmptyBushMessageState(bush)
-		FlashBushColor(bush, Color3.fromRGB(52, 215, 88))
-		beginHarvestOutcome(player, worldPosition, bush)
 		return {
 			ok = true,
 			found = true,
@@ -2189,7 +2203,6 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 		}
 	end
 
-	showEmptyBushMessage(bush)
 	return {
 		ok = true,
 		found = false,
@@ -3279,7 +3292,6 @@ local function consumeInventoryEntry(plr: Player, idx: number): BrainrotInvEntry
 	end
 	enrichEntryFromCatalog(entry)
 
-	-- Unequip / destroy any Tool referencing this inventory index.
 	local char = plr.Character
 	if char then
 		local hum = char:FindFirstChildOfClass("Humanoid")
@@ -3305,291 +3317,22 @@ local function consumeInventoryEntry(plr: Player, idx: number): BrainrotInvEntry
 	return entry
 end
 
-local function ensureInternalFolder(): Folder
-	local existing = ServerStorage:FindFirstChild("BrainrotInternal")
-	if existing and existing:IsA("Folder") then
-		return existing
-	end
-	local newFolder = Instance.new("Folder")
-	newFolder.Name = "BrainrotInternal"
-	newFolder.Parent = ServerStorage
-	return newFolder
-end
-
-local function ensureBindable(name: string): BindableFunction
-	local internal = ensureInternalFolder()
-	local existing = internal:FindFirstChild(name)
-	if existing and existing:IsA("BindableFunction") then
-		return existing
-	end
-	local bf = Instance.new("BindableFunction")
-	bf.Name = name
-	bf.Parent = internal
-	return bf
-end
-
-do
-	local consumeBF = ensureBindable("ConsumeInventoryEntry")
-	consumeBF.OnInvoke = function(player: any, idx: any): any
-		if typeof(player) ~= "Instance" or not (player :: any):IsA("Player") then
-			return nil
-		end
-		if typeof(idx) ~= "number" then
-			return nil
-		end
-		return consumeInventoryEntry(player :: Player, idx)
-	end
-end
-
-do
-	local returnBF = ensureBindable("ReturnInventoryEntry")
-	returnBF.OnInvoke = function(player: any, entryArg: any): any
-		if typeof(player) ~= "Instance" or not (player :: any):IsA("Player") then
-			return false
-		end
-		if typeof(entryArg) ~= "table" then
-			return false
-		end
-		local incoming = entryArg :: any
-		local name = if typeof(incoming.name) == "string" then incoming.name else nil
-		if not name then
-			return false
-		end
-		local icon = if typeof(incoming.icon) == "string" then incoming.icon else ""
-		local sourcePath = if typeof(incoming.sourcePath) == "string" then incoming.sourcePath else ""
-		local rarity = if typeof(incoming.rarity) == "string" then incoming.rarity else "common"
-		local mutation = if typeof(incoming.mutation) == "string" then incoming.mutation else "normal"
-		local level = if typeof(incoming.level) == "number" then math.max(1, math.floor(incoming.level)) else 1
-		local baseIncome = if typeof(incoming.baseIncome) == "number" then incoming.baseIncome else 0
-
-		local entry: BrainrotInvEntry = {
-			name = name,
-			icon = icon,
-			sourcePath = sourcePath,
-			rarity = rarity,
-			mutation = mutation,
-			level = level,
-			baseIncome = baseIncome,
-		}
-		-- If icon is empty, try to enrich from template.
-		if entry.icon == "" then
-			local brainrotsFolder = Brainrots.getBrainrotsFolder()
-			if brainrotsFolder and brainrotsFolder:IsA("Folder") then
-				enrichEntryFromBrainrotsFolder(brainrotsFolder :: Folder, entry)
-			end
-		end
-		enrichEntryFromCatalog(entry)
-		return pushBrainrotInventory(player :: Player, entry)
-	end
-end
-
-do
-	local exportSaveBF = ensureBindable("ExportInventoryForSave")
-	exportSaveBF.OnInvoke = function(playerArg: any): any
-		if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
-			return { entries = {}, parkedSlots = {}, hotbarSlots = {}, equipSlot = nil }
-		end
-		local plr = playerArg :: Player
-		local list = brainrotInventories[plr] or {}
-		local entries = {}
-		for _, entry in ipairs(list) do
-			table.insert(entries, {
-				name = entry.name,
-				icon = entry.icon,
-				sourcePath = entry.sourcePath,
-				rarity = entry.rarity,
-				mutation = entry.mutation,
-				level = entry.level,
-				baseIncome = entry.baseIncome,
-			})
-		end
-		local parked: { number } = {}
-		local map = brainrotParkedInExpandedBackpack[plr] or {}
-		for slot in map do
-			table.insert(parked, slot)
-		end
-		table.sort(parked)
-		return {
-			entries = entries,
-			parkedSlots = parked,
-			hotbarSlots = hotbarSlotsPayloadForPlayer(plr, list),
-			equipSlot = plr:GetAttribute("BrainrotEquipSlot"),
-		}
-	end
-end
-
-do
-	local importSaveBF = ensureBindable("ImportInventoryFromSave")
-	importSaveBF.OnInvoke = function(playerArg: any, payloadArg: any): boolean
-		if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
-			return false
-		end
-		if typeof(payloadArg) ~= "table" then
-			return false
-		end
-		local plr = playerArg :: Player
-		local payload = payloadArg :: any
-		local rebuilt: { BrainrotInvEntry } = {}
-		if typeof(payload.entries) == "table" then
-			for _, raw in payload.entries do
-				if typeof(raw) == "table" and typeof(raw.name) == "string" and raw.name ~= "" then
-					local entry: BrainrotInvEntry = {
-						name = raw.name,
-						icon = if typeof(raw.icon) == "string" then raw.icon else "",
-						sourcePath = if typeof(raw.sourcePath) == "string" then raw.sourcePath else "",
-						rarity = if typeof(raw.rarity) == "string" then raw.rarity else "common",
-						mutation = if typeof(raw.mutation) == "string" then raw.mutation else "normal",
-						level = if typeof(raw.level) == "number" then math.max(1, math.floor(raw.level)) else 1,
-						baseIncome = if typeof(raw.baseIncome) == "number" then raw.baseIncome else 0,
-					}
-					enrichEntryFromCatalog(entry)
-					table.insert(rebuilt, entry)
-				end
-			end
-		end
-		brainrotInventories[plr] = rebuilt
-		local parked: { [number]: boolean } = {}
-		if typeof(payload.parkedSlots) == "table" then
-			for _, slot in payload.parkedSlots do
-				if typeof(slot) == "number" then
-					parked[math.floor(slot)] = true
-				end
-			end
-		end
-		brainrotParkedInExpandedBackpack[plr] = parked
-		local hotbarSlots: { [number]: number } = {}
-		if typeof(payload.hotbarSlots) == "table" then
-			for rawIdx, rawSlot in pairs(payload.hotbarSlots :: any) do
-				local idxNum = if typeof(rawIdx) == "number" then rawIdx else tonumber(rawIdx)
-				if typeof(idxNum) == "number" and typeof(rawSlot) == "number" then
-					local idx = math.floor(idxNum)
-					local slot = math.floor(rawSlot)
-					if idx >= 1 and rebuilt[idx] ~= nil and slot >= 1 and slot <= HOTBAR_UI_SLOTS then
-						hotbarSlots[idx] = slot
-					end
-				end
-			end
-		end
-		brainrotHotbarSlots[plr] = hotbarSlots
-		plr:SetAttribute("BrainrotCount", #rebuilt)
-		syncBrainrotCarryCountAttr(plr)
-		local equipSlot = if typeof(payload.equipSlot) == "number" then math.floor(payload.equipSlot) else nil
-		if equipSlot then
-			plr:SetAttribute("BrainrotEquipSlot", equipSlot)
-		end
-		local sync = ensureInventoryRemotes()
-		sync:FireClient(plr, packInventoryForClient(plr, rebuilt, equipSlot))
-		return true
-	end
-end
-
-do
-	local getListBF = ensureBindable("GetInventoryList")
-	getListBF.OnInvoke = function(playerArg: any): any
-		if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
-			return {}
-		end
-		local plr = playerArg :: Player
-		local list = brainrotInventories[plr] or {}
-		local out = {}
-		for _, entry in ipairs(list) do
-			table.insert(out, {
-				name = entry.name,
-				rarity = entry.rarity,
-				icon = entry.icon,
-			})
-		end
-		return out
-	end
-end
-
--- Granting brainrots from external systems (e.g. Daily rewards, Lucky Block tool).
--- Accepts a partial entry table (name required) and best-effort fills in rarity / icon / source
--- from the Brainrots catalog. Returns true on success and auto-equips the brainrot when possible.
-do
-	local grantBF = ensureBindable("GrantBrainrotAndEquip")
-	grantBF.OnInvoke = function(playerArg: any, entryArg: any, opts: any): boolean
-		if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
-			return false
-		end
-		if typeof(entryArg) ~= "table" then
-			return false
-		end
-		local plr = playerArg :: Player
-		if not brainrotInventories[plr] then
-			brainrotInventories[plr] = {}
-		end
-		if not brainrotParkedInExpandedBackpack[plr] then
-			brainrotParkedInExpandedBackpack[plr] = {}
-		end
-		local incoming = entryArg :: any
-		local name = if typeof(incoming.name) == "string" then incoming.name else nil
-		if not name or name == "" then
-			return false
-		end
-
-		local rarity = if typeof(incoming.rarity) == "string" then incoming.rarity else "common"
-		local mutation = if typeof(incoming.mutation) == "string" then incoming.mutation else "normal"
-		local level = if typeof(incoming.level) == "number" then math.max(1, math.floor(incoming.level)) else 1
-		local baseIncome = if typeof(incoming.baseIncome) == "number" then incoming.baseIncome else 0
-		local icon = if typeof(incoming.icon) == "string" then incoming.icon else ""
-		local sourcePath = if typeof(incoming.sourcePath) == "string" then incoming.sourcePath else ""
-
-		local entry: BrainrotInvEntry = {
-			name = name,
-			icon = icon,
-			sourcePath = sourcePath,
-			rarity = rarity,
-			mutation = mutation,
-			level = level,
-			baseIncome = baseIncome,
-		}
-
-		local brainrotsFolder = Brainrots.getBrainrotsFolder()
-		if brainrotsFolder and brainrotsFolder:IsA("Folder") then
-			enrichEntryFromBrainrotsFolder(brainrotsFolder :: Folder, entry)
-		end
-		enrichEntryFromCatalog(entry)
-		if entry.icon == "" then
-			local mutationId = if entry.mutation ~= "" then entry.mutation else "normal"
-			entry.icon = IndexService.getIconFor(entry.name, mutationId)
-		end
-
-		if not pushBrainrotInventory(plr, entry, true) then
-			return false
-		end
-
-		local list = brainrotInventories[plr]
-		if not list then
-			return true
-		end
-		local newSlot = #list
-
-		notifyIndexDeposited(plr, entry)
-
-		local forceEquip = true
-		if typeof(opts) == "table" and opts.equip == false then
-			forceEquip = false
-		end
-		local syncSlot = newSlot
-		if forceEquip then
-			local equippedIdx = equipBrainrotSlotForPlayer(plr, newSlot, true)
-			if typeof(equippedIdx) == "number" then
-				syncSlot = equippedIdx
-			else
-				task.spawn(function()
-					for _ = 1, 24 do
-						local idx = equipBrainrotSlotForPlayer(plr, newSlot, true)
-						if typeof(idx) == "number" then
-							notifyClientInventorySync(plr, idx, false)
-							return
-						end
-						task.wait(0.25)
-					end
-				end)
-			end
-		end
-		notifyClientInventorySync(plr, syncSlot, false)
-		return true
-	end
-end
+require(Modules:WaitForChild("BushHarvestInternal")).install({
+	consumeInventoryEntry = consumeInventoryEntry,
+	pushBrainrotInventory = pushBrainrotInventory,
+	brainrotInventories = brainrotInventories,
+	brainrotParkedInExpandedBackpack = brainrotParkedInExpandedBackpack,
+	brainrotHotbarSlots = brainrotHotbarSlots,
+	enrichEntryFromCatalog = enrichEntryFromCatalog,
+	enrichEntryFromBrainrotsFolder = enrichEntryFromBrainrotsFolder,
+	Brainrots = Brainrots,
+	IndexService = IndexService,
+	packInventoryForClient = packInventoryForClient,
+	hotbarSlotsPayloadForPlayer = hotbarSlotsPayloadForPlayer,
+	syncBrainrotCarryCountAttr = syncBrainrotCarryCountAttr,
+	ensureInventoryRemotes = ensureInventoryRemotes,
+	equipBrainrotSlotForPlayer = equipBrainrotSlotForPlayer,
+	notifyClientInventorySync = notifyClientInventorySync,
+	notifyIndexDeposited = notifyIndexDeposited,
+	HOTBAR_UI_SLOTS = HOTBAR_UI_SLOTS,
+})

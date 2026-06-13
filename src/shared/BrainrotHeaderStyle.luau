@@ -238,6 +238,89 @@ local function findGameGradientTemplate(names: { string }): UIGradient?
 	return nil
 end
 
+local gameGradientsTypeFolder: Folder? = nil
+
+local function getGameGradientsTypeFolder(): Folder?
+	if gameGradientsTypeFolder and gameGradientsTypeFolder.Parent then
+		return gameGradientsTypeFolder
+	end
+	local RunService = game:GetService("RunService")
+	if not RunService:IsClient() then
+		return nil
+	end
+	local Players = game:GetService("Players")
+	local player = Players.LocalPlayer
+	if not player then
+		return nil
+	end
+	local main = player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("Main")
+	local gameGradients = main and main:FindFirstChild("GameGradients")
+	local types = gameGradients and gameGradients:FindFirstChild("Type")
+	if types and types:IsA("Folder") then
+		gameGradientsTypeFolder = types
+	end
+	return gameGradientsTypeFolder
+end
+
+local function findTypeGradientTemplate(names: { string }): UIGradient?
+	local folder = getGameGradientsTypeFolder()
+	if not folder then
+		return nil
+	end
+	for _, name in names do
+		local template = folder:FindFirstChild(name)
+		if template and template:IsA("UIGradient") then
+			return template
+		end
+	end
+	return nil
+end
+
+function M.sampleGradientAccentColor(gradient: UIGradient?): Color3?
+	if not gradient then
+		return nil
+	end
+	local keypoints = gradient.Color.Keypoints
+	if #keypoints == 0 then
+		return nil
+	end
+	local r, g, b = 0, 0, 0
+	for _, kp in keypoints do
+		r += kp.Value.R
+		g += kp.Value.G
+		b += kp.Value.B
+	end
+	local n = #keypoints
+	return Color3.new(r / n, g / n, b / n)
+end
+
+function M.rarityAccentColor(rarityId: string): Color3
+	local template = findGameGradientTemplate(M.rarityGradientNames(rarityId))
+	return M.sampleGradientAccentColor(template) or Color3.fromRGB(120, 220, 150)
+end
+
+function M.mutationAccentColor(mutationId: string): Color3?
+	local gradientName = M.MUTATION_GRADIENT_NAME[mutationId]
+	if not gradientName then
+		return nil
+	end
+	local template = findTypeGradientTemplate({ gradientName })
+	return M.sampleGradientAccentColor(template)
+end
+
+function M.hiddenLootOutlineColor(rarityId: string?, mutationId: string?): Color3
+	if typeof(mutationId) == "string" and mutationId ~= "" and mutationId ~= "normal" then
+		local mutationColor = M.mutationAccentColor(mutationId)
+		if mutationColor then
+			return mutationColor
+		end
+	end
+	if typeof(rarityId) == "string" and rarityId ~= "" then
+		return M.rarityAccentColor(rarityId)
+	end
+	return Color3.fromRGB(120, 220, 150)
+end
+
 function M.ensureRarityGradient(node: Instance, rarityId: string)
 	local names = M.rarityGradientNames(rarityId)
 	local host = M.gradientHost(node)

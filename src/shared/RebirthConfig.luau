@@ -43,6 +43,7 @@ export type TierDef = {
 export type RebirthSnapshot = {
 	rebirthCount: number,
 	nextTier: number,
+	isMaxRebirth: boolean,
 	isFloorRebirth: boolean,
 	cashRequired: number,
 	cashMet: boolean,
@@ -206,7 +207,15 @@ function M.getRebirthCount(player: Player): number
 end
 
 function M.nextRebirthTier(player: Player): number
-	return M.getRebirthCount(player) + 1
+	return math.min(M.getRebirthCount(player) + 1, M.MAX_TIER)
+end
+
+function M.isMaxRebirthCount(rebirthCount: number): boolean
+	return math.floor(rebirthCount) >= M.MAX_TIER
+end
+
+function M.isMaxRebirth(player: Player): boolean
+	return M.isMaxRebirthCount(M.getRebirthCount(player))
 end
 
 function M.isFloorRebirth(tier: number): boolean
@@ -272,6 +281,24 @@ end
 
 function M.buildSnapshot(player: Player, isDiscovered: (name: string) -> boolean): RebirthSnapshot
 	local count = M.getRebirthCount(player)
+	if M.isMaxRebirthCount(count) then
+		local tierDef = M.getTierDef(count)
+		local maxMult = if tierDef then tierDef.incomeMultiplier else M.moneyMultiplierForCount(count)
+		return {
+			rebirthCount = count,
+			nextTier = count,
+			isMaxRebirth = true,
+			isFloorRebirth = false,
+			cashRequired = 0,
+			cashMet = true,
+			canRebirth = false,
+			moneyMultiplier = M.getMoneyMultiplier(player),
+			nextMoneyMultiplier = maxMult,
+			moneyPercentDisplay = M.moneyPercentDisplayForTier(count),
+			brainrotReqs = {},
+		}
+	end
+
 	local tier = count + 1
 	local tierDef = M.getTierDef(tier)
 	local cashRequired = if tierDef then tierDef.cashCost else 0
@@ -293,6 +320,7 @@ function M.buildSnapshot(player: Player, isDiscovered: (name: string) -> boolean
 	return {
 		rebirthCount = count,
 		nextTier = tier,
+		isMaxRebirth = false,
 		isFloorRebirth = M.isFloorRebirth(tier),
 		cashRequired = cashRequired,
 		cashMet = cashMet,

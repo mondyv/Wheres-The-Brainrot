@@ -15,6 +15,7 @@ local GlobalRaritySpawnConfig = require(ReplicatedStorage:WaitForChild("Shared")
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local LiveDataStores = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LiveDataStores"))
 local Brainrots = require(script.Parent:WaitForChild("Brainrots"))
+local IndexService = require(script.Parent:WaitForChild("IndexService"))
 
 local C = GlobalRaritySpawnConfig
 
@@ -282,17 +283,22 @@ local function publishReplication(state: GlobalState, eventKind: string?, tierId
 	end
 	local active = state.active
 	if active then
+		local ok, icon = pcall(function()
+			return IndexService.getIconFor(active.brainrotName, active.mutation)
+		end)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_RARITY_ATTR, active.rarity)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_BUSH_KEY_ATTR, active.bushKey)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_ENDS_ATTR, active.endsAt)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_NAME_ATTR, active.brainrotName)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_MUTATION_ATTR, active.mutation)
+		ReplicatedStorage:SetAttribute(C.ACTIVE_ICON_ATTR, if ok and typeof(icon) == "string" then icon else "")
 	else
 		ReplicatedStorage:SetAttribute(C.ACTIVE_RARITY_ATTR, nil)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_BUSH_KEY_ATTR, nil)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_ENDS_ATTR, nil)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_NAME_ATTR, nil)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_MUTATION_ATTR, nil)
+		ReplicatedStorage:SetAttribute(C.ACTIVE_ICON_ATTR, nil)
 	end
 
 	local ev = ensureRemotes()

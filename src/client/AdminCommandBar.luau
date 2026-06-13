@@ -345,7 +345,7 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 	elseif cmdName == "spawnglobal" then
 		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
-			for _, tier in { "mythic", "mythical", "legendary", "godly", "secret" } do
+			for _, tier in { "mythic", "legendary", "godly", "secret" } do
 				if startsWith(tier, partial) then
 					pushSuggestion(out, prefix .. tier, "global rarity spawn")
 				end

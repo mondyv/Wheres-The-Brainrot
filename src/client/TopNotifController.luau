@@ -8,18 +8,18 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
-local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local RaritySpawnStyle = require(script.Parent.RaritySpawnStyle)
 
 local player = Players.LocalPlayer
 
-local POP_IN = TweenInfo.new(0.55, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
-local TEXT_IN = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local WOBBLE_SETTLE = TweenInfo.new(0.6, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
-local IDLE_BOB = TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
-local FADE_OUT = TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+local POP_IN = TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local TEXT_IN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local WOBBLE_SETTLE = TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local FADE_OUT = TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local ERROR_ACCENT = Color3.fromRGB(255, 86, 86)
 local DISPLAY_LIFETIME = 10
 local ERROR_LIFETIME = 3.5
 local ERROR_COOLDOWN = 0.35
@@ -35,12 +35,12 @@ type QueuedMessage = {
 local host: GuiObject? = nil
 local animHost: GuiObject? = nil
 local label: TextLabel? = nil
+local panelStroke: UIStroke? = nil
 local templateErrorGrad: UIGradient? = nil
 local messageQueue: { QueuedMessage } = {}
 local isShowing = false
 local hideToken = 0
 local activeFadeTween: Tween? = nil
-local idleTween: Tween? = nil
 local lastErrorAt = 0
 local broadcastConn: RBXScriptConnection? = nil
 
@@ -69,6 +69,7 @@ local function findParts()
 	end
 	host = notif :: GuiObject
 	animHost = (notif:FindFirstChildWhichIsA("Frame") or notif) :: GuiObject
+	panelStroke = notif:FindFirstChildWhichIsA("UIStroke", true)
 	local text = notif:FindFirstChild("Text", true)
 	if text and text:IsA("TextLabel") then
 		label = text
@@ -79,33 +80,54 @@ local function findParts()
 	end
 end
 
-local function clearLabelGradients(textLabel: TextLabel)
+local function disableOtherGradients(textLabel: TextLabel, keepName: string)
 	for _, child in textLabel:GetChildren() do
-		if child:IsA("UIGradient") then
-			child:Destroy()
+		if child:IsA("UIGradient") and child.Name ~= keepName then
+			child.Enabled = false
 		end
 	end
 end
 
-local function applyRarityStyle(textLabel: TextLabel, rarityId: string)
-	clearLabelGradients(textLabel)
-	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-	local key = string.lower(rarityId)
-	local gradName = BrainrotHeaderStyle.RARITY_GRADIENT_NAME[key]
-	if gradName then
-		BrainrotHeaderStyle.selectGradient(textLabel, gradName)
+local function setPanelAccent(color: Color3, rarityId: string?)
+	if not panelStroke then
+		return
+	end
+	panelStroke.Color = color
+	local grad = panelStroke:FindFirstChild("RaritySpawnGradient")
+	if rarityId then
+		if not grad or not grad:IsA("UIGradient") then
+			grad = Instance.new("UIGradient")
+			grad.Name = "RaritySpawnGradient"
+			grad.Parent = panelStroke
+		end
+		;(grad :: UIGradient).Color = RaritySpawnStyle.colorSequence(rarityId)
+		;(grad :: UIGradient).Rotation = 90
+		;(grad :: UIGradient).Enabled = true
+	elseif grad and grad:IsA("UIGradient") then
+		grad.Enabled = false
 	end
 end
 
-local function applyErrorStyle(textLabel: TextLabel)
-	clearLabelGradients(textLabel)
+local function applyRarityStyle(textLabel: TextLabel, rarityId: string)
 	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-	if templateErrorGrad then
+	disableOtherGradients(textLabel, "RaritySpawnGradient")
+	RaritySpawnStyle.applyTextGradient(textLabel, rarityId)
+	setPanelAccent(RaritySpawnStyle.accentColor(rarityId), rarityId)
+end
+
+local function applyErrorStyle(textLabel: TextLabel)
+	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	disableOtherGradients(textLabel, "Error")
+	local err = textLabel:FindFirstChild("Error")
+	if err and err:IsA("UIGradient") then
+		err.Enabled = true
+	elseif templateErrorGrad then
 		local clone = templateErrorGrad:Clone()
 		clone.Name = "Error"
 		clone.Enabled = true
 		clone.Parent = textLabel
 	end
+	setPanelAccent(ERROR_ACCENT, nil)
 end
 
 local function setLabelAlpha(textLabel: TextLabel, alpha: number)
@@ -146,14 +168,16 @@ local function processQueue()
 	setLabelAlpha(label, 0)
 	host.Visible = true
 
-	local scale = getOrAddUIScale(animHost)
-	scale.Scale = 0
-	animHost.Rotation = -8
+	-- Scale the label only (not the layout frame) so the panel never "resizes weirdly".
+	local scale = getOrAddUIScale(label)
+	scale.Scale = 0.55
+	label.Rotation = -5
 
-	-- Bedazzle pop: elastic scale overshoot + rotation wobble settle.
+	-- Single-shot bedazzle pop: Back overshoot + small wobble settle, lands at scale 1.
+	cancelActiveTween()
 	activeFadeTween = TweenService:Create(scale, POP_IN, { Scale = 1 })
 	activeFadeTween:Play()
-	TweenService:Create(animHost, WOBBLE_SETTLE, { Rotation = 0 }):Play()
+	TweenService:Create(label, WOBBLE_SETTLE, { Rotation = 0 }):Play()
 	TweenService:Create(label, TEXT_IN, { TextTransparency = 0 }):Play()
 	for _, desc in label:GetDescendants() do
 		if desc:IsA("UIStroke") then
@@ -161,32 +185,14 @@ local function processQueue()
 		end
 	end
 
-	-- Gentle idle bob once the pop settles, for some life.
-	if idleTween then
-		idleTween:Cancel()
-		idleTween = nil
-	end
-	task.delay(0.6, function()
-		if token ~= hideToken or not animHost then
-			return
-		end
-		idleTween = TweenService:Create(scale, IDLE_BOB, { Scale = 1.035 })
-		idleTween:Play()
-	end)
-
 	local lifetime = if entry.isError then ERROR_LIFETIME else DISPLAY_LIFETIME
 	task.delay(lifetime, function()
-		if token ~= hideToken or not host or not animHost or not label then
+		if token ~= hideToken or not host or not label then
 			return
 		end
 		cancelActiveTween()
-		if idleTween then
-			idleTween:Cancel()
-			idleTween = nil
-		end
-		activeFadeTween = TweenService:Create(scale, FADE_OUT, { Scale = 0 })
+		activeFadeTween = TweenService:Create(scale, FADE_OUT, { Scale = 0.55 })
 		activeFadeTween:Play()
-		TweenService:Create(animHost, FADE_OUT, { Rotation = 8 }):Play()
 		TweenService:Create(label, FADE_OUT, { TextTransparency = 1 }):Play()
 		for _, desc in label:GetDescendants() do
 			if desc:IsA("UIStroke") then
@@ -203,9 +209,9 @@ local function processQueue()
 			end
 			if label then
 				label.Visible = false
+				label.Rotation = 0
 			end
 			scale.Scale = 1
-			animHost.Rotation = 0
 			processQueue()
 		end)
 	end)

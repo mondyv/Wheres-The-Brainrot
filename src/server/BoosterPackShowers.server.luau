@@ -7,7 +7,6 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
@@ -19,22 +18,12 @@ local ZONE_POLL_SEC = 0.25
 local PROMPT_REMOTE_FOLDER = "StoreRemotes"
 local PROMPT_REMOTE_NAME = "BoosterShowerProductPrompt"
 
--- Studio + live: filter Output with [BoosterPackShowers]
-local function diag(msg: string)
-	warn("[BoosterPackShowers]", msg)
-end
-
--- Studio stand folder name → StoreConfig.PACKS frameName
+local EXCLUSIVE_PRODUCT_ID = StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT
 local STAND_FRAME_NAMES: { [string]: string } = {
 	["Starter Stand"] = "StarterPack",
 	["Mythic Stand"] = "MythicPack",
 	["Godly Stand"] = "GodlyPack",
 	["Secret Stand"] = "SecretPack",
-}
-
-local EXCLUSIVE_STAND_PRODUCTS: { [string]: number } = {
-	["StrawbeerryElephantStand"] = StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT,
-	["StrawberryElephantStand"] = StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT,
 }
 
 local packByFrameName: { [string]: typeof(StoreConfig.PACKS[1]) } = {}
@@ -73,8 +62,6 @@ local function firePurchaseEffect(player: Player)
 	local re = events and events:FindFirstChild("PurchaseEffectShow")
 	if re and re:IsA("RemoteEvent") then
 		re:FireClient(player)
-	else
-		diag("PurchaseEffectShow remote missing — prompt will still run")
 	end
 end
 
@@ -85,7 +72,6 @@ local function packRemaining(player: Player, pack: typeof(StoreConfig.PACKS[1]))
 end
 
 local function promptProductPurchase(player: Player, productId: number, context: string)
-	diag(string.format("PromptProductPurchase player=%s productId=%s context=%s", player.Name, tostring(productId), context))
 	local productKind = if string.find(context, "exclusive:", 1, true) then "exclusive" else "product"
 	local remote = ensurePromptProductRemote()
 	if remote then
@@ -97,13 +83,12 @@ local function promptProductPurchase(player: Player, productId: number, context:
 		MarketplaceService:PromptProductPurchase(player, productId)
 	end)
 	if not ok then
-		diag(string.format("PromptProductPurchase FAILED player=%s productId=%s err=%s", player.Name, tostring(productId), tostring(err)))
+		warn("[BoosterPackShowers] PromptProductPurchase failed:", player.Name, productId, err)
 	end
 end
 
 local function promptPackPurchase(player: Player, pack: typeof(StoreConfig.PACKS[1]))
 	if packRemaining(player, pack) <= 0 then
-		diag(string.format("Pack purchase skipped — limit reached player=%s pack=%s", player.Name, pack.frameName))
 		return
 	end
 	promptProductPurchase(player, pack.productId, "pack:" .. pack.frameName)
@@ -115,17 +100,6 @@ local function playerFromTouchPart(other: BasePart): Player?
 		return nil
 	end
 	return Players:GetPlayerFromCharacter(character)
-end
-
-local function describePart(part: BasePart): string
-	return string.format(
-		"%s CanTouch=%s CanCollide=%s CanQuery=%s Size=%s",
-		part:GetFullName(),
-		tostring(part.CanTouch),
-		tostring(part.CanCollide),
-		tostring(part.CanQuery),
-		tostring(part.Size)
-	)
 end
 
 local function findStandHitbox(stand: Instance): BasePart?
@@ -143,14 +117,6 @@ local function findStandHitbox(stand: Instance): BasePart?
 		end
 	end
 	return nil
-end
-
-local function listStandChildren(stand: Instance): string
-	local names: { string } = {}
-	for _, child in stand:GetChildren() do
-		table.insert(names, child.Name .. "(" .. child.ClassName .. ")")
-	end
-	return table.concat(names, ", ")
 end
 
 local function isOnCooldown(plr: Player, standKey: string): boolean
@@ -175,7 +141,6 @@ local function tryRunPrompt(plr: Player, standKey: string, onPrompt: (Player) ->
 		return false
 	end
 	setCooldown(plr, standKey)
-	diag(string.format("Trigger stand=%s player=%s source=%s", standKey, plr.Name, source))
 	onPrompt(plr)
 	return true
 end
@@ -207,7 +172,6 @@ end
 
 local function bindHitboxTouch(stand: Instance, hitbox: BasePart, onPrompt: (Player) -> ())
 	if wiredStands[stand] then
-		diag("Already wired stand=" .. stand:GetFullName())
 		return
 	end
 	wiredStands[stand] = true
@@ -216,7 +180,6 @@ local function bindHitboxTouch(stand: Instance, hitbox: BasePart, onPrompt: (Pla
 	hitbox.CanTouch = true
 	hitbox.CanQuery = true
 	local standKey = stand.Name
-	diag("Wired stand=" .. stand:GetFullName() .. " hitbox=" .. describePart(hitbox))
 
 	hitbox.Touched:Connect(function(other: BasePart)
 		if not other:IsA("BasePart") then
@@ -273,8 +236,6 @@ local function ensureHitboxWired(stand: Instance, onPrompt: (Player) -> (), useZ
 		return true
 	end
 
-	diag("Hitbox not found yet on stand=" .. stand:GetFullName() .. " children=[" .. listStandChildren(stand) .. "]")
-
 	local conn: RBXScriptConnection?
 	conn = stand.DescendantAdded:Connect(function(desc)
 		if desc.Name == "Hitbox" and desc:IsA("BasePart") then
@@ -305,27 +266,19 @@ local function isStrawberryElephantStandName(name: string): boolean
 end
 
 local function exclusiveProductForStand(standName: string): number?
-	local direct = EXCLUSIVE_STAND_PRODUCTS[standName]
-	if direct then
-		return direct
-	end
-	if isStrawberryElephantStandName(standName) then
-		return StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT
+	if standName == EXCLUSIVE_STAND_NAME or isStrawberryElephantStandName(standName) then
+		return EXCLUSIVE_PRODUCT_ID
 	end
 	return nil
 end
 
 local function wireExclusiveStand(stand: Instance, productId: number)
-	local wired = ensureHitboxWired(stand, function(plr: Player)
+	ensureHitboxWired(stand, function(plr: Player)
 		if plr:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) == true then
-			diag(string.format("Exclusive purchase skipped — already owned player=%s stand=%s", plr.Name, stand.Name))
 			return
 		end
 		promptProductPurchase(plr, productId, "exclusive:" .. stand.Name)
 	end, true)
-	if not wired then
-		diag("Exclusive stand waiting for Hitbox: " .. stand:GetFullName())
-	end
 end
 
 local function wirePackStand(stand: Instance, pack: typeof(StoreConfig.PACKS[1]))
@@ -336,7 +289,6 @@ end
 
 local function tryWireStand(stand: Instance)
 	if not stand:IsA("Model") and not stand:IsA("Folder") and not stand:IsA("BasePart") then
-		diag("Skipped non-stand instance: " .. stand:GetFullName() .. " class=" .. stand.ClassName)
 		return
 	end
 	if wiredStands[stand] then
@@ -348,73 +300,37 @@ local function tryWireStand(stand: Instance)
 		local pack = packByFrameName[frameName]
 		if pack then
 			wirePackStand(stand, pack)
-		else
-			diag("No pack config for frame: " .. frameName)
 		end
 		return
 	end
 
 	local productId = exclusiveProductForStand(stand.Name)
 	if productId then
-		diag(string.format("Wiring exclusive stand=%s productId=%s", stand:GetFullName(), tostring(productId)))
 		wireExclusiveStand(stand, productId)
 	end
 end
 
-local function listShowersChildren(root: Instance): string
-	local names: { string } = {}
-	for _, child in root:GetChildren() do
-		table.insert(names, child.Name)
-	end
-	table.sort(names)
-	return table.concat(names, ", ")
-end
-
 local function wireShowersRoot(root: Instance)
-	diag("Wiring showers root: " .. root:GetFullName() .. " children=[" .. listShowersChildren(root) .. "]")
-
-	for standName, frameName in STAND_FRAME_NAMES do
+	for standName in STAND_FRAME_NAMES do
 		local stand = root:FindFirstChild(standName)
 		if stand then
 			tryWireStand(stand)
-		else
-			diag("Stand not found: " .. standName .. " under " .. root:GetFullName())
 		end
 	end
 
-	local exclusiveFound = false
-	for standName in EXCLUSIVE_STAND_PRODUCTS do
-		local stand = root:FindFirstChild(standName)
-		if stand then
-			exclusiveFound = true
-			tryWireStand(stand)
-		else
-			diag("Exclusive stand not found by exact name: " .. standName .. " under " .. root:GetFullName())
-		end
+	local exclusiveStand = root:FindFirstChild(EXCLUSIVE_STAND_NAME)
+	if exclusiveStand then
+		tryWireStand(exclusiveStand)
 	end
 
 	for _, child in root:GetChildren() do
 		if exclusiveProductForStand(child.Name) and not STAND_FRAME_NAMES[child.Name] then
-			exclusiveFound = true
 			tryWireStand(child)
 		end
 	end
 
-	if not exclusiveFound then
-		diag(
-			"WARNING: No Strawberry Elephant stand found in "
-				.. root:GetFullName()
-				.. ". Expected "
-				.. EXCLUSIVE_STAND_NAME
-				.. ". Children=["
-				.. listShowersChildren(root)
-				.. "]"
-		)
-	end
-
 	root.ChildAdded:Connect(function(child)
 		task.defer(function()
-			diag("New showers child: " .. child:GetFullName())
 			tryWireStand(child)
 		end)
 	end)
@@ -432,16 +348,12 @@ local function hookShowersFolder(showers: Instance)
 end
 
 local function hookMap(map: Instance)
-	diag("Map hooked: " .. map:GetFullName())
 	local showers = map:FindFirstChild(SHOWERS_FOLDER_NAME)
 	if showers then
 		hookShowersFolder(showers)
-	else
-		diag("Map has no '" .. SHOWERS_FOLDER_NAME .. "' yet under " .. map:GetFullName())
 	end
 	map.ChildAdded:Connect(function(child)
 		if child.Name == SHOWERS_FOLDER_NAME then
-			diag("Booster Pack Showers streamed in: " .. child:GetFullName())
 			hookShowersFolder(child)
 		end
 	end)
@@ -457,7 +369,6 @@ local function ensureMapHooked()
 		hookMap(map)
 		return
 	end
-	diag("Workspace.Map not present yet — waiting for stream")
 	Workspace.ChildAdded:Connect(function(child)
 		if child.Name == "Map" and not mapHooked then
 			mapHooked = true
@@ -466,14 +377,12 @@ local function ensureMapHooked()
 	end)
 end
 
-diag("Script starting (Studio=" .. tostring(RunService:IsStudio()) .. ") exclusiveProductId=" .. tostring(StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT))
-
 ensurePromptProductRemote()
 ensureMapHooked()
 task.spawn(function()
 	local map = Workspace:WaitForChild("Map", 120)
 	if not map then
-		diag("ERROR: Workspace.Map missing after 120s")
+		warn("[BoosterPackShowers] Workspace.Map missing after 120s")
 		return
 	end
 	if not mapHooked then
@@ -482,7 +391,7 @@ task.spawn(function()
 	end
 	local showers = map:WaitForChild(SHOWERS_FOLDER_NAME, 120)
 	if not showers then
-		diag("ERROR: Map.Booster Pack Showers missing after 120s under " .. map:GetFullName())
+		warn("[BoosterPackShowers] Booster Pack Showers missing after 120s")
 		return
 	end
 	hookShowersFolder(showers)

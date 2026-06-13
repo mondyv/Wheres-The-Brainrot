@@ -297,7 +297,6 @@ local function wireExclusive(container: Instance)
 		(info :: TextLabel).Text = "Exclusive brainrot"
 	end
 	local state = wireBuyButton(buy, function()
-		warn("[Exclusive] purchase attempt, already owned:", player:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED))
 		if player:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) == true then
 			GameSoundEffects.playErrorNotif()
 			return

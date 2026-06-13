@@ -3,6 +3,7 @@
 -- Studio: press ; (F5 is the Play shortcut). Live game: F5 or ;
 
 local ContextActionService = game:GetService("ContextActionService")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -52,6 +53,8 @@ local rootScale: UIScale? = nil
 local inputBox: TextBox? = nil
 local statusLabel: TextLabel? = nil
 local suggestionPanel: Frame? = nil
+local suggestionScrollTrack: Frame? = nil
+local suggestionScrollThumb: Frame? = nil
 local suggestionRows: {{
 	button: TextButton,
 	stroke: UIStroke,
@@ -82,6 +85,8 @@ local COMMAND_ALIASES: { [string]: string } = {
 	reset = "resetdata",
 	givelucky = "addluckyblock",
 	giveblock = "addluckyblock",
+	globalnotifs = "globalnotif",
+	servernotifs = "servernotif",
 }
 
 local COMMAND_HINTS: { [string]: string } = {
@@ -91,6 +96,9 @@ local COMMAND_HINTS: { [string]: string } = {
 	addluckyblock = "Grant a lucky block tool",
 	resetdata = "Wipe saved player data",
 	rebirth = "Force rebirth (skip requirements)",
+	spawnglobal = "Force a global rarity bush spawn",
+	servernotif = "Top notification on this server",
+	globalnotif = "Top notification on all servers",
 }
 
 local refreshSuggestions: () -> ()
@@ -261,6 +269,9 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "addluckyblock me \"star rainbow\"", hint = COMMAND_HINTS.addluckyblock },
 		{ fill = "resetdata me", hint = COMMAND_HINTS.resetdata },
 		{ fill = "rebirth me", hint = COMMAND_HINTS.rebirth },
+		{ fill = "spawnglobal mythic", hint = COMMAND_HINTS.spawnglobal },
+		{ fill = "servernotif Event starting now!", hint = COMMAND_HINTS.servernotif },
+		{ fill = "globalnotif Double luck weekend!", hint = COMMAND_HINTS.globalnotif },
 	}
 end
 
@@ -329,6 +340,15 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(2, #tokens - 1))
 			for _, blockName in filterByPrefix(catalog.luckyBlocks, partial) do
 				pushSuggestion(out, prefix .. quoteIfNeeded(blockName), "lucky block")
+			end
+		end
+	elseif cmdName == "spawnglobal" then
+		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
+			for _, tier in { "mythic", "mythical", "legendary", "godly", "secret" } do
+				if startsWith(tier, partial) then
+					pushSuggestion(out, prefix .. tier, "global rarity spawn")
+				end
 			end
 		end
 	end
@@ -400,6 +420,39 @@ local function styleSuggestionRow(visibleIndex: number)
 		else COLORS.idleBgTransparency
 end
 
+local function isPointerOverAdminGui(): boolean
+	local root = rootFrame
+	if not root or not root.Visible then
+		return false
+	end
+	local mouse = UserInputService:GetMouseLocation()
+	local inset = GuiService:GetGuiInset()
+	local point = Vector2.new(mouse.X, mouse.Y - inset.Y)
+	local pos = root.AbsolutePosition
+	local size = root.AbsoluteSize
+	return point.X >= pos.X and point.X <= pos.X + size.X and point.Y >= pos.Y and point.Y <= pos.Y + size.Y
+end
+
+local function updateScrollbar(total: number, visibleCount: number)
+	local track = suggestionScrollTrack
+	local thumb = suggestionScrollThumb
+	if not track or not thumb then
+		return
+	end
+	if total <= MAX_SUGGESTION_ROWS or visibleCount == 0 then
+		track.Visible = false
+		return
+	end
+	track.Visible = true
+	local trackHeight = visibleCount * ROW_HEIGHT
+	local thumbHeight = math.max(18, trackHeight * (MAX_SUGGESTION_ROWS / total))
+	local maxOffset = math.max(1, total - MAX_SUGGESTION_ROWS)
+	local scrollRatio = scrollOffset / maxOffset
+	local travel = math.max(0, trackHeight - thumbHeight)
+	thumb.Size = UDim2.new(1, -4, 0, thumbHeight)
+	thumb.Position = UDim2.fromOffset(2, scrollRatio * travel)
+end
+
 local function updateRootHeight(visibleRows: number)
 	local root = rootFrame
 	local panel = suggestionPanel
@@ -440,6 +493,7 @@ refreshSuggestions = function()
 		end
 	end
 	updateRootHeight(if #currentMatches > 0 then visibleCount else 0)
+	updateScrollbar(#currentMatches, visibleCount)
 	if gui and gui.Enabled and #currentMatches > 0 then
 		updateSuggestionStatus()
 	end
@@ -746,6 +800,36 @@ local function buildGui(parent: PlayerGui)
 		createSuggestionRow(panel, index)
 	end
 
+	local scrollTrack = Instance.new("Frame")
+	scrollTrack.Name = "ScrollTrack"
+	scrollTrack.BackgroundColor3 = Color3.fromRGB(32, 38, 48)
+	scrollTrack.BackgroundTransparency = 0.35
+	scrollTrack.BorderSizePixel = 0
+	scrollTrack.AnchorPoint = Vector2.new(1, 0)
+	scrollTrack.Position = UDim2.new(1, -2, 0, 2)
+	scrollTrack.Size = UDim2.new(0, 8, 1, -4)
+	scrollTrack.Visible = false
+	scrollTrack.ZIndex = 3
+	scrollTrack.Parent = panel
+
+	local trackCorner = Instance.new("UICorner")
+	trackCorner.CornerRadius = UDim.new(1, 0)
+	trackCorner.Parent = scrollTrack
+
+	local scrollThumb = Instance.new("Frame")
+	scrollThumb.Name = "Thumb"
+	scrollThumb.BackgroundColor3 = Color3.fromRGB(90, 255, 140)
+	scrollThumb.BackgroundTransparency = 0.15
+	scrollThumb.BorderSizePixel = 0
+	scrollThumb.Position = UDim2.fromOffset(2, 0)
+	scrollThumb.Size = UDim2.new(1, -4, 0, 24)
+	scrollThumb.ZIndex = 4
+	scrollThumb.Parent = scrollTrack
+
+	local thumbCorner = Instance.new("UICorner")
+	thumbCorner.CornerRadius = UDim.new(1, 0)
+	thumbCorner.Parent = scrollThumb
+
 	local label = Instance.new("TextLabel")
 	label.Name = "Status"
 	label.Font = Enum.Font.Gotham
@@ -790,6 +874,8 @@ local function buildGui(parent: PlayerGui)
 	inputBox = box
 	statusLabel = label
 	suggestionPanel = panel
+	suggestionScrollTrack = scrollTrack
+	suggestionScrollThumb = scrollThumb
 end
 
 local function isToggleKey(keyCode: Enum.KeyCode): boolean
@@ -873,6 +959,22 @@ function M.init()
 		AUTOCOMPLETE_PRIORITY,
 		Enum.KeyCode.Tab
 	)
+
+	UserInputService.InputChanged:Connect(function(input, _gameProcessed)
+		if input.UserInputType ~= Enum.UserInputType.MouseWheel then
+			return
+		end
+		if not gui or not gui.Enabled then
+			return
+		end
+		if not isAdminInputFocused() and not isPointerOverAdminGui() then
+			return
+		end
+		if #currentMatches == 0 then
+			return
+		end
+		cycleSuggestion(if input.Position.Z > 0 then -1 else 1)
+	end)
 
 	UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then

@@ -429,7 +429,8 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 		local c = if typeof(cash) == "number" then cash else 0
 		local price = priceForUpgrade(upgradeId)
 		if c < price then
-			GameSoundEffects.playErrorNotif()
+			local TopNotifController = require(script.Parent.TopNotifController)
+			TopNotifController.showError("Not enough cash!")
 			prepareRobuxRE:FireServer(upgradeId)
 			pcall(function()
 				PurchasePrompt.promptProduct(SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID)

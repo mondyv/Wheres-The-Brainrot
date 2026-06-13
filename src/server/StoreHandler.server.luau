@@ -451,7 +451,6 @@ local function registerReceipts()
 
 	-- Exclusive Brainrot (one-time).
 	PH.registerProductReceipt(P.EXCLUSIVE_BRAINROT, function(player)
-		warn("[Exclusive] receipt fired for", player.Name)
 		if player:GetAttribute(A.EXCLUSIVE_OWNED) == true then
 			notifyPurchaseComplete(player)
 			return GRANTED

@@ -1362,6 +1362,9 @@ local function RollBushState(bush: Instance): boolean
 	if not isValidBushRef(bush) then
 		return false
 	end
+	if bush:GetAttribute("GlobalRaritySpawn") == true then
+		return bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
+	end
 	local hasBrainrot = rollBushHasBrainrot()
 	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, hasBrainrot)
 	bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, false)
@@ -2128,6 +2131,18 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 	if hasBrainrot then
 		clearEmptyBushMessageState(bush)
 		FlashBushColor(bush, Color3.fromRGB(52, 215, 88))
+		if bush:GetAttribute("GlobalRaritySpawn") == true then
+			local internal = ServerStorage:FindFirstChild("GameInternal")
+			local bf = internal and internal:FindFirstChild("GlobalRaritySpawnClaimed")
+			if bf and bf:IsA("BindableFunction") then
+				local ok, err = pcall(function()
+					(bf :: BindableFunction):Invoke(bush)
+				end)
+				if not ok then
+					warn("[BushHarvest] GlobalRaritySpawnClaimed failed:", err)
+				end
+			end
+		end
 		beginHarvestOutcome(player, worldPosition, bush)
 	else
 		showEmptyBushMessage(bush)

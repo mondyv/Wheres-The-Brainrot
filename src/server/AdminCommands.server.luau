@@ -9,6 +9,7 @@ local AdminAllowlist = require(script.Parent:WaitForChild("Modules"):WaitForChil
 local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Brainrots"))
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+local AdminBroadcastService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminBroadcastService"))
 
 local COMMAND_REMOTE_NAME = "AdminCommand"
 local CATALOG_REMOTE_NAME = "AdminAutocomplete"
@@ -193,7 +194,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, help"
+			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, spawnglobal, servernotif, globalnotif, help"
 	end,
 }
 
@@ -369,6 +370,64 @@ commands.addluckyblock = {
 }
 
 commands.giveluckyblock = commands.addluckyblock
+
+commands.spawnglobal = {
+	usage = "spawnglobal <mythic|legendary|godly|secret>",
+	description = "Force a global rarity spawn (does not reset timers).",
+	run = function(_sender: Player, args: { string }): (boolean, string)
+		if not args[1] then
+			return false, "Usage: " .. commands.spawnglobal.usage
+		end
+		local internal = ServerStorage:FindFirstChild("GameInternal")
+		local bf = internal and internal:FindFirstChild("ForceGlobalRaritySpawn")
+		if not bf or not bf:IsA("BindableFunction") then
+			return false, "Global rarity spawn service is not ready."
+		end
+		local invokeOk, spawnOk, msg = pcall(function()
+			return (bf :: BindableFunction):Invoke(args[1])
+		end)
+		if not invokeOk then
+			return false, "Spawn command failed."
+		end
+		return spawnOk == true, if typeof(msg) == "string" then msg else (if spawnOk then "Spawned." else "Spawn failed.")
+	end,
+}
+
+local function runBroadcastCommand(sender: Player, args: { string }, global: boolean): (boolean, string)
+	local message = AdminBroadcastService.joinArgs(args)
+	if not message then
+		local usage = if global then "globalnotif <message>" else "servernotif <message>"
+		return false, "Usage: " .. usage
+	end
+	if global then
+		if not AdminBroadcastService.broadcastGlobal(message, sender.Name) then
+			return false, "Failed to send global notification."
+		end
+		return true, string.format("Global notification sent: %s", message)
+	end
+	if not AdminBroadcastService.broadcastServer(message) then
+		return false, "Failed to send server notification."
+	end
+	return true, string.format("Server notification sent: %s", message)
+end
+
+commands.servernotif = {
+	usage = "servernotif <message>",
+	description = "Show a top notification to everyone on this server.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		return runBroadcastCommand(sender, args, false)
+	end,
+}
+commands.servernotifs = commands.servernotif
+
+commands.globalnotif = {
+	usage = "globalnotif <message>",
+	description = "Show a top notification on every server.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		return runBroadcastCommand(sender, args, true)
+	end,
+}
+commands.globalnotifs = commands.globalnotif
 
 commands.rebirth = {
 	usage = "rebirth <player|me>",

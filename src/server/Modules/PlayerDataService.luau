@@ -207,6 +207,63 @@ local function collectStands(player: Player): { PlayerDataSchema.StandSaveEntry 
 	return raw
 end
 
+local function clamp01(n: any, fallback: number): number
+	if typeof(n) ~= "number" then
+		return fallback
+	end
+	return math.clamp(n, 0, 1)
+end
+
+local function normalizeSettings(raw: any): PlayerDataSchema.PlayerSettingsSaveData
+	local d = PlayerDataSchema.DEFAULT_SETTINGS
+	if typeof(raw) ~= "table" then
+		return {
+			musicVolume = d.musicVolume,
+			sfxVolume = d.sfxVolume,
+			uiSoundsEnabled = d.uiSoundsEnabled,
+			slowWalkEnabled = d.slowWalkEnabled,
+			showOtherBrainrots = d.showOtherBrainrots,
+			brainrotVfxEnabled = d.brainrotVfxEnabled,
+			globalMessagesEnabled = d.globalMessagesEnabled,
+		}
+	end
+	return {
+		musicVolume = clamp01(raw.musicVolume, d.musicVolume),
+		sfxVolume = clamp01(raw.sfxVolume, d.sfxVolume),
+		uiSoundsEnabled = readBool(raw.uiSoundsEnabled, d.uiSoundsEnabled),
+		slowWalkEnabled = readBool(raw.slowWalkEnabled, d.slowWalkEnabled),
+		showOtherBrainrots = readBool(raw.showOtherBrainrots, d.showOtherBrainrots),
+		brainrotVfxEnabled = readBool(raw.brainrotVfxEnabled, d.brainrotVfxEnabled),
+		globalMessagesEnabled = readBool(raw.globalMessagesEnabled, d.globalMessagesEnabled),
+	}
+end
+
+local function applySettings(player: Player, raw: any)
+	local settings = normalizeSettings(raw)
+	player:SetAttribute(PlayerDataSchema.SETTINGS_MUSIC_VOLUME_ATTR, settings.musicVolume)
+	player:SetAttribute(PlayerDataSchema.SETTINGS_SFX_VOLUME_ATTR, settings.sfxVolume)
+	player:SetAttribute(PlayerDataSchema.SETTINGS_UI_SOUNDS_ATTR, settings.uiSoundsEnabled)
+	player:SetAttribute(PlayerDataSchema.SETTINGS_SLOW_WALK_ATTR, settings.slowWalkEnabled)
+	player:SetAttribute(PlayerDataSchema.SETTINGS_SHOW_OTHERS_ATTR, settings.showOtherBrainrots)
+	player:SetAttribute(PlayerDataSchema.SETTINGS_BRAINROT_VFX_ATTR, settings.brainrotVfxEnabled)
+	player:SetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR, settings.globalMessagesEnabled)
+	player:SetAttribute("SlowWalkEnabled", settings.slowWalkEnabled)
+	player:SetAttribute("ShowOtherBrainrots", settings.showOtherBrainrots)
+	player:SetAttribute("BrainrotVFXEnabled", settings.brainrotVfxEnabled)
+end
+
+local function collectSettings(player: Player): PlayerDataSchema.PlayerSettingsSaveData
+	return normalizeSettings({
+		musicVolume = player:GetAttribute(PlayerDataSchema.SETTINGS_MUSIC_VOLUME_ATTR),
+		sfxVolume = player:GetAttribute(PlayerDataSchema.SETTINGS_SFX_VOLUME_ATTR),
+		uiSoundsEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_UI_SOUNDS_ATTR),
+		slowWalkEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_SLOW_WALK_ATTR),
+		showOtherBrainrots = player:GetAttribute(PlayerDataSchema.SETTINGS_SHOW_OTHERS_ATTR),
+		brainrotVfxEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_BRAINROT_VFX_ATTR),
+		globalMessagesEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR),
+	})
+end
+
 function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 	local unlockKeys: { string } = {}
 	for key, unlocked in IndexService.getUnlockMap(player) do
@@ -258,6 +315,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		equipSlot = equipSlot,
 		stands = stands,
 		lastSavedAt = os.time(),
+		settings = collectSettings(player),
 	}
 end
 
@@ -269,6 +327,26 @@ function M.getTotalPlayTimeSeconds(player: Player): number
 		return base
 	end
 	return base + math.max(0, math.floor(os.clock() - joined))
+end
+
+function M.savePlayerSettings(player: Player, patch: any)
+	if typeof(patch) ~= "table" then
+		return
+	end
+	local current = collectSettings(player)
+	local merged = normalizeSettings({
+		musicVolume = if patch.musicVolume ~= nil then patch.musicVolume else current.musicVolume,
+		sfxVolume = if patch.sfxVolume ~= nil then patch.sfxVolume else current.sfxVolume,
+		uiSoundsEnabled = if patch.uiSoundsEnabled ~= nil then patch.uiSoundsEnabled else current.uiSoundsEnabled,
+		slowWalkEnabled = if patch.slowWalkEnabled ~= nil then patch.slowWalkEnabled else current.slowWalkEnabled,
+		showOtherBrainrots = if patch.showOtherBrainrots ~= nil then patch.showOtherBrainrots else current.showOtherBrainrots,
+		brainrotVfxEnabled = if patch.brainrotVfxEnabled ~= nil then patch.brainrotVfxEnabled else current.brainrotVfxEnabled,
+		globalMessagesEnabled = if patch.globalMessagesEnabled ~= nil then patch.globalMessagesEnabled else current.globalMessagesEnabled,
+	})
+	applySettings(player, merged)
+	if player:GetAttribute(LOADED_ATTR) == true then
+		M.savePlayerData(player)
+	end
 end
 
 local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSaveData)
@@ -286,6 +364,7 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	player:SetAttribute(CashBoostUtil.DAILY_BOOST_ATTR, data.dailyCashBoostPercent)
 
 	applyStorePurchases(player, (data :: any).storePurchases)
+	applySettings(player, (data :: any).settings)
 
 	SwingUpgrades.syncGameplayStatsFromLevels(player, {
 		power = data.powerLevel,
@@ -424,6 +503,7 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		equipSlot = if typeof(raw.equipSlot) == "number" then raw.equipSlot else nil,
 		stands = stands,
 		lastSavedAt = floorNum(raw.lastSavedAt, 0),
+		settings = normalizeSettings(raw.settings),
 	}
 end
 
@@ -508,6 +588,7 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		equipSlot = nil,
 		stands = {},
 		lastSavedAt = os.time(),
+		settings = PlayerDataSchema.DEFAULT_SETTINGS,
 	}
 end
 
@@ -600,6 +681,7 @@ function M.bindPlayer(player: Player)
 	sessionPlayBase[player] = floorNum(player:GetAttribute(PLAY_TIME_ATTR), 0)
 
 	if not persistenceEnabled then
+		applySettings(player, PlayerDataSchema.DEFAULT_SETTINGS)
 		M.markLoaded(player)
 		return
 	end
@@ -607,6 +689,8 @@ function M.bindPlayer(player: Player)
 	local loaded = M.loadPlayerData(player)
 	if loaded then
 		M.applyLoadedData(player, loaded)
+	else
+		applySettings(player, PlayerDataSchema.DEFAULT_SETTINGS)
 	end
 	M.markLoaded(player)
 end

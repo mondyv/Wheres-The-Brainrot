@@ -10,9 +10,12 @@
 --]]
 
 local Players          = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService     = game:GetService("SoundService")
 local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+
+local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
@@ -21,6 +24,30 @@ local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
+
+local saveSettingsRE = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("SavePlayerSettings") :: RemoteEvent
+local savePending = false
+
+local function queueSettingsSave(patch: { [string]: any })
+	if savePending then
+		return
+	end
+	savePending = true
+	task.delay(0.25, function()
+		savePending = false
+		if saveSettingsRE then
+			saveSettingsRE:FireServer(patch)
+		end
+	end)
+end
+
+local function readSavedVolume(attrName: string, fallback: number): number
+	local v = player:GetAttribute(attrName)
+	if typeof(v) == "number" then
+		return math.clamp(v, 0, 1)
+	end
+	return fallback
+end
 
 local mainGui: ScreenGui? = nil
 local framesFolder: Instance? = nil
@@ -187,6 +214,27 @@ local function syncGroupVolume(group: SoundGroup, volume01: number)
 	group.Volume = math.clamp(volume01, 0, 1)
 end
 
+local function applySavedSettings(musicMixer: SoundGroup?, musicSound: Sound?, sfxGroup: SoundGroup?, uiMixerGroup: SoundGroup?)
+	local musicVol = readSavedVolume(PlayerDataSchema.SETTINGS_MUSIC_VOLUME_ATTR, PlayerDataSchema.DEFAULT_SETTINGS.musicVolume)
+	local sfxVol = readSavedVolume(PlayerDataSchema.SETTINGS_SFX_VOLUME_ATTR, PlayerDataSchema.DEFAULT_SETTINGS.sfxVolume)
+	if musicMixer then
+		syncGroupVolume(musicMixer, musicVol)
+	elseif musicSound then
+		syncMusicVolume(musicSound, musicVol)
+	end
+	ClientSFXVolume.setVolume(sfxVol)
+	if sfxGroup then
+		syncGroupVolume(sfxGroup, sfxVol)
+	end
+	if uiMixerGroup then
+		syncGroupVolume(uiMixerGroup, sfxVol)
+	end
+	local uiSounds = player:GetAttribute(PlayerDataSchema.SETTINGS_UI_SOUNDS_ATTR)
+	if typeof(uiSounds) == "boolean" then
+		UIInteractionSounds.setUISoundsEnabled(uiSounds)
+	end
+end
+
 local function getSliderRowTitle(sliderRow: Instance): string
 	local n = sliderRow:FindFirstChild("Name")
 	if n and n:IsA("TextLabel") then
@@ -238,7 +286,13 @@ local function classifySettingsRow(buttonRow: Instance): string?
 	if title:find("vfx", 1, true) or title:find("visual", 1, true) then
 		return "brainrot_vfx"
 	end
+	if title:find("global", 1, true) and title:find("message", 1, true) then
+		return "global_messages"
+	end
 	local n = buttonRow.Name
+	if n == "GlobalMessages" then
+		return "global_messages"
+	end
 	if n == "Button3" then
 		return "show_others"
 	end
@@ -404,14 +458,26 @@ function SettingsController.init()
 		if uiMixerGroup then
 			syncGroupVolume(uiMixerGroup, r)
 		end
+		queueSettingsSave({ sfxVolume = r })
 	end
+
+	task.spawn(function()
+		while player:GetAttribute(PlayerDataSchema.LOADED_ATTR) ~= true do
+			if not player.Parent then
+				return
+			end
+			player:GetAttributeChangedSignal(PlayerDataSchema.LOADED_ATTR):Wait()
+		end
+		applySavedSettings(musicMixer, musicSound, sfxGroup, uiMixerGroup)
+	end)
 
 	local uiSoundsToggleRow: Instance? = nil
 	local slowToggleRow: Instance? = nil
 	local showOthersToggleRow: Instance? = nil
 	local brainrotVfxToggleRow: Instance? = nil
+	local globalMessagesToggleRow: Instance? = nil
 	for _, child in ipairs(container:GetChildren()) do
-		if child.Name:match("^Button%d+$") then
+		if child.Name:match("^Button%d+$") or child.Name == "GlobalMessages" then
 			local kind = classifySettingsRow(child)
 			if kind == "ui_sounds" then
 				uiSoundsToggleRow = child
@@ -425,8 +491,13 @@ function SettingsController.init()
 				showOthersToggleRow = child
 			elseif kind == "brainrot_vfx" and not brainrotVfxToggleRow then
 				brainrotVfxToggleRow = child
+			elseif kind == "global_messages" then
+				globalMessagesToggleRow = child
 			end
 		end
+	end
+	if player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR) == nil then
+		player:SetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR, true)
 	end
 	if player:GetAttribute("SlowWalkEnabled") == nil then
 		player:SetAttribute("SlowWalkEnabled", false)
@@ -461,22 +532,24 @@ function SettingsController.init()
 		if isMusic and musicMixer then
 			wireVolumeSlider(sliderRow, function(r)
 				syncGroupVolume(musicMixer, r)
+				queueSettingsSave({ musicVolume = r })
 			end, function()
-				return musicMixer.Volume
+				return readSavedVolume(PlayerDataSchema.SETTINGS_MUSIC_VOLUME_ATTR, musicMixer.Volume)
 			end)
 			return
 		elseif isMusic and musicSound then
 			wireVolumeSlider(sliderRow, function(r)
 				syncMusicVolume(musicSound, r)
+				queueSettingsSave({ musicVolume = r })
 			end, function()
-				return musicSound.Volume
+				return readSavedVolume(PlayerDataSchema.SETTINGS_MUSIC_VOLUME_ATTR, musicSound.Volume)
 			end)
 			return
 		end
 
 		if isSfx and (sfxGroup or uiMixerGroup) then
 			wireVolumeSlider(sliderRow, applySFXSliderVolume, function()
-				return ClientSFXVolume.getVolume()
+				return readSavedVolume(PlayerDataSchema.SETTINGS_SFX_VOLUME_ATTR, ClientSFXVolume.getVolume())
 			end)
 			return
 		end
@@ -505,7 +578,7 @@ function SettingsController.init()
 	end
 
 	for _, child in ipairs(container:GetChildren()) do
-		if not child.Name:match("^Button%d+$") then
+		if not child.Name:match("^Button%d+$") and child.Name ~= "GlobalMessages" then
 			continue
 		end
 
@@ -518,6 +591,7 @@ function SettingsController.init()
 		local toggleOn = if child == slowToggleRow then player:GetAttribute("SlowWalkEnabled") == true
 			elseif child == showOthersToggleRow then true
 			elseif child == brainrotVfxToggleRow then true
+			elseif child == globalMessagesToggleRow then player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR) ~= false
 			else readInitialOn(onOff)
 		if child == showOthersToggleRow then
 			toggleOn = player:GetAttribute("ShowOtherBrainrots") ~= false
@@ -525,6 +599,8 @@ function SettingsController.init()
 			toggleOn = player:GetAttribute("BrainrotVFXEnabled") ~= false
 		elseif child == slowToggleRow then
 			toggleOn = player:GetAttribute("SlowWalkEnabled") == true
+		elseif child == globalMessagesToggleRow then
+			toggleOn = player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR) ~= false
 		end
 		applyToggleVisuals(onOff, toggleOn)
 		setToggleFaceText(onOff, toggleOn)
@@ -556,16 +632,24 @@ function SettingsController.init()
 			setToggleFaceText(onOff, toggleOn)
 			if child == uiSoundsToggleRow then
 				UIInteractionSounds.setUISoundsEnabled(toggleOn)
+				queueSettingsSave({ uiSoundsEnabled = toggleOn })
 			end
 			if child == slowToggleRow then
 				player:SetAttribute("SlowWalkEnabled", toggleOn)
+				queueSettingsSave({ slowWalkEnabled = toggleOn })
 				setSlowRowNameLabel(child, toggleOn)
 			end
 			if child == showOthersToggleRow then
 				player:SetAttribute("ShowOtherBrainrots", toggleOn)
+				queueSettingsSave({ showOtherBrainrots = toggleOn })
 			end
 			if child == brainrotVfxToggleRow then
 				player:SetAttribute("BrainrotVFXEnabled", toggleOn)
+				queueSettingsSave({ brainrotVfxEnabled = toggleOn })
+			end
+			if child == globalMessagesToggleRow then
+				player:SetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR, toggleOn)
+				queueSettingsSave({ globalMessagesEnabled = toggleOn })
 			end
 		end)
 	end

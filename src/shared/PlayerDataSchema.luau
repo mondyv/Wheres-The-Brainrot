@@ -32,6 +32,16 @@ export type StorePurchasesSaveData = {
 	packPurchases: { [string]: number },
 }
 
+export type PlayerSettingsSaveData = {
+	musicVolume: number,
+	sfxVolume: number,
+	uiSoundsEnabled: boolean,
+	slowWalkEnabled: boolean,
+	showOtherBrainrots: boolean,
+	brainrotVfxEnabled: boolean,
+	globalMessagesEnabled: boolean,
+}
+
 export type PlayerSaveData = {
 	version: number,
 	cash: number,
@@ -54,6 +64,7 @@ export type PlayerSaveData = {
 	stands: { StandSaveEntry },
 	lastSavedAt: number,
 	storePurchases: StorePurchasesSaveData?,
+	settings: PlayerSettingsSaveData?,
 }
 
 local M = {}
@@ -61,5 +72,22 @@ local M = {}
 M.VERSION = 1
 M.TOTAL_PLAY_TIME_ATTR = "TotalPlayTimeSeconds"
 M.LOADED_ATTR = "PlayerDataLoaded"
+
+M.SETTINGS_MUSIC_VOLUME_ATTR = "SettingsMusicVolume"
+M.SETTINGS_SFX_VOLUME_ATTR = "SettingsSfxVolume"
+M.SETTINGS_UI_SOUNDS_ATTR = "SettingsUiSoundsEnabled"
+M.SETTINGS_SLOW_WALK_ATTR = "SettingsSlowWalkEnabled"
+M.SETTINGS_SHOW_OTHERS_ATTR = "SettingsShowOtherBrainrots"
+M.SETTINGS_BRAINROT_VFX_ATTR = "SettingsBrainrotVfxEnabled"
+M.SETTINGS_GLOBAL_MESSAGES_ATTR = "SettingsGlobalMessagesEnabled"
+M.DEFAULT_SETTINGS = {
+	musicVolume = 0.5,
+	sfxVolume = 0.5,
+	uiSoundsEnabled = true,
+	slowWalkEnabled = false,
+	showOtherBrainrots = true,
+	brainrotVfxEnabled = true,
+	globalMessagesEnabled = true,
+} :: PlayerSettingsSaveData
 
 return M

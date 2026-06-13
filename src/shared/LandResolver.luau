@@ -25,6 +25,7 @@ local landHitboxes: { LandHitbox } = {}
 local registeredParts: { [BasePart]: boolean } = {}
 local landFolders: { [number]: Instance } = {}
 local discoveryHooked = false
+local initialScanDone = false
 
 local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolean
 	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
@@ -125,7 +126,10 @@ local function ensureDiscovery()
 	end
 
 	local lands = map:FindFirstChild("Lands")
-	if lands then
+
+	-- Full scan only once; live additions are tracked via DescendantAdded below.
+	if lands and not initialScanDone then
+		initialScanDone = true
 		scanLandsRoot(lands)
 	end
 
@@ -140,19 +144,26 @@ local function ensureDiscovery()
 				tryRegisterHitbox(desc)
 			end
 		end)
-		lands.ChildAdded:Connect(function()
-			task.defer(function()
-				if lands.Parent then
-					scanLandsRoot(lands)
-				end
-			end)
+		lands.ChildAdded:Connect(function(child)
+			local land = landNumberFromName(child.Name)
+			if land then
+				landFolders[land] = child
+			end
 		end)
 	end
 
 	map.ChildAdded:Connect(function(child)
 		if child.Name == "Lands" then
 			task.defer(function()
-				scanLandsRoot(child)
+				if child.Parent and not initialScanDone then
+					initialScanDone = true
+					scanLandsRoot(child)
+				end
+				(child :: Instance).DescendantAdded:Connect(function(desc)
+					if desc:IsA("BasePart") then
+						tryRegisterHitbox(desc)
+					end
+				end)
 			end)
 		end
 	end)

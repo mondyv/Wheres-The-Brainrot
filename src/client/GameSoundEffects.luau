@@ -26,6 +26,7 @@ local bushRandomShakeTemplate: Sound?
 local proximityPromptTemplate: Sound?
 local groundSmashTemplate: Sound?
 local purchaseTemplate: Sound?
+local notification1Template: Sound?
 
 local activeAuraSound: Sound?
 local activeAuraKey: string? = nil
@@ -308,6 +309,8 @@ function GameSoundEffects.init()
 		purchaseTemplate = purchase
 	end
 
+	notification1Template = findSoundIn(root, "Notification1")
+
 	local ev = ReplicatedStorage:WaitForChild("PlayHarvestDropFX", 60)
 	if ev and ev:IsA("RemoteEvent") then
 		(ev :: RemoteEvent).OnClientEvent:Connect(function(rarity: string)
@@ -487,6 +490,17 @@ function GameSoundEffects.playBushRandomShakeAt(bush: Instance)
 
 	local clone = prepareClone(bushRandomShakeTemplate)
 	clone.Parent = bush
+	clone:Play()
+	clone.Ended:Once(function()
+		clone:Destroy()
+	end)
+end
+
+function GameSoundEffects.playNotification1()
+	if not notification1Template then
+		return
+	end
+	local clone = prepareClone(notification1Template)
 	clone:Play()
 	clone.Ended:Once(function()
 		clone:Destroy()

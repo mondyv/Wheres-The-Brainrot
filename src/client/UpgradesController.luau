@@ -317,7 +317,8 @@ local function playRowPurchasePulse(row: Instance)
 	if arrow and arrow:IsA("GuiObject") then
 		local asc = getOrAddUIScale(arrow)
 		asc.Scale = 1.2
-		TweenService:Create(asc, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		TweenService:Create(asc, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 })
+			:Play()
 	end
 end
 
@@ -328,13 +329,21 @@ local function playSpendFeedback(amountLabel: TextLabel, spent: boolean)
 		end
 		local base = amountBaseColor :: Color3
 		local punch = getOrAddUIScale(amountLabel)
-		TweenService:Create(punch, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.92 }):Play()
+		TweenService
+			:Create(punch, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.92 })
+			:Play()
 		task.delay(0.06, function()
-			TweenService:Create(punch, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+			TweenService
+				:Create(punch, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 })
+				:Play()
 		end)
 		local hit = Color3.fromRGB(255, 82, 82)
 		amountLabel.TextColor3 = hit
-		TweenService:Create(amountLabel, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { TextColor3 = base }):Play()
+		TweenService:Create(
+			amountLabel,
+			TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ TextColor3 = base }
+		):Play()
 	end
 end
 
@@ -443,6 +452,7 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 		purchaseInFlight = false
 
 		if ok then
+			GameSoundEffects.playUpgrade()
 			setCostLabel(row, upgradeId)
 			refreshAllRows()
 			playRowPurchasePulse(row)
@@ -490,28 +500,30 @@ local function init()
 	lastShownCash = if typeof(cash0) == "number" then cash0 else 0
 	amountLabel.Text = formatCash(lastShownCash)
 
-	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId: number, productId: number, wasPurchased: boolean)
-		if userId ~= player.UserId or not isCashBundleProduct(productId) then
-			return
-		end
-		pendingCashBundlePurchase = false
-		if not wasPurchased or not cashAmountLabel then
-			return
-		end
-		local label = cashAmountLabel
-		local startCash = lastShownCash
-		task.spawn(function()
-			for _ = 1, 25 do
-				local newTotal = player:GetAttribute("Cash")
-				if typeof(newTotal) == "number" and newTotal > startCash + 0.5 then
-					GameSoundEffects.playCashGrab()
-					tweenCashBundleGrant(label, newTotal, 1.5)
-					return
-				end
-				task.wait(0.1)
+	MarketplaceService.PromptProductPurchaseFinished:Connect(
+		function(userId: number, productId: number, wasPurchased: boolean)
+			if userId ~= player.UserId or not isCashBundleProduct(productId) then
+				return
 			end
-		end)
-	end)
+			pendingCashBundlePurchase = false
+			if not wasPurchased or not cashAmountLabel then
+				return
+			end
+			local label = cashAmountLabel
+			local startCash = lastShownCash
+			task.spawn(function()
+				for _ = 1, 25 do
+					local newTotal = player:GetAttribute("Cash")
+					if typeof(newTotal) == "number" and newTotal > startCash + 0.5 then
+						GameSoundEffects.playCashGrab()
+						tweenCashBundleGrant(label, newTotal, 1.5)
+						return
+					end
+					task.wait(0.1)
+				end
+			end)
+		end
+	)
 
 	local function refreshAllRows()
 		for _, id in ROW_IDS do

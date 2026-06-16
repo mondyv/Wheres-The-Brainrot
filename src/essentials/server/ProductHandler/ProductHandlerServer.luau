@@ -14,7 +14,10 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 
+local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local StoreAccess = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreAccess"))
 
@@ -32,6 +35,252 @@ local ProductHandlerServer = {}
 local initialized = false
 local productHandlerConfig = nil
 local customReceiptHandlers = {}
+
+local RANDOM_BRAINROT_PRODUCT_ID = StoreConfig.PRODUCT.RANDOM_BRAINROT
+local BrainrotsFolder = ServerStorage:WaitForChild("Brainrots")
+
+local DEFAULT_VARIANT = "Normal"
+
+local VARIANT_TO_MUTATION = {
+	Normal = "normal",
+	Golden = "gold",
+	Gold = "gold",
+	Diamond = "diamond",
+	Lava = "lava",
+	Galaxy = "galaxy",
+	Rainbow = "rainbow",
+}
+
+local function getAllBrainrotsSorted()
+	if typeof(BrainrotsConfig.GetAllSorted) == "function" then
+		return BrainrotsConfig:GetAllSorted()
+	end
+
+	local list = {}
+
+	for brainrotName, data in pairs(BrainrotsConfig) do
+		if typeof(brainrotName) ~= "string" then
+			continue
+		end
+
+		if typeof(data) ~= "table" then
+			continue
+		end
+
+		if typeof(data.rarity) ~= "string" or typeof(data.baseIncome) ~= "number" then
+			continue
+		end
+
+		table.insert(list, {
+			name = brainrotName,
+			rarity = data.rarity,
+			baseIncome = data.baseIncome,
+			icons = if typeof(data.icons) == "table" then data.icons else {},
+		})
+	end
+
+	table.sort(list, function(a, b)
+		if a.baseIncome ~= b.baseIncome then
+			return a.baseIncome < b.baseIncome
+		end
+
+		return a.name < b.name
+	end)
+
+	return list
+end
+
+local function pickRandomBrainrot()
+	local brainrots = getAllBrainrotsSorted()
+
+	if #brainrots <= 0 then
+		return nil
+	end
+
+	return brainrots[math.random(1, #brainrots)]
+end
+
+local function pickRandomVariant(icons: { [string]: string }): string
+	local variants = {}
+
+	for variantName, icon in pairs(icons) do
+		if typeof(variantName) == "string" and typeof(icon) == "string" and icon ~= "" then
+			table.insert(variants, variantName)
+		end
+	end
+
+	if #variants <= 0 then
+		return DEFAULT_VARIANT
+	end
+
+	table.sort(variants)
+
+	return variants[math.random(1, #variants)]
+end
+
+local function findBrainrotTemplate(brainrotName: string, variantName: string): Model?
+	local brainrotFolder = BrainrotsFolder:FindFirstChild(brainrotName)
+
+	if not brainrotFolder or not brainrotFolder:IsA("Folder") then
+		return nil
+	end
+
+	local variant = brainrotFolder:FindFirstChild(variantName)
+
+	if variant and variant:IsA("Model") then
+		return variant
+	end
+
+	local normal = brainrotFolder:FindFirstChild(DEFAULT_VARIANT)
+
+	if normal and normal:IsA("Model") then
+		return normal
+	end
+
+	for _, child in ipairs(brainrotFolder:GetChildren()) do
+		if child:IsA("Model") then
+			return child
+		end
+	end
+
+	return nil
+end
+
+local function getMainPart(model: Model): BasePart?
+	if model.PrimaryPart then
+		return model.PrimaryPart
+	end
+
+	local part = model:FindFirstChildWhichIsA("BasePart", true)
+
+	if part then
+		model.PrimaryPart = part
+	end
+
+	return part
+end
+
+local function cleanClone(model: Model)
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("Script") or descendant:IsA("LocalScript") or descendant:IsA("ProximityPrompt") then
+			descendant:Destroy()
+		end
+	end
+end
+
+local function setupToolPhysics(model: Model, handle: BasePart)
+	local parts = {}
+
+	for _, descendant in ipairs(model:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			table.insert(parts, descendant)
+
+			descendant.Anchored = false
+			descendant.Massless = true
+			descendant.CanCollide = false
+			descendant.CanTouch = false
+			descendant.CanQuery = false
+		end
+	end
+
+	for _, part in ipairs(parts) do
+		if part ~= handle then
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = handle
+			weld.Part1 = part
+			weld.Parent = handle
+		end
+	end
+end
+
+local function buildBrainrotTool(brainrotData: any, variantName: string): Tool?
+	local template = findBrainrotTemplate(brainrotData.name, variantName)
+
+	if not template then
+		warn(`[ProductHandler] No template found for {brainrotData.name}/{variantName}`)
+		return nil
+	end
+
+	local clone = template:Clone()
+	cleanClone(clone)
+
+	local handle = getMainPart(clone)
+
+	if not handle then
+		clone:Destroy()
+		warn(`[ProductHandler] No BasePart found inside {brainrotData.name}/{variantName}`)
+		return nil
+	end
+
+	local icon = ""
+
+	if typeof(brainrotData.icons) == "table" then
+		icon = brainrotData.icons[variantName] or brainrotData.icons.Normal or ""
+	end
+
+	local mutation = VARIANT_TO_MUTATION[variantName] or string.lower(variantName)
+
+	local tool = Instance.new("Tool")
+	tool.Name = brainrotData.name
+	tool.RequiresHandle = true
+	tool.CanBeDropped = false
+	tool.ManualActivationOnly = true
+
+	tool:SetAttribute("BrainrotTool", true)
+	tool:SetAttribute("BrainrotName", brainrotData.name)
+	tool:SetAttribute("BrainrotRarity", brainrotData.rarity)
+	tool:SetAttribute("BrainrotMutation", mutation)
+	tool:SetAttribute("BrainrotLevel", 1)
+	tool:SetAttribute("BrainrotBaseIncome", brainrotData.baseIncome)
+	tool:SetAttribute("BrainrotSourcePath", brainrotData.name .. "/" .. variantName)
+
+	if icon ~= "" then
+		tool:SetAttribute("ToolbarIcon", icon)
+
+		pcall(function()
+			tool.TextureId = icon
+		end)
+	end
+
+	setupToolPhysics(clone, handle)
+
+	handle.Name = "Handle"
+	handle.Parent = tool
+
+	clone.Name = "Visual"
+	clone.Parent = tool
+
+	return tool
+end
+
+local function grantRandomBrainrot(player: Player): boolean
+	local backpack = player:FindFirstChildOfClass("Backpack")
+
+	if not backpack then
+		warn(`[ProductHandler] No Backpack found for {player.Name}`)
+		return false
+	end
+
+	local brainrotData = pickRandomBrainrot()
+
+	if not brainrotData then
+		warn("[ProductHandler] No brainrots found in BrainrotsConfig")
+		return false
+	end
+
+	local variantName = pickRandomVariant(brainrotData.icons)
+	local tool = buildBrainrotTool(brainrotData, variantName)
+
+	if not tool then
+		return false
+	end
+
+	tool.Parent = backpack
+
+	player:SetAttribute("LastCollectedBrainrot", brainrotData.name)
+
+	return true
+end
 
 local function getProductHandlerConfig()
 	if productHandlerConfig then
@@ -85,6 +334,7 @@ function ProductHandlerServer.init(self: ProductHandlerServer)
 	self._limitedStockServer = nil
 	self:createRemotes()
 	self:discoverParts()
+	self:registerRandomBrainrotProduct()
 	self:setupProcessReceipt()
 end
 
@@ -136,6 +386,18 @@ function ProductHandlerServer.createRemotes(self: ProductHandlerServer)
 		end
 
 		self:promptPurchase(player, productName, entry)
+	end)
+end
+
+function ProductHandlerServer.registerRandomBrainrotProduct(self: ProductHandlerServer)
+	ProductHandlerServer.registerProductReceipt(RANDOM_BRAINROT_PRODUCT_ID, function(player: Player, _receiptInfo: any)
+		local success = grantRandomBrainrot(player)
+
+		if not success then
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+
+		return Enum.ProductPurchaseDecision.PurchaseGranted
 	end)
 end
 

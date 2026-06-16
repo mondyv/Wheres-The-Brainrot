@@ -194,7 +194,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, spawnglobal, servernotif, globalnotif, help"
+			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, serverspawn, globalspawn, servernotif, globalnotif, help"
 	end,
 }
 
@@ -371,27 +371,56 @@ commands.addluckyblock = {
 
 commands.giveluckyblock = commands.addluckyblock
 
-commands.spawnglobal = {
-	usage = "spawnglobal <mythic|legendary|godly|secret>",
-	description = "Force a global rarity spawn (does not reset timers).",
+local function invokeServerSpawn(tierArg: string): (boolean, string)
+	local internal = ServerStorage:FindFirstChild("GameInternal")
+	local bf = internal and internal:FindFirstChild("ForceServerRaritySpawn")
+	if not bf or not bf:IsA("BindableFunction") then
+		return false, "Rarity spawn service is not ready."
+	end
+	local invokeOk, spawnOk, msg = pcall(function()
+		return (bf :: BindableFunction):Invoke(tierArg)
+	end)
+	if not invokeOk then
+		return false, "Spawn command failed."
+	end
+	return spawnOk == true, if typeof(msg) == "string" then msg else (if spawnOk then "Spawned." else "Spawn failed.")
+end
+
+commands.serverspawn = {
+	usage = "serverspawn <mythic|legendary|godly|secret>",
+	description = "Force a rarity spawn on this server only (does not reset timers).",
 	run = function(_sender: Player, args: { string }): (boolean, string)
 		if not args[1] then
-			return false, "Usage: " .. commands.spawnglobal.usage
+			return false, "Usage: " .. commands.serverspawn.usage
+		end
+		return invokeServerSpawn(args[1])
+	end,
+}
+
+commands.globalspawn = {
+	usage = "globalspawn <mythic|legendary|godly|secret>",
+	description = "Force a rarity spawn on every server (does not reset timers).",
+	run = function(_sender: Player, args: { string }): (boolean, string)
+		if not args[1] then
+			return false, "Usage: " .. commands.globalspawn.usage
 		end
 		local internal = ServerStorage:FindFirstChild("GameInternal")
-		local bf = internal and internal:FindFirstChild("ForceGlobalRaritySpawn")
+		local bf = internal and internal:FindFirstChild("BroadcastGlobalRaritySpawn")
 		if not bf or not bf:IsA("BindableFunction") then
-			return false, "Global rarity spawn service is not ready."
+			return false, "Rarity spawn service is not ready."
 		end
 		local invokeOk, spawnOk, msg = pcall(function()
 			return (bf :: BindableFunction):Invoke(args[1])
 		end)
 		if not invokeOk then
-			return false, "Spawn command failed."
+			return false, "Global spawn command failed."
 		end
-		return spawnOk == true, if typeof(msg) == "string" then msg else (if spawnOk then "Spawned." else "Spawn failed.")
+		return spawnOk == true,
+			if typeof(msg) == "string" then msg else (if spawnOk then "Spawned globally." else "Spawn failed.")
 	end,
 }
+
+commands.spawnglobal = commands.serverspawn
 
 local function runBroadcastCommand(sender: Player, args: { string }, global: boolean): (boolean, string)
 	local message = AdminBroadcastService.joinArgs(args)

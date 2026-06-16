@@ -1,7 +1,7 @@
 -- [ACTIVE] GameSoundEffects
 --[[
 	GameSoundEffects — gameplay SFX under SoundService.SoundEffects
-	CashGrab, ErrorNotif, Drops, BushAura, BushRustles, On ProximityPrompts, GroundSmash, Purchase
+	CashGrab, ErrorNotif, Drops, BushAura, BushRustles, On ProximityPrompts, GroundSmash, Purchase, Upgrade
 --]]
 
 local Players = game:GetService("Players")
@@ -26,6 +26,7 @@ local bushRandomShakeTemplate: Sound?
 local proximityPromptTemplate: Sound?
 local groundSmashTemplate: Sound?
 local purchaseTemplate: Sound?
+local upgradeTemplate: Sound?
 local notification1Template: Sound?
 
 local activeAuraSound: Sound?
@@ -309,6 +310,11 @@ function GameSoundEffects.init()
 		purchaseTemplate = purchase
 	end
 
+	local upgrade = root:FindFirstChild("Upgrade")
+	if upgrade and upgrade:IsA("Sound") then
+		upgradeTemplate = upgrade
+	end
+
 	notification1Template = findSoundIn(root, "Notification1")
 
 	local ev = ReplicatedStorage:WaitForChild("PlayHarvestDropFX", 60)
@@ -425,6 +431,30 @@ end
 
 function GameSoundEffects.playPurchaseShake()
 	startPurchaseCameraShake()
+end
+
+function GameSoundEffects.playUpgrade()
+	if ClientSFXVolume.getVolume() <= 0 then
+		return
+	end
+	local template = upgradeTemplate
+	if not template then
+		local root = SoundService:FindFirstChild("SoundEffects")
+		local inst = root and root:FindFirstChild("Upgrade")
+		if inst and inst:IsA("Sound") then
+			upgradeTemplate = inst
+			template = inst
+		end
+	end
+	if not template then
+		return
+	end
+	local clone = prepareClone(template)
+	clone.Parent = SoundService
+	clone:Play()
+	clone.Ended:Once(function()
+		clone:Destroy()
+	end)
 end
 
 function GameSoundEffects.startBushSearchLoop()

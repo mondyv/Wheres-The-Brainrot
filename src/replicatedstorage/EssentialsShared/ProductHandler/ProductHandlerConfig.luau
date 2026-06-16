@@ -24,6 +24,11 @@ local ProductHandlerConfig: { [string]: ProductEntry } = {
 		type = "devproduct",
 		id = 0,
 	},
+	RandomBrainrot = {
+		type = "devproduct",
+		id = 3604806744,
+		part = nil,
+	},
 }
 
 return ProductHandlerConfig

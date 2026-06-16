@@ -18,6 +18,9 @@
       "LoadingMoonCamera": {
         "$path": "src/replicatedstorage/LoadingMoonCamera",
         "$ignoreUnknownInstances": true
+      },
+      "Packages": {
+        "$path": "Packages"
       }
     },
 

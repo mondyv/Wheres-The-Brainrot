@@ -1,19 +1,18 @@
 -- [ACTIVE] GlobalRaritySpawnService
 --[[
-	Global rarity spawn timers (DataStore + MessagingService) and active map markers.
+	Per-server rarity spawn timers and active map markers.
+	Each server owns its own countdown; globalspawn admin command fans out via MessagingService.
 ]]
 
-local DataStoreService = game:GetService("DataStoreService")
 local MessagingService = game:GetService("MessagingService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
-local GlobalRaritySpawnConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GlobalRaritySpawnConfig"))
+local GlobalRaritySpawnConfig =
+	require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GlobalRaritySpawnConfig"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
-local LiveDataStores = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LiveDataStores"))
 local Brainrots = require(script.Parent:WaitForChild("Brainrots"))
 local IndexService = require(script.Parent:WaitForChild("IndexService"))
 
@@ -45,9 +44,6 @@ local BUSH_HIDDEN_BASE_INCOME_ATTR = "HiddenBrainrotBaseIncome"
 local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
 local BUSH_ON_COOLDOWN_ATTR = "BushOnCooldown"
 local BUSH_LOOT_PHASE_READY = "ready"
-
-local persistenceEnabled = LiveDataStores.isEnabled()
-local globalStore = if persistenceEnabled then DataStoreService:GetDataStore(C.DATASTORE_NAME) else nil
 
 local currentState: GlobalState = {
 	version = 1,
@@ -101,7 +97,8 @@ local function normalizeState(raw: any): GlobalState
 	local active: ActiveSpawn? = nil
 	if typeof(raw) == "table" and typeof(raw.active) == "table" then
 		local a = raw.active
-		if typeof(a.rarity) == "string"
+		if
+			typeof(a.rarity) == "string"
 			and typeof(a.bushKey) == "string"
 			and typeof(a.brainrotName) == "string"
 			and typeof(a.endsAt) == "number"
@@ -159,7 +156,6 @@ local cachedSpawnCandidates: { { bush: Instance, weight: number } } = {}
 local spawnCacheBuiltAt = 0
 local SPAWN_CACHE_TTL = 30
 
--- Heavy: walks the map + resolves land per bush. Never call inside an UpdateAsync transform.
 local function buildSpawnBushList(): { { bush: Instance, weight: number } }
 	local out: { { bush: Instance, weight: number } } = {}
 	local seen: { [Instance]: boolean } = {}
@@ -190,7 +186,6 @@ local function refreshSpawnBushCache()
 	spawnCacheBuiltAt = os.clock()
 end
 
--- Fast: returns cached candidates (still-present bushes only); rebuilds only if stale/empty.
 local function collectSpawnBushes(): { { bush: Instance, weight: number } }
 	if #cachedSpawnCandidates == 0 or (os.clock() - spawnCacheBuiltAt) > SPAWN_CACHE_TTL then
 		refreshSpawnBushCache()
@@ -238,7 +233,11 @@ local function findBushByKey(key: string): Instance?
 		return nil
 	end
 	for _, desc in map:GetDescendants() do
-		if isLootableBush(desc) and desc:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key then
+		if
+			isLootableBush(desc)
+			and desc:GetAttribute(C.BUSH_GLOBAL_SPAWN_ATTR) == true
+			and desc:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key
+		then
 			return desc
 		end
 	end
@@ -302,29 +301,17 @@ local function publishReplication(state: GlobalState, eventKind: string?, tierId
 	end
 
 	local ev = ensureRemotes()
-	ev:FireAllClients(eventKind or "sync", tierId, active and active.rarity or nil, active and active.brainrotName or nil)
+	ev:FireAllClients(
+		eventKind or "sync",
+		tierId,
+		active and active.rarity or nil,
+		active and active.brainrotName or nil
+	)
 end
 
-local function saveAndBroadcast(state: GlobalState, eventKind: string?, tierId: string?)
+local function broadcastState(state: GlobalState, eventKind: string?, tierId: string?)
 	currentState = state
 	publishReplication(state, eventKind, tierId)
-	if persistenceEnabled and globalStore then
-		task.spawn(function()
-			local ok, err = pcall(function()
-				globalStore:SetAsync(C.STATE_KEY, state)
-			end)
-			if not ok then
-				warn("[GlobalRaritySpawnService] SetAsync failed:", err)
-			end
-		end)
-	end
-	if messagingReady then
-		task.spawn(function()
-			pcall(function()
-				MessagingService:PublishAsync(C.MESSAGING_TOPIC, state)
-			end)
-		end)
-	end
 end
 
 local function brainrotIsAvailable(def: any): boolean
@@ -403,7 +390,7 @@ function M.onBushClaimed(bush: Instance)
 		local state = table.clone(currentState)
 		state.timers = table.clone(currentState.timers)
 		clearActiveSpawnState(state, false)
-		saveAndBroadcast(state, "claimed", currentState.active.rarity)
+		broadcastState(state, "claimed", currentState.active.rarity)
 	end
 end
 
@@ -420,8 +407,35 @@ function M.forceSpawn(tierId: string): (boolean, string?)
 	if not trySpawnTier(state, tier.id, true) then
 		return false, "Could not place spawn (no bush or brainrot pool empty)."
 	end
-	saveAndBroadcast(state, "spawn", tier.id)
-	return true, string.format("Forced %s spawn at bush %s.", tier.displayName, state.active and state.active.bushKey or "?")
+	broadcastState(state, "spawn", tier.id)
+	return true,
+		string.format(
+			"Spawned %s on this server at bush %s.",
+			tier.displayName,
+			state.active and state.active.bushKey or "?"
+		)
+end
+
+function M.broadcastGlobalSpawn(tierId: string): (boolean, string?)
+	local tier = C.tierById(tierId)
+	if not tier then
+		return false, "Unknown tier. Use: mythic, legendary, godly, secret"
+	end
+	if messagingReady then
+		task.spawn(function()
+			local ok, err = pcall(function()
+				MessagingService:PublishAsync(C.SPAWN_CMD_TOPIC, {
+					tierId = tier.id,
+					sentAt = os.time(),
+				})
+			end)
+			if not ok then
+				warn("[GlobalRaritySpawnService] global spawn publish failed:", err)
+			end
+		end)
+		return true, string.format("Global %s spawn sent to all servers.", tier.displayName)
+	end
+	return M.forceSpawn(tier.id)
 end
 
 local function advanceState(state: GlobalState): (boolean, string?)
@@ -437,13 +451,14 @@ local function advanceState(state: GlobalState): (boolean, string?)
 	for _, tier in C.TIERS do
 		local endsAt = state.timers[tier.id]
 		if typeof(endsAt) == "number" and now >= endsAt then
-			state.timers[tier.id] = now + tier.intervalSec
-			changed = true
-			if not state.active then
-				if trySpawnTier(state, tier.id, false) then
-					spawnTier = tier.id
-					break
-				end
+			if state.active then
+				state.timers[tier.id] = now + tier.intervalSec
+				changed = true
+			elseif trySpawnTier(state, tier.id, false) then
+				state.timers[tier.id] = now + tier.intervalSec
+				changed = true
+				spawnTier = tier.id
+				break
 			end
 		end
 	end
@@ -464,31 +479,8 @@ local function processTick()
 		tickInFlight = false
 	end
 
-	if persistenceEnabled and globalStore then
-		local ok, err = pcall(function()
-			globalStore:UpdateAsync(C.STATE_KEY, function(old)
-				local state = normalizeState(old)
-				local changed, spawnTier = advanceState(state)
-				if not changed then
-					return nil
-				end
-				currentState = state
-				task.defer(function()
-					publishReplication(state, if spawnTier then "spawn" else "sync", spawnTier)
-				end)
-				return state
-			end)
-		end)
-		if not ok then
-			warn("[GlobalRaritySpawnService] UpdateAsync failed:", err)
-			local state = normalizeState(currentState)
-			local changed, spawnTier = advanceState(state)
-			if changed then
-				saveAndBroadcast(state, if spawnTier then "spawn" else "sync", spawnTier)
-			end
-		end
-		finish()
-		return
+	if #cachedSpawnCandidates == 0 then
+		refreshSpawnBushCache()
 	end
 
 	local state = {
@@ -498,30 +490,14 @@ local function processTick()
 	}
 	local changed, spawnTier = advanceState(state)
 	if changed then
-		saveAndBroadcast(state, if spawnTier then "spawn" else "sync", spawnTier)
+		broadcastState(state, if spawnTier then "spawn" else "sync", spawnTier)
 	end
 	finish()
-end
-
-local function applyRemoteState(raw: any)
-	local state = normalizeState(raw)
-	if state.active then
-		local bush = findBushByKey(state.active.bushKey)
-		if bush and bush:GetAttribute(C.BUSH_GLOBAL_SPAWN_ATTR) ~= true then
-			local def = Brainrots.getByName(state.active.brainrotName)
-			if def then
-				applySpawnToBush(bush, state.active.rarity, def, state.active.mutation, state.active.level)
-			end
-		end
-	end
-	currentState = state
-	publishReplication(state, "sync", nil)
 end
 
 function M.start()
 	ensureRemotes()
 
-	-- Warm land discovery + bush candidate cache up-front so DataStore transforms stay fast.
 	task.spawn(function()
 		local deadline = os.clock() + 30
 		while os.clock() < deadline do
@@ -533,39 +509,21 @@ function M.start()
 		end
 	end)
 
-	local now = os.time()
-	if persistenceEnabled and globalStore then
-		local ok, raw = pcall(function()
-			return globalStore:GetAsync(C.STATE_KEY)
-		end)
-		if ok and raw then
-			currentState = normalizeState(raw)
-		else
-			currentState = normalizeState(nil)
-			pcall(function()
-				globalStore:SetAsync(C.STATE_KEY, currentState)
-			end)
-		end
-	else
-		currentState = normalizeState(nil)
-	end
-
-	if currentState.active then
-		local bush = findBushByKey(currentState.active.bushKey)
-		if bush then
-			local def = Brainrots.getByName(currentState.active.brainrotName)
-			if def then
-				applySpawnToBush(bush, currentState.active.rarity, def, currentState.active.mutation, currentState.active.level)
-			end
-		end
-	end
-
-	publishReplication(currentState, "sync", nil)
+	currentState = normalizeState(nil)
+	broadcastState(currentState, "sync", nil)
 
 	pcall(function()
-		MessagingService:SubscribeAsync(C.MESSAGING_TOPIC, function(message)
-			if typeof(message) == "table" and typeof(message.Data) == "table" then
-				applyRemoteState(message.Data)
+		MessagingService:SubscribeAsync(C.SPAWN_CMD_TOPIC, function(packet)
+			if typeof(packet) ~= "table" or typeof(packet.Data) ~= "table" then
+				return
+			end
+			local tierId = packet.Data.tierId
+			if typeof(tierId) ~= "string" then
+				return
+			end
+			local ok, err = M.forceSpawn(tierId)
+			if not ok then
+				warn("[GlobalRaritySpawnService] global spawn invoke failed:", err)
 			end
 		end)
 		messagingReady = true
@@ -592,7 +550,6 @@ function M.start()
 		while true do
 			task.wait(1)
 			sinceCacheRefresh += 1
-			-- Refresh the bush cache outside the transform so processTick never scans the world.
 			if sinceCacheRefresh >= SPAWN_CACHE_TTL then
 				sinceCacheRefresh = 0
 				refreshSpawnBushCache()

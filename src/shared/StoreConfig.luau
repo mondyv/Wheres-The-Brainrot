@@ -25,6 +25,7 @@ StoreConfig.GAMEPASS = {
 -- ── Developer product ids ───────────────────────────────────────────────────────
 StoreConfig.PRODUCT = {
 	EXCLUSIVE_BRAINROT = 3601996606,
+	RANDOM_BRAINROT = 3604806744,
 	SERVER_LUCK = 3601997089,
 
 	CASH_BUNDLE_1 = 3602163836,

@@ -566,6 +566,30 @@ local function init()
 		end
 	end
 
+	wireProduct(container.RandomBrainrot, 3604806744)
+
+	local randomBrainrotPanel = container:FindFirstChild("RandomBrainrot")
+	if randomBrainrotPanel then
+		local chancesHost = randomBrainrotPanel:FindFirstChild("Chances", true)
+		if chancesHost and chancesHost:IsA("GuiObject") then
+			local chancesBtn: GuiButton
+
+			if chancesHost:IsA("GuiButton") then
+				chancesBtn = chancesHost :: GuiButton
+			else
+				chancesBtn = ensureClickButton(chancesHost :: GuiObject)
+			end
+
+			HUDController.applyHoverAndClick(chancesBtn, function()
+				HUDController.openFrameByName("Chances")
+			end)
+		else
+			warn("[StoreController] Chances button not found inside RandomBrainrot")
+		end
+	else
+		warn("[StoreController] RandomBrainrot panel not found")
+	end
+
 	wireExclusive(container)
 	wireServerLuck(container)
 	wirePacks(container)

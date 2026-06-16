@@ -36,6 +36,7 @@ local host: GuiObject? = nil
 local animHost: GuiObject? = nil
 local label: TextLabel? = nil
 local panelStroke: UIStroke? = nil
+local labelStroke: UIStroke? = nil
 local templateErrorGrad: UIGradient? = nil
 local messageQueue: { QueuedMessage } = {}
 local isShowing = false
@@ -77,6 +78,28 @@ local function findParts()
 		if err and err:IsA("UIGradient") then
 			templateErrorGrad = err
 		end
+		local stroke = text:FindFirstChildOfClass("UIStroke")
+		if stroke then
+			labelStroke = stroke
+		else
+			stroke = Instance.new("UIStroke")
+			stroke.Name = "TextOutline"
+			stroke.Color = Color3.fromRGB(0, 0, 0)
+			stroke.Thickness = 2
+			stroke.Parent = text
+			labelStroke = stroke
+		end
+	end
+end
+
+local function ensureBlackTextOutline()
+	if not labelStroke then
+		return
+	end
+	labelStroke.Color = Color3.fromRGB(0, 0, 0)
+	local grad = labelStroke:FindFirstChild("RaritySpawnGradient")
+	if grad and grad:IsA("UIGradient") then
+		grad.Enabled = false
 	end
 end
 
@@ -100,9 +123,9 @@ local function setPanelAccent(color: Color3, rarityId: string?)
 			grad.Name = "RaritySpawnGradient"
 			grad.Parent = panelStroke
 		end
-		;(grad :: UIGradient).Color = RaritySpawnStyle.colorSequence(rarityId)
-		;(grad :: UIGradient).Rotation = 90
-		;(grad :: UIGradient).Enabled = true
+		(grad :: UIGradient).Color = RaritySpawnStyle.colorSequence(rarityId);
+		(grad :: UIGradient).Rotation = 90
+		(grad :: UIGradient).Enabled = true
 	elseif grad and grad:IsA("UIGradient") then
 		grad.Enabled = false
 	end
@@ -112,7 +135,7 @@ local function applyRarityStyle(textLabel: TextLabel, rarityId: string)
 	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	disableOtherGradients(textLabel, "RaritySpawnGradient")
 	RaritySpawnStyle.applyTextGradient(textLabel, rarityId)
-	setPanelAccent(RaritySpawnStyle.accentColor(rarityId), rarityId)
+	ensureBlackTextOutline()
 end
 
 local function applyErrorStyle(textLabel: TextLabel)
@@ -132,10 +155,8 @@ end
 
 local function setLabelAlpha(textLabel: TextLabel, alpha: number)
 	textLabel.TextTransparency = alpha
-	for _, desc in textLabel:GetDescendants() do
-		if desc:IsA("UIStroke") then
-			desc.Transparency = alpha
-		end
+	if labelStroke then
+		labelStroke.Transparency = alpha
 	end
 end
 
@@ -179,10 +200,8 @@ local function processQueue()
 	activeFadeTween:Play()
 	TweenService:Create(label, WOBBLE_SETTLE, { Rotation = 0 }):Play()
 	TweenService:Create(label, TEXT_IN, { TextTransparency = 0 }):Play()
-	for _, desc in label:GetDescendants() do
-		if desc:IsA("UIStroke") then
-			TweenService:Create(desc, TEXT_IN, { Transparency = 0 }):Play()
-		end
+	if labelStroke then
+		TweenService:Create(labelStroke, TEXT_IN, { Transparency = 0 }):Play()
 	end
 
 	local lifetime = if entry.isError then ERROR_LIFETIME else DISPLAY_LIFETIME
@@ -194,10 +213,8 @@ local function processQueue()
 		activeFadeTween = TweenService:Create(scale, FADE_OUT, { Scale = 0.55 })
 		activeFadeTween:Play()
 		TweenService:Create(label, FADE_OUT, { TextTransparency = 1 }):Play()
-		for _, desc in label:GetDescendants() do
-			if desc:IsA("UIStroke") then
-				TweenService:Create(desc, FADE_OUT, { Transparency = 1 }):Play()
-			end
+		if labelStroke then
+			TweenService:Create(labelStroke, FADE_OUT, { Transparency = 1 }):Play()
 		end
 		activeFadeTween.Completed:Once(function()
 			if token ~= hideToken then

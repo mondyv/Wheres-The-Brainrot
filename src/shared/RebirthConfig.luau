@@ -222,6 +222,19 @@ function M.isFloorRebirth(tier: number): boolean
 	return tier > 0 and (tier % M.FLOOR_EVERY) == 0
 end
 
+-- Cash floor unlock: floor 2 needs rebirth 3, floor 3 needs 6, floor 4 needs 9, etc.
+function M.requiredRebirthCountForFloor(floorLevel: number): number
+	local floor = math.floor(floorLevel)
+	if floor <= 1 then
+		return 0
+	end
+	return (floor - 1) * M.FLOOR_EVERY
+end
+
+function M.playerCanCashUnlockFloor(player: Player, targetFloor: number): boolean
+	return M.getRebirthCount(player) >= M.requiredRebirthCountForFloor(targetFloor)
+end
+
 function M.moneyPercentDisplayForTier(tier: number): number
 	local t = math.max(1, math.floor(tier))
 	return M.MONEY_PERCENT_BASE + (t - 1) * M.MONEY_PERCENT_STEP
@@ -261,10 +274,7 @@ function M.brainrotRequirements(tier: number): { BrainrotReq }
 end
 
 -- isDiscovered must reflect Index unlocks (IndexService.hasDiscoveredBrainrot), not inventory.
-function M.evaluateBrainrotReqs(
-	isDiscovered: (name: string) -> boolean,
-	reqs: { BrainrotReq }
-): { BrainrotReqState }
+function M.evaluateBrainrotReqs(isDiscovered: (name: string) -> boolean, reqs: { BrainrotReq }): { BrainrotReqState }
 	local out: { BrainrotReqState } = {}
 	for _, req in reqs do
 		local met = isDiscovered(req.name)
@@ -305,9 +315,7 @@ function M.buildSnapshot(player: Player, isDiscovered: (name: string) -> boolean
 	local cash = player:GetAttribute("Cash")
 	local cashVal = if typeof(cash) == "number" then cash else 0
 	local cashMet = tierDef ~= nil and cashVal >= cashRequired
-	local brainrotReqs = if tierDef
-		then M.evaluateBrainrotReqs(isDiscovered, M.brainrotRequirements(tier))
-		else {}
+	local brainrotReqs = if tierDef then M.evaluateBrainrotReqs(isDiscovered, M.brainrotRequirements(tier)) else {}
 	local brainrotsMet = tierDef ~= nil
 	for _, req in brainrotReqs do
 		if not req.met then

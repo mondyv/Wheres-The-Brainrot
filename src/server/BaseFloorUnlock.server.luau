@@ -39,6 +39,7 @@ local Workspace = game:GetService("Workspace")
 
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local PlotStandPlaceholders = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotStandPlaceholders"))
+local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 
 local MAX_FLOOR = 4
 local FLOOR_UNLOCK_COSTS: { [number]: number } = {
@@ -47,8 +48,8 @@ local FLOOR_UNLOCK_COSTS: { [number]: number } = {
 	[4] = 30_500_000_000_000,
 }
 
-local UNLOCK_DEBOUNCE = 0.5
-local SIGN_CLICK_DISTANCE = 22
+local UNLOCK_DEBOUNCE = 0.75
+local PLAYER_UNLOCK_DEBOUNCE = 1.0
 
 local function formatCash(n: number): string
 	if n >= 1e15 then
@@ -74,7 +75,9 @@ end
 local function getStoryNumber(name: string): number?
 	-- Accepts "1 Story", "1st Story", "2 Story", etc.
 	local digits = string.match(name, "^(%d+)")
-	if not digits then return nil end
+	if not digits then
+		return nil
+	end
 	local n = tonumber(digits)
 	if n and n >= 1 and n <= MAX_FLOOR then
 		return n
@@ -117,9 +120,13 @@ end
 
 local function findSignFrame(sign: Model): Frame?
 	local gp = findSignGuiPart(sign)
-	if not gp then return nil end
+	if not gp then
+		return nil
+	end
 	local sg = gp:FindFirstChild("SurfaceGui") or gp:FindFirstChildWhichIsA("SurfaceGui")
-	if not sg or not sg:IsA("SurfaceGui") then return nil end
+	if not sg or not sg:IsA("SurfaceGui") then
+		return nil
+	end
 	local f = sg:FindFirstChild("Frame")
 	if f and f:IsA("Frame") then
 		return f :: Frame
@@ -144,7 +151,9 @@ end
 
 local function ensureUIScale(target: GuiObject): UIScale
 	local s = target:FindFirstChildOfClass("UIScale")
-	if s then return s end
+	if s then
+		return s
+	end
 	local n = Instance.new("UIScale")
 	n.Parent = target
 	return n
@@ -199,7 +208,9 @@ local function setPartHidden(part: BasePart, hidden: boolean)
 end
 
 local function setDecalHidden(d: Instance, hidden: boolean)
-	if not (d:IsA("Decal") or d:IsA("Texture")) then return end
+	if not (d:IsA("Decal") or d:IsA("Texture")) then
+		return
+	end
 	if hidden then
 		if d:GetAttribute(ORIG_DECAL_TRANSP) == nil then
 			d:SetAttribute(ORIG_DECAL_TRANSP, (d :: any).Transparency)
@@ -266,7 +277,6 @@ type SignData = {
 	surfaceGui: SurfaceGui?,
 	-- UIScale hover / pulse only on the button graphic, not the whole frame (title text).
 	hoverTarget: GuiObject,
-	clickDetector: ClickDetector?,
 	lastClickAt: number,
 }
 
@@ -280,6 +290,7 @@ type BaseState = {
 
 local bases: { [Instance]: BaseState } = {}
 local standRescanScheduled = false
+local lastUnlockAtByUserId: { [number]: number } = {}
 
 local function scheduleStandRescan()
 	if standRescanScheduled then
@@ -319,7 +330,9 @@ end
 
 local function setStandsLocked(story: Instance, locked: boolean)
 	local standsFolder = PlotStandPlaceholders.findStandsFolder(story)
-	if not standsFolder then return end
+	if not standsFolder then
+		return
+	end
 	for _, stand in ipairs(standsFolder:GetChildren()) do
 		if stand:IsA("Model") then
 			stand:SetAttribute("BrainrotStandLocked", locked)
@@ -331,9 +344,6 @@ end
 -- consumed or not reachable yet), the whole sign-post visually disappears.
 local function setSignVisible(signData: SignData, visible: boolean)
 	setPartHidden(signData.guiPart, not visible)
-	if signData.clickDetector then
-		signData.clickDetector.MaxActivationDistance = if visible then SIGN_CLICK_DISTANCE else 0
-	end
 	if signData.surfaceGui then
 		signData.surfaceGui.Enabled = visible
 		signData.surfaceGui.Active = visible
@@ -355,10 +365,12 @@ local function setSignVisible(signData: SignData, visible: boolean)
 	end
 end
 
-local function updateSignText(signData: SignData, currentFloor: number)
+local function updateSignText(signData: SignData, currentFloor: number, ownerPlayer: Player?)
 	local frame = signData.frame
 	local nextFloor = signData.storyNumber + 1
 	local cost = FLOOR_UNLOCK_COSTS[nextFloor]
+	local rebirthRequired = RebirthConfig.requiredRebirthCountForFloor(nextFloor)
+	local rebirthMet = if ownerPlayer then RebirthConfig.playerCanCashUnlockFloor(ownerPlayer, nextFloor) else true
 
 	if currentFloor >= MAX_FLOOR then
 		setLabel(frame, "TextLabel", "MAX FLOOR")
@@ -369,12 +381,24 @@ local function updateSignText(signData: SignData, currentFloor: number)
 	local upgrade = frame:FindFirstChild("Upgrade")
 	if upgrade then
 		if cost and currentFloor < MAX_FLOOR then
-			setLabel(upgrade, "Cost", formatCash(cost))
+			if not rebirthMet then
+				setLabel(upgrade, "Cost", string.format("Rebirth %d", rebirthRequired))
+			else
+				setLabel(upgrade, "Cost", formatCash(cost))
+			end
 		else
 			setLabel(upgrade, "Cost", "MAX")
 		end
 		setLabel(upgrade, "Current", string.format("%d/%d", currentFloor, MAX_FLOOR))
 	end
+end
+
+local function ownerPlayerForBase(base: Instance): Player?
+	local uid = base:GetAttribute("PlotOwnerUserId")
+	if typeof(uid) ~= "number" then
+		return nil
+	end
+	return Players:GetPlayerByUserId(uid)
 end
 
 local function countPartsIn(story: Instance): number
@@ -410,10 +434,11 @@ local function refreshBase(state: BaseState)
 	-- 3) Sign visibility and text. Only the sign at the current floor is interactive,
 	--    and only if there's a higher floor still to unlock. Done AFTER story
 	--    reparenting so the active sign sits on the correct visible story.
+	local owner = ownerPlayerForBase(state.base)
 	for n, signData in pairs(state.signs) do
 		local isActive = claimed and (n == state.floorLevel) and (state.floorLevel < MAX_FLOOR)
 		setSignVisible(signData, isActive)
-		updateSignText(signData, state.floorLevel)
+		updateSignText(signData, state.floorLevel, owner)
 	end
 
 	local internal = ServerStorage:FindFirstChild("BrainrotInternal")
@@ -427,7 +452,8 @@ end
 local function pulseSignBurst(signData: SignData)
 	local scale = ensureUIScale(signData.hoverTarget)
 	scale.Scale = 1.12
-	TweenService:Create(scale, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	TweenService:Create(scale, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 })
+		:Play()
 end
 
 -- ── Click → unlock ───────────────────────────────────────────────────────────
@@ -437,13 +463,23 @@ local function tryUnlock(state: BaseState, signData: SignData, player: Player): 
 	if now - signData.lastClickAt < UNLOCK_DEBOUNCE then
 		return false, "debounce"
 	end
+	local lastPlayerUnlock = lastUnlockAtByUserId[player.UserId]
+	if lastPlayerUnlock and now - lastPlayerUnlock < PLAYER_UNLOCK_DEBOUNCE then
+		return false, "debounce"
+	end
 	signData.lastClickAt = now
+	lastUnlockAtByUserId[player.UserId] = now
 
 	if signData.storyNumber ~= state.floorLevel then
 		return false, "wrong_sign"
 	end
 	if state.floorLevel >= MAX_FLOOR then
 		return false, "max"
+	end
+
+	local nextLevel = state.floorLevel + 1
+	if not RebirthConfig.playerCanCashUnlockFloor(player, nextLevel) then
+		return false, "rebirth"
 	end
 
 	local plotSlot = state.base:GetAttribute("PlotSlotId")
@@ -459,7 +495,6 @@ local function tryUnlock(state: BaseState, signData: SignData, player: Player): 
 		return false, "owner"
 	end
 
-	local nextLevel = state.floorLevel + 1
 	local cost = FLOOR_UNLOCK_COSTS[nextLevel] or 0
 	local cash = player:GetAttribute("Cash")
 	local c = if typeof(cash) == "number" then cash else 0
@@ -481,31 +516,35 @@ end
 
 -- ── Sign init ────────────────────────────────────────────────────────────────
 
-local function ensureClickDetector(part: BasePart, name: string, maxDist: number): ClickDetector
-	local existing = part:FindFirstChild(name)
-	if existing and existing:IsA("ClickDetector") then
-		(existing :: ClickDetector).MaxActivationDistance = maxDist
-		return existing :: ClickDetector
+local function disableLegacyClickDetectors(sign: Model)
+	for _, desc in sign:GetDescendants() do
+		if desc:IsA("ClickDetector") then
+			desc.MaxActivationDistance = 0
+		end
 	end
-	if existing then existing:Destroy() end
-	local cd = Instance.new("ClickDetector")
-	cd.Name = name
-	cd.MaxActivationDistance = maxDist
-	cd.Parent = part
-	return cd
 end
 
 local function buildSignData(state: BaseState, storyNumber: number, story: Instance): SignData?
 	local sign = findUpgradeSign(story)
-	if not sign then return nil end
+	if not sign then
+		return nil
+	end
 	local guiPart = findSignGuiPart(sign)
-	if not guiPart then return nil end
+	if not guiPart then
+		return nil
+	end
 	local frame = findSignFrame(sign)
-	if not frame then return nil end
+	if not frame then
+		return nil
+	end
+
+	disableLegacyClickDetectors(sign)
 
 	-- SurfaceGui with Active=true so client Upgrade button receives clicks (see BaseFloorUnlockClick).
 	local surfaceGuiInst = guiPart:FindFirstChildWhichIsA("SurfaceGui")
-	local surfaceGui: SurfaceGui? = if surfaceGuiInst and surfaceGuiInst:IsA("SurfaceGui") then surfaceGuiInst :: SurfaceGui else nil
+	local surfaceGui: SurfaceGui? = if surfaceGuiInst and surfaceGuiInst:IsA("SurfaceGui")
+		then surfaceGuiInst :: SurfaceGui
+		else nil
 	if surfaceGui then
 		surfaceGui.Active = true
 	end
@@ -517,8 +556,6 @@ local function buildSignData(state: BaseState, storyNumber: number, story: Insta
 		hoverTarget = upg
 	end
 
-	local cd = ensureClickDetector(guiPart, "_FloorUnlockClick", SIGN_CLICK_DISTANCE)
-
 	local signData: SignData = {
 		story = story,
 		storyNumber = storyNumber,
@@ -527,45 +564,25 @@ local function buildSignData(state: BaseState, storyNumber: number, story: Insta
 		frame = frame,
 		surfaceGui = surfaceGui,
 		hoverTarget = hoverTarget,
-		clickDetector = cd,
 		lastClickAt = 0,
 	}
 
-	cd.MouseClick:Connect(function(player)
-		tryUnlock(state, signData, player)
-	end)
-	-- Extra hit targets on the wooden post / frame (GUIPart ray can be finicky vs. SurfaceGui).
-	local function connectUnlockToPart(hitPart: BasePart)
-		if hitPart == guiPart then
-			return
-		end
-		local ed = ensureClickDetector(hitPart, "_FloorUnlockExtra_" .. hitPart.Name, SIGN_CLICK_DISTANCE)
-		ed.MouseClick:Connect(function(player)
-			tryUnlock(state, signData, player)
-		end)
-	end
-	for _, ch in ipairs(sign:GetChildren()) do
-		if ch:IsA("BasePart") and ch ~= guiPart then
-			connectUnlockToPart(ch :: BasePart)
-			break
-		elseif ch:IsA("Model") then
-			local first = (ch :: Model):FindFirstChildWhichIsA("BasePart", true)
-			if first and first ~= guiPart and not first:IsDescendantOf(guiPart) then
-				connectUnlockToPart(first)
-				break
-			end
-		end
-	end
 	return signData
 end
 
 local function hookBase(base: Instance)
-	if bases[base] then return end
+	if bases[base] then
+		return
+	end
 	local stories = findStoriesUnderBase(base)
-	if next(stories) == nil then return end
+	if next(stories) == nil then
+		return
+	end
 
 	local existingLevel = base:GetAttribute("BaseFloorLevel")
-	local floorLevel = if typeof(existingLevel) == "number" then math.clamp(math.floor(existingLevel), 1, MAX_FLOOR) else 1
+	local floorLevel = if typeof(existingLevel) == "number"
+		then math.clamp(math.floor(existingLevel), 1, MAX_FLOOR)
+		else 1
 	base:SetAttribute("BaseFloorLevel", floorLevel)
 
 	local state: BaseState = {
@@ -635,7 +652,9 @@ end
 
 local function tryStart(): boolean
 	local folder = findSpawnBasesFolder()
-	if not folder then return false end
+	if not folder then
+		return false
+	end
 	hookAllBasesUnder(folder)
 	folder.ChildAdded:Connect(function(child)
 		if child:IsA("Model") or child:IsA("Folder") then
@@ -719,4 +738,30 @@ unlockRE.OnServerEvent:Connect(function(player: Player)
 	end
 	local ok, reason = tryUnlock(state, signData, player)
 	unlockRE:FireClient(player, ok, reason or "")
+end)
+
+local function refreshPlotForPlayer(player: Player)
+	local base = findPlayerPlot(player)
+	if not base then
+		return
+	end
+	local state = bases[base]
+	if state then
+		refreshBase(state)
+	end
+end
+
+local function hookPlayerRefresh(player: Player)
+	player:GetAttributeChangedSignal(RebirthConfig.REBIRTH_COUNT_ATTR):Connect(function()
+		refreshPlotForPlayer(player)
+	end)
+end
+
+Players.PlayerAdded:Connect(hookPlayerRefresh)
+for _, plr in Players:GetPlayers() do
+	hookPlayerRefresh(plr)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	lastUnlockAtByUserId[player.UserId] = nil
 end)

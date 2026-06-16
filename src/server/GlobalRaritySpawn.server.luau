@@ -35,9 +35,16 @@ ensureBindable("GlobalRaritySpawnClaimed").OnInvoke = function(bush: any)
 	return true
 end
 
-ensureBindable("ForceGlobalRaritySpawn").OnInvoke = function(tierId: any)
+ensureBindable("ForceServerRaritySpawn").OnInvoke = function(tierId: any)
 	if typeof(tierId) ~= "string" then
 		return false, "bad_tier"
 	end
 	return GlobalRaritySpawnService.forceSpawn(tierId)
+end
+
+ensureBindable("BroadcastGlobalRaritySpawn").OnInvoke = function(tierId: any)
+	if typeof(tierId) ~= "string" then
+		return false, "bad_tier"
+	end
+	return GlobalRaritySpawnService.broadcastGlobalSpawn(tierId)
 end

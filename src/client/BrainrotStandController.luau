@@ -1688,7 +1688,11 @@ function M.init()
 	end
 
 	upgradeFeedbackRE.OnClientEvent:Connect(function(ok: boolean, reason: string)
-		if ok or reason ~= "cash" then
+		if ok then
+			GameSoundEffects.playUpgrade()
+			return
+		end
+		if reason ~= "cash" then
 			return
 		end
 		GameSoundEffects.playErrorNotif()

@@ -53,6 +53,14 @@ C.ROPE_MOMENTUM_LENGTH_MULT = 0.68
 C.ROPE_DISTANCE_STRETCH_MULT = 0.22
 C.ROPE_LENGTH_RESPONSE = 24
 C.ROPE_ATTACH_START_MULT = 0.58
+
+C.ROPE_VISUAL_SHOOT_SPEED = 190
+C.ROPE_VISUAL_SHOOT_MIN_TIME = 0.22
+C.ROPE_VISUAL_SHOOT_MAX_TIME = 0.42
+
+C.ROPE_VISUAL_IDLE_STRAIGHT_SPEED = 36
+C.ROPE_VISUAL_FULL_SAG_SPEED = 78
+
 -- Elastic catch controls the brief "stretch then recover" feel when chaining to a new swing.
 -- It does NOT increase target reach; it only starts the rope closer to the player's current distance,
 -- then gently retracts it instead of snapping the player upward instantly.
@@ -95,6 +103,7 @@ C.ATTACH_RETRY_TIME = 0.12
 C.ATTACH_COOLDOWN = 0.18
 C.MIN_SWING_LOCK_TIME = 0.18
 C.MOBILE_JUMP_HOLD_GRACE = 0.06
+C.MOBILE_REAL_JUMP_PRESS_WINDOW = 0.28
 -- Grounded range should match actual swing reach, otherwise the UI can show red even when attach is allowed.
 -- These are fallback floors only; the live grounded ready distance uses getSwingRange().
 C.GROUNDED_READY_RANGE = 75
@@ -236,11 +245,24 @@ C.TARGET_VISUAL_SMOOTH_SPEED = 10
 C.PREVIEW_FADE_SPEED = 12
 C.READY_TEXT_BOB_SPEED = 8
 C.READY_TEXT_BOB_PIXELS = 5
-C.ROPE_COLOR_A = Color3.fromRGB(255, 255, 255)
-C.ROPE_COLOR_B = Color3.fromRGB(90, 220, 255)
+C.ROPE_COLOR_A = Color3.fromRGB(135, 82, 38)
+C.ROPE_COLOR_B = Color3.fromRGB(86, 51, 24)
 
--- Swing animations live in ReplicatedStorage/Animations/Player.
--- Expected Animation names: Hang_Left, Hang_Right, Falling, Landed.
+C.ROPE_BRICK_COLOR = BrickColor.new("Reddish brown")
+C.ROPE_VISUAL_THICKNESS = 0.18
+C.ROPE_VISUAL_SAG = 0.65
+C.ROPE_VISUAL_SHOOT_TIME = 0.24
+C.ROPE_VISUAL_SHOOT_SPEED = 330
+C.ROPE_VISUAL_SHOOT_MIN_TIME = 0.18
+C.ROPE_VISUAL_SHOOT_MAX_TIME = 0.32
+C.ROPE_VISUAL_MIN_LENGTH = 0.25
+
+C.ROPE_THROW_BRICK_COLOR = BrickColor.new("Reddish brown")
+C.ROPE_LOCKED_BRICK_COLOR = BrickColor.new("Reddish brown")
+
+C.ROPE_VISUAL_SHOOT_THICKNESS = 0.09
+C.ROPE_VISUAL_LOCKED_THICKNESS = 0.18
+
 C.ENABLE_SWING_ANIMATIONS = true
 C.ANIMATIONS_FOLDER_NAME = "Animations"
 C.PLAYER_ANIMATIONS_FOLDER_NAME = "Player"
@@ -1088,6 +1110,7 @@ local function boot(character)
 	local gamepadHeld = false
 	local mobileJumpHoldUntil = -1e9
 	local mobileJumpHeld = false
+	local mobileRealJumpPressUntil = -1e9
 
 	local targetCache = {}
 	local targetSet = {}
@@ -1118,7 +1141,7 @@ local function boot(character)
 	local orientationAttachment = nil
 	local swingOrientation = nil
 	local handAttachment = nil
-	local swingBeam = nil
+	local swingRopeVisual = nil
 	local previewAnchorPart = nil
 	local previewFrom = nil
 	local previewTo = nil
@@ -2309,7 +2332,10 @@ local function boot(character)
 			or safeIsKeyDown(Enum.KeyCode.Space)
 			or safeIsKeyDown(Enum.KeyCode.ButtonA)
 			or safeIsKeyDown(Enum.KeyCode.ButtonR2)
-			or (UserInputService.TouchEnabled and (mobileJumpHeld or os.clock() <= mobileJumpHoldUntil))
+			or (
+				UserInputService.TouchEnabled
+				and (mobileJumpHeld or (os.clock() <= mobileJumpHoldUntil and os.clock() <= mobileRealJumpPressUntil))
+			)
 	end
 
 	local function readyPromptText()
@@ -2915,37 +2941,249 @@ local function boot(character)
 		chargeDot.Position = UDim2.new(0.5, -px * 0.5, 0.5, -px * 0.5)
 	end
 
-	local function spawnSwingBeam(attachWorld)
+	local function spawnSwingRopeVisual(attachWorld)
 		local side = getSwingSide(attachWorld)
 		local hand = handPartForSide(side)
 
 		handAttachment = Instance.new("Attachment")
 		handAttachment.Name = "SwingHandAttachment"
 		handAttachment.Parent = hand
+
 		if hand == hrp then
 			handAttachment.Position = Vector3.new(0, 1.1, 0)
 		else
 			handAttachment.Position = Vector3.new(0, -0.85, 0)
 		end
 
-		swingBeam = Instance.new("Beam")
-		swingBeam.Name = "SwingRopeBeam"
-		swingBeam.Attachment0 = handAttachment
-		swingBeam.Attachment1 = anchorAttachment
-		swingBeam.Width0 = 0.14
-		swingBeam.Width1 = 0.09
-		swingBeam.Color = ColorSequence.new(C.ROPE_COLOR_A, C.ROPE_COLOR_B)
-		swingBeam.Transparency = NumberSequence.new(0.08)
-		swingBeam.LightEmission = 0.35
-		swingBeam.FaceCamera = true
-		swingBeam.Segments = 18
-		swingBeam.Parent = character
+		hidePreview()
+
+		if swingRopeVisual then
+			local old = swingRopeVisual
+			swingRopeVisual = nil
+
+			if old.ShootConn then
+				old.ShootConn:Disconnect()
+			end
+
+			if old.Tween then
+				pcall(function()
+					old.Tween:Cancel()
+				end)
+			end
+
+			if old.TweenConn then
+				old.TweenConn:Disconnect()
+			end
+
+			for _, inst in pairs(old) do
+				if typeof(inst) == "Instance" and inst.Parent then
+					inst:Destroy()
+				end
+			end
+		end
+
+		local function makeVisualPart(name, worldPos)
+			local part = Instance.new("Part")
+			part.Name = name
+			part.Size = Vector3.new(0.15, 0.15, 0.15)
+			part.Transparency = 1
+			part.Anchored = true
+			part.CanCollide = false
+			part.CanTouch = false
+			part.CanQuery = false
+			part.CastShadow = false
+			part.CFrame = CFrame.new(worldPos)
+			part.Parent = workspace
+			return part
+		end
+
+		local startHandWorld = handAttachment.WorldPosition
+
+		local handPart = makeVisualPart("SwingRopeHandVisualAnchor", startHandWorld)
+		local tipPart = makeVisualPart("SwingRopeTipVisualAnchor", startHandWorld)
+		local anchorPart = makeVisualPart("SwingRopeAnchorVisualAnchor", attachWorld)
+
+		local handVisualAttachment = Instance.new("Attachment")
+		handVisualAttachment.Name = "SwingRopeVisualHandAttachment"
+		handVisualAttachment.Parent = handPart
+
+		local tipVisualAttachment = Instance.new("Attachment")
+		tipVisualAttachment.Name = "SwingRopeVisualTipAttachment"
+		tipVisualAttachment.Parent = tipPart
+
+		local anchorVisualAttachment = Instance.new("Attachment")
+		anchorVisualAttachment.Name = "SwingRopeVisualAnchorAttachment"
+		anchorVisualAttachment.Parent = anchorPart
+
+		local visualRope = Instance.new("RopeConstraint")
+		visualRope.Name = "SwingVisualRopeConstraint"
+		visualRope.Attachment0 = handVisualAttachment
+		visualRope.Attachment1 = tipVisualAttachment
+		visualRope.Length = C.ROPE_VISUAL_MIN_LENGTH
+		visualRope.Thickness = C.ROPE_VISUAL_SHOOT_THICKNESS
+		visualRope.Visible = true
+		visualRope.Restitution = 0
+		visualRope.Parent = handPart
+
+		pcall(function()
+			visualRope.Color = C.ROPE_THROW_BRICK_COLOR
+		end)
+
+		local shootDistance = (attachWorld - startHandWorld).Magnitude
+		local shootTime = math.clamp(
+			shootDistance / C.ROPE_VISUAL_SHOOT_SPEED,
+			C.ROPE_VISUAL_SHOOT_MIN_TIME,
+			C.ROPE_VISUAL_SHOOT_MAX_TIME
+		)
+
+		local visualState = {
+			HandPart = handPart,
+			TipPart = tipPart,
+			AnchorPart = anchorPart,
+
+			HandAttachment = handVisualAttachment,
+			TipAttachment = tipVisualAttachment,
+			AnchorAttachment = anchorVisualAttachment,
+
+			Rope = visualRope,
+			Locked = false,
+			ShootStart = os.clock(),
+			ShootTime = shootTime,
+			ShootConn = nil,
+		}
+
+		swingRopeVisual = visualState
+
+		visualState.ShootConn = RunService.Heartbeat:Connect(function()
+			if swingRopeVisual ~= visualState then
+				if visualState.ShootConn then
+					visualState.ShootConn:Disconnect()
+					visualState.ShootConn = nil
+				end
+				return
+			end
+
+			if not handAttachment or not handAttachment.Parent then
+				return
+			end
+
+			local handWorld = handAttachment.WorldPosition
+			local anchorWorld = anchorAttachment and anchorAttachment.WorldPosition or attachWorld
+
+			if visualState.HandPart then
+				visualState.HandPart.CFrame = CFrame.new(handWorld)
+			end
+
+			if visualState.AnchorPart then
+				visualState.AnchorPart.CFrame = CFrame.new(anchorWorld)
+			end
+
+			local alpha = math.clamp((os.clock() - visualState.ShootStart) / visualState.ShootTime, 0, 1)
+			local tipWorld = handWorld:Lerp(anchorWorld, alpha)
+
+			if visualState.TipPart then
+				visualState.TipPart.CFrame = CFrame.new(tipWorld)
+			end
+
+			if visualState.Rope then
+				visualState.Rope.Length = math.max((tipWorld - handWorld).Magnitude + 0.03, C.ROPE_VISUAL_MIN_LENGTH)
+			end
+
+			if alpha >= 1 then
+				visualState.Locked = true
+
+				if visualState.ShootConn then
+					visualState.ShootConn:Disconnect()
+					visualState.ShootConn = nil
+				end
+
+				if visualState.Rope and visualState.AnchorAttachment then
+					visualState.Rope.Attachment1 = visualState.AnchorAttachment
+				end
+
+				if visualState.Rope then
+					visualState.Rope.Thickness = C.ROPE_VISUAL_LOCKED_THICKNESS
+
+					pcall(function()
+						visualState.Rope.Color = C.ROPE_LOCKED_BRICK_COLOR
+					end)
+				end
+
+				if visualState.TipPart then
+					visualState.TipPart:Destroy()
+					visualState.TipPart = nil
+					visualState.TipAttachment = nil
+				end
+			end
+		end)
+	end
+
+	local function updateSwingRopeVisual(anchorWorld)
+		local visualState = swingRopeVisual
+		if not visualState or not handAttachment or not handAttachment.Parent then
+			return
+		end
+
+		local handWorld = handAttachment.WorldPosition
+
+		if visualState.HandPart then
+			visualState.HandPart.CFrame = CFrame.new(handWorld)
+		end
+
+		if visualState.AnchorPart then
+			visualState.AnchorPart.CFrame = CFrame.new(anchorWorld)
+		end
+
+		if not visualState.Rope then
+			return
+		end
+
+		if visualState.Locked then
+			local distance = (anchorWorld - handWorld).Magnitude
+			local speed = hrp.AssemblyLinearVelocity.Magnitude
+
+			local speedSagAlpha = math.clamp(
+				(speed - C.ROPE_VISUAL_IDLE_STRAIGHT_SPEED)
+					/ math.max(C.ROPE_VISUAL_FULL_SAG_SPEED - C.ROPE_VISUAL_IDLE_STRAIGHT_SPEED, 1),
+				0,
+				1
+			)
+
+			local momentumSagAlpha = math.clamp((swingMomentum or 0) * 0.32, 0, 1)
+			local sagAlpha = math.max(speedSagAlpha, momentumSagAlpha)
+
+			visualState.Rope.Length = math.max(distance + C.ROPE_VISUAL_SAG * sagAlpha, C.ROPE_VISUAL_MIN_LENGTH)
+		elseif visualState.TipPart then
+			visualState.Rope.Length =
+				math.max((visualState.TipPart.Position - handWorld).Magnitude + 0.03, C.ROPE_VISUAL_MIN_LENGTH)
+		end
 	end
 
 	local function destroySwingObjects()
-		if swingBeam then
-			swingBeam:Destroy()
-			swingBeam = nil
+		if swingRopeVisual then
+			local visualState = swingRopeVisual
+			swingRopeVisual = nil
+
+			if visualState.ShootConn then
+				visualState.ShootConn:Disconnect()
+				visualState.ShootConn = nil
+			end
+
+			if visualState.Tween then
+				pcall(function()
+					visualState.Tween:Cancel()
+				end)
+			end
+
+			if visualState.TweenConn then
+				visualState.TweenConn:Disconnect()
+			end
+
+			for _, inst in pairs(visualState) do
+				if typeof(inst) == "Instance" and inst.Parent then
+					inst:Destroy()
+				end
+			end
 		end
 		if handAttachment then
 			handAttachment:Destroy()
@@ -3102,9 +3340,11 @@ local function boot(character)
 			math.clamp(math.max(dist * C.ROPE_ATTACH_START_MULT, elasticRestLength), elasticRestLength, ropeMax)
 		local elasticCatchStartLength =
 			math.clamp(math.max(dist * C.ROPE_CATCH_START_MULT, normalStartLength), elasticRestLength, ropeMax)
+
 		local startLength = elasticCatchStartLength
 		ropeCatchStartLength = startLength
 		ropeCatchUntil = os.clock() + C.ROPE_CATCH_ELASTIC_TIME
+
 		ropeConstraint = Instance.new("RopeConstraint")
 		ropeConstraint.Name = "SwingRopeConstraint"
 		ropeConstraint.Attachment0 = anchorAttachment
@@ -3170,7 +3410,7 @@ local function boot(character)
 
 		applyAttachBoost(attachWorld)
 		playHangAnim(attachWorld)
-		spawnSwingBeam(attachWorld)
+		spawnSwingRopeVisual(attachWorld)
 		ensureChargeGui(target)
 		updateTargetVisual(nil, false)
 		playOptionalSound("Catch")
@@ -3248,13 +3488,17 @@ local function boot(character)
 			end
 
 			local function mobileJumpPressed()
+				local now = os.clock()
+
 				mobileJumpHeld = true
-				mobileJumpHoldUntil = os.clock() + C.MOBILE_JUMP_HOLD_GRACE
+				mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
+				mobileRealJumpPressUntil = now + C.MOBILE_REAL_JUMP_PRESS_WINDOW
 			end
 
 			local function mobileJumpReleased()
 				mobileJumpHeld = false
 				mobileJumpHoldUntil = -1e9
+				mobileRealJumpPressUntil = -1e9
 
 				if isSwinging and os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
 					stopSwing(true)
@@ -3735,9 +3979,14 @@ local function boot(character)
 			return
 		end
 
-		if UserInputService.TouchEnabled then
-			mobileJumpHeld = true
-			mobileJumpHoldUntil = os.clock() + C.MOBILE_JUMP_HOLD_GRACE
+		local now = os.clock()
+
+		if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+			if not mobileJumpHeld and now > mobileRealJumpPressUntil then
+				return
+			end
+
+			mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
 			humanoid.Jump = false
 		end
 
@@ -4060,6 +4309,8 @@ local function boot(character)
 			humanoid.Jump = false
 
 			local anchorWorld = anchorAttachment.WorldPosition
+			updateSwingRopeVisual(anchorWorld)
+
 			local fromAnchor = hrp.Position - anchorWorld
 			local dist = fromAnchor.Magnitude
 			local radial = dist > 0.2 and fromAnchor.Unit or Vector3.new(0, 1, 0)

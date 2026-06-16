@@ -10,6 +10,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
+local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 
 local player = Players.LocalPlayer
@@ -26,6 +27,8 @@ local FLOOR_UNLOCK_COSTS: { [number]: number } = {
 
 local wiredSigns: { [Instance]: boolean } = {}
 local plotConns: { [Instance]: RBXScriptConnection } = {}
+local lastFireAt = 0
+local FIRE_DEBOUNCE = 0.85
 
 local function alphaKey(name: string): string
 	return string.gsub(string.lower(name), "[^a-z0-9]", "")
@@ -104,21 +107,28 @@ local function plotForSign(sign: Model): Instance?
 	return nil
 end
 
-local function canAffordNextFloor(plot: Instance?): boolean
+local function canUnlockNextFloor(plot: Instance?): (boolean, string?)
 	if not plot then
-		return true
+		return true, nil
 	end
 	local level = plot:GetAttribute("BaseFloorLevel")
 	local floorLevel = if typeof(level) == "number" then math.floor(level) else 1
 	if floorLevel >= MAX_FLOOR then
-		return false
+		return false, "max"
 	end
-	local cost = FLOOR_UNLOCK_COSTS[floorLevel + 1]
+	local nextFloor = floorLevel + 1
+	if not RebirthConfig.playerCanCashUnlockFloor(player, nextFloor) then
+		return false, "rebirth"
+	end
+	local cost = FLOOR_UNLOCK_COSTS[nextFloor]
 	if not cost then
-		return true
+		return true, nil
 	end
 	local cash = player:GetAttribute("Cash")
-	return typeof(cash) == "number" and cash >= cost
+	if typeof(cash) ~= "number" or cash < cost then
+		return false, "cash"
+	end
+	return true, nil
 end
 
 local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent, sign: Model)
@@ -140,17 +150,27 @@ local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent,
 	local function wireHoverTarget(target: GuiObject)
 		target.MouseEnter:Connect(function()
 			local sc = getScale()
-			TweenService:Create(sc, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1.06 }):Play()
+			TweenService
+				:Create(sc, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1.06 })
+				:Play()
 		end)
 		target.MouseLeave:Connect(function()
 			local sc = getScale()
-			TweenService:Create(sc, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+			TweenService:Create(sc, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 })
+				:Play()
 		end)
 	end
 
 	local function fire()
+		local now = os.clock()
+		if now - lastFireAt < FIRE_DEBOUNCE then
+			return
+		end
+		lastFireAt = now
+
 		local plot = plotForSign(sign)
-		if not canAffordNextFloor(plot) then
+		local canUnlock, reason = canUnlockNextFloor(plot)
+		if not canUnlock then
 			GameSoundEffects.playErrorNotif()
 			return
 		end
@@ -311,7 +331,7 @@ function M.init()
 			if ok or reason == "" or reason == "debounce" then
 				return
 			end
-			if reason == "cash" or reason == "max" then
+			if reason == "cash" or reason == "max" or reason == "rebirth" then
 				GameSoundEffects.playErrorNotif()
 			end
 			warn("[BaseFloorUnlockClick] Unlock failed:", reason)

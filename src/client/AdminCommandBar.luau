@@ -55,12 +55,15 @@ local statusLabel: TextLabel? = nil
 local suggestionPanel: Frame? = nil
 local suggestionScrollTrack: Frame? = nil
 local suggestionScrollThumb: Frame? = nil
-local suggestionRows: {{
-	button: TextButton,
-	stroke: UIStroke,
-	cmdLabel: TextLabel,
-	hintLabel: TextLabel,
-}} = {}
+local suggestionRows: {
+	{
+		button: TextButton,
+		stroke: UIStroke,
+		cmdLabel: TextLabel,
+		hintLabel: TextLabel,
+	}
+} =
+	{}
 local commandRF: RemoteFunction? = nil
 local catalogRF: RemoteFunction? = nil
 local initialized = false
@@ -75,7 +78,13 @@ local historyIndex = 0
 local catalog = {
 	players = { "me", "all" } :: { string },
 	brainrots = {} :: { string },
-	luckyBlocks = { "star rainbow", "Starter Lucky Block", "Mythic Lucky Block", "Godly Luckyblock", "Secret Lucky Block" } :: { string },
+	luckyBlocks = {
+		"star rainbow",
+		"Starter Lucky Block",
+		"Mythic Lucky Block",
+		"Godly Luckyblock",
+		"Secret Lucky Block",
+	} :: { string },
 	mutations = { "normal", "golden", "diamond", "lava", "galaxy", "rainbow" } :: { string },
 }
 
@@ -87,6 +96,7 @@ local COMMAND_ALIASES: { [string]: string } = {
 	giveblock = "addluckyblock",
 	globalnotifs = "globalnotif",
 	servernotifs = "servernotif",
+	spawnglobal = "serverspawn",
 }
 
 local COMMAND_HINTS: { [string]: string } = {
@@ -96,7 +106,8 @@ local COMMAND_HINTS: { [string]: string } = {
 	addluckyblock = "Grant a lucky block tool",
 	resetdata = "Wipe saved player data",
 	rebirth = "Force rebirth (skip requirements)",
-	spawnglobal = "Force a global rarity bush spawn",
+	serverspawn = "Force a rarity spawn on this server",
+	globalspawn = "Force a rarity spawn on every server",
 	servernotif = "Top notification on this server",
 	globalnotif = "Top notification on all servers",
 }
@@ -166,7 +177,7 @@ local function setStatus(text: string, ok: boolean?)
 end
 
 local function quoteIfNeeded(value: string): string
-	if string.find(value, "[%s\"]") then
+	if string.find(value, '[%s"]') then
 		return '"' .. value .. '"'
 	end
 	return value
@@ -266,10 +277,11 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "addinventory me NoobiniPizzanini", hint = "Give brainrot (equipped)" },
 		{ fill = "addinventory me NoobiniPizzanini 3 golden 5", hint = "Count, mutation, level" },
 		{ fill = "addcash me 1000000", hint = COMMAND_HINTS.addcash },
-		{ fill = "addluckyblock me \"star rainbow\"", hint = COMMAND_HINTS.addluckyblock },
+		{ fill = 'addluckyblock me "star rainbow"', hint = COMMAND_HINTS.addluckyblock },
 		{ fill = "resetdata me", hint = COMMAND_HINTS.resetdata },
 		{ fill = "rebirth me", hint = COMMAND_HINTS.rebirth },
-		{ fill = "spawnglobal mythic", hint = COMMAND_HINTS.spawnglobal },
+		{ fill = "serverspawn mythic", hint = COMMAND_HINTS.serverspawn },
+		{ fill = "globalspawn mythic", hint = COMMAND_HINTS.globalspawn },
 		{ fill = "servernotif Event starting now!", hint = COMMAND_HINTS.servernotif },
 		{ fill = "globalnotif Double luck weekend!", hint = COMMAND_HINTS.globalnotif },
 	}
@@ -314,7 +326,13 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 		end
 	end
 
-	if cmdName == "addinventory" or cmdName == "addcash" or cmdName == "addluckyblock" or cmdName == "resetdata" or cmdName == "rebirth" then
+	if
+		cmdName == "addinventory"
+		or cmdName == "addcash"
+		or cmdName == "addluckyblock"
+		or cmdName == "resetdata"
+		or cmdName == "rebirth"
+	then
 		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
 			for _, playerName in filterByPrefix(catalog.players, partial) do
@@ -342,12 +360,16 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 				pushSuggestion(out, prefix .. quoteIfNeeded(blockName), "lucky block")
 			end
 		end
-	elseif cmdName == "spawnglobal" then
+	elseif cmdName == "serverspawn" or cmdName == "globalspawn" then
 		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
 			for _, tier in { "mythic", "legendary", "godly", "secret" } do
 				if startsWith(tier, partial) then
-					pushSuggestion(out, prefix .. tier, "global rarity spawn")
+					pushSuggestion(
+						out,
+						prefix .. tier,
+						if cmdName == "globalspawn" then "all servers" else "this server"
+					)
 				end
 			end
 		end
@@ -394,10 +416,20 @@ local function updateSuggestionStatus()
 	end
 	local scrollHint = ""
 	if total > MAX_SUGGESTION_ROWS then
-		scrollHint = string.format(" · scroll %d-%d of %d", scrollOffset + 1, math.min(scrollOffset + MAX_SUGGESTION_ROWS, total), total)
+		scrollHint = string.format(
+			" · scroll %d-%d of %d",
+			scrollOffset + 1,
+			math.min(scrollOffset + MAX_SUGGESTION_ROWS, total),
+			total
+		)
 	end
 	setStatus(
-		string.format("%d/%d selected · Tab fill · ↑↓ move%s · Ctrl+↑↓ history", selectedSuggestionIndex, total, scrollHint),
+		string.format(
+			"%d/%d selected · Tab fill · ↑↓ move%s · Ctrl+↑↓ history",
+			selectedSuggestionIndex,
+			total,
+			scrollHint
+		),
 		nil
 	)
 end
@@ -413,7 +445,10 @@ local function styleSuggestionRow(visibleIndex: number)
 	local active = hovered or selected
 	row.stroke.Color = if active then COLORS.hoverStroke else COLORS.idleStroke
 	row.stroke.Transparency = if active then COLORS.hoverStrokeTransparency else COLORS.idleStrokeTransparency
-	row.button.BackgroundColor3 = if selected then COLORS.selectedBg elseif hovered then COLORS.hoverBg else COLORS.idleBg
+	row.button.BackgroundColor3 = if selected
+		then COLORS.selectedBg
+		elseif hovered then COLORS.hoverBg
+		else COLORS.idleBg
 	row.button.BackgroundTransparency = if selected
 		then COLORS.selectedBgTransparency
 		elseif hovered then COLORS.hoverBgTransparency
@@ -919,46 +954,34 @@ function M.init()
 	end
 
 	ContextActionService:UnbindAction(ACTION_NAME)
-	ContextActionService:BindActionAtPriority(
-		ACTION_NAME,
-		function(_name, state, input)
-			if state ~= Enum.UserInputState.Begin then
-				return Enum.ContextActionResult.Pass
-			end
-			if input.UserInputType ~= Enum.UserInputType.Keyboard then
-				return Enum.ContextActionResult.Pass
-			end
-			if not isToggleKey(input.KeyCode) then
-				return Enum.ContextActionResult.Pass
-			end
-			onToggleAdmin()
-			return Enum.ContextActionResult.Sink
-		end,
-		false,
-		BIND_PRIORITY,
-		table.unpack(TOGGLE_KEYS)
-	)
+	ContextActionService:BindActionAtPriority(ACTION_NAME, function(_name, state, input)
+		if state ~= Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Pass
+		end
+		if input.UserInputType ~= Enum.UserInputType.Keyboard then
+			return Enum.ContextActionResult.Pass
+		end
+		if not isToggleKey(input.KeyCode) then
+			return Enum.ContextActionResult.Pass
+		end
+		onToggleAdmin()
+		return Enum.ContextActionResult.Sink
+	end, false, BIND_PRIORITY, table.unpack(TOGGLE_KEYS))
 
 	ContextActionService:UnbindAction(AUTOCOMPLETE_ACTION_NAME)
-	ContextActionService:BindActionAtPriority(
-		AUTOCOMPLETE_ACTION_NAME,
-		function(_name, state, input)
-			if not isAdminInputFocused() or not (gui and gui.Enabled) then
-				return Enum.ContextActionResult.Pass
-			end
-			if state ~= Enum.UserInputState.Begin or input.UserInputType ~= Enum.UserInputType.Keyboard then
-				return Enum.ContextActionResult.Pass
-			end
-			if input.KeyCode == Enum.KeyCode.Tab then
-				applySelectedSuggestion()
-				return Enum.ContextActionResult.Sink
-			end
+	ContextActionService:BindActionAtPriority(AUTOCOMPLETE_ACTION_NAME, function(_name, state, input)
+		if not isAdminInputFocused() or not (gui and gui.Enabled) then
 			return Enum.ContextActionResult.Pass
-		end,
-		false,
-		AUTOCOMPLETE_PRIORITY,
-		Enum.KeyCode.Tab
-	)
+		end
+		if state ~= Enum.UserInputState.Begin or input.UserInputType ~= Enum.UserInputType.Keyboard then
+			return Enum.ContextActionResult.Pass
+		end
+		if input.KeyCode == Enum.KeyCode.Tab then
+			applySelectedSuggestion()
+			return Enum.ContextActionResult.Sink
+		end
+		return Enum.ContextActionResult.Pass
+	end, false, AUTOCOMPLETE_PRIORITY, Enum.KeyCode.Tab)
 
 	UserInputService.InputChanged:Connect(function(input, _gameProcessed)
 		if input.UserInputType ~= Enum.UserInputType.MouseWheel then
@@ -988,13 +1011,19 @@ function M.init()
 			if input.KeyCode == Enum.KeyCode.Tab then
 				applySelectedSuggestion()
 			elseif input.KeyCode == Enum.KeyCode.Up then
-				if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl) then
+				if
+					UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+					or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+				then
 					cycleHistory(-1)
 				else
 					cycleSuggestion(-1)
 				end
 			elseif input.KeyCode == Enum.KeyCode.Down then
-				if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl) then
+				if
+					UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+					or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+				then
 					cycleHistory(1)
 				else
 					cycleSuggestion(1)
@@ -1005,7 +1034,10 @@ function M.init()
 				pageSuggestions(1)
 			elseif
 				input.KeyCode == Enum.KeyCode.L
-				and (UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl))
+				and (
+					UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+					or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+				)
 			then
 				local box = inputBox
 				if box then

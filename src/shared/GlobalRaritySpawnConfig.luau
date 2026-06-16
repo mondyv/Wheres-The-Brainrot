@@ -1,6 +1,6 @@
 -- [ACTIVE] GlobalRaritySpawnConfig
 --[[
-	Global timed rarity spawns — same countdown across all servers.
+	Per-server rarity spawn timers — each new server starts its own countdown.
 	Mythical 5:00, Legendary 10:00, Godly 15:00, Secret 20:00.
 ]]
 
@@ -47,13 +47,11 @@ M.TIERS = {
 	},
 } :: { TierDef }
 
-M.MARKER_DURATION_SEC = 60
+M.MARKER_DURATION_SEC = 120
 M.MIN_SPAWN_LAND = 3
 M.MAX_SPAWN_LAND = 8
 
-M.DATASTORE_NAME = "GlobalRaritySpawn_v1"
-M.STATE_KEY = "state"
-M.MESSAGING_TOPIC = "GlobalRaritySpawn_v1"
+M.SPAWN_CMD_TOPIC = "GlobalRaritySpawnCmd_v1"
 
 M.REMOTE_FOLDER = "GlobalRaritySpawnRemotes"
 M.UPDATED_REMOTE = "Updated"

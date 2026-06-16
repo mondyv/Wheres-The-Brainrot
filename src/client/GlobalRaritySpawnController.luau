@@ -6,10 +6,10 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
-local GlobalRaritySpawnConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GlobalRaritySpawnConfig"))
+local GlobalRaritySpawnConfig =
+	require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GlobalRaritySpawnConfig"))
 local TopNotifController = require(script.Parent.TopNotifController)
 
 local player = Players.LocalPlayer
@@ -19,7 +19,6 @@ local GlobalRaritySpawnController = {}
 
 type MarkerState = {
 	bushKey: string,
-	highlight: Highlight,
 	billboard: BillboardGui,
 	timerLabel: TextLabel,
 	conns: { RBXScriptConnection },
@@ -57,7 +56,6 @@ local function findTimerLabels()
 		local timeLabel = row:FindFirstChild("Time", true)
 		if timeLabel and timeLabel:IsA("TextLabel") then
 			timerLabels[tier.id] = timeLabel
-			RaritySpawnStyle.applyTextGradient(timeLabel, tier.id)
 		end
 	end
 end
@@ -81,7 +79,7 @@ local function findBushByKey(key: string): Instance?
 		return nil
 	end
 	for _, desc in map:GetDescendants() do
-		if desc:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key then
+		if desc:GetAttribute(C.BUSH_GLOBAL_SPAWN_ATTR) == true and desc:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key then
 			return desc
 		end
 	end
@@ -108,57 +106,59 @@ local function destroyMarker()
 	for _, conn in activeMarker.conns do
 		conn:Disconnect()
 	end
-	if activeMarker.highlight.Parent then
-		activeMarker.highlight:Destroy()
-	end
 	if activeMarker.billboard.Parent then
 		activeMarker.billboard:Destroy()
 	end
 	activeMarker = nil
 end
 
-local function buildMarkerUi(bush: Instance, rarity: string, iconImage: string, brainrotName: string): (BillboardGui, TextLabel)
+local function addBlackStroke(parent: Instance, thickness: number)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(0, 0, 0)
+	stroke.Thickness = thickness
+	stroke.Parent = parent
+	return stroke
+end
+
+local function buildMarkerUi(rarity: string, iconImage: string): (BillboardGui, TextLabel)
+	local tier = C.tierById(rarity)
+	local rarityLabel = if tier then tier.displayName else string.upper(rarity)
 	local color = pulseColor(rarity)
 
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "GlobalRaritySpawnMarker"
-	bb.Size = UDim2.fromOffset(150, 168)
-	bb.StudsOffset = Vector3.new(0, 7, 0)
+	bb.Size = UDim2.fromOffset(76, 86)
+	bb.StudsOffset = Vector3.new(0, 14, 0)
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	bb.MaxDistance = 2000
 
-	-- Card panel; outline tinted to the rarity.
-	local panel = Instance.new("Frame")
-	panel.Name = "Panel"
-	panel.AnchorPoint = Vector2.new(0.5, 0)
-	panel.Position = UDim2.fromScale(0.5, 0)
-	panel.Size = UDim2.fromOffset(132, 132)
-	panel.BackgroundColor3 = Color3.fromRGB(14, 16, 22)
-	panel.BackgroundTransparency = 0.1
-	panel.BorderSizePixel = 0
-	panel.Parent = bb
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Vertical
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Top
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 3)
+	layout.Parent = bb
 
-	local panelCorner = Instance.new("UICorner")
-	panelCorner.CornerRadius = UDim.new(0, 14)
-	panelCorner.Parent = panel
-
-	local panelStroke = Instance.new("UIStroke")
-	panelStroke.Color = color
-	panelStroke.Thickness = 3
-	panelStroke.Parent = panel
-
-	local panelGrad = Instance.new("UIGradient")
-	panelGrad.Color = RaritySpawnStyle.colorSequence(rarity)
-	panelGrad.Rotation = 90
-	panelGrad.Parent = panelStroke
+	local rarityText = Instance.new("TextLabel")
+	rarityText.Name = "Rarity"
+	rarityText.LayoutOrder = 1
+	rarityText.Size = UDim2.fromOffset(76, 17)
+	rarityText.BackgroundTransparency = 1
+	rarityText.Font = Enum.Font.GothamBlack
+	rarityText.TextSize = 14
+	rarityText.Text = rarityLabel
+	rarityText.TextColor3 = Color3.fromRGB(255, 255, 255)
+	rarityText.Parent = bb
+	RaritySpawnStyle.applyTextGradient(rarityText, rarity)
+	addBlackStroke(rarityText, 1.5)
 
 	local icon = Instance.new("ImageLabel")
 	icon.Name = "Icon"
+	icon.LayoutOrder = 2
 	icon.BackgroundTransparency = 1
-	icon.AnchorPoint = Vector2.new(0.5, 0)
-	icon.Position = UDim2.fromScale(0.5, 0.06)
-	icon.Size = UDim2.fromScale(0.74, 0.74)
+	icon.Size = UDim2.fromOffset(46, 46)
 	icon.ScaleType = Enum.ScaleType.Fit
 	if iconImage ~= "" then
 		icon.Image = iconImage
@@ -167,56 +167,19 @@ local function buildMarkerUi(bush: Instance, rarity: string, iconImage: string, 
 		icon.Image = "rbxassetid://6031075938"
 		icon.ImageColor3 = color
 	end
-	icon.Parent = panel
-
-	local nameLabel = Instance.new("TextLabel")
-	nameLabel.Name = "BrainrotName"
-	nameLabel.AnchorPoint = Vector2.new(0.5, 1)
-	nameLabel.Position = UDim2.fromScale(0.5, 0.99)
-	nameLabel.Size = UDim2.new(1, -10, 0, 22)
-	nameLabel.BackgroundTransparency = 1
-	nameLabel.Font = Enum.Font.GothamBold
-	nameLabel.TextScaled = true
-	nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-	nameLabel.Text = if brainrotName ~= "" then brainrotName else "???"
-	nameLabel.Parent = panel
-	RaritySpawnStyle.applyTextGradient(nameLabel, rarity)
-
-	local nameStroke = Instance.new("UIStroke")
-	nameStroke.Color = Color3.fromRGB(0, 0, 0)
-	nameStroke.Thickness = 1.5
-	nameStroke.Transparency = 0.25
-	nameStroke.Parent = nameLabel
-
-	-- Countdown pill below the card.
-	local ring = Instance.new("Frame")
-	ring.Name = "TimerRing"
-	ring.AnchorPoint = Vector2.new(0.5, 0)
-	ring.Position = UDim2.new(0.5, 0, 0, 134)
-	ring.Size = UDim2.fromOffset(72, 24)
-	ring.BackgroundColor3 = Color3.fromRGB(12, 14, 18)
-	ring.BackgroundTransparency = 0.1
-	ring.BorderSizePixel = 0
-	ring.Parent = bb
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
-	corner.Parent = ring
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = color
-	stroke.Thickness = 1.5
-	stroke.Parent = ring
+	icon.Parent = bb
 
 	local timer = Instance.new("TextLabel")
 	timer.Name = "Time"
-	timer.Size = UDim2.fromScale(1, 1)
+	timer.LayoutOrder = 3
+	timer.Size = UDim2.fromOffset(76, 16)
 	timer.BackgroundTransparency = 1
 	timer.Font = Enum.Font.GothamBold
-	timer.TextSize = 15
-	timer.TextColor3 = Color3.fromRGB(255, 255, 255)
-	timer.Text = "60s"
-	timer.Parent = ring
+	timer.TextSize = 13
+	timer.TextColor3 = Color3.fromRGB(238, 240, 248)
+	timer.Text = C.formatCountdown(C.MARKER_DURATION_SEC)
+	timer.Parent = bb
+	addBlackStroke(timer, 1.5)
 
 	return bb, timer
 end
@@ -233,31 +196,13 @@ local function trackMarker(bushKey: string, rarity: string, endsAt: number)
 	end
 
 	local iconImage = ReplicatedStorage:GetAttribute(C.ACTIVE_ICON_ATTR)
-	local brainrotName = ReplicatedStorage:GetAttribute(C.ACTIVE_NAME_ATTR)
 
-	local color = pulseColor(rarity)
-	local hl = Instance.new("Highlight")
-	hl.Name = "GlobalSpawnOutline"
-	hl.Adornee = bush
-	hl.FillColor = color
-	hl.FillTransparency = 0.8
-	hl.OutlineTransparency = 0
-	hl.OutlineColor = color
-	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	hl.Parent = Workspace.CurrentCamera
-
-	local bb, timerLabel = buildMarkerUi(
-		bush,
-		rarity,
-		if typeof(iconImage) == "string" then iconImage else "",
-		if typeof(brainrotName) == "string" then brainrotName else ""
-	)
+	local bb, timerLabel = buildMarkerUi(rarity, if typeof(iconImage) == "string" then iconImage else "")
 	bb.Adornee = adornee
 	bb.Parent = player:FindFirstChild("PlayerGui") or Workspace.CurrentCamera
 
 	local state: MarkerState = {
 		bushKey = bushKey,
-		highlight = hl,
 		billboard = bb,
 		timerLabel = timerLabel,
 		conns = {},
@@ -272,9 +217,7 @@ local function trackMarker(bushKey: string, rarity: string, endsAt: number)
 				return
 			end
 			local remaining = math.max(0, endsAt - os.time())
-			timerLabel.Text = string.format("%ds", math.ceil(remaining))
-			local urgency = 1 - math.clamp(remaining / C.MARKER_DURATION_SEC, 0, 1)
-			hl.OutlineTransparency = urgency * 0.35
+			timerLabel.Text = C.formatCountdown(remaining)
 			if remaining <= 0 then
 				destroyMarker()
 			end
@@ -304,7 +247,12 @@ local function syncFromAttributes()
 	local bushKey = ReplicatedStorage:GetAttribute(C.ACTIVE_BUSH_KEY_ATTR)
 	local rarity = ReplicatedStorage:GetAttribute(C.ACTIVE_RARITY_ATTR)
 	local endsAt = ReplicatedStorage:GetAttribute(C.ACTIVE_ENDS_ATTR)
-	if typeof(bushKey) == "string" and typeof(rarity) == "string" and typeof(endsAt) == "number" and os.time() < endsAt then
+	if
+		typeof(bushKey) == "string"
+		and typeof(rarity) == "string"
+		and typeof(endsAt) == "number"
+		and os.time() < endsAt
+	then
 		trackMarker(bushKey, rarity, endsAt)
 	else
 		destroyMarker()

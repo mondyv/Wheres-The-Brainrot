@@ -35,6 +35,7 @@ local ProductHandlerServer = {}
 local initialized = false
 local productHandlerConfig = nil
 local customReceiptHandlers = {}
+local receiptInterceptors = {}
 
 local RANDOM_BRAINROT_PRODUCT_ID = StoreConfig.PRODUCT.RANDOM_BRAINROT
 local BrainrotsFolder = ServerStorage:WaitForChild("Brainrots")
@@ -365,6 +366,15 @@ function ProductHandlerServer.createRemotes(self: ProductHandlerServer)
 
 	self._confettiRemote = confettiRemote
 
+	local onPurchaseRemote = eventsFolder:FindFirstChild("OnPurchase")
+	if not onPurchaseRemote then
+		onPurchaseRemote = Instance.new("RemoteEvent")
+		onPurchaseRemote.Name = "OnPurchase"
+		onPurchaseRemote.Parent = eventsFolder
+	end
+
+	self._onPurchaseRemote = onPurchaseRemote
+
 	local effectRemote = eventsFolder:FindFirstChild("PurchaseEffectShow")
 	if not effectRemote then
 		effectRemote = Instance.new("RemoteEvent")
@@ -450,7 +460,9 @@ end
 function ProductHandlerServer.promptPurchase(self: ProductHandlerServer, player: Player, name: string, entry: any)
 	if entry.type == "gamepass" then
 		local ownsPass = false
-		if StoreAccess.shouldTrustMarketplaceOwnership(player) then
+		if StoreAccess.hasGiftedGamePass(player, entry.id) then
+			ownsPass = true
+		elseif StoreAccess.shouldTrustMarketplaceOwnership(player) then
 			local success, result = pcall(function()
 				return MarketplaceService:UserOwnsGamePassAsync(player.UserId, entry.id)
 			end)
@@ -487,6 +499,21 @@ function ProductHandlerServer.registerProductReceipt(
 	customReceiptHandlers[productId] = handler
 end
 
+function ProductHandlerServer.registerReceiptInterceptor(
+	handler: (Player, any) -> Enum.ProductPurchaseDecision?
+): () -> ()
+	table.insert(receiptInterceptors, handler)
+
+	return function()
+		for i = #receiptInterceptors, 1, -1 do
+			if receiptInterceptors[i] == handler then
+				table.remove(receiptInterceptors, i)
+				return
+			end
+		end
+	end
+end
+
 function ProductHandlerServer.setupProcessReceipt(self: ProductHandlerServer)
 	local ReviveService = nil
 	do
@@ -516,6 +543,31 @@ function ProductHandlerServer.setupProcessReceipt(self: ProductHandlerServer)
 			end
 		end
 
+		for _, interceptor in ipairs(receiptInterceptors) do
+			local interceptorPlayer = Players:GetPlayerByUserId(receiptInfo.PlayerId)
+			if not interceptorPlayer then
+				return Enum.ProductPurchaseDecision.NotProcessedYet
+			end
+
+			local ok, decision = pcall(interceptor, interceptorPlayer, receiptInfo)
+			if not ok then
+				warn("[ProductHandler] Receipt interceptor failed for", receiptInfo.ProductId, decision)
+				return Enum.ProductPurchaseDecision.NotProcessedYet
+			end
+
+			if decision == Enum.ProductPurchaseDecision.PurchaseGranted then
+				self._confettiRemote:FireClient(interceptorPlayer)
+
+				if self._onPurchaseRemote then
+					self._onPurchaseRemote:FireClient(interceptorPlayer, receiptInfo.ProductId)
+				end
+			end
+
+			if decision ~= nil then
+				return decision
+			end
+		end
+
 		local customHandler = customReceiptHandlers[receiptInfo.ProductId]
 		if customHandler then
 			local customPlayer = Players:GetPlayerByUserId(receiptInfo.PlayerId)
@@ -529,7 +581,12 @@ function ProductHandlerServer.setupProcessReceipt(self: ProductHandlerServer)
 			end
 			if decision == Enum.ProductPurchaseDecision.PurchaseGranted then
 				self._confettiRemote:FireClient(customPlayer)
+
+				if self._onPurchaseRemote then
+					self._onPurchaseRemote:FireClient(customPlayer, receiptInfo.ProductId)
+				end
 			end
+
 			if decision ~= nil then
 				return decision
 			end
@@ -566,6 +623,7 @@ function ProductHandlerServer.setupProcessReceipt(self: ProductHandlerServer)
 		end
 
 		self._confettiRemote:FireClient(player)
+
 		return Enum.ProductPurchaseDecision.PurchaseGranted
 	end
 end
@@ -581,9 +639,11 @@ end
 export type ProductHandlerServer = typeof(ProductHandlerServer) & {
 	_grantCallbacks: { [string]: (Player) -> () },
 	_limitedStockServer: any,
+	registerReceiptInterceptor: (handler: (Player, any) -> Enum.ProductPurchaseDecision?) -> (() -> ()),
 	_purchaseRemote: RemoteEvent,
 	_confettiRemote: RemoteEvent,
 	_effectRemote: RemoteEvent,
+	_onPurchaseRemote: RemoteEvent,
 }
 
 return ProductHandlerServer

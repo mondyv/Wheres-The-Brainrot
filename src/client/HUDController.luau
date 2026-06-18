@@ -5,8 +5,8 @@
 	Also exposes openFrameByName / closeCurrentFrame for other modules.
 --]]
 
-local Players       = game:GetService("Players")
-local TweenService  = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
 local SocialService = game:GetService("SocialService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
@@ -29,18 +29,18 @@ local function ensureHudRoots()
 end
 
 -- Tween configs
-local OPEN_TWEEN  = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local OPEN_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
 local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 -- Button name (searched recursively across all of mainGui) → Frame name in Frames
 local BUTTON_FRAME_MAP = {
-	Store   = "Store",
-	Index   = "Index",
-	Gifts   = "Daily",
+	Store = "Store",
+	Index = "Index",
+	Gifts = "Daily",
 	Rebirth = "Rebirth2",
-	Config  = "Config/Settings",
+	Config = "Config/Settings",
 }
 
 local currentFrame: Frame? = nil
@@ -50,7 +50,9 @@ local closeTweenByFrame: { [Frame]: Tween } = {}
 
 local function getOrAddUIScale(parent: Instance): UIScale
 	local s = parent:FindFirstChildOfClass("UIScale")
-	if s then return s end
+	if s then
+		return s
+	end
 	s = Instance.new("UIScale")
 	s.Parent = parent
 	return s
@@ -65,12 +67,14 @@ end
 -- If the found instance is a container, grabs the first GuiButton inside it.
 local function findButton(name: string): GuiButton?
 	ensureHudRoots()
-	local inst = (sideUI :: Instance):FindFirstChild(name, true)
-		or (mainGui :: ScreenGui):FindFirstChild(name, true)
-	if not inst then return nil end
-	if inst:IsA("GuiButton") then return inst :: GuiButton end
-	return inst:FindFirstChildOfClass("ImageButton")
-		or inst:FindFirstChildOfClass("TextButton") :: GuiButton?
+	local inst = (sideUI :: Instance):FindFirstChild(name, true) or (mainGui :: ScreenGui):FindFirstChild(name, true)
+	if not inst then
+		return nil
+	end
+	if inst:IsA("GuiButton") then
+		return inst :: GuiButton
+	end
+	return inst:FindFirstChildOfClass("ImageButton") or inst:FindFirstChildOfClass("TextButton") :: GuiButton?
 end
 
 -- ── Animation helpers ─────────────────────────────────────────────────────────
@@ -142,33 +146,41 @@ end
 
 -- ── Button helpers ────────────────────────────────────────────────────────────
 
-local TILT_HOVER = TweenInfo.new(0.18, Enum.EasingStyle.Back,    Enum.EasingDirection.Out)
+local TILT_HOVER = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local TILT_LEAVE = TweenInfo.new(0.22, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
-local TILT_CLICK = TweenInfo.new(0.08, Enum.EasingStyle.Quad,    Enum.EasingDirection.Out)
+local TILT_CLICK = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 -- Full sidebar-button animation: scale on the button + tilt on its Icon child.
 -- Used by every HUD button (frame-openers AND invite).
 local function applyHoverAndClick(button: GuiButton, onClicked: () -> ())
 	local scale = getOrAddUIScale(button)
-	local icon  = button:FindFirstChild("Icon", true)
+	local icon = button:FindFirstChild("Icon", true)
 
 	button.MouseEnter:Connect(function()
 		UIInteractionSounds.playHover()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.10 }):Play()
-		if icon then TweenService:Create(icon, TILT_HOVER, { Rotation = -10 }):Play() end
+		if icon then
+			TweenService:Create(icon, TILT_HOVER, { Rotation = -10 }):Play()
+		end
 	end)
 	button.MouseLeave:Connect(function()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.0 }):Play()
-		if icon then TweenService:Create(icon, TILT_LEAVE, { Rotation = 0 }):Play() end
+		if icon then
+			TweenService:Create(icon, TILT_LEAVE, { Rotation = 0 }):Play()
+		end
 	end)
 	button.MouseButton1Down:Connect(function()
 		UIInteractionSounds.playClick()
 		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.94 }):Play()
-		if icon then TweenService:Create(icon, TILT_CLICK, { Rotation = 6 }):Play() end
+		if icon then
+			TweenService:Create(icon, TILT_CLICK, { Rotation = 6 }):Play()
+		end
 	end)
 	button.MouseButton1Up:Connect(function()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.10 }):Play()
-		if icon then TweenService:Create(icon, TILT_HOVER, { Rotation = -10 }):Play() end
+		if icon then
+			TweenService:Create(icon, TILT_HOVER, { Rotation = -10 }):Play()
+		end
 	end)
 	button.MouseButton1Click:Connect(onClicked)
 end
@@ -250,7 +262,8 @@ local function setupSlowButton()
 
 	player:GetAttributeChangedSignal("SlowWalkEnabled"):Connect(applyStateFromAttribute)
 
-	local btn: GuiButton? = if slowBtn:IsA("GuiButton") then slowBtn :: GuiButton
+	local btn: GuiButton? = if slowBtn:IsA("GuiButton")
+		then slowBtn :: GuiButton
 		else (slowBtn:FindFirstChildOfClass("ImageButton") or slowBtn:FindFirstChildOfClass("TextButton") :: GuiButton?)
 
 	if not btn then
@@ -280,13 +293,15 @@ local function setupSlowButton()
 	btn.MouseButton1Click:Connect(function()
 		player:SetAttribute("SlowWalkEnabled", not (player:GetAttribute("SlowWalkEnabled") == true))
 
-		local pulse = TweenService:Create(scale,
+		local pulse = TweenService:Create(
+			scale,
 			TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ Scale = 1.08 })
+			{ Scale = 1.08 }
+		)
 		pulse.Completed:Once(function()
-			TweenService:Create(scale,
-				TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-				{ Scale = 1.0 }):Play()
+			TweenService
+				:Create(scale, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.0 })
+				:Play()
 		end)
 		pulse:Play()
 	end)
@@ -301,7 +316,7 @@ function HUDController.init()
 	-- Frame-opening HUD buttons
 	for buttonName, frameName in pairs(BUTTON_FRAME_MAP) do
 		local button = findButton(buttonName)
-		local frame  = resolveFrame(frameName)
+		local frame = resolveFrame(frameName)
 		if not button then
 			warn("[HUDController] Button not found: " .. buttonName)
 			continue

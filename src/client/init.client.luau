@@ -12,6 +12,7 @@ LoadingScreenController.showEarly()
 
 pcall(function()
 	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+	StarterGui:SetCore("ResetButtonCallback", false)
 end)
 
 -- Core HUD (cash, sidebar buttons) — shown as soon as the loading screen dismisses
@@ -21,6 +22,7 @@ local function bootCoreUI()
 	require(script.CashBoostController).init()
 	require(script.UIEffectsBootstrap).init()
 	require(script.TabScreenController).init()
+	require(script.RandomBrainrotController):Init()
 end
 
 -- Store panels, boost icons, gamepass checks, etc. — deferred after core is visible
@@ -47,7 +49,6 @@ local function bootDeferredUI()
 	require(script.StealController).init()
 	require(script.XrayController).init()
 	require(script.ChatTagsController).init()
-	require(script.RandomBrainrotController):Init()
 	local adminOk, adminErr = pcall(function()
 		require(script.AdminCommandBar).init()
 	end)

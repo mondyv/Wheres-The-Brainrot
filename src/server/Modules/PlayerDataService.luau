@@ -188,6 +188,41 @@ local function applyStorePurchases(player: Player, raw: any)
 	end
 end
 
+local function normalizeGiftedGamepasses(raw: any): PlayerDataSchema.GiftedGamepassesSaveData
+	local out: PlayerDataSchema.GiftedGamepassesSaveData = {}
+	if typeof(raw) ~= "table" then
+		return out
+	end
+
+	for gamePassId in StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID do
+		local key = tostring(gamePassId)
+		if raw[key] == true or raw[gamePassId] == true then
+			out[key] = true
+		end
+	end
+
+	return out
+end
+
+local function collectGiftedGamepasses(player: Player): PlayerDataSchema.GiftedGamepassesSaveData
+	local out: PlayerDataSchema.GiftedGamepassesSaveData = {}
+	for gamePassId, attr in StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID do
+		if typeof(attr) == "string" and player:GetAttribute(attr) == true then
+			out[tostring(gamePassId)] = true
+		end
+	end
+	return out
+end
+
+local function applyGiftedGamepasses(player: Player, raw: any)
+	local gifted = normalizeGiftedGamepasses(raw)
+	for gamePassId, attr in StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID do
+		if typeof(attr) == "string" then
+			player:SetAttribute(attr, gifted[tostring(gamePassId)] == true)
+		end
+	end
+end
+
 local function collectInventory(player: Player): ({ PlayerDataSchema.BrainrotInvSaveEntry }, { number }, number?)
 	local packed = invokeInternal("ExportInventoryForSave", player)
 	if typeof(packed) ~= "table" then
@@ -292,6 +327,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 	local rebirth = player:GetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR)
 	local dailyBoost = player:GetAttribute(CashBoostUtil.DAILY_BOOST_ATTR)
 	local storePurchases = collectStorePurchases(player)
+	local giftedGamepasses = collectGiftedGamepasses(player)
 
 	return {
 		version = PlayerDataSchema.VERSION,
@@ -308,6 +344,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		dailySkipAllOwned = player:GetAttribute(DailyConfig.SKIP_ALL_ATTR) == true,
 		dailyCashBoostPercent = if typeof(dailyBoost) == "number" then math.max(0, dailyBoost) else 0,
 		storePurchases = storePurchases,
+		giftedGamepasses = giftedGamepasses,
 		indexUnlocks = unlockKeys,
 		goldenNames = goldenNames,
 		inventory = inventory,
@@ -364,6 +401,7 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	player:SetAttribute(CashBoostUtil.DAILY_BOOST_ATTR, data.dailyCashBoostPercent)
 
 	applyStorePurchases(player, (data :: any).storePurchases)
+	applyGiftedGamepasses(player, (data :: any).giftedGamepasses)
 	applySettings(player, (data :: any).settings)
 
 	SwingUpgrades.syncGameplayStatsFromLevels(player, {
@@ -496,6 +534,7 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 			if typeof(raw.dailyCashBoostPercent) == "number" then raw.dailyCashBoostPercent else 0
 		),
 		storePurchases = normalizeStorePurchases(raw.storePurchases),
+		giftedGamepasses = normalizeGiftedGamepasses(raw.giftedGamepasses),
 		indexUnlocks = readStringArray(raw.indexUnlocks),
 		goldenNames = readStringArray(raw.goldenNames),
 		inventory = inventory,
@@ -581,6 +620,7 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		dailySkipAllOwned = false,
 		dailyCashBoostPercent = 0,
 		storePurchases = normalizeStorePurchases(nil),
+		giftedGamepasses = normalizeGiftedGamepasses(nil),
 		indexUnlocks = {},
 		goldenNames = {},
 		inventory = {},

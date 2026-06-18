@@ -32,6 +32,8 @@ export type StorePurchasesSaveData = {
 	packPurchases: { [string]: number },
 }
 
+export type GiftedGamepassesSaveData = { [string]: boolean }
+
 export type PlayerSettingsSaveData = {
 	musicVolume: number,
 	sfxVolume: number,
@@ -64,6 +66,7 @@ export type PlayerSaveData = {
 	stands: { StandSaveEntry },
 	lastSavedAt: number,
 	storePurchases: StorePurchasesSaveData?,
+	giftedGamepasses: GiftedGamepassesSaveData?,
 	settings: PlayerSettingsSaveData?,
 }
 

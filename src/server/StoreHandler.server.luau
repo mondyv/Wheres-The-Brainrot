@@ -315,6 +315,10 @@ local function ownsGamePass(player: Player, gamePassId: number): boolean
 end
 
 local function isGamePassOwnedForEffects(player: Player, gamePassId: number, fromPurchase: boolean?): boolean
+	if StoreAccess.hasGiftedGamePass(player, gamePassId) then
+		return true
+	end
+
 	if fromPurchase then
 		local ownedAttr = GAMEPASS_OWNED_ATTR_BY_ID[gamePassId]
 		if ownedAttr and player:GetAttribute(ownedAttr) == true then
@@ -322,6 +326,16 @@ local function isGamePassOwnedForEffects(player: Player, gamePassId: number, fro
 		end
 	end
 	return ownsGamePass(player, gamePassId)
+end
+
+local function hasAnyGiftedGamePass(player: Player): boolean
+	for gamePassId in StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID do
+		if StoreAccess.hasGiftedGamePass(player, gamePassId) then
+			return true
+		end
+	end
+
+	return false
 end
 
 local function clearGamePassAttributes(player: Player)
@@ -339,7 +353,7 @@ local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
 	local A = StoreConfig.ATTR
 	local G = StoreConfig.GAMEPASS
 
-	if not fromPurchase and StoreAccess.isPrivilegedMarketplaceTester(player) then
+	if not fromPurchase and StoreAccess.isPrivilegedMarketplaceTester(player) and not hasAnyGiftedGamePass(player) then
 		clearGamePassAttributes(player)
 		return
 	end
@@ -402,6 +416,7 @@ end
 local function onPlayerAdded(player: Player)
 	initPlayerAttributes(player)
 	task.spawn(function()
+		PlayerDataService.waitUntilLoaded(player)
 		applyGamePassEffects(player)
 	end)
 end

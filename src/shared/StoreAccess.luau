@@ -6,6 +6,8 @@
 
 local M = {}
 
+local StoreConfig = require(script.Parent:WaitForChild("StoreConfig"))
+
 local GROUP_OWNER_RANK = 254
 
 function M.isPrivilegedMarketplaceTester(player: Player): boolean
@@ -25,6 +27,15 @@ end
 
 function M.shouldTrustMarketplaceOwnership(player: Player): boolean
 	return not M.isPrivilegedMarketplaceTester(player)
+end
+
+function M.getGiftedGamePassAttribute(gamePassId: number): string?
+	return StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID[gamePassId]
+end
+
+function M.hasGiftedGamePass(player: Player, gamePassId: number): boolean
+	local attr = M.getGiftedGamePassAttribute(gamePassId)
+	return attr ~= nil and player:GetAttribute(attr) == true
 end
 
 return M

@@ -51,6 +51,14 @@ StoreConfig.ATTR = {
 	MEGA_LUCK_OWNED = "MegaLuckOwned",
 	XRAY_OWNED = "XrayVisionOwned",
 
+	-- Custom saved entitlements granted by the gifting system.
+	GIFTED_VIP = "GiftedVIP",
+	GIFTED_DOUBLE_CASH = "GiftedDoubleCash",
+	GIFTED_DOUBLE_UPGRADES = "GiftedDoubleUpgrades",
+	GIFTED_SUPER_LUCK = "GiftedSuperLuck",
+	GIFTED_MEGA_LUCK = "GiftedMegaLuck",
+	GIFTED_XRAY = "GiftedXray",
+
 	-- One-time / counter grants
 	EXCLUSIVE_OWNED = "ExclusiveBrainrotOwned",
 	FREE_STEAL_COUNT = "FreeStealCount",
@@ -126,6 +134,58 @@ StoreConfig.PACKS = {
 }
 
 StoreConfig.PACK_PURCHASE_LIMIT = 2
+
+-- Developer products that may be purchased for another player through GiftsService.
+StoreConfig.GIFTABLE_PRODUCTS = {
+	[StoreConfig.PRODUCT.RANDOM_BRAINROT] = {
+		displayName = "Random Brainrot",
+		rewardKind = "randomBrainrot",
+	},
+}
+
+StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID = {
+	[StoreConfig.GAMEPASS.VIP] = StoreConfig.ATTR.GIFTED_VIP,
+	[StoreConfig.GAMEPASS.DOUBLE_CASH] = StoreConfig.ATTR.GIFTED_DOUBLE_CASH,
+	[StoreConfig.GAMEPASS.DOUBLE_UPGRADES] = StoreConfig.ATTR.GIFTED_DOUBLE_UPGRADES,
+	[StoreConfig.GAMEPASS.SUPER_LUCK] = StoreConfig.ATTR.GIFTED_SUPER_LUCK,
+	[StoreConfig.GAMEPASS.MEGA_LUCK] = StoreConfig.ATTR.GIFTED_MEGA_LUCK,
+	[StoreConfig.GAMEPASS.XRAY] = StoreConfig.ATTR.GIFTED_XRAY,
+}
+
+-- Fill `giftProductId` with a developer product id for each giftable pass when
+-- the products exist in Roblox. Gamepass ownership itself is not transferred.
+StoreConfig.GIFTABLE_GAMEPASSES = {
+	[StoreConfig.GAMEPASS.VIP] = {
+		displayName = "VIP",
+		entitlementKey = StoreConfig.ATTR.GIFTED_VIP,
+		giftProductId = nil,
+	},
+	[StoreConfig.GAMEPASS.DOUBLE_CASH] = {
+		displayName = "2x Cash",
+		entitlementKey = StoreConfig.ATTR.GIFTED_DOUBLE_CASH,
+		giftProductId = nil,
+	},
+	[StoreConfig.GAMEPASS.DOUBLE_UPGRADES] = {
+		displayName = "2x Upgrades",
+		entitlementKey = StoreConfig.ATTR.GIFTED_DOUBLE_UPGRADES,
+		giftProductId = nil,
+	},
+	[StoreConfig.GAMEPASS.SUPER_LUCK] = {
+		displayName = "Super Luck",
+		entitlementKey = StoreConfig.ATTR.GIFTED_SUPER_LUCK,
+		giftProductId = nil,
+	},
+	[StoreConfig.GAMEPASS.MEGA_LUCK] = {
+		displayName = "Mega Luck",
+		entitlementKey = StoreConfig.ATTR.GIFTED_MEGA_LUCK,
+		giftProductId = nil,
+	},
+	[StoreConfig.GAMEPASS.XRAY] = {
+		displayName = "X-Ray",
+		entitlementKey = StoreConfig.ATTR.GIFTED_XRAY,
+		giftProductId = nil,
+	},
+}
 
 -- Per-lucky-block rarity roll pools (rarity ids match Brainrots.RarityId).
 StoreConfig.LUCKY_BLOCK_RARITY_WEIGHTS = {

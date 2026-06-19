@@ -107,7 +107,7 @@ C.MOBILE_REAL_JUMP_PRESS_WINDOW = 0.28
 -- Grounded range should match actual swing reach, otherwise the UI can show red even when attach is allowed.
 -- These are fallback floors only; the live grounded ready distance uses getSwingRange().
 C.GROUNDED_READY_RANGE = 75
-C.GROUNDED_BLOCKED_UI_RANGE = 75
+C.GROUNDED_BLOCKED_UI_RANGE = 50
 C.SAFEZONE_BLOCKED_UI_RANGE = 48
 C.AIRBORNE_TARGET_UI_EXTRA = 45
 
@@ -2688,7 +2688,7 @@ local function boot(character)
 			local playerGui = player:WaitForChild("PlayerGui")
 			markerGui = Instance.new("BillboardGui")
 			markerGui.Name = "SwingTargetMarker"
-			markerGui.Size = UDim2.fromOffset(128, 82)
+			markerGui.Size = UDim2.fromOffset(128, 96)
 			markerGui.AlwaysOnTop = true
 			markerGui.LightInfluence = 0
 			markerGui.MaxDistance = 320
@@ -2699,7 +2699,7 @@ local function boot(character)
 			local ring = Instance.new("Frame")
 			ring.Name = "Ring"
 			ring.Size = UDim2.fromOffset(42, 42)
-			ring.Position = UDim2.new(0.5, -21, 0, 0)
+			ring.Position = UDim2.new(0.5, -21, 0.5, -21)
 			ring.BackgroundTransparency = 1
 			ring.BorderSizePixel = 0
 			ring.Parent = markerGui
@@ -2733,7 +2733,7 @@ local function boot(character)
 			markerLabel = Instance.new("TextLabel")
 			markerLabel.Name = "Label"
 			markerLabel.Size = UDim2.new(1, 0, 0, 24)
-			markerLabel.Position = UDim2.new(0, 0, 0, 48)
+			markerLabel.Position = UDim2.new(0, 0, 0.5, 26)
 			markerLabel.BackgroundTransparency = 1
 			markerLabel.Font = Enum.Font.GothamBold
 			markerLabel.TextColor3 = C.READY_COLOR
@@ -2750,7 +2750,6 @@ local function boot(character)
 
 		if target and not isSwinging then
 			local attachWorld = closestAttachWorldOnPart(target)
-			local markerOffset = Vector3.new(0, target.Size.Y * 0.5 + 0.9, 0)
 			targetReadyGoal = canSwingNow and 1 or 0
 			previewFadeGoal = 1
 			highlightedTarget = target
@@ -2759,7 +2758,7 @@ local function boot(character)
 
 			updateTargetHighlight(target)
 			setTargetHighlightColor(canSwingNow)
-			markerAnchorPart.CFrame = CFrame.new(attachWorld + markerOffset)
+			markerAnchorPart.CFrame = CFrame.new(attachWorld)
 			if markerGui.Adornee ~= markerAnchorPart then
 				markerGui.Adornee = markerAnchorPart
 			end
@@ -2849,7 +2848,7 @@ local function boot(character)
 			markerLabel.TextColor3 = targetVisualColor
 			markerLabel.TextTransparency = 0
 			markerLabel.TextStrokeTransparency = 0.35
-			markerLabel.Position = UDim2.new(0, 0, 0, 48 - readyBob)
+			markerLabel.Position = UDim2.new(0, 0, 0.5, 26 - readyBob)
 
 			if markerStroke then
 				markerStroke.Color = targetVisualColor
@@ -3295,11 +3294,22 @@ local function boot(character)
 		local reach = getSwingRange()
 		local baseRopeMax = getRopeMaxLength()
 		local ropeRestLength = getRopeRestLength()
-		local attachLimit = math.max(reach, C.GROUNDED_READY_RANGE)
+
+		local airborneAttach = isAirborneForSwing()
+		local groundedAttach = isGroundedForSwing()
+
+		if not airborneAttach and not groundedAttach then
+			return
+		end
+
+		local attachLimit = airborneAttach and reach or C.GROUNDED_READY_RANGE
+
 		if dist < 2 or dist > attachLimit then
 			return
 		end
+
 		releaseStyle.cancel()
+
 		local ropeMaxFloor = math.max(C.ROPE_SAFE_MAX_MIN_LENGTH, C.ROPE_MIN_LENGTH + C.ROPE_HANG_PULL_MIN_GAP + 8)
 		local ropeStretchFloor = math.min(baseRopeMax, ropeRestLength + C.ROPE_HANG_PULL_MIN_GAP)
 		local ropeStretchCeiling = math.min(
@@ -3916,7 +3926,7 @@ local function boot(character)
 			maxDistance = getSwingRange()
 		elseif isGroundedForSwing() then
 			groundedAttempt = true
-			maxDistance = math.max(C.GROUNDED_READY_RANGE, getSwingRange())
+			maxDistance = C.GROUNDED_READY_RANGE
 			lookDot = C.GROUNDED_TARGET_LOOK_DOT
 			screenLimit = C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT
 		else
@@ -4694,11 +4704,8 @@ local function boot(character)
 							scannedVisualTarget, scannedVisualCanSwing =
 								pickVisualSwingTarget(0, C.SAFEZONE_BLOCKED_UI_RANGE, highlightedTarget, true)
 						else
-							scannedVisualTarget, scannedVisualCanSwing = pickVisualSwingTarget(
-								math.max(C.GROUNDED_READY_RANGE, getSwingRange()),
-								math.max(C.GROUNDED_READY_RANGE, getSwingRange()),
-								highlightedTarget
-							)
+							scannedVisualTarget, scannedVisualCanSwing =
+								pickVisualSwingTarget(C.GROUNDED_READY_RANGE, C.GROUNDED_READY_RANGE, highlightedTarget)
 						end
 					end
 					if

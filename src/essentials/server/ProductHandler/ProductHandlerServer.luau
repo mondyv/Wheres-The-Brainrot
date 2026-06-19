@@ -21,6 +21,24 @@ local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitFor
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local StoreAccess = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreAccess"))
 
+local function requireServerModule(moduleName: string)
+	local localModule = script.Parent:FindFirstChild(moduleName)
+	if localModule and localModule:IsA("ModuleScript") then
+		return require(localModule)
+	end
+
+	local serverFolder = ServerScriptService:FindFirstChild("Server")
+	local modulesFolder = serverFolder and serverFolder:FindFirstChild("Modules")
+	local sharedModule = modulesFolder and modulesFolder:FindFirstChild(moduleName)
+	if sharedModule and sharedModule:IsA("ModuleScript") then
+		return require(sharedModule)
+	end
+
+	error(`[ProductHandler] Missing server module: {moduleName}`)
+end
+
+local ItemService = requireServerModule("ItemService")
+
 local GAMEPASS_OWNED_ATTR_BY_ID: { [number]: string } = {
 	[StoreConfig.GAMEPASS.VIP] = StoreConfig.ATTR.VIP_OWNED,
 	[StoreConfig.GAMEPASS.XRAY] = StoreConfig.ATTR.XRAY_OWNED,
@@ -38,7 +56,7 @@ local customReceiptHandlers = {}
 local receiptInterceptors = {}
 
 local RANDOM_BRAINROT_PRODUCT_ID = StoreConfig.PRODUCT.RANDOM_BRAINROT
-local BrainrotsFolder = ServerStorage:WaitForChild("Brainrots")
+local BrainrotsFolder = ServerStorage:FindFirstChild("Brainrots")
 
 local DEFAULT_VARIANT = "Normal"
 
@@ -120,6 +138,10 @@ local function pickRandomVariant(icons: { [string]: string }): string
 end
 
 local function findBrainrotTemplate(brainrotName: string, variantName: string): Model?
+	if not BrainrotsFolder then
+		return nil
+	end
+
 	local brainrotFolder = BrainrotsFolder:FindFirstChild(brainrotName)
 
 	if not brainrotFolder or not brainrotFolder:IsA("Folder") then
@@ -254,31 +276,85 @@ local function buildBrainrotTool(brainrotData: any, variantName: string): Tool?
 	return tool
 end
 
+local RANDOM_BRAINROT_GRANT_TIMEOUT = 15
+
+local function snapshotInventoryByUid(player: Player): { [string]: boolean }
+	local byUid: { [string]: boolean } = {}
+	local inventory, invErr = ItemService:GetInventory(player, RANDOM_BRAINROT_GRANT_TIMEOUT)
+
+	if invErr then
+		warn(`[ProductHandler] Could not snapshot inventory before random brainrot grant for {player.Name}: {invErr}`)
+		return byUid
+	end
+
+	for _, entry in ipairs(inventory) do
+		if typeof(entry.uid) == "string" and entry.uid ~= "" then
+			byUid[entry.uid] = true
+		end
+	end
+
+	return byUid
+end
+
+local function applyLastCollectedAttributes(player: Player, beforeByUid: { [string]: boolean })
+	local inventory, invErr = ItemService:GetInventory(player, RANDOM_BRAINROT_GRANT_TIMEOUT)
+
+	if invErr then
+		warn(`[ProductHandler] Random brainrot granted, but inventory refresh failed for {player.Name}: {invErr}`)
+		return
+	end
+
+	local grantedEntry: any = nil
+
+	for _, entry in ipairs(inventory) do
+		local uid = entry.uid
+		if typeof(uid) == "string" and uid ~= "" and beforeByUid[uid] ~= true then
+			grantedEntry = entry
+			break
+		end
+	end
+
+	grantedEntry = grantedEntry or inventory[#inventory]
+
+	if not grantedEntry then
+		return
+	end
+
+	player:SetAttribute("LastCollectedBrainrot", grantedEntry.name)
+
+	if typeof(grantedEntry.uid) == "string" then
+		player:SetAttribute("LastCollectedBrainrotUid", grantedEntry.uid)
+	end
+
+	if typeof(grantedEntry.rarity) == "string" then
+		player:SetAttribute("LastCollectedBrainrotRarity", grantedEntry.rarity)
+	end
+
+	if typeof(grantedEntry.mutation) == "string" then
+		player:SetAttribute("LastCollectedBrainrotMutation", grantedEntry.mutation)
+	end
+end
+
 local function grantRandomBrainrot(player: Player): boolean
-	local backpack = player:FindFirstChildOfClass("Backpack")
+	local beforeByUid = snapshotInventoryByUid(player)
 
-	if not backpack then
-		warn(`[ProductHandler] No Backpack found for {player.Name}`)
+	local success, err = ItemService:GiveRandomBrainrot(player, nil, {
+		equip = false,
+		save = true,
+		waitForData = true,
+		timeout = RANDOM_BRAINROT_GRANT_TIMEOUT,
+	})
+
+	if not success then
+		warn(`[ProductHandler] ItemService random brainrot grant failed for {player.Name}: {err or "unknown_error"}`)
 		return false
 	end
 
-	local brainrotData = pickRandomBrainrot()
-
-	if not brainrotData then
-		warn("[ProductHandler] No brainrots found in BrainrotsConfig")
-		return false
+	if err then
+		warn(`[ProductHandler] Random brainrot granted for {player.Name}, but ItemService returned: {err}`)
 	end
 
-	local variantName = pickRandomVariant(brainrotData.icons)
-	local tool = buildBrainrotTool(brainrotData, variantName)
-
-	if not tool then
-		return false
-	end
-
-	tool.Parent = backpack
-
-	player:SetAttribute("LastCollectedBrainrot", brainrotData.name)
+	applyLastCollectedAttributes(player, beforeByUid)
 
 	return true
 end
@@ -639,7 +715,7 @@ end
 export type ProductHandlerServer = typeof(ProductHandlerServer) & {
 	_grantCallbacks: { [string]: (Player) -> () },
 	_limitedStockServer: any,
-	registerReceiptInterceptor: (handler: (Player, any) -> Enum.ProductPurchaseDecision?) -> (() -> ()),
+	registerReceiptInterceptor: (handler: (Player, any) -> Enum.ProductPurchaseDecision?) -> () -> (),
 	_purchaseRemote: RemoteEvent,
 	_confettiRemote: RemoteEvent,
 	_effectRemote: RemoteEvent,

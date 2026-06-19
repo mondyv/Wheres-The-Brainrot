@@ -15,7 +15,7 @@
 	Studio layout: anchor Hotbar + Backpack at X=0.5 under Toolbar once at init. ToggleBackpackImage hides while the inventory panel is open (close via X).
 	Hotbar slots may use nested `Button` (e.g. Hotbar["1"].Button.Icon).
 	Brainrot pickups: tuck/untuck via drag; ghost drag; search; backpack frame outline + open/close tweens.
-	Backpack UI rows 1..19 show stashed items in dense order (tucked hotbar slots + list indices >9); row labels use server list index.
+	Backpack UI reuses Backpack.Container and fills visible stashed brainrots from the top-left. Empty rows stay visible.
 
 	Toolbar UI access: spawn safe zone (SafeZoneHitbox / Reddie / Raddie) and RedWall deposit area.
 --]]
@@ -148,6 +148,7 @@ local brainrotInventoryUsed: number = 0
 local brainrotInventoryMax: number = DEFAULT_BRAINROT_CAPACITY
 local brainrotEntries: {
 	{
+		uid: string?,
 		name: string,
 		icon: string,
 		sourcePath: string,
@@ -163,6 +164,7 @@ local backpackGuiFrame: GuiObject? = nil
 local backpackHeaderLabel: Instance? = nil
 local backpackEquipWired = false
 local equipBestWired = false
+local equipBestBusyUntil = 0.0
 
 local brainrotParkedInUI: { [number]: boolean } = {}
 -- Normal brainrots are stored by server inventory index, but their visible hotbar
@@ -171,11 +173,16 @@ local brainrotHotbarSlotByIndex: { [number]: number } = {}
 local brainrotIndexByHotbarSlot: { [number]: number } = {}
 -- UI backpack rows 1..MAX map through this → server list index (tucked + slot >9) so stashed pets fill consecutive rows.
 local backpackDisplayOrder: { number } = {}
+-- Client-only display priority for items freshly moved/tucked into the backpack.
+-- Without this, high inventory indices appear after every lower index, which feels
+-- like the item was thrown to the end instead of the top-left.
+local backpackFrontDisplayOrder: { number } = {}
 local pendingToolbarDrag: {
 	kind: string,
 	idx: number,
 	start: Vector2,
 	texture: string?,
+	uid: string?,
 	rowButton: GuiButton?,
 	equippedOnDown: boolean?,
 	isExtraTool: boolean?,
@@ -222,7 +229,7 @@ local backpackFadeRoot: CanvasGroup? = nil
 local hotbarDragBulkHover = false
 local backpackDragHover = false
 local BACKPACK_FRAME_DRAG_HOVER_SCALE = 1.045
-local BACKPACK_ROW_DRAG_HOVER_SCALE = 1.06
+local BACKPACK_ROW_DRAG_HOVER_SCALE = 1.0
 
 local ToolbarController = {}
 
@@ -330,17 +337,40 @@ local ToolbarController = {}
 
 	local function rebuildBrainrotHotbarReverseMap()
 		brainrotIndexByHotbarSlot = {}
+
+		local validMappings: { { idx: number, slot: number } } = {}
 		for rawIdx, rawSlot in pairs(brainrotHotbarSlotByIndex) do
-			if typeof(rawIdx) == "number" and typeof(rawSlot) == "number" then
-				local idx = math.floor(rawIdx)
+			local idxNum = if typeof(rawIdx) == "number" then rawIdx else tonumber(rawIdx)
+			if typeof(idxNum) == "number" and typeof(rawSlot) == "number" then
+				local idx = math.floor(idxNum)
 				local slot = math.floor(rawSlot)
-				if idx >= 1 and brainrotEntries[idx] ~= nil and slot >= 1 and slot <= HOTBAR_INVENTORY_SLOTS then
-					brainrotIndexByHotbarSlot[slot] = idx
-				else
-					brainrotHotbarSlotByIndex[rawIdx] = nil
+				if
+					idx >= 1
+					and brainrotEntries[idx] ~= nil
+					and brainrotParkedInUI[idx] ~= true
+					and slot >= 1
+					and slot <= HOTBAR_INVENTORY_SLOTS
+				then
+					table.insert(validMappings, { idx = idx, slot = slot })
 				end
+			end
+		end
+
+		-- pairs() order is not stable. Rebuild the maps in inventory order so two
+		-- bad/conflicting mappings never make pets jump into random slots.
+		table.sort(validMappings, function(a, b)
+			return a.idx < b.idx
+		end)
+
+		brainrotHotbarSlotByIndex = {}
+		for _, mapping in ipairs(validMappings) do
+			if brainrotIndexByHotbarSlot[mapping.slot] == nil then
+				brainrotHotbarSlotByIndex[mapping.idx] = mapping.slot
+				brainrotIndexByHotbarSlot[mapping.slot] = mapping.idx
+				brainrotParkedInUI[mapping.idx] = nil
 			else
-				brainrotHotbarSlotByIndex[rawIdx] = nil
+				-- Conflict fallback: keep one owner for the hotbar cell and park the other.
+				brainrotParkedInUI[mapping.idx] = true
 			end
 		end
 	end
@@ -771,111 +801,26 @@ local ToolbarController = {}
 			return
 		end
 
-		local template = container:FindFirstChild("1")
-		if not template or not template:IsA("GuiObject") then
-			return
-		end
-
-		-- Older versions placed lucky blocks inside a __ExtraTools Frame. That frame
-		-- does not size correctly inside UIGridLayout/UIListLayout containers, which
-		-- made the lucky-block buttons huge/tiny and unreliable. Keep extra tools as
-		-- direct container rows so they inherit the same layout behavior as normal
-		-- backpack cells.
 		local oldHost = container:FindFirstChild("__ExtraTools")
 		if oldHost then
 			oldHost:Destroy()
 		end
 
+		for _, child in container:GetChildren() do
+			if child:IsA("GuiObject") and string.sub(child.Name, 1, 8) == "__Extra_" then
+				child:Destroy()
+			end
+		end
+
 		for tool, row in pairs(extraToolRowByTool) do
-			if not isExtraToolParked(tool) or not tool.Parent then
-				if row and row.Parent then
-					row:Destroy()
-				end
-				extraToolRowByTool[tool] = nil
+			if row and row.Parent then
+				row:Destroy()
 			end
+			extraToolRowByTool[tool] = nil
 		end
 
-		for i = #parkedExtraTools, 1, -1 do
-			local tool = parkedExtraTools[i]
-			if not tool.Parent then
-				table.remove(parkedExtraTools, i)
-			end
-		end
-
-		for index, tool in ipairs(parkedExtraTools) do
-			local row = extraToolRowByTool[tool]
-			if not row or not row.Parent then
-				row = (template :: GuiObject):Clone()
-				row.Visible = true
-				row.Parent = container
-				extraToolRowByTool[tool] = row
-
-				local btn = slotPrimaryButton(row :: GuiObject)
-				if btn then
-					passthroughChildClicks(btn :: GuiObject)
-					styleToolbarSlotButton(btn)
-
-					local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
-					btn.MouseEnter:Connect(function()
-						if not canUseToolbar then
-							return
-						end
-						UIInteractionSounds.playHover()
-						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.1 }):Play()
-					end)
-					btn.MouseLeave:Connect(function()
-						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
-					end)
-					btn.MouseButton1Down:Connect(function()
-						if not canUseToolbar then
-							return
-						end
-						if pendingToolbarDrag then
-							return
-						end
-						local tex = toolDisplayTexture(tool)
-						if tex == "" then
-							tex = "rbxasset://textures/ui/GuiImagePlaceholder.png"
-						end
-						UIInteractionSounds.playClick()
-						lastResolvedHotbarDropSlot = nil
-						activeToolbarDrag = true
-						pendingToolbarDrag = {
-							kind = "backpack_extra",
-							idx = index,
-							start = UserInputService:GetMouseLocation(),
-							texture = tex,
-							rowButton = btn,
-							isExtraTool = true,
-							tool = tool,
-						}
-					end)
-				end
-			end
-
-			row.Name = "__Extra_" .. tostring(index)
-			row.LayoutOrder = MAX_BACKPACK_BRAINROT_SLOTS + index
-			row.Size = (template :: GuiObject).Size
-			row.AutomaticSize = Enum.AutomaticSize.None
-			row.Visible = true
-
-			local surface = toolSlotSurface(row :: GuiObject)
-			local tex = toolDisplayTexture(tool)
-			setSlotIcons(surface, (tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png", true)
-			for _, icon in slotIconTargets(surface) do
-				icon.AnchorPoint = Vector2.new(0.5, 0.5)
-				icon.Position = UDim2.new(0.5, 0, 0.5, 0)
-			end
-
-			local rate = surface:FindFirstChild("Rate")
-			if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
-				rate.Text = tool.Name
-			end
-			local key = surface:FindFirstChild("Key")
-			if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
-				key.Text = "LB"
-			end
-		end
+		-- Keep the brainrot Container clean: only numbered brainrot cells belong here.
+		-- Extra/lucky-block UI should use its own container, not this grid.
 	end
 
 	type BackpackSlotPanelDefaults = {
@@ -920,12 +865,17 @@ local ToolbarController = {}
 				stroke.Transparency = defaults.strokeTransparency or 0
 			end
 		else
-			btn.BackgroundTransparency = 1
+			-- Empty backpack cells should still look like real slots.
+			-- Only the icon/rate text gets cleared elsewhere.
+			btn.BackgroundTransparency = defaults.bgTransparency
 			if btn:IsA("ImageButton") then
-				(btn :: ImageButton).ImageTransparency = 1
+				local imageBtn = btn :: ImageButton
+				imageBtn.ImageColor3 = SLOT_BUTTON_IMAGE_TINT
+				imageBtn.ImageTransparency = defaults.imageTransparency or 0
 			end
 			if stroke then
-				stroke.Transparency = 1
+				stroke.Enabled = true
+				stroke.Transparency = defaults.strokeTransparency or 0.6
 			end
 		end
 	end
@@ -980,6 +930,25 @@ local ToolbarController = {}
 		return iconHost
 	end
 
+	local function brainrotEntryIncomeValue(entry: {
+		name: string,
+		rarity: string?,
+		mutation: string?,
+		level: number?,
+		baseIncome: number?,
+	}): number
+		local ok, inc = pcall(function()
+			return BrainrotEconomy.incomePerSecond({
+				name = entry.name,
+				rarity = if typeof(entry.rarity) == "string" then entry.rarity else "common",
+				mutation = if typeof(entry.mutation) == "string" then entry.mutation else "normal",
+				level = if typeof(entry.level) == "number" then entry.level else 1,
+				baseIncome = if typeof(entry.baseIncome) == "number" then entry.baseIncome else 0,
+			})
+		end)
+		return if ok and typeof(inc) == "number" then inc else 0
+	end
+
 	local function formatEntryIncomeLabel(entry: {
 		name: string,
 		rarity: string?,
@@ -987,14 +956,7 @@ local ToolbarController = {}
 		level: number?,
 		baseIncome: number?,
 	}): string
-		local inc = BrainrotEconomy.incomePerSecond({
-			name = entry.name,
-			rarity = if typeof(entry.rarity) == "string" then entry.rarity else "common",
-			mutation = if typeof(entry.mutation) == "string" then entry.mutation else "normal",
-			level = if typeof(entry.level) == "number" then entry.level else 1,
-			baseIncome = if typeof(entry.baseIncome) == "number" then entry.baseIncome else 0,
-		})
-		return BrainrotEconomy.formatCashShort(inc) .. "/s"
+		return BrainrotEconomy.formatCashShort(brainrotEntryIncomeValue(entry)) .. "/s"
 	end
 
 	local function findBackpackChild(frame: Instance, name: string): Instance?
@@ -1009,18 +971,172 @@ local ToolbarController = {}
 		return nil
 	end
 
+	local BACKPACK_TEMPLATE_ATTRIBUTE = "_ToolbarBackpackTemplate"
+	local BACKPACK_GENERATED_ATTRIBUTE = "_ToolbarGeneratedBackpackRow"
+	local BACKPACK_UI_ROW_ATTRIBUTE = "ToolbarBackpackUiRow"
+	local backpackTemplateRow: GuiObject? = nil
+
+	local function findBackpackTemplateRow(container: Instance?): GuiObject?
+		if not container then
+			return nil
+		end
+		if backpackTemplateRow and backpackTemplateRow:IsDescendantOf(container) then
+			backpackTemplateRow.Visible = false
+			backpackTemplateRow.LayoutOrder = 100000
+			return backpackTemplateRow
+		end
+
+		local candidates: { Instance } = {}
+		local direct = container:FindFirstChild("1")
+		if direct then
+			table.insert(candidates, direct)
+		end
+		for _, inst in container:GetDescendants() do
+			if inst.Name == "1" then
+				table.insert(candidates, inst)
+			end
+		end
+
+		for _, candidate in candidates do
+			if candidate:IsA("GuiObject") and candidate:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) ~= true then
+				local gui = candidate :: GuiObject
+				gui:SetAttribute(BACKPACK_TEMPLATE_ATTRIBUTE, true)
+				gui.Visible = false
+				gui.LayoutOrder = 100000
+				backpackTemplateRow = gui
+				return gui
+			end
+		end
+		return nil
+	end
+
+	local function findGeneratedBackpackRow(container: Instance?, index: number): GuiObject?
+		if not container then
+			return nil
+		end
+		for _, inst in container:GetDescendants() do
+			if inst:IsA("GuiObject") and inst:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) == true then
+				local rowIndex = inst:GetAttribute(BACKPACK_UI_ROW_ATTRIBUTE)
+				if typeof(rowIndex) == "number" and math.floor(rowIndex) == index then
+					return inst :: GuiObject
+				end
+			end
+		end
+		return nil
+	end
+
+	local function findBackpackRow(container: Instance?, index: number): GuiObject?
+		if not container then
+			return nil
+		end
+
+		local generated = findGeneratedBackpackRow(container, index)
+		if generated then
+			return generated
+		end
+
+		local rowName = tostring(index)
+		local direct = container:FindFirstChild(rowName)
+		if
+			direct
+			and direct:IsA("GuiObject")
+			and direct:GetAttribute(BACKPACK_TEMPLATE_ATTRIBUTE) ~= true
+			and direct:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) ~= true
+		then
+			return direct :: GuiObject
+		end
+		local nested = container:FindFirstChild(rowName, true)
+		if
+			nested
+			and nested:IsA("GuiObject")
+			and nested:GetAttribute(BACKPACK_TEMPLATE_ATTRIBUTE) ~= true
+			and nested:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) ~= true
+		then
+			return nested :: GuiObject
+		end
+		return nil
+	end
+
+	local function ensureBackpackGeneratedRows(container: Instance?)
+		if not container then
+			return
+		end
+		local template = findBackpackTemplateRow(container)
+		if not template then
+			return
+		end
+
+		local rowsParent = template.Parent or container
+		template.Visible = false
+		template.LayoutOrder = 100000
+
+		for _, inst in rowsParent:GetChildren() do
+			if inst:IsA("GuiObject") and inst:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) == true then
+				local rowIndex = inst:GetAttribute(BACKPACK_UI_ROW_ATTRIBUTE)
+				if typeof(rowIndex) ~= "number" or rowIndex < 1 or rowIndex > MAX_BACKPACK_BRAINROT_SLOTS then
+					inst:Destroy()
+				end
+			end
+		end
+
+		for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
+			local row = findGeneratedBackpackRow(container, idx)
+			if not row or not row.Parent then
+				row = template:Clone()
+				row.Parent = rowsParent
+			end
+			row.Name = tostring(idx)
+			row:SetAttribute(BACKPACK_TEMPLATE_ATTRIBUTE, false)
+			row:SetAttribute(BACKPACK_GENERATED_ATTRIBUTE, true)
+			row:SetAttribute(BACKPACK_UI_ROW_ATTRIBUTE, idx)
+			row.LayoutOrder = idx
+			row.Visible = false
+		end
+	end
+
 	local BACKPACK_CHROME_NAMES = { "BackpackButtons", "OtherButtons", "SortButtons", "SortCatagory", "SortCategory" }
+
+	local function ensureBackpackScrollingVisible(root: Instance)
+		-- Fixes the backpack scrollbar / visible slider being hidden on load.
+		-- This only touches scrolling UI under the backpack frame.
+		for _, inst in root:GetDescendants() do
+			if inst:IsA("ScrollingFrame") then
+				local scrolling = inst :: ScrollingFrame
+				scrolling.Visible = true
+				scrolling.Active = true
+				scrolling.ScrollingEnabled = true
+				scrolling.ScrollBarImageTransparency = 0
+				if scrolling.ScrollBarThickness <= 0 then
+					scrolling.ScrollBarThickness = 8
+				end
+				if scrolling.AutomaticCanvasSize == Enum.AutomaticSize.None then
+					scrolling.AutomaticCanvasSize = Enum.AutomaticSize.Y
+				end
+			elseif inst.Name == "Scrolling" and inst:IsA("GuiObject") then
+				(inst :: GuiObject).Visible = true
+			end
+		end
+	end
+
+	local function scrollBackpackToTop(root: Instance)
+		for _, inst in root:GetDescendants() do
+			if inst:IsA("ScrollingFrame") then
+				(inst :: ScrollingFrame).CanvasPosition = Vector2.new(0, 0)
+			end
+		end
+	end
 
 	local function detachBackpackChromeFromFadeRoot(frame: GuiObject)
 		local fadeRoot = frame:FindFirstChild("_BackpackFadeRoot")
 		if not fadeRoot then
 			return
 		end
-		for _, name in BACKPACK_CHROME_NAMES do
-			local ch = fadeRoot:FindFirstChild(name)
-			if ch then
-				ch.Parent = frame
-			end
+
+		-- Repair older/broken versions that moved Backpack.Container/Scrolling into
+		-- _BackpackFadeRoot. The real Backpack children must stay directly under
+		-- Backpack; otherwise your authored layout and scrolling setup break.
+		for _, ch in fadeRoot:GetChildren() do
+			ch.Parent = frame
 		end
 	end
 
@@ -1053,13 +1169,70 @@ local ToolbarController = {}
 		if container and container:IsA("GuiObject") then
 			(container :: GuiObject).Visible = true
 		end
+		ensureBackpackScrollingVisible(frame)
+	end
+
+	local function ensureBackpackContainerTopLeftLayout(container: Instance)
+		-- UIGridLayout/UIListLayout can live either directly in Container or inside
+		-- Container.Scrolling/Holder with the template row. Do not move Container;
+		-- just force the authored layout to start from the top-left.
+		ensureBackpackGeneratedRows(container)
+
+		local template = findBackpackTemplateRow(container)
+		local rowsParent = if template and template.Parent then template.Parent else container
+
+		local grid = rowsParent:FindFirstChildOfClass("UIGridLayout")
+			or container:FindFirstChildWhichIsA("UIGridLayout", true)
+		if grid then
+			grid.SortOrder = Enum.SortOrder.LayoutOrder
+			grid.FillDirection = Enum.FillDirection.Horizontal
+			grid.StartCorner = Enum.StartCorner.TopLeft
+			grid.HorizontalAlignment = Enum.HorizontalAlignment.Left
+			grid.VerticalAlignment = Enum.VerticalAlignment.Top
+			return
+		end
+
+		local list = rowsParent:FindFirstChildOfClass("UIListLayout")
+			or container:FindFirstChildWhichIsA("UIListLayout", true)
+		if list then
+			list.SortOrder = Enum.SortOrder.LayoutOrder
+			list.HorizontalAlignment = Enum.HorizontalAlignment.Left
+			list.VerticalAlignment = Enum.VerticalAlignment.Top
+		end
 	end
 
 	local function rebuildBackpackDisplayOrder()
+		-- Backpack panel must always fill from TOP-LEFT.
+		-- Items freshly sent back to the backpack are pinned first so a high
+		-- inventory index does not visually jump to the end of the grid.
 		backpackDisplayOrder = {}
-		for ki = 1, #brainrotEntries do
-			if brainrotEntries[ki] and (brainrotParkedInUI[ki] == true or hotbarSlotForBrainrotIndex(ki) == nil) then
-				table.insert(backpackDisplayOrder, ki)
+		local seen: { [number]: boolean } = {}
+		local cleanedFront: { number } = {}
+
+		for _, rawIdx in ipairs(backpackFrontDisplayOrder) do
+			local invIndex = math.floor(rawIdx)
+			if
+				invIndex >= 1
+				and brainrotEntries[invIndex] ~= nil
+				and (brainrotParkedInUI[invIndex] == true or hotbarSlotForBrainrotIndex(invIndex) == nil)
+				and seen[invIndex] ~= true
+			then
+				seen[invIndex] = true
+				table.insert(cleanedFront, invIndex)
+				table.insert(backpackDisplayOrder, invIndex)
+			end
+		end
+
+		backpackFrontDisplayOrder = cleanedFront
+
+		for invIndex = 1, #brainrotEntries do
+			if
+				seen[invIndex] ~= true
+				and brainrotEntries[invIndex] ~= nil
+				and (brainrotParkedInUI[invIndex] == true or hotbarSlotForBrainrotIndex(invIndex) == nil)
+			then
+				seen[invIndex] = true
+				table.insert(backpackDisplayOrder, invIndex)
 			end
 		end
 	end
@@ -1079,8 +1252,19 @@ local ToolbarController = {}
 		return brainrotEntries[li]
 	end
 
-	local function matchesBackpackSearch(itemName: string): boolean
+	local function normalizedBackpackSearchText(): string
 		local q = string.lower((string.gsub((string.gsub(backpackSearchText, "^%s+", "")), "%s+$", "")))
+		-- Some Studio templates put the visual placeholder directly in TextBox.Text
+		-- instead of PlaceholderText. Treat those as an empty search, otherwise a
+		-- refresh after adding/tucking a brainrot filters every row out.
+		if q == "" or q == "search" or q == "search." or q == "search.." or q == "search..." then
+			return ""
+		end
+		return q
+	end
+
+	local function matchesBackpackSearch(itemName: string): boolean
+		local q = normalizedBackpackSearchText()
 		if q == "" then
 			return true
 		end
@@ -1103,7 +1287,7 @@ local ToolbarController = {}
 		end
 		if backpackContainer then
 			for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
-				local row = backpackContainer:FindFirstChild(tostring(idx))
+				local row = findBackpackRow(backpackContainer, idx)
 				if row and row:IsA("GuiObject") and (row :: GuiObject).Visible then
 					TweenService:Create(getOrAddUIScale(row), HIGHLIGHT_TWEEN, { Scale = 1 }):Play()
 				end
@@ -1126,12 +1310,13 @@ local ToolbarController = {}
 			end
 		end
 		if backpackContainer then
+			-- Do not bulk-grow backpack cells while dragging inside the backpack.
+			-- The ghost already gives feedback, and scaling the grid makes the grabbed
+			-- brainrot look like it is resizing/pop-corrupting. Keep cells locked at 1.
 			for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
-				local row = backpackContainer:FindFirstChild(tostring(idx))
+				local row = findBackpackRow(backpackContainer, idx)
 				if row and row:IsA("GuiObject") and (row :: GuiObject).Visible then
-					TweenService
-						:Create(getOrAddUIScale(row), HIGHLIGHT_TWEEN, { Scale = BACKPACK_ROW_DRAG_HOVER_SCALE })
-						:Play()
+					TweenService:Create(getOrAddUIScale(row), HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
 				end
 			end
 		end
@@ -1206,6 +1391,7 @@ local ToolbarController = {}
 		im.BackgroundTransparency = 0.65
 		im.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 		im.Image = texture
+		im.ScaleType = Enum.ScaleType.Fit
 		im.ImageTransparency = 0.05
 		im.Size = UDim2.fromOffset(72, 72)
 		im.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -1258,36 +1444,28 @@ local ToolbarController = {}
 		if backpackFadeRoot and backpackFadeRoot.Parent == frame then
 			return backpackFadeRoot
 		end
+
 		local existing = frame:FindFirstChild("_BackpackFadeRoot")
 		if existing and existing:IsA("CanvasGroup") then
+			-- Do NOT keep real Backpack content inside this wrapper. Older patches moved
+			-- Container into here, which broke your UI hierarchy. Put everything back.
+			for _, ch in existing:GetChildren() do
+				ch.Parent = frame
+			end
 			backpackFadeRoot = existing
 			return existing
 		end
+
 		local cg = Instance.new("CanvasGroup")
 		cg.Name = "_BackpackFadeRoot"
 		cg.Size = UDim2.fromScale(1, 1)
 		cg.BackgroundTransparency = 1
 		cg.BorderSizePixel = 0
 		cg.GroupTransparency = 0
-		local toMove: { Instance } = {}
-		for _, ch in frame:GetChildren() do
-			table.insert(toMove, ch)
-		end
+		cg.Visible = false
 		cg.Parent = frame
-		for _, ch in toMove do
-			if ch ~= cg then
-				local skip = false
-				for _, name in BACKPACK_CHROME_NAMES do
-					if ch.Name == name then
-						skip = true
-						break
-					end
-				end
-				if not skip then
-					ch.Parent = cg
-				end
-			end
-		end
+
+		-- Important: this must stay EMPTY. Never parent Container/Scrolling/slots into it.
 		backpackFadeRoot = cg
 		return cg
 	end
@@ -1345,6 +1523,7 @@ local ToolbarController = {}
 		if open then
 			f.Visible = true
 			ensureBackpackChromeVisible(f)
+			scrollBackpackToTop(f)
 			fadeRoot.GroupTransparency = 0
 			sc.Scale = 0.94
 			local backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_OPEN_TWEEN, { Scale = 1 })
@@ -2171,23 +2350,49 @@ local ToolbarController = {}
 		if not container then
 			return
 		end
+		ensureBackpackGeneratedRows(container)
 		rebuildBackpackDisplayOrder()
+		ensureBackpackContainerTopLeftLayout(container)
+		if backpackFrameRef then
+			ensureBackpackScrollingVisible(backpackFrameRef)
+		end
+
+		-- IMPORTANT: do NOT hide/delete non-numbered children of Container.
+		-- Some UIs keep the actual slots inside Container.Scrolling / Container.Holder.
+		-- Hiding those wrappers makes every brainrot disappear after a refresh.
+		-- Only remove stale cloned extra rows created by older versions.
+		for _, child in container:GetChildren() do
+			if child:IsA("GuiObject") and string.sub(child.Name, 1, 8) == "__Extra_" then
+				child:Destroy()
+			end
+		end
+
+		local hasActiveSearch = normalizedBackpackSearchText() ~= ""
+
 		for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
-			local row = container:FindFirstChild(tostring(idx))
+			local row = findBackpackRow(container, idx)
 			if not row or not row:IsA("GuiObject") then
 				continue
 			end
+
+			-- Force normal layout order so visible cells start at row 1 / top-left.
+			(row :: GuiObject).LayoutOrder = idx
+
 			local entry = brainrotEntryForBackpackSlot(idx)
-			if entry and backpackSearchText ~= "" and not matchesBackpackSearch(entry.name) then
+			local listIdx = listIndexForBackpackUiRow(idx)
+			if entry and hasActiveSearch and not matchesBackpackSearch(entry.name) then
 				entry = nil
+				listIdx = nil
 			end
+
+			-- Only generated rows with real brainrots should be visible.
+			-- The original Container["1"] row is a hidden template and must never show.
 			row.Visible = entry ~= nil
-			if not entry then
-				continue
-			end
+
 			local surface = toolSlotSurface(row :: GuiObject)
 			local rate = surface:FindFirstChild("Rate")
 			local key = surface:FindFirstChild("Key")
+
 			if entry then
 				setSlotIcons(
 					surface,
@@ -2202,8 +2407,9 @@ local ToolbarController = {}
 					rate.Text = formatEntryIncomeLabel(entry)
 				end
 				if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
-					local li = listIndexForBackpackUiRow(idx)
-					key.Text = if li then tostring(li) else tostring(idx)
+					-- Show original server inventory slot on occupied cells, even while
+					-- the backpack grid itself stays packed at the top-left.
+					key.Text = if listIdx then tostring(listIdx) else tostring(idx)
 				end
 			else
 				setSlotIcons(surface, "", false)
@@ -2218,12 +2424,14 @@ local ToolbarController = {}
 					key.Text = tostring(idx)
 				end
 			end
+
 			local btn = slotPrimaryButton(row :: GuiObject)
 			if btn then
 				applyBackpackSlotPanelAppearance(btn, entry ~= nil)
 			end
 			passthroughChildClicks(surface :: GuiObject)
 		end
+
 		refreshParkedExtraToolsUI()
 	end
 
@@ -2231,21 +2439,147 @@ local ToolbarController = {}
 		if not canUseToolbar then
 			return
 		end
-		local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
-		local ev = folder and folder:FindFirstChild("EquipBestBrainrot")
-		if ev and ev:IsA("RemoteEvent") then
-			ev:FireServer()
+
+		-- Debounce Equip Best so it cannot double-fire while sync packets are still arriving.
+		local now = os.clock()
+		if now < equipBestBusyUntil then
+			return
 		end
+		equipBestBusyUntil = now + 0.75
+
+		local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
+
+		-- Do NOT use EquipBestBrainrot here. That server action does not carry the
+		-- exact target hotbar slots, so the next sync can shove pets back into the
+		-- backpack or into old/default positions. Use BrainrotSetParkedSlot below
+		-- with explicit slot numbers so the layout is deterministic.
+		local ranked: { { idx: number, income: number } } = {}
+		for idx, entry in ipairs(brainrotEntries) do
+			if entry ~= nil then
+				table.insert(ranked, {
+					idx = idx,
+					income = brainrotEntryIncomeValue(entry),
+				})
+			end
+		end
+
+		if #ranked == 0 then
+			return
+		end
+
+		table.sort(ranked, function(a, b)
+			if a.income == b.income then
+				return a.idx < b.idx
+			end
+			return a.income > b.income
+		end)
+
+		local desiredHotbar: { [number]: number } = {}
+		local selected: { [number]: boolean } = {}
+		for slot = 1, math.min(HOTBAR_INVENTORY_SLOTS, #ranked) do
+			local invIdx = ranked[slot].idx
+			desiredHotbar[invIdx] = slot
+			selected[invIdx] = true
+		end
+
+		local previousHotbarSlots = brainrotHotbarSlotByIndex
+		local previousParkedSlots = brainrotParkedInUI
+
+		brainrotHotbarSlotByIndex = {}
+		brainrotParkedInUI = {}
+		for idx = 1, #brainrotEntries do
+			local wantedSlot = desiredHotbar[idx]
+			if wantedSlot then
+				brainrotHotbarSlotByIndex[idx] = wantedSlot
+			else
+				brainrotParkedInUI[idx] = true
+			end
+		end
+
+		rebuildBrainrotHotbarReverseMap()
+		for si = 1, #slots do
+			refreshSlotVisual(si)
+		end
+		updateHotbarSlotVisibility()
+		refreshBrainrotBackpackUI()
+		if backpackFrameRef then
+			scrollBackpackToTop(backpackFrameRef)
+		end
+		task.defer(rebuildSlots)
+
+		local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
+		if not parkEv or not parkEv:IsA("RemoteEvent") then
+			return
+		end
+
+		local remote = parkEv :: RemoteEvent
+
+		-- Free backpack-only pets first, then place the best pets into explicit
+		-- hotbar slots. This avoids the server briefly resolving slot conflicts and
+		-- sending a pet back.
+		for idx = 1, #brainrotEntries do
+			if desiredHotbar[idx] == nil then
+				local oldSlot = previousHotbarSlots[idx]
+				local wasParked = previousParkedSlots[idx] == true
+				if oldSlot ~= nil or not wasParked then
+					remote:FireServer(idx, true)
+				end
+			end
+		end
+
+		for idx = 1, #brainrotEntries do
+			local wantedSlot = desiredHotbar[idx]
+			if wantedSlot then
+				local oldSlot = previousHotbarSlots[idx]
+				local wasParked = previousParkedSlots[idx] == true
+				if oldSlot ~= wantedSlot or wasParked then
+					remote:FireServer(idx, false, wantedSlot)
+				end
+			end
+		end
+	end
+
+	local optimisticBrainrotMoveToHotbar: (number, number) -> ()
+
+	local function firstEmptyHotbarSlot(preferredSlot: number?): number?
+		if typeof(preferredSlot) == "number" then
+			local preferred = math.clamp(math.floor(preferredSlot), 1, HOTBAR_INVENTORY_SLOTS)
+			if not hotbarSlotIsOccupied(preferred) then
+				return preferred
+			end
+		end
+
+		for slot = 1, HOTBAR_INVENTORY_SLOTS do
+			if not hotbarSlotIsOccupied(slot) then
+				return slot
+			end
+		end
+
+		return nil
 	end
 
 	local function requestMoveBackpackEntryToHotbar(listIdx: number)
 		if not canUseToolbar then
 			return
 		end
+		if not brainrotEntries[listIdx] then
+			return
+		end
+
+		-- A tap from the backpack used to call the server without a target slot.
+		-- That let the server choose any available slot, which made items look random.
+		-- Prefer the item's original 1..9 slot, otherwise use the first empty slot.
+		local targetSlot = firstEmptyHotbarSlot(if listIdx <= HOTBAR_INVENTORY_SLOTS then listIdx else nil)
+		if not targetSlot then
+			return
+		end
+
+		optimisticBrainrotMoveToHotbar(listIdx, targetSlot)
+
 		local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
 		local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
 		if parkEv and parkEv:IsA("RemoteEvent") then
-			parkEv:FireServer(listIdx, false)
+			(parkEv :: RemoteEvent):FireServer(listIdx, false, targetSlot)
 		end
 	end
 
@@ -2255,6 +2589,9 @@ local ToolbarController = {}
 		end
 		updateHotbarSlotVisibility()
 		refreshBrainrotBackpackUI()
+		if backpackFrameRef then
+			scrollBackpackToTop(backpackFrameRef)
+		end
 		task.defer(rebuildSlots)
 	end
 
@@ -2273,20 +2610,89 @@ local ToolbarController = {}
 		return brainrotParkedInUI[index] == true or hotbarSlotForBrainrotIndex(index) == nil
 	end
 
+	local function brainrotUidAtIndex(index: number): string?
+		local entry = brainrotEntries[index]
+		if entry and typeof(entry.uid) == "string" and entry.uid ~= "" then
+			return entry.uid
+		end
+		return nil
+	end
+
+	local function resolveBrainrotIndexForDrag(index: number, uid: string?): number?
+		if typeof(uid) == "string" and uid ~= "" then
+			for invIndex, entry in ipairs(brainrotEntries) do
+				if entry and entry.uid == uid then
+					return invIndex
+				end
+			end
+		end
+
+		if typeof(index) == "number" and brainrotEntries[index] ~= nil then
+			return index
+		end
+
+		return nil
+	end
+
+	local function freezeCurrentHotbarLayout()
+		-- Make every currently visible hotbar brainrot explicit before a drag mutation.
+		-- Without this, legacy/default slot fallback can refill empty cells and make
+		-- unrelated pets jump to other hotbar positions after one pet is tucked.
+		local frozen: { [number]: number } = {}
+		for slot = 1, HOTBAR_INVENTORY_SLOTS do
+			local invIndex = brainrotIndexForHotbarSlot(slot)
+			if invIndex and brainrotEntries[invIndex] and brainrotParkedInUI[invIndex] ~= true then
+				frozen[invIndex] = slot
+			end
+		end
+		brainrotHotbarSlotByIndex = frozen
+		rebuildBrainrotHotbarReverseMap()
+	end
+
+	local function moveBrainrotBackpackDisplayRow(listIdx: number, destUiRow: number)
+		if not brainrotEntries[listIdx] or not localBrainrotIsBackpackVisible(listIdx) then
+			return
+		end
+
+		rebuildBackpackDisplayOrder()
+		local order: { number } = {}
+		local seen: { [number]: boolean } = {}
+
+		for _, invIndex in ipairs(backpackDisplayOrder) do
+			if invIndex ~= listIdx and seen[invIndex] ~= true then
+				seen[invIndex] = true
+				table.insert(order, invIndex)
+			end
+		end
+
+		local insertAt = math.clamp(math.floor(destUiRow), 1, #order + 1)
+		table.insert(order, insertAt, listIdx)
+		backpackFrontDisplayOrder = order
+		refreshBrainrotBackpackUI()
+	end
+
 	local function optimisticBrainrotTuckToBackpack(listIdx: number)
 		if not brainrotEntries[listIdx] then
 			return
 		end
+		freezeCurrentHotbarLayout()
 		brainrotParkedInUI[listIdx] = true
 		brainrotHotbarSlotByIndex[listIdx] = nil
+		for i = #backpackFrontDisplayOrder, 1, -1 do
+			if backpackFrontDisplayOrder[i] == listIdx then
+				table.remove(backpackFrontDisplayOrder, i)
+			end
+		end
+		table.insert(backpackFrontDisplayOrder, 1, listIdx)
 		rebuildBrainrotHotbarReverseMap()
 		refreshAfterLocalBrainrotMove()
 	end
 
-	local function optimisticBrainrotMoveToHotbar(listIdx: number, targetSlot: number)
+	optimisticBrainrotMoveToHotbar = function(listIdx: number, targetSlot: number)
 		if not brainrotEntries[listIdx] then
 			return
 		end
+		freezeCurrentHotbarLayout()
 		local target = math.clamp(math.floor(targetSlot), 1, HOTBAR_INVENTORY_SLOTS)
 		local oldSlot = hotbarSlotForBrainrotIndex(listIdx)
 		local displacedIdx = brainrotIndexForHotbarSlot(target)
@@ -2303,6 +2709,11 @@ local ToolbarController = {}
 
 		brainrotHotbarSlotByIndex[listIdx] = target
 		brainrotParkedInUI[listIdx] = nil
+		for i = #backpackFrontDisplayOrder, 1, -1 do
+			if backpackFrontDisplayOrder[i] == listIdx then
+				table.remove(backpackFrontDisplayOrder, i)
+			end
+		end
 		rebuildBrainrotHotbarReverseMap()
 		refreshAfterLocalBrainrotMove()
 	end
@@ -2328,9 +2739,10 @@ local ToolbarController = {}
 		if backpackEquipWired or not backpackContainer then
 			return
 		end
+		ensureBackpackGeneratedRows(backpackContainer)
 		backpackEquipWired = true
 		for uiRow = 1, MAX_BACKPACK_BRAINROT_SLOTS do
-			local row = backpackContainer:FindFirstChild(tostring(uiRow))
+			local row = findBackpackRow(backpackContainer, uiRow)
 			if not row or not row:IsA("GuiObject") then
 				continue
 			end
@@ -2340,16 +2752,13 @@ local ToolbarController = {}
 				styleToolbarSlotButton(btn)
 				local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
 				btn.MouseEnter:Connect(function()
-					if hotbarDragBulkHover or not canUseToolbar then
+					if pendingToolbarDrag or activeToolbarDrag or hotbarDragBulkHover or not canUseToolbar then
 						return
 					end
 					UIInteractionSounds.playHover()
 					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.1 }):Play()
 				end)
 				btn.MouseLeave:Connect(function()
-					if hotbarDragBulkHover then
-						return
-					end
 					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
 				end)
 				btn.MouseButton1Down:Connect(function()
@@ -2368,11 +2777,13 @@ local ToolbarController = {}
 					local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
 					lastResolvedHotbarDropSlot = nil
 					activeToolbarDrag = true
+					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
 					pendingToolbarDrag = {
 						kind = "backpack",
 						idx = listIdx,
 						start = UserInputService:GetMouseLocation(),
 						texture = tex,
+						uid = brainrotUidAtIndex(listIdx),
 						rowButton = btn,
 						equippedOnDown = false,
 					}
@@ -2508,6 +2919,31 @@ local ToolbarController = {}
 		local entriesSource: any = payload
 		local usedOverride: number? = nil
 		local maxOverride: number? = nil
+		local receivedTuckedSlots = false
+		local receivedHotbarSlots = false
+		local previousHotbarSlotByUid: { [string]: number } = {}
+		local previousParkedByUid: { [string]: boolean } = {}
+		local previousBackpackFrontUids: { string } = {}
+
+		for oldIndex, oldEntry in ipairs(brainrotEntries) do
+			if oldEntry and typeof(oldEntry.uid) == "string" and oldEntry.uid ~= "" then
+				local uid = oldEntry.uid :: string
+				local oldSlot = brainrotHotbarSlotByIndex[oldIndex]
+				if typeof(oldSlot) == "number" then
+					previousHotbarSlotByUid[uid] = oldSlot
+				end
+				if brainrotParkedInUI[oldIndex] == true then
+					previousParkedByUid[uid] = true
+				end
+			end
+		end
+
+		for _, oldIndex in ipairs(backpackFrontDisplayOrder) do
+			local oldEntry = brainrotEntries[oldIndex]
+			if oldEntry and typeof(oldEntry.uid) == "string" and oldEntry.uid ~= "" then
+				table.insert(previousBackpackFrontUids, oldEntry.uid :: string)
+			end
+		end
 		if typeof(payload) == "table" then
 			local t = payload :: any
 			if typeof(t.entries) == "table" then
@@ -2519,6 +2955,7 @@ local ToolbarController = {}
 					maxOverride = math.floor(t.max)
 				end
 				if typeof(t.tuckedSlots) == "table" then
+					receivedTuckedSlots = true
 					brainrotParkedInUI = {}
 					for _, n in ipairs(t.tuckedSlots :: { any }) do
 						if typeof(n) == "number" then
@@ -2529,10 +2966,12 @@ local ToolbarController = {}
 						end
 					end
 				else
-					brainrotParkedInUI = {}
+					-- Older payloads may omit tuckedSlots. Preserve local parked state
+					-- by uid after the new entries list is rebuilt below.
 				end
 
 				if typeof(t.hotbarSlots) == "table" then
+					receivedHotbarSlots = true
 					brainrotHotbarSlotByIndex = {}
 
 					for rawIdx, rawSlot in pairs(t.hotbarSlots :: any) do
@@ -2547,6 +2986,12 @@ local ToolbarController = {}
 							end
 						end
 					end
+				else
+					-- Older server payloads do not include explicit hotbarSlots. Preserve
+					-- the local custom hotbar mapping made by drag/drop and Equip Best;
+					-- otherwise higher-index pets snap back into the backpack after sync.
+					-- rebuildBrainrotHotbarReverseMap() below still removes invalid/conflict
+					-- mappings, so this does not revive deleted items.
 				end
 
 				rebuildBrainrotHotbarReverseMap()
@@ -2557,6 +3002,7 @@ local ToolbarController = {}
 		end
 		local nextList: {
 			{
+				uid: string?,
 				name: string,
 				icon: string,
 				sourcePath: string,
@@ -2569,6 +3015,7 @@ local ToolbarController = {}
 			{}
 		for _, e in ipairs(entriesSource :: { any }) do
 			if typeof(e) == "table" then
+				local uid = (e :: any).uid
 				local name = (e :: any).name
 				local icon = (e :: any).icon
 				local sourcePath = (e :: any).sourcePath
@@ -2578,6 +3025,7 @@ local ToolbarController = {}
 				local baseIncome = (e :: any).baseIncome
 				if typeof(name) == "string" and typeof(icon) == "string" then
 					table.insert(nextList, {
+						uid = if typeof(uid) == "string" and uid ~= "" then uid else nil,
 						name = name,
 						icon = icon,
 						sourcePath = if typeof(sourcePath) == "string" then sourcePath else "",
@@ -2590,6 +3038,50 @@ local ToolbarController = {}
 			end
 		end
 		brainrotEntries = nextList
+
+		if not receivedHotbarSlots then
+			local remappedHotbar: { [number]: number } = {}
+			for newIndex, entry in ipairs(brainrotEntries) do
+				if entry and typeof(entry.uid) == "string" and entry.uid ~= "" then
+					local previousSlot = previousHotbarSlotByUid[entry.uid]
+					if typeof(previousSlot) == "number" then
+						remappedHotbar[newIndex] = previousSlot
+					end
+				end
+			end
+			brainrotHotbarSlotByIndex = remappedHotbar
+		end
+
+		if not receivedTuckedSlots then
+			local remappedParked: { [number]: boolean } = {}
+			for newIndex, entry in ipairs(brainrotEntries) do
+				if
+					entry
+					and typeof(entry.uid) == "string"
+					and entry.uid ~= ""
+					and previousParkedByUid[entry.uid] == true
+				then
+					remappedParked[newIndex] = true
+				end
+			end
+			brainrotParkedInUI = remappedParked
+		end
+
+		if #previousBackpackFrontUids > 0 then
+			local remappedFront: { number } = {}
+			local seenFront: { [number]: boolean } = {}
+			for _, uid in ipairs(previousBackpackFrontUids) do
+				for newIndex, entry in ipairs(brainrotEntries) do
+					if entry and entry.uid == uid and seenFront[newIndex] ~= true then
+						seenFront[newIndex] = true
+						table.insert(remappedFront, newIndex)
+						break
+					end
+				end
+			end
+			backpackFrontDisplayOrder = remappedFront
+		end
+
 		rebuildBrainrotHotbarReverseMap()
 		brainrotInventoryUsed = usedOverride or #nextList
 		brainrotInventoryMax = maxOverride or DEFAULT_BRAINROT_CAPACITY
@@ -2949,6 +3441,9 @@ local ToolbarController = {}
 						idx = if isExtraTool then i else dragBrainrotIdx :: number,
 						start = UserInputService:GetMouseLocation(),
 						texture = tex,
+						uid = if isExtraTool or not dragBrainrotIdx
+							then nil
+							else brainrotUidAtIndex(dragBrainrotIdx :: number),
 						rowButton = nil,
 						isExtraTool = isExtraTool,
 						equippedOnDown = equippedOnDown,
@@ -3087,8 +3582,9 @@ local ToolbarController = {}
 			backpackHeaderLabel = resolveBackpackHeaderLabel(backpackFrame)
 			refreshInventoryHeaderText()
 			if backpackContainer then
+				ensureBackpackGeneratedRows(backpackContainer)
 				for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
-					local row = backpackContainer:FindFirstChild(tostring(idx))
+					local row = findBackpackRow(backpackContainer, idx)
 					if row and row:IsA("GuiObject") then
 						local btn = slotPrimaryButton(row :: GuiObject)
 						if btn then
@@ -3238,6 +3734,17 @@ local ToolbarController = {}
 			if input.UserInputType == Enum.UserInputType.Touch then
 				rawEnd = Vector2.new(input.Position.X, input.Position.Y)
 			end
+
+			if pnd.kind == "backpack" or (pnd.kind == "hotbar" and not pnd.isExtraTool) then
+				local resolvedIdx = resolveBrainrotIndexForDrag(pnd.idx, pnd.uid)
+				if not resolvedIdx then
+					clearDragGhost()
+					lastResolvedHotbarDropSlot = nil
+					return
+				end
+				pnd.idx = resolvedIdx
+			end
+
 			if (rawEnd - pnd.start).Magnitude < DRAG_THRESHOLD_PX then
 				if pnd.kind == "backpack" then
 					requestMoveBackpackEntryToHotbar(pnd.idx)
@@ -3357,7 +3864,13 @@ local ToolbarController = {}
 					remote:FireServer(pnd.idx, true)
 					UIInteractionSounds.playClick()
 				elseif targetHotbar and targetHotbar ~= sourceHotbarSlot then
-					-- Hotbar → hotbar swap.
+					-- Hotbar → hotbar swap. Send the displaced pet's new slot too;
+					-- otherwise the server may resolve the conflict differently and the
+					-- hotbar appears to reshuffle after the next sync.
+					local displacedIdx = brainrotIndexForHotbarSlot(targetHotbar)
+					if displacedIdx and displacedIdx ~= pnd.idx and sourceHotbarSlot then
+						remote:FireServer(displacedIdx, false, sourceHotbarSlot)
+					end
 					optimisticBrainrotMoveToHotbar(pnd.idx, targetHotbar)
 					remote:FireServer(pnd.idx, false, targetHotbar)
 					UIInteractionSounds.playClick()
@@ -3368,25 +3881,31 @@ local ToolbarController = {}
 					return
 				end
 				if targetHotbar then
-					-- Backpack → exact hotbar slot.
+					-- Backpack → exact hotbar slot. If the target slot is occupied,
+					-- park that occupant first so the server does not pick a random
+					-- conflict resolution and reshuffle the hotbar on sync.
+					local displacedIdx = brainrotIndexForHotbarSlot(targetHotbar)
+					if displacedIdx and displacedIdx ~= pnd.idx then
+						remote:FireServer(displacedIdx, true)
+					end
 					optimisticBrainrotMoveToHotbar(pnd.idx, targetHotbar)
 					remote:FireServer(pnd.idx, false, targetHotbar)
 					UIInteractionSounds.playClick()
 				elseif overHotbarZone then
 					-- Fallback: dropped over the hotbar row but not a specific cell.
-					(parkEv :: RemoteEvent):FireServer(pnd.idx, false)
-					UIInteractionSounds.playClick()
-				elseif droppedOnBackpack and destBackpackRow then
-					local destListIdx = listIndexForBackpackUiRow(destBackpackRow)
-					if not destListIdx then
-						destListIdx = #brainrotEntries + 1
-					end
-					if destListIdx ~= pnd.idx then
-						-- Backpack row → backpack row reorder.
-						optimisticBrainrotMoveToBackpackIndex(pnd.idx, destListIdx)
-						remote:FireServer(pnd.idx, false, nil, destListIdx)
+					-- Still choose a deterministic slot; never let the server pick a random one.
+					local fallbackSlot =
+						firstEmptyHotbarSlot(if pnd.idx <= HOTBAR_INVENTORY_SLOTS then pnd.idx else nil)
+					if fallbackSlot then
+						optimisticBrainrotMoveToHotbar(pnd.idx, fallbackSlot)
+						remote:FireServer(pnd.idx, false, fallbackSlot)
 						UIInteractionSounds.playClick()
 					end
+				elseif droppedOnBackpack and destBackpackRow then
+					-- Backpack → backpack reorder. This only changes the visible backpack
+					-- order; it does not touch Equip Best or hotbar slot mappings.
+					moveBrainrotBackpackDisplayRow(pnd.idx, destBackpackRow)
+					UIInteractionSounds.playClick()
 				end
 			end
 		end)

@@ -90,6 +90,7 @@ M.BUSH_BILLBOARD_LIFT_SCALE = 0.66
 M.BUSH_BILLBOARD_MIN_MAX_DISTANCE = 40
 -- Fixed local offset above the bush prompt anchor (keep low — anchor is already lifted to bush top).
 M.BUSH_UI_STATIC_OFFSET = Vector3.new(0, 0.35, 0)
-M.BUSH_XRAY_UI_OFFSET = Vector3.new(0, 1.65, 0)
+-- Sit above the custom bush search prompt card (BUSH_UI_STATIC_OFFSET + CARD_H clearance).
+M.BUSH_XRAY_UI_OFFSET = Vector3.new(0, 3.05, 0)
 
 return M

@@ -27,12 +27,16 @@ local BUSH_HIDDEN_LEVEL_ATTR = "HiddenBrainrotLevel"
 local BUSH_HIDDEN_BASE_INCOME_ATTR = "HiddenBrainrotBaseIncome"
 
 local DEFAULT_BB_SIZE = UDim2.fromOffset(280, 130)
+local EMPTY_BB_SIZE = UDim2.fromOffset(320, 58)
+local EMPTY_NAME_TEXT_SIZE = 24
 local HEADER_MAX_DISTANCE = 90
 
 local XrayController = {}
 
 local templateCache: BillboardGui? = nil
 local billboard: BillboardGui? = nil
+local fullBillboardSize: UDim2 = DEFAULT_BB_SIZE
+local defaultNameTextSize: number = 18
 local infoFrame: Frame? = nil
 local panelStroke: UIStroke? = nil
 local activeBushConns: { RBXScriptConnection } = {}
@@ -93,6 +97,12 @@ local function hideInfoChild(frame: Instance, name: string)
 	end
 end
 
+local function hideInfoLabels(frame: Instance, names: { string })
+	for _, name in names do
+		hideInfoChild(frame, name)
+	end
+end
+
 local function buildBillboard()
 	local template = getHeaderTemplate()
 	if not template then
@@ -110,6 +120,7 @@ local function buildBillboard()
 	bb.MaxDistance = HEADER_MAX_DISTANCE
 	bb.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	bb.Size = if template.Size.Y.Offset > 4 then template.Size else DEFAULT_BB_SIZE
+	fullBillboardSize = bb.Size
 	bb.StudsOffsetWorldSpace = Vector3.zero
 	bb.StudsOffset = PromptConfig.BUSH_XRAY_UI_OFFSET
 
@@ -118,6 +129,10 @@ local function buildBillboard()
 		infoFrame = frame
 		hideInfoChild(frame, "Level")
 		hideInfoChild(frame, "Type")
+		local nameNode = frame:FindFirstChild("Name", true)
+		if nameNode and nameNode:IsA("TextLabel") then
+			defaultNameTextSize = nameNode.TextSize
+		end
 	end
 
 	local panel = bb:FindFirstChildWhichIsA("Frame", true)
@@ -176,6 +191,41 @@ local function readHiddenLoot(bush: Instance): {
 	}
 end
 
+local function applyEmptyHiddenState(infoFrame: Frame)
+	BrainrotHeaderStyle.applyInfoFrame(infoFrame, {
+		name = "No brainrots hiding!",
+		rarity = "common",
+		mutation = "normal",
+		level = 1,
+		rateText = "",
+	})
+	hideInfoLabels(infoFrame, { "Level", "Type", "Rarity", "Rate" })
+
+	local nameNode = infoFrame:FindFirstChild("Name", true)
+	if nameNode and nameNode:IsA("TextLabel") then
+		nameNode.TextSize = EMPTY_NAME_TEXT_SIZE
+		nameNode.TextScaled = false
+		nameNode.TextWrapped = true
+		nameNode.TextColor3 = Color3.fromRGB(235, 235, 240)
+		nameNode.TextStrokeTransparency = 0
+		nameNode.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		nameNode.AnchorPoint = Vector2.new(0.5, 0.5)
+		nameNode.Position = UDim2.fromScale(0.5, 0.5)
+		nameNode.Size = UDim2.new(1, -12, 1, -8)
+		nameNode.TextXAlignment = Enum.TextXAlignment.Center
+		nameNode.TextYAlignment = Enum.TextYAlignment.Center
+	end
+end
+
+local function restoreNameLabelLayout(nameNode: TextLabel)
+	nameNode.TextSize = defaultNameTextSize
+	nameNode.TextScaled = false
+	nameNode.AnchorPoint = Vector2.new(0.5, 0.5)
+	nameNode.Position = UDim2.fromScale(0.5, 0.5)
+	nameNode.Size = UDim2.new(1, -8, 0, 28)
+	nameNode.TextXAlignment = Enum.TextXAlignment.Center
+	nameNode.TextYAlignment = Enum.TextYAlignment.Center
+end
 local function applyPanelStrokeColor(rarity: string?, mutation: string?)
 	if not panelStroke then
 		return
@@ -215,6 +265,7 @@ local function updateForBush(bush: Instance)
 	end
 
 	if loot.hasBrainrot and loot.name and loot.rarity then
+		billboard.Size = fullBillboardSize
 		BrainrotHeaderStyle.applyInfoFrame(infoFrame, {
 			name = loot.name,
 			rarity = loot.rarity,
@@ -222,25 +273,15 @@ local function updateForBush(bush: Instance)
 			level = 1,
 			rateText = formatRate(loot.incomePerSecond),
 		})
-		hideInfoChild(infoFrame, "Level")
-		hideInfoChild(infoFrame, "Type")
+		hideInfoLabels(infoFrame, { "Level", "Type" })
+		local nameNode = infoFrame:FindFirstChild("Name", true)
+		if nameNode and nameNode:IsA("TextLabel") then
+			restoreNameLabelLayout(nameNode)
+		end
 		applyPanelStrokeColor(loot.rarity, loot.mutation)
 	else
-		BrainrotHeaderStyle.applyInfoFrame(infoFrame, {
-			name = "No brainrot hiding...",
-			rarity = "common",
-			mutation = "normal",
-			level = 1,
-			rateText = "",
-		})
-		local rarityNode = infoFrame:FindFirstChild("Rarity", true)
-		local rateNode = infoFrame:FindFirstChild("Rate", true)
-		if rarityNode and rarityNode:IsA("GuiObject") then
-			rarityNode.Visible = false
-		end
-		if rateNode and rateNode:IsA("GuiObject") then
-			rateNode.Visible = false
-		end
+		billboard.Size = EMPTY_BB_SIZE
+		applyEmptyHiddenState(infoFrame)
 		if panelStroke then
 			panelStroke.Color = Color3.fromRGB(90, 90, 100)
 		end
@@ -275,7 +316,7 @@ local function onActiveBushChanged(bush: Instance?)
 	end
 end
 
-local function bushOutlineColor(bush: Instance): Color3?
+local function bushOutlineGradient(bush: Instance): ColorSequence?
 	if not ownsXrayVision() then
 		return nil
 	end
@@ -286,12 +327,12 @@ local function bushOutlineColor(bush: Instance): Color3?
 	if not loot or not loot.hasBrainrot then
 		return nil
 	end
-	return BrainrotHeaderStyle.hiddenLootOutlineColor(loot.rarity, loot.mutation)
+	return BrainrotHeaderStyle.getLootOutlineGradientSequence(loot.rarity, loot.mutation)
 end
 
 local function init()
 	buildBillboard()
-	BushHoldInteraction.setBushOutlineColorProvider(bushOutlineColor)
+	BushHoldInteraction.setBushOutlineGradientProvider(bushOutlineGradient)
 	BushHoldInteraction.onActiveBushChanged(onActiveBushChanged)
 
 	player:GetAttributeChangedSignal(StoreConfig.ATTR.XRAY_OWNED):Connect(function()

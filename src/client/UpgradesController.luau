@@ -8,6 +8,7 @@ local TweenService = game:GetService("TweenService")
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local MainGradientButtons = require(script.Parent.MainGradientButtons)
+local TopNotifController = require(script.Parent.TopNotifController)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 
@@ -438,8 +439,7 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 		local c = if typeof(cash) == "number" then cash else 0
 		local price = priceForUpgrade(upgradeId)
 		if c < price then
-			local TopNotifController = require(script.Parent.TopNotifController)
-			TopNotifController.showError("Not enough cash!")
+			TopNotifController.showCantAfford()
 			prepareRobuxRE:FireServer(upgradeId)
 			pcall(function()
 				PurchasePrompt.promptProduct(SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID)

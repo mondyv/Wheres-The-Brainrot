@@ -1,7 +1,7 @@
 -- [ACTIVE] BushHarvestFloating
 --[[
-	Floating bush harvest offers: brainrot bobs above the bush with a claim ProximityPrompt.
-	Player must interact to carry it; unclaimed offers vanish when the timer expires.
+	Floating bush harvest offers: brainrot bobs above the bush with accept / decline UI.
+	Player accepts to carry it; decline or timeout returns the bush to normal cooldown flow.
 ]]
 
 local Players = game:GetService("Players")
@@ -12,14 +12,14 @@ local Workspace = game:GetService("Workspace")
 
 local M = {}
 
-local FLOAT_CLAIM_DURATION = 15
-local CLAIM_PROMPT_NAME = "BrainrotFloatingClaim"
-local CUSTOM_PROMPT_ATTR = "CustomPromptFX"
-local FLOATING_CLAIM_ATTR = "BrainrotFloatingClaim"
+M.FLOAT_CLAIM_DURATION = 15
+local FLOAT_CLAIM_DURATION = M.FLOAT_CLAIM_DURATION
 local FLOAT_ENDS_AT_ATTR = "BrainrotFloatEndsAt"
 local CLAIMING_ATTR = "BrainrotFloatClaiming"
+local DECLINING_ATTR = "BrainrotFloatDeclining"
+local BUSH_KEY_ATTR = "BrainrotHarvestBushKey"
 
-local claimConnByClone: { [Model]: RBXScriptConnection } = {}
+local floatConnByClone: { [Model]: RBXScriptConnection } = {}
 local vanishTokenByClone: { [Model]: number } = {}
 
 export type Deps = {
@@ -32,25 +32,18 @@ export type Deps = {
 	setAllPartsPhysics: (Model, boolean, boolean) -> (),
 }
 
-local function getVanishRemote(): RemoteEvent?
-	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
-	if not folder then
-		return nil
-	end
-	local ev = folder:FindFirstChild("FloatingClaimVanish")
-	if ev and ev:IsA("RemoteEvent") then
-		return ev
-	end
-	return nil
-end
-
-local function ensureVanishRemote(): RemoteEvent
+local function getBushRemotesFolder(): Folder
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
 	if not folder then
 		folder = Instance.new("Folder")
 		folder.Name = "BushRemotes"
 		folder.Parent = ReplicatedStorage
 	end
+	return folder :: Folder
+end
+
+local function ensureVanishRemote(): RemoteEvent
+	local folder = getBushRemotesFolder()
 	local ev = folder:FindFirstChild("FloatingClaimVanish")
 	if not ev then
 		ev = Instance.new("RemoteEvent")
@@ -60,20 +53,40 @@ local function ensureVanishRemote(): RemoteEvent
 	return ev :: RemoteEvent
 end
 
+local function ensureDeclineFxRemote(): RemoteEvent
+	local folder = getBushRemotesFolder()
+	local ev = folder:FindFirstChild("FloatingClaimDeclineFX")
+	if not ev then
+		ev = Instance.new("RemoteEvent")
+		ev.Name = "FloatingClaimDeclineFX"
+		ev.Parent = folder
+	end
+	return ev :: RemoteEvent
+end
+
+function M.ensureDecisionRemote(): RemoteEvent
+	local folder = getBushRemotesFolder()
+	local ev = folder:FindFirstChild("FloatingClaimDecision")
+	if not ev then
+		ev = Instance.new("RemoteEvent")
+		ev.Name = "FloatingClaimDecision"
+		ev.Parent = folder
+	end
+	return ev :: RemoteEvent
+end
+
 local function fireVanishFX(player: Player, clone: Model)
 	local rarity = clone:GetAttribute("BrainrotRarity")
 	local main = clone:FindFirstChildWhichIsA("BasePart", true)
 	local pos = if main then main.Position else clone:GetPivot().Position
-	local remote = ensureVanishRemote()
-	remote:FireClient(player, pos, if typeof(rarity) == "string" then rarity else "common")
+	ensureVanishRemote():FireClient(player, pos, if typeof(rarity) == "string" then rarity else "common")
 end
 
-local function disconnectClaimConn(clone: Model)
-	local conn = claimConnByClone[clone]
-	if conn then
-		conn:Disconnect()
-		claimConnByClone[clone] = nil
-	end
+local function fireDeclineFX(player: Player, clone: Model)
+	local rarity = clone:GetAttribute("BrainrotRarity")
+	local main = clone:FindFirstChildWhichIsA("BasePart", true)
+	local pos = if main then main.Position else clone:GetPivot().Position
+	ensureDeclineFxRemote():FireClient(player, pos, if typeof(rarity) == "string" then rarity else "common")
 end
 
 local function disconnectFloatConn(deps: Deps, clone: Model)
@@ -84,14 +97,18 @@ local function disconnectFloatConn(deps: Deps, clone: Model)
 	end
 end
 
-local function destroyClaimPrompt(clone: Model)
-	local prompt = clone:FindFirstChild(CLAIM_PROMPT_NAME, true)
-	if prompt then
-		prompt:Destroy()
+local function validateFloatingOwner(player: Player, clone: Model): boolean
+	if clone:GetAttribute("BrainrotCarryPhase") ~= "Floating" then
+		return false
 	end
+	if clone:GetAttribute(CLAIMING_ATTR) == true or clone:GetAttribute(DECLINING_ATTR) == true then
+		return false
+	end
+	local ownerId = clone:GetAttribute("OwnerUserId")
+	return typeof(ownerId) == "number" and ownerId == player.UserId
 end
 
-local function tweenModelVanish(clone: Model, onDone: (() -> ())?)
+local function tweenModelVanish(clone: Model, sink: boolean?, onDone: (() -> ())?)
 	local parts: { BasePart } = {}
 	for _, desc in clone:GetDescendants() do
 		if desc:IsA("BasePart") then
@@ -107,15 +124,18 @@ local function tweenModelVanish(clone: Model, onDone: (() -> ())?)
 
 	local token = (vanishTokenByClone[clone] or 0) + 1
 	vanishTokenByClone[clone] = token
-	local tweenInfo = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-	local remaining = #parts
+	local tweenInfo = TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 	for _, part in parts do
-		TweenService:Create(part, tweenInfo, {
+		local goal: { [string]: any } = {
 			Transparency = 1,
-			Size = part.Size * 0.2,
-		}):Play()
+			Size = part.Size * 0.15,
+		}
+		if sink then
+			goal.CFrame = part.CFrame * CFrame.new(0, -1.8, 0)
+		end
+		TweenService:Create(part, tweenInfo, goal):Play()
 	end
-	task.delay(0.48, function()
+	task.delay(0.44, function()
 		if vanishTokenByClone[clone] ~= token then
 			return
 		end
@@ -127,8 +147,6 @@ end
 
 function M.destroyFloatingOffer(deps: Deps, player: Player?, clone: Model, playVanish: boolean)
 	disconnectFloatConn(deps, clone)
-	disconnectClaimConn(clone)
-	destroyClaimPrompt(clone)
 
 	if not clone.Parent then
 		return
@@ -142,7 +160,7 @@ function M.destroyFloatingOffer(deps: Deps, player: Player?, clone: Model, playV
 		if player then
 			fireVanishFX(player, clone)
 		end
-		tweenModelVanish(clone, function()
+		tweenModelVanish(clone, false, function()
 			if clone.Parent then
 				clone:Destroy()
 			end
@@ -193,14 +211,7 @@ local function playClaimTween(clone: Model, char: Model, onDone: (() -> ())?)
 end
 
 function M.claimFloatingBrainrot(deps: Deps, player: Player, clone: Model): boolean
-	if clone:GetAttribute("BrainrotCarryPhase") ~= "Floating" then
-		return false
-	end
-	if clone:GetAttribute(CLAIMING_ATTR) == true then
-		return false
-	end
-	local ownerId = clone:GetAttribute("OwnerUserId")
-	if typeof(ownerId) ~= "number" or ownerId ~= player.UserId then
+	if not validateFloatingOwner(player, clone) then
 		return false
 	end
 
@@ -211,8 +222,6 @@ function M.claimFloatingBrainrot(deps: Deps, player: Player, clone: Model): bool
 
 	clone:SetAttribute(CLAIMING_ATTR, true)
 	disconnectFloatConn(deps, clone)
-	disconnectClaimConn(clone)
-	destroyClaimPrompt(clone)
 	deps.removePendingFloat(player, clone)
 	deps.syncBrainrotCarryCountAttr(player)
 
@@ -226,56 +235,33 @@ function M.claimFloatingBrainrot(deps: Deps, player: Player, clone: Model): bool
 	return true
 end
 
-local function destroyAllProximityPrompts(model: Model)
-	for _, d in model:GetDescendants() do
-		if d:IsA("ProximityPrompt") then
-			d:Destroy()
-		end
+function M.declineFloatingBrainrot(deps: Deps, player: Player, clone: Model): boolean
+	if not validateFloatingOwner(player, clone) then
+		return false
 	end
+
+	clone:SetAttribute(DECLINING_ATTR, true)
+	disconnectFloatConn(deps, clone)
+	deps.removePendingFloat(player, clone)
+	deps.syncBrainrotCarryCountAttr(player)
+
+	fireDeclineFX(player, clone)
+	tweenModelVanish(clone, true, function()
+		if clone.Parent then
+			clone:Destroy()
+		end
+	end)
+	return true
 end
 
-local function attachClaimPrompt(deps: Deps, player: Player, clone: Model)
-	local main = deps.getMainPart(clone)
-	if not main then
-		return
+function M.handleDecision(deps: Deps, player: Player, clone: Model, decision: string): boolean
+	if decision == "accept" then
+		return M.claimFloatingBrainrot(deps, player, clone)
 	end
-
-	local existing = main:FindFirstChild(CLAIM_PROMPT_NAME)
-	if existing then
-		existing:Destroy()
+	if decision == "decline" then
+		return M.declineFloatingBrainrot(deps, player, clone)
 	end
-
-	local brainrotName = clone:GetAttribute("BrainrotName")
-	local anchor = main:FindFirstChild("FloatingClaimPromptAnchor")
-	if not anchor or not anchor:IsA("Attachment") then
-		if anchor then
-			anchor:Destroy()
-		end
-		anchor = Instance.new("Attachment")
-		anchor.Name = "FloatingClaimPromptAnchor"
-		anchor.Parent = main
-	end
-	anchor.Position = main.CFrame:PointToObjectSpace(clone:GetPivot().Position)
-
-	local prompt = Instance.new("ProximityPrompt")
-	prompt.Name = CLAIM_PROMPT_NAME
-	prompt.Style = Enum.ProximityPromptStyle.Custom
-	prompt.ActionText = "Catch"
-	prompt.ObjectText = if typeof(brainrotName) == "string" and brainrotName ~= "" then brainrotName else "Brainrot"
-	prompt.HoldDuration = 0
-	prompt.MaxActivationDistance = 16
-	prompt.RequiresLineOfSight = false
-	prompt.Enabled = true
-	prompt:SetAttribute(CUSTOM_PROMPT_ATTR, true)
-	prompt:SetAttribute(FLOATING_CLAIM_ATTR, true)
-	prompt.Parent = anchor
-
-	claimConnByClone[clone] = prompt.Triggered:Connect(function(plr: Player)
-		if plr ~= player then
-			return
-		end
-		M.claimFloatingBrainrot(deps, player, clone)
-	end)
+	return false
 end
 
 function M.startOffer(deps: Deps, player: Player, char: Model, clone: Model, anchorPos: Vector3, baseYaw: number)
@@ -288,8 +274,6 @@ function M.startOffer(deps: Deps, player: Player, char: Model, clone: Model, anc
 	deps.syncBrainrotCarryCountAttr(player)
 
 	clone:SetAttribute(FLOAT_ENDS_AT_ATTR, Workspace:GetServerTimeNow() + FLOAT_CLAIM_DURATION)
-	destroyAllProximityPrompts(clone)
-	attachClaimPrompt(deps, player, clone)
 
 	local t0 = os.clock()
 	local conn: RBXScriptConnection
@@ -297,7 +281,6 @@ function M.startOffer(deps: Deps, player: Player, char: Model, clone: Model, anc
 		if not clone.Parent then
 			conn:Disconnect()
 			deps.floatConnByClone[clone] = nil
-			disconnectClaimConn(clone)
 			if player then
 				deps.removePendingFloat(player, clone)
 			end
@@ -350,6 +333,25 @@ function M.cleanupAllForPlayer(deps: Deps, player: Player, clones: { Model })
 	for _, clone in clones do
 		M.destroyFloatingOffer(deps, player, clone, false)
 	end
+end
+
+function M.wireDecisionRemote(deps: Deps)
+	local ev = M.ensureDecisionRemote()
+	ev.OnServerEvent:Connect(function(player: Player, clone: any, decision: any)
+		if typeof(clone) ~= "Instance" or not clone:IsA("Model") then
+			return
+		end
+		if typeof(decision) ~= "string" then
+			return
+		end
+		if not clone:IsDescendantOf(Workspace) then
+			return
+		end
+		local ok = M.handleDecision(deps, player, clone, decision)
+		if not ok then
+			warn("[BushHarvestFloating] FloatingClaimDecision rejected for", player.Name, decision)
+		end
+	end)
 end
 
 return M

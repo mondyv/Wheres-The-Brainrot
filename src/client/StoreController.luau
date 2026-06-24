@@ -11,6 +11,7 @@
 	(Chat tags live in ChatTagsController.)
 ]]
 
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local MarketplaceService = game:GetService("MarketplaceService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -27,6 +28,9 @@ local MainGradientButtons = require(script.Parent.MainGradientButtons)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
+
+local STAND_TAG = "BrainrotStand"
+local SECONDS_PER_DAY = 86400
 
 local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -399,8 +403,35 @@ local function setCashBundleLabel(panel: Instance, productId: number, reward: nu
 	end
 end
 
-local function applyFloorCashBundleLabels()
-	local effective = StoreConfig.MIN_OFFLINE_24H_CASH
+local function localPlacedIncomePerSecond(): number
+	local total = 0
+	for _, stand in CollectionService:GetTagged(STAND_TAG) do
+		if stand:GetAttribute("StandOwnerUserId") == player.UserId then
+			local name = stand:GetAttribute("BrainrotName")
+			local rarity = stand:GetAttribute("BrainrotRarity")
+			if typeof(name) == "string" and typeof(rarity) == "string" then
+				local level = stand:GetAttribute("BrainrotLevel")
+				local mutation = stand:GetAttribute("BrainrotMutation")
+				local baseIncome = stand:GetAttribute("BrainrotBaseIncome")
+				total += BrainrotEconomy.incomePerSecond({
+					name = name,
+					rarity = rarity,
+					mutation = if typeof(mutation) == "string" then mutation else "normal",
+					level = if typeof(level) == "number" then level else 1,
+					baseIncome = if typeof(baseIncome) == "number" then baseIncome else 0,
+				})
+			end
+		end
+	end
+	return total
+end
+
+local function effectiveOffline24hCash(): number
+	local offline24h = localPlacedIncomePerSecond() * SECONDS_PER_DAY
+	return math.max(offline24h, StoreConfig.MIN_OFFLINE_24H_CASH)
+end
+
+local function applyCashBundleLabelsFromEffective(effective: number)
 	for _, entry in cashBundlePanels do
 		local multiplier = StoreConfig.CASH_BUNDLE_MULTIPLIERS[entry.productId]
 		if multiplier then
@@ -410,17 +441,30 @@ local function applyFloorCashBundleLabels()
 	end
 end
 
+-- Remote tables stringify numeric keys, so check both number and string forms.
+local function lookupCashBundleReward(rewards: { [any]: any }, productId: number): number?
+	local reward = rewards[productId]
+	if typeof(reward) == "number" then
+		return reward
+	end
+	reward = rewards[tostring(productId)]
+	if typeof(reward) == "number" then
+		return reward
+	end
+	return nil
+end
+
 local function refreshCashBundles()
 	if #cashBundlePanels == 0 then
 		return
 	end
-	applyFloorCashBundleLabels()
-	local folder = ReplicatedStorage:FindFirstChild("StoreRemotes")
-	local rf = folder and folder:FindFirstChild("GetCashBundleRewards")
-	if not rf or not rf:IsA("RemoteFunction") then
-		return
-	end
+	applyCashBundleLabelsFromEffective(effectiveOffline24hCash())
 	task.spawn(function()
+		local folder = ReplicatedStorage:WaitForChild("StoreRemotes", 15)
+		local rf = folder and folder:WaitForChild("GetCashBundleRewards", 15)
+		if not rf or not rf:IsA("RemoteFunction") then
+			return
+		end
 		local ok, rewards = pcall(function()
 			return rf:InvokeServer()
 		end)
@@ -432,8 +476,8 @@ local function refreshCashBundles()
 			return
 		end
 		for _, entry in cashBundlePanels do
-			local reward = rewards[entry.productId]
-			if typeof(reward) == "number" then
+			local reward = lookupCashBundleReward(rewards, entry.productId)
+			if reward then
 				setCashBundleLabel(entry.panel, entry.productId, reward)
 			end
 		end
@@ -595,7 +639,7 @@ local function init()
 	wirePacks(container)
 
 	collectCashBundlePanels(container)
-	applyFloorCashBundleLabels()
+	applyCashBundleLabelsFromEffective(effectiveOffline24hCash())
 
 	local refreshFreeBrainrot = wireFreeBrainrot(storeFrame)
 

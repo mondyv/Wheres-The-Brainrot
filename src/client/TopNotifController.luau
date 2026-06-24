@@ -17,12 +17,13 @@ local player = Players.LocalPlayer
 
 local POP_IN = TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local TEXT_IN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local WOBBLE_SETTLE = TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local FADE_OUT = TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local ERROR_ACCENT = Color3.fromRGB(255, 86, 86)
+local ERROR_ACCENT = Color3.fromRGB(255, 72, 72)
+local ERROR_TEXT_STROKE = Color3.fromRGB(0, 0, 0)
 local DISPLAY_LIFETIME = 10
 local ERROR_LIFETIME = 3.5
 local ERROR_COOLDOWN = 0.35
+local CANT_AFFORD_MESSAGE = "You can't afford this!"
 
 local TopNotifController = {}
 
@@ -37,27 +38,65 @@ local animHost: GuiObject? = nil
 local label: TextLabel? = nil
 local panelStroke: UIStroke? = nil
 local labelStroke: UIStroke? = nil
-local templateErrorGrad: UIGradient? = nil
+local animScale: UIScale? = nil
+local savedLabelStrokeThickness: number? = nil
+local savedPanelStrokeTransparency: number? = nil
 local messageQueue: { QueuedMessage } = {}
 local isShowing = false
 local hideToken = 0
 local activeFadeTween: Tween? = nil
 local lastErrorAt = 0
 local broadcastConn: RBXScriptConnection? = nil
+local defaultPanelStrokeColor: Color3? = nil
 
 local function globalMessagesEnabled(): boolean
 	return player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR) ~= false
 end
 
-local function getOrAddUIScale(obj: GuiObject): UIScale
-	local s = obj:FindFirstChildOfClass("UIScale")
-	if s then
+local function getOrAddAnimScale(obj: GuiObject): UIScale
+	local s = obj:FindFirstChild("NotifAnimScale")
+	if s and s:IsA("UIScale") then
 		return s
 	end
 	s = Instance.new("UIScale")
+	s.Name = "NotifAnimScale"
 	s.Scale = 1
 	s.Parent = obj
 	return s
+end
+
+local function prepareNotifLabel(textLabel: TextLabel)
+	textLabel.BackgroundTransparency = 1
+	textLabel.BorderSizePixel = 0
+	textLabel.Rotation = 0
+	for _, child in textLabel:GetChildren() do
+		if child:IsA("UIScale") then
+			child:Destroy()
+		elseif child:IsA("UIGradient") then
+			child.Enabled = false
+			child.Offset = Vector2.new(0, 0)
+		elseif child:IsA("UIStroke") then
+			child.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+			child.Thickness = math.clamp(child.Thickness, 1, 2.5)
+		end
+	end
+end
+
+local function prepareNotifHost(notif: GuiObject)
+	if notif:IsA("GuiObject") then
+		notif.BackgroundTransparency = 1
+		notif.BorderSizePixel = 0
+	end
+	for _, desc in notif:GetDescendants() do
+		if desc:IsA("Frame") or desc:IsA("ImageLabel") then
+			desc.BackgroundTransparency = 1
+			desc.BorderSizePixel = 0
+		end
+	end
+	local directStroke = notif:FindFirstChildOfClass("UIStroke")
+	if directStroke then
+		savedPanelStrokeTransparency = directStroke.Transparency
+	end
 end
 
 local function findParts()
@@ -70,24 +109,22 @@ local function findParts()
 	end
 	host = notif :: GuiObject
 	animHost = (notif:FindFirstChildWhichIsA("Frame") or notif) :: GuiObject
-	panelStroke = notif:FindFirstChildWhichIsA("UIStroke", true)
+	animScale = getOrAddAnimScale(animHost)
+	prepareNotifHost(host)
+
+	panelStroke = host:FindFirstChildOfClass("UIStroke")
+	if panelStroke then
+		defaultPanelStrokeColor = panelStroke.Color
+	end
+
 	local text = notif:FindFirstChild("Text", true)
 	if text and text:IsA("TextLabel") then
 		label = text
-		local err = text:FindFirstChild("Error")
-		if err and err:IsA("UIGradient") then
-			templateErrorGrad = err
-		end
-		local stroke = text:FindFirstChildOfClass("UIStroke")
+		prepareNotifLabel(label)
+		local stroke = label:FindFirstChildOfClass("UIStroke")
 		if stroke then
 			labelStroke = stroke
-		else
-			stroke = Instance.new("UIStroke")
-			stroke.Name = "TextOutline"
-			stroke.Color = Color3.fromRGB(0, 0, 0)
-			stroke.Thickness = 2
-			stroke.Parent = text
-			labelStroke = stroke
+			savedLabelStrokeThickness = stroke.Thickness
 		end
 	end
 end
@@ -96,7 +133,11 @@ local function ensureBlackTextOutline()
 	if not labelStroke then
 		return
 	end
+	labelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 	labelStroke.Color = Color3.fromRGB(0, 0, 0)
+	if savedLabelStrokeThickness then
+		labelStroke.Thickness = savedLabelStrokeThickness
+	end
 	local grad = labelStroke:FindFirstChild("RaritySpawnGradient")
 	if grad and grad:IsA("UIGradient") then
 		grad.Enabled = false
@@ -131,26 +172,50 @@ local function setPanelAccent(color: Color3, rarityId: string?)
 	end
 end
 
+local function applyRarityPanelStyle(rarityId: string)
+	if not panelStroke then
+		return
+	end
+	panelStroke.Transparency = savedPanelStrokeTransparency or 0
+	setPanelAccent(Color3.fromRGB(255, 255, 255), rarityId)
+end
+
 local function applyRarityStyle(textLabel: TextLabel, rarityId: string)
 	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	disableOtherGradients(textLabel, "RaritySpawnGradient")
 	RaritySpawnStyle.applyTextGradient(textLabel, rarityId)
 	ensureBlackTextOutline()
+	applyRarityPanelStyle(rarityId)
 end
 
 local function applyErrorStyle(textLabel: TextLabel)
-	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-	disableOtherGradients(textLabel, "Error")
-	local err = textLabel:FindFirstChild("Error")
-	if err and err:IsA("UIGradient") then
-		err.Enabled = true
-	elseif templateErrorGrad then
-		local clone = templateErrorGrad:Clone()
-		clone.Name = "Error"
-		clone.Enabled = true
-		clone.Parent = textLabel
+	for _, child in textLabel:GetChildren() do
+		if child:IsA("UIGradient") then
+			child.Enabled = false
+		end
 	end
-	setPanelAccent(ERROR_ACCENT, nil)
+
+	textLabel.TextColor3 = ERROR_ACCENT
+	if labelStroke then
+		labelStroke.Enabled = true
+		labelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+		labelStroke.Color = ERROR_TEXT_STROKE
+		labelStroke.Transparency = 0
+		labelStroke.Thickness = savedLabelStrokeThickness or 2
+		for _, child in labelStroke:GetChildren() do
+			if child:IsA("UIGradient") then
+				child.Enabled = false
+			end
+		end
+	end
+
+	if panelStroke then
+		panelStroke.Transparency = 1
+		local grad = panelStroke:FindFirstChild("RaritySpawnGradient")
+		if grad and grad:IsA("UIGradient") then
+			grad.Enabled = false
+		end
+	end
 end
 
 local function setLabelAlpha(textLabel: TextLabel, alpha: number)
@@ -168,7 +233,7 @@ local function cancelActiveTween()
 end
 
 local function processQueue()
-	if isShowing or #messageQueue == 0 or not host or not animHost or not label then
+	if isShowing or #messageQueue == 0 or not host or not animHost or not label or not animScale then
 		return
 	end
 
@@ -180,25 +245,25 @@ local function processQueue()
 
 	label.Visible = true
 	label.Text = entry.message
+	label.Rotation = 0
+
 	if entry.isError then
 		applyErrorStyle(label)
+		animScale.Scale = 0.55
 	else
 		applyRarityStyle(label, entry.rarityId or "legendary")
+		animScale.Scale = 0.6
 	end
 
 	setLabelAlpha(label, 0)
 	host.Visible = true
 
-	-- Scale the label only (not the layout frame) so the panel never "resizes weirdly".
-	local scale = getOrAddUIScale(label)
-	scale.Scale = 0.55
-	label.Rotation = -5
-
-	-- Single-shot bedazzle pop: Back overshoot + small wobble settle, lands at scale 1.
 	cancelActiveTween()
-	activeFadeTween = TweenService:Create(scale, POP_IN, { Scale = 1 })
+	local popInfo = if entry.isError
+		then TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		else POP_IN
+	activeFadeTween = TweenService:Create(animScale, popInfo, { Scale = 1 })
 	activeFadeTween:Play()
-	TweenService:Create(label, WOBBLE_SETTLE, { Rotation = 0 }):Play()
 	TweenService:Create(label, TEXT_IN, { TextTransparency = 0 }):Play()
 	if labelStroke then
 		TweenService:Create(labelStroke, TEXT_IN, { Transparency = 0 }):Play()
@@ -206,11 +271,11 @@ local function processQueue()
 
 	local lifetime = if entry.isError then ERROR_LIFETIME else DISPLAY_LIFETIME
 	task.delay(lifetime, function()
-		if token ~= hideToken or not host or not label then
+		if token ~= hideToken or not host or not label or not animScale then
 			return
 		end
 		cancelActiveTween()
-		activeFadeTween = TweenService:Create(scale, FADE_OUT, { Scale = 0.55 })
+		activeFadeTween = TweenService:Create(animScale, FADE_OUT, { Scale = 0.55 })
 		activeFadeTween:Play()
 		TweenService:Create(label, FADE_OUT, { TextTransparency = 1 }):Play()
 		if labelStroke then
@@ -228,7 +293,7 @@ local function processQueue()
 				label.Visible = false
 				label.Rotation = 0
 			end
-			scale.Scale = 1
+			animScale.Scale = 1
 			processQueue()
 		end)
 	end)
@@ -276,6 +341,10 @@ function TopNotifController.showError(message: string)
 	lastErrorAt = now
 	GameSoundEffects.playErrorNotif()
 	enqueue(message, true, nil)
+end
+
+function TopNotifController.showCantAfford(message: string?)
+	TopNotifController.showError(message or CANT_AFFORD_MESSAGE)
 end
 
 function TopNotifController.init()

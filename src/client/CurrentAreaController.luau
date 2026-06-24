@@ -2,7 +2,7 @@
 --[[
 	Shows SideUI.Top.CurrentArea when the player enters a land luck hitbox.
 	Enables the matching UIGradient on LuckText + Multiplier (1x = default, no gradient).
-	Entrance: drop + pop, left–right tilt settle; higher tiers shake harder on land and while idle.
+	Animates the container only — text stays gradient-only (no extra borders / label scaling).
 --]]
 
 local Players = game:GetService("Players")
@@ -36,6 +36,7 @@ local areaScale: UIScale? = nil
 local restPosition: UDim2? = nil
 
 local activeDisplayLuck: number? = nil
+local activeTierIndex = 1
 local closePending: thread? = nil
 local introToken = 0
 local idleToken = 0
@@ -48,13 +49,52 @@ local function cancelClose()
 	end
 end
 
+local function tierIntensity(tierIndex: number): number
+	return math.clamp((tierIndex - 1) / 7, 0, 1)
+end
+
+local function tierRestScale(tierIndex: number): number
+	return 1 + tierIntensity(tierIndex) * 0.16
+end
+
+local function prepareTextLabel(label: TextLabel)
+	label.BackgroundTransparency = 1
+	label.BorderSizePixel = 0
+	label.Rotation = 0
+	for _, child in label:GetChildren() do
+		if child:IsA("UIScale") then
+			child:Destroy()
+		elseif child:IsA("UIGradient") then
+			child.Offset = Vector2.new(0, 0)
+		elseif child:IsA("UIStroke") then
+			-- Border mode draws a box behind the text; Contextual follows the glyphs only.
+			child.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+		end
+	end
+end
+
+local function prepareArea(root: GuiObject)
+	root.BackgroundTransparency = 1
+	root.BorderSizePixel = 0
+	for _, desc in root:GetDescendants() do
+		if desc:IsA("GuiObject") and not desc:IsA("TextLabel") then
+			desc.BackgroundTransparency = 1
+			desc.BorderSizePixel = 0
+		end
+	end
+end
+
 local function setGradient(label: TextLabel?, gradientName: string?)
 	if not label then
 		return
 	end
 	for _, c in label:GetChildren() do
 		if c:IsA("UIGradient") then
-			c.Enabled = (gradientName ~= nil and c.Name == gradientName)
+			local enabled = gradientName ~= nil and c.Name == gradientName
+			c.Enabled = enabled
+			if not enabled then
+				c.Offset = Vector2.new(0, 0)
+			end
 		end
 	end
 end
@@ -65,10 +105,16 @@ local function applyLuckVisuals(displayLuck: number)
 
 	if multiplier then
 		multiplier.Text = amountText
+		if gradientName then
+			multiplier.TextColor3 = Color3.fromRGB(255, 255, 255)
+		end
 		setGradient(multiplier, gradientName)
 	end
 	if luckText then
 		luckText.Text = "LUCK"
+		if gradientName then
+			luckText.TextColor3 = Color3.fromRGB(255, 255, 255)
+		end
 		setGradient(luckText, gradientName)
 	end
 end
@@ -81,115 +127,86 @@ local function stopIdle()
 	end
 end
 
-local function resetAreaTransform()
+local function resetAreaTransform(tierIndex: number?)
 	if currentArea and restPosition then
 		currentArea.Position = restPosition
 		currentArea.Rotation = 0
 	end
 	if areaScale then
-		areaScale.Scale = 1
+		areaScale.Scale = tierRestScale(tierIndex or 1)
 	end
 end
 
 type TierMotion = {
-	maxTilt: number,
 	dropHeight: number,
 	popScale: number,
 	dropTime: number,
-	settleAngles: { number },
-	settleTimes: { number },
 	burstDuration: number,
-	burstRotAmp: number,
+	burstPosAmp: number,
 	burstFreq: number,
-	idleRotAmp: number,
+	idlePosAmp: number,
 	idlePeriod: number,
 	idleScaleAmp: number,
 }
 
-local function motionForTier(tierIndex: number, dir: number): TierMotion
+local function motionForTier(tierIndex: number): TierMotion
 	local t = math.clamp(tierIndex, 1, 8)
-	local maxTilt = 2 + t * 1.65
+	local intensity = tierIntensity(t)
+	local restScale = tierRestScale(tierIndex)
 
 	if t <= 2 then
 		return {
-			maxTilt = maxTilt,
-			dropHeight = 16 + t * 2,
-			popScale = 1.03,
-			dropTime = 0.46,
-			settleAngles = { maxTilt * 0.35 * dir, -maxTilt * 0.12 * dir, 0 },
-			settleTimes = { 0.5, 0.45, 0.5 },
+			dropHeight = 18 + t * 3,
+			popScale = restScale * (1.04 + intensity * 0.02),
+			dropTime = 0.44,
 			burstDuration = 0,
-			burstRotAmp = 0,
+			burstPosAmp = 0,
 			burstFreq = 0,
-			idleRotAmp = 0,
-			idlePeriod = 99,
-			idleScaleAmp = 0,
+			idlePosAmp = 1 + t * 0.4,
+			idlePeriod = 3.6,
+			idleScaleAmp = 0.006,
 		}
 	elseif t <= 4 then
 		return {
-			maxTilt = maxTilt,
-			dropHeight = 20 + t * 3,
-			popScale = 1.05,
-			dropTime = 0.48,
-			settleAngles = { maxTilt * 0.45 * dir, -maxTilt * 0.3 * dir, maxTilt * 0.1 * dir, 0 },
-			settleTimes = { 0.42, 0.38, 0.36, 0.48 },
+			dropHeight = 24 + t * 4,
+			popScale = restScale * (1.06 + intensity * 0.03),
+			dropTime = 0.42,
 			burstDuration = 0,
-			burstRotAmp = 0,
+			burstPosAmp = 0,
 			burstFreq = 0,
-			idleRotAmp = 0.35 + t * 0.12,
-			idlePeriod = 3.4,
-			idleScaleAmp = 0,
+			idlePosAmp = 2 + t * 0.6,
+			idlePeriod = 3 - intensity * 0.5,
+			idleScaleAmp = 0.01,
 		}
 	elseif t <= 6 then
 		return {
-			maxTilt = maxTilt,
-			dropHeight = 26 + t * 4,
-			popScale = 1.08,
-			dropTime = 0.44,
-			settleAngles = {
-				maxTilt * 0.58 * dir,
-				-maxTilt * 0.48 * dir,
-				maxTilt * 0.3 * dir,
-				-maxTilt * 0.14 * dir,
-				0,
-			},
-			settleTimes = { 0.3, 0.28, 0.26, 0.24, 0.38 },
-			burstDuration = 0.45 + (t - 4) * 0.12,
-			burstRotAmp = maxTilt * (0.35 + (t - 4) * 0.12),
-			burstFreq = 14 + t * 3,
-			idleRotAmp = 1.2 + t * 0.35,
-			idlePeriod = 2.4 - (t - 5) * 0.15,
-			idleScaleAmp = 0.012,
+			dropHeight = 30 + t * 5,
+			popScale = restScale * (1.09 + intensity * 0.04),
+			dropTime = 0.4,
+			burstDuration = 0.4 + (t - 4) * 0.1,
+			burstPosAmp = 4 + t * 1.2,
+			burstFreq = 16 + t * 3,
+			idlePosAmp = 3 + t * 0.8,
+			idlePeriod = 2.2 - (t - 5) * 0.12,
+			idleScaleAmp = 0.016,
 		}
 	else
-		-- 750x–1750x: big tilt, fast settle, vigorous burst + idle
 		return {
-			maxTilt = maxTilt,
-			dropHeight = 34 + t * 5,
-			popScale = 1.12,
-			dropTime = 0.4,
-			settleAngles = {
-				maxTilt * 0.65 * dir,
-				-maxTilt * 0.55 * dir,
-				maxTilt * 0.38 * dir,
-				-maxTilt * 0.22 * dir,
-				maxTilt * 0.08 * dir,
-				0,
-			},
-			settleTimes = { 0.24, 0.22, 0.2, 0.18, 0.2, 0.35 },
-			burstDuration = 0.65 + (t - 6) * 0.15,
-			burstRotAmp = maxTilt * 0.55,
-			burstFreq = 20 + t * 4,
-			idleRotAmp = 2.8 + t * 0.55,
-			idlePeriod = 1.15 - (t - 7) * 0.08,
-			idleScaleAmp = 0.022 + (t - 6) * 0.006,
+			dropHeight = 38 + t * 6,
+			popScale = restScale * (1.12 + intensity * 0.05),
+			dropTime = 0.36,
+			burstDuration = 0.62 + (t - 6) * 0.14,
+			burstPosAmp = 7 + t * 1.8,
+			burstFreq = 22 + t * 4,
+			idlePosAmp = 5 + t * 1.1,
+			idlePeriod = 1.1 - (t - 7) * 0.07,
+			idleScaleAmp = 0.026 + (t - 6) * 0.005,
 		}
 	end
 end
 
--- Damped rotation burst after settle (high tiers only; frame-only, no layout fight).
-local function playVigorousBurst(token: number, motion: TierMotion, onDone: () -> ())
-	if motion.burstDuration <= 0 or not currentArea then
+local function playLandBurst(token: number, motion: TierMotion, onDone: () -> ())
+	if motion.burstDuration <= 0 or not currentArea or not restPosition then
 		onDone()
 		return
 	end
@@ -204,7 +221,7 @@ local function playVigorousBurst(token: number, motion: TierMotion, onDone: () -
 	local decay = 5.5 - motion.burstDuration * 2
 
 	swingConn = RunService.RenderStepped:Connect(function()
-		if token ~= introToken or not currentArea then
+		if token ~= introToken or not currentArea or not restPosition then
 			if swingConn then
 				swingConn:Disconnect()
 				swingConn = nil
@@ -214,7 +231,7 @@ local function playVigorousBurst(token: number, motion: TierMotion, onDone: () -
 
 		local elapsed = os.clock() - t0
 		if elapsed >= motion.burstDuration then
-			currentArea.Rotation = 0
+			currentArea.Position = restPosition
 			if swingConn then
 				swingConn:Disconnect()
 				swingConn = nil
@@ -224,60 +241,36 @@ local function playVigorousBurst(token: number, motion: TierMotion, onDone: () -
 		end
 
 		local falloff = math.exp(-decay * elapsed)
-		local wobble = math.sin(elapsed * motion.burstFreq + phase) * motion.burstRotAmp * falloff
-		local wobble2 = math.sin(elapsed * motion.burstFreq * 1.37 + phase * 1.3) * motion.burstRotAmp * 0.4 * falloff
-		currentArea.Rotation = wobble + wobble2
+		local px = math.sin(elapsed * motion.burstFreq + phase) * motion.burstPosAmp * falloff
+		local py = math.sin(elapsed * motion.burstFreq * 1.6 + phase * 0.7) * motion.burstPosAmp * 0.45 * falloff
+		currentArea.Position = restPosition + UDim2.fromOffset(px, py)
 	end)
 end
 
 local function startTierIdle(tierIndex: number, motion: TierMotion)
-	if motion.idleRotAmp <= 0 or not currentArea or not areaScale then
+	if motion.idlePosAmp <= 0 or not currentArea or not areaScale or not restPosition then
 		return
 	end
 
 	idleToken += 1
 	local myIdle = idleToken
 	local phase = math.random() * math.pi * 2
-	local vigorous = tierIndex >= 6
+	local restScale = tierRestScale(tierIndex)
 
 	swingConn = RunService.RenderStepped:Connect(function()
-		if myIdle ~= idleToken or not currentArea or not currentArea.Visible then
+		if myIdle ~= idleToken or not currentArea or not currentArea.Visible or not restPosition then
 			return
 		end
 		local t = os.clock()
 		local wave = math.sin((t / motion.idlePeriod) * math.pi * 2 + phase)
-		currentArea.Rotation = wave * motion.idleRotAmp
+		local wave2 = math.sin((t / motion.idlePeriod) * math.pi * 3.2 + phase * 1.4)
+		local px = wave * motion.idlePosAmp + wave2 * motion.idlePosAmp * 0.35
+		local py = wave2 * motion.idlePosAmp * 0.25
+		currentArea.Position = restPosition + UDim2.fromOffset(px, py)
 		if motion.idleScaleAmp > 0 then
-			local w2 = math.sin((t / motion.idlePeriod) * math.pi * 4 + phase * 0.7)
-			areaScale.Scale = 1 + w2 * motion.idleScaleAmp
-		end
-		if vigorous and tierIndex >= 7 then
-			-- Extra high-frequency layer on top for 1250x / 1750x
-			currentArea.Rotation += math.sin(t * 22 + phase) * motion.idleRotAmp * 0.18
+			areaScale.Scale = restScale + wave2 * motion.idleScaleAmp
 		end
 	end)
-end
-
-local function chainTilt(token: number, angles: { number }, durations: { number }, onDone: () -> ())
-	local step = 0
-	local function nextStep()
-		if token ~= introToken or not currentArea then
-			return
-		end
-		step += 1
-		if step > #angles then
-			onDone()
-			return
-		end
-		local tw = TweenService:Create(
-			currentArea,
-			TweenInfo.new(durations[step], Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-			{ Rotation = angles[step] }
-		)
-		tw.Completed:Once(nextStep)
-		tw:Play()
-	end
-	nextStep()
 end
 
 local function playIntro(displayLuck: number, tierIndex: number)
@@ -287,24 +280,23 @@ local function playIntro(displayLuck: number, tierIndex: number)
 
 	introToken += 1
 	local myIntro = introToken
+	activeTierIndex = tierIndex
 	stopIdle()
-	resetAreaTransform()
+	resetAreaTransform(tierIndex)
 
 	currentArea.Visible = true
 	applyLuckVisuals(displayLuck)
 
-	local dir = if math.random() > 0.5 then 1 else -1
-	local motion = motionForTier(tierIndex, dir)
-	local landRot = -motion.maxTilt * 0.75 * dir
+	local motion = motionForTier(tierIndex)
+	local restScale = tierRestScale(tierIndex)
 
 	currentArea.Position = restPosition + UDim2.fromOffset(0, -motion.dropHeight)
-	currentArea.Rotation = motion.maxTilt * dir
-	areaScale.Scale = 0.88
+	areaScale.Scale = restScale * 0.82
 
 	TweenService:Create(
 		currentArea,
 		TweenInfo.new(motion.dropTime, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Position = restPosition, Rotation = landRot }
+		{ Position = restPosition }
 	):Play()
 	TweenService:Create(
 		areaScale,
@@ -317,19 +309,16 @@ local function playIntro(displayLuck: number, tierIndex: number)
 			return
 		end
 
-		TweenService
-			:Create(areaScale, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
-			:Play()
+		TweenService:Create(
+			areaScale,
+			TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Scale = restScale }
+		):Play()
 
-		chainTilt(myIntro, motion.settleAngles, motion.settleTimes, function()
-			if myIntro ~= introToken then
-				return
+		playLandBurst(myIntro, motion, function()
+			if myIntro == introToken then
+				startTierIdle(tierIndex, motion)
 			end
-			playVigorousBurst(myIntro, motion, function()
-				if myIntro == introToken then
-					startTierIdle(tierIndex, motion)
-				end
-			end)
 		end)
 	end)
 end
@@ -338,16 +327,16 @@ local function hideArea()
 	stopIdle()
 	introToken += 1
 	activeDisplayLuck = nil
+	activeTierIndex = 1
 	if currentArea and restPosition and currentArea.Visible then
-		local hideRot = currentArea.Rotation * 0.4
 		local hideTween = TweenService:Create(
 			currentArea,
 			TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-			{ Position = restPosition + UDim2.fromOffset(0, -10), Rotation = hideRot }
+			{ Position = restPosition + UDim2.fromOffset(0, -10) }
 		)
 		if areaScale then
 			TweenService:Create(areaScale, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-				Scale = 0.94,
+				Scale = tierRestScale(activeTierIndex) * 0.94,
 			}):Play()
 		end
 		hideTween:Play()
@@ -355,13 +344,13 @@ local function hideArea()
 			if currentArea then
 				currentArea.Visible = false
 			end
-			resetAreaTransform()
+			resetAreaTransform(1)
 		end)
 	else
 		if currentArea then
 			currentArea.Visible = false
 		end
-		resetAreaTransform()
+		resetAreaTransform(1)
 	end
 end
 
@@ -518,6 +507,14 @@ function CurrentAreaController.init()
 	restPosition = area.Position
 	luckText = area:FindFirstChild("LuckText", true) :: TextLabel?
 	multiplier = area:FindFirstChild("Multiplier", true) :: TextLabel?
+
+	prepareArea(area)
+	if luckText then
+		prepareTextLabel(luckText)
+	end
+	if multiplier then
+		prepareTextLabel(multiplier)
+	end
 
 	areaScale = area:FindFirstChildOfClass("UIScale")
 	if not areaScale then

@@ -12,7 +12,9 @@ M.RARITY_GRADIENT_NAME = {
 	rare = "RARE",
 	epic = "EPIC",
 	mythic = "MYTHIC",
+	mythical = "MYTHICAL",
 	legendary = "LEGENDARY",
+	godly = "GODLY",
 	["brainrot god"] = "GODLY",
 	secret = "SECRET",
 }
@@ -141,7 +143,8 @@ local function collectNames(primary: string?, aliases: { string }?): { string }
 end
 
 function M.rarityGradientNames(rarityId: string): { string }
-	return collectNames(M.RARITY_GRADIENT_NAME[rarityId], M.RARITY_GRADIENT_ALIASES[rarityId])
+	local key = string.lower(rarityId)
+	return collectNames(M.RARITY_GRADIENT_NAME[key], M.RARITY_GRADIENT_ALIASES[key])
 end
 
 local function gradientNameMatches(instName: string, wanted: { string }): boolean
@@ -205,7 +208,7 @@ local function getGameGradientsRarityFolder(): Folder?
 	if not player then
 		return nil
 	end
-	local main = player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("Main")
+	local main = player.PlayerGui:FindFirstChild("Main") or player.PlayerGui:WaitForChild("Main", 8)
 	local gameGradients = main and main:FindFirstChild("GameGradients")
 	local rarities = gameGradients and gameGradients:FindFirstChild("Rarity")
 	if rarities and rarities:IsA("Folder") then
@@ -253,7 +256,7 @@ local function getGameGradientsTypeFolder(): Folder?
 	if not player then
 		return nil
 	end
-	local main = player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("Main")
+	local main = player.PlayerGui:FindFirstChild("Main") or player.PlayerGui:WaitForChild("Main", 8)
 	local gameGradients = main and main:FindFirstChild("GameGradients")
 	local types = gameGradients and gameGradients:FindFirstChild("Type")
 	if types and types:IsA("Folder") then
@@ -306,6 +309,53 @@ function M.mutationAccentColor(mutationId: string): Color3?
 	end
 	local template = findTypeGradientTemplate({ gradientName })
 	return M.sampleGradientAccentColor(template)
+end
+
+function M.sampleColorSequence(sequence: ColorSequence, alpha: number): Color3
+	alpha = math.clamp(alpha, 0, 1)
+	local keypoints = sequence.Keypoints
+	if #keypoints == 0 then
+		return Color3.new(1, 1, 1)
+	end
+	if #keypoints == 1 then
+		return keypoints[1].Value
+	end
+	for i = 1, #keypoints - 1 do
+		local a = keypoints[i]
+		local b = keypoints[i + 1]
+		if alpha >= a.Time and alpha <= b.Time then
+			local span = math.max(1e-6, b.Time - a.Time)
+			return a.Value:Lerp(b.Value, (alpha - a.Time) / span)
+		end
+	end
+	return keypoints[#keypoints].Value
+end
+
+function M.getLootOutlineGradientSequence(rarityId: string?, mutationId: string?): ColorSequence?
+	if typeof(mutationId) == "string" and mutationId ~= "" and mutationId ~= "normal" then
+		local gradientName = M.MUTATION_GRADIENT_NAME[mutationId]
+		if gradientName then
+			local mutationTemplate = findTypeGradientTemplate({ gradientName })
+			if mutationTemplate then
+				return mutationTemplate.Color
+			end
+		end
+	end
+	if typeof(rarityId) == "string" and rarityId ~= "" then
+		local rarityTemplate = findGameGradientTemplate(M.rarityGradientNames(rarityId))
+		if rarityTemplate then
+			return rarityTemplate.Color
+		end
+	end
+	return nil
+end
+
+function M.lootOutlineColorAtTime(rarityId: string?, mutationId: string?, clock: number): Color3
+	local sequence = M.getLootOutlineGradientSequence(rarityId, mutationId)
+	if sequence then
+		return M.sampleColorSequence(sequence, (clock * 0.42) % 1)
+	end
+	return M.hiddenLootOutlineColor(rarityId, mutationId)
 end
 
 function M.hiddenLootOutlineColor(rarityId: string?, mutationId: string?): Color3

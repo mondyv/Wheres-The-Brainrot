@@ -12,6 +12,7 @@ local TweenService = game:GetService("TweenService")
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local TopNotifController = require(script.Parent.TopNotifController)
 
 local player = Players.LocalPlayer
 
@@ -171,7 +172,11 @@ local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent,
 		local plot = plotForSign(sign)
 		local canUnlock, reason = canUnlockNextFloor(plot)
 		if not canUnlock then
-			GameSoundEffects.playErrorNotif()
+			if reason == "cash" then
+				TopNotifController.showCantAfford()
+			else
+				GameSoundEffects.playErrorNotif()
+			end
 			return
 		end
 		unlockRE:FireServer()
@@ -331,7 +336,9 @@ function M.init()
 			if ok or reason == "" or reason == "debounce" then
 				return
 			end
-			if reason == "cash" or reason == "max" or reason == "rebirth" then
+			if reason == "cash" then
+				TopNotifController.showCantAfford()
+			elseif reason == "max" or reason == "rebirth" then
 				GameSoundEffects.playErrorNotif()
 			end
 			warn("[BaseFloorUnlockClick] Unlock failed:", reason)

@@ -39,6 +39,38 @@ export type InstallConfig = {
 	HOTBAR_UI_SLOTS: number,
 }
 
+export type BootConfig = {
+	pushBrainrotInventory: (Player, BrainrotInvEntry, boolean?) -> boolean,
+	brainrotInventories: { [Player]: { BrainrotInvEntry } },
+	brainrotParkedInExpandedBackpack: { [Player]: { [number]: boolean } },
+	brainrotHotbarSlots: { [Player]: { [number]: number } },
+	enrichEntryFromCatalog: (BrainrotInvEntry) -> (),
+	enrichEntryFromBrainrotsFolder: (Folder, BrainrotInvEntry) -> (),
+	Brainrots: any,
+	IndexService: any,
+	packInventoryForClient: (Player, { BrainrotInvEntry }, number?) -> any,
+	hotbarSlotsPayloadForPlayer: (Player, { BrainrotInvEntry }) -> { [number]: number },
+	syncBrainrotCarryCountAttr: (Player) -> (),
+	ensureInventoryRemotes: () -> RemoteEvent,
+	equipBrainrotSlotForPlayer: (Player, number, boolean?) -> number?,
+	notifyClientInventorySync: (Player, number?, boolean?) -> (),
+	notifyIndexDeposited: (Player, BrainrotInvEntry) -> (),
+	HOTBAR_UI_SLOTS: number,
+	BrainrotEconomy: any,
+	assignEntryToLowestFreeHotbarSlot: (
+		Player,
+		{ BrainrotInvEntry },
+		{ [number]: boolean },
+		number
+	) -> number?,
+	playerInInventoryZone: (Player) -> boolean,
+	SafezoneUtil: any,
+	destroyAllBrainrotToolsForPlayer: (Player) -> (),
+	shiftParkedMapAfterListRemove: ({ [number]: boolean }, number) -> (),
+	getBushRemotesFolder: () -> Folder,
+	ensureEquipBrainrotRemote: () -> RemoteEvent,
+}
+
 local function ensureInternalFolder(): Folder
 	local existing = ServerStorage:FindFirstChild("BrainrotInternal")
 	if existing and existing:IsA("Folder") then
@@ -324,6 +356,151 @@ function M.install(config: InstallConfig)
 			return true
 		end
 	end
+end
+
+function M.boot(config: BootConfig)
+	local function inventoryEntryIncome(entry: BrainrotInvEntry): number
+		config.enrichEntryFromCatalog(entry)
+		return config.BrainrotEconomy.incomePerSecond({
+			name = entry.name,
+			rarity = if typeof(entry.rarity) == "string" then entry.rarity else "common",
+			mutation = if typeof(entry.mutation) == "string" then entry.mutation else "normal",
+			level = if typeof(entry.level) == "number" then entry.level else 1,
+			baseIncome = if typeof(entry.baseIncome) == "number" then entry.baseIncome else 0,
+		})
+	end
+
+	local function equipBestBrainrotForPlayer(plr: Player): boolean
+		local char = plr.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		local canUse = config.playerInInventoryZone(plr)
+			or config.SafezoneUtil.isCharacterInSafezone(char)
+			or config.SafezoneUtil.isCharacterInToolbarZone(char)
+			or (hrp and hrp:IsA("BasePart") and config.SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position))
+		if not canUse then
+			return false
+		end
+		local list = config.brainrotInventories[plr]
+		if not list or #list == 0 then
+			return false
+		end
+		local map = config.brainrotParkedInExpandedBackpack[plr]
+		if not map then
+			map = {}
+			config.brainrotParkedInExpandedBackpack[plr] = map
+		end
+
+		local bestIdx: number? = nil
+		local bestIncome = -math.huge
+		for i, entry in ipairs(list) do
+			local inc = inventoryEntryIncome(entry)
+			if inc > bestIncome then
+				bestIncome = inc
+				bestIdx = i
+			end
+		end
+		if not bestIdx then
+			return false
+		end
+
+		local equipSlot = bestIdx
+		if bestIdx > config.HOTBAR_UI_SLOTS or map[bestIdx] == true then
+			local destSlot = config.assignEntryToLowestFreeHotbarSlot(plr, list, map, bestIdx)
+			if not destSlot then
+				return false
+			end
+			equipSlot = destSlot
+		end
+
+		config.notifyClientInventorySync(plr, equipSlot, true)
+		return true
+	end
+
+	local function ensureEquipBestBrainrotRemote(): RemoteEvent
+		local folder = config.getBushRemotesFolder()
+		local ev = folder:FindFirstChild("EquipBestBrainrot")
+		if not ev then
+			ev = Instance.new("RemoteEvent")
+			ev.Name = "EquipBestBrainrot"
+			ev.Parent = folder
+		end
+		return ev :: RemoteEvent
+	end
+
+	local function consumeInventoryEntry(plr: Player, idx: number): BrainrotInvEntry?
+		local list = config.brainrotInventories[plr]
+		if not list then
+			return nil
+		end
+		local i = math.floor(idx)
+		if i < 1 or i > #list then
+			return nil
+		end
+		local entry = list[i]
+		if not entry then
+			return nil
+		end
+		config.enrichEntryFromCatalog(entry)
+
+		local char = plr.Character
+		if char then
+			local hum = char:FindFirstChildOfClass("Humanoid")
+			local equipped = char:FindFirstChildOfClass("Tool")
+			if equipped and equipped:GetAttribute("BrainrotTool") == true then
+				local a = equipped:GetAttribute("BrainrotInvIndex")
+				if typeof(a) == "number" and math.floor(a) == i and hum then
+					hum:UnequipTools()
+				end
+			end
+		end
+		config.destroyAllBrainrotToolsForPlayer(plr)
+
+		local map = config.brainrotParkedInExpandedBackpack[plr]
+		if map then
+			config.shiftParkedMapAfterListRemove(map, i)
+		end
+		table.remove(list, i)
+		plr:SetAttribute("BrainrotCount", #list)
+
+		local sync = config.ensureInventoryRemotes()
+		sync:FireClient(plr, config.packInventoryForClient(plr, list))
+		return entry
+	end
+
+	M.install({
+		consumeInventoryEntry = consumeInventoryEntry,
+		pushBrainrotInventory = config.pushBrainrotInventory,
+		brainrotInventories = config.brainrotInventories,
+		brainrotParkedInExpandedBackpack = config.brainrotParkedInExpandedBackpack,
+		brainrotHotbarSlots = config.brainrotHotbarSlots,
+		enrichEntryFromCatalog = config.enrichEntryFromCatalog,
+		enrichEntryFromBrainrotsFolder = config.enrichEntryFromBrainrotsFolder,
+		Brainrots = config.Brainrots,
+		IndexService = config.IndexService,
+		packInventoryForClient = config.packInventoryForClient,
+		hotbarSlotsPayloadForPlayer = config.hotbarSlotsPayloadForPlayer,
+		syncBrainrotCarryCountAttr = config.syncBrainrotCarryCountAttr,
+		ensureInventoryRemotes = config.ensureInventoryRemotes,
+		equipBrainrotSlotForPlayer = config.equipBrainrotSlotForPlayer,
+		notifyClientInventorySync = config.notifyClientInventorySync,
+		notifyIndexDeposited = config.notifyIndexDeposited,
+		HOTBAR_UI_SLOTS = config.HOTBAR_UI_SLOTS,
+	})
+
+	ensureEquipBestBrainrotRemote().OnServerEvent:Connect(function(player: Player)
+		equipBestBrainrotForPlayer(player)
+	end)
+
+	config.ensureEquipBrainrotRemote().OnServerEvent:Connect(function(player: Player, slot: any, forceArg: any)
+		if typeof(slot) ~= "number" then
+			return
+		end
+		local forceEquip = forceArg == true
+		local equippedIdx = config.equipBrainrotSlotForPlayer(player, slot :: number, forceEquip)
+		if equippedIdx then
+			config.notifyClientInventorySync(player, equippedIdx, false)
+		end
+	end)
 end
 
 return M

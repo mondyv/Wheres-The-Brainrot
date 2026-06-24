@@ -1975,6 +1975,13 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 		clone:SetAttribute("BrainrotSourcePath", fallback.Parent.Name .. "/" .. fallback.Name)
 		clone:SetAttribute("BrainrotMutation", "normal")
 		clone:SetAttribute("BrainrotLevel", harvestLevel)
+		if bushRef and isValidBushRef(bushRef) then
+			local pos = if bushRef:IsA("BasePart") then bushRef.Position else bushRef:GetPivot().Position
+			clone:SetAttribute(
+				"BrainrotHarvestBushKey",
+				string.format("%.0f_%.0f_%.0f", pos.X, pos.Y, pos.Z)
+			)
+		end
 		for _, d in clone:GetDescendants() do
 			if d:IsA("ProximityPrompt") then
 				d:Destroy()
@@ -2030,6 +2037,10 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 	clone:SetAttribute("BrainrotLevel", harvestLevel)
 	clone:SetAttribute("BrainrotPlot", plot)
 	clone:SetAttribute("BrainrotDisplayLuck", displayLuck)
+	if bushRef and isValidBushRef(bushRef) then
+		local pos = if bushRef:IsA("BasePart") then bushRef.Position else bushRef:GetPivot().Position
+		clone:SetAttribute("BrainrotHarvestBushKey", string.format("%.0f_%.0f_%.0f", pos.X, pos.Y, pos.Z))
+	end
 
 	for _, d in clone:GetDescendants() do
 		if d:IsA("ProximityPrompt") then
@@ -2555,6 +2566,17 @@ end)
 harvestBushFn.OnServerInvoke = function(player: Player, worldPosition: Vector3, bushRef: Instance?): any
 	return processBushSearch(player, worldPosition, bushRef)
 end
+
+local BushHarvestFloating = require(Modules:WaitForChild("BushHarvestFloating"))
+BushHarvestFloating.wireDecisionRemote({
+	pendingFloats = pendingFloats,
+	floatConnByClone = floatConnByClone,
+	removePendingFloat = removePendingFloat,
+	syncBrainrotCarryCountAttr = syncBrainrotCarryCountAttr,
+	attachCarriedBrainrot = attachCarriedBrainrot,
+	getMainPart = getMainPart,
+	setAllPartsPhysics = setAllPartsPhysics,
+})
 
 local _, getInvRF = ensureInventoryRemotes()
 
@@ -3098,89 +3120,6 @@ equipBrainrotSlotForPlayer = function(player: Player, slot: number, forceEquip: 
 	return equipBrainrotSlotForPlayerImpl(player, slot, forceEquip)
 end
 
-local function inventoryEntryIncome(entry: BrainrotInvEntry): number
-	enrichEntryFromCatalog(entry)
-	return BrainrotEconomy.incomePerSecond({
-		name = entry.name,
-		rarity = if typeof(entry.rarity) == "string" then entry.rarity else "common",
-		mutation = if typeof(entry.mutation) == "string" then entry.mutation else "normal",
-		level = if typeof(entry.level) == "number" then entry.level else 1,
-		baseIncome = if typeof(entry.baseIncome) == "number" then entry.baseIncome else 0,
-	})
-end
-
-local function equipBestBrainrotForPlayer(plr: Player): boolean
-	local char = plr.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	local canUse = playerInInventoryZone(plr)
-		or SafezoneUtil.isCharacterInSafezone(char)
-		or SafezoneUtil.isCharacterInToolbarZone(char)
-		or (hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position))
-	if not canUse then
-		return false
-	end
-	local list = brainrotInventories[plr]
-	if not list or #list == 0 then
-		return false
-	end
-	local map = brainrotParkedInExpandedBackpack[plr]
-	if not map then
-		map = {}
-		brainrotParkedInExpandedBackpack[plr] = map
-	end
-
-	local bestIdx: number? = nil
-	local bestIncome = -math.huge
-	for i, entry in ipairs(list) do
-		local inc = inventoryEntryIncome(entry)
-		if inc > bestIncome then
-			bestIncome = inc
-			bestIdx = i
-		end
-	end
-	if not bestIdx then
-		return false
-	end
-
-	local equipSlot = bestIdx
-	if bestIdx > HOTBAR_UI_SLOTS or map[bestIdx] == true then
-		local destSlot = assignEntryToLowestFreeHotbarSlot(plr, list, map, bestIdx)
-		if not destSlot then
-			return false
-		end
-		equipSlot = destSlot
-	end
-
-	notifyClientInventorySync(plr, equipSlot, true)
-	return true
-end
-
-local function ensureEquipBestBrainrotRemote(): RemoteEvent
-	local folder = getBushRemotesFolder()
-	local ev = folder:FindFirstChild("EquipBestBrainrot")
-	if not ev then
-		ev = Instance.new("RemoteEvent")
-		ev.Name = "EquipBestBrainrot"
-		ev.Parent = folder
-	end
-	return ev :: RemoteEvent
-end
-
-ensureEquipBestBrainrotRemote().OnServerEvent:Connect(function(player: Player)
-	equipBestBrainrotForPlayer(player)
-end)
-
-ensureEquipBrainrotRemote().OnServerEvent:Connect(function(player: Player, slot: any, forceArg: any)
-	if typeof(slot) ~= "number" then
-		return
-	end
-	local forceEquip = forceArg == true
-	local equippedIdx = equipBrainrotSlotForPlayer(player, slot :: number, forceEquip)
-	if equippedIdx then
-		notifyClientInventorySync(player, equippedIdx, false)
-	end
-end)
-
 task.defer(function()
 	local map = workspace:WaitForChild("Map", 120)
 	if not map then
@@ -3230,53 +3169,7 @@ task.defer(function()
 	end
 end)
 
--- ── Inter-script API (consumed by StandManager.server) ────────────────────────
--- Removes the inventory entry at `idx`, destroys any equipped/backpack Tool that
--- references it, shifts the parked-slot bitmap, and broadcasts the sync. Returns
--- the removed entry (or nil if invalid).
-
-local function consumeInventoryEntry(plr: Player, idx: number): BrainrotInvEntry?
-	local list = brainrotInventories[plr]
-	if not list then
-		return nil
-	end
-	local i = math.floor(idx)
-	if i < 1 or i > #list then
-		return nil
-	end
-	local entry = list[i]
-	if not entry then
-		return nil
-	end
-	enrichEntryFromCatalog(entry)
-
-	local char = plr.Character
-	if char then
-		local hum = char:FindFirstChildOfClass("Humanoid")
-		local equipped = char:FindFirstChildOfClass("Tool")
-		if equipped and equipped:GetAttribute("BrainrotTool") == true then
-			local a = equipped:GetAttribute("BrainrotInvIndex")
-			if typeof(a) == "number" and math.floor(a) == i and hum then
-				hum:UnequipTools()
-			end
-		end
-	end
-	destroyAllBrainrotToolsForPlayer(plr)
-
-	local map = brainrotParkedInExpandedBackpack[plr]
-	if map then
-		shiftParkedMapAfterListRemove(map, i)
-	end
-	table.remove(list, i)
-	plr:SetAttribute("BrainrotCount", #list)
-
-	local sync = ensureInventoryRemotes()
-	sync:FireClient(plr, packInventoryForClient(plr, list))
-	return entry
-end
-
-require(Modules:WaitForChild("BushHarvestInternal")).install({
-	consumeInventoryEntry = consumeInventoryEntry,
+require(Modules:WaitForChild("BushHarvestInternal")).boot({
 	pushBrainrotInventory = pushBrainrotInventory,
 	brainrotInventories = brainrotInventories,
 	brainrotParkedInExpandedBackpack = brainrotParkedInExpandedBackpack,
@@ -3285,6 +3178,7 @@ require(Modules:WaitForChild("BushHarvestInternal")).install({
 	enrichEntryFromBrainrotsFolder = enrichEntryFromBrainrotsFolder,
 	Brainrots = Brainrots,
 	IndexService = IndexService,
+	BrainrotEconomy = BrainrotEconomy,
 	packInventoryForClient = packInventoryForClient,
 	hotbarSlotsPayloadForPlayer = hotbarSlotsPayloadForPlayer,
 	syncBrainrotCarryCountAttr = syncBrainrotCarryCountAttr,
@@ -3293,4 +3187,11 @@ require(Modules:WaitForChild("BushHarvestInternal")).install({
 	notifyClientInventorySync = notifyClientInventorySync,
 	notifyIndexDeposited = notifyIndexDeposited,
 	HOTBAR_UI_SLOTS = HOTBAR_UI_SLOTS,
+	assignEntryToLowestFreeHotbarSlot = assignEntryToLowestFreeHotbarSlot,
+	playerInInventoryZone = playerInInventoryZone,
+	SafezoneUtil = SafezoneUtil,
+	destroyAllBrainrotToolsForPlayer = destroyAllBrainrotToolsForPlayer,
+	shiftParkedMapAfterListRemove = shiftParkedMapAfterListRemove,
+	getBushRemotesFolder = getBushRemotesFolder,
+	ensureEquipBrainrotRemote = ensureEquipBrainrotRemote,
 })

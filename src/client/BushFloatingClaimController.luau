@@ -1,7 +1,7 @@
 -- [ACTIVE] BushFloatingClaimController
 --[[
-	Client polish for floating bush brainrot offers: pulse highlight, countdown ring,
-	and vanish poof when the player misses the catch window.
+	Floating bush brainrot offers — accept / decline flanking the model, countdown ring,
+	pulse highlight, and vanish / decline FX.
 ]]
 
 local Players = game:GetService("Players")
@@ -10,49 +10,76 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
-local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local RaritySpawnStyle = require(script.Parent.RaritySpawnStyle)
 
 local player = Players.LocalPlayer
 
 local FLOAT_ENDS_AT_ATTR = "BrainrotFloatEndsAt"
 local FLOATING_PHASE = "Floating"
 local OWNER_ATTR = "OwnerUserId"
+local FLOAT_DURATION = 15
+local FLANK_OFFSET_X = 3.8
+local FLANK_OFFSET_Y = 1.5
+local TIMER_OFFSET_Y = -0.85
 
 local BushFloatingClaimController = {}
 
 type TrackedOffer = {
 	model: Model,
+	modelAdornee: BasePart,
 	highlight: Highlight,
-	billboard: BillboardGui,
+	billboards: { BillboardGui },
+	acceptBb: BillboardGui,
+	declineBb: BillboardGui,
+	timerBb: BillboardGui,
+	acceptBtn: TextButton,
+	declineBtn: TextButton,
+	acceptScale: UIScale,
+	declineScale: UIScale,
+	acceptPanelScale: UIScale,
+	declinePanelScale: UIScale,
 	timeLabel: TextLabel,
 	ring: Frame,
+	decisionLocked: boolean,
+	hoverCount: number,
+	uiHoverFrozen: boolean,
+	frozenWorldPositions: { [BillboardGui]: Vector3 }?,
+	hoverFreezeConn: RBXScriptConnection?,
+	unfreezeToken: number,
+	bbOffsets: { [BillboardGui]: Vector3 },
 	conns: { RBXScriptConnection },
 }
 
 local tracked: { [Model]: TrackedOffer } = {}
 local tickerConn: RBXScriptConnection? = nil
+local decisionRE: RemoteEvent? = nil
 
-local RARITY_PULSE: { [string]: Color3 } = {
-	common = Color3.fromRGB(180, 220, 180),
-	uncommon = Color3.fromRGB(120, 255, 150),
-	rare = Color3.fromRGB(90, 170, 255),
-	epic = Color3.fromRGB(200, 120, 255),
-	mythic = Color3.fromRGB(255, 120, 220),
-	legendary = Color3.fromRGB(255, 210, 80),
-	["brainrot god"] = Color3.fromRGB(255, 90, 90),
-	secret = Color3.fromRGB(255, 70, 70),
-}
+local HOVER_POP = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local HOVER_SCALE = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local HOVER_OUT = TweenInfo.new(0.26, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local HOVER_LIFT = 0.22
+local POP_IN = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local SLIDE_IN = TweenInfo.new(0.34, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local PUNCH = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local FADE = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
 local function pulseColorForRarity(rarity: string?): Color3
 	if typeof(rarity) == "string" then
-		local key = string.lower(rarity)
-		if RARITY_PULSE[key] then
-			return RARITY_PULSE[key]
-		end
-		return BrainrotHeaderStyle.rarityAccentColor(key)
+		return RaritySpawnStyle.accentColor(rarity)
 	end
 	return Color3.fromRGB(120, 255, 160)
+end
+
+local function getOrAddUIScale(obj: GuiObject): UIScale
+	local s = obj:FindFirstChildOfClass("UIScale")
+	if s then
+		return s
+	end
+	s = Instance.new("UIScale")
+	s.Scale = 1
+	s.Parent = obj
+	return s
 end
 
 local function adorneeFor(model: Model): BasePart?
@@ -62,7 +89,49 @@ local function adorneeFor(model: Model): BasePart?
 	return model:FindFirstChildWhichIsA("BasePart", true)
 end
 
+local function attachBillboardToModel(billboard: BillboardGui, adornee: BasePart, localOffset: Vector3)
+	billboard.Adornee = adornee
+	billboard.StudsOffset = Vector3.zero
+	billboard.StudsOffsetWorldSpace = localOffset
+end
+
+local function getBillboardLiftValue(billboard: BillboardGui): NumberValue
+	local lift = billboard:FindFirstChild("HoverLift")
+	if lift and lift:IsA("NumberValue") then
+		return lift
+	end
+	lift = Instance.new("NumberValue")
+	lift.Name = "HoverLift"
+	lift.Value = 0
+	lift.Parent = billboard
+	return lift
+end
+
+local function billboardWorldPosition(billboard: BillboardGui, adornee: BasePart): Vector3
+	return adornee.CFrame:PointToWorldSpace(billboard.StudsOffsetWorldSpace)
+end
+
+local function getModelAdornee(entry: TrackedOffer): BasePart?
+	if entry.modelAdornee.Parent then
+		return entry.modelAdornee
+	end
+	local adornee = adorneeFor(entry.model)
+	if adornee then
+		entry.modelAdornee = adornee
+	end
+	return adornee
+end
+
+local function parentBillboard(bb: BillboardGui)
+	local pg = player:FindFirstChild("PlayerGui")
+	bb.Parent = pg or Workspace.CurrentCamera
+end
+
 local function disconnectTracked(entry: TrackedOffer)
+	if entry.hoverFreezeConn then
+		entry.hoverFreezeConn:Disconnect()
+		entry.hoverFreezeConn = nil
+	end
 	for _, conn in entry.conns do
 		conn:Disconnect()
 	end
@@ -70,8 +139,10 @@ local function disconnectTracked(entry: TrackedOffer)
 	if entry.highlight.Parent then
 		entry.highlight:Destroy()
 	end
-	if entry.billboard.Parent then
-		entry.billboard:Destroy()
+	for _, bb in entry.billboards do
+		if bb.Parent then
+			bb:Destroy()
+		end
 	end
 end
 
@@ -82,6 +153,419 @@ local function untrack(model: Model)
 	end
 	disconnectTracked(entry)
 	tracked[model] = nil
+end
+
+local function fireDecision(model: Model, decision: string)
+	if not decisionRE then
+		return
+	end
+	decisionRE:FireServer(model, decision)
+end
+
+local function lockDecision(entry: TrackedOffer)
+	entry.decisionLocked = true
+	entry.acceptBtn.Active = false
+	entry.declineBtn.Active = false
+end
+
+local function styleChoiceButton(
+	btn: TextButton,
+	label: string,
+	accent: Color3,
+	gradColors: { Color3 },
+	textColor: Color3
+)
+	btn.Name = label
+	btn.Size = UDim2.fromScale(1, 1)
+	btn.BackgroundTransparency = 1
+	btn.BorderSizePixel = 0
+	btn.Font = Enum.Font.GothamBlack
+	btn.TextSize = 17
+	btn.Text = label
+	btn.TextColor3 = textColor
+	btn.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	btn.TextStrokeTransparency = 0
+	btn.AutoButtonColor = false
+	btn.ZIndex = 3
+
+	local panel = Instance.new("Frame")
+	panel.Name = "Panel"
+	panel.Size = UDim2.fromScale(1, 1)
+	panel.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	panel.BackgroundTransparency = 0
+	panel.BorderSizePixel = 0
+	panel.ZIndex = 1
+	panel.Parent = btn
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 10)
+	corner.Parent = panel
+
+	local grad = Instance.new("UIGradient")
+	grad.Name = "PanelGrad"
+	grad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, gradColors[1]),
+		ColorSequenceKeypoint.new(1, gradColors[2]),
+	})
+	grad.Rotation = 90
+	grad.Offset = Vector2.zero
+	grad.Parent = panel
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = accent
+	stroke.Thickness = 3
+	stroke.Transparency = 0
+	stroke.Parent = panel
+
+	local shine = Instance.new("Frame")
+	shine.Name = "Shine"
+	shine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	shine.BackgroundTransparency = 0.78
+	shine.BorderSizePixel = 0
+	shine.Size = UDim2.new(0.45, 0, 1.4, 0)
+	shine.Rotation = 18
+	shine.Position = UDim2.fromScale(-0.5, -0.2)
+	shine.ZIndex = 2
+	shine.Active = false
+	shine.Parent = panel
+
+	local scale = getOrAddUIScale(btn)
+	scale.Scale = 0.01
+
+	local panelScale = getOrAddUIScale(panel)
+	panelScale.Scale = 1
+
+	return btn, scale, panelScale
+end
+
+local function styleMinimalTimer(accent: Color3, parent: Instance): (TextLabel, Frame)
+	local label = Instance.new("TextLabel")
+	label.Name = "Time"
+	label.AnchorPoint = Vector2.new(0.5, 0)
+	label.Position = UDim2.fromScale(0.5, 0)
+	label.Size = UDim2.new(1, 0, 0, 18)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.GothamBlack
+	label.TextSize = 17
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	label.TextStrokeTransparency = 0
+	label.Text = string.format("%.1fs", FLOAT_DURATION)
+	label.Parent = parent
+
+	local track = Instance.new("Frame")
+	track.Name = "Track"
+	track.AnchorPoint = Vector2.new(0.5, 1)
+	track.Position = UDim2.new(0.5, 0, 1, 0)
+	track.Size = UDim2.new(0.88, 0, 0, 4)
+	track.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	track.BackgroundTransparency = 0.55
+	track.BorderSizePixel = 0
+	track.Parent = parent
+
+	local trackCorner = Instance.new("UICorner")
+	trackCorner.CornerRadius = UDim.new(1, 0)
+	trackCorner.Parent = track
+
+	local ring = Instance.new("Frame")
+	ring.Name = "Fill"
+	ring.Size = UDim2.fromScale(1, 1)
+	ring.BackgroundColor3 = accent
+	ring.BorderSizePixel = 0
+	ring.Parent = track
+
+	local ringCorner = Instance.new("UICorner")
+	ringCorner.CornerRadius = UDim.new(1, 0)
+	ringCorner.Parent = ring
+
+	return label, ring
+end
+
+local function makeFlankBillboard(name: string, worldOffset: Vector3, size: Vector2): BillboardGui
+	local bb = Instance.new("BillboardGui")
+	bb.Name = name
+	bb.Size = UDim2.fromOffset(size.X, size.Y)
+	bb.StudsOffset = Vector3.zero
+	bb.StudsOffsetWorldSpace = worldOffset
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.MaxDistance = 140
+	bb.Active = true
+	bb.ResetOnSpawn = false
+	return bb
+end
+
+type ChoiceUiParts = {
+	acceptBb: BillboardGui,
+	declineBb: BillboardGui,
+	timerBb: BillboardGui,
+	acceptBtn: TextButton,
+	declineBtn: TextButton,
+	acceptScale: UIScale,
+	declineScale: UIScale,
+	acceptPanelScale: UIScale,
+	declinePanelScale: UIScale,
+	timeLabel: TextLabel,
+	ring: Frame,
+}
+
+local function buildChoiceUi(_model: Model, rarity: string): ChoiceUiParts
+	local accent = pulseColorForRarity(rarity)
+
+	local acceptBb = makeFlankBillboard(
+		"FloatingClaimAccept",
+		Vector3.new(-FLANK_OFFSET_X, FLANK_OFFSET_Y, 0),
+		Vector2.new(84, 46)
+	)
+	local acceptBtn, acceptScale, acceptPanelScale = styleChoiceButton(
+		Instance.new("TextButton"),
+		"Accept",
+		Color3.fromRGB(70, 255, 140),
+		{ Color3.fromRGB(18, 42, 28), Color3.fromRGB(8, 18, 12) },
+		Color3.fromRGB(170, 255, 200)
+	)
+	acceptBtn.Parent = acceptBb
+
+	local declineBb = makeFlankBillboard(
+		"FloatingClaimDecline",
+		Vector3.new(FLANK_OFFSET_X, FLANK_OFFSET_Y, 0),
+		Vector2.new(84, 46)
+	)
+	local declineBtn, declineScale, declinePanelScale = styleChoiceButton(
+		Instance.new("TextButton"),
+		"Decline",
+		Color3.fromRGB(255, 95, 85),
+		{ Color3.fromRGB(42, 14, 14), Color3.fromRGB(18, 6, 8) },
+		Color3.fromRGB(255, 190, 185)
+	)
+	declineBtn.Parent = declineBb
+
+	local timerBb = makeFlankBillboard(
+		"FloatingClaimTimer",
+		Vector3.new(0, TIMER_OFFSET_Y, 0),
+		Vector2.new(76, 26)
+	)
+
+	local label, ring = styleMinimalTimer(accent, timerBb)
+
+	return {
+		acceptBb = acceptBb,
+		declineBb = declineBb,
+		timerBb = timerBb,
+		acceptBtn = acceptBtn,
+		declineBtn = declineBtn,
+		acceptScale = acceptScale,
+		declineScale = declineScale,
+		acceptPanelScale = acceptPanelScale,
+		declinePanelScale = declinePanelScale,
+		timeLabel = label,
+		ring = ring,
+	}
+end
+
+local function animateOfferIn(entry: TrackedOffer)
+	local acceptGoal = Vector3.new(-FLANK_OFFSET_X, FLANK_OFFSET_Y, 0)
+	local declineGoal = Vector3.new(FLANK_OFFSET_X, FLANK_OFFSET_Y, 0)
+
+	entry.acceptBb.StudsOffsetWorldSpace = acceptGoal + Vector3.new(-1.2, 0, 0)
+	entry.declineBb.StudsOffsetWorldSpace = declineGoal + Vector3.new(1.2, 0, 0)
+
+	TweenService:Create(entry.acceptScale, POP_IN, { Scale = 1 }):Play()
+	TweenService:Create(entry.declineScale, POP_IN, { Scale = 1 }):Play()
+	TweenService:Create(entry.acceptBb, SLIDE_IN, { StudsOffsetWorldSpace = acceptGoal }):Play()
+	TweenService:Create(entry.declineBb, SLIDE_IN, { StudsOffsetWorldSpace = declineGoal }):Play()
+
+	for _, btn in { entry.acceptBtn, entry.declineBtn } do
+		local panel = btn:FindFirstChild("Panel")
+		local shine = if panel then panel:FindFirstChild("Shine") else nil
+		if shine and shine:IsA("Frame") then
+			TweenService:Create(shine, TweenInfo.new(0.65, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Position = UDim2.fromScale(1.2, -0.2),
+			}):Play()
+		end
+	end
+end
+
+local function getButtonPanelStroke(btn: TextButton): UIStroke?
+	local panel = btn:FindFirstChild("Panel")
+	if panel then
+		return panel:FindFirstChildOfClass("UIStroke")
+	end
+	return nil
+end
+
+local function punchButton(scale: UIScale, btn: TextButton, bright: Color3)
+	TweenService:Create(scale, PUNCH, { Scale = 0.88 }):Play()
+	task.delay(0.12, function()
+		if scale.Parent then
+			TweenService:Create(scale, PUNCH, { Scale = 1 }):Play()
+		end
+	end)
+	local stroke = getButtonPanelStroke(btn)
+	if stroke then
+		local orig = stroke.Color
+		stroke.Color = bright
+		task.delay(0.18, function()
+			if stroke.Parent then
+				TweenService:Create(stroke, FADE, { Color = orig }):Play()
+			end
+		end)
+	end
+end
+
+local function captureFrozenWorldPositions(entry: TrackedOffer)
+	local adornee = getModelAdornee(entry)
+	if not adornee then
+		return
+	end
+	entry.frozenWorldPositions = {}
+	for _, billboard in entry.billboards do
+		entry.frozenWorldPositions[billboard] = billboardWorldPosition(billboard, adornee)
+	end
+end
+
+local function ensureHoverFreezeLoop(entry: TrackedOffer)
+	if entry.hoverFreezeConn then
+		return
+	end
+	entry.hoverFreezeConn = RunService.RenderStepped:Connect(function()
+		if not entry.uiHoverFrozen then
+			return
+		end
+		local frozen = entry.frozenWorldPositions
+		if not frozen then
+			return
+		end
+		local adornee = getModelAdornee(entry)
+		if not adornee then
+			return
+		end
+		for billboard, worldPos in frozen do
+			if not billboard.Parent then
+				continue
+			end
+			local lift = getBillboardLiftValue(billboard).Value
+			local holdPos = worldPos + Vector3.new(0, lift, 0)
+			billboard.StudsOffsetWorldSpace = adornee.CFrame:PointToObjectSpace(holdPos)
+		end
+	end)
+end
+
+local function startHoverFreeze(entry: TrackedOffer)
+	if not entry.frozenWorldPositions then
+		captureFrozenWorldPositions(entry)
+	end
+	entry.uiHoverFrozen = true
+	ensureHoverFreezeLoop(entry)
+end
+
+local function stopHoverFreeze(entry: TrackedOffer)
+	entry.uiHoverFrozen = false
+	entry.frozenWorldPositions = nil
+	if entry.hoverFreezeConn then
+		entry.hoverFreezeConn:Disconnect()
+		entry.hoverFreezeConn = nil
+	end
+end
+
+local function tweenBillboardLift(billboard: BillboardGui, lifted: boolean)
+	local liftValue = getBillboardLiftValue(billboard)
+	TweenService:Create(liftValue, if lifted then HOVER_POP else HOVER_OUT, {
+		Value = if lifted then HOVER_LIFT else 0,
+	}):Play()
+end
+
+local function brightGradientColors(gradColors: { Color3 }, accent: Color3): ColorSequence
+	return ColorSequence.new({
+		ColorSequenceKeypoint.new(0, gradColors[1]:Lerp(accent, 0.16)),
+		ColorSequenceKeypoint.new(1, gradColors[2]:Lerp(accent, 0.1)),
+	})
+end
+
+local function wireButtonHover(
+	entry: TrackedOffer,
+	btn: TextButton?,
+	scale: UIScale?,
+	panelScale: UIScale?,
+	bb: BillboardGui?,
+	accent: Color3,
+	textColor: Color3,
+	gradColors: { Color3 }
+)
+	if not btn or not scale or not panelScale or not bb then
+		return
+	end
+
+	local panel = btn:FindFirstChild("Panel")
+	local stroke = if panel then panel:FindFirstChildOfClass("UIStroke") else nil
+	local grad = if panel then panel:FindFirstChild("PanelGrad") else nil
+	local strokeBright = accent:Lerp(Color3.fromRGB(255, 255, 255), 0.55)
+	local restGradient = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, gradColors[1]),
+		ColorSequenceKeypoint.new(1, gradColors[2]),
+	})
+	local hoverGradient = brightGradientColors(gradColors, accent)
+
+	btn.MouseEnter:Connect(function()
+		if scale.Scale < 0.5 then
+			return
+		end
+		entry.unfreezeToken += 1
+		entry.hoverCount += 1
+		startHoverFreeze(entry)
+		tweenBillboardLift(bb, true)
+
+		TweenService:Create(scale, HOVER_SCALE, { Scale = 1.05 }):Play()
+		TweenService:Create(panelScale, HOVER_SCALE, { Scale = 1.02 }):Play()
+		if stroke then
+			TweenService:Create(stroke, HOVER_POP, {
+				Thickness = 3.5,
+				Color = strokeBright,
+				Transparency = 0,
+			}):Play()
+		end
+		if grad and grad:IsA("UIGradient") then
+			grad.Color = hoverGradient
+			TweenService:Create(grad, HOVER_POP, {
+				Rotation = 82,
+				Offset = Vector2.new(0.1, 0.02),
+			}):Play()
+		end
+		TweenService:Create(btn, HOVER_POP, { TextColor3 = Color3.fromRGB(255, 255, 255) }):Play()
+	end)
+
+	btn.MouseLeave:Connect(function()
+		entry.hoverCount = math.max(0, entry.hoverCount - 1)
+		tweenBillboardLift(bb, false)
+		TweenService:Create(scale, HOVER_SCALE, { Scale = 1 }):Play()
+		TweenService:Create(panelScale, HOVER_SCALE, { Scale = 1 }):Play()
+		if stroke then
+			TweenService:Create(stroke, HOVER_OUT, {
+				Thickness = 3,
+				Color = accent,
+				Transparency = 0,
+			}):Play()
+		end
+		if grad and grad:IsA("UIGradient") then
+			grad.Color = restGradient
+			TweenService:Create(grad, HOVER_OUT, {
+				Rotation = 90,
+				Offset = Vector2.zero,
+			}):Play()
+		end
+		TweenService:Create(btn, HOVER_OUT, { TextColor3 = textColor }):Play()
+
+		if entry.hoverCount == 0 then
+			entry.unfreezeToken += 1
+			local token = entry.unfreezeToken
+			task.delay(0.28, function()
+				if entry.unfreezeToken ~= token or entry.hoverCount > 0 then
+					return
+				end
+				stopHoverFreeze(entry)
+			end)
+		end
+	end)
 end
 
 local function ensureTicker()
@@ -109,89 +593,54 @@ local function ensureTicker()
 			end
 			local remaining = math.max(0, endsAt - now)
 			entry.timeLabel.Text = string.format("%.1fs", remaining)
-			local frac = math.clamp(remaining / 15, 0, 1)
+			local frac = math.clamp(remaining / FLOAT_DURATION, 0, 1)
 			entry.ring.Size = UDim2.fromScale(frac, 1)
 			local urgency = 1 - frac
 			entry.highlight.OutlineTransparency = 0.05 + urgency * 0.25
 			if urgency > 0.65 then
 				local flash = 0.5 + math.sin(now * 14) * 0.5
-				entry.timeLabel.TextColor3 = Color3.fromRGB(255, math.floor(120 + flash * 135), 90)
+				entry.timeLabel.TextColor3 = Color3.fromRGB(255, math.floor(170 + flash * 85), math.floor(140 + flash * 60))
+				local pulse = 1 + math.sin(now * 10) * 0.04
+				if not entry.decisionLocked and not entry.uiHoverFrozen then
+					entry.acceptScale.Scale = pulse
+					entry.declineScale.Scale = pulse
+				end
 			else
-				entry.timeLabel.TextColor3 = Color3.fromRGB(235, 255, 240)
+				entry.timeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 			end
 		end
 	end)
 end
 
-local function buildTimerUi(model: Model): (BillboardGui, TextLabel, Frame)
-	local bb = Instance.new("BillboardGui")
-	bb.Name = "FloatingClaimTimer"
-	bb.Size = UDim2.fromOffset(92, 28)
-	bb.StudsOffset = Vector3.new(0, 3.2, 0)
-	bb.AlwaysOnTop = true
-	bb.LightInfluence = 0
-	bb.MaxDistance = 80
+local pendingWatches: { [Model]: { RBXScriptConnection } } = {}
 
-	local panel = Instance.new("Frame")
-	panel.Name = "Panel"
-	panel.Size = UDim2.fromScale(1, 1)
-	panel.BackgroundColor3 = Color3.fromRGB(10, 14, 12)
-	panel.BackgroundTransparency = 0.2
-	panel.BorderSizePixel = 0
-	panel.Parent = bb
+local function clearWatch(model: Model)
+	local conns = pendingWatches[model]
+	if not conns then
+		return
+	end
+	for _, conn in conns do
+		conn:Disconnect()
+	end
+	pendingWatches[model] = nil
+end
 
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
-	corner.Parent = panel
+local function ownsOffer(model: Model): boolean
+	local ownerId = model:GetAttribute(OWNER_ATTR)
+	return typeof(ownerId) == "number" and ownerId == player.UserId
+end
 
-	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = 1.5
-	stroke.Color = Color3.fromRGB(120, 255, 170)
-	stroke.Parent = panel
-
-	local track = Instance.new("Frame")
-	track.Name = "Track"
-	track.AnchorPoint = Vector2.new(0, 1)
-	track.Position = UDim2.new(0, 6, 1, -5)
-	track.Size = UDim2.new(1, -12, 0, 5)
-	track.BackgroundColor3 = Color3.fromRGB(24, 32, 28)
-	track.BorderSizePixel = 0
-	track.Parent = panel
-
-	local trackCorner = Instance.new("UICorner")
-	trackCorner.CornerRadius = UDim.new(1, 0)
-	trackCorner.Parent = track
-
-	local ring = Instance.new("Frame")
-	ring.Name = "Fill"
-	ring.Size = UDim2.fromScale(1, 1)
-	ring.BackgroundColor3 = Color3.fromRGB(90, 255, 150)
-	ring.BorderSizePixel = 0
-	ring.Parent = track
-
-	local ringCorner = Instance.new("UICorner")
-	ringCorner.CornerRadius = UDim.new(1, 0)
-	ringCorner.Parent = ring
-
-	local label = Instance.new("TextLabel")
-	label.Name = "Time"
-	label.Size = UDim2.new(1, -8, 0, 16)
-	label.Position = UDim2.fromOffset(4, 3)
-	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.GothamBold
-	label.TextSize = 14
-	label.TextColor3 = Color3.fromRGB(235, 255, 240)
-	label.Text = "15.0s"
-	label.Parent = panel
-
-	return bb, label, ring
+local function isOfferBrainrotModel(model: Model): boolean
+	return model:GetAttribute("BrainrotCarryPhase") ~= nil
+		or model:GetAttribute(OWNER_ATTR) ~= nil
+		or typeof(model:GetAttribute("BrainrotName")) == "string"
 end
 
 local function trackModel(model: Model)
 	if tracked[model] then
 		return
 	end
-	if model:GetAttribute(OWNER_ATTR) ~= player.UserId then
+	if not ownsOffer(model) then
 		return
 	end
 	if model:GetAttribute("BrainrotCarryPhase") ~= FLOATING_PHASE then
@@ -204,7 +653,8 @@ local function trackModel(model: Model)
 	end
 
 	local rarity = model:GetAttribute("BrainrotRarity")
-	local color = pulseColorForRarity(if typeof(rarity) == "string" then rarity else nil)
+	local rarityStr = if typeof(rarity) == "string" then rarity else "common"
+	local color = pulseColorForRarity(rarityStr)
 
 	local hl = Instance.new("Highlight")
 	hl.Name = "FloatingClaimHighlight"
@@ -213,21 +663,75 @@ local function trackModel(model: Model)
 	hl.OutlineTransparency = 0.05
 	hl.OutlineColor = color
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	hl.Parent = workspace.CurrentCamera
+	hl.Parent = Workspace.CurrentCamera
 
-	local bb, label, ring = buildTimerUi(model)
-	bb.Adornee = adornee
-	bb.Parent = player:FindFirstChild("PlayerGui") or workspace.CurrentCamera
+	local ui = buildChoiceUi(model, rarityStr)
+	for _, billboard in { ui.acceptBb, ui.declineBb, ui.timerBb } do
+		attachBillboardToModel(billboard, adornee, billboard.StudsOffsetWorldSpace)
+		parentBillboard(billboard)
+	end
 
 	local entry: TrackedOffer = {
 		model = model,
+		modelAdornee = adornee,
 		highlight = hl,
-		billboard = bb,
-		timeLabel = label,
-		ring = ring,
+		billboards = { ui.acceptBb, ui.declineBb, ui.timerBb },
+		acceptBb = ui.acceptBb,
+		declineBb = ui.declineBb,
+		timerBb = ui.timerBb,
+		acceptBtn = ui.acceptBtn,
+		declineBtn = ui.declineBtn,
+		acceptScale = ui.acceptScale,
+		declineScale = ui.declineScale,
+		acceptPanelScale = ui.acceptPanelScale,
+		declinePanelScale = ui.declinePanelScale,
+		timeLabel = ui.timeLabel,
+		ring = ui.ring,
+		decisionLocked = false,
+		hoverCount = 0,
+		uiHoverFrozen = false,
+		frozenWorldPositions = nil,
+		hoverFreezeConn = nil,
+		unfreezeToken = 0,
+		bbOffsets = {
+			[ui.acceptBb] = Vector3.new(-FLANK_OFFSET_X, FLANK_OFFSET_Y, 0),
+			[ui.declineBb] = Vector3.new(FLANK_OFFSET_X, FLANK_OFFSET_Y, 0),
+			[ui.timerBb] = Vector3.new(0, TIMER_OFFSET_Y, 0),
+		},
 		conns = {},
 	}
 	tracked[model] = entry
+
+	local acceptAccent = Color3.fromRGB(70, 255, 140)
+	local declineAccent = Color3.fromRGB(255, 95, 85)
+	local acceptText = Color3.fromRGB(170, 255, 200)
+	local declineText = Color3.fromRGB(255, 190, 185)
+
+	table.insert(
+		entry.conns,
+		entry.acceptBtn.MouseButton1Click:Connect(function()
+			if entry.decisionLocked then
+				return
+			end
+			lockDecision(entry)
+			punchButton(entry.acceptScale, entry.acceptBtn, Color3.fromRGB(160, 255, 190))
+			GameSoundEffects.playProximityPromptAppear()
+			fireDecision(model, "accept")
+		end)
+	)
+
+	table.insert(
+		entry.conns,
+		entry.declineBtn.MouseButton1Click:Connect(function()
+			if entry.decisionLocked then
+				return
+			end
+			lockDecision(entry)
+			punchButton(entry.declineScale, entry.declineBtn, Color3.fromRGB(255, 170, 160))
+			GameSoundEffects.playErrorNotif()
+			fireDecision(model, "decline")
+		end)
+	)
 
 	table.insert(
 		entry.conns,
@@ -251,20 +755,77 @@ local function trackModel(model: Model)
 		end)
 	)
 
+	clearWatch(model)
+	animateOfferIn(entry)
+	local acceptGrad = { Color3.fromRGB(18, 42, 28), Color3.fromRGB(8, 18, 12) }
+	local declineGrad = { Color3.fromRGB(42, 14, 14), Color3.fromRGB(18, 6, 8) }
+
+	wireButtonHover(entry, entry.acceptBtn, entry.acceptScale, entry.acceptPanelScale, entry.acceptBb, acceptAccent, acceptText, acceptGrad)
+	wireButtonHover(entry, entry.declineBtn, entry.declineScale, entry.declinePanelScale, entry.declineBb, declineAccent, declineText, declineGrad)
 	ensureTicker()
+end
+
+local function tryTrackModel(model: Model)
+	if tracked[model] then
+		clearWatch(model)
+		return
+	end
+	if not ownsOffer(model) then
+		return
+	end
+	if model:GetAttribute("BrainrotCarryPhase") ~= FLOATING_PHASE then
+		return
+	end
+	trackModel(model)
+end
+
+local function watchModel(model: Model)
+	if tracked[model] or pendingWatches[model] then
+		return
+	end
+	if not model:IsA("Model") or not isOfferBrainrotModel(model) then
+		return
+	end
+
+	local conns: { RBXScriptConnection } = {}
+	pendingWatches[model] = conns
+
+	local function refresh()
+		tryTrackModel(model)
+	end
+
+	refresh()
+	table.insert(conns, model:GetAttributeChangedSignal("BrainrotCarryPhase"):Connect(refresh))
+	table.insert(conns, model:GetAttributeChangedSignal(OWNER_ATTR):Connect(refresh))
+	table.insert(
+		conns,
+		model.AncestryChanged:Connect(function(_, parent)
+			if not parent then
+				clearWatch(model)
+				untrack(model)
+			end
+		end)
+	)
+end
+
+local function onBrainrotModelSeen(model: Model)
+	if not model.Parent then
+		return
+	end
+	watchModel(model)
 end
 
 local function scanRoot(root: Instance)
 	for _, desc in root:GetDescendants() do
-		if desc:IsA("Model") and desc:GetAttribute("BrainrotCarryPhase") == FLOATING_PHASE then
-			trackModel(desc)
+		if desc:IsA("Model") and isOfferBrainrotModel(desc) then
+			onBrainrotModelSeen(desc)
 		end
 	end
 end
 
-local function spawnVanishBurst(worldPos: Vector3, rarity: string)
+local function spawnVanishBurst(worldPos: Vector3, rarity: string, declined: boolean)
 	local anchor = Instance.new("Part")
-	anchor.Name = "FloatingClaimVanishFX"
+	anchor.Name = if declined then "FloatingClaimDeclineFX" else "FloatingClaimVanishFX"
 	anchor.Anchored = true
 	anchor.CanCollide = false
 	anchor.CanQuery = false
@@ -274,9 +835,10 @@ local function spawnVanishBurst(worldPos: Vector3, rarity: string)
 	anchor.CFrame = CFrame.new(worldPos)
 	anchor.Parent = Workspace
 
-	local color = pulseColorForRarity(rarity)
+	local color = if declined then Color3.fromRGB(255, 110, 95) else pulseColorForRarity(rarity)
+	local count = if declined then 8 else 10
 
-	for i = 1, 10 do
+	for i = 1, count do
 		local p = Instance.new("Part")
 		p.Name = "Spark"
 		p.Anchored = true
@@ -289,8 +851,8 @@ local function spawnVanishBurst(worldPos: Vector3, rarity: string)
 		p.CFrame = anchor.CFrame
 		p.Parent = anchor
 
-		local offset = Vector3.new(math.random() - 0.5, math.random() * 0.5, math.random() - 0.5).Unit
-			* (1.5 + math.random() * 2)
+		local offset = Vector3.new(math.random() - 0.5, if declined then -0.2 else math.random() * 0.5, math.random() - 0.5).Unit
+			* (1.2 + math.random() * 2)
 		TweenService:Create(p, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 			CFrame = CFrame.new(worldPos + offset),
 			Transparency = 1,
@@ -311,24 +873,45 @@ function BushFloatingClaimController.init()
 	Workspace.DescendantAdded:Connect(function(desc)
 		if desc:IsA("Model") then
 			task.defer(function()
-				trackModel(desc)
+				onBrainrotModelSeen(desc)
 			end)
 		end
 	end)
 
-	local folder = ReplicatedStorage:WaitForChild("BushRemotes", 60)
-	if folder then
-		local vanish = folder:WaitForChild("FloatingClaimVanish", 60)
+	task.spawn(function()
+		local folder = ReplicatedStorage:WaitForChild("BushRemotes", 120)
+		if not folder then
+			warn("[BushFloatingClaimController] BushRemotes folder missing")
+			return
+		end
+		local decision = folder:WaitForChild("FloatingClaimDecision", 120)
+		if decision and decision:IsA("RemoteEvent") then
+			decisionRE = decision
+		else
+			warn("[BushFloatingClaimController] FloatingClaimDecision remote missing")
+		end
+
+		local vanish = folder:WaitForChild("FloatingClaimVanish", 30)
 		if vanish and vanish:IsA("RemoteEvent") then
 			vanish.OnClientEvent:Connect(function(worldPos: any, rarity: any)
 				if typeof(worldPos) ~= "Vector3" then
 					return
 				end
-				spawnVanishBurst(worldPos, if typeof(rarity) == "string" then rarity else "common")
+				spawnVanishBurst(worldPos, if typeof(rarity) == "string" then rarity else "common", false)
 				GameSoundEffects.playErrorNotif()
 			end)
 		end
-	end
+
+		local declined = folder:WaitForChild("FloatingClaimDeclineFX", 30)
+		if declined and declined:IsA("RemoteEvent") then
+			declined.OnClientEvent:Connect(function(worldPos: any, rarity: any)
+				if typeof(worldPos) ~= "Vector3" then
+					return
+				end
+				spawnVanishBurst(worldPos, if typeof(rarity) == "string" then rarity else "common", true)
+			end)
+		end
+	end)
 end
 
 return BushFloatingClaimController

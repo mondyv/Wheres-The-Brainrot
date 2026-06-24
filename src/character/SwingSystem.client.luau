@@ -36,6 +36,7 @@ end
 local SafezoneUtil = tryRequireModule(sharedFolder, "SafezoneUtil")
 local SwingUpgrades = tryRequireModule(sharedFolder, "SwingUpgrades")
 local SwingProgression = tryRequireModule(sharedFolder, "SwingProgression")
+local WebTrapConfig = tryRequireModule(sharedFolder, "WebTrapConfig")
 
 -- Target setup from the original friend script.
 C.SWING_TARGET_TAG = "SwingTarget"
@@ -53,10 +54,6 @@ C.ROPE_MOMENTUM_LENGTH_MULT = 0.68
 C.ROPE_DISTANCE_STRETCH_MULT = 0.22
 C.ROPE_LENGTH_RESPONSE = 24
 C.ROPE_ATTACH_START_MULT = 0.58
-
-C.ROPE_VISUAL_SHOOT_SPEED = 190
-C.ROPE_VISUAL_SHOOT_MIN_TIME = 0.22
-C.ROPE_VISUAL_SHOOT_MAX_TIME = 0.42
 
 C.ROPE_VISUAL_IDLE_STRAIGHT_SPEED = 36
 C.ROPE_VISUAL_FULL_SAG_SPEED = 78
@@ -251,11 +248,29 @@ C.ROPE_COLOR_B = Color3.fromRGB(86, 51, 24)
 C.ROPE_BRICK_COLOR = BrickColor.new("Reddish brown")
 C.ROPE_VISUAL_THICKNESS = 0.18
 C.ROPE_VISUAL_SAG = 0.65
-C.ROPE_VISUAL_SHOOT_TIME = 0.24
-C.ROPE_VISUAL_SHOOT_SPEED = 330
-C.ROPE_VISUAL_SHOOT_MIN_TIME = 0.18
-C.ROPE_VISUAL_SHOOT_MAX_TIME = 0.32
+C.ROPE_VISUAL_SHOOT_SPEED = 420
+C.ROPE_VISUAL_SHOOT_MIN_TIME = 0.14
+C.ROPE_VISUAL_SHOOT_MAX_TIME = 0.34
 C.ROPE_VISUAL_MIN_LENGTH = 0.25
+C.ROPE_THROW_BEAM_WIDTH0 = 0.24
+C.ROPE_THROW_BEAM_WIDTH1 = 0.11
+C.ROPE_THROW_BEAM_COLOR = Color3.fromRGB(238, 244, 255)
+C.ROPE_THROW_BEAM_TIP_COLOR = Color3.fromRGB(90, 220, 255)
+C.ROPE_THROW_BEAM_LIGHT = 0.9
+C.ROPE_THROW_LAUNCH_EASE = 2.65
+C.ROPE_THROW_LATCH_DISTANCE = 2.5
+C.ROPE_THROW_ARC_HEIGHT_MULT = 0.06
+C.ROPE_THROW_ARC_MIN = 0.6
+C.ROPE_THROW_ARC_MAX = 7
+C.ROPE_THROW_ARC_SWAY_MULT = 0.018
+C.ROPE_THROW_HOOK_SIZE = Vector3.new(0.28, 0.28, 0.36)
+C.ROPE_THROW_RECOIL_DV = 8
+C.ROPE_THROW_LAUNCH_VFX_SIZE = 1.15
+C.ROPE_THROW_LAUNCH_VFX_TIME = 0.22
+C.ROPE_THROW_TRAIL_LIFE = 0.18
+C.ROPE_LATCH_FLASH_SIZE = 3.2
+C.ROPE_LATCH_FLASH_TIME = 0.32
+C.ROPE_LATCH_SPARK_COUNT = 8
 
 C.ROPE_THROW_BRICK_COLOR = BrickColor.new("Reddish brown")
 C.ROPE_LOCKED_BRICK_COLOR = BrickColor.new("Reddish brown")
@@ -1035,6 +1050,397 @@ local function createReleaseStyleController(humanoid, hrp)
 	return controller
 end
 
+local function getThrowArcWorldPos(handWorld, anchorWorld, alpha)
+	local delta = anchorWorld - handWorld
+	local dist = delta.Magnitude
+	if dist < 0.05 then
+		return handWorld
+	end
+
+	local launchT = 1 - (1 - math.clamp(alpha, 0, 1)) ^ C.ROPE_THROW_LAUNCH_EASE
+	local arcHeight = math.clamp(dist * C.ROPE_THROW_ARC_HEIGHT_MULT, C.ROPE_THROW_ARC_MIN, C.ROPE_THROW_ARC_MAX)
+	local basePos = handWorld:Lerp(anchorWorld, launchT)
+	local arcLift = math.sin(launchT * math.pi) * arcHeight
+
+	local side = delta:Cross(Vector3.yAxis)
+	local swayDir = side.Magnitude > 0.05 and side.Unit or Vector3.new()
+	local swayAmt = math.sin(launchT * math.pi) * math.clamp(dist * C.ROPE_THROW_ARC_SWAY_MULT, 0, 1.4)
+
+	return basePos + Vector3.new(0, arcLift, 0) + swayDir * swayAmt
+end
+
+local function setupHandThrowAttachment(hand, hrp, side)
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "SwingHandAttachment"
+
+	if hand ~= hrp then
+		attachment.Parent = hand
+		local gripName = side == "Left" and "LeftGripAttachment" or "RightGripAttachment"
+		local grip = hand:FindFirstChild(gripName)
+		if grip and grip:IsA("Attachment") then
+			attachment.CFrame = grip.CFrame
+		elseif hand.Name:find("Hand") then
+			attachment.Position = Vector3.new(0, 0, -0.34)
+		else
+			attachment.Position = Vector3.new(0, -0.45, 0)
+		end
+	else
+		attachment.Parent = hrp
+		local lateral = side == "Left" and -1.2 or 1.2
+		attachment.Position = Vector3.new(lateral, 0.45, -0.5)
+	end
+
+	return attachment
+end
+
+local function spawnThrowLaunchVfx(worldPos, throwDir)
+	local burst = Instance.new("Part")
+	burst.Name = "SwingThrowLaunchBurst"
+	burst.Shape = Enum.PartType.Ball
+	burst.Size = Vector3.new(0.5, 0.5, 0.5)
+	burst.Anchored = true
+	burst.CanCollide = false
+	burst.CanTouch = false
+	burst.CanQuery = false
+	burst.CastShadow = false
+	burst.Material = Enum.Material.Neon
+	burst.Color = Color3.fromRGB(255, 255, 255)
+	burst.Transparency = 0.12
+	burst.CFrame = CFrame.new(worldPos)
+	burst.Parent = workspace
+
+	local ring = Instance.new("Part")
+	ring.Name = "SwingThrowLaunchRing"
+	ring.Shape = Enum.PartType.Cylinder
+	ring.Size = Vector3.new(0.06, 0.7, 0.7)
+	ring.Anchored = true
+	ring.CanCollide = false
+	ring.CanTouch = false
+	ring.CanQuery = false
+	ring.CastShadow = false
+	ring.Material = Enum.Material.Neon
+	ring.Color = C.PREVIEW_COLOR
+	ring.Transparency = 0.2
+	ring.CFrame = CFrame.lookAt(worldPos, worldPos + throwDir) * CFrame.Angles(0, math.rad(90), 0)
+	ring.Parent = workspace
+
+	local endSize = C.ROPE_THROW_LAUNCH_VFX_SIZE
+	TweenService:Create(burst, TweenInfo.new(C.ROPE_THROW_LAUNCH_VFX_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(endSize, endSize, endSize),
+		Transparency = 1,
+	}):Play()
+	TweenService:Create(ring, TweenInfo.new(C.ROPE_THROW_LAUNCH_VFX_TIME * 1.1, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+		Size = Vector3.new(0.06, endSize * 2.4, endSize * 2.4),
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(burst, C.ROPE_THROW_LAUNCH_VFX_TIME + 0.06)
+	Debris:AddItem(ring, C.ROPE_THROW_LAUNCH_VFX_TIME + 0.1)
+end
+
+local function spawnRopeLatchVfx(worldPos)
+	local flash = Instance.new("Part")
+	flash.Name = "SwingRopeLatchFlash"
+	flash.Shape = Enum.PartType.Ball
+	flash.Size = Vector3.new(0.55, 0.55, 0.55)
+	flash.Anchored = true
+	flash.CanCollide = false
+	flash.CanTouch = false
+	flash.CanQuery = false
+	flash.CastShadow = false
+	flash.Material = Enum.Material.Neon
+	flash.Color = Color3.fromRGB(255, 255, 255)
+	flash.Transparency = 0.08
+	flash.CFrame = CFrame.new(worldPos)
+	flash.Parent = workspace
+
+	local ring = Instance.new("Part")
+	ring.Name = "SwingRopeLatchRing"
+	ring.Shape = Enum.PartType.Cylinder
+	ring.Size = Vector3.new(0.1, 1.2, 1.2)
+	ring.Anchored = true
+	ring.CanCollide = false
+	ring.CanTouch = false
+	ring.CanQuery = false
+	ring.CastShadow = false
+	ring.Material = Enum.Material.Neon
+	ring.Color = C.PREVIEW_COLOR
+	ring.Transparency = 0.18
+	ring.CFrame = CFrame.new(worldPos) * CFrame.Angles(0, 0, math.rad(90))
+	ring.Parent = workspace
+
+	local ring2 = Instance.new("Part")
+	ring2.Name = "SwingRopeLatchRingOuter"
+	ring2.Shape = Enum.PartType.Cylinder
+	ring2.Size = Vector3.new(0.06, 0.85, 0.85)
+	ring2.Anchored = true
+	ring2.CanCollide = false
+	ring2.CanTouch = false
+	ring2.CanQuery = false
+	ring2.CastShadow = false
+	ring2.Material = Enum.Material.Neon
+	ring2.Color = C.READY_COLOR
+	ring2.Transparency = 0.32
+	ring2.CFrame = CFrame.new(worldPos) * CFrame.Angles(math.rad(90), 0, 0)
+	ring2.Parent = workspace
+
+	local flashSize = C.ROPE_LATCH_FLASH_SIZE
+	TweenService:Create(flash, TweenInfo.new(C.ROPE_LATCH_FLASH_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(flashSize, flashSize, flashSize),
+		Transparency = 1,
+	}):Play()
+	TweenService:Create(ring, TweenInfo.new(C.ROPE_LATCH_FLASH_TIME * 1.1, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+		Size = Vector3.new(0.1, flashSize * 2.6, flashSize * 2.6),
+		Transparency = 1,
+	}):Play()
+	TweenService:Create(ring2, TweenInfo.new(C.ROPE_LATCH_FLASH_TIME * 1.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+		Size = Vector3.new(0.06, flashSize * 3.4, flashSize * 3.4),
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(flash, C.ROPE_LATCH_FLASH_TIME + 0.08)
+	Debris:AddItem(ring, C.ROPE_LATCH_FLASH_TIME + 0.12)
+	Debris:AddItem(ring2, C.ROPE_LATCH_FLASH_TIME + 0.14)
+
+	for i = 1, C.ROPE_LATCH_SPARK_COUNT do
+		local spark = Instance.new("Part")
+		spark.Name = "SwingRopeLatchSpark"
+		spark.Size = Vector3.new(0.14, 0.14, 0.14)
+		spark.Anchored = true
+		spark.CanCollide = false
+		spark.CanTouch = false
+		spark.CanQuery = false
+		spark.CastShadow = false
+		spark.Material = Enum.Material.Neon
+		spark.Color = i % 2 == 0 and C.READY_COLOR or C.PREVIEW_COLOR
+		spark.Transparency = 0.05
+		spark.CFrame = CFrame.new(worldPos)
+		spark.Parent = workspace
+
+		local angle = (i / C.ROPE_LATCH_SPARK_COUNT) * math.pi * 2
+		local outward = Vector3.new(math.cos(angle), math.random(4, 14) / 10, math.sin(angle))
+		TweenService:Create(spark, TweenInfo.new(C.ROPE_LATCH_FLASH_TIME * 0.85, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			CFrame = CFrame.new(worldPos + outward * (1.6 + math.random() * 1.8)),
+			Size = Vector3.new(0.03, 0.03, 0.03),
+			Transparency = 1,
+		}):Play()
+		Debris:AddItem(spark, C.ROPE_LATCH_FLASH_TIME + 0.06)
+	end
+end
+
+local function pendulumArcDir(radial)
+	local gravity = Vector3.new(0, -workspace.Gravity, 0)
+	local tangent = gravity - radial * gravity:Dot(radial)
+	if tangent.Magnitude < 0.05 then
+		return nil
+	end
+	return tangent.Unit
+end
+
+local function spawnLandingBlocks(character, hrp, rayParams, speed)
+	local alpha = math.clamp((speed - 8) / 70, 0.58, 1)
+	if alpha <= 0 then
+		return
+	end
+
+	rayParams.FilterDescendantsInstances = { character }
+	local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -10, 0), rayParams)
+	local pos = hit and hit.Position or (hrp.Position - Vector3.new(0, 3, 0))
+	local color = hit and hit.Instance and hit.Instance.Color or Color3.fromRGB(120, 120, 120)
+	local material = hit and hit.Material or Enum.Material.Concrete
+	local count = math.floor(10 + alpha * 14)
+
+	local ring = Instance.new("Part")
+	ring.Name = "SwingImpactRing"
+	ring.Shape = Enum.PartType.Cylinder
+	ring.Anchored = true
+	ring.CanCollide = false
+	ring.CanTouch = false
+	ring.CanQuery = false
+	ring.CastShadow = false
+	ring.Material = Enum.Material.SmoothPlastic
+	ring.Color = color:Lerp(Color3.new(1, 1, 1), 0.35)
+	ring.Transparency = 0.24
+	ring.Size = Vector3.new(0.12, 7 + alpha * 7, 7 + alpha * 7)
+	ring.CFrame = CFrame.new(pos + Vector3.new(0, 0.08, 0)) * CFrame.Angles(0, 0, math.rad(90))
+	ring.Parent = workspace
+	TweenService:Create(ring, TweenInfo.new(0.58, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(0.12, 30 + alpha * 34, 30 + alpha * 34),
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(ring, 0.7)
+
+	local dustRing = Instance.new("Part")
+	dustRing.Name = "SwingImpactDustRing"
+	dustRing.Shape = Enum.PartType.Cylinder
+	dustRing.Anchored = true
+	dustRing.CanCollide = false
+	dustRing.CanTouch = false
+	dustRing.CanQuery = false
+	dustRing.CastShadow = false
+	dustRing.Material = Enum.Material.SmoothPlastic
+	dustRing.Color = color:Lerp(Color3.new(0, 0, 0), 0.18)
+	dustRing.Transparency = 0.56
+	dustRing.Size = Vector3.new(0.1, 10 + alpha * 8, 10 + alpha * 8)
+	dustRing.CFrame = CFrame.new(pos + Vector3.new(0, 0.05, 0)) * CFrame.Angles(0, 0, math.rad(90))
+	dustRing.Parent = workspace
+	TweenService:Create(dustRing, TweenInfo.new(0.86, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+		Size = Vector3.new(0.1, 44 + alpha * 44, 44 + alpha * 44),
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(dustRing, 0.96)
+
+	local burst = Instance.new("Part")
+	burst.Name = "SwingImpactBurst"
+	burst.Shape = Enum.PartType.Ball
+	burst.Anchored = true
+	burst.CanCollide = false
+	burst.CanTouch = false
+	burst.CanQuery = false
+	burst.CastShadow = false
+	burst.Material = Enum.Material.SmoothPlastic
+	burst.Color = color:Lerp(Color3.new(1, 1, 1), 0.18)
+	burst.Transparency = 0.72
+	burst.Size = Vector3.new(4 + alpha * 5, 1.2 + alpha * 1.8, 4 + alpha * 5)
+	burst.CFrame = CFrame.new(pos + Vector3.new(0, 0.65, 0))
+	burst.Parent = workspace
+	TweenService:Create(burst, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(15 + alpha * 15, 5 + alpha * 5, 15 + alpha * 15),
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(burst, 0.52)
+
+	for _ = 1, count do
+		local size = math.random(80, 240) / 100
+		local part = Instance.new("Part")
+		part.Name = "SwingLandingChunk"
+		part.Size = Vector3.new(size, size * math.random(70, 130) / 100, size)
+		part.Anchored = true
+		part.Material = material
+		part.Color = color
+		part.CanCollide = false
+		part.CanTouch = false
+		part.CanQuery = false
+		part.CastShadow = false
+		part.CFrame = CFrame.new(pos + Vector3.new(math.random(-42, 42) / 10, 0.22, math.random(-42, 42) / 10))
+			* CFrame.Angles(math.random() * math.pi, math.random() * math.pi, math.random() * math.pi)
+		part.Parent = workspace
+
+		TweenService:Create(part, TweenInfo.new(1.05, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Transparency = 1,
+			CFrame = part.CFrame
+				+ Vector3.new(math.random(-52, 52) / 10, math.random(24, 58) / 10, math.random(-52, 52) / 10),
+			Size = Vector3.new(0.06, 0.06, 0.06),
+		}):Play()
+		Debris:AddItem(part, 1.16)
+	end
+
+	local chipCount = math.floor(22 + alpha * 26)
+	for _ = 1, chipCount do
+		local size = math.random(20, 62) / 100
+		local chip = Instance.new("Part")
+		chip.Name = "SwingLandingChip"
+		chip.Size = Vector3.new(size, size, size)
+		chip.Anchored = true
+		chip.Material = material
+		chip.Color = color:Lerp(Color3.new(1, 1, 1), math.random(0, 18) / 100)
+		chip.CanCollide = false
+		chip.CanTouch = false
+		chip.CanQuery = false
+		chip.CastShadow = false
+		chip.CFrame = CFrame.new(pos + Vector3.new(math.random(-42, 42) / 10, 0.16, math.random(-42, 42) / 10))
+		chip.Parent = workspace
+
+		TweenService:Create(chip, TweenInfo.new(0.78, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Transparency = 1,
+			CFrame = chip.CFrame
+				+ Vector3.new(math.random(-62, 62) / 10, math.random(14, 34) / 10, math.random(-62, 62) / 10),
+			Size = Vector3.new(0.03, 0.03, 0.03),
+		}):Play()
+		Debris:AddItem(chip, 0.9)
+	end
+end
+
+local function spawnGroundDragDebris(hrp, hit, horizontalVelocity, lastClock)
+	if not hit then
+		return lastClock
+	end
+
+	local now = os.clock()
+	if now - lastClock < C.SWING_GROUND_DRAG_DEBRIS_INTERVAL then
+		return lastClock
+	end
+
+	local speed = horizontalVelocity and horizontalVelocity.Magnitude or 0
+	local pos = hit.Position
+	local color = Color3.fromRGB(120, 120, 120)
+	local material = hit.Material or Enum.Material.Concrete
+	if hit.Instance and hit.Instance:IsA("BasePart") then
+		color = hit.Instance.Color
+		material = hit.Material or hit.Instance.Material
+	end
+	local travelDir = speed > 0.05 and horizontalVelocity.Unit
+		or flatUnit(hrp.CFrame.LookVector)
+		or Vector3.new(0, 0, -1)
+	local right = Vector3.new(-travelDir.Z, 0, travelDir.X)
+	local visualSpeed = math.max(speed, C.SWING_GROUND_DRAG_MIN_SPEED)
+
+	local scrape = Instance.new("Part")
+	scrape.Name = "SwingGroundDragScrape"
+	scrape.Anchored = true
+	scrape.CanCollide = false
+	scrape.CanTouch = false
+	scrape.CanQuery = false
+	scrape.CastShadow = false
+	scrape.Material = Enum.Material.SmoothPlastic
+	scrape.Color = color:Lerp(Color3.new(1, 1, 1), 0.14)
+	scrape.Transparency = 0.48
+	scrape.Size = Vector3.new(math.random(45, 75) / 100, 0.035, math.random(130, 220) / 100)
+	scrape.CFrame =
+		CFrame.lookAt(pos + Vector3.new(0, 0.055, 0) - travelDir * 0.35, pos + Vector3.new(0, 0.055, 0) + travelDir)
+	scrape.Parent = workspace
+	TweenService:Create(scrape, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Transparency = 1,
+		Size = Vector3.new(scrape.Size.X * 1.8, 0.025, scrape.Size.Z * 1.35),
+	}):Play()
+	Debris:AddItem(scrape, 0.34)
+
+	local chipCount = speed >= C.SWING_GROUND_DRAG_MIN_SPEED and math.random(2, 3) or 2
+	for _ = 1, chipCount do
+		local size = math.random(16, 42) / 100
+		local chip = Instance.new("Part")
+		chip.Name = "SwingGroundDragChip"
+		chip.Size = Vector3.new(size, size * math.random(70, 120) / 100, size)
+		chip.Anchored = true
+		chip.Material = material
+		chip.Color = color:Lerp(Color3.new(1, 1, 1), math.random(0, 12) / 100)
+		chip.CanCollide = false
+		chip.CanTouch = false
+		chip.CanQuery = false
+		chip.CastShadow = false
+		chip.CFrame = CFrame.new(pos + Vector3.new(0, 0.18, 0) + right * math.random(-11, 11) / 10)
+			* CFrame.Angles(math.random() * math.pi, math.random() * math.pi, math.random() * math.pi)
+		chip.Parent = workspace
+
+		local scatter = right * math.random(-16, 16) / 10
+		local backKick = math.random(8, 16) + visualSpeed * math.random(4, 8) / 100
+
+		TweenService:Create(
+			chip,
+			TweenInfo.new(C.SWING_GROUND_DRAG_DEBRIS_LIFETIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{
+				Transparency = 1,
+				CFrame = chip.CFrame
+					- travelDir * backKick * 0.08
+					+ scatter
+					+ Vector3.new(0, math.random(4, 10) / 10, 0),
+				Size = Vector3.new(0.03, 0.03, 0.03),
+			}
+		):Play()
+		Debris:AddItem(chip, C.SWING_GROUND_DRAG_DEBRIS_LIFETIME + 0.08)
+	end
+
+	return now
+end
+
 local function boot(character)
 	camera = workspace.CurrentCamera or camera
 
@@ -1053,6 +1459,13 @@ local function boot(character)
 			return SafezoneUtil.isCharacterInSafezone(character)
 		end)
 		return ok and blocked == true
+	end
+
+	local function isWebTrapped()
+		if not WebTrapConfig or typeof(WebTrapConfig.TRAPPED_ATTR) ~= "string" then
+			return false
+		end
+		return player:GetAttribute(WebTrapConfig.TRAPPED_ATTR) == true
 	end
 
 	local animator = humanoid:FindFirstChildOfClass("Animator")
@@ -1142,6 +1555,7 @@ local function boot(character)
 	local swingOrientation = nil
 	local handAttachment = nil
 	local swingRopeVisual = nil
+	local pendingSwingParams = nil
 	local previewAnchorPart = nil
 	local previewFrom = nil
 	local previewTo = nil
@@ -1211,6 +1625,9 @@ local function boot(character)
 	end
 
 	local function forceSwingHumanoidControl()
+		if isWebTrapped() then
+			return
+		end
 		releaseStyle.cancel()
 		swingPose.clear()
 		humanoid.PlatformStand = false
@@ -2940,19 +3357,15 @@ local function boot(character)
 		chargeDot.Position = UDim2.new(0.5, -px * 0.5, 0.5, -px * 0.5)
 	end
 
-	local function spawnSwingRopeVisual(attachWorld)
+	local function spawnSwingRopeVisual(attachWorld, onLatch)
 		local side = getSwingSide(attachWorld)
 		local hand = handPartForSide(side)
 
-		handAttachment = Instance.new("Attachment")
-		handAttachment.Name = "SwingHandAttachment"
-		handAttachment.Parent = hand
-
-		if hand == hrp then
-			handAttachment.Position = Vector3.new(0, 1.1, 0)
-		else
-			handAttachment.Position = Vector3.new(0, -0.85, 0)
+		if handAttachment then
+			handAttachment:Destroy()
+			handAttachment = nil
 		end
+		handAttachment = setupHandThrowAttachment(hand, hrp, side)
 
 		hidePreview()
 
@@ -2997,6 +3410,10 @@ local function boot(character)
 		end
 
 		local startHandWorld = handAttachment.WorldPosition
+		local throwDir = attachWorld - startHandWorld
+		if throwDir.Magnitude > 0.05 then
+			spawnThrowLaunchVfx(startHandWorld, throwDir.Unit)
+		end
 
 		local handPart = makeVisualPart("SwingRopeHandVisualAnchor", startHandWorld)
 		local tipPart = makeVisualPart("SwingRopeTipVisualAnchor", startHandWorld)
@@ -3014,19 +3431,75 @@ local function boot(character)
 		anchorVisualAttachment.Name = "SwingRopeVisualAnchorAttachment"
 		anchorVisualAttachment.Parent = anchorPart
 
-		local visualRope = Instance.new("RopeConstraint")
-		visualRope.Name = "SwingVisualRopeConstraint"
-		visualRope.Attachment0 = handVisualAttachment
-		visualRope.Attachment1 = tipVisualAttachment
-		visualRope.Length = C.ROPE_VISUAL_MIN_LENGTH
-		visualRope.Thickness = C.ROPE_VISUAL_SHOOT_THICKNESS
-		visualRope.Visible = true
-		visualRope.Restitution = 0
-		visualRope.Parent = handPart
+		local throwBeam = Instance.new("Beam")
+		throwBeam.Name = "SwingThrowBeam"
+		throwBeam.Attachment0 = handVisualAttachment
+		throwBeam.Attachment1 = tipVisualAttachment
+		throwBeam.Width0 = C.ROPE_THROW_BEAM_WIDTH0
+		throwBeam.Width1 = C.ROPE_THROW_BEAM_WIDTH1
+		throwBeam.LightEmission = C.ROPE_THROW_BEAM_LIGHT
+		throwBeam.FaceCamera = true
+		throwBeam.Segments = 12
+		throwBeam.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+			ColorSequenceKeypoint.new(0.55, C.ROPE_THROW_BEAM_COLOR),
+			ColorSequenceKeypoint.new(1, C.ROPE_THROW_BEAM_TIP_COLOR),
+		})
+		throwBeam.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.02),
+			NumberSequenceKeypoint.new(1, 0.12),
+		})
+		throwBeam.Parent = handPart
 
-		pcall(function()
-			visualRope.Color = C.ROPE_THROW_BRICK_COLOR
-		end)
+		local hookHead = Instance.new("Part")
+		hookHead.Name = "SwingRopeHookHead"
+		hookHead.Size = C.ROPE_THROW_HOOK_SIZE
+		hookHead.Anchored = false
+		hookHead.CanCollide = false
+		hookHead.CanTouch = false
+		hookHead.CanQuery = false
+		hookHead.CastShadow = false
+		hookHead.Material = Enum.Material.Neon
+		hookHead.Color = Color3.fromRGB(255, 255, 255)
+		hookHead.Transparency = 0.02
+		hookHead.Parent = tipPart
+
+		local hookWeld = Instance.new("WeldConstraint")
+		hookWeld.Part0 = tipPart
+		hookWeld.Part1 = hookHead
+		hookWeld.Parent = hookHead
+
+		local trailA0 = Instance.new("Attachment")
+		trailA0.Name = "SwingHookTrailA0"
+		trailA0.Position = Vector3.new(0, 0, hookHead.Size.Z * 0.22)
+		trailA0.Parent = hookHead
+
+		local trailA1 = Instance.new("Attachment")
+		trailA1.Name = "SwingHookTrailA1"
+		trailA1.Position = Vector3.new(0, 0, -hookHead.Size.Z * 0.22)
+		trailA1.Parent = hookHead
+
+		local hookTrail = Instance.new("Trail")
+		hookTrail.Name = "SwingHookTrail"
+		hookTrail.Attachment0 = trailA0
+		hookTrail.Attachment1 = trailA1
+		hookTrail.Lifetime = C.ROPE_THROW_TRAIL_LIFE
+		hookTrail.MinLength = 0.02
+		hookTrail.LightEmission = 1
+		hookTrail.FaceCamera = true
+		hookTrail.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+			ColorSequenceKeypoint.new(1, C.ROPE_THROW_BEAM_TIP_COLOR),
+		})
+		hookTrail.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.08),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		hookTrail.WidthScale = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 1),
+			NumberSequenceKeypoint.new(1, 0),
+		})
+		hookTrail.Parent = hookHead
 
 		local shootDistance = (attachWorld - startHandWorld).Magnitude
 		local shootTime = math.clamp(
@@ -3039,13 +3512,18 @@ local function boot(character)
 			HandPart = handPart,
 			TipPart = tipPart,
 			AnchorPart = anchorPart,
+			TargetAttachWorld = attachWorld,
 
 			HandAttachment = handVisualAttachment,
 			TipAttachment = tipVisualAttachment,
 			AnchorAttachment = anchorVisualAttachment,
 
-			Rope = visualRope,
+			ThrowBeam = throwBeam,
+			Rope = nil,
+			HookHead = hookHead,
+			OnLatch = onLatch,
 			Locked = false,
+			LatchFired = false,
 			ShootStart = os.clock(),
 			ShootTime = shootTime,
 			ShootConn = nil,
@@ -3053,7 +3531,9 @@ local function boot(character)
 
 		swingRopeVisual = visualState
 
-		visualState.ShootConn = RunService.Heartbeat:Connect(function()
+		local throwSignal = C.PRE_SIMULATION_SIGNAL or RunService.RenderStepped
+
+		local function stepThrowVisual()
 			if swingRopeVisual ~= visualState then
 				if visualState.ShootConn then
 					visualState.ShootConn:Disconnect()
@@ -3067,7 +3547,7 @@ local function boot(character)
 			end
 
 			local handWorld = handAttachment.WorldPosition
-			local anchorWorld = anchorAttachment and anchorAttachment.WorldPosition or attachWorld
+			local anchorWorld = visualState.TargetAttachWorld
 
 			if visualState.HandPart then
 				visualState.HandPart.CFrame = CFrame.new(handWorld)
@@ -3077,18 +3557,31 @@ local function boot(character)
 				visualState.AnchorPart.CFrame = CFrame.new(anchorWorld)
 			end
 
-			local alpha = math.clamp((os.clock() - visualState.ShootStart) / visualState.ShootTime, 0, 1)
-			local tipWorld = handWorld:Lerp(anchorWorld, alpha)
+			local elapsed = os.clock() - visualState.ShootStart
+			local alpha = math.clamp(elapsed / visualState.ShootTime, 0, 1)
+			local tipWorld = getThrowArcWorldPos(handWorld, anchorWorld, alpha)
 
 			if visualState.TipPart then
-				visualState.TipPart.CFrame = CFrame.new(tipWorld)
+				local lookDir = anchorWorld - tipWorld
+				if lookDir.Magnitude > 0.05 then
+					visualState.TipPart.CFrame = CFrame.lookAt(tipWorld, tipWorld + lookDir.Unit)
+				else
+					visualState.TipPart.CFrame = CFrame.new(tipWorld)
+				end
 			end
 
-			if visualState.Rope then
-				visualState.Rope.Length = math.max((tipWorld - handWorld).Magnitude + 0.03, C.ROPE_VISUAL_MIN_LENGTH)
+			if visualState.ThrowBeam then
+				local pulse = 0.82 + 0.18 * math.sin(elapsed * 34)
+				visualState.ThrowBeam.Width0 = C.ROPE_THROW_BEAM_WIDTH0 * pulse
+				visualState.ThrowBeam.Width1 = C.ROPE_THROW_BEAM_WIDTH1 * (0.9 + 0.1 * pulse)
 			end
 
-			if alpha >= 1 then
+			local tipDistance = (anchorWorld - tipWorld).Magnitude
+			local throwFinished = alpha >= 1 and elapsed >= visualState.ShootTime * 0.98
+			local tipAtTarget = tipDistance <= C.ROPE_THROW_LATCH_DISTANCE
+
+			if throwFinished and tipAtTarget and not visualState.LatchFired then
+				visualState.LatchFired = true
 				visualState.Locked = true
 
 				if visualState.ShootConn then
@@ -3096,16 +3589,18 @@ local function boot(character)
 					visualState.ShootConn = nil
 				end
 
-				if visualState.Rope and visualState.AnchorAttachment then
-					visualState.Rope.Attachment1 = visualState.AnchorAttachment
+				if visualState.TipPart then
+					visualState.TipPart.CFrame = CFrame.new(anchorWorld)
 				end
 
-				if visualState.Rope then
-					visualState.Rope.Thickness = C.ROPE_VISUAL_LOCKED_THICKNESS
+				if visualState.ThrowBeam then
+					visualState.ThrowBeam:Destroy()
+					visualState.ThrowBeam = nil
+				end
 
-					pcall(function()
-						visualState.Rope.Color = C.ROPE_LOCKED_BRICK_COLOR
-					end)
+				if visualState.HookHead and visualState.HookHead.Parent then
+					visualState.HookHead:Destroy()
+					visualState.HookHead = nil
 				end
 
 				if visualState.TipPart then
@@ -3113,8 +3608,33 @@ local function boot(character)
 					visualState.TipPart = nil
 					visualState.TipAttachment = nil
 				end
+
+				local visualRope = Instance.new("RopeConstraint")
+				visualRope.Name = "SwingVisualRopeConstraint"
+				visualRope.Attachment0 = visualState.HandAttachment
+				visualRope.Attachment1 = visualState.AnchorAttachment
+				visualRope.Length = math.max((anchorWorld - handWorld).Magnitude + 0.03, C.ROPE_VISUAL_MIN_LENGTH)
+				visualRope.Thickness = C.ROPE_VISUAL_LOCKED_THICKNESS
+				visualRope.Visible = true
+				visualRope.Restitution = 0
+				visualRope.Parent = visualState.HandPart
+				pcall(function()
+					visualRope.Color = C.ROPE_LOCKED_BRICK_COLOR
+				end)
+				visualState.Rope = visualRope
+
+				spawnRopeLatchVfx(anchorWorld)
+
+				local latchCallback = visualState.OnLatch
+				visualState.OnLatch = nil
+				if latchCallback then
+					latchCallback(anchorWorld)
+				end
 			end
-		end)
+		end
+
+		visualState.ShootConn = throwSignal:Connect(stepThrowVisual)
+		stepThrowVisual()
 	end
 
 	local function updateSwingRopeVisual(anchorWorld)
@@ -3122,6 +3642,8 @@ local function boot(character)
 		if not visualState or not handAttachment or not handAttachment.Parent then
 			return
 		end
+
+		visualState.TargetAttachWorld = anchorWorld
 
 		local handWorld = handAttachment.WorldPosition
 
@@ -3131,6 +3653,10 @@ local function boot(character)
 
 		if visualState.AnchorPart then
 			visualState.AnchorPart.CFrame = CFrame.new(anchorWorld)
+		end
+
+		if visualState.ThrowBeam then
+			return
 		end
 
 		if not visualState.Rope then
@@ -3152,13 +3678,11 @@ local function boot(character)
 			local sagAlpha = math.max(speedSagAlpha, momentumSagAlpha)
 
 			visualState.Rope.Length = math.max(distance + C.ROPE_VISUAL_SAG * sagAlpha, C.ROPE_VISUAL_MIN_LENGTH)
-		elseif visualState.TipPart then
-			visualState.Rope.Length =
-				math.max((visualState.TipPart.Position - handWorld).Magnitude + 0.03, C.ROPE_VISUAL_MIN_LENGTH)
 		end
 	end
 
 	local function destroySwingObjects()
+		pendingSwingParams = nil
 		if swingRopeVisual then
 			local visualState = swingRopeVisual
 			swingRopeVisual = nil
@@ -3227,15 +3751,6 @@ local function boot(character)
 		destroyChargeGui()
 	end
 
-	local function pendulumArcDir(radial)
-		local gravity = Vector3.new(0, -workspace.Gravity, 0)
-		local tangent = gravity - radial * gravity:Dot(radial)
-		if tangent.Magnitude < 0.05 then
-			return nil
-		end
-		return tangent.Unit
-	end
-
 	local function floorScale(anchorWorld, ropeLength)
 		rayParams.FilterDescendantsInstances = { character }
 		local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -130, 0), rayParams)
@@ -3276,8 +3791,101 @@ local function boot(character)
 		end
 	end
 
+	local function finalizeSwingAttach(target, ropeMax, startLength, elasticRestLength, attachWorld)
+		if not isSwinging or not target or not target.Parent then
+			return
+		end
+
+		attachWorld = closestAttachWorldOnPart(target)
+		local dist = (attachWorld - hrp.Position).Magnitude
+
+		pendingSwingParams = nil
+		lastAttachClock = os.clock()
+		swingTimer = 0
+		activeRopeMaxLength = ropeMax
+
+		ropeCatchStartLength = startLength
+		ropeCatchUntil = os.clock() + C.ROPE_CATCH_ELASTIC_TIME
+
+		anchorAttachment = Instance.new("Attachment")
+		anchorAttachment.Name = "SwingAnchorAttachment"
+		anchorAttachment.Position = target.CFrame:PointToObjectSpace(attachWorld)
+		anchorAttachment.Parent = target
+
+		bodyAttachment = Instance.new("Attachment")
+		bodyAttachment.Name = "SwingBodyAttachment"
+		bodyAttachment.Parent = hrp
+
+		ropeConstraint = Instance.new("RopeConstraint")
+		ropeConstraint.Name = "SwingRopeConstraint"
+		ropeConstraint.Attachment0 = anchorAttachment
+		ropeConstraint.Attachment1 = bodyAttachment
+		ropeConstraint.Length = startLength
+		ropeConstraint.Thickness = 0.08
+		ropeConstraint.Visible = false
+		ropeConstraint.Restitution = 0.05
+		ropeConstraint.Parent = hrp
+
+		pcall(function()
+			ropeConstraint.WinchEnabled = true
+			ropeConstraint.WinchResponsiveness = 46
+			ropeConstraint.WinchSpeed = C.ROPE_HANG_PULL_WINCH_SPEED * C.ROPE_CATCH_REEL_MULT
+			ropeConstraint.WinchForce = hrp.AssemblyMass * 3000 * C.ROPE_CATCH_FORCE_MULT
+			ropeConstraint.WinchTarget = startLength
+		end)
+
+		if math.abs(dist - elasticRestLength) > 1.5 then
+			zipSpring = Instance.new("SpringConstraint")
+			zipSpring.Name = "SwingZipSpring"
+			zipSpring.Attachment0 = anchorAttachment
+			zipSpring.Attachment1 = bodyAttachment
+			zipSpring.FreeLength = startLength
+			zipSpring.Stiffness = C.ZIP_SPRING_STIFFNESS * 0.72
+			zipSpring.Damping = C.ZIP_SPRING_DAMPING * 1.12
+			zipSpring.MaxForce = hrp.AssemblyMass * C.ZIP_SPRING_MAX_ACCEL * C.ROPE_CATCH_FORCE_MULT
+			zipSpring.Parent = hrp
+		end
+
+		forceAttachment = Instance.new("Attachment")
+		forceAttachment.Name = "SwingForceAttachment"
+		forceAttachment.Parent = hrp
+
+		steerForce = Instance.new("VectorForce")
+		steerForce.Name = "SwingSteerForce"
+		steerForce.Attachment0 = forceAttachment
+		steerForce.RelativeTo = Enum.ActuatorRelativeTo.World
+		steerForce.ApplyAtCenterOfMass = true
+		steerForce.Force = Vector3.new(0, 0, 0)
+		steerForce.Parent = hrp
+
+		orientationAttachment = Instance.new("Attachment")
+		orientationAttachment.Name = "SwingOrientationAttachment"
+		orientationAttachment.Parent = hrp
+
+		swingOrientation = Instance.new("AlignOrientation")
+		swingOrientation.Name = "SwingFaceDirection"
+		swingOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
+		swingOrientation.Attachment0 = orientationAttachment
+		swingOrientation.RigidityEnabled = false
+		swingOrientation.Responsiveness = C.AVATAR_TURN_RESPONSIVENESS
+		swingOrientation.MaxTorque = hrp.AssemblyMass * 18000
+		swingOrientation.Enabled = true
+		swingOrientation.Parent = hrp
+
+		humanoid.PlatformStand = true
+		humanoid.AutoRotate = false
+		humanoid.Jump = false
+		hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+
+		applyAttachBoost(attachWorld)
+		playHangAnim(attachWorld)
+		ensureChargeGui(target)
+		playOptionalSound("Catch")
+		playOptionalSound("Wind")
+	end
+
 	local function startSwing(target)
-		if isSwinging or not target or not target.Parent then
+		if isWebTrapped() or isSwinging or not target or not target.Parent then
 			return
 		end
 		if isHrpInSafezone() then
@@ -3319,13 +3927,18 @@ local function boot(character)
 				+ math.max(baseRopeMax - C.ROPE_MAX_LENGTH, 0) * 0.9
 		)
 		local ropeMax = math.max(ropeStretchFloor, ropeStretchCeiling, ropeMaxFloor)
-		activeRopeMaxLength = ropeMax
+
+		local elasticRestLength = math.clamp(ropeRestLength, C.ROPE_MIN_LENGTH, ropeMax)
+		local normalStartLength =
+			math.clamp(math.max(dist * C.ROPE_ATTACH_START_MULT, elasticRestLength), elasticRestLength, ropeMax)
+		local elasticCatchStartLength =
+			math.clamp(math.max(dist * C.ROPE_CATCH_START_MULT, normalStartLength), elasticRestLength, ropeMax)
+		local startLength = elasticCatchStartLength
 
 		isSwinging = true
 		isLaunched = false
 		landedFromSwing = false
 		currentTarget = target
-		lastAttachClock = now
 		swingTimer = 0
 		swingCharge = 0
 		forwardSwingCharge = 0
@@ -3336,95 +3949,38 @@ local function boot(character)
 		lastPumpSwitchClock = now
 		swingFaceDir = nil
 
-		anchorAttachment = Instance.new("Attachment")
-		anchorAttachment.Name = "SwingAnchorAttachment"
-		anchorAttachment.Position = target.CFrame:PointToObjectSpace(attachWorld)
-		anchorAttachment.Parent = target
+		pendingSwingParams = {
+			target = target,
+			ropeMax = ropeMax,
+			startLength = startLength,
+			elasticRestLength = elasticRestLength,
+			attachWorld = attachWorld,
+		}
 
-		bodyAttachment = Instance.new("Attachment")
-		bodyAttachment.Name = "SwingBodyAttachment"
-		bodyAttachment.Parent = hrp
-
-		local elasticRestLength = math.clamp(ropeRestLength, C.ROPE_MIN_LENGTH, ropeMax)
-		local normalStartLength =
-			math.clamp(math.max(dist * C.ROPE_ATTACH_START_MULT, elasticRestLength), elasticRestLength, ropeMax)
-		local elasticCatchStartLength =
-			math.clamp(math.max(dist * C.ROPE_CATCH_START_MULT, normalStartLength), elasticRestLength, ropeMax)
-
-		local startLength = elasticCatchStartLength
-		ropeCatchStartLength = startLength
-		ropeCatchUntil = os.clock() + C.ROPE_CATCH_ELASTIC_TIME
-
-		ropeConstraint = Instance.new("RopeConstraint")
-		ropeConstraint.Name = "SwingRopeConstraint"
-		ropeConstraint.Attachment0 = anchorAttachment
-		ropeConstraint.Attachment1 = bodyAttachment
-		ropeConstraint.Length = startLength
-		ropeConstraint.Thickness = 0.08
-		ropeConstraint.Visible = false
-		ropeConstraint.Restitution = 0.05
-		ropeConstraint.Parent = hrp
-
-		pcall(function()
-			ropeConstraint.WinchEnabled = true
-			ropeConstraint.WinchResponsiveness = 46
-			ropeConstraint.WinchSpeed = C.ROPE_HANG_PULL_WINCH_SPEED * C.ROPE_CATCH_REEL_MULT
-			ropeConstraint.WinchForce = hrp.AssemblyMass * 3000 * C.ROPE_CATCH_FORCE_MULT
-			ropeConstraint.WinchTarget = startLength
-		end)
-
-		if math.abs(dist - elasticRestLength) > 1.5 then
-			zipSpring = Instance.new("SpringConstraint")
-			zipSpring.Name = "SwingZipSpring"
-			zipSpring.Attachment0 = anchorAttachment
-			zipSpring.Attachment1 = bodyAttachment
-			-- Start the helper spring at the catch length too. If this starts at rest length,
-			-- the player gets yanked/snapped upward the instant a new swing attaches.
-			zipSpring.FreeLength = startLength
-			zipSpring.Stiffness = C.ZIP_SPRING_STIFFNESS * 0.72
-			zipSpring.Damping = C.ZIP_SPRING_DAMPING * 1.12
-			zipSpring.MaxForce = hrp.AssemblyMass * C.ZIP_SPRING_MAX_ACCEL * C.ROPE_CATCH_FORCE_MULT
-			zipSpring.Parent = hrp
+		local flatFromAnchor = hrp.Position - attachWorld
+		local flatRecoil = Vector3.new(flatFromAnchor.X, 0, flatFromAnchor.Z)
+		if flatRecoil.Magnitude > 0.12 then
+			hrp:ApplyImpulse(flatRecoil.Unit * C.ROPE_THROW_RECOIL_DV * hrp.AssemblyMass)
 		end
 
-		forceAttachment = Instance.new("Attachment")
-		forceAttachment.Name = "SwingForceAttachment"
-		forceAttachment.Parent = hrp
+		spawnSwingRopeVisual(attachWorld, function(latchWorld)
+			if not isSwinging or not pendingSwingParams or ropeConstraint then
+				return
+			end
+			if not holdIsActive() then
+				stopSwing(false)
+				return
+			end
+			local params = pendingSwingParams
+			if not params.target or not params.target.Parent then
+				stopSwing(false)
+				return
+			end
+			finalizeSwingAttach(params.target, params.ropeMax, params.startLength, params.elasticRestLength, latchWorld)
+		end)
 
-		steerForce = Instance.new("VectorForce")
-		steerForce.Name = "SwingSteerForce"
-		steerForce.Attachment0 = forceAttachment
-		steerForce.RelativeTo = Enum.ActuatorRelativeTo.World
-		steerForce.ApplyAtCenterOfMass = true
-		steerForce.Force = Vector3.new(0, 0, 0)
-		steerForce.Parent = hrp
-
-		orientationAttachment = Instance.new("Attachment")
-		orientationAttachment.Name = "SwingOrientationAttachment"
-		orientationAttachment.Parent = hrp
-
-		swingOrientation = Instance.new("AlignOrientation")
-		swingOrientation.Name = "SwingFaceDirection"
-		swingOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
-		swingOrientation.Attachment0 = orientationAttachment
-		swingOrientation.RigidityEnabled = false
-		swingOrientation.Responsiveness = C.AVATAR_TURN_RESPONSIVENESS
-		swingOrientation.MaxTorque = hrp.AssemblyMass * 18000
-		swingOrientation.Enabled = true
-		swingOrientation.Parent = hrp
-
-		humanoid.PlatformStand = true
-		humanoid.AutoRotate = false
-		humanoid.Jump = false
-		hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-
-		applyAttachBoost(attachWorld)
-		playHangAnim(attachWorld)
-		spawnSwingRopeVisual(attachWorld)
-		ensureChargeGui(target)
 		updateTargetVisual(nil, false)
-		playOptionalSound("Catch")
-		playOptionalSound("Wind")
+		playOptionalSound("Throw")
 	end
 
 	local function stopSwing(doLaunch)
@@ -3510,8 +4066,12 @@ local function boot(character)
 				mobileJumpHoldUntil = -1e9
 				mobileRealJumpPressUntil = -1e9
 
-				if isSwinging and os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
-					stopSwing(true)
+				if isSwinging then
+					if pendingSwingParams and not ropeConstraint then
+						stopSwing(false)
+					elseif os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
+						stopSwing(true)
+					end
 				end
 			end
 
@@ -3530,211 +4090,6 @@ local function boot(character)
 				end
 			end))
 		end)
-	end
-
-	local function spawnLandingBlocks(speed)
-		local alpha = math.clamp((speed - 8) / 70, 0.58, 1)
-		if alpha <= 0 then
-			return
-		end
-
-		rayParams.FilterDescendantsInstances = { character }
-		local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -10, 0), rayParams)
-		local pos = hit and hit.Position or (hrp.Position - Vector3.new(0, 3, 0))
-		local color = hit and hit.Instance and hit.Instance.Color or Color3.fromRGB(120, 120, 120)
-		local material = hit and hit.Material or Enum.Material.Concrete
-		local count = math.floor(10 + alpha * 14)
-
-		local ring = Instance.new("Part")
-		ring.Name = "SwingImpactRing"
-		ring.Shape = Enum.PartType.Cylinder
-		ring.Anchored = true
-		ring.CanCollide = false
-		ring.CanTouch = false
-		ring.CanQuery = false
-		ring.CastShadow = false
-		ring.Material = Enum.Material.SmoothPlastic
-		ring.Color = color:Lerp(Color3.new(1, 1, 1), 0.35)
-		ring.Transparency = 0.24
-		ring.Size = Vector3.new(0.12, 7 + alpha * 7, 7 + alpha * 7)
-		ring.CFrame = CFrame.new(pos + Vector3.new(0, 0.08, 0)) * CFrame.Angles(0, 0, math.rad(90))
-		ring.Parent = workspace
-		TweenService:Create(ring, TweenInfo.new(0.58, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			Size = Vector3.new(0.12, 30 + alpha * 34, 30 + alpha * 34),
-			Transparency = 1,
-		}):Play()
-		Debris:AddItem(ring, 0.7)
-
-		local dustRing = Instance.new("Part")
-		dustRing.Name = "SwingImpactDustRing"
-		dustRing.Shape = Enum.PartType.Cylinder
-		dustRing.Anchored = true
-		dustRing.CanCollide = false
-		dustRing.CanTouch = false
-		dustRing.CanQuery = false
-		dustRing.CastShadow = false
-		dustRing.Material = Enum.Material.SmoothPlastic
-		dustRing.Color = color:Lerp(Color3.new(0, 0, 0), 0.18)
-		dustRing.Transparency = 0.56
-		dustRing.Size = Vector3.new(0.1, 10 + alpha * 8, 10 + alpha * 8)
-		dustRing.CFrame = CFrame.new(pos + Vector3.new(0, 0.05, 0)) * CFrame.Angles(0, 0, math.rad(90))
-		dustRing.Parent = workspace
-		TweenService:Create(dustRing, TweenInfo.new(0.86, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-			Size = Vector3.new(0.1, 44 + alpha * 44, 44 + alpha * 44),
-			Transparency = 1,
-		}):Play()
-		Debris:AddItem(dustRing, 0.96)
-
-		local burst = Instance.new("Part")
-		burst.Name = "SwingImpactBurst"
-		burst.Shape = Enum.PartType.Ball
-		burst.Anchored = true
-		burst.CanCollide = false
-		burst.CanTouch = false
-		burst.CanQuery = false
-		burst.CastShadow = false
-		burst.Material = Enum.Material.SmoothPlastic
-		burst.Color = color:Lerp(Color3.new(1, 1, 1), 0.18)
-		burst.Transparency = 0.72
-		burst.Size = Vector3.new(4 + alpha * 5, 1.2 + alpha * 1.8, 4 + alpha * 5)
-		burst.CFrame = CFrame.new(pos + Vector3.new(0, 0.65, 0))
-		burst.Parent = workspace
-		TweenService:Create(burst, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			Size = Vector3.new(15 + alpha * 15, 5 + alpha * 5, 15 + alpha * 15),
-			Transparency = 1,
-		}):Play()
-		Debris:AddItem(burst, 0.52)
-
-		for _ = 1, count do
-			local size = math.random(80, 240) / 100
-			local part = Instance.new("Part")
-			part.Name = "SwingLandingChunk"
-			part.Size = Vector3.new(size, size * math.random(70, 130) / 100, size)
-			part.Anchored = true
-			part.Material = material
-			part.Color = color
-			part.CanCollide = false
-			part.CanTouch = false
-			part.CanQuery = false
-			part.CastShadow = false
-			part.CFrame = CFrame.new(pos + Vector3.new(math.random(-42, 42) / 10, 0.22, math.random(-42, 42) / 10))
-				* CFrame.Angles(math.random() * math.pi, math.random() * math.pi, math.random() * math.pi)
-			part.Parent = workspace
-
-			TweenService:Create(part, TweenInfo.new(1.05, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-				Transparency = 1,
-				CFrame = part.CFrame
-					+ Vector3.new(math.random(-52, 52) / 10, math.random(24, 58) / 10, math.random(-52, 52) / 10),
-				Size = Vector3.new(0.06, 0.06, 0.06),
-			}):Play()
-			Debris:AddItem(part, 1.16)
-		end
-
-		local chipCount = math.floor(22 + alpha * 26)
-		for _ = 1, chipCount do
-			local size = math.random(20, 62) / 100
-			local chip = Instance.new("Part")
-			chip.Name = "SwingLandingChip"
-			chip.Size = Vector3.new(size, size, size)
-			chip.Anchored = true
-			chip.Material = material
-			chip.Color = color:Lerp(Color3.new(1, 1, 1), math.random(0, 18) / 100)
-			chip.CanCollide = false
-			chip.CanTouch = false
-			chip.CanQuery = false
-			chip.CastShadow = false
-			chip.CFrame = CFrame.new(pos + Vector3.new(math.random(-42, 42) / 10, 0.16, math.random(-42, 42) / 10))
-			chip.Parent = workspace
-
-			TweenService:Create(chip, TweenInfo.new(0.78, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-				Transparency = 1,
-				CFrame = chip.CFrame
-					+ Vector3.new(math.random(-62, 62) / 10, math.random(14, 34) / 10, math.random(-62, 62) / 10),
-				Size = Vector3.new(0.03, 0.03, 0.03),
-			}):Play()
-			Debris:AddItem(chip, 0.9)
-		end
-	end
-
-	local function spawnGroundDragDebris(hit, horizontalVelocity)
-		if not hit then
-			return
-		end
-
-		local now = os.clock()
-		if now - lastGroundDragDebrisClock < C.SWING_GROUND_DRAG_DEBRIS_INTERVAL then
-			return
-		end
-		lastGroundDragDebrisClock = now
-
-		local speed = horizontalVelocity and horizontalVelocity.Magnitude or 0
-		local pos = hit.Position
-		local color = Color3.fromRGB(120, 120, 120)
-		local material = hit.Material or Enum.Material.Concrete
-		if hit.Instance and hit.Instance:IsA("BasePart") then
-			color = hit.Instance.Color
-			material = hit.Material or hit.Instance.Material
-		end
-		local travelDir = speed > 0.05 and horizontalVelocity.Unit
-			or flatUnit(hrp.CFrame.LookVector)
-			or Vector3.new(0, 0, -1)
-		local right = Vector3.new(-travelDir.Z, 0, travelDir.X)
-		local visualSpeed = math.max(speed, C.SWING_GROUND_DRAG_MIN_SPEED)
-
-		local scrape = Instance.new("Part")
-		scrape.Name = "SwingGroundDragScrape"
-		scrape.Anchored = true
-		scrape.CanCollide = false
-		scrape.CanTouch = false
-		scrape.CanQuery = false
-		scrape.CastShadow = false
-		scrape.Material = Enum.Material.SmoothPlastic
-		scrape.Color = color:Lerp(Color3.new(1, 1, 1), 0.14)
-		scrape.Transparency = 0.48
-		scrape.Size = Vector3.new(math.random(45, 75) / 100, 0.035, math.random(130, 220) / 100)
-		scrape.CFrame =
-			CFrame.lookAt(pos + Vector3.new(0, 0.055, 0) - travelDir * 0.35, pos + Vector3.new(0, 0.055, 0) + travelDir)
-		scrape.Parent = workspace
-		TweenService:Create(scrape, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			Transparency = 1,
-			Size = Vector3.new(scrape.Size.X * 1.8, 0.025, scrape.Size.Z * 1.35),
-		}):Play()
-		Debris:AddItem(scrape, 0.34)
-
-		local chipCount = speed >= C.SWING_GROUND_DRAG_MIN_SPEED and math.random(2, 3) or 2
-		for _ = 1, chipCount do
-			local size = math.random(16, 42) / 100
-			local chip = Instance.new("Part")
-			chip.Name = "SwingGroundDragChip"
-			chip.Size = Vector3.new(size, size * math.random(70, 120) / 100, size)
-			chip.Anchored = true
-			chip.Material = material
-			chip.Color = color:Lerp(Color3.new(1, 1, 1), math.random(0, 12) / 100)
-			chip.CanCollide = false
-			chip.CanTouch = false
-			chip.CanQuery = false
-			chip.CastShadow = false
-			chip.CFrame = CFrame.new(pos + Vector3.new(0, 0.18, 0) + right * math.random(-11, 11) / 10)
-				* CFrame.Angles(math.random() * math.pi, math.random() * math.pi, math.random() * math.pi)
-			chip.Parent = workspace
-
-			local scatter = right * math.random(-16, 16) / 10
-			local backKick = math.random(8, 16) + visualSpeed * math.random(4, 8) / 100
-
-			TweenService:Create(
-				chip,
-				TweenInfo.new(C.SWING_GROUND_DRAG_DEBRIS_LIFETIME, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{
-					Transparency = 1,
-					CFrame = chip.CFrame
-						- travelDir * backKick * 0.08
-						+ scatter
-						+ Vector3.new(0, math.random(4, 10) / 10, 0),
-					Size = Vector3.new(0.03, 0.03, 0.03),
-				}
-			):Play()
-			Debris:AddItem(chip, C.SWING_GROUND_DRAG_DEBRIS_LIFETIME + 0.08)
-		end
 	end
 
 	local function updateSwingRopePhysics(
@@ -3909,7 +4264,7 @@ local function boot(character)
 	end
 
 	local function tryAttach()
-		if isSwinging or not hrp.Parent then
+		if isWebTrapped() or isSwinging or not hrp.Parent then
 			return
 		end
 
@@ -3944,7 +4299,25 @@ local function boot(character)
 
 	-- Mobile fallback removed to keep Luau boot() under the 200 local-register limit.
 
+	if WebTrapConfig and typeof(WebTrapConfig.TRAPPED_ATTR) == "string" then
+		addConn(player:GetAttributeChangedSignal(WebTrapConfig.TRAPPED_ATTR):Connect(function()
+			if isWebTrapped() then
+				if isSwinging then
+					stopSwing(false)
+				end
+				isLaunched = false
+				landedFromSwing = false
+				releaseStyle.cancel()
+				hideSwingTargetUi()
+			end
+		end))
+	end
+
 	addConn(UserInputService.InputBegan:Connect(function(input, processed)
+		if isWebTrapped() then
+			return
+		end
+
 		if UserInputService:GetFocusedTextBox() then
 			return
 		end
@@ -3970,21 +4343,34 @@ local function boot(character)
 	addConn(UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space then
 			spaceHeld = false
-			if isSwinging and os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
-				stopSwing(true)
+			if isSwinging then
+				if pendingSwingParams and not ropeConstraint then
+					stopSwing(false)
+				elseif os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
+					stopSwing(true)
+				end
 			end
 		elseif
 			input.UserInputType == Enum.UserInputType.Gamepad1
 			and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
 		then
 			gamepadHeld = false
-			if isSwinging and os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
-				stopSwing(true)
+			if isSwinging then
+				if pendingSwingParams and not ropeConstraint then
+					stopSwing(false)
+				elseif os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
+					stopSwing(true)
+				end
 			end
 		end
 	end))
 
 	addConn(UserInputService.JumpRequest:Connect(function()
+		if isWebTrapped() then
+			humanoid.Jump = false
+			return
+		end
+
 		if UserInputService:GetFocusedTextBox() then
 			return
 		end
@@ -4023,7 +4409,7 @@ local function boot(character)
 				poseInputs.extT,
 				poseInputs.momentum,
 				currentHangSide,
-				isSwinging,
+				isSwinging and ropeConstraint ~= nil,
 				isLaunched,
 				landedFromSwing
 			)
@@ -4039,7 +4425,7 @@ local function boot(character)
 				poseInputs.extT,
 				poseInputs.momentum,
 				currentHangSide,
-				isSwinging,
+				isSwinging and ropeConstraint ~= nil,
 				isLaunched,
 				landedFromSwing
 			)
@@ -4065,7 +4451,7 @@ local function boot(character)
 
 				if wasLandedFromSwing then
 					playLandedAnim()
-					spawnLandingBlocks(impactSpeed)
+					spawnLandingBlocks(character, hrp, rayParams, impactSpeed)
 					playOptionalSound("GroundSmash")
 					local impactAlpha = math.clamp((impactSpeed - 8) / 70, 0.58, 1)
 					lastLandingClock = os.clock()
@@ -4110,7 +4496,7 @@ local function boot(character)
 			end
 
 			if wasLandedFromSwing then
-				spawnLandingBlocks(impactSpeed)
+				spawnLandingBlocks(character, hrp, rayParams, impactSpeed)
 				playOptionalSound("GroundSmash")
 				local impactAlpha = math.clamp((impactSpeed - 8) / 70, 0.58, 1)
 				lastLandingClock = os.clock()
@@ -4264,6 +4650,14 @@ local function boot(character)
 	end)
 
 	addConn(RunService.Heartbeat:Connect(function(dt)
+		if isWebTrapped() then
+			if isSwinging then
+				stopSwing(false)
+			end
+			hideSwingTargetUi()
+			return
+		end
+
 		camera = workspace.CurrentCamera or camera
 		local now = os.clock()
 		local velocity = hrp.AssemblyLinearVelocity
@@ -4293,7 +4687,7 @@ local function boot(character)
 			stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
 			if wasLandedFromSwing then
 				playLandedAnim()
-				spawnLandingBlocks(impactSpeed)
+				spawnLandingBlocks(character, hrp, rayParams, impactSpeed)
 				playOptionalSound("GroundSmash")
 				local impactAlpha = math.clamp((impactSpeed - 8) / 70, 0.58, 1)
 				lastLandingClock = now
@@ -4304,7 +4698,23 @@ local function boot(character)
 		end
 
 		if isSwinging then
-			if not currentTarget or not currentTarget.Parent or not anchorAttachment or not anchorAttachment.Parent then
+			if not currentTarget or not currentTarget.Parent then
+				stopSwing(true)
+				return
+			end
+
+			if pendingSwingParams and not ropeConstraint then
+				if not holdIsActive() then
+					stopSwing(false)
+					return
+				end
+
+				local pendingAnchorWorld = closestAttachWorldOnPart(currentTarget)
+				updateSwingRopeVisual(pendingAnchorWorld)
+				return
+			end
+
+			if not anchorAttachment or not anchorAttachment.Parent then
 				stopSwing(true)
 				return
 			end
@@ -4349,7 +4759,7 @@ local function boot(character)
 						local lift = math.min(C.SWING_GROUND_HARD_CLEARANCE - groundGap + 0.12, 1.6)
 						hrp.CFrame += Vector3.new(0, lift, 0)
 					end
-					spawnGroundDragDebris(groundHit, horizontalVelocity)
+					lastGroundDragDebrisClock = spawnGroundDragDebris(hrp, groundHit, horizontalVelocity, lastGroundDragDebrisClock)
 				end
 			end
 

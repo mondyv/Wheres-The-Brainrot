@@ -124,6 +124,7 @@ require(script.GameSoundEffects).init()
 
 require(script.BrainrotSFX).init()
 require(script.SafeZoneFlashController).init()
+require(script.WebTrapController).init()
 require(script.BushHoldInteraction).init()
 require(script.ProximityPromptEffects).init()
 require(script.BushFloatingClaimController).init()

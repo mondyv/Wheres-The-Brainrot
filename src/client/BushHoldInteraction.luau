@@ -14,6 +14,7 @@ local Workspace = game:GetService("Workspace")
 
 local BushShiver = require(script.Parent.BushShiver)
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
+local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
@@ -57,6 +58,7 @@ local activePrompt: ProximityPrompt? = nil
 -- External listeners (e.g. X-Ray Vision) notified whenever the targeted bush changes.
 local activeBushListeners: { (Instance?) -> () } = {}
 local bushOutlineColorProvider: ((Instance) -> Color3?)? = nil
+local bushOutlineGradientProvider: ((Instance) -> ColorSequence?)? = nil
 local function notifyActiveBushChanged(bush: Instance?)
 	for _, cb in activeBushListeners do
 		task.spawn(cb, bush)
@@ -335,8 +337,13 @@ local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean
 	if locked then
 		hl.OutlineColor = HIGHLIGHT_LOCKED
 	else
-		local custom = if bushOutlineColorProvider then bushOutlineColorProvider(bush) else nil
-		hl.OutlineColor = custom or HIGHLIGHT_READY
+		local gradientSequence = if bushOutlineGradientProvider then bushOutlineGradientProvider(bush) else nil
+		if gradientSequence then
+			hl.OutlineColor = BrainrotHeaderStyle.sampleColorSequence(gradientSequence, (os.clock() * 0.42) % 1)
+		else
+			local custom = if bushOutlineColorProvider then bushOutlineColorProvider(bush) else nil
+			hl.OutlineColor = custom or HIGHLIGHT_READY
+		end
 	end
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 end
@@ -680,6 +687,10 @@ end
 
 function BushHoldInteraction.setBushOutlineColorProvider(provider: ((Instance) -> Color3?)?)
 	bushOutlineColorProvider = provider
+end
+
+function BushHoldInteraction.setBushOutlineGradientProvider(provider: ((Instance) -> ColorSequence?)?)
+	bushOutlineGradientProvider = provider
 end
 
 function BushHoldInteraction.init()

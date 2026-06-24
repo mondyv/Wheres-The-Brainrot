@@ -1,7 +1,7 @@
 -- [ACTIVE] LoadingScreenController
 --[[
 	LoadingScreenController — full-screen join overlay:
-	Moon camera flyover, blur, centered GameNameImage with breathe/tilt anim; hides other PlayerGui until ready.
+	Moon camera flyover, blur, centered GameNameImage with fade-in + gentle pulse; hides other PlayerGui until ready.
 	StarterGui.LoadingScreen + GameNameImage. Moon export: "Camera loading" (Frames/0..N) under LoadingScreen or ReplicatedStorage.
 --]]
 
@@ -39,12 +39,15 @@ local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
 }
 
 local OVERLAY_COLOR = Color3.fromRGB(12, 8, 6)
+local SOLID_COVER_COLOR = Color3.fromRGB(6, 4, 3)
+local OVERLAY_TRANSPARENCY = 0.18
+local LOADING_BLUR_SIZE = 28
 
-local NAME_ANIM_SPEED = 0.78
-local NAME_SCALE_AMOUNT = 0.095
-local NAME_TILT_AMOUNT = 7.5
-local NAME_TILT_WOBBLE = 2.8
-local NAME_ANIM_SMOOTH = 11
+local ENTRANCE_DURATION = 0.9
+local ENTRANCE_SCALE_START = 0.84
+local IDLE_PULSE_AMOUNT = 0.032
+local IDLE_PULSE_SPEED = 1.05
+local SOLID_COVER_FADE_SEC = 0.55
 local TITLE_DISPLAY_SCALE = 1.22
 local TITLE_MAX_WIDTH_MOBILE = 680
 local TITLE_MAX_WIDTH_DESKTOP = 1100
@@ -70,6 +73,9 @@ local stopNameAnim: (() -> ())? = nil
 local stopCameraLock: (() -> ())? = nil
 local fadeCanvas: CanvasGroup? = nil
 local cameraClipStartedAt: number? = nil
+local characterHideConn: RBXScriptConnection? = nil
+local hiddenCharacterParts: { [BasePart]: number }? = nil
+local earlyVisualsReady = false
 
 local function defaultLoadingCFrame(): CFrame
 	return CFrame.new(DEFAULT_CAMERA_POS) * CFrame.fromOrientation(DEFAULT_CAMERA_RAD.X, DEFAULT_CAMERA_RAD.Y, DEFAULT_CAMERA_RAD.Z)
@@ -101,6 +107,176 @@ local function resolveLoadingCFrame(_loadingGui: ScreenGui?): CFrame
 		end
 	end
 	return defaultLoadingCFrame()
+end
+
+local function hideLocalCharacter(character: Model)
+	local saved: { [BasePart]: number } = {}
+	for _, desc in character:GetDescendants() do
+		if desc:IsA("BasePart") then
+			saved[desc] = desc.LocalTransparencyModifier
+			desc.LocalTransparencyModifier = 1
+		end
+	end
+	hiddenCharacterParts = saved
+end
+
+local function restoreLocalCharacter()
+	if not hiddenCharacterParts then
+		return
+	end
+	for part, modifier in hiddenCharacterParts do
+		if part.Parent then
+			part.LocalTransparencyModifier = modifier
+		end
+	end
+	hiddenCharacterParts = nil
+end
+
+local function bindCharacterHideWhileLoading(player: Player)
+	if characterHideConn then
+		return
+	end
+	if player.Character then
+		hideLocalCharacter(player.Character)
+	end
+	characterHideConn = player.CharacterAdded:Connect(function(character)
+		if not loadingActive then
+			return
+		end
+		task.defer(function()
+			if loadingActive and character.Parent then
+				hideLocalCharacter(character)
+			end
+		end)
+	end)
+end
+
+local function unbindCharacterHide()
+	if characterHideConn then
+		characterHideConn:Disconnect()
+		characterHideConn = nil
+	end
+	restoreLocalCharacter()
+end
+
+local function destroyLightingBlurEffects()
+	if activeBlurEffect and activeBlurEffect.Parent then
+		activeBlurEffect:Destroy()
+	end
+	activeBlurEffect = nil
+
+	for _, name in { "LoadingScreenBlur", "UIModalBlur" } do
+		local effect = Lighting:FindFirstChild(name)
+		if effect and effect:IsA("BlurEffect") then
+			effect:Destroy()
+		end
+	end
+end
+
+local function ensureLoadingBlur(): BlurEffect
+	if activeBlurEffect and activeBlurEffect.Parent then
+		activeBlurEffect.Size = LOADING_BLUR_SIZE
+		return activeBlurEffect
+	end
+
+	destroyLightingBlurEffects()
+	local blur = Instance.new("BlurEffect")
+	blur.Name = "LoadingScreenBlur"
+	blur.Size = LOADING_BLUR_SIZE
+	blur.Parent = Lighting
+	activeBlurEffect = blur
+	return blur
+end
+
+local function findSolidCover(loadingGui: ScreenGui): Frame?
+	local direct = loadingGui:FindFirstChild("SolidCover")
+	if direct and direct:IsA("Frame") then
+		return direct
+	end
+	local nested = loadingGui:FindFirstChild("SolidCover", true)
+	if nested and nested:IsA("Frame") then
+		return nested
+	end
+	return nil
+end
+
+local function ensureSolidCover(loadingGui: ScreenGui): Frame
+	local existing = findSolidCover(loadingGui)
+	if existing and existing:IsA("Frame") then
+		existing.Size = UDim2.fromScale(1, 1)
+		existing.Position = UDim2.fromScale(0, 0)
+		existing.AnchorPoint = Vector2.new(0, 0)
+		existing.BackgroundTransparency = 0
+		existing.Visible = true
+		return existing
+	end
+
+	local cover = Instance.new("Frame")
+	cover.Name = "SolidCover"
+	cover.BackgroundColor3 = SOLID_COVER_COLOR
+	cover.BackgroundTransparency = 0
+	cover.BorderSizePixel = 0
+	cover.AnchorPoint = Vector2.new(0, 0)
+	cover.Position = UDim2.fromScale(0, 0)
+	cover.Size = UDim2.fromScale(1, 1)
+	cover.ZIndex = 10
+	cover.Parent = loadingGui
+	return cover
+end
+
+local function forceReleaseSolidCover(loadingGui: ScreenGui)
+	local cover = findSolidCover(loadingGui)
+	if not cover or not cover:IsA("Frame") then
+		return
+	end
+	cover.BackgroundTransparency = 1
+	cover.Visible = false
+end
+
+local function releaseSolidCover(loadingGui: ScreenGui)
+	local cover = findSolidCover(loadingGui)
+	if not cover or not cover:IsA("Frame") or not cover.Visible then
+		return
+	end
+
+	local tween = TweenService:Create(
+		cover,
+		TweenInfo.new(SOLID_COVER_FADE_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ BackgroundTransparency = 1 }
+	)
+	tween:Play()
+	local completedConn: RBXScriptConnection?
+	completedConn = tween.Completed:Connect(function()
+		if completedConn then
+			completedConn:Disconnect()
+			completedConn = nil
+		end
+		if cover.Parent then
+			cover.Visible = false
+		end
+	end)
+end
+
+local function ensureBlurOverlay(loadingGui: ScreenGui): Frame
+	local existing = loadingGui:FindFirstChild("BlurOverlay")
+	if existing and existing:IsA("Frame") then
+		existing.Size = UDim2.new(1, 0, 1, 0)
+		existing.Position = UDim2.new(0, 0, 0, 0)
+		existing.AnchorPoint = Vector2.new(0, 0)
+		existing.BackgroundTransparency = OVERLAY_TRANSPARENCY
+		return existing
+	end
+	local overlay = Instance.new("Frame")
+	overlay.Name = "BlurOverlay"
+	overlay.BackgroundColor3 = OVERLAY_COLOR
+	overlay.BackgroundTransparency = OVERLAY_TRANSPARENCY
+	overlay.BorderSizePixel = 0
+	overlay.AnchorPoint = Vector2.new(0, 0)
+	overlay.Position = UDim2.new(0, 0, 0, 0)
+	overlay.Size = UDim2.new(1, 0, 1, 0)
+	overlay.ZIndex = 0
+	overlay.Parent = loadingGui
+	return overlay
 end
 
 local function restoreGameplayCamera(camera: Camera, player: Player)
@@ -877,6 +1053,23 @@ local function startLoadingCameraLock(camera: Camera, loadingGui: ScreenGui): ()
 	end
 end
 
+local function bootstrapLoadingVisuals(loadingGui: ScreenGui, player: Player)
+	ensureSolidCover(loadingGui)
+	ensureBlurOverlay(loadingGui)
+	ensureLoadingBlur()
+
+	local camera = Workspace.CurrentCamera
+	if camera and not stopCameraLock then
+		if not cameraClipStartedAt then
+			cameraClipStartedAt = os.clock()
+		end
+		stopCameraLock = startLoadingCameraLock(camera, loadingGui)
+	end
+
+	bindCharacterHideWhileLoading(player)
+	earlyVisualsReady = true
+end
+
 local function wrapAsScreenGui(source: Instance, playerGui: PlayerGui): ScreenGui
 	local screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "LoadingScreen"
@@ -1103,6 +1296,7 @@ end
 
 local function exitLoadingIsolation(playerGui: PlayerGui)
 	loadingActive = false
+	unbindCharacterHide()
 
 	if playerGuiChildConn then
 		playerGuiChildConn:Disconnect()
@@ -1130,20 +1324,6 @@ local function exitLoadingIsolation(playerGui: PlayerGui)
 	end
 end
 
-local function destroyLightingBlurEffects()
-	if activeBlurEffect and activeBlurEffect.Parent then
-		activeBlurEffect:Destroy()
-	end
-	activeBlurEffect = nil
-
-	for _, name in { "LoadingScreenBlur", "UIModalBlur" } do
-		local effect = Lighting:FindFirstChild(name)
-		if effect and effect:IsA("BlurEffect") then
-			effect:Destroy()
-		end
-	end
-end
-
 local function cleanupLoadingVisuals(playerGui: PlayerGui, loadingGui: ScreenGui?, overlay: Frame?)
 	destroyLightingBlurEffects()
 
@@ -1157,33 +1337,16 @@ local function cleanupLoadingVisuals(playerGui: PlayerGui, loadingGui: ScreenGui
 		if guiOverlay and guiOverlay:IsA("Frame") then
 			guiOverlay:Destroy()
 		end
+		local solidCover = loadingGui:FindFirstChild("SolidCover")
+		if solidCover and solidCover:IsA("Frame") then
+			solidCover:Destroy()
+		end
 	end
 
 	local blurGui = playerGui:FindFirstChild("Blur")
 	if blurGui and blurGui:IsA("ScreenGui") then
 		blurGui.Enabled = false
 	end
-end
-
-local function ensureBlurOverlay(loadingGui: ScreenGui): Frame
-	local existing = loadingGui:FindFirstChild("BlurOverlay")
-	if existing and existing:IsA("Frame") then
-		existing.Size = UDim2.new(1, 0, 1, 0)
-		existing.Position = UDim2.new(0, 0, 0, 0)
-		existing.AnchorPoint = Vector2.new(0, 0)
-		return existing
-	end
-	local overlay = Instance.new("Frame")
-	overlay.Name = "BlurOverlay"
-	overlay.BackgroundColor3 = OVERLAY_COLOR
-	overlay.BackgroundTransparency = 0.35
-	overlay.BorderSizePixel = 0
-	overlay.AnchorPoint = Vector2.new(0, 0)
-	overlay.Position = UDim2.new(0, 0, 0, 0)
-	overlay.Size = UDim2.new(1, 0, 1, 0)
-	overlay.ZIndex = 0
-	overlay.Parent = loadingGui
-	return overlay
 end
 
 local function findGameNameImage(loadingGui: ScreenGui): ImageLabel?
@@ -1216,7 +1379,13 @@ local function setupFadeCanvas(loadingGui: ScreenGui): CanvasGroup
 
 	local moveList: { GuiObject } = {}
 	for _, child in loadingGui:GetChildren() do
-		if child:IsA("GuiObject") and child ~= canvas and child.Name ~= "Camera" and child.Name ~= "BlurOverlay" then
+		if
+			child:IsA("GuiObject")
+			and child ~= canvas
+			and child.Name ~= "Camera"
+			and child.Name ~= "BlurOverlay"
+			and child.Name ~= "SolidCover"
+		then
 			table.insert(moveList, child)
 		end
 	end
@@ -1308,7 +1477,7 @@ local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 	end
 
 	local oldScale = logo:FindFirstChildOfClass("UIScale")
-	if oldScale then
+	if oldScale and oldScale.Name ~= "TitleAnimScale" then
 		oldScale:Destroy()
 	end
 
@@ -1316,28 +1485,39 @@ local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 	if not wrapScale or not wrapScale:IsA("UIScale") then
 		wrapScale = Instance.new("UIScale")
 		wrapScale.Name = "TitleAnimScale"
-		wrapScale.Scale = 1
 		wrapScale.Parent = logo
 	end
 
-	local baseRotation = logo.Rotation
-	local phase = 0
-	local smoothScale = 1
-	local smoothRot = baseRotation
+	logo.Rotation = 0
+	wrapScale.Scale = ENTRANCE_SCALE_START
+	logo.ImageTransparency = 1
+
+	local entranceStart = os.clock()
+	local entranceDone = false
+	local idlePhase = 0
+
 	local conn = RunService.RenderStepped:Connect(function(dt)
 		if not loadingActive or not logo.Parent then
 			return
 		end
-		phase += dt * NAME_ANIM_SPEED
-		local breathe = math.sin(phase)
-		local wobble = math.sin(phase * 1.62 + 0.7)
-		local targetScale = 1 + NAME_SCALE_AMOUNT * breathe + NAME_SCALE_AMOUNT * 0.2 * wobble
-		local targetRot = baseRotation + NAME_TILT_AMOUNT * breathe + NAME_TILT_WOBBLE * wobble
-		local blend = math.min(1, dt * NAME_ANIM_SMOOTH)
-		smoothScale += (targetScale - smoothScale) * blend
-		smoothRot += (targetRot - smoothRot) * blend
-		wrapScale.Scale = smoothScale
-		logo.Rotation = smoothRot
+
+		if not entranceDone then
+			local elapsed = os.clock() - entranceStart
+			local t = math.clamp(elapsed / ENTRANCE_DURATION, 0, 1)
+			local eased = 1 - (1 - t) ^ 3
+			wrapScale.Scale = ENTRANCE_SCALE_START + (1 - ENTRANCE_SCALE_START) * eased
+			logo.ImageTransparency = 1 - eased
+			if t >= 1 then
+				entranceDone = true
+				wrapScale.Scale = 1
+				logo.ImageTransparency = 0
+			end
+			return
+		end
+
+		idlePhase += dt * IDLE_PULSE_SPEED
+		local pulse = math.sin(idlePhase)
+		wrapScale.Scale = 1 + IDLE_PULSE_AMOUNT * pulse
 	end)
 
 	return function()
@@ -1346,7 +1526,8 @@ local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 			wrapScale.Scale = 1
 		end
 		if logo.Parent then
-			logo.Rotation = baseRotation
+			logo.Rotation = 0
+			logo.ImageTransparency = 0
 		end
 	end
 end
@@ -1420,21 +1601,37 @@ function M.showEarly()
 		return
 	end
 
+	loadingActive = true
+	setCoreGuisVisible(false)
+
 	local loadingGui = findLoadingScreenGui(playerGui)
-	if not loadingGui then
+	if loadingGui then
+		loadingGui.Enabled = true
+		loadingGui.DisplayOrder = 1000
+		loadingGui.ResetOnSpawn = false
+		loadingGui.IgnoreGuiInset = true
+		pcall(function()
+			loadingGui.ScreenInsets = Enum.ScreenInsets.None
+		end)
+
+		enterLoadingIsolation(playerGui)
+		prepareGameplayUIBeforeReveal(playerGui)
+		bootstrapLoadingVisuals(loadingGui, player)
 		return
 	end
 
-	loadingGui.Enabled = true
-	loadingGui.DisplayOrder = 1000
-	loadingGui.ResetOnSpawn = false
-	loadingGui.IgnoreGuiInset = true
-	pcall(function()
-		loadingGui.ScreenInsets = Enum.ScreenInsets.None
-	end)
-
-	enterLoadingIsolation(playerGui)
-	prepareGameplayUIBeforeReveal(playerGui)
+	-- No LoadingScreen GUI yet — still block the default gameplay camera immediately.
+	local camera = Workspace.CurrentCamera
+	if camera then
+		camera.CameraType = Enum.CameraType.Scriptable
+		local loadingCFrame = defaultLoadingCFrame()
+		camera.CFrame = loadingCFrame
+		camera.Focus = loadingCFrame
+		camera.CameraSubject = nil
+	end
+	ensureLoadingBlur()
+	bindCharacterHideWhileLoading(player)
+	earlyVisualsReady = true
 end
 
 function M.run()
@@ -1467,6 +1664,10 @@ function M.run()
 	hideLoadingChrome(loadingGui)
 	ensureGameNameVisible(loadingGui)
 
+	if not earlyVisualsReady then
+		bootstrapLoadingVisuals(loadingGui, player)
+	end
+
 	stopNameAnim = startGameNameSubtitleAnim(loadingGui)
 	preloadGameName(loadingGui)
 
@@ -1475,16 +1676,16 @@ function M.run()
 		camera = Workspace:WaitForChild("Camera", 10) :: Camera?
 	end
 
-	destroyLightingBlurEffects()
-	local blur = Instance.new("BlurEffect")
-	blur.Name = "LoadingScreenBlur"
-	blur.Size = 24
-	blur.Parent = Lighting
-	activeBlurEffect = blur
+	local blur = ensureLoadingBlur()
 
 	if camera and not stopCameraLock then
+		if not cameraClipStartedAt then
+			cameraClipStartedAt = os.clock()
+		end
 		stopCameraLock = startLoadingCameraLock(camera, loadingGui)
 	end
+
+	releaseSolidCover(loadingGui)
 
 	local clipSec = if loadedMoonTrack
 		then math.max(moonClipDurationSec(loadedMoonTrack), 0.05)

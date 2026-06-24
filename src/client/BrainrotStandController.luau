@@ -24,6 +24,7 @@ local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):Wai
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local MainGradientButtons = require(script.Parent.MainGradientButtons)
+local TopNotifController = require(script.Parent.TopNotifController)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local PlotMarkerVisibility = require(script.Parent.PlotMarkerVisibility)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
@@ -1224,6 +1225,11 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 		if (lastUpgradeRequestAt[stand] or 0) + UPGRADE_REQUEST_COOLDOWN > now then
 			return
 		end
+		local view = views[stand]
+		if view and affordVisualKey(view) == "cant_afford" then
+			TopNotifController.showCantAfford()
+			return
+		end
 		lastUpgradeRequestAt[stand] = now
 		if upgradeRE then
 			upgradeRE:FireServer(stand)
@@ -1695,7 +1701,7 @@ function M.init()
 		if reason ~= "cash" then
 			return
 		end
-		GameSoundEffects.playErrorNotif()
+		TopNotifController.showCantAfford()
 	end)
 
 	collectFXRE.OnClientEvent:Connect(function(stand: any, total: any)

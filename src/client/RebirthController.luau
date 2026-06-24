@@ -15,6 +15,7 @@ local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local HUDController = require(script.Parent.HUDController)
 local MainGradientButtons = require(script.Parent.MainGradientButtons)
+local TopNotifController = require(script.Parent.TopNotifController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -785,8 +786,16 @@ local function tryRebirth(main: ScreenGui)
 	if rebirthBusy or not performRF then
 		return
 	end
-	if not lastSnapshot or not lastSnapshot.canRebirth or lastSnapshot.isMaxRebirth then
+	if not lastSnapshot or lastSnapshot.isMaxRebirth then
 		GameSoundEffects.playErrorNotif()
+		return
+	end
+	if not lastSnapshot.canRebirth then
+		if not lastSnapshot.cashMet then
+			TopNotifController.showCantAfford()
+		else
+			GameSoundEffects.playErrorNotif()
+		end
 		return
 	end
 	rebirthBusy = true

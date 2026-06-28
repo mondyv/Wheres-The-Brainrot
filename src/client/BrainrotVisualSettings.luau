@@ -170,7 +170,12 @@ local function tryTrack(inst: Instance)
 end
 
 local function scanWorkspace()
+	local scanned = 0
 	for _, d in Workspace:GetDescendants() do
+		scanned += 1
+		if scanned % 4000 == 0 then
+			task.wait()
+		end
 		tryTrack(d)
 	end
 	for _, plr in Players:GetPlayers() do

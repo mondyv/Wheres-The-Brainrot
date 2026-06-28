@@ -30,6 +30,9 @@ local PlotMarkerVisibility = require(script.Parent.PlotMarkerVisibility)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+local BrainrotStandConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotStandConfig"))
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 
 local STAND_TAG = "BrainrotStand"
 local STAND_ACCUMULATED_ATTR = "StandAccumulatedCash"
@@ -64,6 +67,7 @@ end
 
 local remotes: Folder? = nil
 local upgradeRE: RemoteEvent? = nil
+local prepareRobuxStandUpgradeRE: RemoteEvent? = nil
 local upgradeFeedbackRE: RemoteEvent? = nil
 local collectFXRE: RemoteEvent? = nil
 
@@ -1063,6 +1067,56 @@ local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 	end
 end
 
+local function localUpgradeLevelGain(): number
+	if player:GetAttribute(StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED) == true then
+		return BrainrotStandConfig.PLUS_25_LEVEL_GAIN
+	end
+	return BrainrotStandConfig.NORMAL_LEVEL_GAIN
+end
+
+local function showCantAffordNotif()
+	if typeof(TopNotifController.showCantAfford) == "function" then
+		TopNotifController.showCantAfford()
+	end
+end
+
+local function promptRobuxStandUpgrade(stand: Model, mode: string, productId: number)
+	if prepareRobuxStandUpgradeRE then
+		prepareRobuxStandUpgradeRE:FireServer(stand, mode)
+	end
+	pcall(function()
+		PurchasePrompt.promptProduct(productId)
+	end)
+end
+
+local function affordVisualKey(view: StandView): string
+	local upgradeFrame = view.upgradeFrame
+	if not upgradeFrame or not upgradeFrame:IsA("GuiObject") then
+		return "none"
+	end
+	if not standMatchesAssignedPlotCached(view.stand) then
+		return "none"
+	end
+	local brainrotName = view.stand:GetAttribute("BrainrotName")
+	if typeof(brainrotName) ~= "string" or brainrotName == "" then
+		return "empty"
+	end
+	local level = view.stand:GetAttribute("BrainrotLevel")
+	if typeof(level) == "number" and math.floor(level) >= BRAINROT_MAX_LEVEL then
+		return "max"
+	end
+	local cost = view.stand:GetAttribute(STAND_UPGRADE_COST_ATTR)
+	if typeof(cost) ~= "number" or cost <= 0 then
+		return "default"
+	end
+	local cash = player:GetAttribute("Cash")
+	local balance = if typeof(cash) == "number" then cash else 0
+	if balance < cost then
+		return "cant_afford"
+	end
+	return "default"
+end
+
 local function wireUpgradeButton(stand: Model): GuiButton?
 	if not standMatchesAssignedPlotCached(stand) then
 		return nil
@@ -1226,8 +1280,14 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 			return
 		end
 		local view = views[stand]
+		if localUpgradeLevelGain() >= BrainrotStandConfig.PLUS_25_LEVEL_GAIN then
+			lastUpgradeRequestAt[stand] = now
+			promptRobuxStandUpgrade(stand, "plus25", BrainrotStandConfig.PLUS_25_DEV_PRODUCT_ID)
+			return
+		end
 		if view and affordVisualKey(view) == "cant_afford" then
-			TopNotifController.showCantAfford()
+			lastUpgradeRequestAt[stand] = now
+			promptRobuxStandUpgrade(stand, "cant_afford", BrainrotStandConfig.CANT_AFFORD_DEV_PRODUCT_ID)
 			return
 		end
 		lastUpgradeRequestAt[stand] = now
@@ -1238,34 +1298,6 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 
 	bindUpgradeClick(clickable, tryFireUpgrade)
 	return clickable
-end
-
-local function affordVisualKey(view: StandView): string
-	local upgradeFrame = view.upgradeFrame
-	if not upgradeFrame or not upgradeFrame:IsA("GuiObject") then
-		return "none"
-	end
-	if not standMatchesAssignedPlotCached(view.stand) then
-		return "none"
-	end
-	local brainrotName = view.stand:GetAttribute("BrainrotName")
-	if typeof(brainrotName) ~= "string" or brainrotName == "" then
-		return "empty"
-	end
-	local level = view.stand:GetAttribute("BrainrotLevel")
-	if typeof(level) == "number" and math.floor(level) >= BRAINROT_MAX_LEVEL then
-		return "max"
-	end
-	local cost = view.stand:GetAttribute(STAND_UPGRADE_COST_ATTR)
-	if typeof(cost) ~= "number" or cost <= 0 then
-		return "default"
-	end
-	local cash = player:GetAttribute("Cash")
-	local balance = if typeof(cash) == "number" then cash else 0
-	if balance < cost then
-		return "cant_afford"
-	end
-	return "default"
 end
 
 local function refreshStandUpgradeAfford(view: StandView)
@@ -1686,6 +1718,7 @@ function M.init()
 		return
 	end
 	upgradeRE = (remotes :: Folder):WaitForChild("UpgradeStandBrainrot", 45) :: RemoteEvent
+	prepareRobuxStandUpgradeRE = (remotes :: Folder):WaitForChild("PrepareRobuxStandUpgrade", 45) :: RemoteEvent
 	upgradeFeedbackRE = (remotes :: Folder):WaitForChild("StandUpgradeFeedback", 45) :: RemoteEvent
 	collectFXRE = (remotes :: Folder):WaitForChild("StandCashCollectedFX", 45) :: RemoteEvent
 	if not upgradeRE or not upgradeFeedbackRE or not collectFXRE then
@@ -1701,7 +1734,7 @@ function M.init()
 		if reason ~= "cash" then
 			return
 		end
-		TopNotifController.showCantAfford()
+		showCantAffordNotif()
 	end)
 
 	collectFXRE.OnClientEvent:Connect(function(stand: any, total: any)
@@ -1728,9 +1761,14 @@ function M.init()
 	end)
 
 	rebuildCachedTaggedStands()
-	for _, m in ipairs(cachedTaggedStands) do
-		initStand(m)
-	end
+	task.spawn(function()
+		for i, m in ipairs(cachedTaggedStands) do
+			initStand(m)
+			if i % 6 == 0 then
+				task.wait()
+			end
+		end
+	end)
 	CollectionService:GetInstanceAddedSignal(STAND_TAG):Connect(function(inst)
 		if inst:IsA("Model") then
 			initStand(inst :: Model)

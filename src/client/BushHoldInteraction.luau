@@ -310,18 +310,35 @@ local function purgeLegacyEmptyBushBillboards(map: Instance)
 end
 
 local function registerAllBushesOnMap(map: Instance)
-	purgeForeignUnder(map)
-	purgeLegacyEmptyBushBillboards(map)
-
-	for _, folder in collectBushFolders(map) do
-		registerBushesUnderFolder(folder)
-	end
-
+	-- Single pass (was 4 separate GetDescendants calls). Register foreign prompts before purging.
+	local bushFolders: { Folder } = {}
+	local foreignPrompts: { ProximityPrompt } = {}
+	local count = 0
 	for _, desc in map:GetDescendants() do
-		if desc:IsA("ProximityPrompt") and isForeignSearchPrompt(desc) then
-			registerFromSearchPrompt(desc)
+		count += 1
+		if count % 4000 == 0 then
+			task.wait()
+		end
+		if desc:IsA("Folder") and isBushFolderName(desc.Name) then
+			table.insert(bushFolders, desc :: Folder)
+		elseif desc:IsA("ProximityPrompt") and isForeignSearchPrompt(desc) then
+			table.insert(foreignPrompts, desc)
+		elseif desc.Name == "BushEmptyMessage" then
+			desc:Destroy()
+		elseif desc.Name == "_BushEmptyMessageAnchor" and desc:IsA("BasePart") then
+			desc:Destroy()
 		end
 	end
+
+	for _, folder in bushFolders do
+		registerBushesUnderFolder(folder)
+	end
+	for _, prompt in foreignPrompts do
+		if prompt.Parent then
+			registerFromSearchPrompt(prompt)
+		end
+	end
+	purgeForeignUnder(map)
 end
 
 -- ── Targeting ─────────────────────────────────────────────────────────────────
@@ -660,15 +677,17 @@ end
 
 local function bootMap(map: Instance)
 	wireMapWatch(map)
-	registerAllBushesOnMap(map)
-	lastEmptyBushScanAt = os.clock()
-	local n = 0
-	for _, _ in bushByModel do
-		n += 1
-	end
-	if n == 0 then
-		warn("[BushHoldInteraction] No bush prompts yet — waiting for Map/Tycoon to finish loading bushes")
-	end
+	task.spawn(function()
+		registerAllBushesOnMap(map)
+		lastEmptyBushScanAt = os.clock()
+		local n = 0
+		for _, _ in bushByModel do
+			n += 1
+		end
+		if n == 0 then
+			warn("[BushHoldInteraction] No bush prompts yet — waiting for Map/Tycoon to finish loading bushes")
+		end
+	end)
 end
 
 -- ── Init ─────────────────────────────────────────────────────────────────────-

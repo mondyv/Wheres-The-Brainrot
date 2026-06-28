@@ -427,12 +427,24 @@ local function tryRegisterHitbox(part: BasePart)
 	})
 end
 
-local function scanLuckHitboxes(root: Instance)
-	for _, desc in ipairs(root:GetDescendants()) do
-		if desc:IsA("BasePart") then
-			tryRegisterHitbox(desc)
+local function scanLuckHitboxesChunked(root: Instance)
+	task.spawn(function()
+		local stack = { root }
+		local processed = 0
+		while #stack > 0 do
+			local inst = table.remove(stack)
+			if inst:IsA("BasePart") then
+				tryRegisterHitbox(inst)
+			end
+			for _, child in inst:GetChildren() do
+				table.insert(stack, child)
+			end
+			processed += 1
+			if processed % 400 == 0 then
+				task.wait()
+			end
 		end
-	end
+	end)
 end
 
 local function hookLuckRoot(root: Instance)
@@ -440,7 +452,7 @@ local function hookLuckRoot(root: Instance)
 		return
 	end
 	hookedLuckRoots[root] = true
-	scanLuckHitboxes(root)
+	scanLuckHitboxesChunked(root)
 	root.DescendantAdded:Connect(function(ch)
 		if ch:IsA("BasePart") then
 			tryRegisterHitbox(ch)

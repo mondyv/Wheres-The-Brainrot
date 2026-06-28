@@ -186,6 +186,8 @@ C.FOV_SPEED = 4.5
 C.FOV_MAX = 96
 C.ATTACH_FOV_PUNCH = 5
 C.ATTACH_FOV_TIME = 0.28
+C.ATTACH_CAMERA_SHAKE_TIME = 0.24
+C.ATTACH_CAMERA_SHAKE_STRENGTH = 0.38
 C.LAUNCH_FOV_BOOST = 7
 C.LAUNCH_FOV_TIME = 0.34
 C.LANDING_FOV_KICK = 8
@@ -270,7 +272,7 @@ C.ROPE_THROW_LAUNCH_VFX_TIME = 0.22
 C.ROPE_THROW_TRAIL_LIFE = 0.18
 C.ROPE_LATCH_FLASH_SIZE = 3.2
 C.ROPE_LATCH_FLASH_TIME = 0.32
-C.ROPE_LATCH_SPARK_COUNT = 8
+C.ROPE_LATCH_RING_COUNT = 2
 
 C.ROPE_THROW_BRICK_COLOR = BrickColor.new("Reddish brown")
 C.ROPE_LOCKED_BRICK_COLOR = BrickColor.new("Reddish brown")
@@ -1069,6 +1071,32 @@ local function getThrowArcWorldPos(handWorld, anchorWorld, alpha)
 	return basePos + Vector3.new(0, arcLift, 0) + swayDir * swayAmt
 end
 
+local function getSwingAttachCenterWorld(part)
+	if part:IsA("BasePart") then
+		return part.Position
+	end
+
+	local ok, cf = pcall(function()
+		return part:GetBoundingBox()
+	end)
+	if ok and typeof(cf) == "CFrame" then
+		return cf.Position
+	end
+
+	return part:GetPivot().Position
+end
+
+local function resolveLockedSwingAttachWorld(part)
+	local centerWorld = getSwingAttachCenterWorld(part)
+	local ok, point = pcall(function()
+		return part:GetClosestPointOnSurface(centerWorld)
+	end)
+	if ok and typeof(point) == "Vector3" then
+		return point
+	end
+	return centerWorld
+end
+
 local function setupHandThrowAttachment(hand, hrp, side)
 	local attachment = Instance.new("Attachment")
 	attachment.Name = "SwingHandAttachment"
@@ -1093,11 +1121,11 @@ local function setupHandThrowAttachment(hand, hrp, side)
 	return attachment
 end
 
-local function spawnThrowLaunchVfx(worldPos, throwDir)
+local function spawnThrowLaunchVfx(worldPos)
 	local burst = Instance.new("Part")
 	burst.Name = "SwingThrowLaunchBurst"
 	burst.Shape = Enum.PartType.Ball
-	burst.Size = Vector3.new(0.5, 0.5, 0.5)
+	burst.Size = Vector3.new(0.45, 0.45, 0.45)
 	burst.Anchored = true
 	burst.CanCollide = false
 	burst.CanTouch = false
@@ -1105,43 +1133,79 @@ local function spawnThrowLaunchVfx(worldPos, throwDir)
 	burst.CastShadow = false
 	burst.Material = Enum.Material.Neon
 	burst.Color = Color3.fromRGB(255, 255, 255)
-	burst.Transparency = 0.12
+	burst.Transparency = 0.1
 	burst.CFrame = CFrame.new(worldPos)
 	burst.Parent = workspace
-
-	local ring = Instance.new("Part")
-	ring.Name = "SwingThrowLaunchRing"
-	ring.Shape = Enum.PartType.Cylinder
-	ring.Size = Vector3.new(0.06, 0.7, 0.7)
-	ring.Anchored = true
-	ring.CanCollide = false
-	ring.CanTouch = false
-	ring.CanQuery = false
-	ring.CastShadow = false
-	ring.Material = Enum.Material.Neon
-	ring.Color = C.PREVIEW_COLOR
-	ring.Transparency = 0.2
-	ring.CFrame = CFrame.lookAt(worldPos, worldPos + throwDir) * CFrame.Angles(0, math.rad(90), 0)
-	ring.Parent = workspace
 
 	local endSize = C.ROPE_THROW_LAUNCH_VFX_SIZE
 	TweenService:Create(burst, TweenInfo.new(C.ROPE_THROW_LAUNCH_VFX_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 		Size = Vector3.new(endSize, endSize, endSize),
 		Transparency = 1,
 	}):Play()
-	TweenService:Create(ring, TweenInfo.new(C.ROPE_THROW_LAUNCH_VFX_TIME * 1.1, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-		Size = Vector3.new(0.06, endSize * 2.4, endSize * 2.4),
-		Transparency = 1,
-	}):Play()
 	Debris:AddItem(burst, C.ROPE_THROW_LAUNCH_VFX_TIME + 0.06)
-	Debris:AddItem(ring, C.ROPE_THROW_LAUNCH_VFX_TIME + 0.1)
+
+	for i = 1, 2 do
+		local ring = Instance.new("Part")
+		ring.Name = "SwingThrowLaunchRing"
+		ring.Shape = Enum.PartType.Cylinder
+		ring.Size = Vector3.new(0.05, 0.55 + i * 0.15, 0.55 + i * 0.15)
+		ring.Anchored = true
+		ring.CanCollide = false
+		ring.CanTouch = false
+		ring.CanQuery = false
+		ring.CastShadow = false
+		ring.Material = Enum.Material.Neon
+		ring.Color = i == 1 and Color3.fromRGB(255, 255, 255) or C.PREVIEW_COLOR
+		ring.Transparency = 0.15 + i * 0.08
+		ring.CFrame = CFrame.new(worldPos) * CFrame.Angles(0, 0, math.rad(90))
+		ring.Parent = workspace
+
+		local delay = (i - 1) * 0.04
+		task.delay(delay, function()
+			if not ring.Parent then
+				return
+			end
+			TweenService:Create(
+				ring,
+				TweenInfo.new(C.ROPE_THROW_LAUNCH_VFX_TIME * 1.05, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+				{
+					Size = Vector3.new(0.05, endSize * (2 + i * 0.45), endSize * (2 + i * 0.45)),
+					Transparency = 1,
+				}
+			):Play()
+		end)
+		Debris:AddItem(ring, C.ROPE_THROW_LAUNCH_VFX_TIME + 0.12 + delay)
+	end
+end
+
+local function cameraFacingDiscCFrame(worldPos)
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return CFrame.new(worldPos) * CFrame.Angles(math.rad(90), 0, 0)
+	end
+
+	local toCamera = cam.CFrame.Position - worldPos
+	if toCamera.Magnitude < 0.05 then
+		toCamera = -cam.CFrame.LookVector
+	else
+		toCamera = toCamera.Unit
+	end
+
+	local right = toCamera:Cross(Vector3.yAxis)
+	if right.Magnitude < 0.001 then
+		right = Vector3.xAxis
+	else
+		right = right.Unit
+	end
+
+	return CFrame.fromMatrix(worldPos, right, toCamera)
 end
 
 local function spawnRopeLatchVfx(worldPos)
 	local flash = Instance.new("Part")
 	flash.Name = "SwingRopeLatchFlash"
 	flash.Shape = Enum.PartType.Ball
-	flash.Size = Vector3.new(0.55, 0.55, 0.55)
+	flash.Size = Vector3.new(0.65, 0.65, 0.65)
 	flash.Anchored = true
 	flash.CanCollide = false
 	flash.CanTouch = false
@@ -1149,80 +1213,44 @@ local function spawnRopeLatchVfx(worldPos)
 	flash.CastShadow = false
 	flash.Material = Enum.Material.Neon
 	flash.Color = Color3.fromRGB(255, 255, 255)
-	flash.Transparency = 0.08
+	flash.Transparency = 0.06
 	flash.CFrame = CFrame.new(worldPos)
 	flash.Parent = workspace
 
-	local ring = Instance.new("Part")
-	ring.Name = "SwingRopeLatchRing"
-	ring.Shape = Enum.PartType.Cylinder
-	ring.Size = Vector3.new(0.1, 1.2, 1.2)
-	ring.Anchored = true
-	ring.CanCollide = false
-	ring.CanTouch = false
-	ring.CanQuery = false
-	ring.CastShadow = false
-	ring.Material = Enum.Material.Neon
-	ring.Color = C.PREVIEW_COLOR
-	ring.Transparency = 0.18
-	ring.CFrame = CFrame.new(worldPos) * CFrame.Angles(0, 0, math.rad(90))
-	ring.Parent = workspace
-
-	local ring2 = Instance.new("Part")
-	ring2.Name = "SwingRopeLatchRingOuter"
-	ring2.Shape = Enum.PartType.Cylinder
-	ring2.Size = Vector3.new(0.06, 0.85, 0.85)
-	ring2.Anchored = true
-	ring2.CanCollide = false
-	ring2.CanTouch = false
-	ring2.CanQuery = false
-	ring2.CastShadow = false
-	ring2.Material = Enum.Material.Neon
-	ring2.Color = C.READY_COLOR
-	ring2.Transparency = 0.32
-	ring2.CFrame = CFrame.new(worldPos) * CFrame.Angles(math.rad(90), 0, 0)
-	ring2.Parent = workspace
-
 	local flashSize = C.ROPE_LATCH_FLASH_SIZE
-	TweenService:Create(flash, TweenInfo.new(C.ROPE_LATCH_FLASH_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		Size = Vector3.new(flashSize, flashSize, flashSize),
-		Transparency = 1,
-	}):Play()
-	TweenService:Create(ring, TweenInfo.new(C.ROPE_LATCH_FLASH_TIME * 1.1, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-		Size = Vector3.new(0.1, flashSize * 2.6, flashSize * 2.6),
-		Transparency = 1,
-	}):Play()
-	TweenService:Create(ring2, TweenInfo.new(C.ROPE_LATCH_FLASH_TIME * 1.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-		Size = Vector3.new(0.06, flashSize * 3.4, flashSize * 3.4),
+	TweenService:Create(flash, TweenInfo.new(C.ROPE_LATCH_FLASH_TIME * 0.85, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(flashSize * 0.55, flashSize * 0.55, flashSize * 0.55),
 		Transparency = 1,
 	}):Play()
 	Debris:AddItem(flash, C.ROPE_LATCH_FLASH_TIME + 0.08)
-	Debris:AddItem(ring, C.ROPE_LATCH_FLASH_TIME + 0.12)
-	Debris:AddItem(ring2, C.ROPE_LATCH_FLASH_TIME + 0.14)
 
-	for i = 1, C.ROPE_LATCH_SPARK_COUNT do
-		local spark = Instance.new("Part")
-		spark.Name = "SwingRopeLatchSpark"
-		spark.Size = Vector3.new(0.14, 0.14, 0.14)
-		spark.Anchored = true
-		spark.CanCollide = false
-		spark.CanTouch = false
-		spark.CanQuery = false
-		spark.CastShadow = false
-		spark.Material = Enum.Material.Neon
-		spark.Color = i % 2 == 0 and C.READY_COLOR or C.PREVIEW_COLOR
-		spark.Transparency = 0.05
-		spark.CFrame = CFrame.new(worldPos)
-		spark.Parent = workspace
+	for i = 1, C.ROPE_LATCH_RING_COUNT do
+		local ring = Instance.new("Part")
+		ring.Name = "SwingRopeLatchRing"
+		ring.Shape = Enum.PartType.Cylinder
+		local startDiameter = 0.85 + i * 0.18
+		ring.Size = Vector3.new(0.07, startDiameter, startDiameter)
+		ring.Anchored = true
+		ring.CanCollide = false
+		ring.CanTouch = false
+		ring.CanQuery = false
+		ring.CastShadow = false
+		ring.Material = Enum.Material.Neon
+		ring.Color = i == 1 and C.READY_COLOR or C.PREVIEW_COLOR
+		ring.Transparency = 0.1 + i * 0.05
+		ring.CFrame = cameraFacingDiscCFrame(worldPos)
+		ring.Parent = workspace
 
-		local angle = (i / C.ROPE_LATCH_SPARK_COUNT) * math.pi * 2
-		local outward = Vector3.new(math.cos(angle), math.random(4, 14) / 10, math.sin(angle))
-		TweenService:Create(spark, TweenInfo.new(C.ROPE_LATCH_FLASH_TIME * 0.85, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			CFrame = CFrame.new(worldPos + outward * (1.6 + math.random() * 1.8)),
-			Size = Vector3.new(0.03, 0.03, 0.03),
-			Transparency = 1,
-		}):Play()
-		Debris:AddItem(spark, C.ROPE_LATCH_FLASH_TIME + 0.06)
+		local endDiameter = flashSize * (1.65 + i * 0.42)
+		TweenService:Create(
+			ring,
+			TweenInfo.new(C.ROPE_LATCH_FLASH_TIME, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+			{
+				Size = Vector3.new(0.07, endDiameter, endDiameter),
+				Transparency = 1,
+			}
+		):Play()
+		Debris:AddItem(ring, C.ROPE_LATCH_FLASH_TIME + 0.14)
 	end
 end
 
@@ -1450,203 +1478,212 @@ local function boot(character)
 		return function() end
 	end
 
-	local function isHrpInSafezone()
-		if not SafezoneUtil or typeof(SafezoneUtil.isCharacterInSafezone) ~= "function" then
-			return false
-		end
-
-		local ok, blocked = pcall(function()
-			return SafezoneUtil.isCharacterInSafezone(character)
-		end)
-		return ok and blocked == true
-	end
-
-	local function isWebTrapped()
-		if not WebTrapConfig or typeof(WebTrapConfig.TRAPPED_ATTR) ~= "string" then
-			return false
-		end
-		return player:GetAttribute(WebTrapConfig.TRAPPED_ATTR) == true
-	end
-
 	local animator = humanoid:FindFirstChildOfClass("Animator")
 	if not animator then
 		animator = Instance.new("Animator")
 		animator.Parent = humanoid
 	end
 
-	local originalFov = camera and camera.FieldOfView or 70
-	local function resetFovNow()
+	local st = {
+		character = character,
+		humanoid = humanoid,
+		hrp = hrp,
+		animator = animator,
+		originalFov = camera and camera.FieldOfView or 70,
+		isSwinging = false,
+		isLaunched = false,
+		isAirborne = false,
+		landedFromSwing = false,
+		landingSpeed = 0,
+		swingTimer = 0,
+		swingCharge = 0,
+		forwardSwingCharge = 0,
+		forwardHoldTime = 0,
+		swingMomentum = 0,
+		swingRhythmBoost = 0,
+		lastPumpInputSign = 0,
+		lastPumpSwitchClock = -1e9,
+		lastSwingInputClock = os.clock(),
+		swingFaceDir = nil,
+		lastTryClock = -1e9,
+		lastAttachClock = -1e9,
+		lastGroundJumpClock = -1e9,
+		airborneStartedClock = -1e9,
+		lastLaunchClock = -1e9,
+		poseInputs = {
+			radial = nil,
+			moveFlatUnit = nil,
+			forwardInput = 0,
+			extT = 0,
+			momentum = 0,
+		},
+		lastLandingClock = -1e9,
+		landingShakeStrength = 0,
+		landingShakeSeed = math.random() * 1000,
+		attachShakeStrength = 0,
+		attachShakeSeed = math.random() * 1000,
+		lastGroundDragDebrisClock = -1e9,
+		swingCamRoll = 0,
+		swingCamLag = Vector3.new(0, 0, 0),
+		spaceHeld = false,
+		gamepadHeld = false,
+		mobileJumpHoldUntil = -1e9,
+		mobileJumpHeld = false,
+		mobileRealJumpPressUntil = -1e9,
+		targetCache = {},
+		targetSet = {},
+		targetGrid = {},
+		targetGridKeyByPart = {},
+		boundVines = {},
+		targetCacheReady = false,
+		lastTargetScanClock = -1e9,
+		lastTargetScanMode = "none",
+		scannedVisualTarget = nil,
+		scannedVisualCanSwing = false,
+		currentTarget = nil,
+		lastReleasedTarget = nil,
+		lastReleasedTargetClock = -1e9,
+		highlightedTarget = nil,
+		highlightedPoint = nil,
+		targetVisualShown = false,
+		anchorAttachment = nil,
+		bodyAttachment = nil,
+		ropeConstraint = nil,
+		activeRopeMaxLength = nil,
+		ropeCatchUntil = -1e9,
+		ropeCatchStartLength = nil,
+		zipSpring = nil,
+		forceAttachment = nil,
+		steerForce = nil,
+		orientationAttachment = nil,
+		swingOrientation = nil,
+		handAttachment = nil,
+		swingRopeVisual = nil,
+		pendingSwingParams = nil,
+		lockedAttachWorld = nil,
+		previewAnchorPart = nil,
+		previewFrom = nil,
+		previewTo = nil,
+		previewBeam = nil,
+		previewTarget = nil,
+		previewFade = 0,
+		previewFadeGoal = 0,
+		lastPreviewFadeBucket = -1,
+		lastPreviewColor = nil,
+		targetVisualStepAccum = 0,
+		targetHighlight = nil,
+		targetHighlightAdornee = nil,
+		targetHighlightProxyPart = nil,
+		lastHighlightColor = nil,
+		lastHighlightFillTransparency = nil,
+		markerAnchorPart = nil,
+		markerGui = nil,
+		markerLabel = nil,
+		markerRing = nil,
+		markerStroke = nil,
+		markerDot = nil,
+		lastMarkerText = nil,
+		lastVisualTarget = nil,
+		lastVisualCanSwing = nil,
+		targetReadyVisual = 0,
+		targetReadyGoal = 0,
+		targetVisualColor = C.NOT_READY_COLOR,
+		chargeGui = nil,
+		chargeDot = nil,
+		activeHangTrack = nil,
+		currentHangSide = "Right",
+		nextSwingHandSide = "Right",
+		rightHangTrack = nil,
+		leftHangTrack = nil,
+		fallingTrack = nil,
+		landedTrack = nil,
+		lastLandedAnimClock = -1e9,
+		trails = {},
+		conns = {},
+		playerAnimationsFolder = nil,
+		playerAnimationsFolderSearched = false,
+	}
+	st.swingPose = createSwingPose(st.character, st.hrp)
+	st.releaseStyle = createReleaseStyleController(st.humanoid, st.hrp)
+	st.renderBindName = "UnifiedSwingCameraFX_" .. tostring(os.clock()) .. "_" .. tostring(math.random(1, 1000000))
+	st.rayParams = RaycastParams.new()
+	st.rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	st.rayParams.FilterDescendantsInstances = { st.character }
+
+	function st.isHrpInSafezone()
+		if not SafezoneUtil or typeof(SafezoneUtil.isCharacterInSafezone) ~= "function" then
+			return false
+		end
+
+		local ok, blocked = pcall(function()
+			return SafezoneUtil.isCharacterInSafezone(st.character)
+		end)
+		return ok and blocked == true
+	end
+
+	function st.isWebTrapped()
+		if not WebTrapConfig or typeof(WebTrapConfig.TRAPPED_ATTR) ~= "string" then
+			return false
+		end
+		return player:GetAttribute(WebTrapConfig.TRAPPED_ATTR) == true
+	end
+
+	function st.resetFovNow()
 		camera = workspace.CurrentCamera or camera
 		if camera then
-			camera.FieldOfView = originalFov
+			camera.FieldOfView = st.originalFov
 		end
 	end
 
-	local isSwinging = false
-	local isLaunched = false
-	local isAirborne = false
-	local landedFromSwing = false
-	local landingSpeed = 0
-	local swingTimer = 0
-	local swingCharge = 0
-	local forwardSwingCharge = 0
-	local forwardHoldTime = 0
-	local swingMomentum = 0
-	local swingRhythmBoost = 0
-	local lastPumpInputSign = 0
-	local lastPumpSwitchClock = -1e9
-	local lastSwingInputClock = os.clock()
-	local swingFaceDir = nil
-	local swingPose = createSwingPose(character, hrp)
-	local lastTryClock = -1e9
-	local lastAttachClock = -1e9
-	local lastGroundJumpClock = -1e9
-	local airborneStartedClock = -1e9
-	local lastLaunchClock = -1e9
-	local releaseStyle = createReleaseStyleController(humanoid, hrp)
-	local poseInputs = {
-		radial = nil,
-		moveFlatUnit = nil,
-		forwardInput = 0,
-		extT = 0,
-		momentum = 0,
-	}
-	local lastLandingClock = -1e9
-	local landingShakeStrength = 0
-	local landingShakeSeed = math.random() * 1000
-	local lastGroundDragDebrisClock = -1e9
-	local swingCamRoll = 0
-	local swingCamLag = Vector3.new(0, 0, 0)
-	local renderBindName = "UnifiedSwingCameraFX_" .. tostring(os.clock()) .. "_" .. tostring(math.random(1, 1000000))
-
-	local spaceHeld = false
-	local gamepadHeld = false
-	local mobileJumpHoldUntil = -1e9
-	local mobileJumpHeld = false
-	local mobileRealJumpPressUntil = -1e9
-
-	local targetCache = {}
-	local targetSet = {}
-	local targetGrid = {}
-	local targetGridKeyByPart = {}
-	local boundVines = {}
-	local targetCacheReady = false
-	local lastTargetScanClock = -1e9
-	local lastTargetScanMode = "none"
-	local scannedVisualTarget = nil
-	local scannedVisualCanSwing = false
-
-	local currentTarget = nil
-	local lastReleasedTarget = nil
-	local lastReleasedTargetClock = -1e9
-	local highlightedTarget = nil
-	local highlightedPoint = nil
-	local targetVisualShown = false
-	local anchorAttachment = nil
-	local bodyAttachment = nil
-	local ropeConstraint = nil
-	local activeRopeMaxLength = nil
-	local ropeCatchUntil = -1e9
-	local ropeCatchStartLength = nil
-	local zipSpring = nil
-	local forceAttachment = nil
-	local steerForce = nil
-	local orientationAttachment = nil
-	local swingOrientation = nil
-	local handAttachment = nil
-	local swingRopeVisual = nil
-	local pendingSwingParams = nil
-	local previewAnchorPart = nil
-	local previewFrom = nil
-	local previewTo = nil
-	local previewBeam = nil
-	local previewTarget = nil
-	local previewFade = 0
-	local previewFadeGoal = 0
-	local lastPreviewFadeBucket = -1
-	local lastPreviewColor = nil
-	local targetVisualStepAccum = 0
-	local targetHighlight = nil
-	local targetHighlightAdornee = nil
-	local targetHighlightProxyPart = nil
-	local lastHighlightColor = nil
-	local lastHighlightFillTransparency = nil
-	local markerAnchorPart = nil
-	local markerGui = nil
-	local markerLabel = nil
-	local markerRing = nil
-	local markerStroke = nil
-	local markerDot = nil
-	local lastMarkerText = nil
-	local lastVisualTarget = nil
-	local lastVisualCanSwing = nil
-	local targetReadyVisual = 0
-	local targetReadyGoal = 0
-	local targetVisualColor = C.NOT_READY_COLOR
-	local chargeGui = nil
-	local chargeDot = nil
-	local activeHangTrack = nil
-	local currentHangSide = "Right"
-	local rightHangTrack = nil
-	local leftHangTrack = nil
-	local fallingTrack = nil
-	local landedTrack = nil
-	local lastLandedAnimClock = -1e9
-	local trails = {}
-	local conns = {}
-
-	local rayParams = RaycastParams.new()
-	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-	rayParams.FilterDescendantsInstances = { character }
 
 	if C.SWING_DISABLE_FALLDOWN_STATES then
 		pcall(function()
-			humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+			st.humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
 		end)
 		pcall(function()
-			humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+			st.humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
 		end)
 	end
 
-	local function isSwingLandingRecoveryState(state)
+	function st.isSwingLandingRecoveryState(state)
 		return state == Enum.HumanoidStateType.FallingDown
 			or state == Enum.HumanoidStateType.Ragdoll
 			or state == Enum.HumanoidStateType.Physics
 			or state == Enum.HumanoidStateType.GettingUp
 	end
 
-	local function isCloseToGroundForSwingLanding()
-		if humanoid.FloorMaterial ~= Enum.Material.Air then
+	function st.isCloseToGroundForSwingLanding()
+		if st.humanoid.FloorMaterial ~= Enum.Material.Air then
 			return true
 		end
-		rayParams.FilterDescendantsInstances = { character }
-		local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -C.SWING_LANDING_GROUND_RAY, 0), rayParams)
+		st.rayParams.FilterDescendantsInstances = { st.character }
+		local hit = workspace:Raycast(st.hrp.Position, Vector3.new(0, -C.SWING_LANDING_GROUND_RAY, 0), st.rayParams)
 		return hit ~= nil
 	end
 
-	local function forceSwingHumanoidControl()
-		if isWebTrapped() then
+	function st.forceSwingHumanoidControl()
+		if st.isWebTrapped() then
 			return
 		end
-		releaseStyle.cancel()
-		swingPose.clear()
-		humanoid.PlatformStand = false
-		humanoid.AutoRotate = true
-		humanoid.Sit = false
-		hrp.AssemblyAngularVelocity = Vector3.zero
-		if humanoid.Health > 0 then
+		st.releaseStyle.cancel()
+		st.swingPose.clear()
+		st.humanoid.PlatformStand = false
+		st.humanoid.AutoRotate = true
+		st.humanoid.Sit = false
+		st.hrp.AssemblyAngularVelocity = Vector3.zero
+		if st.humanoid.Health > 0 then
 			pcall(function()
-				local state = humanoid:GetState()
-				if isSwingLandingRecoveryState(state) then
-					humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+				local state = st.humanoid:GetState()
+				if st.isSwingLandingRecoveryState(state) then
+					st.humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
 				else
-					humanoid:ChangeState(Enum.HumanoidStateType.Running)
+					st.humanoid:ChangeState(Enum.HumanoidStateType.Running)
 				end
 			end)
 		end
 	end
 
-	local function normalizeAnimationId(id)
+	function st.normalizeAnimationId(id)
 		if typeof(id) == "Instance" then
 			if id:IsA("Animation") then
 				return id.AnimationId
@@ -1685,36 +1722,33 @@ local function boot(character)
 		return cleaned
 	end
 
-	local playerAnimationsFolder = nil
-	local playerAnimationsFolderSearched = false
-
-	local function getPlayerAnimationsFolder()
-		if playerAnimationsFolder and playerAnimationsFolder.Parent then
-			return playerAnimationsFolder
+	function st.getPlayerAnimationsFolder()
+		if st.playerAnimationsFolder and st.playerAnimationsFolder.Parent then
+			return st.playerAnimationsFolder
 		end
-		if playerAnimationsFolderSearched then
+		if st.playerAnimationsFolderSearched then
 			return nil
 		end
-		playerAnimationsFolderSearched = true
+		st.playerAnimationsFolderSearched = true
 
 		local animationsFolder = ReplicatedStorage:FindFirstChild(C.ANIMATIONS_FOLDER_NAME)
 			or ReplicatedStorage:WaitForChild(C.ANIMATIONS_FOLDER_NAME, 5)
-		playerAnimationsFolder = animationsFolder
+		st.playerAnimationsFolder = animationsFolder
 			and (
 				animationsFolder:FindFirstChild(C.PLAYER_ANIMATIONS_FOLDER_NAME)
 				or animationsFolder:WaitForChild(C.PLAYER_ANIMATIONS_FOLDER_NAME, 5)
 			)
-		if not playerAnimationsFolder then
+		if not st.playerAnimationsFolder then
 			warn(
 				"[MergedFriendSwingSystem] Missing animation folder:",
 				C.ANIMATIONS_FOLDER_NAME .. "/" .. C.PLAYER_ANIMATIONS_FOLDER_NAME
 			)
 		end
-		return playerAnimationsFolder
+		return st.playerAnimationsFolder
 	end
 
-	local function findPlayerAnimation(name)
-		local folder = getPlayerAnimationsFolder()
+	function st.findPlayerAnimation(name)
+		local folder = st.getPlayerAnimationsFolder()
 		local anim = folder and folder:FindFirstChild(name)
 		if not anim then
 			warn(
@@ -1730,12 +1764,12 @@ local function boot(character)
 		return anim
 	end
 
-	local function loadAnimTrack(source, looped, priority, name)
+	function st.loadAnimTrack(source, looped, priority, name)
 		if not C.ENABLE_SWING_ANIMATIONS then
 			return nil
 		end
 
-		local animId = normalizeAnimationId(source)
+		local animId = st.normalizeAnimationId(source)
 		if animId == "" then
 			return nil
 		end
@@ -1744,7 +1778,7 @@ local function boot(character)
 		anim.Name = name or "SwingAnimation"
 		anim.AnimationId = animId
 		local ok, track = pcall(function()
-			return animator:LoadAnimation(anim)
+			return st.animator:LoadAnimation(anim)
 		end)
 		anim:Destroy()
 		if ok and track then
@@ -1756,7 +1790,7 @@ local function boot(character)
 		return nil
 	end
 
-	local function playTrack(track, fadeTime, weight, speed)
+	function st.playTrack(track, fadeTime, weight, speed)
 		if not track then
 			return
 		end
@@ -1773,7 +1807,7 @@ local function boot(character)
 		end
 	end
 
-	local function stopTrack(track, fadeTime)
+	function st.stopTrack(track, fadeTime)
 		if not track then
 			return
 		end
@@ -1789,29 +1823,36 @@ local function boot(character)
 		end)
 	end
 
-	local hangRightAnim = findPlayerAnimation(C.HANG_ANIM_RIGHT_NAME)
-	local hangLeftAnim = findPlayerAnimation(C.HANG_ANIM_LEFT_NAME)
-	local fallingAnim = findPlayerAnimation(C.FALLING_ANIM_NAME)
-	local landedAnim = findPlayerAnimation(C.LANDED_ANIM_NAME)
+	local hangRightAnim = st.findPlayerAnimation(C.HANG_ANIM_RIGHT_NAME)
+	local hangLeftAnim = st.findPlayerAnimation(C.HANG_ANIM_LEFT_NAME)
+	local fallingAnim = st.findPlayerAnimation(C.FALLING_ANIM_NAME)
+	local landedAnim = st.findPlayerAnimation(C.LANDED_ANIM_NAME)
 
-	rightHangTrack = loadAnimTrack(hangRightAnim, true, Enum.AnimationPriority.Action4, "HangRight")
-	if normalizeAnimationId(hangLeftAnim) == normalizeAnimationId(hangRightAnim) then
-		leftHangTrack = rightHangTrack
+	st.rightHangTrack = st.loadAnimTrack(hangRightAnim, true, Enum.AnimationPriority.Action4, "HangRight")
+	if st.normalizeAnimationId(hangLeftAnim) == st.normalizeAnimationId(hangRightAnim) then
+		st.leftHangTrack = st.rightHangTrack
 	else
-		leftHangTrack = loadAnimTrack(hangLeftAnim, true, Enum.AnimationPriority.Action4, "HangLeft")
+		st.leftHangTrack = st.loadAnimTrack(hangLeftAnim, true, Enum.AnimationPriority.Action4, "HangLeft")
 	end
-	fallingTrack = loadAnimTrack(fallingAnim, true, Enum.AnimationPriority.Action4, "SwingFalling")
+	st.fallingTrack = st.loadAnimTrack(fallingAnim, true, Enum.AnimationPriority.Action4, "SwingFalling")
 	-- Use Action instead of Action4 so the landing clip does not overpower normal movement for several seconds.
-	landedTrack = loadAnimTrack(landedAnim, false, Enum.AnimationPriority.Action2, "SwingLanded")
+	st.landedTrack = st.loadAnimTrack(landedAnim, false, Enum.AnimationPriority.Action2, "SwingLanded")
 
-	local function addConn(conn)
-		table.insert(conns, conn)
+	function st.addConn(conn)
+		table.insert(st.conns, conn)
 		return conn
 	end
 
 	-- Mobile fallback button removed in no-register build.
 
-	local function handPartForSide(side)
+	function st.advanceSwingHandSide()
+		local side = st.nextSwingHandSide
+		st.nextSwingHandSide = side == "Left" and "Right" or "Left"
+		st.currentHangSide = side
+		return side
+	end
+
+	function st.handPartForSide(side)
 		local names
 		if side == "Left" then
 			names = { "LeftHand", "Left Arm", "LeftLowerArm", "LeftUpperArm" }
@@ -1819,56 +1860,42 @@ local function boot(character)
 			names = { "RightHand", "Right Arm", "RightLowerArm", "RightUpperArm" }
 		end
 		for _, name in ipairs(names) do
-			local p = character:FindFirstChild(name, true)
+			local p = st.character:FindFirstChild(name, true)
 			if p and p:IsA("BasePart") then
 				return p
 			end
 		end
-		return hrp
+		return st.hrp
 	end
 
-	local function getSwingSide(attachWorld)
-		camera = workspace.CurrentCamera or camera
-		if not camera then
-			return "Right"
+	function st.playHangAnim(_attachWorld)
+		st.stopTrack(st.fallingTrack, 0.1)
+		st.stopTrack(st.landedTrack, 0.08)
+		local side = st.currentHangSide or "Right"
+		local track = side == "Left" and st.leftHangTrack or st.rightHangTrack
+		if st.activeHangTrack and st.activeHangTrack ~= track then
+			st.stopTrack(st.activeHangTrack, 0.12)
 		end
-		local toTarget = Vector3.new(attachWorld.X - hrp.Position.X, 0, attachWorld.Z - hrp.Position.Z)
-		local camRight = Vector3.new(camera.CFrame.RightVector.X, 0, camera.CFrame.RightVector.Z)
-		if toTarget.Magnitude > 0.1 and camRight.Magnitude > 0.1 and toTarget.Unit:Dot(camRight.Unit) < 0 then
-			return "Left"
-		end
-		return "Right"
-	end
-
-	local function playHangAnim(attachWorld)
-		stopTrack(fallingTrack, 0.1)
-		stopTrack(landedTrack, 0.08)
-		local side = getSwingSide(attachWorld)
-		currentHangSide = side
-		local track = side == "Left" and leftHangTrack or rightHangTrack
-		if activeHangTrack and activeHangTrack ~= track then
-			stopTrack(activeHangTrack, 0.12)
-		end
-		activeHangTrack = track
-		if activeHangTrack then
-			playTrack(activeHangTrack, 0.12, 1, 1)
+		st.activeHangTrack = track
+		if st.activeHangTrack then
+			st.playTrack(st.activeHangTrack, 0.12, 1, 1)
 		end
 	end
 
-	local function stopHangAnim(fadeTime)
+	function st.stopHangAnim(fadeTime)
 		local fade = fadeTime
 		if fade == nil then
 			fade = 0.08
 		end
-		stopTrack(rightHangTrack, fade)
-		if leftHangTrack ~= rightHangTrack then
-			stopTrack(leftHangTrack, fade)
+		st.stopTrack(st.rightHangTrack, fade)
+		if st.leftHangTrack ~= st.rightHangTrack then
+			st.stopTrack(st.leftHangTrack, fade)
 		end
-		activeHangTrack = nil
+		st.activeHangTrack = nil
 	end
 
-	local function playFallingAnim(fadeTime)
-		if isSwinging or not (isLaunched or landedFromSwing) then
+	function st.playFallingAnim(fadeTime)
+		if st.isSwinging or not (st.isLaunched or st.landedFromSwing) then
 			return
 		end
 
@@ -1880,102 +1907,102 @@ local function boot(character)
 		-- Smoothly crossfade from the hanging pose into the falling pose.
 		-- The old version stopped hang instantly and restarted Falling every state change,
 		-- which made release -> fall -> land feel rushed/snappy.
-		stopHangAnim(C.LAUNCH_HANG_RELEASE_FADE)
-		stopTrack(landedTrack, C.LAUNCH_LAND_ANIM_FADE)
+		st.stopHangAnim(C.LAUNCH_HANG_RELEASE_FADE)
+		st.stopTrack(st.landedTrack, C.LAUNCH_LAND_ANIM_FADE)
 
-		if fallingTrack then
+		if st.fallingTrack then
 			pcall(function()
-				if not fallingTrack.IsPlaying then
-					fallingTrack.TimePosition = 0
+				if not st.fallingTrack.IsPlaying then
+					st.fallingTrack.TimePosition = 0
 				end
 			end)
 		end
 
-		playTrack(fallingTrack, fade, 1, 1)
+		st.playTrack(st.fallingTrack, fade, 1, 1)
 	end
 
-	local function stopFallingAnim(fadeTime)
+	function st.stopFallingAnim(fadeTime)
 		local fade = fadeTime
 		if fade == nil then
 			fade = C.LAUNCH_FALL_STOP_FADE
 		end
-		stopTrack(fallingTrack, fade)
+		st.stopTrack(st.fallingTrack, fade)
 	end
 
-	local function playLandedAnim()
-		stopHangAnim(C.LAUNCH_HANG_RELEASE_FADE)
-		stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
+	function st.playLandedAnim()
+		st.stopHangAnim(C.LAUNCH_HANG_RELEASE_FADE)
+		st.stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
 
 		local now = os.clock()
-		if now - lastLandedAnimClock < 0.12 then
+		if now - st.lastLandedAnimClock < 0.12 then
 			return
 		end
 
-		lastLandedAnimClock = now
-		forceSwingHumanoidControl()
+		st.lastLandedAnimClock = now
+		st.forceSwingHumanoidControl()
 
 		if not C.SWING_ENABLE_LANDED_IMPACT_ANIM then
-			stopTrack(landedTrack, 0.05)
+			st.stopTrack(st.landedTrack, 0.05)
 			return
 		end
 
-		if landedTrack then
+		if st.landedTrack then
 			pcall(function()
-				landedTrack.TimePosition = 0
+				st.landedTrack.TimePosition = 0
 			end)
 			-- Low weight + short lifetime = quick impact flavor without stealing movement control.
-			playTrack(landedTrack, C.LAUNCH_LAND_ANIM_FADE, C.SWING_LANDED_ANIM_WEIGHT, 0.9)
+			st.playTrack(st.landedTrack, C.LAUNCH_LAND_ANIM_FADE, C.SWING_LANDED_ANIM_WEIGHT, 0.9)
 
-			local playToken = lastLandedAnimClock
+			local playToken = st.lastLandedAnimClock
 			task.spawn(function()
 				local stopAt = os.clock() + C.LAUNCH_LAND_MAX_PLAY_TIME
 				while os.clock() < stopAt do
-					if lastLandedAnimClock ~= playToken then
+					if st.lastLandedAnimClock ~= playToken then
 						return
 					end
-					if isSwinging then
-						stopTrack(landedTrack, 0.05)
+					if st.isSwinging then
+						st.stopTrack(st.landedTrack, 0.05)
 						return
 					end
 					-- If the player tries to move/jump, instantly fade the impact pose out.
 					local playedFor = os.clock() - playToken
 
-					if humanoid.Jump then
-						stopTrack(landedTrack, 0.05)
+					if st.humanoid.Jump then
+						st.stopTrack(st.landedTrack, 0.05)
 						return
 					end
 
-					if playedFor > 0.28 and humanoid.MoveDirection.Magnitude > 0.35 then
-						stopTrack(landedTrack, 0.08)
+					if playedFor > 0.28 and st.humanoid.MoveDirection.Magnitude > 0.35 then
+						st.stopTrack(st.landedTrack, 0.08)
 						return
 					end
 
 					RunService.Heartbeat:Wait()
 				end
-				if lastLandedAnimClock == playToken then
-					stopTrack(landedTrack, 0.1)
+				if st.lastLandedAnimClock == playToken then
+					st.stopTrack(st.landedTrack, 0.1)
 				end
 			end)
 		end
 
 		-- Extra delayed recovery catches the frames where Roblox briefly switches to GettingUp/Physics after impact.
 		task.delay(C.LAUNCH_LAND_CONTROL_RELEASE_DELAY, function()
-			if humanoid.Parent and not isSwinging then
-				forceSwingHumanoidControl()
+			if st.humanoid.Parent and not st.isSwinging then
+				st.forceSwingHumanoidControl()
 			end
 		end)
 		task.delay(C.SWING_LANDING_RECOVERY_REPEAT_DELAY, function()
-			if humanoid.Parent and not isSwinging then
-				forceSwingHumanoidControl()
+			if st.humanoid.Parent and not st.isSwinging then
+				st.forceSwingHumanoidControl()
 
-				if os.clock() - lastLandedAnimClock >= C.LAUNCH_LAND_MAX_PLAY_TIME then
-					stopTrack(landedTrack, 0.08)
+				if os.clock() - st.lastLandedAnimClock >= C.LAUNCH_LAND_MAX_PLAY_TIME then
+					st.stopTrack(st.landedTrack, 0.08)
 				end
 			end
 		end)
 	end
 
-	local function makeTrails()
+	function st.makeTrails()
 		local limbNames = {
 			"Right Arm",
 			"Left Arm",
@@ -1988,7 +2015,7 @@ local function boot(character)
 		}
 		local seen = {}
 		for _, name in ipairs(limbNames) do
-			local part = character:FindFirstChild(name, true)
+			local part = st.character:FindFirstChild(name, true)
 			if part and part:IsA("BasePart") and not seen[part] then
 				seen[part] = true
 				local a0 = Instance.new("Attachment")
@@ -2012,24 +2039,24 @@ local function boot(character)
 				trail.Lifetime = 0.26
 				trail.Enabled = false
 				trail.Parent = part
-				table.insert(trails, trail)
+				table.insert(st.trails, trail)
 			end
 		end
 	end
 
-	makeTrails()
+	st.makeTrails()
 
-	local function setTrailsEnabled(on)
-		for _, trail in ipairs(trails) do
+	function st.setTrailsEnabled(on)
+		for _, trail in ipairs(st.trails) do
 			if trail and trail.Parent then
 				trail.Enabled = on
 			end
 		end
 	end
 
-	local function closestAttachWorldOnPart(part)
+	function st.closestAttachWorldOnPart(part)
 		local ok, point = pcall(function()
-			return part:GetClosestPointOnSurface(hrp.Position)
+			return part:GetClosestPointOnSurface(st.hrp.Position)
 		end)
 		if ok and typeof(point) == "Vector3" then
 			return point
@@ -2037,79 +2064,79 @@ local function boot(character)
 		return part.Position
 	end
 
-	local function targetCellCoord(value)
+	function st.targetCellCoord(value)
 		return math.floor(value / C.TARGET_GRID_CELL_SIZE)
 	end
 
-	local function targetGridKeyFromCoords(x, y, z)
+	function st.targetGridKeyFromCoords(x, y, z)
 		return tostring(x) .. ":" .. tostring(y) .. ":" .. tostring(z)
 	end
 
-	local function targetGridKeyForPosition(pos)
-		return targetGridKeyFromCoords(targetCellCoord(pos.X), targetCellCoord(pos.Y), targetCellCoord(pos.Z))
+	function st.targetGridKeyForPosition(pos)
+		return st.targetGridKeyFromCoords(st.targetCellCoord(pos.X), st.targetCellCoord(pos.Y), st.targetCellCoord(pos.Z))
 	end
 
-	local function removeTargetFromGrid(part)
-		local oldKey = targetGridKeyByPart[part]
+	function st.removeTargetFromGrid(part)
+		local oldKey = st.targetGridKeyByPart[part]
 		if not oldKey then
 			return
 		end
 
-		targetGridKeyByPart[part] = nil
-		local cell = targetGrid[oldKey]
+		st.targetGridKeyByPart[part] = nil
+		local cell = st.targetGrid[oldKey]
 		if not cell then
 			return
 		end
 
 		cell[part] = nil
 		if not next(cell) then
-			targetGrid[oldKey] = nil
+			st.targetGrid[oldKey] = nil
 		end
 	end
 
-	local function addTargetToGrid(part)
-		removeTargetFromGrid(part)
+	function st.addTargetToGrid(part)
+		st.removeTargetFromGrid(part)
 
-		local key = targetGridKeyForPosition(part.Position)
-		targetGridKeyByPart[part] = key
+		local key = st.targetGridKeyForPosition(part.Position)
+		st.targetGridKeyByPart[part] = key
 
-		local cell = targetGrid[key]
+		local cell = st.targetGrid[key]
 		if not cell then
 			cell = {}
-			targetGrid[key] = cell
+			st.targetGrid[key] = cell
 		end
 		cell[part] = true
 	end
 
-	local function addSwingTarget(obj)
+	function st.addSwingTarget(obj)
 		if not obj:IsA("BasePart") or not obj.Parent then
 			return
 		end
-		if targetSet[obj] then
+		if st.targetSet[obj] then
 			return
 		end
 
-		targetSet[obj] = true
-		table.insert(targetCache, obj)
-		addTargetToGrid(obj)
+		st.targetSet[obj] = true
+		table.insert(st.targetCache, obj)
+		st.addTargetToGrid(obj)
 	end
 
-	local function removeSwingTarget(obj)
-		if not targetSet[obj] then
+	function st.removeSwingTarget(obj)
+		if not st.targetSet[obj] then
 			return
 		end
 
-		targetSet[obj] = nil
-		for i = #targetCache, 1, -1 do
-			if targetCache[i] == obj then
-				table.remove(targetCache, i)
+		st.targetSet[obj] = nil
+		for i = #st.targetCache, 1, -1 do
+			if st.targetCache[i] == obj then
+				table.remove(st.targetCache, i)
 				break
 			end
 		end
-		removeTargetFromGrid(obj)
+		st.removeTargetFromGrid(obj)
 	end
 
-	local function seedVineTargets(vine)
+	function st.seedVineTargets(vine)
 		if not vine or not C.TARGET_BACKGROUND_SEED_ENABLED then
 			return
 		end
@@ -2122,7 +2149,7 @@ local function boot(character)
 			while #stack > 0 and vine.Parent do
 				local obj = table.remove(stack)
 				if obj:IsA("BasePart") and obj.Name == C.SWING_TARGET_NAME then
-					addSwingTarget(obj)
+					st.addSwingTarget(obj)
 				end
 
 				if not obj:IsA("BasePart") then
@@ -2143,59 +2170,59 @@ local function boot(character)
 		end)
 	end
 
-	local function bindVineFolder(vine, seedExisting)
+	function st.bindVineFolder(vine, seedExisting)
 		if not vine or not C.TARGET_ENABLE_VINE_NAME_FALLBACK then
 			return
 		end
-		if boundVines[vine] then
+		if st.boundVines[vine] then
 			return
 		end
-		boundVines[vine] = true
+		st.boundVines[vine] = true
 
 		if seedExisting ~= false then
-			seedVineTargets(vine)
+			st.seedVineTargets(vine)
 		end
-		addConn(vine.DescendantAdded:Connect(function(obj)
+		st.addConn(vine.DescendantAdded:Connect(function(obj)
 			if obj:IsA("BasePart") and obj.Name == C.SWING_TARGET_NAME then
-				addSwingTarget(obj)
+				st.addSwingTarget(obj)
 			end
 		end))
-		addConn(vine.DescendantRemoving:Connect(function(obj)
-			removeSwingTarget(obj)
+		st.addConn(vine.DescendantRemoving:Connect(function(obj)
+			st.removeSwingTarget(obj)
 		end))
 	end
 
-	local function initializeTargetCache()
-		if targetCacheReady then
+	function st.initializeTargetCache()
+		if st.targetCacheReady then
 			return
 		end
-		targetCacheReady = true
+		st.targetCacheReady = true
 
 		local taggedTargets = CollectionService:GetTagged(C.SWING_TARGET_TAG)
 		for _, obj in ipairs(taggedTargets) do
-			addSwingTarget(obj)
+			st.addSwingTarget(obj)
 		end
 		local hasTaggedTargets = #taggedTargets > 0
 
-		addConn(CollectionService:GetInstanceAddedSignal(C.SWING_TARGET_TAG):Connect(addSwingTarget))
-		addConn(CollectionService:GetInstanceRemovedSignal(C.SWING_TARGET_TAG):Connect(removeSwingTarget))
+		st.addConn(CollectionService:GetInstanceAddedSignal(C.SWING_TARGET_TAG):Connect(st.addSwingTarget))
+		st.addConn(CollectionService:GetInstanceRemovedSignal(C.SWING_TARGET_TAG):Connect(st.removeSwingTarget))
 
 		local map = workspace:FindFirstChild(C.MAP_FOLDER_NAME)
 		local vine = map and map:FindFirstChild(C.VINE_FOLDER_NAME)
-		bindVineFolder(vine, not (C.TARGET_SKIP_VINE_SEED_WHEN_TAGGED and hasTaggedTargets))
+		st.bindVineFolder(vine, not (C.TARGET_SKIP_VINE_SEED_WHEN_TAGGED and hasTaggedTargets))
 
 		if C.TARGET_ENABLE_VINE_NAME_FALLBACK and not vine then
-			addConn(workspace.DescendantAdded:Connect(function(obj)
+			st.addConn(workspace.DescendantAdded:Connect(function(obj)
 				if obj.Name == C.VINE_FOLDER_NAME then
 					local parent = obj.Parent
 					if parent and parent.Name == C.MAP_FOLDER_NAME then
-						bindVineFolder(obj, not (C.TARGET_SKIP_VINE_SEED_WHEN_TAGGED and hasTaggedTargets))
+						st.bindVineFolder(obj, not (C.TARGET_SKIP_VINE_SEED_WHEN_TAGGED and hasTaggedTargets))
 					end
 				elseif obj:IsA("BasePart") and obj.Name == C.SWING_TARGET_NAME then
 					local ancestor = obj.Parent
 					while ancestor do
 						if ancestor.Name == C.VINE_FOLDER_NAME then
-							addSwingTarget(obj)
+							st.addSwingTarget(obj)
 							break
 						end
 						ancestor = ancestor.Parent
@@ -2211,38 +2238,38 @@ local function boot(character)
 		end
 	end
 
-	local function getTargets()
-		initializeTargetCache()
+	function st.getTargets()
+		st.initializeTargetCache()
 
-		for i = #targetCache, 1, -1 do
-			local part = targetCache[i]
+		for i = #st.targetCache, 1, -1 do
+			local part = st.targetCache[i]
 			if not part.Parent or not part:IsDescendantOf(workspace) then
-				targetSet[part] = nil
-				removeTargetFromGrid(part)
-				table.remove(targetCache, i)
+				st.targetSet[part] = nil
+				st.removeTargetFromGrid(part)
+				table.remove(st.targetCache, i)
 			end
 		end
 
-		return targetCache
+		return st.targetCache
 	end
 
-	task.defer(initializeTargetCache)
+	task.defer(st.initializeTargetCache)
 
-	local function getCandidateTargets(maxDistance)
-		initializeTargetCache()
-		if #targetCache == 0 and not C.TARGET_ENABLE_VINE_NAME_FALLBACK then
+	function st.getCandidateTargets(maxDistance)
+		st.initializeTargetCache()
+		if #st.targetCache == 0 and not C.TARGET_ENABLE_VINE_NAME_FALLBACK then
 			return {}
 		end
 
 		local radius = math.max(2, (maxDistance or getSwingRange()) + C.TARGET_CANDIDATE_EXTRA_RADIUS)
-		local origin = hrp.Position
+		local origin = st.hrp.Position
 		local candidates = {}
 		local seen = {}
 		local invalidTargets = {}
 
-		local centerX = targetCellCoord(origin.X)
-		local centerY = targetCellCoord(origin.Y)
-		local centerZ = targetCellCoord(origin.Z)
+		local centerX = st.targetCellCoord(origin.X)
+		local centerY = st.targetCellCoord(origin.Y)
+		local centerZ = st.targetCellCoord(origin.Z)
 		local cellRadius = math.max(1, math.ceil(radius / C.TARGET_GRID_CELL_SIZE))
 		local candidateLimitHit = false
 
@@ -2258,7 +2285,7 @@ local function boot(character)
 					if candidateLimitHit then
 						break
 					end
-					local cell = targetGrid[targetGridKeyFromCoords(x, y, z)]
+					local cell = st.targetGrid[st.targetGridKeyFromCoords(x, y, z)]
 					if cell then
 						for part in pairs(cell) do
 							if not seen[part] then
@@ -2267,7 +2294,7 @@ local function boot(character)
 									table.insert(invalidTargets, part)
 									continue
 								end
-								if not targetSet[part] or part:IsDescendantOf(character) then
+								if not st.targetSet[part] or part:IsDescendantOf(st.character) then
 									continue
 								end
 
@@ -2287,16 +2314,16 @@ local function boot(character)
 		end
 
 		for _, part in ipairs(invalidTargets) do
-			removeSwingTarget(part)
+			st.removeSwingTarget(part)
 		end
 
-		if #candidates == 0 and #targetCache <= C.TARGET_FULL_SCAN_FALLBACK_LIMIT then
-			for _, part in ipairs(getTargets()) do
+		if #candidates == 0 and #st.targetCache <= C.TARGET_FULL_SCAN_FALLBACK_LIMIT then
+			for _, part in ipairs(st.getTargets()) do
 				if
 					not seen[part]
 					and part.Parent
 					and part:IsDescendantOf(workspace)
-					and not part:IsDescendantOf(character)
+					and not part:IsDescendantOf(st.character)
 				then
 					local halfSize = part.Size.Magnitude * 0.5
 					if (part.Position - origin).Magnitude <= radius + halfSize then
@@ -2310,7 +2337,7 @@ local function boot(character)
 		return candidates
 	end
 
-	local function hasLineOfSight(part, attachWorld)
+	function st.hasLineOfSight(part, attachWorld)
 		camera = workspace.CurrentCamera or camera
 		if not camera then
 			return true
@@ -2322,7 +2349,7 @@ local function boot(character)
 			return true
 		end
 
-		local ignored = { character }
+		local ignored = { st.character }
 		local params = RaycastParams.new()
 		params.FilterType = Enum.RaycastFilterType.Exclude
 
@@ -2348,9 +2375,9 @@ local function boot(character)
 		return false
 	end
 
-	local function pickSwingTarget(requireLineOfSight, maxDistanceOverride, minLookDotOverride, maxScreenRadiusOverride)
+	function st.pickSwingTarget(requireLineOfSight, maxDistanceOverride, minLookDotOverride, maxScreenRadiusOverride)
 		camera = workspace.CurrentCamera or camera
-		if not camera or not hrp.Parent or isHrpInSafezone() then
+		if not camera or not st.hrp.Parent or st.isHrpInSafezone() then
 			return nil
 		end
 
@@ -2362,21 +2389,21 @@ local function boot(character)
 		local best = nil
 		local bestScore = -math.huge
 
-		for _, part in ipairs(getCandidateTargets(reach)) do
+		for _, part in ipairs(st.getCandidateTargets(reach)) do
 			if not part.Parent or not part:IsDescendantOf(workspace) then
 				continue
 			end
-			if part:IsDescendantOf(character) then
+			if part:IsDescendantOf(st.character) then
 				continue
 			end
 
-			local attachWorld = closestAttachWorldOnPart(part)
-			local offset = attachWorld - hrp.Position
+			local attachWorld = st.closestAttachWorldOnPart(part)
+			local offset = attachWorld - st.hrp.Position
 			local dist = offset.Magnitude
 			if dist < 2 or dist > reach then
 				continue
 			end
-			if attachWorld.Y < hrp.Position.Y + C.MIN_TARGET_HEIGHT_OFFSET then
+			if attachWorld.Y < st.hrp.Position.Y + C.MIN_TARGET_HEIGHT_OFFSET then
 				continue
 			end
 
@@ -2408,12 +2435,12 @@ local function boot(character)
 			if flatDir and flatLook then
 				align = math.max(viewDot, flatDir:Dot(flatLook) * 0.92)
 			end
-			if requireLineOfSight and not hasLineOfSight(part, attachWorld) then
+			if requireLineOfSight and not st.hasLineOfSight(part, attachWorld) then
 				continue
 			end
 
 			local heightBonus = 0
-			if attachWorld.Y > hrp.Position.Y + 5 then
+			if attachWorld.Y > st.hrp.Position.Y + 5 then
 				heightBonus = 0.16
 			end
 
@@ -2429,34 +2456,34 @@ local function boot(character)
 		return best
 	end
 
-	local function getAirborneTargetUiRange()
+	function st.getAirborneTargetUiRange()
 		return math.clamp(getSwingRange() + C.AIRBORNE_TARGET_UI_EXTRA, 75, 270)
 	end
 
-	local function targetDistanceAndPoint(target)
+	function st.targetDistanceAndPoint(target)
 		if not target or not target.Parent or not target:IsDescendantOf(workspace) then
 			return nil, nil
 		end
-		if target:IsDescendantOf(character) then
+		if target:IsDescendantOf(st.character) then
 			return nil, nil
 		end
 
-		local attachWorld = closestAttachWorldOnPart(target)
-		if attachWorld.Y < hrp.Position.Y + C.MIN_TARGET_HEIGHT_OFFSET then
+		local attachWorld = st.closestAttachWorldOnPart(target)
+		if attachWorld.Y < st.hrp.Position.Y + C.MIN_TARGET_HEIGHT_OFFSET then
 			return nil, nil
 		end
 
-		return (attachWorld - hrp.Position).Magnitude, attachWorld
+		return (attachWorld - st.hrp.Position).Magnitude, attachWorld
 	end
 
-	local function pickNearbySwingTarget(maxDistance, preferredTarget)
-		if isHrpInSafezone() then
+	function st.pickNearbySwingTarget(maxDistance, preferredTarget)
+		if st.isHrpInSafezone() then
 			return nil, nil, nil
 		end
 		camera = workspace.CurrentCamera or camera
 
 		local function validCandidate(target)
-			local dist, point = targetDistanceAndPoint(target)
+			local dist, point = st.targetDistanceAndPoint(target)
 			if not dist or dist < 2 or dist > maxDistance then
 				return nil, nil
 			end
@@ -2479,7 +2506,7 @@ local function boot(character)
 		local best = nil
 		local bestDist = math.huge
 		local bestPoint = nil
-		for _, part in ipairs(getCandidateTargets(maxDistance)) do
+		for _, part in ipairs(st.getCandidateTargets(maxDistance)) do
 			local dist, point = validCandidate(part)
 			if dist and dist < bestDist then
 				best = part
@@ -2491,68 +2518,63 @@ local function boot(character)
 		return best, bestDist, bestPoint
 	end
 
-	local function pickVisualSwingTarget(readyDistance, maxDistance, preferredTarget, showSafezoneBlocked)
-		local inSafezone = isHrpInSafezone()
+	function st.pickVisualSwingTarget(
+		readyDistance,
+		maxDistance,
+		preferredTarget,
+		showSafezoneBlocked,
+		minLookDot,
+		maxScreenRadius
+	)
+		local inSafezone = st.isHrpInSafezone()
 		if inSafezone and not showSafezoneBlocked then
 			return nil, false
 		end
 		camera = workspace.CurrentCamera or camera
+		minLookDot = minLookDot or C.MIN_LOOK_DOT
+		maxScreenRadius = maxScreenRadius or C.TARGET_SCREEN_RADIUS_LIMIT
 
-		local function validCandidate(target)
-			local dist, point = targetDistanceAndPoint(target)
-			if not dist or dist < 2 or dist > maxDistance then
-				return nil
-			end
-			if camera then
-				local toCameraTarget = point and (point - camera.CFrame.Position) or nil
-				if
-					toCameraTarget
-					and toCameraTarget.Magnitude > 0.5
-					and toCameraTarget.Unit:Dot(camera.CFrame.LookVector) < 0.02
-				then
-					return nil
-				end
-			end
-			return dist
+		local function passesVisibleChecks(target, distanceLimit)
+			return st.isVisibleSwingTarget(target, distanceLimit, minLookDot)
+		end
+
+		local function passesAttachChecks(target, distanceLimit)
+			return st.isSpecificSwingTargetReady(target, false, distanceLimit, minLookDot, maxScreenRadius)
 		end
 
 		local lookedTarget = nil
 		if not inSafezone then
-			lookedTarget = pickSwingTarget(false, maxDistance, 0.02, 0.98)
+			lookedTarget = st.pickSwingTarget(false, maxDistance, minLookDot, maxScreenRadius)
 		end
-		if lookedTarget then
-			local lookedDist = validCandidate(lookedTarget)
-			if lookedDist then
-				return lookedTarget, lookedDist <= readyDistance
-			end
+		if lookedTarget and passesVisibleChecks(lookedTarget, maxDistance) then
+			return lookedTarget, (not inSafezone) and passesAttachChecks(lookedTarget, readyDistance)
 		end
 
-		if preferredTarget then
-			local preferredDist = validCandidate(preferredTarget)
-			if preferredDist then
-				return preferredTarget, (not inSafezone) and preferredDist <= readyDistance
-			end
+		if preferredTarget and passesVisibleChecks(preferredTarget, maxDistance) then
+			return preferredTarget, (not inSafezone) and passesAttachChecks(preferredTarget, readyDistance)
 		end
 
 		local best = nil
 		local bestDist = math.huge
-		for _, part in ipairs(getCandidateTargets(maxDistance)) do
-			local dist = validCandidate(part)
-			if dist and dist < bestDist then
-				best = part
-				bestDist = dist
+		for _, part in ipairs(st.getCandidateTargets(maxDistance)) do
+			local dist, _ = st.targetDistanceAndPoint(part)
+			if dist and dist >= 2 and dist <= maxDistance and passesVisibleChecks(part, maxDistance) then
+				if dist < bestDist then
+					best = part
+					bestDist = dist
+				end
 			end
 		end
 
-		return best, best ~= nil and not inSafezone and bestDist <= readyDistance
+		return best, best ~= nil and not inSafezone and passesAttachChecks(best, readyDistance)
 	end
 
-	local function attachCandidateScore(target, dist, point, maxDistance)
+	function st.attachCandidateScore(target, dist, point, maxDistance)
 		camera = workspace.CurrentCamera or camera
 
 		local distanceAlpha = 1 - math.clamp(dist / math.max(maxDistance, 1), 0, 1)
 		local score = distanceAlpha * 0.72
-		local toTargetFlat = flatUnit(point - hrp.Position)
+		local toTargetFlat = flatUnit(point - st.hrp.Position)
 
 		if camera and toTargetFlat then
 			local lookFlat = flatUnit(camera.CFrame.LookVector)
@@ -2562,35 +2584,35 @@ local function boot(character)
 			end
 		end
 
-		local moveFlat = flatUnit(humanoid.MoveDirection)
+		local moveFlat = flatUnit(st.humanoid.MoveDirection)
 		if not moveFlat then
-			moveFlat = flatUnit(hrp.AssemblyLinearVelocity)
+			moveFlat = flatUnit(st.hrp.AssemblyLinearVelocity)
 		end
 		if moveFlat and toTargetFlat then
 			local moveAlpha = math.clamp((toTargetFlat:Dot(moveFlat) + 1) * 0.5, 0, 1)
 			score += moveAlpha * 0.42
 		end
 
-		if target == lastReleasedTarget and os.clock() - lastReleasedTargetClock < 0.9 then
+		if target == st.lastReleasedTarget and os.clock() - st.lastReleasedTargetClock < 0.9 then
 			score -= 0.95
 		end
-		if target == scannedVisualTarget then
+		if target == st.scannedVisualTarget then
 			score += 0.42
-		elseif target == highlightedTarget then
+		elseif target == st.highlightedTarget then
 			score += 0.24
 		end
 
 		return score
 	end
 
-	local function pickAttachSwingTarget(maxDistance, minLookDot, maxScreenRadius)
-		if isHrpInSafezone() then
+	function st.pickAttachSwingTarget(maxDistance, minLookDot, maxScreenRadius)
+		if st.isHrpInSafezone() then
 			return nil
 		end
 		camera = workspace.CurrentCamera or camera
 
-		local lookedTarget = pickSwingTarget(false, maxDistance, minLookDot or 0.02, maxScreenRadius or 0.98)
-		if lookedTarget then
+		local lookedTarget = st.pickSwingTarget(false, maxDistance, minLookDot or 0.02, maxScreenRadius or 0.98)
+		if lookedTarget and st.canAttachToSwingTarget(lookedTarget, maxDistance, minLookDot, maxScreenRadius) then
 			return lookedTarget
 		end
 
@@ -2604,35 +2626,59 @@ local function boot(character)
 			end
 			seen[target] = true
 
-			local dist, point = targetDistanceAndPoint(target)
+			if not st.canAttachToSwingTarget(target, maxDistance, minLookDot, maxScreenRadius) then
+				return
+			end
+
+			local dist, point = st.targetDistanceAndPoint(target)
 			if not dist or dist < 2 or dist > maxDistance then
 				return
 			end
-			if camera then
-				local toCameraTarget = point - camera.CFrame.Position
-				if toCameraTarget.Magnitude > 0.5 and toCameraTarget.Unit:Dot(camera.CFrame.LookVector) < 0.02 then
-					return
-				end
-			end
 
-			local score = attachCandidateScore(target, dist, point, maxDistance)
+			local score = st.attachCandidateScore(target, dist, point, maxDistance)
 			if score > bestScore then
 				bestScore = score
 				best = target
 			end
 		end
 
-		consider(scannedVisualTarget)
-		consider(highlightedTarget)
-		consider(lastReleasedTarget)
-		for _, part in ipairs(getCandidateTargets(maxDistance)) do
+		if st.scannedVisualCanSwing then
+			consider(st.scannedVisualTarget)
+		end
+		consider(st.highlightedTarget)
+		consider(st.lastReleasedTarget)
+		for _, part in ipairs(st.getCandidateTargets(maxDistance)) do
 			consider(part)
 		end
 
 		return best
 	end
 
-	local function isSpecificSwingTargetReady(
+	function st.isVisibleSwingTarget(target, maxDistance, minLookDot)
+		camera = workspace.CurrentCamera or camera
+		if not camera or not st.hrp.Parent or st.isHrpInSafezone() then
+			return false
+		end
+		if not target or not target.Parent then
+			return false
+		end
+
+		local dist, attachWorld = st.targetDistanceAndPoint(target)
+		if not dist or dist < 2 or dist > maxDistance then
+			return false
+		end
+
+		local look = camera.CFrame.LookVector
+		minLookDot = minLookDot or 0.02
+		local toCameraTarget = attachWorld - camera.CFrame.Position
+		if toCameraTarget.Magnitude < 0.5 or toCameraTarget.Unit:Dot(look) < minLookDot then
+			return false
+		end
+
+		return true
+	end
+
+	function st.isSpecificSwingTargetReady(
 		target,
 		requireLineOfSight,
 		maxDistanceOverride,
@@ -2640,11 +2686,11 @@ local function boot(character)
 		maxScreenRadiusOverride
 	)
 		camera = workspace.CurrentCamera or camera
-		if not camera or not hrp.Parent or isHrpInSafezone() then
+		if not camera or not st.hrp.Parent or st.isHrpInSafezone() then
 			return false
 		end
 
-		local dist, attachWorld = targetDistanceAndPoint(target)
+		local dist, attachWorld = st.targetDistanceAndPoint(target)
 		local reach = maxDistanceOverride or getSwingRange()
 		if not dist or dist < 2 or dist > reach then
 			return false
@@ -2670,15 +2716,15 @@ local function boot(character)
 			return false
 		end
 
-		if requireLineOfSight and not hasLineOfSight(target, attachWorld) then
+		if requireLineOfSight and not st.hasLineOfSight(target, attachWorld) then
 			return false
 		end
 
 		return true
 	end
 
-	local function isAirborneForSwing()
-		local state = humanoid:GetState()
+	function st.isAirborneForSwing()
+		local state = st.humanoid:GetState()
 		if
 			state == Enum.HumanoidStateType.Freefall
 			or state == Enum.HumanoidStateType.Jumping
@@ -2686,46 +2732,63 @@ local function boot(character)
 		then
 			return true
 		end
-		if humanoid.FloorMaterial == Enum.Material.Air and hrp.AssemblyLinearVelocity.Y < 5 then
+		if st.humanoid.FloorMaterial == Enum.Material.Air and st.hrp.AssemblyLinearVelocity.Y < 5 then
 			return true
 		end
-		return isAirborne
+		return st.isAirborne
 	end
 
-	local function isGroundedForSwing()
-		if isSwinging or isLaunched or isAirborneForSwing() then
+	function st.isGroundedForSwing()
+		if st.isSwinging or st.isLaunched or st.isAirborneForSwing() then
 			return false
 		end
-		if humanoid.FloorMaterial == Enum.Material.Air then
+		if st.humanoid.FloorMaterial == Enum.Material.Air then
 			return false
 		end
 
-		local state = humanoid:GetState()
+		local state = st.humanoid:GetState()
 		return state == Enum.HumanoidStateType.Running
 			or state == Enum.HumanoidStateType.RunningNoPhysics
 			or state == Enum.HumanoidStateType.Landed
 			or state == Enum.HumanoidStateType.None
 	end
 
-	local function isGroundedForCameraAssist()
+	function st.getSwingAttachLimits()
+		if st.isAirborneForSwing() then
+			return getSwingRange(), C.AIRBORNE_TARGET_LOOK_DOT, C.TARGET_SCREEN_RADIUS_LIMIT
+		end
+		if st.isGroundedForSwing() then
+			return getSwingRange(), C.GROUNDED_TARGET_LOOK_DOT, C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT
+		end
+		return nil
+	end
+
+	function st.canAttachToSwingTarget(target, attachLimit, minLookDot, maxScreenRadius)
+		if not target or not target.Parent or not attachLimit then
+			return false
+		end
+		return st.isSpecificSwingTargetReady(target, false, attachLimit, minLookDot, maxScreenRadius)
+	end
+
+	function st.isGroundedForCameraAssist()
 		if not C.ENABLE_GROUNDED_CAMERA_ASSIST then
 			return false
 		end
-		return isGroundedForSwing()
+		return st.isGroundedForSwing()
 	end
 
-	local function closestGroundCameraTarget()
-		if not isGroundedForCameraAssist() then
+	function st.closestGroundCameraTarget()
+		if not st.isGroundedForCameraAssist() then
 			return nil, nil
 		end
 
 		camera = workspace.CurrentCamera or camera
-		if not camera or not targetVisualShown or not highlightedTarget or not highlightedTarget.Parent then
+		if not camera or not st.targetVisualShown or not st.highlightedTarget or not st.highlightedTarget.Parent then
 			return nil, nil
 		end
 
-		local point = highlightedPoint or closestAttachWorldOnPart(highlightedTarget)
-		if (point - hrp.Position).Magnitude > C.CAMERA_ASSIST_RANGE then
+		local point = st.highlightedPoint or st.closestAttachWorldOnPart(st.highlightedTarget)
+		if (point - st.hrp.Position).Magnitude > C.CAMERA_ASSIST_RANGE then
 			return nil, nil
 		end
 
@@ -2736,26 +2799,26 @@ local function boot(character)
 		if camera.CFrame.LookVector:Dot(toPoint.Unit) < C.CAMERA_ASSIST_MIN_LOOK_DOT then
 			return nil, nil
 		end
-		if not hasLineOfSight(highlightedTarget, point) then
+		if not st.hasLineOfSight(st.highlightedTarget, point) then
 			return nil, nil
 		end
 
-		return highlightedTarget, point
+		return st.highlightedTarget, point
 	end
 
-	local function holdIsActive()
-		return spaceHeld
-			or gamepadHeld
+	function st.holdIsActive()
+		return st.spaceHeld
+			or st.gamepadHeld
 			or safeIsKeyDown(Enum.KeyCode.Space)
 			or safeIsKeyDown(Enum.KeyCode.ButtonA)
 			or safeIsKeyDown(Enum.KeyCode.ButtonR2)
 			or (
 				UserInputService.TouchEnabled
-				and (mobileJumpHeld or (os.clock() <= mobileJumpHoldUntil and os.clock() <= mobileRealJumpPressUntil))
+				and (st.mobileJumpHeld or (os.clock() <= st.mobileJumpHoldUntil and os.clock() <= st.mobileRealJumpPressUntil))
 			)
 	end
 
-	local function readyPromptText()
+	function st.readyPromptText()
 		if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
 			return "[HOLD JUMP] TO SWING"
 		end
@@ -2765,20 +2828,20 @@ local function boot(character)
 		return "[HOLD SPACE] TO SWING"
 	end
 
-	local function noteJumpPressed()
+	function st.noteJumpPressed()
 		local now = os.clock()
-		local freshGroundJump = now - lastGroundJumpClock <= 0.2 and now - airborneStartedClock <= 0.2
-		if isAirborneForSwing() and not freshGroundJump then
+		local freshGroundJump = now - st.lastGroundJumpClock <= 0.2 and now - st.airborneStartedClock <= 0.2
+		if st.isAirborneForSwing() and not freshGroundJump then
 			return true
 		else
-			lastGroundJumpClock = now
+			st.lastGroundJumpClock = now
 			return false
 		end
 	end
 
-	local function forwardInputAmount()
+	function st.forwardInputAmount()
 		camera = workspace.CurrentCamera or camera
-		local moveDir = humanoid.MoveDirection
+		local moveDir = st.humanoid.MoveDirection
 		local controlMoveUnit, controlMoveAmount = getControlWorldMove(camera)
 		if moveDir.Magnitude < 0.05 and controlMoveUnit then
 			moveDir = controlMoveUnit * math.max(controlMoveAmount, 0.5)
@@ -2794,7 +2857,7 @@ local function boot(character)
 		if camera then
 			facing = flatUnit(camera.CFrame.LookVector)
 		end
-		facing = facing or flatUnit(hrp.CFrame.LookVector)
+		facing = facing or flatUnit(st.hrp.CFrame.LookVector)
 		if not facing then
 			return math.clamp(moveDir.Magnitude, 0, 1)
 		end
@@ -2811,9 +2874,7 @@ local function boot(character)
 		return math.clamp(amount, 0, 1)
 	end
 
-	local previewTransparency
-
-	local function cleanupWorkspaceHelpersByName(name, keep)
+	function st.cleanupWorkspaceHelpersByName(name, keep)
 		for _, obj in ipairs(workspace:GetChildren()) do
 			if obj.Name == name and obj ~= keep then
 				obj:Destroy()
@@ -2821,7 +2882,7 @@ local function boot(character)
 		end
 	end
 
-	local function makeVisualAnchor(name)
+	function st.makeVisualAnchor(name)
 		local existing = workspace:FindFirstChild(name)
 		local part = existing and existing:IsA("BasePart") and existing or nil
 		if existing and not part then
@@ -2839,76 +2900,76 @@ local function boot(character)
 		part.CanQuery = false
 		part.CastShadow = false
 		part.Parent = workspace
-		task.defer(cleanupWorkspaceHelpersByName, name, part)
+		task.defer(st.cleanupWorkspaceHelpersByName, name, part)
 		return part
 	end
 
-	local function ensurePreviewObjects()
-		if not previewAnchorPart or not previewAnchorPart.Parent then
-			previewAnchorPart = makeVisualAnchor("SwingPreviewAnchor")
+	function st.ensurePreviewObjects()
+		if not st.previewAnchorPart or not st.previewAnchorPart.Parent then
+			st.previewAnchorPart = st.makeVisualAnchor("SwingPreviewAnchor")
 		end
-		if not previewFrom or not previewFrom.Parent then
-			previewFrom = Instance.new("Attachment")
-			previewFrom.Name = "SwingPreviewFrom"
-			previewFrom.Position = Vector3.new(0, 0.8, 0)
-			previewFrom.Parent = hrp
+		if not st.previewFrom or not st.previewFrom.Parent then
+			st.previewFrom = Instance.new("Attachment")
+			st.previewFrom.Name = "SwingPreviewFrom"
+			st.previewFrom.Position = Vector3.new(0, 0.8, 0)
+			st.previewFrom.Parent = st.hrp
 		end
-		if not previewTo or not previewTo.Parent then
-			previewTo = Instance.new("Attachment")
-			previewTo.Name = "SwingPreviewTo"
-			previewTo.Parent = previewAnchorPart
+		if not st.previewTo or not st.previewTo.Parent then
+			st.previewTo = Instance.new("Attachment")
+			st.previewTo.Name = "SwingPreviewTo"
+			st.previewTo.Parent = st.previewAnchorPart
 		end
-		if not previewBeam or not previewBeam.Parent then
-			previewBeam = Instance.new("Beam")
-			previewBeam.Name = "SwingPreviewBeam"
-			previewBeam.Attachment0 = previewFrom
-			previewBeam.Attachment1 = previewTo
-			previewBeam.Width0 = 0.08
-			previewBeam.Width1 = 0.06
-			previewBeam.LightEmission = 0.35
-			previewBeam.FaceCamera = true
-			previewBeam.Segments = 1
-			previewBeam.Color = ColorSequence.new(C.PREVIEW_COLOR)
-			previewBeam.Transparency = previewTransparency(previewFade)
-			previewBeam.Enabled = true
-			previewBeam.Parent = character
-			lastPreviewFadeBucket = -1
-			lastPreviewColor = nil
+		if not st.previewBeam or not st.previewBeam.Parent then
+			st.previewBeam = Instance.new("Beam")
+			st.previewBeam.Name = "SwingPreviewBeam"
+			st.previewBeam.Attachment0 = st.previewFrom
+			st.previewBeam.Attachment1 = st.previewTo
+			st.previewBeam.Width0 = 0.08
+			st.previewBeam.Width1 = 0.06
+			st.previewBeam.LightEmission = 0.35
+			st.previewBeam.FaceCamera = true
+			st.previewBeam.Segments = 1
+			st.previewBeam.Color = ColorSequence.new(C.PREVIEW_COLOR)
+			st.previewBeam.Transparency = st.previewTransparency(st.previewFade)
+			st.previewBeam.Enabled = true
+			st.previewBeam.Parent = st.character
+			st.lastPreviewFadeBucket = -1
+			st.lastPreviewColor = nil
 		end
 	end
 
-	local function hidePreview()
-		previewFadeGoal = 0
-		previewTarget = nil
+	function st.hidePreview()
+		st.previewFadeGoal = 0
+		st.previewTarget = nil
 	end
 
-	local function destroyPreview(force)
+	function st.destroyPreview(force)
 		if not force then
-			hidePreview()
+			st.hidePreview()
 			return
 		end
-		if previewBeam then
-			previewBeam:Destroy()
-			previewBeam = nil
+		if st.previewBeam then
+			st.previewBeam:Destroy()
+			st.previewBeam = nil
 		end
-		if previewFrom then
-			previewFrom:Destroy()
-			previewFrom = nil
+		if st.previewFrom then
+			st.previewFrom:Destroy()
+			st.previewFrom = nil
 		end
-		if previewTo then
-			previewTo:Destroy()
-			previewTo = nil
+		if st.previewTo then
+			st.previewTo:Destroy()
+			st.previewTo = nil
 		end
-		if previewAnchorPart then
-			previewAnchorPart:Destroy()
-			previewAnchorPart = nil
+		if st.previewAnchorPart then
+			st.previewAnchorPart:Destroy()
+			st.previewAnchorPart = nil
 		end
-		previewTarget = nil
-		lastPreviewFadeBucket = -1
-		lastPreviewColor = nil
+		st.previewTarget = nil
+		st.lastPreviewFadeBucket = -1
+		st.lastPreviewColor = nil
 	end
 
-	previewTransparency = function(alpha)
+	st.previewTransparency = function(alpha)
 		alpha = math.clamp(alpha, 0, 1)
 		return NumberSequence.new({
 			NumberSequenceKeypoint.new(0, 1 - alpha * 0.82),
@@ -2917,58 +2978,69 @@ local function boot(character)
 		})
 	end
 
-	local function applyPreviewVisual()
-		if not previewBeam then
+	function st.applyPreviewVisual()
+		if not st.previewBeam then
 			return
 		end
 
-		local beamColor = targetReadyGoal > 0.5 and targetVisualColor:Lerp(C.PREVIEW_COLOR, 0.45) or C.NOT_READY_COLOR
-		if not previewBeam.Enabled then
-			previewBeam.Enabled = true
+		local beamColor = st.targetReadyGoal > 0.5 and st.targetVisualColor:Lerp(C.PREVIEW_COLOR, 0.45) or C.NOT_READY_COLOR
+		if not st.previewBeam.Enabled then
+			st.previewBeam.Enabled = true
 		end
 
-		local fadeBucket = math.clamp(math.floor(previewFade * 30 + 0.5), 0, 30)
-		if fadeBucket ~= lastPreviewFadeBucket then
-			previewBeam.Transparency = previewTransparency(fadeBucket / 30)
-			lastPreviewFadeBucket = fadeBucket
+		local fadeBucket = math.clamp(math.floor(st.previewFade * 30 + 0.5), 0, 30)
+		if fadeBucket ~= st.lastPreviewFadeBucket then
+			st.previewBeam.Transparency = st.previewTransparency(fadeBucket / 30)
+			st.lastPreviewFadeBucket = fadeBucket
 		end
 
-		local colorChanged = not lastPreviewColor
-			or math.abs(lastPreviewColor.R - beamColor.R) > 0.02
-			or math.abs(lastPreviewColor.G - beamColor.G) > 0.02
-			or math.abs(lastPreviewColor.B - beamColor.B) > 0.02
+		local colorChanged = not st.lastPreviewColor
+			or math.abs(st.lastPreviewColor.R - beamColor.R) > 0.02
+			or math.abs(st.lastPreviewColor.G - beamColor.G) > 0.02
+			or math.abs(st.lastPreviewColor.B - beamColor.B) > 0.02
 		if colorChanged then
-			previewBeam.Color = ColorSequence.new(beamColor)
-			lastPreviewColor = beamColor
+			st.previewBeam.Color = ColorSequence.new(beamColor)
+			st.lastPreviewColor = beamColor
 		end
 	end
 
-	local function updatePreview(target)
-		if isSwinging or not target or not target.Parent then
-			hidePreview()
+	function st.resolveUiAttachWorld(target)
+		if not target or not target.Parent then
+			return nil
+		end
+		return resolveLockedSwingAttachWorld(target)
+	end
+
+	function st.updatePreview(target)
+		if st.isSwinging or not target or not target.Parent then
+			st.hidePreview()
 			return
 		end
 
-		local attachWorld = closestAttachWorldOnPart(target)
-		ensurePreviewObjects()
-		if previewTarget ~= target then
-			previewTarget = target
+		local attachWorld = st.resolveUiAttachWorld(target)
+		if not attachWorld then
+			st.hidePreview()
+			return
+		end
+		st.ensurePreviewObjects()
+		if st.previewTarget ~= target then
+			st.previewTarget = target
 		end
 
-		previewAnchorPart.CFrame = CFrame.new(attachWorld)
-		previewTo.Position = Vector3.new(0, 0, 0)
-		applyPreviewVisual()
+		st.previewAnchorPart.CFrame = CFrame.new(attachWorld)
+		st.previewTo.Position = Vector3.new(0, 0, 0)
+		st.applyPreviewVisual()
 	end
 
-	local function ensureTargetHighlight()
+	function st.ensureTargetHighlight()
 		if not C.ENABLE_TARGET_HIGHLIGHT then
 			return nil
 		end
-		if targetHighlight and targetHighlight.Parent and targetHighlight:IsA("Highlight") then
-			return targetHighlight
+		if st.targetHighlight and st.targetHighlight.Parent and st.targetHighlight:IsA("Highlight") then
+			return st.targetHighlight
 		end
 
-		task.defer(cleanupWorkspaceHelpersByName, "SwingTargetHighlightProxy", nil)
+		task.defer(st.cleanupWorkspaceHelpersByName, "SwingTargetHighlightProxy", nil)
 
 		local existing = workspace:FindFirstChild("SwingTargetHighlight")
 		if existing and not existing:IsA("Highlight") then
@@ -2976,142 +3048,142 @@ local function boot(character)
 			existing = nil
 		end
 
-		targetHighlight = existing or Instance.new("Highlight")
-		targetHighlight.Name = "SwingTargetHighlight"
-		targetHighlight.FillColor = Color3.fromRGB(38, 138, 58)
-		targetHighlight.OutlineColor = C.READY_COLOR
-		targetHighlight.FillTransparency = C.TARGET_HIGHLIGHT_FILL_TRANSPARENCY
-		targetHighlight.OutlineTransparency = 0
-		targetHighlight.Enabled = false
+		st.targetHighlight = existing or Instance.new("Highlight")
+		st.targetHighlight.Name = "SwingTargetHighlight"
+		st.targetHighlight.FillColor = Color3.fromRGB(38, 138, 58)
+		st.targetHighlight.OutlineColor = C.READY_COLOR
+		st.targetHighlight.FillTransparency = C.TARGET_HIGHLIGHT_FILL_TRANSPARENCY
+		st.targetHighlight.OutlineTransparency = 0
+		st.targetHighlight.Enabled = false
 		pcall(function()
-			targetHighlight.DepthMode = Enum.HighlightDepthMode.Occluded
+			st.targetHighlight.DepthMode = Enum.HighlightDepthMode.Occluded
 		end)
-		targetHighlight.Parent = workspace
-		task.defer(cleanupWorkspaceHelpersByName, "SwingTargetHighlight", targetHighlight)
-		targetHighlightAdornee = nil
-		lastHighlightColor = nil
-		lastHighlightFillTransparency = nil
-		targetHighlightProxyPart = nil
-		return targetHighlight
+		st.targetHighlight.Parent = workspace
+		task.defer(st.cleanupWorkspaceHelpersByName, "SwingTargetHighlight", st.targetHighlight)
+		st.targetHighlightAdornee = nil
+		st.lastHighlightColor = nil
+		st.lastHighlightFillTransparency = nil
+		st.targetHighlightProxyPart = nil
+		return st.targetHighlight
 	end
 
-	local function resolveTargetHighlightAdornee(target)
+	function st.resolveTargetHighlightAdornee(target)
 		if not target or not target.Parent or not target:IsDescendantOf(workspace) then
 			return nil
 		end
-		if target:IsDescendantOf(character) then
+		if target:IsDescendantOf(st.character) then
 			return nil
 		end
 
 		local vine = target.Parent
-		if not vine or vine == workspace or vine:IsDescendantOf(character) then
+		if not vine or vine == workspace or vine:IsDescendantOf(st.character) then
 			return nil
 		end
 		return vine
 	end
 
-	local function clearTargetHighlight()
-		if not targetHighlight then
+	function st.clearTargetHighlight()
+		if not st.targetHighlight then
 			return
 		end
-		targetHighlight.Enabled = false
+		st.targetHighlight.Enabled = false
 	end
 
-	local function updateTargetHighlight(target)
-		local highlight = ensureTargetHighlight()
+	function st.updateTargetHighlight(target)
+		local highlight = st.ensureTargetHighlight()
 		if not highlight then
 			return
 		end
 
-		if not target or isSwinging then
-			clearTargetHighlight()
+		if not target or st.isSwinging then
+			st.clearTargetHighlight()
 			return
 		end
 
 		if
-			targetHighlightAdornee
-			and targetHighlightAdornee.Parent
-			and lastVisualTarget == target
+			st.targetHighlightAdornee
+			and st.targetHighlightAdornee.Parent
+			and st.lastVisualTarget == target
 			and highlight.Enabled
 		then
 			return
 		end
 
-		local adornee = resolveTargetHighlightAdornee(target)
+		local adornee = st.resolveTargetHighlightAdornee(target)
 		if not adornee then
-			clearTargetHighlight()
+			st.clearTargetHighlight()
 			return
 		end
 
-		if targetHighlightAdornee ~= adornee then
+		if st.targetHighlightAdornee ~= adornee then
 			highlight.Adornee = adornee
-			targetHighlightAdornee = adornee
+			st.targetHighlightAdornee = adornee
 		end
 		if not highlight.Enabled then
 			highlight.Enabled = true
 		end
 	end
 
-	local function setTargetHighlightColor(canSwingNow)
-		if not targetHighlight or not targetHighlight.Enabled then
+	function st.setTargetHighlightColor(canSwingNow)
+		if not st.targetHighlight or not st.targetHighlight.Enabled then
 			return
 		end
 		local color = canSwingNow and C.READY_COLOR or C.NOT_READY_COLOR
-		local colorChanged = not lastHighlightColor
-			or math.abs(lastHighlightColor.R - color.R) > 0.015
-			or math.abs(lastHighlightColor.G - color.G) > 0.015
-			or math.abs(lastHighlightColor.B - color.B) > 0.015
+		local colorChanged = not st.lastHighlightColor
+			or math.abs(st.lastHighlightColor.R - color.R) > 0.015
+			or math.abs(st.lastHighlightColor.G - color.G) > 0.015
+			or math.abs(st.lastHighlightColor.B - color.B) > 0.015
 		if colorChanged then
-			targetHighlight.FillColor = canSwingNow and Color3.fromRGB(38, 138, 58) or Color3.fromRGB(138, 38, 38)
-			targetHighlight.OutlineColor = color
-			lastHighlightColor = color
+			st.targetHighlight.FillColor = canSwingNow and Color3.fromRGB(38, 138, 58) or Color3.fromRGB(138, 38, 38)
+			st.targetHighlight.OutlineColor = color
+			st.lastHighlightColor = color
 		end
 		local fillTransparency = C.TARGET_HIGHLIGHT_FILL_TRANSPARENCY
-		if not lastHighlightFillTransparency or math.abs(lastHighlightFillTransparency - fillTransparency) > 0.015 then
-			targetHighlight.FillTransparency = fillTransparency
-			targetHighlight.OutlineTransparency = 0
-			lastHighlightFillTransparency = fillTransparency
+		if not st.lastHighlightFillTransparency or math.abs(st.lastHighlightFillTransparency - fillTransparency) > 0.015 then
+			st.targetHighlight.FillTransparency = fillTransparency
+			st.targetHighlight.OutlineTransparency = 0
+			st.lastHighlightFillTransparency = fillTransparency
 		end
 	end
 
-	local function hideMarkerVisualNow()
-		if markerAnchorPart then
-			markerAnchorPart.CFrame = CFrame.new(C.TARGET_VISUAL_HIDDEN_POSITION)
+	function st.hideMarkerVisualNow()
+		if st.markerAnchorPart then
+			st.markerAnchorPart.CFrame = CFrame.new(C.TARGET_VISUAL_HIDDEN_POSITION)
 		end
-		if markerGui and not markerGui.Enabled then
-			markerGui.Enabled = true
+		if st.markerGui and not st.markerGui.Enabled then
+			st.markerGui.Enabled = true
 		end
-		if markerLabel then
-			markerLabel.TextTransparency = 1
-			markerLabel.TextStrokeTransparency = 1
+		if st.markerLabel then
+			st.markerLabel.TextTransparency = 1
+			st.markerLabel.TextStrokeTransparency = 1
 		end
-		if markerStroke then
-			markerStroke.Transparency = 1
+		if st.markerStroke then
+			st.markerStroke.Transparency = 1
 		end
-		if markerDot then
-			markerDot.BackgroundTransparency = 1
+		if st.markerDot then
+			st.markerDot.BackgroundTransparency = 1
 		end
 	end
 
-	local function ensureVisuals()
-		ensureTargetHighlight()
+	function st.ensureVisuals()
+		st.ensureTargetHighlight()
 
-		if not markerAnchorPart or not markerAnchorPart.Parent then
-			markerAnchorPart = makeVisualAnchor("SwingMarkerAnchor")
-			markerAnchorPart.CFrame = CFrame.new(C.TARGET_VISUAL_HIDDEN_POSITION)
+		if not st.markerAnchorPart or not st.markerAnchorPart.Parent then
+			st.markerAnchorPart = st.makeVisualAnchor("SwingMarkerAnchor")
+			st.markerAnchorPart.CFrame = CFrame.new(C.TARGET_VISUAL_HIDDEN_POSITION)
 		end
 
-		if not markerGui then
+		if not st.markerGui then
 			local playerGui = player:WaitForChild("PlayerGui")
-			markerGui = Instance.new("BillboardGui")
-			markerGui.Name = "SwingTargetMarker"
-			markerGui.Size = UDim2.fromOffset(128, 96)
-			markerGui.AlwaysOnTop = true
-			markerGui.LightInfluence = 0
-			markerGui.MaxDistance = 320
-			markerGui.Enabled = true
-			markerGui.Adornee = markerAnchorPart
-			markerGui.Parent = playerGui
+			st.markerGui = Instance.new("BillboardGui")
+			st.markerGui.Name = "SwingTargetMarker"
+			st.markerGui.Size = UDim2.fromOffset(128, 96)
+			st.markerGui.AlwaysOnTop = true
+			st.markerGui.LightInfluence = 0
+			st.markerGui.MaxDistance = 320
+			st.markerGui.Enabled = true
+			st.markerGui.Adornee = st.markerAnchorPart
+			st.markerGui.Parent = playerGui
 
 			local ring = Instance.new("Frame")
 			ring.Name = "Ring"
@@ -3119,8 +3191,8 @@ local function boot(character)
 			ring.Position = UDim2.new(0.5, -21, 0.5, -21)
 			ring.BackgroundTransparency = 1
 			ring.BorderSizePixel = 0
-			ring.Parent = markerGui
-			markerRing = ring
+			ring.Parent = st.markerGui
+			st.markerRing = ring
 
 			local corner = Instance.new("UICorner")
 			corner.CornerRadius = UDim.new(1, 0)
@@ -3131,7 +3203,7 @@ local function boot(character)
 			stroke.Thickness = 2
 			stroke.Transparency = 1
 			stroke.Parent = ring
-			markerStroke = stroke
+			st.markerStroke = stroke
 
 			local dot = Instance.new("Frame")
 			dot.Name = "Dot"
@@ -3141,190 +3213,193 @@ local function boot(character)
 			dot.BackgroundTransparency = 1
 			dot.BorderSizePixel = 0
 			dot.Parent = ring
-			markerDot = dot
+			st.markerDot = dot
 
 			local dotCorner = Instance.new("UICorner")
 			dotCorner.CornerRadius = UDim.new(1, 0)
 			dotCorner.Parent = dot
 
-			markerLabel = Instance.new("TextLabel")
-			markerLabel.Name = "Label"
-			markerLabel.Size = UDim2.new(1, 0, 0, 24)
-			markerLabel.Position = UDim2.new(0, 0, 0.5, 26)
-			markerLabel.BackgroundTransparency = 1
-			markerLabel.Font = Enum.Font.GothamBold
-			markerLabel.TextColor3 = C.READY_COLOR
-			markerLabel.TextTransparency = 1
-			markerLabel.TextStrokeTransparency = 1
-			markerLabel.TextSize = 12
-			markerLabel.Text = "[HOLD SPACE] TO SWING"
-			markerLabel.Parent = markerGui
+			st.markerLabel = Instance.new("TextLabel")
+			st.markerLabel.Name = "Label"
+			st.markerLabel.Size = UDim2.new(1, 0, 0, 24)
+			st.markerLabel.Position = UDim2.new(0, 0, 0.5, 26)
+			st.markerLabel.BackgroundTransparency = 1
+			st.markerLabel.Font = Enum.Font.GothamBold
+			st.markerLabel.TextColor3 = C.READY_COLOR
+			st.markerLabel.TextTransparency = 1
+			st.markerLabel.TextStrokeTransparency = 1
+			st.markerLabel.TextSize = 12
+			st.markerLabel.Text = "[HOLD SPACE] TO SWING"
+			st.markerLabel.Parent = st.markerGui
 		end
 	end
 
-	local function updateTargetVisual(target, canSwingNow, inactiveText)
-		ensureVisuals()
+	function st.updateTargetVisual(target, canSwingNow, inactiveText)
+		st.ensureVisuals()
 
-		if target and not isSwinging then
-			local attachWorld = closestAttachWorldOnPart(target)
-			targetReadyGoal = canSwingNow and 1 or 0
-			previewFadeGoal = 1
-			highlightedTarget = target
-			highlightedPoint = attachWorld
-			targetVisualShown = true
+		if target and not st.isSwinging then
+			local attachWorld = st.resolveUiAttachWorld(target)
+			if not attachWorld then
+				return nil
+			end
+			st.targetReadyGoal = canSwingNow and 1 or 0
+			st.previewFadeGoal = 1
+			st.highlightedTarget = target
+			st.highlightedPoint = attachWorld
+			st.targetVisualShown = true
 
-			updateTargetHighlight(target)
-			setTargetHighlightColor(canSwingNow)
-			markerAnchorPart.CFrame = CFrame.new(attachWorld)
-			if markerGui.Adornee ~= markerAnchorPart then
-				markerGui.Adornee = markerAnchorPart
+			st.updateTargetHighlight(target)
+			st.setTargetHighlightColor(canSwingNow)
+			st.markerAnchorPart.CFrame = CFrame.new(attachWorld)
+			if st.markerGui.Adornee ~= st.markerAnchorPart then
+				st.markerGui.Adornee = st.markerAnchorPart
 			end
-			if markerGui.StudsOffset ~= Vector3.new(0, 0, 0) then
-				markerGui.StudsOffset = Vector3.new(0, 0, 0)
+			if st.markerGui.StudsOffset ~= Vector3.new(0, 0, 0) then
+				st.markerGui.StudsOffset = Vector3.new(0, 0, 0)
 			end
-			if not markerGui.Enabled then
-				markerGui.Enabled = true
+			if not st.markerGui.Enabled then
+				st.markerGui.Enabled = true
 			end
 
 			if canSwingNow then
-				local text = readyPromptText()
-				if lastMarkerText ~= text then
-					markerLabel.Text = text
-					lastMarkerText = text
+				local text = st.readyPromptText()
+				if st.lastMarkerText ~= text then
+					st.markerLabel.Text = text
+					st.lastMarkerText = text
 				end
-				updatePreview(target)
+				st.updatePreview(target)
 			else
-				if lastMarkerText ~= "SWING BLOCKED" then
-					markerLabel.Text = "SWING BLOCKED"
-					lastMarkerText = "SWING BLOCKED"
+				if st.lastMarkerText ~= "SWING BLOCKED" then
+					st.markerLabel.Text = "SWING BLOCKED"
+					st.lastMarkerText = "SWING BLOCKED"
 				end
-				updatePreview(target)
+				st.updatePreview(target)
 			end
-			lastVisualTarget = target
-			lastVisualCanSwing = canSwingNow
+			st.lastVisualTarget = target
+			st.lastVisualCanSwing = canSwingNow
 
 			return attachWorld
 		end
 
-		targetReadyGoal = 0
-		previewFadeGoal = 0
-		targetVisualColor = C.NOT_READY_COLOR
-		if not targetVisualShown and not highlightedTarget then
-			clearTargetHighlight()
-			hidePreview()
+		st.targetReadyGoal = 0
+		st.previewFadeGoal = 0
+		st.targetVisualColor = C.NOT_READY_COLOR
+		if not st.targetVisualShown and not st.highlightedTarget then
+			st.clearTargetHighlight()
+			st.hidePreview()
 			return nil
 		end
-		clearTargetHighlight()
-		highlightedTarget = nil
-		highlightedPoint = nil
-		targetVisualShown = false
-		hideMarkerVisualNow()
-		lastVisualTarget = nil
-		lastVisualCanSwing = nil
-		hidePreview()
+		st.clearTargetHighlight()
+		st.highlightedTarget = nil
+		st.highlightedPoint = nil
+		st.targetVisualShown = false
+		st.hideMarkerVisualNow()
+		st.lastVisualTarget = nil
+		st.lastVisualCanSwing = nil
+		st.hidePreview()
 		return nil
 	end
 
-	local function hideSwingTargetUi()
-		lastTargetScanMode = "none"
-		scannedVisualTarget = nil
-		scannedVisualCanSwing = false
-		if targetVisualShown or highlightedTarget or previewFadeGoal > 0 then
-			updateTargetVisual(nil, false)
+	function st.hideSwingTargetUi()
+		st.lastTargetScanMode = "none"
+		st.scannedVisualTarget = nil
+		st.scannedVisualCanSwing = false
+		if st.targetVisualShown or st.highlightedTarget or st.previewFadeGoal > 0 then
+			st.updateTargetVisual(nil, false)
 		else
-			clearTargetHighlight()
-			hideMarkerVisualNow()
-			hidePreview()
+			st.clearTargetHighlight()
+			st.hideMarkerVisualNow()
+			st.hidePreview()
 		end
 	end
 
-	local function stepTargetVisual(dt)
-		targetVisualStepAccum += dt
-		if targetVisualStepAccum < C.TARGET_VISUAL_STEP_INTERVAL then
+	function st.stepTargetVisual(dt)
+		st.targetVisualStepAccum += dt
+		if st.targetVisualStepAccum < C.TARGET_VISUAL_STEP_INTERVAL then
 			return
 		end
-		dt = targetVisualStepAccum
-		targetVisualStepAccum = 0
+		dt = st.targetVisualStepAccum
+		st.targetVisualStepAccum = 0
 
 		local colorAlpha = math.clamp(dt * C.TARGET_VISUAL_SMOOTH_SPEED, 0, 1)
 		local fadeAlpha = math.clamp(dt * C.PREVIEW_FADE_SPEED, 0, 1)
 
-		targetReadyVisual += (targetReadyGoal - targetReadyVisual) * colorAlpha
-		previewFade += (previewFadeGoal - previewFade) * fadeAlpha
-		if math.abs(previewFade - previewFadeGoal) < 0.01 then
-			previewFade = previewFadeGoal
+		st.targetReadyVisual += (st.targetReadyGoal - st.targetReadyVisual) * colorAlpha
+		st.previewFade += (st.previewFadeGoal - st.previewFade) * fadeAlpha
+		if math.abs(st.previewFade - st.previewFadeGoal) < 0.01 then
+			st.previewFade = st.previewFadeGoal
 		end
 
-		targetVisualColor = C.NOT_READY_COLOR:Lerp(C.READY_COLOR, math.clamp(targetReadyVisual, 0, 1))
+		st.targetVisualColor = C.NOT_READY_COLOR:Lerp(C.READY_COLOR, math.clamp(st.targetReadyVisual, 0, 1))
 
-		if targetVisualShown and markerGui and markerLabel then
+		if st.targetVisualShown and st.markerGui and st.markerLabel then
 			local pulse = math.sin(os.clock() * 7) * 0.5 + 0.5
 			local readyBob = math.sin(os.clock() * C.READY_TEXT_BOB_SPEED)
 				* C.READY_TEXT_BOB_PIXELS
-				* math.clamp(targetReadyVisual, 0, 1)
-			markerLabel.TextColor3 = targetVisualColor
-			markerLabel.TextTransparency = 0
-			markerLabel.TextStrokeTransparency = 0.35
-			markerLabel.Position = UDim2.new(0, 0, 0.5, 26 - readyBob)
+				* math.clamp(st.targetReadyVisual, 0, 1)
+			st.markerLabel.TextColor3 = st.targetVisualColor
+			st.markerLabel.TextTransparency = 0
+			st.markerLabel.TextStrokeTransparency = 0.35
+			st.markerLabel.Position = UDim2.new(0, 0, 0.5, 26 - readyBob)
 
-			if markerStroke then
-				markerStroke.Color = targetVisualColor
-				markerStroke.Transparency = 0
+			if st.markerStroke then
+				st.markerStroke.Color = st.targetVisualColor
+				st.markerStroke.Transparency = 0
 			end
-			if markerDot then
-				markerDot.BackgroundColor3 = targetVisualColor
-				markerDot.BackgroundTransparency = 0.05 + pulse * 0.38
+			if st.markerDot then
+				st.markerDot.BackgroundColor3 = st.targetVisualColor
+				st.markerDot.BackgroundTransparency = 0.05 + pulse * 0.38
 			end
 		end
 
-		if previewBeam then
-			applyPreviewVisual()
+		if st.previewBeam then
+			st.applyPreviewVisual()
 		end
 	end
 
 	task.defer(function()
 		task.wait(0.05)
-		if not hrp.Parent then
+		if not st.hrp.Parent then
 			return
 		end
-		ensureVisuals()
-		cleanupWorkspaceHelpersByName("SwingTargetHighlightProxy", nil)
-		ensurePreviewObjects()
-		hidePreview()
-		hideMarkerVisualNow()
-		applyPreviewVisual()
+		st.ensureVisuals()
+		st.cleanupWorkspaceHelpersByName("SwingTargetHighlightProxy", nil)
+		st.ensurePreviewObjects()
+		st.hidePreview()
+		st.hideMarkerVisualNow()
+		st.applyPreviewVisual()
 	end)
 
-	local function destroyChargeGui()
-		if chargeGui then
-			chargeGui:Destroy()
-			chargeGui = nil
-			chargeDot = nil
+	function st.destroyChargeGui()
+		if st.chargeGui then
+			st.chargeGui:Destroy()
+			st.chargeGui = nil
+			st.chargeDot = nil
 		end
-		swingCharge = 0
+		st.swingCharge = 0
 	end
 
-	local function ensureChargeGui(target)
-		if chargeGui or not target then
+	function st.ensureChargeGui(target)
+		if st.chargeGui or not target then
 			return
 		end
 
 		local playerGui = player:WaitForChild("PlayerGui")
-		chargeGui = Instance.new("BillboardGui")
-		chargeGui.Name = "SwingHoldCharge"
-		chargeGui.Adornee = target
-		chargeGui.Size = UDim2.fromOffset(96, 70)
-		chargeGui.StudsOffset = Vector3.new(0, target.Size.Y * 0.5 + 0.9, 0)
-		chargeGui.AlwaysOnTop = true
-		chargeGui.LightInfluence = 0
-		chargeGui.Parent = playerGui
+		st.chargeGui = Instance.new("BillboardGui")
+		st.chargeGui.Name = "SwingHoldCharge"
+		st.chargeGui.Adornee = target
+		st.chargeGui.Size = UDim2.fromOffset(96, 70)
+		st.chargeGui.StudsOffset = Vector3.new(0, target.Size.Y * 0.5 + 0.9, 0)
+		st.chargeGui.AlwaysOnTop = true
+		st.chargeGui.LightInfluence = 0
+		st.chargeGui.Parent = playerGui
 
 		local ring = Instance.new("Frame")
 		ring.Size = UDim2.fromOffset(46, 46)
 		ring.Position = UDim2.new(0.5, -23, 0, 0)
 		ring.BackgroundTransparency = 1
 		ring.BorderSizePixel = 0
-		ring.Parent = chargeGui
+		ring.Parent = st.chargeGui
 
 		local corner = Instance.new("UICorner")
 		corner.CornerRadius = UDim.new(1, 0)
@@ -3336,42 +3411,42 @@ local function boot(character)
 		stroke.Transparency = 0.05
 		stroke.Parent = ring
 
-		chargeDot = Instance.new("Frame")
-		chargeDot.Size = UDim2.fromOffset(8, 8)
-		chargeDot.Position = UDim2.new(0.5, -4, 0.5, -4)
-		chargeDot.BackgroundColor3 = C.READY_COLOR
-		chargeDot.BorderSizePixel = 0
-		chargeDot.Parent = ring
+		st.chargeDot = Instance.new("Frame")
+		st.chargeDot.Size = UDim2.fromOffset(8, 8)
+		st.chargeDot.Position = UDim2.new(0.5, -4, 0.5, -4)
+		st.chargeDot.BackgroundColor3 = C.READY_COLOR
+		st.chargeDot.BorderSizePixel = 0
+		st.chargeDot.Parent = ring
 
 		local dotCorner = Instance.new("UICorner")
 		dotCorner.CornerRadius = UDim.new(1, 0)
-		dotCorner.Parent = chargeDot
+		dotCorner.Parent = st.chargeDot
 	end
 
-	local function layoutCharge()
-		if not chargeDot then
+	function st.layoutCharge()
+		if not st.chargeDot then
 			return
 		end
-		local px = 8 + 34 * math.clamp(swingCharge, 0, 1)
-		chargeDot.Size = UDim2.fromOffset(px, px)
-		chargeDot.Position = UDim2.new(0.5, -px * 0.5, 0.5, -px * 0.5)
+		local px = 8 + 34 * math.clamp(st.swingCharge, 0, 1)
+		st.chargeDot.Size = UDim2.fromOffset(px, px)
+		st.chargeDot.Position = UDim2.new(0.5, -px * 0.5, 0.5, -px * 0.5)
 	end
 
-	local function spawnSwingRopeVisual(attachWorld, onLatch)
-		local side = getSwingSide(attachWorld)
-		local hand = handPartForSide(side)
+	function st.spawnSwingRopeVisual(attachWorld, onLatch)
+		local side = st.currentHangSide or "Right"
+		local hand = st.handPartForSide(side)
 
-		if handAttachment then
-			handAttachment:Destroy()
-			handAttachment = nil
+		if st.handAttachment then
+			st.handAttachment:Destroy()
+			st.handAttachment = nil
 		end
-		handAttachment = setupHandThrowAttachment(hand, hrp, side)
+		st.handAttachment = setupHandThrowAttachment(hand, st.hrp, side)
 
-		hidePreview()
+		st.hidePreview()
 
-		if swingRopeVisual then
-			local old = swingRopeVisual
-			swingRopeVisual = nil
+		if st.swingRopeVisual then
+			local old = st.swingRopeVisual
+			st.swingRopeVisual = nil
 
 			if old.ShootConn then
 				old.ShootConn:Disconnect()
@@ -3409,11 +3484,8 @@ local function boot(character)
 			return part
 		end
 
-		local startHandWorld = handAttachment.WorldPosition
-		local throwDir = attachWorld - startHandWorld
-		if throwDir.Magnitude > 0.05 then
-			spawnThrowLaunchVfx(startHandWorld, throwDir.Unit)
-		end
+		local startHandWorld = st.handAttachment.WorldPosition
+		spawnThrowLaunchVfx(startHandWorld)
 
 		local handPart = makeVisualPart("SwingRopeHandVisualAnchor", startHandWorld)
 		local tipPart = makeVisualPart("SwingRopeTipVisualAnchor", startHandWorld)
@@ -3529,12 +3601,12 @@ local function boot(character)
 			ShootConn = nil,
 		}
 
-		swingRopeVisual = visualState
+		st.swingRopeVisual = visualState
 
 		local throwSignal = C.PRE_SIMULATION_SIGNAL or RunService.RenderStepped
 
 		local function stepThrowVisual()
-			if swingRopeVisual ~= visualState then
+			if st.swingRopeVisual ~= visualState then
 				if visualState.ShootConn then
 					visualState.ShootConn:Disconnect()
 					visualState.ShootConn = nil
@@ -3542,12 +3614,12 @@ local function boot(character)
 				return
 			end
 
-			if not handAttachment or not handAttachment.Parent then
+			if not st.handAttachment or not st.handAttachment.Parent then
 				return
 			end
 
-			local handWorld = handAttachment.WorldPosition
-			local anchorWorld = visualState.TargetAttachWorld
+			local handWorld = st.handAttachment.WorldPosition
+			local anchorWorld = st.lockedAttachWorld or visualState.TargetAttachWorld
 
 			if visualState.HandPart then
 				visualState.HandPart.CFrame = CFrame.new(handWorld)
@@ -3637,22 +3709,22 @@ local function boot(character)
 		stepThrowVisual()
 	end
 
-	local function updateSwingRopeVisual(anchorWorld)
-		local visualState = swingRopeVisual
-		if not visualState or not handAttachment or not handAttachment.Parent then
+	function st.updateSwingRopeVisual(anchorWorld)
+		local visualState = st.swingRopeVisual
+		if not visualState or not st.handAttachment or not st.handAttachment.Parent then
 			return
 		end
 
-		visualState.TargetAttachWorld = anchorWorld
+		local anchorPos = st.lockedAttachWorld or anchorWorld or visualState.TargetAttachWorld
 
-		local handWorld = handAttachment.WorldPosition
+		local handWorld = st.handAttachment.WorldPosition
 
 		if visualState.HandPart then
 			visualState.HandPart.CFrame = CFrame.new(handWorld)
 		end
 
 		if visualState.AnchorPart then
-			visualState.AnchorPart.CFrame = CFrame.new(anchorWorld)
+			visualState.AnchorPart.CFrame = CFrame.new(anchorPos)
 		end
 
 		if visualState.ThrowBeam then
@@ -3664,8 +3736,8 @@ local function boot(character)
 		end
 
 		if visualState.Locked then
-			local distance = (anchorWorld - handWorld).Magnitude
-			local speed = hrp.AssemblyLinearVelocity.Magnitude
+			local distance = (anchorPos - handWorld).Magnitude
+			local speed = st.hrp.AssemblyLinearVelocity.Magnitude
 
 			local speedSagAlpha = math.clamp(
 				(speed - C.ROPE_VISUAL_IDLE_STRAIGHT_SPEED)
@@ -3674,18 +3746,19 @@ local function boot(character)
 				1
 			)
 
-			local momentumSagAlpha = math.clamp((swingMomentum or 0) * 0.32, 0, 1)
+			local momentumSagAlpha = math.clamp((st.swingMomentum or 0) * 0.32, 0, 1)
 			local sagAlpha = math.max(speedSagAlpha, momentumSagAlpha)
 
 			visualState.Rope.Length = math.max(distance + C.ROPE_VISUAL_SAG * sagAlpha, C.ROPE_VISUAL_MIN_LENGTH)
 		end
 	end
 
-	local function destroySwingObjects()
-		pendingSwingParams = nil
-		if swingRopeVisual then
-			local visualState = swingRopeVisual
-			swingRopeVisual = nil
+	function st.destroySwingObjects()
+		st.pendingSwingParams = nil
+		st.lockedAttachWorld = nil
+		if st.swingRopeVisual then
+			local visualState = st.swingRopeVisual
+			st.swingRopeVisual = nil
 
 			if visualState.ShootConn then
 				visualState.ShootConn:Disconnect()
@@ -3708,55 +3781,55 @@ local function boot(character)
 				end
 			end
 		end
-		if handAttachment then
-			handAttachment:Destroy()
-			handAttachment = nil
+		if st.handAttachment then
+			st.handAttachment:Destroy()
+			st.handAttachment = nil
 		end
-		if steerForce then
-			steerForce:Destroy()
-			steerForce = nil
+		if st.steerForce then
+			st.steerForce:Destroy()
+			st.steerForce = nil
 		end
-		if swingOrientation then
-			swingOrientation:Destroy()
-			swingOrientation = nil
+		if st.swingOrientation then
+			st.swingOrientation:Destroy()
+			st.swingOrientation = nil
 		end
-		if orientationAttachment then
-			orientationAttachment:Destroy()
-			orientationAttachment = nil
+		if st.orientationAttachment then
+			st.orientationAttachment:Destroy()
+			st.orientationAttachment = nil
 		end
-		if forceAttachment then
-			forceAttachment:Destroy()
-			forceAttachment = nil
+		if st.forceAttachment then
+			st.forceAttachment:Destroy()
+			st.forceAttachment = nil
 		end
-		if ropeConstraint then
-			ropeConstraint:Destroy()
-			ropeConstraint = nil
+		if st.ropeConstraint then
+			st.ropeConstraint:Destroy()
+			st.ropeConstraint = nil
 		end
-		activeRopeMaxLength = nil
-		ropeCatchUntil = -1e9
-		ropeCatchStartLength = nil
-		if zipSpring then
-			zipSpring:Destroy()
-			zipSpring = nil
+		st.activeRopeMaxLength = nil
+		st.ropeCatchUntil = -1e9
+		st.ropeCatchStartLength = nil
+		if st.zipSpring then
+			st.zipSpring:Destroy()
+			st.zipSpring = nil
 		end
-		if anchorAttachment then
-			anchorAttachment:Destroy()
-			anchorAttachment = nil
+		if st.anchorAttachment then
+			st.anchorAttachment:Destroy()
+			st.anchorAttachment = nil
 		end
-		if bodyAttachment then
-			bodyAttachment:Destroy()
-			bodyAttachment = nil
+		if st.bodyAttachment then
+			st.bodyAttachment:Destroy()
+			st.bodyAttachment = nil
 		end
-		swingFaceDir = nil
-		destroyChargeGui()
+		st.swingFaceDir = nil
+		st.destroyChargeGui()
 	end
 
-	local function floorScale(anchorWorld, ropeLength)
-		rayParams.FilterDescendantsInstances = { character }
-		local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -130, 0), rayParams)
-		local floorY = hit and hit.Position.Y or (hrp.Position.Y - 80)
+	function st.floorScale(anchorWorld, ropeLength)
+		st.rayParams.FilterDescendantsInstances = { st.character }
+		local hit = workspace:Raycast(st.hrp.Position, Vector3.new(0, -130, 0), st.rayParams)
+		local floorY = hit and hit.Position.Y or (st.hrp.Position.Y - 80)
 		local minSafeY = math.max(floorY + C.FLOOR_CLEARANCE, anchorWorld.Y - (ropeLength or getRopeMaxLength()) * 0.72)
-		local margin = hrp.Position.Y - minSafeY
+		local margin = st.hrp.Position.Y - minSafeY
 		if margin <= 0 then
 			return 0.18
 		end
@@ -3766,15 +3839,15 @@ local function boot(character)
 		return 1
 	end
 
-	local function applyAttachBoost(attachWorld)
+	function st.applyAttachBoost(attachWorld)
 		camera = workspace.CurrentCamera or camera
 		if not camera then
 			return
 		end
 
-		hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-		local velocity = hrp.AssemblyLinearVelocity
-		local fromAnchor = hrp.Position - attachWorld
+		st.hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+		local velocity = st.hrp.AssemblyLinearVelocity
+		local fromAnchor = st.hrp.Position - attachWorld
 		local radial = fromAnchor.Magnitude > 0.25 and fromAnchor.Unit or Vector3.new(0, 1, 0)
 
 		local look = camera.CFrame.LookVector
@@ -3787,136 +3860,149 @@ local function boot(character)
 		end
 
 		if tangent.Magnitude > 0.08 then
-			hrp:ApplyImpulse(tangent.Unit * getZipDv() * hrp.AssemblyMass)
+			st.hrp:ApplyImpulse(tangent.Unit * getZipDv() * st.hrp.AssemblyMass)
 		end
 	end
 
-	local function finalizeSwingAttach(target, ropeMax, startLength, elasticRestLength, attachWorld)
-		if not isSwinging or not target or not target.Parent then
+	function st.finalizeSwingAttach(target, ropeMax, startLength, elasticRestLength, attachWorld)
+		if not st.isSwinging or not target or not target.Parent then
 			return
 		end
 
-		attachWorld = closestAttachWorldOnPart(target)
-		local dist = (attachWorld - hrp.Position).Magnitude
+		attachWorld = st.lockedAttachWorld or attachWorld
+		local dist = (attachWorld - st.hrp.Position).Magnitude
 
-		pendingSwingParams = nil
-		lastAttachClock = os.clock()
-		swingTimer = 0
-		activeRopeMaxLength = ropeMax
+		st.pendingSwingParams = nil
+		st.lastAttachClock = os.clock()
+		st.attachShakeStrength = 0.82
+		st.attachShakeSeed = math.random() * 1000
+		st.swingTimer = 0
+		st.activeRopeMaxLength = ropeMax
 
-		ropeCatchStartLength = startLength
-		ropeCatchUntil = os.clock() + C.ROPE_CATCH_ELASTIC_TIME
+		st.ropeCatchStartLength = startLength
+		st.ropeCatchUntil = os.clock() + C.ROPE_CATCH_ELASTIC_TIME
 
-		anchorAttachment = Instance.new("Attachment")
-		anchorAttachment.Name = "SwingAnchorAttachment"
-		anchorAttachment.Position = target.CFrame:PointToObjectSpace(attachWorld)
-		anchorAttachment.Parent = target
+		st.anchorAttachment = Instance.new("Attachment")
+		st.anchorAttachment.Name = "SwingAnchorAttachment"
+		st.anchorAttachment.Position = target.CFrame:PointToObjectSpace(attachWorld)
+		st.anchorAttachment.Parent = target
 
-		bodyAttachment = Instance.new("Attachment")
-		bodyAttachment.Name = "SwingBodyAttachment"
-		bodyAttachment.Parent = hrp
+		st.bodyAttachment = Instance.new("Attachment")
+		st.bodyAttachment.Name = "SwingBodyAttachment"
+		st.bodyAttachment.Parent = st.hrp
 
-		ropeConstraint = Instance.new("RopeConstraint")
-		ropeConstraint.Name = "SwingRopeConstraint"
-		ropeConstraint.Attachment0 = anchorAttachment
-		ropeConstraint.Attachment1 = bodyAttachment
-		ropeConstraint.Length = startLength
-		ropeConstraint.Thickness = 0.08
-		ropeConstraint.Visible = false
-		ropeConstraint.Restitution = 0.05
-		ropeConstraint.Parent = hrp
+		st.ropeConstraint = Instance.new("RopeConstraint")
+		st.ropeConstraint.Name = "SwingRopeConstraint"
+		st.ropeConstraint.Attachment0 = st.anchorAttachment
+		st.ropeConstraint.Attachment1 = st.bodyAttachment
+		st.ropeConstraint.Length = startLength
+		st.ropeConstraint.Thickness = 0.08
+		st.ropeConstraint.Visible = false
+		st.ropeConstraint.Restitution = 0.05
+		st.ropeConstraint.Parent = st.hrp
 
 		pcall(function()
-			ropeConstraint.WinchEnabled = true
-			ropeConstraint.WinchResponsiveness = 46
-			ropeConstraint.WinchSpeed = C.ROPE_HANG_PULL_WINCH_SPEED * C.ROPE_CATCH_REEL_MULT
-			ropeConstraint.WinchForce = hrp.AssemblyMass * 3000 * C.ROPE_CATCH_FORCE_MULT
-			ropeConstraint.WinchTarget = startLength
+			st.ropeConstraint.WinchEnabled = true
+			st.ropeConstraint.WinchResponsiveness = 46
+			st.ropeConstraint.WinchSpeed = C.ROPE_HANG_PULL_WINCH_SPEED * C.ROPE_CATCH_REEL_MULT
+			st.ropeConstraint.WinchForce = st.hrp.AssemblyMass * 3000 * C.ROPE_CATCH_FORCE_MULT
+			st.ropeConstraint.WinchTarget = startLength
 		end)
 
 		if math.abs(dist - elasticRestLength) > 1.5 then
-			zipSpring = Instance.new("SpringConstraint")
-			zipSpring.Name = "SwingZipSpring"
-			zipSpring.Attachment0 = anchorAttachment
-			zipSpring.Attachment1 = bodyAttachment
-			zipSpring.FreeLength = startLength
-			zipSpring.Stiffness = C.ZIP_SPRING_STIFFNESS * 0.72
-			zipSpring.Damping = C.ZIP_SPRING_DAMPING * 1.12
-			zipSpring.MaxForce = hrp.AssemblyMass * C.ZIP_SPRING_MAX_ACCEL * C.ROPE_CATCH_FORCE_MULT
-			zipSpring.Parent = hrp
+			st.zipSpring = Instance.new("SpringConstraint")
+			st.zipSpring.Name = "SwingZipSpring"
+			st.zipSpring.Attachment0 = st.anchorAttachment
+			st.zipSpring.Attachment1 = st.bodyAttachment
+			st.zipSpring.FreeLength = startLength
+			st.zipSpring.Stiffness = C.ZIP_SPRING_STIFFNESS * 0.72
+			st.zipSpring.Damping = C.ZIP_SPRING_DAMPING * 1.12
+			st.zipSpring.MaxForce = st.hrp.AssemblyMass * C.ZIP_SPRING_MAX_ACCEL * C.ROPE_CATCH_FORCE_MULT
+			st.zipSpring.Parent = st.hrp
 		end
 
-		forceAttachment = Instance.new("Attachment")
-		forceAttachment.Name = "SwingForceAttachment"
-		forceAttachment.Parent = hrp
+		st.forceAttachment = Instance.new("Attachment")
+		st.forceAttachment.Name = "SwingForceAttachment"
+		st.forceAttachment.Parent = st.hrp
 
-		steerForce = Instance.new("VectorForce")
-		steerForce.Name = "SwingSteerForce"
-		steerForce.Attachment0 = forceAttachment
-		steerForce.RelativeTo = Enum.ActuatorRelativeTo.World
-		steerForce.ApplyAtCenterOfMass = true
-		steerForce.Force = Vector3.new(0, 0, 0)
-		steerForce.Parent = hrp
+		st.steerForce = Instance.new("VectorForce")
+		st.steerForce.Name = "SwingSteerForce"
+		st.steerForce.Attachment0 = st.forceAttachment
+		st.steerForce.RelativeTo = Enum.ActuatorRelativeTo.World
+		st.steerForce.ApplyAtCenterOfMass = true
+		st.steerForce.Force = Vector3.new(0, 0, 0)
+		st.steerForce.Parent = st.hrp
 
-		orientationAttachment = Instance.new("Attachment")
-		orientationAttachment.Name = "SwingOrientationAttachment"
-		orientationAttachment.Parent = hrp
+		st.orientationAttachment = Instance.new("Attachment")
+		st.orientationAttachment.Name = "SwingOrientationAttachment"
+		st.orientationAttachment.Parent = st.hrp
 
-		swingOrientation = Instance.new("AlignOrientation")
-		swingOrientation.Name = "SwingFaceDirection"
-		swingOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
-		swingOrientation.Attachment0 = orientationAttachment
-		swingOrientation.RigidityEnabled = false
-		swingOrientation.Responsiveness = C.AVATAR_TURN_RESPONSIVENESS
-		swingOrientation.MaxTorque = hrp.AssemblyMass * 18000
-		swingOrientation.Enabled = true
-		swingOrientation.Parent = hrp
+		st.swingOrientation = Instance.new("AlignOrientation")
+		st.swingOrientation.Name = "SwingFaceDirection"
+		st.swingOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
+		st.swingOrientation.Attachment0 = st.orientationAttachment
+		st.swingOrientation.RigidityEnabled = false
+		st.swingOrientation.Responsiveness = C.AVATAR_TURN_RESPONSIVENESS
+		st.swingOrientation.MaxTorque = st.hrp.AssemblyMass * 18000
+		st.swingOrientation.Enabled = true
+		st.swingOrientation.Parent = st.hrp
 
-		humanoid.PlatformStand = true
-		humanoid.AutoRotate = false
-		humanoid.Jump = false
-		hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+		st.humanoid.PlatformStand = true
+		st.humanoid.AutoRotate = false
+		st.humanoid.Jump = false
+		st.hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 
-		applyAttachBoost(attachWorld)
-		playHangAnim(attachWorld)
-		ensureChargeGui(target)
+		st.applyAttachBoost(attachWorld)
+		st.playHangAnim(attachWorld)
+		st.ensureChargeGui(target)
 		playOptionalSound("Catch")
 		playOptionalSound("Wind")
 	end
 
-	local function startSwing(target)
-		if isWebTrapped() or isSwinging or not target or not target.Parent then
+	function st.startSwing(target)
+		if st.isWebTrapped() or st.isSwinging or not target or not target.Parent then
 			return
 		end
-		if isHrpInSafezone() then
+		if st.isHrpInSafezone() then
 			return
 		end
 
 		local now = os.clock()
-		if now - lastAttachClock < C.ATTACH_COOLDOWN then
+		if now - st.lastAttachClock < C.ATTACH_COOLDOWN then
 			return
 		end
 
-		local attachWorld = closestAttachWorldOnPart(target)
-		local dist = (attachWorld - hrp.Position).Magnitude
+		local attachLimits = st.getSwingAttachLimits()
+		if not attachLimits then
+			return
+		end
+		local attachLimit, minLookDot, maxScreenRadius = attachLimits
+
+		if not st.canAttachToSwingTarget(target, attachLimit, minLookDot, maxScreenRadius) then
+			return
+		end
+
+		local closestWorld = st.closestAttachWorldOnPart(target)
+		local dist = (closestWorld - st.hrp.Position).Magnitude
+		if dist < 2 or dist > attachLimit then
+			return
+		end
+
+		local attachWorld = resolveLockedSwingAttachWorld(target)
+		st.lockedAttachWorld = attachWorld
+		st.advanceSwingHandSide()
 		local reach = getSwingRange()
 		local baseRopeMax = getRopeMaxLength()
 		local ropeRestLength = getRopeRestLength()
 
-		local airborneAttach = isAirborneForSwing()
-		local groundedAttach = isGroundedForSwing()
+		local airborneAttach = st.isAirborneForSwing()
+		local groundedAttach = st.isGroundedForSwing()
 
 		if not airborneAttach and not groundedAttach then
 			return
 		end
 
-		local attachLimit = airborneAttach and reach or C.GROUNDED_READY_RANGE
-
-		if dist < 2 or dist > attachLimit then
-			return
-		end
-
-		releaseStyle.cancel()
+		st.releaseStyle.cancel()
 
 		local ropeMaxFloor = math.max(C.ROPE_SAFE_MAX_MIN_LENGTH, C.ROPE_MIN_LENGTH + C.ROPE_HANG_PULL_MIN_GAP + 8)
 		local ropeStretchFloor = math.min(baseRopeMax, ropeRestLength + C.ROPE_HANG_PULL_MIN_GAP)
@@ -3935,21 +4021,21 @@ local function boot(character)
 			math.clamp(math.max(dist * C.ROPE_CATCH_START_MULT, normalStartLength), elasticRestLength, ropeMax)
 		local startLength = elasticCatchStartLength
 
-		isSwinging = true
-		isLaunched = false
-		landedFromSwing = false
-		currentTarget = target
-		swingTimer = 0
-		swingCharge = 0
-		forwardSwingCharge = 0
-		forwardHoldTime = 0
-		swingMomentum = 0
-		swingRhythmBoost = 0
-		lastPumpInputSign = 0
-		lastPumpSwitchClock = now
-		swingFaceDir = nil
+		st.isSwinging = true
+		st.isLaunched = false
+		st.landedFromSwing = false
+		st.currentTarget = target
+		st.swingTimer = 0
+		st.swingCharge = 0
+		st.forwardSwingCharge = 0
+		st.forwardHoldTime = 0
+		st.swingMomentum = 0
+		st.swingRhythmBoost = 0
+		st.lastPumpInputSign = 0
+		st.lastPumpSwitchClock = now
+		st.swingFaceDir = nil
 
-		pendingSwingParams = {
+		st.pendingSwingParams = {
 			target = target,
 			ropeMax = ropeMax,
 			startLength = startLength,
@@ -3957,71 +4043,71 @@ local function boot(character)
 			attachWorld = attachWorld,
 		}
 
-		local flatFromAnchor = hrp.Position - attachWorld
+		local flatFromAnchor = st.hrp.Position - attachWorld
 		local flatRecoil = Vector3.new(flatFromAnchor.X, 0, flatFromAnchor.Z)
 		if flatRecoil.Magnitude > 0.12 then
-			hrp:ApplyImpulse(flatRecoil.Unit * C.ROPE_THROW_RECOIL_DV * hrp.AssemblyMass)
+			st.hrp:ApplyImpulse(flatRecoil.Unit * C.ROPE_THROW_RECOIL_DV * st.hrp.AssemblyMass)
 		end
 
-		spawnSwingRopeVisual(attachWorld, function(latchWorld)
-			if not isSwinging or not pendingSwingParams or ropeConstraint then
+		st.spawnSwingRopeVisual(attachWorld, function(latchWorld)
+			if not st.isSwinging or not st.pendingSwingParams or st.ropeConstraint then
 				return
 			end
-			if not holdIsActive() then
-				stopSwing(false)
+			if not st.holdIsActive() then
+				st.stopSwing(false)
 				return
 			end
-			local params = pendingSwingParams
+			local params = st.pendingSwingParams
 			if not params.target or not params.target.Parent then
-				stopSwing(false)
+				st.stopSwing(false)
 				return
 			end
-			finalizeSwingAttach(params.target, params.ropeMax, params.startLength, params.elasticRestLength, latchWorld)
+			st.finalizeSwingAttach(params.target, params.ropeMax, params.startLength, params.elasticRestLength, latchWorld)
 		end)
 
-		updateTargetVisual(nil, false)
+		st.updateTargetVisual(nil, false)
 		playOptionalSound("Throw")
 	end
 
-	local function stopSwing(doLaunch)
-		if not isSwinging then
+	function st.stopSwing(doLaunch)
+		if not st.isSwinging then
 			return
 		end
 
-		local heldTime = swingTimer
-		local charge = swingCharge
-		local forwardCharge = forwardSwingCharge
-		local forwardHeld = forwardHoldTime
-		local releaseMomentum = swingMomentum
-		local snapVelocity = hrp.AssemblyLinearVelocity
-		local snapPosition = hrp.Position
-		local snapAnchorWorld = anchorAttachment and anchorAttachment.Parent and anchorAttachment.WorldPosition or nil
-		lastReleasedTarget = currentTarget
-		lastReleasedTargetClock = os.clock()
+		local heldTime = st.swingTimer
+		local charge = st.swingCharge
+		local forwardCharge = st.forwardSwingCharge
+		local forwardHeld = st.forwardHoldTime
+		local releaseMomentum = st.swingMomentum
+		local snapVelocity = st.hrp.AssemblyLinearVelocity
+		local snapPosition = st.hrp.Position
+		local snapAnchorWorld = st.anchorAttachment and st.anchorAttachment.Parent and st.anchorAttachment.WorldPosition or nil
+		st.lastReleasedTarget = st.currentTarget
+		st.lastReleasedTargetClock = os.clock()
 
-		isSwinging = false
-		currentTarget = nil
-		scannedVisualTarget = nil
-		scannedVisualCanSwing = false
-		lastTargetScanClock = -1e9
-		stopHangAnim(doLaunch and C.LAUNCH_HANG_RELEASE_FADE or 0.08)
-		swingPose.clear()
-		destroySwingObjects()
+		st.isSwinging = false
+		st.currentTarget = nil
+		st.scannedVisualTarget = nil
+		st.scannedVisualCanSwing = false
+		st.lastTargetScanClock = -1e9
+		st.stopHangAnim(doLaunch and C.LAUNCH_HANG_RELEASE_FADE or 0.08)
+		st.swingPose.clear()
+		st.destroySwingObjects()
 		stopOptionalSound("Wind")
 
-		humanoid.PlatformStand = false
-		humanoid.AutoRotate = true
-		hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+		st.humanoid.PlatformStand = false
+		st.humanoid.AutoRotate = true
+		st.hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 
 		if doLaunch then
-			isLaunched = true
-			landedFromSwing = true
-			lastLaunchClock = os.clock()
-			playFallingAnim(C.LAUNCH_FALL_ANIM_FADE)
+			st.isLaunched = true
+			st.landedFromSwing = true
+			st.lastLaunchClock = os.clock()
+			st.playFallingAnim(C.LAUNCH_FALL_ANIM_FADE)
 			playOptionalSound("Launch")
-			if not isSwinging and hrp.Parent then
+			if not st.isSwinging and st.hrp.Parent then
 				camera = workspace.CurrentCamera or camera
-				releaseStyle.apply(
+				st.releaseStyle.apply(
 					camera,
 					snapVelocity,
 					snapPosition,
@@ -4034,7 +4120,7 @@ local function boot(character)
 				)
 			end
 		else
-			releaseStyle.cancel()
+			st.releaseStyle.cancel()
 		end
 	end
 
@@ -4053,46 +4139,46 @@ local function boot(character)
 				return
 			end
 
-			local function mobileJumpPressed()
+			function st.mobileJumpPressed()
 				local now = os.clock()
 
-				mobileJumpHeld = true
-				mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
-				mobileRealJumpPressUntil = now + C.MOBILE_REAL_JUMP_PRESS_WINDOW
+				st.mobileJumpHeld = true
+				st.mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
+				st.mobileRealJumpPressUntil = now + C.MOBILE_REAL_JUMP_PRESS_WINDOW
 			end
 
-			local function mobileJumpReleased()
-				mobileJumpHeld = false
-				mobileJumpHoldUntil = -1e9
-				mobileRealJumpPressUntil = -1e9
+			function st.mobileJumpReleased()
+				st.mobileJumpHeld = false
+				st.mobileJumpHoldUntil = -1e9
+				st.mobileRealJumpPressUntil = -1e9
 
-				if isSwinging then
-					if pendingSwingParams and not ropeConstraint then
-						stopSwing(false)
-					elseif os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
-						stopSwing(true)
+				if st.isSwinging then
+					if st.pendingSwingParams and not st.ropeConstraint then
+						st.stopSwing(false)
+					elseif os.clock() - st.lastAttachClock > C.MIN_SWING_LOCK_TIME then
+						st.stopSwing(true)
 					end
 				end
 			end
 
-			addConn(jumpButton.MouseButton1Down:Connect(mobileJumpPressed))
-			addConn(jumpButton.MouseButton1Up:Connect(mobileJumpReleased))
+			st.addConn(jumpButton.MouseButton1Down:Connect(st.mobileJumpPressed))
+			st.addConn(jumpButton.MouseButton1Up:Connect(st.mobileJumpReleased))
 
-			addConn(jumpButton.InputBegan:Connect(function(input)
+			st.addConn(jumpButton.InputBegan:Connect(function(input)
 				if input.UserInputType == Enum.UserInputType.Touch then
-					mobileJumpPressed()
+					st.mobileJumpPressed()
 				end
 			end))
 
-			addConn(jumpButton.InputEnded:Connect(function(input)
+			st.addConn(jumpButton.InputEnded:Connect(function(input)
 				if input.UserInputType == Enum.UserInputType.Touch then
-					mobileJumpReleased()
+					st.mobileJumpReleased()
 				end
 			end))
 		end)
 	end
 
-	local function updateSwingRopePhysics(
+	function st.updateSwingRopePhysics(
 		dt,
 		ropeLiftForce,
 		velocity,
@@ -4104,7 +4190,7 @@ local function boot(character)
 		speedCap,
 		mult
 	)
-		if not ropeConstraint then
+		if not st.ropeConstraint then
 			return ropeLiftForce, velocity, speed
 		end
 
@@ -4118,13 +4204,13 @@ local function boot(character)
 				restLength + C.ROPE_STRETCH_MAX_EXTRA * flexScale + math.max(ropeMax - C.ROPE_MAX_LENGTH, 0) * 0.9
 			)
 		)
-		local moveAmount = humanoid.MoveDirection.Magnitude
+		local moveAmount = st.humanoid.MoveDirection.Magnitude
 		local idleHoldAlpha = 0
-		if moveAmount < 0.06 and forwardSwingCharge < 0.08 then
+		if moveAmount < 0.06 and st.forwardSwingCharge < 0.08 then
 			idleHoldAlpha = 1
 		end
 		local speedStretch = math.clamp((speed - 18) / math.max(speedCap - 18, 1), 0, 1)
-		local stretchAlpha = math.clamp(swingMomentum * 0.58 + speedStretch * 0.24 + forwardSwingCharge * 0.12, 0, 1)
+		local stretchAlpha = math.clamp(st.swingMomentum * 0.58 + speedStretch * 0.24 + st.forwardSwingCharge * 0.12, 0, 1)
 		stretchAlpha = math.clamp(
 			stretchAlpha * (1 - idleHoldAlpha * 0.35) + speedStretch * 0.34 + math.clamp(moveAmount, 0, 1) * 0.18,
 			0,
@@ -4135,7 +4221,7 @@ local function boot(character)
 			restLength,
 			stretchMaxLength
 		)
-		local verticalDrop = math.max(anchorWorld.Y - hrp.Position.Y, 0)
+		local verticalDrop = math.max(anchorWorld.Y - st.hrp.Position.Y, 0)
 		local pullStartLength = restLength + math.max(stretchMaxLength - restLength, 0) * C.ROPE_HANG_PULL_START_MULT
 		local distanceSag = math.clamp((dist - pullStartLength) / math.max(stretchMaxLength - pullStartLength, 1), 0, 1)
 		local heightSag = math.clamp((verticalDrop - restLength * 0.72) / math.max(restLength * 0.42, 1), 0, 1)
@@ -4146,16 +4232,16 @@ local function boot(character)
 		local baseCloseEnoughLength = math.clamp(ropeMax * C.ROPE_HANG_PULL_TARGET_MULT, closeEnoughMin, closeEnoughMax)
 
 		local catchAlpha = 0
-		if ropeCatchUntil > os.clock() then
-			catchAlpha = math.clamp((ropeCatchUntil - os.clock()) / C.ROPE_CATCH_ELASTIC_TIME, 0, 1)
+		if st.ropeCatchUntil > os.clock() then
+			catchAlpha = math.clamp((st.ropeCatchUntil - os.clock()) / C.ROPE_CATCH_ELASTIC_TIME, 0, 1)
 			-- Smoothstep so the catch starts soft and eases back into normal rope behavior.
 			catchAlpha = catchAlpha * catchAlpha * (3 - 2 * catchAlpha)
 		else
-			ropeCatchStartLength = nil
+			st.ropeCatchStartLength = nil
 		end
 
 		local catchLength =
-			math.clamp(ropeCatchStartLength or ropeConstraint.Length, baseCloseEnoughLength, stretchMaxLength)
+			math.clamp(st.ropeCatchStartLength or st.ropeConstraint.Length, baseCloseEnoughLength, stretchMaxLength)
 		local closeEnoughLength = baseCloseEnoughLength + (catchLength - baseCloseEnoughLength) * catchAlpha
 		local catchForceMult = 1 - catchAlpha * (1 - C.ROPE_CATCH_FORCE_MULT)
 		local reelAlpha =
@@ -4169,32 +4255,32 @@ local function boot(character)
 			* flexScale
 			* (0.25 + stretchAlpha * 0.95)
 		local targetLength = math.clamp(elasticRestLength + stretchExtra, closeEnoughLength, stretchMaxLength)
-		ropeConstraint.Length += (targetLength - ropeConstraint.Length) * math.clamp(
+		st.ropeConstraint.Length += (targetLength - st.ropeConstraint.Length) * math.clamp(
 			dt * (idleHoldAlpha > 0.05 and C.ROPE_LENGTH_RESPONSE * 0.28 or C.ROPE_LENGTH_RESPONSE * 0.62),
 			0,
 			1
 		)
 
 		pcall(function()
-			ropeConstraint.WinchTarget = closeEnoughLength
-			ropeConstraint.WinchSpeed = (
+			st.ropeConstraint.WinchTarget = closeEnoughLength
+			st.ropeConstraint.WinchSpeed = (
 				22
-				+ swingCharge * 4
-				+ swingMomentum * 2
+				+ st.swingCharge * 4
+				+ st.swingMomentum * 2
 				+ (C.ROPE_REEL_ALWAYS_ALPHA + sagAlpha * 0.8 + idleHoldAlpha * 0.18) * C.ROPE_HANG_PULL_WINCH_SPEED
 			)
 				* math.clamp(1 - stretchAlpha * (1 - idleHoldAlpha) * 0.68, 0.28, 1)
 				* catchForceMult
-			ropeConstraint.WinchForce = hrp.AssemblyMass
+			st.ropeConstraint.WinchForce = st.hrp.AssemblyMass
 				* (3900 + sagAlpha * 2200 + idleHoldAlpha * 700)
 				* math.clamp(1 - stretchAlpha * (1 - idleHoldAlpha) * 0.68, 0.28, 1)
 				* catchForceMult
 		end)
 
-		if ropeConstraint.Length > stretchMaxLength then
-			ropeConstraint.Length = stretchMaxLength
-		elseif ropeConstraint.Length < closeEnoughLength then
-			ropeConstraint.Length = closeEnoughLength
+		if st.ropeConstraint.Length > stretchMaxLength then
+			st.ropeConstraint.Length = stretchMaxLength
+		elseif st.ropeConstraint.Length < closeEnoughLength then
+			st.ropeConstraint.Length = closeEnoughLength
 		end
 
 		local pullGap = dist - closeEnoughLength
@@ -4205,7 +4291,7 @@ local function boot(character)
 			local pullDir = -radial + Vector3.new(0, 0.58 + sagAlpha * 0.62 + idleHoldAlpha * 0.42, 0)
 			local idlePullScale = 1
 			if idleHoldAlpha > 0.05 then
-				local idleTargetOffset = anchorWorld - Vector3.new(0, idleHangDrop, 0) - hrp.Position
+				local idleTargetOffset = anchorWorld - Vector3.new(0, idleHangDrop, 0) - st.hrp.Position
 				if idleTargetOffset.Magnitude > 0.05 then
 					pullDir = idleTargetOffset.Unit
 					idlePullScale =
@@ -4222,7 +4308,7 @@ local function boot(character)
 					1 - stretchAlpha * (1 - idleHoldAlpha) * 0.52,
 					0.36,
 					1
-				) * catchForceMult * upSpeedGate * mult * hrp.AssemblyMass
+				) * catchForceMult * upSpeedGate * mult * st.hrp.AssemblyMass
 			end
 
 			local outwardSpeed = velocity:Dot(radial)
@@ -4239,7 +4325,7 @@ local function boot(character)
 			if idleHoldAlpha > 0.05 then
 				nextVelocity -= tangentialVelocity * math.clamp(dt * (2.8 + idleHoldAlpha * 4.5), 0, 0.28) * idleHoldAlpha
 			end
-			if swingMomentum < 0.22 and forwardSwingCharge < 0.12 then
+			if st.swingMomentum < 0.22 and st.forwardSwingCharge < 0.12 then
 				nextVelocity -= tangentialVelocity * dampAlpha * 0.22
 			end
 			if lowHang then
@@ -4256,65 +4342,63 @@ local function boot(character)
 			if (nextVelocity - velocity).Magnitude > 0.01 then
 				velocity = nextVelocity
 				speed = velocity.Magnitude
-				hrp.AssemblyLinearVelocity = velocity
+				st.hrp.AssemblyLinearVelocity = velocity
 			end
 		end
 
 		return ropeLiftForce, velocity, speed
 	end
 
-	local function tryAttach()
-		if isWebTrapped() or isSwinging or not hrp.Parent then
+	function st.tryAttach()
+		if st.isWebTrapped() or st.isSwinging or not st.hrp.Parent then
 			return
 		end
 
 		local now = os.clock()
-		if now - lastTryClock < C.ATTACH_RETRY_TIME then
+		if now - st.lastTryClock < C.ATTACH_RETRY_TIME then
 			return
 		end
 
-		local maxDistance = getSwingRange()
-		local lookDot = C.AIRBORNE_TARGET_LOOK_DOT
-		local screenLimit = C.TARGET_SCREEN_RADIUS_LIMIT
-		local groundedAttempt = false
-		if isAirborneForSwing() then
-			maxDistance = getSwingRange()
-		elseif isGroundedForSwing() then
-			groundedAttempt = true
-			maxDistance = C.GROUNDED_READY_RANGE
-			lookDot = C.GROUNDED_TARGET_LOOK_DOT
-			screenLimit = C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT
-		else
+		local attachLimits = st.getSwingAttachLimits()
+		if not attachLimits then
+			return
+		end
+		local maxDistance, lookDot, screenLimit = attachLimits
+		local groundedAttempt = st.isGroundedForSwing()
+
+		if not st.scannedVisualTarget or not st.scannedVisualCanSwing then
+			if not (groundedAttempt and now - st.lastGroundJumpClock < 0.25) then
+				st.lastTryClock = now
+			end
 			return
 		end
 
-		local target = pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
-		if target then
-			lastTryClock = now
-			startSwing(target)
-		elseif not (groundedAttempt and now - lastGroundJumpClock < 0.25) then
-			lastTryClock = now
+		if st.canAttachToSwingTarget(st.scannedVisualTarget, maxDistance, lookDot, screenLimit) then
+			st.lastTryClock = now
+			st.startSwing(st.scannedVisualTarget)
+		elseif not (groundedAttempt and now - st.lastGroundJumpClock < 0.25) then
+			st.lastTryClock = now
 		end
 	end
 
 	-- Mobile fallback removed to keep Luau boot() under the 200 local-register limit.
 
 	if WebTrapConfig and typeof(WebTrapConfig.TRAPPED_ATTR) == "string" then
-		addConn(player:GetAttributeChangedSignal(WebTrapConfig.TRAPPED_ATTR):Connect(function()
-			if isWebTrapped() then
-				if isSwinging then
-					stopSwing(false)
+		st.addConn(player:GetAttributeChangedSignal(WebTrapConfig.TRAPPED_ATTR):Connect(function()
+			if st.isWebTrapped() then
+				if st.isSwinging then
+					st.stopSwing(false)
 				end
-				isLaunched = false
-				landedFromSwing = false
-				releaseStyle.cancel()
-				hideSwingTargetUi()
+				st.isLaunched = false
+				st.landedFromSwing = false
+				st.releaseStyle.cancel()
+				st.hideSwingTargetUi()
 			end
 		end))
 	end
 
-	addConn(UserInputService.InputBegan:Connect(function(input, processed)
-		if isWebTrapped() then
+	st.addConn(UserInputService.InputBegan:Connect(function(input, processed)
+		if st.isWebTrapped() then
 			return
 		end
 
@@ -4323,51 +4407,51 @@ local function boot(character)
 		end
 
 		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space then
-			noteJumpPressed()
-			spaceHeld = true
+			st.noteJumpPressed()
+			st.spaceHeld = true
 			if not processed then
-				tryAttach()
+				st.tryAttach()
 			end
 		elseif
 			input.UserInputType == Enum.UserInputType.Gamepad1
 			and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
 		then
-			noteJumpPressed()
-			gamepadHeld = true
+			st.noteJumpPressed()
+			st.gamepadHeld = true
 			if not processed then
-				tryAttach()
+				st.tryAttach()
 			end
 		end
 	end))
 
-	addConn(UserInputService.InputEnded:Connect(function(input)
+	st.addConn(UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space then
-			spaceHeld = false
-			if isSwinging then
-				if pendingSwingParams and not ropeConstraint then
-					stopSwing(false)
-				elseif os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
-					stopSwing(true)
+			st.spaceHeld = false
+			if st.isSwinging then
+				if st.pendingSwingParams and not st.ropeConstraint then
+					st.stopSwing(false)
+				elseif os.clock() - st.lastAttachClock > C.MIN_SWING_LOCK_TIME then
+					st.stopSwing(true)
 				end
 			end
 		elseif
 			input.UserInputType == Enum.UserInputType.Gamepad1
 			and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
 		then
-			gamepadHeld = false
-			if isSwinging then
-				if pendingSwingParams and not ropeConstraint then
-					stopSwing(false)
-				elseif os.clock() - lastAttachClock > C.MIN_SWING_LOCK_TIME then
-					stopSwing(true)
+			st.gamepadHeld = false
+			if st.isSwinging then
+				if st.pendingSwingParams and not st.ropeConstraint then
+					st.stopSwing(false)
+				elseif os.clock() - st.lastAttachClock > C.MIN_SWING_LOCK_TIME then
+					st.stopSwing(true)
 				end
 			end
 		end
 	end))
 
-	addConn(UserInputService.JumpRequest:Connect(function()
-		if isWebTrapped() then
-			humanoid.Jump = false
+	st.addConn(UserInputService.JumpRequest:Connect(function()
+		if st.isWebTrapped() then
+			st.humanoid.Jump = false
 			return
 		end
 
@@ -4378,197 +4462,197 @@ local function boot(character)
 		local now = os.clock()
 
 		if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-			if not mobileJumpHeld and now > mobileRealJumpPressUntil then
+			if not st.mobileJumpHeld and now > st.mobileRealJumpPressUntil then
 				return
 			end
 
-			mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
-			humanoid.Jump = false
+			st.mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
+			st.humanoid.Jump = false
 		end
 
-		noteJumpPressed()
+		st.noteJumpPressed()
 
-		if isSwinging then
+		if st.isSwinging then
 			return
 		end
 
-		stopTrack(landedTrack, 0.08)
-		humanoid.PlatformStand = false
-		humanoid.AutoRotate = true
-		tryAttach()
+		st.stopTrack(st.landedTrack, 0.08)
+		st.humanoid.PlatformStand = false
+		st.humanoid.AutoRotate = true
+		st.tryAttach()
 	end))
 
 	if C.PRE_SIMULATION_SIGNAL then
-		addConn(C.PRE_SIMULATION_SIGNAL:Connect(function(dt)
-			swingPose.step(
+		st.addConn(C.PRE_SIMULATION_SIGNAL:Connect(function(dt)
+			st.swingPose.step(
 				dt,
-				hrp.AssemblyLinearVelocity,
-				poseInputs.radial,
-				poseInputs.moveFlatUnit,
-				poseInputs.forwardInput,
-				poseInputs.extT,
-				poseInputs.momentum,
-				currentHangSide,
-				isSwinging and ropeConstraint ~= nil,
-				isLaunched,
-				landedFromSwing
+				st.hrp.AssemblyLinearVelocity,
+				st.poseInputs.radial,
+				st.poseInputs.moveFlatUnit,
+				st.poseInputs.forwardInput,
+				st.poseInputs.extT,
+				st.poseInputs.momentum,
+				st.currentHangSide,
+				st.isSwinging and st.ropeConstraint ~= nil,
+				st.isLaunched,
+				st.landedFromSwing
 			)
 		end))
 	else
-		addConn(RunService.Stepped:Connect(function(_, dt)
-			swingPose.step(
+		st.addConn(RunService.Stepped:Connect(function(_, dt)
+			st.swingPose.step(
 				dt,
-				hrp.AssemblyLinearVelocity,
-				poseInputs.radial,
-				poseInputs.moveFlatUnit,
-				poseInputs.forwardInput,
-				poseInputs.extT,
-				poseInputs.momentum,
-				currentHangSide,
-				isSwinging and ropeConstraint ~= nil,
-				isLaunched,
-				landedFromSwing
+				st.hrp.AssemblyLinearVelocity,
+				st.poseInputs.radial,
+				st.poseInputs.moveFlatUnit,
+				st.poseInputs.forwardInput,
+				st.poseInputs.extT,
+				st.poseInputs.momentum,
+				st.currentHangSide,
+				st.isSwinging and st.ropeConstraint ~= nil,
+				st.isLaunched,
+				st.landedFromSwing
 			)
 		end))
 	end
 
-	addConn(humanoid.StateChanged:Connect(function(_, newState)
-		if isSwingLandingRecoveryState(newState) then
+	st.addConn(st.humanoid.StateChanged:Connect(function(_, newState)
+		if st.isSwingLandingRecoveryState(newState) then
 			-- Fast angled landings can put the Humanoid into Roblox's get-up/ragdoll states.
 			-- During swing launch recovery, skip that delay and immediately restore player control.
 			if
-				not isSwinging
-				and (isLaunched or landedFromSwing or os.clock() - lastLaunchClock < C.LAUNCH_STYLE_TIME + 0.45)
+				not st.isSwinging
+				and (st.isLaunched or st.landedFromSwing or os.clock() - st.lastLaunchClock < C.LAUNCH_STYLE_TIME + 0.45)
 			then
-				local wasLandedFromSwing = landedFromSwing
-				local impactSpeed = landingSpeed
-				landedFromSwing = false
-				isLaunched = false
-				landingSpeed = 0
-				isAirborne = false
-				forceSwingHumanoidControl()
-				stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
+				local wasLandedFromSwing = st.landedFromSwing
+				local impactSpeed = st.landingSpeed
+				st.landedFromSwing = false
+				st.isLaunched = false
+				st.landingSpeed = 0
+				st.isAirborne = false
+				st.forceSwingHumanoidControl()
+				st.stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
 
 				if wasLandedFromSwing then
-					playLandedAnim()
-					spawnLandingBlocks(character, hrp, rayParams, impactSpeed)
+					st.playLandedAnim()
+					spawnLandingBlocks(st.character, st.hrp, st.rayParams, impactSpeed)
 					playOptionalSound("GroundSmash")
 					local impactAlpha = math.clamp((impactSpeed - 8) / 70, 0.58, 1)
-					lastLandingClock = os.clock()
-					landingShakeStrength = math.clamp(0.42 + impactAlpha * 0.86, 0, 1.22)
-					landingShakeSeed = math.random() * 1000
+					st.lastLandingClock = os.clock()
+					st.landingShakeStrength = math.clamp(0.42 + impactAlpha * 0.86, 0, 1.22)
+					st.landingShakeSeed = math.random() * 1000
 				else
-					stopTrack(landedTrack, 0.05)
+					st.stopTrack(st.landedTrack, 0.05)
 				end
-				hideSwingTargetUi()
+				st.hideSwingTargetUi()
 				task.delay(C.SWING_LANDING_RECOVERY_DELAY, function()
-					if humanoid.Parent and not isSwinging then
-						forceSwingHumanoidControl()
+					if st.humanoid.Parent and not st.isSwinging then
+						st.forceSwingHumanoidControl()
 					end
 				end)
 				return
 			end
 		elseif newState == Enum.HumanoidStateType.Freefall or newState == Enum.HumanoidStateType.Jumping then
-			isAirborne = true
-			airborneStartedClock = os.clock()
-			if not isSwinging and (isLaunched or landedFromSwing) then
-				playFallingAnim()
+			st.isAirborne = true
+			st.airborneStartedClock = os.clock()
+			if not st.isSwinging and (st.isLaunched or st.landedFromSwing) then
+				st.playFallingAnim()
 			end
 		elseif newState == Enum.HumanoidStateType.Landed then
-			isAirborne = false
-			if isSwinging then
+			st.isAirborne = false
+			if st.isSwinging then
 				return
 			end
 
-			local swingLanding = landedFromSwing or isLaunched
-			local wasLandedFromSwing = landedFromSwing
-			local impactSpeed = landingSpeed
+			local swingLanding = st.landedFromSwing or st.isLaunched
+			local wasLandedFromSwing = st.landedFromSwing
+			local impactSpeed = st.landingSpeed
 
 			-- Clear the swing flags BEFORE playing the landing animation.
 			-- Otherwise the landing auto-stop task can think the launch is still active and leave the clip running.
-			landedFromSwing = false
-			isLaunched = false
-			landingSpeed = 0
+			st.landedFromSwing = false
+			st.isLaunched = false
+			st.landingSpeed = 0
 
-			forceSwingHumanoidControl()
+			st.forceSwingHumanoidControl()
 			if swingLanding then
-				playLandedAnim()
+				st.playLandedAnim()
 			end
 
 			if wasLandedFromSwing then
-				spawnLandingBlocks(character, hrp, rayParams, impactSpeed)
+				spawnLandingBlocks(st.character, st.hrp, st.rayParams, impactSpeed)
 				playOptionalSound("GroundSmash")
 				local impactAlpha = math.clamp((impactSpeed - 8) / 70, 0.58, 1)
-				lastLandingClock = os.clock()
-				landingShakeStrength = math.clamp(0.42 + impactAlpha * 0.86, 0, 1.22)
-				landingShakeSeed = math.random() * 1000
+				st.lastLandingClock = os.clock()
+				st.landingShakeStrength = math.clamp(0.42 + impactAlpha * 0.86, 0, 1.22)
+				st.landingShakeSeed = math.random() * 1000
 			end
 
-			hideSwingTargetUi()
+			st.hideSwingTargetUi()
 			task.delay(C.SWING_LANDING_RECOVERY_DELAY, function()
-				if humanoid.Parent and not isSwinging then
-					forceSwingHumanoidControl()
+				if st.humanoid.Parent and not st.isSwinging then
+					st.forceSwingHumanoidControl()
 				end
 			end)
 		elseif newState == Enum.HumanoidStateType.Running or newState == Enum.HumanoidStateType.RunningNoPhysics then
-			isAirborne = false
+			st.isAirborne = false
 
-			if not isSwinging then
-				forceSwingHumanoidControl()
+			if not st.isSwinging then
+				st.forceSwingHumanoidControl()
 			end
 
-			stopFallingAnim()
+			st.stopFallingAnim()
 
-			local landingAnimRecentlyPlayed = os.clock() - lastLandedAnimClock < C.LAUNCH_LAND_MAX_PLAY_TIME
+			local landingAnimRecentlyPlayed = os.clock() - st.lastLandedAnimClock < C.LAUNCH_LAND_MAX_PLAY_TIME
 			if not landingAnimRecentlyPlayed then
-				stopTrack(landedTrack, 0.08)
+				st.stopTrack(st.landedTrack, 0.08)
 			end
-
-			hideSwingTargetUi()
 		end
 	end))
 
-	addConn(humanoid.Died:Connect(function()
-		if isSwinging then
-			stopSwing(false)
+	st.addConn(st.humanoid.Died:Connect(function()
+		if st.isSwinging then
+			st.stopSwing(false)
 		end
-		isLaunched = false
-		landedFromSwing = false
-		landingSpeed = 0
-		lastLaunchClock = -1e9
-		lastLandingClock = -1e9
-		landingShakeStrength = 0
-		releaseStyle.cancel()
-		swingPose.clear()
-		stopHangAnim(0)
-		stopFallingAnim()
-		stopTrack(landedTrack, 0.08)
-		resetFovNow()
+		st.isLaunched = false
+		st.landedFromSwing = false
+		st.landingSpeed = 0
+		st.lastLaunchClock = -1e9
+		st.lastLandingClock = -1e9
+		st.landingShakeStrength = 0
+		st.releaseStyle.cancel()
+		st.swingPose.clear()
+		st.stopHangAnim(0)
+		st.stopFallingAnim()
+		st.stopTrack(st.landedTrack, 0.08)
+		st.resetFovNow()
 	end))
 
-	RunService:BindToRenderStep(renderBindName, Enum.RenderPriority.Camera.Value + 1, function(dt)
+	RunService:BindToRenderStep(st.renderBindName, Enum.RenderPriority.Camera.Value + 1, function(dt)
 		camera = workspace.CurrentCamera or camera
-		if not camera or not hrp.Parent then
+		if not camera or not st.hrp.Parent then
 			return
 		end
 
 		local now = os.clock()
-		local launchShakeActive = now - lastLaunchClock >= 0 and now - lastLaunchClock < C.LAUNCH_CAMERA_SHAKE_TIME
-		local landingShakeActive = now - lastLandingClock >= 0 and now - lastLandingClock < C.LANDING_CAMERA_SHAKE_TIME
+		local launchShakeActive = now - st.lastLaunchClock >= 0 and now - st.lastLaunchClock < C.LAUNCH_CAMERA_SHAKE_TIME
+		local landingShakeActive = now - st.lastLandingClock >= 0 and now - st.lastLandingClock < C.LANDING_CAMERA_SHAKE_TIME
+		local attachShakeActive = now - st.lastAttachClock >= 0 and now - st.lastAttachClock < C.ATTACH_CAMERA_SHAKE_TIME
 		if
 			not C.ENABLE_GROUNDED_CAMERA_ASSIST
-			and not isSwinging
-			and not isLaunched
+			and not st.isSwinging
+			and not st.isLaunched
 			and not launchShakeActive
 			and not landingShakeActive
-			and swingCamLag.Magnitude <= 0.001
-			and math.abs(swingCamRoll) <= 0.0001
+			and not attachShakeActive
+			and st.swingCamLag.Magnitude <= 0.001
+			and math.abs(st.swingCamRoll) <= 0.0001
 		then
 			return
 		end
 
 		local cf = camera.CFrame
-		local _, assistPoint = closestGroundCameraTarget()
+		local _, assistPoint = st.closestGroundCameraTarget()
 		if assistPoint then
 			local toPoint = assistPoint - cf.Position
 			if toPoint.Magnitude > 0.5 then
@@ -4580,29 +4664,29 @@ local function boot(character)
 			end
 		end
 
-		local velocity = hrp.AssemblyLinearVelocity
+		local velocity = st.hrp.AssemblyLinearVelocity
 		local speed = velocity.Magnitude
 		local targetRoll = 0
 		local targetLag = Vector3.new(0, 0, 0)
 
-		if isSwinging then
+		if st.isSwinging then
 			local swingSpeedRef = math.max(getMaxSwingSpeed(), 1)
 			local lateral = math.clamp(velocity:Dot(cf.RightVector) / swingSpeedRef, -1, 1)
 			targetRoll = -lateral * C.SWING_CAMERA_ROLL_MAX
 			targetLag = -cf.LookVector * math.clamp(speed / swingSpeedRef, 0, 1) * C.SWING_CAMERA_LAG_MAX
 			targetLag += Vector3.new(0, math.clamp(-velocity.Y / 160, -0.18, 0.28), 0)
-		elseif isLaunched then
+		elseif st.isLaunched then
 			local lateral = math.clamp(velocity:Dot(cf.RightVector) / math.max(C.LAUNCH_SPEED_CAP, 1), -1, 1)
 			targetRoll = -lateral * C.SWING_CAMERA_ROLL_MAX * 0.55
 		end
 
 		local smooth = math.min(dt * C.SWING_CAMERA_EFFECT_SPEED, 1)
-		swingCamRoll += (targetRoll - swingCamRoll) * smooth
-		swingCamLag = swingCamLag:Lerp(targetLag, smooth)
+		st.swingCamRoll += (targetRoll - st.swingCamRoll) * smooth
+		st.swingCamLag = st.swingCamLag:Lerp(targetLag, smooth)
 
-		if swingCamLag.Magnitude > 0.001 or math.abs(swingCamRoll) > 0.0001 then
-			local pos = cf.Position + swingCamLag
-			cf = CFrame.lookAt(pos, pos + cf.LookVector, cf.UpVector) * CFrame.Angles(0, 0, swingCamRoll)
+		if st.swingCamLag.Magnitude > 0.001 or math.abs(st.swingCamRoll) > 0.0001 then
+			local pos = cf.Position + st.swingCamLag
+			cf = CFrame.lookAt(pos, pos + cf.LookVector, cf.UpVector) * CFrame.Angles(0, 0, st.swingCamRoll)
 		end
 
 		local shakeOffset = Vector3.new(0, 0, 0)
@@ -4623,11 +4707,11 @@ local function boot(character)
 			) * s * rotScale
 		end
 
-		local launchAge = now - lastLaunchClock
+		local launchAge = now - st.lastLaunchClock
 		if launchAge >= 0 and launchAge < C.LAUNCH_CAMERA_SHAKE_TIME then
 			local speedAlpha = math.clamp(speed / math.max(C.LAUNCH_SPEED_CAP, 1), 0.25, 1)
 			addShake(
-				lastLaunchClock,
+				st.lastLaunchClock,
 				C.LAUNCH_CAMERA_SHAKE_TIME,
 				C.LAUNCH_CAMERA_SHAKE_STRENGTH * speedAlpha,
 				240.5,
@@ -4635,11 +4719,18 @@ local function boot(character)
 			)
 		end
 		addShake(
-			lastLandingClock,
+			st.lastLandingClock,
 			C.LANDING_CAMERA_SHAKE_TIME,
-			C.LANDING_CAMERA_SHAKE_STRENGTH * landingShakeStrength,
-			landingShakeSeed,
+			C.LANDING_CAMERA_SHAKE_STRENGTH * st.landingShakeStrength,
+			st.landingShakeSeed,
 			0.055
+		)
+		addShake(
+			st.lastAttachClock,
+			C.ATTACH_CAMERA_SHAKE_TIME,
+			C.ATTACH_CAMERA_SHAKE_STRENGTH * st.attachShakeStrength,
+			st.attachShakeSeed,
+			0.036
 		)
 
 		if shakeOffset.Magnitude > 0.0001 or shakeRot.Magnitude > 0.0001 then
@@ -4649,131 +4740,130 @@ local function boot(character)
 		camera.CFrame = cf
 	end)
 
-	addConn(RunService.Heartbeat:Connect(function(dt)
-		if isWebTrapped() then
-			if isSwinging then
-				stopSwing(false)
+	st.addConn(RunService.Heartbeat:Connect(function(dt)
+		if st.isWebTrapped() then
+			if st.isSwinging then
+				st.stopSwing(false)
 			end
-			hideSwingTargetUi()
+			st.hideSwingTargetUi()
 			return
 		end
 
 		camera = workspace.CurrentCamera or camera
 		local now = os.clock()
-		local velocity = hrp.AssemblyLinearVelocity
+		local velocity = st.hrp.AssemblyLinearVelocity
 		local speed = velocity.Magnitude
 
-		if isAirborneForSwing() then
-			landingSpeed = math.max(landingSpeed, speed)
+		if st.isAirborneForSwing() then
+			st.landingSpeed = math.max(st.landingSpeed, speed)
 		end
 
-		-- Landing watchdog: sometimes Roblox skips the clean Landed state and leaves the character
+		-- Landing watchdog: sometimes Roblox skips the clean Landed state and leaves the st.character
 		-- briefly in Physics/FallingDown/GettingUp. If the launched player is now grounded or close
 		-- to ground while no longer moving upward, instantly return control.
 		if
-			not isSwinging
-			and (isLaunched or landedFromSwing)
-			and now - lastLaunchClock > 0.16
+			not st.isSwinging
+			and (st.isLaunched or st.landedFromSwing)
+			and now - st.lastLaunchClock > 0.16
 			and velocity.Y <= C.SWING_LANDING_MAX_Y_SPEED_FOR_RECOVERY
-			and isCloseToGroundForSwingLanding()
+			and st.isCloseToGroundForSwingLanding()
 		then
-			local wasLandedFromSwing = landedFromSwing
-			local impactSpeed = landingSpeed
-			landedFromSwing = false
-			isLaunched = false
-			landingSpeed = 0
-			isAirborne = false
-			forceSwingHumanoidControl()
-			stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
+			local wasLandedFromSwing = st.landedFromSwing
+			local impactSpeed = st.landingSpeed
+			st.landedFromSwing = false
+			st.isLaunched = false
+			st.landingSpeed = 0
+			st.isAirborne = false
+			st.forceSwingHumanoidControl()
+			st.stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
 			if wasLandedFromSwing then
-				playLandedAnim()
-				spawnLandingBlocks(character, hrp, rayParams, impactSpeed)
+				st.playLandedAnim()
+				spawnLandingBlocks(st.character, st.hrp, st.rayParams, impactSpeed)
 				playOptionalSound("GroundSmash")
 				local impactAlpha = math.clamp((impactSpeed - 8) / 70, 0.58, 1)
-				lastLandingClock = now
-				landingShakeStrength = math.clamp(0.42 + impactAlpha * 0.86, 0, 1.22)
-				landingShakeSeed = math.random() * 1000
+				st.lastLandingClock = now
+				st.landingShakeStrength = math.clamp(0.42 + impactAlpha * 0.86, 0, 1.22)
+				st.landingShakeSeed = math.random() * 1000
 			end
-			hideSwingTargetUi()
+			st.hideSwingTargetUi()
 		end
 
-		if isSwinging then
-			if not currentTarget or not currentTarget.Parent then
-				stopSwing(true)
+		if st.isSwinging then
+			if not st.currentTarget or not st.currentTarget.Parent then
+				st.stopSwing(true)
 				return
 			end
 
-			if pendingSwingParams and not ropeConstraint then
-				if not holdIsActive() then
-					stopSwing(false)
+			if st.pendingSwingParams and not st.ropeConstraint then
+				if not st.holdIsActive() then
+					st.stopSwing(false)
 					return
 				end
 
-				local pendingAnchorWorld = closestAttachWorldOnPart(currentTarget)
-				updateSwingRopeVisual(pendingAnchorWorld)
+				st.updateSwingRopeVisual(st.lockedAttachWorld)
 				return
 			end
 
-			if not anchorAttachment or not anchorAttachment.Parent then
-				stopSwing(true)
+			if not st.anchorAttachment or not st.anchorAttachment.Parent then
+				st.stopSwing(true)
 				return
 			end
-			if swingTimer > C.MIN_SWING_LOCK_TIME and not holdIsActive() then
-				stopSwing(true)
+			if st.swingTimer > C.MIN_SWING_LOCK_TIME and not st.holdIsActive() then
+				st.stopSwing(true)
 				return
 			end
 
-			swingTimer += dt
-			humanoid.PlatformStand = true
-			humanoid.AutoRotate = false
-			humanoid.Jump = false
+			st.swingTimer += dt
+			st.humanoid.PlatformStand = true
+			st.humanoid.AutoRotate = false
+			st.humanoid.Jump = false
 
-			local anchorWorld = anchorAttachment.WorldPosition
-			updateSwingRopeVisual(anchorWorld)
+			local anchorWorld = st.anchorAttachment.WorldPosition
+			st.updateSwingRopeVisual(anchorWorld)
 
-			local fromAnchor = hrp.Position - anchorWorld
+			local fromAnchor = st.hrp.Position - anchorWorld
 			local dist = fromAnchor.Magnitude
 			local radial = dist > 0.2 and fromAnchor.Unit or Vector3.new(0, 1, 0)
-			local ropeMax = math.max(activeRopeMaxLength or getRopeMaxLength(), C.ROPE_SAFE_MAX_MIN_LENGTH)
-			local speedCap = getMaxSwingSpeed() * (1 + swingMomentum * C.SWING_MOMENTUM_SPEED_BONUS)
+			local ropeMax = math.max(st.activeRopeMaxLength or getRopeMaxLength(), C.ROPE_SAFE_MAX_MIN_LENGTH)
+			local speedCap = getMaxSwingSpeed() * (1 + st.swingMomentum * C.SWING_MOMENTUM_SPEED_BONUS)
 			local extT = math.clamp(dist / math.max(ropeMax, 1), 0, 1.15)
-			local decay = math.clamp(swingTimer / C.FORCE_DECAY_TIME, 0, 1)
+			local decay = math.clamp(st.swingTimer / C.FORCE_DECAY_TIME, 0, 1)
 			local mult = 1 - decay * (1 - C.FORCE_MIN_MULT)
 			local ropeLiftForce = Vector3.new(0, 0, 0)
 
-			rayParams.FilterDescendantsInstances = { character }
+			st.rayParams.FilterDescendantsInstances = { st.character }
 			local groundHit =
-				workspace:Raycast(hrp.Position, Vector3.new(0, -C.SWING_GROUND_CLEARANCE * 1.8, 0), rayParams)
+				workspace:Raycast(st.hrp.Position, Vector3.new(0, -C.SWING_GROUND_CLEARANCE * 1.8, 0), st.rayParams)
 			if groundHit then
-				local groundGap = hrp.Position.Y - groundHit.Position.Y
+				local groundGap = st.hrp.Position.Y - groundHit.Position.Y
 				local horizontalVelocity = Vector3.new(velocity.X, 0, velocity.Z)
 				if groundGap < C.SWING_GROUND_CLEARANCE then
 					local liftAlpha =
 						math.clamp((C.SWING_GROUND_CLEARANCE - groundGap) / C.SWING_GROUND_CLEARANCE, 0, 1)
-					ropeLiftForce += Vector3.yAxis * C.SWING_GROUND_LIFT_FORCE * liftAlpha * hrp.AssemblyMass
+					ropeLiftForce += Vector3.yAxis * C.SWING_GROUND_LIFT_FORCE * liftAlpha * st.hrp.AssemblyMass
 					if velocity.Y < C.SWING_GROUND_MIN_UP_SPEED * liftAlpha then
 						velocity = Vector3.new(velocity.X, C.SWING_GROUND_MIN_UP_SPEED * liftAlpha, velocity.Z)
-						hrp.AssemblyLinearVelocity = velocity
+						st.hrp.AssemblyLinearVelocity = velocity
 					end
 					if groundGap < C.SWING_GROUND_HARD_CLEARANCE then
 						local lift = math.min(C.SWING_GROUND_HARD_CLEARANCE - groundGap + 0.12, 1.6)
-						hrp.CFrame += Vector3.new(0, lift, 0)
+						st.hrp.CFrame += Vector3.new(0, lift, 0)
 					end
-					lastGroundDragDebrisClock = spawnGroundDragDebris(hrp, groundHit, horizontalVelocity, lastGroundDragDebrisClock)
+					st.lastGroundDragDebrisClock = spawnGroundDragDebris(st.hrp, groundHit, horizontalVelocity, st.lastGroundDragDebrisClock)
 				end
 			end
 
-			if zipSpring then
-				local zipAlpha = math.clamp(1 - swingTimer / C.ZIP_PULL_TIME, 0, 1)
+			if st.zipSpring then
+				local zipAlpha = math.clamp(1 - st.swingTimer / C.ZIP_PULL_TIME, 0, 1)
 				if zipAlpha <= 0 then
-					zipSpring:Destroy()
-					zipSpring = nil
+					st.zipSpring:Destroy()
+					st.zipSpring = nil
 				else
-					zipSpring.MaxForce = hrp.AssemblyMass * C.ZIP_SPRING_MAX_ACCEL * C.ROPE_CATCH_FORCE_MULT * zipAlpha
+					st.zipSpring.MaxForce = st.hrp.AssemblyMass * C.ZIP_SPRING_MAX_ACCEL * C.ROPE_CATCH_FORCE_MULT * zipAlpha
 				end
 			end
 
-			ropeLiftForce, velocity, speed = updateSwingRopePhysics(
+			ropeLiftForce, velocity, speed = st.updateSwingRopePhysics(
 				dt,
 				ropeLiftForce,
 				velocity,
@@ -4786,10 +4876,10 @@ local function boot(character)
 				mult
 			)
 
-			local camLook = camera and camera.CFrame.LookVector or hrp.CFrame.LookVector
-			local camRight = camera and camera.CFrame.RightVector or hrp.CFrame.RightVector
-			local moveDir = humanoid.MoveDirection
-			local camFlat = flatUnit(camLook) or flatUnit(hrp.CFrame.LookVector)
+			local camLook = camera and camera.CFrame.LookVector or st.hrp.CFrame.LookVector
+			local camRight = camera and camera.CFrame.RightVector or st.hrp.CFrame.RightVector
+			local moveDir = st.humanoid.MoveDirection
+			local camFlat = flatUnit(camLook) or flatUnit(st.hrp.CFrame.LookVector)
 			local moveFlat = Vector3.new(moveDir.X, 0, moveDir.Z)
 			local moveFlatUnit = moveFlat.Magnitude > 0.05 and moveFlat.Unit or nil
 			if not moveFlatUnit then
@@ -4800,28 +4890,28 @@ local function boot(character)
 					moveFlat = Vector3.new(moveDir.X, 0, moveDir.Z)
 				end
 			end
-			local forwardInput = forwardInputAmount()
+			local forwardInput = st.forwardInputAmount()
 			if moveFlatUnit and forwardInput <= 0.08 and safeIsKeyDown(Enum.KeyCode.W) then
 				forwardInput = 1
 			end
 			if forwardInput > 0.08 then
-				forwardHoldTime += dt * forwardInput
-				forwardSwingCharge = math.min(1, forwardSwingCharge + dt * forwardInput / C.FORWARD_CHARGE_TIME)
+				st.forwardHoldTime += dt * forwardInput
+				st.forwardSwingCharge = math.min(1, st.forwardSwingCharge + dt * forwardInput / C.FORWARD_CHARGE_TIME)
 			else
-				forwardHoldTime = math.max(0, forwardHoldTime - dt * 0.55)
-				forwardSwingCharge = math.max(0, forwardSwingCharge - dt * 0.7)
+				st.forwardHoldTime = math.max(0, st.forwardHoldTime - dt * 0.55)
+				st.forwardSwingCharge = math.max(0, st.forwardSwingCharge - dt * 0.7)
 			end
 
 			if moveFlatUnit or forwardInput > 0.08 then
-				lastSwingInputClock = now
+				st.lastSwingInputClock = now
 			end
-			poseInputs.radial = radial
-			poseInputs.moveFlatUnit = moveFlatUnit
-			poseInputs.forwardInput = forwardInput
-			poseInputs.extT = extT
-			poseInputs.momentum = swingMomentum
+			st.poseInputs.radial = radial
+			st.poseInputs.moveFlatUnit = moveFlatUnit
+			st.poseInputs.forwardInput = forwardInput
+			st.poseInputs.extT = extT
+			st.poseInputs.momentum = st.swingMomentum
 
-			swingRhythmBoost = math.max(0, swingRhythmBoost - C.SWING_RHYTHM_DECAY_RATE * dt)
+			st.swingRhythmBoost = math.max(0, st.swingRhythmBoost - C.SWING_RHYTHM_DECAY_RATE * dt)
 			local pumpInputSign = 0
 			if camFlat and moveFlatUnit then
 				local inputDot = moveFlatUnit:Dot(camFlat)
@@ -4832,15 +4922,15 @@ local function boot(character)
 				end
 			end
 			if pumpInputSign ~= 0 then
-				if lastPumpInputSign ~= 0 and pumpInputSign ~= lastPumpInputSign then
-					local switchAge = now - lastPumpSwitchClock
+				if st.lastPumpInputSign ~= 0 and pumpInputSign ~= st.lastPumpInputSign then
+					local switchAge = now - st.lastPumpSwitchClock
 					if switchAge > 0.1 and switchAge < 1.25 then
 						local timing = 1 - math.clamp(math.abs(switchAge - 0.48) / 0.77, 0, 1)
-						swingRhythmBoost = math.min(1, swingRhythmBoost + 0.24 + timing * 0.2)
+						st.swingRhythmBoost = math.min(1, st.swingRhythmBoost + 0.24 + timing * 0.2)
 					end
-					lastPumpSwitchClock = now
+					st.lastPumpSwitchClock = now
 				end
-				lastPumpInputSign = pumpInputSign
+				st.lastPumpInputSign = pumpInputSign
 			end
 
 			local inputBias = Vector3.new(0, 0, 0)
@@ -4855,7 +4945,7 @@ local function boot(character)
 			local camSteerForce = Vector3.new(0, 0, 0)
 			if tangent.Magnitude > 0.05 then
 				local steerInputScale = 0.42 + math.clamp(moveDir.Magnitude, 0, 1) * 0.58
-				camSteerForce = tangent.Unit * getSteerForce() * mult * steerInputScale * hrp.AssemblyMass
+				camSteerForce = tangent.Unit * getSteerForce() * mult * steerInputScale * st.hrp.AssemblyMass
 			end
 
 			local arcDir = pendulumArcDir(radial)
@@ -4864,9 +4954,9 @@ local function boot(character)
 			local deadHangForce = Vector3.new(0, 0, 0)
 			local orbitInputForce = Vector3.new(0, 0, 0)
 			if arcDir then
-				local floorMult = floorScale(anchorWorld, ropeMax)
+				local floorMult = st.floorScale(anchorWorld, ropeMax)
 				local arcStrength = getArcForce() * mult * (0.42 + extT * 0.78) * floorMult
-				arcForce = arcDir * arcStrength * hrp.AssemblyMass
+				arcForce = arcDir * arcStrength * st.hrp.AssemblyMass
 
 				local tangVel = velocity - radial * velocity:Dot(radial)
 				local tangSpeed = tangVel.Magnitude
@@ -4877,10 +4967,10 @@ local function boot(character)
 						* C.DEAD_HANG_MOVE_FORCE
 						* (0.35 + lowSpeedBoost * 0.65)
 						* mult
-						* hrp.AssemblyMass
-					swingMomentum = math.min(
+						* st.hrp.AssemblyMass
+					st.swingMomentum = math.min(
 						1,
-						swingMomentum
+						st.swingMomentum
 							+ C.SWING_DEAD_HANG_MOMENTUM_BUILD_RATE
 								* moveTangent.Magnitude
 								* (0.25 + lowSpeedBoost * 0.75)
@@ -4895,23 +4985,23 @@ local function boot(character)
 
 				local movingWithArc = tangVel.Magnitude > 4 and tangVel:Dot(arcDir) > 0
 				local pumpQuality = 0
-				local rhythmQuality = swingRhythmBoost * (0.35 + math.abs(moveAlongTangent) * 0.65)
+				local rhythmQuality = st.swingRhythmBoost * (0.35 + math.abs(moveAlongTangent) * 0.65)
 				local lowSpeedPump = 1 - math.clamp(tangSpeed / 30, 0, 1)
 				if moveTangent.Magnitude > 0.05 then
 					local orbitGrip = 0.58 + math.clamp(moveAlongTangent, -0.25, 1) * 0.22
-					orbitGrip += lowSpeedPump * 0.25 + swingRhythmBoost * 0.18
+					orbitGrip += lowSpeedPump * 0.25 + st.swingRhythmBoost * 0.18
 					orbitInputForce = moveTangent.Unit
 						* C.SWING_INPUT_ORBIT_FORCE
 						* math.clamp(orbitGrip, 0.35, 1.25)
 						* mult
-						* hrp.AssemblyMass
+						* st.hrp.AssemblyMass
 				end
 				if movingWithArc and moveFlatUnit then
 					pumpQuality = math.max(pumpQuality, 0.35)
 				end
 				if moveFlatUnit then
 					pumpQuality = math.max(pumpQuality, math.clamp(moveAlongTangent, 0, 1))
-					if moveAlongTangent < -0.12 and (tangSpeed < targetTangSpeed * 0.58 or swingRhythmBoost > 0.12) then
+					if moveAlongTangent < -0.12 and (tangSpeed < targetTangSpeed * 0.58 or st.swingRhythmBoost > 0.12) then
 						local reversalQuality = math.abs(moveAlongTangent) * (0.35 + lowSpeedPump * 0.65)
 						pumpQuality = math.max(pumpQuality, reversalQuality * 0.72 + rhythmQuality * 0.55)
 					else
@@ -4927,25 +5017,25 @@ local function boot(character)
 						+ C.SWING_MOMENTUM_FORWARD_BUILD_RATE * forwardInput
 						+ C.SWING_RHYTHM_BUILD_RATE * rhythmQuality
 					) * dt
-					swingMomentum = math.min(1, swingMomentum + build)
+					st.swingMomentum = math.min(1, st.swingMomentum + build)
 				elseif not moveFlatUnit or tangSpeed < 5 then
-					swingMomentum = math.max(0, swingMomentum - C.SWING_MOMENTUM_IDLE_DECAY_RATE * dt)
+					st.swingMomentum = math.max(0, st.swingMomentum - C.SWING_MOMENTUM_IDLE_DECAY_RATE * dt)
 				elseif moveAlongTangent < -0.2 then
-					if tangSpeed < targetTangSpeed * 0.62 or swingRhythmBoost > 0.12 then
+					if tangSpeed < targetTangSpeed * 0.62 or st.swingRhythmBoost > 0.12 then
 						local reversalBuild = C.SWING_REVERSAL_BUILD_RATE
 							* math.abs(moveAlongTangent)
-							* (0.35 + lowSpeedPump * 0.65 + swingRhythmBoost * 0.35)
+							* (0.35 + lowSpeedPump * 0.65 + st.swingRhythmBoost * 0.35)
 							* dt
-						swingMomentum = math.min(1, swingMomentum + reversalBuild)
+						st.swingMomentum = math.min(1, st.swingMomentum + reversalBuild)
 					else
-						swingMomentum = math.max(
+						st.swingMomentum = math.max(
 							0,
-							swingMomentum
+							st.swingMomentum
 								- C.SWING_MOMENTUM_BAD_INPUT_DECAY_RATE * math.abs(moveAlongTangent) * 0.38 * dt
 						)
 					end
 				else
-					swingMomentum = math.max(0, swingMomentum - C.SWING_MOMENTUM_BAD_INPUT_DECAY_RATE * 0.28 * dt)
+					st.swingMomentum = math.max(0, st.swingMomentum - C.SWING_MOMENTUM_BAD_INPUT_DECAY_RATE * 0.28 * dt)
 				end
 
 				if tangSpeed < targetTangSpeed and extT > 0.28 then
@@ -4957,56 +5047,56 @@ local function boot(character)
 					pumpForce = pumpDir
 						* deficit
 						* getSpeedPump()
-						* (1 + forwardInput * 0.3 + swingMomentum * 0.22)
+						* (1 + forwardInput * 0.3 + st.swingMomentum * 0.22)
 						* mult
-						* hrp.AssemblyMass
+						* st.hrp.AssemblyMass
 						* 0.02
-					if moveTangent.Magnitude > 0.05 and swingRhythmBoost > 0.03 then
-						pumpForce += moveTangent.Unit * C.SWING_RHYTHM_FORCE * swingRhythmBoost * (0.45 + math.abs(
+					if moveTangent.Magnitude > 0.05 and st.swingRhythmBoost > 0.03 then
+						pumpForce += moveTangent.Unit * C.SWING_RHYTHM_FORCE * st.swingRhythmBoost * (0.45 + math.abs(
 							moveAlongTangent
-						) * 0.55) * mult * hrp.AssemblyMass
+						) * 0.55) * mult * st.hrp.AssemblyMass
 					end
 					if
 						moveTangent.Magnitude > 0.05
 						and moveAlongTangent < -0.12
-						and (tangSpeed < targetTangSpeed * 0.62 or swingRhythmBoost > 0.12)
+						and (tangSpeed < targetTangSpeed * 0.62 or st.swingRhythmBoost > 0.12)
 					then
-						pumpForce += moveTangent.Unit * C.SWING_REVERSAL_FORCE * math.abs(moveAlongTangent) * (0.35 + lowSpeedPump * 0.65) * mult * hrp.AssemblyMass
+						pumpForce += moveTangent.Unit * C.SWING_REVERSAL_FORCE * math.abs(moveAlongTangent) * (0.35 + lowSpeedPump * 0.65) * mult * st.hrp.AssemblyMass
 					end
 				end
 
 				if floorMult < 0.3 and velocity.Y < -10 then
-					hrp.AssemblyLinearVelocity = Vector3.new(velocity.X, velocity.Y * 0.84, velocity.Z)
+					st.hrp.AssemblyLinearVelocity = Vector3.new(velocity.X, velocity.Y * 0.84, velocity.Z)
 				end
 			else
 				if moveTangent.Magnitude > 0.05 then
-					lastSwingInputClock = now
+					st.lastSwingInputClock = now
 
-					deadHangForce = moveTangent.Unit * C.DEAD_HANG_MOVE_FORCE * 0.72 * mult * hrp.AssemblyMass
-					swingMomentum =
-						math.min(1, swingMomentum + C.SWING_DEAD_HANG_MOMENTUM_BUILD_RATE * moveTangent.Magnitude * dt)
+					deadHangForce = moveTangent.Unit * C.DEAD_HANG_MOVE_FORCE * 0.72 * mult * st.hrp.AssemblyMass
+					st.swingMomentum =
+						math.min(1, st.swingMomentum + C.SWING_DEAD_HANG_MOMENTUM_BUILD_RATE * moveTangent.Magnitude * dt)
 				else
 					-- No input: keep the swing flowing, then slowly bleed speed away.
-					swingMomentum = math.max(0, swingMomentum - C.SWING_MOMENTUM_IDLE_DECAY_RATE * 0.32 * dt)
+					st.swingMomentum = math.max(0, st.swingMomentum - C.SWING_MOMENTUM_IDLE_DECAY_RATE * 0.32 * dt)
 
 					local tangVelocity = velocity - radial * velocity:Dot(radial)
 					local tangSpeed = tangVelocity.Magnitude
 
 					if tangSpeed > C.SWING_IDLE_FLOW_MIN_SPEED then
-						deadHangForce = -tangVelocity * C.SWING_IDLE_FLOW_DAMPING * hrp.AssemblyMass
-					elseif now - lastSwingInputClock > C.SWING_IDLE_SWAY_DELAY and arcDir then
+						deadHangForce = -tangVelocity * C.SWING_IDLE_FLOW_DAMPING * st.hrp.AssemblyMass
+					elseif now - st.lastSwingInputClock > C.SWING_IDLE_SWAY_DELAY and arcDir then
 						deadHangForce = arcDir
 							* math.sin(now * C.SWING_IDLE_SWAY_SPEED)
 							* C.SWING_IDLE_SWAY_FORCE
 							* mult
-							* hrp.AssemblyMass
+							* st.hrp.AssemblyMass
 					end
 				end
 			end
 
 			local arcWeight = 0.36 + math.clamp((extT - 0.25) / 0.75, 0, 1) * 0.56
-			if steerForce then
-				steerForce.Force = camSteerForce * (1 - arcWeight * 0.45)
+			if st.steerForce then
+				st.steerForce.Force = camSteerForce * (1 - arcWeight * 0.45)
 					+ arcForce
 					+ pumpForce
 					+ deadHangForce
@@ -5014,8 +5104,8 @@ local function boot(character)
 					+ ropeLiftForce
 			end
 
-			if swingOrientation then
-				local currentFace = flatUnit(hrp.CFrame.LookVector)
+			if st.swingOrientation then
+				local currentFace = flatUnit(st.hrp.CFrame.LookVector)
 				local flatVel = Vector3.new(velocity.X, 0, velocity.Z)
 				local desiredUnit = nil
 				if moveFlatUnit then
@@ -5038,125 +5128,128 @@ local function boot(character)
 						turnRate += 8
 					end
 					local faceAlpha = math.clamp(dt * turnRate, 0, 1)
-					if swingFaceDir and swingFaceDir.Magnitude > 0.05 then
-						swingFaceDir = swingFaceDir:Lerp(desiredUnit, faceAlpha)
+					if st.swingFaceDir and st.swingFaceDir.Magnitude > 0.05 then
+						st.swingFaceDir = st.swingFaceDir:Lerp(desiredUnit, faceAlpha)
 					else
-						swingFaceDir = desiredUnit
+						st.swingFaceDir = desiredUnit
 					end
 
-					if swingFaceDir.Magnitude > 0.05 then
-						local faceCFrame = CFrame.lookAt(hrp.Position, hrp.Position + swingFaceDir.Unit)
+					if st.swingFaceDir.Magnitude > 0.05 then
+						local faceCFrame = CFrame.lookAt(st.hrp.Position, st.hrp.Position + st.swingFaceDir.Unit)
 						local tangVelocity = velocity - radial * velocity:Dot(radial)
 						local leanPower = math.clamp(
-							tangVelocity.Magnitude / math.max(speedCap, 1) + swingMomentum * 0.45 + extT * 0.18,
+							tangVelocity.Magnitude / math.max(speedCap, 1) + st.swingMomentum * 0.45 + extT * 0.18,
 							0,
 							1.25
 						)
 
-						swingOrientation.Responsiveness = C.AVATAR_TURN_RESPONSIVENESS
+						st.swingOrientation.Responsiveness = C.AVATAR_TURN_RESPONSIVENESS
 							+ (quickTurn and 18 or 0)
 							+ math.floor(leanPower * 8)
-						swingOrientation.MaxTorque = hrp.AssemblyMass * 22000
-						swingOrientation.CFrame = faceCFrame
+						st.swingOrientation.MaxTorque = st.hrp.AssemblyMass * 22000
+						st.swingOrientation.CFrame = faceCFrame
 					end
 				end
 			end
 
-			hrp.AssemblyAngularVelocity = hrp.AssemblyAngularVelocity * math.exp(-C.ANGULAR_DAMP * dt)
+			st.hrp.AssemblyAngularVelocity = st.hrp.AssemblyAngularVelocity * math.exp(-C.ANGULAR_DAMP * dt)
 			if speed > speedCap then
-				hrp.AssemblyLinearVelocity = velocity.Unit * speedCap
+				st.hrp.AssemblyLinearVelocity = velocity.Unit * speedCap
 			end
 
-			swingCharge = math.min(1, swingCharge + dt / C.CHARGE_TIME)
-			layoutCharge()
+			st.swingCharge = math.min(1, st.swingCharge + dt / C.CHARGE_TIME)
+			st.layoutCharge()
 		else
-			poseInputs.radial = nil
-			poseInputs.moveFlatUnit = nil
-			poseInputs.forwardInput = 0
-			poseInputs.extT = 0
-			poseInputs.momentum = 0
+			st.poseInputs.radial = nil
+			st.poseInputs.moveFlatUnit = nil
+			st.poseInputs.forwardInput = 0
+			st.poseInputs.extT = 0
+			st.poseInputs.momentum = 0
 
-			if isLaunched then
-				releaseStyle.step(now, dt, isLaunched, isSwinging, lastLaunchClock)
+			if st.isLaunched then
+				st.releaseStyle.step(now, dt, st.isLaunched, st.isSwinging, st.lastLaunchClock)
 			end
 
-			if holdIsActive() then
-				tryAttach()
+			if st.holdIsActive() then
+				st.tryAttach()
 			end
 
 			local scanMode = "none"
-			if isAirborneForSwing() then
+			if st.isAirborneForSwing() then
 				scanMode = "air"
-			elseif isGroundedForSwing() then
+			elseif st.isGroundedForSwing() then
 				scanMode = "ground"
 			end
 
 			if scanMode == "none" then
-				hideSwingTargetUi()
+				st.hideSwingTargetUi()
 			else
-				local needsScan = scanMode ~= lastTargetScanMode
-					or now - lastTargetScanClock >= C.TARGET_SCAN_INTERVAL
-					or (scannedVisualTarget ~= nil and not scannedVisualTarget.Parent)
+				local needsScan = scanMode ~= st.lastTargetScanMode
+					or now - st.lastTargetScanClock >= C.TARGET_SCAN_INTERVAL
+					or (st.scannedVisualTarget ~= nil and not st.scannedVisualTarget.Parent)
+					or (not st.targetVisualShown and st.scannedVisualTarget == nil)
 
 				if needsScan then
-					lastTargetScanClock = now
-					lastTargetScanMode = scanMode
+					st.lastTargetScanClock = now
+					st.lastTargetScanMode = scanMode
+					local scanLimits = st.getSwingAttachLimits()
+					local scanDistance, scanLookDot, scanScreenLimit = scanLimits
 					if scanMode == "air" then
-						if isHrpInSafezone() then
-							scannedVisualTarget, scannedVisualCanSwing =
-								pickVisualSwingTarget(0, C.SAFEZONE_BLOCKED_UI_RANGE, highlightedTarget, true)
+						if st.isHrpInSafezone() then
+							st.scannedVisualTarget, st.scannedVisualCanSwing =
+								st.pickVisualSwingTarget(0, C.SAFEZONE_BLOCKED_UI_RANGE, st.highlightedTarget, true, scanLookDot, scanScreenLimit)
 						else
-							scannedVisualTarget, scannedVisualCanSwing =
-								pickVisualSwingTarget(getSwingRange(), getSwingRange(), highlightedTarget)
+							st.scannedVisualTarget, st.scannedVisualCanSwing =
+								st.pickVisualSwingTarget(scanDistance, scanDistance, st.highlightedTarget, false, scanLookDot, scanScreenLimit)
 						end
 					else
-						if isHrpInSafezone() then
-							scannedVisualTarget, scannedVisualCanSwing =
-								pickVisualSwingTarget(0, C.SAFEZONE_BLOCKED_UI_RANGE, highlightedTarget, true)
+						if st.isHrpInSafezone() then
+							st.scannedVisualTarget, st.scannedVisualCanSwing =
+								st.pickVisualSwingTarget(0, C.SAFEZONE_BLOCKED_UI_RANGE, st.highlightedTarget, true, scanLookDot, scanScreenLimit)
 						else
-							scannedVisualTarget, scannedVisualCanSwing =
-								pickVisualSwingTarget(C.GROUNDED_READY_RANGE, C.GROUNDED_READY_RANGE, highlightedTarget)
+							st.scannedVisualTarget, st.scannedVisualCanSwing =
+								st.pickVisualSwingTarget(scanDistance, scanDistance, st.highlightedTarget, false, scanLookDot, scanScreenLimit)
 						end
 					end
 					if
-						scannedVisualTarget ~= lastVisualTarget
-						or scannedVisualCanSwing ~= lastVisualCanSwing
-						or targetVisualShown ~= (scannedVisualTarget ~= nil)
+						st.scannedVisualTarget ~= st.lastVisualTarget
+						or st.scannedVisualCanSwing ~= st.lastVisualCanSwing
+						or st.targetVisualShown ~= (st.scannedVisualTarget ~= nil)
 					then
-						updateTargetVisual(scannedVisualTarget, scannedVisualCanSwing)
+						st.updateTargetVisual(st.scannedVisualTarget, st.scannedVisualCanSwing)
 					end
 				end
 			end
 		end
 
-		stepTargetVisual(dt)
+		st.stepTargetVisual(dt)
 
-		local trailOn = (isSwinging or isLaunched or isAirborneForSwing()) and (speed > 62 or velocity.Y < -78)
-		setTrailsEnabled(trailOn)
+		local trailOn = (st.isSwinging or st.isLaunched or st.isAirborneForSwing()) and (speed > 62 or velocity.Y < -78)
+		st.setTrailsEnabled(trailOn)
 
 		if camera then
-			local targetFov = originalFov
-			if isSwinging or isLaunched then
+			local targetFov = st.originalFov
+			if st.isSwinging or st.isLaunched then
 				local t = math.clamp(speed / math.max(getMaxSwingSpeed(), 1), 0, 1)
-				targetFov = originalFov + (C.FOV_MAX - originalFov) * t
+				targetFov = st.originalFov + (C.FOV_MAX - st.originalFov) * t
 			end
 
-			local attachAge = os.clock() - lastAttachClock
-			if isSwinging and attachAge >= 0 and attachAge < C.ATTACH_FOV_TIME then
+			local attachAge = os.clock() - st.lastAttachClock
+			if st.isSwinging and attachAge >= 0 and attachAge < C.ATTACH_FOV_TIME then
 				local u = attachAge / C.ATTACH_FOV_TIME
 				targetFov -= C.ATTACH_FOV_PUNCH * math.sin(u * math.pi)
 			end
 
-			local launchAge = os.clock() - lastLaunchClock
+			local launchAge = os.clock() - st.lastLaunchClock
 			if launchAge >= 0 and launchAge < C.LAUNCH_FOV_TIME then
 				local u = 1 - launchAge / C.LAUNCH_FOV_TIME
 				targetFov += C.LAUNCH_FOV_BOOST * u * u
 			end
 
-			local landingAge = os.clock() - lastLandingClock
+			local landingAge = os.clock() - st.lastLandingClock
 			if landingAge >= 0 and landingAge < C.LANDING_FOV_TIME then
 				local u = 1 - landingAge / C.LANDING_FOV_TIME
-				targetFov -= C.LANDING_FOV_KICK * u * u * landingShakeStrength
+				targetFov -= C.LANDING_FOV_KICK * u * u * st.landingShakeStrength
 			end
 
 			camera.FieldOfView += (targetFov - camera.FieldOfView) * math.min(dt * C.FOV_SPEED, 1)
@@ -5165,42 +5258,42 @@ local function boot(character)
 
 	return function()
 		pcall(function()
-			RunService:UnbindFromRenderStep(renderBindName)
+			RunService:UnbindFromRenderStep(st.renderBindName)
 		end)
-		for _, conn in ipairs(conns) do
+		for _, conn in ipairs(st.conns) do
 			conn:Disconnect()
 		end
-		table.clear(conns)
-		if isSwinging then
-			stopSwing(false)
+		table.clear(st.conns)
+		if st.isSwinging then
+			st.stopSwing(false)
 		end
-		releaseStyle.cancel()
-		swingPose.clear()
-		destroySwingObjects()
-		destroyPreview(true)
-		if targetHighlight then
-			targetHighlight:Destroy()
-			targetHighlight = nil
-			targetHighlightAdornee = nil
+		st.releaseStyle.cancel()
+		st.swingPose.clear()
+		st.destroySwingObjects()
+		st.destroyPreview(true)
+		if st.targetHighlight then
+			st.targetHighlight:Destroy()
+			st.targetHighlight = nil
+			st.targetHighlightAdornee = nil
 		end
-		if targetHighlightProxyPart then
-			targetHighlightProxyPart:Destroy()
-			targetHighlightProxyPart = nil
+		if st.targetHighlightProxyPart then
+			st.targetHighlightProxyPart:Destroy()
+			st.targetHighlightProxyPart = nil
 		end
-		cleanupWorkspaceHelpersByName("SwingTargetHighlightProxy", nil)
-		cleanupWorkspaceHelpersByName("SwingTargetHighlight", nil)
-		if markerGui then
-			markerGui:Destroy()
-			markerGui = nil
+		st.cleanupWorkspaceHelpersByName("SwingTargetHighlightProxy", nil)
+		st.cleanupWorkspaceHelpersByName("SwingTargetHighlight", nil)
+		if st.markerGui then
+			st.markerGui:Destroy()
+			st.markerGui = nil
 		end
-		if markerAnchorPart then
-			markerAnchorPart:Destroy()
-			markerAnchorPart = nil
+		if st.markerAnchorPart then
+			st.markerAnchorPart:Destroy()
+			st.markerAnchorPart = nil
 		end
-		cleanupWorkspaceHelpersByName("SwingMarkerAnchor", nil)
-		cleanupWorkspaceHelpersByName("SwingPreviewAnchor", nil)
-		setTrailsEnabled(false)
-		for _, trail in ipairs(trails) do
+		st.cleanupWorkspaceHelpersByName("SwingMarkerAnchor", nil)
+		st.cleanupWorkspaceHelpersByName("SwingPreviewAnchor", nil)
+		st.setTrailsEnabled(false)
+		for _, trail in ipairs(st.trails) do
 			if trail and trail.Parent then
 				local a0 = trail.Attachment0
 				local a1 = trail.Attachment1
@@ -5213,15 +5306,15 @@ local function boot(character)
 				end
 			end
 		end
-		stopHangAnim(0)
-		stopFallingAnim()
-		stopTrack(landedTrack, 0.12)
+		st.stopHangAnim(0)
+		st.stopFallingAnim()
+		st.stopTrack(st.landedTrack, 0.12)
 		stopOptionalSound("Wind")
 		pcall(function()
-			humanoid.PlatformStand = false
-			humanoid.AutoRotate = true
+			st.humanoid.PlatformStand = false
+			st.humanoid.AutoRotate = true
 		end)
-		pcall(resetFovNow)
+		pcall(st.resetFovNow)
 	end
 end
 

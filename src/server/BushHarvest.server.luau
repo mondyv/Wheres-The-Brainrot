@@ -25,6 +25,7 @@ local BrainrotHeader = require(Modules:WaitForChild("BrainrotHeader"))
 local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local PlotLuck = SwingUpgrades.PlotLuck
@@ -482,6 +483,13 @@ local function findFirstTemplateByModelName(root: Folder, modelName: string): Mo
 	if Brainrots.isRetiredBrainrotName(modelName) then
 		return nil
 	end
+	local aliasName = Brainrots.resolveStorageFolderName(modelName)
+	if aliasName ~= modelName then
+		local aliasTemplate = findFirstTemplateByModelName(root, aliasName)
+		if aliasTemplate then
+			return aliasTemplate
+		end
+	end
 	local nameFolder = root:FindFirstChild(modelName)
 	if nameFolder and nameFolder:IsA("Folder") and not Brainrots.isRetiredBrainrotInstance(nameFolder) then
 		local normal = nameFolder:FindFirstChild("Normal")
@@ -565,6 +573,13 @@ local function enrichEntryFromBrainrotsFolder(root: Folder?, entry: BrainrotInvE
 		template = findFirstTemplateByModelName(root, entry.name)
 	end
 	if not template then
+		if entry.icon == "" then
+			local mutationId = if entry.mutation ~= "" then entry.mutation else "normal"
+			entry.icon = IndexService.getIconFor(entry.name, mutationId)
+		end
+		if entry.icon == "" then
+			entry.icon = BrainrotsConfig:GetNormalIcon(entry.name)
+		end
 		return
 	end
 	if entry.sourcePath == "" then
@@ -573,6 +588,13 @@ local function enrichEntryFromBrainrotsFolder(root: Folder?, entry: BrainrotInvE
 	local icon = pickIconFromTemplateModel(template)
 	if icon ~= "" then
 		entry.icon = icon
+	end
+	if entry.icon == "" then
+		local mutationId = if entry.mutation ~= "" then entry.mutation else "normal"
+		entry.icon = IndexService.getIconFor(entry.name, mutationId)
+	end
+	if entry.icon == "" then
+		entry.icon = BrainrotsConfig:GetNormalIcon(entry.name)
 	end
 	local parent = template.Parent
 	local templateName = template.Name
@@ -2446,14 +2468,26 @@ local function hookDepositPart(part: BasePart)
 end
 
 local function ensureSpawnRedWallDepositHooks(root: Instance)
-	for _, d in root:GetDescendants() do
-		if d:IsA("BasePart") and (d.Name == "RedWall" or d.Name == "RedPart") then
-			if not CollectionService:HasTag(d, DEPOSIT_TAG) then
-				CollectionService:AddTag(d, DEPOSIT_TAG)
+	task.spawn(function()
+		local stack = { root }
+		local processed = 0
+		while #stack > 0 do
+			local d = table.remove(stack)
+			if d:IsA("BasePart") and (d.Name == "RedWall" or d.Name == "RedPart") then
+				if not CollectionService:HasTag(d, DEPOSIT_TAG) then
+					CollectionService:AddTag(d, DEPOSIT_TAG)
+				end
+				hookDepositPart(d)
 			end
-			hookDepositPart(d)
+			for _, child in d:GetChildren() do
+				table.insert(stack, child)
+			end
+			processed += 1
+			if processed % 400 == 0 then
+				task.wait()
+			end
 		end
-	end
+	end)
 end
 
 for _, inst in CollectionService:GetTagged(DEPOSIT_TAG) do

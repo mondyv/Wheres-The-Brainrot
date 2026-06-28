@@ -111,7 +111,12 @@ end
 
 local function hideLocalCharacter(character: Model)
 	local saved: { [BasePart]: number } = {}
+	local scanned = 0
 	for _, desc in character:GetDescendants() do
+		scanned += 1
+		if scanned % 400 == 0 then
+			task.wait()
+		end
 		if desc:IsA("BasePart") then
 			saved[desc] = desc.LocalTransparencyModifier
 			desc.LocalTransparencyModifier = 1
@@ -704,7 +709,12 @@ local function parseMoonFramesFolder(framesFolder: Instance): { CFrame }
 	local seenAtKey: { [number]: boolean } = {}
 	local sequence = 0
 
+	local scanned = 0
 	for _, desc in framesFolder:GetDescendants() do
+		scanned += 1
+		if scanned % 400 == 0 then
+			task.wait()
+		end
 		if not desc:IsA("CFrameValue") or SKIP_MOON_FRAME_NAMES[desc.Name] then
 			continue
 		end
@@ -748,7 +758,12 @@ local function collectMoonCFramesFromRoot(root: Instance, framesFolder: Instance
 	local sequence = 0
 	local sortRoot = framesFolder or root
 
+	local scanned = 0
 	for _, desc in root:GetDescendants() do
+		scanned += 1
+		if scanned % 400 == 0 then
+			task.wait()
+		end
 		if not desc:IsA("CFrameValue") or SKIP_MOON_FRAME_NAMES[desc.Name] then
 			continue
 		end
@@ -1156,7 +1171,12 @@ local function resolveLoadingScreenGui(playerGui: PlayerGui): ScreenGui?
 			return cloned
 		end
 
+		local scanned = 0
 		for _, desc in playerGui:GetDescendants() do
+			scanned += 1
+			if scanned % 400 == 0 then
+				task.wait()
+			end
 			if desc.Name == "LoadingScreen" and desc:IsA("ScreenGui") then
 				return desc
 			end
@@ -1613,25 +1633,34 @@ function M.showEarly()
 		pcall(function()
 			loadingGui.ScreenInsets = Enum.ScreenInsets.None
 		end)
-
-		enterLoadingIsolation(playerGui)
-		prepareGameplayUIBeforeReveal(playerGui)
-		bootstrapLoadingVisuals(loadingGui, player)
-		return
+	else
+		-- No LoadingScreen GUI yet — still block the default gameplay camera immediately.
+		local camera = Workspace.CurrentCamera
+		if camera then
+			camera.CameraType = Enum.CameraType.Scriptable
+			local loadingCFrame = defaultLoadingCFrame()
+			camera.CFrame = loadingCFrame
+			camera.Focus = loadingCFrame
+			camera.CameraSubject = nil
+		end
 	end
 
-	-- No LoadingScreen GUI yet — still block the default gameplay camera immediately.
-	local camera = Workspace.CurrentCamera
-	if camera then
-		camera.CameraType = Enum.CameraType.Scriptable
-		local loadingCFrame = defaultLoadingCFrame()
-		camera.CFrame = loadingCFrame
-		camera.Focus = loadingCFrame
-		camera.CameraSubject = nil
-	end
-	ensureLoadingBlur()
-	bindCharacterHideWhileLoading(player)
-	earlyVisualsReady = true
+	enterLoadingIsolation(playerGui)
+
+	local guiForBootstrap = loadingGui
+	task.defer(function()
+		if not loadingActive then
+			return
+		end
+		if guiForBootstrap then
+			prepareGameplayUIBeforeReveal(playerGui)
+			bootstrapLoadingVisuals(guiForBootstrap, player)
+		else
+			ensureLoadingBlur()
+			bindCharacterHideWhileLoading(player)
+			earlyVisualsReady = true
+		end
+	end)
 end
 
 function M.run()

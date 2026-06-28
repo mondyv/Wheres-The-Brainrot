@@ -16,14 +16,17 @@ type TrapState = {
 	anchorWorld: Vector3,
 	outwardDir: Vector3,
 	slideDir: Vector3,
+	trapRotation: CFrame,
 	slideProgress: number,
 	maxSlide: number,
 	heartbeatConn: RBXScriptConnection?,
 	diedConn: RBXScriptConnection?,
+	alignPos: AlignPosition?,
+	alignOri: AlignOrientation?,
+	rootAttachment: Attachment?,
 	originalWalkSpeed: number,
 	originalJumpHeight: number,
 	originalAutoRotate: boolean,
-	disabledStates: { Enum.HumanoidStateType },
 }
 
 local trappedByPlayer: { [Player]: TrapState } = {}
@@ -62,18 +65,32 @@ local function computeSlideDir(webPart: BasePart, outward: Vector3): Vector3
 	return slide.Unit
 end
 
-local function computeOutward(webPart: BasePart, hitPosition: Vector3, hrp: BasePart): Vector3
-	local toPlayer = hrp.Position - hitPosition
+local function computeOutward(webPart: BasePart, hrp: BasePart): Vector3
+	local toPlayer = hrp.Position - webPart.Position
 	local flattened = toPlayer - webPart.CFrame.UpVector * toPlayer:Dot(webPart.CFrame.UpVector)
 	if flattened.Magnitude > 0.35 then
 		return flattened.Unit
 	end
-	local fromCenter = hrp.Position - webPart.Position
-	flattened = fromCenter - webPart.CFrame.UpVector * fromCenter:Dot(webPart.CFrame.UpVector)
+	flattened = hrp.CFrame.LookVector - webPart.CFrame.UpVector * hrp.CFrame.LookVector:Dot(webPart.CFrame.UpVector)
 	if flattened.Magnitude > 0.35 then
 		return flattened.Unit
 	end
 	return webPart.CFrame.LookVector.Unit
+end
+
+local function buildTrapRotation(outward: Vector3): CFrame
+	local look = outward
+	local up = Vector3.yAxis
+	if math.abs(look:Dot(up)) > 0.92 then
+		up = Vector3.new(0, 0, -1)
+	end
+	local right = up:Cross(look)
+	if right.Magnitude < 0.05 then
+		right = Vector3.new(1, 0, 0)
+	end
+	right = right.Unit
+	local stableUp = look:Cross(right).Unit
+	return CFrame.fromMatrix(Vector3.zero, right, stableUp)
 end
 
 local function setHumanoidTrapped(humanoid: Humanoid, trapped: boolean, state: TrapState?)
@@ -103,6 +120,53 @@ local function setHumanoidTrapped(humanoid: Humanoid, trapped: boolean, state: T
 	end
 end
 
+local function destroyConstraints(state: TrapState)
+	if state.alignPos then
+		state.alignPos:Destroy()
+		state.alignPos = nil
+	end
+	if state.alignOri then
+		state.alignOri:Destroy()
+		state.alignOri = nil
+	end
+	if state.rootAttachment then
+		state.rootAttachment:Destroy()
+		state.rootAttachment = nil
+	end
+end
+
+local function createConstraints(hrp: BasePart, state: TrapState)
+	destroyConstraints(state)
+
+	local att = Instance.new("Attachment")
+	att.Name = "WebTrapAttachment"
+	att.Parent = hrp
+	state.rootAttachment = att
+
+	local alignPos = Instance.new("AlignPosition")
+	alignPos.Name = "WebTrapAlignPosition"
+	alignPos.Mode = Enum.PositionAlignmentMode.OneAttachment
+	alignPos.Attachment0 = att
+	alignPos.RigidityEnabled = true
+	alignPos.Responsiveness = 200
+	alignPos.MaxForce = 500_000
+	alignPos.MaxVelocity = WebTrapConfig.SLIDE_SPEED + 2
+	alignPos.Position = state.anchorWorld
+	alignPos.Parent = hrp
+	state.alignPos = alignPos
+
+	local alignOri = Instance.new("AlignOrientation")
+	alignOri.Name = "WebTrapAlignOrientation"
+	alignOri.Mode = Enum.OrientationAlignmentMode.OneAttachment
+	alignOri.Attachment0 = att
+	alignOri.RigidityEnabled = true
+	alignOri.Responsiveness = 200
+	alignOri.MaxTorque = 500_000
+	alignOri.CFrame = state.trapRotation + state.anchorWorld
+	alignOri.Parent = hrp
+	state.alignOri = alignOri
+end
+
 local function releaseTrap(player: Player)
 	local state = trappedByPlayer[player]
 	if not state then
@@ -123,6 +187,8 @@ local function releaseTrap(player: Player)
 		state.diedConn = nil
 	end
 
+	destroyConstraints(state)
+
 	player:SetAttribute(WebTrapConfig.TRAPPED_ATTR, false)
 
 	local character = player.Character
@@ -135,16 +201,25 @@ local function releaseTrap(player: Player)
 	end
 end
 
-local function updateTrapPose(player: Player, state: TrapState, hrp: BasePart)
-	local worldPos = state.anchorWorld + state.slideDir * state.slideProgress
-	local lookTarget = worldPos + state.outwardDir
-	local targetCf = CFrame.lookAt(worldPos, lookTarget)
-	hrp.CFrame = targetCf
-	hrp.AssemblyLinearVelocity = Vector3.zero
-	hrp.AssemblyAngularVelocity = Vector3.zero
+local function zeroCharacterMotion(character: Model, root: BasePart)
+	root.AssemblyLinearVelocity = Vector3.zero
+	root.AssemblyAngularVelocity = Vector3.zero
+	for _, part in character:GetDescendants() do
+		if part:IsA("BasePart") and part ~= root then
+			part.AssemblyLinearVelocity = Vector3.zero
+			part.AssemblyAngularVelocity = Vector3.zero
+		end
+	end
 end
 
-local function beginTrap(player: Player, webPart: BasePart, hitPosition: Vector3)
+local function updateTrapTarget(state: TrapState)
+	local worldPos = state.anchorWorld + state.slideDir * state.slideProgress
+	if state.alignPos then
+		state.alignPos.Position = worldPos
+	end
+end
+
+local function beginTrap(player: Player, webPart: BasePart)
 	if trappedByPlayer[player] then
 		return
 	end
@@ -164,29 +239,35 @@ local function beginTrap(player: Player, webPart: BasePart, hitPosition: Vector3
 		return
 	end
 
-	local outward = computeOutward(webPart, hitPosition, hrp)
+	local outward = computeOutward(webPart, hrp)
 	local slideDir = computeSlideDir(webPart, outward)
-	local anchorWorld = hitPosition - outward * WebTrapConfig.STICK_OFFSET
+	local anchorWorld = hrp.Position - outward * WebTrapConfig.STICK_OFFSET
+	local trapRotation = buildTrapRotation(outward)
 
 	local state: TrapState = {
 		webPart = webPart,
 		anchorWorld = anchorWorld,
 		outwardDir = outward,
 		slideDir = slideDir,
+		trapRotation = trapRotation,
 		slideProgress = 0,
 		maxSlide = WebTrapConfig.MAX_SLIDE_DISTANCE,
 		heartbeatConn = nil,
 		diedConn = nil,
+		alignPos = nil,
+		alignOri = nil,
+		rootAttachment = nil,
 		originalWalkSpeed = humanoid.WalkSpeed,
 		originalJumpHeight = humanoid.JumpHeight,
 		originalAutoRotate = humanoid.AutoRotate,
-		disabledStates = DISABLED_STATES,
 	}
 
 	trappedByPlayer[player] = state
 	player:SetAttribute(WebTrapConfig.TRAPPED_ATTR, true)
 	setHumanoidTrapped(humanoid, true, state)
-	updateTrapPose(player, state, hrp)
+	createConstraints(hrp, state)
+	updateTrapTarget(state)
+	zeroCharacterMotion(character, hrp)
 
 	local bleedPerSecond = humanoid.MaxHealth / math.max(WebTrapConfig.BLEED_DURATION, 0.5)
 
@@ -222,7 +303,8 @@ local function beginTrap(player: Player, webPart: BasePart, hitPosition: Vector3
 
 		setHumanoidTrapped(hum, true, state)
 		hum.Jump = false
-		updateTrapPose(player, state, root)
+		updateTrapTarget(state)
+		zeroCharacterMotion(char, root)
 
 		local damage = bleedPerSecond * dt
 		if damage > 0 then
@@ -246,7 +328,7 @@ local function onWebTouched(webPart: BasePart, other: BasePart)
 		return
 	end
 
-	beginTrap(player, webPart, other.Position)
+	beginTrap(player, webPart)
 end
 
 local function wireWebPart(part: BasePart)

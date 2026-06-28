@@ -589,6 +589,12 @@ local function init()
 	wireGamePass(gamepassContainers, "SuperLuck", StoreConfig.GAMEPASS.SUPER_LUCK, StoreConfig.ATTR.SUPER_LUCK_OWNED)
 	wireGamePass(gamepassContainers, "MEGALuck", StoreConfig.GAMEPASS.MEGA_LUCK, StoreConfig.ATTR.MEGA_LUCK_OWNED)
 	wireGamePass(gamepassContainers, "XrayVision", StoreConfig.GAMEPASS.XRAY, StoreConfig.ATTR.XRAY_OWNED)
+	wireGamePass(
+		gamepassContainers,
+		"CollectCash",
+		StoreConfig.GAMEPASS.AUTOCOLLECT,
+		StoreConfig.ATTR.AUTOCOLLECT_OWNED
+	)
 
 	-- VIP panel sits directly under Container.
 	do

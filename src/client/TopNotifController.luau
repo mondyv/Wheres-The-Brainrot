@@ -39,8 +39,10 @@ local label: TextLabel? = nil
 local panelStroke: UIStroke? = nil
 local labelStroke: UIStroke? = nil
 local animScale: UIScale? = nil
+local cachedStrokes: { UIStroke } = {}
 local savedLabelStrokeThickness: number? = nil
 local savedPanelStrokeTransparency: number? = nil
+local savedTextStrokeTransparency: number = 1
 local messageQueue: { QueuedMessage } = {}
 local isShowing = false
 local hideToken = 0
@@ -82,6 +84,48 @@ local function prepareNotifLabel(textLabel: TextLabel)
 	end
 end
 
+local function cacheStrokes(root: Instance)
+	table.clear(cachedStrokes)
+	for _, desc in root:GetDescendants() do
+		if desc:IsA("UIStroke") then
+			table.insert(cachedStrokes, desc)
+		end
+	end
+	local hostStroke = root:FindFirstChildOfClass("UIStroke")
+	if hostStroke and hostStroke.Parent == root then
+		local found = false
+		for _, stroke in cachedStrokes do
+			if stroke == hostStroke then
+				found = true
+				break
+			end
+		end
+		if not found then
+			table.insert(cachedStrokes, hostStroke)
+		end
+	end
+end
+
+-- Only the panel outline + the text outline are ours to toggle. Enabling every descendant UIStroke
+-- (decorative inner frames) drew extra rectangular outlines behind the text — the "outline background" bug.
+local function setManagedStrokesEnabled(enabled: boolean)
+	if panelStroke and panelStroke.Parent then
+		panelStroke.Enabled = enabled
+	end
+	if labelStroke and labelStroke.Parent then
+		labelStroke.Enabled = enabled
+	end
+end
+
+-- Force every other (decorative) stroke off so rarity styling never lights up inner-frame outlines.
+local function disableDecorativeStrokes()
+	for _, stroke in cachedStrokes do
+		if stroke.Parent and stroke ~= panelStroke and stroke ~= labelStroke then
+			stroke.Enabled = false
+		end
+	end
+end
+
 local function prepareNotifHost(notif: GuiObject)
 	if notif:IsA("GuiObject") then
 		notif.BackgroundTransparency = 1
@@ -97,6 +141,7 @@ local function prepareNotifHost(notif: GuiObject)
 	if directStroke then
 		savedPanelStrokeTransparency = directStroke.Transparency
 	end
+	cacheStrokes(notif)
 end
 
 local function findParts()
@@ -120,6 +165,7 @@ local function findParts()
 	local text = notif:FindFirstChild("Text", true)
 	if text and text:IsA("TextLabel") then
 		label = text
+		savedTextStrokeTransparency = label.TextStrokeTransparency
 		prepareNotifLabel(label)
 		local stroke = label:FindFirstChildOfClass("UIStroke")
 		if stroke then
@@ -181,6 +227,9 @@ local function applyRarityPanelStyle(rarityId: string)
 end
 
 local function applyRarityStyle(textLabel: TextLabel, rarityId: string)
+	disableDecorativeStrokes()
+	setManagedStrokesEnabled(true)
+	textLabel.TextStrokeTransparency = savedTextStrokeTransparency
 	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	disableOtherGradients(textLabel, "RaritySpawnGradient")
 	RaritySpawnStyle.applyTextGradient(textLabel, rarityId)
@@ -195,19 +244,11 @@ local function applyErrorStyle(textLabel: TextLabel)
 		end
 	end
 
+	disableDecorativeStrokes()
+	setManagedStrokesEnabled(false)
 	textLabel.TextColor3 = ERROR_ACCENT
-	if labelStroke then
-		labelStroke.Enabled = true
-		labelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-		labelStroke.Color = ERROR_TEXT_STROKE
-		labelStroke.Transparency = 0
-		labelStroke.Thickness = savedLabelStrokeThickness or 2
-		for _, child in labelStroke:GetChildren() do
-			if child:IsA("UIGradient") then
-				child.Enabled = false
-			end
-		end
-	end
+	textLabel.TextStrokeColor3 = ERROR_TEXT_STROKE
+	textLabel.TextStrokeTransparency = 0
 
 	if panelStroke then
 		panelStroke.Transparency = 1
@@ -218,10 +259,14 @@ local function applyErrorStyle(textLabel: TextLabel)
 	end
 end
 
-local function setLabelAlpha(textLabel: TextLabel, alpha: number)
+local function setLabelAlpha(textLabel: TextLabel, alpha: number, isError: boolean)
 	textLabel.TextTransparency = alpha
-	if labelStroke then
-		labelStroke.Transparency = alpha
+	if isError then
+		textLabel.TextStrokeTransparency = alpha
+	else
+		if labelStroke then
+			labelStroke.Transparency = alpha
+		end
 	end
 end
 
@@ -249,24 +294,25 @@ local function processQueue()
 
 	if entry.isError then
 		applyErrorStyle(label)
-		animScale.Scale = 0.55
+		animScale.Scale = 1
 	else
 		applyRarityStyle(label, entry.rarityId or "legendary")
 		animScale.Scale = 0.6
 	end
 
-	setLabelAlpha(label, 0)
+	setLabelAlpha(label, if entry.isError then 1 else 0, entry.isError)
 	host.Visible = true
 
 	cancelActiveTween()
-	local popInfo = if entry.isError
-		then TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-		else POP_IN
-	activeFadeTween = TweenService:Create(animScale, popInfo, { Scale = 1 })
-	activeFadeTween:Play()
-	TweenService:Create(label, TEXT_IN, { TextTransparency = 0 }):Play()
-	if labelStroke then
-		TweenService:Create(labelStroke, TEXT_IN, { Transparency = 0 }):Play()
+	if entry.isError then
+		TweenService:Create(label, TEXT_IN, { TextTransparency = 0, TextStrokeTransparency = 0 }):Play()
+	else
+		activeFadeTween = TweenService:Create(animScale, POP_IN, { Scale = 1 })
+		activeFadeTween:Play()
+		TweenService:Create(label, TEXT_IN, { TextTransparency = 0 }):Play()
+		if labelStroke then
+			TweenService:Create(labelStroke, TEXT_IN, { Transparency = 0 }):Play()
+		end
 	end
 
 	local lifetime = if entry.isError then ERROR_LIFETIME else DISPLAY_LIFETIME
@@ -275,13 +321,17 @@ local function processQueue()
 			return
 		end
 		cancelActiveTween()
-		activeFadeTween = TweenService:Create(animScale, FADE_OUT, { Scale = 0.55 })
-		activeFadeTween:Play()
-		TweenService:Create(label, FADE_OUT, { TextTransparency = 1 }):Play()
-		if labelStroke then
-			TweenService:Create(labelStroke, FADE_OUT, { Transparency = 1 }):Play()
+		if entry.isError then
+			TweenService:Create(label, FADE_OUT, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+		else
+			activeFadeTween = TweenService:Create(animScale, FADE_OUT, { Scale = 0.55 })
+			activeFadeTween:Play()
+			TweenService:Create(label, FADE_OUT, { TextTransparency = 1 }):Play()
+			if labelStroke then
+				TweenService:Create(labelStroke, FADE_OUT, { Transparency = 1 }):Play()
+			end
 		end
-		activeFadeTween.Completed:Once(function()
+		task.delay(FADE_OUT.Time, function()
 			if token ~= hideToken then
 				return
 			end

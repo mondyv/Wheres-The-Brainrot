@@ -32,23 +32,34 @@ local function findVariantTemplate(brainrotName: string, mutationId: string): Mo
 	if not root then
 		return nil
 	end
-	local folderName = Brainrots.MUTATION_TEMPLATE_FOLDER[mutationId]
-	if not folderName then
+	local variantFolderName = Brainrots.MUTATION_TEMPLATE_FOLDER[mutationId]
+	if not variantFolderName then
 		return nil
 	end
-	local brainrotFolder = root:FindFirstChild(brainrotName)
-	if not brainrotFolder then
-		for _, d in root:GetDescendants() do
-			if d:IsA("Folder") and d.Name == brainrotName then
-				brainrotFolder = d
-				break
+	local folderNames: { string } = { brainrotName }
+	local alias = Brainrots.resolveStorageFolderName(brainrotName)
+	if alias ~= brainrotName then
+		table.insert(folderNames, alias)
+	end
+	local brainrotFolder: Instance? = nil
+	for _, storageFolderName in folderNames do
+		brainrotFolder = root:FindFirstChild(storageFolderName)
+		if not brainrotFolder then
+			for _, d in root:GetDescendants() do
+				if d:IsA("Folder") and d.Name == storageFolderName then
+					brainrotFolder = d
+					break
+				end
 			end
+		end
+		if brainrotFolder then
+			break
 		end
 	end
 	if not brainrotFolder then
 		return nil
 	end
-	local variant = brainrotFolder:FindFirstChild(folderName)
+	local variant = brainrotFolder:FindFirstChild(variantFolderName)
 	if variant and variant:IsA("Model") then
 		return variant
 	end

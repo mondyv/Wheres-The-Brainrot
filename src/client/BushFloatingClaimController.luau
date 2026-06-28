@@ -19,15 +19,21 @@ local FLOAT_ENDS_AT_ATTR = "BrainrotFloatEndsAt"
 local FLOATING_PHASE = "Floating"
 local OWNER_ATTR = "OwnerUserId"
 local FLOAT_DURATION = 15
-local FLANK_OFFSET_X = 3.8
-local FLANK_OFFSET_Y = 1.5
-local TIMER_OFFSET_Y = -0.85
+local FLANK_OFFSET_X = 4.2
+local FLANK_OFFSET_Y = 1.65
+local TIMER_OFFSET_Y = -1.05
+-- Keep the buttons a consistent visual gap from the model regardless of camera distance, but
+-- smooth the scale so small camera/model motion can't make them jitter or slide.
+local FLANK_DISTANCE_REF = 20
+local FLANK_DISTANCE_SCALE_MIN = 1.0
+local FLANK_DISTANCE_SCALE_MAX = 2.4
+local FLANK_SCALE_SMOOTHING = 0.15
 
 local BushFloatingClaimController = {}
 
 type TrackedOffer = {
 	model: Model,
-	modelAdornee: BasePart,
+	uiAnchor: BasePart,
 	highlight: Highlight,
 	billboards: { BillboardGui },
 	acceptBb: BillboardGui,
@@ -48,6 +54,7 @@ type TrackedOffer = {
 	hoverFreezeConn: RBXScriptConnection?,
 	unfreezeToken: number,
 	bbOffsets: { [BillboardGui]: Vector3 },
+	flankScaleSmoothed: number?,
 	conns: { RBXScriptConnection },
 }
 
@@ -60,7 +67,6 @@ local HOVER_SCALE = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirect
 local HOVER_OUT = TweenInfo.new(0.26, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local HOVER_LIFT = 0.22
 local POP_IN = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local SLIDE_IN = TweenInfo.new(0.34, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local PUNCH = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local FADE = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
@@ -89,10 +95,54 @@ local function adorneeFor(model: Model): BasePart?
 	return model:FindFirstChildWhichIsA("BasePart", true)
 end
 
-local function attachBillboardToModel(billboard: BillboardGui, adornee: BasePart, localOffset: Vector3)
-	billboard.Adornee = adornee
+local function modelPivotPosition(model: Model): Vector3?
+	local ok, pivot = pcall(function()
+		return model:GetPivot()
+	end)
+	if ok and typeof(pivot) == "CFrame" then
+		return (pivot :: CFrame).Position
+	end
+	local adornee = adorneeFor(model)
+	return if adornee then adornee.Position else nil
+end
+
+local function createUiAnchor(model: Model): BasePart?
+	local pos = modelPivotPosition(model)
+	if not pos then
+		return nil
+	end
+	local anchor = Instance.new("Part")
+	anchor.Name = "FloatingClaimUiAnchor"
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Transparency = 1
+	anchor.Size = Vector3.new(0.15, 0.15, 0.15)
+	anchor.CFrame = CFrame.new(pos)
+	anchor.Parent = Workspace.CurrentCamera
+	return anchor
+end
+
+local function syncUiAnchorPosition(entry: TrackedOffer)
+	local pos = modelPivotPosition(entry.model)
+	if not pos or not entry.uiAnchor.Parent then
+		return
+	end
+	entry.uiAnchor.CFrame = CFrame.new(pos)
+end
+
+local function attachBillboardToAnchor(billboard: BillboardGui, anchor: BasePart, worldOffset: Vector3)
+	billboard.Adornee = anchor
 	billboard.StudsOffset = Vector3.zero
-	billboard.StudsOffsetWorldSpace = localOffset
+	billboard.StudsOffsetWorldSpace = worldOffset
+end
+
+local function getUiAnchor(entry: TrackedOffer): BasePart?
+	if entry.uiAnchor and entry.uiAnchor.Parent then
+		return entry.uiAnchor
+	end
+	return nil
 end
 
 local function getBillboardLiftValue(billboard: BillboardGui): NumberValue
@@ -107,19 +157,79 @@ local function getBillboardLiftValue(billboard: BillboardGui): NumberValue
 	return lift
 end
 
-local function billboardWorldPosition(billboard: BillboardGui, adornee: BasePart): Vector3
-	return adornee.CFrame:PointToWorldSpace(billboard.StudsOffsetWorldSpace)
+local function billboardWorldPosition(billboard: BillboardGui, anchor: BasePart): Vector3
+	return anchor.Position + billboard.StudsOffsetWorldSpace
 end
 
-local function getModelAdornee(entry: TrackedOffer): BasePart?
-	if entry.modelAdornee.Parent then
-		return entry.modelAdornee
+local function cameraFlatRight(): Vector3
+	local camera = Workspace.CurrentCamera
+	if not camera then
+		return Vector3.new(1, 0, 0)
 	end
-	local adornee = adorneeFor(entry.model)
-	if adornee then
-		entry.modelAdornee = adornee
+	local look = camera.CFrame.LookVector
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < 0.05 then
+		return Vector3.new(1, 0, 0)
 	end
-	return adornee
+	return flat:Cross(Vector3.yAxis).Unit
+end
+
+local function cameraRelativeFlankOffset(sideSign: number, liftY: number, distanceScale: number): Vector3
+	local right = cameraFlatRight()
+	local scale = math.clamp(distanceScale, FLANK_DISTANCE_SCALE_MIN, FLANK_DISTANCE_SCALE_MAX)
+	return right * (sideSign * FLANK_OFFSET_X * scale) + Vector3.yAxis * liftY
+end
+
+local function flankTargetScaleForEntry(entry: TrackedOffer): number
+	local camera = Workspace.CurrentCamera
+	local pos = modelPivotPosition(entry.model)
+	if not camera or not pos then
+		return entry.flankScaleSmoothed or 1
+	end
+	local dist = (camera.CFrame.Position - pos).Magnitude
+	return math.clamp(dist / FLANK_DISTANCE_REF, FLANK_DISTANCE_SCALE_MIN, FLANK_DISTANCE_SCALE_MAX)
+end
+
+local function smoothedFlankScale(entry: TrackedOffer): number
+	local target = flankTargetScaleForEntry(entry)
+	local current = entry.flankScaleSmoothed
+	if typeof(current) ~= "number" then
+		-- First frame: snap so the buttons don't visibly slide in from a wrong spacing.
+		entry.flankScaleSmoothed = target
+		return target
+	end
+	-- Exponential smoothing kills the frame-to-frame distance jitter.
+	current += (target - current) * FLANK_SCALE_SMOOTHING
+	if math.abs(target - current) < 0.001 then
+		current = target
+	end
+	entry.flankScaleSmoothed = current
+	return current
+end
+
+local function updateBillboardPositions(entry: TrackedOffer)
+	if entry.uiHoverFrozen then
+		return
+	end
+
+	syncUiAnchorPosition(entry)
+	local anchor = getUiAnchor(entry)
+	if not anchor then
+		return
+	end
+
+	local distanceScale = smoothedFlankScale(entry)
+	local acceptLift = getBillboardLiftValue(entry.acceptBb).Value
+	local declineLift = getBillboardLiftValue(entry.declineBb).Value
+
+	entry.acceptBb.StudsOffset = Vector3.zero
+	entry.declineBb.StudsOffset = Vector3.zero
+	entry.timerBb.StudsOffset = Vector3.zero
+	entry.acceptBb.StudsOffsetWorldSpace =
+		cameraRelativeFlankOffset(-1, FLANK_OFFSET_Y + acceptLift, distanceScale)
+	entry.declineBb.StudsOffsetWorldSpace =
+		cameraRelativeFlankOffset(1, FLANK_OFFSET_Y + declineLift, distanceScale)
+	entry.timerBb.StudsOffsetWorldSpace = Vector3.new(0, TIMER_OFFSET_Y * distanceScale, 0)
 end
 
 local function parentBillboard(bb: BillboardGui)
@@ -138,6 +248,9 @@ local function disconnectTracked(entry: TrackedOffer)
 	table.clear(entry.conns)
 	if entry.highlight.Parent then
 		entry.highlight:Destroy()
+	end
+	if entry.uiAnchor.Parent then
+		entry.uiAnchor:Destroy()
 	end
 	for _, bb in entry.billboards do
 		if bb.Parent then
@@ -364,16 +477,10 @@ local function buildChoiceUi(_model: Model, rarity: string): ChoiceUiParts
 end
 
 local function animateOfferIn(entry: TrackedOffer)
-	local acceptGoal = Vector3.new(-FLANK_OFFSET_X, FLANK_OFFSET_Y, 0)
-	local declineGoal = Vector3.new(FLANK_OFFSET_X, FLANK_OFFSET_Y, 0)
-
-	entry.acceptBb.StudsOffsetWorldSpace = acceptGoal + Vector3.new(-1.2, 0, 0)
-	entry.declineBb.StudsOffsetWorldSpace = declineGoal + Vector3.new(1.2, 0, 0)
+	updateBillboardPositions(entry)
 
 	TweenService:Create(entry.acceptScale, POP_IN, { Scale = 1 }):Play()
 	TweenService:Create(entry.declineScale, POP_IN, { Scale = 1 }):Play()
-	TweenService:Create(entry.acceptBb, SLIDE_IN, { StudsOffsetWorldSpace = acceptGoal }):Play()
-	TweenService:Create(entry.declineBb, SLIDE_IN, { StudsOffsetWorldSpace = declineGoal }):Play()
 
 	for _, btn in { entry.acceptBtn, entry.declineBtn } do
 		local panel = btn:FindFirstChild("Panel")
@@ -414,13 +521,14 @@ local function punchButton(scale: UIScale, btn: TextButton, bright: Color3)
 end
 
 local function captureFrozenWorldPositions(entry: TrackedOffer)
-	local adornee = getModelAdornee(entry)
-	if not adornee then
+	local anchor = getUiAnchor(entry)
+	if not anchor then
 		return
 	end
+	syncUiAnchorPosition(entry)
 	entry.frozenWorldPositions = {}
 	for _, billboard in entry.billboards do
-		entry.frozenWorldPositions[billboard] = billboardWorldPosition(billboard, adornee)
+		entry.frozenWorldPositions[billboard] = billboardWorldPosition(billboard, anchor)
 	end
 end
 
@@ -436,17 +544,19 @@ local function ensureHoverFreezeLoop(entry: TrackedOffer)
 		if not frozen then
 			return
 		end
-		local adornee = getModelAdornee(entry)
-		if not adornee then
+		local anchor = getUiAnchor(entry)
+		if not anchor then
 			return
 		end
+		syncUiAnchorPosition(entry)
 		for billboard, worldPos in frozen do
 			if not billboard.Parent then
 				continue
 			end
 			local lift = getBillboardLiftValue(billboard).Value
 			local holdPos = worldPos + Vector3.new(0, lift, 0)
-			billboard.StudsOffsetWorldSpace = adornee.CFrame:PointToObjectSpace(holdPos)
+			billboard.StudsOffset = Vector3.zero
+			billboard.StudsOffsetWorldSpace = holdPos - anchor.Position
 		end
 	end)
 end
@@ -572,7 +682,7 @@ local function ensureTicker()
 	if tickerConn then
 		return
 	end
-	tickerConn = RunService.Heartbeat:Connect(function()
+	tickerConn = RunService.RenderStepped:Connect(function()
 		if next(tracked) == nil then
 			if tickerConn then
 				tickerConn:Disconnect()
@@ -587,6 +697,7 @@ local function ensureTicker()
 				untrack(model)
 				continue
 			end
+			updateBillboardPositions(entry)
 			local endsAt = model:GetAttribute(FLOAT_ENDS_AT_ATTR)
 			if typeof(endsAt) ~= "number" then
 				continue
@@ -647,8 +758,8 @@ local function trackModel(model: Model)
 		return
 	end
 
-	local adornee = adorneeFor(model)
-	if not adornee then
+	local anchor = createUiAnchor(model)
+	if not anchor then
 		return
 	end
 
@@ -667,13 +778,13 @@ local function trackModel(model: Model)
 
 	local ui = buildChoiceUi(model, rarityStr)
 	for _, billboard in { ui.acceptBb, ui.declineBb, ui.timerBb } do
-		attachBillboardToModel(billboard, adornee, billboard.StudsOffsetWorldSpace)
+		attachBillboardToAnchor(billboard, anchor, Vector3.zero)
 		parentBillboard(billboard)
 	end
 
 	local entry: TrackedOffer = {
 		model = model,
-		modelAdornee = adornee,
+		uiAnchor = anchor,
 		highlight = hl,
 		billboards = { ui.acceptBb, ui.declineBb, ui.timerBb },
 		acceptBb = ui.acceptBb,
@@ -698,9 +809,11 @@ local function trackModel(model: Model)
 			[ui.declineBb] = Vector3.new(FLANK_OFFSET_X, FLANK_OFFSET_Y, 0),
 			[ui.timerBb] = Vector3.new(0, TIMER_OFFSET_Y, 0),
 		},
+		flankScaleSmoothed = nil,
 		conns = {},
 	}
 	tracked[model] = entry
+	updateBillboardPositions(entry)
 
 	local acceptAccent = Color3.fromRGB(70, 255, 140)
 	local declineAccent = Color3.fromRGB(255, 95, 85)
@@ -865,6 +978,15 @@ local function spawnVanishBurst(worldPos: Vector3, rarity: string, declined: boo
 			anchor:Destroy()
 		end
 	end)
+end
+
+function BushFloatingClaimController.hasActiveOffer(): boolean
+	for model, entry in tracked do
+		if model.Parent and not entry.decisionLocked then
+			return true
+		end
+	end
+	return false
 end
 
 function BushFloatingClaimController.init()

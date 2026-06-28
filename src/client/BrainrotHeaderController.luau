@@ -9,6 +9,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
+local BrainrotGradientAnimator = require(script.Parent.BrainrotGradientAnimator)
 
 local HEADER_NAME = "BrainrotInfoBillboard"
 local HEADER_MAX_DISTANCE = 120
@@ -151,6 +152,7 @@ end
 local function removeHeader(model: Model)
 	local existing = headersByModel[model]
 	if existing then
+		BrainrotGradientAnimator.unregister(existing)
 		existing:Destroy()
 		headersByModel[model] = nil
 	end
@@ -212,6 +214,7 @@ local function syncHeader(model: Model): boolean
 	local infoFrame = bb:FindFirstChild("Info", true)
 	if infoFrame and infoFrame:IsA("GuiObject") then
 		applyToInfoFrame(infoFrame, data)
+		BrainrotGradientAnimator.register(bb)
 	end
 
 	-- Parent to Workspace + Adornee (same pattern as SwingSystem): parenting the gui under an

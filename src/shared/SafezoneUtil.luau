@@ -5,17 +5,37 @@
 	• SafeZoneHitbox / SafezoneHitbox / Reddie / Raddie — broad spawn safe zone.
 	• isCharacterInInventoryZone — broad safe zone minus RedWall (return equip / server sync).
 	• RedWall / RedPart — brainrot deposit (touch); does not gate inventory add/sync.
-]]
+
+	Never calls Instance:GetDescendants() — that API builds the full list synchronously and
+	causes multi-second hitches when Spawn And Bases streams in near the red wall.
+--]]
+
+local CollectionService = game:GetService("CollectionService")
 
 local SafezoneUtil = {}
 
-local TOOLBAR_ZONE_NAMES = { "Reddie" }
-local INVENTORY_ZONE_NAMES = { "SafeZoneHitbox", "SafezoneHitbox", "Reddie", "Raddie" }
-local RED_WALL_NAMES = { "RedWall", "RedPart" }
+local TOOLBAR_ZONE_NAMES = { Reddie = true }
+local INVENTORY_ZONE_NAMES = {
+	SafeZoneHitbox = true,
+	SafezoneHitbox = true,
+	Reddie = true,
+	Raddie = true,
+}
+local RED_WALL_NAMES = { RedWall = true, RedPart = true }
+local DEPOSIT_TAG = "BrainrotDeposit"
 
 local cachedReddieParts: { BasePart }? = nil
 local cachedInventoryParts: { BasePart }? = nil
 local cachedRedWallParts: { BasePart }? = nil
+local reddieSet: { [BasePart]: boolean } = {}
+local inventorySet: { [BasePart]: boolean } = {}
+local redWallSet: { [BasePart]: boolean } = {}
+local cachesBuilt = false
+local rebuildInProgress = false
+local depositHookConnected = false
+local spawnBasesHookConnected = false
+local mapHookConnected = false
+local SCAN_YIELD_EVERY = 400
 
 local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolean
 	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
@@ -23,29 +43,6 @@ local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolea
 	return math.abs(localPt.X) <= half.X
 		and math.abs(localPt.Y) <= half.Y
 		and math.abs(localPt.Z) <= half.Z
-end
-
-local function collectBasePartsFrom(inst: Instance, out: { BasePart })
-	if inst:IsA("BasePart") then
-		table.insert(out, inst)
-		return
-	end
-	for _, d in inst:GetDescendants() do
-		if d:IsA("BasePart") then
-			table.insert(out, d)
-		end
-	end
-end
-
-local function findNamedPartsUnder(root: Instance, names: { string }): { BasePart }
-	local parts: { BasePart } = {}
-	for _, name in names do
-		local inst = root:FindFirstChild(name, true)
-		if inst then
-			collectBasePartsFrom(inst, parts)
-		end
-	end
-	return parts
 end
 
 local function getSpawnBasesFolder(): Instance?
@@ -56,58 +53,187 @@ local function getSpawnBasesFolder(): Instance?
 	return map:FindFirstChild("Spawn And Bases")
 end
 
-local function cacheStillValid(cached: { BasePart }?): boolean
-	if not cached then
-		return false
+local function ensureListTables()
+	if cachedReddieParts == nil then
+		cachedReddieParts = {}
+		cachedInventoryParts = {}
+		cachedRedWallParts = {}
 	end
-	for _, p in cached do
-		if p.Parent then
-			return true
+end
+
+local function tryAddPart(list: { BasePart }, set: { [BasePart]: boolean }, part: BasePart)
+	if set[part] then
+		return
+	end
+	set[part] = true
+	table.insert(list, part)
+end
+
+local function isZonePartName(name: string): boolean
+	return TOOLBAR_ZONE_NAMES[name] == true
+		or INVENTORY_ZONE_NAMES[name] == true
+		or RED_WALL_NAMES[name] == true
+end
+
+function SafezoneUtil.isZonePartName(name: string): boolean
+	return isZonePartName(name)
+end
+
+function SafezoneUtil.registerZonePart(part: BasePart)
+	if not part.Parent then
+		return
+	end
+	ensureListTables()
+	local name = part.Name
+	if TOOLBAR_ZONE_NAMES[name] then
+		tryAddPart(cachedReddieParts :: { BasePart }, reddieSet, part)
+	end
+	if INVENTORY_ZONE_NAMES[name] then
+		tryAddPart(cachedInventoryParts :: { BasePart }, inventorySet, part)
+	end
+	if RED_WALL_NAMES[name] then
+		tryAddPart(cachedRedWallParts :: { BasePart }, redWallSet, part)
+	end
+end
+
+local function registerDepositPartsFromTags()
+	for _, inst in CollectionService:GetTagged(DEPOSIT_TAG) do
+		if inst:IsA("BasePart") then
+			SafezoneUtil.registerZonePart(inst)
 		end
 	end
-	return false
 end
 
-local function refreshReddieHitboxes()
-	if cacheStillValid(cachedReddieParts) then
+local function connectDepositTagListener()
+	if depositHookConnected then
 		return
 	end
-	cachedReddieParts = {}
-	local spawnBases = getSpawnBasesFolder()
-	if not spawnBases then
-		return
-	end
-	cachedReddieParts = findNamedPartsUnder(spawnBases, TOOLBAR_ZONE_NAMES)
+	depositHookConnected = true
+	CollectionService:GetInstanceAddedSignal(DEPOSIT_TAG):Connect(function(inst)
+		if inst:IsA("BasePart") then
+			SafezoneUtil.registerZonePart(inst)
+		end
+	end)
 end
 
-local function refreshInventoryHitboxes()
-	if cacheStillValid(cachedInventoryParts) then
+local function hookSpawnBasesFolder(folder: Instance)
+	if spawnBasesHookConnected then
 		return
 	end
-	cachedInventoryParts = {}
-	local spawnBases = getSpawnBasesFolder()
-	if not spawnBases then
-		return
-	end
-	cachedInventoryParts = findNamedPartsUnder(spawnBases, INVENTORY_ZONE_NAMES)
+	spawnBasesHookConnected = true
+	folder.DescendantAdded:Connect(function(desc)
+		if desc:IsA("BasePart") and isZonePartName(desc.Name) then
+			SafezoneUtil.registerZonePart(desc)
+		end
+	end)
 end
 
-local function refreshRedWallHitboxes()
-	if cacheStillValid(cachedRedWallParts) then
+local function connectMapStreamingListener()
+	if mapHookConnected then
 		return
 	end
-	cachedRedWallParts = {}
+	mapHookConnected = true
+
+	task.spawn(function()
+		local map = workspace:WaitForChild("Map", 120)
+		if not map then
+			return
+		end
+
+		local existing = map:FindFirstChild("Spawn And Bases")
+		if existing then
+			hookSpawnBasesFolder(existing)
+		end
+
+		map.ChildAdded:Connect(function(ch)
+			if ch.Name == "Spawn And Bases" then
+				hookSpawnBasesFolder(ch)
+				if not cachesBuilt and not rebuildInProgress then
+					SafezoneUtil.warmCacheAsync()
+				end
+			end
+		end)
+	end)
+end
+
+local function scanTreeForZoneParts(root: Instance)
+	local stack = { root }
+	local processed = 0
+	while #stack > 0 do
+		local inst = table.remove(stack)
+		if inst:IsA("BasePart") and isZonePartName(inst.Name) then
+			SafezoneUtil.registerZonePart(inst)
+		end
+		for _, child in inst:GetChildren() do
+			table.insert(stack, child)
+		end
+		processed += 1
+		if processed % SCAN_YIELD_EVERY == 0 then
+			task.wait()
+		end
+	end
+end
+
+local function startBackgroundScan()
+	if rebuildInProgress or cachesBuilt then
+		return
+	end
+	rebuildInProgress = true
+
+	task.spawn(function()
+		ensureListTables()
+		registerDepositPartsFromTags()
+		connectDepositTagListener()
+		connectMapStreamingListener()
+
+		local spawnBases = getSpawnBasesFolder()
+		if spawnBases then
+			hookSpawnBasesFolder(spawnBases)
+			scanTreeForZoneParts(spawnBases)
+		end
+
+		cachesBuilt = true
+		rebuildInProgress = false
+	end)
+end
+
+local function ensureCaches()
+	ensureListTables()
+	connectDepositTagListener()
+	connectMapStreamingListener()
+	if not cachesBuilt and not rebuildInProgress then
+		startBackgroundScan()
+	end
+end
+
+function SafezoneUtil.warmCacheAsync()
+	ensureListTables()
+	connectDepositTagListener()
+	connectMapStreamingListener()
+	registerDepositPartsFromTags()
+
 	local spawnBases = getSpawnBasesFolder()
-	if not spawnBases then
+	if spawnBases then
+		hookSpawnBasesFolder(spawnBases)
+	end
+
+	if cachesBuilt or rebuildInProgress then
 		return
 	end
-	cachedRedWallParts = findNamedPartsUnder(spawnBases, RED_WALL_NAMES)
+	startBackgroundScan()
 end
 
 function SafezoneUtil.invalidateCache()
 	cachedReddieParts = nil
 	cachedInventoryParts = nil
 	cachedRedWallParts = nil
+	reddieSet = {}
+	inventorySet = {}
+	redWallSet = {}
+	cachesBuilt = false
+	rebuildInProgress = false
+	spawnBasesHookConnected = false
+	startBackgroundScan()
 end
 
 local function isWorldPointInsideParts(worldPoint: Vector3, parts: { BasePart }?): boolean
@@ -123,7 +249,7 @@ local function isWorldPointInsideParts(worldPoint: Vector3, parts: { BasePart }?
 end
 
 function SafezoneUtil.isWorldPointInReddie(worldPoint: Vector3): boolean
-	refreshReddieHitboxes()
+	ensureCaches()
 	return isWorldPointInsideParts(worldPoint, cachedReddieParts)
 end
 
@@ -132,12 +258,13 @@ function SafezoneUtil.isWorldPointInToolbarZone(worldPoint: Vector3): boolean
 end
 
 function SafezoneUtil.isWorldPointInSafezone(worldPoint: Vector3): boolean
-	refreshInventoryHitboxes()
+	ensureCaches()
 	return isWorldPointInsideParts(worldPoint, cachedInventoryParts)
 end
 
 function SafezoneUtil.isWorldPointInRedWall(worldPoint: Vector3): boolean
-	refreshRedWallHitboxes()
+	ensureListTables()
+	connectDepositTagListener()
 	return isWorldPointInsideParts(worldPoint, cachedRedWallParts)
 end
 

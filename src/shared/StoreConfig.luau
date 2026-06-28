@@ -20,6 +20,7 @@ StoreConfig.GAMEPASS = {
 	DOUBLE_CASH = 1866666344,
 	SUPER_LUCK = 1863082382,
 	MEGA_LUCK = 1866440312,
+	AUTOCOLLECT = 1892789728,
 }
 
 -- ── Developer product ids ───────────────────────────────────────────────────────
@@ -33,6 +34,9 @@ StoreConfig.PRODUCT = {
 	CASH_BUNDLE_3 = 3602164776,
 	CASH_BUNDLE_4 = 3602164890,
 	CASH_BUNDLE_5 = 3602165053,
+
+	STAND_UPGRADE_PLUS_25 = 3602369225,
+	STAND_UPGRADE_CANT_AFFORD = 3602369815,
 
 	STARTER_PACK = 3602172485,
 	MYTHIC_PACK = 3602172591,
@@ -50,6 +54,7 @@ StoreConfig.ATTR = {
 	SUPER_LUCK_OWNED = "SuperLuckOwned",
 	MEGA_LUCK_OWNED = "MegaLuckOwned",
 	XRAY_OWNED = "XrayVisionOwned",
+	AUTOCOLLECT_OWNED = "AutoCollectOwned",
 
 	-- Custom saved entitlements granted by the gifting system.
 	GIFTED_VIP = "GiftedVIP",
@@ -58,6 +63,7 @@ StoreConfig.ATTR = {
 	GIFTED_SUPER_LUCK = "GiftedSuperLuck",
 	GIFTED_MEGA_LUCK = "GiftedMegaLuck",
 	GIFTED_XRAY = "GiftedXray",
+	GIFTED_AUTOCOLLECT = "GiftedAutoCollect",
 
 	-- One-time / counter grants
 	EXCLUSIVE_OWNED = "ExclusiveBrainrotOwned",
@@ -150,6 +156,7 @@ StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID = {
 	[StoreConfig.GAMEPASS.SUPER_LUCK] = StoreConfig.ATTR.GIFTED_SUPER_LUCK,
 	[StoreConfig.GAMEPASS.MEGA_LUCK] = StoreConfig.ATTR.GIFTED_MEGA_LUCK,
 	[StoreConfig.GAMEPASS.XRAY] = StoreConfig.ATTR.GIFTED_XRAY,
+	[StoreConfig.GAMEPASS.AUTOCOLLECT] = StoreConfig.ATTR.GIFTED_AUTOCOLLECT,
 }
 
 -- Fill `giftProductId` with a developer product id for each giftable pass when
@@ -183,6 +190,11 @@ StoreConfig.GIFTABLE_GAMEPASSES = {
 	[StoreConfig.GAMEPASS.XRAY] = {
 		displayName = "X-Ray",
 		entitlementKey = StoreConfig.ATTR.GIFTED_XRAY,
+		giftProductId = nil,
+	},
+	[StoreConfig.GAMEPASS.AUTOCOLLECT] = {
+		displayName = "Autocollect",
+		entitlementKey = StoreConfig.ATTR.GIFTED_AUTOCOLLECT,
 		giftProductId = nil,
 	},
 }

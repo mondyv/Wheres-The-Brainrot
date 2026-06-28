@@ -13,12 +13,15 @@ local StarterGui = game:GetService("StarterGui")
 local PlayerGuiMain = {}
 
 local function scoreMain(gui: ScreenGui): number
-	local score = #gui:GetDescendants()
+	local score = 0
 	if gui:FindFirstChild("SideUI") then
 		score += 500
 	end
 	if gui:FindFirstChild("Frames") then
 		score += 250
+	end
+	if gui.Enabled then
+		score += 100
 	end
 	return score
 end

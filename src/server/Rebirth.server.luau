@@ -261,6 +261,30 @@ ProductHandlerServer.registerProductReceipt(SwingUpgrades.SKIP_UPGRADE_DEV_PRODU
 	return Enum.ProductPurchaseDecision.NotProcessedYet
 end)
 
+ProductHandlerServer.registerProductReceipt(SwingUpgrades.SKIP_UPGRADE_25_DEV_PRODUCT_ID, function(player: Player)
+	local internal = ServerStorage:FindFirstChild("GameInternal")
+	local fulfill = internal and internal:FindFirstChild("FulfillRobuxUpgrade")
+	if fulfill and fulfill:IsA("BindableFunction") then
+		local ok = (fulfill :: BindableFunction):Invoke(player)
+		if ok then
+			return Enum.ProductPurchaseDecision.PurchaseGranted
+		end
+	end
+	return Enum.ProductPurchaseDecision.NotProcessedYet
+end)
+
+ProductHandlerServer.registerProductReceipt(SwingUpgrades.CARRY_SKIP_UPGRADE_DEV_PRODUCT_ID, function(player: Player)
+	local internal = ServerStorage:FindFirstChild("GameInternal")
+	local fulfill = internal and internal:FindFirstChild("FulfillRobuxUpgrade")
+	if fulfill and fulfill:IsA("BindableFunction") then
+		local ok = (fulfill :: BindableFunction):Invoke(player)
+		if ok then
+			return Enum.ProductPurchaseDecision.PurchaseGranted
+		end
+	end
+	return Enum.ProductPurchaseDecision.NotProcessedYet
+end)
+
 Players.PlayerRemoving:Connect(function(player: Player)
 	lastPushedSnapshot[player] = nil
 	local conn = cashConns[player]

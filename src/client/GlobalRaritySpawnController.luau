@@ -73,13 +73,30 @@ local function refreshTimerLabels()
 	end
 end
 
+local cachedBushByKey: { [string]: Instance } = {}
+
 local function findBushByKey(key: string): Instance?
-	local map = Workspace:FindFirstChild("Map")
-	if not map or key == "" then
+	if key == "" then
 		return nil
 	end
+	local hit = cachedBushByKey[key]
+	if hit and hit.Parent then
+		return hit
+	end
+	cachedBushByKey[key] = nil
+
+	local map = Workspace:FindFirstChild("Map")
+	if not map then
+		return nil
+	end
+	local count = 0
 	for _, desc in map:GetDescendants() do
+		count += 1
+		if count % 4000 == 0 then
+			task.wait()
+		end
 		if desc:GetAttribute(C.BUSH_GLOBAL_SPAWN_ATTR) == true and desc:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key then
+			cachedBushByKey[key] = desc
 			return desc
 		end
 	end
@@ -253,7 +270,9 @@ local function syncFromAttributes()
 		and typeof(endsAt) == "number"
 		and os.time() < endsAt
 	then
-		trackMarker(bushKey, rarity, endsAt)
+		task.spawn(function()
+			trackMarker(bushKey, rarity, endsAt)
+		end)
 	else
 		destroyMarker()
 	end

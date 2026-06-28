@@ -47,7 +47,9 @@ local PURCHASE_SHAKE_POS = 0.14
 local PURCHASE_SHAKE_SPEED = 13
 local PURCHASE_SHAKE_DURATION = 0.42
 
-local BUSH_RANDOM_SHAKE_MAX_DIST = 45
+local BUSH_RANDOM_SHAKE_MAX_DIST = 70
+local BUSH_RANDOM_SHAKE_PITCH_MIN = 0.94
+local BUSH_RANDOM_SHAKE_PITCH_MAX = 1.06
 
 local HIDDEN_RARITY_ATTR = "HiddenBrainrotRarity"
 local HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
@@ -519,6 +521,8 @@ function GameSoundEffects.playBushRandomShakeAt(bush: Instance)
 	end
 
 	local clone = prepareClone(bushRandomShakeTemplate)
+	clone.PlaybackSpeed = BUSH_RANDOM_SHAKE_PITCH_MIN
+		+ math.random() * (BUSH_RANDOM_SHAKE_PITCH_MAX - BUSH_RANDOM_SHAKE_PITCH_MIN)
 	clone.Parent = bush
 	clone:Play()
 	clone.Ended:Once(function()

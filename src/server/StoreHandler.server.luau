@@ -286,6 +286,7 @@ local GAMEPASS_OWNED_ATTR_BY_ID: { [number]: string } = {
 	[StoreConfig.GAMEPASS.DOUBLE_CASH] = StoreConfig.ATTR.DOUBLE_CASH_OWNED,
 	[StoreConfig.GAMEPASS.SUPER_LUCK] = StoreConfig.ATTR.SUPER_LUCK_OWNED,
 	[StoreConfig.GAMEPASS.MEGA_LUCK] = StoreConfig.ATTR.MEGA_LUCK_OWNED,
+	[StoreConfig.GAMEPASS.AUTOCOLLECT] = StoreConfig.ATTR.AUTOCOLLECT_OWNED,
 }
 
 local function applyPurchasedGamePassAttributes(player: Player, gamePassId: number)
@@ -347,6 +348,7 @@ local function clearGamePassAttributes(player: Player)
 	player:SetAttribute(A.SUPER_LUCK_OWNED, false)
 	player:SetAttribute(A.MEGA_LUCK_OWNED, false)
 	player:SetAttribute(A.XRAY_OWNED, false)
+	player:SetAttribute(A.AUTOCOLLECT_OWNED, false)
 end
 
 local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
@@ -364,6 +366,7 @@ local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
 	local ownsSuper = isGamePassOwnedForEffects(player, G.SUPER_LUCK, fromPurchase)
 	local ownsMega = isGamePassOwnedForEffects(player, G.MEGA_LUCK, fromPurchase)
 	local ownsXray = isGamePassOwnedForEffects(player, G.XRAY, fromPurchase)
+	local ownsAutoCollect = isGamePassOwnedForEffects(player, G.AUTOCOLLECT, fromPurchase)
 
 	if ownsVip then
 		player:SetAttribute(A.VIP_OWNED, true)
@@ -385,6 +388,7 @@ local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
 	player:SetAttribute(A.SUPER_LUCK_OWNED, ownsSuper)
 	player:SetAttribute(A.MEGA_LUCK_OWNED, ownsMega)
 	player:SetAttribute(A.XRAY_OWNED, ownsXray)
+	player:SetAttribute(A.AUTOCOLLECT_OWNED, ownsAutoCollect)
 end
 
 local function initPlayerAttributes(player: Player)

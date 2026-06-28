@@ -29,6 +29,7 @@ local BUSH_HIDDEN_BASE_INCOME_ATTR = "HiddenBrainrotBaseIncome"
 local DEFAULT_BB_SIZE = UDim2.fromOffset(280, 130)
 local EMPTY_BB_SIZE = UDim2.fromOffset(320, 58)
 local EMPTY_NAME_TEXT_SIZE = 24
+local EMPTY_BRAINROT_TEXT = "No Brainrot"
 local HEADER_MAX_DISTANCE = 90
 
 local XrayController = {}
@@ -155,7 +156,7 @@ local function readHiddenLoot(bush: Instance): {
 	rarity: string?,
 	mutation: string?,
 	incomePerSecond: number,
-}?
+}
 	local hasBrainrot = bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
 	local hiddenName = bush:GetAttribute(BUSH_HIDDEN_NAME_ATTR)
 	local hiddenRarity = bush:GetAttribute(BUSH_HIDDEN_RARITY_ATTR)
@@ -191,18 +192,22 @@ local function readHiddenLoot(bush: Instance): {
 	}
 end
 
+local function clearLabelGradients(label: TextLabel)
+	for _, child in label:GetChildren() do
+		if child:IsA("UIGradient") then
+			child:Destroy()
+		end
+	end
+end
+
 local function applyEmptyHiddenState(infoFrame: Frame)
-	BrainrotHeaderStyle.applyInfoFrame(infoFrame, {
-		name = "No brainrots hiding!",
-		rarity = "common",
-		mutation = "normal",
-		level = 1,
-		rateText = "",
-	})
 	hideInfoLabels(infoFrame, { "Level", "Type", "Rarity", "Rate" })
 
 	local nameNode = infoFrame:FindFirstChild("Name", true)
 	if nameNode and nameNode:IsA("TextLabel") then
+		clearLabelGradients(nameNode)
+		nameNode.Visible = true
+		nameNode.Text = EMPTY_BRAINROT_TEXT
 		nameNode.TextSize = EMPTY_NAME_TEXT_SIZE
 		nameNode.TextScaled = false
 		nameNode.TextWrapped = true
@@ -259,10 +264,6 @@ local function updateForBush(bush: Instance)
 	billboard.StudsOffset = PromptConfig.BUSH_XRAY_UI_OFFSET
 
 	local loot = readHiddenLoot(bush)
-	if not loot then
-		setVisible(false)
-		return
-	end
 
 	if loot.hasBrainrot and loot.name and loot.rarity then
 		billboard.Size = fullBillboardSize

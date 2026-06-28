@@ -207,13 +207,28 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 end
 
 local function rebuildPlotGuiCache(plotRoot: Instance)
-	local list: { LayerCollector } = {}
-	for _, d in ipairs(plotRoot:GetDescendants()) do
-		if d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
-			table.insert(list, d :: LayerCollector)
+	task.spawn(function()
+		local list: { LayerCollector } = {}
+		local stack = { plotRoot }
+		local processed = 0
+		while #stack > 0 do
+			local inst = table.remove(stack)
+			if inst:IsA("BillboardGui") or inst:IsA("SurfaceGui") then
+				table.insert(list, inst :: LayerCollector)
+			end
+			for _, child in inst:GetChildren() do
+				table.insert(stack, child)
+			end
+			processed += 1
+			if processed % 400 == 0 then
+				task.wait()
+			end
 		end
-	end
-	plotLayerCollectors[plotRoot] = list
+		plotLayerCollectors[plotRoot] = list
+		if plotRoot.Parent then
+			applyPlotMarker(plotRoot)
+		end
+	end)
 end
 
 local function trackLayerCollector(plotRoot: Instance, inst: Instance)
@@ -248,11 +263,23 @@ local function applyPlotMarker(plotRoot: Instance)
 end
 
 local function hookStandsInPlot(plotRoot: Instance, refresh: () -> ())
-	for _, d in ipairs(plotRoot:GetDescendants()) do
-		if d:IsA("Model") and CollectionService:HasTag(d, STAND_TAG) then
-			ensureStandBrainrotNameWatcher(plotRoot, d :: Model, refresh)
+	task.spawn(function()
+		local stack = { plotRoot }
+		local processed = 0
+		while #stack > 0 do
+			local inst = table.remove(stack)
+			if inst:IsA("Model") and CollectionService:HasTag(inst, STAND_TAG) then
+				ensureStandBrainrotNameWatcher(plotRoot, inst :: Model, refresh)
+			end
+			for _, child in inst:GetChildren() do
+				table.insert(stack, child)
+			end
+			processed += 1
+			if processed % 400 == 0 then
+				task.wait()
+			end
 		end
-	end
+	end)
 end
 
 local function hookPlotRoot(plotRoot: Instance)

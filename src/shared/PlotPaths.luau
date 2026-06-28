@@ -49,7 +49,7 @@ function M.collectSpawnAndBasesCandidates(): { Instance }
 	local list: { Instance } = {}
 	local seen: { [Instance]: boolean } = {}
 
-	-- Prefer Map subtree (streaming / huge Workspace safe)
+	-- Known paths only — never map:GetDescendants() (entire world scan blocked UIBlox boot).
 	local map = Workspace:FindFirstChild("Map")
 	if map then
 		pushUnique(list, seen, map:FindFirstChild("Spawn And Bases"))
@@ -57,9 +57,14 @@ function M.collectSpawnAndBasesCandidates(): { Instance }
 		if lands then
 			pushUnique(list, seen, lands:FindFirstChild("Spawn And Bases"))
 		end
-		for _, d in ipairs(map:GetDescendants()) do
-			if d.Name == "Spawn And Bases" and (d:IsA("Folder") or d:IsA("Model")) then
-				pushUnique(list, seen, d)
+		for _, child in map:GetChildren() do
+			if child.Name == "Spawn And Bases" and (child:IsA("Folder") or child:IsA("Model")) then
+				pushUnique(list, seen, child)
+			elseif child:IsA("Folder") or child:IsA("Model") then
+				local nested = child:FindFirstChild("Spawn And Bases")
+				if nested then
+					pushUnique(list, seen, nested)
+				end
 			end
 		end
 	end
@@ -74,7 +79,17 @@ function M.collectSpawnAndBasesCandidates(): { Instance }
 	return list
 end
 
+-- Cache the resolved folder. collectSpawnAndBasesCandidates() runs map:GetDescendants() over the
+-- ENTIRE world, and this resolver is called on every stand collect / plot check — re-scanning each
+-- time caused severe server hitches. "Spawn And Bases" is a stable Folder, so a .Parent check is
+-- enough to know the cache is still valid.
+local cachedSpawnBases: Instance? = nil
+
 function M.findSpawnAndBasesFolder(): Instance?
+	if cachedSpawnBases and cachedSpawnBases.Parent then
+		return cachedSpawnBases
+	end
+
 	local candidates = M.collectSpawnAndBasesCandidates()
 	local best: Instance? = nil
 	local bestScore = -1
@@ -87,10 +102,22 @@ function M.findSpawnAndBasesFolder(): Instance?
 		end
 	end
 
-	if bestScore > 0 then
+	if bestScore > 0 and best then
+		-- Confident match (has plot anchors): safe to cache.
+		cachedSpawnBases = best
 		return best
 	end
+
+	-- Anchors may not have streamed/loaded yet; return a best-effort candidate but only cache it
+	-- when it's the sole candidate (so we don't lock onto the wrong folder during load).
+	if #candidates == 1 then
+		cachedSpawnBases = candidates[1]
+	end
 	return candidates[1]
+end
+
+function M.invalidateSpawnAndBasesCache()
+	cachedSpawnBases = nil
 end
 
 function M.waitForSpawnAndBasesFolder(timeoutSec: number): Instance?

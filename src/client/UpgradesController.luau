@@ -425,6 +425,12 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 
 	local purchaseInFlight = false
 
+	local function promptSkipUpgradeProduct()
+		pcall(function()
+			PurchasePrompt.promptProduct(SwingUpgrades.skipUpgradeDevProductId(upgradeId))
+		end)
+	end
+
 	local function tryBuy()
 		if purchaseInFlight then
 			return
@@ -441,9 +447,7 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 		if c < price then
 			TopNotifController.showCantAfford()
 			prepareRobuxRE:FireServer(upgradeId)
-			pcall(function()
-				PurchasePrompt.promptProduct(SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID)
-			end)
+			promptSkipUpgradeProduct()
 			return
 		end
 
@@ -475,9 +479,7 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 		if robuxBtn then
 			UIButtonEffects.wireAccentButton(robuxBtn, function()
 				prepareRobuxRE:FireServer(upgradeId)
-				pcall(function()
-					PurchasePrompt.promptProduct(SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID)
-				end)
+				promptSkipUpgradeProduct()
 			end)
 		end
 	end

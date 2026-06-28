@@ -29,7 +29,19 @@ local DEFS: { [string]: UpgradeDef } = {
 
 local M = {}
 
-M.SKIP_UPGRADE_DEV_PRODUCT_ID = 3598819972
+M.SKIP_UPGRADE_DEV_PRODUCT_ID = 3598819972 -- +10 power / reach skip
+M.SKIP_UPGRADE_25_DEV_PRODUCT_ID = 3606833486 -- +25 power / reach skip
+M.CARRY_SKIP_UPGRADE_DEV_PRODUCT_ID = 3606834349
+
+function M.skipUpgradeDevProductId(upgradeId: string): number
+	if upgradeId == "Carry1" then
+		return M.CARRY_SKIP_UPGRADE_DEV_PRODUCT_ID
+	end
+	if upgradeId == "Power25" or upgradeId == "Reach25" then
+		return M.SKIP_UPGRADE_25_DEV_PRODUCT_ID
+	end
+	return M.SKIP_UPGRADE_DEV_PRODUCT_ID
+end
 
 M.POWER_LEVEL_ATTR = "PowerUpgradeLevel"
 M.ROPE_LEVEL_ATTR = "RopeUpgradeLevel"

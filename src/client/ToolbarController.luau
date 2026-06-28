@@ -17,7 +17,7 @@
 	Brainrot pickups: tuck/untuck via drag; ghost drag; search; backpack frame outline + open/close tweens.
 	Backpack UI reuses Backpack.Container and fills visible stashed brainrots from the top-left. Empty rows stay visible.
 
-	Toolbar UI access: spawn safe zone (SafeZoneHitbox / Reddie / Raddie) and RedWall deposit area.
+	Toolbar UI access: spawn safe zone (SafeZoneHitbox / Reddie / Raddie). RedWall hides the backpack (glide/deposit zone).
 --]]
 
 local Players = game:GetService("Players")
@@ -36,6 +36,8 @@ local DropTargets = require(script.Parent.ToolbarDropTargets)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
+local BrainrotItemTooltip = require(script.Parent.BrainrotItemTooltip)
 
 local player = Players.LocalPlayer
 
@@ -1728,38 +1730,43 @@ local ToolbarController = {}
 			return
 		end
 		canUseToolbar = inZone
-		if inZone then
-			if CarryGate.isCarrying() then
-				local name = getPrimaryCarriedBrainrotName()
-				if name then
-					pendingReturnedBrainrotName = name
+		task.defer(function()
+			if canUseToolbar ~= inZone then
+				return
+			end
+			if inZone then
+				if CarryGate.isCarrying() then
+					local name = getPrimaryCarriedBrainrotName()
+					if name then
+						pendingReturnedBrainrotName = name
+					end
+				end
+				tryAutoSelectReturnedBrainrot()
+			else
+				pendingReturnedBrainrotName = nil
+				setBackpackPanelOpen(false)
+				deselectAllHotbarSlots()
+				if not activeToolbarDrag then
+					clearDragGhost()
+					pendingToolbarDrag = nil
 				end
 			end
-			tryAutoSelectReturnedBrainrot()
-		else
-			pendingReturnedBrainrotName = nil
-			setBackpackPanelOpen(false)
-			deselectAllHotbarSlots()
-			if not activeToolbarDrag then
-				clearDragGhost()
-				pendingToolbarDrag = nil
-			end
-		end
-		refreshToolbarVisibility()
+			refreshToolbarVisibility()
+		end)
 	end
 
 	local function isCharacterInToolbarAccessZone(character: Model?): boolean
 		if not character then
 			return false
 		end
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position) then
+			return false
+		end
 		if SafezoneUtil.isCharacterInToolbarZone(character) then
 			return true
 		end
 		if SafezoneUtil.isCharacterInSafezone(character) then
-			return true
-		end
-		local hrp = character:FindFirstChild("HumanoidRootPart")
-		if hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position) then
 			return true
 		end
 		return false
@@ -1770,10 +1777,17 @@ local ToolbarController = {}
 	end
 
 	local function pollSafezonePresence()
-		local inZone = isCharacterInToolbarAccessZone(player.Character)
+		local character = player.Character
+		local inZone = isCharacterInToolbarAccessZone(character)
 		if inZone then
 			safezoneOutStreak = 0
 			onSafezonePresenceChanged(true)
+			return
+		end
+		local hrp = character and character:FindFirstChild("HumanoidRootPart")
+		if hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position) then
+			safezoneOutStreak = SAFEZONE_EXIT_POLLS_REQUIRED
+			onSafezonePresenceChanged(false)
 			return
 		end
 		safezoneOutStreak += 1
@@ -2761,6 +2775,14 @@ local ToolbarController = {}
 				btn.MouseLeave:Connect(function()
 					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
 				end)
+				if btn:GetAttribute("_BrainrotTooltipBound") ~= true then
+					btn:SetAttribute("_BrainrotTooltipBound", true)
+					local rowIndex = uiRow
+					BrainrotItemTooltip.bind(btn, function()
+						local entry = brainrotEntryForBackpackSlot(rowIndex)
+						return if entry then entry.name else nil
+					end)
+				end
 				btn.MouseButton1Down:Connect(function()
 					if not canUseToolbar then
 						return
@@ -3023,11 +3045,15 @@ local ToolbarController = {}
 				local mutation = (e :: any).mutation
 				local level = (e :: any).level
 				local baseIncome = (e :: any).baseIncome
-				if typeof(name) == "string" and typeof(icon) == "string" then
+				if typeof(name) == "string" then
+					local iconStr = if typeof(icon) == "string" then icon else ""
+					if iconStr == "" then
+						iconStr = BrainrotsConfig:GetNormalIcon(name)
+					end
 					table.insert(nextList, {
 						uid = if typeof(uid) == "string" and uid ~= "" then uid else nil,
 						name = name,
-						icon = icon,
+						icon = iconStr,
 						sourcePath = if typeof(sourcePath) == "string" then sourcePath else "",
 						rarity = if typeof(rarity) == "string" then rarity else nil,
 						mutation = if typeof(mutation) == "string" then mutation else nil,
@@ -3328,6 +3354,8 @@ local ToolbarController = {}
 	function ToolbarController.init()
 		ensureDefaultRobloxBackpackStaysOff()
 		task.defer(ensureDefaultRobloxBackpackStaysOff)
+		SafezoneUtil.warmCacheAsync()
+		BrainrotItemTooltip.init()
 
 		local ReviveController = require(script.Parent.ReviveController)
 		ReviveController.registerHudRestoredCallback(function()
@@ -3472,6 +3500,26 @@ local ToolbarController = {}
 				end
 				TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = hotbarSlotRestScale(i) }):Play()
 			end)
+
+			if btn and btn:GetAttribute("_BrainrotTooltipBound") ~= true then
+				btn:SetAttribute("_BrainrotTooltipBound", true)
+				local slotIndex = i
+				BrainrotItemTooltip.bind(btn, function()
+					local brainrotIdx = brainrotIndexForHotbarSlot(slotIndex)
+					if brainrotIdx and brainrotEntries[brainrotIdx] then
+						return brainrotEntries[brainrotIdx].name
+					end
+					local tool = slotTools[slotIndex]
+					if tool then
+						local toolName = tool:GetAttribute("BrainrotName")
+						if typeof(toolName) == "string" and toolName ~= "" then
+							return toolName
+						end
+						return tool.Name
+					end
+					return nil
+				end)
+			end
 		end
 
 		resetAllSlotsToIdle()
@@ -3526,36 +3574,9 @@ local ToolbarController = {}
 		end)
 
 		task.spawn(function()
-			local map = workspace:WaitForChild("Map", 120)
-			if map then
-				map.ChildAdded:Connect(function(ch)
-					if ch.Name == "Spawn And Bases" then
-						SafezoneUtil.invalidateCache()
-						pollSafezonePresence()
-					end
-				end)
-				local spawnBases = map:WaitForChild("Spawn And Bases", 60)
-				if spawnBases then
-					spawnBases.DescendantAdded:Connect(function(desc)
-						if not desc:IsA("BasePart") then
-							return
-						end
-						if
-							desc.Name == "Reddie"
-							or desc.Name == "RedWall"
-							or desc.Name == "RedPart"
-							or desc.Name == "Raddie"
-							or desc.Name == "SafezoneHitbox"
-							or desc.Name == "SafeZoneHitbox"
-						then
-							SafezoneUtil.invalidateCache()
-							pollSafezonePresence()
-						end
-					end)
-				end
-				SafezoneUtil.invalidateCache()
-				pollSafezonePresence()
-			end
+			SafezoneUtil.warmCacheAsync()
+			task.wait()
+			pollSafezonePresence()
 		end)
 
 		-- ToggleBackpack + brainrot backpack grid (Backpack.Container["1"]..["19"])

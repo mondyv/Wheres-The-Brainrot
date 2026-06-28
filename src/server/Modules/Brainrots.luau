@@ -161,6 +161,19 @@ for _, def in ipairs(M.BRAINROTS) do
 	M.BRAINROT_BY_NAME[def.name] = def
 end
 
+-- Logical name → ServerStorage.Brainrots folder name when they differ in Studio.
+M.STORAGE_FOLDER_ALIASES = {
+	Garamarama = "Garama",
+} :: { [string]: string }
+
+function M.resolveStorageFolderName(brainrotName: string): string
+	local alias = M.STORAGE_FOLDER_ALIASES[brainrotName]
+	if typeof(alias) == "string" and alias ~= "" then
+		return alias
+	end
+	return brainrotName
+end
+
 function M.getByName(name: string): BrainrotDef?
 	return M.BRAINROT_BY_NAME[name]
 end

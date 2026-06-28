@@ -790,6 +790,13 @@ local Config = {
 		},
 	},
 
+	["Garamarama"] = {
+		rarity = "mythic",
+		baseIncome = 7000,
+
+		icons = {},
+	},
+
 	["KetupatKepat"] = {
 		rarity = "mythic",
 		baseIncome = 7700,

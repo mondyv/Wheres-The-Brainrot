@@ -7,26 +7,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ContentProvider = game:GetService("ContentProvider")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
 
 -->> || Variables || <<--
 
 local Player = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPlayer"):Wait() :: Player
 local _Character = Player.Character or Player.CharacterAdded:Wait() :: Model
-local PlayerGui = Player:WaitForChild("PlayerGui") :: PlayerGui
 
-local Gui = PlayerGui:WaitForChild("Main") :: ScreenGui
-
-local Frames = Gui:WaitForChild("Frames") :: Frame
-local SideUi = Gui:WaitForChild("SideUI") :: Frame
-
-local RightSide = SideUi.Right :: Frame
-local StoreFrame = Frames.Store :: Frame
-local Frame = RightSide.RandomBrainrot :: Frame
-
-local Activation = Frame.Activation :: ImageButton
-local ChancesButton = Activation.Chances
-
-local RandomBrainrotPack = StoreFrame.StoreFrame.Container.RandomBrainrot
+local activationUiWired = false
 
 -->> || Modules || <<--
 
@@ -41,6 +29,8 @@ local BrainrotsConfig = require(Shared.BrainrotsConfig)
 local StoreConfig = require(Shared.StoreConfig)
 
 local HUDController = require(script.Parent.HUDController)
+local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local Maid = require(Packages.Maid)
 local Promise = require(Packages.Promise)
@@ -118,6 +108,123 @@ local _CONFIG = {
 
 	awaitInterval = 8,
 }
+
+local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local function highlightOn(host: GuiObject): GuiObject?
+	local decor = host:FindFirstChild("Decor")
+	local highlight = decor and decor:FindFirstChild("Highlight")
+	local on = highlight and highlight:FindFirstChild("On")
+	if on and on:IsA("GuiObject") then
+		return on :: GuiObject
+	end
+	return nil
+end
+
+local function resolveRandomBrainrotUi(): (ImageButton, Instance, Instance)
+	local gui = PlayerGuiMain.ensure(Player)
+	local activation = gui:WaitForChild("SideUI")
+		:WaitForChild("Right")
+		:WaitForChild("RandomBrainrot")
+		:WaitForChild("Activation") :: ImageButton
+	local storePack = gui:WaitForChild("Frames")
+		:WaitForChild("Store")
+		:WaitForChild("StoreFrame")
+		:WaitForChild("Container")
+		:WaitForChild("RandomBrainrot")
+	return activation, activation.Chances, storePack
+end
+
+local function getOrAddUIScale(obj: GuiObject): UIScale
+	local s = obj:FindFirstChildOfClass("UIScale")
+	if s then
+		return s
+	end
+	s = Instance.new("UIScale")
+	s.Parent = obj
+	return s
+end
+
+local function ensureClickButton(host: GuiObject): GuiButton
+	if host:IsA("GuiButton") then
+		return host :: GuiButton
+	end
+	local existing = host:FindFirstChild("_HudClick")
+	if existing and existing:IsA("GuiButton") then
+		return existing :: GuiButton
+	end
+	local btn = Instance.new("TextButton")
+	btn.Name = "_HudClick"
+	btn.BackgroundTransparency = 1
+	btn.Text = ""
+	btn.Size = UDim2.fromScale(1, 1)
+	btn.Position = UDim2.fromScale(0.5, 0.5)
+	btn.AnchorPoint = Vector2.new(0.5, 0.5)
+	btn.ZIndex = 50
+	btn.Active = true
+	btn.AutoButtonColor = false
+	btn.Parent = host
+	return btn
+end
+
+local function passthroughActivationChildren(activation: GuiObject, chancesHost: Instance?)
+	for _, child in activation:GetDescendants() do
+		if chancesHost and (child == chancesHost or child:IsDescendantOf(chancesHost)) then
+			continue
+		end
+		if child:IsA("GuiObject") and not child:IsA("GuiButton") then
+			child.Active = false
+		end
+	end
+end
+
+local function wireActivationHover(
+	activation: ImageButton,
+	chancesHost: Instance,
+	onActivated: () -> (),
+	maid: any
+)
+	if activationUiWired then
+		return
+	end
+	activationUiWired = true
+
+	activation.Active = true
+	if activation:IsA("ImageButton") then
+		activation.AutoButtonColor = false
+	end
+
+	passthroughActivationChildren(activation, chancesHost)
+
+	local frame = activation.Parent
+	local frameScale = if frame and frame:IsA("GuiObject") then getOrAddUIScale(frame :: GuiObject) else nil
+
+	local icon = activation:FindFirstChild("Icon")
+	local tiltTarget: GuiObject = if icon and icon:IsA("GuiObject") then icon :: GuiObject else activation
+	local onHighlight = highlightOn(activation)
+	if onHighlight then
+		onHighlight.Visible = false
+	end
+
+	UIButtonEffects.wireTiltHoverButton(activation, onActivated, activation, tiltTarget, true)
+
+	maid:GiveTask(activation.MouseEnter:Connect(function()
+		if onHighlight then
+			onHighlight.Visible = true
+		end
+		if frameScale then
+			TweenService:Create(frameScale, HOVER_TWEEN, { Scale = 1.02 }):Play()
+		end
+	end))
+	maid:GiveTask(activation.MouseLeave:Connect(function()
+		if onHighlight then
+			onHighlight.Visible = false
+		end
+		if frameScale then
+			TweenService:Create(frameScale, HOVER_TWEEN, { Scale = 1 }):Play()
+		end
+	end))
+end
 
 -->> || Main ~ Utilities || <<--
 
@@ -242,6 +349,8 @@ function Main:_celebrate(): any
 end
 
 function Main:_linkButtons(): boolean
+	local activation, chancesHost, storePack = resolveRandomBrainrotUi()
+
 	self:_getProductInfo(self._CONFIG.productId, Enum.InfoType.Product)
 		:andThen(function(info: ProductInfo)
 			if not info then
@@ -249,9 +358,12 @@ function Main:_linkButtons(): boolean
 				return
 			end
 
-			Activation.Price.Text = self._CONFIG.textTemplate:gsub("AMOUNT", info.PriceInRobux)
+			local priceLabel = activation:FindFirstChild("Price")
+			if priceLabel and priceLabel:IsA("TextLabel") then
+				priceLabel.Text = self._CONFIG.textTemplate:gsub("AMOUNT", info.PriceInRobux)
+			end
 
-			for _, label in RandomBrainrotPack:GetDescendants() do
+			for _, label in storePack:GetDescendants() do
 				if not label:IsA("TextLabel") and label.Name ~= "Price" then
 					continue
 				end
@@ -271,11 +383,12 @@ function Main:_linkButtons(): boolean
 			return
 		end)
 
-	Activation.Activated:Connect(function()
+	wireActivationHover(activation, chancesHost, function()
 		Prompter.promptProduct(StoreConfig.PRODUCT.RANDOM_BRAINROT)
-	end)
+	end, self._MAID)
 
-	HUDController.applyHoverAndClick(ChancesButton, function()
+	local chancesBtn = ensureClickButton(chancesHost :: GuiObject)
+	UIButtonEffects.wireScaleButtonAnim(chancesBtn, function()
 		local current = HUDController.getCurrentFrame()
 
 		if current and current.Name == "Chances" then
@@ -299,25 +412,23 @@ function Main:_obtainNextImagery()
 		return nil
 	end
 
-	local icons = randomSel and randomSel.icons
-	if not icons then
-		return
+	local icons = randomSel.icons
+	if typeof(icons) == "table" then
+		local icon = icons.Normal
+		if typeof(icon) == "string" and icon ~= "" then
+			return icon
+		end
 	end
 
-	if typeof(icons) ~= "table" then
-		return nil
+	local name = randomSel.name
+	if typeof(name) == "string" and name ~= "" then
+		local fallback = BrainrotsConfig:GetNormalIcon(name)
+		if typeof(fallback) == "string" and fallback ~= "" then
+			return fallback
+		end
 	end
 
-	local icon = icons.Normal
-	if not icon then
-		return nil
-	end
-
-	if typeof(icon) ~= "string" then
-		return nil
-	end
-
-	return icon
+	return nil
 end
 
 function Main:_preloadImagery(id: string)
@@ -329,19 +440,23 @@ function Main:_preloadImagery(id: string)
 		return nil
 	end
 
+	local activation = resolveRandomBrainrotUi()
 	local _asset = Instance.new("ImageLabel")
 	_asset.Name = "TEMP_ASSET"
-	_asset.Parent = Activation
+	_asset.Parent = activation
 	_asset.ImageTransparency = 1
 	_asset.BackgroundTransparency = 1
 	_asset.Visible = true
 	_asset.Image = id
 
-	local success, result = pcall(function(...)
+	local success, err = pcall(function()
 		return ContentProvider:PreloadAsync({ _asset })
 	end)
 
-	if success and result then
+	if not success then
+		warn("[RandomBrainrotController] preload error:", err)
+	end
+	if success then
 		task.wait(0.1)
 		_asset:Destroy()
 	end
@@ -350,13 +465,14 @@ function Main:_preloadImagery(id: string)
 end
 
 function Main:_updateImagery()
-	local imagery = Activation.Icon
-	if not imagery then
+	local activation, _, storePack = resolveRandomBrainrotUi()
+	local imagery = activation:FindFirstChild("Icon")
+	if not imagery or not imagery:IsA("ImageLabel") then
 		return nil
 	end
 
-	local imagery_2 = RandomBrainrotPack.Icon
-	if not imagery_2 then
+	local imagery_2 = storePack:FindFirstChild("Icon")
+	if not imagery_2 or not imagery_2:IsA("ImageLabel") then
 		return nil
 	end
 
@@ -415,8 +531,10 @@ function Main:Setup()
 	end
 
 	self._SETUP_PROMISE = Promise.try(function()
+		PlayerGuiMain.ensure(Player)
 		self:_linkButtons()
 		self:_trackPurchase()
+		self:_updateImagery()
 
 		self._SETUP_COMPLETE = true
 	end)

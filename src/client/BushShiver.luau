@@ -7,9 +7,12 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
 local M = {}
 
@@ -20,17 +23,22 @@ local LOOT_PHASE_COOLDOWN = "cooldown"
 
 local SHIVER_BURST_MIN_SEC = 1.1
 local SHIVER_BURST_MAX_SEC = 1.5
-local SHIVER_IDLE_MIN_SEC = 7
-local SHIVER_IDLE_MAX_SEC = 15
-local SHIVER_START_DELAY_MAX_SEC = 12
-local SHIVER_TICK_SEC = 1 / 12
-local SHIVER_ACTIVE_RANGE = 90
-local MAX_SIMULTANEOUS_SHIVERS = 2
-local ENABLE_IDLE_RANDOM_SHIVER = false -- keep bushes still unless the player is actively searching
+local SHIVER_IDLE_MIN_SEC = 2
+local SHIVER_IDLE_MAX_SEC = 4.5
+local SHIVER_START_DELAY_MAX_SEC = 2
+local SHIVER_ACTIVE_RANGE = 80
+local MAX_SIMULTANEOUS_SHIVERS = 5
+local GLOBAL_SHIVER_GAP_SEC = 0.65
+local PER_BUSH_SHIVER_GAP_SEC = 3
+local HINT_BLOCKED_WAIT_SEC = 0.6
+local GAP_RETRY_WAIT_SEC = 0.2
+local SHIVER_SMOOTH_SPEED = 16
+local COMPANION_SHIVER_CHANCE = 0.55
+local COMPANION_SHIVER_MAX = 2
 
-local SHIVER_POS_AMP = 0.045
-local SHIVER_ROT_AMP = math.rad(1.6)
-local SHIVER_FREQ = 12
+local SHIVER_POS_AMP = 0.052
+local SHIVER_ROT_AMP = math.rad(1.45)
+local SHIVER_SWAY_HZ = 4.2
 
 type ShakeBases = { [Instance]: CFrame }
 
@@ -38,15 +46,12 @@ local baseTransformByBush: { [Instance]: ShakeBases } = {}
 local hookedByBush: { [Instance]: boolean } = {}
 local schedulerTokenByBush: { [Instance]: number } = {}
 local loopRunningByBush: { [Instance]: boolean } = {}
+local lastShiverAtByBush: { [Instance]: number } = {}
 local activeShiverBursts = 0
+local lastGlobalShiverAt = 0
 local localPlayer = Players.LocalPlayer
 
 local function shouldShiverBush(bush: Instance): boolean
-	-- Disabled idle random shiver. Bushes now only move during actual interaction
-	-- through ProximityPromptEffects.beginBushWobble(), or during server feedback effects.
-	if not ENABLE_IDLE_RANDOM_SHIVER then
-		return false
-	end
 	if bush:GetAttribute(LOOT_PHASE_ATTR) == LOOT_PHASE_COOLDOWN then
 		return false
 	end
@@ -54,6 +59,17 @@ local function shouldShiverBush(bush: Instance): boolean
 		return false
 	end
 	return bush:GetAttribute(HAS_BRAINROT_ATTR) == true
+end
+
+local function canPlayAmbientShiverHints(): boolean
+	if ProximityPromptEffects.isBushSearchActive() then
+		return false
+	end
+	local char = localPlayer.Character
+	if not char then
+		return false
+	end
+	return not SafezoneUtil.isCharacterInSafezone(char)
 end
 
 local function captureBaseTransforms(bush: Instance): ShakeBases?
@@ -132,14 +148,23 @@ local function isBushNearPlayer(bush: Instance): boolean
 	return (pos - (hrp :: BasePart).Position).Magnitude <= SHIVER_ACTIVE_RANGE
 end
 
-local function softShiverOffset(elapsed: number, burstSec: number): CFrame
-	local envelope = math.sin(math.clamp(elapsed / burstSec, 0, 1) * math.pi)
-	local ox = math.sin(elapsed * SHIVER_FREQ) * SHIVER_POS_AMP * envelope
-	local oz = math.sin(elapsed * SHIVER_FREQ * 1.11 + 0.7) * SHIVER_POS_AMP * 0.52 * envelope
-	local ty = math.sin(elapsed * SHIVER_FREQ * 0.94 + 1.1) * SHIVER_ROT_AMP * envelope
-	local tz = math.sin(elapsed * SHIVER_FREQ * 1.06 + 0.35) * SHIVER_ROT_AMP * 0.58 * envelope
-	local tx = math.sin(elapsed * SHIVER_FREQ * 1.19) * SHIVER_ROT_AMP * 0.32 * envelope
-	return CFrame.new(ox, 0, oz) * CFrame.Angles(tx, ty, tz)
+local function softShiverOffset(elapsed: number, burstSec: number, seed: number): CFrame
+	local t = math.clamp(elapsed / burstSec, 0, 1)
+	local envelope = math.sin(t * math.pi)
+	local attack = math.clamp(t / 0.2, 0, 1)
+	envelope *= attack
+
+	local hz = SHIVER_SWAY_HZ + (seed % 5) * 0.22
+	local phase = seed * 0.17
+	local swayA = math.sin(elapsed * hz * math.pi * 2 + phase)
+	local swayB = math.sin(elapsed * hz * math.pi * 2 * 0.86 + phase * 1.4)
+
+	local ox = swayA * SHIVER_POS_AMP * envelope
+	local oz = swayB * SHIVER_POS_AMP * 0.62 * envelope
+	local ty = swayA * SHIVER_ROT_AMP * 0.55 * envelope
+	local tz = swayB * SHIVER_ROT_AMP * 0.38 * envelope
+
+	return CFrame.new(ox, 0, oz) * CFrame.Angles(0, ty, tz)
 end
 
 local function stopShiverLoop(bush: Instance)
@@ -159,26 +184,138 @@ local function randomBurstSec(): number
 	return SHIVER_BURST_MIN_SEC + math.random() * (SHIVER_BURST_MAX_SEC - SHIVER_BURST_MIN_SEC)
 end
 
-local function runSoftBurst(bush: Instance, token: number, burstSec: number)
+local function canStartShiverNow(bush: Instance): boolean
+	if not canPlayAmbientShiverHints() then
+		return false
+	end
+	if not isBushNearPlayer(bush) then
+		return false
+	end
+	if activeShiverBursts >= MAX_SIMULTANEOUS_SHIVERS then
+		return false
+	end
+	local now = os.clock()
+	if now - lastGlobalShiverAt < GLOBAL_SHIVER_GAP_SEC then
+		return false
+	end
+	if now - (lastShiverAtByBush[bush] or 0) < PER_BUSH_SHIVER_GAP_SEC then
+		return false
+	end
+	return true
+end
+
+local function tryCompanionShivers(sourceBush: Instance, token: number, seed: number)
+	if math.random() > COMPANION_SHIVER_CHANCE then
+		return
+	end
+
+	local char = localPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp then
+		return
+	end
+
+	local candidates: { Instance } = {}
+	for bush, loopRunning in loopRunningByBush do
+		if bush == sourceBush or not loopRunning or not shouldShiverBush(bush) then
+			continue
+		end
+		if not isBushNearPlayer(bush) then
+			continue
+		end
+		table.insert(candidates, bush)
+	end
+	if #candidates == 0 then
+		return
+	end
+
+	for _ = 1, math.min(COMPANION_SHIVER_MAX, #candidates) do
+		if activeShiverBursts >= MAX_SIMULTANEOUS_SHIVERS then
+			break
+		end
+		local pick = candidates[math.random(1, #candidates)]
+		for i, bush in candidates do
+			if bush == pick then
+				table.remove(candidates, i)
+				break
+			end
+		end
+		local bushToken = schedulerTokenByBush[pick]
+		if not bushToken or not loopRunningByBush[pick] then
+			continue
+		end
+		task.defer(function()
+			if not canStartShiverNow(pick) then
+				return
+			end
+			local bases = captureBaseTransforms(pick)
+			if not bases then
+				return
+			end
+			baseTransformByBush[pick] = bases
+			runSoftBurst(pick, bushToken, randomBurstSec(), seed + math.random(1, 500))
+		end)
+	end
+end
+
+local function runSoftBurst(bush: Instance, token: number, burstSec: number, seed: number)
 	local bases = baseTransformByBush[bush]
 	if not bases then
 		return
 	end
-	if activeShiverBursts >= MAX_SIMULTANEOUS_SHIVERS or not isBushNearPlayer(bush) then
+	if not canStartShiverNow(bush) then
 		return
 	end
+
+	local now = os.clock()
+	lastGlobalShiverAt = now
+	lastShiverAtByBush[bush] = now
+	tryCompanionShivers(bush, token, seed)
 
 	activeShiverBursts += 1
 	local start = os.clock()
 	local endAt = start + burstSec
+	local displayOffset = CFrame.new()
 	GameSoundEffects.playBushRandomShakeAt(bush)
+
+	local burstConn: RBXScriptConnection? = nil
+	burstConn = RunService.Heartbeat:Connect(function(dt)
+		if not bush.Parent or token ~= schedulerTokenByBush[bush] or not shouldShiverBush(bush) then
+			if burstConn then
+				burstConn:Disconnect()
+			end
+			return
+		end
+		if not isBushNearPlayer(bush) or ProximityPromptEffects.isBushSearchActive() then
+			if burstConn then
+				burstConn:Disconnect()
+			end
+			return
+		end
+
+		local elapsed = os.clock() - start
+		if elapsed >= burstSec then
+			if burstConn then
+				burstConn:Disconnect()
+			end
+			return
+		end
+
+		local targetOffset = softShiverOffset(elapsed, burstSec, seed)
+		local alpha = math.clamp(dt * SHIVER_SMOOTH_SPEED, 0, 1)
+		displayOffset = displayOffset:Lerp(targetOffset, alpha)
+		applyShiverOffset(bush, displayOffset)
+	end)
+
 	while bush.Parent and token == schedulerTokenByBush[bush] and shouldShiverBush(bush) and os.clock() < endAt do
-		if not isBushNearPlayer(bush) then
+		if not isBushNearPlayer(bush) or ProximityPromptEffects.isBushSearchActive() then
 			break
 		end
-		local elapsed = os.clock() - start
-		applyShiverOffset(bush, softShiverOffset(elapsed, burstSec))
-		task.wait(SHIVER_TICK_SEC)
+		task.wait()
+	end
+
+	if burstConn then
+		burstConn:Disconnect()
 	end
 	activeShiverBursts = math.max(0, activeShiverBursts - 1)
 
@@ -195,6 +332,7 @@ local function startShiverScheduler(bush: Instance)
 	local token = (schedulerTokenByBush[bush] or 0) + 1
 	schedulerTokenByBush[bush] = token
 	loopRunningByBush[bush] = true
+	local shakeSeed = math.random(1, 9999)
 
 	task.spawn(function()
 		local firstCycle = true
@@ -203,6 +341,11 @@ local function startShiverScheduler(bush: Instance)
 			if not shouldShiverBush(bush) then
 				restoreBushTransforms(bush)
 				break
+			end
+
+			if not canPlayAmbientShiverHints() then
+				task.wait(HINT_BLOCKED_WAIT_SEC)
+				continue
 			end
 
 			if firstCycle then
@@ -215,7 +358,8 @@ local function startShiverScheduler(bush: Instance)
 			if token ~= schedulerTokenByBush[bush] or not bush.Parent or not shouldShiverBush(bush) then
 				break
 			end
-			if not isBushNearPlayer(bush) or activeShiverBursts >= MAX_SIMULTANEOUS_SHIVERS then
+			if not canStartShiverNow(bush) then
+				task.wait(GAP_RETRY_WAIT_SEC)
 				continue
 			end
 
@@ -225,7 +369,7 @@ local function startShiverScheduler(bush: Instance)
 			end
 			baseTransformByBush[bush] = bases
 
-			runSoftBurst(bush, token, randomBurstSec())
+			runSoftBurst(bush, token, randomBurstSec(), shakeSeed)
 		end
 
 		if token == schedulerTokenByBush[bush] then
@@ -242,6 +386,7 @@ local function refreshShiverState(bush: Instance)
 		startShiverScheduler(bush)
 	else
 		stopShiverLoop(bush)
+		lastShiverAtByBush[bush] = nil
 	end
 end
 
@@ -250,6 +395,7 @@ function M.trackBush(bush: Instance)
 		return
 	end
 	if hookedByBush[bush] then
+		refreshShiverState(bush)
 		return
 	end
 	hookedByBush[bush] = true
@@ -270,6 +416,7 @@ function M.trackBush(bush: Instance)
 		if parent == nil then
 			stopShiverLoop(bush)
 			hookedByBush[bush] = nil
+			lastShiverAtByBush[bush] = nil
 		end
 	end)
 end

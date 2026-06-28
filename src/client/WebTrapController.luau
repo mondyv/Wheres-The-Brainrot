@@ -1,16 +1,13 @@
 -- [ACTIVE] WebTrapController
 --[[
-	Client VFX for spider-web traps: strands, vignette, struggle wiggle, sticky SFX.
+	Client VFX for spider-web traps: strands, vignette, subtle particles.
 --]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
-local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
 local WebTrapConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WebTrapConfig"))
 
 local player = Players.LocalPlayer
@@ -18,19 +15,15 @@ local player = Players.LocalPlayer
 local WebTrapController = {}
 
 local active = false
-local heartbeatConn: RBXScriptConnection? = nil
 local attrConn: RBXScriptConnection? = nil
 local charConn: RBXScriptConnection? = nil
 
 local colorFx: ColorCorrectionEffect? = nil
 local vignetteGui: ScreenGui? = nil
 local vignetteFrame: Frame? = nil
-local stickySound: Sound? = nil
 local strandFolder: Folder? = nil
 local websFolder: Instance? = nil
 local dustEmitter: ParticleEmitter? = nil
-
-local wigglePhase = 0
 local webAttachments: { Attachment } = {}
 
 local function findWebsFolder(): Instance?
@@ -199,28 +192,7 @@ local function buildStrands(character: Model)
 	makeStrand(bodyAtt, webCenterAtt, folder)
 end
 
-local function ensureStickySound(): Sound
-	if stickySound and stickySound.Parent then
-		return stickySound
-	end
-	local sound = Instance.new("Sound")
-	sound.Name = "WebTrapSticky"
-	sound.SoundId = "rbxasset://sounds/electronicpingshort.wav"
-	sound.Looped = true
-	sound.Volume = 0
-	sound.PlaybackSpeed = 0.42
-	sound.RollOffMaxDistance = 40
-	sound.Parent = SoundService:FindFirstChild("SoundEffects") or SoundService
-	stickySound = sound
-	return sound
-end
-
 local function cleanupFx()
-	if heartbeatConn then
-		heartbeatConn:Disconnect()
-		heartbeatConn = nil
-	end
-
 	if strandFolder then
 		strandFolder:Destroy()
 		strandFolder = nil
@@ -235,11 +207,6 @@ local function cleanupFx()
 	if dustEmitter then
 		dustEmitter:Destroy()
 		dustEmitter = nil
-	end
-
-	if stickySound then
-		stickySound:Stop()
-		TweenService:Create(stickySound, TweenInfo.new(0.25), { Volume = 0 }):Play()
 	end
 
 	if colorFx then
@@ -262,7 +229,6 @@ local function startFx(character: Model)
 		cleanupFx()
 	end
 	active = true
-	wigglePhase = 0
 
 	buildStrands(character)
 
@@ -282,16 +248,6 @@ local function startFx(character: Model)
 	vignette.BackgroundTransparency = 1
 	TweenService:Create(vignette, TweenInfo.new(0.5), { BackgroundTransparency = 0.35 }):Play()
 
-	local sound = ensureStickySound()
-	sound.Volume = 0
-	sound:Play()
-	TweenService:Create(sound, TweenInfo.new(0.4), { Volume = 0.22 * ClientSFXVolume.getVolume() }):Play()
-
-	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not hrp then
-		return
-	end
-
 	local torso = character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
 	if torso and torso:IsA("BasePart") then
 		local dust = Instance.new("ParticleEmitter")
@@ -299,38 +255,20 @@ local function startFx(character: Model)
 		dust.Texture = "rbxasset://textures/particles/sparkles_main.dds"
 		dust.Color = ColorSequence.new(Color3.fromRGB(230, 230, 245))
 		dust.Size = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.12),
+			NumberSequenceKeypoint.new(0, 0.08),
 			NumberSequenceKeypoint.new(1, 0),
 		})
 		dust.Lifetime = NumberRange.new(0.35, 0.7)
-		dust.Rate = 18
-		dust.Speed = NumberRange.new(0.2, 1.2)
-		dust.SpreadAngle = Vector2.new(40, 40)
+		dust.Rate = 8
+		dust.Speed = NumberRange.new(0.1, 0.5)
+		dust.SpreadAngle = Vector2.new(30, 30)
 		dust.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.35),
+			NumberSequenceKeypoint.new(0, 0.45),
 			NumberSequenceKeypoint.new(1, 1),
 		})
 		dust.Parent = torso
 		dustEmitter = dust
 	end
-
-	heartbeatConn = RunService.RenderStepped:Connect(function(dt)
-		if not active or player:GetAttribute(WebTrapConfig.TRAPPED_ATTR) ~= true then
-			return
-		end
-
-		wigglePhase += dt * 5.5
-
-		if stickySound and stickySound.IsPlaying then
-			stickySound.PlaybackSpeed = 0.38 + math.sin(wigglePhase * 0.8) * 0.04
-		end
-
-		local cam = Workspace.CurrentCamera
-		if cam then
-			local shake = math.sin(wigglePhase * 2.3) * 0.035
-			cam.CFrame = cam.CFrame * CFrame.new(shake, shake * 0.6, 0)
-		end
-	end)
 end
 
 local function onTrappedChanged()

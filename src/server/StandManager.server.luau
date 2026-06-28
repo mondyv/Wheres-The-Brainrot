@@ -22,7 +22,7 @@
 	• After a saved logout, returning players earn offline income (up to OFFLINE_CAP) on occupied stands;
 	  Cash.BillboardGui.Offline shows the away earnings until the pad is collected.
 	• Touch ButtonPart → owner collects accumulated cash (online + offline); coin VFX bursts.
-	• Owner clicks the Upgrade SurfaceGui → level +1 (or +2 with 2× Upgrades gamepass, same single-step cost).
+	• Owner clicks the Upgrade SurfaceGui → level +1 (cash) or +25 with 2× Upgrades (Robux dev product).
 --]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -40,6 +40,7 @@ local PlotStandPlaceholders = require(ReplicatedStorage:WaitForChild("Shared"):W
 local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local BrainrotStandConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotStandConfig"))
 
 local STAND_TAG = "BrainrotStand"
 local STAND_ACCUMULATED_ATTR = "StandAccumulatedCash"
@@ -93,8 +94,10 @@ local remotesFolder = ensureRemotesFolder()
 local placeRE = ensureRemoteEvent(remotesFolder, "PlaceBrainrotOnStand") -- (standModel)
 local removeRE = ensureRemoteEvent(remotesFolder, "RemoveBrainrotFromStand") -- (standModel)
 local upgradeRE = ensureRemoteEvent(remotesFolder, "UpgradeStandBrainrot") -- (standModel)
+local prepareRobuxStandUpgradeRE = ensureRemoteEvent(remotesFolder, "PrepareRobuxStandUpgrade") -- (standModel, mode)
 local upgradeFeedbackRE = ensureRemoteEvent(remotesFolder, "StandUpgradeFeedback") -- server → client (ok, reason)
 local collectVFXRE = ensureRemoteEvent(remotesFolder, "StandCashCollectedFX") -- server → client (standModel, cashAmount)
+local autoCollectVFXRE = ensureRemoteEvent(remotesFolder, "AutoCollectCashCollectedFX") -- server → client (autocollectModel, totalCash)
 
 -- ── Internal BindableFunction from BushHarvest (inventory mutation) ───────────
 
@@ -440,6 +443,37 @@ type StandState = {
 
 local stands: { [Model]: StandState } = {}
 
+local autoCollectRefreshScheduled: { [number]: boolean } = {}
+local autoCollectRefreshLastAt: { [number]: number } = {}
+local AUTO_COLLECT_REFRESH_MIN_INTERVAL = 2.5
+
+local function scheduleAutoCollectRefresh(ownerUserId: number?)
+	if typeof(ownerUserId) ~= "number" then
+		return
+	end
+	local uid = ownerUserId
+	local now = os.clock()
+	local lastAt = autoCollectRefreshLastAt[uid] or 0
+	if now - lastAt < AUTO_COLLECT_REFRESH_MIN_INTERVAL then
+		return
+	end
+	if autoCollectRefreshScheduled[uid] then
+		return
+	end
+	autoCollectRefreshScheduled[uid] = true
+	task.defer(function()
+		autoCollectRefreshScheduled[uid] = nil
+		autoCollectRefreshLastAt[uid] = os.clock()
+		local folder = ServerStorage:FindFirstChild("BrainrotInternal")
+		local bf = folder and folder:FindFirstChild("RefreshAutoCollectDisplay")
+		if bf and bf:IsA("BindableFunction") then
+			pcall(function()
+				(bf :: BindableFunction):Invoke(uid)
+			end)
+		end
+	end)
+end
+
 local function resolveTotalCashLabel(state: StandState): (TextLabel | TextButton)?
 	local label = state.totalLabel
 	if label and label.Parent then
@@ -568,12 +602,12 @@ end
 
 local function upgradeLevelGainForPlayer(player: Player?): number
 	if not player then
-		return 1
+		return BrainrotStandConfig.NORMAL_LEVEL_GAIN
 	end
 	if player:GetAttribute(StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED) == true then
-		return 2
+		return BrainrotStandConfig.PLUS_25_LEVEL_GAIN
 	end
-	return 1
+	return BrainrotStandConfig.NORMAL_LEVEL_GAIN
 end
 
 local function upgradeLevelGainForStand(state: StandState): number
@@ -1139,6 +1173,7 @@ local function applyOfflineEarningsForPlayer(player: Player, lastSavedAt: number
 			refreshLabels(state)
 		end
 	end
+	scheduleAutoCollectRefresh(player.UserId)
 end
 
 local function clearStandState(state: StandState)
@@ -1415,6 +1450,9 @@ local function collectCash(state: StandState, player: Player)
 	-- refreshLabels(state) also touches upgrade cost/level UI and stand attributes, which is unnecessary here.
 	syncCashPadDisplay(state, true)
 	syncOfflineDisplay(state)
+	-- Autocollect pad label is updated client-side (it watches StandAccumulatedCash on each stand),
+	-- so we deliberately do NOT refresh the autocollect display here — that path did a per-collect
+	-- gamepass web check and caused periodic hitches.
 
 	-- Defer the client-side presentation so payout/labels finish first, and hard-throttle duplicates.
 	if now - (state.lastCollectVfxAt or 0) >= COLLECT_VFX_MIN_INTERVAL then
@@ -1427,36 +1465,118 @@ local function collectCash(state: StandState, player: Player)
 	end
 end
 
-local function upgradeStandBrainrot(state: StandState, player: Player)
-	if not isOwner(state, player) then
-		return
+local function collectAllCashForPlayer(player: Player): number
+	local totalCollected = 0
+	local vfxEntries: { { stand: Model, amount: number } } = {}
+
+	for _, state in pairs(stands) do
+		if state.ownerUserId ~= player.UserId then
+			continue
+		end
+		if not state.brainrotName then
+			continue
+		end
+		if not playerAssignedToStandPlot(player, state.stand) then
+			continue
+		end
+
+		local amount = math.floor(state.accumulated)
+		if amount <= 0 then
+			continue
+		end
+
+		state.accumulated = math.max(0, state.accumulated - amount)
+		state.offlinePending = 0
+		totalCollected += amount
+		table.insert(vfxEntries, { stand = state.stand, amount = amount })
+		syncCashPadDisplay(state, true)
+		syncOfflineDisplay(state)
 	end
-	if not playerAssignedToStandPlot(player, state.stand) then
-		return
+
+	if totalCollected <= 0 then
+		return 0
 	end
-	if not state.brainrotName then
-		return
-	end
-	if isStandLocked(state) then
-		return
-	end
-	if state.level >= Brainrots.MAX_LEVEL then
-		return
-	end
-	local now = os.clock()
-	if state.lastUpgradeAt + UPGRADE_DEBOUNCE > now then
-		return
-	end
-	state.lastUpgradeAt = now
-	local cost = recomputeUpgradeCost(state)
+
 	local cash = player:GetAttribute("Cash")
 	local c = if typeof(cash) == "number" then cash else 0
-	if c < cost then
-		upgradeFeedbackRE:FireClient(player, false, "cash")
-		return
+	player:SetAttribute("Cash", c + totalCollected)
+	-- AutoCollectManager already refreshes the pad display directly after collect-all; no extra
+	-- refresh needed here (and the client updates each stand label from replicated attributes).
+
+	table.sort(vfxEntries, function(a, b)
+		return a.amount > b.amount
+	end)
+	for i, entry in ipairs(vfxEntries) do
+		if i > 4 then
+			break
+		end
+		task.defer(function()
+			if player.Parent and entry.stand.Parent then
+				collectVFXRE:FireClient(player, entry.stand, entry.amount)
+			end
+		end)
 	end
-	player:SetAttribute("Cash", c - cost)
-	local levelGain = upgradeLevelGainForPlayer(player)
+
+	return totalCollected
+end
+
+local function getPlayerPlotCashTotals(player: Player): (number, number)
+	local accumulated = 0
+	local offlinePending = 0
+	for _, state in pairs(stands) do
+		if state.ownerUserId ~= player.UserId then
+			continue
+		end
+		if not state.brainrotName then
+			continue
+		end
+		if not playerAssignedToStandPlot(player, state.stand) then
+			continue
+		end
+		accumulated += math.max(0, math.floor(state.accumulated + 0.5))
+		offlinePending += math.max(0, state.offlinePending)
+	end
+	return accumulated, offlinePending
+end
+
+local pendingRobuxStandUpgrade: { [Player]: { stand: Model, mode: string } } = {}
+
+local function applyStandUpgrade(state: StandState, player: Player, levelGain: number, chargeCash: boolean): boolean
+	if not isOwner(state, player) then
+		return false
+	end
+	if not playerAssignedToStandPlot(player, state.stand) then
+		return false
+	end
+	if not state.brainrotName then
+		return false
+	end
+	if isStandLocked(state) then
+		return false
+	end
+	if state.level >= Brainrots.MAX_LEVEL then
+		return false
+	end
+	if levelGain <= 0 then
+		return false
+	end
+
+	local now = os.clock()
+	if state.lastUpgradeAt + UPGRADE_DEBOUNCE > now then
+		return false
+	end
+	state.lastUpgradeAt = now
+
+	if chargeCash then
+		local cost = recomputeUpgradeCost(state)
+		local cash = player:GetAttribute("Cash")
+		local c = if typeof(cash) == "number" then cash else 0
+		if c < cost then
+			return false
+		end
+		player:SetAttribute("Cash", c - cost)
+	end
+
 	state.level = math.min(Brainrots.MAX_LEVEL, state.level + levelGain)
 	state.stand:SetAttribute("BrainrotLevel", state.level)
 	if state.displayModel and state.displayModel.Parent then
@@ -1471,7 +1591,40 @@ local function upgradeStandBrainrot(state: StandState, player: Player)
 			refreshHeader(state)
 		end
 	end)
-	upgradeFeedbackRE:FireClient(player, true, "ok")
+	return true
+end
+
+local function upgradeStandBrainrot(state: StandState, player: Player)
+	local levelGain = upgradeLevelGainForPlayer(player)
+	if levelGain > BrainrotStandConfig.NORMAL_LEVEL_GAIN then
+		upgradeFeedbackRE:FireClient(player, false, "robux_plus25")
+		return
+	end
+	if applyStandUpgrade(state, player, levelGain, true) then
+		upgradeFeedbackRE:FireClient(player, true, "ok")
+	else
+		upgradeFeedbackRE:FireClient(player, false, "cash")
+	end
+end
+
+local function setPendingRobuxStandUpgrade(player: Player, state: StandState, mode: string)
+	pendingRobuxStandUpgrade[player] = {
+		stand = state.stand,
+		mode = mode,
+	}
+end
+
+local function fulfillPendingRobuxStandUpgrade(player: Player, expectedMode: string, levelGain: number): boolean
+	local pending = pendingRobuxStandUpgrade[player]
+	if not pending or pending.mode ~= expectedMode then
+		return false
+	end
+	local state = stands[pending.stand]
+	pendingRobuxStandUpgrade[player] = nil
+	if not state then
+		return false
+	end
+	return applyStandUpgrade(state, player, levelGain, false)
 end
 
 -- ── Hooks ─────────────────────────────────────────────────────────────────────
@@ -1938,6 +2091,36 @@ local function ensureStandRescanRequestBindable()
 			return countStandsOnPlayerPlot(playerArg :: Player)
 		end
 	end
+
+	local collectAllBF = folder:FindFirstChild("CollectAllStandCashForPlayer")
+	if not collectAllBF then
+		collectAllBF = Instance.new("BindableFunction")
+		collectAllBF.Name = "CollectAllStandCashForPlayer"
+		collectAllBF.Parent = folder
+	end
+	if collectAllBF:IsA("BindableFunction") then
+		(collectAllBF :: BindableFunction).OnInvoke = function(playerArg: any)
+			if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+				return 0
+			end
+			return collectAllCashForPlayer(playerArg :: Player)
+		end
+	end
+
+	local totalsBF = folder:FindFirstChild("GetPlayerPlotCashTotals")
+	if not totalsBF then
+		totalsBF = Instance.new("BindableFunction")
+		totalsBF.Name = "GetPlayerPlotCashTotals"
+		totalsBF.Parent = folder
+	end
+	if totalsBF:IsA("BindableFunction") then
+		(totalsBF :: BindableFunction).OnInvoke = function(playerArg: any)
+			if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+				return 0, 0
+			end
+			return getPlayerPlotCashTotals(playerArg :: Player)
+		end
+	end
 end
 
 CollectionService:GetInstanceAddedSignal(STAND_TAG):Connect(function(inst)
@@ -2023,6 +2206,33 @@ upgradeRE.OnServerEvent:Connect(function(player: Player, standArg: any)
 	upgradeStandBrainrot(state, player)
 end)
 
+prepareRobuxStandUpgradeRE.OnServerEvent:Connect(function(player: Player, standArg: any, mode: any)
+	if typeof(mode) ~= "string" then
+		return
+	end
+	local state = resolveStandFromArg(standArg)
+	if not state then
+		return
+	end
+	if not isOwner(state, player) then
+		return
+	end
+	if not playerAssignedToStandPlot(player, state.stand) then
+		return
+	end
+	if mode == "plus25" then
+		if upgradeLevelGainForPlayer(player) <= BrainrotStandConfig.NORMAL_LEVEL_GAIN then
+			return
+		end
+		setPendingRobuxStandUpgrade(player, state, mode)
+	elseif mode == "cant_afford" then
+		if upgradeLevelGainForPlayer(player) > BrainrotStandConfig.NORMAL_LEVEL_GAIN then
+			return
+		end
+		setPendingRobuxStandUpgrade(player, state, mode)
+	end
+end)
+
 -- ── Income loop ──────────────────────────────────────────────────────────────
 
 local incomeStandOrder: { StandState } = {}
@@ -2066,6 +2276,7 @@ end)
 -- ── Player cleanup ───────────────────────────────────────────────────────────
 
 Players.PlayerRemoving:Connect(function(player)
+	pendingRobuxStandUpgrade[player] = nil
 	for _, state in pairs(stands) do
 		if isOwner(state, player) then
 			-- Leave the brainrot on the stand; ownership persists per-server.
@@ -2117,3 +2328,27 @@ do
 		return stolen
 	end
 end
+
+local ProductHandlerServer = require(
+	game:GetService("ServerScriptService").EssentialsServer.ProductHandler.ProductHandlerServer
+)
+
+ProductHandlerServer.registerProductReceipt(BrainrotStandConfig.PLUS_25_DEV_PRODUCT_ID, function(player: Player)
+	local ok = fulfillPendingRobuxStandUpgrade(player, "plus25", BrainrotStandConfig.PLUS_25_LEVEL_GAIN)
+	if ok then
+		upgradeFeedbackRE:FireClient(player, true, "ok")
+	end
+	return if ok
+		then Enum.ProductPurchaseDecision.PurchaseGranted
+		else Enum.ProductPurchaseDecision.NotProcessedYet
+end)
+
+ProductHandlerServer.registerProductReceipt(BrainrotStandConfig.CANT_AFFORD_DEV_PRODUCT_ID, function(player: Player)
+	local ok = fulfillPendingRobuxStandUpgrade(player, "cant_afford", BrainrotStandConfig.NORMAL_LEVEL_GAIN)
+	if ok then
+		upgradeFeedbackRE:FireClient(player, true, "ok")
+	end
+	return if ok
+		then Enum.ProductPurchaseDecision.PurchaseGranted
+		else Enum.ProductPurchaseDecision.NotProcessedYet
+end)

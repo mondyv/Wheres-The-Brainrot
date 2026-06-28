@@ -1340,6 +1340,10 @@ local function fireManagedBushHoldComplete(prompt: ProximityPrompt)
 	end
 end
 
+function ProximityPromptEffects.isBushSearchActive(): boolean
+	return managedBushHoldActive ~= nil and managedBushHoldActive.Parent ~= nil
+end
+
 -- Client-owned bush hold (works while a hotbar brainrot Tool is equipped; engine InputHoldBegin often does not).
 function ProximityPromptEffects.beginManagedBushHold(prompt: ProximityPrompt)
 	if not isManagedBushPrompt(prompt) or CarryGate.isFull() or not prompt.Enabled then
@@ -2809,7 +2813,7 @@ function ProximityPromptEffects.init()
 	end)
 
 	wireProximityPromptService()
-	purgeOrphanPromptBillboards()
+	task.defer(purgeOrphanPromptBillboards)
 
 	task.defer(function()
 		local pg = player:WaitForChild("PlayerGui", 120)

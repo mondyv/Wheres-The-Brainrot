@@ -305,7 +305,7 @@ local ICON_DEFS = {
 		id = StoreConfig.GAMEPASS.DOUBLE_UPGRADES,
 		attr = StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED,
 		title = "2× Upgrades",
-		description = "Each stand upgrade grants two levels for the price of one",
+		description = "Each stand upgrade grants +25 levels (Robux)",
 	},
 	["Super Luck"] = {
 		id = StoreConfig.GAMEPASS.SUPER_LUCK,

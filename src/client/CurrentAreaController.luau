@@ -360,7 +360,13 @@ local function showArea(displayLuck: number)
 	end
 	activeDisplayLuck = displayLuck
 	cancelClose()
-	playIntro(displayLuck, PlotLuck.tierIndex(displayLuck))
+	local tierIndex = PlotLuck.tierIndex(displayLuck)
+	task.defer(function()
+		if activeDisplayLuck ~= displayLuck then
+			return
+		end
+		playIntro(displayLuck, tierIndex)
+	end)
 end
 
 local function scheduleHide()

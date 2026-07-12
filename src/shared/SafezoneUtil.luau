@@ -148,9 +148,9 @@ local function connectMapStreamingListener()
 		map.ChildAdded:Connect(function(ch)
 			if ch.Name == "Spawn And Bases" then
 				hookSpawnBasesFolder(ch)
-				if not cachesBuilt and not rebuildInProgress then
-					SafezoneUtil.warmCacheAsync()
-				end
+				task.spawn(function()
+					scanTreeForZoneParts(ch)
+				end)
 			end
 		end)
 	end)
@@ -248,6 +248,18 @@ local function isWorldPointInsideParts(worldPoint: Vector3, parts: { BasePart }?
 	return false
 end
 
+function SafezoneUtil.awaitCacheReady(timeoutSec: number): boolean
+	local deadline = os.clock() + math.max(timeoutSec, 0)
+	ensureCaches()
+	while os.clock() < deadline do
+		if cachesBuilt then
+			return true
+		end
+		task.wait(0.05)
+	end
+	return cachesBuilt == true
+end
+
 function SafezoneUtil.isWorldPointInReddie(worldPoint: Vector3): boolean
 	ensureCaches()
 	return isWorldPointInsideParts(worldPoint, cachedReddieParts)
@@ -263,9 +275,21 @@ function SafezoneUtil.isWorldPointInSafezone(worldPoint: Vector3): boolean
 end
 
 function SafezoneUtil.isWorldPointInRedWall(worldPoint: Vector3): boolean
-	ensureListTables()
-	connectDepositTagListener()
+	ensureCaches()
 	return isWorldPointInsideParts(worldPoint, cachedRedWallParts)
+end
+
+function SafezoneUtil.getRedWallSamplePositions(): { Vector3 }
+	ensureCaches()
+	local out: { Vector3 } = {}
+	if cachedRedWallParts then
+		for _, part in cachedRedWallParts do
+			if part.Parent then
+				table.insert(out, part.Position)
+			end
+		end
+	end
+	return out
 end
 
 function SafezoneUtil.isWorldPointInInventoryZone(worldPoint: Vector3): boolean

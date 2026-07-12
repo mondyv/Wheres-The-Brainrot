@@ -12,28 +12,45 @@ local Workspace = game:GetService("Workspace")
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local RaritySpawnStyle = require(script.Parent.RaritySpawnStyle)
+local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
+local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 
 local player = Players.LocalPlayer
 
 local FLOAT_ENDS_AT_ATTR = "BrainrotFloatEndsAt"
+local FLOAT_ANCHOR_ATTR = "BrainrotFloatAnchorPos"
 local FLOATING_PHASE = "Floating"
 local OWNER_ATTR = "OwnerUserId"
-local FLOAT_DURATION = 15
+local BUSH_HARVEST_KEY_ATTR = "BrainrotHarvestBushKey"
+local BUSH_FLOATING_CLAIM_ATTR = "BushFloatingClaimActive"
+local DECLINING_ATTR = "BrainrotFloatDeclining"
+local BUSH_OUTLINE_COLOR = Color3.fromRGB(255, 45, 45)
+local OFFER_UI_HIDE_DISTANCE = 28
+local OFFER_UI_MAX_DISTANCE = 36
+local DEFAULT_OFFER_DURATION = 15
+local FLOAT_DURATION = DEFAULT_OFFER_DURATION
 local FLANK_OFFSET_X = 4.2
 local FLANK_OFFSET_Y = 1.65
-local TIMER_OFFSET_Y = -1.05
--- Keep the buttons a consistent visual gap from the model regardless of camera distance, but
--- smooth the scale so small camera/model motion can't make them jitter or slide.
-local FLANK_DISTANCE_REF = 20
-local FLANK_DISTANCE_SCALE_MIN = 1.0
-local FLANK_DISTANCE_SCALE_MAX = 2.4
-local FLANK_SCALE_SMOOTHING = 0.15
+local TIMER_OFFSET_Y = -0.55
+local FLANK_EDGE_PAD = 0.45
+local TIMER_EDGE_PAD = 0.08
+local TIMER_BELOW_SCALE = 0.38
+local UI_ANCHOR_LIFT = 1.85
+local CHOICE_BILLBOARD_SIZE = Vector2.new(68, 32)
+local TIMER_BILLBOARD_SIZE = Vector2.new(62, 18)
+local CHOICE_TEXT_MAX = 12
+local TIMER_TEXT_MAX = 11
+local TIMER_CAMERA_HIDE_DIST = 38
 
 local BushFloatingClaimController = {}
 
 type TrackedOffer = {
 	model: Model,
+	bush: Instance?,
+	bushHighlight: Highlight?,
+	restoreBushCooldownOnRelease: boolean,
 	uiAnchor: BasePart,
+	fixedUiWorldPos: Vector3,
 	highlight: Highlight,
 	billboards: { BillboardGui },
 	acceptBb: BillboardGui,
@@ -45,16 +62,18 @@ type TrackedOffer = {
 	declineScale: UIScale,
 	acceptPanelScale: UIScale,
 	declinePanelScale: UIScale,
+	acceptDistanceScale: UIScale,
+	declineDistanceScale: UIScale,
+	timerDistanceScale: UIScale,
 	timeLabel: TextLabel,
 	ring: Frame,
+	timerTrack: Frame?,
 	decisionLocked: boolean,
+	expiring: boolean,
 	hoverCount: number,
-	uiHoverFrozen: boolean,
-	frozenWorldPositions: { [BillboardGui]: Vector3 }?,
-	hoverFreezeConn: RBXScriptConnection?,
-	unfreezeToken: number,
-	bbOffsets: { [BillboardGui]: Vector3 },
-	flankScaleSmoothed: number?,
+	layoutHalfWidth: number,
+	layoutFlankY: number,
+	layoutTimerY: number,
 	conns: { RBXScriptConnection },
 }
 
@@ -69,6 +88,7 @@ local HOVER_LIFT = 0.22
 local POP_IN = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local PUNCH = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local FADE = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local VANISH_OUT = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
 
 local function pulseColorForRarity(rarity: string?): Color3
 	if typeof(rarity) == "string" then
@@ -106,11 +126,15 @@ local function modelPivotPosition(model: Model): Vector3?
 	return if adornee then adornee.Position else nil
 end
 
-local function createUiAnchor(model: Model): BasePart?
-	local pos = modelPivotPosition(model)
-	if not pos then
-		return nil
+local function resolveFixedUiWorldPos(model: Model): Vector3?
+	local anchorAttr = model:GetAttribute(FLOAT_ANCHOR_ATTR)
+	if typeof(anchorAttr) == "Vector3" then
+		return (anchorAttr :: Vector3) + Vector3.new(0, UI_ANCHOR_LIFT, 0)
 	end
+	return modelPivotPosition(model)
+end
+
+local function createUiAnchor(worldPos: Vector3): BasePart
 	local anchor = Instance.new("Part")
 	anchor.Name = "FloatingClaimUiAnchor"
 	anchor.Anchored = true
@@ -119,17 +143,16 @@ local function createUiAnchor(model: Model): BasePart?
 	anchor.CanTouch = false
 	anchor.Transparency = 1
 	anchor.Size = Vector3.new(0.15, 0.15, 0.15)
-	anchor.CFrame = CFrame.new(pos)
+	anchor.CFrame = CFrame.new(worldPos)
 	anchor.Parent = Workspace.CurrentCamera
 	return anchor
 end
 
 local function syncUiAnchorPosition(entry: TrackedOffer)
-	local pos = modelPivotPosition(entry.model)
-	if not pos or not entry.uiAnchor.Parent then
+	if not entry.uiAnchor.Parent then
 		return
 	end
-	entry.uiAnchor.CFrame = CFrame.new(pos)
+	entry.uiAnchor.CFrame = CFrame.new(entry.fixedUiWorldPos)
 end
 
 local function attachBillboardToAnchor(billboard: BillboardGui, anchor: BasePart, worldOffset: Vector3)
@@ -157,10 +180,6 @@ local function getBillboardLiftValue(billboard: BillboardGui): NumberValue
 	return lift
 end
 
-local function billboardWorldPosition(billboard: BillboardGui, anchor: BasePart): Vector3
-	return anchor.Position + billboard.StudsOffsetWorldSpace
-end
-
 local function cameraFlatRight(): Vector3
 	local camera = Workspace.CurrentCamera
 	if not camera then
@@ -174,51 +193,78 @@ local function cameraFlatRight(): Vector3
 	return flat:Cross(Vector3.yAxis).Unit
 end
 
-local function cameraRelativeFlankOffset(sideSign: number, liftY: number, distanceScale: number): Vector3
+local function cameraRelativeFlankOffset(sideSign: number, liftY: number, halfWidthStuds: number): Vector3
 	local right = cameraFlatRight()
-	local scale = math.clamp(distanceScale, FLANK_DISTANCE_SCALE_MIN, FLANK_DISTANCE_SCALE_MAX)
-	return right * (sideSign * FLANK_OFFSET_X * scale) + Vector3.yAxis * liftY
+	return right * (sideSign * halfWidthStuds) + Vector3.yAxis * liftY
 end
 
-local function flankTargetScaleForEntry(entry: TrackedOffer): number
+local function modelFlankLayout(model: Model): (number, number, number)
+	local ok, cf, size = pcall(function()
+		return model:GetBoundingBox()
+	end)
+	if not ok or typeof(cf) ~= "CFrame" or typeof(size) ~= "Vector3" then
+		return FLANK_OFFSET_X, FLANK_OFFSET_Y, TIMER_OFFSET_Y
+	end
+
+	local right = cameraFlatRight()
+	local half = size * 0.5
+	local halfWidth = math.abs(cf.RightVector:Dot(right)) * half.X
+		+ math.abs(cf.LookVector:Dot(right)) * half.Z
+		+ math.abs(cf.UpVector:Dot(right)) * half.Y
+
+	local pivot = modelPivotPosition(model)
+	local centerY = if pivot then pivot.Y else cf.Position.Y
+	local topY = cf.Position.Y + half.Y
+	local bottomY = cf.Position.Y - half.Y
+	local aboveCenter = topY - centerY
+	local belowCenter = centerY - bottomY
+
+	return halfWidth + FLANK_EDGE_PAD, aboveCenter * 0.72 + 0.2, -(belowCenter * TIMER_BELOW_SCALE + TIMER_EDGE_PAD)
+end
+
+local function snapOfferLayout(entry: TrackedOffer)
+	local hw, fy, ty = modelFlankLayout(entry.model)
+	entry.layoutHalfWidth = hw
+	entry.layoutFlankY = fy
+	entry.layoutTimerY = ty
+end
+
+local function cameraDistanceToFixedAnchor(entry: TrackedOffer): number?
 	local camera = Workspace.CurrentCamera
-	local pos = modelPivotPosition(entry.model)
-	if not camera or not pos then
-		return entry.flankScaleSmoothed or 1
+	if not camera then
+		return nil
 	end
-	local dist = (camera.CFrame.Position - pos).Magnitude
-	return math.clamp(dist / FLANK_DISTANCE_REF, FLANK_DISTANCE_SCALE_MIN, FLANK_DISTANCE_SCALE_MAX)
+	return (camera.CFrame.Position - entry.fixedUiWorldPos).Magnitude
 end
 
-local function smoothedFlankScale(entry: TrackedOffer): number
-	local target = flankTargetScaleForEntry(entry)
-	local current = entry.flankScaleSmoothed
-	if typeof(current) ~= "number" then
-		-- First frame: snap so the buttons don't visibly slide in from a wrong spacing.
-		entry.flankScaleSmoothed = target
-		return target
+local function updateOfferUiVisibility(entry: TrackedOffer)
+	local dist = playerDistanceToOffer(entry)
+	if typeof(dist) ~= "number" then
+		return
 	end
-	-- Exponential smoothing kills the frame-to-frame distance jitter.
-	current += (target - current) * FLANK_SCALE_SMOOTHING
-	if math.abs(target - current) < 0.001 then
-		current = target
-	end
-	entry.flankScaleSmoothed = current
-	return current
+	local camDist = cameraDistanceToFixedAnchor(entry)
+	local showChoices = dist <= OFFER_UI_HIDE_DISTANCE
+	local showTimer = dist <= OFFER_UI_MAX_DISTANCE
+		and (typeof(camDist) ~= "number" or camDist <= TIMER_CAMERA_HIDE_DIST)
+	entry.acceptBb.Enabled = showChoices
+	entry.declineBb.Enabled = showChoices
+	entry.timerBb.Enabled = showTimer
+end
+
+local function applyDistanceScale(entry: TrackedOffer)
+	local scale = 1
+	entry.acceptDistanceScale.Scale = scale
+	entry.declineDistanceScale.Scale = scale
+	entry.timerDistanceScale.Scale = scale
 end
 
 local function updateBillboardPositions(entry: TrackedOffer)
-	if entry.uiHoverFrozen then
-		return
-	end
-
 	syncUiAnchorPosition(entry)
 	local anchor = getUiAnchor(entry)
 	if not anchor then
 		return
 	end
 
-	local distanceScale = smoothedFlankScale(entry)
 	local acceptLift = getBillboardLiftValue(entry.acceptBb).Value
 	local declineLift = getBillboardLiftValue(entry.declineBb).Value
 
@@ -226,10 +272,137 @@ local function updateBillboardPositions(entry: TrackedOffer)
 	entry.declineBb.StudsOffset = Vector3.zero
 	entry.timerBb.StudsOffset = Vector3.zero
 	entry.acceptBb.StudsOffsetWorldSpace =
-		cameraRelativeFlankOffset(-1, FLANK_OFFSET_Y + acceptLift, distanceScale)
+		cameraRelativeFlankOffset(-1, entry.layoutFlankY + acceptLift, entry.layoutHalfWidth)
 	entry.declineBb.StudsOffsetWorldSpace =
-		cameraRelativeFlankOffset(1, FLANK_OFFSET_Y + declineLift, distanceScale)
-	entry.timerBb.StudsOffsetWorldSpace = Vector3.new(0, TIMER_OFFSET_Y * distanceScale, 0)
+		cameraRelativeFlankOffset(1, entry.layoutFlankY + declineLift, entry.layoutHalfWidth)
+	entry.timerBb.StudsOffsetWorldSpace = Vector3.new(0, entry.layoutTimerY, 0)
+
+	applyDistanceScale(entry)
+end
+
+local function releaseBushForOffer(entry: TrackedOffer, restoreBushCooldown: boolean)
+	local bush = entry.bush
+	if not bush then
+		return
+	end
+	entry.bush = nil
+	if bush.Parent then
+		bush:SetAttribute(BUSH_FLOATING_CLAIM_ATTR, nil)
+	end
+	if entry.bushHighlight then
+		if entry.bushHighlight.Parent then
+			entry.bushHighlight:Destroy()
+		end
+		entry.bushHighlight = nil
+	end
+	if bush.Parent then
+		if restoreBushCooldown then
+			ProximityPromptEffects.releaseBushCooldownBanner(bush)
+		else
+			ProximityPromptEffects.clearBushCooldownBannerSuppression(bush)
+		end
+		BushHoldInteraction.refreshCooldownVisuals()
+	end
+end
+
+local function applyBushVisualsToEntry(entry: TrackedOffer, bush: Instance)
+	local prompt = BushHoldInteraction.getPromptForBush(bush)
+	bush:SetAttribute(BUSH_FLOATING_CLAIM_ATTR, true)
+	ProximityPromptEffects.suppressBushCooldownBanner(bush, prompt)
+
+	local cam = Workspace.CurrentCamera
+	if not cam then
+		return
+	end
+
+	if entry.bushHighlight and entry.bushHighlight.Parent then
+		entry.bushHighlight:Destroy()
+	end
+
+	local bushHl = Instance.new("Highlight")
+	bushHl.Name = "FloatingClaimBushHighlight"
+	bushHl.Adornee = bush
+	bushHl.FillTransparency = 1
+	bushHl.OutlineTransparency = 0.05
+	bushHl.OutlineColor = BUSH_OUTLINE_COLOR
+	bushHl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	bushHl.Parent = cam
+
+	entry.bush = bush
+	entry.bushHighlight = bushHl
+	BushHoldInteraction.refreshCooldownVisuals()
+end
+
+local function attachBushOfferVisuals(entry: TrackedOffer, model: Model)
+	local bushKey = model:GetAttribute(BUSH_HARVEST_KEY_ATTR)
+	if typeof(bushKey) ~= "string" or bushKey == "" then
+		return
+	end
+
+	local function tryAttach()
+		local bush = BushHoldInteraction.findBushByHarvestKey(bushKey)
+		if bush and bush.Parent then
+			applyBushVisualsToEntry(entry, bush)
+			return true
+		end
+		return false
+	end
+
+	if tryAttach() then
+		return
+	end
+
+	task.defer(function()
+		if tracked[entry.model] ~= entry or entry.bush then
+			return
+		end
+		tryAttach()
+	end)
+end
+
+local function applyUrgencyFlash(entry: TrackedOffer, urgency: number, now: number)
+	if entry.expiring then
+		return
+	end
+
+	if urgency > 0.65 then
+		local flash = 0.5 + math.sin(now * 14) * 0.5
+		entry.timeLabel.TextColor3 =
+			Color3.fromRGB(255, math.floor(170 + flash * 85), math.floor(140 + flash * 60))
+		entry.highlight.OutlineTransparency = 0.05 + urgency * 0.25
+		if entry.bushHighlight then
+			entry.bushHighlight.OutlineTransparency = 0.05 + (1 - flash) * 0.35
+			entry.bushHighlight.OutlineColor =
+				Color3.fromRGB(255, math.floor(45 + flash * 120), math.floor(45 + flash * 40))
+		end
+		if not entry.decisionLocked and entry.hoverCount == 0 then
+			local pulseStroke = 1 + math.sin(now * 10) * 0.025
+			for _, btn in { entry.acceptBtn, entry.declineBtn } do
+				local panel = btn:FindFirstChild("Panel")
+				local stroke = if panel then panel:FindFirstChildOfClass("UIStroke") else nil
+				if stroke then
+					stroke.Thickness = 1.2 * pulseStroke
+				end
+			end
+		end
+	else
+		entry.timeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+		entry.highlight.OutlineTransparency = 0.05 + urgency * 0.25
+		if entry.bushHighlight then
+			entry.bushHighlight.OutlineTransparency = 0.05
+			entry.bushHighlight.OutlineColor = BUSH_OUTLINE_COLOR
+		end
+		if not entry.decisionLocked and entry.hoverCount == 0 then
+			for _, btn in { entry.acceptBtn, entry.declineBtn } do
+				local panel = btn:FindFirstChild("Panel")
+				local stroke = if panel then panel:FindFirstChildOfClass("UIStroke") else nil
+				if stroke then
+					stroke.Thickness = 1.2
+					stroke.Transparency = 0.12
+				end
+			end
+		end
+	end
 end
 
 local function parentBillboard(bb: BillboardGui)
@@ -238,10 +411,6 @@ local function parentBillboard(bb: BillboardGui)
 end
 
 local function disconnectTracked(entry: TrackedOffer)
-	if entry.hoverFreezeConn then
-		entry.hoverFreezeConn:Disconnect()
-		entry.hoverFreezeConn = nil
-	end
 	for _, conn in entry.conns do
 		conn:Disconnect()
 	end
@@ -259,11 +428,17 @@ local function disconnectTracked(entry: TrackedOffer)
 	end
 end
 
-local function untrack(model: Model)
+local function untrack(model: Model, restoreBushCooldown: boolean?)
 	local entry = tracked[model]
 	if not entry then
 		return
 	end
+	local restore = restoreBushCooldown
+	if restore == nil then
+		restore = entry.restoreBushCooldownOnRelease
+			or model:GetAttribute(DECLINING_ATTR) == true
+	end
+	releaseBushForOffer(entry, restore == true)
 	disconnectTracked(entry)
 	tracked[model] = nil
 end
@@ -286,14 +461,15 @@ local function styleChoiceButton(
 	label: string,
 	accent: Color3,
 	gradColors: { Color3 },
-	textColor: Color3
+	textColor: Color3,
+	parent: Instance
 )
 	btn.Name = label
 	btn.Size = UDim2.fromScale(1, 1)
 	btn.BackgroundTransparency = 1
 	btn.BorderSizePixel = 0
 	btn.Font = Enum.Font.GothamBlack
-	btn.TextSize = 17
+	btn.TextScaled = true
 	btn.Text = label
 	btn.TextColor3 = textColor
 	btn.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
@@ -301,17 +477,22 @@ local function styleChoiceButton(
 	btn.AutoButtonColor = false
 	btn.ZIndex = 3
 
+	local textBounds = Instance.new("UITextSizeConstraint")
+	textBounds.MaxTextSize = CHOICE_TEXT_MAX
+	textBounds.MinTextSize = 8
+	textBounds.Parent = btn
+
 	local panel = Instance.new("Frame")
 	panel.Name = "Panel"
 	panel.Size = UDim2.fromScale(1, 1)
-	panel.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	panel.BackgroundTransparency = 0
+	panel.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
+	panel.BackgroundTransparency = 0.42
 	panel.BorderSizePixel = 0
 	panel.ZIndex = 1
 	panel.Parent = btn
 
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
+	corner.CornerRadius = UDim.new(0.28, 0)
 	corner.Parent = panel
 
 	local grad = Instance.new("UIGradient")
@@ -326,21 +507,10 @@ local function styleChoiceButton(
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = accent
-	stroke.Thickness = 3
-	stroke.Transparency = 0
+	stroke.Thickness = 1.2
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Transparency = 0.12
 	stroke.Parent = panel
-
-	local shine = Instance.new("Frame")
-	shine.Name = "Shine"
-	shine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	shine.BackgroundTransparency = 0.78
-	shine.BorderSizePixel = 0
-	shine.Size = UDim2.new(0.45, 0, 1.4, 0)
-	shine.Rotation = 18
-	shine.Position = UDim2.fromScale(-0.5, -0.2)
-	shine.ZIndex = 2
-	shine.Active = false
-	shine.Parent = panel
 
 	local scale = getOrAddUIScale(btn)
 	scale.Scale = 0.01
@@ -348,29 +518,36 @@ local function styleChoiceButton(
 	local panelScale = getOrAddUIScale(panel)
 	panelScale.Scale = 1
 
+	btn.Parent = parent
+
 	return btn, scale, panelScale
 end
 
-local function styleMinimalTimer(accent: Color3, parent: Instance): (TextLabel, Frame)
+local function styleMinimalTimer(accent: Color3, parent: Instance): (TextLabel, Frame, Frame)
 	local label = Instance.new("TextLabel")
 	label.Name = "Time"
 	label.AnchorPoint = Vector2.new(0.5, 0)
 	label.Position = UDim2.fromScale(0.5, 0)
-	label.Size = UDim2.new(1, 0, 0, 18)
+	label.Size = UDim2.new(1, 0, 0.62, 0)
 	label.BackgroundTransparency = 1
 	label.Font = Enum.Font.GothamBlack
-	label.TextSize = 17
+	label.TextScaled = true
 	label.TextColor3 = Color3.fromRGB(255, 255, 255)
 	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	label.TextStrokeTransparency = 0
-	label.Text = string.format("%.1fs", FLOAT_DURATION)
+	label.Text = string.format("%.1fs", DEFAULT_OFFER_DURATION)
 	label.Parent = parent
+
+	local textBounds = Instance.new("UITextSizeConstraint")
+	textBounds.MaxTextSize = TIMER_TEXT_MAX
+	textBounds.MinTextSize = 8
+	textBounds.Parent = label
 
 	local track = Instance.new("Frame")
 	track.Name = "Track"
 	track.AnchorPoint = Vector2.new(0.5, 1)
 	track.Position = UDim2.new(0.5, 0, 1, 0)
-	track.Size = UDim2.new(0.88, 0, 0, 4)
+	track.Size = UDim2.new(0.82, 0, 0.14, 0)
 	track.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 	track.BackgroundTransparency = 0.55
 	track.BorderSizePixel = 0
@@ -391,7 +568,23 @@ local function styleMinimalTimer(accent: Color3, parent: Instance): (TextLabel, 
 	ringCorner.CornerRadius = UDim.new(1, 0)
 	ringCorner.Parent = ring
 
-	return label, ring
+	return label, ring, track
+end
+
+local function addBillboardRoot(bb: BillboardGui): UIScale
+	local root = Instance.new("Frame")
+	root.Name = "Root"
+	root.Size = UDim2.fromScale(1, 1)
+	root.BackgroundTransparency = 1
+	root.BorderSizePixel = 0
+	root.Parent = bb
+
+	local distanceScale = Instance.new("UIScale")
+	distanceScale.Name = "DistanceScale"
+	distanceScale.Scale = 1
+	distanceScale.Parent = root
+
+	return distanceScale, root
 end
 
 local function makeFlankBillboard(name: string, worldOffset: Vector3, size: Vector2): BillboardGui
@@ -418,8 +611,12 @@ type ChoiceUiParts = {
 	declineScale: UIScale,
 	acceptPanelScale: UIScale,
 	declinePanelScale: UIScale,
+	acceptDistanceScale: UIScale,
+	declineDistanceScale: UIScale,
+	timerDistanceScale: UIScale,
 	timeLabel: TextLabel,
 	ring: Frame,
+	timerTrack: Frame,
 }
 
 local function buildChoiceUi(_model: Model, rarity: string): ChoiceUiParts
@@ -428,38 +625,40 @@ local function buildChoiceUi(_model: Model, rarity: string): ChoiceUiParts
 	local acceptBb = makeFlankBillboard(
 		"FloatingClaimAccept",
 		Vector3.new(-FLANK_OFFSET_X, FLANK_OFFSET_Y, 0),
-		Vector2.new(84, 46)
+		CHOICE_BILLBOARD_SIZE
 	)
+	local acceptDistanceScale, acceptRoot = addBillboardRoot(acceptBb)
 	local acceptBtn, acceptScale, acceptPanelScale = styleChoiceButton(
 		Instance.new("TextButton"),
 		"Accept",
 		Color3.fromRGB(70, 255, 140),
 		{ Color3.fromRGB(18, 42, 28), Color3.fromRGB(8, 18, 12) },
-		Color3.fromRGB(170, 255, 200)
+		Color3.fromRGB(170, 255, 200),
+		acceptRoot
 	)
-	acceptBtn.Parent = acceptBb
 
 	local declineBb = makeFlankBillboard(
 		"FloatingClaimDecline",
 		Vector3.new(FLANK_OFFSET_X, FLANK_OFFSET_Y, 0),
-		Vector2.new(84, 46)
+		CHOICE_BILLBOARD_SIZE
 	)
+	local declineDistanceScale, declineRoot = addBillboardRoot(declineBb)
 	local declineBtn, declineScale, declinePanelScale = styleChoiceButton(
 		Instance.new("TextButton"),
 		"Decline",
 		Color3.fromRGB(255, 95, 85),
 		{ Color3.fromRGB(42, 14, 14), Color3.fromRGB(18, 6, 8) },
-		Color3.fromRGB(255, 190, 185)
+		Color3.fromRGB(255, 190, 185),
+		declineRoot
 	)
-	declineBtn.Parent = declineBb
 
 	local timerBb = makeFlankBillboard(
 		"FloatingClaimTimer",
 		Vector3.new(0, TIMER_OFFSET_Y, 0),
-		Vector2.new(76, 26)
+		TIMER_BILLBOARD_SIZE
 	)
-
-	local label, ring = styleMinimalTimer(accent, timerBb)
+	local timerDistanceScale, timerRoot = addBillboardRoot(timerBb)
+	local label, ring, track = styleMinimalTimer(accent, timerRoot)
 
 	return {
 		acceptBb = acceptBb,
@@ -471,26 +670,84 @@ local function buildChoiceUi(_model: Model, rarity: string): ChoiceUiParts
 		declineScale = declineScale,
 		acceptPanelScale = acceptPanelScale,
 		declinePanelScale = declinePanelScale,
+		acceptDistanceScale = acceptDistanceScale,
+		declineDistanceScale = declineDistanceScale,
+		timerDistanceScale = timerDistanceScale,
 		timeLabel = label,
 		ring = ring,
+		timerTrack = track,
 	}
 end
 
 local function animateOfferIn(entry: TrackedOffer)
+	applyDistanceScale(entry)
 	updateBillboardPositions(entry)
 
 	TweenService:Create(entry.acceptScale, POP_IN, { Scale = 1 }):Play()
 	TweenService:Create(entry.declineScale, POP_IN, { Scale = 1 }):Play()
+end
 
-	for _, btn in { entry.acceptBtn, entry.declineBtn } do
-		local panel = btn:FindFirstChild("Panel")
-		local shine = if panel then panel:FindFirstChild("Shine") else nil
-		if shine and shine:IsA("Frame") then
-			TweenService:Create(shine, TweenInfo.new(0.65, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Position = UDim2.fromScale(1.2, -0.2),
-			}):Play()
-		end
+local function fadeButtonPanel(btn: TextButton)
+	local panel = btn:FindFirstChild("Panel")
+	if not panel or not panel:IsA("Frame") then
+		return
 	end
+	TweenService:Create(panel, VANISH_OUT, { BackgroundTransparency = 1 }):Play()
+	local stroke = panel:FindFirstChildOfClass("UIStroke")
+	if stroke then
+		TweenService:Create(stroke, VANISH_OUT, { Transparency = 1 }):Play()
+	end
+end
+
+local function animateOfferOut(entry: TrackedOffer, restoreBushCooldown: boolean?)
+	if entry.expiring then
+		return
+	end
+	entry.expiring = true
+	lockDecision(entry)
+	releaseBushForOffer(entry, restoreBushCooldown == true)
+
+	local sinkScale = 0.02
+	TweenService:Create(entry.acceptScale, VANISH_OUT, { Scale = sinkScale }):Play()
+	TweenService:Create(entry.declineScale, VANISH_OUT, { Scale = sinkScale }):Play()
+	TweenService:Create(entry.acceptDistanceScale, VANISH_OUT, { Scale = 0.01 }):Play()
+	TweenService:Create(entry.declineDistanceScale, VANISH_OUT, { Scale = 0.01 }):Play()
+	TweenService:Create(entry.timerDistanceScale, VANISH_OUT, { Scale = 0.01 }):Play()
+
+	fadeButtonPanel(entry.acceptBtn)
+	fadeButtonPanel(entry.declineBtn)
+	TweenService:Create(entry.acceptBtn, VANISH_OUT, {
+		TextTransparency = 1,
+		TextStrokeTransparency = 1,
+	}):Play()
+	TweenService:Create(entry.declineBtn, VANISH_OUT, {
+		TextTransparency = 1,
+		TextStrokeTransparency = 1,
+	}):Play()
+	TweenService:Create(entry.timeLabel, VANISH_OUT, {
+		TextTransparency = 1,
+		TextStrokeTransparency = 1,
+	}):Play()
+	TweenService:Create(entry.ring, VANISH_OUT, { BackgroundTransparency = 1 }):Play()
+	if entry.timerTrack then
+		TweenService:Create(entry.timerTrack, VANISH_OUT, { BackgroundTransparency = 1 }):Play()
+	end
+
+	if entry.highlight.Parent then
+		TweenService:Create(entry.highlight, VANISH_OUT, {
+			FillTransparency = 1,
+			OutlineTransparency = 1,
+		}):Play()
+	end
+
+	task.delay(VANISH_OUT.Time + 0.04, function()
+		if tracked[entry.model] ~= entry then
+			return
+		end
+		for _, bb in entry.billboards do
+			bb.Enabled = false
+		end
+	end)
 end
 
 local function getButtonPanelStroke(btn: TextButton): UIStroke?
@@ -517,64 +774,6 @@ local function punchButton(scale: UIScale, btn: TextButton, bright: Color3)
 				TweenService:Create(stroke, FADE, { Color = orig }):Play()
 			end
 		end)
-	end
-end
-
-local function captureFrozenWorldPositions(entry: TrackedOffer)
-	local anchor = getUiAnchor(entry)
-	if not anchor then
-		return
-	end
-	syncUiAnchorPosition(entry)
-	entry.frozenWorldPositions = {}
-	for _, billboard in entry.billboards do
-		entry.frozenWorldPositions[billboard] = billboardWorldPosition(billboard, anchor)
-	end
-end
-
-local function ensureHoverFreezeLoop(entry: TrackedOffer)
-	if entry.hoverFreezeConn then
-		return
-	end
-	entry.hoverFreezeConn = RunService.RenderStepped:Connect(function()
-		if not entry.uiHoverFrozen then
-			return
-		end
-		local frozen = entry.frozenWorldPositions
-		if not frozen then
-			return
-		end
-		local anchor = getUiAnchor(entry)
-		if not anchor then
-			return
-		end
-		syncUiAnchorPosition(entry)
-		for billboard, worldPos in frozen do
-			if not billboard.Parent then
-				continue
-			end
-			local lift = getBillboardLiftValue(billboard).Value
-			local holdPos = worldPos + Vector3.new(0, lift, 0)
-			billboard.StudsOffset = Vector3.zero
-			billboard.StudsOffsetWorldSpace = holdPos - anchor.Position
-		end
-	end)
-end
-
-local function startHoverFreeze(entry: TrackedOffer)
-	if not entry.frozenWorldPositions then
-		captureFrozenWorldPositions(entry)
-	end
-	entry.uiHoverFrozen = true
-	ensureHoverFreezeLoop(entry)
-end
-
-local function stopHoverFreeze(entry: TrackedOffer)
-	entry.uiHoverFrozen = false
-	entry.frozenWorldPositions = nil
-	if entry.hoverFreezeConn then
-		entry.hoverFreezeConn:Disconnect()
-		entry.hoverFreezeConn = nil
 	end
 end
 
@@ -620,16 +819,14 @@ local function wireButtonHover(
 		if scale.Scale < 0.5 then
 			return
 		end
-		entry.unfreezeToken += 1
 		entry.hoverCount += 1
-		startHoverFreeze(entry)
 		tweenBillboardLift(bb, true)
 
 		TweenService:Create(scale, HOVER_SCALE, { Scale = 1.05 }):Play()
 		TweenService:Create(panelScale, HOVER_SCALE, { Scale = 1.02 }):Play()
 		if stroke then
 			TweenService:Create(stroke, HOVER_POP, {
-				Thickness = 3.5,
+				Thickness = 1.5,
 				Color = strokeBright,
 				Transparency = 0,
 			}):Play()
@@ -651,9 +848,9 @@ local function wireButtonHover(
 		TweenService:Create(panelScale, HOVER_SCALE, { Scale = 1 }):Play()
 		if stroke then
 			TweenService:Create(stroke, HOVER_OUT, {
-				Thickness = 3,
+				Thickness = 1.2,
 				Color = accent,
-				Transparency = 0,
+				Transparency = 0.12,
 			}):Play()
 		end
 		if grad and grad:IsA("UIGradient") then
@@ -664,17 +861,6 @@ local function wireButtonHover(
 			}):Play()
 		end
 		TweenService:Create(btn, HOVER_OUT, { TextColor3 = textColor }):Play()
-
-		if entry.hoverCount == 0 then
-			entry.unfreezeToken += 1
-			local token = entry.unfreezeToken
-			task.delay(0.28, function()
-				if entry.unfreezeToken ~= token or entry.hoverCount > 0 then
-					return
-				end
-				stopHoverFreeze(entry)
-			end)
-		end
 	end)
 end
 
@@ -682,7 +868,7 @@ local function ensureTicker()
 	if tickerConn then
 		return
 	end
-	tickerConn = RunService.RenderStepped:Connect(function()
+	tickerConn = RunService.Heartbeat:Connect(function(dt)
 		if next(tracked) == nil then
 			if tickerConn then
 				tickerConn:Disconnect()
@@ -698,6 +884,10 @@ local function ensureTicker()
 				continue
 			end
 			updateBillboardPositions(entry)
+			updateOfferUiVisibility(entry)
+			if entry.expiring then
+				continue
+			end
 			local endsAt = model:GetAttribute(FLOAT_ENDS_AT_ATTR)
 			if typeof(endsAt) ~= "number" then
 				continue
@@ -707,17 +897,9 @@ local function ensureTicker()
 			local frac = math.clamp(remaining / FLOAT_DURATION, 0, 1)
 			entry.ring.Size = UDim2.fromScale(frac, 1)
 			local urgency = 1 - frac
-			entry.highlight.OutlineTransparency = 0.05 + urgency * 0.25
-			if urgency > 0.65 then
-				local flash = 0.5 + math.sin(now * 14) * 0.5
-				entry.timeLabel.TextColor3 = Color3.fromRGB(255, math.floor(170 + flash * 85), math.floor(140 + flash * 60))
-				local pulse = 1 + math.sin(now * 10) * 0.04
-				if not entry.decisionLocked and not entry.uiHoverFrozen then
-					entry.acceptScale.Scale = pulse
-					entry.declineScale.Scale = pulse
-				end
-			else
-				entry.timeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+			applyUrgencyFlash(entry, urgency, now)
+			if remaining <= 0 then
+				animateOfferOut(entry, false)
 			end
 		end
 	end)
@@ -758,10 +940,12 @@ local function trackModel(model: Model)
 		return
 	end
 
-	local anchor = createUiAnchor(model)
-	if not anchor then
+	local fixedPos = resolveFixedUiWorldPos(model)
+	if not fixedPos then
 		return
 	end
+
+	local anchor = createUiAnchor(fixedPos)
 
 	local rarity = model:GetAttribute("BrainrotRarity")
 	local rarityStr = if typeof(rarity) == "string" then rarity else "common"
@@ -784,7 +968,11 @@ local function trackModel(model: Model)
 
 	local entry: TrackedOffer = {
 		model = model,
+		bush = nil,
+		bushHighlight = nil,
+		restoreBushCooldownOnRelease = false,
 		uiAnchor = anchor,
+		fixedUiWorldPos = fixedPos,
 		highlight = hl,
 		billboards = { ui.acceptBb, ui.declineBb, ui.timerBb },
 		acceptBb = ui.acceptBb,
@@ -796,23 +984,23 @@ local function trackModel(model: Model)
 		declineScale = ui.declineScale,
 		acceptPanelScale = ui.acceptPanelScale,
 		declinePanelScale = ui.declinePanelScale,
+		acceptDistanceScale = ui.acceptDistanceScale,
+		declineDistanceScale = ui.declineDistanceScale,
+		timerDistanceScale = ui.timerDistanceScale,
 		timeLabel = ui.timeLabel,
 		ring = ui.ring,
+		timerTrack = ui.timerTrack,
 		decisionLocked = false,
+		expiring = false,
 		hoverCount = 0,
-		uiHoverFrozen = false,
-		frozenWorldPositions = nil,
-		hoverFreezeConn = nil,
-		unfreezeToken = 0,
-		bbOffsets = {
-			[ui.acceptBb] = Vector3.new(-FLANK_OFFSET_X, FLANK_OFFSET_Y, 0),
-			[ui.declineBb] = Vector3.new(FLANK_OFFSET_X, FLANK_OFFSET_Y, 0),
-			[ui.timerBb] = Vector3.new(0, TIMER_OFFSET_Y, 0),
-		},
-		flankScaleSmoothed = nil,
+		layoutHalfWidth = FLANK_OFFSET_X,
+		layoutFlankY = FLANK_OFFSET_Y,
+		layoutTimerY = TIMER_OFFSET_Y,
 		conns = {},
 	}
 	tracked[model] = entry
+	snapOfferLayout(entry)
+	attachBushOfferVisuals(entry, model)
 	updateBillboardPositions(entry)
 
 	local acceptAccent = Color3.fromRGB(70, 255, 140)
@@ -829,6 +1017,8 @@ local function trackModel(model: Model)
 			lockDecision(entry)
 			punchButton(entry.acceptScale, entry.acceptBtn, Color3.fromRGB(160, 255, 190))
 			GameSoundEffects.playProximityPromptAppear()
+			BushHoldInteraction.suppressBushSearchBriefly(2.5)
+			ProximityPromptEffects.hideBushSearch()
 			fireDecision(model, "accept")
 		end)
 	)
@@ -839,9 +1029,10 @@ local function trackModel(model: Model)
 			if entry.decisionLocked then
 				return
 			end
-			lockDecision(entry)
+			entry.restoreBushCooldownOnRelease = true
 			punchButton(entry.declineScale, entry.declineBtn, Color3.fromRGB(255, 170, 160))
 			GameSoundEffects.playErrorNotif()
+			animateOfferOut(entry, true)
 			fireDecision(model, "decline")
 		end)
 	)
@@ -852,9 +1043,14 @@ local function trackModel(model: Model)
 			local phase = model:GetAttribute("BrainrotCarryPhase")
 			if phase == "Carried" then
 				GameSoundEffects.playProximityPromptAppear()
-				untrack(model)
+				if not entry.expiring then
+					animateOfferOut(entry, false)
+				end
+				task.delay(VANISH_OUT.Time + 0.06, function()
+					untrack(model, false)
+				end)
 			elseif phase ~= FLOATING_PHASE then
-				untrack(model)
+				untrack(model, false)
 			end
 		end)
 	)
@@ -863,7 +1059,13 @@ local function trackModel(model: Model)
 		entry.conns,
 		model.AncestryChanged:Connect(function(_, parent)
 			if not parent then
-				untrack(model)
+				if entry.expiring then
+					task.delay(VANISH_OUT.Time + 0.06, function()
+						untrack(model)
+					end)
+				else
+					untrack(model)
+				end
 			end
 		end)
 	)
@@ -890,6 +1092,7 @@ local function tryTrackModel(model: Model)
 		return
 	end
 	trackModel(model)
+	updateOfferUiVisibility(tracked[model] :: TrackedOffer)
 end
 
 local function watchModel(model: Model)
@@ -1019,8 +1222,7 @@ function BushFloatingClaimController.init()
 				if typeof(worldPos) ~= "Vector3" then
 					return
 				end
-				spawnVanishBurst(worldPos, if typeof(rarity) == "string" then rarity else "common", false)
-				GameSoundEffects.playErrorNotif()
+				spawnVanishBurst(worldPos, if typeof(rarity) == "string" then rarity else "common", true)
 			end)
 		end
 

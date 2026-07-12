@@ -56,6 +56,8 @@ local teleportBusy = false
 local idleBobTween: Tween? = nil
 local pollAccum = 0
 local heartbeatConn: RBXScriptConnection? = nil
+local wasInSafezone = true
+local deferredShowPending = false
 
 local decorStudRestPos: UDim2? = nil
 local decorShadowRestPos: UDim2? = nil
@@ -525,8 +527,28 @@ function ReturnController.init()
 			return
 		end
 		pollAccum = 0
+
+		local character = player.Character
+		local inSafezone = if character then SafezoneUtil.isCharacterInSafezone(character) else true
+		local crossingOut = wasInSafezone and not inSafezone
+		wasInSafezone = inSafezone
+
+		if crossingOut and shouldShowReturn() then
+			if not deferredShowPending then
+				deferredShowPending = true
+				task.defer(function()
+					task.wait()
+					deferredShowPending = false
+					refreshVisibility(false)
+				end)
+			end
+			return
+		end
+
 		refreshVisibility(false)
 	end)
+
+	wasInSafezone = if player.Character then SafezoneUtil.isCharacterInSafezone(player.Character) else true
 
 	refreshVisibility(true)
 end

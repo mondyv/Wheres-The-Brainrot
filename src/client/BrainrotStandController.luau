@@ -44,6 +44,7 @@ local DEFAULT_PLACE_DISTANCE = 10
 local DEFAULT_PICKUP_DISTANCE = 14
 local PROMPT_REFRESH_INTERVAL = 0.3
 local PROMPT_MOVE_SKIP_THRESHOLD = 2
+local STAND_LAZY_INIT_RANGE = 220
 local lastShownStandPrompt: ProximityPrompt? = nil
 
 local player = Players.LocalPlayer
@@ -580,9 +581,11 @@ local function rebuildStandPromptCache(stand: Model)
 		end
 	end
 
-	for _, d in stand:GetDescendants() do
-		if d:IsA("ProximityPrompt") then
-			addPrompt(d :: ProximityPrompt)
+	if not canonical then
+		for _, d in stand:GetDescendants() do
+			if d:IsA("ProximityPrompt") then
+				addPrompt(d :: ProximityPrompt)
+			end
 		end
 	end
 
@@ -672,12 +675,30 @@ local function rebuildCachedTaggedStands()
 	table.clear(cachedTaggedStands)
 	for _, inst in CollectionService:GetTagged(STAND_TAG) do
 		if inst:IsA("Model") then
-			local stand = inst :: Model
-			table.insert(cachedTaggedStands, stand)
-			rebuildStandPromptCache(stand)
+			table.insert(cachedTaggedStands, inst :: Model)
 		end
 	end
 	rebuildCachedPlotMatch()
+end
+
+local function registerTaggedStand(stand: Model)
+	for _, existing in ipairs(cachedTaggedStands) do
+		if existing == stand then
+			return
+		end
+	end
+	table.insert(cachedTaggedStands, stand)
+	cachedPlotMatch[stand] = standMatchesAssignedPlot(stand)
+end
+
+local function unregisterTaggedStand(stand: Model)
+	for i = #cachedTaggedStands, 1, -1 do
+		if cachedTaggedStands[i] == stand then
+			table.remove(cachedTaggedStands, i)
+			break
+		end
+	end
+	cachedPlotMatch[stand] = nil
 end
 
 -- Only one stand prompt visible at a time (closest). Hide pick-up while holding a brainrot.
@@ -822,49 +843,58 @@ local function hookCharPlacePromptListeners(char: Model)
 end
 
 local function wireStandPlacePromptListeners(stand: Model)
-	rebuildStandPromptCache(stand)
-	local prev = standPlacePromptConns[stand]
-	if prev then
-		for _, c in ipairs(prev) do
-			c:Disconnect()
+	task.spawn(function()
+		if not stand.Parent then
+			return
 		end
-	end
-	local conns: { RBXScriptConnection } = {}
-	table.insert(
-		conns,
-		stand:GetAttributeChangedSignal("BrainrotName"):Connect(function()
-			refreshStandProximityPromptVisibility(true)
-		end)
-	)
-	table.insert(
-		conns,
-		stand:GetAttributeChangedSignal("BrainrotStandLocked"):Connect(function()
-			refreshStandProximityPromptVisibility(true)
-		end)
-	)
-	table.insert(
-		conns,
-		stand.DescendantAdded:Connect(function(desc)
-			if desc:IsA("ProximityPrompt") then
-				invalidateStandPromptCache(stand)
+		rebuildStandPromptCache(stand)
+		if not stand.Parent then
+			return
+		end
+
+		local prev = standPlacePromptConns[stand]
+		if prev then
+			for _, c in ipairs(prev) do
+				c:Disconnect()
+			end
+		end
+		local conns: { RBXScriptConnection } = {}
+		table.insert(
+			conns,
+			stand:GetAttributeChangedSignal("BrainrotName"):Connect(function()
 				refreshStandProximityPromptVisibility(true)
-			end
-		end)
-	)
-	table.insert(
-		conns,
-		stand.DescendantRemoving:Connect(function(desc)
-			if desc:IsA("ProximityPrompt") then
-				task.defer(function()
-					if stand.Parent then
-						invalidateStandPromptCache(stand)
-						refreshStandProximityPromptVisibility(true)
-					end
-				end)
-			end
-		end)
-	)
-	standPlacePromptConns[stand] = conns
+			end)
+		)
+		table.insert(
+			conns,
+			stand:GetAttributeChangedSignal("BrainrotStandLocked"):Connect(function()
+				refreshStandProximityPromptVisibility(true)
+			end)
+		)
+		table.insert(
+			conns,
+			stand.DescendantAdded:Connect(function(desc)
+				if desc:IsA("ProximityPrompt") then
+					invalidateStandPromptCache(stand)
+					refreshStandProximityPromptVisibility(true)
+				end
+			end)
+		)
+		table.insert(
+			conns,
+			stand.DescendantRemoving:Connect(function(desc)
+				if desc:IsA("ProximityPrompt") then
+					task.defer(function()
+						if stand.Parent then
+							invalidateStandPromptCache(stand)
+							refreshStandProximityPromptVisibility(true)
+						end
+					end)
+				end
+			end)
+		)
+		standPlacePromptConns[stand] = conns
+	end)
 end
 
 local function findSpawnPart(stand: Model): BasePart?
@@ -1707,6 +1737,89 @@ local function refreshLocalStandUpgradeWiring()
 	end
 end
 
+local pendingStandRegisters: { Model } = {}
+local pendingDistantStandInits: { Model } = {}
+local standRegisterFlushScheduled = false
+
+local function standNearPlayer(stand: Model): boolean
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return true
+	end
+	local ok, pivot = pcall(function()
+		return stand:GetPivot()
+	end)
+	if not ok or typeof(pivot) ~= "CFrame" then
+		return true
+	end
+	return ((pivot :: CFrame).Position - (hrp :: BasePart).Position).Magnitude <= STAND_LAZY_INIT_RANGE
+end
+
+local function queueDistantStandInit(stand: Model)
+	for _, existing in ipairs(pendingDistantStandInits) do
+		if existing == stand then
+			return
+		end
+	end
+	table.insert(pendingDistantStandInits, stand)
+end
+
+local function flushNearbyPendingStandInits()
+	if #pendingDistantStandInits == 0 then
+		return
+	end
+	local remaining: { Model } = {}
+	for _, stand in ipairs(pendingDistantStandInits) do
+		if not stand.Parent then
+			continue
+		end
+		if views[stand] then
+			continue
+		end
+		if standNearPlayer(stand) then
+			initStand(stand)
+		else
+			table.insert(remaining, stand)
+		end
+	end
+	pendingDistantStandInits = remaining
+end
+
+local function flushPendingStandRegisters()
+	standRegisterFlushScheduled = false
+	local batch = pendingStandRegisters
+	pendingStandRegisters = {}
+	if #batch == 0 then
+		return
+	end
+	task.spawn(function()
+		for i, stand in ipairs(batch) do
+			if stand.Parent then
+				registerTaggedStand(stand)
+				if standNearPlayer(stand) then
+					initStand(stand)
+				else
+					queueDistantStandInit(stand)
+				end
+			end
+			if i % 2 == 0 then
+				task.wait()
+			end
+		end
+		task.defer(bumpPromptRefreshFromMovement)
+	end)
+end
+
+local function queueTaggedStandRegister(stand: Model)
+	table.insert(pendingStandRegisters, stand)
+	if standRegisterFlushScheduled then
+		return
+	end
+	standRegisterFlushScheduled = true
+	task.defer(flushPendingStandRegisters)
+end
+
 -- ── Init ─────────────────────────────────────────────────────────────────────
 
 function M.init()
@@ -1763,22 +1876,25 @@ function M.init()
 	rebuildCachedTaggedStands()
 	task.spawn(function()
 		for i, m in ipairs(cachedTaggedStands) do
-			initStand(m)
-			if i % 6 == 0 then
+			if standNearPlayer(m) then
+				initStand(m)
+			else
+				queueDistantStandInit(m)
+			end
+			if i % 3 == 0 then
 				task.wait()
 			end
 		end
 	end)
 	CollectionService:GetInstanceAddedSignal(STAND_TAG):Connect(function(inst)
 		if inst:IsA("Model") then
-			initStand(inst :: Model)
-			rebuildCachedTaggedStands()
-			task.defer(bumpPromptRefreshFromMovement)
+			queueTaggedStandRegister(inst :: Model)
 		end
 	end)
 	CollectionService:GetInstanceRemovedSignal(STAND_TAG):Connect(function(inst)
 		if inst:IsA("Model") then
 			local standModel = inst :: Model
+			unregisterTaggedStand(standModel)
 			local affordConns = standUpgradeAffordConns[standModel]
 			if affordConns then
 				for _, conn in affordConns do
@@ -1807,7 +1923,6 @@ function M.init()
 			if view then
 				lastCashCollectVfxAt[view] = nil
 			end
-			rebuildCachedTaggedStands()
 			task.defer(bumpPromptRefreshFromMovement)
 		end
 	end)
@@ -1841,6 +1956,7 @@ function M.init()
 			return
 		end
 		promptRefreshAccum = 0
+		flushNearbyPendingStandInits()
 		refreshStandProximityPromptVisibility()
 	end)
 

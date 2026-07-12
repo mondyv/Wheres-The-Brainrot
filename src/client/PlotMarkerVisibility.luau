@@ -21,6 +21,7 @@ local player = Players.LocalPlayer
 
 local STAND_TAG = "BrainrotStand"
 local PLOT_GUI_MAX_DISTANCE = 180
+local PLOT_GUI_OTHER_MAX_DISTANCE = 85
 
 local baseMarkerConns: { [Instance]: { RBXScriptConnection } } = {}
 local standNameWatch: { [Model]: RBXScriptConnection } = {}
@@ -183,6 +184,7 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 			setLayerCollectorInteractive(d)
 		elseif not mine and d.Enabled then
 			setLayerCollectorViewOnly(d)
+			d.MaxDistance = PLOT_GUI_OTHER_MAX_DISTANCE
 		end
 	elseif d:IsA("SurfaceGui") then
 		if isPlotGuiRelated(d, plotRoot) then
@@ -202,11 +204,36 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 			end
 		elseif not mine and d.Enabled then
 			setLayerCollectorViewOnly(d)
+			if d:IsA("SurfaceGui") then
+				(d :: SurfaceGui).MaxDistance = PLOT_GUI_OTHER_MAX_DISTANCE
+			end
 		end
 	end
 end
 
-local function rebuildPlotGuiCache(plotRoot: Instance)
+local rebuildPlotGuiCache: (Instance) -> ()
+local applyPlotMarker: (Instance) -> ()
+
+applyPlotMarker = function(plotRoot: Instance)
+	local uid = plotRoot:GetAttribute("PlotOwnerUserId")
+	local mine = typeof(uid) == "number" and uid == player.UserId
+	local unclaimed = plotIsUnclaimed(plotRoot)
+	local list = plotLayerCollectors[plotRoot]
+	if not list then
+		rebuildPlotGuiCache(plotRoot)
+		return
+	end
+	for _, d in ipairs(list) do
+		if d.Parent then
+			applyLayerCollector(d, plotRoot, mine, unclaimed)
+		end
+	end
+	if mine and not unclaimed then
+		notifyAfterInteractiveApply()
+	end
+end
+
+rebuildPlotGuiCache = function(plotRoot: Instance)
 	task.spawn(function()
 		local list: { LayerCollector } = {}
 		local stack = { plotRoot }
@@ -241,25 +268,6 @@ local function trackLayerCollector(plotRoot: Instance, inst: Instance)
 		return
 	end
 	table.insert(list, inst :: LayerCollector)
-end
-
-local function applyPlotMarker(plotRoot: Instance)
-	local uid = plotRoot:GetAttribute("PlotOwnerUserId")
-	local mine = typeof(uid) == "number" and uid == player.UserId
-	local unclaimed = plotIsUnclaimed(plotRoot)
-	local list = plotLayerCollectors[plotRoot]
-	if not list then
-		rebuildPlotGuiCache(plotRoot)
-		list = plotLayerCollectors[plotRoot] or {}
-	end
-	for _, d in ipairs(list) do
-		if d.Parent then
-			applyLayerCollector(d, plotRoot, mine, unclaimed)
-		end
-	end
-	if mine and not unclaimed then
-		notifyAfterInteractiveApply()
-	end
 end
 
 local function hookStandsInPlot(plotRoot: Instance, refresh: () -> ())

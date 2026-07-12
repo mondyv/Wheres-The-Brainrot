@@ -69,7 +69,13 @@ local function refreshTimerLabels()
 		end
 		local endsAt = ReplicatedStorage:GetAttribute(C.timerAttrForTier(tier.id))
 		local remaining = if typeof(endsAt) == "number" then math.max(0, endsAt - now) else tier.intervalSec
-		label.Text = formatRowLabel(tier, remaining)
+		if remaining <= 0 then
+			label.Text = ""
+			label.Visible = false
+		else
+			label.Visible = true
+			label.Text = formatRowLabel(tier, remaining)
+		end
 	end
 end
 
@@ -127,6 +133,7 @@ local function destroyMarker()
 		activeMarker.billboard:Destroy()
 	end
 	activeMarker = nil
+	TopNotifController.dismissActive()
 end
 
 local function addBlackStroke(parent: Instance, thickness: number)
@@ -251,10 +258,11 @@ local function onSpawnEvent(rarityId: string?, brainrotName: string?)
 	if typeof(brainrotName) == "string" and brainrotName ~= "" then
 		message = string.format("%s (%s)", message, brainrotName)
 	end
-	TopNotifController.showRaritySpawn(message, rarityId)
+	local endsAt = ReplicatedStorage:GetAttribute(C.ACTIVE_ENDS_ATTR)
+	local lifetimeSec = if typeof(endsAt) == "number" then math.max(0, endsAt - os.time()) else nil
+	TopNotifController.showRaritySpawn(message, rarityId, lifetimeSec)
 
 	local bushKey = ReplicatedStorage:GetAttribute(C.ACTIVE_BUSH_KEY_ATTR)
-	local endsAt = ReplicatedStorage:GetAttribute(C.ACTIVE_ENDS_ATTR)
 	if typeof(bushKey) == "string" and typeof(endsAt) == "number" then
 		trackMarker(bushKey, rarityId, endsAt)
 	end

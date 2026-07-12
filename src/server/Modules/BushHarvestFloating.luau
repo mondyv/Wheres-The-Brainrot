@@ -15,6 +15,7 @@ local M = {}
 M.FLOAT_CLAIM_DURATION = 15
 local FLOAT_CLAIM_DURATION = M.FLOAT_CLAIM_DURATION
 local FLOAT_ENDS_AT_ATTR = "BrainrotFloatEndsAt"
+local FLOAT_ANCHOR_ATTR = "BrainrotFloatAnchorPos"
 local CLAIMING_ATTR = "BrainrotFloatClaiming"
 local DECLINING_ATTR = "BrainrotFloatDeclining"
 local BUSH_KEY_ATTR = "BrainrotHarvestBushKey"
@@ -30,6 +31,7 @@ export type Deps = {
 	attachCarriedBrainrot: (Player, Model) -> (),
 	getMainPart: (Model) -> BasePart?,
 	setAllPartsPhysics: (Model, boolean, boolean) -> (),
+	releaseBushAfterFloatingTimeout: ((string) -> ())?,
 }
 
 local function getBushRemotesFolder(): Folder
@@ -156,11 +158,23 @@ function M.destroyFloatingOffer(deps: Deps, player: Player?, clone: Model, playV
 		deps.removePendingFloat(player, clone)
 	end
 
+	if
+		playVanish
+		and clone:GetAttribute(DECLINING_ATTR) ~= true
+		and clone:GetAttribute(CLAIMING_ATTR) ~= true
+		and deps.releaseBushAfterFloatingTimeout
+	then
+		local bushKey = clone:GetAttribute(BUSH_KEY_ATTR)
+		if typeof(bushKey) == "string" and bushKey ~= "" then
+			deps.releaseBushAfterFloatingTimeout(bushKey)
+		end
+	end
+
 	if playVanish then
 		if player then
-			fireVanishFX(player, clone)
+			fireDeclineFX(player, clone)
 		end
-		tweenModelVanish(clone, false, function()
+		tweenModelVanish(clone, true, function()
 			if clone.Parent then
 				clone:Destroy()
 			end
@@ -274,6 +288,7 @@ function M.startOffer(deps: Deps, player: Player, char: Model, clone: Model, anc
 	deps.syncBrainrotCarryCountAttr(player)
 
 	clone:SetAttribute(FLOAT_ENDS_AT_ATTR, Workspace:GetServerTimeNow() + FLOAT_CLAIM_DURATION)
+	clone:SetAttribute(FLOAT_ANCHOR_ATTR, anchorPos)
 
 	local t0 = os.clock()
 	local conn: RBXScriptConnection

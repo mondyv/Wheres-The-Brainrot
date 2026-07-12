@@ -29,6 +29,7 @@ local BUSH_ON_COOLDOWN_ATTR = "BushOnCooldown"
 local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
 local BUSH_COOLDOWN_ENDS_ATTR = "BushCooldownEndsAt"
 local BUSH_LOOT_PHASE_COOLDOWN = "cooldown"
+local BUSH_FLOATING_CLAIM_ATTR = "BushFloatingClaimActive"
 local AIM_TICK_INTERVAL = 0.05
 local PICK_FULL_SCAN_INTERVAL = 0.5
 local COOLDOWN_VISUAL_SYNC_INTERVAL = 0.5
@@ -47,10 +48,17 @@ local harvestRemote: RemoteEvent? = nil
 local harvestFunction: RemoteFunction? = nil
 local hooked = false
 local mapWatchRoot: Instance? = nil
-local EMPTY_BUSH_RESCAN_INTERVAL = 3
+local EMPTY_BUSH_RESCAN_INTERVAL = 8
 local lastEmptyBushScanAt = 0
+local bushMapScanInProgress = false
 local lastPickFullScanAt = 0
 local lastCooldownVisualSyncAt = 0
+local bushSearchSuppressUntil = 0.0
+
+local pendingBushRoots: { Instance } = {}
+local pendingBushSet: { [Instance]: boolean } = {}
+local bushRegisterBatchConn: RBXScriptConnection? = nil
+local BUSH_REGISTER_PER_TICK = 6
 
 local activeBush: Instance? = nil
 local activePrompt: ProximityPrompt? = nil
@@ -160,8 +168,6 @@ local function attachPrompt(root: Instance)
 		return
 	end
 
-	stripExtraPrompts(root, nil)
-
 	local att = Instance.new("Attachment")
 	att.Name = "_BushPromptCenter"
 	att.Position = Vector3.zero
@@ -195,10 +201,6 @@ local function attachPrompt(root: Instance)
 			ch:Destroy()
 		end
 	end)
-
-	task.defer(function()
-		stripExtraPrompts(root, bushByModel[root])
-	end)
 end
 
 local bushCooldownConns: { [Instance]: { RBXScriptConnection } } = {}
@@ -227,7 +229,7 @@ local function wireBushCooldownSignals(root: Instance)
 	end)
 end
 
-local function registerBushRoot(root: Instance)
+local function registerBushRootNow(root: Instance)
 	if not BushRootUtil.isDirectBushRoot(root) then
 		return
 	end
@@ -250,6 +252,39 @@ local function registerBushRoot(root: Instance)
 			attachPrompt(root)
 		end
 	end)
+end
+
+local function ensureBushRegisterBatchLoop()
+	if bushRegisterBatchConn then
+		return
+	end
+	bushRegisterBatchConn = RunService.Heartbeat:Connect(function()
+		local processed = 0
+		while processed < BUSH_REGISTER_PER_TICK and #pendingBushRoots > 0 do
+			local root = table.remove(pendingBushRoots, 1)
+			pendingBushSet[root] = nil
+			if root.Parent then
+				registerBushRootNow(root)
+			end
+			processed += 1
+		end
+		if #pendingBushRoots == 0 and bushRegisterBatchConn then
+			bushRegisterBatchConn:Disconnect()
+			bushRegisterBatchConn = nil
+		end
+	end)
+end
+
+local function registerBushRoot(root: Instance)
+	if not BushRootUtil.isDirectBushRoot(root) then
+		return
+	end
+	if bushByModel[root] or pendingBushSet[root] then
+		return
+	end
+	pendingBushSet[root] = true
+	table.insert(pendingBushRoots, root)
+	ensureBushRegisterBatchLoop()
 end
 
 local function registerBushModel(root: Model)
@@ -286,15 +321,10 @@ end
 
 local function registerBushesUnderFolder(folder: Folder)
 	for _, child in folder:GetChildren() do
-		if child.Name == "BushSCRIPT" and (child:IsA("Model") or child:IsA("BasePart")) then
+		if BushRootUtil.isDirectBushRoot(child) then
 			registerBushRoot(child)
 		elseif child:IsA("Model") then
 			registerBushModel(child :: Model)
-		end
-	end
-	for _, desc in folder:GetDescendants() do
-		if desc:IsA("ProximityPrompt") and isForeignSearchPrompt(desc) then
-			registerFromSearchPrompt(desc)
 		end
 	end
 end
@@ -338,7 +368,6 @@ local function registerAllBushesOnMap(map: Instance)
 			registerFromSearchPrompt(prompt)
 		end
 	end
-	purgeForeignUnder(map)
 end
 
 -- ── Targeting ─────────────────────────────────────────────────────────────────
@@ -365,9 +394,17 @@ local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 end
 
+local function bushHighlightInViewRange(model: Instance): boolean
+	local prompt = bushByModel[model]
+	if not prompt or not prompt.Parent then
+		return false
+	end
+	return ProximityPromptEffects.isBushSearchInViewRange(prompt)
+end
+
 syncCooldownVisuals = function()
 	for bush, hl in cooldownHighlights do
-		if not bush.Parent or not isBushInSearchCooldown(bush) then
+		if not bush.Parent or not isBushInSearchCooldown(bush) or not bushHighlightInViewRange(bush) then
 			hl:Destroy()
 			cooldownHighlights[bush] = nil
 		end
@@ -378,7 +415,23 @@ syncCooldownVisuals = function()
 		if not model.Parent then
 			continue
 		end
+		if model:GetAttribute(BUSH_FLOATING_CLAIM_ATTR) == true then
+			local hl = cooldownHighlights[model]
+			if hl then
+				hl:Destroy()
+				cooldownHighlights[model] = nil
+			end
+			continue
+		end
 		if not isBushInSearchCooldown(model) then
+			continue
+		end
+		if not bushHighlightInViewRange(model) then
+			local hl = cooldownHighlights[model]
+			if hl then
+				hl:Destroy()
+				cooldownHighlights[model] = nil
+			end
 			continue
 		end
 		local hl = cooldownHighlights[model]
@@ -419,6 +472,9 @@ local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 		local bush = activeBush
 		local prompt = activePrompt
 		if bush and prompt and bush.Parent and prompt.Parent and not isBushInSearchCooldown(bush) then
+			if bush:GetAttribute(BUSH_FLOATING_CLAIM_ATTR) == true then
+				return nil, nil, nil
+			end
 			local wp = promptWorldPos(prompt)
 			if wp ~= Vector3.zero and (wp - pos).Magnitude <= MAX_RANGE then
 				return bush, prompt, bushAnchor[bush] or anchorFor(bush)
@@ -435,6 +491,9 @@ local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 
 	for model, prompt in bushByModel do
 		if not model.Parent then
+			continue
+		end
+		if model:GetAttribute(BUSH_FLOATING_CLAIM_ATTR) == true then
 			continue
 		end
 		if isBushInSearchCooldown(model) then
@@ -579,11 +638,12 @@ local function doHarvest(prompt: ProximityPrompt)
 	if typeof(result) == "table" then
 		local cooldownEndsAt = result.cooldownEndsAt
 		if typeof(cooldownEndsAt) == "number" and cooldownEndsAt > Workspace:GetServerTimeNow() then
-			-- Attributes replicate from server, but set them locally too so the timer appears instantly.
 			bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, true)
 			bush:SetAttribute(BUSH_LOOT_PHASE_ATTR, BUSH_LOOT_PHASE_COOLDOWN)
 			bush:SetAttribute(BUSH_COOLDOWN_ENDS_ATTR, cooldownEndsAt)
-			ProximityPromptEffects.showBushCooldownBanner(prompt, cooldownEndsAt)
+			if result.found ~= true then
+				ProximityPromptEffects.showBushCooldownBanner(prompt, cooldownEndsAt)
+			end
 		end
 		-- Empty-bush message is shown server-side (BushHarvest.showEmptyBushMessage).
 	end
@@ -596,16 +656,28 @@ local function tickAim()
 		hl.Parent = cam
 	end
 
+	if os.clock() < bushSearchSuppressUntil then
+		if activeBush or activePrompt then
+			setActive(nil, nil, nil)
+		end
+		if hl then
+			hl.Enabled = false
+			hl.Adornee = nil
+		end
+		GameSoundEffects.syncBushAura(nil)
+		return
+	end
+
 	if mapWatchRoot and mapWatchRoot.Parent then
 		local bushN = 0
 		for _ in bushByModel do
 			bushN += 1
 		end
-		if bushN == 0 then
+		if bushN == 0 and not bushMapScanInProgress and #pendingBushRoots == 0 then
 			local now = os.clock()
 			if now - lastEmptyBushScanAt >= EMPTY_BUSH_RESCAN_INTERVAL then
 				lastEmptyBushScanAt = now
-				registerAllBushesOnMap(mapWatchRoot)
+				scheduleBushMapScan(mapWatchRoot)
 			end
 		end
 	end
@@ -624,6 +696,9 @@ local function tickAim()
 		bush, prompt, anchor = nil, nil, nil
 	else
 		bush, prompt, anchor = pickClosest()
+		if bush and prompt and not ProximityPromptEffects.isBushSearchInViewRange(prompt) then
+			bush, prompt, anchor = nil, nil, nil
+		end
 	end
 	if bush then
 		if hl then
@@ -661,25 +736,24 @@ local function wireMapWatch(map: Instance)
 				registerFromSearchPrompt(desc)
 			end)
 		elseif desc.Parent and desc.Parent:IsA("Folder") and isBushFolderName(desc.Parent.Name) then
-			if desc.Name == "BushSCRIPT" and (desc:IsA("Model") or desc:IsA("BasePart")) then
+			if BushRootUtil.isDirectBushRoot(desc) then
 				task.defer(function()
-					BushShiver.trackBush(desc)
 					registerBushRoot(desc)
-				end)
-			elseif desc:IsA("Model") and BushRootUtil.isDirectBushRoot(desc) then
-				task.defer(function()
-					registerBushModel(desc :: Model)
 				end)
 			end
 		end
 	end)
 end
 
-local function bootMap(map: Instance)
-	wireMapWatch(map)
+local function scheduleBushMapScan(map: Instance)
+	if bushMapScanInProgress then
+		return
+	end
+	bushMapScanInProgress = true
 	task.spawn(function()
 		registerAllBushesOnMap(map)
 		lastEmptyBushScanAt = os.clock()
+		bushMapScanInProgress = false
 		local n = 0
 		for _, _ in bushByModel do
 			n += 1
@@ -688,6 +762,11 @@ local function bootMap(map: Instance)
 			warn("[BushHoldInteraction] No bush prompts yet — waiting for Map/Tycoon to finish loading bushes")
 		end
 	end)
+end
+
+local function bootMap(map: Instance)
+	wireMapWatch(map)
+	scheduleBushMapScan(map)
 end
 
 -- ── Init ─────────────────────────────────────────────────────────────────────-
@@ -899,6 +978,37 @@ function BushHoldInteraction.init()
 			startMap(map)
 		end)
 	end
+end
+
+local function bushHarvestKey(root: Instance): string
+	local pos = if root:IsA("BasePart") then root.Position else root:GetPivot().Position
+	return string.format("%.0f_%.0f_%.0f", pos.X, pos.Y, pos.Z)
+end
+
+function BushHoldInteraction.findBushByHarvestKey(key: string): Instance?
+	if typeof(key) ~= "string" or key == "" then
+		return nil
+	end
+	for bush in bushByModel do
+		if bush.Parent and bushHarvestKey(bush) == key then
+			return bush
+		end
+	end
+	return nil
+end
+
+function BushHoldInteraction.getPromptForBush(bush: Instance): ProximityPrompt?
+	return bushByModel[bush]
+end
+
+function BushHoldInteraction.refreshCooldownVisuals()
+	syncCooldownVisualsIfDue(true)
+end
+
+function BushHoldInteraction.suppressBushSearchBriefly(durationSec: number)
+	bushSearchSuppressUntil = os.clock() + math.max(durationSec, 0.25)
+	setActive(nil, nil, nil)
+	ProximityPromptEffects.hideBushSearch()
 end
 
 return BushHoldInteraction

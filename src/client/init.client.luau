@@ -56,6 +56,32 @@ task.defer(function()
 		end
 	end
 
+	local function bootCriticalForRedWall()
+		runBootSteps({
+			function()
+				require(script.StandController).init()
+			end,
+			function()
+				require(script.ToolbarController).init()
+			end,
+			function()
+				require(script.PlotMarkerVisibility).init()
+			end,
+			function()
+				require(script.BrainrotStandController).init()
+			end,
+			function()
+				require(script.ProximityPromptEffects).init()
+			end,
+			function()
+				require(script.BushHoldInteraction).init()
+			end,
+			function()
+				require(script.CurrentAreaController).init()
+			end,
+		}, 1)
+	end
+
 	local function bootDeferredUI()
 		runBootSteps({
 			function()
@@ -86,28 +112,10 @@ task.defer(function()
 				require(script.SettingsController).init()
 			end,
 			function()
-				require(script.StandController).init()
-			end,
-			function()
 				require(script.BrainrotHeaderController).init()
 			end,
 			function()
-				require(script.ToolbarController).init()
-			end,
-			function()
-				require(script.PlotMarkerVisibility).init()
-			end,
-			function()
-				require(script.BaseFloorUnlockClick).init()
-			end,
-			function()
-				require(script.BrainrotStandController).init()
-			end,
-			function()
 				require(script.AutoCollectController).init()
-			end,
-			function()
-				require(script.CurrentAreaController).init()
 			end,
 			function()
 				require(script.StoreController).init()
@@ -159,6 +167,22 @@ task.defer(function()
 	end
 
 	task.spawn(function()
+		task.spawn(function()
+			local warmOk, warmErr = pcall(function()
+				require(script.SpawnAreaWarmup).runAsync()
+			end)
+			if not warmOk then
+				warn("[init.client] SpawnAreaWarmup failed:", warmErr)
+			end
+		end)
+
+		task.spawn(function()
+			local critOk, critErr = pcall(bootCriticalForRedWall)
+			if not critOk then
+				warn("[init.client] bootCriticalForRedWall failed:", critErr)
+			end
+		end)
+
 		local loadOk, loadErr = pcall(function()
 			LoadingScreenController.run()
 		end)
@@ -171,12 +195,17 @@ task.defer(function()
 			warn("[init.client] Core UI boot failed:", coreErr)
 		end
 
-		task.spawn(function()
-			local deferOk, deferErr = pcall(bootDeferredUI)
-			if not deferOk then
-				warn("[init.client] Deferred UI boot failed:", deferErr)
-			end
+		local deferOk, deferErr = pcall(function()
+			runBootSteps({
+				function()
+					require(script.BaseFloorUnlockClick).init()
+				end,
+			}, 1)
+			bootDeferredUI()
 		end)
+		if not deferOk then
+			warn("[init.client] Deferred UI boot failed:", deferErr)
+		end
 	end)
 
 	task.spawn(function()
@@ -222,9 +251,6 @@ task.defer(function()
 				require(script.WebTrapController).init()
 			end,
 			function()
-				require(script.ProximityPromptEffects).init()
-			end,
-			function()
 				require(script.BushFloatingClaimController).init()
 			end,
 			function()
@@ -232,9 +258,6 @@ task.defer(function()
 			end,
 			function()
 				require(script.LeaderboardsController).init()
-			end,
-			function()
-				require(script.BushHoldInteraction).init()
 			end,
 		}, 2)
 	end)

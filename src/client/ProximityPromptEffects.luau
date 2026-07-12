@@ -81,6 +81,8 @@ type BushCooldownBannerEntry = {
 	prompt: ProximityPrompt,
 }
 local bushCooldownBanners: { [Instance]: BushCooldownBannerEntry } = {}
+local suppressedBushCooldownBanners: { [Instance]: boolean } = {}
+local suppressedBushCooldownPrompts: { [Instance]: ProximityPrompt } = {}
 local bushCooldownTickerConn: RBXScriptConnection? = nil
 local rarityGradientsFolder: Folder? = nil
 
@@ -166,6 +168,10 @@ local function isBushSearchInCameraRange(prompt: ProximityPrompt): boolean
 		return false
 	end
 	return (focus - cam.CFrame.Position).Magnitude <= bushBillboardMaxDistance(prompt)
+end
+
+function ProximityPromptEffects.isBushSearchInViewRange(prompt: ProximityPrompt): boolean
+	return isBushSearchInCameraRange(prompt)
 end
 
 local function managedBushUiEligible(prompt: ProximityPrompt): boolean
@@ -2086,6 +2092,9 @@ local function ensureBushCooldownTicker()
 end
 
 local function ensureBushCooldownBanner(bush: Instance, prompt: ProximityPrompt, endClock: number)
+	if suppressedBushCooldownBanners[bush] then
+		return
+	end
 	local existing = bushCooldownBanners[bush]
 	if
 		existing
@@ -2194,6 +2203,39 @@ function ProximityPromptEffects.hideBushCooldownBanner()
 	destroyAllBushCooldownBanners()
 end
 
+function ProximityPromptEffects.suppressBushCooldownBanner(bush: Instance, prompt: ProximityPrompt?)
+	suppressedBushCooldownBanners[bush] = true
+	if prompt then
+		suppressedBushCooldownPrompts[bush] = prompt
+	end
+	destroyBushCooldownBannerForBush(bush)
+end
+
+function ProximityPromptEffects.releaseBushCooldownBanner(bush: Instance)
+	if not suppressedBushCooldownBanners[bush] then
+		return
+	end
+	suppressedBushCooldownBanners[bush] = nil
+	local prompt = suppressedBushCooldownPrompts[bush]
+	suppressedBushCooldownPrompts[bush] = nil
+	if not bush.Parent then
+		return
+	end
+	local endsAt = bush:GetAttribute("BushCooldownEndsAt")
+	if typeof(endsAt) == "number" and Workspace:GetServerTimeNow() < endsAt and prompt and prompt.Parent then
+		ensureBushCooldownBanner(bush, prompt, endsAt)
+	end
+end
+
+function ProximityPromptEffects.clearBushCooldownBannerSuppression(bush: Instance)
+	suppressedBushCooldownBanners[bush] = nil
+	suppressedBushCooldownPrompts[bush] = nil
+end
+
+function ProximityPromptEffects.isBushCooldownBannerSuppressed(bush: Instance): boolean
+	return suppressedBushCooldownBanners[bush] == true
+end
+
 function ProximityPromptEffects.syncBushCooldownBanners(bushPrompts: { [Instance]: ProximityPrompt })
 	local now = Workspace:GetServerTimeNow()
 	local expired: { Instance } = {}
@@ -2208,6 +2250,9 @@ function ProximityPromptEffects.syncBushCooldownBanners(bushPrompts: { [Instance
 	end
 	for bush, prompt in bushPrompts do
 		if not bush.Parent then
+			continue
+		end
+		if suppressedBushCooldownBanners[bush] then
 			continue
 		end
 		local endsAt = bush:GetAttribute("BushCooldownEndsAt")

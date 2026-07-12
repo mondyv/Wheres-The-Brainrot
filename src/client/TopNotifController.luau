@@ -31,6 +31,7 @@ type QueuedMessage = {
 	message: string,
 	isError: boolean,
 	rarityId: string?,
+	lifetimeSec: number?,
 }
 
 local host: GuiObject? = nil
@@ -126,6 +127,27 @@ local function disableDecorativeStrokes()
 	end
 end
 
+local function hideNotifDecorations()
+	if not host then
+		return
+	end
+	for _, desc in host:GetDescendants() do
+		if desc:IsA("TextLabel") and desc ~= label then
+			desc.Visible = false
+		elseif desc:IsA("ImageLabel") then
+			desc.Visible = false
+		elseif desc:IsA("Frame") and desc ~= animHost and desc ~= host then
+			desc.Visible = false
+		end
+	end
+	if host:IsA("GuiObject") then
+		(host :: GuiObject).BackgroundTransparency = 1
+	end
+	if animHost and animHost:IsA("GuiObject") then
+		(animHost :: GuiObject).BackgroundTransparency = 1
+	end
+end
+
 local function prepareNotifHost(notif: GuiObject)
 	if notif:IsA("GuiObject") then
 		notif.BackgroundTransparency = 1
@@ -133,8 +155,13 @@ local function prepareNotifHost(notif: GuiObject)
 	end
 	for _, desc in notif:GetDescendants() do
 		if desc:IsA("Frame") or desc:IsA("ImageLabel") then
-			desc.BackgroundTransparency = 1
+			if desc:IsA("Frame") then
+				desc.BackgroundTransparency = 1
+			end
 			desc.BorderSizePixel = 0
+			if desc:IsA("ImageLabel") then
+				desc.Visible = false
+			end
 		end
 	end
 	local directStroke = notif:FindFirstChildOfClass("UIStroke")
@@ -222,18 +249,25 @@ local function applyRarityPanelStyle(rarityId: string)
 	if not panelStroke then
 		return
 	end
-	panelStroke.Transparency = savedPanelStrokeTransparency or 0
-	setPanelAccent(Color3.fromRGB(255, 255, 255), rarityId)
+	panelStroke.Transparency = math.clamp((savedPanelStrokeTransparency or 0) + 0.35, 0.15, 0.65)
+	setPanelAccent(RaritySpawnStyle.accentColor(rarityId), nil)
 end
 
 local function applyRarityStyle(textLabel: TextLabel, rarityId: string)
+	hideNotifDecorations()
 	disableDecorativeStrokes()
 	setManagedStrokesEnabled(true)
-	textLabel.TextStrokeTransparency = savedTextStrokeTransparency
+	textLabel.TextStrokeTransparency = 1
 	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	disableOtherGradients(textLabel, "RaritySpawnGradient")
 	RaritySpawnStyle.applyTextGradient(textLabel, rarityId)
-	ensureBlackTextOutline()
+	if labelStroke then
+		labelStroke.Enabled = true
+		labelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+		labelStroke.Color = Color3.fromRGB(0, 0, 0)
+		labelStroke.Thickness = if savedLabelStrokeThickness then math.clamp(savedLabelStrokeThickness, 1.2, 2) else 1.5
+		labelStroke.Transparency = 0.15
+	end
 	applyRarityPanelStyle(rarityId)
 end
 
@@ -315,7 +349,9 @@ local function processQueue()
 		end
 	end
 
-	local lifetime = if entry.isError then ERROR_LIFETIME else DISPLAY_LIFETIME
+	local lifetime = if entry.isError
+		then ERROR_LIFETIME
+		else (if typeof(entry.lifetimeSec) == "number" then math.max(2.5, entry.lifetimeSec) else DISPLAY_LIFETIME)
 	task.delay(lifetime, function()
 		if token ~= hideToken or not host or not label or not animScale then
 			return
@@ -349,16 +385,36 @@ local function processQueue()
 	end)
 end
 
-local function enqueue(message: string, isError: boolean, rarityId: string?)
+local function enqueue(message: string, isError: boolean, rarityId: string?, lifetimeSec: number?)
 	table.insert(messageQueue, {
 		message = message,
 		isError = isError,
 		rarityId = rarityId,
+		lifetimeSec = lifetimeSec,
 	})
 	processQueue()
 end
 
-function TopNotifController.showRaritySpawn(message: string, rarityId: string)
+function TopNotifController.dismissActive()
+	if not isShowing then
+		return
+	end
+	hideToken += 1
+	isShowing = false
+	cancelActiveTween()
+	if host then
+		host.Visible = false
+	end
+	if label then
+		label.Visible = false
+	end
+	if animScale then
+		animScale.Scale = 1
+	end
+	processQueue()
+end
+
+function TopNotifController.showRaritySpawn(message: string, rarityId: string, lifetimeSec: number?)
 	if not globalMessagesEnabled() then
 		return
 	end
@@ -366,7 +422,7 @@ function TopNotifController.showRaritySpawn(message: string, rarityId: string)
 		TopNotifController.init()
 	end
 	GameSoundEffects.playNotification1()
-	enqueue(message, false, rarityId)
+	enqueue(message, false, rarityId, lifetimeSec)
 end
 
 function TopNotifController.showBroadcast(message: string, _scope: string?)

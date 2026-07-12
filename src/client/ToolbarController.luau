@@ -130,6 +130,7 @@ local parkedExtraTools: { Tool } = {} -- tucked off hotbar, shown in backpack pa
 local extraToolRowByTool: { [Tool]: GuiObject } = {}
 local _activeSlot: number? = nil
 local uiHotbarHighlight: number? = nil -- nil = no slot ring (toggle off); otherwise mirrors selection / equip
+local slotStrokeLit: { [number]: boolean } = {}
 local toolbarShown: boolean = false
 local canUseToolbar: boolean = false
 local safezonePollAccum = 0.0
@@ -218,7 +219,7 @@ local refreshSlotVisual: (number) -> ()
 local updateHotbarSlotVisibility: () -> ()
 local refreshBrainrotBackpackUI: () -> ()
 local showToolbar: () -> ()
-local hideToolbar: () -> ()
+local hideToolbar: (boolean?) -> ()
 local backpackSearchWired = false
 local backpackCloseWired = false
 local isBackpackPanelOpen = false
@@ -1600,7 +1601,7 @@ local ToolbarController = {}
 		end)
 	end
 
-	hideToolbar = function()
+	hideToolbar = function(instant: boolean?)
 		if not toolbarShown then
 			return
 		end
@@ -1612,6 +1613,11 @@ local ToolbarController = {}
 		if toolbarVisibilityTween then
 			toolbarVisibilityTween:Cancel()
 			toolbarVisibilityTween = nil
+		end
+		if instant then
+			scale.Scale = 0.8
+			toolbar.Visible = false
+			return
 		end
 		local t = TweenService:Create(scale, HIDE_TWEEN, { Scale = 0.8 })
 		toolbarVisibilityTween = t
@@ -1725,32 +1731,67 @@ local ToolbarController = {}
 		end
 	end
 
+	local zoneExitUiToken = 0
+
 	local function onSafezonePresenceChanged(inZone: boolean)
 		if canUseToolbar == inZone then
 			return
 		end
 		canUseToolbar = inZone
-		task.defer(function()
-			if canUseToolbar ~= inZone then
+
+		if not inZone then
+			zoneExitUiToken += 1
+			local token = zoneExitUiToken
+			pendingReturnedBrainrotName = nil
+
+			if isBackpackPanelOpen then
+				setBackpackPanelOpen(false)
+			end
+			if toolbarShown and not activeToolbarDrag then
+				hideToolbar(true)
+			end
+			if activeToolbarDrag then
 				return
 			end
-			if inZone then
-				if CarryGate.isCarrying() then
-					local name = getPrimaryCarriedBrainrotName()
-					if name then
-						pendingReturnedBrainrotName = name
-					end
+
+			task.defer(function()
+				if token ~= zoneExitUiToken or canUseToolbar then
+					return
 				end
-				tryAutoSelectReturnedBrainrot()
-			else
-				pendingReturnedBrainrotName = nil
-				setBackpackPanelOpen(false)
+				task.wait()
+				if token ~= zoneExitUiToken or canUseToolbar then
+					return
+				end
 				deselectAllHotbarSlots()
 				if not activeToolbarDrag then
 					clearDragGhost()
 					pendingToolbarDrag = nil
 				end
+			end)
+			return
+		end
+
+		task.defer(function()
+			if canUseToolbar ~= inZone then
+				return
 			end
+			if CarryGate.isCarrying() then
+				local name = getPrimaryCarriedBrainrotName()
+				if name then
+					pendingReturnedBrainrotName = name
+				end
+			end
+			tryAutoSelectReturnedBrainrot()
+			task.defer(function()
+				if not canUseToolbar then
+					return
+				end
+				local char = player.Character
+				local equipped = char and char:FindFirstChildOfClass("Tool")
+				if not equipped and uiHotbarHighlight ~= nil then
+					deselectAllHotbarSlots()
+				end
+			end)
 			refreshToolbarVisibility()
 		end)
 	end
@@ -1804,7 +1845,6 @@ local ToolbarController = {}
 	local SLOT_SELECTED_SCALE = 1.08
 	local SLOT_IDLE_SCALE = 1.0
 	local SLOT_HOVER_SCALE = 1.12
-	local slotStrokeLit: { [number]: boolean } = {}
 
 	local function hotbarSlotRestScale(index: number): number
 		if uiHotbarHighlight ~= nil and index == uiHotbarHighlight then
@@ -3122,9 +3162,11 @@ local ToolbarController = {}
 			if typeof(equipSlot) == "number" then
 				pendingAutoEquipSlot = equipSlot
 				pendingReturnedBrainrotName = nil
-				applyAutoEquipFromSync(equipSlot)
-				tryAutoSelectReturnedBrainrot()
-			elseif pendingReturnedBrainrotName then
+				if canUseToolbar then
+					applyAutoEquipFromSync(equipSlot)
+					tryAutoSelectReturnedBrainrot()
+				end
+			elseif pendingReturnedBrainrotName and canUseToolbar then
 				tryAutoSelectReturnedBrainrot()
 			end
 		end
@@ -3213,6 +3255,10 @@ local ToolbarController = {}
 	-- After deposit, server sends equipSlot = inventory index of the new brainrot (hotbar 1–9 mirror those indices).
 	-- Must not use selectSlot here — it toggles off when the server already equipped the matching tool.
 	applyAutoEquipFromSync = function(equipSlot: number)
+		if not canUseToolbar then
+			pendingAutoEquipSlot = equipSlot
+			return
+		end
 		local invIndex = math.floor(equipSlot)
 		if not brainrotEntries[invIndex] and invIndex >= 1 and invIndex <= HOTBAR_INVENTORY_SLOTS then
 			invIndex = brainrotIndexForHotbarSlot(invIndex) or invIndex
@@ -3577,6 +3623,24 @@ local ToolbarController = {}
 			SafezoneUtil.warmCacheAsync()
 			task.wait()
 			pollSafezonePresence()
+		end)
+
+		task.spawn(function()
+			task.wait(1.5)
+			if not toolbar or not toolbar.Parent then
+				return
+			end
+			local sc = getOrAddUIScale(toolbar)
+			local savedShown = toolbarShown
+			local savedVisible = toolbar.Visible
+			sc.Scale = 1
+			local t = TweenService:Create(sc, HIDE_TWEEN, { Scale = 0.8 })
+			t:Play()
+			t.Completed:Wait()
+			sc.Scale = if savedShown then 1 else 0.8
+			if not savedShown then
+				toolbar.Visible = savedVisible
+			end
 		end)
 
 		-- ToggleBackpack + brainrot backpack grid (Backpack.Container["1"]..["19"])

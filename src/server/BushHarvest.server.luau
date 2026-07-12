@@ -60,6 +60,7 @@ local BUSH_LOOT_PHASE_COOLDOWN = "cooldown"
 local BUSH_LOOT_RESPAWN_MIN = 10
 local BUSH_LOOT_RESPAWN_MAX = 15
 local bushLootRespawnToken: { [Instance]: number } = {}
+local releaseBushAfterFloatingTimeout: (string) -> ()
 local POP_DURATION = 0.35
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 local BUSH_EMPTY_MESSAGE_ANCHOR_NAME = "_BushEmptyMessageAnchor"
@@ -1205,6 +1206,7 @@ local function clearPlayerHarvestState(player: Player)
 		attachCarriedBrainrot = attachCarriedBrainrot,
 		getMainPart = getMainPart,
 		setAllPartsPhysics = setAllPartsPhysics,
+		releaseBushAfterFloatingTimeout = releaseBushAfterFloatingTimeout,
 	}, player, floatingClones)
 	for _, m in activeCarries[player] or {} do
 		safeZoneSfxPlayedForCarry[m] = nil
@@ -1310,6 +1312,7 @@ local function startFloatingClaimOffer(player: Player, char: Model, clone: Model
 		attachCarriedBrainrot = attachCarriedBrainrot,
 		getMainPart = getMainPart,
 		setAllPartsPhysics = setAllPartsPhysics,
+		releaseBushAfterFloatingTimeout = releaseBushAfterFloatingTimeout,
 	}, player, char, clone, anchorPos, baseYaw)
 end
 
@@ -1422,6 +1425,38 @@ local function scheduleRollAfterCooldown(bush: Instance, cooldownSec: number)
 		end
 		RollBushState(bush)
 	end)
+end
+
+local function bushHarvestKeyForInstance(bush: Instance): string
+	local pos = if bush:IsA("BasePart") then bush.Position else bush:GetPivot().Position
+	return string.format("%.0f_%.0f_%.0f", pos.X, pos.Y, pos.Z)
+end
+
+local function findBushByHarvestKey(key: string): Instance?
+	if key == "" then
+		return nil
+	end
+	local map = workspace:FindFirstChild("Map")
+	if not map then
+		return nil
+	end
+	for _, desc in map:GetDescendants() do
+		if isLootableBush(desc) and bushHarvestKeyForInstance(desc) == key then
+			return desc
+		end
+	end
+	return nil
+end
+
+releaseBushAfterFloatingTimeout = function(bushKey: string)
+	local bush = findBushByHarvestKey(bushKey)
+	if not bush or not isValidBushRef(bush) then
+		return
+	end
+	bushLootRespawnToken[bush] = (bushLootRespawnToken[bush] or 0) + 1
+	bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, false)
+	bush:SetAttribute(BUSH_COOLDOWN_ENDS_ATTR, nil)
+	RollBushState(bush)
 end
 
 local function initBushLootIfNeeded(bush: Instance)
@@ -2610,6 +2645,7 @@ BushHarvestFloating.wireDecisionRemote({
 	attachCarriedBrainrot = attachCarriedBrainrot,
 	getMainPart = getMainPart,
 	setAllPartsPhysics = setAllPartsPhysics,
+	releaseBushAfterFloatingTimeout = releaseBushAfterFloatingTimeout,
 })
 
 local _, getInvRF = ensureInventoryRemotes()

@@ -10,7 +10,9 @@ local Workspace = game:GetService("Workspace")
 
 local GlobalRaritySpawnConfig =
 	require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GlobalRaritySpawnConfig"))
+local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
 local TopNotifController = require(script.Parent.TopNotifController)
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local player = Players.LocalPlayer
 local C = GlobalRaritySpawnConfig
@@ -30,8 +32,30 @@ local tickerConn: RBXScriptConnection? = nil
 
 local RaritySpawnStyle = require(script.Parent:WaitForChild("RaritySpawnStyle"))
 
+local PLACEHOLDER_ICON = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+
 local function pulseColor(rarity: string): Color3
 	return RaritySpawnStyle.accentColor(rarity)
+end
+
+local function resolveSpawnIcon(iconAttr: any, brainrotName: any): string
+	if typeof(iconAttr) == "string" and iconAttr ~= "" then
+		return iconAttr
+	end
+	if typeof(brainrotName) == "string" and brainrotName ~= "" then
+		return BrainrotsConfig:GetIcon(brainrotName, "normal")
+	end
+	return PLACEHOLDER_ICON
+end
+
+local function updateMarkerIcon(icon: ImageLabel, iconImage: string, rarity: string)
+	if iconImage ~= "" then
+		icon.Image = iconImage
+		icon.ImageColor3 = Color3.fromRGB(255, 255, 255)
+	else
+		icon.Image = PLACEHOLDER_ICON
+		icon.ImageColor3 = pulseColor(rarity)
+	end
 end
 
 local function formatRowLabel(tier: GlobalRaritySpawnConfig.TierDef, remaining: number): string
@@ -95,15 +119,20 @@ local function findBushByKey(key: string): Instance?
 	if not map then
 		return nil
 	end
+	local stack = { map }
 	local count = 0
-	for _, desc in map:GetDescendants() do
-		count += 1
-		if count % 4000 == 0 then
-			task.wait()
+	while #stack > 0 do
+		local inst = table.remove(stack)
+		if inst:GetAttribute(C.BUSH_GLOBAL_SPAWN_ATTR) == true and inst:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key then
+			cachedBushByKey[key] = inst
+			return inst
 		end
-		if desc:GetAttribute(C.BUSH_GLOBAL_SPAWN_ATTR) == true and desc:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key then
-			cachedBushByKey[key] = desc
-			return desc
+		for _, child in inst:GetChildren() do
+			table.insert(stack, child)
+		end
+		count += 1
+		if count % 500 == 0 then
+			task.wait()
 		end
 	end
 	return nil
@@ -133,7 +162,6 @@ local function destroyMarker()
 		activeMarker.billboard:Destroy()
 	end
 	activeMarker = nil
-	TopNotifController.dismissActive()
 end
 
 local function addBlackStroke(parent: Instance, thickness: number)
@@ -147,11 +175,10 @@ end
 local function buildMarkerUi(rarity: string, iconImage: string): (BillboardGui, TextLabel)
 	local tier = C.tierById(rarity)
 	local rarityLabel = if tier then tier.displayName else string.upper(rarity)
-	local color = pulseColor(rarity)
 
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "GlobalRaritySpawnMarker"
-	bb.Size = UDim2.fromOffset(76, 86)
+	bb.Size = UDim2.fromOffset(88, 96)
 	bb.StudsOffset = Vector3.new(0, 14, 0)
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
@@ -168,10 +195,9 @@ local function buildMarkerUi(rarity: string, iconImage: string): (BillboardGui, 
 	local rarityText = Instance.new("TextLabel")
 	rarityText.Name = "Rarity"
 	rarityText.LayoutOrder = 1
-	rarityText.Size = UDim2.fromOffset(76, 17)
+	rarityText.Size = UDim2.fromOffset(84, 20)
 	rarityText.BackgroundTransparency = 1
-	rarityText.Font = Enum.Font.GothamBlack
-	rarityText.TextSize = 14
+	UiFonts.applyDisplayLabel(rarityText, 14, 10)
 	rarityText.Text = rarityLabel
 	rarityText.TextColor3 = Color3.fromRGB(255, 255, 255)
 	rarityText.Parent = bb
@@ -184,22 +210,15 @@ local function buildMarkerUi(rarity: string, iconImage: string): (BillboardGui, 
 	icon.BackgroundTransparency = 1
 	icon.Size = UDim2.fromOffset(46, 46)
 	icon.ScaleType = Enum.ScaleType.Fit
-	if iconImage ~= "" then
-		icon.Image = iconImage
-		icon.ImageColor3 = Color3.fromRGB(255, 255, 255)
-	else
-		icon.Image = "rbxassetid://6031075938"
-		icon.ImageColor3 = color
-	end
+	updateMarkerIcon(icon, iconImage, rarity)
 	icon.Parent = bb
 
 	local timer = Instance.new("TextLabel")
 	timer.Name = "Time"
 	timer.LayoutOrder = 3
-	timer.Size = UDim2.fromOffset(76, 16)
+	timer.Size = UDim2.fromOffset(84, 18)
 	timer.BackgroundTransparency = 1
-	timer.Font = Enum.Font.GothamBold
-	timer.TextSize = 13
+	UiFonts.applyDisplayLabel(timer, 13, 10)
 	timer.TextColor3 = Color3.fromRGB(238, 240, 248)
 	timer.Text = C.formatCountdown(C.MARKER_DURATION_SEC)
 	timer.Parent = bb
@@ -219,9 +238,12 @@ local function trackMarker(bushKey: string, rarity: string, endsAt: number)
 		return
 	end
 
-	local iconImage = ReplicatedStorage:GetAttribute(C.ACTIVE_ICON_ATTR)
+	local iconImage = resolveSpawnIcon(
+		ReplicatedStorage:GetAttribute(C.ACTIVE_ICON_ATTR),
+		ReplicatedStorage:GetAttribute(C.ACTIVE_NAME_ATTR)
+	)
 
-	local bb, timerLabel = buildMarkerUi(rarity, if typeof(iconImage) == "string" then iconImage else "")
+	local bb, timerLabel = buildMarkerUi(rarity, iconImage)
 	bb.Adornee = adornee
 	bb.Parent = player:FindFirstChild("PlayerGui") or Workspace.CurrentCamera
 
@@ -241,12 +263,31 @@ local function trackMarker(bushKey: string, rarity: string, endsAt: number)
 				return
 			end
 			local remaining = math.max(0, endsAt - os.time())
-			timerLabel.Text = C.formatCountdown(remaining)
 			if remaining <= 0 then
+				timerLabel.Text = ""
 				destroyMarker()
+				return
 			end
+			timerLabel.Text = C.formatCountdown(remaining)
 		end)
 	)
+end
+
+local function trackMarkerWithRetry(bushKey: string, rarity: string, endsAt: number)
+	task.spawn(function()
+		local deadline = os.clock() + 45
+		while os.clock() < deadline and os.time() < endsAt do
+			if activeMarker and activeMarker.bushKey == bushKey then
+				return
+			end
+			local bush = findBushByKey(bushKey)
+			if bush then
+				trackMarker(bushKey, rarity, endsAt)
+				return
+			end
+			task.wait(0.5)
+		end
+	end)
 end
 
 local function onSpawnEvent(rarityId: string?, brainrotName: string?)
@@ -258,13 +299,16 @@ local function onSpawnEvent(rarityId: string?, brainrotName: string?)
 	if typeof(brainrotName) == "string" and brainrotName ~= "" then
 		message = string.format("%s (%s)", message, brainrotName)
 	end
+	local iconImage = resolveSpawnIcon(
+		ReplicatedStorage:GetAttribute(C.ACTIVE_ICON_ATTR),
+		ReplicatedStorage:GetAttribute(C.ACTIVE_NAME_ATTR)
+	)
 	local endsAt = ReplicatedStorage:GetAttribute(C.ACTIVE_ENDS_ATTR)
-	local lifetimeSec = if typeof(endsAt) == "number" then math.max(0, endsAt - os.time()) else nil
-	TopNotifController.showRaritySpawn(message, rarityId, lifetimeSec)
+	TopNotifController.showRaritySpawn(message, rarityId)
 
 	local bushKey = ReplicatedStorage:GetAttribute(C.ACTIVE_BUSH_KEY_ATTR)
 	if typeof(bushKey) == "string" and typeof(endsAt) == "number" then
-		trackMarker(bushKey, rarityId, endsAt)
+		trackMarkerWithRetry(bushKey, rarityId, endsAt)
 	end
 end
 
@@ -278,9 +322,7 @@ local function syncFromAttributes()
 		and typeof(endsAt) == "number"
 		and os.time() < endsAt
 	then
-		task.spawn(function()
-			trackMarker(bushKey, rarity, endsAt)
-		end)
+		trackMarkerWithRetry(bushKey, rarity, endsAt)
 	else
 		destroyMarker()
 	end
@@ -308,7 +350,20 @@ function GlobalRaritySpawnController.init()
 	ReplicatedStorage:GetAttributeChangedSignal(C.ACTIVE_BUSH_KEY_ATTR):Connect(syncFromAttributes)
 	ReplicatedStorage:GetAttributeChangedSignal(C.ACTIVE_ENDS_ATTR):Connect(syncFromAttributes)
 	ReplicatedStorage:GetAttributeChangedSignal(C.ACTIVE_RARITY_ATTR):Connect(syncFromAttributes)
-	ReplicatedStorage:GetAttributeChangedSignal(C.ACTIVE_ICON_ATTR):Connect(syncFromAttributes)
+	ReplicatedStorage:GetAttributeChangedSignal(C.ACTIVE_ICON_ATTR):Connect(function()
+		syncFromAttributes()
+		if activeMarker and activeMarker.billboard.Parent then
+			local iconNode = activeMarker.billboard:FindFirstChild("Icon")
+			if iconNode and iconNode:IsA("ImageLabel") then
+				local rarity = ReplicatedStorage:GetAttribute(C.ACTIVE_RARITY_ATTR)
+				local iconImage = resolveSpawnIcon(
+					ReplicatedStorage:GetAttribute(C.ACTIVE_ICON_ATTR),
+					ReplicatedStorage:GetAttribute(C.ACTIVE_NAME_ATTR)
+				)
+				updateMarkerIcon(iconNode, iconImage, if typeof(rarity) == "string" then rarity else "common")
+			end
+		end
+	end)
 
 	local folder = ReplicatedStorage:WaitForChild(C.REMOTE_FOLDER, 60)
 	if folder then

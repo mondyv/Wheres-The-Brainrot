@@ -21,6 +21,7 @@ local Workspace = game:GetService("Workspace")
 
 local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local MainGradientButtons = require(script.Parent.MainGradientButtons)
@@ -45,7 +46,6 @@ local DEFAULT_PICKUP_DISTANCE = 14
 local PROMPT_REFRESH_INTERVAL = 0.3
 local PROMPT_MOVE_SKIP_THRESHOLD = 2
 local STAND_LAZY_INIT_RANGE = 220
-local lastShownStandPrompt: ProximityPrompt? = nil
 
 local player = Players.LocalPlayer
 local MONEY_VFX_HOLD_SEC = 0.14
@@ -317,7 +317,11 @@ local function playRisingFloatText(worldPosition: Vector3, opts: RisingFloatText
 				opts.strokeScale or FLOAT_STROKE_SCALE
 			) or Instance.new("UIStroke")
 		else
-			label.Font = opts.font
+			if opts.font then
+				label.FontFace = Font.fromEnum(opts.font)
+			else
+				UiFonts.applyBody(label)
+			end
 			label.Text = opts.text or ""
 			label.TextSize = opts.textSize
 			label.TextColor3 = Color3.new(1, 1, 1)
@@ -794,13 +798,8 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 	if closest then
 		closest.prompt.Enabled = true
 		ProximityPromptEffects.syncStandProximityUi(closest.prompt)
-		if closest.prompt ~= lastShownStandPrompt then
-			ProximityPromptEffects.syncStandPlaceProximityUi(closest.prompt)
-			lastShownStandPrompt = closest.prompt
-		end
 	else
 		ProximityPromptEffects.syncStandProximityUi(nil)
-		lastShownStandPrompt = nil
 	end
 
 	lastHRPPosition = hrpPos

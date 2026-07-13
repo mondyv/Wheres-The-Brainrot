@@ -14,6 +14,7 @@ local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local RaritySpawnStyle = require(script.Parent.RaritySpawnStyle)
 local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local player = Players.LocalPlayer
 
@@ -32,17 +33,31 @@ local FLOAT_DURATION = DEFAULT_OFFER_DURATION
 local FLANK_OFFSET_X = 4.2
 local FLANK_OFFSET_Y = 1.65
 local TIMER_OFFSET_Y = -0.55
-local FLANK_EDGE_PAD = 0.45
+local FLANK_EDGE_PAD = 0.35
+local FLANK_MAX_HALF_WIDTH = 4.2
+local FLANK_MIN_HALF_WIDTH = 2.2
 local TIMER_EDGE_PAD = 0.08
 local TIMER_BELOW_SCALE = 0.38
 local UI_ANCHOR_LIFT = 1.85
-local CHOICE_BILLBOARD_SIZE = Vector2.new(68, 32)
-local TIMER_BILLBOARD_SIZE = Vector2.new(62, 18)
-local CHOICE_TEXT_MAX = 12
-local TIMER_TEXT_MAX = 11
+local CHOICE_BILLBOARD_SIZE = Vector2.new(84, 36)
+local TIMER_BILLBOARD_SIZE = Vector2.new(76, 26)
+local CHOICE_TEXT_MAX = 14
+local TIMER_TEXT_MAX = 13
 local TIMER_CAMERA_HIDE_DIST = 38
 
 local BushFloatingClaimController = {}
+
+local acceptHooks: { (Model) -> () } = {}
+
+function BushFloatingClaimController.registerAcceptHook(fn: (Model) -> ())
+	table.insert(acceptHooks, fn)
+end
+
+local function fireAcceptHooks(model: Model)
+	for _, fn in acceptHooks do
+		task.spawn(fn, model)
+	end
+end
 
 type TrackedOffer = {
 	model: Model,
@@ -69,7 +84,9 @@ type TrackedOffer = {
 	ring: Frame,
 	timerTrack: Frame?,
 	decisionLocked: boolean,
+	acceptedOffer: boolean,
 	expiring: boolean,
+	modelVanishing: boolean,
 	hoverCount: number,
 	layoutHalfWidth: number,
 	layoutFlankY: number,
@@ -127,11 +144,15 @@ local function modelPivotPosition(model: Model): Vector3?
 end
 
 local function resolveFixedUiWorldPos(model: Model): Vector3?
+	local pivot = modelPivotPosition(model)
+	if pivot then
+		return pivot + Vector3.new(0, UI_ANCHOR_LIFT * 0.35, 0)
+	end
 	local anchorAttr = model:GetAttribute(FLOAT_ANCHOR_ATTR)
 	if typeof(anchorAttr) == "Vector3" then
 		return (anchorAttr :: Vector3) + Vector3.new(0, UI_ANCHOR_LIFT, 0)
 	end
-	return modelPivotPosition(model)
+	return nil
 end
 
 local function createUiAnchor(worldPos: Vector3): BasePart
@@ -144,7 +165,7 @@ local function createUiAnchor(worldPos: Vector3): BasePart
 	anchor.Transparency = 1
 	anchor.Size = Vector3.new(0.15, 0.15, 0.15)
 	anchor.CFrame = CFrame.new(worldPos)
-	anchor.Parent = Workspace.CurrentCamera
+	anchor.Parent = Workspace
 	return anchor
 end
 
@@ -152,7 +173,11 @@ local function syncUiAnchorPosition(entry: TrackedOffer)
 	if not entry.uiAnchor.Parent then
 		return
 	end
-	entry.uiAnchor.CFrame = CFrame.new(entry.fixedUiWorldPos)
+	local pos = resolveFixedUiWorldPos(entry.model)
+	if pos then
+		entry.fixedUiWorldPos = pos
+		entry.uiAnchor.CFrame = CFrame.new(pos)
+	end
 end
 
 local function attachBillboardToAnchor(billboard: BillboardGui, anchor: BasePart, worldOffset: Vector3)
@@ -185,20 +210,40 @@ local function cameraFlatRight(): Vector3
 	if not camera then
 		return Vector3.new(1, 0, 0)
 	end
-	local look = camera.CFrame.LookVector
-	local flat = Vector3.new(look.X, 0, look.Z)
+	local right = camera.CFrame.RightVector
+	local flat = Vector3.new(right.X, 0, right.Z)
+	if flat.Magnitude < 0.05 then
+		local look = camera.CFrame.LookVector
+		flat = Vector3.new(-look.Z, 0, look.X)
+	end
 	if flat.Magnitude < 0.05 then
 		return Vector3.new(1, 0, 0)
 	end
-	return flat:Cross(Vector3.yAxis).Unit
+	return flat.Unit
+end
+
+local function cameraFlatForward(): Vector3
+	local camera = Workspace.CurrentCamera
+	if not camera then
+		return Vector3.new(0, 0, -1)
+	end
+	local look = camera.CFrame.LookVector
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < 0.05 then
+		return Vector3.new(0, 0, -1)
+	end
+	return flat.Unit
 end
 
 local function cameraRelativeFlankOffset(sideSign: number, liftY: number, halfWidthStuds: number): Vector3
 	local right = cameraFlatRight()
-	return right * (sideSign * halfWidthStuds) + Vector3.yAxis * liftY
+	local forward = cameraFlatForward()
+	local depthBias = forward * 0.08
+	return right * (sideSign * halfWidthStuds) + Vector3.yAxis * liftY + depthBias
 end
 
 local function modelFlankLayout(model: Model): (number, number, number)
+	local pivot = modelPivotPosition(model)
 	local ok, cf, size = pcall(function()
 		return model:GetBoundingBox()
 	end)
@@ -206,20 +251,20 @@ local function modelFlankLayout(model: Model): (number, number, number)
 		return FLANK_OFFSET_X, FLANK_OFFSET_Y, TIMER_OFFSET_Y
 	end
 
-	local right = cameraFlatRight()
 	local half = size * 0.5
-	local halfWidth = math.abs(cf.RightVector:Dot(right)) * half.X
-		+ math.abs(cf.LookVector:Dot(right)) * half.Z
-		+ math.abs(cf.UpVector:Dot(right)) * half.Y
+	local modelHalfWidth = math.max(half.X, half.Z) + FLANK_EDGE_PAD + 0.75
+	local halfWidth = math.clamp(modelHalfWidth, FLANK_MIN_HALF_WIDTH, FLANK_MAX_HALF_WIDTH)
 
-	local pivot = modelPivotPosition(model)
 	local centerY = if pivot then pivot.Y else cf.Position.Y
 	local topY = cf.Position.Y + half.Y
 	local bottomY = cf.Position.Y - half.Y
 	local aboveCenter = topY - centerY
 	local belowCenter = centerY - bottomY
 
-	return halfWidth + FLANK_EDGE_PAD, aboveCenter * 0.72 + 0.2, -(belowCenter * TIMER_BELOW_SCALE + TIMER_EDGE_PAD)
+	local flankY = aboveCenter * 0.55 + 0.35
+	local timerY = -(belowCenter * TIMER_BELOW_SCALE + TIMER_EDGE_PAD)
+
+	return halfWidth, flankY, timerY
 end
 
 local function snapOfferLayout(entry: TrackedOffer)
@@ -234,7 +279,18 @@ local function cameraDistanceToFixedAnchor(entry: TrackedOffer): number?
 	if not camera then
 		return nil
 	end
-	return (camera.CFrame.Position - entry.fixedUiWorldPos).Magnitude
+	local pos = modelPivotPosition(entry.model) or entry.fixedUiWorldPos
+	return (camera.CFrame.Position - pos).Magnitude
+end
+
+local function playerDistanceToOffer(entry: TrackedOffer): number?
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return nil
+	end
+	local pos = modelPivotPosition(entry.model) or entry.fixedUiWorldPos
+	return ((hrp :: BasePart).Position - pos).Magnitude
 end
 
 local function updateOfferUiVisibility(entry: TrackedOffer)
@@ -243,7 +299,7 @@ local function updateOfferUiVisibility(entry: TrackedOffer)
 		return
 	end
 	local camDist = cameraDistanceToFixedAnchor(entry)
-	local showChoices = dist <= OFFER_UI_HIDE_DISTANCE
+	local showChoices = not entry.expiring and not entry.decisionLocked and dist <= OFFER_UI_HIDE_DISTANCE
 	local showTimer = dist <= OFFER_UI_MAX_DISTANCE
 		and (typeof(camDist) ~= "number" or camDist <= TIMER_CAMERA_HIDE_DIST)
 	entry.acceptBb.Enabled = showChoices
@@ -263,6 +319,10 @@ local function updateBillboardPositions(entry: TrackedOffer)
 	local anchor = getUiAnchor(entry)
 	if not anchor then
 		return
+	end
+
+	for _, bb in { entry.acceptBb, entry.declineBb, entry.timerBb } do
+		bb.Adornee = anchor
 	end
 
 	local acceptLift = getBillboardLiftValue(entry.acceptBb).Value
@@ -460,7 +520,7 @@ local function styleChoiceButton(
 	btn: TextButton,
 	label: string,
 	accent: Color3,
-	gradColors: { Color3 },
+	fillColor: Color3,
 	textColor: Color3,
 	parent: Instance
 )
@@ -468,49 +528,42 @@ local function styleChoiceButton(
 	btn.Size = UDim2.fromScale(1, 1)
 	btn.BackgroundTransparency = 1
 	btn.BorderSizePixel = 0
-	btn.Font = Enum.Font.GothamBlack
-	btn.TextScaled = true
-	btn.Text = label
-	btn.TextColor3 = textColor
-	btn.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-	btn.TextStrokeTransparency = 0
 	btn.AutoButtonColor = false
 	btn.ZIndex = 3
-
-	local textBounds = Instance.new("UITextSizeConstraint")
-	textBounds.MaxTextSize = CHOICE_TEXT_MAX
-	textBounds.MinTextSize = 8
-	textBounds.Parent = btn
+	btn.Text = ""
 
 	local panel = Instance.new("Frame")
 	panel.Name = "Panel"
 	panel.Size = UDim2.fromScale(1, 1)
-	panel.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
-	panel.BackgroundTransparency = 0.42
+	panel.BackgroundColor3 = fillColor
+	panel.BackgroundTransparency = 0.28
 	panel.BorderSizePixel = 0
 	panel.ZIndex = 1
 	panel.Parent = btn
 
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0.28, 0)
+	corner.CornerRadius = UDim.new(0, 8)
 	corner.Parent = panel
-
-	local grad = Instance.new("UIGradient")
-	grad.Name = "PanelGrad"
-	grad.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, gradColors[1]),
-		ColorSequenceKeypoint.new(1, gradColors[2]),
-	})
-	grad.Rotation = 90
-	grad.Offset = Vector2.zero
-	grad.Parent = panel
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = accent
-	stroke.Thickness = 1.2
+	stroke.Thickness = 1.5
+	stroke.Transparency = 0.08
 	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	stroke.Transparency = 0.12
+	stroke.LineJoinMode = Enum.LineJoinMode.Round
 	stroke.Parent = panel
+
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Name = "Label"
+	textLabel.Size = UDim2.fromScale(1, 1)
+	textLabel.BackgroundTransparency = 1
+	UiFonts.applyButtonLabel(textLabel, CHOICE_TEXT_MAX, 10)
+	textLabel.Text = string.upper(label)
+	textLabel.TextColor3 = textColor
+	textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	textLabel.TextStrokeTransparency = 0.35
+	textLabel.ZIndex = 2
+	textLabel.Parent = btn
 
 	local scale = getOrAddUIScale(btn)
 	scale.Scale = 0.01
@@ -528,45 +581,38 @@ local function styleMinimalTimer(accent: Color3, parent: Instance): (TextLabel, 
 	label.Name = "Time"
 	label.AnchorPoint = Vector2.new(0.5, 0)
 	label.Position = UDim2.fromScale(0.5, 0)
-	label.Size = UDim2.new(1, 0, 0.62, 0)
+	label.Size = UDim2.new(1, 0, 0.52, 0)
 	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.GothamBlack
-	label.TextScaled = true
+	UiFonts.applyDisplayLabel(label, TIMER_TEXT_MAX, 10)
+	label.TextScaled = false
 	label.TextColor3 = Color3.fromRGB(255, 255, 255)
 	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	label.TextStrokeTransparency = 0
 	label.Text = string.format("%.1fs", DEFAULT_OFFER_DURATION)
 	label.Parent = parent
 
-	local textBounds = Instance.new("UITextSizeConstraint")
-	textBounds.MaxTextSize = TIMER_TEXT_MAX
-	textBounds.MinTextSize = 8
-	textBounds.Parent = label
-
 	local track = Instance.new("Frame")
 	track.Name = "Track"
 	track.AnchorPoint = Vector2.new(0.5, 1)
 	track.Position = UDim2.new(0.5, 0, 1, 0)
-	track.Size = UDim2.new(0.82, 0, 0.14, 0)
+	track.Size = UDim2.new(0.84, 0, 0.16, 0)
 	track.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	track.BackgroundTransparency = 0.55
+	track.BackgroundTransparency = 0.5
 	track.BorderSizePixel = 0
 	track.Parent = parent
 
 	local trackCorner = Instance.new("UICorner")
-	trackCorner.CornerRadius = UDim.new(1, 0)
+	trackCorner.CornerRadius = UDim.new(0, 4)
 	trackCorner.Parent = track
 
 	local ring = Instance.new("Frame")
 	ring.Name = "Fill"
+	ring.AnchorPoint = Vector2.new(0, 0)
+	ring.Position = UDim2.fromOffset(0, 0)
 	ring.Size = UDim2.fromScale(1, 1)
 	ring.BackgroundColor3 = accent
 	ring.BorderSizePixel = 0
 	ring.Parent = track
-
-	local ringCorner = Instance.new("UICorner")
-	ringCorner.CornerRadius = UDim.new(1, 0)
-	ringCorner.Parent = ring
 
 	return label, ring, track
 end
@@ -631,9 +677,9 @@ local function buildChoiceUi(_model: Model, rarity: string): ChoiceUiParts
 	local acceptBtn, acceptScale, acceptPanelScale = styleChoiceButton(
 		Instance.new("TextButton"),
 		"Accept",
-		Color3.fromRGB(70, 255, 140),
-		{ Color3.fromRGB(18, 42, 28), Color3.fromRGB(8, 18, 12) },
-		Color3.fromRGB(170, 255, 200),
+		Color3.fromRGB(72, 255, 140),
+		Color3.fromRGB(12, 28, 18),
+		Color3.fromRGB(190, 255, 210),
 		acceptRoot
 	)
 
@@ -647,8 +693,8 @@ local function buildChoiceUi(_model: Model, rarity: string): ChoiceUiParts
 		Instance.new("TextButton"),
 		"Decline",
 		Color3.fromRGB(255, 95, 85),
-		{ Color3.fromRGB(42, 14, 14), Color3.fromRGB(18, 6, 8) },
-		Color3.fromRGB(255, 190, 185),
+		Color3.fromRGB(28, 12, 14),
+		Color3.fromRGB(255, 200, 195),
 		declineRoot
 	)
 
@@ -689,23 +735,59 @@ end
 
 local function fadeButtonPanel(btn: TextButton)
 	local panel = btn:FindFirstChild("Panel")
-	if not panel or not panel:IsA("Frame") then
-		return
+	if panel and panel:IsA("Frame") then
+		TweenService:Create(panel, VANISH_OUT, { BackgroundTransparency = 1 }):Play()
+		local stroke = panel:FindFirstChildOfClass("UIStroke")
+		if stroke then
+			TweenService:Create(stroke, VANISH_OUT, { Transparency = 1 }):Play()
+		end
 	end
-	TweenService:Create(panel, VANISH_OUT, { BackgroundTransparency = 1 }):Play()
-	local stroke = panel:FindFirstChildOfClass("UIStroke")
-	if stroke then
-		TweenService:Create(stroke, VANISH_OUT, { Transparency = 1 }):Play()
+	local textLabel = btn:FindFirstChild("Label")
+	if textLabel and textLabel:IsA("TextLabel") then
+		TweenService:Create(textLabel, VANISH_OUT, {
+			TextTransparency = 1,
+			TextStrokeTransparency = 1,
+		}):Play()
 	end
 end
 
-local function animateOfferOut(entry: TrackedOffer, restoreBushCooldown: boolean?)
+local function tweenTrackedModelVanish(model: Model)
+	if not model or not model.Parent then
+		return
+	end
+
+	local parts: { BasePart } = {}
+	for _, desc in model:GetDescendants() do
+		if desc:IsA("BasePart") then
+			table.insert(parts, desc)
+		end
+	end
+	if #parts == 0 then
+		return
+	end
+
+	local tweenInfo = TweenInfo.new(VANISH_OUT.Time, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	for _, part in parts do
+		TweenService:Create(part, tweenInfo, {
+			Transparency = 1,
+			Size = part.Size * 0.15,
+			CFrame = part.CFrame * CFrame.new(0, -1.8, 0),
+		}):Play()
+	end
+end
+
+local function animateOfferOut(entry: TrackedOffer, restoreBushCooldown: boolean?, skipModelVanish: boolean?)
 	if entry.expiring then
 		return
 	end
 	entry.expiring = true
 	lockDecision(entry)
 	releaseBushForOffer(entry, restoreBushCooldown == true)
+
+	if skipModelVanish ~= true and not entry.modelVanishing then
+		entry.modelVanishing = true
+		tweenTrackedModelVanish(entry.model)
+	end
 
 	local sinkScale = 0.02
 	TweenService:Create(entry.acceptScale, VANISH_OUT, { Scale = sinkScale }):Play()
@@ -716,14 +798,6 @@ local function animateOfferOut(entry: TrackedOffer, restoreBushCooldown: boolean
 
 	fadeButtonPanel(entry.acceptBtn)
 	fadeButtonPanel(entry.declineBtn)
-	TweenService:Create(entry.acceptBtn, VANISH_OUT, {
-		TextTransparency = 1,
-		TextStrokeTransparency = 1,
-	}):Play()
-	TweenService:Create(entry.declineBtn, VANISH_OUT, {
-		TextTransparency = 1,
-		TextStrokeTransparency = 1,
-	}):Play()
 	TweenService:Create(entry.timeLabel, VANISH_OUT, {
 		TextTransparency = 1,
 		TextStrokeTransparency = 1,
@@ -784,13 +858,6 @@ local function tweenBillboardLift(billboard: BillboardGui, lifted: boolean)
 	}):Play()
 end
 
-local function brightGradientColors(gradColors: { Color3 }, accent: Color3): ColorSequence
-	return ColorSequence.new({
-		ColorSequenceKeypoint.new(0, gradColors[1]:Lerp(accent, 0.16)),
-		ColorSequenceKeypoint.new(1, gradColors[2]:Lerp(accent, 0.1)),
-	})
-end
-
 local function wireButtonHover(
 	entry: TrackedOffer,
 	btn: TextButton?,
@@ -799,7 +866,7 @@ local function wireButtonHover(
 	bb: BillboardGui?,
 	accent: Color3,
 	textColor: Color3,
-	gradColors: { Color3 }
+	_gradColors: { Color3 }
 )
 	if not btn or not scale or not panelScale or not bb then
 		return
@@ -807,13 +874,8 @@ local function wireButtonHover(
 
 	local panel = btn:FindFirstChild("Panel")
 	local stroke = if panel then panel:FindFirstChildOfClass("UIStroke") else nil
-	local grad = if panel then panel:FindFirstChild("PanelGrad") else nil
-	local strokeBright = accent:Lerp(Color3.fromRGB(255, 255, 255), 0.55)
-	local restGradient = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, gradColors[1]),
-		ColorSequenceKeypoint.new(1, gradColors[2]),
-	})
-	local hoverGradient = brightGradientColors(gradColors, accent)
+	local textLabel = btn:FindFirstChild("Label")
+	local strokeBright = accent:Lerp(Color3.fromRGB(255, 255, 255), 0.45)
 
 	btn.MouseEnter:Connect(function()
 		if scale.Scale < 0.5 then
@@ -824,21 +886,19 @@ local function wireButtonHover(
 
 		TweenService:Create(scale, HOVER_SCALE, { Scale = 1.05 }):Play()
 		TweenService:Create(panelScale, HOVER_SCALE, { Scale = 1.02 }):Play()
+		if panel and panel:IsA("Frame") then
+			TweenService:Create(panel, HOVER_POP, { BackgroundTransparency = 0.12 }):Play()
+		end
 		if stroke then
 			TweenService:Create(stroke, HOVER_POP, {
-				Thickness = 1.5,
+				Thickness = 2,
 				Color = strokeBright,
 				Transparency = 0,
 			}):Play()
 		end
-		if grad and grad:IsA("UIGradient") then
-			grad.Color = hoverGradient
-			TweenService:Create(grad, HOVER_POP, {
-				Rotation = 82,
-				Offset = Vector2.new(0.1, 0.02),
-			}):Play()
+		if textLabel and textLabel:IsA("TextLabel") then
+			TweenService:Create(textLabel, HOVER_POP, { TextColor3 = Color3.fromRGB(255, 255, 255) }):Play()
 		end
-		TweenService:Create(btn, HOVER_POP, { TextColor3 = Color3.fromRGB(255, 255, 255) }):Play()
 	end)
 
 	btn.MouseLeave:Connect(function()
@@ -846,21 +906,19 @@ local function wireButtonHover(
 		tweenBillboardLift(bb, false)
 		TweenService:Create(scale, HOVER_SCALE, { Scale = 1 }):Play()
 		TweenService:Create(panelScale, HOVER_SCALE, { Scale = 1 }):Play()
+		if panel and panel:IsA("Frame") then
+			TweenService:Create(panel, HOVER_OUT, { BackgroundTransparency = 0.28 }):Play()
+		end
 		if stroke then
 			TweenService:Create(stroke, HOVER_OUT, {
-				Thickness = 1.2,
+				Thickness = 1.5,
 				Color = accent,
-				Transparency = 0.12,
+				Transparency = 0.08,
 			}):Play()
 		end
-		if grad and grad:IsA("UIGradient") then
-			grad.Color = restGradient
-			TweenService:Create(grad, HOVER_OUT, {
-				Rotation = 90,
-				Offset = Vector2.zero,
-			}):Play()
+		if textLabel and textLabel:IsA("TextLabel") then
+			TweenService:Create(textLabel, HOVER_OUT, { TextColor3 = textColor }):Play()
 		end
-		TweenService:Create(btn, HOVER_OUT, { TextColor3 = textColor }):Play()
 	end)
 end
 
@@ -991,7 +1049,9 @@ local function trackModel(model: Model)
 		ring = ui.ring,
 		timerTrack = ui.timerTrack,
 		decisionLocked = false,
+		acceptedOffer = false,
 		expiring = false,
+		modelVanishing = false,
 		hoverCount = 0,
 		layoutHalfWidth = FLANK_OFFSET_X,
 		layoutFlankY = FLANK_OFFSET_Y,
@@ -1015,11 +1075,13 @@ local function trackModel(model: Model)
 				return
 			end
 			lockDecision(entry)
+			entry.acceptedOffer = true
 			punchButton(entry.acceptScale, entry.acceptBtn, Color3.fromRGB(160, 255, 190))
 			GameSoundEffects.playProximityPromptAppear()
 			BushHoldInteraction.suppressBushSearchBriefly(2.5)
 			ProximityPromptEffects.hideBushSearch()
 			fireDecision(model, "accept")
+			animateOfferOut(entry, false, true)
 		end)
 	)
 
@@ -1042,9 +1104,12 @@ local function trackModel(model: Model)
 		model:GetAttributeChangedSignal("BrainrotCarryPhase"):Connect(function()
 			local phase = model:GetAttribute("BrainrotCarryPhase")
 			if phase == "Carried" then
+				if entry.acceptedOffer then
+					fireAcceptHooks(model)
+				end
 				GameSoundEffects.playProximityPromptAppear()
 				if not entry.expiring then
-					animateOfferOut(entry, false)
+					animateOfferOut(entry, false, true)
 				end
 				task.delay(VANISH_OUT.Time + 0.06, function()
 					untrack(model, false)

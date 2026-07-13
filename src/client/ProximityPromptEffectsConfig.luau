@@ -1,7 +1,7 @@
 -- [ACTIVE] ProximityPromptEffectsConfig
 --[[
 	Visual / tuning constants for ProximityPromptEffects (keeps main module under Luau register limit).
---]]
+]]
 
 local TweenService = game:GetService("TweenService")
 
@@ -20,6 +20,9 @@ M.PRESS_FLASH = Color3.fromRGB(255, 228, 88)
 M.HOLD_COMPLETE_FLASH = Color3.fromRGB(210, 255, 230)
 M.TEXT_PRIMARY = Color3.fromRGB(248, 250, 252)
 M.TEXT_SECONDARY = Color3.fromRGB(168, 178, 192)
+M.KEY_TEXT = M.TEXT_PRIMARY
+M.KEY_CHIP_STROKE = M.ACCENT_STROKE
+M.KEY_CHIP_STROKE_TRANSPARENCY = 0.35
 
 M.CARD_H = 58
 M.BADGE_SIZE = 44
@@ -27,6 +30,10 @@ M.BADGE_HOLD_PAD = 3
 M.PAD_LEFT = 8
 M.BADGE_TEXT_GAP = 6
 M.PAD_RIGHT = 10
+M.ACTION_TEXT_SIZE = 17
+M.OBJECT_TEXT_SIZE = 14
+M.KEY_TEXT_SIZE = 22
+M.KEY_TEXT_SIZE_MOBILE = 18
 M.MIN_CARD_W = 118
 M.MOBILE_MIN_CARD_W = 148
 M.MAX_CARD_W = 232
@@ -88,9 +95,9 @@ M.STAND_TAG = "BrainrotStand"
 M.COOLDOWN_BANNER_VIEW_RANGE = 500
 M.BUSH_BILLBOARD_LIFT_SCALE = 0.66
 M.BUSH_BILLBOARD_MIN_MAX_DISTANCE = 40
--- Fixed local offset above the bush prompt anchor (keep low — anchor is already lifted to bush top).
 M.BUSH_UI_STATIC_OFFSET = Vector3.new(0, 0.35, 0)
--- Sit above the custom bush search prompt card (BUSH_UI_STATIC_OFFSET + CARD_H clearance).
 M.BUSH_XRAY_UI_OFFSET = Vector3.new(0, 3.05, 0)
+M.BUSH_SEARCH_BADGE_BG_TRANSPARENCY = 0.45
+M.BUSH_SEARCH_BADGE_STROKE_TRANSPARENCY = 0.5
 
 return M

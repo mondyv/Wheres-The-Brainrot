@@ -20,6 +20,8 @@ local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local C = require(script.Parent.ProximityPromptEffectsConfig)
+local PromptTheme = require(script.Parent.ProximityPromptTheme)
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local player = Players.LocalPlayer
 
@@ -70,6 +72,7 @@ local cameraShakeActive = false
 local bushCameraShakeStepBound = false
 local bushHoldLockUntil = 0
 local bushHoldCompleteHandler: ((ProximityPrompt) -> ())? = nil
+local bushHoldCompleteHooks: { (ProximityPrompt, () -> ()) -> boolean } = {}
 local managedBushHoldActive: ProximityPrompt? = nil
 local directBushHoldPrompt: ProximityPrompt? = nil
 
@@ -90,6 +93,10 @@ local ProximityPromptEffects = {}
 
 function ProximityPromptEffects.setBushHoldCompleteHandler(handler: ((ProximityPrompt) -> ())?)
 	bushHoldCompleteHandler = handler
+end
+
+function ProximityPromptEffects.registerBushHoldCompleteHook(hook: (ProximityPrompt, () -> ()) -> boolean)
+	table.insert(bushHoldCompleteHooks, hook)
 end
 
 local startIdleSway: (view: PromptView) -> ()
@@ -154,6 +161,10 @@ local function isManagedBushPrompt(prompt: ProximityPrompt): boolean
 	return CarryGate.isBushSearchPrompt(prompt) and prompt:GetAttribute(C.BUSH_MANAGED_ATTR) == true
 end
 
+local function applyBushSearchCardStyle(view: PromptView)
+	PromptTheme.applyBushSearchStyle(view)
+end
+
 local function bushBillboardMaxDistance(prompt: ProximityPrompt): number
 	return math.max(prompt.MaxActivationDistance * 1.5, C.BUSH_BILLBOARD_MIN_MAX_DISTANCE)
 end
@@ -214,6 +225,10 @@ end
 
 local function isMobilePlatform(): boolean
 	return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+end
+
+local function isTouchDevice(): boolean
+	return UserInputService.TouchEnabled
 end
 
 local function resolvePromptInputType(explicit: Enum.ProximityPromptInputType?): Enum.ProximityPromptInputType
@@ -294,7 +309,13 @@ local function shouldShowBushTouchIcon(prompt: ProximityPrompt, inputType: Enum.
 	if not isBushSearchPrompt(prompt) then
 		return false
 	end
-	return inputType == Enum.ProximityPromptInputType.Touch or usesTouchPromptIcon()
+	if inputType == Enum.ProximityPromptInputType.Touch then
+		return true
+	end
+	if isTouchDevice() then
+		return true
+	end
+	return usesTouchPromptIcon()
 end
 
 local function showTouchKeyIcon(view: PromptView, hold: boolean)
@@ -308,7 +329,8 @@ local function showTouchKeyIcon(view: PromptView, hold: boolean)
 	icon.ScaleType = Enum.ScaleType.Fit
 	icon.AnchorPoint = Vector2.new(0.5, 0.5)
 	icon.Position = UDim2.fromScale(0.5, 0.5)
-	icon.Size = UDim2.fromOffset(28, 34)
+	local touchSize = if isTouchDevice() then 34 else 28
+	icon.Size = UDim2.fromOffset(touchSize, touchSize + 6)
 	icon.ZIndex = 10
 	icon.Image = if hold then C.TOUCH_HOLD_ICON else C.TOUCH_TAP_ICON
 end
@@ -331,7 +353,7 @@ local function refreshKeyLabel(view: PromptView)
 		icon.Visible = true
 		icon.ImageTransparency = 0
 		icon.Image = image
-		icon.ImageColor3 = Color3.new(1, 1, 1)
+		icon.ImageColor3 = if isBushSearchPrompt(view.prompt) then C.TEXT_PRIMARY else C.KEY_TEXT
 		icon.ScaleType = Enum.ScaleType.Fit
 		icon.AnchorPoint = Vector2.new(0.5, 0.5)
 		icon.Position = UDim2.fromScale(0.5, 0.5)
@@ -343,9 +365,12 @@ local function refreshKeyLabel(view: PromptView)
 		showText(gamepadButtonLabel(prompt.GamepadKeyCode))
 		return
 	end
+	if isBushSearchPrompt(prompt) and shouldShowBushTouchIcon(prompt, inputType) then
+		showTouchKeyIcon(view, prompt.HoldDuration > 0)
+		return
+	end
 	if
 		inputType == Enum.ProximityPromptInputType.Touch
-		or shouldShowBushTouchIcon(prompt, inputType)
 		or usesTouchPromptIcon()
 	then
 		showTouchKeyIcon(view, prompt.HoldDuration > 0)
@@ -667,6 +692,8 @@ function getPromptFocusWorld(prompt: ProximityPrompt): Vector3?
 	return nil
 end
 
+ProximityPromptEffects.getPromptFocusWorld = getPromptFocusWorld
+
 isPromptFacingCamera = function(prompt: ProximityPrompt): boolean
 	if not isMobilePlatform() then
 		return true
@@ -760,10 +787,10 @@ local function clearStandStrokeGradient(view: PromptView)
 		grad:Destroy()
 	end
 	table.clear(view.strokeGrads)
-	view.rootStroke.Color = C.ACCENT
-	view.rootStroke.Transparency = 0.25
-	view.keyStroke.Color = C.ACCENT_STROKE
-	view.keyStroke.Transparency = 0.35
+	view.rootStroke.Color = C.PANEL_STROKE
+	view.rootStroke.Transparency = C.PANEL_STROKE_TRANSPARENCY
+	view.keyStroke.Color = C.KEY_CHIP_STROKE
+	view.keyStroke.Transparency = C.KEY_CHIP_STROKE_TRANSPARENCY
 end
 
 local function attachStrokeGradient(stroke: UIStroke, template: UIGradient, view: PromptView)
@@ -836,8 +863,9 @@ end
 
 local function measureCardWidth(actionText: string, objectText: string, _holdDuration: number): number
 	local measureBounds = Vector2.new(512, 48)
-	local actionSize = TextService:GetTextSize(actionText, 17, Enum.Font.GothamBold, measureBounds)
-	local objectSize = TextService:GetTextSize(objectText, 14, Enum.Font.Gotham, measureBounds)
+	local TextService = game:GetService("TextService")
+	local actionSize = TextService:GetTextSize(actionText, C.ACTION_TEXT_SIZE, UiFonts.DISPLAY_LEGACY, measureBounds)
+	local objectSize = TextService:GetTextSize(objectText, C.OBJECT_TEXT_SIZE, UiFonts.DISPLAY_LEGACY, measureBounds)
 	local textW = math.max(actionSize.X, objectSize.X)
 	local total = C.PAD_LEFT + C.BADGE_SIZE + C.BADGE_TEXT_GAP + math.ceil(textW) + C.PAD_RIGHT
 	return math.clamp(total, effectiveMinCardWidth(), C.MAX_CARD_W)
@@ -901,7 +929,7 @@ local function ensureKeyIcon(view: PromptView)
 	icon.Size = UDim2.new(1, -10, 1, -10)
 	icon.BackgroundTransparency = 1
 	icon.ScaleType = Enum.ScaleType.Fit
-	icon.ImageColor3 = Color3.new(1, 1, 1)
+	icon.ImageColor3 = if isBushSearchPrompt(view.prompt) then C.TEXT_PRIMARY else C.KEY_TEXT
 	icon.ImageTransparency = 0
 	icon.Visible = false
 	icon.ZIndex = 10
@@ -910,22 +938,11 @@ local function ensureKeyIcon(view: PromptView)
 end
 
 local function resetKeyBadgeVisuals(view: PromptView)
-	view.keyBadge.BackgroundColor3 = C.BADGE_BG
-	view.keyBadge.BackgroundTransparency = C.BADGE_BG_TRANSPARENCY
-	if hasStandStrokeGradient(view) then
-		view.keyStroke.Color = Color3.new(1, 1, 1)
-		view.keyStroke.Transparency = 0.12
-	else
-		view.keyStroke.Color = C.ACCENT_STROKE
-		view.keyStroke.Transparency = 0.35
-	end
-	view.keyLabel.TextColor3 = C.TEXT_PRIMARY
+	PromptTheme.resetBadgeVisuals(view, isManagedBushPrompt(view.prompt), hasStandStrokeGradient(view))
 	ensureKeyIcon(view)
-	view.keyIcon.ImageColor3 = Color3.new(1, 1, 1)
-	local _trackH = holdTrackHeight(view)
 	view.holdTrack.Size = UDim2.new(1, -C.BADGE_HOLD_PAD * 2, 1, -C.BADGE_HOLD_PAD * 2)
 	view.holdFill.Size = UDim2.new(1, 0, 0, 0)
-	view.holdFill.BackgroundTransparency = 0.05
+	view.holdFill.BackgroundTransparency = 0.08
 	setHoldTrackVisible(view, view.prompt.HoldDuration > 0)
 	refreshKeyLabel(view)
 end
@@ -1076,11 +1093,7 @@ endHoldVisual = function(view: PromptView, completed: boolean?)
 end
 
 applyHoldBadgeActive = function(view: PromptView)
-	view.keyBadge.BackgroundColor3 = C.BADGE_BG
-	view.keyBadge.BackgroundTransparency = 0.2
-	view.keyStroke.Color = C.HOLD_GREEN_BRIGHT
-	view.keyStroke.Transparency = 0.1
-	view.holdTrack.BackgroundTransparency = 0.15
+	PromptTheme.applyHoldBadgeActive(view, isManagedBushPrompt(view.prompt))
 end
 
 -- Bush-style noisy wiggle on a GuiObject rotation
@@ -1116,7 +1129,9 @@ local function flashKeyYellow(view: PromptView, holdGreenAfter: boolean?, skipBa
 		else
 			resetKeyBadgeVisuals(view)
 		end
-		TweenService:Create(view.keyLabel, C.BADGE_TWEEN, { TextColor3 = C.TEXT_PRIMARY }):Play()
+		TweenService:Create(view.keyLabel, C.BADGE_TWEEN, {
+			TextColor3 = if isManagedBushPrompt(view.prompt) then C.TEXT_PRIMARY else C.KEY_TEXT,
+		}):Play()
 		if not skipBadgeScale then
 			TweenService:Create(badgeScale, C.BADGE_TWEEN, { Scale = 1 }):Play()
 		end
@@ -1335,14 +1350,27 @@ local function fireManagedBushHoldComplete(prompt: ProximityPrompt)
 		stopBushSharedCardHoldVisual(bushSharedView, true)
 	end
 	UIInteractionSounds.playClick()
-	local handler = bushHoldCompleteHandler
-	if handler then
-		task.spawn(function()
-			local ok, err = pcall(handler, prompt)
-			if not ok then
-				warn("[ProximityPromptEffects] Bush hold complete handler failed:", err)
-			end
-		end)
+	local function runDefaultBushHoldComplete()
+		local handler = bushHoldCompleteHandler
+		if handler then
+			task.spawn(function()
+				local ok, err = pcall(handler, prompt)
+				if not ok then
+					warn("[ProximityPromptEffects] Bush hold complete handler failed:", err)
+				end
+			end)
+		end
+	end
+	local intercepted = false
+	for _, hook in bushHoldCompleteHooks do
+		local ok, takeOver = pcall(hook, prompt, runDefaultBushHoldComplete)
+		if ok and takeOver == true then
+			intercepted = true
+			break
+		end
+	end
+	if not intercepted then
+		runDefaultBushHoldComplete()
 	end
 end
 
@@ -1592,195 +1620,30 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 		billboard.Parent = adornee or prompt
 	end
 
-	local root = Instance.new("Frame")
-	root.Name = "Root"
-	root.Active = not isDisplayOnly
-	root.AnchorPoint = Vector2.new(0.5, 0.5)
-	root.Position = UDim2.fromScale(0.5, 0.5)
-	root.Size = UDim2.fromScale(1, 1)
-	root.BackgroundColor3 = C.BG_COLOR
-	root.BackgroundTransparency = C.BG_TRANSPARENCY
-	root.BorderSizePixel = 0
-	root.Parent = billboard
-
-	local rootCorner = Instance.new("UICorner")
-	rootCorner.CornerRadius = UDim.new(0, 10)
-	rootCorner.Parent = root
-
-	local rootStroke = Instance.new("UIStroke")
-	rootStroke.Color = C.ACCENT
-	rootStroke.Thickness = 1.5
-	rootStroke.Transparency = 0.25
-	rootStroke.Parent = root
-
-	local rootGrad = Instance.new("UIGradient")
-	rootGrad.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(18, 22, 28)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 10, 14)),
+	local card = PromptTheme.buildCard(billboard, prompt, {
+		isMobile = isMobilePlatform(),
+		isDisplayOnly = isDisplayOnly,
+		isManagedBush = isDisplayOnly and isManagedBushPrompt(prompt),
+		isFloatingClaim = prompt:GetAttribute("BrainrotFloatingClaim") == true,
+		getOrAddUIScale = getOrAddUIScale,
 	})
-	rootGrad.Rotation = 90
-	rootGrad.Parent = root
-
-	local rootScale = getOrAddUIScale(root)
-	-- Bush card should spawn perfectly centered immediately, not pop/slide into center.
-	rootScale.Scale = if isDisplayOnly and isManagedBushPrompt(prompt) then 1 else 0.82
-
-	local keyBadge = Instance.new("Frame")
-	keyBadge.Name = "KeyBadge"
-	keyBadge.AnchorPoint = Vector2.new(0, 0.5)
-	keyBadge.Position = UDim2.new(0, C.PAD_LEFT, 0.5, 0)
-	keyBadge.Size = UDim2.fromOffset(C.BADGE_SIZE, C.BADGE_SIZE)
-	keyBadge.BackgroundColor3 = C.BADGE_BG
-	keyBadge.BackgroundTransparency = C.BADGE_BG_TRANSPARENCY
-	keyBadge.BorderSizePixel = 0
-	keyBadge.Parent = root
-
-	local badgeCorner = Instance.new("UICorner")
-	badgeCorner.CornerRadius = UDim.new(0, 8)
-	badgeCorner.Parent = keyBadge
-
-	local keyStroke = Instance.new("UIStroke")
-	keyStroke.Color = C.ACCENT_STROKE
-	keyStroke.Thickness = 1.5
-	keyStroke.Transparency = 0.35
-	keyStroke.Parent = keyBadge
-
-	if prompt:GetAttribute("BrainrotFloatingClaim") == true then
-		local gold = Color3.fromRGB(255, 210, 80)
-		rootStroke.Color = gold
-		keyStroke.Color = gold
-	end
-
-	local holdTrack = Instance.new("Frame")
-	holdTrack.Name = "HoldTrack"
-	holdTrack.AnchorPoint = Vector2.new(0.5, 0.5)
-	holdTrack.Position = UDim2.fromScale(0.5, 0.5)
-	holdTrack.Size = UDim2.new(1, -C.BADGE_HOLD_PAD * 2, 1, -C.BADGE_HOLD_PAD * 2)
-	holdTrack.BackgroundColor3 = Color3.fromRGB(8, 20, 12)
-	holdTrack.BackgroundTransparency = 0.15
-	holdTrack.BorderSizePixel = 0
-	holdTrack.ClipsDescendants = true
-	holdTrack.ZIndex = 1
-	holdTrack.Visible = prompt.HoldDuration > 0
-	holdTrack.Parent = keyBadge
-
-	local trackCorner = Instance.new("UICorner")
-	trackCorner.CornerRadius = UDim.new(0, 6)
-	trackCorner.Parent = holdTrack
-
-	local trackStroke = Instance.new("UIStroke")
-	trackStroke.Color = C.ACCENT_STROKE
-	trackStroke.Thickness = 1.25
-	trackStroke.Transparency = 0.35
-	trackStroke.Parent = holdTrack
-
-	local holdFill = Instance.new("Frame")
-	holdFill.Name = "HoldFill"
-	holdFill.AnchorPoint = Vector2.new(0.5, 1)
-	holdFill.Position = UDim2.new(0.5, 0, 1, 0)
-	holdFill.Size = UDim2.new(1, 0, 0, 0)
-	holdFill.BackgroundColor3 = C.HOLD_GREEN_BRIGHT
-	holdFill.BackgroundTransparency = 0.08
-	holdFill.BorderSizePixel = 0
-	holdFill.ZIndex = 2
-	holdFill.Visible = prompt.HoldDuration > 0
-	holdFill.Parent = holdTrack
-
-	local fillCorner = Instance.new("UICorner")
-	fillCorner.CornerRadius = UDim.new(0, 6)
-	fillCorner.Parent = holdFill
-
-	local fillGrad = Instance.new("UIGradient")
-	fillGrad.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, C.HOLD_GREEN),
-		ColorSequenceKeypoint.new(0.5, C.HOLD_GREEN_BRIGHT),
-		ColorSequenceKeypoint.new(1, C.ACCENT_BRIGHT),
-	})
-	fillGrad.Rotation = 90
-	fillGrad.Parent = holdFill
-
-	local keyLabel = Instance.new("TextLabel")
-	keyLabel.Name = "Key"
-	keyLabel.AnchorPoint = Vector2.new(0.5, 0.5)
-	keyLabel.Position = UDim2.fromScale(0.5, 0.5)
-	keyLabel.Size = UDim2.new(1, -6, 1, -6)
-	keyLabel.BackgroundTransparency = 1
-	keyLabel.Font = Enum.Font.GothamBold
-	keyLabel.Text = ""
-	keyLabel.TextSize = if isMobilePlatform() then 18 else 22
-	keyLabel.TextColor3 = C.TEXT_PRIMARY
-	keyLabel.AutoLocalize = false
-	keyLabel.ZIndex = 5
-	keyLabel.Parent = keyBadge
-
-	local keyIcon = Instance.new("ImageLabel")
-	keyIcon.Name = "KeyIcon"
-	keyIcon.AnchorPoint = Vector2.new(0.5, 0.5)
-	keyIcon.Position = UDim2.fromScale(0.5, 0.5)
-	keyIcon.Size = UDim2.new(1, -10, 1, -10)
-	keyIcon.BackgroundTransparency = 1
-	keyIcon.ScaleType = Enum.ScaleType.Fit
-	keyIcon.ImageColor3 = Color3.new(1, 1, 1)
-	keyIcon.ImageTransparency = 0
-	keyIcon.Visible = false
-	keyIcon.ZIndex = 10
-	keyIcon.Parent = keyBadge
-
-	local textCol = Instance.new("Frame")
-	textCol.Name = "TextColumn"
-	textCol.AnchorPoint = Vector2.new(0, 0.5)
-	textCol.Position = UDim2.new(0, C.PAD_LEFT + C.BADGE_SIZE + C.BADGE_TEXT_GAP, 0.5, 0)
-	textCol.Size = UDim2.new(1, -(C.PAD_LEFT + C.BADGE_SIZE + C.BADGE_TEXT_GAP + C.PAD_RIGHT), 1, -8)
-	textCol.BackgroundTransparency = 1
-	textCol.Parent = root
-
-	local actionLabel = Instance.new("TextLabel")
-	actionLabel.Name = "Action"
-	actionLabel.Size = UDim2.new(1, 0, 0.52, 0)
-	actionLabel.BackgroundTransparency = 1
-	actionLabel.Font = Enum.Font.GothamBold
-	actionLabel.Text = ""
-	actionLabel.AutoLocalize = false
-	actionLabel.TextSize = 17
-	actionLabel.TextXAlignment = Enum.TextXAlignment.Left
-	actionLabel.TextYAlignment = Enum.TextYAlignment.Bottom
-	actionLabel.TextColor3 = C.TEXT_PRIMARY
-	actionLabel.TextTruncate = Enum.TextTruncate.AtEnd
-	actionLabel.TextWrapped = true
-	actionLabel.Parent = textCol
-
-	local objectLabel = Instance.new("TextLabel")
-	objectLabel.Name = "Object"
-	objectLabel.Position = UDim2.fromScale(0, 0.48)
-	objectLabel.Size = UDim2.new(1, 0, 0.52, 0)
-	objectLabel.BackgroundTransparency = 1
-	objectLabel.Font = Enum.Font.Gotham
-	objectLabel.Text = ""
-	objectLabel.AutoLocalize = false
-	objectLabel.TextSize = 14
-	objectLabel.TextXAlignment = Enum.TextXAlignment.Left
-	objectLabel.TextYAlignment = Enum.TextYAlignment.Top
-	objectLabel.TextColor3 = C.TEXT_SECONDARY
-	objectLabel.TextTruncate = Enum.TextTruncate.AtEnd
-	objectLabel.TextWrapped = true
-	objectLabel.Parent = textCol
 
 	local view: PromptView = {
 		prompt = prompt,
 		billboard = billboard,
-		root = root,
-		rootScale = rootScale,
-		rootStroke = rootStroke,
+		root = card.root,
+		rootScale = card.rootScale,
+		rootStroke = card.rootStroke,
 		strokeGrads = {},
 		strokeGradConn = nil,
-		keyBadge = keyBadge,
-		keyStroke = keyStroke,
-		keyLabel = keyLabel,
-		keyIcon = keyIcon,
-		holdTrack = holdTrack,
-		holdFill = holdFill,
-		actionLabel = actionLabel,
-		objectLabel = objectLabel,
+		keyBadge = card.keyBadge,
+		keyStroke = card.keyStroke,
+		keyLabel = card.keyLabel,
+		keyIcon = card.keyIcon,
+		holdTrack = card.holdTrack,
+		holdFill = card.holdFill,
+		actionLabel = card.actionLabel,
+		objectLabel = card.objectLabel,
 		holding = false,
 		holdViaPointer = false,
 		holdProgress = 0,
@@ -1797,6 +1660,9 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 
 	applyLabelsToView(view)
 	refreshKeyLabel(view)
+	if isDisplayOnly and isManagedBushPrompt(prompt) then
+		applyBushSearchCardStyle(view)
+	end
 	if not isDisplayOnly then
 		wireClickablePrompt(view)
 	end
@@ -1964,6 +1830,7 @@ showBushSharedUi = function(prompt: ProximityPrompt): boolean
 	view.billboard.Enabled = true
 	ensureKeyIcon(view)
 	applyLabelsToView(view)
+	applyBushSearchCardStyle(view)
 	refreshKeyLabel(view)
 	setHoldTrackVisible(view, view.prompt.HoldDuration > 0)
 	wirePromptLiveUpdates(prompt, view)
@@ -2050,9 +1917,17 @@ local function tickBushCooldownBanner(bush: Instance, entry: BushCooldownBannerE
 		destroyBushCooldownBannerForBush(bush)
 		return
 	end
-	local rem = entry.endClock - now
-	if rem <= 0 then
-		entry.label.Text = "0s"
+	if bush:GetAttribute("BushOnCooldown") ~= true then
+		destroyBushCooldownBannerForBush(bush)
+		return
+	end
+	local endsAt = bush:GetAttribute("BushCooldownEndsAt")
+	if typeof(endsAt) ~= "number" or now >= endsAt then
+		destroyBushCooldownBannerForBush(bush)
+		return
+	end
+	local rem = endsAt - now
+	if rem <= 0.05 then
 		destroyBushCooldownBannerForBush(bush)
 		return
 	end
@@ -2129,7 +2004,7 @@ local function ensureBushCooldownBanner(bush: Instance, prompt: ProximityPrompt,
 	bb.LightInfluence = 0
 	bb.ResetOnSpawn = false
 	bb.ClipsDescendants = false
-	bb.Size = UDim2.fromOffset(300, 56)
+	bb.Size = UDim2.fromOffset(220, 48)
 	applyBushBillboardPlacement(bb, prompt, adornee)
 	bb.MaxDistance = C.COOLDOWN_BANNER_VIEW_RANGE
 	bb.Adornee = adornee
@@ -2161,7 +2036,7 @@ local function ensureBushCooldownBanner(bush: Instance, prompt: ProximityPrompt,
 	icon.Name = "Clock"
 	icon.ZIndex = 2
 	icon.BackgroundTransparency = 1
-	icon.Size = UDim2.fromOffset(40, 40)
+	icon.Size = UDim2.fromOffset(32, 32)
 	icon.ScaleType = Enum.ScaleType.Fit
 	local img = tryGetClockImageAsset()
 	icon.Image = if img ~= "" then img else "rbxasset://textures/ui/GuiImagePlaceholder.png"
@@ -2175,11 +2050,10 @@ local function ensureBushCooldownBanner(bush: Instance, prompt: ProximityPrompt,
 	timeLabel.BackgroundTransparency = 1
 	timeLabel.AutomaticSize = Enum.AutomaticSize.XY
 	timeLabel.Size = UDim2.fromOffset(0, 0)
-	timeLabel.Font = Enum.Font.GothamBold
-	timeLabel.TextSize = 28
+	UiFonts.applyDisplayLabel(timeLabel, 18, 12)
+	timeLabel.Text = "0s"
 	timeLabel.TextColor3 = C.TEXT_PRIMARY
 	timeLabel.TextXAlignment = Enum.TextXAlignment.Left
-	timeLabel.Text = "0s"
 	timeLabel.LayoutOrder = 1
 	local tStroke = Instance.new("UIStroke")
 	tStroke.Color = Color3.new(0, 0, 0)
@@ -2339,6 +2213,7 @@ local function showView(prompt: ProximityPrompt)
 	local existing = viewsByPrompt[prompt]
 	if existing then
 		if existing.billboard.Parent then
+			existing.billboard.Enabled = true
 			applyLabelsToView(existing)
 			existing.rootScale.Scale = 1
 			existing.root.Rotation = 0
@@ -2450,33 +2325,34 @@ reshowEligiblePlaceProximityPrompts = function()
 	for _, inst in CollectionService:GetTagged(C.STAND_TAG) do
 		if inst:IsA("Model") then
 			local pp = findStandProximityPrompt(inst :: Model)
-			if pp and pp.Enabled and isPlaceBrainrotPrompt(pp) then
+			if pp and pp.Enabled and shouldShowPromptUi(pp) then
 				onPromptShown(pp, nil)
 			end
 		end
 	end
 end
 
-function ProximityPromptEffects.syncStandPlaceProximityUi(prompt: ProximityPrompt?)
+function ProximityPromptEffects.syncStandActivePromptUi(prompt: ProximityPrompt?)
 	if not prompt or not prompt.Parent then
-		return
-	end
-	local existing = viewsByPrompt[prompt]
-	if existing and existing.billboard.Parent and existing.billboard.Enabled then
 		return
 	end
 	task.defer(function()
 		if not prompt.Parent or not prompt.Enabled then
 			return
 		end
-		if not isPlaceBrainrotPrompt(prompt) then
+		if prompt:GetAttribute(C.CUSTOM_ATTR) ~= true then
 			return
 		end
-		if prompt:GetAttribute(C.CUSTOM_ATTR) ~= true or not shouldShowPromptUi(prompt) then
+		if not shouldShowPromptUi(prompt) then
+			hideView(prompt, true)
 			return
 		end
 		onPromptShown(prompt, nil)
 	end)
+end
+
+function ProximityPromptEffects.syncStandPlaceProximityUi(prompt: ProximityPrompt?)
+	ProximityPromptEffects.syncStandActivePromptUi(prompt)
 end
 
 local function onPromptHidden(prompt: ProximityPrompt, _inputType: Enum.ProximityPromptInputType?)
@@ -2682,8 +2558,10 @@ function ProximityPromptEffects.syncStandProximityUi(activePrompt: ProximityProm
 		end
 		if prompt ~= activePrompt then
 			ProximityPromptEffects.forceHide(prompt)
-			prompt.Enabled = false
 		end
+	end
+	if activePrompt and activePrompt.Parent and activePrompt.Enabled then
+		ProximityPromptEffects.syncStandActivePromptUi(activePrompt)
 	end
 end
 
@@ -2723,9 +2601,19 @@ end
 
 function ProximityPromptEffects.init()
 	local function scanForPrompts(root: Instance)
-		for _, desc in ipairs(root:GetDescendants()) do
-			if desc:IsA("ProximityPrompt") then
-				ProximityPromptEffects.stylePrompt(desc)
+		local stack = { root }
+		local count = 0
+		while #stack > 0 do
+			local inst = table.remove(stack)
+			if inst:IsA("ProximityPrompt") then
+				ProximityPromptEffects.stylePrompt(inst)
+			end
+			for _, child in inst:GetChildren() do
+				table.insert(stack, child)
+			end
+			count += 1
+			if count % 500 == 0 then
+				task.wait()
 			end
 		end
 	end

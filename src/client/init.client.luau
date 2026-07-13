@@ -1,8 +1,10 @@
 -- [ACTIVE] init.client
 -- Entry point – boots all client-side controllers.
--- Yield immediately so Roblox core (UIBlox/Foundation StarterScript) can finish loading.
+-- Yield immediately so Roblox core (PlayerModule / ClickToMove / UIBlox) can finish loading.
 task.defer(function()
-	task.wait()
+	for _ = 1, 4 do
+		task.wait()
+	end
 
 	local Players = game:GetService("Players")
 	local Lighting = game:GetService("Lighting")
@@ -75,6 +77,9 @@ task.defer(function()
 			end,
 			function()
 				require(script.BushHoldInteraction).init()
+			end,
+			function()
+				require(script.BushSpiderEncounterController).init()
 			end,
 			function()
 				require(script.CurrentAreaController).init()
@@ -168,15 +173,6 @@ task.defer(function()
 
 	task.spawn(function()
 		task.spawn(function()
-			local warmOk, warmErr = pcall(function()
-				require(script.SpawnAreaWarmup).runAsync()
-			end)
-			if not warmOk then
-				warn("[init.client] SpawnAreaWarmup failed:", warmErr)
-			end
-		end)
-
-		task.spawn(function()
 			local critOk, critErr = pcall(bootCriticalForRedWall)
 			if not critOk then
 				warn("[init.client] bootCriticalForRedWall failed:", critErr)
@@ -205,6 +201,16 @@ task.defer(function()
 		end)
 		if not deferOk then
 			warn("[init.client] Deferred UI boot failed:", deferErr)
+		end
+	end)
+
+	task.spawn(function()
+		task.wait(6)
+		local warmOk, warmErr = pcall(function()
+			require(script.SpawnAreaWarmup).runAsync()
+		end)
+		if not warmOk then
+			warn("[init.client] SpawnAreaWarmup failed:", warmErr)
 		end
 	end)
 

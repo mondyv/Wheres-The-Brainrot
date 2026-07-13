@@ -22,7 +22,6 @@ local ERROR_ACCENT = Color3.fromRGB(255, 72, 72)
 local ERROR_TEXT_STROKE = Color3.fromRGB(0, 0, 0)
 local DISPLAY_LIFETIME = 10
 local ERROR_LIFETIME = 3.5
-local ERROR_COOLDOWN = 0.35
 local CANT_AFFORD_MESSAGE = "You can't afford this!"
 
 local TopNotifController = {}
@@ -48,7 +47,8 @@ local messageQueue: { QueuedMessage } = {}
 local isShowing = false
 local hideToken = 0
 local activeFadeTween: Tween? = nil
-local lastErrorAt = 0
+local activeIsError = false
+local errorHideThread: thread? = nil
 local broadcastConn: RBXScriptConnection? = nil
 local defaultPanelStrokeColor: Color3? = nil
 
@@ -134,10 +134,18 @@ local function hideNotifDecorations()
 	for _, desc in host:GetDescendants() do
 		if desc:IsA("TextLabel") and desc ~= label then
 			desc.Visible = false
-		elseif desc:IsA("ImageLabel") then
+		elseif desc:IsA("ImageLabel") or desc:IsA("ImageButton") then
 			desc.Visible = false
 		elseif desc:IsA("Frame") and desc ~= animHost and desc ~= host then
 			desc.Visible = false
+			desc.BackgroundTransparency = 1
+		elseif desc:IsA("UIStroke") and desc ~= panelStroke and desc ~= labelStroke then
+			desc.Enabled = false
+		elseif desc:IsA("UIGradient") then
+			local parent = desc.Parent
+			if parent ~= label and parent ~= panelStroke then
+				desc.Enabled = false
+			end
 		end
 	end
 	if host:IsA("GuiObject") then
@@ -145,6 +153,32 @@ local function hideNotifDecorations()
 	end
 	if animHost and animHost:IsA("GuiObject") then
 		(animHost :: GuiObject).BackgroundTransparency = 1
+	end
+end
+
+local function prepareManagedNotifPanel()
+	if not host or not animHost then
+		return
+	end
+	local panel = animHost:FindFirstChild("ManagedNotifPanel")
+	if not panel or not panel:IsA("Frame") then
+		panel = Instance.new("Frame")
+		panel.Name = "ManagedNotifPanel"
+		panel.AnchorPoint = Vector2.new(0.5, 0.5)
+		panel.Position = UDim2.fromScale(0.5, 0.5)
+		panel.Size = UDim2.fromScale(1, 1)
+		panel.BorderSizePixel = 0
+		panel.ZIndex = 0
+		panel.Parent = animHost
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 10)
+		corner.Parent = panel
+	end
+	panel.BackgroundColor3 = Color3.fromRGB(8, 10, 14)
+	panel.BackgroundTransparency = 0.18
+	panel.Visible = true
+	if label and label:IsA("GuiObject") then
+		(label :: GuiObject).ZIndex = 2
 	end
 end
 
@@ -180,8 +214,8 @@ local function findParts()
 		return
 	end
 	host = notif :: GuiObject
-	animHost = (notif:FindFirstChildWhichIsA("Frame") or notif) :: GuiObject
-	animScale = getOrAddAnimScale(animHost)
+	animHost = host
+	animScale = getOrAddAnimScale(host)
 	prepareNotifHost(host)
 
 	panelStroke = host:FindFirstChildOfClass("UIStroke")
@@ -189,7 +223,10 @@ local function findParts()
 		defaultPanelStrokeColor = panelStroke.Color
 	end
 
-	local text = notif:FindFirstChild("Text", true)
+	local text = notif:FindFirstChild("Text")
+	if not text or not text:IsA("TextLabel") then
+		text = notif:FindFirstChild("Text", true)
+	end
 	if text and text:IsA("TextLabel") then
 		label = text
 		savedTextStrokeTransparency = label.TextStrokeTransparency
@@ -225,23 +262,17 @@ local function disableOtherGradients(textLabel: TextLabel, keepName: string)
 	end
 end
 
-local function setPanelAccent(color: Color3, rarityId: string?)
+local function setPanelAccent(color: Color3, _rarityId: string?)
 	if not panelStroke then
 		return
 	end
 	panelStroke.Color = color
+	panelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	panelStroke.LineJoinMode = Enum.LineJoinMode.Round
+	panelStroke.Thickness = 1.5
 	local grad = panelStroke:FindFirstChild("RaritySpawnGradient")
-	if rarityId then
-		if not grad or not grad:IsA("UIGradient") then
-			grad = Instance.new("UIGradient")
-			grad.Name = "RaritySpawnGradient"
-			grad.Parent = panelStroke
-		end
-		(grad :: UIGradient).Color = RaritySpawnStyle.colorSequence(rarityId);
-		(grad :: UIGradient).Rotation = 90
-		(grad :: UIGradient).Enabled = true
-	elseif grad and grad:IsA("UIGradient") then
-		grad.Enabled = false
+	if grad and grad:IsA("UIGradient") then
+		grad:Destroy()
 	end
 end
 
@@ -249,7 +280,10 @@ local function applyRarityPanelStyle(rarityId: string)
 	if not panelStroke then
 		return
 	end
-	panelStroke.Transparency = math.clamp((savedPanelStrokeTransparency or 0) + 0.35, 0.15, 0.65)
+	panelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	panelStroke.LineJoinMode = Enum.LineJoinMode.Round
+	panelStroke.Thickness = 1.5
+	panelStroke.Transparency = math.clamp((savedPanelStrokeTransparency or 0) + 0.2, 0.1, 0.45)
 	setPanelAccent(RaritySpawnStyle.accentColor(rarityId), nil)
 end
 
@@ -265,8 +299,9 @@ local function applyRarityStyle(textLabel: TextLabel, rarityId: string)
 		labelStroke.Enabled = true
 		labelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 		labelStroke.Color = Color3.fromRGB(0, 0, 0)
-		labelStroke.Thickness = if savedLabelStrokeThickness then math.clamp(savedLabelStrokeThickness, 1.2, 2) else 1.5
-		labelStroke.Transparency = 0.15
+		labelStroke.LineJoinMode = Enum.LineJoinMode.Round
+		labelStroke.Thickness = if savedLabelStrokeThickness then math.clamp(savedLabelStrokeThickness, 1, 1.6) else 1.25
+		labelStroke.Transparency = 0.2
 	end
 	applyRarityPanelStyle(rarityId)
 end
@@ -311,6 +346,24 @@ local function cancelActiveTween()
 	end
 end
 
+local function cancelErrorHideThread()
+	if errorHideThread then
+		task.cancel(errorHideThread)
+		errorHideThread = nil
+	end
+end
+
+local function purgeQueuedErrors()
+	local i = 1
+	while i <= #messageQueue do
+		if messageQueue[i].isError then
+			table.remove(messageQueue, i)
+		else
+			i += 1
+		end
+	end
+end
+
 local function processQueue()
 	if isShowing or #messageQueue == 0 or not host or not animHost or not label or not animScale then
 		return
@@ -318,9 +371,11 @@ local function processQueue()
 
 	local entry = table.remove(messageQueue, 1)
 	isShowing = true
+	activeIsError = entry.isError
 	hideToken += 1
 	local token = hideToken
 	cancelActiveTween()
+	cancelErrorHideThread()
 
 	label.Visible = true
 	label.Text = entry.message
@@ -331,7 +386,7 @@ local function processQueue()
 		animScale.Scale = 1
 	else
 		applyRarityStyle(label, entry.rarityId or "legendary")
-		animScale.Scale = 0.6
+		animScale.Scale = 0.88
 	end
 
 	setLabelAlpha(label, if entry.isError then 1 else 0, entry.isError)
@@ -352,6 +407,10 @@ local function processQueue()
 	local lifetime = if entry.isError
 		then ERROR_LIFETIME
 		else (if typeof(entry.lifetimeSec) == "number" then math.max(2.5, entry.lifetimeSec) else DISPLAY_LIFETIME)
+	if entry.isError then
+		scheduleErrorHide(token, lifetime)
+		return
+	end
 	task.delay(lifetime, function()
 		if token ~= hideToken or not host or not label or not animScale then
 			return
@@ -372,6 +431,7 @@ local function processQueue()
 				return
 			end
 			isShowing = false
+			activeIsError = false
 			if host then
 				host.Visible = false
 			end
@@ -383,6 +443,55 @@ local function processQueue()
 			processQueue()
 		end)
 	end)
+end
+
+local function scheduleErrorHide(token: number, lifetime: number)
+	cancelErrorHideThread()
+	errorHideThread = task.delay(lifetime, function()
+		errorHideThread = nil
+		if token ~= hideToken or not host or not label or not animScale then
+			return
+		end
+		cancelActiveTween()
+		TweenService:Create(label, FADE_OUT, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+		task.delay(FADE_OUT.Time, function()
+			if token ~= hideToken then
+				return
+			end
+			isShowing = false
+			activeIsError = false
+			if host then
+				host.Visible = false
+			end
+			if label then
+				label.Visible = false
+				label.Rotation = 0
+			end
+			animScale.Scale = 1
+			processQueue()
+		end)
+	end)
+end
+
+local function showErrorNow(message: string)
+	if not host or not animHost or not label or not animScale then
+		return
+	end
+	isShowing = true
+	activeIsError = true
+	hideToken += 1
+	local token = hideToken
+	cancelActiveTween()
+	cancelErrorHideThread()
+	label.Visible = true
+	label.Text = message
+	label.Rotation = 0
+	applyErrorStyle(label)
+	animScale.Scale = 1
+	setLabelAlpha(label, 1, true)
+	host.Visible = true
+	TweenService:Create(label, TEXT_IN, { TextTransparency = 0, TextStrokeTransparency = 0 }):Play()
+	scheduleErrorHide(token, ERROR_LIFETIME)
 end
 
 local function enqueue(message: string, isError: boolean, rarityId: string?, lifetimeSec: number?)
@@ -440,11 +549,12 @@ function TopNotifController.showError(message: string)
 	if not host then
 		TopNotifController.init()
 	end
-	local now = os.clock()
-	if now - lastErrorAt < ERROR_COOLDOWN then
+	purgeQueuedErrors()
+	if isShowing and activeIsError then
+		GameSoundEffects.playErrorNotif()
+		showErrorNow(message)
 		return
 	end
-	lastErrorAt = now
 	GameSoundEffects.playErrorNotif()
 	enqueue(message, true, nil)
 end

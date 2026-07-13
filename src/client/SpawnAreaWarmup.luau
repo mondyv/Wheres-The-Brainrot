@@ -198,8 +198,13 @@ function SpawnAreaWarmup.runAsync()
 	SafezoneUtil.awaitCacheReady(3)
 	streamBeyondRedWalls(center)
 	streamLandPivots()
+	-- Full-map bush streaming deferred — avoids blocking PlayerModule boot on huge maps.
 	if map then
-		streamMapWilderness(map)
+		task.delay(10, function()
+			if map.Parent then
+				streamMapWilderness(map)
+			end
+		end)
 	end
 end
 

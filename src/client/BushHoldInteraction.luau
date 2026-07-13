@@ -301,24 +301,6 @@ local function registerFromSearchPrompt(prompt: ProximityPrompt)
 	registerBushRoot(root)
 end
 
-local function purgeForeignUnder(root: Instance)
-	for _, d in root:GetDescendants() do
-		if d:IsA("ProximityPrompt") and isForeignSearchPrompt(d) then
-			d:Destroy()
-		end
-	end
-end
-
-local function collectBushFolders(map: Instance): { Folder }
-	local out: { Folder } = {}
-	for _, desc in map:GetDescendants() do
-		if desc:IsA("Folder") and isBushFolderName(desc.Name) then
-			table.insert(out, desc :: Folder)
-		end
-	end
-	return out
-end
-
 local function registerBushesUnderFolder(folder: Folder)
 	for _, child in folder:GetChildren() do
 		if BushRootUtil.isDirectBushRoot(child) then
@@ -329,34 +311,31 @@ local function registerBushesUnderFolder(folder: Folder)
 	end
 end
 
-local function purgeLegacyEmptyBushBillboards(map: Instance)
-	for _, desc in map:GetDescendants() do
-		if desc.Name == "BushEmptyMessage" then
-			desc:Destroy()
-		elseif desc.Name == "_BushEmptyMessageAnchor" and desc:IsA("BasePart") then
-			desc:Destroy()
-		end
-	end
-end
-
+-- Walk map tree with GetChildren only — never GetDescendants (sync hitch on huge maps).
 local function registerAllBushesOnMap(map: Instance)
-	-- Single pass (was 4 separate GetDescendants calls). Register foreign prompts before purging.
 	local bushFolders: { Folder } = {}
 	local foreignPrompts: { ProximityPrompt } = {}
+	local stack = { map }
 	local count = 0
-	for _, desc in map:GetDescendants() do
-		count += 1
-		if count % 4000 == 0 then
-			task.wait()
+	while #stack > 0 do
+		local inst = table.remove(stack)
+		if inst ~= map then
+			if inst:IsA("Folder") and isBushFolderName(inst.Name) then
+				table.insert(bushFolders, inst :: Folder)
+			elseif inst:IsA("ProximityPrompt") and isForeignSearchPrompt(inst) then
+				table.insert(foreignPrompts, inst)
+			elseif inst.Name == "BushEmptyMessage" then
+				inst:Destroy()
+			elseif inst.Name == "_BushEmptyMessageAnchor" and inst:IsA("BasePart") then
+				inst:Destroy()
+			end
 		end
-		if desc:IsA("Folder") and isBushFolderName(desc.Name) then
-			table.insert(bushFolders, desc :: Folder)
-		elseif desc:IsA("ProximityPrompt") and isForeignSearchPrompt(desc) then
-			table.insert(foreignPrompts, desc)
-		elseif desc.Name == "BushEmptyMessage" then
-			desc:Destroy()
-		elseif desc.Name == "_BushEmptyMessageAnchor" and desc:IsA("BasePart") then
-			desc:Destroy()
+		for _, child in inst:GetChildren() do
+			table.insert(stack, child)
+		end
+		count += 1
+		if count % 400 == 0 then
+			task.wait()
 		end
 	end
 

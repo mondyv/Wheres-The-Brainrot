@@ -28,7 +28,7 @@ local ENVIRONMENT = RunService:IsStudio() and "Development" or "Production"
 local DATA_STORE_NAME = ENVIRONMENT .. "_#003"
 
 local AUTOSAVE_INTERVAL_SEC = 300
-local DEFAULT_CASH = 1_000_000
+local DEFAULT_CASH = 500
 local LOADED_ATTR = PlayerDataSchema.LOADED_ATTR
 local PLAY_TIME_ATTR = PlayerDataSchema.TOTAL_PLAY_TIME_ATTR
 

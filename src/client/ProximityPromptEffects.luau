@@ -19,6 +19,8 @@ local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
+local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local C = require(script.Parent.ProximityPromptEffectsConfig)
 local PromptTheme = require(script.Parent.ProximityPromptTheme)
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
@@ -53,6 +55,7 @@ type PromptView = {
 	liveConns: { RBXScriptConnection },
 	clickConns: { RBXScriptConnection },
 	clickWired: boolean,
+	hoverWired: boolean,
 	displayOnly: boolean,
 	inputType: Enum.ProximityPromptInputType?,
 }
@@ -60,6 +63,8 @@ type PromptView = {
 local viewsByPrompt: { [ProximityPrompt]: PromptView } = {}
 local styledPrompts: { [ProximityPrompt]: boolean } = {}
 local promptStyleConns: { [ProximityPrompt]: { RBXScriptConnection } } = {}
+-- Prevents concurrent showView (PromptShown + sync + repair) from stacking billboards.
+local promptBuildLocks: { [ProximityPrompt]: boolean } = {}
 local serviceWired = false
 local activeBushSearchPrompt: ProximityPrompt? = nil
 local bushSharedView = nil
@@ -89,6 +94,8 @@ local suppressedBushCooldownPrompts: { [Instance]: ProximityPrompt } = {}
 local bushCooldownTickerConn: RBXScriptConnection? = nil
 local rarityGradientsFolder: Folder? = nil
 
+local activeStandPrompt: ProximityPrompt? = nil
+
 local ProximityPromptEffects = {}
 
 function ProximityPromptEffects.setBushHoldCompleteHandler(handler: ((ProximityPrompt) -> ())?)
@@ -100,6 +107,8 @@ function ProximityPromptEffects.registerBushHoldCompleteHook(hook: (ProximityPro
 end
 
 local startIdleSway: (view: PromptView) -> ()
+local stopIdleSway: (view: PromptView) -> ()
+local playPressAnim: (view: PromptView) -> ()
 local destroyView: (prompt: ProximityPrompt) -> ()
 local hideView: (prompt: ProximityPrompt, instant: boolean?) -> ()
 local clearBushPerPromptViews: () -> ()
@@ -114,6 +123,8 @@ local endHoldVisual: (view: PromptView, completed: boolean?) -> ()
 -- After carry/bush UI clears, PromptShown may not refire for prompts already enabled — refresh place cards.
 local reshowEligiblePlaceProximityPrompts: (() -> ())?
 local isPromptFacingCamera: (ProximityPrompt) -> boolean
+local isStandProximityPrompt: (ProximityPrompt) -> boolean
+local purgeOrphanPromptBillboards: () -> ()
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -169,6 +180,30 @@ local function bushBillboardMaxDistance(prompt: ProximityPrompt): number
 	return math.max(prompt.MaxActivationDistance * 1.5, C.BUSH_BILLBOARD_MIN_MAX_DISTANCE)
 end
 
+-- Must be above promptBillboardMaxDistance / refreshKeyLabel (Luau local scope).
+local function isStealProximityPrompt(prompt: ProximityPrompt): boolean
+	return prompt:GetAttribute(C.STEAL_PROMPT_ATTR) == true
+end
+
+local function promptBillboardMaxDistance(prompt: ProximityPrompt): number
+	-- Steal used to cap at MaxActivation+1, which hid the card while still in range.
+	return bushBillboardMaxDistance(prompt)
+end
+
+local getPromptFocusWorld: (ProximityPrompt) -> Vector3?
+
+local function getCharacterRootPart(): BasePart?
+	local char = player.Character
+	if not char then
+		return nil
+	end
+	local root = char:FindFirstChild("HumanoidRootPart")
+	if root and root:IsA("BasePart") then
+		return root
+	end
+	return nil
+end
+
 local function isBushSearchInCameraRange(prompt: ProximityPrompt): boolean
 	local cam = workspace.CurrentCamera
 	if not cam then
@@ -181,27 +216,39 @@ local function isBushSearchInCameraRange(prompt: ProximityPrompt): boolean
 	return (focus - cam.CFrame.Position).Magnitude <= bushBillboardMaxDistance(prompt)
 end
 
+local function isBushSearchInPlayerRange(prompt: ProximityPrompt): boolean
+	local root = getCharacterRootPart()
+	local focus = getPromptFocusWorld(prompt)
+	if not root or not focus then
+		return false
+	end
+	return (root.Position - focus).Magnitude <= prompt.MaxActivationDistance + 1.25
+end
+
 function ProximityPromptEffects.isBushSearchInViewRange(prompt: ProximityPrompt): boolean
-	return isBushSearchInCameraRange(prompt)
+	return isBushSearchInPlayerRange(prompt) or isBushSearchInCameraRange(prompt)
+end
+
+function ProximityPromptEffects.isBushSearchNearPlayer(prompt: ProximityPrompt): boolean
+	return isBushSearchInPlayerRange(prompt)
 end
 
 local function managedBushUiEligible(prompt: ProximityPrompt): boolean
 	return isManagedBushPrompt(prompt)
 		and prompt.Enabled
 		and not CarryGate.isFull()
-		and isPromptFacingCamera(prompt)
-		and isBushSearchInCameraRange(prompt)
+		and isBushSearchInPlayerRange(prompt)
 end
 
 local function shouldShowPromptUi(prompt: ProximityPrompt): boolean
 	if not prompt.Enabled then
 		return false
 	end
-	if not isPromptFacingCamera(prompt) then
-		return false
-	end
 	if managedBushUiEligible(prompt) then
 		return true
+	end
+	if not isPromptFacingCamera(prompt) then
+		return false
 	end
 	if CarryGate.isBushSearchPrompt(prompt) then
 		return false
@@ -224,7 +271,16 @@ local function prefersGamepadInput(): boolean
 end
 
 local function isMobilePlatform(): boolean
-	return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+		return true
+	end
+	local ok, preferred = pcall(function()
+		return (UserInputService :: any).PreferredInput
+	end)
+	if ok and preferred == Enum.PreferredInput.Touch then
+		return true
+	end
+	return false
 end
 
 local function isTouchDevice(): boolean
@@ -232,6 +288,18 @@ local function isTouchDevice(): boolean
 end
 
 local function resolvePromptInputType(explicit: Enum.ProximityPromptInputType?): Enum.ProximityPromptInputType
+	-- Prefer touch whenever the device has a touch screen (bush/stand share the same badge).
+	if UserInputService.TouchEnabled and not prefersGamepadInput() then
+		if isMobilePlatform() or UserInputService:GetLastInputType() == Enum.UserInputType.Touch then
+			return Enum.ProximityPromptInputType.Touch
+		end
+		local ok, preferred = pcall(function()
+			return (UserInputService :: any).PreferredInput
+		end)
+		if ok and preferred == Enum.PreferredInput.Touch then
+			return Enum.ProximityPromptInputType.Touch
+		end
+	end
 	if isMobilePlatform() then
 		return Enum.ProximityPromptInputType.Touch
 	end
@@ -302,6 +370,8 @@ local function isBushSearchPrompt(prompt: ProximityPrompt): boolean
 	return CarryGate.isBushSearchPrompt(prompt)
 end
 
+-- Bush shared cards skip PromptShown, so they often have nil inputType.
+-- Always use the stand touch badge on any touch-capable device (ignore KeyboardEnabled).
 local function shouldShowBushTouchIcon(prompt: ProximityPrompt, inputType: Enum.ProximityPromptInputType): boolean
 	if prefersGamepadInput() then
 		return false
@@ -309,10 +379,10 @@ local function shouldShowBushTouchIcon(prompt: ProximityPrompt, inputType: Enum.
 	if not isBushSearchPrompt(prompt) then
 		return false
 	end
-	if inputType == Enum.ProximityPromptInputType.Touch then
+	if UserInputService.TouchEnabled then
 		return true
 	end
-	if isTouchDevice() then
+	if inputType == Enum.ProximityPromptInputType.Touch then
 		return true
 	end
 	return usesTouchPromptIcon()
@@ -367,6 +437,10 @@ local function refreshKeyLabel(view: PromptView)
 	end
 	if isBushSearchPrompt(prompt) and shouldShowBushTouchIcon(prompt, inputType) then
 		showTouchKeyIcon(view, prompt.HoldDuration > 0)
+		return
+	end
+	if isStealProximityPrompt(prompt) and (inputType == Enum.ProximityPromptInputType.Touch or usesTouchPromptIcon()) then
+		showTouchKeyIcon(view, false)
 		return
 	end
 	if
@@ -425,7 +499,55 @@ local function hidePlacePromptViewsIfNeeded()
 end
 
 local function promptBillboardInputActive(): boolean
-	return UserInputService.TouchEnabled
+	return true
+end
+
+local function wirePromptHover(view: PromptView)
+	if view.hoverWired then
+		return
+	end
+	view.hoverWired = true
+
+	local root = view.root
+	local clickBtn = root:FindFirstChild("ClickTarget")
+	if not clickBtn or not clickBtn:IsA("GuiObject") then
+		return
+	end
+
+	local rootScale = view.rootScale
+	local badgeScale = getOrAddUIScale(view.keyBadge)
+	local hoverIn = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local hoverOut = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local isStand = isStandProximityPrompt(view.prompt)
+
+	table.insert(view.clickConns, clickBtn.MouseEnter:Connect(function()
+		if view.holding or not viewIsActive(view) then
+			return
+		end
+		stopIdleSway(view)
+		TweenService:Create(rootScale, hoverIn, { Scale = if isStand then 1.06 else 1.05 }):Play()
+		TweenService:Create(badgeScale, hoverIn, { Scale = 1.08 }):Play()
+		TweenService:Create(view.rootStroke, hoverIn, { Thickness = 2.2, Transparency = 0.06 }):Play()
+		view.root.Rotation = if isStand then -2.5 else -2
+		view.keyBadge.Rotation = if isStand then -3.5 else -3
+	end))
+
+	table.insert(view.clickConns, clickBtn.MouseLeave:Connect(function()
+		if view.holding or not viewIsActive(view) then
+			return
+		end
+		TweenService:Create(rootScale, hoverOut, { Scale = 1 }):Play()
+		TweenService:Create(badgeScale, hoverOut, { Scale = 1 }):Play()
+		TweenService:Create(view.rootStroke, hoverOut, {
+			Thickness = 1.5,
+			Transparency = C.PANEL_STROKE_TRANSPARENCY,
+		}):Play()
+		view.root.Rotation = 0
+		view.keyBadge.Rotation = 0
+		if not (view.displayOnly and isManagedBushPrompt(view.prompt)) then
+			startIdleSway(view)
+		end
+	end))
 end
 
 local function wireClickablePrompt(view: PromptView)
@@ -465,6 +587,9 @@ local function wireClickablePrompt(view: PromptView)
 		local function beginPointerHold()
 			local prompt = view.prompt
 			if not shouldShowPromptUi(prompt) or view.holding then
+				return
+			end
+			if not MobileTouchGate.canTapUi() then
 				return
 			end
 			view.holdViaPointer = true
@@ -558,12 +683,16 @@ local function wireClickablePrompt(view: PromptView)
 			if not shouldShowPromptUi(prompt) then
 				return
 			end
+			if not MobileTouchGate.canTapUi() then
+				return
+			end
 			local now = os.clock()
 			if now - lastTapAt < 0.12 then
 				return
 			end
 			lastTapAt = now
 			UIInteractionSounds.playClick()
+			playPressAnim(view)
 			triggerPromptTap(prompt)
 		end
 		table.insert(view.clickConns, clickBtn.Activated:Connect(tryTapPrompt))
@@ -677,7 +806,7 @@ local function isBushPrompt(prompt: ProximityPrompt): boolean
 	return CarryGate.isBushSearchPrompt(prompt) or findBushRootForPrompt(prompt) ~= nil
 end
 
-function getPromptFocusWorld(prompt: ProximityPrompt): Vector3?
+getPromptFocusWorld = function(prompt: ProximityPrompt): Vector3?
 	-- Use the stable prompt BasePart for range/camera checks.
 	-- Do not use the bush focus/bounding-box position here, because that position
 	-- changes during bush wobble and can make the UI hide/reappear incorrectly.
@@ -721,10 +850,7 @@ function ProximityPromptEffects.isBushSearchUiInRange(prompt: ProximityPrompt): 
 	if not prompt.Parent or CarryGate.isFull() then
 		return false
 	end
-	if not isPromptFacingCamera(prompt) then
-		return false
-	end
-	return isBushSearchInCameraRange(prompt)
+	return isBushSearchInPlayerRange(prompt) or isBushSearchInCameraRange(prompt)
 end
 
 local function findStandForPrompt(prompt: ProximityPrompt): Model?
@@ -744,7 +870,11 @@ local function findStandForPrompt(prompt: ProximityPrompt): Model?
 	return nil
 end
 
-local function isStandProximityPrompt(prompt: ProximityPrompt): boolean
+local function isManagedStandProximityPrompt(prompt: ProximityPrompt): boolean
+	return findStandForPrompt(prompt) ~= nil and not isStealProximityPrompt(prompt)
+end
+
+isStandProximityPrompt = function(prompt: ProximityPrompt): boolean
 	return findStandForPrompt(prompt) ~= nil
 end
 
@@ -784,9 +914,26 @@ end
 local function clearStandStrokeGradient(view: PromptView)
 	stopStandStrokeGradientCycle(view)
 	for _, grad in view.strokeGrads do
-		grad:Destroy()
+		if grad.Parent then
+			grad:Destroy()
+		end
 	end
 	table.clear(view.strokeGrads)
+	-- Also purge any leftover gradients that weren't tracked (prevents stacking / darkening).
+	if view.rootStroke then
+		for _, ch in view.rootStroke:GetChildren() do
+			if ch:IsA("UIGradient") then
+				ch:Destroy()
+			end
+		end
+	end
+	if view.keyStroke then
+		for _, ch in view.keyStroke:GetChildren() do
+			if ch:IsA("UIGradient") then
+				ch:Destroy()
+			end
+		end
+	end
 	view.rootStroke.Color = C.PANEL_STROKE
 	view.rootStroke.Transparency = C.PANEL_STROKE_TRANSPARENCY
 	view.keyStroke.Color = C.KEY_CHIP_STROKE
@@ -794,6 +941,12 @@ local function clearStandStrokeGradient(view: PromptView)
 end
 
 local function attachStrokeGradient(stroke: UIStroke, template: UIGradient, view: PromptView)
+	-- One gradient per stroke — wipe leftovers first.
+	for _, ch in stroke:GetChildren() do
+		if ch:IsA("UIGradient") then
+			ch:Destroy()
+		end
+	end
 	stroke.Color = Color3.new(1, 1, 1)
 	stroke.Transparency = 0.12
 	local clone = template:Clone()
@@ -836,29 +989,50 @@ local function applyStandStrokeGradient(view: PromptView, stand: Model)
 
 	local folder = cacheRarityGradientsFolder()
 	local template = folder and folder:FindFirstChild(gradUiName)
-	if not template or not template:IsA("UIGradient") then
+	if template and template:IsA("UIGradient") then
+		attachStrokeGradient(view.rootStroke, template, view)
+		attachStrokeGradient(view.keyStroke, template, view)
+		startStandStrokeGradientCycle(view)
 		return
 	end
 
-	attachStrokeGradient(view.rootStroke, template, view)
-	attachStrokeGradient(view.keyStroke, template, view)
-	startStandStrokeGradientCycle(view)
+	local rarityRaw = stand:GetAttribute(C.STAND_RARITY_ATTR)
+	local rarityKey = if typeof(rarityRaw) == "string" then RebirthConfig.normalizeRarity(rarityRaw) else "common"
+	local accent = BrainrotHeaderStyle.rarityAccentColor(rarityKey)
+	view.rootStroke.Color = accent
+	view.rootStroke.Transparency = 0.08
+	view.keyStroke.Color = accent:Lerp(Color3.new(1, 1, 1), 0.18)
+	view.keyStroke.Transparency = 0.12
 end
 
 local function resolvePromptLabels(prompt: ProximityPrompt): (string, string)
 	if prompt:GetAttribute("BrainrotFloatingClaim") == true then
 		return prompt.ActionText, prompt.ObjectText
 	end
+	if isStealProximityPrompt(prompt) then
+		return prompt.ActionText, prompt.ObjectText
+	end
+
+	local actionText = prompt.ActionText
+	if actionText == "" then
+		actionText = if isPlaceBrainrotPrompt(prompt) then "Place Brainrot" else "Pick Up"
+	end
+
+	local objectText = prompt.ObjectText
 	local stand = findStandForPrompt(prompt)
-	if stand then
+	if stand and not isPlaceBrainrotPrompt(prompt) then
 		local name = stand:GetAttribute(C.STAND_NAME_ATTR)
 		if typeof(name) == "string" and name ~= "" then
 			local level = stand:GetAttribute(C.STAND_LEVEL_ATTR)
 			local lvl = if typeof(level) == "number" then math.max(1, math.floor(level)) else 1
-			return "Pick Up", string.format("Lvl %d %s", lvl, name)
+			objectText = string.format("Lvl %d %s", lvl, name)
 		end
 	end
-	return prompt.ActionText, prompt.ObjectText
+	if objectText == "" then
+		objectText = if isPlaceBrainrotPrompt(prompt) then "Stand" else ""
+	end
+
+	return actionText, objectText
 end
 
 local function measureCardWidth(actionText: string, objectText: string, _holdDuration: number): number
@@ -886,13 +1060,16 @@ local function applyLabelsToView(view: PromptView)
 	view.objectLabel.Text = objectText
 	view.billboard.Size = UDim2.fromOffset(measureCardWidth(actionText, objectText, view.prompt.HoldDuration), C.CARD_H)
 	refreshKeyLabel(view)
+	-- Keep panel opacity stable (stacked billboards / re-applies were darkening it).
+	view.root.BackgroundTransparency = C.BG_TRANSPARENCY
+	view.root.BackgroundColor3 = C.BG_COLOR
 	local stand = findStandForPrompt(view.prompt)
 	if stand then
 		applyStandStrokeGradient(view, stand)
 	end
 end
 
-local function stopIdleSway(view: PromptView)
+stopIdleSway = function(view: PromptView)
 	view.swayToken += 1
 end
 
@@ -1138,7 +1315,7 @@ local function flashKeyYellow(view: PromptView, holdGreenAfter: boolean?, skipBa
 	end)
 end
 
-local function playPressAnim(view: PromptView)
+playPressAnim = function(view: PromptView)
 	local root = view.root
 	local badge = view.keyBadge
 	local badgeScale = getOrAddUIScale(badge)
@@ -1148,7 +1325,7 @@ local function playPressAnim(view: PromptView)
 	root.Rotation = 0
 	badge.Rotation = 0
 	view.rootScale.Scale = 1
-	flashKeyYellow(view, false, isStand)
+	flashKeyYellow(view, false, false)
 
 	view.pressAnimToken += 1
 	local token = view.pressAnimToken
@@ -1159,6 +1336,8 @@ local function playPressAnim(view: PromptView)
 
 	if not isStand then
 		TweenService:Create(badgeScale, C.TILT_LEFT, { Scale = 0.92 }):Play()
+	else
+		TweenService:Create(badgeScale, C.TILT_LEFT, { Scale = 0.94 }):Play()
 	end
 
 	local function animAlive(): boolean
@@ -1173,8 +1352,10 @@ local function playPressAnim(view: PromptView)
 		TweenService:Create(badge, tiltCenter, { Rotation = 0 }):Play()
 		if not isStand then
 			TweenService:Create(badgeScale, tiltCenter, { Scale = 1 }):Play()
+		else
+			TweenService:Create(badgeScale, tiltCenter, { Scale = 1 }):Play()
 		end
-		if not isStand and not view.holding and viewIsActive(view) then
+		if not view.holding and viewIsActive(view) then
 			startIdleSway(view)
 		end
 	end
@@ -1189,6 +1370,8 @@ local function playPressAnim(view: PromptView)
 		tRightBadge:Play()
 		if not isStand then
 			TweenService:Create(badgeScale, tiltRight, { Scale = 1.08 }):Play()
+		else
+			TweenService:Create(badgeScale, tiltRight, { Scale = 1.05 }):Play()
 		end
 		tRightRoot.Completed:Once(function(state)
 			if state == Enum.PlaybackState.Completed then
@@ -1207,6 +1390,8 @@ local function playPressAnim(view: PromptView)
 		tLeftBadge:Play()
 		if not isStand then
 			TweenService:Create(badgeScale, tiltLeft, { Scale = 0.92 }):Play()
+		else
+			TweenService:Create(badgeScale, tiltLeft, { Scale = 0.94 }):Play()
 		end
 		tLeftRoot.Completed:Once(function(state)
 			if state == Enum.PlaybackState.Completed then
@@ -1221,25 +1406,33 @@ end
 startIdleSway = function(view: PromptView)
 	stopIdleSway(view)
 
-	-- Bush prompt cards should NOT rotate/sway while idle.
-	-- The bush itself only wobbles during an active hold via beginBushWobble().
 	if view.displayOnly and isManagedBushPrompt(view.prompt) then
 		view.root.Rotation = 0
 		view.keyBadge.Rotation = 0
 		return
 	end
 
+	local isStand = isStandProximityPrompt(view.prompt)
 	local token = view.swayToken
 	local phase = math.random() * math.pi * 2
+	local freq = if isStand then C.STAND_SWAY_FREQ else C.SWAY_FREQ
+	local rootAmp = if isStand then C.STAND_SWAY_AMP else C.SWAY_AMP
+	local badgeAmp = if isStand then C.STAND_BADGE_SWAY_AMP else 0
 
 	task.spawn(function()
 		while viewIsActive(view) and view.swayToken == token and not view.holding do
-			local t = os.clock() * C.SWAY_FREQ + phase
-			view.root.Rotation = math.sin(t) * C.SWAY_AMP
+			local t = os.clock() * freq + phase
+			view.root.Rotation = math.sin(t) * rootAmp
+			if badgeAmp > 0 then
+				view.keyBadge.Rotation = math.sin(t * 1.18 + 0.55) * badgeAmp
+			else
+				view.keyBadge.Rotation = 0
+			end
 			RunService.Heartbeat:Wait()
 		end
 		if view.swayToken == token and not view.holding and viewIsActive(view) then
 			view.root.Rotation = 0
+			view.keyBadge.Rotation = 0
 		end
 	end)
 end
@@ -1473,6 +1666,9 @@ local function wireBushSharedClickable(view: PromptView)
 		if not canInteractWithBush() or pointerHoldActive then
 			return
 		end
+		if not MobileTouchGate.canTapUi() then
+			return
+		end
 		pointerHoldActive = true
 		pointerHoldBeganAt = os.clock()
 		ProximityPromptEffects.beginManagedBushHold(prompt)
@@ -1513,6 +1709,9 @@ local function wireBushSharedClickable(view: PromptView)
 		local lastTapAt = 0
 		local function tryTapPrompt()
 			if not canInteractWithBush() then
+				return
+			end
+			if not MobileTouchGate.canTapUi() then
 				return
 			end
 			local now = os.clock()
@@ -1600,7 +1799,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	billboard.Active = promptBillboardInputActive()
 	billboard.AlwaysOnTop = true
 	billboard.LightInfluence = 0
-	billboard.MaxDistance = bushBillboardMaxDistance(prompt)
+	billboard.MaxDistance = promptBillboardMaxDistance(prompt)
 	billboard.Size = UDim2.fromOffset(effectiveMinCardWidth(), C.CARD_H)
 	billboard.Adornee = adornee
 	if isBushPrompt(prompt) and adornee then
@@ -1654,17 +1853,19 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 		liveConns = {},
 		clickConns = {},
 		clickWired = false,
+		hoverWired = false,
 		displayOnly = isDisplayOnly,
-		inputType = nil,
+		inputType = if isDisplayOnly then resolvePromptInputType(nil) else nil,
 	}
 
 	applyLabelsToView(view)
-	refreshKeyLabel(view)
 	if isDisplayOnly and isManagedBushPrompt(prompt) then
 		applyBushSearchCardStyle(view)
 	end
+	refreshKeyLabel(view)
 	if not isDisplayOnly then
 		wireClickablePrompt(view)
+		wirePromptHover(view)
 	end
 	return view
 end
@@ -1825,6 +2026,7 @@ showBushSharedUi = function(prompt: ProximityPrompt): boolean
 	end
 
 	view.prompt = prompt
+	view.inputType = resolvePromptInputType(nil)
 	view.billboard.Adornee = adornee
 	applyBushBillboardPlacement(view.billboard, prompt, adornee)
 	view.billboard.Enabled = true
@@ -1832,6 +2034,10 @@ showBushSharedUi = function(prompt: ProximityPrompt): boolean
 	applyLabelsToView(view)
 	applyBushSearchCardStyle(view)
 	refreshKeyLabel(view)
+	-- Hard guarantee: touch devices never keep the keyboard "E" on bush search.
+	if UserInputService.TouchEnabled and not prefersGamepadInput() then
+		showTouchKeyIcon(view, prompt.HoldDuration > 0)
+	end
 	setHoldTrackVisible(view, view.prompt.HoldDuration > 0)
 	wirePromptLiveUpdates(prompt, view)
 	wireBushSharedClickable(view)
@@ -2209,39 +2415,75 @@ function ProximityPromptEffects.suppressBushSearchUi(activePrompt: ProximityProm
 	end
 end
 
+local function untrackBillboard(billboard: BillboardGui)
+	for p, v in viewsByPrompt do
+		if v.billboard == billboard then
+			viewsByPrompt[p] = nil
+			disconnectAll(v.liveConns)
+			disconnectAll(v.clickConns)
+			stopIdleSway(v)
+			stopStandStrokeGradientCycle(v)
+			promptBuildLocks[p] = nil
+		end
+	end
+end
+
+local function destroyCustomPromptBillboardsForAdornee(adornee: Instance)
+	local pg = player:FindFirstChild("PlayerGui")
+	if not pg then
+		return
+	end
+	for _, ch in ipairs(pg:GetChildren()) do
+		if ch:IsA("BillboardGui") and ch.Name == "CustomProximityPrompt" and ch.Adornee == adornee then
+			untrackBillboard(ch)
+			ch:Destroy()
+		end
+	end
+end
+
 local function showView(prompt: ProximityPrompt)
 	local existing = viewsByPrompt[prompt]
 	if existing then
 		if existing.billboard.Parent then
+			-- Reuse the live card. Do NOT restart sway / reset rotation (kills animations).
 			existing.billboard.Enabled = true
-			applyLabelsToView(existing)
-			existing.rootScale.Scale = 1
-			existing.root.Rotation = 0
 			return
 		end
-		destroyView(prompt)
+		-- Stale entry (billboard destroyed) — clear tracking before rebuild.
+		viewsByPrompt[prompt] = nil
+		disconnectAll(existing.liveConns)
+		disconnectAll(existing.clickConns)
+		stopIdleSway(existing)
+		stopStandStrokeGradientCycle(existing)
 	end
 
-	local ok, view = pcall(buildPromptView, prompt)
-	if not ok or not view then
+	if promptBuildLocks[prompt] then
 		return
 	end
-	viewsByPrompt[prompt] = view
+	promptBuildLocks[prompt] = true
 
-	applyLabelsToView(view)
-	if isStandProximityPrompt(prompt) then
-		stopIdleSway(view)
-		view.rootScale.Scale = 1
-		view.root.Rotation = 0
+	local ok, viewOrErr = pcall(function()
+		-- Nuke any stacked CustomProximityPrompt for this adornee before creating another.
+		local adornee = if isBushPrompt(prompt) then getBushBillboardAdornee(prompt) else getPromptAdornee(prompt)
+		if adornee then
+			destroyCustomPromptBillboardsForAdornee(adornee)
+		end
+
+		local built = buildPromptView(prompt)
+		viewsByPrompt[prompt] = built
+		applyLabelsToView(built)
+		built.rootScale.Scale = 0.86
+		TweenService:Create(built.rootScale, C.OPEN_TWEEN, { Scale = 1 }):Play()
+		startIdleSway(built)
 		if not isBushPrompt(prompt) and not isManagedBushPrompt(prompt) then
 			GameSoundEffects.playProximityPromptAppear()
 		end
-	else
-		TweenService:Create(view.rootScale, C.OPEN_TWEEN, { Scale = 1 }):Play()
-		startIdleSway(view)
-		if not isBushPrompt(prompt) and not isManagedBushPrompt(prompt) then
-			GameSoundEffects.playProximityPromptAppear()
-		end
+		return built
+	end)
+
+	promptBuildLocks[prompt] = nil
+	if not ok then
+		warn("[ProximityPromptEffects] buildPromptView failed:", viewOrErr)
 	end
 end
 
@@ -2256,6 +2498,7 @@ wirePromptLiveUpdates = function(prompt: ProximityPrompt, view: PromptView)
 
 	table.insert(view.liveConns, prompt:GetPropertyChangedSignal("ActionText"):Connect(refresh))
 	table.insert(view.liveConns, prompt:GetPropertyChangedSignal("ObjectText"):Connect(refresh))
+	table.insert(view.liveConns, prompt:GetAttributeChangedSignal(C.PLACE_PROMPT_ATTR):Connect(refresh))
 
 	local stand = findStandForPrompt(prompt)
 	if stand then
@@ -2273,27 +2516,38 @@ local function onPromptShown(prompt: ProximityPrompt, inputType: Enum.ProximityP
 		hideView(prompt, true)
 		return
 	end
+	if isManagedStandProximityPrompt(prompt) and activeStandPrompt ~= nil and prompt ~= activeStandPrompt then
+		hideView(prompt, true)
+		return
+	end
 
 	local view = viewsByPrompt[prompt]
-	if not view then
+	local alreadyLive = view ~= nil and view.billboard.Parent ~= nil
+	if not alreadyLive then
 		showView(prompt)
 		view = viewsByPrompt[prompt]
 	end
-	if view then
-		view.inputType = inputType
-		if isBushPrompt(prompt) then
-			local adornee = getBushBillboardAdornee(prompt)
-			if adornee then
-				view.billboard.Adornee = adornee
-				applyBushBillboardPlacement(view.billboard, prompt, adornee)
-			end
-		elseif prompt:GetAttribute("BrainrotFloatingClaim") == true then
-			local adornee = getPromptAdornee(prompt)
-			if adornee and adornee:IsA("BasePart") then
-				view.billboard.Adornee = adornee
-				applyFloatingClaimBillboardPlacement(view.billboard, prompt, adornee :: BasePart)
-			end
+	if not view then
+		return
+	end
+
+	view.billboard.Enabled = true
+	view.inputType = inputType
+	if isBushPrompt(prompt) then
+		local adornee = getBushBillboardAdornee(prompt)
+		if adornee then
+			view.billboard.Adornee = adornee
+			applyBushBillboardPlacement(view.billboard, prompt, adornee)
 		end
+	elseif prompt:GetAttribute("BrainrotFloatingClaim") == true then
+		local adornee = getPromptAdornee(prompt)
+		if adornee and adornee:IsA("BasePart") then
+			view.billboard.Adornee = adornee
+			applyFloatingClaimBillboardPlacement(view.billboard, prompt, adornee :: BasePart)
+		end
+	end
+	-- First show only: wire + labels. Re-shows must not restart sway (kills idle/hover/press anims).
+	if not alreadyLive then
 		wirePromptLiveUpdates(prompt, view)
 		applyLabelsToView(view)
 		ensureKeyIcon(view)
@@ -2325,15 +2579,21 @@ reshowEligiblePlaceProximityPrompts = function()
 	for _, inst in CollectionService:GetTagged(C.STAND_TAG) do
 		if inst:IsA("Model") then
 			local pp = findStandProximityPrompt(inst :: Model)
-			if pp and pp.Enabled and shouldShowPromptUi(pp) then
+			if pp and pp.Enabled and pp == activeStandPrompt and shouldShowPromptUi(pp) then
 				onPromptShown(pp, nil)
 			end
 		end
 	end
 end
 
-function ProximityPromptEffects.syncStandActivePromptUi(prompt: ProximityPrompt?)
+function ProximityPromptEffects.syncStandPlaceProximityUi(prompt: ProximityPrompt?)
 	if not prompt or not prompt.Parent then
+		return
+	end
+	local existing = viewsByPrompt[prompt]
+	if existing and existing.billboard.Parent then
+		-- Card already up — never rebuild or restart sway from stand poll.
+		existing.billboard.Enabled = true
 		return
 	end
 	task.defer(function()
@@ -2344,15 +2604,21 @@ function ProximityPromptEffects.syncStandActivePromptUi(prompt: ProximityPrompt?
 			return
 		end
 		if not shouldShowPromptUi(prompt) then
-			hideView(prompt, true)
+			return
+		end
+		-- Bail if another path already built the card while we deferred.
+		local live = viewsByPrompt[prompt]
+		if live and live.billboard.Parent then
+			live.billboard.Enabled = true
 			return
 		end
 		onPromptShown(prompt, nil)
+		purgeOrphanPromptBillboards()
 	end)
 end
 
-function ProximityPromptEffects.syncStandPlaceProximityUi(prompt: ProximityPrompt?)
-	ProximityPromptEffects.syncStandActivePromptUi(prompt)
+function ProximityPromptEffects.syncStandActivePromptUi(prompt: ProximityPrompt?)
+	ProximityPromptEffects.syncStandPlaceProximityUi(prompt)
 end
 
 local function onPromptHidden(prompt: ProximityPrompt, _inputType: Enum.ProximityPromptInputType?)
@@ -2429,8 +2695,17 @@ local function onPromptTriggered(prompt: ProximityPrompt, triggerPlayer: Player)
 	if prompt:GetAttribute(C.CUSTOM_ATTR) ~= true then
 		return
 	end
+	if isManagedStandProximityPrompt(prompt) and activeStandPrompt ~= nil and prompt ~= activeStandPrompt then
+		return
+	end
 
 	local view = viewsByPrompt[prompt]
+	if not view then
+		if shouldShowPromptUi(prompt) then
+			showView(prompt)
+			view = viewsByPrompt[prompt]
+		end
+	end
 	if not view then
 		return
 	end
@@ -2460,6 +2735,12 @@ local function wireStylePrompt(prompt: ProximityPrompt)
 				if not prompt.Enabled then
 					stopBushCameraShake()
 					stopBushWobble()
+				end
+				return
+			end
+			if isManagedStandProximityPrompt(prompt) then
+				if not prompt.Enabled then
+					hideView(prompt, true)
 				end
 				return
 			end
@@ -2518,7 +2799,7 @@ function ProximityPromptEffects.forceHide(prompt: ProximityPrompt)
 	hideView(prompt, true)
 end
 
-local function purgeOrphanPromptBillboards()
+purgeOrphanPromptBillboards = function()
 	local pg = player:FindFirstChild("PlayerGui")
 	if not pg then
 		return
@@ -2532,7 +2813,7 @@ local function purgeOrphanPromptBillboards()
 					tracked = true
 				end
 				if not tracked then
-					for prompt, view in viewsByPrompt do
+					for _, view in viewsByPrompt do
 						if view.billboard == desc then
 							tracked = true
 							break
@@ -2545,23 +2826,51 @@ local function purgeOrphanPromptBillboards()
 			end
 		end
 	end
+	-- Also kill duplicate CustomProximityPrompts for the same adornee (stacked = darker).
+	local byAdornee: { [Instance]: BillboardGui } = {}
+	for _, desc in ipairs(pg:GetChildren()) do
+		if desc:IsA("BillboardGui") and desc.Name == "CustomProximityPrompt" then
+			local adornee = desc.Adornee
+			if adornee then
+				local existing = byAdornee[adornee]
+				if existing and existing ~= desc then
+					local keepTracked = false
+					for _, view in viewsByPrompt do
+						if view.billboard == existing then
+							keepTracked = true
+							break
+						end
+					end
+					if keepTracked then
+						untrackBillboard(desc)
+						desc:Destroy()
+					else
+						untrackBillboard(existing)
+						existing:Destroy()
+						byAdornee[adornee] = desc
+					end
+				else
+					byAdornee[adornee] = desc
+				end
+			end
+		end
+	end
 end
 
 -- Stand prompts: client toggles Enabled without always firing PromptHidden — hide stale cards.
 function ProximityPromptEffects.syncStandProximityUi(activePrompt: ProximityPrompt?)
+	activeStandPrompt = activePrompt
 	for prompt in styledPrompts do
 		if not prompt.Parent or isManagedBushPrompt(prompt) then
 			continue
 		end
-		if not findStandForPrompt(prompt) then
+		if not isManagedStandProximityPrompt(prompt) then
 			continue
 		end
 		if prompt ~= activePrompt then
 			ProximityPromptEffects.forceHide(prompt)
+			prompt.Enabled = false
 		end
-	end
-	if activePrompt and activePrompt.Parent and activePrompt.Enabled then
-		ProximityPromptEffects.syncStandActivePromptUi(activePrompt)
 	end
 end
 
@@ -2600,6 +2909,7 @@ function ProximityPromptEffects.stylePrompt(prompt: ProximityPrompt)
 end
 
 function ProximityPromptEffects.init()
+	MobileTouchGate.init()
 	local function scanForPrompts(root: Instance)
 		local stack = { root }
 		local count = 0
@@ -2748,6 +3058,55 @@ function ProximityPromptEffects.init()
 	wireProximityPromptService()
 	task.defer(purgeOrphanPromptBillboards)
 
+	local promptRepairAccum = 0
+	local purgeAccum = 0
+	RunService.Heartbeat:Connect(function(dt)
+		promptRepairAccum += dt
+		purgeAccum += dt
+		if purgeAccum >= 1.5 then
+			purgeAccum = 0
+			purgeOrphanPromptBillboards()
+		end
+		if promptRepairAccum < 0.35 then
+			return
+		end
+		promptRepairAccum = 0
+		for prompt in styledPrompts do
+			if not prompt.Parent or not prompt.Enabled or prompt:GetAttribute(C.CUSTOM_ATTR) ~= true then
+				continue
+			end
+			if isManagedBushPrompt(prompt) then
+				continue
+			end
+			-- Stand Pick Up / Place cards are owned by BrainrotStandController sync — never
+			-- rebuild them on a timer (that stacked billboards and killed sway/press anims).
+			if isManagedStandProximityPrompt(prompt) then
+				if activeStandPrompt == prompt and shouldShowPromptUi(prompt) then
+					local view = viewsByPrompt[prompt]
+					if view and view.billboard.Parent then
+						if not view.billboard.Enabled then
+							view.billboard.Enabled = true
+						end
+					else
+						onPromptShown(prompt, nil)
+					end
+				end
+				continue
+			end
+			if not shouldShowPromptUi(prompt) then
+				continue
+			end
+			local view = viewsByPrompt[prompt]
+			if view and view.billboard.Parent then
+				if not view.billboard.Enabled then
+					view.billboard.Enabled = true
+				end
+				continue
+			end
+			onPromptShown(prompt, nil)
+		end
+	end)
+
 	task.defer(function()
 		local pg = player:WaitForChild("PlayerGui", 120)
 		if pg then
@@ -2792,7 +3151,10 @@ function ProximityPromptEffects.init()
 	end)
 
 	UserInputService.LastInputTypeChanged:Connect(refreshAllKeyLabels)
-	if isMobilePlatform() then
+	pcall(function()
+		UserInputService:GetPropertyChangedSignal("PreferredInput"):Connect(refreshAllKeyLabels)
+	end)
+	if isMobilePlatform() or UserInputService.TouchEnabled then
 		task.defer(refreshAllKeyLabels)
 	end
 
@@ -2807,18 +3169,6 @@ function ProximityPromptEffects.init()
 	end)
 	if player.Character then
 		hookCharacterToolListeners(player.Character)
-	end
-
-	local function getCharacterRootPart(): BasePart?
-		local char = player.Character
-		if not char then
-			return nil
-		end
-		local root = char:FindFirstChild("HumanoidRootPart")
-		if root and root:IsA("BasePart") then
-			return root
-		end
-		return nil
 	end
 
 	local function promptDistanceToCharacter(prompt: ProximityPrompt): number?
@@ -2865,6 +3215,11 @@ function ProximityPromptEffects.init()
 		if bushRefreshAccum >= 0.08 then
 			bushRefreshAccum = 0
 			local bestBushPrompt = findBestManagedBushPrompt()
+			if not bestBushPrompt and activeBushSearchPrompt and activeBushSearchPrompt.Parent then
+				if managedBushUiEligible(activeBushSearchPrompt) then
+					bestBushPrompt = activeBushSearchPrompt
+				end
+			end
 			if bestBushPrompt then
 				ProximityPromptEffects.showBushSearchFor(bestBushPrompt)
 			elseif activeBushSearchPrompt and not managedBushHoldActive then

@@ -13,6 +13,7 @@ local RunService = game:GetService("RunService")
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
+local PlotStandPlaceholders = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotStandPlaceholders"))
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local TopNotifController = require(script.Parent.TopNotifController)
@@ -21,8 +22,8 @@ local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local player = Players.LocalPlayer
 local STAND_TAG = "BrainrotStand"
 local HOLD_DURATION = 1.05
--- Match StandManager brainrot pickup prompt range.
-local MAX_DISTANCE = 14
+-- Same front-of-stand feel as brainrot pickup, with a little extra reach.
+local MAX_DISTANCE = 20
 local VISIBILITY_REFRESH_INTERVAL = 0.1
 
 local StealController = {}
@@ -55,7 +56,8 @@ end
 local function standAnchorPart(stand: Model): BasePart?
 	local spawn = stand:FindFirstChild("Spawn", true)
 	if spawn and spawn:IsA("BasePart") then
-		return spawn :: BasePart
+		-- Same front Decor cube as brainrot place/pickup prompts (not deep Spawn).
+		return PlotStandPlaceholders.findPromptAnchorPart(stand, spawn :: BasePart)
 	end
 	if stand.PrimaryPart then
 		return stand.PrimaryPart
@@ -178,13 +180,16 @@ end
 
 local function ensureStealPrompt(stand: Model): ProximityPrompt?
 	local existing = stealPrompts[stand]
-	if existing and existing.Parent then
-		existing.MaxActivationDistance = MAX_DISTANCE
-		return existing
-	end
 	local anchor = standAnchorPart(stand)
 	if not anchor then
 		return nil
+	end
+	if existing and existing.Parent then
+		existing.MaxActivationDistance = MAX_DISTANCE
+		if existing.Parent ~= anchor then
+			existing.Parent = anchor
+		end
+		return existing
 	end
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.Name = "StealPrompt"

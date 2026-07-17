@@ -4,6 +4,7 @@
 	rhythm letter QTE (shrinking ring), death on fail.
 ]]
 
+local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -16,7 +17,9 @@ local Workspace = game:GetService("Workspace")
 local BushFloatingClaimController = require(script.Parent.BushFloatingClaimController)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local LandAmbushUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandAmbushUtil"))
+local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local PromptFxConfig = require(script.Parent.ProximityPromptEffectsConfig)
 local SpiderEncounterConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SpiderEncounterConfig"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
@@ -37,13 +40,13 @@ local timingRoot: Frame? = nil
 local timingRing: Frame? = nil
 local timingRingScale: UIScale? = nil
 local timingRingStroke: UIStroke? = nil
-local timingPulseRing: Frame? = nil
-local timingPulseScale: UIScale? = nil
-local timingTargetRing: Frame? = nil
 local timingLetter: TextLabel? = nil
 local timingHint: TextLabel? = nil
 local timingRootScale: UIScale? = nil
-local timingPulseConn: RBXScriptConnection? = nil
+local timingTapBtn: TextButton? = nil
+local timingKeyIcon: ImageLabel? = nil
+local clearSpiderEncounterCharacterFx: () -> ()
+local timingProgressFill: Frame? = nil
 local colorFx: ColorCorrectionEffect? = nil
 local blurFx: BlurEffect? = nil
 local cameraConn: RBXScriptConnection? = nil
@@ -53,14 +56,29 @@ local savedFov = 70
 local defaultFov = 70
 local dodgeResolved = false
 local spiderKillRE: RemoteEvent? = nil
+local activeSpideySensesRoot: Instance? = nil
 
 local GREEN_OK = Color3.fromRGB(70, 255, 130)
 local RED_FAIL = Color3.fromRGB(255, 55, 55)
 local RING_IDLE = Color3.fromRGB(255, 235, 120)
+local FLASH_HIT = Color3.fromRGB(255, 72, 68)
+local FLASH_DODGE = Color3.fromRGB(55, 255, 130)
+
+local function isMobileSpiderInput(): boolean
+	return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+end
 
 local function smoothstep(alpha: number): number
 	alpha = math.clamp(alpha, 0, 1)
 	return alpha * alpha * (3 - 2 * alpha)
+end
+
+local function flatUnitXZ(fromPos: Vector3, toPos: Vector3): Vector3
+	local flat = Vector3.new(toPos.X - fromPos.X, 0, toPos.Z - fromPos.Z)
+	if flat.Magnitude < 0.05 then
+		return Vector3.new(0, 0, -1)
+	end
+	return flat.Unit
 end
 
 local function ringScaleForEased(eased: number): number
@@ -118,19 +136,435 @@ local function waitSec(sec: number)
 	task.wait(sec)
 end
 
-local function findSpiderTemplate(): Model?
+local function findReplicatedAsset(path: { string }): Instance?
 	local node: Instance = ReplicatedStorage
-	for _, name in C.SPIDER_TEMPLATE_PATH do
+	for _, name in path do
 		local child = node:FindFirstChild(name)
 		if not child then
 			return nil
 		end
 		node = child
 	end
-	if node:IsA("Model") then
+	return node
+end
+
+local function findSpiderTemplate(): Model?
+	local node = findReplicatedAsset(C.SPIDER_TEMPLATE_PATH)
+	if node and node:IsA("Model") then
 		return node :: Model
 	end
 	return nil
+end
+
+local function findSpiderVfxTemplate(vfxName: string): Instance?
+	local folder = findReplicatedAsset(C.SPIDER_VFX_FOLDER_PATH)
+	if folder then
+		local template = folder:FindFirstChild(vfxName)
+		if template then
+			return template
+		end
+	end
+
+	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
+	local templates = assets and assets:FindFirstChild("Templates")
+	local fallback = templates and templates:FindFirstChild(vfxName)
+	if fallback then
+		return fallback
+	end
+	return nil
+end
+
+local function findSpiderBlowVfxTemplate(): Instance?
+	return findSpiderVfxTemplate(C.SPIDER_BLOW_VFX_NAME)
+end
+
+local function emitVfxParticles(root: Instance, defaultCount: number)
+	local function emitOne(emitter: ParticleEmitter)
+		local count = emitter:GetAttribute("EmitCount")
+		emitter:Emit(if typeof(count) == "number" then count else defaultCount)
+	end
+
+	if root:IsA("ParticleEmitter") then
+		emitOne(root)
+	end
+	for _, child in root:GetDescendants() do
+		if child:IsA("ParticleEmitter") then
+			emitOne(child)
+		end
+	end
+end
+
+local function playVfxSounds(root: Instance)
+	for _, child in root:GetDescendants() do
+		if child:IsA("Sound") then
+			child:Play()
+		end
+	end
+end
+
+local function setEffectInstancesEnabled(root: Instance, enabled: boolean)
+	if root:IsA("ParticleEmitter") or root:IsA("Trail") or root:IsA("Beam") then
+		root.Enabled = enabled
+	end
+	for _, desc in root:GetDescendants() do
+		if desc:IsA("ParticleEmitter") or desc:IsA("Trail") or desc:IsA("Beam") then
+			desc.Enabled = enabled
+		end
+	end
+end
+
+local function resolveSpiderHeadHost(spider: Model): BasePart?
+	local head = spider:FindFirstChild("Head")
+	if head and head:IsA("BasePart") then
+		return head
+	end
+	if head and head:IsA("Model") then
+		local part = head:FindFirstChildWhichIsA("BasePart", true)
+		if part and part:IsA("BasePart") then
+			return part
+		end
+	end
+	for _, desc in spider:GetDescendants() do
+		if desc.Name == "Head" and desc:IsA("BasePart") then
+			return desc
+		end
+	end
+	return nil
+end
+
+local function createVfxAnchorPart(host: BasePart, name: string): BasePart
+	local anchor = Instance.new("Part")
+	anchor.Name = name
+	anchor.Size = Vector3.new(0.12, 0.12, 0.12)
+	anchor.Transparency = 1
+	anchor.Anchored = false
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.CanTouch = false
+	anchor.Massless = true
+	anchor.CFrame = host.CFrame
+	anchor.Parent = host
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = host
+	weld.Part1 = anchor
+	weld.Parent = anchor
+
+	return anchor
+end
+
+local function attachEncounterVfxToPart(template: Instance, host: BasePart, cloneName: string): Instance?
+	local clone = template:Clone()
+	clone.Name = cloneName
+
+	if clone:IsA("Attachment") then
+		clone.Parent = host
+		setEffectInstancesEnabled(clone, true)
+		return clone
+	end
+
+	if clone:IsA("BasePart") then
+		clone.Anchored = false
+		clone.CanCollide = false
+		clone.CanQuery = false
+		clone.CanTouch = false
+		clone.Massless = true
+		clone.CFrame = host.CFrame
+		clone.Parent = host
+
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = host
+		weld.Part1 = clone
+		weld.Parent = clone
+
+		setEffectInstancesEnabled(clone, true)
+		return clone
+	end
+
+	local anchorPart = clone:FindFirstChildWhichIsA("BasePart", true)
+	if anchorPart and anchorPart:IsA("BasePart") then
+		for _, desc in clone:GetDescendants() do
+			if desc:IsA("BasePart") then
+				desc.Anchored = false
+				desc.CanCollide = false
+				desc.CanQuery = false
+				desc.CanTouch = false
+				desc.Massless = true
+			end
+		end
+		clone.Parent = host
+		anchorPart.CFrame = host.CFrame
+
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = host
+		weld.Part1 = anchorPart
+		weld.Parent = anchorPart
+
+		setEffectInstancesEnabled(clone, true)
+		return clone
+	end
+
+	local moved: { Instance } = {}
+	local anchor = createVfxAnchorPart(host, cloneName)
+	for _, desc in clone:GetDescendants() do
+		if desc:IsA("Attachment") then
+			desc.Parent = anchor
+			table.insert(moved, desc)
+		end
+	end
+	for _, desc in clone:GetDescendants() do
+		if desc:IsA("ParticleEmitter") or desc:IsA("Trail") or desc:IsA("Beam") or desc:IsA("Sound") then
+			if desc.Parent == clone or desc:IsDescendantOf(clone) then
+				desc.Parent = anchor
+				table.insert(moved, desc)
+			end
+		end
+	end
+	clone:Destroy()
+
+	if #moved == 0 then
+		anchor:Destroy()
+		return nil
+	end
+	setEffectInstancesEnabled(anchor, true)
+	return anchor
+end
+
+local function stopSpideySenses()
+	if activeSpideySensesRoot and activeSpideySensesRoot.Parent then
+		setEffectInstancesEnabled(activeSpideySensesRoot, false)
+		activeSpideySensesRoot:Destroy()
+	end
+	activeSpideySensesRoot = nil
+end
+
+local function startSpideySensesOnSpider(spider: Model)
+	stopSpideySenses()
+
+	local template = findSpiderVfxTemplate(C.SPIDER_SPIDEY_SENSES_NAME)
+	if not template then
+		warn("[BushSpiderEncounterController] EssentialAssets.SpiderVFX['Spidey senses'] missing")
+		return
+	end
+
+	local head = resolveSpiderHeadHost(spider)
+	if not head then
+		warn("[BushSpiderEncounterController] Spider Head part missing for Spidey senses VFX")
+		return
+	end
+
+	local attached = attachEncounterVfxToPart(template, head, "SpiderSpideySenses")
+	if attached then
+		activeSpideySensesRoot = attached
+		emitVfxParticles(attached, 24)
+		playVfxSounds(attached)
+	end
+end
+
+local function orientWebFlightVfx(web: BasePart)
+	local oldAnchor = web:FindFirstChild("SpiderWebLightArrow")
+	if oldAnchor and oldAnchor:IsA("BasePart") then
+		for _, desc in oldAnchor:GetDescendants() do
+			if
+				desc:IsA("Trail")
+				or desc:IsA("Beam")
+				or desc:IsA("ParticleEmitter")
+				or desc:IsA("Sound")
+			then
+				desc.Parent = web
+			elseif desc:IsA("Attachment") then
+				desc.Parent = web
+			end
+		end
+		oldAnchor:Destroy()
+	end
+
+	local a0 = web:FindFirstChild("SpiderWebTrailA0")
+	if not (a0 and a0:IsA("Attachment")) then
+		a0 = Instance.new("Attachment")
+		a0.Name = "SpiderWebTrailA0"
+		a0.Parent = web
+	end
+	local a1 = web:FindFirstChild("SpiderWebTrailA1")
+	if not (a1 and a1:IsA("Attachment")) then
+		a1 = Instance.new("Attachment")
+		a1.Name = "SpiderWebTrailA1"
+		a1.Parent = web
+	end
+
+	local trailA0 = a0 :: Attachment
+	local trailA1 = a1 :: Attachment
+	trailA0.Position = Vector3.new(0, 0, -0.35)
+	trailA1.Position = Vector3.new(0, 0, 3.6)
+
+	for _, desc in web:GetChildren() do
+		if desc:IsA("Attachment") and desc ~= a0 and desc ~= a1 then
+			desc:Destroy()
+		end
+	end
+
+	for _, desc in web:GetDescendants() do
+		if desc:IsA("ParticleEmitter") then
+			desc.Parent = trailA0
+			desc.Enabled = true
+		elseif desc:IsA("Trail") or desc:IsA("Beam") then
+			desc.Attachment0 = trailA0
+			desc.Attachment1 = trailA1
+			desc.Enabled = true
+			desc.FaceCamera = false
+		end
+	end
+end
+
+local function webProjectileCFrame(pos: Vector3, flightDir: Vector3): CFrame
+	local dir = flightDir
+	if dir.Magnitude < 0.05 then
+		return CFrame.new(pos)
+	end
+	dir = dir.Unit
+	local upHint = Vector3.yAxis
+	if math.abs(dir:Dot(upHint)) > 0.92 then
+		upHint = Vector3.xAxis
+	end
+	return CFrame.lookAt(pos, pos + dir, upHint)
+end
+
+local function attachWebLightArrow(web: BasePart)
+	local template = findSpiderVfxTemplate(C.SPIDER_LIGHT_ARROW_NAME)
+	if not template then
+		warn("[BushSpiderEncounterController] EssentialAssets.SpiderVFX.LightArrow missing")
+		return
+	end
+
+	local clone = template:Clone()
+	clone.Name = "SpiderWebLightArrow"
+
+	local function moveEffectToWeb(inst: Instance)
+		if
+			inst:IsA("Attachment")
+			or inst:IsA("ParticleEmitter")
+			or inst:IsA("Trail")
+			or inst:IsA("Beam")
+			or inst:IsA("Sound")
+		then
+			inst.Parent = web
+		end
+	end
+
+	if
+		clone:IsA("Attachment")
+		or clone:IsA("ParticleEmitter")
+		or clone:IsA("Trail")
+		or clone:IsA("Beam")
+		or clone:IsA("Sound")
+	then
+		moveEffectToWeb(clone)
+	else
+		for _, desc in clone:GetDescendants() do
+			moveEffectToWeb(desc)
+		end
+		for _, child in clone:GetChildren() do
+			moveEffectToWeb(child)
+		end
+		clone:Destroy()
+	end
+
+	orientWebFlightVfx(web)
+	setEffectInstancesEnabled(web, true)
+	emitVfxParticles(web, 12)
+	playVfxSounds(web)
+end
+
+local function snapWebToImpact(web: BasePart, fromPos: Vector3, hitPos: Vector3, flightDir: Vector3, duration: number)
+	local started = os.clock()
+	while os.clock() - started < duration and encounterActive do
+		local alpha = smoothstep((os.clock() - started) / duration)
+		local pos = fromPos:Lerp(hitPos, alpha)
+		web.CFrame = webProjectileCFrame(pos, flightDir)
+		RunService.RenderStepped:Wait()
+	end
+	web.CFrame = webProjectileCFrame(hitPos, flightDir)
+end
+
+local function holdHitImpactCamera(hitPos: Vector3, spiderPos: Vector3)
+	local cam = Workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	local viewDir = flatUnitXZ(spiderPos, hitPos)
+	local right = viewDir:Cross(Vector3.yAxis)
+	if right.Magnitude < 0.05 then
+		right = Vector3.new(1, 0, 0)
+	else
+		right = right.Unit
+	end
+	local camPos = hitPos + viewDir * 8.2 + right * 4.5 + Vector3.new(0, 2.0, 0)
+	cam.CFrame = CFrame.lookAt(camPos, hitPos + Vector3.new(0, 0.35, 0))
+	cam.FieldOfView = defaultFov + 4
+end
+
+local function placeVfxAtWorldPos(vfx: Instance, worldPos: Vector3)
+	if vfx:IsA("Model") then
+		vfx:PivotTo(CFrame.new(worldPos))
+		return
+	end
+	if vfx:IsA("BasePart") then
+		vfx.CFrame = CFrame.new(worldPos)
+		return
+	end
+	if vfx:IsA("Attachment") then
+		local anchor = Instance.new("Part")
+		anchor.Name = "SpiderBlowVfxAnchor"
+		anchor.Anchored = true
+		anchor.CanCollide = false
+		anchor.CanQuery = false
+		anchor.CanTouch = false
+		anchor.Transparency = 1
+		anchor.Size = Vector3.new(0.2, 0.2, 0.2)
+		anchor.CFrame = CFrame.new(worldPos)
+		anchor.Parent = Workspace
+		vfx.Parent = anchor
+		return
+	end
+
+	local anchor = vfx:FindFirstChildWhichIsA("BasePart", true)
+	if anchor then
+		local offset = worldPos - anchor.Position
+		for _, desc in vfx:GetDescendants() do
+			if desc:IsA("BasePart") then
+				desc.CFrame = desc.CFrame + offset
+			end
+		end
+	end
+end
+
+local function playSpiderHitBlowVfx(impactPos: Vector3?)
+	local template = findSpiderBlowVfxTemplate()
+	if not template then
+		warn("[BushSpiderEncounterController] EssentialAssets.SpiderVFX.Blow missing")
+		return
+	end
+
+	local hrp = getPlayerHRP()
+	local pos = impactPos or (if hrp then hrp.Position + Vector3.new(0, 1.1, 0) else nil)
+	if not pos then
+		return
+	end
+
+	local vfx = template:Clone()
+	vfx.Name = "SpiderHitBlowVfx"
+	placeVfxAtWorldPos(vfx, pos)
+
+	local effectRoot: Instance = vfx
+	if vfx:IsA("Attachment") and vfx.Parent then
+		effectRoot = vfx.Parent
+	elseif not vfx.Parent then
+		vfx.Parent = Workspace
+	end
+
+	emitVfxParticles(effectRoot, 40)
+	playVfxSounds(effectRoot)
+	Debris:AddItem(effectRoot, C.SPIDER_BLOW_VFX_LIFETIME)
 end
 
 local function resolveAnimator(model: Model): Animator?
@@ -169,12 +603,21 @@ local function loadTrack(animator: Animator, assetId: string): AnimationTrack?
 	return nil
 end
 
-local function flatUnitXZ(fromPos: Vector3, toPos: Vector3): Vector3
-	local flat = Vector3.new(toPos.X - fromPos.X, 0, toPos.Z - fromPos.Z)
-	if flat.Magnitude < 0.05 then
-		return Vector3.new(0, 0, -1)
+local function spiderVisualFrontFlat(spiderPivot: CFrame, playerPos: Vector3): Vector3
+	-- Rig is yaw-flipped (SPIDER_YAW_OFFSET); LookVector points at the mesh back, not the face.
+	local toPlayer = flatUnitXZ(spiderPivot.Position, playerPos)
+	local flatLook = Vector3.new(spiderPivot.LookVector.X, 0, spiderPivot.LookVector.Z)
+	if flatLook.Magnitude > 0.05 then
+		local visualFront = (-flatLook).Unit
+		if visualFront:Dot(toPlayer) > 0.25 then
+			return visualFront
+		end
 	end
-	return flat.Unit
+	return toPlayer
+end
+
+local function spiderHeadTarget(spiderPos: Vector3, visualFront: Vector3): Vector3
+	return spiderPos + visualFront * 1.6 + Vector3.new(0, 3.1, 0)
 end
 
 local function waitForRageSequence(
@@ -187,6 +630,7 @@ local function waitForRageSequence(
 		rageTrack.Looped = false
 		rageTrack:Play(0.1, 1, 1)
 	end
+	GameSoundEffects.playSpiderRoar()
 
 	local duration = if rageTrack and rageTrack.Length > 0.05 then rageTrack.Length else C.RAGE_FALLBACK_SEC
 	local started = os.clock()
@@ -304,11 +748,13 @@ local function setBgmWebSlow()
 		if bgmSpeedSaved[s] == nil then
 			bgmSpeedSaved[s] = s.PlaybackSpeed
 		end
-		TweenService:Create(
+		local tween = TweenService:Create(
 			s,
 			TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ PlaybackSpeed = C.BGM_SLOW_SPEED * C.WEB_SLOW_TIME_SCALE }
-		):Play()
+			{ PlaybackSpeed = C.BGM_WEB_SPEED }
+		)
+		bgmSpeedTweens[s] = tween
+		tween:Play()
 	end
 end
 
@@ -345,19 +791,34 @@ local function restoreGameplayUi()
 	end
 	for _, entry in hiddenScreenGui do
 		if entry.gui.Parent then
-			entry.gui.Enabled = entry.wasEnabled
+			if entry.gui.Name == "Main" then
+				entry.gui.Enabled = true
+			else
+				entry.gui.Enabled = entry.wasEnabled
+			end
 		end
 	end
 	table.clear(hiddenGui)
 	table.clear(hiddenScreenGui)
+	local pg = player:FindFirstChild("PlayerGui")
+	local main = pg and pg:FindFirstChild("Main")
+	if main and main:IsA("ScreenGui") then
+		main.Enabled = true
+	end
 	pcall(function()
 		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, true)
 	end)
 end
 
 local function ensureCutsceneGui(): ScreenGui
-	if cutsceneGui and cutsceneGui.Parent then
+	if cutsceneGui and cutsceneGui.Parent and cutsceneGui:GetAttribute("QteStyle") == "clean_v1" then
 		return cutsceneGui
+	end
+	if cutsceneGui then
+		cutsceneGui:Destroy()
+		cutsceneGui = nil
+		letterTop = nil
+		letterBottom = nil
 	end
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "BushSpiderCutscene"
@@ -365,14 +826,25 @@ local function ensureCutsceneGui(): ScreenGui
 	gui.IgnoreGuiInset = true
 	gui.DisplayOrder = 950
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui:SetAttribute("QteStyle", "clean_v1")
+	pcall(function()
+		(gui :: any).ClipToDeviceSafeArea = false
+	end)
+	pcall(function()
+		(gui :: any).SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
+	end)
+	pcall(function()
+		(gui :: any).ScreenInsets = Enum.ScreenInsets.None
+	end)
 	gui.Parent = player:WaitForChild("PlayerGui")
 
 	local top = Instance.new("Frame")
 	top.Name = "LetterTop"
 	top.BackgroundColor3 = Color3.new(0, 0, 0)
 	top.BorderSizePixel = 0
-	top.Size = UDim2.new(1, 0, 0, 0)
-	top.Position = UDim2.fromScale(0, 0)
+	top.Size = UDim2.new(1.4, 0, 0, 0)
+	top.AnchorPoint = Vector2.new(0.5, 0)
+	top.Position = UDim2.new(0.5, 0, -0.04, 0)
 	top.ZIndex = 20
 	top.Parent = gui
 
@@ -380,17 +852,41 @@ local function ensureCutsceneGui(): ScreenGui
 	bottom.Name = "LetterBottom"
 	bottom.BackgroundColor3 = Color3.new(0, 0, 0)
 	bottom.BorderSizePixel = 0
-	bottom.Size = UDim2.new(1, 0, 0, 0)
-	bottom.AnchorPoint = Vector2.new(0, 1)
-	bottom.Position = UDim2.fromScale(0, 1)
+	bottom.Size = UDim2.new(1.4, 0, 0, 0)
+	bottom.AnchorPoint = Vector2.new(0.5, 1)
+	bottom.Position = UDim2.new(0.5, 0, 1.04, 0)
 	bottom.ZIndex = 20
 	bottom.Parent = gui
 
+	local leftSeal = Instance.new("Frame")
+	leftSeal.Name = "LetterLeftSeal"
+	leftSeal.BackgroundColor3 = Color3.new(0, 0, 0)
+	leftSeal.BorderSizePixel = 0
+	leftSeal.Size = UDim2.new(0, 0, 1.2, 0)
+	leftSeal.AnchorPoint = Vector2.new(0, 0.5)
+	leftSeal.Position = UDim2.new(0, 0, 0.5, 0)
+	leftSeal.ZIndex = 18
+	leftSeal.Visible = false
+	leftSeal.Parent = gui
+
+	local rightSeal = Instance.new("Frame")
+	rightSeal.Name = "LetterRightSeal"
+	rightSeal.BackgroundColor3 = Color3.new(0, 0, 0)
+	rightSeal.BorderSizePixel = 0
+	rightSeal.Size = UDim2.new(0, 0, 1.2, 0)
+	rightSeal.AnchorPoint = Vector2.new(1, 0.5)
+	rightSeal.Position = UDim2.new(1, 0, 0.5, 0)
+	rightSeal.ZIndex = 18
+	rightSeal.Visible = false
+	rightSeal.Parent = gui
+
+	-- Clean QTE: key badge + one closing ring + thin progress (stays above letterbox).
+	local ringPx = C.RING_OUTER_PX
 	local qte = Instance.new("Frame")
 	qte.Name = "TimingQTE"
 	qte.AnchorPoint = Vector2.new(0.5, 0.5)
-	qte.Position = UDim2.fromScale(0.5, 0.56)
-	qte.Size = UDim2.fromOffset(210, 210)
+	qte.Position = UDim2.fromScale(0.5, 0.70)
+	qte.Size = UDim2.fromOffset(132, 148)
 	qte.BackgroundTransparency = 1
 	qte.Visible = false
 	qte.ZIndex = 40
@@ -400,33 +896,12 @@ local function ensureCutsceneGui(): ScreenGui
 	qteScale.Scale = 1
 	qteScale.Parent = qte
 
-	local pulse = Instance.new("Frame")
-	pulse.Name = "PulseRing"
-	pulse.AnchorPoint = Vector2.new(0.5, 0.5)
-	pulse.Position = UDim2.fromScale(0.5, 0.5)
-	pulse.Size = UDim2.fromOffset(200, 200)
-	pulse.BackgroundTransparency = 1
-	pulse.ZIndex = 41
-	pulse.Parent = qte
-	local pulseStroke = Instance.new("UIStroke")
-	pulseStroke.Color = Color3.fromRGB(255, 220, 120)
-	pulseStroke.Thickness = 2
-	pulseStroke.Transparency = 0.55
-	pulseStroke.Parent = pulse
-	local pulseCorner = Instance.new("UICorner")
-	pulseCorner.CornerRadius = UDim.new(1, 0)
-	pulseCorner.Parent = pulse
-	local pulseScale = Instance.new("UIScale")
-	pulseScale.Scale = 1.55
-	pulseScale.Parent = pulse
-
 	local ring = Instance.new("Frame")
 	ring.Name = "Ring"
 	ring.AnchorPoint = Vector2.new(0.5, 0.5)
-	ring.Position = UDim2.fromScale(0.5, 0.5)
-	ring.Size = UDim2.fromOffset(170, 170)
-	ring.BackgroundColor3 = Color3.fromRGB(10, 10, 16)
-	ring.BackgroundTransparency = 0.25
+	ring.Position = UDim2.fromScale(0.5, 0.42)
+	ring.Size = UDim2.fromOffset(ringPx, ringPx)
+	ring.BackgroundTransparency = 1
 	ring.ZIndex = 42
 	ring.Parent = qte
 	local ringCorner = Instance.new("UICorner")
@@ -434,76 +909,104 @@ local function ensureCutsceneGui(): ScreenGui
 	ringCorner.Parent = ring
 	local ringStroke = Instance.new("UIStroke")
 	ringStroke.Color = RING_IDLE
-	ringStroke.Thickness = 5
-	ringStroke.Transparency = 0.05
+	ringStroke.Thickness = 3
+	ringStroke.Transparency = 0.12
 	ringStroke.Parent = ring
-	local ringGrad = Instance.new("UIGradient")
-	ringGrad.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 240, 160)),
-		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 200, 90)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 240, 160)),
-	})
-	ringGrad.Rotation = 35
-	ringGrad.Parent = ringStroke
 	local ringScale = Instance.new("UIScale")
-	ringScale.Scale = 1.42
+	ringScale.Scale = C.RING_START_SCALE
 	ringScale.Parent = ring
 
-	local target = Instance.new("Frame")
-	target.Name = "TargetRing"
-	target.AnchorPoint = Vector2.new(0.5, 0.5)
-	target.Position = UDim2.fromScale(0.5, 0.5)
-	target.Size = UDim2.fromOffset(108, 108)
-	target.BackgroundTransparency = 1
-	target.ZIndex = 43
-	target.Parent = qte
-	local targetStroke = Instance.new("UIStroke")
-	targetStroke.Color = Color3.fromRGB(255, 255, 255)
-	targetStroke.Thickness = 2
-	targetStroke.Transparency = 0.35
-	targetStroke.Parent = target
-	local targetCorner = Instance.new("UICorner")
-	targetCorner.CornerRadius = UDim.new(1, 0)
-	targetCorner.Parent = target
-
-	local inner = Instance.new("Frame")
-	inner.Name = "Inner"
-	inner.AnchorPoint = Vector2.new(0.5, 0.5)
-	inner.Position = UDim2.fromScale(0.5, 0.5)
-	inner.Size = UDim2.fromOffset(96, 96)
-	inner.BackgroundColor3 = Color3.fromRGB(14, 14, 22)
-	inner.BackgroundTransparency = 0.08
-	inner.ZIndex = 44
-	inner.Parent = qte
-	local innerCorner = Instance.new("UICorner")
-	innerCorner.CornerRadius = UDim.new(1, 0)
-	innerCorner.Parent = inner
-	local innerStroke = Instance.new("UIStroke")
-	innerStroke.Color = Color3.fromRGB(255, 245, 200)
-	innerStroke.Thickness = 2
-	innerStroke.Transparency = 0.2
-	innerStroke.Parent = inner
+	local badge = Instance.new("Frame")
+	badge.Name = "Badge"
+	badge.AnchorPoint = Vector2.new(0.5, 0.5)
+	badge.Position = UDim2.fromScale(0.5, 0.42)
+	badge.Size = UDim2.fromOffset(ringPx, ringPx)
+	badge.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+	badge.BackgroundTransparency = 0.12
+	badge.ZIndex = 44
+	badge.Parent = qte
+	local badgeCorner = Instance.new("UICorner")
+	badgeCorner.CornerRadius = UDim.new(1, 0)
+	badgeCorner.Parent = badge
+	local badgeStroke = Instance.new("UIStroke")
+	badgeStroke.Color = Color3.fromRGB(255, 245, 210)
+	badgeStroke.Thickness = 1.5
+	badgeStroke.Transparency = 0.35
+	badgeStroke.Parent = badge
 
 	local keyLabel = Instance.new("TextLabel")
 	keyLabel.Name = "Letter"
-	keyLabel.Size = UDim2.fromScale(1, 0.62)
+	keyLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+	keyLabel.Position = UDim2.fromScale(0.5, 0.48)
+	keyLabel.Size = UDim2.fromScale(0.9, 0.7)
 	keyLabel.BackgroundTransparency = 1
 	keyLabel.Text = "E"
 	keyLabel.TextColor3 = Color3.fromRGB(255, 248, 220)
-	UiFonts.applyDisplayLabel(keyLabel, 58, 34)
+	UiFonts.applyDisplayLabel(keyLabel, 42, 28)
 	keyLabel.ZIndex = 45
-	keyLabel.Parent = inner
+	keyLabel.Parent = badge
+
+	local keyIcon = Instance.new("ImageLabel")
+	keyIcon.Name = "KeyIcon"
+	keyIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+	keyIcon.Position = UDim2.fromScale(0.5, 0.5)
+	keyIcon.Size = UDim2.fromOffset(40, 40)
+	keyIcon.BackgroundTransparency = 1
+	keyIcon.Image = PromptFxConfig.TOUCH_TAP_ICON
+	keyIcon.ImageColor3 = Color3.fromRGB(255, 248, 220)
+	keyIcon.ScaleType = Enum.ScaleType.Fit
+	keyIcon.Visible = false
+	keyIcon.ZIndex = 46
+	keyIcon.Parent = badge
 
 	local hint = Instance.new("TextLabel")
 	hint.Name = "Hint"
-	hint.Size = UDim2.new(1, 0, 0.34, 0)
-	hint.Position = UDim2.fromScale(0, 0.64)
+	hint.AnchorPoint = Vector2.new(0.5, 0)
+	hint.Position = UDim2.fromScale(0.5, 0.72)
+	hint.Size = UDim2.new(1, 0, 0, 22)
 	hint.BackgroundTransparency = 1
-	hint.Text = "HIT"
+	hint.Text = "GET READY"
 	hint.TextColor3 = Color3.fromRGB(200, 205, 220)
-	UiFonts.applyButtonLabel(hint, 13, 10)
+	UiFonts.applyButtonLabel(hint, 12, 9)
 	hint.ZIndex = 45
-	hint.Parent = inner
+	hint.Parent = qte
+
+	local tapBtn = Instance.new("TextButton")
+	tapBtn.Name = "TapButton"
+	tapBtn.AnchorPoint = Vector2.new(0.5, 0.5)
+	tapBtn.Position = UDim2.fromScale(0.5, 0.42)
+	tapBtn.Size = UDim2.fromOffset(120, 120)
+	tapBtn.BackgroundTransparency = 1
+	tapBtn.BorderSizePixel = 0
+	tapBtn.Text = ""
+	tapBtn.AutoButtonColor = false
+	tapBtn.ZIndex = 50
+	tapBtn.Visible = false
+	tapBtn.Parent = qte
+
+	local progressTrack = Instance.new("Frame")
+	progressTrack.Name = "ProgressTrack"
+	progressTrack.AnchorPoint = Vector2.new(0.5, 1)
+	progressTrack.Position = UDim2.new(0.5, 0, 1, 0)
+	progressTrack.Size = UDim2.fromOffset(88, 5)
+	progressTrack.BackgroundColor3 = Color3.fromRGB(24, 26, 34)
+	progressTrack.BackgroundTransparency = 0.2
+	progressTrack.BorderSizePixel = 0
+	progressTrack.ZIndex = 46
+	progressTrack.Parent = qte
+	local progressCorner = Instance.new("UICorner")
+	progressCorner.CornerRadius = UDim.new(1, 0)
+	progressCorner.Parent = progressTrack
+	local progressFill = Instance.new("Frame")
+	progressFill.Name = "Fill"
+	progressFill.Size = UDim2.fromScale(0, 1)
+	progressFill.BackgroundColor3 = Color3.fromRGB(255, 220, 110)
+	progressFill.BorderSizePixel = 0
+	progressFill.ZIndex = 47
+	progressFill.Parent = progressTrack
+	local fillCorner = Instance.new("UICorner")
+	fillCorner.CornerRadius = UDim.new(1, 0)
+	fillCorner.Parent = progressFill
 
 	cutsceneGui = gui
 	letterTop = top
@@ -512,38 +1015,75 @@ local function ensureCutsceneGui(): ScreenGui
 	timingRing = ring
 	timingRingScale = ringScale
 	timingRingStroke = ringStroke
-	timingPulseRing = pulse
-	timingPulseScale = pulseScale
-	timingTargetRing = target
 	timingLetter = keyLabel
+	timingKeyIcon = keyIcon
 	timingHint = hint
 	timingRootScale = qteScale
+	timingTapBtn = tapBtn
+	timingProgressFill = progressFill
 	return gui
 end
 
 local function animateLetterboxIn()
 	local gui = ensureCutsceneGui()
 	gui.Enabled = true
+	local barIn = TweenInfo.new(0.45, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 	if letterTop and letterBottom then
-		TweenService:Create(letterTop, TweenInfo.new(0.45, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-			Size = UDim2.new(1, 0, 0.11, 0),
+		TweenService:Create(letterTop, barIn, {
+			Size = UDim2.new(1.4, 0, 0.12, 0),
 		}):Play()
-		TweenService:Create(letterBottom, TweenInfo.new(0.45, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-			Size = UDim2.new(1, 0, 0.11, 0),
+		TweenService:Create(letterBottom, barIn, {
+			Size = UDim2.new(1.4, 0, 0.12, 0),
 		}):Play()
+	end
+	local leftSeal = gui:FindFirstChild("LetterLeftSeal")
+	local rightSeal = gui:FindFirstChild("LetterRightSeal")
+	local useSideSeals = UserInputService.TouchEnabled
+	if leftSeal and leftSeal:IsA("Frame") then
+		leftSeal.Visible = useSideSeals
+		if useSideSeals then
+			TweenService:Create(leftSeal, barIn, {
+				Size = UDim2.new(0.04, 16, 1.2, 0),
+			}):Play()
+		else
+			leftSeal.Size = UDim2.new(0, 0, 1.2, 0)
+		end
+	end
+	if rightSeal and rightSeal:IsA("Frame") then
+		rightSeal.Visible = useSideSeals
+		if useSideSeals then
+			TweenService:Create(rightSeal, barIn, {
+				Size = UDim2.new(0.04, 16, 1.2, 0),
+			}):Play()
+		else
+			rightSeal.Size = UDim2.new(0, 0, 1.2, 0)
+		end
 	end
 end
 
 local function animateLetterboxOut()
+	local barOut = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 	if letterTop and letterBottom then
-		TweenService:Create(letterTop, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-			Size = UDim2.new(1, 0, 0, 0),
+		TweenService:Create(letterTop, barOut, {
+			Size = UDim2.new(1.4, 0, 0, 0),
 		}):Play()
-		TweenService:Create(letterBottom, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-			Size = UDim2.new(1, 0, 0, 0),
+		TweenService:Create(letterBottom, barOut, {
+			Size = UDim2.new(1.4, 0, 0, 0),
 		}):Play()
 	end
 	if cutsceneGui then
+		local leftSeal = cutsceneGui:FindFirstChild("LetterLeftSeal")
+		local rightSeal = cutsceneGui:FindFirstChild("LetterRightSeal")
+		if leftSeal and leftSeal:IsA("Frame") then
+			TweenService:Create(leftSeal, barOut, {
+				Size = UDim2.new(0, 0, 1.2, 0),
+			}):Play()
+		end
+		if rightSeal and rightSeal:IsA("Frame") then
+			TweenService:Create(rightSeal, barOut, {
+				Size = UDim2.new(0, 0, 1.2, 0),
+			}):Play()
+		end
 		task.delay(0.38, function()
 			if cutsceneGui then
 				cutsceneGui.Enabled = false
@@ -570,12 +1110,12 @@ local function ensurePostFx()
 	colorFx.Enabled = true
 	blurFx.Enabled = true
 	TweenService:Create(colorFx, TweenInfo.new(0.4), {
-		Brightness = -0.12,
-		Contrast = 0.18,
-		Saturation = -0.25,
-		TintColor = Color3.fromRGB(200, 210, 230),
+		Brightness = -0.05,
+		Contrast = 0.08,
+		Saturation = -0.1,
+		TintColor = Color3.fromRGB(232, 234, 240),
 	}):Play()
-	TweenService:Create(blurFx, TweenInfo.new(0.4), { Size = 6 }):Play()
+	TweenService:Create(blurFx, TweenInfo.new(0.4), { Size = 3 }):Play()
 end
 
 local function clearPostFx()
@@ -619,16 +1159,22 @@ local function stopCameraRig()
 	end
 end
 
-local function wobbleCFrame(base: CFrame, phase: number, intensity: number): CFrame
+local function shakeCFrame(base: CFrame, phase: number, amp: number): CFrame
+	local wobble = amp * (0.78 + 0.22 * math.sin(phase * 0.55))
 	return base
+		* CFrame.new(
+			math.sin(phase * 17.3) * wobble * 0.14 + math.sin(phase * 4.1) * wobble * 0.07,
+			math.sin(phase * 13.7) * wobble * 0.11 + math.cos(phase * 3.3) * wobble * 0.055,
+			math.sin(phase * 10.9) * wobble * 0.085 + math.sin(phase * 2.4) * wobble * 0.04
+		)
 		* CFrame.Angles(
-			math.sin(phase * 9.5) * 0.04 * intensity,
-			math.cos(phase * 7.2) * 0.032 * intensity,
-			math.sin(phase * 11.3) * 0.022 * intensity
+			math.sin(phase * 19.1) * wobble * 0.024 + math.sin(phase * 5.2) * wobble * 0.011,
+			math.cos(phase * 15.4) * wobble * 0.02 + math.sin(phase * 2.8) * wobble * 0.009,
+			math.sin(phase * 21.3) * wobble * 0.016 + math.cos(phase * 6.7) * wobble * 0.007
 		)
 end
 
-local function beginSpiderDropCamera(getSpiderPos: () -> Vector3, intensity: number)
+local function beginSpiderDropCamera(getSpiderPivot: () -> CFrame, getPlayerPos: () -> Vector3, intensity: number)
 	stopCameraRig()
 	local cam = Workspace.CurrentCamera
 	if not cam then
@@ -642,21 +1188,29 @@ local function beginSpiderDropCamera(getSpiderPos: () -> Vector3, intensity: num
 			return
 		end
 		phase += dt
-		local spiderPos = getSpiderPos()
-		local offset = Vector3.new(
-			math.sin(phase * 1.6) * 5,
-			5 + math.sin(phase * 2.8) * 1.2,
-			14 + math.cos(phase * 1.1) * 3
-		)
-		local camPos = spiderPos + offset
-		local lookAt = spiderPos + Vector3.new(0, 2.5, 0)
-		cam.CFrame = wobbleCFrame(CFrame.lookAt(camPos, lookAt), phase, intensity)
-		cam.FieldOfView = defaultFov + 6 + math.sin(phase * 4) * 3 * intensity
+		local spiderPivot = getSpiderPivot()
+		local spiderPos = spiderPivot.Position
+		local playerPos = getPlayerPos()
+		local front = spiderVisualFrontFlat(spiderPivot, playerPos)
+		local right = front:Cross(Vector3.yAxis)
+		if right.Magnitude < 0.05 then
+			right = Vector3.new(1, 0, 0)
+		else
+			right = right.Unit
+		end
+
+		local dist = 16.5 + math.sin(phase * 1.55) * 3.6
+		local sidePull = 6.8 + math.sin(phase * 1.05) * 2.2
+		local height = 4.8 + math.sin(phase * 2.35) * 1.85
+		local camPos = spiderPos + front * dist + right * sidePull + Vector3.new(0, height, 0)
+		local lookAt = spiderPos + Vector3.new(0, 1.85, 0) + front * 0.35
+		cam.CFrame = shakeCFrame(CFrame.lookAt(camPos, lookAt), phase, intensity * 1.15)
+		cam.FieldOfView = defaultFov + 5 + math.sin(phase * 4.2) * 3.2 * intensity
 	end)
 end
 
 local function beginRageCamera(
-	getSpiderPos: () -> Vector3,
+	getSpiderPivot: () -> CFrame,
 	getPlayerPos: () -> Vector3,
 	intensity: number
 )
@@ -676,29 +1230,28 @@ local function beginRageCamera(
 		end
 		phase += dt
 
-		local spiderPos = getSpiderPos()
+		local spiderPivot = getSpiderPivot()
+		local spiderPos = spiderPivot.Position
 		local playerPos = getPlayerPos()
-		local lookTarget = spiderPos + Vector3.new(0, 2.4, 0)
-		local between = flatUnitXZ(spiderPos, playerPos)
-		local right = between:Cross(Vector3.yAxis)
+		local front = spiderVisualFrontFlat(spiderPivot, playerPos)
+		local right = front:Cross(Vector3.yAxis)
 		if right.Magnitude < 0.05 then
 			right = Vector3.new(1, 0, 0)
 		else
 			right = right.Unit
 		end
 
-		local mid = spiderPos:Lerp(playerPos, 0.32)
-		local pullBack = 19 + intensity * 6 + math.sin(phase * 2.2) * 3
-		local height = 7 + math.sin(phase * 3.4) * 2
-		local side = math.sin(phase * 1.35) * 6 * intensity
-		local camPos = mid - between * pullBack + right * side + Vector3.new(0, height, 0)
+		local pullBack = 20 + intensity * 3.5
+		local sidePull = 8.5 + math.sin(phase * 1.45) * 2.4
+		local camPos = spiderPos + front * pullBack + right * sidePull + Vector3.new(0, 5.8 + math.sin(phase * 2.1) * 0.85, 0)
+		local lookTarget = spiderPos + Vector3.new(0, 2.15, 0) + front * 0.65
 
-		cam.CFrame = wobbleCFrame(CFrame.lookAt(camPos, lookTarget), phase, intensity * 1.15)
-		cam.FieldOfView = defaultFov + zoomFov + math.sin(phase * 5.2) * 3.5
+		cam.CFrame = shakeCFrame(CFrame.lookAt(camPos, lookTarget), phase, 1.05)
+		cam.FieldOfView = defaultFov + zoomFov + math.sin(phase * 3.1) * 2.2
 	end)
 end
 
-local function beginWebWindupCamera(getSpiderPos: () -> Vector3, getPlayerPos: () -> Vector3)
+local function beginWebWindupCamera(getSpiderPivot: () -> CFrame, getPlayerPos: () -> Vector3)
 	stopCameraRig()
 	local cam = Workspace.CurrentCamera
 	if not cam then
@@ -712,28 +1265,34 @@ local function beginWebWindupCamera(getSpiderPos: () -> Vector3, getPlayerPos: (
 		end
 		phase += dt
 
-		local spiderPos = getSpiderPos()
+		local spiderPivot = getSpiderPivot()
+		local spiderPos = spiderPivot.Position
 		local playerPos = getPlayerPos()
-		local toPlayer = flatUnitXZ(spiderPos, playerPos)
-		local right = toPlayer:Cross(Vector3.yAxis)
+		local front = spiderVisualFrontFlat(spiderPivot, playerPos)
+		local right = front:Cross(Vector3.yAxis)
 		if right.Magnitude < 0.05 then
 			right = Vector3.new(1, 0, 0)
 		else
 			right = right.Unit
 		end
 
-		local lookTarget = spiderPos + Vector3.new(0, 2.1, 0) + toPlayer * 1.2
+		local lookTarget = spiderPos + Vector3.new(0, 2.0, 0) + front * 0.45
 		local camPos = spiderPos
-			- toPlayer * (7.5 + math.sin(phase * 2.8) * 0.6)
-			+ right * (2.8 + math.cos(phase * 2.1) * 0.5)
-			+ Vector3.new(0, 1.35 + math.sin(phase * 4.5) * 0.25, 0)
+			+ front * (7.5 + math.sin(phase * 2.6) * 0.95)
+			+ right * (5.4 + math.cos(phase * 2.05) * 1.05)
+			+ Vector3.new(0, 1.65 + math.sin(phase * 4.1) * 0.42, 0)
 
-		cam.CFrame = wobbleCFrame(CFrame.lookAt(camPos, lookTarget), phase, 0.5)
-		cam.FieldOfView = defaultFov + 6 + math.sin(phase * 7) * 1.5
+		cam.CFrame = shakeCFrame(CFrame.lookAt(camPos, lookTarget), phase, 0.92)
+		cam.FieldOfView = defaultFov + 5 + math.sin(phase * 5.8) * 2.8
 	end)
 end
 
-local function beginWebFollowCamera(getWebPos: () -> Vector3, getTargetPos: () -> Vector3, intensity: number)
+local function beginWebFollowCamera(
+	getWebPos: () -> Vector3,
+	getTargetPos: () -> Vector3,
+	getPlayerPos: () -> Vector3,
+	intensity: number
+)
 	stopCameraRig()
 	local cam = Workspace.CurrentCamera
 	if not cam then
@@ -742,34 +1301,90 @@ local function beginWebFollowCamera(getWebPos: () -> Vector3, getTargetPos: () -
 	saveCameraState(cam)
 
 	local phase = 0
-	local side = if math.random() < 0.5 then 1 else -1
 
 	cameraConn = RunService.RenderStepped:Connect(function(dt)
 		if not encounterActive or not cam then
 			return
 		end
 		phase += dt
+
+		local playerPos = getPlayerPos()
 		local webPos = getWebPos()
 		local targetPos = getTargetPos()
-		local toTarget = targetPos - webPos
-		if toTarget.Magnitude < 0.05 then
-			toTarget = Vector3.new(0, 0, -1)
+		local toWeb = webPos - playerPos
+		local flatToWeb = Vector3.new(toWeb.X, 0, toWeb.Z)
+		if flatToWeb.Magnitude < 0.05 then
+			flatToWeb = Vector3.new(0, 0, -1)
 		else
-			toTarget = toTarget.Unit
+			flatToWeb = flatToWeb.Unit
 		end
-		local lateral = toTarget:Cross(Vector3.yAxis)
-		if lateral.Magnitude < 0.05 then
-			lateral = Vector3.new(side, 0, 0)
+		local right = flatToWeb:Cross(Vector3.yAxis)
+		if right.Magnitude < 0.05 then
+			right = Vector3.new(1, 0, 0)
 		else
-			lateral = lateral.Unit * side
+			right = right.Unit
 		end
-		local camPos = webPos
-			- toTarget * (8 + math.sin(phase * 3) * 1.5)
-			+ lateral * (5 + math.cos(phase * 2.4) * 1.2)
-			+ Vector3.new(0, 2.4 + math.sin(phase * 5) * 0.6, 0)
-		cam.CFrame = wobbleCFrame(CFrame.lookAt(camPos, webPos + toTarget * 2.5), phase, intensity)
-		cam.FieldOfView = defaultFov + 12 + math.sin(phase * 6) * 2.5
+
+		local camPos = playerPos
+			- flatToWeb * (10.5 + math.sin(phase * 2.2) * 0.8)
+			+ right * (6.2 + math.cos(phase * 1.8) * 0.55)
+			+ Vector3.new(0, 3.1 + math.sin(phase * 3.5) * 0.25, 0)
+		local lookTarget = webPos:Lerp(targetPos, 0.42) + Vector3.new(0, 1.1, 0)
+
+		cam.CFrame = shakeCFrame(CFrame.lookAt(camPos, lookTarget), phase, intensity * 0.72)
+		cam.FieldOfView = defaultFov + 8 + math.sin(phase * 4.2) * 2.8
 	end)
+end
+
+local function easeCameraBackToPlayer(duration: number, spider: Model?)
+	stopCameraRig()
+	local cam = Workspace.CurrentCamera
+	local hrp = getPlayerHRP()
+	if not cam or not hrp then
+		return
+	end
+
+	local hum = hrp.Parent and hrp.Parent:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum.CameraOffset = Vector3.zero
+	end
+
+	local lookTarget = hrp.Position + Vector3.new(0, 1.5, 0)
+	local camPos: Vector3
+	if spider and spider.Parent then
+		local spiderPos = spider:GetPivot().Position
+		local towardPlayer = flatUnitXZ(spiderPos, hrp.Position)
+		camPos = hrp.Position + towardPlayer * 10 + Vector3.new(0, 2.6, 0)
+	else
+		local back = hrp.CFrame.LookVector
+		local flatBack = Vector3.new(back.X, 0, back.Z)
+		if flatBack.Magnitude < 0.05 then
+			flatBack = Vector3.new(0, 0, 1)
+		else
+			flatBack = flatBack.Unit
+		end
+		camPos = hrp.Position - flatBack * 8 + Vector3.new(0, 2.5, 0)
+	end
+
+	local startCf = cam.CFrame
+	local goalCf = CFrame.lookAt(camPos, lookTarget)
+	local startFov = cam.FieldOfView
+	local goalFov = if savedFov > 0 then savedFov else defaultFov
+
+	local nv = Instance.new("NumberValue")
+	nv.Value = 0
+	local conn = nv.Changed:Connect(function()
+		local t = nv.Value
+		cam.CFrame = startCf:Lerp(goalCf, t)
+		cam.FieldOfView = startFov + (goalFov - startFov) * t
+	end)
+	local tween = TweenService:Create(nv, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Value = 1,
+	})
+	tween:Play()
+	tween.Completed:Wait()
+	conn:Disconnect()
+	nv:Destroy()
 end
 
 local function restoreCamera()
@@ -793,6 +1408,10 @@ local function restoreCamera()
 	end
 	if savedCameraSubject then
 		cam.CameraSubject = savedCameraSubject
+	end
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum.CameraOffset = Vector3.zero
 	end
 	savedCameraType = nil
 	savedCameraSubject = nil
@@ -854,10 +1473,6 @@ local function fadeSpider(model: Model)
 end
 
 local function hideTimingQTE()
-	if timingPulseConn then
-		timingPulseConn:Disconnect()
-		timingPulseConn = nil
-	end
 	if timingRoot then
 		timingRoot.Visible = false
 	end
@@ -867,31 +1482,106 @@ local function pickRandomQtePosition()
 	if not timingRoot then
 		return
 	end
-	local x = 0.22 + math.random() * 0.56
-	local y = 0.34 + math.random() * 0.34
-	timingRoot.Position = UDim2.fromScale(x, y)
+	-- Centered above bottom letterbox (~12% bars).
+	timingRoot.Position = UDim2.fromScale(0.5, 0.70)
 end
 
-local function startTimingPulse()
-	if timingPulseConn then
-		timingPulseConn:Disconnect()
+local function refreshTimingUiPresentation(mobileInput: boolean, choiceLabel: string)
+	if timingLetter then
+		timingLetter.Visible = not mobileInput
+		if not mobileInput then
+			timingLetter.Text = choiceLabel
+		end
 	end
-	if not timingPulseScale then
-		return
+	if timingKeyIcon then
+		timingKeyIcon.Visible = mobileInput
 	end
-	local phase = 0
-	timingPulseConn = RunService.RenderStepped:Connect(function(dt)
-		if not encounterActive or not timingRoot or not timingRoot.Visible then
-			return
+	if timingHint then
+		timingHint.Text = if mobileInput then "TAP!" else "NOW!"
+	end
+	if timingRing then
+		timingRing.Visible = true
+	end
+end
+
+local function flashCharacterTint(color: Color3, duration: number, intense: boolean?)
+	local strong = intense == true
+	local pg = player:FindFirstChild("PlayerGui")
+	if pg then
+		local existingGui = pg:FindFirstChild("SpiderEncounterFlash")
+		if existingGui then
+			existingGui:Destroy()
 		end
-		phase += dt
-		if timingPulseScale then
-			timingPulseScale.Scale = 1.35 + math.sin(phase * 7) * 0.08
+
+		local screenGui = Instance.new("ScreenGui")
+		screenGui.Name = "SpiderEncounterFlash"
+		screenGui.IgnoreGuiInset = true
+		screenGui.DisplayOrder = 10000
+		screenGui.ResetOnSpawn = true
+
+		local overlay = Instance.new("Frame")
+		overlay.BackgroundColor3 = color
+		overlay.BackgroundTransparency = if strong then 0.22 else 0.55
+		overlay.BorderSizePixel = 0
+		overlay.Size = UDim2.fromScale(1, 1)
+		overlay.Parent = screenGui
+
+		screenGui.Parent = pg
+
+		TweenService:Create(overlay, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			BackgroundTransparency = 1,
+		}):Play()
+		task.delay(duration + 0.06, function()
+			if screenGui.Parent then
+				screenGui:Destroy()
+			end
+		end)
+	end
+
+	local char = player.Character
+	local cam = Workspace.CurrentCamera
+	if char and cam then
+		local existingHl = cam:FindFirstChild("SpiderEncounterFlashHl")
+		if existingHl then
+			existingHl:Destroy()
 		end
-		if timingRingStroke then
-			timingRingStroke.Transparency = 0.04 + math.sin(phase * 9) * 0.08
-		end
-	end)
+
+		local hl = Instance.new("Highlight")
+		hl.Name = "SpiderEncounterFlashHl"
+		hl.Adornee = char
+		hl.FillColor = color
+		hl.OutlineColor = color
+		hl.FillTransparency = if strong then 0.02 else 0.28
+		hl.OutlineTransparency = if strong then 0.08 else 0.35
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		hl.Parent = cam
+
+		TweenService:Create(hl, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			FillTransparency = 1,
+			OutlineTransparency = 1,
+		}):Play()
+		task.delay(duration + 0.06, function()
+			if hl.Parent then
+				hl:Destroy()
+			end
+		end)
+	end
+
+	if colorFx and colorFx.Enabled then
+		local prevTint = colorFx.TintColor
+		colorFx.TintColor = color:Lerp(prevTint, 0.55)
+		TweenService:Create(colorFx, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			TintColor = prevTint,
+		}):Play()
+	end
+end
+
+local function flashCharacterHit()
+	flashCharacterTint(FLASH_HIT, 0.72, true)
+end
+
+local function flashCharacterDodge()
+	flashCharacterTint(FLASH_DODGE, 0.65, true)
 end
 
 local function flashTimingResult(success: boolean)
@@ -926,7 +1616,6 @@ local function flashTimingResult(success: boolean)
 			end
 		end)
 		pulseCameraShake(0.45, 0.22)
-		GameSoundEffects.playErrorNotif()
 	end
 end
 
@@ -935,6 +1624,8 @@ local function playDodgeMove()
 	if not hrp then
 		return
 	end
+	GameSoundEffects.playSpiderDodge()
+	flashCharacterDodge()
 	local cam = Workspace.CurrentCamera
 	local right = if cam then cam.CFrame.RightVector else Vector3.new(1, 0, 0)
 	local flat = Vector3.new(right.X, 0, right.Z)
@@ -953,25 +1644,63 @@ local function playDodgeMove()
 	pulseCameraShake(0.25, 0.12)
 end
 
-local function tweenSpiderDrop(spider: Model, fromPos: Vector3, toPos: Vector3, faceTarget: Vector3, duration: number)
+local function computeSpiderDropPositions(landPos: Vector3): (Vector3, Vector3)
+	local landing = landPos
+	local dropHeight = C.DROP_HEIGHT
+	local dropStart = landing + Vector3.new(0, dropHeight, 0)
+
+	local ceiling = workspace:Raycast(dropStart, Vector3.new(0, 55, 0))
+	if ceiling then
+		local cappedY = ceiling.Position.Y - 2.5
+		if cappedY - landing.Y >= 8 then
+			dropStart = Vector3.new(landing.X, cappedY, landing.Z)
+		end
+	end
+
+	if dropStart.Y - landing.Y < dropHeight * 0.65 then
+		dropStart = Vector3.new(landing.X, landing.Y + dropHeight, landing.Z)
+	end
+
+	return dropStart, landing
+end
+
+local function tweenSpiderDrop(
+	spider: Model,
+	fromPos: Vector3,
+	toPos: Vector3,
+	faceTargetFn: () -> Vector3,
+	duration: number
+)
 	local nv = Instance.new("NumberValue")
 	nv.Value = 0
+	local phase = 0
 	local tween = TweenService:Create(nv, TweenInfo.new(duration, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out), {
 		Value = 1,
 	})
 	local conn = nv.Changed:Connect(function()
-		local pos = fromPos:Lerp(toPos, nv.Value)
+		local alpha = nv.Value
+		local pos = fromPos:Lerp(toPos, alpha)
+		local sway = math.sin(phase * 16) * (1 - alpha) * 1.1
+		pos += Vector3.new(sway, 0, math.cos(phase * 13) * (1 - alpha) * 0.65)
+		local faceTarget = faceTargetFn()
 		spider:PivotTo(cfFacingTarget(pos, faceTarget))
+	end)
+	local phaseConn = RunService.RenderStepped:Connect(function(dt)
+		phase += dt
 	end)
 	tween:Play()
 	tween.Completed:Wait()
 	conn:Disconnect()
+	phaseConn:Disconnect()
 	nv:Destroy()
+	spider:PivotTo(cfFacingTarget(toPos, faceTargetFn()))
 end
 
 local function finishEncounter(spider: Model?, web: BasePart?)
 	encounterActive = false
 	hideTimingQTE()
+	stopSpideySenses()
+	clearSpiderEncounterCharacterFx()
 	forceRestoreBgm()
 	clearPostFx()
 	animateLetterboxOut()
@@ -989,22 +1718,101 @@ end
 local function killPlayerFromSpiderHit()
 	local char = player.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	if not hum or hum.Health <= 0 then
+	if not hum then
+		return
+	end
+	if hum.Health <= 0 then
 		return
 	end
 	hum.BreakJointsOnDeath = true
 	if spiderKillRE then
 		spiderKillRE:FireServer()
 	end
+	pcall(function()
+		hum:TakeDamage(hum.MaxHealth * 2)
+	end)
 	hum.Health = 0
-	if char and char.Parent and hum.Health <= 0 then
-		char:BreakJoints()
-	end
+	task.defer(function()
+		if not hum.Parent then
+			return
+		end
+		if hum.Health > 0 then
+			if spiderKillRE then
+				spiderKillRE:FireServer()
+			end
+			hum.Health = 0
+		end
+		local liveChar = player.Character
+		if liveChar and liveChar.Parent and hum.Health <= 0 then
+			pcall(function()
+				liveChar:BreakJoints()
+			end)
+		end
+	end)
+end
+
+local function getPlayerChestPos(fallback: Vector3): Vector3
+	local hrp = getPlayerHRP()
+	return if hrp then hrp.Position + Vector3.new(0, 0.75, 0) else fallback
 end
 
 local function getPlayerAimPos(fallback: Vector3): Vector3
+	return getPlayerChestPos(fallback)
+end
+
+local function getWebImpactPos(flightDir: Vector3, fallback: Vector3, spider: Model?, web: BasePart?): Vector3
 	local hrp = getPlayerHRP()
-	return if hrp then hrp.Position + Vector3.new(0, 1.2, 0) else fallback
+	if not hrp then
+		return fallback
+	end
+	local char = hrp.Parent
+	local flatDir = Vector3.new(flightDir.X, 0, flightDir.Z)
+	if flatDir.Magnitude > 0.05 then
+		flatDir = flatDir.Unit
+	else
+		flatDir = Vector3.new(0, 0, -1)
+	end
+
+	local origin = hrp.Position + Vector3.new(0, 0.85, 0) - flatDir * 9
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore: { Instance } = {}
+	if spider then
+		table.insert(ignore, spider)
+	end
+	if web then
+		table.insert(ignore, web)
+	end
+	params.FilterDescendantsInstances = ignore
+
+	local hit = workspace:Raycast(origin, flatDir * 16, params)
+	if hit and char and hit.Instance:IsDescendantOf(char) then
+		return hit.Position + hit.Normal * 1.35
+	end
+
+	return hrp.Position + Vector3.new(0, 0.55, 0) - flatDir * 3.8
+end
+
+clearSpiderEncounterCharacterFx = function()
+	local pg = player:FindFirstChild("PlayerGui")
+	if pg then
+		local flashGui = pg:FindFirstChild("SpiderEncounterFlash")
+		if flashGui then
+			flashGui:Destroy()
+		end
+	end
+	local cam = Workspace.CurrentCamera
+	if cam then
+		local hl = cam:FindFirstChild("SpiderEncounterFlashHl")
+		if hl then
+			hl:Destroy()
+		end
+	end
+	for _, inst in Workspace:GetChildren() do
+		if inst.Name == "SpiderHitBlowVfx" or inst.Name == "SpiderBlowVfxAnchor" then
+			inst:Destroy()
+		end
+	end
 end
 
 local function runEncounter(fallbackAnchor: Vector3)
@@ -1026,18 +1834,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 
 	local landPos = resolveSpiderSpawnPosition(fallbackAnchor)
 	local playerAim = getPlayerAimPos(fallbackAnchor)
-	local dropStart = landPos + Vector3.new(0, C.DROP_HEIGHT, 0)
-	local hrp = getPlayerHRP()
-	if hrp then
-		local ceiling = workspace:Raycast(dropStart, Vector3.new(0, 40, 0))
-		if ceiling then
-			dropStart = Vector3.new(landPos.X, ceiling.Position.Y - 3, landPos.Z)
-		end
-		local maxDropY = hrp.Position.Y + 28
-		if dropStart.Y > maxDropY then
-			dropStart = Vector3.new(dropStart.X, maxDropY, dropStart.Z)
-		end
-	end
+	local dropStart, landingPos = computeSpiderDropPositions(landPos)
 
 	local spider = template:Clone()
 	spider.Name = "BushSpiderEncounter"
@@ -1046,39 +1843,39 @@ local function runEncounter(fallbackAnchor: Vector3)
 	spider.Parent = Workspace
 
 	beginSpiderDropCamera(function()
-		return spider:GetPivot().Position
-	end, 1.1)
-	pulseCameraShake(0.35, 0.08)
+		return spider:GetPivot()
+	end, function()
+		return getPlayerChestPos(fallbackAnchor)
+	end, 1.35)
+	pulseCameraShake(0.45, 0.14)
 
 	local animator = resolveAnimator(spider)
-	local jumpTrack = if animator then loadTrack(animator, C.ANIM.JUMP) else nil
 	local rageTrack = if animator then loadTrack(animator, C.ANIM.RAGE) else nil
 	local webTrack = if animator then loadTrack(animator, C.ANIM.WEB) else nil
 
-	if jumpTrack then
-		jumpTrack:Play(0.05, 1, 1)
-	end
-	tweenSpiderDrop(spider, dropStart, landPos, playerAim, 0.85)
+	tweenSpiderDrop(spider, dropStart, landingPos, function()
+		return getPlayerAimPos(fallbackAnchor)
+	end, 1.05)
 
 	if not encounterActive then
 		finishEncounter(spider, nil)
 		return
 	end
 
-	waitSec(0.15)
-	GameSoundEffects.playErrorNotif()
-	pulseCameraShake(0.55, 0.16)
+	pulseCameraShake(0.65, 0.18)
 	playerAim = getPlayerAimPos(fallbackAnchor)
-	faceCharacterToward(landPos)
-	spider:PivotTo(cfFacingTarget(landPos, playerAim))
+	faceCharacterToward(landingPos)
+	spider:PivotTo(cfFacingTarget(landingPos, playerAim))
 	beginRageCamera(function()
-		return spider:GetPivot().Position
+		return spider:GetPivot()
 	end, function()
 		return getPlayerAimPos(fallbackAnchor)
 	end, 1.4)
+	startSpideySensesOnSpider(spider)
 	waitForRageSequence(spider, rageTrack, function()
 		return getPlayerAimPos(fallbackAnchor)
 	end)
+	stopSpideySenses()
 
 	if not encounterActive then
 		finishEncounter(spider, nil)
@@ -1090,7 +1887,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 	end
 
 	beginWebWindupCamera(function()
-		return spider:GetPivot().Position
+		return spider:GetPivot()
 	end, function()
 		return getPlayerAimPos(fallbackAnchor)
 	end)
@@ -1125,26 +1922,40 @@ local function runEncounter(fallbackAnchor: Vector3)
 	webMesh.Parent = web
 
 	playerAim = getPlayerAimPos(fallbackAnchor)
-	local spiderShoot = spider:GetPivot().Position + spider:GetPivot().LookVector * 2.5
-	web.CFrame = CFrame.new(spiderShoot, playerAim)
+	local spiderPivot = spider:GetPivot()
+	local visualFront = spiderVisualFrontFlat(spiderPivot, playerAim)
+	local spiderShoot = spiderPivot.Position + visualFront * 2.5
+	local shotTarget = getPlayerChestPos(fallbackAnchor)
+	local flightDir = shotTarget - spiderShoot
+	if flightDir.Magnitude < 0.05 then
+		flightDir = Vector3.new(0, 0, -1)
+	else
+		flightDir = flightDir.Unit
+	end
+	web.CFrame = webProjectileCFrame(spiderShoot, flightDir)
+	attachWebLightArrow(web)
 
+	GameSoundEffects.playSpiderWebShot()
 	setBgmWebSlow()
 
 	beginWebFollowCamera(function()
 		return web.Position
 	end, function()
 		return getPlayerAimPos(fallbackAnchor)
+	end, function()
+		local hrp = getPlayerHRP()
+		return if hrp then hrp.Position else getPlayerAimPos(fallbackAnchor)
 	end, 1.65)
 
 	ensureCutsceneGui()
 	local choice = C.TIMING_LETTERS[math.random(1, #C.TIMING_LETTERS)]
-	if timingLetter then
-		timingLetter.Text = choice.label
+	local mobileInput = isMobileSpiderInput()
+	refreshTimingUiPresentation(mobileInput, choice.label)
+	if timingLetter and not mobileInput then
 		timingLetter.TextColor3 = Color3.fromRGB(255, 248, 220)
 	end
 	if timingHint then
-		timingHint.Text = "HIT"
-		timingHint.TextColor3 = Color3.fromRGB(200, 205, 220)
+		timingHint.TextColor3 = Color3.fromRGB(220, 225, 240)
 	end
 	if timingRingStroke then
 		timingRingStroke.Color = RING_IDLE
@@ -1152,19 +1963,19 @@ local function runEncounter(fallbackAnchor: Vector3)
 	if timingRingScale then
 		timingRingScale.Scale = C.RING_START_SCALE
 	end
-	if timingPulseScale then
-		timingPulseScale.Scale = 1.22
+	if timingProgressFill then
+		timingProgressFill.Size = UDim2.fromScale(0, 1)
+		timingProgressFill.BackgroundColor3 = Color3.fromRGB(255, 220, 110)
 	end
 	if timingRootScale then
-		timingRootScale.Scale = 0.35
+		timingRootScale.Scale = 0.82
 	end
 	pickRandomQtePosition()
 	if timingRoot then
 		timingRoot.Visible = true
 	end
-	startTimingPulse()
 	if timingRootScale then
-		TweenService:Create(timingRootScale, TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		TweenService:Create(timingRootScale, TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 			Scale = 1,
 		}):Play()
 	end
@@ -1175,8 +1986,52 @@ local function runEncounter(fallbackAnchor: Vector3)
 	local travel = C.WEB_TRAVEL_TIME
 	local start = os.clock()
 	local inputConn: RBXScriptConnection? = nil
+	local tapConn: RBXScriptConnection? = nil
+
+	local function tryResolveQtePress(): boolean
+		if qteResolved or not encounterActive then
+			return false
+		end
+		if not MobileTouchGate.canTapUi() then
+			return false
+		end
+		local pressAlpha = (os.clock() - start) / travel
+		if pressAlpha < C.QTE_CLOSE_MIN then
+			return false
+		end
+		qteResolved = true
+		qteSuccess = pressAlpha <= C.QTE_CLOSE_MAX
+		flashTimingResult(qteSuccess)
+		return true
+	end
+
+	if timingTapBtn then
+		timingTapBtn.Visible = mobileInput
+		timingTapBtn.Active = mobileInput
+	end
+	if mobileInput and timingTapBtn then
+		tapConn = timingTapBtn.Activated:Connect(function()
+			if not MobileTouchGate.canTapUi() then
+				return
+			end
+			if timingRootScale then
+				TweenService:Create(timingRootScale, TweenInfo.new(0.08, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+					Scale = 0.92,
+				}):Play()
+				task.delay(0.08, function()
+					if timingRootScale then
+						TweenService:Create(timingRootScale, TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+							Scale = 1,
+						}):Play()
+					end
+				end)
+			end
+			tryResolveQtePress()
+		end)
+	end
+
 	inputConn = UserInputService.InputBegan:Connect(function(input, processed)
-		if processed or qteResolved or not encounterActive then
+		if processed or qteResolved or not encounterActive or mobileInput then
 			return
 		end
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then
@@ -1188,13 +2043,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 			flashTimingResult(false)
 			return
 		end
-		local pressAlpha = (os.clock() - start) / travel
-		if pressAlpha < C.QTE_CLOSE_MIN then
-			return
-		end
-		qteResolved = true
-		qteSuccess = pressAlpha <= C.QTE_CLOSE_MAX
-		flashTimingResult(qteSuccess)
+		tryResolveQtePress()
 	end)
 
 	while encounterActive do
@@ -1211,24 +2060,41 @@ local function runEncounter(fallbackAnchor: Vector3)
 			break
 		end
 
-		playerAim = getPlayerAimPos(fallbackAnchor)
+		playerAim = getPlayerChestPos(fallbackAnchor)
 		spider:PivotTo(cfFacingTarget(spider:GetPivot().Position, playerAim))
+		shotTarget = getWebImpactPos(flightDir, getPlayerChestPos(fallbackAnchor), spider, web)
 		currentEased = smoothstep(math.clamp(travelAlpha, 0, 1))
-		local pos = spiderShoot:Lerp(playerAim, currentEased)
-		web.CFrame = CFrame.new(pos, playerAim)
+		local pos = spiderShoot:Lerp(shotTarget, currentEased)
+		web.CFrame = webProjectileCFrame(pos, flightDir)
 
+		if timingProgressFill then
+			timingProgressFill.Size = UDim2.fromScale(math.clamp(travelAlpha, 0, 1), 1)
+			if travelAlpha >= C.QTE_CLOSE_MIN and travelAlpha <= C.QTE_CLOSE_MAX then
+				timingProgressFill.BackgroundColor3 = Color3.fromRGB(80, 255, 140)
+			elseif travelAlpha > C.QTE_CLOSE_MAX then
+				timingProgressFill.BackgroundColor3 = Color3.fromRGB(255, 90, 90)
+			else
+				timingProgressFill.BackgroundColor3 = Color3.fromRGB(255, 220, 110)
+			end
+		end
 		if timingRingScale then
 			timingRingScale.Scale = ringScaleForEased(currentEased)
 		end
-		if timingPulseScale then
-			timingPulseScale.Scale = 1.08 + (1 - currentEased) * 0.18
+		if timingRingStroke then
+			if travelAlpha >= C.QTE_CLOSE_MIN and travelAlpha <= C.QTE_CLOSE_MAX then
+				timingRingStroke.Color = GREEN_OK
+				timingRingStroke.Transparency = 0.05
+			else
+				timingRingStroke.Color = RING_IDLE
+				timingRingStroke.Transparency = 0.12
+			end
 		end
 		if timingHint then
-			if travelAlpha >= C.QTE_CLOSE_MIN then
-				timingHint.Text = "NOW!"
-				timingHint.TextColor3 = Color3.fromRGB(255, 230, 140)
+			if travelAlpha >= C.QTE_CLOSE_MIN and travelAlpha <= C.QTE_CLOSE_MAX then
+				timingHint.Text = if mobileInput then "TAP!" else "NOW!"
+				timingHint.TextColor3 = Color3.fromRGB(120, 255, 170)
 			else
-				timingHint.Text = "HIT"
+				timingHint.Text = if mobileInput then "WAIT..." else "GET READY"
 				timingHint.TextColor3 = Color3.fromRGB(200, 205, 220)
 			end
 		end
@@ -1239,6 +2105,13 @@ local function runEncounter(fallbackAnchor: Vector3)
 	if inputConn then
 		inputConn:Disconnect()
 	end
+	if tapConn then
+		tapConn:Disconnect()
+	end
+	if timingTapBtn then
+		timingTapBtn.Visible = false
+		timingTapBtn.Active = false
+	end
 
 	if not qteResolved then
 		flashTimingResult(false)
@@ -1246,34 +2119,44 @@ local function runEncounter(fallbackAnchor: Vector3)
 		qteSuccess = false
 	end
 
-	task.wait(if qteSuccess then 0.22 else 0.35)
 	hideTimingQTE()
 
 	if dodgeResolved then
-		waitSec(0.35)
+		task.wait(0.22)
+		easeCameraBackToPlayer(0.55, spider)
+		waitSec(0.2)
 		TweenService:Create(web, TweenInfo.new(0.25), { Transparency = 1 }):Play()
 		fadeSpider(spider)
-		waitSec(0.55)
+		waitSec(0.4)
 		finishEncounter(spider, web)
 		return
 	end
 
-	pulseCameraShake(0.45, 0.2)
-	TweenService:Create(web, TweenInfo.new(0.12), {
-		Size = C.WEB_PROJECTILE_SIZE * 1.8,
-	}):Play()
+	task.wait(0.1)
+	stopCameraRig()
+
+	local hitTarget = getWebImpactPos(flightDir, getPlayerChestPos(fallbackAnchor), spider, web)
+	snapWebToImpact(web, web.Position, hitTarget, flightDir, 0.14)
+	holdHitImpactCamera(hitTarget, spider:GetPivot().Position)
+
+	TweenService:Create(web, TweenInfo.new(0.18), { Transparency = 1 }):Play()
+	GameSoundEffects.playSpiderGettingHit()
+	flashCharacterHit()
+	playSpiderHitBlowVfx(hitTarget)
 	killPlayerFromSpiderHit()
-	waitSec(0.85)
+	task.delay(0.15, killPlayerFromSpiderHit)
+	waitSec(0.95)
 	finishEncounter(spider, web)
 	forceRestoreBgm()
 	return
 end
 
+function BushSpiderEncounterController.isActive(): boolean
+	return encounterActive
+end
+
 function BushSpiderEncounterController.tryTriggerAfterBrainrotAccept(_model: Model)
 	if not C.ENABLED or encounterActive then
-		return
-	end
-	if math.random() > C.TRIGGER_CHANCE then
 		return
 	end
 	local hrp = getPlayerHRP()
@@ -1284,6 +2167,12 @@ function BushSpiderEncounterController.tryTriggerAfterBrainrotAccept(_model: Mod
 end
 
 function BushSpiderEncounterController.init()
+	MobileTouchGate.init()
+
+	player.CharacterAdded:Connect(function()
+		clearSpiderEncounterCharacterFx()
+	end)
+
 	local remotes = ReplicatedStorage:WaitForChild("Remotes", 60)
 	if remotes then
 		local re = remotes:WaitForChild("BushSpiderEncounterKill", 15)
@@ -1292,8 +2181,10 @@ function BushSpiderEncounterController.init()
 		end
 	end
 
-	BushFloatingClaimController.registerAcceptHook(function(_model: Model)
-		BushSpiderEncounterController.tryTriggerAfterBrainrotAccept(_model)
+	BushFloatingClaimController.registerAcceptHook(function(model: Model)
+		if BushFloatingClaimController.consumeAmbushOnAccept(model) then
+			BushSpiderEncounterController.tryTriggerAfterBrainrotAccept(model)
+		end
 	end)
 end
 

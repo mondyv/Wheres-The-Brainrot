@@ -7,14 +7,18 @@
 local M = {}
 
 M.ENABLED = true
-M.TRIGGER_CHANCE = 1
+M.TRIGGER_CHANCE = 0.5
 
 M.SPIDER_TEMPLATE_PATH = { "EssentialAssets", "Spider" }
+M.SPIDER_VFX_FOLDER_PATH = { "EssentialAssets", "SpiderVFX" }
+M.SPIDER_BLOW_VFX_NAME = "Blow"
+M.SPIDER_SPIDEY_SENSES_NAME = "Spidey senses"
+M.SPIDER_SPIDEY_SENSES_HUMAN_NAME = "Spidey senses human"
+M.SPIDER_LIGHT_ARROW_NAME = "LightArrow"
+M.SPIDER_BLOW_VFX_LIFETIME = 1.35
 
 M.ANIM = {
-	CLIMB = "82610198667230",
 	RAGE = "96475299364690",
-	JUMP = "105668035268975",
 	WEB = "136236258564046",
 }
 
@@ -26,19 +30,17 @@ M.WEB_ANIM_WINDUP = 0.55
 M.WEB_SHOOT_AT = 0.72
 M.WEB_ANIM_FALLBACK_SEC = 1.15
 M.RAGE_FALLBACK_SEC = 1.85
-M.RAGE_CAMERA_ZOOM_FOV = 18
+M.RAGE_CAMERA_ZOOM_FOV = 26
 M.WEB_PROJECTILE_SIZE = Vector3.new(2.4, 2.4, 2.4)
-M.WEB_TRAVEL_TIME = 2.6
-M.WEB_SLOW_TIME_SCALE = 0.22
+M.WEB_TRAVEL_TIME = 3.2
 
--- Rhythm dodge: outer ring shrinks onto the fixed target circle (Ring 170px → TargetRing 108px).
-M.RING_OUTER_PX = 170
-M.RING_TARGET_PX = 108
-M.RING_START_SCALE = 1.42
-M.RING_CLOSED_SCALE = M.RING_TARGET_PX / M.RING_OUTER_PX
+-- Single closing ring: base size matches key badge; starts larger, closes to 1.
+M.RING_OUTER_PX = 78
+M.RING_START_SCALE = 1.55
+M.RING_CLOSED_SCALE = 1.0
 M.SPIDER_YAW_OFFSET = math.pi
-M.QTE_CLOSE_MIN = 0.86
-M.QTE_CLOSE_MAX = 1.06
+M.QTE_CLOSE_MIN = 0.72
+M.QTE_CLOSE_MAX = 1.18
 M.TIMING_LETTERS = {
 	{ label = "E", key = Enum.KeyCode.E },
 	{ label = "Q", key = Enum.KeyCode.Q },
@@ -50,7 +52,9 @@ M.TIMING_LETTERS = {
 	{ label = "Z", key = Enum.KeyCode.Z },
 }
 
-M.BGM_SLOW_SPEED = 0.42
+-- Mild BGM duck (was 0.42); web QTE uses BGM_WEB_SPEED (was ~0.09 stacked crawl).
+M.BGM_SLOW_SPEED = 0.78
+M.BGM_WEB_SPEED = 0.62
 M.BGM_SLOW_FADE = 0.55
 M.BGM_RESTORE_FADE = 0.7
 

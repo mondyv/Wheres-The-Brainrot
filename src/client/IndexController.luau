@@ -14,7 +14,9 @@ local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local IndexConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("IndexConfig"))
+local PanelSlideIn = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PanelSlideIn"))
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -389,13 +391,11 @@ local function wireTabInteractions(tabRoot: Instance, mutationId: string)
 		UIInteractionSounds.playClick()
 		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.94 }):Play()
 		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 2.5 }):Play()
+		selectMutation(mutationId)
 	end)
 	btn.MouseButton1Up:Connect(function()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.06 }):Play()
 		TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -4 }):Play()
-	end)
-	btn.Activated:Connect(function()
-		selectMutation(mutationId)
 	end)
 end
 
@@ -406,6 +406,31 @@ local function playPanelOpenAnim()
 	local scale = getOrAddUIScale(indexFrame)
 	scale.Scale = 0.82
 	TweenService:Create(scale, OPEN_PANEL, { Scale = 1 }):Play()
+end
+
+local function playIndexTabsSlideIn()
+	if not indexFrame then
+		return
+	end
+	local typeButtons = indexFrame:FindFirstChild("TypeButtons")
+	if not typeButtons then
+		return
+	end
+	local names: { string } = {}
+	for _, mutationId in IndexConfig.MUTATION_TABS do
+		local btnName = IndexConfig.TAB_BUTTON_NAME[mutationId]
+		if typeof(btnName) == "string" then
+			table.insert(names, btnName)
+		end
+	end
+	local tabs = PanelSlideIn.collectNamedChildren(typeButtons, names)
+	if #tabs > 0 then
+		PanelSlideIn.slideInSequence(tabs, {
+			from = "Left",
+			stagger = 0.06,
+			distance = 52,
+		})
+	end
 end
 
 local function incomeForCatalog(entry: { name: string, rarity: string, baseIncome: number }, mutationId: string): number
@@ -577,16 +602,10 @@ local function clearGrid()
 		conn:Disconnect()
 	end
 	table.clear(rowHoverConns)
+	-- Keep pooled rows; just hide them. Destroying hundreds of clones freezes the client.
 	for _, row in catalogRows do
-		row:Destroy()
-	end
-	table.clear(catalogRows)
-	if not container or not rowTemplate then
-		return
-	end
-	for _, c in container:GetChildren() do
-		if c:IsA("Frame") and c ~= rowTemplate and c.Name ~= "UIListLayout" and c.Name ~= "UIPadding" and c.Name ~= "ScrollBarAdjuster" then
-			c:Destroy()
+		if row.Parent then
+			row.Visible = false
 		end
 	end
 end
@@ -632,29 +651,43 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 	local list = buildSortedCatalog(catalog, selectedMutation)
 	local order = 0
 	local index = 1
+	local BATCH = math.min(ROW_BATCH_SIZE, 10)
 
 	local function spawnBatch()
 		if token ~= rebuildToken or not container or not rowTemplate then
 			return
 		end
-		local batchEnd = math.min(index + ROW_BATCH_SIZE - 1, #list)
+		local batchEnd = math.min(index + BATCH - 1, #list)
 		for i = index, batchEnd do
 			local entry = list[i]
 			order += 1
-			local row = rowTemplate:Clone()
-			row.Name = "Entry_" .. entry.name
+			local row = catalogRows[i]
+			if not row or not row.Parent then
+				row = rowTemplate:Clone()
+				row.Name = "Entry_" .. entry.name
+				row.Parent = container
+				catalogRows[i] = row
+			else
+				row.Name = "Entry_" .. entry.name
+			end
 			row.Visible = true
 			row.LayoutOrder = order
-			row.Parent = container
 			local key = IndexConfig.unlockKey(entry.name, selectedMutation)
 			local isUnlocked = unlocked[key] == true
-			populateRow(row, entry, selectedMutation, isUnlocked, animateRows)
-			table.insert(catalogRows, row)
+			populateRow(row, entry, selectedMutation, isUnlocked, animateRows == true and i <= BATCH)
 		end
 		index = batchEnd + 1
 		if index <= #list then
-			task.defer(spawnBatch)
+			-- Real frame yield so tab switches don't hitch.
+			task.wait()
+			spawnBatch()
 		else
+			for i = #list + 1, #catalogRows do
+				local extra = catalogRows[i]
+				if extra then
+					extra.Visible = false
+				end
+			end
 			refreshQuest(
 				if typeof(state.goldenCount) == "number" then math.floor(state.goldenCount) else 0,
 				state.questComplete == true
@@ -662,7 +695,7 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 		end
 	end
 
-	spawnBatch()
+	task.spawn(spawnBatch)
 end
 
 local function fetchStateFor(mutationId: string): any?
@@ -804,8 +837,7 @@ local function ensureTooltip()
 	lbl.BackgroundTransparency = 0.35
 	lbl.BackgroundColor3 = Color3.fromRGB(12, 14, 18)
 	lbl.TextColor3 = Color3.fromRGB(220, 255, 230)
-	lbl.Font = Enum.Font.GothamBold
-	lbl.TextSize = 14
+	UiFonts.applyBodyLabel(lbl, 11, 7)
 	lbl.AutomaticSize = Enum.AutomaticSize.XY
 	lbl.Visible = false
 	lbl.Parent = sg
@@ -913,6 +945,9 @@ function IndexController.init()
 			if not wasVisible and HUDController.getCurrentFrame() ~= indexFrame then
 				playPanelOpenAnim()
 			end
+			if not wasVisible then
+				playIndexTabsSlideIn()
+			end
 			wasVisible = true
 			if gridMutation ~= selectedMutation or #catalogRows == 0 then
 				applyCachedState(selectedMutation, false)
@@ -920,6 +955,7 @@ function IndexController.init()
 			refreshStateInBackground(selectedMutation, false)
 		else
 			wasVisible = false
+			PanelSlideIn.cancel()
 			if tooltipLabel then
 				tooltipLabel.Visible = false
 			end

@@ -1,14 +1,16 @@
 -- [ACTIVE] LoadingScreenController
 --[[
 	LoadingScreenController — full-screen join overlay:
-	Moon camera flyover, blur, centered GameNameImage with fade-in + gentle pulse; hides other PlayerGui until ready.
-	StarterGui.LoadingScreen + GameNameImage. Moon export: "Camera loading" (Frames/0..N) under LoadingScreen or ReplicatedStorage.
+	Moon camera flyover + heavy blur, centered GameNameImage (wobbly jump),
+	"Loading..." + lime progress bar + cycling [hints]; hides other PlayerGui until ready.
+	StarterGui.LoadingScreen + GameNameImage. Moon export: "Camera loading" (Frames/0..N).
 --]]
 
 local ContentProvider = game:GetService("ContentProvider")
 local HttpService = game:GetService("HttpService")
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
@@ -16,6 +18,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local MIN_DISPLAY_SEC = 1.2
 local HOLD_AT_FULL_SEC = 0.4
@@ -38,26 +41,48 @@ local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
 	Enum.CoreGuiType.PlayerList,
 }
 
-local OVERLAY_COLOR = Color3.fromRGB(12, 8, 6)
+local OVERLAY_COLOR = Color3.fromRGB(8, 5, 4)
 local SOLID_COVER_COLOR = Color3.fromRGB(6, 4, 3)
-local OVERLAY_TRANSPARENCY = 0.18
-local LOADING_BLUR_SIZE = 28
+local OVERLAY_TRANSPARENCY = 0.38
+local LOADING_BLUR_SIZE = 56
 
-local ENTRANCE_DURATION = 0.9
-local ENTRANCE_SCALE_START = 0.84
-local IDLE_PULSE_AMOUNT = 0.032
-local IDLE_PULSE_SPEED = 1.05
+local ENTRANCE_DURATION = 0.85
+local ENTRANCE_SCALE_START = 0.78
 local SOLID_COVER_FADE_SEC = 0.55
-local TITLE_DISPLAY_SCALE = 1.22
-local TITLE_MAX_WIDTH_MOBILE = 680
-local TITLE_MAX_WIDTH_DESKTOP = 1100
-local TITLE_WIDTH_SCALE = 0.58
-local TITLE_HEIGHT_SCALE = 0.28
+local TITLE_MAX_WIDTH_MOBILE = 220
+local TITLE_MAX_WIDTH_DESKTOP = 280
+
+local BAR_FILL_COLOR = Color3.fromRGB(118, 196, 66)
+local BAR_TRACK_COLOR = Color3.fromRGB(18, 16, 14)
+local LOADING_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
+local HINT_TEXT_COLOR = Color3.fromRGB(235, 235, 235)
+
+local ELLIPSIS_INTERVAL_SEC = 0.38
+local HINT_INTERVAL_SEC = 2.15
+local WOBBLE_JUMP_SPEED = 2.35
+local WOBBLE_ROT_DEG = 5.5
+local WOBBLE_JUMP_PX = 9
+local WOBBLE_SCALE_AMOUNT = 0.028
+
+local LOADING_HINTS = {
+	"Optimizing Vibes",
+	"Warming Up Bushes",
+	"Charging Brainrot",
+	"Polishing Luck",
+	"Spawning Chaos",
+	"Calibrating Steals",
+	"Syncing Stands",
+	"Brewing Rebirths",
+	"Untangling Spaghetti",
+	"Feeding the Turtle",
+}
 
 local HIDE_LOADING_UI_NAMES = { "LoadingFrame", "BarPlaceholder", "LoadingBar", "Stud TextureDecal", "Stud Texture", "StudTexture" }
 
 local function isLoadingGuiAllowed(name: string): boolean
-	return name == "LoadingScreen" or name == "Purchasing"
+	-- Only LoadingScreen stays up. Main must stay disabled or Toolbar/inventory bleed through.
+	-- Never force-enable Purchasing — DisplayOrder 10000 overlay stuck after join.
+	return name == "LoadingScreen"
 end
 
 local LOGO_NAMES = { "GameNameImage", "ImageLabel" }
@@ -68,6 +93,7 @@ local M = {}
 local savedGuiStates: { [ScreenGui]: boolean }? = nil
 local playerGuiChildConn: RBXScriptConnection? = nil
 local loadingActive = false
+local gameplayReadyCallbacks: { () -> () } = {}
 local activeBlurEffect: BlurEffect? = nil
 local stopNameAnim: (() -> ())? = nil
 local stopCameraLock: (() -> ())? = nil
@@ -76,6 +102,8 @@ local cameraClipStartedAt: number? = nil
 local characterHideConn: RBXScriptConnection? = nil
 local hiddenCharacterParts: { [BasePart]: number }? = nil
 local earlyVisualsReady = false
+local loadingBarFill: Frame? = nil
+local loadingProgress = 0
 
 local function defaultLoadingCFrame(): CFrame
 	return CFrame.new(DEFAULT_CAMERA_POS) * CFrame.fromOrientation(DEFAULT_CAMERA_RAD.X, DEFAULT_CAMERA_RAD.Y, DEFAULT_CAMERA_RAD.Z)
@@ -1091,7 +1119,7 @@ local function wrapAsScreenGui(source: Instance, playerGui: PlayerGui): ScreenGu
 	screenGui.ResetOnSpawn = false
 	screenGui.IgnoreGuiInset = true
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	screenGui.DisplayOrder = 1000
+	screenGui.DisplayOrder = 5000
 	screenGui.Parent = playerGui
 
 	local copy = source:Clone()
@@ -1207,6 +1235,14 @@ local function hideNonLoadingScreenGuis(playerGui: PlayerGui)
 			child.Enabled = false
 		end
 	end
+	local main = playerGui:FindFirstChild("Main")
+	if main and main:IsA("ScreenGui") then
+		main.Enabled = false
+		local sideUI = main:FindFirstChild("SideUI")
+		if sideUI and sideUI:IsA("GuiObject") then
+			(sideUI :: GuiObject).Visible = false
+		end
+	end
 	local blurGui = playerGui:FindFirstChild("Blur")
 	if blurGui and blurGui:IsA("ScreenGui") then
 		blurGui.Enabled = false
@@ -1235,7 +1271,11 @@ local function enterLoadingIsolation(playerGui: PlayerGui)
 
 	for _, child in playerGui:GetChildren() do
 		if child:IsA("ScreenGui") then
-			child.Enabled = isLoadingGuiAllowed(child.Name)
+			if isLoadingGuiAllowed(child.Name) then
+				child.Enabled = true
+			else
+				child.Enabled = false
+			end
 		end
 	end
 	hideNonLoadingScreenGuis(playerGui)
@@ -1247,6 +1287,9 @@ local function enterLoadingIsolation(playerGui: PlayerGui)
 			end
 			if child:IsA("ScreenGui") and child.Name == "Main" then
 				PlayerGuiMain.dedupe(playerGui)
+				-- Keep Main off until exitLoadingIsolation — inventory must not show through loading.
+				child.Enabled = false
+				return
 			end
 			if child:IsA("ScreenGui") and not isLoadingGuiAllowed(child.Name) then
 				if savedGuiStates then
@@ -1314,6 +1357,14 @@ local function prepareGameplayUIBeforeReveal(playerGui: PlayerGui)
 	end
 end
 
+local function fireGameplayReadyCallbacks()
+	local callbacks = gameplayReadyCallbacks
+	gameplayReadyCallbacks = {}
+	for _, fn in callbacks do
+		task.defer(fn)
+	end
+end
+
 local function exitLoadingIsolation(playerGui: PlayerGui)
 	loadingActive = false
 	unbindCharacterHide()
@@ -1328,13 +1379,41 @@ local function exitLoadingIsolation(playerGui: PlayerGui)
 	if savedGuiStates then
 		for gui, wasEnabled in savedGuiStates do
 			if gui.Parent and gui.Name ~= "LoadingScreen" then
-				gui.Enabled = wasEnabled
+				-- Always bring Main back; other guis restore prior state.
+				if gui.Name == "Main" then
+					gui.Enabled = true
+				else
+					gui.Enabled = wasEnabled
+				end
 			end
 		end
 		savedGuiStates = nil
 	end
 
 	PlayerGuiMain.finalize(playerGui)
+	local main = playerGui:FindFirstChild("Main")
+	if main and main:IsA("ScreenGui") then
+		main.Enabled = true
+		local sideUI = main:FindFirstChild("SideUI")
+		if sideUI and sideUI:IsA("GuiObject") then
+			(sideUI :: GuiObject).Visible = true
+		end
+	end
+
+	-- Purchasing is a fullscreen overlay (DisplayOrder 10000); never leave it on after load.
+	-- Also hide Studio leftovers Purchasing.Loading / Purchasing.Main that block HUD frames.
+	local purchasing = playerGui:FindFirstChild("Purchasing")
+	if purchasing then
+		if purchasing:IsA("ScreenGui") then
+			purchasing.Enabled = false
+		end
+		for _, child in purchasing:GetChildren() do
+			if child.Name ~= "Rainbow" and child:IsA("GuiObject") then
+				child.Visible = false
+				child.Active = false
+			end
+		end
+	end
 
 	setCoreGuisVisible(true)
 
@@ -1342,6 +1421,8 @@ local function exitLoadingIsolation(playerGui: PlayerGui)
 	if blurGui and blurGui:IsA("ScreenGui") then
 		blurGui.Enabled = false
 	end
+
+	fireGameplayReadyCallbacks()
 end
 
 local function cleanupLoadingVisuals(playerGui: PlayerGui, loadingGui: ScreenGui?, overlay: Frame?)
@@ -1360,6 +1441,17 @@ local function cleanupLoadingVisuals(playerGui: PlayerGui, loadingGui: ScreenGui
 		local solidCover = loadingGui:FindFirstChild("SolidCover")
 		if solidCover and solidCover:IsA("Frame") then
 			solidCover:Destroy()
+		end
+		local canvas = loadingGui:FindFirstChild("LoadingFadeCanvas")
+		if canvas then
+			local stack = canvas:FindFirstChild("LoadingStack")
+			if stack then
+				local logo = stack:FindFirstChild("GameNameImage", true) or stack:FindFirstChild("ImageLabel", true)
+				if logo and logo:IsA("ImageLabel") then
+					logo.Parent = canvas
+				end
+				stack:Destroy()
+			end
 		end
 	end
 
@@ -1431,38 +1523,77 @@ local function hideLoadingChrome(loadingGui: ScreenGui)
 	end
 end
 
+local function getUiParent(loadingGui: ScreenGui): Instance
+	local canvas = fadeCanvas or loadingGui:FindFirstChild("LoadingFadeCanvas")
+	if canvas and canvas:IsA("CanvasGroup") then
+		return canvas
+	end
+	return loadingGui
+end
+
+local function findOrCreateStack(loadingGui: ScreenGui): Frame
+	local parent = getUiParent(loadingGui)
+	local existing = parent:FindFirstChild("LoadingStack")
+	if existing and existing:IsA("Frame") then
+		return existing
+	end
+
+	local stack = Instance.new("Frame")
+	stack.Name = "LoadingStack"
+	stack.BackgroundTransparency = 1
+	stack.BorderSizePixel = 0
+	stack.AnchorPoint = Vector2.new(0.5, 0.5)
+	stack.Position = UDim2.fromScale(0.5, 0.5)
+	stack.Size = UDim2.fromScale(0.72, 0)
+	stack.AutomaticSize = Enum.AutomaticSize.Y
+	stack.ZIndex = 5
+	stack.Parent = parent
+
+	local layout = Instance.new("UIListLayout")
+	layout.Name = "StackLayout"
+	layout.FillDirection = Enum.FillDirection.Vertical
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 14)
+	layout.Parent = stack
+
+	return stack
+end
+
 local function ensureGameNameVisible(loadingGui: ScreenGui)
 	local logo = findGameNameImage(loadingGui)
 	if not logo then
 		return
 	end
+
+	local aspectAttr = logo:GetAttribute("AspectRatio")
+	local titleAspect = if typeof(aspectAttr) == "number" and aspectAttr > 0 then aspectAttr else 1.1
+	local maxW = if UserInputService.TouchEnabled then TITLE_MAX_WIDTH_MOBILE else TITLE_MAX_WIDTH_DESKTOP
+	local slotH = math.floor(maxW / titleAspect)
+
+	local stack = findOrCreateStack(loadingGui)
+	local logoSlot = stack:FindFirstChild("LogoSlot")
+	if not logoSlot or not logoSlot:IsA("Frame") then
+		logoSlot = Instance.new("Frame")
+		logoSlot.Name = "LogoSlot"
+		logoSlot.BackgroundTransparency = 1
+		logoSlot.BorderSizePixel = 0
+		logoSlot.LayoutOrder = 1
+		logoSlot.ZIndex = 6
+		logoSlot.Parent = stack
+	end
+	logoSlot.Size = UDim2.fromOffset(maxW, slotH)
+
 	logo.Visible = true
 	logo.ScaleType = Enum.ScaleType.Fit
 	logo.BackgroundTransparency = 1
 	logo.AnchorPoint = Vector2.new(0.5, 0.5)
 	logo.Position = UDim2.fromScale(0.5, 0.5)
-
-	local studioSize = logo.Size
-	if studioSize.X.Scale > 0 or studioSize.Y.Scale > 0 then
-		logo.Size = UDim2.new(
-			studioSize.X.Scale * TITLE_DISPLAY_SCALE,
-			studioSize.X.Offset,
-			studioSize.Y.Scale * TITLE_DISPLAY_SCALE,
-			studioSize.Y.Offset
-		)
-	elseif studioSize.X.Offset > 0 or studioSize.Y.Offset > 0 then
-		logo.Size = UDim2.new(
-			studioSize.X.Scale,
-			math.floor(studioSize.X.Offset * TITLE_DISPLAY_SCALE),
-			studioSize.Y.Scale,
-			math.floor(studioSize.Y.Offset * TITLE_DISPLAY_SCALE)
-		)
-	else
-		logo.Size = UDim2.fromScale(TITLE_WIDTH_SCALE, TITLE_HEIGHT_SCALE)
-	end
-
-	local aspectAttr = logo:GetAttribute("AspectRatio")
-	local titleAspect = if typeof(aspectAttr) == "number" and aspectAttr > 0 then aspectAttr else 2.85
+	logo.Size = UDim2.fromScale(1, 1)
+	logo.Parent = logoSlot
+	logo.LayoutOrder = 1
+	logo.ZIndex = 7
 
 	local aspect = logo:FindFirstChild("TitleAspectLock")
 	if not aspect or not aspect:IsA("UIAspectRatioConstraint") then
@@ -1475,49 +1606,151 @@ local function ensureGameNameVisible(loadingGui: ScreenGui)
 	aspectLock.AspectType = Enum.AspectType.FitWithinMaxSize
 	aspectLock.DominantAxis = Enum.DominantAxis.Width
 
-	local sizeConstraint = logo:FindFirstChild("TitleSizeCap")
+	local sizeConstraint = logoSlot:FindFirstChild("TitleSizeCap")
 	if not sizeConstraint or not sizeConstraint:IsA("UISizeConstraint") then
 		sizeConstraint = Instance.new("UISizeConstraint")
 		sizeConstraint.Name = "TitleSizeCap"
-		sizeConstraint.Parent = logo
+		sizeConstraint.Parent = logoSlot
 	end
-	local maxW = if UserInputService.TouchEnabled then TITLE_MAX_WIDTH_MOBILE else TITLE_MAX_WIDTH_DESKTOP
 	local sizeCap = sizeConstraint :: UISizeConstraint
-	sizeCap.MaxSize = Vector2.new(maxW, maxW / titleAspect)
+	sizeCap.MaxSize = Vector2.new(maxW, slotH)
+end
 
-	if logo.ZIndex < 2 then
-		logo.ZIndex = 4
+local function ensureSleekLoadingUI(loadingGui: ScreenGui)
+	local stack = findOrCreateStack(loadingGui)
+
+	local loadingLabel = stack:FindFirstChild("LoadingText")
+	if not loadingLabel or not loadingLabel:IsA("TextLabel") then
+		loadingLabel = Instance.new("TextLabel")
+		loadingLabel.Name = "LoadingText"
+		loadingLabel.BackgroundTransparency = 1
+		loadingLabel.BorderSizePixel = 0
+		loadingLabel.Size = UDim2.new(1, 0, 0, 36)
+		loadingLabel.LayoutOrder = 2
+		loadingLabel.ZIndex = 6
+		loadingLabel.Text = "Loading"
+		loadingLabel.TextColor3 = LOADING_TEXT_COLOR
+		loadingLabel.TextTransparency = 0
+		loadingLabel.TextXAlignment = Enum.TextXAlignment.Center
+		loadingLabel.TextYAlignment = Enum.TextYAlignment.Center
+		loadingLabel.Parent = stack
+	end
+	UiFonts.applyDisplayLabel(loadingLabel :: TextLabel, 28, 18)
+	;(loadingLabel :: TextLabel).TextColor3 = LOADING_TEXT_COLOR
+
+	local barTrack = stack:FindFirstChild("ProgressTrack")
+	if not barTrack or not barTrack:IsA("Frame") then
+		barTrack = Instance.new("Frame")
+		barTrack.Name = "ProgressTrack"
+		barTrack.BackgroundColor3 = BAR_TRACK_COLOR
+		barTrack.BackgroundTransparency = 0.15
+		barTrack.BorderSizePixel = 0
+		barTrack.Size = UDim2.new(0, if UserInputService.TouchEnabled then 200 else 248, 0, 8)
+		barTrack.LayoutOrder = 3
+		barTrack.ZIndex = 6
+		barTrack.ClipsDescendants = true
+		barTrack.Parent = stack
+
+		local trackCorner = Instance.new("UICorner")
+		trackCorner.CornerRadius = UDim.new(1, 0)
+		trackCorner.Parent = barTrack
+
+		local fill = Instance.new("Frame")
+		fill.Name = "ProgressFill"
+		fill.BackgroundColor3 = BAR_FILL_COLOR
+		fill.BackgroundTransparency = 0
+		fill.BorderSizePixel = 0
+		fill.AnchorPoint = Vector2.new(0, 0.5)
+		fill.Position = UDim2.fromScale(0, 0.5)
+		fill.Size = UDim2.fromScale(0.08, 1)
+		fill.ZIndex = 7
+		fill.Parent = barTrack
+
+		local fillCorner = Instance.new("UICorner")
+		fillCorner.CornerRadius = UDim.new(1, 0)
+		fillCorner.Parent = fill
+	end
+
+	local fill = (barTrack :: Frame):FindFirstChild("ProgressFill")
+	if fill and fill:IsA("Frame") then
+		loadingBarFill = fill
+		fill.Size = UDim2.fromScale(math.clamp(loadingProgress, 0.08, 1), 1)
+	end
+
+	local hintLabel = stack:FindFirstChild("LoadingHint")
+	if not hintLabel or not hintLabel:IsA("TextLabel") then
+		hintLabel = Instance.new("TextLabel")
+		hintLabel.Name = "LoadingHint"
+		hintLabel.BackgroundTransparency = 1
+		hintLabel.BorderSizePixel = 0
+		hintLabel.Size = UDim2.new(1, 0, 0, 22)
+		hintLabel.LayoutOrder = 4
+		hintLabel.ZIndex = 6
+		hintLabel.Text = "[" .. LOADING_HINTS[1] .. "]"
+		hintLabel.TextColor3 = HINT_TEXT_COLOR
+		hintLabel.TextTransparency = 0.08
+		hintLabel.TextXAlignment = Enum.TextXAlignment.Center
+		hintLabel.TextYAlignment = Enum.TextYAlignment.Center
+		hintLabel.Parent = stack
+	end
+	UiFonts.applyDisplayLabel(hintLabel :: TextLabel, 15, 11)
+	;(hintLabel :: TextLabel).TextColor3 = HINT_TEXT_COLOR
+	;(hintLabel :: TextLabel).FontFace = UiFonts.BUTTON_REGULAR_FACE
+end
+
+local function setLoadingProgress(alpha: number)
+	loadingProgress = math.clamp(alpha, 0, 1)
+	local fill = loadingBarFill
+	if fill and fill.Parent then
+		-- Keep a tiny visible nub at the start so the bar never looks empty.
+		local shown = 0.06 + loadingProgress * 0.94
+		fill.Size = UDim2.fromScale(shown, 1)
 	end
 end
 
 local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 	local logo = findGameNameImage(loadingGui)
-	if not logo then
-		return function() end
+	local stack = findOrCreateStack(loadingGui)
+	local loadingLabel = stack:FindFirstChild("LoadingText")
+	local hintLabel = stack:FindFirstChild("LoadingHint")
+
+	local wrapScale: UIScale? = nil
+	if logo then
+		local oldScale = logo:FindFirstChildOfClass("UIScale")
+		if oldScale and oldScale.Name ~= "TitleAnimScale" then
+			oldScale:Destroy()
+		end
+
+		local scaleInst = logo:FindFirstChild("TitleAnimScale")
+		if not scaleInst or not scaleInst:IsA("UIScale") then
+			scaleInst = Instance.new("UIScale")
+			scaleInst.Name = "TitleAnimScale"
+			scaleInst.Parent = logo
+		end
+		wrapScale = scaleInst :: UIScale
+		logo.Rotation = 0
+		wrapScale.Scale = ENTRANCE_SCALE_START
+		logo.ImageTransparency = 1
+		logo.Position = UDim2.fromScale(0.5, 0.5)
 	end
 
-	local oldScale = logo:FindFirstChildOfClass("UIScale")
-	if oldScale and oldScale.Name ~= "TitleAnimScale" then
-		oldScale:Destroy()
+	if loadingLabel and loadingLabel:IsA("TextLabel") then
+		loadingLabel.TextTransparency = 1
 	end
-
-	local wrapScale = logo:FindFirstChild("TitleAnimScale")
-	if not wrapScale or not wrapScale:IsA("UIScale") then
-		wrapScale = Instance.new("UIScale")
-		wrapScale.Name = "TitleAnimScale"
-		wrapScale.Parent = logo
+	if hintLabel and hintLabel:IsA("TextLabel") then
+		hintLabel.TextTransparency = 1
 	end
-
-	logo.Rotation = 0
-	wrapScale.Scale = ENTRANCE_SCALE_START
-	logo.ImageTransparency = 1
 
 	local entranceStart = os.clock()
 	local entranceDone = false
 	local idlePhase = 0
+	local ellipsisPhase = 0
+	local hintIndex = 1
+	local hintTimer = 0
+	local hintFade = 0
 
 	local conn = RunService.RenderStepped:Connect(function(dt)
-		if not loadingActive or not logo.Parent then
+		if not loadingActive then
 			return
 		end
 
@@ -1525,29 +1758,83 @@ local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 			local elapsed = os.clock() - entranceStart
 			local t = math.clamp(elapsed / ENTRANCE_DURATION, 0, 1)
 			local eased = 1 - (1 - t) ^ 3
-			wrapScale.Scale = ENTRANCE_SCALE_START + (1 - ENTRANCE_SCALE_START) * eased
-			logo.ImageTransparency = 1 - eased
+			if wrapScale and logo and logo.Parent then
+				wrapScale.Scale = ENTRANCE_SCALE_START + (1 - ENTRANCE_SCALE_START) * eased
+				logo.ImageTransparency = 1 - eased
+			end
+			if loadingLabel and loadingLabel:IsA("TextLabel") and loadingLabel.Parent then
+				loadingLabel.TextTransparency = 1 - eased
+			end
+			if hintLabel and hintLabel:IsA("TextLabel") and hintLabel.Parent then
+				hintLabel.TextTransparency = 1 - eased * 0.92
+			end
 			if t >= 1 then
 				entranceDone = true
-				wrapScale.Scale = 1
-				logo.ImageTransparency = 0
+				if wrapScale then
+					wrapScale.Scale = 1
+				end
+				if logo and logo.Parent then
+					logo.ImageTransparency = 0
+				end
+				if loadingLabel and loadingLabel:IsA("TextLabel") then
+					loadingLabel.TextTransparency = 0
+				end
+				if hintLabel and hintLabel:IsA("TextLabel") then
+					hintLabel.TextTransparency = 0.08
+				end
 			end
 			return
 		end
 
-		idlePhase += dt * IDLE_PULSE_SPEED
-		local pulse = math.sin(idlePhase)
-		wrapScale.Scale = 1 + IDLE_PULSE_AMOUNT * pulse
+		idlePhase += dt * WOBBLE_JUMP_SPEED
+		-- Soft jump (abs sin) + slight rotation wobble + micro scale pulse.
+		local jumpWave = math.abs(math.sin(idlePhase * math.pi))
+		local rotWave = math.sin(idlePhase * 1.65)
+		local scaleWave = math.sin(idlePhase * 1.1)
+		if logo and logo.Parent and wrapScale then
+			logo.Position = UDim2.new(0.5, 0, 0.5, -jumpWave * WOBBLE_JUMP_PX)
+			logo.Rotation = rotWave * WOBBLE_ROT_DEG
+			wrapScale.Scale = 1 + scaleWave * WOBBLE_SCALE_AMOUNT + jumpWave * 0.012
+		end
+
+		ellipsisPhase += dt
+		if loadingLabel and loadingLabel:IsA("TextLabel") and loadingLabel.Parent then
+			local dots = math.floor(ellipsisPhase / ELLIPSIS_INTERVAL_SEC) % 4
+			loadingLabel.Text = "Loading" .. string.rep(".", dots)
+		end
+
+		hintTimer += dt
+		if hintLabel and hintLabel:IsA("TextLabel") and hintLabel.Parent then
+			if hintTimer >= HINT_INTERVAL_SEC then
+				hintTimer = 0
+				hintIndex = (hintIndex % #LOADING_HINTS) + 1
+				hintLabel.Text = "[" .. LOADING_HINTS[hintIndex] .. "]"
+				hintFade = 0.35
+			end
+			if hintFade > 0 then
+				hintFade = math.max(0, hintFade - dt)
+				local flash = hintFade / 0.35
+				hintLabel.TextTransparency = 0.08 + flash * 0.55
+			end
+		end
 	end)
 
 	return function()
 		conn:Disconnect()
-		if wrapScale.Parent then
+		if wrapScale and wrapScale.Parent then
 			wrapScale.Scale = 1
 		end
-		if logo.Parent then
+		if logo and logo.Parent then
 			logo.Rotation = 0
 			logo.ImageTransparency = 0
+			logo.Position = UDim2.fromScale(0.5, 0.5)
+		end
+		if loadingLabel and loadingLabel:IsA("TextLabel") and loadingLabel.Parent then
+			loadingLabel.Text = "Loading..."
+			loadingLabel.TextTransparency = 0
+		end
+		if hintLabel and hintLabel:IsA("TextLabel") and hintLabel.Parent then
+			hintLabel.TextTransparency = 0.08
 		end
 	end
 end
@@ -1603,7 +1890,8 @@ local function fadeOutLoadingTogether(
 	end
 	task.wait(FADE_OUT_SEC)
 
-	loadingGui.Enabled = false
+	-- Keep LoadingScreen.Enabled true until exitLoadingIsolation finishes in run().
+	-- Disabling it here raced OfflineEarnings / other join UI before Main was restored.
 	fadeCanvas = nil
 
 	if camera then
@@ -1623,11 +1911,12 @@ function M.showEarly()
 
 	loadingActive = true
 	setCoreGuisVisible(false)
+	hideNonLoadingScreenGuis(playerGui)
 
 	local loadingGui = findLoadingScreenGui(playerGui)
 	if loadingGui then
 		loadingGui.Enabled = true
-		loadingGui.DisplayOrder = 1000
+		loadingGui.DisplayOrder = 5000
 		loadingGui.ResetOnSpawn = false
 		loadingGui.IgnoreGuiInset = true
 		pcall(function()
@@ -1674,12 +1963,18 @@ function M.run()
 	local loadingGui = findLoadingScreenGui(playerGui) or resolveLoadingScreenGui(playerGui)
 	if not loadingGui then
 		warn("[LoadingScreenController] No StarterGui.LoadingScreen — add ScreenGui with GameNameImage")
+		-- showEarly may still have isolation / camera lock active — always release.
+		exitLoadingIsolation(playerGui)
+		local camera = Workspace.CurrentCamera
+		if camera then
+			restoreGameplayCamera(camera, player)
+		end
 		return
 	end
 
 	loadingGui.Enabled = true
 	loadingGui.ResetOnSpawn = false
-	loadingGui.DisplayOrder = 1000
+	loadingGui.DisplayOrder = 5000
 	loadingGui.IgnoreGuiInset = true
 	loadingGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	pcall(function()
@@ -1691,7 +1986,9 @@ function M.run()
 	ensureBlurOverlay(loadingGui)
 	setupFadeCanvas(loadingGui)
 	hideLoadingChrome(loadingGui)
+	ensureSleekLoadingUI(loadingGui)
 	ensureGameNameVisible(loadingGui)
+	setLoadingProgress(0.08)
 
 	if not earlyVisualsReady then
 		bootstrapLoadingVisuals(loadingGui, player)
@@ -1727,8 +2024,14 @@ function M.run()
 	local startedAt = cameraClipStartedAt or os.clock()
 	while os.clock() - startedAt < minDisplaySec do
 		enterLoadingIsolation(playerGui)
+		local elapsed = os.clock() - startedAt
+		-- Ease toward ~92% during the clip, then finish on hold.
+		local t = math.clamp(elapsed / math.max(clipSec, 0.05), 0, 1)
+		local eased = 1 - (1 - t) ^ 2
+		setLoadingProgress(0.08 + eased * 0.84)
 		task.wait(0.05)
 	end
+	setLoadingProgress(1)
 	task.wait(HOLD_AT_FULL_SEC)
 
 	loadingActive = false
@@ -1743,6 +2046,7 @@ function M.run()
 
 	fadeOutLoadingTogether(loadingGui, blur, camera, player)
 	cleanupLoadingVisuals(playerGui, loadingGui, nil)
+	loadingBarFill = nil
 
 	if stopNameAnim then
 		stopNameAnim()
@@ -1751,6 +2055,30 @@ function M.run()
 
 	exitLoadingIsolation(playerGui)
 	loadingGui.Enabled = false
+	-- Ensure gameplay HUD is interactable after the last isolation pass.
+	local main = playerGui:FindFirstChild("Main")
+	if main and main:IsA("ScreenGui") then
+		main.Enabled = true
+		local sideUI = main:FindFirstChild("SideUI")
+		if sideUI and sideUI:IsA("GuiObject") then
+			(sideUI :: GuiObject).Visible = true
+		end
+	end
+end
+
+function M.isActive(): boolean
+	return loadingActive
+end
+
+function M.registerOnGameplayReady(callback: () -> ())
+	if typeof(callback) ~= "function" then
+		return
+	end
+	if not loadingActive then
+		task.defer(callback)
+		return
+	end
+	table.insert(gameplayReadyCallbacks, callback)
 end
 
 return M

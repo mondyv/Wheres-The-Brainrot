@@ -14,7 +14,12 @@ local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local RaritySpawnStyle = require(script.Parent.RaritySpawnStyle)
 local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
+local CharacterWorldNotif = require(script.Parent.CharacterWorldNotif)
+local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
+local SpiderSenseFx = require(script.Parent.SpiderSenseFx)
+local SpiderEncounterConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SpiderEncounterConfig"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 
 local player = Players.LocalPlayer
 
@@ -48,6 +53,75 @@ local TIMER_CAMERA_HIDE_DIST = 38
 local BushFloatingClaimController = {}
 
 local acceptHooks: { (Model) -> () } = {}
+local ambushPendingByModel: { [Model]: boolean } = {}
+local spiderDeclineStreak = 0
+
+local SPIDER_SENSE_MESSAGES = {
+	"You sense something lurking",
+	"You still sense something lurking",
+	"You can't outrun it.",
+}
+
+local spiderArcActive = false
+
+local function rollSpiderAmbush(): boolean
+	if not SpiderEncounterConfig.ENABLED then
+		return false
+	end
+	if spiderArcActive or spiderDeclineStreak > 0 then
+		return true
+	end
+	return math.random() <= SpiderEncounterConfig.TRIGGER_CHANCE
+end
+
+local function spiderSenseMessage(): string
+	local idx = math.clamp(spiderDeclineStreak + 1, 1, #SPIDER_SENSE_MESSAGES)
+	return SPIDER_SENSE_MESSAGES[idx]
+end
+
+local function clearOfferPresentation(keepMoveLock: boolean?)
+	CharacterWorldNotif.dismiss()
+	SpiderSenseFx.stopAll()
+	if FloatingClaimCutscene.isActive() then
+		FloatingClaimCutscene.endCutscene(0.55, keepMoveLock == true)
+	elseif not keepMoveLock then
+		FloatingClaimCutscene.releaseMoveLock()
+	end
+end
+
+function BushFloatingClaimController.consumeAmbushOnAccept(model: Model): boolean
+	local pending = ambushPendingByModel[model] == true
+	ambushPendingByModel[model] = nil
+	if pending then
+		spiderDeclineStreak = 0
+		spiderArcActive = false
+	end
+	return pending
+end
+
+local function noteAmbushDeclined(model: Model)
+	if ambushPendingByModel[model] then
+		spiderDeclineStreak = math.min(spiderDeclineStreak + 1, #SPIDER_SENSE_MESSAGES - 1)
+		spiderArcActive = true
+	end
+	ambushPendingByModel[model] = nil
+end
+
+local function beginSpiderSenseForOffer(model: Model)
+	if ambushPendingByModel[model] ~= nil then
+		return
+	end
+	local willAmbush = rollSpiderAmbush()
+	ambushPendingByModel[model] = willAmbush
+	if not willAmbush then
+		return
+	end
+	spiderArcActive = true
+	CharacterWorldNotif.show(player.Character, spiderSenseMessage(), {
+		color = Color3.fromRGB(255, 210, 130),
+	})
+	SpiderSenseFx.startLurkingSense()
+end
 
 function BushFloatingClaimController.registerAcceptHook(fn: (Model) -> ())
 	table.insert(acceptHooks, fn)
@@ -88,21 +162,25 @@ type TrackedOffer = {
 	expiring: boolean,
 	modelVanishing: boolean,
 	hoverCount: number,
+	choiceUiReady: boolean,
 	layoutHalfWidth: number,
 	layoutFlankY: number,
 	layoutTimerY: number,
 	conns: { RBXScriptConnection },
+	spiderSenseActive: boolean,
 }
 
 local tracked: { [Model]: TrackedOffer } = {}
 local tickerConn: RBXScriptConnection? = nil
 local decisionRE: RemoteEvent? = nil
 
-local HOVER_POP = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local HOVER_SCALE = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local HOVER_OUT = TweenInfo.new(0.26, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-local HOVER_LIFT = 0.22
-local POP_IN = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local HOVER_POP = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local HOVER_SCALE = TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local HOVER_OUT = TweenInfo.new(0.24, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local HOVER_LIFT = 0.28
+local HOVER_TILT = 5.5
+local HOVER_TILT_SETTLE = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local POP_IN = TweenInfo.new(0.48, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local PUNCH = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local FADE = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local VANISH_OUT = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
@@ -299,7 +377,10 @@ local function updateOfferUiVisibility(entry: TrackedOffer)
 		return
 	end
 	local camDist = cameraDistanceToFixedAnchor(entry)
-	local showChoices = not entry.expiring and not entry.decisionLocked and dist <= OFFER_UI_HIDE_DISTANCE
+	local showChoices = entry.choiceUiReady
+		and not entry.expiring
+		and not entry.decisionLocked
+		and dist <= OFFER_UI_HIDE_DISTANCE
 	local showTimer = dist <= OFFER_UI_MAX_DISTANCE
 		and (typeof(camDist) ~= "number" or camDist <= TIMER_CAMERA_HIDE_DIST)
 	entry.acceptBb.Enabled = showChoices
@@ -501,6 +582,10 @@ local function untrack(model: Model, restoreBushCooldown: boolean?)
 	releaseBushForOffer(entry, restore == true)
 	disconnectTracked(entry)
 	tracked[model] = nil
+	ambushPendingByModel[model] = nil
+	if next(tracked) == nil then
+		clearOfferPresentation()
+	end
 end
 
 local function fireDecision(model: Model, decision: string)
@@ -729,8 +814,23 @@ local function animateOfferIn(entry: TrackedOffer)
 	applyDistanceScale(entry)
 	updateBillboardPositions(entry)
 
-	TweenService:Create(entry.acceptScale, POP_IN, { Scale = 1 }):Play()
-	TweenService:Create(entry.declineScale, POP_IN, { Scale = 1 }):Play()
+	-- Hold buttons back until the Pokémon pop settles into Floating, then ease
+	-- them in (no Back bounce) so the handoff feels continuous.
+	entry.choiceUiReady = false
+	entry.acceptBb.Enabled = false
+	entry.declineBb.Enabled = false
+	entry.acceptScale.Scale = 0.7
+	entry.declineScale.Scale = 0.7
+
+	task.delay(0.16, function()
+		if tracked[entry.model] ~= entry or entry.expiring then
+			return
+		end
+		entry.choiceUiReady = true
+		updateOfferUiVisibility(entry)
+		TweenService:Create(entry.acceptScale, POP_IN, { Scale = 1 }):Play()
+		TweenService:Create(entry.declineScale, POP_IN, { Scale = 1 }):Play()
+	end)
 end
 
 local function fadeButtonPanel(btn: TextButton)
@@ -851,6 +951,91 @@ local function punchButton(scale: UIScale, btn: TextButton, bright: Color3)
 	end
 end
 
+local function pressButtonVisual(scale: UIScale, btn: TextButton, panelScale: UIScale?)
+	TweenService:Create(scale, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Scale = 0.9,
+	}):Play()
+	if panelScale then
+		TweenService:Create(panelScale, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Scale = 0.96,
+		}):Play()
+	end
+	local panel = btn:FindFirstChild("Panel")
+	if panel and panel:IsA("Frame") then
+		TweenService:Create(panel, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			BackgroundTransparency = 0.08,
+		}):Play()
+	end
+end
+
+local function releaseButtonVisual(scale: UIScale, btn: TextButton, panelScale: UIScale?)
+	TweenService:Create(scale, TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Scale = 1,
+	}):Play()
+	if panelScale then
+		TweenService:Create(panelScale, TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+			Scale = 1,
+		}):Play()
+	end
+	local panel = btn:FindFirstChild("Panel")
+	if panel and panel:IsA("Frame") then
+		TweenService:Create(panel, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			BackgroundTransparency = 0.28,
+		}):Play()
+	end
+end
+
+local function bindChoiceButtonPress(
+	btn: TextButton,
+	scale: UIScale,
+	panelScale: UIScale?,
+	onActivated: () -> ()
+): { RBXScriptConnection }
+	local conns: { RBXScriptConnection } = {}
+	local pressed = false
+
+	table.insert(conns, btn.Activated:Connect(function()
+		if not MobileTouchGate.canTapUi() then
+			return
+		end
+		onActivated()
+	end))
+
+	table.insert(
+		conns,
+		btn.InputBegan:Connect(function(input, processed)
+			if processed or not btn.Active then
+				return
+			end
+			if
+				input.UserInputType == Enum.UserInputType.Touch
+				or input.UserInputType == Enum.UserInputType.MouseButton1
+			then
+				pressed = true
+				pressButtonVisual(scale, btn, panelScale)
+			end
+		end)
+	)
+
+	table.insert(
+		conns,
+		btn.InputEnded:Connect(function(input)
+			if not pressed then
+				return
+			end
+			if
+				input.UserInputType == Enum.UserInputType.Touch
+				or input.UserInputType == Enum.UserInputType.MouseButton1
+			then
+				pressed = false
+				releaseButtonVisual(scale, btn, panelScale)
+			end
+		end)
+	)
+
+	return conns
+end
+
 local function tweenBillboardLift(billboard: BillboardGui, lifted: boolean)
 	local liftValue = getBillboardLiftValue(billboard)
 	TweenService:Create(liftValue, if lifted then HOVER_POP else HOVER_OUT, {
@@ -876,6 +1061,29 @@ local function wireButtonHover(
 	local stroke = if panel then panel:FindFirstChildOfClass("UIStroke") else nil
 	local textLabel = btn:FindFirstChild("Label")
 	local strokeBright = accent:Lerp(Color3.fromRGB(255, 255, 255), 0.45)
+	local baseThickness = if stroke then stroke.Thickness else 1.5
+	local tiltSign = if btn.Name == "Accept" then -1 else 1
+	local hoverToken = 0
+
+	local function playHoverTilt()
+		hoverToken += 1
+		local token = hoverToken
+		local peak = HOVER_TILT * tiltSign
+		local overshoot = peak * 1.22
+		TweenService:Create(btn, HOVER_POP, { Rotation = overshoot }):Play()
+		if panel and panel:IsA("Frame") then
+			TweenService:Create(panel, HOVER_POP, { Rotation = overshoot * 0.35 }):Play()
+		end
+		task.delay(0.16, function()
+			if token ~= hoverToken or not btn.Parent then
+				return
+			end
+			TweenService:Create(btn, HOVER_TILT_SETTLE, { Rotation = peak }):Play()
+			if panel and panel:IsA("Frame") then
+				TweenService:Create(panel, HOVER_TILT_SETTLE, { Rotation = peak * 0.28 }):Play()
+			end
+		end)
+	end
 
 	btn.MouseEnter:Connect(function()
 		if scale.Scale < 0.5 then
@@ -883,15 +1091,15 @@ local function wireButtonHover(
 		end
 		entry.hoverCount += 1
 		tweenBillboardLift(bb, true)
-
-		TweenService:Create(scale, HOVER_SCALE, { Scale = 1.05 }):Play()
-		TweenService:Create(panelScale, HOVER_SCALE, { Scale = 1.02 }):Play()
+		TweenService:Create(scale, HOVER_SCALE, { Scale = 1.12 }):Play()
+		TweenService:Create(panelScale, HOVER_SCALE, { Scale = 1.06 }):Play()
+		playHoverTilt()
 		if panel and panel:IsA("Frame") then
-			TweenService:Create(panel, HOVER_POP, { BackgroundTransparency = 0.12 }):Play()
+			TweenService:Create(panel, HOVER_POP, { BackgroundTransparency = 0.1 }):Play()
 		end
 		if stroke then
 			TweenService:Create(stroke, HOVER_POP, {
-				Thickness = 2,
+				Thickness = baseThickness + 0.9,
 				Color = strokeBright,
 				Transparency = 0,
 			}):Play()
@@ -903,15 +1111,17 @@ local function wireButtonHover(
 
 	btn.MouseLeave:Connect(function()
 		entry.hoverCount = math.max(0, entry.hoverCount - 1)
+		hoverToken += 1
 		tweenBillboardLift(bb, false)
-		TweenService:Create(scale, HOVER_SCALE, { Scale = 1 }):Play()
-		TweenService:Create(panelScale, HOVER_SCALE, { Scale = 1 }):Play()
+		TweenService:Create(scale, HOVER_OUT, { Scale = 1 }):Play()
+		TweenService:Create(panelScale, HOVER_OUT, { Scale = 1 }):Play()
+		TweenService:Create(btn, HOVER_OUT, { Rotation = 0 }):Play()
 		if panel and panel:IsA("Frame") then
-			TweenService:Create(panel, HOVER_OUT, { BackgroundTransparency = 0.28 }):Play()
+			TweenService:Create(panel, HOVER_OUT, { BackgroundTransparency = 0.28, Rotation = 0 }):Play()
 		end
 		if stroke then
 			TweenService:Create(stroke, HOVER_OUT, {
-				Thickness = 1.5,
+				Thickness = baseThickness,
 				Color = accent,
 				Transparency = 0.08,
 			}):Play()
@@ -957,7 +1167,12 @@ local function ensureTicker()
 			local urgency = 1 - frac
 			applyUrgencyFlash(entry, urgency, now)
 			if remaining <= 0 then
-				animateOfferOut(entry, false)
+				-- Same client presentation as Decline: end cutscene + sink/fade brainrot.
+				entry.restoreBushCooldownOnRelease = true
+				noteAmbushDeclined(model)
+				clearOfferPresentation()
+				GameSoundEffects.playErrorNotif()
+				animateOfferOut(entry, true)
 			end
 		end
 	end)
@@ -1053,51 +1268,65 @@ local function trackModel(model: Model)
 		expiring = false,
 		modelVanishing = false,
 		hoverCount = 0,
+		choiceUiReady = false,
 		layoutHalfWidth = FLANK_OFFSET_X,
 		layoutFlankY = FLANK_OFFSET_Y,
 		layoutTimerY = TIMER_OFFSET_Y,
 		conns = {},
+		spiderSenseActive = false,
 	}
 	tracked[model] = entry
 	snapOfferLayout(entry)
 	attachBushOfferVisuals(entry, model)
 	updateBillboardPositions(entry)
 
+	FloatingClaimCutscene.begin(model, 0.62)
+
+	-- Ambush roll / lurking VFX starts during Pop; reuse that result here.
+	beginSpiderSenseForOffer(model)
+	local willAmbush = ambushPendingByModel[model] == true
+	if willAmbush then
+		entry.spiderSenseActive = true
+	end
+
 	local acceptAccent = Color3.fromRGB(70, 255, 140)
 	local declineAccent = Color3.fromRGB(255, 95, 85)
 	local acceptText = Color3.fromRGB(170, 255, 200)
 	local declineText = Color3.fromRGB(255, 190, 185)
 
-	table.insert(
-		entry.conns,
-		entry.acceptBtn.MouseButton1Click:Connect(function()
-			if entry.decisionLocked then
-				return
-			end
-			lockDecision(entry)
-			entry.acceptedOffer = true
-			punchButton(entry.acceptScale, entry.acceptBtn, Color3.fromRGB(160, 255, 190))
-			GameSoundEffects.playProximityPromptAppear()
-			BushHoldInteraction.suppressBushSearchBriefly(2.5)
-			ProximityPromptEffects.hideBushSearch()
-			fireDecision(model, "accept")
-			animateOfferOut(entry, false, true)
-		end)
-	)
+	for _, conn in bindChoiceButtonPress(entry.acceptBtn, entry.acceptScale, entry.acceptPanelScale, function()
+		if entry.decisionLocked then
+			return
+		end
+		lockDecision(entry)
+		entry.acceptedOffer = true
+		local keepLockedForSpider = ambushPendingByModel[model] == true
+		clearOfferPresentation(keepLockedForSpider)
+		punchButton(entry.acceptScale, entry.acceptBtn, Color3.fromRGB(160, 255, 190))
+		GameSoundEffects.playProximityPromptAppear()
+		BushHoldInteraction.suppressBushSearchBriefly(2.5)
+		ProximityPromptEffects.hideBushSearch()
+		fireDecision(model, "accept")
+		animateOfferOut(entry, false, true)
+	end) do
+		table.insert(entry.conns, conn)
+	end
 
-	table.insert(
-		entry.conns,
-		entry.declineBtn.MouseButton1Click:Connect(function()
-			if entry.decisionLocked then
-				return
-			end
-			entry.restoreBushCooldownOnRelease = true
-			punchButton(entry.declineScale, entry.declineBtn, Color3.fromRGB(255, 170, 160))
-			GameSoundEffects.playErrorNotif()
-			animateOfferOut(entry, true)
-			fireDecision(model, "decline")
-		end)
-	)
+	for _, conn in bindChoiceButtonPress(entry.declineBtn, entry.declineScale, entry.declinePanelScale, function()
+		if entry.decisionLocked then
+			return
+		end
+		entry.restoreBushCooldownOnRelease = true
+		lockDecision(entry)
+		noteAmbushDeclined(model)
+		clearOfferPresentation()
+		punchButton(entry.declineScale, entry.declineBtn, Color3.fromRGB(255, 170, 160))
+		GameSoundEffects.playErrorNotif()
+		animateOfferOut(entry, true)
+		fireDecision(model, "decline")
+	end) do
+		table.insert(entry.conns, conn)
+	end
 
 	table.insert(
 		entry.conns,
@@ -1153,7 +1382,18 @@ local function tryTrackModel(model: Model)
 	if not ownsOffer(model) then
 		return
 	end
-	if model:GetAttribute("BrainrotCarryPhase") ~= FLOATING_PHASE then
+	local phase = model:GetAttribute("BrainrotCarryPhase")
+	if phase == "Pop" then
+		-- Soft cutscene + lurking sense at the start of the pop, not after it settles.
+		beginSpiderSenseForOffer(model)
+		if FloatingClaimCutscene.isActive() then
+			FloatingClaimCutscene.setFocus(model, 0.32)
+		else
+			FloatingClaimCutscene.begin(model, 0.32)
+		end
+		return
+	end
+	if phase ~= FLOATING_PHASE then
 		return
 	end
 	trackModel(model)

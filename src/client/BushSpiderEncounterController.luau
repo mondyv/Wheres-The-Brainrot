@@ -5,6 +5,7 @@
 ]]
 
 local Debris = game:GetService("Debris")
+local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -15,6 +16,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local BushFloatingClaimController = require(script.Parent.BushFloatingClaimController)
+local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local LandAmbushUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandAmbushUtil"))
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
@@ -27,6 +29,8 @@ local C = SpiderEncounterConfig
 local player = Players.LocalPlayer
 
 local BushSpiderEncounterController = {}
+
+local MOVE_LOCK_ACTION = "BushSpiderEncounterMoveLock"
 
 local encounterActive = false
 local hiddenGui: { { inst: GuiObject, wasVisible: boolean } } = {}
@@ -50,10 +54,16 @@ local timingProgressFill: Frame? = nil
 local colorFx: ColorCorrectionEffect? = nil
 local blurFx: BlurEffect? = nil
 local cameraConn: RBXScriptConnection? = nil
+local moveLockConn: RBXScriptConnection? = nil
 local savedCameraType: Enum.CameraType? = nil
 local savedCameraSubject: Instance? = nil
 local savedFov = 70
 local defaultFov = 70
+local savedWalkSpeed: number? = nil
+local savedJumpPower: number? = nil
+local savedJumpHeight: number? = nil
+local savedUseJumpPower: boolean? = nil
+local savedAutoRotate: boolean? = nil
 local dodgeResolved = false
 local spiderKillRE: RemoteEvent? = nil
 local activeSpideySensesRoot: Instance? = nil
@@ -1336,7 +1346,7 @@ local function beginWebFollowCamera(
 	end)
 end
 
-local function easeCameraBackToPlayer(duration: number, spider: Model?)
+local function easeCameraBackToPlayer(duration: number, _spider: Model?)
 	stopCameraRig()
 	local cam = Workspace.CurrentCamera
 	local hrp = getPlayerHRP()
@@ -1349,32 +1359,30 @@ local function easeCameraBackToPlayer(duration: number, spider: Model?)
 		hum.CameraOffset = Vector3.zero
 	end
 
-	local lookTarget = hrp.Position + Vector3.new(0, 1.5, 0)
-	local camPos: Vector3
-	if spider and spider.Parent then
-		local spiderPos = spider:GetPivot().Position
-		local towardPlayer = flatUnitXZ(spiderPos, hrp.Position)
-		camPos = hrp.Position + towardPlayer * 10 + Vector3.new(0, 2.6, 0)
-	else
-		local back = hrp.CFrame.LookVector
-		local flatBack = Vector3.new(back.X, 0, back.Z)
-		if flatBack.Magnitude < 0.05 then
-			flatBack = Vector3.new(0, 0, 1)
+	local function gameplayHandoffCf(root: BasePart): CFrame
+		local look = Vector3.new(root.CFrame.LookVector.X, 0, root.CFrame.LookVector.Z)
+		if look.Magnitude < 0.05 then
+			look = Vector3.new(0, 0, -1)
 		else
-			flatBack = flatBack.Unit
+			look = look.Unit
 		end
-		camPos = hrp.Position - flatBack * 8 + Vector3.new(0, 2.5, 0)
+		local camPos = root.Position - look * 12.5 + Vector3.new(0, 5.5, 0)
+		return CFrame.lookAt(camPos, root.Position + Vector3.new(0, 1.6, 0))
 	end
 
 	local startCf = cam.CFrame
-	local goalCf = CFrame.lookAt(camPos, lookTarget)
+	local goalCf = gameplayHandoffCf(hrp)
 	local startFov = cam.FieldOfView
 	local goalFov = if savedFov > 0 then savedFov else defaultFov
 
 	local nv = Instance.new("NumberValue")
 	nv.Value = 0
 	local conn = nv.Changed:Connect(function()
-		local t = nv.Value
+		local live = getPlayerHRP()
+		if live then
+			goalCf = gameplayHandoffCf(live)
+		end
+		local t = 1 - (1 - nv.Value) ^ 3
 		cam.CFrame = startCf:Lerp(goalCf, t)
 		cam.FieldOfView = startFov + (goalFov - startFov) * t
 	end)
@@ -1387,15 +1395,120 @@ local function easeCameraBackToPlayer(duration: number, spider: Model?)
 	nv:Destroy()
 end
 
+local function lockPlayerMovement()
+	local handoff = FloatingClaimCutscene.takeMoveLockState()
+	if handoff then
+		if typeof(handoff.walkSpeed) == "number" then
+			savedWalkSpeed = handoff.walkSpeed
+		end
+		if typeof(handoff.jumpPower) == "number" then
+			savedJumpPower = handoff.jumpPower
+		end
+		if typeof(handoff.jumpHeight) == "number" then
+			savedJumpHeight = handoff.jumpHeight
+		end
+		if typeof(handoff.useJumpPower) == "boolean" then
+			savedUseJumpPower = handoff.useJumpPower
+		end
+		if typeof(handoff.autoRotate) == "boolean" then
+			savedAutoRotate = handoff.autoRotate
+		end
+	end
+
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum then
+		if savedWalkSpeed == nil then
+			-- Don't capture a zeroed speed from a prior cutscene freeze.
+			savedWalkSpeed = if hum.WalkSpeed > 0.05 then hum.WalkSpeed else 16
+			savedJumpPower = hum.JumpPower
+			savedJumpHeight = if hum.JumpHeight > 0 then hum.JumpHeight else 7.2
+			savedUseJumpPower = hum.UseJumpPower
+			savedAutoRotate = hum.AutoRotate
+		end
+		hum.WalkSpeed = 0
+		hum.JumpPower = 0
+		hum.JumpHeight = 0
+		hum.AutoRotate = false
+		hum:Move(Vector3.zero, false)
+	end
+	pcall(function()
+		ContextActionService:UnbindAction(MOVE_LOCK_ACTION)
+	end)
+	ContextActionService:BindActionAtPriority(
+		MOVE_LOCK_ACTION,
+		function()
+			return Enum.ContextActionResult.Sink
+		end,
+		false,
+		Enum.ContextActionPriority.High.Value,
+		Enum.PlayerActions.CharacterForward,
+		Enum.PlayerActions.CharacterBackward,
+		Enum.PlayerActions.CharacterLeft,
+		Enum.PlayerActions.CharacterRight,
+		Enum.PlayerActions.CharacterJump
+	)
+	if moveLockConn then
+		moveLockConn:Disconnect()
+	end
+	moveLockConn = RunService.RenderStepped:Connect(function()
+		if not encounterActive then
+			return
+		end
+		local liveHum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if liveHum then
+			if liveHum.WalkSpeed ~= 0 then
+				liveHum.WalkSpeed = 0
+			end
+			liveHum:Move(Vector3.zero, false)
+		end
+	end)
+end
+
+local function unlockPlayerMovement()
+	if moveLockConn then
+		moveLockConn:Disconnect()
+		moveLockConn = nil
+	end
+	pcall(function()
+		ContextActionService:UnbindAction(MOVE_LOCK_ACTION)
+	end)
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		if typeof(savedWalkSpeed) == "number" then
+			hum.WalkSpeed = savedWalkSpeed
+		end
+		if typeof(savedUseJumpPower) == "boolean" then
+			hum.UseJumpPower = savedUseJumpPower
+		end
+		if typeof(savedJumpPower) == "number" then
+			hum.JumpPower = savedJumpPower
+		end
+		if typeof(savedJumpHeight) == "number" then
+			hum.JumpHeight = savedJumpHeight
+		elseif hum.JumpHeight <= 0 then
+			hum.JumpHeight = 7.2
+		end
+		if typeof(savedAutoRotate) == "boolean" then
+			hum.AutoRotate = savedAutoRotate
+		end
+	end
+	savedWalkSpeed = nil
+	savedJumpPower = nil
+	savedJumpHeight = nil
+	savedUseJumpPower = nil
+	savedAutoRotate = nil
+end
+
 local function restoreCamera()
 	stopCameraRig()
 	local cam = Workspace.CurrentCamera
 	if not cam then
+		unlockPlayerMovement()
 		return
 	end
-	TweenService:Create(cam, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		FieldOfView = savedFov,
-	}):Play()
+	local goalFov = if savedFov > 0 then savedFov else defaultFov
+	cam.FieldOfView = goalFov
 	if savedCameraType then
 		cam.CameraType = savedCameraType
 	else
@@ -1415,6 +1528,7 @@ local function restoreCamera()
 	end
 	savedCameraType = nil
 	savedCameraSubject = nil
+	unlockPlayerMovement()
 end
 
 local function pulseCameraShake(duration: number, amp: number)
@@ -1826,7 +1940,13 @@ local function runEncounter(fallbackAnchor: Vector3)
 	dodgeResolved = false
 	savedCameraType = nil
 	savedCameraSubject = nil
+	savedWalkSpeed = nil
+	savedJumpPower = nil
+	savedJumpHeight = nil
+	savedUseJumpPower = nil
+	savedAutoRotate = nil
 
+	lockPlayerMovement()
 	hideGameplayUi()
 	animateLetterboxIn()
 	ensurePostFx()
@@ -2157,6 +2277,7 @@ end
 
 function BushSpiderEncounterController.tryTriggerAfterBrainrotAccept(_model: Model)
 	if not C.ENABLED or encounterActive then
+		FloatingClaimCutscene.releaseMoveLock()
 		return
 	end
 	local hrp = getPlayerHRP()
@@ -2184,6 +2305,8 @@ function BushSpiderEncounterController.init()
 	BushFloatingClaimController.registerAcceptHook(function(model: Model)
 		if BushFloatingClaimController.consumeAmbushOnAccept(model) then
 			BushSpiderEncounterController.tryTriggerAfterBrainrotAccept(model)
+		else
+			FloatingClaimCutscene.releaseMoveLock()
 		end
 	end)
 end

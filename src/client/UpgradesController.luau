@@ -19,8 +19,18 @@ local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitFor
 local Players = game:GetService("Players")
 local player = Players.LocalPlayer
 
-local purchaseFn = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("PurchaseSwingUpgrade") :: RemoteFunction
-local prepareRobuxRE = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("PrepareRobuxUpgrade") :: RemoteEvent
+local purchaseFn: RemoteFunction? = nil
+local prepareRobuxRE: RemoteEvent? = nil
+
+task.spawn(function()
+	local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
+	if not remotes then
+		warn("[UpgradesController] Remotes folder missing")
+		return
+	end
+	purchaseFn = remotes:WaitForChild("PurchaseSwingUpgrade", 30) :: RemoteFunction?
+	prepareRobuxRE = remotes:WaitForChild("PrepareRobuxUpgrade", 30) :: RemoteEvent?
+end)
 
 local SUCCESS_TWEEN = TweenInfo.new(0.32, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
 
@@ -446,8 +456,16 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 		local price = priceForUpgrade(upgradeId)
 		if c < price then
 			TopNotifController.showCantAfford()
-			prepareRobuxRE:FireServer(upgradeId)
+			if prepareRobuxRE then
+				prepareRobuxRE:FireServer(upgradeId)
+			end
 			promptSkipUpgradeProduct()
+			return
+		end
+
+		if not purchaseFn then
+			warn("[UpgradesController] PurchaseSwingUpgrade remote not ready")
+			GameSoundEffects.playErrorNotif()
 			return
 		end
 
@@ -477,8 +495,10 @@ local function wirePurchase(upgradeId: string, row: Instance, buyButtons: Instan
 			robuxBtn = robuxHolder:FindFirstChildWhichIsA("GuiButton", true)
 		end
 		if robuxBtn then
-			UIButtonEffects.wireAccentButton(robuxBtn, function()
-				prepareRobuxRE:FireServer(upgradeId)
+			UIButtonEffects.wireScaleButtonAnim(robuxBtn, function()
+				if prepareRobuxRE then
+					prepareRobuxRE:FireServer(upgradeId)
+				end
 				promptSkipUpgradeProduct()
 			end)
 		end

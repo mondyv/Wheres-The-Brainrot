@@ -1,18 +1,19 @@
 -- [ACTIVE] PanelSlideIn
 --[[
 	Open animations for HUD panels:
-	• slideGui — move a GuiObject from off-screen into its designed Position (no resize)
-	• slideInSequence — staggered UIScale pop for tabs (layout stays enabled)
-	• playForPanel — slide the panel frame itself; never nudge nested Containers/scrollbars
+	• slideGui — Container / content host slides into its designed Position
+	• slideInSequence — staggered TypeButtons (UIScale pop; layout stays enabled)
+	• playForPanel — only nested containers (+ Index tabs), never the whole panel frame
 ]]
 
 local TweenService = game:GetService("TweenService")
 
 local M = {}
 
-local DEFAULT_TWEEN = TweenInfo.new(0.52, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local DEFAULT_TWEEN = TweenInfo.new(0.48, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local DEFAULT_STAGGER = 0.07
 local TAB_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local DEFAULT_DISTANCE = 120
 
 local designedRest: { [GuiObject]: UDim2 } = {}
 local animGeneration = 0
@@ -83,10 +84,10 @@ function M.slideGui(gui: GuiObject?, opts: SlideOpts?)
 
 	local options = opts or {}
 	local from: SlideFrom = options.from or "Left"
-	local distance = if typeof(options.distance) == "number" then options.distance else 320
+	local distance = if typeof(options.distance) == "number" then options.distance else DEFAULT_DISTANCE
 	local tweenInfo = options.tweenInfo or DEFAULT_TWEEN
 	local scalePop = options.scalePop == true
-	local startScale = if typeof(options.startScale) == "number" then options.startScale else 0.85
+	local startScale = if typeof(options.startScale) == "number" then options.startScale else 0.92
 	local myGen = if typeof(options.generation) == "number" then options.generation else animGeneration
 
 	local rest = rememberRest(gui)
@@ -163,18 +164,25 @@ function M.collectNamedChildren(parent: Instance?, names: { string }): { GuiObje
 	return out
 end
 
-local PANEL_CONTENT: { [string]: { staggerParent: string?, staggerNames: { string }? } } = {
-	Shop = {},
-	Sell = {},
-	Store = {},
-	Daily = {},
+local PANEL_CONTENT: {
+	[string]: {
+		containers: { string },
+		staggerParent: string?,
+		staggerNames: { string }?,
+	},
+} = {
+	Shop = { containers = { "Container" } },
+	Sell = { containers = { "Container" } },
+	Store = { containers = { "StoreFrame" } },
+	Daily = { containers = { "Container" } },
 	Index = {
+		containers = { "Container" },
 		staggerParent = "TypeButtons",
 		staggerNames = { "Normal", "Gold", "Diamond", "Lava", "Galaxy", "Rainbow" },
 	},
-	["Config/Settings"] = {},
-	Config = {},
-	Settings = {},
+	["Config/Settings"] = { containers = { "Container" } },
+	Config = { containers = { "Container" } },
+	Settings = { containers = { "Container" } },
 }
 
 function M.playForPanel(frame: Frame)
@@ -187,15 +195,24 @@ function M.playForPanel(frame: Frame)
 	animGeneration += 1
 	local myGen = animGeneration
 
-	-- Slide the panel into its designed Position (scrollbars + content travel with it).
-	local slideDistance = math.max(frame.AbsoluteSize.X + 80, 360)
-	M.slideGui(frame, {
-		from = "Left",
-		distance = slideDistance,
-		scalePop = false,
-		generation = myGen,
-		tweenInfo = DEFAULT_TWEEN,
-	})
+	-- Only nested containers — header / panel chrome stay put.
+	for _, name in recipe.containers do
+		local host = frame:FindFirstChild(name)
+		if not host then
+			host = frame:FindFirstChild(name, true)
+		end
+		if host and host:IsA("GuiObject") then
+			if name == "Container" and host.Parent and host.Parent.Name == "StoreFrame" and frame.Name == "Store" then
+				continue
+			end
+			M.slideGui(host, {
+				from = "Left",
+				distance = if frame.Name == "Index" then 140 else 110,
+				scalePop = false,
+				generation = myGen,
+			})
+		end
+	end
 
 	if recipe.staggerParent and recipe.staggerNames then
 		local parent = frame:FindFirstChild(recipe.staggerParent)

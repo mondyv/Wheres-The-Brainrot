@@ -371,61 +371,6 @@ local function startSpideySensesOnSpider(spider: Model)
 	end
 end
 
-local function orientWebFlightVfx(web: BasePart)
-	local oldAnchor = web:FindFirstChild("SpiderWebLightArrow")
-	if oldAnchor and oldAnchor:IsA("BasePart") then
-		for _, desc in oldAnchor:GetDescendants() do
-			if
-				desc:IsA("Trail")
-				or desc:IsA("Beam")
-				or desc:IsA("ParticleEmitter")
-				or desc:IsA("Sound")
-			then
-				desc.Parent = web
-			elseif desc:IsA("Attachment") then
-				desc.Parent = web
-			end
-		end
-		oldAnchor:Destroy()
-	end
-
-	local a0 = web:FindFirstChild("SpiderWebTrailA0")
-	if not (a0 and a0:IsA("Attachment")) then
-		a0 = Instance.new("Attachment")
-		a0.Name = "SpiderWebTrailA0"
-		a0.Parent = web
-	end
-	local a1 = web:FindFirstChild("SpiderWebTrailA1")
-	if not (a1 and a1:IsA("Attachment")) then
-		a1 = Instance.new("Attachment")
-		a1.Name = "SpiderWebTrailA1"
-		a1.Parent = web
-	end
-
-	local trailA0 = a0 :: Attachment
-	local trailA1 = a1 :: Attachment
-	trailA0.Position = Vector3.new(0, 0, -0.35)
-	trailA1.Position = Vector3.new(0, 0, 3.6)
-
-	for _, desc in web:GetChildren() do
-		if desc:IsA("Attachment") and desc ~= a0 and desc ~= a1 then
-			desc:Destroy()
-		end
-	end
-
-	for _, desc in web:GetDescendants() do
-		if desc:IsA("ParticleEmitter") then
-			desc.Parent = trailA0
-			desc.Enabled = true
-		elseif desc:IsA("Trail") or desc:IsA("Beam") then
-			desc.Attachment0 = trailA0
-			desc.Attachment1 = trailA1
-			desc.Enabled = true
-			desc.FaceCamera = false
-		end
-	end
-end
-
 local function webProjectileCFrame(pos: Vector3, flightDir: Vector3): CFrame
 	local dir = flightDir
 	if dir.Magnitude < 0.05 then
@@ -439,61 +384,127 @@ local function webProjectileCFrame(pos: Vector3, flightDir: Vector3): CFrame
 	return CFrame.lookAt(pos, pos + dir, upHint)
 end
 
-local function attachWebLightArrow(web: BasePart)
-	local template = findSpiderVfxTemplate(C.SPIDER_LIGHT_ARROW_NAME)
+local function getWebProjectilePosition(web: Model): Vector3
+	return web:GetPivot().Position
+end
+
+local function setWebProjectileCFrame(web: Model, pos: Vector3, flightDir: Vector3)
+	web:PivotTo(webProjectileCFrame(pos, flightDir))
+end
+
+local function stabilizeWebProjectile(model: Model)
+	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if primary and primary:IsA("BasePart") then
+		model.PrimaryPart = primary
+	end
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+			d.CanCollide = false
+			d.CanQuery = false
+			d.CanTouch = false
+			d.Massless = true
+		end
+	end
+end
+
+local function createFallbackWebProjectile(): Model
+	local model = Instance.new("Model")
+	model.Name = "SpiderWebShot"
+	local web = Instance.new("Part")
+	web.Name = "Root"
+	web.Size = Vector3.new(1.2, 1.2, 2.4)
+	web.Shape = Enum.PartType.Ball
+	web.Material = Enum.Material.SmoothPlastic
+	web.Color = Color3.fromRGB(235, 235, 245)
+	web.Anchored = true
+	web.CanCollide = false
+	web.CanQuery = false
+	web.CanTouch = false
+	web.Transparency = 0.08
+	web.Parent = model
+	model.PrimaryPart = web
+	model.Parent = Workspace
+	return model
+end
+
+local function createShootingWebProjectile(): Model
+	local template = findSpiderVfxTemplate(C.SPIDER_SHOOTING_WEB_NAME)
 	if not template then
-		warn("[BushSpiderEncounterController] EssentialAssets.SpiderVFX.LightArrow missing")
-		return
+		warn("[BushSpiderEncounterController] EssentialAssets.SpiderVFX['Shooting Web'] missing")
+		return createFallbackWebProjectile()
 	end
 
 	local clone = template:Clone()
-	clone.Name = "SpiderWebLightArrow"
+	clone.Name = "SpiderWebShot"
 
-	local function moveEffectToWeb(inst: Instance)
-		if
-			inst:IsA("Attachment")
-			or inst:IsA("ParticleEmitter")
-			or inst:IsA("Trail")
-			or inst:IsA("Beam")
-			or inst:IsA("Sound")
-		then
-			inst.Parent = web
-		end
-	end
-
-	if
-		clone:IsA("Attachment")
-		or clone:IsA("ParticleEmitter")
-		or clone:IsA("Trail")
-		or clone:IsA("Beam")
-		or clone:IsA("Sound")
-	then
-		moveEffectToWeb(clone)
+	local model: Model
+	if clone:IsA("Model") then
+		model = clone
 	else
-		for _, desc in clone:GetDescendants() do
-			moveEffectToWeb(desc)
-		end
-		for _, child in clone:GetChildren() do
-			moveEffectToWeb(child)
-		end
-		clone:Destroy()
+		model = Instance.new("Model")
+		model.Name = "SpiderWebShot"
+		clone.Parent = model
 	end
 
-	orientWebFlightVfx(web)
-	setEffectInstancesEnabled(web, true)
-	emitVfxParticles(web, 12)
-	playVfxSounds(web)
+	stabilizeWebProjectile(model)
+	model.Parent = Workspace
+	setEffectInstancesEnabled(model, true)
+	emitVfxParticles(model, 10)
+	playVfxSounds(model)
+	return model
 end
 
-local function snapWebToImpact(web: BasePart, fromPos: Vector3, hitPos: Vector3, flightDir: Vector3, duration: number)
+local function fadeWebProjectile(web: Model, duration: number)
+	setEffectInstancesEnabled(web, false)
+	local fadeInfo = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	for _, d in web:GetDescendants() do
+		if d:IsA("BasePart") then
+			TweenService:Create(d, fadeInfo, { Transparency = 1 }):Play()
+		elseif d:IsA("Decal") or d:IsA("Texture") then
+			TweenService:Create(d, fadeInfo, { Transparency = 1 }):Play()
+		elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+			TweenService:Create(d, fadeInfo, { Brightness = 0 }):Play()
+		elseif d:IsA("ParticleEmitter") then
+			d.Enabled = false
+			d.Rate = 0
+		elseif d:IsA("Trail") or d:IsA("Beam") then
+			d.Enabled = false
+		end
+	end
+	-- Soft shrink dissolve while trails finish fading.
+	pcall(function()
+		local startScale = (web :: any):GetScale()
+		if typeof(startScale) ~= "number" then
+			return
+		end
+		local nv = Instance.new("NumberValue")
+		nv.Value = startScale
+		local conn = nv.Changed:Connect(function()
+			if web.Parent then
+				pcall(function()
+					(web :: any):ScaleTo(nv.Value)
+				end)
+			end
+		end)
+		local tween = TweenService:Create(nv, fadeInfo, { Value = startScale * 0.28 })
+		tween:Play()
+		tween.Completed:Once(function()
+			conn:Disconnect()
+			nv:Destroy()
+		end)
+	end)
+end
+
+local function snapWebToImpact(web: Model, fromPos: Vector3, hitPos: Vector3, flightDir: Vector3, duration: number)
 	local started = os.clock()
 	while os.clock() - started < duration and encounterActive do
 		local alpha = smoothstep((os.clock() - started) / duration)
 		local pos = fromPos:Lerp(hitPos, alpha)
-		web.CFrame = webProjectileCFrame(pos, flightDir)
+		setWebProjectileCFrame(web, pos, flightDir)
 		RunService.RenderStepped:Wait()
 	end
-	web.CFrame = webProjectileCFrame(hitPos, flightDir)
+	setWebProjectileCFrame(web, hitPos, flightDir)
 end
 
 local function holdHitImpactCamera(hitPos: Vector3, spiderPos: Vector3)
@@ -1811,7 +1822,7 @@ local function tweenSpiderDrop(
 	spider:PivotTo(cfFacingTarget(toPos, faceTargetFn()))
 end
 
-local function finishEncounter(spider: Model?, web: BasePart?)
+local function finishEncounter(spider: Model?, web: Model?)
 	encounterActive = false
 	hideTimingQTE()
 	stopSpideySenses()
@@ -1875,7 +1886,7 @@ local function getPlayerAimPos(fallback: Vector3): Vector3
 	return getPlayerChestPos(fallback)
 end
 
-local function getWebImpactPos(flightDir: Vector3, fallback: Vector3, spider: Model?, web: BasePart?): Vector3
+local function getWebImpactPos(flightDir: Vector3, fallback: Vector3, spider: Model?, web: Model?): Vector3
 	local hrp = getPlayerHRP()
 	if not hrp then
 		return fallback
@@ -2025,22 +2036,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 	faceCharacterToward(spider:GetPivot().Position)
 	spider:PivotTo(cfFacingTarget(spider:GetPivot().Position, playerAim))
 
-	local web = Instance.new("Part")
-	web.Name = "SpiderWebShot"
-	web.Size = C.WEB_PROJECTILE_SIZE
-	web.Shape = Enum.PartType.Ball
-	web.Material = Enum.Material.SmoothPlastic
-	web.Color = Color3.fromRGB(235, 235, 245)
-	web.Anchored = true
-	web.CanCollide = false
-	web.CanQuery = false
-	web.CanTouch = false
-	web.Transparency = 0.08
-	web.Parent = Workspace
-	local webMesh = Instance.new("SpecialMesh")
-	webMesh.MeshType = Enum.MeshType.Sphere
-	webMesh.Scale = Vector3.new(1.1, 1.1, 2.2)
-	webMesh.Parent = web
+	local web = createShootingWebProjectile()
 
 	playerAim = getPlayerAimPos(fallbackAnchor)
 	local spiderPivot = spider:GetPivot()
@@ -2053,14 +2049,13 @@ local function runEncounter(fallbackAnchor: Vector3)
 	else
 		flightDir = flightDir.Unit
 	end
-	web.CFrame = webProjectileCFrame(spiderShoot, flightDir)
-	attachWebLightArrow(web)
+	setWebProjectileCFrame(web, spiderShoot, flightDir)
 
 	GameSoundEffects.playSpiderWebShot()
 	setBgmWebSlow()
 
 	beginWebFollowCamera(function()
-		return web.Position
+		return getWebProjectilePosition(web)
 	end, function()
 		return getPlayerAimPos(fallbackAnchor)
 	end, function()
@@ -2186,7 +2181,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 		shotTarget = getWebImpactPos(flightDir, getPlayerChestPos(fallbackAnchor), spider, web)
 		currentEased = smoothstep(math.clamp(travelAlpha, 0, 1))
 		local pos = spiderShoot:Lerp(shotTarget, currentEased)
-		web.CFrame = webProjectileCFrame(pos, flightDir)
+		setWebProjectileCFrame(web, pos, flightDir)
 
 		if timingProgressFill then
 			timingProgressFill.Size = UDim2.fromScale(math.clamp(travelAlpha, 0, 1), 1)
@@ -2246,7 +2241,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 		task.wait(0.22)
 		easeCameraBackToPlayer(0.55, spider)
 		waitSec(0.2)
-		TweenService:Create(web, TweenInfo.new(0.25), { Transparency = 1 }):Play()
+		fadeWebProjectile(web, C.WEB_FADE_OUT)
 		fadeSpider(spider)
 		waitSec(0.4)
 		finishEncounter(spider, web)
@@ -2257,10 +2252,10 @@ local function runEncounter(fallbackAnchor: Vector3)
 	stopCameraRig()
 
 	local hitTarget = getWebImpactPos(flightDir, getPlayerChestPos(fallbackAnchor), spider, web)
-	snapWebToImpact(web, web.Position, hitTarget, flightDir, 0.14)
+	snapWebToImpact(web, getWebProjectilePosition(web), hitTarget, flightDir, 0.14)
 	holdHitImpactCamera(hitTarget, spider:GetPivot().Position)
 
-	TweenService:Create(web, TweenInfo.new(0.18), { Transparency = 1 }):Play()
+	fadeWebProjectile(web, math.min(C.WEB_FADE_OUT, 0.22))
 	GameSoundEffects.playSpiderGettingHit()
 	flashCharacterHit()
 	playSpiderHitBlowVfx(hitTarget)

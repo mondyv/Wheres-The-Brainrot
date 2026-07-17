@@ -14,7 +14,7 @@ M.SPIDER_VFX_FOLDER_PATH = { "EssentialAssets", "SpiderVFX" }
 M.SPIDER_BLOW_VFX_NAME = "Blow"
 M.SPIDER_SPIDEY_SENSES_NAME = "Spidey senses"
 M.SPIDER_SPIDEY_SENSES_HUMAN_NAME = "Spidey senses human"
-M.SPIDER_LIGHT_ARROW_NAME = "LightArrow"
+M.SPIDER_SHOOTING_WEB_NAME = "Shooting Web"
 M.SPIDER_BLOW_VFX_LIFETIME = 1.35
 
 M.ANIM = {
@@ -31,8 +31,8 @@ M.WEB_SHOOT_AT = 0.72
 M.WEB_ANIM_FALLBACK_SEC = 1.15
 M.RAGE_FALLBACK_SEC = 1.85
 M.RAGE_CAMERA_ZOOM_FOV = 26
-M.WEB_PROJECTILE_SIZE = Vector3.new(2.4, 2.4, 2.4)
 M.WEB_TRAVEL_TIME = 3.2
+M.WEB_FADE_OUT = 0.35
 
 -- Single closing ring: base size matches key badge; starts larger, closes to 1.
 M.RING_OUTER_PX = 78

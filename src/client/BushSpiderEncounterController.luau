@@ -821,7 +821,7 @@ local function restoreGameplayUi()
 end
 
 local function ensureCutsceneGui(): ScreenGui
-	if cutsceneGui and cutsceneGui.Parent and cutsceneGui:GetAttribute("QteStyle") == "clean_v1" then
+	if cutsceneGui and cutsceneGui.Parent and cutsceneGui:GetAttribute("QteStyle") == "clean_v2" then
 		return cutsceneGui
 	end
 	if cutsceneGui then
@@ -836,7 +836,7 @@ local function ensureCutsceneGui(): ScreenGui
 	gui.IgnoreGuiInset = true
 	gui.DisplayOrder = 950
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	gui:SetAttribute("QteStyle", "clean_v1")
+	gui:SetAttribute("QteStyle", "clean_v2")
 	pcall(function()
 		(gui :: any).ClipToDeviceSafeArea = false
 	end)
@@ -912,7 +912,8 @@ local function ensureCutsceneGui(): ScreenGui
 	ring.Position = UDim2.fromScale(0.5, 0.42)
 	ring.Size = UDim2.fromOffset(ringPx, ringPx)
 	ring.BackgroundTransparency = 1
-	ring.ZIndex = 42
+	-- Behind badge + hint so the closing stroke never covers the letter/text.
+	ring.ZIndex = 41
 	ring.Parent = qte
 	local ringCorner = Instance.new("UICorner")
 	ringCorner.CornerRadius = UDim.new(1, 0)
@@ -932,7 +933,7 @@ local function ensureCutsceneGui(): ScreenGui
 	badge.Position = UDim2.fromScale(0.5, 0.42)
 	badge.Size = UDim2.fromOffset(ringPx, ringPx)
 	badge.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
-	badge.BackgroundTransparency = 0.12
+	badge.BackgroundTransparency = 0
 	badge.ZIndex = 44
 	badge.Parent = qte
 	local badgeCorner = Instance.new("UICorner")
@@ -978,7 +979,7 @@ local function ensureCutsceneGui(): ScreenGui
 	hint.Text = "GET READY"
 	hint.TextColor3 = Color3.fromRGB(200, 205, 220)
 	UiFonts.applyButtonLabel(hint, 12, 9)
-	hint.ZIndex = 45
+	hint.ZIndex = 48
 	hint.Parent = qte
 
 	local tapBtn = Instance.new("TextButton")

@@ -96,7 +96,8 @@ local function resolveTimeLabel(row: Instance): TextLabel?
 	return nil
 end
 
-local function ensureTitleLabel(row: Instance, tier: GlobalRaritySpawnConfig.TierDef)
+-- Hide Studio title labels — the Time row carries the full "Mythical Spawning in …" string.
+local function hideTitleLabels(row: Instance, tier: GlobalRaritySpawnConfig.TierDef)
 	local names = TITLE_CANDIDATES[tier.id]
 	if not names then
 		return
@@ -104,11 +105,14 @@ local function ensureTitleLabel(row: Instance, tier: GlobalRaritySpawnConfig.Tie
 	for _, name in names do
 		local title = row:FindFirstChild(name)
 		if title and title:IsA("TextLabel") then
-			title.Text = tier.displayName
-			title.Visible = true
-			return
+			title.Text = ""
+			title.Visible = false
 		end
 	end
+end
+
+local function formatRowLabel(tier: GlobalRaritySpawnConfig.TierDef, remaining: number): string
+	return string.format("%s Spawning in %s", tier.displayName, C.formatCountdown(remaining))
 end
 
 local function findTimerLabels(): number
@@ -127,7 +131,7 @@ local function findTimerLabels(): number
 		if not row then
 			continue
 		end
-		ensureTitleLabel(row, tier)
+		hideTitleLabels(row, tier)
 		local timeLabel = resolveTimeLabel(row)
 		if timeLabel then
 			timerLabels[tier.id] = timeLabel
@@ -147,8 +151,7 @@ local function refreshTimerLabels()
 		local endsAt = ReplicatedStorage:GetAttribute(C.timerAttrForTier(tier.id))
 		local remaining = if typeof(endsAt) == "number" then math.max(0, endsAt - now) else tier.intervalSec
 		label.Visible = true
-		-- Title labels already show rarity; Time is countdown only.
-		label.Text = C.formatCountdown(remaining)
+		label.Text = formatRowLabel(tier, remaining)
 	end
 end
 

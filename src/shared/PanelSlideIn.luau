@@ -10,9 +10,9 @@ local TweenService = game:GetService("TweenService")
 
 local M = {}
 
-local DEFAULT_TWEEN = TweenInfo.new(0.42, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-local DEFAULT_STAGGER = 0.055
-local DEFAULT_DISTANCE = 80
+local DEFAULT_TWEEN = TweenInfo.new(0.48, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local DEFAULT_STAGGER = 0.065
+local DEFAULT_DISTANCE = 110
 
 local restPositions: { [GuiObject]: UDim2 } = {}
 local animGeneration = 0
@@ -26,6 +26,7 @@ export type SlideOpts = {
 	distance: number?,
 	tweenInfo: TweenInfo?,
 	scalePop: boolean?,
+	startScale: number?,
 	generation: number?,
 	skipCancel: boolean?,
 }
@@ -100,6 +101,7 @@ function M.slideGui(gui: GuiObject?, opts: SlideOpts?)
 	local distance = if typeof(options.distance) == "number" then options.distance else DEFAULT_DISTANCE
 	local tweenInfo = options.tweenInfo or DEFAULT_TWEEN
 	local scalePop = options.scalePop ~= false
+	local startScale = if typeof(options.startScale) == "number" then options.startScale else 0.72
 	local myGen = if typeof(options.generation) == "number" then options.generation else animGeneration
 
 	restPositions[gui] = nil
@@ -110,7 +112,7 @@ function M.slideGui(gui: GuiObject?, opts: SlideOpts?)
 	local scale: UIScale? = nil
 	if scalePop then
 		scale = getOrAddScale(gui)
-		scale.Scale = 0.96
+		scale.Scale = startScale
 	end
 
 	task.defer(function()
@@ -135,9 +137,10 @@ function M.slideInSequence(guis: { GuiObject }, opts: SlideOpts?)
 	local options = opts or {}
 	local from: SlideFrom = options.from or "Left"
 	local stagger = if typeof(options.stagger) == "number" then options.stagger else DEFAULT_STAGGER
-	local distance = if typeof(options.distance) == "number" then options.distance else 48
+	local distance = if typeof(options.distance) == "number" then options.distance else 64
 	local tweenInfo = options.tweenInfo or DEFAULT_TWEEN
 	local scalePop = options.scalePop ~= false
+	local startScale = if typeof(options.startScale) == "number" then options.startScale else 0.35
 
 	if not options.skipCancel then
 		M.cancel()
@@ -181,7 +184,7 @@ function M.slideInSequence(guis: { GuiObject }, opts: SlideOpts?)
 		local scale: UIScale? = nil
 		if scalePop then
 			scale = getOrAddScale(gui)
-			scale.Scale = 0.92
+			scale.Scale = startScale
 		end
 
 		pending += 1
@@ -261,8 +264,9 @@ function M.playForPanel(frame: Frame)
 			end
 			M.slideGui(host, {
 				from = "Left",
-				distance = 80,
+				distance = if frame.Name == "Index" then 140 else 100,
 				scalePop = true,
+				startScale = if frame.Name == "Index" then 0.45 else 0.72,
 				generation = myGen,
 			})
 		end
@@ -278,9 +282,10 @@ function M.playForPanel(frame: Frame)
 				end
 				M.slideInSequence(tabs, {
 					from = "Left",
-					stagger = 0.055,
-					distance = 44,
+					stagger = 0.07,
+					distance = 72,
 					scalePop = true,
+					startScale = 0.2,
 					generation = myGen,
 					skipCancel = true,
 				})

@@ -30,6 +30,9 @@ local TILT_CLICK = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirectio
 local TILT_RESET = TweenInfo.new(0.2, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
 local QUEST_BAR_TWEEN = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local ROW_HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local ROW_ROLL_IN = TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local ROW_STAGGER = 0.05
+local ROW_START_SCALE = 0.12
 local INDEX_BADGE_SWAY = TweenInfo.new(0.72, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
 local INDEX_BADGE_INNER_SWAY = TweenInfo.new(0.52, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
 local INDEX_BADGE_INNER_PULSE = TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut, -1, true)
@@ -71,6 +74,7 @@ local stateCache: { [string]: any } = {}
 local sortedCatalogCache: { [string]: { { name: string, rarity: string, baseIncome: number, icon: string } } } = {}
 local gridMutation: string? = nil
 local rebuildToken = 0
+local rowAnimGen = 0
 local ROW_BATCH_SIZE = 14
 
 local function getOrAddUIScale(obj: GuiObject): UIScale
@@ -455,7 +459,9 @@ local function populateRow(
 	entry: { name: string, rarity: string, baseIncome: number, icon: string },
 	mutationId: string,
 	unlocked: boolean,
-	animateRow: boolean?
+	animateRow: boolean?,
+	rowIndex: number?,
+	animStartedAt: number?
 )
 	local frame = row:FindFirstChild("Frame") or row
 	local icon = frame:FindFirstChild("Icon", true)
@@ -512,8 +518,17 @@ local function populateRow(
 	local rowHost = if frame:IsA("GuiObject") then frame :: GuiObject else row
 	local rowScale = getOrAddUIScale(rowHost)
 	if animateRow == true then
-		rowScale.Scale = 0.94
-		TweenService:Create(rowScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		rowScale.Scale = ROW_START_SCALE
+		local idx = if typeof(rowIndex) == "number" then rowIndex else 1
+		local started = if typeof(animStartedAt) == "number" then animStartedAt else os.clock()
+		local delaySec = math.max(0, (idx - 1) * ROW_STAGGER - (os.clock() - started))
+		local gen = rowAnimGen
+		task.delay(delaySec, function()
+			if gen ~= rowAnimGen or not row.Parent or not row.Visible then
+				return
+			end
+			TweenService:Create(rowScale, ROW_ROLL_IN, { Scale = 1 }):Play()
+		end)
 	else
 		rowScale.Scale = 1
 	end
@@ -619,6 +634,10 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 
 	rebuildToken += 1
 	local token = rebuildToken
+	if animateRows == true then
+		rowAnimGen += 1
+	end
+	local animStartedAt = os.clock()
 	clearGrid()
 	gridMutation = selectedMutation
 
@@ -626,6 +645,7 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 	local order = 0
 	local index = 1
 	local BATCH = math.min(ROW_BATCH_SIZE, 10)
+	local doAnimate = animateRows == true
 
 	local function spawnBatch()
 		if token ~= rebuildToken or not container or not rowTemplate then
@@ -648,7 +668,7 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 			row.LayoutOrder = order
 			local key = IndexConfig.unlockKey(entry.name, selectedMutation)
 			local isUnlocked = unlocked[key] == true
-			populateRow(row, entry, selectedMutation, isUnlocked, animateRows == true and i <= BATCH)
+			populateRow(row, entry, selectedMutation, isUnlocked, doAnimate, i, animStartedAt)
 		end
 		index = batchEnd + 1
 		if index <= #list then
@@ -705,20 +725,14 @@ local function refreshStateInBackground(mutationId: string, animateRows: boolean
 	end)
 end
 
-local function prefetchAllMutations()
-	for _, mutationId in IndexConfig.MUTATION_TABS do
-		if stateCache[mutationId] then
-			continue
-		end
-		task.spawn(function()
-			local state = fetchStateFor(mutationId)
-			if state then
-				stateCache[mutationId] = state
-				if mutationId == selectedMutation and indexFrame and indexFrame.Visible then
-					rebuildGrid(state, false)
-				end
-			end
-		end)
+local function loadMutationGrid(mutationId: string, animateRows: boolean)
+	if stateCache[mutationId] then
+		applyCachedState(mutationId, animateRows)
+		refreshStateInBackground(mutationId, false)
+	else
+		clearGrid()
+		gridMutation = nil
+		refreshStateInBackground(mutationId, animateRows)
 	end
 end
 
@@ -759,8 +773,7 @@ selectMutation = function(mutationId: string)
 			end
 		end
 	end
-	applyCachedState(mutationId, false)
-	refreshStateInBackground(mutationId, false)
+	loadMutationGrid(mutationId, true)
 end
 
 local function hideIndexNotif()
@@ -929,12 +942,12 @@ function IndexController.init()
 					layout.Enabled = true
 				end
 			end
-			if gridMutation ~= selectedMutation or #catalogRows == 0 then
-				applyCachedState(selectedMutation, false)
-			end
-			refreshStateInBackground(selectedMutation, false)
+			loadMutationGrid(selectedMutation, true)
 		else
 			wasVisible = false
+			rowAnimGen += 1
+			clearGrid()
+			gridMutation = nil
 			if tooltipLabel then
 				tooltipLabel.Visible = false
 			end
@@ -959,9 +972,8 @@ function IndexController.init()
 			local re = remotes:WaitForChild("IndexUnlocked", 30)
 			if rf and rf:IsA("RemoteFunction") then
 				getStateRF = rf
-				local bootState = fetchStateFor("normal")
-				if bootState then
-					stateCache.normal = bootState
+				if indexFrame and indexFrame.Visible then
+					loadMutationGrid(selectedMutation, true)
 				end
 			end
 			if re and re:IsA("RemoteEvent") then
@@ -993,8 +1005,6 @@ function IndexController.init()
 				end)
 			end
 		end
-
-		prefetchAllMutations()
 	end)
 end
 

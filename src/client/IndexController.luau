@@ -20,7 +20,6 @@ local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("U
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-local OPEN_PANEL = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local OPEN_NOTIF = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_NOTIF = TweenInfo.new(0.12, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
 local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -43,7 +42,7 @@ local LOCKED_NAME_COLOR = Color3.fromRGB(0, 0, 0)
 
 local indexFrame: Frame? = nil
 local headerTitle: TextLabel? = nil
-local container: ScrollingFrame? = nil
+local container: GuiObject? = nil
 local rowTemplate: Frame? = nil
 local questsFrame: Frame? = nil
 local progressBar: Frame? = nil
@@ -376,39 +375,47 @@ end
 local function wireTabInteractions(tabRoot: Instance, mutationId: string)
 	local btn = resolveTabButton(tabRoot)
 	if not btn then
+		warn("[IndexController] no GuiButton under TypeButtons." .. tabRoot.Name)
 		return
 	end
+	btn.Active = true
+	pcall(function()
+		(btn :: any).Interactable = true
+	end)
 	local tiltTarget = resolveTabTiltTarget(tabRoot, btn)
-	local scale = getOrAddUIScale(btn)
+	-- Dedicated scale so PanelSlideScale on the tab root doesn't fight hover.
+	local scale = btn:FindFirstChild("IndexTabHoverScale")
+	if not (scale and scale:IsA("UIScale")) then
+		scale = Instance.new("UIScale")
+		scale.Name = "IndexTabHoverScale"
+		scale.Scale = 1
+		scale.Parent = btn
+	end
+	local hoverScale = scale :: UIScale
+
+	local lastFire = 0
+	local function fireSelect()
+		local now = os.clock()
+		if now - lastFire < 0.15 then
+			return
+		end
+		lastFire = now
+		UIInteractionSounds.playClick()
+		TweenService:Create(hoverScale, CLICK_TWEEN, { Scale = 0.94 }):Play()
+		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 2.5 }):Play()
+		selectMutation(mutationId)
+	end
 
 	btn.MouseEnter:Connect(function()
 		UIInteractionSounds.playHover()
-		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.06 }):Play()
+		TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1.06 }):Play()
 		TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -4 }):Play()
 	end)
 	btn.MouseLeave:Connect(function()
-		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1 }):Play()
+		TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1 }):Play()
 		TweenService:Create(tiltTarget, TILT_RESET, { Rotation = 0 }):Play()
 	end)
-	btn.MouseButton1Down:Connect(function()
-		UIInteractionSounds.playClick()
-		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.94 }):Play()
-		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 2.5 }):Play()
-		selectMutation(mutationId)
-	end)
-	btn.MouseButton1Up:Connect(function()
-		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.06 }):Play()
-		TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -4 }):Play()
-	end)
-end
-
-local function playPanelOpenAnim()
-	if not indexFrame then
-		return
-	end
-	local scale = getOrAddUIScale(indexFrame)
-	scale.Scale = 0.82
-	TweenService:Create(scale, OPEN_PANEL, { Scale = 1 }):Play()
+	btn.Activated:Connect(fireSelect)
 end
 
 local function incomeForCatalog(entry: { name: string, rarity: string, baseIncome: number }, mutationId: string): number
@@ -699,10 +706,15 @@ local function fetchStateFor(mutationId: string): any?
 	local ok, result = pcall(function()
 		return getStateRF:InvokeServer(mutationId)
 	end)
-	if ok then
-		return result
+	if not ok then
+		warn("[IndexController] GetIndexState failed:", result)
+		return nil
 	end
-	return nil
+	if typeof(result) ~= "table" then
+		warn("[IndexController] GetIndexState returned non-table for", mutationId)
+		return nil
+	end
+	return result
 end
 
 local function applyCachedState(mutationId: string, animateRows: boolean?)
@@ -714,6 +726,11 @@ end
 
 local function refreshStateInBackground(mutationId: string, animateRows: boolean?)
 	task.spawn(function()
+		-- Wait briefly if remotes aren't ready yet (open can race init).
+		local deadline = os.clock() + 8
+		while not getStateRF and os.clock() < deadline do
+			task.wait(0.2)
+		end
 		local state = fetchStateFor(mutationId)
 		if not state then
 			return
@@ -866,12 +883,36 @@ function IndexController.init()
 
 	headerTitle = findLabel(indexFrame, { "Title", "HeaderTitle", "Name" })
 		or (indexFrame:FindFirstChild("Header") and findLabel(indexFrame.Header, { "Title", "Name" }))
-	container = indexFrame:FindFirstChild("Container", true) :: ScrollingFrame?
+	-- Prefer direct child so we don't grab a nested Decor/Container by mistake.
+	local containerInst = indexFrame:FindFirstChild("Container")
+	if not containerInst then
+		containerInst = indexFrame:FindFirstChild("Container", true)
+	end
+	container = if containerInst and containerInst:IsA("ScrollingFrame")
+		then containerInst
+		elseif containerInst and containerInst:IsA("GuiObject")
+		then containerInst:FindFirstChildWhichIsA("ScrollingFrame", true)
+		else nil
+	if not container and containerInst and containerInst:IsA("Frame") then
+		container = containerInst :: any
+	end
 	if container then
 		rowTemplate = container:FindFirstChild("1") :: Frame?
+		if not rowTemplate then
+			for _, ch in container:GetChildren() do
+				if ch:IsA("Frame") and ch.Name ~= "UIListLayout" and ch.Name ~= "UIGridLayout" and ch.Name ~= "UIPadding" then
+					rowTemplate = ch
+					break
+				end
+			end
+		end
 		if rowTemplate then
 			rowTemplate.Visible = false
+		else
+			warn("[IndexController] Index Container has no row template")
 		end
+	else
+		warn("[IndexController] Index Container missing")
 	end
 
 	questsFrame = indexFrame:FindFirstChild("Quests", true) :: Frame?
@@ -924,16 +965,11 @@ function IndexController.init()
 		end)
 	end
 
-	local wasVisible = indexFrame.Visible
 	indexFrame:GetPropertyChangedSignal("Visible"):Connect(function()
 		if indexFrame.Visible then
 			hideIndexSidebarBadge()
 			hideTabNotif(selectedMutation)
-			if not wasVisible and HUDController.getCurrentFrame() ~= indexFrame then
-				playPanelOpenAnim()
-			end
-			wasVisible = true
-			-- Force tab layout healthy after any prior slide cancel.
+			-- Ensure tabs stay clickable after panel open.
 			local typeButtons = indexFrame:FindFirstChild("TypeButtons")
 			if typeButtons then
 				local layout = typeButtons:FindFirstChildOfClass("UIListLayout")
@@ -941,11 +977,23 @@ function IndexController.init()
 				if layout then
 					layout.Enabled = true
 				end
+				for _, ch in typeButtons:GetChildren() do
+					local btn = resolveTabButton(ch)
+					if btn then
+						btn.Active = true
+						pcall(function()
+							(btn :: any).Interactable = true
+						end)
+					end
+				end
+			end
+			if container then
+				(container :: GuiObject).Active = true
 			end
 			loadMutationGrid(selectedMutation, true)
 		else
-			wasVisible = false
 			rowAnimGen += 1
+			-- Keep cache; only hide rows so reopen can animate again without refetch lag.
 			clearGrid()
 			gridMutation = nil
 			if tooltipLabel then
@@ -972,6 +1020,11 @@ function IndexController.init()
 			local re = remotes:WaitForChild("IndexUnlocked", 30)
 			if rf and rf:IsA("RemoteFunction") then
 				getStateRF = rf
+				-- Warm normal tab cache so first open isn't empty; grid still only builds when visible.
+				local bootState = fetchStateFor("normal")
+				if bootState then
+					stateCache.normal = bootState
+				end
 				if indexFrame and indexFrame.Visible then
 					loadMutationGrid(selectedMutation, true)
 				end

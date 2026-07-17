@@ -111,9 +111,9 @@ local syncFramesInputPassthrough: () -> ()
 
 local function animateOpen(frame: Frame)
 	frame.Visible = true
+	-- Keep size fixed — PanelSlideIn slides Position into the designed layout spot.
 	local scale = getOrAddUIScale(frame)
-	scale.Scale = 0.82
-	TweenService:Create(scale, OPEN_TWEEN, { Scale = 1 }):Play()
+	scale.Scale = 1
 	PanelSlideIn.playForPanel(frame)
 end
 
@@ -125,13 +125,14 @@ local function animateClose(frame: Frame)
 		closeTweenByFrame[frame] = nil
 	end
 	local scale = getOrAddUIScale(frame)
-	local t = TweenService:Create(scale, CLOSE_TWEEN, { Scale = 0.72 })
+	scale.Scale = 1
+	local t = TweenService:Create(scale, CLOSE_TWEEN, { Scale = 0.92 })
 	closeTweenByFrame[frame] = t
 	t.Completed:Once(function()
 		closeTweenByFrame[frame] = nil
 		frame.Visible = false
 		frame.Active = false
-		scale.Scale = 0.82 -- reset for next open
+		scale.Scale = 1
 		if syncFramesInputPassthrough then
 			syncFramesInputPassthrough()
 		end

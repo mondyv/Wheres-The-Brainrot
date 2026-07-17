@@ -1,22 +1,21 @@
 -- [ACTIVE] PanelSlideIn
 --[[
 	Open animations for HUD panels:
-	• slideGui — whole Container / content host from the left
-	• slideInSequence — staggered children (Index TypeButtons), layout-safe
-	• playForPanel — recipe for Shop / Sell / Store / Daily / Index / Config
+	• slideGui — move a GuiObject from off-screen into its designed Position (no resize)
+	• slideInSequence — staggered UIScale pop for tabs (layout stays enabled)
+	• playForPanel — slide the panel frame itself; never nudge nested Containers/scrollbars
 ]]
 
 local TweenService = game:GetService("TweenService")
 
 local M = {}
 
-local DEFAULT_TWEEN = TweenInfo.new(0.48, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-local DEFAULT_STAGGER = 0.065
-local DEFAULT_DISTANCE = 110
+local DEFAULT_TWEEN = TweenInfo.new(0.52, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local DEFAULT_STAGGER = 0.07
+local TAB_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
-local restPositions: { [GuiObject]: UDim2 } = {}
+local designedRest: { [GuiObject]: UDim2 } = {}
 local animGeneration = 0
-local activeLayout: (UIListLayout | UIGridLayout)? = nil
 
 export type SlideFrom = "Left" | "Right" | "Up" | "Down"
 
@@ -54,33 +53,19 @@ local function getOrAddScale(gui: GuiObject): UIScale
 	return scale
 end
 
-local function findLayout(parent: Instance?): UIListLayout | UIGridLayout | nil
-	if not parent then
-		return nil
+local function rememberRest(gui: GuiObject): UDim2
+	local rest = designedRest[gui]
+	if rest then
+		return rest
 	end
-	return parent:FindFirstChildOfClass("UIListLayout") or parent:FindFirstChildOfClass("UIGridLayout")
-end
-
-local function restoreActiveLayout()
-	if activeLayout and activeLayout.Parent then
-		activeLayout.Enabled = true
-		for _, ch in activeLayout.Parent:GetChildren() do
-			if ch:IsA("GuiObject") then
-				restPositions[ch] = nil
-				local scale = ch:FindFirstChild("PanelSlideScale")
-				if scale and scale:IsA("UIScale") then
-					scale.Scale = 1
-				end
-			end
-		end
-	end
-	activeLayout = nil
+	rest = gui.Position
+	designedRest[gui] = rest
+	return rest
 end
 
 function M.cancel()
 	animGeneration += 1
-	restoreActiveLayout()
-	for gui, rest in restPositions do
+	for gui, rest in designedRest do
 		if gui.Parent then
 			gui.Position = rest
 			local scale = gui:FindFirstChild("PanelSlideScale")
@@ -98,28 +83,28 @@ function M.slideGui(gui: GuiObject?, opts: SlideOpts?)
 
 	local options = opts or {}
 	local from: SlideFrom = options.from or "Left"
-	local distance = if typeof(options.distance) == "number" then options.distance else DEFAULT_DISTANCE
+	local distance = if typeof(options.distance) == "number" then options.distance else 320
 	local tweenInfo = options.tweenInfo or DEFAULT_TWEEN
-	local scalePop = options.scalePop ~= false
-	local startScale = if typeof(options.startScale) == "number" then options.startScale else 0.72
+	local scalePop = options.scalePop == true
+	local startScale = if typeof(options.startScale) == "number" then options.startScale else 0.85
 	local myGen = if typeof(options.generation) == "number" then options.generation else animGeneration
 
-	restPositions[gui] = nil
-	local rest = gui.Position
-	restPositions[gui] = rest
-
+	local rest = rememberRest(gui)
 	gui.Position = offsetPosition(rest, from, distance)
 	local scale: UIScale? = nil
 	if scalePop then
 		scale = getOrAddScale(gui)
 		scale.Scale = startScale
+	else
+		local existing = gui:FindFirstChild("PanelSlideScale")
+		if existing and existing:IsA("UIScale") then
+			existing.Scale = 1
+		end
 	end
 
 	task.defer(function()
 		if myGen ~= animGeneration or not gui.Parent then
-			if restPositions[gui] then
-				gui.Position = restPositions[gui]
-			end
+			gui.Position = rest
 			return
 		end
 		TweenService:Create(gui, tweenInfo, { Position = rest }):Play()
@@ -129,18 +114,16 @@ function M.slideGui(gui: GuiObject?, opts: SlideOpts?)
 	end)
 end
 
+-- Staggered pop-in via UIScale only — keeps UIListLayout/UIGridLayout positions intact.
 function M.slideInSequence(guis: { GuiObject }, opts: SlideOpts?)
 	if #guis == 0 then
 		return
 	end
 
 	local options = opts or {}
-	local from: SlideFrom = options.from or "Left"
 	local stagger = if typeof(options.stagger) == "number" then options.stagger else DEFAULT_STAGGER
-	local distance = if typeof(options.distance) == "number" then options.distance else 64
-	local tweenInfo = options.tweenInfo or DEFAULT_TWEEN
-	local scalePop = options.scalePop ~= false
-	local startScale = if typeof(options.startScale) == "number" then options.startScale else 0.35
+	local startScale = if typeof(options.startScale) == "number" then options.startScale else 0.08
+	local tweenInfo = options.tweenInfo or TAB_TWEEN
 
 	if not options.skipCancel then
 		M.cancel()
@@ -151,65 +134,18 @@ function M.slideInSequence(guis: { GuiObject }, opts: SlideOpts?)
 		animGeneration = myGen
 	end
 
-	local parent = guis[1].Parent
-	local layout = findLayout(parent)
-	if layout then
-		layout.Enabled = true
-	end
-	for _, gui in ipairs(guis) do
-		if gui.Parent then
-			restPositions[gui] = gui.Position
-		end
-	end
-
-	if layout then
-		activeLayout = layout
-		layout.Enabled = false
-	end
-
-	local pending = 0
-	local function finishOne()
-		pending -= 1
-		if pending <= 0 and myGen == animGeneration then
-			restoreActiveLayout()
-		end
-	end
-
 	for i, gui in ipairs(guis) do
 		if not gui.Parent then
 			continue
 		end
-		local rest = restPositions[gui] or gui.Position
-		gui.Position = offsetPosition(rest, from, distance)
-		local scale: UIScale? = nil
-		if scalePop then
-			scale = getOrAddScale(gui)
-			scale.Scale = startScale
-		end
-
-		pending += 1
+		local scale = getOrAddScale(gui)
+		scale.Scale = startScale
 		task.delay((i - 1) * stagger, function()
 			if myGen ~= animGeneration or not gui.Parent then
-				finishOne()
 				return
 			end
-			local move = TweenService:Create(gui, tweenInfo, { Position = rest })
-			move:Play()
-			if scale and scale.Parent then
-				TweenService:Create(scale, tweenInfo, { Scale = 1 }):Play()
-			end
-			local conn: RBXScriptConnection?
-			conn = move.Completed:Connect(function()
-				if conn then
-					conn:Disconnect()
-				end
-				finishOne()
-			end)
+			TweenService:Create(scale, tweenInfo, { Scale = 1 }):Play()
 		end)
-	end
-
-	if pending == 0 then
-		restoreActiveLayout()
 	end
 end
 
@@ -227,19 +163,18 @@ function M.collectNamedChildren(parent: Instance?, names: { string }): { GuiObje
 	return out
 end
 
-local PANEL_CONTENT: { [string]: { containers: { string }, staggerParent: string?, staggerNames: { string }? } } = {
-	Shop = { containers = { "Container" } },
-	Sell = { containers = { "Container" } },
-	Store = { containers = { "StoreFrame" } },
-	Daily = { containers = { "Container" } },
+local PANEL_CONTENT: { [string]: { staggerParent: string?, staggerNames: { string }? } } = {
+	Shop = {},
+	Sell = {},
+	Store = {},
+	Daily = {},
 	Index = {
-		containers = { "Container" },
 		staggerParent = "TypeButtons",
 		staggerNames = { "Normal", "Gold", "Diamond", "Lava", "Galaxy", "Rainbow" },
 	},
-	["Config/Settings"] = { containers = { "Container" } },
-	Config = { containers = { "Container" } },
-	Settings = { containers = { "Container" } },
+	["Config/Settings"] = {},
+	Config = {},
+	Settings = {},
 }
 
 function M.playForPanel(frame: Frame)
@@ -252,25 +187,15 @@ function M.playForPanel(frame: Frame)
 	animGeneration += 1
 	local myGen = animGeneration
 
-	for _, name in recipe.containers do
-		local host = frame:FindFirstChild(name)
-		if not host then
-			host = frame:FindFirstChild(name, true)
-		end
-		if host and host:IsA("GuiObject") then
-			-- Don't slide a nested Container if we already slide StoreFrame as parent.
-			if name == "Container" and host.Parent and host.Parent.Name == "StoreFrame" and frame.Name == "Store" then
-				continue
-			end
-			M.slideGui(host, {
-				from = "Left",
-				distance = if frame.Name == "Index" then 140 else 100,
-				scalePop = true,
-				startScale = if frame.Name == "Index" then 0.45 else 0.72,
-				generation = myGen,
-			})
-		end
-	end
+	-- Slide the panel into its designed Position (scrollbars + content travel with it).
+	local slideDistance = math.max(frame.AbsoluteSize.X + 80, 360)
+	M.slideGui(frame, {
+		from = "Left",
+		distance = slideDistance,
+		scalePop = false,
+		generation = myGen,
+		tweenInfo = DEFAULT_TWEEN,
+	})
 
 	if recipe.staggerParent and recipe.staggerNames then
 		local parent = frame:FindFirstChild(recipe.staggerParent)
@@ -281,13 +206,11 @@ function M.playForPanel(frame: Frame)
 					return
 				end
 				M.slideInSequence(tabs, {
-					from = "Left",
-					stagger = 0.07,
-					distance = 72,
-					scalePop = true,
-					startScale = 0.2,
+					stagger = 0.075,
+					startScale = 0.05,
 					generation = myGen,
 					skipCancel = true,
+					tweenInfo = TAB_TWEEN,
 				})
 			end)
 		end

@@ -10,7 +10,6 @@ local ContentProvider = game:GetService("ContentProvider")
 local HttpService = game:GetService("HttpService")
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
@@ -18,7 +17,6 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
-local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local MIN_DISPLAY_SEC = 2.4
 local HOLD_AT_FULL_SEC = 0.6
@@ -27,8 +25,6 @@ local FADE_TWEEN_INFO = TweenInfo.new(FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.
 local RESOLVE_TIMEOUT = 45
 -- Wall-clock duration multiplier for moon flyover (2x slower back cam → longer load).
 local MOON_PLAYBACK_SCALE = 2
--- Soft radial glow used for liquid blobs (white circle with soft falloff).
-local LIQUID_GLOW_IMAGE = "rbxassetid://241644025"
 
 local DEFAULT_CAMERA_POS = Vector3.new(1452.568, 100.564, 518.559)
 local DEFAULT_CAMERA_RAD = Vector3.new(math.rad(4.555), math.rad(18.409), 0)
@@ -56,10 +52,10 @@ local SOLID_COVER_FADE_SEC = 0.55
 local TITLE_MAX_WIDTH_MOBILE = 560
 local TITLE_MAX_WIDTH_DESKTOP = 860
 local TITLE_DEFAULT_ASPECT = 3.15
-local STACK_PADDING_PX = 4
-local STACK_CENTER_Y = 0.58
-local LOADING_TEXT_SIZE = 26
-local HINT_TEXT_SIZE = 16
+local STACK_PADDING_PX = 6
+local STACK_CENTER_Y = 0.52
+local LOADING_TEXT_SIZE = 28
+local HINT_TEXT_SIZE = 18
 local BAR_WIDTH_MOBILE = 360
 local BAR_WIDTH_DESKTOP = 520
 local BAR_HEIGHT_PX = 10
@@ -67,23 +63,23 @@ local BAR_HEIGHT_PX = 10
 local BAR_FILL_COLOR = Color3.fromRGB(118, 196, 66)
 local BAR_TRACK_COLOR = Color3.fromRGB(18, 16, 14)
 local LOADING_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
-local HINT_TEXT_COLOR = Color3.fromRGB(245, 245, 245)
+local HINT_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
 
 local ELLIPSIS_INTERVAL_SEC = 0.38
 local HINT_INTERVAL_SEC = 2.15
 local WOBBLE_JUMP_SPEED = 2.35
-local WOBBLE_ROT_DEG = 5.5
-local WOBBLE_JUMP_PX = 10
-local WOBBLE_SCALE_AMOUNT = 0.028
+local WOBBLE_ROT_DEG = 4
+local WOBBLE_JUMP_PX = 8
+local WOBBLE_SCALE_AMOUNT = 0.022
 
-local LIQUID_BLOB_COUNT = 6
+local LIQUID_BLOB_COUNT = 8
 local LIQUID_SPEED_MUL = 0.5 -- 2x slower drift
 local LIQUID_COLORS = {
-	Color3.fromRGB(255, 220, 90),
-	Color3.fromRGB(255, 200, 55),
-	Color3.fromRGB(255, 235, 140),
-	Color3.fromRGB(255, 185, 50),
-	Color3.fromRGB(255, 245, 170),
+	Color3.fromRGB(255, 220, 70),
+	Color3.fromRGB(255, 195, 40),
+	Color3.fromRGB(255, 235, 120),
+	Color3.fromRGB(255, 175, 35),
+	Color3.fromRGB(255, 245, 160),
 }
 
 local LOADING_HINTS = {
@@ -1478,20 +1474,32 @@ local function cleanupLoadingVisuals(playerGui: PlayerGui, loadingGui: ScreenGui
 		if solidCover and solidCover:IsA("Frame") then
 			solidCover:Destroy()
 		end
+
+		local function salvageLogoAndDestroyStack(stackParent: Instance)
+			local stack = stackParent:FindFirstChild("LoadingStack")
+			if not stack then
+				return
+			end
+			local logo = stack:FindFirstChild("GameNameImage", true) or stack:FindFirstChild("ImageLabel", true)
+			if logo and logo:IsA("ImageLabel") then
+				logo.Parent = loadingGui
+			end
+			stack:Destroy()
+		end
+
+		local liquid = loadingGui:FindFirstChild("LiquidLayer")
+		if liquid then
+			liquid:Destroy()
+		end
+		salvageLogoAndDestroyStack(loadingGui)
+
 		local canvas = loadingGui:FindFirstChild("LoadingFadeCanvas")
 		if canvas then
-			local liquid = canvas:FindFirstChild("LiquidLayer")
-			if liquid then
-				liquid:Destroy()
+			local canvasLiquid = canvas:FindFirstChild("LiquidLayer")
+			if canvasLiquid then
+				canvasLiquid:Destroy()
 			end
-			local stack = canvas:FindFirstChild("LoadingStack")
-			if stack then
-				local logo = stack:FindFirstChild("GameNameImage", true) or stack:FindFirstChild("ImageLabel", true)
-				if logo and logo:IsA("ImageLabel") then
-					logo.Parent = canvas
-				end
-				stack:Destroy()
-			end
+			salvageLogoAndDestroyStack(canvas)
 		end
 	end
 
@@ -1512,6 +1520,7 @@ local function findGameNameImage(loadingGui: ScreenGui): ImageLabel?
 end
 
 local function setupFadeCanvas(loadingGui: ScreenGui): CanvasGroup
+	-- Keep a CanvasGroup only for legacy Studio chrome fade — crisp text/logo stay OUTSIDE it.
 	local existing = loadingGui:FindFirstChild("LoadingFadeCanvas")
 	if existing and existing:IsA("CanvasGroup") then
 		fadeCanvas = existing
@@ -1537,6 +1546,8 @@ local function setupFadeCanvas(loadingGui: ScreenGui): CanvasGroup
 			and child.Name ~= "Camera"
 			and child.Name ~= "BlurOverlay"
 			and child.Name ~= "SolidCover"
+			and child.Name ~= "LiquidLayer"
+			and child.Name ~= "LoadingStack"
 		then
 			table.insert(moveList, child)
 		end
@@ -1563,23 +1574,33 @@ local function hideLoadingChrome(loadingGui: ScreenGui)
 	end
 end
 
-local function getUiParent(loadingGui: ScreenGui): Instance
-	local canvas = fadeCanvas or loadingGui:FindFirstChild("LoadingFadeCanvas")
-	if canvas and canvas:IsA("CanvasGroup") then
-		return canvas
-	end
+-- Crisp UI must NOT live under CanvasGroup (it rasterizes and makes text look low-res).
+local function getCrispUiParent(loadingGui: ScreenGui): ScreenGui
 	return loadingGui
 end
 
 local function findOrCreateStack(loadingGui: ScreenGui): Frame
-	local parent = getUiParent(loadingGui)
+	local parent = getCrispUiParent(loadingGui)
+	-- Migrate old stack out of CanvasGroup if needed.
+	local canvas = loadingGui:FindFirstChild("LoadingFadeCanvas")
+	if canvas then
+		local buried = canvas:FindFirstChild("LoadingStack")
+		if buried and buried:IsA("Frame") then
+			buried.Parent = parent
+		end
+	end
+
 	local existing = parent:FindFirstChild("LoadingStack")
 	if existing and existing:IsA("Frame") then
+		existing.AnchorPoint = Vector2.new(0.5, 0.5)
 		existing.Position = UDim2.fromScale(0.5, STACK_CENTER_Y)
-		existing.Size = UDim2.fromScale(0.86, 0)
+		existing.Size = UDim2.fromScale(1, 0)
+		existing.ZIndex = 20
 		local layout = existing:FindFirstChild("StackLayout")
 		if layout and layout:IsA("UIListLayout") then
 			layout.Padding = UDim.new(0, STACK_PADDING_PX)
+			layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+			layout.VerticalAlignment = Enum.VerticalAlignment.Center
 		end
 		return existing
 	end
@@ -1590,9 +1611,9 @@ local function findOrCreateStack(loadingGui: ScreenGui): Frame
 	stack.BorderSizePixel = 0
 	stack.AnchorPoint = Vector2.new(0.5, 0.5)
 	stack.Position = UDim2.fromScale(0.5, STACK_CENTER_Y)
-	stack.Size = UDim2.fromScale(0.86, 0)
+	stack.Size = UDim2.fromScale(1, 0)
 	stack.AutomaticSize = Enum.AutomaticSize.Y
-	stack.ZIndex = 5
+	stack.ZIndex = 20
 	stack.Parent = parent
 
 	local layout = Instance.new("UIListLayout")
@@ -1607,32 +1628,57 @@ local function findOrCreateStack(loadingGui: ScreenGui): Frame
 	return stack
 end
 
-local function addSoftLobe(parent: Frame, name: string, color: Color3, sizeScale: number, ox: number, oy: number, transparency: number)
-	local lobe = Instance.new("ImageLabel")
-	lobe.Name = name
-	lobe.BackgroundTransparency = 1
-	lobe.BorderSizePixel = 0
-	lobe.Image = LIQUID_GLOW_IMAGE
-	lobe.ImageColor3 = color
-	lobe.ImageTransparency = transparency
-	lobe.ScaleType = Enum.ScaleType.Fit
-	lobe.AnchorPoint = Vector2.new(0.5, 0.5)
-	lobe.Position = UDim2.fromScale(0.5 + ox, 0.5 + oy)
-	lobe.Size = UDim2.fromScale(sizeScale, sizeScale)
-	lobe.ZIndex = 1
-	lobe:SetAttribute("BaseOX", ox)
-	lobe:SetAttribute("BaseOY", oy)
-	lobe.Parent = parent
-	return lobe
+local function addSoftLobe(parent: Frame, name: string, color: Color3, sizeScale: number, ox: number, oy: number, coreTransparency: number)
+	-- Concentric rounded discs = soft blob without external glow assets.
+	local holder = Instance.new("Frame")
+	holder.Name = name
+	holder.BackgroundTransparency = 1
+	holder.BorderSizePixel = 0
+	holder.AnchorPoint = Vector2.new(0.5, 0.5)
+	holder.Position = UDim2.fromScale(0.5 + ox, 0.5 + oy)
+	holder.Size = UDim2.fromScale(sizeScale, sizeScale)
+	holder.ZIndex = 2
+	holder:SetAttribute("BaseOX", ox)
+	holder:SetAttribute("BaseOY", oy)
+	holder.Parent = parent
+
+	for ring = 1, 5 do
+		local t = (ring - 1) / 4
+		local disc = Instance.new("Frame")
+		disc.Name = "Ring" .. ring
+		disc.BackgroundColor3 = color
+		disc.BackgroundTransparency = math.clamp(coreTransparency + t * 0.32, 0, 0.97)
+		disc.BorderSizePixel = 0
+		disc.AnchorPoint = Vector2.new(0.5, 0.5)
+		disc.Position = UDim2.fromScale(0.5, 0.5)
+		disc.Size = UDim2.fromScale(1 - t * 0.42, 1 - t * 0.42)
+		disc.ZIndex = 2
+		disc.Parent = holder
+
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(1, 0)
+		corner.Parent = disc
+	end
+
+	return holder
 end
 
 local function ensureLiquidLayer(loadingGui: ScreenGui): Frame
-	local parent = getUiParent(loadingGui)
-	local existing = parent:FindFirstChild("LiquidLayer")
-	if existing and existing:IsA("Frame") then
-		if existing:GetAttribute("LiquidStyle") == "organic_v2" then
-			return existing
+	local parent = getCrispUiParent(loadingGui)
+	for _, root in { parent, loadingGui:FindFirstChild("LoadingFadeCanvas") } do
+		if root then
+			local old = root:FindFirstChild("LiquidLayer")
+			if old and old:GetAttribute("LiquidStyle") ~= "organic_v3" then
+				old:Destroy()
+			end
 		end
+	end
+
+	local existing = parent:FindFirstChild("LiquidLayer")
+	if existing and existing:IsA("Frame") and existing:GetAttribute("LiquidStyle") == "organic_v3" then
+		return existing
+	end
+	if existing then
 		existing:Destroy()
 	end
 
@@ -1643,33 +1689,35 @@ local function ensureLiquidLayer(loadingGui: ScreenGui): Frame
 	layer.AnchorPoint = Vector2.new(0, 0)
 	layer.Position = UDim2.fromScale(0, 0)
 	layer.Size = UDim2.fromScale(1, 1)
-	layer.ZIndex = 1
+	layer.ZIndex = 3
 	layer.ClipsDescendants = true
-	layer:SetAttribute("LiquidStyle", "organic_v2")
+	layer:SetAttribute("LiquidStyle", "organic_v3")
 	layer.Parent = parent
 
-	-- Organic clusters: overlapping soft glow lobes (not capsules).
+	-- Organic lava-lamp clusters: overlapping soft discs.
 	local layouts = {
-		{ { 1.0, 0, 0, 0.82 }, { 0.62, 0.22, -0.12, 0.88 }, { 0.55, -0.18, 0.16, 0.9 }, { 0.4, 0.1, 0.22, 0.92 } },
-		{ { 0.95, 0, 0, 0.84 }, { 0.7, -0.2, 0.08, 0.89 }, { 0.48, 0.18, -0.18, 0.91 } },
-		{ { 1.05, 0, 0, 0.83 }, { 0.58, 0.24, 0.14, 0.9 }, { 0.5, -0.22, -0.1, 0.91 }, { 0.36, 0.05, -0.24, 0.93 } },
-		{ { 0.9, 0, 0, 0.85 }, { 0.66, 0.16, 0.2, 0.9 }, { 0.52, -0.14, -0.2, 0.92 } },
-		{ { 1.1, 0, 0, 0.84 }, { 0.6, -0.24, 0.12, 0.89 }, { 0.45, 0.2, -0.16, 0.91 }, { 0.38, 0.12, 0.2, 0.93 } },
-		{ { 0.88, 0, 0, 0.86 }, { 0.64, 0.2, -0.14, 0.9 }, { 0.5, -0.18, 0.18, 0.92 } },
+		{ { 1.05, 0, 0, 0.62 }, { 0.7, 0.2, -0.14, 0.72 }, { 0.62, -0.18, 0.16, 0.76 }, { 0.48, 0.12, 0.2, 0.8 } },
+		{ { 1.0, 0, 0, 0.64 }, { 0.75, -0.2, 0.1, 0.74 }, { 0.55, 0.18, -0.18, 0.78 } },
+		{ { 1.12, 0, 0, 0.6 }, { 0.65, 0.22, 0.14, 0.72 }, { 0.58, -0.2, -0.12, 0.76 }, { 0.42, 0.06, -0.22, 0.82 } },
+		{ { 0.95, 0, 0, 0.66 }, { 0.72, 0.16, 0.18, 0.74 }, { 0.58, -0.14, -0.18, 0.78 } },
+		{ { 1.15, 0, 0, 0.58 }, { 0.68, -0.22, 0.12, 0.7 }, { 0.5, 0.2, -0.16, 0.76 }, { 0.4, 0.1, 0.2, 0.82 } },
+		{ { 0.92, 0, 0, 0.68 }, { 0.7, 0.18, -0.14, 0.75 }, { 0.55, -0.16, 0.16, 0.8 } },
+		{ { 1.08, 0, 0, 0.63 }, { 0.6, 0.24, 0.1, 0.73 }, { 0.52, -0.2, -0.14, 0.78 } },
+		{ { 0.98, 0, 0, 0.65 }, { 0.66, -0.16, 0.18, 0.74 }, { 0.5, 0.2, -0.12, 0.8 } },
 	}
 
 	for i = 1, LIQUID_BLOB_COUNT do
 		local color = LIQUID_COLORS[((i - 1) % #LIQUID_COLORS) + 1]
-		local size = 0.22 + (i % 3) * 0.06
+		local size = 0.26 + (i % 4) * 0.05
 		local blob = Instance.new("Frame")
 		blob.Name = "LiquidBlob" .. i
 		blob.BackgroundTransparency = 1
 		blob.BorderSizePixel = 0
 		blob.AnchorPoint = Vector2.new(0.5, 0.5)
-		blob.Position = UDim2.fromScale(((i * 0.19 + 0.05) % 1), 0.12 + (i % 5) * 0.15)
-		blob.Size = UDim2.fromScale(size, size * (0.85 + (i % 3) * 0.08))
-		blob.Rotation = (i * 23) % 50 - 25
-		blob.ZIndex = 1
+		blob.Position = UDim2.fromScale(((i * 0.17 + 0.08) % 1), 0.1 + (i % 5) * 0.16)
+		blob.Size = UDim2.fromScale(size, size * (0.9 + (i % 3) * 0.06))
+		blob.Rotation = (i * 19) % 40 - 20
+		blob.ZIndex = 3
 		blob.Parent = layer
 
 		local lobes = layouts[((i - 1) % #layouts) + 1]
@@ -1700,10 +1748,10 @@ local function startLiquidAnim(loadingGui: ScreenGui): () -> ()
 				baseX = child.Position.X.Scale,
 				baseY = child.Position.Y.Scale,
 				speed = (0.012 + (idx % 5) * 0.004) * LIQUID_SPEED_MUL,
-				ampY = 0.04 + (idx % 3) * 0.015,
-				ampX = 0.1 + (idx % 4) * 0.035,
+				ampY = 0.05 + (idx % 3) * 0.018,
+				ampX = 0.12 + (idx % 4) * 0.04,
 				phase = idx * 1.37,
-				rotSpeed = 3 + (idx % 4) * 1.4,
+				rotSpeed = 4 + (idx % 4) * 1.6,
 				baseScale = 1,
 			})
 		end
@@ -1720,28 +1768,27 @@ local function startLiquidAnim(loadingGui: ScreenGui): () -> ()
 				continue
 			end
 			local wave = t * blob.speed + blob.phase
-			local drift = (t * blob.speed * 0.22) % 1.4
-			local x = blob.baseX + math.sin(wave) * blob.ampX + drift - 0.2
-			local y = blob.baseY + math.sin(wave * 0.7 + 0.6) * blob.ampY + math.sin(wave * 0.35) * 0.02
-			if x < -0.25 then
-				x += 1.5
-			elseif x > 1.25 then
-				x -= 1.5
+			local drift = (t * blob.speed * 0.25) % 1.5
+			local x = blob.baseX + math.sin(wave) * blob.ampX + drift - 0.25
+			local y = blob.baseY + math.sin(wave * 0.7 + 0.6) * blob.ampY + math.sin(wave * 0.35) * 0.025
+			if x < -0.3 then
+				x += 1.6
+			elseif x > 1.3 then
+				x -= 1.6
 			end
 			blob.frame.Position = UDim2.fromScale(x, y)
-			blob.frame.Rotation = math.sin(wave * 0.4) * blob.rotSpeed
+			blob.frame.Rotation = math.sin(wave * 0.35) * blob.rotSpeed
 			local scaleInst = blob.frame:FindFirstChild("BlobScale")
 			if scaleInst and scaleInst:IsA("UIScale") then
-				-- Subtle breathe / morph so clusters feel liquid.
-				scaleInst.Scale = 0.92 + 0.12 * (0.5 + 0.5 * math.sin(wave * 0.9))
+				scaleInst.Scale = 0.88 + 0.18 * (0.5 + 0.5 * math.sin(wave * 0.85))
 			end
 			for _, lobe in blob.frame:GetChildren() do
-				if lobe:IsA("ImageLabel") then
+				if lobe:IsA("Frame") and lobe:GetAttribute("BaseOX") ~= nil then
 					local ox = lobe:GetAttribute("BaseOX")
 					local oy = lobe:GetAttribute("BaseOY")
 					if typeof(ox) == "number" and typeof(oy) == "number" then
-						local jx = math.sin(wave * 1.15 + oy * 8) * 0.03
-						local jy = math.cos(wave * 0.95 + ox * 8) * 0.03
+						local jx = math.sin(wave * 1.1 + oy * 8) * 0.04
+						local jy = math.cos(wave * 0.9 + ox * 8) * 0.04
 						lobe.Position = UDim2.fromScale(0.5 + ox + jx, 0.5 + oy + jy)
 					end
 				end
@@ -1751,6 +1798,19 @@ local function startLiquidAnim(loadingGui: ScreenGui): () -> ()
 
 	return function()
 		conn:Disconnect()
+	end
+end
+
+local function applyCrispLabel(label: TextLabel, textSize: number, bold: boolean)
+	label.TextScaled = false
+	label.RichText = false
+	label.TextSize = textSize
+	label.FontFace = if bold
+		then Font.fromEnum(Enum.Font.GothamBold)
+		else Font.fromEnum(Enum.Font.GothamMedium)
+	local constraint = label:FindFirstChildOfClass("UITextSizeConstraint")
+	if constraint then
+		constraint:Destroy()
 	end
 end
 
@@ -1773,10 +1833,11 @@ local function ensureGameNameVisible(loadingGui: ScreenGui)
 		logoSlot.BackgroundTransparency = 1
 		logoSlot.BorderSizePixel = 0
 		logoSlot.LayoutOrder = 1
-		logoSlot.ZIndex = 6
+		logoSlot.ZIndex = 21
 		logoSlot.Parent = stack
 	end
 	logoSlot.Size = UDim2.fromOffset(maxW, slotH)
+	logoSlot.AnchorPoint = Vector2.new(0.5, 0.5)
 
 	logo.Visible = true
 	logo.ScaleType = Enum.ScaleType.Fit
@@ -1786,7 +1847,7 @@ local function ensureGameNameVisible(loadingGui: ScreenGui)
 	logo.Size = UDim2.fromScale(1, 1)
 	logo.Parent = logoSlot
 	logo.LayoutOrder = 1
-	logo.ZIndex = 7
+	logo.ZIndex = 22
 
 	local aspect = logo:FindFirstChild("TitleAspectLock")
 	if not aspect or not aspect:IsA("UIAspectRatioConstraint") then
@@ -1820,7 +1881,7 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		loadingLabel.BackgroundTransparency = 1
 		loadingLabel.BorderSizePixel = 0
 		loadingLabel.LayoutOrder = 2
-		loadingLabel.ZIndex = 6
+		loadingLabel.ZIndex = 21
 		loadingLabel.Text = "Loading"
 		loadingLabel.TextColor3 = LOADING_TEXT_COLOR
 		loadingLabel.TextTransparency = 0
@@ -1828,15 +1889,11 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		loadingLabel.TextYAlignment = Enum.TextYAlignment.Center
 		loadingLabel.Parent = stack
 	end
-	;(loadingLabel :: TextLabel).Size = UDim2.new(1, 0, 0, 32)
-	;(loadingLabel :: TextLabel).TextScaled = false
-	UiFonts.applyDisplayLabel(loadingLabel :: TextLabel, LOADING_TEXT_SIZE, 18)
-	;(loadingLabel :: TextLabel).TextColor3 = LOADING_TEXT_COLOR
-	local loadingConstraint = (loadingLabel :: TextLabel):FindFirstChildOfClass("UITextSizeConstraint")
-	if loadingConstraint then
-		loadingConstraint.MaxTextSize = LOADING_TEXT_SIZE
-		loadingConstraint.MinTextSize = 18
-	end
+	local loadLbl = loadingLabel :: TextLabel
+	loadLbl.Size = UDim2.fromOffset(520, 34)
+	loadLbl.AutomaticSize = Enum.AutomaticSize.None
+	loadLbl.TextColor3 = LOADING_TEXT_COLOR
+	applyCrispLabel(loadLbl, LOADING_TEXT_SIZE, true)
 
 	local barW = if UserInputService.TouchEnabled then BAR_WIDTH_MOBILE else BAR_WIDTH_DESKTOP
 	local barTrack = stack:FindFirstChild("ProgressTrack")
@@ -1847,7 +1904,7 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		barTrack.BackgroundTransparency = 0.15
 		barTrack.BorderSizePixel = 0
 		barTrack.LayoutOrder = 3
-		barTrack.ZIndex = 6
+		barTrack.ZIndex = 21
 		barTrack.ClipsDescendants = true
 		barTrack.Parent = stack
 
@@ -1863,7 +1920,7 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		fill.AnchorPoint = Vector2.new(0, 0.5)
 		fill.Position = UDim2.fromScale(0, 0.5)
 		fill.Size = UDim2.fromScale(0.08, 1)
-		fill.ZIndex = 7
+		fill.ZIndex = 22
 		fill.Parent = barTrack
 
 		local fillCorner = Instance.new("UICorner")
@@ -1885,24 +1942,19 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		hintLabel.BackgroundTransparency = 1
 		hintLabel.BorderSizePixel = 0
 		hintLabel.LayoutOrder = 4
-		hintLabel.ZIndex = 6
+		hintLabel.ZIndex = 21
 		hintLabel.Text = "[" .. LOADING_HINTS[1] .. "]"
 		hintLabel.TextColor3 = HINT_TEXT_COLOR
-		hintLabel.TextTransparency = 0.08
+		hintLabel.TextTransparency = 0.05
 		hintLabel.TextXAlignment = Enum.TextXAlignment.Center
 		hintLabel.TextYAlignment = Enum.TextYAlignment.Center
 		hintLabel.Parent = stack
 	end
-	;(hintLabel :: TextLabel).Size = UDim2.new(1, 0, 0, 24)
-	;(hintLabel :: TextLabel).TextScaled = false
-	;(hintLabel :: TextLabel).TextColor3 = HINT_TEXT_COLOR
-	;(hintLabel :: TextLabel).FontFace = Font.fromEnum(Enum.Font.GothamMedium)
-	;(hintLabel :: TextLabel).TextSize = HINT_TEXT_SIZE
-	local oldHintConstraint = (hintLabel :: TextLabel):FindFirstChildOfClass("UITextSizeConstraint")
-	if oldHintConstraint then
-		oldHintConstraint:Destroy()
-	end
-	;(hintLabel :: TextLabel).TextTransparency = 0.05
+	local hintLbl = hintLabel :: TextLabel
+	hintLbl.Size = UDim2.fromOffset(560, 26)
+	hintLbl.TextColor3 = HINT_TEXT_COLOR
+	hintLbl.TextTransparency = 0.05
+	applyCrispLabel(hintLbl, HINT_TEXT_SIZE, false)
 end
 
 local function setLoadingProgress(alpha: number)
@@ -2080,17 +2132,25 @@ local function fadeOutLoadingTogether(
 	local canvas = fadeCanvas or loadingGui:FindFirstChild("LoadingFadeCanvas")
 	if canvas and canvas:IsA("CanvasGroup") then
 		table.insert(tweens, TweenService:Create(canvas, FADE_TWEEN_INFO, { GroupTransparency = 1 }))
-	else
-		for _, desc in loadingGui:GetDescendants() do
-			if desc:IsA("GuiObject") and desc.Name ~= "Camera" then
-				local props: { [string]: number } = { BackgroundTransparency = 1 }
-				if desc:IsA("ImageLabel") or desc:IsA("ImageButton") then
-					props.ImageTransparency = 1
-				end
-				table.insert(tweens, TweenService:Create(desc, FADE_TWEEN_INFO, props))
+	end
+
+	-- Stack + liquid sit outside CanvasGroup for crisp text — fade them directly.
+	local function fadeTree(root: Instance?)
+		if not root then
+			return
+		end
+		for _, desc in root:GetDescendants() do
+			if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+				table.insert(tweens, TweenService:Create(desc, FADE_TWEEN_INFO, { TextTransparency = 1 }))
+			elseif desc:IsA("ImageLabel") or desc:IsA("ImageButton") then
+				table.insert(tweens, TweenService:Create(desc, FADE_TWEEN_INFO, { ImageTransparency = 1 }))
+			elseif desc:IsA("Frame") and desc.BackgroundTransparency < 1 then
+				table.insert(tweens, TweenService:Create(desc, FADE_TWEEN_INFO, { BackgroundTransparency = 1 }))
 			end
 		end
 	end
+	fadeTree(loadingGui:FindFirstChild("LoadingStack"))
+	fadeTree(loadingGui:FindFirstChild("LiquidLayer"))
 
 	if blur and blur.Parent then
 		table.insert(tweens, TweenService:Create(blur, FADE_TWEEN_INFO, { Size = 0 }))

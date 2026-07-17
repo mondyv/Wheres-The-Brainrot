@@ -52,16 +52,20 @@ local SOLID_COVER_FADE_SEC = 0.55
 local TITLE_MAX_WIDTH_MOBILE = 560
 local TITLE_MAX_WIDTH_DESKTOP = 860
 local TITLE_DEFAULT_ASPECT = 3.15
-local STACK_PADDING_PX = 6
+local STACK_PADDING_PX = 8
 local STACK_CENTER_Y = 0.52
-local LOADING_TEXT_SIZE = 28
-local HINT_TEXT_SIZE = 18
-local BAR_WIDTH_MOBILE = 360
-local BAR_WIDTH_DESKTOP = 520
-local BAR_HEIGHT_PX = 10
+local LOADING_TEXT_SIZE = 24
+local HINT_TEXT_SIZE = 16
+local BAR_WIDTH_MOBILE = 340
+local BAR_WIDTH_DESKTOP = 440
+local BAR_HEIGHT_PX = 16
+local BAR_OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
+local BAR_OUTLINE_TRANSPARENCY = 0.72
+local BAR_OUTLINE_THICKNESS = 1.25
 
 local BAR_FILL_COLOR = Color3.fromRGB(118, 196, 66)
-local BAR_TRACK_COLOR = Color3.fromRGB(18, 16, 14)
+local BAR_FILL_HIGHLIGHT = Color3.fromRGB(160, 230, 100)
+local BAR_TRACK_COLOR = Color3.fromRGB(22, 20, 18)
 local LOADING_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
 local HINT_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
 
@@ -72,15 +76,14 @@ local WOBBLE_ROT_DEG = 4
 local WOBBLE_JUMP_PX = 8
 local WOBBLE_SCALE_AMOUNT = 0.022
 
-local LIQUID_BLOB_COUNT = 8
-local LIQUID_SPEED_MUL = 0.5 -- 2x slower drift
-local LIQUID_COLORS = {
-	Color3.fromRGB(255, 220, 70),
-	Color3.fromRGB(255, 195, 40),
-	Color3.fromRGB(255, 235, 120),
-	Color3.fromRGB(255, 175, 35),
-	Color3.fromRGB(255, 245, 160),
+local LIQUID_IMAGE_IDS = {
+	"rbxassetid://114678398666932",
+	"rbxassetid://79066128728111",
+	"rbxassetid://126746861363784",
 }
+local LIQUID_BLOB_COUNT = 6
+local LIQUID_SPEED_MUL = 0.5 -- 2x slower drift
+local LIQUID_STYLE = "image_v1"
 
 local LOADING_HINTS = {
 	"Optimizing Vibes",
@@ -125,7 +128,7 @@ local loadingProgress = 0
 local stopLiquidAnim: (() -> ())? = nil
 
 type LiquidBlob = {
-	frame: Frame,
+	gui: ImageLabel,
 	baseX: number,
 	baseY: number,
 	speed: number,
@@ -1628,54 +1631,19 @@ local function findOrCreateStack(loadingGui: ScreenGui): Frame
 	return stack
 end
 
-local function addSoftLobe(parent: Frame, name: string, color: Color3, sizeScale: number, ox: number, oy: number, coreTransparency: number)
-	-- Concentric rounded discs = soft blob without external glow assets.
-	local holder = Instance.new("Frame")
-	holder.Name = name
-	holder.BackgroundTransparency = 1
-	holder.BorderSizePixel = 0
-	holder.AnchorPoint = Vector2.new(0.5, 0.5)
-	holder.Position = UDim2.fromScale(0.5 + ox, 0.5 + oy)
-	holder.Size = UDim2.fromScale(sizeScale, sizeScale)
-	holder.ZIndex = 2
-	holder:SetAttribute("BaseOX", ox)
-	holder:SetAttribute("BaseOY", oy)
-	holder.Parent = parent
-
-	for ring = 1, 5 do
-		local t = (ring - 1) / 4
-		local disc = Instance.new("Frame")
-		disc.Name = "Ring" .. ring
-		disc.BackgroundColor3 = color
-		disc.BackgroundTransparency = math.clamp(coreTransparency + t * 0.32, 0, 0.97)
-		disc.BorderSizePixel = 0
-		disc.AnchorPoint = Vector2.new(0.5, 0.5)
-		disc.Position = UDim2.fromScale(0.5, 0.5)
-		disc.Size = UDim2.fromScale(1 - t * 0.42, 1 - t * 0.42)
-		disc.ZIndex = 2
-		disc.Parent = holder
-
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(1, 0)
-		corner.Parent = disc
-	end
-
-	return holder
-end
-
 local function ensureLiquidLayer(loadingGui: ScreenGui): Frame
 	local parent = getCrispUiParent(loadingGui)
 	for _, root in { parent, loadingGui:FindFirstChild("LoadingFadeCanvas") } do
 		if root then
 			local old = root:FindFirstChild("LiquidLayer")
-			if old and old:GetAttribute("LiquidStyle") ~= "organic_v3" then
+			if old and old:GetAttribute("LiquidStyle") ~= LIQUID_STYLE then
 				old:Destroy()
 			end
 		end
 	end
 
 	local existing = parent:FindFirstChild("LiquidLayer")
-	if existing and existing:IsA("Frame") and existing:GetAttribute("LiquidStyle") == "organic_v3" then
+	if existing and existing:IsA("Frame") and existing:GetAttribute("LiquidStyle") == LIQUID_STYLE then
 		return existing
 	end
 	if existing then
@@ -1691,41 +1659,52 @@ local function ensureLiquidLayer(loadingGui: ScreenGui): Frame
 	layer.Size = UDim2.fromScale(1, 1)
 	layer.ZIndex = 3
 	layer.ClipsDescendants = true
-	layer:SetAttribute("LiquidStyle", "organic_v3")
+	layer:SetAttribute("LiquidStyle", LIQUID_STYLE)
 	layer.Parent = parent
 
-	-- Organic lava-lamp clusters: overlapping soft discs.
-	local layouts = {
-		{ { 1.05, 0, 0, 0.62 }, { 0.7, 0.2, -0.14, 0.72 }, { 0.62, -0.18, 0.16, 0.76 }, { 0.48, 0.12, 0.2, 0.8 } },
-		{ { 1.0, 0, 0, 0.64 }, { 0.75, -0.2, 0.1, 0.74 }, { 0.55, 0.18, -0.18, 0.78 } },
-		{ { 1.12, 0, 0, 0.6 }, { 0.65, 0.22, 0.14, 0.72 }, { 0.58, -0.2, -0.12, 0.76 }, { 0.42, 0.06, -0.22, 0.82 } },
-		{ { 0.95, 0, 0, 0.66 }, { 0.72, 0.16, 0.18, 0.74 }, { 0.58, -0.14, -0.18, 0.78 } },
-		{ { 1.15, 0, 0, 0.58 }, { 0.68, -0.22, 0.12, 0.7 }, { 0.5, 0.2, -0.16, 0.76 }, { 0.4, 0.1, 0.2, 0.82 } },
-		{ { 0.92, 0, 0, 0.68 }, { 0.7, 0.18, -0.14, 0.75 }, { 0.55, -0.16, 0.16, 0.8 } },
-		{ { 1.08, 0, 0, 0.63 }, { 0.6, 0.24, 0.1, 0.73 }, { 0.52, -0.2, -0.14, 0.78 } },
-		{ { 0.98, 0, 0, 0.65 }, { 0.66, -0.16, 0.18, 0.74 }, { 0.5, 0.2, -0.12, 0.8 } },
+	-- Soft lava-lamp sprites drifting behind the loading stack.
+	local placements = {
+		{ 0.12, 0.22, 0.34 },
+		{ 0.78, 0.18, 0.3 },
+		{ 0.28, 0.62, 0.36 },
+		{ 0.7, 0.7, 0.32 },
+		{ 0.5, 0.38, 0.28 },
+		{ 0.88, 0.48, 0.26 },
 	}
 
 	for i = 1, LIQUID_BLOB_COUNT do
-		local color = LIQUID_COLORS[((i - 1) % #LIQUID_COLORS) + 1]
-		local size = 0.26 + (i % 4) * 0.05
-		local blob = Instance.new("Frame")
-		blob.Name = "LiquidBlob" .. i
-		blob.BackgroundTransparency = 1
-		blob.BorderSizePixel = 0
-		blob.AnchorPoint = Vector2.new(0.5, 0.5)
-		blob.Position = UDim2.fromScale(((i * 0.17 + 0.08) % 1), 0.1 + (i % 5) * 0.16)
-		blob.Size = UDim2.fromScale(size, size * (0.9 + (i % 3) * 0.06))
-		blob.Rotation = (i * 19) % 40 - 20
-		blob.ZIndex = 3
-		blob.Parent = layer
-
-		local lobes = layouts[((i - 1) % #layouts) + 1]
-		for li, lobeDef in ipairs(lobes) do
-			local lobeColor = if li == 1 then color else LIQUID_COLORS[((i + li) % #LIQUID_COLORS) + 1]
-			addSoftLobe(blob, "Lobe" .. li, lobeColor, lobeDef[1], lobeDef[2], lobeDef[3], lobeDef[4])
-		end
+		local place = placements[((i - 1) % #placements) + 1]
+		local img = Instance.new("ImageLabel")
+		img.Name = "LiquidBlob" .. i
+		img.BackgroundTransparency = 1
+		img.BorderSizePixel = 0
+		img.Image = LIQUID_IMAGE_IDS[((i - 1) % #LIQUID_IMAGE_IDS) + 1]
+		img.ImageTransparency = 0.28 + (i % 3) * 0.08
+		img.ScaleType = Enum.ScaleType.Fit
+		img.AnchorPoint = Vector2.new(0.5, 0.5)
+		img.Position = UDim2.fromScale(place[1], place[2])
+		img.Size = UDim2.fromScale(place[3], place[3])
+		img.Rotation = (i * 27) % 50 - 25
+		img.ZIndex = 3
+		img.Parent = layer
 	end
+
+	task.defer(function()
+		local toPreload: { Instance } = {}
+		for _, child in layer:GetChildren() do
+			if child:IsA("ImageLabel") then
+				table.insert(toPreload, child)
+			end
+		end
+		if #toPreload > 0 then
+			local ok, err = pcall(function()
+				ContentProvider:PreloadAsync(toPreload)
+			end)
+			if not ok then
+				warn("[LoadingScreenController] liquid preload failed:", err)
+			end
+		end
+	end)
 
 	return layer
 end
@@ -1735,7 +1714,7 @@ local function startLiquidAnim(loadingGui: ScreenGui): () -> ()
 	local blobs: { LiquidBlob } = {}
 
 	for _, child in layer:GetChildren() do
-		if child:IsA("Frame") and string.sub(child.Name, 1, 10) == "LiquidBlob" then
+		if child:IsA("ImageLabel") and string.sub(child.Name, 1, 10) == "LiquidBlob" then
 			local idx = tonumber(string.match(child.Name, "%d+")) or (#blobs + 1)
 			local scaleInst = child:FindFirstChild("BlobScale")
 			if not scaleInst or not scaleInst:IsA("UIScale") then
@@ -1744,14 +1723,14 @@ local function startLiquidAnim(loadingGui: ScreenGui): () -> ()
 				scaleInst.Parent = child
 			end
 			table.insert(blobs, {
-				frame = child,
+				gui = child,
 				baseX = child.Position.X.Scale,
 				baseY = child.Position.Y.Scale,
-				speed = (0.012 + (idx % 5) * 0.004) * LIQUID_SPEED_MUL,
-				ampY = 0.05 + (idx % 3) * 0.018,
-				ampX = 0.12 + (idx % 4) * 0.04,
+				speed = (0.01 + (idx % 5) * 0.0035) * LIQUID_SPEED_MUL,
+				ampY = 0.045 + (idx % 3) * 0.016,
+				ampX = 0.08 + (idx % 4) * 0.03,
 				phase = idx * 1.37,
-				rotSpeed = 4 + (idx % 4) * 1.6,
+				rotSpeed = 3.5 + (idx % 4) * 1.4,
 				baseScale = 1,
 			})
 		end
@@ -1764,34 +1743,23 @@ local function startLiquidAnim(loadingGui: ScreenGui): () -> ()
 		end
 		t += dt
 		for _, blob in blobs do
-			if not blob.frame.Parent then
+			if not blob.gui.Parent then
 				continue
 			end
 			local wave = t * blob.speed + blob.phase
-			local drift = (t * blob.speed * 0.25) % 1.5
-			local x = blob.baseX + math.sin(wave) * blob.ampX + drift - 0.25
-			local y = blob.baseY + math.sin(wave * 0.7 + 0.6) * blob.ampY + math.sin(wave * 0.35) * 0.025
-			if x < -0.3 then
-				x += 1.6
-			elseif x > 1.3 then
-				x -= 1.6
+			local drift = (t * blob.speed * 0.2) % 1.4
+			local x = blob.baseX + math.sin(wave) * blob.ampX + drift - 0.2
+			local y = blob.baseY + math.sin(wave * 0.72 + 0.6) * blob.ampY
+			if x < -0.25 then
+				x += 1.5
+			elseif x > 1.25 then
+				x -= 1.5
 			end
-			blob.frame.Position = UDim2.fromScale(x, y)
-			blob.frame.Rotation = math.sin(wave * 0.35) * blob.rotSpeed
-			local scaleInst = blob.frame:FindFirstChild("BlobScale")
+			blob.gui.Position = UDim2.fromScale(x, y)
+			blob.gui.Rotation = math.sin(wave * 0.32) * blob.rotSpeed
+			local scaleInst = blob.gui:FindFirstChild("BlobScale")
 			if scaleInst and scaleInst:IsA("UIScale") then
-				scaleInst.Scale = 0.88 + 0.18 * (0.5 + 0.5 * math.sin(wave * 0.85))
-			end
-			for _, lobe in blob.frame:GetChildren() do
-				if lobe:IsA("Frame") and lobe:GetAttribute("BaseOX") ~= nil then
-					local ox = lobe:GetAttribute("BaseOX")
-					local oy = lobe:GetAttribute("BaseOY")
-					if typeof(ox) == "number" and typeof(oy) == "number" then
-						local jx = math.sin(wave * 1.1 + oy * 8) * 0.04
-						local jy = math.cos(wave * 0.9 + ox * 8) * 0.04
-						lobe.Position = UDim2.fromScale(0.5 + ox + jx, 0.5 + oy + jy)
-					end
-				end
+				scaleInst.Scale = 0.9 + 0.14 * (0.5 + 0.5 * math.sin(wave * 0.8))
 			end
 		end
 	end)
@@ -1890,27 +1858,40 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		loadingLabel.Parent = stack
 	end
 	local loadLbl = loadingLabel :: TextLabel
-	loadLbl.Size = UDim2.fromOffset(520, 34)
+	loadLbl.Size = UDim2.fromOffset(440, 30)
 	loadLbl.AutomaticSize = Enum.AutomaticSize.None
 	loadLbl.TextColor3 = LOADING_TEXT_COLOR
 	applyCrispLabel(loadLbl, LOADING_TEXT_SIZE, true)
 
 	local barW = if UserInputService.TouchEnabled then BAR_WIDTH_MOBILE else BAR_WIDTH_DESKTOP
 	local barTrack = stack:FindFirstChild("ProgressTrack")
+	if barTrack and barTrack:IsA("Frame") and barTrack:GetAttribute("BarStyle") ~= "outlined_v1" then
+		barTrack:Destroy()
+		barTrack = nil
+	end
 	if not barTrack or not barTrack:IsA("Frame") then
 		barTrack = Instance.new("Frame")
 		barTrack.Name = "ProgressTrack"
 		barTrack.BackgroundColor3 = BAR_TRACK_COLOR
-		barTrack.BackgroundTransparency = 0.15
+		barTrack.BackgroundTransparency = 0.08
 		barTrack.BorderSizePixel = 0
 		barTrack.LayoutOrder = 3
 		barTrack.ZIndex = 21
 		barTrack.ClipsDescendants = true
+		barTrack:SetAttribute("BarStyle", "outlined_v1")
 		barTrack.Parent = stack
 
 		local trackCorner = Instance.new("UICorner")
 		trackCorner.CornerRadius = UDim.new(1, 0)
 		trackCorner.Parent = barTrack
+
+		local outline = Instance.new("UIStroke")
+		outline.Name = "BarOutline"
+		outline.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		outline.Color = BAR_OUTLINE_COLOR
+		outline.Transparency = BAR_OUTLINE_TRANSPARENCY
+		outline.Thickness = BAR_OUTLINE_THICKNESS
+		outline.Parent = barTrack
 
 		local fill = Instance.new("Frame")
 		fill.Name = "ProgressFill"
@@ -1918,21 +1899,31 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		fill.BackgroundTransparency = 0
 		fill.BorderSizePixel = 0
 		fill.AnchorPoint = Vector2.new(0, 0.5)
-		fill.Position = UDim2.fromScale(0, 0.5)
-		fill.Size = UDim2.fromScale(0.08, 1)
+		fill.Position = UDim2.new(0, 3, 0.5, 0)
+		fill.Size = UDim2.new(0.08, -6, 1, -6)
 		fill.ZIndex = 22
 		fill.Parent = barTrack
 
 		local fillCorner = Instance.new("UICorner")
 		fillCorner.CornerRadius = UDim.new(1, 0)
 		fillCorner.Parent = fill
+
+		local fillGrad = Instance.new("UIGradient")
+		fillGrad.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, BAR_FILL_COLOR),
+			ColorSequenceKeypoint.new(0.5, BAR_FILL_HIGHLIGHT),
+			ColorSequenceKeypoint.new(1, BAR_FILL_COLOR),
+		})
+		fillGrad.Rotation = 90
+		fillGrad.Parent = fill
 	end
 	;(barTrack :: Frame).Size = UDim2.fromOffset(barW, BAR_HEIGHT_PX)
 
 	local fill = (barTrack :: Frame):FindFirstChild("ProgressFill")
 	if fill and fill:IsA("Frame") then
 		loadingBarFill = fill
-		fill.Size = UDim2.fromScale(math.clamp(loadingProgress, 0.08, 1), 1)
+		local shown = 0.06 + math.clamp(loadingProgress, 0, 1) * 0.94
+		fill.Size = UDim2.new(shown, -6, 1, -6)
 	end
 
 	local hintLabel = stack:FindFirstChild("LoadingHint")
@@ -1963,7 +1954,7 @@ local function setLoadingProgress(alpha: number)
 	if fill and fill.Parent then
 		-- Keep a tiny visible nub at the start so the bar never looks empty.
 		local shown = 0.06 + loadingProgress * 0.94
-		fill.Size = UDim2.fromScale(shown, 1)
+		fill.Size = UDim2.new(shown, -6, 1, -6)
 	end
 end
 

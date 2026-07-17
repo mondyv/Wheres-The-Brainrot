@@ -82,8 +82,11 @@ local LIQUID_IMAGE_IDS = {
 	"rbxassetid://126746861363784",
 }
 local LIQUID_BLOB_COUNT = 6
-local LIQUID_SPEED_MUL = 0.5 -- 2x slower drift
-local LIQUID_STYLE = "image_v1"
+local LIQUID_SPEED_MUL = 0.45
+local LIQUID_STYLE = "image_v2_blur_sides"
+local LIQUID_BLUR_LAYERS = 5 -- stacked copies = fake heavy blur
+local LIQUID_CORE_TRANSPARENCY = 0.55
+local LIQUID_OUTER_TRANSPARENCY = 0.9
 
 local LOADING_HINTS = {
 	"Optimizing Vibes",
@@ -128,7 +131,7 @@ local loadingProgress = 0
 local stopLiquidAnim: (() -> ())? = nil
 
 type LiquidBlob = {
-	gui: ImageLabel,
+	gui: GuiObject,
 	baseX: number,
 	baseY: number,
 	speed: number,
@@ -1658,40 +1661,62 @@ local function ensureLiquidLayer(loadingGui: ScreenGui): Frame
 	layer.Position = UDim2.fromScale(0, 0)
 	layer.Size = UDim2.fromScale(1, 1)
 	layer.ZIndex = 3
-	layer.ClipsDescendants = true
+	-- Allow big soft blobs to bleed past the edges.
+	layer.ClipsDescendants = false
 	layer:SetAttribute("LiquidStyle", LIQUID_STYLE)
 	layer.Parent = parent
 
-	-- Soft lava-lamp sprites drifting behind the loading stack.
+	-- Big soft blobs hug left + right edges only (keep center clear for logo).
+	-- { x, y, size }
 	local placements = {
-		{ 0.12, 0.22, 0.34 },
-		{ 0.78, 0.18, 0.3 },
-		{ 0.28, 0.62, 0.36 },
-		{ 0.7, 0.7, 0.32 },
-		{ 0.5, 0.38, 0.28 },
-		{ 0.88, 0.48, 0.26 },
+		{ -0.02, 0.18, 0.72 },
+		{ 1.02, 0.22, 0.68 },
+		{ -0.06, 0.58, 0.78 },
+		{ 1.06, 0.62, 0.74 },
+		{ -0.1, 0.38, 0.62 },
+		{ 1.1, 0.42, 0.66 },
 	}
 
 	for i = 1, LIQUID_BLOB_COUNT do
 		local place = placements[((i - 1) % #placements) + 1]
-		local img = Instance.new("ImageLabel")
-		img.Name = "LiquidBlob" .. i
-		img.BackgroundTransparency = 1
-		img.BorderSizePixel = 0
-		img.Image = LIQUID_IMAGE_IDS[((i - 1) % #LIQUID_IMAGE_IDS) + 1]
-		img.ImageTransparency = 0.28 + (i % 3) * 0.08
-		img.ScaleType = Enum.ScaleType.Fit
-		img.AnchorPoint = Vector2.new(0.5, 0.5)
-		img.Position = UDim2.fromScale(place[1], place[2])
-		img.Size = UDim2.fromScale(place[3], place[3])
-		img.Rotation = (i * 27) % 50 - 25
-		img.ZIndex = 3
-		img.Parent = layer
+		local imageId = LIQUID_IMAGE_IDS[((i - 1) % #LIQUID_IMAGE_IDS) + 1]
+
+		local holder = Instance.new("Frame")
+		holder.Name = "LiquidBlob" .. i
+		holder.BackgroundTransparency = 1
+		holder.BorderSizePixel = 0
+		holder.AnchorPoint = Vector2.new(0.5, 0.5)
+		holder.Position = UDim2.fromScale(place[1], place[2])
+		holder.Size = UDim2.fromScale(place[3], place[3])
+		holder.Rotation = (i * 31) % 40 - 20
+		holder.ZIndex = 3
+		holder.Parent = layer
+
+		-- Stacked oversized copies at rising transparency = heavy soft blur look.
+		for layerIdx = LIQUID_BLUR_LAYERS, 1, -1 do
+			local t = (layerIdx - 1) / math.max(LIQUID_BLUR_LAYERS - 1, 1)
+			local grow = 1 + t * 0.55
+			local ox = math.sin(layerIdx * 1.7 + i) * t * 0.04
+			local oy = math.cos(layerIdx * 1.3 + i) * t * 0.04
+			local ghost = Instance.new("ImageLabel")
+			ghost.Name = "Blur" .. layerIdx
+			ghost.BackgroundTransparency = 1
+			ghost.BorderSizePixel = 0
+			ghost.Image = imageId
+			ghost.ImageTransparency = LIQUID_CORE_TRANSPARENCY
+				+ t * (LIQUID_OUTER_TRANSPARENCY - LIQUID_CORE_TRANSPARENCY)
+			ghost.ScaleType = Enum.ScaleType.Fit
+			ghost.AnchorPoint = Vector2.new(0.5, 0.5)
+			ghost.Position = UDim2.fromScale(0.5 + ox, 0.5 + oy)
+			ghost.Size = UDim2.fromScale(grow, grow)
+			ghost.ZIndex = 3
+			ghost.Parent = holder
+		end
 	end
 
 	task.defer(function()
 		local toPreload: { Instance } = {}
-		for _, child in layer:GetChildren() do
+		for _, child in layer:GetDescendants() do
 			if child:IsA("ImageLabel") then
 				table.insert(toPreload, child)
 			end
@@ -1714,7 +1739,7 @@ local function startLiquidAnim(loadingGui: ScreenGui): () -> ()
 	local blobs: { LiquidBlob } = {}
 
 	for _, child in layer:GetChildren() do
-		if child:IsA("ImageLabel") and string.sub(child.Name, 1, 10) == "LiquidBlob" then
+		if child:IsA("Frame") and string.sub(child.Name, 1, 10) == "LiquidBlob" then
 			local idx = tonumber(string.match(child.Name, "%d+")) or (#blobs + 1)
 			local scaleInst = child:FindFirstChild("BlobScale")
 			if not scaleInst or not scaleInst:IsA("UIScale") then
@@ -1722,15 +1747,17 @@ local function startLiquidAnim(loadingGui: ScreenGui): () -> ()
 				scaleInst.Name = "BlobScale"
 				scaleInst.Parent = child
 			end
+			-- Keep drift mostly vertical so they stay left/right.
+			local onLeft = child.Position.X.Scale < 0.5
 			table.insert(blobs, {
 				gui = child,
 				baseX = child.Position.X.Scale,
 				baseY = child.Position.Y.Scale,
-				speed = (0.01 + (idx % 5) * 0.0035) * LIQUID_SPEED_MUL,
-				ampY = 0.045 + (idx % 3) * 0.016,
-				ampX = 0.08 + (idx % 4) * 0.03,
+				speed = (0.008 + (idx % 5) * 0.003) * LIQUID_SPEED_MUL,
+				ampY = 0.06 + (idx % 3) * 0.02,
+				ampX = if onLeft then 0.035 else 0.035,
 				phase = idx * 1.37,
-				rotSpeed = 3.5 + (idx % 4) * 1.4,
+				rotSpeed = 2.2 + (idx % 4) * 1.1,
 				baseScale = 1,
 			})
 		end
@@ -1747,19 +1774,19 @@ local function startLiquidAnim(loadingGui: ScreenGui): () -> ()
 				continue
 			end
 			local wave = t * blob.speed + blob.phase
-			local drift = (t * blob.speed * 0.2) % 1.4
-			local x = blob.baseX + math.sin(wave) * blob.ampX + drift - 0.2
-			local y = blob.baseY + math.sin(wave * 0.72 + 0.6) * blob.ampY
-			if x < -0.25 then
-				x += 1.5
-			elseif x > 1.25 then
-				x -= 1.5
+			local x = blob.baseX + math.sin(wave * 0.55) * blob.ampX
+			local y = blob.baseY + math.sin(wave * 0.7 + 0.6) * blob.ampY
+			-- Clamp so blobs never crawl into the center.
+			if blob.baseX < 0.5 then
+				x = math.clamp(x, -0.15, 0.22)
+			else
+				x = math.clamp(x, 0.78, 1.15)
 			end
 			blob.gui.Position = UDim2.fromScale(x, y)
-			blob.gui.Rotation = math.sin(wave * 0.32) * blob.rotSpeed
+			blob.gui.Rotation = math.sin(wave * 0.28) * blob.rotSpeed
 			local scaleInst = blob.gui:FindFirstChild("BlobScale")
 			if scaleInst and scaleInst:IsA("UIScale") then
-				scaleInst.Scale = 0.9 + 0.14 * (0.5 + 0.5 * math.sin(wave * 0.8))
+				scaleInst.Scale = 0.94 + 0.1 * (0.5 + 0.5 * math.sin(wave * 0.65))
 			end
 		end
 	end)

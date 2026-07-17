@@ -6,12 +6,14 @@
 --]]
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local SocialService = game:GetService("SocialService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local PanelSlideIn = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PanelSlideIn"))
 
 local player = Players.LocalPlayer
 
@@ -63,30 +65,60 @@ local function resolveFrame(name: string): Frame?
 	return (framesFolder :: Instance):FindFirstChild(name) :: Frame?
 end
 
--- Searches sideUI first, then all of mainGui.
--- If the found instance is a container, grabs the first GuiButton inside it.
+-- Searches SideUI only (never Main.Frames — that wrongly wired panel-internal buttons).
+-- Prefers a child named Button; makes non-button visuals non-Active so they don't steal clicks.
 local function findButton(name: string): GuiButton?
 	ensureHudRoots()
-	local inst = (sideUI :: Instance):FindFirstChild(name, true) or (mainGui :: ScreenGui):FindFirstChild(name, true)
+	local side = sideUI :: Instance
+	local inst = side:FindFirstChild(name, true)
 	if not inst then
 		return nil
 	end
-	if inst:IsA("GuiButton") then
-		return inst :: GuiButton
+	-- Reject anything that somehow sits under Frames.
+	if inst:IsDescendantOf((framesFolder :: Instance)) then
+		return nil
 	end
-	return inst:FindFirstChildOfClass("ImageButton") or inst:FindFirstChildOfClass("TextButton") :: GuiButton?
+
+	local btn: GuiButton? = nil
+	if inst:IsA("GuiButton") then
+		btn = inst :: GuiButton
+	else
+		local named = inst:FindFirstChild("Button")
+		if named and named:IsA("GuiButton") then
+			btn = named :: GuiButton
+		else
+			btn = inst:FindFirstChildOfClass("ImageButton") or inst:FindFirstChildOfClass("TextButton")
+		end
+	end
+	if not btn then
+		return nil
+	end
+
+	btn.Active = true
+	btn.Selectable = true
+	for _, d in btn:GetDescendants() do
+		if d:IsA("GuiObject") and not d:IsA("GuiButton") then
+			(d :: GuiObject).Active = false
+		end
+	end
+	return btn
 end
 
 -- ── Animation helpers ─────────────────────────────────────────────────────────
+
+-- Forward-declared: animateClose's Completed callback must not see a nil upvalue.
+local syncFramesInputPassthrough: () -> ()
 
 local function animateOpen(frame: Frame)
 	frame.Visible = true
 	local scale = getOrAddUIScale(frame)
 	scale.Scale = 0.82
 	TweenService:Create(scale, OPEN_TWEEN, { Scale = 1 }):Play()
+	PanelSlideIn.playForPanel(frame)
 end
 
 local function animateClose(frame: Frame)
+	PanelSlideIn.cancel()
 	local prevTween = closeTweenByFrame[frame]
 	if prevTween then
 		prevTween:Cancel()
@@ -98,12 +130,77 @@ local function animateClose(frame: Frame)
 	t.Completed:Once(function()
 		closeTweenByFrame[frame] = nil
 		frame.Visible = false
+		frame.Active = false
 		scale.Scale = 0.82 -- reset for next open
+		if syncFramesInputPassthrough then
+			syncFramesInputPassthrough()
+		end
 	end)
 	t:Play()
 end
 
 -- ── Core open / close ─────────────────────────────────────────────────────────
+
+local function makeChromeClickThrough(root: Instance?)
+	if not root or not root:IsA("GuiObject") then
+		return
+	end
+	-- Fullscreen / large chrome must not steal clicks from Frames panels.
+	(root :: GuiObject).Active = false
+	for _, d in root:GetDescendants() do
+		if d:IsA("GuiButton") then
+			(d :: GuiButton).Active = true
+			pcall(function()
+				(d :: any).Interactable = true
+			end)
+		elseif d:IsA("TextBox") then
+			(d :: TextBox).Active = true
+		elseif d:IsA("ScrollingFrame") then
+			(d :: ScrollingFrame).Active = true
+		elseif d:IsA("GuiObject") then
+			-- Decorative hosts (icons, panels used as layout) pass clicks through.
+			local name = d.Name
+			if name == "__SweepClip" or name == "__GlistenTrack" or name == "__DiagSweep" or name == "Glint" then
+				(d :: GuiObject).Active = false
+			elseif not d:IsA("GuiButton") then
+				-- Keep known interactive hosts active only if they are scrolling/input.
+				-- Everything else under SideUI chrome should pass through.
+				if d:FindFirstAncestorWhichIsA("GuiButton") then
+					-- inside a button: already handled; leave false so button gets the click
+					(d :: GuiObject).Active = false
+				else
+					(d :: GuiObject).Active = false
+				end
+			end
+		end
+	end
+end
+
+syncFramesInputPassthrough = function()
+	ensureHudRoots()
+	local side = sideUI
+	local frames = framesFolder
+	if not side or not frames then
+		return
+	end
+	local sideZ = if side:IsA("GuiObject") then (side :: GuiObject).ZIndex else 1
+	if frames:IsA("GuiObject") then
+		local f = frames :: GuiObject
+		f.Visible = true
+		-- CRITICAL: Frames is fullscreen. Active=true steals camera orbit/zoom (mouse icon stays).
+		-- Only the open panel should capture input; empty Frames must click through.
+		f.Active = false
+		if f.ZIndex <= sideZ then
+			f.ZIndex = sideZ + 10
+		end
+	end
+	if currentFrame and currentFrame.Parent and currentFrame.Visible then
+		currentFrame.Active = true
+		if currentFrame.ZIndex < 20 then
+			currentFrame.ZIndex = 20
+		end
+	end
+end
 
 local function closeFrame(frame: Frame)
 	if not frame.Visible then
@@ -113,20 +210,50 @@ local function closeFrame(frame: Frame)
 		currentFrame = nil
 	end
 	animateClose(frame)
+	task.defer(syncFramesInputPassthrough)
 end
 
 local function openFrame(frame: Frame)
-	if currentFrame == frame then
+	ensureHudRoots()
+	makeChromeClickThrough(sideUI)
+	syncFramesInputPassthrough()
+
+	local frames = framesFolder
+	if frames and frames:IsA("GuiObject") then
+		(frames :: GuiObject).Visible = true
+		(frames :: GuiObject).Active = false
+	end
+	-- Ensure parent chain isn't hiding the panel (don't force `frame` yet — toggle needs prior Visible).
+	local p: Instance? = frame.Parent
+	while p and p ~= mainGui do
+		if p:IsA("GuiObject") and p ~= framesFolder then
+			(p :: GuiObject).Visible = true
+		end
+		p = p.Parent
+	end
+
+	if currentFrame == frame and frame.Visible then
 		closeFrame(frame)
 		return
 	end
-	-- Fire close on the old frame immediately — don't wait for it
-	if currentFrame then
+	if currentFrame and currentFrame ~= frame then
 		animateClose(currentFrame)
 	end
-	-- Start opening the new frame at the same time, no sequential delay
 	currentFrame = frame
+	frame.Active = true
+	-- Panel content must receive clicks (ScrollingFrames / buy buttons).
+	for _, d in frame:GetDescendants() do
+		if d:IsA("GuiButton") or d:IsA("ScrollingFrame") or d:IsA("TextBox") then
+			(d :: GuiObject).Active = true
+		elseif d:IsA("GuiObject") and not d:IsA("GuiButton") then
+			-- Keep decorative layers from eating camera when they overflow the panel.
+			if d.Name == "__SweepClip" or d.Name == "__GlistenTrack" or d.Name == "__DiagSweep" then
+				(d :: GuiObject).Active = false
+			end
+		end
+	end
 	animateOpen(frame)
+	syncFramesInputPassthrough()
 end
 
 -- Closing via Studio Close under Header, scripts toggling Visible, etc.
@@ -150,64 +277,87 @@ local TILT_HOVER = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirecti
 local TILT_LEAVE = TweenInfo.new(0.22, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
 local TILT_CLICK = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
--- Full sidebar-button animation: scale on the button + tilt on its Icon child.
--- Used by every HUD button (frame-openers AND invite).
+-- Used by StoreController (Chances) and any other HUD micro-buttons.
 local function applyHoverAndClick(button: GuiButton, onClicked: () -> ())
 	local scale = getOrAddUIScale(button)
 	local icon = button:FindFirstChild("Icon", true)
+	local lastFire = 0
+	local function fire()
+		local now = os.clock()
+		if now - lastFire < 0.12 then
+			return
+		end
+		lastFire = now
+		onClicked()
+	end
 
 	button.MouseEnter:Connect(function()
 		UIInteractionSounds.playHover()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.10 }):Play()
-		if icon then
+		if icon and icon:IsA("GuiObject") then
 			TweenService:Create(icon, TILT_HOVER, { Rotation = -10 }):Play()
 		end
 	end)
 	button.MouseLeave:Connect(function()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.0 }):Play()
-		if icon then
+		if icon and icon:IsA("GuiObject") then
 			TweenService:Create(icon, TILT_LEAVE, { Rotation = 0 }):Play()
 		end
 	end)
 	button.MouseButton1Down:Connect(function()
 		UIInteractionSounds.playClick()
 		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.94 }):Play()
-		if icon then
+		if icon and icon:IsA("GuiObject") then
 			TweenService:Create(icon, TILT_CLICK, { Rotation = 6 }):Play()
 		end
+		fire()
 	end)
 	button.MouseButton1Up:Connect(function()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.10 }):Play()
-		if icon then
+		if icon and icon:IsA("GuiObject") then
 			TweenService:Create(icon, TILT_HOVER, { Rotation = -10 }):Play()
 		end
 	end)
-	button.MouseButton1Click:Connect(onClicked)
 end
 
 local function setupFrameButton(button: GuiButton, frame: Frame)
 	frame.Visible = false
+
+	-- ONLY Header.Buttons.Close — recursive "Close"/"X" search wired huge hitboxes and ate panel clicks.
 	local header = frame:FindFirstChild("Header")
-	local buttons = header and header:FindFirstChild("Buttons")
-	local closeBtn = buttons and buttons:FindFirstChild("Close")
+	local headerButtons = header and header:FindFirstChild("Buttons")
+	local closeBtn = headerButtons and headerButtons:FindFirstChild("Close")
 	if closeBtn and closeBtn:IsA("GuiButton") then
 		UIButtonEffects.wireGlistenCloseButton(closeBtn :: GuiButton, function()
 			closeFrame(frame)
 		end)
-	else
-		for _, name in ipairs({ "Close", "CloseButton", "Exit", "X" }) do
-			local btn = frame:FindFirstChild(name, true)
-			if btn and btn:IsA("GuiButton") then
-				UIButtonEffects.wireGlistenCloseButton(btn, function()
-					closeFrame(frame)
-				end)
-				break
-			end
+	end
+
+	-- Visual polish only (open is bound separately).
+	UIButtonEffects.wireSidebarButton(button, function() end)
+
+	button.Active = true
+	pcall(function()
+		(button :: any).Interactable = true
+	end)
+	for _, d in button:GetDescendants() do
+		if d:IsA("GuiObject") and not d:IsA("GuiButton") then
+			(d :: GuiObject).Active = false
 		end
 	end
-	UIButtonEffects.wireSidebarButton(button, function()
+
+	local lastFire = 0
+	local function requestOpen()
+		local now = os.clock()
+		if now - lastFire < 0.2 then
+			return
+		end
+		lastFire = now
 		openFrame(frame)
-	end)
+	end
+
+	button.MouseButton1Down:Connect(requestOpen)
+
 	wireFrameVisibleBackdropCleanup(frame)
 end
 
@@ -312,17 +462,33 @@ end
 local HUDController = {}
 
 function HUDController.init()
+	if (HUDController :: any)._initialized then
+		return
+	end
+	(HUDController :: any)._initialized = true
+
 	ensureHudRoots()
+	makeChromeClickThrough(sideUI)
+	-- Other Main chrome that is often fullscreen and steals panel clicks.
+	if mainGui then
+		for _, name in { "Purchased", "GameGradients", "Boosts" } do
+			makeChromeClickThrough(mainGui:FindFirstChild(name))
+		end
+		-- Main itself must not modal-lock the mouse.
+		pcall(function()
+			(mainGui :: any).Modal = false
+		end)
+	end
+	syncFramesInputPassthrough()
+
 	-- Frame-opening HUD buttons
 	for buttonName, frameName in pairs(BUTTON_FRAME_MAP) do
 		local button = findButton(buttonName)
 		local frame = resolveFrame(frameName)
 		if not button then
-			warn("[HUDController] Button not found: " .. buttonName)
 			continue
 		end
 		if not frame then
-			warn("[HUDController] Frame not found: " .. frameName)
 			continue
 		end
 		setupFrameButton(button, frame)
@@ -382,11 +548,14 @@ function HUDController.init()
 end
 
 function HUDController.openFrameByName(frameName: string)
+	-- Legacy stand pad name for the Robux store — Shop now opens the dealer
+	-- panel directly (Frames.Shop); Store is still reachable via SideUI/HUD.
+	if frameName == "Shop2" then
+		frameName = "Store"
+	end
 	local frame = resolveFrame(frameName)
 	if frame then
 		openFrame(frame)
-	else
-		warn("[HUDController] openFrameByName: frame not found: " .. frameName)
 	end
 end
 
@@ -394,6 +563,10 @@ function HUDController.closeCurrentFrame()
 	if currentFrame then
 		closeFrame(currentFrame)
 	end
+end
+
+function HUDController.syncInputPassthrough()
+	syncFramesInputPassthrough()
 end
 
 function HUDController.closeFrameByName(frameName: string)

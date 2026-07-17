@@ -14,7 +14,6 @@ local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local IndexConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("IndexConfig"))
-local PanelSlideIn = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PanelSlideIn"))
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
@@ -406,31 +405,6 @@ local function playPanelOpenAnim()
 	local scale = getOrAddUIScale(indexFrame)
 	scale.Scale = 0.82
 	TweenService:Create(scale, OPEN_PANEL, { Scale = 1 }):Play()
-end
-
-local function playIndexTabsSlideIn()
-	if not indexFrame then
-		return
-	end
-	local typeButtons = indexFrame:FindFirstChild("TypeButtons")
-	if not typeButtons then
-		return
-	end
-	local names: { string } = {}
-	for _, mutationId in IndexConfig.MUTATION_TABS do
-		local btnName = IndexConfig.TAB_BUTTON_NAME[mutationId]
-		if typeof(btnName) == "string" then
-			table.insert(names, btnName)
-		end
-	end
-	local tabs = PanelSlideIn.collectNamedChildren(typeButtons, names)
-	if #tabs > 0 then
-		PanelSlideIn.slideInSequence(tabs, {
-			from = "Left",
-			stagger = 0.06,
-			distance = 52,
-		})
-	end
 end
 
 local function incomeForCatalog(entry: { name: string, rarity: string, baseIncome: number }, mutationId: string): number
@@ -945,17 +919,22 @@ function IndexController.init()
 			if not wasVisible and HUDController.getCurrentFrame() ~= indexFrame then
 				playPanelOpenAnim()
 			end
-			if not wasVisible then
-				playIndexTabsSlideIn()
-			end
 			wasVisible = true
+			-- Force tab layout healthy after any prior slide cancel.
+			local typeButtons = indexFrame:FindFirstChild("TypeButtons")
+			if typeButtons then
+				local layout = typeButtons:FindFirstChildOfClass("UIListLayout")
+					or typeButtons:FindFirstChildOfClass("UIGridLayout")
+				if layout then
+					layout.Enabled = true
+				end
+			end
 			if gridMutation ~= selectedMutation or #catalogRows == 0 then
 				applyCachedState(selectedMutation, false)
 			end
 			refreshStateInBackground(selectedMutation, false)
 		else
 			wasVisible = false
-			PanelSlideIn.cancel()
 			if tooltipLabel then
 				tooltipLabel.Visible = false
 			end

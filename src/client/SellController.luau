@@ -12,7 +12,6 @@ local HUDController = require(script.Parent.HUDController)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
-local PanelSlideIn = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PanelSlideIn"))
 
 local player = Players.LocalPlayer
 
@@ -34,7 +33,6 @@ local pendingConfirm: PendingConfirm? = nil
 local sellOneRF: RemoteFunction? = nil
 local sellAllRF: RemoteFunction? = nil
 local refreshSellList: () -> ()
-local slideRowsOnNextRefresh = false
 
 local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -683,27 +681,6 @@ local function refreshSellList()
 			populateRow(row, entry :: InvEntry, i)
 		end
 	end
-
-	if slideRowsOnNextRefresh then
-		slideRowsOnNextRefresh = false
-		local rows = PanelSlideIn.collectVisibleGuiChildren(container, CONTAINER_SKIP_DESTROY)
-		if rowTemplate and rowTemplate:IsA("GuiObject") then
-			-- Template is hidden; collectVisible already skips invisible, but be safe.
-		end
-		local filtered: { GuiObject } = {}
-		for _, row in rows do
-			if row ~= rowTemplate then
-				table.insert(filtered, row)
-			end
-		end
-		if #filtered > 0 then
-			PanelSlideIn.slideInSequence(filtered, {
-				from = "Left",
-				stagger = 0.045,
-				distance = 60,
-			})
-		end
-	end
 end
 
 local function confirmSell()
@@ -856,11 +833,7 @@ function SellController.init()
 		end
 		sellFrame:GetPropertyChangedSignal("Visible"):Connect(function()
 			if sellFrame and sellFrame.Visible then
-				slideRowsOnNextRefresh = true
 				refreshSellList()
-			else
-				slideRowsOnNextRefresh = false
-				PanelSlideIn.cancel()
 			end
 		end)
 		local bushFolder = ReplicatedStorage:WaitForChild("BushRemotes", 60)

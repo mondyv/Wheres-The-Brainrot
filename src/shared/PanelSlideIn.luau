@@ -1,21 +1,22 @@
 -- [ACTIVE] PanelSlideIn
 --[[
-	Staggered slide-in for panel children (shop rows, sell rows, index tabs).
-	Temporarily disables UIListLayout/UIGridLayout so Position tweens can run.
+	Open animations for HUD panels:
+	• slideGui — whole Container / content host from the left
+	• slideInSequence — staggered children (Index TypeButtons), layout-safe
+	• playForPanel — recipe for Shop / Sell / Store / Daily / Index / Config
 ]]
 
 local TweenService = game:GetService("TweenService")
 
 local M = {}
 
-local DEFAULT_TWEEN = TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local DEFAULT_TWEEN = TweenInfo.new(0.42, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local DEFAULT_STAGGER = 0.055
-local DEFAULT_DISTANCE = 56
+local DEFAULT_DISTANCE = 80
 
 local restPositions: { [GuiObject]: UDim2 } = {}
 local animGeneration = 0
 local activeLayout: (UIListLayout | UIGridLayout)? = nil
-local activeLayoutWasEnabled = true
 
 export type SlideFrom = "Left" | "Right" | "Up" | "Down"
 
@@ -25,16 +26,9 @@ export type SlideOpts = {
 	distance: number?,
 	tweenInfo: TweenInfo?,
 	scalePop: boolean?,
+	generation: number?,
+	skipCancel: boolean?,
 }
-
-local function ensureRest(gui: GuiObject): UDim2
-	local cached = restPositions[gui]
-	if cached then
-		return cached
-	end
-	restPositions[gui] = gui.Position
-	return gui.Position
-end
 
 local function offsetPosition(rest: UDim2, from: SlideFrom, distance: number): UDim2
 	if from == "Left" then
@@ -63,41 +57,74 @@ local function findLayout(parent: Instance?): UIListLayout | UIGridLayout | nil
 	if not parent then
 		return nil
 	end
-	local list = parent:FindFirstChildOfClass("UIListLayout")
-	if list then
-		return list
-	end
-	local grid = parent:FindFirstChildOfClass("UIGridLayout")
-	if grid then
-		return grid
-	end
-	return nil
+	return parent:FindFirstChildOfClass("UIListLayout") or parent:FindFirstChildOfClass("UIGridLayout")
 end
 
-function M.cancel()
-	animGeneration += 1
+local function restoreActiveLayout()
 	if activeLayout and activeLayout.Parent then
-		activeLayout.Enabled = activeLayoutWasEnabled
+		activeLayout.Enabled = true
+		for _, ch in activeLayout.Parent:GetChildren() do
+			if ch:IsA("GuiObject") then
+				restPositions[ch] = nil
+				local scale = ch:FindFirstChild("PanelSlideScale")
+				if scale and scale:IsA("UIScale") then
+					scale.Scale = 1
+				end
+			end
+		end
 	end
 	activeLayout = nil
 end
 
-function M.snapToRest(guis: { GuiObject })
-	M.cancel()
-	for _, gui in guis do
-		local rest = restPositions[gui]
-		if rest and gui.Parent then
+function M.cancel()
+	animGeneration += 1
+	restoreActiveLayout()
+	for gui, rest in restPositions do
+		if gui.Parent then
 			gui.Position = rest
-		end
-		local scale = gui:FindFirstChild("PanelSlideScale")
-		if scale and scale:IsA("UIScale") then
-			scale.Scale = 1
+			local scale = gui:FindFirstChild("PanelSlideScale")
+			if scale and scale:IsA("UIScale") then
+				scale.Scale = 1
+			end
 		end
 	end
 end
 
-function M.rememberRest(gui: GuiObject)
-	restPositions[gui] = gui.Position
+function M.slideGui(gui: GuiObject?, opts: SlideOpts?)
+	if not gui or not gui.Parent then
+		return
+	end
+
+	local options = opts or {}
+	local from: SlideFrom = options.from or "Left"
+	local distance = if typeof(options.distance) == "number" then options.distance else DEFAULT_DISTANCE
+	local tweenInfo = options.tweenInfo or DEFAULT_TWEEN
+	local scalePop = options.scalePop ~= false
+	local myGen = if typeof(options.generation) == "number" then options.generation else animGeneration
+
+	restPositions[gui] = nil
+	local rest = gui.Position
+	restPositions[gui] = rest
+
+	gui.Position = offsetPosition(rest, from, distance)
+	local scale: UIScale? = nil
+	if scalePop then
+		scale = getOrAddScale(gui)
+		scale.Scale = 0.96
+	end
+
+	task.defer(function()
+		if myGen ~= animGeneration or not gui.Parent then
+			if restPositions[gui] then
+				gui.Position = restPositions[gui]
+			end
+			return
+		end
+		TweenService:Create(gui, tweenInfo, { Position = rest }):Play()
+		if scale and scale.Parent then
+			TweenService:Create(scale, tweenInfo, { Scale = 1 }):Play()
+		end
+	end)
 end
 
 function M.slideInSequence(guis: { GuiObject }, opts: SlideOpts?)
@@ -108,39 +135,40 @@ function M.slideInSequence(guis: { GuiObject }, opts: SlideOpts?)
 	local options = opts or {}
 	local from: SlideFrom = options.from or "Left"
 	local stagger = if typeof(options.stagger) == "number" then options.stagger else DEFAULT_STAGGER
-	local distance = if typeof(options.distance) == "number" then options.distance else DEFAULT_DISTANCE
+	local distance = if typeof(options.distance) == "number" then options.distance else 48
 	local tweenInfo = options.tweenInfo or DEFAULT_TWEEN
 	local scalePop = options.scalePop ~= false
 
-	M.cancel()
-	animGeneration += 1
-	local myGen = animGeneration
+	if not options.skipCancel then
+		M.cancel()
+	end
 
-	-- Capture layout-assigned rest poses first.
+	local myGen = if typeof(options.generation) == "number" then options.generation else (animGeneration + 1)
+	if typeof(options.generation) ~= "number" then
+		animGeneration = myGen
+	end
+
+	local parent = guis[1].Parent
+	local layout = findLayout(parent)
+	if layout then
+		layout.Enabled = true
+	end
 	for _, gui in ipairs(guis) do
 		if gui.Parent then
 			restPositions[gui] = gui.Position
 		end
 	end
 
-	local parent = guis[1].Parent
-	local layout = findLayout(parent)
 	if layout then
 		activeLayout = layout
-		activeLayoutWasEnabled = layout.Enabled
 		layout.Enabled = false
-	else
-		activeLayout = nil
 	end
 
 	local pending = 0
 	local function finishOne()
 		pending -= 1
-		if pending <= 0 then
-			if activeLayout and activeLayout.Parent and myGen == animGeneration then
-				activeLayout.Enabled = activeLayoutWasEnabled
-				activeLayout = nil
-			end
+		if pending <= 0 and myGen == animGeneration then
+			restoreActiveLayout()
 		end
 	end
 
@@ -148,7 +176,7 @@ function M.slideInSequence(guis: { GuiObject }, opts: SlideOpts?)
 		if not gui.Parent then
 			continue
 		end
-		local rest = ensureRest(gui)
+		local rest = restPositions[gui] or gui.Position
 		gui.Position = offsetPosition(rest, from, distance)
 		local scale: UIScale? = nil
 		if scalePop then
@@ -157,8 +185,7 @@ function M.slideInSequence(guis: { GuiObject }, opts: SlideOpts?)
 		end
 
 		pending += 1
-		local delaySec = (i - 1) * stagger
-		task.delay(delaySec, function()
+		task.delay((i - 1) * stagger, function()
 			if myGen ~= animGeneration or not gui.Parent then
 				finishOne()
 				return
@@ -172,7 +199,6 @@ function M.slideInSequence(guis: { GuiObject }, opts: SlideOpts?)
 			conn = move.Completed:Connect(function()
 				if conn then
 					conn:Disconnect()
-					conn = nil
 				end
 				finishOne()
 			end)
@@ -180,10 +206,7 @@ function M.slideInSequence(guis: { GuiObject }, opts: SlideOpts?)
 	end
 
 	if pending == 0 then
-		if activeLayout and activeLayout.Parent then
-			activeLayout.Enabled = activeLayoutWasEnabled
-			activeLayout = nil
-		end
+		restoreActiveLayout()
 	end
 end
 
@@ -201,29 +224,69 @@ function M.collectNamedChildren(parent: Instance?, names: { string }): { GuiObje
 	return out
 end
 
-function M.collectVisibleGuiChildren(parent: Instance?, skipNames: { [string]: boolean }?): { GuiObject }
-	local out: { GuiObject } = {}
-	if not parent then
-		return out
+local PANEL_CONTENT: { [string]: { containers: { string }, staggerParent: string?, staggerNames: { string }? } } = {
+	Shop = { containers = { "Container" } },
+	Sell = { containers = { "Container" } },
+	Store = { containers = { "StoreFrame" } },
+	Daily = { containers = { "Container" } },
+	Index = {
+		containers = { "Container" },
+		staggerParent = "TypeButtons",
+		staggerNames = { "Normal", "Gold", "Diamond", "Lava", "Galaxy", "Rainbow" },
+	},
+	["Config/Settings"] = { containers = { "Container" } },
+	Config = { containers = { "Container" } },
+	Settings = { containers = { "Container" } },
+}
+
+function M.playForPanel(frame: Frame)
+	local recipe = PANEL_CONTENT[frame.Name]
+	if not recipe then
+		return
 	end
-	local kids = parent:GetChildren()
-	table.sort(kids, function(a, b)
-		local ao = if a:IsA("GuiObject") then a.LayoutOrder else 0
-		local bo = if b:IsA("GuiObject") then b.LayoutOrder else 0
-		if ao ~= bo then
-			return ao < bo
+
+	M.cancel()
+	animGeneration += 1
+	local myGen = animGeneration
+
+	for _, name in recipe.containers do
+		local host = frame:FindFirstChild(name)
+		if not host then
+			host = frame:FindFirstChild(name, true)
 		end
-		return a.Name < b.Name
-	end)
-	for _, child in kids do
-		if skipNames and skipNames[child.Name] then
-			continue
-		end
-		if child:IsA("GuiObject") and child.Visible then
-			table.insert(out, child)
+		if host and host:IsA("GuiObject") then
+			-- Don't slide a nested Container if we already slide StoreFrame as parent.
+			if name == "Container" and host.Parent and host.Parent.Name == "StoreFrame" and frame.Name == "Store" then
+				continue
+			end
+			M.slideGui(host, {
+				from = "Left",
+				distance = 80,
+				scalePop = true,
+				generation = myGen,
+			})
 		end
 	end
-	return out
+
+	if recipe.staggerParent and recipe.staggerNames then
+		local parent = frame:FindFirstChild(recipe.staggerParent)
+		local tabs = M.collectNamedChildren(parent, recipe.staggerNames)
+		if #tabs > 0 then
+			task.defer(function()
+				if myGen ~= animGeneration or not frame.Parent or not frame.Visible then
+					return
+				end
+				M.slideInSequence(tabs, {
+					from = "Left",
+					stagger = 0.055,
+					distance = 44,
+					scalePop = true,
+					generation = myGen,
+					skipCancel = true,
+				})
+			end)
+		end
+	end
 end
 
 return M

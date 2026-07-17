@@ -17,7 +17,6 @@ local TweenService = game:GetService("TweenService")
 
 local DealerConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("DealerConfig"))
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
-local PanelSlideIn = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PanelSlideIn"))
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
@@ -757,35 +756,6 @@ function refreshFromServer()
 	end
 end
 
-local function playShopOpenSlide()
-	if not shopFrame then
-		return
-	end
-	local container = shopFrame:FindFirstChild("Container")
-	local rows: { GuiObject } = {}
-	for i = 1, DealerConfig.SLOT_COUNT do
-		local row = rowByIndex[i]
-		if row and row:IsA("GuiObject") and row.Visible then
-			table.insert(rows, row)
-		end
-	end
-	if #rows == 0 and container then
-		rows = PanelSlideIn.collectVisibleGuiChildren(container, {
-			["Coming Soon text"] = true,
-			UIListLayout = true,
-			UIPadding = true,
-			UICorner = true,
-		})
-	end
-	if #rows > 0 then
-		PanelSlideIn.slideInSequence(rows, {
-			from = "Left",
-			stagger = 0.05,
-			distance = 64,
-		})
-	end
-end
-
 local function formatCountdown(secondsLeft: number): string
 	local s = math.max(0, math.floor(secondsLeft))
 	local m = s // 60
@@ -867,9 +837,6 @@ local function init()
 	shop:GetPropertyChangedSignal("Visible"):Connect(function()
 		if shop.Visible then
 			refreshFromServer()
-			playShopOpenSlide()
-		else
-			PanelSlideIn.cancel()
 		end
 	end)
 

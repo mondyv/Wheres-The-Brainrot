@@ -49,8 +49,15 @@ local LOADING_BLUR_SIZE = 56
 local ENTRANCE_DURATION = 0.85
 local ENTRANCE_SCALE_START = 0.78
 local SOLID_COVER_FADE_SEC = 0.55
-local TITLE_MAX_WIDTH_MOBILE = 220
-local TITLE_MAX_WIDTH_DESKTOP = 280
+local TITLE_MAX_WIDTH_MOBILE = 560
+local TITLE_MAX_WIDTH_DESKTOP = 860
+local TITLE_DEFAULT_ASPECT = 3.15
+local STACK_PADDING_PX = 6
+local LOADING_TEXT_SIZE = 44
+local HINT_TEXT_SIZE = 20
+local BAR_WIDTH_MOBILE = 320
+local BAR_WIDTH_DESKTOP = 420
+local BAR_HEIGHT_PX = 12
 
 local BAR_FILL_COLOR = Color3.fromRGB(118, 196, 66)
 local BAR_TRACK_COLOR = Color3.fromRGB(18, 16, 14)
@@ -61,8 +68,16 @@ local ELLIPSIS_INTERVAL_SEC = 0.38
 local HINT_INTERVAL_SEC = 2.15
 local WOBBLE_JUMP_SPEED = 2.35
 local WOBBLE_ROT_DEG = 5.5
-local WOBBLE_JUMP_PX = 9
+local WOBBLE_JUMP_PX = 10
 local WOBBLE_SCALE_AMOUNT = 0.028
+
+local LIQUID_BLOB_COUNT = 7
+local LIQUID_COLORS = {
+	Color3.fromRGB(255, 214, 70),
+	Color3.fromRGB(255, 190, 45),
+	Color3.fromRGB(255, 232, 110),
+	Color3.fromRGB(240, 175, 40),
+}
 
 local LOADING_HINTS = {
 	"Optimizing Vibes",
@@ -104,6 +119,18 @@ local hiddenCharacterParts: { [BasePart]: number }? = nil
 local earlyVisualsReady = false
 local loadingBarFill: Frame? = nil
 local loadingProgress = 0
+local stopLiquidAnim: (() -> ())? = nil
+
+type LiquidBlob = {
+	frame: Frame,
+	baseX: number,
+	baseY: number,
+	speed: number,
+	ampY: number,
+	ampX: number,
+	phase: number,
+	rotSpeed: number,
+}
 
 local function defaultLoadingCFrame(): CFrame
 	return CFrame.new(DEFAULT_CAMERA_POS) * CFrame.fromOrientation(DEFAULT_CAMERA_RAD.X, DEFAULT_CAMERA_RAD.Y, DEFAULT_CAMERA_RAD.Z)
@@ -1444,6 +1471,10 @@ local function cleanupLoadingVisuals(playerGui: PlayerGui, loadingGui: ScreenGui
 		end
 		local canvas = loadingGui:FindFirstChild("LoadingFadeCanvas")
 		if canvas then
+			local liquid = canvas:FindFirstChild("LiquidLayer")
+			if liquid then
+				liquid:Destroy()
+			end
 			local stack = canvas:FindFirstChild("LoadingStack")
 			if stack then
 				local logo = stack:FindFirstChild("GameNameImage", true) or stack:FindFirstChild("ImageLabel", true)
@@ -1535,6 +1566,12 @@ local function findOrCreateStack(loadingGui: ScreenGui): Frame
 	local parent = getUiParent(loadingGui)
 	local existing = parent:FindFirstChild("LoadingStack")
 	if existing and existing:IsA("Frame") then
+		existing.Position = UDim2.fromScale(0.5, 0.48)
+		existing.Size = UDim2.fromScale(0.86, 0)
+		local layout = existing:FindFirstChild("StackLayout")
+		if layout and layout:IsA("UIListLayout") then
+			layout.Padding = UDim.new(0, STACK_PADDING_PX)
+		end
 		return existing
 	end
 
@@ -1543,8 +1580,8 @@ local function findOrCreateStack(loadingGui: ScreenGui): Frame
 	stack.BackgroundTransparency = 1
 	stack.BorderSizePixel = 0
 	stack.AnchorPoint = Vector2.new(0.5, 0.5)
-	stack.Position = UDim2.fromScale(0.5, 0.5)
-	stack.Size = UDim2.fromScale(0.72, 0)
+	stack.Position = UDim2.fromScale(0.5, 0.48)
+	stack.Size = UDim2.fromScale(0.86, 0)
 	stack.AutomaticSize = Enum.AutomaticSize.Y
 	stack.ZIndex = 5
 	stack.Parent = parent
@@ -1555,10 +1592,111 @@ local function findOrCreateStack(loadingGui: ScreenGui): Frame
 	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0, 14)
+	layout.Padding = UDim.new(0, STACK_PADDING_PX)
 	layout.Parent = stack
 
 	return stack
+end
+
+local function ensureLiquidLayer(loadingGui: ScreenGui): Frame
+	local parent = getUiParent(loadingGui)
+	local existing = parent:FindFirstChild("LiquidLayer")
+	if existing and existing:IsA("Frame") then
+		return existing
+	end
+
+	local layer = Instance.new("Frame")
+	layer.Name = "LiquidLayer"
+	layer.BackgroundTransparency = 1
+	layer.BorderSizePixel = 0
+	layer.AnchorPoint = Vector2.new(0, 0)
+	layer.Position = UDim2.fromScale(0, 0)
+	layer.Size = UDim2.fromScale(1, 1)
+	layer.ZIndex = 1
+	layer.ClipsDescendants = true
+	layer.Parent = parent
+
+	for i = 1, LIQUID_BLOB_COUNT do
+		local color = LIQUID_COLORS[((i - 1) % #LIQUID_COLORS) + 1]
+		local w = 0.28 + (i % 3) * 0.12
+		local h = 0.18 + (i % 4) * 0.07
+
+		local blob = Instance.new("Frame")
+		blob.Name = "LiquidBlob" .. i
+		blob.BackgroundColor3 = color
+		blob.BackgroundTransparency = 0.88 + (i % 3) * 0.025
+		blob.BorderSizePixel = 0
+		blob.AnchorPoint = Vector2.new(0.5, 0.5)
+		blob.Position = UDim2.fromScale(((i * 0.17) % 1), 0.15 + (i % 5) * 0.16)
+		blob.Size = UDim2.fromScale(w, h)
+		blob.Rotation = (i * 17) % 40 - 20
+		blob.ZIndex = 1
+		blob.Parent = layer
+
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(1, 0)
+		corner.Parent = blob
+
+		local grad = Instance.new("UIGradient")
+		grad.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.55),
+			NumberSequenceKeypoint.new(0.45, 0.15),
+			NumberSequenceKeypoint.new(1, 0.7),
+		})
+		grad.Rotation = 25 + i * 18
+		grad.Parent = blob
+	end
+
+	return layer
+end
+
+local function startLiquidAnim(loadingGui: ScreenGui): () -> ()
+	local layer = ensureLiquidLayer(loadingGui)
+	local blobs: { LiquidBlob } = {}
+
+	for _, child in layer:GetChildren() do
+		if child:IsA("Frame") and string.sub(child.Name, 1, 10) == "LiquidBlob" then
+			local idx = tonumber(string.match(child.Name, "%d+")) or (#blobs + 1)
+			table.insert(blobs, {
+				frame = child,
+				baseX = child.Position.X.Scale,
+				baseY = child.Position.Y.Scale,
+				speed = 0.018 + (idx % 5) * 0.007,
+				ampY = 0.035 + (idx % 3) * 0.012,
+				ampX = 0.08 + (idx % 4) * 0.03,
+				phase = idx * 1.37,
+				rotSpeed = 2.5 + (idx % 4) * 1.2,
+			})
+		end
+	end
+
+	local t = 0
+	local conn = RunService.RenderStepped:Connect(function(dt)
+		if not loadingActive then
+			return
+		end
+		t += dt
+		for _, blob in blobs do
+			if not blob.frame.Parent then
+				continue
+			end
+			local wave = t * blob.speed + blob.phase
+			local x = blob.baseX + math.sin(wave) * blob.ampX + (t * blob.speed * 0.35) % 0.2 - 0.1
+			local y = blob.baseY + math.sin(wave * 0.85 + 0.6) * blob.ampY
+			-- Wrap gently so blobs keep drifting across.
+			if x < -0.2 then
+				x += 1.4
+			elseif x > 1.2 then
+				x -= 1.4
+			end
+			blob.frame.Position = UDim2.fromScale(x, y)
+			blob.frame.Rotation = math.sin(wave * 0.55) * blob.rotSpeed
+		end
+	end)
+
+	return function()
+		conn:Disconnect()
+	end
 end
 
 local function ensureGameNameVisible(loadingGui: ScreenGui)
@@ -1568,7 +1706,7 @@ local function ensureGameNameVisible(loadingGui: ScreenGui)
 	end
 
 	local aspectAttr = logo:GetAttribute("AspectRatio")
-	local titleAspect = if typeof(aspectAttr) == "number" and aspectAttr > 0 then aspectAttr else 1.1
+	local titleAspect = if typeof(aspectAttr) == "number" and aspectAttr > 0 then aspectAttr else TITLE_DEFAULT_ASPECT
 	local maxW = if UserInputService.TouchEnabled then TITLE_MAX_WIDTH_MOBILE else TITLE_MAX_WIDTH_DESKTOP
 	local slotH = math.floor(maxW / titleAspect)
 
@@ -1617,6 +1755,7 @@ local function ensureGameNameVisible(loadingGui: ScreenGui)
 end
 
 local function ensureSleekLoadingUI(loadingGui: ScreenGui)
+	ensureLiquidLayer(loadingGui)
 	local stack = findOrCreateStack(loadingGui)
 
 	local loadingLabel = stack:FindFirstChild("LoadingText")
@@ -1625,7 +1764,6 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		loadingLabel.Name = "LoadingText"
 		loadingLabel.BackgroundTransparency = 1
 		loadingLabel.BorderSizePixel = 0
-		loadingLabel.Size = UDim2.new(1, 0, 0, 36)
 		loadingLabel.LayoutOrder = 2
 		loadingLabel.ZIndex = 6
 		loadingLabel.Text = "Loading"
@@ -1635,9 +1773,11 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		loadingLabel.TextYAlignment = Enum.TextYAlignment.Center
 		loadingLabel.Parent = stack
 	end
-	UiFonts.applyDisplayLabel(loadingLabel :: TextLabel, 28, 18)
+	;(loadingLabel :: TextLabel).Size = UDim2.new(1, 0, 0, 52)
+	UiFonts.applyDisplayLabel(loadingLabel :: TextLabel, LOADING_TEXT_SIZE, 28)
 	;(loadingLabel :: TextLabel).TextColor3 = LOADING_TEXT_COLOR
 
+	local barW = if UserInputService.TouchEnabled then BAR_WIDTH_MOBILE else BAR_WIDTH_DESKTOP
 	local barTrack = stack:FindFirstChild("ProgressTrack")
 	if not barTrack or not barTrack:IsA("Frame") then
 		barTrack = Instance.new("Frame")
@@ -1645,7 +1785,6 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		barTrack.BackgroundColor3 = BAR_TRACK_COLOR
 		barTrack.BackgroundTransparency = 0.15
 		barTrack.BorderSizePixel = 0
-		barTrack.Size = UDim2.new(0, if UserInputService.TouchEnabled then 200 else 248, 0, 8)
 		barTrack.LayoutOrder = 3
 		barTrack.ZIndex = 6
 		barTrack.ClipsDescendants = true
@@ -1670,6 +1809,7 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		fillCorner.CornerRadius = UDim.new(1, 0)
 		fillCorner.Parent = fill
 	end
+	;(barTrack :: Frame).Size = UDim2.fromOffset(barW, BAR_HEIGHT_PX)
 
 	local fill = (barTrack :: Frame):FindFirstChild("ProgressFill")
 	if fill and fill:IsA("Frame") then
@@ -1683,7 +1823,6 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		hintLabel.Name = "LoadingHint"
 		hintLabel.BackgroundTransparency = 1
 		hintLabel.BorderSizePixel = 0
-		hintLabel.Size = UDim2.new(1, 0, 0, 22)
 		hintLabel.LayoutOrder = 4
 		hintLabel.ZIndex = 6
 		hintLabel.Text = "[" .. LOADING_HINTS[1] .. "]"
@@ -1693,7 +1832,8 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 		hintLabel.TextYAlignment = Enum.TextYAlignment.Center
 		hintLabel.Parent = stack
 	end
-	UiFonts.applyDisplayLabel(hintLabel :: TextLabel, 15, 11)
+	;(hintLabel :: TextLabel).Size = UDim2.new(1, 0, 0, 28)
+	UiFonts.applyDisplayLabel(hintLabel :: TextLabel, HINT_TEXT_SIZE, 14)
 	;(hintLabel :: TextLabel).TextColor3 = HINT_TEXT_COLOR
 	;(hintLabel :: TextLabel).FontFace = UiFonts.BUTTON_REGULAR_FACE
 end
@@ -1858,6 +1998,10 @@ local function fadeOutLoadingTogether(
 		stopNameAnim()
 		stopNameAnim = nil
 	end
+	if stopLiquidAnim then
+		stopLiquidAnim()
+		stopLiquidAnim = nil
+	end
 
 	local tweens: { Tween } = {}
 
@@ -1995,6 +2139,11 @@ function M.run()
 	end
 
 	stopNameAnim = startGameNameSubtitleAnim(loadingGui)
+	if stopLiquidAnim then
+		stopLiquidAnim()
+		stopLiquidAnim = nil
+	end
+	stopLiquidAnim = startLiquidAnim(loadingGui)
 	preloadGameName(loadingGui)
 
 	local camera = Workspace.CurrentCamera
@@ -2051,6 +2200,10 @@ function M.run()
 	if stopNameAnim then
 		stopNameAnim()
 		stopNameAnim = nil
+	end
+	if stopLiquidAnim then
+		stopLiquidAnim()
+		stopLiquidAnim = nil
 	end
 
 	exitLoadingIsolation(playerGui)

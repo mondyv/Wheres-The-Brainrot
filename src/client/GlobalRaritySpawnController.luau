@@ -58,30 +58,83 @@ local function updateMarkerIcon(icon: ImageLabel, iconImage: string, rarity: str
 	end
 end
 
-local function formatRowLabel(tier: GlobalRaritySpawnConfig.TierDef, remaining: number): string
-	return string.format("%s Spawning in %s", tier.displayName, C.formatCountdown(remaining))
+-- Studio hierarchy (Secret differs): Timers.<Row>/Time is sometimes a Frame
+-- with a nested TextLabel (e.g. Secret.Time.Secret2), not a TextLabel itself.
+local TITLE_CANDIDATES: { [string]: { string } } = {
+	mythic = { "Mythical" },
+	legendary = { "Legendary" },
+	["brainrot god"] = { "Godly", "BrainrotGod" },
+	secret = { "Secret1", "Secret" },
+}
+
+local function resolveTimeLabel(row: Instance): TextLabel?
+	local timeNode = row:FindFirstChild("Time") or row:FindFirstChild("Time", true)
+	if not timeNode then
+		return nil
+	end
+	if timeNode:IsA("TextLabel") then
+		return timeNode
+	end
+	for _, name in { "Secret2", "Time", "Label", "Text", "Countdown" } do
+		local child = timeNode:FindFirstChild(name)
+		if child and child:IsA("TextLabel") then
+			return child
+		end
+	end
+	local nested = timeNode:FindFirstChildWhichIsA("TextLabel", true)
+	if nested then
+		return nested
+	end
+	-- Secret board also nests text under UIStroke in Studio.
+	local stroke = row:FindFirstChild("UIStroke")
+	if stroke then
+		local underStroke = stroke:FindFirstChildWhichIsA("TextLabel", true)
+		if underStroke then
+			return underStroke
+		end
+	end
+	return nil
 end
 
-local function findTimerLabels()
+local function ensureTitleLabel(row: Instance, tier: GlobalRaritySpawnConfig.TierDef)
+	local names = TITLE_CANDIDATES[tier.id]
+	if not names then
+		return
+	end
+	for _, name in names do
+		local title = row:FindFirstChild(name)
+		if title and title:IsA("TextLabel") then
+			title.Text = tier.displayName
+			title.Visible = true
+			return
+		end
+	end
+end
+
+local function findTimerLabels(): number
 	local map = Workspace:FindFirstChild("Map")
 	local timersRoot = map and map:FindFirstChild("SpawnTimers")
 	local guiPart = timersRoot and timersRoot:FindFirstChild("GUIPart")
 	local surface = guiPart and guiPart:FindFirstChild("SurfaceGui")
 	local timers = surface and surface:FindFirstChild("Timers")
 	if not timers then
-		return
+		return 0
 	end
 
+	local bound = 0
 	for _, tier in C.TIERS do
 		local row = timers:FindFirstChild(tier.timerRowName)
 		if not row then
 			continue
 		end
-		local timeLabel = row:FindFirstChild("Time", true)
-		if timeLabel and timeLabel:IsA("TextLabel") then
+		ensureTitleLabel(row, tier)
+		local timeLabel = resolveTimeLabel(row)
+		if timeLabel then
 			timerLabels[tier.id] = timeLabel
+			bound += 1
 		end
 	end
+	return bound
 end
 
 local function refreshTimerLabels()
@@ -93,13 +146,9 @@ local function refreshTimerLabels()
 		end
 		local endsAt = ReplicatedStorage:GetAttribute(C.timerAttrForTier(tier.id))
 		local remaining = if typeof(endsAt) == "number" then math.max(0, endsAt - now) else tier.intervalSec
-		if remaining <= 0 then
-			label.Text = ""
-			label.Visible = false
-		else
-			label.Visible = true
-			label.Text = formatRowLabel(tier, remaining)
-		end
+		label.Visible = true
+		-- Title labels already show rarity; Time is countdown only.
+		label.Text = C.formatCountdown(remaining)
 	end
 end
 
@@ -343,6 +392,22 @@ function GlobalRaritySpawnController.init()
 	refreshTimerLabels()
 	ensureTicker()
 	syncFromAttributes()
+
+	-- Map/SpawnTimers can stream in late — keep trying until all rows bind.
+	task.spawn(function()
+		for _ = 1, 45 do
+			local bound = 0
+			for _ in pairs(timerLabels) do
+				bound += 1
+			end
+			if bound >= #C.TIERS then
+				break
+			end
+			task.wait(1)
+			findTimerLabels()
+			refreshTimerLabels()
+		end
+	end)
 
 	for _, tier in C.TIERS do
 		ReplicatedStorage:GetAttributeChangedSignal(C.timerAttrForTier(tier.id)):Connect(refreshTimerLabels)

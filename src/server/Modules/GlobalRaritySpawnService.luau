@@ -169,6 +169,9 @@ local function buildSpawnBushList(): { { bush: Instance, weight: number } }
 				if isLootableBush(child) and not seen[child] then
 					seen[child] = true
 					local pos = bushWorldPos(child)
+					if not LandResolver.isPositionWithinLandSpawn(pos) then
+						continue
+					end
 					local land = LandResolver.resolveLandAtPosition(pos)
 					local w = if typeof(land) == "number" then landWeight(land) else 0
 					if w > 0 then
@@ -448,17 +451,44 @@ local function advanceState(state: GlobalState): (boolean, string?)
 		changed = true
 	end
 
+	-- Intervals are multiples of mythic (5/10/15/20m), so several tiers often
+	-- expire together. Collect due tiers and prefer the rarest; never burn a
+	-- full interval just because another marker is already active.
+	local dueTiers: { GlobalRaritySpawnConfig.TierDef } = {}
 	for _, tier in C.TIERS do
 		local endsAt = state.timers[tier.id]
 		if typeof(endsAt) == "number" and now >= endsAt then
-			if state.active then
-				state.timers[tier.id] = now + tier.intervalSec
+			table.insert(dueTiers, tier)
+		end
+	end
+
+	if #dueTiers > 0 then
+		if state.active then
+			local deferTo = math.max(now + 1, state.active.endsAt + 1)
+			for _, tier in dueTiers do
+				if state.timers[tier.id] ~= deferTo then
+					state.timers[tier.id] = deferTo
+					changed = true
+				end
+			end
+		else
+			local picked = dueTiers[#dueTiers]
+			if trySpawnTier(state, picked.id, false) then
+				state.timers[picked.id] = now + picked.intervalSec
 				changed = true
-			elseif trySpawnTier(state, tier.id, false) then
-				state.timers[tier.id] = now + tier.intervalSec
-				changed = true
-				spawnTier = tier.id
-				break
+				spawnTier = picked.id
+				local retryAt = (state.active and state.active.endsAt or now) + 1
+				for i = 1, #dueTiers - 1 do
+					state.timers[dueTiers[i].id] = retryAt
+					changed = true
+				end
+			else
+				-- Bush/pool not ready — retry soon instead of leaving timers stuck at 0.
+				local retryAt = now + 5
+				for _, tier in dueTiers do
+					state.timers[tier.id] = retryAt
+					changed = true
+				end
 			end
 		end
 	end

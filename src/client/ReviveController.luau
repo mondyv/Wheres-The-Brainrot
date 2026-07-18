@@ -205,7 +205,9 @@ local function setBgmSlowed(slowed: boolean)
 		end
 		if slowed then
 			if bgmSpeedBySound[s] == nil then
-				bgmSpeedBySound[s] = s.PlaybackSpeed
+				local current = s.PlaybackSpeed
+				-- Don't lock in temporary combat slowdowns (e.g. spider web) as "normal".
+				bgmSpeedBySound[s] = if current >= 0.95 then current else 1
 			end
 			local tween = TweenService:Create(s, bgmSlowFadeTween(), {
 				PlaybackSpeed = ReviveConfig.BGM_PLAYBACK_SPEED,
@@ -214,7 +216,7 @@ local function setBgmSlowed(slowed: boolean)
 			tween:Play()
 		else
 			local prev = bgmSpeedBySound[s]
-			local target = if typeof(prev) == "number" then prev else 1
+			local target = if typeof(prev) == "number" and prev >= 0.95 then prev else 1
 			bgmSpeedBySound[s] = nil
 			local tween = TweenService:Create(s, bgmSlowFadeTween(), { PlaybackSpeed = target })
 			bgmSpeedTweens[s] = tween
@@ -747,33 +749,36 @@ end
 function ReviveController.init()
 	resolveSoundTemplates()
 
-	local remotes = ReplicatedStorage:WaitForChild("Remotes", 60)
-	if not remotes then
-		warn("[ReviveController] Remotes folder missing after wait; init aborted")
-		return
-	end
-	local revivePromptRE = remotes:WaitForChild("RevivePrompt", 30) :: RemoteEvent
-	reviveDeclinedRE = remotes:WaitForChild("ReviveDeclined", 30) :: RemoteEvent
-	reviveCompleteRE = remotes:WaitForChild("ReviveComplete", 30) :: RemoteEvent
-	if not revivePromptRE or not reviveDeclinedRE or not reviveCompleteRE then
-		warn("[ReviveController] revive remotes missing after wait; init aborted")
-		return
-	end
-
-	revivePromptRE.OnClientEvent:Connect(function(land: number, productId: number, countdownSec: number?)
-		local duration = if typeof(countdownSec) == "number" then countdownSec else ReviveConfig.COUNTDOWN_SECONDS
-		openRevivePanel(land, productId, duration)
-	end)
-
-	reviveCompleteRE.OnClientEvent:Connect(function()
-		if sessionActive then
-			sessionActive = false
-			cancelCountdown()
-			if revivePanel then
-				revivePanel.Visible = false
-			end
-			cleanupReviveSession()
+	-- Remotes bind async so a missing/slow Remotes folder never stalls HUD panel boot.
+	task.spawn(function()
+		local remotes = ReplicatedStorage:WaitForChild("Remotes", 15)
+		if not remotes then
+			warn("[ReviveController] Remotes folder missing after wait; init aborted")
+			return
 		end
+		local revivePromptRE = remotes:WaitForChild("RevivePrompt", 15) :: RemoteEvent?
+		reviveDeclinedRE = remotes:WaitForChild("ReviveDeclined", 15) :: RemoteEvent?
+		reviveCompleteRE = remotes:WaitForChild("ReviveComplete", 15) :: RemoteEvent?
+		if not revivePromptRE or not reviveDeclinedRE or not reviveCompleteRE then
+			warn("[ReviveController] revive remotes missing after wait; init aborted")
+			return
+		end
+
+		revivePromptRE.OnClientEvent:Connect(function(land: number, productId: number, countdownSec: number?)
+			local duration = if typeof(countdownSec) == "number" then countdownSec else ReviveConfig.COUNTDOWN_SECONDS
+			openRevivePanel(land, productId, duration)
+		end)
+
+		reviveCompleteRE.OnClientEvent:Connect(function()
+			if sessionActive then
+				sessionActive = false
+				cancelCountdown()
+				if revivePanel then
+					revivePanel.Visible = false
+				end
+				cleanupReviveSession()
+			end
+		end)
 	end)
 
 	task.spawn(function()

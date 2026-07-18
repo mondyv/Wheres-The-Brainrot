@@ -715,17 +715,23 @@ local function collectBgmSounds(): { Sound }
 end
 
 local function forceRestoreBgm()
-	for _, s in collectBgmSounds() do
-		if not s.Parent then
-			continue
-		end
-		local tw = bgmSpeedTweens[s]
+	for s, tw in bgmSpeedTweens do
 		if tw then
 			tw:Cancel()
-			bgmSpeedTweens[s] = nil
 		end
-		s.PlaybackSpeed = bgmSpeedSaved[s] or 1
+		bgmSpeedTweens[s] = nil
+	end
+	for s, saved in bgmSpeedSaved do
+		if s.Parent then
+			s.PlaybackSpeed = if typeof(saved) == "number" then saved else 1
+		end
 		bgmSpeedSaved[s] = nil
+	end
+	-- Snap any lingering combat slowdown even if we lost the saved map entry.
+	for _, s in collectBgmSounds() do
+		if s.Parent and s.PlaybackSpeed < 0.95 then
+			s.PlaybackSpeed = 1
+		end
 	end
 end
 
@@ -2263,11 +2269,12 @@ local function runEncounter(fallbackAnchor: Vector3)
 	GameSoundEffects.playSpiderGettingHit()
 	flashCharacterHit()
 	playSpiderHitBlowVfx(hitTarget)
+	-- Restore BGM before death so ReviveController doesn't snapshot the combat slowdown.
+	forceRestoreBgm()
 	killPlayerFromSpiderHit()
 	task.delay(0.15, killPlayerFromSpiderHit)
 	waitSec(0.95)
 	finishEncounter(spider, web)
-	forceRestoreBgm()
 	return
 end
 
@@ -2292,6 +2299,7 @@ function BushSpiderEncounterController.init()
 
 	player.CharacterAdded:Connect(function()
 		clearSpiderEncounterCharacterFx()
+		forceRestoreBgm()
 	end)
 
 	local remotes = ReplicatedStorage:WaitForChild("Remotes", 60)

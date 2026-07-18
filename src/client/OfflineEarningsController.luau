@@ -8,7 +8,6 @@
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
@@ -71,7 +70,6 @@ local doubledRE: RemoteEvent? = nil
 local queuedAmount: number? = nil
 local autoDeclineToken = 0
 local priceLabelTemplate: string? = nil
-local priceStuckToButton = false
 
 local function getOrAddUIScale(parent: Instance): UIScale
 	local s = parent:FindFirstChildOfClass("UIScale")
@@ -444,10 +442,8 @@ local function attachPriceToDoubleButton()
 		label.Parent = doubleBtn
 		label.Position = UDim2.fromOffset(relX, relY)
 		priceBasePos = label.Position
-		priceStuckToButton = true
 	elseif not priceBasePos then
 		priceBasePos = label.Position
-		priceStuckToButton = true
 	end
 end
 

@@ -95,10 +95,14 @@ local function hotbarSlotIndexUnderPoint(screen: Vector2): number?
 	local c = requireCfg()
 	for si = c.hotbarInventorySlots, 1, -1 do
 		local slot = c.slots[si]
-		if not slot or not slot.Visible then
+		if not slot then
 			continue
 		end
+		-- Include hidden empty drop cells: AbsoluteSize is still valid while parent Hotbar is shown.
 		local surface = c.toolSlotSurface(slot)
+		if surface.AbsoluteSize.X <= 0 or surface.AbsoluteSize.Y <= 0 then
+			continue
+		end
 		if screenPointInHotbarSurface(surface, screen) then
 			return si
 		end

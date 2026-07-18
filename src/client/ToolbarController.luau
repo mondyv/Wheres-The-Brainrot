@@ -17,7 +17,8 @@
 	Brainrot pickups: tuck/untuck via drag; ghost drag; search; backpack frame outline + open/close tweens.
 	Backpack UI reuses Backpack.Container and fills visible stashed brainrots from the top-left. Empty rows stay visible.
 
-	Toolbar UI access: spawn safe zone (SafeZoneHitbox / Reddie / Raddie). RedWall hides the backpack (glide/deposit zone).
+	Toolbar UI access: spawn SafeZoneHitbox (and legacy Reddie/Raddie). RedWall is deposit —
+	hides backpack only when outside the safe zone (Reddie was renamed to RedWall on some maps).
 --]]
 
 local Players = game:GetService("Players")
@@ -28,16 +29,19 @@ local GuiService = game:GetService("GuiService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local CarryGate = require(script.Parent.CarryGate)
 local DropTargets = require(script.Parent.ToolbarDropTargets)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local LoadingScreenController = require(script.Parent.LoadingScreenController)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
 local BrainrotItemTooltip = require(script.Parent.BrainrotItemTooltip)
+local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 
 local player = Players.LocalPlayer
 
@@ -104,6 +108,7 @@ local EQUIP_POP_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDi
 local BACKPACK_OPEN_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
+local MOBILE_DRAG_HOLD_SEC = 0.2 -- long-press before mobile inventory drag starts (keeps tap-to-select)
 local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 28
 local TOGGLE_BACKPACK_ICON_SIZE_SCALE = 0.68
 
@@ -190,6 +195,7 @@ local pendingToolbarDrag: {
 	equippedOnDown: boolean?,
 	isExtraTool: boolean?,
 	tool: Tool?,
+	sourceSize: Vector2?,
 }? =
 	nil
 -- Drag started inside the safe zone; finish drop even if zone poll flickers before mouse up.
@@ -198,10 +204,11 @@ local pendingToolbarDrag: {
 local lastResolvedHotbarDropSlot: number? = nil
 local activeToolbarDrag = false
 local dragSuppressedToolbarClick = false
+local mobileDragHoldToken = 0
 local DRAG_THRESHOLD_PX = 14
 local DRAG_GHOST_THRESHOLD_PX = 6
--- Shared scale for "whole hotbar" hover while dragging toward slots (slightly subtler than per-slot hover).
-local HOTBAR_BULK_DRAG_HOVER_SCALE = 1.06
+-- Shared scale for the single hotbar slot under the cursor while dragging (not the whole bar).
+local HOTBAR_DRAG_HOVER_SCALE = 1.06
 local TOGGLE_BACKPACK_ICON_TINT = Color3.fromRGB(255, 255, 255)
 
 local backpackSearchText: string = ""
@@ -220,6 +227,8 @@ local updateHotbarSlotVisibility: () -> ()
 local refreshBrainrotBackpackUI: () -> ()
 local showToolbar: () -> ()
 local hideToolbar: (boolean?) -> ()
+local tryAutoSelectReturnedBrainrot: () -> ()
+local requestBrainrotInventoryFromServer: () -> ()
 local backpackSearchWired = false
 local backpackCloseWired = false
 local isBackpackPanelOpen = false
@@ -228,8 +237,10 @@ local backpackPanelFadeTween: Tween? = nil
 local backpackContainerScaleTween: Tween? = nil
 local backpackFadeRoot: CanvasGroup? = nil
 
--- While dragging toward the hotbar (from backpack, or from hotbar back over the bar), all slots share one hover scale.
-local hotbarDragBulkHover = false
+-- While dragging over the hotbar, only the slot under the cursor scales.
+-- `hotbarDragZoneActive` keeps drop hit-pad expansion without resizing every cell.
+local hotbarDragZoneActive = false
+local hotbarDragHoverSlot: number? = nil
 local backpackDragHover = false
 local BACKPACK_FRAME_DRAG_HOVER_SCALE = 1.045
 local BACKPACK_ROW_DRAG_HOVER_SCALE = 1.0
@@ -1326,7 +1337,8 @@ local ToolbarController = {}
 	end
 
 	local function resetHotbarSlotHoverScalesAfterDrag()
-		hotbarDragBulkHover = false
+		hotbarDragZoneActive = false
+		hotbarDragHoverSlot = nil
 		for si = 1, HOTBAR_INVENTORY_SLOTS do
 			local slot = slots[si]
 			if not slot then
@@ -1337,25 +1349,38 @@ local ToolbarController = {}
 		end
 	end
 
-	local function enterHotbarBackpackDragBulkHover()
-		if hotbarDragBulkHover then
+	local function setHotbarDragHoverSlot(slotIndex: number?)
+		if hotbarDragHoverSlot == slotIndex then
 			return
 		end
-		hotbarDragBulkHover = true
-		for si = 1, HOTBAR_INVENTORY_SLOTS do
-			local slot = slots[si]
-			if not slot then
-				continue
+		local prev = hotbarDragHoverSlot
+		hotbarDragHoverSlot = slotIndex
+		if prev and prev ~= slotIndex then
+			local prevSlot = slots[prev]
+			if prevSlot then
+				local sc = getOrAddUIScale(hotbarSlotScaleHost(prevSlot) :: GuiObject)
+				TweenService:Create(sc, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
 			end
-			local sc = getOrAddUIScale(hotbarSlotScaleHost(slot) :: GuiObject)
-			TweenService:Create(sc, HIGHLIGHT_TWEEN, { Scale = HOTBAR_BULK_DRAG_HOVER_SCALE }):Play()
+		end
+		if slotIndex then
+			local slot = slots[slotIndex]
+			if slot then
+				local sc = getOrAddUIScale(hotbarSlotScaleHost(slot) :: GuiObject)
+				TweenService:Create(sc, HIGHLIGHT_TWEEN, { Scale = HOTBAR_DRAG_HOVER_SCALE }):Play()
+			end
 		end
 	end
 
-	local function updateDragHoverTargets(overHotbar: boolean, overBackpack: boolean, overBackpackPanel: boolean)
+	local function updateDragHoverTargets(
+		overHotbar: boolean,
+		overBackpack: boolean,
+		overBackpackPanel: boolean,
+		hoveredHotbarSlot: number?
+	)
 		if overHotbar and not overBackpackPanel then
-			enterHotbarBackpackDragBulkHover()
-		elseif hotbarDragBulkHover then
+			hotbarDragZoneActive = true
+			setHotbarDragHoverSlot(hoveredHotbarSlot)
+		elseif hotbarDragZoneActive or hotbarDragHoverSlot ~= nil then
 			resetHotbarSlotHoverScalesAfterDrag()
 		end
 		if overBackpackPanel or (overBackpack and isBackpackPanelOpen) then
@@ -1380,7 +1405,7 @@ local ToolbarController = {}
 		resetBackpackDragHover()
 	end
 
-	local function startDragGhost(texture: string, screenPos: Vector2)
+	local function startDragGhost(texture: string, screenPos: Vector2, sourceSize: Vector2?)
 		clearDragGhost()
 		local sg = Instance.new("ScreenGui")
 		sg.Name = "ToolbarBrainrotDragGhost"
@@ -1396,7 +1421,13 @@ local ToolbarController = {}
 		im.Image = texture
 		im.ScaleType = Enum.ScaleType.Fit
 		im.ImageTransparency = 0.05
-		im.Size = UDim2.fromOffset(72, 72)
+		local side = 48
+		if sourceSize then
+			side = math.clamp(math.min(sourceSize.X, sourceSize.Y) * 0.85, 36, 56)
+		elseif UserInputService.TouchEnabled then
+			side = 44
+		end
+		im.Size = UDim2.fromOffset(side, side)
 		im.AnchorPoint = Vector2.new(0.5, 0.5)
 		im.ZIndex = 10
 		im.Parent = sg
@@ -1519,6 +1550,9 @@ local ToolbarController = {}
 			return
 		end
 		isBackpackPanelOpen = open
+		if not open then
+			BrainrotItemTooltip.hide(true)
+		end
 		local f = backpackFrameRef
 		cancelBackpackPanelTweens()
 		local sc = getOrAddUIScale(f :: Instance)
@@ -1581,7 +1615,13 @@ local ToolbarController = {}
 	end
 
 	showToolbar = function()
+		if LoadingScreenController.isActive() then
+			return
+		end
 		if toolbarShown then
+			if toggleBackpackIconRef and not isBackpackPanelOpen then
+				refreshToggleBackpackIconLayout()
+			end
 			return
 		end
 		toolbarShown = true
@@ -1597,7 +1637,8 @@ local ToolbarController = {}
 		local toolbarVisibilityTween = TweenService:Create(scale, SHOW_TWEEN, { Scale = 1 })
 		toolbarVisibilityTween:Play()
 		task.defer(function()
-			task.defer(refreshToggleBackpackIconLayout)
+			refreshToggleBackpackIconLayout()
+			updateHotbarSlotVisibility()
 		end)
 	end
 
@@ -1649,6 +1690,10 @@ local ToolbarController = {}
 	end
 
 	local function refreshToolbarVisibility()
+		if LoadingScreenController.isActive() then
+			hideToolbar()
+			return
+		end
 		if canUseToolbar then
 			showToolbar()
 		else
@@ -1702,7 +1747,7 @@ local ToolbarController = {}
 		return nil
 	end
 
-	local function tryAutoSelectReturnedBrainrot()
+	tryAutoSelectReturnedBrainrot = function()
 		if not canUseToolbar then
 			return
 		end
@@ -1735,6 +1780,11 @@ local ToolbarController = {}
 
 	local function onSafezonePresenceChanged(inZone: boolean)
 		if canUseToolbar == inZone then
+			-- Mid-load polls can set canUseToolbar while showToolbar no-ops.
+			-- Re-assert visibility whenever we confirm we're still in-zone.
+			if inZone and not LoadingScreenController.isActive() then
+				refreshToolbarVisibility()
+			end
 			return
 		end
 		canUseToolbar = inZone
@@ -1793,6 +1843,8 @@ local ToolbarController = {}
 				end
 			end)
 			refreshToolbarVisibility()
+			updateHotbarSlotVisibility()
+			refreshToggleBackpackIconLayout()
 		end)
 	end
 
@@ -1800,15 +1852,18 @@ local ToolbarController = {}
 		if not character then
 			return false
 		end
-		local hrp = character:FindFirstChild("HumanoidRootPart")
-		if hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position) then
-			return false
+		-- SafezoneHitbox (spawn) always unlocks the backpack/hotbar.
+		-- RedWall may overlap spawn after the Reddie→RedWall rename — do not let
+		-- deposit volume hide the toolbar while the player is still in the safe zone.
+		if SafezoneUtil.isCharacterInSafezone(character) then
+			return true
 		end
 		if SafezoneUtil.isCharacterInToolbarZone(character) then
 			return true
 		end
-		if SafezoneUtil.isCharacterInSafezone(character) then
-			return true
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position) then
+			return false
 		end
 		return false
 	end
@@ -1904,7 +1959,7 @@ local ToolbarController = {}
 		for i = 1, #slots do
 			local lit = uiHotbarHighlight ~= nil and i == uiHotbarHighlight
 			setSlotHighlight(i, lit)
-			if not hotbarDragBulkHover then
+			if not hotbarDragHoverSlot then
 				local slot = slots[i]
 				if slot then
 					local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
@@ -1932,6 +1987,7 @@ local ToolbarController = {}
 
 	-- Leaving the safe zone: unequip held brainrot and clear every hotbar selection ring.
 	deselectAllHotbarSlots = function()
+		BrainrotItemTooltip.hide(true)
 		local hum = getHumanoid()
 		if hum then
 			hum:UnequipTools()
@@ -2209,16 +2265,46 @@ local ToolbarController = {}
 
 	updateHotbarSlotVisibility = function()
 		ensureHotbarListLayout()
+		local toolbarActive = canUseToolbar and toolbarShown
+		local anyOccupied = false
+		for i = 1, #slots do
+			if hotbarSlotIsOccupied(i) then
+				anyOccupied = true
+				break
+			end
+		end
+		-- While dragging from backpack/hotbar with the bag open, keep empty cells visible
+		-- so backpack → hotbar drops can target a free slot (not only occupied ones).
+		local draggingForHotbarDrop = isBackpackPanelOpen
+			and (
+				hotbarDragZoneActive
+				or dragGhostGui ~= nil
+				or (
+					pendingToolbarDrag ~= nil
+					and (
+						pendingToolbarDrag.kind == "backpack"
+						or pendingToolbarDrag.kind == "hotbar"
+						or pendingToolbarDrag.kind == "backpack_extra"
+					)
+				)
+			)
+		local showEmptyDropTargets = draggingForHotbarDrop
+		local showHotbarSlots = anyOccupied or showEmptyDropTargets
+		-- Keep the Hotbar frame visible whenever the toolbar is up so ToggleBackpackImage
+		-- (a child of Hotbar) still shows when every slot is empty.
+		if hotbar:IsA("GuiObject") then
+			(hotbar :: GuiObject).Visible = toolbarActive
+		end
 		for i = 1, #slots do
 			local slot = slots[i]
 			if slot then
-				slot.Visible = hotbarSlotIsOccupied(i) or isBackpackPanelOpen
+				slot.Visible = toolbarActive and showHotbarSlots and (hotbarSlotIsOccupied(i) or showEmptyDropTargets)
 			end
 		end
 		if toggleBackpackIconRef then
 			local icon = toggleBackpackIconRef :: GuiObject
-			icon.Visible = not isBackpackPanelOpen
-			if not isBackpackPanelOpen then
+			icon.Visible = toolbarActive and not isBackpackPanelOpen
+			if icon.Visible then
 				task.defer(refreshToggleBackpackIconLayout)
 			end
 		end
@@ -2489,8 +2575,39 @@ local ToolbarController = {}
 		refreshParkedExtraToolsUI()
 	end
 
+	local function findBestBrainrotInventoryIndex(): number?
+		local bestIdx: number? = nil
+		local bestIncome = -math.huge
+		for i, entry in ipairs(brainrotEntries) do
+			local inc = brainrotEntryIncomeValue(entry)
+			if inc > bestIncome then
+				bestIncome = inc
+				bestIdx = i
+			end
+		end
+		return bestIdx
+	end
+
+	local function isBestBrainrotAlreadyEquipped(): boolean
+		local bestIdx = findBestBrainrotInventoryIndex()
+		if not bestIdx then
+			return true
+		end
+		local char = player.Character
+		local equipped = char and char:FindFirstChildOfClass("Tool")
+		if not equipped or equipped:GetAttribute("BrainrotTool") ~= true then
+			return false
+		end
+		local a = equipped:GetAttribute("BrainrotInvIndex")
+		return typeof(a) == "number" and math.floor(a) == bestIdx
+	end
+
 	local function requestEquipBestBrainrot()
 		if not canUseToolbar then
+			return
+		end
+		-- Already holding the highest-income brainrot — no remote, toast, or reshuffle.
+		if isBestBrainrotAlreadyEquipped() then
 			return
 		end
 
@@ -2502,95 +2619,13 @@ local ToolbarController = {}
 		equipBestBusyUntil = now + 0.75
 
 		local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
-
-		-- Do NOT use EquipBestBrainrot here. That server action does not carry the
-		-- exact target hotbar slots, so the next sync can shove pets back into the
-		-- backpack or into old/default positions. Use BrainrotSetParkedSlot below
-		-- with explicit slot numbers so the layout is deterministic.
-		local ranked: { { idx: number, income: number } } = {}
-		for idx, entry in ipairs(brainrotEntries) do
-			if entry ~= nil then
-				table.insert(ranked, {
-					idx = idx,
-					income = brainrotEntryIncomeValue(entry),
-				})
-			end
-		end
-
-		if #ranked == 0 then
+		local equipEv = folder and folder:FindFirstChild("EquipBestBrainrot")
+		if not equipEv or not equipEv:IsA("RemoteEvent") then
+			warn("[ToolbarController] EquipBestBrainrot remote missing")
 			return
 		end
-
-		table.sort(ranked, function(a, b)
-			if a.income == b.income then
-				return a.idx < b.idx
-			end
-			return a.income > b.income
-		end)
-
-		local desiredHotbar: { [number]: number } = {}
-		local selected: { [number]: boolean } = {}
-		for slot = 1, math.min(HOTBAR_INVENTORY_SLOTS, #ranked) do
-			local invIdx = ranked[slot].idx
-			desiredHotbar[invIdx] = slot
-			selected[invIdx] = true
-		end
-
-		local previousHotbarSlots = brainrotHotbarSlotByIndex
-		local previousParkedSlots = brainrotParkedInUI
-
-		brainrotHotbarSlotByIndex = {}
-		brainrotParkedInUI = {}
-		for idx = 1, #brainrotEntries do
-			local wantedSlot = desiredHotbar[idx]
-			if wantedSlot then
-				brainrotHotbarSlotByIndex[idx] = wantedSlot
-			else
-				brainrotParkedInUI[idx] = true
-			end
-		end
-
-		rebuildBrainrotHotbarReverseMap()
-		for si = 1, #slots do
-			refreshSlotVisual(si)
-		end
-		updateHotbarSlotVisibility()
-		refreshBrainrotBackpackUI()
-		if backpackFrameRef then
-			scrollBackpackToTop(backpackFrameRef)
-		end
-		task.defer(rebuildSlots)
-
-		local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
-		if not parkEv or not parkEv:IsA("RemoteEvent") then
-			return
-		end
-
-		local remote = parkEv :: RemoteEvent
-
-		-- Free backpack-only pets first, then place the best pets into explicit
-		-- hotbar slots. This avoids the server briefly resolving slot conflicts and
-		-- sending a pet back.
-		for idx = 1, #brainrotEntries do
-			if desiredHotbar[idx] == nil then
-				local oldSlot = previousHotbarSlots[idx]
-				local wasParked = previousParkedSlots[idx] == true
-				if oldSlot ~= nil or not wasParked then
-					remote:FireServer(idx, true)
-				end
-			end
-		end
-
-		for idx = 1, #brainrotEntries do
-			local wantedSlot = desiredHotbar[idx]
-			if wantedSlot then
-				local oldSlot = previousHotbarSlots[idx]
-				local wasParked = previousParkedSlots[idx] == true
-				if oldSlot ~= wantedSlot or wasParked then
-					remote:FireServer(idx, false, wantedSlot)
-				end
-			end
-		end
+		-- Server picks highest-income brainrot and equips it (moves to hotbar if needed).
+		(equipEv :: RemoteEvent):FireServer()
 	end
 
 	local optimisticBrainrotMoveToHotbar: (number, number) -> ()
@@ -2610,31 +2645,6 @@ local ToolbarController = {}
 		end
 
 		return nil
-	end
-
-	local function requestMoveBackpackEntryToHotbar(listIdx: number)
-		if not canUseToolbar then
-			return
-		end
-		if not brainrotEntries[listIdx] then
-			return
-		end
-
-		-- A tap from the backpack used to call the server without a target slot.
-		-- That let the server choose any available slot, which made items look random.
-		-- Prefer the item's original 1..9 slot, otherwise use the first empty slot.
-		local targetSlot = firstEmptyHotbarSlot(if listIdx <= HOTBAR_INVENTORY_SLOTS then listIdx else nil)
-		if not targetSlot then
-			return
-		end
-
-		optimisticBrainrotMoveToHotbar(listIdx, targetSlot)
-
-		local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
-		local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
-		if parkEv and parkEv:IsA("RemoteEvent") then
-			(parkEv :: RemoteEvent):FireServer(listIdx, false, targetSlot)
-		end
 	end
 
 	local function refreshAfterLocalBrainrotMove()
@@ -2789,6 +2799,38 @@ local ToolbarController = {}
 		end
 	end
 
+	-- Click inventory row: place on hotbar if needed, then equip (no drag required).
+	local function requestEquipFromBackpack(listIdx: number)
+		if not canUseToolbar then
+			return
+		end
+		if not brainrotEntries[listIdx] then
+			return
+		end
+
+		local uiSlot = hotbarSlotForBrainrotIndex(listIdx)
+		local needsHotbar = brainrotParkedInUI[listIdx] == true or uiSlot == nil
+		if needsHotbar then
+			local targetSlot = firstEmptyHotbarSlot(if listIdx <= HOTBAR_INVENTORY_SLOTS then listIdx else nil)
+			if targetSlot then
+				optimisticBrainrotMoveToHotbar(listIdx, targetSlot)
+				local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
+				local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
+				if parkEv and parkEv:IsA("RemoteEvent") then
+					(parkEv :: RemoteEvent):FireServer(listIdx, false, targetSlot)
+				end
+				uiSlot = targetSlot
+			end
+		end
+
+		if uiSlot then
+			setHotbarSelection(uiSlot)
+		end
+		requestEquipBrainrotSlot(listIdx, true)
+		task.defer(rebuildSlots)
+		task.delay(0.15, rebuildSlots)
+	end
+
 	local function wireBrainrotBackpackEquips()
 		if backpackEquipWired or not backpackContainer then
 			return
@@ -2806,13 +2848,14 @@ local ToolbarController = {}
 				styleToolbarSlotButton(btn)
 				local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
 				btn.MouseEnter:Connect(function()
-					if pendingToolbarDrag or activeToolbarDrag or hotbarDragBulkHover or not canUseToolbar then
+					if pendingToolbarDrag or activeToolbarDrag or hotbarDragZoneActive or not canUseToolbar then
 						return
 					end
 					UIInteractionSounds.playHover()
 					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.1 }):Play()
 				end)
 				btn.MouseLeave:Connect(function()
+					BrainrotItemTooltip.hide(true)
 					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
 				end)
 				if btn:GetAttribute("_BrainrotTooltipBound") ~= true then
@@ -2830,12 +2873,16 @@ local ToolbarController = {}
 					if pendingToolbarDrag then
 						return
 					end
+					if dtIsTouchPointerInput() then
+						return
+					end
 					local listIdx = listIndexForBackpackUiRow(uiRow)
 					local entry = brainrotEntryForBackpackSlot(uiRow)
 					if not listIdx or not entry then
 						return
 					end
 					UIInteractionSounds.playClick()
+					BrainrotItemTooltip.hide(true)
 					local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
 					lastResolvedHotbarDropSlot = nil
 					activeToolbarDrag = true
@@ -2846,9 +2893,92 @@ local ToolbarController = {}
 						start = UserInputService:GetMouseLocation(),
 						texture = tex,
 						uid = brainrotUidAtIndex(listIdx),
+						sourceSize = btn.AbsoluteSize,
 						rowButton = btn,
 						equippedOnDown = false,
 					}
+				end)
+
+				btn.InputBegan:Connect(function(input)
+					if input.UserInputType ~= Enum.UserInputType.Touch then
+						return
+					end
+					if not canUseToolbar or pendingToolbarDrag then
+						return
+					end
+					local listIdx = listIndexForBackpackUiRow(uiRow)
+					local entry = brainrotEntryForBackpackSlot(uiRow)
+					if not listIdx or not entry then
+						return
+					end
+					mobileDragHoldToken += 1
+					local token = mobileDragHoldToken
+					local startPos = Vector2.new(input.Position.X, input.Position.Y)
+					local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+					task.delay(MOBILE_DRAG_HOLD_SEC, function()
+						if token ~= mobileDragHoldToken or pendingToolbarDrag or not canUseToolbar then
+							return
+						end
+						UIInteractionSounds.playClick()
+						BrainrotItemTooltip.hide(true)
+						lastResolvedHotbarDropSlot = nil
+						activeToolbarDrag = true
+						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
+						pendingToolbarDrag = {
+							kind = "backpack",
+							idx = listIdx,
+							start = startPos,
+							texture = tex,
+							uid = brainrotUidAtIndex(listIdx),
+							sourceSize = btn.AbsoluteSize,
+							rowButton = btn,
+							equippedOnDown = false,
+						}
+						dragSuppressedToolbarClick = true
+					end)
+				end)
+				btn.InputEnded:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.Touch then
+						mobileDragHoldToken += 1
+					end
+				end)
+				btn.InputChanged:Connect(function(input)
+					if input.UserInputType ~= Enum.UserInputType.Touch then
+						return
+					end
+					if pendingToolbarDrag or not canUseToolbar then
+						return
+					end
+					local listIdx = listIndexForBackpackUiRow(uiRow)
+					local entry = brainrotEntryForBackpackSlot(uiRow)
+					if not listIdx or not entry then
+						return
+					end
+					local pos = Vector2.new(input.Position.X, input.Position.Y)
+					local btnPos = btn.AbsolutePosition
+					local btnSize = btn.AbsoluteSize
+					local center = btnPos + btnSize * 0.5
+					if (pos - center).Magnitude < math.max(btnSize.X, btnSize.Y) * 0.55 + DRAG_GHOST_THRESHOLD_PX then
+						return
+					end
+					mobileDragHoldToken += 1
+					local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+					UIInteractionSounds.playClick()
+					BrainrotItemTooltip.hide(true)
+					lastResolvedHotbarDropSlot = nil
+					activeToolbarDrag = true
+					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
+					pendingToolbarDrag = {
+						kind = "backpack",
+						idx = listIdx,
+						start = pos,
+						texture = tex,
+						uid = brainrotUidAtIndex(listIdx),
+						sourceSize = btn.AbsoluteSize,
+						rowButton = btn,
+						equippedOnDown = false,
+					}
+					dragSuppressedToolbarClick = true
 				end)
 			end
 		end
@@ -3373,21 +3503,116 @@ local ToolbarController = {}
 		task.defer(rebuildSlots)
 	end
 
+	requestBrainrotInventoryFromServer = function()
+		task.spawn(function()
+			local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
+			if not folder then
+				folder = ReplicatedStorage:WaitForChild("BushRemotes", 20)
+			end
+			if not folder then
+				return
+			end
+			local getFn = folder:FindFirstChild("GetBrainrotInventory")
+			if not getFn or not getFn:IsA("RemoteFunction") then
+				getFn = folder:WaitForChild("GetBrainrotInventory", 15)
+			end
+			if getFn and getFn:IsA("RemoteFunction") then
+				local ok, res = pcall(function()
+					return (getFn :: RemoteFunction):InvokeServer()
+				end)
+				if ok and typeof(res) == "table" then
+					setBrainrotEntriesFromServer(res)
+				end
+			end
+		end)
+	end
+
+	local initialInventoryRevealed = false
+
+	-- After loading, canUseToolbar may already be true from mid-load safezone polls
+	-- while showToolbar() no-op'd. Re-sync so hotbar/backpack appear without pressing `.
+	local function revealInventoryAfterLoadIfReady()
+		if LoadingScreenController.isActive() then
+			return false
+		end
+		SafezoneUtil.warmCacheAsync()
+		pollSafezonePresence()
+		refreshToolbarVisibility()
+		updateHotbarSlotVisibility()
+		refreshToggleBackpackIconLayout()
+		if canUseToolbar then
+			showToolbar()
+			updateHotbarSlotVisibility()
+			-- Do not auto-open the backpack panel — only show toolbar/hotbar chrome.
+			if tryAutoSelectReturnedBrainrot then
+				tryAutoSelectReturnedBrainrot()
+			end
+			requestBrainrotInventoryFromServer()
+			return true
+		end
+		return false
+	end
+
+	local function ensureSpawnToolbarVisible()
+		task.spawn(function()
+			SafezoneUtil.warmCacheAsync()
+			for _ = 1, 40 do
+				SafezoneUtil.warmCacheAsync()
+				SafezoneUtil.awaitCacheReady(1)
+				pollSafezonePresence()
+				refreshToolbarVisibility()
+				updateHotbarSlotVisibility()
+				refreshToggleBackpackIconLayout()
+				if canUseToolbar and not LoadingScreenController.isActive() then
+					revealInventoryAfterLoadIfReady()
+					return
+				end
+				task.wait(0.25)
+			end
+			pollSafezonePresence()
+			refreshToolbarVisibility()
+			updateHotbarSlotVisibility()
+			refreshToggleBackpackIconLayout()
+			requestBrainrotInventoryFromServer()
+		end)
+	end
+
+	local function watchLoadingThenRevealInventory()
+		task.spawn(function()
+			for _ = 1, 120 do
+				if revealInventoryAfterLoadIfReady() then
+					return
+				end
+				task.wait(0.25)
+			end
+			revealInventoryAfterLoadIfReady()
+		end)
+	end
+
 	local function refreshToolbarAfterWorldChange()
 		activeToolbarDrag = false
 		pendingToolbarDrag = nil
 		dragSuppressedToolbarClick = false
 		clearDragGhost()
 		isBackpackPanelOpen = false
+		initialInventoryRevealed = false
 		if backpackFrameRef and backpackFrameRef:IsA("GuiObject") then
 			(backpackFrameRef :: GuiObject).Visible = false
 		end
 		toolbarShown = false
 		safezoneOutStreak = 0
-		pollSafezonePresence()
-		refreshToolbarVisibility()
 		rebuildSlots()
 		applyHotbarSlotScales()
+		ensureSpawnToolbarVisible()
+		watchLoadingThenRevealInventory()
+		task.defer(function()
+			for _ = 1, 20 do
+				if revealInventoryAfterLoadIfReady() then
+					return
+				end
+				task.wait(0.2)
+			end
+		end)
 	end
 
 	-- ── Init ──────────────────────────────────────────────────────────────────────
@@ -3442,7 +3667,7 @@ local ToolbarController = {}
 					return pendingToolbarDrag
 				end,
 				getHotbarDragBulkHover = function()
-					return hotbarDragBulkHover
+					return hotbarDragZoneActive or hotbarDragHoverSlot ~= nil
 				end,
 				getBackpackContainer = function()
 					return backpackContainer
@@ -3474,6 +3699,9 @@ local ToolbarController = {}
 				configureHotbarSlotInput(slot, btn)
 				styleToolbarSlotButton(btn)
 				local function onHotbarSlotTapSelect()
+					if not MobileTouchGate.canTapUi() then
+						return
+					end
 					if not canSelectHotbarSlot() then
 						return
 					end
@@ -3488,19 +3716,14 @@ local ToolbarController = {}
 					selectSlot(i)
 				end
 				btn.Activated:Connect(onHotbarSlotTapSelect)
-				-- PC-only drag start; touch taps must not enter the drag pipeline (blocks Activated on some devices).
-				btn.MouseButton1Down:Connect(function()
-					if not canUseToolbar then
-						return
-					end
-					if dtIsTouchPointerInput() then
-						return
-					end
+				local function beginHotbarPendingDrag(startPos: Vector2)
 					local tex = hotbarSlotDragTexture(i)
 					if not tex then
 						return
 					end
-					UIInteractionSounds.playClick()
+					-- Click SFX plays once from Activated (onHotbarSlotTapSelect), not here —
+					-- MouseButton1Down + Activated were stacking duplicate plays.
+					BrainrotItemTooltip.hide(true)
 					local dragBrainrotIdx = brainrotIndexForHotbarSlot(i)
 					local isExtraTool = dragBrainrotIdx == nil or brainrotParkedInUI[dragBrainrotIdx] == true
 					local tool = slotTools[i]
@@ -3513,7 +3736,7 @@ local ToolbarController = {}
 					pendingToolbarDrag = {
 						kind = "hotbar",
 						idx = if isExtraTool then i else dragBrainrotIdx :: number,
-						start = UserInputService:GetMouseLocation(),
+						start = startPos,
 						texture = tex,
 						uid = if isExtraTool or not dragBrainrotIdx
 							then nil
@@ -3522,6 +3745,69 @@ local ToolbarController = {}
 						isExtraTool = isExtraTool,
 						equippedOnDown = equippedOnDown,
 					}
+				end
+
+				-- PC: drag starts immediately on mouse down.
+				btn.MouseButton1Down:Connect(function()
+					if not canUseToolbar then
+						return
+					end
+					if dtIsTouchPointerInput() then
+						return
+					end
+					beginHotbarPendingDrag(UserInputService:GetMouseLocation())
+				end)
+
+				-- Mobile: long-press (or hold + slide) starts drag so short taps still Activate/select.
+				btn.InputBegan:Connect(function(input)
+					if input.UserInputType ~= Enum.UserInputType.Touch then
+						return
+					end
+					if not canUseToolbar then
+						return
+					end
+					if pendingToolbarDrag or not hotbarSlotDragTexture(i) then
+						return
+					end
+					mobileDragHoldToken += 1
+					local token = mobileDragHoldToken
+					local startPos = Vector2.new(input.Position.X, input.Position.Y)
+					task.delay(MOBILE_DRAG_HOLD_SEC, function()
+						if token ~= mobileDragHoldToken then
+							return
+						end
+						if pendingToolbarDrag or not canUseToolbar then
+							return
+						end
+						beginHotbarPendingDrag(startPos)
+						dragSuppressedToolbarClick = true
+					end)
+				end)
+				btn.InputEnded:Connect(function(input)
+					if input.UserInputType == Enum.UserInputType.Touch then
+						mobileDragHoldToken += 1
+					end
+				end)
+				btn.InputChanged:Connect(function(input)
+					if input.UserInputType ~= Enum.UserInputType.Touch then
+						return
+					end
+					if pendingToolbarDrag or not canUseToolbar then
+						return
+					end
+					local pos = Vector2.new(input.Position.X, input.Position.Y)
+					local btnPos = btn.AbsolutePosition
+					local btnSize = btn.AbsoluteSize
+					local center = btnPos + btnSize * 0.5
+					if (pos - center).Magnitude < math.max(btnSize.X, btnSize.Y) * 0.55 + DRAG_GHOST_THRESHOLD_PX then
+						return
+					end
+					if not hotbarSlotDragTexture(i) then
+						return
+					end
+					mobileDragHoldToken += 1
+					beginHotbarPendingDrag(pos)
+					dragSuppressedToolbarClick = true
 				end)
 			else
 				warn(
@@ -3534,14 +3820,15 @@ local ToolbarController = {}
 			local scale = getOrAddUIScale(hotbarSlotScaleHost(slot))
 			local hoverTarget: GuiObject = (btn and (btn :: GuiObject)) or slot
 			hoverTarget.MouseEnter:Connect(function()
-				if hotbarDragBulkHover then
+				if hotbarDragZoneActive or hotbarDragHoverSlot ~= nil then
 					return
 				end
 				UIInteractionSounds.playHover()
 				TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = SLOT_HOVER_SCALE }):Play()
 			end)
 			hoverTarget.MouseLeave:Connect(function()
-				if hotbarDragBulkHover then
+				BrainrotItemTooltip.hide(true)
+				if hotbarDragZoneActive or hotbarDragHoverSlot ~= nil then
 					return
 				end
 				TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = hotbarSlotRestScale(i) }):Play()
@@ -3589,15 +3876,10 @@ local ToolbarController = {}
 		player.CharacterAdded:Connect(function(char: Model)
 			wireCharacter(char)
 			task.defer(refreshToolbarAfterWorldChange)
+			ensureSpawnToolbarVisible()
 		end)
 		if player.Character then
 			wireCharacter(player.Character)
-		end
-
-		canUseToolbar = isCharacterInToolbarAccessZone(player.Character)
-		refreshToolbarVisibility()
-		if canUseToolbar then
-			tryAutoSelectReturnedBrainrot()
 		end
 
 		player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(function()
@@ -3620,10 +3902,29 @@ local ToolbarController = {}
 		end)
 
 		task.spawn(function()
-			SafezoneUtil.warmCacheAsync()
-			task.wait()
-			pollSafezonePresence()
+			local map = workspace:WaitForChild("Map", 120)
+			if not map then
+				return
+			end
+			local function onSpawnBasesReady()
+				SafezoneUtil.warmCacheAsync()
+				pollSafezonePresence()
+				refreshToolbarVisibility()
+				updateHotbarSlotVisibility()
+				refreshToggleBackpackIconLayout()
+				requestBrainrotInventoryFromServer()
+			end
+			map.ChildAdded:Connect(function(ch)
+				if ch.Name == "Spawn And Bases" then
+					task.defer(onSpawnBasesReady)
+				end
+			end)
+			if map:FindFirstChild("Spawn And Bases") then
+				task.defer(onSpawnBasesReady)
+			end
 		end)
+
+		ensureSpawnToolbarVisible()
 
 		task.spawn(function()
 			task.wait(1.5)
@@ -3707,6 +4008,14 @@ local ToolbarController = {}
 			updateHotbarSlotVisibility()
 		end)
 
+		ensureSpawnToolbarVisible()
+		-- After backpack is wired closed above: wait for loading to end, then show
+		-- hotbar + open backpack (same as pressing `) when already in safezone.
+		watchLoadingThenRevealInventory()
+		LoadingScreenController.registerOnGameplayReady(function()
+			revealInventoryAfterLoadIfReady()
+		end)
+
 		-- `(`)` key opens / closes the brainrot backpack (matches the on-screen prompt text).
 		if backpackFrame then
 			ContextActionService:BindActionAtPriority("ToolbarOpenBackpack", function(_, state, _)
@@ -3758,7 +4067,12 @@ local ToolbarController = {}
 						return
 					end
 				end
-				startDragGhost(pnd.texture, m)
+				startDragGhost(pnd.texture, m, pnd.sourceSize or (if pnd.rowButton then pnd.rowButton.AbsoluteSize else nil))
+				-- Reveal empty hotbar cells immediately when dragging from the backpack.
+				if pnd.kind == "backpack" or pnd.kind == "backpack_extra" or pnd.kind == "hotbar" then
+					hotbarDragZoneActive = true
+					updateHotbarSlotVisibility()
+				end
 				local probeEnd = m
 				local probeWindow = dtScreenPointWithGuiInset(probeEnd)
 				local ghostCenter = if dragGhostImage
@@ -3766,7 +4080,8 @@ local ToolbarController = {}
 					else nil
 				local overHotbar, overBackpack, overBackpackPanel =
 					dtProbeDragHoverTargets(probeWindow, probeEnd, ghostCenter, nil)
-				updateDragHoverTargets(overHotbar, overBackpack, overBackpackPanel)
+				local hoverSlot = dtHotbarSlotIndexFromDropProbes(probeWindow, probeEnd, ghostCenter)
+				updateDragHoverTargets(overHotbar, overBackpack, overBackpackPanel, hoverSlot)
 				return
 			end
 			local rawEnd = UserInputService:GetMouseLocation()
@@ -3790,7 +4105,7 @@ local ToolbarController = {}
 			if pnd.kind == "hotbar" and not isBackpackPanelOpen and overBackpack then
 				setBackpackPanelOpen(true)
 			end
-			updateDragHoverTargets(overHotbar, overBackpack, overBackpackPanel)
+			updateDragHoverTargets(overHotbar, overBackpack, overBackpackPanel, hoveringHotbarSlot)
 		end)
 
 		UserInputService.InputEnded:Connect(function(input, _gp)
@@ -3832,7 +4147,7 @@ local ToolbarController = {}
 
 			if (rawEnd - pnd.start).Magnitude < DRAG_THRESHOLD_PX then
 				if pnd.kind == "backpack" then
-					requestMoveBackpackEntryToHotbar(pnd.idx)
+					requestEquipFromBackpack(pnd.idx)
 				end
 				clearDragGhost()
 				return
@@ -3845,32 +4160,31 @@ local ToolbarController = {}
 			local insetProbe = GuiService:GetGuiInset()
 			local ghostViewport = if ghostCenter then ghostCenter - Vector2.new(insetProbe.X, insetProbe.Y) else nil
 			local destBackpackRow = dtBackpackRowIndexFromDropProbes(rawEnd, mouseWindow, ghostViewport)
-			clearDragGhost()
-			dragSuppressedToolbarClick = true
 
+			-- Resolve targets before clearDragGhost so empty hotbar cells / pads are still active.
 			local overHotbar, overBackpack, overBackpackPanel =
 				dtProbeDragHoverTargets(mouseWindow, rawEnd, ghostCenter, ghostViewport)
-
-			-- Resolve exact hotbar drops, but DO NOT reuse the cached hotbar slot when
-			-- the release is over the backpack. That stale cache was why normal brainrots
-			-- snapped back instead of saving into the bag: it thought you dropped back on
-			-- the old hotbar slot.
 			local targetHotbar: number? = dtHotbarSlotIndexFromDropProbes(mouseWindow, rawEnd, ghostCenter)
-			local releaseOverBackpack = (overBackpack or overBackpackPanel or destBackpackRow ~= nil)
 			local releaseOverHotbarZone = overHotbar
 				or dtPointOverHotbarDropZoneProbes(mouseWindow, rawEnd)
 				or (ghostCenter ~= nil and dtPointOverHotbarDropZoneProbes(ghostCenter, rawEnd))
 				or pointOverHotbarHitScan(ghostViewport)
-			if
-				not targetHotbar
-				and lastResolvedHotbarDropSlot
-				and releaseOverHotbarZone
-				and not releaseOverBackpack
-			then
-				targetHotbar = lastResolvedHotbarDropSlot
+			local releaseOverBackpack = (overBackpack or overBackpackPanel or destBackpackRow ~= nil)
+			if not targetHotbar and lastResolvedHotbarDropSlot and releaseOverHotbarZone then
+				-- Backpack → hotbar: allow cache even if release also overlaps the bag frame.
+				-- Hotbar → backpack: ignore stale cache when release is clearly on the bag.
+				if pnd.kind == "backpack" or pnd.kind == "backpack_extra" or not releaseOverBackpack then
+					targetHotbar = lastResolvedHotbarDropSlot
+				end
 			end
 			lastResolvedHotbarDropSlot = nil
-			local droppedOnBackpack = releaseOverBackpack and targetHotbar == nil
+
+			clearDragGhost()
+			dragSuppressedToolbarClick = true
+
+			-- Hotbar wins when a hotbar cell/zone was targeted (fixes backpack → hotbar).
+			local droppedOnBackpack = releaseOverBackpack and targetHotbar == nil and not releaseOverHotbarZone
+			local overHotbarZone = targetHotbar ~= nil or releaseOverHotbarZone
 
 			if pnd.kind == "hotbar" and pnd.isExtraTool then
 				local tool = extraToolAtHotbarSlot(pnd.idx) or extraToolSlotByIndex[pnd.idx] or slotTools[pnd.idx]
@@ -3931,8 +4245,6 @@ local ToolbarController = {}
 			end
 
 			local remote = parkEv :: RemoteEvent
-
-			local overHotbarZone = targetHotbar ~= nil or (releaseOverHotbarZone and not releaseOverBackpack)
 
 			if pnd.kind == "hotbar" then
 				local sourceHotbarSlot = hotbarSlotForBrainrotIndex(pnd.idx)
@@ -4001,18 +4313,10 @@ local ToolbarController = {}
 				return
 			end
 			local sync = folder:WaitForChild("BrainrotInventorySync", 20)
-			local getFn = folder:WaitForChild("GetBrainrotInventory", 20)
 			if sync and sync:IsA("RemoteEvent") then
 				sync.OnClientEvent:Connect(setBrainrotEntriesFromServer)
 			end
-			if getFn and getFn:IsA("RemoteFunction") then
-				local ok, res = pcall(function()
-					return (getFn :: RemoteFunction):InvokeServer()
-				end)
-				if ok and typeof(res) == "table" then
-					setBrainrotEntriesFromServer(res)
-				end
-			end
+			requestBrainrotInventoryFromServer()
 		end)
 	end
 end)()

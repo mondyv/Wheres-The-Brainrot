@@ -56,16 +56,15 @@ local STACK_PADDING_PX = 8
 local STACK_CENTER_Y = 0.52
 local LOADING_TEXT_SIZE = 24
 local HINT_TEXT_SIZE = 16
-local BAR_WIDTH_MOBILE = 320
-local BAR_WIDTH_DESKTOP = 400
-local BAR_HEIGHT_PX = 12
-local BAR_STYLE = "gloss_v2"
+local BAR_WIDTH_MOBILE = 340
+local BAR_WIDTH_DESKTOP = 440
+local BAR_HEIGHT_PX = 14
+local BAR_STYLE = "clean_rect_v2"
+local BAR_CORNER_PX = 5
 
-local BAR_FILL_TOP = Color3.fromRGB(175, 245, 105)
-local BAR_FILL_MID = Color3.fromRGB(110, 210, 55)
-local BAR_FILL_BOT = Color3.fromRGB(70, 165, 35)
-local BAR_GLOW_COLOR = Color3.fromRGB(120, 220, 70)
-local BAR_TRACK_COLOR = Color3.fromRGB(16, 16, 16)
+local BAR_FILL_COLOR = Color3.fromRGB(118, 196, 66)
+local BAR_FILL_HIGHLIGHT = Color3.fromRGB(160, 230, 100)
+local BAR_TRACK_COLOR = Color3.fromRGB(22, 20, 18)
 local LOADING_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
 local HINT_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
 
@@ -75,18 +74,6 @@ local WOBBLE_JUMP_SPEED = 2.35
 local WOBBLE_ROT_DEG = 4
 local WOBBLE_JUMP_PX = 8
 local WOBBLE_SCALE_AMOUNT = 0.022
-
-local LIQUID_IMAGE_IDS = {
-	"rbxassetid://114678398666932",
-	"rbxassetid://79066128728111",
-	"rbxassetid://126746861363784",
-}
-local LIQUID_BLOB_COUNT = 6
-local LIQUID_SPEED_MUL = 0.55
-local LIQUID_STYLE = "image_v3_soft_float"
-local LIQUID_BLUR_LAYERS = 4
-local LIQUID_CORE_TRANSPARENCY = 0.62
-local LIQUID_OUTER_TRANSPARENCY = 0.93
 
 local LOADING_HINTS = {
 	"Optimizing Vibes",
@@ -128,19 +115,6 @@ local hiddenCharacterParts: { [BasePart]: number }? = nil
 local earlyVisualsReady = false
 local loadingBarFill: Frame? = nil
 local loadingProgress = 0
-local stopLiquidAnim: (() -> ())? = nil
-
-type LiquidBlob = {
-	gui: GuiObject,
-	baseX: number,
-	baseY: number,
-	speed: number,
-	ampY: number,
-	ampX: number,
-	phase: number,
-	rotSpeed: number,
-	baseScale: number,
-}
 
 local function defaultLoadingCFrame(): CFrame
 	return CFrame.new(DEFAULT_CAMERA_POS) * CFrame.fromOrientation(DEFAULT_CAMERA_RAD.X, DEFAULT_CAMERA_RAD.Y, DEFAULT_CAMERA_RAD.Z)
@@ -1634,163 +1608,17 @@ local function findOrCreateStack(loadingGui: ScreenGui): Frame
 	return stack
 end
 
-local function ensureLiquidLayer(loadingGui: ScreenGui): Frame
-	local parent = getCrispUiParent(loadingGui)
-	for _, root in { parent, loadingGui:FindFirstChild("LoadingFadeCanvas") } do
-		if root then
-			local old = root:FindFirstChild("LiquidLayer")
-			if old and old:GetAttribute("LiquidStyle") ~= LIQUID_STYLE then
-				old:Destroy()
-			end
-		end
+local function destroyLiquidLayers(loadingGui: ScreenGui)
+	local liquid = loadingGui:FindFirstChild("LiquidLayer")
+	if liquid then
+		liquid:Destroy()
 	end
-
-	local existing = parent:FindFirstChild("LiquidLayer")
-	if existing and existing:IsA("Frame") and existing:GetAttribute("LiquidStyle") == LIQUID_STYLE then
-		return existing
-	end
-	if existing then
-		existing:Destroy()
-	end
-
-	local layer = Instance.new("Frame")
-	layer.Name = "LiquidLayer"
-	layer.BackgroundTransparency = 1
-	layer.BorderSizePixel = 0
-	layer.AnchorPoint = Vector2.new(0, 0)
-	layer.Position = UDim2.fromScale(0, 0)
-	layer.Size = UDim2.fromScale(1, 1)
-	layer.ZIndex = 3
-	layer.ClipsDescendants = false
-	layer:SetAttribute("LiquidStyle", LIQUID_STYLE)
-	layer.Parent = parent
-
-	-- Moderate size, left/right floaters (not center-smothering).
-	-- { x, y, size }
-	local placements = {
-		{ 0.1, 0.2, 0.26 },
-		{ 0.9, 0.24, 0.24 },
-		{ 0.08, 0.68, 0.28 },
-		{ 0.92, 0.66, 0.26 },
-		{ 0.14, 0.44, 0.22 },
-		{ 0.86, 0.48, 0.23 },
-	}
-
-	for i = 1, LIQUID_BLOB_COUNT do
-		local place = placements[((i - 1) % #placements) + 1]
-		local imageId = LIQUID_IMAGE_IDS[((i - 1) % #LIQUID_IMAGE_IDS) + 1]
-
-		local holder = Instance.new("Frame")
-		holder.Name = "LiquidBlob" .. i
-		holder.BackgroundTransparency = 1
-		holder.BorderSizePixel = 0
-		holder.AnchorPoint = Vector2.new(0.5, 0.5)
-		holder.Position = UDim2.fromScale(place[1], place[2])
-		holder.Size = UDim2.fromScale(place[3], place[3])
-		holder.Rotation = (i * 31) % 40 - 20
-		holder.ZIndex = 3
-		holder.Parent = layer
-
-		-- Soft stack: slightly larger ghosts + high transparency = blurry haze.
-		for layerIdx = LIQUID_BLUR_LAYERS, 1, -1 do
-			local t = (layerIdx - 1) / math.max(LIQUID_BLUR_LAYERS - 1, 1)
-			local grow = 1 + t * 0.28
-			local ox = math.sin(layerIdx * 2.1 + i) * t * 0.035
-			local oy = math.cos(layerIdx * 1.6 + i) * t * 0.035
-			local ghost = Instance.new("ImageLabel")
-			ghost.Name = "Blur" .. layerIdx
-			ghost.BackgroundTransparency = 1
-			ghost.BorderSizePixel = 0
-			ghost.Image = imageId
-			ghost.ImageTransparency = LIQUID_CORE_TRANSPARENCY
-				+ t * (LIQUID_OUTER_TRANSPARENCY - LIQUID_CORE_TRANSPARENCY)
-			ghost.ScaleType = Enum.ScaleType.Fit
-			ghost.AnchorPoint = Vector2.new(0.5, 0.5)
-			ghost.Position = UDim2.fromScale(0.5 + ox, 0.5 + oy)
-			ghost.Size = UDim2.fromScale(grow, grow)
-			ghost.ZIndex = 3
-			ghost.Parent = holder
+	local canvas = loadingGui:FindFirstChild("LoadingFadeCanvas")
+	if canvas then
+		local canvasLiquid = canvas:FindFirstChild("LiquidLayer")
+		if canvasLiquid then
+			canvasLiquid:Destroy()
 		end
-	end
-
-	task.defer(function()
-		local toPreload: { Instance } = {}
-		for _, child in layer:GetDescendants() do
-			if child:IsA("ImageLabel") then
-				table.insert(toPreload, child)
-			end
-		end
-		if #toPreload > 0 then
-			local ok, err = pcall(function()
-				ContentProvider:PreloadAsync(toPreload)
-			end)
-			if not ok then
-				warn("[LoadingScreenController] liquid preload failed:", err)
-			end
-		end
-	end)
-
-	return layer
-end
-
-local function startLiquidAnim(loadingGui: ScreenGui): () -> ()
-	local layer = ensureLiquidLayer(loadingGui)
-	local blobs: { LiquidBlob } = {}
-
-	for _, child in layer:GetChildren() do
-		if child:IsA("Frame") and string.sub(child.Name, 1, 10) == "LiquidBlob" then
-			local idx = tonumber(string.match(child.Name, "%d+")) or (#blobs + 1)
-			local scaleInst = child:FindFirstChild("BlobScale")
-			if not scaleInst or not scaleInst:IsA("UIScale") then
-				scaleInst = Instance.new("UIScale")
-				scaleInst.Name = "BlobScale"
-				scaleInst.Parent = child
-			end
-			table.insert(blobs, {
-				gui = child,
-				baseX = child.Position.X.Scale,
-				baseY = child.Position.Y.Scale,
-				speed = (0.012 + (idx % 5) * 0.004) * LIQUID_SPEED_MUL,
-				ampY = 0.08 + (idx % 3) * 0.025,
-				ampX = 0.06 + (idx % 4) * 0.02,
-				phase = idx * 1.37,
-				rotSpeed = 3 + (idx % 4) * 1.3,
-				baseScale = 1,
-			})
-		end
-	end
-
-	local t = 0
-	local conn = RunService.RenderStepped:Connect(function(dt)
-		if not loadingActive then
-			return
-		end
-		t += dt
-		for _, blob in blobs do
-			if not blob.gui.Parent then
-				continue
-			end
-			local wave = t * blob.speed + blob.phase
-			local x = blob.baseX + math.sin(wave) * blob.ampX + math.sin(wave * 0.37) * 0.02
-			local y = blob.baseY + math.sin(wave * 0.75 + 0.5) * blob.ampY
-			-- Drift on their side of the screen, still fully visible.
-			if blob.baseX < 0.5 then
-				x = math.clamp(x, 0.02, 0.32)
-			else
-				x = math.clamp(x, 0.68, 0.98)
-			end
-			y = math.clamp(y, 0.08, 0.9)
-			blob.gui.Position = UDim2.fromScale(x, y)
-			blob.gui.Rotation = math.sin(wave * 0.3) * blob.rotSpeed
-			local scaleInst = blob.gui:FindFirstChild("BlobScale")
-			if scaleInst and scaleInst:IsA("UIScale") then
-				scaleInst.Scale = 0.95 + 0.08 * (0.5 + 0.5 * math.sin(wave * 0.7))
-			end
-		end
-	end)
-
-	return function()
-		conn:Disconnect()
 	end
 end
 
@@ -1864,7 +1692,7 @@ local function ensureGameNameVisible(loadingGui: ScreenGui)
 end
 
 local function ensureSleekLoadingUI(loadingGui: ScreenGui)
-	ensureLiquidLayer(loadingGui)
+	destroyLiquidLayers(loadingGui)
 	local stack = findOrCreateStack(loadingGui)
 
 	local loadingLabel = stack:FindFirstChild("LoadingText")
@@ -1890,147 +1718,78 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 
 	local barW = if UserInputService.TouchEnabled then BAR_WIDTH_MOBILE else BAR_WIDTH_DESKTOP
 	local host = stack:FindFirstChild("ProgressHost")
-	local barTrack: Frame? = nil
-	if host and host:IsA("Frame") then
-		local nested = host:FindFirstChild("ProgressTrack")
-		if nested and nested:IsA("Frame") then
-			barTrack = nested
-		end
-	else
-		local direct = stack:FindFirstChild("ProgressTrack")
-		if direct and direct:IsA("Frame") then
-			barTrack = direct
-		end
-	end
-
-	if barTrack and barTrack:GetAttribute("BarStyle") ~= BAR_STYLE then
-		if host then
-			host:Destroy()
-		else
-			barTrack:Destroy()
-		end
-		local orphanGlow = stack:FindFirstChild("ProgressGlow")
-		if orphanGlow then
-			orphanGlow:Destroy()
-		end
-		barTrack = nil
+	if host then
+		host:Destroy()
 		host = nil
 	end
+	local orphanGlow = stack:FindFirstChild("ProgressGlow")
+	if orphanGlow then
+		orphanGlow:Destroy()
+	end
 
-	if not barTrack then
-		host = Instance.new("Frame")
-		host.Name = "ProgressHost"
-		host.BackgroundTransparency = 1
-		host.BorderSizePixel = 0
-		host.LayoutOrder = 3
-		host.ZIndex = 20
-		host.Size = UDim2.fromOffset(barW + 18, BAR_HEIGHT_PX + 10)
-		host.Parent = stack
+	local barTrack = stack:FindFirstChild("ProgressTrack")
+	if barTrack and barTrack:IsA("Frame") and barTrack:GetAttribute("BarStyle") ~= BAR_STYLE then
+		barTrack:Destroy()
+		barTrack = nil
+	end
 
-		local glow = Instance.new("Frame")
-		glow.Name = "ProgressGlow"
-		glow.BackgroundColor3 = BAR_GLOW_COLOR
-		glow.BackgroundTransparency = 0.78
-		glow.BorderSizePixel = 0
-		glow.AnchorPoint = Vector2.new(0.5, 0.5)
-		glow.Position = UDim2.fromScale(0.5, 0.5)
-		glow.Size = UDim2.fromScale(1, 1)
-		glow.ZIndex = 20
-		glow.Parent = host
-
-		local glowCorner = Instance.new("UICorner")
-		glowCorner.CornerRadius = UDim.new(1, 0)
-		glowCorner.Parent = glow
-
-		local glowStroke = Instance.new("UIStroke")
-		glowStroke.Color = BAR_GLOW_COLOR
-		glowStroke.Transparency = 0.55
-		glowStroke.Thickness = 3
-		glowStroke.Parent = glow
-
+	if not barTrack or not barTrack:IsA("Frame") then
 		barTrack = Instance.new("Frame")
 		barTrack.Name = "ProgressTrack"
 		barTrack.BackgroundColor3 = BAR_TRACK_COLOR
-		barTrack.BackgroundTransparency = 0.05
+		barTrack.BackgroundTransparency = 0.12
 		barTrack.BorderSizePixel = 0
-		barTrack.AnchorPoint = Vector2.new(0.5, 0.5)
-		barTrack.Position = UDim2.fromScale(0.5, 0.5)
-		barTrack.Size = UDim2.fromOffset(barW, BAR_HEIGHT_PX)
+		barTrack.LayoutOrder = 3
 		barTrack.ZIndex = 21
 		barTrack.ClipsDescendants = true
 		barTrack:SetAttribute("BarStyle", BAR_STYLE)
-		barTrack.Parent = host
+		barTrack.Parent = stack
 
 		local trackCorner = Instance.new("UICorner")
-		trackCorner.CornerRadius = UDim.new(1, 0)
+		trackCorner.CornerRadius = UDim.new(0, BAR_CORNER_PX)
 		trackCorner.Parent = barTrack
 
 		local fill = Instance.new("Frame")
 		fill.Name = "ProgressFill"
-		fill.BackgroundColor3 = BAR_FILL_MID
+		fill.BackgroundColor3 = BAR_FILL_COLOR
 		fill.BackgroundTransparency = 0
 		fill.BorderSizePixel = 0
 		fill.AnchorPoint = Vector2.new(0, 0.5)
-		fill.Position = UDim2.new(0, 0, 0.5, 0)
-		fill.Size = UDim2.fromScale(0.08, 1)
+		fill.Position = UDim2.new(0, 2, 0.5, 0)
+		fill.Size = UDim2.new(0.08, -4, 1, -4)
 		fill.ZIndex = 22
 		fill.Parent = barTrack
 
 		local fillCorner = Instance.new("UICorner")
-		fillCorner.CornerRadius = UDim.new(1, 0)
+		fillCorner.CornerRadius = UDim.new(0, math.max(3, BAR_CORNER_PX - 1))
 		fillCorner.Parent = fill
 
 		local fillGrad = Instance.new("UIGradient")
 		fillGrad.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, BAR_FILL_TOP),
-			ColorSequenceKeypoint.new(0.45, BAR_FILL_MID),
-			ColorSequenceKeypoint.new(1, BAR_FILL_BOT),
+			ColorSequenceKeypoint.new(0, BAR_FILL_COLOR),
+			ColorSequenceKeypoint.new(0.5, BAR_FILL_HIGHLIGHT),
+			ColorSequenceKeypoint.new(1, BAR_FILL_COLOR),
 		})
 		fillGrad.Rotation = 90
 		fillGrad.Parent = fill
-
-		local shine = Instance.new("Frame")
-		shine.Name = "Shine"
-		shine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-		shine.BackgroundTransparency = 0.72
-		shine.BorderSizePixel = 0
-		shine.AnchorPoint = Vector2.new(0.5, 0)
-		shine.Position = UDim2.new(0.5, 0, 0, 1)
-		shine.Size = UDim2.new(1, -4, 0.42, 0)
-		shine.ZIndex = 23
-		shine.Parent = fill
-
-		local shineCorner = Instance.new("UICorner")
-		shineCorner.CornerRadius = UDim.new(1, 0)
-		shineCorner.Parent = shine
-
-		local shineGrad = Instance.new("UIGradient")
-		shineGrad.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.35),
-			NumberSequenceKeypoint.new(0.5, 0.15),
-			NumberSequenceKeypoint.new(1, 0.55),
-		})
-		shineGrad.Parent = shine
-
-		local fillGlow = Instance.new("UIStroke")
-		fillGlow.Name = "FillGlow"
-		fillGlow.Color = BAR_GLOW_COLOR
-		fillGlow.Transparency = 0.45
-		fillGlow.Thickness = 1.5
-		fillGlow.Parent = fill
-	end
-
-	if host and host:IsA("Frame") then
-		host.Size = UDim2.fromOffset(barW + 18, BAR_HEIGHT_PX + 10)
-	end
-	if barTrack then
-		barTrack.Size = UDim2.fromOffset(barW, BAR_HEIGHT_PX)
-		local fill = barTrack:FindFirstChild("ProgressFill")
-		if fill and fill:IsA("Frame") then
-			loadingBarFill = fill
-			local shown = 0.06 + math.clamp(loadingProgress, 0, 1) * 0.94
-			fill.Size = UDim2.fromScale(shown, 1)
+	else
+		local staleStroke = (barTrack :: Frame):FindFirstChild("BarOutline")
+		if staleStroke then
+			staleStroke:Destroy()
 		end
+		for _, d in (barTrack :: Frame):GetDescendants() do
+			if d:IsA("UIStroke") then
+				d:Destroy()
+			end
+		end
+	end
+
+	;(barTrack :: Frame).Size = UDim2.fromOffset(barW, BAR_HEIGHT_PX)
+	local fill = (barTrack :: Frame):FindFirstChild("ProgressFill")
+	if fill and fill:IsA("Frame") then
+		loadingBarFill = fill
+		local shown = 0.06 + math.clamp(loadingProgress, 0, 1) * 0.94
+		fill.Size = UDim2.new(shown, -4, 1, -4)
 	end
 
 	local hintLabel = stack:FindFirstChild("LoadingHint")
@@ -2060,7 +1819,7 @@ local function setLoadingProgress(alpha: number)
 	local fill = loadingBarFill
 	if fill and fill.Parent then
 		local shown = 0.06 + loadingProgress * 0.94
-		fill.Size = UDim2.fromScale(shown, 1)
+		fill.Size = UDim2.new(shown, -4, 1, -4)
 	end
 end
 
@@ -2214,10 +1973,6 @@ local function fadeOutLoadingTogether(
 		stopNameAnim()
 		stopNameAnim = nil
 	end
-	if stopLiquidAnim then
-		stopLiquidAnim()
-		stopLiquidAnim = nil
-	end
 
 	local tweens: { Tween } = {}
 
@@ -2231,7 +1986,7 @@ local function fadeOutLoadingTogether(
 		table.insert(tweens, TweenService:Create(canvas, FADE_TWEEN_INFO, { GroupTransparency = 1 }))
 	end
 
-	-- Stack + liquid sit outside CanvasGroup for crisp text — fade them directly.
+	-- Stack sits outside CanvasGroup for crisp text — fade it directly.
 	local function fadeTree(root: Instance?)
 		if not root then
 			return
@@ -2247,7 +2002,6 @@ local function fadeOutLoadingTogether(
 		end
 	end
 	fadeTree(loadingGui:FindFirstChild("LoadingStack"))
-	fadeTree(loadingGui:FindFirstChild("LiquidLayer"))
 
 	if blur and blur.Parent then
 		table.insert(tweens, TweenService:Create(blur, FADE_TWEEN_INFO, { Size = 0 }))
@@ -2363,11 +2117,7 @@ function M.run()
 	end
 
 	stopNameAnim = startGameNameSubtitleAnim(loadingGui)
-	if stopLiquidAnim then
-		stopLiquidAnim()
-		stopLiquidAnim = nil
-	end
-	stopLiquidAnim = startLiquidAnim(loadingGui)
+	destroyLiquidLayers(loadingGui)
 	preloadGameName(loadingGui)
 
 	local camera = Workspace.CurrentCamera
@@ -2424,10 +2174,6 @@ function M.run()
 	if stopNameAnim then
 		stopNameAnim()
 		stopNameAnim = nil
-	end
-	if stopLiquidAnim then
-		stopLiquidAnim()
-		stopLiquidAnim = nil
 	end
 
 	exitLoadingIsolation(playerGui)

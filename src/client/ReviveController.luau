@@ -16,7 +16,6 @@ local HUDController = require(script.Parent.HUDController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
-local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 
 local player = Players.LocalPlayer
@@ -642,7 +641,17 @@ local function resolveRevivePanel(main: ScreenGui): GuiObject?
 end
 
 local function openRevivePanel(land: number, productId: number, countdownSec: number)
+	-- Server is authoritative for land/product. If a stale local open raced first,
+	-- replace it with the correct tier instead of ignoring the prompt.
 	if sessionActive then
+		if currentProductId == productId and currentLand == land then
+			return
+		end
+		cancelCountdown()
+		currentLand = land
+		currentProductId = productId
+		refreshRegionalPrice(productId)
+		startCountdown(countdownSec)
 		return
 	end
 	sessionActive = true
@@ -712,15 +721,12 @@ local function resolveSoundTemplates()
 	end
 end
 
-local function onLocalDeath(character: Model)
+-- Client only plays death FX here. Land/product come from server RevivePrompt
+-- so streaming / wrong local resolve can't prompt the Land 1 product.
+local function onLocalDeath(_character: Model)
 	stopRobloxOofSounds()
 	playDeathSfx()
 	startEarRinging()
-
-	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
-	local land = if hrp then LandResolver.resolveLandAtPosition(hrp.Position) else 1
-	local tier = ReviveConfig.tierForLand(land)
-	openRevivePanel(tier.land, tier.productId, ReviveConfig.COUNTDOWN_SECONDS)
 end
 
 local function hookCharacter(character: Model)
@@ -805,13 +811,16 @@ function ReviveController.init()
 		if userId ~= player.UserId then
 			return
 		end
-		if ReviveConfig.isReviveProduct(productId) then
-			purchasePromptOpen = false
-		end
-		if not wasPurchased or not ReviveConfig.isReviveProduct(productId) or not sessionActive then
+		if not ReviveConfig.isReviveProduct(productId) then
 			return
 		end
-		-- Server ReviveComplete closes the panel after teleport.
+		if wasPurchased then
+			-- Keep purchasePromptOpen true so the countdown cannot fire Decline
+			-- and clear server pending before ProcessReceipt teleports us.
+			purchasePromptOpen = true
+			return
+		end
+		purchasePromptOpen = false
 	end)
 end
 

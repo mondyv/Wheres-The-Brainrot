@@ -29,10 +29,39 @@ local function waitForAssignedPlot(player: Player, character: Model): Instance?
 end
 
 local function teleportToPlotSpawn(player: Player, character: Model)
-	local reviveCf = player:GetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR)
-	if typeof(reviveCf) == "CFrame" then
-		player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, nil)
+	local posAttr = player:GetAttribute(ReviveConfig.REVIVE_SPAWN_POS_ATTR)
+	local lookAttr = player:GetAttribute(ReviveConfig.REVIVE_SPAWN_LOOK_ATTR)
+	local legacyCf = player:GetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR)
+
+	local reviveCf: CFrame? = nil
+	if typeof(posAttr) == "Vector3" then
+		local look = if typeof(lookAttr) == "Vector3" then lookAttr else Vector3.new(0, 0, -1)
+		local flat = Vector3.new(look.X, 0, look.Z)
+		if flat.Magnitude < 0.08 then
+			flat = Vector3.new(0, 0, -1)
+		else
+			flat = flat.Unit
+		end
+		reviveCf = CFrame.lookAt(posAttr, posAttr + flat)
+	elseif typeof(legacyCf) == "CFrame" then
+		reviveCf = legacyCf
+	end
+
+	if reviveCf then
+		local targetPos = reviveCf.Position
+		-- Keep attrs briefly so late plot hooks don't overwrite the land revive.
 		PlotSpawnUtil.teleportCharacterToCFrame(character, reviveCf)
+		task.delay(2.5, function()
+			if not player.Parent then
+				return
+			end
+			local stillPos = player:GetAttribute(ReviveConfig.REVIVE_SPAWN_POS_ATTR)
+			if typeof(stillPos) == "Vector3" and (stillPos - targetPos).Magnitude < 1 then
+				player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, nil)
+				player:SetAttribute(ReviveConfig.REVIVE_SPAWN_POS_ATTR, nil)
+				player:SetAttribute(ReviveConfig.REVIVE_SPAWN_LOOK_ATTR, nil)
+			end
+		end)
 		return
 	end
 

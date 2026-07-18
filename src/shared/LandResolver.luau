@@ -27,16 +27,22 @@ local landFolders: { [number]: Instance } = {}
 local discoveryHooked = false
 local initialScanDone = false
 
-local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolean
-	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
-	local half = part.Size * 0.5
-	return math.abs(localPt.X) <= half.X and math.abs(localPt.Y) <= half.Y and math.abs(localPt.Z) <= half.Z
-end
-
 local function isPointWithinPartXZ(worldPoint: Vector3, part: BasePart): boolean
 	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
 	local half = part.Size * 0.5
 	return math.abs(localPt.X) <= half.X and math.abs(localPt.Z) <= half.Z
+end
+
+-- Luck hitboxes are often flat volumes; death/ragdoll Y easily leaves the OBB.
+-- Match on XZ (with a small pad) and allow generous vertical slack.
+local function isPointWithinLandHitbox(worldPoint: Vector3, part: BasePart): boolean
+	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
+	local half = part.Size * 0.5
+	local xzPad = 3
+	local ySlack = math.max(half.Y + 12, 64)
+	return math.abs(localPt.X) <= half.X + xzPad
+		and math.abs(localPt.Z) <= half.Z + xzPad
+		and math.abs(localPt.Y) <= ySlack
 end
 
 local function expandPartBounds(cf: CFrame, size: Vector3, minV: Vector3, maxV: Vector3): (Vector3, Vector3)
@@ -311,8 +317,8 @@ function M.resolveLandAtPosition(worldPos: Vector3): number
 	local bestLand: number? = nil
 	local bestLuck = -1
 	for _, entry in landHitboxes do
-		if entry.part.Parent and isPointInsidePartOBB(worldPos, entry.part) then
-			if entry.land > (bestLand or 0) or (bestLand == entry.land and entry.displayLuck > bestLuck) then
+		if entry.part.Parent and isPointWithinLandHitbox(worldPos, entry.part) then
+			if entry.land > (bestLand or 0) or (entry.land == bestLand and entry.displayLuck > bestLuck) then
 				bestLand = entry.land
 				bestLuck = entry.displayLuck
 			end
@@ -321,6 +327,17 @@ function M.resolveLandAtPosition(worldPos: Vector3): number
 
 	if bestLand then
 		return bestLand
+	end
+
+	-- Fallback: standing on a land's Spawn pad (XZ).
+	for land = MAX_LAND, 1, -1 do
+		local folder = findLandFolder(land)
+		if folder then
+			local spawnNode = getSpawnNode(folder)
+			if spawnNode and positionWithinSpawnNode(worldPos, spawnNode) then
+				return land
+			end
+		end
 	end
 
 	return resolveLandByNearest(worldPos)

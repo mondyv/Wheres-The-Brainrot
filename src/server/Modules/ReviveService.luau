@@ -1,9 +1,10 @@
 -- [ACTIVE] ReviveService
 --[[
 	Revive flow (server module):
-	• On death: store land revive spawn, prompt client, respawn at plot normally.
-	• Decline / timeout: clear pending — player stays at plot.
-	• Dev product receipt: teleport live character to that land's Spawn.
+	• Tracks last good land while alive (death Y/ragdoll can miss hitboxes).
+	• On death: store land + spawn CFrame, prompt client with that land's product.
+	• Decline / timeout: clear pending — player stays on normal plot respawn.
+	• Dev product receipt: LoadCharacter / teleport onto that land's Spawn.
 --]]
 
 local Players = game:GetService("Players")
@@ -19,10 +20,16 @@ type PendingRevive = {
 }
 
 local pendingByPlayer: { [Player]: PendingRevive } = {}
+local lastGoodLand: { [Player]: number } = {}
+local lastGoodPos: { [Player]: Vector3 } = {}
+local landTrackThreads: { [Player]: thread } = {}
+local fulfillingByPlayer: { [Player]: boolean } = {}
 
 local revivePromptRE: RemoteEvent
 local reviveDeclinedRE: RemoteEvent
 local reviveCompleteRE: RemoteEvent
+
+local MIN_SANE_Y = -80
 
 local function getRemotesFolder(): Folder
 	local folder = ReplicatedStorage:FindFirstChild("Remotes")
@@ -49,13 +56,27 @@ local function clearPending(player: Player)
 	pendingByPlayer[player] = nil
 end
 
+local function clearReviveSpawnAttrs(player: Player)
+	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, nil)
+	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_POS_ATTR, nil)
+	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_LOOK_ATTR, nil)
+end
+
+local function storeReviveSpawnAttrs(player: Player, spawnCf: CFrame)
+	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_POS_ATTR, spawnCf.Position)
+	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_LOOK_ATTR, spawnCf.LookVector)
+	pcall(function()
+		player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, spawnCf)
+	end)
+end
+
 local function teleportCharacterToCFrame(character: Model, spawnCf: CFrame)
 	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
 		hrp = character:WaitForChild("HumanoidRootPart", 8) :: BasePart?
 	end
 	if not hrp then
-		return
+		return false
 	end
 
 	if character.PrimaryPart then
@@ -65,13 +86,93 @@ local function teleportCharacterToCFrame(character: Model, spawnCf: CFrame)
 	end
 	hrp.AssemblyLinearVelocity = Vector3.zero
 	hrp.AssemblyAngularVelocity = Vector3.zero
+	return true
+end
+
+local function resolvePendingSpawn(pending: PendingRevive): CFrame
+	local fresh = LandResolver.getSpawnCFrameForLand(pending.land)
+	if fresh then
+		return fresh
+	end
+	return pending.reviveCf
+end
+
+local function stopLandTracking(player: Player)
+	local th = landTrackThreads[player]
+	if th then
+		task.cancel(th)
+		landTrackThreads[player] = nil
+	end
+end
+
+local function sampleLand(player: Player, character: Model)
+	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp then
+		return
+	end
+	local pos = hrp.Position
+	if pos.Y < MIN_SANE_Y then
+		return
+	end
+	local land = LandResolver.resolveLandAtPosition(pos)
+	if typeof(land) == "number" and land >= 1 then
+		lastGoodLand[player] = ReviveConfig.clampLand(land)
+		lastGoodPos[player] = pos
+	end
+end
+
+local function startLandTracking(player: Player, character: Model)
+	stopLandTracking(player)
+	sampleLand(player, character)
+	local thread = task.spawn(function()
+		while player.Parent and character.Parent do
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if not humanoid or humanoid.Health <= 0 then
+				break
+			end
+			sampleLand(player, character)
+			task.wait(0.35)
+		end
+		if landTrackThreads[player] == thread then
+			landTrackThreads[player] = nil
+		end
+	end)
+	landTrackThreads[player] = thread
 end
 
 local function finishDecline(player: Player)
+	if fulfillingByPlayer[player] then
+		return
+	end
 	if not pendingByPlayer[player] then
 		return
 	end
 	clearPending(player)
+end
+
+local function applyTeleportWithRetries(player: Player, character: Model, spawnCf: CFrame)
+	teleportCharacterToCFrame(character, spawnCf)
+	task.spawn(function()
+		for _ = 1, 10 do
+			task.wait(0.2)
+			if not player.Parent then
+				return
+			end
+			local char = player.Character
+			if not char or char ~= character or not char.Parent then
+				return
+			end
+			local humanoid = char:FindFirstChildOfClass("Humanoid")
+			if not humanoid or humanoid.Health <= 0 then
+				return
+			end
+			teleportCharacterToCFrame(char, spawnCf)
+		end
+		if player.Parent then
+			clearReviveSpawnAttrs(player)
+		end
+		fulfillingByPlayer[player] = nil
+	end)
 end
 
 local function fulfillRevivePurchase(player: Player): boolean
@@ -80,19 +181,55 @@ local function fulfillRevivePurchase(player: Player): boolean
 		return false
 	end
 
-	local reviveCf = pending.reviveCf
+	fulfillingByPlayer[player] = true
+	local reviveCf = resolvePendingSpawn(pending)
 	clearPending(player)
+	storeReviveSpawnAttrs(player, reviveCf)
 
 	local character = player.Character
-	if character and character.Parent then
-		teleportCharacterToCFrame(character, reviveCf)
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if character and character.Parent and humanoid and humanoid.Health > 0 then
+		applyTeleportWithRetries(player, character, reviveCf)
 		reviveCompleteRE:FireClient(player)
 		return true
 	end
 
-	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, reviveCf)
+	local conn: RBXScriptConnection? = nil
+	local done = false
+	conn = player.CharacterAdded:Connect(function(newChar)
+		if done then
+			return
+		end
+		done = true
+		if conn then
+			conn:Disconnect()
+			conn = nil
+		end
+		task.defer(function()
+			if player.Parent and newChar.Parent then
+				applyTeleportWithRetries(player, newChar, reviveCf)
+			else
+				fulfillingByPlayer[player] = nil
+			end
+		end)
+	end)
+
 	player:LoadCharacter()
 	reviveCompleteRE:FireClient(player)
+
+	task.delay(12, function()
+		if conn then
+			conn:Disconnect()
+			conn = nil
+		end
+		if fulfillingByPlayer[player] then
+			fulfillingByPlayer[player] = nil
+			if player.Parent then
+				clearReviveSpawnAttrs(player)
+			end
+		end
+	end)
+
 	return true
 end
 
@@ -100,12 +237,40 @@ local function onHumanoidDied(player: Player, character: Model)
 	if pendingByPlayer[player] then
 		return
 	end
+	stopLandTracking(player)
 
 	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	local worldPos = if hrp then hrp.Position else Vector3.zero
-	local land, landSpawnCf = LandResolver.getReviveSpawnCFrame(worldPos)
-	local reviveCf = landSpawnCf or (if hrp then hrp.CFrame else CFrame.new(worldPos))
+
+	local land: number
+	local tracked = lastGoodLand[player]
+	if typeof(tracked) == "number" then
+		land = tracked
+		if hrp and worldPos.Y >= MIN_SANE_Y then
+			local resolved = LandResolver.resolveLandAtPosition(worldPos)
+			-- Prefer the higher of tracked vs death-pos resolve (covers walking into a new land).
+			if typeof(resolved) == "number" and resolved > land then
+				land = resolved
+			end
+		end
+	else
+		land = LandResolver.resolveLandAtPosition(worldPos)
+	end
+
+	land = ReviveConfig.clampLand(land)
 	local tier = ReviveConfig.tierForLand(land)
+	local reviveCf = LandResolver.getSpawnCFrameForLand(tier.land)
+	if not reviveCf then
+		local trackedPos = lastGoodPos[player]
+		if typeof(trackedPos) == "Vector3" then
+			reviveCf = CFrame.new(trackedPos + Vector3.new(0, 4, 0))
+		elseif hrp then
+			reviveCf = hrp.CFrame
+		else
+			reviveCf = CFrame.new(worldPos)
+		end
+		warn("[ReviveService] Land", tier.land, "Spawn missing — falling back to death/tracked CFrame")
+	end
 
 	pendingByPlayer[player] = {
 		land = tier.land,
@@ -124,6 +289,8 @@ local function hookCharacter(player: Player, character: Model)
 	if not humanoid then
 		return
 	end
+
+	startLandTracking(player, character)
 
 	humanoid.Died:Connect(function()
 		local char = humanoid.Parent
@@ -160,12 +327,37 @@ function ReviveService.processReceipt(receiptInfo): Enum.ProductPurchaseDecision
 	end
 
 	local pending = pendingByPlayer[player]
-	if not pending then
-		return Enum.ProductPurchaseDecision.NotProcessedYet
-	end
-
-	if pending.productId ~= receiptInfo.ProductId then
-		return Enum.ProductPurchaseDecision.NotProcessedYet
+	if pending then
+		-- Always revive to the land they died on, even if the client prompted
+		-- the wrong (cheaper) product due to a stale UI race.
+		if pending.productId ~= receiptInfo.ProductId then
+			warn(
+				"[ReviveService] product mismatch for",
+				player.Name,
+				"— pending land",
+				pending.land,
+				"product",
+				pending.productId,
+				"bought",
+				receiptInfo.ProductId,
+				"; fulfilling death land anyway"
+			)
+		end
+	else
+		local land = ReviveConfig.landForProductId(receiptInfo.ProductId)
+		if not land then
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+		local spawnCf = LandResolver.getSpawnCFrameForLand(land)
+		if not spawnCf then
+			warn("[ReviveService] purchase for land", land, "but Spawn missing")
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+		pendingByPlayer[player] = {
+			land = land,
+			productId = receiptInfo.ProductId,
+			reviveCf = spawnCf,
+		}
 	end
 
 	if fulfillRevivePurchase(player) then
@@ -186,7 +378,12 @@ function ReviveService.init()
 
 	Players.PlayerAdded:Connect(hookPlayer)
 	Players.PlayerRemoving:Connect(function(player)
+		stopLandTracking(player)
 		clearPending(player)
+		clearReviveSpawnAttrs(player)
+		fulfillingByPlayer[player] = nil
+		lastGoodLand[player] = nil
+		lastGoodPos[player] = nil
 		local conn = charAddedConns[player]
 		if conn then
 			conn:Disconnect()

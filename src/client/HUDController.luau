@@ -112,7 +112,7 @@ local syncFramesInputPassthrough: () -> ()
 local function animateOpen(frame: Frame)
 	frame.Visible = true
 	local scale = getOrAddUIScale(frame)
-	scale.Scale = 0.88
+	scale.Scale = 0.82
 	TweenService:Create(scale, OPEN_TWEEN, { Scale = 1 }):Play()
 	PanelSlideIn.playForPanel(frame)
 end
@@ -125,14 +125,13 @@ local function animateClose(frame: Frame)
 		closeTweenByFrame[frame] = nil
 	end
 	local scale = getOrAddUIScale(frame)
-	scale.Scale = 1
-	local t = TweenService:Create(scale, CLOSE_TWEEN, { Scale = 0.92 })
+	local t = TweenService:Create(scale, CLOSE_TWEEN, { Scale = 0.72 })
 	closeTweenByFrame[frame] = t
 	t.Completed:Once(function()
 		closeTweenByFrame[frame] = nil
 		frame.Visible = false
 		frame.Active = false
-		scale.Scale = 1
+		scale.Scale = 0.82
 		if syncFramesInputPassthrough then
 			syncFramesInputPassthrough()
 		end

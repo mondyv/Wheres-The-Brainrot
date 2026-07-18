@@ -951,12 +951,11 @@ function IndexController.init()
 			-- Ensure tabs stay clickable after panel open.
 			local typeButtons = indexFrame:FindFirstChild("TypeButtons")
 			if typeButtons then
-				local layout = typeButtons:FindFirstChildOfClass("UIListLayout")
-					or typeButtons:FindFirstChildOfClass("UIGridLayout")
-				if layout then
-					layout.Enabled = true
-				end
 				for _, ch in typeButtons:GetChildren() do
+					local slideScale = ch:FindFirstChild("PanelSlideScale")
+					if slideScale and slideScale:IsA("UIScale") then
+						slideScale.Scale = 1
+					end
 					local btn = resolveTabButton(ch)
 					if btn then
 						btn.Active = true
@@ -968,6 +967,10 @@ function IndexController.init()
 			end
 			if container then
 				(container :: GuiObject).Active = true
+				local contScale = container:FindFirstChild("PanelSlideScale")
+				if contScale and contScale:IsA("UIScale") then
+					contScale.Scale = 1
+				end
 			end
 			loadMutationGrid(selectedMutation, false)
 		else

@@ -2277,22 +2277,8 @@ local ToolbarController = {}
 				break
 			end
 		end
-		-- While dragging from backpack/hotbar with the bag open, keep empty cells visible
-		-- so backpack → hotbar drops can target a free slot (not only occupied ones).
-		local draggingForHotbarDrop = isBackpackPanelOpen
-			and (
-				hotbarDragZoneActive
-				or dragGhostGui ~= nil
-				or (
-					pendingToolbarDrag ~= nil
-					and (
-						pendingToolbarDrag.kind == "backpack"
-						or pendingToolbarDrag.kind == "hotbar"
-						or pendingToolbarDrag.kind == "backpack_extra"
-					)
-				)
-			)
-		local showEmptyDropTargets = draggingForHotbarDrop
+		-- Empty hotbar cells only while the backpack panel is open (drop targets + clarity).
+		local showEmptyDropTargets = isBackpackPanelOpen
 		local showHotbarSlots = anyOccupied or showEmptyDropTargets
 		-- Keep the Hotbar frame visible whenever the toolbar is up so ToggleBackpackImage
 		-- (a child of Hotbar) still shows when every slot is empty.
@@ -3554,14 +3540,27 @@ local ToolbarController = {}
 			return false
 		end
 		SafezoneUtil.warmCacheAsync()
+		SafezoneUtil.awaitCacheReady(3)
 		pollSafezonePresence()
+		-- If safezone cache was late, force a second poll after a short wait.
+		if not canUseToolbar and player.Character then
+			task.wait(0.15)
+			SafezoneUtil.warmCacheAsync()
+			SafezoneUtil.awaitCacheReady(2)
+			pollSafezonePresence()
+		end
 		refreshToolbarVisibility()
 		updateHotbarSlotVisibility()
 		refreshToggleBackpackIconLayout()
 		if canUseToolbar then
-			showToolbar()
+			-- Force show even if an earlier mid-load showToolbar no-op'd.
+			if not toolbarShown then
+				showToolbar()
+			else
+				toolbar.Visible = true
+			end
 			updateHotbarSlotVisibility()
-			-- Do not auto-open the backpack panel — only show toolbar/hotbar chrome.
+			refreshToggleBackpackIconLayout()
 			if tryAutoSelectReturnedBrainrot then
 				tryAutoSelectReturnedBrainrot()
 			end
@@ -3574,23 +3573,30 @@ local ToolbarController = {}
 	local function ensureSpawnToolbarVisible()
 		task.spawn(function()
 			SafezoneUtil.warmCacheAsync()
-			for _ = 1, 40 do
+			SafezoneUtil.awaitCacheReady(8)
+			for _ = 1, 60 do
+				if LoadingScreenController.isActive() then
+					task.wait(0.25)
+					continue
+				end
 				SafezoneUtil.warmCacheAsync()
-				SafezoneUtil.awaitCacheReady(1)
 				pollSafezonePresence()
 				refreshToolbarVisibility()
 				updateHotbarSlotVisibility()
 				refreshToggleBackpackIconLayout()
-				if canUseToolbar and not LoadingScreenController.isActive() then
-					revealInventoryAfterLoadIfReady()
-					return
+				if canUseToolbar then
+					if revealInventoryAfterLoadIfReady() then
+						return
+					end
 				end
 				task.wait(0.25)
 			end
 			pollSafezonePresence()
 			refreshToolbarVisibility()
-			updateHotbarSlotVisibility()
-			refreshToggleBackpackIconLayout()
+			if canUseToolbar then
+				showToolbar()
+				updateHotbarSlotVisibility()
+			end
 			requestBrainrotInventoryFromServer()
 		end)
 	end

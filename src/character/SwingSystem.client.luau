@@ -16,6 +16,53 @@ end)
 local player = Players.LocalPlayer
 local camera = workspace.CurrentCamera
 
+local floatingClaimCutsceneMod = nil
+local spiderEncounterMod = nil
+
+local function getClientModule(name)
+	local ps = player:FindFirstChild("PlayerScripts")
+	local client = ps and ps:FindFirstChild("Client")
+	local mod = client and client:FindFirstChild(name)
+	if mod and mod:IsA("ModuleScript") then
+		local ok, result = pcall(require, mod)
+		if ok then
+			return result
+		end
+	end
+	return nil
+end
+
+local function isGameplayCutsceneActive()
+	if floatingClaimCutsceneMod == nil then
+		floatingClaimCutsceneMod = getClientModule("FloatingClaimCutscene") or false
+	end
+	if floatingClaimCutsceneMod and typeof(floatingClaimCutsceneMod.isActive) == "function" then
+		if floatingClaimCutsceneMod.isActive() then
+			return true
+		end
+	end
+	if spiderEncounterMod == nil then
+		spiderEncounterMod = getClientModule("BushSpiderEncounterController") or false
+	end
+	if spiderEncounterMod and typeof(spiderEncounterMod.isActive) == "function" then
+		if spiderEncounterMod.isActive() then
+			return true
+		end
+	end
+	local pg = player:FindFirstChild("PlayerGui")
+	if pg then
+		local claimGui = pg:FindFirstChild("FloatingClaimCutscene")
+		if claimGui and claimGui:IsA("ScreenGui") and claimGui.Enabled then
+			return true
+		end
+		local spiderGui = pg:FindFirstChild("BushSpiderCutscene")
+		if spiderGui and spiderGui:IsA("ScreenGui") and spiderGui.Enabled then
+			return true
+		end
+	end
+	return false
+end
+
 local sharedFolder = ReplicatedStorage:FindFirstChild("Shared") or ReplicatedStorage:WaitForChild("Shared", 10)
 
 local function tryRequireModule(parent, name)
@@ -37,6 +84,7 @@ local SafezoneUtil = tryRequireModule(sharedFolder, "SafezoneUtil")
 local SwingUpgrades = tryRequireModule(sharedFolder, "SwingUpgrades")
 local SwingProgression = tryRequireModule(sharedFolder, "SwingProgression")
 local WebTrapConfig = tryRequireModule(sharedFolder, "WebTrapConfig")
+local UiFonts = tryRequireModule(sharedFolder, "UiFonts")
 
 -- Target setup from the original friend script.
 C.SWING_TARGET_TAG = "SwingTarget"
@@ -78,6 +126,8 @@ C.AIRBORNE_TARGET_LOOK_DOT = 0.02
 C.GROUNDED_TARGET_LOOK_DOT = 0.02
 C.TARGET_SCREEN_RADIUS_LIMIT = 0.98
 C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.98
+C.LOOK_DOWN_PITCH = -0.22
+C.LOOK_DOWN_FORWARD_DOT = 0.12
 C.MIN_TARGET_HEIGHT_OFFSET = -8
 C.TARGET_SCAN_INTERVAL = 0.12
 C.TARGET_CANDIDATE_EXTRA_RADIUS = 4
@@ -250,9 +300,9 @@ C.ROPE_COLOR_B = Color3.fromRGB(86, 51, 24)
 C.ROPE_BRICK_COLOR = BrickColor.new("Reddish brown")
 C.ROPE_VISUAL_THICKNESS = 0.18
 C.ROPE_VISUAL_SAG = 0.65
-C.ROPE_VISUAL_SHOOT_SPEED = 420
-C.ROPE_VISUAL_SHOOT_MIN_TIME = 0.14
-C.ROPE_VISUAL_SHOOT_MAX_TIME = 0.34
+C.ROPE_VISUAL_SHOOT_SPEED = 1200
+C.ROPE_VISUAL_SHOOT_MIN_TIME = 0.02
+C.ROPE_VISUAL_SHOOT_MAX_TIME = 0.06
 C.ROPE_VISUAL_MIN_LENGTH = 0.25
 C.ROPE_THROW_BEAM_WIDTH0 = 0.24
 C.ROPE_THROW_BEAM_WIDTH1 = 0.11
@@ -1263,17 +1313,75 @@ local function pendulumArcDir(radial)
 	return tangent.Unit
 end
 
+local function raycastCollidableGround(origin: Vector3, direction: Vector3, character: Model, rayParams: RaycastParams): RaycastResult?
+	local ignore: { Instance } = { character }
+	local remaining = direction
+	local from = origin
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+	for _ = 1, 14 do
+		rayParams.FilterDescendantsInstances = ignore
+		local hit = workspace:Raycast(from, remaining, rayParams)
+		if not hit then
+			return nil
+		end
+
+		local inst = hit.Instance
+		if inst:IsA("Terrain") then
+			return hit
+		end
+		if inst:IsA("BasePart") and inst.CanCollide and inst.Transparency < 0.95 then
+			return hit
+		end
+
+		table.insert(ignore, inst)
+		local traveled = (hit.Position - from).Magnitude
+		local left = remaining.Magnitude - traveled
+		if left < 0.08 then
+			return nil
+		end
+		from = hit.Position + remaining.Unit * 0.06
+		remaining = remaining.Unit * left
+	end
+
+	return nil
+end
+
+local function groundVisualFromHit(hit: RaycastResult?): (Color3, Enum.Material)
+	if not hit then
+		return Color3.fromRGB(110, 90, 55), Enum.Material.Ground
+	end
+
+	local mat = hit.Material
+	local inst = hit.Instance
+	if inst:IsA("Terrain") then
+		local ok, terrainColor = pcall(function()
+			return workspace.Terrain:GetMaterialColor(mat)
+		end)
+		if ok and typeof(terrainColor) == "Color3" then
+			return terrainColor, mat
+		end
+		return Color3.fromRGB(105, 88, 50), mat
+	end
+	if inst:IsA("BasePart") then
+		return inst.Color, inst.Material
+	end
+	return Color3.fromRGB(110, 90, 55), mat
+end
+
 local function spawnLandingBlocks(character, hrp, rayParams, speed)
 	local alpha = math.clamp((speed - 8) / 70, 0.58, 1)
 	if alpha <= 0 then
 		return
 	end
 
-	rayParams.FilterDescendantsInstances = { character }
-	local hit = workspace:Raycast(hrp.Position, Vector3.new(0, -10, 0), rayParams)
-	local pos = hit and hit.Position or (hrp.Position - Vector3.new(0, 3, 0))
-	local color = hit and hit.Instance and hit.Instance.Color or Color3.fromRGB(120, 120, 120)
-	local material = hit and hit.Material or Enum.Material.Concrete
+	local hit = raycastCollidableGround(hrp.Position, Vector3.new(0, -12, 0), character, rayParams)
+	if not hit then
+		return
+	end
+
+	local pos = hit.Position
+	local color, material = groundVisualFromHit(hit)
 	local count = math.floor(10 + alpha * 14)
 
 	local ring = Instance.new("Part")
@@ -1285,7 +1393,7 @@ local function spawnLandingBlocks(character, hrp, rayParams, speed)
 	ring.CanQuery = false
 	ring.CastShadow = false
 	ring.Material = Enum.Material.SmoothPlastic
-	ring.Color = color:Lerp(Color3.new(1, 1, 1), 0.35)
+	ring.Color = color:Lerp(Color3.new(0, 0, 0), 0.08)
 	ring.Transparency = 0.24
 	ring.Size = Vector3.new(0.12, 7 + alpha * 7, 7 + alpha * 7)
 	ring.CFrame = CFrame.new(pos + Vector3.new(0, 0.08, 0)) * CFrame.Angles(0, 0, math.rad(90))
@@ -1325,7 +1433,7 @@ local function spawnLandingBlocks(character, hrp, rayParams, speed)
 	burst.CanQuery = false
 	burst.CastShadow = false
 	burst.Material = Enum.Material.SmoothPlastic
-	burst.Color = color:Lerp(Color3.new(1, 1, 1), 0.18)
+	burst.Color = color
 	burst.Transparency = 0.72
 	burst.Size = Vector3.new(4 + alpha * 5, 1.2 + alpha * 1.8, 4 + alpha * 5)
 	burst.CFrame = CFrame.new(pos + Vector3.new(0, 0.65, 0))
@@ -1343,7 +1451,7 @@ local function spawnLandingBlocks(character, hrp, rayParams, speed)
 		part.Size = Vector3.new(size, size * math.random(70, 130) / 100, size)
 		part.Anchored = true
 		part.Material = material
-		part.Color = color
+		part.Color = color:Lerp(Color3.new(0, 0, 0), math.random(0, 12) / 100)
 		part.CanCollide = false
 		part.CanTouch = false
 		part.CanQuery = false
@@ -1369,7 +1477,7 @@ local function spawnLandingBlocks(character, hrp, rayParams, speed)
 		chip.Size = Vector3.new(size, size, size)
 		chip.Anchored = true
 		chip.Material = material
-		chip.Color = color:Lerp(Color3.new(1, 1, 1), math.random(0, 18) / 100)
+		chip.Color = color:Lerp(Color3.new(0, 0, 0), math.random(0, 10) / 100)
 		chip.CanCollide = false
 		chip.CanTouch = false
 		chip.CanQuery = false
@@ -1387,6 +1495,15 @@ local function spawnLandingBlocks(character, hrp, rayParams, speed)
 	end
 end
 
+local function canPlaySwingLandingImpact(character, hrp, rayParams): boolean
+	return raycastCollidableGround(
+		hrp.Position,
+		Vector3.new(0, -C.SWING_LANDING_GROUND_RAY, 0),
+		character,
+		rayParams
+	) ~= nil
+end
+
 local function spawnGroundDragDebris(hrp, hit, horizontalVelocity, lastClock)
 	if not hit then
 		return lastClock
@@ -1399,11 +1516,21 @@ local function spawnGroundDragDebris(hrp, hit, horizontalVelocity, lastClock)
 
 	local speed = horizontalVelocity and horizontalVelocity.Magnitude or 0
 	local pos = hit.Position
-	local color = Color3.fromRGB(120, 120, 120)
+	local color = Color3.fromRGB(110, 90, 55)
 	local material = hit.Material or Enum.Material.Concrete
 	if hit.Instance and hit.Instance:IsA("BasePart") then
+		if not hit.Instance.CanCollide or hit.Instance.Transparency >= 0.95 then
+			return lastClock
+		end
 		color = hit.Instance.Color
 		material = hit.Material or hit.Instance.Material
+	elseif hit.Instance and hit.Instance:IsA("Terrain") then
+		local ok, terrainColor = pcall(function()
+			return workspace.Terrain:GetMaterialColor(hit.Material)
+		end)
+		if ok and typeof(terrainColor) == "Color3" then
+			color = terrainColor
+		end
 	end
 	local travelDir = speed > 0.05 and horizontalVelocity.Unit
 		or flatUnit(hrp.CFrame.LookVector)
@@ -1656,9 +1783,12 @@ local function boot(character)
 		if st.humanoid.FloorMaterial ~= Enum.Material.Air then
 			return true
 		end
-		st.rayParams.FilterDescendantsInstances = { st.character }
-		local hit = workspace:Raycast(st.hrp.Position, Vector3.new(0, -C.SWING_LANDING_GROUND_RAY, 0), st.rayParams)
-		return hit ~= nil
+		return raycastCollidableGround(
+			st.hrp.Position,
+			Vector3.new(0, -C.SWING_LANDING_GROUND_RAY, 0),
+			st.character,
+			st.rayParams
+		) ~= nil
 	end
 
 	function st.forceSwingHumanoidControl()
@@ -2382,7 +2512,8 @@ local function boot(character)
 		end
 
 		local look = camera.CFrame.LookVector
-		local flatLook = flatUnit(look)
+		local lookingDown = look.Y <= C.LOOK_DOWN_PITCH
+		local flatLook = flatUnit(look) or flatUnit(st.hrp.CFrame.LookVector)
 		local reach = maxDistanceOverride or getSwingRange()
 		local minLookDot = minLookDotOverride or C.MIN_LOOK_DOT
 		local maxScreenRadius = maxScreenRadiusOverride or C.TARGET_SCREEN_RADIUS_LIMIT
@@ -2413,27 +2544,46 @@ local function boot(character)
 			end
 
 			local viewDot = toCameraTarget.Unit:Dot(look)
-			if viewDot < minLookDot then
+			local flatDir = flatUnit(offset)
+			local flatAlign = if flatDir and flatLook then flatDir:Dot(flatLook) else nil
+
+			-- Never latch onto something clearly behind the player/camera facing.
+			if flatAlign ~= nil and flatAlign < C.LOOK_DOWN_FORWARD_DOT then
+				continue
+			end
+
+			if not lookingDown and viewDot < minLookDot then
+				continue
+			end
+			-- Looking down: 3D look-dot collapses; require forward flat facing instead.
+			if lookingDown and (flatAlign == nil or flatAlign < C.LOOK_DOWN_FORWARD_DOT) then
 				continue
 			end
 
 			local viewportPoint, onScreen = camera:WorldToViewportPoint(attachWorld)
-			if not onScreen then
-				continue
-			end
-
 			local vp = camera.ViewportSize
 			local dx = (viewportPoint.X - vp.X * 0.5) / math.max(vp.X, 1)
 			local dy = (viewportPoint.Y - vp.Y * 0.5) / math.max(vp.Y, 1)
 			local screenRadius = math.sqrt(dx * dx + dy * dy)
-			if screenRadius > maxScreenRadius then
-				continue
+			local horizontallyOnScreen = viewportPoint.Z > 0 and math.abs(dx) <= 0.62
+
+			if lookingDown then
+				-- Looking down pushes the true forward vine above the viewport — keep it if still ahead.
+				if not horizontallyOnScreen then
+					continue
+				end
+			else
+				if not onScreen then
+					continue
+				end
+				if screenRadius > maxScreenRadius then
+					continue
+				end
 			end
 
 			local align = viewDot
-			local flatDir = flatUnit(offset)
-			if flatDir and flatLook then
-				align = math.max(viewDot, flatDir:Dot(flatLook) * 0.92)
+			if flatAlign ~= nil then
+				align = math.max(viewDot, flatAlign * (if lookingDown then 1.05 else 0.92))
 			end
 			if requireLineOfSight and not st.hasLineOfSight(part, attachWorld) then
 				continue
@@ -2444,9 +2594,20 @@ local function boot(character)
 				heightBonus = 0.16
 			end
 
-			local centerBias = (1 - math.clamp(screenRadius / math.max(maxScreenRadius, 0.01), 0, 1)) * 2.35
+			local centerBias
+			if lookingDown then
+				-- Horizontal centering only — vertical screen position must not steal the forward vine.
+				centerBias = (1 - math.clamp(math.abs(dx) / 0.62, 0, 1)) * 0.75
+			else
+				centerBias = (1 - math.clamp(screenRadius / math.max(maxScreenRadius, 0.01), 0, 1)) * 2.35
+			end
 
-			local score = align * 1.75 + heightBonus + centerBias - (dist / reach) * 0.04
+			local stickBonus = 0
+			if part == st.highlightedTarget or part == st.scannedVisualTarget then
+				stickBonus = if lookingDown then 1.55 else 0.28
+			end
+
+			local score = align * 1.75 + heightBonus + centerBias + stickBonus - (dist / reach) * 0.04
 			if score > bestScore then
 				bestScore = score
 				best = part
@@ -2533,6 +2694,7 @@ local function boot(character)
 		camera = workspace.CurrentCamera or camera
 		minLookDot = minLookDot or C.MIN_LOOK_DOT
 		maxScreenRadius = maxScreenRadius or C.TARGET_SCREEN_RADIUS_LIMIT
+		local lookingDown = camera ~= nil and camera.CFrame.LookVector.Y <= C.LOOK_DOWN_PITCH
 
 		local function passesVisibleChecks(target, distanceLimit)
 			return st.isVisibleSwingTarget(target, distanceLimit, minLookDot)
@@ -2540,6 +2702,27 @@ local function boot(character)
 
 		local function passesAttachChecks(target, distanceLimit)
 			return st.isSpecificSwingTargetReady(target, false, distanceLimit, minLookDot, maxScreenRadius)
+		end
+
+		local function preferredStillForward(target)
+			local dist, point = st.targetDistanceAndPoint(target)
+			if not dist or not point then
+				return false
+			end
+			local flatTo = flatUnit(point - st.hrp.Position)
+			local face = (camera and flatUnit(camera.CFrame.LookVector)) or flatUnit(st.hrp.CFrame.LookVector)
+			if not flatTo or not face then
+				return false
+			end
+			return flatTo:Dot(face) >= C.LOOK_DOWN_FORWARD_DOT
+		end
+
+		-- Looking down for swing control: cling to the current forward vine instead of
+		-- re-picking whatever sits near screen-center (often a left/side vine).
+		if lookingDown and preferredTarget and not inSafezone then
+			if passesVisibleChecks(preferredTarget, maxDistance) and preferredStillForward(preferredTarget) then
+				return preferredTarget, passesAttachChecks(preferredTarget, readyDistance)
+			end
 		end
 
 		local lookedTarget = nil
@@ -2551,7 +2734,9 @@ local function boot(character)
 		end
 
 		if preferredTarget and passesVisibleChecks(preferredTarget, maxDistance) then
-			return preferredTarget, (not inSafezone) and passesAttachChecks(preferredTarget, readyDistance)
+			if not lookingDown or preferredStillForward(preferredTarget) then
+				return preferredTarget, (not inSafezone) and passesAttachChecks(preferredTarget, readyDistance)
+			end
 		end
 
 		local best = nil
@@ -2669,9 +2854,20 @@ local function boot(character)
 		end
 
 		local look = camera.CFrame.LookVector
+		local lookingDown = look.Y <= C.LOOK_DOWN_PITCH
 		minLookDot = minLookDot or 0.02
 		local toCameraTarget = attachWorld - camera.CFrame.Position
-		if toCameraTarget.Magnitude < 0.5 or toCameraTarget.Unit:Dot(look) < minLookDot then
+		if toCameraTarget.Magnitude < 0.5 then
+			return false
+		end
+
+		if lookingDown then
+			local flatDir = flatUnit(attachWorld - st.hrp.Position)
+			local face = flatUnit(look) or flatUnit(st.hrp.CFrame.LookVector)
+			if not flatDir or not face or flatDir:Dot(face) < C.LOOK_DOWN_FORWARD_DOT then
+				return false
+			end
+		elseif toCameraTarget.Unit:Dot(look) < minLookDot then
 			return false
 		end
 
@@ -2697,23 +2893,46 @@ local function boot(character)
 		end
 
 		local look = camera.CFrame.LookVector
+		local lookingDown = look.Y <= C.LOOK_DOWN_PITCH
 		local minLookDot = minLookDotOverride or C.MIN_LOOK_DOT
 		local maxScreenRadius = maxScreenRadiusOverride or C.TARGET_SCREEN_RADIUS_LIMIT
 		local toCameraTarget = attachWorld - camera.CFrame.Position
-		if toCameraTarget.Magnitude < 0.5 or toCameraTarget.Unit:Dot(look) < minLookDot then
+		if toCameraTarget.Magnitude < 0.5 then
+			return false
+		end
+
+		local flatDir = flatUnit(attachWorld - st.hrp.Position)
+		local faceFlat = flatUnit(look) or flatUnit(st.hrp.CFrame.LookVector)
+		local flatAlign = if flatDir and faceFlat then flatDir:Dot(faceFlat) else nil
+		if flatAlign ~= nil and flatAlign < C.LOOK_DOWN_FORWARD_DOT then
+			return false
+		end
+
+		if lookingDown then
+			if flatAlign == nil or flatAlign < C.LOOK_DOWN_FORWARD_DOT then
+				return false
+			end
+		elseif toCameraTarget.Unit:Dot(look) < minLookDot then
 			return false
 		end
 
 		local viewportPoint, onScreen = camera:WorldToViewportPoint(attachWorld)
-		if not onScreen then
-			return false
-		end
-
 		local vp = camera.ViewportSize
 		local dx = (viewportPoint.X - vp.X * 0.5) / math.max(vp.X, 1)
 		local dy = (viewportPoint.Y - vp.Y * 0.5) / math.max(vp.Y, 1)
-		if math.sqrt(dx * dx + dy * dy) > maxScreenRadius then
-			return false
+		local horizontallyOnScreen = viewportPoint.Z > 0 and math.abs(dx) <= 0.62
+
+		if lookingDown then
+			if not horizontallyOnScreen then
+				return false
+			end
+		else
+			if not onScreen then
+				return false
+			end
+			if math.sqrt(dx * dx + dy * dy) > maxScreenRadius then
+				return false
+			end
 		end
 
 		if requireLineOfSight and not st.hasLineOfSight(target, attachWorld) then
@@ -3177,7 +3396,7 @@ local function boot(character)
 			local playerGui = player:WaitForChild("PlayerGui")
 			st.markerGui = Instance.new("BillboardGui")
 			st.markerGui.Name = "SwingTargetMarker"
-			st.markerGui.Size = UDim2.fromOffset(128, 96)
+			st.markerGui.Size = UDim2.fromOffset(148, 102)
 			st.markerGui.AlwaysOnTop = true
 			st.markerGui.LightInfluence = 0
 			st.markerGui.MaxDistance = 320
@@ -3221,14 +3440,18 @@ local function boot(character)
 
 			st.markerLabel = Instance.new("TextLabel")
 			st.markerLabel.Name = "Label"
-			st.markerLabel.Size = UDim2.new(1, 0, 0, 24)
-			st.markerLabel.Position = UDim2.new(0, 0, 0.5, 26)
+			st.markerLabel.Size = UDim2.new(1, 0, 0, 30)
+			st.markerLabel.Position = UDim2.new(0, 0, 0.5, 28)
 			st.markerLabel.BackgroundTransparency = 1
-			st.markerLabel.Font = Enum.Font.GothamBold
+			if UiFonts then
+				UiFonts.applyDisplayLabel(st.markerLabel, 15, 11)
+			else
+				st.markerLabel.FontFace = Font.fromEnum(Enum.Font.GothamBold)
+				st.markerLabel.TextSize = 15
+			end
 			st.markerLabel.TextColor3 = C.READY_COLOR
 			st.markerLabel.TextTransparency = 1
 			st.markerLabel.TextStrokeTransparency = 1
-			st.markerLabel.TextSize = 12
 			st.markerLabel.Text = "[HOLD SPACE] TO SWING"
 			st.markerLabel.Parent = st.markerGui
 		end
@@ -3340,7 +3563,7 @@ local function boot(character)
 			st.markerLabel.TextColor3 = st.targetVisualColor
 			st.markerLabel.TextTransparency = 0
 			st.markerLabel.TextStrokeTransparency = 0.35
-			st.markerLabel.Position = UDim2.new(0, 0, 0.5, 26 - readyBob)
+			st.markerLabel.Position = UDim2.new(0, 0, 0.5, 28 - readyBob)
 
 			if st.markerStroke then
 				st.markerStroke.Color = st.targetVisualColor
@@ -4049,21 +4272,14 @@ local function boot(character)
 			st.hrp:ApplyImpulse(flatRecoil.Unit * C.ROPE_THROW_RECOIL_DV * st.hrp.AssemblyMass)
 		end
 
-		st.spawnSwingRopeVisual(attachWorld, function(latchWorld)
-			if not st.isSwinging or not st.pendingSwingParams or st.ropeConstraint then
-				return
-			end
-			if not st.holdIsActive() then
-				st.stopSwing(false)
-				return
-			end
-			local params = st.pendingSwingParams
-			if not params.target or not params.target.Parent then
-				st.stopSwing(false)
-				return
-			end
-			st.finalizeSwingAttach(params.target, params.ropeMax, params.startLength, params.elasticRestLength, latchWorld)
-		end)
+		-- Attach immediately — throw VFX is cosmetic only (no latch wait).
+		st.spawnSwingRopeVisual(attachWorld, function(_latchWorld) end)
+		if st.holdIsActive() and target.Parent then
+			st.finalizeSwingAttach(target, ropeMax, startLength, elasticRestLength, attachWorld)
+		else
+			st.stopSwing(false)
+			return
+		end
 
 		st.updateTargetVisual(nil, false)
 		playOptionalSound("Throw")
@@ -4459,14 +4675,29 @@ local function boot(character)
 			return
 		end
 
-		local now = os.clock()
+		if isGameplayCutsceneActive() then
+			st.humanoid.Jump = false
+			return
+		end
 
-		if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+		local now = os.clock()
+		local touchOnly = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
+		if touchOnly then
 			if not st.mobileJumpHeld and now > st.mobileRealJumpPressUntil then
 				return
 			end
-
 			st.mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
+
+			-- Only steal the jump button for swinging when airborne / already swinging /
+			-- a ready vine is latched. On the ground with no target, allow a real jump.
+			local stealForSwing = st.isSwinging
+				or st.isAirborneForSwing()
+				or (st.scannedVisualCanSwing == true and st.scannedVisualTarget ~= nil)
+			if not stealForSwing then
+				st.noteJumpPressed()
+				return
+			end
 			st.humanoid.Jump = false
 		end
 
@@ -4533,7 +4764,7 @@ local function boot(character)
 				st.forceSwingHumanoidControl()
 				st.stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
 
-				if wasLandedFromSwing then
+				if wasLandedFromSwing and canPlaySwingLandingImpact(st.character, st.hrp, st.rayParams) then
 					st.playLandedAnim()
 					spawnLandingBlocks(st.character, st.hrp, st.rayParams, impactSpeed)
 					playOptionalSound("GroundSmash")
@@ -4575,11 +4806,12 @@ local function boot(character)
 			st.landingSpeed = 0
 
 			st.forceSwingHumanoidControl()
-			if swingLanding then
+			local solidGround = canPlaySwingLandingImpact(st.character, st.hrp, st.rayParams)
+			if swingLanding and solidGround then
 				st.playLandedAnim()
 			end
 
-			if wasLandedFromSwing then
+			if wasLandedFromSwing and solidGround then
 				spawnLandingBlocks(st.character, st.hrp, st.rayParams, impactSpeed)
 				playOptionalSound("GroundSmash")
 				local impactAlpha = math.clamp((impactSpeed - 8) / 70, 0.58, 1)
@@ -4776,7 +5008,7 @@ local function boot(character)
 			st.isAirborne = false
 			st.forceSwingHumanoidControl()
 			st.stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
-			if wasLandedFromSwing then
+			if wasLandedFromSwing and canPlaySwingLandingImpact(st.character, st.hrp, st.rayParams) then
 				st.playLandedAnim()
 				spawnLandingBlocks(st.character, st.hrp, st.rayParams, impactSpeed)
 				playOptionalSound("GroundSmash")
@@ -5175,7 +5407,9 @@ local function boot(character)
 			end
 
 			local scanMode = "none"
-			if st.isAirborneForSwing() then
+			if isGameplayCutsceneActive() then
+				st.hideSwingTargetUi()
+			elseif st.isAirborneForSwing() then
 				scanMode = "air"
 			elseif st.isGroundedForSwing() then
 				scanMode = "ground"

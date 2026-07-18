@@ -16,6 +16,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local BushFloatingClaimController = require(script.Parent.BushFloatingClaimController)
+local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
 local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local LandAmbushUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandAmbushUtil"))
@@ -1832,6 +1833,7 @@ local function finishEncounter(spider: Model?, web: Model?)
 	animateLetterboxOut()
 	restoreCamera()
 	restoreGameplayUi()
+	BushHoldInteraction.setBushSearchLocked(false)
 
 	if spider and spider.Parent then
 		spider:Destroy()
@@ -1958,6 +1960,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 	savedUseJumpPower = nil
 	savedAutoRotate = nil
 
+	BushHoldInteraction.setBushSearchLocked(true)
 	lockPlayerMovement()
 	hideGameplayUi()
 	animateLetterboxIn()
@@ -2146,8 +2149,9 @@ local function runEncounter(fallbackAnchor: Vector3)
 		end)
 	end
 
-	inputConn = UserInputService.InputBegan:Connect(function(input, processed)
-		if processed or qteResolved or not encounterActive or mobileInput then
+	inputConn = UserInputService.InputBegan:Connect(function(input, _processed)
+		-- Ignore `processed` so bush/UI can't swallow the dodge letter (often E).
+		if qteResolved or not encounterActive or mobileInput then
 			return
 		end
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then

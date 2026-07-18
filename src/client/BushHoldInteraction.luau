@@ -54,6 +54,7 @@ local bushMapScanInProgress = false
 local lastPickFullScanAt = 0
 local lastCooldownVisualSyncAt = 0
 local bushSearchSuppressUntil = 0.0
+local bushSearchLocked = false
 
 local pendingBushRoots: { Instance } = {}
 local pendingBushSet: { [Instance]: boolean } = {}
@@ -635,7 +636,7 @@ local function tickAim()
 		hl.Parent = cam
 	end
 
-	if os.clock() < bushSearchSuppressUntil then
+	if bushSearchLocked or os.clock() < bushSearchSuppressUntil then
 		if activeBush or activePrompt then
 			setActive(nil, nil, nil)
 		end
@@ -675,7 +676,7 @@ local function tickAim()
 		bush, prompt, anchor = nil, nil, nil
 	else
 		bush, prompt, anchor = pickClosest()
-		if bush and prompt and not ProximityPromptEffects.isBushSearchInViewRange(prompt) then
+		if bush and prompt and not ProximityPromptEffects.isBushSearchNearPlayer(prompt) then
 			bush, prompt, anchor = nil, nil, nil
 		end
 	end
@@ -834,6 +835,9 @@ function BushHoldInteraction.init()
 
 	-- Engine ProximityPrompt hold is blocked while a brainrot Tool is equipped; run the hold ourselves.
 	ContextActionService:BindActionAtPriority(BUSH_SEARCH_HOLD_ACTION, function(_name, state, input)
+		if bushSearchLocked or os.clock() < bushSearchSuppressUntil then
+			return Enum.ContextActionResult.Pass
+		end
 		if UserInputService:GetFocusedTextBox() ~= nil then
 			return Enum.ContextActionResult.Pass
 		end
@@ -988,6 +992,22 @@ function BushHoldInteraction.suppressBushSearchBriefly(durationSec: number)
 	bushSearchSuppressUntil = os.clock() + math.max(durationSec, 0.25)
 	setActive(nil, nil, nil)
 	ProximityPromptEffects.hideBushSearch()
+end
+
+function BushHoldInteraction.setBushSearchLocked(locked: boolean)
+	bushSearchLocked = locked == true
+	if bushSearchLocked then
+		if bushSearchHoldPrompt then
+			ProximityPromptEffects.endManagedBushHold(bushSearchHoldPrompt, false)
+			bushSearchHoldPrompt = nil
+		end
+		setActive(nil, nil, nil)
+		ProximityPromptEffects.hideBushSearch()
+	end
+end
+
+function BushHoldInteraction.isBushSearchLocked(): boolean
+	return bushSearchLocked
 end
 
 return BushHoldInteraction

@@ -1738,7 +1738,9 @@ local ToolbarController = {}
 	end
 
 	local function findInventoryIndexForBrainrotName(itemName: string): number?
-		for invIndex = 1, #brainrotEntries do
+		-- Prefer newest matching entry (deposits append) so returning Cocofanto
+		-- does not select an older duplicate already on the hotbar.
+		for invIndex = #brainrotEntries, 1, -1 do
 			local e = brainrotEntries[invIndex]
 			if e and e.name == itemName and not brainrotParkedInUI[invIndex] then
 				return invIndex
@@ -1757,20 +1759,22 @@ local ToolbarController = {}
 		end
 		lastSafezoneAutoEquipAttempt = now
 
-		if typeof(pendingAutoEquipSlot) == "number" then
-			local slot = math.clamp(math.floor(pendingAutoEquipSlot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
-			if brainrotEntries[slot] and (slot > HOTBAR_INVENTORY_SLOTS or not brainrotParkedInUI[slot]) then
-				applyAutoEquipFromSync(slot)
-				pendingAutoEquipSlot = nil
-				pendingReturnedBrainrotName = nil
-			end
-			return
-		end
-
+		-- Prefer the brainrot that was on the player's head when they re-entered.
 		if pendingReturnedBrainrotName then
 			local invIndex = findInventoryIndexForBrainrotName(pendingReturnedBrainrotName)
 			if invIndex then
 				applyAutoEquipFromSync(invIndex)
+				pendingReturnedBrainrotName = nil
+				pendingAutoEquipSlot = nil
+				return
+			end
+		end
+
+		if typeof(pendingAutoEquipSlot) == "number" then
+			local invIndex = math.floor(pendingAutoEquipSlot)
+			if brainrotEntries[invIndex] and not brainrotParkedInUI[invIndex] then
+				applyAutoEquipFromSync(invIndex)
+				pendingAutoEquipSlot = nil
 				pendingReturnedBrainrotName = nil
 			end
 		end
@@ -3291,9 +3295,9 @@ local ToolbarController = {}
 			local equipSlot = (payload :: any).equipSlot
 			if typeof(equipSlot) == "number" then
 				pendingAutoEquipSlot = equipSlot
-				pendingReturnedBrainrotName = nil
+				-- Keep pendingReturnedBrainrotName so head-carry identity wins over a
+				-- stale/mis-typed equipSlot (hotbar cell vs inventory index).
 				if canUseToolbar then
-					applyAutoEquipFromSync(equipSlot)
 					tryAutoSelectReturnedBrainrot()
 				end
 			elseif pendingReturnedBrainrotName and canUseToolbar then
@@ -3382,22 +3386,31 @@ local ToolbarController = {}
 		task.defer(rebuildSlots)
 	end
 
-	-- After deposit, server sends equipSlot = inventory index of the new brainrot (hotbar 1–9 mirror those indices).
-	-- Must not use selectSlot here — it toggles off when the server already equipped the matching tool.
+	-- After deposit, server sends equipSlot = inventory list index of the deposited brainrot.
+	-- Resolve the visible hotbar cell via the slot map (no longer 1:1 with inventory index).
 	applyAutoEquipFromSync = function(equipSlot: number)
 		if not canUseToolbar then
 			pendingAutoEquipSlot = equipSlot
 			return
 		end
 		local invIndex = math.floor(equipSlot)
-		if not brainrotEntries[invIndex] and invIndex >= 1 and invIndex <= HOTBAR_INVENTORY_SLOTS then
-			invIndex = brainrotIndexForHotbarSlot(invIndex) or invIndex
-		end
 		if not brainrotEntries[invIndex] then
 			return
 		end
+		if brainrotParkedInUI[invIndex] then
+			brainrotParkedInUI[invIndex] = nil
+		end
 
-		local slot = hotbarSlotForBrainrotIndex(invIndex) or math.clamp(invIndex, 1, HOTBAR_INVENTORY_SLOTS)
+		local slot = hotbarSlotForBrainrotIndex(invIndex)
+		if not slot then
+			local preferred = if invIndex <= HOTBAR_INVENTORY_SLOTS then invIndex else nil
+			slot = firstEmptyHotbarSlot(preferred)
+			if slot then
+				optimisticBrainrotMoveToHotbar(invIndex, slot)
+			else
+				slot = math.clamp(invIndex, 1, HOTBAR_INVENTORY_SLOTS)
+			end
+		end
 		setHotbarSelection(slot)
 
 		local function tryHoldBrainrot(): boolean
@@ -3412,6 +3425,11 @@ local ToolbarController = {}
 			if tool then
 				if equipped ~= tool then
 					hum:EquipTool(tool)
+				end
+				-- Confirm tool matches the intended inventory entry when possible.
+				local toolInv = tool:GetAttribute("BrainrotInvIndex")
+				if typeof(toolInv) == "number" and math.floor(toolInv) ~= invIndex then
+					requestEquipBrainrotSlot(invIndex, true)
 				end
 				return true
 			end

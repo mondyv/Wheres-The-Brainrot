@@ -19,6 +19,7 @@ local TweenService = game:GetService("TweenService")
 
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
+local BushHarvestBrainrotEquip = require(Modules:WaitForChild("BushHarvestBrainrotEquip"))
 local IndexService = require(Modules:WaitForChild("IndexService"))
 local PlayerDataService = require(Modules:WaitForChild("PlayerDataService"))
 local BrainrotHeader = require(Modules:WaitForChild("BrainrotHeader"))
@@ -61,7 +62,7 @@ local BUSH_LOOT_RESPAWN_MIN = 10
 local BUSH_LOOT_RESPAWN_MAX = 15
 local bushLootRespawnToken: { [Instance]: number } = {}
 local releaseBushAfterFloatingTimeout: (string) -> ()
-local POP_DURATION = 0.35
+local POP_DURATION = 1.55
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 local BUSH_EMPTY_MESSAGE_ANCHOR_NAME = "_BushEmptyMessageAnchor"
 local DEPOSIT_TAG = "BrainrotDeposit"
@@ -1130,11 +1131,26 @@ local function findNearestBushModel(worldPos: Vector3, maxRange: number): Model?
 	return best
 end
 
-local function spawnBrainrotAboveBush(clone: Model, worldPosition: Vector3, harvestLevel: number): (CFrame, number)
+local function spawnBrainrotAboveBush(clone: Model, worldPosition: Vector3, harvestLevel: number, faceToward: Vector3?): (CFrame, number)
 	local bush = findNearestBushModel(worldPosition, MAX_HARVEST_RANGE + RANGE_SLACK)
 	local surfaceTopY = bushTopWorldY(bush, worldPosition.Y)
 	BrainrotCarryVisual.applyScaleForLevel(clone, harvestLevel)
-	local yaw = math.random() * math.pi * 2
+
+	local yaw: number
+	if faceToward then
+		local flat = Vector3.new(faceToward.X - worldPosition.X, 0, faceToward.Z - worldPosition.Z)
+		if flat.Magnitude < 0.05 then
+			yaw = 0
+		else
+			-- Face the player (+Z toward them via lookAt yaw — no π flip).
+			local look = CFrame.lookAt(Vector3.zero, flat.Unit)
+			local _, lookYaw, _ = look:ToEulerAnglesYXZ()
+			yaw = lookYaw
+		end
+	else
+		yaw = math.random() * math.pi * 2
+	end
+
 	local spawnCf =
 		BrainrotCarryVisual.spawnCFrameAboveSurface(clone, worldPosition.X, surfaceTopY, worldPosition.Z, nil, yaw)
 	return spawnCf, yaw
@@ -1171,28 +1187,90 @@ end
 
 local function popSpawnEffect(model: Model, onDone: (() -> ())?)
 	local pivot = model:GetPivot()
+	local _, baseYaw, _ = pivot:ToEulerAnglesYXZ()
 	local duration = POP_DURATION
 	local t0 = os.clock()
+
+	local baseScales: { [BasePart]: Vector3 } = {}
+	local baseTrans: { [BasePart]: number } = {}
+	for _, desc in model:GetDescendants() do
+		if desc:IsA("BasePart") then
+			baseScales[desc] = desc.Size
+			baseTrans[desc] = desc.Transparency
+			desc.Size = desc.Size * 0.04
+			desc.Transparency = math.min(0.98, math.max(desc.Transparency, 0.9))
+		end
+	end
+
+	local function easeOutCubic(x: number): number
+		return 1 - (1 - x) ^ 3
+	end
+
+	local function easeOutQuint(x: number): number
+		return 1 - (1 - x) ^ 5
+	end
+
+	local function easeOutBack(x: number): number
+		local c1 = 1.35
+		local c3 = c1 + 1
+		return 1 + c3 * (x - 1) ^ 3 + c1 * (x - 1) ^ 2
+	end
+
 	local conn: RBXScriptConnection
 	conn = RunService.Heartbeat:Connect(function()
 		if not model.Parent then
-			-- Model was destroyed mid-effect; stop so the Heartbeat connection doesn't run forever.
 			conn:Disconnect()
 			return
 		end
-		local t = (os.clock() - t0) / duration
+		local t = math.clamp((os.clock() - t0) / duration, 0, 1)
 		if t >= 1 then
 			conn:Disconnect()
-			model:PivotTo(pivot)
+			for part, size in baseScales do
+				if part.Parent then
+					part.Size = size
+					part.Transparency = baseTrans[part] or 0
+				end
+			end
+			-- End on float-ready pose (continuous handoff, no hard snap).
+			model:PivotTo(CFrame.new(pivot.Position + Vector3.new(0, 0.22, 0)) * CFrame.Angles(0, baseYaw, 0))
 			if onDone then
 				onDone()
 			end
 			return
 		end
-		local wobble = (1 - t) * 0.18
-		local yaw = math.sin(t * math.pi * 5) * wobble
-		local pitch = math.cos(t * math.pi * 4) * wobble * 0.6
-		model:PivotTo(pivot * CFrame.Angles(pitch, yaw, -yaw * 0.4))
+
+		-- Modern Pokémon-style release: seed → expand → rise → settle.
+		local formT = easeOutBack(math.clamp(t / 0.42, 0, 1))
+		local scaleMul
+		if t < 0.42 then
+			scaleMul = math.clamp(0.04 + formT * 1.02, 0.04, 1.06)
+		else
+			local settle = easeOutCubic(math.clamp((t - 0.42) / 0.2, 0, 1))
+			scaleMul = 1.06 - settle * 0.06
+		end
+
+		local fadeT = easeOutQuint(math.clamp(t / 0.32, 0, 1))
+		local rise = easeOutCubic(math.clamp(t / 0.55, 0, 1)) * 1.15
+		local settleDown = easeOutCubic(math.clamp((t - 0.55) / 0.45, 0, 1)) * 0.93
+		local lift = math.max(0.18, rise - settleDown)
+
+		-- Start facing the player, then spin during the pop, settle facing them again.
+		local spinAmt = math.sin(easeOutCubic(t) * math.pi) * math.pi * 0.85
+		local yaw = baseYaw + spinAmt
+		local tip = math.sin(easeOutCubic(t) * math.pi) * 0.1 * (1 - t)
+
+		for part, size in baseScales do
+			if part.Parent then
+				part.Size = size * scaleMul
+				local baseT = baseTrans[part] or 0
+				part.Transparency = baseT + (1 - fadeT) * (0.98 - baseT)
+			end
+		end
+
+		model:PivotTo(
+			CFrame.new(pivot.Position + Vector3.new(0, lift, 0))
+				* CFrame.Angles(tip * 0.35, yaw, -tip * 0.2)
+		)
 	end)
 end
 
@@ -1245,12 +1323,10 @@ local function attachCarriedBrainrot(player: Player, clone: Model)
 				brainrotParkedInExpandedBackpack[player] = map
 			end
 			local invList = brainrotInventories[player]
-			local equipSlot = newSlot
+			-- Place on hotbar, but auto-equip must use the inventory index (newSlot),
+			-- not the visual hotbar cell — those no longer mirror 1:1.
 			if invList then
-				local hotbarIdx = assignEntryToLowestFreeHotbarSlot(player, invList, map, newSlot)
-				if hotbarIdx then
-					equipSlot = hotbarIdx
-				end
+				assignEntryToLowestFreeHotbarSlot(player, invList, map, newSlot)
 			end
 			local carryList = activeCarries[player]
 			if carryList then
@@ -1261,7 +1337,7 @@ local function attachCarriedBrainrot(player: Player, clone: Model)
 				end
 			end
 			syncBrainrotCarryCountAttr(player)
-			notifyClientInventorySync(player, equipSlot, true)
+			notifyClientInventorySync(player, newSlot, true)
 		end
 		return
 	end
@@ -1525,6 +1601,7 @@ local clearEmptyBushMessageState: (Instance) -> ()
 local showEmptyBushMessage: (Instance) -> ()
 
 do
+	local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 	local EMPTY_BUSH_MESSAGE = "No brainrots hiding!"
 	local EMPTY_BUSH_MESSAGE_LIFETIME = 4
 	local EMPTY_BUSH_FADE_DURATION = 1
@@ -1773,22 +1850,14 @@ do
 	end
 
 	local function resetEmptyBushMessageVisuals(billboard: BillboardGui)
-		local panel = billboard:FindFirstChild("Panel")
-		if not panel or not panel:IsA("Frame") then
+		local label = billboard:FindFirstChild("Text")
+		if not label or not label:IsA("TextLabel") then
 			return
 		end
-		panel.BackgroundTransparency = 0.25
-		local panelStroke = panel:FindFirstChildOfClass("UIStroke")
-		if panelStroke then
-			panelStroke.Transparency = 0
-		end
-		local label = panel:FindFirstChild("Text")
-		if label and label:IsA("TextLabel") then
-			label.TextTransparency = 0
-			local textStroke = label:FindFirstChildOfClass("UIStroke")
-			if textStroke then
-				textStroke.Transparency = 0
-			end
+		label.TextTransparency = 0
+		local textStroke = label:FindFirstChildOfClass("UIStroke")
+		if textStroke then
+			textStroke.Transparency = 0
 		end
 	end
 
@@ -1798,43 +1867,25 @@ do
 		billboard.Adornee = anchor
 		billboard.AlwaysOnTop = true
 		billboard.LightInfluence = 0
-		billboard.Size = UDim2.fromOffset(260, 70)
+		billboard.Size = UDim2.fromOffset(300, 44)
 		billboard.StudsOffset = Vector3.zero
 		billboard.MaxDistance = 80
 		billboard.Parent = bush
 
-		local panel = Instance.new("Frame")
-		panel.Name = "Panel"
-		panel.Size = UDim2.fromScale(1, 1)
-		panel.BackgroundColor3 = Color3.fromRGB(16, 18, 16)
-		panel.BackgroundTransparency = 0.25
-		panel.BorderSizePixel = 0
-		panel.Parent = billboard
-
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 12)
-		corner.Parent = panel
-
-		local panelStroke = Instance.new("UIStroke")
-		panelStroke.Color = Color3.fromRGB(72, 230, 105)
-		panelStroke.Thickness = 2
-		panelStroke.Transparency = 0
-		panelStroke.Parent = panel
-
 		local label = Instance.new("TextLabel")
 		label.Name = "Text"
-		label.Size = UDim2.new(1, -20, 1, -14)
-		label.Position = UDim2.fromOffset(10, 7)
+		label.Size = UDim2.fromScale(1, 1)
 		label.BackgroundTransparency = 1
 		label.Text = EMPTY_BUSH_MESSAGE
-		label.TextScaled = true
+		label.TextWrapped = true
 		label.TextColor3 = Color3.fromRGB(240, 255, 244)
-		label.Font = Enum.Font.GothamBold
-		label.Parent = panel
+		UiFonts.applyDisplayLabel(label, 20, 14)
+		label.Parent = billboard
 
 		local textStroke = Instance.new("UIStroke")
-		textStroke.Color = Color3.fromRGB(28, 110, 52)
-		textStroke.Thickness = 1.15
+		textStroke.Color = Color3.fromRGB(0, 0, 0)
+		textStroke.Thickness = 2
+		textStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 		textStroke.Transparency = 0
 		textStroke.Parent = label
 
@@ -1870,20 +1921,12 @@ do
 			end
 
 			local fadeInfo = TweenInfo.new(EMPTY_BUSH_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-			local panel = billboard:FindFirstChild("Panel")
-			if panel and panel:IsA("Frame") then
-				TweenService:Create(panel, fadeInfo, { BackgroundTransparency = 1 }):Play()
-				local panelStroke = panel:FindFirstChildOfClass("UIStroke")
-				if panelStroke then
-					TweenService:Create(panelStroke, fadeInfo, { Transparency = 1 }):Play()
-				end
-				local label = panel:FindFirstChild("Text")
-				if label and label:IsA("TextLabel") then
-					TweenService:Create(label, fadeInfo, { TextTransparency = 1 }):Play()
-					local textStroke = label:FindFirstChildOfClass("UIStroke")
-					if textStroke then
-						TweenService:Create(textStroke, fadeInfo, { Transparency = 1 }):Play()
-					end
+			local label = billboard:FindFirstChild("Text")
+			if label and label:IsA("TextLabel") then
+				TweenService:Create(label, fadeInfo, { TextTransparency = 1 }):Play()
+				local textStroke = label:FindFirstChildOfClass("UIStroke")
+				if textStroke then
+					TweenService:Create(textStroke, fadeInfo, { Transparency = 1 }):Play()
 				end
 			end
 
@@ -2045,7 +2088,8 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 			end
 		end
 		clone.Parent = workspace
-		local spawnCf, baseYaw = spawnBrainrotAboveBush(clone, worldPosition, harvestLevel)
+		local facePos = char:GetPivot().Position
+		local spawnCf, baseYaw = spawnBrainrotAboveBush(clone, worldPosition, harvestLevel, facePos)
 		placeModelAtWorld(clone, spawnCf)
 		setAllPartsPhysics(clone, true, true)
 		local anchorPos = spawnCf.Position
@@ -2106,7 +2150,8 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 	end
 
 	clone.Parent = workspace
-	local spawnCf, baseYaw = spawnBrainrotAboveBush(clone, worldPosition, harvestLevel)
+	local facePos = char:GetPivot().Position
+	local spawnCf, baseYaw = spawnBrainrotAboveBush(clone, worldPosition, harvestLevel, facePos)
 	placeModelAtWorld(clone, spawnCf)
 	setAllPartsPhysics(clone, true, true)
 
@@ -2327,8 +2372,9 @@ local function tryRedeemAllAtDeposit(player: Player, depositPart: BasePart?)
 		addedAny = true
 		local invList = brainrotInventories[player]
 		if invList then
-			local hotbarIdx = assignEntryToLowestFreeHotbarSlot(player, invList, map, newSlot)
-			lastEquipSlot = hotbarIdx or newSlot
+			assignEntryToLowestFreeHotbarSlot(player, invList, map, newSlot)
+			-- Always auto-equip by inventory index of the deposited carry.
+			lastEquipSlot = newSlot
 			depositDebug("hotbar assign", player.Name, brainrotName, "list", newSlot, "equip", lastEquipSlot)
 		else
 			lastEquipSlot = newSlot
@@ -2376,7 +2422,7 @@ local function tryRedeemPendingFloatsAtDeposit(player: Player)
 
 	pendingRedeemDebounce[player] = now
 
-	local lastHotbarIdx: number? = nil
+	local lastEquipInvIdx: number? = nil
 	local addedAny = false
 
 	for _, clone in ipairs(toRedeem) do
@@ -2408,18 +2454,15 @@ local function tryRedeemPendingFloatsAtDeposit(player: Player)
 			break
 		end
 
-		local hotbarIdx = assignEntryToLowestFreeHotbarSlot(player, list, map, newSlot)
-		if not hotbarIdx then
-			break
-		end
-		lastHotbarIdx = hotbarIdx
+		assignEntryToLowestFreeHotbarSlot(player, list, map, newSlot)
+		lastEquipInvIdx = newSlot
 		addedAny = true
 	end
 
 	syncBrainrotCarryCountAttr(player)
 
 	if addedAny then
-		notifyClientInventorySync(player, lastHotbarIdx, true)
+		notifyClientInventorySync(player, lastEquipInvIdx, true)
 	end
 end
 
@@ -2658,52 +2701,7 @@ getInvRF.OnServerInvoke = function(requesting: Player)
 	return packInventoryForClient(requesting, list)
 end
 
-local function destroyAllBrainrotToolsForPlayer(plr: Player)
-	local bp = plr:FindFirstChildOfClass("Backpack")
-	local char = plr.Character
-	if bp then
-		for _, c in ipairs(bp:GetChildren()) do
-			if c:IsA("Tool") and c:GetAttribute("BrainrotTool") == true then
-				c:Destroy()
-			end
-		end
-	end
-	if char then
-		for _, c in ipairs(char:GetChildren()) do
-			if c:IsA("Tool") and c:GetAttribute("BrainrotTool") == true then
-				c:Destroy()
-			end
-		end
-	end
-end
-
--- Retag existing brainrot Tool's BrainrotInvIndex so equipped/held tools stay valid after a swap.
-local function swapBrainrotToolIndices(plr: Player, oldA: number, oldB: number)
-	local roots: { Instance } = {}
-	local bp = plr:FindFirstChildOfClass("Backpack")
-	if bp then
-		table.insert(roots, bp)
-	end
-	local char = plr.Character
-	if char then
-		table.insert(roots, char)
-	end
-	for _, root in ipairs(roots) do
-		for _, c in ipairs(root:GetChildren()) do
-			if c:IsA("Tool") and c:GetAttribute("BrainrotTool") == true then
-				local a = c:GetAttribute("BrainrotInvIndex")
-				if typeof(a) == "number" then
-					local af = math.floor(a)
-					if af == oldA then
-						c:SetAttribute("BrainrotInvIndex", oldB)
-					elseif af == oldB then
-						c:SetAttribute("BrainrotInvIndex", oldA)
-					end
-				end
-			end
-		end
-	end
-end
+local destroyAllBrainrotToolsForPlayer = BushHarvestBrainrotEquip.destroyAllBrainrotToolsForPlayer
 
 -- After removing list index `removedIdx`, re-key tucked flags so they still match list positions.
 local function shiftParkedMapAfterListRemove(m: { [number]: boolean }, removedIdx: number)
@@ -3046,149 +3044,46 @@ local function ensureEquipBrainrotRemote(): RemoteEvent
 	return ev :: RemoteEvent
 end
 
-local function removeBrainrotToolAtInventoryIndex(parent: Instance, invIndex: number)
-	for _, c in ipairs(parent:GetChildren()) do
-		if c:IsA("Tool") and c:GetAttribute("BrainrotTool") == true then
-			local a = c:GetAttribute("BrainrotInvIndex")
-			if typeof(a) == "number" and math.floor(a) == invIndex then
-				c:Destroy()
-			end
-		end
-	end
-end
+equipBrainrotSlotForPlayer = BushHarvestBrainrotEquip.createEquipBrainrotSlotForPlayer({
+	Brainrots = Brainrots,
+	SafezoneUtil = SafezoneUtil,
+	brainrotInventories = brainrotInventories,
+	brainrotParkedInExpandedBackpack = brainrotParkedInExpandedBackpack,
+	HOTBAR_UI_SLOTS = HOTBAR_UI_SLOTS,
+	MAX_BACKPACK_BRAINROT_SLOTS = MAX_BACKPACK_BRAINROT_SLOTS,
+	assignEntryToLowestFreeHotbarSlot = assignEntryToLowestFreeHotbarSlot,
+	playerInInventoryZone = playerInInventoryZone,
+	getMainPart = getMainPart,
+	findTemplateBySourcePath = findTemplateBySourcePath,
+	findFirstTemplateByModelName = findFirstTemplateByModelName,
+})
 
-local function buildBrainrotToolFromTemplate(template: Model, entry: BrainrotInvEntry, invIndex: number): Tool?
-	local clone = template:Clone()
-	BrainrotCarryVisual.applyScaleForLevel(clone, entry.level)
-	for _, d in clone:GetDescendants() do
-		if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ProximityPrompt") then
-			d:Destroy()
-		end
-	end
-	local main = getMainPart(clone)
-	if not main then
-		clone:Destroy()
-		return nil
-	end
-
-	local parts: { BasePart } = {}
-	for _, d in clone:GetDescendants() do
-		if d:IsA("BasePart") then
-			table.insert(parts, d)
-		end
-	end
-
-	local tool = Instance.new("Tool")
-	tool.Name = entry.name
-	tool:SetAttribute("BrainrotTool", true)
-	tool:SetAttribute("BrainrotInvIndex", invIndex)
-	tool:SetAttribute("BrainrotSourcePath", entry.sourcePath)
-	tool:SetAttribute("BrainrotName", entry.name)
-	tool:SetAttribute("BrainrotRarity", entry.rarity)
-	tool:SetAttribute("BrainrotMutation", entry.mutation)
-	tool:SetAttribute("BrainrotLevel", math.max(1, math.floor(entry.level)))
-	tool:SetAttribute("BrainrotBaseIncome", entry.baseIncome)
-	tool.CanBeDropped = false
-	tool.ManualActivationOnly = true -- keep E for bush Search while a brainrot is equipped in the hotbar
-	if entry.icon ~= "" then
-		pcall(function()
-			tool.TextureId = entry.icon
-		end)
-	end
-
-	main.Name = "Handle"
-	main.Anchored = false
-	main.Massless = true
-	main.Parent = tool
-
-	for _, p in parts do
-		if p ~= main then
-			p.Anchored = false
-			p.Massless = true
-			p.Parent = tool
-			local w = Instance.new("WeldConstraint")
-			w.Part0 = main
-			w.Part1 = p
-			w.Parent = main
-		end
-	end
-
-	BrainrotCarryVisual.applyNonColliding(tool)
-
-	clone:Destroy()
-	tool.Grip = CFrame.new()
-	return tool
-end
-
-local function equipBrainrotSlotForPlayerImpl(player: Player, slot: number, forceEquip: boolean?): number?
-	local char = player.Character
-	if not forceEquip then
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		local canEquip = playerInInventoryZone(player)
-			or SafezoneUtil.isCharacterInToolbarZone(char)
-			or (hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position))
-		if not canEquip then
-			return nil
-		end
-	end
-	local list = brainrotInventories[player]
-	if not list then
-		return nil
-	end
-	local map = brainrotParkedInExpandedBackpack[player]
-	if not map then
-		map = {}
-		brainrotParkedInExpandedBackpack[player] = map
-	end
-	local idx = math.clamp(math.floor(slot), 1, MAX_BACKPACK_BRAINROT_SLOTS)
-	if not list[idx] then
-		return nil
-	end
-	if idx > HOTBAR_UI_SLOTS or map[idx] then
-		local newIdx = assignEntryToLowestFreeHotbarSlot(player, list, map, idx)
-		if not newIdx then
-			return nil
-		end
-		idx = newIdx
-	end
-	local entry = list[idx]
-	if not char then
-		return nil
-	end
-	local brainrots = Brainrots.getBrainrotsFolder()
-	if not brainrots then
-		return nil
-	end
-	local template: Model? = nil
-	if entry.sourcePath ~= "" then
-		template = findTemplateBySourcePath(brainrots, entry.sourcePath)
-	end
-	if not template then
-		template = findFirstTemplateByModelName(brainrots, entry.name)
-	end
-	if not template then
-		return nil
-	end
-	local tool = buildBrainrotToolFromTemplate(template, entry, idx)
-	if not tool then
-		return nil
-	end
-	local hum = char:FindFirstChildOfClass("Humanoid")
-	local bp = player:FindFirstChildOfClass("Backpack")
-	if not hum or not bp then
-		tool:Destroy()
-		return nil
-	end
-	removeBrainrotToolAtInventoryIndex(bp, idx)
-	removeBrainrotToolAtInventoryIndex(char, idx)
-	tool.Parent = bp
-	hum:EquipTool(tool)
-	return idx
-end
-
-equipBrainrotSlotForPlayer = function(player: Player, slot: number, forceEquip: boolean?)
-	return equipBrainrotSlotForPlayerImpl(player, slot, forceEquip)
-end
+require(Modules:WaitForChild("BushHarvestInternal")).boot({
+	pushBrainrotInventory = pushBrainrotInventory,
+	brainrotInventories = brainrotInventories,
+	brainrotParkedInExpandedBackpack = brainrotParkedInExpandedBackpack,
+	brainrotHotbarSlots = brainrotHotbarSlots,
+	enrichEntryFromCatalog = enrichEntryFromCatalog,
+	enrichEntryFromBrainrotsFolder = enrichEntryFromBrainrotsFolder,
+	Brainrots = Brainrots,
+	IndexService = IndexService,
+	BrainrotEconomy = BrainrotEconomy,
+	packInventoryForClient = packInventoryForClient,
+	hotbarSlotsPayloadForPlayer = hotbarSlotsPayloadForPlayer,
+	syncBrainrotCarryCountAttr = syncBrainrotCarryCountAttr,
+	ensureInventoryRemotes = ensureInventoryRemotes,
+	equipBrainrotSlotForPlayer = equipBrainrotSlotForPlayer,
+	notifyClientInventorySync = notifyClientInventorySync,
+	notifyIndexDeposited = notifyIndexDeposited,
+	HOTBAR_UI_SLOTS = HOTBAR_UI_SLOTS,
+	assignEntryToLowestFreeHotbarSlot = assignEntryToLowestFreeHotbarSlot,
+	playerInInventoryZone = playerInInventoryZone,
+	SafezoneUtil = SafezoneUtil,
+	destroyAllBrainrotToolsForPlayer = destroyAllBrainrotToolsForPlayer,
+	shiftParkedMapAfterListRemove = shiftParkedMapAfterListRemove,
+	getBushRemotesFolder = getBushRemotesFolder,
+	ensureEquipBrainrotRemote = ensureEquipBrainrotRemote,
+})
 
 task.defer(function()
 	local map = workspace:WaitForChild("Map", 120)
@@ -3238,30 +3133,3 @@ task.defer(function()
 		task.wait(1)
 	end
 end)
-
-require(Modules:WaitForChild("BushHarvestInternal")).boot({
-	pushBrainrotInventory = pushBrainrotInventory,
-	brainrotInventories = brainrotInventories,
-	brainrotParkedInExpandedBackpack = brainrotParkedInExpandedBackpack,
-	brainrotHotbarSlots = brainrotHotbarSlots,
-	enrichEntryFromCatalog = enrichEntryFromCatalog,
-	enrichEntryFromBrainrotsFolder = enrichEntryFromBrainrotsFolder,
-	Brainrots = Brainrots,
-	IndexService = IndexService,
-	BrainrotEconomy = BrainrotEconomy,
-	packInventoryForClient = packInventoryForClient,
-	hotbarSlotsPayloadForPlayer = hotbarSlotsPayloadForPlayer,
-	syncBrainrotCarryCountAttr = syncBrainrotCarryCountAttr,
-	ensureInventoryRemotes = ensureInventoryRemotes,
-	equipBrainrotSlotForPlayer = equipBrainrotSlotForPlayer,
-	notifyClientInventorySync = notifyClientInventorySync,
-	notifyIndexDeposited = notifyIndexDeposited,
-	HOTBAR_UI_SLOTS = HOTBAR_UI_SLOTS,
-	assignEntryToLowestFreeHotbarSlot = assignEntryToLowestFreeHotbarSlot,
-	playerInInventoryZone = playerInInventoryZone,
-	SafezoneUtil = SafezoneUtil,
-	destroyAllBrainrotToolsForPlayer = destroyAllBrainrotToolsForPlayer,
-	shiftParkedMapAfterListRemove = shiftParkedMapAfterListRemove,
-	getBushRemotesFolder = getBushRemotesFolder,
-	ensureEquipBrainrotRemote = ensureEquipBrainrotRemote,
-})

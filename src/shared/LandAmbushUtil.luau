@@ -1,7 +1,8 @@
 -- [ACTIVE] LandAmbushUtil
 --[[
-	Random ambush positions on Map.Lands.Land<N> (wilderness lands, not player plot).
-	Ground height uses raycasts so invisible ceiling borders are not used as floor Y.
+	Random ambush positions on Map.Lands.Land<N>.Spawn (wilderness lands, not player plot).
+	Samples inside the Spawn part OBB (not world AABB) so spawns stay off ledges.
+	Ground height uses raycasts that skip invisible/border/hitbox parts.
 ]]
 
 local LandResolver = require(script.Parent.LandResolver)
@@ -17,7 +18,7 @@ local SKIP_NAME = {
 	reddie = true,
 }
 
-local function shouldIncludePart(part: BasePart): boolean
+local function shouldUseAsGround(part: BasePart): boolean
 	local n = string.lower(part.Name)
 	for token, _ in SKIP_NAME do
 		if string.find(n, token, 1, true) then
@@ -30,55 +31,91 @@ local function shouldIncludePart(part: BasePart): boolean
 	return true
 end
 
-local function expandPartBounds(cf: CFrame, size: Vector3, minV: Vector3, maxV: Vector3): (Vector3, Vector3)
-	local hs = size * 0.5
-	local newMin = minV
-	local newMax = maxV
-	for sx = -1, 1, 2 do
-		for sy = -1, 1, 2 do
-			for sz = -1, 1, 2 do
-				local world = cf:PointToWorldSpace(Vector3.new(hs.X * sx, hs.Y * sy, hs.Z * sz))
-				newMin = Vector3.new(math.min(newMin.X, world.X), math.min(newMin.Y, world.Y), math.min(newMin.Z, world.Z))
-				newMax = Vector3.new(math.max(newMax.X, world.X), math.max(newMax.Y, world.Y), math.max(newMax.Z, world.Z))
-			end
-		end
+local function isInsideSpawnXZ(part: BasePart, worldPos: Vector3, edgeMargin: number): boolean
+	local localPt = part.CFrame:PointToObjectSpace(worldPos)
+	local half = part.Size * 0.5
+	local insetX = math.max(half.X - edgeMargin, 0)
+	local insetZ = math.max(half.Z - edgeMargin, 0)
+	if insetX < 1 or insetZ < 1 then
+		-- Tiny spawn: keep a proportional inset so we never sit on the rim.
+		insetX = half.X * 0.7
+		insetZ = half.Z * 0.7
 	end
-	return newMin, newMax
+	return math.abs(localPt.X) <= insetX and math.abs(localPt.Z) <= insetZ
 end
 
-local function boundingBoxOf(root: Instance): (Vector3?, Vector3?)
-	local minV = Vector3.new(math.huge, math.huge, math.huge)
-	local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
-	local stack = { root }
-	local count = 0
-	local any = false
-	while #stack > 0 do
-		local inst = table.remove(stack)
-		if inst:IsA("BasePart") and shouldIncludePart(inst) then
-			any = true
-			minV, maxV = expandPartBounds(inst.CFrame, inst.Size, minV, maxV)
+local function resolveGroundY(x: number, z: number, referenceY: number): number?
+	local origin = Vector3.new(x, referenceY + 90, z)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore: { Instance } = {}
+	params.FilterDescendantsInstances = ignore
+
+	for _ = 1, 10 do
+		local result = workspace:Raycast(origin, Vector3.new(0, -260, 0), params)
+		if not result then
+			return nil
 		end
-		for _, child in inst:GetChildren() do
-			table.insert(stack, child)
+		local hitPart = result.Instance
+		if hitPart:IsA("BasePart") and shouldUseAsGround(hitPart) then
+			return result.Position.Y + 2
 		end
-		count += 1
-		if count % 800 == 0 then
-			task.wait()
-		end
+		table.insert(ignore, hitPart)
+		params.FilterDescendantsInstances = ignore
+		origin = result.Position - Vector3.new(0, 0.15, 0)
 	end
-	if not any then
-		return nil, nil
-	end
-	return minV, maxV
+	return nil
 end
 
-local function resolveGroundY(x: number, z: number, referenceY: number): number
-	local origin = Vector3.new(x, referenceY + 80, z)
-	local result = workspace:Raycast(origin, Vector3.new(0, -220, 0))
-	if result then
-		return result.Position.Y + 2
+local function samplePointOnSpawnPart(
+	part: BasePart,
+	targetPos: Vector3,
+	minDist: number,
+	maxDist: number?,
+	edgeMargin: number
+): Vector3?
+	local half = part.Size * 0.5
+	local usableX = math.max(half.X - edgeMargin, half.X * 0.55)
+	local usableZ = math.max(half.Z - edgeMargin, half.Z * 0.55)
+	if usableX < 2 or usableZ < 2 then
+		return nil
 	end
-	return referenceY
+
+	local refY = targetPos.Y
+	local targetFlat = Vector3.new(targetPos.X, 0, targetPos.Z)
+	local bestFar: Vector3? = nil
+	local bestFarDist = -1
+
+	for _ = 1, 48 do
+		local lx = (math.random() * 2 - 1) * usableX
+		local lz = (math.random() * 2 - 1) * usableZ
+		-- Sample near the top face so we stay over the Spawn footprint.
+		local localY = half.Y * 0.35
+		local world = part.CFrame:PointToWorldSpace(Vector3.new(lx, localY, lz))
+		local y = resolveGroundY(world.X, world.Z, refY)
+		if not y then
+			continue
+		end
+		local pos = Vector3.new(world.X, y, world.Z)
+		if not isInsideSpawnXZ(part, pos, edgeMargin) then
+			continue
+		end
+
+		local flatDist = (targetFlat - Vector3.new(pos.X, 0, pos.Z)).Magnitude
+		if flatDist > bestFarDist then
+			bestFarDist = flatDist
+			bestFar = pos
+		end
+		if flatDist >= minDist and (not maxDist or flatDist <= maxDist) then
+			return pos
+		end
+	end
+
+	-- Prefer farthest valid point still on Spawn (never leave the Spawn volume).
+	if bestFar and bestFarDist >= math.min(minDist * 0.55, 14) then
+		return bestFar
+	end
+	return bestFar
 end
 
 function LandAmbushUtil.findLandFolder(land: number): Instance?
@@ -91,7 +128,7 @@ function LandAmbushUtil.findLandFolder(land: number): Instance?
 end
 
 function LandAmbushUtil.getLandBounds(landFolder: Instance): (Vector3?, Vector3?)
-	return boundingBoxOf(landFolder)
+	return LandResolver.getSpawnBoundsForLandFolder(landFolder)
 end
 
 function LandAmbushUtil.pickRandomAmbushOnLand(
@@ -101,43 +138,35 @@ function LandAmbushUtil.pickRandomAmbushOnLand(
 	maxDist: number?,
 	edgeMargin: number
 ): Vector3?
-	local minV, maxV = LandAmbushUtil.getLandBounds(landFolder)
-	if not minV or not maxV then
+	local parts = LandResolver.getSpawnPartsForLandFolder(landFolder)
+	if #parts == 0 then
 		return nil
 	end
 
-	local spanX = maxV.X - minV.X - edgeMargin * 2
-	local spanZ = maxV.Z - minV.Z - edgeMargin * 2
-	if spanX < 6 or spanZ < 6 then
-		return nil
-	end
+	-- Try larger Spawn parts first (more room to stay far from the player).
+	table.sort(parts, function(a, b)
+		return (a.Size.X * a.Size.Z) > (b.Size.X * b.Size.Z)
+	end)
 
-	local refY = targetPos.Y
-	local targetFlat = Vector3.new(targetPos.X, refY, targetPos.Z)
+	local bestOverall: Vector3? = nil
+	local bestOverallDist = -1
+	local targetFlat = Vector3.new(targetPos.X, 0, targetPos.Z)
 
-	for _ = 1, 36 do
-		local x = minV.X + edgeMargin + math.random() * spanX
-		local z = minV.Z + edgeMargin + math.random() * spanZ
-		local y = resolveGroundY(x, z, refY)
-		local pos = Vector3.new(x, y, z)
-		local flatDist = (Vector3.new(targetFlat.X, y, targetFlat.Z) - pos).Magnitude
-		if flatDist >= minDist and (not maxDist or flatDist <= maxDist) then
-			return pos
+	for _, part in parts do
+		local pos = samplePointOnSpawnPart(part, targetPos, minDist, maxDist, edgeMargin)
+		if pos then
+			local flatDist = (targetFlat - Vector3.new(pos.X, 0, pos.Z)).Magnitude
+			if flatDist >= minDist and (not maxDist or flatDist <= maxDist) then
+				return pos
+			end
+			if flatDist > bestOverallDist then
+				bestOverallDist = flatDist
+				bestOverall = pos
+			end
 		end
 	end
 
-	local center = (minV + maxV) * 0.5
-	local centerFlat = Vector3.new(center.X, refY, center.Z)
-	local away = centerFlat - targetFlat
-	if away.Magnitude < 0.1 then
-		away = Vector3.new(1, 0, 0)
-	else
-		away = away.Unit * minDist
-	end
-	local fx = math.clamp(targetFlat.X + away.X, minV.X + edgeMargin, maxV.X - edgeMargin)
-	local fz = math.clamp(targetFlat.Z + away.Z, minV.Z + edgeMargin, maxV.Z - edgeMargin)
-	local fy = resolveGroundY(fx, fz, refY)
-	return Vector3.new(fx, fy, fz)
+	return bestOverall
 end
 
 function LandAmbushUtil.pickAmbushForPlayer(
@@ -146,27 +175,13 @@ function LandAmbushUtil.pickAmbushForPlayer(
 	maxDist: number?,
 	edgeMargin: number
 ): Vector3?
+	-- Only the land the player is currently on — never spill onto another Land's Spawn.
 	local land = LandResolver.resolveLandAtPosition(playerPos)
 	local folder = LandAmbushUtil.findLandFolder(land)
-	if folder then
-		local pos = LandAmbushUtil.pickRandomAmbushOnLand(folder, playerPos, minDist, maxDist, edgeMargin)
-		if pos then
-			return pos
-		end
+	if not folder then
+		return nil
 	end
-
-	for offsetLand = 1, 10 do
-		local tryLand = ((land - 1 + offsetLand) % 10) + 1
-		local tryFolder = LandAmbushUtil.findLandFolder(tryLand)
-		if tryFolder then
-			local pos = LandAmbushUtil.pickRandomAmbushOnLand(tryFolder, playerPos, minDist, maxDist, edgeMargin)
-			if pos then
-				return pos
-			end
-		end
-	end
-
-	return nil
+	return LandAmbushUtil.pickRandomAmbushOnLand(folder, playerPos, minDist, maxDist, edgeMargin)
 end
 
 return LandAmbushUtil

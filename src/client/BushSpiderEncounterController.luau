@@ -383,6 +383,7 @@ local function webProjectileCFrame(pos: Vector3, flightDir: Vector3): CFrame
 		upHint = Vector3.xAxis
 	end
 	return CFrame.lookAt(pos, pos + dir, upHint)
+		* CFrame.Angles(C.WEB_SHOT_PITCH_OFFSET, C.WEB_SHOT_YAW_OFFSET, 0)
 end
 
 local function getWebProjectilePosition(web: Model): Vector3

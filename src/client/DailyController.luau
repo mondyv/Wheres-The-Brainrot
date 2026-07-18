@@ -126,7 +126,14 @@ local function formatDayTimer(remainingSec: number): string
 	local clamped = math.max(0, math.floor(remainingSec))
 	local hours = math.floor(clamped / 3600)
 	local minutes = math.floor((clamped % 3600) / 60)
-	return string.format("%dH %02dM", hours, minutes)
+	local seconds = clamped % 60
+	if hours > 0 then
+		return string.format("%dH %02dM", hours, minutes)
+	end
+	if minutes > 0 then
+		return string.format("%dM %02dS", minutes, seconds)
+	end
+	return string.format("%dS", seconds)
 end
 
 local function findCardTimer(card: Frame): TextLabel?
@@ -137,33 +144,73 @@ local function findCardTimer(card: Frame): TextLabel?
 	return nil
 end
 
+local function clickHostForCard(card: Frame): Instance?
+	return card:FindFirstChild("Claim/Claimed/Locked") or card
+end
+
+local function nextLockedDayRemaining(state: DailyConfig.DailyState): (number?, number)
+	if state.skipAll then
+		return nil, 0
+	end
+	if state.currentDay < 1 or state.currentDay > DailyConfig.MAX_DAY then
+		return nil, 0
+	end
+	if DailyConfig.isDayClaimedMask(state.claimedMask, state.currentDay) then
+		return nil, 0
+	end
+	local remaining = math.max(0, state.nextAvailableAt - state.now)
+	if remaining <= 0 then
+		return nil, 0
+	end
+	return state.currentDay, remaining
+end
+
+local function setCardButtonStatusText(clickHost: Instance, status: DailyConfig.DayStatus, timerText: string?)
+	local claimLabel = clickHost:FindFirstChild("Claim")
+	local claimedLabel = clickHost:FindFirstChild("Claimed/Locked")
+	local comboLabel = clickHost:FindFirstChild("Claim/Claimed/Locked")
+
+	local lockedText = if status == "claimed"
+		then "Claimed"
+		elseif timerText and timerText ~= ""
+		then timerText
+		else "Locked"
+
+	if claimLabel and claimLabel:IsA("TextLabel") then
+		claimLabel.Visible = status == "claim"
+		claimLabel.Text = "Claim"
+	end
+	if claimedLabel and claimedLabel:IsA("TextLabel") then
+		claimedLabel.Visible = status ~= "claim"
+		claimedLabel.Text = lockedText
+	end
+	if comboLabel and comboLabel:IsA("TextLabel") then
+		comboLabel.Text = if status == "claim" then "Claim" else lockedText
+	end
+end
+
 local function updateCardTimers(state: DailyConfig.DailyState)
 	if not container then
 		return
 	end
-	local timerDay: number? = nil
-	local remaining = 0
-	if not state.skipAll and state.currentDay >= 1 and state.currentDay <= DailyConfig.MAX_DAY then
-		if not DailyConfig.isDayClaimedMask(state.claimedMask, state.currentDay) then
-			remaining = math.max(0, state.nextAvailableAt - state.now)
-			if remaining > 0 then
-				timerDay = state.currentDay
-			end
-		end
-	end
+	local timerDay, remaining = nextLockedDayRemaining(state)
+	local timerText = if timerDay then formatDayTimer(remaining) else nil
 	for day = 1, DailyConfig.MAX_DAY do
 		local card = container:FindFirstChild(tostring(day))
 		if not (card and card:IsA("Frame")) then
 			continue
 		end
-		local timer = findCardTimer(card)
-		if not timer then
-			continue
+		local status = DailyConfig.statusForDay(state, day)
+		local clickHost = clickHostForCard(card)
+		if clickHost then
+			local dayTimer = if day == timerDay then timerText else nil
+			if status == "locked" or status == "claimed" or status == "claim" then
+				setCardButtonStatusText(clickHost, status, dayTimer)
+			end
 		end
-		if day == timerDay then
-			timer.Visible = true
-			timer.Text = formatDayTimer(remaining)
-		else
+		-- Time lives on the claim/locked button now — hide spare Timer labels.
+		local timer = findCardTimer(card)
+		if timer then
 			timer.Visible = false
 		end
 	end
@@ -501,10 +548,6 @@ end
 
 -- ── Card state visuals ──────────────────────────────────────────────────────
 
-local function clickHostForCard(card: Frame): Instance?
-	return card:FindFirstChild("Claim/Claimed/Locked") or card
-end
-
 local function setAllGradientsEnabled(root: Instance?, enabled: boolean)
 	if not root then
 		return
@@ -519,7 +562,7 @@ local function setAllGradientsEnabled(root: Instance?, enabled: boolean)
 	end
 end
 
-local function applyCardStatus(card: Frame, status: DailyConfig.DayStatus)
+local function applyCardStatus(card: Frame, status: DailyConfig.DayStatus, timerText: string?)
 	local clickHost = clickHostForCard(card)
 	if not clickHost then
 		return
@@ -565,22 +608,7 @@ local function applyCardStatus(card: Frame, status: DailyConfig.DayStatus)
 		hostGradient.Enabled = showGreen
 	end
 
-	-- Text labels: "Claim" vs "Claimed/Locked"; choose which one to show.
-	local claimLabel = clickHost:FindFirstChild("Claim")
-	local claimedLabel = clickHost:FindFirstChild("Claimed/Locked")
-	local comboLabel = clickHost:FindFirstChild("Claim/Claimed/Locked")
-
-	if claimLabel and claimLabel:IsA("TextLabel") then
-		claimLabel.Visible = status == "claim"
-		claimLabel.Text = "Claim"
-	end
-	if claimedLabel and claimedLabel:IsA("TextLabel") then
-		claimedLabel.Visible = status ~= "claim"
-		claimedLabel.Text = if status == "claimed" then "Claimed" else "Locked"
-	end
-	if comboLabel and comboLabel:IsA("TextLabel") then
-		comboLabel.Text = if status == "claim" then "Claim" elseif status == "claimed" then "Claimed" else "Locked"
-	end
+	setCardButtonStatusText(clickHost, status, timerText)
 end
 
 local function applyCardScaleBump(card: Frame)
@@ -688,21 +716,19 @@ local function wireCardClaim(card: Frame, day: number)
 			if clickHost and clickHost:IsA("GuiObject") then clickHost :: GuiObject else btn
 		)
 	end)
-	btn.MouseButton1Down:Connect(function()
-		UIInteractionSounds.playClick()
-		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.94 }):Play()
-	end)
-	btn.MouseButton1Up:Connect(function()
-		TweenService:Create(scale, CLAIM_BTN_TWEEN, { Scale = 1.06 }):Play()
-	end)
 	cardClaimHandlers[card] = function()
 		tryClaim(day, card)
 	end
-	btn.Activated:Connect(function()
+	btn.MouseButton1Down:Connect(function()
+		UIInteractionSounds.playClick()
+		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.94 }):Play()
 		local handler = cardClaimHandlers[card]
 		if handler then
 			handler()
 		end
+	end)
+	btn.MouseButton1Up:Connect(function()
+		TweenService:Create(scale, CLAIM_BTN_TWEEN, { Scale = 1.06 }):Play()
 	end)
 end
 
@@ -715,13 +741,16 @@ applyState = function(state: DailyConfig.DailyState)
 	if not container then
 		return
 	end
+	local timerDay, remaining = nextLockedDayRemaining(state)
+	local nextTimerText = if timerDay then formatDayTimer(remaining) else nil
 	for day = 1, DailyConfig.MAX_DAY do
 		local card = container:FindFirstChild(tostring(day))
 		if not (card and card:IsA("Frame")) then
 			continue
 		end
 		local status = DailyConfig.statusForDay(state, day)
-		applyCardStatus(card, status)
+		local timerText = if status == "locked" and day == timerDay then nextTimerText else nil
+		applyCardStatus(card, status, timerText)
 		local clickHost = clickHostForCard(card)
 		local btn = cardClaimButtons[card]
 		if btn then

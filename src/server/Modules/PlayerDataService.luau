@@ -260,6 +260,7 @@ local function normalizeSettings(raw: any): PlayerDataSchema.PlayerSettingsSaveD
 			showOtherBrainrots = d.showOtherBrainrots,
 			brainrotVfxEnabled = d.brainrotVfxEnabled,
 			globalMessagesEnabled = d.globalMessagesEnabled,
+			skipSpiderCutscene = d.skipSpiderCutscene,
 		}
 	end
 	return {
@@ -270,6 +271,7 @@ local function normalizeSettings(raw: any): PlayerDataSchema.PlayerSettingsSaveD
 		showOtherBrainrots = readBool(raw.showOtherBrainrots, d.showOtherBrainrots),
 		brainrotVfxEnabled = readBool(raw.brainrotVfxEnabled, d.brainrotVfxEnabled),
 		globalMessagesEnabled = readBool(raw.globalMessagesEnabled, d.globalMessagesEnabled),
+		skipSpiderCutscene = readBool(raw.skipSpiderCutscene, d.skipSpiderCutscene),
 	}
 end
 
@@ -282,9 +284,11 @@ local function applySettings(player: Player, raw: any)
 	player:SetAttribute(PlayerDataSchema.SETTINGS_SHOW_OTHERS_ATTR, settings.showOtherBrainrots)
 	player:SetAttribute(PlayerDataSchema.SETTINGS_BRAINROT_VFX_ATTR, settings.brainrotVfxEnabled)
 	player:SetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR, settings.globalMessagesEnabled)
+	player:SetAttribute(PlayerDataSchema.SETTINGS_SKIP_SPIDER_CUTSCENE_ATTR, settings.skipSpiderCutscene)
 	player:SetAttribute("SlowWalkEnabled", settings.slowWalkEnabled)
 	player:SetAttribute("ShowOtherBrainrots", settings.showOtherBrainrots)
 	player:SetAttribute("BrainrotVFXEnabled", settings.brainrotVfxEnabled)
+	player:SetAttribute("SkipSpiderCutscene", settings.skipSpiderCutscene)
 end
 
 local function collectSettings(player: Player): PlayerDataSchema.PlayerSettingsSaveData
@@ -296,6 +300,7 @@ local function collectSettings(player: Player): PlayerDataSchema.PlayerSettingsS
 		showOtherBrainrots = player:GetAttribute(PlayerDataSchema.SETTINGS_SHOW_OTHERS_ATTR),
 		brainrotVfxEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_BRAINROT_VFX_ATTR),
 		globalMessagesEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR),
+		skipSpiderCutscene = player:GetAttribute(PlayerDataSchema.SETTINGS_SKIP_SPIDER_CUTSCENE_ATTR),
 	})
 end
 
@@ -379,6 +384,7 @@ function M.savePlayerSettings(player: Player, patch: any)
 		showOtherBrainrots = if patch.showOtherBrainrots ~= nil then patch.showOtherBrainrots else current.showOtherBrainrots,
 		brainrotVfxEnabled = if patch.brainrotVfxEnabled ~= nil then patch.brainrotVfxEnabled else current.brainrotVfxEnabled,
 		globalMessagesEnabled = if patch.globalMessagesEnabled ~= nil then patch.globalMessagesEnabled else current.globalMessagesEnabled,
+		skipSpiderCutscene = if patch.skipSpiderCutscene ~= nil then patch.skipSpiderCutscene else current.skipSpiderCutscene,
 	})
 	applySettings(player, merged)
 	if player:GetAttribute(LOADED_ATTR) == true then

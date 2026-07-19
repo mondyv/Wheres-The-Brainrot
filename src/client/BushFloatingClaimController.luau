@@ -1280,13 +1280,15 @@ local function trackModel(model: Model)
 	attachBushOfferVisuals(entry, model)
 	updateBillboardPositions(entry)
 
-	FloatingClaimCutscene.begin(model, 0.62)
-
-	-- Ambush roll / lurking VFX starts during Pop; reuse that result here.
+	-- Ambush roll / lurking VFX starts here so we can skip offer cutscene when set.
 	beginSpiderSenseForOffer(model)
 	local willAmbush = ambushPendingByModel[model] == true
 	if willAmbush then
 		entry.spiderSenseActive = true
+	end
+	local skipSpiderCinematics = player:GetAttribute("SkipSpiderCutscene") ~= false
+	if not (skipSpiderCinematics and willAmbush) then
+		FloatingClaimCutscene.begin(model, 0.62)
 	end
 
 	local acceptAccent = Color3.fromRGB(70, 255, 140)
@@ -1386,10 +1388,14 @@ local function tryTrackModel(model: Model)
 	if phase == "Pop" then
 		-- Soft cutscene + lurking sense at the start of the pop, not after it settles.
 		beginSpiderSenseForOffer(model)
-		if FloatingClaimCutscene.isActive() then
-			FloatingClaimCutscene.setFocus(model, 0.32)
-		else
-			FloatingClaimCutscene.begin(model, 0.32)
+		local willAmbush = ambushPendingByModel[model] == true
+		local skipSpiderCinematics = player:GetAttribute("SkipSpiderCutscene") ~= false
+		if not (skipSpiderCinematics and willAmbush) then
+			if FloatingClaimCutscene.isActive() then
+				FloatingClaimCutscene.setFocus(model, 0.32)
+			else
+				FloatingClaimCutscene.begin(model, 0.32)
+			end
 		end
 		return
 	end

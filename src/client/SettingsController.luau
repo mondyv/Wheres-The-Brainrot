@@ -6,7 +6,8 @@
 	• Button rows → toggles; row whose label contains "ui sound" drives UI hover/click sounds.
 	• Row whose label contains "slow" → SlowWalkEnabled (0.8× vs 1.15× Humanoid.WalkSpeed at spawn); default off; softer hover on that row.
 	• Row whose label contains "other" (or Button3) → ShowOtherBrainrots; default on.
-	• Row whose label contains "vfx" (or Button4/5) → BrainrotVFXEnabled; default on.
+	• Row whose label contains "vfx" (or Button4) → BrainrotVFXEnabled; default on.
+	• Button5 → SkipSpiderCutscene; default on (skip cinematic, go straight to web attack).
 --]]
 
 local Players          = game:GetService("Players")
@@ -25,8 +26,35 @@ local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
 
-local saveSettingsRE = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("SavePlayerSettings") :: RemoteEvent
+local saveSettingsRE: RemoteEvent? = nil
 local savePending = false
+
+local function getSaveSettingsRemote(): RemoteEvent?
+	if saveSettingsRE and saveSettingsRE.Parent then
+		return saveSettingsRE
+	end
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+	if not remotes then
+		return nil
+	end
+	local re = remotes:FindFirstChild("SavePlayerSettings")
+	if re and re:IsA("RemoteEvent") then
+		saveSettingsRE = re
+		return re
+	end
+	return nil
+end
+
+task.spawn(function()
+	local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
+	if not remotes then
+		return
+	end
+	local re = remotes:WaitForChild("SavePlayerSettings", 30)
+	if re and re:IsA("RemoteEvent") then
+		saveSettingsRE = re
+	end
+end)
 
 local function queueSettingsSave(patch: { [string]: any })
 	if savePending then
@@ -35,8 +63,9 @@ local function queueSettingsSave(patch: { [string]: any })
 	savePending = true
 	task.delay(0.25, function()
 		savePending = false
-		if saveSettingsRE then
-			saveSettingsRE:FireServer(patch)
+		local re = getSaveSettingsRemote()
+		if re then
+			re:FireServer(patch)
 		end
 	end)
 end
@@ -270,6 +299,11 @@ local function getButtonRowTitle(buttonRow: Instance): string
 end
 
 local function classifySettingsRow(buttonRow: Instance): string?
+	local n = buttonRow.Name
+	-- Button5 is dedicated Skip Spider Cutscene (Studio label may still say Brainrot VFX).
+	if n == "Button5" then
+		return "skip_spider_cutscene"
+	end
 	local title = getButtonRowTitle(buttonRow)
 	if title:find("ui sound", 1, true) then
 		return "ui_sounds"
@@ -283,23 +317,42 @@ local function classifySettingsRow(buttonRow: Instance): string?
 	if title:find("show", 1, true) and title:find("other", 1, true) then
 		return "show_others"
 	end
+	if title:find("spider", 1, true) then
+		return "skip_spider_cutscene"
+	end
 	if title:find("vfx", 1, true) or title:find("visual", 1, true) then
 		return "brainrot_vfx"
 	end
 	if title:find("global", 1, true) and title:find("message", 1, true) then
 		return "global_messages"
 	end
-	local n = buttonRow.Name
 	if n == "GlobalMessages" then
 		return "global_messages"
 	end
 	if n == "Button3" then
 		return "show_others"
 	end
-	if n == "Button4" or n == "Button5" then
+	if n == "Button4" then
 		return "brainrot_vfx"
 	end
 	return nil
+end
+
+local function setSkipSpiderRowNameLabel(buttonRow: Instance)
+	local labels: { Instance } = {}
+	local nameNode = buttonRow:FindFirstChild("Name")
+	if nameNode then
+		table.insert(labels, nameNode)
+	end
+	local vfxLabel = buttonRow:FindFirstChild("Brainrot VFX")
+	if vfxLabel then
+		table.insert(labels, vfxLabel)
+	end
+	for _, node in labels do
+		if node:IsA("TextLabel") or node:IsA("TextButton") then
+			(node :: TextLabel).Text = "Skip Spider Cutscene"
+		end
+	end
 end
 
 local function setSlowRowNameLabel(buttonRow: Instance, slowModeOn: boolean)
@@ -475,6 +528,7 @@ function SettingsController.init()
 	local slowToggleRow: Instance? = nil
 	local showOthersToggleRow: Instance? = nil
 	local brainrotVfxToggleRow: Instance? = nil
+	local skipSpiderCutsceneToggleRow: Instance? = nil
 	local globalMessagesToggleRow: Instance? = nil
 	for _, child in ipairs(container:GetChildren()) do
 		if child.Name:match("^Button%d+$") or child.Name == "GlobalMessages" then
@@ -491,6 +545,9 @@ function SettingsController.init()
 				showOthersToggleRow = child
 			elseif kind == "brainrot_vfx" and not brainrotVfxToggleRow then
 				brainrotVfxToggleRow = child
+			elseif kind == "skip_spider_cutscene" then
+				skipSpiderCutsceneToggleRow = child
+				setSkipSpiderRowNameLabel(child)
 			elseif kind == "global_messages" then
 				globalMessagesToggleRow = child
 			end
@@ -507,6 +564,10 @@ function SettingsController.init()
 	end
 	if player:GetAttribute("BrainrotVFXEnabled") == nil then
 		player:SetAttribute("BrainrotVFXEnabled", true)
+	end
+	if player:GetAttribute("SkipSpiderCutscene") == nil then
+		player:SetAttribute("SkipSpiderCutscene", true)
+		player:SetAttribute(PlayerDataSchema.SETTINGS_SKIP_SPIDER_CUTSCENE_ATTR, true)
 	end
 
 	local function configureSettingsContainer()
@@ -591,12 +652,15 @@ function SettingsController.init()
 		local toggleOn = if child == slowToggleRow then player:GetAttribute("SlowWalkEnabled") == true
 			elseif child == showOthersToggleRow then true
 			elseif child == brainrotVfxToggleRow then true
+			elseif child == skipSpiderCutsceneToggleRow then true
 			elseif child == globalMessagesToggleRow then player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR) ~= false
 			else readInitialOn(onOff)
 		if child == showOthersToggleRow then
 			toggleOn = player:GetAttribute("ShowOtherBrainrots") ~= false
 		elseif child == brainrotVfxToggleRow then
 			toggleOn = player:GetAttribute("BrainrotVFXEnabled") ~= false
+		elseif child == skipSpiderCutsceneToggleRow then
+			toggleOn = player:GetAttribute("SkipSpiderCutscene") ~= false
 		elseif child == slowToggleRow then
 			toggleOn = player:GetAttribute("SlowWalkEnabled") == true
 		elseif child == globalMessagesToggleRow then
@@ -606,6 +670,9 @@ function SettingsController.init()
 		setToggleFaceText(onOff, toggleOn)
 		if child == slowToggleRow then
 			setSlowRowNameLabel(child, toggleOn)
+		end
+		if child == skipSpiderCutsceneToggleRow then
+			setSkipSpiderRowNameLabel(child)
 		end
 
 		local clickable = findClickable(child)
@@ -626,7 +693,7 @@ function SettingsController.init()
 			end
 		end
 
-		clickable.Activated:Connect(function()
+		clickable.MouseButton1Down:Connect(function()
 			toggleOn = not toggleOn
 			applyToggleVisuals(onOff, toggleOn)
 			setToggleFaceText(onOff, toggleOn)
@@ -646,6 +713,11 @@ function SettingsController.init()
 			if child == brainrotVfxToggleRow then
 				player:SetAttribute("BrainrotVFXEnabled", toggleOn)
 				queueSettingsSave({ brainrotVfxEnabled = toggleOn })
+			end
+			if child == skipSpiderCutsceneToggleRow then
+				player:SetAttribute("SkipSpiderCutscene", toggleOn)
+				player:SetAttribute(PlayerDataSchema.SETTINGS_SKIP_SPIDER_CUTSCENE_ATTR, toggleOn)
+				queueSettingsSave({ skipSpiderCutscene = toggleOn })
 			end
 			if child == globalMessagesToggleRow then
 				player:SetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR, toggleOn)

@@ -1122,54 +1122,38 @@ local function animateLetterboxOut()
 	end
 end
 
-local function ensurePostFx()
-	local cam = Workspace.CurrentCamera
-	if not cam then
-		return
-	end
-	if not colorFx then
-		colorFx = Instance.new("ColorCorrectionEffect")
-		colorFx.Name = "BushSpiderColor"
-		colorFx.Parent = cam
-	end
-	if not blurFx then
-		blurFx = Instance.new("BlurEffect")
-		blurFx.Name = "BushSpiderBlur"
-		blurFx.Parent = cam
-	end
-	colorFx.Enabled = true
-	blurFx.Enabled = true
-	TweenService:Create(colorFx, TweenInfo.new(0.4), {
-		Brightness = -0.05,
-		Contrast = 0.08,
-		Saturation = -0.1,
-		TintColor = Color3.fromRGB(232, 234, 240),
-	}):Play()
-	TweenService:Create(blurFx, TweenInfo.new(0.4), { Size = 3 }):Play()
-end
-
 local function clearPostFx()
 	if colorFx then
-		TweenService:Create(colorFx, TweenInfo.new(0.35), {
-			Brightness = 0,
-			Contrast = 0,
-			Saturation = 0,
-			TintColor = Color3.new(1, 1, 1),
-		}):Play()
-		task.delay(0.36, function()
-			if colorFx then
-				colorFx.Enabled = false
-			end
-		end)
+		colorFx.Enabled = false
+		colorFx.Brightness = 0
+		colorFx.Contrast = 0
+		colorFx.Saturation = 0
+		colorFx.TintColor = Color3.new(1, 1, 1)
+		colorFx:Destroy()
+		colorFx = nil
 	end
 	if blurFx then
-		TweenService:Create(blurFx, TweenInfo.new(0.35), { Size = 0 }):Play()
-		task.delay(0.36, function()
-			if blurFx then
-				blurFx.Enabled = false
-			end
-		end)
+		blurFx.Enabled = false
+		blurFx.Size = 0
+		blurFx:Destroy()
+		blurFx = nil
 	end
+	local cam = Workspace.CurrentCamera
+	if cam then
+		local leftoverColor = cam:FindFirstChild("BushSpiderColor")
+		if leftoverColor then
+			leftoverColor:Destroy()
+		end
+		local leftoverBlur = cam:FindFirstChild("BushSpiderBlur")
+		if leftoverBlur then
+			leftoverBlur:Destroy()
+		end
+	end
+end
+
+local function ensurePostFx()
+	-- Keep world lighting/coloring normal during the spider cutscene (no tint/blur).
+	clearPostFx()
 end
 
 local function saveCameraState(cam: Camera)
@@ -1699,14 +1683,6 @@ local function flashCharacterTint(color: Color3, duration: number, intense: bool
 				hl:Destroy()
 			end
 		end)
-	end
-
-	if colorFx and colorFx.Enabled then
-		local prevTint = colorFx.TintColor
-		colorFx.TintColor = color:Lerp(prevTint, 0.55)
-		TweenService:Create(colorFx, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			TintColor = prevTint,
-		}):Play()
 	end
 end
 

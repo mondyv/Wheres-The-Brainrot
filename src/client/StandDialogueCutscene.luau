@@ -10,6 +10,7 @@ local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
@@ -21,6 +22,7 @@ local player = Players.LocalPlayer
 local GUI_NAME = "StandDialogueCutscene"
 local LOCK_ACTION = "StandDialogueMoveLock"
 local SELECT_ACTION = "StandDialogueSelect"
+local WORLD_SPEECH_NAME = "StandBrainrotSpeech"
 
 local IDLE_ANIM_IDS: { [string]: number } = {
 	TatatataSahur = 126404281186060,
@@ -28,12 +30,20 @@ local IDLE_ANIM_IDS: { [string]: number } = {
 	OrangutiniAnanassini = 101569991072351,
 }
 
+export type DialogueLine = {
+	text: string,
+	shake: boolean?,
+}
+
 export type StandDialogueConfig = {
 	standName: string,
 	frameName: string,
 	brainrotName: string,
 	enterLabel: string,
-	lines: { string },
+	lines: { DialogueLine },
+	-- Base PlaybackSpeed range for Voice Gaster (Undertale-style jitter around it)
+	voicePitchMin: number,
+	voicePitchMax: number,
 }
 
 local StandDialogueCutscene = {}
@@ -41,8 +51,11 @@ local StandDialogueCutscene = {}
 local active = false
 local finishing = false
 local cameraConn: RBXScriptConnection? = nil
+local shakeConn: RBXScriptConnection? = nil
 local typeToken = 0
 local jumpToken = 0
+local skipRequested = false
+local typingActive = false
 
 local savedCameraType: Enum.CameraType? = nil
 local savedCameraSubject: Instance? = nil
@@ -59,7 +72,9 @@ local hiddenScreenGui: { { gui: ScreenGui, wasEnabled: boolean } } = {}
 local cutsceneGui: ScreenGui? = nil
 local letterTop: Frame? = nil
 local letterBottom: Frame? = nil
+local dialogueBox: Frame? = nil
 local dialogueLabel: TextLabel? = nil
+local skipHint: TextLabel? = nil
 local choiceEnter: TextButton? = nil
 local choiceExit: TextButton? = nil
 local soulMarker: TextLabel? = nil
@@ -72,9 +87,15 @@ local BLEND_DURATION = 0.75
 local selectedIndex = 1 -- 1 = enter, 2 = exit
 local choicesReady = false
 local resolveChoice: ((choseEnter: boolean) -> ())? = nil
+local activeVoicePitchMin = 0.88
+local activeVoicePitchMax = 1.2
+local mouseLookX = 0
+local mouseLookY = 0
+local boxShakeBasePos: UDim2? = nil
 
 local voiceGasterTemplate: Sound? = nil
 local idleTracks: { [Model]: AnimationTrack } = {}
+local worldSpeechToken = 0
 
 local function getHRP(): BasePart?
 	local char = player.Character
@@ -114,6 +135,18 @@ local function modelFocusPoint(model: Model): (Vector3, number)
 	end
 	local pivot = model:GetPivot().Position
 	return pivot + Vector3.new(0, 1.5, 0), 3.5
+end
+
+local function resolveSpeechAdornee(model: Model): BasePart?
+	local head = model:FindFirstChild("Head", true)
+	if head and head:IsA("BasePart") then
+		return head
+	end
+	local primary = model.PrimaryPart
+	if primary then
+		return primary
+	end
+	return model:FindFirstChildWhichIsA("BasePart", true)
 end
 
 local function faceCharacterToward(target: Vector3)
@@ -211,8 +244,8 @@ local function playVoiceLetter()
 	else
 		clone.Volume = voiceGasterTemplate.Volume * ClientSFXVolume.getVolume()
 	end
-	-- Undertale-style: each letter slightly different pitch
-	clone.PlaybackSpeed = 0.88 + math.random() * 0.32
+	local span = math.max(activeVoicePitchMax - activeVoicePitchMin, 0.01)
+	clone.PlaybackSpeed = activeVoicePitchMin + math.random() * span
 	clone.Parent = SoundService
 	clone:Play()
 	clone.Ended:Once(function()
@@ -240,7 +273,12 @@ local function hideGameplayUi()
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then
 		for _, ch in pg:GetChildren() do
-			if ch:IsA("ScreenGui") and ch.Name ~= GUI_NAME and ch.Name ~= "FloatingClaimCutscene" and ch.Name ~= "BushSpiderCutscene" then
+			if
+				ch:IsA("ScreenGui")
+				and ch.Name ~= GUI_NAME
+				and ch.Name ~= "FloatingClaimCutscene"
+				and ch.Name ~= "BushSpiderCutscene"
+			then
 				table.insert(hiddenScreenGui, { gui = ch, wasEnabled = ch.Enabled })
 				ch.Enabled = false
 			end
@@ -352,6 +390,33 @@ local function stopCamera()
 	end
 end
 
+local function stopShake()
+	if shakeConn then
+		shakeConn:Disconnect()
+		shakeConn = nil
+	end
+	if dialogueBox and boxShakeBasePos then
+		dialogueBox.Position = boxShakeBasePos
+	end
+end
+
+local function startShake()
+	stopShake()
+	if not dialogueBox then
+		return
+	end
+	boxShakeBasePos = dialogueBox.Position
+	local base = boxShakeBasePos
+	shakeConn = RunService.RenderStepped:Connect(function()
+		if not dialogueBox or not base then
+			return
+		end
+		local ox = (math.random() - 0.5) * 10
+		local oy = (math.random() - 0.5) * 8
+		dialogueBox.Position = UDim2.new(base.X.Scale, base.X.Offset + ox, base.Y.Scale, base.Y.Offset + oy)
+	end)
+end
+
 local function stopInput()
 	pcall(function()
 		ContextActionService:UnbindAction(SELECT_ACTION)
@@ -379,24 +444,67 @@ local function defaultGameplayCameraCFrame(hrp: BasePart): CFrame
 	return CFrame.lookAt(camPos, lookAt)
 end
 
+local function styleChoiceButton(btn: TextButton)
+	btn.BackgroundColor3 = Color3.new(0, 0, 0)
+	btn.BackgroundTransparency = 0.15
+	btn.BorderSizePixel = 0
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.TextStrokeColor3 = Color3.new(0, 0, 0)
+	btn.TextStrokeTransparency = 0
+	btn.TextXAlignment = Enum.TextXAlignment.Left
+	btn.AutoButtonColor = false
+	local stroke = btn:FindFirstChildOfClass("UIStroke")
+	if not stroke then
+		stroke = Instance.new("UIStroke")
+		stroke.Parent = btn
+	end
+	stroke.Color = Color3.new(1, 1, 1)
+	stroke.Thickness = 3
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	local pad = btn:FindFirstChildOfClass("UIPadding")
+	if not pad then
+		pad = Instance.new("UIPadding")
+		pad.Parent = btn
+	end
+	pad.PaddingLeft = UDim.new(0, 14)
+	pad.PaddingRight = UDim.new(0, 10)
+end
+
 local function updateChoiceVisuals()
 	if not choiceEnter or not choiceExit or not soulMarker then
 		return
 	end
 	choiceEnter.TextColor3 = if selectedIndex == 1 then Color3.fromRGB(255, 255, 0) else Color3.fromRGB(255, 255, 255)
 	choiceExit.TextColor3 = if selectedIndex == 2 then Color3.fromRGB(255, 255, 0) else Color3.fromRGB(255, 255, 255)
+	local enterStroke = choiceEnter:FindFirstChildOfClass("UIStroke")
+	local exitStroke = choiceExit:FindFirstChildOfClass("UIStroke")
+	if enterStroke and exitStroke then
+		if selectedIndex == 1 then
+			enterStroke.Color = Color3.fromRGB(255, 255, 0)
+			exitStroke.Color = Color3.new(1, 1, 1)
+		else
+			enterStroke.Color = Color3.new(1, 1, 1)
+			exitStroke.Color = Color3.fromRGB(255, 255, 0)
+		end
+	end
 	local target = if selectedIndex == 1 then choiceEnter else choiceExit
 	soulMarker.Position = UDim2.new(
-		target.Position.X.Scale,
-		target.Position.X.Offset - 28,
-		target.Position.Y.Scale,
+		0,
+		-18,
+		target.Position.Y.Scale + target.Size.Y.Scale * 0.5,
 		target.Position.Y.Offset
 	)
 	soulMarker.Visible = choicesReady
 end
 
+local function requestSkip()
+	if typingActive and not choicesReady then
+		skipRequested = true
+	end
+end
+
 local function ensureGui(): ScreenGui
-	if cutsceneGui and cutsceneGui.Parent and dialogueLabel and choiceEnter and choiceExit and soulMarker then
+	if cutsceneGui and cutsceneGui.Parent and dialogueLabel and choiceEnter and choiceExit and soulMarker and dialogueBox then
 		return cutsceneGui
 	end
 	if cutsceneGui then
@@ -438,16 +546,23 @@ local function ensureGui(): ScreenGui
 	bottom.ZIndex = 10
 	bottom.Parent = gui
 
-	local box = Instance.new("Frame")
+	local box = Instance.new("TextButton")
 	box.Name = "DialogueBox"
 	box.BackgroundColor3 = Color3.new(0, 0, 0)
-	box.BorderColor3 = Color3.new(1, 1, 1)
-	box.BorderSizePixel = 4
+	box.BorderSizePixel = 0
+	box.AutoButtonColor = false
+	box.Text = ""
 	box.AnchorPoint = Vector2.new(0.5, 1)
 	box.Position = UDim2.new(0.5, 0, 0.92, 0)
 	box.Size = UDim2.new(0.72, 0, 0.18, 0)
 	box.ZIndex = 30
 	box.Parent = gui
+
+	local boxStroke = Instance.new("UIStroke")
+	boxStroke.Color = Color3.new(1, 1, 1)
+	boxStroke.Thickness = 4
+	boxStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	boxStroke.Parent = box
 
 	local pad = Instance.new("UIPadding")
 	pad.PaddingLeft = UDim.new(0, 18)
@@ -459,9 +574,11 @@ local function ensureGui(): ScreenGui
 	local label = Instance.new("TextLabel")
 	label.Name = "DialogueText"
 	label.BackgroundTransparency = 1
-	label.Size = UDim2.fromScale(1, 1)
+	label.Size = UDim2.new(1, 0, 1, -14)
 	label.Text = ""
 	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextStrokeColor3 = Color3.new(0, 0, 0)
+	label.TextStrokeTransparency = 0
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.TextYAlignment = Enum.TextYAlignment.Top
 	label.TextWrapped = true
@@ -470,50 +587,66 @@ local function ensureGui(): ScreenGui
 	UiFonts.applyBody(label)
 	label.Parent = box
 
+	local hint = Instance.new("TextLabel")
+	hint.Name = "SkipHint"
+	hint.BackgroundTransparency = 1
+	hint.AnchorPoint = Vector2.new(1, 1)
+	hint.Position = UDim2.new(1, -4, 1, -2)
+	hint.Size = UDim2.new(0.45, 0, 0, 14)
+	hint.Text = "CLICK TO SKIP"
+	hint.TextColor3 = Color3.fromRGB(180, 180, 180)
+	hint.TextStrokeTransparency = 0.4
+	hint.TextXAlignment = Enum.TextXAlignment.Right
+	hint.TextSize = 11
+	hint.ZIndex = 32
+	hint.Visible = false
+	UiFonts.applyBody(hint)
+	hint.Parent = box
+
+	box.Activated:Connect(function()
+		requestSkip()
+	end)
+
 	local choices = Instance.new("Frame")
 	choices.Name = "Choices"
 	choices.BackgroundTransparency = 1
 	choices.AnchorPoint = Vector2.new(1, 0.5)
 	choices.Position = UDim2.new(0.96, 0, 0.48, 0)
-	choices.Size = UDim2.new(0.22, 0, 0.22, 0)
+	choices.Size = UDim2.new(0.24, 0, 0.26, 0)
 	choices.ZIndex = 40
 	choices.Parent = gui
 
 	local enterBtn = Instance.new("TextButton")
 	enterBtn.Name = "Enter"
-	enterBtn.BackgroundTransparency = 1
-	enterBtn.Size = UDim2.new(1, 0, 0.4, 0)
-	enterBtn.Position = UDim2.new(0, 0, 0.05, 0)
+	enterBtn.Size = UDim2.new(1, 0, 0.42, 0)
+	enterBtn.Position = UDim2.new(0, 0, 0.02, 0)
 	enterBtn.Text = "* ENTER"
-	enterBtn.TextColor3 = Color3.new(1, 1, 1)
-	enterBtn.TextXAlignment = Enum.TextXAlignment.Left
-	enterBtn.TextSize = 24
-	enterBtn.AutoButtonColor = false
+	enterBtn.TextSize = 22
 	enterBtn.ZIndex = 41
 	UiFonts.applyBody(enterBtn)
+	styleChoiceButton(enterBtn)
 	enterBtn.Parent = choices
 
 	local exitBtn = Instance.new("TextButton")
 	exitBtn.Name = "Exit"
-	exitBtn.BackgroundTransparency = 1
-	exitBtn.Size = UDim2.new(1, 0, 0.4, 0)
-	exitBtn.Position = UDim2.new(0, 0, 0.55, 0)
+	exitBtn.Size = UDim2.new(1, 0, 0.42, 0)
+	exitBtn.Position = UDim2.new(0, 0, 0.54, 0)
 	exitBtn.Text = "* EXIT"
-	exitBtn.TextColor3 = Color3.new(1, 1, 1)
-	exitBtn.TextXAlignment = Enum.TextXAlignment.Left
-	exitBtn.TextSize = 24
-	exitBtn.AutoButtonColor = false
+	exitBtn.TextSize = 22
 	exitBtn.ZIndex = 41
 	UiFonts.applyBody(exitBtn)
+	styleChoiceButton(exitBtn)
 	exitBtn.Parent = choices
 
 	local soul = Instance.new("TextLabel")
 	soul.Name = "Soul"
 	soul.BackgroundTransparency = 1
 	soul.Size = UDim2.fromOffset(22, 22)
-	soul.AnchorPoint = Vector2.new(0.5, 0.5)
+	soul.AnchorPoint = Vector2.new(1, 0.5)
 	soul.Text = "♥"
 	soul.TextColor3 = Color3.fromRGB(255, 60, 60)
+	soul.TextStrokeTransparency = 0
+	soul.TextStrokeColor3 = Color3.new(0, 0, 0)
 	soul.TextSize = 20
 	soul.Visible = false
 	soul.ZIndex = 42
@@ -547,10 +680,13 @@ local function ensureGui(): ScreenGui
 	cutsceneGui = gui
 	letterTop = top
 	letterBottom = bottom
+	dialogueBox = box
 	dialogueLabel = label
+	skipHint = hint
 	choiceEnter = enterBtn
 	choiceExit = exitBtn
 	soulMarker = soul
+	boxShakeBasePos = box.Position
 	return gui
 end
 
@@ -614,27 +750,45 @@ local function stopTalkJump()
 	restoreBrainrotPivot()
 end
 
-local function typeLine(fullText: string)
+local function typeLine(line: DialogueLine)
 	local label = dialogueLabel
 	if not label then
 		return
 	end
+	local fullText = line.text
 	typeToken += 1
 	local token = typeToken
+	typingActive = true
+	skipRequested = false
 	label.Text = ""
-	local chars = {}
-	for i = 1, #fullText do
-		table.insert(chars, string.sub(fullText, i, i))
+	if skipHint then
+		skipHint.Visible = true
 	end
-	for i, ch in ipairs(chars) do
-		if token ~= typeToken or not active then
-			return
+	if line.shake then
+		startShake()
+	else
+		stopShake()
+	end
+
+	for i = 1, #fullText do
+		if token ~= typeToken or not active or skipRequested then
+			break
 		end
+		local ch = string.sub(fullText, i, i)
 		label.Text = string.sub(fullText, 1, i)
 		if ch ~= " " and ch ~= "\n" then
 			playVoiceLetter()
 		end
 		task.wait(0.035)
+	end
+
+	if active then
+		label.Text = fullText
+	end
+	stopShake()
+	typingActive = false
+	if skipHint then
+		skipHint.Visible = false
 	end
 end
 
@@ -648,6 +802,8 @@ local function startCamera(brainrot: Model)
 	stopCamera()
 	blendFromCf = cam.CFrame
 	blendStart = os.clock()
+	mouseLookX = 0
+	mouseLookY = 0
 	savedCameraType = cam.CameraType
 	savedCameraSubject = cam.CameraSubject
 	savedFov = cam.FieldOfView
@@ -671,6 +827,18 @@ local function startCamera(brainrot: Model)
 		end
 
 		phase += dt
+
+		-- Mouse / touch look pan (Undertale-adjacent cinematic feel)
+		local viewport = cam.ViewportSize
+		local mouse = UserInputService:GetMouseLocation()
+		local nx = ((mouse.X / math.max(viewport.X, 1)) - 0.5) * 2
+		local ny = ((mouse.Y / math.max(viewport.Y, 1)) - 0.5) * 2
+		nx = math.clamp(nx, -1, 1)
+		ny = math.clamp(ny, -1, 1)
+		local lookSmooth = math.min(dt * 7.5, 1)
+		mouseLookX += (nx - mouseLookX) * lookSmooth
+		mouseLookY += (ny - mouseLookY) * lookSmooth
+
 		local npcPos, npcRadius = modelFocusPoint(brainrot)
 		local playerPos = liveHrp.Position + Vector3.new(0, 1.4, 0)
 		local mid = playerPos:Lerp(npcPos, 0.55)
@@ -683,12 +851,15 @@ local function startCamera(brainrot: Model)
 			right = right.Unit
 		end
 
-		-- Over-shoulder from the player's right so character stays left-ish, choices read on the right
-		local camPos = mid - toNpc * (7.2 + npcRadius * 0.15) + right * 3.4 + Vector3.new(0, 2.35, 0)
+		local sidePull = 3.4 + mouseLookX * 2.8
+		local height = 2.35 - mouseLookY * 1.2
+		local pullBack = 7.2 + npcRadius * 0.15 - math.abs(mouseLookX) * 0.35
+
+		local camPos = mid - toNpc * pullBack + right * sidePull + Vector3.new(0, height, 0)
 		camPos += Vector3.new(math.sin(phase * 1.1) * 0.05, math.sin(phase * 0.9) * 0.04, 0)
-		local lookAt = mid + Vector3.new(0, 0.2, 0) + right * 0.4
+		local lookAt = mid + Vector3.new(0, 0.2, 0) + right * (0.4 + mouseLookX * 1.1) + Vector3.new(0, -mouseLookY * 0.7, 0)
 		local goalCf = CFrame.lookAt(camPos, lookAt)
-		local goalFov = (savedFov or 70) - 4
+		local goalFov = (savedFov or 70) - 4 + math.abs(mouseLookX) * 1.5 + math.abs(mouseLookY) * 0.8
 
 		local blend = 1
 		if blendFromCf then
@@ -753,8 +924,11 @@ local function finishSession(choseEnter: boolean): boolean
 	finishing = true
 	choicesReady = false
 	resolveChoice = nil
+	skipRequested = false
+	typingActive = false
 	stopInput()
 	typeToken += 1
+	stopShake()
 	stopTalkJump()
 	animateLetterboxOut()
 	active = false
@@ -764,13 +938,95 @@ local function finishSession(choseEnter: boolean): boolean
 	if dialogueLabel then
 		dialogueLabel.Text = ""
 	end
+	if skipHint then
+		skipHint.Visible = false
+	end
 	if soulMarker then
 		soulMarker.Visible = false
+	end
+	if choiceEnter then
+		choiceEnter.Visible = false
+	end
+	if choiceExit then
+		choiceExit.Visible = false
 	end
 	focusModel = nil
 	basePivot = nil
 	finishing = false
 	return choseEnter
+end
+
+--[[
+	Floating goodbye / speech near a stand brainrot (no cutscene).
+]]
+function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, durationSec: number?)
+	local adornee = resolveSpeechAdornee(model)
+	if not adornee then
+		return
+	end
+	worldSpeechToken += 1
+	local token = worldSpeechToken
+
+	local existing = model:FindFirstChild(WORLD_SPEECH_NAME)
+	if existing then
+		existing:Destroy()
+	end
+
+	local bb = Instance.new("BillboardGui")
+	bb.Name = WORLD_SPEECH_NAME
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.MaxDistance = 80
+	bb.Size = UDim2.fromOffset(280, 56)
+	bb.StudsOffset = Vector3.new(0, 2.6, 0)
+	bb.Adornee = adornee
+	bb.Parent = model
+
+	local label = Instance.new("TextLabel")
+	label.BackgroundColor3 = Color3.new(0, 0, 0)
+	label.BackgroundTransparency = 0.25
+	label.BorderSizePixel = 0
+	label.Size = UDim2.fromScale(1, 1)
+	label.Text = message
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextStrokeColor3 = Color3.new(0, 0, 0)
+	label.TextStrokeTransparency = 0
+	label.TextWrapped = true
+	label.TextSize = 16
+	label.TextTransparency = 1
+	UiFonts.applyBody(label)
+	label.Parent = bb
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.new(1, 1, 1)
+	stroke.Thickness = 2
+	stroke.Parent = label
+
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 8)
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
+	pad.Parent = label
+
+	TweenService:Create(label, TweenInfo.new(0.2), {
+		TextTransparency = 0,
+	}):Play()
+
+	local dur = durationSec or 2.6
+	task.delay(dur, function()
+		if token ~= worldSpeechToken or not bb.Parent then
+			return
+		end
+		TweenService:Create(label, TweenInfo.new(0.25), {
+			TextTransparency = 1,
+		}):Play()
+		task.delay(0.28, function()
+			if bb.Parent then
+				bb:Destroy()
+			end
+		end)
+	end)
 end
 
 function StandDialogueCutscene.isActive(): boolean
@@ -800,9 +1056,13 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 	active = true
 	finishing = false
 	choicesReady = false
+	skipRequested = false
+	typingActive = false
 	selectedIndex = 1
 	focusModel = brainrot
 	basePivot = brainrot:GetPivot()
+	activeVoicePitchMin = config.voicePitchMin
+	activeVoicePitchMax = config.voicePitchMax
 
 	StandDialogueCutscene.ensureIdleAnimation(brainrot, config.brainrotName)
 	ensureGui()
@@ -822,6 +1082,9 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 	if soulMarker then
 		soulMarker.Visible = false
 	end
+	if skipHint then
+		skipHint.Visible = false
+	end
 
 	local choseEnter = false
 	local done = false
@@ -837,7 +1100,21 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 	ContextActionService:BindActionAtPriority(
 		SELECT_ACTION,
 		function(_name, state, input)
-			if not choicesReady or state ~= Enum.UserInputState.Begin then
+			if state ~= Enum.UserInputState.Begin then
+				return Enum.ContextActionResult.Pass
+			end
+			-- Skip typing with Enter/Space before choices appear
+			if typingActive and not choicesReady then
+				if
+					input.KeyCode == Enum.KeyCode.Return
+					or input.KeyCode == Enum.KeyCode.Space
+					or input.KeyCode == Enum.KeyCode.ButtonA
+				then
+					requestSkip()
+					return Enum.ContextActionResult.Sink
+				end
+			end
+			if not choicesReady then
 				return Enum.ContextActionResult.Pass
 			end
 			if input.KeyCode == Enum.KeyCode.Up or input.KeyCode == Enum.KeyCode.W then
@@ -873,16 +1150,24 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 
 	startTalkJump(brainrot)
 	for _, line in ipairs(config.lines) do
-		if not active then
+		if not active or skipRequested then
 			break
 		end
 		typeLine(line)
-		if not active then
+		if not active or skipRequested then
 			break
 		end
-		task.wait(0.15)
+		local pauseStart = os.clock()
+		while os.clock() - pauseStart < 0.12 and active and not skipRequested do
+			task.wait()
+		end
 	end
 	stopTalkJump()
+	stopShake()
+	typingActive = false
+	if skipHint then
+		skipHint.Visible = false
+	end
 
 	if not active then
 		return false

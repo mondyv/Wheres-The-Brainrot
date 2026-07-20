@@ -4,6 +4,7 @@
 	• Hitbox detection for UIStands pads
 	• Undertale-style dialogue cutscene before opening Shop / Sell / Upgrades
 	• Ensures stand brainrot idle animations play
+	• Goodbye speech near brainrot when leaving after shopping (no re-cutscene)
 
 	Workspace path:  workspace.Map.UIStands.<Stand Name>.<HitboxPart>
 --]]
@@ -21,6 +22,7 @@ if not player.Character then
 end
 
 -- ── Stand config ──────────────────────────────────────────────────────────────
+-- voicePitch: Shop keeps default Gaster range; Sell deeper; Upgrade higher
 
 local STAND_CONFIG = {
 	{
@@ -29,10 +31,13 @@ local STAND_CONFIG = {
 		frameName = "Shop",
 		brainrotName = "TatatataSahur",
 		enterLabel = "SHOP",
+		voicePitchMin = 0.88,
+		voicePitchMax = 1.2,
 		lines = {
-			"HEY!! WELCOME TO MY SHOP!!",
-			"WANT TO BUY SOME STUFF??",
+			{ text = "HEY!! WELCOME TO MY SHOP!!", shake = true },
+			{ text = "WANT TO BUY SOME STUFF??", shake = false },
 		},
+		goodbye = "COME BACK SOON!! BYE BYE!!",
 	},
 	{
 		standName = "Sell Stand",
@@ -40,10 +45,13 @@ local STAND_CONFIG = {
 		frameName = "Sell",
 		brainrotName = "TricTracBarabum",
 		enterLabel = "SELL",
+		voicePitchMin = 0.58,
+		voicePitchMax = 0.82,
 		lines = {
-			"GOT BRAINROTS?? I'LL BUY EM!!",
-			"CASH FOR YOUR JUNK!!",
+			{ text = "GOT BRAINROTS?? I'LL BUY EM!!", shake = true },
+			{ text = "CASH FOR YOUR JUNK!!", shake = false },
 		},
+		goodbye = "BRING MORE JUNK NEXT TIME!!",
 	},
 	{
 		standName = "Upgrade Stand",
@@ -51,10 +59,13 @@ local STAND_CONFIG = {
 		frameName = "Upgrades",
 		brainrotName = "OrangutiniAnanassini",
 		enterLabel = "UPGRADE",
+		voicePitchMin = 1.2,
+		voicePitchMax = 1.55,
 		lines = {
-			"FEELING WEAK??",
-			"LET ME UPGRADE YOUR SWING!!",
+			{ text = "FEELING WEAK??", shake = true },
+			{ text = "LET ME UPGRADE YOUR SWING!!", shake = false },
 		},
+		goodbye = "GO SWING HARDER!! SEE YA!!",
 	},
 }
 
@@ -65,8 +76,11 @@ type StandEntry = {
 	frameName: string,
 	brainrotName: string,
 	enterLabel: string,
-	lines: { string },
+	lines: { { text: string, shake: boolean? } },
 	standName: string,
+	voicePitchMin: number,
+	voicePitchMax: number,
+	goodbye: string,
 }
 
 -- How long the player must be outside a hitbox before the UI closes.
@@ -74,10 +88,13 @@ local CLOSE_DEBOUNCE = 0.22
 
 local stands: { StandEntry } = {}
 local activeStandFrame: string? = nil
+local activeStandEntry: StandEntry? = nil
 local closePending: thread? = nil
 local dialogueBusy = false
 -- After Exit (or cancel), ignore this pad until the player leaves it.
 local dismissedStandKey: string? = nil
+-- True when the current pad session opened a panel via Enter (for goodbye on leave).
+local openedPanelFromDialogue = false
 
 local function cancelPendingClose()
 	if closePending then
@@ -86,12 +103,34 @@ local function cancelPendingClose()
 	end
 end
 
+local function showGoodbye(stand: StandEntry)
+	local brainrot = stand.brainrot
+	if not brainrot or not brainrot.Parent then
+		brainrot = nil
+		local child = stand.standFolder:FindFirstChild(stand.brainrotName)
+		if child and child:IsA("Model") then
+			brainrot = child
+		end
+	end
+	if brainrot then
+		StandDialogueCutscene.showWorldSpeech(brainrot, stand.goodbye, 2.8)
+	end
+end
+
 local function scheduleClose()
 	cancelPendingClose()
 	closePending = task.delay(CLOSE_DEBOUNCE, function()
 		closePending = nil
+		local leavingStand = activeStandEntry
+		local shouldGoodbye = openedPanelFromDialogue and leavingStand ~= nil
 		activeStandFrame = nil
+		activeStandEntry = nil
+		openedPanelFromDialogue = false
 		HUDController.closeCurrentFrame()
+		if shouldGoodbye and leavingStand then
+			-- Soft goodbye bubble only — no cutscene on leave
+			showGoodbye(leavingStand)
+		end
 	end)
 end
 
@@ -127,13 +166,15 @@ local function beginDialogue(stand: StandEntry)
 		stand.brainrot = brainrot
 	end
 	if not brainrot then
-		-- Fallback: open panel directly if brainrot missing
 		activeStandFrame = stand.frameName
+		activeStandEntry = stand
+		openedPanelFromDialogue = true
 		HUDController.openFrameByName(stand.frameName)
 		return
 	end
 
 	dialogueBusy = true
+	openedPanelFromDialogue = false
 	task.spawn(function()
 		local choseEnter = StandDialogueCutscene.play({
 			standName = stand.standName,
@@ -141,6 +182,8 @@ local function beginDialogue(stand: StandEntry)
 			brainrotName = stand.brainrotName,
 			enterLabel = stand.enterLabel,
 			lines = stand.lines,
+			voicePitchMin = stand.voicePitchMin,
+			voicePitchMax = stand.voicePitchMax,
 		}, brainrot)
 
 		dialogueBusy = false
@@ -148,11 +191,14 @@ local function beginDialogue(stand: StandEntry)
 		if choseEnter then
 			dismissedStandKey = nil
 			activeStandFrame = stand.frameName
+			activeStandEntry = stand
+			openedPanelFromDialogue = true
 			HUDController.openFrameByName(stand.frameName)
 		else
-			-- Stay in pad without reopening until they leave
 			dismissedStandKey = stand.standName
 			activeStandFrame = nil
+			activeStandEntry = nil
+			openedPanelFromDialogue = false
 		end
 	end)
 end
@@ -169,7 +215,6 @@ local function tick()
 	local hrpPos = (hrp :: BasePart).Position
 
 	if dialogueBusy or StandDialogueCutscene.isActive() then
-		-- If player somehow leaves while dialoguing, cancel
 		local stillInside = false
 		for _, stand in ipairs(stands) do
 			if stand.hitbox.Parent and isPointInsidePartOBB(hrpPos, stand.hitbox, 2.75) then
@@ -199,17 +244,16 @@ local function tick()
 	if insideStand then
 		cancelPendingClose()
 		if dismissedStandKey == insideStand.standName then
-			-- Chose Exit; wait until they leave the pad
 			return
 		end
 		if activeStandFrame == insideStand.frameName then
-			-- Already in the shop UI from this pad
 			return
 		end
 		if activeStandFrame then
-			-- Switched pads
 			HUDController.closeCurrentFrame()
 			activeStandFrame = nil
+			activeStandEntry = nil
+			openedPanelFromDialogue = false
 		end
 		beginDialogue(insideStand)
 	else
@@ -266,6 +310,9 @@ function StandController.init()
 			enterLabel = cfg.enterLabel,
 			lines = cfg.lines,
 			standName = cfg.standName,
+			voicePitchMin = cfg.voicePitchMin,
+			voicePitchMax = cfg.voicePitchMax,
+			goodbye = cfg.goodbye,
 		})
 	end
 
@@ -277,7 +324,9 @@ function StandController.init()
 	player.CharacterAdded:Connect(function()
 		cancelPendingClose()
 		activeStandFrame = nil
+		activeStandEntry = nil
 		dismissedStandKey = nil
+		openedPanelFromDialogue = false
 		if StandDialogueCutscene.isActive() then
 			StandDialogueCutscene.cancel()
 		end
@@ -292,7 +341,6 @@ function StandController.init()
 		tickAccum = 0
 		tick()
 	end)
-	-- Keep reference so connection is not GC'd; disconnect on leave is N/A for local forever loop
 	player.AncestryChanged:Connect(function(_, parent)
 		if not parent and heartbeatConn then
 			heartbeatConn:Disconnect()

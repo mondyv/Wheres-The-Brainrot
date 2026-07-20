@@ -1,7 +1,8 @@
 -- [ACTIVE] VegetationSwayController
 --[[
-	Local-only Pokémon-style bend when walking through grassparts and bushes.
-	Uses spatial overlap (grass CanCollide is off). Hard-caps simultaneous sways.
+	Local-only Pokémon-style bend when walking through grass and bushes.
+	Indexes Map.Lands/*/grass/grassland(+grasspart) and */BushSCRIPTs children by distance
+	(overlap fails when CanQuery is off). Hard-caps simultaneous sways.
 ]]
 
 local Players = game:GetService("Players")
@@ -15,19 +16,27 @@ local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 
 local M = {}
 
-local MAX_ACTIVE = 10
-local SCAN_INTERVAL_SEC = 0.04
-local MOVE_DIR_MIN = 0.12
-local OVERLAP_SIZE = Vector3.new(5.5, 6.5, 5.5)
-local GRASS_TILT_RAD = math.rad(26)
-local BUSH_TILT_RAD = math.rad(18)
-local GRASS_PUSH = 0.22
-local BUSH_PUSH = 0.38
-local SWAY_DURATION_SEC = 0.62
-local COOLDOWN_SEC = 0.22
+local MAX_ACTIVE = 32
+local SCAN_INTERVAL_SEC = 0.035
+local MOVE_DIR_MIN = 0.1
+local GRASS_RADIUS = 5.25
+local BUSH_RADIUS = 6.5
+local GRASS_TILT_RAD = math.rad(42)
+local BUSH_TILT_RAD = math.rad(32)
+local GRASS_PUSH = 0.45
+local BUSH_PUSH = 0.85
+local SWAY_DURATION_SEC = 0.7
+local COOLDOWN_SEC = 0.16
+local INDEX_REFRESH_SEC = 2.5
 local STEP_NAME = "VegetationSwayStep"
 
 type SwayKind = "grass" | "bush"
+
+type VegEntry = {
+	root: Instance,
+	kind: SwayKind,
+	landFolder: Instance,
+}
 
 type TargetBase = {
 	target: Instance,
@@ -47,11 +56,13 @@ type ActiveSway = {
 }
 
 local localPlayer = Players.LocalPlayer
-local overlapParams = OverlapParams.new()
-overlapParams.FilterType = Enum.RaycastFilterType.Exclude
-overlapParams.MaxParts = 72
 
 local landsFolder: Instance? = nil
+local vegEntries: { VegEntry } = {}
+local indexedRoots: { [Instance]: boolean } = {}
+local indexConns: { RBXScriptConnection } = {}
+local lastIndexAt = 0
+
 local active: { [Instance]: ActiveSway } = {}
 local activeCount = 0
 local cooldownUntil: { [Instance]: number } = {}
@@ -60,11 +71,11 @@ local scanAccum = 0
 local heartbeatConn: RBXScriptConnection? = nil
 local charConns: { RBXScriptConnection } = {}
 
-local function disconnectCharConns()
-	for _, conn in charConns do
+local function disconnectList(list: { RBXScriptConnection })
+	for _, conn in list do
 		conn:Disconnect()
 	end
-	table.clear(charConns)
+	table.clear(list)
 end
 
 local function applyTargetCFrame(target: Instance, cf: CFrame)
@@ -91,48 +102,54 @@ local function getTargetPivot(target: Instance): CFrame?
 	return nil
 end
 
+local function getWorldPos(inst: Instance): Vector3?
+	local pivot = getTargetPivot(inst)
+	if pivot then
+		return pivot.Position
+	end
+	local part = if inst:IsA("BasePart") then inst else inst:FindFirstChildWhichIsA("BasePart", true)
+	return if part and part:IsA("BasePart") then part.Position else nil
+end
+
 local function approxHalfY(target: Instance): number
 	if target:IsA("BasePart") then
-		return math.max((target :: BasePart).Size.Y * 0.5, 0.35)
+		return math.max((target :: BasePart).Size.Y * 0.5, 0.4)
 	end
 	if target:IsA("Model") then
 		local ok, size = pcall(function()
 			return (target :: Model):GetExtentsSize()
 		end)
 		if ok and typeof(size) == "Vector3" then
-			return math.clamp((size :: Vector3).Y * 0.5, 0.5, 4)
+			return math.clamp((size :: Vector3).Y * 0.5, 0.55, 5)
 		end
 	end
-	return 1.2
+	return 1.4
 end
 
--- Fast punch to peak, hold readable bend, then recover.
+-- Fast punch, hold a clear peak, then recover.
 local function swayEnvelope(t: number): number
-	if t <= 0 then
+	if t <= 0 or t >= 1 then
 		return 0
 	end
-	if t >= 1 then
-		return 0
-	end
-	if t < 0.14 then
-		local u = t / 0.14
+	if t < 0.12 then
+		local u = t / 0.12
 		return u * u
 	end
-	if t < 0.42 then
+	if t < 0.48 then
 		return 1
 	end
-	local u = (t - 0.42) / 0.58
+	local u = (t - 0.48) / 0.52
 	return (1 - u) * (1 - u)
 end
 
 local function bendOffset(halfY: number, axis: Vector3, angle: number, push: number, pushDir: Vector3): CFrame
+	local pushCf = CFrame.new(pushDir * push)
 	if angle == 0 or axis.Magnitude < 1e-4 then
-		return CFrame.new(pushDir * push)
+		return pushCf
 	end
-	local unit = axis.Unit
-	return CFrame.new(pushDir * push)
+	return pushCf
 		* CFrame.new(0, -halfY, 0)
-		* CFrame.fromAxisAngle(unit, angle)
+		* CFrame.fromAxisAngle(axis.Unit, angle)
 		* CFrame.new(0, halfY, 0)
 end
 
@@ -211,41 +228,143 @@ local function bindStep()
 	stepBound = true
 end
 
-local function isGrassPart(inst: Instance): boolean
-	local name = string.lower(inst.Name)
-	if name ~= "grasspart" then
-		return false
-	end
-	return inst:IsA("BasePart") or inst:IsA("Model")
+local function isGrassPartName(name: string): boolean
+	return string.lower(name) == "grasspart"
 end
 
-local function resolveSwayTarget(hit: Instance): (Instance?, SwayKind?)
-	if BushRootUtil.isGeneratedPromptHelper(hit) then
-		return nil, nil
-	end
+local function isGrasslandName(name: string): boolean
+	return string.lower(name) == "grassland"
+end
 
-	local bush = BushRootUtil.resolveBushRoot(hit)
-	if bush then
-		return bush, "bush"
-	end
+local function collectGrassRootsFromGrassland(grassland: Instance): { Instance }
+	local roots: { Instance } = {}
 
-	if isGrassPart(hit) then
-		return hit, "grass"
-	end
-
-	-- Climb a few parents in case overlap hit a nested mesh under grasspart.
-	local node: Instance? = hit.Parent
-	for _ = 1, 3 do
-		if not node then
-			break
+	for _, desc in grassland:GetDescendants() do
+		if isGrassPartName(desc.Name) and (desc:IsA("BasePart") or desc:IsA("Model")) then
+			table.insert(roots, desc)
 		end
-		if isGrassPart(node) then
-			return node, "grass"
-		end
-		node = node.Parent
+	end
+	if #roots > 0 then
+		return roots
 	end
 
-	return nil, nil
+	-- No grasspart children: sway leaf BaseParts (not the whole grassland cluster).
+	for _, child in grassland:GetChildren() do
+		if child:IsA("BasePart") then
+			table.insert(roots, child)
+		end
+	end
+	if #roots > 0 then
+		return roots
+	end
+
+	if grassland:IsA("BasePart") or grassland:IsA("Model") then
+		table.insert(roots, grassland)
+	end
+	return roots
+end
+
+local function addVeg(root: Instance, kind: SwayKind, landFolder: Instance)
+	if indexedRoots[root] then
+		return
+	end
+	if not root:IsA("Model") and not root:IsA("BasePart") then
+		return
+	end
+	indexedRoots[root] = true
+	table.insert(vegEntries, {
+		root = root,
+		kind = kind,
+		landFolder = landFolder,
+	})
+end
+
+local function indexLandFolder(landFolder: Instance)
+	local grassFolder = landFolder:FindFirstChild("grass")
+	if grassFolder then
+		local function considerGrassland(node: Instance)
+			if not isGrasslandName(node.Name) then
+				return
+			end
+			for _, grassRoot in collectGrassRootsFromGrassland(node) do
+				addVeg(grassRoot, "grass", landFolder)
+			end
+		end
+
+		if isGrasslandName(grassFolder.Name) then
+			considerGrassland(grassFolder)
+		end
+		for _, child in grassFolder:GetChildren() do
+			considerGrassland(child)
+			-- Nested grassland folders/models.
+			if child:IsA("Folder") or child:IsA("Model") then
+				for _, nested in child:GetChildren() do
+					considerGrassland(nested)
+				end
+			end
+		end
+	end
+
+	for _, folderName in BushRootUtil.FOLDER_NAMES do
+		local bushFolder = landFolder:FindFirstChild(folderName)
+		if bushFolder and bushFolder:IsA("Folder") then
+			for _, child in bushFolder:GetChildren() do
+				if BushRootUtil.isDirectBushRoot(child) then
+					addVeg(child, "bush", landFolder)
+				elseif child:IsA("Model") or child:IsA("BasePart") then
+					-- Named BushSCRIPT etc. even if util edge-case fails.
+					addVeg(child, "bush", landFolder)
+				end
+			end
+		end
+	end
+end
+
+local function clearIndex()
+	disconnectList(indexConns)
+	table.clear(vegEntries)
+	table.clear(indexedRoots)
+end
+
+local function rebuildIndex()
+	clearIndex()
+	local map = Workspace:FindFirstChild("Map")
+	if not map then
+		return
+	end
+	local lands = map:FindFirstChild("Lands")
+	if not lands then
+		return
+	end
+	landsFolder = lands
+
+	for _, landFolder in lands:GetChildren() do
+		if landFolder:IsA("Folder") or landFolder:IsA("Model") then
+			if string.match(landFolder.Name, "^Land%d+$") then
+				indexLandFolder(landFolder)
+			end
+		end
+	end
+
+	table.insert(
+		indexConns,
+		lands.ChildAdded:Connect(function(child)
+			if string.match(child.Name, "^Land%d+$") then
+				task.defer(function()
+					indexLandFolder(child)
+				end)
+			end
+		end)
+	)
+
+	lastIndexAt = os.clock()
+end
+
+local function ensureIndex()
+	local now = os.clock()
+	if #vegEntries == 0 or now - lastIndexAt >= INDEX_REFRESH_SEC then
+		rebuildIndex()
+	end
 end
 
 local function capturePieces(root: Instance, kind: SwayKind): { TargetBase }?
@@ -253,6 +372,37 @@ local function capturePieces(root: Instance, kind: SwayKind): { TargetBase }?
 	local targets: { Instance }
 	if kind == "bush" then
 		targets = BushRootUtil.getShakeTargets(root)
+		-- Also nudge every BasePart under the bush if Model pivot alone is subtle.
+		if root:IsA("Model") then
+			local extra: { Instance } = {}
+			for _, desc in root:GetDescendants() do
+				if desc:IsA("BasePart") and not BushRootUtil.isGeneratedPromptHelper(desc) then
+					local already = false
+					for _, t in targets do
+						if t == desc then
+							already = true
+							break
+						end
+					end
+					if not already then
+						-- Prefer model-level pivot only when the bush has no child Models;
+						-- for single-mesh bushes, pivoting BaseParts is more visible.
+						table.insert(extra, desc)
+					end
+				end
+			end
+			-- If root is a Model with only BasePart children (no nested Models), animate parts.
+			local hasChildModel = false
+			for _, child in root:GetChildren() do
+				if child:IsA("Model") and not BushRootUtil.isGeneratedPromptHelper(child) then
+					hasChildModel = true
+					break
+				end
+			end
+			if not hasChildModel and #extra > 0 then
+				targets = extra
+			end
+		end
 	else
 		targets = { root }
 	end
@@ -300,8 +450,8 @@ local function speedAmpScale(humanoid: Humanoid, hrp: BasePart): number
 	local moveMag = humanoid.MoveDirection.Magnitude
 	local vel = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z).Magnitude
 	local walk = math.max(humanoid.WalkSpeed, 1)
-	local speedFactor = math.clamp(vel / walk, 0.75, 1.55)
-	return 0.85 + moveMag * 0.25 + (speedFactor - 1) * 0.55
+	local speedFactor = math.clamp(vel / walk, 0.8, 1.7)
+	return 0.95 + moveMag * 0.2 + (speedFactor - 1) * 0.45
 end
 
 local function startSway(target: Instance, kind: SwayKind, moveDir: Vector3, ampScale: number)
@@ -344,30 +494,7 @@ local function startSway(target: Instance, kind: SwayKind, moveDir: Vector3, amp
 	bindStep()
 end
 
-local function ensureLandsFolder(): Instance?
-	if landsFolder and landsFolder.Parent then
-		return landsFolder
-	end
-	local map = Workspace:FindFirstChild("Map")
-	if not map then
-		return nil
-	end
-	local lands = map:FindFirstChild("Lands")
-	if lands then
-		landsFolder = lands
-	end
-	return landsFolder
-end
-
-local function isUnderLands(inst: Instance): boolean
-	local lands = ensureLandsFolder()
-	if not lands then
-		return false
-	end
-	return inst:IsDescendantOf(lands)
-end
-
-local function scanAroundCharacter(character: Model, humanoid: Humanoid, hrp: BasePart)
+local function scanAroundCharacter(_character: Model, humanoid: Humanoid, hrp: BasePart)
 	local move = humanoid.MoveDirection
 	if move.Magnitude < MOVE_DIR_MIN then
 		return
@@ -382,53 +509,63 @@ local function scanAroundCharacter(character: Model, humanoid: Humanoid, hrp: Ba
 		return
 	end
 
-	if not ensureLandsFolder() then
+	ensureIndex()
+	if #vegEntries == 0 then
 		return
 	end
 
-	overlapParams.FilterDescendantsInstances = { character }
-	local parts = Workspace:GetPartBoundsInBox(hrp.CFrame, OVERLAP_SIZE, overlapParams)
-	if #parts == 0 then
-		return
-	end
-
-	table.sort(parts, function(a, b)
-		return (a.Position - hrp.Position).Magnitude < (b.Position - hrp.Position).Magnitude
-	end)
-
+	local pos = hrp.Position
+	local flatPos = Vector3.new(pos.X, 0, pos.Z)
 	local ampScale = speedAmpScale(humanoid, hrp)
-	local seen: { [Instance]: boolean } = {}
-	local bushQueue: { Instance } = {}
-	local grassQueue: { Instance } = {}
 
-	for _, part in parts do
-		if not isUnderLands(part) then
+	type Cand = { root: Instance, kind: SwayKind, dist: number }
+	local bushes: { Cand } = {}
+	local grasses: { Cand } = {}
+
+	for _, entry in vegEntries do
+		if not entry.root.Parent then
 			continue
 		end
-		local target, kind = resolveSwayTarget(part)
-		if not target or not kind or seen[target] then
+
+		local rootPos = getWorldPos(entry.root)
+		if not rootPos then
 			continue
 		end
-		seen[target] = true
-		if kind == "bush" then
-			table.insert(bushQueue, target)
+		-- Cheap reject on Y so distant lands above/below don't matter much.
+		if math.abs(rootPos.Y - pos.Y) > 12 then
+			continue
+		end
+		local dist = (Vector3.new(rootPos.X, 0, rootPos.Z) - flatPos).Magnitude
+		local radius = if entry.kind == "bush" then BUSH_RADIUS else GRASS_RADIUS
+		if dist > radius then
+			continue
+		end
+
+		local cand = { root = entry.root, kind = entry.kind, dist = dist }
+		if entry.kind == "bush" then
+			table.insert(bushes, cand)
 		else
-			table.insert(grassQueue, target)
+			table.insert(grasses, cand)
 		end
 	end
 
-	-- Bushes first so dense grass can't starve them under the hard cap.
-	for _, target in bushQueue do
-		if activeCount >= MAX_ACTIVE then
-			break
-		end
-		startSway(target, "bush", move, ampScale)
+	local function byDist(a: Cand, b: Cand): boolean
+		return a.dist < b.dist
 	end
-	for _, target in grassQueue do
+	table.sort(bushes, byDist)
+	table.sort(grasses, byDist)
+
+	for _, cand in bushes do
 		if activeCount >= MAX_ACTIVE then
 			break
 		end
-		startSway(target, "grass", move, ampScale)
+		startSway(cand.root, "bush", move, ampScale)
+	end
+	for _, cand in grasses do
+		if activeCount >= MAX_ACTIVE then
+			break
+		end
+		startSway(cand.root, "grass", move, ampScale)
 	end
 end
 
@@ -444,7 +581,7 @@ local function clearAllSways()
 end
 
 local function bindCharacter(character: Model)
-	disconnectCharConns()
+	disconnectList(charConns)
 	clearAllSways()
 
 	local humanoid = character:WaitForChild("Humanoid", 10)
@@ -460,7 +597,7 @@ local function bindCharacter(character: Model)
 		charConns,
 		character.AncestryChanged:Connect(function(_, parent)
 			if parent == nil then
-				disconnectCharConns()
+				disconnectList(charConns)
 				clearAllSways()
 			end
 		end)
@@ -495,6 +632,14 @@ function M.init()
 		return
 	end
 
+	task.spawn(function()
+		local map = Workspace:WaitForChild("Map", 60)
+		if map then
+			map:WaitForChild("Lands", 30)
+		end
+		rebuildIndex()
+	end)
+
 	heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
 
 	localPlayer.CharacterAdded:Connect(function(character)
@@ -505,7 +650,7 @@ function M.init()
 	end
 
 	localPlayer.CharacterRemoving:Connect(function()
-		disconnectCharConns()
+		disconnectList(charConns)
 		clearAllSways()
 	end)
 end

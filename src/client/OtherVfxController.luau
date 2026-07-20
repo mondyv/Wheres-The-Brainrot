@@ -294,6 +294,62 @@ local function samplePolyline(points: { Vector3 }, alpha: number): Vector3
 	return a:Lerp(b, f)
 end
 
+--- Trails need Attachment0 + Attachment1. Specs (Blurred Spec, etc.) live on those same
+--- Attachments under Bezier.Part — wire and emit them the same way as the root Fading Glow.
+local function prepareMoverFlightVfx(mover: BasePart, emitOnFinish: Instance?)
+	local attachments: { Attachment } = {}
+	for _, ch in mover:GetChildren() do
+		if ch:IsA("Attachment") then
+			table.insert(attachments, ch)
+		end
+	end
+
+	-- Guarantee two attachments so Trail has a span (plugin often leaves these unset).
+	while #attachments < 2 do
+		local extra = Instance.new("Attachment")
+		extra.Name = "TrailSpan" .. tostring(#attachments + 1)
+		extra.Position = Vector3.new(0, (#attachments == 0) and 0.14 or -0.14, 0)
+		extra.Parent = mover
+		table.insert(attachments, extra)
+	end
+	if (attachments[1].Position - attachments[2].Position).Magnitude < 0.05 then
+		attachments[1].Position = Vector3.new(0, 0.16, 0)
+		attachments[2].Position = Vector3.new(0, -0.16, 0)
+	end
+
+	for _, d in mover:GetDescendants() do
+		if emitOnFinish and d:IsDescendantOf(emitOnFinish) then
+			continue
+		end
+		if d:IsA("Trail") then
+			d.Attachment0 = attachments[1]
+			d.Attachment1 = attachments[2]
+			d.Enabled = true
+		elseif d:IsA("Beam") then
+			if not d.Attachment0 then
+				d.Attachment0 = attachments[1]
+			end
+			if not d.Attachment1 then
+				d.Attachment1 = attachments[2]
+			end
+			d.Enabled = true
+		end
+	end
+
+	-- Emit every spec/particle on the mover attachments (Blurred Spec 21, etc.).
+	for _, att in attachments do
+		emitAll(att, emitOnFinish)
+		for _, d in att:GetDescendants() do
+			if emitOnFinish and d:IsDescendantOf(emitOnFinish) then
+				continue
+			end
+			if d:IsA("ParticleEmitter") then
+				d.Enabled = true
+			end
+		end
+	end
+end
+
 local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
 	local bezier = root:FindFirstChild("Bezier", true)
 	if not bezier then
@@ -323,22 +379,10 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
 	end
 
 	local emitOnFinish = mover:FindFirstChild("EmitOnFinish")
-	-- Play every layer on the effect (glow, specs, trails) except the finish burst.
+	-- Root glow (Fading Glow) + everything outside the finish burst.
 	emitAll(root, emitOnFinish)
-
-	for _, d in mover:GetDescendants() do
-		if d:IsA("Trail") or d:IsA("Beam") then
-			if not (emitOnFinish and d:IsDescendantOf(emitOnFinish)) then
-				d.Enabled = true
-			end
-		elseif d:IsA("ParticleEmitter") and not (emitOnFinish and d:IsDescendantOf(emitOnFinish)) then
-			-- Keep in-flight emitters alive for the arc.
-			local durAttr = d:GetAttribute("EmitDuration")
-			if typeof(durAttr) ~= "number" or durAttr <= 0 then
-				d.Enabled = true
-			end
-		end
-	end
+	-- Wire Trail/Beam to Bezier.Part attachments and emit Blurred Spec layers on them.
+	prepareMoverFlightVfx(mover, emitOnFinish)
 
 	mover.CFrame = CFrame.new(points[1])
 	local started = os.clock()

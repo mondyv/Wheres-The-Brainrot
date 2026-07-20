@@ -6,6 +6,7 @@
 --]]
 
 local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local SocialService = game:GetService("SocialService")
@@ -13,6 +14,8 @@ local SocialService = game:GetService("SocialService")
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
+local MobileHaptics = require(script.Parent.MobileHaptics)
 local PanelSlideIn = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PanelSlideIn"))
 
 local player = Players.LocalPlayer
@@ -20,6 +23,15 @@ local player = Players.LocalPlayer
 local mainGui: ScreenGui? = nil
 local sideUI: Instance? = nil
 local framesFolder: Instance? = nil
+
+local PANEL_BLUR_NAME = "PanelModalBlur"
+local PANEL_BACKDROP_NAME = "PanelClickOutside"
+local BLUR_SIZE = 14
+local BLUR_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local panelChromeHidden = false
+local panelBlur: BlurEffect? = nil
+local panelBackdrop: TextButton? = nil
 
 local function ensureHudRoots()
 	if mainGui then
@@ -64,6 +76,115 @@ local function resolveFrame(name: string): Frame?
 	ensureHudRoots()
 	return (framesFolder :: Instance):FindFirstChild(name) :: Frame?
 end
+
+local function ensurePanelBlur()
+	local existing = Lighting:FindFirstChild(PANEL_BLUR_NAME)
+	if existing and existing:IsA("BlurEffect") then
+		panelBlur = existing
+	else
+		if existing then
+			existing:Destroy()
+		end
+		local blur = Instance.new("BlurEffect")
+		blur.Name = PANEL_BLUR_NAME
+		blur.Size = 0
+		blur.Parent = Lighting
+		panelBlur = blur
+	end
+	TweenService:Create(panelBlur :: BlurEffect, BLUR_TWEEN, { Size = BLUR_SIZE }):Play()
+end
+
+local function clearPanelBlur()
+	local blur = panelBlur or Lighting:FindFirstChild(PANEL_BLUR_NAME)
+	if blur and blur:IsA("BlurEffect") then
+		local tw = TweenService:Create(blur, BLUR_TWEEN, { Size = 0 })
+		tw.Completed:Once(function()
+			if blur.Parent then
+				blur:Destroy()
+			end
+			if panelBlur == blur then
+				panelBlur = nil
+			end
+		end)
+		tw:Play()
+	else
+		panelBlur = nil
+	end
+end
+
+local function destroyPanelBackdrop()
+	if panelBackdrop then
+		panelBackdrop:Destroy()
+		panelBackdrop = nil
+	end
+	ensureHudRoots()
+	local frames = framesFolder
+	if frames then
+		local existing = frames:FindFirstChild(PANEL_BACKDROP_NAME)
+		if existing then
+			existing:Destroy()
+		end
+	end
+end
+
+local function ensurePanelBackdrop()
+	ensureHudRoots()
+	local frames = framesFolder
+	if not frames or not frames:IsA("GuiObject") then
+		return
+	end
+	destroyPanelBackdrop()
+
+	local backdrop = Instance.new("TextButton")
+	backdrop.Name = PANEL_BACKDROP_NAME
+	backdrop.AutoButtonColor = false
+	backdrop.Text = ""
+	backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
+	backdrop.BackgroundTransparency = 0.55
+	backdrop.BorderSizePixel = 0
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.Position = UDim2.fromScale(0, 0)
+	backdrop.AnchorPoint = Vector2.new(0, 0)
+	backdrop.ZIndex = 12
+	backdrop.Active = true
+	backdrop.Parent = frames
+
+	backdrop.Activated:Connect(function()
+		if currentFrame then
+			MobileHaptics.tap()
+			HUDController.closeCurrentFrame()
+		end
+	end)
+
+	panelBackdrop = backdrop
+end
+
+local function hidePanelChrome()
+	if panelChromeHidden then
+		ensurePanelBlur()
+		ensurePanelBackdrop()
+		return
+	end
+	panelChromeHidden = true
+	GameplayUiVisibility.hide({ keepMainChildNames = { "Frames" } })
+	ensurePanelBlur()
+	ensurePanelBackdrop()
+end
+
+local function showPanelChrome()
+	if not panelChromeHidden then
+		clearPanelBlur()
+		destroyPanelBackdrop()
+		return
+	end
+	panelChromeHidden = false
+	GameplayUiVisibility.show()
+	clearPanelBlur()
+	destroyPanelBackdrop()
+end
+
+-- Forward declare for close callbacks
+local HUDController = {}
 
 -- Searches SideUI only (never Main.Frames — that wrongly wired panel-internal buttons).
 -- Prefers a child named Button; makes non-button visuals non-Active so they don't steal clicks.
@@ -134,6 +255,9 @@ local function animateClose(frame: Frame)
 		scale.Scale = 0.82
 		if syncFramesInputPassthrough then
 			syncFramesInputPassthrough()
+		end
+		if currentFrame == nil then
+			showPanelChrome()
 		end
 	end)
 	t:Play()
@@ -241,6 +365,9 @@ local function openFrame(frame: Frame)
 	end
 	currentFrame = frame
 	frame.Active = true
+	if frame.ZIndex < 20 then
+		frame.ZIndex = 20
+	end
 	-- Panel content must receive clicks (ScrollingFrames / buy buttons).
 	for _, d in frame:GetDescendants() do
 		if d:IsA("GuiButton") or d:IsA("ScrollingFrame") or d:IsA("TextBox") then
@@ -252,6 +379,7 @@ local function openFrame(frame: Frame)
 			end
 		end
 	end
+	hidePanelChrome()
 	animateOpen(frame)
 	syncFramesInputPassthrough()
 end
@@ -267,6 +395,9 @@ local function wireFrameVisibleBackdropCleanup(frame: Frame)
 		end
 		if currentFrame == frame then
 			currentFrame = nil
+		end
+		if currentFrame == nil then
+			showPanelChrome()
 		end
 	end)
 end
@@ -458,8 +589,6 @@ local function setupSlowButton()
 end
 
 -- ── Public API ────────────────────────────────────────────────────────────────
-
-local HUDController = {}
 
 function HUDController.init()
 	if (HUDController :: any)._initialized then

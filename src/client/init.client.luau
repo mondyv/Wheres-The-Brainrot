@@ -284,6 +284,7 @@ task.defer(function()
 		if modalBlur and modalBlur:IsA("BlurEffect") then
 			modalBlur:Destroy()
 		end
+		-- Do not destroy PanelModalBlur here — HUDController owns panel blur lifetime.
 	end)
 
 	-- World / gameplay controllers — staggered so client boot doesn't block UIBlox/Foundation.

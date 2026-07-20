@@ -24,10 +24,12 @@ local GUI_NAME = "StandDialogueCutscene"
 local LOCK_ACTION = "StandDialogueMoveLock"
 local SELECT_ACTION = "StandDialogueSelect"
 local WORLD_SPEECH_NAME = "StandBrainrotSpeech"
+local ARROW_IMAGE = "rbxassetid://92898814478474"
 
 local LETTER_DELAY = 0.07
 local LINE_PAUSE = 0.4
 local WORLD_LETTER_DELAY = 0.055
+local WORLD_MAX_DISTANCE = 42
 
 local IDLE_ANIM_IDS: { [string]: number } = {
 	TatatataSahur = 126404281186060,
@@ -87,7 +89,9 @@ local dialogueLabel: TextLabel? = nil
 local skipHint: TextLabel? = nil
 local choiceEnter: TextButton? = nil
 local choiceExit: TextButton? = nil
-local soulMarker: TextLabel? = nil
+local soulMarker: ImageLabel? = nil
+local soulSpinConn: RBXScriptConnection? = nil
+local soulWiping = false
 
 local focusModel: Model? = nil
 local basePivot: CFrame? = nil
@@ -422,7 +426,7 @@ local function startChoiceHoverLoop()
 			if not btn.Parent then
 				continue
 			end
-			local smooth = math.min(dt * 10, 1)
+			local smooth = math.min(dt * 14, 1)
 			if state.hovering then
 				anyActive = true
 				local absPos = btn.AbsolutePosition
@@ -432,9 +436,9 @@ local function startChoiceHoverLoop()
 				local mouse = UserInputService:GetMouseLocation()
 				local dx = mouse.X - centerX
 				local dy = mouse.Y - centerY
-				local followX = math.clamp(dx * 0.12, -6, 6)
-				local followY = math.clamp(dy * 0.12, -6, 6)
-				local tilt = math.clamp(dx * 0.025, -4, 4)
+				local followX = math.clamp(dx * 0.32, -22, 22)
+				local followY = math.clamp(dy * 0.28, -16, 16)
+				local tilt = math.clamp(dx * 0.07, -12, 12)
 				local goalPos = UDim2.new(
 					state.basePos.X.Scale,
 					state.basePos.X.Offset + followX,
@@ -451,6 +455,7 @@ local function startChoiceHoverLoop()
 				btn.Position = state.pos
 				btn.Rotation = state.rot
 			else
+				local leaveSmooth = math.min(dt * 5.5, 1)
 				local distX = math.abs(state.pos.X.Offset - state.basePos.X.Offset)
 				local distY = math.abs(state.pos.Y.Offset - state.basePos.Y.Offset)
 				local rotDist = math.abs(state.rot - state.baseRot)
@@ -458,11 +463,11 @@ local function startChoiceHoverLoop()
 					anyActive = true
 					state.pos = UDim2.new(
 						state.pos.X.Scale,
-						state.pos.X.Offset + (state.basePos.X.Offset - state.pos.X.Offset) * smooth,
+						state.pos.X.Offset + (state.basePos.X.Offset - state.pos.X.Offset) * leaveSmooth,
 						state.pos.Y.Scale,
-						state.pos.Y.Offset + (state.basePos.Y.Offset - state.pos.Y.Offset) * smooth
+						state.pos.Y.Offset + (state.basePos.Y.Offset - state.pos.Y.Offset) * leaveSmooth
 					)
-					state.rot += (state.baseRot - state.rot) * smooth
+					state.rot += (state.baseRot - state.rot) * leaveSmooth
 					btn.Position = state.pos
 					btn.Rotation = state.rot
 				else
@@ -623,11 +628,81 @@ updateChoiceVisuals = function()
 	local target = if selectedIndex == 1 then choiceEnter else choiceExit
 	soulMarker.Position = UDim2.new(
 		0,
-		-18,
+		-22,
 		target.Position.Y.Scale + target.Size.Y.Scale * 0.5,
 		target.Position.Y.Offset
 	)
-	soulMarker.Visible = choicesReady
+	if choicesReady and not soulWiping then
+		soulMarker.Visible = true
+		soulMarker.ImageTransparency = 0
+		local scale = soulMarker:FindFirstChildOfClass("UIScale")
+		if scale then
+			scale.Scale = 1
+		end
+	end
+end
+
+local function stopSoulSpin()
+	if soulSpinConn then
+		soulSpinConn:Disconnect()
+		soulSpinConn = nil
+	end
+end
+
+local function startSoulSpin()
+	stopSoulSpin()
+	if not soulMarker then
+		return
+	end
+	local phase = 0
+	soulSpinConn = RunService.RenderStepped:Connect(function(dt)
+		if not soulMarker or not soulMarker.Visible or soulWiping then
+			return
+		end
+		phase += dt
+		-- Gentle idle bob + slow spin
+		soulMarker.Rotation = math.sin(phase * 3.2) * 12 + phase * 40
+		local scale = soulMarker:FindFirstChildOfClass("UIScale")
+		if scale then
+			scale.Scale = 1 + math.sin(phase * 5.5) * 0.08
+		end
+	end)
+end
+
+local function wipeSoulMarker(onDone: (() -> ())?)
+	if not soulMarker or soulWiping then
+		if onDone then
+			onDone()
+		end
+		return
+	end
+	soulWiping = true
+	stopSoulSpin()
+	local marker = soulMarker
+	local scale = marker:FindFirstChildOfClass("UIScale")
+	if not scale then
+		scale = Instance.new("UIScale")
+		scale.Parent = marker
+	end
+	-- Pokemon-style wipe: spin hard + shrink + fade
+	local info = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+	TweenService:Create(marker, info, {
+		Rotation = marker.Rotation + 420,
+		ImageTransparency = 1,
+	}):Play()
+	TweenService:Create(scale, info, { Scale = 0.05 }):Play()
+	task.delay(0.3, function()
+		if marker.Parent then
+			marker.Visible = false
+			marker.ImageTransparency = 0
+			marker.Rotation = 0
+			scale.Scale = 1
+		end
+		soulWiping = false
+		if onDone then
+			onDone()
+		end
+	end)
 end
 
 local function requestSkip()
@@ -643,7 +718,13 @@ local function confirmChoice(enter: boolean)
 	selectedIndex = if enter then 1 else 2
 	updateChoiceVisuals()
 	MobileHaptics.confirm()
-	resolveChoice(enter)
+	local resolve = resolveChoice
+	choicesReady = false
+	wipeSoulMarker(function()
+		if resolve then
+			resolve(enter)
+		end
+	end)
 end
 
 local function ensureGui(): ScreenGui
@@ -783,19 +864,20 @@ local function ensureGui(): ScreenGui
 	styleChoiceButton(exitBtn)
 	exitBtn.Parent = choices
 
-	local soul = Instance.new("TextLabel")
+	local soul = Instance.new("ImageLabel")
 	soul.Name = "Soul"
 	soul.BackgroundTransparency = 1
-	soul.Size = UDim2.fromOffset(22, 22)
+	soul.Size = UDim2.fromOffset(28, 28)
 	soul.AnchorPoint = Vector2.new(1, 0.5)
-	soul.Text = "♥"
-	soul.TextColor3 = Color3.fromRGB(255, 60, 60)
-	soul.TextStrokeTransparency = 0
-	soul.TextStrokeColor3 = Color3.new(0, 0, 0)
-	soul.TextSize = 20
+	soul.Image = ARROW_IMAGE
+	soul.ScaleType = Enum.ScaleType.Fit
 	soul.Visible = false
 	soul.ZIndex = 42
+	soul.Rotation = 0
 	soul.Parent = choices
+	local soulScale = Instance.new("UIScale")
+	soulScale.Scale = 1
+	soulScale.Parent = soul
 
 	wireChoiceHover(enterBtn)
 	wireChoiceHover(exitBtn)
@@ -1109,6 +1191,9 @@ local function finishSession(choseEnter: boolean): boolean
 	typingActive = false
 	stopInput()
 	stopChoiceHover()
+	stopTouchInput()
+	stopSoulSpin()
+	soulWiping = false
 	typeToken += 1
 	stopShake()
 	stopTalkJump()
@@ -1125,6 +1210,12 @@ local function finishSession(choseEnter: boolean): boolean
 	end
 	if soulMarker then
 		soulMarker.Visible = false
+		soulMarker.ImageTransparency = 0
+		soulMarker.Rotation = 0
+		local sc = soulMarker:FindFirstChildOfClass("UIScale")
+		if sc then
+			sc.Scale = 1
+		end
 	end
 	if choiceEnter then
 		choiceEnter.Visible = false
@@ -1169,21 +1260,20 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 	bb.Name = WORLD_SPEECH_NAME
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
-	bb.MaxDistance = 80
+	bb.MaxDistance = WORLD_MAX_DISTANCE
 	bb.Size = UDim2.fromOffset(220, 48)
 	bb.StudsOffset = Vector3.new(0, 2.6, 0)
 	bb.Adornee = adornee
 	bb.Parent = model
 
 	local label = Instance.new("TextLabel")
-	label.BackgroundColor3 = Color3.new(0, 0, 0)
-	label.BackgroundTransparency = 0.1
+	label.BackgroundTransparency = 1
 	label.BorderSizePixel = 0
 	label.Size = UDim2.fromScale(1, 1)
 	label.Text = ""
 	label.TextColor3 = Color3.new(1, 1, 1)
 	label.TextStrokeColor3 = Color3.new(0, 0, 0)
-	label.TextStrokeTransparency = 0
+	label.TextStrokeTransparency = 0.15
 	label.TextWrapped = true
 	label.TextScaled = false
 	label.TextSize = 12
@@ -1193,10 +1283,10 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 	label.Parent = bb
 
 	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 8)
-	pad.PaddingTop = UDim.new(0, 5)
-	pad.PaddingBottom = UDim.new(0, 5)
+	pad.PaddingLeft = UDim.new(0, 4)
+	pad.PaddingRight = UDim.new(0, 4)
+	pad.PaddingTop = UDim.new(0, 2)
+	pad.PaddingBottom = UDim.new(0, 2)
 	pad.Parent = label
 
 	local typeDuration = #message * WORLD_LETTER_DELAY + 0.15
@@ -1228,7 +1318,6 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 		TweenService:Create(label, TweenInfo.new(0.25), {
 			TextTransparency = 1,
 			TextStrokeTransparency = 1,
-			BackgroundTransparency = 1,
 		}):Play()
 		task.delay(0.28, function()
 			if bb.Parent then
@@ -1298,7 +1387,7 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 	local done = false
 
 	resolveChoice = function(enter: boolean)
-		if done or not choicesReady then
+		if done then
 			return
 		end
 		done = true
@@ -1385,6 +1474,7 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 	choicesReady = true
 	lastHapticSelectedIndex = 0
 	updateChoiceVisuals()
+	startSoulSpin()
 
 	while active and not done do
 		task.wait(0.05)

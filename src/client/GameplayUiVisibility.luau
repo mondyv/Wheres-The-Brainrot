@@ -1,7 +1,7 @@
 -- [ACTIVE] GameplayUiVisibility
 --[[
-	Shared cutscene HUD hide/show with Pokemon-style slide-to-edge animation.
-	Ref-counted so nested cutscenes don't restore early.
+	Shared cutscene / panel HUD hide/show with Pokemon-style staggered slide-to-edge.
+	Ref-counted so nested hides don't restore early.
 ]]
 
 local Players = game:GetService("Players")
@@ -16,14 +16,16 @@ local player = Players.LocalPlayer
 local M = {}
 
 local hideCount = 0
-local SLIDE_OUT = TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local SLIDE_IN = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local SLIDE_OUT = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local SLIDE_IN = TweenInfo.new(0.36, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local WAVE_STAGGER = 0.045
 
 type GuiSnap = {
 	inst: GuiObject,
 	wasVisible: boolean,
 	basePos: UDim2,
 	slidePos: UDim2,
+	order: number,
 }
 
 type ScreenSnap = {
@@ -35,7 +37,13 @@ local mainSnaps: { GuiSnap } = {}
 local screenSnaps: { ScreenSnap } = {}
 local chatWasEnabled = true
 local activeTweens: { Tween } = {}
-local keepNames: { [string]: boolean } = {}
+local keepScreenNames: { [string]: boolean } = {}
+local keepMainChildNames: { [string]: boolean } = {}
+
+export type HideOpts = {
+	keepScreenGuiNames: { string }?,
+	keepMainChildNames: { string }?,
+}
 
 local function cancelTweens()
 	for _, tw in activeTweens do
@@ -63,7 +71,6 @@ local function computeSlidePos(gui: GuiObject): UDim2
 	local margin = 80
 
 	if center.X < vp.X * 0.38 then
-		-- Left side → slide further left
 		return UDim2.new(base.X.Scale, base.X.Offset - (absSize.X + margin), base.Y.Scale, base.Y.Offset)
 	elseif center.X > vp.X * 0.62 then
 		return UDim2.new(base.X.Scale, base.X.Offset + (absSize.X + margin), base.Y.Scale, base.Y.Offset)
@@ -74,14 +81,28 @@ local function computeSlidePos(gui: GuiObject): UDim2
 	end
 end
 
-local function buildKeepSet(extraKeep: { string }?)
-	table.clear(keepNames)
-	keepNames.FloatingClaimCutscene = true
-	keepNames.BushSpiderCutscene = true
-	keepNames.StandDialogueCutscene = true
-	if extraKeep then
-		for _, name in extraKeep do
-			keepNames[name] = true
+local function waveOrderKey(gui: GuiObject): number
+	local absPos = gui.AbsolutePosition
+	-- Slight diagonal wave: left/top first
+	return absPos.X * 0.65 + absPos.Y * 0.35
+end
+
+local function buildKeepSets(opts: HideOpts?)
+	table.clear(keepScreenNames)
+	table.clear(keepMainChildNames)
+	keepScreenNames.FloatingClaimCutscene = true
+	keepScreenNames.BushSpiderCutscene = true
+	keepScreenNames.StandDialogueCutscene = true
+	if opts then
+		if opts.keepScreenGuiNames then
+			for _, name in opts.keepScreenGuiNames do
+				keepScreenNames[name] = true
+			end
+		end
+		if opts.keepMainChildNames then
+			for _, name in opts.keepMainChildNames do
+				keepMainChildNames[name] = true
+			end
 		end
 	end
 end
@@ -92,34 +113,53 @@ local function snapshotAndSlideOut()
 	table.clear(screenSnaps)
 
 	local main = PlayerGuiMain.ensure(player)
-	-- Force Main enabled so children can animate out
 	if main:IsA("ScreenGui") then
 		main.Enabled = true
 	end
 
+	local pending: { GuiSnap } = {}
 	for _, child in main:GetChildren() do
 		if child:IsA("GuiObject") then
+			if keepMainChildNames[child.Name] then
+				continue
+			end
 			local gui = child :: GuiObject
 			local basePos = gui.Position
 			local slidePos = computeSlidePos(gui)
-			table.insert(mainSnaps, {
+			table.insert(pending, {
 				inst = gui,
 				wasVisible = gui.Visible,
 				basePos = basePos,
 				slidePos = slidePos,
+				order = waveOrderKey(gui),
 			})
-			if gui.Visible then
-				playTween(gui, SLIDE_OUT, { Position = slidePos })
-			end
 		end
 	end
 
-	task.delay(SLIDE_OUT.Time + 0.02, function()
+	table.sort(pending, function(a, b)
+		return a.order < b.order
+	end)
+
+	for i, entry in ipairs(pending) do
+		table.insert(mainSnaps, entry)
+		if entry.wasVisible then
+			local delaySec = (i - 1) * WAVE_STAGGER
+			task.delay(delaySec, function()
+				if hideCount <= 0 or not entry.inst.Parent then
+					return
+				end
+				playTween(entry.inst, SLIDE_OUT, { Position = entry.slidePos })
+			end)
+		end
+	end
+
+	local totalOut = SLIDE_OUT.Time + math.max(0, #pending - 1) * WAVE_STAGGER + 0.02
+	task.delay(totalOut, function()
 		if hideCount <= 0 then
 			return
 		end
 		for _, entry in mainSnaps do
-			if entry.inst.Parent then
+			if entry.inst.Parent and not keepMainChildNames[entry.inst.Name] then
 				entry.inst.Visible = false
 				entry.inst.Position = entry.basePos
 			end
@@ -129,8 +169,7 @@ local function snapshotAndSlideOut()
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then
 		for _, ch in pg:GetChildren() do
-			if ch:IsA("ScreenGui") and not keepNames[ch.Name] then
-				-- Keep Main enabled (we hide its children); disable other gameplay ScreenGuis
+			if ch:IsA("ScreenGui") and not keepScreenNames[ch.Name] then
 				if ch.Name == "Main" then
 					continue
 				end
@@ -149,12 +188,23 @@ end
 local function slideInAndRestore()
 	cancelTweens()
 
-	for _, entry in mainSnaps do
+	local pending = table.clone(mainSnaps)
+	table.sort(pending, function(a, b)
+		return a.order < b.order
+	end)
+
+	for i, entry in ipairs(pending) do
 		if entry.inst.Parent then
 			entry.inst.Position = entry.slidePos
 			entry.inst.Visible = entry.wasVisible
 			if entry.wasVisible then
-				playTween(entry.inst, SLIDE_IN, { Position = entry.basePos })
+				local delaySec = (i - 1) * WAVE_STAGGER
+				task.delay(delaySec, function()
+					if hideCount > 0 or not entry.inst.Parent then
+						return
+					end
+					playTween(entry.inst, SLIDE_IN, { Position = entry.basePos })
+				end)
 			else
 				entry.inst.Position = entry.basePos
 			end
@@ -185,7 +235,8 @@ local function slideInAndRestore()
 		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, chatWasEnabled)
 	end)
 
-	task.delay(SLIDE_IN.Time + 0.05, function()
+	local totalIn = SLIDE_IN.Time + math.max(0, #pending - 1) * WAVE_STAGGER + 0.05
+	task.delay(totalIn, function()
 		if hideCount > 0 then
 			return
 		end
@@ -194,23 +245,26 @@ local function slideInAndRestore()
 	end)
 end
 
---[[
-	hide(opts?) — opts.keepScreenGuiNames: extra ScreenGui names to leave enabled
-]]
-function M.hide(opts: { keepScreenGuiNames: { string }? }?)
+function M.hide(opts: HideOpts?)
 	hideCount += 1
 	if hideCount == 1 then
-		buildKeepSet(if opts then opts.keepScreenGuiNames else nil)
-		-- Defer one frame so AbsolutePosition is valid
+		buildKeepSets(opts)
 		task.defer(function()
 			if hideCount > 0 then
 				snapshotAndSlideOut()
 			end
 		end)
 	else
-		if opts and opts.keepScreenGuiNames then
-			for _, name in opts.keepScreenGuiNames do
-				keepNames[name] = true
+		if opts then
+			if opts.keepScreenGuiNames then
+				for _, name in opts.keepScreenGuiNames do
+					keepScreenNames[name] = true
+				end
+			end
+			if opts.keepMainChildNames then
+				for _, name in opts.keepMainChildNames do
+					keepMainChildNames[name] = true
+				end
 			end
 		end
 	end

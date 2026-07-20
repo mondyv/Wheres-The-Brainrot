@@ -1,54 +1,41 @@
 -- [ACTIVE] VegetationSwayController
 --[[
-	Local-only Pokémon-style bend for grasspart + bushes under Map.Lands.
-	- Indexes only instances named grasspart (never whole grassland groups).
-	- Holds bend while the player stands in range; recovers after leaving.
-	- Bushes: index nested bushlets inside cluster Models; very slight size-scaled tilt.
+	Local-only Pokémon-style bend for grassparts under Map.Lands/*/grass.
+	Holds bend while standing in range; recovers after leaving.
+	Bushes intentionally omitted (nested cluster search was too expensive).
 ]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
-local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 
 local M = {}
 
-local MAX_ACTIVE = 28
-local SCAN_INTERVAL_SEC = 0.04
+local MAX_ACTIVE = 24
+local SCAN_INTERVAL_SEC = 0.05
 local GRASS_RADIUS = 3.4
-local BUSH_RADIUS = 4.2
+local GRASS_RADIUS_SQ = GRASS_RADIUS * GRASS_RADIUS
 local GRASS_TILT_RAD = math.rad(14)
--- Nested bushlets only — keep this tiny; huge clusters must never rock as one unit.
-local BUSH_TILT_RAD = math.rad(3.2)
 local GRASS_PUSH = 0.12
-local BUSH_PUSH = 0.05
 local PRESS_SEC = 0.1
 local RECOVER_SEC = 0.28
 local LEAVE_GRACE_SEC = 0.12
-local INDEX_REFRESH_SEC = 4
+local INDEX_REFRESH_SEC = 8
 local STEP_NAME = "VegetationSwayStep"
-local BUSH_NEST_MAX_DEPTH = 4
 
-type SwayKind = "grass" | "bush"
 type Phase = "press" | "hold" | "recover"
 
-type VegEntry = {
-	root: Instance,
-	kind: SwayKind,
-}
-
-type TargetBase = {
-	target: Instance,
-	base: CFrame,
-	halfY: number,
+type GrassEntry = {
+	part: BasePart,
+	x: number,
+	y: number,
+	z: number,
 }
 
 type ActiveSway = {
-	kind: SwayKind,
-	pieces: { TargetBase },
+	part: BasePart,
+	base: CFrame,
+	halfY: number,
 	axis: Vector3,
 	amp: number,
 	push: number,
@@ -60,12 +47,12 @@ type ActiveSway = {
 
 local localPlayer = Players.LocalPlayer
 
-local vegEntries: { VegEntry } = {}
-local indexedRoots: { [Instance]: boolean } = {}
+local grassEntries: { GrassEntry } = {}
+local indexedParts: { [BasePart]: boolean } = {}
 local indexConns: { RBXScriptConnection } = {}
 local lastIndexAt = 0
 
-local active: { [Instance]: ActiveSway } = {}
+local active: { [BasePart]: ActiveSway } = {}
 local activeCount = 0
 local stepBound = false
 local scanAccum = 0
@@ -78,134 +65,6 @@ local function disconnectList(list: { RBXScriptConnection })
 		conn:Disconnect()
 	end
 	table.clear(list)
-end
-
-local function applyTargetCFrame(target: Instance, cf: CFrame)
-	if target:IsA("Model") then
-		(target :: Model):PivotTo(cf)
-	elseif target:IsA("BasePart") then
-		(target :: BasePart).CFrame = cf
-	end
-end
-
-local function getTargetPivot(target: Instance): CFrame?
-	if target:IsA("Model") then
-		local ok, pivot = pcall(function()
-			return (target :: Model):GetPivot()
-		end)
-		if ok and typeof(pivot) == "CFrame" then
-			return pivot
-		end
-		return nil
-	end
-	if target:IsA("BasePart") then
-		return (target :: BasePart).CFrame
-	end
-	return nil
-end
-
-local function approxHalfY(target: Instance): number
-	if target:IsA("BasePart") then
-		return math.max((target :: BasePart).Size.Y * 0.5, 0.25)
-	end
-	if target:IsA("Model") then
-		local ok, size = pcall(function()
-			return (target :: Model):GetExtentsSize()
-		end)
-		if ok and typeof(size) == "Vector3" then
-			return math.clamp((size :: Vector3).Y * 0.45, 0.35, 2.2)
-		end
-	end
-	return 0.9
-end
-
-local function approxExtentsMag(target: Instance): number
-	if target:IsA("BasePart") then
-		local s = (target :: BasePart).Size
-		return math.max(s.X, s.Y, s.Z)
-	end
-	if target:IsA("Model") then
-		local ok, size = pcall(function()
-			return (target :: Model):GetExtentsSize()
-		end)
-		if ok and typeof(size) == "Vector3" then
-			local s = size :: Vector3
-			return math.max(s.X, s.Y, s.Z)
-		end
-	end
-	return 4
-end
-
--- Bigger bushlets sway even less so huge props barely twitch.
-local function bushAmpFor(target: Instance): (number, number)
-	local mag = approxExtentsMag(target)
-	local sizeScale = math.clamp(3.5 / math.max(mag, 1), 0.2, 1)
-	return BUSH_TILT_RAD * sizeScale, BUSH_PUSH * sizeScale
-end
-
-local function collectChildBushModels(node: Instance): { Instance }
-	local kids: { Instance } = {}
-	for _, child in node:GetChildren() do
-		if BushRootUtil.isGeneratedPromptHelper(child) then
-			continue
-		end
-		if child:IsA("Model") then
-			table.insert(kids, child)
-		end
-	end
-	return kids
-end
-
--- Prefer leaf/nested bush Models inside a cluster; never index the huge outer group if it has kids.
-local function collectNestedBushTargets(root: Instance, depth: number, out: { Instance })
-	if depth > BUSH_NEST_MAX_DEPTH then
-		return
-	end
-	local kids = collectChildBushModels(root)
-	if #kids == 0 then
-		if root:IsA("Model") or root:IsA("BasePart") then
-			table.insert(out, root)
-		end
-		return
-	end
-	for _, kid in kids do
-		local grand = collectChildBushModels(kid)
-		if #grand > 0 then
-			collectNestedBushTargets(kid, depth + 1, out)
-		else
-			table.insert(out, kid)
-		end
-	end
-end
-
-local function grassWorldPos(inst: Instance): Vector3?
-	if inst:IsA("BasePart") then
-		return inst.Position
-	end
-	local pivot = getTargetPivot(inst)
-	return if pivot then pivot.Position else nil
-end
-
--- Visual center of a bush (ignores bad Model pivots).
-local function bushWorldPos(root: Instance): Vector3?
-	local focus = BushRootUtil.focusWorldPosition(root, 0)
-	if focus then
-		return focus
-	end
-	return grassWorldPos(root)
-end
-
-local function entryWorldPos(entry: VegEntry): Vector3?
-	if entry.kind == "bush" then
-		return bushWorldPos(entry.root)
-	end
-	return grassWorldPos(entry.root)
-end
-
-local function xzDist(a: Vector3, b: Vector3): number
-	local dx = a.X - b.X
-	local dz = a.Z - b.Z
-	return math.sqrt(dx * dx + dz * dz)
 end
 
 local function bendOffset(halfY: number, axis: Vector3, angle: number, push: number, pushDir: Vector3): CFrame
@@ -228,17 +87,15 @@ local function unbindStep()
 	end
 end
 
-local function restoreAndClear(root: Instance)
-	local entry = active[root]
+local function restoreAndClear(part: BasePart)
+	local entry = active[part]
 	if not entry then
 		return
 	end
-	for _, piece in entry.pieces do
-		if piece.target.Parent then
-			applyTargetCFrame(piece.target, piece.base)
-		end
+	if part.Parent then
+		part.CFrame = entry.base
 	end
-	active[root] = nil
+	active[part] = nil
 	activeCount = math.max(0, activeCount - 1)
 	if activeCount == 0 then
 		unbindStep()
@@ -253,29 +110,20 @@ local function phaseEnvelope(entry: ActiveSway, now: number): number
 		local u = math.clamp((now - entry.phaseStartedAt) / PRESS_SEC, 0, 1)
 		return u * u
 	end
-	-- recover
 	local u = math.clamp((now - entry.phaseStartedAt) / RECOVER_SEC, 0, 1)
 	return (1 - u) * (1 - u)
 end
 
 local function stepSways(_dt: number)
 	local now = os.clock()
-	local toClear: { Instance } = {}
+	local toClear: { BasePart } = {}
 
-	for root, entry in active do
-		local alive = false
-		for _, piece in entry.pieces do
-			if piece.target.Parent then
-				alive = true
-				break
-			end
-		end
-		if not alive then
-			table.insert(toClear, root)
+	for part, entry in active do
+		if not part.Parent then
+			table.insert(toClear, part)
 			continue
 		end
 
-		-- Left range → start recover.
 		if entry.phase ~= "recover" and (now - entry.lastInRangeAt) > LEAVE_GRACE_SEC then
 			entry.phase = "recover"
 			entry.phaseStartedAt = now
@@ -287,25 +135,17 @@ local function stepSways(_dt: number)
 		end
 
 		if entry.phase == "recover" and (now - entry.phaseStartedAt) >= RECOVER_SEC then
-			table.insert(toClear, root)
+			table.insert(toClear, part)
 			continue
 		end
 
 		local envelope = phaseEnvelope(entry, now)
-		local angle = entry.amp * envelope
-		local push = entry.push * envelope
-		for _, piece in entry.pieces do
-			if piece.target.Parent then
-				applyTargetCFrame(
-					piece.target,
-					piece.base * bendOffset(piece.halfY, entry.axis, angle, push, entry.pushDir)
-				)
-			end
-		end
+		part.CFrame = entry.base
+			* bendOffset(entry.halfY, entry.axis, entry.amp * envelope, entry.push * envelope, entry.pushDir)
 	end
 
-	for _, root in toClear do
-		restoreAndClear(root)
+	for _, part in toClear do
+		restoreAndClear(part)
 	end
 end
 
@@ -317,86 +157,55 @@ local function bindStep()
 	stepBound = true
 end
 
-local function isGrassPart(inst: Instance): boolean
-	return string.lower(inst.Name) == "grasspart" and (inst:IsA("BasePart") or inst:IsA("Model"))
-end
-
-local function addVeg(root: Instance, kind: SwayKind)
-	if indexedRoots[root] then
+local function addGrassPart(part: BasePart)
+	if indexedParts[part] then
 		return
 	end
-	if not root:IsA("Model") and not root:IsA("BasePart") then
-		return
-	end
-	indexedRoots[root] = true
-	table.insert(vegEntries, {
-		root = root,
-		kind = kind,
+	indexedParts[part] = true
+	local pos = part.Position
+	table.insert(grassEntries, {
+		part = part,
+		x = pos.X,
+		y = pos.Y,
+		z = pos.Z,
 	})
 end
 
 local function indexLandFolder(landFolder: Instance)
 	local grassFolder = landFolder:FindFirstChild("grass")
-	if grassFolder then
-		-- Only grasspart — never whole grassland groups.
-		for _, desc in grassFolder:GetDescendants() do
-			if isGrassPart(desc) then
-				if desc:IsA("BasePart") then
-					addVeg(desc, "grass")
-				elseif desc:IsA("Model") then
-					-- Model named grasspart: sway each leaf BasePart, not the group pivot.
-					local partCount = 0
-					for _, child in desc:GetDescendants() do
-						if child:IsA("BasePart") then
-							addVeg(child, "grass")
-							partCount += 1
-						end
-					end
-					if partCount == 0 then
-						addVeg(desc, "grass")
-					end
-				end
-			end
-		end
+	if not grassFolder then
+		return
 	end
 
-	for _, folderName in BushRootUtil.FOLDER_NAMES do
-		local bushFolder = landFolder:FindFirstChild(folderName)
-		if not bushFolder then
+	for _, desc in grassFolder:GetDescendants() do
+		if string.lower(desc.Name) ~= "grasspart" then
 			continue
 		end
-
-		local function indexBushContainer(container: Instance)
-			for _, child in container:GetChildren() do
-				if BushRootUtil.isGeneratedPromptHelper(child) then
-					continue
-				end
-				if BushRootUtil.isBushContainer(child) then
-					indexBushContainer(child)
-				elseif child:IsA("Model") or child:IsA("BasePart") then
-					local nested: { Instance } = {}
-					collectNestedBushTargets(child, 0, nested)
-					if #nested == 0 then
-						addVeg(child, "bush")
-					else
-						for _, bushlet in nested do
-							addVeg(bushlet, "bush")
-						end
-					end
+		if desc:IsA("BasePart") then
+			addGrassPart(desc)
+		elseif desc:IsA("Model") then
+			-- Prefer the model’s direct BasePart children (one blade unit), not every nested mesh.
+			local any = false
+			for _, child in desc:GetChildren() do
+				if child:IsA("BasePart") then
+					addGrassPart(child)
+					any = true
 				end
 			end
-		end
-
-		if bushFolder:IsA("Folder") or bushFolder:IsA("Model") then
-			indexBushContainer(bushFolder)
+			if not any then
+				local part = desc:FindFirstChildWhichIsA("BasePart", true)
+				if part then
+					addGrassPart(part)
+				end
+			end
 		end
 	end
 end
 
 local function clearIndex()
 	disconnectList(indexConns)
-	table.clear(vegEntries)
-	table.clear(indexedRoots)
+	table.clear(grassEntries)
+	table.clear(indexedParts)
 end
 
 local function rebuildIndex()
@@ -431,31 +240,9 @@ local function rebuildIndex()
 end
 
 local function ensureIndex()
-	if #vegEntries == 0 or (os.clock() - lastIndexAt) >= INDEX_REFRESH_SEC then
+	if #grassEntries == 0 or (os.clock() - lastIndexAt) >= INDEX_REFRESH_SEC then
 		rebuildIndex()
 	end
-end
-
-local function capturePieces(root: Instance, kind: SwayKind): { TargetBase }?
-	local pieces: { TargetBase } = {}
-	-- Animate only this bushlet / grasspart — never the whole cluster via getShakeTargets.
-	local targets: { Instance } = { root }
-
-	for _, target in targets do
-		local base = getTargetPivot(target)
-		if base then
-			table.insert(pieces, {
-				target = target,
-				base = base,
-				halfY = approxHalfY(target),
-			})
-		end
-	end
-
-	if #pieces == 0 then
-		return nil
-	end
-	return pieces
 end
 
 local function makeAxis(pushDir: Vector3): Vector3
@@ -466,8 +253,8 @@ local function makeAxis(pushDir: Vector3): Vector3
 	return axis.Unit
 end
 
-local function touchVeg(root: Instance, kind: SwayKind, pushDir: Vector3, now: number)
-	local existing = active[root]
+local function touchGrass(part: BasePart, pushDir: Vector3, now: number)
+	local existing = active[part]
 	if existing then
 		existing.lastInRangeAt = now
 		if existing.phase == "recover" then
@@ -484,30 +271,17 @@ local function touchVeg(root: Instance, kind: SwayKind, pushDir: Vector3, now: n
 	if activeCount >= MAX_ACTIVE then
 		return
 	end
-	if kind == "bush" and ProximityPromptEffects.isBushSearchActive() then
+	if not part.Parent then
 		return
 	end
 
-	local pieces = capturePieces(root, kind)
-	if not pieces then
-		return
-	end
-
-	local amp: number
-	local push: number
-	if kind == "grass" then
-		amp = GRASS_TILT_RAD
-		push = GRASS_PUSH
-	else
-		amp, push = bushAmpFor(root)
-	end
-
-	active[root] = {
-		kind = kind,
-		pieces = pieces,
+	active[part] = {
+		part = part,
+		base = part.CFrame,
+		halfY = math.max(part.Size.Y * 0.5, 0.25),
 		axis = makeAxis(pushDir),
-		amp = amp,
-		push = push,
+		amp = GRASS_TILT_RAD,
+		push = GRASS_PUSH,
 		pushDir = pushDir,
 		phase = "press",
 		phaseStartedAt = now,
@@ -518,17 +292,18 @@ local function touchVeg(root: Instance, kind: SwayKind, pushDir: Vector3, now: n
 end
 
 local function scanAroundCharacter(_character: Model, humanoid: Humanoid, hrp: BasePart)
-	local state = humanoid:GetState()
-	if state == Enum.HumanoidStateType.Dead then
+	if humanoid:GetState() == Enum.HumanoidStateType.Dead then
 		return
 	end
 
 	ensureIndex()
-	if #vegEntries == 0 then
+	local n = #grassEntries
+	if n == 0 then
 		return
 	end
 
 	local pos = hrp.Position
+	local px, py, pz = pos.X, pos.Y, pos.Z
 	local move = humanoid.MoveDirection
 	local moveFlat = Vector3.new(move.X, 0, move.Z)
 	if moveFlat.Magnitude > 0.12 then
@@ -536,80 +311,62 @@ local function scanAroundCharacter(_character: Model, humanoid: Humanoid, hrp: B
 	end
 
 	local now = os.clock()
+	local pushDefault = if moveFlat.Magnitude > 0.12
+		then moveFlat.Unit
+		elseif lastMoveFlat.Magnitude > 0.1 then lastMoveFlat
+		else Vector3.new(0, 0, -1)
 
-	type Cand = { root: Instance, kind: SwayKind, dist: number }
-	local bushes: { Cand } = {}
-	local grasses: { Cand } = {}
+	-- Collect nearest hits without sorting the full map — first-pass gather then soft cap.
+	type Cand = { part: BasePart, distSq: number, x: number, z: number }
+	local cands: { Cand } = {}
 
-	for _, entry in vegEntries do
-		if not entry.root.Parent then
+	for i = 1, n do
+		local entry = grassEntries[i]
+		local part = entry.part
+		if not part.Parent then
 			continue
 		end
-
-		local rootPos = entryWorldPos(entry)
-		if not rootPos then
+		if math.abs(entry.y - py) > 12 then
 			continue
 		end
-		if math.abs(rootPos.Y - pos.Y) > 14 then
+		local dx = entry.x - px
+		local dz = entry.z - pz
+		local distSq = dx * dx + dz * dz
+		if distSq > GRASS_RADIUS_SQ then
 			continue
 		end
-
-		local dist = xzDist(rootPos, pos)
-		local radius = if entry.kind == "bush" then BUSH_RADIUS else GRASS_RADIUS
-		if dist > radius then
-			continue
-		end
-
-		local cand = { root = entry.root, kind = entry.kind, dist = dist }
-		if entry.kind == "bush" then
-			table.insert(bushes, cand)
-		else
-			table.insert(grasses, cand)
-		end
+		table.insert(cands, { part = part, distSq = distSq, x = entry.x, z = entry.z })
 	end
 
-	local function byDist(a: Cand, b: Cand): boolean
-		return a.dist < b.dist
-	end
-	table.sort(bushes, byDist)
-	table.sort(grasses, byDist)
-
-	local function pushDirFor(root: Instance, rootPos: Vector3): Vector3
-		if moveFlat.Magnitude > 0.12 then
-			return moveFlat.Unit
-		end
-		if lastMoveFlat.Magnitude > 0.1 then
-			return lastMoveFlat
-		end
-		local away = Vector3.new(pos.X - rootPos.X, 0, pos.Z - rootPos.Z)
-		if away.Magnitude > 1e-3 then
-			return away.Unit
-		end
-		return Vector3.new(0, 0, -1)
+	if #cands == 0 then
+		return
 	end
 
-	-- Prefer bushes so they aren't starved by dense grass.
-	for _, cand in bushes do
-		local rootPos = bushWorldPos(cand.root)
-		if rootPos then
-			touchVeg(cand.root, "bush", pushDirFor(cand.root, rootPos), now)
+	table.sort(cands, function(a, b)
+		return a.distSq < b.distSq
+	end)
+
+	local limit = math.min(#cands, MAX_ACTIVE)
+	for i = 1, limit do
+		local cand = cands[i]
+		local dir = pushDefault
+		if moveFlat.Magnitude <= 0.12 then
+			local away = Vector3.new(px - cand.x, 0, pz - cand.z)
+			if away.Magnitude > 1e-3 then
+				dir = away.Unit
+			end
 		end
-	end
-	for _, cand in grasses do
-		local rootPos = grassWorldPos(cand.root)
-		if rootPos then
-			touchVeg(cand.root, "grass", pushDirFor(cand.root, rootPos), now)
-		end
+		touchGrass(cand.part, dir, now)
 	end
 end
 
 local function clearAllSways()
-	local targets: { Instance } = {}
-	for target in active do
-		table.insert(targets, target)
+	local parts: { BasePart } = {}
+	for part in active do
+		table.insert(parts, part)
 	end
-	for _, target in targets do
-		restoreAndClear(target)
+	for _, part in parts do
+		restoreAndClear(part)
 	end
 	unbindStep()
 end

@@ -11,6 +11,7 @@ local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local GameplayMusicMuffle = require(script.Parent.GameplayMusicMuffle)
 
 local player = Players.LocalPlayer
 
@@ -485,6 +486,7 @@ function M.hide(opts: HideOpts?)
 	hideCount += 1
 	if hideCount == 1 then
 		buildKeepSets(opts)
+		GameplayMusicMuffle.push()
 		-- Start immediately — no deferred wait
 		snapshotAndSlideOut()
 	else
@@ -509,12 +511,14 @@ function M.show()
 	end
 	hideCount -= 1
 	if hideCount == 0 then
+		GameplayMusicMuffle.pop()
 		slideInAndRestore()
 	end
 end
 
 function M.forceShow()
 	hideCount = 0
+	GameplayMusicMuffle.forceClear()
 	slideInAndRestore()
 end
 

@@ -112,7 +112,8 @@ local function flashLight(light: PointLight | SpotLight | SurfaceLight)
 end
 
 --- Plugin-style one-shot emit for every VFX under root.
-local function emitAll(root: Instance, skipUnder: Instance?)
+local function emitAll(root: Instance, skipUnder: Instance?, opts: { noLights: boolean? }?)
+	local noLights = opts ~= nil and opts.noLights == true
 	local function skip(inst: Instance): boolean
 		return skipUnder ~= nil and (inst == skipUnder or inst:IsDescendantOf(skipUnder))
 	end
@@ -232,7 +233,7 @@ local function emitAll(root: Instance, skipUnder: Instance?)
 			emitBeam(inst)
 		elseif inst:IsA("Trail") then
 			emitTrail(inst)
-		elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+		elseif not noLights and (inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight")) then
 			flashLight(inst)
 		end
 	end
@@ -242,6 +243,43 @@ local function emitAll(root: Instance, skipUnder: Instance?)
 		visit(d)
 	end
 	playSounds(root)
+end
+
+local function stripLights(root: Instance)
+	local function kill(inst: Instance)
+		if inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+			inst.Enabled = false
+			inst:Destroy()
+		end
+	end
+	kill(root)
+	for _, d in root:GetDescendants() do
+		kill(d)
+	end
+end
+
+local function scaleParticleSizes(root: Instance, mult: number)
+	if mult == 1 then
+		return
+	end
+	for _, d in root:GetDescendants() do
+		if d:IsA("ParticleEmitter") then
+			local keypoints = d.Size.Keypoints
+			local scaled: { NumberSequenceKeypoint } = {}
+			for _, kp in keypoints do
+				table.insert(scaled, NumberSequenceKeypoint.new(kp.Time, kp.Value * mult, kp.Envelope * mult))
+			end
+			d.Size = NumberSequence.new(scaled)
+		end
+	end
+	if root:IsA("ParticleEmitter") then
+		local keypoints = root.Size.Keypoints
+		local scaled: { NumberSequenceKeypoint } = {}
+		for _, kp in keypoints do
+			table.insert(scaled, NumberSequenceKeypoint.new(kp.Time, kp.Value * mult, kp.Envelope * mult))
+		end
+		root.Size = NumberSequence.new(scaled)
+	end
 end
 
 local function collectBezierWorldPoints(pointsFolder: Instance): { Vector3 }
@@ -338,13 +376,61 @@ local function prepareMoverFlightVfx(mover: BasePart, emitOnFinish: Instance?)
 
 	-- Emit every spec/particle on the mover attachments (Blurred Spec 21, etc.).
 	for _, att in attachments do
-		emitAll(att, emitOnFinish)
+		emitAll(att, emitOnFinish, nil)
 		for _, d in att:GetDescendants() do
 			if emitOnFinish and d:IsDescendantOf(emitOnFinish) then
 				continue
 			end
 			if d:IsA("ParticleEmitter") then
 				d.Enabled = true
+			elseif d:IsA("Trail") then
+				d.Attachment0 = attachments[1]
+				d.Attachment1 = attachments[2]
+				d.Enabled = true
+			end
+		end
+	end
+end
+
+--- Put orphan Trail / ParticleEmitter / Beam onto Attachments under the mover so they
+--- actually render from those Attachment slots (plugin layout expects this).
+local function nestOrphanFxOntoAttachments(mover: BasePart)
+	local attachments: { Attachment } = {}
+	for _, ch in mover:GetChildren() do
+		if ch:IsA("Attachment") then
+			table.insert(attachments, ch)
+		end
+	end
+	if #attachments == 0 then
+		local a = Instance.new("Attachment")
+		a.Name = "VfxAttachment"
+		a.Parent = mover
+		table.insert(attachments, a)
+	end
+	local slot = 1
+	for _, ch in mover:GetChildren() do
+		if ch:IsA("Trail") or ch:IsA("ParticleEmitter") or ch:IsA("Beam") then
+			local att = attachments[((slot - 1) % #attachments) + 1]
+			ch.Parent = att
+			slot += 1
+		end
+	end
+	local eof = mover:FindFirstChild("EmitOnFinish")
+	if eof then
+		for _, ch in eof:GetChildren() do
+			if ch:IsA("Trail") or ch:IsA("ParticleEmitter") or ch:IsA("Beam") then
+				local att = eof:FindFirstChildWhichIsA("Attachment")
+				if not att then
+					att = Instance.new("Attachment")
+					att.Name = "EmitOnFinishAtt"
+					att.Parent = eof
+				end
+				-- EmitOnFinish is often a Folder — Attachment must live on a BasePart.
+				-- Parent Attachment to mover and keep emitters under it for the finish burst.
+				if eof:IsA("Folder") or eof:IsA("Model") then
+					att.Parent = mover
+				end
+				ch.Parent = att
 			end
 		end
 	end
@@ -369,6 +455,8 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
 	end
 	mover.Anchored = true
 
+	nestOrphanFxOntoAttachments(mover)
+
 	local points = collectBezierWorldPoints(pointsFolder)
 	if #points < 2 then
 		points = {
@@ -380,7 +468,7 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
 
 	local emitOnFinish = mover:FindFirstChild("EmitOnFinish")
 	-- Root glow (Fading Glow) + everything outside the finish burst.
-	emitAll(root, emitOnFinish)
+	emitAll(root, emitOnFinish, nil)
 	-- Wire Trail/Beam to Bezier.Part attachments and emit Blurred Spec layers on them.
 	prepareMoverFlightVfx(mover, emitOnFinish)
 
@@ -403,9 +491,9 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
 				conn:Disconnect()
 			end
 			if emitOnFinish then
-				emitAll(emitOnFinish, nil)
+				emitAll(emitOnFinish, nil, nil)
 			else
-				emitAll(mover, nil)
+				emitAll(mover, nil, nil)
 			end
 			for _, d in mover:GetDescendants() do
 				if d:IsA("Trail") or d:IsA("Beam") or d:IsA("ParticleEmitter") then
@@ -578,7 +666,12 @@ local function placeClone(clone: Instance, at: CFrame | BasePart): Instance
 	return anchor
 end
 
-local function playTemplate(pathParts: { string }, at: CFrame | BasePart, lifetimeSec: number?)
+local function playTemplate(
+	pathParts: { string },
+	at: CFrame | BasePart,
+	lifetimeSec: number?,
+	opts: { noLights: boolean?, particleScale: number? }?
+)
 	local template = findTemplate(pathParts)
 	if not template then
 		warn("[OtherVfxController] missing template:", table.concat(pathParts, "/"))
@@ -586,8 +679,15 @@ local function playTemplate(pathParts: { string }, at: CFrame | BasePart, lifeti
 	end
 	local life = lifetimeSec or LIFETIME_SEC
 	local clone = template:Clone()
+	if opts and opts.noLights then
+		stripLights(clone)
+	end
+	if opts and typeof(opts.particleScale) == "number" then
+		scaleParticleSizes(clone, opts.particleScale)
+	end
 	local placed = placeClone(clone, at)
 	local hostCf = if typeof(at) == "CFrame" then at else at.CFrame
+	local emitOpts = if opts and opts.noLights then { noLights = true } else nil
 
 	task.delay(EMIT_SETTLE_SEC, function()
 		if not clone.Parent then
@@ -595,7 +695,7 @@ local function playTemplate(pathParts: { string }, at: CFrame | BasePart, lifeti
 		end
 		local usedBezier = runBezierIfPresent(clone, hostCf)
 		if not usedBezier then
-			emitAll(clone, nil)
+			emitAll(clone, nil, emitOpts)
 		end
 	end)
 
@@ -708,11 +808,15 @@ end
 
 local function sampleBushVolumePoints(bush: Instance, count: number): { CFrame }
 	local volumeCf, size = getBushVolume(bush)
-	local half = size * 0.42
+	local half = size * 0.38
 	local points: { CFrame } = {}
 	table.insert(points, volumeCf)
-	table.insert(points, volumeCf * CFrame.new(0, -half.Y * 0.35, 0))
-	table.insert(points, volumeCf * CFrame.new(0, half.Y * 0.25, 0))
+	if count >= 2 then
+		table.insert(points, volumeCf * CFrame.new(0, -half.Y * 0.25, 0))
+	end
+	if count >= 3 then
+		table.insert(points, volumeCf * CFrame.new(half.X * 0.4, half.Y * 0.1, -half.Z * 0.25))
+	end
 	local remaining = math.max(0, count - #points)
 	for _ = 1, remaining do
 		local offset = Vector3.new(
@@ -725,18 +829,20 @@ local function sampleBushVolumePoints(bush: Instance, count: number): { CFrame }
 	return points
 end
 
+local BUSH_VFX_OPTS = { noLights = true, particleScale = 1.65 }
+
 local function playScattered(pathParts: { string }, bush: Instance, pointCount: number)
 	for _, cf in sampleBushVolumePoints(bush, pointCount) do
-		playTemplate(pathParts, cf)
+		playTemplate(pathParts, cf, nil, BUSH_VFX_OPTS)
 	end
 end
 
 local bushShakeToken = 0
-local BUSH_SHAKE_PULSE_SEC = 0.42
-local BUSH_SHAKE_POINTS = 6
-local BUSH_BURST_POINTS = 7
+local BUSH_SHAKE_PULSE_SEC = 0.75
+local BUSH_SHAKE_POINTS = 2
+local BUSH_BURST_POINTS = 3
 
---- Leaves/debris while searching (hold shake). Pulsed Emit across the bush volume.
+--- Leaves/debris while searching (hold shake). Sparse pulsed Emit across the bush volume.
 function OtherVfxController.playBushSearchShake(bush: Instance)
 	bushShakeToken += 1
 	local token = bushShakeToken
@@ -772,8 +878,111 @@ function OtherVfxController.playLuckyBlockOpen(at: CFrame | BasePart)
 	playTemplate({ "Bush Opening", "Luckyblock" }, at)
 end
 
+--- Upgrade VFX: parent Attachments onto the brainrot BasePart, then run Bezier off those slots.
 function OtherVfxController.playBrainrotUpgrade(at: CFrame | BasePart)
-	playTemplate({ "UpgradeBR", "OnUpgrade" }, at, UPGRADE_LIFETIME_SEC)
+	local hostPart: BasePart? = nil
+	local hostCf: CFrame
+	if typeof(at) == "CFrame" then
+		hostCf = at
+	else
+		hostPart = at
+		hostCf = at.CFrame
+	end
+
+	local template = findTemplate({ "UpgradeBR", "OnUpgrade" })
+	if not template then
+		warn("[OtherVfxController] missing template: UpgradeBR/OnUpgrade")
+		return
+	end
+
+	local clone = template:Clone()
+	stabilizeParts(clone)
+	disableAllFx(clone)
+
+	if not hostPart then
+		local anchor = Instance.new("Part")
+		anchor.Name = "OtherVfxUpgradeAnchor"
+		anchor.Anchored = true
+		anchor.CanCollide = false
+		anchor.CanQuery = false
+		anchor.Transparency = 1
+		anchor.Size = Vector3.new(0.4, 0.4, 0.4)
+		anchor.CFrame = hostCf
+		anchor.Parent = Workspace
+		hostPart = anchor
+		Debris:AddItem(anchor, UPGRADE_LIFETIME_SEC)
+	end
+
+	local movedAtts: { Attachment } = {}
+
+	if clone:IsA("BasePart") then
+		local bezier = clone:FindFirstChild("Bezier")
+		local mover = if bezier then bezier:FindFirstChild("Part") else nil
+		local freeMover = if mover and mover:IsA("BasePart") then mover :: BasePart else nil
+		relocatePartTree(clone, hostCf)
+		if freeMover then
+			weldStaticPartsToRoot(clone, freeMover)
+			freeMover.Anchored = true
+		end
+
+		-- Put root Attachments (Fading Glow) directly on the brainrot part.
+		for _, ch in clone:GetChildren() do
+			if ch:IsA("Attachment") then
+				local world = ch.WorldCFrame
+				ch.Parent = hostPart
+				ch.WorldCFrame = world
+				ch:SetAttribute("__UpgradeVfx", true)
+				table.insert(movedAtts, ch)
+				Debris:AddItem(ch, UPGRADE_LIFETIME_SEC)
+			end
+		end
+
+		clone.Anchored = false
+		clone.Parent = hostPart
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = hostPart
+		weld.Part1 = clone
+		weld.Parent = clone
+	elseif clone:IsA("Model") then
+		clone.Parent = Workspace
+		clone:PivotTo(hostCf)
+		local primary = clone.PrimaryPart or clone:FindFirstChildWhichIsA("BasePart", true)
+		if primary then
+			for _, ch in primary:GetChildren() do
+				if ch:IsA("Attachment") then
+					local world = ch.WorldCFrame
+					ch.Parent = hostPart
+					ch.WorldCFrame = world
+					ch:SetAttribute("__UpgradeVfx", true)
+					table.insert(movedAtts, ch)
+					Debris:AddItem(ch, UPGRADE_LIFETIME_SEC)
+				end
+			end
+			primary.Anchored = false
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = hostPart
+			weld.Part1 = primary
+			weld.Parent = primary
+		end
+	else
+		clone.Parent = hostPart
+	end
+
+	task.delay(EMIT_SETTLE_SEC, function()
+		for _, att in movedAtts do
+			if att.Parent then
+				emitAll(att, nil, nil)
+			end
+		end
+		if clone.Parent then
+			local usedBezier = runBezierIfPresent(clone, hostPart.CFrame)
+			if not usedBezier then
+				emitAll(clone, nil, nil)
+			end
+		end
+	end)
+
+	Debris:AddItem(clone, UPGRADE_LIFETIME_SEC)
 end
 
 return OtherVfxController

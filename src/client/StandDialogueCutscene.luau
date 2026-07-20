@@ -400,13 +400,13 @@ local function stopSoulMove()
 	end
 end
 
-local function soulPosForButton(target: GuiObject): (number, number)?
+local function soulPosForButton(target: GuiObject)
 	if not soulMarker or not soulMarker.Parent then
-		return nil
+		return nil, nil
 	end
 	local parent = soulMarker.Parent
 	if not parent:IsA("GuiObject") then
-		return nil
+		return nil, nil
 	end
 	local btnAbs = target.AbsolutePosition
 	local btnSize = target.AbsoluteSize

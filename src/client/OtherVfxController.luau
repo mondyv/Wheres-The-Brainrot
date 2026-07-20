@@ -1,8 +1,9 @@
 -- [ACTIVE] OtherVfxController
 --[[
-	One-shot bursts from ReplicatedStorage.EssentialAssets.OtherVFX.
-	Particles use Emit (EmitCount / EmitDelay attrs) — not Enabled=true loops.
-	Skips continuous BushEffect; use BushEffectBurst / Luckyblock / UpgradeBR.OnUpgrade.
+	One-shot VFX from ReplicatedStorage.EssentialAssets.OtherVFX.
+	Enables every ParticleEmitter / Trail / Beam / Light in the clone, then Emit()
+	using EmitCount / EmitDelay / EmitDuration attributes when present.
+	Skips continuous BushEffect; uses BushEffectBurst / Luckyblock / UpgradeBR.OnUpgrade.
 ]]
 
 local Debris = game:GetService("Debris")
@@ -12,9 +13,10 @@ local Workspace = game:GetService("Workspace")
 
 local OtherVfxController = {}
 
-local LIFETIME_SEC = 4.5
+local LIFETIME_SEC = 5.5
 local DEFAULT_EMIT = 28
 local BEZIER_DURATION = 0.55
+local DEFAULT_EMIT_DURATION = 0.85
 
 local function findOtherVfxFolder(): Instance?
 	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
@@ -39,90 +41,114 @@ local function findTemplate(pathParts: { string }): Instance?
 	return node
 end
 
-local function stabilizeClone(root: Instance)
+local function stabilizeParts(root: Instance)
+	local function fixPart(part: BasePart)
+		part.Anchored = true
+		part.CanCollide = false
+		part.CanQuery = false
+		part.CanTouch = false
+		part.Massless = true
+		part.Transparency = 1
+		part.CastShadow = false
+	end
 	if root:IsA("BasePart") then
-		root.Anchored = true
-		root.CanCollide = false
-		root.CanQuery = false
-		root.CanTouch = false
-		root.Massless = true
-		root.Transparency = 1
+		fixPart(root)
 	end
 	for _, d in root:GetDescendants() do
 		if d:IsA("BasePart") then
-			d.Anchored = true
-			d.CanCollide = false
-			d.CanQuery = false
-			d.CanTouch = false
-			d.Massless = true
-			d.Transparency = 1
-		elseif d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") then
-			d.Enabled = false
+			fixPart(d)
 		end
 	end
 end
 
 local function playSounds(root: Instance)
+	if root:IsA("Sound") then
+		root:Play()
+	end
 	for _, d in root:GetDescendants() do
 		if d:IsA("Sound") then
 			d:Play()
 		end
 	end
-	if root:IsA("Sound") then
-		root:Play()
-	end
 end
 
-local function flashLights(root: Instance)
-	for _, d in root:GetDescendants() do
-		if d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-			local light = d :: PointLight
-			local peak = light.Brightness
-			if peak <= 0 then
-				peak = 2
+local function activateLight(light: PointLight | SpotLight | SurfaceLight)
+	light.Enabled = true
+	local peak = light.Brightness
+	if peak <= 0 then
+		peak = 2
+		light.Brightness = peak
+	end
+	task.delay(math.max(0.4, DEFAULT_EMIT_DURATION), function()
+		if light.Parent then
+			light.Enabled = false
+		end
+	end)
+end
+
+--- Enable every VFX under root, then burst Emit on particle emitters.
+local function activateAllVfx(root: Instance, defaultCount: number, skipUnder: Instance?)
+	local function skip(inst: Instance): boolean
+		return skipUnder ~= nil and (inst == skipUnder or inst:IsDescendantOf(skipUnder))
+	end
+
+	local function activateEmitter(emitter: ParticleEmitter)
+		if skip(emitter) then
+			return
+		end
+		local delayAttr = emitter:GetAttribute("EmitDelay")
+		local delaySec = if typeof(delayAttr) == "number" then math.max(0, delayAttr) else 0
+		local countAttr = emitter:GetAttribute("EmitCount")
+		local count = if typeof(countAttr) == "number" then math.max(1, math.floor(countAttr)) else defaultCount
+		local durAttr = emitter:GetAttribute("EmitDuration")
+		local dur = if typeof(durAttr) == "number" then math.max(0, durAttr) else DEFAULT_EMIT_DURATION
+
+		local function run()
+			if not emitter.Parent then
+				return
 			end
-			light.Enabled = true
-			light.Brightness = peak
-			task.delay(0.35, function()
-				if light.Parent then
-					light.Enabled = false
-				end
-			end)
-		end
-	end
-end
-
-local function emitOne(emitter: ParticleEmitter, defaultCount: number)
-	local countAttr = emitter:GetAttribute("EmitCount")
-	local count = if typeof(countAttr) == "number" then math.max(1, math.floor(countAttr)) else defaultCount
-	local delayAttr = emitter:GetAttribute("EmitDelay")
-	local delaySec = if typeof(delayAttr) == "number" then math.max(0, delayAttr) else 0
-	emitter.Enabled = false
-	local function doEmit()
-		if emitter.Parent then
+			-- Enable first so rate-based + style layers show; Emit for the burst spike.
+			emitter.Enabled = true
 			emitter:Emit(count)
+			if dur > 0 then
+				task.delay(dur, function()
+					if emitter.Parent then
+						emitter.Enabled = false
+					end
+				end)
+			end
+		end
+
+		if delaySec > 0 then
+			task.delay(delaySec, run)
+		else
+			run()
 		end
 	end
-	if delaySec > 0 then
-		task.delay(delaySec, doEmit)
-	else
-		doEmit()
-	end
-end
 
-local function emitParticles(root: Instance, defaultCount: number, skipUnder: Instance?)
-	local function consider(inst: Instance)
-		if skipUnder and (inst == skipUnder or inst:IsDescendantOf(skipUnder)) then
+	local function activateInst(inst: Instance)
+		if skip(inst) then
 			return
 		end
 		if inst:IsA("ParticleEmitter") then
-			emitOne(inst, defaultCount)
+			activateEmitter(inst)
+		elseif inst:IsA("Trail") or inst:IsA("Beam") then
+			inst.Enabled = true
+			task.delay(DEFAULT_EMIT_DURATION + 0.4, function()
+				if inst.Parent then
+					(inst :: Trail).Enabled = false
+				end
+			end)
+		elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+			activateLight(inst)
 		end
 	end
-	consider(root)
+
+	activateInst(root)
 	for _, d in root:GetDescendants() do
-		consider(d)
+		activateInst(d)
 	end
+	playSounds(root)
 end
 
 local function collectBezierWorldPoints(pointsFolder: Instance): { Vector3 }
@@ -175,7 +201,7 @@ local function samplePolyline(points: { Vector3 }, alpha: number): Vector3
 	return a:Lerp(b, f)
 end
 
-local function runBezierIfPresent(root: Instance, hostCf: CFrame)
+local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
 	local bezier = root:FindFirstChild("Bezier")
 	if not bezier then
 		return false
@@ -188,7 +214,6 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame)
 
 	local points = collectBezierWorldPoints(pointsFolder)
 	if #points < 2 then
-		-- Fall back: place relative to host if points weren't world-ready yet.
 		points = {}
 		local origin = hostCf.Position
 		table.insert(points, origin)
@@ -197,13 +222,13 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame)
 	end
 
 	local emitOnFinish = mover:FindFirstChild("EmitOnFinish")
-	-- Skip EmitOnFinish during the initial burst; fire at path end.
-	emitParticles(root, DEFAULT_EMIT, emitOnFinish)
-	flashLights(root)
-	playSounds(root)
+	-- Enable everything except EmitOnFinish (that bursts at path end).
+	activateAllVfx(root, DEFAULT_EMIT, emitOnFinish)
 
 	for _, d in mover:GetDescendants() do
 		if d:IsA("Trail") or d:IsA("Beam") then
+			d.Enabled = true
+		elseif d:IsA("ParticleEmitter") and not (emitOnFinish and d:IsDescendantOf(emitOnFinish)) then
 			d.Enabled = true
 		end
 	end
@@ -227,23 +252,28 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame)
 			if conn then
 				conn:Disconnect()
 			end
-			for _, d in mover:GetDescendants() do
-				if d:IsA("Trail") or d:IsA("Beam") then
-					d.Enabled = false
-				end
-			end
 			if emitOnFinish then
-				emitParticles(emitOnFinish, DEFAULT_EMIT, nil)
+				activateAllVfx(emitOnFinish, DEFAULT_EMIT, nil)
 			else
-				emitParticles(mover, DEFAULT_EMIT, nil)
+				activateAllVfx(mover, DEFAULT_EMIT, nil)
 			end
+			task.delay(0.5, function()
+				if not mover.Parent then
+					return
+				end
+				for _, d in mover:GetDescendants() do
+					if d:IsA("Trail") or d:IsA("Beam") then
+						d.Enabled = false
+					end
+				end
+			end)
 		end
 	end)
 	return true
 end
 
 local function placeClone(clone: Instance, at: CFrame | BasePart): Instance
-	stabilizeClone(clone)
+	stabilizeParts(clone)
 	local cf: CFrame
 	local hostPart: BasePart? = nil
 	if typeof(at) == "CFrame" then
@@ -263,7 +293,7 @@ local function placeClone(clone: Instance, at: CFrame | BasePart): Instance
 			anchor.CanCollide = false
 			anchor.CanQuery = false
 			anchor.Transparency = 1
-			anchor.Size = Vector3.new(0.2, 0.2, 0.2)
+			anchor.Size = Vector3.new(0.35, 0.35, 0.35)
 			anchor.CFrame = cf
 			anchor.Parent = Workspace
 			clone.Parent = anchor
@@ -275,26 +305,53 @@ local function placeClone(clone: Instance, at: CFrame | BasePart): Instance
 
 	if clone:IsA("BasePart") then
 		clone.CFrame = cf
-		clone.Parent = Workspace
+		if hostPart then
+			clone.Anchored = false
+			clone.Parent = hostPart
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = hostPart
+			weld.Part1 = clone
+			weld.Parent = clone
+		else
+			clone.Parent = Workspace
+		end
 		return clone
 	end
 
 	if clone:IsA("Model") then
 		clone:PivotTo(cf)
 		clone.Parent = Workspace
+		if hostPart then
+			local primary = clone.PrimaryPart or clone:FindFirstChildWhichIsA("BasePart", true)
+			if primary then
+				primary.Anchored = false
+				local weld = Instance.new("WeldConstraint")
+				weld.Part0 = hostPart
+				weld.Part1 = primary
+				weld.Parent = primary
+			end
+		end
 		return clone
 	end
 
-	-- Folder / other: wrap in anchored part at target.
 	local anchor = Instance.new("Part")
 	anchor.Name = "OtherVfxAnchor"
 	anchor.Anchored = true
 	anchor.CanCollide = false
 	anchor.CanQuery = false
 	anchor.Transparency = 1
-	anchor.Size = Vector3.new(0.2, 0.2, 0.2)
+	anchor.Size = Vector3.new(0.35, 0.35, 0.35)
 	anchor.CFrame = cf
-	anchor.Parent = Workspace
+	if hostPart then
+		anchor.Anchored = false
+		anchor.Parent = hostPart
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = hostPart
+		weld.Part1 = anchor
+		weld.Parent = anchor
+	else
+		anchor.Parent = Workspace
+	end
 	clone.Parent = anchor
 	anchor:SetAttribute("__OtherVfxDebris", true)
 	Debris:AddItem(anchor, LIFETIME_SEC)
@@ -310,17 +367,19 @@ local function playTemplate(pathParts: { string }, at: CFrame | BasePart, defaul
 	local clone = template:Clone()
 	local placed = placeClone(clone, at)
 	local hostCf = if typeof(at) == "CFrame" then at else at.CFrame
-	local usedBezier = runBezierIfPresent(clone, hostCf)
-	if not usedBezier then
-		emitParticles(clone, defaultEmit or DEFAULT_EMIT, nil)
-		flashLights(clone)
-		playSounds(clone)
-	end
-	-- Attachment parented to an existing host part: only clean the clone.
+	-- Defer one frame so Attachment WorldCFrames settle after parenting.
+	task.defer(function()
+		if not clone.Parent then
+			return
+		end
+		local usedBezier = runBezierIfPresent(clone, hostCf)
+		if not usedBezier then
+			activateAllVfx(clone, defaultEmit or DEFAULT_EMIT, nil)
+		end
+	end)
 	if clone:IsA("Attachment") and typeof(at) ~= "CFrame" then
 		Debris:AddItem(clone, LIFETIME_SEC)
 	elseif placed.Name == "OtherVfxAnchor" then
-		-- placeClone already scheduled Debris on the wrapper when needed.
 		if not placed:GetAttribute("__OtherVfxDebris") then
 			placed:SetAttribute("__OtherVfxDebris", true)
 			Debris:AddItem(placed, LIFETIME_SEC)
@@ -344,17 +403,31 @@ local function resolveBushCFrame(bush: Instance): CFrame
 	return CFrame.new()
 end
 
---- Bush search completed — burst only (not continuous BushEffect).
-function OtherVfxController.playBushOpenedBurst(bush: Instance)
-	playTemplate({ "Bush Opening", "BushEffectBurst" }, resolveBushCFrame(bush), 36)
+local function resolveBushHost(bush: Instance): CFrame | BasePart
+	if bush:IsA("BasePart") then
+		return bush
+	end
+	if bush:IsA("Model") then
+		local primary = bush.PrimaryPart or bush:FindFirstChildWhichIsA("BasePart", true)
+		if primary then
+			return primary
+		end
+	end
+	local part = bush:FindFirstChildWhichIsA("BasePart", true)
+	if part then
+		return part
+	end
+	return resolveBushCFrame(bush)
 end
 
---- Lucky block shake / open.
+function OtherVfxController.playBushOpenedBurst(bush: Instance)
+	playTemplate({ "Bush Opening", "BushEffectBurst" }, resolveBushHost(bush), 36)
+end
+
 function OtherVfxController.playLuckyBlockOpen(at: CFrame | BasePart)
 	playTemplate({ "Bush Opening", "Luckyblock" }, at, 40)
 end
 
---- Stand brainrot upgraded.
 function OtherVfxController.playBrainrotUpgrade(at: CFrame | BasePart)
 	playTemplate({ "UpgradeBR", "OnUpgrade" }, at, 32)
 end

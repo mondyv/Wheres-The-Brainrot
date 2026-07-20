@@ -1,8 +1,8 @@
 -- [ACTIVE] GameplayUiVisibility
 --[[
 	Shared cutscene / panel HUD hide/show with Pokemon-style staggered slide-to-edge.
-	Animates individual SideUI buttons (and non-button chrome leaves), not whole frame groups.
-	Detaches UIListLayout/UIGridLayout during the slide so Position tweens aren't fought.
+	Animates SideUI chrome *groups* (Lef1, Top, Counters, Toolbar, …) as whole units
+	so nothing is left half-visible. No layout detach — avoids broken/stuck UI.
 ]]
 
 local Players = game:GetService("Players")
@@ -19,10 +19,10 @@ local M = {}
 
 local hideCount = 0
 local animGen = 0
-local SLIDE_OUT = TweenInfo.new(0.13, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local SLIDE_IN = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local WAVE_STAGGER = 0.02
-local MAX_WAVE_SPAN = 0.22
+local SLIDE_OUT = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local SLIDE_IN = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local WAVE_STAGGER = 0.028
+local MAX_WAVE_SPAN = 0.2
 
 type GuiSnap = {
 	inst: GuiObject,
@@ -37,18 +37,14 @@ type ScreenSnap = {
 	wasEnabled: boolean,
 }
 
-type LayoutSnap = {
-	layout: UIListLayout | UIGridLayout | UIPageLayout,
-	parent: Instance,
-}
-
 local mainSnaps: { GuiSnap } = {}
 local screenSnaps: { ScreenSnap } = {}
-local layoutSnaps: { LayoutSnap } = {}
 local chatWasEnabled = true
 local activeTweens: { Tween } = {}
 local keepScreenNames: { [string]: boolean } = {}
 local keepMainChildNames: { [string]: boolean } = {}
+local sideUIRef: GuiObject? = nil
+local sideUIWasVisible = true
 
 export type HideOpts = {
 	keepScreenGuiNames: { string }?,
@@ -76,78 +72,66 @@ local function viewportSize(): Vector2
 	return if cam then cam.ViewportSize else Vector2.new(1280, 720)
 end
 
-local function restoreLayouts()
-	for _, entry in layoutSnaps do
-		if entry.layout and entry.parent and entry.parent.Parent then
-			entry.layout.Parent = entry.parent
+-- Content-weighted center so fullscreen wrappers slide by where chrome actually sits.
+local function contentCenter(gui: GuiObject, vp: Vector2): Vector2
+	local minX, minY = math.huge, math.huge
+	local maxX, maxY = -math.huge, -math.huge
+	local found = false
+	local areaCap = vp.X * vp.Y * 0.45
+
+	local function consider(g: GuiObject)
+		if not g.Visible then
+			return
+		end
+		local sz = g.AbsoluteSize
+		local area = sz.X * sz.Y
+		if area < 20 * 20 or area >= areaCap then
+			return
+		end
+		local pos = g.AbsolutePosition
+		minX = math.min(minX, pos.X)
+		minY = math.min(minY, pos.Y)
+		maxX = math.max(maxX, pos.X + sz.X)
+		maxY = math.max(maxY, pos.Y + sz.Y)
+		found = true
+	end
+
+	consider(gui)
+	for _, d in gui:GetDescendants() do
+		if d:IsA("GuiObject") then
+			consider(d :: GuiObject)
 		end
 	end
-	table.clear(layoutSnaps)
-end
 
-local function detachLayouts(root: Instance)
-	for _, d in root:GetDescendants() do
-		if d:IsA("UIListLayout") or d:IsA("UIGridLayout") or d:IsA("UIPageLayout") then
-			local parent = d.Parent
-			if parent then
-				table.insert(layoutSnaps, { layout = d, parent = parent })
-				d.Parent = nil
-			end
-		end
+	if found then
+		return Vector2.new((minX + maxX) * 0.5, (minY + maxY) * 0.5)
 	end
-end
-
-local function pieceCenter(gui: GuiObject): Vector2
-	local absPos = gui.AbsolutePosition
-	local absSize = gui.AbsoluteSize
-	return absPos + absSize * 0.5
+	return gui.AbsolutePosition + gui.AbsoluteSize * 0.5
 end
 
 local function computeSlidePos(gui: GuiObject, vp: Vector2): UDim2
 	local absSize = gui.AbsoluteSize
 	local base = gui.Position
-	local margin = 56
-	local travelX = math.max(absSize.X + margin, 120)
-	local travelY = math.max(absSize.Y + margin, 90)
-	local center = pieceCenter(gui)
+	local margin = 72
+	local travelX = math.max(absSize.X + margin, 160)
+	local travelY = math.max(absSize.Y + margin, 120)
+	local center = contentCenter(gui, vp)
 	local nx = center.X / math.max(vp.X, 1)
 
-	if nx < 0.4 then
+	if nx < 0.38 then
 		return UDim2.new(base.X.Scale, base.X.Offset - travelX, base.Y.Scale, base.Y.Offset)
-	elseif nx > 0.6 then
+	elseif nx > 0.62 then
 		return UDim2.new(base.X.Scale, base.X.Offset + travelX, base.Y.Scale, base.Y.Offset)
-	elseif center.Y < vp.Y * 0.38 then
+	elseif center.Y < vp.Y * 0.36 then
 		return UDim2.new(base.X.Scale, base.X.Offset, base.Y.Scale, base.Y.Offset - travelY)
 	else
 		return UDim2.new(base.X.Scale, base.X.Offset, base.Y.Scale, base.Y.Offset + travelY)
 	end
 end
 
-local function waveOrderKey(gui: GuiObject): number
-	local center = pieceCenter(gui)
-	return -center.Y + center.X * 0.015
-end
-
-local function isUnderKeptMainChild(inst: Instance, main: Instance): boolean
-	local p: Instance? = inst
-	while p and p ~= main do
-		if keepMainChildNames[p.Name] then
-			return true
-		end
-		p = p.Parent
-	end
-	return false
-end
-
-local function isVisibleChain(gui: GuiObject, stopAt: Instance): boolean
-	local p: Instance? = gui
-	while p and p ~= stopAt do
-		if p:IsA("GuiObject") and not (p :: GuiObject).Visible then
-			return false
-		end
-		p = p.Parent
-	end
-	return gui.Visible
+local function waveOrderKey(gui: GuiObject, vp: Vector2): number
+	local center = contentCenter(gui, vp)
+	return -center.Y + center.X * 0.02
 end
 
 local function collectTargets(main: Instance): { GuiObject }
@@ -156,15 +140,7 @@ local function collectTargets(main: Instance): { GuiObject }
 	local seen: { [GuiObject]: boolean } = {}
 
 	local function addTarget(gui: GuiObject)
-		if seen[gui] then
-			return
-		end
-		local sz = gui.AbsoluteSize
-		if sz.X < 18 or sz.Y < 18 then
-			return
-		end
-		-- Skip near-fullscreen slabs
-		if sz.X >= vp.X * 0.7 and sz.Y >= vp.Y * 0.55 then
+		if seen[gui] or not gui.Visible then
 			return
 		end
 		seen[gui] = true
@@ -173,83 +149,17 @@ local function collectTargets(main: Instance): { GuiObject }
 
 	local sideUI = main:FindFirstChild("SideUI")
 	if sideUI and sideUI:IsA("GuiObject") then
-		local buttons: { GuiButton } = {}
-		for _, d in sideUI:GetDescendants() do
-			if d:IsA("GuiButton") and isVisibleChain(d :: GuiObject, sideUI) then
-				table.insert(buttons, d :: GuiButton)
+		sideUIRef = sideUI :: GuiObject
+		-- Whole chrome groups — never partial buttons (avoids “some stays some goes”)
+		for _, sub in sideUI:GetChildren() do
+			if sub:IsA("GuiObject") then
+				addTarget(sub :: GuiObject)
 			end
 		end
-
-		-- Prefer outer buttons (skip nested clickables inside another button)
-		for _, btn in buttons do
-			local nested = false
-			for _, other in buttons do
-				if other ~= btn and btn:IsDescendantOf(other) then
-					nested = true
-					break
-				end
-			end
-			if not nested then
-				addTarget(btn)
-			end
-		end
-
-		-- Non-button chrome (cash, boost, area, etc.) that isn't already covered by a button ancestor
-		for _, d in sideUI:GetDescendants() do
-			if not d:IsA("GuiObject") or d:IsA("GuiButton") then
-				continue
-			end
-			local gui = d :: GuiObject
-			if not isVisibleChain(gui, sideUI) then
-				continue
-			end
-			local sz = gui.AbsoluteSize
-			if sz.X < 36 or sz.Y < 28 then
-				continue
-			end
-			if sz.X >= vp.X * 0.55 or sz.Y >= vp.Y * 0.4 then
-				continue
-			end
-			-- Only leaf-ish chrome: no GuiButton descendants, and not an ancestor wrapper of a target
-			local hasBtn = false
-			for _, c in gui:GetDescendants() do
-				if c:IsA("GuiButton") then
-					hasBtn = true
-					break
-				end
-			end
-			if hasBtn then
-				continue
-			end
-			local coversTarget = false
-			for _, t in targets do
-				if t:IsDescendantOf(gui) then
-					coversTarget = true
-					break
-				end
-			end
-			if coversTarget then
-				continue
-			end
-			-- Prefer named chrome leaves under Counters / Top / Return / Boosts
-			local parent = gui.Parent
-			local parentName = if parent then parent.Name else ""
-			local useful = gui.Name == "Cash"
-				or gui.Name == "Boost"
-				or gui.Name == "CurrentArea"
-				or gui.Name == "Notif"
-				or gui.Name == "Return"
-				or parentName == "Counters"
-				or parentName == "Top"
-				or parentName == "Boosts"
-				or parentName == "GamepassBoostIcons"
-			if useful then
-				addTarget(gui)
-			end
-		end
+	else
+		sideUIRef = nil
 	end
 
-	-- Other Main children (not SideUI / kept)
 	for _, child in main:GetChildren() do
 		if not child:IsA("GuiObject") then
 			continue
@@ -257,20 +167,7 @@ local function collectTargets(main: Instance): { GuiObject }
 		if child.Name == "SideUI" or keepMainChildNames[child.Name] then
 			continue
 		end
-		local gui = child :: GuiObject
-		if not gui.Visible then
-			continue
-		end
-		local sz = gui.AbsoluteSize
-		if sz.X >= vp.X * 0.65 and sz.Y >= vp.Y * 0.5 then
-			for _, sub in gui:GetDescendants() do
-				if sub:IsA("GuiButton") and isVisibleChain(sub :: GuiObject, gui) then
-					addTarget(sub :: GuiObject)
-				end
-			end
-		else
-			addTarget(gui)
-		end
+		addTarget(child :: GuiObject)
 	end
 
 	return targets
@@ -304,11 +201,28 @@ local function waveDelay(index: number, count: number): number
 	return (index - 1) * stagger
 end
 
+local function forceHideAllSnaps()
+	for _, entry in mainSnaps do
+		if entry.inst.Parent then
+			entry.inst.Visible = false
+			entry.inst.Position = entry.slidePos
+		end
+	end
+	-- Sweep any SideUI child that appeared mid-hide or was missed
+	local side = sideUIRef
+	if side and side.Parent then
+		for _, sub in side:GetChildren() do
+			if sub:IsA("GuiObject") then
+				(sub :: GuiObject).Visible = false
+			end
+		end
+	end
+end
+
 local function snapshotAndSlideOut()
 	animGen += 1
 	local gen = animGen
 	cancelTweens()
-	restoreLayouts()
 	table.clear(mainSnaps)
 	table.clear(screenSnaps)
 
@@ -318,26 +232,21 @@ local function snapshotAndSlideOut()
 	end
 
 	local vp = viewportSize()
-	-- Freeze layouts so per-button Position tweens work
-	local sideUI = main:FindFirstChild("SideUI")
-	if sideUI then
-		detachLayouts(sideUI)
-	end
-
 	local pending: { GuiSnap } = {}
 	for _, gui in collectTargets(main) do
-		if isUnderKeptMainChild(gui, main) then
-			continue
-		end
 		local basePos = gui.Position
 		local slidePos = computeSlidePos(gui, vp)
 		table.insert(pending, {
 			inst = gui,
-			wasVisible = true,
+			wasVisible = gui.Visible,
 			basePos = basePos,
 			slidePos = slidePos,
-			order = waveOrderKey(gui),
+			order = waveOrderKey(gui, vp),
 		})
+	end
+
+	if sideUIRef then
+		sideUIWasVisible = sideUIRef.Visible
 	end
 
 	table.sort(pending, function(a, b)
@@ -347,6 +256,9 @@ local function snapshotAndSlideOut()
 	local count = #pending
 	for i, entry in ipairs(pending) do
 		table.insert(mainSnaps, entry)
+		if not entry.wasVisible then
+			continue
+		end
 		local delaySec = waveDelay(i, count)
 		task.delay(delaySec, function()
 			if gen ~= animGen or hideCount <= 0 or not entry.inst.Parent then
@@ -361,12 +273,7 @@ local function snapshotAndSlideOut()
 		if gen ~= animGen or hideCount <= 0 then
 			return
 		end
-		for _, entry in mainSnaps do
-			if entry.inst.Parent then
-				entry.inst.Visible = false
-				entry.inst.Position = entry.slidePos
-			end
-		end
+		forceHideAllSnaps()
 	end)
 
 	local pg = player:FindFirstChild("PlayerGui")
@@ -401,6 +308,10 @@ local function slideInAndRestore()
 		return a.order < b.order
 	end)
 
+	if sideUIRef and sideUIRef.Parent then
+		sideUIRef.Visible = sideUIWasVisible
+	end
+
 	for _, entry in ipairs(pending) do
 		if entry.inst.Parent and entry.wasVisible then
 			entry.inst.Position = entry.slidePos
@@ -410,7 +321,6 @@ local function slideInAndRestore()
 
 	local count = #pending
 	if count == 0 then
-		restoreLayouts()
 		for _, entry in screenSnaps do
 			if entry.gui.Parent then
 				entry.gui.Enabled = entry.wasEnabled
@@ -438,6 +348,7 @@ local function slideInAndRestore()
 				end)
 			else
 				entry.inst.Position = entry.basePos
+				entry.inst.Visible = false
 			end
 		end
 	end
@@ -471,12 +382,26 @@ local function slideInAndRestore()
 			return
 		end
 		for _, entry in mainSnaps do
-			if entry.inst.Parent and entry.wasVisible then
+			if entry.inst.Parent then
 				entry.inst.Position = entry.basePos
-				entry.inst.Visible = true
+				entry.inst.Visible = entry.wasVisible
 			end
 		end
-		restoreLayouts()
+		-- Ensure every SideUI group is back if it was visible before
+		local side = sideUIRef
+		if side and side.Parent then
+			side.Visible = sideUIWasVisible
+			local restored: { [GuiObject]: boolean } = {}
+			for _, entry in mainSnaps do
+				restored[entry.inst] = true
+			end
+			for _, sub in side:GetChildren() do
+				if sub:IsA("GuiObject") and not restored[sub :: GuiObject] then
+					-- Missed child: show again at current position (safer than leaving hidden)
+					(sub :: GuiObject).Visible = true
+				end
+			end
+		end
 		table.clear(mainSnaps)
 		table.clear(screenSnaps)
 	end)
@@ -487,7 +412,6 @@ function M.hide(opts: HideOpts?)
 	if hideCount == 1 then
 		buildKeepSets(opts)
 		GameplayMusicMuffle.push()
-		-- Start immediately — no deferred wait
 		snapshotAndSlideOut()
 	else
 		if opts then

@@ -37,6 +37,7 @@ local CarryGate = require(script.Parent.CarryGate)
 local DropTargets = require(script.Parent.ToolbarDropTargets)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local LoadingScreenController = require(script.Parent.LoadingScreenController)
+local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
@@ -1643,6 +1644,9 @@ local ToolbarController = {}
 
 	showToolbar = function()
 		if LoadingScreenController.isActive() then
+			return
+		end
+		if GameplayUiVisibility.isHidden() then
 			return
 		end
 		if toolbarShown then
@@ -3606,6 +3610,10 @@ local ToolbarController = {}
 		refreshToggleBackpackIconLayout()
 		if canUseToolbar then
 			-- Force show even if an earlier mid-load showToolbar no-op'd.
+			if GameplayUiVisibility.isHidden() then
+				toolbarShown = true
+				return true
+			end
 			if not toolbarShown then
 				showToolbar()
 			else

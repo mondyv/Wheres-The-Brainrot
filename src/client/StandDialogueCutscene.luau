@@ -416,14 +416,15 @@ local function soulPosForButton(target: GuiObject)
 	return x, y
 end
 
-local function beginSoulSpin180()
+local function beginSoulSelectPulse()
 	if not soulMarker or soulWiping then
 		return
 	end
-	soulSpinFrom = soulMarker.Rotation
-	soulSpinDelta = 180
+	-- Scale pulse only — never rotate (180 flips the arrow the wrong way)
+	soulSpinFrom = 0
+	soulSpinDelta = 0
 	soulSpinT0 = os.clock()
-	soulSpinDur = 0.28
+	soulSpinDur = 0.26
 	soulSpinning = true
 end
 
@@ -465,10 +466,10 @@ local function ensureSoulTrackLoop()
 			end
 			local a = math.clamp((os.clock() - soulSpinT0) / math.max(soulSpinDur, 0.01), 0, 1)
 			local eased = a * a * (3 - 2 * a)
-			soulMarker.Rotation = soulSpinFrom + soulSpinDelta * eased
-			scale.Scale = 1 - 0.18 * math.sin(eased * math.pi)
+			-- Keep facing; just shrink then grow
+			soulMarker.Rotation = 0
+			scale.Scale = 1 - 0.22 * math.sin(eased * math.pi)
 			if a >= 1 then
-				soulMarker.Rotation = (soulSpinFrom + soulSpinDelta) % 360
 				scale.Scale = 1
 				soulSpinning = false
 			end
@@ -531,7 +532,6 @@ local function wipeSoulMarker(onDone: (() -> ())?)
 	end
 	local info = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 	TweenService:Create(marker, info, {
-		Rotation = marker.Rotation + 180,
 		ImageTransparency = 1,
 	}):Play()
 	TweenService:Create(scale, info, { Scale = 0.15 }):Play()
@@ -699,7 +699,7 @@ updateChoiceVisuals = function()
 	if selectedIndex ~= lastHapticSelectedIndex and choicesReady then
 		lastHapticSelectedIndex = selectedIndex
 		MobileHaptics.select()
-		beginSoulSpin180()
+		beginSoulSelectPulse()
 	end
 	choiceEnter.TextColor3 = if selectedIndex == 1 then Color3.fromRGB(255, 255, 0) else Color3.fromRGB(255, 255, 255)
 	choiceExit.TextColor3 = if selectedIndex == 2 then Color3.fromRGB(255, 255, 0) else Color3.fromRGB(255, 255, 255)

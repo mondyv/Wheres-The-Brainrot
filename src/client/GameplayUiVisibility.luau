@@ -19,9 +19,9 @@ local player = Players.LocalPlayer
 local M = {}
 
 local hideCount = 0
-local SLIDE_OUT = TweenInfo.new(0.34, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local SLIDE_IN = TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local WAVE_STAGGER = 0.055
+local SLIDE_OUT = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local SLIDE_IN = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local WAVE_STAGGER = 0.038
 
 type GuiSnap = {
 	inst: GuiObject,
@@ -275,7 +275,7 @@ local function slideInAndRestore()
 		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, chatWasEnabled)
 	end)
 
-	local totalIn = SLIDE_IN.Time + math.max(0, #pending - 1) * WAVE_STAGGER + 0.05
+	local totalIn = SLIDE_IN.Time + math.max(0, #pending - 1) * WAVE_STAGGER + 0.02
 	task.delay(totalIn, function()
 		if hideCount > 0 then
 			return
@@ -289,6 +289,7 @@ function M.hide(opts: HideOpts?)
 	hideCount += 1
 	if hideCount == 1 then
 		buildKeepSets(opts)
+		-- One frame so AbsolutePosition is valid, then start immediately
 		task.defer(function()
 			if hideCount > 0 then
 				snapshotAndSlideOut()

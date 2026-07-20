@@ -389,23 +389,48 @@ burstSoulSpin = function()
 	end
 	stopSoulSpin()
 	local marker = soulMarker
+	local scale = marker:FindFirstChildOfClass("UIScale")
+	if not scale then
+		scale = Instance.new("UIScale")
+		scale.Scale = 1
+		scale.Parent = marker
+	end
 	local startRot = marker.Rotation
 	local t0 = os.clock()
-	local dur = 0.55
+	local dur = 0.48
 	soulSpinConn = RunService.RenderStepped:Connect(function()
 		if not marker.Parent or soulWiping then
 			stopSoulSpin()
 			return
 		end
 		local a = math.clamp((os.clock() - t0) / dur, 0, 1)
-		-- Smooth single turn (ease in-out)
+		-- Smooth ease in-out spin + shrink then grow back
 		local eased = a * a * (3 - 2 * a)
 		marker.Rotation = startRot + 360 * eased
+		scale.Scale = 1 - 0.28 * math.sin(eased * math.pi)
 		if a >= 1 then
 			marker.Rotation = startRot % 360
+			scale.Scale = 1
 			stopSoulSpin()
 		end
 	end)
+end
+
+local function placeSoulOnButton(target: GuiObject)
+	if not soulMarker or not soulMarker.Parent then
+		return
+	end
+	local parent = soulMarker.Parent
+	if not parent:IsA("GuiObject") then
+		return
+	end
+	local btnAbs = target.AbsolutePosition
+	local btnSize = target.AbsoluteSize
+	local parentAbs = (parent :: GuiObject).AbsolutePosition
+	-- AnchorPoint (1, 0.5): tip sits just left of button, Y locked to visual center
+	local x = btnAbs.X - parentAbs.X - 4
+	local y = btnAbs.Y + btnSize.Y * 0.5 - parentAbs.Y
+	soulMarker.Position = UDim2.fromOffset(x, y)
 end
 
 local function wipeSoulMarker(onDone: (() -> ())?)
@@ -454,10 +479,6 @@ local function stopChoiceHover()
 		state.pos = state.basePos
 		state.rot = state.baseRot
 		state.hovering = false
-		local sc = state.btn:FindFirstChildOfClass("UIScale")
-		if sc then
-			sc.Scale = 1
-		end
 	end
 end
 
@@ -495,32 +516,53 @@ local function startChoiceHoverLoop()
 	end
 	choiceHoverConn = RunService.RenderStepped:Connect(function(dt)
 		local anyActive = false
+		local mouse = UserInputService:GetMouseLocation()
 		for _, state in choiceHoverStates do
 			local btn = state.btn
 			if not btn.Parent then
 				continue
 			end
-			local scale = btn:FindFirstChildOfClass("UIScale")
-			if not scale then
-				scale = Instance.new("UIScale")
-				scale.Scale = 1
-				scale.Parent = btn
+			local goalX = 0
+			local goalY = 0
+			local goalRot = state.baseRot
+			if state.hovering then
+				local absPos = btn.AbsolutePosition
+				local absSize = btn.AbsoluteSize
+				-- Use base layout center so follow doesn't feed back into itself
+				local centerX = absPos.X + absSize.X * 0.5 - (state.pos.X.Offset - state.basePos.X.Offset)
+				local centerY = absPos.Y + absSize.Y * 0.5 - (state.pos.Y.Offset - state.basePos.Y.Offset)
+				local dx = mouse.X - centerX
+				local dy = mouse.Y - centerY
+				goalX = math.clamp(dx * 0.1, -7, 7)
+				goalY = math.clamp(dy * 0.1, -5, 5)
+				goalRot = state.baseRot + math.clamp(dx * 0.012, -1.1, 1.1)
 			end
-			-- Keep buttons in place — only light scale + tiny tilt (no position follow / clipping)
-			local goalScale = if state.hovering then 1.05 else 1
-			local goalRot = if state.hovering then state.baseRot - 2.5 else state.baseRot
-			local smooth = math.min(dt * 12, 1)
-			local nextScale = scale.Scale + (goalScale - scale.Scale) * smooth
+			local smooth = math.min(dt * 14, 1)
+			local nextX = (state.pos.X.Offset - state.basePos.X.Offset) + (goalX - (state.pos.X.Offset - state.basePos.X.Offset)) * smooth
+			local nextY = (state.pos.Y.Offset - state.basePos.Y.Offset) + (goalY - (state.pos.Y.Offset - state.basePos.Y.Offset)) * smooth
 			state.rot += (goalRot - state.rot) * smooth
-			scale.Scale = nextScale
+			state.pos = UDim2.new(
+				state.basePos.X.Scale,
+				state.basePos.X.Offset + nextX,
+				state.basePos.Y.Scale,
+				state.basePos.Y.Offset + nextY
+			)
+			btn.Position = state.pos
 			btn.Rotation = state.rot
-			btn.Position = state.basePos
-			state.pos = state.basePos
-			if state.hovering or math.abs(scale.Scale - 1) > 0.01 or math.abs(state.rot - state.baseRot) > 0.05 then
+			if state.hovering or math.abs(nextX) > 0.15 or math.abs(nextY) > 0.15 or math.abs(state.rot - state.baseRot) > 0.04 then
 				anyActive = true
 			end
 		end
+		-- Keep arrow glued to selected button's visual center (handles tilt + follow)
+		local target = if selectedIndex == 1 then choiceEnter else choiceExit
+		if target and choicesReady and not soulWiping then
+			placeSoulOnButton(target)
+		end
 		if not anyActive and choiceHoverConn then
+			-- Still update arrow once more at rest
+			if target and choicesReady and not soulWiping then
+				placeSoulOnButton(target)
+			end
 			stopChoiceHover()
 		end
 	end)
@@ -645,20 +687,19 @@ updateChoiceVisuals = function()
 		end
 	end
 	local target = if selectedIndex == 1 then choiceEnter else choiceExit
-	soulMarker.Position = UDim2.new(
-		0,
-		-28,
-		target.Position.Y.Scale + target.Size.Y.Scale * 0.5,
-		target.Position.Y.Offset
-	)
+	placeSoulOnButton(target)
 	if choicesReady and not soulWiping then
 		soulMarker.Visible = true
 		soulMarker.ImageTransparency = 0
-		local scale = soulMarker:FindFirstChildOfClass("UIScale")
-		if scale then
-			scale.Scale = 1
+		-- Don't force scale=1 mid-spin; only reset if idle
+		if not soulSpinConn then
+			local scale = soulMarker:FindFirstChildOfClass("UIScale")
+			if scale then
+				scale.Scale = 1
+			end
 		end
 	end
+	startChoiceHoverLoop()
 end
 
 local function requestSkip()

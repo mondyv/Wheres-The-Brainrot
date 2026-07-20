@@ -10,6 +10,7 @@ local RunService = game:GetService("RunService")
 
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
+local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 
 local M = {}
 
@@ -222,6 +223,10 @@ local function isInSafezone(player: Player): boolean
 end
 
 local function shouldShowBadge(player: Player): boolean
+	-- Hide overhead rank icons during cutscenes / panel HUD hide.
+	if GameplayUiVisibility.isHidden() then
+		return false
+	end
 	-- Only visible while you and they are both in the safezone.
 	if not isInSafezone(localPlayer) then
 		return false
@@ -348,7 +353,13 @@ function M.init()
 	end
 
 	local pollAccum = 0
+	local wasHudHidden = false
 	RunService.Heartbeat:Connect(function(dt)
+		local hudHidden = GameplayUiVisibility.isHidden()
+		if hudHidden ~= wasHudHidden then
+			wasHudHidden = hudHidden
+			refreshAllBadges()
+		end
 		pollAccum += dt
 		if pollAccum < SAFEZONE_POLL_INTERVAL then
 			return

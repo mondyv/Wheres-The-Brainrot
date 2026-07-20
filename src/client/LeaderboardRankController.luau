@@ -1,0 +1,361 @@
+-- [ACTIVE] LeaderboardRankController
+--[[
+	Top-10 cash/time leaderboard overhead badges + chat tags for ranked players.
+	Reads ReplicatedStorage.LeaderboardData published by Leaderboards.server.
+--]]
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
+
+local M = {}
+
+local DATA_FOLDER_NAME = "LeaderboardData"
+local BOARD_NAMES = { "Cash", "Time" }
+local ROW_COUNT = 10
+local SAFEZONE_POLL_INTERVAL = 0.2
+
+local localPlayer = Players.LocalPlayer
+
+local ICON_BY_BOARD = {
+	Cash = "rbxassetid://74007287247874",
+	Time = "rbxassetid://119045246423817",
+}
+
+local EMOJI_BY_BOARD = {
+	Cash = "💰",
+	Time = "🕐",
+}
+
+local RANK_GRADIENTS: { [number]: ColorSequence } = {
+	[1] = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 228, 120)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 190, 55)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(210, 140, 30)),
+	}),
+	[2] = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(235, 242, 255)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(190, 200, 215)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(145, 155, 170)),
+	}),
+	[3] = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 190, 130)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(220, 140, 75)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 95, 45)),
+	}),
+}
+
+local DEFAULT_GRADIENT = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 255, 180)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 210, 130)),
+})
+
+type BoardRank = {
+	board: string,
+	rank: number,
+}
+
+local ranksByUserId: { [number]: { BoardRank } } = {}
+local badgeByPlayer: { [Player]: BillboardGui } = {}
+local charAddedConns: { [Player]: RBXScriptConnection } = {}
+local wiredData = false
+
+local function readBoardRanks(boardFolder: Folder): { [number]: BoardRank }
+	local out: { [number]: BoardRank } = {}
+	local boardName = boardFolder.Name
+	for rank = 1, ROW_COUNT do
+		local rowFolder = boardFolder:FindFirstChild(tostring(rank))
+		if not rowFolder then
+			continue
+		end
+		local userIdVal = rowFolder:FindFirstChild("UserId")
+		local userId = if userIdVal and userIdVal:IsA("IntValue") then userIdVal.Value else 0
+		if userId > 0 then
+			out[userId] = { board = boardName, rank = rank }
+		end
+	end
+	return out
+end
+
+local function rebuildRankCache(dataFolder: Folder)
+	table.clear(ranksByUserId)
+	for _, boardName in BOARD_NAMES do
+		local boardFolder = dataFolder:FindFirstChild(boardName)
+		if boardFolder and boardFolder:IsA("Folder") then
+			for userId, info in readBoardRanks(boardFolder) do
+				local list = ranksByUserId[userId]
+				if not list then
+					list = {}
+					ranksByUserId[userId] = list
+				end
+				table.insert(list, info)
+			end
+		end
+	end
+	for _, list in ranksByUserId do
+		table.sort(list, function(a, b)
+			return a.rank < b.rank
+		end)
+	end
+end
+
+function M.getChatTagsForUserId(userId: number): string
+	local list = ranksByUserId[userId]
+	if not list or #list == 0 then
+		return ""
+	end
+	local parts: { string } = {}
+	for _, info in list do
+		local emoji = EMOJI_BY_BOARD[info.board] or ""
+		table.insert(parts, string.format("<b>[#%d %s]</b>", info.rank, emoji))
+	end
+	return table.concat(parts, " ")
+end
+
+local function applyRankGradient(label: TextLabel, rank: number)
+	for _, child in label:GetChildren() do
+		if child:IsA("UIGradient") then
+			child:Destroy()
+		end
+	end
+	local grad = Instance.new("UIGradient")
+	grad.Color = RANK_GRADIENTS[rank] or DEFAULT_GRADIENT
+	grad.Rotation = 90
+	grad.Parent = label
+	label.TextColor3 = Color3.new(1, 1, 1)
+end
+
+local function destroyBadge(player: Player)
+	local badge = badgeByPlayer[player]
+	if badge then
+		badge:Destroy()
+		badgeByPlayer[player] = nil
+	end
+end
+
+local COL_W_STUDS = 1.35
+local COL_H_STUDS = 1.55
+local COL_GAP_STUDS = 0.2
+local MAX_VIEW_DISTANCE = 42
+
+local function buildBadge(player: Player, entries: { BoardRank }): BillboardGui?
+	local char = player.Character
+	local head = char and char:FindFirstChild("Head")
+	if not head or not head:IsA("BasePart") then
+		return nil
+	end
+
+	local count = #entries
+	local totalW = count * COL_W_STUDS + math.max(0, count - 1) * COL_GAP_STUDS
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "LeaderboardRankBadge"
+	billboard.AlwaysOnTop = true
+	billboard.LightInfluence = 0
+	billboard.MaxDistance = MAX_VIEW_DISTANCE
+	billboard.Size = UDim2.fromScale(totalW, COL_H_STUDS)
+	billboard.StudsOffset = Vector3.new(0, 2.15, 0)
+	billboard.Adornee = head
+	billboard.ResetOnSpawn = false
+	billboard.Parent = char
+
+	local root = Instance.new("Frame")
+	root.Name = "Root"
+	root.BackgroundTransparency = 1
+	root.Size = UDim2.fromScale(1, 1)
+	root.Parent = billboard
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(COL_GAP_STUDS / math.max(totalW, 0.01), 0)
+	layout.Parent = root
+
+	local colScaleW = COL_W_STUDS / math.max(totalW, 0.01)
+
+	for index, info in ipairs(entries) do
+		local col = Instance.new("Frame")
+		col.Name = info.board
+		col.BackgroundTransparency = 1
+		col.Size = UDim2.fromScale(colScaleW, 1)
+		col.LayoutOrder = index
+		col.Parent = root
+
+		local icon = Instance.new("ImageLabel")
+		icon.Name = "Icon"
+		icon.BackgroundTransparency = 1
+		icon.AnchorPoint = Vector2.new(0.5, 0)
+		icon.Position = UDim2.fromScale(0.5, 0)
+		icon.Size = UDim2.fromScale(0.72, 0.58)
+		icon.ScaleType = Enum.ScaleType.Fit
+		icon.Image = ICON_BY_BOARD[info.board] or ""
+		icon.Parent = col
+
+		local rankLabel = Instance.new("TextLabel")
+		rankLabel.Name = "Rank"
+		rankLabel.BackgroundTransparency = 1
+		rankLabel.AnchorPoint = Vector2.new(0.5, 1)
+		rankLabel.Position = UDim2.fromScale(0.5, 1)
+		rankLabel.Size = UDim2.fromScale(1, 0.42)
+		UiFonts.applyDisplayLabel(rankLabel, 28, 18)
+		rankLabel.TextScaled = true
+		rankLabel.Text = "#" .. tostring(info.rank)
+		rankLabel.Parent = col
+		applyRankGradient(rankLabel, info.rank)
+
+		local stroke = Instance.new("UIStroke")
+		stroke.Thickness = 1.6
+		stroke.Color = Color3.fromRGB(10, 14, 18)
+		stroke.Transparency = 0.15
+		stroke.Parent = rankLabel
+	end
+
+	return billboard
+end
+
+local function isInSafezone(player: Player): boolean
+	return SafezoneUtil.isCharacterInSafezone(player.Character)
+end
+
+local function shouldShowBadge(player: Player): boolean
+	-- Only visible while you and they are both in the safezone.
+	if not isInSafezone(localPlayer) then
+		return false
+	end
+	if not isInSafezone(player) then
+		return false
+	end
+	local entries = ranksByUserId[player.UserId]
+	return entries ~= nil and #entries > 0
+end
+
+local function refreshPlayerBadge(player: Player, forceRebuild: boolean?)
+	local want = shouldShowBadge(player)
+	local existing = badgeByPlayer[player]
+	if not want then
+		destroyBadge(player)
+		return
+	end
+	if existing and existing.Parent and not forceRebuild then
+		existing.Enabled = true
+		return
+	end
+	destroyBadge(player)
+	local entries = ranksByUserId[player.UserId]
+	if not entries or #entries == 0 then
+		return
+	end
+	local badge = buildBadge(player, entries)
+	if badge then
+		badgeByPlayer[player] = badge
+	end
+end
+
+local function refreshAllBadges(forceRebuild: boolean?)
+	for _, player in Players:GetPlayers() do
+		refreshPlayerBadge(player, forceRebuild)
+	end
+end
+
+local function hookPlayer(player: Player)
+	if charAddedConns[player] then
+		charAddedConns[player]:Disconnect()
+	end
+	charAddedConns[player] = player.CharacterAdded:Connect(function()
+		task.defer(function()
+			refreshPlayerBadge(player)
+		end)
+	end)
+	if player.Character then
+		task.defer(function()
+			refreshPlayerBadge(player)
+		end)
+	end
+end
+
+local function hookDataFolder(dataFolder: Folder)
+	if wiredData then
+		return
+	end
+	wiredData = true
+
+	local function onDataChanged()
+		rebuildRankCache(dataFolder)
+		refreshAllBadges(true)
+	end
+
+	for _, boardName in BOARD_NAMES do
+		local boardFolder = dataFolder:FindFirstChild(boardName)
+		if boardFolder and boardFolder:IsA("Folder") then
+			for rank = 1, ROW_COUNT do
+				local rowFolder = boardFolder:FindFirstChild(tostring(rank))
+				if rowFolder and rowFolder:IsA("Folder") then
+					for _, child in rowFolder:GetChildren() do
+						if child:IsA("ValueBase") then
+							child.Changed:Connect(onDataChanged)
+						end
+					end
+					rowFolder.ChildAdded:Connect(function(child)
+						if child:IsA("ValueBase") then
+							child.Changed:Connect(onDataChanged)
+							onDataChanged()
+						end
+					end)
+				end
+			end
+			boardFolder:GetAttributeChangedSignal("UpdatedAt"):Connect(onDataChanged)
+		end
+	end
+
+	dataFolder.ChildAdded:Connect(function(child)
+		if child:IsA("Folder") and table.find(BOARD_NAMES, child.Name) then
+			onDataChanged()
+		end
+	end)
+
+	onDataChanged()
+end
+
+function M.init()
+	task.spawn(function()
+		SafezoneUtil.warmCacheAsync()
+	end)
+
+	task.spawn(function()
+		local dataFolder = ReplicatedStorage:WaitForChild(DATA_FOLDER_NAME, 120)
+		if not dataFolder or not dataFolder:IsA("Folder") then
+			return
+		end
+		hookDataFolder(dataFolder)
+	end)
+
+	Players.PlayerAdded:Connect(hookPlayer)
+	Players.PlayerRemoving:Connect(function(player)
+		destroyBadge(player)
+		local conn = charAddedConns[player]
+		if conn then
+			conn:Disconnect()
+			charAddedConns[player] = nil
+		end
+	end)
+
+	for _, player in Players:GetPlayers() do
+		hookPlayer(player)
+	end
+
+	local pollAccum = 0
+	RunService.Heartbeat:Connect(function(dt)
+		pollAccum += dt
+		if pollAccum < SAFEZONE_POLL_INTERVAL then
+			return
+		end
+		pollAccum = 0
+		refreshAllBadges()
+	end)
+end
+
+return M

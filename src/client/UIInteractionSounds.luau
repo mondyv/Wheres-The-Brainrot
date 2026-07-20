@@ -11,7 +11,9 @@ local clickSound: Sound?
 local notifSound: Sound?
 local uiSoundsOn = true
 local lastHoverClock = 0.0
+local lastClickClock = 0.0
 local HOVER_DEBOUNCE = 0.055
+local CLICK_DEBOUNCE = 0.08
 
 local UIInteractionSounds = {}
 
@@ -47,6 +49,11 @@ end
 
 function UIInteractionSounds.playClick()
 	if not uiSoundsOn or not clickSound then return end
+	local now = os.clock()
+	if now - lastClickClock < CLICK_DEBOUNCE then
+		return
+	end
+	lastClickClock = now
 	clickSound:Play()
 end
 

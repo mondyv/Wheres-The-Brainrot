@@ -23,7 +23,7 @@ local HUDController = require(script.Parent.HUDController)
 -- ── Stand config ──────────────────────────────────────────────────────────────
 
 local STAND_CONFIG = {
-	{ standName = "Shop Stand", hitboxName = "ShopPadHitbox", frameName = "Shop2" },
+	{ standName = "Shop Stand", hitboxName = "ShopPadHitbox", frameName = "Shop" },
 	{ standName = "Sell Stand", hitboxName = "SellPadHitbox", frameName = "Sell" },
 	{ standName = "Upgrade Stand", hitboxName = "UpgradePadHitbox", frameName = "Upgrades" },
 }

@@ -12,12 +12,18 @@ local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+
 local M = {}
 
 local ACTION_NAME = "ToggleAdminCommandBar"
 local AUTOCOMPLETE_ACTION_NAME = "AdminCommandBarAutocomplete"
 local COMMAND_REMOTE_NAME = "AdminCommand"
 local CATALOG_REMOTE_NAME = "AdminAutocomplete"
+local ADMIN_ALLOWED_ATTR = "AdminPanelAllowed"
 local BIND_PRIORITY = Enum.ContextActionPriority.High.Value + 1
 local AUTOCOMPLETE_PRIORITY = 10000
 
@@ -26,35 +32,56 @@ local TOGGLE_KEYS = {
 	Enum.KeyCode.Semicolon,
 }
 
-local MAX_SUGGESTION_ROWS = 8
-local ROW_HEIGHT = 30
-local ROOT_WIDTH = 600
-local BASE_HEIGHT = 92
 local MAX_HISTORY = 25
+local HEADER_HEIGHT = 44
+local INPUT_HEIGHT = 42
+local STATUS_HEIGHT = 26
+local CONTENT_PAD = 14
+
+-- Desktop defaults; mobile overrides applied in applyLayout().
+local MAX_SUGGESTION_ROWS = 8
+local ROW_HEIGHT = 34
+local ROOT_WIDTH = 620
+local BASE_HEIGHT = HEADER_HEIGHT + CONTENT_PAD + INPUT_HEIGHT + 10 + STATUS_HEIGHT
+local ROOT_WIDTH_SCALE = 0
+local IS_MOBILE_LAYOUT = false
 
 local COLORS = {
-	hoverBg = Color3.fromRGB(90, 255, 140),
-	hoverBgTransparency = 0.82,
-	hoverStroke = Color3.fromRGB(90, 255, 140),
-	hoverStrokeTransparency = 0.12,
-	idleBg = Color3.fromRGB(22, 28, 36),
-	idleBgTransparency = 0.38,
-	idleStroke = Color3.fromRGB(70, 80, 96),
-	idleStrokeTransparency = 0.62,
-	selectedBg = Color3.fromRGB(70, 200, 120),
+	panel = Color3.fromRGB(14, 18, 26),
+	panelTop = Color3.fromRGB(22, 30, 42),
+	accent = Color3.fromRGB(72, 255, 150),
+	accentDim = Color3.fromRGB(40, 160, 100),
+	inputBg = Color3.fromRGB(10, 14, 20),
+	hoverBg = Color3.fromRGB(72, 255, 150),
+	hoverBgTransparency = 0.86,
+	hoverStroke = Color3.fromRGB(72, 255, 150),
+	hoverStrokeTransparency = 0.15,
+	idleBg = Color3.fromRGB(24, 30, 40),
+	idleBgTransparency = 0.22,
+	idleStroke = Color3.fromRGB(55, 68, 86),
+	idleStrokeTransparency = 0.45,
+	selectedBg = Color3.fromRGB(55, 190, 120),
 	selectedBgTransparency = 0.78,
+	textPrimary = Color3.fromRGB(245, 250, 255),
+	textMuted = Color3.fromRGB(150, 165, 185),
+	danger = Color3.fromRGB(255, 95, 110),
 }
 
-local OPEN_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local OPEN_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local CLOSE_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
 local gui: ScreenGui? = nil
+local backdrop: TextButton? = nil
 local rootFrame: Frame? = nil
 local rootScale: UIScale? = nil
 local inputBox: TextBox? = nil
+local runButton: TextButton? = nil
+local closeButton: TextButton? = nil
 local statusLabel: TextLabel? = nil
 local suggestionPanel: Frame? = nil
 local suggestionScrollTrack: Frame? = nil
 local suggestionScrollThumb: Frame? = nil
+local titleLabel: TextLabel? = nil
 local suggestionRows: {
 	{
 		button: TextButton,
@@ -68,12 +95,22 @@ local commandRF: RemoteFunction? = nil
 local catalogRF: RemoteFunction? = nil
 local initialized = false
 local closeToken = 0
+local backdropGuardUntil = 0
 local selectedSuggestionIndex = 1
 local hoveredSuggestionIndex = 0
 local scrollOffset = 0
 local currentMatches: { { fill: string, hint: string } } = {}
 local commandHistory: { string } = {}
 local historyIndex = 0
+local mobileAdminFrame: GuiObject? = nil
+local mobileAdminButtonHost: GuiObject? = nil
+local mobileAdminWired = false
+local suggestionScrollTouch: InputObject? = nil
+local suggestionScrollStartY = 0
+local suggestionScrollStartOffset = 0
+local suggestionScrollDragged = false
+local suppressSuggestionRowTap = false
+local SUGGESTION_SCROLL_DRAG_PX = 10
 
 local catalog = {
 	players = { "me", "all" } :: { string },
@@ -97,6 +134,10 @@ local COMMAND_ALIASES: { [string]: string } = {
 	globalnotifs = "globalnotif",
 	servernotifs = "servernotif",
 	spawnglobal = "serverspawn",
+	land = "tpland",
+	teleportland = "tpland",
+	gotoland = "tpland",
+	tpl = "tpland",
 }
 
 local COMMAND_HINTS: { [string]: string } = {
@@ -106,11 +147,29 @@ local COMMAND_HINTS: { [string]: string } = {
 	addluckyblock = "Grant a lucky block tool",
 	resetdata = "Wipe saved player data",
 	rebirth = "Force rebirth (skip requirements)",
+	tpland = "Teleport to a land revive/spawn pad",
 	serverspawn = "Force a rarity spawn on this server",
 	globalspawn = "Force a rarity spawn on every server",
 	servernotif = "Top notification on this server",
 	globalnotif = "Top notification on all servers",
 }
+
+local function isPhoneLike(): boolean
+	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+		return true
+	end
+	local ok, preferred = pcall(function()
+		return (UserInputService :: any).PreferredInput
+	end)
+	if ok and preferred == Enum.PreferredInput.Touch then
+		return true
+	end
+	return false
+end
+
+local function isAdminAllowed(): boolean
+	return player:GetAttribute(ADMIN_ALLOWED_ATTR) == true
+end
 
 local refreshSuggestions: () -> ()
 
@@ -168,11 +227,11 @@ local function setStatus(text: string, ok: boolean?)
 	end
 	label.Text = text
 	if ok == nil then
-		label.TextColor3 = Color3.fromRGB(185, 195, 210)
+		label.TextColor3 = COLORS.textMuted
 	elseif ok then
-		label.TextColor3 = Color3.fromRGB(90, 255, 145)
+		label.TextColor3 = COLORS.accent
 	else
-		label.TextColor3 = Color3.fromRGB(255, 100, 100)
+		label.TextColor3 = COLORS.danger
 	end
 end
 
@@ -274,6 +333,7 @@ end
 local function baseCommandExamples(): { { fill: string, hint: string } }
 	return {
 		{ fill = "help", hint = COMMAND_HINTS.help },
+		{ fill = "tpland 1", hint = COMMAND_HINTS.tpland },
 		{ fill = "addinventory me NoobiniPizzanini", hint = "Give brainrot (equipped)" },
 		{ fill = "addinventory me NoobiniPizzanini 3 golden 5", hint = "Count, mutation, level" },
 		{ fill = "addcash me 1000000", hint = COMMAND_HINTS.addcash },
@@ -373,6 +433,16 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 				end
 			end
 		end
+	elseif cmdName == "tpland" then
+		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
+			for land = 1, 10 do
+				local landStr = tostring(land)
+				if startsWith(landStr, partial) then
+					pushSuggestion(out, prefix .. landStr, "land spawn / revive pad")
+				end
+			end
+		end
 	end
 
 	if #out == 0 then
@@ -416,16 +486,22 @@ local function updateSuggestionStatus()
 	end
 	local scrollHint = ""
 	if total > MAX_SUGGESTION_ROWS then
-		scrollHint = string.format(
-			" · scroll %d-%d of %d",
-			scrollOffset + 1,
-			math.min(scrollOffset + MAX_SUGGESTION_ROWS, total),
-			total
-		)
+		if IS_MOBILE_LAYOUT then
+			scrollHint = string.format(" · drag %d-%d of %d", scrollOffset + 1, math.min(scrollOffset + MAX_SUGGESTION_ROWS, total), total)
+		else
+			scrollHint = string.format(
+				" · scroll %d-%d of %d",
+				scrollOffset + 1,
+				math.min(scrollOffset + MAX_SUGGESTION_ROWS, total),
+				total
+			)
+		end
 	end
 	setStatus(
 		string.format(
-			"%d/%d selected · Tab fill · ↑↓ move%s · Ctrl+↑↓ history",
+			if IS_MOBILE_LAYOUT
+				then "%d/%d selected · Tap to fill%s"
+				else "%d/%d selected · Tab fill · ↑↓ move%s · Ctrl+↑↓ history",
 			selectedSuggestionIndex,
 			total,
 			scrollHint
@@ -453,6 +529,61 @@ local function styleSuggestionRow(visibleIndex: number)
 		then COLORS.selectedBgTransparency
 		elseif hovered then COLORS.hoverBgTransparency
 		else COLORS.idleBgTransparency
+end
+
+local function isPointOverSuggestions(screenPos: Vector2): boolean
+	local panel = suggestionPanel
+	if not panel or not panel.Visible then
+		return false
+	end
+	local inset = GuiService:GetGuiInset()
+	local point = Vector2.new(screenPos.X, screenPos.Y - inset.Y)
+	local pos = panel.AbsolutePosition
+	local size = panel.AbsoluteSize
+	return point.X >= pos.X and point.X <= pos.X + size.X and point.Y >= pos.Y and point.Y <= pos.Y + size.Y
+end
+
+local function setSuggestionScrollOffset(nextOffset: number)
+	local total = #currentMatches
+	if total <= MAX_SUGGESTION_ROWS then
+		scrollOffset = 0
+		return
+	end
+	local maxOffset = math.max(0, total - MAX_SUGGESTION_ROWS)
+	scrollOffset = math.clamp(nextOffset, 0, maxOffset)
+	refreshSuggestions()
+end
+
+local function wireSuggestionTouchScroll()
+	UserInputService.InputBegan:Connect(function(input, _gameProcessed)
+		if input.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+		if not gui or not gui.Enabled or #currentMatches <= MAX_SUGGESTION_ROWS then
+			return
+		end
+		if not isPointOverSuggestions(input.Position) then
+			return
+		end
+		suggestionScrollTouch = input
+		suggestionScrollStartY = input.Position.Y
+		suggestionScrollStartOffset = scrollOffset
+		suggestionScrollDragged = false
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if suggestionScrollTouch ~= input then
+			return
+		end
+		if suggestionScrollDragged then
+			suppressSuggestionRowTap = true
+			task.defer(function()
+				suppressSuggestionRowTap = false
+			end)
+		end
+		suggestionScrollTouch = nil
+		suggestionScrollDragged = false
+	end)
 end
 
 local function isPointerOverAdminGui(): boolean
@@ -495,15 +626,41 @@ local function updateRootHeight(visibleRows: number)
 		return
 	end
 	local panelHeight = if visibleRows > 0 then visibleRows * ROW_HEIGHT + 8 else 0
-	panel.Size = UDim2.new(1, -28, 0, panelHeight)
+	local sidePad = if IS_MOBILE_LAYOUT then 12 else 14
+	panel.Size = UDim2.new(1, -sidePad * 2, 0, panelHeight)
 	panel.Visible = panelHeight > 0
-	root.Size = UDim2.fromOffset(ROOT_WIDTH, BASE_HEIGHT + panelHeight)
+	local totalH = BASE_HEIGHT + panelHeight
+	if ROOT_WIDTH_SCALE > 0 then
+		root.Size = UDim2.new(ROOT_WIDTH_SCALE, 0, 0, totalH)
+	else
+		root.Size = UDim2.fromOffset(ROOT_WIDTH, totalH)
+	end
 	local status = statusLabel
 	if status then
-		status.Position = UDim2.fromOffset(16, BASE_HEIGHT - 28 + panelHeight)
+		status.Position = UDim2.fromOffset(sidePad + 2, HEADER_HEIGHT + CONTENT_PAD + INPUT_HEIGHT + 8 + panelHeight)
 	end
 end
 
+local function applyLayoutMetrics()
+	IS_MOBILE_LAYOUT = isPhoneLike()
+	if IS_MOBILE_LAYOUT then
+		MAX_SUGGESTION_ROWS = 4
+		ROW_HEIGHT = 36
+		ROOT_WIDTH = 0
+		ROOT_WIDTH_SCALE = 0.86
+		BASE_HEIGHT = HEADER_HEIGHT + CONTENT_PAD + INPUT_HEIGHT + 12 + STATUS_HEIGHT + 4
+	else
+		MAX_SUGGESTION_ROWS = 8
+		ROW_HEIGHT = 34
+		ROOT_WIDTH = 620
+		ROOT_WIDTH_SCALE = 0
+		BASE_HEIGHT = HEADER_HEIGHT + CONTENT_PAD + INPUT_HEIGHT + 10 + STATUS_HEIGHT
+	end
+	for index, row in suggestionRows do
+		row.button.Size = UDim2.new(1, 0, 0, ROW_HEIGHT - 4)
+		row.button.Position = UDim2.fromOffset(0, (index - 1) * ROW_HEIGHT + 2)
+	end
+end
 refreshSuggestions = function()
 	local box = inputBox
 	local panel = suggestionPanel
@@ -608,16 +765,32 @@ end
 local function animateOpen(open: boolean)
 	local root = rootFrame
 	local scale = rootScale
+	local dim = backdrop
 	if not root or not scale then
 		return
 	end
+	local targetY = if IS_MOBILE_LAYOUT then 0.1 else 0.09
 	if open then
-		scale.Scale = 0.94
-		root.Position = UDim2.fromScale(0.5, 0.06)
+		scale.Scale = 0.9
+		root.Position = UDim2.fromScale(0.5, targetY - 0.02)
+		root.BackgroundTransparency = 0.2
 		TweenService:Create(scale, OPEN_TWEEN, { Scale = 1 }):Play()
-		TweenService:Create(root, OPEN_TWEEN, { Position = UDim2.fromScale(0.5, 0.08) }):Play()
+		TweenService:Create(root, OPEN_TWEEN, {
+			Position = UDim2.fromScale(0.5, targetY),
+			BackgroundTransparency = 0.04,
+		}):Play()
+		if dim then
+			dim.Visible = true
+			dim.BackgroundTransparency = 1
+			TweenService:Create(dim, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				BackgroundTransparency = 0.45,
+			}):Play()
+		end
 	else
-		scale.Scale = 1
+		TweenService:Create(scale, CLOSE_TWEEN, { Scale = 0.94 }):Play()
+		if dim then
+			TweenService:Create(dim, CLOSE_TWEEN, { BackgroundTransparency = 1 }):Play()
+		end
 	end
 end
 
@@ -625,30 +798,53 @@ local function setOpen(open: boolean)
 	if not gui or not inputBox then
 		return
 	end
+	applyLayoutMetrics()
 	if open then
 		closeToken += 1
+		backdropGuardUntil = os.clock() + 0.35
 		gui.Enabled = true
 		inputBox.Text = ""
 		selectedSuggestionIndex = 1
 		hoveredSuggestionIndex = 0
 		scrollOffset = 0
 		historyIndex = 0
-		setStatus("Tab fill · ↑↓ navigate · PgUp/PgDn page · Enter run", nil)
+		local hint = if IS_MOBILE_LAYOUT
+			then "Drag list to scroll · Tap suggestion · Run · X to close"
+			else "Tab fill · ↑↓ navigate · Enter run · Esc close"
+		setStatus(hint, nil)
+		if titleLabel then
+			titleLabel.Text = if IS_MOBILE_LAYOUT then "ADMIN COMMANDS" else "ADMIN"
+		end
 		animateOpen(true)
 		task.defer(fetchCatalog)
 		refreshSuggestions()
-		inputBox:CaptureFocus()
+		task.defer(function()
+			if inputBox and gui and gui.Enabled then
+				inputBox:CaptureFocus()
+			end
+		end)
 	else
 		closeToken += 1
 		local token = closeToken
 		inputBox:ReleaseFocus()
 		animateOpen(false)
-		task.delay(0.12, function()
+		task.delay(0.14, function()
 			if token == closeToken and gui then
 				gui.Enabled = false
+				if backdrop then
+					backdrop.Visible = false
+				end
 			end
 		end)
 	end
+end
+
+function M.toggle()
+	setOpen(not (gui and gui.Enabled))
+end
+
+function M.setOpen(open: boolean)
+	setOpen(open)
 end
 
 local function submitCommand()
@@ -703,38 +899,36 @@ local function createSuggestionRow(parent: Frame, index: number)
 	rowButton.ZIndex = 2
 
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 8)
+	corner.CornerRadius = UDim.new(0, 10)
 	corner.Parent = rowButton
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = COLORS.idleStroke
 	stroke.Transparency = COLORS.idleStrokeTransparency
-	stroke.Thickness = 1.25
+	stroke.Thickness = 1.2
 	stroke.Parent = rowButton
 
 	local cmdLabel = Instance.new("TextLabel")
 	cmdLabel.Name = "Command"
 	cmdLabel.BackgroundTransparency = 1
-	cmdLabel.Font = Enum.Font.GothamSemibold
-	cmdLabel.TextSize = 14
-	cmdLabel.TextColor3 = Color3.fromRGB(235, 242, 255)
+	UiFonts.applyButtonLabel(cmdLabel, 11, 8)
+	cmdLabel.TextColor3 = COLORS.textPrimary
 	cmdLabel.TextXAlignment = Enum.TextXAlignment.Left
 	cmdLabel.TextTruncate = Enum.TextTruncate.AtEnd
-	cmdLabel.Position = UDim2.fromOffset(10, 0)
-	cmdLabel.Size = UDim2.new(0.58, -10, 1, 0)
+	cmdLabel.Position = UDim2.fromOffset(12, 0)
+	cmdLabel.Size = UDim2.new(0.58, -12, 1, 0)
 	cmdLabel.ZIndex = 3
 	cmdLabel.Parent = rowButton
 
 	local hintLabel = Instance.new("TextLabel")
 	hintLabel.Name = "Hint"
 	hintLabel.BackgroundTransparency = 1
-	hintLabel.Font = Enum.Font.Gotham
-	hintLabel.TextSize = 12
-	hintLabel.TextColor3 = Color3.fromRGB(140, 155, 175)
+	UiFonts.applyButtonLabel(hintLabel, 9, 7)
+	hintLabel.TextColor3 = COLORS.textMuted
 	hintLabel.TextXAlignment = Enum.TextXAlignment.Right
 	hintLabel.TextTruncate = Enum.TextTruncate.AtEnd
 	hintLabel.Position = UDim2.new(0.58, 0, 0, 0)
-	hintLabel.Size = UDim2.new(0.42, -8, 1, 0)
+	hintLabel.Size = UDim2.new(0.42, -10, 1, 0)
 	hintLabel.ZIndex = 3
 	hintLabel.Parent = rowButton
 
@@ -752,6 +946,9 @@ local function createSuggestionRow(parent: Frame, index: number)
 	end)
 
 	rowButton.MouseButton1Click:Connect(function()
+		if suppressSuggestionRowTap then
+			return
+		end
 		selectedSuggestionIndex = scrollOffset + index
 		applySelectedSuggestion()
 	end)
@@ -766,6 +963,8 @@ local function createSuggestionRow(parent: Frame, index: number)
 end
 
 local function buildGui(parent: PlayerGui)
+	applyLayoutMetrics()
+
 	local screen = Instance.new("ScreenGui")
 	screen.Name = "AdminCommandBar"
 	screen.ResetOnSpawn = false
@@ -774,64 +973,187 @@ local function buildGui(parent: PlayerGui)
 	screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	screen.Enabled = false
 
+	local dim = Instance.new("TextButton")
+	dim.Name = "Backdrop"
+	dim.AutoButtonColor = false
+	dim.Text = ""
+	dim.Size = UDim2.fromScale(1, 1)
+	dim.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	dim.BackgroundTransparency = 1
+	dim.BorderSizePixel = 0
+	dim.Visible = false
+	dim.ZIndex = 1
+	dim.Parent = screen
+	dim.MouseButton1Click:Connect(function()
+		if os.clock() < backdropGuardUntil then
+			return
+		end
+		setOpen(false)
+	end)
+
 	local root = Instance.new("Frame")
 	root.Name = "Root"
 	root.AnchorPoint = Vector2.new(0.5, 0)
-	root.Position = UDim2.fromScale(0.5, 0.08)
-	root.Size = UDim2.fromOffset(ROOT_WIDTH, BASE_HEIGHT)
-	root.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
-	root.BackgroundTransparency = 0.08
+	root.Position = UDim2.fromScale(0.5, 0.09)
+	if ROOT_WIDTH_SCALE > 0 then
+		root.Size = UDim2.new(ROOT_WIDTH_SCALE, 0, 0, BASE_HEIGHT)
+	else
+		root.Size = UDim2.fromOffset(ROOT_WIDTH, BASE_HEIGHT)
+	end
+	root.BackgroundColor3 = COLORS.panel
+	root.BackgroundTransparency = 0.04
 	root.BorderSizePixel = 0
+	root.ClipsDescendants = true
+	root.ZIndex = 2
 
 	local scale = Instance.new("UIScale")
 	scale.Scale = 1
 	scale.Parent = root
 
 	local rootCorner = Instance.new("UICorner")
-	rootCorner.CornerRadius = UDim.new(0, 12)
+	rootCorner.CornerRadius = UDim.new(0, 16)
 	rootCorner.Parent = root
 
 	local rootStroke = Instance.new("UIStroke")
-	rootStroke.Color = Color3.fromRGB(90, 255, 140)
-	rootStroke.Transparency = 0.25
-	rootStroke.Thickness = 1.5
+	rootStroke.Color = COLORS.accent
+	rootStroke.Transparency = 0.35
+	rootStroke.Thickness = 1.75
 	rootStroke.Parent = root
+
+	local header = Instance.new("Frame")
+	header.Name = "Header"
+	header.Size = UDim2.new(1, 0, 0, HEADER_HEIGHT)
+	header.BackgroundColor3 = COLORS.panelTop
+	header.BackgroundTransparency = 0.08
+	header.BorderSizePixel = 0
+	header.ZIndex = 3
+	header.Parent = root
+
+	local headerAccent = Instance.new("Frame")
+	headerAccent.Name = "AccentBar"
+	headerAccent.Size = UDim2.new(1, 0, 0, 2)
+	headerAccent.Position = UDim2.new(0, 0, 1, -2)
+	headerAccent.BackgroundColor3 = COLORS.accent
+	headerAccent.BackgroundTransparency = 0.25
+	headerAccent.BorderSizePixel = 0
+	headerAccent.ZIndex = 4
+	headerAccent.Parent = header
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.BackgroundTransparency = 1
+	UiFonts.applyButtonLabel(title, 13, 10)
+	title.Text = "ADMIN"
+	title.TextColor3 = COLORS.accent
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Position = UDim2.fromOffset(16, 0)
+	title.Size = UDim2.new(1, -70, 1, 0)
+	title.ZIndex = 4
+	title.Parent = header
+
+	local closeBtn = Instance.new("TextButton")
+	closeBtn.Name = "Close"
+	closeBtn.AutoButtonColor = false
+	closeBtn.Text = "X"
+	UiFonts.applyButtonLabel(closeBtn, 16, 11)
+	closeBtn.TextColor3 = COLORS.textMuted
+	closeBtn.BackgroundColor3 = Color3.fromRGB(30, 36, 48)
+	closeBtn.BackgroundTransparency = 0.2
+	closeBtn.BorderSizePixel = 0
+	closeBtn.AnchorPoint = Vector2.new(1, 0.5)
+	closeBtn.Position = UDim2.new(1, -12, 0.5, 0)
+	closeBtn.Size = UDim2.fromOffset(32, 32)
+	closeBtn.ZIndex = 5
+	closeBtn.Parent = header
+	local closeCorner = Instance.new("UICorner")
+	closeCorner.CornerRadius = UDim.new(0, 8)
+	closeCorner.Parent = closeBtn
+	closeBtn.MouseButton1Click:Connect(function()
+		UIInteractionSounds.playClick()
+		setOpen(false)
+	end)
+	closeBtn.MouseEnter:Connect(function()
+		closeBtn.TextColor3 = COLORS.danger
+		TweenService:Create(closeBtn, TweenInfo.new(0.1), { BackgroundTransparency = 0 }):Play()
+	end)
+	closeBtn.MouseLeave:Connect(function()
+		closeBtn.TextColor3 = COLORS.textMuted
+		TweenService:Create(closeBtn, TweenInfo.new(0.1), { BackgroundTransparency = 0.2 }):Play()
+	end)
 
 	local box = Instance.new("TextBox")
 	box.Name = "CommandInput"
 	box.ClearTextOnFocus = false
-	box.Font = Enum.Font.GothamSemibold
-	box.PlaceholderText = "admin command..."
+	UiFonts.applyInput(box)
+	box.PlaceholderText = "Type a command…  e.g. tpland 3"
 	box.Text = ""
-	box.TextColor3 = Color3.fromRGB(245, 248, 255)
-	box.PlaceholderColor3 = Color3.fromRGB(130, 140, 155)
-	box.TextSize = 18
+	box.TextColor3 = COLORS.textPrimary
+	box.PlaceholderColor3 = Color3.fromRGB(110, 125, 145)
+	box.TextSize = 17
 	box.TextXAlignment = Enum.TextXAlignment.Left
-	box.BackgroundColor3 = Color3.fromRGB(20, 24, 32)
+	box.BackgroundColor3 = COLORS.inputBg
 	box.BorderSizePixel = 0
-	box.Position = UDim2.fromOffset(14, 12)
-	box.Size = UDim2.new(1, -28, 0, 36)
+	box.Position = UDim2.fromOffset(14, HEADER_HEIGHT + CONTENT_PAD)
+	box.Size = UDim2.new(1, -108, 0, INPUT_HEIGHT)
+	box.ZIndex = 3
 
 	local boxPadding = Instance.new("UIPadding")
-	boxPadding.PaddingLeft = UDim.new(0, 10)
-	boxPadding.PaddingRight = UDim.new(0, 10)
+	boxPadding.PaddingLeft = UDim.new(0, 12)
+	boxPadding.PaddingRight = UDim.new(0, 12)
 	boxPadding.Parent = box
 
 	local boxCorner = Instance.new("UICorner")
-	boxCorner.CornerRadius = UDim.new(0, 8)
+	boxCorner.CornerRadius = UDim.new(0, 10)
 	boxCorner.Parent = box
+
+	local boxStroke = Instance.new("UIStroke")
+	boxStroke.Color = COLORS.idleStroke
+	boxStroke.Transparency = 0.35
+	boxStroke.Thickness = 1.2
+	boxStroke.Parent = box
+
+	local runBtn = Instance.new("TextButton")
+	runBtn.Name = "Run"
+	runBtn.AutoButtonColor = false
+	runBtn.Text = "Run"
+	UiFonts.applyButtonLabel(runBtn, 12, 9)
+	runBtn.TextColor3 = Color3.fromRGB(8, 18, 12)
+	runBtn.BackgroundColor3 = COLORS.accent
+	runBtn.BorderSizePixel = 0
+	runBtn.AnchorPoint = Vector2.new(1, 0)
+	runBtn.Position = UDim2.new(1, -14, 0, HEADER_HEIGHT + CONTENT_PAD)
+	runBtn.Size = UDim2.fromOffset(80, INPUT_HEIGHT)
+	runBtn.ZIndex = 3
+	local runCorner = Instance.new("UICorner")
+	runCorner.CornerRadius = UDim.new(0, 10)
+	runCorner.Parent = runBtn
+	runBtn.MouseButton1Click:Connect(function()
+		UIInteractionSounds.playClick()
+		submitCommand()
+	end)
+	runBtn.MouseEnter:Connect(function()
+		TweenService:Create(runBtn, TweenInfo.new(0.1), {
+			BackgroundColor3 = Color3.fromRGB(120, 255, 180),
+		}):Play()
+	end)
+	runBtn.MouseLeave:Connect(function()
+		TweenService:Create(runBtn, TweenInfo.new(0.1), {
+			BackgroundColor3 = COLORS.accent,
+		}):Play()
+	end)
 
 	local panel = Instance.new("Frame")
 	panel.Name = "Suggestions"
 	panel.BackgroundTransparency = 1
 	panel.BorderSizePixel = 0
 	panel.ClipsDescendants = true
-	panel.Position = UDim2.fromOffset(14, 54)
+	panel.Position = UDim2.fromOffset(14, HEADER_HEIGHT + CONTENT_PAD + INPUT_HEIGHT + 8)
 	panel.Size = UDim2.new(1, -28, 0, 0)
 	panel.Visible = false
 	panel.ZIndex = 2
 
-	for index = 1, MAX_SUGGESTION_ROWS do
+	-- Pre-create enough rows for desktop max; mobile shows fewer via MAX_SUGGESTION_ROWS.
+	for index = 1, 8 do
 		createSuggestionRow(panel, index)
 	end
 
@@ -853,7 +1175,7 @@ local function buildGui(parent: PlayerGui)
 
 	local scrollThumb = Instance.new("Frame")
 	scrollThumb.Name = "Thumb"
-	scrollThumb.BackgroundColor3 = Color3.fromRGB(90, 255, 140)
+	scrollThumb.BackgroundColor3 = COLORS.accent
 	scrollThumb.BackgroundTransparency = 0.15
 	scrollThumb.BorderSizePixel = 0
 	scrollThumb.Position = UDim2.fromOffset(2, 0)
@@ -867,14 +1189,14 @@ local function buildGui(parent: PlayerGui)
 
 	local label = Instance.new("TextLabel")
 	label.Name = "Status"
-	label.Font = Enum.Font.Gotham
-	label.Text = "Tab fill · ↑↓ navigate · Enter run"
-	label.TextColor3 = Color3.fromRGB(185, 195, 210)
-	label.TextSize = 13
+	UiFonts.applyBodyLabel(label, 10, 7)
+	label.Text = "Ready"
+	label.TextColor3 = COLORS.textMuted
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.BackgroundTransparency = 1
-	label.Position = UDim2.fromOffset(16, BASE_HEIGHT - 28)
-	label.Size = UDim2.new(1, -32, 0, 20)
+	label.Position = UDim2.fromOffset(16, BASE_HEIGHT - STATUS_HEIGHT)
+	label.Size = UDim2.new(1, -32, 0, STATUS_HEIGHT - 4)
+	label.ZIndex = 3
 
 	local tabGuard = false
 	box:GetPropertyChangedSignal("Text"):Connect(function()
@@ -899,18 +1221,151 @@ local function buildGui(parent: PlayerGui)
 
 	root.Parent = screen
 	box.Parent = root
+	runBtn.Parent = root
 	panel.Parent = root
 	label.Parent = root
 	screen.Parent = parent
 
 	gui = screen
+	backdrop = dim
 	rootFrame = root
 	rootScale = scale
 	inputBox = box
+	runButton = runBtn
+	closeButton = closeBtn
 	statusLabel = label
 	suggestionPanel = panel
 	suggestionScrollTrack = scrollTrack
 	suggestionScrollThumb = scrollThumb
+	titleLabel = title
+end
+
+local function getOrAddUIScale(obj: GuiObject): UIScale
+	local s = obj:FindFirstChildOfClass("UIScale")
+	if s then
+		return s
+	end
+	s = Instance.new("UIScale")
+	s.Parent = obj
+	return s
+end
+
+local function ensureClickButton(host: GuiObject): GuiButton
+	if host:IsA("GuiButton") then
+		return host :: GuiButton
+	end
+	local existing = host:FindFirstChild("_AdminClick")
+	if existing and existing:IsA("GuiButton") then
+		return existing :: GuiButton
+	end
+	local btn = Instance.new("TextButton")
+	btn.Name = "_AdminClick"
+	btn.BackgroundTransparency = 1
+	btn.Text = ""
+	btn.Size = UDim2.fromScale(1, 1)
+	btn.Position = UDim2.fromScale(0.5, 0.5)
+	btn.AnchorPoint = Vector2.new(0.5, 0.5)
+	btn.ZIndex = 50
+	btn.Parent = host
+	return btn
+end
+
+local function highlightOn(host: GuiObject): GuiObject?
+	local decor = host:FindFirstChild("Decor")
+	local highlight = decor and decor:FindFirstChild("Highlight")
+	local on = highlight and highlight:FindFirstChild("On")
+	if on and on:IsA("GuiObject") then
+		return on :: GuiObject
+	end
+	return nil
+end
+
+local function syncMobileAdminButton()
+	local frame = mobileAdminFrame
+	local host = mobileAdminButtonHost
+	local show = isAdminAllowed() and isPhoneLike()
+	if frame then
+		frame.Visible = show
+	end
+	if host then
+		host.Visible = show
+	end
+end
+
+local function wireMobileAdminButton()
+	if mobileAdminWired then
+		return
+	end
+	local main = PlayerGuiMain.ensure(player)
+	if not main then
+		return
+	end
+	local sideUI = main:FindFirstChild("SideUI")
+	-- Prefer SideUI.AdminFrame; fall back to any AdminFrame under Main (Studio moves).
+	local adminFrame = (sideUI and sideUI:FindFirstChild("AdminFrame"))
+		or main:FindFirstChild("AdminFrame", true)
+	if not adminFrame or not adminFrame:IsA("GuiObject") then
+		return
+	end
+	local host = adminFrame:FindFirstChild("Admin Panel Button")
+		or adminFrame:FindFirstChild("AdminPanelButton")
+	if not host or not host:IsA("GuiObject") then
+		return
+	end
+
+	mobileAdminWired = true
+	mobileAdminFrame = adminFrame :: GuiObject
+	mobileAdminButtonHost = host :: GuiObject
+	;(adminFrame :: GuiObject).Visible = false
+	host.Visible = false
+	;(adminFrame :: GuiObject).Active = false
+	host.Active = true
+	pcall(function()
+		(host :: any).Interactable = true
+	end)
+
+	local on = highlightOn(host)
+	if on then
+		on.Visible = false
+	end
+
+	local scale = getOrAddUIScale(host)
+	local btn: GuiButton = if host:IsA("GuiButton") then host :: GuiButton else ensureClickButton(host)
+	local tiltTarget: GuiObject = host
+	local adminIcon = host:FindFirstChild("Admin", true)
+	if adminIcon and adminIcon:IsA("GuiObject") then
+		tiltTarget = adminIcon
+	end
+
+	UIButtonEffects.wireTiltHoverButton(btn, function()
+		if not isAdminAllowed() then
+			return
+		end
+		-- Open only (don't toggle): MouseButton1Down + backdrop Click would open then close.
+		if gui and gui.Enabled then
+			setOpen(false)
+		else
+			setOpen(true)
+		end
+	end, host, tiltTarget, true)
+
+	-- Keep Studio Decor.Highlight.On in sync with hover.
+	btn.MouseEnter:Connect(function()
+		if on then
+			on.Visible = true
+		end
+	end)
+	btn.MouseLeave:Connect(function()
+		if on then
+			on.Visible = false
+		end
+		TweenService:Create(scale, TweenInfo.new(0.12), { Scale = 1 }):Play()
+	end)
+
+	syncMobileAdminButton()
+	player:GetAttributeChangedSignal(ADMIN_ALLOWED_ATTR):Connect(syncMobileAdminButton)
+	UserInputService:GetPropertyChangedSignal("KeyboardEnabled"):Connect(syncMobileAdminButton)
+	UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(syncMobileAdminButton)
 end
 
 local function isToggleKey(keyCode: Enum.KeyCode): boolean
@@ -939,9 +1394,26 @@ function M.init()
 		return
 	end
 	buildGui(playerGui)
+	wireSuggestionTouchScroll()
+	task.spawn(function()
+		for _ = 1, 30 do
+			wireMobileAdminButton()
+			if mobileAdminWired then
+				break
+			end
+			task.wait(0.5)
+		end
+		if not mobileAdminWired then
+			warn("[AdminCommandBar] SideUI.AdminFrame['Admin Panel Button'] not found — mobile admin button skipped")
+		end
+	end)
 
 	local lastToggleAt = 0
 	local function onToggleAdmin()
+		if not isAdminAllowed() and not RunService:IsStudio() then
+			-- Attribute may still be syncing; allow Studio always via allowlist server-side.
+			return
+		end
 		local now = os.clock()
 		if now - lastToggleAt < 0.15 then
 			return
@@ -984,6 +1456,20 @@ function M.init()
 	end, false, AUTOCOMPLETE_PRIORITY, Enum.KeyCode.Tab)
 
 	UserInputService.InputChanged:Connect(function(input, _gameProcessed)
+		if
+			suggestionScrollTouch
+			and input == suggestionScrollTouch
+			and input.UserInputType == Enum.UserInputType.Touch
+		then
+			local dy = input.Position.Y - suggestionScrollStartY
+			if not suggestionScrollDragged and math.abs(dy) < SUGGESTION_SCROLL_DRAG_PX then
+				return
+			end
+			suggestionScrollDragged = true
+			local rowDelta = -dy / ROW_HEIGHT
+			setSuggestionScrollOffset(math.floor(suggestionScrollStartOffset + rowDelta + 0.5))
+			return
+		end
 		if input.UserInputType ~= Enum.UserInputType.MouseWheel then
 			return
 		end
@@ -1053,7 +1539,7 @@ function M.init()
 	task.defer(fetchCatalog)
 
 	local studioHint = if RunService:IsStudio() then " — Studio: press ;" else ""
-	warn("[AdminCommandBar] Ready — F5 or ; to open" .. studioHint)
+	warn("[AdminCommandBar] Ready — F5 or ; to open · mobile Admin button when allowed" .. studioHint)
 end
 
 return M

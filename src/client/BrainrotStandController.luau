@@ -33,6 +33,7 @@ local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild(
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local BrainrotStandConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotStandConfig"))
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 
 local STAND_TAG = "BrainrotStand"
@@ -41,17 +42,19 @@ local STAND_UPGRADE_COST_ATTR = "StandUpgradeCost"
 local BRAINROT_MAX_LEVEL = 90
 -- Server sets this on the stand's ProximityPrompt while the stand is empty; client gates Enabled.
 local PLACE_PROMPT_ATTR = "BrainrotPlacePrompt"
+local STEAL_PROMPT_ATTR = "StealPrompt"
 local DEFAULT_PLACE_DISTANCE = 10
 local DEFAULT_PICKUP_DISTANCE = 14
 local PROMPT_REFRESH_INTERVAL = 0.3
 local PROMPT_MOVE_SKIP_THRESHOLD = 2
 local STAND_LAZY_INIT_RANGE = 220
+local lastShownStandPrompt: ProximityPrompt? = nil
 
 local player = Players.LocalPlayer
 local MONEY_VFX_HOLD_SEC = 0.14
 local CHILD_WAIT_TIMEOUT = 8 -- seconds; stand children may not have replicated when the tag arrives
 local BRAINROT_HOP_HEIGHT = 0.34
-local BRAINROT_HOP_COOLDOWN = 0.4
+local BRAINROT_HOP_COOLDOWN = 0.08
 
 local M = {}
 
@@ -495,7 +498,7 @@ local lastBrainrotHopAt: { [Model]: number } = {}
 local lastUpgradeRequestAt: { [Model]: number } = {}
 local affordVisualByView: { [StandView]: string } = {}
 local cashAffordToken = 0
-local UPGRADE_REQUEST_COOLDOWN = 0.22
+local UPGRADE_REQUEST_COOLDOWN = 0.08
 local standHeartbeatConn: RBXScriptConnection? = nil
 local cachedSpawnBasesFolder: Instance? = nil
 
@@ -531,6 +534,10 @@ local function canShowPlaceBrainrotPrompt(): boolean
 	return characterHasBrainrotToolEquipped(player.Character) or CarryGate.isCarrying()
 end
 
+local function isStealProximityPrompt(pp: ProximityPrompt): boolean
+	return pp:GetAttribute(STEAL_PROMPT_ATTR) == true
+end
+
 local function standHasBrainrot(stand: Model): boolean
 	local name = stand:GetAttribute("BrainrotName")
 	return typeof(name) == "string" and name ~= ""
@@ -553,49 +560,66 @@ local function getAllStandProximityPrompts(stand: Model): { ProximityPrompt }
 end
 
 local function rebuildStandPromptCache(stand: Model)
-	local prompts: { ProximityPrompt } = {}
+	local found: { ProximityPrompt } = {}
 	local seen: { [ProximityPrompt]: boolean } = {}
-	local canonical: ProximityPrompt? = nil
 
-	local function addPrompt(prompt: ProximityPrompt)
-		if seen[prompt] then
-			return
-		end
-		seen[prompt] = true
-		table.insert(prompts, prompt)
-		if not canonical then
-			canonical = prompt
+	local function collectFrom(root: Instance)
+		for _, d in root:GetDescendants() do
+			if d:IsA("ProximityPrompt") and not seen[d] then
+				seen[d :: ProximityPrompt] = true
+				table.insert(found, d :: ProximityPrompt)
+			end
 		end
 	end
 
 	local decor = stand:FindFirstChild("Decor")
 	if decor then
-		for _, d in ipairs(decor:GetDescendants()) do
-			if d:IsA("ProximityPrompt") then
-				addPrompt(d :: ProximityPrompt)
-			end
-		end
+		collectFrom(decor)
 	end
-
 	local spawn = stand:FindFirstChild("Spawn", true)
-	if spawn and spawn:IsA("BasePart") then
-		local onSpawn = (spawn :: BasePart):FindFirstChildWhichIsA("ProximityPrompt")
-		if onSpawn then
-			addPrompt(onSpawn :: ProximityPrompt)
+	if spawn then
+		collectFrom(spawn)
+	end
+	if #found == 0 then
+		collectFrom(stand)
+	end
+
+	local canonical: ProximityPrompt? = nil
+	for _, pp in found do
+		if isStealProximityPrompt(pp) then
+			continue
+		end
+		if pp.Name == "StandProximityPrompt" then
+			canonical = pp
+			break
+		end
+	end
+	if not canonical then
+		for _, pp in found do
+			if not isStealProximityPrompt(pp) then
+				canonical = pp
+				break
+			end
 		end
 	end
 
-	if not canonical then
-		for _, d in stand:GetDescendants() do
-			if d:IsA("ProximityPrompt") then
-				addPrompt(d :: ProximityPrompt)
-			end
+	local managedPrompts: { ProximityPrompt } = {}
+	for _, pp in found do
+		if not isStealProximityPrompt(pp) then
+			table.insert(managedPrompts, pp)
+		end
+	end
+
+	for _, pp in found do
+		if pp ~= canonical and not isStealProximityPrompt(pp) then
+			pp.Enabled = false
+			ProximityPromptEffects.forceHide(pp)
 		end
 	end
 
 	standPromptCache[stand] = {
 		canonical = canonical,
-		prompts = prompts,
+		prompts = managedPrompts,
 	}
 end
 
@@ -742,13 +766,17 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 		end
 
 		local pp = canonical
+		if not pp or not pp.Parent then
+			continue
+		end
 
 		local locked = stand:GetAttribute("BrainrotStandLocked") == true
 		if locked or not cachedPlotMatch[stand] then
 			continue
 		end
 
-		local isPlace = pp:GetAttribute(PLACE_PROMPT_ATTR) == true or not standHasBrainrot(stand)
+		local hasBrainrot = standHasBrainrot(stand)
+		local isPlace = pp:GetAttribute(PLACE_PROMPT_ATTR) == true or not hasBrainrot
 		if isPlace then
 			if not holdingTool then
 				continue
@@ -788,7 +816,7 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 
 	local closestPrompt = if closest then closest.prompt else nil
 	for _, pp in allPrompts do
-		if pp == closestPrompt then
+		if pp == closestPrompt or isStealProximityPrompt(pp) then
 			continue
 		end
 		pp.Enabled = false
@@ -798,8 +826,13 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 	if closest then
 		closest.prompt.Enabled = true
 		ProximityPromptEffects.syncStandProximityUi(closest.prompt)
+		-- Always ensure the card exists (safe no-op if already live). Skipping when the
+		-- prompt identity was unchanged left Pick Up / Place missing after hide/facing flicker.
+		ProximityPromptEffects.syncStandPlaceProximityUi(closest.prompt)
+		lastShownStandPrompt = closest.prompt
 	else
 		ProximityPromptEffects.syncStandProximityUi(nil)
+		lastShownStandPrompt = nil
 	end
 
 	lastHRPPosition = hrpPos
@@ -861,6 +894,7 @@ local function wireStandPlacePromptListeners(stand: Model)
 		table.insert(
 			conns,
 			stand:GetAttributeChangedSignal("BrainrotName"):Connect(function()
+				lastShownStandPrompt = nil
 				refreshStandProximityPromptVisibility(true)
 			end)
 		)
@@ -1074,6 +1108,9 @@ end
 local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 	local lastActivatedAt = -1e9
 	local function requestUpgrade()
+		if not MobileTouchGate.canTapUi() then
+			return
+		end
 		local now = os.clock()
 		if now - lastActivatedAt < UPGRADE_REQUEST_COOLDOWN then
 			return
@@ -1086,6 +1123,9 @@ local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 	if UserInputService.TouchEnabled then
 		clickable.InputEnded:Connect(function(input: InputObject)
 			if input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			if not MobileTouchGate.canTapUi() then
 				return
 			end
 			if os.clock() - lastActivatedAt < 0.05 then
@@ -1488,7 +1528,7 @@ local function hopStandBrainrot(stand: Model)
 	end)
 	local hopTween = TweenService:Create(
 		hopProxy,
-		TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Value = 1 }
 	)
 	hopTween.Completed:Connect(function()

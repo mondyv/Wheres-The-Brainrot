@@ -26,6 +26,8 @@ local HUDController = require(script.Parent.HUDController)
 local UpgradesController = require(script.Parent.UpgradesController)
 local MainGradientButtons = require(script.Parent.MainGradientButtons)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local GiftController = require(script.Parent.GiftController)
 
 local player = Players.LocalPlayer
 
@@ -50,6 +52,27 @@ local ownedBuyByGamePassId: { [number]: OwnedBuyEntry } = {}
 local ownedBuyByProductId: { [number]: OwnedBuyEntry } = {}
 
 local StoreController = {}
+
+-- ── Gift-mode purchase redirect ─────────────────────────────────────────────────
+-- While GiftController has a target selected, buy clicks redirect to the gift
+-- remotes (server grants to the recipient) instead of the normal marketplace
+-- prompt for the buyer.
+
+local function buyProduct(productId: number)
+	if GiftController.isGifting() then
+		GiftController.requestGiftProduct(productId)
+		return
+	end
+	PurchasePrompt.promptProduct(productId)
+end
+
+local function buyGamepass(gamePassId: number)
+	if GiftController.isGifting() then
+		GiftController.requestGiftGamepass(gamePassId)
+		return
+	end
+	PurchasePrompt.promptGamePass(gamePassId)
+end
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -116,31 +139,41 @@ local function wireBuyButton(host: GuiObject, onClick: () -> ()): BuyButtonState
 		if on then
 			on.Visible = true
 		end
+		UIButtonEffects.playBorderGlisten(host)
+		UIButtonEffects.playDiagonalSweep(host)
 	end)
 	btn.MouseLeave:Connect(function()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1 }):Play()
 		if on then
 			on.Visible = false
 		end
+		-- Do not cancel glisten/sweep — finish full travel after short hover/tap.
 	end)
+	local lastFire = 0
+	local function activated()
+		if not state.enabled then
+			GameSoundEffects.playErrorNotif()
+			return
+		end
+		local now = os.clock()
+		if now - lastFire < 0.12 then
+			return
+		end
+		lastFire = now
+		onClick()
+	end
 	btn.MouseButton1Down:Connect(function()
 		if not state.enabled then
 			return
 		end
 		UIInteractionSounds.playClick()
 		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.94 }):Play()
+		-- Fire on Down: scaling the host shrinks _StoreClick and cancels Activated.
+		activated()
 	end)
 	btn.MouseButton1Up:Connect(function()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = if state.enabled then 1.06 else 1 }):Play()
 	end)
-	local function activated()
-		if not state.enabled then
-			GameSoundEffects.playErrorNotif()
-			return
-		end
-		onClick()
-	end
-	btn.Activated:Connect(activated)
 	return state
 end
 
@@ -248,7 +281,7 @@ local function wireGamePass(containers: { Instance? }, panelName: string, gamePa
 	end
 	local state = wireBuyButton(buy, function()
 		warn("[StoreController]", panelName, "buy clicked → prompting gamepass", gamePassId)
-		PurchasePrompt.promptGamePass(gamePassId)
+		buyGamepass(gamePassId)
 	end)
 	-- Register for owned/optimistic refresh; without this, PromptGamePassPurchaseFinished
 	-- finds no entry in ownedBuyByGamePassId and the button never shows as purchased.
@@ -272,7 +305,7 @@ local function wireProduct(panel: Instance?, productId: number)
 		return
 	end
 	wireBuyButton(buy, function()
-		PurchasePrompt.promptProduct(productId)
+		buyProduct(productId)
 	end)
 end
 
@@ -301,11 +334,15 @@ local function wireExclusive(container: Instance)
 		(info :: TextLabel).Text = "Exclusive brainrot"
 	end
 	local state = wireBuyButton(buy, function()
+		if GiftController.isGifting() then
+			buyProduct(StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT)
+			return
+		end
 		if player:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) == true then
 			GameSoundEffects.playErrorNotif()
 			return
 		end
-		PurchasePrompt.promptProduct(StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT)
+		buyProduct(StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT)
 	end)
 	local entry: OwnedBuyEntry = {
 		buy = buy,
@@ -326,7 +363,7 @@ local function wirePacks(container: Instance)
 		local buy = findBuy(panel)
 		if buy and panel then
 			local state = wireBuyButton(buy, function()
-				PurchasePrompt.promptProduct(pack.productId)
+				buyProduct(pack.productId)
 			end)
 			local availableLabel = panel:FindFirstChild("Available")
 			local entry: OwnedBuyEntry = {
@@ -385,10 +422,14 @@ local function collectCashBundlePanels(container: Instance)
 			local buy = findBuy(panel)
 			if buy then
 				wireBuyButton(buy, function()
+					if GiftController.isGifting() then
+						buyProduct(entry[3])
+						return
+					end
 					if UpgradesController.markCashBundlePurchasePending then
 						UpgradesController.markCashBundlePurchasePending()
 					end
-					PurchasePrompt.promptProduct(entry[3])
+					buyProduct(entry[3])
 				end)
 			end
 		end
@@ -601,7 +642,7 @@ local function init()
 		local vipBuy = findBuy(container:FindFirstChild("VIP"))
 		if vipBuy then
 			local vipState = wireBuyButton(vipBuy, function()
-				PurchasePrompt.promptGamePass(StoreConfig.GAMEPASS.VIP)
+				buyGamepass(StoreConfig.GAMEPASS.VIP)
 			end)
 			local vipEntry: OwnedBuyEntry = {
 				buy = vipBuy,

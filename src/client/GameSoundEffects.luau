@@ -28,6 +28,10 @@ local groundSmashTemplate: Sound?
 local purchaseTemplate: Sound?
 local upgradeTemplate: Sound?
 local notification1Template: Sound?
+local spiderRoarTemplate: Sound?
+local spiderWebShotTemplate: Sound?
+local spiderGettingHitTemplate: Sound?
+local spiderDodgeTemplate: Sound?
 
 local activeAuraSound: Sound?
 local activeAuraKey: string? = nil
@@ -319,6 +323,15 @@ function GameSoundEffects.init()
 
 	notification1Template = findSoundIn(root, "Notification1")
 
+	local spiderFolder = root:FindFirstChild("Spider")
+	local spiderGroup = spiderFolder and spiderFolder:FindFirstChild("SoundGroup")
+	if spiderGroup then
+		spiderRoarTemplate = findSoundIn(spiderGroup, "Spider Roar")
+		spiderWebShotTemplate = findSoundIn(spiderGroup, "Spider Web Shot")
+		spiderGettingHitTemplate = findSoundIn(spiderGroup, "Getting Hit")
+		spiderDodgeTemplate = findSoundIn(spiderGroup, "Dodge")
+	end
+
 	local ev = ReplicatedStorage:WaitForChild("PlayHarvestDropFX", 60)
 	if ev and ev:IsA("RemoteEvent") then
 		(ev :: RemoteEvent).OnClientEvent:Connect(function(rarity: string)
@@ -516,11 +529,16 @@ function GameSoundEffects.playBushRandomShakeAt(bush: Instance)
 		return
 	end
 
-	if (bushPos - hrp.Position).Magnitude > BUSH_RANDOM_SHAKE_MAX_DIST then
+	local dist = (bushPos - hrp.Position).Magnitude
+	if dist > BUSH_RANDOM_SHAKE_MAX_DIST then
 		return
 	end
 
+	local falloff = 1 - dist / BUSH_RANDOM_SHAKE_MAX_DIST
+	local distanceVolume = 0.1 + 0.9 * falloff * falloff
+
 	local clone = prepareClone(bushRandomShakeTemplate)
+	clone.Volume = clone.Volume * distanceVolume
 	clone.PlaybackSpeed = BUSH_RANDOM_SHAKE_PITCH_MIN
 		+ math.random() * (BUSH_RANDOM_SHAKE_PITCH_MAX - BUSH_RANDOM_SHAKE_PITCH_MIN)
 	clone.Parent = bush
@@ -539,6 +557,26 @@ function GameSoundEffects.playNotification1()
 	clone.Ended:Once(function()
 		clone:Destroy()
 	end)
+end
+
+local function playSpiderSound(template: Sound?)
+	playTemplate(template)
+end
+
+function GameSoundEffects.playSpiderRoar()
+	playSpiderSound(spiderRoarTemplate)
+end
+
+function GameSoundEffects.playSpiderWebShot()
+	playSpiderSound(spiderWebShotTemplate)
+end
+
+function GameSoundEffects.playSpiderGettingHit()
+	playSpiderSound(spiderGettingHitTemplate)
+end
+
+function GameSoundEffects.playSpiderDodge()
+	playSpiderSound(spiderDodgeTemplate)
 end
 
 return GameSoundEffects

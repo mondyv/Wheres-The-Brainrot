@@ -10,11 +10,17 @@ local ServerStorage = game:GetService("ServerStorage")
 local function syncHeaderTemplate()
 	local templates = ServerStorage:FindFirstChild("Templates")
 	if not templates then
+		warn("[0_MirrorBrainrotHeader] ServerStorage.Templates missing")
 		return
 	end
 	local src = templates:FindFirstChild("BrainrotHeader")
 	if not src then
+		warn("[0_MirrorBrainrotHeader] ServerStorage.Templates.BrainrotHeader missing")
 		return
+	end
+	local hasBb = src:FindFirstChildWhichIsA("BillboardGui", true) ~= nil
+	if not hasBb then
+		warn("[0_MirrorBrainrotHeader] BrainrotHeader has no BillboardGui — headers will use client fallback. Place BillboardGui under ServerStorage.Templates.BrainrotHeader in Studio.")
 	end
 	local rsTemplates = ReplicatedStorage:FindFirstChild("Templates")
 	if not rsTemplates then

@@ -19,8 +19,8 @@
 	  Tool/inventory entry consumed, stand now owned by the placer.
 	• Owner standing on prompt again removes the brainrot (returned to inventory).
 	• Stand generates cash at the level/mutation income rate; cap at OFFLINE_CAP if no one collects.
-	• After a saved logout, returning players earn offline income (up to OFFLINE_CAP) on occupied stands;
-	  Cash.BillboardGui.Offline shows the away earnings until the pad is collected.
+	• After a saved logout (10+ minutes away), returning players earn offline income at 0.2× live rate
+	  (up to 8h). OfflineEarnings2x offers a Robux 2× claim; Decline puts the cash on pads.
 	• Touch ButtonPart → owner collects accumulated cash (online + offline); coin VFX bursts.
 	• Owner clicks the Upgrade SurfaceGui → level +1 (cash) or +25 with 2× Upgrades (Robux dev product).
 --]]
@@ -41,11 +41,14 @@ local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):Wai
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local BrainrotStandConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotStandConfig"))
+local OfflineEarningsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("OfflineEarningsConfig"))
 
 local STAND_TAG = "BrainrotStand"
 local STAND_ACCUMULATED_ATTR = "StandAccumulatedCash"
 -- Accumulated cash is capped at OFFLINE_CAP_SECONDS * income; tunes how long a player can leave it.
-local OFFLINE_CAP_SECONDS = 60 * 60 * 4 -- 4 hours of income, then it stops growing
+local OFFLINE_CAP_SECONDS = OfflineEarningsConfig.CAP_SECONDS
+local OFFLINE_MIN_SECONDS = OfflineEarningsConfig.MIN_OFFLINE_SECONDS
+local OFFLINE_INCOME_MULT = OfflineEarningsConfig.INCOME_MULT
 local COLLECT_TOUCH_DEBOUNCE = 0.5 -- seconds between successful collect claims on the money pad
 local COLLECT_TOUCH_CHARACTER_DEBOUNCE = 0.2 -- blocks limb/accessory spam before collectCash even runs
 local COLLECT_VFX_MIN_INTERVAL = 0.25 -- prevents duplicate collect remotes from stacking in one moment
@@ -53,7 +56,7 @@ local CASH_PAD_DISPLAY_INTERVAL = 1 -- cash pad label/attribute refresh cadence 
 local CASH_PAD_DISPLAY_STAGGER_BUCKETS = 16
 local INCOME_TICK_INTERVAL = 0.25
 local INCOME_STANDS_PER_HEARTBEAT = 4
-local UPGRADE_DEBOUNCE = 0.2 -- blocks duplicate upgrade fires from GUI + remote on the same click
+local UPGRADE_DEBOUNCE = 0.08 -- blocks duplicate upgrade fires from GUI + remote on the same click
 local PICKUP_DEBOUNCE = 0.35 -- blocks duplicate inventory adds from double prompt triggers
 local PROMPT_PLACE_DISTANCE = 10
 local PROMPT_PICKUP_DISTANCE = 14
@@ -98,6 +101,9 @@ local prepareRobuxStandUpgradeRE = ensureRemoteEvent(remotesFolder, "PrepareRobu
 local upgradeFeedbackRE = ensureRemoteEvent(remotesFolder, "StandUpgradeFeedback") -- server → client (ok, reason)
 local collectVFXRE = ensureRemoteEvent(remotesFolder, "StandCashCollectedFX") -- server → client (standModel, cashAmount)
 local autoCollectVFXRE = ensureRemoteEvent(remotesFolder, "AutoCollectCashCollectedFX") -- server → client (autocollectModel, totalCash)
+local showOfflineEarningsRE = ensureRemoteEvent(remotesFolder, "ShowOfflineEarnings") -- server → client (amount)
+local declineOfflineEarningsRE = ensureRemoteEvent(remotesFolder, "DeclineOfflineEarnings") -- client → server
+local offlineDoubledRE = ensureRemoteEvent(remotesFolder, "OfflineEarningsDoubled") -- server → client (grantedAmount)
 
 -- ── Internal BindableFunction from BushHarvest (inventory mutation) ───────────
 
@@ -1145,35 +1151,107 @@ local function grantOfflineEarningsForStand(state: StandState, player: Player, l
 		return 0
 	end
 	local elapsed = os.time() - lastSavedAt
-	if elapsed <= 0 then
+	-- No offline income until the player has been away long enough.
+	if elapsed < OFFLINE_MIN_SECONDS then
 		return 0
 	end
-	local offlineSec = math.min(elapsed, OFFLINE_CAP_SECONDS)
+	-- Accrue only the time after the minimum AFK gate.
+	local offlineSec = math.min(elapsed - OFFLINE_MIN_SECONDS, OFFLINE_CAP_SECONDS)
+	if offlineSec <= 0 then
+		return 0
+	end
 	local ips = recomputeIncomePerSecond(state)
 	if ips <= 0 then
 		return 0
 	end
-	local mult = getPlayerMoneyMult(player)
-	local cap = ips * mult * OFFLINE_CAP_SECONDS
-	local before = state.accumulated
+	local moneyMult = getPlayerMoneyMult(player)
+	local mult = moneyMult * OFFLINE_INCOME_MULT
 	local gain = ips * mult * offlineSec
-	state.accumulated = math.min(cap, before + gain)
-	state.lastTickAt = os.clock()
-	return math.max(0, state.accumulated - before)
+	local cap = ips * mult * OFFLINE_CAP_SECONDS
+	local room = math.max(0, cap - state.accumulated)
+	-- Held in offlinePending until Decline (pads) or Double (cash grant) — not collectable yet.
+	return math.min(gain, room)
+end
+
+local pendingOfflineDoubleOffer: { [Player]: number } = {}
+
+local function clearOfflinePendingOnly(player: Player)
+	for _, state in pairs(stands) do
+		if state.ownerUserId == player.UserId and state.brainrotName then
+			if state.offlinePending > 0 then
+				state.offlinePending = 0
+				refreshLabels(state)
+			end
+		end
+	end
+	scheduleAutoCollectRefresh(player.UserId)
+end
+
+local function commitOfflinePendingToPads(player: Player)
+	for _, state in pairs(stands) do
+		if state.ownerUserId == player.UserId and state.brainrotName then
+			local pending = math.max(0, state.offlinePending)
+			if pending > 0 then
+				local moneyMult = getPlayerMoneyMult(player)
+				local ips = recomputeIncomePerSecond(state)
+				local cap = ips * moneyMult * OFFLINE_INCOME_MULT * OFFLINE_CAP_SECONDS
+				-- Once committed, pad uses full money mult for ongoing cap; offline chunk stays in accumulated.
+				cap = math.max(cap, ips * moneyMult * OFFLINE_CAP_SECONDS)
+				state.accumulated = math.min(cap, state.accumulated + pending)
+				-- Keep offlinePending so the stand billboard still shows "+X Offline" until collected.
+				refreshLabels(state)
+			end
+		end
+	end
+	scheduleAutoCollectRefresh(player.UserId)
 end
 
 local function applyOfflineEarningsForPlayer(player: Player, lastSavedAt: number)
 	if typeof(lastSavedAt) ~= "number" or lastSavedAt <= 0 then
 		return
 	end
+	local totalAdded = 0
 	for _, state in pairs(stands) do
 		if state.ownerUserId == player.UserId and state.brainrotName then
 			local added = grantOfflineEarningsForStand(state, player, lastSavedAt)
 			state.offlinePending = added
+			totalAdded += added
 			refreshLabels(state)
 		end
 	end
 	scheduleAutoCollectRefresh(player.UserId)
+	local offer = math.floor(totalAdded + 0.5)
+	if offer >= 1 then
+		pendingOfflineDoubleOffer[player] = offer
+		showOfflineEarningsRE:FireClient(player, offer)
+		-- Safety: if the client never resolves the offer, still put cash on the pads.
+		task.delay(180, function()
+			if not player.Parent then
+				return
+			end
+			if pendingOfflineDoubleOffer[player] == offer then
+				commitOfflinePendingToPads(player)
+				pendingOfflineDoubleOffer[player] = nil
+			end
+		end)
+	else
+		pendingOfflineDoubleOffer[player] = nil
+	end
+end
+
+local function grantOfflineDouble(player: Player): (boolean, number)
+	local offer = pendingOfflineDoubleOffer[player]
+	if typeof(offer) ~= "number" or offer < 1 then
+		return false, 0
+	end
+	local granted = math.floor(offer) * 2
+	clearOfflinePendingOnly(player)
+	pendingOfflineDoubleOffer[player] = nil
+	local cash = player:GetAttribute("Cash")
+	local c = if typeof(cash) == "number" then cash else 0
+	player:SetAttribute("Cash", c + granted)
+	offlineDoubledRE:FireClient(player, granted)
+	return true, granted
 end
 
 local function clearStandState(state: StandState)
@@ -1439,7 +1517,10 @@ local function collectCash(state: StandState, player: Player)
 
 	-- Keep any tiny fractional income instead of destroying it, but remove the whole-number payout.
 	state.accumulated = math.max(0, state.accumulated - amount)
-	state.offlinePending = 0
+	-- While the 2× join offer is open, offline cash is not on the pad yet — don't wipe it.
+	if not pendingOfflineDoubleOffer[player] then
+		state.offlinePending = 0
+	end
 
 	local cash = player:GetAttribute("Cash")
 	local c = if typeof(cash) == "number" then cash else 0
@@ -1486,7 +1567,9 @@ local function collectAllCashForPlayer(player: Player): number
 		end
 
 		state.accumulated = math.max(0, state.accumulated - amount)
-		state.offlinePending = 0
+		if not pendingOfflineDoubleOffer[player] then
+			state.offlinePending = 0
+		end
 		totalCollected += amount
 		table.insert(vfxEntries, { stand = state.stand, amount = amount })
 		syncCashPadDisplay(state, true)
@@ -2277,6 +2360,10 @@ end)
 
 Players.PlayerRemoving:Connect(function(player)
 	pendingRobuxStandUpgrade[player] = nil
+	if pendingOfflineDoubleOffer[player] then
+		commitOfflinePendingToPads(player)
+	end
+	pendingOfflineDoubleOffer[player] = nil
 	for _, state in pairs(stands) do
 		if isOwner(state, player) then
 			-- Leave the brainrot on the stand; ownership persists per-server.
@@ -2351,4 +2438,18 @@ ProductHandlerServer.registerProductReceipt(BrainrotStandConfig.CANT_AFFORD_DEV_
 	return if ok
 		then Enum.ProductPurchaseDecision.PurchaseGranted
 		else Enum.ProductPurchaseDecision.NotProcessedYet
+end)
+
+ProductHandlerServer.registerProductReceipt(OfflineEarningsConfig.DOUBLE_DEV_PRODUCT_ID, function(player: Player)
+	local ok = grantOfflineDouble(player)
+	return if ok
+		then Enum.ProductPurchaseDecision.PurchaseGranted
+		else Enum.ProductPurchaseDecision.NotProcessedYet
+end)
+
+declineOfflineEarningsRE.OnServerEvent:Connect(function(player: Player)
+	if pendingOfflineDoubleOffer[player] then
+		commitOfflinePendingToPads(player)
+	end
+	pendingOfflineDoubleOffer[player] = nil
 end)

@@ -159,8 +159,34 @@ StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID = {
 	[StoreConfig.GAMEPASS.AUTOCOLLECT] = StoreConfig.ATTR.GIFTED_AUTOCOLLECT,
 }
 
+-- Store gift-panel picker: developer products whose grant is redirected to the
+-- Store's selected recipient instead of the buyer. See StoreHandler.server for
+-- the redirect logic (pending gift → receipt interceptor → grant to recipient).
+StoreConfig.GIFTABLE_STORE_PRODUCT_IDS = {
+	[StoreConfig.PRODUCT.RANDOM_BRAINROT] = true,
+	[StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT] = true,
+	[StoreConfig.PRODUCT.CASH_BUNDLE_1] = true,
+	[StoreConfig.PRODUCT.CASH_BUNDLE_2] = true,
+	[StoreConfig.PRODUCT.CASH_BUNDLE_3] = true,
+	[StoreConfig.PRODUCT.CASH_BUNDLE_4] = true,
+	[StoreConfig.PRODUCT.CASH_BUNDLE_5] = true,
+	[StoreConfig.PRODUCT.STARTER_PACK] = true,
+	[StoreConfig.PRODUCT.MYTHIC_PACK] = true,
+	[StoreConfig.PRODUCT.GODLY_PACK] = true,
+	[StoreConfig.PRODUCT.SECRET_PACK] = true,
+}
+
+function StoreConfig.isStoreProductGiftable(productId: number): boolean
+	return StoreConfig.GIFTABLE_STORE_PRODUCT_IDS[productId] == true
+end
+
 -- Fill `giftProductId` with a developer product id for each giftable pass when
 -- the products exist in Roblox. Gamepass ownership itself is not transferred.
+-- Roblox always grants PromptGamePassPurchase to the purchaser, so a gamepass
+-- can only be gifted through a *separate* gift-only developer product — create
+-- one per pass in Studio and paste its id below (StoreConfig.getGiftGamepassProductId
+-- reads it). Until filled in, the Store's gift flow rejects that pass with a
+-- clear "not available yet" message instead of charging anyone.
 StoreConfig.GIFTABLE_GAMEPASSES = {
 	[StoreConfig.GAMEPASS.VIP] = {
 		displayName = "VIP",
@@ -198,6 +224,16 @@ StoreConfig.GIFTABLE_GAMEPASSES = {
 		giftProductId = nil,
 	},
 }
+
+-- Returns the gift-only developer product id for a gamepass, or nil if the
+-- pass isn't giftable yet (see GIFTABLE_GAMEPASSES comment above).
+function StoreConfig.getGiftGamepassProductId(gamepassId: number): number?
+	local entry = StoreConfig.GIFTABLE_GAMEPASSES[gamepassId]
+	if entry and typeof(entry.giftProductId) == "number" and entry.giftProductId > 0 then
+		return entry.giftProductId
+	end
+	return nil
+end
 
 -- Per-lucky-block rarity roll pools (rarity ids match Brainrots.RarityId).
 StoreConfig.LUCKY_BLOCK_RARITY_WEIGHTS = {
@@ -243,5 +279,33 @@ StoreConfig.STEAL_PRICE_BY_RARITY = {
 	["brainrot god"] = 699,
 	secret = 999,
 }
+
+local STEAL_RARITY_ALIASES: { [string]: string } = {
+	mythical = "mythic",
+	godly = "brainrot god",
+	god = "brainrot god",
+	brainrotgod = "brainrot god",
+	["brain rot god"] = "brainrot god",
+}
+
+function StoreConfig.normalizeStealRarity(rarity: string): string
+	local key = string.lower(string.gsub(rarity, "^%s*(.-)%s*$", "%1"))
+	key = string.gsub(key, "[_%-]+", " ")
+	key = string.gsub(key, "%s+", " ")
+	local compact = string.gsub(key, "%s+", "")
+	return STEAL_RARITY_ALIASES[key] or STEAL_RARITY_ALIASES[compact] or key
+end
+
+function StoreConfig.getStealProductId(rarity: string): number?
+	local key = StoreConfig.normalizeStealRarity(rarity)
+	local id = StoreConfig.STEAL_PRODUCT_BY_RARITY[key]
+	return if typeof(id) == "number" then id else nil
+end
+
+function StoreConfig.getStealPriceRobux(rarity: string): number?
+	local key = StoreConfig.normalizeStealRarity(rarity)
+	local price = StoreConfig.STEAL_PRICE_BY_RARITY[key]
+	return if typeof(price) == "number" then price else nil
+end
 
 return StoreConfig

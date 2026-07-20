@@ -403,16 +403,24 @@ function M.boot(config: BootConfig)
 			return false
 		end
 
-		local equipSlot = bestIdx
-		if bestIdx > config.HOTBAR_UI_SLOTS or map[bestIdx] == true then
-			local destSlot = config.assignEntryToLowestFreeHotbarSlot(plr, list, map, bestIdx)
-			if not destSlot then
+		-- Already holding the best brainrot — no sync, reshuffle, or re-equip.
+		local equippedTool = char and char:FindFirstChildOfClass("Tool")
+		if equippedTool and equippedTool:GetAttribute("BrainrotTool") == true then
+			local equippedIdx = equippedTool:GetAttribute("BrainrotInvIndex")
+			if typeof(equippedIdx) == "number" and math.floor(equippedIdx) == bestIdx then
 				return false
 			end
-			equipSlot = destSlot
 		end
 
-		config.notifyClientInventorySync(plr, equipSlot, true)
+		-- Move parked / overflow best entry onto a free hotbar cell, but always sync/equip
+		-- by inventory index (assignEntry returns a hotbar cell, not a list index).
+		if bestIdx > config.HOTBAR_UI_SLOTS or map[bestIdx] == true then
+			if not config.assignEntryToLowestFreeHotbarSlot(plr, list, map, bestIdx) then
+				return false
+			end
+		end
+
+		config.notifyClientInventorySync(plr, bestIdx, true)
 		return true
 	end
 

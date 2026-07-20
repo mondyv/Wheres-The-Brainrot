@@ -11,6 +11,7 @@ local TweenService = game:GetService("TweenService")
 
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local TopNotifController = require(script.Parent.TopNotifController)
 
@@ -163,6 +164,9 @@ local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent,
 	end
 
 	local function fire()
+		if not MobileTouchGate.canTapUi() then
+			return
+		end
 		local now = os.clock()
 		if now - lastFireAt < FIRE_DEBOUNCE then
 			return

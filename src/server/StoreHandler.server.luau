@@ -9,6 +9,9 @@
 	• Server-wide luck timer + replication (ReplicatedStorage attributes + remote).
 	• Shared helpers (grantBrainrot / grantLuckyBlock / placedIncomePerSecond) the
 	  steal system also relies on.
+	• Store gifting: buying while the client is in gift mode redirects the grant
+	  to the picked recipient instead of the buyer (see "Store gifting" section
+	  at the bottom of this file).
 
 	No new economy system is invented — brainrots are granted via the existing
 	ServerStorage.BrainrotInternal.GrantBrainrotAndEquip path (same as LuckyBlock),
@@ -24,8 +27,10 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local ServerStorage = game:GetService("ServerStorage")
 
 local PlayerDataService = require(script.Parent.Modules:WaitForChild("PlayerDataService"))
+local ItemService = require(script.Parent.Modules:WaitForChild("ItemService"))
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Brainrots"))
 
 local STAND_TAG = "BrainrotStand"
@@ -33,6 +38,11 @@ local GRANTED = Enum.ProductPurchaseDecision.PurchaseGranted
 local NOT_PROCESSED = Enum.ProductPurchaseDecision.NotProcessedYet
 
 local StoreServer = {}
+
+local PACK_BY_PRODUCT_ID: { [number]: any } = {}
+for _, pack in StoreConfig.PACKS do
+	PACK_BY_PRODUCT_ID[pack.productId] = pack
+end
 
 -- ── BindableFunction lookups (created by LuckyBlock.server / brainrot system) ────
 
@@ -171,6 +181,19 @@ function StoreServer.placedIncomePerSecond(player: Player): number
 	return total
 end
 
+-- Cash bundle rewards scale off the *paying* player's placed income so gifting
+-- can reuse this against the recipient instead (see grantGiftedStoreProduct).
+function StoreServer.cashBundleRewardFor(player: Player, productId: number): number?
+	local multiplier = StoreConfig.CASH_BUNDLE_MULTIPLIERS[productId]
+	if not multiplier then
+		return nil
+	end
+	local incomePerSecond = StoreServer.placedIncomePerSecond(player)
+	local offline24h = incomePerSecond * 86400
+	local effective = math.max(offline24h, StoreConfig.MIN_OFFLINE_24H_CASH)
+	return math.floor(effective * multiplier)
+end
+
 -- ── Remotes ─────────────────────────────────────────────────────────────────────
 
 local function ensureRemotesFolder(): Folder
@@ -218,12 +241,9 @@ end
 -- Client asks for the current cash-bundle reward amounts (depend on placed income).
 local cashBundleRewardsRF = ensureRemoteFunction("GetCashBundleRewards")
 cashBundleRewardsRF.OnServerInvoke = function(player: Player): { [number]: number }
-	local incomePerSecond = StoreServer.placedIncomePerSecond(player)
-	local offline24h = incomePerSecond * 86400
-	local effective = math.max(offline24h, StoreConfig.MIN_OFFLINE_24H_CASH)
 	local out: { [number]: number } = {}
-	for productId, multiplier in StoreConfig.CASH_BUNDLE_MULTIPLIERS do
-		out[productId] = math.floor(effective * multiplier)
+	for productId in StoreConfig.CASH_BUNDLE_MULTIPLIERS do
+		out[productId] = StoreServer.cashBundleRewardFor(player, productId)
 	end
 	return out
 end
@@ -529,14 +549,10 @@ local function registerReceipts()
 	end
 
 	-- Cash bundles.
-	for productId, multiplier in StoreConfig.CASH_BUNDLE_MULTIPLIERS do
+	for productId in StoreConfig.CASH_BUNDLE_MULTIPLIERS do
 		PH.registerProductReceipt(productId, function(player)
-			warn("[CashBundle] handler fired for product:", productId, "player:", player.Name)
-			local incomePerSecond = StoreServer.placedIncomePerSecond(player)
-			local offline24h = incomePerSecond * 86400
-			local effective = math.max(offline24h, StoreConfig.MIN_OFFLINE_24H_CASH)
-			local reward = math.floor(effective * multiplier)
-			warn("[CashBundle] incomePerSec:", incomePerSecond, "offline24h:", offline24h, "reward:", reward)
+			local reward = StoreServer.cashBundleRewardFor(player, productId) or 0
+			warn("[CashBundle] handler fired for product:", productId, "player:", player.Name, "reward:", reward)
 			StoreServer.addCash(player, reward)
 			notifyPurchaseComplete(player)
 			return GRANTED
@@ -578,4 +594,292 @@ end)
 
 Players.PlayerRemoving:Connect(function(player)
 	freeBrainrotInFlight[player] = nil
+end)
+
+-- ── Store gifting ─────────────────────────────────────────────────────────────────
+--[[
+	Client (GiftController) picks a target player, then StoreController fires
+	GiftBuyProduct / GiftBuyGamepass instead of PurchasePrompt. This records a
+	pending gift keyed by the *buyer*, prompts the real purchase from the
+	server, then the receipt interceptor below redirects the grant to the
+	recorded recipient (falling back to the buyer if the recipient left before
+	the receipt landed, so a completed real-money purchase never gets stuck).
+]]
+
+local giftBuyProductRE = ensureRemoteEvent("GiftBuyProduct")
+local giftBuyGamepassRE = ensureRemoteEvent("GiftBuyGamepass")
+local giftPurchaseResultRE = ensureRemoteEvent("GiftPurchaseResult")
+local giftReceivedRE = ensureRemoteEvent("GiftReceived")
+
+local GIFT_PENDING_TIMEOUT = 90 -- seconds a pending gift stays valid while the buyer is in the purchase prompt.
+
+type PendingStoreGift = {
+	targetUserId: number,
+	promptedProductId: number, -- the id actually passed to PromptProductPurchase.
+	giftedGamepassId: number?, -- set only when promptedProductId is a gift-only gamepass product.
+	createdAt: number,
+}
+
+local pendingStoreGifts: { [number]: PendingStoreGift } = {}
+
+local function clearPendingStoreGift(buyerUserId: number)
+	pendingStoreGifts[buyerUserId] = nil
+end
+
+local function clearExpiredPendingStoreGift(buyerUserId: number)
+	local pending = pendingStoreGifts[buyerUserId]
+	if pending and os.clock() - pending.createdAt > GIFT_PENDING_TIMEOUT then
+		pendingStoreGifts[buyerUserId] = nil
+	end
+end
+
+local function notifyGiftResult(buyer: Player?, success: boolean, message: string)
+	if buyer and buyer.Parent then
+		giftPurchaseResultRE:FireClient(buyer, success, message)
+	end
+end
+
+local function notifyGiftReceived(target: Player, fromName: string, description: string)
+	if target.Parent then
+		giftReceivedRE:FireClient(target, fromName, description)
+	end
+end
+
+-- Grants a non-gamepass giftable Store product to `recipient`. Returns
+-- (granted, description) where description is a short human-readable label
+-- used for the buyer/recipient toasts.
+local function grantGiftedStoreProduct(recipient: Player, productId: number): (boolean, string?)
+	if productId == StoreConfig.PRODUCT.RANDOM_BRAINROT then
+		local ok, err = ItemService:GiveRandomBrainrot(recipient, nil, { equip = false })
+		if ok then
+			return true, "a Random Brainrot"
+		end
+		return false, err or "random_brainrot_grant_failed"
+	end
+
+	if productId == StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT then
+		if recipient:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) == true then
+			-- Idempotent: buyer already paid, don't grant twice, still report success.
+			return true, StoreConfig.EXCLUSIVE_BRAINROT_NAME
+		end
+		local granted = StoreServer.grantBrainrot(recipient, StoreConfig.EXCLUSIVE_BRAINROT_NAME, {
+			equip = true,
+			sourcePath = StoreConfig.EXCLUSIVE_BRAINROT_SOURCE_PATH,
+		})
+		if granted then
+			recipient:SetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED, true)
+			savePurchaseStateSoon(recipient)
+			return true, StoreConfig.EXCLUSIVE_BRAINROT_NAME
+		end
+		return false, "exclusive_grant_failed"
+	end
+
+	local cashReward = StoreServer.cashBundleRewardFor(recipient, productId)
+	if cashReward then
+		StoreServer.addCash(recipient, cashReward)
+		return true, BrainrotEconomy.formatCashShort(cashReward) .. " Cash"
+	end
+
+	local pack = PACK_BY_PRODUCT_ID[productId]
+	if pack then
+		local bought = recipient:GetAttribute(pack.boughtAttr)
+		local count = if typeof(bought) == "number" then bought else 0
+		if count >= StoreConfig.PACK_PURCHASE_LIMIT then
+			-- Idempotent: buyer already paid, don't grant past the cap.
+			return true, pack.key
+		end
+		StoreServer.grantLuckyBlock(recipient, pack.luckyBlock, pack.luckyBlockVariant)
+		StoreServer.addCash(recipient, pack.cash)
+		StoreServer.grantBrainrot(recipient, pack.brainrot, { equip = false })
+		recipient:SetAttribute(pack.boughtAttr, count + 1)
+		savePurchaseStateSoon(recipient)
+		return true, pack.key
+	end
+
+	return false, "unknown_product"
+end
+
+local function grantGiftedGamepass(recipient: Player, gamepassId: number): (boolean, string?)
+	local attr = StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID[gamepassId]
+	local entry = StoreConfig.GIFTABLE_GAMEPASSES[gamepassId]
+	if not attr or not entry then
+		return false, "gamepass_not_giftable"
+	end
+	recipient:SetAttribute(attr, true)
+	applyGamePassEffects(recipient, true)
+	savePurchaseStateSoon(recipient)
+	return true, entry.displayName
+end
+
+-- Shared validation for both gift request remotes. Returns the resolved
+-- target Player, or nil + a user-facing failure message.
+local function validateGiftRequest(buyer: Player, targetUserId: any): (Player?, string?)
+	if typeof(targetUserId) ~= "number" then
+		return nil, "Invalid gift target."
+	end
+	local target = Players:GetPlayerByUserId(math.floor(targetUserId))
+	if not target or not target.Parent then
+		return nil, "Your gift target left the server."
+	end
+	if target == buyer then
+		return nil, "You can't gift yourself."
+	end
+	clearExpiredPendingStoreGift(buyer.UserId)
+	if pendingStoreGifts[buyer.UserId] then
+		return nil, "You already have a gift purchase in progress."
+	end
+	return target, nil
+end
+
+local function beginPendingGift(buyer: Player, pending: PendingStoreGift)
+	pendingStoreGifts[buyer.UserId] = pending
+	local ok, err = pcall(function()
+		MarketplaceService:PromptProductPurchase(buyer, pending.promptedProductId)
+	end)
+	if not ok then
+		clearPendingStoreGift(buyer.UserId)
+		warn("[StoreHandler] Gift purchase prompt failed:", pending.promptedProductId, err)
+		notifyGiftResult(buyer, false, "Could not start the gift purchase.")
+	end
+end
+
+giftBuyProductRE.OnServerEvent:Connect(function(buyer: Player, targetUserId: any, productId: any)
+	if typeof(productId) ~= "number" then
+		notifyGiftResult(buyer, false, "Invalid gift item.")
+		return
+	end
+	productId = math.floor(productId)
+
+	if not StoreConfig.isStoreProductGiftable(productId) then
+		notifyGiftResult(buyer, false, "That item can't be gifted.")
+		return
+	end
+
+	local target, err = validateGiftRequest(buyer, targetUserId)
+	if not target then
+		notifyGiftResult(buyer, false, err or "Gift target is unavailable.")
+		return
+	end
+
+	if productId == StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT and target:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) == true then
+		notifyGiftResult(buyer, false, "Your gift target already owns the Exclusive Brainrot.")
+		return
+	end
+
+	local pack = PACK_BY_PRODUCT_ID[productId]
+	if pack then
+		local bought = target:GetAttribute(pack.boughtAttr)
+		local count = if typeof(bought) == "number" then bought else 0
+		if count >= StoreConfig.PACK_PURCHASE_LIMIT then
+			notifyGiftResult(buyer, false, "Your gift target already has the max number of that pack.")
+			return
+		end
+	end
+
+	beginPendingGift(buyer, {
+		targetUserId = target.UserId,
+		promptedProductId = productId,
+		createdAt = os.clock(),
+	})
+end)
+
+giftBuyGamepassRE.OnServerEvent:Connect(function(buyer: Player, targetUserId: any, gamepassId: any)
+	if typeof(gamepassId) ~= "number" then
+		notifyGiftResult(buyer, false, "Invalid gift item.")
+		return
+	end
+	gamepassId = math.floor(gamepassId)
+
+	local giftProductId = StoreConfig.getGiftGamepassProductId(gamepassId)
+	if not giftProductId then
+		notifyGiftResult(buyer, false, "Gifting isn't set up for this pass yet.")
+		return
+	end
+
+	local target, err = validateGiftRequest(buyer, targetUserId)
+	if not target then
+		notifyGiftResult(buyer, false, err or "Gift target is unavailable.")
+		return
+	end
+
+	if StoreAccess.hasGiftedGamePass(target, gamepassId) then
+		notifyGiftResult(buyer, false, "Your gift target already has this gifted pass.")
+		return
+	end
+
+	beginPendingGift(buyer, {
+		targetUserId = target.UserId,
+		promptedProductId = giftProductId,
+		giftedGamepassId = gamepassId,
+		createdAt = os.clock(),
+	})
+end)
+
+-- Cancelled/declined prompts never fire a receipt — clear the pending gift so
+-- the buyer can retry immediately instead of waiting out GIFT_PENDING_TIMEOUT.
+MarketplaceService.PromptProductPurchaseFinished:Connect(function(playerId, productId, wasPurchased)
+	if wasPurchased then
+		return
+	end
+	local buyer = Players:GetPlayerByUserId(playerId)
+	if not buyer then
+		return
+	end
+	local pending = pendingStoreGifts[buyer.UserId]
+	if pending and pending.promptedProductId == productId then
+		clearPendingStoreGift(buyer.UserId)
+	end
+end)
+
+local function storeGiftReceiptInterceptor(buyer: Player, receiptInfo: any): Enum.ProductPurchaseDecision?
+	local pending = pendingStoreGifts[buyer.UserId]
+	if not pending or pending.promptedProductId ~= receiptInfo.ProductId then
+		return nil
+	end
+	clearPendingStoreGift(buyer.UserId)
+
+	local isFresh = os.clock() - pending.createdAt <= GIFT_PENDING_TIMEOUT
+	local target = Players:GetPlayerByUserId(pending.targetUserId)
+	local targetLeft = not isFresh or not target or not target.Parent
+	local recipient = if targetLeft then buyer else (target :: Player)
+
+	local granted, description
+	if pending.giftedGamepassId then
+		granted, description = grantGiftedGamepass(recipient, pending.giftedGamepassId)
+	else
+		granted, description = grantGiftedStoreProduct(recipient, receiptInfo.ProductId)
+	end
+
+	if not granted then
+		warn("[StoreHandler] Gift grant failed for product", receiptInfo.ProductId, "->", description)
+		notifyGiftResult(buyer, false, "Gift could not be delivered.")
+		return NOT_PROCESSED
+	end
+
+	if targetLeft then
+		notifyGiftResult(buyer, true, "Your gift target left the server — the item was granted to you instead.")
+	else
+		notifyGiftResult(buyer, true, `Gift sent: {description or "item"}!`)
+		notifyGiftReceived(recipient, buyer.Name, description or "a gift")
+	end
+
+	notifyPurchaseComplete(buyer)
+	return GRANTED
+end
+
+local function registerStoreGiftInterceptor()
+	local PH = resolveProductHandlerServer()
+	if not PH or typeof(PH.registerReceiptInterceptor) ~= "function" then
+		warn("[StoreHandler] ProductHandlerServer.registerReceiptInterceptor unavailable for gifting")
+		return
+	end
+	PH.registerReceiptInterceptor(function(player, receiptInfo)
+		return storeGiftReceiptInterceptor(player, receiptInfo)
+	end)
+end
+
+registerStoreGiftInterceptor()
+
+Players.PlayerRemoving:Connect(function(player)
+	clearPendingStoreGift(player.UserId)
 end)

@@ -4,7 +4,7 @@
 	• Populates Container["1"].."[7]" from DealerRemotes.GetState.
 	• Cash buy / Robux buy / Locked (rebirth gate) / Out of stock states.
 	• Stock is per-player remaining (optimistic tick on cash buy).
-	• Cash price = incomePerSecond × DealerConfig.CASH_PRICE_MULTIPLIER (10×).
+	• Cash price = incomePerSecond × DealerConfig.CASH_PRICE_MULTIPLIER (1000×).
 	• Sold-out shows Studio OutOfStock (+ its existing UIGradient); row stays visible.
 	• Header.Buttons.Restock -> personal restock dev product.
 	• Restock countdown label + live refresh on DealerRemotes.StateChanged.

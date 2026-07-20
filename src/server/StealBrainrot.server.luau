@@ -7,15 +7,14 @@
 	  1. Client (StealController) fires StealRequest with the target stand model.
 	  2. If the thief has VIP free steals (FreeStealCount > 0), the steal happens
 	     immediately for free (counter decremented).
-	  3. Otherwise the matching rarity developer product is prompted. On a granted
-	     receipt the pending steal is executed.
+	  3. Otherwise the matching rarity developer product is prompted on the client
+	     (PurchasePrompt / rainbow). On a granted receipt the pending steal runs.
 
 	Stealing = remove the brainrot from the victim's stand (via
 	ServerStorage.StandInternal.StealBrainrotFromStand) and grant a copy to the
-	thief through the existing BrainrotInternal.GrantBrainrotAndEquip path.
+	thief through BrainrotInternal.GrantBrainrotAndEquip.
 ]]
 
-local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
@@ -26,8 +25,6 @@ local Brainrots = require(ServerScriptService:WaitForChild("Server"):WaitForChil
 
 local GRANTED = Enum.ProductPurchaseDecision.PurchaseGranted
 local STEAL_RANGE = 32
-
--- ── Remotes ─────────────────────────────────────────────────────────────────────
 
 local function ensureRemotesFolder(): Folder
 	local folder = ReplicatedStorage:FindFirstChild("StoreRemotes")
@@ -51,8 +48,8 @@ local function ensureRemoteEvent(name: string): RemoteEvent
 end
 
 local stealRequestRE = ensureRemoteEvent("StealRequest")
-
--- ── Internal bindable lookups ─────────────────────────────────────────────────
+local stealPromptProductRE = ensureRemoteEvent("StealPromptProduct")
+local stealSuccessRE = ensureRemoteEvent("StealSuccess")
 
 local function waitBindable(folderName: string, name: string, timeout: number?): BindableFunction?
 	local deadline = os.clock() + (timeout or 30)
@@ -67,9 +64,10 @@ local function waitBindable(folderName: string, name: string, timeout: number?):
 	return nil
 end
 
-local function grantBrainrotToThief(thief: Player, stats: { [string]: any })
+local function grantBrainrotToThief(thief: Player, stats: { [string]: any }): boolean
 	local bf = waitBindable("BrainrotInternal", "GrantBrainrotAndEquip", 5)
 	if not bf then
+		warn("[Steal] GrantBrainrotAndEquip missing")
 		return false
 	end
 	local ok = pcall(function()
@@ -79,7 +77,7 @@ local function grantBrainrotToThief(thief: Player, stats: { [string]: any })
 			mutation = stats.mutation or "normal",
 			level = if typeof(stats.level) == "number" then stats.level else 1,
 			baseIncome = if typeof(stats.baseIncome) == "number" then stats.baseIncome else 0,
-		}, { equip = false })
+		}, { equip = true })
 	end)
 	return ok
 end
@@ -93,9 +91,13 @@ local function fireThiefFeedback(thief: Player, stats: { [string]: any })
 	if dropFX and dropFX:IsA("RemoteEvent") and typeof(stats.rarity) == "string" then
 		dropFX:FireClient(thief, stats.rarity)
 	end
+	if stealSuccessRE then
+		stealSuccessRE:FireClient(thief, {
+			name = stats.name,
+			rarity = stats.rarity,
+		})
+	end
 end
-
--- ── Validation ─────────────────────────────────────────────────────────────────
 
 local function standHasBrainrot(stand: Instance): boolean
 	return typeof(stand:GetAttribute("BrainrotName")) == "string"
@@ -119,7 +121,6 @@ local function standWorldPosition(stand: Instance): Vector3?
 	return part and part.Position or nil
 end
 
--- Returns the rarity of the brainrot on the stand, or nil.
 local function standRarity(stand: Instance): string?
 	local r = stand:GetAttribute("BrainrotRarity")
 	return if typeof(r) == "string" then r else nil
@@ -134,7 +135,7 @@ local function canSteal(thief: Player, stand: Instance): boolean
 	end
 	local owner = standOwnerId(stand)
 	if owner == nil or owner == thief.UserId then
-		return false -- can't steal from your own / unowned stands
+		return false
 	end
 	local char = thief.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -144,8 +145,6 @@ local function canSteal(thief: Player, stand: Instance): boolean
 	end
 	return true
 end
-
--- ── Execution ────────────────────────────────────────────────────────────────
 
 local function executeSteal(thief: Player, stand: Instance?, fallbackRarity: string?): boolean
 	local stealBF = waitBindable("StandInternal", "StealBrainrotFromStand", 5)
@@ -160,18 +159,26 @@ local function executeSteal(thief: Player, stand: Instance?, fallbackRarity: str
 	end
 
 	if not stolen then
-		-- Stand emptied before the steal resolved (e.g. paid purchase finished late).
-		-- Grant a random brainrot of the rarity that was paid for so the purchase isn't wasted.
 		local rarity = fallbackRarity
 		if typeof(rarity) ~= "string" then
 			return false
 		end
-		local pool = Brainrots.brainrotsOfRarity(rarity)
+		local normalized = StoreConfig.normalizeStealRarity(rarity)
+		local pool = Brainrots.brainrotsOfRarity(normalized)
+		if #pool == 0 then
+			pool = Brainrots.brainrotsOfRarity(rarity)
+		end
 		if #pool == 0 then
 			return false
 		end
 		local def = pool[math.random(1, #pool)]
-		stolen = { name = def.name, rarity = def.rarity, mutation = "normal", level = 1, baseIncome = def.baseIncome }
+		stolen = {
+			name = def.name,
+			rarity = def.rarity,
+			mutation = "normal",
+			level = 1,
+			baseIncome = def.baseIncome,
+		}
 	end
 
 	local granted = grantBrainrotToThief(thief, stolen)
@@ -180,8 +187,6 @@ local function executeSteal(thief: Player, stand: Instance?, fallbackRarity: str
 	end
 	return granted
 end
-
--- ── Pending paid steals ─────────────────────────────────────────────────────────
 
 type Pending = { stand: Instance, rarity: string }
 local pendingSteal: { [Player]: Pending } = {}
@@ -195,50 +200,40 @@ local function rarityFromProductId(productId: number): string?
 	return nil
 end
 
--- ── Request handler ──────────────────────────────────────────────────────────────
-
 stealRequestRE.OnServerEvent:Connect(function(thief: Player, standArg: any)
 	if typeof(standArg) ~= "Instance" then
 		return
 	end
 	local stand = standArg :: Instance
 	if not canSteal(thief, stand) then
-		warn("[Steal] request denied for", thief.Name, "stand:", stand and stand.Name, "(out of range / own / empty)")
 		return
 	end
 
 	local freeSteals = thief:GetAttribute(StoreConfig.ATTR.FREE_STEAL_COUNT)
-	warn("[Steal] request by", thief.Name, "freeSteals:", freeSteals, "rarity:", standRarity(stand))
 	if typeof(freeSteals) == "number" and freeSteals > 0 then
-		-- Free steal (VIP) — atomic.
 		if executeSteal(thief, stand) then
 			thief:SetAttribute(StoreConfig.ATTR.FREE_STEAL_COUNT, freeSteals - 1)
-		else
-			warn("[Steal] free steal execution failed for", thief.Name)
 		end
 		return
 	end
 
-	-- Paid steal — prompt the rarity-specific product.
 	local rarity = standRarity(stand)
 	if not rarity then
-		warn("[Steal] no rarity on stand for", thief.Name)
+		warn("[Steal] stand missing BrainrotRarity")
 		return
 	end
-	local productId = StoreConfig.STEAL_PRODUCT_BY_RARITY[rarity]
+	local productId = StoreConfig.getStealProductId(rarity)
 	if not productId then
-		warn("[Steal] no steal product mapped for rarity:", rarity)
+		warn("[Steal] no steal product for rarity:", rarity)
 		return
 	end
-	pendingSteal[thief] = { stand = stand, rarity = rarity }
-	MarketplaceService:PromptProductPurchase(thief, productId)
+	pendingSteal[thief] = { stand = stand, rarity = StoreConfig.normalizeStealRarity(rarity) }
+	stealPromptProductRE:FireClient(thief, productId)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
 	pendingSteal[player] = nil
 end)
-
--- ── Receipt registration ─────────────────────────────────────────────────────────
 
 local function resolveProductHandlerServer(): any?
 	local essentials = ServerScriptService:FindFirstChild("EssentialsServer")
@@ -251,11 +246,10 @@ local function resolveProductHandlerServer(): any?
 	return ok and loaded or nil
 end
 
-local function registerStealReceipts()
+local function registerStealReceipts(): boolean
 	local PH = resolveProductHandlerServer()
 	if not PH or typeof(PH.registerProductReceipt) ~= "function" then
-		warn("[StealBrainrot] ProductHandlerServer.registerProductReceipt unavailable")
-		return
+		return false
 	end
 	for _, productId in StoreConfig.STEAL_PRODUCT_BY_RARITY do
 		PH.registerProductReceipt(productId, function(thief, receiptInfo)
@@ -263,14 +257,22 @@ local function registerStealReceipts()
 			local fallbackRarity = rarityFromProductId(receiptInfo.ProductId)
 			pendingSteal[thief] = nil
 			if pending and canSteal(thief, pending.stand) then
-				executeSteal(thief, pending.stand, fallbackRarity)
+				executeSteal(thief, pending.stand, fallbackRarity or pending.rarity)
 			else
-				-- Stand changed; still honor the purchase with a fallback grant.
 				executeSteal(thief, nil, fallbackRarity)
 			end
 			return GRANTED
 		end)
 	end
+	return true
 end
 
-registerStealReceipts()
+task.spawn(function()
+	for _ = 1, 40 do
+		if registerStealReceipts() then
+			return
+		end
+		task.wait(0.5)
+	end
+	warn("[StealBrainrot] ProductHandlerServer.registerProductReceipt unavailable")
+end)

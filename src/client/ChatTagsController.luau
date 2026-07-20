@@ -13,6 +13,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TextChatService = game:GetService("TextChatService")
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local LeaderboardRankController = require(script.Parent.LeaderboardRankController)
 
 local GROUP_ID = 34716703
 local VIP_GAMEPASS_ID = StoreConfig.GAMEPASS.VIP
@@ -82,6 +83,10 @@ local function getTagsForPlayer(plr: Player): string
 	return result
 end
 
+local function getLeaderboardTagsForPlayer(plr: Player): string
+	return LeaderboardRankController.getChatTagsForUserId(plr.UserId)
+end
+
 local function bindCacheInvalidation(plr: Player)
 	plr:GetAttributeChangedSignal(StoreConfig.ATTR.VIP_OWNED):Connect(function()
 		clearTagCache(plr.UserId)
@@ -103,6 +108,10 @@ local function init()
 		end
 
 		local tags = getTagsForPlayer(plr)
+		local leaderboardTags = getLeaderboardTagsForPlayer(plr)
+		if leaderboardTags ~= "" then
+			tags = if tags ~= "" then tags .. " " .. leaderboardTags else leaderboardTags
+		end
 		if tags ~= "" then
 			props.PrefixText = tags .. " " .. message.PrefixText
 		end

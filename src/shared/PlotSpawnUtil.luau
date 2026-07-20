@@ -99,6 +99,64 @@ function PlotSpawnUtil.findFirstFloorSpawnCFrame(plot: Instance): CFrame?
 	return cfOnTopOfBounds(minV, maxV, face)
 end
 
+function PlotSpawnUtil.getPlotFloorBounds(plot: Instance): (Vector3?, Vector3?)
+	local story1 = PlotPaths.firstStoryFolder(plot)
+	if not story1 then
+		return nil, nil
+	end
+	local floor = story1:FindFirstChild("Floor") or story1:FindFirstChild("floor")
+	local bboxRoot: Instance = if floor then floor else story1
+	return boundingBoxOf(bboxRoot)
+end
+
+-- Random floor point on a plot, facing toward targetPos, at least minDist studs away (flat XZ).
+function PlotSpawnUtil.pickRandomAmbushPositionOnPlot(
+	plot: Instance,
+	targetPos: Vector3,
+	minDist: number,
+	maxDist: number?,
+	edgeMargin: number
+): Vector3?
+	local minV, maxV = PlotSpawnUtil.getPlotFloorBounds(plot)
+	if not minV or not maxV then
+		return nil
+	end
+
+	local spanX = maxV.X - minV.X - edgeMargin * 2
+	local spanZ = maxV.Z - minV.Z - edgeMargin * 2
+	if spanX < 4 or spanZ < 4 then
+		return nil
+	end
+
+	local topY = maxV.Y + 2
+	local targetFlat = Vector3.new(targetPos.X, topY, targetPos.Z)
+
+	for _ = 1, 32 do
+		local x = minV.X + edgeMargin + math.random() * spanX
+		local z = minV.Z + edgeMargin + math.random() * spanZ
+		local pos = Vector3.new(x, topY, z)
+		local flatDist = (targetFlat - pos).Magnitude
+		if flatDist >= minDist and (not maxDist or flatDist <= maxDist) then
+			return pos
+		end
+	end
+
+	local center = (minV + maxV) * 0.5
+	local centerFlat = Vector3.new(center.X, topY, center.Z)
+	local away = centerFlat - targetFlat
+	if away.Magnitude < 0.1 then
+		away = Vector3.new(1, 0, 0)
+	else
+		away = away.Unit * minDist
+	end
+	local fallback = targetFlat + away
+	return Vector3.new(
+		math.clamp(fallback.X, minV.X + edgeMargin, maxV.X - edgeMargin),
+		topY,
+		math.clamp(fallback.Z, minV.Z + edgeMargin, maxV.Z - edgeMargin)
+	)
+end
+
 function PlotSpawnUtil.getAssignedPlotSpawnCFrame(player: Player): CFrame?
 	local plot = PlotPaths.findPlotForAssignedSlot(player)
 	if not plot or not plot.Parent then

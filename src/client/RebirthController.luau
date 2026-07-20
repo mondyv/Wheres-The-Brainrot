@@ -524,6 +524,15 @@ end
 
 local function wireClickButton(button: GuiButton, animTarget: Instance, onClick: () -> ())
 	local scale = getOrAddUIScale(if animTarget:IsA("GuiObject") then animTarget :: GuiObject else button)
+	local lastFire = 0
+	local function fire()
+		local now = os.clock()
+		if now - lastFire < 0.12 then
+			return
+		end
+		lastFire = now
+		onClick()
+	end
 	button.MouseEnter:Connect(function()
 		UIInteractionSounds.playHover()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.06 }):Play()
@@ -534,12 +543,11 @@ local function wireClickButton(button: GuiButton, animTarget: Instance, onClick:
 	button.MouseButton1Down:Connect(function()
 		UIInteractionSounds.playClick()
 		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.94 }):Play()
+		fire()
 	end)
 	button.MouseButton1Up:Connect(function()
 		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.06 }):Play()
 	end)
-	button.Activated:Connect(onClick)
-	button.MouseButton1Click:Connect(onClick)
 end
 
 local function wireFrameButton(host: Instance?, onClick: () -> ())

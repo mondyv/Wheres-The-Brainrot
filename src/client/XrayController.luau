@@ -3,7 +3,7 @@
 	XrayController
 	With the X-Ray Vision gamepass, reveals what brainrot (if any) is hiding inside
 	the currently targeted bush. Clones the BrainrotHeader billboard so name / rarity /
-	rate layout matches stands and carry headers (no overlapping text).
+	mutation / rate layout matches stands and carry headers (no overlapping text).
 ]]
 
 local Players = game:GetService("Players")
@@ -26,21 +26,37 @@ local BUSH_HIDDEN_MUTATION_ATTR = "HiddenBrainrotMutation"
 local BUSH_HIDDEN_LEVEL_ATTR = "HiddenBrainrotLevel"
 local BUSH_HIDDEN_BASE_INCOME_ATTR = "HiddenBrainrotBaseIncome"
 
-local DEFAULT_BB_SIZE = UDim2.fromOffset(280, 130)
+local DEFAULT_BB_SIZE = UDim2.fromOffset(300, 140)
 local EMPTY_BB_SIZE = UDim2.fromOffset(320, 58)
-local EMPTY_NAME_TEXT_SIZE = 24
+local EMPTY_NAME_TEXT_SIZE = 22
 local EMPTY_BRAINROT_TEXT = "No Brainrot"
 local HEADER_MAX_DISTANCE = 90
+local NAME_MIN_TEXT_SIZE = 16
+local NAME_MAX_TEXT_SIZE = 26
 
 local XrayController = {}
 
 local templateCache: BillboardGui? = nil
 local billboard: BillboardGui? = nil
 local fullBillboardSize: UDim2 = DEFAULT_BB_SIZE
-local defaultNameTextSize: number = 18
 local infoFrame: Frame? = nil
 local panelStroke: UIStroke? = nil
 local activeBushConns: { RBXScriptConnection } = {}
+
+type LabelLayout = {
+	size: UDim2,
+	position: UDim2,
+	anchorPoint: Vector2,
+	textSize: number,
+	textScaled: boolean,
+	textWrapped: boolean,
+	textXAlignment: Enum.TextXAlignment,
+	textYAlignment: Enum.TextYAlignment,
+	visible: boolean,
+}
+
+local nameLabelLayout: LabelLayout? = nil
+local typeLabelLayout: LabelLayout? = nil
 
 local function disconnectActiveBushConns()
 	for _, conn in activeBushConns do
@@ -91,6 +107,40 @@ local function getHeaderTemplate(): BillboardGui?
 	return nil
 end
 
+local function resolveInfoTextLabel(info: Instance, childName: string): TextLabel?
+	local node = info:FindFirstChild(childName) or info:FindFirstChild(childName, true)
+	if not node then
+		return nil
+	end
+	return BrainrotHeaderStyle.resolveTextLabel(node)
+end
+
+local function captureLabelLayout(label: TextLabel): LabelLayout
+	return {
+		size = label.Size,
+		position = label.Position,
+		anchorPoint = label.AnchorPoint,
+		textSize = label.TextSize,
+		textScaled = label.TextScaled,
+		textWrapped = label.TextWrapped,
+		textXAlignment = label.TextXAlignment,
+		textYAlignment = label.TextYAlignment,
+		visible = label.Visible,
+	}
+end
+
+local function applyLabelLayout(label: TextLabel, layout: LabelLayout)
+	label.Size = layout.size
+	label.Position = layout.position
+	label.AnchorPoint = layout.anchorPoint
+	label.TextSize = layout.textSize
+	label.TextScaled = layout.textScaled
+	label.TextWrapped = layout.textWrapped
+	label.TextXAlignment = layout.textXAlignment
+	label.TextYAlignment = layout.textYAlignment
+	label.Visible = layout.visible
+end
+
 local function hideInfoChild(frame: Instance, name: string)
 	local node = frame:FindFirstChild(name) or frame:FindFirstChild(name, true)
 	if node and node:IsA("GuiObject") then
@@ -98,10 +148,25 @@ local function hideInfoChild(frame: Instance, name: string)
 	end
 end
 
-local function hideInfoLabels(frame: Instance, names: { string })
-	for _, name in names do
-		hideInfoChild(frame, name)
+local function ensureNameReadable(label: TextLabel)
+	label.Visible = true
+	label.TextTransparency = 0
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextStrokeTransparency = 0
+	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	-- Prefer scaled text in the template slot so long names stay readable.
+	if nameLabelLayout then
+		applyLabelLayout(label, nameLabelLayout)
 	end
+	label.TextScaled = true
+	label.TextWrapped = true
+	local constraint = label:FindFirstChildOfClass("UITextSizeConstraint")
+	if not constraint then
+		constraint = Instance.new("UITextSizeConstraint")
+		constraint.Parent = label
+	end
+	constraint.MinTextSize = NAME_MIN_TEXT_SIZE
+	constraint.MaxTextSize = math.max(NAME_MAX_TEXT_SIZE, nameLabelLayout and nameLabelLayout.textSize or NAME_MAX_TEXT_SIZE)
 end
 
 local function buildBillboard()
@@ -129,10 +194,13 @@ local function buildBillboard()
 	if frame and frame:IsA("Frame") then
 		infoFrame = frame
 		hideInfoChild(frame, "Level")
-		hideInfoChild(frame, "Type")
-		local nameNode = frame:FindFirstChild("Name", true)
-		if nameNode and nameNode:IsA("TextLabel") then
-			defaultNameTextSize = nameNode.TextSize
+		local nameLabel = resolveInfoTextLabel(frame, "Name")
+		if nameLabel then
+			nameLabelLayout = captureLabelLayout(nameLabel)
+		end
+		local typeLabel = resolveInfoTextLabel(frame, "Type")
+		if typeLabel then
+			typeLabelLayout = captureLabelLayout(typeLabel)
 		end
 	end
 
@@ -155,6 +223,7 @@ local function readHiddenLoot(bush: Instance): {
 	name: string?,
 	rarity: string?,
 	mutation: string?,
+	level: number,
 	incomePerSecond: number,
 }
 	local hasBrainrot = bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
@@ -167,6 +236,7 @@ local function readHiddenLoot(bush: Instance): {
 	if not hasBrainrot or typeof(hiddenName) ~= "string" or hiddenName == "" then
 		return {
 			hasBrainrot = false,
+			level = 1,
 			incomePerSecond = 0,
 		}
 	end
@@ -188,6 +258,7 @@ local function readHiddenLoot(bush: Instance): {
 		name = hiddenName,
 		rarity = rarity,
 		mutation = mutation,
+		level = level,
 		incomePerSecond = income,
 	}
 end
@@ -200,18 +271,22 @@ local function clearLabelGradients(label: TextLabel)
 	end
 end
 
-local function applyEmptyHiddenState(infoFrame: Frame)
-	hideInfoLabels(infoFrame, { "Level", "Type", "Rarity", "Rate" })
+local function applyEmptyHiddenState(info: Frame)
+	hideInfoChild(info, "Level")
+	hideInfoChild(info, "Type")
+	hideInfoChild(info, "Rarity")
+	hideInfoChild(info, "Rate")
 
-	local nameNode = infoFrame:FindFirstChild("Name", true)
-	if nameNode and nameNode:IsA("TextLabel") then
+	local nameNode = resolveInfoTextLabel(info, "Name")
+	if nameNode then
 		clearLabelGradients(nameNode)
 		nameNode.Visible = true
 		nameNode.Text = EMPTY_BRAINROT_TEXT
-		nameNode.TextSize = EMPTY_NAME_TEXT_SIZE
 		nameNode.TextScaled = false
+		nameNode.TextSize = EMPTY_NAME_TEXT_SIZE
 		nameNode.TextWrapped = true
 		nameNode.TextColor3 = Color3.fromRGB(235, 235, 240)
+		nameNode.TextTransparency = 0
 		nameNode.TextStrokeTransparency = 0
 		nameNode.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 		nameNode.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -222,15 +297,6 @@ local function applyEmptyHiddenState(infoFrame: Frame)
 	end
 end
 
-local function restoreNameLabelLayout(nameNode: TextLabel)
-	nameNode.TextSize = defaultNameTextSize
-	nameNode.TextScaled = false
-	nameNode.AnchorPoint = Vector2.new(0.5, 0.5)
-	nameNode.Position = UDim2.fromScale(0.5, 0.5)
-	nameNode.Size = UDim2.new(1, -8, 0, 28)
-	nameNode.TextXAlignment = Enum.TextXAlignment.Center
-	nameNode.TextYAlignment = Enum.TextYAlignment.Center
-end
 local function applyPanelStrokeColor(rarity: string?, mutation: string?)
 	if not panelStroke then
 		return
@@ -242,11 +308,7 @@ local function setVisible(visible: boolean)
 	if not billboard then
 		return
 	end
-	if visible then
-		billboard.Enabled = true
-	else
-		billboard.Enabled = false
-	end
+	billboard.Enabled = visible
 end
 
 local function updateForBush(bush: Instance)
@@ -267,19 +329,35 @@ local function updateForBush(bush: Instance)
 
 	if loot.hasBrainrot and loot.name and loot.rarity then
 		billboard.Size = fullBillboardSize
+		local mutation = loot.mutation or "normal"
 		BrainrotHeaderStyle.applyInfoFrame(infoFrame, {
 			name = loot.name,
 			rarity = loot.rarity,
-			mutation = loot.mutation or "normal",
-			level = 1,
+			mutation = mutation,
+			level = loot.level,
 			rateText = formatRate(loot.incomePerSecond),
 		})
-		hideInfoLabels(infoFrame, { "Level", "Type" })
-		local nameNode = infoFrame:FindFirstChild("Name", true)
-		if nameNode and nameNode:IsA("TextLabel") then
-			restoreNameLabelLayout(nameNode)
+		hideInfoChild(infoFrame, "Level")
+
+		local nameNode = resolveInfoTextLabel(infoFrame, "Name")
+		if nameNode then
+			ensureNameReadable(nameNode)
+			BrainrotHeaderStyle.setTextOnNode(nameNode, loot.name)
 		end
-		applyPanelStrokeColor(loot.rarity, loot.mutation)
+
+		local typeNode = resolveInfoTextLabel(infoFrame, "Type")
+		if typeNode then
+			if typeLabelLayout then
+				applyLabelLayout(typeNode, typeLabelLayout)
+			end
+			BrainrotHeaderStyle.applyMutationLabel(typeNode, mutation)
+			typeNode.Visible = true
+			typeNode.TextTransparency = 0
+			typeNode.TextStrokeTransparency = 0
+			typeNode.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		end
+
+		applyPanelStrokeColor(loot.rarity, mutation)
 	else
 		billboard.Size = EMPTY_BB_SIZE
 		applyEmptyHiddenState(infoFrame)
@@ -328,7 +406,8 @@ local function bushOutlineGradient(bush: Instance): ColorSequence?
 	if not loot or not loot.hasBrainrot then
 		return nil
 	end
-	return BrainrotHeaderStyle.getLootOutlineGradientSequence(loot.rarity, loot.mutation)
+	-- Outline follows rarity (mutation still shown in the header Type label).
+	return BrainrotHeaderStyle.getLootOutlineGradientSequence(loot.rarity, nil)
 end
 
 local function init()

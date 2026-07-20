@@ -22,6 +22,7 @@ local ERROR_ACCENT = Color3.fromRGB(255, 72, 72)
 local ERROR_TEXT_STROKE = Color3.fromRGB(0, 0, 0)
 local DISPLAY_LIFETIME = 10
 local ERROR_LIFETIME = 3.5
+local ERROR_COOLDOWN = 0.35
 local CANT_AFFORD_MESSAGE = "You can't afford this!"
 
 local TopNotifController = {}
@@ -47,12 +48,9 @@ local messageQueue: { QueuedMessage } = {}
 local isShowing = false
 local hideToken = 0
 local activeFadeTween: Tween? = nil
-local activeIsError = false
-local errorHideThread: thread? = nil
+local lastErrorAt = 0
 local broadcastConn: RBXScriptConnection? = nil
 local defaultPanelStrokeColor: Color3? = nil
-
-local scheduleErrorHide: (token: number, lifetime: number) -> ()
 
 local function globalMessagesEnabled(): boolean
 	return player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR) ~= false
@@ -80,8 +78,10 @@ local function prepareNotifLabel(textLabel: TextLabel)
 		elseif child:IsA("UIGradient") then
 			child.Enabled = false
 			child.Offset = Vector2.new(0, 0)
+		elseif child:IsA("UIStroke") then
+			child.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+			child.Thickness = math.clamp(child.Thickness, 1, 2.5)
 		end
-		-- Leave existing UIStroke alone — Studio already styled it.
 	end
 end
 
@@ -107,12 +107,78 @@ local function cacheStrokes(root: Instance)
 	end
 end
 
+-- Only the panel outline + the text outline are ours to toggle. Enabling every descendant UIStroke
+-- (decorative inner frames) drew extra rectangular outlines behind the text — the "outline background" bug.
+local function setManagedStrokesEnabled(enabled: boolean)
+	if panelStroke and panelStroke.Parent then
+		panelStroke.Enabled = enabled
+	end
+	if labelStroke and labelStroke.Parent then
+		labelStroke.Enabled = enabled
+	end
+end
+
 -- Force every other (decorative) stroke off so rarity styling never lights up inner-frame outlines.
 local function disableDecorativeStrokes()
 	for _, stroke in cachedStrokes do
 		if stroke.Parent and stroke ~= panelStroke and stroke ~= labelStroke then
 			stroke.Enabled = false
 		end
+	end
+end
+
+local function hideNotifDecorations()
+	if not host then
+		return
+	end
+	for _, desc in host:GetDescendants() do
+		if desc:IsA("TextLabel") and desc ~= label then
+			desc.Visible = false
+		elseif desc:IsA("ImageLabel") or desc:IsA("ImageButton") then
+			desc.Visible = false
+		elseif desc:IsA("Frame") and desc ~= animHost and desc ~= host then
+			desc.Visible = false
+			desc.BackgroundTransparency = 1
+		elseif desc:IsA("UIStroke") and desc ~= panelStroke and desc ~= labelStroke then
+			desc.Enabled = false
+		elseif desc:IsA("UIGradient") then
+			local parent = desc.Parent
+			if parent ~= label and parent ~= panelStroke then
+				desc.Enabled = false
+			end
+		end
+	end
+	if host:IsA("GuiObject") then
+		(host :: GuiObject).BackgroundTransparency = 1
+	end
+	if animHost and animHost:IsA("GuiObject") then
+		(animHost :: GuiObject).BackgroundTransparency = 1
+	end
+end
+
+local function prepareManagedNotifPanel()
+	if not host or not animHost then
+		return
+	end
+	local panel = animHost:FindFirstChild("ManagedNotifPanel")
+	if not panel or not panel:IsA("Frame") then
+		panel = Instance.new("Frame")
+		panel.Name = "ManagedNotifPanel"
+		panel.AnchorPoint = Vector2.new(0.5, 0.5)
+		panel.Position = UDim2.fromScale(0.5, 0.5)
+		panel.Size = UDim2.fromScale(1, 1)
+		panel.BorderSizePixel = 0
+		panel.ZIndex = 0
+		panel.Parent = animHost
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 10)
+		corner.Parent = panel
+	end
+	panel.BackgroundColor3 = Color3.fromRGB(8, 10, 14)
+	panel.BackgroundTransparency = 0.18
+	panel.Visible = true
+	if label and label:IsA("GuiObject") then
+		(label :: GuiObject).ZIndex = 2
 	end
 end
 
@@ -148,8 +214,8 @@ local function findParts()
 		return
 	end
 	host = notif :: GuiObject
-	animHost = host
-	animScale = getOrAddAnimScale(host)
+	animHost = (notif:FindFirstChildWhichIsA("Frame") or notif) :: GuiObject
+	animScale = getOrAddAnimScale(animHost)
 	prepareNotifHost(host)
 
 	panelStroke = host:FindFirstChildOfClass("UIStroke")
@@ -157,10 +223,7 @@ local function findParts()
 		defaultPanelStrokeColor = panelStroke.Color
 	end
 
-	local text = notif:FindFirstChild("Text")
-	if not text or not text:IsA("TextLabel") then
-		text = notif:FindFirstChild("Text", true)
-	end
+	local text = notif:FindFirstChild("Text", true)
 	if text and text:IsA("TextLabel") then
 		label = text
 		savedTextStrokeTransparency = label.TextStrokeTransparency
@@ -173,13 +236,15 @@ local function findParts()
 	end
 end
 
--- Touch existing stroke lightly for rarity text only — never create or thicken.
 local function ensureBlackTextOutline()
-	if not labelStroke or not labelStroke.Parent then
+	if not labelStroke then
 		return
 	end
-	labelStroke.Enabled = true
+	labelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
 	labelStroke.Color = Color3.fromRGB(0, 0, 0)
+	if savedLabelStrokeThickness then
+		labelStroke.Thickness = savedLabelStrokeThickness
+	end
 	local grad = labelStroke:FindFirstChild("RaritySpawnGradient")
 	if grad and grad:IsA("UIGradient") then
 		grad.Enabled = false
@@ -199,6 +264,9 @@ local function setPanelAccent(color: Color3, _rarityId: string?)
 		return
 	end
 	panelStroke.Color = color
+	panelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	panelStroke.LineJoinMode = Enum.LineJoinMode.Round
+	panelStroke.Thickness = 1.5
 	local grad = panelStroke:FindFirstChild("RaritySpawnGradient")
 	if grad and grad:IsA("UIGradient") then
 		grad:Destroy()
@@ -209,20 +277,29 @@ local function applyRarityPanelStyle(rarityId: string)
 	if not panelStroke then
 		return
 	end
-	panelStroke.Transparency = savedPanelStrokeTransparency or panelStroke.Transparency
+	panelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	panelStroke.LineJoinMode = Enum.LineJoinMode.Round
+	panelStroke.Thickness = 1.5
+	panelStroke.Transparency = math.clamp((savedPanelStrokeTransparency or 0) + 0.2, 0.1, 0.45)
 	setPanelAccent(RaritySpawnStyle.accentColor(rarityId), nil)
 end
 
 local function applyRarityStyle(textLabel: TextLabel, rarityId: string)
+	hideNotifDecorations()
+	prepareManagedNotifPanel()
 	disableDecorativeStrokes()
+	setManagedStrokesEnabled(true)
 	textLabel.TextStrokeTransparency = 1
 	textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	disableOtherGradients(textLabel, "RaritySpawnGradient")
 	RaritySpawnStyle.applyTextGradient(textLabel, rarityId)
-	ensureBlackTextOutline()
-	if panelStroke then
-		panelStroke.Enabled = true
-		panelStroke.Transparency = savedPanelStrokeTransparency or 0
+	if labelStroke then
+		labelStroke.Enabled = true
+		labelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+		labelStroke.Color = Color3.fromRGB(0, 0, 0)
+		labelStroke.LineJoinMode = Enum.LineJoinMode.Round
+		labelStroke.Thickness = if savedLabelStrokeThickness then math.clamp(savedLabelStrokeThickness, 1, 1.6) else 1.25
+		labelStroke.Transparency = 0.2
 	end
 	applyRarityPanelStyle(rarityId)
 end
@@ -235,14 +312,12 @@ local function applyErrorStyle(textLabel: TextLabel)
 	end
 
 	disableDecorativeStrokes()
+	setManagedStrokesEnabled(false)
 	textLabel.TextColor3 = ERROR_ACCENT
-	-- Prefer UIStroke outline (studio outline was left disabled); hide legacy TextStroke.
 	textLabel.TextStrokeColor3 = ERROR_TEXT_STROKE
-	textLabel.TextStrokeTransparency = 1
-	ensureBlackTextOutline()
+	textLabel.TextStrokeTransparency = 0
 
 	if panelStroke then
-		panelStroke.Enabled = false
 		panelStroke.Transparency = 1
 		local grad = panelStroke:FindFirstChild("RaritySpawnGradient")
 		if grad and grad:IsA("UIGradient") then
@@ -251,10 +326,14 @@ local function applyErrorStyle(textLabel: TextLabel)
 	end
 end
 
-local function setLabelAlpha(textLabel: TextLabel, alpha: number, _isError: boolean)
+local function setLabelAlpha(textLabel: TextLabel, alpha: number, isError: boolean)
 	textLabel.TextTransparency = alpha
-	if labelStroke and labelStroke.Parent then
-		labelStroke.Transparency = alpha
+	if isError then
+		textLabel.TextStrokeTransparency = alpha
+	else
+		if labelStroke then
+			labelStroke.Transparency = alpha
+		end
 	end
 end
 
@@ -265,24 +344,6 @@ local function cancelActiveTween()
 	end
 end
 
-local function cancelErrorHideThread()
-	if errorHideThread then
-		task.cancel(errorHideThread)
-		errorHideThread = nil
-	end
-end
-
-local function purgeQueuedErrors()
-	local i = 1
-	while i <= #messageQueue do
-		if messageQueue[i].isError then
-			table.remove(messageQueue, i)
-		else
-			i += 1
-		end
-	end
-end
-
 local function processQueue()
 	if isShowing or #messageQueue == 0 or not host or not animHost or not label or not animScale then
 		return
@@ -290,11 +351,9 @@ local function processQueue()
 
 	local entry = table.remove(messageQueue, 1)
 	isShowing = true
-	activeIsError = entry.isError
 	hideToken += 1
 	local token = hideToken
 	cancelActiveTween()
-	cancelErrorHideThread()
 
 	label.Visible = true
 	label.Text = entry.message
@@ -313,10 +372,7 @@ local function processQueue()
 
 	cancelActiveTween()
 	if entry.isError then
-		TweenService:Create(label, TEXT_IN, { TextTransparency = 0 }):Play()
-		if labelStroke then
-			TweenService:Create(labelStroke, TEXT_IN, { Transparency = 0 }):Play()
-		end
+		TweenService:Create(label, TEXT_IN, { TextTransparency = 0, TextStrokeTransparency = 0 }):Play()
 	else
 		activeFadeTween = TweenService:Create(animScale, POP_IN, { Scale = 1 })
 		activeFadeTween:Play()
@@ -329,20 +385,13 @@ local function processQueue()
 	local lifetime = if entry.isError
 		then ERROR_LIFETIME
 		else (if typeof(entry.lifetimeSec) == "number" then math.max(2.5, entry.lifetimeSec) else DISPLAY_LIFETIME)
-	if entry.isError then
-		scheduleErrorHide(token, lifetime)
-		return
-	end
 	task.delay(lifetime, function()
 		if token ~= hideToken or not host or not label or not animScale then
 			return
 		end
 		cancelActiveTween()
 		if entry.isError then
-			TweenService:Create(label, FADE_OUT, { TextTransparency = 1 }):Play()
-			if labelStroke then
-				TweenService:Create(labelStroke, FADE_OUT, { Transparency = 1 }):Play()
-			end
+			TweenService:Create(label, FADE_OUT, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
 		else
 			activeFadeTween = TweenService:Create(animScale, FADE_OUT, { Scale = 0.55 })
 			activeFadeTween:Play()
@@ -356,7 +405,6 @@ local function processQueue()
 				return
 			end
 			isShowing = false
-			activeIsError = false
 			if host then
 				host.Visible = false
 			end
@@ -368,61 +416,6 @@ local function processQueue()
 			processQueue()
 		end)
 	end)
-end
-
-scheduleErrorHide = function(token: number, lifetime: number)
-	cancelErrorHideThread()
-	errorHideThread = task.delay(lifetime, function()
-		errorHideThread = nil
-		if token ~= hideToken or not host or not label or not animScale then
-			return
-		end
-		cancelActiveTween()
-		TweenService:Create(label, FADE_OUT, { TextTransparency = 1 }):Play()
-		if labelStroke then
-			TweenService:Create(labelStroke, FADE_OUT, { Transparency = 1 }):Play()
-		end
-		task.delay(FADE_OUT.Time, function()
-			if token ~= hideToken then
-				return
-			end
-			isShowing = false
-			activeIsError = false
-			if host then
-				host.Visible = false
-			end
-			if label then
-				label.Visible = false
-				label.Rotation = 0
-			end
-			animScale.Scale = 1
-			processQueue()
-		end)
-	end)
-end
-
-local function showErrorNow(message: string)
-	if not host or not animHost or not label or not animScale then
-		return
-	end
-	isShowing = true
-	activeIsError = true
-	hideToken += 1
-	local token = hideToken
-	cancelActiveTween()
-	cancelErrorHideThread()
-	label.Visible = true
-	label.Text = message
-	label.Rotation = 0
-	applyErrorStyle(label)
-	animScale.Scale = 1
-	setLabelAlpha(label, 1, true)
-	host.Visible = true
-	TweenService:Create(label, TEXT_IN, { TextTransparency = 0 }):Play()
-	if labelStroke then
-		TweenService:Create(labelStroke, TEXT_IN, { Transparency = 0 }):Play()
-	end
-	scheduleErrorHide(token, ERROR_LIFETIME)
 end
 
 local function enqueue(message: string, isError: boolean, rarityId: string?, lifetimeSec: number?)
@@ -480,12 +473,11 @@ function TopNotifController.showError(message: string)
 	if not host then
 		TopNotifController.init()
 	end
-	purgeQueuedErrors()
-	if isShowing and activeIsError then
-		GameSoundEffects.playErrorNotif()
-		showErrorNow(message)
+	local now = os.clock()
+	if now - lastErrorAt < ERROR_COOLDOWN then
 		return
 	end
+	lastErrorAt = now
 	GameSoundEffects.playErrorNotif()
 	enqueue(message, true, nil)
 end
@@ -499,10 +491,6 @@ function TopNotifController.init()
 	if not host or not label then
 		warn("[TopNotifController] SideUI.Top.Notif missing")
 		return
-	end
-	local legacyPanel = host:FindFirstChild("ManagedNotifPanel")
-	if legacyPanel then
-		legacyPanel:Destroy()
 	end
 	host.Visible = false
 	label.Visible = false

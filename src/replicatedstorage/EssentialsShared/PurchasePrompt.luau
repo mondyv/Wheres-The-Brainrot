@@ -8,11 +8,13 @@ local PurchaseEffectClient = require(ReplicatedStorage.EssentialsShared.Purchase
 local PurchasePrompt = {}
 
 function PurchasePrompt.promptGamePass(gamePassId: number)
+	PurchaseEffectClient:init()
 	PurchaseEffectClient:show()
 	MarketplaceService:PromptGamePassPurchase(Players.LocalPlayer, gamePassId)
 end
 
 function PurchasePrompt.promptProduct(productId: number)
+	PurchaseEffectClient:init()
 	PurchaseEffectClient:show()
 	MarketplaceService:PromptProductPurchase(Players.LocalPlayer, productId)
 end

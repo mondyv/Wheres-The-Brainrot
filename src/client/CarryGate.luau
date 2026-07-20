@@ -118,8 +118,17 @@ function CarryGate.isCarryingOnHead(): boolean
 end
 
 function CarryGate.isBushSearchPrompt(prompt: ProximityPrompt): boolean
-	return prompt.Name == "BushHarvestPrompt"
-		or (prompt.ActionText == "Search" and prompt.ObjectText == "Bush")
+	if prompt.Name == "BushHarvestPrompt" then
+		return true
+	end
+	if prompt.ActionText == "Search" and prompt.ObjectText == "Bush" then
+		return true
+	end
+	-- Managed bush hold cards still count as bush search UI.
+	if prompt:GetAttribute("BushManagedPrompt") == true or prompt:GetAttribute("BushSearchManaged") == true then
+		return true
+	end
+	return false
 end
 
 return CarryGate

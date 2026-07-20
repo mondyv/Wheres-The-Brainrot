@@ -1,10 +1,11 @@
 -- [ACTIVE] SafezoneUtil
 --[[
 	OBB point tests for plot zones under workspace.Map["Spawn And Bases"].
-	• Reddie — toolbar / backpack UI access only (manual hotbar input).
-	• SafeZoneHitbox / SafezoneHitbox / Reddie / Raddie — broad spawn safe zone.
-	• isCharacterInInventoryZone — broad safe zone minus RedWall (return equip / server sync).
-	• RedWall / RedPart — brainrot deposit (touch); does not gate inventory add/sync.
+	• SafeZoneHitbox / SafezoneHitbox / Reddie / Raddie — spawn safe zone (toolbar / backpack).
+	• Reddie / Raddie — legacy toolbar zone names (kept for older maps).
+	• RedWall / RedPart — brainrot deposit (touch). Formerly named Reddie on some maps;
+	  does NOT block toolbar while the player is also inside SafeZoneHitbox.
+	• isCharacterInInventoryZone — safe zone minus RedWall-only (return equip / server sync).
 
 	Never calls Instance:GetDescendants() — that API builds the full list synchronously and
 	causes multi-second hitches when Spawn And Bases streams in near the red wall.
@@ -14,7 +15,7 @@ local CollectionService = game:GetService("CollectionService")
 
 local SafezoneUtil = {}
 
-local TOOLBAR_ZONE_NAMES = { Reddie = true }
+local TOOLBAR_ZONE_NAMES = { Reddie = true, Raddie = true }
 local INVENTORY_ZONE_NAMES = {
 	SafeZoneHitbox = true,
 	SafezoneHitbox = true,

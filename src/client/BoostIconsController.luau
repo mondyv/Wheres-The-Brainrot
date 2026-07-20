@@ -20,6 +20,7 @@ local Workspace = game:GetService("Workspace")
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local LuckBoost = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckBoost"))
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local player = Players.LocalPlayer
 
@@ -171,9 +172,9 @@ local function ensureTooltip(mainGui: ScreenGui)
 	corner.Parent = frame
 
 	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(100, 70, 180)
-	stroke.Thickness = 1.5
-	stroke.Transparency = 0.2
+	stroke.Color = Color3.fromRGB(180, 180, 200)
+	stroke.Thickness = 1
+	stroke.Transparency = 0.72
 	stroke.Parent = frame
 
 	local pad = Instance.new("UIPadding")
@@ -192,8 +193,7 @@ local function ensureTooltip(mainGui: ScreenGui)
 	title.Name = "Title"
 	title.LayoutOrder = 1
 	title.BackgroundTransparency = 1
-	title.Font = Enum.Font.GothamBold
-	title.TextSize = 16
+	UiFonts.applyBodyLabel(title, 11, 7)
 	title.RichText = true
 	title.AutomaticSize = Enum.AutomaticSize.XY
 	title.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -206,8 +206,7 @@ local function ensureTooltip(mainGui: ScreenGui)
 	desc.Name = "Description"
 	desc.LayoutOrder = 2
 	desc.BackgroundTransparency = 1
-	desc.Font = Enum.Font.GothamMedium
-	desc.TextSize = 13
+	UiFonts.applyBodyLabel(desc, 9, 6)
 	desc.TextColor3 = Color3.fromRGB(210, 200, 230)
 	desc.AutomaticSize = Enum.AutomaticSize.XY
 	desc.TextTransparency = 1
@@ -246,11 +245,11 @@ local function showTooltip(titleText: string, description: string, accent: Color
 	end
 
 	if tooltipFrame.BackgroundTransparency > 0.5 then
-		TweenService:Create(tooltipFrame, TOOLTIP_FADE, { BackgroundTransparency = 0.05 }):Play()
+		TweenService:Create(tooltipFrame, TOOLTIP_FADE, { BackgroundTransparency = 0.55 }):Play()
 		TweenService:Create(tooltipTitle, TOOLTIP_FADE, { TextTransparency = 0 }):Play()
 		TweenService:Create(tooltipDesc, TOOLTIP_FADE, { TextTransparency = 0 }):Play()
 	else
-		tooltipFrame.BackgroundTransparency = 0.05
+		tooltipFrame.BackgroundTransparency = 0.55
 		tooltipTitle.TextTransparency = 0
 		tooltipDesc.TextTransparency = 0
 	end

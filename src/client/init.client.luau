@@ -33,19 +33,6 @@ task.defer(function()
 		StarterGui:SetCore("ResetButtonCallback", false)
 	end)
 
-	-- Core HUD (cash, sidebar buttons) — shown as soon as the loading screen dismisses
-	local function bootCoreUI()
-		require(script.HUDController).init()
-		require(script.TopNotifController).init()
-		require(script.CashBoostController).init()
-		require(script.UIEffectsBootstrap).init()
-		require(script.TabScreenController).init()
-		require(script.ReturnController).init()
-		require(script.RandomBrainrotController):Init()
-	end
-
-	-- Store panels, boost icons, gamepass checks, etc. — deferred after core is visible.
-	-- Yield every few inits so Roblox core (UIBlox/Foundation) isn't starved during boot.
 	local function runBootSteps(steps: { () -> () }, yieldEvery: number)
 		for i, step in steps do
 			local ok, err = pcall(step)
@@ -58,8 +45,65 @@ task.defer(function()
 		end
 	end
 
+	-- Fire each step in its own thread so one WaitForChild can't stall the rest.
+	local function runBootStepsParallel(steps: { () -> () })
+		for _, step in steps do
+			task.spawn(function()
+				local ok, err = pcall(step)
+				if not ok then
+					warn("[init.client] boot step failed:", err)
+				end
+			end)
+		end
+	end
+
+	-- Core HUD (cash, sidebar) — shown as soon as loading dismisses.
+	local function bootCoreUI()
+		require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate")).init()
+		require(script.HUDController).init()
+		require(script.TopNotifController).init()
+		require(script.CashBoostController).init()
+		require(script.UIEffectsBootstrap).init()
+		require(script.TabScreenController).init()
+		require(script.ReturnController).init()
+		require(script.RandomBrainrotController):Init()
+	end
+
+	-- Panel innards (Store buy buttons, Index tabs, etc.) — must be ready as soon as HUD opens.
+	local function bootPanelUI()
+		runBootStepsParallel({
+			function()
+				require(script.GiftController).init()
+			end,
+			function()
+				require(script.StoreController).init()
+			end,
+			function()
+				require(script.IndexController).init()
+			end,
+			function()
+				require(script.RebirthController).init()
+			end,
+			function()
+				require(script.DailyController).init()
+			end,
+			function()
+				require(script.SettingsController).init()
+			end,
+			function()
+				require(script.SellController).init()
+			end,
+			function()
+				require(script.UpgradesController).init()
+			end,
+			function()
+				require(script.DealerShopController).init()
+			end,
+		})
+	end
+
 	local function bootCriticalForRedWall()
-		runBootSteps({
+		runBootStepsParallel({
 			function()
 				require(script.StandController).init()
 			end,
@@ -73,6 +117,9 @@ task.defer(function()
 				require(script.BrainrotStandController).init()
 			end,
 			function()
+				require(script.BrainrotHeaderController).init()
+			end,
+			function()
 				require(script.ProximityPromptEffects).init()
 			end,
 			function()
@@ -84,28 +131,23 @@ task.defer(function()
 			function()
 				require(script.CurrentAreaController).init()
 			end,
-		}, 1)
+			function()
+				require(script.ComingSoonZoneController).init()
+			end,
+			function()
+				require(script.BaseFloorUnlockClick).init()
+			end,
+		})
 	end
 
-	local function bootDeferredUI()
-		runBootSteps({
-			function()
-				require(script.UpgradesController).init()
-			end,
-			function()
-				require(script.SellController).init()
-			end,
+	-- Everything else — never block panel boot on these.
+	local function bootBackgroundUI()
+		runBootStepsParallel({
 			function()
 				require(script.ReviveController).init()
 			end,
 			function()
-				require(script.IndexController).init()
-			end,
-			function()
-				require(script.RebirthController).init()
-			end,
-			function()
-				require(script.DailyController).init()
+				require(script.OfflineEarningsController).init()
 			end,
 			function()
 				require(script.LuckyBlockController).init()
@@ -114,16 +156,7 @@ task.defer(function()
 				require(script.BrainrotVisualSettings).init()
 			end,
 			function()
-				require(script.SettingsController).init()
-			end,
-			function()
-				require(script.BrainrotHeaderController).init()
-			end,
-			function()
 				require(script.AutoCollectController).init()
-			end,
-			function()
-				require(script.StoreController).init()
 			end,
 			function()
 				require(script.BoostIconsController).init()
@@ -138,46 +171,41 @@ task.defer(function()
 				require(script.XrayController).init()
 			end,
 			function()
+				require(script.LeaderboardRankController).init()
+			end,
+			function()
 				require(script.ChatTagsController).init()
 			end,
-		}, 2)
-
-		task.wait()
-		runBootSteps({
 			function()
 				require(script.AdminCommandBar).init()
 			end,
-		}, 1)
-
-		local shared = ReplicatedStorage:WaitForChild("EssentialsShared", 10)
-		if shared then
-			require(shared:WaitForChild("PurchaseEffect"):WaitForChild("PurchaseEffectClient")):init()
-			local productHandlerClient = require(shared:WaitForChild("ProductHandler"):WaitForChild("ProductHandlerClient"))
-			productHandlerClient:init()
-
-			task.wait()
-			local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui", 30)
-			if playerGui then
+			function()
+				local shared = ReplicatedStorage:WaitForChild("EssentialsShared", 10)
+				if not shared then
+					return
+				end
+				require(shared:WaitForChild("PurchaseEffect"):WaitForChild("PurchaseEffectClient")):init()
+				local productHandlerClient =
+					require(shared:WaitForChild("ProductHandler"):WaitForChild("ProductHandlerClient"))
+				productHandlerClient:init()
+				local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui", 30)
+				if not playerGui then
+					return
+				end
 				local main = PlayerGuiMain.finalize(playerGui)
 				if main then
 					productHandlerClient:autoBindPurchaseButtons(main)
 				end
-				task.wait()
 				local hud = playerGui:FindFirstChild("Hud")
 				if hud then
 					productHandlerClient:autoBindPurchaseButtons(hud)
 				end
-			end
-		end
+			end,
+		})
 	end
 
 	task.spawn(function()
-		task.spawn(function()
-			local critOk, critErr = pcall(bootCriticalForRedWall)
-			if not critOk then
-				warn("[init.client] bootCriticalForRedWall failed:", critErr)
-			end
-		end)
+		task.spawn(bootCriticalForRedWall)
 
 		local loadOk, loadErr = pcall(function()
 			LoadingScreenController.run()
@@ -186,22 +214,42 @@ task.defer(function()
 			warn("[init.client] LoadingScreenController.run failed:", loadErr)
 		end
 
+		pcall(function()
+			local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+			local main = pg and pg:FindFirstChild("Main")
+			if main and main:IsA("ScreenGui") then
+				main.Enabled = true
+				local sideUI = main:FindFirstChild("SideUI")
+				if sideUI and sideUI:IsA("GuiObject") then
+					(sideUI :: GuiObject).Visible = true
+				end
+			end
+			require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate")).ensureTouchControlsVisible()
+		end)
+
 		local coreOk, coreErr = pcall(bootCoreUI)
 		if not coreOk then
 			warn("[init.client] Core UI boot failed:", coreErr)
 		end
 
-		local deferOk, deferErr = pcall(function()
-			runBootSteps({
-				function()
-					require(script.BaseFloorUnlockClick).init()
-				end,
-			}, 1)
-			bootDeferredUI()
+		LoadingScreenController.registerOnGameplayReady(function()
+			pcall(function()
+				require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate")).ensureTouchControlsVisible()
+			end)
 		end)
-		if not deferOk then
-			warn("[init.client] Deferred UI boot failed:", deferErr)
+
+		-- Panels immediately after HUD — do not wait for Offline/Revive remotes.
+		local panelOk, panelErr = pcall(bootPanelUI)
+		if not panelOk then
+			warn("[init.client] Panel UI boot failed:", panelErr)
 		end
+
+		task.spawn(function()
+			local bgOk, bgErr = pcall(bootBackgroundUI)
+			if not bgOk then
+				warn("[init.client] Background UI boot failed:", bgErr)
+			end
+		end)
 	end)
 
 	task.spawn(function()

@@ -14,17 +14,17 @@ type AnimSpec = {
 }
 
 local ANIMATED_BY_NAME: { [string]: AnimSpec } = {
-	Rainbow = { rotateSpeed = 110, scrollSpeed = 0.55 },
-	Galaxy = { rotateSpeed = 42, scrollSpeed = 0.28 },
-	GODLY = { rotateSpeed = 52, scrollSpeed = 0.32 },
-	BrainrotGod = { rotateSpeed = 52, scrollSpeed = 0.32 },
-	SECRET = { rotateSpeed = 36, scrollSpeed = 0.22 },
-	Secret = { rotateSpeed = 36, scrollSpeed = 0.22 },
-	LEGENDARY = { rotateSpeed = 28, scrollSpeed = 0.18 },
-	MYTHICAL = { rotateSpeed = 34, scrollSpeed = 0.24 },
-	MYTHIC = { rotateSpeed = 34, scrollSpeed = 0.24 },
-	["90-100"] = { rotateSpeed = 46, scrollSpeed = 0.26 },
-	["70-89"] = { rotateSpeed = 32, scrollSpeed = 0.18 },
+	Rainbow = { rotateSpeed = 48, scrollSpeed = 0.9 },
+	Galaxy = { rotateSpeed = 28, scrollSpeed = 0.55 },
+	GODLY = { rotateSpeed = 36, scrollSpeed = 0.65 },
+	BrainrotGod = { rotateSpeed = 36, scrollSpeed = 0.65 },
+	SECRET = { rotateSpeed = 24, scrollSpeed = 0.45 },
+	Secret = { rotateSpeed = 24, scrollSpeed = 0.45 },
+	LEGENDARY = { rotateSpeed = 20, scrollSpeed = 0.4 },
+	MYTHICAL = { rotateSpeed = 26, scrollSpeed = 0.5 },
+	MYTHIC = { rotateSpeed = 26, scrollSpeed = 0.5 },
+	["90-100"] = { rotateSpeed = 32, scrollSpeed = 0.55 },
+	["70-89"] = { rotateSpeed = 22, scrollSpeed = 0.4 },
 }
 
 local tracked: { [UIGradient]: AnimSpec } = {}
@@ -58,7 +58,9 @@ local function ensureHeartbeat()
 				gradient.Rotation = (now * spec.rotateSpeed) % 360
 			end
 			if spec.scrollSpeed then
-				gradient.Offset = Vector2.new((now * spec.scrollSpeed) % 1, 0)
+				-- Soft ping-pong offset (no hard % wrap) — wrap made rainbow text snap/flicker.
+				local wave = math.sin(now * spec.scrollSpeed)
+				gradient.Offset = Vector2.new(wave * 0.42, 0)
 			end
 		end
 	end)

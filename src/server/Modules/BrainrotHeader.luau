@@ -215,10 +215,10 @@ function M.attach(
 
 	M.remove(model)
 
-	local template = fetchTemplateBillboard()
-	if not template then
-		warn("[BrainrotHeader] Template missing — check ServerStorage.Templates.BrainrotHeader.BillboardGui")
-		return false
+	-- Template is only required on the client (mirrored to ReplicatedStorage). Do not block
+	-- tagging/attrs if Studio/ServerStorage is missing BillboardGui — clients still get HeaderRefresh.
+	if not fetchTemplateBillboard() then
+		warn("[BrainrotHeader] ServerStorage.Templates.BrainrotHeader.BillboardGui missing — clients will use fallback if needed")
 	end
 
 	syncHeaderAttributes(model, data, opts)

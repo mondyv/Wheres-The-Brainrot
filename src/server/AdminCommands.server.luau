@@ -10,6 +10,8 @@ local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Br
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local AdminBroadcastService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminBroadcastService"))
+local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
+local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 
 local COMMAND_REMOTE_NAME = "AdminCommand"
 local CATALOG_REMOTE_NAME = "AdminAutocomplete"
@@ -194,9 +196,44 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, serverspawn, globalspawn, servernotif, globalnotif, help"
+			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tpland, serverspawn, globalspawn, servernotif, globalnotif, help"
 	end,
 }
+
+commands.tpland = {
+	usage = "tpland <1-10>",
+	description = "Teleport to a land's revive/spawn pad.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		if not args[1] then
+			return false, "Usage: " .. commands.tpland.usage
+		end
+		local landNum = tonumber(args[1])
+		if not landNum then
+			return false, "Usage: " .. commands.tpland.usage
+		end
+		landNum = math.floor(landNum)
+		if landNum < 1 or landNum > 10 then
+			return false, "Land must be between 1 and 10."
+		end
+
+		local spawnCf = LandResolver.getSpawnCFrameForLand(landNum)
+		if not spawnCf then
+			return false, string.format("Land %d spawn not found.", landNum)
+		end
+
+		local character = sender.Character
+		if not character or not character.Parent then
+			return false, "No character to teleport."
+		end
+
+		PlotSpawnUtil.teleportCharacterToCFrame(character, spawnCf)
+		return true, string.format("Teleported to Land %d spawn.", landNum)
+	end,
+}
+commands.land = commands.tpland
+commands.teleportland = commands.tpland
+commands.gotoland = commands.tpland
+commands.tpl = commands.tpland
 
 commands.addinventory = {
 	usage = "addinventory <player|me|all> <brainrot> [count] [mutation] [level]",

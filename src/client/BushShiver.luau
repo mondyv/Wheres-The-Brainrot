@@ -10,6 +10,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
+local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
@@ -50,6 +51,10 @@ local lastShiverAtByBush: { [Instance]: number } = {}
 local activeShiverBursts = 0
 local lastGlobalShiverAt = 0
 local localPlayer = Players.LocalPlayer
+local cachedPlayerLand = 1
+local cachedPlayerLandAt = 0
+local PLAYER_LAND_REFRESH_SEC = 0.45
+local bushLandByBush: { [Instance]: number } = {}
 
 local function shouldShiverBush(bush: Instance): boolean
 	if bush:GetAttribute(LOOT_PHASE_ATTR) == LOOT_PHASE_COOLDOWN then
@@ -135,6 +140,45 @@ local function bushApproxPosition(bush: Instance): Vector3?
 	return if part then part.Position else nil
 end
 
+local function getPlayerLand(): number
+	local now = os.clock()
+	if now - cachedPlayerLandAt < PLAYER_LAND_REFRESH_SEC then
+		return cachedPlayerLand
+	end
+	cachedPlayerLandAt = now
+
+	local char = localPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		cachedPlayerLand = 1
+		return cachedPlayerLand
+	end
+	cachedPlayerLand = LandResolver.resolveLandAtPosition((hrp :: BasePart).Position)
+	return cachedPlayerLand
+end
+
+local function resolveBushLand(bush: Instance): number?
+	local cached = bushLandByBush[bush]
+	if cached then
+		return cached
+	end
+	local pos = bushApproxPosition(bush)
+	if not pos then
+		return nil
+	end
+	local land = LandResolver.resolveLandAtPosition(pos)
+	bushLandByBush[bush] = land
+	return land
+end
+
+local function isBushInPlayerLand(bush: Instance): boolean
+	local bushLand = resolveBushLand(bush)
+	if not bushLand then
+		return false
+	end
+	return bushLand == getPlayerLand()
+end
+
 local function isBushNearPlayer(bush: Instance): boolean
 	local char = localPlayer.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -143,6 +187,9 @@ local function isBushNearPlayer(bush: Instance): boolean
 	end
 	local pos = bushApproxPosition(bush)
 	if not pos then
+		return false
+	end
+	if not isBushInPlayerLand(bush) then
 		return false
 	end
 	return (pos - (hrp :: BasePart).Position).Magnitude <= SHIVER_ACTIVE_RANGE
@@ -417,18 +464,29 @@ function M.trackBush(bush: Instance)
 			stopShiverLoop(bush)
 			hookedByBush[bush] = nil
 			lastShiverAtByBush[bush] = nil
+			bushLandByBush[bush] = nil
 		end
 	end)
 end
 
 function M.scanMapForBrainrotBushes(map: Instance)
-	for _, desc in map:GetDescendants() do
-		if desc:IsA("Folder") and BushRootUtil.isBushFolderName(desc.Name) then
-			for _, child in desc:GetChildren() do
+	local stack = { map }
+	local count = 0
+	while #stack > 0 do
+		local inst = table.remove(stack)
+		if inst:IsA("Folder") and BushRootUtil.isBushFolderName(inst.Name) then
+			for _, child in inst:GetChildren() do
 				if BushRootUtil.isDirectBushRoot(child) then
 					M.trackBush(child)
 				end
 			end
+		end
+		for _, child in inst:GetChildren() do
+			table.insert(stack, child)
+		end
+		count += 1
+		if count % 400 == 0 then
+			task.wait()
 		end
 	end
 end

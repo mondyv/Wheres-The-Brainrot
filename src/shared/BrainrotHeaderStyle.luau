@@ -4,6 +4,8 @@
 	UIGradient children live on the TextLabel that renders the text (not UIStroke).
 --]]
 
+local UiFonts = require(script.Parent.UiFonts)
+
 local M = {}
 
 M.RARITY_GRADIENT_NAME = {
@@ -514,7 +516,13 @@ end
 
 function M.prepareFloatTextLabel(label: TextLabel, styleSource: Instance, textSize: number, font: Enum.Font?)
 	local sourceLabel = M.resolveTextLabel(styleSource)
-	label.Font = font or (if sourceLabel then sourceLabel.Font else Enum.Font.GothamBold)
+	if font then
+		label.FontFace = Font.fromEnum(font)
+	elseif sourceLabel then
+		label.FontFace = sourceLabel.FontFace
+	else
+		UiFonts.applyBody(label)
+	end
 	label.TextSize = textSize
 	label.TextStrokeTransparency = 1
 	prepareLabelForGradient(label)

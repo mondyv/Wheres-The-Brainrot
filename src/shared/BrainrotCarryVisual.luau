@@ -6,7 +6,8 @@
 local M = {}
 
 M.BASE_SCALE = 0.7
-M.UPGRADE_SCALE_PER_LEVEL = 0.05
+-- Was 0.05; 40% smaller growth per level.
+M.UPGRADE_SCALE_PER_LEVEL = 0.03
 M.CARRY_CLEARANCE = 0.04
 -- Hard cap so mis-scaled Studio templates cannot dwarf the map.
 M.MAX_WORLD_LONGEST_AXIS = 5.5
@@ -97,15 +98,34 @@ function M.clampWorldSize(model: Model, maxLongest: number?)
 	end
 end
 
+-- Clamp oversized templates once, then grow from that base so upgrades keep resizing.
+local BASE_SCALE_ATTR = "BrainrotVisualBaseScale"
+
 function M.applyScaleForLevel(model: Model, level: number?)
 	local lv = if typeof(level) == "number" then math.max(1, math.floor(level)) else 1
+	local base = model:GetAttribute(BASE_SCALE_ATTR)
+	if typeof(base) ~= "number" or base <= 0 then
+		local okBase, errBase = pcall(function()
+			model:ScaleTo(M.BASE_SCALE)
+		end)
+		if not okBase then
+			warn("[BrainrotCarryVisual] ScaleTo base failed for", model.Name, ":", errBase)
+			return
+		end
+		M.clampWorldSize(model)
+		local okCur, current = pcall(function()
+			return model:GetScale()
+		end)
+		base = if okCur and typeof(current) == "number" and current > 0 then current else M.BASE_SCALE
+		model:SetAttribute(BASE_SCALE_ATTR, base)
+	end
+	local levelMult = 1 + M.UPGRADE_SCALE_PER_LEVEL * (lv - 1)
 	local okScale, errScale = pcall(function()
-		model:ScaleTo(M.scaleMultiplierForLevel(lv))
+		model:ScaleTo((base :: number) * levelMult)
 	end)
 	if not okScale then
 		warn("[BrainrotCarryVisual] ScaleTo failed for", model.Name, ":", errScale)
 	end
-	M.clampWorldSize(model)
 end
 
 -- Place model so its world-space bottom sits `gap` studs above `surfaceTopY`.

@@ -50,6 +50,18 @@ local function setString(parent: Instance, name: string, value: string)
 	end
 end
 
+local function setNumber(parent: Instance, name: string, value: number)
+	local node = parent:FindFirstChild(name)
+	if not node then
+		node = Instance.new("IntValue")
+		node.Name = name
+		node.Parent = parent
+	end
+	if node:IsA("IntValue") then
+		node.Value = value
+	end
+end
+
 local function publishBoard(boardName: string, entries: { { rank: number, userId: number, displayName: string, amountText: string } })
 	local root = ensureDataFolder()
 	local board = root:FindFirstChild(boardName)
@@ -70,10 +82,12 @@ local function publishBoard(boardName: string, entries: { { rank: number, userId
 			setString(rowFolder, "Rank", "#" .. tostring(entry.rank))
 			setString(rowFolder, "User", entry.displayName)
 			setString(rowFolder, "Amount", entry.amountText)
+			setNumber(rowFolder, "UserId", entry.userId)
 		else
 			setString(rowFolder, "Rank", "#" .. tostring(rank))
 			setString(rowFolder, "User", "---")
 			setString(rowFolder, "Amount", "---")
+			setNumber(rowFolder, "UserId", 0)
 		end
 	end
 	board:SetAttribute("UpdatedAt", os.time())
@@ -83,6 +97,11 @@ local function getDisplayName(userId: number): string
 	local cached = nameCache[userId]
 	if cached then
 		return cached
+	end
+	local player = Players:GetPlayerByUserId(userId)
+	if player then
+		nameCache[userId] = player.DisplayName
+		return player.DisplayName
 	end
 	local ok, name = pcall(function()
 		return Players:GetNameFromUserIdAsync(userId)
@@ -279,6 +298,12 @@ end)
 
 task.defer(refreshPublishedBoards)
 
-if not leaderboardsEnabled then
-	warn("[Leaderboards] OrderedDataStore leaderboards disabled — publish or enable Studio API access")
-end
+-- Studio without DataStore API: session boards still refresh often so the UI isn't empty.
+task.spawn(function()
+	task.wait(3)
+	refreshPublishedBoards()
+	for _ = 1, 10 do
+		task.wait(5)
+		refreshPublishedBoards()
+	end
+end)

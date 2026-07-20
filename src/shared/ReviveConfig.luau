@@ -9,7 +9,9 @@ local M = {}
 M.COUNTDOWN_SECONDS = 10
 M.BGM_PLAYBACK_SPEED = 0.78
 M.BGM_SLOW_FADE_SECONDS = 1.2
-M.REVIVE_SPAWN_ATTR = "ReviveSpawnCFrame"
+M.REVIVE_SPAWN_ATTR = "ReviveSpawnCFrame" -- legacy
+M.REVIVE_SPAWN_POS_ATTR = "ReviveSpawnPos"
+M.REVIVE_SPAWN_LOOK_ATTR = "ReviveSpawnLook"
 M.MAX_LAND = 10
 
 export type ReviveTier = {

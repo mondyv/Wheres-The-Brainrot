@@ -232,10 +232,15 @@ local requestBrainrotInventoryFromServer: () -> ()
 local backpackSearchWired = false
 local backpackCloseWired = false
 local isBackpackPanelOpen = false
+-- Keep empty hotbar drop targets visible through the close tween so they don't snap away mid-animation.
+local isBackpackPanelClosing = false
 local backpackPanelScaleTween: Tween? = nil
 local backpackPanelFadeTween: Tween? = nil
 local backpackContainerScaleTween: Tween? = nil
 local backpackFadeRoot: CanvasGroup? = nil
+local tweenEmptyHotbarSlotsOut: () -> ()
+local resetEmptyHotbarSlotScales: () -> ()
+local cancelEmptyHotbarCloseTweens: () -> ()
 
 -- While dragging over the hotbar, only the slot under the cursor scales.
 -- `hotbarDragZoneActive` keeps drop hit-pad expansion without resizing every cell.
@@ -1472,7 +1477,19 @@ local ToolbarController = {}
 			backpackContainerScaleTween:Cancel()
 			backpackContainerScaleTween = nil
 		end
+		cancelEmptyHotbarCloseTweens()
 	end
+
+	local emptyHotbarCloseTweens: { Tween } = {}
+
+	cancelEmptyHotbarCloseTweens = function()
+		for _, tw in emptyHotbarCloseTweens do
+			tw:Cancel()
+		end
+		table.clear(emptyHotbarCloseTweens)
+	end
+
+	-- resetEmptyHotbarSlotScales / tweenEmptyHotbarSlotsOut assigned after hotbarSlotIsOccupied
 
 	local function ensureBackpackFadeRoot(frame: GuiObject): CanvasGroup
 		if backpackFadeRoot and backpackFadeRoot.Parent == frame then
@@ -1549,8 +1566,13 @@ local ToolbarController = {}
 			ensureBackpackChromeVisible(backpackFrameRef :: GuiObject)
 			return
 		end
-		isBackpackPanelOpen = open
-		if not open then
+		if open then
+			isBackpackPanelClosing = false
+			isBackpackPanelOpen = true
+			resetEmptyHotbarSlotScales()
+		else
+			isBackpackPanelOpen = false
+			isBackpackPanelClosing = true
 			BrainrotItemTooltip.hide(true)
 		end
 		local f = backpackFrameRef
@@ -1584,6 +1606,9 @@ local ToolbarController = {}
 			end
 			refreshBrainrotBackpackUI()
 		else
+			-- Keep empty hotbar cells visible and scale them out with the panel close.
+			updateHotbarSlotVisibility()
+			tweenEmptyHotbarSlotsOut()
 			local backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.9 })
 			local backpackPanelFadeTween =
 				TweenService:Create(fadeRoot, BACKPACK_CLOSE_TWEEN, { GroupTransparency = 1 })
@@ -1596,6 +1621,8 @@ local ToolbarController = {}
 			end
 			backpackPanelFadeTween.Completed:Once(function(state)
 				if state == Enum.PlaybackState.Completed and not isBackpackPanelOpen then
+					isBackpackPanelClosing = false
+					resetEmptyHotbarSlotScales()
 					f.Visible = false
 					sc.Scale = 1
 					fadeRoot.GroupTransparency = 0
@@ -2070,6 +2097,30 @@ local ToolbarController = {}
 		return brainrotIdx ~= nil and brainrotEntries[brainrotIdx] ~= nil and brainrotParkedInUI[brainrotIdx] ~= true
 	end
 
+	resetEmptyHotbarSlotScales = function()
+		cancelEmptyHotbarCloseTweens()
+		for i = 1, #slots do
+			local slot = slots[i]
+			if slot and not hotbarSlotIsOccupied(i) then
+				getOrAddUIScale(hotbarSlotScaleHost(slot)).Scale = hotbarSlotRestScale(i)
+			end
+		end
+	end
+
+	tweenEmptyHotbarSlotsOut = function()
+		cancelEmptyHotbarCloseTweens()
+		for i = 1, #slots do
+			local slot = slots[i]
+			if slot and slot.Visible and not hotbarSlotIsOccupied(i) then
+				local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
+				sc.Scale = hotbarSlotRestScale(i)
+				local tw = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.2 })
+				table.insert(emptyHotbarCloseTweens, tw)
+				tw:Play()
+			end
+		end
+	end
+
 	local hotbarListLayout: UIListLayout? = nil
 	local toolbarHorizontalCenterApplied = false
 
@@ -2277,8 +2328,8 @@ local ToolbarController = {}
 				break
 			end
 		end
-		-- Empty hotbar cells only while the backpack panel is open (drop targets + clarity).
-		local showEmptyDropTargets = isBackpackPanelOpen
+		-- Empty hotbar cells while backpack is open or still closing (avoids snap-hide mid-tween).
+		local showEmptyDropTargets = isBackpackPanelOpen or isBackpackPanelClosing
 		local showHotbarSlots = anyOccupied or showEmptyDropTargets
 		-- Keep the Hotbar frame visible whenever the toolbar is up so ToggleBackpackImage
 		-- (a child of Hotbar) still shows when every slot is empty.
@@ -2293,7 +2344,8 @@ local ToolbarController = {}
 		end
 		if toggleBackpackIconRef then
 			local icon = toggleBackpackIconRef :: GuiObject
-			icon.Visible = toolbarActive and not isBackpackPanelOpen
+			-- Keep backpack toggle hidden until close tween finishes so it doesn't pop in over empty slots.
+			icon.Visible = toolbarActive and not isBackpackPanelOpen and not isBackpackPanelClosing
 			if icon.Visible then
 				task.defer(refreshToggleBackpackIconLayout)
 			end
@@ -3619,6 +3671,7 @@ local ToolbarController = {}
 		dragSuppressedToolbarClick = false
 		clearDragGhost()
 		isBackpackPanelOpen = false
+		isBackpackPanelClosing = false
 		initialInventoryRevealed = false
 		if backpackFrameRef and backpackFrameRef:IsA("GuiObject") then
 			(backpackFrameRef :: GuiObject).Visible = false
@@ -4010,6 +4063,7 @@ local ToolbarController = {}
 			wireBackpackCloseButton(backpackFrame)
 			wireSortCategoryTabs(backpackFrame)
 			isBackpackPanelOpen = false
+			isBackpackPanelClosing = false
 			if backpackFrame:IsA("GuiObject") then
 				(backpackFrame :: GuiObject).Visible = false
 			end

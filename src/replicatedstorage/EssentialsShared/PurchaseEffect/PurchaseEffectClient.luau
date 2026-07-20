@@ -1,4 +1,9 @@
 -- [ACTIVE] PurchaseEffectClient
+--[[
+	Fullscreen rainbow overlay while a Marketplace purchase prompt is open.
+	Hides SideUI chrome for the prompt, then restores it when finished.
+]]
+
 local MarketplaceService = game:GetService("MarketplaceService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
@@ -15,8 +20,10 @@ local defaultFov: number?
 local hideToken = 0
 local initialized = false
 local purchaseUiActive = false
-local savedGuiStates: { [ScreenGui]: boolean }? = nil
-local playerGuiChildConn: RBXScriptConnection? = nil
+local activeRainbowTween: Tween? = nil
+local activeFovTween: Tween? = nil
+local hiddenSideUI: GuiObject? = nil
+local sideUIWasVisible = false
 
 local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
 	Enum.CoreGuiType.Chat,
@@ -76,79 +83,116 @@ local function setCoreGuisVisible(visible: boolean)
 	end
 end
 
-local function isPurchaseGui(name: string): boolean
-	return name == "Purchasing"
+local function cancelActiveTweens()
+	if activeRainbowTween then
+		activeRainbowTween:Cancel()
+		activeRainbowTween = nil
+	end
+	if activeFovTween then
+		activeFovTween:Cancel()
+		activeFovTween = nil
+	end
 end
 
-local function enterPurchaseUiIsolation()
+local function setPurchasingGuiEnabled(enabled: boolean)
+	if not rainbow then
+		return
+	end
+	local effectGui = rainbow.Parent
+	if effectGui and effectGui:IsA("ScreenGui") then
+		effectGui.Enabled = enabled
+	end
+end
+
+local function ensureMainGuiEnabled()
 	local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
 	if not playerGui then
 		return
 	end
-
-	purchaseUiActive = true
-	setCoreGuisVisible(false)
-
-	if not savedGuiStates then
-		savedGuiStates = {}
-		for _, child in playerGui:GetChildren() do
-			if child:IsA("ScreenGui") then
-				savedGuiStates[child] = child.Enabled
-			end
-		end
-	end
-
-	for _, child in playerGui:GetChildren() do
-		if child:IsA("ScreenGui") then
-			child.Enabled = isPurchaseGui(child.Name)
-		end
-	end
-
-	if not playerGuiChildConn then
-		playerGuiChildConn = playerGui.ChildAdded:Connect(function(child)
-			if not purchaseUiActive then
-				return
-			end
-			if child:IsA("ScreenGui") and not isPurchaseGui(child.Name) then
-				if savedGuiStates then
-					savedGuiStates[child] = child.Enabled
-				end
-				child.Enabled = false
-			end
-		end)
+	local main = playerGui:FindFirstChild("Main")
+	if main and main:IsA("ScreenGui") then
+		main.Enabled = true
 	end
 end
 
-local function exitPurchaseUiIsolation()
-	purchaseUiActive = false
-
-	if playerGuiChildConn then
-		playerGuiChildConn:Disconnect()
-		playerGuiChildConn = nil
+local function restoreCameraFov(instant: boolean)
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return
 	end
+	local target = defaultFov or 70
+	if instant then
+		camera.FieldOfView = target
+		return
+	end
+	activeFovTween = TweenService:Create(camera, fadeOutTween, { FieldOfView = target })
+	activeFovTween:Play()
+end
 
+local function hideSideHud()
 	local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
-	if savedGuiStates then
-		for gui, wasEnabled in savedGuiStates do
-			if gui.Parent and not isPurchaseGui(gui.Name) then
-				gui.Enabled = wasEnabled
-			end
-		end
-		savedGuiStates = nil
+	local main = playerGui and playerGui:FindFirstChild("Main")
+	local sideUI = main and main:FindFirstChild("SideUI")
+	if sideUI and sideUI:IsA("GuiObject") then
+		hiddenSideUI = sideUI
+		sideUIWasVisible = sideUI.Visible
+		sideUI.Visible = false
 	end
+end
 
+local function restoreSideHud()
+	local side = hiddenSideUI
+	hiddenSideUI = nil
+	if side and side.Parent then
+		side.Visible = sideUIWasVisible or true
+		local scale = side:FindFirstChildOfClass("UIScale")
+		if not scale then
+			scale = Instance.new("UIScale")
+			scale.Parent = side
+		end
+		scale.Scale = 0.96
+		TweenService:Create(scale, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Scale = 1,
+		}):Play()
+	end
+end
+
+local function beginPurchaseOverlay()
+	purchaseUiActive = true
+	setCoreGuisVisible(false)
+	hideSideHud()
+	setPurchasingGuiEnabled(true)
+end
+
+local function endPurchaseOverlay()
+	purchaseUiActive = false
+	setPurchasingGuiEnabled(false)
 	setCoreGuisVisible(true)
+	restoreSideHud()
+	-- Safety: never leave the core HUD ScreenGui disabled after a prompt.
+	ensureMainGuiEnabled()
+end
 
-	if playerGui then
-		local purchasing = playerGui:FindFirstChild("Purchasing")
-		if purchasing and purchasing:IsA("ScreenGui") then
-			purchasing.Enabled = true
+local function sanitizePurchasingChildren(effectGui: Instance)
+	-- Studio place file ships Purchasing.Loading + Purchasing.Main overlays that sit above
+	-- HUD frames (DisplayOrder 10000) and eat clicks. Only Rainbow is used for the effect.
+	for _, child in effectGui:GetChildren() do
+		if child.Name == "Rainbow" then
+			continue
+		end
+		if child:IsA("GuiObject") then
+			child.Visible = false
+			child.Active = false
+		elseif child:IsA("LayerCollector") then
+			-- nested ScreenGui unlikely, but disable if present
+			(child :: LayerCollector).Enabled = false
 		end
 	end
 end
 
 function PurchaseEffectClient.ensureRainbow(self: PurchaseEffectClient)
-	if rainbow then
+	if rainbow and rainbow.Parent then
+		sanitizePurchasingChildren(rainbow.Parent)
 		return
 	end
 
@@ -165,8 +209,10 @@ function PurchaseEffectClient.ensureRainbow(self: PurchaseEffectClient)
 		effectGui.ResetOnSpawn = false
 		effectGui.IgnoreGuiInset = true
 		effectGui.DisplayOrder = PurchaseEffectConfig.guiDisplayOrder
-		effectGui.Enabled = true
+		effectGui.Enabled = false
 	end
+
+	sanitizePurchasingChildren(effectGui)
 
 	rainbow = effectGui:FindFirstChild("Rainbow") :: ImageLabel?
 	if not rainbow then
@@ -179,44 +225,39 @@ function PurchaseEffectClient.ensureRainbow(self: PurchaseEffectClient)
 		img.Image = PurchaseEffectConfig.rainbowImage
 		img.ScaleType = Enum.ScaleType.Crop
 		img.ZIndex = 10
+		img.Active = false
 		img.Parent = effectGui
 		rainbow = img
+	else
+		rainbow.Active = false
+		rainbow.Visible = true
 	end
 end
 
 function PurchaseEffectClient.show(self: PurchaseEffectClient)
+	self:init()
 	self:ensureRainbow()
 	if not rainbow then
 		return
 	end
 
-	enterPurchaseUiIsolation()
-
-	local effectGui = rainbow.Parent
-	if effectGui and effectGui:IsA("ScreenGui") then
-		effectGui.Enabled = true
-	end
+	cancelActiveTweens()
+	beginPurchaseOverlay()
 
 	hideToken += 1
-	TweenService:Create(rainbow, fadeInTween, { ImageTransparency = 0 }):Play()
+	activeRainbowTween = TweenService:Create(rainbow, fadeInTween, { ImageTransparency = 0 })
+	activeRainbowTween:Play()
 
 	local camera = workspace.CurrentCamera
 	if camera then
 		defaultFov = camera.FieldOfView
 		local targetFov = math.clamp(defaultFov + PurchaseEffectConfig.fovBoost, 1, 120)
-		TweenService:Create(camera, fadeInTween, { FieldOfView = targetFov }):Play()
+		activeFovTween = TweenService:Create(camera, fadeInTween, { FieldOfView = targetFov })
+		activeFovTween:Play()
 	end
 end
 
 function PurchaseEffectClient.hide(self: PurchaseEffectClient, delaySeconds: number?, onHidden: (() -> ())?)
-	if not rainbow then
-		exitPurchaseUiIsolation()
-		if onHidden then
-			onHidden()
-		end
-		return
-	end
-
 	local token = hideToken
 	local delayTime = delaySeconds or 0
 	if delayTime > 0 then
@@ -229,25 +270,51 @@ function PurchaseEffectClient.hide(self: PurchaseEffectClient, delaySeconds: num
 		return
 	end
 
-	local tween = TweenService:Create(rainbow, fadeOutTween, { ImageTransparency = 1 })
-	tween:Play()
+	cancelActiveTweens()
+	hideToken += 1
+	local finishToken = hideToken
 
-	local camera = workspace.CurrentCamera
-	if camera then
-		TweenService:Create(camera, fadeOutTween, {
-			FieldOfView = defaultFov or 70,
-		}):Play()
-	end
+	-- Restore HUD immediately. Only keep Purchasing up while a visible rainbow is fading out.
+	endPurchaseOverlay()
 
-	exitPurchaseUiIsolation()
-
-	if onHidden then
+	local needsFade = rainbow ~= nil and rainbow.ImageTransparency < 0.99
+	if needsFade and rainbow then
+		setPurchasingGuiEnabled(true)
+		activeRainbowTween = TweenService:Create(rainbow, fadeOutTween, { ImageTransparency = 1 })
+		activeRainbowTween:Play()
+		local tween = activeRainbowTween
 		tween.Completed:Once(function()
-			if token == hideToken then
+			if finishToken ~= hideToken then
+				return
+			end
+			if rainbow then
+				rainbow.ImageTransparency = 1
+			end
+			setPurchasingGuiEnabled(false)
+			ensureMainGuiEnabled()
+			if onHidden then
 				onHidden()
 			end
 		end)
+	else
+		setPurchasingGuiEnabled(false)
+		ensureMainGuiEnabled()
+		if onHidden then
+			onHidden()
+		end
 	end
+
+	restoreCameraFov(false)
+end
+
+function PurchaseEffectClient.forceHide(self: PurchaseEffectClient)
+	cancelActiveTweens()
+	hideToken += 1
+	if rainbow then
+		rainbow.ImageTransparency = 1
+	end
+	restoreCameraFov(true)
+	endPurchaseOverlay()
 end
 
 local function runPurchaseCelebration()
@@ -258,7 +325,7 @@ function PurchaseEffectClient.onPurchaseFinished(self: PurchaseEffectClient, was
 	if wasPurchased then
 		self:hide(nil, runPurchaseCelebration)
 	else
-		self:hide()
+		self:forceHide()
 	end
 end
 
@@ -269,31 +336,29 @@ function PurchaseEffectClient.init(self: PurchaseEffectClient)
 	initialized = true
 
 	self:ensureRainbow()
+	-- Join/load can leave StarterGui.Purchasing Enabled; clear before any prompt.
+	self:forceHide()
 
 	bindRemoteAsync("PurchaseEffectShow", function()
 		self:show()
 	end)
 
 	bindRemoteAsync("ProductHandlerConfetti", function()
-		-- Client-initiated purchases already celebrate via PromptProductPurchaseFinished
-		-- after the rainbow fades; only run confetti here when no rainbow was showing.
-		local rainbowVisible = rainbow and rainbow.ImageTransparency < 0.99
-		if rainbowVisible then
-			self:hide()
-		else
-			self:hide(nil, runPurchaseCelebration)
+		if purchaseUiActive or (rainbow and rainbow.ImageTransparency < 0.99) then
+			return
 		end
+		self:hide(nil, runPurchaseCelebration)
 	end)
 
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, _gamePassId, wasPurchased)
 		if player == Players.LocalPlayer then
-			self:onPurchaseFinished(wasPurchased)
+			self:onPurchaseFinished(wasPurchased == true)
 		end
 	end)
 
 	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, _productId, wasPurchased)
 		if userId == Players.LocalPlayer.UserId then
-			self:onPurchaseFinished(wasPurchased)
+			self:onPurchaseFinished(wasPurchased == true)
 		end
 	end)
 end

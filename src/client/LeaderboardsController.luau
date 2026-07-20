@@ -14,7 +14,7 @@ local M = {}
 local DATA_FOLDER_NAME = "LeaderboardData"
 local BOARD_NAMES = { "Cash", "Time" }
 local ROW_COUNT = 10
-local RETRY_INTERVAL_SEC = 3
+local RETRY_INTERVAL_SEC = 2
 
 local function readRows(boardFolder: Folder): { LeaderboardUI.RowEntry }
 	local rows: { LeaderboardUI.RowEntry } = {}
@@ -25,11 +25,13 @@ local function readRows(boardFolder: Folder): { LeaderboardUI.RowEntry }
 		end
 		local userVal = rowFolder:FindFirstChild("User")
 		local amountVal = rowFolder:FindFirstChild("Amount")
+		local userIdVal = rowFolder:FindFirstChild("UserId")
 		local userText = if userVal and userVal:IsA("StringValue") then userVal.Value else "---"
 		local amountText = if amountVal and amountVal:IsA("StringValue") then amountVal.Value else "---"
+		local userId = if userIdVal and userIdVal:IsA("IntValue") then userIdVal.Value else 0
 		rows[rank] = {
 			rank = rank,
-			userId = 0,
+			userId = userId,
 			displayName = userText,
 			amountText = amountText,
 		}
@@ -37,28 +39,19 @@ local function readRows(boardFolder: Folder): { LeaderboardUI.RowEntry }
 	return rows
 end
 
-local function paintBoard(boardName: string, boardFolder: Folder?): boolean
-	if not boardFolder then
-		return false
-	end
-	local container = LeaderboardUI.findBoardContainer(boardName)
-	if not container then
-		return false
-	end
-	return LeaderboardUI.renderBoard(container, readRows(boardFolder))
-end
-
-local function paintAllFromData(dataFolder: Folder): boolean
-	local anyPainted = false
+local function readAllBoardData(dataFolder: Folder): { [string]: { LeaderboardUI.RowEntry } }
+	local out: { [string]: { LeaderboardUI.RowEntry } } = {}
 	for _, boardName in BOARD_NAMES do
 		local boardFolder = dataFolder:FindFirstChild(boardName)
 		if boardFolder and boardFolder:IsA("Folder") then
-			if paintBoard(boardName, boardFolder) then
-				anyPainted = true
-			end
+			out[boardName] = readRows(boardFolder)
 		end
 	end
-	return anyPainted
+	return out
+end
+
+local function paintAllFromData(dataFolder: Folder): boolean
+	return LeaderboardUI.renderAllBoards(readAllBoardData(dataFolder))
 end
 
 local function hookRowFolder(boardName: string, rowFolder: Folder)
@@ -67,9 +60,12 @@ local function hookRowFolder(boardName: string, rowFolder: Folder)
 			child.Changed:Connect(function()
 				local boardFolder = rowFolder.Parent
 				if boardFolder and boardFolder:IsA("Folder") then
-					task.defer(function()
-						paintBoard(boardName, boardFolder :: Folder)
-					end)
+					local dataFolder = boardFolder.Parent
+					if dataFolder and dataFolder:IsA("Folder") then
+						task.defer(function()
+							paintAllFromData(dataFolder :: Folder)
+						end)
+					end
 				end
 			end)
 		end
@@ -79,15 +75,12 @@ local function hookRowFolder(boardName: string, rowFolder: Folder)
 			child.Changed:Connect(function()
 				local boardFolder = rowFolder.Parent
 				if boardFolder and boardFolder:IsA("Folder") then
-					task.defer(function()
-						paintBoard(boardName, boardFolder :: Folder)
-					end)
-				end
-			end)
-			task.defer(function()
-				local boardFolder = rowFolder.Parent
-				if boardFolder and boardFolder:IsA("Folder") then
-					paintBoard(boardName, boardFolder :: Folder)
+					local dataFolder = boardFolder.Parent
+					if dataFolder and dataFolder:IsA("Folder") then
+						task.defer(function()
+							paintAllFromData(dataFolder :: Folder)
+						end)
+					end
 				end
 			end)
 		end
@@ -104,15 +97,15 @@ local function hookBoardFolder(boardName: string, boardFolder: Folder)
 	boardFolder.ChildAdded:Connect(function(child)
 		if child:IsA("Folder") then
 			hookRowFolder(boardName, child)
-			task.defer(function()
-				paintBoard(boardName, boardFolder)
-			end)
 		end
 	end)
 	boardFolder:GetAttributeChangedSignal("UpdatedAt"):Connect(function()
-		task.defer(function()
-			paintBoard(boardName, boardFolder)
-		end)
+		local dataFolder = boardFolder.Parent
+		if dataFolder and dataFolder:IsA("Folder") then
+			task.defer(function()
+				paintAllFromData(dataFolder :: Folder)
+			end)
+		end
 	end)
 end
 
@@ -127,20 +120,25 @@ local function hookDataFolder(dataFolder: Folder)
 		if child:IsA("Folder") and table.find(BOARD_NAMES, child.Name) then
 			hookBoardFolder(child.Name, child :: Folder)
 			task.defer(function()
-				paintBoard(child.Name, child :: Folder)
+				paintAllFromData(dataFolder)
 			end)
 		end
 	end)
 end
 
+local function waitForDataFolder(): Folder
+	while true do
+		local found = ReplicatedStorage:FindFirstChild(DATA_FOLDER_NAME)
+		if found and found:IsA("Folder") then
+			return found
+		end
+		task.wait(0.5)
+	end
+end
+
 function M.init()
 	task.spawn(function()
-		Workspace:WaitForChild("Building Assets", 300)
-		local dataFolder = ReplicatedStorage:WaitForChild(DATA_FOLDER_NAME, 120)
-		if not dataFolder or not dataFolder:IsA("Folder") then
-			warn("[LeaderboardsController] LeaderboardData folder missing")
-			return
-		end
+		local dataFolder = waitForDataFolder()
 		hookDataFolder(dataFolder)
 		while true do
 			paintAllFromData(dataFolder)
@@ -149,16 +147,21 @@ function M.init()
 	end)
 
 	task.spawn(function()
-		Workspace:WaitForChild("Building Assets", 300)
-		local dataFolder = ReplicatedStorage:WaitForChild(DATA_FOLDER_NAME, 120)
-		if not dataFolder or not dataFolder:IsA("Folder") then
-			return
+		local dataFolder = waitForDataFolder()
+		local function onWorldChange()
+			task.defer(function()
+				paintAllFromData(dataFolder)
+			end)
 		end
-		Workspace.ChildAdded:Connect(function(child)
-			if child.Name == "Building Assets" or string.find(child.Name, "Stud UI Pack", 1, true) then
-				task.defer(function()
-					paintAllFromData(dataFolder :: Folder)
-				end)
+		Workspace.DescendantAdded:Connect(function(child)
+			if
+				child.Name == "LeaderBoards"
+				or child.Name == "Leaderboards"
+				or child.Name == "GUIPart"
+				or child:IsA("SurfaceGui")
+				or string.find(child.Name, "Stud UI Pack", 1, true)
+			then
+				onWorldChange()
 			end
 		end)
 	end)

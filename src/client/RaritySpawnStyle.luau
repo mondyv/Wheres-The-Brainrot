@@ -77,7 +77,9 @@ function M.applyTextGradient(label: TextLabel, rarity: string?): UIGradient
 	local grad = if existing and existing:IsA("UIGradient") then existing :: UIGradient else Instance.new("UIGradient")
 	grad.Name = "RaritySpawnGradient"
 	grad.Color = M.colorSequence(rarity)
-	grad.Rotation = 90
+	-- Horizontal wash reads cleaner on toast text than a vertical stripe.
+	grad.Rotation = 0
+	grad.Offset = Vector2.new(0, 0)
 	grad.Enabled = true
 	grad.Parent = label
 	return grad

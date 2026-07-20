@@ -12,7 +12,7 @@ local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):Wai
 local BrainrotGradientAnimator = require(script.Parent.BrainrotGradientAnimator)
 
 local HEADER_NAME = "BrainrotInfoBillboard"
-local HEADER_MAX_DISTANCE = 120
+local HEADER_MAX_DISTANCE = 280
 local HEADER_TAG = "BrainrotHeaderTarget"
 local ACTIVE_ATTR = "BrainrotHeaderActive"
 local STAND_DISPLAY_ATTR = "BrainrotStandDisplay"
@@ -52,29 +52,89 @@ local function formatRate(n: number): string
 	return formatCash(n) .. "/s"
 end
 
+local function buildFallbackTemplate(): BillboardGui
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "BillboardGui"
+	bb.Size = DEFAULT_BB_SIZE
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.ResetOnSpawn = false
+
+	local info = Instance.new("Frame")
+	info.Name = "Info"
+	info.BackgroundTransparency = 1
+	info.Size = UDim2.fromScale(1, 1)
+	info.Parent = bb
+
+	local function makeLabel(name: string, y: number, size: number): TextLabel
+		local tl = Instance.new("TextLabel")
+		tl.Name = name
+		tl.BackgroundTransparency = 1
+		tl.Size = UDim2.new(1, 0, 0, size)
+		tl.Position = UDim2.new(0, 0, 0, y)
+		tl.Font = Enum.Font.GothamBold
+		tl.TextSize = size - 2
+		tl.TextColor3 = Color3.new(1, 1, 1)
+		tl.TextStrokeTransparency = 0.4
+		tl.Text = ""
+		tl.Parent = info
+		return tl
+	end
+
+	makeLabel("Name", 0, 28)
+	makeLabel("Rarity", 28, 22)
+	makeLabel("Type", 50, 20)
+	makeLabel("Level", 70, 20)
+	makeLabel("Rate", 90, 22)
+	return bb
+end
+
 local function getTemplate(): BillboardGui?
 	if templateCache and templateCache.Parent then
 		return templateCache
 	end
-	local templates = ReplicatedStorage:WaitForChild("Templates", 120)
+	local templates = ReplicatedStorage:FindFirstChild("Templates")
 	if not templates then
-		return nil
+		templates = ReplicatedStorage:WaitForChild("Templates", 30)
 	end
-	local header = templates:WaitForChild("BrainrotHeader", 60)
-	if not header then
-		return nil
+	if templates then
+		local header = templates:FindFirstChild("BrainrotHeader") or templates:WaitForChild("BrainrotHeader", 15)
+		if header then
+			local direct = header:FindFirstChild("BillboardGui")
+			if direct and direct:IsA("BillboardGui") then
+				templateCache = direct
+				return direct
+			end
+			local any = header:FindFirstChildWhichIsA("BillboardGui", true)
+			if any and any:IsA("BillboardGui") then
+				templateCache = any
+				return any
+			end
+		end
 	end
-	local direct = header:FindFirstChild("BillboardGui")
-	if direct and direct:IsA("BillboardGui") then
-		templateCache = direct
-		return direct
+
+	warn("[BrainrotHeaderController] BrainrotHeader BillboardGui missing — using fallback template")
+	local fallbackFolder = ReplicatedStorage:FindFirstChild("Templates")
+	if not fallbackFolder then
+		fallbackFolder = Instance.new("Folder")
+		fallbackFolder.Name = "Templates"
+		fallbackFolder.Parent = ReplicatedStorage
 	end
-	local any = header:FindFirstChildWhichIsA("BillboardGui", true)
-	if any and any:IsA("BillboardGui") then
-		templateCache = any
-		return any
+	local headerFolder = fallbackFolder:FindFirstChild("BrainrotHeader")
+	if not headerFolder then
+		headerFolder = Instance.new("Folder")
+		headerFolder.Name = "BrainrotHeader"
+		headerFolder.Parent = fallbackFolder
 	end
-	return nil
+	local existing = headerFolder:FindFirstChild("BillboardGui")
+	if existing and existing:IsA("BillboardGui") then
+		templateCache = existing
+		return existing
+	end
+	local built = buildFallbackTemplate()
+	built.Parent = headerFolder
+	templateCache = built
+	return built
 end
 
 local function pickPrimaryPart(model: Model): BasePart?
@@ -364,14 +424,8 @@ end
 
 function BrainrotHeaderController.init()
 	task.spawn(function()
-		for _ = 1, 120 do
-			if getTemplate() then
-				break
-			end
-			task.wait(0.5)
-		end
 		if not getTemplate() then
-			warn("[BrainrotHeaderController] ReplicatedStorage.Templates.BrainrotHeader.BillboardGui missing — is 0_MirrorBrainrotHeader running?")
+			warn("[BrainrotHeaderController] Failed to create header template")
 		end
 	end)
 
@@ -403,6 +457,25 @@ function BrainrotHeaderController.init()
 	CollectionService:GetInstanceAddedSignal("BrainrotStand"):Connect(function(inst)
 		if inst:IsA("Model") then
 			hookStandHeaderCleanup(inst :: Model)
+		end
+	end)
+
+	-- Streaming / late stand rebuilds: rescan a few times after join.
+	task.spawn(function()
+		for _ = 1, 8 do
+			task.wait(1.25)
+			for _, inst in CollectionService:GetTagged(HEADER_TAG) do
+				onHeaderTarget(inst)
+			end
+			for _, inst in CollectionService:GetTagged("BrainrotStand") do
+				if inst:IsA("Model") then
+					for _, desc in ipairs(inst:GetDescendants()) do
+						if desc:IsA("Model") and desc:GetAttribute(STAND_DISPLAY_ATTR) == true then
+							hookStandDisplayModel(desc :: Model)
+						end
+					end
+				end
+			end
 		end
 	end)
 end

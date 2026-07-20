@@ -75,11 +75,16 @@ local function streamLandPivots()
 
 	for _, child in lands:GetChildren() do
 		if child:IsA("Model") or child:IsA("Folder") then
-			local ok, pivot = pcall(function()
-				return child:GetPivot()
-			end)
-			if ok and typeof(pivot) == "CFrame" then
-				streamAround((pivot :: CFrame).Position)
+			local spawn = child:FindFirstChild("Spawn")
+			if spawn and spawn:IsA("BasePart") then
+				streamAround((spawn :: BasePart).Position)
+			else
+				local ok, pivot = pcall(function()
+					return child:GetPivot()
+				end)
+				if ok and typeof(pivot) == "CFrame" then
+					streamAround((pivot :: CFrame).Position)
+				end
 			end
 		end
 		task.wait()

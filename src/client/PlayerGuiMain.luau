@@ -119,7 +119,12 @@ function PlayerGuiMain.finalize(playerGui: PlayerGui?)
 
 	local main = PlayerGuiMain.dedupe(pg)
 	if main then
-		main.Enabled = true
+		-- LoadingScreen keeps Main disabled until isolation exits; don't fight it here.
+		local loading = pg:FindFirstChild("LoadingScreen")
+		local loadingOn = loading and loading:IsA("ScreenGui") and loading.Enabled
+		if not loadingOn then
+			main.Enabled = true
+		end
 		main.ResetOnSpawn = false
 	end
 	return main

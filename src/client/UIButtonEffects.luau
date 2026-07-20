@@ -2,8 +2,10 @@
 -- Shared UI polish: scale hover, in-bounds glisten (hover only), contained diagonal sweep (hover only).
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local HOVER_TWEEN = TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -538,11 +540,12 @@ function M.wireScaleButtonAnim(btn: GuiButton, onActivated: () -> ())
 	btn.MouseButton1Down:Connect(function()
 		UIInteractionSounds.playClick()
 		tweenScale(0.9, CLICK_TWEEN)
+		-- Fire on Down: UIScale shrink cancels Activated/Click if we wait for release.
+		onActivated()
 	end)
 	btn.MouseButton1Up:Connect(function()
 		tweenScale(if hovering then 1.08 else 1, RELEASE_TWEEN)
 	end)
-	btn.Activated:Connect(onActivated)
 end
 
 -- Sidebar buttons: tilt + scale; glisten + sweep only while hovered.
@@ -556,11 +559,21 @@ function M.wireTiltHoverButton(
 	ensureButtonUnclip(btn)
 	local scale = getOrAddUIScale(scaleRoot)
 	local hovering = false
+	local lastFire = 0
 
 	local TILT_HOVER = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 	local TILT_LEAVE = TweenInfo.new(0.22, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
 	local TILT_CLICK = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	local HOVER_SCALE = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+	local function fireActivated()
+		local now = os.clock()
+		if now - lastFire < 0.08 then
+			return
+		end
+		lastFire = now
+		onActivated()
+	end
 
 	bindPointerHover(
 		btn,
@@ -575,9 +588,7 @@ function M.wireTiltHoverButton(
 		end,
 		function()
 			hovering = false
-			if withPolish then
-				hideEffectLayers(btn)
-			end
+			-- Leave scale/tilt alone for effects: glisten + sweep finish full travel even on tap.
 			TweenService:Create(scale, HOVER_SCALE, { Scale = 1 }):Play()
 			TweenService:Create(tiltTarget, TILT_LEAVE, { Rotation = 0 }):Play()
 		end
@@ -586,6 +597,7 @@ function M.wireTiltHoverButton(
 		UIInteractionSounds.playClick()
 		TweenService:Create(scale, TILT_CLICK, { Scale = 0.94 }):Play()
 		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 6 }):Play()
+		fireActivated()
 	end)
 	btn.MouseButton1Up:Connect(function()
 		TweenService:Create(scale, HOVER_SCALE, { Scale = if hovering then 1.1 else 1 }):Play()
@@ -595,7 +607,6 @@ function M.wireTiltHoverButton(
 			TweenService:Create(tiltTarget, TILT_LEAVE, { Rotation = 0 }):Play()
 		end
 	end)
-	btn.Activated:Connect(onActivated)
 end
 
 function M.wireSidebarButton(btn: GuiButton, onActivated: () -> ())
@@ -609,6 +620,7 @@ function M.wireAccentButton(btn: GuiButton, onActivated: () -> ())
 	ensureButtonUnclip(btn)
 	local scale = getOrAddUIScale(btn)
 	local hovering = false
+	local lastFire = 0
 
 	bindPointerHover(
 		btn,
@@ -620,18 +632,22 @@ function M.wireAccentButton(btn: GuiButton, onActivated: () -> ())
 		end,
 		function()
 			hovering = false
-			hideEffectLayers(btn)
+			-- Let glisten/sweep finish the full path after a quick mobile tap.
 			TweenService:Create(scale, HOVER_TWEEN, { Scale = 1 }):Play()
 		end
 	)
 	btn.MouseButton1Down:Connect(function()
 		UIInteractionSounds.playClick()
 		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.92 }):Play()
+		local now = os.clock()
+		if now - lastFire >= 0.08 then
+			lastFire = now
+			onActivated()
+		end
 	end)
 	btn.MouseButton1Up:Connect(function()
 		TweenService:Create(scale, if hovering then HOVER_TWEEN else RELEASE_TWEEN, { Scale = if hovering then 1.08 else 1 }):Play()
 	end)
-	btn.Activated:Connect(onActivated)
 end
 
 -- Close (X): scale + thin in-bounds glisten on hover only (no sweep — keeps X readable).
@@ -640,9 +656,11 @@ function M.wireGlistenCloseButton(btn: GuiButton, onActivated: () -> ())
 		return
 	end
 	wiredClose[btn] = true
+	UiFonts.applyButtonTree(btn)
 
 	local scale = getOrAddUIScale(btn)
 	local hovering = false
+	local lastFire = 0
 
 	bindPointerHover(
 		btn,
@@ -654,31 +672,36 @@ function M.wireGlistenCloseButton(btn: GuiButton, onActivated: () -> ())
 		end,
 		function()
 			hovering = false
-			hideEffectLayers(btn)
+			-- Finish the full outline lap even if hover was only a moment.
 			TweenService:Create(scale, HOVER_TWEEN, { Scale = 1 }):Play()
 		end
 	)
 	btn.MouseButton1Down:Connect(function()
 		UIInteractionSounds.playClick()
 		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.9 }):Play()
+		local now = os.clock()
+		if now - lastFire >= 0.08 then
+			lastFire = now
+			onActivated()
+		end
 	end)
 	btn.MouseButton1Up:Connect(function()
 		TweenService:Create(scale, if hovering then HOVER_TWEEN else RELEASE_TWEEN, { Scale = if hovering then 1.08 else 1 }):Play()
 	end)
-	btn.Activated:Connect(onActivated)
 end
 
 local function findFrameCloseButton(frame: Instance): GuiButton?
+	-- Strict path only — recursive Close/X search was wiring huge controls that ate panel clicks.
 	local header = frame:FindFirstChild("Header")
 	local buttons = header and header:FindFirstChild("Buttons")
 	local close = buttons and buttons:FindFirstChild("Close")
 	if close and close:IsA("GuiButton") then
 		return close
 	end
-	for _, name in { "Close", "CloseButton", "Exit" } do
-		local inst = frame:FindFirstChild(name, true)
-		if inst and inst:IsA("GuiButton") then
-			return inst
+	if close and not close:IsA("GuiButton") then
+		local nested = close:FindFirstChildOfClass("ImageButton") or close:FindFirstChildOfClass("TextButton")
+		if nested then
+			return nested
 		end
 	end
 	return nil

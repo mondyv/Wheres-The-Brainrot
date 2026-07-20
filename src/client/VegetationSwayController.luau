@@ -3,7 +3,7 @@
 	Local-only Pokémon-style bend for grasspart + bushes under Map.Lands.
 	- Indexes only instances named grasspart (never whole grassland groups).
 	- Holds bend while the player stands in range; recovers after leaving.
-	- Bush proximity uses visual bounds (not Model pivot, which can be wrong).
+	- Bushes: index nested bushlets inside cluster Models; very slight size-scaled tilt.
 ]]
 
 local Players = game:GetService("Players")
@@ -19,16 +19,18 @@ local M = {}
 local MAX_ACTIVE = 28
 local SCAN_INTERVAL_SEC = 0.04
 local GRASS_RADIUS = 3.4
-local BUSH_RADIUS = 5.5
+local BUSH_RADIUS = 4.2
 local GRASS_TILT_RAD = math.rad(14)
-local BUSH_TILT_RAD = math.rad(11)
+-- Nested bushlets only — keep this tiny; huge clusters must never rock as one unit.
+local BUSH_TILT_RAD = math.rad(3.2)
 local GRASS_PUSH = 0.12
-local BUSH_PUSH = 0.28
+local BUSH_PUSH = 0.05
 local PRESS_SEC = 0.1
 local RECOVER_SEC = 0.28
 local LEAVE_GRACE_SEC = 0.12
 local INDEX_REFRESH_SEC = 4
 local STEP_NAME = "VegetationSwayStep"
+local BUSH_NEST_MAX_DEPTH = 4
 
 type SwayKind = "grass" | "bush"
 type Phase = "press" | "hold" | "recover"
@@ -111,10 +113,69 @@ local function approxHalfY(target: Instance): number
 			return (target :: Model):GetExtentsSize()
 		end)
 		if ok and typeof(size) == "Vector3" then
-			return math.clamp((size :: Vector3).Y * 0.45, 0.4, 3.5)
+			return math.clamp((size :: Vector3).Y * 0.45, 0.35, 2.2)
 		end
 	end
-	return 1
+	return 0.9
+end
+
+local function approxExtentsMag(target: Instance): number
+	if target:IsA("BasePart") then
+		local s = (target :: BasePart).Size
+		return math.max(s.X, s.Y, s.Z)
+	end
+	if target:IsA("Model") then
+		local ok, size = pcall(function()
+			return (target :: Model):GetExtentsSize()
+		end)
+		if ok and typeof(size) == "Vector3" then
+			local s = size :: Vector3
+			return math.max(s.X, s.Y, s.Z)
+		end
+	end
+	return 4
+end
+
+-- Bigger bushlets sway even less so huge props barely twitch.
+local function bushAmpFor(target: Instance): (number, number)
+	local mag = approxExtentsMag(target)
+	local sizeScale = math.clamp(3.5 / math.max(mag, 1), 0.2, 1)
+	return BUSH_TILT_RAD * sizeScale, BUSH_PUSH * sizeScale
+end
+
+local function collectChildBushModels(node: Instance): { Instance }
+	local kids: { Instance } = {}
+	for _, child in node:GetChildren() do
+		if BushRootUtil.isGeneratedPromptHelper(child) then
+			continue
+		end
+		if child:IsA("Model") then
+			table.insert(kids, child)
+		end
+	end
+	return kids
+end
+
+-- Prefer leaf/nested bush Models inside a cluster; never index the huge outer group if it has kids.
+local function collectNestedBushTargets(root: Instance, depth: number, out: { Instance })
+	if depth > BUSH_NEST_MAX_DEPTH then
+		return
+	end
+	local kids = collectChildBushModels(root)
+	if #kids == 0 then
+		if root:IsA("Model") or root:IsA("BasePart") then
+			table.insert(out, root)
+		end
+		return
+	end
+	for _, kid in kids do
+		local grand = collectChildBushModels(kid)
+		if #grand > 0 then
+			collectNestedBushTargets(kid, depth + 1, out)
+		else
+			table.insert(out, kid)
+		end
+	end
 end
 
 local function grassWorldPos(inst: Instance): Vector3?
@@ -311,10 +372,17 @@ local function indexLandFolder(landFolder: Instance)
 					continue
 				end
 				if BushRootUtil.isBushContainer(child) then
-					-- Nested BushSCRIPT folder under BushSCRIPTs.
 					indexBushContainer(child)
 				elseif child:IsA("Model") or child:IsA("BasePart") then
-					addVeg(child, "bush")
+					local nested: { Instance } = {}
+					collectNestedBushTargets(child, 0, nested)
+					if #nested == 0 then
+						addVeg(child, "bush")
+					else
+						for _, bushlet in nested do
+							addVeg(bushlet, "bush")
+						end
+					end
 				end
 			end
 		end
@@ -370,14 +438,8 @@ end
 
 local function capturePieces(root: Instance, kind: SwayKind): { TargetBase }?
 	local pieces: { TargetBase } = {}
-	local targets: { Instance }
-
-	if kind == "bush" then
-		-- Same targets BushShiver uses — proven to move bush visuals.
-		targets = BushRootUtil.getShakeTargets(root)
-	else
-		targets = { root }
-	end
+	-- Animate only this bushlet / grasspart — never the whole cluster via getShakeTargets.
+	local targets: { Instance } = { root }
 
 	for _, target in targets do
 		local base = getTargetPivot(target)
@@ -431,8 +493,14 @@ local function touchVeg(root: Instance, kind: SwayKind, pushDir: Vector3, now: n
 		return
 	end
 
-	local amp = if kind == "grass" then GRASS_TILT_RAD else BUSH_TILT_RAD
-	local push = if kind == "grass" then GRASS_PUSH else BUSH_PUSH
+	local amp: number
+	local push: number
+	if kind == "grass" then
+		amp = GRASS_TILT_RAD
+		push = GRASS_PUSH
+	else
+		amp, push = bushAmpFor(root)
+	end
 
 	active[root] = {
 		kind = kind,

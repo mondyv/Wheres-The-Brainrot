@@ -15,6 +15,7 @@ local HUDController = require(script.Parent.HUDController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local LoadingScreenController = require(script.Parent.LoadingScreenController)
+local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 local OfflineEarningsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("OfflineEarningsConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
@@ -83,6 +84,10 @@ end
 
 local function healCoreHud()
 	if LoadingScreenController.isActive() or sessionActive then
+		return
+	end
+	-- Don't fight panel / cutscene HUD hide
+	if GameplayUiVisibility.isHidden() then
 		return
 	end
 	local playerGui = player:FindFirstChild("PlayerGui")

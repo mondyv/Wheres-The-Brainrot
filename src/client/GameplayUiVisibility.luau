@@ -2,6 +2,7 @@
 --[[
 	Shared cutscene / panel HUD hide/show with Pokemon-style staggered slide-to-edge.
 	Ref-counted so nested hides don't restore early.
+	Prefers left/right slides (SideUI / edge chrome) instead of accidental up/down.
 ]]
 
 local Players = game:GetService("Players")
@@ -18,7 +19,7 @@ local M = {}
 local hideCount = 0
 local SLIDE_OUT = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local SLIDE_IN = TweenInfo.new(0.36, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local WAVE_STAGGER = 0.045
+local WAVE_STAGGER = 0.05
 
 type GuiSnap = {
 	inst: GuiObject,
@@ -66,25 +67,57 @@ local function computeSlidePos(gui: GuiObject): UDim2
 	local vp = if cam then cam.ViewportSize else Vector2.new(1280, 720)
 	local absPos = gui.AbsolutePosition
 	local absSize = gui.AbsoluteSize
-	local center = absPos + absSize * 0.5
 	local base = gui.Position
-	local margin = 80
+	local margin = 96
+	local travel = math.max(absSize.X * 0.4, absSize.Y * 0.35, 180) + margin
 
-	if center.X < vp.X * 0.38 then
-		return UDim2.new(base.X.Scale, base.X.Offset - (absSize.X + margin), base.Y.Scale, base.Y.Offset)
-	elseif center.X > vp.X * 0.62 then
-		return UDim2.new(base.X.Scale, base.X.Offset + (absSize.X + margin), base.Y.Scale, base.Y.Offset)
-	elseif center.Y < vp.Y * 0.42 then
-		return UDim2.new(base.X.Scale, base.X.Offset, base.Y.Scale, base.Y.Offset - (absSize.Y + margin))
-	else
-		return UDim2.new(base.X.Scale, base.X.Offset, base.Y.Scale, base.Y.Offset + (absSize.Y + margin))
+	local coversMost = absSize.X >= vp.X * 0.65 and absSize.Y >= vp.Y * 0.5
+	-- SideUI is usually a fullscreen host for left chrome — always exit left.
+	if gui.Name == "SideUI" or coversMost then
+		local goLeft = true
+		if gui.Name ~= "SideUI" then
+			if gui.AnchorPoint.X > 0.55 or base.X.Scale > 0.55 then
+				goLeft = false
+			elseif gui.AnchorPoint.X < 0.45 or base.X.Scale < 0.45 then
+				goLeft = true
+			else
+				goLeft = (absPos.X + absSize.X * 0.5) <= vp.X * 0.5
+			end
+		end
+		if goLeft then
+			return UDim2.new(base.X.Scale, base.X.Offset - travel, base.Y.Scale, base.Y.Offset)
+		end
+		return UDim2.new(base.X.Scale, base.X.Offset + travel, base.Y.Scale, base.Y.Offset)
 	end
+
+	local centerX = absPos.X + absSize.X * 0.5
+	local centerY = absPos.Y + absSize.Y * 0.5
+	local distL = centerX
+	local distR = vp.X - centerX
+	local distT = centerY
+	local distB = vp.Y - centerY
+	local minH = math.min(distL, distR)
+	local minV = math.min(distT, distB)
+
+	-- Prefer horizontal unless clearly glued to top/bottom edge
+	if minH <= minV * 1.25 then
+		if distL <= distR then
+			return UDim2.new(base.X.Scale, base.X.Offset - travel, base.Y.Scale, base.Y.Offset)
+		end
+		return UDim2.new(base.X.Scale, base.X.Offset + travel, base.Y.Scale, base.Y.Offset)
+	end
+
+	local vTravel = math.max(absSize.Y, 120) + margin
+	if distT <= distB then
+		return UDim2.new(base.X.Scale, base.X.Offset, base.Y.Scale, base.Y.Offset - vTravel)
+	end
+	return UDim2.new(base.X.Scale, base.X.Offset, base.Y.Scale, base.Y.Offset + vTravel)
 end
 
 local function waveOrderKey(gui: GuiObject): number
 	local absPos = gui.AbsolutePosition
-	-- Slight diagonal wave: left/top first
-	return absPos.X * 0.65 + absPos.Y * 0.35
+	-- Left-to-right wave primarily
+	return absPos.X * 1.0 + absPos.Y * 0.15
 end
 
 local function buildKeepSets(opts: HideOpts?)
@@ -188,7 +221,10 @@ end
 local function slideInAndRestore()
 	cancelTweens()
 
-	local pending = table.clone(mainSnaps)
+	local pending: { GuiSnap } = {}
+	for _, entry in mainSnaps do
+		table.insert(pending, entry)
+	end
 	table.sort(pending, function(a, b)
 		return a.order < b.order
 	end)
@@ -225,10 +261,6 @@ local function slideInAndRestore()
 	local main = pg and pg:FindFirstChild("Main")
 	if main and main:IsA("ScreenGui") then
 		main.Enabled = true
-		local sideUI = main:FindFirstChild("SideUI")
-		if sideUI and sideUI:IsA("GuiObject") then
-			sideUI.Visible = true
-		end
 	end
 
 	pcall(function()

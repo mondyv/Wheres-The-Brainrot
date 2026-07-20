@@ -12,6 +12,7 @@
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local HUDController = require(script.Parent.HUDController)
 local StandDialogueCutscene = require(script.Parent.StandDialogueCutscene)
@@ -87,6 +88,7 @@ type StandEntry = {
 local CLOSE_DEBOUNCE = 0.22
 local CHARGE_DURATION = 0.55
 local CHARGE_GUI_NAME = "StandPadCharge"
+local CHARGE_TWEEN = TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 local stands: { StandEntry } = {}
 local activeStandFrame: string? = nil
@@ -100,6 +102,7 @@ local chargeStand: StandEntry? = nil
 local chargeAmount = 0
 local chargeBillboard: BillboardGui? = nil
 local chargeFill: Frame? = nil
+local chargeFillTween: Tween? = nil
 
 local function cancelPendingClose()
 	if closePending then
@@ -125,6 +128,10 @@ local function getHRP(): BasePart?
 end
 
 local function destroyChargeUi()
+	if chargeFillTween then
+		chargeFillTween:Cancel()
+		chargeFillTween = nil
+	end
 	if chargeBillboard then
 		chargeBillboard:Destroy()
 		chargeBillboard = nil
@@ -147,21 +154,26 @@ local function ensureChargeUi(): Frame?
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	bb.MaxDistance = 60
-	bb.Size = UDim2.fromOffset(120, 14)
+	bb.Size = UDim2.fromOffset(132, 16)
 	bb.StudsOffset = Vector3.new(0, -2.8, 0)
 	bb.Adornee = hrp
 	bb.Parent = hrp
 
 	local track = Instance.new("Frame")
 	track.Name = "Track"
-	track.BackgroundColor3 = Color3.new(0, 0, 0)
-	track.BackgroundTransparency = 0.1
+	track.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+	track.BackgroundTransparency = 0.05
 	track.BorderSizePixel = 0
 	track.Size = UDim2.fromScale(1, 1)
+	track.ClipsDescendants = true
 	track.Parent = bb
 
+	local trackCorner = Instance.new("UICorner")
+	trackCorner.CornerRadius = UDim.new(0, 6)
+	trackCorner.Parent = track
+
 	local trackStroke = Instance.new("UIStroke")
-	trackStroke.Color = Color3.new(1, 1, 1)
+	trackStroke.Color = Color3.fromRGB(255, 255, 255)
 	trackStroke.Thickness = 2
 	trackStroke.Parent = track
 
@@ -172,6 +184,22 @@ local function ensureChargeUi(): Frame?
 	fill.Size = UDim2.fromScale(0, 1)
 	fill.Parent = track
 
+	local fillCorner = Instance.new("UICorner")
+	fillCorner.CornerRadius = UDim.new(0, 6)
+	fillCorner.Parent = fill
+
+	local tip = Instance.new("Frame")
+	tip.Name = "Tip"
+	tip.AnchorPoint = Vector2.new(1, 0.5)
+	tip.Position = UDim2.fromScale(1, 0.5)
+	tip.Size = UDim2.fromOffset(6, 10)
+	tip.BackgroundColor3 = Color3.fromRGB(255, 245, 120)
+	tip.BorderSizePixel = 0
+	tip.Parent = fill
+	local tipCorner = Instance.new("UICorner")
+	tipCorner.CornerRadius = UDim.new(0, 3)
+	tipCorner.Parent = tip
+
 	chargeBillboard = bb
 	chargeFill = fill
 	return fill
@@ -179,9 +207,17 @@ end
 
 local function setChargeVisual(alpha: number)
 	local fill = ensureChargeUi()
-	if fill then
-		fill.Size = UDim2.fromScale(math.clamp(alpha, 0, 1), 1)
+	if not fill then
+		return
 	end
+	local goal = math.clamp(alpha, 0, 1)
+	if chargeFillTween then
+		chargeFillTween:Cancel()
+	end
+	chargeFillTween = TweenService:Create(fill, CHARGE_TWEEN, {
+		Size = UDim2.fromScale(goal, 1),
+	})
+	chargeFillTween:Play()
 end
 
 local function resetCharge()
@@ -233,9 +269,6 @@ local function scheduleClose()
 		end
 	end)
 end
-
-local TICK_INTERVAL = 0.2
-local tickAccum = 0
 
 local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart, padding: number): boolean
 	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
@@ -469,13 +502,7 @@ function StandController.init()
 	end)
 
 	local heartbeatConn = RunService.Heartbeat:Connect(function(dt)
-		tickAccum += dt
-		if tickAccum < TICK_INTERVAL then
-			return
-		end
-		local stepDt = tickAccum
-		tickAccum = 0
-		tick(stepDt)
+		tick(dt)
 	end)
 	player.AncestryChanged:Connect(function(_, parent)
 		if not parent and heartbeatConn then

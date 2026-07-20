@@ -10,6 +10,8 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
+local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
+
 local HudRescue = {}
 
 local function rescueOnce(reason: string)
@@ -83,9 +85,11 @@ local function rescueOnce(reason: string)
 		end
 		local sideUI = main:FindFirstChild("SideUI")
 		if sideUI and sideUI:IsA("GuiObject") then
-			if not (sideUI :: GuiObject).Visible then
+			if not (sideUI :: GuiObject).Visible and not GameplayUiVisibility.isHidden() then
 				(sideUI :: GuiObject).Visible = true
 				table.insert(lines, "showed SideUI")
+			elseif GameplayUiVisibility.isHidden() then
+				table.insert(lines, "skipped SideUI show (panel/cutscene hide active)")
 			end
 			table.insert(lines, string.format("Main.Enabled=%s SideUI.Visible=%s", tostring(main.Enabled), tostring((sideUI :: GuiObject).Visible)))
 		else

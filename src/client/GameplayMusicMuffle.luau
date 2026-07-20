@@ -1,7 +1,7 @@
 -- [ACTIVE] GameplayMusicMuffle
 --[[
-	Underwater / blurry BGM while panels or cutscenes hide the HUD.
-	Equalizer + light reverb on SoundService.BackgroundMusic.SoundGroup.
+	Muffled / blurry BGM while panels or cutscenes hide the HUD.
+	Equalizer only (no reverb — reverb reads as underwater).
 	Ref-counted to match nested GameplayUiVisibility hides.
 ]]
 
@@ -12,15 +12,13 @@ local M = {}
 
 local EQ_NAME = "GameplayUiMuffleEQ"
 local REVERB_NAME = "GameplayUiMuffleReverb"
-local FADE_IN = TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local FADE_OUT = TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local FADE_IN = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local FADE_OUT = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
--- Underwater-ish profile (dB)
-local MUFFLE_HIGH = -24
-local MUFFLE_MID = -9
-local MUFFLE_LOW = 3
-local REVERB_WET = -4
-local REVERB_DRY = -2
+-- Dry muffled profile (dB) — cut highs/mids, keep lows
+local MUFFLE_HIGH = -36
+local MUFFLE_MID = -16
+local MUFFLE_LOW = 0
 
 local depth = 0
 local activeTweens: { Tween } = {}
@@ -53,7 +51,13 @@ local function getMusicGroup(): SoundGroup?
 	return nil
 end
 
-local function ensureEffects(group: SoundGroup): (EqualizerSoundEffect, ReverbSoundEffect)
+local function ensureEq(group: SoundGroup): EqualizerSoundEffect
+	-- Remove legacy reverb so it never sounds watery
+	local oldReverb = group:FindFirstChild(REVERB_NAME)
+	if oldReverb then
+		oldReverb:Destroy()
+	end
+
 	local eq = group:FindFirstChild(EQ_NAME)
 	if not eq or not eq:IsA("EqualizerSoundEffect") then
 		if eq then
@@ -68,25 +72,7 @@ local function ensureEffects(group: SoundGroup): (EqualizerSoundEffect, ReverbSo
 		created.Parent = group
 		eq = created
 	end
-
-	local reverb = group:FindFirstChild(REVERB_NAME)
-	if not reverb or not reverb:IsA("ReverbSoundEffect") then
-		if reverb then
-			reverb:Destroy()
-		end
-		local created = Instance.new("ReverbSoundEffect")
-		created.Name = REVERB_NAME
-		created.DecayTime = 1.6
-		created.Density = 0.35
-		created.Diffusion = 0.75
-		created.DryLevel = 0
-		created.WetLevel = -40
-		created.Enabled = true
-		created.Parent = group
-		reverb = created
-	end
-
-	return eq :: EqualizerSoundEffect, reverb :: ReverbSoundEffect
+	return eq :: EqualizerSoundEffect
 end
 
 local function applyMuffle(on: boolean)
@@ -94,30 +80,21 @@ local function applyMuffle(on: boolean)
 	if not group then
 		return
 	end
-	local eq, reverb = ensureEffects(group)
+	local eq = ensureEq(group)
 	cancelTweens()
 	local info = if on then FADE_IN else FADE_OUT
 	if on then
 		eq.Enabled = true
-		reverb.Enabled = true
 		playTween(eq, info, {
 			HighGain = MUFFLE_HIGH,
 			MidGain = MUFFLE_MID,
 			LowGain = MUFFLE_LOW,
-		})
-		playTween(reverb, info, {
-			WetLevel = REVERB_WET,
-			DryLevel = REVERB_DRY,
 		})
 	else
 		playTween(eq, info, {
 			HighGain = 0,
 			MidGain = 0,
 			LowGain = 0,
-		})
-		playTween(reverb, info, {
-			WetLevel = -40,
-			DryLevel = 0,
 		})
 	end
 end

@@ -25,13 +25,15 @@ local sideUI: Instance? = nil
 local framesFolder: Instance? = nil
 
 local PANEL_BLUR_NAME = "PanelModalBlur"
+local PANEL_DIM_GUI_NAME = "PanelModalDim"
 local PANEL_BACKDROP_NAME = "PanelClickOutside"
-local BLUR_SIZE = 14
+local BLUR_SIZE = 18
 local BLUR_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 local panelChromeHidden = false
 local panelBlur: BlurEffect? = nil
 local panelBackdrop: TextButton? = nil
+local panelDimGui: ScreenGui? = nil
 
 -- Module table declared early so backdrop callbacks never see a nil HUDController.
 local HUDController = {}
@@ -120,23 +122,55 @@ local function destroyPanelBackdrop()
 		panelBackdrop:Destroy()
 		panelBackdrop = nil
 	end
+	if panelDimGui then
+		panelDimGui:Destroy()
+		panelDimGui = nil
+	end
+	local pg = player:FindFirstChild("PlayerGui")
+	if pg then
+		local existing = pg:FindFirstChild(PANEL_DIM_GUI_NAME)
+		if existing then
+			existing:Destroy()
+		end
+	end
 	ensureHudRoots()
 	local frames = framesFolder
 	if frames then
-		local existing = frames:FindFirstChild(PANEL_BACKDROP_NAME)
-		if existing then
-			existing:Destroy()
+		local legacy = frames:FindFirstChild(PANEL_BACKDROP_NAME)
+		if legacy then
+			legacy:Destroy()
 		end
 	end
 end
 
 local function ensurePanelBackdrop()
 	ensureHudRoots()
-	local frames = framesFolder
-	if not frames or not frames:IsA("GuiObject") then
+	local pg = player:FindFirstChild("PlayerGui")
+	if not pg then
 		return
 	end
 	destroyPanelBackdrop()
+
+	local main = mainGui
+	local dimGui = Instance.new("ScreenGui")
+	dimGui.Name = PANEL_DIM_GUI_NAME
+	dimGui.ResetOnSpawn = false
+	dimGui.IgnoreGuiInset = true
+	dimGui.DisplayOrder = if main then math.max(main.DisplayOrder - 1, 0) else 0
+	dimGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	dimGui.Enabled = true
+	pcall(function()
+		(dimGui :: any).ClipToDeviceSafeArea = false
+	end)
+	pcall(function()
+		(dimGui :: any).SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
+	end)
+	-- Keep Main above the dim so panels stay clickable on top
+	if main and main.DisplayOrder <= dimGui.DisplayOrder then
+		main.DisplayOrder = dimGui.DisplayOrder + 1
+	end
+	dimGui.Parent = pg
+	panelDimGui = dimGui
 
 	local backdrop = Instance.new("TextButton")
 	backdrop.Name = PANEL_BACKDROP_NAME
@@ -148,9 +182,9 @@ local function ensurePanelBackdrop()
 	backdrop.Size = UDim2.fromScale(1, 1)
 	backdrop.Position = UDim2.fromScale(0, 0)
 	backdrop.AnchorPoint = Vector2.new(0, 0)
-	backdrop.ZIndex = 12
+	backdrop.ZIndex = 1
 	backdrop.Active = true
-	backdrop.Parent = frames
+	backdrop.Parent = dimGui
 
 	backdrop.Activated:Connect(function()
 		local frame = currentFrame

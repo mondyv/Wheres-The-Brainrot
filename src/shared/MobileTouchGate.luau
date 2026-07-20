@@ -15,7 +15,7 @@ local RunService = game:GetService("RunService")
 
 local M = {}
 
-local HOLD_BLOCK_SEC = 0.7
+local HOLD_BLOCK_SEC = 0.2
 local activeTouches: { [InputObject]: number } = {}
 local blockedUntilAllReleased = false
 local wired = false

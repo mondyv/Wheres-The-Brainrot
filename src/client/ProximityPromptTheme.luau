@@ -241,7 +241,8 @@ function M.applyBushSearchStyle(parts: CardParts)
 	parts.keyBadge.BackgroundTransparency = C.BUSH_SEARCH_BADGE_BG_TRANSPARENCY
 	parts.keyStroke.Transparency = C.BUSH_SEARCH_BADGE_STROKE_TRANSPARENCY
 	parts.keyLabel.TextColor3 = C.TEXT_PRIMARY
-	parts.keyIcon.ImageColor3 = C.TEXT_PRIMARY
+	-- Keep finger icon white (same as stand); tinting made TouchHold look blank.
+	parts.keyIcon.ImageColor3 = Color3.new(1, 1, 1)
 end
 
 function M.resetBadgeVisuals(parts: CardParts, isBush: boolean, hasStandStrokeGradient: boolean)
@@ -262,7 +263,7 @@ function M.resetBadgeVisuals(parts: CardParts, isBush: boolean, hasStandStrokeGr
 		end
 		parts.keyLabel.TextColor3 = C.TEXT_PRIMARY
 	end
-	parts.keyIcon.ImageColor3 = if isBush then C.TEXT_PRIMARY else Color3.new(1, 1, 1)
+	parts.keyIcon.ImageColor3 = Color3.new(1, 1, 1)
 end
 
 function M.applyHoldBadgeActive(parts: CardParts, isBush: boolean)

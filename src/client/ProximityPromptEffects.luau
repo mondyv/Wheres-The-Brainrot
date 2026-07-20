@@ -272,13 +272,24 @@ local function prefersGamepadInput(): boolean
 end
 
 local function isMobilePlatform(): boolean
-	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-		return true
-	end
-	local ok, preferred = pcall(function()
-		return (UserInputService :: any).PreferredInput
-	end)
-	if ok and preferred == Enum.PreferredInput.Touch then
+	-- Many phones/tablets report KeyboardEnabled=true; don't require keyboard off.
+	if UserInputService.TouchEnabled then
+		if prefersGamepadInput() then
+			return false
+		end
+		if not UserInputService.KeyboardEnabled then
+			return true
+		end
+		local ok, preferred = pcall(function()
+			return (UserInputService :: any).PreferredInput
+		end)
+		if ok and preferred == Enum.PreferredInput.Touch then
+			return true
+		end
+		if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then
+			return true
+		end
+		-- Touch screen present and not actively using gamepad — treat as mobile for prompt UI.
 		return true
 	end
 	return false
@@ -389,13 +400,15 @@ local function shouldShowBushTouchIcon(prompt: ProximityPrompt, inputType: Enum.
 	return usesTouchPromptIcon()
 end
 
-local function showTouchKeyIcon(view: PromptView, hold: boolean)
+local function showTouchKeyIcon(view: PromptView, _hold: boolean)
 	local label = view.keyLabel
 	local icon = view.keyIcon
 	label.Text = ""
 	label.Visible = false
 	icon.Visible = true
 	icon.ImageTransparency = 0
+	-- Same finger image as stand prompts. TouchHoldIcon is blank/missing on many
+	-- clients; hold is already communicated by the green hold-fill ring.
 	icon.ImageColor3 = Color3.new(1, 1, 1)
 	icon.ScaleType = Enum.ScaleType.Fit
 	icon.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -403,7 +416,7 @@ local function showTouchKeyIcon(view: PromptView, hold: boolean)
 	local touchSize = if isTouchDevice() then 34 else 28
 	icon.Size = UDim2.fromOffset(touchSize, touchSize + 6)
 	icon.ZIndex = 10
-	icon.Image = if hold then C.TOUCH_HOLD_ICON else C.TOUCH_TAP_ICON
+	icon.Image = C.TOUCH_TAP_ICON
 end
 
 local function refreshKeyLabel(view: PromptView)
@@ -418,35 +431,20 @@ local function refreshKeyLabel(view: PromptView)
 		label.Text = text
 	end
 
-	local function _showIcon(image: string)
-		label.Text = ""
-		label.Visible = false
-		icon.Visible = true
-		icon.ImageTransparency = 0
-		icon.Image = image
-		icon.ImageColor3 = if isBushSearchPrompt(view.prompt) then C.TEXT_PRIMARY else C.KEY_TEXT
-		icon.ScaleType = Enum.ScaleType.Fit
-		icon.AnchorPoint = Vector2.new(0.5, 0.5)
-		icon.Position = UDim2.fromScale(0.5, 0.5)
-		icon.Size = UDim2.new(1, -10, 1, -10)
-		icon.ZIndex = 10
-	end
-
 	if inputType == Enum.ProximityPromptInputType.Gamepad then
 		showText(gamepadButtonLabel(prompt.GamepadKeyCode))
 		return
 	end
-	if isBushSearchPrompt(prompt) and shouldShowBushTouchIcon(prompt, inputType) then
+	-- Touch devices: always finger badge (same asset as stand). Never keyboard "E".
+	if UserInputService.TouchEnabled and not prefersGamepadInput() then
 		showTouchKeyIcon(view, prompt.HoldDuration > 0)
-		return
-	end
-	if isStealProximityPrompt(prompt) and (inputType == Enum.ProximityPromptInputType.Touch or usesTouchPromptIcon()) then
-		showTouchKeyIcon(view, false)
 		return
 	end
 	if
 		inputType == Enum.ProximityPromptInputType.Touch
 		or usesTouchPromptIcon()
+		or (isBushSearchPrompt(prompt) and shouldShowBushTouchIcon(prompt, inputType))
+		or (isStealProximityPrompt(prompt) and usesTouchPromptIcon())
 	then
 		showTouchKeyIcon(view, prompt.HoldDuration > 0)
 		return
@@ -2036,10 +2034,12 @@ showBushSharedUi = function(prompt: ProximityPrompt): boolean
 	ensureKeyIcon(view)
 	applyLabelsToView(view)
 	applyBushSearchCardStyle(view)
-	refreshKeyLabel(view)
-	-- Hard guarantee: touch devices never keep the keyboard "E" on bush search.
+	-- Always force the same finger badge stands use on touch devices.
+	-- Do this last so live label refresh / style tint cannot leave a blank "E".
 	if UserInputService.TouchEnabled and not prefersGamepadInput() then
 		showTouchKeyIcon(view, prompt.HoldDuration > 0)
+	else
+		refreshKeyLabel(view)
 	end
 	setHoldTrackVisible(view, view.prompt.HoldDuration > 0)
 	wirePromptLiveUpdates(prompt, view)

@@ -25,6 +25,7 @@ local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("U
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local MainGradientButtons = require(script.Parent.MainGradientButtons)
+local OtherVfxController = require(script.Parent.OtherVfxController)
 local TopNotifController = require(script.Parent.TopNotifController)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local PlotMarkerVisibility = require(script.Parent.PlotMarkerVisibility)
@@ -1675,6 +1676,16 @@ local function hookStandLevelPulse(stand: Model, view: StandView)
 		affordVisualByView[view] = nil
 		refreshStandUpgradeAfford(view)
 		hopStandBrainrot(stand)
+		local upgradeHost: BasePart? = nil
+		if displayModel then
+			upgradeHost = displayModel.PrimaryPart or displayModel:FindFirstChildWhichIsA("BasePart", true)
+		end
+		if not upgradeHost then
+			upgradeHost = resolveStandVfxRoot(stand)
+		end
+		if upgradeHost then
+			OtherVfxController.playBrainrotUpgrade(upgradeHost)
+		end
 	end)
 end
 

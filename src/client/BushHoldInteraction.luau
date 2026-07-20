@@ -17,6 +17,7 @@ local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local OtherVfxController = require(script.Parent.OtherVfxController)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 
 local player = Players.LocalPlayer
@@ -604,6 +605,7 @@ local function doHarvest(prompt: ProximityPrompt)
 	if not bush then
 		return
 	end
+	OtherVfxController.playBushOpenedBurst(bush)
 	if bushSearchInFlight[bush] then
 		return
 	end

@@ -19,6 +19,7 @@ local TweenService = game:GetService("TweenService")
 
 local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local OtherVfxController = require(script.Parent.OtherVfxController)
 
 local player = Players.LocalPlayer
 
@@ -157,11 +158,26 @@ local function handleShakeStart(payload: any)
 	end
 	if tool then
 		startShake(tool, duration)
+		local handle = tool:FindFirstChild("Handle")
+		if handle and handle:IsA("BasePart") then
+			OtherVfxController.playLuckyBlockOpen(handle)
+		else
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if hrp and hrp:IsA("BasePart") then
+				OtherVfxController.playLuckyBlockOpen(hrp)
+			end
+		end
 	end
 	startAura()
 	task.delay(duration, function()
 		stopAura()
 		stopShake()
+		-- Reveal burst again at the player (tool may already be gone).
+		local liveChar = player.Character
+		local hrp = liveChar and liveChar:FindFirstChild("HumanoidRootPart")
+		if hrp and hrp:IsA("BasePart") then
+			OtherVfxController.playLuckyBlockOpen(hrp)
+		end
 		-- Drop shake camera shake comes from the standard harvest-drop FX once the brainrot is granted;
 		-- play a one-shot purchase shake so the player feels the reveal.
 		GameSoundEffects.playPurchaseShake()

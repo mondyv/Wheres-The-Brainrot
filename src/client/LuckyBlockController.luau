@@ -172,12 +172,6 @@ local function handleShakeStart(payload: any)
 	task.delay(duration, function()
 		stopAura()
 		stopShake()
-		-- Reveal burst again at the player (tool may already be gone).
-		local liveChar = player.Character
-		local hrp = liveChar and liveChar:FindFirstChild("HumanoidRootPart")
-		if hrp and hrp:IsA("BasePart") then
-			OtherVfxController.playLuckyBlockOpen(hrp)
-		end
 		-- Drop shake camera shake comes from the standard harvest-drop FX once the brainrot is granted;
 		-- play a one-shot purchase shake so the player feels the reveal.
 		GameSoundEffects.playPurchaseShake()

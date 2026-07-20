@@ -1,22 +1,22 @@
 -- [ACTIVE] OtherVfxController
 --[[
-	One-shot VFX from ReplicatedStorage.EssentialAssets.OtherVFX.
-	Enables every ParticleEmitter / Trail / Beam / Light in the clone, then Emit()
-	using EmitCount / EmitDelay / EmitDuration attributes when present.
-	Skips continuous BushEffect; uses BushEffectBurst / Luckyblock / UpgradeBR.OnUpgrade.
+	Plays EssentialAssets.OtherVFX with the standard Studio emit-plugin pattern:
+	emitters stay Disabled; script calls :Emit(EmitCount) once (after EmitDelay).
+	Supports EmitDuration (brief enable window), Beam Width0/Width1/Duration tweens.
 ]]
 
 local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local OtherVfxController = {}
 
-local LIFETIME_SEC = 5.5
-local DEFAULT_EMIT = 28
+local LIFETIME_SEC = 5
 local BEZIER_DURATION = 0.55
-local DEFAULT_EMIT_DURATION = 0.85
+-- One frame+ after Clone/Parent so particle textures can load before Emit.
+local EMIT_SETTLE_SEC = 0.08
 
 local function findOtherVfxFolder(): Instance?
 	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
@@ -61,6 +61,21 @@ local function stabilizeParts(root: Instance)
 	end
 end
 
+local function disableAllFx(root: Instance)
+	if root:IsA("ParticleEmitter") or root:IsA("Trail") or root:IsA("Beam") then
+		root.Enabled = false
+	elseif root:IsA("PointLight") or root:IsA("SpotLight") or root:IsA("SurfaceLight") then
+		root.Enabled = false
+	end
+	for _, d in root:GetDescendants() do
+		if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") then
+			d.Enabled = false
+		elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+			d.Enabled = false
+		end
+	end
+end
+
 local function playSounds(root: Instance)
 	if root:IsA("Sound") then
 		root:Play()
@@ -72,81 +87,150 @@ local function playSounds(root: Instance)
 	end
 end
 
-local function activateLight(light: PointLight | SpotLight | SurfaceLight)
-	light.Enabled = true
-	local peak = light.Brightness
-	if peak <= 0 then
-		peak = 2
-		light.Brightness = peak
-	end
-	task.delay(math.max(0.4, DEFAULT_EMIT_DURATION), function()
-		if light.Parent then
-			light.Enabled = false
+local function flashLight(light: PointLight | SpotLight | SurfaceLight)
+	local delayAttr = light:GetAttribute("EmitDelay")
+	local delaySec = if typeof(delayAttr) == "number" then math.max(0, delayAttr) else 0
+	local durAttr = light:GetAttribute("EmitDuration") or light:GetAttribute("Duration")
+	local dur = if typeof(durAttr) == "number" then math.max(0.05, durAttr) else 0.35
+	task.delay(delaySec, function()
+		if not light.Parent then
+			return
 		end
+		if light.Brightness <= 0 then
+			light.Brightness = 2
+		end
+		light.Enabled = true
+		task.delay(dur, function()
+			if light.Parent then
+				light.Enabled = false
+			end
+		end)
 	end)
 end
 
---- Enable every VFX under root, then burst Emit on particle emitters.
-local function activateAllVfx(root: Instance, defaultCount: number, skipUnder: Instance?)
+--- Plugin-style one-shot emit for every VFX under root.
+local function emitAll(root: Instance, skipUnder: Instance?)
 	local function skip(inst: Instance): boolean
 		return skipUnder ~= nil and (inst == skipUnder or inst:IsDescendantOf(skipUnder))
 	end
 
-	local function activateEmitter(emitter: ParticleEmitter)
+	local function emitParticle(emitter: ParticleEmitter)
 		if skip(emitter) then
 			return
 		end
+		emitter.Enabled = false
 		local delayAttr = emitter:GetAttribute("EmitDelay")
 		local delaySec = if typeof(delayAttr) == "number" then math.max(0, delayAttr) else 0
 		local countAttr = emitter:GetAttribute("EmitCount")
-		local count = if typeof(countAttr) == "number" then math.max(1, math.floor(countAttr)) else defaultCount
+		local count = if typeof(countAttr) == "number" then math.max(0, math.floor(countAttr)) else nil
 		local durAttr = emitter:GetAttribute("EmitDuration")
-		local dur = if typeof(durAttr) == "number" then math.max(0, durAttr) else DEFAULT_EMIT_DURATION
+		local dur = if typeof(durAttr) == "number" then math.max(0, durAttr) else 0
 
-		local function run()
+		task.delay(delaySec, function()
 			if not emitter.Parent then
 				return
 			end
-			-- Enable first so rate-based + style layers show; Emit for the burst spike.
-			emitter.Enabled = true
-			emitter:Emit(count)
+			-- Pure burst: Emit once. Optional EmitDuration = short enable window only.
+			if count and count > 0 then
+				emitter:Emit(count)
+			elseif count == nil then
+				-- No EmitCount baked by the plugin — fall back to Rate as a one-shot burst.
+				local rate = math.max(1, math.floor(emitter.Rate))
+				emitter:Emit(rate)
+			end
 			if dur > 0 then
+				emitter.Enabled = true
 				task.delay(dur, function()
 					if emitter.Parent then
 						emitter.Enabled = false
 					end
 				end)
+			else
+				emitter.Enabled = false
 			end
-		end
-
-		if delaySec > 0 then
-			task.delay(delaySec, run)
-		else
-			run()
-		end
+		end)
 	end
 
-	local function activateInst(inst: Instance)
+	local function emitBeam(beam: Beam)
+		if skip(beam) then
+			return
+		end
+		local delayAttr = beam:GetAttribute("EmitDelay")
+		local delaySec = if typeof(delayAttr) == "number" then math.max(0, delayAttr) else 0
+		local width0 = beam:GetAttribute("Width0")
+		local width1 = beam:GetAttribute("Width1")
+		local durAttr = beam:GetAttribute("Duration") or beam:GetAttribute("EmitDuration")
+		local dur = if typeof(durAttr) == "number" then math.max(0.05, durAttr) else 0.35
+
+		task.delay(delaySec, function()
+			if not beam.Parent then
+				return
+			end
+			if typeof(width0) == "number" and typeof(width1) == "number" then
+				beam.Width0 = 0
+				beam.Width1 = 0
+				beam.Enabled = true
+				local tw = TweenService:Create(
+					beam,
+					TweenInfo.new(dur, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, true),
+					{ Width0 = width0, Width1 = width1 }
+				)
+				tw:Play()
+				tw.Completed:Once(function()
+					if beam.Parent then
+						beam.Enabled = false
+					end
+				end)
+			else
+				beam.Enabled = true
+				task.delay(dur, function()
+					if beam.Parent then
+						beam.Enabled = false
+					end
+				end)
+			end
+		end)
+	end
+
+	local function emitTrail(trail: Trail)
+		if skip(trail) then
+			return
+		end
+		local delayAttr = trail:GetAttribute("EmitDelay")
+		local delaySec = if typeof(delayAttr) == "number" then math.max(0, delayAttr) else 0
+		local durAttr = trail:GetAttribute("EmitDuration") or trail:GetAttribute("Duration")
+		local dur = if typeof(durAttr) == "number" then math.max(0.05, durAttr) else 0.45
+		task.delay(delaySec, function()
+			if not trail.Parent then
+				return
+			end
+			trail.Enabled = true
+			task.delay(dur, function()
+				if trail.Parent then
+					trail.Enabled = false
+				end
+			end)
+		end)
+	end
+
+	local function visit(inst: Instance)
 		if skip(inst) then
 			return
 		end
 		if inst:IsA("ParticleEmitter") then
-			activateEmitter(inst)
-		elseif inst:IsA("Trail") or inst:IsA("Beam") then
-			inst.Enabled = true
-			task.delay(DEFAULT_EMIT_DURATION + 0.4, function()
-				if inst.Parent then
-					(inst :: Trail).Enabled = false
-				end
-			end)
+			emitParticle(inst)
+		elseif inst:IsA("Beam") then
+			emitBeam(inst)
+		elseif inst:IsA("Trail") then
+			emitTrail(inst)
 		elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
-			activateLight(inst)
+			flashLight(inst)
 		end
 	end
 
-	activateInst(root)
+	visit(root)
 	for _, d in root:GetDescendants() do
-		activateInst(d)
+		visit(d)
 	end
 	playSounds(root)
 end
@@ -214,22 +298,22 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
 
 	local points = collectBezierWorldPoints(pointsFolder)
 	if #points < 2 then
-		points = {}
-		local origin = hostCf.Position
-		table.insert(points, origin)
-		table.insert(points, origin + hostCf.UpVector * 4 + hostCf.LookVector * 2)
-		table.insert(points, origin + hostCf.UpVector * 2)
+		points = {
+			hostCf.Position,
+			hostCf.Position + hostCf.UpVector * 4 + hostCf.LookVector * 2,
+			hostCf.Position + hostCf.UpVector * 2,
+		}
 	end
 
 	local emitOnFinish = mover:FindFirstChild("EmitOnFinish")
-	-- Enable everything except EmitOnFinish (that bursts at path end).
-	activateAllVfx(root, DEFAULT_EMIT, emitOnFinish)
+	emitAll(root, emitOnFinish)
 
+	-- Trails on the mover need to be on while it travels, then off.
 	for _, d in mover:GetDescendants() do
 		if d:IsA("Trail") or d:IsA("Beam") then
-			d.Enabled = true
-		elseif d:IsA("ParticleEmitter") and not (emitOnFinish and d:IsDescendantOf(emitOnFinish)) then
-			d.Enabled = true
+			if not (emitOnFinish and d:IsDescendantOf(emitOnFinish)) then
+				d.Enabled = true
+			end
 		end
 	end
 
@@ -253,20 +337,13 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
 				conn:Disconnect()
 			end
 			if emitOnFinish then
-				activateAllVfx(emitOnFinish, DEFAULT_EMIT, nil)
-			else
-				activateAllVfx(mover, DEFAULT_EMIT, nil)
+				emitAll(emitOnFinish, nil)
 			end
-			task.delay(0.5, function()
-				if not mover.Parent then
-					return
+			for _, d in mover:GetDescendants() do
+				if d:IsA("Trail") or d:IsA("Beam") then
+					d.Enabled = false
 				end
-				for _, d in mover:GetDescendants() do
-					if d:IsA("Trail") or d:IsA("Beam") then
-						d.Enabled = false
-					end
-				end
-			end)
+			end
 		end
 	end)
 	return true
@@ -274,6 +351,8 @@ end
 
 local function placeClone(clone: Instance, at: CFrame | BasePart): Instance
 	stabilizeParts(clone)
+	disableAllFx(clone)
+
 	local cf: CFrame
 	local hostPart: BasePart? = nil
 	if typeof(at) == "CFrame" then
@@ -358,7 +437,7 @@ local function placeClone(clone: Instance, at: CFrame | BasePart): Instance
 	return anchor
 end
 
-local function playTemplate(pathParts: { string }, at: CFrame | BasePart, defaultEmit: number?)
+local function playTemplate(pathParts: { string }, at: CFrame | BasePart)
 	local template = findTemplate(pathParts)
 	if not template then
 		warn("[OtherVfxController] missing template:", table.concat(pathParts, "/"))
@@ -367,16 +446,17 @@ local function playTemplate(pathParts: { string }, at: CFrame | BasePart, defaul
 	local clone = template:Clone()
 	local placed = placeClone(clone, at)
 	local hostCf = if typeof(at) == "CFrame" then at else at.CFrame
-	-- Defer one frame so Attachment WorldCFrames settle after parenting.
-	task.defer(function()
+
+	task.delay(EMIT_SETTLE_SEC, function()
 		if not clone.Parent then
 			return
 		end
 		local usedBezier = runBezierIfPresent(clone, hostCf)
 		if not usedBezier then
-			activateAllVfx(clone, defaultEmit or DEFAULT_EMIT, nil)
+			emitAll(clone, nil)
 		end
 	end)
+
 	if clone:IsA("Attachment") and typeof(at) ~= "CFrame" then
 		Debris:AddItem(clone, LIFETIME_SEC)
 	elseif placed.Name == "OtherVfxAnchor" then
@@ -387,20 +467,6 @@ local function playTemplate(pathParts: { string }, at: CFrame | BasePart, defaul
 	else
 		Debris:AddItem(placed, LIFETIME_SEC)
 	end
-end
-
-local function resolveBushCFrame(bush: Instance): CFrame
-	if bush:IsA("Model") then
-		return bush:GetPivot()
-	end
-	if bush:IsA("BasePart") then
-		return bush.CFrame
-	end
-	local part = bush:FindFirstChildWhichIsA("BasePart", true)
-	if part then
-		return part.CFrame
-	end
-	return CFrame.new()
 end
 
 local function resolveBushHost(bush: Instance): CFrame | BasePart
@@ -417,19 +483,22 @@ local function resolveBushHost(bush: Instance): CFrame | BasePart
 	if part then
 		return part
 	end
-	return resolveBushCFrame(bush)
+	if bush:IsA("Model") then
+		return bush:GetPivot()
+	end
+	return CFrame.new()
 end
 
 function OtherVfxController.playBushOpenedBurst(bush: Instance)
-	playTemplate({ "Bush Opening", "BushEffectBurst" }, resolveBushHost(bush), 36)
+	playTemplate({ "Bush Opening", "BushEffectBurst" }, resolveBushHost(bush))
 end
 
 function OtherVfxController.playLuckyBlockOpen(at: CFrame | BasePart)
-	playTemplate({ "Bush Opening", "Luckyblock" }, at, 40)
+	playTemplate({ "Bush Opening", "Luckyblock" }, at)
 end
 
 function OtherVfxController.playBrainrotUpgrade(at: CFrame | BasePart)
-	playTemplate({ "UpgradeBR", "OnUpgrade" }, at, 32)
+	playTemplate({ "UpgradeBR", "OnUpgrade" }, at)
 end
 
 return OtherVfxController

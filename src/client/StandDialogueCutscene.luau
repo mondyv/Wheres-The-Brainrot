@@ -391,17 +391,18 @@ burstSoulSpin = function()
 	local marker = soulMarker
 	local startRot = marker.Rotation
 	local t0 = os.clock()
-	local dur = 0.28
+	local dur = 0.55
 	soulSpinConn = RunService.RenderStepped:Connect(function()
 		if not marker.Parent or soulWiping then
 			stopSoulSpin()
 			return
 		end
 		local a = math.clamp((os.clock() - t0) / dur, 0, 1)
-		local eased = 1 - (1 - a) ^ 3
+		-- Smooth single turn (ease in-out)
+		local eased = a * a * (3 - 2 * a)
 		marker.Rotation = startRot + 360 * eased
 		if a >= 1 then
-			marker.Rotation = (startRot + 360) % 360
+			marker.Rotation = startRot % 360
 			stopSoulSpin()
 		end
 	end)

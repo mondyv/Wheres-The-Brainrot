@@ -33,6 +33,9 @@ local panelChromeHidden = false
 local panelBlur: BlurEffect? = nil
 local panelBackdrop: TextButton? = nil
 
+-- Module table declared early so backdrop callbacks never see a nil HUDController.
+local HUDController = {}
+
 local function ensureHudRoots()
 	if mainGui then
 		return
@@ -150,7 +153,8 @@ local function ensurePanelBackdrop()
 	backdrop.Parent = frames
 
 	backdrop.Activated:Connect(function()
-		if currentFrame then
+		local frame = currentFrame
+		if frame then
 			MobileHaptics.tap()
 			HUDController.closeCurrentFrame()
 		end
@@ -182,9 +186,6 @@ local function showPanelChrome()
 	clearPanelBlur()
 	destroyPanelBackdrop()
 end
-
--- Forward declare for close callbacks
-local HUDController = {}
 
 -- Searches SideUI only (never Main.Frames — that wrongly wired panel-internal buttons).
 -- Prefers a child named Button; makes non-button visuals non-Active so they don't steal clicks.

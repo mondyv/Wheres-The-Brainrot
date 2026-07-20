@@ -25,9 +25,9 @@ local LOCK_ACTION = "StandDialogueMoveLock"
 local SELECT_ACTION = "StandDialogueSelect"
 local WORLD_SPEECH_NAME = "StandBrainrotSpeech"
 
-local LETTER_DELAY = 0.058
-local LINE_PAUSE = 0.35
-local WORLD_LETTER_DELAY = 0.05
+local LETTER_DELAY = 0.07
+local LINE_PAUSE = 0.4
+local WORLD_LETTER_DELAY = 0.055
 
 local IDLE_ANIM_IDS: { [string]: number } = {
 	TatatataSahur = 126404281186060,
@@ -1185,9 +1185,11 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 	label.TextStrokeColor3 = Color3.new(0, 0, 0)
 	label.TextStrokeTransparency = 0
 	label.TextWrapped = true
-	label.TextSize = 14
+	label.TextScaled = false
+	label.TextSize = 12
 	label.TextTransparency = 0
 	UiFonts.applyBody(label)
+	UiFonts.ensureTextSizeConstraint(label, 12, 10)
 	label.Parent = bb
 
 	local pad = Instance.new("UIPadding")
@@ -1197,6 +1199,7 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 	pad.PaddingBottom = UDim.new(0, 5)
 	pad.Parent = label
 
+	local typeDuration = #message * WORLD_LETTER_DELAY + 0.15
 	task.spawn(function()
 		for i = 1, #message do
 			if token ~= worldSpeechToken or not bb.Parent then
@@ -1214,7 +1217,8 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 		end
 	end)
 
-	local dur = if opts and typeof(opts.durationSec) == "number" then opts.durationSec else 2.6
+	local holdAfter = if opts and typeof(opts.durationSec) == "number" then opts.durationSec else 1.4
+	local dur = math.max(typeDuration + holdAfter, 2.2)
 	task.delay(dur, function()
 		activeVoicePitchMin = savedPitchMin
 		activeVoicePitchMax = savedPitchMax

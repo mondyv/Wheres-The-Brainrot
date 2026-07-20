@@ -211,7 +211,7 @@ local function showGoodbye(stand: StandEntry)
 	end
 	if brainrot then
 		StandDialogueCutscene.showWorldSpeech(brainrot, stand.goodbye, {
-			durationSec = 2.8,
+			durationSec = 1.6,
 			voicePitchMin = stand.voicePitchMin,
 			voicePitchMax = stand.voicePitchMax,
 		})

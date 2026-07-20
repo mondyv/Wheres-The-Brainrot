@@ -3,6 +3,7 @@
 	Plays EssentialAssets.OtherVFX with the standard Studio emit-plugin pattern:
 	emitters stay Disabled; script calls :Emit(EmitCount) once (after EmitDelay).
 	Supports EmitDuration (brief enable window), Beam Width0/Width1/Duration tweens.
+	Bush search: BushEffect pulsed across the bush volume while shaking; BushEffectBurst on open.
 ]]
 
 local Debris = game:GetService("Debris")
@@ -489,8 +490,139 @@ local function resolveBushHost(bush: Instance): CFrame | BasePart
 	return CFrame.new()
 end
 
+local function isHelperPart(part: BasePart): boolean
+	local n = part.Name
+	return n == "_BushPromptAnchor"
+		or n == "_BushPromptCenter"
+		or n == "_BushEmptyMessageAnchor"
+		or n == "OtherVfxAnchor"
+		or string.sub(n, 1, 9) == "OtherVfx"
+end
+
+--- Visual AABB of the bush (ignores invisible helpers). Uses volume center, not crown/pivot.
+local function getBushVolume(bush: Instance): (CFrame, Vector3)
+	local minX, minY, minZ = math.huge, math.huge, math.huge
+	local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
+	local found = false
+
+	local function include(part: BasePart)
+		if isHelperPart(part) or part.Transparency >= 1 then
+			return
+		end
+		found = true
+		local cf = part.CFrame
+		local h = part.Size * 0.5
+		for sx = -1, 1, 2 do
+			for sy = -1, 1, 2 do
+				for sz = -1, 1, 2 do
+					local wp = cf:PointToWorldSpace(Vector3.new(h.X * sx, h.Y * sy, h.Z * sz))
+					minX = math.min(minX, wp.X)
+					minY = math.min(minY, wp.Y)
+					minZ = math.min(minZ, wp.Z)
+					maxX = math.max(maxX, wp.X)
+					maxY = math.max(maxY, wp.Y)
+					maxZ = math.max(maxZ, wp.Z)
+				end
+			end
+		end
+	end
+
+	if bush:IsA("BasePart") then
+		include(bush)
+	end
+	for _, d in bush:GetDescendants() do
+		if d:IsA("BasePart") then
+			include(d)
+		end
+	end
+
+	if found then
+		local center = Vector3.new((minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5)
+		local size = Vector3.new(
+			math.max(1.2, maxX - minX),
+			math.max(1.2, maxY - minY),
+			math.max(1.2, maxZ - minZ)
+		)
+		return CFrame.new(center), size
+	end
+
+	if bush:IsA("Model") then
+		local ok, cf, size = pcall(function()
+			return (bush :: Model):GetBoundingBox()
+		end)
+		if ok and typeof(cf) == "CFrame" and typeof(size) == "Vector3" then
+			return cf, Vector3.new(math.max(1.2, size.X), math.max(1.2, size.Y), math.max(1.2, size.Z))
+		end
+		return bush:GetPivot(), Vector3.new(4, 4, 4)
+	end
+
+	local host = resolveBushHost(bush)
+	if typeof(host) == "CFrame" then
+		return host, Vector3.new(4, 4, 4)
+	end
+	return host.CFrame, Vector3.new(4, 4, 4)
+end
+
+local function sampleBushVolumePoints(bush: Instance, count: number): { CFrame }
+	local volumeCf, size = getBushVolume(bush)
+	local half = size * 0.42
+	local points: { CFrame } = {}
+	table.insert(points, volumeCf)
+	table.insert(points, volumeCf * CFrame.new(0, -half.Y * 0.35, 0))
+	table.insert(points, volumeCf * CFrame.new(0, half.Y * 0.25, 0))
+	local remaining = math.max(0, count - #points)
+	for _ = 1, remaining do
+		local offset = Vector3.new(
+			(math.random() * 2 - 1) * half.X,
+			(math.random() * 2 - 1) * half.Y,
+			(math.random() * 2 - 1) * half.Z
+		)
+		table.insert(points, volumeCf * CFrame.new(offset))
+	end
+	return points
+end
+
+local function playScattered(pathParts: { string }, bush: Instance, pointCount: number)
+	for _, cf in sampleBushVolumePoints(bush, pointCount) do
+		playTemplate(pathParts, cf)
+	end
+end
+
+local bushShakeToken = 0
+local BUSH_SHAKE_PULSE_SEC = 0.42
+local BUSH_SHAKE_POINTS = 6
+local BUSH_BURST_POINTS = 7
+
+--- Leaves/debris while searching (hold shake). Pulsed Emit across the bush volume.
+function OtherVfxController.playBushSearchShake(bush: Instance)
+	bushShakeToken += 1
+	local token = bushShakeToken
+	local function pulse()
+		if token ~= bushShakeToken or not bush.Parent then
+			return
+		end
+		playScattered({ "Bush Opening", "BushEffect" }, bush, BUSH_SHAKE_POINTS)
+	end
+	pulse()
+	task.spawn(function()
+		while token == bushShakeToken do
+			task.wait(BUSH_SHAKE_PULSE_SEC)
+			if token ~= bushShakeToken then
+				break
+			end
+			pulse()
+		end
+	end)
+end
+
+function OtherVfxController.stopBushSearchShake()
+	bushShakeToken += 1
+end
+
+--- Final burst when search completes — scattered through the bush volume.
 function OtherVfxController.playBushOpenedBurst(bush: Instance)
-	playTemplate({ "Bush Opening", "BushEffectBurst" }, resolveBushHost(bush))
+	OtherVfxController.stopBushSearchShake()
+	playScattered({ "Bush Opening", "BushEffectBurst" }, bush, BUSH_BURST_POINTS)
 end
 
 function OtherVfxController.playLuckyBlockOpen(at: CFrame | BasePart)

@@ -17,6 +17,7 @@ local Workspace = game:GetService("Workspace")
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local OtherVfxController = require(script.Parent.OtherVfxController)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
@@ -1206,6 +1207,7 @@ end
 
 local function stopBushWobble()
 	stopBushWobbleRenderStep()
+	OtherVfxController.stopBushSearchShake()
 	if bushWobbleModel and bushWobbleBasePivot and bushWobbleModel.Parent then
 		pcall(function()
 			bushWobbleModel:PivotTo(bushWobbleBasePivot :: CFrame)
@@ -1225,6 +1227,7 @@ local function beginBushWobble(prompt: ProximityPrompt)
 
 	bushWobbleModel = bush
 	bushWobbleBasePivot = bush:GetPivot()
+	OtherVfxController.playBushSearchShake(bush)
 
 	local bushWobbleSeed = math.random() * 10
 	bushWobbleStepBound = true

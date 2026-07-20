@@ -1,10 +1,11 @@
 -- [ACTIVE] GameplayUiVisibility
 --[[
 	Shared cutscene / panel HUD hide/show with Pokemon-style staggered slide-to-edge.
-	Animates SideUI chrome *groups* (Lef1, Top, Counters, Toolbar, …) as whole units
-	so nothing is left half-visible. No layout detach — avoids broken/stuck UI.
+	Animates SideUI chrome *groups* that were already visible — never reveals hidden frames.
+	Disables device/safe-area clipping during the slide so mobile buttons aren't cut off.
 ]]
 
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
@@ -30,6 +31,7 @@ type GuiSnap = {
 	basePos: UDim2,
 	slidePos: UDim2,
 	order: number,
+	clips: boolean,
 }
 
 type ScreenSnap = {
@@ -37,8 +39,16 @@ type ScreenSnap = {
 	wasEnabled: boolean,
 }
 
+type ClipRestore = {
+	inst: Instance,
+	clipsDescendants: boolean?,
+	clipToDeviceSafeArea: boolean?,
+	safeAreaCompatibility: Enum.SafeAreaCompatibility?,
+}
+
 local mainSnaps: { GuiSnap } = {}
 local screenSnaps: { ScreenSnap } = {}
+local clipRestores: { ClipRestore } = {}
 local chatWasEnabled = true
 local activeTweens: { Tween } = {}
 local keepScreenNames: { [string]: boolean } = {}
@@ -72,12 +82,73 @@ local function viewportSize(): Vector2
 	return if cam then cam.ViewportSize else Vector2.new(1280, 720)
 end
 
+local function restoreClipping()
+	for _, entry in clipRestores do
+		local inst = entry.inst
+		if not inst.Parent then
+			continue
+		end
+		if entry.clipsDescendants ~= nil and inst:IsA("GuiObject") then
+			(inst :: GuiObject).ClipsDescendants = entry.clipsDescendants
+		end
+		if inst:IsA("ScreenGui") then
+			local sg = inst :: ScreenGui
+			if entry.clipToDeviceSafeArea ~= nil then
+				pcall(function()
+					(sg :: any).ClipToDeviceSafeArea = entry.clipToDeviceSafeArea
+				end)
+			end
+			if entry.safeAreaCompatibility ~= nil then
+				pcall(function()
+					(sg :: any).SafeAreaCompatibility = entry.safeAreaCompatibility
+				end)
+			end
+		end
+	end
+	table.clear(clipRestores)
+end
+
+local function disableClippingForSlide(main: Instance, sideUI: GuiObject?)
+	table.clear(clipRestores)
+
+	if main:IsA("ScreenGui") then
+		local sg = main :: ScreenGui
+		local restore: ClipRestore = { inst = sg }
+		pcall(function()
+			restore.clipToDeviceSafeArea = (sg :: any).ClipToDeviceSafeArea
+			;(sg :: any).ClipToDeviceSafeArea = false
+		end)
+		pcall(function()
+			restore.safeAreaCompatibility = (sg :: any).SafeAreaCompatibility
+			;(sg :: any).SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
+		end)
+		table.insert(clipRestores, restore)
+	end
+
+	local function unclipGui(gui: GuiObject)
+		table.insert(clipRestores, {
+			inst = gui,
+			clipsDescendants = gui.ClipsDescendants,
+		})
+		gui.ClipsDescendants = false
+	end
+
+	if sideUI then
+		unclipGui(sideUI)
+	end
+	for _, entry in mainSnaps do
+		if entry.inst.Parent then
+			unclipGui(entry.inst)
+		end
+	end
+end
+
 -- Content-weighted center so fullscreen wrappers slide by where chrome actually sits.
-local function contentCenter(gui: GuiObject, vp: Vector2): Vector2
+local function contentBounds(gui: GuiObject, vp: Vector2): (Vector2, Vector2)
 	local minX, minY = math.huge, math.huge
 	local maxX, maxY = -math.huge, -math.huge
 	local found = false
-	local areaCap = vp.X * vp.Y * 0.45
+	local areaCap = vp.X * vp.Y * 0.5
 
 	local function consider(g: GuiObject)
 		if not g.Visible then
@@ -85,7 +156,7 @@ local function contentCenter(gui: GuiObject, vp: Vector2): Vector2
 		end
 		local sz = g.AbsoluteSize
 		local area = sz.X * sz.Y
-		if area < 20 * 20 or area >= areaCap then
+		if area < 16 * 16 or area >= areaCap then
 			return
 		end
 		local pos = g.AbsolutePosition
@@ -104,18 +175,24 @@ local function contentCenter(gui: GuiObject, vp: Vector2): Vector2
 	end
 
 	if found then
-		return Vector2.new((minX + maxX) * 0.5, (minY + maxY) * 0.5)
+		local center = Vector2.new((minX + maxX) * 0.5, (minY + maxY) * 0.5)
+		local size = Vector2.new(math.max(maxX - minX, 40), math.max(maxY - minY, 40))
+		return center, size
 	end
-	return gui.AbsolutePosition + gui.AbsoluteSize * 0.5
+	local absPos = gui.AbsolutePosition
+	local absSize = gui.AbsoluteSize
+	return absPos + absSize * 0.5, Vector2.new(math.min(absSize.X, vp.X * 0.4), math.min(absSize.Y, vp.Y * 0.4))
 end
 
 local function computeSlidePos(gui: GuiObject, vp: Vector2): UDim2
-	local absSize = gui.AbsoluteSize
 	local base = gui.Position
-	local margin = 72
-	local travelX = math.max(absSize.X + margin, 160)
-	local travelY = math.max(absSize.Y + margin, 120)
-	local center = contentCenter(gui, vp)
+	local center, contentSize = contentBounds(gui, vp)
+	local inset = GuiService:GetGuiInset()
+	local topInset = inset.Y
+	-- Travel by content size (not fullscreen wrapper size) so iPhone safe-area doesn't eat the UI
+	local margin = 48 + topInset * 0.25
+	local travelX = math.clamp(contentSize.X + margin, 80, vp.X * 0.55)
+	local travelY = math.clamp(contentSize.Y + margin, 70, vp.Y * 0.45)
 	local nx = center.X / math.max(vp.X, 1)
 
 	if nx < 0.38 then
@@ -130,16 +207,16 @@ local function computeSlidePos(gui: GuiObject, vp: Vector2): UDim2
 end
 
 local function waveOrderKey(gui: GuiObject, vp: Vector2): number
-	local center = contentCenter(gui, vp)
+	local center = contentBounds(gui, vp)
 	return -center.Y + center.X * 0.02
 end
 
 local function collectTargets(main: Instance): { GuiObject }
-	local vp = viewportSize()
 	local targets: { GuiObject } = {}
 	local seen: { [GuiObject]: boolean } = {}
 
 	local function addTarget(gui: GuiObject)
+		-- Only animate groups that are already visible — never invent new UI
 		if seen[gui] or not gui.Visible then
 			return
 		end
@@ -150,7 +227,6 @@ local function collectTargets(main: Instance): { GuiObject }
 	local sideUI = main:FindFirstChild("SideUI")
 	if sideUI and sideUI:IsA("GuiObject") then
 		sideUIRef = sideUI :: GuiObject
-		-- Whole chrome groups — never partial buttons (avoids “some stays some goes”)
 		for _, sub in sideUI:GetChildren() do
 			if sub:IsA("GuiObject") then
 				addTarget(sub :: GuiObject)
@@ -201,28 +277,36 @@ local function waveDelay(index: number, count: number): number
 	return (index - 1) * stagger
 end
 
-local function forceHideAllSnaps()
+local function parkSnapsHidden()
 	for _, entry in mainSnaps do
-		if entry.inst.Parent then
+		if entry.inst.Parent and entry.wasVisible then
 			entry.inst.Visible = false
 			entry.inst.Position = entry.slidePos
 		end
 	end
-	-- Sweep any SideUI child that appeared mid-hide or was missed
-	local side = sideUIRef
-	if side and side.Parent then
-		for _, sub in side:GetChildren() do
-			if sub:IsA("GuiObject") then
-				(sub :: GuiObject).Visible = false
+end
+
+local function hardRestoreSnaps()
+	for _, entry in mainSnaps do
+		if entry.inst.Parent then
+			entry.inst.Position = entry.basePos
+			entry.inst.Visible = entry.wasVisible
+			if entry.clips ~= nil then
+				entry.inst.ClipsDescendants = entry.clips
 			end
 		end
 	end
+	if sideUIRef and sideUIRef.Parent then
+		sideUIRef.Visible = sideUIWasVisible
+	end
+	restoreClipping()
 end
 
 local function snapshotAndSlideOut()
 	animGen += 1
 	local gen = animGen
 	cancelTweens()
+	restoreClipping()
 	table.clear(mainSnaps)
 	table.clear(screenSnaps)
 
@@ -234,14 +318,13 @@ local function snapshotAndSlideOut()
 	local vp = viewportSize()
 	local pending: { GuiSnap } = {}
 	for _, gui in collectTargets(main) do
-		local basePos = gui.Position
-		local slidePos = computeSlidePos(gui, vp)
 		table.insert(pending, {
 			inst = gui,
-			wasVisible = gui.Visible,
-			basePos = basePos,
-			slidePos = slidePos,
+			wasVisible = true,
+			basePos = gui.Position,
+			slidePos = computeSlidePos(gui, vp),
 			order = waveOrderKey(gui, vp),
+			clips = gui.ClipsDescendants,
 		})
 	end
 
@@ -253,12 +336,14 @@ local function snapshotAndSlideOut()
 		return a.order < b.order
 	end)
 
+	for _, entry in ipairs(pending) do
+		table.insert(mainSnaps, entry)
+	end
+
+	disableClippingForSlide(main, sideUIRef)
+
 	local count = #pending
 	for i, entry in ipairs(pending) do
-		table.insert(mainSnaps, entry)
-		if not entry.wasVisible then
-			continue
-		end
 		local delaySec = waveDelay(i, count)
 		task.delay(delaySec, function()
 			if gen ~= animGen or hideCount <= 0 or not entry.inst.Parent then
@@ -273,7 +358,7 @@ local function snapshotAndSlideOut()
 		if gen ~= animGen or hideCount <= 0 then
 			return
 		end
-		forceHideAllSnaps()
+		parkSnapsHidden()
 	end)
 
 	local pg = player:FindFirstChild("PlayerGui")
@@ -308,6 +393,11 @@ local function slideInAndRestore()
 		return a.order < b.order
 	end)
 
+	local main = PlayerGuiMain.ensure(player)
+	if #clipRestores == 0 then
+		disableClippingForSlide(main, sideUIRef)
+	end
+
 	if sideUIRef and sideUIRef.Parent then
 		sideUIRef.Visible = sideUIWasVisible
 	end
@@ -321,6 +411,7 @@ local function slideInAndRestore()
 
 	local count = #pending
 	if count == 0 then
+		hardRestoreSnaps()
 		for _, entry in screenSnaps do
 			if entry.gui.Parent then
 				entry.gui.Enabled = entry.wasEnabled
@@ -335,21 +426,19 @@ local function slideInAndRestore()
 	end
 
 	for i, entry in ipairs(pending) do
-		if entry.inst.Parent then
-			if entry.wasVisible then
-				local delaySec = waveDelay(i, count)
-				task.delay(delaySec, function()
-					if gen ~= animGen or hideCount > 0 or not entry.inst.Parent then
-						return
-					end
-					entry.inst.Position = entry.slidePos
-					entry.inst.Visible = true
-					playTween(entry.inst, SLIDE_IN, { Position = entry.basePos })
-				end)
-			else
-				entry.inst.Position = entry.basePos
-				entry.inst.Visible = false
-			end
+		if entry.inst.Parent and entry.wasVisible then
+			local delaySec = waveDelay(i, count)
+			task.delay(delaySec, function()
+				if gen ~= animGen or hideCount > 0 or not entry.inst.Parent then
+					return
+				end
+				entry.inst.Position = entry.slidePos
+				entry.inst.Visible = true
+				playTween(entry.inst, SLIDE_IN, { Position = entry.basePos })
+			end)
+		elseif entry.inst.Parent then
+			entry.inst.Position = entry.basePos
+			entry.inst.Visible = false
 		end
 	end
 
@@ -367,41 +456,22 @@ local function slideInAndRestore()
 			end
 		end
 		local pg = player:FindFirstChild("PlayerGui")
-		local main = pg and pg:FindFirstChild("Main")
-		if main and main:IsA("ScreenGui") then
-			main.Enabled = true
+		local mainGui = pg and pg:FindFirstChild("Main")
+		if mainGui and mainGui:IsA("ScreenGui") then
+			mainGui.Enabled = true
 		end
 		pcall(function()
 			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, chatWasEnabled)
 		end)
 	end)
 
-	local totalIn = SLIDE_IN.Time + waveDelay(count, count) + 0.03
+	local totalIn = SLIDE_IN.Time + waveDelay(count, count) + 0.04
 	task.delay(totalIn, function()
 		if gen ~= animGen or hideCount > 0 then
 			return
 		end
-		for _, entry in mainSnaps do
-			if entry.inst.Parent then
-				entry.inst.Position = entry.basePos
-				entry.inst.Visible = entry.wasVisible
-			end
-		end
-		-- Ensure every SideUI group is back if it was visible before
-		local side = sideUIRef
-		if side and side.Parent then
-			side.Visible = sideUIWasVisible
-			local restored: { [GuiObject]: boolean } = {}
-			for _, entry in mainSnaps do
-				restored[entry.inst] = true
-			end
-			for _, sub in side:GetChildren() do
-				if sub:IsA("GuiObject") and not restored[sub :: GuiObject] then
-					-- Missed child: show again at current position (safer than leaving hidden)
-					(sub :: GuiObject).Visible = true
-				end
-			end
-		end
+		-- Exact restore — never force-show frames that started hidden
+		hardRestoreSnaps()
 		table.clear(mainSnaps)
 		table.clear(screenSnaps)
 	end)

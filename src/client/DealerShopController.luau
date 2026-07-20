@@ -25,6 +25,7 @@ local MainGradientButtons = require(script.Parent.MainGradientButtons)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local TopNotifController = require(script.Parent.TopNotifController)
+local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local HOVER_TWEEN = TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -316,10 +317,7 @@ local function setStockLabels(row: Instance, effectiveStock: number)
 			(oos :: GuiObject).Visible = showOos
 		end
 		if showOos and (oos:IsA("TextLabel") or oos:IsA("TextButton")) then
-			local text = (oos :: any).Text
-			if typeof(text) ~= "string" or text == "" then
-				(oos :: any).Text = "OUT OF STOCK"
-			end
+			(oos :: any).Text = "OUT OF STOCK"
 		end
 		setGradientsEnabled(oos, showOos)
 	end
@@ -351,14 +349,22 @@ local function setStockLabels(row: Instance, effectiveStock: number)
 			(stockFrame :: any).Text = stockText
 		end
 	else
+		-- Always keep visible "OUT OF STOCK" copy — never blank the stock text away.
 		if stockLabel and stockLabel:IsA("GuiObject") then
-			stockLabel.Visible = false
-			setGradientsEnabled(stockLabel, false)
+			stockLabel.Visible = true
+			if stockLabel:IsA("TextLabel") or stockLabel:IsA("TextButton") then
+				(stockLabel :: any).Text = "OUT OF STOCK"
+			end
+			setGradientsEnabled(stockLabel, true)
 		end
 		if stockFrame:IsA("TextLabel") or stockFrame:IsA("TextButton") then
-			(stockFrame :: any).Text = ""
+			(stockFrame :: any).Text = "OUT OF STOCK"
 		end
 		applyOutOfStockVisual(outLabel, true)
+		if outLabel and (outLabel:IsA("TextLabel") or outLabel:IsA("TextButton")) then
+			(outLabel :: any).Text = "OUT OF STOCK"
+			(outLabel :: GuiObject).Visible = true
+		end
 		applyStockFrameOosGradients(true)
 		if outLabel and outLabel:IsA("GuiObject") then
 			for _, d in outLabel:GetDescendants() do
@@ -603,6 +609,14 @@ local function applyStockAt(index: number, remaining: number)
 	})
 end
 
+local function celebrateDealerPurchase()
+	GameSoundEffects.playPurchase()
+	GameSoundEffects.playPurchaseShake()
+	pcall(function()
+		require(ReplicatedStorage.EssentialsShared.EffectsController).celebratePurchase(player)
+	end)
+end
+
 local function tryBuyCash(index: number)
 	if buyInFlight[index] or not buyCashRF then
 		return
@@ -641,6 +655,8 @@ local function tryBuyCash(index: number)
 				applyStockAt(index, prevStock)
 			end
 			showReasonError(reason)
+		else
+			celebrateDealerPurchase()
 		end
 	end)
 end
@@ -856,7 +872,10 @@ local function init()
 		if userId ~= player.UserId or not wasPurchased then
 			return
 		end
-		if productId == DealerConfig.PRODUCT.PERSONAL_RESTOCK or productId == DealerConfig.PRODUCT.ROBUX_BUY_1X then
+		if productId == DealerConfig.PRODUCT.PERSONAL_RESTOCK then
+			task.delay(0.3, refreshFromServer)
+		elseif productId == DealerConfig.PRODUCT.ROBUX_BUY_1X then
+			celebrateDealerPurchase()
 			task.delay(0.3, refreshFromServer)
 		end
 	end)

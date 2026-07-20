@@ -425,7 +425,7 @@ function M.buyCash(player: Player, slotIndex: number): (boolean, string?, any?)
 
 	-- Memory grant only — no DataStore save on the buy path (keeps Invoke fast).
 	local granted, grantErr = ItemService:GiveBrainrot(player, def.name, {
-		equip = false,
+		equip = true,
 		save = false,
 		waitForData = false,
 		timeout = 5,
@@ -490,7 +490,7 @@ function M.grantRobuxBuy(player: Player): boolean
 	end
 
 	local granted, grantErr = ItemService:GiveBrainrot(player, def.name, {
-		equip = false,
+		equip = true,
 		save = true,
 		waitForData = false,
 		timeout = 5,

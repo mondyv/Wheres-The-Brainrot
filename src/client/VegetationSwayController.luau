@@ -248,10 +248,24 @@ local function collectGrassRootsFromGrassland(grassland: Instance): { Instance }
 		return roots
 	end
 
-	-- No grasspart children: sway leaf BaseParts (not the whole grassland cluster).
+	-- No grasspart: sway direct BasePart children.
 	for _, child in grassland:GetChildren() do
 		if child:IsA("BasePart") then
 			table.insert(roots, child)
+		end
+	end
+	if #roots > 0 then
+		return roots
+	end
+
+	-- Nested meshes under grassland (cap so one patch can't flood the global budget).
+	local fallbackCap = 14
+	for _, desc in grassland:GetDescendants() do
+		if desc:IsA("BasePart") then
+			table.insert(roots, desc)
+			if #roots >= fallbackCap then
+				break
+			end
 		end
 	end
 	if #roots > 0 then

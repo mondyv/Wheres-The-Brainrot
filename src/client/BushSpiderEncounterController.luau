@@ -1945,8 +1945,10 @@ local function runEncounter(fallbackAnchor: Vector3)
 
 	BushHoldInteraction.setBushSearchLocked(true)
 	lockPlayerMovement()
-	local skipCutscene = player:GetAttribute("SkipSpiderCutscene") ~= false
-	if not skipCutscene then
+	-- ON (default): skip spider appear/drop, still play shooting cutscene.
+	-- OFF: no cinematic cameras / letterbox.
+	local cutsceneOn = player:GetAttribute("SpiderCutsceneEnabled") ~= false
+	if cutsceneOn then
 		hideGameplayUi()
 		animateLetterboxIn()
 		ensurePostFx()
@@ -1955,101 +1957,49 @@ local function runEncounter(fallbackAnchor: Vector3)
 
 	local landPos = resolveSpiderSpawnPosition(fallbackAnchor)
 	local playerAim = getPlayerAimPos(fallbackAnchor)
-	local dropStart, landingPos = computeSpiderDropPositions(landPos)
+	local _, landingPos = computeSpiderDropPositions(landPos)
 
 	local spider = template:Clone()
 	spider.Name = "BushSpiderEncounter"
 	stabilizeSpiderModel(spider)
-	-- Skip mode: spawn already on the ground and go straight into the attack beat.
-	if skipCutscene then
-		spider:PivotTo(cfFacingTarget(landingPos, playerAim))
-	else
-		spider:PivotTo(cfFacingTarget(dropStart, playerAim))
-	end
+	-- Always spawn on the ground; skip drop/appear. CutsceneOn only affects shooting cams.
+	spider:PivotTo(cfFacingTarget(landingPos, playerAim))
 	spider.Parent = Workspace
 
 	local animator = resolveAnimator(spider)
 	local rageTrack = if animator then loadTrack(animator, C.ANIM.RAGE) else nil
 	local webTrack = if animator then loadTrack(animator, C.ANIM.WEB) else nil
 
-	if skipCutscene then
-		faceCharacterToward(landingPos)
-		spider:PivotTo(cfFacingTarget(landingPos, playerAim))
-		startSpideySensesOnSpider(spider)
-		-- Short rage sting, then straight into web attack (no cinematic cameras).
-		if rageTrack then
-			rageTrack.Priority = Enum.AnimationPriority.Action4
-			rageTrack.Looped = false
-			rageTrack:Play(0.08, 1, 1.15)
-			waitSec(math.clamp((if rageTrack.Length > 0.05 then rageTrack.Length else C.RAGE_FALLBACK_SEC) * 0.35, 0.35, 0.85))
-			rageTrack:Stop(0.12)
-		else
-			waitSec(0.35)
-		end
-		stopSpideySenses()
+	faceCharacterToward(landingPos)
+	spider:PivotTo(cfFacingTarget(landingPos, playerAim))
+	startSpideySensesOnSpider(spider)
+	-- Brief rage sting (no appear camera), then shooting beat.
+	if rageTrack then
+		rageTrack.Priority = Enum.AnimationPriority.Action4
+		rageTrack.Looped = false
+		rageTrack:Play(0.08, 1, 1.15)
+		waitSec(math.clamp((if rageTrack.Length > 0.05 then rageTrack.Length else C.RAGE_FALLBACK_SEC) * 0.35, 0.35, 0.85))
+		rageTrack:Stop(0.12)
 	else
-		beginSpiderDropCamera(function()
-			return spider:GetPivot()
-		end, function()
-			return getPlayerChestPos(fallbackAnchor)
-		end, 1.35)
-		pulseCameraShake(0.45, 0.14)
-
-		tweenSpiderDrop(spider, dropStart, landingPos, function()
-			return getPlayerAimPos(fallbackAnchor)
-		end, 1.05)
-
-		if not encounterActive then
-			finishEncounter(spider, nil)
-			return
-		end
-
-		pulseCameraShake(0.65, 0.18)
-		playerAim = getPlayerAimPos(fallbackAnchor)
-		faceCharacterToward(landingPos)
-		spider:PivotTo(cfFacingTarget(landingPos, playerAim))
-		beginRageCamera(function()
-			return spider:GetPivot()
-		end, function()
-			return getPlayerAimPos(fallbackAnchor)
-		end, 1.4)
-		startSpideySensesOnSpider(spider)
-		waitForRageSequence(spider, rageTrack, function()
-			return getPlayerAimPos(fallbackAnchor)
-		end)
-		stopSpideySenses()
-
-		if not encounterActive then
-			finishEncounter(spider, nil)
-			return
-		end
-
-		if rageTrack then
-			rageTrack:Stop(0.2)
-		end
-
-		beginWebWindupCamera(function()
-			return spider:GetPivot()
-		end, function()
-			return getPlayerAimPos(fallbackAnchor)
-		end)
-		waitForWebShootWindup(spider, webTrack, function()
-			return getPlayerAimPos(fallbackAnchor)
-		end)
+		waitSec(0.35)
 	end
+	stopSpideySenses()
 
 	if not encounterActive then
 		finishEncounter(spider, nil)
 		return
 	end
 
-	if not skipCutscene then
-		-- already waited windup above
-	else
-		waitForWebShootWindup(spider, webTrack, function()
+	if cutsceneOn then
+		beginWebWindupCamera(function()
+			return spider:GetPivot()
+		end, function()
 			return getPlayerAimPos(fallbackAnchor)
 		end)
 	end
+	waitForWebShootWindup(spider, webTrack, function()
+		return getPlayerAimPos(fallbackAnchor)
+	end)
 
 	if not encounterActive then
 		finishEncounter(spider, nil)
@@ -2078,7 +2028,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 	GameSoundEffects.playSpiderWebShot()
 	setBgmWebSlow()
 
-	if not skipCutscene then
+	if cutsceneOn then
 		beginWebFollowCamera(function()
 			return getWebProjectilePosition(web)
 		end, function()
@@ -2090,8 +2040,8 @@ local function runEncounter(fallbackAnchor: Vector3)
 	end
 
 	ensureCutsceneGui()
-	-- Skip mode: QTE only — no letterbox bars.
-	if skipCutscene and cutsceneGui then
+	-- Off: QTE only — no letterbox bars.
+	if not cutsceneOn and cutsceneGui then
 		local top = cutsceneGui:FindFirstChild("LetterTop")
 		local bottom = cutsceneGui:FindFirstChild("LetterBottom")
 		if top and top:IsA("GuiObject") then
@@ -2277,7 +2227,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 
 	if dodgeResolved then
 		task.wait(0.22)
-		if not skipCutscene then
+		if cutsceneOn then
 			easeCameraBackToPlayer(0.55, spider)
 			waitSec(0.2)
 		end

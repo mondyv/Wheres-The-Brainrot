@@ -1286,8 +1286,8 @@ local function trackModel(model: Model)
 	if willAmbush then
 		entry.spiderSenseActive = true
 	end
-	local skipSpiderCinematics = player:GetAttribute("SkipSpiderCutscene") ~= false
-	if not (skipSpiderCinematics and willAmbush) then
+	local spiderCutsceneOn = player:GetAttribute("SpiderCutsceneEnabled") ~= false
+	if not (spiderCutsceneOn and willAmbush) then
 		FloatingClaimCutscene.begin(model, 0.62)
 	end
 
@@ -1389,8 +1389,8 @@ local function tryTrackModel(model: Model)
 		-- Soft cutscene + lurking sense at the start of the pop, not after it settles.
 		beginSpiderSenseForOffer(model)
 		local willAmbush = ambushPendingByModel[model] == true
-		local skipSpiderCinematics = player:GetAttribute("SkipSpiderCutscene") ~= false
-		if not (skipSpiderCinematics and willAmbush) then
+		local spiderCutsceneOn = player:GetAttribute("SpiderCutsceneEnabled") ~= false
+		if not (spiderCutsceneOn and willAmbush) then
 			if FloatingClaimCutscene.isActive() then
 				FloatingClaimCutscene.setFocus(model, 0.32)
 			else

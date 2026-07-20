@@ -34,8 +34,8 @@ M.RAGE_FALLBACK_SEC = 1.85
 M.RAGE_CAMERA_ZOOM_FOV = 26
 M.WEB_TRAVEL_TIME = 3.2
 M.WEB_FADE_OUT = 0.35
--- Shooting Web asset tip is along local -Y; map that onto LookVector (-Z).
-M.WEB_SHOT_PITCH_OFFSET = math.rad(90)
+-- Shooting Web asset tip is along local +Y; map that onto LookVector (-Z).
+M.WEB_SHOT_PITCH_OFFSET = math.rad(-90)
 M.WEB_SHOT_YAW_OFFSET = 0
 
 -- Single closing ring: base size matches key badge; starts larger, closes to 1.

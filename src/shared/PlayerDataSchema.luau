@@ -42,7 +42,7 @@ export type PlayerSettingsSaveData = {
 	showOtherBrainrots: boolean,
 	brainrotVfxEnabled: boolean,
 	globalMessagesEnabled: boolean,
-	skipSpiderCutscene: boolean,
+	spiderCutsceneEnabled: boolean,
 }
 
 export type PlayerSaveData = {
@@ -84,7 +84,7 @@ M.SETTINGS_SLOW_WALK_ATTR = "SettingsSlowWalkEnabled"
 M.SETTINGS_SHOW_OTHERS_ATTR = "SettingsShowOtherBrainrots"
 M.SETTINGS_BRAINROT_VFX_ATTR = "SettingsBrainrotVfxEnabled"
 M.SETTINGS_GLOBAL_MESSAGES_ATTR = "SettingsGlobalMessagesEnabled"
-M.SETTINGS_SKIP_SPIDER_CUTSCENE_ATTR = "SettingsSkipSpiderCutscene"
+M.SETTINGS_SPIDER_CUTSCENE_ATTR = "SettingsSpiderCutsceneEnabled"
 M.DEFAULT_SETTINGS = {
 	musicVolume = 0.5,
 	sfxVolume = 0.5,
@@ -93,7 +93,7 @@ M.DEFAULT_SETTINGS = {
 	showOtherBrainrots = true,
 	brainrotVfxEnabled = true,
 	globalMessagesEnabled = true,
-	skipSpiderCutscene = true,
+	spiderCutsceneEnabled = true,
 } :: PlayerSettingsSaveData
 
 return M

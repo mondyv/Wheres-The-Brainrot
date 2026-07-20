@@ -437,6 +437,10 @@ local function refreshShiverState(bush: Instance)
 	end
 end
 
+function M.isAnimating(bush: Instance): boolean
+	return baseTransformByBush[bush] ~= nil
+end
+
 function M.trackBush(bush: Instance)
 	if not BushRootUtil.isDirectBushRoot(bush) then
 		return

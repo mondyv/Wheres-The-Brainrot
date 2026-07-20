@@ -126,6 +126,9 @@ task.defer(function()
 				require(script.BushHoldInteraction).init()
 			end,
 			function()
+				require(script.VegetationSwayController).init()
+			end,
+			function()
 				require(script.BushSpiderEncounterController).init()
 			end,
 			function()

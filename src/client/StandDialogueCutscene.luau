@@ -91,7 +91,16 @@ local choiceEnter: TextButton? = nil
 local choiceExit: TextButton? = nil
 local soulMarker: ImageLabel? = nil
 local soulSpinConn: RBXScriptConnection? = nil
+local soulMoveConn: RBXScriptConnection? = nil
 local soulWiping = false
+local soulAnimX = 0
+local soulAnimY = 0
+local soulHasPos = false
+local soulSpinT0 = 0
+local soulSpinDur = 0
+local soulSpinFrom = 0
+local soulSpinDelta = 0
+local soulSpinning = false
 
 local focusModel: Model? = nil
 local basePivot: CFrame? = nil
@@ -374,63 +383,134 @@ local function stopShake()
 end
 
 local updateChoiceVisuals: () -> ()
-local burstSoulSpin: () -> ()
 
 local function stopSoulSpin()
+	soulSpinning = false
+	soulSpinDur = 0
 	if soulSpinConn then
 		soulSpinConn:Disconnect()
 		soulSpinConn = nil
 	end
 end
 
-burstSoulSpin = function()
-	if not soulMarker or soulWiping then
-		return
+local function stopSoulMove()
+	if soulMoveConn then
+		soulMoveConn:Disconnect()
+		soulMoveConn = nil
 	end
-	stopSoulSpin()
-	local marker = soulMarker
-	local scale = marker:FindFirstChildOfClass("UIScale")
-	if not scale then
-		scale = Instance.new("UIScale")
-		scale.Scale = 1
-		scale.Parent = marker
-	end
-	local startRot = marker.Rotation
-	local t0 = os.clock()
-	local dur = 0.48
-	soulSpinConn = RunService.RenderStepped:Connect(function()
-		if not marker.Parent or soulWiping then
-			stopSoulSpin()
-			return
-		end
-		local a = math.clamp((os.clock() - t0) / dur, 0, 1)
-		-- Smooth ease in-out spin + shrink then grow back
-		local eased = a * a * (3 - 2 * a)
-		marker.Rotation = startRot + 360 * eased
-		scale.Scale = 1 - 0.28 * math.sin(eased * math.pi)
-		if a >= 1 then
-			marker.Rotation = startRot % 360
-			scale.Scale = 1
-			stopSoulSpin()
-		end
-	end)
 end
 
-local function placeSoulOnButton(target: GuiObject)
+local function soulPosForButton(target: GuiObject): (number, number)?
 	if not soulMarker or not soulMarker.Parent then
-		return
+		return nil
 	end
 	local parent = soulMarker.Parent
 	if not parent:IsA("GuiObject") then
-		return
+		return nil
 	end
 	local btnAbs = target.AbsolutePosition
 	local btnSize = target.AbsoluteSize
 	local parentAbs = (parent :: GuiObject).AbsolutePosition
-	-- AnchorPoint (1, 0.5): tip sits just left of button, Y locked to visual center
 	local x = btnAbs.X - parentAbs.X - 4
 	local y = btnAbs.Y + btnSize.Y * 0.5 - parentAbs.Y
-	soulMarker.Position = UDim2.fromOffset(x, y)
+	return x, y
+end
+
+local function beginSoulSpin180()
+	if not soulMarker or soulWiping then
+		return
+	end
+	soulSpinFrom = soulMarker.Rotation
+	soulSpinDelta = 180
+	soulSpinT0 = os.clock()
+	soulSpinDur = 0.28
+	soulSpinning = true
+end
+
+local function ensureSoulTrackLoop()
+	if soulMoveConn or not choicesReady then
+		return
+	end
+	soulMoveConn = RunService.RenderStepped:Connect(function(dt)
+		if not choicesReady or soulWiping or not soulMarker or not soulMarker.Parent then
+			stopSoulMove()
+			return
+		end
+		local target = if selectedIndex == 1 then choiceEnter else choiceExit
+		if not target then
+			return
+		end
+		local gx, gy = soulPosForButton(target)
+		if not gx or not gy then
+			return
+		end
+		if not soulHasPos then
+			soulAnimX = gx
+			soulAnimY = gy
+			soulHasPos = true
+		else
+			-- Pokemon-style cursor: glide toward the selected option
+			local smooth = math.min(dt * 16, 1)
+			soulAnimX += (gx - soulAnimX) * smooth
+			soulAnimY += (gy - soulAnimY) * smooth
+		end
+		soulMarker.Position = UDim2.fromOffset(soulAnimX, soulAnimY)
+
+		if soulSpinning and soulMarker then
+			local scale = soulMarker:FindFirstChildOfClass("UIScale")
+			if not scale then
+				scale = Instance.new("UIScale")
+				scale.Scale = 1
+				scale.Parent = soulMarker
+			end
+			local a = math.clamp((os.clock() - soulSpinT0) / math.max(soulSpinDur, 0.01), 0, 1)
+			local eased = a * a * (3 - 2 * a)
+			soulMarker.Rotation = soulSpinFrom + soulSpinDelta * eased
+			scale.Scale = 1 - 0.18 * math.sin(eased * math.pi)
+			if a >= 1 then
+				soulMarker.Rotation = (soulSpinFrom + soulSpinDelta) % 360
+				scale.Scale = 1
+				soulSpinning = false
+			end
+		end
+
+		-- Soft button follow / tilt
+		local mouse = UserInputService:GetMouseLocation()
+		for _, state in choiceHoverStates do
+			local btn = state.btn
+			if not btn.Parent then
+				continue
+			end
+			local goalX = 0
+			local goalY = 0
+			local goalRot = state.baseRot
+			if state.hovering then
+				local absPos = btn.AbsolutePosition
+				local absSize = btn.AbsoluteSize
+				local centerX = absPos.X + absSize.X * 0.5 - (state.pos.X.Offset - state.basePos.X.Offset)
+				local centerY = absPos.Y + absSize.Y * 0.5 - (state.pos.Y.Offset - state.basePos.Y.Offset)
+				local dx = mouse.X - centerX
+				local dy = mouse.Y - centerY
+				goalX = math.clamp(dx * 0.1, -7, 7)
+				goalY = math.clamp(dy * 0.1, -5, 5)
+				goalRot = state.baseRot + math.clamp(dx * 0.012, -1.1, 1.1)
+			end
+			local smooth = math.min(dt * 14, 1)
+			local curX = state.pos.X.Offset - state.basePos.X.Offset
+			local curY = state.pos.Y.Offset - state.basePos.Y.Offset
+			local nextX = curX + (goalX - curX) * smooth
+			local nextY = curY + (goalY - curY) * smooth
+			state.rot += (goalRot - state.rot) * smooth
+			state.pos = UDim2.new(
+				state.basePos.X.Scale,
+				state.basePos.X.Offset + nextX,
+				state.basePos.Y.Scale,
+				state.basePos.Y.Offset + nextY
+			)
+			btn.Position = state.pos
+			btn.Rotation = state.rot
+		end
+	end)
 end
 
 local function wipeSoulMarker(onDone: (() -> ())?)
@@ -442,18 +522,19 @@ local function wipeSoulMarker(onDone: (() -> ())?)
 	end
 	soulWiping = true
 	stopSoulSpin()
+	stopSoulMove()
 	local marker = soulMarker
 	local scale = marker:FindFirstChildOfClass("UIScale")
 	if not scale then
 		scale = Instance.new("UIScale")
 		scale.Parent = marker
 	end
-	local info = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+	local info = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 	TweenService:Create(marker, info, {
-		Rotation = marker.Rotation + 420,
+		Rotation = marker.Rotation + 180,
 		ImageTransparency = 1,
 	}):Play()
-	TweenService:Create(scale, info, { Scale = 0.05 }):Play()
+	TweenService:Create(scale, info, { Scale = 0.15 }):Play()
 	task.delay(0.3, function()
 		if marker.Parent then
 			marker.Visible = false
@@ -461,6 +542,7 @@ local function wipeSoulMarker(onDone: (() -> ())?)
 			marker.Rotation = 0
 			scale.Scale = 1
 		end
+		soulHasPos = false
 		soulWiping = false
 		if onDone then
 			onDone()
@@ -511,61 +593,7 @@ local function isPointerOverChoiceButtons(): boolean
 end
 
 local function startChoiceHoverLoop()
-	if choiceHoverConn then
-		return
-	end
-	choiceHoverConn = RunService.RenderStepped:Connect(function(dt)
-		local anyActive = false
-		local mouse = UserInputService:GetMouseLocation()
-		for _, state in choiceHoverStates do
-			local btn = state.btn
-			if not btn.Parent then
-				continue
-			end
-			local goalX = 0
-			local goalY = 0
-			local goalRot = state.baseRot
-			if state.hovering then
-				local absPos = btn.AbsolutePosition
-				local absSize = btn.AbsoluteSize
-				-- Use base layout center so follow doesn't feed back into itself
-				local centerX = absPos.X + absSize.X * 0.5 - (state.pos.X.Offset - state.basePos.X.Offset)
-				local centerY = absPos.Y + absSize.Y * 0.5 - (state.pos.Y.Offset - state.basePos.Y.Offset)
-				local dx = mouse.X - centerX
-				local dy = mouse.Y - centerY
-				goalX = math.clamp(dx * 0.1, -7, 7)
-				goalY = math.clamp(dy * 0.1, -5, 5)
-				goalRot = state.baseRot + math.clamp(dx * 0.012, -1.1, 1.1)
-			end
-			local smooth = math.min(dt * 14, 1)
-			local nextX = (state.pos.X.Offset - state.basePos.X.Offset) + (goalX - (state.pos.X.Offset - state.basePos.X.Offset)) * smooth
-			local nextY = (state.pos.Y.Offset - state.basePos.Y.Offset) + (goalY - (state.pos.Y.Offset - state.basePos.Y.Offset)) * smooth
-			state.rot += (goalRot - state.rot) * smooth
-			state.pos = UDim2.new(
-				state.basePos.X.Scale,
-				state.basePos.X.Offset + nextX,
-				state.basePos.Y.Scale,
-				state.basePos.Y.Offset + nextY
-			)
-			btn.Position = state.pos
-			btn.Rotation = state.rot
-			if state.hovering or math.abs(nextX) > 0.15 or math.abs(nextY) > 0.15 or math.abs(state.rot - state.baseRot) > 0.04 then
-				anyActive = true
-			end
-		end
-		-- Keep arrow glued to selected button's visual center (handles tilt + follow)
-		local target = if selectedIndex == 1 then choiceEnter else choiceExit
-		if target and choicesReady and not soulWiping then
-			placeSoulOnButton(target)
-		end
-		if not anyActive and choiceHoverConn then
-			-- Still update arrow once more at rest
-			if target and choicesReady and not soulWiping then
-				placeSoulOnButton(target)
-			end
-			stopChoiceHover()
-		end
-	end)
+	ensureSoulTrackLoop()
 end
 
 local function wireChoiceHover(btn: TextButton)
@@ -671,7 +699,7 @@ updateChoiceVisuals = function()
 	if selectedIndex ~= lastHapticSelectedIndex and choicesReady then
 		lastHapticSelectedIndex = selectedIndex
 		MobileHaptics.select()
-		burstSoulSpin()
+		beginSoulSpin180()
 	end
 	choiceEnter.TextColor3 = if selectedIndex == 1 then Color3.fromRGB(255, 255, 0) else Color3.fromRGB(255, 255, 255)
 	choiceExit.TextColor3 = if selectedIndex == 2 then Color3.fromRGB(255, 255, 0) else Color3.fromRGB(255, 255, 255)
@@ -686,20 +714,11 @@ updateChoiceVisuals = function()
 			exitStroke.Color = Color3.fromRGB(255, 255, 0)
 		end
 	end
-	local target = if selectedIndex == 1 then choiceEnter else choiceExit
-	placeSoulOnButton(target)
 	if choicesReady and not soulWiping then
 		soulMarker.Visible = true
 		soulMarker.ImageTransparency = 0
-		-- Don't force scale=1 mid-spin; only reset if idle
-		if not soulSpinConn then
-			local scale = soulMarker:FindFirstChildOfClass("UIScale")
-			if scale then
-				scale.Scale = 1
-			end
-		end
 	end
-	startChoiceHoverLoop()
+	ensureSoulTrackLoop()
 end
 
 local function requestSkip()
@@ -1190,6 +1209,8 @@ local function finishSession(choseEnter: boolean): boolean
 	stopChoiceHover()
 	stopTouchInput()
 	stopSoulSpin()
+	stopSoulMove()
+	soulHasPos = false
 	soulWiping = false
 	typeToken += 1
 	stopShake()
@@ -1469,9 +1490,11 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 		choiceExit.Visible = true
 	end
 	choicesReady = true
-	lastHapticSelectedIndex = 0
+	selectedIndex = 1
+	lastHapticSelectedIndex = 1
+	soulHasPos = false
+	soulSpinning = false
 	updateChoiceVisuals()
-	burstSoulSpin()
 
 	while active and not done do
 		task.wait(0.05)

@@ -3,8 +3,9 @@
 	Shared cutscene / panel HUD hide/show with Pokemon-style staggered slide-to-edge.
 	Ref-counted so nested hides don't restore early.
 
-	Fullscreen hosts (SideUI) animate their visible children individually so
-	left chrome exits left, right exits right, middle exits down/up — waved bottom-first.
+	Fullscreen hosts (SideUI) expand into real chrome groups. Slide direction + wave
+	order use each group's visible content center so left/right/bottom pieces move
+	as separate staggered units (not one simultaneous fullscreen slab).
 ]]
 
 local Players = game:GetService("Players")
@@ -19,9 +20,10 @@ local player = Players.LocalPlayer
 local M = {}
 
 local hideCount = 0
-local SLIDE_OUT = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local SLIDE_IN = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local WAVE_STAGGER = 0.038
+local animGen = 0
+local SLIDE_OUT = TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local SLIDE_IN = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local WAVE_STAGGER = 0.08
 
 type GuiSnap = {
 	inst: GuiObject,
@@ -64,39 +66,74 @@ local function playTween(inst: Instance, info: TweenInfo, props: { [string]: any
 	return tw
 end
 
-local function computeSlidePos(gui: GuiObject): UDim2
+local function viewportSize(): Vector2
 	local cam = Workspace.CurrentCamera
-	local vp = if cam then cam.ViewportSize else Vector2.new(1280, 720)
+	return if cam then cam.ViewportSize else Vector2.new(1280, 720)
+end
+
+-- Content-weighted center so fullscreen wrappers still slide by where the chrome actually sits.
+local function contentCenter(gui: GuiObject, vp: Vector2): Vector2
+	local minX, minY = math.huge, math.huge
+	local maxX, maxY = -math.huge, -math.huge
+	local found = false
+	local areaCap = vp.X * vp.Y * 0.45
+
+	local function consider(g: GuiObject)
+		if not g.Visible then
+			return
+		end
+		local sz = g.AbsoluteSize
+		local area = sz.X * sz.Y
+		if area < 24 * 24 or area >= areaCap then
+			return
+		end
+		local pos = g.AbsolutePosition
+		minX = math.min(minX, pos.X)
+		minY = math.min(minY, pos.Y)
+		maxX = math.max(maxX, pos.X + sz.X)
+		maxY = math.max(maxY, pos.Y + sz.Y)
+		found = true
+	end
+
+	consider(gui)
+	for _, d in gui:GetDescendants() do
+		if d:IsA("GuiObject") then
+			consider(d :: GuiObject)
+		end
+	end
+
+	if found then
+		return Vector2.new((minX + maxX) * 0.5, (minY + maxY) * 0.5)
+	end
 	local absPos = gui.AbsolutePosition
 	local absSize = gui.AbsoluteSize
+	return absPos + absSize * 0.5
+end
+
+local function computeSlidePos(gui: GuiObject, vp: Vector2): UDim2
+	local absSize = gui.AbsoluteSize
 	local base = gui.Position
-	local margin = 72
-	local travelX = math.max(absSize.X + margin, 160)
-	local travelY = math.max(absSize.Y + margin, 120)
+	local margin = 80
+	local travelX = math.max(absSize.X + margin, 180)
+	local travelY = math.max(absSize.Y + margin, 140)
+	local center = contentCenter(gui, vp)
+	local nx = center.X / math.max(vp.X, 1)
 
-	local centerX = absPos.X + absSize.X * 0.5
-	local centerY = absPos.Y + absSize.Y * 0.5
-	local nx = centerX / math.max(vp.X, 1)
-
-	-- Left third → left, right third → right, middle → down (or up if near top)
-	if nx < 0.36 then
+	if nx < 0.38 then
 		return UDim2.new(base.X.Scale, base.X.Offset - travelX, base.Y.Scale, base.Y.Offset)
-	elseif nx > 0.64 then
+	elseif nx > 0.62 then
 		return UDim2.new(base.X.Scale, base.X.Offset + travelX, base.Y.Scale, base.Y.Offset)
-	elseif centerY < vp.Y * 0.38 then
+	elseif center.Y < vp.Y * 0.36 then
 		return UDim2.new(base.X.Scale, base.X.Offset, base.Y.Scale, base.Y.Offset - travelY)
 	else
 		return UDim2.new(base.X.Scale, base.X.Offset, base.Y.Scale, base.Y.Offset + travelY)
 	end
 end
 
--- Lower on screen exits first (bottom → top wave)
-local function waveOrderKey(gui: GuiObject): number
-	local absPos = gui.AbsolutePosition
-	local absSize = gui.AbsoluteSize
-	local centerY = absPos.Y + absSize.Y * 0.5
-	local centerX = absPos.X + absSize.X * 0.5
-	return -centerY + centerX * 0.02
+-- Lower content exits first (bottom → top wave)
+local function waveOrderKey(gui: GuiObject, vp: Vector2): number
+	local center = contentCenter(gui, vp)
+	return -center.Y + center.X * 0.02
 end
 
 local function isFullscreenHost(gui: GuiObject, vp: Vector2): boolean
@@ -108,9 +145,17 @@ local function isFullscreenHost(gui: GuiObject, vp: Vector2): boolean
 end
 
 local function collectTargets(main: Instance): { GuiObject }
-	local cam = Workspace.CurrentCamera
-	local vp = if cam then cam.ViewportSize else Vector2.new(1280, 720)
+	local vp = viewportSize()
 	local targets: { GuiObject } = {}
+	local seen: { [GuiObject]: boolean } = {}
+
+	local function addTarget(gui: GuiObject)
+		if seen[gui] or not gui.Visible then
+			return
+		end
+		seen[gui] = true
+		table.insert(targets, gui)
+	end
 
 	for _, child in main:GetChildren() do
 		if not child:IsA("GuiObject") then
@@ -121,14 +166,14 @@ local function collectTargets(main: Instance): { GuiObject }
 		end
 		local gui = child :: GuiObject
 		if isFullscreenHost(gui, vp) then
-			-- Animate visible children so left/right/middle exit correctly
+			-- Animate SideUI chrome groups (Lef1, Top, Counters, Toolbar, …) as separate wave units
 			for _, sub in gui:GetChildren() do
 				if sub:IsA("GuiObject") and (sub :: GuiObject).Visible then
-					table.insert(targets, sub :: GuiObject)
+					addTarget(sub :: GuiObject)
 				end
 			end
 		elseif gui.Visible then
-			table.insert(targets, gui)
+			addTarget(gui)
 		end
 	end
 
@@ -156,6 +201,8 @@ local function buildKeepSets(opts: HideOpts?)
 end
 
 local function snapshotAndSlideOut()
+	animGen += 1
+	local gen = animGen
 	cancelTweens()
 	table.clear(mainSnaps)
 	table.clear(screenSnaps)
@@ -165,16 +212,17 @@ local function snapshotAndSlideOut()
 		main.Enabled = true
 	end
 
+	local vp = viewportSize()
 	local pending: { GuiSnap } = {}
 	for _, gui in collectTargets(main) do
 		local basePos = gui.Position
-		local slidePos = computeSlidePos(gui)
+		local slidePos = computeSlidePos(gui, vp)
 		table.insert(pending, {
 			inst = gui,
 			wasVisible = true,
 			basePos = basePos,
 			slidePos = slidePos,
-			order = waveOrderKey(gui),
+			order = waveOrderKey(gui, vp),
 		})
 	end
 
@@ -186,7 +234,7 @@ local function snapshotAndSlideOut()
 		table.insert(mainSnaps, entry)
 		local delaySec = (i - 1) * WAVE_STAGGER
 		task.delay(delaySec, function()
-			if hideCount <= 0 or not entry.inst.Parent then
+			if gen ~= animGen or hideCount <= 0 or not entry.inst.Parent then
 				return
 			end
 			playTween(entry.inst, SLIDE_OUT, { Position = entry.slidePos })
@@ -195,13 +243,14 @@ local function snapshotAndSlideOut()
 
 	local totalOut = SLIDE_OUT.Time + math.max(0, #pending - 1) * WAVE_STAGGER + 0.02
 	task.delay(totalOut, function()
-		if hideCount <= 0 then
+		if gen ~= animGen or hideCount <= 0 then
 			return
 		end
 		for _, entry in mainSnaps do
 			if entry.inst.Parent then
+				-- Stay parked off-screen (no snap back to base while hidden — avoids restore jitter)
 				entry.inst.Visible = false
-				entry.inst.Position = entry.basePos
+				entry.inst.Position = entry.slidePos
 			end
 		end
 	end)
@@ -226,27 +275,36 @@ local function snapshotAndSlideOut()
 end
 
 local function slideInAndRestore()
+	animGen += 1
+	local gen = animGen
 	cancelTweens()
 
 	local pending: { GuiSnap } = {}
 	for _, entry in mainSnaps do
 		table.insert(pending, entry)
 	end
-	-- Reverse wave on return: top first or keep same bottom-first — user liked wave, keep bottom first
 	table.sort(pending, function(a, b)
 		return a.order < b.order
 	end)
 
+	-- Park everything off-screen first so nothing pops at rest position
+	for _, entry in ipairs(pending) do
+		if entry.inst.Parent and entry.wasVisible then
+			entry.inst.Position = entry.slidePos
+			entry.inst.Visible = false
+		end
+	end
+
 	for i, entry in ipairs(pending) do
 		if entry.inst.Parent then
-			entry.inst.Position = entry.slidePos
-			entry.inst.Visible = entry.wasVisible
 			if entry.wasVisible then
 				local delaySec = (i - 1) * WAVE_STAGGER
 				task.delay(delaySec, function()
-					if hideCount > 0 or not entry.inst.Parent then
+					if gen ~= animGen or hideCount > 0 or not entry.inst.Parent then
 						return
 					end
+					entry.inst.Position = entry.slidePos
+					entry.inst.Visible = true
 					playTween(entry.inst, SLIDE_IN, { Position = entry.basePos })
 				end)
 			else
@@ -255,30 +313,41 @@ local function slideInAndRestore()
 		end
 	end
 
-	for _, entry in screenSnaps do
-		if entry.gui.Parent then
-			if entry.gui.Name == "Main" then
-				entry.gui.Enabled = true
-			else
-				entry.gui.Enabled = entry.wasEnabled
+	-- Restore other ScreenGuis after the first HUD piece starts (less flash/jitter)
+	task.delay(0.02, function()
+		if gen ~= animGen or hideCount > 0 then
+			return
+		end
+		for _, entry in screenSnaps do
+			if entry.gui.Parent then
+				if entry.gui.Name == "Main" then
+					entry.gui.Enabled = true
+				else
+					entry.gui.Enabled = entry.wasEnabled
+				end
 			end
 		end
-	end
-
-	local pg = player:FindFirstChild("PlayerGui")
-	local main = pg and pg:FindFirstChild("Main")
-	if main and main:IsA("ScreenGui") then
-		main.Enabled = true
-	end
-
-	pcall(function()
-		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, chatWasEnabled)
+		local pg = player:FindFirstChild("PlayerGui")
+		local main = pg and pg:FindFirstChild("Main")
+		if main and main:IsA("ScreenGui") then
+			main.Enabled = true
+		end
+		pcall(function()
+			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, chatWasEnabled)
+		end)
 	end)
 
-	local totalIn = SLIDE_IN.Time + math.max(0, #pending - 1) * WAVE_STAGGER + 0.02
+	local totalIn = SLIDE_IN.Time + math.max(0, #pending - 1) * WAVE_STAGGER + 0.04
 	task.delay(totalIn, function()
-		if hideCount > 0 then
+		if gen ~= animGen or hideCount > 0 then
 			return
+		end
+		-- Snap any stragglers to base in case a tween was interrupted
+		for _, entry in mainSnaps do
+			if entry.inst.Parent and entry.wasVisible then
+				entry.inst.Position = entry.basePos
+				entry.inst.Visible = true
+			end
 		end
 		table.clear(mainSnaps)
 		table.clear(screenSnaps)
@@ -289,7 +358,6 @@ function M.hide(opts: HideOpts?)
 	hideCount += 1
 	if hideCount == 1 then
 		buildKeepSets(opts)
-		-- One frame so AbsolutePosition is valid, then start immediately
 		task.defer(function()
 			if hideCount > 0 then
 				snapshotAndSlideOut()

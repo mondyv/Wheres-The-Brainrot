@@ -8,6 +8,7 @@
 	• Row whose label contains "other" (or Button3) → ShowOtherBrainrots; default on.
 	• Row whose label contains "vfx" (or Button4) → BrainrotVFXEnabled; default on.
 	• Button5 → SpiderCutsceneEnabled; default on = full spider cinematic (drop + rage + shoot). Off = QTE only, no cameras.
+	• Button6 → ShopCutsceneEnabled; default on = Undertale stand greetings. Off = walk up and open panels directly.
 --]]
 
 local Players          = game:GetService("Players")
@@ -304,6 +305,10 @@ local function classifySettingsRow(buttonRow: Instance): string?
 	if n == "Button5" then
 		return "spider_cutscene"
 	end
+	-- Button6 is dedicated Shop Cutscene (Studio label may still say Brainrot VFX).
+	if n == "Button6" then
+		return "shop_cutscene"
+	end
 	local title = getButtonRowTitle(buttonRow)
 	if title:find("ui sound", 1, true) then
 		return "ui_sounds"
@@ -316,6 +321,9 @@ local function classifySettingsRow(buttonRow: Instance): string?
 	end
 	if title:find("show", 1, true) and title:find("other", 1, true) then
 		return "show_others"
+	end
+	if title:find("shop", 1, true) and title:find("cutscene", 1, true) then
+		return "shop_cutscene"
 	end
 	if title:find("spider", 1, true) then
 		return "spider_cutscene"
@@ -351,6 +359,23 @@ local function setSpiderCutsceneRowNameLabel(buttonRow: Instance)
 	for _, node in labels do
 		if node:IsA("TextLabel") or node:IsA("TextButton") then
 			(node :: TextLabel).Text = "Spider Cutscene"
+		end
+	end
+end
+
+local function setShopCutsceneRowNameLabel(buttonRow: Instance)
+	local labels: { Instance } = {}
+	local nameNode = buttonRow:FindFirstChild("Name")
+	if nameNode then
+		table.insert(labels, nameNode)
+	end
+	local vfxLabel = buttonRow:FindFirstChild("Brainrot VFX")
+	if vfxLabel then
+		table.insert(labels, vfxLabel)
+	end
+	for _, node in labels do
+		if node:IsA("TextLabel") or node:IsA("TextButton") then
+			(node :: TextLabel).Text = "Shop Cutscene"
 		end
 	end
 end
@@ -529,6 +554,7 @@ function SettingsController.init()
 	local showOthersToggleRow: Instance? = nil
 	local brainrotVfxToggleRow: Instance? = nil
 	local spiderCutsceneToggleRow: Instance? = nil
+	local shopCutsceneToggleRow: Instance? = nil
 	local globalMessagesToggleRow: Instance? = nil
 	for _, child in ipairs(container:GetChildren()) do
 		if child.Name:match("^Button%d+$") or child.Name == "GlobalMessages" then
@@ -548,6 +574,9 @@ function SettingsController.init()
 			elseif kind == "spider_cutscene" then
 				spiderCutsceneToggleRow = child
 				setSpiderCutsceneRowNameLabel(child)
+			elseif kind == "shop_cutscene" then
+				shopCutsceneToggleRow = child
+				setShopCutsceneRowNameLabel(child)
 			elseif kind == "global_messages" then
 				globalMessagesToggleRow = child
 			end
@@ -568,6 +597,10 @@ function SettingsController.init()
 	if player:GetAttribute("SpiderCutsceneEnabled") == nil then
 		player:SetAttribute("SpiderCutsceneEnabled", true)
 		player:SetAttribute(PlayerDataSchema.SETTINGS_SPIDER_CUTSCENE_ATTR, true)
+	end
+	if player:GetAttribute("ShopCutsceneEnabled") == nil then
+		player:SetAttribute("ShopCutsceneEnabled", true)
+		player:SetAttribute(PlayerDataSchema.SETTINGS_SHOP_CUTSCENE_ATTR, true)
 	end
 
 	local function configureSettingsContainer()
@@ -653,6 +686,7 @@ function SettingsController.init()
 			elseif child == showOthersToggleRow then true
 			elseif child == brainrotVfxToggleRow then true
 			elseif child == spiderCutsceneToggleRow then true
+			elseif child == shopCutsceneToggleRow then true
 			elseif child == globalMessagesToggleRow then player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR) ~= false
 			else readInitialOn(onOff)
 		if child == showOthersToggleRow then
@@ -661,6 +695,8 @@ function SettingsController.init()
 			toggleOn = player:GetAttribute("BrainrotVFXEnabled") ~= false
 		elseif child == spiderCutsceneToggleRow then
 			toggleOn = player:GetAttribute("SpiderCutsceneEnabled") ~= false
+		elseif child == shopCutsceneToggleRow then
+			toggleOn = player:GetAttribute("ShopCutsceneEnabled") ~= false
 		elseif child == slowToggleRow then
 			toggleOn = player:GetAttribute("SlowWalkEnabled") == true
 		elseif child == globalMessagesToggleRow then
@@ -673,6 +709,9 @@ function SettingsController.init()
 		end
 		if child == spiderCutsceneToggleRow then
 			setSpiderCutsceneRowNameLabel(child)
+		end
+		if child == shopCutsceneToggleRow then
+			setShopCutsceneRowNameLabel(child)
 		end
 
 		local clickable = findClickable(child)
@@ -718,6 +757,11 @@ function SettingsController.init()
 				player:SetAttribute("SpiderCutsceneEnabled", toggleOn)
 				player:SetAttribute(PlayerDataSchema.SETTINGS_SPIDER_CUTSCENE_ATTR, toggleOn)
 				queueSettingsSave({ spiderCutsceneEnabled = toggleOn })
+			end
+			if child == shopCutsceneToggleRow then
+				player:SetAttribute("ShopCutsceneEnabled", toggleOn)
+				player:SetAttribute(PlayerDataSchema.SETTINGS_SHOP_CUTSCENE_ATTR, toggleOn)
+				queueSettingsSave({ shopCutsceneEnabled = toggleOn })
 			end
 			if child == globalMessagesToggleRow then
 				player:SetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR, toggleOn)

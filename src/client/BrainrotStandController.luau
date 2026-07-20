@@ -33,6 +33,7 @@ local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild(
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local BrainrotStandConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotStandConfig"))
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local MobileHaptics = require(script.Parent.MobileHaptics)
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 
@@ -1116,6 +1117,7 @@ local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 			return
 		end
 		lastActivatedAt = now
+		MobileHaptics.tap()
 		tryFireUpgrade()
 	end
 	clickable.Activated:Connect(requestUpgrade)

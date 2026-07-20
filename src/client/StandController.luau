@@ -3,8 +3,9 @@
 	StandController
 	• Hitbox detection for UIStands pads
 	• Undertale-style dialogue cutscene before opening Shop / Sell / Upgrades
+	• Charge-in pad fill (~0.55s) before dialogue when cutscenes enabled
 	• Ensures stand brainrot idle animations play
-	• Goodbye speech near brainrot when leaving after shopping (no re-cutscene)
+	• Goodbye speech near brainrot when leaving after shopping or choosing Exit
 
 	Workspace path:  workspace.Map.UIStands.<Stand Name>.<HitboxPart>
 --]]
@@ -83,24 +84,120 @@ type StandEntry = {
 	goodbye: string,
 }
 
--- How long the player must be outside a hitbox before the UI closes.
 local CLOSE_DEBOUNCE = 0.22
+local CHARGE_DURATION = 0.55
+local CHARGE_GUI_NAME = "StandPadCharge"
 
 local stands: { StandEntry } = {}
 local activeStandFrame: string? = nil
 local activeStandEntry: StandEntry? = nil
 local closePending: thread? = nil
 local dialogueBusy = false
--- After Exit (or cancel), ignore this pad until the player leaves it.
 local dismissedStandKey: string? = nil
--- True when the current pad session opened a panel via Enter (for goodbye on leave).
 local openedPanelFromDialogue = false
+
+local chargeStand: StandEntry? = nil
+local chargeAmount = 0
+local chargeBillboard: BillboardGui? = nil
+local chargeFill: Frame? = nil
 
 local function cancelPendingClose()
 	if closePending then
 		task.cancel(closePending)
 		closePending = nil
 	end
+end
+
+local function shopCutsceneEnabled(): boolean
+	return player:GetAttribute("ShopCutsceneEnabled") ~= false
+end
+
+local function getHRP(): BasePart?
+	local char = player.Character
+	if not char then
+		return nil
+	end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		return hrp
+	end
+	return nil
+end
+
+local function destroyChargeUi()
+	if chargeBillboard then
+		chargeBillboard:Destroy()
+		chargeBillboard = nil
+		chargeFill = nil
+	end
+end
+
+local function ensureChargeUi(): Frame?
+	local hrp = getHRP()
+	if not hrp then
+		return nil
+	end
+	if chargeBillboard and chargeBillboard.Parent == hrp then
+		return chargeFill
+	end
+	destroyChargeUi()
+
+	local bb = Instance.new("BillboardGui")
+	bb.Name = CHARGE_GUI_NAME
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.MaxDistance = 60
+	bb.Size = UDim2.fromOffset(120, 14)
+	bb.StudsOffset = Vector3.new(0, -2.8, 0)
+	bb.Adornee = hrp
+	bb.Parent = hrp
+
+	local track = Instance.new("Frame")
+	track.Name = "Track"
+	track.BackgroundColor3 = Color3.new(0, 0, 0)
+	track.BackgroundTransparency = 0.1
+	track.BorderSizePixel = 0
+	track.Size = UDim2.fromScale(1, 1)
+	track.Parent = bb
+
+	local trackStroke = Instance.new("UIStroke")
+	trackStroke.Color = Color3.new(1, 1, 1)
+	trackStroke.Thickness = 2
+	trackStroke.Parent = track
+
+	local fill = Instance.new("Frame")
+	fill.Name = "Fill"
+	fill.BackgroundColor3 = Color3.fromRGB(255, 230, 40)
+	fill.BorderSizePixel = 0
+	fill.Size = UDim2.fromScale(0, 1)
+	fill.Parent = track
+
+	chargeBillboard = bb
+	chargeFill = fill
+	return fill
+end
+
+local function setChargeVisual(alpha: number)
+	local fill = ensureChargeUi()
+	if fill then
+		fill.Size = UDim2.fromScale(math.clamp(alpha, 0, 1), 1)
+	end
+end
+
+local function resetCharge()
+	chargeStand = nil
+	chargeAmount = 0
+	destroyChargeUi()
+end
+
+local function canChargeOnStand(_stand: StandEntry): boolean
+	if dialogueBusy or StandDialogueCutscene.isActive() then
+		return false
+	end
+	if activeStandFrame then
+		return false
+	end
+	return true
 end
 
 local function showGoodbye(stand: StandEntry)
@@ -113,7 +210,11 @@ local function showGoodbye(stand: StandEntry)
 		end
 	end
 	if brainrot then
-		StandDialogueCutscene.showWorldSpeech(brainrot, stand.goodbye, 2.8)
+		StandDialogueCutscene.showWorldSpeech(brainrot, stand.goodbye, {
+			durationSec = 2.8,
+			voicePitchMin = stand.voicePitchMin,
+			voicePitchMax = stand.voicePitchMax,
+		})
 	end
 end
 
@@ -128,7 +229,6 @@ local function scheduleClose()
 		openedPanelFromDialogue = false
 		HUDController.closeCurrentFrame()
 		if shouldGoodbye and leavingStand then
-			-- Soft goodbye bubble only — no cutscene on leave
 			showGoodbye(leavingStand)
 		end
 	end)
@@ -156,6 +256,14 @@ local function findBrainrotModel(standFolder: Instance, brainrotName: string): M
 	return nil
 end
 
+local function openPanelDirect(stand: StandEntry)
+	dismissedStandKey = nil
+	activeStandFrame = stand.frameName
+	activeStandEntry = stand
+	openedPanelFromDialogue = true
+	HUDController.openFrameByName(stand.frameName)
+end
+
 local function beginDialogue(stand: StandEntry)
 	if dialogueBusy or StandDialogueCutscene.isActive() then
 		return
@@ -166,13 +274,11 @@ local function beginDialogue(stand: StandEntry)
 		stand.brainrot = brainrot
 	end
 	if not brainrot then
-		activeStandFrame = stand.frameName
-		activeStandEntry = stand
-		openedPanelFromDialogue = true
-		HUDController.openFrameByName(stand.frameName)
+		openPanelDirect(stand)
 		return
 	end
 
+	resetCharge()
 	dialogueBusy = true
 	openedPanelFromDialogue = false
 	task.spawn(function()
@@ -199,11 +305,29 @@ local function beginDialogue(stand: StandEntry)
 			activeStandFrame = nil
 			activeStandEntry = nil
 			openedPanelFromDialogue = false
+			showGoodbye(stand)
 		end
 	end)
 end
 
-local function tick()
+local function updateCharge(stand: StandEntry, dt: number)
+	if not canChargeOnStand(stand) then
+		resetCharge()
+		return
+	end
+	if chargeStand ~= stand then
+		chargeStand = stand
+		chargeAmount = 0
+	end
+	chargeAmount += dt / CHARGE_DURATION
+	setChargeVisual(chargeAmount)
+	if chargeAmount >= 1 then
+		resetCharge()
+		beginDialogue(stand)
+	end
+end
+
+local function tick(dt: number)
 	local char = player.Character
 	if not char then
 		return
@@ -215,6 +339,7 @@ local function tick()
 	local hrpPos = (hrp :: BasePart).Position
 
 	if dialogueBusy or StandDialogueCutscene.isActive() then
+		resetCharge()
 		local stillInside = false
 		for _, stand in ipairs(stands) do
 			if stand.hitbox.Parent and isPointInsidePartOBB(hrpPos, stand.hitbox, 2.75) then
@@ -244,9 +369,11 @@ local function tick()
 	if insideStand then
 		cancelPendingClose()
 		if dismissedStandKey == insideStand.standName then
+			resetCharge()
 			return
 		end
 		if activeStandFrame == insideStand.frameName then
+			resetCharge()
 			return
 		end
 		if activeStandFrame then
@@ -255,9 +382,16 @@ local function tick()
 			activeStandEntry = nil
 			openedPanelFromDialogue = false
 		end
-		beginDialogue(insideStand)
+
+		if not shopCutsceneEnabled() then
+			resetCharge()
+			openPanelDirect(insideStand)
+		else
+			updateCharge(insideStand, dt)
+		end
 	else
 		dismissedStandKey = nil
+		resetCharge()
 		if activeStandFrame and not closePending then
 			scheduleClose()
 		end
@@ -327,6 +461,7 @@ function StandController.init()
 		activeStandEntry = nil
 		dismissedStandKey = nil
 		openedPanelFromDialogue = false
+		resetCharge()
 		if StandDialogueCutscene.isActive() then
 			StandDialogueCutscene.cancel()
 		end
@@ -338,8 +473,9 @@ function StandController.init()
 		if tickAccum < TICK_INTERVAL then
 			return
 		end
+		local stepDt = tickAccum
 		tickAccum = 0
-		tick()
+		tick(stepDt)
 	end)
 	player.AncestryChanged:Connect(function(_, parent)
 		if not parent and heartbeatConn then

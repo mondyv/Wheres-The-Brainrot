@@ -30,6 +30,7 @@ local MODAL_OVERLAY_NAMES = {
 	"LoadingScreen",
 	"FloatingClaimCutscene",
 	"BushSpiderCutscene",
+	"StandDialogueCutscene",
 }
 
 local function hasModalOverlay(playerGui: Instance): boolean

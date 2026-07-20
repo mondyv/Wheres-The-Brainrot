@@ -6,12 +6,11 @@
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
-local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 
 local player = Players.LocalPlayer
 
@@ -30,8 +29,6 @@ local savedJumpPower: number? = nil
 local savedJumpHeight: number? = nil
 local savedUseJumpPower: boolean? = nil
 local savedAutoRotate: boolean? = nil
-local hiddenGui: { { inst: GuiObject, wasVisible: boolean } } = {}
-local hiddenScreenGui: { { gui: ScreenGui, wasEnabled: boolean } } = {}
 local cutsceneGui: ScreenGui? = nil
 local letterTop: Frame? = nil
 local letterBottom: Frame? = nil
@@ -97,59 +94,6 @@ local function faceCharacterToward(target: Vector3)
 	end
 	local flat = flatUnit(hrp.Position, target)
 	hrp.CFrame = CFrame.new(hrp.Position, hrp.Position + flat)
-end
-
-local function hideGameplayUi()
-	table.clear(hiddenGui)
-	table.clear(hiddenScreenGui)
-	local main = PlayerGuiMain.ensure(player)
-	for _, child in main:GetChildren() do
-		if child:IsA("GuiObject") then
-			local gui = child :: GuiObject
-			table.insert(hiddenGui, { inst = gui, wasVisible = gui.Visible })
-			gui.Visible = false
-		end
-	end
-	local pg = player:FindFirstChild("PlayerGui")
-	if pg then
-		for _, ch in pg:GetChildren() do
-			if ch:IsA("ScreenGui") and ch.Name ~= GUI_NAME and ch.Name ~= "BushSpiderCutscene" then
-				table.insert(hiddenScreenGui, { gui = ch, wasEnabled = ch.Enabled })
-				ch.Enabled = false
-			end
-		end
-	end
-	pcall(function()
-		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false)
-	end)
-end
-
-local function restoreGameplayUi()
-	for _, entry in hiddenGui do
-		if entry.inst.Parent then
-			entry.inst.Visible = entry.wasVisible
-		end
-	end
-	for _, entry in hiddenScreenGui do
-		if entry.gui.Parent then
-			-- Never restore Main as disabled (purchase overlay used to poison this).
-			if entry.gui.Name == "Main" then
-				entry.gui.Enabled = true
-			else
-				entry.gui.Enabled = entry.wasEnabled
-			end
-		end
-	end
-	table.clear(hiddenGui)
-	table.clear(hiddenScreenGui)
-	local pg = player:FindFirstChild("PlayerGui")
-	local main = pg and pg:FindFirstChild("Main")
-	if main and main:IsA("ScreenGui") then
-		main.Enabled = true
-	end
-	pcall(function()
-		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, true)
-	end)
 end
 
 local function ensureLetterboxGui(): ScreenGui
@@ -443,7 +387,7 @@ local function restoreCamera(keepMoveLock: boolean?)
 	if not keepMoveLock then
 		unlockMovement()
 	end
-	restoreGameplayUi()
+	GameplayUiVisibility.show()
 	animateLetterboxOut()
 	local cam = Workspace.CurrentCamera
 	if cam and savedCameraType then
@@ -494,7 +438,7 @@ function FloatingClaimCutscene.begin(model: Model?, zoomIntensity: number?)
 		savedCameraSubject = cam.CameraSubject
 		savedFov = cam.FieldOfView
 		cam.CameraType = Enum.CameraType.Scriptable
-		hideGameplayUi()
+		GameplayUiVisibility.hide({ keepScreenGuiNames = { "FloatingClaimCutscene" } })
 		animateLetterboxIn()
 		lockMovement()
 	end

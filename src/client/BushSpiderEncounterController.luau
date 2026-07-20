@@ -10,7 +10,6 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
-local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
@@ -21,7 +20,7 @@ local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local LandAmbushUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandAmbushUtil"))
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
-local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local PromptFxConfig = require(script.Parent.ProximityPromptEffectsConfig)
 local SpiderEncounterConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SpiderEncounterConfig"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
@@ -34,8 +33,6 @@ local BushSpiderEncounterController = {}
 local MOVE_LOCK_ACTION = "BushSpiderEncounterMoveLock"
 
 local encounterActive = false
-local hiddenGui: { { inst: GuiObject, wasVisible: boolean } } = {}
-local hiddenScreenGui: { { gui: ScreenGui, wasEnabled: boolean } } = {}
 local bgmSpeedSaved: { [Sound]: number } = {}
 local bgmSpeedTweens: { [Sound]: Tween } = {}
 local cutsceneGui: ScreenGui? = nil
@@ -785,58 +782,6 @@ local function setBgmWebSlow()
 		bgmSpeedTweens[s] = tween
 		tween:Play()
 	end
-end
-
-local function hideGameplayUi()
-	table.clear(hiddenGui)
-	table.clear(hiddenScreenGui)
-	local main = PlayerGuiMain.ensure(player)
-	for _, child in main:GetChildren() do
-		if child:IsA("GuiObject") then
-			local gui = child :: GuiObject
-			table.insert(hiddenGui, { inst = gui, wasVisible = gui.Visible })
-			gui.Visible = false
-		end
-	end
-	local pg = player:FindFirstChild("PlayerGui")
-	if pg then
-		for _, ch in pg:GetChildren() do
-			if ch:IsA("ScreenGui") and ch.Name ~= "BushSpiderCutscene" then
-				table.insert(hiddenScreenGui, { gui = ch, wasEnabled = ch.Enabled })
-				ch.Enabled = false
-			end
-		end
-	end
-	pcall(function()
-		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false)
-	end)
-end
-
-local function restoreGameplayUi()
-	for _, entry in hiddenGui do
-		if entry.inst.Parent then
-			entry.inst.Visible = entry.wasVisible
-		end
-	end
-	for _, entry in hiddenScreenGui do
-		if entry.gui.Parent then
-			if entry.gui.Name == "Main" then
-				entry.gui.Enabled = true
-			else
-				entry.gui.Enabled = entry.wasEnabled
-			end
-		end
-	end
-	table.clear(hiddenGui)
-	table.clear(hiddenScreenGui)
-	local pg = player:FindFirstChild("PlayerGui")
-	local main = pg and pg:FindFirstChild("Main")
-	if main and main:IsA("ScreenGui") then
-		main.Enabled = true
-	end
-	pcall(function()
-		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, true)
-	end)
 end
 
 local function ensureCutsceneGui(): ScreenGui
@@ -1815,7 +1760,7 @@ local function finishEncounter(spider: Model?, web: Model?)
 	clearPostFx()
 	animateLetterboxOut()
 	restoreCamera()
-	restoreGameplayUi()
+	GameplayUiVisibility.show()
 	BushHoldInteraction.setBushSearchLocked(false)
 
 	if spider and spider.Parent then
@@ -1951,7 +1896,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 	-- OFF: ground spawn + QTE only (no cameras / letterbox).
 	local cutsceneOn = player:GetAttribute("SpiderCutsceneEnabled") ~= false
 	if cutsceneOn then
-		hideGameplayUi()
+		GameplayUiVisibility.hide({ keepScreenGuiNames = { "BushSpiderCutscene" } })
 		animateLetterboxIn()
 		ensurePostFx()
 	end

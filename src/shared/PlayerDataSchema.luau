@@ -43,6 +43,7 @@ export type PlayerSettingsSaveData = {
 	brainrotVfxEnabled: boolean,
 	globalMessagesEnabled: boolean,
 	spiderCutsceneEnabled: boolean,
+	shopCutsceneEnabled: boolean,
 }
 
 export type PlayerSaveData = {
@@ -85,6 +86,7 @@ M.SETTINGS_SHOW_OTHERS_ATTR = "SettingsShowOtherBrainrots"
 M.SETTINGS_BRAINROT_VFX_ATTR = "SettingsBrainrotVfxEnabled"
 M.SETTINGS_GLOBAL_MESSAGES_ATTR = "SettingsGlobalMessagesEnabled"
 M.SETTINGS_SPIDER_CUTSCENE_ATTR = "SettingsSpiderCutsceneEnabled"
+M.SETTINGS_SHOP_CUTSCENE_ATTR = "SettingsShopCutsceneEnabled"
 M.DEFAULT_SETTINGS = {
 	musicVolume = 0.5,
 	sfxVolume = 0.5,
@@ -94,6 +96,7 @@ M.DEFAULT_SETTINGS = {
 	brainrotVfxEnabled = true,
 	globalMessagesEnabled = true,
 	spiderCutsceneEnabled = true,
+	shopCutsceneEnabled = true,
 } :: PlayerSettingsSaveData
 
 return M

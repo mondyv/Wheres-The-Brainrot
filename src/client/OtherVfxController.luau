@@ -15,9 +15,11 @@ local Workspace = game:GetService("Workspace")
 local OtherVfxController = {}
 
 local LIFETIME_SEC = 5
+local UPGRADE_LIFETIME_SEC = 6.5
 local BEZIER_DURATION = 0.55
 -- One frame+ after Clone/Parent so particle textures can load before Emit.
 local EMIT_SETTLE_SEC = 0.08
+local DEFAULT_EMIT_FALLBACK = 16
 
 local function findOtherVfxFolder(): Instance?
 	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
@@ -123,7 +125,7 @@ local function emitAll(root: Instance, skipUnder: Instance?)
 		local delayAttr = emitter:GetAttribute("EmitDelay")
 		local delaySec = if typeof(delayAttr) == "number" then math.max(0, delayAttr) else 0
 		local countAttr = emitter:GetAttribute("EmitCount")
-		local count = if typeof(countAttr) == "number" then math.max(0, math.floor(countAttr)) else nil
+		local count = if typeof(countAttr) == "number" then math.floor(countAttr) else nil
 		local durAttr = emitter:GetAttribute("EmitDuration")
 		local dur = if typeof(durAttr) == "number" then math.max(0, durAttr) else 0
 
@@ -131,14 +133,7 @@ local function emitAll(root: Instance, skipUnder: Instance?)
 			if not emitter.Parent then
 				return
 			end
-			-- Pure burst: Emit once. Optional EmitDuration = short enable window only.
-			if count and count > 0 then
-				emitter:Emit(count)
-			elseif count == nil then
-				-- No EmitCount baked by the plugin — fall back to Rate as a one-shot burst.
-				local rate = math.max(1, math.floor(emitter.Rate))
-				emitter:Emit(rate)
-			end
+			-- EmitDuration = brief rate window (plugin style). Still Emit when count > 0.
 			if dur > 0 then
 				emitter.Enabled = true
 				task.delay(dur, function()
@@ -146,7 +141,20 @@ local function emitAll(root: Instance, skipUnder: Instance?)
 						emitter.Enabled = false
 					end
 				end)
-			else
+			end
+			local burst = 0
+			if typeof(count) == "number" and count > 0 then
+				burst = count
+			elseif count == nil then
+				burst = math.max(DEFAULT_EMIT_FALLBACK, math.floor(emitter.Rate))
+			elseif count <= 0 and dur <= 0 then
+				-- EmitCount 0 with no duration — still pop a small burst so layers aren't silent.
+				burst = math.max(DEFAULT_EMIT_FALLBACK, math.floor(emitter.Rate))
+			end
+			if burst > 0 then
+				emitter:Emit(burst)
+			end
+			if dur <= 0 then
 				emitter.Enabled = false
 			end
 		end)
@@ -287,7 +295,7 @@ local function samplePolyline(points: { Vector3 }, alpha: number): Vector3
 end
 
 local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
-	local bezier = root:FindFirstChild("Bezier")
+	local bezier = root:FindFirstChild("Bezier", true)
 	if not bezier then
 		return false
 	end
@@ -296,6 +304,14 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
 	if not pointsFolder or not mover or not mover:IsA("BasePart") then
 		return false
 	end
+
+	-- Break free of any weld so the scripted flight can move this part.
+	for _, ch in mover:GetChildren() do
+		if ch:IsA("WeldConstraint") or ch:IsA("Weld") or ch:IsA("Motor6D") then
+			ch:Destroy()
+		end
+	end
+	mover.Anchored = true
 
 	local points = collectBezierWorldPoints(pointsFolder)
 	if #points < 2 then
@@ -307,18 +323,23 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
 	end
 
 	local emitOnFinish = mover:FindFirstChild("EmitOnFinish")
+	-- Play every layer on the effect (glow, specs, trails) except the finish burst.
 	emitAll(root, emitOnFinish)
 
-	-- Trails on the mover need to be on while it travels, then off.
 	for _, d in mover:GetDescendants() do
 		if d:IsA("Trail") or d:IsA("Beam") then
 			if not (emitOnFinish and d:IsDescendantOf(emitOnFinish)) then
 				d.Enabled = true
 			end
+		elseif d:IsA("ParticleEmitter") and not (emitOnFinish and d:IsDescendantOf(emitOnFinish)) then
+			-- Keep in-flight emitters alive for the arc.
+			local durAttr = d:GetAttribute("EmitDuration")
+			if typeof(durAttr) ~= "number" or durAttr <= 0 then
+				d.Enabled = true
+			end
 		end
 	end
 
-	mover.Anchored = true
 	mover.CFrame = CFrame.new(points[1])
 	local started = os.clock()
 	local conn: RBXScriptConnection? = nil
@@ -339,15 +360,44 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
 			end
 			if emitOnFinish then
 				emitAll(emitOnFinish, nil)
+			else
+				emitAll(mover, nil)
 			end
 			for _, d in mover:GetDescendants() do
-				if d:IsA("Trail") or d:IsA("Beam") then
-					d.Enabled = false
+				if d:IsA("Trail") or d:IsA("Beam") or d:IsA("ParticleEmitter") then
+					if not (emitOnFinish and d:IsDescendantOf(emitOnFinish)) then
+						d.Enabled = false
+					end
 				end
 			end
 		end
 	end)
 	return true
+end
+
+--- Move a root BasePart and every descendant BasePart by the same delta (Attachments alone aren't enough —
+--- Bezier point/mover Parts stay at the template origin unless transformed).
+local function relocatePartTree(rootPart: BasePart, targetCf: CFrame)
+	local oldCf = rootPart.CFrame
+	local delta = targetCf * oldCf:Inverse()
+	rootPart.CFrame = targetCf
+	for _, d in rootPart:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.CFrame = delta * d.CFrame
+		end
+	end
+end
+
+local function weldStaticPartsToRoot(rootPart: BasePart, freePart: BasePart?)
+	for _, d in rootPart:GetDescendants() do
+		if d:IsA("BasePart") and d ~= freePart then
+			d.Anchored = false
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = rootPart
+			weld.Part1 = d
+			weld.Parent = d
+		end
+	end
 end
 
 local function placeClone(clone: Instance, at: CFrame | BasePart): Instance
@@ -384,10 +434,18 @@ local function placeClone(clone: Instance, at: CFrame | BasePart): Instance
 	end
 
 	if clone:IsA("BasePart") then
-		clone.CFrame = cf
+		local bezier = clone:FindFirstChild("Bezier", true)
+		local mover = if bezier then bezier:FindFirstChild("Part") else nil
+		local freeMover = if mover and mover:IsA("BasePart") then mover :: BasePart else nil
+		relocatePartTree(clone, cf)
+		if freeMover then
+			-- Keep the bezier payload free to fly; weld the rest so Points stay with the host.
+			weldStaticPartsToRoot(clone, freeMover)
+			freeMover.Anchored = true
+		end
 		if hostPart then
 			clone.Anchored = false
-			clone.Parent = hostPart
+			clone.Parent = Workspace
 			local weld = Instance.new("WeldConstraint")
 			weld.Part0 = hostPart
 			weld.Part1 = clone
@@ -399,11 +457,28 @@ local function placeClone(clone: Instance, at: CFrame | BasePart): Instance
 	end
 
 	if clone:IsA("Model") then
-		clone:PivotTo(cf)
 		clone.Parent = Workspace
-		if hostPart then
-			local primary = clone.PrimaryPart or clone:FindFirstChildWhichIsA("BasePart", true)
-			if primary then
+		clone:PivotTo(cf)
+		local primary = clone.PrimaryPart or clone:FindFirstChildWhichIsA("BasePart", true)
+		local bezier = clone:FindFirstChild("Bezier", true)
+		local mover = if bezier then bezier:FindFirstChild("Part") else nil
+		local freeMover = if mover and mover:IsA("BasePart") then mover :: BasePart else nil
+		if primary then
+			if freeMover then
+				weldStaticPartsToRoot(primary, freeMover)
+				-- Also weld other model parts to primary except freeMover
+				for _, d in clone:GetDescendants() do
+					if d:IsA("BasePart") and d ~= primary and d ~= freeMover then
+						d.Anchored = false
+						local weld = Instance.new("WeldConstraint")
+						weld.Part0 = primary
+						weld.Part1 = d
+						weld.Parent = d
+					end
+				end
+				freeMover.Anchored = true
+			end
+			if hostPart then
 				primary.Anchored = false
 				local weld = Instance.new("WeldConstraint")
 				weld.Part0 = hostPart
@@ -422,28 +497,50 @@ local function placeClone(clone: Instance, at: CFrame | BasePart): Instance
 	anchor.Transparency = 1
 	anchor.Size = Vector3.new(0.35, 0.35, 0.35)
 	anchor.CFrame = cf
+	anchor.Parent = Workspace
+	clone.Parent = anchor
+	local firstPart = clone:FindFirstChildWhichIsA("BasePart", true)
+	if firstPart then
+		local delta = cf * firstPart.CFrame:Inverse()
+		for _, d in clone:GetDescendants() do
+			if d:IsA("BasePart") then
+				d.CFrame = delta * d.CFrame
+			end
+		end
+		local bezier = clone:FindFirstChild("Bezier", true)
+		local mover = if bezier then bezier:FindFirstChild("Part") else nil
+		local freeMover = if mover and mover:IsA("BasePart") then mover :: BasePart else nil
+		if freeMover then
+			weldStaticPartsToRoot(firstPart, freeMover)
+			freeMover.Anchored = true
+		else
+			weldStaticPartsToRoot(firstPart, nil)
+		end
+		firstPart.Anchored = false
+		local weldRoot = Instance.new("WeldConstraint")
+		weldRoot.Part0 = anchor
+		weldRoot.Part1 = firstPart
+		weldRoot.Parent = firstPart
+	end
 	if hostPart then
 		anchor.Anchored = false
-		anchor.Parent = hostPart
 		local weld = Instance.new("WeldConstraint")
 		weld.Part0 = hostPart
 		weld.Part1 = anchor
 		weld.Parent = anchor
-	else
-		anchor.Parent = Workspace
 	end
-	clone.Parent = anchor
 	anchor:SetAttribute("__OtherVfxDebris", true)
 	Debris:AddItem(anchor, LIFETIME_SEC)
 	return anchor
 end
 
-local function playTemplate(pathParts: { string }, at: CFrame | BasePart)
+local function playTemplate(pathParts: { string }, at: CFrame | BasePart, lifetimeSec: number?)
 	local template = findTemplate(pathParts)
 	if not template then
 		warn("[OtherVfxController] missing template:", table.concat(pathParts, "/"))
 		return
 	end
+	local life = lifetimeSec or LIFETIME_SEC
 	local clone = template:Clone()
 	local placed = placeClone(clone, at)
 	local hostCf = if typeof(at) == "CFrame" then at else at.CFrame
@@ -459,14 +556,16 @@ local function playTemplate(pathParts: { string }, at: CFrame | BasePart)
 	end)
 
 	if clone:IsA("Attachment") and typeof(at) ~= "CFrame" then
-		Debris:AddItem(clone, LIFETIME_SEC)
+		Debris:AddItem(clone, life)
 	elseif placed.Name == "OtherVfxAnchor" then
 		if not placed:GetAttribute("__OtherVfxDebris") then
 			placed:SetAttribute("__OtherVfxDebris", true)
-			Debris:AddItem(placed, LIFETIME_SEC)
+			Debris:AddItem(placed, life)
+		elseif life > LIFETIME_SEC then
+			Debris:AddItem(placed, life)
 		end
 	else
-		Debris:AddItem(placed, LIFETIME_SEC)
+		Debris:AddItem(placed, life)
 	end
 end
 
@@ -630,7 +729,7 @@ function OtherVfxController.playLuckyBlockOpen(at: CFrame | BasePart)
 end
 
 function OtherVfxController.playBrainrotUpgrade(at: CFrame | BasePart)
-	playTemplate({ "UpgradeBR", "OnUpgrade" }, at)
+	playTemplate({ "UpgradeBR", "OnUpgrade" }, at, UPGRADE_LIFETIME_SEC)
 end
 
 return OtherVfxController

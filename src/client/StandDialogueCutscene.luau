@@ -1232,11 +1232,8 @@ local function finishSession(choseEnter: boolean): boolean
 	endCamera(0.35)
 	unlockMovement()
 	GameplayUiVisibility.show()
-	pcall(function()
-		local MobileTouchGate = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
-		MobileTouchGate.ensureTouchControlsVisible(true)
-		MobileTouchGate.restorePlayerMovement()
-	end)
+	MobileTouchGate.ensureTouchControlsVisible(true)
+	MobileTouchGate.restorePlayerMovement()
 	if dialogueLabel then
 		dialogueLabel.Text = ""
 	end

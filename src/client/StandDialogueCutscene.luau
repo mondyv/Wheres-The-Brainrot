@@ -17,6 +17,7 @@ local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local MobileHaptics = require(script.Parent.MobileHaptics)
 local UiFonts = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiFonts"))
+local MobileTouchGate = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 
 local player = Players.LocalPlayer
 
@@ -776,6 +777,7 @@ local function ensureGui(): ScreenGui
 	top.AnchorPoint = Vector2.new(0.5, 0)
 	top.Position = UDim2.new(0.5, 0, 0, 0)
 	top.ZIndex = 10
+	top.Active = false
 	top.Parent = gui
 
 	local bottom = Instance.new("Frame")
@@ -786,6 +788,7 @@ local function ensureGui(): ScreenGui
 	bottom.AnchorPoint = Vector2.new(0.5, 1)
 	bottom.Position = UDim2.new(0.5, 0, 1, 0)
 	bottom.ZIndex = 10
+	bottom.Active = false
 	bottom.Parent = gui
 
 	local box = Instance.new("TextButton")
@@ -1163,6 +1166,7 @@ local function endCamera(fadeSec: number?)
 	stopCamera()
 	local cam = Workspace.CurrentCamera
 	local hrp = getHRP()
+	local hum = getHumanoid()
 	if cam and hrp and (fadeSec or 0) > 0 then
 		local startCf = cam.CFrame
 		local endCf = defaultGameplayCameraCFrame(hrp)
@@ -1182,13 +1186,18 @@ local function endCamera(fadeSec: number?)
 			RunService.RenderStepped:Wait()
 		end
 	end
-	if cam and savedCameraType then
-		cam.CameraType = savedCameraType
+	-- Always hard-restore gameplay camera (never leave Scriptable / weird FOV on mobile)
+	if cam then
+		cam.CameraType = Enum.CameraType.Custom
+		if hum then
+			cam.CameraSubject = hum
+		elseif savedCameraSubject then
+			cam.CameraSubject = savedCameraSubject
+		end
 		if savedFov then
 			cam.FieldOfView = savedFov
-		end
-		if savedCameraSubject then
-			cam.CameraSubject = savedCameraSubject
+		elseif cam.FieldOfView < 55 or cam.FieldOfView > 90 then
+			cam.FieldOfView = 70
 		end
 	end
 	savedCameraType = nil
@@ -1217,9 +1226,17 @@ local function finishSession(choseEnter: boolean): boolean
 	stopTalkJump()
 	animateLetterboxOut()
 	active = false
+	if cutsceneGui then
+		cutsceneGui.Enabled = false
+	end
 	endCamera(0.35)
 	unlockMovement()
 	GameplayUiVisibility.show()
+	pcall(function()
+		local MobileTouchGate = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
+		MobileTouchGate.ensureTouchControlsVisible(true)
+		MobileTouchGate.restorePlayerMovement()
+	end)
 	if dialogueLabel then
 		dialogueLabel.Text = ""
 	end

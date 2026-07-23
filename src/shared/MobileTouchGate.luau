@@ -105,13 +105,13 @@ function M.restorePlayerMovement()
 	end
 end
 
-function M.ensureTouchControlsVisible()
+function M.ensureTouchControlsVisible(force: boolean?)
 	if not UserInputService.TouchEnabled then
 		return
 	end
 
 	local now = os.clock()
-	if now - lastEnsureClock < ENSURE_DEBOUNCE_SEC then
+	if not force and now - lastEnsureClock < ENSURE_DEBOUNCE_SEC then
 		return
 	end
 	lastEnsureClock = now

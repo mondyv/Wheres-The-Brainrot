@@ -7,9 +7,11 @@
 
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
+local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local SocialService = game:GetService("SocialService")
+local UserInputService = game:GetService("UserInputService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
@@ -17,6 +19,7 @@ local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local MobileHaptics = require(script.Parent.MobileHaptics)
 local PanelSlideIn = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PanelSlideIn"))
+local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 
 local player = Players.LocalPlayer
 
@@ -145,32 +148,21 @@ end
 
 local function ensurePanelBackdrop()
 	ensureHudRoots()
-	local pg = player:FindFirstChild("PlayerGui")
-	if not pg then
+	local frames = framesFolder
+	if not frames or not frames:IsA("GuiObject") then
 		return
 	end
 	destroyPanelBackdrop()
 
-	local main = mainGui
-	local dimGui = Instance.new("ScreenGui")
-	dimGui.Name = PANEL_DIM_GUI_NAME
-	dimGui.ResetOnSpawn = false
-	dimGui.IgnoreGuiInset = true
-	dimGui.DisplayOrder = if main then math.max(main.DisplayOrder - 1, 0) else 0
-	dimGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	dimGui.Enabled = true
-	pcall(function()
-		(dimGui :: any).ClipToDeviceSafeArea = false
-	end)
-	pcall(function()
-		(dimGui :: any).SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
-	end)
-	-- Keep Main above the dim so panels stay clickable on top
-	if main and main.DisplayOrder <= dimGui.DisplayOrder then
-		main.DisplayOrder = dimGui.DisplayOrder + 1
+	-- Keep dim inside Frames (do NOT raise Main DisplayOrder — that covers TouchGui on mobile).
+	if frames:IsA("GuiObject") then
+		(frames :: GuiObject).ClipsDescendants = false
 	end
-	dimGui.Parent = pg
-	panelDimGui = dimGui
+
+	local inset = GuiService:GetGuiInset()
+	local bottomExtra = if UserInputService.TouchEnabled then 56 else 28
+	local padX = math.max(inset.X, 8)
+	local padTop = math.max(inset.Y, 8)
 
 	local backdrop = Instance.new("TextButton")
 	backdrop.Name = PANEL_BACKDROP_NAME
@@ -179,12 +171,12 @@ local function ensurePanelBackdrop()
 	backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
 	backdrop.BackgroundTransparency = 0.55
 	backdrop.BorderSizePixel = 0
-	backdrop.Size = UDim2.fromScale(1, 1)
-	backdrop.Position = UDim2.fromScale(0, 0)
+	backdrop.Position = UDim2.fromOffset(-padX, -padTop)
+	backdrop.Size = UDim2.new(1, padX * 2, 1, padTop + bottomExtra)
 	backdrop.AnchorPoint = Vector2.new(0, 0)
-	backdrop.ZIndex = 1
+	backdrop.ZIndex = 12
 	backdrop.Active = true
-	backdrop.Parent = dimGui
+	backdrop.Parent = frames
 
 	backdrop.Activated:Connect(function()
 		local frame = currentFrame
@@ -195,6 +187,13 @@ local function ensurePanelBackdrop()
 	end)
 
 	panelBackdrop = backdrop
+end
+
+local function restoreMobileControlsAfterPanel()
+	task.defer(function()
+		MobileTouchGate.ensureTouchControlsVisible(true)
+		MobileTouchGate.restorePlayerMovement()
+	end)
 end
 
 local function hidePanelChrome()
@@ -213,12 +212,14 @@ local function showPanelChrome()
 	if not panelChromeHidden then
 		clearPanelBlur()
 		destroyPanelBackdrop()
+		restoreMobileControlsAfterPanel()
 		return
 	end
 	panelChromeHidden = false
 	GameplayUiVisibility.show()
 	clearPanelBlur()
 	destroyPanelBackdrop()
+	restoreMobileControlsAfterPanel()
 end
 
 -- Searches SideUI only (never Main.Frames — that wrongly wired panel-internal buttons).

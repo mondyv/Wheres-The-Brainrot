@@ -1,20 +1,23 @@
 -- [ACTIVE] BackgroundMusicController
 --[[
 	BackgroundMusicController — context BGM from SoundService.BackgroundMusic.SoundGroup:
-	• Safezone folder — default world music (plays everywhere)
-	• WhenHolding folder — while carrying a bush brainrot on your head
-	Picks a random track from the active folder; when it ends, picks another random one.
+	• Safezone — default / inside safe zone
+	• JungleZone — outside safe zone (Background1 / Background2, one at a time)
+	• WhenHolding — while carrying a bush brainrot on your head
+	Picks a random track from the active folder; when it ends, picks another.
 --]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 
 local CarryGate = require(script.Parent.CarryGate)
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
 local POLL_INTERVAL = 0.25
 
-type BgmMode = "none" | "safezone" | "holding"
+type BgmMode = "none" | "safezone" | "jungle" | "holding"
 
 local player = Players.LocalPlayer
 
@@ -63,18 +66,18 @@ function BackgroundMusicController.init()
 	end
 
 	local safezonePlaylist = soundsInFolder(sg:FindFirstChild("Safezone"))
+	local junglePlaylist = soundsInFolder(sg:FindFirstChild("JungleZone"))
 	local holdingPlaylist = soundsInFolder(sg:FindFirstChild("WhenHolding"))
-	if #safezonePlaylist == 0 and #holdingPlaylist == 0 then
+	if #safezonePlaylist == 0 and #junglePlaylist == 0 and #holdingPlaylist == 0 then
 		return
 	end
 
 	local groupRef = if sg:IsA("SoundGroup") then sg :: SoundGroup else nil
 	local allSounds: { Sound } = {}
-	for _, s in safezonePlaylist do
-		table.insert(allSounds, s)
-	end
-	for _, s in holdingPlaylist do
-		table.insert(allSounds, s)
+	for _, playlist in { safezonePlaylist, junglePlaylist, holdingPlaylist } do
+		for _, s in playlist do
+			table.insert(allSounds, s)
+		end
 	end
 	for _, s in allSounds do
 		s.Looped = false
@@ -102,6 +105,8 @@ function BackgroundMusicController.init()
 	local function playlistForMode(mode: BgmMode): { Sound }
 		if mode == "safezone" then
 			return safezonePlaylist
+		elseif mode == "jungle" then
+			return junglePlaylist
 		elseif mode == "holding" then
 			return holdingPlaylist
 		end
@@ -142,8 +147,16 @@ function BackgroundMusicController.init()
 		if CarryGate.isCarryingOnHead() and #holdingPlaylist > 0 then
 			return "holding"
 		end
+		local char = player.Character
+		local inSafe = if char then SafezoneUtil.isCharacterInSafezone(char) else true
+		if not inSafe and #junglePlaylist > 0 then
+			return "jungle"
+		end
 		if #safezonePlaylist > 0 then
 			return "safezone"
+		end
+		if #junglePlaylist > 0 then
+			return "jungle"
 		end
 		return "none"
 	end
@@ -159,12 +172,18 @@ function BackgroundMusicController.init()
 		end
 		if mode ~= currentMode then
 			playRandomFromMode(mode)
+		elseif currentSound and not currentSound.IsPlaying then
+			playRandomFromMode(mode)
 		end
 	end
 
 	local function pollState()
 		applyMode(resolveMode())
 	end
+
+	task.spawn(function()
+		SafezoneUtil.warmCacheAsync()
+	end)
 
 	player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(pollState)
 	player.CharacterAdded:Connect(function()

@@ -2,14 +2,11 @@
 --[[
 	Local-only smooth Pokémon-style bend for grassparts under Map.Lands/*/grass.
 	Holds bend while standing in range; recovers after leaving.
-	Plays SoundEffects.Grass while walking through.
 ]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-
-local GameSoundEffects = require(script.Parent.GameSoundEffects)
 
 local M = {}
 
@@ -352,11 +349,6 @@ local function scanAroundCharacter(_character: Model, humanoid: Humanoid, hrp: B
 		if touchGrass(cand.part, dir) then
 			startedNew = true
 		end
-	end
-
-	-- Rustle while walking through grass (throttled inside GameSoundEffects).
-	if walking and (#cands > 0 or startedNew) then
-		GameSoundEffects.playGrassWalk()
 	end
 end
 

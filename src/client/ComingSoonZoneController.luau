@@ -64,8 +64,14 @@ local function resolveHitbox(): BasePart?
 	local map = Workspace:FindFirstChild("Map")
 	local lands = map and map:FindFirstChild("Lands")
 	local lastLand = lands and lands:FindFirstChild("Last land")
-	local models = lastLand and lastLand:FindFirstChild("Models")
-	local part = models and models:FindFirstChild("ComingSoonHitbox")
+	if not lastLand then
+		return nil
+	end
+	-- Hitbox lives directly under Last land (not under Models)
+	local part = lastLand:FindFirstChild("ComingSoonHitbox")
+	if not part then
+		part = lastLand:FindFirstChild("ComingSoonHitbox", true)
+	end
 	if part and part:IsA("BasePart") then
 		hitbox = part
 		return part
@@ -121,10 +127,10 @@ function ComingSoonZoneController.init()
 			warn("[ComingSoonZoneController] Last land not found")
 			return
 		end
-		local models = lastLand:WaitForChild("Models", 15)
-		local part = models and models:WaitForChild("ComingSoonHitbox", 15)
+		local part = lastLand:FindFirstChild("ComingSoonHitbox")
+			or lastLand:WaitForChild("ComingSoonHitbox", 15)
 		if not part or not part:IsA("BasePart") then
-			warn("[ComingSoonZoneController] ComingSoonHitbox not found")
+			warn("[ComingSoonZoneController] ComingSoonHitbox not found under Last land")
 			return
 		end
 		hitbox = part

@@ -3718,6 +3718,13 @@ local ToolbarController = {}
 			task.defer(refreshToolbarAfterWorldChange)
 		end)
 
+		GameplayUiVisibility.onRestored(function()
+			if GameplayUiVisibility.isHidden() then
+				return
+			end
+			task.defer(refreshToolbarAfterWorldChange)
+		end)
+
 		toolbar.Visible = false
 		applyToolbarInitialHiddenState()
 

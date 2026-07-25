@@ -1,8 +1,8 @@
 -- [ACTIVE] GameplayUiVisibility
 --[[
 	Shared cutscene / panel HUD hide/show with Pokemon-style staggered slide-to-edge.
-	Animates SideUI chrome *groups* that were already visible — never reveals hidden frames.
-	Disables device/safe-area clipping during the slide so mobile buttons aren't cut off.
+	Never animates Main.Frames (panel host). Interrupting a restore hard-snaps bases
+	before a new hide so positions cannot corrupt (fixes offset panels / missing HUD).
 ]]
 
 local GuiService = game:GetService("GuiService")
@@ -55,10 +55,15 @@ local keepScreenNames: { [string]: boolean } = {}
 local keepMainChildNames: { [string]: boolean } = {}
 local sideUIRef: GuiObject? = nil
 local sideUIWasVisible = true
+local restoreCallbacks: { () -> () } = {}
 
 export type HideOpts = {
 	keepScreenGuiNames: { string }?,
 	keepMainChildNames: { string }?,
+}
+
+export type ShowOpts = {
+	instant: boolean?,
 }
 
 local function cancelTweens()
@@ -143,7 +148,6 @@ local function disableClippingForSlide(main: Instance, sideUI: GuiObject?)
 	end
 end
 
--- Content-weighted center so fullscreen wrappers slide by where chrome actually sits.
 local function contentBounds(gui: GuiObject, vp: Vector2): (Vector2, Vector2)
 	local minX, minY = math.huge, math.huge
 	local maxX, maxY = -math.huge, -math.huge
@@ -189,7 +193,6 @@ local function computeSlidePos(gui: GuiObject, vp: Vector2): UDim2
 	local center, contentSize = contentBounds(gui, vp)
 	local inset = GuiService:GetGuiInset()
 	local topInset = inset.Y
-	-- Travel by content size (not fullscreen wrapper size) so iPhone safe-area doesn't eat the UI
 	local margin = 48 + topInset * 0.25
 	local travelX = math.clamp(contentSize.X + margin, 80, vp.X * 0.55)
 	local travelY = math.clamp(contentSize.Y + margin, 70, vp.Y * 0.45)
@@ -216,7 +219,6 @@ local function collectTargets(main: Instance): { GuiObject }
 	local seen: { [GuiObject]: boolean } = {}
 
 	local function addTarget(gui: GuiObject)
-		-- Only animate groups that are already visible — never invent new UI
 		if seen[gui] or not gui.Visible then
 			return
 		end
@@ -252,6 +254,8 @@ end
 local function buildKeepSets(opts: HideOpts?)
 	table.clear(keepScreenNames)
 	table.clear(keepMainChildNames)
+	-- Frames is the panel host — never slide it (causes offset/missing shop panels)
+	keepMainChildNames.Frames = true
 	keepScreenNames.FloatingClaimCutscene = true
 	keepScreenNames.BushSpiderCutscene = true
 	keepScreenNames.StandDialogueCutscene = true
@@ -277,16 +281,63 @@ local function waveDelay(index: number, count: number): number
 	return (index - 1) * stagger
 end
 
-local function parkSnapsHidden()
-	for _, entry in mainSnaps do
-		if entry.inst.Parent and entry.wasVisible then
-			entry.inst.Visible = false
-			entry.inst.Position = entry.slidePos
-		end
+local function fireRestored()
+	for _, cb in restoreCallbacks do
+		task.defer(cb)
 	end
 end
 
+local function restoreScreenGuis()
+	for _, entry in screenSnaps do
+		if entry.gui.Parent then
+			if entry.gui.Name == "Main" then
+				entry.gui.Enabled = true
+			else
+				entry.gui.Enabled = entry.wasEnabled
+			end
+		end
+	end
+	local pg = player:FindFirstChild("PlayerGui")
+	local mainGui = pg and pg:FindFirstChild("Main")
+	if mainGui and mainGui:IsA("ScreenGui") then
+		mainGui.Enabled = true
+	end
+	-- Frames must always be available for panels
+	if mainGui then
+		local frames = mainGui:FindFirstChild("Frames")
+		if frames and frames:IsA("GuiObject") then
+			(frames :: GuiObject).Visible = true
+		end
+	end
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, chatWasEnabled)
+	end)
+end
+
 local function hardRestoreSnaps()
+	cancelTweens()
+	for _, entry in mainSnaps do
+		if entry.inst.Parent then
+			entry.inst.Position = entry.basePos
+			entry.inst.Visible = entry.wasVisible
+			if entry.clips ~= nil then
+				entry.inst.ClipsDescendants = entry.clips
+			end
+		end
+	end
+	if sideUIRef and sideUIRef.Parent then
+		sideUIRef.Visible = sideUIWasVisible
+	end
+	restoreClipping()
+	restoreScreenGuis()
+end
+
+-- Undo an in-progress hide/restore so the next snapshot uses true layout positions
+local function revertSnapsToBaseBeforeResnap()
+	if #mainSnaps == 0 then
+		return
+	end
+	cancelTweens()
 	for _, entry in mainSnaps do
 		if entry.inst.Parent then
 			entry.inst.Position = entry.basePos
@@ -302,17 +353,32 @@ local function hardRestoreSnaps()
 	restoreClipping()
 end
 
+local function parkSnapsHidden()
+	for _, entry in mainSnaps do
+		if entry.inst.Parent and entry.wasVisible then
+			entry.inst.Visible = false
+			entry.inst.Position = entry.slidePos
+		end
+	end
+end
+
 local function snapshotAndSlideOut()
 	animGen += 1
 	local gen = animGen
-	cancelTweens()
-	restoreClipping()
+	-- Critical: if a restore was mid-flight, snap back to real bases before re-hiding
+	revertSnapsToBaseBeforeResnap()
 	table.clear(mainSnaps)
 	table.clear(screenSnaps)
 
 	local main = PlayerGuiMain.ensure(player)
 	if main:IsA("ScreenGui") then
 		main.Enabled = true
+	end
+
+	-- Always keep Frames visible for panels
+	local frames = main:FindFirstChild("Frames")
+	if frames and frames:IsA("GuiObject") then
+		(frames :: GuiObject).Visible = true
 	end
 
 	local vp = viewportSize()
@@ -380,6 +446,13 @@ local function snapshotAndSlideOut()
 	end)
 end
 
+local function finishRestoreCleanup()
+	hardRestoreSnaps()
+	table.clear(mainSnaps)
+	table.clear(screenSnaps)
+	fireRestored()
+end
+
 local function slideInAndRestore()
 	animGen += 1
 	local gen = animGen
@@ -402,6 +475,11 @@ local function slideInAndRestore()
 		sideUIRef.Visible = sideUIWasVisible
 	end
 
+	local frames = main:FindFirstChild("Frames")
+	if frames and frames:IsA("GuiObject") then
+		(frames :: GuiObject).Visible = true
+	end
+
 	for _, entry in ipairs(pending) do
 		if entry.inst.Parent and entry.wasVisible then
 			entry.inst.Position = entry.slidePos
@@ -411,17 +489,7 @@ local function slideInAndRestore()
 
 	local count = #pending
 	if count == 0 then
-		hardRestoreSnaps()
-		for _, entry in screenSnaps do
-			if entry.gui.Parent then
-				entry.gui.Enabled = entry.wasEnabled
-			end
-		end
-		pcall(function()
-			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, chatWasEnabled)
-		end)
-		table.clear(mainSnaps)
-		table.clear(screenSnaps)
+		finishRestoreCleanup()
 		return
 	end
 
@@ -446,23 +514,7 @@ local function slideInAndRestore()
 		if gen ~= animGen or hideCount > 0 then
 			return
 		end
-		for _, entry in screenSnaps do
-			if entry.gui.Parent then
-				if entry.gui.Name == "Main" then
-					entry.gui.Enabled = true
-				else
-					entry.gui.Enabled = entry.wasEnabled
-				end
-			end
-		end
-		local pg = player:FindFirstChild("PlayerGui")
-		local mainGui = pg and pg:FindFirstChild("Main")
-		if mainGui and mainGui:IsA("ScreenGui") then
-			mainGui.Enabled = true
-		end
-		pcall(function()
-			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, chatWasEnabled)
-		end)
+		restoreScreenGuis()
 	end)
 
 	local totalIn = SLIDE_IN.Time + waveDelay(count, count) + 0.04
@@ -470,11 +522,14 @@ local function slideInAndRestore()
 		if gen ~= animGen or hideCount > 0 then
 			return
 		end
-		-- Exact restore — never force-show frames that started hidden
-		hardRestoreSnaps()
-		table.clear(mainSnaps)
-		table.clear(screenSnaps)
+		finishRestoreCleanup()
 	end)
+end
+
+local function instantRestore()
+	animGen += 1
+	cancelTweens()
+	finishRestoreCleanup()
 end
 
 function M.hide(opts: HideOpts?)
@@ -484,6 +539,8 @@ function M.hide(opts: HideOpts?)
 		GameplayMusicMuffle.push()
 		snapshotAndSlideOut()
 	else
+		-- Nested hide (e.g. dialogue → panel): keep Frames, don't re-snapshot
+		keepMainChildNames.Frames = true
 		if opts then
 			if opts.keepScreenGuiNames then
 				for _, name in opts.keepScreenGuiNames do
@@ -496,28 +553,41 @@ function M.hide(opts: HideOpts?)
 				end
 			end
 		end
+		local main = PlayerGuiMain.ensure(player)
+		local frames = main:FindFirstChild("Frames")
+		if frames and frames:IsA("GuiObject") then
+			(frames :: GuiObject).Visible = true
+		end
 	end
 end
 
-function M.show()
+function M.show(opts: ShowOpts?)
 	if hideCount <= 0 then
 		return
 	end
 	hideCount -= 1
 	if hideCount == 0 then
 		GameplayMusicMuffle.pop()
-		slideInAndRestore()
+		if opts and opts.instant then
+			instantRestore()
+		else
+			slideInAndRestore()
+		end
 	end
 end
 
 function M.forceShow()
 	hideCount = 0
 	GameplayMusicMuffle.forceClear()
-	slideInAndRestore()
+	instantRestore()
 end
 
 function M.isHidden(): boolean
 	return hideCount > 0
+end
+
+function M.onRestored(callback: () -> ())
+	table.insert(restoreCallbacks, callback)
 end
 
 return M

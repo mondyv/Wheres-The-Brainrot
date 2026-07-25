@@ -1231,7 +1231,8 @@ local function finishSession(choseEnter: boolean): boolean
 	end
 	endCamera(0.35)
 	unlockMovement()
-	GameplayUiVisibility.show()
+	-- Instant restore so shop panel open right after doesn't re-snapshot mid-slide
+	GameplayUiVisibility.show({ instant = true })
 	MobileTouchGate.ensureTouchControlsVisible(true)
 	MobileTouchGate.restorePlayerMovement()
 	if dialogueLabel then

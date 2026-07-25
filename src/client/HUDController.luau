@@ -381,7 +381,14 @@ local function openFrame(frame: Frame)
 	local frames = framesFolder
 	if frames and frames:IsA("GuiObject") then
 		(frames :: GuiObject).Visible = true
-		(frames :: GuiObject).Active = false
+		-- Never leave Frames parked off-screen from a prior HUD slide
+		local f = frames :: GuiObject
+		if math.abs(f.Position.X.Offset) > 2 or math.abs(f.Position.Y.Offset) > 2 then
+			-- If somehow offset, reset scale-based full frame hosts to origin
+			if f.Position.X.Scale == 0 and f.Position.Y.Scale == 0 then
+				f.Position = UDim2.fromScale(0, 0)
+			end
+		end
 	end
 	-- Ensure parent chain isn't hiding the panel (don't force `frame` yet — toggle needs prior Visible).
 	local p: Instance? = frame.Parent

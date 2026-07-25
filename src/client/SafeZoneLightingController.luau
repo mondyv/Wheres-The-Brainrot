@@ -451,12 +451,9 @@ local function resolvePresets(): boolean
 	end
 	local folder = presets:FindFirstChild("NightLighting")
 		or presets:WaitForChild("NightLighting", 10)
-	if not folder or not folder:IsA("Folder") and not folder:IsA("Configuration") then
-		-- Accept Model/Folder/Configuration
-		if not folder then
-			warn("[SafeZoneLighting] NightLighting missing")
-			return false
-		end
+	if not folder then
+		warn("[SafeZoneLighting] NightLighting missing")
+		return false
 	end
 	nightFolder = folder :: Folder
 
@@ -515,7 +512,10 @@ function SafeZoneLightingController.init()
 			-- Fallback: atmosphere-only night if preset missing
 			presetsReady = true
 			nightAtmoGoals = defaultNightAtmo()
-			nightLightingGoals = buildNightLightingGoals(Instance.new("Folder"))
+			nightLightingGoals = {
+				Brightness = math.max(1.2, (dayLighting.Brightness or 3) * 0.55),
+				ClockTime = 0.35,
+			}
 		end
 
 		-- Re-snapshot day after a short settle (map lighting may stream in)

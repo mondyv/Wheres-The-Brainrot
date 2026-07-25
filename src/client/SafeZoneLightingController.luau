@@ -18,14 +18,14 @@ local POLL_INTERVAL = 0.25
 local FADE_INFO = TweenInfo.new(1.45, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 local CC_LEGACY_NAME = "SafeZoneNightCC"
 
--- Neutral dark smoky night — barely any hue, just darker jungle air
+-- Neutral dark smoky night — denser fog, slightly darker
 local NIGHT_ATMO = {
-	Density = 0.52,
-	Offset = 0.08,
-	Color = Color3.fromRGB(58, 62, 64),
-	Decay = Color3.fromRGB(72, 76, 78),
-	Glare = 0.04,
-	Haze = 2.2,
+	Density = 0.62,
+	Offset = 0.05,
+	Color = Color3.fromRGB(46, 50, 52),
+	Decay = Color3.fromRGB(58, 62, 64),
+	Glare = 0.03,
+	Haze = 2.85,
 }
 
 type AtmoSnap = {

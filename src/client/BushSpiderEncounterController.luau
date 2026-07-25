@@ -471,6 +471,7 @@ local function createFallbackWebProjectile(): Model
 	web.Transparency = 0.08
 	web.Parent = model
 	model.PrimaryPart = web
+	model:SetAttribute(WEB_TIP_ATTR, -Vector3.zAxis)
 	model.Parent = Workspace
 	return model
 end

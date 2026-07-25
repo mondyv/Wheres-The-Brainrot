@@ -4895,6 +4895,7 @@ local function boot(character)
 			and not attachShakeActive
 			and st.swingCamLag.Magnitude <= 0.001
 			and math.abs(st.swingCamRoll) <= 0.0001
+			and (st.windShakeIntensity or 0) <= 0.01
 		then
 			return
 		end
@@ -4980,6 +4981,41 @@ local function boot(character)
 			st.attachShakeSeed,
 			0.036
 		)
+
+		-- Continuous soft wind buffet while swinging / flying through air
+		local windTarget = 0
+		if st.isSwinging or st.isLaunched then
+			local speedAlpha = math.clamp(
+				(speed - C.SWING_WIND_SHAKE_MIN_SPEED)
+					/ math.max(C.SWING_WIND_SHAKE_REF_SPEED - C.SWING_WIND_SHAKE_MIN_SPEED, 1),
+				0,
+				1
+			)
+			if st.isSwinging then
+				windTarget = C.SWING_WIND_SHAKE_HANG + speedAlpha * (1 - C.SWING_WIND_SHAKE_HANG)
+			else
+				windTarget = speedAlpha * 0.9
+			end
+		end
+		st.windShakeIntensity += (windTarget - st.windShakeIntensity) * math.min(dt * 5.5, 1)
+		local windIntensity = st.windShakeIntensity
+		if windIntensity > 0.01 then
+			local seed = st.windShakeSeed
+			local t = now * C.SWING_WIND_SHAKE_SPEED
+			local gust = Vector3.new(
+				math.noise(seed, t * 0.34, 1),
+				math.noise(seed, t * 0.26, 7) * 0.75,
+				math.noise(seed, t * 0.3, 14)
+			)
+			local flutter = Vector3.new(
+				math.noise(seed + 4, t * 1.55, 2),
+				math.noise(seed + 4, t * 1.85, 9),
+				math.noise(seed + 4, t * 1.35, 16)
+			)
+			local wind = gust * 0.7 + flutter * 0.3
+			shakeOffset += wind * C.SWING_WIND_SHAKE_POS * windIntensity
+			shakeRot += wind * C.SWING_WIND_SHAKE_ROT * windIntensity
+		end
 
 		if shakeOffset.Magnitude > 0.0001 or shakeRot.Magnitude > 0.0001 then
 			cf = cf * CFrame.new(shakeOffset) * CFrame.Angles(shakeRot.X, shakeRot.Y, shakeRot.Z)

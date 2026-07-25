@@ -14,7 +14,7 @@ if not character or not character:IsA("Model") then
 end
 
 local ANIMS = {
-	idle = 90797198734546,
+	idle = 103546733090654,
 	walk = 79330322261039,
 	walkSlow = 119335536256791,
 	jump = 133207078869082,

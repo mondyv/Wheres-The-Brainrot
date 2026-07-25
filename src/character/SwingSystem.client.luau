@@ -583,16 +583,22 @@ local function getZipDv()
 	return C.ATTACH_ZIP_DV * getPowerScale()
 end
 
-local function playOptionalSound(name)
+local function resolveOptionalSound(name)
 	local s = script:FindFirstChild(name)
-
 	if not s then
 		local soundEffects = SoundService:FindFirstChild("SoundEffects")
 		s = soundEffects and soundEffects:FindFirstChild(name)
 	end
+	return s
+end
 
+local function playOptionalSound(name)
+	local s = resolveOptionalSound(name)
 	if s and s:IsA("Sound") then
 		pcall(function()
+			if name == "Wind Loop" then
+				s.Looped = true
+			end
 			s.TimePosition = 0
 			s:Play()
 		end)
@@ -600,7 +606,7 @@ local function playOptionalSound(name)
 end
 
 local function stopOptionalSound(name)
-	local s = script:FindFirstChild(name)
+	local s = resolveOptionalSound(name)
 	if s and s:IsA("Sound") then
 		pcall(function()
 			s:Stop()
@@ -4179,7 +4185,7 @@ local function boot(character)
 		st.playHangAnim(attachWorld)
 		st.ensureChargeGui(target)
 		playOptionalSound("Catch")
-		playOptionalSound("Wind")
+		playOptionalSound("Wind Loop")
 	end
 
 	function st.startSwing(target)
@@ -4309,6 +4315,7 @@ local function boot(character)
 		st.stopHangAnim(doLaunch and C.LAUNCH_HANG_RELEASE_FADE or 0.08)
 		st.swingPose.clear()
 		st.destroySwingObjects()
+		stopOptionalSound("Wind Loop")
 		stopOptionalSound("Wind")
 
 		st.humanoid.PlatformStand = false
@@ -5543,6 +5550,7 @@ local function boot(character)
 		st.stopHangAnim(0)
 		st.stopFallingAnim()
 		st.stopTrack(st.landedTrack, 0.12)
+		stopOptionalSound("Wind Loop")
 		stopOptionalSound("Wind")
 		pcall(function()
 			st.humanoid.PlatformStand = false

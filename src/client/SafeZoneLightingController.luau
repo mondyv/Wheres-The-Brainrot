@@ -1,8 +1,9 @@
 -- [ACTIVE] SafeZoneLightingController
 --[[
-	Outside the safe zone: smoky dark Atmosphere night only.
-	Day look is snapped once at boot (before night is ever applied) and never
-	overwritten, so returning to the safe zone always restores original lighting.
+	Outside the safe zone: smoky dark Atmosphere night.
+	Inside: faint mist fog (based on the place day snapshot) so the base
+	isn't crystal-clear at long range. Day is snapped once at boot before
+	any fog/night is applied.
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -18,7 +19,7 @@ local POLL_INTERVAL = 0.25
 local FADE_INFO = TweenInfo.new(1.45, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 local CC_LEGACY_NAME = "SafeZoneNightCC"
 
--- Dark nighty fog (the look that felt right before the misty pass)
+-- Dark nighty fog outside safe zone
 local NIGHT_ATMO = {
 	Density = 0.62,
 	Offset = 0.05,
@@ -26,6 +27,21 @@ local NIGHT_ATMO = {
 	Decay = Color3.fromRGB(58, 62, 64),
 	Glare = 0.03,
 	Haze = 2.85,
+}
+
+-- Faint mist inside safe zone — softens distance so the base isn't crystal-clear
+local SAFEZONE_FOG = {
+	densityAdd = 0.18,
+	densityMin = 0.22,
+	densityMax = 0.34,
+	hazeAdd = 0.85,
+	hazeMin = 0.9,
+	hazeMax = 1.55,
+	offsetBias = -0.04,
+	glareMax = 0.035,
+	mistColor = Color3.fromRGB(198, 204, 210),
+	mistDecay = Color3.fromRGB(155, 160, 166),
+	mistMix = 0.28,
 }
 
 type AtmoSnap = {
@@ -111,7 +127,7 @@ local function readAtmo(atmo: Atmosphere): AtmoSnap
 	}
 end
 
--- Capture place day lighting once. Never call after night has been applied.
+-- Capture place day lighting once. Never call after night/fog has been applied.
 local function captureDayOnce()
 	if dayAtmo then
 		return
@@ -119,12 +135,25 @@ local function captureDayOnce()
 	dayAtmo = readAtmo(ensureAtmosphere())
 end
 
+local function safezoneAtmo(): AtmoSnap
+	local day = dayAtmo :: AtmoSnap
+	local mix = SAFEZONE_FOG.mistMix
+	return {
+		Density = math.clamp(math.max(day.Density, SAFEZONE_FOG.densityMin) + SAFEZONE_FOG.densityAdd, SAFEZONE_FOG.densityMin, SAFEZONE_FOG.densityMax),
+		Offset = day.Offset + SAFEZONE_FOG.offsetBias,
+		Color = day.Color:Lerp(SAFEZONE_FOG.mistColor, mix),
+		Decay = day.Decay:Lerp(SAFEZONE_FOG.mistDecay, mix * 0.85),
+		Glare = math.min(day.Glare, SAFEZONE_FOG.glareMax),
+		Haze = math.clamp(math.max(day.Haze, SAFEZONE_FOG.hazeMin) + SAFEZONE_FOG.hazeAdd, SAFEZONE_FOG.hazeMin, SAFEZONE_FOG.hazeMax),
+	}
+end
+
 local function applyProfile(night: boolean, instant: boolean?)
 	captureDayOnce()
 	local atmo = ensureAtmosphere()
 	cancelTweens()
 
-	local goal = if night then NIGHT_ATMO else (dayAtmo :: AtmoSnap)
+	local goal = if night then NIGHT_ATMO else safezoneAtmo()
 
 	if instant then
 		atmo.Density = goal.Density
@@ -169,7 +198,7 @@ function SafeZoneLightingController.init()
 	wired = true
 
 	cleanupLegacy()
-	-- CRITICAL: snap day BEFORE any night apply, so restore always works
+	-- CRITICAL: snap day BEFORE any fog/night apply, so restore always works
 	captureDayOnce()
 
 	task.spawn(function()

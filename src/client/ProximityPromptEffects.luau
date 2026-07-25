@@ -181,9 +181,9 @@ end
 
 local prefersTouchInput: () -> boolean
 
-local function isBushTapMode(view: PromptView): boolean
-	-- HoldDuration is synced by BushHoldInteraction (0 = mobile tap, >0 = PC/gamepad hold).
-	return view.prompt.HoldDuration <= 0
+local function isBushTouchVisual(view: PromptView): boolean
+	-- Visual only: finger icon on touch devices. HoldDuration stays > 0 for all platforms.
+	return prefersTouchInput()
 end
 
 local function applyBushSearchCardStyle(view: PromptView)
@@ -204,7 +204,7 @@ local function applyBushSearchCardStyle(view: PromptView)
 			actionLabel = view.actionLabel,
 			objectLabel = view.objectLabel,
 			glow = view.bushGlow :: Frame,
-		}, isBushTapMode(view))
+		}, isBushTouchVisual(view))
 		return
 	end
 	PromptTheme.applyBushSearchStyle(view)
@@ -448,12 +448,12 @@ local function showTouchKeyIcon(view: PromptView, _hold: boolean)
 	icon.AnchorPoint = Vector2.new(0.5, 0.5)
 	icon.Position = UDim2.fromScale(0.5, 0.5)
 	local touchSize = if view.isBushPokemon
-		then C.BUSH_POKE_TAP_ICON_SIZE
+		then C.BUSH_POKE_MOBILE_ICON_GLYPH
 		elseif isTouchDevice() then 34
 		else 28
-	icon.Size = UDim2.fromOffset(touchSize, touchSize + 6)
+	icon.Size = UDim2.fromOffset(touchSize, touchSize + 4)
 	icon.ZIndex = 10
-	icon.Image = C.TOUCH_TAP_ICON
+	icon.Image = if view.isBushPokemon then C.TOUCH_HOLD_ICON else C.TOUCH_TAP_ICON
 end
 
 local function refreshKeyLabel(view: PromptView)
@@ -472,10 +472,10 @@ local function refreshKeyLabel(view: PromptView)
 		showText(gamepadButtonLabel(prompt.GamepadKeyCode))
 		return
 	end
-	-- Managed bush: follow HoldDuration (tap vs hold), not raw TouchEnabled.
+	-- Managed bush: touch shows hold icon; keyboard/gamepad shows E.
 	if view.isBushPokemon then
-		if isBushTapMode(view) then
-			showTouchKeyIcon(view, false)
+		if isBushTouchVisual(view) then
+			showTouchKeyIcon(view, true)
 		else
 			local kc = prompt.KeyboardKeyCode
 			if kc == Enum.KeyCode.Unknown or kc == Enum.KeyCode.E then
@@ -1115,15 +1115,18 @@ local function applyLabelsToView(view: PromptView)
 	end
 
 	if view.isBushPokemon then
-		local touch = isBushTapMode(view)
-		view.actionLabel.Text = if touch then "TAP" else "INTERACT"
+		local touch = isBushTouchVisual(view)
+		view.actionLabel.Text = if touch then "" else "Hold"
 		view.objectLabel.Text = ""
 		view.objectLabel.Visible = false
-		view.billboard.Size = UDim2.fromOffset(C.BUSH_POKE_BOARD_SIZE, C.BUSH_POKE_BOARD_SIZE)
+		view.billboard.Size = UDim2.fromOffset(
+			if touch then C.BUSH_POKE_MOBILE_BOARD_SIZE else C.BUSH_POKE_BOARD_SIZE,
+			if touch then C.BUSH_POKE_MOBILE_BOARD_SIZE else C.BUSH_POKE_BOARD_SIZE
+		)
 		refreshKeyLabel(view)
 		if not view.holding then
-			view.actionLabel.TextTransparency = 0
-			view.actionLabel.Visible = true
+			view.actionLabel.Visible = not touch
+			view.actionLabel.TextTransparency = if touch then 1 else 0.15
 		end
 		return
 	end
@@ -1158,7 +1161,7 @@ local function setHoldTrackVisible(view: PromptView, visible: boolean)
 		view.holdTrack.Visible = false
 		view.holdFill.Visible = false
 		if view.holdRing then
-			view.holdRing.Visible = visible and not isBushTapMode(view)
+			view.holdRing.Visible = visible
 		end
 		return
 	end
@@ -1213,7 +1216,7 @@ local function resetKeyBadgeVisuals(view: PromptView)
 			actionLabel = view.actionLabel,
 			objectLabel = view.objectLabel,
 			glow = view.bushGlow,
-		}, isBushTapMode(view))
+		}, isBushTouchVisual(view))
 		ensureKeyIcon(view)
 		refreshKeyLabel(view)
 		return
@@ -1541,24 +1544,16 @@ startIdleSway = function(view: PromptView)
 	if view.displayOnly and isManagedBushPrompt(view.prompt) then
 		view.root.Rotation = 0
 		view.keyBadge.Rotation = 0
-		-- Soft Pokémon-style breathe on the floating badge + glow.
-		if view.isBushPokemon then
+		-- Quiet idle breathe — ring only, no badge bounce.
+		if view.isBushPokemon and view.holdRingStroke then
 			local token = view.swayToken
-			local badgeScale = getOrAddUIScale(view.keyBadge)
+			local stroke = view.holdRingStroke
+			local baseT = if isBushTouchVisual(view) then 0.55 else 0.62
 			task.spawn(function()
 				while viewIsActive(view) and view.swayToken == token and not view.holding do
-					local pulse = 0.5 + 0.5 * math.sin(os.clock() * 2.8)
-					badgeScale.Scale = 1 + pulse * 0.045
-					if view.bushGlow then
-						view.bushGlow.BackgroundTransparency = 0.78 - pulse * 0.14
-					end
-					if view.keyStroke then
-						view.keyStroke.Transparency = 0.28 - pulse * 0.14
-					end
+					local pulse = 0.5 + 0.5 * math.sin(os.clock() * 2.2)
+					stroke.Transparency = baseT - pulse * 0.12
 					RunService.Heartbeat:Wait()
-				end
-				if view.swayToken == token and not view.holding then
-					badgeScale.Scale = 1
 				end
 			end)
 		end
@@ -1676,11 +1671,7 @@ local function startBushSharedCardHoldVisual(view: PromptView)
 				local pulse = 0.04 + math.sin(os.clock() * 14) * 0.03
 				view.holdFill.BackgroundTransparency = math.clamp(0.05 - pulse, 0, 0.2)
 			else
-				local throb = 1 + math.sin(os.clock() * 16) * 0.03
-				badgeScale.Scale = 1.04 * throb
-				if view.bushGlow then
-					view.bushGlow.BackgroundTransparency = 0.45 - p * 0.2
-				end
+				badgeScale.Scale = 1
 			end
 			if p >= C.HOLD_COMPLETE_THRESHOLD and managedBushHoldActive == view.prompt then
 				stopHoldRender(view)
@@ -1690,7 +1681,7 @@ local function startBushSharedCardHoldVisual(view: PromptView)
 		end
 		if view.isBushPokemon then
 			view.root.Rotation = 0
-			view.keyBadge.Rotation = math.sin(os.clock() * 10) * 2.2
+			view.keyBadge.Rotation = 0
 		else
 			local t = os.clock()
 			view.root.Rotation = wiggleRotation(view.root, seed, t)
@@ -1837,23 +1828,6 @@ local function wireBushSharedClickable(view: PromptView)
 		if not MobileTouchGate.canTapUi() then
 			return
 		end
-		-- Touch / tap-mode bushes search instantly (no hold ring).
-		if isBushTapMode(view) then
-			local now = os.clock()
-			if now - pointerHoldBeganAt < 0.12 then
-				return
-			end
-			pointerHoldBeganAt = now
-			UIInteractionSounds.playClick()
-			ProximityPromptEffects.endManagedBushHold(prompt, false)
-			local handler = bushHoldCompleteHandler
-			if handler then
-				task.defer(handler, prompt)
-			else
-				triggerPromptTap(prompt)
-			end
-			return
-		end
 		pointerHoldActive = true
 		pointerHoldBeganAt = os.clock()
 		ProximityPromptEffects.beginManagedBushHold(prompt)
@@ -1870,7 +1844,6 @@ local function wireBushSharedClickable(view: PromptView)
 		ProximityPromptEffects.endManagedBushHold(prompt, completed)
 	end
 
-	-- Always wire press handlers; mode is decided at press time (touch vs keyboard HoldDuration).
 	table.insert(view.clickConns, clickBtn.MouseButton1Down:Connect(beginPointerHold))
 	table.insert(view.clickConns, clickBtn.MouseButton1Up:Connect(endPointerHold))
 	table.insert(view.clickConns, clickBtn.MouseLeave:Connect(endPointerHold))
@@ -1887,14 +1860,6 @@ local function wireBushSharedClickable(view: PromptView)
 		clickBtn.InputEnded:Connect(function(input: InputObject)
 			if input.UserInputType == Enum.UserInputType.Touch then
 				endPointerHold()
-			end
-		end)
-	)
-	table.insert(
-		view.clickConns,
-		clickBtn.Activated:Connect(function()
-			if isBushTapMode(view) then
-				beginPointerHold()
 			end
 		end)
 	)
@@ -1969,7 +1934,10 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	billboard.LightInfluence = 0
 	billboard.MaxDistance = promptBillboardMaxDistance(prompt)
 	billboard.Size = if useBushPokemon
-		then UDim2.fromOffset(C.BUSH_POKE_BOARD_SIZE, C.BUSH_POKE_BOARD_SIZE)
+		then UDim2.fromOffset(
+			if prefersTouchInput() then C.BUSH_POKE_MOBILE_BOARD_SIZE else C.BUSH_POKE_BOARD_SIZE,
+			if prefersTouchInput() then C.BUSH_POKE_MOBILE_BOARD_SIZE else C.BUSH_POKE_BOARD_SIZE
+		)
 		else UDim2.fromOffset(effectiveMinCardWidth(), C.CARD_H)
 	billboard.Adornee = adornee
 	if isBushPrompt(prompt) and adornee then
@@ -2257,24 +2225,14 @@ showBushSharedUi = function(prompt: ProximityPrompt): boolean
 	view.prompt = prompt
 	view.inputType = resolvePromptInputType(nil)
 	view.billboard.Adornee = adornee
-	view.billboard.Size = UDim2.fromOffset(C.BUSH_POKE_BOARD_SIZE, C.BUSH_POKE_BOARD_SIZE)
+	local board = if isBushTouchVisual(view) then C.BUSH_POKE_MOBILE_BOARD_SIZE else C.BUSH_POKE_BOARD_SIZE
+	view.billboard.Size = UDim2.fromOffset(board, board)
 	applyBushBillboardPlacement(view.billboard, prompt, adornee)
 	view.billboard.Enabled = true
 	ensureKeyIcon(view)
 	applyLabelsToView(view)
 	applyBushSearchCardStyle(view)
-	-- Key / tap icon: bush tap-mode uses finger; PC hold uses large E.
-	if view.isBushPokemon then
-		if isBushTapMode(view) then
-			showTouchKeyIcon(view, false)
-		else
-			refreshKeyLabel(view)
-		end
-	elseif UserInputService.TouchEnabled and not prefersGamepadInput() then
-		showTouchKeyIcon(view, prompt.HoldDuration > 0)
-	else
-		refreshKeyLabel(view)
-	end
+	refreshKeyLabel(view)
 	setHoldTrackVisible(view, view.prompt.HoldDuration > 0)
 	wirePromptLiveUpdates(prompt, view)
 	wireBushSharedClickable(view)
@@ -2289,10 +2247,6 @@ showBushSharedUi = function(prompt: ProximityPrompt): boolean
 		view.keyBadge.Rotation = 0
 
 		if view.isBushPokemon then
-			if not wasEnabled or promptChanged then
-				view.rootScale.Scale = 0.86
-				TweenService:Create(view.rootScale, C.OPEN_TWEEN, { Scale = 1 }):Play()
-			end
 			startIdleSway(view)
 		elseif not (view.displayOnly and isManagedBushPrompt(view.prompt)) then
 			if not wasEnabled or promptChanged then

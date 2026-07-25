@@ -197,12 +197,8 @@ local function prefersBushTapInput(): boolean
 end
 
 local function syncPromptHoldDuration(prompt: ProximityPrompt)
-	-- Mobile/touch: tap to search. Keyboard/gamepad: hold E / ButtonX.
-	if prefersBushTapInput() then
-		prompt.HoldDuration = 0
-	else
-		prompt.HoldDuration = HOLD_DURATION
-	end
+	-- Mobile and PC both hold-to-search.
+	prompt.HoldDuration = HOLD_DURATION
 end
 
 local scheduleBushMapScan: (map: Instance) -> ()
@@ -760,8 +756,31 @@ tryWorldTapBushSearch = function(screenPos: Vector2): boolean
 	end
 	lastBushWorldTapAt = now
 	syncPromptHoldDuration(prompt)
-	if prompt.HoldDuration <= 0 then
-		task.defer(doHarvest, prompt)
+	-- Mobile whole-bush press: start the same hold path as the floating icon.
+	if prefersBushTapInput() then
+		if bushSearchHoldPrompt == prompt then
+			return true
+		end
+		bushSearchHoldPrompt = prompt
+		bushSearchHoldBeganAt = os.clock()
+		bushSearchHoldToken += 1
+		local token = bushSearchHoldToken
+		local holdPrompt = prompt
+		ProximityPromptEffects.beginManagedBushHold(holdPrompt)
+		task.delay(math.max(0.05, holdPrompt.HoldDuration), function()
+			if bushSearchHoldToken ~= token then
+				return
+			end
+			if bushSearchHoldPrompt ~= holdPrompt then
+				return
+			end
+			if not holdPrompt.Parent or not holdPrompt.Enabled or CarryGate.isFull() then
+				return
+			end
+			ProximityPromptEffects.endManagedBushHold(holdPrompt, true)
+			task.defer(doHarvest, holdPrompt)
+			bushSearchHoldPrompt = nil
+		end)
 		return true
 	end
 	return false
@@ -973,7 +992,7 @@ function BushHoldInteraction.init()
 		tickAim()
 	end)
 
-	-- Mobile: tapping the bush mesh itself (not only the floating icon) starts search.
+	-- Mobile: pressing the bush mesh itself starts hold-to-search (same as the icon).
 	UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
 		if gameProcessed then
 			return
@@ -985,6 +1004,27 @@ function BushHoldInteraction.init()
 			return
 		end
 		tryWorldTapBushSearch(Vector2.new(input.Position.X, input.Position.Y))
+	end)
+
+	UserInputService.InputEnded:Connect(function(input: InputObject, _gameProcessed: boolean)
+		if not prefersBushTapInput() then
+			return
+		end
+		if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+			return
+		end
+		local prompt = bushSearchHoldPrompt
+		if not prompt then
+			return
+		end
+		local dur = prompt.HoldDuration
+		local completed = dur > 0 and (os.clock() - bushSearchHoldBeganAt) >= dur * 0.92
+		bushSearchHoldToken += 1
+		ProximityPromptEffects.endManagedBushHold(prompt, completed)
+		if completed then
+			task.defer(doHarvest, prompt)
+		end
+		bushSearchHoldPrompt = nil
 	end)
 
 	-- Engine ProximityPrompt hold is blocked while a brainrot Tool is equipped; run the hold ourselves.

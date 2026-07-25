@@ -1,13 +1,15 @@
 -- [ACTIVE] VegetationSwayController
 --[[
-	Local-only Pokémon-style bend for grassparts under Map.Lands/*/grass.
+	Local-only smooth Pokémon-style bend for grassparts under Map.Lands/*/grass.
 	Holds bend while standing in range; recovers after leaving.
-	Bushes intentionally omitted (nested cluster search was too expensive).
+	Plays SoundEffects.Grass while walking through.
 ]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
+
+local GameSoundEffects = require(script.Parent.GameSoundEffects)
 
 local M = {}
 
@@ -15,15 +17,15 @@ local MAX_ACTIVE = 24
 local SCAN_INTERVAL_SEC = 0.05
 local GRASS_RADIUS = 3.4
 local GRASS_RADIUS_SQ = GRASS_RADIUS * GRASS_RADIUS
-local GRASS_TILT_RAD = math.rad(14)
-local GRASS_PUSH = 0.12
-local PRESS_SEC = 0.1
-local RECOVER_SEC = 0.28
-local LEAVE_GRACE_SEC = 0.12
+local GRASS_TILT_RAD = math.rad(13)
+local GRASS_PUSH = 0.1
+local BLEND_IN = 7.5
+local BLEND_OUT = 4.2
+local CLEAR_EPS = 0.02
+local LEAVE_GRACE_SEC = 0.14
 local INDEX_REFRESH_SEC = 8
 local STEP_NAME = "VegetationSwayStep"
-
-type Phase = "press" | "hold" | "recover"
+local DIR_SMOOTH = 6
 
 type GrassEntry = {
 	part: BasePart,
@@ -37,12 +39,12 @@ type ActiveSway = {
 	base: CFrame,
 	halfY: number,
 	axis: Vector3,
+	pushDir: Vector3,
+	targetDir: Vector3,
+	envelope: number,
+	lastInRangeAt: number,
 	amp: number,
 	push: number,
-	pushDir: Vector3,
-	phase: Phase,
-	phaseStartedAt: number,
-	lastInRangeAt: number,
 }
 
 local localPlayer = Players.LocalPlayer
@@ -78,6 +80,14 @@ local function bendOffset(halfY: number, axis: Vector3, angle: number, push: num
 		* CFrame.new(0, halfY, 0)
 end
 
+local function makeAxis(pushDir: Vector3): Vector3
+	local axis = Vector3.yAxis:Cross(pushDir)
+	if axis.Magnitude < 1e-3 then
+		return Vector3.xAxis
+	end
+	return axis.Unit
+end
+
 local function unbindStep()
 	if stepBound then
 		pcall(function()
@@ -102,21 +112,10 @@ local function restoreAndClear(part: BasePart)
 	end
 end
 
-local function phaseEnvelope(entry: ActiveSway, now: number): number
-	if entry.phase == "hold" then
-		return 1
-	end
-	if entry.phase == "press" then
-		local u = math.clamp((now - entry.phaseStartedAt) / PRESS_SEC, 0, 1)
-		return u * u
-	end
-	local u = math.clamp((now - entry.phaseStartedAt) / RECOVER_SEC, 0, 1)
-	return (1 - u) * (1 - u)
-end
-
-local function stepSways(_dt: number)
+local function stepSways(dt: number)
 	local now = os.clock()
 	local toClear: { BasePart } = {}
+	local safeDt = math.clamp(dt, 0, 0.05)
 
 	for part, entry in active do
 		if not part.Parent then
@@ -124,24 +123,30 @@ local function stepSways(_dt: number)
 			continue
 		end
 
-		if entry.phase ~= "recover" and (now - entry.lastInRangeAt) > LEAVE_GRACE_SEC then
-			entry.phase = "recover"
-			entry.phaseStartedAt = now
+		local inRange = (now - entry.lastInRangeAt) <= LEAVE_GRACE_SEC
+		local targetEnv = if inRange then 1 else 0
+		local blend = if targetEnv > entry.envelope then BLEND_IN else BLEND_OUT
+		local alpha = 1 - math.exp(-blend * safeDt)
+		entry.envelope += (targetEnv - entry.envelope) * alpha
+
+		-- Soft-follow walk direction so blades don't snap when turning.
+		local dirAlpha = 1 - math.exp(-DIR_SMOOTH * safeDt)
+		entry.pushDir = entry.pushDir:Lerp(entry.targetDir, dirAlpha)
+		if entry.pushDir.Magnitude > 1e-3 then
+			entry.pushDir = entry.pushDir.Unit
+			entry.axis = makeAxis(entry.pushDir)
 		end
 
-		if entry.phase == "press" and (now - entry.phaseStartedAt) >= PRESS_SEC then
-			entry.phase = "hold"
-			entry.phaseStartedAt = now
-		end
-
-		if entry.phase == "recover" and (now - entry.phaseStartedAt) >= RECOVER_SEC then
+		if not inRange and entry.envelope <= CLEAR_EPS then
 			table.insert(toClear, part)
 			continue
 		end
 
-		local envelope = phaseEnvelope(entry, now)
+		-- Smoothstep the visible bend so mid-motion feels softer.
+		local e = entry.envelope
+		local smooth = e * e * (3 - 2 * e)
 		part.CFrame = entry.base
-			* bendOffset(entry.halfY, entry.axis, entry.amp * envelope, entry.push * envelope, entry.pushDir)
+			* bendOffset(entry.halfY, entry.axis, entry.amp * smooth, entry.push * smooth, entry.pushDir)
 	end
 
 	for _, part in toClear do
@@ -184,7 +189,6 @@ local function indexLandFolder(landFolder: Instance)
 		if desc:IsA("BasePart") then
 			addGrassPart(desc)
 		elseif desc:IsA("Model") then
-			-- Prefer the model’s direct BasePart children (one blade unit), not every nested mesh.
 			local any = false
 			for _, child in desc:GetChildren() do
 				if child:IsA("BasePart") then
@@ -245,50 +249,39 @@ local function ensureIndex()
 	end
 end
 
-local function makeAxis(pushDir: Vector3): Vector3
-	local axis = Vector3.yAxis:Cross(pushDir)
-	if axis.Magnitude < 1e-3 then
-		return Vector3.xAxis
-	end
-	return axis.Unit
-end
-
-local function touchGrass(part: BasePart, pushDir: Vector3, now: number)
+local function touchGrass(part: BasePart, pushDir: Vector3): boolean
 	local existing = active[part]
 	if existing then
-		existing.lastInRangeAt = now
-		if existing.phase == "recover" then
-			existing.phase = "press"
-			existing.phaseStartedAt = now
-		end
+		existing.lastInRangeAt = os.clock()
 		if pushDir.Magnitude > 0.2 then
-			existing.pushDir = pushDir
-			existing.axis = makeAxis(pushDir)
+			existing.targetDir = pushDir.Unit
 		end
-		return
+		return false
 	end
 
 	if activeCount >= MAX_ACTIVE then
-		return
+		return false
 	end
 	if not part.Parent then
-		return
+		return false
 	end
 
+	local dir = if pushDir.Magnitude > 0.2 then pushDir.Unit else lastMoveFlat
 	active[part] = {
 		part = part,
 		base = part.CFrame,
 		halfY = math.max(part.Size.Y * 0.5, 0.25),
-		axis = makeAxis(pushDir),
+		axis = makeAxis(dir),
+		pushDir = dir,
+		targetDir = dir,
+		envelope = 0,
+		lastInRangeAt = os.clock(),
 		amp = GRASS_TILT_RAD,
 		push = GRASS_PUSH,
-		pushDir = pushDir,
-		phase = "press",
-		phaseStartedAt = now,
-		lastInRangeAt = now,
 	}
 	activeCount += 1
 	bindStep()
+	return true
 end
 
 local function scanAroundCharacter(_character: Model, humanoid: Humanoid, hrp: BasePart)
@@ -306,17 +299,16 @@ local function scanAroundCharacter(_character: Model, humanoid: Humanoid, hrp: B
 	local px, py, pz = pos.X, pos.Y, pos.Z
 	local move = humanoid.MoveDirection
 	local moveFlat = Vector3.new(move.X, 0, move.Z)
-	if moveFlat.Magnitude > 0.12 then
+	local walking = moveFlat.Magnitude > 0.12
+	if walking then
 		lastMoveFlat = moveFlat.Unit
 	end
 
-	local now = os.clock()
-	local pushDefault = if moveFlat.Magnitude > 0.12
+	local pushDefault = if walking
 		then moveFlat.Unit
 		elseif lastMoveFlat.Magnitude > 0.1 then lastMoveFlat
 		else Vector3.new(0, 0, -1)
 
-	-- Collect nearest hits without sorting the full map — first-pass gather then soft cap.
 	type Cand = { part: BasePart, distSq: number, x: number, z: number }
 	local cands: { Cand } = {}
 
@@ -346,17 +338,25 @@ local function scanAroundCharacter(_character: Model, humanoid: Humanoid, hrp: B
 		return a.distSq < b.distSq
 	end)
 
+	local startedNew = false
 	local limit = math.min(#cands, MAX_ACTIVE)
 	for i = 1, limit do
 		local cand = cands[i]
 		local dir = pushDefault
-		if moveFlat.Magnitude <= 0.12 then
+		if not walking then
 			local away = Vector3.new(px - cand.x, 0, pz - cand.z)
 			if away.Magnitude > 1e-3 then
 				dir = away.Unit
 			end
 		end
-		touchGrass(cand.part, dir, now)
+		if touchGrass(cand.part, dir) then
+			startedNew = true
+		end
+	end
+
+	-- Rustle while walking through grass (throttled inside GameSoundEffects).
+	if walking and (#cands > 0 or startedNew) then
+		GameSoundEffects.playGrassWalk()
 	end
 end
 

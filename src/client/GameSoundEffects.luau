@@ -1,7 +1,7 @@
 -- [ACTIVE] GameSoundEffects
 --[[
 	GameSoundEffects — gameplay SFX under SoundService.SoundEffects
-	CashGrab, ErrorNotif, Drops, BushAura, BushRustles, On ProximityPrompts, GroundSmash, Purchase, Upgrade
+	CashGrab, ErrorNotif, Drops, BushAura, BushRustles, Grass, On ProximityPrompts, GroundSmash, Purchase, Upgrade
 --]]
 
 local Players = game:GetService("Players")
@@ -32,6 +32,7 @@ local spiderRoarTemplate: Sound?
 local spiderWebShotTemplate: Sound?
 local spiderGettingHitTemplate: Sound?
 local spiderDodgeTemplate: Sound?
+local grassTemplates: { Sound } = {}
 
 local activeAuraSound: Sound?
 local activeAuraKey: string? = nil
@@ -54,6 +55,11 @@ local PURCHASE_SHAKE_DURATION = 0.42
 local BUSH_RANDOM_SHAKE_MAX_DIST = 70
 local BUSH_RANDOM_SHAKE_PITCH_MIN = 0.94
 local BUSH_RANDOM_SHAKE_PITCH_MAX = 1.06
+
+local GRASS_WALK_COOLDOWN_SEC = 0.22
+local GRASS_WALK_PITCH_MIN = 0.92
+local GRASS_WALK_PITCH_MAX = 1.08
+local lastGrassWalkAt = 0.0
 
 local HIDDEN_RARITY_ATTR = "HiddenBrainrotRarity"
 local HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
@@ -323,6 +329,26 @@ function GameSoundEffects.init()
 
 	notification1Template = findSoundIn(root, "Notification1")
 
+	table.clear(grassTemplates)
+	local grassNode = root:FindFirstChild("Grass")
+	if grassNode then
+		if grassNode:IsA("Sound") then
+			table.insert(grassTemplates, grassNode)
+		else
+			for _, child in grassNode:GetDescendants() do
+				if child:IsA("Sound") then
+					table.insert(grassTemplates, child)
+				end
+			end
+			if #grassTemplates == 0 then
+				local one = grassNode:FindFirstChildWhichIsA("Sound")
+				if one then
+					table.insert(grassTemplates, one)
+				end
+			end
+		end
+	end
+
 	local spiderFolder = root:FindFirstChild("Spider")
 	local spiderGroup = spiderFolder and spiderFolder:FindFirstChild("SoundGroup")
 	if spiderGroup then
@@ -553,6 +579,46 @@ function GameSoundEffects.playNotification1()
 		return
 	end
 	local clone = prepareClone(notification1Template)
+	clone:Play()
+	clone.Ended:Once(function()
+		clone:Destroy()
+	end)
+end
+
+function GameSoundEffects.playGrassWalk()
+	if ClientSFXVolume.getVolume() <= 0 then
+		return
+	end
+
+	local now = os.clock()
+	if now - lastGrassWalkAt < GRASS_WALK_COOLDOWN_SEC then
+		return
+	end
+
+	if #grassTemplates == 0 then
+		local root = SoundService:FindFirstChild("SoundEffects")
+		if root then
+			local grassNode = root:FindFirstChild("Grass")
+			if grassNode and grassNode:IsA("Sound") then
+				table.insert(grassTemplates, grassNode)
+			elseif grassNode then
+				for _, child in grassNode:GetDescendants() do
+					if child:IsA("Sound") then
+						table.insert(grassTemplates, child)
+					end
+				end
+			end
+		end
+	end
+	if #grassTemplates == 0 then
+		return
+	end
+
+	lastGrassWalkAt = now
+	local template = grassTemplates[math.random(1, #grassTemplates)]
+	local clone = prepareClone(template)
+	clone.PlaybackSpeed = GRASS_WALK_PITCH_MIN + math.random() * (GRASS_WALK_PITCH_MAX - GRASS_WALK_PITCH_MIN)
+	clone.Parent = SoundService
 	clone:Play()
 	clone.Ended:Once(function()
 		clone:Destroy()

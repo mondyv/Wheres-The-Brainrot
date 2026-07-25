@@ -159,7 +159,7 @@ local function makeFly(parent: Folder, center: Vector3, half: Vector3, index: nu
 		NumberSequenceKeypoint.new(0.4, 0.55),
 		NumberSequenceKeypoint.new(1, 1),
 	})
-	glow.LifetimeRate = 6
+	glow.Rate = 6
 	glow.Lifetime = NumberRange.new(0.35, 0.55)
 	glow.Speed = NumberRange.new(0, 0.05)
 	glow.SpreadAngle = Vector2.new(180, 180)

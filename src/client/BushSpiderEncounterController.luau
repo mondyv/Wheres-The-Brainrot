@@ -1183,6 +1183,32 @@ local function shakeCFrame(base: CFrame, phase: number, amp: number): CFrame
 		)
 end
 
+-- Soft look-at when cutscene setting is OFF (no drop/rage cams).
+local function beginSimpleLookAtCamera(getSpiderPivot: () -> CFrame, getPlayerPos: () -> Vector3)
+	stopCameraRig()
+	local cam = Workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	saveCameraState(cam)
+
+	cameraConn = RunService.RenderStepped:Connect(function()
+		if not encounterActive or not cam then
+			return
+		end
+		local spiderPos = getSpiderPivot().Position + Vector3.new(0, 1.6, 0)
+		local playerPos = getPlayerPos()
+		local flat = Vector3.new(spiderPos.X - playerPos.X, 0, spiderPos.Z - playerPos.Z)
+		if flat.Magnitude < 0.05 then
+			flat = Vector3.new(0, 0, -1)
+		else
+			flat = flat.Unit
+		end
+		local camPos = playerPos - flat * 7.5 + Vector3.new(0, 4.2, 0)
+		cam.CFrame = CFrame.lookAt(camPos, spiderPos)
+	end)
+end
+
 local function beginSpiderDropCamera(getSpiderPivot: () -> CFrame, getPlayerPos: () -> Vector3, intensity: number)
 	stopCameraRig()
 	local cam = Workspace.CurrentCamera
@@ -1801,7 +1827,7 @@ local function tweenSpiderDrop(
 	spider:PivotTo(cfFacingTarget(toPos, faceTargetFn()))
 end
 
-local function finishEncounter(spider: Model?, web: Model?)
+local function finishEncounter(spider: Model?, web: Model?, didHideHud: boolean?)
 	encounterActive = false
 	hideTimingQTE()
 	stopSpideySenses()
@@ -1810,7 +1836,9 @@ local function finishEncounter(spider: Model?, web: Model?)
 	clearPostFx()
 	animateLetterboxOut()
 	restoreCamera()
-	GameplayUiVisibility.show()
+	if didHideHud ~= false then
+		GameplayUiVisibility.show()
+	end
 	BushHoldInteraction.setBushSearchLocked(false)
 
 	if spider and spider.Parent then
@@ -1942,12 +1970,13 @@ local function runEncounter(fallbackAnchor: Vector3)
 
 	BushHoldInteraction.setBushSearchLocked(true)
 	lockPlayerMovement()
-	-- ON (default): full drop + rage + shooting cinematic.
-	-- OFF: ground spawn + QTE only (no cameras / letterbox).
+	-- ON (default): full drop + rage + shooting cinematic cameras.
+	-- OFF: ground spawn + soft look-at + QTE (still letterbox / HUD hide).
 	local cutsceneOn = player:GetAttribute("SpiderCutsceneEnabled") ~= false
+	local didHideHud = true
+	GameplayUiVisibility.hide({ keepScreenGuiNames = { "BushSpiderCutscene" } })
+	animateLetterboxIn()
 	if cutsceneOn then
-		GameplayUiVisibility.hide({ keepScreenGuiNames = { "BushSpiderCutscene" } })
-		animateLetterboxIn()
 		ensurePostFx()
 	end
 	setBgmSlowed(true)
@@ -1983,7 +2012,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 		end, 1.05)
 
 		if not encounterActive then
-			finishEncounter(spider, nil)
+			finishEncounter(spider, nil, didHideHud)
 			return
 		end
 
@@ -2003,7 +2032,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 		stopSpideySenses()
 
 		if not encounterActive then
-			finishEncounter(spider, nil)
+			finishEncounter(spider, nil, didHideHud)
 			return
 		end
 
@@ -2022,6 +2051,11 @@ local function runEncounter(fallbackAnchor: Vector3)
 	else
 		faceCharacterToward(landingPos)
 		spider:PivotTo(cfFacingTarget(landingPos, playerAim))
+		beginSimpleLookAtCamera(function()
+			return spider:GetPivot()
+		end, function()
+			return getPlayerChestPos(fallbackAnchor)
+		end)
 		startSpideySensesOnSpider(spider)
 		if rageTrack then
 			rageTrack.Priority = Enum.AnimationPriority.Action4
@@ -2035,7 +2069,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 		stopSpideySenses()
 
 		if not encounterActive then
-			finishEncounter(spider, nil)
+			finishEncounter(spider, nil, didHideHud)
 			return
 		end
 
@@ -2045,7 +2079,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 	end
 
 	if not encounterActive then
-		finishEncounter(spider, nil)
+		finishEncounter(spider, nil, didHideHud)
 		return
 	end
 
@@ -2080,20 +2114,17 @@ local function runEncounter(fallbackAnchor: Vector3)
 			local hrp = getPlayerHRP()
 			return if hrp then hrp.Position else getPlayerAimPos(fallbackAnchor)
 		end, 1.65)
+	else
+		-- Keep looking at spider while the web flies (QTE phase).
+		beginSimpleLookAtCamera(function()
+			return spider:GetPivot()
+		end, function()
+			return getPlayerChestPos(fallbackAnchor)
+		end)
 	end
 
-	ensureCutsceneGui()
-	-- Off: QTE only — no letterbox bars.
-	if not cutsceneOn and cutsceneGui then
-		local top = cutsceneGui:FindFirstChild("LetterTop")
-		local bottom = cutsceneGui:FindFirstChild("LetterBottom")
-		if top and top:IsA("GuiObject") then
-			top.Visible = false
-		end
-		if bottom and bottom:IsA("GuiObject") then
-			bottom.Visible = false
-		end
-	end
+	local gui = ensureCutsceneGui()
+	gui.Enabled = true
 	local choice = C.TIMING_LETTERS[math.random(1, #C.TIMING_LETTERS)]
 	local mobileInput = isMobileSpiderInput()
 	refreshTimingUiPresentation(mobileInput, choice.label)
@@ -2277,7 +2308,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 		fadeWebProjectile(web, C.WEB_FADE_OUT)
 		fadeSpider(spider)
 		waitSec(0.4)
-		finishEncounter(spider, web)
+		finishEncounter(spider, web, didHideHud)
 		return
 	end
 
@@ -2297,7 +2328,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 	killPlayerFromSpiderHit()
 	task.delay(0.15, killPlayerFromSpiderHit)
 	waitSec(0.95)
-	finishEncounter(spider, web)
+	finishEncounter(spider, web, didHideHud)
 	return
 end
 

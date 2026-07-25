@@ -1,15 +1,14 @@
 -- [ACTIVE] GameplayUiVisibility
 --[[
-	Shared cutscene / panel HUD hide/show.
-	Animates individual SideUI buttons (not whole Lef1/Top groups) on staggered
-	quadratic arcs. Detaches list/grid layouts during the slide so Position tweens win.
-	Never animates Main.Frames. Hard-resets bases before re-hide so positions stay clean.
+	Shared cutscene / panel HUD hide/show with Pokemon-style staggered slide-to-edge.
+	Never animates Main.Frames (panel host). Interrupting a restore hard-snaps bases
+	before a new hide so positions cannot corrupt (fixes offset panels / missing HUD).
 ]]
 
 local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -21,19 +20,16 @@ local M = {}
 
 local hideCount = 0
 local animGen = 0
-local SLIDE_OUT_DUR = 0.22
-local SLIDE_IN_DUR = 0.24
-local WAVE_STAGGER = 0.032
-local MAX_WAVE_SPAN = 0.28
-local ARC_HEIGHT = 42
+local SLIDE_OUT = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local SLIDE_IN = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local WAVE_STAGGER = 0.028
+local MAX_WAVE_SPAN = 0.2
 
 type GuiSnap = {
 	inst: GuiObject,
 	wasVisible: boolean,
 	basePos: UDim2,
-	deltaX: number,
-	deltaY: number,
-	arcSign: number,
+	slidePos: UDim2,
 	order: number,
 	clips: boolean,
 }
@@ -50,30 +46,16 @@ type ClipRestore = {
 	safeAreaCompatibility: Enum.SafeAreaCompatibility?,
 }
 
-type LayoutSnap = {
-	layout: UIListLayout | UIGridLayout | UIPageLayout,
-	parent: Instance,
-}
-
-type Flight = {
-	entry: GuiSnap,
-	t0: number,
-	dur: number,
-	goingOut: boolean,
-}
-
 local mainSnaps: { GuiSnap } = {}
 local screenSnaps: { ScreenSnap } = {}
 local clipRestores: { ClipRestore } = {}
-local layoutSnaps: { LayoutSnap } = {}
 local chatWasEnabled = true
+local activeTweens: { Tween } = {}
 local keepScreenNames: { [string]: boolean } = {}
 local keepMainChildNames: { [string]: boolean } = {}
 local sideUIRef: GuiObject? = nil
 local sideUIWasVisible = true
 local restoreCallbacks: { () -> () } = {}
-local flightConn: RBXScriptConnection? = nil
-local activeFlights: { Flight } = {}
 
 export type HideOpts = {
 	keepScreenGuiNames: { string }?,
@@ -84,139 +66,25 @@ export type ShowOpts = {
 	instant: boolean?,
 }
 
-local function easeQuadIn(t: number): number
-	return t * t
+local function cancelTweens()
+	for _, tw in activeTweens do
+		pcall(function()
+			tw:Cancel()
+		end)
+	end
+	table.clear(activeTweens)
 end
 
-local function easeQuadOut(t: number): number
-	local u = 1 - t
-	return 1 - u * u
+local function playTween(inst: Instance, info: TweenInfo, props: { [string]: any })
+	local tw = TweenService:Create(inst, info, props)
+	table.insert(activeTweens, tw)
+	tw:Play()
+	return tw
 end
 
 local function viewportSize(): Vector2
 	local cam = Workspace.CurrentCamera
 	return if cam then cam.ViewportSize else Vector2.new(1280, 720)
-end
-
-local function stopFlights()
-	if flightConn then
-		flightConn:Disconnect()
-		flightConn = nil
-	end
-	table.clear(activeFlights)
-end
-
-local function applyFlightPos(entry: GuiSnap, alpha: number, goingOut: boolean)
-	local eased = if goingOut then easeQuadIn(alpha) else easeQuadOut(alpha)
-	-- Quadratic arc: peaks mid-flight (4t(1-t))
-	local arc = 4 * alpha * (1 - alpha) * ARC_HEIGHT * entry.arcSign
-	local x = if goingOut then entry.deltaX * eased else entry.deltaX * (1 - eased)
-	local y = if goingOut then entry.deltaY * eased else entry.deltaY * (1 - eased)
-	-- Arc is perpendicular-ish: bias upward on horizontal exits, sideways on vertical
-	local ax = 0
-	local ay = 0
-	if math.abs(entry.deltaX) >= math.abs(entry.deltaY) then
-		ay = -arc
-	else
-		ax = arc * 0.55
-	end
-	local base = entry.basePos
-	entry.inst.Position = UDim2.new(
-		base.X.Scale,
-		base.X.Offset + x + ax,
-		base.Y.Scale,
-		base.Y.Offset + y + ay
-	)
-end
-
-local function ensureFlightLoop()
-	if flightConn then
-		return
-	end
-	flightConn = RunService.RenderStepped:Connect(function()
-		if #activeFlights == 0 then
-			stopFlights()
-			return
-		end
-		local now = os.clock()
-		local i = 1
-		while i <= #activeFlights do
-			local flight = activeFlights[i]
-			local entry = flight.entry
-			if not entry.inst.Parent then
-				table.remove(activeFlights, i)
-				continue
-			end
-			local a = math.clamp((now - flight.t0) / math.max(flight.dur, 0.01), 0, 1)
-			applyFlightPos(entry, a, flight.goingOut)
-			if a >= 1 then
-				if flight.goingOut then
-					entry.inst.Visible = false
-					entry.inst.Position = UDim2.new(
-						entry.basePos.X.Scale,
-						entry.basePos.X.Offset + entry.deltaX,
-						entry.basePos.Y.Scale,
-						entry.basePos.Y.Offset + entry.deltaY
-					)
-				else
-					entry.inst.Position = entry.basePos
-					entry.inst.Visible = entry.wasVisible
-				end
-				table.remove(activeFlights, i)
-			else
-				i += 1
-			end
-		end
-	end)
-end
-
-local function startFlight(entry: GuiSnap, goingOut: boolean, delaySec: number, dur: number, gen: number)
-	task.delay(delaySec, function()
-		if gen ~= animGen or not entry.inst.Parent then
-			return
-		end
-		if goingOut and hideCount <= 0 then
-			return
-		end
-		if not goingOut and hideCount > 0 then
-			return
-		end
-		if goingOut then
-			entry.inst.Visible = true
-			entry.inst.Position = entry.basePos
-		else
-			entry.inst.Visible = true
-			applyFlightPos(entry, 0, false) -- at full delta (goingOut false alpha 0 => delta*(1-0)=delta)
-		end
-		table.insert(activeFlights, {
-			entry = entry,
-			t0 = os.clock(),
-			dur = dur,
-			goingOut = goingOut,
-		})
-		ensureFlightLoop()
-	end)
-end
-
-local function restoreLayouts()
-	for _, entry in layoutSnaps do
-		if entry.layout and entry.parent and entry.parent.Parent then
-			entry.layout.Parent = entry.parent
-		end
-	end
-	table.clear(layoutSnaps)
-end
-
-local function detachLayouts(root: Instance)
-	for _, d in root:GetDescendants() do
-		if d:IsA("UIListLayout") or d:IsA("UIGridLayout") or d:IsA("UIPageLayout") then
-			local parent = d.Parent
-			if parent then
-				table.insert(layoutSnaps, { layout = d, parent = parent })
-				d.Parent = nil
-			end
-		end
-	end
 end
 
 local function restoreClipping()
@@ -272,69 +140,86 @@ local function disableClippingForSlide(main: Instance, sideUI: GuiObject?)
 
 	if sideUI then
 		unclipGui(sideUI)
-		for _, d in sideUI:GetDescendants() do
-			if d:IsA("GuiObject") and (d :: GuiObject).ClipsDescendants then
-				unclipGui(d :: GuiObject)
-			end
+	end
+	for _, entry in mainSnaps do
+		if entry.inst.Parent then
+			unclipGui(entry.inst)
 		end
 	end
 end
 
-local function pieceCenter(gui: GuiObject): Vector2
-	return gui.AbsolutePosition + gui.AbsoluteSize * 0.5
-end
+local function contentBounds(gui: GuiObject, vp: Vector2): (Vector2, Vector2)
+	local minX, minY = math.huge, math.huge
+	local maxX, maxY = -math.huge, -math.huge
+	local found = false
+	local areaCap = vp.X * vp.Y * 0.5
 
-local function computeSlideDelta(gui: GuiObject, vp: Vector2): (number, number, number)
+	local function consider(g: GuiObject)
+		if not g.Visible then
+			return
+		end
+		local sz = g.AbsoluteSize
+		local area = sz.X * sz.Y
+		if area < 16 * 16 or area >= areaCap then
+			return
+		end
+		local pos = g.AbsolutePosition
+		minX = math.min(minX, pos.X)
+		minY = math.min(minY, pos.Y)
+		maxX = math.max(maxX, pos.X + sz.X)
+		maxY = math.max(maxY, pos.Y + sz.Y)
+		found = true
+	end
+
+	consider(gui)
+	for _, d in gui:GetDescendants() do
+		if d:IsA("GuiObject") then
+			consider(d :: GuiObject)
+		end
+	end
+
+	if found then
+		local center = Vector2.new((minX + maxX) * 0.5, (minY + maxY) * 0.5)
+		local size = Vector2.new(math.max(maxX - minX, 40), math.max(maxY - minY, 40))
+		return center, size
+	end
+	local absPos = gui.AbsolutePosition
 	local absSize = gui.AbsoluteSize
-	local center = pieceCenter(gui)
+	return absPos + absSize * 0.5, Vector2.new(math.min(absSize.X, vp.X * 0.4), math.min(absSize.Y, vp.Y * 0.4))
+end
+
+local function computeSlidePos(gui: GuiObject, vp: Vector2): UDim2
+	local base = gui.Position
+	local center, contentSize = contentBounds(gui, vp)
 	local inset = GuiService:GetGuiInset()
-	local margin = 36 + inset.Y * 0.2
-	local travelX = math.clamp(absSize.X + margin, 70, vp.X * 0.5)
-	local travelY = math.clamp(absSize.Y + margin, 60, vp.Y * 0.42)
+	local topInset = inset.Y
+	local margin = 48 + topInset * 0.25
+	local travelX = math.clamp(contentSize.X + margin, 80, vp.X * 0.55)
+	local travelY = math.clamp(contentSize.Y + margin, 70, vp.Y * 0.45)
 	local nx = center.X / math.max(vp.X, 1)
-	local arcSign = if center.X < vp.X * 0.5 then 1 else -1
 
-	if nx < 0.4 then
-		return -travelX, 0, arcSign
-	elseif nx > 0.6 then
-		return travelX, 0, -arcSign
-	elseif center.Y < vp.Y * 0.38 then
-		return 0, -travelY, arcSign
+	if nx < 0.38 then
+		return UDim2.new(base.X.Scale, base.X.Offset - travelX, base.Y.Scale, base.Y.Offset)
+	elseif nx > 0.62 then
+		return UDim2.new(base.X.Scale, base.X.Offset + travelX, base.Y.Scale, base.Y.Offset)
+	elseif center.Y < vp.Y * 0.36 then
+		return UDim2.new(base.X.Scale, base.X.Offset, base.Y.Scale, base.Y.Offset - travelY)
 	else
-		return 0, travelY, arcSign
+		return UDim2.new(base.X.Scale, base.X.Offset, base.Y.Scale, base.Y.Offset + travelY)
 	end
 end
 
-local function waveOrderKey(gui: GuiObject): number
-	local center = pieceCenter(gui)
-	return -center.Y + center.X * 0.015
-end
-
-local function isVisibleChain(gui: GuiObject, stopAt: Instance): boolean
-	local p: Instance? = gui
-	while p and p ~= stopAt do
-		if p:IsA("GuiObject") and not (p :: GuiObject).Visible then
-			return false
-		end
-		p = p.Parent
-	end
-	return gui.Visible
+local function waveOrderKey(gui: GuiObject, vp: Vector2): number
+	local center = contentBounds(gui, vp)
+	return -center.Y + center.X * 0.02
 end
 
 local function collectTargets(main: Instance): { GuiObject }
-	local vp = viewportSize()
 	local targets: { GuiObject } = {}
 	local seen: { [GuiObject]: boolean } = {}
 
 	local function addTarget(gui: GuiObject)
-		if seen[gui] then
-			return
-		end
-		local sz = gui.AbsoluteSize
-		if sz.X < 18 or sz.Y < 18 then
-			return
-		end
-		if sz.X >= vp.X * 0.7 and sz.Y >= vp.Y * 0.55 then
+		if seen[gui] or not gui.Visible then
 			return
 		end
 		seen[gui] = true
@@ -344,76 +229,9 @@ local function collectTargets(main: Instance): { GuiObject }
 	local sideUI = main:FindFirstChild("SideUI")
 	if sideUI and sideUI:IsA("GuiObject") then
 		sideUIRef = sideUI :: GuiObject
-
-		local buttons: { GuiButton } = {}
-		for _, d in sideUI:GetDescendants() do
-			if d:IsA("GuiButton") and isVisibleChain(d :: GuiObject, sideUI) then
-				table.insert(buttons, d :: GuiButton)
-			end
-		end
-
-		for _, btn in buttons do
-			local nested = false
-			for _, other in buttons do
-				if other ~= btn and btn:IsDescendantOf(other) then
-					nested = true
-					break
-				end
-			end
-			if not nested then
-				addTarget(btn)
-			end
-		end
-
-		-- Non-button chrome leaves (cash, boost, area…)
-		for _, d in sideUI:GetDescendants() do
-			if not d:IsA("GuiObject") or d:IsA("GuiButton") then
-				continue
-			end
-			local gui = d :: GuiObject
-			if not isVisibleChain(gui, sideUI) then
-				continue
-			end
-			local sz = gui.AbsoluteSize
-			if sz.X < 36 or sz.Y < 28 then
-				continue
-			end
-			if sz.X >= vp.X * 0.55 or sz.Y >= vp.Y * 0.4 then
-				continue
-			end
-			local hasBtn = false
-			for _, c in gui:GetDescendants() do
-				if c:IsA("GuiButton") then
-					hasBtn = true
-					break
-				end
-			end
-			if hasBtn then
-				continue
-			end
-			local covers = false
-			for _, t in targets do
-				if t:IsDescendantOf(gui) then
-					covers = true
-					break
-				end
-			end
-			if covers then
-				continue
-			end
-			local parent = gui.Parent
-			local parentName = if parent then parent.Name else ""
-			local useful = gui.Name == "Cash"
-				or gui.Name == "Boost"
-				or gui.Name == "CurrentArea"
-				or gui.Name == "Notif"
-				or gui.Name == "Return"
-				or parentName == "Counters"
-				or parentName == "Top"
-				or parentName == "Boosts"
-				or parentName == "GamepassBoostIcons"
-			if useful then
-				addTarget(gui)
+		for _, sub in sideUI:GetChildren() do
+			if sub:IsA("GuiObject") then
+				addTarget(sub :: GuiObject)
 			end
 		end
 	else
@@ -427,20 +245,7 @@ local function collectTargets(main: Instance): { GuiObject }
 		if child.Name == "SideUI" or keepMainChildNames[child.Name] then
 			continue
 		end
-		local gui = child :: GuiObject
-		if not gui.Visible then
-			continue
-		end
-		local sz = gui.AbsoluteSize
-		if sz.X >= vp.X * 0.65 and sz.Y >= vp.Y * 0.5 then
-			for _, sub in gui:GetDescendants() do
-				if sub:IsA("GuiButton") and isVisibleChain(sub :: GuiObject, gui) then
-					addTarget(sub :: GuiObject)
-				end
-			end
-		else
-			addTarget(gui)
-		end
+		addTarget(child :: GuiObject)
 	end
 
 	return targets
@@ -449,6 +254,7 @@ end
 local function buildKeepSets(opts: HideOpts?)
 	table.clear(keepScreenNames)
 	table.clear(keepMainChildNames)
+	-- Frames is the panel host — never slide it (causes offset/missing shop panels)
 	keepMainChildNames.Frames = true
 	keepScreenNames.FloatingClaimCutscene = true
 	keepScreenNames.BushSpiderCutscene = true
@@ -496,6 +302,7 @@ local function restoreScreenGuis()
 	if mainGui and mainGui:IsA("ScreenGui") then
 		mainGui.Enabled = true
 	end
+	-- Frames must always be available for panels
 	if mainGui then
 		local frames = mainGui:FindFirstChild("Frames")
 		if frames and frames:IsA("GuiObject") then
@@ -508,7 +315,7 @@ local function restoreScreenGuis()
 end
 
 local function hardRestoreSnaps()
-	stopFlights()
+	cancelTweens()
 	for _, entry in mainSnaps do
 		if entry.inst.Parent then
 			entry.inst.Position = entry.basePos
@@ -521,16 +328,16 @@ local function hardRestoreSnaps()
 	if sideUIRef and sideUIRef.Parent then
 		sideUIRef.Visible = sideUIWasVisible
 	end
-	restoreLayouts()
 	restoreClipping()
 	restoreScreenGuis()
 end
 
+-- Undo an in-progress hide/restore so the next snapshot uses true layout positions
 local function revertSnapsToBaseBeforeResnap()
 	if #mainSnaps == 0 then
 		return
 	end
-	stopFlights()
+	cancelTweens()
 	for _, entry in mainSnaps do
 		if entry.inst.Parent then
 			entry.inst.Position = entry.basePos
@@ -543,13 +350,22 @@ local function revertSnapsToBaseBeforeResnap()
 	if sideUIRef and sideUIRef.Parent then
 		sideUIRef.Visible = sideUIWasVisible
 	end
-	restoreLayouts()
 	restoreClipping()
+end
+
+local function parkSnapsHidden()
+	for _, entry in mainSnaps do
+		if entry.inst.Parent and entry.wasVisible then
+			entry.inst.Visible = false
+			entry.inst.Position = entry.slidePos
+		end
+	end
 end
 
 local function snapshotAndSlideOut()
 	animGen += 1
 	local gen = animGen
+	-- Critical: if a restore was mid-flight, snap back to real bases before re-hiding
 	revertSnapsToBaseBeforeResnap()
 	table.clear(mainSnaps)
 	table.clear(screenSnaps)
@@ -559,24 +375,21 @@ local function snapshotAndSlideOut()
 		main.Enabled = true
 	end
 
+	-- Always keep Frames visible for panels
 	local frames = main:FindFirstChild("Frames")
 	if frames and frames:IsA("GuiObject") then
 		(frames :: GuiObject).Visible = true
 	end
 
 	local vp = viewportSize()
-	-- Snapshot positions WHILE layouts still apply (true resting layout)
 	local pending: { GuiSnap } = {}
 	for _, gui in collectTargets(main) do
-		local dx, dy, arcSign = computeSlideDelta(gui, vp)
 		table.insert(pending, {
 			inst = gui,
 			wasVisible = true,
 			basePos = gui.Position,
-			deltaX = dx,
-			deltaY = dy,
-			arcSign = arcSign,
-			order = waveOrderKey(gui),
+			slidePos = computeSlidePos(gui, vp),
+			order = waveOrderKey(gui, vp),
 			clips = gui.ClipsDescendants,
 		})
 	end
@@ -593,16 +406,26 @@ local function snapshotAndSlideOut()
 		table.insert(mainSnaps, entry)
 	end
 
-	-- Freeze layouts so each button can fly on its own
-	if sideUIRef then
-		detachLayouts(sideUIRef)
-	end
 	disableClippingForSlide(main, sideUIRef)
 
 	local count = #pending
 	for i, entry in ipairs(pending) do
-		startFlight(entry, true, waveDelay(i, count), SLIDE_OUT_DUR, gen)
+		local delaySec = waveDelay(i, count)
+		task.delay(delaySec, function()
+			if gen ~= animGen or hideCount <= 0 or not entry.inst.Parent then
+				return
+			end
+			playTween(entry.inst, SLIDE_OUT, { Position = entry.slidePos })
+		end)
 	end
+
+	local totalOut = SLIDE_OUT.Time + waveDelay(count, count) + 0.01
+	task.delay(totalOut, function()
+		if gen ~= animGen or hideCount <= 0 then
+			return
+		end
+		parkSnapsHidden()
+	end)
 
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then
@@ -633,7 +456,7 @@ end
 local function slideInAndRestore()
 	animGen += 1
 	local gen = animGen
-	stopFlights()
+	cancelTweens()
 
 	local pending: { GuiSnap } = {}
 	for _, entry in mainSnaps do
@@ -647,10 +470,6 @@ local function slideInAndRestore()
 	if #clipRestores == 0 then
 		disableClippingForSlide(main, sideUIRef)
 	end
-	-- Layouts should still be detached from hide; if not, detach again
-	if sideUIRef and #layoutSnaps == 0 then
-		detachLayouts(sideUIRef)
-	end
 
 	if sideUIRef and sideUIRef.Parent then
 		sideUIRef.Visible = sideUIWasVisible
@@ -661,23 +480,30 @@ local function slideInAndRestore()
 		(frames :: GuiObject).Visible = true
 	end
 
+	for _, entry in ipairs(pending) do
+		if entry.inst.Parent and entry.wasVisible then
+			entry.inst.Position = entry.slidePos
+			entry.inst.Visible = false
+		end
+	end
+
 	local count = #pending
 	if count == 0 then
 		finishRestoreCleanup()
 		return
 	end
 
-	-- Park at off-screen end of arc, then fly home
-	for _, entry in ipairs(pending) do
-		if entry.inst.Parent and entry.wasVisible then
-			entry.inst.Visible = false
-			applyFlightPos(entry, 1, true)
-		end
-	end
-
 	for i, entry in ipairs(pending) do
 		if entry.inst.Parent and entry.wasVisible then
-			startFlight(entry, false, waveDelay(i, count), SLIDE_IN_DUR, gen)
+			local delaySec = waveDelay(i, count)
+			task.delay(delaySec, function()
+				if gen ~= animGen or hideCount > 0 or not entry.inst.Parent then
+					return
+				end
+				entry.inst.Position = entry.slidePos
+				entry.inst.Visible = true
+				playTween(entry.inst, SLIDE_IN, { Position = entry.basePos })
+			end)
 		elseif entry.inst.Parent then
 			entry.inst.Position = entry.basePos
 			entry.inst.Visible = false
@@ -691,7 +517,7 @@ local function slideInAndRestore()
 		restoreScreenGuis()
 	end)
 
-	local totalIn = SLIDE_IN_DUR + waveDelay(count, count) + 0.05
+	local totalIn = SLIDE_IN.Time + waveDelay(count, count) + 0.04
 	task.delay(totalIn, function()
 		if gen ~= animGen or hideCount > 0 then
 			return
@@ -702,7 +528,7 @@ end
 
 local function instantRestore()
 	animGen += 1
-	stopFlights()
+	cancelTweens()
 	finishRestoreCleanup()
 end
 
@@ -713,6 +539,7 @@ function M.hide(opts: HideOpts?)
 		GameplayMusicMuffle.push()
 		snapshotAndSlideOut()
 	else
+		-- Nested hide (e.g. dialogue → panel): keep Frames, don't re-snapshot
 		keepMainChildNames.Frames = true
 		if opts then
 			if opts.keepScreenGuiNames then

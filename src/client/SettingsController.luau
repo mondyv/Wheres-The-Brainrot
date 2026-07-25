@@ -7,7 +7,7 @@
 	• Row whose label contains "slow" → SlowWalkEnabled (0.8× vs 1.15× Humanoid.WalkSpeed at spawn); default off; softer hover on that row.
 	• Row whose label contains "other" (or Button3) → ShowOtherBrainrots; default on.
 	• Row whose label contains "vfx" (or Button4) → BrainrotVFXEnabled; default on.
-	• Button5 → SpiderCutsceneEnabled; default on = full spider cinematic (drop + rage + shoot). Off = QTE only, no cameras.
+	• Button5 → SpiderCutsceneEnabled; default on = full spider cinematic (drop + rage + shoot). Off = soft look-at + QTE (still letterbox / HUD hide).
 	• Button6 → ShopCutsceneEnabled; default on = Undertale stand greetings. Off = walk up and open panels directly.
 --]]
 

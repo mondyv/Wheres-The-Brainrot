@@ -1,7 +1,7 @@
 -- [ACTIVE] SafeZoneLightingController
 --[[
-	Smoothly fades Lighting toward a slight night look when the local player
-	leaves the safe zone, and restores the original look when they return.
+	Outside the safe zone, darkens Atmosphere (sky look) only.
+	Does NOT use ColorCorrection — that tints the whole screen.
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -14,31 +14,34 @@ local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local POLL_INTERVAL = 0.25
 local FADE_INFO = TweenInfo.new(1.45, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
-local CC_NAME = "SafeZoneNightCC"
+local CC_LEGACY_NAME = "SafeZoneNightCC"
 
--- Mild night — not pitch black
-local NIGHT = {
-	Brightness = -0.14,
-	Contrast = 0.06,
-	Saturation = -0.12,
-	TintColor = Color3.fromRGB(168, 186, 230),
-}
-
-local DAY = {
-	Brightness = 0,
-	Contrast = 0,
-	Saturation = 0,
-	TintColor = Color3.new(1, 1, 1),
+-- Mild night sky via Atmosphere only
+local NIGHT_ATMO = {
+	Density = 0.48,
+	Offset = 0.08,
+	Color = Color3.fromRGB(48, 62, 98),
+	Decay = Color3.fromRGB(72, 88, 130),
+	Glare = 0.08,
+	Haze = 2.2,
 }
 
 local SafeZoneLightingController = {}
 
 local player = Players.LocalPlayer
-local colorFx: ColorCorrectionEffect? = nil
 local activeTweens: { Tween } = {}
 local inSafezone = true
 local wired = false
 local pollConn: RBXScriptConnection? = nil
+
+local dayAtmo: {
+	Density: number,
+	Offset: number,
+	Color: Color3,
+	Decay: Color3,
+	Glare: number,
+	Haze: number,
+}? = nil
 
 local function cancelTweens()
 	for _, tw in activeTweens do
@@ -56,36 +59,67 @@ local function playTween(inst: Instance, props: { [string]: any })
 	return tw
 end
 
-local function ensureColorFx(): ColorCorrectionEffect
-	local existing = Lighting:FindFirstChild(CC_NAME)
-	if existing and existing:IsA("ColorCorrectionEffect") then
-		colorFx = existing
-		return existing
-	end
+local function destroyLegacyColorCorrection()
+	local existing = Lighting:FindFirstChild(CC_LEGACY_NAME)
 	if existing then
 		existing:Destroy()
 	end
-	local fx = Instance.new("ColorCorrectionEffect")
-	fx.Name = CC_NAME
-	fx.Brightness = DAY.Brightness
-	fx.Contrast = DAY.Contrast
-	fx.Saturation = DAY.Saturation
-	fx.TintColor = DAY.TintColor
-	fx.Enabled = true
-	fx.Parent = Lighting
-	colorFx = fx
-	return fx
 end
 
-local function applyProfile(night: boolean)
-	local fx = ensureColorFx()
+local function ensureAtmosphere(): Atmosphere
+	local atmo = Lighting:FindFirstChildOfClass("Atmosphere")
+	if atmo then
+		return atmo
+	end
+	atmo = Instance.new("Atmosphere")
+	atmo.Density = 0.3
+	atmo.Offset = 0.25
+	atmo.Color = Color3.fromRGB(199, 199, 199)
+	atmo.Decay = Color3.fromRGB(92, 60, 13)
+	atmo.Glare = 0
+	atmo.Haze = 0
+	atmo.Parent = Lighting
+	return atmo
+end
+
+local function snapshotDay()
+	local atmo = ensureAtmosphere()
+	dayAtmo = {
+		Density = atmo.Density,
+		Offset = atmo.Offset,
+		Color = atmo.Color,
+		Decay = atmo.Decay,
+		Glare = atmo.Glare,
+		Haze = atmo.Haze,
+	}
+end
+
+local function applyProfile(night: boolean, instant: boolean?)
+	if not dayAtmo then
+		snapshotDay()
+	end
+	local atmo = ensureAtmosphere()
 	cancelTweens()
-	local profile = if night then NIGHT else DAY
-	playTween(fx, {
-		Brightness = profile.Brightness,
-		Contrast = profile.Contrast,
-		Saturation = profile.Saturation,
-		TintColor = profile.TintColor,
+
+	local goal = if night then NIGHT_ATMO else (dayAtmo :: typeof(NIGHT_ATMO))
+
+	if instant then
+		atmo.Density = goal.Density
+		atmo.Offset = goal.Offset
+		atmo.Color = goal.Color
+		atmo.Decay = goal.Decay
+		atmo.Glare = goal.Glare
+		atmo.Haze = goal.Haze
+		return
+	end
+
+	playTween(atmo, {
+		Density = goal.Density,
+		Offset = goal.Offset,
+		Color = goal.Color,
+		Decay = goal.Decay,
+		Glare = goal.Glare,
+		Haze = goal.Haze,
 	})
 end
 
@@ -102,7 +136,7 @@ local function setInSafezone(nextIn: boolean, force: boolean?)
 		return
 	end
 	inSafezone = nextIn
-	applyProfile(not nextIn)
+	applyProfile(not nextIn, force == true)
 end
 
 function SafeZoneLightingController.init()
@@ -111,19 +145,15 @@ function SafeZoneLightingController.init()
 	end
 	wired = true
 
+	destroyLegacyColorCorrection()
+	snapshotDay()
+
 	task.spawn(function()
 		SafezoneUtil.warmCacheAsync()
 	end)
 
-	ensureColorFx()
 	inSafezone = readInSafezone()
-	-- Snap to correct state on join (no long fade from wrong look)
-	local fx = ensureColorFx()
-	local profile = if inSafezone then DAY else NIGHT
-	fx.Brightness = profile.Brightness
-	fx.Contrast = profile.Contrast
-	fx.Saturation = profile.Saturation
-	fx.TintColor = profile.TintColor
+	applyProfile(not inSafezone, true)
 
 	player.CharacterAdded:Connect(function()
 		task.defer(function()

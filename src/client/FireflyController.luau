@@ -17,14 +17,14 @@ local FireflyController = {}
 
 local player = Players.LocalPlayer
 
-local ACTIVE_RANGE = 70
-local SELECT_PCT = 8
-local MAX_ACTIVE = 4
-local FLIES_PER_BUSH = 2
+local ACTIVE_RANGE = 80
+local SELECT_PCT = 10
+local MAX_ACTIVE = 5
+local FLIES_PER_BUSH = 6
 local REFRESH_SEC = 1.0
 local FOLDER_NAME = "BushFireflies"
 
-local YELLOW = Color3.fromRGB(255, 210, 90)
+local YELLOW = Color3.fromRGB(255, 215, 85)
 
 type Fly = {
 	part: BasePart,

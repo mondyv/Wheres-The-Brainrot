@@ -1,7 +1,8 @@
 -- [ACTIVE] SafeZoneLightingController
 --[[
-	Outside the safe zone: dark greenish Atmosphere + slightly dimmer ambient.
-	No ColorCorrection, no skybox swap, no light beams / SunRays.
+	Outside the safe zone, darkens Atmosphere only (smoky jungle night).
+	Does NOT touch Ambient / OutdoorAmbient / Brightness / ColorCorrection —
+	those tint the whole screen.
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -17,14 +18,14 @@ local POLL_INTERVAL = 0.25
 local FADE_INFO = TweenInfo.new(1.45, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 local CC_LEGACY_NAME = "SafeZoneNightCC"
 
--- Soft dark green night — keep Density/Haze low so no bright fog band in the sky
+-- Original smoky jungle night (Atmosphere only)
 local NIGHT_ATMO = {
-	Density = 0.28,
-	Offset = 0.18,
-	Color = Color3.fromRGB(28, 42, 32),
-	Decay = Color3.fromRGB(38, 52, 36),
-	Glare = 0,
-	Haze = 0.12,
+	Density = 0.48,
+	Offset = 0.08,
+	Color = Color3.fromRGB(48, 62, 98),
+	Decay = Color3.fromRGB(72, 88, 130),
+	Glare = 0.08,
+	Haze = 2.2,
 }
 
 type AtmoSnap = {
@@ -36,12 +37,6 @@ type AtmoSnap = {
 	Haze: number,
 }
 
-type LightSnap = {
-	Ambient: Color3,
-	OutdoorAmbient: Color3,
-	Brightness: number,
-}
-
 local SafeZoneLightingController = {}
 
 local player = Players.LocalPlayer
@@ -50,7 +45,6 @@ local inSafezone = true
 local wired = false
 local pollConn: RBXScriptConnection? = nil
 local dayAtmo: AtmoSnap? = nil
-local dayLight: LightSnap? = nil
 
 local function cancelTweens()
 	for _, tw in activeTweens do
@@ -69,9 +63,9 @@ local function playTween(inst: Instance, props: { [string]: any })
 end
 
 local function cleanupLegacy()
-	local cc = Lighting:FindFirstChild(CC_LEGACY_NAME)
-	if cc then
-		cc:Destroy()
+	local existing = Lighting:FindFirstChild(CC_LEGACY_NAME)
+	if existing then
+		existing:Destroy()
 	end
 	local rays = Lighting:FindFirstChild("SafeZoneSunRays")
 	if rays then
@@ -116,60 +110,34 @@ local function snapshotDay()
 		Glare = atmo.Glare,
 		Haze = atmo.Haze,
 	}
-	dayLight = {
-		Ambient = Lighting.Ambient,
-		OutdoorAmbient = Lighting.OutdoorAmbient,
-		Brightness = Lighting.Brightness,
-	}
-end
-
-local function nightLightGoals(): LightSnap
-	local day = dayLight :: LightSnap
-	local function dim(c: Color3): Color3
-		return Color3.new(c.R * 0.38, math.min(1, c.G * 0.48), c.B * 0.36)
-	end
-	return {
-		Ambient = dim(day.Ambient),
-		OutdoorAmbient = dim(day.OutdoorAmbient),
-		Brightness = math.max(0.9, day.Brightness * 0.48),
-	}
 end
 
 local function applyProfile(night: boolean, instant: boolean?)
-	if not dayAtmo or not dayLight then
+	if not dayAtmo then
 		snapshotDay()
 	end
+	local atmo = ensureAtmosphere()
 	cancelTweens()
 
-	local atmo = ensureAtmosphere()
-	local atmoGoal = if night then NIGHT_ATMO else (dayAtmo :: AtmoSnap)
-	local lightGoal = if night then nightLightGoals() else (dayLight :: LightSnap)
+	local goal = if night then NIGHT_ATMO else (dayAtmo :: AtmoSnap)
 
 	if instant then
-		atmo.Density = atmoGoal.Density
-		atmo.Offset = atmoGoal.Offset
-		atmo.Color = atmoGoal.Color
-		atmo.Decay = atmoGoal.Decay
-		atmo.Glare = atmoGoal.Glare
-		atmo.Haze = atmoGoal.Haze
-		Lighting.Ambient = lightGoal.Ambient
-		Lighting.OutdoorAmbient = lightGoal.OutdoorAmbient
-		Lighting.Brightness = lightGoal.Brightness
+		atmo.Density = goal.Density
+		atmo.Offset = goal.Offset
+		atmo.Color = goal.Color
+		atmo.Decay = goal.Decay
+		atmo.Glare = goal.Glare
+		atmo.Haze = goal.Haze
 		return
 	end
 
 	playTween(atmo, {
-		Density = atmoGoal.Density,
-		Offset = atmoGoal.Offset,
-		Color = atmoGoal.Color,
-		Decay = atmoGoal.Decay,
-		Glare = atmoGoal.Glare,
-		Haze = atmoGoal.Haze,
-	})
-	playTween(Lighting, {
-		Ambient = lightGoal.Ambient,
-		OutdoorAmbient = lightGoal.OutdoorAmbient,
-		Brightness = lightGoal.Brightness,
+		Density = goal.Density,
+		Offset = goal.Offset,
+		Color = goal.Color,
+		Decay = goal.Decay,
+		Glare = goal.Glare,
+		Haze = goal.Haze,
 	})
 end
 

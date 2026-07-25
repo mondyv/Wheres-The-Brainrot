@@ -282,6 +282,13 @@ C.SWING_POSE_FREE_ELBOW = math.rad(22)
 C.SWING_CAMERA_ROLL_MAX = math.rad(5)
 C.SWING_CAMERA_LAG_MAX = 0.72
 C.SWING_CAMERA_EFFECT_SPEED = 7
+-- Faint continuous wind buffet while swinging / airborne (keep slight)
+C.SWING_WIND_SHAKE_POS = 0.048
+C.SWING_WIND_SHAKE_ROT = 0.0075
+C.SWING_WIND_SHAKE_SPEED = 8.2
+C.SWING_WIND_SHAKE_MIN_SPEED = 6
+C.SWING_WIND_SHAKE_REF_SPEED = 52
+C.SWING_WIND_SHAKE_HANG = 0.22
 C.LAUNCH_CAMERA_SHAKE_TIME = 0.3
 C.LAUNCH_CAMERA_SHAKE_STRENGTH = 0.22
 C.LANDING_CAMERA_SHAKE_TIME = 0.62
@@ -1655,6 +1662,8 @@ local function boot(character)
 		landingShakeSeed = math.random() * 1000,
 		attachShakeStrength = 0,
 		attachShakeSeed = math.random() * 1000,
+		windShakeSeed = math.random() * 1000,
+		windShakeIntensity = 0,
 		lastGroundDragDebrisClock = -1e9,
 		swingCamRoll = 0,
 		swingCamLag = Vector3.new(0, 0, 0),

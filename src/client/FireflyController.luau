@@ -1,7 +1,6 @@
 -- [ACTIVE] FireflyController
 --[[
-	Soft glowing fireflies around a stable random subset of bushes (~15%),
-	only while the local player is outside the safe zone.
+	Glowing fireflies on a random subset of bushes while outside the safe zone.
 ]]
 
 local Players = game:GetService("Players")
@@ -16,15 +15,15 @@ local FireflyController = {}
 
 local player = Players.LocalPlayer
 
-local ACTIVE_RANGE = 95
-local SELECT_PCT = 15 -- ~15% of bushes
-local MAX_ACTIVE_BUSHES = 10
-local FLIES_PER_BUSH = 4
-local REFRESH_SEC = 0.9
-local SCAN_YIELD_EVERY = 350
+local ACTIVE_RANGE = 110
+local SELECT_PCT = 28
+local MAX_ACTIVE_BUSHES = 14
+local FLIES_PER_BUSH = 5
+local REFRESH_SEC = 0.75
+local SCAN_YIELD_EVERY = 300
 local FOLDER_NAME = "SafeZoneFireflies"
 
-local GLOW = Color3.fromRGB(180, 255, 120)
+local GLOW = Color3.fromRGB(190, 255, 130)
 
 type Fly = {
 	part: BasePart,
@@ -49,6 +48,8 @@ local wired = false
 local heartbeatConn: RBXScriptConnection? = nil
 local rootFolder: Folder? = nil
 local refreshAccum = 0.0
+local trackedCount = 0
+local eligibleCount = 0
 
 local function stableHash(s: string): number
 	local h = 2166136261
@@ -59,12 +60,8 @@ local function stableHash(s: string): number
 	return h
 end
 
-local function bushKey(bush: Instance): string
-	return bush:GetFullName()
-end
-
 local function isEligibleBush(bush: Instance): boolean
-	return (stableHash(bushKey(bush)) % 100) < SELECT_PCT
+	return (stableHash(bush:GetFullName()) % 100) < SELECT_PCT
 end
 
 local function ensureRootFolder(): Folder
@@ -96,10 +93,10 @@ local function getBushCenter(bush: Instance): Vector3?
 			return (bush :: Model):GetPivot()
 		end)
 		if ok and pivot then
-			return pivot.Position
+			return pivot.Position + Vector3.new(0, 2, 0)
 		end
 	elseif bush:IsA("BasePart") then
-		return (bush :: BasePart).Position
+		return (bush :: BasePart).Position + Vector3.new(0, 2, 0)
 	end
 	return nil
 end
@@ -115,11 +112,21 @@ local function destroySwarm(bush: Instance)
 	end
 end
 
+local function clearAllSwarms()
+	local bushes = {}
+	for bush in pairs(activeSwarms) do
+		table.insert(bushes, bush)
+	end
+	for _, bush in bushes do
+		destroySwarm(bush)
+	end
+end
+
 local function createFly(parent: Folder, center: Vector3, index: number): Fly
 	local part = Instance.new("Part")
 	part.Name = "Firefly" .. index
 	part.Shape = Enum.PartType.Ball
-	part.Size = Vector3.new(0.18, 0.18, 0.18)
+	part.Size = Vector3.new(0.28, 0.28, 0.28)
 	part.Material = Enum.Material.Neon
 	part.Color = GLOW
 	part.Anchored = true
@@ -127,34 +134,34 @@ local function createFly(parent: Folder, center: Vector3, index: number): Fly
 	part.CanQuery = false
 	part.CanTouch = false
 	part.CastShadow = false
-	part.Transparency = 0.15
+	part.Transparency = 0.05
 	part.CFrame = CFrame.new(center)
 	part.Parent = parent
 
 	local light = Instance.new("PointLight")
 	light.Color = GLOW
-	light.Brightness = 1.1
-	light.Range = 7
+	light.Brightness = 2.2
+	light.Range = 10
 	light.Shadows = false
 	light.Parent = part
 
 	local spark = Instance.new("ParticleEmitter")
 	spark.Name = "Glow"
-	spark.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+	spark.Texture = "rbxasset://textures/particles/smoke_main.dds"
 	spark.Color = ColorSequence.new(GLOW)
 	spark.Size = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.15),
-		NumberSequenceKeypoint.new(1, 0.02),
+		NumberSequenceKeypoint.new(0, 0.35),
+		NumberSequenceKeypoint.new(1, 0.05),
 	})
 	spark.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.2),
+		NumberSequenceKeypoint.new(0, 0.15),
 		NumberSequenceKeypoint.new(1, 1),
 	})
-	spark.LifetimeRate = 2
-	spark.Lifetime = NumberRange.new(0.6, 1.1)
-	spark.Speed = NumberRange.new(0.05, 0.2)
+	spark.LifetimeRate = 4
+	spark.Lifetime = NumberRange.new(0.5, 0.9)
+	spark.Speed = NumberRange.new(0.02, 0.12)
 	spark.SpreadAngle = Vector2.new(180, 180)
-	spark.LightEmission = 0.9
+	spark.LightEmission = 1
 	spark.LightInfluence = 0
 	spark.Parent = part
 
@@ -162,13 +169,13 @@ local function createFly(parent: Folder, center: Vector3, index: number): Fly
 		part = part,
 		light = light,
 		phase = index * 1.7 + math.random() * 6,
-		speed = 0.55 + math.random() * 0.55,
-		radius = 1.2 + math.random() * 2.2,
-		height = 0.6 + math.random() * 1.8,
+		speed = 0.5 + math.random() * 0.6,
+		radius = 1.4 + math.random() * 2.4,
+		height = 0.8 + math.random() * 2.2,
 	}
 end
 
-local function createSwarm(bush: Instance, center: Vector3): Swarm
+local function createSwarm(bush: Instance, center: Vector3)
 	local folder = Instance.new("Folder")
 	folder.Name = "Swarm"
 	folder.Parent = ensureRootFolder()
@@ -178,14 +185,12 @@ local function createSwarm(bush: Instance, center: Vector3): Swarm
 		table.insert(flies, createFly(folder, center, i))
 	end
 
-	local swarm: Swarm = {
+	activeSwarms[bush] = {
 		bush = bush,
 		center = center,
 		folder = folder,
 		flies = flies,
 	}
-	activeSwarms[bush] = swarm
-	return swarm
 end
 
 local function trackBush(bush: Instance)
@@ -193,13 +198,19 @@ local function trackBush(bush: Instance)
 		return
 	end
 	trackedBushes[bush] = true
+	trackedCount += 1
 	if isEligibleBush(bush) then
 		eligibleBushes[bush] = true
+		eligibleCount += 1
 	end
 	bush.AncestryChanged:Connect(function(_, parent)
 		if parent == nil then
 			trackedBushes[bush] = nil
-			eligibleBushes[bush] = nil
+			if eligibleBushes[bush] then
+				eligibleBushes[bush] = nil
+				eligibleCount = math.max(0, eligibleCount - 1)
+			end
+			trackedCount = math.max(0, trackedCount - 1)
 			destroySwarm(bush)
 		end
 	end)
@@ -237,11 +248,9 @@ local function playerPos(): Vector3?
 end
 
 local function refreshActiveSwarms()
-	local outside = player.Character and not SafezoneUtil.isCharacterInSafezone(player.Character)
-	if not outside then
-		for bush in activeSwarms do
-			destroySwarm(bush)
-		end
+	local char = player.Character
+	if not char or SafezoneUtil.isCharacterInSafezone(char) then
+		clearAllSwarms()
 		return
 	end
 
@@ -251,7 +260,7 @@ local function refreshActiveSwarms()
 	end
 
 	local candidates: { { bush: Instance, dist: number, center: Vector3 } } = {}
-	for bush in eligibleBushes do
+	for bush in pairs(eligibleBushes) do
 		if not bush.Parent then
 			eligibleBushes[bush] = nil
 			continue
@@ -276,24 +285,23 @@ local function refreshActiveSwarms()
 	for i = 1, math.min(MAX_ACTIVE_BUSHES, #candidates) do
 		local entry = candidates[i]
 		keep[entry.bush] = true
-		local swarm = activeSwarms[entry.bush]
-		if swarm then
-			swarm.center = entry.center
+		if activeSwarms[entry.bush] then
+			activeSwarms[entry.bush].center = entry.center
 		else
 			createSwarm(entry.bush, entry.center)
 		end
 	end
 
-	for bush in activeSwarms do
+	for bush in pairs(activeSwarms) do
 		if not keep[bush] then
 			destroySwarm(bush)
 		end
 	end
 end
 
-local function stepFlies(dt: number)
+local function stepFlies(_dt: number)
 	local t = os.clock()
-	for _, swarm in activeSwarms do
+	for _, swarm in pairs(activeSwarms) do
 		if not swarm.bush.Parent then
 			destroySwarm(swarm.bush)
 			continue
@@ -305,10 +313,8 @@ local function stepFlies(dt: number)
 			local pos = center
 				+ Vector3.new(math.cos(ang) * fly.radius, fly.height + bob, math.sin(ang * 0.85) * fly.radius)
 			fly.part.CFrame = CFrame.new(pos)
-			-- Soft pulse
-			local pulse = 0.75 + 0.45 * (0.5 + 0.5 * math.sin(t * 3.2 + fly.phase))
+			local pulse = 1.4 + 1.1 * (0.5 + 0.5 * math.sin(t * 3.2 + fly.phase))
 			fly.light.Brightness = pulse
-			fly.part.Transparency = 0.1 + 0.25 * (1 - (pulse - 0.75) / 0.9)
 		end
 	end
 end
@@ -323,8 +329,10 @@ function FireflyController.init()
 
 	task.spawn(function()
 		SafezoneUtil.warmCacheAsync()
+		SafezoneUtil.awaitCacheReady(12)
 		local map = Workspace:WaitForChild("Map", 120)
 		if not map then
+			warn("[FireflyController] Map missing")
 			return
 		end
 		scanMap(map)
@@ -337,9 +345,20 @@ function FireflyController.init()
 						trackBush(child)
 					end
 				end
+				desc.ChildAdded:Connect(function(child)
+					if BushRootUtil.isDirectBushRoot(child) then
+						trackBush(child)
+					end
+				end)
 			end
 		end)
+		-- Rescan once more after streaming
+		task.wait(2)
+		scanMap(map)
 		refreshActiveSwarms()
+		if eligibleCount == 0 then
+			warn("[FireflyController] No eligible bushes yet (tracked=", trackedCount, ")")
+		end
 	end)
 
 	if heartbeatConn then

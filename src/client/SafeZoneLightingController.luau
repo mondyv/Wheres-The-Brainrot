@@ -1,7 +1,8 @@
 -- [ACTIVE] SafeZoneLightingController
 --[[
-	Outside safe zone: mild greenish Atmosphere night + SunRays + soft physical
-	god-ray Beams. No ColorCorrection, no skybox swap, no white UI veil.
+	Outside safe zone → visible greenish Atmosphere night (smooth tween).
+	Fixed physical light shafts sit permanently on the map (lands) — not
+	player-follow, no SunRaysEffect.
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -12,28 +13,22 @@ local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
+local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 
-local POLL_INTERVAL = 0.25
-local ATMO_INFO = TweenInfo.new(1.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
-local RAY_INFO = TweenInfo.new(1.2, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+local POLL_INTERVAL = 0.2
+local ATMO_INFO = TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 local CC_LEGACY_NAME = "SafeZoneNightCC"
+local BEAM_FOLDER_NAME = "MapGodRays"
 local SUNRAYS_NAME = "SafeZoneSunRays"
-local BEAM_FOLDER_NAME = "SafeZoneGodRays"
-local BEAM_COUNT = 5
 
--- Slight green night — low haze so it doesn't flash white/foggy
+-- Visible greenish night (stronger than last pass so the transition reads)
 local NIGHT_ATMO = {
-	Density = 0.34,
-	Offset = 0.12,
-	Color = Color3.fromRGB(52, 78, 58),
-	Decay = Color3.fromRGB(70, 95, 62),
-	Glare = 0.06,
-	Haze = 0.85,
-}
-
-local NIGHT_SUNRAYS = {
-	Intensity = 0.22,
-	Spread = 0.55,
+	Density = 0.45,
+	Offset = 0.1,
+	Color = Color3.fromRGB(58, 92, 64),
+	Decay = Color3.fromRGB(78, 110, 70),
+	Glare = 0.05,
+	Haze = 1.35,
 }
 
 type AtmoSnap = {
@@ -52,20 +47,8 @@ local activeTweens: { Tween } = {}
 local inSafezone = true
 local wired = false
 local pollConn: RBXScriptConnection? = nil
-local beamConn: RBXScriptConnection? = nil
 local dayAtmo: AtmoSnap? = nil
-local daySunRays: { Intensity: number, Spread: number, Enabled: boolean }? = nil
-local beamFolder: Folder? = nil
-local beamShafts: {
-	{
-		part: BasePart,
-		att0: Attachment,
-		att1: Attachment,
-		beam: Beam,
-		angle: number,
-		radius: number,
-	}
-} = {}
+local beamsBuilt = false
 
 local function cancelTweens()
 	for _, tw in activeTweens do
@@ -76,17 +59,30 @@ local function cancelTweens()
 	table.clear(activeTweens)
 end
 
-local function playTween(inst: Instance, info: TweenInfo, props: { [string]: any }): Tween
+local function playTween(inst: Instance, info: TweenInfo, props: { [string]: any })
 	local tw = TweenService:Create(inst, info, props)
 	table.insert(activeTweens, tw)
 	tw:Play()
 	return tw
 end
 
-local function destroyLegacyColorCorrection()
-	local existing = Lighting:FindFirstChild(CC_LEGACY_NAME)
-	if existing then
-		existing:Destroy()
+local function destroyLegacyJunk()
+	local cc = Lighting:FindFirstChild(CC_LEGACY_NAME)
+	if cc then
+		cc:Destroy()
+	end
+	local rays = Lighting:FindFirstChild(SUNRAYS_NAME)
+	if rays then
+		rays:Destroy()
+	end
+	local oldFollow = Workspace:FindFirstChild("SafeZoneGodRays")
+	if oldFollow then
+		oldFollow:Destroy()
+	end
+	local veilPg = player:FindFirstChild("PlayerGui")
+	local veil = veilPg and veilPg:FindFirstChild("SafeZoneSkyVeil")
+	if veil then
+		veil:Destroy()
 	end
 end
 
@@ -119,33 +115,6 @@ end
 
 local function snapshotDay()
 	dayAtmo = readAtmo(ensureAtmosphere())
-	local existing = Lighting:FindFirstChildOfClass("SunRaysEffect")
-	if existing and existing.Name ~= SUNRAYS_NAME then
-		daySunRays = {
-			Intensity = existing.Intensity,
-			Spread = existing.Spread,
-			Enabled = existing.Enabled,
-		}
-	else
-		daySunRays = { Intensity = 0.05, Spread = 0.1, Enabled = false }
-	end
-end
-
-local function ensureSunRays(): SunRaysEffect
-	local existing = Lighting:FindFirstChild(SUNRAYS_NAME)
-	if existing and existing:IsA("SunRaysEffect") then
-		return existing
-	end
-	if existing then
-		existing:Destroy()
-	end
-	local rays = Instance.new("SunRaysEffect")
-	rays.Name = SUNRAYS_NAME
-	rays.Intensity = 0
-	rays.Spread = 0.2
-	rays.Enabled = true
-	rays.Parent = Lighting
-	return rays
 end
 
 local function applyAtmo(snap: AtmoSnap, instant: boolean?)
@@ -169,174 +138,121 @@ local function applyAtmo(snap: AtmoSnap, instant: boolean?)
 	})
 end
 
-local function applySunRays(night: boolean, instant: boolean?)
-	local rays = ensureSunRays()
-	local goalIntensity = if night then NIGHT_SUNRAYS.Intensity else 0
-	local goalSpread = if night then NIGHT_SUNRAYS.Spread else (daySunRays and daySunRays.Spread or 0.1)
-	rays.Enabled = true
-	if instant then
-		rays.Intensity = goalIntensity
-		rays.Spread = goalSpread
-		if not night and goalIntensity <= 0.001 then
-			rays.Enabled = false
-		end
-		return
-	end
-	playTween(rays, RAY_INFO, {
-		Intensity = goalIntensity,
-		Spread = goalSpread,
-	})
-end
-
-local function clearGodRays()
-	if beamConn then
-		beamConn:Disconnect()
-		beamConn = nil
-	end
-	table.clear(beamShafts)
-	if beamFolder then
-		beamFolder:Destroy()
-		beamFolder = nil
-	end
-end
-
-local function ensureGodRays()
-	if beamFolder and beamFolder.Parent then
-		return
-	end
-	clearGodRays()
-
-	local folder = Instance.new("Folder")
-	folder.Name = BEAM_FOLDER_NAME
-	folder.Parent = Workspace
-
-	local color = Color3.fromRGB(190, 230, 140)
-	for i = 1, BEAM_COUNT do
-		local part = Instance.new("Part")
-		part.Name = "GodRay" .. i
-		part.Anchored = true
-		part.CanCollide = false
-		part.CanQuery = false
-		part.CanTouch = false
-		part.CastShadow = false
-		part.Transparency = 1
-		part.Size = Vector3.new(0.2, 0.2, 0.2)
-		part.Parent = folder
-
-		local att0 = Instance.new("Attachment")
-		att0.Name = "Top"
-		att0.Parent = part
-
-		local att1 = Instance.new("Attachment")
-		att1.Name = "Bottom"
-		att1.Parent = part
-
-		local beam = Instance.new("Beam")
-		beam.Attachment0 = att0
-		beam.Attachment1 = att1
-		beam.Color = ColorSequence.new(color)
-		beam.Transparency = NumberSequence.new({
-			NumberSequenceKeypoint.new(0, 0.82),
-			NumberSequenceKeypoint.new(0.45, 0.55),
-			NumberSequenceKeypoint.new(1, 1),
-		})
-		beam.Width0 = 7.5
-		beam.Width1 = 2.2
-		beam.FaceCamera = true
-		beam.LightEmission = 0.85
-		beam.LightInfluence = 0
-		beam.Segments = 8
-		beam.Enabled = false
-		beam.Parent = part
-
-		local light = Instance.new("PointLight")
-		light.Name = "ShaftLight"
-		light.Color = color
-		light.Brightness = 0.35
-		light.Range = 28
-		light.Shadows = false
-		light.Enabled = false
-		light.Parent = part
-
-		table.insert(beamShafts, {
-			part = part,
-			att0 = att0,
-			att1 = att1,
-			beam = beam,
-			angle = (i / BEAM_COUNT) * math.pi * 2 + i * 0.37,
-			radius = 18 + (i % 3) * 9,
-		})
-	end
-
-	beamFolder = folder
-end
-
-local function setGodRaysVisible(on: boolean)
-	for _, shaft in beamShafts do
-		shaft.beam.Enabled = on
-		local light = shaft.part:FindFirstChild("ShaftLight")
-		if light and light:IsA("PointLight") then
-			light.Enabled = on
-		end
-	end
-end
-
-local function updateGodRayPositions()
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if not hrp or not hrp:IsA("BasePart") then
-		return
-	end
-	local origin = (hrp :: BasePart).Position
-	local t = os.clock()
-
-	for _, shaft in beamShafts do
-		local ang = shaft.angle + t * 0.035
-		local wobble = math.sin(t * 0.4 + shaft.angle) * 2.5
-		local x = origin.X + math.cos(ang) * (shaft.radius + wobble)
-		local z = origin.Z + math.sin(ang) * (shaft.radius + wobble)
-		local top = Vector3.new(x, origin.Y + 55, z)
-		local bottom = Vector3.new(x + math.cos(ang) * 3, origin.Y - 2, z + math.sin(ang) * 3)
-		shaft.part.CFrame = CFrame.new((top + bottom) * 0.5)
-		shaft.att0.WorldPosition = top
-		shaft.att1.WorldPosition = bottom
-	end
-end
-
-local function setGodRaysActive(on: boolean)
-	if on then
-		ensureGodRays()
-		setGodRaysVisible(true)
-		if not beamConn then
-			local accum = 0.0
-			beamConn = RunService.Heartbeat:Connect(function(dt)
-				accum += dt
-				if accum < 0.05 then
-					return
-				end
-				accum = 0
-				updateGodRayPositions()
-			end)
-		end
-	else
-		setGodRaysVisible(false)
-		if beamConn then
-			beamConn:Disconnect()
-			beamConn = nil
-		end
-	end
-end
-
 local function applyProfile(night: boolean, instant: boolean?)
 	if not dayAtmo then
 		snapshotDay()
 	end
 	cancelTweens()
-
 	local goal = if night then NIGHT_ATMO else (dayAtmo :: AtmoSnap)
 	applyAtmo(goal, instant)
-	applySunRays(night, instant)
-	setGodRaysActive(night)
+end
+
+-- Fixed shafts at land positions (permanent map props)
+local function createShaft(folder: Folder, name: string, top: Vector3, bottom: Vector3, width: number)
+	local mid = (top + bottom) * 0.5
+	local len = (top - bottom).Magnitude
+	if len < 1 then
+		return
+	end
+
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.CastShadow = false
+	part.Material = Enum.Material.Neon
+	part.Color = Color3.fromRGB(255, 236, 175)
+	part.Transparency = 0.88
+	part.Size = Vector3.new(width * 0.55, len, width * 0.55)
+	part.CFrame = CFrame.lookAt(mid, bottom) * CFrame.Angles(math.rad(90), 0, 0)
+	part.Parent = folder
+
+	local att0 = Instance.new("Attachment")
+	att0.Position = Vector3.new(0, len * 0.5, 0)
+	att0.Parent = part
+
+	local att1 = Instance.new("Attachment")
+	att1.Position = Vector3.new(0, -len * 0.5, 0)
+	att1.Parent = part
+
+	local beam = Instance.new("Beam")
+	beam.Attachment0 = att0
+	beam.Attachment1 = att1
+	beam.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 245, 200)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(210, 255, 170)),
+	})
+	beam.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.72),
+		NumberSequenceKeypoint.new(0.35, 0.55),
+		NumberSequenceKeypoint.new(1, 0.95),
+	})
+	beam.Width0 = width
+	beam.Width1 = width * 0.35
+	beam.FaceCamera = true
+	beam.LightEmission = 0.7
+	beam.LightInfluence = 0.15
+	beam.Segments = 10
+	beam.Texture = "rbxasset://textures/particles/smoke_main.dds"
+	beam.TextureSpeed = 0.04
+	beam.TextureLength = 18
+	beam.Enabled = true
+	beam.Parent = part
+
+	local light = Instance.new("PointLight")
+	light.Color = Color3.fromRGB(255, 235, 170)
+	light.Brightness = 0.45
+	light.Range = 22
+	light.Shadows = false
+	light.Parent = part
+end
+
+local function buildFixedGodRays()
+	if beamsBuilt then
+		return
+	end
+	beamsBuilt = true
+
+	local existing = Workspace:FindFirstChild(BEAM_FOLDER_NAME)
+	if existing then
+		existing:Destroy()
+	end
+
+	local folder = Instance.new("Folder")
+	folder.Name = BEAM_FOLDER_NAME
+	folder.Parent = Workspace
+
+	local placed = 0
+	for land = 1, 10 do
+		local cf = LandResolver.getSpawnCFrameForLand(land)
+		if not cf then
+			continue
+		end
+		local base = cf.Position
+		-- Two offset shafts per land, angled slightly, fixed forever
+		for j = 1, 2 do
+			local ang = (land * 0.9 + j * 1.7)
+			local ox = math.cos(ang) * (10 + j * 7)
+			local oz = math.sin(ang) * (10 + j * 7)
+			local lean = 6 + j * 3
+			local top = Vector3.new(base.X + ox, base.Y + 72, base.Z + oz)
+			local bottom = Vector3.new(base.X + ox + lean * 0.35, base.Y + 1.5, base.Z + oz + lean * 0.2)
+			createShaft(folder, ("Land%d_Ray%d"):format(land, j), top, bottom, 5.5 + j)
+			placed += 1
+		end
+	end
+
+	-- Fallback if lands aren't ready yet — retry once
+	if placed == 0 then
+		beamsBuilt = false
+		task.delay(3, function()
+			if not beamsBuilt then
+				buildFixedGodRays()
+			end
+		end)
+	end
 end
 
 local function readInSafezone(): boolean
@@ -351,6 +267,10 @@ local function setInSafezone(nextIn: boolean, force: boolean?)
 	if not force and nextIn == inSafezone then
 		return
 	end
+	-- Refresh day snapshot while inside so return looks correct
+	if nextIn and (force or inSafezone) then
+		snapshotDay()
+	end
 	inSafezone = nextIn
 	applyProfile(not nextIn, force == true)
 end
@@ -361,31 +281,22 @@ function SafeZoneLightingController.init()
 	end
 	wired = true
 
-	destroyLegacyColorCorrection()
-	local stash = Lighting:FindFirstChild("_SafeZoneLightingStash")
-	if stash then
-		stash:Destroy()
-	end
-	for _, child in Lighting:GetChildren() do
-		if child:IsA("Sky") and child:GetAttribute("SafeZoneLightingApplied") == true then
-			child:Destroy()
-		end
-	end
-	local oldVeil = player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("SafeZoneSkyVeil")
-	if oldVeil then
-		oldVeil:Destroy()
-	end
-	local oldBeams = Workspace:FindFirstChild(BEAM_FOLDER_NAME)
-	if oldBeams then
-		oldBeams:Destroy()
-	end
-
+	destroyLegacyJunk()
 	snapshotDay()
 
 	task.spawn(function()
 		SafezoneUtil.warmCacheAsync()
+		SafezoneUtil.awaitCacheReady(12)
+		-- Re-snapshot day lighting once map/lighting is settled
+		if readInSafezone() then
+			snapshotDay()
+		end
+		inSafezone = readInSafezone()
+		applyProfile(not inSafezone, true)
+		buildFixedGodRays()
 	end)
 
+	-- Immediate baseline so first leave still works before cache finishes
 	inSafezone = readInSafezone()
 	applyProfile(not inSafezone, true)
 

@@ -2,7 +2,7 @@
 --[[
 	LoadingScreenController — full-screen join overlay:
 	Moon camera flyover + heavy blur, centered GameNameImage (wobbly jump),
-	"Loading..." + lime progress bar + cycling [hints]; hides other PlayerGui until ready.
+	cycling tips at the bottom of the screen; hides other PlayerGui until ready.
 	StarterGui.LoadingScreen + GameNameImage. Moon export: "Camera loading" (Frames/0..N).
 --]]
 
@@ -53,22 +53,12 @@ local TITLE_MAX_WIDTH_MOBILE = 560
 local TITLE_MAX_WIDTH_DESKTOP = 860
 local TITLE_DEFAULT_ASPECT = 3.15
 local STACK_PADDING_PX = 8
-local STACK_CENTER_Y = 0.52
-local LOADING_TEXT_SIZE = 24
+local STACK_CENTER_Y = 0.48
 local HINT_TEXT_SIZE = 16
-local BAR_WIDTH_MOBILE = 340
-local BAR_WIDTH_DESKTOP = 440
-local BAR_HEIGHT_PX = 14
-local BAR_STYLE = "clean_rect_v2"
-local BAR_CORNER_PX = 5
+local HINT_BOTTOM_Y = 0.94
 
-local BAR_FILL_COLOR = Color3.fromRGB(118, 196, 66)
-local BAR_FILL_HIGHLIGHT = Color3.fromRGB(160, 230, 100)
-local BAR_TRACK_COLOR = Color3.fromRGB(22, 20, 18)
-local LOADING_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
 local HINT_TEXT_COLOR = Color3.fromRGB(255, 255, 255)
 
-local ELLIPSIS_INTERVAL_SEC = 0.38
 local HINT_INTERVAL_SEC = 2.15
 local WOBBLE_JUMP_SPEED = 2.35
 local WOBBLE_ROT_DEG = 4
@@ -88,7 +78,20 @@ local LOADING_HINTS = {
 	"Feeding the Turtle",
 }
 
-local HIDE_LOADING_UI_NAMES = { "LoadingFrame", "BarPlaceholder", "LoadingBar", "Stud TextureDecal", "Stud Texture", "StudTexture" }
+local HIDE_LOADING_UI_NAMES = {
+	"LoadingFrame",
+	"BarPlaceholder",
+	"LoadingBar",
+	"BarArea",
+	"ProgressTrack",
+	"ProgressHost",
+	"ProgressGlow",
+	"ProgressFill",
+	"LoadingText",
+	"Stud TextureDecal",
+	"Stud Texture",
+	"StudTexture",
+}
 
 local function isLoadingGuiAllowed(name: string): boolean
 	-- Only LoadingScreen stays up. Main must stay disabled or Toolbar/inventory bleed through.
@@ -113,7 +116,6 @@ local cameraClipStartedAt: number? = nil
 local characterHideConn: RBXScriptConnection? = nil
 local hiddenCharacterParts: { [BasePart]: number }? = nil
 local earlyVisualsReady = false
-local loadingBarFill: Frame? = nil
 local loadingProgress = 0
 
 local function defaultLoadingCFrame(): CFrame
@@ -1473,6 +1475,11 @@ local function cleanupLoadingVisuals(playerGui: PlayerGui, loadingGui: ScreenGui
 		end
 		salvageLogoAndDestroyStack(loadingGui)
 
+		local bottomHint = loadingGui:FindFirstChild("LoadingHint")
+		if bottomHint then
+			bottomHint:Destroy()
+		end
+
 		local canvas = loadingGui:FindFirstChild("LoadingFadeCanvas")
 		if canvas then
 			local canvasLiquid = canvas:FindFirstChild("LiquidLayer")
@@ -1528,6 +1535,8 @@ local function setupFadeCanvas(loadingGui: ScreenGui): CanvasGroup
 			and child.Name ~= "SolidCover"
 			and child.Name ~= "LiquidLayer"
 			and child.Name ~= "LoadingStack"
+			and child.Name ~= "LoadingHint"
+			and child.Name ~= "GameNameImage"
 		then
 			table.insert(moveList, child)
 		end
@@ -1542,7 +1551,15 @@ end
 
 local function hideLoadingChrome(loadingGui: ScreenGui)
 	for _, desc in loadingGui:GetDescendants() do
-		if desc.Name == "BarArea" or desc.Name == "LoadingBar" then
+		if
+			desc.Name == "BarArea"
+			or desc.Name == "LoadingBar"
+			or desc.Name == "ProgressTrack"
+			or desc.Name == "ProgressHost"
+			or desc.Name == "ProgressGlow"
+			or desc.Name == "ProgressFill"
+			or desc.Name == "LoadingText"
+		then
 			desc:Destroy()
 		end
 	end
@@ -1695,139 +1712,46 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 	destroyLiquidLayers(loadingGui)
 	local stack = findOrCreateStack(loadingGui)
 
-	local loadingLabel = stack:FindFirstChild("LoadingText")
-	if not loadingLabel or not loadingLabel:IsA("TextLabel") then
-		loadingLabel = Instance.new("TextLabel")
-		loadingLabel.Name = "LoadingText"
-		loadingLabel.BackgroundTransparency = 1
-		loadingLabel.BorderSizePixel = 0
-		loadingLabel.LayoutOrder = 2
-		loadingLabel.ZIndex = 21
-		loadingLabel.Text = "Loading"
-		loadingLabel.TextColor3 = LOADING_TEXT_COLOR
-		loadingLabel.TextTransparency = 0
-		loadingLabel.TextXAlignment = Enum.TextXAlignment.Center
-		loadingLabel.TextYAlignment = Enum.TextYAlignment.Center
-		loadingLabel.Parent = stack
-	end
-	local loadLbl = loadingLabel :: TextLabel
-	loadLbl.Size = UDim2.fromOffset(440, 30)
-	loadLbl.AutomaticSize = Enum.AutomaticSize.None
-	loadLbl.TextColor3 = LOADING_TEXT_COLOR
-	applyCrispLabel(loadLbl, LOADING_TEXT_SIZE, true)
-
-	local barW = if UserInputService.TouchEnabled then BAR_WIDTH_MOBILE else BAR_WIDTH_DESKTOP
-	local host = stack:FindFirstChild("ProgressHost")
-	if host then
-		host:Destroy()
-		host = nil
-	end
-	local orphanGlow = stack:FindFirstChild("ProgressGlow")
-	if orphanGlow then
-		orphanGlow:Destroy()
-	end
-
-	local barTrack = stack:FindFirstChild("ProgressTrack")
-	if barTrack and barTrack:IsA("Frame") and barTrack:GetAttribute("BarStyle") ~= BAR_STYLE then
-		barTrack:Destroy()
-		barTrack = nil
-	end
-
-	if not barTrack or not barTrack:IsA("Frame") then
-		barTrack = Instance.new("Frame")
-		barTrack.Name = "ProgressTrack"
-		barTrack.BackgroundColor3 = BAR_TRACK_COLOR
-		barTrack.BackgroundTransparency = 0.12
-		barTrack.BorderSizePixel = 0
-		barTrack.LayoutOrder = 3
-		barTrack.ZIndex = 21
-		barTrack.ClipsDescendants = true
-		barTrack:SetAttribute("BarStyle", BAR_STYLE)
-		barTrack.Parent = stack
-
-		local trackCorner = Instance.new("UICorner")
-		trackCorner.CornerRadius = UDim.new(0, BAR_CORNER_PX)
-		trackCorner.Parent = barTrack
-
-		local fill = Instance.new("Frame")
-		fill.Name = "ProgressFill"
-		fill.BackgroundColor3 = BAR_FILL_COLOR
-		fill.BackgroundTransparency = 0
-		fill.BorderSizePixel = 0
-		fill.AnchorPoint = Vector2.new(0, 0.5)
-		fill.Position = UDim2.new(0, 2, 0.5, 0)
-		fill.Size = UDim2.new(0.08, -4, 1, -4)
-		fill.ZIndex = 22
-		fill.Parent = barTrack
-
-		local fillCorner = Instance.new("UICorner")
-		fillCorner.CornerRadius = UDim.new(0, math.max(3, BAR_CORNER_PX - 1))
-		fillCorner.Parent = fill
-
-		local fillGrad = Instance.new("UIGradient")
-		fillGrad.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, BAR_FILL_COLOR),
-			ColorSequenceKeypoint.new(0.5, BAR_FILL_HIGHLIGHT),
-			ColorSequenceKeypoint.new(1, BAR_FILL_COLOR),
-		})
-		fillGrad.Rotation = 90
-		fillGrad.Parent = fill
-	else
-		local staleStroke = (barTrack :: Frame):FindFirstChild("BarOutline")
-		if staleStroke then
-			staleStroke:Destroy()
-		end
-		for _, d in (barTrack :: Frame):GetDescendants() do
-			if d:IsA("UIStroke") then
-				d:Destroy()
-			end
+	-- Logo only in the center stack — strip bar / "Loading..." chrome.
+	for _, name in { "LoadingText", "ProgressTrack", "ProgressHost", "ProgressGlow", "LoadingHint" } do
+		local junk = stack:FindFirstChild(name)
+		if junk then
+			junk:Destroy()
 		end
 	end
 
-	;(barTrack :: Frame).Size = UDim2.fromOffset(barW, BAR_HEIGHT_PX)
-	local fill = (barTrack :: Frame):FindFirstChild("ProgressFill")
-	if fill and fill:IsA("Frame") then
-		loadingBarFill = fill
-		local shown = 0.06 + math.clamp(loadingProgress, 0, 1) * 0.94
-		fill.Size = UDim2.new(shown, -4, 1, -4)
-	end
-
-	local hintLabel = stack:FindFirstChild("LoadingHint")
+	local parent = getCrispUiParent(loadingGui)
+	local hintLabel = parent:FindFirstChild("LoadingHint")
 	if not hintLabel or not hintLabel:IsA("TextLabel") then
 		hintLabel = Instance.new("TextLabel")
 		hintLabel.Name = "LoadingHint"
 		hintLabel.BackgroundTransparency = 1
 		hintLabel.BorderSizePixel = 0
-		hintLabel.LayoutOrder = 4
-		hintLabel.ZIndex = 21
+		hintLabel.ZIndex = 25
 		hintLabel.Text = "[" .. LOADING_HINTS[1] .. "]"
 		hintLabel.TextColor3 = HINT_TEXT_COLOR
 		hintLabel.TextTransparency = 0.05
 		hintLabel.TextXAlignment = Enum.TextXAlignment.Center
-		hintLabel.TextYAlignment = Enum.TextYAlignment.Center
-		hintLabel.Parent = stack
+		hintLabel.TextYAlignment = Enum.TextYAlignment.Bottom
+		hintLabel.Parent = parent
 	end
 	local hintLbl = hintLabel :: TextLabel
-	hintLbl.Size = UDim2.fromOffset(560, 26)
+	hintLbl.AnchorPoint = Vector2.new(0.5, 1)
+	hintLbl.Position = UDim2.fromScale(0.5, HINT_BOTTOM_Y)
+	hintLbl.Size = UDim2.new(0.92, 0, 0, 32)
 	hintLbl.TextColor3 = HINT_TEXT_COLOR
 	hintLbl.TextTransparency = 0.05
+	hintLbl.Visible = true
 	applyCrispLabel(hintLbl, HINT_TEXT_SIZE, false)
 end
 
 local function setLoadingProgress(alpha: number)
 	loadingProgress = math.clamp(alpha, 0, 1)
-	local fill = loadingBarFill
-	if fill and fill.Parent then
-		local shown = 0.06 + loadingProgress * 0.94
-		fill.Size = UDim2.new(shown, -4, 1, -4)
-	end
 end
 
 local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 	local logo = findGameNameImage(loadingGui)
-	local stack = findOrCreateStack(loadingGui)
-	local loadingLabel = stack:FindFirstChild("LoadingText")
-	local hintLabel = stack:FindFirstChild("LoadingHint")
+	local hintLabel = loadingGui:FindFirstChild("LoadingHint")
 
 	local wrapScale: UIScale? = nil
 	if logo then
@@ -1849,9 +1773,6 @@ local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 		logo.Position = UDim2.fromScale(0.5, 0.5)
 	end
 
-	if loadingLabel and loadingLabel:IsA("TextLabel") then
-		loadingLabel.TextTransparency = 1
-	end
 	if hintLabel and hintLabel:IsA("TextLabel") then
 		hintLabel.TextTransparency = 1
 	end
@@ -1859,7 +1780,6 @@ local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 	local entranceStart = os.clock()
 	local entranceDone = false
 	local idlePhase = 0
-	local ellipsisPhase = 0
 	local hintIndex = 1
 	local hintTimer = 0
 	local hintFade = 0
@@ -1877,9 +1797,6 @@ local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 				wrapScale.Scale = ENTRANCE_SCALE_START + (1 - ENTRANCE_SCALE_START) * eased
 				logo.ImageTransparency = 1 - eased
 			end
-			if loadingLabel and loadingLabel:IsA("TextLabel") and loadingLabel.Parent then
-				loadingLabel.TextTransparency = 1 - eased
-			end
 			if hintLabel and hintLabel:IsA("TextLabel") and hintLabel.Parent then
 				hintLabel.TextTransparency = 1 - eased * 0.92
 			end
@@ -1891,9 +1808,6 @@ local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 				if logo and logo.Parent then
 					logo.ImageTransparency = 0
 				end
-				if loadingLabel and loadingLabel:IsA("TextLabel") then
-					loadingLabel.TextTransparency = 0
-				end
 				if hintLabel and hintLabel:IsA("TextLabel") then
 					hintLabel.TextTransparency = 0.08
 				end
@@ -1902,7 +1816,6 @@ local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 		end
 
 		idlePhase += dt * WOBBLE_JUMP_SPEED
-		-- Soft jump (abs sin) + slight rotation wobble + micro scale pulse.
 		local jumpWave = math.abs(math.sin(idlePhase * math.pi))
 		local rotWave = math.sin(idlePhase * 1.65)
 		local scaleWave = math.sin(idlePhase * 1.1)
@@ -1910,12 +1823,6 @@ local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 			logo.Position = UDim2.new(0.5, 0, 0.5, -jumpWave * WOBBLE_JUMP_PX)
 			logo.Rotation = rotWave * WOBBLE_ROT_DEG
 			wrapScale.Scale = 1 + scaleWave * WOBBLE_SCALE_AMOUNT + jumpWave * 0.012
-		end
-
-		ellipsisPhase += dt
-		if loadingLabel and loadingLabel:IsA("TextLabel") and loadingLabel.Parent then
-			local dots = math.floor(ellipsisPhase / ELLIPSIS_INTERVAL_SEC) % 4
-			loadingLabel.Text = "Loading" .. string.rep(".", dots)
 		end
 
 		hintTimer += dt
@@ -1943,10 +1850,6 @@ local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
 			logo.Rotation = 0
 			logo.ImageTransparency = 0
 			logo.Position = UDim2.fromScale(0.5, 0.5)
-		end
-		if loadingLabel and loadingLabel:IsA("TextLabel") and loadingLabel.Parent then
-			loadingLabel.Text = "Loading..."
-			loadingLabel.TextTransparency = 0
 		end
 		if hintLabel and hintLabel:IsA("TextLabel") and hintLabel.Parent then
 			hintLabel.TextTransparency = 0.08
@@ -2169,7 +2072,6 @@ function M.run()
 
 	fadeOutLoadingTogether(loadingGui, blur, camera, player)
 	cleanupLoadingVisuals(playerGui, loadingGui, nil)
-	loadingBarFill = nil
 
 	if stopNameAnim then
 		stopNameAnim()

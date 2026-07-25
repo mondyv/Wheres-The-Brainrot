@@ -16,6 +16,7 @@ local TweenService = game:GetService("TweenService")
 
 local HUDController = require(script.Parent.HUDController)
 local StandDialogueCutscene = require(script.Parent.StandDialogueCutscene)
+local BackgroundMusicController = require(script.Parent.BackgroundMusicController)
 
 local player = Players.LocalPlayer
 
@@ -26,6 +27,11 @@ end
 -- ── Stand config ──────────────────────────────────────────────────────────────
 -- voicePitch: Shop keeps default Gaster range; Sell deeper; Upgrade higher
 
+local FRAME_TO_BOOTH = {
+	Shop = "BrainrotDealerBooth" :: BackgroundMusicController.BoothKey,
+	Sell = "SellBooth" :: BackgroundMusicController.BoothKey,
+	Upgrades = "UpgradeBooth" :: BackgroundMusicController.BoothKey,
+}
 local STAND_CONFIG = {
 	{
 		standName = "Shop Stand",
@@ -103,6 +109,11 @@ local chargeAmount = 0
 local chargeBillboard: BillboardGui? = nil
 local chargeFill: Frame? = nil
 local chargeFillTween: Tween? = nil
+
+local function syncBoothMusic(stand: StandEntry?)
+	local key = if stand then FRAME_TO_BOOTH[stand.frameName] else nil
+	BackgroundMusicController.setActiveBooth(key)
+end
 
 local function cancelPendingClose()
 	if closePending then
@@ -263,6 +274,7 @@ local function scheduleClose()
 		activeStandFrame = nil
 		activeStandEntry = nil
 		openedPanelFromDialogue = false
+		syncBoothMusic(nil)
 		HUDController.closeCurrentFrame()
 		if shouldGoodbye and leavingStand then
 			showGoodbye(leavingStand)
@@ -294,6 +306,7 @@ local function openPanelDirect(stand: StandEntry)
 	activeStandFrame = stand.frameName
 	activeStandEntry = stand
 	openedPanelFromDialogue = true
+	syncBoothMusic(stand)
 	HUDController.openFrameByName(stand.frameName)
 end
 
@@ -314,6 +327,7 @@ local function beginDialogue(stand: StandEntry)
 	resetCharge()
 	dialogueBusy = true
 	openedPanelFromDialogue = false
+	syncBoothMusic(stand)
 	task.spawn(function()
 		local choseEnter = StandDialogueCutscene.play({
 			standName = stand.standName,
@@ -332,12 +346,14 @@ local function beginDialogue(stand: StandEntry)
 			activeStandFrame = stand.frameName
 			activeStandEntry = stand
 			openedPanelFromDialogue = true
+			syncBoothMusic(stand)
 			HUDController.openFrameByName(stand.frameName)
 		else
 			dismissedStandKey = stand.standName
 			activeStandFrame = nil
 			activeStandEntry = nil
 			openedPanelFromDialogue = false
+			syncBoothMusic(nil)
 			showGoodbye(stand)
 		end
 	end)
@@ -373,16 +389,19 @@ local function tick(dt: number)
 
 	if dialogueBusy or StandDialogueCutscene.isActive() then
 		resetCharge()
-		local stillInside = false
+		local stillInside: StandEntry? = nil
 		for _, stand in ipairs(stands) do
 			if stand.hitbox.Parent and isPointInsidePartOBB(hrpPos, stand.hitbox, 2.75) then
-				stillInside = true
+				stillInside = stand
 				break
 			end
 		end
-		if not stillInside then
+		if stillInside then
+			syncBoothMusic(stillInside)
+		else
 			StandDialogueCutscene.cancel()
 			dialogueBusy = false
+			syncBoothMusic(nil)
 		end
 		return
 	end
@@ -401,6 +420,7 @@ local function tick(dt: number)
 
 	if insideStand then
 		cancelPendingClose()
+		syncBoothMusic(insideStand)
 		if dismissedStandKey == insideStand.standName then
 			resetCharge()
 			return
@@ -427,6 +447,8 @@ local function tick(dt: number)
 		resetCharge()
 		if activeStandFrame and not closePending then
 			scheduleClose()
+		elseif not activeStandFrame then
+			syncBoothMusic(nil)
 		end
 	end
 end

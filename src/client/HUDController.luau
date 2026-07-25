@@ -180,13 +180,55 @@ local function ensurePanelBackdrop()
 
 	backdrop.Activated:Connect(function()
 		local frame = currentFrame
-		if frame then
-			MobileHaptics.tap()
-			HUDController.closeCurrentFrame()
+		if not frame then
+			return
 		end
+		-- Empty panel chrome is often Active=false and punches through to this backdrop.
+		-- Only close when the pointer is truly outside the open panel (or on X).
+		local mouse = UserInputService:GetMouseLocation()
+		local inset = GuiService:GetGuiInset()
+		local atPos = player.PlayerGui:GetGuiObjectsAtPosition(mouse.X - inset.X, mouse.Y - inset.Y)
+		for _, obj in atPos do
+			if obj ~= backdrop and (obj == frame or obj:IsDescendantOf(frame)) then
+				return
+			end
+		end
+		local pos = frame.AbsolutePosition
+		local size = frame.AbsoluteSize
+		local px = mouse.X - inset.X
+		local py = mouse.Y - inset.Y
+		if px >= pos.X and px <= pos.X + size.X and py >= pos.Y and py <= pos.Y + size.Y then
+			return
+		end
+		MobileHaptics.tap()
+		HUDController.closeCurrentFrame()
 	end)
 
 	panelBackdrop = backdrop
+end
+
+local function ensurePanelClickSink(frame: Frame)
+	local sink = frame:FindFirstChild("_PanelClickSink")
+	if sink and sink:IsA("GuiButton") then
+		sink.Active = true
+		sink.ZIndex = 1
+		return
+	end
+	if sink then
+		sink:Destroy()
+	end
+	local btn = Instance.new("TextButton")
+	btn.Name = "_PanelClickSink"
+	btn.AutoButtonColor = false
+	btn.Text = ""
+	btn.BackgroundTransparency = 1
+	btn.BorderSizePixel = 0
+	btn.Size = UDim2.fromScale(1, 1)
+	btn.Position = UDim2.fromScale(0, 0)
+	btn.ZIndex = 1
+	btn.Active = true
+	btn.Selectable = false
+	btn.Parent = frame
 end
 
 local function restoreMobileControlsAfterPanel()
@@ -411,8 +453,12 @@ local function openFrame(frame: Frame)
 	if frame.ZIndex < 20 then
 		frame.ZIndex = 20
 	end
+	ensurePanelClickSink(frame)
 	-- Panel content must receive clicks (ScrollingFrames / buy buttons).
 	for _, d in frame:GetDescendants() do
+		if d.Name == "_PanelClickSink" then
+			continue
+		end
 		if d:IsA("GuiButton") or d:IsA("ScrollingFrame") or d:IsA("TextBox") then
 			(d :: GuiObject).Active = true
 		elseif d:IsA("GuiObject") and not d:IsA("GuiButton") then

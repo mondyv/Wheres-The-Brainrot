@@ -1,9 +1,10 @@
 -- [ACTIVE] BackgroundMusicController
 --[[
-	BackgroundMusicController — context BGM from SoundService.BackgroundMusic.SoundGroup:
-	• Safezone — default / inside safe zone
-	• JungleZone — outside safe zone (Background1 / Background2, one at a time)
+	BackgroundMusicController — context BGM from SoundService.BackgroundMusic:
+	• Booths (UpgradeBooth / SellBooth / BrainrotDealerBooth) — while at a stand shop
 	• WhenHolding — while carrying a bush brainrot on your head
+	• JungleZone — outside safe zone
+	• Safezone — default / inside safe zone
 	Picks a random track from the active folder; when it ends, picks another.
 --]]
 
@@ -17,9 +18,14 @@ local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local POLL_INTERVAL = 0.25
 
-type BgmMode = "none" | "safezone" | "jungle" | "holding"
+export type BoothKey = "UpgradeBooth" | "SellBooth" | "BrainrotDealerBooth"
+
+type BgmMode = "none" | "safezone" | "jungle" | "holding" | "booth"
 
 local player = Players.LocalPlayer
+
+local activeBoothKey: BoothKey? = nil
+local resolveAndApplyFn: (() -> ())? = nil
 
 local function soundsInFolder(folder: Instance?): { Sound }
 	local list: { Sound } = {}
@@ -55,26 +61,58 @@ end
 
 local BackgroundMusicController = {}
 
+function BackgroundMusicController.setActiveBooth(boothKey: BoothKey?)
+	if activeBoothKey == boothKey then
+		return
+	end
+	activeBoothKey = boothKey
+	if resolveAndApplyFn then
+		resolveAndApplyFn()
+	end
+end
+
+function BackgroundMusicController.getActiveBooth(): BoothKey?
+	return activeBoothKey
+end
+
 function BackgroundMusicController.init()
 	local bg = SoundService:FindFirstChild("BackgroundMusic")
 	if not bg then
 		return
 	end
 	local sg = bg:FindFirstChild("SoundGroup")
-	if not sg then
+	local boothsRoot = bg:FindFirstChild("Booths")
+
+	local safezonePlaylist = soundsInFolder(sg and sg:FindFirstChild("Safezone"))
+	local junglePlaylist = soundsInFolder(sg and sg:FindFirstChild("JungleZone"))
+	local holdingPlaylist = soundsInFolder(sg and sg:FindFirstChild("WhenHolding"))
+
+	local boothPlaylists: { [BoothKey]: { Sound } } = {
+		UpgradeBooth = soundsInFolder(boothsRoot and boothsRoot:FindFirstChild("UpgradeBooth")),
+		SellBooth = soundsInFolder(boothsRoot and boothsRoot:FindFirstChild("SellBooth")),
+		BrainrotDealerBooth = soundsInFolder(boothsRoot and boothsRoot:FindFirstChild("BrainrotDealerBooth")),
+	}
+
+	local hasAnyBooth = false
+	for _, list in boothPlaylists do
+		if #list > 0 then
+			hasAnyBooth = true
+			break
+		end
+	end
+
+	if #safezonePlaylist == 0 and #junglePlaylist == 0 and #holdingPlaylist == 0 and not hasAnyBooth then
 		return
 	end
 
-	local safezonePlaylist = soundsInFolder(sg:FindFirstChild("Safezone"))
-	local junglePlaylist = soundsInFolder(sg:FindFirstChild("JungleZone"))
-	local holdingPlaylist = soundsInFolder(sg:FindFirstChild("WhenHolding"))
-	if #safezonePlaylist == 0 and #junglePlaylist == 0 and #holdingPlaylist == 0 then
-		return
-	end
-
-	local groupRef = if sg:IsA("SoundGroup") then sg :: SoundGroup else nil
+	local groupRef = if sg and sg:IsA("SoundGroup") then sg :: SoundGroup else nil
 	local allSounds: { Sound } = {}
 	for _, playlist in { safezonePlaylist, junglePlaylist, holdingPlaylist } do
+		for _, s in playlist do
+			table.insert(allSounds, s)
+		end
+	end
+	for _, playlist in boothPlaylists do
 		for _, s in playlist do
 			table.insert(allSounds, s)
 		end
@@ -87,6 +125,7 @@ function BackgroundMusicController.init()
 	end
 
 	local currentMode: BgmMode = "none"
+	local currentBoothKey: BoothKey? = nil
 	local currentSound: Sound? = nil
 	local endedConn: RBXScriptConnection? = nil
 	local pollAccum = 0.0
@@ -100,10 +139,13 @@ function BackgroundMusicController.init()
 			s:Stop()
 		end
 		currentSound = nil
+		currentBoothKey = nil
 	end
 
-	local function playlistForMode(mode: BgmMode): { Sound }
-		if mode == "safezone" then
+	local function playlistForMode(mode: BgmMode, boothKey: BoothKey?): { Sound }
+		if mode == "booth" and boothKey then
+			return boothPlaylists[boothKey] or {}
+		elseif mode == "safezone" then
 			return safezonePlaylist
 		elseif mode == "jungle" then
 			return junglePlaylist
@@ -113,8 +155,8 @@ function BackgroundMusicController.init()
 		return {}
 	end
 
-	local function playRandomFromMode(mode: BgmMode)
-		local playlist = playlistForMode(mode)
+	local function playRandomFromMode(mode: BgmMode, boothKey: BoothKey?)
+		local playlist = playlistForMode(mode, boothKey)
 		local nextSound = pickRandom(playlist, currentSound)
 		if not nextSound then
 			stopAll()
@@ -133,36 +175,42 @@ function BackgroundMusicController.init()
 		end
 
 		currentMode = mode
+		currentBoothKey = if mode == "booth" then boothKey else nil
 		currentSound = nextSound
 		nextSound.TimePosition = 0
 		nextSound:Play()
 		endedConn = nextSound.Ended:Connect(function()
-			if currentMode == mode then
-				playRandomFromMode(mode)
+			if currentMode == mode and currentBoothKey == boothKey then
+				playRandomFromMode(mode, boothKey)
 			end
 		end)
 	end
 
-	local function resolveMode(): BgmMode
+	local function resolveMode(): (BgmMode, BoothKey?)
+		local booth = activeBoothKey
+		if booth and #(boothPlaylists[booth] or {}) > 0 then
+			return "booth", booth
+		end
 		if CarryGate.isCarryingOnHead() and #holdingPlaylist > 0 then
-			return "holding"
+			return "holding", nil
 		end
 		local char = player.Character
 		local inSafe = if char then SafezoneUtil.isCharacterInSafezone(char) else true
 		if not inSafe and #junglePlaylist > 0 then
-			return "jungle"
+			return "jungle", nil
 		end
 		if #safezonePlaylist > 0 then
-			return "safezone"
+			return "safezone", nil
 		end
 		if #junglePlaylist > 0 then
-			return "jungle"
+			return "jungle", nil
 		end
-		return "none"
+		return "none", nil
 	end
 
-	local function applyMode(mode: BgmMode)
-		if mode == currentMode and mode ~= "none" and currentSound and currentSound.IsPlaying then
+	local function applyMode(mode: BgmMode, boothKey: BoothKey?)
+		local sameBooth = mode ~= "booth" or currentBoothKey == boothKey
+		if mode == currentMode and sameBooth and mode ~= "none" and currentSound and currentSound.IsPlaying then
 			return
 		end
 		if mode == "none" then
@@ -170,16 +218,18 @@ function BackgroundMusicController.init()
 			currentMode = "none"
 			return
 		end
-		if mode ~= currentMode then
-			playRandomFromMode(mode)
+		if mode ~= currentMode or (mode == "booth" and currentBoothKey ~= boothKey) then
+			playRandomFromMode(mode, boothKey)
 		elseif currentSound and not currentSound.IsPlaying then
-			playRandomFromMode(mode)
+			playRandomFromMode(mode, boothKey)
 		end
 	end
 
 	local function pollState()
-		applyMode(resolveMode())
+		local mode, boothKey = resolveMode()
+		applyMode(mode, boothKey)
 	end
+	resolveAndApplyFn = pollState
 
 	task.spawn(function()
 		SafezoneUtil.warmCacheAsync()

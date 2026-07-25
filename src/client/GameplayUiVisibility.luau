@@ -20,10 +20,11 @@ local M = {}
 
 local hideCount = 0
 local animGen = 0
-local SLIDE_OUT = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local SLIDE_IN = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local WAVE_STAGGER = 0.028
-local MAX_WAVE_SPAN = 0.2
+-- Snappy edge-exit; Quint keeps it fluid without a long hang.
+local SLIDE_OUT = TweenInfo.new(0.1, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+local SLIDE_IN = TweenInfo.new(0.14, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local WAVE_STAGGER = 0.012
+local MAX_WAVE_SPAN = 0.085
 
 type GuiSnap = {
 	inst: GuiObject,
@@ -194,8 +195,8 @@ local function computeSlidePos(gui: GuiObject, vp: Vector2): UDim2
 	local inset = GuiService:GetGuiInset()
 	local topInset = inset.Y
 	local margin = 48 + topInset * 0.25
-	local travelX = math.clamp(contentSize.X + margin, 80, vp.X * 0.55)
-	local travelY = math.clamp(contentSize.Y + margin, 70, vp.Y * 0.45)
+	local travelX = math.clamp(contentSize.X * 0.82 + margin * 0.65, 64, vp.X * 0.42)
+	local travelY = math.clamp(contentSize.Y * 0.82 + margin * 0.65, 52, vp.Y * 0.34)
 	local nx = center.X / math.max(vp.X, 1)
 
 	if nx < 0.38 then

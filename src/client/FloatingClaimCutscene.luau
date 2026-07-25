@@ -153,7 +153,7 @@ local function ensureLetterboxGui(): ScreenGui
 	bottomSeal.ZIndex = 19
 	bottomSeal.Parent = gui
 
-	-- Full-height side strips cover notch gutters on mobile only (look like pillars on PC).
+	-- Full-height side strips unused (mobile keeps top/bottom letterbox only).
 	local leftSeal = Instance.new("Frame")
 	leftSeal.Name = "LetterLeftSeal"
 	leftSeal.BackgroundColor3 = Color3.new(0, 0, 0)
@@ -218,27 +218,16 @@ local function animateLetterboxIn()
 			Size = UDim2.new(1.4, 0, 0.1, 0),
 		}):Play()
 	end
-	-- Side seals are mobile/notch only — on PC they read as black pillars.
-	local useSideSeals = UserInputService.TouchEnabled
+	-- Side seals removed — mobile only uses top/bottom letterbox bars.
+	local leftSeal = gui:FindFirstChild("LetterLeftSeal")
+	local rightSeal = gui:FindFirstChild("LetterRightSeal")
 	if leftSeal and leftSeal:IsA("Frame") then
-		leftSeal.Visible = useSideSeals
-		if useSideSeals then
-			TweenService:Create(leftSeal, barIn, {
-				Size = UDim2.new(0.04, 16, 1.2, 0),
-			}):Play()
-		else
-			leftSeal.Size = UDim2.new(0, 0, 1.2, 0)
-		end
+		leftSeal.Visible = false
+		leftSeal.Size = UDim2.new(0, 0, 1.2, 0)
 	end
 	if rightSeal and rightSeal:IsA("Frame") then
-		rightSeal.Visible = useSideSeals
-		if useSideSeals then
-			TweenService:Create(rightSeal, barIn, {
-				Size = UDim2.new(0.04, 16, 1.2, 0),
-			}):Play()
-		else
-			rightSeal.Size = UDim2.new(0, 0, 1.2, 0)
-		end
+		rightSeal.Visible = false
+		rightSeal.Size = UDim2.new(0, 0, 1.2, 0)
 	end
 	if letterTop and letterBottom then
 		TweenService:Create(letterTop, barIn, {

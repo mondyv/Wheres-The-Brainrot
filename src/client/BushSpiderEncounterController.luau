@@ -1063,26 +1063,14 @@ local function animateLetterboxIn()
 	end
 	local leftSeal = gui:FindFirstChild("LetterLeftSeal")
 	local rightSeal = gui:FindFirstChild("LetterRightSeal")
-	local useSideSeals = UserInputService.TouchEnabled
+	-- Side seals removed — mobile cutscenes use top/bottom bars only.
 	if leftSeal and leftSeal:IsA("Frame") then
-		leftSeal.Visible = useSideSeals
-		if useSideSeals then
-			TweenService:Create(leftSeal, barIn, {
-				Size = UDim2.new(0.04, 16, 1.2, 0),
-			}):Play()
-		else
-			leftSeal.Size = UDim2.new(0, 0, 1.2, 0)
-		end
+		leftSeal.Visible = false
+		leftSeal.Size = UDim2.new(0, 0, 1.2, 0)
 	end
 	if rightSeal and rightSeal:IsA("Frame") then
-		rightSeal.Visible = useSideSeals
-		if useSideSeals then
-			TweenService:Create(rightSeal, barIn, {
-				Size = UDim2.new(0.04, 16, 1.2, 0),
-			}):Play()
-		else
-			rightSeal.Size = UDim2.new(0, 0, 1.2, 0)
-		end
+		rightSeal.Visible = false
+		rightSeal.Size = UDim2.new(0, 0, 1.2, 0)
 	end
 end
 
@@ -1100,14 +1088,12 @@ local function animateLetterboxOut()
 		local leftSeal = cutsceneGui:FindFirstChild("LetterLeftSeal")
 		local rightSeal = cutsceneGui:FindFirstChild("LetterRightSeal")
 		if leftSeal and leftSeal:IsA("Frame") then
-			TweenService:Create(leftSeal, barOut, {
-				Size = UDim2.new(0, 0, 1.2, 0),
-			}):Play()
+			leftSeal.Visible = false
+			leftSeal.Size = UDim2.new(0, 0, 1.2, 0)
 		end
 		if rightSeal and rightSeal:IsA("Frame") then
-			TweenService:Create(rightSeal, barOut, {
-				Size = UDim2.new(0, 0, 1.2, 0),
-			}):Play()
+			rightSeal.Visible = false
+			rightSeal.Size = UDim2.new(0, 0, 1.2, 0)
 		end
 		task.delay(0.38, function()
 			if cutsceneGui then

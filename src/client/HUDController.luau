@@ -189,6 +189,83 @@ local function ensurePanelCloseOnTop(frame: Frame)
 	end
 end
 
+local function ensurePanelEdgeBars()
+	-- Mobile safe-area strips often sit outside Main's inset layout, so Lighting blur
+	-- leaves crisp bands at the top/bottom. Cover those with dim bars.
+	if not UserInputService.TouchEnabled then
+		if panelDimGui then
+			panelDimGui:Destroy()
+			panelDimGui = nil
+		end
+		return
+	end
+
+	local pg = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+	if not pg then
+		return
+	end
+
+	if panelDimGui and panelDimGui.Parent then
+		panelDimGui.Enabled = true
+		return
+	end
+
+	local existing = pg:FindFirstChild(PANEL_DIM_GUI_NAME)
+	if existing then
+		existing:Destroy()
+	end
+
+	ensureHudRoots()
+	local mainOrder = if mainGui then mainGui.DisplayOrder else 10
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = PANEL_DIM_GUI_NAME
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.DisplayOrder = mainOrder
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	pcall(function()
+		(gui :: any).ClipToDeviceSafeArea = false
+	end)
+	pcall(function()
+		(gui :: any).SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
+	end)
+	pcall(function()
+		(gui :: any).ScreenInsets = Enum.ScreenInsets.None
+	end)
+
+	local inset = GuiService:GetGuiInset()
+	local topH = math.max(inset.Y + 10, 48)
+	local bottomH = math.max(inset.Y * 0.35 + 52, 56)
+
+	local topBar = Instance.new("Frame")
+	topBar.Name = "TopEdgeBar"
+	topBar.BackgroundColor3 = Color3.new(0, 0, 0)
+	topBar.BackgroundTransparency = 0.35
+	topBar.BorderSizePixel = 0
+	topBar.AnchorPoint = Vector2.new(0, 0)
+	topBar.Position = UDim2.fromScale(0, 0)
+	topBar.Size = UDim2.new(1, 0, 0, topH)
+	topBar.ZIndex = 1
+	topBar.Active = false
+	topBar.Parent = gui
+
+	local bottomBar = Instance.new("Frame")
+	bottomBar.Name = "BottomEdgeBar"
+	bottomBar.BackgroundColor3 = Color3.new(0, 0, 0)
+	bottomBar.BackgroundTransparency = 0.35
+	bottomBar.BorderSizePixel = 0
+	bottomBar.AnchorPoint = Vector2.new(0, 1)
+	bottomBar.Position = UDim2.fromScale(0, 1)
+	bottomBar.Size = UDim2.new(1, 0, 0, bottomH)
+	bottomBar.ZIndex = 1
+	bottomBar.Active = false
+	bottomBar.Parent = gui
+
+	gui.Parent = pg
+	panelDimGui = gui
+end
+
 local function ensurePanelBackdrop()
 	ensureHudRoots()
 	local frames = framesFolder
@@ -203,7 +280,7 @@ local function ensurePanelBackdrop()
 	end
 
 	local inset = GuiService:GetGuiInset()
-	local bottomExtra = if UserInputService.TouchEnabled then 56 else 28
+	local bottomExtra = if UserInputService.TouchEnabled then 72 else 28
 	local padX = math.max(inset.X, 8)
 	local padTop = math.max(inset.Y, 8)
 
@@ -256,6 +333,7 @@ local function ensurePanelBackdrop()
 	end)
 
 	panelBackdrop = backdrop
+	ensurePanelEdgeBars()
 end
 
 local function ensurePanelClickSink(frame: Frame)

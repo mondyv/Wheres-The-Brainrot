@@ -1,8 +1,8 @@
 -- [ACTIVE] SafeZoneLightingController
 --[[
-	Outside the safe zone, darkens Atmosphere only (smoky jungle night).
-	Does NOT touch Ambient / OutdoorAmbient / Brightness / ColorCorrection —
-	those tint the whole screen.
+	Outside the safe zone: smoky dark Atmosphere night only.
+	Day look is snapped once at boot (before night is ever applied) and never
+	overwritten, so returning to the safe zone always restores original lighting.
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -18,14 +18,14 @@ local POLL_INTERVAL = 0.25
 local FADE_INFO = TweenInfo.new(1.45, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 local CC_LEGACY_NAME = "SafeZoneNightCC"
 
--- Misty see-through fog night — not black crush
+-- Dark nighty fog (the look that felt right before the misty pass)
 local NIGHT_ATMO = {
-	Density = 0.38,
-	Offset = 0.2,
-	Color = Color3.fromRGB(110, 118, 122),
-	Decay = Color3.fromRGB(95, 102, 108),
-	Glare = 0.02,
-	Haze = 3.4,
+	Density = 0.62,
+	Offset = 0.05,
+	Color = Color3.fromRGB(46, 50, 52),
+	Decay = Color3.fromRGB(58, 62, 64),
+	Glare = 0.03,
+	Haze = 2.85,
 }
 
 type AtmoSnap = {
@@ -45,7 +45,6 @@ local inSafezone = true
 local wired = false
 local pollConn: RBXScriptConnection? = nil
 local dayAtmo: AtmoSnap? = nil
-local daySnapReady = false
 
 local function cancelTweens()
 	for _, tw in activeTweens do
@@ -101,13 +100,8 @@ local function ensureAtmosphere(): Atmosphere
 	return atmo
 end
 
-local function snapshotDay(force: boolean?)
-	-- Never overwrite the day snapshot with night atmosphere values
-	if daySnapReady and not force then
-		return
-	end
-	local atmo = ensureAtmosphere()
-	dayAtmo = {
+local function readAtmo(atmo: Atmosphere): AtmoSnap
+	return {
 		Density = atmo.Density,
 		Offset = atmo.Offset,
 		Color = atmo.Color,
@@ -115,13 +109,18 @@ local function snapshotDay(force: boolean?)
 		Glare = atmo.Glare,
 		Haze = atmo.Haze,
 	}
-	daySnapReady = true
+end
+
+-- Capture place day lighting once. Never call after night has been applied.
+local function captureDayOnce()
+	if dayAtmo then
+		return
+	end
+	dayAtmo = readAtmo(ensureAtmosphere())
 end
 
 local function applyProfile(night: boolean, instant: boolean?)
-	if not dayAtmo then
-		snapshotDay(true)
-	end
+	captureDayOnce()
 	local atmo = ensureAtmosphere()
 	cancelTweens()
 
@@ -160,7 +159,6 @@ local function setInSafezone(nextIn: boolean, force: boolean?)
 		return
 	end
 	inSafezone = nextIn
-	-- Restore day snap when returning; never re-snapshot while night is active
 	applyProfile(not nextIn, force == true)
 end
 
@@ -171,24 +169,15 @@ function SafeZoneLightingController.init()
 	wired = true
 
 	cleanupLegacy()
+	-- CRITICAL: snap day BEFORE any night apply, so restore always works
+	captureDayOnce()
 
 	task.spawn(function()
 		SafezoneUtil.warmCacheAsync()
 		SafezoneUtil.awaitCacheReady(12)
-		-- Capture true day look only while (or if) inside safezone before night apply
-		if readInSafezone() then
-			snapshotDay(true)
-		elseif not daySnapReady then
-			-- Outside on join: still store whatever is current as fallback, then night
-			snapshotDay(true)
-		end
 		setInSafezone(readInSafezone(), true)
 	end)
 
-	-- Prefer snapping day ASAP if we spawn in safezone
-	if readInSafezone() then
-		snapshotDay(true)
-	end
 	inSafezone = readInSafezone()
 	applyProfile(not inSafezone, true)
 

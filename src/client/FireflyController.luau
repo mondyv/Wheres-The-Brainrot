@@ -142,7 +142,7 @@ local function makeFly(parent: Folder, center: Vector3, half: Vector3, index: nu
 	part.CanQuery = false
 	part.CanTouch = false
 	part.CastShadow = false
-	part.Transparency = 0.4
+	part.Transparency = 0.55
 	part.CFrame = CFrame.new(center)
 	part.Parent = parent
 
@@ -152,27 +152,27 @@ local function makeFly(parent: Folder, center: Vector3, half: Vector3, index: nu
 	glow.Texture = "rbxasset://textures/particles/smoke_main.dds"
 	glow.Color = ColorSequence.new(YELLOW)
 	glow.Size = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.7),
-		NumberSequenceKeypoint.new(0.5, 1.1),
-		NumberSequenceKeypoint.new(1, 0.3),
+		NumberSequenceKeypoint.new(0, 0.45),
+		NumberSequenceKeypoint.new(0.5, 0.7),
+		NumberSequenceKeypoint.new(1, 0.2),
 	})
 	glow.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.4),
+		NumberSequenceKeypoint.new(0, 0.55),
 		NumberSequenceKeypoint.new(1, 1),
 	})
-	glow.Rate = 8
-	glow.Lifetime = NumberRange.new(0.3, 0.5)
-	glow.Speed = NumberRange.new(0, 0.08)
+	glow.Rate = 3
+	glow.Lifetime = NumberRange.new(0.35, 0.55)
+	glow.Speed = NumberRange.new(0, 0.04)
 	glow.SpreadAngle = Vector2.new(180, 180)
-	glow.LightEmission = 1
+	glow.LightEmission = 0.7
 	glow.LightInfluence = 0
 	glow.LockedToPart = true
 	glow.Parent = part
 
 	local light = Instance.new("PointLight")
 	light.Color = YELLOW
-	light.Brightness = 1.75
-	light.Range = 10
+	light.Brightness = 0.55
+	light.Range = 5.5
 	light.Shadows = false
 	light.Parent = part
 
@@ -186,8 +186,8 @@ local function makeFly(parent: Folder, center: Vector3, half: Vector3, index: nu
 		part = part,
 		light = light,
 		phase = index * 1.35 + math.random() * 6,
-		speed = 0.12 + math.random() * 0.1,
-		orbit = 0.45 + math.random() * 0.5,
+		speed = 0.07 + math.random() * 0.06,
+		orbit = 0.3 + math.random() * 0.35,
 		baseOffset = baseOffset,
 		wander = Vector3.zero,
 		wanderNext = 0,
@@ -274,7 +274,7 @@ end
 
 local function stepFlies(dt: number)
 	local t = os.clock()
-	local blend = math.clamp(dt * 1.35, 0.02, 0.08)
+	local blend = math.clamp(dt * 0.85, 0.015, 0.045)
 	for _, swarm in pairs(activeSwarms) do
 		if not swarm.bush.Parent then
 			destroySwarm(swarm.bush)
@@ -282,23 +282,23 @@ local function stepFlies(dt: number)
 		end
 		for _, fly in swarm.flies do
 			if t >= fly.wanderNext then
-				fly.wanderNext = t + 2.8 + math.random() * 3.5
+				fly.wanderNext = t + 3.5 + math.random() * 4
 				fly.wander = Vector3.new(
-					(math.random() * 2 - 1) * 0.7,
 					(math.random() * 2 - 1) * 0.45,
-					(math.random() * 2 - 1) * 0.7
+					(math.random() * 2 - 1) * 0.3,
+					(math.random() * 2 - 1) * 0.45
 				)
 			end
 			local ang = t * fly.speed + fly.phase
 			local drift = Vector3.new(
 				math.cos(ang) * fly.orbit,
-				math.sin(t * 0.55 + fly.phase) * 0.35,
+				math.sin(t * 0.4 + fly.phase) * 0.22,
 				math.sin(ang * 0.9) * fly.orbit
 			)
 			local target = swarm.center + fly.baseOffset + drift + fly.wander
 			fly.pos = fly.pos:Lerp(target, blend)
 			fly.part.CFrame = CFrame.new(fly.pos)
-			fly.light.Brightness = 1.4 + 0.45 * (0.5 + 0.5 * math.sin(t * 1.2 + fly.phase))
+			fly.light.Brightness = 0.4 + 0.2 * (0.5 + 0.5 * math.sin(t * 0.9 + fly.phase))
 		end
 	end
 end

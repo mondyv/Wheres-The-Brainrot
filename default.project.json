@@ -59,6 +59,9 @@
         },
         "SlowWalk": {
           "$path": "src/character/SlowWalk.client.luau"
+        },
+        "CharacterAnimations": {
+          "$path": "src/character/CharacterAnimations.client.luau"
         }
       }
     },

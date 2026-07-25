@@ -18,14 +18,14 @@ local POLL_INTERVAL = 0.25
 local FADE_INFO = TweenInfo.new(1.45, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 local CC_LEGACY_NAME = "SafeZoneNightCC"
 
--- Neutral dark smoky night — denser fog, slightly darker
+-- Misty see-through fog night — not black crush
 local NIGHT_ATMO = {
-	Density = 0.62,
-	Offset = 0.05,
-	Color = Color3.fromRGB(46, 50, 52),
-	Decay = Color3.fromRGB(58, 62, 64),
-	Glare = 0.03,
-	Haze = 2.85,
+	Density = 0.38,
+	Offset = 0.2,
+	Color = Color3.fromRGB(110, 118, 122),
+	Decay = Color3.fromRGB(95, 102, 108),
+	Glare = 0.02,
+	Haze = 3.4,
 }
 
 type AtmoSnap = {
@@ -45,6 +45,7 @@ local inSafezone = true
 local wired = false
 local pollConn: RBXScriptConnection? = nil
 local dayAtmo: AtmoSnap? = nil
+local daySnapReady = false
 
 local function cancelTweens()
 	for _, tw in activeTweens do
@@ -100,7 +101,11 @@ local function ensureAtmosphere(): Atmosphere
 	return atmo
 end
 
-local function snapshotDay()
+local function snapshotDay(force: boolean?)
+	-- Never overwrite the day snapshot with night atmosphere values
+	if daySnapReady and not force then
+		return
+	end
 	local atmo = ensureAtmosphere()
 	dayAtmo = {
 		Density = atmo.Density,
@@ -110,11 +115,12 @@ local function snapshotDay()
 		Glare = atmo.Glare,
 		Haze = atmo.Haze,
 	}
+	daySnapReady = true
 end
 
 local function applyProfile(night: boolean, instant: boolean?)
 	if not dayAtmo then
-		snapshotDay()
+		snapshotDay(true)
 	end
 	local atmo = ensureAtmosphere()
 	cancelTweens()
@@ -153,10 +159,8 @@ local function setInSafezone(nextIn: boolean, force: boolean?)
 	if not force and nextIn == inSafezone then
 		return
 	end
-	if nextIn then
-		snapshotDay()
-	end
 	inSafezone = nextIn
+	-- Restore day snap when returning; never re-snapshot while night is active
 	applyProfile(not nextIn, force == true)
 end
 
@@ -167,17 +171,24 @@ function SafeZoneLightingController.init()
 	wired = true
 
 	cleanupLegacy()
-	snapshotDay()
 
 	task.spawn(function()
 		SafezoneUtil.warmCacheAsync()
 		SafezoneUtil.awaitCacheReady(12)
+		-- Capture true day look only while (or if) inside safezone before night apply
 		if readInSafezone() then
-			snapshotDay()
+			snapshotDay(true)
+		elseif not daySnapReady then
+			-- Outside on join: still store whatever is current as fallback, then night
+			snapshotDay(true)
 		end
 		setInSafezone(readInSafezone(), true)
 	end)
 
+	-- Prefer snapping day ASAP if we spawn in safezone
+	if readInSafezone() then
+		snapshotDay(true)
+	end
 	inSafezone = readInSafezone()
 	applyProfile(not inSafezone, true)
 

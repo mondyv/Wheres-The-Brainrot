@@ -22,6 +22,11 @@ M.PRODUCT_BY_COUNT = {
 	[11] = 3607613257,
 }
 
+-- Fallback display prices until MarketplaceService:GetProductInfo resolves.
+M.DEFAULT_PRICE_BY_COUNT = {
+	[1] = 54,
+}
+
 local productToCount: { [number]: number } = {}
 for count, productId in M.PRODUCT_BY_COUNT do
 	productToCount[productId] = count
@@ -29,6 +34,11 @@ end
 
 function M.clampCount(count: number): number
 	return math.clamp(math.floor(count), 1, M.MAX_COUNT)
+end
+
+function M.defaultPriceForCount(count: number): number?
+	local c = M.clampCount(count)
+	return M.DEFAULT_PRICE_BY_COUNT[c]
 end
 
 function M.productIdForCount(count: number): number

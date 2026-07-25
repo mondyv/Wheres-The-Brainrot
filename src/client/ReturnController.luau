@@ -40,10 +40,14 @@ local IDLE_BOB_TWEEN = TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDire
 local GRADIENT_HOVER_TWEEN = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local GRADIENT_IDLE_TWEEN = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
+local ROBUX_GLYPH = "\u{E002}"
+
 local returnFrame: GuiObject? = nil
 local freeBtn: GuiButton? = nil
 local paidBtn: GuiButton? = nil
 local frameScale: UIScale? = nil
+local paidPriceLabel: TextLabel? = nil
+local paidPriceTemplate: string? = nil
 
 local fadeGui: ScreenGui? = nil
 local fadeFrame: Frame? = nil
@@ -60,6 +64,9 @@ local wasInSafezone = true
 local deferredShowPending = false
 local pendingPaidProductId: number? = nil
 local paidFinishLock = false
+local lastPaidCount = -1
+local priceCache: { [number]: number } = {}
+local charCarryConns: { RBXScriptConnection } = {}
 
 type BtnDecor = {
 	btn: GuiButton,
@@ -267,7 +274,99 @@ local function startIdleMotion()
 end
 
 local function carryCount(): number
-	return CarryGate.usedSlots()
+	local n = CarryGate.usedSlots()
+	if n > 0 then
+		return n
+	end
+	-- Haul models can exist a frame before BrainrotCarryCount syncs.
+	if CarryGate.isCarrying() then
+		return 1
+	end
+	return 0
+end
+
+local function findPaidPriceLabel(btn: GuiButton): TextLabel?
+	for _, name in { "Amount", "Price", "Robux", "Cost", "Text" } do
+		local node = btn:FindFirstChild(name, true)
+		if node and node:IsA("TextLabel") then
+			return node
+		end
+	end
+	local best: TextLabel? = nil
+	for _, d in btn:GetDescendants() do
+		if d:IsA("TextLabel") then
+			local t = d.Text
+			if string.find(t, "%d") then
+				if string.find(t, "Return", 1, true) or string.find(t, ROBUX_GLYPH, 1, true) then
+					return d
+				end
+				best = best or d
+			end
+		end
+	end
+	if btn:IsA("TextButton") and string.find(btn.Text, "%d") then
+		-- TextButton.Text is not a TextLabel; handled in applyPaidPrice.
+		return nil
+	end
+	return best
+end
+
+local function applyPaidPrice(price: number)
+	if paidPriceLabel and paidPriceLabel.Parent then
+		local tmpl = paidPriceTemplate or paidPriceLabel.Text
+		if string.find(tmpl, "%d") then
+			paidPriceLabel.Text = string.gsub(tmpl, "%d+", tostring(price), 1)
+		elseif string.find(tmpl, "Return", 1, true) then
+			paidPriceLabel.Text = "Return " .. ROBUX_GLYPH .. tostring(price)
+		else
+			paidPriceLabel.Text = ROBUX_GLYPH .. tostring(price)
+		end
+		return
+	end
+	if paidBtn and paidBtn:IsA("TextButton") then
+		local tmpl = paidPriceTemplate or paidBtn.Text
+		if string.find(tmpl, "%d") then
+			paidBtn.Text = string.gsub(tmpl, "%d+", tostring(price), 1)
+		else
+			paidBtn.Text = "Return " .. ROBUX_GLYPH .. tostring(price)
+		end
+	end
+end
+
+local function refreshPaidPrice(count: number)
+	if not paidBtn then
+		return
+	end
+	local c = ReturnConfig.clampCount(count)
+	local cached = priceCache[c]
+	if cached then
+		applyPaidPrice(cached)
+	else
+		local fallback = ReturnConfig.defaultPriceForCount(c)
+		if fallback then
+			applyPaidPrice(fallback)
+		end
+	end
+
+	local productId = ReturnConfig.productIdForCount(c)
+	task.spawn(function()
+		local ok, info = pcall(function()
+			return MarketplaceService:GetProductInfo(productId, Enum.InfoType.Product)
+		end)
+		if not ok then
+			warn("[ReturnController] GetProductInfo failed:", info)
+			return
+		end
+		if typeof(info) ~= "table" or typeof(info.PriceInRobux) ~= "number" then
+			return
+		end
+		local price = info.PriceInRobux :: number
+		priceCache[c] = price
+		-- Only paint if still on the same haul tier.
+		if lastPaidCount == c then
+			applyPaidPrice(price)
+		end
+	end)
 end
 
 local function shouldShowReturnChrome(): boolean
@@ -281,6 +380,10 @@ local function shouldShowReturnChrome(): boolean
 	if SafezoneUtil.isCharacterInSafezone(character) then
 		return false
 	end
+	-- While carrying, keep Return visible (escape hatch) even if claim/search UI is up.
+	if carryCount() > 0 then
+		return true
+	end
 	if BushFloatingClaimController.hasActiveOffer() then
 		return false
 	end
@@ -291,7 +394,8 @@ local function shouldShowReturnChrome(): boolean
 end
 
 local function syncModeButtons()
-	local carrying = carryCount() > 0
+	local n = carryCount()
+	local carrying = n > 0
 	if freeBtn then
 		freeBtn.Visible = not carrying
 		if not carrying then
@@ -301,6 +405,16 @@ local function syncModeButtons()
 	end
 	if paidBtn then
 		paidBtn.Visible = carrying
+		if carrying then
+			paidBtn.Position = FREE_BTN_POS
+			local tier = ReturnConfig.clampCount(n)
+			if tier ~= lastPaidCount then
+				lastPaidCount = tier
+				refreshPaidPrice(tier)
+			end
+		else
+			lastPaidCount = -1
+		end
 		paidBtn.Active = carrying and visibleTarget and not teleportBusy
 	end
 end
@@ -556,9 +670,45 @@ local function resolveUi(): boolean
 	free.Position = FREE_BTN_POS
 	free.Visible = true
 	if paid then
+		paid.Position = FREE_BTN_POS
 		paid.Visible = false
+		paidPriceLabel = findPaidPriceLabel(paid)
+		if paidPriceLabel then
+			paidPriceTemplate = paidPriceLabel.Text
+		elseif paid:IsA("TextButton") then
+			paidPriceTemplate = paid.Text
+		end
+		-- Seed count-1 display from Studio ("Return 54") or config default.
+		local seed = ReturnConfig.defaultPriceForCount(1)
+		if seed then
+			applyPaidPrice(seed)
+		end
 	end
 	return true
+end
+
+local function clearCharCarryConns()
+	for _, conn in charCarryConns do
+		conn:Disconnect()
+	end
+	table.clear(charCarryConns)
+end
+
+local function watchCharacterCarry(character: Model)
+	clearCharCarryConns()
+	local function bump()
+		refreshVisibility(false)
+	end
+	table.insert(charCarryConns, character.ChildAdded:Connect(function(child)
+		if child:IsA("Model") or child:IsA("WeldConstraint") then
+			bump()
+		end
+	end))
+	table.insert(charCarryConns, character.ChildRemoved:Connect(function(child)
+		if child:IsA("Model") or child:IsA("WeldConstraint") then
+			bump()
+		end
+	end))
 end
 
 function ReturnController.init()
@@ -625,11 +775,18 @@ function ReturnController.init()
 		refreshVisibility(false)
 	end)
 
-	player.CharacterAdded:Connect(function()
+	player.CharacterAdded:Connect(function(character)
+		watchCharacterCarry(character)
 		task.defer(function()
 			refreshVisibility(true)
 		end)
 	end)
+	player.CharacterRemoving:Connect(function()
+		clearCharCarryConns()
+	end)
+	if player.Character then
+		watchCharacterCarry(player.Character)
+	end
 
 	if heartbeatConn then
 		heartbeatConn:Disconnect()

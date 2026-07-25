@@ -369,26 +369,74 @@ local function startSpideySensesOnSpider(spider: Model)
 	end
 end
 
-local function webProjectileCFrame(pos: Vector3, flightDir: Vector3): CFrame
+local WEB_TIP_ATTR = "WebTipLocal"
+
+local function inferWebTipLocalAxis(model: Model): Vector3
+	if typeof(C.WEB_SHOT_TIP_LOCAL) == "Vector3" and C.WEB_SHOT_TIP_LOCAL.Magnitude > 0.05 then
+		return (C.WEB_SHOT_TIP_LOCAL :: Vector3).Unit
+	end
+	local part = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if not part then
+		return -Vector3.zAxis
+	end
+	local s = part.Size
+	-- Align the longest "shaft" axis to flight. Prefer -Z when Z wins (Roblox look space).
+	if s.Y >= s.X and s.Y >= s.Z then
+		return Vector3.yAxis
+	end
+	if s.Z >= s.X then
+		return -Vector3.zAxis
+	end
+	return Vector3.xAxis
+end
+
+local function rotationMappingLocalToNegZ(localAxis: Vector3): CFrame
+	local a = localAxis.Unit
+	local target = -Vector3.zAxis
+	local dot = a:Dot(target)
+	if dot > 0.9999 then
+		return CFrame.identity
+	end
+	if dot < -0.9999 then
+		local ortho = if math.abs(a.X) < 0.9 then Vector3.xAxis else Vector3.yAxis
+		local axis = a:Cross(ortho)
+		if axis.Magnitude < 0.05 then
+			axis = Vector3.yAxis
+		end
+		return CFrame.fromAxisAngle(axis.Unit, math.pi)
+	end
+	return CFrame.fromAxisAngle(a:Cross(target).Unit, math.acos(math.clamp(dot, -1, 1)))
+end
+
+local function webProjectileCFrame(pos: Vector3, flightDir: Vector3, tipLocal: Vector3?): CFrame
 	local dir = flightDir
 	if dir.Magnitude < 0.05 then
 		return CFrame.new(pos)
 	end
 	dir = dir.Unit
+	local tip = if tipLocal and tipLocal.Magnitude > 0.05 then tipLocal.Unit else -Vector3.zAxis
 	local upHint = Vector3.yAxis
 	if math.abs(dir:Dot(upHint)) > 0.92 then
 		upHint = Vector3.xAxis
 	end
-	return CFrame.lookAt(pos, pos + dir, upHint)
-		* CFrame.Angles(C.WEB_SHOT_PITCH_OFFSET, C.WEB_SHOT_YAW_OFFSET, 0)
+	-- lookAt aims LookVector (-Z) along flight; map model tip axis onto that -Z.
+	return CFrame.lookAt(pos, pos + dir, upHint) * rotationMappingLocalToNegZ(tip)
 end
 
 local function getWebProjectilePosition(web: Model): Vector3
 	return web:GetPivot().Position
 end
 
+local function getWebTipLocal(web: Model): Vector3
+	local attr = web:GetAttribute(WEB_TIP_ATTR)
+	if typeof(attr) == "Vector3" and (attr :: Vector3).Magnitude > 0.05 then
+		return (attr :: Vector3).Unit
+	end
+	return inferWebTipLocalAxis(web)
+end
+
 local function setWebProjectileCFrame(web: Model, pos: Vector3, flightDir: Vector3)
-	web:PivotTo(webProjectileCFrame(pos, flightDir))
+	web:PivotTo(webProjectileCFrame(pos, flightDir, getWebTipLocal(web)))
 end
 
 local function stabilizeWebProjectile(model: Model)
@@ -447,6 +495,7 @@ local function createShootingWebProjectile(): Model
 	end
 
 	stabilizeWebProjectile(model)
+	model:SetAttribute(WEB_TIP_ATTR, inferWebTipLocalAxis(model))
 	model.Parent = Workspace
 	setEffectInstancesEnabled(model, true)
 	emitVfxParticles(model, 10)

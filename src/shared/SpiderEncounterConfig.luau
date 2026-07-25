@@ -34,9 +34,9 @@ M.RAGE_FALLBACK_SEC = 1.85
 M.RAGE_CAMERA_ZOOM_FOV = 26
 M.WEB_TRAVEL_TIME = 3.2
 M.WEB_FADE_OUT = 0.35
--- Shooting Web asset tip is along local +Y; map that onto LookVector (-Z).
-M.WEB_SHOT_PITCH_OFFSET = math.rad(-90)
-M.WEB_SHOT_YAW_OFFSET = 0
+-- Tip axis in model space that should point along flight. nil = auto from PrimaryPart longest size.
+-- Manual overrides if needed: Vector3.yAxis, -Vector3.zAxis, Vector3.zAxis, etc.
+M.WEB_SHOT_TIP_LOCAL = nil :: Vector3?
 
 -- Single closing ring: base size matches key badge; starts larger, closes to 1.
 M.RING_OUTER_PX = 78

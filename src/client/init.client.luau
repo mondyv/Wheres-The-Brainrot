@@ -300,9 +300,6 @@ task.defer(function()
 				require(script.GameSoundEffects).init()
 			end,
 			function()
-				require(script.FootstepController).init()
-			end,
-			function()
 				require(script.BrainrotSFX).init()
 			end,
 			function()

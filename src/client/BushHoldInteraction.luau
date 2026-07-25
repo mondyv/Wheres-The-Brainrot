@@ -986,6 +986,14 @@ function BushHoldInteraction.getPromptForBush(bush: Instance): ProximityPrompt?
 	return bushByModel[bush]
 end
 
+function BushHoldInteraction.forEachRegisteredBush(fn: (Instance) -> ())
+	for bush in bushByModel do
+		if bush.Parent then
+			fn(bush)
+		end
+	end
+end
+
 function BushHoldInteraction.refreshCooldownVisuals()
 	syncCooldownVisualsIfDue(true)
 end

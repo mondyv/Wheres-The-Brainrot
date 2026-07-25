@@ -17,14 +17,14 @@ local FireflyController = {}
 
 local player = Players.LocalPlayer
 
-local ACTIVE_RANGE = 90
-local SELECT_PCT = 35
-local MAX_ACTIVE = 12
-local FLIES_PER_BUSH = 4
-local REFRESH_SEC = 0.6
+local ACTIVE_RANGE = 70
+local SELECT_PCT = 8
+local MAX_ACTIVE = 4
+local FLIES_PER_BUSH = 2
+local REFRESH_SEC = 1.0
 local FOLDER_NAME = "BushFireflies"
 
-local YELLOW = Color3.fromRGB(255, 220, 70)
+local YELLOW = Color3.fromRGB(255, 210, 90)
 
 type Fly = {
 	part: BasePart,
@@ -33,6 +33,7 @@ type Fly = {
 	speed: number,
 	radius: number,
 	height: number,
+	pos: Vector3,
 }
 
 type Swarm = {
@@ -119,7 +120,7 @@ local function makeFly(parent: Folder, center: Vector3, index: number): Fly
 	local part = Instance.new("Part")
 	part.Name = "Firefly"
 	part.Shape = Enum.PartType.Ball
-	part.Size = Vector3.new(0.35, 0.35, 0.35)
+	part.Size = Vector3.new(0.18, 0.18, 0.18)
 	part.Material = Enum.Material.Neon
 	part.Color = YELLOW
 	part.Anchored = true
@@ -127,14 +128,14 @@ local function makeFly(parent: Folder, center: Vector3, index: number): Fly
 	part.CanQuery = false
 	part.CanTouch = false
 	part.CastShadow = false
-	part.Transparency = 0
+	part.Transparency = 0.25
 	part.CFrame = CFrame.new(center)
 	part.Parent = parent
 
 	local light = Instance.new("PointLight")
 	light.Color = YELLOW
-	light.Brightness = 3
-	light.Range = 12
+	light.Brightness = 0.55
+	light.Range = 5
 	light.Shadows = false
 	light.Parent = part
 
@@ -142,9 +143,10 @@ local function makeFly(parent: Folder, center: Vector3, index: number): Fly
 		part = part,
 		light = light,
 		phase = index * 2.1 + math.random() * 4,
-		speed = 0.7 + math.random() * 0.7,
-		radius = 1.6 + math.random() * 2.2,
-		height = 0.4 + math.random() * 1.8,
+		speed = 0.18 + math.random() * 0.16,
+		radius = 1.1 + math.random() * 1.4,
+		height = 0.5 + math.random() * 1.2,
+		pos = center,
 	}
 end
 
@@ -227,8 +229,9 @@ local function refresh()
 	end
 end
 
-local function stepFlies()
+local function stepFlies(dt: number)
 	local t = os.clock()
+	local blend = math.clamp(dt * 2.4, 0.04, 0.18)
 	for _, swarm in pairs(activeSwarms) do
 		if not swarm.bush.Parent then
 			destroySwarm(swarm.bush)
@@ -236,16 +239,16 @@ local function stepFlies()
 		end
 		for _, fly in swarm.flies do
 			local ang = t * fly.speed + fly.phase
-			local bob = math.sin(t * 2.2 + fly.phase) * 0.45
-			fly.part.CFrame = CFrame.new(
-				swarm.center
-					+ Vector3.new(
-						math.cos(ang) * fly.radius,
-						fly.height + bob,
-						math.sin(ang * 0.9) * fly.radius
-					)
-			)
-			fly.light.Brightness = 2.2 + 1.4 * (0.5 + 0.5 * math.sin(t * 4 + fly.phase))
+			local bob = math.sin(t * 0.9 + fly.phase) * 0.28
+			local target = swarm.center
+				+ Vector3.new(
+					math.cos(ang) * fly.radius,
+					fly.height + bob,
+					math.sin(ang * 0.85) * fly.radius
+				)
+			fly.pos = fly.pos:Lerp(target, blend)
+			fly.part.CFrame = CFrame.new(fly.pos)
+			fly.light.Brightness = 0.4 + 0.25 * (0.5 + 0.5 * math.sin(t * 1.6 + fly.phase))
 		end
 	end
 end
@@ -275,7 +278,7 @@ function FireflyController.init()
 			refresh()
 		end
 		if next(activeSwarms) ~= nil then
-			stepFlies()
+			stepFlies(dt)
 		end
 	end)
 end

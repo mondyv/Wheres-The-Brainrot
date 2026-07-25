@@ -17,14 +17,14 @@ local POLL_INTERVAL = 0.25
 local FADE_INFO = TweenInfo.new(1.45, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 local CC_LEGACY_NAME = "SafeZoneNightCC"
 
--- Dark green night — low haze so it doesn't wash white
+-- Soft dark green night — keep Density/Haze low so no bright fog band in the sky
 local NIGHT_ATMO = {
-	Density = 0.52,
-	Offset = 0.06,
-	Color = Color3.fromRGB(36, 55, 40),
-	Decay = Color3.fromRGB(48, 68, 46),
-	Glare = 0.03,
-	Haze = 0.55,
+	Density = 0.28,
+	Offset = 0.18,
+	Color = Color3.fromRGB(28, 42, 32),
+	Decay = Color3.fromRGB(38, 52, 36),
+	Glare = 0,
+	Haze = 0.12,
 }
 
 type AtmoSnap = {
@@ -126,12 +126,12 @@ end
 local function nightLightGoals(): LightSnap
 	local day = dayLight :: LightSnap
 	local function dim(c: Color3): Color3
-		return Color3.new(c.R * 0.45, math.min(1, c.G * 0.55), c.B * 0.42)
+		return Color3.new(c.R * 0.38, math.min(1, c.G * 0.48), c.B * 0.36)
 	end
 	return {
 		Ambient = dim(day.Ambient),
 		OutdoorAmbient = dim(day.OutdoorAmbient),
-		Brightness = math.max(1.1, day.Brightness * 0.55),
+		Brightness = math.max(0.9, day.Brightness * 0.48),
 	}
 end
 

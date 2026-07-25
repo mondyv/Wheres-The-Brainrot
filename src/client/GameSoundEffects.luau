@@ -56,10 +56,12 @@ local BUSH_RANDOM_SHAKE_MAX_DIST = 70
 local BUSH_RANDOM_SHAKE_PITCH_MIN = 0.94
 local BUSH_RANDOM_SHAKE_PITCH_MAX = 1.06
 
-local GRASS_WALK_COOLDOWN_SEC = 0.22
+local GRASS_WALK_COOLDOWN_SEC = 0.07
+local GRASS_WALK_MAX_CONCURRENT = 3
 local GRASS_WALK_PITCH_MIN = 0.92
 local GRASS_WALK_PITCH_MAX = 1.08
 local lastGrassWalkAt = 0.0
+local activeGrassWalkSounds = 0
 
 local HIDDEN_RARITY_ATTR = "HiddenBrainrotRarity"
 local HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
@@ -594,6 +596,9 @@ function GameSoundEffects.playGrassWalk()
 	if now - lastGrassWalkAt < GRASS_WALK_COOLDOWN_SEC then
 		return
 	end
+	if activeGrassWalkSounds >= GRASS_WALK_MAX_CONCURRENT then
+		return
+	end
 
 	if #grassTemplates == 0 then
 		local root = SoundService:FindFirstChild("SoundEffects")
@@ -615,12 +620,14 @@ function GameSoundEffects.playGrassWalk()
 	end
 
 	lastGrassWalkAt = now
+	activeGrassWalkSounds += 1
 	local template = grassTemplates[math.random(1, #grassTemplates)]
 	local clone = prepareClone(template)
 	clone.PlaybackSpeed = GRASS_WALK_PITCH_MIN + math.random() * (GRASS_WALK_PITCH_MAX - GRASS_WALK_PITCH_MIN)
 	clone.Parent = SoundService
 	clone:Play()
 	clone.Ended:Once(function()
+		activeGrassWalkSounds = math.max(0, activeGrassWalkSounds - 1)
 		clone:Destroy()
 	end)
 end

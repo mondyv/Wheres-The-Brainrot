@@ -164,6 +164,49 @@ local function setAllBushPromptsEnabled(enabledPrompt: ProximityPrompt?)
 	end
 end
 
+local function prefersBushTapInput(): boolean
+	if not UserInputService.TouchEnabled then
+		return false
+	end
+	if UserInputService.GamepadEnabled and UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1 then
+		return false
+	end
+	-- Phones/tablets often still report KeyboardEnabled; prefer platform/last-input.
+	if not UserInputService.KeyboardEnabled then
+		return true
+	end
+	local ok, preferred = pcall(function()
+		return (UserInputService :: any).PreferredInput
+	end)
+	if ok and preferred == Enum.PreferredInput.Touch then
+		return true
+	end
+	if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then
+		return true
+	end
+	-- Touch-only devices that still advertise a soft keyboard.
+	local okPlat, platform = pcall(function()
+		return UserInputService:GetPlatform()
+	end)
+	if okPlat then
+		if platform == Enum.Platform.IOS or platform == Enum.Platform.Android then
+			return true
+		end
+	end
+	return false
+end
+
+local function syncPromptHoldDuration(prompt: ProximityPrompt)
+	-- Mobile/touch: tap to search. Keyboard/gamepad: hold E / ButtonX.
+	if prefersBushTapInput() then
+		prompt.HoldDuration = 0
+	else
+		prompt.HoldDuration = HOLD_DURATION
+	end
+end
+
+local scheduleBushMapScan: (map: Instance) -> ()
+
 local function attachPrompt(root: Instance)
 	if bushByModel[root] then
 		return
@@ -412,47 +455,6 @@ local function ensureOutlinePulseStep()
 		end
 		applyBushHighlight(hl, bush, false)
 	end)
-end
-
-local function prefersBushTapInput(): boolean
-	if not UserInputService.TouchEnabled then
-		return false
-	end
-	if UserInputService.GamepadEnabled and UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1 then
-		return false
-	end
-	-- Phones/tablets often still report KeyboardEnabled; prefer platform/last-input.
-	if not UserInputService.KeyboardEnabled then
-		return true
-	end
-	local ok, preferred = pcall(function()
-		return (UserInputService :: any).PreferredInput
-	end)
-	if ok and preferred == Enum.PreferredInput.Touch then
-		return true
-	end
-	if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then
-		return true
-	end
-	-- Touch-only devices that still advertise a soft keyboard.
-	local okPlat, platform = pcall(function()
-		return UserInputService:GetPlatform()
-	end)
-	if okPlat then
-		if platform == Enum.Platform.IOS or platform == Enum.Platform.Android then
-			return true
-		end
-	end
-	return false
-end
-
-local function syncPromptHoldDuration(prompt: ProximityPrompt)
-	-- Mobile/touch: tap to search. Keyboard/gamepad: hold E / ButtonX.
-	if prefersBushTapInput() then
-		prompt.HoldDuration = 0
-	else
-		prompt.HoldDuration = HOLD_DURATION
-	end
 end
 
 local function isInstanceUnderBush(inst: Instance?, bush: Instance): boolean
@@ -861,7 +863,7 @@ local function wireMapWatch(map: Instance)
 	end)
 end
 
-local function scheduleBushMapScan(map: Instance)
+scheduleBushMapScan = function(map: Instance)
 	if bushMapScanInProgress then
 		return
 	end

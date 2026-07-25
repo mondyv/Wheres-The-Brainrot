@@ -1,18 +1,24 @@
 -- [ACTIVE] ReturnTeleport.server
 --[[
-	Validates and teleports players back to their assigned plot spawn when they use the Return button.
---]]
+	Free return (no brainrots) via ReturnToPlot RemoteFunction → plot spawn.
+	Paid return (carrying N brainrots) via Return 1–11 developer products → plot spawn, keep haul.
+]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
+local ReturnConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReturnConfig"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
 local RETURN_COOLDOWN_SEC = 2.5
-local lastReturnAt: { [Player]: number } = {}
+local GRANTED = Enum.ProductPurchaseDecision.PurchaseGranted
+local NOT_PROCESSED = Enum.ProductPurchaseDecision.NotProcessedYet
 
+local lastReturnAt: { [Player]: number } = {}
 local returnRF: RemoteFunction? = nil
+local returnPaidRE: RemoteEvent? = nil
 
 local function ensureReturnRemote(): RemoteFunction
 	if returnRF and returnRF.Parent then
@@ -30,22 +36,58 @@ local function ensureReturnRemote(): RemoteFunction
 	return rf
 end
 
-local function countCarriedBrainrots(character: Model): number
+local function ensurePaidRemote(): RemoteEvent
+	if returnPaidRE and returnPaidRE.Parent then
+		return returnPaidRE
+	end
+	local existing = ReplicatedStorage:FindFirstChild("ReturnPaidComplete")
+	if existing and existing:IsA("RemoteEvent") then
+		returnPaidRE = existing
+		return existing
+	end
+	local re = Instance.new("RemoteEvent")
+	re.Name = "ReturnPaidComplete"
+	re.Parent = ReplicatedStorage
+	returnPaidRE = re
+	return re
+end
+
+local function countCarriedBrainrots(player: Player, character: Model): number
 	local n = 0
+	local attr = player:GetAttribute("BrainrotCarryCount")
+	if typeof(attr) == "number" then
+		n = math.floor(attr)
+	end
+	local models = 0
 	for _, d in character:GetDescendants() do
 		if d:IsA("Model") then
 			local phase = d:GetAttribute("BrainrotCarryPhase")
 			if phase == "Carried" or phase == "Floating" or phase == "Pop" then
-				n += 1
+				models += 1
 			end
 		elseif d:IsA("WeldConstraint") and d.Name == "BrainrotCarryWeld" then
-			n += 1
+			models = math.max(models, 1)
 		end
 	end
-	return n
+	return math.max(n, models)
 end
 
-local function canReturnToPlot(player: Player): (boolean, string?)
+local function cooldownOk(player: Player): boolean
+	local now = os.clock()
+	return (lastReturnAt[player] or 0) + RETURN_COOLDOWN_SEC <= now
+end
+
+local function teleportHome(player: Player, character: Model): (boolean, string?)
+	local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+	if not spawnCf then
+		return false, "Base not ready yet"
+	end
+	PlotSpawnUtil.teleportCharacterToCFrame(character, spawnCf)
+	lastReturnAt[player] = os.clock()
+	return true, nil
+end
+
+local function canFreeReturn(player: Player): (boolean, string?)
 	local character = player.Character
 	if not character then
 		return false, "No character"
@@ -60,50 +102,81 @@ local function canReturnToPlot(player: Player): (boolean, string?)
 		return false, "Already in the safe zone"
 	end
 
-	local carryCount = player:GetAttribute("BrainrotCarryCount")
-	if typeof(carryCount) == "number" and carryCount > 0 then
-		return false, "Drop your brainrot first"
+	if countCarriedBrainrots(player, character) > 0 then
+		return false, "Use Return With Brainrot"
 	end
 
-	if countCarriedBrainrots(character) > 0 then
-		return false, "Drop your brainrot first"
-	end
-
-	local now = os.clock()
-	if (lastReturnAt[player] or 0) + RETURN_COOLDOWN_SEC > now then
+	if not cooldownOk(player) then
 		return false, "Please wait a moment"
 	end
 
-	local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
-	if not spawnCf then
+	if not PlotSpawnUtil.getAssignedPlotSpawnCFrame(player) then
 		return false, "Base not ready yet"
 	end
 
 	return true, nil
 end
 
-local function onReturnRequest(player: Player): (boolean, string?)
-	local ok, reason = canReturnToPlot(player)
+local function onFreeReturnRequest(player: Player): (boolean, string?)
+	local ok, reason = canFreeReturn(player)
 	if not ok then
 		return false, reason or "Cannot return"
 	end
-
 	local character = player.Character
 	if not character then
 		return false, "No character"
 	end
-
-	local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
-	if not spawnCf then
-		return false, "Base not ready yet"
-	end
-
-	PlotSpawnUtil.teleportCharacterToCFrame(character, spawnCf)
-	lastReturnAt[player] = os.clock()
-	return true, nil
+	return teleportHome(player, character)
 end
 
-ensureReturnRemote().OnServerInvoke = onReturnRequest
+local function fulfillPaidReturn(player: Player, productId: number): boolean
+	local expected = ReturnConfig.countForProductId(productId)
+	if not expected then
+		return false
+	end
+	local character = player.Character
+	if not character then
+		return false
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return false
+	end
+	local carried = countCarriedBrainrots(player, character)
+	if carried <= 0 then
+		return false
+	end
+	-- Product N only fulfills when carrying N (clamped 1–11)
+	if ReturnConfig.clampCount(carried) ~= expected then
+		warn("[ReturnTeleport] product/count mismatch for", player.Name, "product", productId, "carry", carried)
+		return false
+	end
+	local ok = select(1, teleportHome(player, character))
+	if ok then
+		ensurePaidRemote():FireClient(player)
+	end
+	return ok
+end
+
+ensureReturnRemote().OnServerInvoke = onFreeReturnRequest
+ensurePaidRemote()
+
+do
+	local ProductHandlerServer =
+		require(ServerScriptService.EssentialsServer.ProductHandler.ProductHandlerServer)
+	for count = 1, ReturnConfig.MAX_COUNT do
+		local productId = ReturnConfig.PRODUCT_BY_COUNT[count]
+		if typeof(productId) == "number" then
+			ProductHandlerServer.registerProductReceipt(productId, function(player: Player, receiptInfo: any)
+				local pid = if typeof(receiptInfo) == "table" then receiptInfo.ProductId else productId
+				if fulfillPaidReturn(player, pid) then
+					return GRANTED
+				end
+				return NOT_PROCESSED
+			end)
+		end
+	end
+end
 
 Players.PlayerRemoving:Connect(function(player)
 	lastReturnAt[player] = nil

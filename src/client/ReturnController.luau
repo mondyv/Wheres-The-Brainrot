@@ -1,9 +1,12 @@
 -- [ACTIVE] ReturnController
 --[[
-	Return button — lives under Main.SideUI; visible outside the safe zone, teleports home with a fade transition.
-	Decor gradients stay visible; they only animate on hover.
---]]
+	SideUI.Return:
+	• "Return Button" — free teleport home when NOT carrying (pos 0.5, 0.5)
+	• "Return Button With Brainrot" — Robux product Return N for carry count N (1–11)
+	Visible outside the safe zone. Decor gradients animate on hover.
+]]
 
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -14,14 +17,17 @@ local BushFloatingClaimController = require(script.Parent.BushFloatingClaimContr
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
+local ReturnConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReturnConfig"))
 local TopNotifController = require(script.Parent.TopNotifController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 
 local ReturnController = {}
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
+local FREE_BTN_POS = UDim2.new(0.5, 0, 0.5, 0)
 local VISIBILITY_POLL_SEC = 0.12
 local SHOW_TWEEN = TweenInfo.new(0.34, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local HIDE_TWEEN = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
@@ -31,25 +37,19 @@ local RELEASE_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDire
 local FADE_IN_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local FADE_OUT_TWEEN = TweenInfo.new(0.48, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local IDLE_BOB_TWEEN = TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
-
 local GRADIENT_HOVER_TWEEN = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local GRADIENT_IDLE_TWEEN = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 local returnFrame: GuiObject? = nil
-local returnBtn: GuiButton? = nil
-local decor: Instance? = nil
-local decorHighlight: GuiObject? = nil
-local decorHighlightOn: GuiObject? = nil
-local decorStud: GuiObject? = nil
-local decorShadow: GuiObject? = nil
+local freeBtn: GuiButton? = nil
+local paidBtn: GuiButton? = nil
 local frameScale: UIScale? = nil
-local btnScale: UIScale? = nil
 
 local fadeGui: ScreenGui? = nil
 local fadeFrame: Frame? = nil
 
 local returnRF: RemoteFunction? = nil
-local wired = false
+local returnPaidRE: RemoteEvent? = nil
 local visibleTarget = false
 local visibilityTween: Tween? = nil
 local teleportBusy = false
@@ -58,69 +58,25 @@ local pollAccum = 0
 local heartbeatConn: RBXScriptConnection? = nil
 local wasInSafezone = true
 local deferredShowPending = false
+local pendingPaidProductId: number? = nil
+local paidFinishLock = false
 
-local decorStudRestPos: UDim2? = nil
-local decorShadowRestPos: UDim2? = nil
-local returnGradients: { UIGradient } = {}
-local gradientRestByGrad: { [UIGradient]: { rotation: number, offset: Vector2 } } = {}
-local gradientHoverTweens: { [UIGradient]: Tween } = {}
+type BtnDecor = {
+	btn: GuiButton,
+	scale: UIScale,
+	stud: GuiObject?,
+	shadow: GuiObject?,
+	studRest: UDim2?,
+	shadowRest: UDim2?,
+	highlightOn: GuiObject?,
+	gradients: { UIGradient },
+	gradRest: { [UIGradient]: { rotation: number, offset: Vector2 } },
+	gradTweens: { [UIGradient]: Tween },
+	wired: boolean,
+}
 
-local function collectReturnGradients()
-	table.clear(returnGradients)
-	table.clear(gradientRestByGrad)
-	local roots: { Instance } = {}
-	if returnBtn then
-		table.insert(roots, returnBtn)
-	end
-	if returnFrame and returnFrame ~= returnBtn then
-		table.insert(roots, returnFrame)
-	end
-	for _, root in roots do
-		if root:IsA("UIGradient") then
-			table.insert(returnGradients, root :: UIGradient)
-		end
-		for _, d in root:GetDescendants() do
-			if d:IsA("UIGradient") then
-				table.insert(returnGradients, d)
-			end
-		end
-	end
-	for _, grad in returnGradients do
-		grad.Enabled = true
-		gradientRestByGrad[grad] = {
-			rotation = grad.Rotation,
-			offset = grad.Offset,
-		}
-	end
-end
-
-local function setReturnGradientHover(hovering: boolean)
-	for _, grad in returnGradients do
-		if not grad.Parent then
-			continue
-		end
-		local rest = gradientRestByGrad[grad]
-		if not rest then
-			continue
-		end
-		local prev = gradientHoverTweens[grad]
-		if prev then
-			prev:Cancel()
-			gradientHoverTweens[grad] = nil
-		end
-		local tweenInfo = if hovering then GRADIENT_HOVER_TWEEN else GRADIENT_IDLE_TWEEN
-		local goal = if hovering then {
-			Rotation = rest.rotation + 24,
-			Offset = rest.offset + Vector2.new(0.12, 0.04),
-		} else {
-			Rotation = rest.rotation,
-			Offset = rest.offset,
-		}
-		local tween = TweenService:Create(grad, tweenInfo, goal)
-		gradientHoverTweens[grad] = tween
-		tween:Play()
-	end
-end
+local freeDecor: BtnDecor? = nil
+local paidDecor: BtnDecor? = nil
 
 local function getOrAddUIScale(parent: GuiObject): UIScale
 	local s = parent:FindFirstChildOfClass("UIScale")
@@ -133,11 +89,108 @@ local function getOrAddUIScale(parent: GuiObject): UIScale
 	return s
 end
 
+local function collectGradients(btn: GuiButton): ({ UIGradient }, { [UIGradient]: { rotation: number, offset: Vector2 } })
+	local list: { UIGradient } = {}
+	local rest: { [UIGradient]: { rotation: number, offset: Vector2 } } = {}
+	if btn:IsA("UIGradient") then
+		table.insert(list, btn :: any)
+	end
+	for _, d in btn:GetDescendants() do
+		if d:IsA("UIGradient") then
+			table.insert(list, d)
+		end
+	end
+	for _, grad in list do
+		grad.Enabled = true
+		rest[grad] = { rotation = grad.Rotation, offset = grad.Offset }
+	end
+	return list, rest
+end
+
+local function buildDecor(btn: GuiButton): BtnDecor
+	local decor = btn:FindFirstChild("Decor")
+	local highlight = decor and decor:FindFirstChild("Highlight")
+	local highlightOn = highlight and highlight:FindFirstChild("On")
+	local stud = decor and decor:FindFirstChild("Stud")
+	local shadow = decor and decor:FindFirstChild("Shadow")
+	local grads, rest = collectGradients(btn)
+	return {
+		btn = btn,
+		scale = getOrAddUIScale(btn),
+		stud = if stud and stud:IsA("GuiObject") then stud :: GuiObject else nil,
+		shadow = if shadow and shadow:IsA("GuiObject") then shadow :: GuiObject else nil,
+		studRest = if stud and stud:IsA("GuiObject") then (stud :: GuiObject).Position else nil,
+		shadowRest = if shadow and shadow:IsA("GuiObject") then (shadow :: GuiObject).Position else nil,
+		highlightOn = if highlightOn and highlightOn:IsA("GuiObject") then highlightOn :: GuiObject else nil,
+		gradients = grads,
+		gradRest = rest,
+		gradTweens = {},
+		wired = false,
+	}
+end
+
+local function setGradientHover(state: BtnDecor, hovering: boolean)
+	for _, grad in state.gradients do
+		if not grad.Parent then
+			continue
+		end
+		local rest = state.gradRest[grad]
+		if not rest then
+			continue
+		end
+		local prev = state.gradTweens[grad]
+		if prev then
+			prev:Cancel()
+			state.gradTweens[grad] = nil
+		end
+		local info = if hovering then GRADIENT_HOVER_TWEEN else GRADIENT_IDLE_TWEEN
+		local goal = if hovering
+			then { Rotation = rest.rotation + 24, Offset = rest.offset + Vector2.new(0.12, 0.04) }
+			else { Rotation = rest.rotation, Offset = rest.offset }
+		local tween = TweenService:Create(grad, info, goal)
+		state.gradTweens[grad] = tween
+		tween:Play()
+	end
+end
+
+local function setHighlightOn(state: BtnDecor, on: boolean)
+	if state.highlightOn then
+		state.highlightOn.Visible = on
+	end
+end
+
+local function pressDecor(state: BtnDecor)
+	if state.stud and state.studRest then
+		TweenService:Create(state.stud, CLICK_TWEEN, {
+			Position = state.studRest + UDim2.fromOffset(0, 3),
+		}):Play()
+	end
+	if state.shadow and state.shadowRest then
+		TweenService:Create(state.shadow, CLICK_TWEEN, {
+			Position = state.shadowRest + UDim2.fromOffset(0, 1),
+			BackgroundTransparency = 0.35,
+		}):Play()
+	end
+	setHighlightOn(state, false)
+end
+
+local function releaseDecor(state: BtnDecor, hovering: boolean)
+	if state.stud and state.studRest then
+		TweenService:Create(state.stud, RELEASE_TWEEN, { Position = state.studRest }):Play()
+	end
+	if state.shadow and state.shadowRest then
+		TweenService:Create(state.shadow, RELEASE_TWEEN, {
+			Position = state.shadowRest,
+			BackgroundTransparency = 0.55,
+		}):Play()
+	end
+	setHighlightOn(state, hovering)
+end
+
 local function ensureFadeGui(): Frame
 	if fadeFrame and fadeGui and fadeGui.Parent then
 		return fadeFrame
 	end
-
 	local sg = Instance.new("ScreenGui")
 	sg.Name = "ReturnTeleportFade"
 	sg.IgnoreGuiInset = true
@@ -149,13 +202,11 @@ local function ensureFadeGui(): Frame
 	local frame = Instance.new("Frame")
 	frame.Name = "Fade"
 	frame.Size = UDim2.fromScale(1, 1)
-	frame.Position = UDim2.fromScale(0, 0)
 	frame.BackgroundColor3 = Color3.new(0, 0, 0)
 	frame.BackgroundTransparency = 1
 	frame.BorderSizePixel = 0
 	frame.Visible = false
 	frame.Active = true
-	frame.ZIndex = 1
 	frame.Parent = sg
 
 	fadeGui = sg
@@ -172,7 +223,7 @@ local function waitForTween(tween: Tween)
 	end)
 	tween:Play()
 	while not finished do
-		task.wait()
+		task.wait(0.03)
 	end
 	conn:Disconnect()
 end
@@ -215,7 +266,11 @@ local function startIdleMotion()
 	idleBobTween:Play()
 end
 
-local function shouldShowReturn(): boolean
+local function carryCount(): number
+	return CarryGate.usedSlots()
+end
+
+local function shouldShowReturnChrome(): boolean
 	if teleportBusy then
 		return false
 	end
@@ -229,19 +284,35 @@ local function shouldShowReturn(): boolean
 	if BushFloatingClaimController.hasActiveOffer() then
 		return false
 	end
-	if CarryGate.isCarryingOnHead() or CarryGate.isCarrying() then
-		return false
-	end
 	if ProximityPromptEffects.isBushSearchActive() then
 		return false
 	end
 	return true
 end
 
-local function setButtonActive(active: boolean)
-	if returnBtn then
-		returnBtn.Active = active
-		returnBtn.AutoButtonColor = false
+local function syncModeButtons()
+	local carrying = carryCount() > 0
+	if freeBtn then
+		freeBtn.Visible = not carrying
+		if not carrying then
+			freeBtn.Position = FREE_BTN_POS
+		end
+		freeBtn.Active = not carrying and visibleTarget and not teleportBusy
+	end
+	if paidBtn then
+		paidBtn.Visible = carrying
+		paidBtn.Active = carrying and visibleTarget and not teleportBusy
+	end
+end
+
+local function setButtonsActive(active: boolean)
+	if freeBtn then
+		freeBtn.Active = active and freeBtn.Visible
+		freeBtn.AutoButtonColor = false
+	end
+	if paidBtn then
+		paidBtn.Active = active and paidBtn.Visible
+		paidBtn.AutoButtonColor = false
 	end
 end
 
@@ -250,6 +321,7 @@ local function applyVisibility(show: boolean, instant: boolean?)
 		return
 	end
 	if visibleTarget == show and not instant then
+		syncModeButtons()
 		return
 	end
 	visibleTarget = show
@@ -260,8 +332,9 @@ local function applyVisibility(show: boolean, instant: boolean?)
 	end
 
 	if show then
+		syncModeButtons()
 		returnFrame.Visible = true
-		setButtonActive(true)
+		setButtonsActive(true)
 		if instant then
 			frameScale.Scale = 1
 			startIdleMotion()
@@ -277,7 +350,7 @@ local function applyVisibility(show: boolean, instant: boolean?)
 		end)
 	else
 		stopIdleMotion()
-		setButtonActive(false)
+		setButtonsActive(false)
 		if instant then
 			returnFrame.Visible = false
 			frameScale.Scale = 0.72
@@ -294,45 +367,12 @@ local function applyVisibility(show: boolean, instant: boolean?)
 end
 
 local function refreshVisibility(instant: boolean?)
-	applyVisibility(shouldShowReturn(), instant)
+	applyVisibility(shouldShowReturnChrome(), instant)
+	syncModeButtons()
 end
 
-local function setHighlightOn(on: boolean)
-	if decorHighlightOn and decorHighlightOn:IsA("GuiObject") then
-		(decorHighlightOn :: GuiObject).Visible = on
-	end
-end
-
-local function pressDecor()
-	if decorStud and decorStudRestPos then
-		TweenService:Create(decorStud, CLICK_TWEEN, {
-			Position = decorStudRestPos + UDim2.fromOffset(0, 3),
-		}):Play()
-	end
-	if decorShadow and decorShadowRestPos then
-		TweenService:Create(decorShadow, CLICK_TWEEN, {
-			Position = decorShadowRestPos + UDim2.fromOffset(0, 1),
-			BackgroundTransparency = 0.35,
-		}):Play()
-	end
-	setHighlightOn(false)
-end
-
-local function releaseDecor(hovering: boolean)
-	if decorStud and decorStudRestPos then
-		TweenService:Create(decorStud, RELEASE_TWEEN, { Position = decorStudRestPos }):Play()
-	end
-	if decorShadow and decorShadowRestPos then
-		TweenService:Create(decorShadow, RELEASE_TWEEN, {
-			Position = decorShadowRestPos,
-			BackgroundTransparency = 0.55,
-		}):Play()
-	end
-	setHighlightOn(hovering)
-end
-
-local function onReturnActivated()
-	if teleportBusy or not shouldShowReturn() then
+local function onFreeReturnActivated()
+	if teleportBusy or not shouldShowReturnChrome() or carryCount() > 0 then
 		return
 	end
 	if not returnRF then
@@ -340,7 +380,7 @@ local function onReturnActivated()
 	end
 
 	teleportBusy = true
-	setButtonActive(false)
+	setButtonsActive(false)
 	stopIdleMotion()
 	UIInteractionSounds.playClick()
 
@@ -358,106 +398,130 @@ local function onReturnActivated()
 		UIInteractionSounds.playNotif()
 	end
 
-	local fadeOut = playFadeOut()
-	waitForTween(fadeOut)
-
+	waitForTween(playFadeOut())
 	teleportBusy = false
 	refreshVisibility(true)
 end
 
-local function wireReturnButton(btn: GuiButton)
-	if wired then
+local function onPaidReturnActivated()
+	if teleportBusy or not shouldShowReturnChrome() then
 		return
 	end
-	wired = true
-
-	decor = btn:FindFirstChild("Decor")
-	if decor then
-		decorHighlight = decor:FindFirstChild("Highlight")
-		if decorHighlight then
-			decorHighlightOn = decorHighlight:FindFirstChild("On")
-		end
-		decorStud = decor:FindFirstChild("Stud")
-		decorShadow = decor:FindFirstChild("Shadow")
+	local n = carryCount()
+	if n <= 0 then
+		return
 	end
 
-	if decorStud and decorStud:IsA("GuiObject") then
-		decorStudRestPos = (decorStud :: GuiObject).Position
-	end
-	if decorShadow and decorShadow:IsA("GuiObject") then
-		decorShadowRestPos = (decorShadow :: GuiObject).Position
-	end
+	teleportBusy = true
+	paidFinishLock = false
+	setButtonsActive(false)
+	stopIdleMotion()
+	UIInteractionSounds.playClick()
 
-	btnScale = getOrAddUIScale(btn)
-	collectReturnGradients()
+	local productId = ReturnConfig.productIdForCount(n)
+	pendingPaidProductId = productId
+
+	local fadeIn = playFadeIn()
+	waitForTween(fadeIn)
+
+	local ok, err = pcall(function()
+		PurchasePrompt.promptProduct(productId)
+	end)
+	if not ok then
+		warn("[ReturnController] prompt failed:", err)
+		pendingPaidProductId = nil
+		waitForTween(playFadeOut())
+		teleportBusy = false
+		refreshVisibility(true)
+		TopNotifController.showError("Cannot open purchase")
+	end
+	-- Fade out finishes in PromptProductPurchaseFinished / paid complete remote
+end
+
+local function finishPaidPrompt(purchased: boolean)
+	if paidFinishLock then
+		return
+	end
+	if not teleportBusy and not pendingPaidProductId then
+		return
+	end
+	paidFinishLock = true
+	pendingPaidProductId = nil
+	if purchased then
+		UIInteractionSounds.playNotif()
+		task.wait(0.35)
+	else
+		TopNotifController.showError("Return cancelled")
+	end
+	waitForTween(playFadeOut())
+	teleportBusy = false
+	paidFinishLock = false
+	refreshVisibility(true)
+end
+
+local function wireButton(state: BtnDecor, onActivated: () -> ())
+	if state.wired then
+		return
+	end
+	state.wired = true
 	local hovering = false
+	local btn = state.btn
 
 	btn.MouseEnter:Connect(function()
-		if not visibleTarget or teleportBusy then
+		if not visibleTarget or teleportBusy or not btn.Visible then
 			return
 		end
 		hovering = true
 		UIInteractionSounds.playHover()
-		setHighlightOn(true)
-		setReturnGradientHover(true)
-		TweenService:Create(btnScale :: UIScale, HOVER_TWEEN, { Scale = 1.08 }):Play()
+		setHighlightOn(state, true)
+		setGradientHover(state, true)
+		TweenService:Create(state.scale, HOVER_TWEEN, { Scale = 1.08 }):Play()
 	end)
-
 	btn.MouseLeave:Connect(function()
 		hovering = false
-		setHighlightOn(false)
-		setReturnGradientHover(false)
-		TweenService:Create(btnScale :: UIScale, HOVER_TWEEN, { Scale = 1 }):Play()
-		releaseDecor(false)
+		setHighlightOn(state, false)
+		setGradientHover(state, false)
+		TweenService:Create(state.scale, HOVER_TWEEN, { Scale = 1 }):Play()
+		releaseDecor(state, false)
 	end)
-
 	btn.MouseButton1Down:Connect(function()
-		if not visibleTarget or teleportBusy then
+		if not visibleTarget or teleportBusy or not btn.Visible then
 			return
 		end
-		TweenService:Create(btnScale :: UIScale, CLICK_TWEEN, { Scale = 0.93 }):Play()
-		pressDecor()
+		TweenService:Create(state.scale, CLICK_TWEEN, { Scale = 0.93 }):Play()
+		pressDecor(state)
 	end)
-
 	btn.MouseButton1Up:Connect(function()
 		if not visibleTarget or teleportBusy then
 			return
 		end
-		TweenService:Create(btnScale :: UIScale, RELEASE_TWEEN, { Scale = if hovering then 1.08 else 1 }):Play()
-		releaseDecor(hovering)
+		TweenService:Create(state.scale, RELEASE_TWEEN, { Scale = if hovering then 1.08 else 1 }):Play()
+		releaseDecor(state, hovering)
 	end)
-
-	btn.Activated:Connect(onReturnActivated)
+	btn.Activated:Connect(onActivated)
 end
 
-local RETURN_CONTAINER_NAMES = { "Return" }
-local RETURN_BUTTON_NAMES = { "Return Button", "Button" }
-
 local function findReturnContainer(root: Instance): GuiObject?
-	for _, name in RETURN_CONTAINER_NAMES do
-		local inst = root:FindFirstChild(name, true)
-		if inst and inst:IsA("GuiObject") then
-			return inst :: GuiObject
-		end
+	local inst = root:FindFirstChild("Return", true)
+	if inst and inst:IsA("GuiObject") then
+		return inst :: GuiObject
 	end
 	return nil
 end
 
-local function findReturnButton(container: Instance): GuiButton?
-	if container:IsA("GuiButton") then
-		return container :: GuiButton
+local function findNamedButton(container: Instance, name: string): GuiButton?
+	local inst = container:FindFirstChild(name)
+	if inst and inst:IsA("GuiButton") then
+		return inst :: GuiButton
 	end
-	for _, name in RETURN_BUTTON_NAMES do
-		local inst = container:FindFirstChild(name, true)
-		if inst and inst:IsA("GuiButton") then
-			return inst :: GuiButton
-		end
+	inst = container:FindFirstChild(name, true)
+	if inst and inst:IsA("GuiButton") then
+		return inst :: GuiButton
 	end
-	return container:FindFirstChildOfClass("ImageButton") :: GuiButton?
-		or container:FindFirstChildOfClass("TextButton") :: GuiButton?
+	return nil
 end
 
-local function resolveUi()
+local function resolveUi(): boolean
 	local main = PlayerGuiMain.ensure(player)
 	local sideUI = main:WaitForChild("SideUI", 30)
 	if not sideUI then
@@ -467,28 +531,33 @@ local function resolveUi()
 
 	local frame = findReturnContainer(sideUI)
 	if not frame then
-		local frames = main:FindFirstChild("Frames")
-		if frames then
-			frame = findReturnContainer(frames)
-		end
-	end
-	if not frame then
 		warn("[ReturnController] Return container missing under SideUI")
 		return false
 	end
 
-	local btn = findReturnButton(frame)
-	if not btn then
-		warn("[ReturnController] Return Button missing under SideUI.Return")
+	local free = findNamedButton(frame, "Return Button")
+	local paid = findNamedButton(frame, "Return Button With Brainrot")
+	if not free then
+		-- Legacy fallback
+		free = frame:FindFirstChildOfClass("ImageButton") :: GuiButton?
+			or frame:FindFirstChildOfClass("TextButton") :: GuiButton?
+	end
+	if not free then
+		warn("[ReturnController] Return Button missing")
 		return false
 	end
 
 	returnFrame = frame
-	returnBtn = btn
+	freeBtn = free
+	paidBtn = paid
 	frameScale = getOrAddUIScale(frame)
 	frame.Visible = false
 	frameScale.Scale = 0.72
-	collectReturnGradients()
+	free.Position = FREE_BTN_POS
+	free.Visible = true
+	if paid then
+		paid.Visible = false
+	end
 	return true
 end
 
@@ -497,16 +566,60 @@ function ReturnController.init()
 	if rf and rf:IsA("RemoteFunction") then
 		returnRF = rf
 	else
-		warn("[ReturnController] ReplicatedStorage.ReturnToPlot RemoteFunction missing")
+		warn("[ReturnController] ReturnToPlot RemoteFunction missing")
+	end
+
+	local paidRe = ReplicatedStorage:FindFirstChild("ReturnPaidComplete")
+	if not paidRe then
+		paidRe = ReplicatedStorage:WaitForChild("ReturnPaidComplete", 10)
+	end
+	if paidRe and paidRe:IsA("RemoteEvent") then
+		returnPaidRE = paidRe
+		returnPaidRE.OnClientEvent:Connect(function()
+			if pendingPaidProductId or teleportBusy then
+				finishPaidPrompt(true)
+			end
+		end)
 	end
 
 	if not resolveUi() then
 		return
 	end
 
-	if returnBtn then
-		wireReturnButton(returnBtn)
+	freeDecor = buildDecor(freeBtn :: GuiButton)
+	wireButton(freeDecor, onFreeReturnActivated)
+	if paidBtn then
+		paidDecor = buildDecor(paidBtn)
+		wireButton(paidDecor, onPaidReturnActivated)
+	else
+		warn("[ReturnController] Return Button With Brainrot missing — paid return disabled")
 	end
+
+	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, wasPurchased)
+		if userId ~= player.UserId then
+			return
+		end
+		if not ReturnConfig.isReturnProduct(productId) then
+			return
+		end
+		if pendingPaidProductId ~= productId and not teleportBusy then
+			return
+		end
+		-- If server already fired ReturnPaidComplete, finishPaidPrompt may have run
+		if not teleportBusy then
+			return
+		end
+		if wasPurchased then
+			-- Wait briefly for server teleport + remote; if remote already finished, skip
+			task.delay(0.8, function()
+				if teleportBusy and pendingPaidProductId == productId then
+					finishPaidPrompt(true)
+				end
+			end)
+		else
+			finishPaidPrompt(false)
+		end
+	end)
 
 	player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(function()
 		refreshVisibility(false)
@@ -533,11 +646,11 @@ function ReturnController.init()
 		local crossingOut = wasInSafezone and not inSafezone
 		wasInSafezone = inSafezone
 
-		if crossingOut and shouldShowReturn() then
+		if crossingOut and shouldShowReturnChrome() then
 			if not deferredShowPending then
 				deferredShowPending = true
 				task.defer(function()
-					task.wait()
+					task.wait(0.03)
 					deferredShowPending = false
 					refreshVisibility(false)
 				end)
@@ -549,7 +662,6 @@ function ReturnController.init()
 	end)
 
 	wasInSafezone = if player.Character then SafezoneUtil.isCharacterInSafezone(player.Character) else true
-
 	refreshVisibility(true)
 end
 

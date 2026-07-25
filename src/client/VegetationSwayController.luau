@@ -335,7 +335,6 @@ local function scanAroundCharacter(_character: Model, humanoid: Humanoid, hrp: B
 		return a.distSq < b.distSq
 	end)
 
-	local startedNew = false
 	local limit = math.min(#cands, MAX_ACTIVE)
 	for i = 1, limit do
 		local cand = cands[i]
@@ -346,9 +345,7 @@ local function scanAroundCharacter(_character: Model, humanoid: Humanoid, hrp: B
 				dir = away.Unit
 			end
 		end
-		if touchGrass(cand.part, dir) then
-			startedNew = true
-		end
+		touchGrass(cand.part, dir)
 	end
 end
 

@@ -309,6 +309,9 @@ task.defer(function()
 				require(script.SafeZoneLightingController).init()
 			end,
 			function()
+				require(script.FireflyController).init()
+			end,
+			function()
 				require(script.WebTrapController).init()
 			end,
 			function()

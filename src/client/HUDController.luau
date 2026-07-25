@@ -146,6 +146,49 @@ local function destroyPanelBackdrop()
 	end
 end
 
+local function findPanelCloseButton(frame: Frame): GuiButton?
+	local header = frame:FindFirstChild("Header")
+	local headerButtons = header and header:FindFirstChild("Buttons")
+	local close = headerButtons and headerButtons:FindFirstChild("Close")
+	if close and close:IsA("GuiButton") then
+		return close :: GuiButton
+	end
+	if close then
+		local nested = close:FindFirstChildOfClass("ImageButton") or close:FindFirstChildOfClass("TextButton")
+		if nested then
+			return nested
+		end
+	end
+	return nil
+end
+
+local function ensurePanelCloseOnTop(frame: Frame)
+	local closeBtn = findPanelCloseButton(frame)
+	if not closeBtn then
+		return
+	end
+	closeBtn.Active = true
+	pcall(function()
+		(closeBtn :: any).Interactable = true
+	end)
+	if closeBtn.ZIndex < 50 then
+		closeBtn.ZIndex = 50
+	end
+	local header = frame:FindFirstChild("Header")
+	if header and header:IsA("GuiObject") and header.ZIndex < 40 then
+		(header :: GuiObject).ZIndex = 40
+	end
+	local buttons = header and header:FindFirstChild("Buttons")
+	if buttons and buttons:IsA("GuiObject") and (buttons :: GuiObject).ZIndex < 45 then
+		(buttons :: GuiObject).ZIndex = 45
+	end
+	for _, d in closeBtn:GetDescendants() do
+		if d:IsA("GuiObject") and not d:IsA("GuiButton") then
+			(d :: GuiObject).Active = false
+		end
+	end
+end
+
 local function ensurePanelBackdrop()
 	ensureHudRoots()
 	local frames = framesFolder
@@ -184,10 +227,20 @@ local function ensurePanelBackdrop()
 			return
 		end
 		-- Empty panel chrome is often Active=false and punches through to this backdrop.
-		-- Only close when the pointer is truly outside the open panel (or on X).
+		-- Close when outside the panel, or when the hit is the panel Close (X) control.
 		local mouse = UserInputService:GetMouseLocation()
 		local inset = GuiService:GetGuiInset()
-		local atPos = player.PlayerGui:GetGuiObjectsAtPosition(mouse.X - inset.X, mouse.Y - inset.Y)
+		local px = mouse.X - inset.X
+		local py = mouse.Y - inset.Y
+		local atPos = player.PlayerGui:GetGuiObjectsAtPosition(px, py)
+		local closeBtn = findPanelCloseButton(frame)
+		for _, obj in atPos do
+			if closeBtn and (obj == closeBtn or obj:IsDescendantOf(closeBtn)) then
+				MobileHaptics.tap()
+				HUDController.closeCurrentFrame()
+				return
+			end
+		end
 		for _, obj in atPos do
 			if obj ~= backdrop and (obj == frame or obj:IsDescendantOf(frame)) then
 				return
@@ -195,8 +248,6 @@ local function ensurePanelBackdrop()
 		end
 		local pos = frame.AbsolutePosition
 		local size = frame.AbsoluteSize
-		local px = mouse.X - inset.X
-		local py = mouse.Y - inset.Y
 		if px >= pos.X and px <= pos.X + size.X and py >= pos.Y and py <= pos.Y + size.Y then
 			return
 		end
@@ -210,8 +261,10 @@ end
 local function ensurePanelClickSink(frame: Frame)
 	local sink = frame:FindFirstChild("_PanelClickSink")
 	if sink and sink:IsA("GuiButton") then
+		-- Must stay behind Header / Close / content or the X never receives clicks.
 		sink.Active = true
-		sink.ZIndex = 1
+		sink.ZIndex = 0
+		sink.Selectable = false
 		return
 	end
 	if sink then
@@ -225,7 +278,7 @@ local function ensurePanelClickSink(frame: Frame)
 	btn.BorderSizePixel = 0
 	btn.Size = UDim2.fromScale(1, 1)
 	btn.Position = UDim2.fromScale(0, 0)
-	btn.ZIndex = 1
+	btn.ZIndex = 0
 	btn.Active = true
 	btn.Selectable = false
 	btn.Parent = frame
@@ -454,6 +507,7 @@ local function openFrame(frame: Frame)
 		frame.ZIndex = 20
 	end
 	ensurePanelClickSink(frame)
+	ensurePanelCloseOnTop(frame)
 	-- Panel content must receive clicks (ScrollingFrames / buy buttons).
 	for _, d in frame:GetDescendants() do
 		if d.Name == "_PanelClickSink" then
@@ -461,6 +515,10 @@ local function openFrame(frame: Frame)
 		end
 		if d:IsA("GuiButton") or d:IsA("ScrollingFrame") or d:IsA("TextBox") then
 			(d :: GuiObject).Active = true
+			-- Keep interactive controls above the full-panel click sink.
+			if d:IsA("GuiButton") and (d :: GuiObject).ZIndex < 2 then
+				(d :: GuiObject).ZIndex = 2
+			end
 		elseif d:IsA("GuiObject") and not d:IsA("GuiButton") then
 			-- Keep decorative layers from eating camera when they overflow the panel.
 			if d.Name == "__SweepClip" or d.Name == "__GlistenTrack" or d.Name == "__DiagSweep" then
@@ -468,6 +526,7 @@ local function openFrame(frame: Frame)
 			end
 		end
 	end
+	ensurePanelCloseOnTop(frame)
 	hidePanelChrome()
 	animateOpen(frame)
 	syncFramesInputPassthrough()
@@ -544,11 +603,9 @@ local function setupFrameButton(button: GuiButton, frame: Frame)
 	frame.Visible = false
 
 	-- ONLY Header.Buttons.Close — recursive "Close"/"X" search wired huge hitboxes and ate panel clicks.
-	local header = frame:FindFirstChild("Header")
-	local headerButtons = header and header:FindFirstChild("Buttons")
-	local closeBtn = headerButtons and headerButtons:FindFirstChild("Close")
-	if closeBtn and closeBtn:IsA("GuiButton") then
-		UIButtonEffects.wireGlistenCloseButton(closeBtn :: GuiButton, function()
+	local closeBtn = findPanelCloseButton(frame)
+	if closeBtn then
+		UIButtonEffects.wireGlistenCloseButton(closeBtn, function()
 			closeFrame(frame)
 		end)
 	end

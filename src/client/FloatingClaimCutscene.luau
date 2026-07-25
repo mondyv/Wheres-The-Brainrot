@@ -208,8 +208,6 @@ local function animateLetterboxIn()
 	local gui = ensureLetterboxGui()
 	gui.Enabled = true
 	local barIn = TweenInfo.new(0.42, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-	local leftSeal = gui:FindFirstChild("LetterLeftSeal")
-	local rightSeal = gui:FindFirstChild("LetterRightSeal")
 	if letterTopSeal and letterBottomSeal then
 		TweenService:Create(letterTopSeal, barIn, {
 			Size = UDim2.new(1.4, 0, 0.1, 0),

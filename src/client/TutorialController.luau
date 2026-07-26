@@ -58,6 +58,9 @@ local spotlightHole: Frame? = nil
 local heartbeatConn: RBXScriptConnection? = nil
 local attrConns: { RBXScriptConnection } = {}
 local speakToken = 0
+local objectiveBaseText = ""
+local dotsConn: RBXScriptConnection? = nil
+local dotsPhase = 0
 local completeRF: RemoteFunction? = nil
 local upgradesFrame: Frame? = nil
 local powerBuyButton: GuiObject? = nil
@@ -82,6 +85,8 @@ local clearUiPointer: () -> ()
 local clearSpotlight: () -> ()
 local syncPanelToSideButtons: () -> ()
 local refreshPointers: () -> ()
+local stopObjectiveDots: () -> ()
+local startObjectiveDots: (string) -> ()
 
 local function currentStep(): TutorialConfig.StepDef?
 	return TutorialConfig.STEPS[stepIndex]
@@ -110,6 +115,7 @@ local function setChromeSuppressed(suppressed: boolean)
 	chromeSuppressed = suppressed
 	if suppressed then
 		speakToken += 1
+		stopObjectiveDots()
 		if clearWorldArrow then
 			clearWorldArrow()
 		end
@@ -125,6 +131,9 @@ local function setChromeSuppressed(suppressed: boolean)
 	elseif active and gui then
 		gui.Enabled = true
 		pendingPointerRefresh = true
+		if objectiveBaseText ~= "" then
+			startObjectiveDots(objectiveBaseText)
+		end
 	end
 end
 
@@ -159,6 +168,33 @@ local function fireConfettiAndShake()
 	end
 end
 
+local function stopObjectiveDotsImpl()
+	if dotsConn then
+		dotsConn:Disconnect()
+		dotsConn = nil
+	end
+	dotsPhase = 0
+end
+stopObjectiveDots = stopObjectiveDotsImpl
+
+local function startObjectiveDotsImpl(baseText: string)
+	stopObjectiveDots()
+	objectiveBaseText = baseText
+	if not objectiveLabel or not active then
+		return
+	end
+	dotsConn = RunService.Heartbeat:Connect(function(dt)
+		if not active or chromeSuppressed or not objectiveLabel or not objectiveLabel.Parent then
+			return
+		end
+		dotsPhase += dt
+		local step = math.floor(dotsPhase * 2.2) % 4
+		local dots = if step == 0 then "" elseif step == 1 then "." elseif step == 2 then ".." else "..."
+		objectiveLabel.Text = objectiveBaseText .. dots
+	end)
+end
+startObjectiveDots = startObjectiveDotsImpl
+
 local function waitWhileStandTalking(token: number)
 	while active and token == speakToken and StandDialogueCutscene.isActive() do
 		task.wait(0.05)
@@ -168,6 +204,7 @@ end
 local function typeObjective(displayText: string)
 	speakToken += 1
 	local token = speakToken
+	stopObjectiveDots()
 	task.spawn(function()
 		waitWhileStandTalking(token)
 		if token ~= speakToken or not active or not objectiveLabel then
@@ -175,6 +212,7 @@ local function typeObjective(displayText: string)
 		end
 		if isCutsceneBusy() then
 			objectiveLabel.Text = displayText
+			startObjectiveDots(displayText)
 			return
 		end
 		StandDialogueCutscene.setVoicePitch(TutorialConfig.VOICE_PITCH_MIN, TutorialConfig.VOICE_PITCH_MAX)
@@ -191,6 +229,9 @@ local function typeObjective(displayText: string)
 				if objectiveLabel then
 					objectiveLabel.Text = displayText
 				end
+				if token == speakToken then
+					startObjectiveDots(displayText)
+				end
 				return
 			end
 			local ch = string.sub(displayText, i, i)
@@ -202,6 +243,7 @@ local function typeObjective(displayText: string)
 		end
 		if token == speakToken and objectiveLabel then
 			objectiveLabel.Text = displayText
+			startObjectiveDots(displayText)
 		end
 	end)
 end
@@ -1117,6 +1159,7 @@ local function finishTutorial()
 	end
 	active = false
 	speakToken += 1
+	stopObjectiveDots()
 	clearWorldArrow()
 	clearUiPointer()
 	clearSpotlight()
@@ -1390,6 +1433,7 @@ function M.stop()
 	end
 	active = false
 	speakToken += 1
+	stopObjectiveDots()
 	clearWorldArrow()
 	clearUiPointer()
 	clearSpotlight()

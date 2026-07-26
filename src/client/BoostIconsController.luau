@@ -344,34 +344,56 @@ local function resolveBoostIcon(iconsFolder: Instance, iconName: string): GuiObj
 	return nil
 end
 
+local function hideAllBoostIcons(iconsFolder: Instance)
+	for _, child in iconsFolder:GetChildren() do
+		if child:IsA("GuiObject") then
+			child.Visible = false
+		end
+	end
+	if iconsFolder:IsA("GuiObject") then
+		(iconsFolder :: GuiObject).Visible = false
+	end
+end
+
+local function refreshIconsFolderVisible(iconsFolder: Instance)
+	if not iconsFolder:IsA("GuiObject") then
+		return
+	end
+	local anyVisible = false
+	for _, child in iconsFolder:GetChildren() do
+		if child:IsA("GuiObject") and child.Visible then
+			anyVisible = true
+			break
+		end
+	end
+	(iconsFolder :: GuiObject).Visible = anyVisible
+end
+
+-- Server StoreHandler owns these attrs — don't Marketplace-poll on join (that flashes icons).
 local function isGamePassOwned(def: { id: number, attr: string }): boolean
-	if player:GetAttribute(def.attr) == true then
-		return true
-	end
-	local ok, result = pcall(function()
-		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, def.id)
-	end)
-	if not ok then
-		warn("[BoostIconsController] UserOwnsGamePassAsync failed for", def.id, ":", result)
-	end
-	return ok and result == true
+	return player:GetAttribute(def.attr) == true
 end
 
 local function setupIcons(iconsFolder: Instance)
+	-- Place file leaves these Visible=true; hide before any ownership work.
+	hideAllBoostIcons(iconsFolder)
+
 	for iconName, def in ICON_DEFS do
 		local icon = resolveBoostIcon(iconsFolder, iconName)
 		if not icon then
 			warn("[BoostIconsController] boost icon not found:", iconName)
 			continue
 		end
+		icon.Visible = false
 		bindTooltip(icon, def.title, def.description, readGuiAccentColor(icon))
 		local function evaluate()
 			icon.Visible = isGamePassOwned(def)
+			refreshIconsFolderVisible(iconsFolder)
 		end
 		player:GetAttributeChangedSignal(def.attr):Connect(evaluate)
 		evaluate()
-		task.spawn(evaluate)
 	end
+	refreshIconsFolderVisible(iconsFolder)
 
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, gamePassId, wasPurchased)
 		if plr ~= player or not wasPurchased then
@@ -384,6 +406,7 @@ local function setupIcons(iconsFolder: Instance)
 			local icon = resolveBoostIcon(iconsFolder, iconName)
 			if icon then
 				icon.Visible = true
+				refreshIconsFolderVisible(iconsFolder)
 			end
 		end
 		task.defer(function()
@@ -395,6 +418,7 @@ local function setupIcons(iconsFolder: Instance)
 					end
 				end
 			end
+			refreshIconsFolderVisible(iconsFolder)
 		end)
 	end)
 end
@@ -477,7 +501,13 @@ end
 
 -- ── Init ──────────────────────────────────────────────────────────────────────────
 
+local booted = false
+
 local function init()
+	if booted then
+		return
+	end
+	booted = true
 	local main = PlayerGuiMain.ensure(player)
 	if not main then
 		warn("[BoostIconsController] Main ScreenGui missing")
@@ -489,8 +519,15 @@ local function init()
 	local sideUI = main:WaitForChild("SideUI")
 	local counters = sideUI:WaitForChild("Counters")
 
+	-- Hide ASAP so loading/HUD reveal never flashes unowned icons from the place file.
+	local earlyIcons = counters:FindFirstChild("GamepassBoostIcons")
+	if earlyIcons then
+		hideAllBoostIcons(earlyIcons)
+	end
+
 	local iconsFolder = counters:WaitForChild("GamepassBoostIcons", 30)
 	if iconsFolder then
+		hideAllBoostIcons(iconsFolder)
 		setupIcons(iconsFolder)
 	else
 		warn("[BoostIconsController] SideUI.Counters.GamepassBoostIcons missing")

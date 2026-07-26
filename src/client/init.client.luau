@@ -63,6 +63,8 @@ task.defer(function()
 		require(script.HUDController).init()
 		require(script.TopNotifController).init()
 		require(script.CashBoostController).init()
+		-- Before SideUI is visible: hide unowned gamepass icons (place file defaults Visible).
+		require(script.BoostIconsController).init()
 		require(script.UIEffectsBootstrap).init()
 		require(script.TabScreenController).init()
 		require(script.ReturnController).init()
@@ -161,9 +163,6 @@ task.defer(function()
 			end,
 			function()
 				require(script.AutoCollectController).init()
-			end,
-			function()
-				require(script.BoostIconsController).init()
 			end,
 			function()
 				require(script.BoosterPackShowersController).init()

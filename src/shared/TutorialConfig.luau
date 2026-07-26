@@ -11,7 +11,10 @@ M.UI_CLICK_IMAGE = "rbxassetid://80727309150135"
 
 M.VOICE_PITCH_MIN = 1.15
 M.VOICE_PITCH_MAX = 1.5
-M.OBJECTIVE_TYPE_DELAY = 0.028
+M.OBJECTIVE_TYPE_DELAY = 0.048
+M.WORLD_ARROW_ROTATION = 180
+M.WORLD_ARROW_HEIGHT = 9.5
+M.PANEL_GAP_ABOVE_SIDE = 10
 
 export type StepId =
 	"visitUpgrade"
@@ -20,6 +23,7 @@ export type StepId =
 	| "searchBush"
 	| "claimBrainrot"
 	| "placeOnPlot"
+	| "upgradeBrainrot"
 
 export type StepDef = {
 	id: StepId,
@@ -57,6 +61,11 @@ M.STEPS = {
 		id = "placeOnPlot",
 		text = "Place the brainrot on your plot",
 		speak = "BRING IT HOME AND PLACE IT ON YOUR PLOT!!",
+	},
+	{
+		id = "upgradeBrainrot",
+		text = "Upgrade your brainrot",
+		speak = "TAP UPGRADE ON YOUR BRAINROT!!",
 	},
 }
 

@@ -54,6 +54,9 @@ local upgradesFrame: Frame? = nil
 local powerBuyButton: GuiObject? = nil
 local lastLandCheck = 0
 local claimSpotlightActive = false
+local upgradeBaseLevel = 1
+local layoutConn: RBXScriptConnection? = nil
+local panelStroke: UIStroke? = nil
 
 local function getCompleteRemote(): RemoteFunction?
 	if completeRF and completeRF.Parent then
@@ -86,22 +89,100 @@ local function fireConfettiAndShake()
 	end
 end
 
-local function speakLine(text: string)
+local function waitWhileStandTalking(token: number)
+	while active and token == speakToken and StandDialogueCutscene.isActive() do
+		task.wait(0.05)
+	end
+end
+
+local function typeObjective(displayText: string)
 	speakToken += 1
 	local token = speakToken
-	StandDialogueCutscene.setVoicePitch(TutorialConfig.VOICE_PITCH_MIN, TutorialConfig.VOICE_PITCH_MAX)
 	task.spawn(function()
-		for i = 1, #text do
+		waitWhileStandTalking(token)
+		if token ~= speakToken or not active or not objectiveLabel then
+			return
+		end
+		StandDialogueCutscene.setVoicePitch(TutorialConfig.VOICE_PITCH_MIN, TutorialConfig.VOICE_PITCH_MAX)
+		objectiveLabel.Text = ""
+		for i = 1, #displayText do
 			if token ~= speakToken or not active then
 				return
 			end
-			local ch = string.sub(text, i, i)
-			if ch ~= " " then
+			if StandDialogueCutscene.isActive() then
+				-- Stand dialogue owns Voice Gaster; finish text silently after it ends.
+				waitWhileStandTalking(token)
+				if token ~= speakToken or not active then
+					return
+				end
+				if objectiveLabel then
+					objectiveLabel.Text = displayText
+				end
+				return
+			end
+			local ch = string.sub(displayText, i, i)
+			objectiveLabel.Text = string.sub(displayText, 1, i)
+			if ch ~= " " and ch ~= "\n" then
 				StandDialogueCutscene.playVoiceLetter()
 			end
 			task.wait(TutorialConfig.OBJECTIVE_TYPE_DELAY)
 		end
+		if token == speakToken and objectiveLabel then
+			objectiveLabel.Text = displayText
+		end
 	end)
+end
+
+local function resolveSideButtonPanel(): GuiObject?
+	local main = PlayerGuiMain.ensure(player)
+	local sideUI = main and main:FindFirstChild("SideUI")
+	if not sideUI then
+		return nil
+	end
+	local lef1 = sideUI:FindFirstChild("Lef1") or sideUI:FindFirstChild("Left1")
+	if lef1 and lef1:IsA("GuiObject") then
+		return lef1
+	end
+	return nil
+end
+
+local function syncPanelToSideButtons()
+	if not panel or not panel.Parent or not gui or not gui.Enabled then
+		return
+	end
+	local sidePanel = resolveSideButtonPanel()
+	if not sidePanel then
+		return
+	end
+	local abs = sidePanel.AbsolutePosition
+	local size = sidePanel.AbsoluteSize
+	local panelHeight = panel.AbsoluteSize.Y
+	if panelHeight < 8 then
+		panelHeight = 58
+	end
+	local width = math.max(size.X, 240)
+	local gap = TutorialConfig.PANEL_GAP_ABOVE_SIDE
+	panel.Size = UDim2.fromOffset(width, 58)
+	panel.Position = UDim2.fromOffset(abs.X, abs.Y - gap)
+end
+
+local function startLayoutSync()
+	if layoutConn then
+		layoutConn:Disconnect()
+	end
+	layoutConn = RunService.RenderStepped:Connect(function()
+		if not active then
+			return
+		end
+		syncPanelToSideButtons()
+	end)
+end
+
+local function stopLayoutSync()
+	if layoutConn then
+		layoutConn:Disconnect()
+		layoutConn = nil
+	end
 end
 
 local function clearWorldArrow()
@@ -154,35 +235,36 @@ local function ensureGui()
 
 	local panelFrame = Instance.new("Frame")
 	panelFrame.Name = "ObjectivePanel"
-	panelFrame.AnchorPoint = Vector2.new(0, 0)
-	panelFrame.Position = UDim2.new(0, 18, 0, 96)
-	panelFrame.Size = UDim2.fromOffset(320, 64)
-	panelFrame.BackgroundColor3 = Color3.fromRGB(12, 16, 22)
-	panelFrame.BackgroundTransparency = 0.28
+	panelFrame.AnchorPoint = Vector2.new(0, 1)
+	panelFrame.Position = UDim2.new(0, 18, 0, 200)
+	panelFrame.Size = UDim2.fromOffset(280, 58)
+	panelFrame.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
+	panelFrame.BackgroundTransparency = 0.32
 	panelFrame.BorderSizePixel = 0
 	panelFrame.ClipsDescendants = false
 	panelFrame.Parent = rootFrame
 
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 14)
+	corner.CornerRadius = UDim.new(0, 12)
 	corner.Parent = panelFrame
 
 	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(72, 255, 150)
-	stroke.Thickness = 1.5
-	stroke.Transparency = 0.55
+	stroke.Color = Color3.fromRGB(8, 10, 14)
+	stroke.Thickness = 1
+	stroke.Transparency = 0.72
 	stroke.Parent = panelFrame
+	panelStroke = stroke
 
 	local blurFake = Instance.new("Frame")
 	blurFake.Name = "PanelSheen"
-	blurFake.BackgroundColor3 = Color3.fromRGB(40, 55, 70)
-	blurFake.BackgroundTransparency = 0.72
+	blurFake.BackgroundColor3 = Color3.fromRGB(28, 32, 40)
+	blurFake.BackgroundTransparency = 0.78
 	blurFake.BorderSizePixel = 0
 	blurFake.Size = UDim2.fromScale(1, 1)
 	blurFake.ZIndex = 1
 	blurFake.Parent = panelFrame
 	local sheenCorner = Instance.new("UICorner")
-	sheenCorner.CornerRadius = UDim.new(0, 14)
+	sheenCorner.CornerRadius = UDim.new(0, 12)
 	sheenCorner.Parent = blurFake
 
 	local scale = Instance.new("UIScale")
@@ -195,7 +277,7 @@ local function ensureGui()
 	bang.BackgroundTransparency = 1
 	bang.AnchorPoint = Vector2.new(0, 0.5)
 	bang.Position = UDim2.new(0, 10, 0.5, 0)
-	bang.Size = UDim2.fromOffset(42, 42)
+	bang.Size = UDim2.fromOffset(40, 40)
 	bang.Image = TutorialConfig.EXCLAIM_IMAGE
 	bang.ScaleType = Enum.ScaleType.Fit
 	bang.ZIndex = 3
@@ -205,17 +287,17 @@ local function ensureGui()
 	label.Name = "ObjectiveText"
 	label.BackgroundTransparency = 1
 	label.AnchorPoint = Vector2.new(0, 0.5)
-	label.Position = UDim2.new(0, 58, 0.5, 0)
-	label.Size = UDim2.new(1, -70, 1, -12)
+	label.Position = UDim2.new(0, 54, 0.5, 0)
+	label.Size = UDim2.new(1, -64, 1, -10)
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.TextYAlignment = Enum.TextYAlignment.Center
 	label.TextWrapped = true
-	label.TextSize = 15
+	label.TextSize = 16
 	label.TextColor3 = Color3.fromRGB(245, 250, 255)
 	label.Text = ""
 	label.ZIndex = 3
 	label.Parent = panelFrame
-	UiFonts.applyBody(label)
+	UiFonts.applyButton(label)
 
 	local dim = Instance.new("Frame")
 	dim.Name = "ClaimDim"
@@ -231,8 +313,8 @@ local function ensureGui()
 	local hole = Instance.new("Frame")
 	hole.Name = "SpotlightHole"
 	hole.AnchorPoint = Vector2.new(0.5, 0.5)
-	hole.BackgroundColor3 = Color3.fromRGB(72, 255, 150)
-	hole.BackgroundTransparency = 0.82
+	hole.BackgroundColor3 = Color3.fromRGB(18, 20, 24)
+	hole.BackgroundTransparency = 0.55
 	hole.BorderSizePixel = 0
 	hole.Size = UDim2.fromOffset(120, 56)
 	hole.Visible = false
@@ -242,9 +324,9 @@ local function ensureGui()
 	holeCorner.CornerRadius = UDim.new(0, 12)
 	holeCorner.Parent = hole
 	local holeStroke = Instance.new("UIStroke")
-	holeStroke.Color = Color3.fromRGB(72, 255, 150)
-	holeStroke.Thickness = 2
-	holeStroke.Transparency = 0.2
+	holeStroke.Color = Color3.fromRGB(8, 10, 14)
+	holeStroke.Thickness = 1
+	holeStroke.Transparency = 0.7
 	holeStroke.Parent = hole
 
 	screen.Parent = pg
@@ -288,16 +370,21 @@ local function showPanel(text: string, animateIn: boolean)
 		return
 	end
 	gui.Enabled = true
-	objectiveLabel.Text = text
+	objectiveLabel.Text = ""
+	syncPanelToSideButtons()
 	if animateIn then
 		panelScale.Scale = 0.82
-		panel.Position = UDim2.new(0, -40, 0, 96)
+		local pos = panel.Position
+		panel.Position = UDim2.fromOffset(pos.X.Offset - 36, pos.Y.Offset)
 		TweenService:Create(panelScale, PANEL_OPEN, { Scale = 1 }):Play()
-		TweenService:Create(panel, PANEL_OPEN, { Position = UDim2.new(0, 18, 0, 96) }):Play()
+		TweenService:Create(panel, PANEL_OPEN, {
+			Position = UDim2.fromOffset(pos.X.Offset, pos.Y.Offset),
+		}):Play()
 	else
 		panelScale.Scale = 0.92
 		TweenService:Create(panelScale, PANEL_SWAP, { Scale = 1 }):Play()
 	end
+	typeObjective(text)
 end
 
 local function hidePanel()
@@ -307,9 +394,10 @@ local function hidePanel()
 	local s = panelScale
 	local p = panel
 	local g = gui
+	local pos = p.Position
 	TweenService:Create(s, PANEL_SWAP, { Scale = 0.8 }):Play()
 	local tw = TweenService:Create(p, PANEL_SWAP, {
-		Position = UDim2.new(0, -80, 0, 96),
+		Position = UDim2.fromOffset(pos.X.Offset - 80, pos.Y.Offset),
 	})
 	tw:Play()
 	tw.Completed:Once(function()
@@ -317,6 +405,10 @@ local function hidePanel()
 			g.Enabled = false
 		end
 	end)
+end
+
+local function arrowHeight(extra: number?): Vector3
+	return Vector3.new(0, TutorialConfig.WORLD_ARROW_HEIGHT + (extra or 0), 0)
 end
 
 local function pointAtWorld(adornee: Instance?, offset: Vector3?)
@@ -338,7 +430,7 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	bb.Name = "TutorialWorldArrow"
 	bb.AlwaysOnTop = true
 	bb.Size = UDim2.fromOffset(64, 64)
-	bb.StudsOffset = offset or Vector3.new(0, 4.5, 0)
+	bb.StudsOffset = offset or arrowHeight()
 	bb.MaxDistance = 400
 	bb.Adornee = part
 	bb.Parent = player:FindFirstChild("PlayerGui") or Workspace.CurrentCamera
@@ -347,7 +439,7 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	img.BackgroundTransparency = 1
 	img.Size = UDim2.fromScale(1, 1)
 	img.Image = TutorialConfig.WORLD_ARROW_IMAGE
-	img.Rotation = 90
+	img.Rotation = TutorialConfig.WORLD_ARROW_ROTATION
 	img.ScaleType = Enum.ScaleType.Fit
 	img.Parent = bb
 
@@ -357,7 +449,7 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	task.spawn(function()
 		while worldArrowImg == img and img.Parent and active do
 			local a = TweenService:Create(img, ARROW_BOB, {
-				Position = UDim2.new(0, 8, 0, 0),
+				Position = UDim2.new(0, 0, 0, 6),
 				Size = UDim2.fromScale(1.08, 1.08),
 			})
 			a:Play()
@@ -366,7 +458,7 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 				break
 			end
 			local b = TweenService:Create(img, ARROW_BOB, {
-				Position = UDim2.new(0, -4, 0, 0),
+				Position = UDim2.new(0, 0, 0, -2),
 				Size = UDim2.fromScale(1, 1),
 			})
 			b:Play()
@@ -500,30 +592,87 @@ local function resolveNearestBush(): BasePart?
 	return best
 end
 
-local function resolvePlayerPlotStand(): BasePart?
+local function resolvePlayerPlotStand(preferEmpty: boolean?): BasePart?
+	local plot = PlotPaths.findPlotForAssignedSlot(player)
+	if not plot then
+		return nil
+	end
+	local emptyPart: BasePart? = nil
+	local filledPart: BasePart? = nil
+	for _, d in plot:GetDescendants() do
+		if d:IsA("Model") and (d:HasTag("BrainrotStand") or d:GetAttribute("BrainrotStand") == true) then
+			local ownerId = d:GetAttribute("StandOwnerUserId")
+			if ownerId ~= nil and ownerId ~= player.UserId then
+				continue
+			end
+			local part = d.PrimaryPart or d:FindFirstChildWhichIsA("BasePart", true)
+			if not part then
+				continue
+			end
+			if d:GetAttribute("BrainrotName") == nil then
+				if not emptyPart then
+					emptyPart = part
+				end
+			elseif not filledPart then
+				filledPart = part
+			end
+		end
+	end
+	if preferEmpty == false then
+		return filledPart or emptyPart
+	end
+	return emptyPart or filledPart
+end
+
+local function resolvePlacedStandUpgradeTarget(): Instance?
 	local plot = PlotPaths.findPlotForAssignedSlot(player)
 	if not plot then
 		return nil
 	end
 	for _, d in plot:GetDescendants() do
 		if d:IsA("Model") and (d:HasTag("BrainrotStand") or d:GetAttribute("BrainrotStand") == true) then
-			if d:GetAttribute("BrainrotName") == nil then
-				local part = d.PrimaryPart or d:FindFirstChildWhichIsA("BasePart", true)
-				if part then
-					return part
-				end
+			local ownerId = d:GetAttribute("StandOwnerUserId")
+			if ownerId ~= nil and ownerId ~= player.UserId then
+				continue
 			end
-		end
-	end
-	for _, d in plot:GetDescendants() do
-		if d:IsA("Model") and (d:HasTag("BrainrotStand") or d:GetAttribute("BrainrotStand") == true) then
-			local part = d.PrimaryPart or d:FindFirstChildWhichIsA("BasePart", true)
-			if part then
-				return part
+			if typeof(d:GetAttribute("BrainrotName")) ~= "string" then
+				continue
 			end
+			local levelPanel = d:FindFirstChild("LevelPanel")
+			local level = levelPanel and levelPanel:FindFirstChild("Level")
+			if level and level:IsA("BasePart") then
+				return level
+			end
+			if levelPanel and levelPanel:IsA("BasePart") then
+				return levelPanel
+			end
+			return d.PrimaryPart or d:FindFirstChildWhichIsA("BasePart", true)
 		end
 	end
 	return nil
+end
+
+local function readPlacedBrainrotLevel(): number
+	local plot = PlotPaths.findPlotForAssignedSlot(player)
+	if not plot then
+		return 1
+	end
+	for _, d in plot:GetDescendants() do
+		if d:IsA("Model") and (d:HasTag("BrainrotStand") or d:GetAttribute("BrainrotStand") == true) then
+			local ownerId = d:GetAttribute("StandOwnerUserId")
+			if ownerId ~= nil and ownerId ~= player.UserId then
+				continue
+			end
+			if typeof(d:GetAttribute("BrainrotName")) == "string" then
+				local lvl = d:GetAttribute("BrainrotLevel")
+				if typeof(lvl) == "number" then
+					return math.max(1, math.floor(lvl))
+				end
+				return 1
+			end
+		end
+	end
+	return 1
 end
 
 local function cacheUpgradesBuyButton()
@@ -576,18 +725,18 @@ local function refreshPointers()
 		return
 	end
 	if step.id == "visitUpgrade" then
-		pointAtWorld(resolveUpgradeStandPart(), Vector3.new(0, 5, 0))
+		pointAtWorld(resolveUpgradeStandPart(), arrowHeight(1))
 	elseif step.id == "buyPower" then
 		local btn = cacheUpgradesBuyButton()
 		if btn and upgradesFrame and upgradesFrame.Visible then
 			pointAtGui(btn)
 		else
-			pointAtWorld(resolveUpgradeStandPart(), Vector3.new(0, 5, 0))
+			pointAtWorld(resolveUpgradeStandPart(), arrowHeight(1))
 		end
 	elseif step.id == "swingLand1" then
-		pointAtWorld(resolveLand1SwingTarget() or resolveUpgradeStandPart(), Vector3.new(0, 6, 0))
+		pointAtWorld(resolveLand1SwingTarget() or resolveUpgradeStandPart(), arrowHeight(2))
 	elseif step.id == "searchBush" then
-		pointAtWorld(resolveNearestBush(), Vector3.new(0, 4, 0))
+		pointAtWorld(resolveNearestBush(), arrowHeight())
 	elseif step.id == "claimBrainrot" then
 		local offer = BushFloatingClaimController.getActiveOfferUi and BushFloatingClaimController.getActiveOfferUi()
 		if offer and offer.acceptBtn then
@@ -598,7 +747,9 @@ local function refreshPointers()
 			pointAtGui(offer.acceptBtn)
 		end
 	elseif step.id == "placeOnPlot" then
-		pointAtWorld(resolvePlayerPlotStand(), Vector3.new(0, 5, 0))
+		pointAtWorld(resolvePlayerPlotStand(true), arrowHeight(1))
+	elseif step.id == "upgradeBrainrot" then
+		pointAtWorld(resolvePlacedStandUpgradeTarget(), arrowHeight(2.5))
 	end
 end
 
@@ -611,6 +762,7 @@ local function finishTutorial()
 	clearWorldArrow()
 	clearUiPointer()
 	clearSpotlight()
+	stopLayoutSync()
 	if heartbeatConn then
 		heartbeatConn:Disconnect()
 		heartbeatConn = nil
@@ -664,8 +816,11 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 		finishTutorial()
 		return
 	end
+	if step.id == "upgradeBrainrot" then
+		upgradeBaseLevel = readPlacedBrainrotLevel()
+	end
+	-- Use on-screen objective text for typewriter + voice (stand cadence).
 	showPanel(step.text, first)
-	speakLine(step.speak or step.text)
 	refreshPointers()
 end
 
@@ -744,6 +899,14 @@ local function watchStepProgress()
 					end
 				end
 			end
+		elseif step.id == "upgradeBrainrot" and now - lastLandCheck > 0.35 then
+			lastLandCheck = now
+			local lvl = readPlacedBrainrotLevel()
+			if lvl > upgradeBaseLevel then
+				completeCurrentIf("upgradeBrainrot")
+			elseif not worldArrowBb then
+				refreshPointers()
+			end
 		end
 	end)
 end
@@ -816,6 +979,7 @@ function M.start(force: boolean?)
 	active = true
 	stepIndex = 0
 	ensureGui()
+	startLayoutSync()
 	bindGameplayHooks()
 	watchStepProgress()
 	advanceTo(1)
@@ -830,6 +994,7 @@ function M.stop()
 	clearWorldArrow()
 	clearUiPointer()
 	clearSpotlight()
+	stopLayoutSync()
 	if heartbeatConn then
 		heartbeatConn:Disconnect()
 		heartbeatConn = nil

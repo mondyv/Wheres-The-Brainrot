@@ -111,8 +111,8 @@ local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.Ea
 local TOGGLE_ICON_SLIDE_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
 local MOBILE_DRAG_HOLD_SEC = 0.2 -- long-press before mobile inventory drag starts (keeps tap-to-select)
-local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 20
-local TOGGLE_BACKPACK_ICON_SIZE_SCALE = 0.42
+local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 24
+local TOGGLE_BACKPACK_ICON_SIZE_SCALE = 0.55
 
 -- ── Key → slot index map ──────────────────────────────────────────────────────
 
@@ -2453,10 +2453,9 @@ local ToolbarController = {}
 			return
 		end
 		toolbar:SetAttribute("_ToggleIconResizeWired", true)
+		-- Do NOT listen to AbsolutePosition — refresh writes hotbar.Position and that
+		-- would recurse forever (script timeout / Studio freeze).
 		hotbar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-			task.defer(refreshToggleBackpackIconLayout)
-		end)
-		hotbar:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
 			task.defer(refreshToggleBackpackIconLayout)
 		end)
 		toolbar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
@@ -2508,7 +2507,13 @@ local ToolbarController = {}
 		return nil, nil
 	end
 
+	local toggleIconLayoutBusy = false
+	local lastHotbarGroupShift = -1e9
+
 	refreshToggleBackpackIconLayout = function()
+		if toggleIconLayoutBusy then
+			return
+		end
 		if not toggleBackpackIconRef then
 			return
 		end
@@ -2518,93 +2523,98 @@ local ToolbarController = {}
 			return
 		end
 
-		local layout = ensureHotbarListLayout()
-		local HOTBAR_SLOT_PADDING_PX = 10
-		layout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
-		layout.FillDirection = Enum.FillDirection.Horizontal
-		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		layout.VerticalAlignment = Enum.VerticalAlignment.Center
+		toggleIconLayoutBusy = true
+		local ok, err = pcall(function()
+			local layout = ensureHotbarListLayout()
+			local HOTBAR_SLOT_PADDING_PX = 10
+			layout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
+			layout.FillDirection = Enum.FillDirection.Horizontal
+			layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+			layout.VerticalAlignment = Enum.VerticalAlignment.Center
 
-		local slotTemplate = getHotbarSlotSizeTemplate()
-		local iconSize: UDim2
-		if slotTemplate then
-			iconSize = scaledToggleIconSizeFromTemplate(slotTemplate)
-		else
-			local slot = slots[1]
-			if slot and slot:IsA("GuiObject") then
-				local abs = (slot :: GuiObject).AbsoluteSize
-				if abs.X >= 8 and abs.Y >= 8 then
-					iconSize = UDim2.fromOffset(
-						math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(abs.X * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5)),
-						math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(abs.Y * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5))
-					)
+			local slotTemplate = getHotbarSlotSizeTemplate()
+			local iconSize: UDim2
+			if slotTemplate then
+				iconSize = scaledToggleIconSizeFromTemplate(slotTemplate)
+			else
+				local slot = slots[1]
+				if slot and slot:IsA("GuiObject") then
+					local abs = (slot :: GuiObject).AbsoluteSize
+					if abs.X >= 8 and abs.Y >= 8 then
+						iconSize = UDim2.fromOffset(
+							math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(abs.X * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5)),
+							math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(abs.Y * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5))
+						)
+					else
+						iconSize = UDim2.fromOffset(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, TOGGLE_BACKPACK_ICON_MIN_ABS_PX)
+					end
 				else
 					iconSize = UDim2.fromOffset(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, TOGGLE_BACKPACK_ICON_MIN_ABS_PX)
 				end
-			else
-				iconSize = UDim2.fromOffset(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, TOGGLE_BACKPACK_ICON_MIN_ABS_PX)
 			end
-		end
 
-		local iconW = iconSize.X.Offset
-		local iconH = iconSize.Y.Offset
-		icon.Size = iconSize
-		ensureToggleBackpackIconSizeConstraint(icon, iconW, iconH)
+			local iconW = iconSize.X.Offset
+			local iconH = iconSize.Y.Offset
+			icon.Size = iconSize
+			ensureToggleBackpackIconSizeConstraint(icon, iconW, iconH)
 
-		if icon.Parent ~= toolbar then
-			icon.Parent = toolbar
-		end
-		icon.AnchorPoint = Vector2.new(0, 0.5)
-		icon.Visible = true
+			if icon.Parent ~= toolbar then
+				icon.Parent = toolbar
+			end
+			icon.AnchorPoint = Vector2.new(0, 0.5)
+			icon.Visible = true
 
-		local hotbarGui = hotbar :: GuiObject
-		if not hotbarBaseYCaptured then
-			hotbarBaseYScale = hotbarGui.Position.Y.Scale
-			hotbarBaseYOffset = hotbarGui.Position.Y.Offset
-			hotbarBaseYCaptured = true
-		end
+			local hotbarGui = hotbar :: GuiObject
+			if not hotbarBaseYCaptured then
+				hotbarBaseYScale = hotbarGui.Position.Y.Scale
+				hotbarBaseYOffset = hotbarGui.Position.Y.Offset
+				hotbarBaseYCaptured = true
+			end
 
-		-- Shift hotbar left by half (icon + gap) so slots + icon read as one centered group.
-		local groupShift = (iconW + TOGGLE_ICON_GAP_PX) * 0.5
-		hotbarGui.AnchorPoint = Vector2.new(0.5, hotbarGui.AnchorPoint.Y)
-		hotbarGui.Position = UDim2.new(0.5, -groupShift, hotbarBaseYScale, hotbarBaseYOffset)
+			-- Shift hotbar left by half (icon + gap) so slots + icon read as one centered group.
+			local groupShift = (iconW + TOGGLE_ICON_GAP_PX) * 0.5
+			hotbarGui.AnchorPoint = Vector2.new(0.5, hotbarGui.AnchorPoint.Y)
+			if math.abs(groupShift - lastHotbarGroupShift) > 0.5 then
+				lastHotbarGroupShift = groupShift
+				hotbarGui.Position = UDim2.new(0.5, -groupShift, hotbarBaseYScale, hotbarBaseYOffset)
+			end
 
-		-- Force layout, then place icon just right of visible slots (vertically centered on them).
-		local _ = hotbarGui.AbsolutePosition
-		local tbAbs = toolbar.AbsolutePosition
-		local rightEdge: number
-		local midY: number
-		local anySlot = false
-		local leftEdge = 0
-		for i = 1, #slots do
-			local slot = slots[i]
-			if slot and slot.Visible and slot:IsA("GuiObject") then
-				local s = slot :: GuiObject
-				local sAbs = s.AbsolutePosition
-				local sSize = s.AbsoluteSize
-				if not anySlot then
-					leftEdge = sAbs.X
-					rightEdge = sAbs.X + sSize.X
-					midY = sAbs.Y + sSize.Y * 0.5
-					anySlot = true
-				else
-					leftEdge = math.min(leftEdge, sAbs.X)
-					rightEdge = math.max(rightEdge, sAbs.X + sSize.X)
-					midY = sAbs.Y + sSize.Y * 0.5
+			local tbAbs = toolbar.AbsolutePosition
+			local rightEdge: number = 0
+			local midY: number = 0
+			local anySlot = false
+			for i = 1, #slots do
+				local slot = slots[i]
+				if slot and slot.Visible and slot:IsA("GuiObject") then
+					local s = slot :: GuiObject
+					local sAbs = s.AbsolutePosition
+					local sSize = s.AbsoluteSize
+					if not anySlot then
+						rightEdge = sAbs.X + sSize.X
+						midY = sAbs.Y + sSize.Y * 0.5
+						anySlot = true
+					else
+						rightEdge = math.max(rightEdge, sAbs.X + sSize.X)
+						midY = sAbs.Y + sSize.Y * 0.5
+					end
 				end
 			end
-		end
-		if not anySlot then
-			local hbAbs = hotbarGui.AbsolutePosition
-			local hbSize = hotbarGui.AbsoluteSize
-			rightEdge = hbAbs.X + hbSize.X * 0.5
-			midY = hbAbs.Y + hbSize.Y * 0.5
-		end
+			if not anySlot then
+				local hbAbs = hotbarGui.AbsolutePosition
+				local hbSize = hotbarGui.AbsoluteSize
+				rightEdge = hbAbs.X + hbSize.X * 0.5
+				midY = hbAbs.Y + hbSize.Y * 0.5
+			end
 
-		local x = (rightEdge + TOGGLE_ICON_GAP_PX) - tbAbs.X
-		local y = midY - tbAbs.Y
-		icon.Position = UDim2.fromOffset(math.floor(x + 0.5), math.floor(y + 0.5))
-		icon.ZIndex = math.max(icon.ZIndex, hotbarGui.ZIndex + 1)
+			local x = (rightEdge + TOGGLE_ICON_GAP_PX) - tbAbs.X
+			local y = midY - tbAbs.Y
+			icon.Position = UDim2.fromOffset(math.floor(x + 0.5), math.floor(y + 0.5))
+			icon.ZIndex = math.max(icon.ZIndex, hotbarGui.ZIndex + 1)
+		end)
+		toggleIconLayoutBusy = false
+		if not ok then
+			warn("[ToolbarController] refreshToggleBackpackIconLayout error:", err)
+		end
 	end
 
 	updateHotbarSlotVisibility = function()

@@ -1143,6 +1143,8 @@ local function saveCameraState(cam: Camera)
 		savedCameraSubject = cam.CameraSubject
 		savedFov = cam.FieldOfView
 		defaultFov = cam.FieldOfView
+		local GameplayCameraController = require(script.Parent.GameplayCameraController)
+		GameplayCameraController.pause()
 	end
 	cam.CameraType = Enum.CameraType.Scriptable
 end
@@ -1520,8 +1522,14 @@ local function restoreCamera()
 	end
 	local goalFov = if savedFov > 0 then savedFov else defaultFov
 	cam.FieldOfView = goalFov
-	if savedCameraType then
+	local GameplayCameraController = require(script.Parent.GameplayCameraController)
+	if GameplayCameraController.isEnabled() then
+		GameplayCameraController.resume(cam.CFrame)
+	elseif savedCameraType then
 		cam.CameraType = savedCameraType
+		if savedCameraSubject then
+			cam.CameraSubject = savedCameraSubject
+		end
 	else
 		cam.CameraType = Enum.CameraType.Custom
 		local char = player.Character
@@ -1529,9 +1537,6 @@ local function restoreCamera()
 		if hum then
 			cam.CameraSubject = hum
 		end
-	end
-	if savedCameraSubject then
-		cam.CameraSubject = savedCameraSubject
 	end
 	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 	if hum then

@@ -29,6 +29,10 @@ task.defer(function()
 	LoadingScreenController.showEarly()
 
 	pcall(function()
+		require(script.GameplayCameraController).init()
+	end)
+
+	pcall(function()
 		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
 		StarterGui:SetCore("ResetButtonCallback", false)
 	end)

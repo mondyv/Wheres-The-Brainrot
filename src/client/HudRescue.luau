@@ -101,7 +101,16 @@ local function rescueOnce(reason: string)
 
 	local cam = Workspace.CurrentCamera
 	if cam then
-		if cam.CameraType ~= Enum.CameraType.Custom then
+		local GameplayCameraController = require(script.Parent.GameplayCameraController)
+		if GameplayCameraController.isEnabled() then
+			if GameplayCameraController.isPaused() then
+				GameplayCameraController.resume(cam.CFrame)
+				table.insert(lines, "camera -> GameplayCamera resume")
+			elseif cam.CameraType ~= Enum.CameraType.Scriptable then
+				cam.CameraType = Enum.CameraType.Scriptable
+				table.insert(lines, "camera -> Scriptable (gameplay)")
+			end
+		elseif cam.CameraType ~= Enum.CameraType.Custom then
 			cam.CameraType = Enum.CameraType.Custom
 			table.insert(lines, "camera -> Custom")
 		end

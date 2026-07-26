@@ -326,6 +326,13 @@ local function ensureBlurOverlay(loadingGui: ScreenGui): Frame
 end
 
 local function restoreGameplayCamera(camera: Camera, player: Player)
+	local ok, GameplayCameraController = pcall(function()
+		return require(script.Parent.GameplayCameraController)
+	end)
+	if ok and GameplayCameraController then
+		GameplayCameraController.enable()
+		return
+	end
 	camera.CameraType = Enum.CameraType.Custom
 	local character = player.Character
 	if character then

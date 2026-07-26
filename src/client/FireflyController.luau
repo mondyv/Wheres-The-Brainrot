@@ -1,7 +1,7 @@
 -- [ACTIVE] FireflyController
 --[[
-	Soft yellow fireflies on bushes outside the safe zone.
-	Small body + PointLight only (no particle VFX).
+	Soft orange fireflies that orbit *around* bushes outside the safe zone.
+	Body + PointLight only (no particle VFX). Sticky range so swarms don't pop.
 ]]
 
 local Players = game:GetService("Players")
@@ -17,27 +17,33 @@ local FireflyController = {}
 
 local player = Players.LocalPlayer
 
-local ACTIVE_RANGE = 60
-local SELECT_PCT = 14
-local MAX_ACTIVE = 4
-local FLIES_PER_BUSH = 6
-local REFRESH_SEC = 2.5
+-- Enter closer than ACTIVATE, leave farther than DEACTIVATE (hysteresis).
+local ACTIVATE_RANGE = 52
+local DEACTIVATE_RANGE = 78
+local SELECT_PCT = 16
+local MAX_ACTIVE = 6
+local FLIES_PER_BUSH = 5
+local REFRESH_SEC = 1.25
 local FOLDER_NAME = "BushFireflies"
 local LIGHT_UPDATE_EVERY = 2
 
-local GLOW = Color3.fromRGB(255, 230, 120)
-local BODY = Color3.fromRGB(255, 245, 170)
-local LIGHT_RANGE = 11
-local LIGHT_BRIGHTNESS = 0.55
-local FLY_SIZE = 0.22
+-- Warm orange (not pale yellow — pale + bright light reads white).
+local GLOW = Color3.fromRGB(255, 140, 40)
+local BODY = Color3.fromRGB(255, 120, 30)
+local LIGHT_RANGE = 7
+local LIGHT_BRIGHTNESS = 0.35
+local FLY_SIZE = 0.2
+-- Orbit outside the bush mesh, not inside the foliage volume.
+local ORBIT_PAD = 1.85
+local ORBIT_JITTER = 0.9
 
 type Fly = {
 	part: BasePart,
 	light: PointLight,
 	phase: number,
 	speed: number,
-	orbit: number,
-	baseOffset: Vector3,
+	radius: number,
+	heightBias: number,
 	wander: Vector3,
 	wanderNext: number,
 	pos: Vector3,
@@ -46,6 +52,7 @@ type Fly = {
 type Swarm = {
 	bush: Instance,
 	center: Vector3,
+	half: Vector3,
 	folder: Folder,
 	flies: { Fly },
 }
@@ -86,9 +93,9 @@ local function bushBounds(bush: Instance): (Vector3, Vector3)
 		if ok and typeof(cf) == "CFrame" and typeof(size) == "Vector3" then
 			center = cf.Position
 			half = Vector3.new(
-				math.clamp(size.X * 0.45, 1.4, 7),
-				math.clamp(size.Y * 0.4, 1.2, 5),
-				math.clamp(size.Z * 0.45, 1.4, 7)
+				math.clamp(size.X * 0.5, 1.6, 8),
+				math.clamp(size.Y * 0.45, 1.4, 6),
+				math.clamp(size.Z * 0.5, 1.6, 8)
 			)
 			return center, half
 		end
@@ -100,7 +107,7 @@ local function bushBounds(bush: Instance): (Vector3, Vector3)
 	elseif bush:IsA("BasePart") then
 		center = (bush :: BasePart).Position + Vector3.new(0, 1.5, 0)
 		local s = (bush :: BasePart).Size
-		half = Vector3.new(math.max(s.X * 0.4, 1.5), math.max(s.Y * 0.35, 1.2), math.max(s.Z * 0.4, 1.5))
+		half = Vector3.new(math.max(s.X * 0.45, 1.6), math.max(s.Y * 0.4, 1.4), math.max(s.Z * 0.45, 1.6))
 	end
 	return center, half
 end
@@ -136,20 +143,23 @@ local function clearAll()
 	end
 end
 
+local function horizontalRadius(half: Vector3): number
+	return math.max(half.X, half.Z) + ORBIT_PAD
+end
+
 local function makeFly(parent: Folder, center: Vector3, half: Vector3, index: number): Fly
 	local part = Instance.new("Part")
 	part.Name = "Firefly"
 	part.Shape = Enum.PartType.Ball
 	part.Size = Vector3.new(FLY_SIZE, FLY_SIZE, FLY_SIZE)
-	part.Material = Enum.Material.SmoothPlastic
+	part.Material = Enum.Material.Neon
 	part.Color = BODY
 	part.Anchored = true
 	part.CanCollide = false
 	part.CanQuery = false
 	part.CanTouch = false
 	part.CastShadow = false
-	part.Transparency = 0.35
-	part.CFrame = CFrame.new(center)
+	part.Transparency = 0.15
 	part.Parent = parent
 
 	local light = Instance.new("PointLight")
@@ -159,22 +169,23 @@ local function makeFly(parent: Folder, center: Vector3, half: Vector3, index: nu
 	light.Shadows = false
 	light.Parent = part
 
-	local baseOffset = Vector3.new(
-		(math.random() * 2 - 1) * half.X,
-		(math.random() * 2 - 1) * half.Y * 0.85,
-		(math.random() * 2 - 1) * half.Z
-	)
+	local baseRadius = horizontalRadius(half) + math.random() * ORBIT_JITTER
+	local startAng = (index / FLIES_PER_BUSH) * math.pi * 2 + math.random() * 0.6
+	local heightBias = (math.random() * 2 - 0.35) * half.Y * 0.55
+	local startPos = center
+		+ Vector3.new(math.cos(startAng) * baseRadius, heightBias, math.sin(startAng) * baseRadius)
+	part.CFrame = CFrame.new(startPos)
 
 	return {
 		part = part,
 		light = light,
-		phase = index * 1.35 + math.random() * 6,
-		speed = 0.55 + math.random() * 0.55,
-		orbit = 0.85 + math.random() * 0.95,
-		baseOffset = baseOffset,
+		phase = startAng,
+		speed = 0.35 + math.random() * 0.45,
+		radius = baseRadius,
+		heightBias = heightBias,
 		wander = Vector3.zero,
 		wanderNext = 0,
-		pos = center + baseOffset,
+		pos = startPos,
 	}
 end
 
@@ -192,6 +203,7 @@ local function createSwarm(bush: Instance)
 	activeSwarms[bush] = {
 		bush = bush,
 		center = center,
+		half = half,
 		folder = folder,
 		flies = flies,
 	}
@@ -218,17 +230,31 @@ local function refresh()
 		return
 	end
 
+	-- Sticky: keep existing swarms until they leave DEACTIVATE_RANGE.
+	for bush, swarm in pairs(activeSwarms) do
+		if not bush.Parent then
+			destroySwarm(bush)
+			continue
+		end
+		local center = select(1, bushBounds(bush))
+		swarm.center = center
+		if (center - origin).Magnitude > DEACTIVATE_RANGE then
+			destroySwarm(bush)
+		end
+	end
+
 	local candidates: { { bush: Instance, dist: number } } = {}
 	BushHoldInteraction.forEachRegisteredBush(function(bush)
 		if not isEligible(bush) then
 			return
 		end
+		if activeSwarms[bush] then
+			return
+		end
 		local center = select(1, bushBounds(bush))
 		local dist = (center - origin).Magnitude
-		if dist <= ACTIVE_RANGE then
+		if dist <= ACTIVATE_RANGE then
 			table.insert(candidates, { bush = bush, dist = dist })
-		elseif activeSwarms[bush] then
-			destroySwarm(bush)
 		end
 	end)
 
@@ -236,22 +262,17 @@ local function refresh()
 		return a.dist < b.dist
 	end)
 
-	local keep: { [Instance]: boolean } = {}
-	for i = 1, math.min(MAX_ACTIVE, #candidates) do
-		local bush = candidates[i].bush
-		keep[bush] = true
-		local swarm = activeSwarms[bush]
-		if swarm then
-			swarm.center = select(1, bushBounds(bush))
-		else
-			createSwarm(bush)
-		end
+	local activeCount = 0
+	for _ in pairs(activeSwarms) do
+		activeCount += 1
 	end
 
-	for bush in pairs(activeSwarms) do
-		if not keep[bush] then
-			destroySwarm(bush)
+	for i = 1, #candidates do
+		if activeCount >= MAX_ACTIVE then
+			break
 		end
+		createSwarm(candidates[i].bush)
+		activeCount += 1
 	end
 end
 
@@ -261,34 +282,48 @@ local function stepFlies(dt: number)
 	local t = os.clock()
 	lightFrame += 1
 	local updateLights = (lightFrame % LIGHT_UPDATE_EVERY) == 0
-	local blend = math.clamp(dt * 2.4, 0.04, 0.14)
+	local blend = math.clamp(dt * 2.0, 0.04, 0.12)
 	for _, swarm in pairs(activeSwarms) do
 		if not swarm.bush.Parent then
 			destroySwarm(swarm.bush)
 			continue
 		end
+		local center = swarm.center
+		local half = swarm.half
+		local minRadius = horizontalRadius(half)
 		for _, fly in swarm.flies do
 			if t >= fly.wanderNext then
-				fly.wanderNext = t + 0.85 + math.random() * 1.4
+				fly.wanderNext = t + 1.1 + math.random() * 1.6
 				fly.wander = Vector3.new(
-					(math.random() * 2 - 1) * 1.35,
-					(math.random() * 2 - 1) * 0.95,
-					(math.random() * 2 - 1) * 1.35
+					(math.random() * 2 - 1) * 0.55,
+					(math.random() * 2 - 1) * 0.4,
+					(math.random() * 2 - 1) * 0.55
 				)
+				fly.radius = minRadius + math.random() * ORBIT_JITTER
 			end
 			local ang = t * fly.speed + fly.phase
-			local drift = Vector3.new(
-				math.cos(ang) * fly.orbit + math.sin(ang * 1.7) * 0.35,
-				math.sin(t * 1.15 + fly.phase) * 0.55 + math.cos(t * 0.7 + fly.phase) * 0.25,
-				math.sin(ang * 0.95) * fly.orbit + math.cos(ang * 1.3) * 0.3
-			)
-			local target = swarm.center + fly.baseOffset + drift + fly.wander
+			local bob = math.sin(t * 1.05 + fly.phase) * 0.45 + math.cos(t * 0.55 + fly.phase) * 0.2
+			local target = center
+				+ Vector3.new(
+					math.cos(ang) * fly.radius,
+					fly.heightBias + bob,
+					math.sin(ang) * fly.radius
+				)
+				+ fly.wander
+			-- Keep them outside the bush horizontal footprint.
+			local flat = Vector3.new(target.X - center.X, 0, target.Z - center.Z)
+			if flat.Magnitude < minRadius then
+				flat = if flat.Magnitude > 0.05 then flat.Unit * minRadius else Vector3.new(minRadius, 0, 0)
+				target = Vector3.new(center.X + flat.X, target.Y, center.Z + flat.Z)
+			end
 			fly.pos = fly.pos:Lerp(target, blend)
 			fly.part.CFrame = CFrame.new(fly.pos)
 			if updateLights then
-				local pulse = 0.5 + 0.5 * math.sin(t * 2.2 + fly.phase)
-				fly.light.Brightness = LIGHT_BRIGHTNESS * (0.75 + 0.45 * pulse)
-				fly.part.Transparency = 0.25 + 0.35 * (1 - pulse)
+				local pulse = 0.55 + 0.45 * math.sin(t * 1.8 + fly.phase)
+				fly.light.Brightness = LIGHT_BRIGHTNESS * (0.7 + 0.5 * pulse)
+				fly.light.Color = GLOW
+				fly.part.Color = BODY
+				fly.part.Transparency = 0.08 + 0.2 * (1 - pulse)
 			end
 		end
 	end
@@ -301,7 +336,6 @@ function FireflyController.init()
 	wired = true
 
 	ensureRoot()
-	-- Wipe any leftover particle VFX from older builds.
 	task.defer(function()
 		local root = Workspace:FindFirstChild(FOLDER_NAME)
 		if not root then

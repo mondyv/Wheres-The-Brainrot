@@ -25,17 +25,24 @@ local MAX_ACTIVE = 6
 local FLIES_PER_BUSH = 5
 local REFRESH_SEC = 1.25
 local FOLDER_NAME = "BushFireflies"
-local LIGHT_UPDATE_EVERY = 2
 
 -- Warm orange (not pale yellow — pale + bright light reads white).
-local GLOW = Color3.fromRGB(255, 140, 40)
-local BODY = Color3.fromRGB(255, 120, 30)
-local LIGHT_RANGE = 7
-local LIGHT_BRIGHTNESS = 0.35
-local FLY_SIZE = 0.2
+local GLOW = Color3.fromRGB(255, 150, 55)
+local BODY = Color3.fromRGB(255, 130, 40)
+local LIGHT_RANGE = 9
+local LIGHT_BRIGHTNESS = 1.15
+local FLY_SIZE = 0.22
 -- Orbit outside the bush mesh, not inside the foliage volume.
 local ORBIT_PAD = 1.85
 local ORBIT_JITTER = 0.9
+-- Slow lazy drift (rad/sec) + soft long glow breathe.
+local SPEED_MIN = 0.1
+local SPEED_MAX = 0.18
+local BOB_SPEED = 0.45
+local FOLLOW_BLEND = 1.05
+local GLOW_PULSE_SPEED = 0.55
+local GLOW_PULSE_MIN = 0.72
+local GLOW_PULSE_MAX = 1
 
 type Fly = {
 	part: BasePart,
@@ -180,7 +187,7 @@ local function makeFly(parent: Folder, center: Vector3, half: Vector3, index: nu
 		part = part,
 		light = light,
 		phase = startAng,
-		speed = 0.35 + math.random() * 0.45,
+		speed = SPEED_MIN + math.random() * (SPEED_MAX - SPEED_MIN),
 		radius = baseRadius,
 		heightBias = heightBias,
 		wander = Vector3.zero,
@@ -276,13 +283,9 @@ local function refresh()
 	end
 end
 
-local lightFrame = 0
-
 local function stepFlies(dt: number)
 	local t = os.clock()
-	lightFrame += 1
-	local updateLights = (lightFrame % LIGHT_UPDATE_EVERY) == 0
-	local blend = math.clamp(dt * 2.0, 0.04, 0.12)
+	local blend = math.clamp(dt * FOLLOW_BLEND, 0.02, 0.07)
 	for _, swarm in pairs(activeSwarms) do
 		if not swarm.bush.Parent then
 			destroySwarm(swarm.bush)
@@ -293,16 +296,16 @@ local function stepFlies(dt: number)
 		local minRadius = horizontalRadius(half)
 		for _, fly in swarm.flies do
 			if t >= fly.wanderNext then
-				fly.wanderNext = t + 1.1 + math.random() * 1.6
+				fly.wanderNext = t + 2.2 + math.random() * 2.8
 				fly.wander = Vector3.new(
-					(math.random() * 2 - 1) * 0.55,
-					(math.random() * 2 - 1) * 0.4,
-					(math.random() * 2 - 1) * 0.55
+					(math.random() * 2 - 1) * 0.35,
+					(math.random() * 2 - 1) * 0.28,
+					(math.random() * 2 - 1) * 0.35
 				)
 				fly.radius = minRadius + math.random() * ORBIT_JITTER
 			end
 			local ang = t * fly.speed + fly.phase
-			local bob = math.sin(t * 1.05 + fly.phase) * 0.45 + math.cos(t * 0.55 + fly.phase) * 0.2
+			local bob = math.sin(t * BOB_SPEED + fly.phase) * 0.32 + math.cos(t * (BOB_SPEED * 0.55) + fly.phase) * 0.14
 			local target = center
 				+ Vector3.new(
 					math.cos(ang) * fly.radius,
@@ -318,13 +321,15 @@ local function stepFlies(dt: number)
 			end
 			fly.pos = fly.pos:Lerp(target, blend)
 			fly.part.CFrame = CFrame.new(fly.pos)
-			if updateLights then
-				local pulse = 0.55 + 0.45 * math.sin(t * 1.8 + fly.phase)
-				fly.light.Brightness = LIGHT_BRIGHTNESS * (0.7 + 0.5 * pulse)
-				fly.light.Color = GLOW
-				fly.part.Color = BODY
-				fly.part.Transparency = 0.08 + 0.2 * (1 - pulse)
-			end
+
+			-- Soft long glow breathe — always lit, never a split-second flash.
+			local wave = 0.5 + 0.5 * math.sin(t * GLOW_PULSE_SPEED + fly.phase)
+			local pulse = GLOW_PULSE_MIN + (GLOW_PULSE_MAX - GLOW_PULSE_MIN) * wave
+			fly.light.Brightness = LIGHT_BRIGHTNESS * pulse
+			fly.light.Range = LIGHT_RANGE * (0.92 + 0.08 * wave)
+			fly.light.Color = GLOW
+			fly.part.Color = BODY
+			fly.part.Transparency = 0.05 + 0.08 * (1 - wave)
 		end
 	end
 end

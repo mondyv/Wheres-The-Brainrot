@@ -364,6 +364,7 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "addcash me 1000000", hint = COMMAND_HINTS.addcash },
 		{ fill = 'addluckyblock me "star rainbow"', hint = COMMAND_HINTS.addluckyblock },
 		{ fill = "resetdata me", hint = COMMAND_HINTS.resetdata },
+		{ fill = "rebirth", hint = "Force rebirth yourself" },
 		{ fill = "rebirth me", hint = COMMAND_HINTS.rebirth },
 		{ fill = "serverspawn mythic", hint = COMMAND_HINTS.serverspawn },
 		{ fill = "globalspawn mythic", hint = COMMAND_HINTS.globalspawn },

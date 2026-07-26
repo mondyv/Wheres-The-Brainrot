@@ -1,9 +1,10 @@
 -- [ACTIVE] ComingSoonZoneController
 --[[
-	While the local player stands in Last land's ComingSoonHitbox, shows
+	While the local player stands in ComingSoonHitbox (Last land), shows
 	"Coming Soon..." beside the head (animated dots, UiFonts body).
 ]]
 
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -16,6 +17,7 @@ local MESSAGE = "Coming Soon"
 local TICK_INTERVAL = 0.2
 local HITBOX_PADDING = 1.5
 local CLOSE_DEBOUNCE = 0.18
+local ZONE_TAG = "ComingSoonZone"
 
 local ComingSoonZoneController = {}
 
@@ -24,7 +26,7 @@ local tickAccum = 0
 local insideZone = false
 local closePending: thread? = nil
 local heartbeatConn: RBXScriptConnection? = nil
-local warnedMissing = false
+local findConns: { RBXScriptConnection } = {}
 
 local function cancelClose()
 	if closePending then
@@ -59,7 +61,7 @@ local function ensureShowing()
 end
 
 local function partFromInstance(inst: Instance?): BasePart?
-	if not inst then
+	if not inst or not inst.Parent then
 		return nil
 	end
 	if inst:IsA("BasePart") then
@@ -67,17 +69,29 @@ local function partFromInstance(inst: Instance?): BasePart?
 	end
 	if inst:IsA("Model") then
 		local model = inst :: Model
-		if model.PrimaryPart then
+		if model.PrimaryPart and model.PrimaryPart.Parent then
 			return model.PrimaryPart
 		end
-		local pp = model:FindFirstChildWhichIsA("BasePart", true)
-		if pp then
-			return pp
-		end
+		return model:FindFirstChildWhichIsA("BasePart", true)
 	end
-	local nested = inst:FindFirstChildWhichIsA("BasePart", true)
-	if nested then
-		return nested
+	return inst:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function nameMatchesHitbox(name: string): boolean
+	local lower = string.lower(name)
+	return lower == "comingsoonhitbox"
+		or lower == "coming soon hitbox"
+		or lower == "comingsoon"
+end
+
+local function findNamedHitbox(root: Instance): BasePart?
+	for _, d in root:GetDescendants() do
+		if nameMatchesHitbox(d.Name) then
+			local part = partFromInstance(d)
+			if part then
+				return part
+			end
+		end
 	end
 	return nil
 end
@@ -86,19 +100,40 @@ local function resolveHitbox(): BasePart?
 	if hitbox and hitbox.Parent then
 		return hitbox
 	end
+	hitbox = nil
+
+	for _, tagged in CollectionService:GetTagged(ZONE_TAG) do
+		local part = partFromInstance(tagged)
+		if part then
+			hitbox = part
+			return part
+		end
+	end
+
 	local map = Workspace:FindFirstChild("Map")
-	local lands = map and map:FindFirstChild("Lands")
-	local lastLand = lands and lands:FindFirstChild("Last land")
-	if not lastLand then
+	if not map then
 		return nil
 	end
-	-- Path: Workspace.Map.Lands["Last land"].ComingSoonHitbox
-	local inst = lastLand:FindFirstChild("ComingSoonHitbox")
-		or lastLand:FindFirstChild("ComingSoonHitbox", true)
-	local part = partFromInstance(inst)
+	local lands = map:FindFirstChild("Lands")
+	if lands then
+		local lastLand = lands:FindFirstChild("Last land") or lands:FindFirstChild("Last Land")
+		if lastLand then
+			local part = findNamedHitbox(lastLand)
+			if part then
+				hitbox = part
+				return part
+			end
+		end
+		local part = findNamedHitbox(lands)
+		if part then
+			hitbox = part
+			return part
+		end
+	end
+
+	local part = findNamedHitbox(map)
 	if part then
 		hitbox = part
-		warnedMissing = false
 		return part
 	end
 	return nil
@@ -131,6 +166,30 @@ local function tick()
 	end
 end
 
+local function disconnectFindConns()
+	for _, conn in findConns do
+		conn:Disconnect()
+	end
+	table.clear(findConns)
+end
+
+local function watchForHitbox(root: Instance)
+	table.insert(
+		findConns,
+		root.DescendantAdded:Connect(function(inst)
+			if hitbox and hitbox.Parent then
+				return
+			end
+			if nameMatchesHitbox(inst.Name) or CollectionService:HasTag(inst, ZONE_TAG) then
+				local part = partFromInstance(inst)
+				if part then
+					hitbox = part
+				end
+			end
+		end)
+	)
+end
+
 function ComingSoonZoneController.init()
 	if heartbeatConn then
 		return
@@ -139,38 +198,26 @@ function ComingSoonZoneController.init()
 	task.spawn(function()
 		local map = Workspace:WaitForChild("Map", 60)
 		if not map then
-			warn("[ComingSoonZoneController] workspace.Map not found")
 			return
 		end
-		local lands = map:WaitForChild("Lands", 60)
-		if not lands then
-			warn("[ComingSoonZoneController] Lands not found")
-			return
-		end
-		local lastLand = lands:WaitForChild("Last land", 60)
-		if not lastLand then
-			warn("[ComingSoonZoneController] Last land not found")
-			return
-		end
-		-- Streaming maps may load the hitbox late — keep waiting / retrying.
-		local deadline = os.clock() + 120
-		while os.clock() < deadline do
-			local part = resolveHitbox()
-			if part then
-				return
-			end
-			local inst = lastLand:FindFirstChild("ComingSoonHitbox")
-				or lastLand:WaitForChild("ComingSoonHitbox", 5)
-			local resolved = partFromInstance(inst)
-			if resolved then
-				hitbox = resolved
+		watchForHitbox(map)
+
+		table.insert(
+			findConns,
+			CollectionService:GetInstanceAddedSignal(ZONE_TAG):Connect(function(inst)
+				local part = partFromInstance(inst)
+				if part then
+					hitbox = part
+				end
+			end)
+		)
+
+		-- Keep resolving; streaming / late parent can delay the part.
+		for _ = 1, 60 do
+			if resolveHitbox() then
 				return
 			end
 			task.wait(2)
-		end
-		if not warnedMissing and not resolveHitbox() then
-			warnedMissing = true
-			warn("[ComingSoonZoneController] ComingSoonHitbox not found under Map.Lands['Last land']")
 		end
 	end)
 
@@ -191,6 +238,7 @@ function ComingSoonZoneController.init()
 			heartbeatConn:Disconnect()
 			heartbeatConn = nil
 		end
+		disconnectFindConns()
 		cancelClose()
 		hideComingSoon()
 	end)

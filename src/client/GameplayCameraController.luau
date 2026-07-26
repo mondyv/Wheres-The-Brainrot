@@ -49,9 +49,12 @@ local rotating = false
 local touchRotateId: number? = nil
 local lastTouchPos: Vector2? = nil
 local wheelDelta = 0
+local pendingLookX = 0
+local pendingLookY = 0
 local occZoom = DEFAULT_ZOOM
 local occAccum = 0
 local savedMouseBehavior: Enum.MouseBehavior? = nil
+local inputWired = false
 
 local function getRoot(): BasePart?
 	local char = player.Character
@@ -149,10 +152,15 @@ local function setRotating(on: boolean)
 	rotating = on
 	if on then
 		savedMouseBehavior = UserInputService.MouseBehavior
-		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+		-- LockCenter: reliable mouse delta in Studio + live (LockCurrentPosition often returns 0).
+		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+		pendingLookX = 0
+		pendingLookY = 0
 	else
 		UserInputService.MouseBehavior = savedMouseBehavior or Enum.MouseBehavior.Default
 		savedMouseBehavior = nil
+		pendingLookX = 0
+		pendingLookY = 0
 	end
 end
 
@@ -186,6 +194,10 @@ local function onInputChanged(input: InputObject, _processed: boolean)
 	end
 	if input.UserInputType == Enum.UserInputType.MouseWheel then
 		wheelDelta += input.Position.Z
+	elseif input.UserInputType == Enum.UserInputType.MouseMovement and rotating then
+		-- Primary orbit path — works when GetMouseDelta is flaky.
+		pendingLookX += input.Delta.X
+		pendingLookY += input.Delta.Y
 	elseif input.UserInputType == Enum.UserInputType.Touch and touchRotateId == input.UserInputId then
 		local pos = Vector2.new(input.Position.X, input.Position.Y)
 		if lastTouchPos then
@@ -240,10 +252,17 @@ local function update(dt: number)
 		setRotating(rmb)
 	end
 
-	-- Single orbit path: GetMouseDelta only while RMB held (no double-apply from InputChanged).
 	if rotating then
-		local d = UserInputService:GetMouseDelta()
-		applyLook(d.X, d.Y, MOUSE_SENS)
+		local dx = pendingLookX
+		local dy = pendingLookY
+		pendingLookX = 0
+		pendingLookY = 0
+		if math.abs(dx) < 0.01 and math.abs(dy) < 0.01 then
+			local d = UserInputService:GetMouseDelta()
+			dx = d.X
+			dy = d.Y
+		end
+		applyLook(dx, dy, MOUSE_SENS)
 	end
 
 	if wheelDelta ~= 0 then
@@ -369,6 +388,9 @@ function GameplayCameraController.resume(seedCf: CFrame?)
 end
 
 function GameplayCameraController.enable()
+	if not inputWired then
+		GameplayCameraController.init()
+	end
 	if enabled then
 		return
 	end
@@ -408,6 +430,7 @@ end
 
 function GameplayCameraController.init()
 	disconnectAll()
+	inputWired = true
 	table.insert(conns, UserInputService.InputBegan:Connect(onInputBegan))
 	table.insert(conns, UserInputService.InputEnded:Connect(onInputEnded))
 	table.insert(conns, UserInputService.InputChanged:Connect(onInputChanged))

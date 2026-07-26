@@ -18,9 +18,9 @@ local player = Players.LocalPlayer
 
 local ACTIVE_RANGE = 85
 local SELECT_PCT = 12
-local MAX_ACTIVE = 6
-local FLIES_PER_BUSH = 10
-local REFRESH_SEC = 1.0
+local MAX_ACTIVE = 4
+local FLIES_PER_BUSH = 5
+local REFRESH_SEC = 1.25
 local FOLDER_NAME = "BushFireflies"
 
 local YELLOW = Color3.fromRGB(255, 220, 90)

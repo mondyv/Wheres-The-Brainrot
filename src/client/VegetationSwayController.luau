@@ -11,7 +11,7 @@ local Workspace = game:GetService("Workspace")
 local M = {}
 
 local MAX_ACTIVE = 24
-local SCAN_INTERVAL_SEC = 0.05
+local SCAN_INTERVAL_SEC = 0.2
 local GRASS_RADIUS = 3.4
 local GRASS_RADIUS_SQ = GRASS_RADIUS * GRASS_RADIUS
 local GRASS_TILT_RAD = math.rad(13)
@@ -20,7 +20,7 @@ local BLEND_IN = 7.5
 local BLEND_OUT = 4.2
 local CLEAR_EPS = 0.02
 local LEAVE_GRACE_SEC = 0.14
-local INDEX_REFRESH_SEC = 8
+local INDEX_REFRESH_SEC = 14
 local STEP_NAME = "VegetationSwayStep"
 local DIR_SMOOTH = 6
 

@@ -169,9 +169,7 @@ local function buildSpawnBushList(): { { bush: Instance, weight: number } }
 				if isLootableBush(child) and not seen[child] then
 					seen[child] = true
 					local pos = bushWorldPos(child)
-					if not LandResolver.isPositionWithinLandSpawn(pos) then
-						continue
-					end
+					-- Use land hitboxes (not Spawn pads) so rare spawns can land on real bushes.
 					local land = LandResolver.resolveLandAtPosition(pos)
 					local w = if typeof(land) == "number" then landWeight(land) else 0
 					if w > 0 then
@@ -472,16 +470,26 @@ local function advanceState(state: GlobalState): (boolean, string?)
 				end
 			end
 		else
-			local picked = dueTiers[#dueTiers]
-			if trySpawnTier(state, picked.id, false) then
-				state.timers[picked.id] = now + picked.intervalSec
-				changed = true
-				spawnTier = picked.id
-				local retryAt = (state.active and state.active.endsAt or now) + 1
-				for i = 1, #dueTiers - 1 do
-					state.timers[dueTiers[i].id] = retryAt
+			-- Rarest-first: try each due tier until one actually places a bush.
+			local spawnedId: string? = nil
+			for i = #dueTiers, 1, -1 do
+				local tier = dueTiers[i]
+				if trySpawnTier(state, tier.id, false) then
+					state.timers[tier.id] = now + tier.intervalSec
 					changed = true
+					spawnedId = tier.id
+					local retryAt = (state.active and state.active.endsAt or now) + 1
+					for j = 1, #dueTiers do
+						if dueTiers[j].id ~= tier.id then
+							state.timers[dueTiers[j].id] = retryAt
+							changed = true
+						end
+					end
+					break
 				end
+			end
+			if spawnedId then
+				spawnTier = spawnedId
 			else
 				-- Bush/pool not ready — retry soon instead of leaving timers stuck at 0.
 				local retryAt = now + 5

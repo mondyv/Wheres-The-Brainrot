@@ -24,6 +24,8 @@ type MarkerState = {
 	billboard: BillboardGui,
 	timerLabel: TextLabel,
 	conns: { RBXScriptConnection },
+	bush: Instance?,
+	highlight: Highlight?,
 }
 
 local timerLabels: { [string]: TextLabel } = {}
@@ -33,6 +35,10 @@ local tickerConn: RBXScriptConnection? = nil
 local RaritySpawnStyle = require(script.Parent:WaitForChild("RaritySpawnStyle"))
 
 local PLACEHOLDER_ICON = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+local OUTLINE_RANGE = 42
+local OUTLINE_RANGE_SQ = OUTLINE_RANGE * OUTLINE_RANGE
+local PROXIMITY_TICK = 0.12
+local proximityAccum = 0
 
 local function pulseColor(rarity: string): Color3
 	return RaritySpawnStyle.accentColor(rarity)
@@ -127,7 +133,14 @@ local function findTimerLabels(): number
 
 	local bound = 0
 	for _, tier in C.TIERS do
-		local row = timers:FindFirstChild(tier.timerRowName)
+		local row: Instance? = nil
+		local aliases = tier.timerRowAliases or { tier.timerRowName }
+		for _, name in aliases do
+			row = timers:FindFirstChild(name)
+			if row then
+				break
+			end
+		end
 		if not row then
 			continue
 		end
@@ -210,10 +223,90 @@ local function destroyMarker()
 	for _, conn in activeMarker.conns do
 		conn:Disconnect()
 	end
+	if activeMarker.highlight then
+		activeMarker.highlight:Destroy()
+	end
 	if activeMarker.billboard.Parent then
 		activeMarker.billboard:Destroy()
 	end
 	activeMarker = nil
+end
+
+local function bushWorldPos(bush: Instance): Vector3?
+	if bush:IsA("BasePart") then
+		return bush.Position
+	end
+	if bush:IsA("Model") then
+		local ok, pivot = pcall(function()
+			return (bush :: Model):GetPivot()
+		end)
+		if ok and typeof(pivot) == "CFrame" then
+			return (pivot :: CFrame).Position
+		end
+	end
+	local part = bush:FindFirstChildWhichIsA("BasePart", true)
+	return if part then part.Position else nil
+end
+
+local function ensureOutlineHighlight(state: MarkerState, rarity: string): Highlight?
+	local bush = state.bush
+	if not bush or not bush.Parent then
+		return nil
+	end
+	local hl = state.highlight
+	if not hl or not hl.Parent then
+		hl = Instance.new("Highlight")
+		hl.Name = "GlobalRaritySpawnOutline"
+		hl.FillTransparency = 1
+		hl.OutlineTransparency = 0
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		hl.Enabled = false
+		hl.Parent = Workspace.CurrentCamera or bush
+		state.highlight = hl
+	end
+	hl.Adornee = bush
+	hl.OutlineColor = pulseColor(rarity)
+	return hl
+end
+
+local function updateProximityOutline(dt: number)
+	proximityAccum += dt
+	if proximityAccum < PROXIMITY_TICK then
+		return
+	end
+	proximityAccum = 0
+
+	local state = activeMarker
+	if not state then
+		return
+	end
+	local bush = state.bush
+	local rarity = ReplicatedStorage:GetAttribute(C.ACTIVE_RARITY_ATTR)
+	if not bush or not bush.Parent or typeof(rarity) ~= "string" then
+		if state.highlight then
+			state.highlight.Enabled = false
+		end
+		return
+	end
+
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local hl = ensureOutlineHighlight(state, rarity)
+	if not hl or not hrp or not hrp:IsA("BasePart") then
+		if hl then
+			hl.Enabled = false
+		end
+		return
+	end
+
+	local pos = bushWorldPos(bush)
+	if not pos then
+		hl.Enabled = false
+		return
+	end
+	local delta = pos - hrp.Position
+	local distSq = delta.X * delta.X + delta.Y * delta.Y + delta.Z * delta.Z
+	hl.Enabled = distSq <= OUTLINE_RANGE_SQ
 end
 
 local function addBlackStroke(parent: Instance, thickness: number)
@@ -304,8 +397,11 @@ local function trackMarker(bushKey: string, rarity: string, endsAt: number)
 		billboard = bb,
 		timerLabel = timerLabel,
 		conns = {},
+		bush = bush,
+		highlight = nil,
 	}
 	activeMarker = state
+	ensureOutlineHighlight(state, rarity)
 
 	table.insert(
 		state.conns,
@@ -384,8 +480,9 @@ local function ensureTicker()
 	if tickerConn then
 		return
 	end
-	tickerConn = RunService.Heartbeat:Connect(function()
+	tickerConn = RunService.Heartbeat:Connect(function(dt)
 		refreshTimerLabels()
+		updateProximityOutline(dt)
 	end)
 end
 

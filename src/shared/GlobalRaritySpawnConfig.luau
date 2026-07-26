@@ -1,7 +1,7 @@
 -- [ACTIVE] GlobalRaritySpawnConfig
 --[[
 	Per-server rarity spawn timers — each new server starts its own countdown.
-	Mythical 5:00, Legendary 10:00, Godly 15:00, Secret 20:00.
+	Mythical 5:00, Legendary 10:00, Godly 20:00, Secret 30:00.
 ]]
 
 local M = {}
@@ -13,6 +13,7 @@ export type TierDef = {
 	intervalSec: number,
 	displayName: string,
 	timerRowName: string,
+	timerRowAliases: { string },
 	spawnMessage: string,
 }
 
@@ -22,6 +23,7 @@ M.TIERS = {
 		intervalSec = 300,
 		displayName = "Mythical",
 		timerRowName = "Mythical",
+		timerRowAliases = { "Mythical" },
 		spawnMessage = "A Mythical brainrot has spawned!",
 	},
 	{
@@ -29,20 +31,23 @@ M.TIERS = {
 		intervalSec = 600,
 		displayName = "Legendary",
 		timerRowName = "Legendary",
+		timerRowAliases = { "Legendary" },
 		spawnMessage = "A Legendary brainrot has spawned!",
 	},
 	{
 		id = "brainrot god",
-		intervalSec = 900,
+		intervalSec = 1200,
 		displayName = "GODLY",
 		timerRowName = "BrainrotGod",
+		timerRowAliases = { "BrainrotGod", "Godly", "GODLY" },
 		spawnMessage = "A GODLY brainrot has spawned!",
 	},
 	{
 		id = "secret",
-		intervalSec = 1200,
+		intervalSec = 1800,
 		displayName = "Secret",
 		timerRowName = "Secret",
+		timerRowAliases = { "Secret" },
 		spawnMessage = "A Secret brainrot has spawned!",
 	},
 } :: { TierDef }

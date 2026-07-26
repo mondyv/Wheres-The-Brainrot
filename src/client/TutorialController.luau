@@ -470,29 +470,53 @@ end
 local function pointAtGui(target: GuiObject?)
 	clearUiPointer()
 	ensureGui()
-	if not target or not root then
+	if not target or not root or not gui then
 		return
 	end
+
+	-- Keep pointer above Main / billboards.
+	gui.DisplayOrder = 120
 
 	local pointer = Instance.new("ImageLabel")
 	pointer.Name = "TutorialUiClick"
 	pointer.BackgroundTransparency = 1
-	pointer.Size = UDim2.fromOffset(48, 48)
-	pointer.AnchorPoint = Vector2.new(0.5, 0.5)
+	pointer.Size = UDim2.fromOffset(56, 56)
+	pointer.AnchorPoint = Vector2.new(0.15, 0.15)
 	pointer.Image = TutorialConfig.UI_CLICK_IMAGE
 	pointer.ScaleType = Enum.ScaleType.Fit
-	pointer.ZIndex = 20
+	pointer.ZIndex = 50
+	pointer.Visible = false
 	pointer.Parent = root
 	uiPointer = pointer
 
 	task.spawn(function()
+		-- Wait a couple frames for AbsoluteSize to resolve (billboards / just-opened panels).
+		for _ = 1, 8 do
+			if not pointer.Parent or uiPointer ~= pointer or not active then
+				return
+			end
+			if target.Parent and target.AbsoluteSize.X > 2 and target.AbsoluteSize.Y > 2 then
+				break
+			end
+			task.wait()
+		end
+
 		while uiPointer == pointer and pointer.Parent and active and target.Parent do
 			local abs = target.AbsolutePosition
 			local size = target.AbsoluteSize
-			pointer.Position = UDim2.fromOffset(abs.X + size.X * 0.72, abs.Y + size.Y * 0.55)
+			if size.X < 2 or size.Y < 2 then
+				pointer.Visible = false
+				task.wait(0.1)
+				continue
+			end
+			-- Tutorial ScreenGui uses IgnoreGuiInset; AbsolutePosition is already viewport-space.
+			local px = abs.X + size.X * 0.78
+			local py = abs.Y + size.Y * 0.62
+			pointer.Visible = true
+			pointer.Position = UDim2.fromOffset(px, py)
 			local up = TweenService:Create(pointer, CLICK_BOUNCE, {
-				Size = UDim2.fromOffset(54, 54),
-				Rotation = -12,
+				Size = UDim2.fromOffset(64, 64),
+				Rotation = -14,
 			})
 			up:Play()
 			up.Completed:Wait()
@@ -500,14 +524,32 @@ local function pointAtGui(target: GuiObject?)
 				break
 			end
 			local down = TweenService:Create(pointer, CLICK_BOUNCE, {
-				Size = UDim2.fromOffset(48, 48),
-				Rotation = 8,
+				Size = UDim2.fromOffset(56, 56),
+				Rotation = 10,
 			})
 			down:Play()
 			down.Completed:Wait()
-			task.wait(0.05)
+			task.wait(0.04)
 		end
 	end)
+end
+
+local function pointAtAcceptOffer(acceptBtn: GuiObject?, acceptBb: BillboardGui?)
+	-- Prefer the billboard root if the button hasn't laid out yet.
+	if acceptBtn and acceptBtn.AbsoluteSize.X > 2 then
+		pointAtGui(acceptBtn)
+		return
+	end
+	if acceptBb then
+		local rootGui = acceptBb:FindFirstChildWhichIsA("GuiObject")
+		if rootGui then
+			pointAtGui(rootGui)
+			return
+		end
+	end
+	if acceptBtn then
+		pointAtGui(acceptBtn)
+	end
 end
 
 local function resolveUpgradeStandPart(): BasePart?
@@ -676,7 +718,7 @@ local function readPlacedBrainrotLevel(): number
 end
 
 local function cacheUpgradesBuyButton()
-	if powerBuyButton and powerBuyButton.Parent then
+	if powerBuyButton and powerBuyButton.Parent and powerBuyButton.AbsoluteSize.X > 2 then
 		return powerBuyButton
 	end
 	local main = PlayerGuiMain.ensure(player)
@@ -691,17 +733,53 @@ local function cacheUpgradesBuyButton()
 	if not upgrades then
 		return nil
 	end
-	local container = upgrades:FindFirstChild("Container")
-	local row = container and container:FindFirstChild("Power10")
+	local container = upgrades:FindFirstChild("Container") or upgrades:FindFirstChild("Container", true)
+	local row = (container and container:FindFirstChild("Power10")) or upgrades:FindFirstChild("Power10", true)
 	if not row then
-		row = upgrades:FindFirstChild("Power10", true)
+		-- Fallback: first row that looks like a power upgrade.
+		if container then
+			for _, ch in container:GetChildren() do
+				if ch.Name:find("Power") then
+					row = ch
+					break
+				end
+			end
+		end
 	end
 	if not row then
 		return nil
 	end
 	local buyButtons = row:FindFirstChild("BuyButtons", true)
 	local buy = buyButtons and buyButtons:FindFirstChild("Buy")
-	local btn = if buy then buy:FindFirstChildWhichIsA("GuiButton", true) or (buy:IsA("GuiButton") and buy) else nil
+	local btn: GuiObject? = nil
+	if buy and buy:IsA("GuiButton") then
+		btn = buy
+	elseif buy then
+		local best: GuiButton? = nil
+		local bestScore = -1
+		for _, d in buy:GetDescendants() do
+			if d:IsA("GuiButton") then
+				local underDecor = false
+				local p: Instance? = d.Parent
+				while p and p ~= buy do
+					if p.Name == "Decor" then
+						underDecor = true
+						break
+					end
+					p = p.Parent
+				end
+				if not underDecor then
+					local area = d.AbsoluteSize.X * d.AbsoluteSize.Y
+					local score = area + 1e6
+					if score > bestScore then
+						bestScore = score
+						best = d
+					end
+				end
+			end
+		end
+		btn = best or buy:FindFirstChildWhichIsA("GuiButton", true)
+	end
 	if not btn then
 		btn = row:FindFirstChildWhichIsA("GuiButton", true)
 	end
@@ -729,6 +807,16 @@ local function refreshPointers()
 	elseif step.id == "buyPower" then
 		local btn = cacheUpgradesBuyButton()
 		if btn and upgradesFrame and upgradesFrame.Visible then
+			task.defer(function()
+				task.wait()
+				if currentStep() and currentStep().id == "buyPower" then
+					local again = cacheUpgradesBuyButton()
+					if again then
+						clearWorldArrow()
+						pointAtGui(again)
+					end
+				end
+			end)
 			pointAtGui(btn)
 		else
 			pointAtWorld(resolveUpgradeStandPart(), arrowHeight(1))
@@ -738,13 +826,13 @@ local function refreshPointers()
 	elseif step.id == "searchBush" then
 		pointAtWorld(resolveNearestBush(), arrowHeight())
 	elseif step.id == "claimBrainrot" then
-		local offer = BushFloatingClaimController.getActiveOfferUi and BushFloatingClaimController.getActiveOfferUi()
+		local offer = BushFloatingClaimController.getActiveOfferUi()
 		if offer and offer.acceptBtn then
 			claimSpotlightActive = true
 			if dimOverlay then
 				dimOverlay.Visible = true
 			end
-			pointAtGui(offer.acceptBtn)
+			pointAtAcceptOffer(offer.acceptBtn, offer.acceptBb)
 		end
 	elseif step.id == "placeOnPlot" then
 		pointAtWorld(resolvePlayerPlotStand(true), arrowHeight(1))
@@ -871,18 +959,30 @@ local function watchStepProgress()
 					completeCurrentIf("swingLand1")
 				end
 			end
-		elseif step.id == "claimBrainrot" and claimSpotlightActive then
-			local offer = BushFloatingClaimController.getActiveOfferUi and BushFloatingClaimController.getActiveOfferUi()
-			if offer and offer.acceptBtn and spotlightHole and uiPointer then
-				local abs = offer.acceptBtn.AbsolutePosition
-				local size = offer.acceptBtn.AbsoluteSize
-				local cx = abs.X + size.X * 0.5
-				local cy = abs.Y + size.Y * 0.5
-				spotlightHole.Visible = true
-				spotlightHole.Position = UDim2.fromOffset(cx, cy)
-				spotlightHole.Size = UDim2.fromOffset(math.max(size.X + 28, 110), math.max(size.Y + 20, 52))
-				uiPointer.Position = UDim2.fromOffset(cx + size.X * 0.35, cy + size.Y * 0.25)
-			elseif not BushFloatingClaimController.hasActiveOffer() then
+		elseif step.id == "claimBrainrot" then
+			local offer = BushFloatingClaimController.getActiveOfferUi()
+			if offer and offer.acceptBtn then
+				if not claimSpotlightActive then
+					claimSpotlightActive = true
+					if dimOverlay then
+						dimOverlay.Visible = true
+					end
+				end
+				if not uiPointer then
+					pointAtAcceptOffer(offer.acceptBtn, offer.acceptBb)
+				end
+				if spotlightHole and uiPointer then
+					local abs = offer.acceptBtn.AbsolutePosition
+					local size = offer.acceptBtn.AbsoluteSize
+					if size.X > 2 then
+						local cx = abs.X + size.X * 0.5
+						local cy = abs.Y + size.Y * 0.5
+						spotlightHole.Visible = true
+						spotlightHole.Position = UDim2.fromOffset(cx, cy)
+						spotlightHole.Size = UDim2.fromOffset(math.max(size.X + 28, 110), math.max(size.Y + 20, 52))
+					end
+				end
+			elseif claimSpotlightActive and not BushFloatingClaimController.hasActiveOffer() then
 				clearSpotlight()
 			end
 		elseif step.id == "placeOnPlot" and now - lastLandCheck > 0.4 then
@@ -1018,13 +1118,14 @@ function M.init()
 			task.defer(function()
 				local step = currentStep()
 				if step and step.id == "claimBrainrot" then
-					refreshPointers()
+					claimSpotlightActive = true
+					if dimOverlay then
+						dimOverlay.Visible = true
+					end
 					if ui and ui.acceptBtn then
-						claimSpotlightActive = true
-						if dimOverlay then
-							dimOverlay.Visible = true
-						end
-						pointAtGui(ui.acceptBtn)
+						pointAtAcceptOffer(ui.acceptBtn, nil)
+					else
+						refreshPointers()
 					end
 				end
 			end)

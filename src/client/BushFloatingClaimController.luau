@@ -157,15 +157,6 @@ local function fireDeclineHooks(model: Model)
 	end
 end
 
-function BushFloatingClaimController.getActiveOfferUi(): { acceptBtn: TextButton, declineBtn: TextButton }?
-	for _, entry in tracked do
-		if entry.acceptBtn and entry.acceptBtn.Parent and not entry.decisionLocked then
-			return { acceptBtn = entry.acceptBtn, declineBtn = entry.declineBtn }
-		end
-	end
-	return nil
-end
-
 type TrackedOffer = {
 	model: Model,
 	bush: Instance?,
@@ -204,6 +195,33 @@ type TrackedOffer = {
 }
 
 local tracked: { [Model]: TrackedOffer } = {}
+local activeOfferEntry: TrackedOffer? = nil
+
+function BushFloatingClaimController.getActiveOfferUi(): {
+	acceptBtn: TextButton,
+	declineBtn: TextButton,
+	acceptBb: BillboardGui?,
+}?
+	local entry = activeOfferEntry
+	if entry and entry.acceptBtn and entry.acceptBtn.Parent and not entry.decisionLocked then
+		return {
+			acceptBtn = entry.acceptBtn,
+			declineBtn = entry.declineBtn,
+			acceptBb = entry.acceptBb,
+		}
+	end
+	for _, other in tracked do
+		if other.acceptBtn and other.acceptBtn.Parent and not other.decisionLocked then
+			return {
+				acceptBtn = other.acceptBtn,
+				declineBtn = other.declineBtn,
+				acceptBb = other.acceptBb,
+			}
+		end
+	end
+	return nil
+end
+
 local tickerConn: RBXScriptConnection? = nil
 local decisionRE: RemoteEvent? = nil
 
@@ -615,6 +633,9 @@ local function untrack(model: Model, restoreBushCooldown: boolean?)
 	releaseBushForOffer(entry, restore == true)
 	disconnectTracked(entry)
 	tracked[model] = nil
+	if activeOfferEntry == entry then
+		activeOfferEntry = nil
+	end
 	ambushPendingByModel[model] = nil
 	if next(tracked) == nil then
 		clearOfferPresentation()
@@ -1309,6 +1330,7 @@ local function trackModel(model: Model)
 		spiderSenseActive = false,
 	}
 	tracked[model] = entry
+	activeOfferEntry = entry
 	snapOfferLayout(entry)
 	attachBushOfferVisuals(entry, model)
 	updateBillboardPositions(entry)

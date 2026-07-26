@@ -1449,8 +1449,8 @@ local function playHoldComplete(view: PromptView)
 
 	view.keyBadge.BackgroundColor3 = C.HOLD_GREEN_BRIGHT
 	view.keyBadge.BackgroundTransparency = 0
-	view.keyStroke.Color = C.ACCENT_BRIGHT
-	view.keyStroke.Transparency = 0
+	view.keyStroke.Color = C.KEY_CHIP_STROKE
+	view.keyStroke.Transparency = C.KEY_CHIP_STROKE_TRANSPARENCY
 	view.keyLabel.TextColor3 = C.HOLD_COMPLETE_FLASH
 
 	TweenService:Create(badgeScale, C.POP_TWEEN, { Scale = 1.22 }):Play()

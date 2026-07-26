@@ -353,23 +353,25 @@ end
 
 -- ── Targeting ─────────────────────────────────────────────────────────────────
 
-local HIGHLIGHT_READY = Color3.fromRGB(72, 255, 140)
+local HIGHLIGHT_READY = Color3.fromRGB(36, 42, 52)
 local HIGHLIGHT_LOCKED = Color3.fromRGB(255, 45, 45)
 
 local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean)
 	hl.Adornee = bush
 	hl.Enabled = true
 	hl.FillTransparency = 1
-	hl.OutlineTransparency = 0
 	if locked then
+		hl.OutlineTransparency = 0
 		hl.OutlineColor = HIGHLIGHT_LOCKED
 	else
 		local gradientSequence = if bushOutlineGradientProvider then bushOutlineGradientProvider(bush) else nil
 		if gradientSequence then
+			hl.OutlineTransparency = 0
 			hl.OutlineColor = BrainrotHeaderStyle.sampleColorSequence(gradientSequence, (os.clock() * 0.42) % 1)
 		else
 			local custom = if bushOutlineColorProvider then bushOutlineColorProvider(bush) else nil
 			hl.OutlineColor = custom or HIGHLIGHT_READY
+			hl.OutlineTransparency = if custom then 0 else 0.2
 		end
 	end
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
@@ -819,8 +821,8 @@ function BushHoldInteraction.init()
 		aimHighlight = Instance.new("Highlight")
 		aimHighlight.Name = "BushAimHighlight"
 		aimHighlight.FillTransparency = 1
-		aimHighlight.OutlineColor = Color3.fromRGB(72, 255, 140)
-		aimHighlight.OutlineTransparency = 0
+		aimHighlight.OutlineColor = Color3.fromRGB(36, 42, 52)
+		aimHighlight.OutlineTransparency = 0.2
 		aimHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 		aimHighlight.Enabled = false
 		aimHighlight.Parent = workspace.CurrentCamera

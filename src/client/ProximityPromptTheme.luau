@@ -53,9 +53,9 @@ function M.buildCard(
 	rootCorner.Parent = root
 
 	local rootStroke = Instance.new("UIStroke")
-	rootStroke.Color = C.ACCENT
+	rootStroke.Color = C.PANEL_STROKE
 	rootStroke.Thickness = 1.5
-	rootStroke.Transparency = 0.25
+	rootStroke.Transparency = C.PANEL_STROKE_TRANSPARENCY
 	rootStroke.Parent = root
 
 	local rootGrad = Instance.new("UIGradient")
@@ -84,9 +84,9 @@ function M.buildCard(
 	badgeCorner.Parent = keyBadge
 
 	local keyStroke = Instance.new("UIStroke")
-	keyStroke.Color = C.ACCENT_STROKE
+	keyStroke.Color = C.KEY_CHIP_STROKE
 	keyStroke.Thickness = 1.5
-	keyStroke.Transparency = 0.35
+	keyStroke.Transparency = C.KEY_CHIP_STROKE_TRANSPARENCY
 	keyStroke.Parent = keyBadge
 
 	if opts.isFloatingClaim then
@@ -100,7 +100,7 @@ function M.buildCard(
 	holdTrack.AnchorPoint = Vector2.new(0.5, 0.5)
 	holdTrack.Position = UDim2.fromScale(0.5, 0.5)
 	holdTrack.Size = UDim2.new(1, -C.BADGE_HOLD_PAD * 2, 1, -C.BADGE_HOLD_PAD * 2)
-	holdTrack.BackgroundColor3 = Color3.fromRGB(8, 20, 12)
+	holdTrack.BackgroundColor3 = Color3.fromRGB(12, 14, 18)
 	holdTrack.BackgroundTransparency = 0.15
 	holdTrack.BorderSizePixel = 0
 	holdTrack.ClipsDescendants = true
@@ -113,9 +113,9 @@ function M.buildCard(
 	trackCorner.Parent = holdTrack
 
 	local trackStroke = Instance.new("UIStroke")
-	trackStroke.Color = C.ACCENT_STROKE
+	trackStroke.Color = C.HOLD_TRACK_STROKE
 	trackStroke.Thickness = 1.25
-	trackStroke.Transparency = 0.35
+	trackStroke.Transparency = C.HOLD_TRACK_STROKE_TRANSPARENCY
 	trackStroke.Parent = holdTrack
 
 	local holdFill = Instance.new("Frame")
@@ -239,7 +239,10 @@ end
 
 function M.applyBushSearchStyle(parts: CardParts)
 	parts.keyBadge.BackgroundTransparency = C.BUSH_SEARCH_BADGE_BG_TRANSPARENCY
+	parts.keyStroke.Color = C.KEY_CHIP_STROKE
 	parts.keyStroke.Transparency = C.BUSH_SEARCH_BADGE_STROKE_TRANSPARENCY
+	parts.rootStroke.Color = C.PANEL_STROKE
+	parts.rootStroke.Transparency = C.PANEL_STROKE_TRANSPARENCY
 	parts.keyLabel.TextColor3 = C.TEXT_PRIMARY
 	-- Keep finger icon white (same as stand); tinting made TouchHold look blank.
 	parts.keyIcon.ImageColor3 = Color3.new(1, 1, 1)
@@ -249,7 +252,7 @@ function M.resetBadgeVisuals(parts: CardParts, isBush: boolean, hasStandStrokeGr
 	parts.keyBadge.BackgroundColor3 = C.BADGE_BG
 	if isBush then
 		parts.keyBadge.BackgroundTransparency = C.BUSH_SEARCH_BADGE_BG_TRANSPARENCY
-		parts.keyStroke.Color = C.ACCENT_STROKE
+		parts.keyStroke.Color = C.KEY_CHIP_STROKE
 		parts.keyStroke.Transparency = C.BUSH_SEARCH_BADGE_STROKE_TRANSPARENCY
 		parts.keyLabel.TextColor3 = C.TEXT_PRIMARY
 	else
@@ -258,8 +261,8 @@ function M.resetBadgeVisuals(parts: CardParts, isBush: boolean, hasStandStrokeGr
 			parts.keyStroke.Color = Color3.new(1, 1, 1)
 			parts.keyStroke.Transparency = 0.2
 		else
-			parts.keyStroke.Color = C.ACCENT_STROKE
-			parts.keyStroke.Transparency = 0.35
+			parts.keyStroke.Color = C.KEY_CHIP_STROKE
+			parts.keyStroke.Transparency = C.KEY_CHIP_STROKE_TRANSPARENCY
 		end
 		parts.keyLabel.TextColor3 = C.TEXT_PRIMARY
 	end
@@ -268,13 +271,14 @@ end
 
 function M.applyHoldBadgeActive(parts: CardParts, isBush: boolean)
 	parts.keyBadge.BackgroundColor3 = C.HOLD_GREEN_BRIGHT
+	parts.keyStroke.Color = C.KEY_CHIP_STROKE
 	if isBush then
 		parts.keyBadge.BackgroundTransparency = 0.18
-		parts.keyStroke.Transparency = 0.15
+		parts.keyStroke.Transparency = 0.2
 		parts.keyLabel.TextColor3 = Color3.fromRGB(16, 28, 20)
 	else
 		parts.keyBadge.BackgroundTransparency = 0.05
-		parts.keyStroke.Transparency = 0.05
+		parts.keyStroke.Transparency = 0.18
 		parts.keyLabel.TextColor3 = Color3.fromRGB(16, 28, 20)
 	end
 	parts.holdTrack.BackgroundTransparency = 0.2

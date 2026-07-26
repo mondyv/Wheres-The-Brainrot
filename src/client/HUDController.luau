@@ -33,13 +33,12 @@ local PANEL_BACKDROP_NAME = "PanelClickOutside"
 local BLUR_SIZE = 18
 local BLUR_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local MOBILE_PANEL_SCALE = 1.5
--- Mobile: leave a clear ring around the dim so screen edges stay empty (no blur fill).
-local MOBILE_DIM_EDGE_CLEAR = 0.08
 
 local panelChromeHidden = false
 local panelBlur: BlurEffect? = nil
 local panelBackdrop: TextButton? = nil
 local panelDimGui: ScreenGui? = nil
+local panelClosing = false
 
 -- Module table declared early so backdrop callbacks never see a nil HUDController.
 local HUDController = {}
@@ -99,28 +98,21 @@ end
 local function clearPanelBlur()
 	local blur = panelBlur or Lighting:FindFirstChild(PANEL_BLUR_NAME)
 	if blur and blur:IsA("BlurEffect") then
-		local tw = TweenService:Create(blur, BLUR_TWEEN, { Size = 0 })
-		tw.Completed:Once(function()
-			if blur.Parent then
-				blur:Destroy()
-			end
-			if panelBlur == blur then
-				panelBlur = nil
-			end
-		end)
-		tw:Play()
+		-- Destroy immediately so close never leaves a stuck blur (tween races).
+		blur:Destroy()
+		if panelBlur == blur then
+			panelBlur = nil
+		end
 	else
 		panelBlur = nil
+	end
+	local leftover = Lighting:FindFirstChild(PANEL_BLUR_NAME)
+	if leftover then
+		leftover:Destroy()
 	end
 end
 
 local function ensurePanelBlur()
-	-- Mobile: skip full-screen Lighting blur so screen edges stay clear/empty.
-	-- Dim backdrop alone provides the modal focus.
-	if isMobileUi() then
-		clearPanelBlur()
-		return
-	end
 	local existing = Lighting:FindFirstChild(PANEL_BLUR_NAME)
 	if existing and existing:IsA("BlurEffect") then
 		panelBlur = existing
@@ -226,27 +218,58 @@ local function ensurePanelBackdrop()
 	backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
 	backdrop.BackgroundTransparency = 0.55
 	backdrop.BorderSizePixel = 0
-	backdrop.AnchorPoint = Vector2.new(0.5, 0.5)
 	backdrop.ZIndex = 12
 	backdrop.Active = true
+
+	local inset = GuiService:GetGuiInset()
+	local padX = math.max(inset.X, if isMobileUi() then 24 else 8)
+	local padTop = math.max(inset.Y, if isMobileUi() then 24 else 8)
+	local bottomExtra = if isMobileUi() then 96 else 28
+	backdrop.AnchorPoint = Vector2.new(0, 0)
+	backdrop.Position = UDim2.fromOffset(-padX, -padTop)
+	backdrop.Size = UDim2.new(1, padX * 2, 1, padTop + bottomExtra)
 	backdrop.Parent = frames
 
+	-- Mobile safe-area strips sit outside inset layout — fill them so dim is edge-to-edge.
 	if isMobileUi() then
-		-- Centered dim with clear margins — edges stay empty (no edge fill bars).
-		local clear = MOBILE_DIM_EDGE_CLEAR
-		backdrop.Position = UDim2.fromScale(0.5, 0.5)
-		backdrop.Size = UDim2.fromScale(1 - clear * 2, 1 - clear * 2)
-	else
-		local inset = GuiService:GetGuiInset()
-		local padX = math.max(inset.X, 8)
-		local padTop = math.max(inset.Y, 8)
-		local bottomExtra = 28
-		backdrop.AnchorPoint = Vector2.new(0, 0)
-		backdrop.Position = UDim2.fromOffset(-padX, -padTop)
-		backdrop.Size = UDim2.new(1, padX * 2, 1, padTop + bottomExtra)
+		local pg = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+		if pg then
+			local mainOrder = if mainGui then mainGui.DisplayOrder else 10
+			local gui = Instance.new("ScreenGui")
+			gui.Name = PANEL_DIM_GUI_NAME
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			gui.DisplayOrder = math.max(0, mainOrder - 1)
+			gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+			pcall(function()
+				(gui :: any).ClipToDeviceSafeArea = false
+			end)
+			pcall(function()
+				(gui :: any).SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
+			end)
+			pcall(function()
+				(gui :: any).ScreenInsets = Enum.ScreenInsets.None
+			end)
+
+			local fullDim = Instance.new("Frame")
+			fullDim.Name = "FullScreenDim"
+			fullDim.BackgroundColor3 = Color3.new(0, 0, 0)
+			fullDim.BackgroundTransparency = 0.55
+			fullDim.BorderSizePixel = 0
+			fullDim.Size = UDim2.fromScale(1, 1)
+			fullDim.Position = UDim2.fromScale(0, 0)
+			fullDim.Active = false
+			fullDim.Parent = gui
+
+			gui.Parent = pg
+			panelDimGui = gui
+		end
 	end
 
 	backdrop.Activated:Connect(function()
+		if not MobileTouchGate.canTapUi() then
+			return
+		end
 		local frame = currentFrame
 		if not frame then
 			return
@@ -254,9 +277,9 @@ local function ensurePanelBackdrop()
 		-- Empty panel chrome is often Active=false and punches through to this backdrop.
 		-- Close when outside the panel, or when the hit is the panel Close (X) control.
 		local mouse = UserInputService:GetMouseLocation()
-		local inset = GuiService:GetGuiInset()
-		local px = mouse.X - inset.X
-		local py = mouse.Y - inset.Y
+		local guiInset = GuiService:GetGuiInset()
+		local px = mouse.X - guiInset.X
+		local py = mouse.Y - guiInset.Y
 		local atPos = player.PlayerGui:GetGuiObjectsAtPosition(px, py)
 		local closeBtn = findPanelCloseButton(frame)
 		for _, obj in atPos do
@@ -329,12 +352,6 @@ local function hidePanelChrome()
 end
 
 local function showPanelChrome()
-	if not panelChromeHidden then
-		clearPanelBlur()
-		destroyPanelBackdrop()
-		restoreMobileControlsAfterPanel()
-		return
-	end
 	panelChromeHidden = false
 	GameplayUiVisibility.show()
 	clearPanelBlur()
@@ -411,6 +428,7 @@ local function animateClose(frame: Frame)
 		frame.Visible = false
 		frame.Active = false
 		scale.Scale = rest * 0.82
+		panelClosing = false
 		if syncFramesInputPassthrough then
 			syncFramesInputPassthrough()
 		end
@@ -485,9 +503,11 @@ syncFramesInputPassthrough = function()
 end
 
 local function closeFrame(frame: Frame)
-	if not frame.Visible then
+	if not frame.Visible and currentFrame ~= frame then
+		showPanelChrome()
 		return
 	end
+	panelClosing = true
 	if currentFrame == frame then
 		currentFrame = nil
 	end
@@ -565,6 +585,10 @@ local function wireFrameVisibleBackdropCleanup(frame: Frame)
 		if frame.Visible then
 			return
 		end
+		-- Intentional animated close owns chrome restore.
+		if panelClosing then
+			return
+		end
 		if currentFrame ~= nil and currentFrame ~= frame then
 			return
 		end
@@ -589,6 +613,9 @@ local function applyHoverAndClick(button: GuiButton, onClicked: () -> ())
 	local icon = button:FindFirstChild("Icon", true)
 	local lastFire = 0
 	local function fire()
+		if not MobileTouchGate.canTapUi() then
+			return
+		end
 		local now = os.clock()
 		if now - lastFire < 0.12 then
 			return
@@ -864,7 +891,16 @@ end
 function HUDController.closeCurrentFrame()
 	if currentFrame then
 		closeFrame(currentFrame)
+		return
 	end
+	-- Orphan modal chrome (e.g. panel Visible flipped outside HUD) — always clear blur/dim.
+	showPanelChrome()
+end
+
+function HUDController.forceClearPanelModal()
+	currentFrame = nil
+	panelClosing = false
+	showPanelChrome()
 end
 
 function HUDController.syncInputPassthrough()

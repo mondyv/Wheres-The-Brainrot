@@ -275,7 +275,11 @@ local function scheduleClose()
 		activeStandEntry = nil
 		openedPanelFromDialogue = false
 		syncBoothMusic(nil)
-		HUDController.closeCurrentFrame()
+		if HUDController.getCurrentFrame() then
+			HUDController.closeCurrentFrame()
+		else
+			HUDController.forceClearPanelModal()
+		end
 		if shouldGoodbye and leavingStand then
 			showGoodbye(leavingStand)
 		end
@@ -430,7 +434,11 @@ local function tick(dt: number)
 			return
 		end
 		if activeStandFrame then
-			HUDController.closeCurrentFrame()
+			if HUDController.getCurrentFrame() then
+				HUDController.closeCurrentFrame()
+			else
+				HUDController.forceClearPanelModal()
+			end
 			activeStandFrame = nil
 			activeStandEntry = nil
 			openedPanelFromDialogue = false

@@ -15,7 +15,7 @@ local RunService = game:GetService("RunService")
 
 local M = {}
 
-local HOLD_BLOCK_SEC = 0.2
+local HOLD_BLOCK_SEC = 0.4
 local activeTouches: { [InputObject]: number } = {}
 local blockedUntilAllReleased = false
 local wired = false
@@ -31,6 +31,7 @@ local MODAL_OVERLAY_NAMES = {
 	"FloatingClaimCutscene",
 	"BushSpiderCutscene",
 	"StandDialogueCutscene",
+	"PanelModalDim",
 }
 
 local function hasModalOverlay(playerGui: Instance): boolean

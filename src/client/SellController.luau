@@ -12,6 +12,7 @@ local HUDController = require(script.Parent.HUDController)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 
 local player = Players.LocalPlayer
 
@@ -24,7 +25,6 @@ local rowTemplate: Frame? = nil
 local nothingLabel: TextLabel? = nil
 local sellAllBtn: GuiButton? = nil
 local busy = false
-local sellFrameHiddenForConfirm = false
 type PendingConfirm =
 	{ kind: "one", idx: number, entry: InvEntry, price: number }
 	| { kind: "all", count: number, totalPrice: number }
@@ -131,6 +131,9 @@ end
 local function wireSellButton(clickBtn: GuiButton, handler: () -> ())
 	local lastAt = 0
 	local function fire()
+		if not MobileTouchGate.canTapUi() then
+			return
+		end
 		local now = os.clock()
 		if now - lastAt < 0.15 then
 			return
@@ -399,20 +402,7 @@ local function setSellInfoVisible(on: boolean)
 		end
 		sellInfoFrame.Visible = on
 	end
-	if not sellFrame then
-		return
-	end
-	if on then
-		if sellFrame.Visible then
-			sellFrameHiddenForConfirm = true
-			sellFrame.Visible = false
-		end
-	else
-		if sellFrameHiddenForConfirm then
-			sellFrame.Visible = true
-			sellFrameHiddenForConfirm = false
-		end
-	end
+	-- Keep Sell visible under confirm so HUD currentFrame / blur chrome stay valid.
 end
 
 local function formatSellConfirmMessage(entry: InvEntry, price: number): string
@@ -762,7 +752,15 @@ function SellController.init()
 			local closeBtn = sellHeaderButtons:FindFirstChild("Close")
 			if closeBtn and closeBtn:IsA("GuiButton") then
 				UIButtonEffects.wireGlistenCloseButton(closeBtn, function()
-					HUDController.closeCurrentFrame()
+					cancelSell()
+					if HUDController.getCurrentFrame() then
+						HUDController.closeCurrentFrame()
+					else
+						if sellFrame then
+							sellFrame.Visible = false
+						end
+						HUDController.forceClearPanelModal()
+					end
 				end)
 			end
 			sellAllBtn = sellHeaderButtons:FindFirstChild("SellAll") :: GuiButton?

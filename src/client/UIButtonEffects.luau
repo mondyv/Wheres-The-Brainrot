@@ -6,6 +6,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MobileHaptics = require(script.Parent.MobileHaptics)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local HOVER_TWEEN = TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -32,6 +33,10 @@ local sweepMoveTweenByClip: { [Instance]: Tween } = {}
 local sweepFadeTweenByClip: { [Instance]: Tween } = {}
 
 local M = {}
+
+local function canFireUiTap(): boolean
+	return MobileTouchGate.canTapUi()
+end
 
 local function getOrAddUIScale(obj: GuiObject): UIScale
 	local s = obj:FindFirstChildOfClass("UIScale")
@@ -539,6 +544,9 @@ function M.wireScaleButtonAnim(btn: GuiButton, onActivated: () -> ())
 		end
 	)
 	btn.MouseButton1Down:Connect(function()
+		if not canFireUiTap() then
+			return
+		end
 		UIInteractionSounds.playClick()
 		tweenScale(0.9, CLICK_TWEEN)
 		-- Fire on Down: UIScale shrink cancels Activated/Click if we wait for release.
@@ -568,6 +576,9 @@ function M.wireTiltHoverButton(
 	local HOVER_SCALE = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 	local function fireActivated()
+		if not canFireUiTap() then
+			return
+		end
 		local now = os.clock()
 		if now - lastFire < 0.08 then
 			return
@@ -638,6 +649,9 @@ function M.wireAccentButton(btn: GuiButton, onActivated: () -> ())
 		end
 	)
 	btn.MouseButton1Down:Connect(function()
+		if not canFireUiTap() then
+			return
+		end
 		UIInteractionSounds.playClick()
 		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.92 }):Play()
 		local now = os.clock()
@@ -678,6 +692,9 @@ function M.wireGlistenCloseButton(btn: GuiButton, onActivated: () -> ())
 		end
 	)
 	btn.MouseButton1Down:Connect(function()
+		if not canFireUiTap() then
+			return
+		end
 		UIInteractionSounds.playClick()
 		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.9 }):Play()
 		local now = os.clock()

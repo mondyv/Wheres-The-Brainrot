@@ -12,7 +12,7 @@ local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):Wai
 local BrainrotGradientAnimator = require(script.Parent.BrainrotGradientAnimator)
 
 local HEADER_NAME = "BrainrotInfoBillboard"
-local HEADER_MAX_DISTANCE = 280
+local HEADER_MAX_DISTANCE = 90
 local HEADER_TAG = "BrainrotHeaderTarget"
 local ACTIVE_ATTR = "BrainrotHeaderActive"
 local STAND_DISPLAY_ATTR = "BrainrotStandDisplay"
@@ -431,6 +431,27 @@ function BrainrotHeaderController.init()
 
 	task.spawn(hookHeaderRefreshRemote)
 
+	local function clampHeaderDistances()
+		for _, bb in headersByModel do
+			if bb.Parent then
+				bb.MaxDistance = HEADER_MAX_DISTANCE
+			end
+		end
+		local pg = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+		if pg then
+			for _, d in pg:GetDescendants() do
+				if d:IsA("BillboardGui") and d.Name == HEADER_NAME then
+					d.MaxDistance = HEADER_MAX_DISTANCE
+				end
+			end
+		end
+		for _, d in Workspace:GetDescendants() do
+			if d:IsA("BillboardGui") and d.Name == HEADER_NAME then
+				d.MaxDistance = HEADER_MAX_DISTANCE
+			end
+		end
+	end
+
 	CollectionService:GetInstanceAddedSignal(HEADER_TAG):Connect(onHeaderTarget)
 	CollectionService:GetInstanceRemovedSignal(HEADER_TAG):Connect(function(inst)
 		if inst:IsA("Model") then
@@ -442,6 +463,12 @@ function BrainrotHeaderController.init()
 	for _, inst in CollectionService:GetTagged(HEADER_TAG) do
 		onHeaderTarget(inst)
 	end
+
+	task.defer(clampHeaderDistances)
+	task.spawn(function()
+		task.wait(3)
+		clampHeaderDistances()
+	end)
 
 	for _, inst in CollectionService:GetTagged("BrainrotStand") do
 		if inst:IsA("Model") then

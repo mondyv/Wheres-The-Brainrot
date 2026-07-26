@@ -35,7 +35,11 @@ local M = {}
 local PANEL_OPEN = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local PANEL_SWAP = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local EXCLAIM_PULSE = TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
-local ARROW_BOB = TweenInfo.new(0.45, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+local ARROW_JUMP_UP = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local ARROW_HANG = TweenInfo.new(0.08, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+local ARROW_FALL = TweenInfo.new(0.34, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local ARROW_SQUASH = TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local ARROW_RECOVER = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLICK_BOUNCE = TweenInfo.new(0.38, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 
 local active = false
@@ -68,6 +72,11 @@ local vineCacheAt = 0
 local lastPointerRefresh = 0
 local pendingPointerRefresh = false
 
+local lockedBushPart: BasePart? = nil
+local lockedBushRoot: Instance? = nil
+local uiPointerStroke: UIStroke? = nil
+local uiPointerHost: GuiObject? = nil
+
 local clearWorldArrow: () -> ()
 local clearUiPointer: () -> ()
 local clearSpotlight: () -> ()
@@ -78,11 +87,6 @@ local function currentStep(): TutorialConfig.StepDef?
 	return TutorialConfig.STEPS[stepIndex]
 end
 
-local function allowsClaimChrome(): boolean
-	local step = currentStep()
-	return step ~= nil and (step.id == "claimBrainrot" or step.id == "searchBush")
-end
-
 local function isCutsceneBusy(): boolean
 	if StandDialogueCutscene.isActive() then
 		return true
@@ -90,10 +94,10 @@ local function isCutsceneBusy(): boolean
 	if BushSpiderEncounterController.isActive() then
 		return true
 	end
-	if FloatingClaimCutscene.isActive() and not allowsClaimChrome() then
+	if FloatingClaimCutscene.isActive() then
 		return true
 	end
-	if GameplayUiVisibility.isHidden() and not allowsClaimChrome() then
+	if GameplayUiVisibility.isHidden() then
 		return true
 	end
 	return false
@@ -261,10 +265,15 @@ end
 clearWorldArrow = clearWorldArrowImpl
 
 local function clearUiPointerImpl()
+	if uiPointerStroke then
+		uiPointerStroke:Destroy()
+		uiPointerStroke = nil
+	end
 	if uiPointer then
 		uiPointer:Destroy()
 		uiPointer = nil
 	end
+	uiPointerHost = nil
 end
 clearUiPointer = clearUiPointerImpl
 
@@ -515,43 +524,93 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 		return
 	end
 
+	local baseOffset = offset or arrowHeight()
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "TutorialWorldArrow"
 	bb.AlwaysOnTop = true
-	bb.Size = UDim2.fromOffset(72, 72)
-	bb.StudsOffset = offset or arrowHeight()
+	bb.Size = UDim2.fromOffset(78, 78)
+	bb.StudsOffset = baseOffset
 	bb.MaxDistance = 500
 	bb.Adornee = part
 	bb.Parent = player:FindFirstChild("PlayerGui") or Workspace.CurrentCamera
 
 	local img = Instance.new("ImageLabel")
 	img.BackgroundTransparency = 1
+	img.AnchorPoint = Vector2.new(0.5, 1)
+	img.Position = UDim2.fromScale(0.5, 1)
 	img.Size = UDim2.fromScale(1, 1)
 	img.Image = TutorialConfig.WORLD_ARROW_IMAGE
 	img.Rotation = TutorialConfig.WORLD_ARROW_ROTATION
 	img.ScaleType = Enum.ScaleType.Fit
 	img.Parent = bb
 
+	local scale = Instance.new("UIScale")
+	scale.Scale = 1
+	scale.Parent = img
+
 	worldArrowBb = bb
 	worldArrowImg = img
 
 	task.spawn(function()
 		while worldArrowImg == img and img.Parent and active and not chromeSuppressed do
-			local a = TweenService:Create(img, ARROW_BOB, {
-				Position = UDim2.new(0, 0, 0, 6),
-				Size = UDim2.fromScale(1.08, 1.08),
+			-- Jump up (stretch tall / thin)
+			bb.StudsOffset = baseOffset
+			scale.Scale = 1
+			img.Size = UDim2.fromScale(0.82, 1.18)
+			local jump = TweenService:Create(bb, ARROW_JUMP_UP, {
+				StudsOffset = baseOffset + Vector3.new(0, 3.2, 0),
 			})
-			a:Play()
-			a.Completed:Wait()
+			local stretch = TweenService:Create(img, ARROW_JUMP_UP, {
+				Size = UDim2.fromScale(0.78, 1.28),
+			})
+			jump:Play()
+			stretch:Play()
+			jump.Completed:Wait()
 			if worldArrowImg ~= img then
 				break
 			end
-			local b = TweenService:Create(img, ARROW_BOB, {
-				Position = UDim2.new(0, 0, 0, -2),
+
+			-- Tiny hang
+			local hang = TweenService:Create(bb, ARROW_HANG, {
+				StudsOffset = baseOffset + Vector3.new(0, 3.45, 0),
+			})
+			hang:Play()
+			hang.Completed:Wait()
+			if worldArrowImg ~= img then
+				break
+			end
+
+			-- Fall down
+			local fall = TweenService:Create(bb, ARROW_FALL, {
+				StudsOffset = baseOffset,
+			})
+			local unstretch = TweenService:Create(img, ARROW_FALL, {
+				Size = UDim2.fromScale(1.05, 0.92),
+			})
+			fall:Play()
+			unstretch:Play()
+			fall.Completed:Wait()
+			if worldArrowImg ~= img then
+				break
+			end
+
+			-- Land squash
+			local squash = TweenService:Create(img, ARROW_SQUASH, {
+				Size = UDim2.fromScale(1.28, 0.62),
+			})
+			squash:Play()
+			squash.Completed:Wait()
+			if worldArrowImg ~= img then
+				break
+			end
+
+			-- Recover
+			local recover = TweenService:Create(img, ARROW_RECOVER, {
 				Size = UDim2.fromScale(1, 1),
 			})
-			b:Play()
-			b.Completed:Wait()
+			recover:Play()
+			recover.Completed:Wait()
+			task.wait(0.12)
 		end
 	end)
 end
@@ -562,52 +621,40 @@ local function pointAtGui(target: GuiObject?)
 	if chromeSuppressed or isCutsceneBusy() then
 		return
 	end
-	if not target or not root or not gui then
+	if not target or not target.Parent then
 		return
 	end
 
-	-- Keep pointer above Main / billboards.
-	gui.DisplayOrder = 120
+	-- Parent onto the control itself so coordinates always match the upgrades panel.
+	local host = target
+	uiPointerHost = host
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Name = "TutorialTargetStroke"
+	stroke.Color = Color3.fromRGB(255, 230, 90)
+	stroke.Thickness = 2.4
+	stroke.Transparency = 0.15
+	stroke.Parent = host
+	uiPointerStroke = stroke
 
 	local pointer = Instance.new("ImageLabel")
 	pointer.Name = "TutorialUiClick"
 	pointer.BackgroundTransparency = 1
-	pointer.Size = UDim2.fromOffset(56, 56)
-	pointer.AnchorPoint = Vector2.new(0.15, 0.15)
+	pointer.Size = UDim2.fromOffset(52, 52)
+	pointer.AnchorPoint = Vector2.new(0.5, 0.5)
+	pointer.Position = UDim2.new(1, -8, 0.55, 0)
 	pointer.Image = TutorialConfig.UI_CLICK_IMAGE
 	pointer.ScaleType = Enum.ScaleType.Fit
-	pointer.ZIndex = 50
-	pointer.Visible = false
-	pointer.Parent = root
+	pointer.ZIndex = math.max(host.ZIndex + 20, 40)
+	pointer.Parent = host
 	uiPointer = pointer
 
 	task.spawn(function()
-		-- Wait for AbsoluteSize to resolve (billboards / just-opened panels).
-		for _ = 1, 45 do
-			if not pointer.Parent or uiPointer ~= pointer or not active or chromeSuppressed then
-				return
-			end
-			if target.Parent and target.AbsoluteSize.X > 2 and target.AbsoluteSize.Y > 2 then
-				break
-			end
-			task.wait()
-		end
-
-		while uiPointer == pointer and pointer.Parent and active and target.Parent and not chromeSuppressed do
-			local abs = target.AbsolutePosition
-			local size = target.AbsoluteSize
-			if size.X < 2 or size.Y < 2 then
-				pointer.Visible = false
-				task.wait(0.1)
-				continue
-			end
-			local px = abs.X + size.X * 0.78
-			local py = abs.Y + size.Y * 0.62
-			pointer.Visible = true
-			pointer.Position = UDim2.fromOffset(px, py)
+		while uiPointer == pointer and pointer.Parent and active and host.Parent and not chromeSuppressed do
 			local up = TweenService:Create(pointer, CLICK_BOUNCE, {
-				Size = UDim2.fromOffset(64, 64),
-				Rotation = -14,
+				Size = UDim2.fromOffset(60, 60),
+				Rotation = -12,
+				Position = UDim2.new(1, -4, 0.5, 0),
 			})
 			up:Play()
 			up.Completed:Wait()
@@ -615,8 +662,9 @@ local function pointAtGui(target: GuiObject?)
 				break
 			end
 			local down = TweenService:Create(pointer, CLICK_BOUNCE, {
-				Size = UDim2.fromOffset(56, 56),
-				Rotation = 10,
+				Size = UDim2.fromOffset(52, 52),
+				Rotation = 8,
+				Position = UDim2.new(1, -10, 0.62, 0),
 			})
 			down:Play()
 			down.Completed:Wait()
@@ -626,8 +674,7 @@ local function pointAtGui(target: GuiObject?)
 end
 
 local function pointAtAcceptOffer(acceptBtn: GuiObject?, acceptBb: BillboardGui?)
-	-- Prefer the billboard root if the button hasn't laid out yet.
-	if acceptBtn and acceptBtn.AbsoluteSize.X > 2 then
+	if acceptBtn and acceptBtn.Parent then
 		pointAtGui(acceptBtn)
 		return
 	end
@@ -635,11 +682,7 @@ local function pointAtAcceptOffer(acceptBtn: GuiObject?, acceptBb: BillboardGui?
 		local rootGui = acceptBb:FindFirstChildWhichIsA("GuiObject")
 		if rootGui then
 			pointAtGui(rootGui)
-			return
 		end
-	end
-	if acceptBtn then
-		pointAtGui(acceptBtn)
 	end
 end
 
@@ -781,8 +824,18 @@ local function resolveLand1SwingTarget(): BasePart?
 end
 
 local function resolveNearestBush(): BasePart?
+	-- Stick to one bush so the arrow doesn't teleport between targets.
+	if lockedBushPart and lockedBushPart.Parent then
+		if lockedBushRoot and lockedBushRoot.Parent then
+			return lockedBushPart
+		end
+	end
+	lockedBushPart = nil
+	lockedBushRoot = nil
+
 	local origin = playerOrigin()
 	local bestPart: BasePart? = nil
+	local bestRoot: Instance? = nil
 	local bestScore = math.huge
 
 	local function considerBush(bush: Instance)
@@ -792,6 +845,9 @@ local function resolveNearestBush(): BasePart?
 		end
 		local land = LandResolver.resolveLandAtPosition(focus)
 		local dist = (focus - origin).Magnitude
+		if dist > 220 then
+			return
+		end
 		local score = dist + (if land == 1 then 0 else 80)
 		if score >= bestScore then
 			return
@@ -808,29 +864,36 @@ local function resolveNearestBush(): BasePart?
 		if part then
 			bestScore = score
 			bestPart = part
+			bestRoot = bush
 		end
 	end
 
 	BushHoldInteraction.forEachRegisteredBush(considerBush)
 
-	if bestPart then
-		return bestPart
-	end
-
-	-- Fallback: prompts under Map only (avoid full Workspace scan).
-	local map = Workspace:FindFirstChild("Map")
-	if not map then
-		return nil
-	end
-	for _, d in map:GetDescendants() do
-		if d:IsA("ProximityPrompt") and CarryGate.isBushSearchPrompt(d) then
-			local root = BushRootUtil.resolveBushRootFromPrompt(d)
-			if root then
-				considerBush(root)
+	if not bestPart then
+		local map = Workspace:FindFirstChild("Map")
+		if map then
+			for _, d in map:GetDescendants() do
+				if d:IsA("ProximityPrompt") and CarryGate.isBushSearchPrompt(d) then
+					local rootBush = BushRootUtil.resolveBushRootFromPrompt(d)
+					if rootBush then
+						considerBush(rootBush)
+					end
+				end
 			end
 		end
 	end
+
+	if bestPart and bestRoot then
+		lockedBushPart = bestPart
+		lockedBushRoot = bestRoot
+	end
 	return bestPart
+end
+
+local function clearLockedBush()
+	lockedBushPart = nil
+	lockedBushRoot = nil
 end
 
 local function resolvePlayerPlotStand(preferEmpty: boolean?): BasePart?
@@ -991,13 +1054,23 @@ local function refreshPointersImpl()
 	if not active or chromeSuppressed or isCutsceneBusy() then
 		return
 	end
-	clearWorldArrow()
-	clearUiPointer()
-	clearSpotlight()
 	local step = currentStep()
 	if not step then
 		return
 	end
+
+	-- Keep existing world arrow if still valid for locked bush / same step.
+	local keepWorld = false
+	if step.id == "searchBush" and worldArrowBb and lockedBushPart and lockedBushPart.Parent then
+		keepWorld = true
+	end
+
+	if not keepWorld then
+		clearWorldArrow()
+	end
+	clearUiPointer()
+	clearSpotlight()
+
 	if step.id == "visitUpgrade" then
 		pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
 	elseif step.id == "buyPower" then
@@ -1005,15 +1078,14 @@ local function refreshPointersImpl()
 		if btn and upgradesFrame and upgradesFrame.Visible then
 			pointAtGui(btn)
 			task.defer(function()
-				task.wait(0.15)
-				if not active or chromeSuppressed then
+				task.wait(0.2)
+				if not active or chromeSuppressed or isCutsceneBusy() then
 					return
 				end
 				local cur = currentStep()
-				if cur and cur.id == "buyPower" then
+				if cur and cur.id == "buyPower" and not uiPointer then
 					local again = cacheUpgradesBuyButton()
 					if again and upgradesFrame and upgradesFrame.Visible then
-						clearWorldArrow()
 						pointAtGui(again)
 					end
 				end
@@ -1024,17 +1096,14 @@ local function refreshPointersImpl()
 	elseif step.id == "swingLand1" then
 		pointAtWorld(resolveLand1SwingTarget(), arrowHeight(3))
 	elseif step.id == "searchBush" then
-		pointAtWorld(resolveNearestBush(), arrowHeight(2))
-	elseif step.id == "claimBrainrot" then
-		local offer = BushFloatingClaimController.getActiveOfferUi()
-		if offer and offer.acceptBtn then
-			claimSpotlightActive = true
-			if dimOverlay then
-				dimOverlay.Visible = true
-			end
-			pointAtAcceptOffer(offer.acceptBtn, offer.acceptBb)
+		if not keepWorld then
+			pointAtWorld(resolveNearestBush(), arrowHeight(2))
 		end
+	elseif step.id == "claimBrainrot" then
+		-- Quest/blur stay hidden during the accept cutscene (isCutsceneBusy).
+		-- No dim overlay — Accept/Decline UI is already the focus.
 	elseif step.id == "placeOnPlot" then
+		clearLockedBush()
 		pointAtWorld(resolvePlayerPlotStand(true), arrowHeight(3))
 	elseif step.id == "upgradeBrainrot" then
 		pointAtWorld(resolvePlacedStandUpgradeTarget(), arrowHeight(4))
@@ -1108,7 +1177,11 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 	if step.id == "upgradeBrainrot" then
 		upgradeBaseLevel = readPlacedBrainrotLevel()
 	end
-	-- Use on-screen objective text for typewriter + voice (stand cadence).
+	if step.id == "searchBush" then
+		clearLockedBush()
+	elseif step.id ~= "claimBrainrot" then
+		clearLockedBush()
+	end
 	showPanel(step.text, first)
 	refreshPointers()
 end
@@ -1158,11 +1231,19 @@ local function watchStepProgress()
 		end
 		local now = os.clock()
 
-		-- Periodically re-aim world arrows (streaming / player move).
+		-- Periodically re-aim world arrows only when missing (don't retarget bushes).
 		if now - lastPointerRefresh > 1.25 then
 			lastPointerRefresh = now
-			if step.id == "swingLand1" or step.id == "searchBush" or step.id == "visitUpgrade" or step.id == "placeOnPlot" or step.id == "upgradeBrainrot" then
-				if not uiPointer then
+			if step.id == "swingLand1" or step.id == "visitUpgrade" or step.id == "placeOnPlot" or step.id == "upgradeBrainrot" then
+				if not worldArrowBb and not uiPointer then
+					refreshPointers()
+				end
+			elseif step.id == "searchBush" then
+				if not worldArrowBb then
+					refreshPointers()
+				end
+			elseif step.id == "buyPower" then
+				if upgradesFrame and upgradesFrame.Visible and not uiPointer then
 					refreshPointers()
 				end
 			end
@@ -1171,7 +1252,7 @@ local function watchStepProgress()
 		if step.id == "buyPower" then
 			local btn = cacheUpgradesBuyButton()
 			if btn and upgradesFrame and upgradesFrame.Visible then
-				if not uiPointer or (uiPointer.AbsoluteSize.X < 2) then
+				if not uiPointer or uiPointer.Parent ~= btn then
 					clearWorldArrow()
 					pointAtGui(btn)
 				end
@@ -1197,31 +1278,7 @@ local function watchStepProgress()
 				refreshPointers()
 			end
 		elseif step.id == "claimBrainrot" then
-			local offer = BushFloatingClaimController.getActiveOfferUi()
-			if offer and offer.acceptBtn then
-				if not claimSpotlightActive then
-					claimSpotlightActive = true
-					if dimOverlay then
-						dimOverlay.Visible = true
-					end
-				end
-				if not uiPointer then
-					pointAtAcceptOffer(offer.acceptBtn, offer.acceptBb)
-				end
-				if spotlightHole and uiPointer then
-					local abs = offer.acceptBtn.AbsolutePosition
-					local size = offer.acceptBtn.AbsoluteSize
-					if size.X > 2 then
-						local cx = abs.X + size.X * 0.5
-						local cy = abs.Y + size.Y * 0.5
-						spotlightHole.Visible = true
-						spotlightHole.Position = UDim2.fromOffset(cx, cy)
-						spotlightHole.Size = UDim2.fromOffset(math.max(size.X + 28, 110), math.max(size.Y + 20, 52))
-					end
-				end
-			elseif claimSpotlightActive and not BushFloatingClaimController.hasActiveOffer() then
-				clearSpotlight()
-			end
+			-- Stay suppressed during floating claim cutscene; complete on accept hook.
 		elseif step.id == "placeOnPlot" and now - lastLandCheck > 0.4 then
 			lastLandCheck = now
 			local plot = PlotPaths.findPlotForAssignedSlot(player)
@@ -1355,22 +1412,10 @@ function M.init()
 			return
 		end
 		hooksBound = true
-		BushFloatingClaimController.registerOfferHook(function(_model, ui)
+		BushFloatingClaimController.registerOfferHook(function(_model, _ui)
 			completeCurrentIf("searchBush")
-			task.defer(function()
-				local step = currentStep()
-				if step and step.id == "claimBrainrot" then
-					claimSpotlightActive = true
-					if dimOverlay then
-						dimOverlay.Visible = true
-					end
-					if ui and ui.acceptBtn then
-						pointAtAcceptOffer(ui.acceptBtn, nil)
-					else
-						refreshPointers()
-					end
-				end
-			end)
+			-- Claim cutscene owns the screen — keep tutorial chrome suppressed.
+			setChromeSuppressed(true)
 		end)
 		BushFloatingClaimController.registerAcceptHook(function(_model)
 			completeCurrentIf("claimBrainrot")
@@ -1380,6 +1425,7 @@ function M.init()
 			if step and step.id == "claimBrainrot" then
 				clearSpotlight()
 				clearUiPointer()
+				clearLockedBush()
 				goToStep("searchBush", false)
 			end
 		end)

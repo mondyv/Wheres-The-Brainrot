@@ -90,8 +90,8 @@ M.RARITY_GRADIENT_UI_NAMES = {
 
 M.MIN_TOUCH_PX = 44
 M.MIN_TOUCH_PX_MOBILE = 52
-M.TOUCH_TAP_ICON = "rbxasset://textures/ui/Controls/TouchTapIcon.png"
-M.TOUCH_HOLD_ICON = "rbxasset://textures/ui/Controls/TouchHoldIcon.png"
+M.TOUCH_TAP_ICON = "rbxassetid://80727309150135"
+M.TOUCH_HOLD_ICON = "rbxassetid://80727309150135"
 
 M.MIN_MOBILE_FACE_DOT = 0.32
 M.MOBILE_FACING_REFRESH_INTERVAL = 0.12

@@ -127,10 +127,43 @@ function BushFloatingClaimController.registerAcceptHook(fn: (Model) -> ())
 	table.insert(acceptHooks, fn)
 end
 
+local offerHooks: { (Model, { acceptBtn: TextButton, declineBtn: TextButton }) -> () } = {}
+
+function BushFloatingClaimController.registerOfferHook(fn: (Model, { acceptBtn: TextButton, declineBtn: TextButton }) -> ())
+	table.insert(offerHooks, fn)
+end
+
+local declineHooks: { (Model) -> () } = {}
+
+function BushFloatingClaimController.registerDeclineHook(fn: (Model) -> ())
+	table.insert(declineHooks, fn)
+end
+
 local function fireAcceptHooks(model: Model)
 	for _, fn in acceptHooks do
 		task.spawn(fn, model)
 	end
+end
+
+local function fireOfferHooks(model: Model, acceptBtn: TextButton, declineBtn: TextButton)
+	for _, fn in offerHooks do
+		task.spawn(fn, model, { acceptBtn = acceptBtn, declineBtn = declineBtn })
+	end
+end
+
+local function fireDeclineHooks(model: Model)
+	for _, fn in declineHooks do
+		task.spawn(fn, model)
+	end
+end
+
+function BushFloatingClaimController.getActiveOfferUi(): { acceptBtn: TextButton, declineBtn: TextButton }?
+	for _, entry in tracked do
+		if entry.acceptBtn and entry.acceptBtn.Parent and not entry.decisionLocked then
+			return { acceptBtn = entry.acceptBtn, declineBtn = entry.declineBtn }
+		end
+	end
+	return nil
 end
 
 type TrackedOffer = {
@@ -1279,6 +1312,7 @@ local function trackModel(model: Model)
 	snapOfferLayout(entry)
 	attachBushOfferVisuals(entry, model)
 	updateBillboardPositions(entry)
+	fireOfferHooks(model, entry.acceptBtn, entry.declineBtn)
 
 	-- Ambush roll / lurking VFX — keep the offer cutscene so the sense notifier
 	-- isn't just floating text with no cinematic.
@@ -1324,6 +1358,7 @@ local function trackModel(model: Model)
 		GameSoundEffects.playErrorNotif()
 		animateOfferOut(entry, true)
 		fireDecision(model, "decline")
+		fireDeclineHooks(model)
 	end) do
 		table.insert(entry.conns, conn)
 	end

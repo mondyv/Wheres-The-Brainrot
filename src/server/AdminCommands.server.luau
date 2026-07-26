@@ -196,7 +196,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tpland, serverspawn, globalspawn, servernotif, globalnotif, help"
+			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tpland, serverspawn, globalspawn, servernotif, globalnotif, playtutorial, fly, help"
 	end,
 }
 
@@ -528,6 +528,31 @@ commands.rebirth = {
 			return false, string.format("Rebirth failed for %s: %s", target.Name, tostring(err))
 		end
 		return true, string.format("Rebirthed %s.", target.Name)
+	end,
+}
+
+commands.playtutorial = {
+	usage = "playtutorial",
+	description = "Replay the first-join tutorial for yourself.",
+	run = function(sender: Player, _args: { string }): (boolean, string)
+		PlayerDataService.waitUntilLoaded(sender)
+		PlayerDataService.replayTutorial(sender)
+		return true, "Tutorial restarted."
+	end,
+}
+commands.tutorial = commands.playtutorial
+commands.replaytutorial = commands.playtutorial
+
+commands.fly = {
+	usage = "fly",
+	description = "Toggle fly mode for yourself.",
+	run = function(sender: Player, _args: { string }): (boolean, string)
+		local enabled = sender:GetAttribute("AdminFlyEnabled") == true
+		sender:SetAttribute("AdminFlyEnabled", if enabled then nil else true)
+		if enabled then
+			return true, "Fly disabled."
+		end
+		return true, "Fly enabled. WASD move, Space/E up, Ctrl/Q down."
 	end,
 }
 

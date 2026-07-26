@@ -1,0 +1,903 @@
+-- [ACTIVE] TutorialController
+--[[
+	First-join objective HUD: left-side panel, world/UI pointers, step machine.
+	Persists completion via PlayerDataService (TutorialCompleted attribute).
+]]
+
+local Players = game:GetService("Players")
+local CollectionService = game:GetService("CollectionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+
+local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local StandDialogueCutscene = require(script.Parent.StandDialogueCutscene)
+local BushFloatingClaimController = require(script.Parent.BushFloatingClaimController)
+local CarryGate = require(script.Parent.CarryGate)
+local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
+local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
+local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
+local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
+local TutorialConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TutorialConfig"))
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+
+local player = Players.LocalPlayer
+
+local M = {}
+
+local PANEL_OPEN = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local PANEL_SWAP = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local EXCLAIM_PULSE = TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+local ARROW_BOB = TweenInfo.new(0.45, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+local CLICK_BOUNCE = TweenInfo.new(0.38, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+
+local active = false
+local stepIndex = 0
+local gui: ScreenGui? = nil
+local root: Frame? = nil
+local panel: Frame? = nil
+local exclaim: ImageLabel? = nil
+local objectiveLabel: TextLabel? = nil
+local panelScale: UIScale? = nil
+local worldArrowBb: BillboardGui? = nil
+local worldArrowImg: ImageLabel? = nil
+local uiPointer: ImageLabel? = nil
+local dimOverlay: Frame? = nil
+local spotlightHole: Frame? = nil
+local heartbeatConn: RBXScriptConnection? = nil
+local attrConns: { RBXScriptConnection } = {}
+local speakToken = 0
+local completeRF: RemoteFunction? = nil
+local upgradesFrame: Frame? = nil
+local powerBuyButton: GuiObject? = nil
+local lastLandCheck = 0
+local claimSpotlightActive = false
+
+local function getCompleteRemote(): RemoteFunction?
+	if completeRF and completeRF.Parent then
+		return completeRF
+	end
+	local folder = ReplicatedStorage:FindFirstChild("TutorialRemotes")
+	local rf = folder and folder:FindFirstChild("CompleteTutorial")
+	if rf and rf:IsA("RemoteFunction") then
+		completeRF = rf
+		return rf
+	end
+	return nil
+end
+
+local function fireConfettiAndShake()
+	GameSoundEffects.playPurchaseShake()
+	local essentials = ReplicatedStorage:FindFirstChild("EssentialsShared")
+	if not essentials then
+		return
+	end
+	local ok, mod = pcall(require, essentials:FindFirstChild("EffectsController"))
+	if not ok or not mod or typeof(mod.celebratePurchase) ~= "function" then
+		return
+	end
+	local celebrateOk, celebrateErr = pcall(function()
+		mod.celebratePurchase(player)
+	end)
+	if not celebrateOk then
+		warn("[TutorialController] celebratePurchase failed:", celebrateErr)
+	end
+end
+
+local function speakLine(text: string)
+	speakToken += 1
+	local token = speakToken
+	StandDialogueCutscene.setVoicePitch(TutorialConfig.VOICE_PITCH_MIN, TutorialConfig.VOICE_PITCH_MAX)
+	task.spawn(function()
+		for i = 1, #text do
+			if token ~= speakToken or not active then
+				return
+			end
+			local ch = string.sub(text, i, i)
+			if ch ~= " " then
+				StandDialogueCutscene.playVoiceLetter()
+			end
+			task.wait(TutorialConfig.OBJECTIVE_TYPE_DELAY)
+		end
+	end)
+end
+
+local function clearWorldArrow()
+	if worldArrowBb then
+		worldArrowBb:Destroy()
+		worldArrowBb = nil
+		worldArrowImg = nil
+	end
+end
+
+local function clearUiPointer()
+	if uiPointer then
+		uiPointer:Destroy()
+		uiPointer = nil
+	end
+end
+
+local function clearSpotlight()
+	claimSpotlightActive = false
+	if dimOverlay then
+		dimOverlay.Visible = false
+	end
+	if spotlightHole then
+		spotlightHole.Visible = false
+	end
+end
+
+local function ensureGui()
+	if gui and gui.Parent then
+		return
+	end
+	local pg = player:WaitForChild("PlayerGui", 30)
+	if not pg then
+		return
+	end
+
+	local screen = Instance.new("ScreenGui")
+	screen.Name = "TutorialObjective"
+	screen.ResetOnSpawn = false
+	screen.IgnoreGuiInset = true
+	screen.DisplayOrder = 45
+	screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screen.Enabled = false
+
+	local rootFrame = Instance.new("Frame")
+	rootFrame.Name = "Root"
+	rootFrame.BackgroundTransparency = 1
+	rootFrame.Size = UDim2.fromScale(1, 1)
+	rootFrame.Parent = screen
+
+	local panelFrame = Instance.new("Frame")
+	panelFrame.Name = "ObjectivePanel"
+	panelFrame.AnchorPoint = Vector2.new(0, 0)
+	panelFrame.Position = UDim2.new(0, 18, 0, 96)
+	panelFrame.Size = UDim2.fromOffset(320, 64)
+	panelFrame.BackgroundColor3 = Color3.fromRGB(12, 16, 22)
+	panelFrame.BackgroundTransparency = 0.28
+	panelFrame.BorderSizePixel = 0
+	panelFrame.ClipsDescendants = false
+	panelFrame.Parent = rootFrame
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 14)
+	corner.Parent = panelFrame
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(72, 255, 150)
+	stroke.Thickness = 1.5
+	stroke.Transparency = 0.55
+	stroke.Parent = panelFrame
+
+	local blurFake = Instance.new("Frame")
+	blurFake.Name = "PanelSheen"
+	blurFake.BackgroundColor3 = Color3.fromRGB(40, 55, 70)
+	blurFake.BackgroundTransparency = 0.72
+	blurFake.BorderSizePixel = 0
+	blurFake.Size = UDim2.fromScale(1, 1)
+	blurFake.ZIndex = 1
+	blurFake.Parent = panelFrame
+	local sheenCorner = Instance.new("UICorner")
+	sheenCorner.CornerRadius = UDim.new(0, 14)
+	sheenCorner.Parent = blurFake
+
+	local scale = Instance.new("UIScale")
+	scale.Name = "ObjectiveScale"
+	scale.Scale = 0.86
+	scale.Parent = panelFrame
+
+	local bang = Instance.new("ImageLabel")
+	bang.Name = "Exclaim"
+	bang.BackgroundTransparency = 1
+	bang.AnchorPoint = Vector2.new(0, 0.5)
+	bang.Position = UDim2.new(0, 10, 0.5, 0)
+	bang.Size = UDim2.fromOffset(42, 42)
+	bang.Image = TutorialConfig.EXCLAIM_IMAGE
+	bang.ScaleType = Enum.ScaleType.Fit
+	bang.ZIndex = 3
+	bang.Parent = panelFrame
+
+	local label = Instance.new("TextLabel")
+	label.Name = "ObjectiveText"
+	label.BackgroundTransparency = 1
+	label.AnchorPoint = Vector2.new(0, 0.5)
+	label.Position = UDim2.new(0, 58, 0.5, 0)
+	label.Size = UDim2.new(1, -70, 1, -12)
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextYAlignment = Enum.TextYAlignment.Center
+	label.TextWrapped = true
+	label.TextSize = 15
+	label.TextColor3 = Color3.fromRGB(245, 250, 255)
+	label.Text = ""
+	label.ZIndex = 3
+	label.Parent = panelFrame
+	UiFonts.applyBody(label)
+
+	local dim = Instance.new("Frame")
+	dim.Name = "ClaimDim"
+	dim.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	dim.BackgroundTransparency = 0.45
+	dim.BorderSizePixel = 0
+	dim.Size = UDim2.fromScale(1, 1)
+	dim.Visible = false
+	dim.ZIndex = 1
+	dim.Active = false
+	dim.Parent = rootFrame
+
+	local hole = Instance.new("Frame")
+	hole.Name = "SpotlightHole"
+	hole.AnchorPoint = Vector2.new(0.5, 0.5)
+	hole.BackgroundColor3 = Color3.fromRGB(72, 255, 150)
+	hole.BackgroundTransparency = 0.82
+	hole.BorderSizePixel = 0
+	hole.Size = UDim2.fromOffset(120, 56)
+	hole.Visible = false
+	hole.ZIndex = 2
+	hole.Parent = rootFrame
+	local holeCorner = Instance.new("UICorner")
+	holeCorner.CornerRadius = UDim.new(0, 12)
+	holeCorner.Parent = hole
+	local holeStroke = Instance.new("UIStroke")
+	holeStroke.Color = Color3.fromRGB(72, 255, 150)
+	holeStroke.Thickness = 2
+	holeStroke.Transparency = 0.2
+	holeStroke.Parent = hole
+
+	screen.Parent = pg
+	gui = screen
+	root = rootFrame
+	panel = panelFrame
+	exclaim = bang
+	objectiveLabel = label
+	panelScale = scale
+	dimOverlay = dim
+	spotlightHole = hole
+
+	task.spawn(function()
+		while active and bang.Parent do
+			local up = TweenService:Create(bang, EXCLAIM_PULSE, {
+				Size = UDim2.fromOffset(48, 48),
+				Rotation = -8,
+			})
+			up:Play()
+			up.Completed:Wait()
+			if not bang.Parent or not active then
+				break
+			end
+			local down = TweenService:Create(bang, EXCLAIM_PULSE, {
+				Size = UDim2.fromOffset(42, 42),
+				Rotation = 8,
+			})
+			down:Play()
+			down.Completed:Wait()
+		end
+		if bang.Parent then
+			bang.Rotation = 0
+			bang.Size = UDim2.fromOffset(42, 42)
+		end
+	end)
+end
+
+local function showPanel(text: string, animateIn: boolean)
+	ensureGui()
+	if not gui or not panel or not objectiveLabel or not panelScale then
+		return
+	end
+	gui.Enabled = true
+	objectiveLabel.Text = text
+	if animateIn then
+		panelScale.Scale = 0.82
+		panel.Position = UDim2.new(0, -40, 0, 96)
+		TweenService:Create(panelScale, PANEL_OPEN, { Scale = 1 }):Play()
+		TweenService:Create(panel, PANEL_OPEN, { Position = UDim2.new(0, 18, 0, 96) }):Play()
+	else
+		panelScale.Scale = 0.92
+		TweenService:Create(panelScale, PANEL_SWAP, { Scale = 1 }):Play()
+	end
+end
+
+local function hidePanel()
+	if not gui or not panel or not panelScale then
+		return
+	end
+	local s = panelScale
+	local p = panel
+	local g = gui
+	TweenService:Create(s, PANEL_SWAP, { Scale = 0.8 }):Play()
+	local tw = TweenService:Create(p, PANEL_SWAP, {
+		Position = UDim2.new(0, -80, 0, 96),
+	})
+	tw:Play()
+	tw.Completed:Once(function()
+		if g then
+			g.Enabled = false
+		end
+	end)
+end
+
+local function pointAtWorld(adornee: Instance?, offset: Vector3?)
+	clearWorldArrow()
+	if not adornee then
+		return
+	end
+	local part: BasePart? = nil
+	if adornee:IsA("BasePart") then
+		part = adornee
+	elseif adornee:IsA("Model") then
+		part = adornee.PrimaryPart or adornee:FindFirstChildWhichIsA("BasePart", true)
+	end
+	if not part then
+		return
+	end
+
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "TutorialWorldArrow"
+	bb.AlwaysOnTop = true
+	bb.Size = UDim2.fromOffset(64, 64)
+	bb.StudsOffset = offset or Vector3.new(0, 4.5, 0)
+	bb.MaxDistance = 400
+	bb.Adornee = part
+	bb.Parent = player:FindFirstChild("PlayerGui") or Workspace.CurrentCamera
+
+	local img = Instance.new("ImageLabel")
+	img.BackgroundTransparency = 1
+	img.Size = UDim2.fromScale(1, 1)
+	img.Image = TutorialConfig.WORLD_ARROW_IMAGE
+	img.Rotation = 90
+	img.ScaleType = Enum.ScaleType.Fit
+	img.Parent = bb
+
+	worldArrowBb = bb
+	worldArrowImg = img
+
+	task.spawn(function()
+		while worldArrowImg == img and img.Parent and active do
+			local a = TweenService:Create(img, ARROW_BOB, {
+				Position = UDim2.new(0, 8, 0, 0),
+				Size = UDim2.fromScale(1.08, 1.08),
+			})
+			a:Play()
+			a.Completed:Wait()
+			if worldArrowImg ~= img then
+				break
+			end
+			local b = TweenService:Create(img, ARROW_BOB, {
+				Position = UDim2.new(0, -4, 0, 0),
+				Size = UDim2.fromScale(1, 1),
+			})
+			b:Play()
+			b.Completed:Wait()
+		end
+	end)
+end
+
+local function pointAtGui(target: GuiObject?)
+	clearUiPointer()
+	ensureGui()
+	if not target or not root then
+		return
+	end
+
+	local pointer = Instance.new("ImageLabel")
+	pointer.Name = "TutorialUiClick"
+	pointer.BackgroundTransparency = 1
+	pointer.Size = UDim2.fromOffset(48, 48)
+	pointer.AnchorPoint = Vector2.new(0.5, 0.5)
+	pointer.Image = TutorialConfig.UI_CLICK_IMAGE
+	pointer.ScaleType = Enum.ScaleType.Fit
+	pointer.ZIndex = 20
+	pointer.Parent = root
+	uiPointer = pointer
+
+	task.spawn(function()
+		while uiPointer == pointer and pointer.Parent and active and target.Parent do
+			local abs = target.AbsolutePosition
+			local size = target.AbsoluteSize
+			pointer.Position = UDim2.fromOffset(abs.X + size.X * 0.72, abs.Y + size.Y * 0.55)
+			local up = TweenService:Create(pointer, CLICK_BOUNCE, {
+				Size = UDim2.fromOffset(54, 54),
+				Rotation = -12,
+			})
+			up:Play()
+			up.Completed:Wait()
+			if uiPointer ~= pointer then
+				break
+			end
+			local down = TweenService:Create(pointer, CLICK_BOUNCE, {
+				Size = UDim2.fromOffset(48, 48),
+				Rotation = 8,
+			})
+			down:Play()
+			down.Completed:Wait()
+			task.wait(0.05)
+		end
+	end)
+end
+
+local function resolveUpgradeStandPart(): BasePart?
+	local map = Workspace:FindFirstChild("Map")
+	local stands = map and map:FindFirstChild("UIStands")
+	local upgrade = stands and stands:FindFirstChild("Upgrade Stand")
+	if not upgrade then
+		return nil
+	end
+	local hitbox = upgrade:FindFirstChild("UpgradePadHitbox")
+	if hitbox and hitbox:IsA("BasePart") then
+		return hitbox
+	end
+	return upgrade:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function resolveLand1SwingTarget(): BasePart?
+	local best: BasePart? = nil
+	local bestDist = math.huge
+	local map = Workspace:FindFirstChild("Map")
+	local lands = map and map:FindFirstChild("Lands")
+	local land1 = lands and lands:FindFirstChild("Land1")
+	local origin = Vector3.zero
+	if land1 and land1:IsA("Model") then
+		local ok, pivot = pcall(function()
+			return (land1 :: Model):GetPivot()
+		end)
+		if ok and typeof(pivot) == "CFrame" then
+			origin = (pivot :: CFrame).Position
+		end
+	end
+
+	for _, inst in CollectionService:GetTagged("SwingTarget") do
+		if inst:IsA("BasePart") then
+			local land = LandResolver.resolveLandAtPosition(inst.Position)
+			if land == 1 then
+				local dist = (inst.Position - origin).Magnitude
+				if dist < bestDist then
+					bestDist = dist
+					best = inst
+				end
+			end
+		end
+	end
+	if best then
+		return best
+	end
+	if land1 then
+		for _, d in land1:GetDescendants() do
+			if d:IsA("BasePart") and (d.Name == "SwingTarget" or d.Name == "SwingPart") then
+				return d
+			end
+		end
+	end
+	return nil
+end
+
+local function resolveNearestBush(): BasePart?
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local origin = if hrp and hrp:IsA("BasePart") then hrp.Position else Vector3.zero
+	local best: BasePart? = nil
+	local bestDist = math.huge
+	for _, d in Workspace:GetDescendants() do
+		if d:IsA("ProximityPrompt") and CarryGate.isBushSearchPrompt(d) then
+			local parent = d.Parent
+			local part: BasePart? = nil
+			if parent and parent:IsA("BasePart") then
+				part = parent
+			elseif parent then
+				part = parent:FindFirstChildWhichIsA("BasePart", true)
+			end
+			if part then
+				local dist = (part.Position - origin).Magnitude
+				if dist < bestDist then
+					bestDist = dist
+					best = part
+				end
+			end
+		end
+	end
+	return best
+end
+
+local function resolvePlayerPlotStand(): BasePart?
+	local plot = PlotPaths.findPlotForAssignedSlot(player)
+	if not plot then
+		return nil
+	end
+	for _, d in plot:GetDescendants() do
+		if d:IsA("Model") and (d:HasTag("BrainrotStand") or d:GetAttribute("BrainrotStand") == true) then
+			if d:GetAttribute("BrainrotName") == nil then
+				local part = d.PrimaryPart or d:FindFirstChildWhichIsA("BasePart", true)
+				if part then
+					return part
+				end
+			end
+		end
+	end
+	for _, d in plot:GetDescendants() do
+		if d:IsA("Model") and (d:HasTag("BrainrotStand") or d:GetAttribute("BrainrotStand") == true) then
+			local part = d.PrimaryPart or d:FindFirstChildWhichIsA("BasePart", true)
+			if part then
+				return part
+			end
+		end
+	end
+	return nil
+end
+
+local function cacheUpgradesBuyButton()
+	if powerBuyButton and powerBuyButton.Parent then
+		return powerBuyButton
+	end
+	local main = PlayerGuiMain.ensure(player)
+	if not main then
+		return nil
+	end
+	local frames = main:FindFirstChild("Frames")
+	local upgrades = frames and frames:FindFirstChild("Upgrades")
+	if upgrades and upgrades:IsA("Frame") then
+		upgradesFrame = upgrades
+	end
+	if not upgrades then
+		return nil
+	end
+	local container = upgrades:FindFirstChild("Container")
+	local row = container and container:FindFirstChild("Power10")
+	if not row then
+		row = upgrades:FindFirstChild("Power10", true)
+	end
+	if not row then
+		return nil
+	end
+	local buyButtons = row:FindFirstChild("BuyButtons", true)
+	local buy = buyButtons and buyButtons:FindFirstChild("Buy")
+	local btn = if buy then buy:FindFirstChildWhichIsA("GuiButton", true) or (buy:IsA("GuiButton") and buy) else nil
+	if not btn then
+		btn = row:FindFirstChildWhichIsA("GuiButton", true)
+	end
+	if btn and btn:IsA("GuiObject") then
+		powerBuyButton = btn
+		return btn
+	end
+	return nil
+end
+
+local function currentStep(): TutorialConfig.StepDef?
+	return TutorialConfig.STEPS[stepIndex]
+end
+
+local function refreshPointers()
+	clearWorldArrow()
+	clearUiPointer()
+	clearSpotlight()
+	local step = currentStep()
+	if not step then
+		return
+	end
+	if step.id == "visitUpgrade" then
+		pointAtWorld(resolveUpgradeStandPart(), Vector3.new(0, 5, 0))
+	elseif step.id == "buyPower" then
+		local btn = cacheUpgradesBuyButton()
+		if btn and upgradesFrame and upgradesFrame.Visible then
+			pointAtGui(btn)
+		else
+			pointAtWorld(resolveUpgradeStandPart(), Vector3.new(0, 5, 0))
+		end
+	elseif step.id == "swingLand1" then
+		pointAtWorld(resolveLand1SwingTarget() or resolveUpgradeStandPart(), Vector3.new(0, 6, 0))
+	elseif step.id == "searchBush" then
+		pointAtWorld(resolveNearestBush(), Vector3.new(0, 4, 0))
+	elseif step.id == "claimBrainrot" then
+		local offer = BushFloatingClaimController.getActiveOfferUi and BushFloatingClaimController.getActiveOfferUi()
+		if offer and offer.acceptBtn then
+			claimSpotlightActive = true
+			if dimOverlay then
+				dimOverlay.Visible = true
+			end
+			pointAtGui(offer.acceptBtn)
+		end
+	elseif step.id == "placeOnPlot" then
+		pointAtWorld(resolvePlayerPlotStand(), Vector3.new(0, 5, 0))
+	end
+end
+
+local function finishTutorial()
+	if not active then
+		return
+	end
+	active = false
+	speakToken += 1
+	clearWorldArrow()
+	clearUiPointer()
+	clearSpotlight()
+	if heartbeatConn then
+		heartbeatConn:Disconnect()
+		heartbeatConn = nil
+	end
+	for _, conn in attrConns do
+		conn:Disconnect()
+	end
+	table.clear(attrConns)
+	fireConfettiAndShake()
+	hidePanel()
+	local rf = getCompleteRemote()
+	if rf then
+		task.spawn(function()
+			local ok, err = pcall(function()
+				rf:InvokeServer()
+			end)
+			if not ok then
+				warn("[TutorialController] CompleteTutorial failed:", err)
+			end
+		end)
+	else
+		player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, true)
+	end
+end
+
+local function stepIndexById(id: TutorialConfig.StepId): number?
+	for i, step in TutorialConfig.STEPS do
+		if step.id == id then
+			return i
+		end
+	end
+	return nil
+end
+
+local function advanceTo(index: number, opts: { celebrate: boolean? }?)
+	if not active then
+		return
+	end
+	if index > #TutorialConfig.STEPS then
+		finishTutorial()
+		return
+	end
+	local celebrate = if opts and opts.celebrate == false then false else true
+	local first = stepIndex == 0
+	if celebrate and stepIndex > 0 and index > stepIndex then
+		fireConfettiAndShake()
+	end
+	stepIndex = index
+	local step = TutorialConfig.STEPS[stepIndex]
+	if not step then
+		finishTutorial()
+		return
+	end
+	showPanel(step.text, first)
+	speakLine(step.speak or step.text)
+	refreshPointers()
+end
+
+local function completeCurrentIf(id: TutorialConfig.StepId)
+	local step = currentStep()
+	if not step or step.id ~= id then
+		return
+	end
+	advanceTo(stepIndex + 1)
+end
+
+local function goToStep(id: TutorialConfig.StepId, celebrate: boolean?)
+	local index = stepIndexById(id)
+	if not index then
+		return
+	end
+	advanceTo(index, { celebrate = celebrate == true })
+end
+
+local function watchStepProgress()
+	if heartbeatConn then
+		heartbeatConn:Disconnect()
+	end
+	heartbeatConn = RunService.Heartbeat:Connect(function()
+		if not active then
+			return
+		end
+		local step = currentStep()
+		if not step then
+			return
+		end
+		local now = os.clock()
+		if step.id == "buyPower" then
+			local btn = cacheUpgradesBuyButton()
+			if btn and upgradesFrame and upgradesFrame.Visible then
+				if not uiPointer then
+					clearWorldArrow()
+					pointAtGui(btn)
+				end
+			end
+		elseif step.id == "swingLand1" and now - lastLandCheck > 0.35 then
+			lastLandCheck = now
+			local char = player.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if hrp and hrp:IsA("BasePart") then
+				local land = LandResolver.resolveLandAtPosition(hrp.Position)
+				if land == 1 then
+					completeCurrentIf("swingLand1")
+				end
+			end
+		elseif step.id == "claimBrainrot" and claimSpotlightActive then
+			local offer = BushFloatingClaimController.getActiveOfferUi and BushFloatingClaimController.getActiveOfferUi()
+			if offer and offer.acceptBtn and spotlightHole and uiPointer then
+				local abs = offer.acceptBtn.AbsolutePosition
+				local size = offer.acceptBtn.AbsoluteSize
+				local cx = abs.X + size.X * 0.5
+				local cy = abs.Y + size.Y * 0.5
+				spotlightHole.Visible = true
+				spotlightHole.Position = UDim2.fromOffset(cx, cy)
+				spotlightHole.Size = UDim2.fromOffset(math.max(size.X + 28, 110), math.max(size.Y + 20, 52))
+				uiPointer.Position = UDim2.fromOffset(cx + size.X * 0.35, cy + size.Y * 0.25)
+			elseif not BushFloatingClaimController.hasActiveOffer() then
+				clearSpotlight()
+			end
+		elseif step.id == "placeOnPlot" and now - lastLandCheck > 0.4 then
+			lastLandCheck = now
+			local plot = PlotPaths.findPlotForAssignedSlot(player)
+			if plot then
+				for _, d in plot:GetDescendants() do
+					if d:IsA("Model") and typeof(d:GetAttribute("BrainrotName")) == "string" then
+						local ownerId = d:GetAttribute("StandOwnerUserId")
+						if ownerId == nil or ownerId == player.UserId then
+							completeCurrentIf("placeOnPlot")
+							return
+						end
+					end
+				end
+			end
+		end
+	end)
+end
+
+local function bindGameplayHooks()
+	for _, conn in attrConns do
+		conn:Disconnect()
+	end
+	table.clear(attrConns)
+
+	table.insert(
+		attrConns,
+		player:GetAttributeChangedSignal(SwingUpgrades.POWER_LEVEL_ATTR):Connect(function()
+			local lvl = player:GetAttribute(SwingUpgrades.POWER_LEVEL_ATTR)
+			if typeof(lvl) == "number" and lvl > 0 then
+				completeCurrentIf("buyPower")
+			end
+		end)
+	)
+
+	local main = PlayerGuiMain.ensure(player)
+	if main then
+		local frames = main:FindFirstChild("Frames")
+		local upgrades = frames and frames:FindFirstChild("Upgrades")
+		if upgrades and upgrades:IsA("GuiObject") then
+			upgradesFrame = upgrades :: Frame
+			table.insert(
+				attrConns,
+				upgrades:GetPropertyChangedSignal("Visible"):Connect(function()
+					if upgrades.Visible then
+						completeCurrentIf("visitUpgrade")
+						task.defer(refreshPointers)
+					end
+				end)
+			)
+		end
+	end
+
+	-- Pad visit fallback if dialogue is skipped
+	task.spawn(function()
+		local pad = resolveUpgradeStandPart()
+		if not pad then
+			return
+		end
+		while active do
+			local step = currentStep()
+			if step and step.id == "visitUpgrade" then
+				local char = player.Character
+				local hrp = char and char:FindFirstChild("HumanoidRootPart")
+				if hrp and hrp:IsA("BasePart") then
+					local localPt = pad.CFrame:PointToObjectSpace(hrp.Position)
+					local half = pad.Size * 0.5 + Vector3.new(2, 4, 2)
+					if math.abs(localPt.X) <= half.X and math.abs(localPt.Y) <= half.Y and math.abs(localPt.Z) <= half.Z then
+						completeCurrentIf("visitUpgrade")
+					end
+				end
+			end
+			task.wait(0.25)
+		end
+	end)
+end
+
+function M.start(force: boolean?)
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true and not force then
+		return
+	end
+	if active then
+		return
+	end
+	active = true
+	stepIndex = 0
+	ensureGui()
+	bindGameplayHooks()
+	watchStepProgress()
+	advanceTo(1)
+end
+
+function M.stop()
+	if not active then
+		return
+	end
+	active = false
+	speakToken += 1
+	clearWorldArrow()
+	clearUiPointer()
+	clearSpotlight()
+	if heartbeatConn then
+		heartbeatConn:Disconnect()
+		heartbeatConn = nil
+	end
+	for _, conn in attrConns do
+		conn:Disconnect()
+	end
+	table.clear(attrConns)
+	hidePanel()
+end
+
+function M.init()
+	local hooksBound = false
+	local function bindOfferHooksOnce()
+		if hooksBound then
+			return
+		end
+		hooksBound = true
+		BushFloatingClaimController.registerOfferHook(function(_model, ui)
+			completeCurrentIf("searchBush")
+			task.defer(function()
+				local step = currentStep()
+				if step and step.id == "claimBrainrot" then
+					refreshPointers()
+					if ui and ui.acceptBtn then
+						claimSpotlightActive = true
+						if dimOverlay then
+							dimOverlay.Visible = true
+						end
+						pointAtGui(ui.acceptBtn)
+					end
+				end
+			end)
+		end)
+		BushFloatingClaimController.registerAcceptHook(function(_model)
+			completeCurrentIf("claimBrainrot")
+		end)
+		BushFloatingClaimController.registerDeclineHook(function(_model)
+			local step = currentStep()
+			if step and step.id == "claimBrainrot" then
+				clearSpotlight()
+				clearUiPointer()
+				goToStep("searchBush", false)
+			end
+		end)
+	end
+
+	task.spawn(function()
+		while player.Parent and player:GetAttribute(PlayerDataSchema.LOADED_ATTR) ~= true do
+			player:GetAttributeChangedSignal(PlayerDataSchema.LOADED_ATTR):Wait()
+		end
+		if not player.Parent then
+			return
+		end
+
+		task.wait(1.25)
+		bindOfferHooksOnce()
+
+		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_REPLAY_ATTR):Connect(function()
+			M.stop()
+			task.wait(0.15)
+			M.start(true)
+		end)
+
+		if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+			M.start(false)
+		end
+	end)
+end
+
+return M

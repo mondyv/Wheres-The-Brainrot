@@ -299,6 +299,15 @@ end
 
 StandDialogueCutscene.playVoiceLetter = playVoiceLetter
 
+function StandDialogueCutscene.setVoicePitch(minPitch: number?, maxPitch: number?)
+	if typeof(minPitch) == "number" then
+		activeVoicePitchMin = minPitch
+	end
+	if typeof(maxPitch) == "number" then
+		activeVoicePitchMax = maxPitch
+	end
+end
+
 local function bindMoveLock()
 	ContextActionService:BindActionAtPriority(
 		LOCK_ACTION,

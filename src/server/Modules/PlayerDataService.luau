@@ -370,6 +370,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		stands = stands,
 		lastSavedAt = os.time(),
 		settings = collectSettings(player),
+		tutorialCompleted = player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true,
 	}
 end
 
@@ -422,6 +423,7 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	applyStorePurchases(player, (data :: any).storePurchases)
 	applyGiftedGamepasses(player, (data :: any).giftedGamepasses)
 	applySettings(player, (data :: any).settings)
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, data.tutorialCompleted == true)
 
 	SwingUpgrades.syncGameplayStatsFromLevels(player, {
 		power = data.powerLevel,
@@ -562,6 +564,8 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		stands = stands,
 		lastSavedAt = floorNum(raw.lastSavedAt, 0),
 		settings = normalizeSettings(raw.settings),
+		-- Missing field = returning player before tutorial shipped → treat as done.
+		tutorialCompleted = if typeof(raw.tutorialCompleted) == "boolean" then raw.tutorialCompleted else true,
 	}
 end
 
@@ -648,6 +652,7 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		stands = {},
 		lastSavedAt = os.time(),
 		settings = PlayerDataSchema.DEFAULT_SETTINGS,
+		tutorialCompleted = false,
 	}
 end
 
@@ -684,6 +689,7 @@ function M.resetPlayerData(player: Player): (boolean, string?)
 	applyAttributes(player, fresh)
 	SwingUpgrades.resetLevels(player)
 	player:SetAttribute("BrainrotCarryCount", 0)
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, false)
 	applyPlotFloor(player, fresh.baseFloorLevel)
 
 	invokeInternal("ImportInventoryFromSave", player, {
@@ -733,6 +739,29 @@ end
 
 function M.markLoaded(player: Player)
 	player:SetAttribute(LOADED_ATTR, true)
+end
+
+function M.setTutorialCompleted(player: Player, completed: boolean)
+	if not player.Parent then
+		return
+	end
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, completed == true)
+	if player:GetAttribute(LOADED_ATTR) == true then
+		M.savePlayerData(player)
+	end
+end
+
+function M.replayTutorial(player: Player)
+	if not player.Parent then
+		return
+	end
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, false)
+	local nonce = player:GetAttribute(PlayerDataSchema.TUTORIAL_REPLAY_ATTR)
+	local nextNonce = if typeof(nonce) == "number" then nonce + 1 else 1
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_REPLAY_ATTR, nextNonce)
+	if player:GetAttribute(LOADED_ATTR) == true then
+		M.savePlayerData(player)
+	end
 end
 
 function M.bindPlayer(player: Player)

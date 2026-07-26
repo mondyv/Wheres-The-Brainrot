@@ -70,6 +70,7 @@ export type PlayerSaveData = {
 	storePurchases: StorePurchasesSaveData?,
 	giftedGamepasses: GiftedGamepassesSaveData?,
 	settings: PlayerSettingsSaveData?,
+	tutorialCompleted: boolean?,
 }
 
 local M = {}
@@ -77,6 +78,8 @@ local M = {}
 M.VERSION = 1
 M.TOTAL_PLAY_TIME_ATTR = "TotalPlayTimeSeconds"
 M.LOADED_ATTR = "PlayerDataLoaded"
+M.TUTORIAL_COMPLETED_ATTR = "TutorialCompleted"
+M.TUTORIAL_REPLAY_ATTR = "TutorialReplayNonce"
 
 M.SETTINGS_MUSIC_VOLUME_ATTR = "SettingsMusicVolume"
 M.SETTINGS_SFX_VOLUME_ATTR = "SettingsSfxVolume"

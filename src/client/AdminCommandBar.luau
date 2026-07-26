@@ -152,6 +152,8 @@ local COMMAND_HINTS: { [string]: string } = {
 	globalspawn = "Force a rarity spawn on every server",
 	servernotif = "Top notification on this server",
 	globalnotif = "Top notification on all servers",
+	playtutorial = "Replay the first-join tutorial",
+	fly = "Toggle fly mode for yourself",
 }
 
 local function isPhoneLike(): boolean
@@ -344,6 +346,8 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "globalspawn mythic", hint = COMMAND_HINTS.globalspawn },
 		{ fill = "servernotif Event starting now!", hint = COMMAND_HINTS.servernotif },
 		{ fill = "globalnotif Double luck weekend!", hint = COMMAND_HINTS.globalnotif },
+		{ fill = "playtutorial", hint = COMMAND_HINTS.playtutorial },
+		{ fill = "fly", hint = COMMAND_HINTS.fly },
 	}
 end
 

@@ -297,7 +297,16 @@ local function ensureGui()
 	label.Text = ""
 	label.ZIndex = 3
 	label.Parent = panelFrame
-	UiFonts.applyButton(label)
+	UiFonts.applyBody(label)
+	-- Keep Press Start 2P / Arcade, but prefer bold weight when available.
+	local boldOk, boldFace = pcall(function()
+		return Font.new(label.FontFace.Family, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+	end)
+	if boldOk and typeof(boldFace) == "Font" then
+		label.FontFace = boldFace
+	end
+	label.TextStrokeTransparency = 0.55
+	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 
 	local dim = Instance.new("Frame")
 	dim.Name = "ClaimDim"

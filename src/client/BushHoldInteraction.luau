@@ -353,7 +353,7 @@ end
 
 -- ── Targeting ─────────────────────────────────────────────────────────────────
 
-local HIGHLIGHT_READY = Color3.fromRGB(36, 42, 52)
+local HIGHLIGHT_READY = Color3.fromRGB(72, 255, 140)
 local HIGHLIGHT_LOCKED = Color3.fromRGB(255, 45, 45)
 
 local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean)
@@ -371,7 +371,7 @@ local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean
 		else
 			local custom = if bushOutlineColorProvider then bushOutlineColorProvider(bush) else nil
 			hl.OutlineColor = custom or HIGHLIGHT_READY
-			hl.OutlineTransparency = if custom then 0 else 0.2
+			hl.OutlineTransparency = if custom then 0 else 0.05
 		end
 	end
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
@@ -821,8 +821,8 @@ function BushHoldInteraction.init()
 		aimHighlight = Instance.new("Highlight")
 		aimHighlight.Name = "BushAimHighlight"
 		aimHighlight.FillTransparency = 1
-		aimHighlight.OutlineColor = Color3.fromRGB(36, 42, 52)
-		aimHighlight.OutlineTransparency = 0.2
+		aimHighlight.OutlineColor = Color3.fromRGB(72, 255, 140)
+		aimHighlight.OutlineTransparency = 0.05
 		aimHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 		aimHighlight.Enabled = false
 		aimHighlight.Parent = workspace.CurrentCamera

@@ -16,6 +16,10 @@ M.BADGE_BG = Color3.fromRGB(24, 28, 34)
 M.BADGE_BG_TRANSPARENCY = 0.12
 M.HOLD_GREEN = Color3.fromRGB(36, 165, 88)
 M.HOLD_GREEN_BRIGHT = Color3.fromRGB(95, 255, 145)
+-- Neutral hold fill for bush search cards (green outline lives on the bush Highlight, not the prompt).
+M.BUSH_HOLD_FILL = Color3.fromRGB(210, 218, 232)
+M.BUSH_HOLD_FILL_BRIGHT = Color3.fromRGB(235, 240, 248)
+M.BUSH_HOLD_BADGE = Color3.fromRGB(58, 64, 76)
 M.PRESS_FLASH = Color3.fromRGB(255, 228, 88)
 M.HOLD_COMPLETE_FLASH = Color3.fromRGB(210, 255, 230)
 M.TEXT_PRIMARY = Color3.fromRGB(248, 250, 252)

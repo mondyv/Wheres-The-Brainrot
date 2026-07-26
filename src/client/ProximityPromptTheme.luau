@@ -239,6 +239,7 @@ end
 
 function M.applyBushSearchStyle(parts: CardParts)
 	parts.keyBadge.BackgroundTransparency = C.BUSH_SEARCH_BADGE_BG_TRANSPARENCY
+	parts.keyBadge.BackgroundColor3 = C.BADGE_BG
 	parts.keyStroke.Color = C.KEY_CHIP_STROKE
 	parts.keyStroke.Transparency = C.BUSH_SEARCH_BADGE_STROKE_TRANSPARENCY
 	parts.rootStroke.Color = C.PANEL_STROKE
@@ -246,6 +247,16 @@ function M.applyBushSearchStyle(parts: CardParts)
 	parts.keyLabel.TextColor3 = C.TEXT_PRIMARY
 	-- Keep finger icon white (same as stand); tinting made TouchHold look blank.
 	parts.keyIcon.ImageColor3 = Color3.new(1, 1, 1)
+	-- Bush prompt hold ring: cool/neutral — green outline is on the bush model, not this card.
+	parts.holdFill.BackgroundColor3 = C.BUSH_HOLD_FILL_BRIGHT
+	local fillGrad = parts.holdFill:FindFirstChildOfClass("UIGradient")
+	if fillGrad then
+		fillGrad.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, C.BUSH_HOLD_FILL),
+			ColorSequenceKeypoint.new(0.5, C.BUSH_HOLD_FILL_BRIGHT),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(250, 252, 255)),
+		})
+	end
 end
 
 function M.resetBadgeVisuals(parts: CardParts, isBush: boolean, hasStandStrokeGradient: boolean)
@@ -270,13 +281,15 @@ function M.resetBadgeVisuals(parts: CardParts, isBush: boolean, hasStandStrokeGr
 end
 
 function M.applyHoldBadgeActive(parts: CardParts, isBush: boolean)
-	parts.keyBadge.BackgroundColor3 = C.HOLD_GREEN_BRIGHT
-	parts.keyStroke.Color = C.KEY_CHIP_STROKE
 	if isBush then
-		parts.keyBadge.BackgroundTransparency = 0.18
-		parts.keyStroke.Transparency = 0.2
-		parts.keyLabel.TextColor3 = Color3.fromRGB(16, 28, 20)
+		parts.keyBadge.BackgroundColor3 = C.BUSH_HOLD_BADGE
+		parts.keyStroke.Color = C.KEY_CHIP_STROKE
+		parts.keyBadge.BackgroundTransparency = 0.12
+		parts.keyStroke.Transparency = 0.22
+		parts.keyLabel.TextColor3 = C.TEXT_PRIMARY
 	else
+		parts.keyBadge.BackgroundColor3 = C.HOLD_GREEN_BRIGHT
+		parts.keyStroke.Color = C.KEY_CHIP_STROKE
 		parts.keyBadge.BackgroundTransparency = 0.05
 		parts.keyStroke.Transparency = 0.18
 		parts.keyLabel.TextColor3 = Color3.fromRGB(16, 28, 20)

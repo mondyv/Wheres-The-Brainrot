@@ -1447,11 +1447,11 @@ local function playHoldComplete(view: PromptView)
 	view.root.Rotation = 0
 	view.keyBadge.Rotation = 0
 
-	view.keyBadge.BackgroundColor3 = C.HOLD_GREEN_BRIGHT
+	view.keyBadge.BackgroundColor3 = if isManagedBushPrompt(view.prompt) then C.BUSH_HOLD_BADGE else C.HOLD_GREEN_BRIGHT
 	view.keyBadge.BackgroundTransparency = 0
 	view.keyStroke.Color = C.KEY_CHIP_STROKE
 	view.keyStroke.Transparency = C.KEY_CHIP_STROKE_TRANSPARENCY
-	view.keyLabel.TextColor3 = C.HOLD_COMPLETE_FLASH
+	view.keyLabel.TextColor3 = if isManagedBushPrompt(view.prompt) then C.TEXT_PRIMARY else C.HOLD_COMPLETE_FLASH
 
 	TweenService:Create(badgeScale, C.POP_TWEEN, { Scale = 1.22 }):Play()
 	task.delay(0.16, function()

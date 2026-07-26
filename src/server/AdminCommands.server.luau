@@ -1091,14 +1091,11 @@ commands.unban = {
 }
 
 commands.rebirth = {
-	usage = "rebirth <player|me>",
+	usage = "rebirth [player|me]",
 	description = "Force rebirth (skips requirements).",
 	run = function(sender: Player, args: { string }): (boolean, string)
-		if not args[1] then
-			return false, "Usage: " .. commands.rebirth.usage
-		end
-
-		local targets, targetErr = resolveTargets(sender, args[1], false)
+		local targetToken = args[1] or "me"
+		local targets, targetErr = resolveTargets(sender, targetToken, false)
 		if not targets then
 			return false, targetErr or "No target."
 		end
@@ -1106,23 +1103,34 @@ commands.rebirth = {
 			return false, "Rebirth only supports one player at a time."
 		end
 
-		local perform = waitForRebirthBindable("PerformRebirth")
+		local perform = waitForBindable("RebirthInternal", "PerformRebirth", 30)
 		if not perform then
 			return false, "Rebirth service is not ready."
 		end
 
 		local target = targets[1]
 		PlayerDataService.waitUntilLoaded(target)
-		local ok, err = (perform :: BindableFunction):Invoke(target, {
-			skipRequirements = true,
-		})
+		local invokeOk, ok, err = pcall(function()
+			return (perform :: BindableFunction):Invoke(target, {
+				skipRequirements = true,
+				keepUpgrades = false,
+			})
+		end)
+		if not invokeOk then
+			warn("[AdminCommands] rebirth invoke error:", ok)
+			return false, "Rebirth invoke failed. Check server output."
+		end
 		if not ok then
 			if err == "max_rebirth" then
 				return false, string.format("%s is already at max rebirth (%d).", target.Name, RebirthConfig.MAX_TIER)
 			end
-			return false, string.format("Rebirth failed for %s: %s", target.Name, tostring(err))
+			return false, string.format("Rebirth failed for %s: %s", target.Name, tostring(err or "unknown"))
 		end
-		return true, string.format("Rebirthed %s.", target.Name)
+		if target:GetAttribute("PlayerDataLoaded") == true then
+			PlayerDataService.savePlayerData(target)
+		end
+		local count = RebirthConfig.getRebirthCount(target)
+		return true, string.format("Rebirthed %s (now rebirth %d).", target.Name, count)
 	end,
 }
 

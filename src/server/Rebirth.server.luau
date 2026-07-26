@@ -13,8 +13,6 @@ local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local IndexService = require(script.Parent:WaitForChild("Modules"):WaitForChild("IndexService"))
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
-local ProductHandlerServer =
-	require(game:GetService("ServerScriptService").EssentialsServer.ProductHandler.ProductHandlerServer)
 
 local MAX_FLOOR = 4
 
@@ -179,6 +177,33 @@ local function performRebirth(player: Player, opts: { skipRequirements: boolean?
 	return true, nil
 end
 
+-- Register early so admin/daily can invoke without waiting on ProductHandler boot.
+do
+	local internalFolder = ServerStorage:FindFirstChild("RebirthInternal")
+	if not internalFolder then
+		internalFolder = Instance.new("Folder")
+		internalFolder.Name = "RebirthInternal"
+		internalFolder.Parent = ServerStorage
+	end
+	local bindable = internalFolder:FindFirstChild("PerformRebirth")
+	if not bindable then
+		bindable = Instance.new("BindableFunction")
+		bindable.Name = "PerformRebirth"
+		bindable.Parent = internalFolder
+	end
+	(bindable :: BindableFunction).OnInvoke = function(plr: any, opts: any)
+		if typeof(plr) ~= "Instance" or not (plr :: Instance):IsA("Player") then
+			return false, "invalid_player"
+		end
+		local options: { skipRequirements: boolean?, keepUpgrades: boolean? } = {}
+		if typeof(opts) == "table" then
+			options.skipRequirements = opts.skipRequirements == true
+			options.keepUpgrades = opts.keepUpgrades == true
+		end
+		return performRebirth(plr :: Player, options)
+	end
+end
+
 local cashConns: { [Player]: RBXScriptConnection } = {}
 
 local function initPlayer(player: Player)
@@ -239,50 +264,70 @@ local function notifyCloseStore(player: Player)
 	end
 end
 
-ProductHandlerServer.registerProductReceipt(RebirthConfig.SKIP_DEV_PRODUCT_ID, function(player: Player)
-	local ok = performRebirth(player, { skipRequirements = true, keepUpgrades = true })
-	if ok then
-		notifyCloseStore(player)
+task.spawn(function()
+	local ServerScriptService = game:GetService("ServerScriptService")
+	local essentials = ServerScriptService:WaitForChild("EssentialsServer", 120)
+	local handlerFolder = essentials and essentials:WaitForChild("ProductHandler", 30)
+	local moduleScript = handlerFolder and handlerFolder:WaitForChild("ProductHandlerServer", 30)
+	if not moduleScript or not moduleScript:IsA("ModuleScript") then
+		warn("[Rebirth] ProductHandlerServer unavailable; skip-rebirth products not registered")
+		return
 	end
-	return if ok
-		then Enum.ProductPurchaseDecision.PurchaseGranted
-		else Enum.ProductPurchaseDecision.NotProcessedYet
-end)
+	local okRequire, ProductHandlerServer = pcall(require, moduleScript)
+	if not okRequire or typeof(ProductHandlerServer) ~= "table" then
+		warn("[Rebirth] ProductHandlerServer require failed:", ProductHandlerServer)
+		return
+	end
+	if typeof(ProductHandlerServer.registerProductReceipt) ~= "function" then
+		warn("[Rebirth] ProductHandlerServer.registerProductReceipt missing")
+		return
+	end
 
-ProductHandlerServer.registerProductReceipt(SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID, function(player: Player)
-	local internal = ServerStorage:FindFirstChild("GameInternal")
-	local fulfill = internal and internal:FindFirstChild("FulfillRobuxUpgrade")
-	if fulfill and fulfill:IsA("BindableFunction") then
-		local ok = (fulfill :: BindableFunction):Invoke(player)
+	ProductHandlerServer.registerProductReceipt(RebirthConfig.SKIP_DEV_PRODUCT_ID, function(player: Player)
+		local ok = performRebirth(player, { skipRequirements = true, keepUpgrades = true })
 		if ok then
-			return Enum.ProductPurchaseDecision.PurchaseGranted
+			notifyCloseStore(player)
 		end
-	end
-	return Enum.ProductPurchaseDecision.NotProcessedYet
-end)
+		return if ok
+			then Enum.ProductPurchaseDecision.PurchaseGranted
+			else Enum.ProductPurchaseDecision.NotProcessedYet
+	end)
 
-ProductHandlerServer.registerProductReceipt(SwingUpgrades.SKIP_UPGRADE_25_DEV_PRODUCT_ID, function(player: Player)
-	local internal = ServerStorage:FindFirstChild("GameInternal")
-	local fulfill = internal and internal:FindFirstChild("FulfillRobuxUpgrade")
-	if fulfill and fulfill:IsA("BindableFunction") then
-		local ok = (fulfill :: BindableFunction):Invoke(player)
-		if ok then
-			return Enum.ProductPurchaseDecision.PurchaseGranted
+	ProductHandlerServer.registerProductReceipt(SwingUpgrades.SKIP_UPGRADE_DEV_PRODUCT_ID, function(player: Player)
+		local internal = ServerStorage:FindFirstChild("GameInternal")
+		local fulfill = internal and internal:FindFirstChild("FulfillRobuxUpgrade")
+		if fulfill and fulfill:IsA("BindableFunction") then
+			local ok = (fulfill :: BindableFunction):Invoke(player)
+			if ok then
+				return Enum.ProductPurchaseDecision.PurchaseGranted
+			end
 		end
-	end
-	return Enum.ProductPurchaseDecision.NotProcessedYet
-end)
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end)
 
-ProductHandlerServer.registerProductReceipt(SwingUpgrades.CARRY_SKIP_UPGRADE_DEV_PRODUCT_ID, function(player: Player)
-	local internal = ServerStorage:FindFirstChild("GameInternal")
-	local fulfill = internal and internal:FindFirstChild("FulfillRobuxUpgrade")
-	if fulfill and fulfill:IsA("BindableFunction") then
-		local ok = (fulfill :: BindableFunction):Invoke(player)
-		if ok then
-			return Enum.ProductPurchaseDecision.PurchaseGranted
+	ProductHandlerServer.registerProductReceipt(SwingUpgrades.SKIP_UPGRADE_25_DEV_PRODUCT_ID, function(player: Player)
+		local internal = ServerStorage:FindFirstChild("GameInternal")
+		local fulfill = internal and internal:FindFirstChild("FulfillRobuxUpgrade")
+		if fulfill and fulfill:IsA("BindableFunction") then
+			local ok = (fulfill :: BindableFunction):Invoke(player)
+			if ok then
+				return Enum.ProductPurchaseDecision.PurchaseGranted
+			end
 		end
-	end
-	return Enum.ProductPurchaseDecision.NotProcessedYet
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end)
+
+	ProductHandlerServer.registerProductReceipt(SwingUpgrades.CARRY_SKIP_UPGRADE_DEV_PRODUCT_ID, function(player: Player)
+		local internal = ServerStorage:FindFirstChild("GameInternal")
+		local fulfill = internal and internal:FindFirstChild("FulfillRobuxUpgrade")
+		if fulfill and fulfill:IsA("BindableFunction") then
+			local ok = (fulfill :: BindableFunction):Invoke(player)
+			if ok then
+				return Enum.ProductPurchaseDecision.PurchaseGranted
+			end
+		end
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end)
 end)
 
 Players.PlayerRemoving:Connect(function(player: Player)
@@ -299,34 +344,6 @@ for _, plr in Players:GetPlayers() do
 	task.defer(function()
 		initPlayer(plr)
 	end)
-end
-
--- Expose performRebirth as a BindableFunction so other server systems (e.g. the daily
--- "free rebirth" reward) can trigger it without circular requires.
-do
-	local internalFolder = ServerStorage:FindFirstChild("RebirthInternal")
-	if not internalFolder then
-		internalFolder = Instance.new("Folder")
-		internalFolder.Name = "RebirthInternal"
-		internalFolder.Parent = ServerStorage
-	end
-	local bindable = internalFolder:FindFirstChild("PerformRebirth")
-	if not bindable then
-		bindable = Instance.new("BindableFunction")
-		bindable.Name = "PerformRebirth"
-		bindable.Parent = internalFolder
-	end
-	(bindable :: BindableFunction).OnInvoke = function(plr: any, opts: any)
-		if typeof(plr) ~= "Instance" or not (plr :: Instance):IsA("Player") then
-			return false, "invalid_player"
-		end
-		local options: { skipRequirements: boolean?, keepUpgrades: boolean? } = {}
-		if typeof(opts) == "table" then
-			options.skipRequirements = opts.skipRequirements == true
-			options.keepUpgrades = opts.keepUpgrades == true
-		end
-		return performRebirth(plr :: Player, options)
-	end
 end
 
 return {

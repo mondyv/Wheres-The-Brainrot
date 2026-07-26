@@ -32,6 +32,9 @@ local PANEL_DIM_GUI_NAME = "PanelModalDim"
 local PANEL_BACKDROP_NAME = "PanelClickOutside"
 local BLUR_SIZE = 18
 local BLUR_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local MOBILE_PANEL_SCALE = 1.5
+-- Mobile: leave a clear ring around the dim so screen edges stay empty (no blur fill).
+local MOBILE_DIM_EDGE_CLEAR = 0.08
 
 local panelChromeHidden = false
 local panelBlur: BlurEffect? = nil
@@ -48,6 +51,14 @@ local function ensureHudRoots()
 	mainGui = PlayerGuiMain.ensure(player)
 	sideUI = mainGui:WaitForChild("SideUI")
 	framesFolder = mainGui:WaitForChild("Frames")
+end
+
+local function isMobileUi(): boolean
+	return UserInputService.TouchEnabled
+end
+
+local function panelRestScale(): number
+	return if isMobileUi() then MOBILE_PANEL_SCALE else 1
 end
 
 -- Tween configs
@@ -85,23 +96,6 @@ local function resolveFrame(name: string): Frame?
 	return (framesFolder :: Instance):FindFirstChild(name) :: Frame?
 end
 
-local function ensurePanelBlur()
-	local existing = Lighting:FindFirstChild(PANEL_BLUR_NAME)
-	if existing and existing:IsA("BlurEffect") then
-		panelBlur = existing
-	else
-		if existing then
-			existing:Destroy()
-		end
-		local blur = Instance.new("BlurEffect")
-		blur.Name = PANEL_BLUR_NAME
-		blur.Size = 0
-		blur.Parent = Lighting
-		panelBlur = blur
-	end
-	TweenService:Create(panelBlur :: BlurEffect, BLUR_TWEEN, { Size = BLUR_SIZE }):Play()
-end
-
 local function clearPanelBlur()
 	local blur = panelBlur or Lighting:FindFirstChild(PANEL_BLUR_NAME)
 	if blur and blur:IsA("BlurEffect") then
@@ -118,6 +112,29 @@ local function clearPanelBlur()
 	else
 		panelBlur = nil
 	end
+end
+
+local function ensurePanelBlur()
+	-- Mobile: skip full-screen Lighting blur so screen edges stay clear/empty.
+	-- Dim backdrop alone provides the modal focus.
+	if isMobileUi() then
+		clearPanelBlur()
+		return
+	end
+	local existing = Lighting:FindFirstChild(PANEL_BLUR_NAME)
+	if existing and existing:IsA("BlurEffect") then
+		panelBlur = existing
+	else
+		if existing then
+			existing:Destroy()
+		end
+		local blur = Instance.new("BlurEffect")
+		blur.Name = PANEL_BLUR_NAME
+		blur.Size = 0
+		blur.Parent = Lighting
+		panelBlur = blur
+	end
+	TweenService:Create(panelBlur :: BlurEffect, BLUR_TWEEN, { Size = BLUR_SIZE }):Play()
 end
 
 local function destroyPanelBackdrop()
@@ -189,83 +206,6 @@ local function ensurePanelCloseOnTop(frame: Frame)
 	end
 end
 
-local function ensurePanelEdgeBars()
-	-- Mobile safe-area strips often sit outside Main's inset layout, so Lighting blur
-	-- leaves crisp bands at the top/bottom. Cover those with dim bars.
-	if not UserInputService.TouchEnabled then
-		if panelDimGui then
-			panelDimGui:Destroy()
-			panelDimGui = nil
-		end
-		return
-	end
-
-	local pg = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 5)
-	if not pg then
-		return
-	end
-
-	if panelDimGui and panelDimGui.Parent then
-		panelDimGui.Enabled = true
-		return
-	end
-
-	local existing = pg:FindFirstChild(PANEL_DIM_GUI_NAME)
-	if existing then
-		existing:Destroy()
-	end
-
-	ensureHudRoots()
-	local mainOrder = if mainGui then mainGui.DisplayOrder else 10
-
-	local gui = Instance.new("ScreenGui")
-	gui.Name = PANEL_DIM_GUI_NAME
-	gui.ResetOnSpawn = false
-	gui.IgnoreGuiInset = true
-	gui.DisplayOrder = mainOrder
-	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	pcall(function()
-		(gui :: any).ClipToDeviceSafeArea = false
-	end)
-	pcall(function()
-		(gui :: any).SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
-	end)
-	pcall(function()
-		(gui :: any).ScreenInsets = Enum.ScreenInsets.None
-	end)
-
-	local inset = GuiService:GetGuiInset()
-	local topH = math.max(inset.Y + 10, 48)
-	local bottomH = math.max(inset.Y * 0.35 + 52, 56)
-
-	local topBar = Instance.new("Frame")
-	topBar.Name = "TopEdgeBar"
-	topBar.BackgroundColor3 = Color3.new(0, 0, 0)
-	topBar.BackgroundTransparency = 0.35
-	topBar.BorderSizePixel = 0
-	topBar.AnchorPoint = Vector2.new(0, 0)
-	topBar.Position = UDim2.fromScale(0, 0)
-	topBar.Size = UDim2.new(1, 0, 0, topH)
-	topBar.ZIndex = 1
-	topBar.Active = false
-	topBar.Parent = gui
-
-	local bottomBar = Instance.new("Frame")
-	bottomBar.Name = "BottomEdgeBar"
-	bottomBar.BackgroundColor3 = Color3.new(0, 0, 0)
-	bottomBar.BackgroundTransparency = 0.35
-	bottomBar.BorderSizePixel = 0
-	bottomBar.AnchorPoint = Vector2.new(0, 1)
-	bottomBar.Position = UDim2.fromScale(0, 1)
-	bottomBar.Size = UDim2.new(1, 0, 0, bottomH)
-	bottomBar.ZIndex = 1
-	bottomBar.Active = false
-	bottomBar.Parent = gui
-
-	gui.Parent = pg
-	panelDimGui = gui
-end
-
 local function ensurePanelBackdrop()
 	ensureHudRoots()
 	local frames = framesFolder
@@ -279,11 +219,6 @@ local function ensurePanelBackdrop()
 		(frames :: GuiObject).ClipsDescendants = false
 	end
 
-	local inset = GuiService:GetGuiInset()
-	local bottomExtra = if UserInputService.TouchEnabled then 72 else 28
-	local padX = math.max(inset.X, 8)
-	local padTop = math.max(inset.Y, 8)
-
 	local backdrop = Instance.new("TextButton")
 	backdrop.Name = PANEL_BACKDROP_NAME
 	backdrop.AutoButtonColor = false
@@ -291,12 +226,25 @@ local function ensurePanelBackdrop()
 	backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
 	backdrop.BackgroundTransparency = 0.55
 	backdrop.BorderSizePixel = 0
-	backdrop.Position = UDim2.fromOffset(-padX, -padTop)
-	backdrop.Size = UDim2.new(1, padX * 2, 1, padTop + bottomExtra)
-	backdrop.AnchorPoint = Vector2.new(0, 0)
+	backdrop.AnchorPoint = Vector2.new(0.5, 0.5)
 	backdrop.ZIndex = 12
 	backdrop.Active = true
 	backdrop.Parent = frames
+
+	if isMobileUi() then
+		-- Centered dim with clear margins — edges stay empty (no edge fill bars).
+		local clear = MOBILE_DIM_EDGE_CLEAR
+		backdrop.Position = UDim2.fromScale(0.5, 0.5)
+		backdrop.Size = UDim2.fromScale(1 - clear * 2, 1 - clear * 2)
+	else
+		local inset = GuiService:GetGuiInset()
+		local padX = math.max(inset.X, 8)
+		local padTop = math.max(inset.Y, 8)
+		local bottomExtra = 28
+		backdrop.AnchorPoint = Vector2.new(0, 0)
+		backdrop.Position = UDim2.fromOffset(-padX, -padTop)
+		backdrop.Size = UDim2.new(1, padX * 2, 1, padTop + bottomExtra)
+	end
 
 	backdrop.Activated:Connect(function()
 		local frame = currentFrame
@@ -333,7 +281,6 @@ local function ensurePanelBackdrop()
 	end)
 
 	panelBackdrop = backdrop
-	ensurePanelEdgeBars()
 end
 
 local function ensurePanelClickSink(frame: Frame)
@@ -441,9 +388,10 @@ local syncFramesInputPassthrough: () -> ()
 
 local function animateOpen(frame: Frame)
 	frame.Visible = true
+	local rest = panelRestScale()
 	local scale = getOrAddUIScale(frame)
-	scale.Scale = 0.82
-	TweenService:Create(scale, OPEN_TWEEN, { Scale = 1 }):Play()
+	scale.Scale = rest * 0.82
+	TweenService:Create(scale, OPEN_TWEEN, { Scale = rest }):Play()
 	PanelSlideIn.playForPanel(frame)
 end
 
@@ -454,14 +402,15 @@ local function animateClose(frame: Frame)
 		prevTween:Cancel()
 		closeTweenByFrame[frame] = nil
 	end
+	local rest = panelRestScale()
 	local scale = getOrAddUIScale(frame)
-	local t = TweenService:Create(scale, CLOSE_TWEEN, { Scale = 0.72 })
+	local t = TweenService:Create(scale, CLOSE_TWEEN, { Scale = rest * 0.72 })
 	closeTweenByFrame[frame] = t
 	t.Completed:Once(function()
 		closeTweenByFrame[frame] = nil
 		frame.Visible = false
 		frame.Active = false
-		scale.Scale = 0.82
+		scale.Scale = rest * 0.82
 		if syncFramesInputPassthrough then
 			syncFramesInputPassthrough()
 		end

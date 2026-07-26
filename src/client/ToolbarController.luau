@@ -8,11 +8,13 @@
 	  └── Toolbar
 	      ├── Hotbar
 	      │   └── 1 .. 9   (slot frames with nested Button)
-	      ├── ToggleBackpack
-	      ├── ToggleBackpackImage  (icon toggle; lives in Hotbar row after visible slots)
-	  └── Backpack  (optional expanded view)
+	      ├── ToggleBackpack  (optional; opens inventory from hotbar / toolbar)
+	      └── Backpack
+	          ├── ToggleBackpackImage  (close icon; Studio-positioned; ONLY while inventory open)
+	          ├── Container, SortCatagory, OtherButtons, BackpackButtons, …
 
-	Studio layout: anchor Hotbar + Backpack at X=0.5 under Toolbar once at init. ToggleBackpackImage hides while the inventory panel is open (close via X).
+	Studio layout: anchor Hotbar + Backpack at X=0.5 under Toolbar once at init.
+	ToggleBackpackImage stays parented under Backpack and rides open/close slide — never reparented into Hotbar.
 	Hotbar slots may use nested `Button` (e.g. Hotbar["1"].Button.Icon).
 	Brainrot pickups: tuck/untuck via drag; ghost drag; search; backpack frame outline + open/close tweens.
 	Backpack UI reuses Backpack.Container and fills visible stashed brainrots from the top-left. Empty rows stay visible.
@@ -92,7 +94,11 @@ local function applyToolbarInitialHiddenState()
 			(slot :: GuiObject).Visible = false
 		end
 	end
-	local icon = toolbar:FindFirstChild("ToggleBackpackImage") or hotbar:FindFirstChild("ToggleBackpackImage")
+	local backpackEarly = toolbar:FindFirstChild("Backpack")
+	local icon = if backpackEarly then backpackEarly:FindFirstChild("ToggleBackpackImage") else nil
+	if not icon then
+		icon = toolbar:FindFirstChild("ToggleBackpackImage") or hotbar:FindFirstChild("ToggleBackpackImage")
+	end
 	if icon and icon:IsA("GuiObject") then
 		(icon :: GuiObject).Visible = false
 	end
@@ -1123,7 +1129,14 @@ local ToolbarController = {}
 		end
 	end
 
-	local BACKPACK_CHROME_NAMES = { "BackpackButtons", "OtherButtons", "SortButtons", "SortCatagory", "SortCategory" }
+	local BACKPACK_CHROME_NAMES = {
+		"BackpackButtons",
+		"OtherButtons",
+		"SortButtons",
+		"SortCatagory",
+		"SortCategory",
+		"ToggleBackpackImage",
+	}
 
 	local function ensureBackpackScrollingVisible(root: Instance)
 		-- Fixes the backpack scrollbar / visible slider being hidden on load.
@@ -1616,7 +1629,6 @@ local ToolbarController = {}
 		local exitBelow = UDim2.new(rest.X.Scale, rest.X.Offset, rest.Y.Scale, rest.Y.Offset + slide)
 
 		if open then
-			animateToggleBackpackIcon(false)
 			-- Settle empty hotbar slots before the panel appears so layout doesn't jump mid-slide.
 			if canUseToolbar then
 				showToolbar()
@@ -1630,6 +1642,11 @@ local ToolbarController = {}
 			f.Position = fromAbove
 			sc.Scale = BACKPACK_OPEN_START_SCALE
 			ensureBackpackChromeVisible(f)
+			if toggleBackpackIconRef then
+				cancelToggleIconTween()
+				toggleBackpackIconRef.Visible = true
+				getOrAddUIScale(toggleBackpackIconRef :: Instance).Scale = 1
+			end
 			scrollBackpackToTop(f)
 			task.defer(function()
 				if not isBackpackPanelOpen or backpackFrameRef ~= f then
@@ -1649,6 +1666,12 @@ local ToolbarController = {}
 			f.Visible = true
 			f.Position = rest
 			sc.Scale = 1
+			-- Icon stays under Backpack and slides away with the panel (no hotbar spawn).
+			if toggleBackpackIconRef then
+				cancelToggleIconTween()
+				toggleBackpackIconRef.Visible = true
+				getOrAddUIScale(toggleBackpackIconRef :: Instance).Scale = 1
+			end
 			backpackPanelPosTween = TweenService:Create(f, BACKPACK_CLOSE_TWEEN, { Position = exitBelow })
 			backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = BACKPACK_CLOSE_END_SCALE })
 			backpackPanelPosTween:Play()
@@ -1660,16 +1683,14 @@ local ToolbarController = {}
 					f.Visible = false
 					f.Position = rest
 					sc.Scale = 1
-					-- Collapse empty slots first so icon lands in its final hotbar spot, then ease in.
+					if toggleBackpackIconRef then
+						toggleBackpackIconRef.Visible = false
+						getOrAddUIScale(toggleBackpackIconRef :: Instance).Scale = 1
+					end
 					updateHotbarSlotVisibility()
 					for i = 1, #slots do
 						refreshSlotVisual(i)
 					end
-					task.defer(function()
-						if not isBackpackPanelOpen and not isBackpackPanelClosing then
-							animateToggleBackpackIcon(true)
-						end
-					end)
 				end
 				if state == Enum.PlaybackState.Completed then
 					backpackPanelPosTween = nil
@@ -1687,13 +1708,6 @@ local ToolbarController = {}
 			return
 		end
 		if toolbarShown then
-			if toggleBackpackIconRef and not isBackpackPanelOpen and not isBackpackPanelClosing then
-				if not toggleBackpackIconRef.Visible then
-					animateToggleBackpackIcon(true)
-				else
-					refreshToggleBackpackIconLayout()
-				end
-			end
 			return
 		end
 		toolbarShown = true
@@ -1710,9 +1724,6 @@ local ToolbarController = {}
 		toolbarVisibilityTween:Play()
 		task.defer(function()
 			updateHotbarSlotVisibility()
-			if not isBackpackPanelOpen and not isBackpackPanelClosing then
-				animateToggleBackpackIcon(true)
-			end
 		end)
 	end
 
@@ -2318,92 +2329,22 @@ local ToolbarController = {}
 	end
 
 	refreshToggleBackpackIconLayout = function()
+		-- ToggleBackpackImage stays under Backpack at its Studio layout — never reparent/resize into Hotbar.
 		if not toggleBackpackIconRef then
 			return
 		end
 		local icon = toggleBackpackIconRef :: GuiObject
-		-- Size/parent only — visibility is owned by animateToggleBackpackIcon / toolbar show.
-
-		local layout = ensureHotbarListLayout()
-		local HOTBAR_SLOT_PADDING_PX = 10
-		hotbarListLayout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
-		layout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
-		layout.FillDirection = Enum.FillDirection.Horizontal
-		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		layout.VerticalAlignment = Enum.VerticalAlignment.Center
-
-		local w, h = captureToggleIconPixelSize(icon)
-		local slotTemplate = getHotbarSlotSizeTemplate()
-		local iconSize: UDim2
-		if slotTemplate then
-			iconSize = scaledToggleIconSizeFromTemplate(slotTemplate)
-		elseif w and h then
-			iconSize = UDim2.fromOffset(
-				math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(w * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5)),
-				math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(h * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5))
-			)
-		else
-			iconSize = UDim2.fromOffset(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, TOGGLE_BACKPACK_ICON_MIN_ABS_PX)
+		local backpack = backpackFrameRef or toolbar:FindFirstChild("Backpack")
+		if backpack and icon.Parent ~= backpack then
+			icon.Parent = backpack
 		end
-		icon.Size = iconSize
-
-		icon.AnchorPoint = Vector2.new(0, 0)
-		if icon.Parent ~= hotbar then
-			icon.Parent = hotbar
-		end
-		icon.LayoutOrder = 100
-
-		pinToggleIconMinAbsoluteSize(icon, iconSize.X.Offset, iconSize.Y.Offset)
-		ensureToggleBackpackIconSizeConstraint(icon)
+		-- Only visible while the inventory panel is open (rides the panel slide).
+		icon.Visible = isBackpackPanelOpen or isBackpackPanelClosing
 	end
 
-	animateToggleBackpackIcon = function(show: boolean)
-		if not toggleBackpackIconRef then
-			return
-		end
-		local icon = toggleBackpackIconRef :: GuiObject
-		cancelToggleIconTween()
-		local sc = getOrAddUIScale(icon :: Instance)
-
-		if show then
-			if not (canUseToolbar and toolbarShown) then
-				icon.Visible = false
-				sc.Scale = 1
-				return
-			end
-			refreshToggleBackpackIconLayout()
-			icon.Visible = true
-			sc.Scale = 0.55
-			local tw = TweenService:Create(sc, BACKPACK_ICON_IN_TWEEN, { Scale = 1 })
-			toggleIconScaleTween = tw
-			tw:Play()
-			tw.Completed:Once(function(state)
-				if state == Enum.PlaybackState.Completed then
-					sc.Scale = 1
-				end
-				if toggleIconScaleTween == tw then
-					toggleIconScaleTween = nil
-				end
-			end)
-		else
-			if not icon.Visible then
-				sc.Scale = 1
-				return
-			end
-			sc.Scale = math.clamp(sc.Scale, 0.55, 1)
-			local tw = TweenService:Create(sc, BACKPACK_ICON_OUT_TWEEN, { Scale = 0.55 })
-			toggleIconScaleTween = tw
-			tw:Play()
-			tw.Completed:Once(function(state)
-				if state == Enum.PlaybackState.Completed then
-					icon.Visible = false
-					sc.Scale = 1
-				end
-				if toggleIconScaleTween == tw then
-					toggleIconScaleTween = nil
-				end
-			end)
-		end
+	animateToggleBackpackIcon = function(_show: boolean)
+		-- No hotbar icon pop — inventory icon is a child of Backpack only.
+		refreshToggleBackpackIconLayout()
 	end
 
 	updateHotbarSlotVisibility = function()
@@ -2419,8 +2360,6 @@ local ToolbarController = {}
 		-- Empty hotbar cells while backpack is open or still closing (avoids snap-hide mid-tween).
 		local showEmptyDropTargets = isBackpackPanelOpen or isBackpackPanelClosing
 		local showHotbarSlots = anyOccupied or showEmptyDropTargets
-		-- Keep the Hotbar frame visible whenever the toolbar is up so ToggleBackpackImage
-		-- (a child of Hotbar) still shows when every slot is empty.
 		if hotbar:IsA("GuiObject") then
 			(hotbar :: GuiObject).Visible = toolbarActive
 		end
@@ -2430,19 +2369,13 @@ local ToolbarController = {}
 				slot.Visible = toolbarActive and showHotbarSlots and (hotbarSlotIsOccupied(i) or showEmptyDropTargets)
 			end
 		end
-		-- Icon visibility/scale is driven by animateToggleBackpackIcon — don't snap Visible here.
-		if
-			toggleBackpackIconRef
-			and toggleBackpackIconRef.Visible
-			and toolbarActive
-			and not isBackpackPanelOpen
-			and not isBackpackPanelClosing
-		then
-			task.defer(refreshToggleBackpackIconLayout)
-		elseif toggleBackpackIconRef and not toolbarActive then
-			cancelToggleIconTween()
-			toggleBackpackIconRef.Visible = false
-			getOrAddUIScale(toggleBackpackIconRef :: Instance).Scale = 1
+		-- Inventory icon never lives in the hotbar row.
+		if toggleBackpackIconRef then
+			if not toolbarActive and not isBackpackPanelOpen and not isBackpackPanelClosing then
+				toggleBackpackIconRef.Visible = false
+			else
+				refreshToggleBackpackIconLayout()
+			end
 		end
 	end
 
@@ -2456,13 +2389,46 @@ local ToolbarController = {}
 		setBackpackPanelOpen(not isBackpackPanelOpen)
 	end
 
-	local function wireToggleBackpackIcon()
-		local iconHost = toolbar:FindFirstChild("ToggleBackpackImage") or hotbar:FindFirstChild("ToggleBackpackImage")
-		if not iconHost or not iconHost:IsA("GuiObject") then
+	local function closeBackpackFromInventoryIcon()
+		if not canUseToolbar then
 			return
 		end
+		if isBackpackPanelOpen then
+			setBackpackPanelOpen(false)
+		end
+	end
+
+	local function findToggleBackpackImageHost(): GuiObject?
+		local backpack = toolbar:FindFirstChild("Backpack")
+		if backpack then
+			local underBp = backpack:FindFirstChild("ToggleBackpackImage")
+			if underBp and underBp:IsA("GuiObject") then
+				return underBp
+			end
+		end
+		local underToolbar = toolbar:FindFirstChild("ToggleBackpackImage")
+		if underToolbar and underToolbar:IsA("GuiObject") then
+			return underToolbar
+		end
+		local underHotbar = hotbar:FindFirstChild("ToggleBackpackImage")
+		if underHotbar and underHotbar:IsA("GuiObject") then
+			return underHotbar
+		end
+		return nil
+	end
+
+	local function wireToggleBackpackIcon()
+		local iconHost = findToggleBackpackImageHost()
+		if not iconHost then
+			return
+		end
+		-- Always keep under Backpack when possible (Studio position for open inventory).
+		local backpack = toolbar:FindFirstChild("Backpack")
+		if backpack and iconHost.Parent ~= backpack then
+			iconHost.Parent = backpack
+		end
 		toggleBackpackIconRef = iconHost
-		toggleBackpackRef = iconHost
+		iconHost.Visible = false
 
 		local btn: GuiButton? = nil
 		if iconHost:IsA("GuiButton") then
@@ -2482,15 +2448,8 @@ local ToolbarController = {}
 		if tiltTarget ~= iconHost then
 			prepareToggleTiltPivot(tiltTarget)
 		end
-		-- Tilt + scale hover only (no glisten/spin polish).
-		UIButtonEffects.wireTiltHoverButton(btn, toggleBackpackPanel, iconHost, tiltTarget, false)
-		wireToggleBackpackIconResizeSync()
-		task.defer(function()
-			refreshToggleBackpackIconLayout()
-			if canUseToolbar and toolbarShown and not isBackpackPanelOpen and not isBackpackPanelClosing then
-				animateToggleBackpackIcon(true)
-			end
-		end)
+		-- Inventory-only close control (already positioned on the Backpack panel).
+		UIButtonEffects.wireTiltHoverButton(btn, closeBackpackFromInventoryIcon, iconHost, tiltTarget, false)
 	end
 
 	-- ── Tool assignment ───────────────────────────────────────────────────────────
@@ -4131,16 +4090,7 @@ local ToolbarController = {}
 			end
 		end)
 
-		-- ToggleBackpack + brainrot backpack grid (Backpack.Container["1"]..["19"])
-		wireToggleBackpackIcon()
-		local toggleBtn = toolbar:FindFirstChild("ToggleBackpack") or hotbar:FindFirstChild("ToggleBackpack")
-		if toggleBtn and toggleBtn:IsA("GuiObject") then
-			if toggleBackpackIconRef then
-				(toggleBtn :: GuiObject).Visible = false
-			else
-				toggleBackpackRef = toggleBtn :: GuiObject
-			end
-		end
+		-- Backpack panel first, then inventory-only ToggleBackpackImage under it.
 		local backpackFrame = toolbar:FindFirstChild("Backpack")
 		if backpackFrame then
 			backpackContainer = backpackFrame:FindFirstChild("Container")
@@ -4180,7 +4130,15 @@ local ToolbarController = {}
 				(backpackFrame :: GuiObject).Visible = false
 			end
 		end
-		if toggleBtn and toggleBtn:IsA("GuiButton") and not toggleBackpackIconRef then
+
+		wireToggleBackpackIcon()
+
+		-- Optional separate open control (not the inventory close image).
+		local toggleBtn = toolbar:FindFirstChild("ToggleBackpack") or hotbar:FindFirstChild("ToggleBackpack")
+		if toggleBtn and toggleBtn:IsA("GuiObject") then
+			toggleBackpackRef = toggleBtn :: GuiObject
+		end
+		if toggleBtn and toggleBtn:IsA("GuiButton") then
 			toggleBtn.MouseEnter:Connect(function()
 				UIInteractionSounds.playHover()
 			end)
@@ -4196,6 +4154,9 @@ local ToolbarController = {}
 			end
 			applyToolbarHorizontalCenterOnce()
 			updateHotbarSlotVisibility()
+			if toggleBackpackIconRef then
+				toggleBackpackIconRef.Visible = false
+			end
 		end)
 
 		ensureSpawnToolbarVisible()

@@ -293,6 +293,27 @@ function SafezoneUtil.getRedWallSamplePositions(): { Vector3 }
 	return out
 end
 
+-- World center of the spawn safe zone (average of SafeZoneHitbox / inventory zone parts).
+function SafezoneUtil.getSafezoneCenter(): Vector3?
+	ensureCaches()
+	local parts = cachedInventoryParts
+	if not parts or #parts == 0 then
+		return nil
+	end
+	local sum = Vector3.zero
+	local n = 0
+	for _, part in parts do
+		if part.Parent then
+			sum += part.Position
+			n += 1
+		end
+	end
+	if n == 0 then
+		return nil
+	end
+	return sum / n
+end
+
 function SafezoneUtil.isWorldPointInInventoryZone(worldPoint: Vector3): boolean
 	if not SafezoneUtil.isWorldPointInSafezone(worldPoint) then
 		return false

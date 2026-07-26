@@ -19,7 +19,6 @@ local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local OtherVfxController = require(script.Parent.OtherVfxController)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
-local PromptFxConfig = require(script.Parent.ProximityPromptEffectsConfig)
 
 local player = Players.LocalPlayer
 
@@ -80,8 +79,6 @@ local BUSH_SEARCH_HOLD_ACTION = "BushSearchHoldWhileToolEquipped"
 local bushSearchHoldPrompt: ProximityPrompt? = nil
 local bushSearchHoldBeganAt = 0.0
 local bushSearchHoldToken = 0
-local outlinePulseBound = false
-local lastBushWorldTapAt = 0.0
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -164,45 +161,6 @@ local function setAllBushPromptsEnabled(enabledPrompt: ProximityPrompt?)
 	end
 end
 
-local function prefersBushTapInput(): boolean
-	if not UserInputService.TouchEnabled then
-		return false
-	end
-	if UserInputService.GamepadEnabled and UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1 then
-		return false
-	end
-	-- Phones/tablets often still report KeyboardEnabled; prefer platform/last-input.
-	if not UserInputService.KeyboardEnabled then
-		return true
-	end
-	local ok, preferred = pcall(function()
-		return (UserInputService :: any).PreferredInput
-	end)
-	if ok and preferred == Enum.PreferredInput.Touch then
-		return true
-	end
-	if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then
-		return true
-	end
-	-- Touch-only devices that still advertise a soft keyboard.
-	local okPlat, platform = pcall(function()
-		return UserInputService:GetPlatform()
-	end)
-	if okPlat then
-		if platform == Enum.Platform.IOS or platform == Enum.Platform.Android then
-			return true
-		end
-	end
-	return false
-end
-
-local function syncPromptHoldDuration(prompt: ProximityPrompt)
-	-- Mobile and PC both hold-to-search.
-	prompt.HoldDuration = HOLD_DURATION
-end
-
-local scheduleBushMapScan: (map: Instance) -> ()
-
 local function attachPrompt(root: Instance)
 	if bushByModel[root] then
 		return
@@ -230,7 +188,6 @@ local function attachPrompt(root: Instance)
 	prompt.Style = Enum.ProximityPromptStyle.Custom
 	prompt.Enabled = true
 	prompt:SetAttribute(BUSH_MANAGED_ATTR, true)
-	syncPromptHoldDuration(prompt)
 	pcall(function()
 		(prompt :: any).ClickablePrompt = true
 	end)
@@ -399,72 +356,24 @@ end
 local HIGHLIGHT_READY = Color3.fromRGB(72, 255, 140)
 local HIGHLIGHT_LOCKED = Color3.fromRGB(255, 45, 45)
 
-local function outlinePulseAlpha(): number
-	-- Soft Pokémon-style breathe (ease in-out via sin²).
-	local wave = 0.5 + 0.5 * math.sin(os.clock() * PromptFxConfig.BUSH_OUTLINE_PULSE_SPEED)
-	return wave * wave
-end
-
 local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean)
 	hl.Adornee = bush
 	hl.Enabled = true
-	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.FillTransparency = 1
+	hl.OutlineTransparency = 0
 	if locked then
-		hl.FillTransparency = 1
-		hl.OutlineTransparency = 0
 		hl.OutlineColor = HIGHLIGHT_LOCKED
-		hl.FillColor = HIGHLIGHT_LOCKED
-		return
-	end
-
-	local pulse = outlinePulseAlpha()
-	local minT = PromptFxConfig.BUSH_OUTLINE_PULSE_MIN_T
-	local maxT = PromptFxConfig.BUSH_OUTLINE_PULSE_MAX_T
-	hl.OutlineTransparency = minT + (maxT - minT) * pulse
-	hl.FillColor = HIGHLIGHT_READY
-	hl.FillTransparency = PromptFxConfig.BUSH_OUTLINE_FILL_PULSE_MIN_T
-		+ (PromptFxConfig.BUSH_OUTLINE_FILL_PULSE_MAX_T - PromptFxConfig.BUSH_OUTLINE_FILL_PULSE_MIN_T) * pulse
-
-	local gradientSequence = if bushOutlineGradientProvider then bushOutlineGradientProvider(bush) else nil
-	if gradientSequence then
-		hl.OutlineColor = BrainrotHeaderStyle.sampleColorSequence(gradientSequence, (os.clock() * 0.42) % 1)
 	else
-		local custom = if bushOutlineColorProvider then bushOutlineColorProvider(bush) else nil
-		local base = custom or HIGHLIGHT_READY
-		hl.OutlineColor = base:Lerp(PromptFxConfig.ACCENT_BRIGHT, 0.35 + pulse * 0.45)
-	end
-end
-
-local function ensureOutlinePulseStep()
-	if outlinePulseBound then
-		return
-	end
-	outlinePulseBound = true
-	RunService:BindToRenderStep(PromptFxConfig.BUSH_OUTLINE_PULSE_STEP, Enum.RenderPriority.Last.Value - 5, function()
-		local hl = aimHighlight
-		if not hl or not hl.Enabled or not hl.Adornee then
-			return
+		local gradientSequence = if bushOutlineGradientProvider then bushOutlineGradientProvider(bush) else nil
+		if gradientSequence then
+			hl.OutlineColor = BrainrotHeaderStyle.sampleColorSequence(gradientSequence, (os.clock() * 0.42) % 1)
+		else
+			local custom = if bushOutlineColorProvider then bushOutlineColorProvider(bush) else nil
+			hl.OutlineColor = custom or HIGHLIGHT_READY
 		end
-		local bush = hl.Adornee
-		if not bush.Parent or isBushInSearchCooldown(bush) then
-			return
-		end
-		applyBushHighlight(hl, bush, false)
-	end)
-end
-
-local function isInstanceUnderBush(inst: Instance?, bush: Instance): boolean
-	local node: Instance? = inst
-	while node do
-		if node == bush then
-			return true
-		end
-		node = node.Parent
 	end
-	return false
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 end
-
-local tryWorldTapBushSearch: (screenPos: Vector2) -> boolean
 
 local function bushHighlightInViewRange(model: Instance): boolean
 	local prompt = bushByModel[model]
@@ -599,9 +508,6 @@ local function setActive(bush: Instance?, prompt: ProximityPrompt?, _anchor: Bas
 	if changed then
 		activeBush = bush
 		activePrompt = effectivePrompt
-		if effectivePrompt then
-			syncPromptHoldDuration(effectivePrompt)
-		end
 		setAllBushPromptsEnabled(effectivePrompt)
 		ProximityPromptEffects.suppressBushSearchUi(effectivePrompt)
 		GameSoundEffects.syncBushAura(bush)
@@ -725,67 +631,6 @@ local function doHarvest(prompt: ProximityPrompt)
 	end
 end
 
-tryWorldTapBushSearch = function(screenPos: Vector2): boolean
-	if bushSearchLocked or os.clock() < bushSearchSuppressUntil then
-		return false
-	end
-	if CarryGate.isFull() then
-		return false
-	end
-	local bush = activeBush
-	local prompt = activePrompt
-	if not bush or not prompt or not prompt.Parent or not prompt.Enabled then
-		return false
-	end
-	local cam = Workspace.CurrentCamera
-	if not cam then
-		return false
-	end
-	local ray = cam:ViewportPointToRay(screenPos.X, screenPos.Y)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	local char = player.Character
-	params.FilterDescendantsInstances = if char then { char } else {}
-	local result = Workspace:Raycast(ray.Origin, ray.Direction * 80, params)
-	if not result or not isInstanceUnderBush(result.Instance, bush) then
-		return false
-	end
-	local now = os.clock()
-	if now - lastBushWorldTapAt < 0.18 then
-		return true
-	end
-	lastBushWorldTapAt = now
-	syncPromptHoldDuration(prompt)
-	-- Mobile whole-bush press: start the same hold path as the floating icon.
-	if prefersBushTapInput() then
-		if bushSearchHoldPrompt == prompt then
-			return true
-		end
-		bushSearchHoldPrompt = prompt
-		bushSearchHoldBeganAt = os.clock()
-		bushSearchHoldToken += 1
-		local token = bushSearchHoldToken
-		local holdPrompt = prompt
-		ProximityPromptEffects.beginManagedBushHold(holdPrompt)
-		task.delay(math.max(0.05, holdPrompt.HoldDuration), function()
-			if bushSearchHoldToken ~= token then
-				return
-			end
-			if bushSearchHoldPrompt ~= holdPrompt then
-				return
-			end
-			if not holdPrompt.Parent or not holdPrompt.Enabled or CarryGate.isFull() then
-				return
-			end
-			ProximityPromptEffects.endManagedBushHold(holdPrompt, true)
-			task.defer(doHarvest, holdPrompt)
-			bushSearchHoldPrompt = nil
-		end)
-		return true
-	end
-	return false
-end
-
 local function tickAim()
 	local hl = aimHighlight
 	local cam = workspace.CurrentCamera
@@ -882,7 +727,7 @@ local function wireMapWatch(map: Instance)
 	end)
 end
 
-scheduleBushMapScan = function(map: Instance)
+local function scheduleBushMapScan(map: Instance)
 	if bushMapScanInProgress then
 		return
 	end
@@ -973,15 +818,13 @@ function BushHoldInteraction.init()
 	if not aimHighlight then
 		aimHighlight = Instance.new("Highlight")
 		aimHighlight.Name = "BushAimHighlight"
-		aimHighlight.FillTransparency = PromptFxConfig.BUSH_OUTLINE_FILL_PULSE_MIN_T
-		aimHighlight.FillColor = Color3.fromRGB(72, 255, 140)
+		aimHighlight.FillTransparency = 1
 		aimHighlight.OutlineColor = Color3.fromRGB(72, 255, 140)
-		aimHighlight.OutlineTransparency = PromptFxConfig.BUSH_OUTLINE_PULSE_MIN_T
+		aimHighlight.OutlineTransparency = 0
 		aimHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 		aimHighlight.Enabled = false
 		aimHighlight.Parent = workspace.CurrentCamera
 	end
-	ensureOutlinePulseStep()
 
 	RunService.Heartbeat:Connect(function(dt)
 		aimTickAccum += dt
@@ -990,41 +833,6 @@ function BushHoldInteraction.init()
 		end
 		aimTickAccum = 0
 		tickAim()
-	end)
-
-	-- Mobile: pressing the bush mesh itself starts hold-to-search (same as the icon).
-	UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
-		if gameProcessed then
-			return
-		end
-		if not prefersBushTapInput() then
-			return
-		end
-		if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then
-			return
-		end
-		tryWorldTapBushSearch(Vector2.new(input.Position.X, input.Position.Y))
-	end)
-
-	UserInputService.InputEnded:Connect(function(input: InputObject, _gameProcessed: boolean)
-		if not prefersBushTapInput() then
-			return
-		end
-		if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseButton1 then
-			return
-		end
-		local prompt = bushSearchHoldPrompt
-		if not prompt then
-			return
-		end
-		local dur = prompt.HoldDuration
-		local completed = dur > 0 and (os.clock() - bushSearchHoldBeganAt) >= dur * 0.92
-		bushSearchHoldToken += 1
-		ProximityPromptEffects.endManagedBushHold(prompt, completed)
-		if completed then
-			task.defer(doHarvest, prompt)
-		end
-		bushSearchHoldPrompt = nil
 	end)
 
 	-- Engine ProximityPrompt hold is blocked while a brainrot Tool is equipped; run the hold ourselves.

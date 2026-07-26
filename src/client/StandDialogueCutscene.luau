@@ -30,7 +30,7 @@ local ARROW_IMAGE = "rbxassetid://92898814478474"
 local LETTER_DELAY = 0.048
 local LINE_PAUSE = 0.22
 local WORLD_LETTER_DELAY = 0.042
-local WORLD_MAX_DISTANCE = 42
+local WORLD_MAX_DISTANCE = 160
 
 local IDLE_ANIM_IDS: { [string]: number } = {
 	TatatataSahur = 126404281186060,

@@ -1,8 +1,7 @@
 -- [ACTIVE] SafeZoneBeaconController
 --[[
-	Shield icon billboard at the center of the spawn safe zone.
-	Only shown when the local player is on land 2+ (and not already in the safe zone),
-	so explorers can see which way home is.
+	Distance label near the local character's head showing meters from the spawn safe zone.
+	Only shown when the local player is on land 2+ (and not already in the safe zone).
 ]]
 
 local Players = game:GetService("Players")
@@ -15,85 +14,93 @@ local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local M = {}
 
-local SHIELD_IMAGE = "rbxassetid://127281421187767"
 local MIN_LAND_TO_SHOW = 2
-local POLL_SEC = 0.2
-local BILLBOARD_SIZE = UDim2.fromOffset(72, 72)
-local STUDS_OFFSET = Vector3.new(0, 10, 0)
-local MAX_DISTANCE = 5000
-local BEACON_FOLDER_NAME = "SafeZoneBeacon"
+local POLL_SEC = 0.12
+local BILLBOARD_SIZE = UDim2.fromOffset(72, 28)
+-- Slightly right of the head.
+local STUDS_OFFSET = Vector3.new(1.45, 0.35, 0)
+local GUI_NAME = "SafeZoneDistance"
+local LEGACY_FOLDER_NAME = "SafeZoneBeacon"
 
 local localPlayer = Players.LocalPlayer
-local anchor: BasePart? = nil
 local billboard: BillboardGui? = nil
+local distanceLabel: TextLabel? = nil
 local heartbeatConn: RBXScriptConnection? = nil
 local pollAccum = 0
 local centerRefreshAt = 0
+local cachedCenter: Vector3? = nil
 local CENTER_REFRESH_SEC = 4
+local lastMeters: number? = nil
 
-local function destroyBeacon()
+local function destroyGui()
 	if billboard then
 		billboard:Destroy()
 		billboard = nil
 	end
-	if anchor then
-		anchor:Destroy()
-		anchor = nil
+	distanceLabel = nil
+	lastMeters = nil
+end
+
+local function clearLegacyBeacon()
+	local folder = Workspace:FindFirstChild(LEGACY_FOLDER_NAME)
+	if folder then
+		folder:Destroy()
 	end
 end
 
-local function ensureBeacon(center: Vector3): BillboardGui?
-	if anchor and anchor.Parent and billboard and billboard.Parent then
-		anchor.CFrame = CFrame.new(center)
-		return billboard
+local function resolveAdornee(character: Model): BasePart?
+	local head = character:FindFirstChild("Head")
+	if head and head:IsA("BasePart") then
+		return head
 	end
-	destroyBeacon()
-
-	local folder = Workspace:FindFirstChild(BEACON_FOLDER_NAME)
-	if not folder then
-		folder = Instance.new("Folder")
-		folder.Name = BEACON_FOLDER_NAME
-		folder.Parent = Workspace
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		return hrp
 	end
+	return nil
+end
 
-	local part = Instance.new("Part")
-	part.Name = "SafeZoneBeaconAnchor"
-	part.Anchored = true
-	part.CanCollide = false
-	part.CanQuery = false
-	part.CanTouch = false
-	part.CastShadow = false
-	part.Transparency = 1
-	part.Size = Vector3.new(0.2, 0.2, 0.2)
-	part.CFrame = CFrame.new(center)
-	part.Parent = folder
-	anchor = part
+local function ensureGui(character: Model): TextLabel?
+	local adornee = resolveAdornee(character)
+	if not adornee then
+		return nil
+	end
+	if billboard and billboard.Parent and distanceLabel and billboard.Adornee == adornee then
+		return distanceLabel
+	end
+	destroyGui()
 
 	local bb = Instance.new("BillboardGui")
-	bb.Name = "SafeZoneShield"
-	bb.Adornee = part
+	bb.Name = GUI_NAME
+	bb.Adornee = adornee
 	bb.Size = BILLBOARD_SIZE
 	bb.StudsOffset = STUDS_OFFSET
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
-	bb.MaxDistance = MAX_DISTANCE
+	bb.MaxDistance = 80
 	bb.Enabled = false
 
-	local icon = Instance.new("ImageLabel")
-	icon.Name = "Shield"
-	icon.BackgroundTransparency = 1
-	icon.Size = UDim2.fromScale(1, 1)
-	icon.Image = SHIELD_IMAGE
-	icon.ScaleType = Enum.ScaleType.Fit
-	icon.Parent = bb
+	local label = Instance.new("TextLabel")
+	label.Name = "Meters"
+	label.BackgroundTransparency = 1
+	label.BorderSizePixel = 0
+	label.Size = UDim2.fromScale(1, 1)
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 18
+	label.TextColor3 = Color3.fromRGB(245, 250, 255)
+	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	label.TextStrokeTransparency = 0.35
+	label.Text = ""
+	label.Parent = bb
 
 	local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
 	bb.Parent = playerGui or Workspace.CurrentCamera
 	billboard = bb
-	return bb
+	distanceLabel = label
+	return label
 end
 
-local function shouldShowBeacon(character: Model?, hrp: BasePart): boolean
+local function shouldShow(character: Model?, hrp: BasePart): boolean
 	if SafezoneUtil.isWorldPointInSafezone(hrp.Position) then
 		return false
 	end
@@ -101,10 +108,15 @@ local function shouldShowBeacon(character: Model?, hrp: BasePart): boolean
 	return typeof(land) == "number" and land >= MIN_LAND_TO_SHOW
 end
 
+local function formatMeters(distance: number): string
+	local meters = math.max(0, math.floor(distance + 0.5))
+	return string.format("%dm", meters)
+end
+
 local function tick(_dt: number)
 	local character = localPlayer.Character
 	local hrp = character and character:FindFirstChild("HumanoidRootPart")
-	if not hrp or not hrp:IsA("BasePart") then
+	if not character or not hrp or not hrp:IsA("BasePart") then
 		if billboard then
 			billboard.Enabled = false
 		end
@@ -112,15 +124,13 @@ local function tick(_dt: number)
 	end
 
 	local now = os.clock()
-	local center: Vector3? = nil
-	if now - centerRefreshAt >= CENTER_REFRESH_SEC or not anchor then
+	if now - centerRefreshAt >= CENTER_REFRESH_SEC or not cachedCenter then
 		centerRefreshAt = now
 		SafezoneUtil.warmCacheAsync()
-		center = SafezoneUtil.getSafezoneCenter()
-	elseif anchor and anchor.Parent then
-		center = anchor.Position
+		cachedCenter = SafezoneUtil.getSafezoneCenter()
 	end
 
+	local center = cachedCenter
 	if not center then
 		if billboard then
 			billboard.Enabled = false
@@ -128,11 +138,25 @@ local function tick(_dt: number)
 		return
 	end
 
-	local bb = ensureBeacon(center)
-	if not bb then
+	local label = ensureGui(character)
+	local bb = billboard
+	if not label or not bb then
 		return
 	end
-	bb.Enabled = shouldShowBeacon(character, hrp :: BasePart)
+
+	if not shouldShow(character, hrp :: BasePart) then
+		bb.Enabled = false
+		return
+	end
+
+	local delta = (hrp :: BasePart).Position - center
+	local horiz = Vector3.new(delta.X, 0, delta.Z).Magnitude
+	local meters = math.max(0, math.floor(horiz + 0.5))
+	if lastMeters ~= meters then
+		lastMeters = meters
+		label.Text = formatMeters(horiz)
+	end
+	bb.Enabled = true
 end
 
 function M.init()
@@ -140,9 +164,12 @@ function M.init()
 		return
 	end
 
+	clearLegacyBeacon()
+
 	task.spawn(function()
 		SafezoneUtil.warmCacheAsync()
 		SafezoneUtil.awaitCacheReady(8)
+		cachedCenter = SafezoneUtil.getSafezoneCenter()
 	end)
 
 	heartbeatConn = RunService.Heartbeat:Connect(function(dt)
@@ -155,6 +182,11 @@ function M.init()
 		if not ok then
 			warn("[SafeZoneBeaconController] error:", err)
 		end
+	end)
+
+	localPlayer.CharacterAdded:Connect(function()
+		destroyGui()
+		lastMeters = nil
 	end)
 
 	localPlayer.CharacterRemoving:Connect(function()

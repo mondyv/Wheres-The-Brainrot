@@ -3220,7 +3220,7 @@ function ProximityPromptEffects.init()
 	local facingRefreshAccum = 0
 	RunService.Heartbeat:Connect(function(dt)
 		bushRefreshAccum += dt
-		if bushRefreshAccum >= 0.08 then
+		if bushRefreshAccum >= 0.16 then
 			bushRefreshAccum = 0
 			local bestBushPrompt = findBestManagedBushPrompt()
 			if not bestBushPrompt and activeBushSearchPrompt and activeBushSearchPrompt.Parent then

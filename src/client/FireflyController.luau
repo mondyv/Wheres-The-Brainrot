@@ -17,11 +17,11 @@ local FireflyController = {}
 
 local player = Players.LocalPlayer
 
-local ACTIVE_RANGE = 70
+local ACTIVE_RANGE = 55
 local SELECT_PCT = 10
-local MAX_ACTIVE = 3
-local FLIES_PER_BUSH = 4
-local REFRESH_SEC = 1.5
+local MAX_ACTIVE = 2
+local FLIES_PER_BUSH = 3
+local REFRESH_SEC = 2
 local FOLDER_NAME = "BushFireflies"
 
 -- Brighter / lighter yellow

@@ -49,22 +49,27 @@ local IS_MOBILE_LAYOUT = false
 local COLORS = {
 	panel = Color3.fromRGB(14, 18, 26),
 	panelTop = Color3.fromRGB(22, 30, 42),
-	accent = Color3.fromRGB(72, 255, 150),
-	accentDim = Color3.fromRGB(40, 160, 100),
+	accent = Color3.fromRGB(220, 228, 240),
+	accentDim = Color3.fromRGB(140, 150, 165),
+	success = Color3.fromRGB(140, 210, 165),
 	inputBg = Color3.fromRGB(10, 14, 20),
-	hoverBg = Color3.fromRGB(72, 255, 150),
-	hoverBgTransparency = 0.86,
-	hoverStroke = Color3.fromRGB(72, 255, 150),
-	hoverStrokeTransparency = 0.15,
+	hoverBg = Color3.fromRGB(255, 255, 255),
+	hoverBgTransparency = 0.9,
+	hoverStroke = Color3.fromRGB(48, 58, 72),
+	hoverStrokeTransparency = 0.4,
 	idleBg = Color3.fromRGB(24, 30, 40),
-	idleBgTransparency = 0.22,
-	idleStroke = Color3.fromRGB(55, 68, 86),
-	idleStrokeTransparency = 0.45,
-	selectedBg = Color3.fromRGB(55, 190, 120),
-	selectedBgTransparency = 0.78,
+	idleBgTransparency = 0.35,
+	idleStroke = Color3.fromRGB(48, 58, 72),
+	idleStrokeTransparency = 0.5,
+	selectedBg = Color3.fromRGB(255, 255, 255),
+	selectedBgTransparency = 0.88,
+	runBtn = Color3.fromRGB(230, 235, 245),
+	runBtnHover = Color3.fromRGB(245, 248, 255),
 	textPrimary = Color3.fromRGB(245, 250, 255),
 	textMuted = Color3.fromRGB(150, 165, 185),
 	danger = Color3.fromRGB(255, 95, 110),
+	panelStroke = Color3.fromRGB(48, 58, 72),
+	rootBgTransparency = 0.42,
 }
 
 local OPEN_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -231,7 +236,7 @@ local function setStatus(text: string, ok: boolean?)
 	if ok == nil then
 		label.TextColor3 = COLORS.textMuted
 	elseif ok then
-		label.TextColor3 = COLORS.accent
+		label.TextColor3 = COLORS.success
 	else
 		label.TextColor3 = COLORS.danger
 	end
@@ -777,17 +782,17 @@ local function animateOpen(open: boolean)
 	if open then
 		scale.Scale = 0.9
 		root.Position = UDim2.fromScale(0.5, targetY - 0.02)
-		root.BackgroundTransparency = 0.2
+		root.BackgroundTransparency = 0.55
 		TweenService:Create(scale, OPEN_TWEEN, { Scale = 1 }):Play()
 		TweenService:Create(root, OPEN_TWEEN, {
 			Position = UDim2.fromScale(0.5, targetY),
-			BackgroundTransparency = 0.04,
+			BackgroundTransparency = COLORS.rootBgTransparency,
 		}):Play()
 		if dim then
 			dim.Visible = true
 			dim.BackgroundTransparency = 1
 			TweenService:Create(dim, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				BackgroundTransparency = 0.45,
+				BackgroundTransparency = 0.62,
 			}):Play()
 		end
 	else
@@ -1005,7 +1010,7 @@ local function buildGui(parent: PlayerGui)
 		root.Size = UDim2.fromOffset(ROOT_WIDTH, BASE_HEIGHT)
 	end
 	root.BackgroundColor3 = COLORS.panel
-	root.BackgroundTransparency = 0.04
+	root.BackgroundTransparency = COLORS.rootBgTransparency
 	root.BorderSizePixel = 0
 	root.ClipsDescendants = true
 	root.ZIndex = 2
@@ -1019,26 +1024,26 @@ local function buildGui(parent: PlayerGui)
 	rootCorner.Parent = root
 
 	local rootStroke = Instance.new("UIStroke")
-	rootStroke.Color = COLORS.accent
-	rootStroke.Transparency = 0.35
-	rootStroke.Thickness = 1.75
+	rootStroke.Color = COLORS.panelStroke
+	rootStroke.Transparency = 0.52
+	rootStroke.Thickness = 1.25
 	rootStroke.Parent = root
 
 	local header = Instance.new("Frame")
 	header.Name = "Header"
 	header.Size = UDim2.new(1, 0, 0, HEADER_HEIGHT)
 	header.BackgroundColor3 = COLORS.panelTop
-	header.BackgroundTransparency = 0.08
+	header.BackgroundTransparency = 0.35
 	header.BorderSizePixel = 0
 	header.ZIndex = 3
 	header.Parent = root
 
 	local headerAccent = Instance.new("Frame")
 	headerAccent.Name = "AccentBar"
-	headerAccent.Size = UDim2.new(1, 0, 0, 2)
-	headerAccent.Position = UDim2.new(0, 0, 1, -2)
-	headerAccent.BackgroundColor3 = COLORS.accent
-	headerAccent.BackgroundTransparency = 0.25
+	headerAccent.Size = UDim2.new(1, 0, 0, 1)
+	headerAccent.Position = UDim2.new(0, 0, 1, -1)
+	headerAccent.BackgroundColor3 = COLORS.panelStroke
+	headerAccent.BackgroundTransparency = 0.45
 	headerAccent.BorderSizePixel = 0
 	headerAccent.ZIndex = 4
 	headerAccent.Parent = header
@@ -1048,7 +1053,7 @@ local function buildGui(parent: PlayerGui)
 	title.BackgroundTransparency = 1
 	UiFonts.applyButtonLabel(title, 13, 10)
 	title.Text = "ADMIN"
-	title.TextColor3 = COLORS.accent
+	title.TextColor3 = COLORS.textPrimary
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.Position = UDim2.fromOffset(16, 0)
 	title.Size = UDim2.new(1, -70, 1, 0)
@@ -1121,8 +1126,8 @@ local function buildGui(parent: PlayerGui)
 	runBtn.AutoButtonColor = false
 	runBtn.Text = "Run"
 	UiFonts.applyButtonLabel(runBtn, 12, 9)
-	runBtn.TextColor3 = Color3.fromRGB(8, 18, 12)
-	runBtn.BackgroundColor3 = COLORS.accent
+	runBtn.TextColor3 = Color3.fromRGB(18, 22, 30)
+	runBtn.BackgroundColor3 = COLORS.runBtn
 	runBtn.BorderSizePixel = 0
 	runBtn.AnchorPoint = Vector2.new(1, 0)
 	runBtn.Position = UDim2.new(1, -14, 0, HEADER_HEIGHT + CONTENT_PAD)
@@ -1137,12 +1142,12 @@ local function buildGui(parent: PlayerGui)
 	end)
 	runBtn.MouseEnter:Connect(function()
 		TweenService:Create(runBtn, TweenInfo.new(0.1), {
-			BackgroundColor3 = Color3.fromRGB(120, 255, 180),
+			BackgroundColor3 = COLORS.runBtnHover,
 		}):Play()
 	end)
 	runBtn.MouseLeave:Connect(function()
 		TweenService:Create(runBtn, TweenInfo.new(0.1), {
-			BackgroundColor3 = COLORS.accent,
+			BackgroundColor3 = COLORS.runBtn,
 		}):Play()
 	end)
 
@@ -1179,8 +1184,8 @@ local function buildGui(parent: PlayerGui)
 
 	local scrollThumb = Instance.new("Frame")
 	scrollThumb.Name = "Thumb"
-	scrollThumb.BackgroundColor3 = COLORS.accent
-	scrollThumb.BackgroundTransparency = 0.15
+	scrollThumb.BackgroundColor3 = COLORS.accentDim
+	scrollThumb.BackgroundTransparency = 0.25
 	scrollThumb.BorderSizePixel = 0
 	scrollThumb.Position = UDim2.fromOffset(2, 0)
 	scrollThumb.Size = UDim2.new(1, -4, 0, 24)

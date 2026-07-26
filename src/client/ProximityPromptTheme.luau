@@ -247,14 +247,14 @@ function M.applyBushSearchStyle(parts: CardParts)
 	parts.keyLabel.TextColor3 = C.TEXT_PRIMARY
 	-- Keep finger icon white (same as stand); tinting made TouchHold look blank.
 	parts.keyIcon.ImageColor3 = Color3.new(1, 1, 1)
-	-- Bush prompt hold ring: cool/neutral — green outline is on the bush model, not this card.
-	parts.holdFill.BackgroundColor3 = C.BUSH_HOLD_FILL_BRIGHT
+	-- E hold fill stays green; bush world Highlight is separate from this card stroke.
+	parts.holdFill.BackgroundColor3 = C.HOLD_GREEN_BRIGHT
 	local fillGrad = parts.holdFill:FindFirstChildOfClass("UIGradient")
 	if fillGrad then
 		fillGrad.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, C.BUSH_HOLD_FILL),
-			ColorSequenceKeypoint.new(0.5, C.BUSH_HOLD_FILL_BRIGHT),
-			ColorSequenceKeypoint.new(1, Color3.fromRGB(250, 252, 255)),
+			ColorSequenceKeypoint.new(0, C.HOLD_GREEN),
+			ColorSequenceKeypoint.new(0.5, C.HOLD_GREEN_BRIGHT),
+			ColorSequenceKeypoint.new(1, C.ACCENT_BRIGHT),
 		})
 	end
 end

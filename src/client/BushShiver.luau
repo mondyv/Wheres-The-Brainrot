@@ -17,6 +17,9 @@ local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local M = {}
 
+-- Flip to true to re-enable ambient bush shiver (dense lands = many PivotTo bursts).
+local FEATURE_ENABLED = false
+
 local HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
 local ON_COOLDOWN_ATTR = "BushOnCooldown"
 local LOOT_PHASE_ATTR = "BushLootPhase"
@@ -443,6 +446,9 @@ function M.isAnimating(bush: Instance): boolean
 end
 
 function M.trackBush(bush: Instance)
+	if not FEATURE_ENABLED then
+		return
+	end
 	if not BushRootUtil.isDirectBushRoot(bush) then
 		return
 	end
@@ -475,6 +481,9 @@ function M.trackBush(bush: Instance)
 end
 
 function M.scanMapForBrainrotBushes(map: Instance)
+	if not FEATURE_ENABLED then
+		return
+	end
 	local stack = { map }
 	local count = 0
 	while #stack > 0 do

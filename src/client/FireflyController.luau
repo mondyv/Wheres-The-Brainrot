@@ -15,6 +15,9 @@ local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local FireflyController = {}
 
+-- Flip to true to re-enable fireflies (PointLights around bushes tank FPS on dense lands).
+local FEATURE_ENABLED = false
+
 local player = Players.LocalPlayer
 
 -- Enter closer than ACTIVATE, leave farther than DEACTIVATE (hysteresis).
@@ -66,7 +69,7 @@ type Swarm = {
 
 local activeSwarms: { [Instance]: Swarm } = {}
 local wired = false
-local enabled = true
+local enabled = FEATURE_ENABLED
 local heartbeatConn: RBXScriptConnection? = nil
 local rootFolder: Folder? = nil
 local refreshAccum = 0.0
@@ -347,6 +350,11 @@ local function stepFlies(dt: number)
 end
 
 function FireflyController.setEnabled(on: boolean)
+	if not FEATURE_ENABLED then
+		enabled = false
+		clearAll()
+		return
+	end
 	enabled = on == true
 	if not enabled then
 		clearAll()
@@ -356,6 +364,10 @@ function FireflyController.setEnabled(on: boolean)
 end
 
 function FireflyController.init()
+	if not FEATURE_ENABLED then
+		enabled = false
+		return
+	end
 	if wired then
 		return
 	end

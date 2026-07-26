@@ -461,6 +461,14 @@ local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 		if isBushInSearchCooldown(model) then
 			continue
 		end
+		-- Cheap reject via cached anchor before promptWorldPos / pivot work.
+		local anchor = bushAnchor[model]
+		if anchor and anchor.Parent then
+			local approx = (anchor.Position - pos).Magnitude
+			if approx > MAX_RANGE + 10 then
+				continue
+			end
+		end
 		local wp = promptWorldPos(prompt)
 		if wp == Vector3.zero then
 			continue

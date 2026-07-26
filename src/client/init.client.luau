@@ -132,6 +132,9 @@ task.defer(function()
 				require(script.VegetationSwayController).init()
 			end,
 			function()
+				require(script.GrassCullController).init()
+			end,
+			function()
 				require(script.BushSpiderEncounterController).init()
 			end,
 			function()

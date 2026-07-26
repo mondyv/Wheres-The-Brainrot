@@ -5,6 +5,7 @@
 
 	DISABLED for now — indexing/swaying thousands of grassparts on later lands
 	was a prime lag suspect (last land grass never swayed; scans still ran).
+	See also GrassCullController (hides distant grassparts / strips CastShadow).
 ]]
 
 local Players = game:GetService("Players")

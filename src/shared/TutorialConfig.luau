@@ -63,13 +63,13 @@ M.STEPS = {
 	},
 	{
 		id = "swingLand1",
-		text = "Swing on a vine to Land 1",
-		speak = "GRAB A VINE AND SWING TO LAND ONE!!",
+		text = "Hold Jump on the middle vine, then let go to Land 1",
+		speak = "HOLD JUMP ON THE MIDDLE VINE THEN LET GO!!",
 	},
 	{
 		id = "searchBush",
-		text = "Search a bush for a brainrot",
-		speak = "SEARCH A BUSH AND FIND A BRAINROT!!",
+		text = "Open a bush for a brainrot",
+		speak = "OPEN A BUSH AND FIND A BRAINROT!!",
 	},
 	{
 		id = "claimBrainrot",

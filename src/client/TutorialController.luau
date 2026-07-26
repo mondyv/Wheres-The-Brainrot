@@ -91,6 +91,7 @@ local pendingCelebrate = false
 
 local lockedBushPart: BasePart? = nil
 local lockedBushRoot: Instance? = nil
+local lockedSwingPart: BasePart? = nil
 local uiPointerStroke: UIStroke? = nil
 local uiPointerHost: GuiObject? = nil
 
@@ -1149,11 +1150,23 @@ local function refreshVineCache()
 end
 
 local function resolveLand1SwingTarget(): BasePart?
+	-- Stick to one middle vine so the arrow doesn't jump between targets.
+	if lockedSwingPart and lockedSwingPart.Parent then
+		return lockedSwingPart
+	end
+	lockedSwingPart = nil
+
 	refreshVineCache()
 	local origin = playerOrigin()
 	local aim = land1Aim()
 	local toAim = aim - origin
 	local aimDir = if toAim.Magnitude > 1 then toAim.Unit else Vector3.new(0, 0, -1)
+	local right = aimDir:Cross(Vector3.yAxis)
+	if right.Magnitude < 0.05 then
+		right = Vector3.new(1, 0, 0)
+	else
+		right = right.Unit
+	end
 
 	local best: BasePart? = nil
 	local bestScore = math.huge
@@ -1164,39 +1177,46 @@ local function resolveLand1SwingTarget(): BasePart?
 		end
 		local offset = part.Position - origin
 		local dist = offset.Magnitude
-		if dist < 6 or dist > 220 then
+		if dist < 8 or dist > 200 then
 			continue
 		end
-		local toward = offset:Dot(aimDir)
-		-- Prefer vines ahead toward Land 1, not behind the player.
-		if toward < -8 then
+		local along = offset:Dot(aimDir)
+		-- Must be ahead toward Land 1.
+		if along < 6 then
 			continue
 		end
 		local land = LandResolver.resolveLandAtPosition(part.Position)
-		local landBonus = if land == 1 then 0 else 35
-		local score = dist + landBonus + (part.Position - aim).Magnitude * 0.15
+		-- Prefer vines still near spawn / between spawn and Land 1 (not already on Land 1 deep).
+		local landPenalty = if land == 1 then 55 else 0
+		local lateral = math.abs(offset:Dot(right))
+		-- Middle vine = low lateral offset from the spawn→Land1 corridor.
+		local score = lateral * 2.8 + dist * 0.2 + landPenalty + (part.Position - aim).Magnitude * 0.05
 		if score < bestScore then
 			bestScore = score
 			best = part
 		end
 	end
 
-	if best then
-		return best
-	end
-
-	-- Absolute nearest vine as last resort
-	bestScore = math.huge
-	for _, part in vineCache do
-		if part.Parent then
-			local dist = (part.Position - origin).Magnitude
-			if dist < bestScore then
-				bestScore = dist
-				best = part
+	if not best then
+		-- Absolute nearest vine as last resort
+		bestScore = math.huge
+		for _, part in vineCache do
+			if part.Parent then
+				local dist = (part.Position - origin).Magnitude
+				if dist < bestScore then
+					bestScore = dist
+					best = part
+				end
 			end
 		end
 	end
+
+	lockedSwingPart = best
 	return best
+end
+
+local function clearLockedSwing()
+	lockedSwingPart = nil
 end
 
 local function resolveNearestBush(): BasePart?
@@ -1579,7 +1599,9 @@ local function refreshPointersImpl()
 			pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
 		end
 	elseif step.id == "swingLand1" then
-		pointAtWorld(resolveLand1SwingTarget(), arrowHeight(3))
+		if not (lockedSwingPart and lockedSwingPart.Parent and worldArrowBb) then
+			pointAtWorld(resolveLand1SwingTarget(), arrowHeight(3))
+		end
 	elseif step.id == "searchBush" then
 		if not keepWorld then
 			pointAtWorld(resolveNearestBush(), arrowHeight(2))
@@ -1673,6 +1695,9 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 	end
 	if step.id == "searchBush" then
 		clearLockedBush()
+		clearLockedSwing()
+	elseif step.id == "swingLand1" then
+		clearLockedSwing()
 	elseif step.id ~= "claimBrainrot" then
 		clearLockedBush()
 	end
@@ -1794,6 +1819,7 @@ local function watchStepProgress()
 			if hrp and hrp:IsA("BasePart") then
 				local land = LandResolver.resolveLandAtPosition(hrp.Position)
 				if land == 1 then
+					clearLockedSwing()
 					completeCurrentIf("swingLand1")
 				end
 			end

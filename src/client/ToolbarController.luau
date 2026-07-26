@@ -106,11 +106,14 @@ local SHOW_TWEEN = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirecti
 local HIDE_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local HIGHLIGHT_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local EQUIP_POP_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local BACKPACK_OPEN_TWEEN = TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
-local BACKPACK_ICON_IN_TWEEN = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local BACKPACK_ICON_OUT_TWEEN = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local BACKPACK_SLIDE_PX = 64
+local BACKPACK_OPEN_TWEEN = TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.32, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+local BACKPACK_ICON_IN_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local BACKPACK_ICON_OUT_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local BACKPACK_SLIDE_PX = 96
+local BACKPACK_PANEL_ZINDEX = 40
+local BACKPACK_OPEN_START_SCALE = 0.92
+local BACKPACK_CLOSE_END_SCALE = 0.96
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
 local MOBILE_DRAG_HOLD_SEC = 0.2 -- long-press before mobile inventory drag starts (keeps tap-to-select)
 local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 28
@@ -1525,6 +1528,28 @@ local ToolbarController = {}
 		return pos
 	end
 
+	local function prepareBackpackPanelLayer(f: GuiObject)
+		-- Draw above the hotbar so the slide doesn't clip through toolbar slots.
+		if f.ZIndex < BACKPACK_PANEL_ZINDEX then
+			f.ZIndex = BACKPACK_PANEL_ZINDEX
+		end
+		f.ClipsDescendants = false
+		if toolbar:IsA("GuiObject") then
+			(toolbar :: GuiObject).ClipsDescendants = false
+		end
+		if hotbar:IsA("GuiObject") then
+			(hotbar :: GuiObject).ClipsDescendants = false
+		end
+	end
+
+	local function backpackSlideDistance(f: GuiObject): number
+		local h = f.AbsoluteSize.Y
+		if h > 1 then
+			return math.max(BACKPACK_SLIDE_PX, math.floor(h * 0.42 + 0.5))
+		end
+		return BACKPACK_SLIDE_PX
+	end
+
 	local function resolveBackpackHeaderLabel(backpackFrame: Instance): Instance?
 		local cat = findBackpackChild(backpackFrame, "SortCatagory") or findBackpackChild(backpackFrame, "SortCategory")
 		if cat and (cat:IsA("TextLabel") or cat:IsA("TextButton")) then
@@ -1582,23 +1607,17 @@ local ToolbarController = {}
 		local f = backpackFrameRef :: GuiObject
 		cancelBackpackPanelTweens()
 		ensureBackpackFadeRoot(f)
+		prepareBackpackPanelLayer(f)
 		local sc = getOrAddUIScale(f :: Instance)
 		local rest = getBackpackRestPosition(f)
+		local slide = backpackSlideDistance(f)
 		-- Open: start above and drop down. Close: continue downward (not up).
-		local fromAbove = UDim2.new(rest.X.Scale, rest.X.Offset, rest.Y.Scale, rest.Y.Offset - BACKPACK_SLIDE_PX)
-		local exitBelow = UDim2.new(rest.X.Scale, rest.X.Offset, rest.Y.Scale, rest.Y.Offset + BACKPACK_SLIDE_PX)
+		local fromAbove = UDim2.new(rest.X.Scale, rest.X.Offset, rest.Y.Scale, rest.Y.Offset - slide)
+		local exitBelow = UDim2.new(rest.X.Scale, rest.X.Offset, rest.Y.Scale, rest.Y.Offset + slide)
 
 		if open then
 			animateToggleBackpackIcon(false)
-			f.Visible = true
-			ensureBackpackChromeVisible(f)
-			scrollBackpackToTop(f)
-			f.Position = fromAbove
-			sc.Scale = 0.94
-			backpackPanelPosTween = TweenService:Create(f, BACKPACK_OPEN_TWEEN, { Position = rest })
-			backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_OPEN_TWEEN, { Scale = 1 })
-			backpackPanelPosTween:Play()
-			backpackPanelScaleTween:Play()
+			-- Settle empty hotbar slots before the panel appears so layout doesn't jump mid-slide.
 			if canUseToolbar then
 				showToolbar()
 			end
@@ -1606,13 +1625,32 @@ local ToolbarController = {}
 			for i = 1, #slots do
 				refreshSlotVisual(i)
 			end
-			refreshBrainrotBackpackUI()
+			-- Pose off-screen first, then reveal — avoids one-frame flash at rest (the "jump").
+			f.Visible = false
+			f.Position = fromAbove
+			sc.Scale = BACKPACK_OPEN_START_SCALE
+			ensureBackpackChromeVisible(f)
+			scrollBackpackToTop(f)
+			task.defer(function()
+				if not isBackpackPanelOpen or backpackFrameRef ~= f then
+					return
+				end
+				f.Position = fromAbove
+				sc.Scale = BACKPACK_OPEN_START_SCALE
+				f.Visible = true
+				backpackPanelPosTween = TweenService:Create(f, BACKPACK_OPEN_TWEEN, { Position = rest })
+				backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_OPEN_TWEEN, { Scale = 1 })
+				backpackPanelPosTween:Play()
+				backpackPanelScaleTween:Play()
+				task.defer(refreshBrainrotBackpackUI)
+			end)
 		else
 			updateHotbarSlotVisibility()
+			f.Visible = true
 			f.Position = rest
 			sc.Scale = 1
 			backpackPanelPosTween = TweenService:Create(f, BACKPACK_CLOSE_TWEEN, { Position = exitBelow })
-			backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.94 })
+			backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = BACKPACK_CLOSE_END_SCALE })
 			backpackPanelPosTween:Play()
 			backpackPanelScaleTween:Play()
 			backpackPanelPosTween.Completed:Once(function(state)
@@ -1622,12 +1660,16 @@ local ToolbarController = {}
 					f.Visible = false
 					f.Position = rest
 					sc.Scale = 1
-					-- Collapse empty slots first so icon lands in its final hotbar spot, then pop in.
+					-- Collapse empty slots first so icon lands in its final hotbar spot, then ease in.
 					updateHotbarSlotVisibility()
 					for i = 1, #slots do
 						refreshSlotVisual(i)
 					end
-					animateToggleBackpackIcon(true)
+					task.defer(function()
+						if not isBackpackPanelOpen and not isBackpackPanelClosing then
+							animateToggleBackpackIcon(true)
+						end
+					end)
 				end
 				if state == Enum.PlaybackState.Completed then
 					backpackPanelPosTween = nil
@@ -2331,7 +2373,7 @@ local ToolbarController = {}
 			end
 			refreshToggleBackpackIconLayout()
 			icon.Visible = true
-			sc.Scale = 0.15
+			sc.Scale = 0.55
 			local tw = TweenService:Create(sc, BACKPACK_ICON_IN_TWEEN, { Scale = 1 })
 			toggleIconScaleTween = tw
 			tw:Play()
@@ -2348,8 +2390,8 @@ local ToolbarController = {}
 				sc.Scale = 1
 				return
 			end
-			sc.Scale = math.max(sc.Scale, 0.2)
-			local tw = TweenService:Create(sc, BACKPACK_ICON_OUT_TWEEN, { Scale = 0.12 })
+			sc.Scale = math.clamp(sc.Scale, 0.55, 1)
+			local tw = TweenService:Create(sc, BACKPACK_ICON_OUT_TWEEN, { Scale = 0.55 })
 			toggleIconScaleTween = tw
 			tw:Play()
 			tw.Completed:Once(function(state)
@@ -4107,6 +4149,7 @@ local ToolbarController = {}
 				backpackGuiFrame = bf
 				backpackFrameRef = bf
 				backpackRestPosition = bf.Position
+				prepareBackpackPanelLayer(bf)
 				ensureBackpackFrameOutline(bf)
 				ensureBackpackFadeRoot(bf)
 				ensureBackpackChromeVisible(bf)

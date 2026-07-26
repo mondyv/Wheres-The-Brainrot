@@ -6,7 +6,6 @@
 
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
-local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
@@ -52,6 +51,7 @@ local exclaim: ImageLabel? = nil
 local objectiveLabel: TextLabel? = nil
 local dotsLabel: TextLabel? = nil
 local panelScale: UIScale? = nil
+local hudMatchScale: UIScale? = nil
 local worldArrowBb: BillboardGui? = nil
 local worldArrowImg: ImageLabel? = nil
 local arrowAnimConn: RBXScriptConnection? = nil
@@ -77,6 +77,7 @@ local upgradeBaseLevel = 1
 local layoutConn: RBXScriptConnection? = nil
 local panelStroke: UIStroke? = nil
 local chromeSuppressed = false
+local questHost: Frame? = nil
 local vineCache: { BasePart } = {}
 local vineCacheAt = 0
 local lastPointerRefresh = 0
@@ -254,13 +255,53 @@ local function resolveSideButtonPanel(): GuiObject?
 	return nil
 end
 
+local function cumulativeUIScale(inst: Instance): number
+	local s = 1
+	local cur: Instance? = inst
+	while cur and not cur:IsA("LayerCollector") do
+		if cur:IsA("GuiObject") then
+			local u = cur:FindFirstChildOfClass("UIScale")
+			if u then
+				s *= u.Scale
+			end
+		end
+		cur = cur.Parent
+	end
+	return math.max(s, 0.001)
+end
+
+local function ensureQuestHost(): Frame?
+	local main = PlayerGuiMain.ensure(player)
+	if not main then
+		return nil
+	end
+	local existing = main:FindFirstChild("TutorialQuestHost")
+	if existing and existing:IsA("Frame") then
+		questHost = existing
+		return existing
+	end
+	local host = Instance.new("Frame")
+	host.Name = "TutorialQuestHost"
+	host.BackgroundTransparency = 1
+	host.BorderSizePixel = 0
+	host.Size = UDim2.fromScale(1, 1)
+	host.Position = UDim2.fromScale(0, 0)
+	host.AnchorPoint = Vector2.new(0, 0)
+	host.ZIndex = 80
+	host.ClipsDescendants = false
+	host.Active = false
+	host.Parent = main
+	questHost = host
+	return host
+end
+
 local function isHudPanelOpen(): boolean
 	local frame = HUDController.getCurrentFrame()
 	return frame ~= nil and frame.Parent ~= nil and frame.Visible == true
 end
 
 local function syncPanelToSideButtonsImpl()
-	if not panel or not root or chromeSuppressed then
+	if not panel or chromeSuppressed then
 		return
 	end
 	if isHudPanelOpen() then
@@ -268,46 +309,41 @@ local function syncPanelToSideButtonsImpl()
 		return
 	end
 	local lef1 = resolveSideButtonPanel()
-	if not lef1 then
+	local host = ensureQuestHost()
+	if not lef1 or not host then
 		return
 	end
 
-	if panel.Parent ~= root then
-		panel.Parent = root
-	end
-	if gui then
-		-- Match Main inset mode so AbsolutePosition stays correct on resize.
-		local main = PlayerGuiMain.ensure(player)
-		if main then
-			gui.IgnoreGuiInset = main.IgnoreGuiInset
-		end
-		gui.Enabled = true
+	-- Live under Main (same ScreenGui as SideUI) so inset/resize stay locked.
+	if panel.Parent ~= host then
+		panel.Parent = host
 	end
 
 	local gap = TutorialConfig.PANEL_GAP_ABOVE_SIDE
 	local height = TutorialConfig.PANEL_HEIGHT
 	local leftPad = TutorialConfig.PANEL_LEFT_PAD
 	local ap = lef1.AbsolutePosition
+	local hp = host.AbsolutePosition
+	local sideUI = lef1.Parent
+	local sideScale = if sideUI then cumulativeUIScale(sideUI) else 1
 
 	local textW = 0
 	if objectiveLabel and objectiveLabel.Text ~= "" then
 		textW = objectiveLabel.TextBounds.X
 	end
-	local contentW = 54 + textW + 40 + 28
-	local width = math.max(TutorialConfig.PANEL_MIN_WIDTH, contentW)
-
-	local posX = ap.X + leftPad
-	local posY = ap.Y - gap
-	if gui and not gui.IgnoreGuiInset then
-		local inset = GuiService:GetGuiInset()
-		posX -= inset.X
-		posY -= inset.Y
-	end
+	-- Desired on-screen size; Size is pre-UIScale so AbsoluteSize matches after Scale.
+	local screenW = math.max(TutorialConfig.PANEL_MIN_WIDTH, 54 + textW + 40 + 28)
+	local localW = screenW / sideScale
+	local localH = height / sideScale
 
 	panel.AnchorPoint = Vector2.new(0, 1)
-	panel.Size = UDim2.fromOffset(width, height)
-	panel.Position = UDim2.fromOffset(posX, posY)
-	panel.ZIndex = 50
+	panel.Size = UDim2.fromOffset(localW, localH)
+	-- Host has no UIScale — Position uses the same space as AbsolutePosition.
+	panel.Position = UDim2.fromOffset(ap.X - hp.X + leftPad, ap.Y - hp.Y - gap)
+	if hudMatchScale then
+		hudMatchScale.Scale = sideScale
+	end
+	panel.ZIndex = 100
 	panel.Visible = active and not chromeSuppressed
 end
 syncPanelToSideButtons = syncPanelToSideButtonsImpl
@@ -485,8 +521,13 @@ local function ensureGui()
 
 	local scale = Instance.new("UIScale")
 	scale.Name = "ObjectiveScale"
-	scale.Scale = 0.86
+	scale.Scale = 1
 	scale.Parent = panelFrame
+
+	local matchScale = Instance.new("UIScale")
+	matchScale.Name = "HudMatchScale"
+	matchScale.Scale = 1
+	matchScale.Parent = panelFrame
 
 	local bang = Instance.new("ImageLabel")
 	bang.Name = "Exclaim"
@@ -600,10 +641,11 @@ local function ensureGui()
 	objectiveLabel = label
 	dotsLabel = dots
 	panelScale = scale
+	hudMatchScale = matchScale
 	dimOverlay = dim
 	spotlightHole = hole
 
-	-- Move onto SideUI immediately so resize stays correct.
+	-- Parent under Main host so resize stays glued to Lef1.
 	syncPanelToSideButtons()
 
 	task.spawn(function()
@@ -643,7 +685,9 @@ local function showPanel(text: string, animateIn: boolean)
 		return
 	end
 	setChromeSuppressed(false)
-	gui.Enabled = true
+	if gui then
+		gui.Enabled = true
+	end
 	objectiveLabel.Text = ""
 	syncPanelToSideButtons()
 	if animateIn then
@@ -657,21 +701,23 @@ local function showPanel(text: string, animateIn: boolean)
 end
 
 local function hidePanel()
-	if not gui or not panel or not panelScale then
+	if not panel or not panelScale then
 		return
 	end
 	local s = panelScale
 	local p = panel
 	local g = gui
-	local pos = p.Position
 	TweenService:Create(s, PANEL_SWAP, { Scale = 0.8 }):Play()
 	local tw = TweenService:Create(p, PANEL_SWAP, {
-		Position = UDim2.fromOffset(pos.X.Offset - 80, pos.Y.Offset),
+		Position = UDim2.fromOffset(p.Position.X.Offset - 80, p.Position.Y.Offset),
 	})
 	tw:Play()
 	tw.Completed:Once(function()
 		if g then
 			g.Enabled = false
+		end
+		if p then
+			p.Visible = false
 		end
 	end)
 end

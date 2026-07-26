@@ -466,12 +466,12 @@ local function runBroadcastCommand(sender: Player, args: { string }, global: boo
 		return false, "Usage: " .. usage
 	end
 	if global then
-		if not AdminBroadcastService.broadcastGlobal(message, sender.Name) then
+		if not AdminBroadcastService.broadcastGlobal(message, sender.Name, sender.UserId) then
 			return false, "Failed to send global notification."
 		end
 		return true, string.format("Global notification sent: %s", message)
 	end
-	if not AdminBroadcastService.broadcastServer(message) then
+	if not AdminBroadcastService.broadcastServer(message, sender.Name, sender.UserId) then
 		return false, "Failed to send server notification."
 	end
 	return true, string.format("Server notification sent: %s", message)

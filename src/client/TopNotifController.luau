@@ -9,6 +9,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
+local VerifiedCreators = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("VerifiedCreators"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local RaritySpawnStyle = require(script.Parent.RaritySpawnStyle)
@@ -74,6 +75,7 @@ local function prepareNotifLabel(textLabel: TextLabel)
 	textLabel.BackgroundTransparency = 1
 	textLabel.BorderSizePixel = 0
 	textLabel.Rotation = 0
+	textLabel.RichText = true
 	for _, child in textLabel:GetChildren() do
 		if child:IsA("UIScale") then
 			child:Destroy()
@@ -465,7 +467,7 @@ function TopNotifController.showRaritySpawn(message: string, rarityId: string, l
 	enqueue(message, false, rarityId, lifetimeSec)
 end
 
-function TopNotifController.showBroadcast(message: string, _scope: string?)
+function TopNotifController.showBroadcast(message: string, _scope: string?, senderName: string?, senderUserId: number?)
 	if not globalMessagesEnabled() then
 		return
 	end
@@ -473,7 +475,8 @@ function TopNotifController.showBroadcast(message: string, _scope: string?)
 		TopNotifController.init()
 	end
 	GameSoundEffects.playNotification1()
-	enqueue(message, false, "legendary")
+	local display = VerifiedCreators.formatBroadcast(message, senderName, senderUserId)
+	enqueue(display, false, "legendary")
 end
 
 function TopNotifController.showError(message: string)
@@ -514,11 +517,16 @@ function TopNotifController.init()
 	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
 	local ev = remotes and remotes:FindFirstChild("BroadcastTopNotif")
 	if ev and ev:IsA("RemoteEvent") then
-		broadcastConn = (ev :: RemoteEvent).OnClientEvent:Connect(function(message: any, _scope: any)
+		broadcastConn = (ev :: RemoteEvent).OnClientEvent:Connect(function(message: any, _scope: any, senderName: any, senderUserId: any)
 			if typeof(message) ~= "string" then
 				return
 			end
-			TopNotifController.showBroadcast(message, if typeof(_scope) == "string" then _scope else nil)
+			TopNotifController.showBroadcast(
+				message,
+				if typeof(_scope) == "string" then _scope else nil,
+				if typeof(senderName) == "string" then senderName else nil,
+				if typeof(senderUserId) == "number" then senderUserId else nil
+			)
 		end)
 	end
 end

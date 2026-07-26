@@ -47,9 +47,9 @@ local function sanitizeMessage(raw: string): string?
 	return trimmed
 end
 
-local function fireToAllPlayers(message: string, scope: string)
+local function fireToAllPlayers(message: string, scope: string, senderName: string?, senderUserId: number?)
 	local ev = ensureRemote()
-	ev:FireAllClients(message, scope)
+	ev:FireAllClients(message, scope, senderName, senderUserId)
 end
 
 function M.joinArgs(args: { string }): string?
@@ -59,32 +59,35 @@ function M.joinArgs(args: { string }): string?
 	return sanitizeMessage(table.concat(args, " "))
 end
 
-function M.broadcastServer(message: string): boolean
+function M.broadcastServer(message: string, senderName: string?, senderUserId: number?): boolean
 	local text = sanitizeMessage(message)
 	if not text then
 		return false
 	end
-	fireToAllPlayers(text, "server")
+	fireToAllPlayers(text, "server", senderName, senderUserId)
 	return true
 end
 
-function M.broadcastGlobal(message: string, senderName: string?): boolean
+function M.broadcastGlobal(message: string, senderName: string?, senderUserId: number?): boolean
 	local text = sanitizeMessage(message)
 	if not text then
 		return false
 	end
+	local sender = if typeof(senderName) == "string" and senderName ~= "" then senderName else "Admin"
+	local uid = if typeof(senderUserId) == "number" then senderUserId else nil
 	if messagingReady then
 		task.spawn(function()
 			pcall(function()
 				MessagingService:PublishAsync(MESSAGING_TOPIC, {
 					message = text,
-					sender = if typeof(senderName) == "string" then senderName else "Admin",
+					sender = sender,
+					senderUserId = uid,
 					sentAt = os.time(),
 				})
 			end)
 		end)
 	else
-		fireToAllPlayers(text, "global")
+		fireToAllPlayers(text, "global", sender, uid)
 	end
 	return true
 end
@@ -103,7 +106,9 @@ function M.start()
 			end
 			local text = sanitizeMessage(data.message)
 			if text then
-				fireToAllPlayers(text, "global")
+				local sender = if typeof(data.sender) == "string" then data.sender else nil
+				local senderUserId = if typeof(data.senderUserId) == "number" then data.senderUserId else nil
+				fireToAllPlayers(text, "global", sender, senderUserId)
 			end
 		end)
 		messagingReady = true

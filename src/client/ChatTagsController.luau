@@ -13,6 +13,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TextChatService = game:GetService("TextChatService")
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local VerifiedCreators = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("VerifiedCreators"))
 local LeaderboardRankController = require(script.Parent.LeaderboardRankController)
 
 local GROUP_ID = 34716703
@@ -112,8 +113,21 @@ local function init()
 		if leaderboardTags ~= "" then
 			tags = if tags ~= "" then tags .. " " .. leaderboardTags else leaderboardTags
 		end
+
+		local prefix = message.PrefixText
+		if VerifiedCreators.isVerified(plr.UserId) then
+			-- Keep trailing ":" if present: Name ✓:
+			if string.sub(prefix, -1) == ":" then
+				prefix = string.sub(prefix, 1, -2) .. " " .. VerifiedCreators.BADGE_MARKUP .. ":"
+			else
+				prefix = prefix .. " " .. VerifiedCreators.BADGE_MARKUP
+			end
+		end
+
 		if tags ~= "" then
-			props.PrefixText = tags .. " " .. message.PrefixText
+			props.PrefixText = tags .. " " .. prefix
+		elseif prefix ~= message.PrefixText then
+			props.PrefixText = prefix
 		end
 
 		return props

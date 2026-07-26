@@ -255,12 +255,29 @@ end
 
 local serverLuckMultiplier = 1
 local serverLuckEndsAt = 0
+local ADMIN_GLOBAL_LUCK_TOPIC = "AdminGlobalServerLuck_v1"
+local MAX_ADMIN_LUCK_MULT = 256
+local MAX_ADMIN_LUCK_DURATION = 86400
 
 local function publishServerLuck()
 	ReplicatedStorage:SetAttribute(StoreConfig.SERVER_LUCK_MULT_ATTR, serverLuckMultiplier)
 	ReplicatedStorage:SetAttribute(StoreConfig.SERVER_LUCK_ENDS_ATTR, serverLuckEndsAt)
 	local remaining = math.max(0, serverLuckEndsAt - os.time())
 	serverLuckUpdatedRE:FireAllClients(serverLuckMultiplier, remaining)
+end
+
+local function setServerLuckAbsolute(multiplier: number, durationSec: number): (number, number)
+	local mult = math.clamp(multiplier, 1, MAX_ADMIN_LUCK_MULT)
+	if mult <= 1 then
+		serverLuckMultiplier = 1
+		serverLuckEndsAt = 0
+	else
+		local dur = math.clamp(math.floor(durationSec + 0.5), 1, MAX_ADMIN_LUCK_DURATION)
+		serverLuckMultiplier = mult
+		serverLuckEndsAt = os.time() + dur
+	end
+	publishServerLuck()
+	return serverLuckMultiplier, math.max(0, serverLuckEndsAt - os.time())
 end
 
 local function addServerLuck(player: Player?)
@@ -285,6 +302,36 @@ local function addServerLuck(player: Player?)
 	publishServerLuck()
 end
 
+local function ensureStoreInternalBindable(name: string): BindableFunction
+	local folder = ServerStorage:FindFirstChild("StoreInternal")
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "StoreInternal"
+		folder.Parent = ServerStorage
+	end
+	local existing = folder:FindFirstChild(name)
+	if existing and existing:IsA("BindableFunction") then
+		return existing
+	end
+	if existing then
+		existing:Destroy()
+	end
+	local bf = Instance.new("BindableFunction")
+	bf.Name = name
+	bf.Parent = folder
+	return bf
+end
+
+local setServerLuckBF = ensureStoreInternalBindable("SetServerLuck")
+setServerLuckBF.OnInvoke = function(multiplier: any, durationSec: any): any
+	if typeof(multiplier) ~= "number" then
+		return { ok = false }
+	end
+	local dur = if typeof(durationSec) == "number" then durationSec else StoreConfig.SERVER_LUCK_DURATION
+	local mult, remaining = setServerLuckAbsolute(multiplier, dur)
+	return { ok = true, multiplier = mult, remaining = remaining }
+end
+
 publishServerLuck()
 
 task.spawn(function()
@@ -295,6 +342,46 @@ task.spawn(function()
 			serverLuckEndsAt = 0
 			publishServerLuck()
 		end
+	end
+end)
+
+-- Admin globalluck — every server applies the same absolute multiplier.
+task.spawn(function()
+	local MessagingService = game:GetService("MessagingService")
+	local AdminBroadcastService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminBroadcastService"))
+	local ok, err = pcall(function()
+		MessagingService:SubscribeAsync(ADMIN_GLOBAL_LUCK_TOPIC, function(packet)
+			if typeof(packet) ~= "table" or typeof(packet.Data) ~= "table" then
+				return
+			end
+			local data = packet.Data
+			-- Origin server already applied + announced.
+			if typeof(data.originJobId) == "string" and data.originJobId == game.JobId then
+				return
+			end
+			local mult = data.multiplier
+			local dur = data.durationSec
+			if typeof(mult) ~= "number" then
+				return
+			end
+			local duration = if typeof(dur) == "number" then dur else StoreConfig.SERVER_LUCK_DURATION
+			local applied, remaining = setServerLuckAbsolute(mult, duration)
+			local senderName = if typeof(data.sender) == "string" then data.sender else nil
+			local senderUserId = if typeof(data.senderUserId) == "number" then data.senderUserId else nil
+			local msg = if applied <= 1
+				then "cleared global luck"
+				else string.format(
+					"set global luck to %gx for %s",
+					applied,
+					if remaining >= 60
+						then string.format("%dm", math.floor(remaining / 60 + 0.5))
+						else string.format("%ds", remaining)
+				)
+			AdminBroadcastService.broadcastServer(msg, senderName, senderUserId, 8)
+		end)
+	end)
+	if not ok then
+		warn("[ServerLuck] MessagingService subscribe failed:", err)
 	end
 end)
 

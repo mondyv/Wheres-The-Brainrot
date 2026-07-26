@@ -140,6 +140,8 @@ local COMMAND_ALIASES: { [string]: string } = {
 	servernotifs = "servernotif",
 	shutdown = "servershutdown",
 	servershut = "servershutdown",
+	sluck = "serverluck",
+	gluck = "globalluck",
 	spawnglobal = "serverspawn",
 	land = "tpland",
 	teleportland = "tpland",
@@ -160,6 +162,8 @@ local COMMAND_HINTS: { [string]: string } = {
 	servernotif = "Top notification on this server",
 	globalnotif = "Top notification on all servers",
 	servershutdown = "Countdown then shut down THIS server only",
+	serverluck = "Set luck on THIS server + announce",
+	globalluck = "Set luck on ALL servers + announce",
 	playtutorial = "Replay the first-join tutorial",
 	fly = "Toggle fly mode for yourself",
 }
@@ -356,6 +360,9 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "globalnotif Double luck weekend!", hint = COMMAND_HINTS.globalnotif },
 		{ fill = "servershutdown 60", hint = COMMAND_HINTS.servershutdown },
 		{ fill = "servershutdown 5m", hint = "Shut down this server in 5 minutes" },
+		{ fill = "serverluck 4x 10m", hint = COMMAND_HINTS.serverluck },
+		{ fill = "globalluck 4x 10m", hint = COMMAND_HINTS.globalluck },
+		{ fill = "serverluck off", hint = "Clear luck on this server" },
 		{ fill = "playtutorial", hint = COMMAND_HINTS.playtutorial },
 		{ fill = "fly", hint = COMMAND_HINTS.fly },
 	}
@@ -454,6 +461,35 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 				local landStr = tostring(land)
 				if startsWith(landStr, partial) then
 					pushSuggestion(out, prefix .. landStr, "land spawn / revive pad")
+				end
+			end
+		end
+	elseif cmdName == "servershutdown" then
+		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
+			for _, sample in { "30", "60", "30s", "2m", "5m" } do
+				if startsWith(sample, partial) then
+					pushSuggestion(out, prefix .. sample, "this server only")
+				end
+			end
+		end
+	elseif cmdName == "serverluck" or cmdName == "globalluck" then
+		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
+			for _, sample in { "2x", "4x", "8x", "off" } do
+				if startsWith(sample, partial) then
+					pushSuggestion(
+						out,
+						prefix .. sample,
+						if cmdName == "globalluck" then "all servers" else "this server"
+					)
+				end
+			end
+		elseif argIndex == 2 and (#tokens > 2 or (endsWithSpace and #tokens >= 2)) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(2, #tokens - 1))
+			for _, sample in { "5m", "10m", "30m", "1h" } do
+				if startsWith(sample, partial) then
+					pushSuggestion(out, prefix .. sample, "duration")
 				end
 			end
 		end

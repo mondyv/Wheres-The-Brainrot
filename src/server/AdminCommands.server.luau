@@ -2,6 +2,7 @@
 -- Server-authoritative admin command runner used by the F5 command bar.
 
 local Players = game:GetService("Players")
+local MessagingService = game:GetService("MessagingService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
@@ -9,6 +10,7 @@ local AdminAllowlist = require(script.Parent:WaitForChild("Modules"):WaitForChil
 local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Brainrots"))
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local AdminBroadcastService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminBroadcastService"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
@@ -196,7 +198,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tpland, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, playtutorial, fly, help"
+			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tpland, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverluck, globalluck, playtutorial, fly, help"
 	end,
 }
 
@@ -496,6 +498,153 @@ commands.globalnotif = {
 commands.globalnotifs = commands.globalnotif
 
 local shutdownToken = 0
+local ADMIN_GLOBAL_LUCK_TOPIC = "AdminGlobalServerLuck_v1"
+
+local function parseLuckMultiplier(raw: string?): number?
+	if typeof(raw) ~= "string" or raw == "" then
+		return nil
+	end
+	local trimmed = string.lower((string.gsub(raw, "^%s*(.-)%s*$", "%1")))
+	if trimmed == "off" or trimmed == "clear" or trimmed == "reset" then
+		return 1
+	end
+	trimmed = string.gsub(trimmed, "x$", "")
+	local value = tonumber(trimmed)
+	if not value or value < 1 then
+		return nil
+	end
+	return value
+end
+
+local function parseLuckDuration(raw: string?): number?
+	if typeof(raw) ~= "string" or raw == "" then
+		return StoreConfig.SERVER_LUCK_DURATION
+	end
+	local trimmed = string.lower((string.gsub(raw, "^%s*(.-)%s*$", "%1")))
+	local num, unit = string.match(trimmed, "^(%d+%.?%d*)%s*([smh]?)$")
+	if not num then
+		return nil
+	end
+	local value = tonumber(num)
+	if not value or value <= 0 then
+		return nil
+	end
+	if unit == "m" then
+		value *= 60
+	elseif unit == "h" then
+		value *= 3600
+	end
+	return math.clamp(math.floor(value + 0.5), 1, 86400)
+end
+
+local function formatLuckDuration(totalSec: number): string
+	local sec = math.max(0, math.floor(totalSec + 0.5))
+	if sec >= 3600 then
+		local h = math.floor(sec / 3600)
+		local m = math.floor((sec % 3600) / 60)
+		if m > 0 then
+			return string.format("%dh %dm", h, m)
+		end
+		return string.format("%dh", h)
+	end
+	if sec >= 60 then
+		local m = math.floor(sec / 60)
+		local s = sec % 60
+		if s > 0 then
+			return string.format("%dm %ds", m, s)
+		end
+		return string.format("%dm", m)
+	end
+	return string.format("%ds", sec)
+end
+
+local function invokeSetServerLuck(multiplier: number, durationSec: number): (boolean, number?, number?)
+	local bf = waitForBindable("StoreInternal", "SetServerLuck", 5)
+	if not bf then
+		return false, nil, nil
+	end
+	local ok, result = pcall(function()
+		return (bf :: BindableFunction):Invoke(multiplier, durationSec)
+	end)
+	if not ok or typeof(result) ~= "table" or result.ok ~= true then
+		return false, nil, nil
+	end
+	return true,
+		if typeof(result.multiplier) == "number" then result.multiplier else nil,
+		if typeof(result.remaining) == "number" then result.remaining else nil
+end
+
+local function runLuckCommand(sender: Player, args: { string }, global: boolean): (boolean, string)
+	local mult = parseLuckMultiplier(args[1])
+	if not mult then
+		local usage = if global then "globalluck <mult|off> [duration]" else "serverluck <mult|off> [duration]"
+		return false, "Usage: " .. usage
+	end
+	local duration = parseLuckDuration(args[2])
+	if not duration then
+		return false, "Invalid duration. Use seconds, 5m, or 1h."
+	end
+
+	if global then
+		-- Apply + announce on this server immediately; other servers follow via MessagingService.
+		local ok, applied, remaining = invokeSetServerLuck(mult, duration)
+		if not ok then
+			return false, "Server luck service is not ready."
+		end
+		local finalMult = applied or mult
+		local finalRemaining = remaining or (if mult <= 1 then 0 else duration)
+		local msg = if finalMult <= 1
+			then "cleared global luck"
+			else string.format("set global luck to %gx for %s", finalMult, formatLuckDuration(finalRemaining))
+		AdminBroadcastService.broadcastServer(msg, sender.Name, sender.UserId, 8)
+
+		local pubOk, pubErr = pcall(function()
+			MessagingService:PublishAsync(ADMIN_GLOBAL_LUCK_TOPIC, {
+				multiplier = mult,
+				durationSec = duration,
+				sender = sender.Name,
+				senderUserId = sender.UserId,
+				originJobId = game.JobId,
+				sentAt = os.time(),
+			})
+		end)
+		if not pubOk then
+			warn("[AdminCommands] globalluck publish failed:", pubErr)
+			return true, msg .. " (this server only — global publish failed)"
+		end
+		return true, if finalMult <= 1 then "Global luck cleared." else string.format("Global luck set to %gx for %s.", finalMult, formatLuckDuration(finalRemaining))
+	end
+
+	local ok, applied, remaining = invokeSetServerLuck(mult, duration)
+	if not ok then
+		return false, "Server luck service is not ready."
+	end
+	local finalMult = applied or mult
+	local finalRemaining = remaining or (if mult <= 1 then 0 else duration)
+	local msg = if finalMult <= 1
+		then "cleared server luck"
+		else string.format("set server luck to %gx for %s", finalMult, formatLuckDuration(finalRemaining))
+	AdminBroadcastService.broadcastServer(msg, sender.Name, sender.UserId, 8)
+	return true, if finalMult <= 1 then "Server luck cleared." else string.format("Server luck set to %gx for %s.", finalMult, formatLuckDuration(finalRemaining))
+end
+
+commands.serverluck = {
+	usage = "serverluck <mult|off> [duration]",
+	description = "Set luck on THIS server and announce it (username + verified badge).",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		return runLuckCommand(sender, args, false)
+	end,
+}
+commands.sluck = commands.serverluck
+
+commands.globalluck = {
+	usage = "globalluck <mult|off> [duration]",
+	description = "Set luck on ALL servers and announce it (username + verified badge).",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		return runLuckCommand(sender, args, true)
+	end,
+}
+commands.gluck = commands.globalluck
 
 local function parseShutdownSeconds(raw: string?): number?
 	if typeof(raw) ~= "string" or raw == "" then

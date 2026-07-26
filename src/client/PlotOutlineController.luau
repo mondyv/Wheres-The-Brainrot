@@ -22,41 +22,90 @@ local FADE_START_DIST = 72
 local FADE_END_DIST = 18
 local OUTLINE_COLOR = Color3.fromRGB(170, 220, 255)
 -- Farthest visible outline (still faint).
-local OUTLINE_FAR_TRANSPARENCY = 0.62
+local OUTLINE_FAR_TRANSPARENCY = 0.48
+-- SelectionBox line thickness (Highlight has no thickness API).
+local BOX_LINE_THICKNESS = 0.055
 
 local PlotOutlineController = {}
 
 local highlight: Highlight? = nil
+local selectionBox: SelectionBox? = nil
 local pollConn: RBXScriptConnection? = nil
 local accum = 0
 local cachedPlot: Instance? = nil
 local cachedCenter: Vector3? = nil
+local cachedFloorPart: BasePart? = nil
 local wired = false
 
-local function destroyHighlight()
+local function destroyOutline()
 	if highlight then
 		highlight:Destroy()
 		highlight = nil
 	end
+	if selectionBox then
+		selectionBox:Destroy()
+		selectionBox = nil
+	end
 end
 
-local function ensureHighlight(plot: Instance): Highlight?
-	local hl = highlight
-	if hl and hl.Parent and hl.Adornee == plot then
-		return hl
+local function resolveFloorAdornee(plot: Instance): BasePart?
+	local story1 = PlotPaths.firstStoryFolder(plot)
+	local floor = story1 and (story1:FindFirstChild("Floor") or story1:FindFirstChild("floor"))
+	if floor and floor:IsA("BasePart") then
+		return floor
 	end
-	destroyHighlight()
-	hl = Instance.new("Highlight")
-	hl.Name = "PlotSafezoneOutline"
-	hl.FillTransparency = 1
-	hl.OutlineTransparency = 1
-	hl.OutlineColor = OUTLINE_COLOR
-	hl.DepthMode = Enum.HighlightDepthMode.Occluded
-	hl.Enabled = false
-	hl.Adornee = plot
-	hl.Parent = Workspace.CurrentCamera or plot
-	highlight = hl
-	return hl
+	if floor then
+		local part = floor:FindFirstChildWhichIsA("BasePart", true)
+		if part then
+			return part
+		end
+	end
+	return plot:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function ensureOutline(plot: Instance): (Highlight?, SelectionBox?)
+	local floorPart = cachedFloorPart
+	if not floorPart or not floorPart.Parent then
+		floorPart = resolveFloorAdornee(plot)
+		cachedFloorPart = floorPart
+	end
+
+	local hl = highlight
+	if not hl or not hl.Parent or hl.Adornee ~= plot then
+		if hl then
+			hl:Destroy()
+		end
+		hl = Instance.new("Highlight")
+		hl.Name = "PlotSafezoneOutline"
+		hl.FillTransparency = 1
+		hl.OutlineTransparency = 1
+		hl.OutlineColor = OUTLINE_COLOR
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		hl.Enabled = false
+		hl.Adornee = plot
+		hl.Parent = Workspace.CurrentCamera or plot
+		highlight = hl
+	end
+
+	local box = selectionBox
+	if floorPart and (not box or not box.Parent or box.Adornee ~= floorPart) then
+		if box then
+			box:Destroy()
+		end
+		box = Instance.new("SelectionBox")
+		box.Name = "PlotSafezoneOutlineBox"
+		box.Color3 = OUTLINE_COLOR
+		box.SurfaceColor3 = OUTLINE_COLOR
+		box.SurfaceTransparency = 1
+		box.LineThickness = BOX_LINE_THICKNESS
+		box.Transparency = 1
+		box.Visible = false
+		box.Adornee = floorPart
+		box.Parent = Workspace.CurrentCamera or plot
+		selectionBox = box
+	end
+
+	return hl, box
 end
 
 local function resolvePlotCenter(plot: Instance): Vector3?
@@ -75,6 +124,7 @@ local function refreshCachedPlot()
 	local plot = PlotPaths.findPlotForAssignedSlot(player)
 	cachedPlot = plot
 	cachedCenter = if plot then resolvePlotCenter(plot) else nil
+	cachedFloorPart = if plot then resolveFloorAdornee(plot) else nil
 end
 
 local function xzDist(a: Vector3, b: Vector3): number
@@ -101,6 +151,10 @@ local function tickOutline()
 			highlight.Enabled = false
 			highlight.OutlineTransparency = 1
 		end
+		if selectionBox then
+			selectionBox.Visible = false
+			selectionBox.Transparency = 1
+		end
 		return
 	end
 
@@ -110,7 +164,7 @@ local function tickOutline()
 	local plot = cachedPlot
 	local center = cachedCenter
 	if not plot or not center then
-		destroyHighlight()
+		destroyOutline()
 		return
 	end
 
@@ -121,12 +175,17 @@ local function tickOutline()
 
 	local dist = xzDist(hrp.Position, center)
 	local transparency = outlineTransparencyForDistance(dist)
-	local hl = ensureHighlight(plot)
-	if not hl then
-		return
+	local hl, box = ensureOutline(plot)
+	local visible = transparency < 0.995
+	if hl then
+		hl.Enabled = visible
+		hl.OutlineTransparency = transparency
 	end
-	hl.Enabled = transparency < 0.995
-	hl.OutlineTransparency = transparency
+	if box then
+		box.Visible = visible
+		box.Transparency = transparency
+		box.LineThickness = BOX_LINE_THICKNESS
+	end
 end
 
 local function onHeartbeat(dt: number)

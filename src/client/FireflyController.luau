@@ -1,7 +1,7 @@
 -- [ACTIVE] FireflyController
 --[[
-	Soft yellow fireflies on a few bushes outside the safe zone.
-	Neon spheres + PointLight only (no smoke particle textures).
+	Soft green fireflies on bushes outside the safe zone.
+	Small body + PointLight only (no particle VFX).
 ]]
 
 local Players = game:GetService("Players")
@@ -17,17 +17,19 @@ local FireflyController = {}
 
 local player = Players.LocalPlayer
 
-local ACTIVE_RANGE = 55
-local SELECT_PCT = 10
-local MAX_ACTIVE = 2
-local FLIES_PER_BUSH = 2
+local ACTIVE_RANGE = 60
+local SELECT_PCT = 14
+local MAX_ACTIVE = 4
+local FLIES_PER_BUSH = 6
 local REFRESH_SEC = 2.5
 local FOLDER_NAME = "BushFireflies"
 local LIGHT_UPDATE_EVERY = 2
 
--- Brighter / lighter yellow
-local YELLOW = Color3.fromRGB(255, 245, 170)
-local YELLOW_CORE = Color3.fromRGB(255, 252, 220)
+-- Real firefly glow: cool lime / green-white (not pure yellow).
+local GLOW = Color3.fromRGB(170, 255, 150)
+local BODY = Color3.fromRGB(210, 255, 190)
+local LIGHT_RANGE = 11
+local LIGHT_BRIGHTNESS = 0.55
 
 type Fly = {
 	part: BasePart,
@@ -138,24 +140,22 @@ local function makeFly(parent: Folder, center: Vector3, half: Vector3, index: nu
 	local part = Instance.new("Part")
 	part.Name = "Firefly"
 	part.Shape = Enum.PartType.Ball
-	part.Size = Vector3.new(0.28, 0.28, 0.28)
-	part.Material = Enum.Material.Neon
-	part.Color = YELLOW_CORE
+	part.Size = Vector3.new(0.14, 0.14, 0.14)
+	part.Material = Enum.Material.SmoothPlastic
+	part.Color = BODY
 	part.Anchored = true
 	part.CanCollide = false
 	part.CanQuery = false
 	part.CanTouch = false
 	part.CastShadow = false
-	part.Transparency = 0.15
+	part.Transparency = 0.35
 	part.CFrame = CFrame.new(center)
 	part.Parent = parent
 
-	-- No ParticleEmitter — smoke_main texture looked like smoke clouds.
-
 	local light = Instance.new("PointLight")
-	light.Color = YELLOW
-	light.Brightness = 1.1
-	light.Range = 5
+	light.Color = GLOW
+	light.Brightness = LIGHT_BRIGHTNESS
+	light.Range = LIGHT_RANGE
 	light.Shadows = false
 	light.Parent = part
 
@@ -261,7 +261,6 @@ local function stepFlies(dt: number)
 	local t = os.clock()
 	lightFrame += 1
 	local updateLights = (lightFrame % LIGHT_UPDATE_EVERY) == 0
-	-- Snappier follow so motion reads more lively.
 	local blend = math.clamp(dt * 2.4, 0.04, 0.14)
 	for _, swarm in pairs(activeSwarms) do
 		if not swarm.bush.Parent then
@@ -288,8 +287,8 @@ local function stepFlies(dt: number)
 			fly.part.CFrame = CFrame.new(fly.pos)
 			if updateLights then
 				local pulse = 0.5 + 0.5 * math.sin(t * 2.2 + fly.phase)
-				fly.light.Brightness = 0.9 + 0.4 * pulse
-				fly.part.Transparency = 0.08 + 0.12 * (1 - pulse)
+				fly.light.Brightness = LIGHT_BRIGHTNESS * (0.75 + 0.45 * pulse)
+				fly.part.Transparency = 0.25 + 0.35 * (1 - pulse)
 			end
 		end
 	end
@@ -302,14 +301,14 @@ function FireflyController.init()
 	wired = true
 
 	ensureRoot()
-	-- Wipe any leftover smoke emitters from older builds.
+	-- Wipe any leftover particle VFX from older builds.
 	task.defer(function()
 		local root = Workspace:FindFirstChild(FOLDER_NAME)
 		if not root then
 			return
 		end
 		for _, d in root:GetDescendants() do
-			if d:IsA("ParticleEmitter") then
+			if d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam") then
 				d:Destroy()
 			end
 		end

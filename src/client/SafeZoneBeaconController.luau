@@ -11,14 +11,16 @@ local Workspace = game:GetService("Workspace")
 
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local M = {}
 
 local MIN_LAND_TO_SHOW = 2
 local POLL_SEC = 0.12
-local BILLBOARD_SIZE = UDim2.fromOffset(72, 28)
--- Slightly right of the head.
-local STUDS_OFFSET = Vector3.new(1.45, 0.35, 0)
+local BILLBOARD_SIZE = UDim2.fromOffset(48, 18)
+-- A bit right of the head, smaller label.
+local STUDS_OFFSET = Vector3.new(2.15, 0.2, 0)
+local TEXT_SIZE = 12
 local GUI_NAME = "SafeZoneDistance"
 local LEGACY_FOLDER_NAME = "SafeZoneBeacon"
 
@@ -85,8 +87,7 @@ local function ensureGui(character: Model): TextLabel?
 	label.BackgroundTransparency = 1
 	label.BorderSizePixel = 0
 	label.Size = UDim2.fromScale(1, 1)
-	label.Font = Enum.Font.GothamBold
-	label.TextSize = 18
+	UiFonts.applyBodyLabel(label, TEXT_SIZE, 8)
 	label.TextColor3 = Color3.fromRGB(245, 250, 255)
 	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	label.TextStrokeTransparency = 0.35

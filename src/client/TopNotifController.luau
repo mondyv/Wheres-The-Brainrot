@@ -471,16 +471,56 @@ function TopNotifController.showPersonal(message: string, rarityId: string?, lif
 	TopNotifController.showRaritySpawn(message, rarityId or "legendary", lifetimeSec, true)
 end
 
-function TopNotifController.showBroadcast(message: string, _scope: string?, senderName: string?, senderUserId: number?)
+function TopNotifController.showBroadcast(
+	message: string,
+	_scope: string?,
+	senderName: string?,
+	senderUserId: number?,
+	lifetimeSec: number?
+)
 	if not globalMessagesEnabled() then
 		return
 	end
 	if not host then
 		TopNotifController.init()
 	end
-	GameSoundEffects.playNotification1()
 	local display = VerifiedCreators.formatBroadcast(message, senderName, senderUserId)
-	enqueue(display, false, "legendary")
+
+	-- Countdown / persistent admin banners: refresh text in place instead of stacking.
+	if isShowing and not activeIsError and host and label and string.find(message, "Server shutdown", 1, true) then
+		label.Text = display
+		hideToken += 1
+		local token = hideToken
+		local lifetime = if typeof(lifetimeSec) == "number" then math.max(1.2, lifetimeSec) else DISPLAY_LIFETIME
+		task.delay(lifetime, function()
+			if token ~= hideToken or not host or not label then
+				return
+			end
+			cancelActiveTween()
+			if animScale then
+				activeFadeTween = TweenService:Create(animScale, FADE_OUT, { Scale = 0.55 })
+				activeFadeTween:Play()
+			end
+			TweenService:Create(label, FADE_OUT, { TextTransparency = 1 }):Play()
+			if labelStroke then
+				TweenService:Create(labelStroke, FADE_OUT, { Transparency = 1 }):Play()
+			end
+			task.delay(FADE_OUT.Time, function()
+				if token ~= hideToken then
+					return
+				end
+				isShowing = false
+				if host then
+					host.Visible = false
+				end
+				processQueue()
+			end)
+		end)
+		return
+	end
+
+	GameSoundEffects.playNotification1()
+	enqueue(display, false, "legendary", lifetimeSec)
 end
 
 function TopNotifController.showError(message: string)
@@ -521,7 +561,7 @@ function TopNotifController.init()
 	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
 	local ev = remotes and remotes:FindFirstChild("BroadcastTopNotif")
 	if ev and ev:IsA("RemoteEvent") then
-		broadcastConn = (ev :: RemoteEvent).OnClientEvent:Connect(function(message: any, _scope: any, senderName: any, senderUserId: any)
+		broadcastConn = (ev :: RemoteEvent).OnClientEvent:Connect(function(message: any, _scope: any, senderName: any, senderUserId: any, lifetimeSec: any)
 			if typeof(message) ~= "string" then
 				return
 			end
@@ -529,7 +569,8 @@ function TopNotifController.init()
 				message,
 				if typeof(_scope) == "string" then _scope else nil,
 				if typeof(senderName) == "string" then senderName else nil,
-				if typeof(senderUserId) == "number" then senderUserId else nil
+				if typeof(senderUserId) == "number" then senderUserId else nil,
+				if typeof(lifetimeSec) == "number" then lifetimeSec else nil
 			)
 		end)
 	end

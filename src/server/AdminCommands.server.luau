@@ -196,7 +196,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tpland, serverspawn, globalspawn, servernotif, globalnotif, playtutorial, fly, help"
+			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tpland, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, playtutorial, fly, help"
 	end,
 }
 
@@ -494,6 +494,95 @@ commands.globalnotif = {
 	end,
 }
 commands.globalnotifs = commands.globalnotif
+
+local shutdownToken = 0
+
+local function parseShutdownSeconds(raw: string?): number?
+	if typeof(raw) ~= "string" or raw == "" then
+		return nil
+	end
+	local trimmed = string.lower((string.gsub(raw, "^%s*(.-)%s*$", "%1")))
+	local num, unit = string.match(trimmed, "^(%d+%.?%d*)%s*([smh]?)$")
+	if not num then
+		return nil
+	end
+	local value = tonumber(num)
+	if not value or value <= 0 then
+		return nil
+	end
+	if unit == "m" then
+		value *= 60
+	elseif unit == "h" then
+		value *= 3600
+	end
+	return math.clamp(math.floor(value + 0.5), 1, 3600)
+end
+
+local function formatCountdown(totalSec: number): string
+	local sec = math.max(0, math.floor(totalSec + 0.5))
+	if sec >= 3600 then
+		local h = math.floor(sec / 3600)
+		local m = math.floor((sec % 3600) / 60)
+		local s = sec % 60
+		return string.format("%dh %dm %ds", h, m, s)
+	end
+	if sec >= 60 then
+		local m = math.floor(sec / 60)
+		local s = sec % 60
+		return string.format("%dm %ds", m, s)
+	end
+	return string.format("%ds", sec)
+end
+
+commands.servershutdown = {
+	usage = "servershutdown <seconds|30s|5m>",
+	description = "Countdown top notif on THIS server, then kick everyone (not global).",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		local seconds = parseShutdownSeconds(args[1])
+		if not seconds then
+			return false, "Usage: " .. commands.servershutdown.usage
+		end
+
+		shutdownToken += 1
+		local token = shutdownToken
+		local endsAt = os.clock() + seconds
+		local senderName = sender.Name
+		local senderUserId = sender.UserId
+
+		task.spawn(function()
+			local lastBroadcastAt = -math.huge
+			while token == shutdownToken do
+				local remaining = math.max(0, math.ceil(endsAt - os.clock()))
+				local interval = if remaining <= 10 then 1 elseif remaining <= 60 then 5 else 10
+				local now = os.clock()
+				if now - lastBroadcastAt >= interval - 0.05 or remaining <= 0 then
+					lastBroadcastAt = now
+					local msg = if remaining <= 0
+						then "Server shutdown — update coming now!"
+						else string.format("Server shutdown — update coming in %s", formatCountdown(remaining))
+					AdminBroadcastService.broadcastServer(msg, senderName, senderUserId, interval + 1.5)
+				end
+				if remaining <= 0 then
+					break
+				end
+				task.wait(0.25)
+			end
+
+			if token ~= shutdownToken then
+				return
+			end
+
+			task.wait(0.35)
+			for _, plr in Players:GetPlayers() do
+				plr:Kick("Server shutdown — update coming. Please rejoin!")
+			end
+		end)
+
+		return true, string.format("Server shutdown started: %s", formatCountdown(seconds))
+	end,
+}
+commands.shutdown = commands.servershutdown
+commands.servershut = commands.servershutdown
 
 commands.rebirth = {
 	usage = "rebirth <player|me>",

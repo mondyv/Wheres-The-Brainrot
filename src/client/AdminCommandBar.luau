@@ -138,6 +138,8 @@ local COMMAND_ALIASES: { [string]: string } = {
 	giveblock = "addluckyblock",
 	globalnotifs = "globalnotif",
 	servernotifs = "servernotif",
+	shutdown = "servershutdown",
+	servershut = "servershutdown",
 	spawnglobal = "serverspawn",
 	land = "tpland",
 	teleportland = "tpland",
@@ -157,6 +159,7 @@ local COMMAND_HINTS: { [string]: string } = {
 	globalspawn = "Force a rarity spawn on every server",
 	servernotif = "Top notification on this server",
 	globalnotif = "Top notification on all servers",
+	servershutdown = "Countdown then shut down THIS server only",
 	playtutorial = "Replay the first-join tutorial",
 	fly = "Toggle fly mode for yourself",
 }
@@ -351,6 +354,8 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "globalspawn mythic", hint = COMMAND_HINTS.globalspawn },
 		{ fill = "servernotif Event starting now!", hint = COMMAND_HINTS.servernotif },
 		{ fill = "globalnotif Double luck weekend!", hint = COMMAND_HINTS.globalnotif },
+		{ fill = "servershutdown 60", hint = COMMAND_HINTS.servershutdown },
+		{ fill = "servershutdown 5m", hint = "Shut down this server in 5 minutes" },
 		{ fill = "playtutorial", hint = COMMAND_HINTS.playtutorial },
 		{ fill = "fly", hint = COMMAND_HINTS.fly },
 	}

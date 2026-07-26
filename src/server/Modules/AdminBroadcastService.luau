@@ -47,9 +47,9 @@ local function sanitizeMessage(raw: string): string?
 	return trimmed
 end
 
-local function fireToAllPlayers(message: string, scope: string, senderName: string?, senderUserId: number?)
+local function fireToAllPlayers(message: string, scope: string, senderName: string?, senderUserId: number?, lifetimeSec: number?)
 	local ev = ensureRemote()
-	ev:FireAllClients(message, scope, senderName, senderUserId)
+	ev:FireAllClients(message, scope, senderName, senderUserId, lifetimeSec)
 end
 
 function M.joinArgs(args: { string }): string?
@@ -59,12 +59,12 @@ function M.joinArgs(args: { string }): string?
 	return sanitizeMessage(table.concat(args, " "))
 end
 
-function M.broadcastServer(message: string, senderName: string?, senderUserId: number?): boolean
+function M.broadcastServer(message: string, senderName: string?, senderUserId: number?, lifetimeSec: number?): boolean
 	local text = sanitizeMessage(message)
 	if not text then
 		return false
 	end
-	fireToAllPlayers(text, "server", senderName, senderUserId)
+	fireToAllPlayers(text, "server", senderName, senderUserId, lifetimeSec)
 	return true
 end
 
@@ -87,7 +87,7 @@ function M.broadcastGlobal(message: string, senderName: string?, senderUserId: n
 			end)
 		end)
 	else
-		fireToAllPlayers(text, "global", sender, uid)
+		fireToAllPlayers(text, "global", sender, uid, nil)
 	end
 	return true
 end

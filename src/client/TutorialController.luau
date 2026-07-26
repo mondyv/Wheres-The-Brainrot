@@ -31,6 +31,7 @@ local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local TutorialConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TutorialConfig"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
 local player = Players.LocalPlayer
 
@@ -1297,6 +1298,39 @@ local function resolvePlayerPlotStand(preferEmpty: boolean?): BasePart?
 	return emptyPart or filledPart
 end
 
+local function resolvePlayerBaseTarget(): BasePart?
+	local stand = resolvePlayerPlotStand(true)
+	if stand then
+		return stand
+	end
+	local plot = PlotPaths.findPlotForAssignedSlot(player)
+	if not plot then
+		return nil
+	end
+	local slot = player:GetAttribute("AssignedPlotSlot")
+	if typeof(slot) == "number" then
+		local folder = PlotPaths.findSpawnAndBasesFolder()
+		local pos = folder and folder:FindFirstChild("BasePOSPart" .. tostring(math.floor(slot)))
+		if pos and pos:IsA("BasePart") then
+			return pos
+		end
+	end
+	return plot:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function isPlayerAtOwnBase(): boolean
+	local char = player.Character
+	if char and SafezoneUtil.isCharacterInSafezone(char) then
+		return true
+	end
+	local target = resolvePlayerBaseTarget()
+	if not target then
+		return false
+	end
+	local origin = playerOrigin()
+	return (origin - target.Position).Magnitude <= TutorialConfig.GO_TO_BASE_DIST
+end
+
 local function resolvePlacedStandUpgradeTarget(): Instance?
 	local plot = PlotPaths.findPlotForAssignedSlot(player)
 	if not plot then
@@ -1550,6 +1584,9 @@ local function refreshPointersImpl()
 		if not keepWorld then
 			pointAtWorld(resolveNearestBush(), arrowHeight(2))
 		end
+	elseif step.id == "goToBase" then
+		clearLockedBush()
+		pointAtWorld(resolvePlayerBaseTarget(), arrowHeight(4))
 	elseif step.id == "placeOnPlot" then
 		clearLockedBush()
 		pointAtWorld(resolvePlayerPlotStand(true), arrowHeight(3))
@@ -1713,7 +1750,7 @@ local function watchStepProgress()
 		-- Periodically re-aim world arrows only when missing (don't retarget bushes).
 		if now - lastPointerRefresh > 1.25 then
 			lastPointerRefresh = now
-			if step.id == "swingLand1" or step.id == "visitUpgrade" or step.id == "placeOnPlot" then
+			if step.id == "swingLand1" or step.id == "visitUpgrade" or step.id == "placeOnPlot" or step.id == "goToBase" then
 				if not worldArrowBb and not uiPointer then
 					refreshPointers()
 				end
@@ -1777,6 +1814,13 @@ local function watchStepProgress()
 			lastLandCheck = now
 			if CarryGate.isCarryingOnHead() then
 				completeCurrentIf("claimBrainrot")
+			end
+		elseif step.id == "goToBase" and now - lastLandCheck > 0.35 then
+			lastLandCheck = now
+			if isPlayerAtOwnBase() then
+				completeCurrentIf("goToBase")
+			elseif not worldArrowBb then
+				refreshPointers()
 			end
 		elseif step.id == "placeOnPlot" and now - lastLandCheck > 0.4 then
 			lastLandCheck = now

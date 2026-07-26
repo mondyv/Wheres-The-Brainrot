@@ -26,6 +26,7 @@ M.PANEL_MOBILE_MAX_WIDTH_FRAC = 0.58
 M.PANEL_MOBILE_SCALE = 0.82
 M.PANEL_MOBILE_GAP_BELOW_RIGHT = 10
 M.STARTER_CASH = 500
+M.GO_TO_BASE_DIST = 48
 
 export type StepId =
 	"grantCash"
@@ -34,6 +35,7 @@ export type StepId =
 	| "swingLand1"
 	| "searchBush"
 	| "claimBrainrot"
+	| "goToBase"
 	| "placeOnPlot"
 	| "upgradeBrainrot"
 
@@ -75,9 +77,14 @@ M.STEPS = {
 		speak = "HIT ACCEPT TO CLAIM IT!!",
 	},
 	{
+		id = "goToBase",
+		text = "Go back to your base",
+		speak = "HEAD HOME TO YOUR BASE!!",
+	},
+	{
 		id = "placeOnPlot",
-		text = "Place the brainrot on your plot",
-		speak = "BRING IT HOME AND PLACE IT ON YOUR PLOT!!",
+		text = "Place the brainrot on a stand",
+		speak = "PUT IT DOWN ON A STAND!!",
 	},
 	{
 		id = "upgradeBrainrot",

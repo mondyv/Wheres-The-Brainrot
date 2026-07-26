@@ -205,6 +205,13 @@ refreshGround = function()
 		return
 	end
 	local state = humanoid:GetState()
+	if state == Enum.HumanoidStateType.Climbing then
+		-- Don't force walk/idle while on a truss — that breaks R6 climb attach.
+		stopLocomotion(FADE)
+		stopTrack(landTrack, FADE)
+		mode = "idle"
+		return
+	end
 	if state == Enum.HumanoidStateType.Jumping then
 		playJump()
 		return
@@ -222,7 +229,12 @@ refreshGround = function()
 end
 
 humanoid.StateChanged:Connect(function(_old, new)
-	if new == Enum.HumanoidStateType.Jumping then
+	if new == Enum.HumanoidStateType.Climbing then
+		landing = false
+		stopLocomotion(FADE)
+		stopTrack(landTrack, FADE)
+		mode = "idle"
+	elseif new == Enum.HumanoidStateType.Jumping then
 		playJump()
 	elseif new == Enum.HumanoidStateType.Freefall then
 		playFall()
@@ -255,7 +267,11 @@ local _heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 		return
 	end
 	local state = humanoid:GetState()
-	if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
+	if
+		state == Enum.HumanoidStateType.Freefall
+		or state == Enum.HumanoidStateType.Jumping
+		or state == Enum.HumanoidStateType.Climbing
+	then
 		return
 	end
 	local moving = humanoid.MoveDirection.Magnitude > MOVE_EPS

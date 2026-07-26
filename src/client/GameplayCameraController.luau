@@ -1,8 +1,8 @@
 -- [ACTIVE] GameplayCameraController
 --[[
-	High top-down orbit camera.
-	- Free RMB orbit (mouse delta applied once per frame)
-	- Locked focus while standing still (no idle jitter)
+	Free third-person orbit camera.
+	- Full yaw + wide pitch (not locked to a tiny top-down cone)
+	- RMB orbit, scroll zoom
 	- Soft swing framing blend (stays Scriptable)
 ]]
 
@@ -15,23 +15,24 @@ local player = Players.LocalPlayer
 
 local BIND_NAME = "GameplayCameraUpdate"
 
-local DEFAULT_FOV = 60
-local MIN_ZOOM = 10
-local MAX_ZOOM = 26
-local DEFAULT_ZOOM = 16.5
-local LOOK_HEIGHT = 1.05
-local MOUSE_SENS = 0.0048
-local TOUCH_SENS = 0.0075
-local ELEV_MIN = math.rad(42)
-local ELEV_MAX = math.rad(68)
-local DEFAULT_ELEV = math.rad(54)
+local DEFAULT_FOV = 70
+local MIN_ZOOM = 6
+local MAX_ZOOM = 40
+local DEFAULT_ZOOM = 14
+local LOOK_HEIGHT = 1.35
+local MOUSE_SENS = 0.0055
+local TOUCH_SENS = 0.0085
+-- Near-free pitch (avoid exact ±90° gimbal lock).
+local ELEV_MIN = math.rad(2)
+local ELEV_MAX = math.rad(89)
+local DEFAULT_ELEV = math.rad(28)
 
-local SWING_ELEV = math.rad(24)
-local SWING_ZOOM = 12.5
-local SWING_FOV = 70
+local SWING_ELEV = math.rad(18)
+local SWING_ZOOM = 11
+local SWING_FOV = 74
 local SWING_BLEND_SPEED = 3.2
 
-local MOVE_EPS = 0.35 -- studs/s — below this = standing still
+local MOVE_EPS = 0.35
 local OCCLUSION_INTERVAL = 0.2
 
 local GameplayCameraController = {}
@@ -95,18 +96,14 @@ local function sampleOcclusion(focus: Vector3, useYaw: number, useElev: number, 
 	params.IgnoreWater = true
 	local hit = Workspace:Raycast(focus, dir.Unit * desired, params)
 	if hit then
-		return math.max(MIN_ZOOM * 0.6, hit.Distance - 0.55)
+		return math.max(MIN_ZOOM * 0.55, hit.Distance - 0.55)
 	end
 	return desired
 end
 
 local function blended(): (number, number, number)
 	local e = elevation + (SWING_ELEV - elevation) * swingBlend
-	if swingBlend > 0.02 then
-		e = math.clamp(e, math.rad(14), ELEV_MAX)
-	else
-		e = clampElev(e)
-	end
+	e = clampElev(e)
 	local z = zoom + (SWING_ZOOM - zoom) * swingBlend
 	local f = DEFAULT_FOV + (SWING_FOV - DEFAULT_FOV) * swingBlend
 	return e, z, f
@@ -152,7 +149,6 @@ local function setRotating(on: boolean)
 	rotating = on
 	if on then
 		savedMouseBehavior = UserInputService.MouseBehavior
-		-- LockCenter: reliable mouse delta in Studio + live (LockCurrentPosition often returns 0).
 		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 		pendingLookX = 0
 		pendingLookY = 0
@@ -168,7 +164,6 @@ local function onInputBegan(input: InputObject, processed: boolean)
 	if pauseDepth > 0 or not enabled then
 		return
 	end
-	-- Ignore processed for RMB so SideUI doesn't eat orbit.
 	if input.UserInputType == Enum.UserInputType.MouseButton2 then
 		setRotating(true)
 	elseif input.UserInputType == Enum.UserInputType.Touch and not processed then
@@ -195,7 +190,6 @@ local function onInputChanged(input: InputObject, _processed: boolean)
 	if input.UserInputType == Enum.UserInputType.MouseWheel then
 		wheelDelta += input.Position.Z
 	elseif input.UserInputType == Enum.UserInputType.MouseMovement and rotating then
-		-- Primary orbit path — works when GetMouseDelta is flaky.
 		pendingLookX += input.Delta.X
 		pendingLookY += input.Delta.Y
 	elseif input.UserInputType == Enum.UserInputType.Touch and touchRotateId == input.UserInputId then
@@ -242,9 +236,9 @@ local function update(dt: number)
 	if cam.CameraType ~= Enum.CameraType.Scriptable then
 		cam.CameraType = Enum.CameraType.Scriptable
 	end
-	local hum = getHumanoid()
-	if hum and cam.CameraSubject ~= hum then
-		cam.CameraSubject = hum
+	-- Scriptable + Humanoid subject can fight free orbit; leave subject nil.
+	if cam.CameraSubject ~= nil then
+		cam.CameraSubject = nil
 	end
 
 	local rmb = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
@@ -266,7 +260,7 @@ local function update(dt: number)
 	end
 
 	if wheelDelta ~= 0 then
-		zoom = math.clamp(zoom - wheelDelta * 1.35, MIN_ZOOM, MAX_ZOOM)
+		zoom = math.clamp(zoom - wheelDelta * 1.6, MIN_ZOOM, MAX_ZOOM)
 		wheelDelta = 0
 	end
 
@@ -284,7 +278,6 @@ local function update(dt: number)
 	local standingStill = speed < MOVE_EPS and not rotating and swingBlend < 0.05
 
 	if standingStill then
-		-- Freeze occlusion while idle — prevents shimmer/shake when not moving.
 		occZoom = useZoom
 		occAccum = 0
 	else
@@ -298,14 +291,18 @@ local function update(dt: number)
 		end
 	end
 
-	cam.CFrame = orbitCFrame(focus, yaw, useElev, occZoom)
+	local cf = orbitCFrame(focus, yaw, useElev, occZoom)
+	local hum = getHumanoid()
+	if hum and hum.CameraOffset.Magnitude > 0.001 then
+		cf = cf * CFrame.new(hum.CameraOffset)
+	end
+	cam.CFrame = cf
 
-	-- Only ease FOV when it meaningfully differs; avoid fighting SwingSystem idle FOV.
 	if swingBlend > 0.02 or math.abs(cam.FieldOfView - useFov) > 0.15 then
-		if math.abs(cam.FieldOfView - useFov) < 18 then
+		if math.abs(cam.FieldOfView - useFov) < 22 then
 			cam.FieldOfView += (useFov - cam.FieldOfView) * math.min(1, dt * 6)
 		end
-	elseif math.abs(cam.FieldOfView - DEFAULT_FOV) > 0.05 and math.abs(cam.FieldOfView - DEFAULT_FOV) < 12 then
+	elseif math.abs(cam.FieldOfView - DEFAULT_FOV) > 0.05 and math.abs(cam.FieldOfView - DEFAULT_FOV) < 14 then
 		cam.FieldOfView = DEFAULT_FOV
 	end
 end
@@ -380,6 +377,7 @@ function GameplayCameraController.resume(seedCf: CFrame?)
 		local cam = Workspace.CurrentCamera
 		if cam then
 			cam.CameraType = Enum.CameraType.Scriptable
+			cam.CameraSubject = nil
 			if seedCf then
 				cam.CFrame = seedCf
 			end
@@ -402,11 +400,8 @@ function GameplayCameraController.enable()
 	local cam = Workspace.CurrentCamera
 	if cam then
 		cam.CameraType = Enum.CameraType.Scriptable
+		cam.CameraSubject = nil
 		cam.FieldOfView = DEFAULT_FOV
-		local hum = getHumanoid()
-		if hum then
-			cam.CameraSubject = hum
-		end
 		local root = getRoot()
 		if root then
 			cam.CFrame = orbitCFrame(root.Position + Vector3.new(0, LOOK_HEIGHT, 0), yaw, elevation, zoom)
@@ -425,6 +420,10 @@ function GameplayCameraController.disable()
 	local cam = Workspace.CurrentCamera
 	if cam then
 		cam.CameraType = Enum.CameraType.Custom
+		local hum = getHumanoid()
+		if hum then
+			cam.CameraSubject = hum
+		end
 	end
 end
 

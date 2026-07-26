@@ -118,7 +118,12 @@ local function rescueOnce(reason: string)
 		end
 		local char = player.Character
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if hum and cam.CameraSubject ~= hum then
+		if GameplayCameraController.isEnabled() then
+			if cam.CameraSubject ~= nil then
+				cam.CameraSubject = nil
+				table.insert(lines, "camera subject -> nil (gameplay orbit)")
+			end
+		elseif hum and cam.CameraSubject ~= hum then
 			cam.CameraSubject = hum
 			table.insert(lines, "camera subject -> Humanoid")
 		end

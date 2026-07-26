@@ -2381,11 +2381,8 @@ local function boot(character)
 			end))
 		end
 
-		if not hasTaggedTargets and not C.TARGET_ENABLE_VINE_NAME_FALLBACK then
-			warn(
-				"[MergedFriendSwingSystem] No CollectionService 'SwingTarget' tags found. Tag the real swing parts to avoid scanning huge Vine folders."
-			)
-		end
+		-- No warn: tags often arrive a moment after TagSwingTargets.server finishes.
+		-- GetInstanceAddedSignal above picks them up; empty cache just means no swing points yet.
 	end
 
 	function st.getTargets()

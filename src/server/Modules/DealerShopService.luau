@@ -562,12 +562,6 @@ function M.start()
 		tryRestock()
 	end
 
-	local slotSummary = {}
-	for i, slot in (currentState :: DealerState).slots do
-		table.insert(slotSummary, string.format("%d:%s/%d", i, slot.name ~= "" and slot.name or "-", slot.stock))
-	end
-	warn("[DealerShopService] started", table.concat(slotSummary, ", "), "nextRestock", (currentState :: DealerState).nextRestockAt)
-
 	local subscribeOk, subscribeErr = pcall(function()
 		MessagingService:SubscribeAsync(MESSAGING_TOPIC, function(packet)
 			if typeof(packet) ~= "table" or typeof(packet.Data) ~= "table" then

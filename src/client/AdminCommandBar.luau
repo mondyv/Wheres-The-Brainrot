@@ -1541,9 +1541,6 @@ function M.init()
 	end)
 
 	task.defer(fetchCatalog)
-
-	local studioHint = if RunService:IsStudio() then " — Studio: press ;" else ""
-	warn("[AdminCommandBar] Ready — F5 or ; to open · mobile Admin button when allowed" .. studioHint)
 end
 
 return M

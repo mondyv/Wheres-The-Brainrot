@@ -2388,6 +2388,109 @@ local function tryRedeemAllAtDeposit(player: Player, depositPart: BasePart?)
 	end
 end
 
+-- Re-weld head carries after plot return (teleport can leave them offset / stuck).
+local function reseatAllCarriedBrainrots(player: Player)
+	local char = player.Character
+	if not char then
+		return
+	end
+	local carries = collectCarriedBrainrotsForPlayer(player)
+	if #carries == 0 then
+		return
+	end
+
+	for _, carry in ipairs(carries) do
+		local main = getMainPart(carry)
+		if not main then
+			continue
+		end
+		for _, d in ipairs(main:GetChildren()) do
+			if d.Name == "BrainrotCarryMotor" or d.Name == "BrainrotCarryWeld" then
+				d:Destroy()
+			end
+		end
+	end
+
+	local lift = 0
+	for _, carry in ipairs(carries) do
+		local main = getMainPart(carry)
+		if not main or not carry.Parent then
+			continue
+		end
+		applyCarryScaleForModel(carry)
+		setAllPartsPhysics(carry, false, true)
+		local anchorPart, desiredWorld = getCarryAttachmentWorldCFrame(char, main, lift)
+		if not anchorPart or not desiredWorld then
+			continue
+		end
+		carry.Parent = char
+		carry:PivotTo(desiredWorld)
+		local weld = Instance.new("WeldConstraint")
+		weld.Name = "BrainrotCarryWeld"
+		weld.Part0 = anchorPart
+		weld.Part1 = main
+		weld.Parent = main
+		carry:SetAttribute("BrainrotCarryPhase", "Carried")
+		lift += stackHalfHeight(carry) + STACK_GAP
+	end
+	syncBrainrotCarryCountAttr(player)
+end
+
+-- Paid return lands on the plot; if already inside RedWall, Touched never fires.
+local function handleAfterPlotReturn(player: Player)
+	carryRedeemDebounce[player] = nil
+	reseatAllCarriedBrainrots(player)
+	task.defer(function()
+		if not player.Parent then
+			return
+		end
+		if isPlayerInsideDeposit(player) then
+			tryRedeemAllAtDeposit(player, nil)
+			return
+		end
+		task.delay(0.2, function()
+			if not player.Parent then
+				return
+			end
+			if #collectCarriedBrainrotsForPlayer(player) == 0 then
+				return
+			end
+			reseatAllCarriedBrainrots(player)
+			if isPlayerInsideDeposit(player) then
+				tryRedeemAllAtDeposit(player, nil)
+			end
+		end)
+	end)
+end
+
+do
+	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "BrainrotInternal"
+		folder.Parent = ServerStorage
+	end
+	local existing = folder:FindFirstChild("AfterPlotReturn")
+	local bf: BindableFunction
+	if existing and existing:IsA("BindableFunction") then
+		bf = existing
+	else
+		if existing then
+			existing:Destroy()
+		end
+		bf = Instance.new("BindableFunction")
+		bf.Name = "AfterPlotReturn"
+		bf.Parent = folder
+	end
+	bf.OnInvoke = function(playerArg: any): any
+		if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+			return false
+		end
+		handleAfterPlotReturn(playerArg :: Player)
+		return true
+	end
+end
+
 -- Award spinning (pending float) brainrots when the player touches the safezone wall.
 local function tryRedeemPendingFloatsAtDeposit(player: Player)
 	local pending = pendingFloats[player]

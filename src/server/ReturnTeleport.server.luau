@@ -7,6 +7,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
+local ServerStorage = game:GetService("ServerStorage")
 
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local ReturnConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReturnConfig"))
@@ -75,6 +76,19 @@ end
 local function cooldownOk(player: Player): boolean
 	local now = os.clock()
 	return (lastReturnAt[player] or 0) + RETURN_COOLDOWN_SEC <= now
+end
+
+local function notifyAfterPlotReturn(player: Player)
+	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
+	local bf = folder and folder:FindFirstChild("AfterPlotReturn")
+	if bf and bf:IsA("BindableFunction") then
+		local ok, err = pcall(function()
+			(bf :: BindableFunction):Invoke(player)
+		end)
+		if not ok then
+			warn("[ReturnTeleport] AfterPlotReturn failed:", err)
+		end
+	end
 end
 
 local function teleportHome(player: Player, character: Model): (boolean, string?)
@@ -153,6 +167,7 @@ local function fulfillPaidReturn(player: Player, productId: number): boolean
 	end
 	local ok = select(1, teleportHome(player, character))
 	if ok then
+		notifyAfterPlotReturn(player)
 		ensurePaidRemote():FireClient(player)
 	end
 	return ok

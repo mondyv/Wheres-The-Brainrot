@@ -174,11 +174,9 @@ function PlotSpawnUtil.teleportCharacterToCFrame(character: Model, spawnCf: CFra
 		return
 	end
 
-	if character.PrimaryPart then
-		character:PivotTo(spawnCf)
-	else
-		hrp.CFrame = spawnCf
-	end
+	-- Move via HRP so welded head-carries stay in the character assembly.
+	-- Model:PivotTo can desync nested carry models after a long-distance teleport.
+	hrp.CFrame = spawnCf
 	hrp.AssemblyLinearVelocity = Vector3.zero
 	hrp.AssemblyAngularVelocity = Vector3.zero
 end

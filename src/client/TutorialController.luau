@@ -828,11 +828,17 @@ local function pointAtGui(target: GuiObject?, force: boolean?)
 	pointer.ZIndex = math.max(attachHost.ZIndex + 40, 80)
 
 	local underBb = target:FindFirstAncestorOfClass("BillboardGui")
+	local underSurface = target:FindFirstAncestorOfClass("SurfaceGui")
 	if underBb then
 		pointer.Position = UDim2.new(0.55, 0, 0.55, 0)
 		pointer.Parent = target
+	elseif underSurface then
+		-- Stand upgrade SurfaceGui — keep the hand on the upper/center so it doesn't clip the floor.
+		pointer.AnchorPoint = Vector2.new(0.5, 0.5)
+		pointer.Position = UDim2.new(0.5, 0, 0.35, 0)
+		pointer.Parent = attachHost
 	else
-		-- Fingertip on lower-right of the buy chip (price text stays readable).
+		-- HUD buy chip — fingertip on lower-right (price text stays readable).
 		pointer.Position = UDim2.new(1, -8, 1, -6)
 		pointer.Parent = attachHost
 	end

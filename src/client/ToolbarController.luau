@@ -124,7 +124,8 @@ local BACKPACK_CLOSE_END_SCALE = 0.96
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
 local MOBILE_DRAG_HOLD_SEC = 0.2 -- long-press before mobile inventory drag starts (keeps tap-to-select)
 local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 28
-local TOGGLE_BACKPACK_ICON_SIZE_SCALE = 0.68
+-- Keep Studio/hotbar size 1:1 — never shrink the authored ToggleBackpackImage.
+local TOGGLE_BACKPACK_ICON_SIZE_SCALE = 1
 
 -- ── Key → slot index map ──────────────────────────────────────────────────────
 
@@ -918,17 +919,9 @@ local ToolbarController = {}
 
 	local function styleToggleBackpackIcon(btn: GuiButton)
 		enableGuiButtonInput(btn)
+		-- Don't rewrite Studio Image/ScaleType — only ensure the button is clickable.
 		if btn:IsA("ImageButton") then
 			btn.AutoButtonColor = false
-			btn.ImageColor3 = TOGGLE_BACKPACK_ICON_TINT
-			btn.ImageTransparency = 0
-		end
-		for _, d in btn:GetDescendants() do
-			if d:IsA("ImageLabel") then
-				d.ImageColor3 = TOGGLE_BACKPACK_ICON_TINT
-				d.ImageTransparency = 0
-				d.ScaleType = Enum.ScaleType.Fit
-			end
 		end
 	end
 
@@ -936,8 +929,7 @@ local ToolbarController = {}
 		if gui:GetAttribute("_TiltPivotReady") == true then
 			return
 		end
-		gui.AnchorPoint = Vector2.new(0.5, 0.5)
-		gui.Position = UDim2.fromScale(0.5, 0.5)
+		-- Preserve Studio Position/AnchorPoint — only mark ready for tilt scale.
 		gui:SetAttribute("_TiltPivotReady", true)
 	end
 
@@ -2242,6 +2234,21 @@ local ToolbarController = {}
 		icon:SetAttribute("_MinH", math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(targetH + 0.5)))
 	end
 
+	local function captureStudioToggleIconSize(icon: GuiObject)
+		if icon:GetAttribute("_StudioSizePinned") == true then
+			return
+		end
+		local sz = icon.Size
+		local abs = icon.AbsoluteSize
+		local w = if sz.X.Offset >= 8 then sz.X.Offset elseif abs.X >= 8 then abs.X else nil
+		local h = if sz.Y.Offset >= 8 then sz.Y.Offset elseif abs.Y >= 8 then abs.Y else nil
+		if typeof(w) == "number" and typeof(h) == "number" then
+			icon:SetAttribute("_PinnedW", math.floor(w + 0.5))
+			icon:SetAttribute("_PinnedH", math.floor(h + 0.5))
+			icon:SetAttribute("_StudioSizePinned", true)
+		end
+	end
+
 	local function scaledToggleIconSizeFromTemplate(slotTemplate: UDim2): UDim2
 		local w = slotTemplate.X.Offset
 		local h = slotTemplate.Y.Offset
@@ -2334,6 +2341,7 @@ local ToolbarController = {}
 		end
 		local icon = toggleBackpackIconRef :: GuiObject
 		-- Size/parent only — visibility is owned by animateToggleBackpackIcon / toolbar show.
+		captureStudioToggleIconSize(icon)
 
 		local layout = ensureHotbarListLayout()
 		local HOTBAR_SLOT_PADDING_PX = 10
@@ -2342,18 +2350,21 @@ local ToolbarController = {}
 		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 		layout.VerticalAlignment = Enum.VerticalAlignment.Center
 
+		-- Prefer Studio-authored size. Fall back to full hotbar slot size (no shrink).
 		local w, h = captureToggleIconPixelSize(icon)
-		local slotTemplate = getHotbarSlotSizeTemplate()
 		local iconSize: UDim2
-		if slotTemplate then
-			iconSize = scaledToggleIconSizeFromTemplate(slotTemplate)
-		elseif w and h then
+		if typeof(w) == "number" and typeof(h) == "number" then
 			iconSize = UDim2.fromOffset(
-				math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(w * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5)),
-				math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(h * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5))
+				math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(w + 0.5)),
+				math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(h + 0.5))
 			)
 		else
-			iconSize = UDim2.fromOffset(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, TOGGLE_BACKPACK_ICON_MIN_ABS_PX)
+			local slotTemplate = getHotbarSlotSizeTemplate()
+			if slotTemplate then
+				iconSize = scaledToggleIconSizeFromTemplate(slotTemplate)
+			else
+				iconSize = UDim2.fromOffset(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, TOGGLE_BACKPACK_ICON_MIN_ABS_PX)
+			end
 		end
 		icon.Size = iconSize
 
@@ -2506,15 +2517,19 @@ local ToolbarController = {}
 
 		disableGuiInputCapture(iconHost)
 		enableGuiButtonInput(btn)
+		-- Pin Studio size BEFORE any layout pass mutates it.
+		captureStudioToggleIconSize(iconHost)
 		styleToggleBackpackIcon(btn)
 		local tiltTarget = resolveToggleBackpackVisual(iconHost, btn)
 		if tiltTarget ~= iconHost then
 			prepareToggleTiltPivot(tiltTarget)
 		end
-		-- Tilt + scale hover only (no glisten/spin polish).
+		-- Tilt + scale hover only (no glisten/spin polish). Don't rewrite Studio Image assets.
 		UIButtonEffects.wireTiltHoverButton(btn, toggleBackpackPanel, iconHost, tiltTarget, false)
 		wireToggleBackpackIconResizeSync()
 		task.defer(function()
+			-- Second pin after AbsoluteSize settles (scale-sized Studio icons).
+			captureStudioToggleIconSize(iconHost)
 			refreshToggleBackpackIconLayout()
 			if canUseToolbar and toolbarShown and not isBackpackPanelOpen and not isBackpackPanelClosing then
 				animateToggleBackpackIcon(true)

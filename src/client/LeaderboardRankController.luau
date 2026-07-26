@@ -62,6 +62,7 @@ type BoardRank = {
 local ranksByUserId: { [number]: { BoardRank } } = {}
 local badgeByPlayer: { [Player]: BillboardGui } = {}
 local charAddedConns: { [Player]: RBXScriptConnection } = {}
+local chatBubbleSuppress: { [Player]: boolean } = {}
 local wiredData = false
 
 local function readBoardRanks(boardFolder: Folder): { [number]: BoardRank }
@@ -223,6 +224,10 @@ local function isInSafezone(player: Player): boolean
 end
 
 local function shouldShowBadge(player: Player): boolean
+	-- Hide overhead rank icons while that player's custom chat bubble is up.
+	if chatBubbleSuppress[player] == true then
+		return false
+	end
 	-- Hide overhead rank icons during cutscenes / panel HUD hide.
 	if GameplayUiVisibility.isHidden() then
 		return false
@@ -258,6 +263,15 @@ local function refreshPlayerBadge(player: Player, forceRebuild: boolean?)
 	if badge then
 		badgeByPlayer[player] = badge
 	end
+end
+
+function M.setChatBubbleSuppress(player: Player, suppressed: boolean)
+	if suppressed then
+		chatBubbleSuppress[player] = true
+	else
+		chatBubbleSuppress[player] = nil
+	end
+	refreshPlayerBadge(player)
 end
 
 local function refreshAllBadges(forceRebuild: boolean?)
@@ -341,6 +355,7 @@ function M.init()
 	Players.PlayerAdded:Connect(hookPlayer)
 	Players.PlayerRemoving:Connect(function(player)
 		destroyBadge(player)
+		chatBubbleSuppress[player] = nil
 		local conn = charAddedConns[player]
 		if conn then
 			conn:Disconnect()

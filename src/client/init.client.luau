@@ -180,6 +180,9 @@ task.defer(function()
 				require(script.ChatTagsController).init()
 			end,
 			function()
+				require(script.CustomBubbleChatController).init()
+			end,
+			function()
 				require(script.AdminCommandBar).init()
 			end,
 			function()

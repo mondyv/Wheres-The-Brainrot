@@ -1,11 +1,14 @@
 -- [ACTIVE] Tutorial.server
--- Tutorial completion remote; PlayerDataService owns the save flag.
+-- Tutorial completion + starter cash grant; PlayerDataService owns the save flag.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
+local TutorialConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TutorialConfig"))
+
+local GRANT_AMOUNT = TutorialConfig.STARTER_CASH
 
 local function getFolder(): Folder
 	local existing = ReplicatedStorage:FindFirstChild("TutorialRemotes")
@@ -31,6 +34,7 @@ local function ensureRF(name: string): RemoteFunction
 end
 
 local completeRF = ensureRF("CompleteTutorial")
+local grantCashRF = ensureRF("GrantTutorialCash")
 
 completeRF.OnServerInvoke = function(player: Player): boolean
 	if not player or not player.Parent then
@@ -41,12 +45,30 @@ completeRF.OnServerInvoke = function(player: Player): boolean
 	return true
 end
 
+grantCashRF.OnServerInvoke = function(player: Player): (boolean, number)
+	if not player or not player.Parent then
+		return false, 0
+	end
+	PlayerDataService.waitUntilLoaded(player)
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR) == true then
+		return true, 0
+	end
+	local cash = player:GetAttribute("Cash")
+	local c = if typeof(cash) == "number" then cash else 0
+	player:SetAttribute("Cash", c + GRANT_AMOUNT)
+	PlayerDataService.setTutorialCashGranted(player, true)
+	return true, GRANT_AMOUNT
+end
+
 -- Ensure new sessions without save data start with tutorial incomplete.
 Players.PlayerAdded:Connect(function(player)
 	task.defer(function()
 		PlayerDataService.waitUntilLoaded(player)
 		if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == nil then
 			player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, false)
+		end
+		if player:GetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR) == nil then
+			player:SetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR, false)
 		end
 	end)
 end)
@@ -55,6 +77,9 @@ for _, plr in Players:GetPlayers() do
 		PlayerDataService.waitUntilLoaded(plr)
 		if plr:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == nil then
 			plr:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, false)
+		end
+		if plr:GetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR) == nil then
+			plr:SetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR, false)
 		end
 	end)
 end

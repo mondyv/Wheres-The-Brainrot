@@ -28,7 +28,8 @@ local ENVIRONMENT = RunService:IsStudio() and "Development" or "Production"
 local DATA_STORE_NAME = ENVIRONMENT .. "_#003"
 
 local AUTOSAVE_INTERVAL_SEC = 300
-local DEFAULT_CASH = 500
+-- Starter cash is granted by the tutorial (GrantTutorialCash), not on load.
+local DEFAULT_CASH = 0
 local LOADED_ATTR = PlayerDataSchema.LOADED_ATTR
 local PLAY_TIME_ATTR = PlayerDataSchema.TOTAL_PLAY_TIME_ATTR
 
@@ -371,6 +372,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		lastSavedAt = os.time(),
 		settings = collectSettings(player),
 		tutorialCompleted = player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true,
+		tutorialCashGranted = player:GetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR) == true,
 	}
 end
 
@@ -424,6 +426,7 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	applyGiftedGamepasses(player, (data :: any).giftedGamepasses)
 	applySettings(player, (data :: any).settings)
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, data.tutorialCompleted == true)
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR, data.tutorialCashGranted == true)
 
 	SwingUpgrades.syncGameplayStatsFromLevels(player, {
 		power = data.powerLevel,
@@ -566,6 +569,12 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		settings = normalizeSettings(raw.settings),
 		-- Missing field = returning player before tutorial shipped → treat as done.
 		tutorialCompleted = if typeof(raw.tutorialCompleted) == "boolean" then raw.tutorialCompleted else true,
+		-- Missing: if they already have cash (legacy starter), don't double-grant.
+		tutorialCashGranted = if typeof(raw.tutorialCashGranted) == "boolean"
+			then raw.tutorialCashGranted
+			else (math.max(0, if typeof(raw.cash) == "number" then raw.cash else 0) > 0),
+	}
+end
 	}
 end
 
@@ -653,6 +662,7 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		lastSavedAt = os.time(),
 		settings = PlayerDataSchema.DEFAULT_SETTINGS,
 		tutorialCompleted = false,
+		tutorialCashGranted = false,
 	}
 end
 
@@ -746,6 +756,16 @@ function M.setTutorialCompleted(player: Player, completed: boolean)
 		return
 	end
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, completed == true)
+	if player:GetAttribute(LOADED_ATTR) == true then
+		M.savePlayerData(player)
+	end
+end
+
+function M.setTutorialCashGranted(player: Player, granted: boolean)
+	if not player.Parent then
+		return
+	end
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR, granted == true)
 	if player:GetAttribute(LOADED_ATTR) == true then
 		M.savePlayerData(player)
 	end

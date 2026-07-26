@@ -1,6 +1,6 @@
 -- [ACTIVE] TutorialController
 --[[
-	First-join objective HUD: left-side panel, world/UI pointers, step machine.
+	First-join objective HUD: right-side panel, world/UI pointers, step machine.
 	Persists completion via PlayerDataService (TutorialCompleted attribute).
 ]]
 
@@ -10,6 +10,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
+local GuiService = game:GetService("GuiService")
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -69,6 +70,7 @@ local objectiveBaseText = ""
 local dotsConn: RBXScriptConnection? = nil
 local dotsPhase = 0
 local completeRF: RemoteFunction? = nil
+local grantCashRF: RemoteFunction? = nil
 local upgradesFrame: Frame? = nil
 local powerBuyButton: GuiObject? = nil
 local lastLandCheck = 0
@@ -82,6 +84,7 @@ local vineCache: { BasePart } = {}
 local vineCacheAt = 0
 local lastPointerRefresh = 0
 local pendingPointerRefresh = false
+local grantCashPlayed = false
 
 local lockedBushPart: BasePart? = nil
 local lockedBushRoot: Instance? = nil
@@ -95,6 +98,7 @@ local syncPanelToSideButtons: () -> ()
 local refreshPointers: () -> ()
 local stopObjectiveDots: () -> ()
 local startObjectiveDots: (string) -> ()
+local completeCurrentIf: (TutorialConfig.StepId) -> ()
 
 local function currentStep(): TutorialConfig.StepDef?
 	return TutorialConfig.STEPS[stepIndex]
@@ -138,7 +142,7 @@ local function setChromeSuppressed(suppressed: boolean)
 			panel.Visible = false
 		end
 		if gui then
-			-- Quest panel stays on TutorialObjective ScreenGui (synced above Lef1).
+			-- Quest panel lives under Main.TutorialQuestHost (right side).
 			gui.Enabled = false
 		end
 	elseif active then
@@ -172,6 +176,133 @@ local function getCompleteRemote(): RemoteFunction?
 		return rf
 	end
 	return nil
+end
+
+local function getGrantCashRemote(): RemoteFunction?
+	if grantCashRF and grantCashRF.Parent then
+		return grantCashRF
+	end
+	local folder = ReplicatedStorage:FindFirstChild("TutorialRemotes")
+	local rf = folder and folder:FindFirstChild("GrantTutorialCash")
+	if rf and rf:IsA("RemoteFunction") then
+		grantCashRF = rf
+		return rf
+	end
+	return nil
+end
+
+local function findCashAmountLabel(): TextLabel?
+	local main = PlayerGuiMain.ensure(player)
+	local sideUI = main and main:FindFirstChild("SideUI")
+	local counters = sideUI and sideUI:FindFirstChild("Counters")
+	local cash = counters and counters:FindFirstChild("Cash")
+	local amount = cash and cash:FindFirstChild("Amount")
+	if amount and amount:IsA("TextLabel") then
+		return amount
+	end
+	return nil
+end
+
+local function playStarterCashFx(amount: number)
+	local cashLabel = findCashAmountLabel()
+	local host: GuiObject? = cashLabel and cashLabel.Parent :: GuiObject?
+	if not host then
+		local main = PlayerGuiMain.ensure(player)
+		host = main
+	end
+	if not host then
+		return
+	end
+
+	GameSoundEffects.playCashGrab()
+
+	local popup = Instance.new("TextLabel")
+	popup.Name = "TutorialCashPopup"
+	popup.BackgroundTransparency = 1
+	popup.Size = UDim2.fromOffset(160, 40)
+	popup.AnchorPoint = Vector2.new(0.5, 1)
+	if cashLabel then
+		local mid = cashLabel.AbsolutePosition + cashLabel.AbsoluteSize * 0.5
+		local hp = host.AbsolutePosition
+		popup.Position = UDim2.fromOffset(mid.X - hp.X, mid.Y - hp.Y - 6)
+	else
+		popup.Position = UDim2.new(0.5, 0, 0.2, 0)
+	end
+	popup.Text = ("+$%d"):format(amount)
+	popup.TextSize = 28
+	popup.Font = Enum.Font.GothamBold
+	popup.TextColor3 = Color3.fromRGB(90, 255, 140)
+	popup.TextStrokeTransparency = 0.35
+	popup.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	popup.ZIndex = 200
+	popup.Parent = host
+
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.55
+	scale.Parent = popup
+
+	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.15 }):Play()
+	TweenService:Create(
+		popup,
+		TweenInfo.new(1.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{
+			Position = popup.Position + UDim2.fromOffset(0, -54),
+			TextTransparency = 1,
+			TextStrokeTransparency = 1,
+		}
+	):Play()
+
+	if cashLabel then
+		local sc = cashLabel:FindFirstChildOfClass("UIScale")
+		if not sc then
+			sc = Instance.new("UIScale")
+			sc.Scale = 1
+			sc.Parent = cashLabel
+		end
+		local base = cashLabel.TextColor3
+		cashLabel.TextColor3 = Color3.fromRGB(110, 255, 150)
+		sc.Scale = 1.22
+		TweenService:Create(sc, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		TweenService:Create(
+			cashLabel,
+			TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ TextColor3 = base }
+		):Play()
+	end
+
+	task.delay(1.25, function()
+		if popup.Parent then
+			popup:Destroy()
+		end
+	end)
+end
+
+local function runGrantCashStep()
+	if grantCashPlayed then
+		return
+	end
+	grantCashPlayed = true
+	local amount = TutorialConfig.STARTER_CASH
+	local rf = getGrantCashRemote()
+	if rf then
+		local ok, result = pcall(function()
+			local grantedOk, grantedAmt = rf:InvokeServer()
+			return { ok = grantedOk == true, amount = grantedAmt }
+		end)
+		if not ok then
+			warn("[TutorialController] GrantTutorialCash failed:", result)
+		elseif typeof(result) == "table" then
+			local pack = result :: { ok: boolean, amount: any }
+			if pack.ok and typeof(pack.amount) == "number" and pack.amount > 0 then
+				amount = pack.amount
+			end
+		end
+	end
+	playStarterCashFx(amount)
+	task.wait(1.35)
+	if active and currentStep() and currentStep().id == "grantCash" then
+		completeCurrentIf("grantCash")
+	end
 end
 
 local function fireConfettiAndShake()
@@ -242,32 +373,12 @@ local function typeObjective(displayText: string)
 	end
 end
 
-local function resolveSideButtonPanel(): GuiObject?
-	local main = PlayerGuiMain.ensure(player)
-	local sideUI = main and main:FindFirstChild("SideUI")
-	if not sideUI then
-		return nil
+local function viewportSize(): Vector2
+	local cam = Workspace.CurrentCamera
+	if cam then
+		return cam.ViewportSize
 	end
-	local lef1 = sideUI:FindFirstChild("Lef1") or sideUI:FindFirstChild("Left1")
-	if lef1 and lef1:IsA("GuiObject") then
-		return lef1
-	end
-	return nil
-end
-
-local function cumulativeUIScale(inst: Instance): number
-	local s = 1
-	local cur: Instance? = inst
-	while cur and not cur:IsA("LayerCollector") do
-		if cur:IsA("GuiObject") then
-			local u = cur:FindFirstChildOfClass("UIScale")
-			if u then
-				s *= u.Scale
-			end
-		end
-		cur = cur.Parent
-	end
-	return math.max(s, 0.001)
+	return Vector2.new(1280, 720)
 end
 
 local function ensureQuestHost(): Frame?
@@ -308,40 +419,30 @@ local function syncPanelToSideButtonsImpl()
 		panel.Visible = false
 		return
 	end
-	local lef1 = resolveSideButtonPanel()
 	local host = ensureQuestHost()
-	if not lef1 or not host then
+	if not host then
 		return
 	end
 
-	-- Live under Main (same ScreenGui as SideUI) so inset/resize stay locked.
 	if panel.Parent ~= host then
 		panel.Parent = host
 	end
 
-	local gap = TutorialConfig.PANEL_GAP_ABOVE_SIDE
-	local height = TutorialConfig.PANEL_HEIGHT
-	local leftPad = TutorialConfig.PANEL_LEFT_PAD
-	local ap = lef1.AbsolutePosition
-	local hp = host.AbsolutePosition
-	local sideUI = lef1.Parent
-	local sideScale = if sideUI then cumulativeUIScale(sideUI) else 1
+	local vp = viewportSize()
+	local inset = GuiService:GetGuiInset()
+	local rightPad = TutorialConfig.PANEL_RIGHT_PAD
+	local topPad = TutorialConfig.PANEL_TOP_PAD + inset.Y
+	local maxW = math.floor(vp.X * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
+	maxW = math.clamp(maxW, 180, 340)
+	local screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, 340)
 
-	local textW = 0
-	if objectiveLabel and objectiveLabel.Text ~= "" then
-		textW = objectiveLabel.TextBounds.X
-	end
-	-- Desired on-screen size; Size is pre-UIScale so AbsoluteSize matches after Scale.
-	local screenW = math.max(TutorialConfig.PANEL_MIN_WIDTH, 54 + textW + 40 + 28)
-	local localW = screenW / sideScale
-	local localH = height / sideScale
-
-	panel.AnchorPoint = Vector2.new(0, 1)
-	panel.Size = UDim2.fromOffset(localW, localH)
-	-- Host has no UIScale — Position uses the same space as AbsolutePosition.
-	panel.Position = UDim2.fromOffset(ap.X - hp.X + leftPad, ap.Y - hp.Y - gap)
+	-- Right side, top — no Lef1 tracking (stable on mobile resize).
+	panel.AnchorPoint = Vector2.new(1, 0)
+	panel.Size = UDim2.fromOffset(screenW, TutorialConfig.PANEL_HEIGHT)
+	panel.AutomaticSize = Enum.AutomaticSize.Y
+	panel.Position = UDim2.new(1, -rightPad, 0, topPad)
 	if hudMatchScale then
-		hudMatchScale.Scale = sideScale
+		hudMatchScale.Scale = 1
 	end
 	panel.ZIndex = 100
 	panel.Visible = active and not chromeSuppressed
@@ -504,11 +605,12 @@ local function ensureGui()
 
 	local panelFrame = Instance.new("Frame")
 	panelFrame.Name = "ObjectivePanel"
-	panelFrame.AnchorPoint = Vector2.new(0, 1)
-	panelFrame.Position = UDim2.new(0, 18, 0, 200)
+	panelFrame.AnchorPoint = Vector2.new(1, 0)
+	panelFrame.Position = UDim2.new(1, -TutorialConfig.PANEL_RIGHT_PAD, 0, TutorialConfig.PANEL_TOP_PAD)
 	panelFrame.Size = UDim2.fromOffset(TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_HEIGHT)
+	panelFrame.AutomaticSize = Enum.AutomaticSize.Y
 	panelFrame.BackgroundColor3 = Color3.fromRGB(22, 26, 34)
-	panelFrame.BackgroundTransparency = 0.4
+	panelFrame.BackgroundTransparency = 0.35
 	panelFrame.BorderSizePixel = 0
 	panelFrame.ClipsDescendants = false
 	panelFrame.Parent = rootFrame
@@ -526,7 +628,9 @@ local function ensureGui()
 
 	local pad = Instance.new("UIPadding")
 	pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 14)
+	pad.PaddingRight = UDim.new(0, 12)
+	pad.PaddingTop = UDim.new(0, 8)
+	pad.PaddingBottom = UDim.new(0, 8)
 	pad.Parent = panelFrame
 
 	local scale = Instance.new("UIScale")
@@ -542,9 +646,9 @@ local function ensureGui()
 	local bang = Instance.new("ImageLabel")
 	bang.Name = "Exclaim"
 	bang.BackgroundTransparency = 1
-	bang.AnchorPoint = Vector2.new(0, 0.5)
-	bang.Position = UDim2.new(0, 10, 0.5, 0)
-	bang.Size = UDim2.fromOffset(40, 40)
+	bang.AnchorPoint = Vector2.new(0, 0)
+	bang.Position = UDim2.new(0, 6, 0, 4)
+	bang.Size = UDim2.fromOffset(36, 36)
 	bang.Image = TutorialConfig.EXCLAIM_IMAGE
 	bang.ScaleType = Enum.ScaleType.Fit
 	bang.ZIndex = 3
@@ -553,34 +657,27 @@ local function ensureGui()
 	local textRow = Instance.new("Frame")
 	textRow.Name = "TextRow"
 	textRow.BackgroundTransparency = 1
-	textRow.AnchorPoint = Vector2.new(0, 0.5)
-	textRow.Position = UDim2.new(0, 54, 0.5, 0)
-	textRow.Size = UDim2.new(1, -64, 1, -10)
+	textRow.AnchorPoint = Vector2.new(0, 0)
+	textRow.Position = UDim2.new(0, 46, 0, 2)
+	textRow.Size = UDim2.new(1, -52, 0, 0)
+	textRow.AutomaticSize = Enum.AutomaticSize.Y
 	textRow.ClipsDescendants = false
 	textRow.ZIndex = 3
 	textRow.Parent = panelFrame
 
-	local rowLayout = Instance.new("UIListLayout")
-	rowLayout.FillDirection = Enum.FillDirection.Horizontal
-	rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
-	rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	rowLayout.Padding = UDim.new(0, 0)
-	rowLayout.Parent = textRow
-
 	local label = Instance.new("TextLabel")
 	label.Name = "ObjectiveText"
 	label.BackgroundTransparency = 1
-	label.AutomaticSize = Enum.AutomaticSize.X
-	label.Size = UDim2.new(0, 0, 1, 0)
+	label.AutomaticSize = Enum.AutomaticSize.Y
+	label.Size = UDim2.new(1, -28, 0, 0)
+	label.Position = UDim2.fromOffset(0, 0)
 	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.TextYAlignment = Enum.TextYAlignment.Center
-	label.TextWrapped = false
+	label.TextYAlignment = Enum.TextYAlignment.Top
+	label.TextWrapped = true
 	label.TextTruncate = Enum.TextTruncate.None
 	label.TextSize = 15
 	label.TextColor3 = Color3.fromRGB(245, 250, 255)
 	label.Text = ""
-	label.LayoutOrder = 1
 	label.ZIndex = 3
 	label.Parent = textRow
 	UiFonts.applyBody(label)
@@ -596,14 +693,15 @@ local function ensureGui()
 	local dots = Instance.new("TextLabel")
 	dots.Name = "ObjectiveDots"
 	dots.BackgroundTransparency = 1
-	dots.Size = UDim2.fromOffset(34, 40)
+	dots.AnchorPoint = Vector2.new(1, 0)
+	dots.Position = UDim2.new(1, 0, 0, 0)
+	dots.Size = UDim2.fromOffset(26, 20)
 	dots.TextXAlignment = Enum.TextXAlignment.Left
-	dots.TextYAlignment = Enum.TextYAlignment.Center
+	dots.TextYAlignment = Enum.TextYAlignment.Top
 	dots.TextWrapped = false
 	dots.TextSize = 15
 	dots.TextColor3 = Color3.fromRGB(245, 250, 255)
 	dots.Text = ""
-	dots.LayoutOrder = 2
 	dots.ZIndex = 3
 	dots.Parent = textRow
 	UiFonts.applyBody(dots)
@@ -655,13 +753,13 @@ local function ensureGui()
 	dimOverlay = dim
 	spotlightHole = hole
 
-	-- Parent under Main host so resize stays glued to Lef1.
+	-- Parent under Main host so resize stays glued on the right.
 	syncPanelToSideButtons()
 
 	task.spawn(function()
 		while active and bang.Parent do
 			local up = TweenService:Create(bang, EXCLAIM_PULSE, {
-				Size = UDim2.fromOffset(48, 48),
+				Size = UDim2.fromOffset(40, 40),
 				Rotation = -8,
 			})
 			up:Play()
@@ -670,7 +768,7 @@ local function ensureGui()
 				break
 			end
 			local down = TweenService:Create(bang, EXCLAIM_PULSE, {
-				Size = UDim2.fromOffset(42, 42),
+				Size = UDim2.fromOffset(34, 34),
 				Rotation = 8,
 			})
 			down:Play()
@@ -678,7 +776,7 @@ local function ensureGui()
 		end
 		if bang.Parent then
 			bang.Rotation = 0
-			bang.Size = UDim2.fromOffset(42, 42)
+			bang.Size = UDim2.fromOffset(36, 36)
 		end
 	end)
 end
@@ -719,7 +817,7 @@ local function hidePanel()
 	local g = gui
 	TweenService:Create(s, PANEL_SWAP, { Scale = 0.8 }):Play()
 	local tw = TweenService:Create(p, PANEL_SWAP, {
-		Position = UDim2.fromOffset(p.Position.X.Offset - 80, p.Position.Y.Offset),
+		Position = UDim2.new(1, p.Position.X.Offset + 90, 0, p.Position.Y.Offset),
 	})
 	tw:Play()
 	tw.Completed:Once(function()
@@ -755,10 +853,11 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	end
 
 	local baseOffset = offset or arrowHeight()
+	local arrowPx = TutorialConfig.WORLD_ARROW_SIZE
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "TutorialWorldArrow"
 	bb.AlwaysOnTop = true
-	bb.Size = UDim2.fromOffset(78, 78)
+	bb.Size = UDim2.fromOffset(arrowPx, arrowPx)
 	bb.StudsOffset = baseOffset
 	bb.MaxDistance = 500
 	bb.Adornee = part
@@ -1457,15 +1556,21 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 	end
 	showPanel(step.text, first)
 	refreshPointers()
+	if step.id == "grantCash" then
+		task.spawn(function()
+			runGrantCashStep()
+		end)
+	end
 end
 
-local function completeCurrentIf(id: TutorialConfig.StepId)
+local function completeCurrentIfImpl(id: TutorialConfig.StepId)
 	local step = currentStep()
 	if not step or step.id ~= id then
 		return
 	end
 	advanceTo(stepIndex + 1)
 end
+completeCurrentIf = completeCurrentIfImpl
 
 local function goToStep(id: TutorialConfig.StepId, celebrate: boolean?)
 	local index = stepIndexById(id)
@@ -1683,6 +1788,7 @@ function M.start(force: boolean?)
 	end
 	active = true
 	stepIndex = 0
+	grantCashPlayed = false
 	ensureGui()
 	startLayoutSync()
 	bindGameplayHooks()

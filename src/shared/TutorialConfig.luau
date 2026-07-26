@@ -14,13 +14,17 @@ M.VOICE_PITCH_MAX = 1.5
 M.OBJECTIVE_TYPE_DELAY = 0.048
 M.WORLD_ARROW_ROTATION = 180
 M.WORLD_ARROW_HEIGHT = 16
-M.PANEL_GAP_ABOVE_SIDE = 18
+M.WORLD_ARROW_SIZE = 48
+M.PANEL_TOP_PAD = 78
+M.PANEL_RIGHT_PAD = 14
 M.PANEL_HEIGHT = 56
-M.PANEL_LEFT_PAD = 14
-M.PANEL_MIN_WIDTH = 300
+M.PANEL_MIN_WIDTH = 220
+M.PANEL_MAX_WIDTH_FRAC = 0.78
+M.STARTER_CASH = 500
 
 export type StepId =
-	"visitUpgrade"
+	"grantCash"
+	| "visitUpgrade"
 	| "buyPower"
 	| "swingLand1"
 	| "searchBush"
@@ -35,6 +39,11 @@ export type StepDef = {
 }
 
 M.STEPS = {
+	{
+		id = "grantCash",
+		text = "Here's $500!",
+		speak = nil,
+	},
 	{
 		id = "visitUpgrade",
 		text = "Go to the Upgrade Stand",

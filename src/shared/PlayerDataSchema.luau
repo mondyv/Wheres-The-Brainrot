@@ -81,6 +81,7 @@ local M = {}
 M.VERSION = 1
 M.TOTAL_PLAY_TIME_ATTR = "TotalPlayTimeSeconds"
 M.LOADED_ATTR = "PlayerDataLoaded"
+M.LOAD_FAILED_ATTR = "PlayerDataLoadFailed"
 M.TUTORIAL_COMPLETED_ATTR = "TutorialCompleted"
 M.TUTORIAL_REPLAY_ATTR = "TutorialReplayNonce"
 M.TUTORIAL_CASH_GRANTED_ATTR = "TutorialCashGranted"

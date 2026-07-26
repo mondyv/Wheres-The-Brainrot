@@ -24,6 +24,7 @@ export type LandHitbox = {
 local landHitboxes: { LandHitbox } = {}
 local registeredParts: { [BasePart]: boolean } = {}
 local landFolders: { [number]: Instance } = {}
+local landCenters: { [number]: Vector3 } = {}
 local discoveryHooked = false
 local initialScanDone = false
 
@@ -193,6 +194,13 @@ local function tryRegisterHitbox(part: BasePart)
 		land = land,
 		displayLuck = displayLuck,
 	})
+	-- Cache a cheap land center from hitbox parts (never GetBoundingBox on hot path).
+	local prev = landCenters[land]
+	if prev then
+		landCenters[land] = (prev + part.Position) * 0.5
+	else
+		landCenters[land] = part.Position
+	end
 end
 
 local function scanLandsRoot(lands: Instance)
@@ -259,56 +267,40 @@ local function ensureDiscovery()
 	end)
 end
 
-local function centerOfLand(child: Instance): Vector3?
-	if child:IsA("Model") then
-		return (child :: Model):GetBoundingBox().Position
-	elseif child:IsA("BasePart") then
-		return (child :: BasePart).Position
-	elseif child:IsA("Folder") then
-		local sum = Vector3.zero
-		local count = 0
-		for _, d in ipairs((child :: Folder):GetDescendants()) do
-			if d:IsA("BasePart") then
-				sum += d.Position
-				count += 1
-				if count >= 60 then
-					break
-				end
-			end
-		end
-		if count > 0 then
-			return sum / count
-		end
-	end
-	return nil
-end
-
 local function resolveLandByNearest(worldPos: Vector3): number
 	local best = 1
 	local bestDist = math.huge
-	local map = workspace:FindFirstChild("Map")
-	local lands = map and map:FindFirstChild("Lands")
-	if not lands then
-		return 1
-	end
-
-	for _, child in lands:GetChildren() do
-		local n = landNumberFromName(child.Name)
-		if not n then
-			continue
-		end
-		local centerPos = centerOfLand(child)
+	for land = 1, MAX_LAND do
+		local centerPos = landCenters[land]
 		if centerPos then
 			local dist = (centerPos - worldPos).Magnitude
 			if dist < bestDist then
 				bestDist = dist
-				best = n
+				best = land
 			end
-		elseif bestDist == math.huge then
-			best = n
 		end
 	end
-
+	-- If no hitboxes cached yet, fall back to Land folder PrimaryPart / first BasePart only.
+	if bestDist == math.huge then
+		for land = 1, MAX_LAND do
+			local folder = findLandFolder(land)
+			if not folder then
+				continue
+			end
+			local part = if folder:IsA("Model") then (folder :: Model).PrimaryPart else nil
+			if not part then
+				part = folder:FindFirstChildWhichIsA("BasePart", true)
+			end
+			if part then
+				landCenters[land] = part.Position
+				local dist = (part.Position - worldPos).Magnitude
+				if dist < bestDist then
+					bestDist = dist
+					best = land
+				end
+			end
+		end
+	end
 	return best
 end
 
@@ -330,17 +322,7 @@ function M.resolveLandAtPosition(worldPos: Vector3): number
 		return bestLand
 	end
 
-	-- Fallback: standing on a land's Spawn pad (XZ).
-	for land = MAX_LAND, 1, -1 do
-		local folder = findLandFolder(land)
-		if folder then
-			local spawnNode = getSpawnNode(folder)
-			if spawnNode and positionWithinSpawnNode(worldPos, spawnNode) then
-				return land
-			end
-		end
-	end
-
+	-- Skip spawn-node GetDescendants fallback — nearest cached center is enough for beacon UI.
 	return resolveLandByNearest(worldPos)
 end
 

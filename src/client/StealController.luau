@@ -24,7 +24,7 @@ local STAND_TAG = "BrainrotStand"
 local HOLD_DURATION = 1.05
 -- Same front-of-stand feel as brainrot pickup, with a little extra reach.
 local MAX_DISTANCE = 20
-local VISIBILITY_REFRESH_INTERVAL = 0.1
+local VISIBILITY_REFRESH_INTERVAL = 0.4
 
 local StealController = {}
 
@@ -103,9 +103,22 @@ end
 local function standDistance(stand: Model): number?
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	local anchor = standAnchorPart(stand)
-	if not hrp or not hrp:IsA("BasePart") or not anchor then
+	if not hrp or not hrp:IsA("BasePart") then
 		return nil
+	end
+	-- Cheap pivot distance first; only resolve Decor anchor when in range.
+	local ok, pivot = pcall(function()
+		return stand:GetPivot()
+	end)
+	if ok and typeof(pivot) == "CFrame" then
+		local rough = ((hrp :: BasePart).Position - pivot.Position).Magnitude
+		if rough > MAX_DISTANCE + 12 then
+			return rough
+		end
+	end
+	local anchor = standAnchorPart(stand)
+	if not anchor then
+		return if ok and typeof(pivot) == "CFrame" then ((hrp :: BasePart).Position - pivot.Position).Magnitude else nil
 	end
 	return ((hrp :: BasePart).Position - anchor.Position).Magnitude
 end

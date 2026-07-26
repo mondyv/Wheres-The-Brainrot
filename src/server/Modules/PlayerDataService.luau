@@ -1,9 +1,10 @@
 -- [ACTIVE] PlayerDataService
 --[[
-	Single owner of the PlayerData_v1 DataStore key.
-	Persistence is disabled in Studio; live servers save cash, upgrades, rebirth, index,
-	inventory, stand brainrots, floor level, daily progress, and total play time.
---]]
+	Single owner of live player persistence (Production_#003 / Development_#003).
+	Never rename the store without a migration reader — that orphans all saves.
+	Failed loads never mark the session as savable (prevents wiping good data with defaults).
+	Legacy PlayerData_v1 is read once and copied forward on miss.
+]]
 
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
@@ -25,20 +26,30 @@ local IndexService = require(script.Parent:WaitForChild("IndexService"))
 local M = {}
 
 local ENVIRONMENT = RunService:IsStudio() and "Development" or "Production"
+-- LOCKED name. Bumping this orphans every live profile — migrate instead.
 local DATA_STORE_NAME = ENVIRONMENT .. "_#003"
+local BACKUP_STORE_NAME = DATA_STORE_NAME .. "_Backups"
+-- Older store names to recover from if the current key is empty.
+local LEGACY_STORE_NAMES = if RunService:IsStudio()
+	then { "PlayerData_v1", "Development_#001", "Development_#002" }
+	else { "PlayerData_v1", "Production_#001", "Production_#002" }
 
-local AUTOSAVE_INTERVAL_SEC = 300
+local AUTOSAVE_INTERVAL_SEC = 180
 -- Starter cash is granted by the tutorial (GrantTutorialCash), not on load.
 local DEFAULT_CASH = 0
 local LOADED_ATTR = PlayerDataSchema.LOADED_ATTR
+local LOAD_FAILED_ATTR = PlayerDataSchema.LOAD_FAILED_ATTR
 local PLAY_TIME_ATTR = PlayerDataSchema.TOTAL_PLAY_TIME_ATTR
 
 local persistenceEnabled = LiveDataStores.isEnabled()
 local playerStore = if persistenceEnabled then DataStoreService:GetDataStore(DATA_STORE_NAME) else nil
+local backupStore = if persistenceEnabled then DataStoreService:GetDataStore(BACKUP_STORE_NAME) else nil
 
 local sessionJoinAt: { [Player]: number } = {}
 local sessionPlayBase: { [Player]: number } = {}
 local saveInFlight: { [Player]: boolean } = {}
+-- false = DataStore error; do NOT overwrite the key with empty defaults.
+local sessionCanSave: { [Player]: boolean } = {}
 
 local function getInternalFolder(): Folder
 	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
@@ -577,8 +588,17 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		stands = stands,
 		lastSavedAt = floorNum(raw.lastSavedAt, 0),
 		settings = normalizeSettings(raw.settings),
-		-- Missing field = returning player before tutorial shipped → treat as done.
-		tutorialCompleted = if typeof(raw.tutorialCompleted) == "boolean" then raw.tutorialCompleted else true,
+		-- Missing tutorialCompleted: only skip for profiles that already have progress
+		-- (pre-tutorial ship). Brand-new / empty saves must stay incomplete.
+		tutorialCompleted = if typeof(raw.tutorialCompleted) == "boolean"
+			then raw.tutorialCompleted
+			else (
+				math.max(0, if typeof(raw.cash) == "number" then raw.cash else 0) > 0
+					or floorNum(raw.rebirthCount, 0) > 0
+					or floorNum(raw.totalPlayTimeSeconds, 0) > 30
+					or (typeof(raw.inventory) == "table" and next(raw.inventory) ~= nil)
+					or (typeof(raw.stands) == "table" and next(raw.stands) ~= nil)
+			),
 		-- Missing: if they already have cash (legacy starter), don't double-grant.
 		tutorialCashGranted = if typeof(raw.tutorialCashGranted) == "boolean"
 			then raw.tutorialCashGranted
@@ -598,38 +618,121 @@ local function fixParkedSlots(data: PlayerDataSchema.PlayerSaveData, raw: any)
 	data.parkedSlots = parked
 end
 
-function M.loadPlayerData(player: Player): PlayerDataSchema.PlayerSaveData?
+local function getAsyncFromStore(store: any, key: string): (boolean, any)
+	local ok, result = pcall(function()
+		return store:GetAsync(key)
+	end)
+	return ok, result
+end
+
+local function tryMigrateFromLegacy(key: string): PlayerDataSchema.PlayerSaveData?
+	for _, storeName in LEGACY_STORE_NAMES do
+		if storeName == DATA_STORE_NAME then
+			continue
+		end
+		local okGet, legacyStore = pcall(function()
+			return DataStoreService:GetDataStore(storeName)
+		end)
+		if not okGet or not legacyStore then
+			continue
+		end
+		local ok, raw = getAsyncFromStore(legacyStore, key)
+		if not ok then
+			warn("[PlayerDataService] legacy load error from", storeName, raw)
+			continue
+		end
+		if raw == nil then
+			continue
+		end
+		local normalized = normalizeLoadedData(raw)
+		if not normalized then
+			continue
+		end
+		fixParkedSlots(normalized, raw)
+		warn("[PlayerDataService] recovered", key, "from legacy store", storeName)
+		-- Copy forward into the current store immediately.
+		if playerStore then
+			local okSave, errSave = pcall(function()
+				playerStore:SetAsync(key, normalized)
+			end)
+			if not okSave then
+				warn("[PlayerDataService] failed copying legacy save forward:", errSave)
+			end
+		end
+		return normalized
+	end
+	return nil
+end
+
+export type LoadResult = {
+	data: PlayerDataSchema.PlayerSaveData?,
+	-- "loaded" | "new" | "failed"
+	status: string,
+}
+
+function M.loadPlayerDataResult(player: Player): LoadResult
 	if not persistenceEnabled or not playerStore then
-		return nil
+		return { data = nil, status = "new" }
 	end
 	local key = tostring(player.UserId)
-	for attempt = 1, 3 do
-		local ok, result = pcall(function()
-			return playerStore:GetAsync(key)
-		end)
+	local lastErr: any = nil
+	for attempt = 1, 4 do
+		local ok, result = getAsyncFromStore(playerStore, key)
 		if ok then
 			if result == nil then
-				return nil
+				local migrated = tryMigrateFromLegacy(key)
+				if migrated then
+					return { data = migrated, status = "loaded" }
+				end
+				return { data = nil, status = "new" }
 			end
 			local normalized = normalizeLoadedData(result)
 			if normalized then
 				fixParkedSlots(normalized, result)
+				return { data = normalized, status = "loaded" }
 			end
-			return normalized
+			warn("[PlayerDataService] normalize rejected payload for", player.Name, "- keeping as failed (will not overwrite)")
+			return { data = nil, status = "failed" }
 		end
+		lastErr = result
 		warn("[PlayerDataService] load failed attempt", attempt, player.Name, result)
-		task.wait(1 + attempt)
+		task.wait(0.8 + attempt * 0.6)
 	end
-	return nil
+	warn("[PlayerDataService] load FAILED after retries for", player.Name, lastErr)
+	return { data = nil, status = "failed" }
+end
+
+function M.loadPlayerData(player: Player): PlayerDataSchema.PlayerSaveData?
+	local result = M.loadPlayerDataResult(player)
+	return result.data
+end
+
+local function writeBackup(player: Player, payload: PlayerDataSchema.PlayerSaveData)
+	if not backupStore then
+		return
+	end
+	local key = tostring(player.UserId) .. "_" .. tostring(os.time())
+	local ok, err = pcall(function()
+		backupStore:SetAsync(key, payload)
+	end)
+	if not ok then
+		warn("[PlayerDataService] backup write failed:", player.Name, err)
+	end
 end
 
 function M.savePlayerData(player: Player): boolean
 	if not persistenceEnabled or not playerStore or saveInFlight[player] then
 		return false
 	end
+	if sessionCanSave[player] == false then
+		warn("[PlayerDataService] skip save — session load failed for", player.Name)
+		return false
+	end
 	saveInFlight[player] = true
 	local key = tostring(player.UserId)
 	local payload = M.collectSaveData(player)
+	-- Snapshot before overwrite so we can recover if something goes wrong later.
+	writeBackup(player, payload)
 	local ok, err = pcall(function()
 		playerStore:SetAsync(key, payload)
 	end)
@@ -701,6 +804,8 @@ function M.resetPlayerData(player: Player): (boolean, string?)
 	end
 
 	M.waitUntilLoaded(player)
+	sessionCanSave[player] = true
+	player:SetAttribute(LOAD_FAILED_ATTR, false)
 	local fresh = M.makeDefaultSaveData(player)
 
 	IndexService.importUnlocks(player, {}, {})
@@ -795,18 +900,34 @@ end
 function M.bindPlayer(player: Player)
 	sessionJoinAt[player] = os.clock()
 	sessionPlayBase[player] = floorNum(player:GetAttribute(PLAY_TIME_ATTR), 0)
+	player:SetAttribute(LOAD_FAILED_ATTR, false)
 
 	if not persistenceEnabled then
-		applySettings(player, PlayerDataSchema.DEFAULT_SETTINGS)
+		sessionCanSave[player] = false
+		local fresh = M.makeDefaultSaveData(player)
+		M.applyLoadedData(player, fresh)
 		M.markLoaded(player)
 		return
 	end
 
-	local loaded = M.loadPlayerData(player)
-	if loaded then
-		M.applyLoadedData(player, loaded)
-	else
+	local result = M.loadPlayerDataResult(player)
+	if result.status == "failed" then
+		sessionCanSave[player] = false
+		player:SetAttribute(LOAD_FAILED_ATTR, true)
+		-- Soft defaults for this session only — NEVER persist over a failed load.
 		applySettings(player, PlayerDataSchema.DEFAULT_SETTINGS)
+		M.markLoaded(player)
+		warn("[PlayerDataService] playing without save for", player.Name, "(load failed — data preserved in DataStore)")
+		return
+	end
+
+	sessionCanSave[player] = true
+	if result.status == "loaded" and result.data then
+		M.applyLoadedData(player, result.data)
+	else
+		-- Confirmed new player (key missing after legacy migration attempt).
+		local fresh = M.makeDefaultSaveData(player)
+		M.applyLoadedData(player, fresh)
 	end
 	M.markLoaded(player)
 end
@@ -818,10 +939,13 @@ function M.unbindPlayer(player: Player)
 	while saveInFlight[player] and os.clock() < deadline do
 		task.wait(0.1)
 	end
-	M.savePlayerData(player)
+	if sessionCanSave[player] ~= false then
+		M.savePlayerData(player)
+	end
 	sessionJoinAt[player] = nil
 	sessionPlayBase[player] = nil
 	saveInFlight[player] = nil
+	sessionCanSave[player] = nil
 end
 
 local function waitForSaveBindables()
@@ -858,7 +982,7 @@ function M.start()
 		while true do
 			task.wait(AUTOSAVE_INTERVAL_SEC)
 			for _, player in Players:GetPlayers() do
-				if player:GetAttribute(LOADED_ATTR) == true then
+				if player:GetAttribute(LOADED_ATTR) == true and sessionCanSave[player] ~= false then
 					task.spawn(M.savePlayerData, player)
 				end
 			end
@@ -878,7 +1002,9 @@ game:BindToClose(function()
 		while saveInFlight[player] and os.clock() < deadline do
 			task.wait(0.1)
 		end
-		M.savePlayerData(player)
+		if sessionCanSave[player] ~= false then
+			M.savePlayerData(player)
+		end
 	end
 end)
 

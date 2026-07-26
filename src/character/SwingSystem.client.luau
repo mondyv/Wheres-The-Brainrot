@@ -2392,7 +2392,7 @@ local function boot(character)
 
 		for i = #st.targetCache, 1, -1 do
 			local part = st.targetCache[i]
-			if not part.Parent or not part:IsDescendantOf(workspace) then
+			if not part.Parent then
 				st.targetSet[part] = nil
 				st.removeTargetFromGrid(part)
 				table.remove(st.targetCache, i)
@@ -2439,7 +2439,7 @@ local function boot(character)
 						for part in pairs(cell) do
 							if not seen[part] then
 								seen[part] = true
-								if not part.Parent or not part:IsDescendantOf(workspace) then
+								if not part.Parent then
 									table.insert(invalidTargets, part)
 									continue
 								end
@@ -2471,7 +2471,7 @@ local function boot(character)
 				if
 					not seen[part]
 					and part.Parent
-					and part:IsDescendantOf(workspace)
+					and part.Parent
 					and not part:IsDescendantOf(st.character)
 				then
 					local halfSize = part.Size.Magnitude * 0.5
@@ -2540,7 +2540,7 @@ local function boot(character)
 		local bestScore = -math.huge
 
 		for _, part in ipairs(st.getCandidateTargets(reach)) do
-			if not part.Parent or not part:IsDescendantOf(workspace) then
+			if not part.Parent then
 				continue
 			end
 			if part:IsDescendantOf(st.character) then
@@ -2641,7 +2641,7 @@ local function boot(character)
 	end
 
 	function st.targetDistanceAndPoint(target)
-		if not target or not target.Parent or not target:IsDescendantOf(workspace) then
+		if not target or not target.Parent then
 			return nil, nil
 		end
 		if target:IsDescendantOf(st.character) then
@@ -3306,7 +3306,7 @@ local function boot(character)
 	end
 
 	function st.resolveTargetHighlightAdornee(target)
-		if not target or not target.Parent or not target:IsDescendantOf(workspace) then
+		if not target or not target.Parent then
 			return nil
 		end
 		if target:IsDescendantOf(st.character) then
@@ -5532,7 +5532,9 @@ local function boot(character)
 			end
 		end
 
-		st.stepTargetVisual(dt)
+		if st.targetVisualShown or st.scannedVisualTarget ~= nil or st.isSwinging then
+			st.stepTargetVisual(dt)
+		end
 
 		local trailOn = (st.isSwinging or st.isLaunched or st.isAirborneForSwing()) and (speed > 62 or velocity.Y < -78)
 		st.setTrailsEnabled(trailOn)
@@ -5562,7 +5564,14 @@ local function boot(character)
 				targetFov -= C.LANDING_FOV_KICK * u * u * st.landingShakeStrength
 			end
 
-			camera.FieldOfView += (targetFov - camera.FieldOfView) * math.min(dt * C.FOV_SPEED, 1)
+			local fovDelta = targetFov - camera.FieldOfView
+			if math.abs(fovDelta) > 0.03 then
+				camera.FieldOfView += fovDelta * math.min(dt * C.FOV_SPEED, 1)
+			elseif math.abs(camera.FieldOfView - st.originalFov) < 0.05 and not st.isSwinging and not st.isLaunched then
+				-- Settled — avoid writing FieldOfView every Heartbeat while idle.
+			elseif math.abs(fovDelta) > 0.001 then
+				camera.FieldOfView = targetFov
+			end
 		end
 	end))
 

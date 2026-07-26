@@ -16,7 +16,7 @@ local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("U
 local M = {}
 
 local MIN_LAND_TO_SHOW = 2
-local POLL_SEC = 0.12
+local POLL_SEC = 0.35
 local BILLBOARD_SIZE = UDim2.fromOffset(48, 18)
 -- A bit right of the head, smaller label.
 local STUDS_OFFSET = Vector3.new(2.15, 0.2, 0)
@@ -33,6 +33,10 @@ local centerRefreshAt = 0
 local cachedCenter: Vector3? = nil
 local CENTER_REFRESH_SEC = 4
 local lastMeters: number? = nil
+local cachedLand = 1
+local landRefreshAt = 0
+local LAND_REFRESH_SEC = 0.75
+local lastLandPos: Vector3? = nil
 
 local function destroyGui()
 	if billboard then
@@ -105,8 +109,14 @@ local function shouldShow(character: Model?, hrp: BasePart): boolean
 	if SafezoneUtil.isWorldPointInSafezone(hrp.Position) then
 		return false
 	end
-	local land = LandResolver.resolveLandAtPosition(hrp.Position)
-	return typeof(land) == "number" and land >= MIN_LAND_TO_SHOW
+	local now = os.clock()
+	local movedFar = not lastLandPos or (hrp.Position - lastLandPos).Magnitude > 18
+	if movedFar or now - landRefreshAt >= LAND_REFRESH_SEC then
+		landRefreshAt = now
+		lastLandPos = hrp.Position
+		cachedLand = LandResolver.resolveLandAtPosition(hrp.Position)
+	end
+	return cachedLand >= MIN_LAND_TO_SHOW
 end
 
 local function formatMeters(distance: number): string

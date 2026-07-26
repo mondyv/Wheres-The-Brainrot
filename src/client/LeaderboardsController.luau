@@ -14,7 +14,7 @@ local M = {}
 local DATA_FOLDER_NAME = "LeaderboardData"
 local BOARD_NAMES = { "Cash", "Time" }
 local ROW_COUNT = 10
-local RETRY_INTERVAL_SEC = 2
+local RETRY_INTERVAL_SEC = 8
 
 local function readRows(boardFolder: Folder): { LeaderboardUI.RowEntry }
 	local rows: { LeaderboardUI.RowEntry } = {}
@@ -140,15 +140,20 @@ function M.init()
 	task.spawn(function()
 		local dataFolder = waitForDataFolder()
 		hookDataFolder(dataFolder)
+		local paintedOk = false
 		while true do
-			paintAllFromData(dataFolder)
-			task.wait(RETRY_INTERVAL_SEC)
+			if paintAllFromData(dataFolder) then
+				paintedOk = true
+			end
+			-- Once boards paint successfully, only refresh on data hooks — slow retry for streaming.
+			task.wait(if paintedOk then RETRY_INTERVAL_SEC else 2)
 		end
 	end)
 
 	task.spawn(function()
 		local dataFolder = waitForDataFolder()
 		local function onWorldChange()
+			LeaderboardUI.invalidateBoardCache()
 			task.defer(function()
 				paintAllFromData(dataFolder)
 			end)

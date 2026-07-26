@@ -64,14 +64,12 @@ function M.findLeaderboardsRoot(): Instance?
 			end
 		end
 	end
-	for _, desc in Workspace:GetDescendants() do
-		if desc.Name == "LeaderBoards" or desc.Name == "Leaderboards" then
-			if desc:FindFirstChild("Cash", true) or desc:FindFirstChild("Time", true) then
-				return desc
-			end
-			if desc:FindFirstChild("Most Cash", true) or desc:FindFirstChild("Most Time", true) then
-				return desc
-			end
+	-- Cheap fallback: Map / direct children only (never full Workspace:GetDescendants).
+	local map = Workspace:FindFirstChild("Map")
+	if map then
+		local boards = map:FindFirstChild("LeaderBoards", true) or map:FindFirstChild("Leaderboards", true)
+		if boards then
+			return boards
 		end
 	end
 	return nil
@@ -452,18 +450,51 @@ function M.renderBoard(container: Frame?, entries: { RowEntry })
 	return painted
 end
 
+local cachedSurfaceGuisByBoard: { [string]: { SurfaceGui } } = {
+	Cash = {},
+	Time = {},
+}
+local boardCacheBuiltAt = 0.0
+local BOARD_CACHE_TTL = 12
+
+function M.invalidateBoardCache()
+	boardCacheBuiltAt = 0
+	cachedSurfaceGuisByBoard = { Cash = {}, Time = {} }
+end
+
+local function rebuildBoardSurfaceCache()
+	cachedSurfaceGuisByBoard = { Cash = {}, Time = {} }
+	local root = M.findLeaderboardsRoot()
+	if not root then
+		boardCacheBuiltAt = os.clock()
+		return
+	end
+	for _, desc in root:GetDescendants() do
+		if desc:IsA("SurfaceGui") then
+			local key = M.detectBoardKey(desc :: SurfaceGui)
+			if key == "Cash" or key == "Time" then
+				table.insert(cachedSurfaceGuisByBoard[key], desc :: SurfaceGui)
+			end
+		end
+	end
+	boardCacheBuiltAt = os.clock()
+end
+
 function M.renderBoardByName(boardName: string, entries: { RowEntry }): boolean
 	local any = false
+	if os.clock() - boardCacheBuiltAt > BOARD_CACHE_TTL then
+		rebuildBoardSurfaceCache()
+	end
 	for _, container in M.findAllBoardContainers(boardName) do
 		if M.renderBoard(container, entries) then
 			any = true
 		end
 	end
-	for _, desc in Workspace:GetDescendants() do
-		if desc:IsA("SurfaceGui") then
-			local key = M.detectBoardKey(desc :: SurfaceGui)
-			if key == boardName then
-				if M.renderSurfaceGui(desc :: SurfaceGui, entries) then
+	local guis = cachedSurfaceGuisByBoard[boardName]
+	if guis then
+		for _, gui in guis do
+			if gui.Parent then
+				if M.renderSurfaceGui(gui, entries) then
 					any = true
 				end
 			end

@@ -4925,7 +4925,7 @@ local function boot(character)
 			or math.abs(st.swingCamRoll) > 0.0001
 			or (st.windShakeIntensity or 0) > 0.01
 
-		-- Yield Scriptable gameplay cam so default Custom + swing FX own the lens.
+		-- Soft-blend gameplay cam into swing framing (stays Scriptable; FX still layer here).
 		setSwingCameraOverride(swingCamBusy)
 
 		if

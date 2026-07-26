@@ -46,9 +46,9 @@ local CLICK_BOUNCE = TweenInfo.new(0.38, Enum.EasingStyle.Sine, Enum.EasingDirec
 local active = false
 local stepIndex = 0
 local gui: ScreenGui? = nil
-local root: Frame? = nil
+local _questRoot: Frame? = nil
 local panel: Frame? = nil
-local exclaim: ImageLabel? = nil
+local _exclaim: ImageLabel? = nil
 local objectiveLabel: TextLabel? = nil
 local dotsLabel: TextLabel? = nil
 local panelScale: UIScale? = nil
@@ -58,7 +58,7 @@ local worldArrowImg: ImageLabel? = nil
 local arrowAnimConn: RBXScriptConnection? = nil
 local uiPointer: ImageLabel? = nil
 local pointerGui: ScreenGui? = nil
-local pointerRoot: Frame? = nil
+local _pointerRoot: Frame? = nil
 local uiPointerFollowConn: RBXScriptConnection? = nil
 local uiPointerForced = false
 local dimOverlay: Frame? = nil
@@ -71,15 +71,15 @@ local dotsConn: RBXScriptConnection? = nil
 local dotsPhase = 0
 local completeRF: RemoteFunction? = nil
 local grantCashRF: RemoteFunction? = nil
-local upgradesFrame: Frame? = nil
-local powerBuyButton: GuiObject? = nil
+local _upgradesFrame: Frame? = nil
+local _powerBuyButton: GuiObject? = nil
 local lastLandCheck = 0
-local claimSpotlightActive = false
+local _claimSpotlightActive = false
 local upgradeBaseLevel = 1
 local layoutConn: RBXScriptConnection? = nil
-local panelStroke: UIStroke? = nil
+local _panelStroke: UIStroke? = nil
 local chromeSuppressed = false
-local questHost: Frame? = nil
+local _questHost: Frame? = nil
 local vineCache: { BasePart } = {}
 local vineCacheAt = 0
 local lastPointerRefresh = 0
@@ -117,7 +117,7 @@ local function isCutsceneBusy(): boolean
 	return isDialogueOrSpiderCutscene() or isClaimCutscene()
 end
 
-local function shouldHideQuestPanel(): boolean
+local function _shouldHideQuestPanel(): boolean
 	return isCutsceneBusy()
 end
 
@@ -388,7 +388,7 @@ local function ensureQuestHost(): Frame?
 	end
 	local existing = main:FindFirstChild("TutorialQuestHost")
 	if existing and existing:IsA("Frame") then
-		questHost = existing
+		_questHost = existing
 		return existing
 	end
 	local host = Instance.new("Frame")
@@ -402,7 +402,7 @@ local function ensureQuestHost(): Frame?
 	host.ClipsDescendants = false
 	host.Active = false
 	host.Parent = main
-	questHost = host
+	_questHost = host
 	return host
 end
 
@@ -512,7 +512,7 @@ local function clearUiPointerImpl()
 end
 clearUiPointer = clearUiPointerImpl
 
-local function ensurePointerGui()
+local function _ensurePointerGui()
 	if pointerGui and pointerGui.Parent then
 		return
 	end
@@ -539,7 +539,7 @@ local function ensurePointerGui()
 
 	screen.Parent = pg
 	pointerGui = screen
-	pointerRoot = rootFrame
+	_pointerRoot = rootFrame
 end
 
 local function isGuiTreeVisible(obj: GuiObject): boolean
@@ -570,7 +570,7 @@ local function bushHasBrainrotLoot(bush: Instance): boolean
 end
 
 local function clearSpotlightImpl()
-	claimSpotlightActive = false
+	_claimSpotlightActive = false
 	if dimOverlay then
 		dimOverlay.Visible = false
 	end
@@ -624,7 +624,7 @@ local function ensureGui()
 	stroke.Thickness = 1
 	stroke.Transparency = 0.82
 	stroke.Parent = panelFrame
-	panelStroke = stroke
+	_panelStroke = stroke
 
 	local pad = Instance.new("UIPadding")
 	pad.PaddingLeft = UDim.new(0, 8)
@@ -743,9 +743,9 @@ local function ensureGui()
 
 	screen.Parent = pg
 	gui = screen
-	root = rootFrame
+	_questRoot = rootFrame
 	panel = panelFrame
-	exclaim = bang
+	_exclaim = bang
 	objectiveLabel = label
 	dotsLabel = dots
 	panelScale = scale
@@ -1326,7 +1326,7 @@ local function isDisallowedTutorialButton(obj: Instance): boolean
 end
 
 local function cacheUpgradesBuyButton()
-	powerBuyButton = nil
+	_powerBuyButton = nil
 	local main = PlayerGuiMain.ensure(player)
 	if not main then
 		return nil
@@ -1334,7 +1334,7 @@ local function cacheUpgradesBuyButton()
 	local frames = main:FindFirstChild("Frames")
 	local upgrades = frames and frames:FindFirstChild("Upgrades")
 	if upgrades and upgrades:IsA("Frame") then
-		upgradesFrame = upgrades
+		_upgradesFrame = upgrades
 	end
 	if not upgrades then
 		return nil
@@ -1395,7 +1395,7 @@ local function cacheUpgradesBuyButton()
 		end
 	end
 	if btn and btn:IsA("GuiObject") and not isDisallowedTutorialButton(btn) then
-		powerBuyButton = btn
+		_powerBuyButton = btn
 		return btn
 	end
 	return nil
@@ -1737,7 +1737,7 @@ local function bindGameplayHooks()
 		local frames = main:FindFirstChild("Frames")
 		local upgrades = frames and frames:FindFirstChild("Upgrades")
 		if upgrades and upgrades:IsA("GuiObject") then
-			upgradesFrame = upgrades :: Frame
+			_upgradesFrame = upgrades :: Frame
 			table.insert(
 				attrConns,
 				upgrades:GetPropertyChangedSignal("Visible"):Connect(function()

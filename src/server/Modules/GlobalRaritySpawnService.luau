@@ -103,7 +103,7 @@ local function normalizeState(raw: any): GlobalState
 			and typeof(a.brainrotName) == "string"
 			and typeof(a.endsAt) == "number"
 		then
-			active = {
+			local spawned: ActiveSpawn = {
 				rarity = a.rarity,
 				bushKey = a.bushKey,
 				brainrotName = a.brainrotName,
@@ -111,8 +111,10 @@ local function normalizeState(raw: any): GlobalState
 				level = if typeof(a.level) == "number" then math.max(1, math.floor(a.level)) else 1,
 				endsAt = a.endsAt,
 			}
-			if active.endsAt <= now then
+			if spawned.endsAt <= now then
 				active = nil
+			else
+				active = spawned
 			end
 		end
 	end

@@ -4,7 +4,7 @@
 	Player accepts to carry it; decline or timeout returns the bush to normal cooldown flow.
 ]]
 
-local Players = game:GetService("Players")
+local _Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
@@ -20,7 +20,6 @@ local CLAIMING_ATTR = "BrainrotFloatClaiming"
 local DECLINING_ATTR = "BrainrotFloatDeclining"
 local BUSH_KEY_ATTR = "BrainrotHarvestBushKey"
 
-local floatConnByClone: { [Model]: RBXScriptConnection } = {}
 local vanishTokenByClone: { [Model]: number } = {}
 
 export type Deps = {
@@ -77,7 +76,7 @@ function M.ensureDecisionRemote(): RemoteEvent
 	return ev :: RemoteEvent
 end
 
-local function fireVanishFX(player: Player, clone: Model)
+local function _fireVanishFX(player: Player, clone: Model)
 	local rarity = clone:GetAttribute("BrainrotRarity")
 	local main = clone:FindFirstChildWhichIsA("BasePart", true)
 	local pos = if main then main.Position else clone:GetPivot().Position

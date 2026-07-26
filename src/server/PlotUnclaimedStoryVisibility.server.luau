@@ -26,7 +26,7 @@ local ATTR_EMIT = "__PlotUnclEmit"
 local hooked: { [Instance]: boolean } = {}
 local hookedFolders: { [Instance]: boolean } = {}
 local refreshScheduled: { [Instance]: boolean } = {}
-local applyPlotStoryVisibility: (plot: Instance) -> ()
+local _applyPlotStoryVisibility: (plot: Instance) -> ()
 
 local function normalizeKey(name: string): string
 	return string.gsub(string.lower(name), "%s+", "")
@@ -206,7 +206,7 @@ local function findFloorDirectUnder(story: Instance): Instance?
 end
 
 -- Floor may be nested oddly; prefer first story, else first "Floor" folder/model under the plot.
-local function findFloorFolderForPlot(plot: Instance): Instance?
+local function _findFloorFolderForPlot(plot: Instance): Instance?
 	local story = firstStoryOf(plot)
 	if story then
 		local f = findFloorDirectUnder(story)
@@ -250,7 +250,8 @@ end
 
 local function isFloorUnlockSignModel(m: Model): boolean
 	local ak = alphaNumericKey(m.Name)
-	return ak == "upgradeadd" or (string.find(ak, "upgrade", 1, true) and string.find(ak, "add", 1, true))
+	return ak == "upgradeadd"
+		or (string.find(ak, "upgrade", 1, true) ~= nil and string.find(ak, "add", 1, true) ~= nil)
 end
 
 local function isGenericSignModel(inst: Instance): boolean
@@ -418,7 +419,7 @@ local function restoreUnclaimedFirstStoryFloorOnly(story: Instance)
 	end
 end
 
-local function applyPlotStoryVisibility(plot: Instance)
+_applyPlotStoryVisibility = function(plot: Instance)
 	if plot:GetAttribute("PlotFloorStub") == true then
 		local story = firstStoryOf(plot)
 		if story then
@@ -463,12 +464,12 @@ local function schedulePlotRefresh(plot: Instance)
 	task.defer(function()
 		refreshScheduled[plot] = nil
 		if plot.Parent then
-			applyPlotStoryVisibility(plot)
+			_applyPlotStoryVisibility(plot)
 		end
 	end)
 end
 
-local function plotRootFromDescendant(inst: Instance): Instance?
+local function _plotRootFromDescendant(inst: Instance): Instance?
 	local cur: Instance? = inst
 	while cur do
 		if PlotPaths.isPlotRoot(cur) then
@@ -512,7 +513,7 @@ local function tryHookPlot(plot: Instance)
 		refreshScheduled[plot] = nil
 	end)
 
-	applyPlotStoryVisibility(plot)
+	_applyPlotStoryVisibility(plot)
 end
 
 local function hookSpawnFolder(folder: Instance)

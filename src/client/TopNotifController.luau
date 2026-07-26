@@ -41,9 +41,9 @@ local panelStroke: UIStroke? = nil
 local labelStroke: UIStroke? = nil
 local animScale: UIScale? = nil
 local cachedStrokes: { UIStroke } = {}
-local savedLabelStrokeThickness: number? = nil
+local _savedLabelStrokeThickness: number? = nil
 local savedPanelStrokeTransparency: number? = nil
-local savedTextStrokeTransparency: number = 1
+local _savedTextStrokeTransparency: number = 1
 local messageQueue: { QueuedMessage } = {}
 local isShowing = false
 local hideToken = 0
@@ -51,7 +51,7 @@ local activeFadeTween: Tween? = nil
 local activeIsError = false
 local errorHideThread: thread? = nil
 local broadcastConn: RBXScriptConnection? = nil
-local defaultPanelStrokeColor: Color3? = nil
+local _defaultPanelStrokeColor: Color3? = nil
 
 local scheduleErrorHide: (token: number, lifetime: number) -> ()
 
@@ -156,7 +156,7 @@ local function findParts()
 
 	panelStroke = host:FindFirstChildOfClass("UIStroke")
 	if panelStroke then
-		defaultPanelStrokeColor = panelStroke.Color
+		_defaultPanelStrokeColor = panelStroke.Color
 	end
 
 	local text = notif:FindFirstChild("Text")
@@ -165,12 +165,12 @@ local function findParts()
 	end
 	if text and text:IsA("TextLabel") then
 		label = text
-		savedTextStrokeTransparency = label.TextStrokeTransparency
+		_savedTextStrokeTransparency = label.TextStrokeTransparency
 		prepareNotifLabel(label)
 		local stroke = label:FindFirstChildOfClass("UIStroke")
 		if stroke then
 			labelStroke = stroke
-			savedLabelStrokeThickness = stroke.Thickness
+			_savedLabelStrokeThickness = stroke.Thickness
 		end
 	end
 end

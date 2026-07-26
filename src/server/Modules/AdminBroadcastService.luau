@@ -4,7 +4,7 @@
 ]]
 
 local MessagingService = game:GetService("MessagingService")
-local Players = game:GetService("Players")
+local _Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local M = {}

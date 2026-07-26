@@ -131,9 +131,9 @@ local function ensureGlistenTrack(btn: GuiObject): Frame
 	end
 	local outline = resolveOutlineFrame(btn)
 	if outline ~= btn then
-		local stale = btn:FindFirstChild("__GlistenTrack")
-		if stale then
-			stale:Destroy()
+		local staleOnOutline = btn:FindFirstChild("__GlistenTrack")
+		if staleOnOutline then
+			staleOnOutline:Destroy()
 		end
 	end
 	return ensureOverlayFrame(outline, "__GlistenTrack", 15, 0)

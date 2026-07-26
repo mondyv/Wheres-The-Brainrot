@@ -21,7 +21,7 @@ local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+local _playerGui = player:WaitForChild("PlayerGui")
 
 local OPEN_NOTIF = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -692,7 +692,6 @@ local function applySnapshot(snapshot: RebirthConfig.RebirthSnapshot, main: Scre
 	local rebirthIcon = getRebirthButtonIcon(frame)
 	local moneyRewardText = RebirthConfig.moneyRewardTextForTier(snapshot.nextTier)
 
-	local req = frame:FindFirstChild("Requirements")
 	local items = req and req:FindFirstChild("Items")
 	local cashRow = items and items:FindFirstChild("1")
 	if cashRow and cashRow:IsA("Frame") then

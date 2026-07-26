@@ -279,7 +279,7 @@ local Config = {
 		},
 	},
 
-	["BurbalolliLuilolli"] = {
+	["BurbalolliLulilolli"] = {
 		rarity = "uncommon",
 		baseIncome = 62,
 
@@ -1418,11 +1418,17 @@ function Methods:NormalizeVariant(variant: string?): string
 end
 
 function Methods:Exists(brainrotName: string): boolean
-	return rawget(Config, brainrotName) ~= nil
+	return self:Get(brainrotName) ~= nil
 end
 
 function Methods:Get(brainrotName: string): { rarity: string, baseIncome: number, icons: { [string]: string } }?
 	local data = rawget(Config, brainrotName)
+	if typeof(data) ~= "table" then
+		-- Legacy typo: BurbalolliLuilolli → BurbalolliLulilolli
+		if brainrotName == "BurbalolliLuilolli" then
+			data = rawget(Config, "BurbalolliLulilolli")
+		end
+	end
 	if typeof(data) ~= "table" then
 		return nil
 	end

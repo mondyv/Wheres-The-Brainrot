@@ -23,7 +23,7 @@ task.defer(function()
 	local Players = game:GetService("Players")
 	local PlotPaths = require(shared:WaitForChild("PlotPaths"))
 
-	local player = Players.LocalPlayer
+	local _player = Players.LocalPlayer
 	local STAND_TAG = "BrainrotStand"
 	local watchedDisplays: { [Model]: boolean } = {}
 

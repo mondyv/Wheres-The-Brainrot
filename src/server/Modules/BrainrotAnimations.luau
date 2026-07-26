@@ -27,6 +27,8 @@ M.IDLE = {
 	["BananitoDelfinito"] = 125289792215053,
 	["AvocadiniGuffo"] = 136035236790762,
 	["BrrBicusDicus"] = 138004767178926,
+	["BurbalolliLulilolli"] = 139069972938830,
+	-- Legacy typo spelling
 	["BurbalolliLuilolli"] = 139069972938830,
 	["BalerinaCapucina"] = 137174932392010,
 	["SalaminoPinguino"] = 103221813247265,

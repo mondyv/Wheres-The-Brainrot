@@ -248,7 +248,7 @@ local function ensureSellClickTarget(row: Frame): (GuiButton?, GuiObject?, Insta
 	return clickBtn, animTarget, resolveSellPriceNode(row)
 end
 
-local function resolveSellButton(row: Frame): GuiButton?
+local function _resolveSellButton(row: Frame): GuiButton?
 	return select(1, ensureSellClickTarget(row))
 end
 
@@ -497,7 +497,6 @@ local function populateSellInfoConfirm(entry: InvEntry, price: number)
 		})
 	end
 
-	local icon = sellInfoFrame:FindFirstChild("Icon", true)
 	if icon and icon:IsA("ImageLabel") and entry.icon ~= "" then
 		icon.Image = entry.icon
 	end
@@ -628,7 +627,7 @@ local function populateRow(row: Frame, entry: InvEntry, idx: number)
 	wireSellButton(clickBtn, onSellClick)
 end
 
-local function refreshSellList()
+refreshSellList = function()
 	if not container or not rowTemplate then
 		warn("[SellController] Sell list refresh skipped — Container or row template missing")
 		return

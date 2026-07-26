@@ -243,7 +243,10 @@ local cashBundleRewardsRF = ensureRemoteFunction("GetCashBundleRewards")
 cashBundleRewardsRF.OnServerInvoke = function(player: Player): { [number]: number }
 	local out: { [number]: number } = {}
 	for productId in StoreConfig.CASH_BUNDLE_MULTIPLIERS do
-		out[productId] = StoreServer.cashBundleRewardFor(player, productId)
+		local reward = StoreServer.cashBundleRewardFor(player, productId)
+		if typeof(reward) == "number" then
+			out[productId] = reward
+		end
 	end
 	return out
 end

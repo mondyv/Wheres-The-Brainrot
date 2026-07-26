@@ -13,6 +13,7 @@ return function(itemId, type)
 		if success then
 			return result
 		end
+		return nil
 	end):catch(function(issue)
 		Logger.warn(tostring(issue))
 

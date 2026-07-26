@@ -289,7 +289,7 @@ local STEAL_RARITY_ALIASES: { [string]: string } = {
 }
 
 function StoreConfig.normalizeStealRarity(rarity: string): string
-	local key = string.lower(string.gsub(rarity, "^%s*(.-)%s*$", "%1"))
+	local key = string.lower((string.gsub(rarity, "^%s*(.-)%s*$", "%1")))
 	key = string.gsub(key, "[_%-]+", " ")
 	key = string.gsub(key, "%s+", " ")
 	local compact = string.gsub(key, "%s+", "")

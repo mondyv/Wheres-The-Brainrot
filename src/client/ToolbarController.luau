@@ -30,7 +30,7 @@ local GuiService = game:GetService("GuiService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
+local _Workspace = game:GetService("Workspace")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
@@ -253,7 +253,7 @@ local backpackPanelPosTween: Tween? = nil
 local backpackContainerScaleTween: Tween? = nil
 local backpackRestPosition: UDim2? = nil
 local toggleIconScaleTween: Tween? = nil
-local tweenEmptyHotbarSlotsOut: () -> ()
+local _tweenEmptyHotbarSlotsOut: () -> ()
 local resetEmptyHotbarSlotScales: () -> ()
 local cancelEmptyHotbarCloseTweens: () -> ()
 local animateToggleBackpackIcon: (boolean) -> ()
@@ -265,7 +265,7 @@ local hotbarDragZoneActive = false
 local hotbarDragHoverSlot: number? = nil
 local backpackDragHover = false
 local BACKPACK_FRAME_DRAG_HOVER_SCALE = 1.045
-local BACKPACK_ROW_DRAG_HOVER_SCALE = 1.0
+local _BACKPACK_ROW_DRAG_HOVER_SCALE = 1.0
 
 local ToolbarController = {}
 
@@ -1520,7 +1520,7 @@ local ToolbarController = {}
 		end
 	end
 
-	-- resetEmptyHotbarSlotScales / tweenEmptyHotbarSlotsOut / animateToggleBackpackIcon after hotbar helpers
+	-- resetEmptyHotbarSlotScales / _tweenEmptyHotbarSlotsOut / animateToggleBackpackIcon after hotbar helpers
 
 	-- Keep repairing old empty fade wrappers so they never hold real content.
 	local function ensureBackpackFadeRoot(frame: GuiObject)
@@ -1728,8 +1728,9 @@ local ToolbarController = {}
 		if scale.Scale < 0.85 then
 			scale.Scale = 0.8
 		end
-		local toolbarVisibilityTween = TweenService:Create(scale, SHOW_TWEEN, { Scale = 1 })
-		toolbarVisibilityTween:Play()
+		local showTween = TweenService:Create(scale, SHOW_TWEEN, { Scale = 1 })
+		toolbarVisibilityTween = showTween
+		showTween:Play()
 		task.defer(function()
 			updateHotbarSlotVisibility()
 			if not isBackpackPanelOpen and not isBackpackPanelClosing then
@@ -1827,7 +1828,7 @@ local ToolbarController = {}
 		return nil
 	end
 
-	local function findHotbarSlotForBrainrotName(itemName: string): number?
+	local function _findHotbarSlotForBrainrotName(itemName: string): number?
 		for invIndex = 1, #brainrotEntries do
 			local e = brainrotEntries[invIndex]
 			local slot = hotbarSlotForBrainrotIndex(invIndex)
@@ -2181,7 +2182,7 @@ local ToolbarController = {}
 		end
 	end
 
-	tweenEmptyHotbarSlotsOut = function()
+	_tweenEmptyHotbarSlotsOut = function()
 		-- No per-slot shrink — empty toolbar cells hide together after panel close.
 		cancelEmptyHotbarCloseTweens()
 	end
@@ -2828,7 +2829,7 @@ local ToolbarController = {}
 		task.defer(rebuildSlots)
 	end
 
-	local function setLocalBrainrotTucked(index: number, tucked: boolean)
+	local function _setLocalBrainrotTucked(index: number, tucked: boolean)
 		if index < 1 or index > HOTBAR_INVENTORY_SLOTS then
 			return
 		end
@@ -2836,7 +2837,11 @@ local ToolbarController = {}
 			brainrotParkedInUI[index] = nil
 			return
 		end
-		brainrotParkedInUI[index] = if tucked then true else nil
+		if tucked then
+			brainrotParkedInUI[index] = true
+		else
+			brainrotParkedInUI[index] = nil
+		end
 	end
 
 	local function localBrainrotIsBackpackVisible(index: number): boolean
@@ -2951,7 +2956,7 @@ local ToolbarController = {}
 		refreshAfterLocalBrainrotMove()
 	end
 
-	local function optimisticBrainrotMoveToBackpackIndex(listIdx: number, _destListIdx: number)
+	local function _optimisticBrainrotMoveToBackpackIndex(listIdx: number, _destListIdx: number)
 		-- Keep server inventory order authoritative. Locally, just remove it from
 		-- the visible hotbar so it does not snap back while waiting for sync.
 		optimisticBrainrotTuckToBackpack(listIdx)
@@ -3710,7 +3715,7 @@ local ToolbarController = {}
 		end)
 	end
 
-	local initialInventoryRevealed = false
+	local _initialInventoryRevealed = false
 
 	-- After loading, canUseToolbar may already be true from mid-load safezone polls
 	-- while showToolbar() no-op'd. Re-sync so hotbar/backpack appear without pressing `.
@@ -3803,7 +3808,7 @@ local ToolbarController = {}
 		clearDragGhost()
 		isBackpackPanelOpen = false
 		isBackpackPanelClosing = false
-		initialInventoryRevealed = false
+		_initialInventoryRevealed = false
 		if backpackFrameRef and backpackFrameRef:IsA("GuiObject") then
 			(backpackFrameRef :: GuiObject).Visible = false
 		end

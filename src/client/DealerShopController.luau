@@ -67,7 +67,7 @@ local lastState: DealerStatePayload? = nil
 local rowByIndex: { [number]: Instance } = {}
 local buyInFlight: { [number]: boolean } = {}
 local wiredBuyHosts: { [GuiObject]: boolean } = {}
-local shopFrame: Frame? = nil
+local _shopFrame: Frame? = nil
 local comingSoonLabel: Instance? = nil
 
 -- Forward declaration: tryBuyCash applies optimistic stock then reconciles a
@@ -787,7 +787,7 @@ local function init()
 
 	local frames = main:WaitForChild("Frames")
 	local shop = frames:WaitForChild("Shop") :: Frame
-	shopFrame = shop
+	_shopFrame = shop
 
 	local header = shop:WaitForChild("Header")
 	local container = shop:WaitForChild("Container")

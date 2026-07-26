@@ -9,7 +9,7 @@ local Players = game:GetService("Players")
 -->> || Variables || <<--
 
 local Player = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPlayer"):Wait() :: Player
-local PlayerGui = Player:WaitForChild("PlayerGui") :: PlayerGui
+local _PlayerGui = Player:WaitForChild("PlayerGui") :: PlayerGui
 
 -->> || Modules || <<--
 
@@ -18,7 +18,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 
 local Maid = require(Packages.Maid)
 local Promise = require(Packages.Promise)
-local Functions = require(Shared.Functions)
+local _Functions = require(Shared.Functions)
 
 -->> || Types || <<--
 

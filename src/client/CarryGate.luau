@@ -32,7 +32,7 @@ local function countOnCharacter(char: Model): number
 	return if hasCarryWeld then 1 else 0
 end
 
-local function countBrainrotTools(container: Instance?): number
+local function _countBrainrotTools(container: Instance?): number
 	if not container then
 		return 0
 	end

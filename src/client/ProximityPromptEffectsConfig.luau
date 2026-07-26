@@ -3,7 +3,7 @@
 	Visual / tuning constants for ProximityPromptEffects (keeps main module under Luau register limit).
 ]]
 
-local TweenService = game:GetService("TweenService")
+local _TweenService = game:GetService("TweenService")
 
 local M = {}
 

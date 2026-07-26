@@ -54,9 +54,9 @@ local function resolveSpawnIcon(iconAttr: any, brainrotName: any): string
 	return PLACEHOLDER_ICON
 end
 
-local function updateMarkerIcon(icon: ImageLabel, iconImage: string, rarity: string)
-	if iconImage ~= "" then
-		icon.Image = iconImage
+local function updateMarkerIcon(icon: ImageLabel, _iconImage: string, rarity: string)
+	if _iconImage ~= "" then
+		icon.Image = _iconImage
 		icon.ImageColor3 = Color3.fromRGB(255, 255, 255)
 	else
 		icon.Image = PLACEHOLDER_ICON
@@ -317,7 +317,7 @@ local function addBlackStroke(parent: Instance, thickness: number)
 	return stroke
 end
 
-local function buildMarkerUi(rarity: string, iconImage: string): (BillboardGui, TextLabel)
+local function buildMarkerUi(rarity: string, _iconImage: string): (BillboardGui, TextLabel)
 	local tier = C.tierById(rarity)
 	local rarityLabel = if tier then tier.displayName else string.upper(rarity)
 
@@ -355,7 +355,7 @@ local function buildMarkerUi(rarity: string, iconImage: string): (BillboardGui, 
 	icon.BackgroundTransparency = 1
 	icon.Size = UDim2.fromOffset(46, 46)
 	icon.ScaleType = Enum.ScaleType.Fit
-	updateMarkerIcon(icon, iconImage, rarity)
+	updateMarkerIcon(icon, _iconImage, rarity)
 	icon.Parent = bb
 
 	local timer = Instance.new("TextLabel")
@@ -383,12 +383,12 @@ local function trackMarker(bushKey: string, rarity: string, endsAt: number)
 		return
 	end
 
-	local iconImage = resolveSpawnIcon(
+	local _iconImage = resolveSpawnIcon(
 		ReplicatedStorage:GetAttribute(C.ACTIVE_ICON_ATTR),
 		ReplicatedStorage:GetAttribute(C.ACTIVE_NAME_ATTR)
 	)
 
-	local bb, timerLabel = buildMarkerUi(rarity, iconImage)
+	local bb, timerLabel = buildMarkerUi(rarity, _iconImage)
 	bb.Adornee = adornee
 	bb.Parent = player:FindFirstChild("PlayerGui") or Workspace.CurrentCamera
 
@@ -447,7 +447,7 @@ local function onSpawnEvent(rarityId: string?, brainrotName: string?)
 	if typeof(brainrotName) == "string" and brainrotName ~= "" then
 		message = string.format("%s (%s)", message, brainrotName)
 	end
-	local iconImage = resolveSpawnIcon(
+	local _iconImage = resolveSpawnIcon(
 		ReplicatedStorage:GetAttribute(C.ACTIVE_ICON_ATTR),
 		ReplicatedStorage:GetAttribute(C.ACTIVE_NAME_ATTR)
 	)
@@ -521,11 +521,11 @@ function GlobalRaritySpawnController.init()
 			local iconNode = activeMarker.billboard:FindFirstChild("Icon")
 			if iconNode and iconNode:IsA("ImageLabel") then
 				local rarity = ReplicatedStorage:GetAttribute(C.ACTIVE_RARITY_ATTR)
-				local iconImage = resolveSpawnIcon(
+				local _iconImage = resolveSpawnIcon(
 					ReplicatedStorage:GetAttribute(C.ACTIVE_ICON_ATTR),
 					ReplicatedStorage:GetAttribute(C.ACTIVE_NAME_ATTR)
 				)
-				updateMarkerIcon(iconNode, iconImage, if typeof(rarity) == "string" then rarity else "common")
+				updateMarkerIcon(iconNode, _iconImage, if typeof(rarity) == "string" then rarity else "common")
 			end
 		end
 	end)

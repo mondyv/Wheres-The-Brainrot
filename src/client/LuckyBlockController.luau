@@ -15,7 +15,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
-local TweenService = game:GetService("TweenService")
+local _TweenService = game:GetService("TweenService")
 
 local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)

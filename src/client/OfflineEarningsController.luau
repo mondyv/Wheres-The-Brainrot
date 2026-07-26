@@ -9,7 +9,7 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
+local _UserInputService = game:GetService("UserInputService")
 
 local HUDController = require(script.Parent.HUDController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
@@ -63,7 +63,7 @@ local panelHost: ScreenGui? = nil
 local panelHomeParent: Instance? = nil
 
 local sessionActive = false
-local pendingAmount = 0
+local _pendingAmount = 0
 local hiddenHud: { { inst: GuiObject, wasVisible: boolean } } = {}
 local showOfflineRE: RemoteEvent? = nil
 local declineOfflineRE: RemoteEvent? = nil
@@ -627,7 +627,7 @@ local function openPanel(amount: number)
 		end
 	end
 
-	pendingAmount = amount
+	_pendingAmount = amount
 	fillCashText(amount)
 
 	if declineBtn and not declineBtn:FindFirstChild("__OfflineClick") then

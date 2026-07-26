@@ -124,7 +124,8 @@ end
 local function startLandTracking(player: Player, character: Model)
 	stopLandTracking(player)
 	sampleLand(player, character)
-	local thread = task.spawn(function()
+	local thread: thread
+	thread = task.spawn(function()
 		while player.Parent and character.Parent do
 			local humanoid = character:FindFirstChildOfClass("Humanoid")
 			if not humanoid or humanoid.Health <= 0 then

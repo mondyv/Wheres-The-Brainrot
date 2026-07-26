@@ -12,7 +12,7 @@ local CONFETTI_DEBOUNCE_SEC = 0.35
 local purchaseSoundHandler: (() -> ())? = nil
 
 local function findAssetsFolder(): Instance?
-	return ReplicatedStorage:FindFirstChild("EssentialAssets") or ReplicatedStorage:FindFirstChild("EssentialAssets")
+	return ReplicatedStorage:FindFirstChild("EssentialAssets")
 end
 
 local function findTemplate(name: string): Instance?

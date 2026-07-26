@@ -15,8 +15,8 @@ local player = Players.LocalPlayer
 local WebTrapController = {}
 
 local active = false
-local attrConn: RBXScriptConnection? = nil
-local charConn: RBXScriptConnection? = nil
+local _attrConn: RBXScriptConnection? = nil
+local _charConn: RBXScriptConnection? = nil
 
 local colorFx: ColorCorrectionEffect? = nil
 local vignetteGui: ScreenGui? = nil
@@ -303,8 +303,8 @@ function WebTrapController.init()
 		end)
 	end
 
-	attrConn = player:GetAttributeChangedSignal(WebTrapConfig.TRAPPED_ATTR):Connect(onTrappedChanged)
-	charConn = player.CharacterAdded:Connect(hookCharacter)
+	_attrConn = player:GetAttributeChangedSignal(WebTrapConfig.TRAPPED_ATTR):Connect(onTrappedChanged)
+	_charConn = player.CharacterAdded:Connect(hookCharacter)
 
 	if player:GetAttribute(WebTrapConfig.TRAPPED_ATTR) == true then
 		onTrappedChanged()

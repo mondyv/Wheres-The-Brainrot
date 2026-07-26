@@ -73,7 +73,7 @@ local jumpToken = 0
 local skipRequested = false
 local typingActive = false
 
-local savedCameraType: Enum.CameraType? = nil
+local _savedCameraType: Enum.CameraType? = nil
 local savedCameraSubject: Instance? = nil
 local savedFov: number? = nil
 local savedWalkSpeed: number? = nil
@@ -99,8 +99,8 @@ local soulAnimY = 0
 local soulHasPos = false
 local soulSpinT0 = 0
 local soulSpinDur = 0
-local soulSpinFrom = 0
-local soulSpinDelta = 0
+local _soulSpinFrom = 0
+local _soulSpinDelta = 0
 local soulSpinning = false
 
 local focusModel: Model? = nil
@@ -431,8 +431,8 @@ local function beginSoulSelectPulse()
 		return
 	end
 	-- Scale pulse only — never rotate (180 flips the arrow the wrong way)
-	soulSpinFrom = 0
-	soulSpinDelta = 0
+	_soulSpinFrom = 0
+	_soulSpinDelta = 0
 	soulSpinT0 = os.clock()
 	soulSpinDur = 0.26
 	soulSpinning = true
@@ -1096,7 +1096,7 @@ local function startCamera(brainrot: Model)
 	mouseLookY = 0
 	touchPanX = 0
 	touchPanY = 0
-	savedCameraType = cam.CameraType
+	_savedCameraType = cam.CameraType
 	savedCameraSubject = cam.CameraSubject
 	savedFov = cam.FieldOfView
 	cam.CameraType = Enum.CameraType.Scriptable
@@ -1209,7 +1209,7 @@ local function endCamera(fadeSec: number?)
 			cam.FieldOfView = 70
 		end
 	end
-	savedCameraType = nil
+	_savedCameraType = nil
 	savedCameraSubject = nil
 	savedFov = nil
 end

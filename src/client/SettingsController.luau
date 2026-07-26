@@ -276,7 +276,7 @@ end
 local function getButtonRowTitle(buttonRow: Instance): string
 	local chunks: { string } = {}
 	local function addText(text: string)
-		local t = string.lower(string.gsub(text, "^%s*(.-)%s*$", "%1"))
+		local t = string.lower((string.gsub(text, "^%s*(.-)%s*$", "%1")))
 		if t ~= "" then
 			table.insert(chunks, t)
 		end
@@ -443,8 +443,14 @@ local function wireVolumeSlider(
 	local function stopDrag()
 		if not dragging then return end
 		dragging = false
-		if moveConn then moveConn:Disconnect() moveConn = nil end
-		if endConn then endConn:Disconnect() endConn = nil end
+		if moveConn then
+			moveConn:Disconnect()
+			moveConn = nil
+		end
+		if endConn then
+			endConn:Disconnect()
+			endConn = nil
+		end
 		TweenService:Create(thumbScale, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 	end
 

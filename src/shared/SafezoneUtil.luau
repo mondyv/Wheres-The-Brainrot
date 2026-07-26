@@ -129,6 +129,24 @@ local function hookSpawnBasesFolder(folder: Instance)
 	end)
 end
 
+local function scanTreeForZoneParts(root: Instance)
+	local stack = { root }
+	local processed = 0
+	while #stack > 0 do
+		local inst = table.remove(stack)
+		if inst:IsA("BasePart") and isZonePartName(inst.Name) then
+			SafezoneUtil.registerZonePart(inst)
+		end
+		for _, child in inst:GetChildren() do
+			table.insert(stack, child)
+		end
+		processed += 1
+		if processed % SCAN_YIELD_EVERY == 0 then
+			task.wait()
+		end
+	end
+end
+
 local function connectMapStreamingListener()
 	if mapHookConnected then
 		return
@@ -155,24 +173,6 @@ local function connectMapStreamingListener()
 			end
 		end)
 	end)
-end
-
-local function scanTreeForZoneParts(root: Instance)
-	local stack = { root }
-	local processed = 0
-	while #stack > 0 do
-		local inst = table.remove(stack)
-		if inst:IsA("BasePart") and isZonePartName(inst.Name) then
-			SafezoneUtil.registerZonePart(inst)
-		end
-		for _, child in inst:GetChildren() do
-			table.insert(stack, child)
-		end
-		processed += 1
-		if processed % SCAN_YIELD_EVERY == 0 then
-			task.wait()
-		end
-	end
 end
 
 local function startBackgroundScan()

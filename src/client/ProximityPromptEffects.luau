@@ -9,7 +9,7 @@ local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 local ProximityPromptService = game:GetService("ProximityPromptService")
 local RunService = game:GetService("RunService")
-local TextService = game:GetService("TextService")
+local _TextService = game:GetService("TextService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
@@ -729,7 +729,7 @@ local function getPromptAdornee(prompt: ProximityPrompt): BasePart?
 	return nil
 end
 
-local function isUnderBushScripts(inst: Instance?): boolean
+local function _isUnderBushScripts(inst: Instance?): boolean
 	local node: Instance? = inst
 	while node do
 		if node.Name == "BushSCRIPTs" or node.Name == "BushSCRIPT" then
@@ -754,11 +754,11 @@ local function findBushModelForPrompt(prompt: ProximityPrompt): Model?
 	return nil
 end
 
-local function bushFocusWorldPosition(bush: Instance): Vector3?
+local function _bushFocusWorldPosition(bush: Instance): Vector3?
 	return BushRootUtil.focusWorldPosition(bush, C.BUSH_BILLBOARD_LIFT_SCALE)
 end
 
-local function refreshBushPromptAttachment(_prompt: ProximityPrompt)
+local function _refreshBushPromptAttachment(_prompt: ProximityPrompt)
 	-- IMPORTANT: never move the real ProximityPrompt Attachment.
 	-- Moving the prompt Attachment also moves the real activation point, which is what
 	-- caused the bush prompt card to climb upward / disappear every refresh.
@@ -771,7 +771,7 @@ local function getBushBillboardAdornee(prompt: ProximityPrompt): Instance?
 	return getPromptAdornee(prompt)
 end
 
-local function bushBillboardStudsOffset(_prompt: ProximityPrompt?, _bushModel: Model?, _adornee: BasePart): Vector3
+local function _bushBillboardStudsOffset(_prompt: ProximityPrompt?, _bushModel: Model?, _adornee: BasePart): Vector3
 	-- HARD STABILITY FIX: do not calculate this from bush bounding boxes.
 	-- Some bush models wobble/pivot while searching, and recomputing focus height
 	-- makes the UI step upward repeatedly. Use one fixed local offset instead.
@@ -1036,9 +1036,9 @@ end
 
 local function measureCardWidth(actionText: string, objectText: string, _holdDuration: number): number
 	local measureBounds = Vector2.new(512, 48)
-	local TextService = game:GetService("TextService")
-	local actionSize = TextService:GetTextSize(actionText, C.ACTION_TEXT_SIZE, UiFonts.DISPLAY_LEGACY, measureBounds)
-	local objectSize = TextService:GetTextSize(objectText, C.OBJECT_TEXT_SIZE, UiFonts.DISPLAY_LEGACY, measureBounds)
+	local _TextService = game:GetService("TextService")
+	local actionSize = _TextService:GetTextSize(actionText, C.ACTION_TEXT_SIZE, UiFonts.DISPLAY_LEGACY, measureBounds)
+	local objectSize = _TextService:GetTextSize(objectText, C.OBJECT_TEXT_SIZE, UiFonts.DISPLAY_LEGACY, measureBounds)
 	local textW = math.max(actionSize.X, objectSize.X)
 	local total = C.PAD_LEFT + C.BADGE_SIZE + C.BADGE_TEXT_GAP + math.ceil(textW) + C.PAD_RIGHT
 	return math.clamp(total, effectiveMinCardWidth(), C.MAX_CARD_W)
@@ -1084,7 +1084,7 @@ local function setHoldTrackVisible(view: PromptView, visible: boolean)
 	view.holdFill.Visible = visible
 end
 
-local function holdTrackHeight(_view: PromptView): number
+local function _holdTrackHeight(_view: PromptView): number
 	return math.max(8, C.BADGE_SIZE - C.BADGE_HOLD_PAD * 2)
 end
 

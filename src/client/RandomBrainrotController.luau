@@ -16,6 +16,7 @@ local Player = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPla
 local _Character = Player.Character or Player.CharacterAdded:Wait() :: Model
 
 local activationUiWired = false
+local resolveRandomBrainrotUi: () -> (ImageButton, Instance, Instance)
 
 -->> || Modules || <<--
 
@@ -232,7 +233,7 @@ local function highlightOn(host: GuiObject): GuiObject?
 	return nil
 end
 
-local function resolveRandomBrainrotUi(): (ImageButton, Instance, Instance)
+resolveRandomBrainrotUi = function(): (ImageButton, Instance, Instance)
 	local gui = PlayerGuiMain.ensure(Player)
 	local activation = gui:WaitForChild("SideUI")
 		:WaitForChild("Right")

@@ -794,16 +794,24 @@ local function getBushVolume(bush: Instance): (CFrame, Vector3)
 			return (bush :: Model):GetBoundingBox()
 		end)
 		if ok and typeof(cf) == "CFrame" and typeof(size) == "Vector3" then
-			return cf, Vector3.new(math.max(1.2, size.X), math.max(1.2, size.Y), math.max(1.2, size.Z))
+			local outCf = cf :: CFrame
+			local outSize = Vector3.new(math.max(1.2, size.X), math.max(1.2, size.Y), math.max(1.2, size.Z))
+			return outCf, outSize
 		end
-		return bush:GetPivot(), Vector3.new(4, 4, 4)
+		local pivotCf: CFrame = bush:GetPivot()
+		local padSize = Vector3.new(4, 4, 4)
+		return pivotCf, padSize
 	end
 
 	local host = resolveBushHost(bush)
 	if typeof(host) == "CFrame" then
-		return host, Vector3.new(4, 4, 4)
+		local hostCf: CFrame = host
+		local padSize = Vector3.new(4, 4, 4)
+		return hostCf, padSize
 	end
-	return host.CFrame, Vector3.new(4, 4, 4)
+	local part = host :: BasePart
+	local padSize = Vector3.new(4, 4, 4)
+	return part.CFrame, padSize
 end
 
 local function sampleBushVolumePoints(bush: Instance, count: number): { CFrame }

@@ -123,7 +123,8 @@ local function positionWithinSpawnNode(worldPos: Vector3, spawnNode: Instance): 
 end
 
 local function landNumberFromName(name: string): number?
-	local n = tonumber(string.match(name, LAND_FOLDER_PATTERN))
+	local matched = string.match(name, LAND_FOLDER_PATTERN)
+	local n = if typeof(matched) == "string" then tonumber(matched) else nil
 	if not n then
 		return nil
 	end

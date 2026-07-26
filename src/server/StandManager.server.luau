@@ -100,7 +100,7 @@ local upgradeRE = ensureRemoteEvent(remotesFolder, "UpgradeStandBrainrot") -- (s
 local prepareRobuxStandUpgradeRE = ensureRemoteEvent(remotesFolder, "PrepareRobuxStandUpgrade") -- (standModel, mode)
 local upgradeFeedbackRE = ensureRemoteEvent(remotesFolder, "StandUpgradeFeedback") -- server → client (ok, reason)
 local collectVFXRE = ensureRemoteEvent(remotesFolder, "StandCashCollectedFX") -- server → client (standModel, cashAmount)
-local autoCollectVFXRE = ensureRemoteEvent(remotesFolder, "AutoCollectCashCollectedFX") -- server → client (autocollectModel, totalCash)
+local _autoCollectVFXRE = ensureRemoteEvent(remotesFolder, "AutoCollectCashCollectedFX") -- server → client (autocollectModel, totalCash)
 local showOfflineEarningsRE = ensureRemoteEvent(remotesFolder, "ShowOfflineEarnings") -- server → client (amount)
 local declineOfflineEarningsRE = ensureRemoteEvent(remotesFolder, "DeclineOfflineEarnings") -- client → server
 local offlineDoubledRE = ensureRemoteEvent(remotesFolder, "OfflineEarningsDoubled") -- server → client (grantedAmount)
@@ -868,7 +868,7 @@ local function findBrainrotTemplateForState(state: StandState): Model?
 	if not brainrots or not brainrots:IsA("Folder") then
 		return nil
 	end
-	local nameFolder = brainrots:FindFirstChild(state.brainrotName or "")
+	local nameFolder = Brainrots.findBrainrotStorageFolder(brainrots, state.brainrotName or "")
 	if not nameFolder then
 		return nil
 	end

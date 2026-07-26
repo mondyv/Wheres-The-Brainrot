@@ -154,9 +154,9 @@ local function grantFloorRebirth(player: Player): boolean
 end
 
 local function performRebirth(player: Player, opts: { skipRequirements: boolean?, keepUpgrades: boolean? }?): (boolean, string?)
-	opts = opts or {}
+	local options: { skipRequirements: boolean?, keepUpgrades: boolean? } = opts or {}
 	local snapshot = RebirthConfig.buildSnapshot(player, makeIndexDiscoveredCheck(player))
-	if not opts.skipRequirements and not snapshot.canRebirth then
+	if not options.skipRequirements and not snapshot.canRebirth then
 		return false, "requirements"
 	end
 	if RebirthConfig.isMaxRebirthCount(snapshot.rebirthCount) then
@@ -171,7 +171,7 @@ local function performRebirth(player: Player, opts: { skipRequirements: boolean?
 		grantFloorRebirth(player)
 	end
 
-	if not opts.keepUpgrades then
+	if not options.keepUpgrades then
 		resetSwingUpgrades(player)
 	end
 

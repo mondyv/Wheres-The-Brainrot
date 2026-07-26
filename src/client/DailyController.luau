@@ -38,13 +38,13 @@ local BADGE_INNER_PULSE = TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.Easing
 local BADGE_SWAY_DEG = 5
 local BADGE_INNER_SWAY_DEG = 2.5
 
-local DAY7_ICON_SWAY_INFO = TweenInfo.new(4.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
-local DAY7_ICON_SWAY_DEG = 3
+local _DAY7_ICON_SWAY_INFO = TweenInfo.new(4.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+local _DAY7_ICON_SWAY_DEG = 3
 local DAY5_QUESTION_PULSE_UP = TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 local DAY5_QUESTION_PULSE_DOWN = TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 local DAY5_QUESTION_CYCLE_GAP = 0.28
 local DAY5_QUESTION_PEAK_SCALE = 1.18
-local CARD_HOVER_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local _CARD_HOVER_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLAIM_BTN_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLAIM_FLASH_TWEEN = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
@@ -80,7 +80,7 @@ local getStateRF: RemoteFunction? = nil
 local claimRF: RemoteFunction? = nil
 local updatedRE: RemoteEvent? = nil
 local claimedRE: RemoteEvent? = nil
-local promptSkipRE: RemoteEvent? = nil
+local _promptSkipRE: RemoteEvent? = nil
 
 -- ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -112,7 +112,7 @@ local function setStudPairLayer(layer: Instance?, active: boolean)
 	end
 end
 
-local function applyStudPair(root: Instance?, showClaim: boolean)
+local function _applyStudPair(root: Instance?, showClaim: boolean)
 	if not root then
 		return
 	end
@@ -216,7 +216,7 @@ local function updateCardTimers(state: DailyConfig.DailyState)
 	end
 end
 
-local function setVisible(inst: Instance?, visible: boolean)
+local function _setVisible(inst: Instance?, visible: boolean)
 	if not inst then
 		return
 	end
@@ -939,7 +939,7 @@ function DailyController.init()
 		claimRF = folder:WaitForChild("ClaimDaily", 30) :: RemoteFunction?
 		updatedRE = folder:WaitForChild("DailyUpdated", 30) :: RemoteEvent?
 		claimedRE = folder:WaitForChild("DailyClaimed", 30) :: RemoteEvent?
-		promptSkipRE = folder:WaitForChild("DailyPromptSkipAll", 30) :: RemoteEvent?
+		_promptSkipRE = folder:WaitForChild("DailyPromptSkipAll", 30) :: RemoteEvent?
 
 		if updatedRE then
 			updatedRE.OnClientEvent:Connect(function(snapshot)

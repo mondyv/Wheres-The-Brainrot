@@ -49,10 +49,10 @@ local DEFAULT_PICKUP_DISTANCE = 14
 local PROMPT_REFRESH_INTERVAL = 0.3
 local PROMPT_MOVE_SKIP_THRESHOLD = 2
 local STAND_LAZY_INIT_RANGE = 220
-local lastShownStandPrompt: ProximityPrompt? = nil
+local _lastShownStandPrompt: ProximityPrompt? = nil
 
 local player = Players.LocalPlayer
-local MONEY_VFX_HOLD_SEC = 0.14
+local _MONEY_VFX_HOLD_SEC = 0.14
 local CHILD_WAIT_TIMEOUT = 8 -- seconds; stand children may not have replicated when the tag arrives
 local BRAINROT_HOP_HEIGHT = 0.34
 local BRAINROT_HOP_COOLDOWN = 0.08
@@ -223,7 +223,7 @@ local FLOAT_RISE_DURATION = 0.85
 local FLOAT_RISE_STUDS = 3.2
 local CASH_FLOAT_TEXT_SIZE = 26
 local FLOAT_STROKE_SCALE = 0.55
-local CASH_FLOAT_BURST_COUNT = 8
+local _CASH_FLOAT_BURST_COUNT = 8
 local MAX_ACTIVE_CASH_FLOATS = 2
 local CASH_FLOAT_START_Y_DROP = 0.65
 local CASH_COLLECT_VFX_COOLDOWN = 0.18
@@ -351,7 +351,8 @@ local function playRisingFloatText(worldPosition: Vector3, opts: RisingFloatText
 
 		local riseProxy = Instance.new("NumberValue")
 		riseProxy.Value = 0
-		local riseConn = riseProxy:GetPropertyChangedSignal("Value"):Connect(function()
+		local riseConn: RBXScriptConnection
+		riseConn = riseProxy:GetPropertyChangedSignal("Value"):Connect(function()
 			if not part.Parent then
 				releaseCashFloatSlot()
 				riseConn:Disconnect()
@@ -452,7 +453,7 @@ local function playCashCollectPresentation(view: StandView, cashAmount: number)
 	end)
 end
 
-function pulseExistingEmitters(emitters: { ParticleEmitter })
+function _pulseExistingEmitters(emitters: { ParticleEmitter })
 	if #emitters == 0 then
 		return
 	end
@@ -830,10 +831,10 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 		-- Always ensure the card exists (safe no-op if already live). Skipping when the
 		-- prompt identity was unchanged left Pick Up / Place missing after hide/facing flicker.
 		ProximityPromptEffects.syncStandPlaceProximityUi(closest.prompt)
-		lastShownStandPrompt = closest.prompt
+		_lastShownStandPrompt = closest.prompt
 	else
 		ProximityPromptEffects.syncStandProximityUi(nil)
-		lastShownStandPrompt = nil
+		_lastShownStandPrompt = nil
 	end
 
 	lastHRPPosition = hrpPos
@@ -895,7 +896,7 @@ local function wireStandPlacePromptListeners(stand: Model)
 		table.insert(
 			conns,
 			stand:GetAttributeChangedSignal("BrainrotName"):Connect(function()
-				lastShownStandPrompt = nil
+				_lastShownStandPrompt = nil
 				refreshStandProximityPromptVisibility(true)
 			end)
 		)

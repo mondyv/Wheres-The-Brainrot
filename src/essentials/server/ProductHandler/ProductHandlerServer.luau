@@ -139,7 +139,7 @@ local function getAllBrainrotsSorted()
 	return list
 end
 
-local function pickRandomBrainrot()
+local function _pickRandomBrainrot()
 	local brainrots = getAllBrainrotsSorted()
 
 	if #brainrots <= 0 then
@@ -149,7 +149,7 @@ local function pickRandomBrainrot()
 	return brainrots[math.random(1, #brainrots)]
 end
 
-local function pickRandomVariant(icons: { [string]: string }): string
+local function _pickRandomVariant(icons: { [string]: string }): string
 	local variants = {}
 
 	for variantName, icon in pairs(icons) do
@@ -172,7 +172,7 @@ local function findBrainrotTemplate(brainrotName: string, variantName: string): 
 		return nil
 	end
 
-	local brainrotFolder = BrainrotsFolder:FindFirstChild(brainrotName)
+	local brainrotFolder = Brainrots.findBrainrotStorageFolder(BrainrotsFolder, brainrotName)
 
 	if not brainrotFolder or not brainrotFolder:IsA("Folder") then
 		return nil
@@ -246,7 +246,7 @@ local function setupToolPhysics(model: Model, handle: BasePart)
 	end
 end
 
-local function buildBrainrotTool(brainrotData: any, variantName: string): Tool?
+local function _buildBrainrotTool(brainrotData: any, variantName: string): Tool?
 	local template = findBrainrotTemplate(brainrotData.name, variantName)
 
 	if not template then

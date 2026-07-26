@@ -719,7 +719,7 @@ local function spiderVisualFrontFlat(spiderPivot: CFrame, playerPos: Vector3): V
 	return toPlayer
 end
 
-local function spiderHeadTarget(spiderPos: Vector3, visualFront: Vector3): Vector3
+local function _spiderHeadTarget(spiderPos: Vector3, visualFront: Vector3): Vector3
 	return spiderPos + visualFront * 1.6 + Vector3.new(0, 3.1, 0)
 end
 
@@ -767,8 +767,8 @@ local function waitForWebShootWindup(
 	local windup = if length > 0.05 then length * C.WEB_SHOOT_AT else C.WEB_ANIM_FALLBACK_SEC
 	local started = os.clock()
 	while os.clock() - started < windup and encounterActive do
-		local aim = playerAimFn()
-		spider:PivotTo(cfFacingTarget(spider:GetPivot().Position, aim))
+		local aimNow = playerAimFn()
+		spider:PivotTo(cfFacingTarget(spider:GetPivot().Position, aimNow))
 		RunService.RenderStepped:Wait()
 	end
 	return windup

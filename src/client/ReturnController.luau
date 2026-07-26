@@ -737,10 +737,16 @@ function ReturnController.init()
 	end
 
 	freeDecor = buildDecor(freeBtn :: GuiButton)
-	wireButton(freeDecor, onFreeReturnActivated)
+	local freeDecorReady = freeDecor
+	if freeDecorReady then
+		wireButton(freeDecorReady, onFreeReturnActivated)
+	end
 	if paidBtn then
 		paidDecor = buildDecor(paidBtn)
-		wireButton(paidDecor, onPaidReturnActivated)
+		local paidDecorReady = paidDecor
+		if paidDecorReady then
+			wireButton(paidDecorReady, onPaidReturnActivated)
+		end
 	else
 		warn("[ReturnController] Return Button With Brainrot missing — paid return disabled")
 	end

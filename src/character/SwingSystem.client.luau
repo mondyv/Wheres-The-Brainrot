@@ -4212,11 +4212,10 @@ local function boot(character)
 			return
 		end
 
-		local attachLimits = st.getSwingAttachLimits()
-		if not attachLimits then
+		local attachLimit, minLookDot, maxScreenRadius = st.getSwingAttachLimits()
+		if not attachLimit then
 			return
 		end
-		local attachLimit, minLookDot, maxScreenRadius = attachLimits
 
 		if not st.canAttachToSwingTarget(target, attachLimit, minLookDot, maxScreenRadius) then
 			return
@@ -4231,7 +4230,7 @@ local function boot(character)
 		local attachWorld = resolveLockedSwingAttachWorld(target)
 		st.lockedAttachWorld = attachWorld
 		st.advanceSwingHandSide()
-		local reach = getSwingRange()
+		local _reach = getSwingRange()
 		local baseRopeMax = getRopeMaxLength()
 		local ropeRestLength = getRopeRestLength()
 
@@ -4600,11 +4599,10 @@ local function boot(character)
 			return
 		end
 
-		local attachLimits = st.getSwingAttachLimits()
-		if not attachLimits then
+		local maxDistance, lookDot, screenLimit = st.getSwingAttachLimits()
+		if not maxDistance then
 			return
 		end
-		local maxDistance, lookDot, screenLimit = attachLimits
 		local groundedAttempt = st.isGroundedForSwing()
 
 		if not st.scannedVisualTarget or not st.scannedVisualCanSwing then
@@ -5494,8 +5492,10 @@ local function boot(character)
 				if needsScan then
 					st.lastTargetScanClock = now
 					st.lastTargetScanMode = scanMode
-					local scanLimits = st.getSwingAttachLimits()
-					local scanDistance, scanLookDot, scanScreenLimit = scanLimits
+					local scanDistance, scanLookDot, scanScreenLimit = st.getSwingAttachLimits()
+					if not scanDistance then
+						scanDistance, scanLookDot, scanScreenLimit = 0, nil, nil
+					end
 					if scanMode == "air" then
 						if st.isHrpInSafezone() then
 							st.scannedVisualTarget, st.scannedVisualCanSwing =

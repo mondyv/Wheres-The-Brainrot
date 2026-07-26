@@ -21,7 +21,7 @@ local M = {}
 
 local HEADER_NAME = "BrainrotInfoBillboard"
 local HEADER_TAG = "BrainrotHeaderTarget"
-local DEFAULT_BB_SIZE = UDim2.fromOffset(280, 130)
+local _DEFAULT_BB_SIZE = UDim2.fromOffset(280, 130)
 
 local templateCache: BillboardGui? = nil
 

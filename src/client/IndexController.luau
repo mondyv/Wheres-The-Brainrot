@@ -68,7 +68,7 @@ local rowHoverConns: { RBXScriptConnection } = {}
 local selectMutation: (mutationId: string) -> ()
 local stateCache: { [string]: any } = {}
 local sortedCatalogCache: { [string]: { { name: string, rarity: string, baseIncome: number, icon: string } } } = {}
-local gridMutation: string? = nil
+local _gridMutation: string? = nil
 local rebuildToken = 0
 local ROW_BATCH_SIZE = 14
 
@@ -427,7 +427,7 @@ local function incomeForCatalog(entry: { name: string, rarity: string, baseIncom
 end
 
 local function sortCatalog(
-	catalog: { { name: string, rarity: string, baseIncome: number } },
+	catalog: { { name: string, rarity: string, baseIncome: number, icon: string? } },
 	mutationId: string
 )
 	table.sort(catalog, function(a, b)
@@ -626,7 +626,7 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 	rebuildToken += 1
 	local token = rebuildToken
 	clearGrid()
-	gridMutation = selectedMutation
+	_gridMutation = selectedMutation
 
 	local list = buildSortedCatalog(catalog, selectedMutation)
 	local order = 0
@@ -727,7 +727,7 @@ local function loadMutationGrid(mutationId: string, animateRows: boolean)
 		refreshStateInBackground(mutationId, false)
 	else
 		clearGrid()
-		gridMutation = nil
+		_gridMutation = nil
 		refreshStateInBackground(mutationId, animateRows)
 	end
 end
@@ -976,7 +976,7 @@ function IndexController.init()
 		else
 			-- Keep cache; only hide rows so reopen can rebuild without refetch lag.
 			clearGrid()
-			gridMutation = nil
+			_gridMutation = nil
 			if tooltipLabel then
 				tooltipLabel.Visible = false
 			end

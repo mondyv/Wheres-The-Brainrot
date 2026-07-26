@@ -182,11 +182,11 @@ local TIER_DEFINITIONS: { TierDef } = {
 }
 
 function M.normalizeRarity(rarity: string): string
-	return string.lower(string.gsub(rarity, "^%s*(.-)%s*$", "%1"))
+	return string.lower((string.gsub(rarity, "^%s*(.-)%s*$", "%1")))
 end
 
 function M.normalizeName(name: string): string
-	return string.lower(string.gsub(name, "[^%a%d]", ""))
+	return string.lower((string.gsub(name, "[^%a%d]", "")))
 end
 
 function M.formatBrainrotDisplayName(name: string): string

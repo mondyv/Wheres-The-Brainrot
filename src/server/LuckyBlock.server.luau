@@ -277,7 +277,7 @@ local function getActivatedLuckyBlock(player: Player, toolArg: any): Tool?
 	return tool
 end
 
-local function resolveStarRainbowIconId(): string
+local function _resolveStarRainbowIconId(): string
 	local root = ReplicatedStorage:FindFirstChild("Lucky Blocks")
 	local icons = root and root:FindFirstChild("Lucky Block Icons")
 	if not icons then
@@ -417,7 +417,7 @@ local function playerOwnsLuckyBlockTool(player: Player, tool: Instance?): boolea
 	return false
 end
 
-local function findEquippedOrBackpackLuckyBlock(player: Player, preferredTool: Instance?): Tool?
+local function _findEquippedOrBackpackLuckyBlock(player: Player, preferredTool: Instance?): Tool?
 	if playerOwnsLuckyBlockTool(player, preferredTool) then
 		return preferredTool :: Tool
 	end

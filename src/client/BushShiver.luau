@@ -36,6 +36,7 @@ local GAP_RETRY_WAIT_SEC = 0.2
 local SHIVER_SMOOTH_SPEED = 16
 local COMPANION_SHIVER_CHANCE = 0.55
 local COMPANION_SHIVER_MAX = 2
+local runSoftBurst: (Instance, number, number, number) -> ()
 
 local SHIVER_POS_AMP = 0.052
 local SHIVER_ROT_AMP = math.rad(1.45)
@@ -305,7 +306,7 @@ local function tryCompanionShivers(sourceBush: Instance, token: number, seed: nu
 	end
 end
 
-local function runSoftBurst(bush: Instance, token: number, burstSec: number, seed: number)
+runSoftBurst = function(bush: Instance, token: number, burstSec: number, seed: number)
 	local bases = baseTransformByBush[bush]
 	if not bases then
 		return

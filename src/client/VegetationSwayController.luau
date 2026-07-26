@@ -51,7 +51,7 @@ local grassEntries: { GrassEntry } = {}
 local grassCells: { [string]: { GrassEntry } } = {}
 local indexedParts: { [BasePart]: boolean } = {}
 local indexConns: { RBXScriptConnection } = {}
-local lastIndexAt = 0
+local _lastIndexAt = 0
 
 local function cellKey(cx: number, cz: number): string
 	return tostring(cx) .. ":" .. tostring(cz)
@@ -279,7 +279,7 @@ local function rebuildIndex()
 		end)
 	)
 
-	lastIndexAt = os.clock()
+	_lastIndexAt = os.clock()
 	indexBusy = false
 end
 

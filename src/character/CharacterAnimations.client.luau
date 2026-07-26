@@ -241,9 +241,9 @@ humanoid.StateChanged:Connect(function(_old, new)
 end)
 
 local moveAccum = 0.0
-local heartbeatConn = RunService.Heartbeat:Connect(function(dt)
+local _heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 	if not character.Parent then
-		heartbeatConn:Disconnect()
+		_heartbeatConn:Disconnect()
 		return
 	end
 	moveAccum += dt

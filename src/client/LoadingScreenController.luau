@@ -116,7 +116,7 @@ local cameraClipStartedAt: number? = nil
 local characterHideConn: RBXScriptConnection? = nil
 local hiddenCharacterParts: { [BasePart]: number }? = nil
 local earlyVisualsReady = false
-local loadingProgress = 0
+local _loadingProgress = 0
 
 local function defaultLoadingCFrame(): CFrame
 	return CFrame.new(DEFAULT_CAMERA_POS) * CFrame.fromOrientation(DEFAULT_CAMERA_RAD.X, DEFAULT_CAMERA_RAD.Y, DEFAULT_CAMERA_RAD.Z)
@@ -270,7 +270,7 @@ local function ensureSolidCover(loadingGui: ScreenGui): Frame
 	return cover
 end
 
-local function forceReleaseSolidCover(loadingGui: ScreenGui)
+local function _forceReleaseSolidCover(loadingGui: ScreenGui)
 	local cover = findSolidCover(loadingGui)
 	if not cover or not cover:IsA("Frame") then
 		return
@@ -453,7 +453,7 @@ local function moonClipDurationSec(track: MoonCameraTrack): number
 	return ((frameCount - 1) / track.fps) * MOON_PLAYBACK_SCALE
 end
 
-local function computeLoadingDisplaySec(track: MoonCameraTrack?): number
+local function _computeLoadingDisplaySec(track: MoonCameraTrack?): number
 	if track and #track.frames > 1 then
 		return moonClipDurationSec(track) + HOLD_AT_FULL_SEC
 	end
@@ -950,11 +950,11 @@ local function loadMoonCameraTrack(export: Instance, defaultFov: number, refCame
 	frames = normalizeMoonFrames(frames, refCamera)
 
 	if #frames == 0 then
-		local framesFolder = export:FindFirstChild("Frames")
-		local childCount = if framesFolder then #framesFolder:GetChildren() else 0
+		local framesChildren = export:FindFirstChild("Frames")
+		local childCount = if framesChildren then #framesChildren:GetChildren() else 0
 		warn(
 			"[LoadingScreenController] No Moon camera frames parsed from",
-			if framesFolder then framesFolder:GetFullName() else export:GetFullName(),
+			if framesChildren then framesChildren:GetFullName() else export:GetFullName(),
 			"(",
 			childCount,
 			"frame folders — each needs a CFrameValue inside)"
@@ -1052,7 +1052,7 @@ local function startLoadingCameraLock(camera: Camera, loadingGui: ScreenGui): ()
 			cameraClipStartedAt = os.clock()
 		end
 		local bindName = "LoadingScreenMoonCamera"
-		local clipSec = moonClipDurationSec(track)
+		local _clipSec = moonClipDurationSec(track)
 		local function applyAnimated()
 			camera.CameraType = Enum.CameraType.Scriptable
 			camera.CameraSubject = nil
@@ -1176,7 +1176,7 @@ local function findLoadingScreenGui(playerGui: PlayerGui): ScreenGui?
 	return cloneStarterLoadingScreen(playerGui)
 end
 
-local function beginLoadingCameraIfPossible()
+local function _beginLoadingCameraIfPossible()
 	local player = Players.LocalPlayer
 	if not player then
 		return
@@ -1265,10 +1265,11 @@ local function enterLoadingIsolation(playerGui: PlayerGui)
 	PlayerGuiMain.dedupe(playerGui)
 
 	if not savedGuiStates then
-		savedGuiStates = {}
+		local states: { [ScreenGui]: boolean } = {}
+		savedGuiStates = states
 		for _, child in playerGui:GetChildren() do
 			if child:IsA("ScreenGui") then
-				savedGuiStates[child] = child.Enabled
+				states[child] = child.Enabled
 			end
 		end
 	end
@@ -1736,7 +1737,7 @@ local function ensureSleekLoadingUI(loadingGui: ScreenGui)
 end
 
 local function setLoadingProgress(alpha: number)
-	loadingProgress = math.clamp(alpha, 0, 1)
+	_loadingProgress = math.clamp(alpha, 0, 1)
 end
 
 local function startGameNameSubtitleAnim(loadingGui: ScreenGui): () -> ()
@@ -2029,10 +2030,10 @@ function M.run()
 
 	releaseSolidCover(loadingGui)
 
-	local clipSec = if loadedMoonTrack
+	local _clipSec = if loadedMoonTrack
 		then math.max(moonClipDurationSec(loadedMoonTrack), 0.05)
 		else MIN_DISPLAY_SEC - HOLD_AT_FULL_SEC
-	local minDisplaySec = clipSec + HOLD_AT_FULL_SEC
+	local minDisplaySec = _clipSec + HOLD_AT_FULL_SEC
 	if not loadedMoonTrack and not cameraClipStartedAt then
 		cameraClipStartedAt = os.clock()
 	end
@@ -2042,7 +2043,7 @@ function M.run()
 		enterLoadingIsolation(playerGui)
 		local elapsed = os.clock() - startedAt
 		-- Ease toward ~92% during the clip, then finish on hold.
-		local t = math.clamp(elapsed / math.max(clipSec, 0.05), 0, 1)
+		local t = math.clamp(elapsed / math.max(_clipSec, 0.05), 0, 1)
 		local eased = 1 - (1 - t) ^ 2
 		setLoadingProgress(0.08 + eased * 0.84)
 		task.wait(0.05)

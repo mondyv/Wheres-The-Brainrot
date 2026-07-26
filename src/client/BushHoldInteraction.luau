@@ -34,9 +34,10 @@ local BUSH_FLOATING_CLAIM_ATTR = "BushFloatingClaimActive"
 local AIM_TICK_INTERVAL = 0.08
 local PICK_FULL_SCAN_INTERVAL = 0.55
 local COOLDOWN_VISUAL_SYNC_INTERVAL = 0.6
-local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
+local _BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 
 local bushByModel: { [Instance]: ProximityPrompt } = {}
+local scheduleBushMapScan: (Instance) -> ()
 local bushAnchor: { [Instance]: BasePart } = {}
 local pendingParts: { [Instance]: RBXScriptConnection } = {}
 local cooldownHighlights: { [Instance]: Highlight } = {}
@@ -126,7 +127,7 @@ end
 
 local BUSH_PROMPT_LIFT_SCALE = 0.66
 
-local function bushPromptWorldPosition(root: Model): Vector3?
+local function _bushPromptWorldPosition(root: Model): Vector3?
 	return BushRootUtil.focusWorldPosition(root, BUSH_PROMPT_LIFT_SCALE)
 end
 
@@ -145,7 +146,7 @@ local function bushRootFromPrompt(prompt: ProximityPrompt): Instance?
 	return BushRootUtil.resolveBushRootFromPrompt(prompt)
 end
 
-local function stripExtraPrompts(root: Instance, keep: ProximityPrompt?)
+local function _stripExtraPrompts(root: Instance, keep: ProximityPrompt?)
 	-- Shallow walk only — bush trees are small; GetDescendants on every bush at register time hitchs.
 	local stack: { Instance } = { root }
 	local scanned = 0
@@ -532,7 +533,7 @@ end
 
 -- ── Harvest ───────────────────────────────────────────────────────────────────
 
-local function getHarvestRemote(): RemoteEvent?
+local function _getHarvestRemote(): RemoteEvent?
 	if harvestRemote and harvestRemote.Parent then
 		return harvestRemote
 	end
@@ -548,7 +549,7 @@ local function getHarvestRemote(): RemoteEvent?
 	return nil
 end
 
-local function getHarvestFunction(): RemoteFunction?
+local function _getHarvestFunction(): RemoteFunction?
 	if harvestFunction and harvestFunction.Parent then
 		return harvestFunction
 	end
@@ -679,7 +680,7 @@ local function tickAim()
 		end
 	end
 
-	local now = os.clock()
+	local _now = os.clock()
 	for model in bushByModel do
 		if model.Parent and (model == activeBush or isBushInSearchCooldown(model)) then
 			BushRootUtil.ensurePromptAnchorPart(model)
@@ -742,7 +743,7 @@ local function wireMapWatch(map: Instance)
 	end)
 end
 
-local function scheduleBushMapScan(map: Instance)
+scheduleBushMapScan = function(map: Instance)
 	if bushMapScanInProgress then
 		return
 	end

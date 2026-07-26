@@ -59,7 +59,7 @@ local player = Players.LocalPlayer
 local activeTweens: { Tween } = {}
 local inSafezone = true
 local wired = false
-local pollConn: RBXScriptConnection? = nil
+local _pollConn: RBXScriptConnection? = nil
 local dayAtmo: AtmoSnap? = nil
 
 local function cancelTweens()
@@ -217,7 +217,7 @@ function SafeZoneLightingController.init()
 	end)
 
 	local accum = 0.0
-	pollConn = RunService.Heartbeat:Connect(function(dt)
+	_pollConn = RunService.Heartbeat:Connect(function(dt)
 		accum += dt
 		if accum < POLL_INTERVAL then
 			return

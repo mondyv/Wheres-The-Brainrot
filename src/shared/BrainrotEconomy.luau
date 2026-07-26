@@ -39,7 +39,7 @@ export type InvEntry = {
 }
 
 local function normalizeId(value: string): string
-	return string.lower(string.gsub(value, "^%s*(.-)%s*$", "%1"))
+	return string.lower((string.gsub(value, "^%s*(.-)%s*$", "%1")))
 end
 
 function M.incomePerSecond(entry: InvEntry): number

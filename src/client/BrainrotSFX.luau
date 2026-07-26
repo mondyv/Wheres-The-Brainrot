@@ -29,7 +29,25 @@ local function playBrainrotSound(brainrotName: string)
 		return
 	end
 
-	local template = folder:FindFirstChild(brainrotName)
+	local template: Instance? = folder:FindFirstChild(brainrotName)
+	if (not template or not template:IsA("Sound")) and brainrotName == "BurbalolliLuilolli" then
+		template = folder:FindFirstChild("BurbalolliLulilolli")
+	elseif (not template or not template:IsA("Sound")) and brainrotName == "BurbalolliLulilolli" then
+		template = folder:FindFirstChild("BurbalolliLuilolli")
+	end
+	if not template or not template:IsA("Sound") then
+		-- Fuzzy match Sound children (spaces / typo variants).
+		local want = string.lower((brainrotName:gsub("[%s_%-]", "")))
+		for _, child in ipairs(folder:GetChildren()) do
+			if child:IsA("Sound") then
+				local n = string.lower((child.Name:gsub("[%s_%-]", "")))
+				if n == want then
+					template = child
+					break
+				end
+			end
+		end
+	end
 	if not template or not template:IsA("Sound") then
 		warn(string.format("[BrainrotSFX] No sound for brainrot %q in SoundService['Brainrot sfx']", brainrotName))
 		return

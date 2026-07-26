@@ -186,7 +186,9 @@ local function contentBounds(gui: GuiObject, vp: Vector2): (Vector2, Vector2)
 	end
 	local absPos = gui.AbsolutePosition
 	local absSize = gui.AbsoluteSize
-	return absPos + absSize * 0.5, Vector2.new(math.min(absSize.X, vp.X * 0.4), math.min(absSize.Y, vp.Y * 0.4))
+	local fallbackCenter = absPos + absSize * 0.5
+	local fallbackSize = Vector2.new(math.min(absSize.X, vp.X * 0.4), math.min(absSize.Y, vp.Y * 0.4))
+	return fallbackCenter, fallbackSize
 end
 
 local function computeSlidePos(gui: GuiObject, vp: Vector2): UDim2

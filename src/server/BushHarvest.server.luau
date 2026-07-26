@@ -70,12 +70,13 @@ local MAX_BACKPACK_BRAINROT_SLOTS = 19
 -- Total brainrot inventory capacity (UI "All Items [used/max]"); distinct from the 19 backpack grid rows.
 local MAX_BRAINROT_INVENTORY_CAPACITY = 100
 -- Fallback when Head / UpperTorso missing (e.g. custom rigs).
-local HRP_CARRY_OFFSET = CFrame.new(0, 3.4, 0.2) * CFrame.Angles(0, math.rad(180), 0)
+local _HRP_CARRY_OFFSET = CFrame.new(0, 3.4, 0.2) * CFrame.Angles(0, math.rad(180), 0)
 
 -- Multiple brainrots per player while swinging: capacity = max(1, floor(Carry upgrade attribute)).
 local pendingFloats: { [Player]: { Model } } = {}
 local activeCarries: { [Player]: { Model } } = {}
 local floatConnByClone: { [Model]: RBXScriptConnection } = {}
+local attachCarriedBrainrot: (Player, Model) -> ()
 -- Safe-zone SFX: once per carry model instance (avoids RedWall touch spam).
 local safeZoneSfxPlayedForCarry: { [Model]: boolean } = {}
 local brainrotInventories: { [Player]: { BrainrotInvEntry } } = {}
@@ -485,14 +486,7 @@ local function findFirstTemplateByModelName(root: Folder, modelName: string): Mo
 	if Brainrots.isRetiredBrainrotName(modelName) then
 		return nil
 	end
-	local aliasName = Brainrots.resolveStorageFolderName(modelName)
-	if aliasName ~= modelName then
-		local aliasTemplate = findFirstTemplateByModelName(root, aliasName)
-		if aliasTemplate then
-			return aliasTemplate
-		end
-	end
-	local nameFolder = root:FindFirstChild(modelName)
+	local nameFolder = Brainrots.findBrainrotStorageFolder(root, modelName)
 	if nameFolder and nameFolder:IsA("Folder") and not Brainrots.isRetiredBrainrotInstance(nameFolder) then
 		local normal = nameFolder:FindFirstChild("Normal")
 		if normal and normal:IsA("Model") and not Brainrots.isRetiredBrainrotInstance(normal) then
@@ -745,7 +739,7 @@ local function findBrainrotModelByNameAndMutation(root: Folder, brainrotName: st
 	if Brainrots.isRetiredBrainrotName(brainrotName) or not Brainrots.isPlayableBrainrotName(brainrotName) then
 		return nil
 	end
-	local nameFolder = root:FindFirstChild(brainrotName)
+	local nameFolder = Brainrots.findBrainrotStorageFolder(root, brainrotName)
 	if not nameFolder or Brainrots.isRetiredBrainrotInstance(nameFolder) then
 		return nil
 	end
@@ -779,7 +773,7 @@ local function findBrainrotModelByNameAndMutation(root: Folder, brainrotName: st
 end
 
 local function brainrotHasTemplate(root: Folder, brainrotName: string): boolean
-	local nameFolder = root:FindFirstChild(brainrotName)
+	local nameFolder = Brainrots.findBrainrotStorageFolder(root, brainrotName)
 	if not nameFolder then
 		return false
 	end
@@ -808,7 +802,7 @@ local function collectLandCandidates(): { Instance }
 		if seen[child] then
 			return
 		end
-		if tonumber(string.match(child.Name, PLOT_NAME_PATTERN)) then
+		if tonumber((string.match(child.Name, PLOT_NAME_PATTERN))) then
 			seen[child] = true
 			table.insert(result, child)
 		end
@@ -830,7 +824,7 @@ local function resolvePlotForBushPos(bushPos: Vector3): number
 	local best = 1
 	local bestDist = math.huge
 	for _, child in ipairs(collectLandCandidates()) do
-		local n = tonumber(string.match(child.Name, PLOT_NAME_PATTERN)) or 1
+		local n = tonumber((string.match(child.Name, PLOT_NAME_PATTERN))) or 1
 		local plotAttr = child:GetAttribute("Plot")
 		if typeof(plotAttr) == "number" then
 			n = math.floor(plotAttr)
@@ -1302,7 +1296,7 @@ local function applyCarryScaleForModel(model: Model)
 	BrainrotCarryVisual.applyScaleForLevel(model, lv)
 end
 
-local function attachCarriedBrainrot(player: Player, clone: Model)
+attachCarriedBrainrot = function(player: Player, clone: Model)
 	local char = player.Character
 	if not char then
 		return
@@ -1824,7 +1818,7 @@ do
 		end)
 	end
 
-	local function getBushAdornee(bush: Instance): BasePart?
+	local function _getBushAdornee(bush: Instance): BasePart?
 		if bush:IsA("BasePart") then
 			return bush
 		end
@@ -1838,7 +1832,7 @@ do
 		return nil
 	end
 
-	local function bushWorldTopY(bush: Instance, fallbackY: number): number
+	local function _bushWorldTopY(bush: Instance, fallbackY: number): number
 		if bush:IsA("Model") then
 			return bushTopWorldY(bush :: Model, fallbackY)
 		end
@@ -2587,7 +2581,7 @@ local function touchedPartToOwnerPlayer(other: BasePart): Player?
 	return nil
 end
 
-local function carriedBrainrotFromTouch(other: BasePart, plr: Player): Model?
+local function _carriedBrainrotFromTouch(other: BasePart, plr: Player): Model?
 	local w: Instance? = other
 	while w do
 		if w:IsA("Model") and w:GetAttribute("BrainrotCarryPhase") == "Carried" then
@@ -2829,7 +2823,7 @@ local function shiftParkedMapAfterListRemove(m: { [number]: boolean }, removedId
 end
 
 -- After inserting at list index `insertIdx` (1..9), shift tucked flags so they match list positions.
-local function mergeMapAfterBackpackInsert(m: { [number]: boolean }, insertIdx: number, insertedTucked: boolean)
+local function _mergeMapAfterBackpackInsert(m: { [number]: boolean }, insertIdx: number, insertedTucked: boolean)
 	if insertIdx > 9 then
 		return
 	end
@@ -3046,7 +3040,7 @@ local function setBrainrotSlotTucked(
 	end
 end
 
-local function inventoryIndexIsBackpackVisible(map: { [number]: boolean }, index: number): boolean
+local function _inventoryIndexIsBackpackVisible(map: { [number]: boolean }, index: number): boolean
 	return index > HOTBAR_UI_SLOTS or map[index] == true
 end
 

@@ -12,7 +12,7 @@ local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChil
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+local _playerGui = player:WaitForChild("PlayerGui")
 
 local boostLabel: TextLabel? = nil
 

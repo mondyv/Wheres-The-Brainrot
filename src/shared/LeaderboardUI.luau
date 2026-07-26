@@ -19,7 +19,7 @@ local ROW_COUNT = 10
 
 local BOARD_KEYS = { "Cash", "Time" }
 
-local function lowerName(inst: Instance): string
+local function _lowerName(inst: Instance): string
 	return string.lower(inst.Name)
 end
 

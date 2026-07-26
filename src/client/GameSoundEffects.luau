@@ -143,7 +143,7 @@ local function playLoop(template: Sound?): Sound?
 end
 
 local function normalizeRarity(rarity: string): string
-	return string.lower(string.gsub(rarity, "%s+", " "))
+	return string.lower((string.gsub(rarity, "%s+", " ")))
 end
 
 local function resolveDropTemplate(rarity: string): Sound?

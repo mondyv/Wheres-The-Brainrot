@@ -3,7 +3,7 @@
 	Sell brainrots from inventory for cash (10× current $/s via BrainrotEconomy).
 --]]
 
-local Players = game:GetService("Players")
+local _Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 

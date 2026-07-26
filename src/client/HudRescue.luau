@@ -136,9 +136,9 @@ local function rescueOnce(reason: string)
 			end
 		end
 	end
-	local pg = player:FindFirstChild("PlayerGui")
-	if pg then
-		for _, ch in pg:GetChildren() do
+	local playerGui = player:FindFirstChild("PlayerGui")
+	if playerGui then
+		for _, ch in playerGui:GetChildren() do
 			if ch:IsA("BillboardGui") and ch.Name == "BrainrotInfoBillboard" then
 				headerCount += 1
 				ch.Enabled = true

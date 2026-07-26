@@ -68,7 +68,7 @@ M.BRAINROTS = {
 	{ name = "BananitoDelfinito",        rarity = "uncommon",     baseIncome = 44 },
 	{ name = "AvocadiniGuffo",           rarity = "uncommon",     baseIncome = 50 },
 	{ name = "BrrBicusDicus",            rarity = "uncommon",     baseIncome = 52 },
-	{ name = "BurbalolliLuilolli",       rarity = "uncommon",     baseIncome = 62 },
+	{ name = "BurbalolliLulilolli",       rarity = "uncommon",     baseIncome = 62 },
 	{ name = "BalerinaCapucina",         rarity = "uncommon",     baseIncome = 64 },
 	{ name = "SalaminoPinguino",         rarity = "uncommon",     baseIncome = 64 },
 	{ name = "ChimpanziniBananini",      rarity = "uncommon",     baseIncome = 72 },
@@ -164,6 +164,8 @@ end
 -- Logical name → ServerStorage.Brainrots folder name when they differ in Studio.
 M.STORAGE_FOLDER_ALIASES = {
 	Garamarama = "Garama",
+	-- Legacy typo (Lui vs Luli) still present in some older saves / Studio copies.
+	BurbalolliLuilolli = "BurbalolliLulilolli",
 } :: { [string]: string }
 
 function M.resolveStorageFolderName(brainrotName: string): string
@@ -173,6 +175,49 @@ function M.resolveStorageFolderName(brainrotName: string): string
 	end
 	return brainrotName
 end
+
+function M.storageFolderCandidates(brainrotName: string): { string }
+	local out: { string } = {}
+	local seen: { [string]: boolean } = {}
+	local function push(name: string)
+		if name == "" or seen[name] then
+			return
+		end
+		seen[name] = true
+		table.insert(out, name)
+	end
+	push(brainrotName)
+	push(M.resolveStorageFolderName(brainrotName))
+	for logical, folder in pairs(M.STORAGE_FOLDER_ALIASES) do
+		if folder == brainrotName then
+			push(logical)
+		elseif logical == brainrotName then
+			push(folder)
+		end
+	end
+	return out
+end
+
+function M.findBrainrotStorageFolder(root: Instance, brainrotName: string): Instance?
+	for _, name in ipairs(M.storageFolderCandidates(brainrotName)) do
+		local folder = root:FindFirstChild(name)
+		if folder then
+			return folder
+		end
+	end
+	-- Fuzzy: Studio folders sometimes differ by spaces/hyphens/case (Lui vs Luli already aliased).
+	local want = string.lower((brainrotName:gsub("[%s_%-]", "")))
+	for _, child in ipairs(root:GetChildren()) do
+		local n = string.lower((child.Name:gsub("[%s_%-]", "")))
+		if n == want then
+			return child
+		end
+	end
+	return nil
+end
+
+-- Legacy logical-name aliases (old spelling → current def).
+M.BRAINROT_BY_NAME["BurbalolliLuilolli"] = M.BRAINROT_BY_NAME["BurbalolliLulilolli"]
 
 function M.getByName(name: string): BrainrotDef?
 	return M.BRAINROT_BY_NAME[name]

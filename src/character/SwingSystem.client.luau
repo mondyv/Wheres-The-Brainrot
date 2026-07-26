@@ -621,6 +621,11 @@ local function stopOptionalSound(name)
 	end
 end
 
+local function stopWindLoopSfx()
+	stopOptionalSound("Wind Loop")
+	stopOptionalSound("Wind")
+end
+
 local function createSwingPose(character, hrp)
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	local state = {
@@ -4324,8 +4329,10 @@ local function boot(character)
 		st.stopHangAnim(doLaunch and C.LAUNCH_HANG_RELEASE_FADE or 0.08)
 		st.swingPose.clear()
 		st.destroySwingObjects()
-		stopOptionalSound("Wind Loop")
-		stopOptionalSound("Wind")
+		-- Keep Wind Loop through air after a launch; only stop if the swing is cancelled.
+		if not doLaunch then
+			stopWindLoopSfx()
+		end
 
 		st.humanoid.PlatformStand = false
 		st.humanoid.AutoRotate = true
@@ -4337,6 +4344,11 @@ local function boot(character)
 			st.lastLaunchClock = os.clock()
 			st.playFallingAnim(C.LAUNCH_FALL_ANIM_FADE)
 			playOptionalSound("Launch")
+			-- Ensure air wind keeps looping if Catch/Wind somehow missed on attach.
+			local wind = resolveOptionalSound("Wind Loop")
+			if wind and wind:IsA("Sound") and not wind.IsPlaying then
+				playOptionalSound("Wind Loop")
+			end
 			if not st.isSwinging and st.hrp.Parent then
 				camera = workspace.CurrentCamera or camera
 				st.releaseStyle.apply(
@@ -4623,6 +4635,7 @@ local function boot(character)
 				end
 				st.isLaunched = false
 				st.landedFromSwing = false
+				stopWindLoopSfx()
 				st.releaseStyle.cancel()
 				st.hideSwingTargetUi()
 			end
@@ -4777,6 +4790,7 @@ local function boot(character)
 				st.isLaunched = false
 				st.landingSpeed = 0
 				st.isAirborne = false
+				stopWindLoopSfx()
 				st.forceSwingHumanoidControl()
 				st.stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
 
@@ -4820,6 +4834,7 @@ local function boot(character)
 			st.landedFromSwing = false
 			st.isLaunched = false
 			st.landingSpeed = 0
+			stopWindLoopSfx()
 
 			st.forceSwingHumanoidControl()
 			local solidGround = canPlaySwingLandingImpact(st.character, st.hrp, st.rayParams)
@@ -4865,6 +4880,7 @@ local function boot(character)
 		st.isLaunched = false
 		st.landedFromSwing = false
 		st.landingSpeed = 0
+		stopWindLoopSfx()
 		st.lastLaunchClock = -1e9
 		st.lastLandingClock = -1e9
 		st.landingShakeStrength = 0
@@ -5058,6 +5074,7 @@ local function boot(character)
 			st.isLaunched = false
 			st.landingSpeed = 0
 			st.isAirborne = false
+			stopWindLoopSfx()
 			st.forceSwingHumanoidControl()
 			st.stopFallingAnim(C.LAUNCH_FALL_STOP_FADE)
 			if wasLandedFromSwing and canPlaySwingLandingImpact(st.character, st.hrp, st.rayParams) then
@@ -5595,8 +5612,7 @@ local function boot(character)
 		st.stopHangAnim(0)
 		st.stopFallingAnim()
 		st.stopTrack(st.landedTrack, 0.12)
-		stopOptionalSound("Wind Loop")
-		stopOptionalSound("Wind")
+		stopWindLoopSfx()
 		pcall(function()
 			st.humanoid.PlatformStand = false
 			st.humanoid.AutoRotate = true

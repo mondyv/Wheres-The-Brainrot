@@ -10,9 +10,9 @@ local Workspace = game:GetService("Workspace")
 
 local M = {}
 
-local MAX_ACTIVE = 10
-local SCAN_INTERVAL_SEC = 0.7
-local SWAY_STEP_INTERVAL = 1 / 20
+local MAX_ACTIVE = 8
+local SCAN_INTERVAL_SEC = 0.85
+local SWAY_STEP_INTERVAL = 1 / 15
 local GRASS_RADIUS = 3.4
 local GRASS_RADIUS_SQ = GRASS_RADIUS * GRASS_RADIUS
 local GRASS_TILT_RAD = math.rad(13)

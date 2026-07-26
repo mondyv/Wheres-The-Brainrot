@@ -29,14 +29,14 @@ local NIGHT_ATMO = {
 	Haze = 2.85,
 }
 
--- Low-graphics night: thinner fog, cheaper atmosphere.
+-- Low-graphics night: slightly thinner fog only (keep the same look).
 local NIGHT_ATMO_LOW = {
-	Density = 0.28,
-	Offset = 0.08,
-	Color = Color3.fromRGB(52, 56, 58),
-	Decay = Color3.fromRGB(64, 68, 70),
-	Glare = 0,
-	Haze = 1.1,
+	Density = 0.52,
+	Offset = 0.05,
+	Color = Color3.fromRGB(46, 50, 52),
+	Decay = Color3.fromRGB(58, 62, 64),
+	Glare = 0.02,
+	Haze = 2.35,
 }
 
 -- Faint mist inside safe zone — softens distance so the base isn't crystal-clear
@@ -55,17 +55,17 @@ local SAFEZONE_FOG = {
 }
 
 local SAFEZONE_FOG_LOW = {
-	densityAdd = 0.06,
-	densityMin = 0.12,
-	densityMax = 0.2,
-	hazeAdd = 0.25,
-	hazeMin = 0.35,
-	hazeMax = 0.7,
-	offsetBias = 0,
-	glareMax = 0.02,
+	densityAdd = 0.14,
+	densityMin = 0.2,
+	densityMax = 0.3,
+	hazeAdd = 0.65,
+	hazeMin = 0.75,
+	hazeMax = 1.35,
+	offsetBias = -0.03,
+	glareMax = 0.03,
 	mistColor = Color3.fromRGB(198, 204, 210),
 	mistDecay = Color3.fromRGB(155, 160, 166),
-	mistMix = 0.12,
+	mistMix = 0.22,
 }
 
 type AtmoSnap = {
@@ -220,9 +220,6 @@ end
 function SafeZoneLightingController.setLowGraphics(on: boolean)
 	local nextOn = on == true
 	if lowGraphics == nextOn then
-		if wired then
-			applyProfile(not inSafezone, true)
-		end
 		return
 	end
 	lowGraphics = nextOn

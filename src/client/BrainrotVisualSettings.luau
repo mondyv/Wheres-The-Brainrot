@@ -105,6 +105,15 @@ local function applyVfxInstance(inst: Instance, enabled: boolean)
 	end
 end
 
+local function applyInstance(root: Instance, inst: Instance)
+	local hideOthers = shouldHideFromOthers(root)
+	local vfxOn = brainrotVfxEnabled()
+	if inst:IsA("BasePart") then
+		applyPartVisibility(inst :: BasePart, hideOthers)
+	end
+	applyVfxInstance(inst, vfxOn)
+end
+
 local function applyToRoot(root: Instance)
 	local hideOthers = shouldHideFromOthers(root)
 	local vfxOn = brainrotVfxEnabled()
@@ -131,9 +140,10 @@ local function trackModel(model: Model)
 		if not model.Parent then
 			return
 		end
+		-- Only touch the new instance — never re-walk the whole model (O(n²) stutter).
 		task.defer(function()
-			if model.Parent then
-				applyToRoot(model)
+			if model.Parent and ch.Parent then
+				applyInstance(model, ch)
 			end
 		end)
 	end)
@@ -149,10 +159,10 @@ local function trackTool(tool: Tool)
 	end
 	trackedTools[tool] = true
 	applyToRoot(tool)
-	tool.DescendantAdded:Connect(function()
+	tool.DescendantAdded:Connect(function(ch)
 		task.defer(function()
-			if tool.Parent then
-				applyToRoot(tool)
+			if tool.Parent and ch.Parent then
+				applyInstance(tool, ch)
 			end
 		end)
 	end)
@@ -245,6 +255,10 @@ function BrainrotVisualSettings.init()
 	end
 
 	Workspace.DescendantAdded:Connect(function(inst)
+		-- Ignore most streaming noise; only Models/Tools can be brainrots.
+		if not (inst:IsA("Model") or inst:IsA("Tool")) then
+			return
+		end
 		task.defer(function()
 			tryTrack(inst)
 		end)
@@ -252,7 +266,7 @@ function BrainrotVisualSettings.init()
 
 	Players.PlayerAdded:Connect(function(plr)
 		plr.CharacterAdded:Connect(function(char)
-			char.DescendantAdded:Connect(function(ch)
+			char.ChildAdded:Connect(function(ch)
 				task.defer(function()
 					tryTrack(ch)
 				end)

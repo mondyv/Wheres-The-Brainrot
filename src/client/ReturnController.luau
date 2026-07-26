@@ -403,15 +403,21 @@ local function syncModeButtons()
 	local n = carryCount()
 	local carrying = n > 0
 	if freeBtn then
-		freeBtn.Visible = not carrying
-		if not carrying then
+		local wantFree = not carrying and visibleTarget
+		if freeBtn.Visible ~= wantFree then
+			freeBtn.Visible = wantFree
+		end
+		if wantFree then
 			freeBtn.Position = FREE_BTN_POS
 		end
-		freeBtn.Active = not carrying and visibleTarget and not teleportBusy
+		freeBtn.Active = wantFree and not teleportBusy
 	end
 	if paidBtn then
-		paidBtn.Visible = carrying
-		if carrying then
+		local wantPaid = carrying and visibleTarget
+		if paidBtn.Visible ~= wantPaid then
+			paidBtn.Visible = wantPaid
+		end
+		if wantPaid then
 			paidBtn.Position = FREE_BTN_POS
 			local tier = ReturnConfig.clampCount(n)
 			if tier ~= lastPaidCount then
@@ -421,7 +427,7 @@ local function syncModeButtons()
 		else
 			lastPaidCount = -1
 		end
-		paidBtn.Active = carrying and visibleTarget and not teleportBusy
+		paidBtn.Active = wantPaid and not teleportBusy
 	end
 end
 
@@ -440,24 +446,10 @@ local function applyVisibility(show: boolean, instant: boolean?)
 	if not returnFrame or not frameScale then
 		return
 	end
-	if not show then
-		-- Always hard-hide both buttons in safezone / when chrome must be off.
-		-- (SideUI restore after Sell can leave a child Visible even if visibleTarget was already false.)
-		if freeBtn then
-			freeBtn.Visible = false
-			freeBtn.Active = false
-		end
-		if paidBtn then
-			paidBtn.Visible = false
-			paidBtn.Active = false
-		end
-	end
-	if visibleTarget == show and not instant then
+	-- Already in the desired state — do not thrash Visible/Scale every poll.
+	if visibleTarget == show then
 		if show then
 			syncModeButtons()
-		else
-			returnFrame.Visible = false
-			frameScale.Scale = 0.72
 		end
 		return
 	end
@@ -488,10 +480,10 @@ local function applyVisibility(show: boolean, instant: boolean?)
 	else
 		stopIdleMotion()
 		setButtonsActive(false)
-		if freeBtn then
+		if freeBtn and freeBtn.Visible then
 			freeBtn.Visible = false
 		end
-		if paidBtn then
+		if paidBtn and paidBtn.Visible then
 			paidBtn.Visible = false
 		end
 		if instant then
@@ -842,31 +834,34 @@ function ReturnController.init()
 
 		if inSafezone then
 			outsideStreak = 0
-			refreshVisibility(true)
+			-- Only hide when currently showing — never rewrite UI every poll.
+			if visibleTarget then
+				applyVisibility(false, true)
+			end
 			return
 		end
 
 		outsideStreak += 1
 		local wantShow = outsideStreak >= OUTSIDE_STREAK_TO_SHOW and shouldShowReturnChrome()
 
-		if crossingOut and wantShow then
+		if crossingOut and wantShow and not visibleTarget then
 			if not deferredShowPending then
 				deferredShowPending = true
 				task.defer(function()
 					task.wait(0.03)
 					deferredShowPending = false
-					if outsideStreak >= OUTSIDE_STREAK_TO_SHOW then
-						refreshVisibility(false)
+					if outsideStreak >= OUTSIDE_STREAK_TO_SHOW and shouldShowReturnChrome() then
+						applyVisibility(true, false)
 					end
 				end)
 			end
 			return
 		end
 
-		if wantShow then
-			refreshVisibility(false)
-		else
-			applyVisibility(false, true)
+		if wantShow ~= visibleTarget then
+			applyVisibility(wantShow, not wantShow)
+		elseif wantShow then
+			syncModeButtons()
 		end
 	end)
 

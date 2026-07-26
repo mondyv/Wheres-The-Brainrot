@@ -21,9 +21,9 @@ local player = Players.LocalPlayer
 local ACTIVATE_RANGE = 52
 local DEACTIVATE_RANGE = 78
 local SELECT_PCT = 16
-local MAX_ACTIVE = 6
-local FLIES_PER_BUSH = 5
-local REFRESH_SEC = 1.25
+local MAX_ACTIVE = 4
+local FLIES_PER_BUSH = 3
+local REFRESH_SEC = 1.6
 local FOLDER_NAME = "BushFireflies"
 
 -- Warm orange (not pale yellow — pale + bright light reads white).
@@ -70,6 +70,8 @@ local enabled = true
 local heartbeatConn: RBXScriptConnection? = nil
 local rootFolder: Folder? = nil
 local refreshAccum = 0.0
+local lightAccum = 0.0
+local LIGHT_STEP_SEC = 0.12
 
 local function ensureRoot(): Folder
 	if rootFolder and rootFolder.Parent then
@@ -291,6 +293,11 @@ end
 local function stepFlies(dt: number)
 	local t = os.clock()
 	local blend = math.clamp(dt * FOLLOW_BLEND, 0.02, 0.07)
+	lightAccum += dt
+	local updateLights = lightAccum >= LIGHT_STEP_SEC
+	if updateLights then
+		lightAccum = 0
+	end
 	for _, swarm in pairs(activeSwarms) do
 		if not swarm.bush.Parent then
 			destroySwarm(swarm.bush)
@@ -327,14 +334,14 @@ local function stepFlies(dt: number)
 			fly.pos = fly.pos:Lerp(target, blend)
 			fly.part.CFrame = CFrame.new(fly.pos)
 
-			-- Soft long glow breathe — always lit, never a split-second flash.
-			local wave = 0.5 + 0.5 * math.sin(t * GLOW_PULSE_SPEED + fly.phase)
-			local pulse = GLOW_PULSE_MIN + (GLOW_PULSE_MAX - GLOW_PULSE_MIN) * wave
-			fly.light.Brightness = LIGHT_BRIGHTNESS * pulse
-			fly.light.Range = LIGHT_RANGE * (0.92 + 0.08 * wave)
-			fly.light.Color = GLOW
-			fly.part.Color = BODY
-			fly.part.Transparency = 0.05 + 0.08 * (1 - wave)
+			-- PointLight property writes are expensive — breathe at ~8Hz, not every frame.
+			if updateLights then
+				local wave = 0.5 + 0.5 * math.sin(t * GLOW_PULSE_SPEED + fly.phase)
+				local pulse = GLOW_PULSE_MIN + (GLOW_PULSE_MAX - GLOW_PULSE_MIN) * wave
+				fly.light.Brightness = LIGHT_BRIGHTNESS * pulse
+				fly.light.Range = LIGHT_RANGE * (0.92 + 0.08 * wave)
+				fly.part.Transparency = 0.05 + 0.08 * (1 - wave)
+			end
 		end
 	end
 end

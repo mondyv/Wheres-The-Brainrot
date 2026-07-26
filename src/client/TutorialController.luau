@@ -14,11 +14,16 @@ local Workspace = game:GetService("Workspace")
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local StandDialogueCutscene = require(script.Parent.StandDialogueCutscene)
+local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
 local BushFloatingClaimController = require(script.Parent.BushFloatingClaimController)
+local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
+local BushSpiderEncounterController = require(script.Parent.BushSpiderEncounterController)
 local CarryGate = require(script.Parent.CarryGate)
+local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
+local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local TutorialConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TutorialConfig"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
@@ -57,6 +62,67 @@ local claimSpotlightActive = false
 local upgradeBaseLevel = 1
 local layoutConn: RBXScriptConnection? = nil
 local panelStroke: UIStroke? = nil
+local chromeSuppressed = false
+local vineCache: { BasePart } = {}
+local vineCacheAt = 0
+local lastPointerRefresh = 0
+local pendingPointerRefresh = false
+
+local clearWorldArrow: () -> ()
+local clearUiPointer: () -> ()
+local clearSpotlight: () -> ()
+local syncPanelToSideButtons: () -> ()
+local refreshPointers: () -> ()
+
+local function currentStep(): TutorialConfig.StepDef?
+	return TutorialConfig.STEPS[stepIndex]
+end
+
+local function allowsClaimChrome(): boolean
+	local step = currentStep()
+	return step ~= nil and (step.id == "claimBrainrot" or step.id == "searchBush")
+end
+
+local function isCutsceneBusy(): boolean
+	if StandDialogueCutscene.isActive() then
+		return true
+	end
+	if BushSpiderEncounterController.isActive() then
+		return true
+	end
+	if FloatingClaimCutscene.isActive() and not allowsClaimChrome() then
+		return true
+	end
+	if GameplayUiVisibility.isHidden() and not allowsClaimChrome() then
+		return true
+	end
+	return false
+end
+
+local function setChromeSuppressed(suppressed: boolean)
+	if chromeSuppressed == suppressed then
+		return
+	end
+	chromeSuppressed = suppressed
+	if suppressed then
+		speakToken += 1
+		if clearWorldArrow then
+			clearWorldArrow()
+		end
+		if clearUiPointer then
+			clearUiPointer()
+		end
+		if clearSpotlight then
+			clearSpotlight()
+		end
+		if gui then
+			gui.Enabled = false
+		end
+	elseif active and gui then
+		gui.Enabled = true
+		pendingPointerRefresh = true
+	end
+end
 
 local function getCompleteRemote(): RemoteFunction?
 	if completeRF and completeRF.Parent then
@@ -103,14 +169,17 @@ local function typeObjective(displayText: string)
 		if token ~= speakToken or not active or not objectiveLabel then
 			return
 		end
+		if isCutsceneBusy() then
+			objectiveLabel.Text = displayText
+			return
+		end
 		StandDialogueCutscene.setVoicePitch(TutorialConfig.VOICE_PITCH_MIN, TutorialConfig.VOICE_PITCH_MAX)
 		objectiveLabel.Text = ""
 		for i = 1, #displayText do
 			if token ~= speakToken or not active then
 				return
 			end
-			if StandDialogueCutscene.isActive() then
-				-- Stand dialogue owns Voice Gaster; finish text silently after it ends.
+			if isCutsceneBusy() or StandDialogueCutscene.isActive() then
 				waitWhileStandTalking(token)
 				if token ~= speakToken or not active then
 					return
@@ -146,7 +215,7 @@ local function resolveSideButtonPanel(): GuiObject?
 	return nil
 end
 
-local function syncPanelToSideButtons()
+local function syncPanelToSideButtonsImpl()
 	if not panel or not panel.Parent or not gui or not gui.Enabled then
 		return
 	end
@@ -156,22 +225,19 @@ local function syncPanelToSideButtons()
 	end
 	local abs = sidePanel.AbsolutePosition
 	local size = sidePanel.AbsoluteSize
-	local panelHeight = panel.AbsoluteSize.Y
-	if panelHeight < 8 then
-		panelHeight = 58
-	end
 	local width = math.max(size.X, 240)
 	local gap = TutorialConfig.PANEL_GAP_ABOVE_SIDE
 	panel.Size = UDim2.fromOffset(width, 58)
 	panel.Position = UDim2.fromOffset(abs.X, abs.Y - gap)
 end
+syncPanelToSideButtons = syncPanelToSideButtonsImpl
 
 local function startLayoutSync()
 	if layoutConn then
 		layoutConn:Disconnect()
 	end
 	layoutConn = RunService.RenderStepped:Connect(function()
-		if not active then
+		if not active or chromeSuppressed then
 			return
 		end
 		syncPanelToSideButtons()
@@ -185,22 +251,24 @@ local function stopLayoutSync()
 	end
 end
 
-local function clearWorldArrow()
+local function clearWorldArrowImpl()
 	if worldArrowBb then
 		worldArrowBb:Destroy()
 		worldArrowBb = nil
 		worldArrowImg = nil
 	end
 end
+clearWorldArrow = clearWorldArrowImpl
 
-local function clearUiPointer()
+local function clearUiPointerImpl()
 	if uiPointer then
 		uiPointer:Destroy()
 		uiPointer = nil
 	end
 end
+clearUiPointer = clearUiPointerImpl
 
-local function clearSpotlight()
+local function clearSpotlightImpl()
 	claimSpotlightActive = false
 	if dimOverlay then
 		dimOverlay.Visible = false
@@ -209,6 +277,7 @@ local function clearSpotlight()
 		spotlightHole.Visible = false
 	end
 end
+clearSpotlight = clearSpotlightImpl
 
 local function ensureGui()
 	if gui and gui.Parent then
@@ -378,6 +447,14 @@ local function showPanel(text: string, animateIn: boolean)
 	if not gui or not panel or not objectiveLabel or not panelScale then
 		return
 	end
+	if isCutsceneBusy() then
+		setChromeSuppressed(true)
+		if objectiveLabel then
+			objectiveLabel.Text = text
+		end
+		return
+	end
+	setChromeSuppressed(false)
 	gui.Enabled = true
 	objectiveLabel.Text = ""
 	syncPanelToSideButtons()
@@ -422,6 +499,9 @@ end
 
 local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	clearWorldArrow()
+	if chromeSuppressed or isCutsceneBusy() then
+		return
+	end
 	if not adornee then
 		return
 	end
@@ -438,9 +518,9 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "TutorialWorldArrow"
 	bb.AlwaysOnTop = true
-	bb.Size = UDim2.fromOffset(64, 64)
+	bb.Size = UDim2.fromOffset(72, 72)
 	bb.StudsOffset = offset or arrowHeight()
-	bb.MaxDistance = 400
+	bb.MaxDistance = 500
 	bb.Adornee = part
 	bb.Parent = player:FindFirstChild("PlayerGui") or Workspace.CurrentCamera
 
@@ -456,7 +536,7 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	worldArrowImg = img
 
 	task.spawn(function()
-		while worldArrowImg == img and img.Parent and active do
+		while worldArrowImg == img and img.Parent and active and not chromeSuppressed do
 			local a = TweenService:Create(img, ARROW_BOB, {
 				Position = UDim2.new(0, 0, 0, 6),
 				Size = UDim2.fromScale(1.08, 1.08),
@@ -479,6 +559,9 @@ end
 local function pointAtGui(target: GuiObject?)
 	clearUiPointer()
 	ensureGui()
+	if chromeSuppressed or isCutsceneBusy() then
+		return
+	end
 	if not target or not root or not gui then
 		return
 	end
@@ -499,9 +582,9 @@ local function pointAtGui(target: GuiObject?)
 	uiPointer = pointer
 
 	task.spawn(function()
-		-- Wait a couple frames for AbsoluteSize to resolve (billboards / just-opened panels).
-		for _ = 1, 8 do
-			if not pointer.Parent or uiPointer ~= pointer or not active then
+		-- Wait for AbsoluteSize to resolve (billboards / just-opened panels).
+		for _ = 1, 45 do
+			if not pointer.Parent or uiPointer ~= pointer or not active or chromeSuppressed then
 				return
 			end
 			if target.Parent and target.AbsoluteSize.X > 2 and target.AbsoluteSize.Y > 2 then
@@ -510,7 +593,7 @@ local function pointAtGui(target: GuiObject?)
 			task.wait()
 		end
 
-		while uiPointer == pointer and pointer.Parent and active and target.Parent do
+		while uiPointer == pointer and pointer.Parent and active and target.Parent and not chromeSuppressed do
 			local abs = target.AbsolutePosition
 			local size = target.AbsoluteSize
 			if size.X < 2 or size.Y < 2 then
@@ -518,7 +601,6 @@ local function pointAtGui(target: GuiObject?)
 				task.wait(0.1)
 				continue
 			end
-			-- Tutorial ScreenGui uses IgnoreGuiInset; AbsolutePosition is already viewport-space.
 			local px = abs.X + size.X * 0.78
 			local py = abs.Y + size.Y * 0.62
 			pointer.Visible = true
@@ -575,72 +657,180 @@ local function resolveUpgradeStandPart(): BasePart?
 	return upgrade:FindFirstChildWhichIsA("BasePart", true)
 end
 
-local function resolveLand1SwingTarget(): BasePart?
-	local best: BasePart? = nil
-	local bestDist = math.huge
+local function playerOrigin(): Vector3
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		return hrp.Position
+	end
+	local plot = PlotPaths.findPlotForAssignedSlot(player)
+	if plot and plot:IsA("Model") then
+		local ok, pivot = pcall(function()
+			return (plot :: Model):GetPivot()
+		end)
+		if ok and typeof(pivot) == "CFrame" then
+			return (pivot :: CFrame).Position
+		end
+	end
+	return Vector3.zero
+end
+
+local function land1Aim(): Vector3
+	local spawnCf = LandResolver.getSpawnCFrameForLand(1)
+	if spawnCf then
+		return spawnCf.Position
+	end
 	local map = Workspace:FindFirstChild("Map")
 	local lands = map and map:FindFirstChild("Lands")
 	local land1 = lands and lands:FindFirstChild("Land1")
-	local origin = Vector3.zero
 	if land1 and land1:IsA("Model") then
 		local ok, pivot = pcall(function()
 			return (land1 :: Model):GetPivot()
 		end)
 		if ok and typeof(pivot) == "CFrame" then
-			origin = (pivot :: CFrame).Position
+			return (pivot :: CFrame).Position
+		end
+	end
+	return Vector3.zero
+end
+
+local function refreshVineCache()
+	if os.clock() - vineCacheAt < 2.5 and #vineCache > 0 then
+		return
+	end
+	vineCacheAt = os.clock()
+	table.clear(vineCache)
+
+	for _, inst in CollectionService:GetTagged("SwingTarget") do
+		if inst:IsA("BasePart") and inst.Parent then
+			table.insert(vineCache, inst)
 		end
 	end
 
-	for _, inst in CollectionService:GetTagged("SwingTarget") do
-		if inst:IsA("BasePart") then
-			local land = LandResolver.resolveLandAtPosition(inst.Position)
-			if land == 1 then
-				local dist = (inst.Position - origin).Magnitude
-				if dist < bestDist then
-					bestDist = dist
-					best = inst
-				end
+	if #vineCache > 0 then
+		return
+	end
+
+	-- Tags often missing in Studio — fall back to named parts under Map.Vine (capped).
+	local map = Workspace:FindFirstChild("Map")
+	local vine = map and map:FindFirstChild("Vine")
+	if not vine then
+		return
+	end
+	local count = 0
+	for _, d in vine:GetDescendants() do
+		if d:IsA("BasePart") and (d.Name == "SwingTarget" or d.Name == "SwingPart") then
+			table.insert(vineCache, d)
+			count += 1
+			if count >= 100 then
+				break
 			end
 		end
 	end
+end
+
+local function resolveLand1SwingTarget(): BasePart?
+	refreshVineCache()
+	local origin = playerOrigin()
+	local aim = land1Aim()
+	local toAim = aim - origin
+	local aimDir = if toAim.Magnitude > 1 then toAim.Unit else Vector3.new(0, 0, -1)
+
+	local best: BasePart? = nil
+	local bestScore = math.huge
+
+	for _, part in vineCache do
+		if not part.Parent then
+			continue
+		end
+		local offset = part.Position - origin
+		local dist = offset.Magnitude
+		if dist < 6 or dist > 220 then
+			continue
+		end
+		local toward = offset:Dot(aimDir)
+		-- Prefer vines ahead toward Land 1, not behind the player.
+		if toward < -8 then
+			continue
+		end
+		local land = LandResolver.resolveLandAtPosition(part.Position)
+		local landBonus = if land == 1 then 0 else 35
+		local score = dist + landBonus + (part.Position - aim).Magnitude * 0.15
+		if score < bestScore then
+			bestScore = score
+			best = part
+		end
+	end
+
 	if best then
 		return best
 	end
-	if land1 then
-		for _, d in land1:GetDescendants() do
-			if d:IsA("BasePart") and (d.Name == "SwingTarget" or d.Name == "SwingPart") then
-				return d
-			end
-		end
-	end
-	return nil
-end
 
-local function resolveNearestBush(): BasePart?
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	local origin = if hrp and hrp:IsA("BasePart") then hrp.Position else Vector3.zero
-	local best: BasePart? = nil
-	local bestDist = math.huge
-	for _, d in Workspace:GetDescendants() do
-		if d:IsA("ProximityPrompt") and CarryGate.isBushSearchPrompt(d) then
-			local parent = d.Parent
-			local part: BasePart? = nil
-			if parent and parent:IsA("BasePart") then
-				part = parent
-			elseif parent then
-				part = parent:FindFirstChildWhichIsA("BasePart", true)
-			end
-			if part then
-				local dist = (part.Position - origin).Magnitude
-				if dist < bestDist then
-					bestDist = dist
-					best = part
-				end
+	-- Absolute nearest vine as last resort
+	bestScore = math.huge
+	for _, part in vineCache do
+		if part.Parent then
+			local dist = (part.Position - origin).Magnitude
+			if dist < bestScore then
+				bestScore = dist
+				best = part
 			end
 		end
 	end
 	return best
+end
+
+local function resolveNearestBush(): BasePart?
+	local origin = playerOrigin()
+	local bestPart: BasePart? = nil
+	local bestScore = math.huge
+
+	local function considerBush(bush: Instance)
+		local focus = BushRootUtil.focusWorldPosition(bush)
+		if not focus then
+			return
+		end
+		local land = LandResolver.resolveLandAtPosition(focus)
+		local dist = (focus - origin).Magnitude
+		local score = dist + (if land == 1 then 0 else 80)
+		if score >= bestScore then
+			return
+		end
+		local anchor = BushRootUtil.ensurePromptAnchorPart(bush)
+		local part = anchor
+		if not part then
+			if bush:IsA("BasePart") then
+				part = bush
+			else
+				part = bush:FindFirstChildWhichIsA("BasePart", true)
+			end
+		end
+		if part then
+			bestScore = score
+			bestPart = part
+		end
+	end
+
+	BushHoldInteraction.forEachRegisteredBush(considerBush)
+
+	if bestPart then
+		return bestPart
+	end
+
+	-- Fallback: prompts under Map only (avoid full Workspace scan).
+	local map = Workspace:FindFirstChild("Map")
+	if not map then
+		return nil
+	end
+	for _, d in map:GetDescendants() do
+		if d:IsA("ProximityPrompt") and CarryGate.isBushSearchPrompt(d) then
+			local root = BushRootUtil.resolveBushRootFromPrompt(d)
+			if root then
+				considerBush(root)
+			end
+		end
+	end
+	return bestPart
 end
 
 local function resolvePlayerPlotStand(preferEmpty: boolean?): BasePart?
@@ -727,9 +917,7 @@ local function readPlacedBrainrotLevel(): number
 end
 
 local function cacheUpgradesBuyButton()
-	if powerBuyButton and powerBuyButton.Parent and powerBuyButton.AbsoluteSize.X > 2 then
-		return powerBuyButton
-	end
+	powerBuyButton = nil
 	local main = PlayerGuiMain.ensure(player)
 	if not main then
 		return nil
@@ -744,14 +932,11 @@ local function cacheUpgradesBuyButton()
 	end
 	local container = upgrades:FindFirstChild("Container") or upgrades:FindFirstChild("Container", true)
 	local row = (container and container:FindFirstChild("Power10")) or upgrades:FindFirstChild("Power10", true)
-	if not row then
-		-- Fallback: first row that looks like a power upgrade.
-		if container then
-			for _, ch in container:GetChildren() do
-				if ch.Name:find("Power") then
-					row = ch
-					break
-				end
+	if not row and container then
+		for _, ch in container:GetChildren() do
+			if typeof(ch.Name) == "string" and string.find(string.lower(ch.Name), "power", 1, true) then
+				row = ch
+				break
 			end
 		end
 	end
@@ -778,7 +963,7 @@ local function cacheUpgradesBuyButton()
 					p = p.Parent
 				end
 				if not underDecor then
-					local area = d.AbsoluteSize.X * d.AbsoluteSize.Y
+					local area = math.max(d.AbsoluteSize.X * d.AbsoluteSize.Y, 1)
 					local score = area + 1e6
 					if score > bestScore then
 						bestScore = score
@@ -787,7 +972,10 @@ local function cacheUpgradesBuyButton()
 				end
 			end
 		end
-		btn = best or buy:FindFirstChildWhichIsA("GuiButton", true)
+		btn = best or buy:FindFirstChildWhichIsA("GuiButton", true) or (buy:IsA("GuiObject") and buy)
+	end
+	if not btn and buyButtons and buyButtons:IsA("GuiObject") then
+		btn = buyButtons
 	end
 	if not btn then
 		btn = row:FindFirstChildWhichIsA("GuiButton", true)
@@ -799,11 +987,10 @@ local function cacheUpgradesBuyButton()
 	return nil
 end
 
-local function currentStep(): TutorialConfig.StepDef?
-	return TutorialConfig.STEPS[stepIndex]
-end
-
-local function refreshPointers()
+local function refreshPointersImpl()
+	if not active or chromeSuppressed or isCutsceneBusy() then
+		return
+	end
 	clearWorldArrow()
 	clearUiPointer()
 	clearSpotlight()
@@ -812,28 +999,32 @@ local function refreshPointers()
 		return
 	end
 	if step.id == "visitUpgrade" then
-		pointAtWorld(resolveUpgradeStandPart(), arrowHeight(1))
+		pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
 	elseif step.id == "buyPower" then
 		local btn = cacheUpgradesBuyButton()
 		if btn and upgradesFrame and upgradesFrame.Visible then
+			pointAtGui(btn)
 			task.defer(function()
-				task.wait()
-				if currentStep() and currentStep().id == "buyPower" then
+				task.wait(0.15)
+				if not active or chromeSuppressed then
+					return
+				end
+				local cur = currentStep()
+				if cur and cur.id == "buyPower" then
 					local again = cacheUpgradesBuyButton()
-					if again then
+					if again and upgradesFrame and upgradesFrame.Visible then
 						clearWorldArrow()
 						pointAtGui(again)
 					end
 				end
 			end)
-			pointAtGui(btn)
 		else
-			pointAtWorld(resolveUpgradeStandPart(), arrowHeight(1))
+			pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
 		end
 	elseif step.id == "swingLand1" then
-		pointAtWorld(resolveLand1SwingTarget() or resolveUpgradeStandPart(), arrowHeight(2))
+		pointAtWorld(resolveLand1SwingTarget(), arrowHeight(3))
 	elseif step.id == "searchBush" then
-		pointAtWorld(resolveNearestBush(), arrowHeight())
+		pointAtWorld(resolveNearestBush(), arrowHeight(2))
 	elseif step.id == "claimBrainrot" then
 		local offer = BushFloatingClaimController.getActiveOfferUi()
 		if offer and offer.acceptBtn then
@@ -844,11 +1035,12 @@ local function refreshPointers()
 			pointAtAcceptOffer(offer.acceptBtn, offer.acceptBb)
 		end
 	elseif step.id == "placeOnPlot" then
-		pointAtWorld(resolvePlayerPlotStand(true), arrowHeight(1))
+		pointAtWorld(resolvePlayerPlotStand(true), arrowHeight(3))
 	elseif step.id == "upgradeBrainrot" then
-		pointAtWorld(resolvePlacedStandUpgradeTarget(), arrowHeight(2.5))
+		pointAtWorld(resolvePlacedStandUpgradeTarget(), arrowHeight(4))
 	end
 end
+refreshPointers = refreshPointersImpl
 
 local function finishTutorial()
 	if not active then
@@ -945,21 +1137,52 @@ local function watchStepProgress()
 		if not active then
 			return
 		end
+
+		local busy = isCutsceneBusy()
+		if busy then
+			setChromeSuppressed(true)
+			return
+		elseif chromeSuppressed or pendingPointerRefresh then
+			setChromeSuppressed(false)
+			pendingPointerRefresh = false
+			if gui and panel then
+				gui.Enabled = true
+				syncPanelToSideButtons()
+			end
+			refreshPointers()
+		end
+
 		local step = currentStep()
 		if not step then
 			return
 		end
 		local now = os.clock()
+
+		-- Periodically re-aim world arrows (streaming / player move).
+		if now - lastPointerRefresh > 1.25 then
+			lastPointerRefresh = now
+			if step.id == "swingLand1" or step.id == "searchBush" or step.id == "visitUpgrade" or step.id == "placeOnPlot" or step.id == "upgradeBrainrot" then
+				if not uiPointer then
+					refreshPointers()
+				end
+			end
+		end
+
 		if step.id == "buyPower" then
 			local btn = cacheUpgradesBuyButton()
 			if btn and upgradesFrame and upgradesFrame.Visible then
-				if not uiPointer then
+				if not uiPointer or (uiPointer.AbsoluteSize.X < 2) then
 					clearWorldArrow()
 					pointAtGui(btn)
 				end
+			elseif not worldArrowBb then
+				pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
 			end
 		elseif step.id == "swingLand1" and now - lastLandCheck > 0.35 then
 			lastLandCheck = now
+			if not worldArrowBb then
+				refreshPointers()
+			end
 			local char = player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
 			if hrp and hrp:IsA("BasePart") then
@@ -967,6 +1190,11 @@ local function watchStepProgress()
 				if land == 1 then
 					completeCurrentIf("swingLand1")
 				end
+			end
+		elseif step.id == "searchBush" and now - lastLandCheck > 0.5 then
+			lastLandCheck = now
+			if not worldArrowBb then
+				refreshPointers()
 			end
 		elseif step.id == "claimBrainrot" then
 			local offer = BushFloatingClaimController.getActiveOfferUi()
@@ -1047,7 +1275,12 @@ local function bindGameplayHooks()
 				upgrades:GetPropertyChangedSignal("Visible"):Connect(function()
 					if upgrades.Visible then
 						completeCurrentIf("visitUpgrade")
-						task.defer(refreshPointers)
+						task.defer(function()
+							task.wait(0.2)
+							if currentStep() and currentStep().id == "buyPower" then
+								refreshPointers()
+							end
+						end)
 					end
 				end)
 			)
@@ -1162,6 +1395,13 @@ function M.init()
 
 		task.wait(1.25)
 		bindOfferHooksOnce()
+
+		GameplayUiVisibility.onRestored(function()
+			if not active then
+				return
+			end
+			pendingPointerRefresh = true
+		end)
 
 		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_REPLAY_ATTR):Connect(function()
 			M.stop()

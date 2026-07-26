@@ -13,7 +13,7 @@ M.VOICE_PITCH_MIN = 1.15
 M.VOICE_PITCH_MAX = 1.5
 M.OBJECTIVE_TYPE_DELAY = 0.048
 M.WORLD_ARROW_ROTATION = 180
-M.WORLD_ARROW_HEIGHT = 9.5
+M.WORLD_ARROW_HEIGHT = 16
 M.PANEL_GAP_ABOVE_SIDE = 10
 
 export type StepId =
@@ -40,12 +40,12 @@ M.STEPS = {
 	{
 		id = "buyPower",
 		text = "Buy your first Power upgrade",
-		speak = "TAP BUY AND GRAB MORE POWER!!",
+		speak = "TAP BUY ON POWER!!",
 	},
 	{
 		id = "swingLand1",
-		text = "Swing over to Land 1",
-		speak = "SWING OVER TO LAND ONE!!",
+		text = "Swing on a vine to Land 1",
+		speak = "GRAB A VINE AND SWING TO LAND ONE!!",
 	},
 	{
 		id = "searchBush",

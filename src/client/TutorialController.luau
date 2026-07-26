@@ -11,6 +11,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 local GuiService = game:GetService("GuiService")
+local UserInputService = game:GetService("UserInputService")
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -411,6 +412,36 @@ local function isHudPanelOpen(): boolean
 	return frame ~= nil and frame.Parent ~= nil and frame.Visible == true
 end
 
+local function isMobileUi(): boolean
+	return UserInputService.TouchEnabled
+end
+
+local function resolveRandomBrainrotHud(): GuiObject?
+	local main = PlayerGuiMain.ensure(player)
+	local sideUI = main and main:FindFirstChild("SideUI")
+	local right = sideUI and sideUI:FindFirstChild("Right")
+	local rb = right and right:FindFirstChild("RandomBrainrot")
+	if not rb then
+		return nil
+	end
+	local activation = rb:FindFirstChild("Activation")
+	if activation and activation:IsA("GuiObject") and activation.AbsoluteSize.Y > 0 then
+		return activation
+	end
+	if rb:IsA("GuiObject") and rb.AbsoluteSize.Y > 0 then
+		return rb
+	end
+	return nil
+end
+
+local function hostTopInset(host: Frame): number
+	local screen = host:FindFirstAncestorOfClass("ScreenGui")
+	if screen and screen.IgnoreGuiInset then
+		return GuiService:GetGuiInset().Y
+	end
+	return 0
+end
+
 local function syncPanelToSideButtonsImpl()
 	if not panel or chromeSuppressed then
 		return
@@ -429,20 +460,42 @@ local function syncPanelToSideButtonsImpl()
 	end
 
 	local vp = viewportSize()
-	local inset = GuiService:GetGuiInset()
+	local mobile = isMobileUi() or vp.X < 700
+	local insetY = hostTopInset(host)
 	local rightPad = TutorialConfig.PANEL_RIGHT_PAD
-	local topPad = TutorialConfig.PANEL_TOP_PAD + inset.Y
-	local maxW = math.floor(vp.X * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
-	maxW = math.clamp(maxW, 180, 340)
-	local screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, 340)
+	local topPad = TutorialConfig.PANEL_TOP_PAD + insetY
+	local screenW: number
+	local matchScale = 1
 
-	-- Right side, top — no Lef1 tracking (stable on mobile resize).
+	if mobile then
+		local maxW = math.floor(vp.X * TutorialConfig.PANEL_MOBILE_MAX_WIDTH_FRAC)
+		screenW = math.clamp(maxW, TutorialConfig.PANEL_MOBILE_MIN_WIDTH, TutorialConfig.PANEL_MOBILE_MAX_WIDTH)
+		matchScale = TutorialConfig.PANEL_MOBILE_SCALE
+		-- Sit under the RandomBrainrot gamepass so we don't cover it.
+		local rb = resolveRandomBrainrotHud()
+		if rb then
+			local hp = host.AbsolutePosition
+			local rbBottom = rb.AbsolutePosition.Y + rb.AbsoluteSize.Y - hp.Y
+			topPad = math.max(topPad, rbBottom + TutorialConfig.PANEL_MOBILE_GAP_BELOW_RIGHT)
+			local hostRight = hp.X + host.AbsoluteSize.X
+			local rbRight = rb.AbsolutePosition.X + rb.AbsoluteSize.X
+			rightPad = math.max(8, hostRight - rbRight)
+		else
+			topPad = math.max(topPad, 120 + insetY)
+			rightPad = 10
+		end
+	else
+		local maxW = math.floor(vp.X * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
+		maxW = math.clamp(maxW, 180, 340)
+		screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, 340)
+	end
+
 	panel.AnchorPoint = Vector2.new(1, 0)
 	panel.Size = UDim2.fromOffset(screenW, TutorialConfig.PANEL_HEIGHT)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
 	panel.Position = UDim2.new(1, -rightPad, 0, topPad)
 	if hudMatchScale then
-		hudMatchScale.Scale = 1
+		hudMatchScale.Scale = matchScale
 	end
 	panel.ZIndex = 100
 	panel.Visible = active and not chromeSuppressed

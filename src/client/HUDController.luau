@@ -230,41 +230,8 @@ local function ensurePanelBackdrop()
 	backdrop.Size = UDim2.new(1, padX * 2, 1, padTop + bottomExtra)
 	backdrop.Parent = frames
 
-	-- Mobile safe-area strips sit outside inset layout — fill them so dim is edge-to-edge.
-	if isMobileUi() then
-		local pg = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 5)
-		if pg then
-			local mainOrder = if mainGui then mainGui.DisplayOrder else 10
-			local gui = Instance.new("ScreenGui")
-			gui.Name = PANEL_DIM_GUI_NAME
-			gui.ResetOnSpawn = false
-			gui.IgnoreGuiInset = true
-			gui.DisplayOrder = math.max(0, mainOrder - 1)
-			gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-			pcall(function()
-				(gui :: any).ClipToDeviceSafeArea = false
-			end)
-			pcall(function()
-				(gui :: any).SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
-			end)
-			pcall(function()
-				(gui :: any).ScreenInsets = Enum.ScreenInsets.None
-			end)
-
-			local fullDim = Instance.new("Frame")
-			fullDim.Name = "FullScreenDim"
-			fullDim.BackgroundColor3 = Color3.new(0, 0, 0)
-			fullDim.BackgroundTransparency = 0.55
-			fullDim.BorderSizePixel = 0
-			fullDim.Size = UDim2.fromScale(1, 1)
-			fullDim.Position = UDim2.fromScale(0, 0)
-			fullDim.Active = false
-			fullDim.Parent = gui
-
-			gui.Parent = pg
-			panelDimGui = gui
-		end
-	end
+	-- No separate PanelModalDim ScreenGui — on mobile it often shares DisplayOrder with
+	-- Main (0) and paints over the open panel. BlurEffect + in-Frames dim matches PC.
 
 	backdrop.Activated:Connect(function()
 		if not MobileTouchGate.canTapUi() then

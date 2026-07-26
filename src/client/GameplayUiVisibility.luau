@@ -322,14 +322,15 @@ local function hardRestoreSnaps()
 	for _, entry in mainSnaps do
 		if entry.inst.Parent then
 			entry.inst.Position = entry.basePos
-			entry.inst.Visible = entry.wasVisible
+			-- Always unpark; wasVisible can be stale if SideUI was toggled mid-hide.
+			entry.inst.Visible = true
 			if entry.clips ~= nil then
 				entry.inst.ClipsDescendants = entry.clips
 			end
 		end
 	end
 	if sideUIRef and sideUIRef.Parent then
-		sideUIRef.Visible = sideUIWasVisible
+		sideUIRef.Visible = true
 	end
 	restoreClipping()
 	restoreScreenGuis()

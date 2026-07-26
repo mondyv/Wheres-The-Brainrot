@@ -930,7 +930,22 @@ end
 function HUDController.forceClearPanelModal()
 	currentFrame = nil
 	panelClosing = false
-	showPanelChrome()
+	panelChromeHidden = false
+	-- forceShow (not show): interrupted slide-ins can leave hideCount at 0 while
+	-- SideUI children stay parked invisible — show() then no-ops forever.
+	GameplayUiVisibility.forceShow()
+	clearPanelBlur()
+	destroyPanelBackdrop()
+	restoreMobileControlsAfterPanel()
+	ensureHudRoots()
+	if sideUI and sideUI:IsA("GuiObject") then
+		(sideUI :: GuiObject).Visible = true
+	end
+	local main = mainGui
+	if main and main:IsA("ScreenGui") then
+		main.Enabled = true
+	end
+	syncFramesInputPassthrough()
 end
 
 function HUDController.syncInputPassthrough()

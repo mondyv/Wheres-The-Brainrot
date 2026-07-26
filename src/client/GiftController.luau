@@ -61,13 +61,20 @@ local giftingChangedListeners: { () -> () } = {}
 local giftPurchasePromptOpen = false
 
 local function healHudAfterGiftPurchase()
+	-- Don't rely on PurchaseEffect restore alone — gift buys leave panel chrome parked.
 	PurchaseEffectClient:forceHide()
-	-- CloseStore + confetti can race animateClose and leave GameplayUiVisibility parked.
 	HUDController.closeFrameByName("Store")
 	HUDController.forceClearPanelModal()
-	task.delay(0.4, function()
+	task.defer(function()
 		HUDController.forceClearPanelModal()
 		PurchaseEffectClient:forceHide()
+	end)
+	task.delay(0.35, function()
+		HUDController.forceClearPanelModal()
+		PurchaseEffectClient:forceHide()
+	end)
+	task.delay(0.85, function()
+		HUDController.forceClearPanelModal()
 	end)
 end
 
@@ -82,8 +89,10 @@ end
 
 local function beginGiftPurchaseOverlay()
 	giftPurchasePromptOpen = true
+	-- Do NOT PurchaseEffect:show() here — that hides SideUI on top of already-parked
+	-- panel chrome and is what left the whole HUD blank after gift buys.
 	PurchaseEffectClient:init()
-	PurchaseEffectClient:show()
+	PurchaseEffectClient:forceHide()
 end
 
 -- ── Small helpers ────────────────────────────────────────────────────────────────
@@ -285,6 +294,8 @@ local function wireGiftRemotes()
 					return
 				end
 				if success == true then
+					giftPurchasePromptOpen = false
+					healHudAfterGiftPurchase()
 					TopNotifController.showPersonal(message, "legendary", 4)
 				else
 					TopNotifController.showError(message)

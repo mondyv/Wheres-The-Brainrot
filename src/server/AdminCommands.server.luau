@@ -201,19 +201,37 @@ commands.help = {
 }
 
 commands.tpland = {
-	usage = "tpland <1-10>",
-	description = "Teleport to a land's revive/spawn pad.",
+	usage = "tpland <1-10> | tpland <player|me|all> <1-10>",
+	description = "Teleport yourself or other players to a land's revive/spawn pad.",
 	run = function(sender: Player, args: { string }): (boolean, string)
 		if not args[1] then
 			return false, "Usage: " .. commands.tpland.usage
 		end
-		local landNum = tonumber(args[1])
-		if not landNum then
+
+		local landNum: number?
+		local targetToken: string? = nil
+
+		local asLand1 = tonumber(args[1])
+		if asLand1 and not args[2] then
+			landNum = math.floor(asLand1)
+			targetToken = "me"
+		elseif asLand1 and args[2] then
+			landNum = math.floor(asLand1)
+			targetToken = args[2]
+		elseif args[2] and tonumber(args[2]) then
+			landNum = math.floor(tonumber(args[2]) :: number)
+			targetToken = args[1]
+		else
 			return false, "Usage: " .. commands.tpland.usage
 		end
-		landNum = math.floor(landNum)
+
 		if landNum < 1 or landNum > 10 then
 			return false, "Land must be between 1 and 10."
+		end
+
+		local targets, targetErr = resolveTargets(sender, targetToken :: string, true)
+		if not targets then
+			return false, targetErr or "No target."
 		end
 
 		local spawnCf = LandResolver.getSpawnCFrameForLand(landNum)
@@ -221,13 +239,37 @@ commands.tpland = {
 			return false, string.format("Land %d spawn not found.", landNum)
 		end
 
-		local character = sender.Character
-		if not character or not character.Parent then
-			return false, "No character to teleport."
+		local moved = 0
+		local failed = 0
+		for i, target in targets do
+			local character = target.Character
+			if not character or not character.Parent then
+				failed += 1
+				continue
+			end
+			local offset: CFrame
+			if #targets <= 1 then
+				offset = CFrame.identity
+			else
+				local angle = ((i - 1) / #targets) * math.pi * 2
+				local radius = 4
+				offset = CFrame.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+			end
+			PlotSpawnUtil.teleportCharacterToCFrame(character, spawnCf * offset)
+			moved += 1
 		end
 
-		PlotSpawnUtil.teleportCharacterToCFrame(character, spawnCf)
-		return true, string.format("Teleported to Land %d spawn.", landNum)
+		if moved == 0 then
+			return false, "Teleport failed (missing characters)."
+		end
+		if #targets == 1 and targets[1] == sender then
+			return true, string.format("Teleported to Land %d spawn.", landNum)
+		end
+		if failed > 0 then
+			return true,
+				string.format("Teleported %d player(s) to Land %d (%d failed).", moved, landNum, failed)
+		end
+		return true, string.format("Teleported %d player(s) to Land %d.", moved, landNum)
 	end,
 }
 commands.land = commands.tpland

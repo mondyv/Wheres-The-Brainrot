@@ -3028,18 +3028,24 @@ function ProximityPromptEffects.init()
 			return
 		end
 
-		for prompt in styledPrompts do
+		-- Only live views + active bush/stand — never walk every styled prompt on the map.
+		for prompt, view in viewsByPrompt do
 			if not prompt.Parent then
 				continue
 			end
-			local view = viewsByPrompt[prompt]
-			local visible = view ~= nil and view.billboard.Parent ~= nil and view.billboard.Enabled
+			local visible = view.billboard.Parent ~= nil and view.billboard.Enabled
 			local want = shouldShowPromptUi(prompt)
-
 			if want and not visible and prompt.Enabled and prompt:GetAttribute(C.CUSTOM_ATTR) == true then
 				onPromptShown(prompt, nil)
 			elseif not want and visible then
 				hideView(prompt, true)
+			end
+		end
+
+		if activeStandPrompt and activeStandPrompt.Parent and shouldShowPromptUi(activeStandPrompt) then
+			local view = viewsByPrompt[activeStandPrompt]
+			if not (view and view.billboard.Parent and view.billboard.Enabled) then
+				onPromptShown(activeStandPrompt, nil)
 			end
 		end
 

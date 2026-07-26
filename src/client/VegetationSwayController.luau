@@ -10,8 +10,9 @@ local Workspace = game:GetService("Workspace")
 
 local M = {}
 
-local MAX_ACTIVE = 24
-local SCAN_INTERVAL_SEC = 0.55
+local MAX_ACTIVE = 10
+local SCAN_INTERVAL_SEC = 0.7
+local SWAY_STEP_INTERVAL = 1 / 20
 local GRASS_RADIUS = 3.4
 local GRASS_RADIUS_SQ = GRASS_RADIUS * GRASS_RADIUS
 local GRASS_TILT_RAD = math.rad(13)
@@ -20,7 +21,6 @@ local BLEND_IN = 7.5
 local BLEND_OUT = 4.2
 local CLEAR_EPS = 0.02
 local LEAVE_GRACE_SEC = 0.14
-local STEP_NAME = "VegetationSwayStep"
 local DIR_SMOOTH = 6
 -- Coarse grid so scans touch nearby cells only (not every grasspart on the map).
 local CELL_SIZE = 8
@@ -63,8 +63,8 @@ end
 
 local active: { [BasePart]: ActiveSway } = {}
 local activeCount = 0
-local stepBound = false
 local scanAccum = 0
+local swayStepAccum = 0
 local heartbeatConn: RBXScriptConnection? = nil
 local charConns: { RBXScriptConnection } = {}
 local lastMoveFlat = Vector3.new(0, 0, -1)
@@ -95,15 +95,6 @@ local function makeAxis(pushDir: Vector3): Vector3
 	return axis.Unit
 end
 
-local function unbindStep()
-	if stepBound then
-		pcall(function()
-			RunService:UnbindFromRenderStep(STEP_NAME)
-		end)
-		stepBound = false
-	end
-end
-
 local function restoreAndClear(part: BasePart)
 	local entry = active[part]
 	if not entry then
@@ -114,15 +105,12 @@ local function restoreAndClear(part: BasePart)
 	end
 	active[part] = nil
 	activeCount = math.max(0, activeCount - 1)
-	if activeCount == 0 then
-		unbindStep()
-	end
 end
 
 local function stepSways(dt: number)
 	local now = os.clock()
 	local toClear: { BasePart } = {}
-	local safeDt = math.clamp(dt, 0, 0.05)
+	local safeDt = math.clamp(dt, 0, 0.08)
 
 	for part, entry in active do
 		if not part.Parent then
@@ -159,14 +147,6 @@ local function stepSways(dt: number)
 	for _, part in toClear do
 		restoreAndClear(part)
 	end
-end
-
-local function bindStep()
-	if stepBound then
-		return
-	end
-	RunService:BindToRenderStep(STEP_NAME, Enum.RenderPriority.Last.Value, stepSways)
-	stepBound = true
 end
 
 local function addGrassPart(part: BasePart)
@@ -321,7 +301,6 @@ local function touchGrass(part: BasePart, pushDir: Vector3): boolean
 		push = GRASS_PUSH,
 	}
 	activeCount += 1
-	bindStep()
 	return true
 end
 
@@ -409,7 +388,6 @@ local function clearAllSways()
 	for _, part in parts do
 		restoreAndClear(part)
 	end
-	unbindStep()
 end
 
 local function bindCharacter(character: Model)
@@ -437,6 +415,17 @@ local function bindCharacter(character: Model)
 end
 
 local function onHeartbeat(dt: number)
+	if activeCount > 0 then
+		swayStepAccum += dt
+		if swayStepAccum >= SWAY_STEP_INTERVAL then
+			local stepDt = swayStepAccum
+			swayStepAccum = 0
+			stepSways(stepDt)
+		end
+	else
+		swayStepAccum = 0
+	end
+
 	scanAccum += dt
 	if scanAccum < SCAN_INTERVAL_SEC then
 		return

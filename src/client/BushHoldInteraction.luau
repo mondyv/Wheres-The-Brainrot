@@ -31,9 +31,9 @@ local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
 local BUSH_COOLDOWN_ENDS_ATTR = "BushCooldownEndsAt"
 local BUSH_LOOT_PHASE_COOLDOWN = "cooldown"
 local BUSH_FLOATING_CLAIM_ATTR = "BushFloatingClaimActive"
-local AIM_TICK_INTERVAL = 0.08
-local PICK_FULL_SCAN_INTERVAL = 0.55
-local COOLDOWN_VISUAL_SYNC_INTERVAL = 0.6
+local AIM_TICK_INTERVAL = 0.16
+local PICK_FULL_SCAN_INTERVAL = 0.7
+local COOLDOWN_VISUAL_SYNC_INTERVAL = 1.0
 local _BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 
 local bushByModel: { [Instance]: ProximityPrompt } = {}
@@ -41,6 +41,7 @@ local scheduleBushMapScan: (Instance) -> ()
 local bushAnchor: { [Instance]: BasePart } = {}
 local pendingParts: { [Instance]: RBXScriptConnection } = {}
 local cooldownHighlights: { [Instance]: Highlight } = {}
+local lastEnabledBushPrompt: ProximityPrompt? = nil
 local lastHarvestAt = 0
 local lastHarvestPrompt: ProximityPrompt? = nil
 
@@ -167,11 +168,20 @@ local function _stripExtraPrompts(root: Instance, keep: ProximityPrompt?)
 end
 
 local function setAllBushPromptsEnabled(enabledPrompt: ProximityPrompt?)
-	for _, p in bushByModel do
-		if p.Parent then
-			p.Enabled = p == enabledPrompt
+	-- Only toggle previous + next. Walking Enabled on every bush each retarget hitchs.
+	if lastEnabledBushPrompt and lastEnabledBushPrompt ~= enabledPrompt and lastEnabledBushPrompt.Parent then
+		lastEnabledBushPrompt.Enabled = false
+	end
+	if enabledPrompt and enabledPrompt.Parent then
+		enabledPrompt.Enabled = true
+	elseif not enabledPrompt then
+		for _, p in bushByModel do
+			if p.Parent and p.Enabled then
+				p.Enabled = false
+			end
 		end
 	end
+	lastEnabledBushPrompt = enabledPrompt
 end
 
 local function attachPrompt(root: Instance)
@@ -199,7 +209,7 @@ local function attachPrompt(root: Instance)
 	prompt.RequiresLineOfSight = false
 	prompt.Exclusivity = Enum.ProximityPromptExclusivity.OnePerButton
 	prompt.Style = Enum.ProximityPromptStyle.Custom
-	prompt.Enabled = true
+	prompt.Enabled = false
 	prompt:SetAttribute(BUSH_MANAGED_ATTR, true)
 	pcall(function()
 		(prompt :: any).ClickablePrompt = true
@@ -391,58 +401,13 @@ local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 end
 
-local function bushHighlightInViewRange(model: Instance): boolean
-	local prompt = bushByModel[model]
-	if not prompt or not prompt.Parent then
-		return false
-	end
-	return ProximityPromptEffects.isBushSearchInViewRange(prompt)
-end
-
 syncCooldownVisuals = function()
+	-- Destroy any leftover cooldown Highlights (AlwaysOnTop Highlight spam = big GPU hitch).
 	for bush, hl in cooldownHighlights do
-		if not bush.Parent or not isBushInSearchCooldown(bush) or not bushHighlightInViewRange(bush) then
+		if hl.Parent then
 			hl:Destroy()
-			cooldownHighlights[bush] = nil
 		end
-	end
-
-	local cam = workspace.CurrentCamera
-	for model in bushByModel do
-		if not model.Parent then
-			continue
-		end
-		if model:GetAttribute(BUSH_FLOATING_CLAIM_ATTR) == true then
-			local hl = cooldownHighlights[model]
-			if hl then
-				hl:Destroy()
-				cooldownHighlights[model] = nil
-			end
-			continue
-		end
-		if not isBushInSearchCooldown(model) then
-			continue
-		end
-		if not bushHighlightInViewRange(model) then
-			local hl = cooldownHighlights[model]
-			if hl then
-				hl:Destroy()
-				cooldownHighlights[model] = nil
-			end
-			continue
-		end
-		local hl = cooldownHighlights[model]
-		if not hl then
-			hl = Instance.new("Highlight")
-			hl.Name = "BushCooldownHighlight"
-			if cam then
-				hl.Parent = cam
-			end
-			cooldownHighlights[model] = hl
-		elseif cam and hl.Parent ~= cam then
-			hl.Parent = cam
-		end
-		applyBushHighlight(hl, model, true)
+		cooldownHighlights[bush] = nil
 	end
 
 	ProximityPromptEffects.syncBushCooldownBanners(bushByModel)

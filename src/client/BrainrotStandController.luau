@@ -46,10 +46,13 @@ local PLACE_PROMPT_ATTR = "BrainrotPlacePrompt"
 local STEAL_PROMPT_ATTR = "StealPrompt"
 local DEFAULT_PLACE_DISTANCE = 10
 local DEFAULT_PICKUP_DISTANCE = 14
-local PROMPT_REFRESH_INTERVAL = 0.3
-local PROMPT_MOVE_SKIP_THRESHOLD = 2
+local PROMPT_REFRESH_INTERVAL = 0.55
+local PROMPT_MOVE_SKIP_THRESHOLD = 2.5
+local STAND_CANDIDATE_RANGE = 40
+local STAND_CANDIDATE_RANGE_SQ = STAND_CANDIDATE_RANGE * STAND_CANDIDATE_RANGE
 local STAND_LAZY_INIT_RANGE = 220
 local _lastShownStandPrompt: ProximityPrompt? = nil
+local lastEnabledStandPrompts: { [ProximityPrompt]: boolean } = {}
 
 local player = Players.LocalPlayer
 local _MONEY_VFX_HOLD_SEC = 0.14
@@ -747,12 +750,26 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 
 	type Candidate = { prompt: ProximityPrompt, dist: number }
 	local candidates: { Candidate } = {}
-	local allPrompts: { ProximityPrompt } = {}
+	local nearbyPrompts: { [ProximityPrompt]: boolean } = {}
 
 	for _, stand in ipairs(cachedTaggedStands) do
 		if not stand.Parent or not stand:IsDescendantOf(ws) then
 			continue
 		end
+
+		-- Cheap XZ gate before prompt work / facing checks.
+		local okPivot, pivot = pcall(function()
+			return stand:GetPivot()
+		end)
+		if okPivot and typeof(pivot) == "CFrame" then
+			local p = (pivot :: CFrame).Position
+			local dx = p.X - hrpPos.X
+			local dz = p.Z - hrpPos.Z
+			if dx * dx + dz * dz > STAND_CANDIDATE_RANGE_SQ then
+				continue
+			end
+		end
+
 		local canonical = getStandProximityPrompt(stand)
 		if canonical and not canonical.Parent then
 			invalidateStandPromptCache(stand)
@@ -763,7 +780,7 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 		end
 		for _, pp in getAllStandProximityPrompts(stand) do
 			if pp.Parent then
-				table.insert(allPrompts, pp)
+				nearbyPrompts[pp] = true
 			end
 		end
 
@@ -817,16 +834,25 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 	end
 
 	local closestPrompt = if closest then closest.prompt else nil
-	for _, pp in allPrompts do
-		if pp == closestPrompt or isStealProximityPrompt(pp) then
-			continue
+	for pp in lastEnabledStandPrompts do
+		if pp ~= closestPrompt and not isStealProximityPrompt(pp) then
+			if pp.Parent then
+				pp.Enabled = false
+				ProximityPromptEffects.forceHide(pp)
+			end
+			lastEnabledStandPrompts[pp] = nil
 		end
-		pp.Enabled = false
-		ProximityPromptEffects.forceHide(pp)
+	end
+	for pp in nearbyPrompts do
+		if pp ~= closestPrompt and not isStealProximityPrompt(pp) and pp.Enabled then
+			pp.Enabled = false
+			ProximityPromptEffects.forceHide(pp)
+		end
 	end
 
 	if closest then
 		closest.prompt.Enabled = true
+		lastEnabledStandPrompts[closest.prompt] = true
 		ProximityPromptEffects.syncStandProximityUi(closest.prompt)
 		-- Always ensure the card exists (safe no-op if already live). Skipping when the
 		-- prompt identity was unchanged left Pick Up / Place missing after hide/facing flicker.

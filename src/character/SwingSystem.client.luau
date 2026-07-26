@@ -130,9 +130,11 @@ C.LOOK_DOWN_PITCH = -0.22
 C.LOOK_DOWN_FORWARD_DOT = 0.12
 C.MIN_TARGET_HEIGHT_OFFSET = -8
 C.TARGET_SCAN_INTERVAL = 0.12
+C.TARGET_SCAN_INTERVAL_GROUNDED = 0.28
 C.TARGET_CANDIDATE_EXTRA_RADIUS = 4
 C.TARGET_GRID_CELL_SIZE = 64
 C.TARGET_MAX_CANDIDATES_PER_SCAN = 45
+C.TARGET_MAX_CANDIDATES_GROUNDED = 18
 C.TARGET_FULL_SCAN_FALLBACK_LIMIT = 180
 C.TARGET_ENABLE_VINE_NAME_FALLBACK = false
 C.TARGET_BACKGROUND_SEED_ENABLED = false
@@ -5484,14 +5486,19 @@ local function boot(character)
 			if scanMode == "none" then
 				st.hideSwingTargetUi()
 			else
+				local scanInterval = if scanMode == "ground" then C.TARGET_SCAN_INTERVAL_GROUNDED else C.TARGET_SCAN_INTERVAL
 				local needsScan = scanMode ~= st.lastTargetScanMode
-					or now - st.lastTargetScanClock >= C.TARGET_SCAN_INTERVAL
+					or now - st.lastTargetScanClock >= scanInterval
 					or (st.scannedVisualTarget ~= nil and not st.scannedVisualTarget.Parent)
 					or (not st.targetVisualShown and st.scannedVisualTarget == nil)
 
 				if needsScan then
 					st.lastTargetScanClock = now
 					st.lastTargetScanMode = scanMode
+					local prevCandidateCap = C.TARGET_MAX_CANDIDATES_PER_SCAN
+					if scanMode == "ground" then
+						C.TARGET_MAX_CANDIDATES_PER_SCAN = C.TARGET_MAX_CANDIDATES_GROUNDED
+					end
 					local scanDistance, scanLookDot, scanScreenLimit = st.getSwingAttachLimits()
 					if not scanDistance then
 						scanDistance, scanLookDot, scanScreenLimit = 0, nil, nil
@@ -5513,6 +5520,7 @@ local function boot(character)
 								st.pickVisualSwingTarget(scanDistance, scanDistance, st.highlightedTarget, false, scanLookDot, scanScreenLimit)
 						end
 					end
+					C.TARGET_MAX_CANDIDATES_PER_SCAN = prevCandidateCap
 					if
 						st.scannedVisualTarget ~= st.lastVisualTarget
 						or st.scannedVisualCanSwing ~= st.lastVisualCanSwing

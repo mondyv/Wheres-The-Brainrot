@@ -989,7 +989,7 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	end)
 end
 
-local function pointAtGui(target: GuiObject?, force: boolean?)
+local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boolean?)
 	clearUiPointer()
 	local allow = force == true or (not chromeSuppressed and not isCutsceneBusy())
 	if not allow then
@@ -1002,7 +1002,7 @@ local function pointAtGui(target: GuiObject?, force: boolean?)
 	uiPointerForced = force == true
 	uiPointerHost = target
 
-	-- Prefer the cash Buy chip so stroke/hand sit on the green $ button, not a tiny child.
+	-- Prefer the cash Buy chip so stroke sits on the green $ button, not a tiny child.
 	local attachHost = target
 	local buyAncestor = target:FindFirstAncestor("Buy")
 	if buyAncestor and buyAncestor:IsA("GuiObject") then
@@ -1018,6 +1018,11 @@ local function pointAtGui(target: GuiObject?, force: boolean?)
 	stroke.Transparency = 0.1
 	stroke.Parent = attachHost
 	uiPointerStroke = stroke
+
+	-- Upgrade menu: outline only (no click hand).
+	if strokeOnly == true then
+		return
+	end
 
 	local pointer = Instance.new("ImageLabel")
 	pointer.Name = "TutorialUiClick"
@@ -1598,17 +1603,17 @@ local function refreshPointersImpl()
 	elseif step.id == "buyPower" then
 		local btn = cacheUpgradesBuyButton()
 		if btn and isGuiTreeVisible(btn) then
-			pointAtGui(btn)
+			pointAtGui(btn, nil, true)
 			task.defer(function()
 				task.wait(0.2)
 				if not active or chromeSuppressed or isCutsceneBusy() then
 					return
 				end
 				local cur = currentStep()
-				if cur and cur.id == "buyPower" and not uiPointer then
+				if cur and cur.id == "buyPower" and not uiPointerStroke then
 					local again = cacheUpgradesBuyButton()
 					if again and isGuiTreeVisible(again) then
-						pointAtGui(again)
+						pointAtGui(again, nil, true)
 					end
 				end
 			end)
@@ -1810,7 +1815,7 @@ local function watchStepProgress()
 				end
 			elseif step.id == "buyPower" then
 				local btn = cacheUpgradesBuyButton()
-				if btn and isGuiTreeVisible(btn) and not uiPointer then
+				if btn and isGuiTreeVisible(btn) and not uiPointerStroke then
 					refreshPointers()
 				end
 			end
@@ -1819,9 +1824,9 @@ local function watchStepProgress()
 		if step.id == "buyPower" then
 			local btn = cacheUpgradesBuyButton()
 			if btn and isGuiTreeVisible(btn) then
-				if not uiPointer or uiPointerHost ~= btn then
+				if not uiPointerStroke or uiPointerHost ~= btn then
 					clearWorldArrow()
-					pointAtGui(btn)
+					pointAtGui(btn, nil, true)
 				end
 			elseif not worldArrowBb then
 				pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))

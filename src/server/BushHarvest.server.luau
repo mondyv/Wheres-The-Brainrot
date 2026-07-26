@@ -1879,7 +1879,7 @@ do
 		label.Text = EMPTY_BUSH_MESSAGE
 		label.TextWrapped = true
 		label.TextColor3 = Color3.fromRGB(240, 255, 244)
-		UiFonts.applyDisplayLabel(label, 20, 14)
+		UiFonts.applyBodyLabel(label, 20, 14)
 		label.Parent = billboard
 
 		local textStroke = Instance.new("UIStroke")

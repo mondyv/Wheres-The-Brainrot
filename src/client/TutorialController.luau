@@ -262,8 +262,6 @@ local function syncPanelToSideButtonsImpl()
 		return
 	end
 
-	-- Stay on TutorialObjective ScreenGui; AbsolutePosition is always the on-screen
-	-- top-left of Lef1 (independent of Lef1 AnchorPoint / SideUI UIScale).
 	if panel.Parent ~= root then
 		panel.Parent = root
 	end
@@ -273,14 +271,35 @@ local function syncPanelToSideButtonsImpl()
 
 	local gap = TutorialConfig.PANEL_GAP_ABOVE_SIDE
 	local height = TutorialConfig.PANEL_HEIGHT
+	local leftPad = TutorialConfig.PANEL_LEFT_PAD
 	local ap = lef1.AbsolutePosition
-	local as = lef1.AbsoluteSize
-	local width = math.max(as.X, 220)
+
+	-- Use the highest visible chrome under Lef1 (icons / NEW badges) as the top edge.
+	local topY = ap.Y
+	local function consider(obj: GuiObject)
+		if not obj.Visible or obj.AbsoluteSize.X < 2 or obj.AbsoluteSize.Y < 2 then
+			return
+		end
+		topY = math.min(topY, obj.AbsolutePosition.Y)
+	end
+	consider(lef1)
+	for _, d in lef1:GetDescendants() do
+		if d:IsA("GuiObject") then
+			consider(d)
+		end
+	end
+
+	local textW = 0
+	if objectiveLabel and objectiveLabel.Text ~= "" then
+		textW = objectiveLabel.TextBounds.X
+	end
+	-- bang + text + dots reserve + horizontal padding
+	local contentW = 54 + textW + 40 + 28
+	local width = math.max(TutorialConfig.PANEL_MIN_WIDTH, contentW)
 
 	panel.AnchorPoint = Vector2.new(0, 1)
 	panel.Size = UDim2.fromOffset(width, height)
-	-- Bottom edge sits `gap` px above Lef1's top edge.
-	panel.Position = UDim2.fromOffset(ap.X, ap.Y - gap)
+	panel.Position = UDim2.fromOffset(ap.X + leftPad, topY - gap)
 	panel.ZIndex = 50
 	panel.Visible = active and not chromeSuppressed
 end
@@ -430,9 +449,9 @@ local function ensureGui()
 	panelFrame.Name = "ObjectivePanel"
 	panelFrame.AnchorPoint = Vector2.new(0, 1)
 	panelFrame.Position = UDim2.new(0, 18, 0, 200)
-	panelFrame.Size = UDim2.fromOffset(280, TutorialConfig.PANEL_HEIGHT)
-	panelFrame.BackgroundColor3 = Color3.fromRGB(8, 10, 14)
-	panelFrame.BackgroundTransparency = 0.08
+	panelFrame.Size = UDim2.fromOffset(TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_HEIGHT)
+	panelFrame.BackgroundColor3 = Color3.fromRGB(36, 40, 52)
+	panelFrame.BackgroundTransparency = 0.22
 	panelFrame.BorderSizePixel = 0
 	panelFrame.ClipsDescendants = false
 	panelFrame.Parent = rootFrame
@@ -442,16 +461,16 @@ local function ensureGui()
 	corner.Parent = panelFrame
 
 	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(0, 0, 0)
-	stroke.Thickness = 2.2
-	stroke.Transparency = 0.15
+	stroke.Color = Color3.fromRGB(12, 14, 18)
+	stroke.Thickness = 1.6
+	stroke.Transparency = 0.35
 	stroke.Parent = panelFrame
 	panelStroke = stroke
 
 	local blurFake = Instance.new("Frame")
 	blurFake.Name = "PanelSheen"
-	blurFake.BackgroundColor3 = Color3.fromRGB(22, 26, 34)
-	blurFake.BackgroundTransparency = 0.35
+	blurFake.BackgroundColor3 = Color3.fromRGB(48, 54, 68)
+	blurFake.BackgroundTransparency = 0.55
 	blurFake.BorderSizePixel = 0
 	blurFake.Size = UDim2.fromScale(1, 1)
 	blurFake.ZIndex = 1
@@ -462,7 +481,7 @@ local function ensureGui()
 
 	local pad = Instance.new("UIPadding")
 	pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 14)
 	pad.Parent = panelFrame
 
 	local scale = Instance.new("UIScale")

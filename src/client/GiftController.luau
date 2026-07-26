@@ -17,11 +17,14 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local HUDController = require(script.Parent.HUDController)
 local TopNotifController = require(script.Parent.TopNotifController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local PurchaseEffectClient =
+	require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchaseEffect"):WaitForChild("PurchaseEffectClient"))
 
 local player = Players.LocalPlayer
 
@@ -55,6 +58,18 @@ local giftBuyProductRE: RemoteEvent? = nil
 local giftBuyGamepassRE: RemoteEvent? = nil
 
 local giftingChangedListeners: { () -> () } = {}
+local giftPurchasePromptOpen = false
+
+local function healHudAfterGiftPurchase()
+	PurchaseEffectClient:forceHide()
+	-- CloseStore + confetti can race animateClose and leave GameplayUiVisibility parked.
+	HUDController.closeFrameByName("Store")
+	HUDController.forceClearPanelModal()
+	task.delay(0.4, function()
+		HUDController.forceClearPanelModal()
+		PurchaseEffectClient:forceHide()
+	end)
+end
 
 local function notifyGiftingChanged()
 	for _, listener in giftingChangedListeners do
@@ -63,6 +78,12 @@ local function notifyGiftingChanged()
 			warn("[GiftController] onGiftingChanged error:", err)
 		end
 	end
+end
+
+local function beginGiftPurchaseOverlay()
+	giftPurchasePromptOpen = true
+	PurchaseEffectClient:init()
+	PurchaseEffectClient:show()
 end
 
 -- ── Small helpers ────────────────────────────────────────────────────────────────
@@ -354,6 +375,18 @@ local function init()
 
 	wireGiftRemotes()
 	applyGiftingVisuals(false)
+
+	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId: number, _productId: number, wasPurchased: boolean)
+		if userId ~= player.UserId or not giftPurchasePromptOpen then
+			return
+		end
+		giftPurchasePromptOpen = false
+		if wasPurchased then
+			healHudAfterGiftPurchase()
+		else
+			PurchaseEffectClient:forceHide()
+		end
+	end)
 end
 
 local function boot()
@@ -387,6 +420,7 @@ function GiftController.requestGiftProduct(productId: number)
 		warn("[GiftController] GiftBuyProduct remote unavailable")
 		return
 	end
+	beginGiftPurchaseOverlay()
 	giftBuyProductRE:FireServer(giftTargetUserId, productId)
 end
 
@@ -398,6 +432,7 @@ function GiftController.requestGiftGamepass(gamepassId: number)
 		warn("[GiftController] GiftBuyGamepass remote unavailable")
 		return
 	end
+	beginGiftPurchaseOverlay()
 	giftBuyGamepassRE:FireServer(giftTargetUserId, gamepassId)
 end
 

@@ -743,6 +743,13 @@ local function init()
 		if closeRE and closeRE:IsA("RemoteEvent") then
 			closeRE.OnClientEvent:Connect(function()
 				HUDController.closeFrameByName("Store")
+				-- Gift buys + confetti can skip animateClose's showPanelChrome; hard-restore HUD.
+				task.defer(function()
+					HUDController.forceClearPanelModal()
+				end)
+				task.delay(0.4, function()
+					HUDController.forceClearPanelModal()
+				end)
 			end)
 		end
 	end)

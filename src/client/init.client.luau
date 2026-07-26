@@ -328,6 +328,9 @@ task.defer(function()
 				require(script.SafeZoneBeaconController).init()
 			end,
 			function()
+				require(script.PlotOutlineController).init()
+			end,
+			function()
 				require(script.FireflyController).init()
 			end,
 			function()

@@ -23,6 +23,7 @@ local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local HUDController = require(script.Parent.HUDController)
 local TopNotifController = require(script.Parent.TopNotifController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local PurchaseEffectClient =
 	require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchaseEffect"):WaitForChild("PurchaseEffectClient"))
 
@@ -441,6 +442,12 @@ function GiftController.requestGiftGamepass(gamepassId: number)
 	end
 	if not giftBuyGamepassRE then
 		warn("[GiftController] GiftBuyGamepass remote unavailable")
+		TopNotifController.showError("Gift system isn't ready yet — try again.")
+		return
+	end
+	local giftProductId = StoreConfig.getGiftGamepassProductId(gamepassId)
+	if not giftProductId then
+		TopNotifController.showError("Gifting isn't set up for this pass yet.")
 		return
 	end
 	beginGiftPurchaseOverlay()

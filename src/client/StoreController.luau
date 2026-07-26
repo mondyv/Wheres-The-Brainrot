@@ -237,13 +237,23 @@ end
 
 local function refreshOwnedBuy(entry: OwnedBuyEntry)
 	local owned = player:GetAttribute(entry.ownedAttr) == true
-
-	if owned then
+	-- While gifting, keep the button usable even if the buyer already owns the pass —
+	-- the purchase is for someone else via a gift developer product.
+	if owned and not GiftController.isGifting() then
 		MainGradientButtons.applyPurchased(entry.buy)
 		setButtonEnabledNoOverlay(entry.buy, entry.state, false)
 	else
 		MainGradientButtons.applyDefault(entry.buy)
 		setButtonEnabled(entry.buy, entry.state, true)
+	end
+end
+
+local function refreshAllOwnedBuys()
+	for _, entry in ownedBuyByGamePassId do
+		refreshOwnedBuy(entry)
+	end
+	for _, entry in ownedBuyByProductId do
+		refreshOwnedBuy(entry)
 	end
 end
 
@@ -380,7 +390,8 @@ local function wirePacks(container: Instance)
 						string.format("%d/%d available", remaining, StoreConfig.PACK_PURCHASE_LIMIT)
 				end
 				local soldOut = remaining <= 0
-				if soldOut then
+				local gifting = GiftController.isGifting()
+				if soldOut and not gifting then
 					if availableLabel and (availableLabel:IsA("TextLabel") or availableLabel:IsA("TextButton")) then
 						(availableLabel :: TextLabel).Text = "Purchased"
 					end
@@ -395,6 +406,7 @@ local function wirePacks(container: Instance)
 			player:GetAttributeChangedSignal(pack.boughtAttr):Connect(refresh)
 			ownedBuyByProductId[pack.productId] = entry
 			refresh()
+			GiftController.onGiftingChanged(refresh)
 		end
 	end
 end
@@ -691,6 +703,10 @@ local function init()
 	applyCashBundleLabelsFromEffective(effectiveOffline24hCash())
 
 	local refreshFreeBrainrot = wireFreeBrainrot(storeFrame)
+	GiftController.onGiftingChanged(function()
+		refreshAllOwnedBuys()
+		refreshFreeBrainrot()
+	end)
 
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, gamePassId, wasPurchased)
 		if plr ~= player or not wasPurchased then

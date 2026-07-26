@@ -170,13 +170,25 @@ local function tryTrack(inst: Instance)
 end
 
 local function scanWorkspace()
+	-- Stack GetChildren + yields. Never Workspace:GetDescendants() (sync timeout).
+	local stack: { Instance } = { Workspace }
 	local scanned = 0
-	for _, d in Workspace:GetDescendants() do
-		scanned += 1
-		if scanned % 4000 == 0 then
-			task.wait()
+	while #stack > 0 do
+		local node = table.remove(stack) :: Instance
+		local ok, children = pcall(function()
+			return node:GetChildren()
+		end)
+		if not ok or typeof(children) ~= "table" then
+			continue
 		end
-		tryTrack(d)
+		for _, ch in children do
+			scanned += 1
+			if scanned % 250 == 0 then
+				task.wait()
+			end
+			tryTrack(ch)
+			table.insert(stack, ch)
+		end
 	end
 	for _, plr in Players:GetPlayers() do
 		local bp = plr:FindFirstChildOfClass("Backpack")

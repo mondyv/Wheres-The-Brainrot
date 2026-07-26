@@ -2807,7 +2807,12 @@ purgeOrphanPromptBillboards = function()
 	if not pg then
 		return
 	end
+	local scanned = 0
 	for _, desc in ipairs(pg:GetDescendants()) do
+		scanned += 1
+		if scanned % 300 == 0 then
+			task.wait()
+		end
 		if desc:IsA("BillboardGui") then
 			local n = desc.Name
 			if n == "CustomProximityPrompt" or n == "BushSearchSharedPrompt" then

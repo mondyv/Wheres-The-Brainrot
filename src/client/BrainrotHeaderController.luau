@@ -5,6 +5,7 @@
 --]]
 
 local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
@@ -437,17 +438,18 @@ function BrainrotHeaderController.init()
 				bb.MaxDistance = HEADER_MAX_DISTANCE
 			end
 		end
-		local pg = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+		-- Never Workspace:GetDescendants() — that sync-builds the whole map tree and times out Studio.
+		local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
 		if pg then
+			local scanned = 0
 			for _, d in pg:GetDescendants() do
+				scanned += 1
+				if scanned % 400 == 0 then
+					task.wait()
+				end
 				if d:IsA("BillboardGui") and d.Name == HEADER_NAME then
 					d.MaxDistance = HEADER_MAX_DISTANCE
 				end
-			end
-		end
-		for _, d in Workspace:GetDescendants() do
-			if d:IsA("BillboardGui") and d.Name == HEADER_NAME then
-				d.MaxDistance = HEADER_MAX_DISTANCE
 			end
 		end
 	end

@@ -348,14 +348,24 @@ local function syncPanelToSideButtonsImpl()
 end
 syncPanelToSideButtons = syncPanelToSideButtonsImpl
 
+local layoutSyncAccum = 0.0
+local LAYOUT_SYNC_HZ = 10
+
 local function startLayoutSync()
 	if layoutConn then
 		layoutConn:Disconnect()
 	end
-	layoutConn = RunService.RenderStepped:Connect(function()
+	layoutSyncAccum = 0
+	-- Throttled — writing Size/Position every RenderStepped can starve Studio/CorePackages.
+	layoutConn = RunService.Heartbeat:Connect(function(dt)
 		if not active or chromeSuppressed then
 			return
 		end
+		layoutSyncAccum += dt
+		if layoutSyncAccum < (1 / LAYOUT_SYNC_HZ) then
+			return
+		end
+		layoutSyncAccum = 0
 		syncPanelToSideButtons()
 	end)
 end
@@ -1057,17 +1067,8 @@ local function resolveNearestBush(): BasePart?
 	BushHoldInteraction.forEachRegisteredBush(considerBush)
 
 	if not bestPart then
-		local map = Workspace:FindFirstChild("Map")
-		if map then
-			for _, d in map:GetDescendants() do
-				if d:IsA("ProximityPrompt") and CarryGate.isBushSearchPrompt(d) then
-					local rootBush = BushRootUtil.resolveBushRootFromPrompt(d)
-					if rootBush then
-						considerBush(rootBush)
-					end
-				end
-			end
-		end
+		-- Avoid Map:GetDescendants() (sync timeout). Prefer registered bushes only.
+		warn("[TutorialController] No bush in registry for searchBush pointer")
 	end
 
 	if bestPart and bestRoot then

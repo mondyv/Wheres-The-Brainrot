@@ -2248,6 +2248,11 @@ local ToolbarController = {}
 		if typeof(minW) ~= "number" or typeof(minH) ~= "number" then
 			return
 		end
+		-- Fixed pixel clamp only — never AbsoluteSize + ScaleWithParentSize (Studio timeout loop).
+		local aspect = icon:FindFirstChild("ToggleIconAspect")
+		if aspect then
+			aspect:Destroy()
+		end
 		local constraint = icon:FindFirstChild("ToggleIconSizeConstraint")
 		if not constraint or not constraint:IsA("UISizeConstraint") then
 			constraint = Instance.new("UISizeConstraint")
@@ -2256,46 +2261,15 @@ local ToolbarController = {}
 		end
 		local sizeLock = constraint :: UISizeConstraint
 		sizeLock.MinSize = Vector2.new(minW, minH)
-
-		local slot = slots[1]
-		if slot and slot:IsA("GuiObject") then
-			local slotAbs = (slot :: GuiObject).AbsoluteSize
-			if slotAbs.X > 0 and slotAbs.Y > 0 then
-				local aspect = icon:FindFirstChild("ToggleIconAspect")
-				if not aspect or not aspect:IsA("UIAspectRatioConstraint") then
-					aspect = Instance.new("UIAspectRatioConstraint")
-					aspect.Name = "ToggleIconAspect"
-					aspect.Parent = icon
-				end
-				local aspectLock = aspect :: UIAspectRatioConstraint
-				aspectLock.AspectRatio = slotAbs.X / slotAbs.Y
-				aspectLock.AspectType = Enum.AspectType.ScaleWithParentSize
-			end
-		end
+		sizeLock.MaxSize = Vector2.new(minW, minH)
 	end
 
 	local function wireToggleBackpackIconResizeSync()
+		-- No-op: inventory ToggleBackpackImage stays under Backpack (no hotbar AbsoluteSize sync).
 		if hotbar:GetAttribute("_ToggleIconResizeWired") == true then
 			return
 		end
 		hotbar:SetAttribute("_ToggleIconResizeWired", true)
-		hotbar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-			task.defer(refreshToggleBackpackIconLayout)
-		end)
-		local camera = workspace.CurrentCamera
-		if camera then
-			camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-				task.defer(refreshToggleBackpackIconLayout)
-			end)
-		end
-		workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
-			local cam = workspace.CurrentCamera
-			if cam then
-				cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-					task.defer(refreshToggleBackpackIconLayout)
-				end)
-			end
-		end)
 	end
 
 	local function captureToggleIconPixelSize(icon: GuiObject): (number?, number?)

@@ -179,25 +179,38 @@ local function indexLandFolder(landFolder: Instance)
 		return
 	end
 
-	for _, desc in grassFolder:GetDescendants() do
-		if string.lower(desc.Name) ~= "grasspart" then
-			continue
-		end
-		if desc:IsA("BasePart") then
-			addGrassPart(desc)
-		elseif desc:IsA("Model") then
-			local any = false
-			for _, child in desc:GetChildren() do
-				if child:IsA("BasePart") then
-					addGrassPart(child)
-					any = true
-				end
+	-- Stack walk + yields — never grassFolder:GetDescendants() (sync timeout on big lands).
+	local stack: { Instance } = { grassFolder }
+	local scanned = 0
+	while #stack > 0 do
+		local node = table.remove(stack) :: Instance
+		for _, desc in node:GetChildren() do
+			scanned += 1
+			if scanned % 200 == 0 then
+				task.wait()
 			end
-			if not any then
-				local part = desc:FindFirstChildWhichIsA("BasePart", true)
-				if part then
-					addGrassPart(part)
+			if string.lower(desc.Name) ~= "grasspart" then
+				table.insert(stack, desc)
+				continue
+			end
+			if desc:IsA("BasePart") then
+				addGrassPart(desc)
+			elseif desc:IsA("Model") then
+				local any = false
+				for _, child in desc:GetChildren() do
+					if child:IsA("BasePart") then
+						addGrassPart(child)
+						any = true
+					end
 				end
+				if not any then
+					local part = desc:FindFirstChildWhichIsA("BasePart", true)
+					if part then
+						addGrassPart(part)
+					end
+				end
+			else
+				table.insert(stack, desc)
 			end
 		end
 	end
@@ -209,20 +222,29 @@ local function clearIndex()
 	table.clear(indexedParts)
 end
 
+local indexBusy = false
+
 local function rebuildIndex()
+	if indexBusy then
+		return
+	end
+	indexBusy = true
 	clearIndex()
 	local map = Workspace:FindFirstChild("Map")
 	if not map then
+		indexBusy = false
 		return
 	end
 	local lands = map:FindFirstChild("Lands")
 	if not lands then
+		indexBusy = false
 		return
 	end
 
 	for _, landFolder in lands:GetChildren() do
 		if (landFolder:IsA("Folder") or landFolder:IsA("Model")) and string.match(landFolder.Name, "^Land%d+$") then
 			indexLandFolder(landFolder)
+			task.wait()
 		end
 	end
 
@@ -230,7 +252,7 @@ local function rebuildIndex()
 		indexConns,
 		lands.ChildAdded:Connect(function(child)
 			if string.match(child.Name, "^Land%d+$") then
-				task.defer(function()
+				task.spawn(function()
 					indexLandFolder(child)
 				end)
 			end
@@ -238,11 +260,13 @@ local function rebuildIndex()
 	)
 
 	lastIndexAt = os.clock()
+	indexBusy = false
 end
 
 local function ensureIndex()
-	if #grassEntries == 0 or (os.clock() - lastIndexAt) >= INDEX_REFRESH_SEC then
-		rebuildIndex()
+	-- Only build when empty. Timed full rebuilds from Heartbeat caused Studio timeouts.
+	if #grassEntries == 0 and not indexBusy then
+		task.spawn(rebuildIndex)
 	end
 end
 

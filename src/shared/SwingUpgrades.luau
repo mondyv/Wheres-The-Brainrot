@@ -50,7 +50,10 @@ M.CARRY_LEVEL_ATTR = "CarryUpgradeLevel"
 M.MAX_CARRY_UPGRADE_LEVEL = 10
 
 M.POWER_COST_BASE = 20
+-- Soft-capped curve: grow at early rate through SOFT_CAP, then slower forever.
 M.POWER_COST_GROWTH = 1.07
+M.POWER_COST_LATE_GROWTH = 1.03
+M.POWER_COST_SOFT_CAP_LEVEL = 100
 
 -- Reach costs scale from power at the same level, always slightly higher.
 M.ROPE_COST_PREMIUM = 1.2
@@ -93,7 +96,14 @@ end
 
 function M.powerUnitCost(powerUpgradeLevel: number): number
 	local level = floorLevel(powerUpgradeLevel)
-	return math.floor(M.POWER_COST_BASE * (M.POWER_COST_GROWTH ^ level) + 0.5)
+	local earlyLevels = math.min(level, M.POWER_COST_SOFT_CAP_LEVEL)
+	local lateLevels = math.max(level - M.POWER_COST_SOFT_CAP_LEVEL, 0)
+	return math.floor(
+		M.POWER_COST_BASE
+			* (M.POWER_COST_GROWTH ^ earlyLevels)
+			* (M.POWER_COST_LATE_GROWTH ^ lateLevels)
+			+ 0.5
+	)
 end
 
 function M.ropeUnitCost(ropeUpgradeLevel: number): number

@@ -257,27 +257,28 @@ StoreConfig.CASH_BUNDLE_MULTIPLIERS = {
 }
 
 -- ── Steal system ────────────────────────────────────────────────────────────────
+-- Product IDs must match Creator Dashboard names exactly (shifted IDs break grants).
 StoreConfig.STEAL_PRODUCT_BY_RARITY = {
-	common = 3602198445,
-	uncommon = 3602198480,
-	rare = 3602198510,
-	epic = 3602198541,
-	mythic = 3602198574,
-	legendary = 3602198619,
-	["brainrot god"] = 3602198661,
-	secret = 3602198691,
+	common = 3602198480, -- Steal a common brainrot (49)
+	uncommon = 3602198510, -- Steal an uncommon brainrot (79)
+	rare = 3602198541, -- Steal a rare brainrot (149)
+	epic = 3602198574, -- Steal an epic brainrot
+	mythic = 3602198619, -- Steal a mythic brainrot (399)
+	legendary = 3602198661, -- Steal a Legendary Brainrot (699)
+	["brainrot god"] = 3602198691, -- Steal a Brainrot God (999)
+	secret = 3602198445, -- remaining steal product id
 }
 
 -- Robux prices (display only) for the steal products above.
 StoreConfig.STEAL_PRICE_BY_RARITY = {
-	common = 29,
-	uncommon = 49,
-	rare = 79,
-	epic = 149,
-	mythic = 249,
-	legendary = 399,
-	["brainrot god"] = 699,
-	secret = 999,
+	common = 49,
+	uncommon = 79,
+	rare = 149,
+	epic = 249,
+	mythic = 399,
+	legendary = 699,
+	["brainrot god"] = 999,
+	secret = 1299,
 }
 
 local STEAL_RARITY_ALIASES: { [string]: string } = {

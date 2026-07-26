@@ -518,6 +518,24 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 					pushSuggestion(out, prefix .. landStr, "land spawn / revive pad")
 				end
 			end
+			for _, playerName in filterByPrefix(catalog.players, partial) do
+				pushSuggestion(out, prefix .. playerName, "player to teleport")
+			end
+		elseif argIndex == 2 and (#tokens > 2 or (endsWithSpace and #tokens >= 2)) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(2, #tokens - 1))
+			local first = tokens[2]
+			if tonumber(first) then
+				for _, playerName in filterByPrefix(catalog.players, partial) do
+					pushSuggestion(out, prefix .. playerName, "player to teleport")
+				end
+			else
+				for land = 1, 10 do
+					local landStr = tostring(land)
+					if startsWith(landStr, partial) then
+						pushSuggestion(out, prefix .. landStr, "land spawn / revive pad")
+					end
+				end
+			end
 		end
 	elseif cmdName == "servershutdown" then
 		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then

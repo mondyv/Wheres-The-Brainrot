@@ -103,7 +103,9 @@ local function rescueOnce(reason: string)
 	if cam then
 		local GameplayCameraController = require(script.Parent.GameplayCameraController)
 		if GameplayCameraController.isEnabled() then
-			if GameplayCameraController.isPaused() then
+			if GameplayCameraController.isSwingOverride and GameplayCameraController.isSwingOverride() then
+				table.insert(lines, "camera swing override active")
+			elseif GameplayCameraController.isPaused() then
 				GameplayCameraController.resume(cam.CFrame)
 				table.insert(lines, "camera -> GameplayCamera resume")
 			elseif cam.CameraType ~= Enum.CameraType.Scriptable then

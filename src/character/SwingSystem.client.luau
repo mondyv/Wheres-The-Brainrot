@@ -4870,6 +4870,22 @@ local function boot(character)
 		end
 	end))
 
+	local gameplayCameraMod = nil
+	local swingCameraOverrideOn = false
+
+	local function setSwingCameraOverride(active: boolean)
+		if swingCameraOverrideOn == active then
+			return
+		end
+		swingCameraOverrideOn = active
+		if gameplayCameraMod == nil then
+			gameplayCameraMod = getClientModule("GameplayCameraController") or false
+		end
+		if gameplayCameraMod and typeof(gameplayCameraMod.setSwingOverride) == "function" then
+			gameplayCameraMod.setSwingOverride(active)
+		end
+	end
+
 	st.addConn(st.humanoid.Died:Connect(function()
 		if st.isSwinging then
 			st.stopSwing(false)
@@ -4887,6 +4903,7 @@ local function boot(character)
 		st.stopFallingAnim()
 		st.stopTrack(st.landedTrack, 0.08)
 		st.resetFovNow()
+		setSwingCameraOverride(false)
 	end))
 
 	RunService:BindToRenderStep(st.renderBindName, Enum.RenderPriority.Camera.Value + 1, function(dt)
@@ -4899,16 +4916,21 @@ local function boot(character)
 		local launchShakeActive = now - st.lastLaunchClock >= 0 and now - st.lastLaunchClock < C.LAUNCH_CAMERA_SHAKE_TIME
 		local landingShakeActive = now - st.lastLandingClock >= 0 and now - st.lastLandingClock < C.LANDING_CAMERA_SHAKE_TIME
 		local attachShakeActive = now - st.lastAttachClock >= 0 and now - st.lastAttachClock < C.ATTACH_CAMERA_SHAKE_TIME
+		local swingCamBusy = st.isSwinging
+			or st.isLaunched
+			or launchShakeActive
+			or landingShakeActive
+			or attachShakeActive
+			or st.swingCamLag.Magnitude > 0.001
+			or math.abs(st.swingCamRoll) > 0.0001
+			or (st.windShakeIntensity or 0) > 0.01
+
+		-- Yield Scriptable gameplay cam so default Custom + swing FX own the lens.
+		setSwingCameraOverride(swingCamBusy)
+
 		if
 			not C.ENABLE_GROUNDED_CAMERA_ASSIST
-			and not st.isSwinging
-			and not st.isLaunched
-			and not launchShakeActive
-			and not landingShakeActive
-			and not attachShakeActive
-			and st.swingCamLag.Magnitude <= 0.001
-			and math.abs(st.swingCamRoll) <= 0.0001
-			and (st.windShakeIntensity or 0) <= 0.01
+			and not swingCamBusy
 		then
 			return
 		end

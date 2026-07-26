@@ -12,7 +12,7 @@
 	      ├── ToggleBackpackImage  (icon toggle; lives in Hotbar row after visible slots)
 	  └── Backpack  (optional expanded view)
 
-	Studio layout: anchor Hotbar + Backpack at X=0.5 under Toolbar once at init. ToggleBackpackImage stays at the right of the hotbar while inventory is open; on close, empty slots + panel fade out together and the icon eases back into place.
+	Studio layout: anchor Hotbar + Backpack at X=0.5 under Toolbar once at init. ToggleBackpackImage sits to the right of the centered hotbar (not inside the slot list). On close, empty slots + panel fade out together and the icon eases back into place.
 	Hotbar slots may use nested `Button` (e.g. Hotbar["1"].Button.Icon).
 	Brainrot pickups: tuck/untuck via drag; ghost drag; search; backpack frame outline + open/close tweens.
 	Backpack UI reuses Backpack.Container and fills visible stashed brainrots from the top-left. Empty rows stay visible.
@@ -2345,6 +2345,7 @@ local ToolbarController = {}
 
 	local hotbarListLayout: UIListLayout? = nil
 	local toolbarHorizontalCenterApplied = false
+	local TOGGLE_ICON_GAP_PX = 12
 
 	local function centerToolbarChildHorizontally(gui: GuiObject)
 		local pos = gui.Position
@@ -2376,6 +2377,7 @@ local ToolbarController = {}
 			layout.Parent = hotbar
 		end
 		layout.FillDirection = Enum.FillDirection.Horizontal
+		-- Center slots in the hotbar frame; backpack icon is positioned outside to the right.
 		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 		layout.VerticalAlignment = Enum.VerticalAlignment.Center
 		hotbarListLayout = layout
@@ -2442,11 +2444,17 @@ local ToolbarController = {}
 	end
 
 	local function wireToggleBackpackIconResizeSync()
-		if hotbar:GetAttribute("_ToggleIconResizeWired") == true then
+		if toolbar:GetAttribute("_ToggleIconResizeWired") == true then
 			return
 		end
-		hotbar:SetAttribute("_ToggleIconResizeWired", true)
+		toolbar:SetAttribute("_ToggleIconResizeWired", true)
 		hotbar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+			task.defer(refreshToggleBackpackIconLayout)
+		end)
+		hotbar:GetPropertyChangedSignal("AbsolutePosition"):Connect(function()
+			task.defer(refreshToggleBackpackIconLayout)
+		end)
+		toolbar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 			task.defer(refreshToggleBackpackIconLayout)
 		end)
 		local camera = workspace.CurrentCamera
@@ -2507,7 +2515,6 @@ local ToolbarController = {}
 
 		local layout = ensureHotbarListLayout()
 		local HOTBAR_SLOT_PADDING_PX = 10
-		hotbarListLayout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
 		layout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
 		layout.FillDirection = Enum.FillDirection.Horizontal
 		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
@@ -2528,12 +2535,41 @@ local ToolbarController = {}
 		end
 		icon.Size = iconSize
 
-		icon.AnchorPoint = Vector2.new(0, 0)
-		if icon.Parent ~= hotbar then
-			icon.Parent = hotbar
+		-- Keep slots centered in Hotbar; park icon on Toolbar just right of visible slots.
+		if icon.Parent ~= toolbar then
+			icon.Parent = toolbar
 		end
-		icon.LayoutOrder = 100
+		icon.AnchorPoint = Vector2.new(0, 0.5)
 		icon.Visible = true
+
+		local hotbarGui = hotbar :: GuiObject
+		local tbAbs = toolbar.AbsolutePosition
+		local hbAbs = hotbarGui.AbsolutePosition
+		local hbSize = hotbarGui.AbsoluteSize
+
+		local rightEdge = hbAbs.X + hbSize.X * 0.5
+		local midY = hbAbs.Y + hbSize.Y * 0.5
+		local anySlot = false
+		for i = 1, #slots do
+			local slot = slots[i]
+			if slot and slot.Visible and slot:IsA("GuiObject") then
+				local s = slot :: GuiObject
+				local sAbs = s.AbsolutePosition
+				local sSize = s.AbsoluteSize
+				rightEdge = if anySlot then math.max(rightEdge, sAbs.X + sSize.X) else (sAbs.X + sSize.X)
+				midY = sAbs.Y + sSize.Y * 0.5
+				anySlot = true
+			end
+		end
+		if not anySlot then
+			-- Empty hotbar: keep icon near the centered hotbar middle, nudged right.
+			rightEdge = hbAbs.X + hbSize.X * 0.5
+		end
+
+		local x = (rightEdge + TOGGLE_ICON_GAP_PX) - tbAbs.X
+		local y = midY - tbAbs.Y
+		icon.Position = UDim2.fromOffset(math.floor(x + 0.5), math.floor(y + 0.5))
+		icon.ZIndex = math.max(icon.ZIndex, hotbarGui.ZIndex + 1)
 
 		pinToggleIconMinAbsoluteSize(icon, iconSize.X.Offset, iconSize.Y.Offset)
 		ensureToggleBackpackIconSizeConstraint(icon)
@@ -2549,11 +2585,8 @@ local ToolbarController = {}
 				break
 			end
 		end
-		-- Empty hotbar cells while backpack is open or still closing (avoids snap-hide mid-tween).
 		local showEmptyDropTargets = isBackpackPanelOpen or isBackpackPanelClosing
 		local showHotbarSlots = anyOccupied or showEmptyDropTargets
-		-- Keep the Hotbar frame visible whenever the toolbar is up so ToggleBackpackImage
-		-- (a child of Hotbar) still shows when every slot is empty.
 		if hotbar:IsA("GuiObject") then
 			(hotbar :: GuiObject).Visible = toolbarActive
 		end
@@ -2565,7 +2598,6 @@ local ToolbarController = {}
 		end
 		if toggleBackpackIconRef then
 			local icon = toggleBackpackIconRef :: GuiObject
-			-- Stay visible at the right of the hotbar while inventory is open or closing.
 			icon.Visible = toolbarActive
 			if icon.Visible and not toggleIconSlideTween then
 				task.defer(refreshToggleBackpackIconLayout)

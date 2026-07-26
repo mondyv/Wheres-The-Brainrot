@@ -1,11 +1,9 @@
 -- [ACTIVE] GameplayCameraController
 --[[
-	High top-down orbit camera (Pokemon / ARPG feel).
-	- Soft focus lag + velocity look-ahead
-	- Speed FOV + distance bloom
-	- Light strafe lean / walk bob
-	- Idle yaw auto-recenter toward move direction
-	Cutscenes: pause()/resume(). Swing: setSwingOverride(true).
+	High top-down orbit (Pokemon / ARPG).
+	Uses explicit spherical elevation so the lens sits ABOVE the character.
+	Swing stays Scriptable and blends into a behind-follow profile; SwingSystem
+	FX still layer at Camera+1 (no hard Custom cut).
 ]]
 
 local Players = game:GetService("Players")
@@ -17,52 +15,55 @@ local player = Players.LocalPlayer
 
 local BIND_NAME = "GameplayCameraUpdate"
 
--- Framing (steep top-down)
-local DEFAULT_FOV = 62
-local MIN_ZOOM = 8
-local MAX_ZOOM = 26
-local DEFAULT_ZOOM = 16
-local LOOK_HEIGHT = 1.15
-local MOUSE_SENS = 0.0052
-local TOUCH_SENS = 0.008
-local PITCH_MIN = math.rad(28) -- keep fairly top-down
-local PITCH_MAX = math.rad(68)
-local DEFAULT_PITCH = math.rad(48)
+-- Top-down framing (elevation = angle above horizon; 90° = straight overhead)
+local DEFAULT_FOV = 60
+local MIN_ZOOM = 9
+local MAX_ZOOM = 28
+local DEFAULT_ZOOM = 17
+local LOOK_HEIGHT = 1.0
+local MOUSE_SENS = 0.005
+local TOUCH_SENS = 0.0075
+local ELEV_MIN = math.rad(38)
+local ELEV_MAX = math.rad(72)
+local DEFAULT_ELEV = math.rad(55)
 
--- Feel
-local FOCUS_LAG_XY = 14
-local FOCUS_LAG_Z = 10
-local ZOOM_LAG = 10
-local OCCLUSION_PADDING = 0.55
-local OCCLUSION_SMOOTH = 12
-local LOOKAHEAD_MAX = 3.2
-local LOOKAHEAD_SPEED_REF = 18
-local SPEED_FOV_MAX = 7
-local SPEED_ZOOM_MAX = 2.4
+-- Swing framing (blend toward this — still Scriptable)
+local SWING_ELEV = math.rad(22)
+local SWING_ZOOM = 12
+local SWING_FOV = 72
+local SWING_BLEND_IN = 3.8 -- ~0.26s
+local SWING_BLEND_OUT = 2.8 -- ~0.35s
+
+-- Feel (tight follow — avoid bob/lookahead jitter)
+local FOCUS_LAG = 26
+local ZOOM_LAG = 11
+local OCCLUSION_PADDING = 0.6
+local OCCLUSION_SMOOTH = 16
+local LOOKAHEAD_MAX = 0.85
+local LOOKAHEAD_SPEED_REF = 20
+local SPEED_FOV_MAX = 5
+local SPEED_ZOOM_MAX = 1.6
 local SPEED_REF = 22
-local STRAFE_LEAN_MAX = math.rad(3.2)
-local BOB_AMOUNT = 0.07
-local BOB_SPEED = 9.5
-local AUTO_YAW_DELAY = 0.85
-local AUTO_YAW_SPEED = 2.4
-local AUTO_YAW_MOVE_MIN = 2.5
+local STRAFE_LEAN_MAX = math.rad(1.6)
+local AUTO_YAW_DELAY = 1.0
+local AUTO_YAW_SPEED = 2.0
+local AUTO_YAW_MOVE_MIN = 3
 
 local GameplayCameraController = {}
 
 local enabled = false
 local pauseDepth = 0
 local swingOverride = false
+local swingBlend = 0 -- 0 gameplay top-down → 1 swing profile
 local yaw = 0
-local pitch = DEFAULT_PITCH
+local elevation = DEFAULT_ELEV
 local zoom = DEFAULT_ZOOM
 local smoothZoom = DEFAULT_ZOOM
 local smoothFocus: Vector3? = nil
 local smoothOcclusionZoom: number? = nil
 local smoothLean = 0
-local smoothBob = 0
 local smoothFov = DEFAULT_FOV
 local lastManualOrbitClock = 0
-local bobPhase = 0
 local renderBound = false
 local conns: { RBXScriptConnection } = {}
 local rotating = false
@@ -87,38 +88,48 @@ local function getHumanoid(): Humanoid?
 	return char and char:FindFirstChildOfClass("Humanoid") or nil
 end
 
-local function clampPitch(v: number): number
-	return math.clamp(v, PITCH_MIN, PITCH_MAX)
+local function clampElev(v: number): number
+	return math.clamp(v, ELEV_MIN, ELEV_MAX)
 end
 
-local function orbitCFrame(
-	focus: Vector3,
-	useYaw: number,
-	usePitch: number,
-	useZoom: number,
-	lean: number,
-	bob: number
-): CFrame
-	local rot = CFrame.fromOrientation(usePitch, useYaw, 0)
-	local camPos = focus + rot:VectorToWorldSpace(Vector3.new(0, 0, useZoom))
-	-- Soft strafe lean + walk bob in camera-local space
-	camPos += rot:VectorToWorldSpace(Vector3.new(lean * useZoom * 0.12, bob, 0))
+-- Spherical offset: elevation 0 = horizon behind, 90° = directly above looking down.
+local function sphericalOffset(useYaw: number, useElev: number, useZoom: number): Vector3
+	local flat = useZoom * math.cos(useElev)
+	local height = useZoom * math.sin(useElev)
+	return Vector3.new(math.sin(useYaw) * flat, height, math.cos(useYaw) * flat)
+end
+
+local function orbitCFrame(focus: Vector3, useYaw: number, useElev: number, useZoom: number, lean: number): CFrame
+	local offset = sphericalOffset(useYaw, useElev, useZoom)
+	local right = Vector3.new(math.cos(useYaw), 0, -math.sin(useYaw))
+	local camPos = focus + offset + right * (lean * useZoom * 0.08)
 
 	local hum = getHumanoid()
 	if hum then
 		local off = hum.CameraOffset
 		if off.Magnitude > 0.001 then
-			camPos += rot:VectorToWorldSpace(off)
+			-- Keep bush-shake offsets camera-relative-ish
+			local along = offset.Magnitude > 0.05 and offset.Unit or Vector3.yAxis
+			local side = right
+			local up = along:Cross(side)
+			if up.Magnitude > 0.05 then
+				up = up.Unit
+				camPos += side * off.X + up * off.Y + along * off.Z
+			else
+				camPos += off
+			end
 		end
 	end
 
-	local lookTarget = focus + Vector3.new(0, bob * 0.35, 0)
-	return CFrame.lookAt(camPos, lookTarget) * CFrame.Angles(0, 0, lean)
+	return CFrame.lookAt(camPos, focus) * CFrame.Angles(0, 0, lean)
 end
 
-local function occlusionZoom(focus: Vector3, useYaw: number, usePitch: number, desiredZoom: number): number
-	local rot = CFrame.fromOrientation(usePitch, useYaw, 0)
-	local dir = rot:VectorToWorldSpace(Vector3.new(0, 0, 1))
+local function occlusionZoom(focus: Vector3, useYaw: number, useElev: number, desiredZoom: number): number
+	local dir = sphericalOffset(useYaw, useElev, 1)
+	if dir.Magnitude < 0.05 then
+		return desiredZoom
+	end
+	dir = dir.Unit
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { player.Character }
@@ -130,6 +141,19 @@ local function occlusionZoom(focus: Vector3, useYaw: number, usePitch: number, d
 	return desiredZoom
 end
 
+local function blendedElevZoomFov(): (number, number, number)
+	local e = elevation + (SWING_ELEV - elevation) * swingBlend
+	-- During swing allow flatter elevation than gameplay clamp
+	if swingBlend > 0.01 then
+		e = math.clamp(e, math.rad(12), ELEV_MAX)
+	else
+		e = clampElev(e)
+	end
+	local z = smoothZoom + (SWING_ZOOM - smoothZoom) * swingBlend
+	local f = smoothFov + (SWING_FOV - smoothFov) * swingBlend
+	return e, z, f
+end
+
 function GameplayCameraController.getIdealCFrame(root: BasePart?): CFrame
 	local r = root or getRoot()
 	if not r then
@@ -137,30 +161,32 @@ function GameplayCameraController.getIdealCFrame(root: BasePart?): CFrame
 		return if cam then cam.CFrame else CFrame.identity
 	end
 	local focus = r.Position + Vector3.new(0, LOOK_HEIGHT, 0)
-	return orbitCFrame(focus, yaw, pitch, smoothZoom, 0, 0)
+	local e, z = blendedElevZoomFov()
+	return orbitCFrame(focus, yaw, e, z, 0)
 end
 
 function GameplayCameraController.syncFromCFrame(cf: CFrame)
-	local look = cf.LookVector
-	yaw = math.atan2(-look.X, -look.Z)
-	local p = math.asin(math.clamp(look.Y, -1, 1))
-	-- Steep top-down: pitch is elevation of the orbit (positive = higher / more top-down).
-	pitch = clampPitch(-p)
 	local root = getRoot()
-	if root then
-		local focus = root.Position + Vector3.new(0, LOOK_HEIGHT, 0)
-		smoothFocus = focus
-		zoom = math.clamp((cf.Position - focus).Magnitude, MIN_ZOOM, MAX_ZOOM)
+	local focus = if root then root.Position + Vector3.new(0, LOOK_HEIGHT, 0) else cf.Position + cf.LookVector * 12
+	local toCam = cf.Position - focus
+	if toCam.Magnitude > 0.5 then
+		local flat = Vector3.new(toCam.X, 0, toCam.Z)
+		if flat.Magnitude > 0.05 then
+			yaw = math.atan2(flat.X, flat.Z)
+		end
+		elevation = clampElev(math.asin(math.clamp(toCam.Unit.Y, -1, 1)))
+		zoom = math.clamp(toCam.Magnitude, MIN_ZOOM, MAX_ZOOM)
 		smoothZoom = zoom
 		smoothOcclusionZoom = zoom
 	end
+	smoothFocus = focus
 	lastManualOrbitClock = os.clock()
 end
 
--- Horizontal: mouse right → look right (yaw decreases). Vertical already feels correct.
+-- Mouse right → look right; mouse up → less top-down (toward horizon).
 local function applyMouseDelta(dx: number, dy: number, sens: number)
 	yaw -= dx * sens
-	pitch = clampPitch(pitch - dy * sens)
+	elevation = clampElev(elevation + dy * sens)
 	lastManualOrbitClock = os.clock()
 end
 
@@ -192,9 +218,10 @@ local function setRotating(on: boolean)
 end
 
 local function onInputBegan(input: InputObject, _processed: boolean)
-	if pauseDepth > 0 or not enabled or swingOverride then
+	if pauseDepth > 0 or not enabled then
 		return
 	end
+	-- Allow orbit during swing blend (player can still tweak).
 	if input.UserInputType == Enum.UserInputType.MouseButton2 then
 		setRotating(true)
 	elseif input.UserInputType == Enum.UserInputType.Touch then
@@ -217,7 +244,7 @@ local function onInputEnded(input: InputObject, _processed: boolean)
 end
 
 local function onInputChanged(input: InputObject, _processed: boolean)
-	if pauseDepth > 0 or not enabled or swingOverride then
+	if pauseDepth > 0 or not enabled then
 		return
 	end
 	if input.UserInputType == Enum.UserInputType.MouseWheel then
@@ -234,8 +261,7 @@ local function onInputChanged(input: InputObject, _processed: boolean)
 end
 
 local function shortestAngle(from: number, to: number): number
-	local d = (to - from + math.pi) % (math.pi * 2) - math.pi
-	return d
+	return (to - from + math.pi) % (math.pi * 2) - math.pi
 end
 
 local function seedAnglesFromCharacter()
@@ -248,22 +274,22 @@ local function seedAnglesFromCharacter()
 		yaw = 0
 	else
 		look = look.Unit
-		yaw = math.atan2(-look.X, -look.Z)
+		-- Place camera behind the character (opposite facing).
+		yaw = math.atan2(-look.X, -look.Z) + math.pi
 	end
-	pitch = DEFAULT_PITCH
+	elevation = DEFAULT_ELEV
 	zoom = DEFAULT_ZOOM
 	smoothZoom = DEFAULT_ZOOM
 	smoothFocus = root.Position + Vector3.new(0, LOOK_HEIGHT, 0)
 	smoothOcclusionZoom = DEFAULT_ZOOM
 	smoothLean = 0
-	smoothBob = 0
 	smoothFov = DEFAULT_FOV
-	bobPhase = 0
+	swingBlend = 0
 	lastManualOrbitClock = os.clock()
 end
 
 local function canDriveCamera(): boolean
-	return enabled and pauseDepth == 0 and not swingOverride
+	return enabled and pauseDepth == 0
 end
 
 local function update(dt: number)
@@ -301,80 +327,68 @@ local function update(dt: number)
 	end
 
 	dt = math.clamp(dt, 0, 0.05)
+
+	-- Smooth swing profile blend (no CameraType hard cut).
+	local blendTarget = if swingOverride then 1 else 0
+	local blendSpeed = if blendTarget > swingBlend then SWING_BLEND_IN else SWING_BLEND_OUT
+	swingBlend += (blendTarget - swingBlend) * math.min(1, dt * blendSpeed)
+	if math.abs(swingBlend - blendTarget) < 0.002 then
+		swingBlend = blendTarget
+	end
+
 	local vel = root.AssemblyLinearVelocity
 	local flatVel = Vector3.new(vel.X, 0, vel.Z)
 	local speed = flatVel.Magnitude
 	local speed01 = math.clamp(speed / SPEED_REF, 0, 1)
 
-	-- Soft auto-recenter yaw toward move direction after a short idle-orbit delay.
-	if not rotating and speed > AUTO_YAW_MOVE_MIN and (os.clock() - lastManualOrbitClock) > AUTO_YAW_DELAY then
-		local moveYaw = math.atan2(-flatVel.Unit.X, -flatVel.Unit.Z)
-		local deltaYaw = shortestAngle(yaw, moveYaw)
-		yaw += deltaYaw * math.min(1, dt * AUTO_YAW_SPEED * speed01)
+	-- During swing/launch, gently yaw toward velocity so FX feel intentional.
+	if swingBlend > 0.15 and speed > 2 and not rotating then
+		local moveYaw = math.atan2(flatVel.Unit.X, flatVel.Unit.Z) + math.pi
+		yaw += shortestAngle(yaw, moveYaw) * math.min(1, dt * (1.8 + 2.5 * swingBlend))
+	elseif not rotating and speed > AUTO_YAW_MOVE_MIN and (os.clock() - lastManualOrbitClock) > AUTO_YAW_DELAY and swingBlend < 0.05 then
+		local moveYaw = math.atan2(flatVel.Unit.X, flatVel.Unit.Z) + math.pi
+		yaw += shortestAngle(yaw, moveYaw) * math.min(1, dt * AUTO_YAW_SPEED * speed01)
 	end
 
 	smoothZoom += (zoom - smoothZoom) * math.min(1, dt * ZOOM_LAG)
 
-	-- Velocity look-ahead so the camera leads into turns / runs.
 	local lookAhead = Vector3.zero
-	if speed > 0.4 then
-		lookAhead = flatVel.Unit * (LOOKAHEAD_MAX * math.clamp(speed / LOOKAHEAD_SPEED_REF, 0, 1))
+	if speed > 1 and swingBlend < 0.5 then
+		lookAhead = flatVel.Unit * (LOOKAHEAD_MAX * math.clamp(speed / LOOKAHEAD_SPEED_REF, 0, 1) * (1 - swingBlend))
 	end
 	local rawFocus = root.Position + Vector3.new(0, LOOK_HEIGHT, 0) + lookAhead
 	if not smoothFocus then
 		smoothFocus = rawFocus
 	else
-		local cur = smoothFocus :: Vector3
-		local xyAlpha = math.min(1, dt * FOCUS_LAG_XY)
-		local zAlpha = math.min(1, dt * FOCUS_LAG_Z)
-		smoothFocus = Vector3.new(
-			cur.X + (rawFocus.X - cur.X) * xyAlpha,
-			cur.Y + (rawFocus.Y - cur.Y) * zAlpha,
-			cur.Z + (rawFocus.Z - cur.Z) * xyAlpha
-		)
+		-- Tight tracking — high lag kills walk jitter.
+		local a = math.min(1, dt * FOCUS_LAG)
+		smoothFocus = (smoothFocus :: Vector3):Lerp(rawFocus, a)
 	end
 
-	-- Speed bloom: pull out + widen FOV while moving.
-	local speedZoom = SPEED_ZOOM_MAX * speed01
-	local desiredZoom = smoothZoom + speedZoom
-	local desired = occlusionZoom(smoothFocus :: Vector3, yaw, pitch, desiredZoom)
+	local useElev, useZoomBase, useFov = blendedElevZoomFov()
+	local speedZoom = SPEED_ZOOM_MAX * speed01 * (1 - swingBlend * 0.7)
+	local desiredZoom = useZoomBase + speedZoom
+	local desired = occlusionZoom(smoothFocus :: Vector3, yaw, useElev, desiredZoom)
 	if not smoothOcclusionZoom then
 		smoothOcclusionZoom = desired
 	else
 		smoothOcclusionZoom += (desired - smoothOcclusionZoom) * math.min(1, dt * OCCLUSION_SMOOTH)
 	end
 
-	-- Strafe lean from camera-relative sideways velocity.
 	local right = Vector3.new(math.cos(yaw), 0, -math.sin(yaw))
 	local lateral = if speed > 0.2 then flatVel:Dot(right) / math.max(speed, 1) else 0
-	local targetLean = -lateral * STRAFE_LEAN_MAX * speed01
-	smoothLean += (targetLean - smoothLean) * math.min(1, dt * 8)
+	local targetLean = -lateral * STRAFE_LEAN_MAX * speed01 * (1 - swingBlend)
+	smoothLean += (targetLean - smoothLean) * math.min(1, dt * 10)
 
-	-- Subtle walk bob when grounded and moving.
-	local targetBob = 0
-	if hum and hum.FloorMaterial ~= Enum.Material.Air and speed > 1.5 then
-		bobPhase += dt * BOB_SPEED * (0.65 + speed01)
-		targetBob = math.sin(bobPhase) * BOB_AMOUNT * speed01
-	else
-		bobPhase = 0
-	end
-	smoothBob += (targetBob - smoothBob) * math.min(1, dt * 10)
+	local gameplayFov = DEFAULT_FOV + SPEED_FOV_MAX * speed01
+	smoothFov += (gameplayFov - smoothFov) * math.min(1, dt * 6)
+	-- Recompute FOV after smoothFov update for this frame's blend
+	local _, _, blendedFov = blendedElevZoomFov()
 
-	local targetFov = DEFAULT_FOV + SPEED_FOV_MAX * speed01
-	smoothFov += (targetFov - smoothFov) * math.min(1, dt * 5)
+	cam.CFrame = orbitCFrame(smoothFocus :: Vector3, yaw, useElev, smoothOcclusionZoom :: number, smoothLean)
 
-	cam.CFrame = orbitCFrame(
-		smoothFocus :: Vector3,
-		yaw,
-		pitch,
-		smoothOcclusionZoom :: number,
-		smoothLean,
-		smoothBob
-	)
-
-	-- Don't fight swing FOV punches far outside our band.
-	if math.abs(cam.FieldOfView - smoothFov) < 14 then
-		cam.FieldOfView += (smoothFov - cam.FieldOfView) * math.min(1, dt * 6)
+	if math.abs(cam.FieldOfView - blendedFov) < 18 then
+		cam.FieldOfView += (blendedFov - cam.FieldOfView) * math.min(1, dt * 7)
 	end
 end
 
@@ -416,27 +430,21 @@ function GameplayCameraController.isPaused(): boolean
 end
 
 function GameplayCameraController.isSwingOverride(): boolean
-	return swingOverride
+	return swingOverride or swingBlend > 0.05
 end
 
+-- Soft swing handoff: keep Scriptable, blend framing; SwingSystem FX stay on Camera+1.
 function GameplayCameraController.setSwingOverride(active: boolean)
 	if swingOverride == active then
 		return
 	end
 	swingOverride = active
-	setRotating(false)
-	local cam = Workspace.CurrentCamera
-	if not cam then
-		return
+	if not active then
+		lastManualOrbitClock = os.clock()
 	end
-	if active then
-		cam.CameraType = Enum.CameraType.Custom
-		local hum = getHumanoid()
-		if hum then
-			cam.CameraSubject = hum
-		end
-	elseif enabled and pauseDepth == 0 then
-		GameplayCameraController.syncFromCFrame(cam.CFrame)
+	-- Stay Scriptable so we don't pop into default Custom behind-view.
+	local cam = Workspace.CurrentCamera
+	if cam and enabled and pauseDepth == 0 then
 		cam.CameraType = Enum.CameraType.Scriptable
 		local hum = getHumanoid()
 		if hum then
@@ -470,7 +478,8 @@ function GameplayCameraController.resume(seedCf: CFrame?)
 			if seedCf then
 				cam.CFrame = seedCf
 			elseif smoothFocus then
-				cam.CFrame = orbitCFrame(smoothFocus, yaw, pitch, smoothOcclusionZoom or smoothZoom, 0, 0)
+				local e, z = blendedElevZoomFov()
+				cam.CFrame = orbitCFrame(smoothFocus, yaw, e, z, 0)
 			end
 		end
 	end
@@ -489,6 +498,7 @@ function GameplayCameraController.enable()
 	enabled = true
 	pauseDepth = 0
 	swingOverride = false
+	swingBlend = 0
 	seedAnglesFromCharacter()
 	local cam = Workspace.CurrentCamera
 	if cam then
@@ -499,7 +509,7 @@ function GameplayCameraController.enable()
 			cam.CameraSubject = hum
 		end
 		if smoothFocus then
-			cam.CFrame = orbitCFrame(smoothFocus, yaw, pitch, smoothZoom, 0, 0)
+			cam.CFrame = orbitCFrame(smoothFocus, yaw, elevation, smoothZoom, 0)
 		end
 	end
 	bindRender()
@@ -509,6 +519,7 @@ function GameplayCameraController.disable()
 	enabled = false
 	pauseDepth = 0
 	swingOverride = false
+	swingBlend = 0
 	setRotating(false)
 	unbindRender()
 	local cam = Workspace.CurrentCamera

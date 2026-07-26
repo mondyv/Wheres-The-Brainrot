@@ -170,7 +170,7 @@ local function applyOddsToChancesFrame(odds: any)
 		local pct = odds.percents[rarityId] or 0
 		setLabelText(row, "Chance", RandomBrainrotOdds.formatPercent(pct))
 		if row:IsA("GuiObject") then
-			(row :: GuiObject).Visible = pct > 0.001
+			(row :: GuiObject).Visible = true
 		end
 	end
 end

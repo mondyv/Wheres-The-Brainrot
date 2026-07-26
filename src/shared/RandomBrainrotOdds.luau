@@ -42,17 +42,18 @@ local RARITY_ORDER: { RarityId } = {
 }
 
 -- Same land-style tables as bush harvest, keyed by income tier 1–10.
+-- Late tiers keep mythic/legendary playable but crush god/secret vs older tables.
 local TIER_WEIGHTS: { [number]: { [RarityId]: number } } = {
 	[1] = { common = 75, uncommon = 25, rare = 0, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
 	[2] = { common = 55, uncommon = 35, rare = 10, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
 	[3] = { common = 35, uncommon = 35, rare = 22, epic = 8, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
 	[4] = { common = 25, uncommon = 28, rare = 25, epic = 15, mythic = 7, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[5] = { common = 0, uncommon = 25, rare = 30, epic = 25, mythic = 20, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[6] = { common = 0, uncommon = 0, rare = 30, epic = 28, mythic = 27, legendary = 15, ["brainrot god"] = 0, secret = 0 },
-	[7] = { common = 0, uncommon = 0, rare = 0, epic = 30, mythic = 30, legendary = 25, ["brainrot god"] = 15, secret = 0 },
-	[8] = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 35, legendary = 30, ["brainrot god"] = 25, secret = 10 },
-	[9] = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 0, legendary = 35, ["brainrot god"] = 40, secret = 25 },
-	[10] = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 55, secret = 45 },
+	[5] = { common = 5, uncommon = 22, rare = 28, epic = 25, mythic = 18, legendary = 2, ["brainrot god"] = 0, secret = 0 },
+	[6] = { common = 0, uncommon = 8, rare = 28, epic = 30, mythic = 24, legendary = 10, ["brainrot god"] = 0, secret = 0 },
+	[7] = { common = 0, uncommon = 0, rare = 12, epic = 32, mythic = 32, legendary = 20, ["brainrot god"] = 4, secret = 0 },
+	[8] = { common = 0, uncommon = 0, rare = 0, epic = 18, mythic = 38, legendary = 32, ["brainrot god"] = 10, secret = 2 },
+	[9] = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 28, legendary = 42, ["brainrot god"] = 22, secret = 8 },
+	[10] = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 15, legendary = 45, ["brainrot god"] = 28, secret = 12 },
 }
 
 -- Plot $/s thresholds → tier (must keep Random Brainrot below runaway god/secret rolls early).
@@ -63,10 +64,10 @@ local TIER_INCOME: { number } = {
 	350,
 	900,
 	2500,
-	7000,
-	22000,
-	70000,
-	220000,
+	10000,
+	40000,
+	150000,
+	500000,
 }
 
 M.UI_ROW_NAMES = {
@@ -106,7 +107,7 @@ end
 function M.maxAllowedBaseIncome(plotIncomePerSecond: number): number
 	local ips = math.max(0, plotIncomePerSecond)
 	-- Early game floor so empty plots still get commons; hard ceiling vs current gen.
-	return math.max(45, ips * 2.15 + 30)
+	return math.max(45, ips * 1.35 + 20)
 end
 
 function M.tierForIncome(plotIncomePerSecond: number): number

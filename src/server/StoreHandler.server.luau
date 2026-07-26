@@ -614,7 +614,7 @@ local giftBuyGamepassRE = ensureRemoteEvent("GiftBuyGamepass")
 local giftPurchaseResultRE = ensureRemoteEvent("GiftPurchaseResult")
 local giftReceivedRE = ensureRemoteEvent("GiftReceived")
 
-local GIFT_PENDING_TIMEOUT = 90 -- seconds a pending gift stays valid while the buyer is in the purchase prompt.
+local GIFT_PENDING_TIMEOUT = 300 -- seconds a pending gift stays valid while the buyer is in the purchase prompt.
 
 type PendingStoreGift = {
 	targetUserId: number,
@@ -650,8 +650,9 @@ end
 
 -- Grants a non-gamepass giftable Store product to `recipient`. Returns
 -- (granted, description) where description is a short human-readable label
--- used for the buyer/recipient toasts.
-local function grantGiftedStoreProduct(recipient: Player, productId: number): (boolean, string?)
+-- used for the buyer/recipient toasts. Cash bundles scale off `payer` (buyer)
+-- so the gifted amount matches what they saw in the store UI.
+local function grantGiftedStoreProduct(recipient: Player, productId: number, payer: Player?): (boolean, string?)
 	if productId == StoreConfig.PRODUCT.RANDOM_BRAINROT then
 		local ok, err = ItemService:GiveRandomBrainrot(recipient, nil, {
 			equip = false,
@@ -680,9 +681,11 @@ local function grantGiftedStoreProduct(recipient: Player, productId: number): (b
 		return false, "exclusive_grant_failed"
 	end
 
-	local cashReward = StoreServer.cashBundleRewardFor(recipient, productId)
+	local cashScalePlayer = payer or recipient
+	local cashReward = StoreServer.cashBundleRewardFor(cashScalePlayer, productId)
 	if cashReward then
 		StoreServer.addCash(recipient, cashReward)
+		savePurchaseStateSoon(recipient)
 		return true, BrainrotEconomy.formatCashShort(cashReward) .. " Cash"
 	end
 
@@ -842,25 +845,27 @@ local function storeGiftReceiptInterceptor(buyer: Player, receiptInfo: any): Enu
 	if not pending or pending.promptedProductId ~= receiptInfo.ProductId then
 		return nil
 	end
-	clearPendingStoreGift(buyer.UserId)
 
-	local isFresh = os.clock() - pending.createdAt <= GIFT_PENDING_TIMEOUT
+	-- Keep pending until grant succeeds so Roblox retries still route as gifts
+	-- (clearing early made cash fall through to the buyer on NotProcessedYet).
 	local target = Players:GetPlayerByUserId(pending.targetUserId)
-	local targetLeft = not isFresh or not target or not target.Parent
+	local targetLeft = not target or not target.Parent
 	local recipient = if targetLeft then buyer else (target :: Player)
 
 	local granted, description
 	if pending.giftedGamepassId then
 		granted, description = grantGiftedGamepass(recipient, pending.giftedGamepassId)
 	else
-		granted, description = grantGiftedStoreProduct(recipient, receiptInfo.ProductId)
+		granted, description = grantGiftedStoreProduct(recipient, receiptInfo.ProductId, buyer)
 	end
 
 	if not granted then
 		warn("[StoreHandler] Gift grant failed for product", receiptInfo.ProductId, "->", description)
-		notifyGiftResult(buyer, false, "Gift could not be delivered.")
+		notifyGiftResult(buyer, false, "Gift could not be delivered. Retrying…")
 		return NOT_PROCESSED
 	end
+
+	clearPendingStoreGift(buyer.UserId)
 
 	if targetLeft then
 		notifyGiftResult(buyer, true, "Your gift target left the server — the item was granted to you instead.")
@@ -874,13 +879,22 @@ local function storeGiftReceiptInterceptor(buyer: Player, receiptInfo: any): Enu
 end
 
 local function registerStoreGiftInterceptor()
-	local PH = resolveProductHandlerServer()
-	if not PH or typeof(PH.registerReceiptInterceptor) ~= "function" then
-		warn("[StoreHandler] ProductHandlerServer.registerReceiptInterceptor unavailable for gifting")
-		return
-	end
-	PH.registerReceiptInterceptor(function(player, receiptInfo)
-		return storeGiftReceiptInterceptor(player, receiptInfo)
+	task.spawn(function()
+		local PH: any? = nil
+		for _ = 1, 30 do
+			PH = resolveProductHandlerServer()
+			if PH and typeof(PH.registerReceiptInterceptor) == "function" then
+				break
+			end
+			task.wait(0.5)
+		end
+		if not PH or typeof(PH.registerReceiptInterceptor) ~= "function" then
+			warn("[StoreHandler] ProductHandlerServer.registerReceiptInterceptor unavailable for gifting")
+			return
+		end
+		PH.registerReceiptInterceptor(function(player, receiptInfo)
+			return storeGiftReceiptInterceptor(player, receiptInfo)
+		end)
 	end)
 end
 

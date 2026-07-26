@@ -450,7 +450,7 @@ local function refreshKeyLabel(view: PromptView)
 		return
 	end
 	local kc = prompt.KeyboardKeyCode
-	if kc == Enum.KeyCode.Unknown or kc == Enum.KeyCode.E then
+	if kc == Enum.KeyCode.Unknown then
 		showText("E")
 		return
 	end
@@ -617,7 +617,11 @@ local function wireClickablePrompt(view: PromptView)
 		end
 		local function matchesKeyboardHold(input: InputObject): boolean
 			local prompt = view.prompt
-			return input.KeyCode == prompt.KeyboardKeyCode or input.KeyCode == Enum.KeyCode.E
+			local kc = prompt.KeyboardKeyCode
+			if kc == Enum.KeyCode.Unknown then
+				return input.KeyCode == Enum.KeyCode.E
+			end
+			return input.KeyCode == kc
 		end
 		local function matchesGamepadHold(input: InputObject): boolean
 			local prompt = view.prompt
@@ -3237,7 +3241,12 @@ function ProximityPromptEffects.init()
 		if not prompt or not prompt.Parent or not isManagedBushPrompt(prompt) then
 			return
 		end
-		if input.KeyCode ~= prompt.KeyboardKeyCode and input.KeyCode ~= Enum.KeyCode.E then
+		local kc = prompt.KeyboardKeyCode
+		if kc == Enum.KeyCode.Unknown then
+			if input.KeyCode ~= Enum.KeyCode.E then
+				return
+			end
+		elseif input.KeyCode ~= kc then
 			return
 		end
 		if not managedBushUiEligible(prompt) then
@@ -3255,7 +3264,12 @@ function ProximityPromptEffects.init()
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then
 			return
 		end
-		if input.KeyCode ~= prompt.KeyboardKeyCode and input.KeyCode ~= Enum.KeyCode.E then
+		local kc = prompt.KeyboardKeyCode
+		if kc == Enum.KeyCode.Unknown then
+			if input.KeyCode ~= Enum.KeyCode.E then
+				return
+			end
+		elseif input.KeyCode ~= kc then
 			return
 		end
 		ProximityPromptEffects.endManagedBushHold(prompt, false)

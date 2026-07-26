@@ -251,7 +251,7 @@ local function wireGiftRemotes()
 					return
 				end
 				if success == true then
-					TopNotifController.showRaritySpawn(message, "legendary", 4)
+					TopNotifController.showPersonal(message, "legendary", 4)
 				else
 					TopNotifController.showError(message)
 				end
@@ -263,7 +263,7 @@ local function wireGiftRemotes()
 				if typeof(fromName) ~= "string" or typeof(description) ~= "string" then
 					return
 				end
-				TopNotifController.showRaritySpawn(
+				TopNotifController.showPersonal(
 					string.format("%s gifted you %s!", fromName, description),
 					"legendary",
 					5

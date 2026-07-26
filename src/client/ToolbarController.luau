@@ -224,7 +224,6 @@ local DRAG_THRESHOLD_PX = 14
 local DRAG_GHOST_THRESHOLD_PX = 6
 -- Shared scale for the single hotbar slot under the cursor while dragging (not the whole bar).
 local HOTBAR_DRAG_HOVER_SCALE = 1.06
-local TOGGLE_BACKPACK_ICON_TINT = Color3.fromRGB(255, 255, 255)
 
 local backpackSearchText: string = ""
 

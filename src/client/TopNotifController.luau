@@ -456,8 +456,8 @@ function TopNotifController.dismissActive()
 	processQueue()
 end
 
-function TopNotifController.showRaritySpawn(message: string, rarityId: string, lifetimeSec: number?)
-	if not globalMessagesEnabled() then
+function TopNotifController.showRaritySpawn(message: string, rarityId: string, lifetimeSec: number?, ignoreGlobalFilter: boolean?)
+	if not ignoreGlobalFilter and not globalMessagesEnabled() then
 		return
 	end
 	if not host then
@@ -465,6 +465,10 @@ function TopNotifController.showRaritySpawn(message: string, rarityId: string, l
 	end
 	GameSoundEffects.playNotification1()
 	enqueue(message, false, rarityId, lifetimeSec)
+end
+
+function TopNotifController.showPersonal(message: string, rarityId: string?, lifetimeSec: number?)
+	TopNotifController.showRaritySpawn(message, rarityId or "legendary", lifetimeSec, true)
 end
 
 function TopNotifController.showBroadcast(message: string, _scope: string?, senderName: string?, senderUserId: number?)

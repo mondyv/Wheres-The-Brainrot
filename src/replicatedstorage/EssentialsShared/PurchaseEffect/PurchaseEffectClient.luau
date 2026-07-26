@@ -23,7 +23,6 @@ local purchaseUiActive = false
 local activeRainbowTween: Tween? = nil
 local activeFovTween: Tween? = nil
 local hiddenSideUI: GuiObject? = nil
-local sideUIWasVisible = false
 
 local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
 	Enum.CoreGuiType.Chat,
@@ -135,26 +134,30 @@ local function hideSideHud()
 	local sideUI = main and main:FindFirstChild("SideUI")
 	if sideUI and sideUI:IsA("GuiObject") then
 		hiddenSideUI = sideUI
-		sideUIWasVisible = sideUI.Visible
 		sideUI.Visible = false
 	end
 end
 
 local function restoreSideHud()
-	local side = hiddenSideUI
 	hiddenSideUI = nil
-	if side and side.Parent then
-		side.Visible = sideUIWasVisible or true
-		local scale = side:FindFirstChildOfClass("UIScale")
-		if not scale then
-			scale = Instance.new("UIScale")
-			scale.Parent = side
-		end
-		scale.Scale = 0.96
-		TweenService:Create(scale, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			Scale = 1,
-		}):Play()
+	local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	local main = playerGui and playerGui:FindFirstChild("Main")
+	local side = main and main:FindFirstChild("SideUI")
+	if not (side and side:IsA("GuiObject")) then
+		return
 	end
+	-- Always force SideUI back on after a purchase prompt — cached refs / fade races
+	-- previously left the HUD blank until rejoin.
+	side.Visible = true
+	local scale = side:FindFirstChildOfClass("UIScale")
+	if not scale then
+		scale = Instance.new("UIScale")
+		scale.Parent = side
+	end
+	scale.Scale = 0.96
+	TweenService:Create(scale, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Scale = 1,
+	}):Play()
 end
 
 local function beginPurchaseOverlay()
@@ -272,39 +275,18 @@ function PurchaseEffectClient.hide(self: PurchaseEffectClient, delaySeconds: num
 
 	cancelActiveTweens()
 	hideToken += 1
-	local finishToken = hideToken
 
-	-- Restore HUD immediately. Only keep Purchasing up while a visible rainbow is fading out.
-	endPurchaseOverlay()
-
-	local needsFade = rainbow ~= nil and rainbow.ImageTransparency < 0.99
-	if needsFade and rainbow then
-		setPurchasingGuiEnabled(true)
-		activeRainbowTween = TweenService:Create(rainbow, fadeOutTween, { ImageTransparency = 1 })
-		activeRainbowTween:Play()
-		local tween = activeRainbowTween
-		tween.Completed:Once(function()
-			if finishToken ~= hideToken then
-				return
-			end
-			if rainbow then
-				rainbow.ImageTransparency = 1
-			end
-			setPurchasingGuiEnabled(false)
-			ensureMainGuiEnabled()
-			if onHidden then
-				onHidden()
-			end
-		end)
-	else
-		setPurchasingGuiEnabled(false)
-		ensureMainGuiEnabled()
-		if onHidden then
-			onHidden()
-		end
+	-- Instant restore — never re-enable Purchasing for a fade (that race left HUD blank).
+	if rainbow then
+		rainbow.ImageTransparency = 1
 	end
-
+	endPurchaseOverlay()
+	setPurchasingGuiEnabled(false)
+	ensureMainGuiEnabled()
 	restoreCameraFov(false)
+	if onHidden then
+		onHidden()
+	end
 end
 
 function PurchaseEffectClient.forceHide(self: PurchaseEffectClient)
@@ -315,17 +297,24 @@ function PurchaseEffectClient.forceHide(self: PurchaseEffectClient)
 	end
 	restoreCameraFov(true)
 	endPurchaseOverlay()
+	setPurchasingGuiEnabled(false)
+	ensureMainGuiEnabled()
 end
 
+local lastCelebrateAt = 0
 local function runPurchaseCelebration()
+	local now = os.clock()
+	if now - lastCelebrateAt < 1.25 then
+		return
+	end
+	lastCelebrateAt = now
 	EffectsController.celebratePurchase(Players.LocalPlayer)
 end
 
 function PurchaseEffectClient.onPurchaseFinished(self: PurchaseEffectClient, wasPurchased: boolean)
+	self:forceHide()
 	if wasPurchased then
-		self:hide(nil, runPurchaseCelebration)
-	else
-		self:forceHide()
+		task.defer(runPurchaseCelebration)
 	end
 end
 
@@ -344,10 +333,9 @@ function PurchaseEffectClient.init(self: PurchaseEffectClient)
 	end)
 
 	bindRemoteAsync("ProductHandlerConfetti", function()
-		if purchaseUiActive or (rainbow and rainbow.ImageTransparency < 0.99) then
-			return
-		end
-		self:hide(nil, runPurchaseCelebration)
+		-- Always restore HUD first (Finished + Confetti order varies; never leave overlay stuck).
+		self:forceHide()
+		runPurchaseCelebration()
 	end)
 
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, _gamePassId, wasPurchased)

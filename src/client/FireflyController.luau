@@ -1,6 +1,6 @@
 -- [ACTIVE] FireflyController
 --[[
-	Soft green fireflies on bushes outside the safe zone.
+	Soft yellow fireflies on bushes outside the safe zone.
 	Small body + PointLight only (no particle VFX).
 ]]
 
@@ -25,11 +25,11 @@ local REFRESH_SEC = 2.5
 local FOLDER_NAME = "BushFireflies"
 local LIGHT_UPDATE_EVERY = 2
 
--- Real firefly glow: cool lime / green-white (not pure yellow).
-local GLOW = Color3.fromRGB(170, 255, 150)
-local BODY = Color3.fromRGB(210, 255, 190)
+local GLOW = Color3.fromRGB(255, 230, 120)
+local BODY = Color3.fromRGB(255, 245, 170)
 local LIGHT_RANGE = 11
 local LIGHT_BRIGHTNESS = 0.55
+local FLY_SIZE = 0.22
 
 type Fly = {
 	part: BasePart,
@@ -140,7 +140,7 @@ local function makeFly(parent: Folder, center: Vector3, half: Vector3, index: nu
 	local part = Instance.new("Part")
 	part.Name = "Firefly"
 	part.Shape = Enum.PartType.Ball
-	part.Size = Vector3.new(0.14, 0.14, 0.14)
+	part.Size = Vector3.new(FLY_SIZE, FLY_SIZE, FLY_SIZE)
 	part.Material = Enum.Material.SmoothPlastic
 	part.Color = BODY
 	part.Anchored = true

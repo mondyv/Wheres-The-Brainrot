@@ -50,6 +50,8 @@ type ClipRestore = {
 local mainSnaps: { GuiSnap } = {}
 local screenSnaps: { ScreenSnap } = {}
 local clipRestores: { ClipRestore } = {}
+-- Survives snap clears so forceShow can still snap HUD chrome back on-screen.
+local lastingBasePos: { [GuiObject]: UDim2 } = {}
 local chatWasEnabled = true
 local activeTweens: { Tween } = {}
 local keepScreenNames: { [string]: boolean } = {}
@@ -322,11 +324,20 @@ local function hardRestoreSnaps()
 	for _, entry in mainSnaps do
 		if entry.inst.Parent then
 			entry.inst.Position = entry.basePos
-			-- Always unpark; wasVisible can be stale if SideUI was toggled mid-hide.
+			lastingBasePos[entry.inst] = entry.basePos
 			entry.inst.Visible = true
 			if entry.clips ~= nil then
 				entry.inst.ClipsDescendants = entry.clips
 			end
+		end
+	end
+	-- Fallback when snaps were cleared mid-restore (gift buy race): pull from lasting bases.
+	for gui, basePos in lastingBasePos do
+		if gui.Parent then
+			gui.Position = basePos
+			gui.Visible = true
+		else
+			lastingBasePos[gui] = nil
 		end
 	end
 	if sideUIRef and sideUIRef.Parent then
@@ -334,6 +345,51 @@ local function hardRestoreSnaps()
 	end
 	restoreClipping()
 	restoreScreenGuis()
+end
+
+local function nuclearUnparkHud()
+	local main = PlayerGuiMain.ensure(player)
+	if main:IsA("ScreenGui") then
+		main.Enabled = true
+	end
+	local side = main:FindFirstChild("SideUI")
+	if side and side:IsA("GuiObject") then
+		side.Visible = true
+		for _, ch in side:GetChildren() do
+			if ch:IsA("GuiObject") then
+				local g = ch :: GuiObject
+				local remembered = lastingBasePos[g]
+				if remembered then
+					g.Position = remembered
+				else
+					local p = g.Position
+					-- Slide-out parks via large offsets; strip those so layout scale remains.
+					if math.abs(p.X.Offset) > 8 or math.abs(p.Y.Offset) > 8 then
+						g.Position = UDim2.new(p.X.Scale, 0, p.Y.Scale, 0)
+					end
+				end
+				g.Visible = true
+			end
+		end
+	end
+	local frames = main:FindFirstChild("Frames")
+	if frames and frames:IsA("GuiObject") then
+		(frames :: GuiObject).Visible = true
+		(frames :: GuiObject).Active = false
+	end
+	local pg = player:FindFirstChild("PlayerGui")
+	if pg then
+		for _, name in { "Purchasing", "OfflineEarningsDim", "ReviveDim" } do
+			local gui = pg:FindFirstChild(name)
+			if gui and gui:IsA("ScreenGui") then
+				gui.Enabled = false
+			end
+		end
+	end
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, true)
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, true)
+	end)
 end
 
 -- Undo an in-progress hide/restore so the next snapshot uses true layout positions
@@ -388,10 +444,19 @@ local function snapshotAndSlideOut()
 	local vp = viewportSize()
 	local pending: { GuiSnap } = {}
 	for _, gui in collectTargets(main) do
+		-- Never overwrite a known resting base with a mid-slide position.
+		local basePos = lastingBasePos[gui]
+		if not basePos then
+			basePos = gui.Position
+			lastingBasePos[gui] = basePos
+		else
+			-- Snap back before measuring slide so slide distance is correct.
+			gui.Position = basePos
+		end
 		table.insert(pending, {
 			inst = gui,
 			wasVisible = true,
-			basePos = gui.Position,
+			basePos = basePos,
 			slidePos = computeSlidePos(gui, vp),
 			order = waveOrderKey(gui, vp),
 			clips = gui.ClipsDescendants,
@@ -584,6 +649,8 @@ function M.forceShow()
 	hideCount = 0
 	GameplayMusicMuffle.forceClear()
 	instantRestore()
+	nuclearUnparkHud()
+	fireRestored()
 end
 
 function M.isHidden(): boolean

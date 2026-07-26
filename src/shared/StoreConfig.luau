@@ -191,32 +191,32 @@ StoreConfig.GIFTABLE_GAMEPASSES = {
 	[StoreConfig.GAMEPASS.VIP] = {
 		displayName = "VIP",
 		entitlementKey = StoreConfig.ATTR.GIFTED_VIP,
-		giftProductId = nil,
+		giftProductId = 3604960196,
 	},
 	[StoreConfig.GAMEPASS.DOUBLE_CASH] = {
 		displayName = "2x Cash",
 		entitlementKey = StoreConfig.ATTR.GIFTED_DOUBLE_CASH,
-		giftProductId = nil,
+		giftProductId = 3604960744,
 	},
 	[StoreConfig.GAMEPASS.DOUBLE_UPGRADES] = {
 		displayName = "2x Upgrades",
 		entitlementKey = StoreConfig.ATTR.GIFTED_DOUBLE_UPGRADES,
-		giftProductId = nil,
+		giftProductId = 3604960551,
 	},
 	[StoreConfig.GAMEPASS.SUPER_LUCK] = {
 		displayName = "Super Luck",
 		entitlementKey = StoreConfig.ATTR.GIFTED_SUPER_LUCK,
-		giftProductId = nil,
+		giftProductId = 3604960821,
 	},
 	[StoreConfig.GAMEPASS.MEGA_LUCK] = {
 		displayName = "Mega Luck",
 		entitlementKey = StoreConfig.ATTR.GIFTED_MEGA_LUCK,
-		giftProductId = nil,
+		giftProductId = 3604960886,
 	},
 	[StoreConfig.GAMEPASS.XRAY] = {
 		displayName = "X-Ray",
 		entitlementKey = StoreConfig.ATTR.GIFTED_XRAY,
-		giftProductId = nil,
+		giftProductId = 3604960365,
 	},
 	[StoreConfig.GAMEPASS.AUTOCOLLECT] = {
 		displayName = "Autocollect",

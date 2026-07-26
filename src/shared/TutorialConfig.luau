@@ -27,7 +27,7 @@ export type StepDef = {
 	speak: string?,
 }
 
-M.STEPS: { StepDef } = {
+M.STEPS = {
 	{
 		id = "visitUpgrade",
 		text = "Go to the Upgrade Stand",

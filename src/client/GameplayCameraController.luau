@@ -1,9 +1,10 @@
 -- [ACTIVE] GameplayCameraController
 --[[
-	High top-down orbit (Pokemon / ARPG).
-	Spherical elevation above the character. Swing blends framing in-place.
+	Simple high top-down orbit. Snap follow (no lag lerp). Free RMB look.
+	Swing blends elevation in-place; SwingSystem FX still layer at Camera+1.
 ]]
 
+local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -12,35 +13,24 @@ local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 
 local BIND_NAME = "GameplayCameraUpdate"
+local ROTATE_ACTION = "GameplayCameraRotate"
 
 local DEFAULT_FOV = 60
 local MIN_ZOOM = 9
 local MAX_ZOOM = 28
 local DEFAULT_ZOOM = 17
 local LOOK_HEIGHT = 1.0
-local MOUSE_SENS = 0.0065
-local TOUCH_SENS = 0.009
-local ELEV_MIN = math.rad(38)
-local ELEV_MAX = math.rad(72)
+local MOUSE_SENS = 0.007
+local TOUCH_SENS = 0.01
+local ELEV_MIN = math.rad(40)
+local ELEV_MAX = math.rad(70)
 local DEFAULT_ELEV = math.rad(55)
 
 local SWING_ELEV = math.rad(22)
 local SWING_ZOOM = 12
 local SWING_FOV = 72
-local SWING_BLEND_IN = 3.8
-local SWING_BLEND_OUT = 2.8
-
--- Near-locked focus = stable walk follow (no rubber-band jitter).
-local FOCUS_LAG = 40
-local ZOOM_LAG = 12
-local OCCLUSION_PADDING = 0.6
-local OCCLUSION_SMOOTH = 18
-local SPEED_FOV_MAX = 4
-local SPEED_ZOOM_MAX = 1.2
-local SPEED_REF = 22
-local AUTO_YAW_DELAY = 1.25
-local AUTO_YAW_SPEED = 1.6
-local AUTO_YAW_MOVE_MIN = 4
+local SWING_BLEND_IN = 4
+local SWING_BLEND_OUT = 3
 
 local GameplayCameraController = {}
 
@@ -51,25 +41,19 @@ local swingBlend = 0
 local yaw = 0
 local elevation = DEFAULT_ELEV
 local zoom = DEFAULT_ZOOM
-local smoothZoom = DEFAULT_ZOOM
-local smoothFocus: Vector3? = nil
-local smoothOcclusionZoom: number? = nil
-local smoothFov = DEFAULT_FOV
-local lastManualOrbitClock = 0
 local renderBound = false
+local rotateActionBound = false
 local conns: { RBXScriptConnection } = {}
 local rotating = false
 local touchRotateId: number? = nil
 local lastTouchPos: Vector2? = nil
 local wheelDelta = 0
-local pendingLookDelta = Vector2.zero
+local occZoom = DEFAULT_ZOOM
+local occClock = 0
 
 local function getRoot(): BasePart?
 	local char = player.Character
-	if not char then
-		return nil
-	end
-	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
 	if hrp and hrp:IsA("BasePart") then
 		return hrp
 	end
@@ -92,54 +76,35 @@ local function sphericalOffset(useYaw: number, useElev: number, useZoom: number)
 end
 
 local function orbitCFrame(focus: Vector3, useYaw: number, useElev: number, useZoom: number): CFrame
-	local offset = sphericalOffset(useYaw, useElev, useZoom)
-	local camPos = focus + offset
-
+	local camPos = focus + sphericalOffset(useYaw, useElev, useZoom)
 	local hum = getHumanoid()
-	if hum then
-		local off = hum.CameraOffset
-		if off.Magnitude > 0.001 then
-			local right = Vector3.new(math.cos(useYaw), 0, -math.sin(useYaw))
-			local along = offset.Magnitude > 0.05 and offset.Unit or Vector3.yAxis
-			local up = along:Cross(right)
-			if up.Magnitude > 0.05 then
-				up = up.Unit
-				camPos += right * off.X + up * off.Y + along * off.Z
-			else
-				camPos += off
-			end
-		end
+	if hum and hum.CameraOffset.Magnitude > 0.001 then
+		camPos += hum.CameraOffset
 	end
-
 	return CFrame.lookAt(camPos, focus)
 end
 
-local function occlusionZoom(focus: Vector3, useYaw: number, useElev: number, desiredZoom: number): number
+local function sampleOcclusion(focus: Vector3, useYaw: number, useElev: number, desired: number): number
 	local dir = sphericalOffset(useYaw, useElev, 1)
 	if dir.Magnitude < 0.05 then
-		return desiredZoom
+		return desired
 	end
-	dir = dir.Unit
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { player.Character }
 	params.IgnoreWater = true
-	local hit = Workspace:Raycast(focus, dir * desiredZoom, params)
+	local hit = Workspace:Raycast(focus, dir.Unit * desired, params)
 	if hit then
-		return math.max(MIN_ZOOM * 0.55, hit.Distance - OCCLUSION_PADDING)
+		return math.max(MIN_ZOOM * 0.55, hit.Distance - 0.55)
 	end
-	return desiredZoom
+	return desired
 end
 
-local function blendedElevZoomFov(): (number, number, number)
+local function blended(): (number, number, number)
 	local e = elevation + (SWING_ELEV - elevation) * swingBlend
-	if swingBlend > 0.01 then
-		e = math.clamp(e, math.rad(12), ELEV_MAX)
-	else
-		e = clampElev(e)
-	end
-	local z = smoothZoom + (SWING_ZOOM - smoothZoom) * swingBlend
-	local f = smoothFov + (SWING_FOV - smoothFov) * swingBlend
+	e = if swingBlend > 0.01 then math.clamp(e, math.rad(12), ELEV_MAX) else clampElev(e)
+	local z = zoom + (SWING_ZOOM - zoom) * swingBlend
+	local f = DEFAULT_FOV + (SWING_FOV - DEFAULT_FOV) * swingBlend
 	return e, z, f
 end
 
@@ -149,9 +114,8 @@ function GameplayCameraController.getIdealCFrame(root: BasePart?): CFrame
 		local cam = Workspace.CurrentCamera
 		return if cam then cam.CFrame else CFrame.identity
 	end
-	local focus = r.Position + Vector3.new(0, LOOK_HEIGHT, 0)
-	local e, z = blendedElevZoomFov()
-	return orbitCFrame(focus, yaw, e, z)
+	local e, z = blended()
+	return orbitCFrame(r.Position + Vector3.new(0, LOOK_HEIGHT, 0), yaw, e, z)
 end
 
 function GameplayCameraController.syncFromCFrame(cf: CFrame)
@@ -165,31 +129,13 @@ function GameplayCameraController.syncFromCFrame(cf: CFrame)
 		end
 		elevation = clampElev(math.asin(math.clamp(toCam.Unit.Y, -1, 1)))
 		zoom = math.clamp(toCam.Magnitude, MIN_ZOOM, MAX_ZOOM)
-		smoothZoom = zoom
-		smoothOcclusionZoom = zoom
+		occZoom = zoom
 	end
-	smoothFocus = focus
-	lastManualOrbitClock = os.clock()
 end
 
-local function applyMouseDelta(dx: number, dy: number, sens: number)
+local function applyLook(dx: number, dy: number, sens: number)
 	yaw -= dx * sens
 	elevation = clampElev(elevation + dy * sens)
-	lastManualOrbitClock = os.clock()
-end
-
-local function touchOverBlockingGui(pos: Vector3): boolean
-	local guis = player:FindFirstChildOfClass("PlayerGui")
-	if not guis then
-		return false
-	end
-	local objs = guis:GetGuiObjectsAtPosition(pos.X, pos.Y)
-	for _, obj in objs do
-		if obj:IsA("GuiButton") or obj:IsA("TextBox") or obj:IsA("ScrollingFrame") then
-			return true
-		end
-	end
-	return false
 end
 
 local function setRotating(on: boolean)
@@ -197,24 +143,34 @@ local function setRotating(on: boolean)
 		return
 	end
 	rotating = on
-	if on then
-		-- LockCenter gives continuous GetMouseDelta while RMB is held.
-		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-		lastManualOrbitClock = os.clock()
-		pendingLookDelta = Vector2.zero
-	else
-		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+	UserInputService.MouseBehavior = if on then Enum.MouseBehavior.LockCenter else Enum.MouseBehavior.Default
+end
+
+local function onRotateAction(_name: string, state: Enum.UserInputState, input: InputObject)
+	if pauseDepth > 0 or not enabled then
+		return Enum.ContextActionResult.Pass
 	end
+	if state == Enum.UserInputState.Begin then
+		setRotating(true)
+		return Enum.ContextActionResult.Sink
+	elseif state == Enum.UserInputState.End or state == Enum.UserInputState.Cancel then
+		setRotating(false)
+		return Enum.ContextActionResult.Sink
+	elseif state == Enum.UserInputState.Change and rotating then
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			applyLook(input.Delta.X, input.Delta.Y, MOUSE_SENS)
+			return Enum.ContextActionResult.Sink
+		end
+	end
+	return Enum.ContextActionResult.Pass
 end
 
 local function onInputBegan(input: InputObject, _processed: boolean)
 	if pauseDepth > 0 or not enabled then
 		return
 	end
-	if input.UserInputType == Enum.UserInputType.MouseButton2 then
-		setRotating(true)
-	elseif input.UserInputType == Enum.UserInputType.Touch then
-		if touchRotateId == nil and not UserInputService:GetFocusedTextBox() and not touchOverBlockingGui(input.Position) then
+	if input.UserInputType == Enum.UserInputType.Touch then
+		if touchRotateId == nil and not UserInputService:GetFocusedTextBox() then
 			touchRotateId = input.UserInputId
 			lastTouchPos = Vector2.new(input.Position.X, input.Position.Y)
 		end
@@ -222,13 +178,9 @@ local function onInputBegan(input: InputObject, _processed: boolean)
 end
 
 local function onInputEnded(input: InputObject, _processed: boolean)
-	if input.UserInputType == Enum.UserInputType.MouseButton2 then
-		setRotating(false)
-	elseif input.UserInputType == Enum.UserInputType.Touch then
-		if touchRotateId == input.UserInputId then
-			touchRotateId = nil
-			lastTouchPos = nil
-		end
+	if input.UserInputType == Enum.UserInputType.Touch and touchRotateId == input.UserInputId then
+		touchRotateId = nil
+		lastTouchPos = nil
 	end
 end
 
@@ -238,22 +190,16 @@ local function onInputChanged(input: InputObject, _processed: boolean)
 	end
 	if input.UserInputType == Enum.UserInputType.MouseWheel then
 		wheelDelta += input.Position.Z
-		lastManualOrbitClock = os.clock()
 	elseif input.UserInputType == Enum.UserInputType.MouseMovement and rotating then
-		-- Accumulate for the render step (more reliable than only GetMouseDelta).
-		pendingLookDelta += Vector2.new(input.Delta.X, input.Delta.Y)
+		-- Backup path if ContextAction doesn't deliver Change.
+		applyLook(input.Delta.X, input.Delta.Y, MOUSE_SENS)
 	elseif input.UserInputType == Enum.UserInputType.Touch and touchRotateId == input.UserInputId then
 		local pos = Vector2.new(input.Position.X, input.Position.Y)
 		if lastTouchPos then
-			local delta = pos - lastTouchPos
-			applyMouseDelta(delta.X, delta.Y, TOUCH_SENS)
+			applyLook(pos.X - lastTouchPos.X, pos.Y - lastTouchPos.Y, TOUCH_SENS)
 		end
 		lastTouchPos = pos
 	end
-end
-
-local function shortestAngle(from: number, to: number): number
-	return (to - from + math.pi) % (math.pi * 2) - math.pi
 end
 
 local function seedAnglesFromCharacter()
@@ -270,13 +216,8 @@ local function seedAnglesFromCharacter()
 	end
 	elevation = DEFAULT_ELEV
 	zoom = DEFAULT_ZOOM
-	smoothZoom = DEFAULT_ZOOM
-	smoothFocus = root.Position + Vector3.new(0, LOOK_HEIGHT, 0)
-	smoothOcclusionZoom = DEFAULT_ZOOM
-	smoothFov = DEFAULT_FOV
+	occZoom = DEFAULT_ZOOM
 	swingBlend = 0
-	pendingLookDelta = Vector2.zero
-	lastManualOrbitClock = os.clock()
 end
 
 local function canDriveCamera(): boolean
@@ -293,39 +234,30 @@ local function update(dt: number)
 		return
 	end
 
-	if cam.CameraType ~= Enum.CameraType.Scriptable then
-		cam.CameraType = Enum.CameraType.Scriptable
-	end
-
+	cam.CameraType = Enum.CameraType.Scriptable
 	local hum = getHumanoid()
-	if hum and cam.CameraSubject ~= hum then
+	if hum then
 		cam.CameraSubject = hum
 	end
 
-	local rmbDown = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
-	if rmbDown ~= rotating then
-		setRotating(rmbDown)
+	-- Poll RMB in case action binding missed end/begin.
+	local rmb = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+	if rmb ~= rotating then
+		setRotating(rmb)
 	end
-
 	if rotating then
-		local poll = UserInputService:GetMouseDelta()
-		local dx = pendingLookDelta.X + poll.X
-		local dy = pendingLookDelta.Y + poll.Y
-		pendingLookDelta = Vector2.zero
-		if dx ~= 0 or dy ~= 0 then
-			applyMouseDelta(dx, dy, MOUSE_SENS)
+		local d = UserInputService:GetMouseDelta()
+		if d.X ~= 0 or d.Y ~= 0 then
+			applyLook(d.X, d.Y, MOUSE_SENS)
 		end
-	else
-		pendingLookDelta = Vector2.zero
 	end
 
 	if wheelDelta ~= 0 then
-		zoom = math.clamp(zoom - wheelDelta * 1.35, MIN_ZOOM, MAX_ZOOM)
+		zoom = math.clamp(zoom - wheelDelta * 1.4, MIN_ZOOM, MAX_ZOOM)
 		wheelDelta = 0
 	end
 
 	dt = math.clamp(dt, 0, 0.05)
-
 	local blendTarget = if swingOverride then 1 else 0
 	local blendSpeed = if blendTarget > swingBlend then SWING_BLEND_IN else SWING_BLEND_OUT
 	swingBlend += (blendTarget - swingBlend) * math.min(1, dt * blendSpeed)
@@ -333,50 +265,52 @@ local function update(dt: number)
 		swingBlend = blendTarget
 	end
 
-	local vel = root.AssemblyLinearVelocity
-	local flatVel = Vector3.new(vel.X, 0, vel.Z)
-	local speed = flatVel.Magnitude
-	local speed01 = math.clamp(speed / SPEED_REF, 0, 1)
+	local focus = root.Position + Vector3.new(0, LOOK_HEIGHT, 0)
+	local useElev, useZoom, useFov = blended()
 
-	-- Never auto-yaw while the player is orbiting.
-	if not rotating then
-		if swingBlend > 0.15 and speed > 2 then
-			local moveYaw = math.atan2(flatVel.Unit.X, flatVel.Unit.Z) + math.pi
-			yaw += shortestAngle(yaw, moveYaw) * math.min(1, dt * (1.8 + 2.5 * swingBlend))
-		elseif speed > AUTO_YAW_MOVE_MIN and (os.clock() - lastManualOrbitClock) > AUTO_YAW_DELAY and swingBlend < 0.05 then
-			local moveYaw = math.atan2(flatVel.Unit.X, flatVel.Unit.Z) + math.pi
-			yaw += shortestAngle(yaw, moveYaw) * math.min(1, dt * AUTO_YAW_SPEED * speed01)
+	occClock += dt
+	if occClock >= 0.08 then
+		occClock = 0
+		occZoom = sampleOcclusion(focus, yaw, useElev, useZoom)
+	else
+		-- Ease toward last occlusion sample without raycasting every frame.
+		occZoom += (math.min(occZoom, useZoom) - occZoom) * math.min(1, dt * 12)
+		if occZoom > useZoom then
+			occZoom = useZoom
+		elseif occZoom < useZoom * 0.98 then
+			occZoom += (useZoom - occZoom) * math.min(1, dt * 6)
 		end
 	end
 
-	smoothZoom += (zoom - smoothZoom) * math.min(1, dt * ZOOM_LAG)
-
-	local rawFocus = root.Position + Vector3.new(0, LOOK_HEIGHT, 0)
-	if not smoothFocus then
-		smoothFocus = rawFocus
-	else
-		local a = math.min(1, dt * FOCUS_LAG)
-		smoothFocus = (smoothFocus :: Vector3):Lerp(rawFocus, a)
+	cam.CFrame = orbitCFrame(focus, yaw, useElev, occZoom)
+	if math.abs(cam.FieldOfView - useFov) < 20 then
+		cam.FieldOfView += (useFov - cam.FieldOfView) * math.min(1, dt * 8)
 	end
+end
 
-	local useElev, useZoomBase, _ = blendedElevZoomFov()
-	local desiredZoom = useZoomBase + SPEED_ZOOM_MAX * speed01 * (1 - swingBlend * 0.7)
-	local desired = occlusionZoom(smoothFocus :: Vector3, yaw, useElev, desiredZoom)
-	if not smoothOcclusionZoom then
-		smoothOcclusionZoom = desired
-	else
-		smoothOcclusionZoom += (desired - smoothOcclusionZoom) * math.min(1, dt * OCCLUSION_SMOOTH)
+local function bindRotateAction()
+	if rotateActionBound then
+		return
 	end
+	rotateActionBound = true
+	ContextActionService:BindActionAtPriority(
+		ROTATE_ACTION,
+		onRotateAction,
+		false,
+		Enum.ContextActionPriority.High.Value,
+		Enum.UserInputType.MouseButton2,
+		Enum.UserInputType.MouseMovement
+	)
+end
 
-	local gameplayFov = DEFAULT_FOV + SPEED_FOV_MAX * speed01
-	smoothFov += (gameplayFov - smoothFov) * math.min(1, dt * 6)
-	local _, _, blendedFov = blendedElevZoomFov()
-
-	cam.CFrame = orbitCFrame(smoothFocus :: Vector3, yaw, useElev, smoothOcclusionZoom :: number)
-
-	if math.abs(cam.FieldOfView - blendedFov) < 18 then
-		cam.FieldOfView += (blendedFov - cam.FieldOfView) * math.min(1, dt * 7)
+local function unbindRotateAction()
+	if not rotateActionBound then
+		return
 	end
+	rotateActionBound = false
+	pcall(function()
+		ContextActionService:UnbindAction(ROTATE_ACTION)
+	end)
 end
 
 local function bindRender()
@@ -425,16 +359,9 @@ function GameplayCameraController.setSwingOverride(active: boolean)
 		return
 	end
 	swingOverride = active
-	if not active then
-		lastManualOrbitClock = os.clock()
-	end
 	local cam = Workspace.CurrentCamera
 	if cam and enabled and pauseDepth == 0 then
 		cam.CameraType = Enum.CameraType.Scriptable
-		local hum = getHumanoid()
-		if hum then
-			cam.CameraSubject = hum
-		end
 	end
 end
 
@@ -449,22 +376,15 @@ function GameplayCameraController.resume(seedCf: CFrame?)
 	end
 	if seedCf then
 		GameplayCameraController.syncFromCFrame(seedCf)
-	elseif not smoothFocus then
+	else
 		seedAnglesFromCharacter()
 	end
 	if canDriveCamera() then
 		local cam = Workspace.CurrentCamera
 		if cam then
 			cam.CameraType = Enum.CameraType.Scriptable
-			local hum = getHumanoid()
-			if hum then
-				cam.CameraSubject = hum
-			end
 			if seedCf then
 				cam.CFrame = seedCf
-			elseif smoothFocus then
-				local e, z = blendedElevZoomFov()
-				cam.CFrame = orbitCFrame(smoothFocus, yaw, e, z)
 			end
 		end
 	end
@@ -472,12 +392,6 @@ end
 
 function GameplayCameraController.enable()
 	if enabled then
-		if canDriveCamera() then
-			local cam = Workspace.CurrentCamera
-			if cam then
-				cam.CameraType = Enum.CameraType.Scriptable
-			end
-		end
 		return
 	end
 	enabled = true
@@ -493,10 +407,8 @@ function GameplayCameraController.enable()
 		if hum then
 			cam.CameraSubject = hum
 		end
-		if smoothFocus then
-			cam.CFrame = orbitCFrame(smoothFocus, yaw, elevation, smoothZoom)
-		end
 	end
+	bindRotateAction()
 	bindRender()
 end
 
@@ -506,14 +418,11 @@ function GameplayCameraController.disable()
 	swingOverride = false
 	swingBlend = 0
 	setRotating(false)
+	unbindRotateAction()
 	unbindRender()
 	local cam = Workspace.CurrentCamera
 	if cam then
 		cam.CameraType = Enum.CameraType.Custom
-		local hum = getHumanoid()
-		if hum then
-			cam.CameraSubject = hum
-		end
 	end
 end
 
@@ -528,14 +437,6 @@ function GameplayCameraController.init()
 			task.defer(function()
 				if canDriveCamera() then
 					seedAnglesFromCharacter()
-					local cam = Workspace.CurrentCamera
-					if cam then
-						cam.CameraType = Enum.CameraType.Scriptable
-						local hum = getHumanoid()
-						if hum then
-							cam.CameraSubject = hum
-						end
-					end
 				end
 			end)
 		end)

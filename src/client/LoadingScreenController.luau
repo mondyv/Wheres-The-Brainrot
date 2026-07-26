@@ -1213,17 +1213,7 @@ local function resolveLoadingScreenGui(playerGui: PlayerGui): ScreenGui?
 			return cloned
 		end
 
-		local scanned = 0
-		for _, desc in playerGui:GetDescendants() do
-			scanned += 1
-			if scanned % 400 == 0 then
-				task.wait()
-			end
-			if desc.Name == "LoadingScreen" and desc:IsA("ScreenGui") then
-				return desc
-			end
-		end
-
+		-- Do not PlayerGui:GetDescendants() here — HUD is huge and this loop ran every 50ms.
 		task.wait(0.05)
 	end
 

@@ -103,7 +103,8 @@ task.defer(function()
 	end
 
 	local function bootCriticalForRedWall()
-		runBootStepsParallel({
+		-- Stagger map walkers so they don't all scan Workspace in the same frames.
+		runBootSteps({
 			function()
 				require(script.StandController).init()
 			end,
@@ -140,7 +141,7 @@ task.defer(function()
 			function()
 				require(script.BaseFloorUnlockClick).init()
 			end,
-		})
+		}, 1)
 	end
 
 	-- Everything else — never block panel boot on these.
@@ -214,8 +215,6 @@ task.defer(function()
 	end
 
 	task.spawn(function()
-		task.spawn(bootCriticalForRedWall)
-
 		local loadOk, loadErr = pcall(function()
 			LoadingScreenController.run()
 		end)
@@ -253,7 +252,18 @@ task.defer(function()
 			warn("[init.client] Panel UI boot failed:", panelErr)
 		end
 
+		-- Heavy map scanners AFTER loading + HUD. Running them during load starved
+		-- CoreScripts (ExpChat) and caused "exhausted allowed execution time".
 		task.spawn(function()
+			task.wait()
+			local critOk, critErr = pcall(bootCriticalForRedWall)
+			if not critOk then
+				warn("[init.client] Critical world boot failed:", critErr)
+			end
+		end)
+
+		task.spawn(function()
+			task.wait(0.5)
 			local bgOk, bgErr = pcall(bootBackgroundUI)
 			if not bgOk then
 				warn("[init.client] Background UI boot failed:", bgErr)
@@ -293,8 +303,9 @@ task.defer(function()
 		-- Do not destroy PanelModalBlur here — HUDController owns panel blur lifetime.
 	end)
 
-	-- World / gameplay controllers — staggered so client boot doesn't block UIBlox/Foundation.
+	-- World / gameplay controllers — after loading window so ExpChat/core can finish.
 	task.spawn(function()
+		task.wait(2)
 		runBootSteps({
 			function()
 				require(script.BackgroundMusicController).init()
@@ -332,6 +343,6 @@ task.defer(function()
 			function()
 				require(script.LeaderboardsController).init()
 			end,
-		}, 2)
+		}, 1)
 	end)
 end)

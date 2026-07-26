@@ -475,11 +475,13 @@ function BrainrotHeaderController.init()
 	for _, inst in CollectionService:GetTagged("BrainrotStand") do
 		if inst:IsA("Model") then
 			hookStandHeaderCleanup(inst :: Model)
-			for _, desc in ipairs(inst:GetDescendants()) do
-				if desc:IsA("Model") and desc:GetAttribute(STAND_DISPLAY_ATTR) == true then
-					hookStandDisplayModel(desc :: Model)
+			task.defer(function()
+				for _, desc in ipairs(inst:GetDescendants()) do
+					if desc:IsA("Model") and desc:GetAttribute(STAND_DISPLAY_ATTR) == true then
+						hookStandDisplayModel(desc :: Model)
+					end
 				end
-			end
+			end)
 		end
 	end
 

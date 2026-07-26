@@ -2926,7 +2926,7 @@ function ProximityPromptEffects.init()
 				table.insert(stack, child)
 			end
 			count += 1
-			if count % 500 == 0 then
+			if count % 200 == 0 then
 				task.wait()
 			end
 		end

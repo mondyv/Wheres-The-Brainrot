@@ -126,10 +126,23 @@ local function rescueOnce(reason: string)
 	end
 
 	local headerCount = 0
-	for _, d in Workspace:GetDescendants() do
-		if d:IsA("BillboardGui") and d.Name == "BrainrotInfoBillboard" then
-			headerCount += 1
-			d.Enabled = true
+	-- Prefer tagged headers — never Workspace:GetDescendants() (Studio script timeout).
+	for _, inst in CollectionService:GetTagged("BrainrotHeaderTarget") do
+		if inst:IsA("Model") then
+			local bb = inst:FindFirstChild("BrainrotInfoBillboard", true)
+			if bb and bb:IsA("BillboardGui") then
+				headerCount += 1
+				bb.Enabled = true
+			end
+		end
+	end
+	local pg = player:FindFirstChild("PlayerGui")
+	if pg then
+		for _, ch in pg:GetChildren() do
+			if ch:IsA("BillboardGui") and ch.Name == "BrainrotInfoBillboard" then
+				headerCount += 1
+				ch.Enabled = true
+			end
 		end
 	end
 
@@ -138,8 +151,8 @@ local function rescueOnce(reason: string)
 	local standDisplays = 0
 	for _, inst in CollectionService:GetTagged("BrainrotStand") do
 		if inst:IsA("Model") then
-			for _, desc in ipairs(inst:GetDescendants()) do
-				if desc:IsA("Model") and desc:GetAttribute("BrainrotStandDisplay") == true then
+			for _, ch in inst:GetChildren() do
+				if ch:IsA("Model") and ch:GetAttribute("BrainrotStandDisplay") == true then
 					standDisplays += 1
 				end
 			end

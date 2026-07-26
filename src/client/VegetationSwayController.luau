@@ -465,6 +465,8 @@ function M.init()
 	end
 
 	task.spawn(function()
+		-- Let loading + core UI settle before indexing thousands of grassparts.
+		task.wait(3)
 		local map = Workspace:WaitForChild("Map", 60)
 		if map then
 			map:WaitForChild("Lands", 30)

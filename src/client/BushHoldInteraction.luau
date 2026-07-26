@@ -146,9 +146,21 @@ local function bushRootFromPrompt(prompt: ProximityPrompt): Instance?
 end
 
 local function stripExtraPrompts(root: Instance, keep: ProximityPrompt?)
-	for _, d in root:GetDescendants() do
-		if d:IsA("ProximityPrompt") and d ~= keep then
-			d:Destroy()
+	-- Shallow walk only — bush trees are small; GetDescendants on every bush at register time hitchs.
+	local stack: { Instance } = { root }
+	local scanned = 0
+	while #stack > 0 do
+		local node = table.remove(stack) :: Instance
+		for _, d in node:GetChildren() do
+			scanned += 1
+			if scanned % 80 == 0 then
+				task.wait()
+			end
+			if d:IsA("ProximityPrompt") and d ~= keep then
+				d:Destroy()
+			elseif d:IsA("Model") or d:IsA("Folder") or d:IsA("BasePart") then
+				table.insert(stack, d)
+			end
 		end
 	end
 end
@@ -336,13 +348,14 @@ local function registerAllBushesOnMap(map: Instance)
 			table.insert(stack, child)
 		end
 		count += 1
-		if count % 400 == 0 then
+		if count % 200 == 0 then
 			task.wait()
 		end
 	end
 
 	for _, folder in bushFolders do
 		registerBushesUnderFolder(folder)
+		task.wait()
 	end
 	for _, prompt in foreignPrompts do
 		if prompt.Parent then

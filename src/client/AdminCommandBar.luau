@@ -147,6 +147,8 @@ local COMMAND_ALIASES: { [string]: string } = {
 	teleportland = "tpland",
 	gotoland = "tpland",
 	tpl = "tpland",
+	teleport = "tp",
+	["goto"] = "tp",
 }
 
 local COMMAND_HINTS: { [string]: string } = {
@@ -156,6 +158,7 @@ local COMMAND_HINTS: { [string]: string } = {
 	addluckyblock = "Grant a lucky block tool",
 	resetdata = "Wipe saved player data",
 	rebirth = "Force rebirth (skip requirements)",
+	tp = "Teleport to a player, or teleport players to someone",
 	tpland = "Teleport to a land revive/spawn pad",
 	serverspawn = "Force a rarity spawn on this server",
 	globalspawn = "Force a rarity spawn on every server",
@@ -350,6 +353,9 @@ end
 local function baseCommandExamples(): { { fill: string, hint: string } }
 	return {
 		{ fill = "help", hint = COMMAND_HINTS.help },
+		{ fill = "tp PlayerName", hint = "Teleport yourself to a player" },
+		{ fill = "tp PlayerName me", hint = "Bring a player to you" },
+		{ fill = "tp all me", hint = "Bring everyone to you" },
 		{ fill = "tpland 1", hint = COMMAND_HINTS.tpland },
 		{ fill = "addinventory me NoobiniPizzanini", hint = "Give brainrot (equipped)" },
 		{ fill = "addinventory me NoobiniPizzanini 3 golden 5", hint = "Count, mutation, level" },
@@ -423,12 +429,47 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 		or cmdName == "kick"
 		or cmdName == "ban"
 		or cmdName == "unban"
+		or cmdName == "tp"
 	then
 		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
 			for _, playerName in filterByPrefix(catalog.players, partial) do
 				if playerName ~= "all" or (cmdName ~= "kick" and cmdName ~= "ban" and cmdName ~= "unban") then
 					pushSuggestion(out, prefix .. playerName, "player target")
+				end
+			end
+			if cmdName == "tp" and startsWith("to", partial) then
+				pushSuggestion(out, prefix .. "to", "optional keyword")
+			end
+		end
+	end
+
+	if cmdName == "tp" then
+		if argIndex == 2 and (#tokens > 2 or (endsWithSpace and #tokens >= 2)) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(2, #tokens - 1))
+			local prev = string.lower(tokens[2] or "")
+			if prev == "to" then
+				-- tp all to <player>
+				for _, playerName in filterByPrefix(catalog.players, partial) do
+					if playerName ~= "all" then
+						pushSuggestion(out, prefix .. playerName, "destination")
+					end
+				end
+			else
+				if startsWith("to", partial) then
+					pushSuggestion(out, prefix .. "to", "optional keyword")
+				end
+				for _, playerName in filterByPrefix(catalog.players, partial) do
+					if playerName ~= "all" then
+						pushSuggestion(out, prefix .. playerName, "destination")
+					end
+				end
+			end
+		elseif argIndex >= 3 and (#tokens > 3 or (endsWithSpace and #tokens >= 3)) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(3, #tokens - 1))
+			for _, playerName in filterByPrefix(catalog.players, partial) do
+				if playerName ~= "all" then
+					pushSuggestion(out, prefix .. playerName, "destination")
 				end
 			end
 		end

@@ -196,7 +196,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tpland, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
+			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tp, tpland, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -234,6 +234,124 @@ commands.land = commands.tpland
 commands.teleportland = commands.tpland
 commands.gotoland = commands.tpland
 commands.tpl = commands.tpland
+
+local function getPlayerRootCFrame(player: Player): CFrame?
+	local character = player.Character
+	if not character or not character.Parent then
+		return nil
+	end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return nil
+	end
+	return hrp.CFrame
+end
+
+local function teleportPlayerNear(player: Player, destCf: CFrame, slotIndex: number, slotCount: number): boolean
+	local character = player.Character
+	if not character or not character.Parent then
+		return false
+	end
+	local offset: CFrame
+	if slotCount <= 1 then
+		offset = CFrame.new(0, 0, 3)
+	else
+		local angle = ((slotIndex - 1) / slotCount) * math.pi * 2
+		local radius = 4
+		offset = CFrame.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+	end
+	PlotSpawnUtil.teleportCharacterToCFrame(character, destCf * offset)
+	return true
+end
+
+commands.tp = {
+	usage = "tp <player> | tp <who|all|me> <toPlayer|me> | tp all me",
+	description = "Teleport yourself to a player, teleport players to each other, or bring everyone to you.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		if not args[1] then
+			return false, "Usage: " .. commands.tp.usage
+		end
+
+		-- Optional "to" keyword: tp Bob / tp to Bob / tp all to me / tp Alice to Bob
+		local tokens: { string } = {}
+		for _, arg in args do
+			if string.lower(arg) ~= "to" then
+				table.insert(tokens, arg)
+			end
+		end
+		if #tokens == 0 or #tokens > 2 then
+			return false, "Usage: " .. commands.tp.usage
+		end
+
+		local movers: { Player }
+		local destination: Player
+
+		if #tokens == 1 then
+			local destList, destErr = resolveTargets(sender, tokens[1], false)
+			if not destList then
+				return false, destErr or "Destination player not found."
+			end
+			if #destList ~= 1 then
+				return false, "Destination must be one player."
+			end
+			movers = { sender }
+			destination = destList[1]
+		else
+			local whoList, whoErr = resolveTargets(sender, tokens[1], true)
+			if not whoList then
+				return false, whoErr or "Who to teleport not found."
+			end
+			local destList, destErr = resolveTargets(sender, tokens[2], false)
+			if not destList then
+				return false, destErr or "Destination player not found."
+			end
+			if #destList ~= 1 then
+				return false, "Destination must be one player (not all)."
+			end
+			movers = whoList
+			destination = destList[1]
+		end
+
+		local destCf = getPlayerRootCFrame(destination)
+		if not destCf then
+			return false, string.format("%s has no character to teleport to.", destination.Name)
+		end
+
+		local toMove: { Player } = {}
+		for _, mover in movers do
+			if mover ~= destination then
+				table.insert(toMove, mover)
+			end
+		end
+		if #toMove == 0 then
+			return false, "Nothing to teleport (already at destination)."
+		end
+
+		local moved = 0
+		local failed = 0
+		for i, mover in toMove do
+			if teleportPlayerNear(mover, destCf, i, #toMove) then
+				moved += 1
+			else
+				failed += 1
+			end
+		end
+
+		if moved == 0 then
+			return false, "Teleport failed (missing characters)."
+		end
+		if failed > 0 then
+			return true,
+				string.format("Teleported %d player(s) to %s (%d failed).", moved, destination.Name, failed)
+		end
+		if #toMove == 1 and toMove[1] == sender then
+			return true, string.format("Teleported to %s.", destination.Name)
+		end
+		return true, string.format("Teleported %d player(s) to %s.", moved, destination.Name)
+	end,
+}
+commands.teleport = commands.tp
+commands["goto"] = commands.tp
 
 commands.addinventory = {
 	usage = "addinventory <player|me|all> <brainrot> [count] [mutation] [level]",

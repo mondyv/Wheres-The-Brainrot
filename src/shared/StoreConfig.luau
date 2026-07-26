@@ -69,6 +69,7 @@ StoreConfig.ATTR = {
 	EXCLUSIVE_OWNED = "ExclusiveBrainrotOwned",
 	FREE_STEAL_COUNT = "FreeStealCount",
 	FREE_UNCOMMON_CLAIMED = "FreeUncommonClaimed",
+	GROUP_REWARD_CLAIMED = "GroupRewardClaimed",
 
 	-- Booster pack purchase counters (capped at 2)
 	STARTER_PACK_BOUGHT = "StarterPackBought",
@@ -76,6 +77,10 @@ StoreConfig.ATTR = {
 	GODLY_PACK_BOUGHT = "GodlyPackBought",
 	SECRET_PACK_BOUGHT = "SecretPackBought",
 }
+
+-- UV Unwrapped community — Group Stand join reward.
+StoreConfig.GROUP_ID = 34716703
+StoreConfig.GROUP_STAND_NAME = "Group Stand"
 
 -- Replicated (ReplicatedStorage) attributes for server-wide luck.
 StoreConfig.SERVER_LUCK_MULT_ATTR = "ServerLuckMultiplier"

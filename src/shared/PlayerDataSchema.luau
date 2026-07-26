@@ -28,6 +28,7 @@ export type StandSaveEntry = {
 export type StorePurchasesSaveData = {
 	exclusiveOwned: boolean,
 	freeUncommonClaimed: boolean,
+	groupRewardClaimed: boolean,
 	freeStealCount: number,
 	packPurchases: { [string]: number },
 }

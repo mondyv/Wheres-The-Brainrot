@@ -942,9 +942,9 @@ local function pointAtGui(target: GuiObject?, force: boolean?)
 		pointer.Position = UDim2.new(0.55, 0, 0.55, 0)
 		pointer.Parent = target
 	elseif underSurface then
-		-- Stand upgrade SurfaceGui — keep the hand on the upper/center so it doesn't clip the floor.
-		pointer.AnchorPoint = Vector2.new(0.5, 0.5)
-		pointer.Position = UDim2.new(0.5, 0, 0.35, 0)
+		-- Stand upgrade SurfaceGui — top-right so cost/level text stays readable.
+		pointer.AnchorPoint = Vector2.new(1, 0)
+		pointer.Position = UDim2.new(1, -2, 0, 2)
 		pointer.Parent = attachHost
 	else
 		-- HUD buy chip — fingertip on lower-right (price text stays readable).

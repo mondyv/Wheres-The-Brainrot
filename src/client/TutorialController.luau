@@ -135,7 +135,7 @@ local function setChromeSuppressed(suppressed: boolean)
 			panel.Visible = false
 		end
 		if gui then
-			-- ScreenGui may only host leftovers; panel lives under SideUI.
+			-- Quest panel stays on TutorialObjective ScreenGui (synced above Lef1).
 			gui.Enabled = false
 		end
 	elseif active then
@@ -287,31 +287,34 @@ local function resolveSideButtonPanel(): GuiObject?
 end
 
 local function syncPanelToSideButtonsImpl()
-	if not panel or chromeSuppressed then
+	if not panel or not root or chromeSuppressed then
 		return
 	end
-	local sidePanel = resolveSideButtonPanel()
-	if not sidePanel then
-		return
-	end
-	local sideUI = sidePanel.Parent
-	if not sideUI or not sideUI:IsA("GuiObject") then
+	local lef1 = resolveSideButtonPanel()
+	if not lef1 then
 		return
 	end
 
-	-- Live under SideUI so resize / layout stay glued above Lef1.
-	if panel.Parent ~= sideUI then
-		panel.Parent = sideUI
+	-- Stay on TutorialObjective ScreenGui; AbsolutePosition is always the on-screen
+	-- top-left of Lef1 (independent of Lef1 AnchorPoint / SideUI UIScale).
+	if panel.Parent ~= root then
+		panel.Parent = root
+	end
+	if gui then
+		gui.Enabled = true
 	end
 
-	local relX = sidePanel.AbsolutePosition.X - sideUI.AbsolutePosition.X
-	local relY = sidePanel.AbsolutePosition.Y - sideUI.AbsolutePosition.Y
-	local width = math.max(sidePanel.AbsoluteSize.X, 200)
 	local gap = TutorialConfig.PANEL_GAP_ABOVE_SIDE
+	local height = TutorialConfig.PANEL_HEIGHT
+	local ap = lef1.AbsolutePosition
+	local as = lef1.AbsoluteSize
+	local width = math.max(as.X, 220)
+
 	panel.AnchorPoint = Vector2.new(0, 1)
-	panel.Size = UDim2.fromOffset(width, 58)
-	panel.Position = UDim2.fromOffset(relX, relY - gap)
-	panel.ZIndex = math.max(sidePanel.ZIndex + 5, 20)
+	panel.Size = UDim2.fromOffset(width, height)
+	-- Bottom edge sits `gap` px above Lef1's top edge.
+	panel.Position = UDim2.fromOffset(ap.X, ap.Y - gap)
+	panel.ZIndex = 50
 	panel.Visible = active and not chromeSuppressed
 end
 syncPanelToSideButtons = syncPanelToSideButtonsImpl
@@ -446,7 +449,7 @@ local function ensureGui()
 	screen.Name = "TutorialObjective"
 	screen.ResetOnSpawn = false
 	screen.IgnoreGuiInset = true
-	screen.DisplayOrder = 45
+	screen.DisplayOrder = 80
 	screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	screen.Enabled = false
 
@@ -460,9 +463,9 @@ local function ensureGui()
 	panelFrame.Name = "ObjectivePanel"
 	panelFrame.AnchorPoint = Vector2.new(0, 1)
 	panelFrame.Position = UDim2.new(0, 18, 0, 200)
-	panelFrame.Size = UDim2.fromOffset(280, 58)
-	panelFrame.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
-	panelFrame.BackgroundTransparency = 0.32
+	panelFrame.Size = UDim2.fromOffset(280, TutorialConfig.PANEL_HEIGHT)
+	panelFrame.BackgroundColor3 = Color3.fromRGB(8, 10, 14)
+	panelFrame.BackgroundTransparency = 0.08
 	panelFrame.BorderSizePixel = 0
 	panelFrame.ClipsDescendants = false
 	panelFrame.Parent = rootFrame
@@ -472,16 +475,16 @@ local function ensureGui()
 	corner.Parent = panelFrame
 
 	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(8, 10, 14)
-	stroke.Thickness = 1
-	stroke.Transparency = 0.72
+	stroke.Color = Color3.fromRGB(0, 0, 0)
+	stroke.Thickness = 2.2
+	stroke.Transparency = 0.15
 	stroke.Parent = panelFrame
 	panelStroke = stroke
 
 	local blurFake = Instance.new("Frame")
 	blurFake.Name = "PanelSheen"
-	blurFake.BackgroundColor3 = Color3.fromRGB(28, 32, 40)
-	blurFake.BackgroundTransparency = 0.78
+	blurFake.BackgroundColor3 = Color3.fromRGB(22, 26, 34)
+	blurFake.BackgroundTransparency = 0.35
 	blurFake.BorderSizePixel = 0
 	blurFake.Size = UDim2.fromScale(1, 1)
 	blurFake.ZIndex = 1
@@ -489,6 +492,11 @@ local function ensureGui()
 	local sheenCorner = Instance.new("UICorner")
 	sheenCorner.CornerRadius = UDim.new(0, 12)
 	sheenCorner.Parent = blurFake
+
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 10)
+	pad.Parent = panelFrame
 
 	local scale = Instance.new("UIScale")
 	scale.Name = "ObjectiveScale"
@@ -546,7 +554,7 @@ local function ensureGui()
 	if boldOk and typeof(boldFace) == "Font" then
 		label.FontFace = boldFace
 	end
-	label.TextStrokeTransparency = 0.55
+	label.TextStrokeTransparency = 0.25
 	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 
 	local dots = Instance.new("TextLabel")
@@ -566,7 +574,7 @@ local function ensureGui()
 	if boldOk and typeof(boldFace) == "Font" then
 		dots.FontFace = boldFace
 	end
-	dots.TextStrokeTransparency = 0.55
+	dots.TextStrokeTransparency = 0.25
 	dots.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 
 	local dim = Instance.new("Frame")
@@ -656,12 +664,7 @@ local function showPanel(text: string, animateIn: boolean)
 	syncPanelToSideButtons()
 	if animateIn then
 		panelScale.Scale = 0.82
-		local pos = panel.Position
-		panel.Position = UDim2.fromOffset(pos.X.Offset - 36, pos.Y.Offset)
 		TweenService:Create(panelScale, PANEL_OPEN, { Scale = 1 }):Play()
-		TweenService:Create(panel, PANEL_OPEN, {
-			Position = UDim2.fromOffset(pos.X.Offset, pos.Y.Offset),
-		}):Play()
 	else
 		panelScale.Scale = 0.92
 		TweenService:Create(panelScale, PANEL_SWAP, { Scale = 1 }):Play()

@@ -6,6 +6,7 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
+local CollectionService = game:GetService("CollectionService")
 
 -->> || Variables || <<--
 
@@ -17,7 +18,35 @@ local NOT_PROCESSED = Enum.ProductPurchaseDecision.NotProcessedYet
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local ItemService = require(script.Parent:WaitForChild("ItemService"))
 local PlayerDataService = require(script.Parent:WaitForChild("PlayerDataService"))
+local Brainrots = require(script.Parent:WaitForChild("Brainrots"))
 local Utils = require(script.Parent:WaitForChild("Utils"))
+
+local STAND_TAG = "BrainrotStand"
+
+local function playerPlotIncomePerSecond(player: Player): number
+	local total = 0
+	for _, stand in CollectionService:GetTagged(STAND_TAG) do
+		if stand:GetAttribute("StandOwnerUserId") == player.UserId then
+			local name = stand:GetAttribute("BrainrotName")
+			local rarity = stand:GetAttribute("BrainrotRarity")
+			if typeof(name) == "string" and typeof(rarity) == "string" then
+				local def = {
+					name = name,
+					rarity = rarity,
+					baseIncome = stand:GetAttribute("BrainrotBaseIncome") or 0,
+				}
+				local level = stand:GetAttribute("BrainrotLevel")
+				local mutation = stand:GetAttribute("BrainrotMutation")
+				total += Brainrots.incomePerSecond(
+					def,
+					if typeof(level) == "number" then level else 1,
+					if typeof(mutation) == "string" then mutation else "normal"
+				)
+			end
+		end
+	end
+	return total
+end
 
 -->> || Types || <<--
 
@@ -428,7 +457,10 @@ end
 
 function Main:_grantGiftableProduct(target: Player, productId: number, giftable: any): (boolean, string?, string?)
 	if giftable.rewardKind == "randomBrainrot" then
-		local ok, err = ItemService:GiveRandomBrainrot(target, nil, { equip = false })
+		local ok, err = ItemService:GiveRandomBrainrot(target, nil, {
+			equip = false,
+			plotIncomePerSecond = playerPlotIncomePerSecond(target),
+		})
 		if ok then
 			return true, nil, "Random Brainrot"
 		end

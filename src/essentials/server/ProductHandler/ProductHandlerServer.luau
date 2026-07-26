@@ -16,6 +16,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
+local CollectionService = game:GetService("CollectionService")
 
 local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
@@ -38,6 +39,34 @@ local function requireServerModule(moduleName: string)
 end
 
 local ItemService = requireServerModule("ItemService")
+local Brainrots = requireServerModule("Brainrots")
+
+local STAND_TAG = "BrainrotStand"
+
+local function playerPlotIncomePerSecond(player: Player): number
+	local total = 0
+	for _, stand in CollectionService:GetTagged(STAND_TAG) do
+		if stand:GetAttribute("StandOwnerUserId") == player.UserId then
+			local name = stand:GetAttribute("BrainrotName")
+			local rarity = stand:GetAttribute("BrainrotRarity")
+			if typeof(name) == "string" and typeof(rarity) == "string" then
+				local def = {
+					name = name,
+					rarity = rarity,
+					baseIncome = stand:GetAttribute("BrainrotBaseIncome") or 0,
+				}
+				local level = stand:GetAttribute("BrainrotLevel")
+				local mutation = stand:GetAttribute("BrainrotMutation")
+				total += Brainrots.incomePerSecond(
+					def,
+					if typeof(level) == "number" then level else 1,
+					if typeof(mutation) == "string" then mutation else "normal"
+				)
+			end
+		end
+	end
+	return total
+end
 
 local GAMEPASS_OWNED_ATTR_BY_ID: { [number]: string } = {
 	[StoreConfig.GAMEPASS.VIP] = StoreConfig.ATTR.VIP_OWNED,
@@ -344,6 +373,7 @@ local function grantRandomBrainrot(player: Player): boolean
 		save = true,
 		waitForData = true,
 		timeout = RANDOM_BRAINROT_GRANT_TIMEOUT,
+		plotIncomePerSecond = playerPlotIncomePerSecond(player),
 	})
 
 	if not success then

@@ -650,7 +650,10 @@ end
 -- used for the buyer/recipient toasts.
 local function grantGiftedStoreProduct(recipient: Player, productId: number): (boolean, string?)
 	if productId == StoreConfig.PRODUCT.RANDOM_BRAINROT then
-		local ok, err = ItemService:GiveRandomBrainrot(recipient, nil, { equip = false })
+		local ok, err = ItemService:GiveRandomBrainrot(recipient, nil, {
+			equip = false,
+			plotIncomePerSecond = StoreServer.placedIncomePerSecond(recipient),
+		})
 		if ok then
 			return true, "a Random Brainrot"
 		end

@@ -8,6 +8,7 @@ local ContentProvider = game:GetService("ContentProvider")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
+local CollectionService = game:GetService("CollectionService")
 
 -->> || Variables || <<--
 
@@ -27,6 +28,8 @@ local Effects = require(EssentialsShared.EffectsController)
 
 local BrainrotsConfig = require(Shared.BrainrotsConfig)
 local StoreConfig = require(Shared.StoreConfig)
+local BrainrotEconomy = require(Shared.BrainrotEconomy)
+local RandomBrainrotOdds = require(Shared.RandomBrainrotOdds)
 
 local HUDController = require(script.Parent.HUDController)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
@@ -110,6 +113,114 @@ local _CONFIG = {
 }
 
 local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local STAND_TAG = "BrainrotStand"
+local lastOddsKey = ""
+local oddsRefreshAccum = 0.0
+
+local function localPlacedIncomePerSecond(): number
+	local total = 0
+	for _, stand in CollectionService:GetTagged(STAND_TAG) do
+		if stand:GetAttribute("StandOwnerUserId") == Player.UserId then
+			local name = stand:GetAttribute("BrainrotName")
+			local rarity = stand:GetAttribute("BrainrotRarity")
+			if typeof(name) == "string" and typeof(rarity) == "string" then
+				local level = stand:GetAttribute("BrainrotLevel")
+				local mutation = stand:GetAttribute("BrainrotMutation")
+				local baseIncome = stand:GetAttribute("BrainrotBaseIncome")
+				total += BrainrotEconomy.incomePerSecond({
+					name = name,
+					rarity = rarity,
+					mutation = if typeof(mutation) == "string" then mutation else "normal",
+					level = if typeof(level) == "number" then level else 1,
+					baseIncome = if typeof(baseIncome) == "number" then baseIncome else 0,
+				})
+			end
+		end
+	end
+	return total
+end
+
+local function setLabelText(root: Instance?, childName: string, text: string)
+	if not root then
+		return
+	end
+	local node = root:FindFirstChild(childName)
+	if node and (node:IsA("TextLabel") or node:IsA("TextButton")) then
+		(node :: TextLabel).Text = text
+		return
+	end
+	if root:IsA("TextLabel") or root:IsA("TextButton") then
+		(root :: TextLabel).Text = text
+	end
+end
+
+local function applyOddsToChancesFrame(odds: any)
+	local gui = PlayerGuiMain.ensure(Player)
+	local chancesFrame = gui:FindFirstChild("Frames") and gui.Frames:FindFirstChild("Chances")
+	local container = chancesFrame and chancesFrame:FindFirstChild("Container")
+	if not container then
+		return
+	end
+	for rarityId, rowName in RandomBrainrotOdds.UI_ROW_NAMES do
+		local row = container:FindFirstChild(rowName)
+		if not row then
+			continue
+		end
+		local pct = odds.percents[rarityId] or 0
+		setLabelText(row, "Chance", RandomBrainrotOdds.formatPercent(pct))
+		if row:IsA("GuiObject") then
+			(row :: GuiObject).Visible = pct > 0.001
+		end
+	end
+end
+
+local function applyOddsToActivation(activation: Instance, odds: any)
+	local infoText = activation:FindFirstChild("InfoText")
+	if infoText then
+		-- Studio label is often named "Basic/Common"
+		local named = infoText:FindFirstChild("Basic/Common")
+		if named and (named:IsA("TextLabel") or named:IsA("TextButton")) then
+			(named :: TextLabel).Text = odds.summaryLabel
+		else
+			for _, d in infoText:GetChildren() do
+				if d:IsA("TextLabel") or d:IsA("TextButton") then
+					(d :: TextLabel).Text = odds.summaryLabel
+					break
+				end
+			end
+		end
+	end
+end
+
+local function refreshOddsUi()
+	local ips = localPlacedIncomePerSecond()
+	local odds = RandomBrainrotOdds.compute(ips)
+	local key = string.format("%.0f:%d", odds.maxBaseIncome, odds.tier)
+	for _, id in {
+		"common",
+		"uncommon",
+		"rare",
+		"epic",
+		"mythic",
+		"legendary",
+		"brainrot god",
+		"secret",
+	} do
+		key ..= string.format(":%s=%.2f", id, odds.percents[id] or 0)
+	end
+	if key == lastOddsKey then
+		return
+	end
+	lastOddsKey = key
+
+	local ok, activation = pcall(function()
+		return resolveRandomBrainrotUi()
+	end)
+	if ok and activation then
+		applyOddsToActivation(activation, odds)
+	end
+	applyOddsToChancesFrame(odds)
+end
 
 local function highlightOn(host: GuiObject): GuiObject?
 	local decor = host:FindFirstChild("Decor")
@@ -389,6 +500,7 @@ function Main:_linkButtons(): boolean
 
 	local chancesBtn = ensureClickButton(chancesHost :: GuiObject)
 	UIButtonEffects.wireScaleButtonAnim(chancesBtn, function()
+		refreshOddsUi()
 		local current = HUDController.getCurrentFrame()
 
 		if current and current.Name == "Chances" then
@@ -398,16 +510,28 @@ function Main:_linkButtons(): boolean
 		end
 	end)
 
+	refreshOddsUi()
+
 	return true
 end
 
 function Main:_obtainNextImagery()
+	local maxBase = RandomBrainrotOdds.maxAllowedBaseIncome(localPlacedIncomePerSecond())
 	local brainrots = BrainrotsConfig:GetAllSorted()
-	if #brainrots <= 0 then
+	local eligible = {}
+	for _, def in ipairs(brainrots) do
+		if typeof(def.baseIncome) == "number" and def.baseIncome <= maxBase then
+			table.insert(eligible, def)
+		end
+	end
+	if #eligible <= 0 then
+		eligible = brainrots
+	end
+	if #eligible <= 0 then
 		return nil
 	end
 
-	local randomSel = brainrots[math.random(1, #brainrots)]
+	local randomSel = eligible[math.random(1, #eligible)]
 	if not randomSel then
 		return nil
 	end
@@ -511,6 +635,11 @@ function Main:Render(deltaTime: number)
 	end
 
 	self._CONFIG._passedTime += deltaTime
+	oddsRefreshAccum += deltaTime
+	if oddsRefreshAccum >= 0.75 then
+		oddsRefreshAccum = 0
+		refreshOddsUi()
+	end
 
 	if self._CONFIG._passedTime >= self._CONFIG.imageryRotation then
 		self._CONFIG._passedTime -= self._CONFIG.imageryRotation

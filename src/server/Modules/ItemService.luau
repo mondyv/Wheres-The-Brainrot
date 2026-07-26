@@ -20,6 +20,8 @@ export type GiveBrainrotOptions = {
 	baseIncome: number?,
 	timeout: number?,
 	waitForData: boolean?,
+	-- When set, random product rolls scale off this plot $/s (hard income cap).
+	plotIncomePerSecond: number?,
 }
 
 export type ClearItemOptions = {
@@ -103,6 +105,7 @@ Main._CONFIG = {
 local Brainrots = require(script.Parent:WaitForChild("Brainrots"))
 local PlayerDataService = require(script.Parent:WaitForChild("PlayerDataService"))
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
+local RandomBrainrotOdds = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RandomBrainrotOdds"))
 local Utils = require(script.Parent:WaitForChild("Utils"))
 
 local cachedBindables: { [string]: BindableFunction } = {}
@@ -710,21 +713,22 @@ function Main:GiveRandomBrainrot(player: Player, rarity: string?, options: GiveB
 		end
 
 		pool = Brainrots.brainrotsOfRarity(requestedRarity :: any)
-	else
-		pool = {}
-		for _, def in ipairs(Brainrots.BRAINROTS) do
-			if Brainrots.isPlayableBrainrotName(def.name) then
-				table.insert(pool, def)
-			end
+		if #pool <= 0 then
+			return false, "empty_brainrot_pool"
 		end
+		local pick = pool[math.random(1, #pool)]
+		return self:GiveBrainrot(player, pick.name, options)
 	end
 
-	if #pool <= 0 then
+	local plotIps = 0
+	if options and typeof(options.plotIncomePerSecond) == "number" then
+		plotIps = math.max(0, options.plotIncomePerSecond)
+	end
+	local name = RandomBrainrotOdds.pickName(plotIps)
+	if not name then
 		return false, "empty_brainrot_pool"
 	end
-
-	local pick = pool[math.random(1, #pool)]
-	return self:GiveBrainrot(player, pick.name, options)
+	return self:GiveBrainrot(player, name, options)
 end
 
 function Main:ClearInventory(player: Player, options: ClearItemOptions?): (boolean, string?)

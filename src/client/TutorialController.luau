@@ -818,51 +818,43 @@ local function pointAtGui(target: GuiObject?, force: boolean?)
 	uiPointerForced = force == true
 	uiPointerHost = target
 
+	-- Prefer the cash Buy chip so stroke/hand sit on the green $ button, not a tiny child.
+	local attachHost = target
+	local buyAncestor = target:FindFirstAncestor("Buy")
+	if buyAncestor and buyAncestor:IsA("GuiObject") then
+		attachHost = buyAncestor
+	elseif target.Name == "Buy" and target:IsA("GuiObject") then
+		attachHost = target
+	end
+
 	local stroke = Instance.new("UIStroke")
 	stroke.Name = "TutorialTargetStroke"
 	stroke.Color = Color3.fromRGB(255, 230, 90)
-	stroke.Thickness = 2.4
-	stroke.Transparency = 0.15
-	stroke.Parent = target
+	stroke.Thickness = 2.6
+	stroke.Transparency = 0.1
+	stroke.Parent = attachHost
 	uiPointerStroke = stroke
 
-	local underBb = target:FindFirstAncestorOfClass("BillboardGui")
 	local pointer = Instance.new("ImageLabel")
 	pointer.Name = "TutorialUiClick"
 	pointer.BackgroundTransparency = 1
-	pointer.Size = UDim2.fromOffset(56, 56)
-	pointer.AnchorPoint = Vector2.new(0.5, 0.5)
+	pointer.Size = UDim2.fromOffset(46, 46)
+	pointer.AnchorPoint = Vector2.new(0.2, 0.15)
 	pointer.Image = TutorialConfig.UI_CLICK_IMAGE
 	pointer.ScaleType = Enum.ScaleType.Fit
-	pointer.ZIndex = math.max(target.ZIndex + 30, 50)
+	pointer.Active = false
+	pointer.ZIndex = math.max(attachHost.ZIndex + 40, 80)
 
+	local underBb = target:FindFirstAncestorOfClass("BillboardGui")
 	if underBb then
-		-- Accept/Decline live on billboards — stick to the button itself.
-		pointer.Position = UDim2.new(1, -4, 0.55, 0)
+		pointer.Position = UDim2.new(0.55, 0, 0.55, 0)
 		pointer.Parent = target
-		uiPointer = pointer
 	else
-		ensurePointerGui()
-		if not pointerRoot or not pointerGui then
-			pointer:Destroy()
-			return
-		end
-		pointerGui.Enabled = true
-		pointer.Position = UDim2.fromOffset(0, 0)
-		pointer.Parent = pointerRoot
-		uiPointer = pointer
-
-		local function syncPointerPos()
-			if not target.Parent or not pointer.Parent then
-				return
-			end
-			local ap = target.AbsolutePosition
-			local as = target.AbsoluteSize
-			pointer.Position = UDim2.fromOffset(ap.X + as.X - 6, ap.Y + as.Y * 0.55)
-		end
-		syncPointerPos()
-		uiPointerFollowConn = RunService.RenderStepped:Connect(syncPointerPos)
+		-- Fingertip on lower-right of the buy chip (price text stays readable).
+		pointer.Position = UDim2.new(1, -8, 1, -6)
+		pointer.Parent = attachHost
 	end
+	uiPointer = pointer
 
 	task.spawn(function()
 		while uiPointer == pointer and pointer.Parent and active and target.Parent do
@@ -870,8 +862,8 @@ local function pointAtGui(target: GuiObject?, force: boolean?)
 				break
 			end
 			local up = TweenService:Create(pointer, CLICK_BOUNCE, {
-				Size = UDim2.fromOffset(64, 64),
-				Rotation = -12,
+				Size = UDim2.fromOffset(54, 54),
+				Rotation = -10,
 			})
 			up:Play()
 			up.Completed:Wait()
@@ -879,8 +871,8 @@ local function pointAtGui(target: GuiObject?, force: boolean?)
 				break
 			end
 			local down = TweenService:Create(pointer, CLICK_BOUNCE, {
-				Size = UDim2.fromOffset(56, 56),
-				Rotation = 8,
+				Size = UDim2.fromOffset(46, 46),
+				Rotation = 6,
 			})
 			down:Play()
 			down.Completed:Wait()
@@ -1185,6 +1177,21 @@ local function readPlacedBrainrotLevel(): number
 	return 1
 end
 
+local function isDisallowedTutorialButton(obj: Instance): boolean
+	local cur: Instance? = obj
+	while cur do
+		local name = string.lower(cur.Name)
+		if name == "close" or name == "x" or name == "buyrobux" or name == "skip" then
+			return true
+		end
+		if name == "buybuttons" or name == "power10" or name == "container" then
+			break
+		end
+		cur = cur.Parent
+	end
+	return false
+end
+
 local function cacheUpgradesBuyButton()
 	powerBuyButton = nil
 	local main = PlayerGuiMain.ensure(player)
@@ -1212,16 +1219,24 @@ local function cacheUpgradesBuyButton()
 	if not row then
 		return nil
 	end
-	local buyButtons = row:FindFirstChild("BuyButtons", true)
-	local buy = buyButtons and buyButtons:FindFirstChild("Buy")
+	local buyButtons = row:FindFirstChild("BuyButtons") or row:FindFirstChild("BuyButtons", true)
+	if not buyButtons then
+		return nil
+	end
+	-- Cash buy only (never BuyRobux / Close).
+	local buy = buyButtons:FindFirstChild("Buy")
+	if not buy then
+		return nil
+	end
+
 	local btn: GuiObject? = nil
-	if buy and buy:IsA("GuiButton") then
+	if buy:IsA("GuiButton") and not isDisallowedTutorialButton(buy) then
 		btn = buy
-	elseif buy then
+	else
 		local best: GuiButton? = nil
 		local bestScore = -1
 		for _, d in buy:GetDescendants() do
-			if d:IsA("GuiButton") then
+			if d:IsA("GuiButton") and not isDisallowedTutorialButton(d) then
 				local underDecor = false
 				local p: Instance? = d.Parent
 				while p and p ~= buy do
@@ -1233,7 +1248,7 @@ local function cacheUpgradesBuyButton()
 				end
 				if not underDecor then
 					local area = math.max(d.AbsoluteSize.X * d.AbsoluteSize.Y, 1)
-					local score = area + 1e6
+					local score = area + (if d:IsA("ImageButton") or d:IsA("TextButton") then 1e6 else 0)
 					if score > bestScore then
 						bestScore = score
 						best = d
@@ -1241,15 +1256,12 @@ local function cacheUpgradesBuyButton()
 				end
 			end
 		end
-		btn = best or buy:FindFirstChildWhichIsA("GuiButton", true) or (buy:IsA("GuiObject") and buy)
+		btn = best
+		if not btn and buy:IsA("GuiObject") then
+			btn = buy
+		end
 	end
-	if not btn and buyButtons and buyButtons:IsA("GuiObject") then
-		btn = buyButtons
-	end
-	if not btn then
-		btn = row:FindFirstChildWhichIsA("GuiButton", true)
-	end
-	if btn and btn:IsA("GuiObject") then
+	if btn and btn:IsA("GuiObject") and not isDisallowedTutorialButton(btn) then
 		powerBuyButton = btn
 		return btn
 	end

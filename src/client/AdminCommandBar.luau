@@ -164,6 +164,9 @@ local COMMAND_HINTS: { [string]: string } = {
 	servershutdown = "Countdown then shut down THIS server only",
 	serverluck = "Set luck on THIS server + announce",
 	globalluck = "Set luck on ALL servers + announce",
+	kick = "Kick a player from this server",
+	ban = "Ban a player from the experience",
+	unban = "Remove an experience ban",
 	playtutorial = "Replay the first-join tutorial",
 	fly = "Toggle fly mode for yourself",
 }
@@ -363,6 +366,10 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "serverluck 4x 10m", hint = COMMAND_HINTS.serverluck },
 		{ fill = "globalluck 4x 10m", hint = COMMAND_HINTS.globalluck },
 		{ fill = "serverluck off", hint = "Clear luck on this server" },
+		{ fill = "kick PlayerName", hint = COMMAND_HINTS.kick },
+		{ fill = "ban PlayerName 7d", hint = COMMAND_HINTS.ban },
+		{ fill = "ban PlayerName forever", hint = "Permanent experience ban" },
+		{ fill = "unban PlayerName", hint = COMMAND_HINTS.unban },
 		{ fill = "playtutorial", hint = COMMAND_HINTS.playtutorial },
 		{ fill = "fly", hint = COMMAND_HINTS.fly },
 	}
@@ -413,11 +420,16 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 		or cmdName == "addluckyblock"
 		or cmdName == "resetdata"
 		or cmdName == "rebirth"
+		or cmdName == "kick"
+		or cmdName == "ban"
+		or cmdName == "unban"
 	then
 		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
 			for _, playerName in filterByPrefix(catalog.players, partial) do
-				pushSuggestion(out, prefix .. playerName, "player target")
+				if playerName ~= "all" or (cmdName ~= "kick" and cmdName ~= "ban" and cmdName ~= "unban") then
+					pushSuggestion(out, prefix .. playerName, "player target")
+				end
 			end
 		end
 	end
@@ -490,6 +502,15 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 			for _, sample in { "5m", "10m", "30m", "1h" } do
 				if startsWith(sample, partial) then
 					pushSuggestion(out, prefix .. sample, "duration")
+				end
+			end
+		end
+	elseif cmdName == "ban" then
+		if argIndex == 2 and (#tokens > 2 or (endsWithSpace and #tokens >= 2)) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(2, #tokens - 1))
+			for _, sample in { "1h", "1d", "7d", "30d", "forever" } do
+				if startsWith(sample, partial) then
+					pushSuggestion(out, prefix .. sample, "ban duration")
 				end
 			end
 		end

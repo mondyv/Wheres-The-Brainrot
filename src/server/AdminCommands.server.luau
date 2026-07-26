@@ -198,7 +198,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tpland, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverluck, globalluck, playtutorial, fly, help"
+			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tpland, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -732,6 +732,205 @@ commands.servershutdown = {
 }
 commands.shutdown = commands.servershutdown
 commands.servershut = commands.servershutdown
+
+local MAX_REASON_LEN = 200
+local DEFAULT_KICK_REASON = "You have been kicked by an admin."
+local DEFAULT_BAN_REASON = "You have been banned from this experience."
+
+local function joinReason(args: { string }, startIndex: number): string
+	if startIndex > #args then
+		return ""
+	end
+	local parts = {}
+	for i = startIndex, #args do
+		table.insert(parts, args[i])
+	end
+	local reason = table.concat(parts, " ")
+	reason = (string.gsub(reason, "^%s*(.-)%s*$", "%1"))
+	if #reason > MAX_REASON_LEN then
+		reason = string.sub(reason, 1, MAX_REASON_LEN)
+	end
+	return reason
+end
+
+local function parseBanDuration(raw: string?): number?
+	if typeof(raw) ~= "string" or raw == "" then
+		return nil
+	end
+	local trimmed = string.lower((string.gsub(raw, "^%s*(.-)%s*$", "%1")))
+	if trimmed == "forever" or trimmed == "perm" or trimmed == "permanent" or trimmed == "perma" then
+		return -1
+	end
+	local num, unit = string.match(trimmed, "^(%d+%.?%d*)%s*([smhd]?)$")
+	if not num then
+		return nil
+	end
+	local value = tonumber(num)
+	if not value or value <= 0 then
+		return nil
+	end
+	if unit == "m" then
+		value *= 60
+	elseif unit == "h" then
+		value *= 3600
+	elseif unit == "d" then
+		value *= 86400
+	end
+	return math.clamp(math.floor(value + 0.5), 1, 365 * 86400)
+end
+
+local function formatBanDuration(durationSec: number): string
+	if durationSec < 0 then
+		return "permanent"
+	end
+	return formatCountdown(durationSec)
+end
+
+local function canModerateTarget(sender: Player, targetUserId: number, targetPlayer: Player?): (boolean, string?)
+	if targetUserId == sender.UserId then
+		return false, "You can't moderate yourself."
+	end
+	if AdminAllowlist.isAllowed(targetUserId) then
+		return false, "You can't moderate an allowlisted admin."
+	end
+	if targetPlayer and AdminAllowlist.isPlayerAllowed(targetPlayer) then
+		return false, "You can't moderate another admin."
+	end
+	return true, nil
+end
+
+local function resolveUserIdForModeration(sender: Player, query: string): (number?, string?, Player?)
+	local targets, targetErr = resolveTargets(sender, query, false)
+	if targets and #targets == 1 then
+		local plr = targets[1]
+		return plr.UserId, plr.Name, plr
+	end
+	local asId = tonumber(query)
+	if asId and asId == math.floor(asId) and asId > 0 then
+		local online = Players:GetPlayerByUserId(asId)
+		return math.floor(asId), if online then online.Name else tostring(math.floor(asId)), online
+	end
+	local ok, userId = pcall(function()
+		return Players:GetUserIdFromNameAsync(query)
+	end)
+	if ok and typeof(userId) == "number" then
+		local online = Players:GetPlayerByUserId(userId)
+		return userId, query, online
+	end
+	return nil, targetErr or "Player not found.", nil
+end
+
+commands.kick = {
+	usage = "kick <player> [reason]",
+	description = "Kick a player from this server.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		if not args[1] then
+			return false, "Usage: " .. commands.kick.usage
+		end
+		local targets, targetErr = resolveTargets(sender, args[1], false)
+		if not targets then
+			return false, targetErr or "Player not found."
+		end
+		if #targets ~= 1 then
+			return false, "Kick only supports one player at a time."
+		end
+		local target = targets[1]
+		local allowed, denyReason = canModerateTarget(sender, target.UserId, target)
+		if not allowed then
+			return false, denyReason or "Not allowed."
+		end
+		local reason = joinReason(args, 2)
+		if reason == "" then
+			reason = DEFAULT_KICK_REASON
+		end
+		local ok, err = pcall(function()
+			target:Kick(reason)
+		end)
+		if not ok then
+			warn("[AdminCommands] kick failed:", err)
+			return false, "Kick failed."
+		end
+		return true, string.format("Kicked %s.", target.Name)
+	end,
+}
+
+commands.ban = {
+	usage = "ban <player|userid> [duration|forever] [reason]",
+	description = "Ban a player from the experience (BanAsync). Duration like 1h, 7d, or forever.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		if not args[1] then
+			return false, "Usage: " .. commands.ban.usage
+		end
+		local userId, displayName, onlinePlayer = resolveUserIdForModeration(sender, args[1])
+		if not userId then
+			return false, displayName or "Player not found."
+		end
+		local allowed, denyReason = canModerateTarget(sender, userId, onlinePlayer)
+		if not allowed then
+			return false, denyReason or "Not allowed."
+		end
+
+		local duration = -1
+		local reasonStart = 2
+		local maybeDuration = parseBanDuration(args[2])
+		if maybeDuration ~= nil then
+			duration = maybeDuration
+			reasonStart = 3
+		end
+		local reason = joinReason(args, reasonStart)
+		if reason == "" then
+			reason = DEFAULT_BAN_REASON
+		end
+
+		local privateReason = string.format(
+			"Banned by %s (%d). Duration=%s. Reason=%s",
+			sender.Name,
+			sender.UserId,
+			formatBanDuration(duration),
+			reason
+		)
+		local ok, err = pcall(function()
+			Players:BanAsync({
+				UserIds = { userId },
+				ApplyToUniverse = true,
+				Duration = duration,
+				DisplayReason = reason,
+				PrivateReason = privateReason,
+				ExcludeAltAccounts = false,
+			})
+		end)
+		if not ok then
+			warn("[AdminCommands] BanAsync failed:", err)
+			return false, "Ban failed. Make sure experience banning is enabled in Studio."
+		end
+		return true, string.format("Banned %s (%s).", displayName or tostring(userId), formatBanDuration(duration))
+	end,
+}
+
+commands.unban = {
+	usage = "unban <player|userid>",
+	description = "Remove an experience ban (UnbanAsync).",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		if not args[1] then
+			return false, "Usage: " .. commands.unban.usage
+		end
+		local userId, displayName = resolveUserIdForModeration(sender, args[1])
+		if not userId then
+			return false, displayName or "Player not found."
+		end
+		local ok, err = pcall(function()
+			Players:UnbanAsync({
+				UserIds = { userId },
+				ApplyToUniverse = true,
+			})
+		end)
+		if not ok then
+			warn("[AdminCommands] UnbanAsync failed:", err)
+			return false, "Unban failed. Make sure experience banning is enabled in Studio."
+		end
+		return true, string.format("Unbanned %s.", displayName or tostring(userId))
+	end,
+}
 
 commands.rebirth = {
 	usage = "rebirth <player|me>",

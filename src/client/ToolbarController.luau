@@ -107,7 +107,8 @@ local HIDE_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirectio
 local HIGHLIGHT_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local EQUIP_POP_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local BACKPACK_OPEN_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
+local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.24, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
+local BACKPACK_SLIDE_PX = 52
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
 local MOBILE_DRAG_HOLD_SEC = 0.2 -- long-press before mobile inventory drag starts (keeps tap-to-select)
 local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 28
@@ -236,9 +237,9 @@ local isBackpackPanelOpen = false
 -- Keep empty hotbar drop targets visible through the close tween so they don't snap away mid-animation.
 local isBackpackPanelClosing = false
 local backpackPanelScaleTween: Tween? = nil
-local backpackPanelFadeTween: Tween? = nil
+local backpackPanelPosTween: Tween? = nil
 local backpackContainerScaleTween: Tween? = nil
-local backpackFadeRoot: CanvasGroup? = nil
+local backpackRestPosition: UDim2? = nil
 local tweenEmptyHotbarSlotsOut: () -> ()
 local resetEmptyHotbarSlotScales: () -> ()
 local cancelEmptyHotbarCloseTweens: () -> ()
@@ -1470,9 +1471,9 @@ local ToolbarController = {}
 			backpackPanelScaleTween:Cancel()
 			backpackPanelScaleTween = nil
 		end
-		if backpackPanelFadeTween then
-			backpackPanelFadeTween:Cancel()
-			backpackPanelFadeTween = nil
+		if backpackPanelPosTween then
+			backpackPanelPosTween:Cancel()
+			backpackPanelPosTween = nil
 		end
 		if backpackContainerScaleTween then
 			backpackContainerScaleTween:Cancel()
@@ -1492,34 +1493,23 @@ local ToolbarController = {}
 
 	-- resetEmptyHotbarSlotScales / tweenEmptyHotbarSlotsOut assigned after hotbarSlotIsOccupied
 
-	local function ensureBackpackFadeRoot(frame: GuiObject): CanvasGroup
-		if backpackFadeRoot and backpackFadeRoot.Parent == frame then
-			return backpackFadeRoot
-		end
-
+	-- Keep repairing old empty fade wrappers so they never hold real content.
+	local function ensureBackpackFadeRoot(frame: GuiObject)
 		local existing = frame:FindFirstChild("_BackpackFadeRoot")
-		if existing and existing:IsA("CanvasGroup") then
-			-- Do NOT keep real Backpack content inside this wrapper. Older patches moved
-			-- Container into here, which broke your UI hierarchy. Put everything back.
+		if existing then
 			for _, ch in existing:GetChildren() do
 				ch.Parent = frame
 			end
-			backpackFadeRoot = existing
-			return existing
 		end
+	end
 
-		local cg = Instance.new("CanvasGroup")
-		cg.Name = "_BackpackFadeRoot"
-		cg.Size = UDim2.fromScale(1, 1)
-		cg.BackgroundTransparency = 1
-		cg.BorderSizePixel = 0
-		cg.GroupTransparency = 0
-		cg.Visible = false
-		cg.Parent = frame
-
-		-- Important: this must stay EMPTY. Never parent Container/Scrolling/slots into it.
-		backpackFadeRoot = cg
-		return cg
+	local function getBackpackRestPosition(f: GuiObject): UDim2
+		if backpackRestPosition then
+			return backpackRestPosition
+		end
+		local pos = f.Position
+		backpackRestPosition = pos
+		return pos
 	end
 
 	local function resolveBackpackHeaderLabel(backpackFrame: Instance): Instance?
@@ -1576,28 +1566,24 @@ local ToolbarController = {}
 			isBackpackPanelClosing = true
 			BrainrotItemTooltip.hide(true)
 		end
-		local f = backpackFrameRef
+		local f = backpackFrameRef :: GuiObject
 		cancelBackpackPanelTweens()
+		ensureBackpackFadeRoot(f)
 		local sc = getOrAddUIScale(f :: Instance)
-		local fadeRoot = ensureBackpackFadeRoot(f)
+		local rest = getBackpackRestPosition(f)
+		local openPos = UDim2.new(rest.X.Scale, rest.X.Offset, rest.Y.Scale, rest.Y.Offset - BACKPACK_SLIDE_PX)
+		local closePos = UDim2.new(rest.X.Scale, rest.X.Offset, rest.Y.Scale, rest.Y.Offset - math.floor(BACKPACK_SLIDE_PX * 0.45))
+
 		if open then
 			f.Visible = true
 			ensureBackpackChromeVisible(f)
 			scrollBackpackToTop(f)
-			fadeRoot.GroupTransparency = 0
+			f.Position = openPos
 			sc.Scale = 0.94
-			local backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_OPEN_TWEEN, { Scale = 1 })
+			backpackPanelPosTween = TweenService:Create(f, BACKPACK_OPEN_TWEEN, { Position = rest })
+			backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_OPEN_TWEEN, { Scale = 1 })
+			backpackPanelPosTween:Play()
 			backpackPanelScaleTween:Play()
-			if backpackContainer and backpackContainer:IsA("GuiObject") then
-				local csc = getOrAddUIScale(backpackContainer :: Instance)
-				csc.Scale = 0.96
-				local backpackContainerScaleTween = TweenService:Create(
-					csc,
-					TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-					{ Scale = 1 }
-				)
-				backpackContainerScaleTween:Play()
-			end
 			if canUseToolbar then
 				showToolbar()
 			end
@@ -1607,36 +1593,27 @@ local ToolbarController = {}
 			end
 			refreshBrainrotBackpackUI()
 		else
-			-- Keep empty hotbar cells visible and scale them out with the panel close.
+			-- Empty hotbar cells stay full size and hide together when the panel finishes.
 			updateHotbarSlotVisibility()
-			tweenEmptyHotbarSlotsOut()
-			local backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.9 })
-			local backpackPanelFadeTween =
-				TweenService:Create(fadeRoot, BACKPACK_CLOSE_TWEEN, { GroupTransparency = 1 })
+			backpackPanelPosTween = TweenService:Create(f, BACKPACK_CLOSE_TWEEN, { Position = closePos })
+			backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.94 })
+			backpackPanelPosTween:Play()
 			backpackPanelScaleTween:Play()
-			backpackPanelFadeTween:Play()
-			if backpackContainer and backpackContainer:IsA("GuiObject") then
-				local csc = getOrAddUIScale(backpackContainer :: Instance)
-				local backpackContainerScaleTween = TweenService:Create(csc, BACKPACK_CLOSE_TWEEN, { Scale = 0.94 })
-				backpackContainerScaleTween:Play()
-			end
-			backpackPanelFadeTween.Completed:Once(function(state)
+			backpackPanelPosTween.Completed:Once(function(state)
 				if state == Enum.PlaybackState.Completed and not isBackpackPanelOpen then
 					isBackpackPanelClosing = false
 					resetEmptyHotbarSlotScales()
 					f.Visible = false
+					f.Position = rest
 					sc.Scale = 1
-					fadeRoot.GroupTransparency = 0
-					if backpackContainer and backpackContainer:IsA("GuiObject") then
-						getOrAddUIScale(backpackContainer :: Instance).Scale = 1
-					end
 					updateHotbarSlotVisibility()
 					for i = 1, #slots do
 						refreshSlotVisual(i)
 					end
 				end
-				if backpackPanelFadeTween and state == Enum.PlaybackState.Completed then
-					backpackPanelFadeTween = nil
+				if state == Enum.PlaybackState.Completed then
+					backpackPanelPosTween = nil
+					backpackPanelScaleTween = nil
 				end
 			end)
 		end
@@ -2112,17 +2089,8 @@ local ToolbarController = {}
 	end
 
 	tweenEmptyHotbarSlotsOut = function()
+		-- No per-slot shrink — empty toolbar cells hide together after panel close.
 		cancelEmptyHotbarCloseTweens()
-		for i = 1, #slots do
-			local slot = slots[i]
-			if slot and slot.Visible and not hotbarSlotIsOccupied(i) then
-				local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
-				sc.Scale = hotbarSlotRestScale(i)
-				local tw = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.2 })
-				table.insert(emptyHotbarCloseTweens, tw)
-				tw:Play()
-			end
-		end
 	end
 
 	local hotbarListLayout: UIListLayout? = nil
@@ -2145,6 +2113,7 @@ local ToolbarController = {}
 		end
 		if backpackFrameRef then
 			centerToolbarChildHorizontally(backpackFrameRef)
+			backpackRestPosition = backpackFrameRef.Position
 		end
 	end
 
@@ -4053,6 +4022,7 @@ local ToolbarController = {}
 				local bf = backpackFrame :: GuiObject
 				backpackGuiFrame = bf
 				backpackFrameRef = bf
+				backpackRestPosition = bf.Position
 				ensureBackpackFrameOutline(bf)
 				ensureBackpackFadeRoot(bf)
 				ensureBackpackChromeVisible(bf)

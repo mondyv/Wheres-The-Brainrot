@@ -31,9 +31,9 @@ local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
 local BUSH_COOLDOWN_ENDS_ATTR = "BushCooldownEndsAt"
 local BUSH_LOOT_PHASE_COOLDOWN = "cooldown"
 local BUSH_FLOATING_CLAIM_ATTR = "BushFloatingClaimActive"
-local AIM_TICK_INTERVAL = 0.05
-local PICK_FULL_SCAN_INTERVAL = 0.5
-local COOLDOWN_VISUAL_SYNC_INTERVAL = 0.5
+local AIM_TICK_INTERVAL = 0.08
+local PICK_FULL_SCAN_INTERVAL = 0.55
+local COOLDOWN_VISUAL_SYNC_INTERVAL = 0.6
 local BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 
 local bushByModel: { [Instance]: ProximityPrompt } = {}

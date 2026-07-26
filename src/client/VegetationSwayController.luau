@@ -11,7 +11,7 @@ local Workspace = game:GetService("Workspace")
 local M = {}
 
 local MAX_ACTIVE = 24
-local SCAN_INTERVAL_SEC = 0.45
+local SCAN_INTERVAL_SEC = 0.55
 local GRASS_RADIUS = 3.4
 local GRASS_RADIUS_SQ = GRASS_RADIUS * GRASS_RADIUS
 local GRASS_TILT_RAD = math.rad(13)
@@ -20,9 +20,10 @@ local BLEND_IN = 7.5
 local BLEND_OUT = 4.2
 local CLEAR_EPS = 0.02
 local LEAVE_GRACE_SEC = 0.14
-local INDEX_REFRESH_SEC = 14
 local STEP_NAME = "VegetationSwayStep"
 local DIR_SMOOTH = 6
+-- Coarse grid so scans touch nearby cells only (not every grasspart on the map).
+local CELL_SIZE = 8
 
 type GrassEntry = {
 	part: BasePart,
@@ -47,9 +48,18 @@ type ActiveSway = {
 local localPlayer = Players.LocalPlayer
 
 local grassEntries: { GrassEntry } = {}
+local grassCells: { [string]: { GrassEntry } } = {}
 local indexedParts: { [BasePart]: boolean } = {}
 local indexConns: { RBXScriptConnection } = {}
 local lastIndexAt = 0
+
+local function cellKey(cx: number, cz: number): string
+	return tostring(cx) .. ":" .. tostring(cz)
+end
+
+local function worldToCell(x: number, z: number): (number, number)
+	return math.floor(x / CELL_SIZE), math.floor(z / CELL_SIZE)
+end
 
 local active: { [BasePart]: ActiveSway } = {}
 local activeCount = 0
@@ -165,12 +175,21 @@ local function addGrassPart(part: BasePart)
 	end
 	indexedParts[part] = true
 	local pos = part.Position
-	table.insert(grassEntries, {
+	local entry: GrassEntry = {
 		part = part,
 		x = pos.X,
 		y = pos.Y,
 		z = pos.Z,
-	})
+	}
+	table.insert(grassEntries, entry)
+	local cx, cz = worldToCell(pos.X, pos.Z)
+	local key = cellKey(cx, cz)
+	local bucket = grassCells[key]
+	if not bucket then
+		bucket = {}
+		grassCells[key] = bucket
+	end
+	table.insert(bucket, entry)
 end
 
 local function indexLandFolder(landFolder: Instance)
@@ -219,6 +238,7 @@ end
 local function clearIndex()
 	disconnectList(indexConns)
 	table.clear(grassEntries)
+	table.clear(grassCells)
 	table.clear(indexedParts)
 end
 
@@ -311,8 +331,7 @@ local function scanAroundCharacter(_character: Model, humanoid: Humanoid, hrp: B
 	end
 
 	ensureIndex()
-	local n = #grassEntries
-	if n == 0 then
+	if #grassEntries == 0 then
 		return
 	end
 
@@ -333,22 +352,31 @@ local function scanAroundCharacter(_character: Model, humanoid: Humanoid, hrp: B
 	type Cand = { part: BasePart, distSq: number, x: number, z: number }
 	local cands: { Cand } = {}
 
-	for i = 1, n do
-		local entry = grassEntries[i]
-		local part = entry.part
-		if not part.Parent then
-			continue
+	local cx, cz = worldToCell(px, pz)
+	local cellRadius = math.ceil(GRASS_RADIUS / CELL_SIZE)
+	for ox = -cellRadius, cellRadius do
+		for oz = -cellRadius, cellRadius do
+			local bucket = grassCells[cellKey(cx + ox, cz + oz)]
+			if not bucket then
+				continue
+			end
+			for _, entry in bucket do
+				local part = entry.part
+				if not part.Parent then
+					continue
+				end
+				if math.abs(entry.y - py) > 12 then
+					continue
+				end
+				local dx = entry.x - px
+				local dz = entry.z - pz
+				local distSq = dx * dx + dz * dz
+				if distSq > GRASS_RADIUS_SQ then
+					continue
+				end
+				table.insert(cands, { part = part, distSq = distSq, x = entry.x, z = entry.z })
+			end
 		end
-		if math.abs(entry.y - py) > 12 then
-			continue
-		end
-		local dx = entry.x - px
-		local dz = entry.z - pz
-		local distSq = dx * dx + dz * dz
-		if distSq > GRASS_RADIUS_SQ then
-			continue
-		end
-		table.insert(cands, { part = part, distSq = distSq, x = entry.x, z = entry.z })
 	end
 
 	if #cands == 0 then

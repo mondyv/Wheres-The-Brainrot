@@ -20,9 +20,10 @@ local player = Players.LocalPlayer
 local ACTIVE_RANGE = 55
 local SELECT_PCT = 10
 local MAX_ACTIVE = 2
-local FLIES_PER_BUSH = 3
-local REFRESH_SEC = 2
+local FLIES_PER_BUSH = 2
+local REFRESH_SEC = 2.5
 local FOLDER_NAME = "BushFireflies"
+local LIGHT_UPDATE_EVERY = 2
 
 -- Brighter / lighter yellow
 local YELLOW = Color3.fromRGB(255, 245, 170)
@@ -153,8 +154,8 @@ local function makeFly(parent: Folder, center: Vector3, half: Vector3, index: nu
 
 	local light = Instance.new("PointLight")
 	light.Color = YELLOW
-	light.Brightness = 1.35
-	light.Range = 7
+	light.Brightness = 1.1
+	light.Range = 5
 	light.Shadows = false
 	light.Parent = part
 
@@ -254,8 +255,12 @@ local function refresh()
 	end
 end
 
+local lightFrame = 0
+
 local function stepFlies(dt: number)
 	local t = os.clock()
+	lightFrame += 1
+	local updateLights = (lightFrame % LIGHT_UPDATE_EVERY) == 0
 	-- Snappier follow so motion reads more lively.
 	local blend = math.clamp(dt * 2.4, 0.04, 0.14)
 	for _, swarm in pairs(activeSwarms) do
@@ -281,9 +286,11 @@ local function stepFlies(dt: number)
 			local target = swarm.center + fly.baseOffset + drift + fly.wander
 			fly.pos = fly.pos:Lerp(target, blend)
 			fly.part.CFrame = CFrame.new(fly.pos)
-			local pulse = 0.5 + 0.5 * math.sin(t * 2.2 + fly.phase)
-			fly.light.Brightness = 1.05 + 0.55 * pulse
-			fly.part.Transparency = 0.08 + 0.12 * (1 - pulse)
+			if updateLights then
+				local pulse = 0.5 + 0.5 * math.sin(t * 2.2 + fly.phase)
+				fly.light.Brightness = 0.9 + 0.4 * pulse
+				fly.part.Transparency = 0.08 + 0.12 * (1 - pulse)
+			end
 		end
 	end
 end

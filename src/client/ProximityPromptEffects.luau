@@ -2803,41 +2803,37 @@ function ProximityPromptEffects.forceHide(prompt: ProximityPrompt)
 end
 
 purgeOrphanPromptBillboards = function()
+	-- Prompt billboards are parented directly under PlayerGui — never GetDescendants()
+	-- (that walks the whole HUD every purge and hitchs hard).
 	local pg = player:FindFirstChild("PlayerGui")
 	if not pg then
 		return
 	end
-	local scanned = 0
-	for _, desc in ipairs(pg:GetDescendants()) do
-		scanned += 1
-		if scanned % 300 == 0 then
-			task.wait()
+	local byAdornee: { [Instance]: BillboardGui } = {}
+	for _, desc in ipairs(pg:GetChildren()) do
+		if not desc:IsA("BillboardGui") then
+			continue
 		end
-		if desc:IsA("BillboardGui") then
-			local n = desc.Name
-			if n == "CustomProximityPrompt" or n == "BushSearchSharedPrompt" then
-				local tracked = false
-				if bushSharedView and bushSharedView.billboard == desc then
+		local n = desc.Name
+		if n ~= "CustomProximityPrompt" and n ~= "BushSearchSharedPrompt" then
+			continue
+		end
+
+		local tracked = bushSharedView ~= nil and bushSharedView.billboard == desc
+		if not tracked then
+			for _, view in viewsByPrompt do
+				if view.billboard == desc then
 					tracked = true
-				end
-				if not tracked then
-					for _, view in viewsByPrompt do
-						if view.billboard == desc then
-							tracked = true
-							break
-						end
-					end
-				end
-				if not tracked then
-					desc:Destroy()
+					break
 				end
 			end
 		end
-	end
-	-- Also kill duplicate CustomProximityPrompts for the same adornee (stacked = darker).
-	local byAdornee: { [Instance]: BillboardGui } = {}
-	for _, desc in ipairs(pg:GetChildren()) do
-		if desc:IsA("BillboardGui") and desc.Name == "CustomProximityPrompt" then
+		if not tracked then
+			desc:Destroy()
+			continue
+		end
+
+		if n == "CustomProximityPrompt" then
 			local adornee = desc.Adornee
 			if adornee then
 				local existing = byAdornee[adornee]
@@ -3068,50 +3064,49 @@ function ProximityPromptEffects.init()
 
 	local promptRepairAccum = 0
 	local purgeAccum = 0
+	-- Orphan purge was every 1.5s + full PlayerGui GetDescendants — major hitch source.
+	local PURGE_INTERVAL = 12
+	local REPAIR_INTERVAL = 0.75
 	RunService.Heartbeat:Connect(function(dt)
 		promptRepairAccum += dt
 		purgeAccum += dt
-		if purgeAccum >= 1.5 then
+		if purgeAccum >= PURGE_INTERVAL then
 			purgeAccum = 0
 			purgeOrphanPromptBillboards()
 		end
-		if promptRepairAccum < 0.35 then
+		if promptRepairAccum < REPAIR_INTERVAL then
 			return
 		end
 		promptRepairAccum = 0
-		for prompt in styledPrompts do
+		-- Only repair live views + the active stand prompt — never walk every styled prompt.
+		if activeStandPrompt and activeStandPrompt.Parent and shouldShowPromptUi(activeStandPrompt) then
+			local view = viewsByPrompt[activeStandPrompt]
+			if view and view.billboard.Parent then
+				if not view.billboard.Enabled then
+					view.billboard.Enabled = true
+				end
+			else
+				onPromptShown(activeStandPrompt, nil)
+			end
+		end
+		for prompt, view in viewsByPrompt do
+			if prompt == activeStandPrompt or isManagedBushPrompt(prompt) then
+				continue
+			end
 			if not prompt.Parent or not prompt.Enabled or prompt:GetAttribute(C.CUSTOM_ATTR) ~= true then
 				continue
 			end
-			if isManagedBushPrompt(prompt) then
-				continue
-			end
-			-- Stand Pick Up / Place cards are owned by BrainrotStandController sync — never
-			-- rebuild them on a timer (that stacked billboards and killed sway/press anims).
 			if isManagedStandProximityPrompt(prompt) then
-				if activeStandPrompt == prompt and shouldShowPromptUi(prompt) then
-					local view = viewsByPrompt[prompt]
-					if view and view.billboard.Parent then
-						if not view.billboard.Enabled then
-							view.billboard.Enabled = true
-						end
-					else
-						onPromptShown(prompt, nil)
-					end
-				end
 				continue
 			end
 			if not shouldShowPromptUi(prompt) then
 				continue
 			end
-			local view = viewsByPrompt[prompt]
-			if view and view.billboard.Parent then
+			if view.billboard.Parent then
 				if not view.billboard.Enabled then
 					view.billboard.Enabled = true
 				end
-				continue
 			end
-			onPromptShown(prompt, nil)
 		end
 	end)
 
@@ -3188,46 +3183,36 @@ function ProximityPromptEffects.init()
 		return (root.Position - focus).Magnitude
 	end
 
-	local function findBestManagedBushPrompt(): ProximityPrompt?
+	-- BushHoldInteraction already picks the closest bush and calls suppressBushSearchUi.
+	-- Only re-validate the current prompt — never scan all styledPrompts each tick.
+	local function resolveManagedBushPrompt(): ProximityPrompt?
 		if managedBushHoldActive and managedBushHoldActive.Parent and managedBushHoldActive.Enabled then
 			return managedBushHoldActive
 		end
 		if CarryGate.isFull() then
 			return nil
 		end
-		local best: ProximityPrompt? = nil
-		local bestDist = math.huge
-		for prompt in styledPrompts do
-			if not prompt.Parent or not isManagedBushPrompt(prompt) or not prompt.Enabled then
-				continue
-			end
-			if not managedBushUiEligible(prompt) then
-				continue
-			end
-			local dist = promptDistanceToCharacter(prompt)
-			if not dist then
-				continue
-			end
-			if dist <= prompt.MaxActivationDistance + 1.25 and dist < bestDist then
-				best = prompt
-				bestDist = dist
-			end
+		local prompt = activeBushSearchPrompt
+		if not prompt or not prompt.Parent or not isManagedBushPrompt(prompt) or not prompt.Enabled then
+			return nil
 		end
-		return best
+		if not managedBushUiEligible(prompt) then
+			return nil
+		end
+		local dist = promptDistanceToCharacter(prompt)
+		if not dist or dist > prompt.MaxActivationDistance + 1.25 then
+			return nil
+		end
+		return prompt
 	end
 
 	local bushRefreshAccum = 0
 	local facingRefreshAccum = 0
 	RunService.Heartbeat:Connect(function(dt)
 		bushRefreshAccum += dt
-		if bushRefreshAccum >= 0.16 then
+		if bushRefreshAccum >= 0.25 then
 			bushRefreshAccum = 0
-			local bestBushPrompt = findBestManagedBushPrompt()
-			if not bestBushPrompt and activeBushSearchPrompt and activeBushSearchPrompt.Parent then
-				if managedBushUiEligible(activeBushSearchPrompt) then
-					bestBushPrompt = activeBushSearchPrompt
-				end
-			end
+			local bestBushPrompt = resolveManagedBushPrompt()
 			if bestBushPrompt then
 				ProximityPromptEffects.showBushSearchFor(bestBushPrompt)
 			elseif activeBushSearchPrompt and not managedBushHoldActive then

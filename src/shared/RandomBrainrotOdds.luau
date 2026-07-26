@@ -41,33 +41,33 @@ local RARITY_ORDER: { RarityId } = {
 	"secret",
 }
 
--- Same land-style tables as bush harvest, keyed by income tier 1–10.
--- Late tiers keep mythic/legendary playable but crush god/secret vs older tables.
+-- Heavily nerfed vs bush land tables — Random Brainrot is a paid convenience roll,
+-- not a shortcut to god/secret. High tiers stay mostly epic→legendary.
 local TIER_WEIGHTS: { [number]: { [RarityId]: number } } = {
-	[1] = { common = 75, uncommon = 25, rare = 0, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[2] = { common = 55, uncommon = 35, rare = 10, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[3] = { common = 35, uncommon = 35, rare = 22, epic = 8, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[4] = { common = 25, uncommon = 28, rare = 25, epic = 15, mythic = 7, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[5] = { common = 5, uncommon = 22, rare = 28, epic = 25, mythic = 18, legendary = 2, ["brainrot god"] = 0, secret = 0 },
-	[6] = { common = 0, uncommon = 8, rare = 28, epic = 30, mythic = 24, legendary = 10, ["brainrot god"] = 0, secret = 0 },
-	[7] = { common = 0, uncommon = 0, rare = 12, epic = 32, mythic = 32, legendary = 20, ["brainrot god"] = 4, secret = 0 },
-	[8] = { common = 0, uncommon = 0, rare = 0, epic = 18, mythic = 38, legendary = 32, ["brainrot god"] = 10, secret = 2 },
-	[9] = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 28, legendary = 42, ["brainrot god"] = 22, secret = 8 },
-	[10] = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 15, legendary = 45, ["brainrot god"] = 28, secret = 12 },
+	[1] = { common = 88, uncommon = 12, rare = 0, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[2] = { common = 70, uncommon = 25, rare = 5, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[3] = { common = 50, uncommon = 32, rare = 15, epic = 3, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[4] = { common = 35, uncommon = 35, rare = 22, epic = 7, mythic = 1, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[5] = { common = 18, uncommon = 30, rare = 28, epic = 18, mythic = 5, legendary = 1, ["brainrot god"] = 0, secret = 0 },
+	[6] = { common = 8, uncommon = 20, rare = 30, epic = 26, mythic = 12, legendary = 4, ["brainrot god"] = 0, secret = 0 },
+	[7] = { common = 0, uncommon = 10, rare = 28, epic = 32, mythic = 22, legendary = 7, ["brainrot god"] = 1, secret = 0 },
+	[8] = { common = 0, uncommon = 0, rare = 18, epic = 34, mythic = 30, legendary = 15, ["brainrot god"] = 2.5, secret = 0.5 },
+	[9] = { common = 0, uncommon = 0, rare = 8, epic = 28, mythic = 35, legendary = 24, ["brainrot god"] = 4, secret = 1 },
+	[10] = { common = 0, uncommon = 0, rare = 0, epic = 20, mythic = 35, legendary = 35, ["brainrot god"] = 7, secret = 3 },
 }
 
--- Plot $/s thresholds → tier (must keep Random Brainrot below runaway god/secret rolls early).
+-- Much higher $/s gates so mid/late god rolls take real progression.
 local TIER_INCOME: { number } = {
 	0,
-	40,
-	120,
-	350,
-	900,
+	80,
+	250,
+	800,
 	2500,
-	10000,
-	40000,
-	150000,
-	500000,
+	8000,
+	35000,
+	120000,
+	400000,
+	1_200_000,
 }
 
 M.UI_ROW_NAMES = {
@@ -106,8 +106,8 @@ end
 
 function M.maxAllowedBaseIncome(plotIncomePerSecond: number): number
 	local ips = math.max(0, plotIncomePerSecond)
-	-- Early game floor so empty plots still get commons; hard ceiling vs current gen.
-	return math.max(45, ips * 1.35 + 20)
+	-- Cap rolls near current gen so Random Brainrot can't jump multiple income tiers.
+	return math.max(35, ips * 0.95 + 12)
 end
 
 function M.tierForIncome(plotIncomePerSecond: number): number
@@ -314,15 +314,15 @@ function M.pickName(plotIncomePerSecond: number): string?
 		return nil
 	end
 
-	-- Prefer mid/low incomes inside the allowed band (not always the top of the cap).
+	-- Heavily bias toward the cheap end of the allowed band.
 	local roll = math.random()
 	local idx: number
-	if roll < 0.55 then
-		idx = math.random(1, math.max(1, math.ceil(#pool * 0.45)))
-	elseif roll < 0.9 then
-		idx = math.random(1, math.max(1, math.ceil(#pool * 0.8)))
+	if roll < 0.7 then
+		idx = math.random(1, math.max(1, math.ceil(#pool * 0.3)))
+	elseif roll < 0.95 then
+		idx = math.random(1, math.max(1, math.ceil(#pool * 0.6)))
 	else
-		idx = math.random(1, #pool)
+		idx = math.random(1, math.max(1, math.ceil(#pool * 0.85)))
 	end
 	return pool[idx].name
 end

@@ -599,6 +599,10 @@ local function wireClickablePrompt(view: PromptView)
 				return
 			end
 			view.holdViaPointer = false
+			-- Cancel programmatic hold started by beginHoldVisual / InputHoldBegin.
+			pcall(function()
+				view.prompt:InputHoldEnd()
+			end)
 			endHoldVisual(view, false)
 		end
 		local function beginKeyboardHold()
@@ -607,12 +611,16 @@ local function wireClickablePrompt(view: PromptView)
 				return
 			end
 			view.holdViaPointer = false
+			-- InputHoldBegin so hold completes even when engine HoldBegan is skipped.
 			beginHoldVisual(view)
 		end
 		local function endKeyboardHold()
 			if not view.holding or view.holdViaPointer then
 				return
 			end
+			pcall(function()
+				view.prompt:InputHoldEnd()
+			end)
 			endHoldVisual(view, false)
 		end
 		local function matchesKeyboardHold(input: InputObject): boolean
@@ -847,6 +855,11 @@ end
 
 function ProximityPromptEffects.isPromptFacingCamera(prompt: ProximityPrompt): boolean
 	return isPromptFacingCamera(prompt)
+end
+
+function ProximityPromptEffects.isPromptHolding(prompt: ProximityPrompt): boolean
+	local view = viewsByPrompt[prompt]
+	return view ~= nil and view.holding == true
 end
 
 function ProximityPromptEffects.isBushSearchUiInRange(prompt: ProximityPrompt): boolean
@@ -1775,10 +1788,9 @@ startHoldRender = function(view: PromptView)
 			view.holdFill.BackgroundTransparency = math.clamp(0.05 - pulse, 0, 0.2)
 
 			if view.holdProgress >= C.HOLD_COMPLETE_THRESHOLD then
+				-- Celebrate the bar only. Do NOT InputHoldEnd here — that cancels the
+				-- engine hold before PromptTriggered (breaks steal / other hold prompts).
 				stopHoldRender(view)
-				pcall(function()
-					view.prompt:InputHoldEnd()
-				end)
 				resetHoldState(view, true)
 				return
 			end

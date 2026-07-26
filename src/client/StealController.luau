@@ -125,6 +125,15 @@ local function refreshStealPromptVisibility()
 			continue
 		end
 
+		-- Never tear down mid-hold — disable cancels PromptTriggered before the product popup.
+		if ProximityPromptEffects.isPromptHolding(prompt) then
+			if prompt.Enabled then
+				closestStand = stand
+				closestDist = 0
+			end
+			continue
+		end
+
 		if not isStandStealEligible(stand) then
 			if prompt.Enabled then
 				prompt.Enabled = false
@@ -161,6 +170,9 @@ local function refreshStealPromptVisibility()
 
 	for stand, prompt in stealPrompts do
 		if not stand.Parent or not prompt.Parent then
+			continue
+		end
+		if ProximityPromptEffects.isPromptHolding(prompt) then
 			continue
 		end
 		local shouldShow = stand == closestStand

@@ -33,8 +33,7 @@ local PANEL_BACKDROP_NAME = "PanelClickOutside"
 local BLUR_SIZE = 18
 local BLUR_SIZE_MOBILE = 28
 local BLUR_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local MOBILE_PANEL_SCALE = 1.5
-local MOBILE_UPGRADES_PANEL_SCALE = 1.5 / 1.3 -- ~1.15 — power upgrade panel was too large
+local MOBILE_PANEL_SCALE = 1.5 / 1.3 -- all HUD panels ~1.15× on mobile
 local PANEL_MODAL_MAIN_ORDER = 50
 
 local panelChromeHidden = false
@@ -60,14 +59,8 @@ local function isMobileUi(): boolean
 	return UserInputService.TouchEnabled
 end
 
-local function panelRestScale(frame: Frame?): number
-	if not isMobileUi() then
-		return 1
-	end
-	if frame and frame.Name == "Upgrades" then
-		return MOBILE_UPGRADES_PANEL_SCALE
-	end
-	return MOBILE_PANEL_SCALE
+local function panelRestScale(_frame: Frame?): number
+	return if isMobileUi() then MOBILE_PANEL_SCALE else 1
 end
 
 local function blurTargetSize(): number

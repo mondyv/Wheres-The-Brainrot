@@ -88,6 +88,10 @@ local function clearOfferPresentation(keepMoveLock: boolean?)
 	elseif not keepMoveLock then
 		FloatingClaimCutscene.releaseMoveLock()
 	end
+	task.defer(function()
+		MobileTouchGate.ensureTouchControlsVisible(true)
+		MobileTouchGate.restorePlayerMovement()
+	end)
 end
 
 function BushFloatingClaimController.consumeAmbushOnAccept(model: Model): boolean

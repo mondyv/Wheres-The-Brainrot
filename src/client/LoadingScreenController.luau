@@ -336,6 +336,52 @@ local function restoreGameplayCamera(camera: Camera, player: Player)
 	end
 end
 
+local function defaultGameplayCameraCFrame(hrp: BasePart): CFrame
+	local look = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
+	if look.Magnitude < 0.05 then
+		look = Vector3.new(0, 0, -1)
+	else
+		look = look.Unit
+	end
+	local camPos = hrp.Position - look * 14 + Vector3.new(0, 6, 0)
+	local lookAt = hrp.Position + Vector3.new(0, 1.5, 0)
+	return CFrame.lookAt(camPos, lookAt)
+end
+
+-- Smooth handoff from loading moon cam into normal third-person (no hard cut).
+local function settleGameplayCamera(camera: Camera, player: Player, durationSec: number?)
+	local character = player.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not hrp or not hrp:IsA("BasePart") or not humanoid then
+		restoreGameplayCamera(camera, player)
+		return
+	end
+
+	local dur = math.clamp(durationSec or 0.9, 0.35, 2)
+	local startCf = camera.CFrame
+	local startFov = camera.FieldOfView
+	local goalFov = 70
+	camera.CameraType = Enum.CameraType.Scriptable
+
+	local t0 = os.clock()
+	while os.clock() - t0 < dur do
+		local liveHrp = character:FindFirstChild("HumanoidRootPart")
+		if liveHrp and liveHrp:IsA("BasePart") then
+			hrp = liveHrp
+		end
+		local endCf = defaultGameplayCameraCFrame(hrp :: BasePart)
+		local alpha = math.clamp((os.clock() - t0) / dur, 0, 1)
+		-- Smooth ease-out so it settles softly into place.
+		local eased = 1 - (1 - alpha) ^ 3
+		camera.CFrame = startCf:Lerp(endCf, eased)
+		camera.FieldOfView = startFov + (goalFov - startFov) * eased
+		RunService.RenderStepped:Wait()
+	end
+
+	restoreGameplayCamera(camera, player)
+end
+
 type MoonCameraTrack = {
 	frames: { CFrame },
 	fov: { number },
@@ -1910,9 +1956,7 @@ local function fadeOutLoadingTogether(
 	-- Disabling it here raced OfflineEarnings / other join UI before Main was restored.
 	fadeCanvas = nil
 
-	if camera then
-		restoreGameplayCamera(camera, player)
-	end
+	-- Camera settle is owned by run() so fade + settle can overlap cleanly.
 end
 
 function M.showEarly()
@@ -2057,10 +2101,13 @@ function M.run()
 		stopCameraLock()
 		stopCameraLock = nil
 	end
-	if camera then
-		restoreGameplayCamera(camera, player)
-	end
 
+	-- Overlap UI fade with a soft camera drop into third-person.
+	task.spawn(function()
+		if camera then
+			settleGameplayCamera(camera, player, 0.95)
+		end
+	end)
 	fadeOutLoadingTogether(loadingGui, blur, camera, player)
 	cleanupLoadingVisuals(playerGui, loadingGui, nil)
 

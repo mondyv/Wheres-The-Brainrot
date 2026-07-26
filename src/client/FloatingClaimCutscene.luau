@@ -5,12 +5,14 @@
 
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
+local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 
 local player = Players.LocalPlayer
 
@@ -137,6 +139,7 @@ local function ensureLetterboxGui(): ScreenGui
 	topSeal.Name = "LetterTopSeal"
 	topSeal.BackgroundColor3 = Color3.new(0, 0, 0)
 	topSeal.BorderSizePixel = 0
+	topSeal.Active = false
 	topSeal.Size = UDim2.new(1.4, 0, 0, 0)
 	topSeal.AnchorPoint = Vector2.new(0.5, 0)
 	topSeal.Position = UDim2.new(0.5, 0, -0.04, 0)
@@ -147,6 +150,7 @@ local function ensureLetterboxGui(): ScreenGui
 	bottomSeal.Name = "LetterBottomSeal"
 	bottomSeal.BackgroundColor3 = Color3.new(0, 0, 0)
 	bottomSeal.BorderSizePixel = 0
+	bottomSeal.Active = false
 	bottomSeal.Size = UDim2.new(1.4, 0, 0, 0)
 	bottomSeal.AnchorPoint = Vector2.new(0.5, 1)
 	bottomSeal.Position = UDim2.new(0.5, 0, 1.04, 0)
@@ -158,6 +162,7 @@ local function ensureLetterboxGui(): ScreenGui
 	leftSeal.Name = "LetterLeftSeal"
 	leftSeal.BackgroundColor3 = Color3.new(0, 0, 0)
 	leftSeal.BorderSizePixel = 0
+	leftSeal.Active = false
 	leftSeal.Size = UDim2.new(0, 0, 1.2, 0)
 	leftSeal.AnchorPoint = Vector2.new(0, 0.5)
 	leftSeal.Position = UDim2.new(0, 0, 0.5, 0)
@@ -169,6 +174,7 @@ local function ensureLetterboxGui(): ScreenGui
 	rightSeal.Name = "LetterRightSeal"
 	rightSeal.BackgroundColor3 = Color3.new(0, 0, 0)
 	rightSeal.BorderSizePixel = 0
+	rightSeal.Active = false
 	rightSeal.Size = UDim2.new(0, 0, 1.2, 0)
 	rightSeal.AnchorPoint = Vector2.new(1, 0.5)
 	rightSeal.Position = UDim2.new(1, 0, 0.5, 0)
@@ -180,6 +186,7 @@ local function ensureLetterboxGui(): ScreenGui
 	top.Name = "LetterTop"
 	top.BackgroundColor3 = Color3.new(0, 0, 0)
 	top.BorderSizePixel = 0
+	top.Active = false
 	top.Size = UDim2.new(4, 0, 0, 0)
 	top.AnchorPoint = Vector2.new(0.5, 0)
 	top.Position = UDim2.new(0.5, 0, -0.12, 0)
@@ -190,6 +197,7 @@ local function ensureLetterboxGui(): ScreenGui
 	bottom.Name = "LetterBottom"
 	bottom.BackgroundColor3 = Color3.new(0, 0, 0)
 	bottom.BorderSizePixel = 0
+	bottom.Active = false
 	bottom.Size = UDim2.new(4, 0, 0, 0)
 	bottom.AnchorPoint = Vector2.new(0.5, 1)
 	bottom.Position = UDim2.new(0.5, 0, 1.12, 0)
@@ -330,30 +338,48 @@ local function unlockMovement()
 	unbindMoveLock()
 	local hum = getHumanoid()
 	if hum then
-		if typeof(savedWalkSpeed) == "number" then
+		if typeof(savedWalkSpeed) == "number" and savedWalkSpeed > 0 then
 			hum.WalkSpeed = savedWalkSpeed
+		elseif hum.WalkSpeed <= 0 then
+			hum.WalkSpeed = 16
 		end
 		if typeof(savedUseJumpPower) == "boolean" then
 			hum.UseJumpPower = savedUseJumpPower
 		end
 		if typeof(savedJumpPower) == "number" then
-			hum.JumpPower = savedJumpPower
+			hum.JumpPower = if savedJumpPower > 0 then savedJumpPower else 50
+		elseif hum.UseJumpPower and hum.JumpPower <= 0 then
+			hum.JumpPower = 50
 		end
 		if typeof(savedJumpHeight) == "number" then
-			hum.JumpHeight = savedJumpHeight
-		elseif hum.JumpHeight <= 0 then
-			-- Safety if cutscene locked JumpHeight on a UseJumpPower=false humanoid.
+			hum.JumpHeight = if savedJumpHeight > 0 then savedJumpHeight else 7.2
+		elseif not hum.UseJumpPower and hum.JumpHeight <= 0 then
 			hum.JumpHeight = 7.2
 		end
 		if typeof(savedAutoRotate) == "boolean" then
 			hum.AutoRotate = savedAutoRotate
+		else
+			hum.AutoRotate = true
 		end
+		hum.PlatformStand = false
 	end
 	savedWalkSpeed = nil
 	savedJumpPower = nil
 	savedJumpHeight = nil
 	savedUseJumpPower = nil
 	savedAutoRotate = nil
+end
+
+local function disableCutsceneGuiImmediate()
+	if not cutsceneGui then
+		return
+	end
+	cutsceneGui.Enabled = false
+	for _, d in cutsceneGui:GetDescendants() do
+		if d:IsA("GuiObject") then
+			d.Active = false
+		end
+	end
 end
 
 -- Soft third-person handoff (never dive into the character).
@@ -371,18 +397,23 @@ end
 
 local function restoreCamera(keepMoveLock: boolean?)
 	stopConn()
+	disableCutsceneGuiImmediate()
 	if not keepMoveLock then
 		unlockMovement()
 	end
 	GameplayUiVisibility.show()
 	animateLetterboxOut()
+	disableCutsceneGuiImmediate()
 	local cam = Workspace.CurrentCamera
-	if cam and savedCameraType then
-		cam.CameraType = savedCameraType
+	local hum = getHumanoid()
+	if cam then
+		cam.CameraType = Enum.CameraType.Custom
 		if savedFov then
 			cam.FieldOfView = savedFov
 		end
-		if savedCameraSubject then
+		if hum then
+			cam.CameraSubject = hum
+		elseif savedCameraSubject then
 			cam.CameraSubject = savedCameraSubject
 		end
 	end
@@ -401,6 +432,15 @@ local function restoreCamera(keepMoveLock: boolean?)
 	letterTiltTop = 0
 	letterTiltBottom = 0
 	barRoll = 0
+
+	-- Mobile: letterbox ScreenGui (DisplayOrder 940) + move lock can leave jump/thumbstick dead.
+	task.defer(function()
+		MobileTouchGate.ensureTouchControlsVisible(true)
+		MobileTouchGate.restorePlayerMovement()
+		if not keepMoveLock then
+			unlockMovement()
+		end
+	end)
 end
 
 function FloatingClaimCutscene.isActive(): boolean

@@ -20,9 +20,9 @@ local M = {}
 
 local hideCount = 0
 local animGen = 0
--- Snappy edge-exit; Quint keeps it fluid without a long hang.
-local SLIDE_OUT = TweenInfo.new(0.1, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
-local SLIDE_IN = TweenInfo.new(0.14, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+-- Soft edge exit/enter — Cubic eases into rest instead of a Quint hard stop.
+local SLIDE_OUT = TweenInfo.new(0.16, Enum.EasingStyle.Cubic, Enum.EasingDirection.InOut)
+local SLIDE_IN = TweenInfo.new(0.2, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)
 local WAVE_STAGGER = 0.012
 local MAX_WAVE_SPAN = 0.085
 

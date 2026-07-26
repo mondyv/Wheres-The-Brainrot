@@ -588,6 +588,7 @@ freeBrainrotRE.OnServerEvent:Connect(function(player: Player)
 	warn("[FreeBrainrot] granting", pick.name, "to", player.Name)
 	if StoreServer.grantBrainrot(player, pick.name) then
 		player:SetAttribute(StoreConfig.ATTR.FREE_UNCOMMON_CLAIMED, true)
+		savePurchaseStateSoon(player)
 		notifyPurchaseComplete(player)
 	else
 		warn("[FreeBrainrot] grant failed for", pick.name)

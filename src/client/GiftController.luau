@@ -54,6 +54,17 @@ local listPlayerRemovingConn: RBXScriptConnection? = nil
 local giftBuyProductRE: RemoteEvent? = nil
 local giftBuyGamepassRE: RemoteEvent? = nil
 
+local giftingChangedListeners: { () -> () } = {}
+
+local function notifyGiftingChanged()
+	for _, listener in giftingChangedListeners do
+		local ok, err = pcall(listener)
+		if not ok then
+			warn("[GiftController] onGiftingChanged error:", err)
+		end
+	end
+end
+
 -- ── Small helpers ────────────────────────────────────────────────────────────────
 
 local function setLabelText(inst: Instance?, text: string)
@@ -107,12 +118,14 @@ local function exitGiftingMode()
 	giftTargetUserId = nil
 	giftTargetName = nil
 	applyGiftingVisuals(false)
+	notifyGiftingChanged()
 end
 
 local function enterGiftingMode(targetUserId: number, targetName: string)
 	giftTargetUserId = targetUserId
 	giftTargetName = targetName
 	applyGiftingVisuals(true)
+	notifyGiftingChanged()
 end
 
 -- ── Gift picker list ───────────────────────────────────────────────────────────
@@ -352,6 +365,10 @@ end
 
 function GiftController.isGifting(): boolean
 	return giftTargetUserId ~= nil
+end
+
+function GiftController.onGiftingChanged(listener: () -> ())
+	table.insert(giftingChangedListeners, listener)
 end
 
 function GiftController.getTargetUserId(): number?

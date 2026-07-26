@@ -592,16 +592,18 @@ local function wireFreeBrainrot(storeFrame: Instance)
 
 	local function refresh()
 		local claimed = player:GetAttribute(StoreConfig.ATTR.FREE_UNCOMMON_CLAIMED) == true
+		local gifting = GiftController.isGifting()
 		if claimed then
 			celebrateFreeClaim()
 		end
-		setButtonEnabled(freeGui, state, not claimed)
-		-- Once claimed the whole QuickButtons strip is hidden.
+		setButtonEnabled(freeGui, state, not claimed and not gifting)
+		-- Hide while claimed (lifetime) or while picking a gift for someone else.
 		if quick and quick:IsA("GuiObject") then
-			(quick :: GuiObject).Visible = not claimed
+			(quick :: GuiObject).Visible = not claimed and not gifting
 		end
 	end
 	player:GetAttributeChangedSignal(StoreConfig.ATTR.FREE_UNCOMMON_CLAIMED):Connect(refresh)
+	GiftController.onGiftingChanged(refresh)
 	refresh()
 	return refresh
 end

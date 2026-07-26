@@ -575,8 +575,6 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 			else (math.max(0, if typeof(raw.cash) == "number" then raw.cash else 0) > 0),
 	}
 end
-	}
-end
 
 local function fixParkedSlots(data: PlayerDataSchema.PlayerSaveData, raw: any)
 	local parked: { number } = {}

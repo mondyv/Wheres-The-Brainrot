@@ -2,6 +2,9 @@
 --[[
 	Local-only smooth Pokémon-style bend for grassparts under Map.Lands/*/grass.
 	Holds bend while standing in range; recovers after leaving.
+
+	DISABLED for now — indexing/swaying thousands of grassparts on later lands
+	was a prime lag suspect (last land grass never swayed; scans still ran).
 ]]
 
 local Players = game:GetService("Players")
@@ -9,6 +12,9 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
 local M = {}
+
+-- Flip to true to re-enable grass sway.
+local FEATURE_ENABLED = false
 
 local MAX_ACTIVE = 8
 local SCAN_INTERVAL_SEC = 0.85
@@ -68,7 +74,7 @@ local swayStepAccum = 0
 local heartbeatConn: RBXScriptConnection? = nil
 local charConns: { RBXScriptConnection } = {}
 local lastMoveFlat = Vector3.new(0, 0, -1)
-local enabled = true
+local enabled = false
 
 local function disconnectList(list: { RBXScriptConnection })
 	for _, conn in list do
@@ -453,6 +459,11 @@ local function onHeartbeat(dt: number)
 end
 
 function M.setEnabled(on: boolean)
+	if not FEATURE_ENABLED then
+		enabled = false
+		clearAllSways()
+		return
+	end
 	enabled = on == true
 	if not enabled then
 		clearAllSways()
@@ -460,6 +471,9 @@ function M.setEnabled(on: boolean)
 end
 
 function M.init()
+	if not FEATURE_ENABLED then
+		return
+	end
 	if heartbeatConn then
 		return
 	end

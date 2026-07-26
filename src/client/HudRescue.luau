@@ -101,29 +101,13 @@ local function rescueOnce(reason: string)
 
 	local cam = Workspace.CurrentCamera
 	if cam then
-		local GameplayCameraController = require(script.Parent.GameplayCameraController)
-		if GameplayCameraController.isEnabled() then
-			if GameplayCameraController.isSwingOverride and GameplayCameraController.isSwingOverride() then
-				table.insert(lines, "camera swing override active")
-			elseif GameplayCameraController.isPaused() then
-				GameplayCameraController.resume(cam.CFrame)
-				table.insert(lines, "camera -> GameplayCamera resume")
-			elseif cam.CameraType ~= Enum.CameraType.Scriptable then
-				cam.CameraType = Enum.CameraType.Scriptable
-				table.insert(lines, "camera -> Scriptable (gameplay)")
-			end
-		elseif cam.CameraType ~= Enum.CameraType.Custom then
+		if cam.CameraType ~= Enum.CameraType.Custom then
 			cam.CameraType = Enum.CameraType.Custom
 			table.insert(lines, "camera -> Custom")
 		end
 		local char = player.Character
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if GameplayCameraController.isEnabled() then
-			if cam.CameraSubject ~= nil then
-				cam.CameraSubject = nil
-				table.insert(lines, "camera subject -> nil (gameplay orbit)")
-			end
-		elseif hum and cam.CameraSubject ~= hum then
+		if hum and cam.CameraSubject ~= hum then
 			cam.CameraSubject = hum
 			table.insert(lines, "camera subject -> Humanoid")
 		end

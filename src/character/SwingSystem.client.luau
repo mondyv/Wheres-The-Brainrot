@@ -4870,22 +4870,6 @@ local function boot(character)
 		end
 	end))
 
-	local gameplayCameraMod = nil
-	local swingCameraOverrideOn = false
-
-	local function setSwingCameraOverride(active: boolean)
-		if swingCameraOverrideOn == active then
-			return
-		end
-		swingCameraOverrideOn = active
-		if gameplayCameraMod == nil then
-			gameplayCameraMod = getClientModule("GameplayCameraController") or false
-		end
-		if gameplayCameraMod and typeof(gameplayCameraMod.setSwingOverride) == "function" then
-			gameplayCameraMod.setSwingOverride(active)
-		end
-	end
-
 	st.addConn(st.humanoid.Died:Connect(function()
 		if st.isSwinging then
 			st.stopSwing(false)
@@ -4903,7 +4887,6 @@ local function boot(character)
 		st.stopFallingAnim()
 		st.stopTrack(st.landedTrack, 0.08)
 		st.resetFovNow()
-		setSwingCameraOverride(false)
 	end))
 
 	RunService:BindToRenderStep(st.renderBindName, Enum.RenderPriority.Camera.Value + 1, function(dt)
@@ -4921,10 +4904,6 @@ local function boot(character)
 			or launchShakeActive
 			or landingShakeActive
 			or attachShakeActive
-
-		-- Only take framing while actually swinging/launched/shaking.
-		-- Residual lag/roll/wind must NOT keep override stuck (causes idle fight/jitter).
-		setSwingCameraOverride(swingCamBusy)
 
 		if
 			not C.ENABLE_GROUNDED_CAMERA_ASSIST
@@ -5551,49 +5530,31 @@ local function boot(character)
 		st.setTrailsEnabled(trailOn)
 
 		if camera then
-			-- Idle FOV lerp fights GameplayCameraController — skip unless swinging/airborne FX.
-			local gameplayCamOwnsFov = false
-			if not st.isSwinging and not st.isLaunched then
-				if gameplayCameraMod == nil then
-					gameplayCameraMod = getClientModule("GameplayCameraController") or false
-				end
-				if
-					gameplayCameraMod
-					and typeof(gameplayCameraMod.isEnabled) == "function"
-					and gameplayCameraMod.isEnabled()
-					and (typeof(gameplayCameraMod.isSwingOverride) ~= "function" or not gameplayCameraMod.isSwingOverride())
-				then
-					gameplayCamOwnsFov = true
-				end
+			local targetFov = st.originalFov
+			if st.isSwinging or st.isLaunched then
+				local t = math.clamp(speed / math.max(getMaxSwingSpeed(), 1), 0, 1)
+				targetFov = st.originalFov + (C.FOV_MAX - st.originalFov) * t
 			end
 
-			if not gameplayCamOwnsFov then
-				local targetFov = st.originalFov
-				if st.isSwinging or st.isLaunched then
-					local t = math.clamp(speed / math.max(getMaxSwingSpeed(), 1), 0, 1)
-					targetFov = st.originalFov + (C.FOV_MAX - st.originalFov) * t
-				end
-
-				local attachAge = os.clock() - st.lastAttachClock
-				if st.isSwinging and attachAge >= 0 and attachAge < C.ATTACH_FOV_TIME then
-					local u = attachAge / C.ATTACH_FOV_TIME
-					targetFov -= C.ATTACH_FOV_PUNCH * math.sin(u * math.pi)
-				end
-
-				local launchAge = os.clock() - st.lastLaunchClock
-				if launchAge >= 0 and launchAge < C.LAUNCH_FOV_TIME then
-					local u = 1 - launchAge / C.LAUNCH_FOV_TIME
-					targetFov += C.LAUNCH_FOV_BOOST * u * u
-				end
-
-				local landingAge = os.clock() - st.lastLandingClock
-				if landingAge >= 0 and landingAge < C.LANDING_FOV_TIME then
-					local u = 1 - landingAge / C.LANDING_FOV_TIME
-					targetFov -= C.LANDING_FOV_KICK * u * u * st.landingShakeStrength
-				end
-
-				camera.FieldOfView += (targetFov - camera.FieldOfView) * math.min(dt * C.FOV_SPEED, 1)
+			local attachAge = os.clock() - st.lastAttachClock
+			if st.isSwinging and attachAge >= 0 and attachAge < C.ATTACH_FOV_TIME then
+				local u = attachAge / C.ATTACH_FOV_TIME
+				targetFov -= C.ATTACH_FOV_PUNCH * math.sin(u * math.pi)
 			end
+
+			local launchAge = os.clock() - st.lastLaunchClock
+			if launchAge >= 0 and launchAge < C.LAUNCH_FOV_TIME then
+				local u = 1 - launchAge / C.LAUNCH_FOV_TIME
+				targetFov += C.LAUNCH_FOV_BOOST * u * u
+			end
+
+			local landingAge = os.clock() - st.lastLandingClock
+			if landingAge >= 0 and landingAge < C.LANDING_FOV_TIME then
+				local u = 1 - landingAge / C.LANDING_FOV_TIME
+				targetFov -= C.LANDING_FOV_KICK * u * u * st.landingShakeStrength
+			end
+
+			camera.FieldOfView += (targetFov - camera.FieldOfView) * math.min(dt * C.FOV_SPEED, 1)
 		end
 	end))
 

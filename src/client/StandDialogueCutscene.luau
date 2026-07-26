@@ -665,12 +665,6 @@ local function restoreBrainrotPivot()
 end
 
 local function defaultGameplayCameraCFrame(hrp: BasePart): CFrame
-	local ok, GameplayCameraController = pcall(function()
-		return require(script.Parent.GameplayCameraController)
-	end)
-	if ok and GameplayCameraController and typeof(GameplayCameraController.getIdealCFrame) == "function" then
-		return GameplayCameraController.getIdealCFrame(hrp)
-	end
 	local look = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
 	if look.Magnitude < 0.05 then
 		look = Vector3.new(0, 0, -1)
@@ -1105,8 +1099,6 @@ local function startCamera(brainrot: Model)
 	savedCameraType = cam.CameraType
 	savedCameraSubject = cam.CameraSubject
 	savedFov = cam.FieldOfView
-	local GameplayCameraController = require(script.Parent.GameplayCameraController)
-	GameplayCameraController.pause()
 	cam.CameraType = Enum.CameraType.Scriptable
 
 	local focusPos = modelFocusPoint(brainrot)
@@ -1205,21 +1197,16 @@ local function endCamera(fadeSec: number?)
 	end
 	-- Always hard-restore gameplay camera (never leave Scriptable / weird FOV on mobile)
 	if cam then
-		local GameplayCameraController = require(script.Parent.GameplayCameraController)
+		cam.CameraType = Enum.CameraType.Custom
+		if hum then
+			cam.CameraSubject = hum
+		elseif savedCameraSubject then
+			cam.CameraSubject = savedCameraSubject
+		end
 		if savedFov then
 			cam.FieldOfView = savedFov
 		elseif cam.FieldOfView < 55 or cam.FieldOfView > 90 then
 			cam.FieldOfView = 70
-		end
-		if GameplayCameraController.isEnabled() then
-			GameplayCameraController.resume(cam.CFrame)
-		else
-			cam.CameraType = Enum.CameraType.Custom
-			if hum then
-				cam.CameraSubject = hum
-			elseif savedCameraSubject then
-				cam.CameraSubject = savedCameraSubject
-			end
 		end
 	end
 	savedCameraType = nil

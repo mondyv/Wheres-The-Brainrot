@@ -808,28 +808,57 @@ end
 
 local function sampleBushVolumePoints(bush: Instance, count: number): { CFrame }
 	local volumeCf, size = getBushVolume(bush)
-	local half = size * 0.38
+	-- Use most of the visual volume so FX isn't stuck at the crown/center.
+	local half = size * 0.46
 	local points: { CFrame } = {}
-	table.insert(points, volumeCf)
-	if count >= 2 then
-		table.insert(points, volumeCf * CFrame.new(0, -half.Y * 0.25, 0))
+	if count <= 0 then
+		return points
 	end
-	if count >= 3 then
-		table.insert(points, volumeCf * CFrame.new(half.X * 0.4, half.Y * 0.1, -half.Z * 0.25))
+
+	-- Stratified shell + interior samples so each pulse covers the bush.
+	local layers = {
+		{ r = 0.92, n = math.max(1, math.floor(count * 0.55 + 0.5)) },
+		{ r = 0.55, n = math.max(0, math.floor(count * 0.3 + 0.5)) },
+		{ r = 0.2, n = 0 },
+	}
+	local assigned = 0
+	for i, layer in ipairs(layers) do
+		if i == #layers then
+			layer.n = math.max(0, count - assigned)
+		else
+			layer.n = math.min(layer.n, count - assigned)
+			assigned += layer.n
+		end
 	end
-	local remaining = math.max(0, count - #points)
-	for _ = 1, remaining do
-		local offset = Vector3.new(
-			(math.random() * 2 - 1) * half.X,
-			(math.random() * 2 - 1) * half.Y,
-			(math.random() * 2 - 1) * half.Z
-		)
-		table.insert(points, volumeCf * CFrame.new(offset))
+
+	for _, layer in ipairs(layers) do
+		for i = 1, layer.n do
+			local yaw = ((i - 1) / math.max(layer.n, 1)) * math.pi * 2 + math.random() * 0.7
+			local pitch = (math.random() * 2 - 1) * 0.85
+			local dir = Vector3.new(
+				math.cos(yaw) * math.cos(pitch),
+				math.sin(pitch),
+				math.sin(yaw) * math.cos(pitch)
+			)
+			local radius = layer.r * (0.72 + math.random() * 0.28)
+			local offset = Vector3.new(
+				dir.X * half.X * radius,
+				dir.Y * half.Y * radius,
+				dir.Z * half.Z * radius
+			)
+			table.insert(points, volumeCf * CFrame.new(offset))
+		end
+	end
+
+	-- Shuffle lightly so consecutive pulses don't look identical.
+	for i = #points, 2, -1 do
+		local j = math.random(1, i)
+		points[i], points[j] = points[j], points[i]
 	end
 	return points
 end
 
-local BUSH_VFX_OPTS = { noLights = true, particleScale = 1.65 }
+local BUSH_VFX_OPTS = { noLights = true, particleScale = 1.35 }
 
 local function playScattered(pathParts: { string }, bush: Instance, pointCount: number)
 	for _, cf in sampleBushVolumePoints(bush, pointCount) do
@@ -838,9 +867,9 @@ local function playScattered(pathParts: { string }, bush: Instance, pointCount: 
 end
 
 local bushShakeToken = 0
-local BUSH_SHAKE_PULSE_SEC = 0.75
-local BUSH_SHAKE_POINTS = 2
-local BUSH_BURST_POINTS = 3
+local BUSH_SHAKE_PULSE_SEC = 0.55
+local BUSH_SHAKE_POINTS = 7
+local BUSH_BURST_POINTS = 10
 
 --- Leaves/debris while searching (hold shake). Sparse pulsed Emit across the bush volume.
 function OtherVfxController.playBushSearchShake(bush: Instance)

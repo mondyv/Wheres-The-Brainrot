@@ -20,6 +20,8 @@ local ANIMS = {
 	jump = 133207078869082,
 	fall = 73814243071114,
 	land = 89197053203102,
+	-- Classic R6 Animate climb — required once default Animate is disabled.
+	climb = 180436334,
 }
 
 local FADE = 0.15
@@ -79,8 +81,9 @@ local walkSlowTrack = makeTrack(ANIMS.walkSlow, true, Enum.AnimationPriority.Mov
 local jumpTrack = makeTrack(ANIMS.jump, false, Enum.AnimationPriority.Action)
 local fallTrack = makeTrack(ANIMS.fall, true, Enum.AnimationPriority.Movement)
 local landTrack = makeTrack(ANIMS.land, false, Enum.AnimationPriority.Action)
+local climbTrack = makeTrack(ANIMS.climb, true, Enum.AnimationPriority.Movement)
 
-type LocoMode = "idle" | "walk" | "jump" | "fall" | "land"
+type LocoMode = "idle" | "walk" | "jump" | "fall" | "land" | "climb"
 local mode: LocoMode = "idle"
 local landing = false
 
@@ -114,10 +117,11 @@ local function stopLocomotion(fade: number?)
 	stopTrack(walkSlowTrack, fade)
 	stopTrack(jumpTrack, fade)
 	stopTrack(fallTrack, fade)
+	stopTrack(climbTrack, fade)
 end
 
 local function playIdle()
-	if landing then
+	if landing or mode == "climb" then
 		return
 	end
 	mode = "idle"
@@ -125,11 +129,12 @@ local function playIdle()
 	stopTrack(walkSlowTrack, FADE)
 	stopTrack(jumpTrack, FADE)
 	stopTrack(fallTrack, FADE)
+	stopTrack(climbTrack, FADE)
 	playTrack(idleTrack, FADE)
 end
 
 local function playWalk()
-	if landing then
+	if landing or mode == "climb" then
 		return
 	end
 	mode = "walk"
@@ -137,6 +142,7 @@ local function playWalk()
 	stopTrack(idleTrack, FADE)
 	stopTrack(jumpTrack, FADE)
 	stopTrack(fallTrack, FADE)
+	stopTrack(climbTrack, FADE)
 	if want == walkTrack then
 		stopTrack(walkSlowTrack, FADE)
 		playTrack(walkTrack, FADE)
@@ -144,6 +150,19 @@ local function playWalk()
 		stopTrack(walkTrack, FADE)
 		playTrack(walkSlowTrack, FADE)
 	end
+end
+
+local function playClimb()
+	landing = false
+	mode = "climb"
+	-- Instant stop so custom loco keyframes can't yank the R6 off the truss.
+	stopTrack(idleTrack, 0)
+	stopTrack(walkTrack, 0)
+	stopTrack(walkSlowTrack, 0)
+	stopTrack(jumpTrack, 0)
+	stopTrack(fallTrack, 0)
+	stopTrack(landTrack, 0)
+	playTrack(climbTrack, 0.08)
 end
 
 local function playJump()
@@ -166,6 +185,7 @@ local function playFall()
 	stopTrack(walkTrack, FADE)
 	stopTrack(walkSlowTrack, FADE)
 	stopTrack(jumpTrack, 0.1)
+	stopTrack(climbTrack, FADE)
 	playTrack(fallTrack, 0.12)
 end
 
@@ -206,10 +226,7 @@ refreshGround = function()
 	end
 	local state = humanoid:GetState()
 	if state == Enum.HumanoidStateType.Climbing then
-		-- Don't force walk/idle while on a truss — that breaks R6 climb attach.
-		stopLocomotion(FADE)
-		stopTrack(landTrack, FADE)
-		mode = "idle"
+		playClimb()
 		return
 	end
 	if state == Enum.HumanoidStateType.Jumping then
@@ -228,17 +245,19 @@ refreshGround = function()
 	end
 end
 
+humanoid:SetStateEnabled(Enum.HumanoidStateType.Climbing, true)
+
 humanoid.StateChanged:Connect(function(_old, new)
 	if new == Enum.HumanoidStateType.Climbing then
-		landing = false
-		stopLocomotion(FADE)
-		stopTrack(landTrack, FADE)
-		mode = "idle"
+		playClimb()
 	elseif new == Enum.HumanoidStateType.Jumping then
+		stopTrack(climbTrack, 0.08)
 		playJump()
 	elseif new == Enum.HumanoidStateType.Freefall then
+		stopTrack(climbTrack, 0.08)
 		playFall()
 	elseif new == Enum.HumanoidStateType.Landed then
+		stopTrack(climbTrack, 0.08)
 		playLand()
 	elseif
 		new == Enum.HumanoidStateType.Running
@@ -246,6 +265,7 @@ humanoid.StateChanged:Connect(function(_old, new)
 		or new == Enum.HumanoidStateType.GettingUp
 		or new == Enum.HumanoidStateType.Swimming
 	then
+		stopTrack(climbTrack, 0.1)
 		if not landing then
 			refreshGround()
 		end
@@ -267,12 +287,23 @@ local _heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 		return
 	end
 	local state = humanoid:GetState()
-	if
-		state == Enum.HumanoidStateType.Freefall
-		or state == Enum.HumanoidStateType.Jumping
-		or state == Enum.HumanoidStateType.Climbing
-	then
+	if state == Enum.HumanoidStateType.Climbing then
+		-- Keep classic climb posed; scale speed like default R6 Animate.
+		if mode ~= "climb" or (climbTrack and not climbTrack.IsPlaying) then
+			playClimb()
+		end
+		if climbTrack and climbTrack.IsPlaying then
+			local speed = humanoid.MoveDirection.Magnitude * humanoid.WalkSpeed
+			climbTrack:AdjustSpeed(math.clamp(speed / 12, 0.05, 2))
+		end
 		return
+	end
+	if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
+		return
+	end
+	if mode == "climb" then
+		stopTrack(climbTrack, 0.1)
+		mode = "idle"
 	end
 	local moving = humanoid.MoveDirection.Magnitude > MOVE_EPS
 	if moving and mode ~= "walk" then

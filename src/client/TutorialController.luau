@@ -86,6 +86,7 @@ local vineCacheAt = 0
 local lastPointerRefresh = 0
 local pendingPointerRefresh = false
 local grantCashPlayed = false
+local pendingCelebrate = false
 
 local lockedBushPart: BasePart? = nil
 local lockedBushRoot: Instance? = nil
@@ -322,6 +323,35 @@ local function fireConfettiAndShake()
 	if not celebrateOk then
 		warn("[TutorialController] celebratePurchase failed:", celebrateErr)
 	end
+end
+
+local function isHudPanelBlocking(): boolean
+	local frame = HUDController.getCurrentFrame()
+	return frame ~= nil and frame.Parent ~= nil and frame.Visible == true
+end
+
+local function isCelebrateBlocked(): boolean
+	return isCutsceneBusy() or isHudPanelBlocking()
+end
+
+local function tryFlushPendingCelebrate()
+	if not pendingCelebrate or not active then
+		return
+	end
+	if isCelebrateBlocked() then
+		return
+	end
+	pendingCelebrate = false
+	fireConfettiAndShake()
+end
+
+local function requestCelebrate()
+	if isCelebrateBlocked() then
+		pendingCelebrate = true
+		return
+	end
+	pendingCelebrate = false
+	fireConfettiAndShake()
 end
 
 local function stopObjectiveDotsImpl()
@@ -1538,6 +1568,7 @@ local function finishTutorial()
 		return
 	end
 	active = false
+	pendingCelebrate = false
 	speakToken += 1
 	stopObjectiveDots()
 	clearWorldArrow()
@@ -1591,7 +1622,8 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 	local celebrate = if opts and opts.celebrate == false then false else true
 	local first = stepIndex == 0
 	if celebrate and stepIndex > 0 and index > stepIndex then
-		fireConfettiAndShake()
+		-- Wait until cutscenes / HUD panels close so confetti isn't buried.
+		requestCelebrate()
 	end
 	stepIndex = index
 	local step = TutorialConfig.STEPS[stepIndex]
@@ -1667,6 +1699,9 @@ local function watchStepProgress()
 				syncPanelToSideButtons()
 			end
 			refreshPointers()
+			tryFlushPendingCelebrate()
+		elseif pendingCelebrate then
+			tryFlushPendingCelebrate()
 		end
 
 		local step = currentStep()
@@ -1842,6 +1877,7 @@ function M.start(force: boolean?)
 	active = true
 	stepIndex = 0
 	grantCashPlayed = false
+	pendingCelebrate = false
 	ensureGui()
 	startLayoutSync()
 	bindGameplayHooks()
@@ -1854,6 +1890,7 @@ function M.stop()
 		return
 	end
 	active = false
+	pendingCelebrate = false
 	speakToken += 1
 	stopObjectiveDots()
 	clearWorldArrow()
@@ -1915,6 +1952,7 @@ function M.init()
 				return
 			end
 			pendingPointerRefresh = true
+			tryFlushPendingCelebrate()
 		end)
 
 		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_REPLAY_ATTR):Connect(function()

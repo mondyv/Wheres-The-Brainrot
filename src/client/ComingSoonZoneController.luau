@@ -24,6 +24,7 @@ local tickAccum = 0
 local insideZone = false
 local closePending: thread? = nil
 local heartbeatConn: RBXScriptConnection? = nil
+local warnedMissing = false
 
 local function cancelClose()
 	if closePending then
@@ -57,6 +58,30 @@ local function ensureShowing()
 	end
 end
 
+local function partFromInstance(inst: Instance?): BasePart?
+	if not inst then
+		return nil
+	end
+	if inst:IsA("BasePart") then
+		return inst
+	end
+	if inst:IsA("Model") then
+		local model = inst :: Model
+		if model.PrimaryPart then
+			return model.PrimaryPart
+		end
+		local pp = model:FindFirstChildWhichIsA("BasePart", true)
+		if pp then
+			return pp
+		end
+	end
+	local nested = inst:FindFirstChildWhichIsA("BasePart", true)
+	if nested then
+		return nested
+	end
+	return nil
+end
+
 local function resolveHitbox(): BasePart?
 	if hitbox and hitbox.Parent then
 		return hitbox
@@ -67,13 +92,13 @@ local function resolveHitbox(): BasePart?
 	if not lastLand then
 		return nil
 	end
-	-- Hitbox lives directly under Last land (not under Models)
-	local part = lastLand:FindFirstChild("ComingSoonHitbox")
-	if not part then
-		part = lastLand:FindFirstChild("ComingSoonHitbox", true)
-	end
-	if part and part:IsA("BasePart") then
+	-- Path: Workspace.Map.Lands["Last land"].ComingSoonHitbox
+	local inst = lastLand:FindFirstChild("ComingSoonHitbox")
+		or lastLand:FindFirstChild("ComingSoonHitbox", true)
+	local part = partFromInstance(inst)
+	if part then
 		hitbox = part
+		warnedMissing = false
 		return part
 	end
 	return nil
@@ -112,28 +137,41 @@ function ComingSoonZoneController.init()
 	end
 
 	task.spawn(function()
-		local map = Workspace:WaitForChild("Map", 30)
+		local map = Workspace:WaitForChild("Map", 60)
 		if not map then
 			warn("[ComingSoonZoneController] workspace.Map not found")
 			return
 		end
-		local lands = map:WaitForChild("Lands", 20)
+		local lands = map:WaitForChild("Lands", 60)
 		if not lands then
 			warn("[ComingSoonZoneController] Lands not found")
 			return
 		end
-		local lastLand = lands:WaitForChild("Last land", 20)
+		local lastLand = lands:WaitForChild("Last land", 60)
 		if not lastLand then
 			warn("[ComingSoonZoneController] Last land not found")
 			return
 		end
-		local part = lastLand:FindFirstChild("ComingSoonHitbox")
-			or lastLand:WaitForChild("ComingSoonHitbox", 15)
-		if not part or not part:IsA("BasePart") then
-			warn("[ComingSoonZoneController] ComingSoonHitbox not found under Last land")
-			return
+		-- Streaming maps may load the hitbox late — keep waiting / retrying.
+		local deadline = os.clock() + 120
+		while os.clock() < deadline do
+			local part = resolveHitbox()
+			if part then
+				return
+			end
+			local inst = lastLand:FindFirstChild("ComingSoonHitbox")
+				or lastLand:WaitForChild("ComingSoonHitbox", 5)
+			local resolved = partFromInstance(inst)
+			if resolved then
+				hitbox = resolved
+				return
+			end
+			task.wait(2)
 		end
-		hitbox = part
+		if not warnedMissing and not resolveHitbox() then
+			warnedMissing = true
+			warn("[ComingSoonZoneController] ComingSoonHitbox not found under Map.Lands['Last land']")
+		end
 	end)
 
 	heartbeatConn = RunService.Heartbeat:Connect(function(dt)

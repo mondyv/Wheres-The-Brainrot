@@ -18,12 +18,12 @@ local MIN_ZOOM = 6
 local MAX_ZOOM = 22
 local DEFAULT_ZOOM = 13.5
 local LOOK_HEIGHT = 1.55
-local MOUSE_SENS = 0.0042
-local TOUCH_SENS = 0.0075
+local MOUSE_SENS = 0.0055
+local TOUCH_SENS = 0.0085
 local PITCH_MIN = math.rad(-35)
 local PITCH_MAX = math.rad(55)
 local DEFAULT_PITCH = math.rad(18)
-local POS_LAG = 11 -- higher = snappier follow
+local POS_LAG = 11
 local ROT_LAG = 14
 local ZOOM_LAG = 10
 local OCCLUSION_PADDING = 0.55
@@ -42,6 +42,7 @@ local conns: { RBXScriptConnection } = {}
 local rotating = false
 local touchRotateId: number? = nil
 local lastTouchPos: Vector2? = nil
+local wheelDelta = 0
 
 local function getRoot(): BasePart?
 	local char = player.Character
@@ -139,13 +140,25 @@ local function touchOverBlockingGui(pos: Vector3): boolean
 	return false
 end
 
-local function onInputBegan(input: InputObject, processed: boolean)
-	if processed or pauseDepth > 0 or not enabled then
+local function setRotating(on: boolean)
+	if rotating == on then
+		return
+	end
+	rotating = on
+	if on then
+		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+	elseif UserInputService.MouseBehavior == Enum.MouseBehavior.LockCurrentPosition then
+		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+	end
+end
+
+local function onInputBegan(input: InputObject, _processed: boolean)
+	-- Ignore `processed` — SideUI / fullscreen chrome often marks RMB as processed.
+	if pauseDepth > 0 or not enabled then
 		return
 	end
 	if input.UserInputType == Enum.UserInputType.MouseButton2 then
-		rotating = true
-		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+		setRotating(true)
 	elseif input.UserInputType == Enum.UserInputType.Touch then
 		if touchRotateId == nil and not UserInputService:GetFocusedTextBox() and not touchOverBlockingGui(input.Position) then
 			touchRotateId = input.UserInputId
@@ -156,10 +169,7 @@ end
 
 local function onInputEnded(input: InputObject, _processed: boolean)
 	if input.UserInputType == Enum.UserInputType.MouseButton2 then
-		rotating = false
-		if UserInputService.MouseBehavior == Enum.MouseBehavior.LockCurrentPosition then
-			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-		end
+		setRotating(false)
 	elseif input.UserInputType == Enum.UserInputType.Touch then
 		if touchRotateId == input.UserInputId then
 			touchRotateId = nil
@@ -168,14 +178,13 @@ local function onInputEnded(input: InputObject, _processed: boolean)
 	end
 end
 
-local function onInputChanged(input: InputObject, processed: boolean)
+local function onInputChanged(input: InputObject, _processed: boolean)
 	if pauseDepth > 0 or not enabled then
 		return
 	end
-	if input.UserInputType == Enum.UserInputType.MouseMovement and rotating and not processed then
-		applyMouseDelta(input.Delta.X, input.Delta.Y, MOUSE_SENS)
-	elseif input.UserInputType == Enum.UserInputType.MouseWheel and not processed then
-		zoom = math.clamp(zoom - input.Position.Z * 1.35, MIN_ZOOM, MAX_ZOOM)
+	-- Wheel: accumulate; applied in update (also ignore processed — UI eats scroll often).
+	if input.UserInputType == Enum.UserInputType.MouseWheel then
+		wheelDelta += input.Position.Z
 	elseif input.UserInputType == Enum.UserInputType.Touch and touchRotateId == input.UserInputId then
 		local pos = Vector2.new(input.Position.X, input.Position.Y)
 		if lastTouchPos then
@@ -221,6 +230,22 @@ local function update(dt: number)
 	local hum = getHumanoid()
 	if hum and cam.CameraSubject ~= hum then
 		cam.CameraSubject = hum
+	end
+
+	-- Poll RMB + GetMouseDelta every frame (reliable vs InputChanged/processed).
+	local rmbDown = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+	if rmbDown ~= rotating then
+		setRotating(rmbDown)
+	end
+	if rotating then
+		local delta = UserInputService:GetMouseDelta()
+		if delta.X ~= 0 or delta.Y ~= 0 then
+			applyMouseDelta(delta.X, delta.Y, MOUSE_SENS)
+		end
+	end
+	if wheelDelta ~= 0 then
+		zoom = math.clamp(zoom - wheelDelta * 1.35, MIN_ZOOM, MAX_ZOOM)
+		wheelDelta = 0
 	end
 
 	dt = math.clamp(dt, 0, 0.05)
@@ -285,6 +310,7 @@ end
 
 function GameplayCameraController.pause()
 	pauseDepth += 1
+	setRotating(false)
 end
 
 function GameplayCameraController.resume(seedCf: CFrame?)
@@ -344,6 +370,7 @@ end
 function GameplayCameraController.disable()
 	enabled = false
 	pauseDepth = 0
+	setRotating(false)
 	unbindRender()
 	local cam = Workspace.CurrentCamera
 	if cam then
@@ -356,9 +383,6 @@ function GameplayCameraController.disable()
 end
 
 function GameplayCameraController.init()
-	if enabled then
-		return
-	end
 	disconnectAll()
 	table.insert(conns, UserInputService.InputBegan:Connect(onInputBegan))
 	table.insert(conns, UserInputService.InputEnded:Connect(onInputEnded))
@@ -381,7 +405,6 @@ function GameplayCameraController.init()
 			end)
 		end)
 	)
-	-- Stay dormant until loading (or caller) enables us.
 end
 
 return GameplayCameraController

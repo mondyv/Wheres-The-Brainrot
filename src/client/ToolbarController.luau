@@ -1173,7 +1173,9 @@ local ToolbarController = {}
 	end
 
 	local function ensureBackpackChromeVisible(frame: GuiObject)
-		frame.ClipsDescendants = false
+		if not frame:IsA("CanvasGroup") then
+			frame.ClipsDescendants = false
+		end
 		detachBackpackChromeFromFadeRoot(frame)
 		for _, name in BACKPACK_CHROME_NAMES do
 			local ch = frame:FindFirstChild(name) or findBackpackChild(frame, name)
@@ -1539,7 +1541,7 @@ local ToolbarController = {}
 		cg.ZIndex = frame.ZIndex
 		cg.LayoutOrder = frame.LayoutOrder
 		cg.Visible = frame.Visible
-		cg.ClipsDescendants = frame.ClipsDescendants
+		-- CanvasGroup always clips; never assign ClipsDescendants (Studio warns).
 		cg.GroupTransparency = 0
 		for key, val in frame:GetAttributes() do
 			cg:SetAttribute(key, val)
@@ -1551,6 +1553,9 @@ local ToolbarController = {}
 		frame:Destroy()
 		if backpackFrameRef == frame then
 			backpackFrameRef = cg
+		end
+		if backpackGuiFrame == frame then
+			backpackGuiFrame = cg
 		end
 		return cg
 	end
@@ -3252,15 +3257,25 @@ local ToolbarController = {}
 		end
 		local otherButtons = backpackFrame:FindFirstChild("OtherButtons")
 			or findBackpackChild(backpackFrame, "OtherButtons")
-		local equipBestInst = otherButtons and otherButtons:FindFirstChild("EquipBest")
+		local equipBestInst = (otherButtons and otherButtons:FindFirstChild("EquipBest"))
+			or findBackpackChild(backpackFrame, "EquipBest")
 		if not equipBestInst or not equipBestInst:IsA("GuiObject") then
 			warn("[ToolbarController] EquipBest button not found under Backpack.OtherButtons")
 			return
 		end
 		local btn = resolveBackpackActionButton(equipBestInst :: GuiObject)
 		if not btn then
-			warn("[ToolbarController] EquipBest has no GuiButton")
-			return
+			-- Studio template is often a Frame with Decor/Name; add a full-size hit target.
+			local hit = Instance.new("TextButton")
+			hit.Name = "EquipBestHit"
+			hit.BackgroundTransparency = 1
+			hit.Text = ""
+			hit.Size = UDim2.fromScale(1, 1)
+			hit.Position = UDim2.fromScale(0, 0)
+			hit.ZIndex = math.max(6, (equipBestInst :: GuiObject).ZIndex + 1)
+			hit.AutoButtonColor = false
+			hit.Parent = equipBestInst
+			btn = hit
 		end
 		equipBestWired = true
 		passthroughChildClicks(btn :: GuiObject)
@@ -4260,39 +4275,48 @@ local ToolbarController = {}
 		end
 		local backpackFrame = toolbar:FindFirstChild("Backpack")
 		if backpackFrame then
-			backpackContainer = backpackFrame:FindFirstChild("Container")
 			if backpackFrame:IsA("GuiObject") then
 				local bf = backpackFrame :: GuiObject
 				backpackGuiFrame = bf
 				backpackFrameRef = bf
 				ensureBackpackFrameOutline(bf)
+				-- Promote Frame→CanvasGroup (destroys old instance). Rebind local ref after.
 				ensureBackpackFadeRoot(bf)
-				ensureBackpackChromeVisible(bf)
+				backpackFrame = backpackFrameRef or toolbar:FindFirstChild("Backpack")
+				if not backpackFrame then
+					warn("[ToolbarController] Backpack missing after CanvasGroup promote")
+				else
+					ensureBackpackChromeVisible(backpackFrame :: GuiObject)
+				end
 			end
-			backpackHeaderLabel = resolveBackpackHeaderLabel(backpackFrame)
-			refreshInventoryHeaderText()
-			if backpackContainer then
-				ensureBackpackGeneratedRows(backpackContainer)
-				for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
-					local row = findBackpackRow(backpackContainer, idx)
-					if row and row:IsA("GuiObject") then
-						local btn = slotPrimaryButton(row :: GuiObject)
-						if btn then
-							styleToolbarSlotButton(btn)
+			if backpackFrame then
+				backpackContainer = backpackFrame:FindFirstChild("Container")
+					or findBackpackChild(backpackFrame, "Container")
+				backpackHeaderLabel = resolveBackpackHeaderLabel(backpackFrame)
+				refreshInventoryHeaderText()
+				if backpackContainer then
+					ensureBackpackGeneratedRows(backpackContainer)
+					for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
+						local row = findBackpackRow(backpackContainer, idx)
+						if row and row:IsA("GuiObject") then
+							local btn = slotPrimaryButton(row :: GuiObject)
+							if btn then
+								styleToolbarSlotButton(btn)
+							end
 						end
 					end
 				end
-			end
-			task.defer(refreshBrainrotBackpackUI)
-			wireBrainrotBackpackEquips()
-			wireEquipBestButton(backpackFrame)
-			wireBackpackSearch(backpackFrame)
-			wireBackpackCloseButton(backpackFrame)
-			wireSortCategoryTabs(backpackFrame)
-			isBackpackPanelOpen = false
-			isBackpackPanelClosing = false
-			if backpackFrame:IsA("GuiObject") then
-				(backpackFrame :: GuiObject).Visible = false
+				task.defer(refreshBrainrotBackpackUI)
+				wireBrainrotBackpackEquips()
+				wireEquipBestButton(backpackFrame)
+				wireBackpackSearch(backpackFrame)
+				wireBackpackCloseButton(backpackFrame)
+				wireSortCategoryTabs(backpackFrame)
+				isBackpackPanelOpen = false
+				isBackpackPanelClosing = false
+				if backpackFrame:IsA("GuiObject") then
+					(backpackFrame :: GuiObject).Visible = false
+				end
 			end
 		end
 		if toggleBtn and toggleBtn:IsA("GuiButton") and not toggleBackpackIconRef then

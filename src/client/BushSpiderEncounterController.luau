@@ -370,11 +370,35 @@ local function startSpideySensesOnSpider(spider: Model)
 end
 
 local WEB_TIP_ATTR = "WebTipLocal"
+local WEB_POINT_PART_NAME = "Point"
+
+local function findWebPointPart(model: Model): BasePart?
+	local point = model:FindFirstChild(WEB_POINT_PART_NAME, true)
+	if point and point:IsA("BasePart") then
+		return point
+	end
+	return nil
+end
 
 local function inferWebTipLocalAxis(model: Model): Vector3
 	if typeof(C.WEB_SHOT_TIP_LOCAL) == "Vector3" and C.WEB_SHOT_TIP_LOCAL.Magnitude > 0.05 then
 		return (C.WEB_SHOT_TIP_LOCAL :: Vector3).Unit
 	end
+
+	-- Prefer the authored tip marker so the cobweb faces along flight correctly.
+	local point = findWebPointPart(model)
+	if point then
+		local pivot = model:GetPivot()
+		local fromPivot = point.Position - pivot.Position
+		if fromPivot.Magnitude > 0.05 then
+			return pivot:VectorToObjectSpace(fromPivot.Unit)
+		end
+		local look = point.CFrame.LookVector
+		if look.Magnitude > 0.05 then
+			return pivot:VectorToObjectSpace(look.Unit)
+		end
+	end
+
 	local part = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
 	if not part then
 		return -Vector3.zAxis
@@ -424,6 +448,10 @@ local function webProjectileCFrame(pos: Vector3, flightDir: Vector3, tipLocal: V
 end
 
 local function getWebProjectilePosition(web: Model): Vector3
+	local point = findWebPointPart(web)
+	if point then
+		return point.Position
+	end
 	return web:GetPivot().Position
 end
 
@@ -435,8 +463,13 @@ local function getWebTipLocal(web: Model): Vector3
 	return inferWebTipLocalAxis(web)
 end
 
-local function setWebProjectileCFrame(web: Model, pos: Vector3, flightDir: Vector3)
-	web:PivotTo(webProjectileCFrame(pos, flightDir, getWebTipLocal(web)))
+local function setWebProjectileCFrame(web: Model, tipPos: Vector3, flightDir: Vector3)
+	web:PivotTo(webProjectileCFrame(tipPos, flightDir, getWebTipLocal(web)))
+	local point = findWebPointPart(web)
+	if point then
+		-- Keep the tip marker leading the projectile along the flight path.
+		web:PivotTo(web:GetPivot() + (tipPos - point.Position))
+	end
 end
 
 local function stabilizeWebProjectile(model: Model)
@@ -1572,6 +1605,177 @@ local function pulseCameraShake(duration: number, amp: number)
 	end)
 end
 
+local function groundVisualFromHit(hit: RaycastResult?): (Color3, Enum.Material)
+	if not hit then
+		return Color3.fromRGB(110, 90, 55), Enum.Material.Ground
+	end
+	local mat = hit.Material
+	local inst = hit.Instance
+	if inst:IsA("Terrain") then
+		local ok, terrainColor = pcall(function()
+			return Workspace.Terrain:GetMaterialColor(mat)
+		end)
+		if ok and typeof(terrainColor) == "Color3" then
+			return terrainColor, mat
+		end
+		return Color3.fromRGB(105, 88, 50), mat
+	end
+	if inst:IsA("BasePart") then
+		return inst.Color, inst.Material
+	end
+	return Color3.fromRGB(110, 90, 55), mat
+end
+
+-- Same rock / ring / dust landing FX as swing landings, scaled for the spider.
+local function spawnSpiderLandingImpact(landingPos: Vector3, spider: Model)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { spider }
+	local hit = Workspace:Raycast(landingPos + Vector3.new(0, 6, 0), Vector3.new(0, -28, 0), params)
+	local pos = if hit then hit.Position else landingPos
+	local color, material = groundVisualFromHit(hit)
+
+	local spiderScale = 2.35
+	local okSize, extents = pcall(function()
+		return spider:GetExtentsSize()
+	end)
+	if okSize and typeof(extents) == "Vector3" then
+		spiderScale = math.clamp(math.max(extents.X, extents.Z) / 4.2, 1.7, 3.4)
+	end
+
+	local alpha = 1
+	local count = math.floor(12 + alpha * 16)
+	local chipCount = math.floor(26 + alpha * 30)
+
+	local ring = Instance.new("Part")
+	ring.Name = "SpiderImpactRing"
+	ring.Shape = Enum.PartType.Cylinder
+	ring.Anchored = true
+	ring.CanCollide = false
+	ring.CanTouch = false
+	ring.CanQuery = false
+	ring.CastShadow = false
+	ring.Material = Enum.Material.SmoothPlastic
+	ring.Color = color:Lerp(Color3.new(0, 0, 0), 0.08)
+	ring.Transparency = 0.24
+	ring.Size = Vector3.new(0.12, (7 + alpha * 7) * spiderScale, (7 + alpha * 7) * spiderScale)
+	ring.CFrame = CFrame.new(pos + Vector3.new(0, 0.08, 0)) * CFrame.Angles(0, 0, math.rad(90))
+	ring.Parent = Workspace
+	TweenService:Create(ring, TweenInfo.new(0.58, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(0.12, (30 + alpha * 34) * spiderScale, (30 + alpha * 34) * spiderScale),
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(ring, 0.7)
+
+	local dustRing = Instance.new("Part")
+	dustRing.Name = "SpiderImpactDustRing"
+	dustRing.Shape = Enum.PartType.Cylinder
+	dustRing.Anchored = true
+	dustRing.CanCollide = false
+	dustRing.CanTouch = false
+	dustRing.CanQuery = false
+	dustRing.CastShadow = false
+	dustRing.Material = Enum.Material.SmoothPlastic
+	dustRing.Color = color:Lerp(Color3.new(0, 0, 0), 0.18)
+	dustRing.Transparency = 0.56
+	dustRing.Size = Vector3.new(0.1, (10 + alpha * 8) * spiderScale, (10 + alpha * 8) * spiderScale)
+	dustRing.CFrame = CFrame.new(pos + Vector3.new(0, 0.05, 0)) * CFrame.Angles(0, 0, math.rad(90))
+	dustRing.Parent = Workspace
+	TweenService:Create(dustRing, TweenInfo.new(0.86, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+		Size = Vector3.new(0.1, (44 + alpha * 44) * spiderScale, (44 + alpha * 44) * spiderScale),
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(dustRing, 0.96)
+
+	local burst = Instance.new("Part")
+	burst.Name = "SpiderImpactBurst"
+	burst.Shape = Enum.PartType.Ball
+	burst.Anchored = true
+	burst.CanCollide = false
+	burst.CanTouch = false
+	burst.CanQuery = false
+	burst.CastShadow = false
+	burst.Material = Enum.Material.SmoothPlastic
+	burst.Color = color
+	burst.Transparency = 0.72
+	burst.Size = Vector3.new((4 + alpha * 5) * spiderScale, (1.2 + alpha * 1.8) * spiderScale, (4 + alpha * 5) * spiderScale)
+	burst.CFrame = CFrame.new(pos + Vector3.new(0, 0.65 * spiderScale, 0))
+	burst.Parent = Workspace
+	TweenService:Create(burst, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new((15 + alpha * 15) * spiderScale, (5 + alpha * 5) * spiderScale, (15 + alpha * 15) * spiderScale),
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(burst, 0.52)
+
+	local scatter = 4.2 * spiderScale
+	for _ = 1, count do
+		local size = (math.random(80, 240) / 100) * spiderScale * 0.85
+		local part = Instance.new("Part")
+		part.Name = "SpiderLandingChunk"
+		part.Size = Vector3.new(size, size * math.random(70, 130) / 100, size)
+		part.Anchored = true
+		part.Material = material
+		part.Color = color:Lerp(Color3.new(0, 0, 0), math.random(0, 12) / 100)
+		part.CanCollide = false
+		part.CanTouch = false
+		part.CanQuery = false
+		part.CastShadow = false
+		part.CFrame = CFrame.new(pos + Vector3.new(
+			(math.random() * 2 - 1) * scatter,
+			0.22 * spiderScale,
+			(math.random() * 2 - 1) * scatter
+		)) * CFrame.Angles(math.random() * math.pi, math.random() * math.pi, math.random() * math.pi)
+		part.Parent = Workspace
+
+		TweenService:Create(part, TweenInfo.new(1.05, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Transparency = 1,
+			CFrame = part.CFrame
+				+ Vector3.new(
+					(math.random() * 2 - 1) * scatter * 1.25,
+					math.random(24, 58) / 10 * spiderScale,
+					(math.random() * 2 - 1) * scatter * 1.25
+				),
+			Size = Vector3.new(0.06, 0.06, 0.06),
+		}):Play()
+		Debris:AddItem(part, 1.16)
+	end
+
+	for _ = 1, chipCount do
+		local size = (math.random(20, 62) / 100) * spiderScale
+		local chip = Instance.new("Part")
+		chip.Name = "SpiderLandingChip"
+		chip.Size = Vector3.new(size, size, size)
+		chip.Anchored = true
+		chip.Material = material
+		chip.Color = color:Lerp(Color3.new(0, 0, 0), math.random(0, 10) / 100)
+		chip.CanCollide = false
+		chip.CanTouch = false
+		chip.CanQuery = false
+		chip.CastShadow = false
+		chip.CFrame = CFrame.new(pos + Vector3.new(
+			(math.random() * 2 - 1) * scatter,
+			0.16 * spiderScale,
+			(math.random() * 2 - 1) * scatter
+		))
+		chip.Parent = Workspace
+
+		TweenService:Create(chip, TweenInfo.new(0.78, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Transparency = 1,
+			CFrame = chip.CFrame
+				+ Vector3.new(
+					(math.random() * 2 - 1) * scatter * 1.45,
+					math.random(14, 34) / 10 * spiderScale,
+					(math.random() * 2 - 1) * scatter * 1.45
+				),
+			Size = Vector3.new(0.03, 0.03, 0.03),
+		}):Play()
+		Debris:AddItem(chip, 0.9)
+	end
+
+	GameSoundEffects.playGroundSmash(1)
+	pulseCameraShake(0.9, 0.52)
+end
+
 local function stabilizeSpiderModel(model: Model)
 	local primary = model.PrimaryPart
 	if not primary then
@@ -2007,7 +2211,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 			return
 		end
 
-		pulseCameraShake(0.65, 0.18)
+		spawnSpiderLandingImpact(landingPos, spider)
 		playerAim = getPlayerAimPos(fallbackAnchor)
 		faceCharacterToward(landingPos)
 		spider:PivotTo(cfFacingTarget(landingPos, playerAim))

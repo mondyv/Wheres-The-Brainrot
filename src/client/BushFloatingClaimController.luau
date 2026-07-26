@@ -44,10 +44,11 @@ local FLANK_MIN_HALF_WIDTH = 2.2
 local TIMER_EDGE_PAD = 0.08
 local TIMER_BELOW_SCALE = 0.38
 local UI_ANCHOR_LIFT = 1.85
-local CHOICE_BILLBOARD_SIZE = Vector2.new(84, 36)
+local CHOICE_BILLBOARD_SIZE = Vector2.new(58, 58)
 local TIMER_BILLBOARD_SIZE = Vector2.new(76, 26)
-local CHOICE_TEXT_MAX = 14
 local TIMER_TEXT_MAX = 13
+local ACCEPT_ICON = "rbxassetid://138238882257093"
+local DECLINE_ICON = "rbxassetid://117521575588231"
 local TIMER_CAMERA_HIDE_DIST = 38
 
 local BushFloatingClaimController = {}
@@ -660,7 +661,8 @@ local function styleChoiceButton(
 	label: string,
 	accent: Color3,
 	fillColor: Color3,
-	textColor: Color3,
+	iconColor: Color3,
+	iconImage: string,
 	parent: Instance
 )
 	btn.Name = label
@@ -681,7 +683,7 @@ local function styleChoiceButton(
 	panel.Parent = btn
 
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 8)
+	corner.CornerRadius = UDim.new(0, 10)
 	corner.Parent = panel
 
 	local stroke = Instance.new("UIStroke")
@@ -692,17 +694,17 @@ local function styleChoiceButton(
 	stroke.LineJoinMode = Enum.LineJoinMode.Round
 	stroke.Parent = panel
 
-	local textLabel = Instance.new("TextLabel")
-	textLabel.Name = "Label"
-	textLabel.Size = UDim2.fromScale(1, 1)
-	textLabel.BackgroundTransparency = 1
-	UiFonts.applyButtonLabel(textLabel, CHOICE_TEXT_MAX, 10)
-	textLabel.Text = string.upper(label)
-	textLabel.TextColor3 = textColor
-	textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-	textLabel.TextStrokeTransparency = 0.35
-	textLabel.ZIndex = 2
-	textLabel.Parent = btn
+	local icon = Instance.new("ImageLabel")
+	icon.Name = "Icon"
+	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.Position = UDim2.fromScale(0.5, 0.5)
+	icon.Size = UDim2.fromScale(0.72, 0.72)
+	icon.BackgroundTransparency = 1
+	icon.Image = iconImage
+	icon.ImageColor3 = iconColor
+	icon.ScaleType = Enum.ScaleType.Fit
+	icon.ZIndex = 2
+	icon.Parent = btn
 
 	local scale = getOrAddUIScale(btn)
 	scale.Scale = 0.01
@@ -819,6 +821,7 @@ local function buildChoiceUi(_model: Model, rarity: string): ChoiceUiParts
 		Color3.fromRGB(72, 255, 140),
 		Color3.fromRGB(12, 28, 18),
 		Color3.fromRGB(190, 255, 210),
+		ACCEPT_ICON,
 		acceptRoot
 	)
 
@@ -834,6 +837,7 @@ local function buildChoiceUi(_model: Model, rarity: string): ChoiceUiParts
 		Color3.fromRGB(255, 95, 85),
 		Color3.fromRGB(28, 12, 14),
 		Color3.fromRGB(255, 200, 195),
+		DECLINE_ICON,
 		declineRoot
 	)
 
@@ -896,11 +900,10 @@ local function fadeButtonPanel(btn: TextButton)
 			TweenService:Create(stroke, VANISH_OUT, { Transparency = 1 }):Play()
 		end
 	end
-	local textLabel = btn:FindFirstChild("Label")
-	if textLabel and textLabel:IsA("TextLabel") then
-		TweenService:Create(textLabel, VANISH_OUT, {
-			TextTransparency = 1,
-			TextStrokeTransparency = 1,
+	local icon = btn:FindFirstChild("Icon")
+	if icon and icon:IsA("ImageLabel") then
+		TweenService:Create(icon, VANISH_OUT, {
+			ImageTransparency = 1,
 		}):Play()
 	end
 end
@@ -1104,7 +1107,7 @@ local function wireButtonHover(
 	panelScale: UIScale?,
 	bb: BillboardGui?,
 	accent: Color3,
-	textColor: Color3,
+	iconColor: Color3,
 	_gradColors: { Color3 }
 )
 	if not btn or not scale or not panelScale or not bb then
@@ -1113,7 +1116,7 @@ local function wireButtonHover(
 
 	local panel = btn:FindFirstChild("Panel")
 	local stroke = if panel then panel:FindFirstChildOfClass("UIStroke") else nil
-	local textLabel = btn:FindFirstChild("Label")
+	local icon = btn:FindFirstChild("Icon")
 	local strokeBright = accent:Lerp(Color3.fromRGB(255, 255, 255), 0.45)
 	local baseThickness = if stroke then stroke.Thickness else 1.5
 	local tiltSign = if btn.Name == "Accept" then -1 else 1
@@ -1158,8 +1161,8 @@ local function wireButtonHover(
 				Transparency = 0,
 			}):Play()
 		end
-		if textLabel and textLabel:IsA("TextLabel") then
-			TweenService:Create(textLabel, HOVER_POP, { TextColor3 = Color3.fromRGB(255, 255, 255) }):Play()
+		if icon and icon:IsA("ImageLabel") then
+			TweenService:Create(icon, HOVER_POP, { ImageColor3 = Color3.fromRGB(255, 255, 255) }):Play()
 		end
 	end)
 
@@ -1180,8 +1183,8 @@ local function wireButtonHover(
 				Transparency = 0.08,
 			}):Play()
 		end
-		if textLabel and textLabel:IsA("TextLabel") then
-			TweenService:Create(textLabel, HOVER_OUT, { TextColor3 = textColor }):Play()
+		if icon and icon:IsA("ImageLabel") then
+			TweenService:Create(icon, HOVER_OUT, { ImageColor3 = iconColor }):Play()
 		end
 	end)
 end
@@ -1348,8 +1351,8 @@ local function trackModel(model: Model)
 
 	local acceptAccent = Color3.fromRGB(70, 255, 140)
 	local declineAccent = Color3.fromRGB(255, 95, 85)
-	local acceptText = Color3.fromRGB(170, 255, 200)
-	local declineText = Color3.fromRGB(255, 190, 185)
+	local acceptIconColor = Color3.fromRGB(170, 255, 200)
+	local declineIconColor = Color3.fromRGB(255, 190, 185)
 
 	for _, conn in bindChoiceButtonPress(entry.acceptBtn, entry.acceptScale, entry.acceptPanelScale, function()
 		if entry.decisionLocked then
@@ -1427,8 +1430,8 @@ local function trackModel(model: Model)
 	local acceptGrad = { Color3.fromRGB(18, 42, 28), Color3.fromRGB(8, 18, 12) }
 	local declineGrad = { Color3.fromRGB(42, 14, 14), Color3.fromRGB(18, 6, 8) }
 
-	wireButtonHover(entry, entry.acceptBtn, entry.acceptScale, entry.acceptPanelScale, entry.acceptBb, acceptAccent, acceptText, acceptGrad)
-	wireButtonHover(entry, entry.declineBtn, entry.declineScale, entry.declinePanelScale, entry.declineBb, declineAccent, declineText, declineGrad)
+	wireButtonHover(entry, entry.acceptBtn, entry.acceptScale, entry.acceptPanelScale, entry.acceptBb, acceptAccent, acceptIconColor, acceptGrad)
+	wireButtonHover(entry, entry.declineBtn, entry.declineScale, entry.declinePanelScale, entry.declineBb, declineAccent, declineIconColor, declineGrad)
 	ensureTicker()
 end
 

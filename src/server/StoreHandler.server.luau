@@ -432,6 +432,9 @@ local function initPlayerAttributes(player: Player)
 	if player:GetAttribute(A.FREE_UNCOMMON_CLAIMED) == nil then
 		player:SetAttribute(A.FREE_UNCOMMON_CLAIMED, false)
 	end
+	if player:GetAttribute(A.GROUP_REWARD_CLAIMED) == nil then
+		player:SetAttribute(A.GROUP_REWARD_CLAIMED, false)
+	end
 	if player:GetAttribute(A.FREE_STEAL_COUNT) == nil then
 		player:SetAttribute(A.FREE_STEAL_COUNT, 0)
 	end

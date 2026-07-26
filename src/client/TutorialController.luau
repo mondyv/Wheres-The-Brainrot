@@ -125,8 +125,7 @@ local function setChromeSuppressed(suppressed: boolean)
 		if clearWorldArrow then
 			clearWorldArrow()
 		end
-		-- Keep Accept UI pointer during claim cutscene; clear otherwise.
-		if not isClaimCutscene() and clearUiPointer then
+		if clearUiPointer then
 			clearUiPointer()
 		end
 		if clearSpotlight then
@@ -887,19 +886,6 @@ local function pointAtGui(target: GuiObject?, force: boolean?)
 	end)
 end
 
-local function pointAtAcceptOffer(acceptBtn: GuiObject?, acceptBb: BillboardGui?)
-	if acceptBtn and acceptBtn.Parent then
-		pointAtGui(acceptBtn, true)
-		return
-	end
-	if acceptBb then
-		local rootGui = acceptBb:FindFirstChildWhichIsA("GuiObject")
-		if rootGui then
-			pointAtGui(rootGui, true)
-		end
-	end
-end
-
 local function resolveUpgradeStandPart(): BasePart?
 	local map = Workspace:FindFirstChild("Map")
 	local stands = map and map:FindFirstChild("UIStands")
@@ -1276,16 +1262,11 @@ local function refreshPointersImpl()
 		return
 	end
 
-	-- Claim cutscene: only Accept click icon (quest panel stays hidden).
+	-- Claim cutscene: Accept/Decline icons are enough — no click overlay.
 	if step.id == "claimBrainrot" or isClaimCutscene() then
 		clearWorldArrow()
 		clearSpotlight()
-		local offer = BushFloatingClaimController.getActiveOfferUi()
-		if offer and offer.acceptBtn then
-			if not uiPointer or uiPointerHost ~= offer.acceptBtn then
-				pointAtAcceptOffer(offer.acceptBtn, nil)
-			end
-		end
+		clearUiPointer()
 		return
 	end
 
@@ -1451,16 +1432,6 @@ local function watchStepProgress()
 		local busy = isCutsceneBusy()
 		if busy then
 			setChromeSuppressed(true)
-			-- Keep Accept click icon during floating claim.
-			if isClaimCutscene() then
-				local stepBusy = currentStep()
-				if stepBusy and (stepBusy.id == "claimBrainrot" or stepBusy.id == "searchBush") then
-					local offer = BushFloatingClaimController.getActiveOfferUi()
-					if offer and offer.acceptBtn and (not uiPointer or uiPointerHost ~= offer.acceptBtn) then
-						pointAtAcceptOffer(offer.acceptBtn, nil)
-					end
-				end
-			end
 			return
 		elseif chromeSuppressed or pendingPointerRefresh then
 			setChromeSuppressed(false)
@@ -1536,7 +1507,7 @@ local function watchStepProgress()
 				refreshPointers()
 			end
 		elseif step.id == "claimBrainrot" then
-			-- Stay suppressed during floating claim cutscene; Accept pointer kept above.
+			-- Floating claim cutscene; Accept/Decline icons only (no click overlay).
 		elseif step.id == "placeOnPlot" and now - lastLandCheck > 0.4 then
 			lastLandCheck = now
 			local plot = PlotPaths.findPlotForAssignedSlot(player)
@@ -1671,13 +1642,11 @@ function M.init()
 			return
 		end
 		hooksBound = true
-		BushFloatingClaimController.registerOfferHook(function(_model, ui)
+		BushFloatingClaimController.registerOfferHook(function(_model, _ui)
 			completeCurrentIf("searchBush")
-			-- Claim cutscene owns the quest chrome — keep Accept click icon only.
+			-- Claim cutscene owns the quest chrome; Accept icon is the button art.
 			setChromeSuppressed(true)
-			if ui and ui.acceptBtn then
-				pointAtAcceptOffer(ui.acceptBtn, nil)
-			end
+			clearUiPointer()
 		end)
 		BushFloatingClaimController.registerAcceptHook(function(_model)
 			completeCurrentIf("claimBrainrot")

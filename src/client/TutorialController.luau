@@ -498,31 +498,39 @@ local function syncPanelToSideButtonsImpl()
 	local topPad = TutorialConfig.PANEL_TOP_PAD + insetY
 	local screenW: number
 	local matchScale = 1
+	local anchorY = 0 -- top of panel
 
 	if mobile then
 		local maxW = math.floor(vp.X * TutorialConfig.PANEL_MOBILE_MAX_WIDTH_FRAC)
 		screenW = math.clamp(maxW, TutorialConfig.PANEL_MOBILE_MIN_WIDTH, TutorialConfig.PANEL_MOBILE_MAX_WIDTH)
 		matchScale = TutorialConfig.PANEL_MOBILE_SCALE
-		-- Sit under the RandomBrainrot gamepass so we don't cover it.
+		-- Sit ABOVE RandomBrainrot on the right (not below — that pushed it to the bottom).
 		local rb = resolveRandomBrainrotHud()
 		if rb then
 			local hp = host.AbsolutePosition
-			local rbBottom = rb.AbsolutePosition.Y + rb.AbsoluteSize.Y - hp.Y
-			topPad = math.max(topPad, rbBottom + TutorialConfig.PANEL_MOBILE_GAP_BELOW_RIGHT)
+			local rbTop = rb.AbsolutePosition.Y - hp.Y
 			local hostRight = hp.X + host.AbsoluteSize.X
 			local rbRight = rb.AbsolutePosition.X + rb.AbsoluteSize.X
 			rightPad = math.max(8, hostRight - rbRight)
+			-- Anchor bottom of panel just above RandomBrainrot.
+			anchorY = 1
+			topPad = math.max(insetY + 10, rbTop - TutorialConfig.PANEL_MOBILE_GAP_ABOVE_RIGHT)
 		else
-			topPad = math.max(topPad, 120 + insetY)
+			topPad = insetY + 14
 			rightPad = 10
+			anchorY = 0
 		end
 	else
 		local maxW = math.floor(vp.X * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
-		maxW = math.clamp(maxW, 180, 340)
-		screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, 340)
+		maxW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
+		screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
+		matchScale = TutorialConfig.PANEL_PC_SCALE
+		topPad = TutorialConfig.PANEL_TOP_PAD + insetY
+		rightPad = TutorialConfig.PANEL_RIGHT_PAD
+		anchorY = 0
 	end
 
-	panel.AnchorPoint = Vector2.new(1, 0)
+	panel.AnchorPoint = Vector2.new(1, anchorY)
 	panel.Size = UDim2.fromOffset(screenW, TutorialConfig.PANEL_HEIGHT)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
 	panel.Position = UDim2.new(1, -rightPad, 0, topPad)
@@ -760,7 +768,7 @@ local function ensureGui()
 	label.TextYAlignment = Enum.TextYAlignment.Top
 	label.TextWrapped = true
 	label.TextTruncate = Enum.TextTruncate.None
-	label.TextSize = 15
+	label.TextSize = 17
 	label.TextColor3 = Color3.fromRGB(245, 250, 255)
 	label.Text = ""
 	label.ZIndex = 3
@@ -784,7 +792,7 @@ local function ensureGui()
 	dots.TextXAlignment = Enum.TextXAlignment.Left
 	dots.TextYAlignment = Enum.TextYAlignment.Top
 	dots.TextWrapped = false
-	dots.TextSize = 15
+	dots.TextSize = 17
 	dots.TextColor3 = Color3.fromRGB(245, 250, 255)
 	dots.Text = ""
 	dots.ZIndex = 3
@@ -1023,16 +1031,25 @@ local function pointAtGui(target: GuiObject?, force: boolean?)
 
 	local underBb = target:FindFirstAncestorOfClass("BillboardGui")
 	local underSurface = target:FindFirstAncestorOfClass("SurfaceGui")
+	local clickSize = TutorialConfig.UI_CLICK_SIZE
+	local clickSizeUp = clickSize + 8
 	if underBb then
+		pointer.Size = UDim2.fromOffset(clickSize, clickSize)
 		pointer.Position = UDim2.new(0.55, 0, 0.55, 0)
 		pointer.Parent = target
 	elseif underSurface then
-		-- Stand upgrade SurfaceGui — top-right so cost/level text stays readable.
-		pointer.AnchorPoint = Vector2.new(1, 0)
-		pointer.Position = UDim2.new(1, -2, 0, 2)
+		-- Stand upgrade SurfaceGui — left side, small so text stays readable.
+		clickSize = if isMobileUi()
+			then TutorialConfig.UI_CLICK_SIZE_SURFACE_MOBILE
+			else TutorialConfig.UI_CLICK_SIZE_SURFACE
+		clickSizeUp = clickSize + 4
+		pointer.Size = UDim2.fromOffset(clickSize, clickSize)
+		pointer.AnchorPoint = Vector2.new(0, 0.5)
+		pointer.Position = UDim2.new(0, 2, 0.5, 0)
 		pointer.Parent = attachHost
 	else
 		-- HUD buy chip — fingertip on lower-right (price text stays readable).
+		pointer.Size = UDim2.fromOffset(clickSize, clickSize)
 		pointer.Position = UDim2.new(1, -8, 1, -6)
 		pointer.Parent = attachHost
 	end
@@ -1044,7 +1061,7 @@ local function pointAtGui(target: GuiObject?, force: boolean?)
 				break
 			end
 			local up = TweenService:Create(pointer, CLICK_BOUNCE, {
-				Size = UDim2.fromOffset(54, 54),
+				Size = UDim2.fromOffset(clickSizeUp, clickSizeUp),
 				Rotation = -10,
 			})
 			up:Play()
@@ -1053,7 +1070,7 @@ local function pointAtGui(target: GuiObject?, force: boolean?)
 				break
 			end
 			local down = TweenService:Create(pointer, CLICK_BOUNCE, {
-				Size = UDim2.fromOffset(46, 46),
+				Size = UDim2.fromOffset(clickSize, clickSize),
 				Rotation = 6,
 			})
 			down:Play()

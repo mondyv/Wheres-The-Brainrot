@@ -184,6 +184,7 @@ type TrackedOffer = {
 	timerTrack: Frame?,
 	decisionLocked: boolean,
 	acceptedOffer: boolean,
+	acceptHooksFired: boolean,
 	expiring: boolean,
 	modelVanishing: boolean,
 	hoverCount: number,
@@ -1322,6 +1323,7 @@ local function trackModel(model: Model)
 		timerTrack = ui.timerTrack,
 		decisionLocked = false,
 		acceptedOffer = false,
+		acceptHooksFired = false,
 		expiring = false,
 		modelVanishing = false,
 		hoverCount = 0,
@@ -1367,6 +1369,11 @@ local function trackModel(model: Model)
 		BushHoldInteraction.suppressBushSearchBriefly(2.5)
 		ProximityPromptEffects.hideBushSearch()
 		fireDecision(model, "accept")
+		-- Tutorial + listeners should not wait on Carried attr (can race with untrack).
+		if not entry.acceptHooksFired then
+			entry.acceptHooksFired = true
+			fireAcceptHooks(model)
+		end
 		animateOfferOut(entry, false, true)
 	end) do
 		table.insert(entry.conns, conn)
@@ -1394,7 +1401,8 @@ local function trackModel(model: Model)
 		model:GetAttributeChangedSignal("BrainrotCarryPhase"):Connect(function()
 			local phase = model:GetAttribute("BrainrotCarryPhase")
 			if phase == "Carried" then
-				if entry.acceptedOffer then
+				if entry.acceptedOffer and not entry.acceptHooksFired then
+					entry.acceptHooksFired = true
 					fireAcceptHooks(model)
 				end
 				GameSoundEffects.playProximityPromptAppear()

@@ -146,8 +146,14 @@ local function setChromeSuppressed(suppressed: boolean)
 			gui.Enabled = true
 		end
 		pendingPointerRefresh = true
-		if objectiveBaseText ~= "" then
-			startObjectiveDots(objectiveBaseText)
+		local step = currentStep()
+		local text = if step then step.text elseif objectiveBaseText ~= "" then objectiveBaseText else nil
+		if text then
+			objectiveBaseText = text
+			if objectiveLabel then
+				objectiveLabel.Text = text
+			end
+			startObjectiveDots(text)
 		end
 	end
 end
@@ -217,60 +223,20 @@ local function startObjectiveDotsImpl(baseText: string)
 end
 startObjectiveDots = startObjectiveDotsImpl
 
-local function waitWhileStandTalking(token: number)
-	while active and token == speakToken and StandDialogueCutscene.isActive() do
-		task.wait(0.05)
-	end
-end
-
 local function typeObjective(displayText: string)
 	speakToken += 1
-	local token = speakToken
 	stopObjectiveDots()
+	objectiveBaseText = displayText
 	if dotsLabel then
 		dotsLabel.Text = ""
 	end
-	task.spawn(function()
-		waitWhileStandTalking(token)
-		if token ~= speakToken or not active or not objectiveLabel then
-			return
-		end
-		if isCutsceneBusy() then
-			objectiveLabel.Text = displayText
-			startObjectiveDots(displayText)
-			return
-		end
-		StandDialogueCutscene.setVoicePitch(TutorialConfig.VOICE_PITCH_MIN, TutorialConfig.VOICE_PITCH_MAX)
-		objectiveLabel.Text = ""
-		for i = 1, #displayText do
-			if token ~= speakToken or not active then
-				return
-			end
-			if isCutsceneBusy() or StandDialogueCutscene.isActive() then
-				waitWhileStandTalking(token)
-				if token ~= speakToken or not active then
-					return
-				end
-				if objectiveLabel then
-					objectiveLabel.Text = displayText
-				end
-				if token == speakToken then
-					startObjectiveDots(displayText)
-				end
-				return
-			end
-			local ch = string.sub(displayText, i, i)
-			objectiveLabel.Text = string.sub(displayText, 1, i)
-			if ch ~= " " and ch ~= "\n" then
-				StandDialogueCutscene.playVoiceLetter()
-			end
-			task.wait(TutorialConfig.OBJECTIVE_TYPE_DELAY)
-		end
-		if token == speakToken and objectiveLabel then
-			objectiveLabel.Text = displayText
-			startObjectiveDots(displayText)
-		end
-	end)
+	if not active or not objectiveLabel then
+		return
+	end
+	objectiveLabel.Text = displayText
+	if not chromeSuppressed then
+		startObjectiveDots(displayText)
+	end
 end
 
 local function resolveSideButtonPanel(): GuiObject?
@@ -651,11 +617,10 @@ local function showPanel(text: string, animateIn: boolean)
 	if not gui or not panel or not objectiveLabel or not panelScale then
 		return
 	end
+	objectiveBaseText = text
 	if isCutsceneBusy() then
 		setChromeSuppressed(true)
-		if objectiveLabel then
-			objectiveLabel.Text = text
-		end
+		objectiveLabel.Text = text
 		return
 	end
 	setChromeSuppressed(false)
@@ -1447,6 +1412,19 @@ local function watchStepProgress()
 		local busy = isCutsceneBusy()
 		if busy then
 			setChromeSuppressed(true)
+			-- Still advance bush/claim steps while claim cutscene hides the quest bar.
+			local stepBusy = currentStep()
+			if stepBusy then
+				if stepBusy.id == "searchBush" then
+					if BushFloatingClaimController.getActiveOfferUi() or CarryGate.isCarrying() then
+						completeCurrentIf("searchBush")
+					end
+				elseif stepBusy.id == "claimBrainrot" then
+					if CarryGate.isCarryingOnHead() then
+						completeCurrentIf("claimBrainrot")
+					end
+				end
+			end
 			return
 		elseif chromeSuppressed or pendingPointerRefresh then
 			setChromeSuppressed(false)
@@ -1484,8 +1462,6 @@ local function watchStepProgress()
 				if btn and isGuiTreeVisible(btn) and not uiPointer then
 					refreshPointers()
 				end
-			elseif step.id == "claimBrainrot" then
-				refreshPointers()
 			end
 		end
 
@@ -1514,6 +1490,10 @@ local function watchStepProgress()
 			end
 		elseif step.id == "searchBush" and now - lastLandCheck > 0.5 then
 			lastLandCheck = now
+			if BushFloatingClaimController.getActiveOfferUi() or CarryGate.isCarrying() then
+				completeCurrentIf("searchBush")
+				return
+			end
 			if lockedBushRoot and not bushHasBrainrotLoot(lockedBushRoot) then
 				clearLockedBush()
 				clearWorldArrow()
@@ -1521,8 +1501,11 @@ local function watchStepProgress()
 			if not worldArrowBb then
 				refreshPointers()
 			end
-		elseif step.id == "claimBrainrot" then
-			-- Floating claim cutscene; Accept/Decline icons only (no click overlay).
+		elseif step.id == "claimBrainrot" and now - lastLandCheck > 0.35 then
+			lastLandCheck = now
+			if CarryGate.isCarryingOnHead() then
+				completeCurrentIf("claimBrainrot")
+			end
 		elseif step.id == "placeOnPlot" and now - lastLandCheck > 0.4 then
 			lastLandCheck = now
 			local plot = PlotPaths.findPlotForAssignedSlot(player)
@@ -1659,11 +1642,12 @@ function M.init()
 		hooksBound = true
 		BushFloatingClaimController.registerOfferHook(function(_model, _ui)
 			completeCurrentIf("searchBush")
-			-- Claim cutscene owns the quest chrome; Accept icon is the button art.
+			-- Claim cutscene owns the quest chrome.
 			setChromeSuppressed(true)
 			clearUiPointer()
 		end)
 		BushFloatingClaimController.registerAcceptHook(function(_model)
+			completeCurrentIf("searchBush")
 			completeCurrentIf("claimBrainrot")
 		end)
 		BushFloatingClaimController.registerDeclineHook(function(_model)

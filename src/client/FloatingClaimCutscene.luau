@@ -378,12 +378,17 @@ local function restoreCamera(keepMoveLock: boolean?)
 	animateLetterboxOut()
 	local cam = Workspace.CurrentCamera
 	if cam and savedCameraType then
-		cam.CameraType = savedCameraType
 		if savedFov then
 			cam.FieldOfView = savedFov
 		end
-		if savedCameraSubject then
-			cam.CameraSubject = savedCameraSubject
+		local GameplayCameraController = require(script.Parent.GameplayCameraController)
+		if GameplayCameraController.isEnabled() then
+			GameplayCameraController.resume(cam.CFrame)
+		else
+			cam.CameraType = savedCameraType
+			if savedCameraSubject then
+				cam.CameraSubject = savedCameraSubject
+			end
 		end
 	end
 	savedCameraType = nil
@@ -424,8 +429,12 @@ function FloatingClaimCutscene.begin(model: Model?, zoomIntensity: number?)
 		savedCameraType = cam.CameraType
 		savedCameraSubject = cam.CameraSubject
 		savedFov = cam.FieldOfView
+		local GameplayCameraController = require(script.Parent.GameplayCameraController)
+		GameplayCameraController.pause()
 		cam.CameraType = Enum.CameraType.Scriptable
-		GameplayUiVisibility.hide({ keepScreenGuiNames = { "FloatingClaimCutscene" } })
+		GameplayUiVisibility.hide({
+			keepScreenGuiNames = { "FloatingClaimCutscene", "TutorialUiPointer" },
+		})
 		animateLetterboxIn()
 		lockMovement()
 	end

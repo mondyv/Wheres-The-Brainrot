@@ -49,10 +49,15 @@ local root: Frame? = nil
 local panel: Frame? = nil
 local exclaim: ImageLabel? = nil
 local objectiveLabel: TextLabel? = nil
+local dotsLabel: TextLabel? = nil
 local panelScale: UIScale? = nil
 local worldArrowBb: BillboardGui? = nil
 local worldArrowImg: ImageLabel? = nil
 local uiPointer: ImageLabel? = nil
+local pointerGui: ScreenGui? = nil
+local pointerRoot: Frame? = nil
+local uiPointerFollowConn: RBXScriptConnection? = nil
+local uiPointerForced = false
 local dimOverlay: Frame? = nil
 local spotlightHole: Frame? = nil
 local heartbeatConn: RBXScriptConnection? = nil
@@ -92,20 +97,21 @@ local function currentStep(): TutorialConfig.StepDef?
 	return TutorialConfig.STEPS[stepIndex]
 end
 
+local function isDialogueOrSpiderCutscene(): boolean
+	return StandDialogueCutscene.isActive() or BushSpiderEncounterController.isActive()
+end
+
+local function isClaimCutscene(): boolean
+	return FloatingClaimCutscene.isActive()
+end
+
+-- True cutscenes only — NOT GameplayUiVisibility.isHidden() (panels also hide HUD).
 local function isCutsceneBusy(): boolean
-	if StandDialogueCutscene.isActive() then
-		return true
-	end
-	if BushSpiderEncounterController.isActive() then
-		return true
-	end
-	if FloatingClaimCutscene.isActive() then
-		return true
-	end
-	if GameplayUiVisibility.isHidden() then
-		return true
-	end
-	return false
+	return isDialogueOrSpiderCutscene() or isClaimCutscene()
+end
+
+local function shouldHideQuestPanel(): boolean
+	return isCutsceneBusy()
 end
 
 local function setChromeSuppressed(suppressed: boolean)
@@ -119,17 +125,27 @@ local function setChromeSuppressed(suppressed: boolean)
 		if clearWorldArrow then
 			clearWorldArrow()
 		end
-		if clearUiPointer then
+		-- Keep Accept UI pointer during claim cutscene; clear otherwise.
+		if not isClaimCutscene() and clearUiPointer then
 			clearUiPointer()
 		end
 		if clearSpotlight then
 			clearSpotlight()
 		end
+		if panel then
+			panel.Visible = false
+		end
 		if gui then
+			-- ScreenGui may only host leftovers; panel lives under SideUI.
 			gui.Enabled = false
 		end
-	elseif active and gui then
-		gui.Enabled = true
+	elseif active then
+		if panel then
+			panel.Visible = true
+		end
+		if gui then
+			gui.Enabled = true
+		end
 		pendingPointerRefresh = true
 		if objectiveBaseText ~= "" then
 			startObjectiveDots(objectiveBaseText)
@@ -174,6 +190,9 @@ local function stopObjectiveDotsImpl()
 		dotsConn = nil
 	end
 	dotsPhase = 0
+	if dotsLabel then
+		dotsLabel.Text = ""
+	end
 end
 stopObjectiveDots = stopObjectiveDotsImpl
 
@@ -183,14 +202,18 @@ local function startObjectiveDotsImpl(baseText: string)
 	if not objectiveLabel or not active then
 		return
 	end
+	objectiveLabel.Text = baseText
+	if dotsLabel then
+		dotsLabel.Text = ""
+		dotsLabel.Visible = true
+	end
 	dotsConn = RunService.Heartbeat:Connect(function(dt)
-		if not active or chromeSuppressed or not objectiveLabel or not objectiveLabel.Parent then
+		if not active or chromeSuppressed or not dotsLabel or not dotsLabel.Parent then
 			return
 		end
 		dotsPhase += dt
 		local step = math.floor(dotsPhase * 2.2) % 4
-		local dots = if step == 0 then "" elseif step == 1 then "." elseif step == 2 then ".." else "..."
-		objectiveLabel.Text = objectiveBaseText .. dots
+		dotsLabel.Text = if step == 0 then "" elseif step == 1 then "." elseif step == 2 then ".." else "..."
 	end)
 end
 startObjectiveDots = startObjectiveDotsImpl
@@ -205,6 +228,9 @@ local function typeObjective(displayText: string)
 	speakToken += 1
 	local token = speakToken
 	stopObjectiveDots()
+	if dotsLabel then
+		dotsLabel.Text = ""
+	end
 	task.spawn(function()
 		waitWhileStandTalking(token)
 		if token ~= speakToken or not active or not objectiveLabel then
@@ -262,19 +288,32 @@ local function resolveSideButtonPanel(): GuiObject?
 end
 
 local function syncPanelToSideButtonsImpl()
-	if not panel or not panel.Parent or not gui or not gui.Enabled then
+	if not panel or chromeSuppressed then
 		return
 	end
 	local sidePanel = resolveSideButtonPanel()
 	if not sidePanel then
 		return
 	end
-	local abs = sidePanel.AbsolutePosition
-	local size = sidePanel.AbsoluteSize
-	local width = math.max(size.X, 240)
+	local sideUI = sidePanel.Parent
+	if not sideUI or not sideUI:IsA("GuiObject") then
+		return
+	end
+
+	-- Live under SideUI so resize / layout stay glued above Lef1.
+	if panel.Parent ~= sideUI then
+		panel.Parent = sideUI
+	end
+
+	local relX = sidePanel.AbsolutePosition.X - sideUI.AbsolutePosition.X
+	local relY = sidePanel.AbsolutePosition.Y - sideUI.AbsolutePosition.Y
+	local width = math.max(sidePanel.AbsoluteSize.X, 200)
 	local gap = TutorialConfig.PANEL_GAP_ABOVE_SIDE
+	panel.AnchorPoint = Vector2.new(0, 1)
 	panel.Size = UDim2.fromOffset(width, 58)
-	panel.Position = UDim2.fromOffset(abs.X, abs.Y - gap)
+	panel.Position = UDim2.fromOffset(relX, relY - gap)
+	panel.ZIndex = math.max(sidePanel.ZIndex + 5, 20)
+	panel.Visible = active and not chromeSuppressed
 end
 syncPanelToSideButtons = syncPanelToSideButtonsImpl
 
@@ -307,6 +346,10 @@ end
 clearWorldArrow = clearWorldArrowImpl
 
 local function clearUiPointerImpl()
+	if uiPointerFollowConn then
+		uiPointerFollowConn:Disconnect()
+		uiPointerFollowConn = nil
+	end
 	if uiPointerStroke then
 		uiPointerStroke:Destroy()
 		uiPointerStroke = nil
@@ -316,8 +359,69 @@ local function clearUiPointerImpl()
 		uiPointer = nil
 	end
 	uiPointerHost = nil
+	uiPointerForced = false
+	if pointerGui then
+		pointerGui.Enabled = false
+	end
 end
 clearUiPointer = clearUiPointerImpl
+
+local function ensurePointerGui()
+	if pointerGui and pointerGui.Parent then
+		return
+	end
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if not pg then
+		pg = player:WaitForChild("PlayerGui", 10) :: PlayerGui?
+	end
+	if not pg then
+		return
+	end
+	local screen = Instance.new("ScreenGui")
+	screen.Name = "TutorialUiPointer"
+	screen.ResetOnSpawn = false
+	screen.IgnoreGuiInset = true
+	screen.DisplayOrder = 130
+	screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screen.Enabled = false
+
+	local rootFrame = Instance.new("Frame")
+	rootFrame.Name = "Root"
+	rootFrame.BackgroundTransparency = 1
+	rootFrame.Size = UDim2.fromScale(1, 1)
+	rootFrame.Parent = screen
+
+	screen.Parent = pg
+	pointerGui = screen
+	pointerRoot = rootFrame
+end
+
+local function isGuiTreeVisible(obj: GuiObject): boolean
+	local cur: Instance? = obj
+	while cur do
+		if cur:IsA("LayerCollector") then
+			return (cur :: LayerCollector).Enabled
+		end
+		if cur:IsA("GuiObject") and not (cur :: GuiObject).Visible then
+			return false
+		end
+		cur = cur.Parent
+	end
+	return false
+end
+
+local function bushHasBrainrotLoot(bush: Instance): boolean
+	if bush:GetAttribute("HasHiddenBrainrot") ~= true then
+		return false
+	end
+	if bush:GetAttribute("BushOnCooldown") == true then
+		return false
+	end
+	if bush:GetAttribute("BushLootPhase") == "cooldown" then
+		return false
+	end
+	return true
+end
 
 local function clearSpotlightImpl()
 	claimSpotlightActive = false
@@ -403,22 +507,40 @@ local function ensureGui()
 	bang.ZIndex = 3
 	bang.Parent = panelFrame
 
+	local textRow = Instance.new("Frame")
+	textRow.Name = "TextRow"
+	textRow.BackgroundTransparency = 1
+	textRow.AnchorPoint = Vector2.new(0, 0.5)
+	textRow.Position = UDim2.new(0, 54, 0.5, 0)
+	textRow.Size = UDim2.new(1, -64, 1, -10)
+	textRow.ClipsDescendants = false
+	textRow.ZIndex = 3
+	textRow.Parent = panelFrame
+
+	local rowLayout = Instance.new("UIListLayout")
+	rowLayout.FillDirection = Enum.FillDirection.Horizontal
+	rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+	rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	rowLayout.Padding = UDim.new(0, 0)
+	rowLayout.Parent = textRow
+
 	local label = Instance.new("TextLabel")
 	label.Name = "ObjectiveText"
 	label.BackgroundTransparency = 1
-	label.AnchorPoint = Vector2.new(0, 0.5)
-	label.Position = UDim2.new(0, 54, 0.5, 0)
-	label.Size = UDim2.new(1, -64, 1, -10)
+	label.AutomaticSize = Enum.AutomaticSize.X
+	label.Size = UDim2.new(0, 0, 1, 0)
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.TextYAlignment = Enum.TextYAlignment.Center
-	label.TextWrapped = true
-	label.TextSize = 16
+	label.TextWrapped = false
+	label.TextTruncate = Enum.TextTruncate.None
+	label.TextSize = 15
 	label.TextColor3 = Color3.fromRGB(245, 250, 255)
 	label.Text = ""
+	label.LayoutOrder = 1
 	label.ZIndex = 3
-	label.Parent = panelFrame
+	label.Parent = textRow
 	UiFonts.applyBody(label)
-	-- Keep Press Start 2P / Arcade, but prefer bold weight when available.
 	local boldOk, boldFace = pcall(function()
 		return Font.new(label.FontFace.Family, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
 	end)
@@ -427,6 +549,26 @@ local function ensureGui()
 	end
 	label.TextStrokeTransparency = 0.55
 	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+
+	local dots = Instance.new("TextLabel")
+	dots.Name = "ObjectiveDots"
+	dots.BackgroundTransparency = 1
+	dots.Size = UDim2.fromOffset(34, 40)
+	dots.TextXAlignment = Enum.TextXAlignment.Left
+	dots.TextYAlignment = Enum.TextYAlignment.Center
+	dots.TextWrapped = false
+	dots.TextSize = 15
+	dots.TextColor3 = Color3.fromRGB(245, 250, 255)
+	dots.Text = ""
+	dots.LayoutOrder = 2
+	dots.ZIndex = 3
+	dots.Parent = textRow
+	UiFonts.applyBody(dots)
+	if boldOk and typeof(boldFace) == "Font" then
+		dots.FontFace = boldFace
+	end
+	dots.TextStrokeTransparency = 0.55
+	dots.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 
 	local dim = Instance.new("Frame")
 	dim.Name = "ClaimDim"
@@ -464,9 +606,13 @@ local function ensureGui()
 	panel = panelFrame
 	exclaim = bang
 	objectiveLabel = label
+	dotsLabel = dots
 	panelScale = scale
 	dimOverlay = dim
 	spotlightHole = hole
+
+	-- Move onto SideUI immediately so resize stays correct.
+	syncPanelToSideButtons()
 
 	task.spawn(function()
 		while active and bang.Parent do
@@ -657,46 +803,73 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	end)
 end
 
-local function pointAtGui(target: GuiObject?)
+local function pointAtGui(target: GuiObject?, force: boolean?)
 	clearUiPointer()
-	ensureGui()
-	if chromeSuppressed or isCutsceneBusy() then
+	local allow = force == true or (not chromeSuppressed and not isCutsceneBusy())
+	if not allow then
 		return
 	end
 	if not target or not target.Parent then
 		return
 	end
 
-	-- Parent onto the control itself so coordinates always match the upgrades panel.
-	local host = target
-	uiPointerHost = host
+	uiPointerForced = force == true
+	uiPointerHost = target
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Name = "TutorialTargetStroke"
 	stroke.Color = Color3.fromRGB(255, 230, 90)
 	stroke.Thickness = 2.4
 	stroke.Transparency = 0.15
-	stroke.Parent = host
+	stroke.Parent = target
 	uiPointerStroke = stroke
 
+	local underBb = target:FindFirstAncestorOfClass("BillboardGui")
 	local pointer = Instance.new("ImageLabel")
 	pointer.Name = "TutorialUiClick"
 	pointer.BackgroundTransparency = 1
-	pointer.Size = UDim2.fromOffset(52, 52)
+	pointer.Size = UDim2.fromOffset(56, 56)
 	pointer.AnchorPoint = Vector2.new(0.5, 0.5)
-	pointer.Position = UDim2.new(1, -8, 0.55, 0)
 	pointer.Image = TutorialConfig.UI_CLICK_IMAGE
 	pointer.ScaleType = Enum.ScaleType.Fit
-	pointer.ZIndex = math.max(host.ZIndex + 20, 40)
-	pointer.Parent = host
-	uiPointer = pointer
+	pointer.ZIndex = math.max(target.ZIndex + 30, 50)
+
+	if underBb then
+		-- Accept/Decline live on billboards — stick to the button itself.
+		pointer.Position = UDim2.new(1, -4, 0.55, 0)
+		pointer.Parent = target
+		uiPointer = pointer
+	else
+		ensurePointerGui()
+		if not pointerRoot or not pointerGui then
+			pointer:Destroy()
+			return
+		end
+		pointerGui.Enabled = true
+		pointer.Position = UDim2.fromOffset(0, 0)
+		pointer.Parent = pointerRoot
+		uiPointer = pointer
+
+		local function syncPointerPos()
+			if not target.Parent or not pointer.Parent then
+				return
+			end
+			local ap = target.AbsolutePosition
+			local as = target.AbsoluteSize
+			pointer.Position = UDim2.fromOffset(ap.X + as.X - 6, ap.Y + as.Y * 0.55)
+		end
+		syncPointerPos()
+		uiPointerFollowConn = RunService.RenderStepped:Connect(syncPointerPos)
+	end
 
 	task.spawn(function()
-		while uiPointer == pointer and pointer.Parent and active and host.Parent and not chromeSuppressed do
+		while uiPointer == pointer and pointer.Parent and active and target.Parent do
+			if chromeSuppressed and not uiPointerForced and not isClaimCutscene() then
+				break
+			end
 			local up = TweenService:Create(pointer, CLICK_BOUNCE, {
-				Size = UDim2.fromOffset(60, 60),
+				Size = UDim2.fromOffset(64, 64),
 				Rotation = -12,
-				Position = UDim2.new(1, -4, 0.5, 0),
 			})
 			up:Play()
 			up.Completed:Wait()
@@ -704,9 +877,8 @@ local function pointAtGui(target: GuiObject?)
 				break
 			end
 			local down = TweenService:Create(pointer, CLICK_BOUNCE, {
-				Size = UDim2.fromOffset(52, 52),
+				Size = UDim2.fromOffset(56, 56),
 				Rotation = 8,
-				Position = UDim2.new(1, -10, 0.62, 0),
 			})
 			down:Play()
 			down.Completed:Wait()
@@ -717,13 +889,13 @@ end
 
 local function pointAtAcceptOffer(acceptBtn: GuiObject?, acceptBb: BillboardGui?)
 	if acceptBtn and acceptBtn.Parent then
-		pointAtGui(acceptBtn)
+		pointAtGui(acceptBtn, true)
 		return
 	end
 	if acceptBb then
 		local rootGui = acceptBb:FindFirstChildWhichIsA("GuiObject")
 		if rootGui then
-			pointAtGui(rootGui)
+			pointAtGui(rootGui, true)
 		end
 	end
 end
@@ -868,7 +1040,7 @@ end
 local function resolveNearestBush(): BasePart?
 	-- Stick to one bush so the arrow doesn't teleport between targets.
 	if lockedBushPart and lockedBushPart.Parent then
-		if lockedBushRoot and lockedBushRoot.Parent then
+		if lockedBushRoot and lockedBushRoot.Parent and bushHasBrainrotLoot(lockedBushRoot) then
 			return lockedBushPart
 		end
 	end
@@ -881,6 +1053,9 @@ local function resolveNearestBush(): BasePart?
 	local bestScore = math.huge
 
 	local function considerBush(bush: Instance)
+		if not bushHasBrainrotLoot(bush) then
+			return
+		end
 		local focus = BushRootUtil.focusWorldPosition(bush)
 		if not focus then
 			return
@@ -1093,7 +1268,7 @@ local function cacheUpgradesBuyButton()
 end
 
 local function refreshPointersImpl()
-	if not active or chromeSuppressed or isCutsceneBusy() then
+	if not active then
 		return
 	end
 	local step = currentStep()
@@ -1101,10 +1276,32 @@ local function refreshPointersImpl()
 		return
 	end
 
+	-- Claim cutscene: only Accept click icon (quest panel stays hidden).
+	if step.id == "claimBrainrot" or isClaimCutscene() then
+		clearWorldArrow()
+		clearSpotlight()
+		local offer = BushFloatingClaimController.getActiveOfferUi()
+		if offer and offer.acceptBtn then
+			if not uiPointer or uiPointerHost ~= offer.acceptBtn then
+				pointAtAcceptOffer(offer.acceptBtn, nil)
+			end
+		end
+		return
+	end
+
+	if chromeSuppressed or isCutsceneBusy() then
+		return
+	end
+
 	-- Keep existing world arrow if still valid for locked bush / same step.
 	local keepWorld = false
 	if step.id == "searchBush" and worldArrowBb and lockedBushPart and lockedBushPart.Parent then
-		keepWorld = true
+		if lockedBushRoot and lockedBushRoot.Parent and bushHasBrainrotLoot(lockedBushRoot) then
+			keepWorld = true
+		else
+			clearLockedBush()
+			clearWorldArrow()
+		end
 	end
 
 	if not keepWorld then
@@ -1117,7 +1314,7 @@ local function refreshPointersImpl()
 		pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
 	elseif step.id == "buyPower" then
 		local btn = cacheUpgradesBuyButton()
-		if btn and upgradesFrame and upgradesFrame.Visible then
+		if btn and isGuiTreeVisible(btn) then
 			pointAtGui(btn)
 			task.defer(function()
 				task.wait(0.2)
@@ -1127,7 +1324,7 @@ local function refreshPointersImpl()
 				local cur = currentStep()
 				if cur and cur.id == "buyPower" and not uiPointer then
 					local again = cacheUpgradesBuyButton()
-					if again and upgradesFrame and upgradesFrame.Visible then
+					if again and isGuiTreeVisible(again) then
 						pointAtGui(again)
 					end
 				end
@@ -1141,9 +1338,6 @@ local function refreshPointersImpl()
 		if not keepWorld then
 			pointAtWorld(resolveNearestBush(), arrowHeight(2))
 		end
-	elseif step.id == "claimBrainrot" then
-		-- Quest/blur stay hidden during the accept cutscene (isCutsceneBusy).
-		-- No dim overlay — Accept/Decline UI is already the focus.
 	elseif step.id == "placeOnPlot" then
 		clearLockedBush()
 		pointAtWorld(resolvePlayerPlotStand(true), arrowHeight(3))
@@ -1257,6 +1451,16 @@ local function watchStepProgress()
 		local busy = isCutsceneBusy()
 		if busy then
 			setChromeSuppressed(true)
+			-- Keep Accept click icon during floating claim.
+			if isClaimCutscene() then
+				local stepBusy = currentStep()
+				if stepBusy and (stepBusy.id == "claimBrainrot" or stepBusy.id == "searchBush") then
+					local offer = BushFloatingClaimController.getActiveOfferUi()
+					if offer and offer.acceptBtn and (not uiPointer or uiPointerHost ~= offer.acceptBtn) then
+						pointAtAcceptOffer(offer.acceptBtn, nil)
+					end
+				end
+			end
 			return
 		elseif chromeSuppressed or pendingPointerRefresh then
 			setChromeSuppressed(false)
@@ -1282,20 +1486,27 @@ local function watchStepProgress()
 					refreshPointers()
 				end
 			elseif step.id == "searchBush" then
+				if lockedBushRoot and not bushHasBrainrotLoot(lockedBushRoot) then
+					clearLockedBush()
+					clearWorldArrow()
+				end
 				if not worldArrowBb then
 					refreshPointers()
 				end
 			elseif step.id == "buyPower" then
-				if upgradesFrame and upgradesFrame.Visible and not uiPointer then
+				local btn = cacheUpgradesBuyButton()
+				if btn and isGuiTreeVisible(btn) and not uiPointer then
 					refreshPointers()
 				end
+			elseif step.id == "claimBrainrot" then
+				refreshPointers()
 			end
 		end
 
 		if step.id == "buyPower" then
 			local btn = cacheUpgradesBuyButton()
-			if btn and upgradesFrame and upgradesFrame.Visible then
-				if not uiPointer or uiPointer.Parent ~= btn then
+			if btn and isGuiTreeVisible(btn) then
+				if not uiPointer or uiPointerHost ~= btn then
 					clearWorldArrow()
 					pointAtGui(btn)
 				end
@@ -1317,11 +1528,15 @@ local function watchStepProgress()
 			end
 		elseif step.id == "searchBush" and now - lastLandCheck > 0.5 then
 			lastLandCheck = now
+			if lockedBushRoot and not bushHasBrainrotLoot(lockedBushRoot) then
+				clearLockedBush()
+				clearWorldArrow()
+			end
 			if not worldArrowBb then
 				refreshPointers()
 			end
 		elseif step.id == "claimBrainrot" then
-			-- Stay suppressed during floating claim cutscene; complete on accept hook.
+			-- Stay suppressed during floating claim cutscene; Accept pointer kept above.
 		elseif step.id == "placeOnPlot" and now - lastLandCheck > 0.4 then
 			lastLandCheck = now
 			local plot = PlotPaths.findPlotForAssignedSlot(player)
@@ -1456,10 +1671,13 @@ function M.init()
 			return
 		end
 		hooksBound = true
-		BushFloatingClaimController.registerOfferHook(function(_model, _ui)
+		BushFloatingClaimController.registerOfferHook(function(_model, ui)
 			completeCurrentIf("searchBush")
-			-- Claim cutscene owns the screen — keep tutorial chrome suppressed.
+			-- Claim cutscene owns the quest chrome — keep Accept click icon only.
 			setChromeSuppressed(true)
+			if ui and ui.acceptBtn then
+				pointAtAcceptOffer(ui.acceptBtn, nil)
+			end
 		end)
 		BushFloatingClaimController.registerAcceptHook(function(_model)
 			completeCurrentIf("claimBrainrot")

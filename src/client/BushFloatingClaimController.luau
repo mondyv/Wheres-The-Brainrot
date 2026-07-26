@@ -1334,7 +1334,6 @@ local function trackModel(model: Model)
 	snapOfferLayout(entry)
 	attachBushOfferVisuals(entry, model)
 	updateBillboardPositions(entry)
-	fireOfferHooks(model, entry.acceptBtn, entry.declineBtn)
 
 	-- Ambush roll / lurking VFX — keep the offer cutscene so the sense notifier
 	-- isn't just floating text with no cinematic.
@@ -1344,6 +1343,8 @@ local function trackModel(model: Model)
 		entry.spiderSenseActive = true
 	end
 	FloatingClaimCutscene.begin(model, 0.62)
+	-- After cutscene begin so claim-aware tutorial hooks see isActive() == true.
+	fireOfferHooks(model, entry.acceptBtn, entry.declineBtn)
 
 	local acceptAccent = Color3.fromRGB(70, 255, 140)
 	local declineAccent = Color3.fromRGB(255, 95, 85)

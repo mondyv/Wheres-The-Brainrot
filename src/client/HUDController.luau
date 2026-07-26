@@ -31,14 +31,18 @@ local PANEL_BLUR_NAME = "PanelModalBlur"
 local PANEL_DIM_GUI_NAME = "PanelModalDim"
 local PANEL_BACKDROP_NAME = "PanelClickOutside"
 local BLUR_SIZE = 18
+local BLUR_SIZE_MOBILE = 28
 local BLUR_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local MOBILE_PANEL_SCALE = 1.5
+local MOBILE_UPGRADES_PANEL_SCALE = 1.5 / 1.3 -- ~1.15 — power upgrade panel was too large
+local PANEL_MODAL_MAIN_ORDER = 50
 
 local panelChromeHidden = false
 local panelBlur: BlurEffect? = nil
 local panelBackdrop: TextButton? = nil
 local panelDimGui: ScreenGui? = nil
 local panelClosing = false
+local savedMainDisplayOrder: number? = nil
 
 -- Module table declared early so backdrop callbacks never see a nil HUDController.
 local HUDController = {}
@@ -56,8 +60,18 @@ local function isMobileUi(): boolean
 	return UserInputService.TouchEnabled
 end
 
-local function panelRestScale(): number
-	return if isMobileUi() then MOBILE_PANEL_SCALE else 1
+local function panelRestScale(frame: Frame?): number
+	if not isMobileUi() then
+		return 1
+	end
+	if frame and frame.Name == "Upgrades" then
+		return MOBILE_UPGRADES_PANEL_SCALE
+	end
+	return MOBILE_PANEL_SCALE
+end
+
+local function blurTargetSize(): number
+	return if isMobileUi() then BLUR_SIZE_MOBILE else BLUR_SIZE
 end
 
 -- Tween configs
@@ -126,7 +140,28 @@ local function ensurePanelBlur()
 		blur.Parent = Lighting
 		panelBlur = blur
 	end
-	TweenService:Create(panelBlur :: BlurEffect, BLUR_TWEEN, { Size = BLUR_SIZE }):Play()
+	TweenService:Create(panelBlur :: BlurEffect, BLUR_TWEEN, { Size = blurTargetSize() }):Play()
+end
+
+local function restoreMainDisplayOrder()
+	if mainGui and savedMainDisplayOrder ~= nil then
+		mainGui.DisplayOrder = savedMainDisplayOrder
+		savedMainDisplayOrder = nil
+	end
+end
+
+local function raiseMainForModalDim(): number
+	ensureHudRoots()
+	if not mainGui then
+		return 10
+	end
+	if savedMainDisplayOrder == nil then
+		savedMainDisplayOrder = mainGui.DisplayOrder
+	end
+	if mainGui.DisplayOrder < PANEL_MODAL_MAIN_ORDER then
+		mainGui.DisplayOrder = PANEL_MODAL_MAIN_ORDER
+	end
+	return mainGui.DisplayOrder
 end
 
 local function destroyPanelBackdrop()
@@ -145,6 +180,7 @@ local function destroyPanelBackdrop()
 			existing:Destroy()
 		end
 	end
+	restoreMainDisplayOrder()
 	ensureHudRoots()
 	local frames = framesFolder
 	if frames then
@@ -206,32 +242,68 @@ local function ensurePanelBackdrop()
 	end
 	destroyPanelBackdrop()
 
-	-- Keep dim inside Frames (do NOT raise Main DisplayOrder — that covers TouchGui on mobile).
 	if frames:IsA("GuiObject") then
 		(frames :: GuiObject).ClipsDescendants = false
 	end
 
+	local mobile = isMobileUi()
+
+	-- Click-outside sink inside Frames. On mobile the visible dim is a separate
+	-- ScreenGui behind a raised Main (safe-area / blur parity with PC).
 	local backdrop = Instance.new("TextButton")
 	backdrop.Name = PANEL_BACKDROP_NAME
 	backdrop.AutoButtonColor = false
 	backdrop.Text = ""
 	backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
-	backdrop.BackgroundTransparency = 0.55
+	backdrop.BackgroundTransparency = if mobile then 1 else 0.55
 	backdrop.BorderSizePixel = 0
 	backdrop.ZIndex = 12
 	backdrop.Active = true
 
 	local inset = GuiService:GetGuiInset()
-	local padX = math.max(inset.X, if isMobileUi() then 24 else 8)
-	local padTop = math.max(inset.Y, if isMobileUi() then 24 else 8)
-	local bottomExtra = if isMobileUi() then 96 else 28
+	local padX = math.max(inset.X, if mobile then 24 else 8)
+	local padTop = math.max(inset.Y, if mobile then 24 else 8)
+	local bottomExtra = if mobile then 96 else 28
 	backdrop.AnchorPoint = Vector2.new(0, 0)
 	backdrop.Position = UDim2.fromOffset(-padX, -padTop)
 	backdrop.Size = UDim2.new(1, padX * 2, 1, padTop + bottomExtra)
 	backdrop.Parent = frames
 
-	-- No separate PanelModalDim ScreenGui — on mobile it often shares DisplayOrder with
-	-- Main (0) and paints over the open panel. BlurEffect + in-Frames dim matches PC.
+	if mobile then
+		local pg = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+		if pg then
+			-- Raise Main first so dim at (order-1) stays behind the panel (not on top).
+			local mainOrder = raiseMainForModalDim()
+			local gui = Instance.new("ScreenGui")
+			gui.Name = PANEL_DIM_GUI_NAME
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			gui.DisplayOrder = math.max(0, mainOrder - 1)
+			gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+			pcall(function()
+				(gui :: any).ClipToDeviceSafeArea = false
+			end)
+			pcall(function()
+				(gui :: any).SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
+			end)
+			pcall(function()
+				(gui :: any).ScreenInsets = Enum.ScreenInsets.None
+			end)
+
+			local fullDim = Instance.new("Frame")
+			fullDim.Name = "FullScreenDim"
+			fullDim.BackgroundColor3 = Color3.new(0, 0, 0)
+			fullDim.BackgroundTransparency = 0.55
+			fullDim.BorderSizePixel = 0
+			fullDim.Size = UDim2.fromScale(1, 1)
+			fullDim.Position = UDim2.fromScale(0, 0)
+			fullDim.Active = false
+			fullDim.Parent = gui
+
+			gui.Parent = pg
+			panelDimGui = gui
+		end
+	end
 
 	backdrop.Activated:Connect(function()
 		if not MobileTouchGate.canTapUi() then
@@ -241,8 +313,6 @@ local function ensurePanelBackdrop()
 		if not frame then
 			return
 		end
-		-- Empty panel chrome is often Active=false and punches through to this backdrop.
-		-- Close when outside the panel, or when the hit is the panel Close (X) control.
 		local mouse = UserInputService:GetMouseLocation()
 		local guiInset = GuiService:GetGuiInset()
 		local px = mouse.X - guiInset.X
@@ -372,7 +442,7 @@ local syncFramesInputPassthrough: () -> ()
 
 local function animateOpen(frame: Frame)
 	frame.Visible = true
-	local rest = panelRestScale()
+	local rest = panelRestScale(frame)
 	local scale = getOrAddUIScale(frame)
 	scale.Scale = rest * 0.82
 	TweenService:Create(scale, OPEN_TWEEN, { Scale = rest }):Play()
@@ -386,7 +456,7 @@ local function animateClose(frame: Frame)
 		prevTween:Cancel()
 		closeTweenByFrame[frame] = nil
 	end
-	local rest = panelRestScale()
+	local rest = panelRestScale(frame)
 	local scale = getOrAddUIScale(frame)
 	local t = TweenService:Create(scale, CLOSE_TWEEN, { Scale = rest * 0.72 })
 	closeTweenByFrame[frame] = t

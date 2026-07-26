@@ -31,6 +31,7 @@ local MODAL_OVERLAY_NAMES = {
 	"FloatingClaimCutscene",
 	"BushSpiderCutscene",
 	"StandDialogueCutscene",
+	"PanelModalDim",
 }
 
 local function hasModalOverlay(playerGui: Instance): boolean

@@ -12,6 +12,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local PlotStandPlaceholders = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotStandPlaceholders"))
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
@@ -36,6 +37,21 @@ local function storeRemotes(): Folder?
 	local folder = ReplicatedStorage:FindFirstChild("StoreRemotes")
 	if folder and folder:IsA("Folder") then
 		return folder
+	end
+	return nil
+end
+
+local function resolveStandRarity(stand: Model): string?
+	local name = stand:GetAttribute("BrainrotName")
+	if typeof(name) == "string" and name ~= "" then
+		local catalogRarity = BrainrotsConfig:GetRarity(name)
+		if typeof(catalogRarity) == "string" and catalogRarity ~= "" then
+			return catalogRarity
+		end
+	end
+	local attr = stand:GetAttribute("BrainrotRarity")
+	if typeof(attr) == "string" and attr ~= "" then
+		return attr
 	end
 	return nil
 end
@@ -78,7 +94,7 @@ local function stealRarityLabel(rarity: string): string
 end
 
 local function stealTitleText(stand: Model): string
-	local rarity = stand:GetAttribute("BrainrotRarity")
+	local rarity = resolveStandRarity(stand)
 	if typeof(rarity) == "string" and rarity ~= "" then
 		return string.format("Steal (%s) Brainrot", stealRarityLabel(rarity))
 	end
@@ -90,7 +106,7 @@ local function stealCostText(stand: Model): string
 	if typeof(free) == "number" and free > 0 then
 		return string.format("Free · %d left", free)
 	end
-	local rarity = stand:GetAttribute("BrainrotRarity")
+	local rarity = resolveStandRarity(stand)
 	if typeof(rarity) == "string" then
 		local price = StoreConfig.getStealPriceRobux(rarity)
 		if price then
@@ -307,6 +323,17 @@ local function wirePurchaseAndNotifs()
 				end)
 				pcall(function()
 					GameSoundEffects.playPurchase()
+				end)
+			end)
+		end
+		local failedRE = folder:WaitForChild("StealFailed", 15)
+		if failedRE and failedRE:IsA("RemoteEvent") then
+			failedRE.OnClientEvent:Connect(function(message: any)
+				local msg = if typeof(message) == "string" and message ~= ""
+					then message
+					else "Steal failed."
+				pcall(function()
+					TopNotifController.showError(msg)
 				end)
 			end)
 		end

@@ -50,6 +50,7 @@ end
 local stealRequestRE = ensureRemoteEvent("StealRequest")
 local stealPromptProductRE = ensureRemoteEvent("StealPromptProduct")
 local stealSuccessRE = ensureRemoteEvent("StealSuccess")
+local stealFailedRE = ensureRemoteEvent("StealFailed")
 
 local function waitBindable(folderName: string, name: string, timeout: number?): BindableFunction?
 	local deadline = os.clock() + (timeout or 30)
@@ -122,8 +123,18 @@ local function standWorldPosition(stand: Instance): Vector3?
 end
 
 local function standRarity(stand: Instance): string?
+	local name = stand:GetAttribute("BrainrotName")
+	if typeof(name) == "string" and name ~= "" then
+		local def = Brainrots.getByName(name)
+		if def and typeof(def.rarity) == "string" and def.rarity ~= "" then
+			return Brainrots.normalizeRarityId(def.rarity)
+		end
+	end
 	local r = stand:GetAttribute("BrainrotRarity")
-	return if typeof(r) == "string" then r else nil
+	if typeof(r) == "string" and r ~= "" then
+		return Brainrots.normalizeRarityId(r)
+	end
+	return nil
 end
 
 local function canSteal(thief: Player, stand: Instance): boolean
@@ -219,12 +230,17 @@ stealRequestRE.OnServerEvent:Connect(function(thief: Player, standArg: any)
 
 	local rarity = standRarity(stand)
 	if not rarity then
-		warn("[Steal] stand missing BrainrotRarity")
+		warn("[Steal] stand missing BrainrotRarity / catalog rarity")
+		stealFailedRE:FireClient(thief, "Can't steal this brainrot right now.")
 		return
 	end
 	local productId = StoreConfig.getStealProductId(rarity)
 	if not productId then
 		warn("[Steal] no steal product for rarity:", rarity)
+		stealFailedRE:FireClient(
+			thief,
+			string.format("Steal product missing for %s — create it in Creator Dashboard.", rarity)
+		)
 		return
 	end
 	pendingSteal[thief] = { stand = stand, rarity = StoreConfig.normalizeStealRarity(rarity) }

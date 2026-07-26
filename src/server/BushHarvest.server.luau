@@ -316,17 +316,9 @@ local function enrichEntryFromCatalog(entry: BrainrotInvEntry)
 	end
 	if (entry.baseIncome or 0) <= 0 then
 		entry.baseIncome = def.baseIncome
-		entry.rarity = def.rarity
-	elseif typeof(entry.rarity) ~= "string" or entry.rarity == "" then
-		entry.rarity = def.rarity
-	else
-		local normalized = Brainrots.normalizeRarityId(entry.rarity)
-		if Brainrots.RARITY_BY_ID[normalized] == nil then
-			entry.rarity = def.rarity
-		else
-			entry.rarity = normalized
-		end
 	end
+	-- Catalog is source of truth for rarity (stops secret stands sticking as "common").
+	entry.rarity = Brainrots.normalizeRarityId(def.rarity)
 end
 
 local function copyInventoryList(list: { BrainrotInvEntry }): { BrainrotInvEntry }

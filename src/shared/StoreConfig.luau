@@ -271,7 +271,9 @@ StoreConfig.STEAL_PRODUCT_BY_RARITY = {
 	mythic = 3602198619, -- Steal a mythic brainrot (399)
 	legendary = 3602198661, -- Steal a Legendary Brainrot (699)
 	["brainrot god"] = 3602198691, -- Steal a Brainrot God (999)
-	secret = 3602198445, -- remaining steal product id
+	-- Do NOT reuse 3602198445 — that is/was "Steal a common brainrot".
+	-- Paste the Creator Dashboard id for "Steal a Secret Brainrot" here when created.
+	-- secret = 0,
 }
 
 -- Robux prices (display only) for the steal products above.

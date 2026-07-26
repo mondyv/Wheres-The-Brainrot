@@ -597,17 +597,10 @@ local function recomputeIncomePerSecond(state: StandState): number
 			state.baseIncome = catalog.baseIncome
 			state.stand:SetAttribute("BrainrotBaseIncome", state.baseIncome)
 		end
-		local rarityOk = typeof(state.rarity) == "string"
-			and Brainrots.RARITY_BY_ID[Brainrots.normalizeRarityId(state.rarity)] ~= nil
-		if not rarityOk then
-			state.rarity = catalog.rarity
+		local catalogRarity = Brainrots.normalizeRarityId(catalog.rarity)
+		if state.rarity ~= catalogRarity then
+			state.rarity = catalogRarity
 			state.stand:SetAttribute("BrainrotRarity", state.rarity)
-		else
-			local normalized = Brainrots.normalizeRarityId(state.rarity :: string)
-			if normalized ~= state.rarity then
-				state.rarity = normalized
-				state.stand:SetAttribute("BrainrotRarity", state.rarity)
-			end
 		end
 	elseif typeof(state.rarity) == "string" then
 		state.rarity = Brainrots.normalizeRarityId(state.rarity)
@@ -1056,11 +1049,12 @@ local function applyStandFromSave(
 	state.mutation = entry.mutation
 	state.level = math.max(1, math.floor(entry.level))
 	state.baseIncome = entry.baseIncome
-	if state.baseIncome <= 0 then
-		local catalog = Brainrots.getByName(entry.brainrotName)
-		if catalog then
+	local catalog = Brainrots.getByName(entry.brainrotName)
+	if catalog then
+		if state.baseIncome <= 0 then
 			state.baseIncome = catalog.baseIncome
 		end
+		state.rarity = catalog.rarity
 	end
 	if typeof(state.rarity) == "string" then
 		state.rarity = Brainrots.normalizeRarityId(state.rarity)
@@ -1417,13 +1411,13 @@ local function placeBrainrotOnStand(player: Player, state: StandState)
 	state.mutation = entry.mutation or toolMutation or "normal"
 	state.level = math.max(1, math.floor(entry.level or toolLevel or 1))
 	state.baseIncome = entry.baseIncome or toolBaseIncome or 0
-	if state.baseIncome <= 0 and typeof(state.brainrotName) == "string" then
+	if typeof(state.brainrotName) == "string" then
 		local catalog = Brainrots.getByName(state.brainrotName)
 		if catalog then
-			state.baseIncome = catalog.baseIncome
-			if typeof(state.rarity) ~= "string" or state.rarity == "" then
-				state.rarity = catalog.rarity
+			if state.baseIncome <= 0 then
+				state.baseIncome = catalog.baseIncome
 			end
+			state.rarity = catalog.rarity
 		end
 	end
 	if typeof(state.rarity) == "string" then

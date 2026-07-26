@@ -168,10 +168,8 @@ local MUTATION_NAMES = { "normal", "golden", "diamond", "lava", "galaxy", "rainb
 local function buildAutocompleteCatalog(sender: Player)
 	local players = { "me", "all" }
 	for _, plr in Players:GetPlayers() do
+		-- Suggest usernames only (DisplayName still resolves if typed exactly).
 		table.insert(players, plr.Name)
-		if plr.DisplayName ~= plr.Name then
-			table.insert(players, plr.DisplayName)
-		end
 	end
 
 	local brainrots: { string } = {}

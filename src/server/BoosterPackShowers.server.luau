@@ -13,6 +13,7 @@ local Workspace = game:GetService("Workspace")
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Brainrots"))
+local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 
 local SHOWERS_FOLDER_NAME = "Booster Pack Showers"
 local TOUCH_COOLDOWN_SEC = 3
@@ -322,6 +323,10 @@ local function wirePackStand(stand: Instance, pack: typeof(StoreConfig.PACKS[1])
 end
 
 local function promptGroupJoin(player: Player)
+	PlayerDataService.waitUntilLoaded(player)
+	if not player.Parent then
+		return
+	end
 	if player:GetAttribute(StoreConfig.ATTR.GROUP_REWARD_CLAIMED) == true then
 		return
 	end
@@ -383,6 +388,10 @@ local function waitUntilInGroup(player: Player, timeoutSec: number): boolean
 end
 
 local function grantGroupReward(player: Player): (boolean, string?)
+	PlayerDataService.waitUntilLoaded(player)
+	if not player.Parent then
+		return false, "left"
+	end
 	if player:GetAttribute(StoreConfig.ATTR.GROUP_REWARD_CLAIMED) == true then
 		return false, "already_claimed"
 	end
@@ -395,6 +404,10 @@ local function grantGroupReward(player: Player): (boolean, string?)
 		if not waitUntilInGroup(player, GROUP_MEMBERSHIP_RETRY_SEC) then
 			error("not_in_group")
 		end
+		-- Re-check after membership wait (data load / parallel claim).
+		if player:GetAttribute(StoreConfig.ATTR.GROUP_REWARD_CLAIMED) == true then
+			error("already_claimed")
+		end
 
 		local pick = pickRandomRareBrainrot()
 		if not pick then
@@ -405,6 +418,9 @@ local function grantGroupReward(player: Player): (boolean, string?)
 		if not grant then
 			error("grant_bindable_missing")
 		end
+
+		-- Lock claim before grant so double-fires can't award twice.
+		player:SetAttribute(StoreConfig.ATTR.GROUP_REWARD_CLAIMED, true)
 
 		local grantedOk, granted = pcall(function()
 			return grant:Invoke(player, {
@@ -417,11 +433,14 @@ local function grantGroupReward(player: Player): (boolean, string?)
 			}, { equip = true })
 		end)
 		if not grantedOk or granted ~= true then
+			player:SetAttribute(StoreConfig.ATTR.GROUP_REWARD_CLAIMED, false)
 			error("grant_failed")
 		end
 
-		player:SetAttribute(StoreConfig.ATTR.GROUP_REWARD_CLAIMED, true)
 		fireConfetti(player)
+		if player:GetAttribute("PlayerDataLoaded") == true then
+			PlayerDataService.savePlayerData(player)
+		end
 	end)
 
 	claimInFlight[player] = nil

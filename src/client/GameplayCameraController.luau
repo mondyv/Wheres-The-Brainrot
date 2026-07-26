@@ -1,10 +1,11 @@
 -- [ACTIVE] GameplayCameraController
 --[[
-	Simple high top-down orbit. Snap follow (no lag lerp). Free RMB look.
-	Swing blends elevation in-place; SwingSystem FX still layer at Camera+1.
+	High top-down orbit camera.
+	- Free RMB orbit (mouse delta applied once per frame)
+	- Locked focus while standing still (no idle jitter)
+	- Soft swing framing blend (stays Scriptable)
 ]]
 
-local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -13,24 +14,25 @@ local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 
 local BIND_NAME = "GameplayCameraUpdate"
-local ROTATE_ACTION = "GameplayCameraRotate"
 
 local DEFAULT_FOV = 60
-local MIN_ZOOM = 9
-local MAX_ZOOM = 28
-local DEFAULT_ZOOM = 17
-local LOOK_HEIGHT = 1.0
-local MOUSE_SENS = 0.007
-local TOUCH_SENS = 0.01
-local ELEV_MIN = math.rad(40)
-local ELEV_MAX = math.rad(70)
-local DEFAULT_ELEV = math.rad(55)
+local MIN_ZOOM = 10
+local MAX_ZOOM = 26
+local DEFAULT_ZOOM = 16.5
+local LOOK_HEIGHT = 1.05
+local MOUSE_SENS = 0.0048
+local TOUCH_SENS = 0.0075
+local ELEV_MIN = math.rad(42)
+local ELEV_MAX = math.rad(68)
+local DEFAULT_ELEV = math.rad(54)
 
-local SWING_ELEV = math.rad(22)
-local SWING_ZOOM = 12
-local SWING_FOV = 72
-local SWING_BLEND_IN = 4
-local SWING_BLEND_OUT = 3
+local SWING_ELEV = math.rad(24)
+local SWING_ZOOM = 12.5
+local SWING_FOV = 70
+local SWING_BLEND_SPEED = 3.2
+
+local MOVE_EPS = 0.35 -- studs/s — below this = standing still
+local OCCLUSION_INTERVAL = 0.2
 
 local GameplayCameraController = {}
 
@@ -42,14 +44,14 @@ local yaw = 0
 local elevation = DEFAULT_ELEV
 local zoom = DEFAULT_ZOOM
 local renderBound = false
-local rotateActionBound = false
 local conns: { RBXScriptConnection } = {}
 local rotating = false
 local touchRotateId: number? = nil
 local lastTouchPos: Vector2? = nil
 local wheelDelta = 0
 local occZoom = DEFAULT_ZOOM
-local occClock = 0
+local occAccum = 0
+local savedMouseBehavior: Enum.MouseBehavior? = nil
 
 local function getRoot(): BasePart?
 	local char = player.Character
@@ -76,12 +78,7 @@ local function sphericalOffset(useYaw: number, useElev: number, useZoom: number)
 end
 
 local function orbitCFrame(focus: Vector3, useYaw: number, useElev: number, useZoom: number): CFrame
-	local camPos = focus + sphericalOffset(useYaw, useElev, useZoom)
-	local hum = getHumanoid()
-	if hum and hum.CameraOffset.Magnitude > 0.001 then
-		camPos += hum.CameraOffset
-	end
-	return CFrame.lookAt(camPos, focus)
+	return CFrame.lookAt(focus + sphericalOffset(useYaw, useElev, useZoom), focus)
 end
 
 local function sampleOcclusion(focus: Vector3, useYaw: number, useElev: number, desired: number): number
@@ -95,14 +92,18 @@ local function sampleOcclusion(focus: Vector3, useYaw: number, useElev: number, 
 	params.IgnoreWater = true
 	local hit = Workspace:Raycast(focus, dir.Unit * desired, params)
 	if hit then
-		return math.max(MIN_ZOOM * 0.55, hit.Distance - 0.55)
+		return math.max(MIN_ZOOM * 0.6, hit.Distance - 0.55)
 	end
 	return desired
 end
 
 local function blended(): (number, number, number)
 	local e = elevation + (SWING_ELEV - elevation) * swingBlend
-	e = if swingBlend > 0.01 then math.clamp(e, math.rad(12), ELEV_MAX) else clampElev(e)
+	if swingBlend > 0.02 then
+		e = math.clamp(e, math.rad(14), ELEV_MAX)
+	else
+		e = clampElev(e)
+	end
 	local z = zoom + (SWING_ZOOM - zoom) * swingBlend
 	local f = DEFAULT_FOV + (SWING_FOV - DEFAULT_FOV) * swingBlend
 	return e, z, f
@@ -134,6 +135,9 @@ function GameplayCameraController.syncFromCFrame(cf: CFrame)
 end
 
 local function applyLook(dx: number, dy: number, sens: number)
+	if dx == 0 and dy == 0 then
+		return
+	end
 	yaw -= dx * sens
 	elevation = clampElev(elevation + dy * sens)
 end
@@ -143,33 +147,23 @@ local function setRotating(on: boolean)
 		return
 	end
 	rotating = on
-	UserInputService.MouseBehavior = if on then Enum.MouseBehavior.LockCenter else Enum.MouseBehavior.Default
+	if on then
+		savedMouseBehavior = UserInputService.MouseBehavior
+		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+	else
+		UserInputService.MouseBehavior = savedMouseBehavior or Enum.MouseBehavior.Default
+		savedMouseBehavior = nil
+	end
 end
 
-local function onRotateAction(_name: string, state: Enum.UserInputState, input: InputObject)
-	if pauseDepth > 0 or not enabled then
-		return Enum.ContextActionResult.Pass
-	end
-	if state == Enum.UserInputState.Begin then
-		setRotating(true)
-		return Enum.ContextActionResult.Sink
-	elseif state == Enum.UserInputState.End or state == Enum.UserInputState.Cancel then
-		setRotating(false)
-		return Enum.ContextActionResult.Sink
-	elseif state == Enum.UserInputState.Change and rotating then
-		if input.UserInputType == Enum.UserInputType.MouseMovement then
-			applyLook(input.Delta.X, input.Delta.Y, MOUSE_SENS)
-			return Enum.ContextActionResult.Sink
-		end
-	end
-	return Enum.ContextActionResult.Pass
-end
-
-local function onInputBegan(input: InputObject, _processed: boolean)
+local function onInputBegan(input: InputObject, processed: boolean)
 	if pauseDepth > 0 or not enabled then
 		return
 	end
-	if input.UserInputType == Enum.UserInputType.Touch then
+	-- Ignore processed for RMB so SideUI doesn't eat orbit.
+	if input.UserInputType == Enum.UserInputType.MouseButton2 then
+		setRotating(true)
+	elseif input.UserInputType == Enum.UserInputType.Touch and not processed then
 		if touchRotateId == nil and not UserInputService:GetFocusedTextBox() then
 			touchRotateId = input.UserInputId
 			lastTouchPos = Vector2.new(input.Position.X, input.Position.Y)
@@ -178,7 +172,9 @@ local function onInputBegan(input: InputObject, _processed: boolean)
 end
 
 local function onInputEnded(input: InputObject, _processed: boolean)
-	if input.UserInputType == Enum.UserInputType.Touch and touchRotateId == input.UserInputId then
+	if input.UserInputType == Enum.UserInputType.MouseButton2 then
+		setRotating(false)
+	elseif input.UserInputType == Enum.UserInputType.Touch and touchRotateId == input.UserInputId then
 		touchRotateId = nil
 		lastTouchPos = nil
 	end
@@ -190,9 +186,6 @@ local function onInputChanged(input: InputObject, _processed: boolean)
 	end
 	if input.UserInputType == Enum.UserInputType.MouseWheel then
 		wheelDelta += input.Position.Z
-	elseif input.UserInputType == Enum.UserInputType.MouseMovement and rotating then
-		-- Backup path if ContextAction doesn't deliver Change.
-		applyLook(input.Delta.X, input.Delta.Y, MOUSE_SENS)
 	elseif input.UserInputType == Enum.UserInputType.Touch and touchRotateId == input.UserInputId then
 		local pos = Vector2.new(input.Position.X, input.Position.Y)
 		if lastTouchPos then
@@ -234,33 +227,33 @@ local function update(dt: number)
 		return
 	end
 
-	cam.CameraType = Enum.CameraType.Scriptable
+	if cam.CameraType ~= Enum.CameraType.Scriptable then
+		cam.CameraType = Enum.CameraType.Scriptable
+	end
 	local hum = getHumanoid()
-	if hum then
+	if hum and cam.CameraSubject ~= hum then
 		cam.CameraSubject = hum
 	end
 
-	-- Poll RMB in case action binding missed end/begin.
 	local rmb = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
 	if rmb ~= rotating then
 		setRotating(rmb)
 	end
+
+	-- Single orbit path: GetMouseDelta only while RMB held (no double-apply from InputChanged).
 	if rotating then
 		local d = UserInputService:GetMouseDelta()
-		if d.X ~= 0 or d.Y ~= 0 then
-			applyLook(d.X, d.Y, MOUSE_SENS)
-		end
+		applyLook(d.X, d.Y, MOUSE_SENS)
 	end
 
 	if wheelDelta ~= 0 then
-		zoom = math.clamp(zoom - wheelDelta * 1.4, MIN_ZOOM, MAX_ZOOM)
+		zoom = math.clamp(zoom - wheelDelta * 1.35, MIN_ZOOM, MAX_ZOOM)
 		wheelDelta = 0
 	end
 
 	dt = math.clamp(dt, 0, 0.05)
 	local blendTarget = if swingOverride then 1 else 0
-	local blendSpeed = if blendTarget > swingBlend then SWING_BLEND_IN else SWING_BLEND_OUT
-	swingBlend += (blendTarget - swingBlend) * math.min(1, dt * blendSpeed)
+	swingBlend += (blendTarget - swingBlend) * math.min(1, dt * SWING_BLEND_SPEED)
 	if math.abs(swingBlend - blendTarget) < 0.002 then
 		swingBlend = blendTarget
 	end
@@ -268,49 +261,34 @@ local function update(dt: number)
 	local focus = root.Position + Vector3.new(0, LOOK_HEIGHT, 0)
 	local useElev, useZoom, useFov = blended()
 
-	occClock += dt
-	if occClock >= 0.08 then
-		occClock = 0
-		occZoom = sampleOcclusion(focus, yaw, useElev, useZoom)
+	local speed = Vector3.new(root.AssemblyLinearVelocity.X, 0, root.AssemblyLinearVelocity.Z).Magnitude
+	local standingStill = speed < MOVE_EPS and not rotating and swingBlend < 0.05
+
+	if standingStill then
+		-- Freeze occlusion while idle — prevents shimmer/shake when not moving.
+		occZoom = useZoom
+		occAccum = 0
 	else
-		-- Ease toward last occlusion sample without raycasting every frame.
-		occZoom += (math.min(occZoom, useZoom) - occZoom) * math.min(1, dt * 12)
-		if occZoom > useZoom then
-			occZoom = useZoom
-		elseif occZoom < useZoom * 0.98 then
-			occZoom += (useZoom - occZoom) * math.min(1, dt * 6)
+		occAccum += dt
+		if occAccum >= OCCLUSION_INTERVAL or rotating then
+			occAccum = 0
+			local desired = sampleOcclusion(focus, yaw, useElev, useZoom)
+			occZoom += (desired - occZoom) * 0.45
+		else
+			occZoom += (useZoom - occZoom) * math.min(1, dt * 5)
 		end
 	end
 
 	cam.CFrame = orbitCFrame(focus, yaw, useElev, occZoom)
-	if math.abs(cam.FieldOfView - useFov) < 20 then
-		cam.FieldOfView += (useFov - cam.FieldOfView) * math.min(1, dt * 8)
-	end
-end
 
-local function bindRotateAction()
-	if rotateActionBound then
-		return
+	-- Only ease FOV when it meaningfully differs; avoid fighting SwingSystem idle FOV.
+	if swingBlend > 0.02 or math.abs(cam.FieldOfView - useFov) > 0.15 then
+		if math.abs(cam.FieldOfView - useFov) < 18 then
+			cam.FieldOfView += (useFov - cam.FieldOfView) * math.min(1, dt * 6)
+		end
+	elseif math.abs(cam.FieldOfView - DEFAULT_FOV) > 0.05 and math.abs(cam.FieldOfView - DEFAULT_FOV) < 12 then
+		cam.FieldOfView = DEFAULT_FOV
 	end
-	rotateActionBound = true
-	ContextActionService:BindActionAtPriority(
-		ROTATE_ACTION,
-		onRotateAction,
-		false,
-		Enum.ContextActionPriority.High.Value,
-		Enum.UserInputType.MouseButton2,
-		Enum.UserInputType.MouseMovement
-	)
-end
-
-local function unbindRotateAction()
-	if not rotateActionBound then
-		return
-	end
-	rotateActionBound = false
-	pcall(function()
-		ContextActionService:UnbindAction(ROTATE_ACTION)
-	end)
 end
 
 local function bindRender()
@@ -407,8 +385,11 @@ function GameplayCameraController.enable()
 		if hum then
 			cam.CameraSubject = hum
 		end
+		local root = getRoot()
+		if root then
+			cam.CFrame = orbitCFrame(root.Position + Vector3.new(0, LOOK_HEIGHT, 0), yaw, elevation, zoom)
+		end
 	end
-	bindRotateAction()
 	bindRender()
 end
 
@@ -418,7 +399,6 @@ function GameplayCameraController.disable()
 	swingOverride = false
 	swingBlend = 0
 	setRotating(false)
-	unbindRotateAction()
 	unbindRender()
 	local cam = Workspace.CurrentCamera
 	if cam then

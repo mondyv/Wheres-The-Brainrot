@@ -4921,16 +4921,17 @@ local function boot(character)
 			or launchShakeActive
 			or landingShakeActive
 			or attachShakeActive
-			or st.swingCamLag.Magnitude > 0.001
-			or math.abs(st.swingCamRoll) > 0.0001
-			or (st.windShakeIntensity or 0) > 0.01
 
-		-- Soft-blend gameplay cam into swing framing (stays Scriptable; FX still layer here).
+		-- Only take framing while actually swinging/launched/shaking.
+		-- Residual lag/roll/wind must NOT keep override stuck (causes idle fight/jitter).
 		setSwingCameraOverride(swingCamBusy)
 
 		if
 			not C.ENABLE_GROUNDED_CAMERA_ASSIST
 			and not swingCamBusy
+			and st.swingCamLag.Magnitude <= 0.001
+			and math.abs(st.swingCamRoll) <= 0.0001
+			and (st.windShakeIntensity or 0) <= 0.01
 		then
 			return
 		end
@@ -5550,31 +5551,49 @@ local function boot(character)
 		st.setTrailsEnabled(trailOn)
 
 		if camera then
-			local targetFov = st.originalFov
-			if st.isSwinging or st.isLaunched then
-				local t = math.clamp(speed / math.max(getMaxSwingSpeed(), 1), 0, 1)
-				targetFov = st.originalFov + (C.FOV_MAX - st.originalFov) * t
+			-- Idle FOV lerp fights GameplayCameraController — skip unless swinging/airborne FX.
+			local gameplayCamOwnsFov = false
+			if not st.isSwinging and not st.isLaunched then
+				if gameplayCameraMod == nil then
+					gameplayCameraMod = getClientModule("GameplayCameraController") or false
+				end
+				if
+					gameplayCameraMod
+					and typeof(gameplayCameraMod.isEnabled) == "function"
+					and gameplayCameraMod.isEnabled()
+					and (typeof(gameplayCameraMod.isSwingOverride) ~= "function" or not gameplayCameraMod.isSwingOverride())
+				then
+					gameplayCamOwnsFov = true
+				end
 			end
 
-			local attachAge = os.clock() - st.lastAttachClock
-			if st.isSwinging and attachAge >= 0 and attachAge < C.ATTACH_FOV_TIME then
-				local u = attachAge / C.ATTACH_FOV_TIME
-				targetFov -= C.ATTACH_FOV_PUNCH * math.sin(u * math.pi)
-			end
+			if not gameplayCamOwnsFov then
+				local targetFov = st.originalFov
+				if st.isSwinging or st.isLaunched then
+					local t = math.clamp(speed / math.max(getMaxSwingSpeed(), 1), 0, 1)
+					targetFov = st.originalFov + (C.FOV_MAX - st.originalFov) * t
+				end
 
-			local launchAge = os.clock() - st.lastLaunchClock
-			if launchAge >= 0 and launchAge < C.LAUNCH_FOV_TIME then
-				local u = 1 - launchAge / C.LAUNCH_FOV_TIME
-				targetFov += C.LAUNCH_FOV_BOOST * u * u
-			end
+				local attachAge = os.clock() - st.lastAttachClock
+				if st.isSwinging and attachAge >= 0 and attachAge < C.ATTACH_FOV_TIME then
+					local u = attachAge / C.ATTACH_FOV_TIME
+					targetFov -= C.ATTACH_FOV_PUNCH * math.sin(u * math.pi)
+				end
 
-			local landingAge = os.clock() - st.lastLandingClock
-			if landingAge >= 0 and landingAge < C.LANDING_FOV_TIME then
-				local u = 1 - landingAge / C.LANDING_FOV_TIME
-				targetFov -= C.LANDING_FOV_KICK * u * u * st.landingShakeStrength
-			end
+				local launchAge = os.clock() - st.lastLaunchClock
+				if launchAge >= 0 and launchAge < C.LAUNCH_FOV_TIME then
+					local u = 1 - launchAge / C.LAUNCH_FOV_TIME
+					targetFov += C.LAUNCH_FOV_BOOST * u * u
+				end
 
-			camera.FieldOfView += (targetFov - camera.FieldOfView) * math.min(dt * C.FOV_SPEED, 1)
+				local landingAge = os.clock() - st.lastLandingClock
+				if landingAge >= 0 and landingAge < C.LANDING_FOV_TIME then
+					local u = 1 - landingAge / C.LANDING_FOV_TIME
+					targetFov -= C.LANDING_FOV_KICK * u * u * st.landingShakeStrength
+				end
+
+				camera.FieldOfView += (targetFov - camera.FieldOfView) * math.min(dt * C.FOV_SPEED, 1)
+			end
 		end
 	end))
 

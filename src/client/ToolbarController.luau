@@ -12,7 +12,7 @@
 	      ├── ToggleBackpackImage  (icon toggle; lives in Hotbar row after visible slots)
 	  └── Backpack  (optional expanded view)
 
-	Studio layout: pin Toolbar near the bottom; center Hotbar + Backpack. ToggleBackpackImage lives in the Hotbar UIListLayout (right of slots) so the whole row centers as one group.
+	Studio layout: anchor Hotbar + Backpack at X=0.5 under Toolbar once at init. ToggleBackpackImage hides while the inventory panel is open (close via X).
 	Hotbar slots may use nested `Button` (e.g. Hotbar["1"].Button.Icon).
 	Brainrot pickups: tuck/untuck via drag; ghost drag; search; backpack frame outline + open/close tweens.
 	Backpack UI reuses Backpack.Container and fills visible stashed brainrots from the top-left. Empty rows stay visible.
@@ -108,11 +108,10 @@ local HIGHLIGHT_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDi
 local EQUIP_POP_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local BACKPACK_OPEN_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local BACKPACK_CLOSE_TWEEN = TweenInfo.new(0.26, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
-local TOGGLE_ICON_SLIDE_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
 local MOBILE_DRAG_HOLD_SEC = 0.2 -- long-press before mobile inventory drag starts (keeps tap-to-select)
 local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 28
-local TOGGLE_BACKPACK_ICON_SIZE_SCALE = 0.62
+local TOGGLE_BACKPACK_ICON_SIZE_SCALE = 0.68
 
 -- ── Key → slot index map ──────────────────────────────────────────────────────
 
@@ -240,20 +239,9 @@ local backpackPanelScaleTween: Tween? = nil
 local backpackPanelFadeTween: Tween? = nil
 local backpackContainerScaleTween: Tween? = nil
 local backpackFadeRoot: CanvasGroup? = nil
-local toggleIconSlideTween: Tween? = nil
 local tweenEmptyHotbarSlotsOut: () -> ()
 local resetEmptyHotbarSlotScales: () -> ()
 local cancelEmptyHotbarCloseTweens: () -> ()
-local animateToggleIconReturn: (Vector2?, Vector2?) -> ()
-local emptySlotFadeSaved: {
-	[GuiObject]: {
-		bg: number,
-		images: { [GuiObject]: number },
-		texts: { [TextLabel]: number },
-		strokes: { [UIStroke]: number },
-	},
-} =
-	{}
 
 -- While dragging over the hotbar, only the slot under the cursor scales.
 -- `hotbarDragZoneActive` keeps drop hit-pad expansion without resizing every cell.
@@ -1173,9 +1161,7 @@ local ToolbarController = {}
 	end
 
 	local function ensureBackpackChromeVisible(frame: GuiObject)
-		if not frame:IsA("CanvasGroup") then
-			frame.ClipsDescendants = false
-		end
+		frame.ClipsDescendants = false
 		detachBackpackChromeFromFadeRoot(frame)
 		for _, name in BACKPACK_CHROME_NAMES do
 			local ch = frame:FindFirstChild(name) or findBackpackChild(frame, name)
@@ -1493,88 +1479,47 @@ local ToolbarController = {}
 			backpackContainerScaleTween = nil
 		end
 		cancelEmptyHotbarCloseTweens()
-		if toggleIconSlideTween then
-			toggleIconSlideTween:Cancel()
-			toggleIconSlideTween = nil
-		end
 	end
 
 	local emptyHotbarCloseTweens: { Tween } = {}
-	local emptySlotFadeDriver: NumberValue? = nil
-	local emptySlotFadeConn: RBXScriptConnection? = nil
 
 	cancelEmptyHotbarCloseTweens = function()
 		for _, tw in emptyHotbarCloseTweens do
 			tw:Cancel()
 		end
 		table.clear(emptyHotbarCloseTweens)
-		if emptySlotFadeConn then
-			emptySlotFadeConn:Disconnect()
-			emptySlotFadeConn = nil
-		end
-		if emptySlotFadeDriver then
-			emptySlotFadeDriver:Destroy()
-			emptySlotFadeDriver = nil
-		end
 	end
 
-	-- Promote Backpack Frame → CanvasGroup once so GroupTransparency fades real content
-	-- without reparenting chrome into a nested wrapper (that broke scrolling before).
-	local function ensureBackpackIsCanvasGroup(frame: GuiObject): CanvasGroup
-		if frame:IsA("CanvasGroup") then
-			return frame
-		end
-		local parent = frame.Parent
-		if not parent then
-			local cg = Instance.new("CanvasGroup")
-			cg.Name = frame.Name
-			return cg
-		end
-		local cg = Instance.new("CanvasGroup")
-		cg.Name = frame.Name
-		cg.Size = frame.Size
-		cg.Position = frame.Position
-		cg.AnchorPoint = frame.AnchorPoint
-		cg.BackgroundColor3 = frame.BackgroundColor3
-		cg.BackgroundTransparency = frame.BackgroundTransparency
-		cg.BorderSizePixel = frame.BorderSizePixel
-		cg.ZIndex = frame.ZIndex
-		cg.LayoutOrder = frame.LayoutOrder
-		cg.Visible = frame.Visible
-		-- CanvasGroup always clips; never assign ClipsDescendants (Studio warns).
-		cg.GroupTransparency = 0
-		for key, val in frame:GetAttributes() do
-			cg:SetAttribute(key, val)
-		end
-		for _, ch in frame:GetChildren() do
-			ch.Parent = cg
-		end
-		cg.Parent = parent
-		frame:Destroy()
-		if backpackFrameRef == frame then
-			backpackFrameRef = cg
-		end
-		if backpackGuiFrame == frame then
-			backpackGuiFrame = cg
-		end
-		return cg
-	end
+	-- resetEmptyHotbarSlotScales / tweenEmptyHotbarSlotsOut assigned after hotbarSlotIsOccupied
 
 	local function ensureBackpackFadeRoot(frame: GuiObject): CanvasGroup
-		-- Fade root IS the backpack panel (CanvasGroup). Keep chrome as direct children.
-		detachBackpackChromeFromFadeRoot(frame)
+		if backpackFadeRoot and backpackFadeRoot.Parent == frame then
+			return backpackFadeRoot
+		end
+
 		local existing = frame:FindFirstChild("_BackpackFadeRoot")
-		if existing then
+		if existing and existing:IsA("CanvasGroup") then
+			-- Do NOT keep real Backpack content inside this wrapper. Older patches moved
+			-- Container into here, which broke your UI hierarchy. Put everything back.
 			for _, ch in existing:GetChildren() do
 				ch.Parent = frame
 			end
-			existing:Destroy()
+			backpackFadeRoot = existing
+			return existing
 		end
-		backpackFadeRoot = ensureBackpackIsCanvasGroup(frame)
-		if backpackFrameRef ~= backpackFadeRoot then
-			backpackFrameRef = backpackFadeRoot
-		end
-		return backpackFadeRoot
+
+		local cg = Instance.new("CanvasGroup")
+		cg.Name = "_BackpackFadeRoot"
+		cg.Size = UDim2.fromScale(1, 1)
+		cg.BackgroundTransparency = 1
+		cg.BorderSizePixel = 0
+		cg.GroupTransparency = 0
+		cg.Visible = false
+		cg.Parent = frame
+
+		-- Important: this must stay EMPTY. Never parent Container/Scrolling/slots into it.
+		backpackFadeRoot = cg
+		return cg
 	end
 
 	local function resolveBackpackHeaderLabel(backpackFrame: Instance): Instance?
@@ -1635,19 +1580,18 @@ local ToolbarController = {}
 		cancelBackpackPanelTweens()
 		local sc = getOrAddUIScale(f :: Instance)
 		local fadeRoot = ensureBackpackFadeRoot(f)
-		f = backpackFrameRef :: GuiObject
 		if open then
 			f.Visible = true
 			ensureBackpackChromeVisible(f)
 			scrollBackpackToTop(f)
 			fadeRoot.GroupTransparency = 0
 			sc.Scale = 0.94
-			backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_OPEN_TWEEN, { Scale = 1 })
+			local backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_OPEN_TWEEN, { Scale = 1 })
 			backpackPanelScaleTween:Play()
 			if backpackContainer and backpackContainer:IsA("GuiObject") then
 				local csc = getOrAddUIScale(backpackContainer :: Instance)
 				csc.Scale = 0.96
-				backpackContainerScaleTween = TweenService:Create(
+				local backpackContainerScaleTween = TweenService:Create(
 					csc,
 					TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
 					{ Scale = 1 }
@@ -1663,29 +1607,21 @@ local ToolbarController = {}
 			end
 			refreshBrainrotBackpackUI()
 		else
-			-- Keep empty hotbar cells visible; fade them + panel together (no per-slot shrink).
+			-- Keep empty hotbar cells visible and scale them out with the panel close.
 			updateHotbarSlotVisibility()
 			tweenEmptyHotbarSlotsOut()
-			backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.96 })
-			backpackPanelFadeTween =
+			local backpackPanelScaleTween = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.9 })
+			local backpackPanelFadeTween =
 				TweenService:Create(fadeRoot, BACKPACK_CLOSE_TWEEN, { GroupTransparency = 1 })
 			backpackPanelScaleTween:Play()
 			backpackPanelFadeTween:Play()
 			if backpackContainer and backpackContainer:IsA("GuiObject") then
 				local csc = getOrAddUIScale(backpackContainer :: Instance)
-				backpackContainerScaleTween = TweenService:Create(csc, BACKPACK_CLOSE_TWEEN, { Scale = 0.98 })
+				local backpackContainerScaleTween = TweenService:Create(csc, BACKPACK_CLOSE_TWEEN, { Scale = 0.94 })
 				backpackContainerScaleTween:Play()
 			end
-			local fadeTw = backpackPanelFadeTween
-			fadeTw.Completed:Once(function(state)
+			backpackPanelFadeTween.Completed:Once(function(state)
 				if state == Enum.PlaybackState.Completed and not isBackpackPanelOpen then
-					local iconFromAbs: Vector2? = nil
-					local iconFromSize: Vector2? = nil
-					if toggleBackpackIconRef then
-						local ic = toggleBackpackIconRef :: GuiObject
-						iconFromAbs = ic.AbsolutePosition
-						iconFromSize = ic.AbsoluteSize
-					end
 					isBackpackPanelClosing = false
 					resetEmptyHotbarSlotScales()
 					f.Visible = false
@@ -1698,7 +1634,6 @@ local ToolbarController = {}
 					for i = 1, #slots do
 						refreshSlotVisual(i)
 					end
-					animateToggleIconReturn(iconFromAbs, iconFromSize)
 				end
 				if backpackPanelFadeTween and state == Enum.PlaybackState.Completed then
 					backpackPanelFadeTween = nil
@@ -1715,7 +1650,7 @@ local ToolbarController = {}
 			return
 		end
 		if toolbarShown then
-			if toggleBackpackIconRef then
+			if toggleBackpackIconRef and not isBackpackPanelOpen then
 				refreshToggleBackpackIconLayout()
 			end
 			return
@@ -2172,125 +2107,26 @@ local ToolbarController = {}
 			local slot = slots[i]
 			if slot and not hotbarSlotIsOccupied(i) then
 				getOrAddUIScale(hotbarSlotScaleHost(slot)).Scale = hotbarSlotRestScale(i)
-				-- Restore any fade-driven transparencies
-				local saved = emptySlotFadeSaved[slot]
-				if saved then
-					slot.BackgroundTransparency = saved.bg
-					for img, t in saved.images do
-						if img.Parent and (img:IsA("ImageLabel") or img:IsA("ImageButton")) then
-							(img :: ImageLabel).ImageTransparency = t
-						end
-					end
-					for txt, t in saved.texts do
-						if txt.Parent then
-							txt.TextTransparency = t
-						end
-					end
-					for stroke, t in saved.strokes do
-						if stroke.Parent then
-							stroke.Transparency = t
-						end
-					end
-					emptySlotFadeSaved[slot] = nil
-				end
-			end
-		end
-		table.clear(emptySlotFadeSaved)
-	end
-
-	local function captureEmptySlotFade(slot: GuiObject)
-		if emptySlotFadeSaved[slot] then
-			return
-		end
-		local images: { [GuiObject]: number } = {}
-		local texts: { [TextLabel]: number } = {}
-		local strokes: { [UIStroke]: number } = {}
-		for _, d in slot:GetDescendants() do
-			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
-				images[d] = (d :: ImageLabel).ImageTransparency
-			elseif d:IsA("TextLabel") then
-				texts[d] = d.TextTransparency
-			elseif d:IsA("UIStroke") then
-				strokes[d] = d.Transparency
-			end
-		end
-		if slot:IsA("ImageLabel") or slot:IsA("ImageButton") then
-			images[slot] = (slot :: ImageLabel).ImageTransparency
-		end
-		emptySlotFadeSaved[slot] = {
-			bg = slot.BackgroundTransparency,
-			images = images,
-			texts = texts,
-			strokes = strokes,
-		}
-	end
-
-	local function applyEmptySlotFadeAlpha(slot: GuiObject, alpha: number)
-		local saved = emptySlotFadeSaved[slot]
-		if not saved then
-			return
-		end
-		slot.BackgroundTransparency = saved.bg + (1 - saved.bg) * alpha
-		for img, base in saved.images do
-			if img.Parent and (img:IsA("ImageLabel") or img:IsA("ImageButton")) then
-				(img :: ImageLabel).ImageTransparency = base + (1 - base) * alpha
-			end
-		end
-		for txt, base in saved.texts do
-			if txt.Parent then
-				txt.TextTransparency = base + (1 - base) * alpha
-			end
-		end
-		for stroke, base in saved.strokes do
-			if stroke.Parent then
-				stroke.Transparency = base + (1 - base) * alpha
 			end
 		end
 	end
 
 	tweenEmptyHotbarSlotsOut = function()
 		cancelEmptyHotbarCloseTweens()
-		local targets: { GuiObject } = {}
 		for i = 1, #slots do
 			local slot = slots[i]
 			if slot and slot.Visible and not hotbarSlotIsOccupied(i) then
-				getOrAddUIScale(hotbarSlotScaleHost(slot)).Scale = hotbarSlotRestScale(i)
-				captureEmptySlotFade(slot)
-				table.insert(targets, slot)
-				applyEmptySlotFadeAlpha(slot, 0)
+				local sc = getOrAddUIScale(hotbarSlotScaleHost(slot))
+				sc.Scale = hotbarSlotRestScale(i)
+				local tw = TweenService:Create(sc, BACKPACK_CLOSE_TWEEN, { Scale = 0.2 })
+				table.insert(emptyHotbarCloseTweens, tw)
+				tw:Play()
 			end
 		end
-		if #targets == 0 then
-			return
-		end
-		local driver = Instance.new("NumberValue")
-		driver.Name = "_EmptySlotFadeDriver"
-		driver.Value = 0
-		driver.Parent = hotbar
-		emptySlotFadeDriver = driver
-		emptySlotFadeConn = driver:GetPropertyChangedSignal("Value"):Connect(function()
-			local a = driver.Value
-			for _, slot in targets do
-				applyEmptySlotFadeAlpha(slot, a)
-			end
-		end)
-		local tw = TweenService:Create(driver, BACKPACK_CLOSE_TWEEN, { Value = 1 })
-		table.insert(emptyHotbarCloseTweens, tw)
-		tw:Play()
-	end
-
-	animateToggleIconReturn = function(_fromAbs: Vector2?, _fromSize: Vector2?)
-		if toggleIconSlideTween then
-			toggleIconSlideTween:Cancel()
-			toggleIconSlideTween = nil
-		end
-		task.defer(refreshToggleBackpackIconLayout)
 	end
 
 	local hotbarListLayout: UIListLayout? = nil
 	local toolbarHorizontalCenterApplied = false
-	local TOGGLE_ICON_GAP_PX = 10
-	local toolbarBottomPinned = false
 
 	local function centerToolbarChildHorizontally(gui: GuiObject)
 		local pos = gui.Position
@@ -2299,28 +2135,11 @@ local ToolbarController = {}
 		gui.Position = UDim2.new(0.5, 0, pos.Y.Scale, pos.Y.Offset)
 	end
 
-	local function pinToolbarNearBottomOnce()
-		if toolbarBottomPinned then
-			return
-		end
-		toolbarBottomPinned = true
-		if not toolbar:IsA("GuiObject") then
-			return
-		end
-		local t = toolbar :: GuiObject
-		local ap = t.AnchorPoint
-		local pos = t.Position
-		-- Sit closer to the bottom edge while keeping authored X.
-		t.AnchorPoint = Vector2.new(ap.X, 1)
-		t.Position = UDim2.new(pos.X.Scale, pos.X.Offset, 1, -14)
-	end
-
 	local function applyToolbarHorizontalCenterOnce()
 		if toolbarHorizontalCenterApplied then
 			return
 		end
 		toolbarHorizontalCenterApplied = true
-		pinToolbarNearBottomOnce()
 		if hotbar:IsA("GuiObject") then
 			centerToolbarChildHorizontally(hotbar :: GuiObject)
 		end
@@ -2341,7 +2160,6 @@ local ToolbarController = {}
 		layout.FillDirection = Enum.FillDirection.Horizontal
 		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 		layout.VerticalAlignment = Enum.VerticalAlignment.Center
-		layout.Padding = UDim.new(0, TOGGLE_ICON_GAP_PX)
 		hotbarListLayout = layout
 		return layout
 	end
@@ -2365,18 +2183,7 @@ local ToolbarController = {}
 		local w = slotTemplate.X.Offset
 		local h = slotTemplate.Y.Offset
 		if w < 8 or h < 8 then
-			-- Prefer absolute slot size when Studio uses scale sizing.
-			local slot = slots[1]
-			if slot and slot:IsA("GuiObject") then
-				local abs = (slot :: GuiObject).AbsoluteSize
-				if abs.X >= 8 and abs.Y >= 8 then
-					w, h = abs.X, abs.Y
-				else
-					return UDim2.fromOffset(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, TOGGLE_BACKPACK_ICON_MIN_ABS_PX)
-				end
-			else
-				return UDim2.fromOffset(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, TOGGLE_BACKPACK_ICON_MIN_ABS_PX)
-			end
+			return slotTemplate
 		end
 		return UDim2.fromOffset(
 			math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(w * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5)),
@@ -2384,10 +2191,11 @@ local ToolbarController = {}
 		)
 	end
 
-	local function ensureToggleBackpackIconSizeConstraint(icon: GuiObject, targetW: number, targetH: number)
-		local aspect = icon:FindFirstChild("ToggleIconAspect")
-		if aspect then
-			aspect:Destroy()
+	local function ensureToggleBackpackIconSizeConstraint(icon: GuiObject)
+		local minW = icon:GetAttribute("_MinW")
+		local minH = icon:GetAttribute("_MinH")
+		if typeof(minW) ~= "number" or typeof(minH) ~= "number" then
+			return
 		end
 		local constraint = icon:FindFirstChild("ToggleIconSizeConstraint")
 		if not constraint or not constraint:IsA("UISizeConstraint") then
@@ -2396,87 +2204,122 @@ local ToolbarController = {}
 			constraint.Parent = icon
 		end
 		local sizeLock = constraint :: UISizeConstraint
-		local w = math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(targetW + 0.5))
-		local h = math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(targetH + 0.5))
-		sizeLock.MinSize = Vector2.new(w, h)
-		sizeLock.MaxSize = Vector2.new(w, h)
+		sizeLock.MinSize = Vector2.new(minW, minH)
+
+		local slot = slots[1]
+		if slot and slot:IsA("GuiObject") then
+			local slotAbs = (slot :: GuiObject).AbsoluteSize
+			if slotAbs.X > 0 and slotAbs.Y > 0 then
+				local aspect = icon:FindFirstChild("ToggleIconAspect")
+				if not aspect or not aspect:IsA("UIAspectRatioConstraint") then
+					aspect = Instance.new("UIAspectRatioConstraint")
+					aspect.Name = "ToggleIconAspect"
+					aspect.Parent = icon
+				end
+				local aspectLock = aspect :: UIAspectRatioConstraint
+				aspectLock.AspectRatio = slotAbs.X / slotAbs.Y
+				aspectLock.AspectType = Enum.AspectType.ScaleWithParentSize
+			end
+		end
 	end
 
 	local function wireToggleBackpackIconResizeSync()
-		if toolbar:GetAttribute("_ToggleIconResizeWired") == true then
+		if hotbar:GetAttribute("_ToggleIconResizeWired") == true then
 			return
 		end
-		toolbar:SetAttribute("_ToggleIconResizeWired", true)
-		-- Viewport only — never AbsoluteSize/Position (those feedback into layout writes).
-		local function deferRefresh()
+		hotbar:SetAttribute("_ToggleIconResizeWired", true)
+		hotbar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 			task.defer(refreshToggleBackpackIconLayout)
-		end
+		end)
 		local camera = workspace.CurrentCamera
 		if camera then
-			camera:GetPropertyChangedSignal("ViewportSize"):Connect(deferRefresh)
+			camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+				task.defer(refreshToggleBackpackIconLayout)
+			end)
 		end
 		workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
 			local cam = workspace.CurrentCamera
 			if cam then
-				cam:GetPropertyChangedSignal("ViewportSize"):Connect(deferRefresh)
+				cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+					task.defer(refreshToggleBackpackIconLayout)
+				end)
 			end
 		end)
 	end
 
-	local toggleIconLayoutBusy = false
+	local function captureToggleIconPixelSize(icon: GuiObject): (number?, number?)
+		local pinnedW = icon:GetAttribute("_PinnedW")
+		local pinnedH = icon:GetAttribute("_PinnedH")
+		if typeof(pinnedW) == "number" and typeof(pinnedH) == "number" then
+			return pinnedW, pinnedH
+		end
+		local sz = icon.Size
+		if sz.X.Offset >= 8 and sz.Y.Offset >= 8 then
+			return sz.X.Offset, sz.Y.Offset
+		end
+		local abs = icon.AbsoluteSize
+		if abs.X >= 8 and abs.Y >= 8 then
+			return abs.X, abs.Y
+		end
+		for i = 1, HOTBAR_INVENTORY_SLOTS do
+			local slot = slots[i]
+			if slot and slot:IsA("GuiObject") then
+				local rs = (slot :: GuiObject).Size
+				if rs.X.Offset >= 8 and rs.Y.Offset >= 8 then
+					return rs.X.Offset, rs.Y.Offset
+				end
+				local rabs = (slot :: GuiObject).AbsoluteSize
+				if rabs.X >= 8 and rabs.Y >= 8 then
+					return rabs.X, rabs.Y
+				end
+			end
+		end
+		return nil, nil
+	end
 
 	refreshToggleBackpackIconLayout = function()
-		if toggleIconLayoutBusy or not toggleBackpackIconRef then
+		if not toggleBackpackIconRef then
 			return
 		end
 		local icon = toggleBackpackIconRef :: GuiObject
-		if not canUseToolbar or not toolbarShown then
+		if isBackpackPanelOpen then
 			icon.Visible = false
 			return
 		end
 
-		toggleIconLayoutBusy = true
-		local ok, err = pcall(function()
-			pinToolbarNearBottomOnce()
-			local layout = ensureHotbarListLayout()
-			layout.Padding = UDim.new(0, TOGGLE_ICON_GAP_PX)
-			layout.FillDirection = Enum.FillDirection.Horizontal
-			layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-			layout.VerticalAlignment = Enum.VerticalAlignment.Center
+		local layout = ensureHotbarListLayout()
+		local HOTBAR_SLOT_PADDING_PX = 10
+		hotbarListLayout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
+		layout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
+		layout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
+		layout.FillDirection = Enum.FillDirection.Horizontal
+		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		layout.VerticalAlignment = Enum.VerticalAlignment.Center
 
-			local iconW = TOGGLE_BACKPACK_ICON_MIN_ABS_PX
-			local iconH = TOGGLE_BACKPACK_ICON_MIN_ABS_PX
-			local slot = slots[1]
-			if slot and slot:IsA("GuiObject") then
-				local abs = (slot :: GuiObject).AbsoluteSize
-				if abs.X >= 8 and abs.Y >= 8 then
-					iconW = math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(abs.X * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5))
-					iconH = math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(abs.Y * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5))
-				else
-					local sz = (slot :: GuiObject).Size
-					if sz.X.Offset >= 8 and sz.Y.Offset >= 8 then
-						iconW = math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(sz.X.Offset * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5))
-						iconH = math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(sz.Y.Offset * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5))
-					end
-				end
-			end
-
-			-- Stay inside Hotbar list so the whole row (slots + icon) centers as one group.
-			-- Fixed offset size only — no ScaleWithParentSize.
-			if icon.Parent ~= hotbar then
-				icon.Parent = hotbar
-			end
-			icon.LayoutOrder = 100
-			icon.AnchorPoint = Vector2.new(0, 0)
-			icon.Size = UDim2.fromOffset(iconW, iconH)
-			icon.AutomaticSize = Enum.AutomaticSize.None
-			icon.Visible = true
-			ensureToggleBackpackIconSizeConstraint(icon, iconW, iconH)
-		end)
-		toggleIconLayoutBusy = false
-		if not ok then
-			warn("[ToolbarController] refreshToggleBackpackIconLayout error:", err)
+		local w, h = captureToggleIconPixelSize(icon)
+		local slotTemplate = getHotbarSlotSizeTemplate()
+		local iconSize: UDim2
+		if slotTemplate then
+			iconSize = scaledToggleIconSizeFromTemplate(slotTemplate)
+		elseif w and h then
+			iconSize = UDim2.fromOffset(
+				math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(w * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5)),
+				math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(h * TOGGLE_BACKPACK_ICON_SIZE_SCALE + 0.5))
+			)
+		else
+			iconSize = UDim2.fromOffset(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, TOGGLE_BACKPACK_ICON_MIN_ABS_PX)
 		end
+		icon.Size = iconSize
+
+		icon.AnchorPoint = Vector2.new(0, 0)
+		if icon.Parent ~= hotbar then
+			icon.Parent = hotbar
+		end
+		icon.LayoutOrder = 100
+		icon.Visible = true
+
+		pinToggleIconMinAbsoluteSize(icon, iconSize.X.Offset, iconSize.Y.Offset)
+		ensureToggleBackpackIconSizeConstraint(icon)
 	end
 
 	updateHotbarSlotVisibility = function()
@@ -2489,8 +2332,11 @@ local ToolbarController = {}
 				break
 			end
 		end
+		-- Empty hotbar cells while backpack is open or still closing (avoids snap-hide mid-tween).
 		local showEmptyDropTargets = isBackpackPanelOpen or isBackpackPanelClosing
 		local showHotbarSlots = anyOccupied or showEmptyDropTargets
+		-- Keep the Hotbar frame visible whenever the toolbar is up so ToggleBackpackImage
+		-- (a child of Hotbar) still shows when every slot is empty.
 		if hotbar:IsA("GuiObject") then
 			(hotbar :: GuiObject).Visible = toolbarActive
 		end
@@ -2502,8 +2348,9 @@ local ToolbarController = {}
 		end
 		if toggleBackpackIconRef then
 			local icon = toggleBackpackIconRef :: GuiObject
-			icon.Visible = toolbarActive
-			if icon.Visible and not toggleIconSlideTween then
+			-- Keep backpack toggle hidden until close tween finishes so it doesn't pop in over empty slots.
+			icon.Visible = toolbarActive and not isBackpackPanelOpen and not isBackpackPanelClosing
+			if icon.Visible then
 				task.defer(refreshToggleBackpackIconLayout)
 			end
 		end
@@ -3193,25 +3040,15 @@ local ToolbarController = {}
 		end
 		local otherButtons = backpackFrame:FindFirstChild("OtherButtons")
 			or findBackpackChild(backpackFrame, "OtherButtons")
-		local equipBestInst = (otherButtons and otherButtons:FindFirstChild("EquipBest"))
-			or findBackpackChild(backpackFrame, "EquipBest")
+		local equipBestInst = otherButtons and otherButtons:FindFirstChild("EquipBest")
 		if not equipBestInst or not equipBestInst:IsA("GuiObject") then
 			warn("[ToolbarController] EquipBest button not found under Backpack.OtherButtons")
 			return
 		end
 		local btn = resolveBackpackActionButton(equipBestInst :: GuiObject)
 		if not btn then
-			-- Studio template is often a Frame with Decor/Name; add a full-size hit target.
-			local hit = Instance.new("TextButton")
-			hit.Name = "EquipBestHit"
-			hit.BackgroundTransparency = 1
-			hit.Text = ""
-			hit.Size = UDim2.fromScale(1, 1)
-			hit.Position = UDim2.fromScale(0, 0)
-			hit.ZIndex = math.max(6, (equipBestInst :: GuiObject).ZIndex + 1)
-			hit.AutoButtonColor = false
-			hit.Parent = equipBestInst
-			btn = hit
+			warn("[ToolbarController] EquipBest has no GuiButton")
+			return
 		end
 		equipBestWired = true
 		passthroughChildClicks(btn :: GuiObject)
@@ -4211,48 +4048,39 @@ local ToolbarController = {}
 		end
 		local backpackFrame = toolbar:FindFirstChild("Backpack")
 		if backpackFrame then
+			backpackContainer = backpackFrame:FindFirstChild("Container")
 			if backpackFrame:IsA("GuiObject") then
 				local bf = backpackFrame :: GuiObject
 				backpackGuiFrame = bf
 				backpackFrameRef = bf
 				ensureBackpackFrameOutline(bf)
-				-- Promote Frame→CanvasGroup (destroys old instance). Rebind local ref after.
 				ensureBackpackFadeRoot(bf)
-				backpackFrame = backpackFrameRef or toolbar:FindFirstChild("Backpack")
-				if not backpackFrame then
-					warn("[ToolbarController] Backpack missing after CanvasGroup promote")
-				else
-					ensureBackpackChromeVisible(backpackFrame :: GuiObject)
-				end
+				ensureBackpackChromeVisible(bf)
 			end
-			if backpackFrame then
-				backpackContainer = backpackFrame:FindFirstChild("Container")
-					or findBackpackChild(backpackFrame, "Container")
-				backpackHeaderLabel = resolveBackpackHeaderLabel(backpackFrame)
-				refreshInventoryHeaderText()
-				if backpackContainer then
-					ensureBackpackGeneratedRows(backpackContainer)
-					for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
-						local row = findBackpackRow(backpackContainer, idx)
-						if row and row:IsA("GuiObject") then
-							local btn = slotPrimaryButton(row :: GuiObject)
-							if btn then
-								styleToolbarSlotButton(btn)
-							end
+			backpackHeaderLabel = resolveBackpackHeaderLabel(backpackFrame)
+			refreshInventoryHeaderText()
+			if backpackContainer then
+				ensureBackpackGeneratedRows(backpackContainer)
+				for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
+					local row = findBackpackRow(backpackContainer, idx)
+					if row and row:IsA("GuiObject") then
+						local btn = slotPrimaryButton(row :: GuiObject)
+						if btn then
+							styleToolbarSlotButton(btn)
 						end
 					end
 				end
-				task.defer(refreshBrainrotBackpackUI)
-				wireBrainrotBackpackEquips()
-				wireEquipBestButton(backpackFrame)
-				wireBackpackSearch(backpackFrame)
-				wireBackpackCloseButton(backpackFrame)
-				wireSortCategoryTabs(backpackFrame)
-				isBackpackPanelOpen = false
-				isBackpackPanelClosing = false
-				if backpackFrame:IsA("GuiObject") then
-					(backpackFrame :: GuiObject).Visible = false
-				end
+			end
+			task.defer(refreshBrainrotBackpackUI)
+			wireBrainrotBackpackEquips()
+			wireEquipBestButton(backpackFrame)
+			wireBackpackSearch(backpackFrame)
+			wireBackpackCloseButton(backpackFrame)
+			wireSortCategoryTabs(backpackFrame)
+			isBackpackPanelOpen = false
+			isBackpackPanelClosing = false
+			if backpackFrame:IsA("GuiObject") then
+				(backpackFrame :: GuiObject).Visible = false
 			end
 		end
 		if toggleBtn and toggleBtn:IsA("GuiButton") and not toggleBackpackIconRef then

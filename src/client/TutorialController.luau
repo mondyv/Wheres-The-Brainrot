@@ -6,6 +6,7 @@
 
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
+local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
@@ -13,6 +14,7 @@ local Workspace = game:GetService("Workspace")
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local HUDController = require(script.Parent.HUDController)
 local StandDialogueCutscene = require(script.Parent.StandDialogueCutscene)
 local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
 local BushFloatingClaimController = require(script.Parent.BushFloatingClaimController)
@@ -252,8 +254,17 @@ local function resolveSideButtonPanel(): GuiObject?
 	return nil
 end
 
+local function isHudPanelOpen(): boolean
+	local frame = HUDController.getCurrentFrame()
+	return frame ~= nil and frame.Parent ~= nil and frame.Visible == true
+end
+
 local function syncPanelToSideButtonsImpl()
 	if not panel or not root or chromeSuppressed then
+		return
+	end
+	if isHudPanelOpen() then
+		panel.Visible = false
 		return
 	end
 	local lef1 = resolveSideButtonPanel()
@@ -265,6 +276,11 @@ local function syncPanelToSideButtonsImpl()
 		panel.Parent = root
 	end
 	if gui then
+		-- Match Main inset mode so AbsolutePosition stays correct on resize.
+		local main = PlayerGuiMain.ensure(player)
+		if main then
+			gui.IgnoreGuiInset = main.IgnoreGuiInset
+		end
 		gui.Enabled = true
 	end
 
@@ -273,32 +289,24 @@ local function syncPanelToSideButtonsImpl()
 	local leftPad = TutorialConfig.PANEL_LEFT_PAD
 	local ap = lef1.AbsolutePosition
 
-	-- Use the highest visible chrome under Lef1 (icons / NEW badges) as the top edge.
-	local topY = ap.Y
-	local function consider(obj: GuiObject)
-		if not obj.Visible or obj.AbsoluteSize.X < 2 or obj.AbsoluteSize.Y < 2 then
-			return
-		end
-		topY = math.min(topY, obj.AbsolutePosition.Y)
-	end
-	consider(lef1)
-	for _, d in lef1:GetDescendants() do
-		if d:IsA("GuiObject") then
-			consider(d)
-		end
-	end
-
 	local textW = 0
 	if objectiveLabel and objectiveLabel.Text ~= "" then
 		textW = objectiveLabel.TextBounds.X
 	end
-	-- bang + text + dots reserve + horizontal padding
 	local contentW = 54 + textW + 40 + 28
 	local width = math.max(TutorialConfig.PANEL_MIN_WIDTH, contentW)
 
+	local posX = ap.X + leftPad
+	local posY = ap.Y - gap
+	if gui and not gui.IgnoreGuiInset then
+		local inset = GuiService:GetGuiInset()
+		posX -= inset.X
+		posY -= inset.Y
+	end
+
 	panel.AnchorPoint = Vector2.new(0, 1)
 	panel.Size = UDim2.fromOffset(width, height)
-	panel.Position = UDim2.fromOffset(ap.X + leftPad, topY - gap)
+	panel.Position = UDim2.fromOffset(posX, posY)
 	panel.ZIndex = 50
 	panel.Visible = active and not chromeSuppressed
 end
@@ -453,8 +461,8 @@ local function ensureGui()
 	panelFrame.AnchorPoint = Vector2.new(0, 1)
 	panelFrame.Position = UDim2.new(0, 18, 0, 200)
 	panelFrame.Size = UDim2.fromOffset(TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_HEIGHT)
-	panelFrame.BackgroundColor3 = Color3.fromRGB(36, 40, 52)
-	panelFrame.BackgroundTransparency = 0.22
+	panelFrame.BackgroundColor3 = Color3.fromRGB(22, 26, 34)
+	panelFrame.BackgroundTransparency = 0.4
 	panelFrame.BorderSizePixel = 0
 	panelFrame.ClipsDescendants = false
 	panelFrame.Parent = rootFrame
@@ -464,23 +472,11 @@ local function ensureGui()
 	corner.Parent = panelFrame
 
 	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(12, 14, 18)
-	stroke.Thickness = 1.6
-	stroke.Transparency = 0.35
+	stroke.Color = Color3.fromRGB(255, 255, 255)
+	stroke.Thickness = 1
+	stroke.Transparency = 0.82
 	stroke.Parent = panelFrame
 	panelStroke = stroke
-
-	local blurFake = Instance.new("Frame")
-	blurFake.Name = "PanelSheen"
-	blurFake.BackgroundColor3 = Color3.fromRGB(48, 54, 68)
-	blurFake.BackgroundTransparency = 0.55
-	blurFake.BorderSizePixel = 0
-	blurFake.Size = UDim2.fromScale(1, 1)
-	blurFake.ZIndex = 1
-	blurFake.Parent = panelFrame
-	local sheenCorner = Instance.new("UICorner")
-	sheenCorner.CornerRadius = UDim.new(0, 12)
-	sheenCorner.Parent = blurFake
 
 	local pad = Instance.new("UIPadding")
 	pad.PaddingLeft = UDim.new(0, 8)
@@ -1094,6 +1090,51 @@ local function resolvePlacedStandUpgradeTarget(): Instance?
 	return nil
 end
 
+local function resolveStandUpgradeButton(): GuiObject?
+	local plot = PlotPaths.findPlotForAssignedSlot(player)
+	if not plot then
+		return nil
+	end
+	for _, d in plot:GetDescendants() do
+		if not d:IsA("Model") then
+			continue
+		end
+		if not (d:HasTag("BrainrotStand") or d:GetAttribute("BrainrotStand") == true) then
+			continue
+		end
+		local ownerId = d:GetAttribute("StandOwnerUserId")
+		if ownerId ~= nil and ownerId ~= player.UserId then
+			continue
+		end
+		if typeof(d:GetAttribute("BrainrotName")) ~= "string" then
+			continue
+		end
+		local levelPanel = d:FindFirstChild("LevelPanel")
+		local level = levelPanel and levelPanel:FindFirstChild("Level")
+		local sg = level and level:FindFirstChild("SurfaceGui")
+		local frame = sg and sg:FindFirstChild("Frame")
+		local upgrade = frame and frame:FindFirstChild("Upgrade")
+		if not upgrade then
+			continue
+		end
+		local overlay = upgrade:FindFirstChild("__UpgradeOverlay")
+		if overlay and overlay:IsA("GuiButton") then
+			return overlay
+		end
+		if upgrade:IsA("GuiButton") then
+			return upgrade
+		end
+		local nested = upgrade:FindFirstChildWhichIsA("GuiButton", true)
+		if nested then
+			return nested
+		end
+		if upgrade:IsA("GuiObject") then
+			return upgrade
+		end
+	end
+	return nil
+end
+
 local function readPlacedBrainrotLevel(): number
 	local plot = PlotPaths.findPlotForAssignedSlot(player)
 	if not plot then
@@ -1279,6 +1320,10 @@ local function refreshPointersImpl()
 		pointAtWorld(resolvePlayerPlotStand(true), arrowHeight(3))
 	elseif step.id == "upgradeBrainrot" then
 		pointAtWorld(resolvePlacedStandUpgradeTarget(), arrowHeight(4))
+		local upgradeBtn = resolveStandUpgradeButton()
+		if upgradeBtn then
+			pointAtGui(upgradeBtn)
+		end
 	end
 end
 refreshPointers = refreshPointersImpl
@@ -1422,8 +1467,12 @@ local function watchStepProgress()
 		-- Periodically re-aim world arrows only when missing (don't retarget bushes).
 		if now - lastPointerRefresh > 1.25 then
 			lastPointerRefresh = now
-			if step.id == "swingLand1" or step.id == "visitUpgrade" or step.id == "placeOnPlot" or step.id == "upgradeBrainrot" then
+			if step.id == "swingLand1" or step.id == "visitUpgrade" or step.id == "placeOnPlot" then
 				if not worldArrowBb and not uiPointer then
+					refreshPointers()
+				end
+			elseif step.id == "upgradeBrainrot" then
+				if not worldArrowBb or not uiPointer then
 					refreshPointers()
 				end
 			elseif step.id == "searchBush" then
@@ -1502,7 +1551,7 @@ local function watchStepProgress()
 			local lvl = readPlacedBrainrotLevel()
 			if lvl > upgradeBaseLevel then
 				completeCurrentIf("upgradeBrainrot")
-			elseif not worldArrowBb then
+			elseif not worldArrowBb or not uiPointer then
 				refreshPointers()
 			end
 		end

@@ -39,6 +39,8 @@ local _BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 local bushByModel: { [Instance]: ProximityPrompt } = {}
 local scheduleBushMapScan: (Instance) -> ()
 local bushAnchor: { [Instance]: BasePart } = {}
+local bushKnown: { [Instance]: boolean } = {}
+local bushLifecycleConns: { [Instance]: { RBXScriptConnection } } = {}
 local pendingParts: { [Instance]: RBXScriptConnection } = {}
 local cooldownHighlights: { [Instance]: Highlight } = {}
 local lastEnabledBushPrompt: ProximityPrompt? = nil
@@ -58,11 +60,16 @@ local lastPickFullScanAt = 0
 local lastCooldownVisualSyncAt = 0
 local bushSearchSuppressUntil = 0.0
 local bushSearchLocked = false
+local PROMPT_ATTACH_RANGE = MAX_RANGE + 18
+local PROMPT_DETACH_RANGE = MAX_RANGE + 36
+local lastPromptProximitySyncAt = 0.0
+local PROMPT_PROXIMITY_SYNC_INTERVAL = 0.35
 
 local pendingBushRoots: { Instance } = {}
 local pendingBushSet: { [Instance]: boolean } = {}
 local bushRegisterBatchConn: RBXScriptConnection? = nil
 local BUSH_REGISTER_PER_TICK = 6
+local bushCooldownConns: { [Instance]: { RBXScriptConnection } } = {}
 
 local activeBush: Instance? = nil
 local activePrompt: ProximityPrompt? = nil
@@ -184,6 +191,52 @@ local function setAllBushPromptsEnabled(enabledPrompt: ProximityPrompt?)
 	lastEnabledBushPrompt = enabledPrompt
 end
 
+local function detachPrompt(root: Instance)
+	local prompt = bushByModel[root]
+	if prompt then
+		local parent = prompt.Parent
+		prompt:Destroy()
+		if parent and parent:IsA("Attachment") and parent.Name == "_BushPromptCenter" then
+			parent:Destroy()
+		end
+	end
+	bushByModel[root] = nil
+	bushAnchor[root] = nil
+	if activeBush == root then
+		activeBush = nil
+		activePrompt = nil
+	end
+end
+
+local function unregisterBush(root: Instance)
+	detachPrompt(root)
+	bushKnown[root] = nil
+	local pending = pendingParts[root]
+	if pending then
+		pending:Disconnect()
+		pendingParts[root] = nil
+	end
+	local life = bushLifecycleConns[root]
+	if life then
+		for _, conn in life do
+			conn:Disconnect()
+		end
+		bushLifecycleConns[root] = nil
+	end
+	local cool = bushCooldownConns[root]
+	if cool then
+		for _, conn in cool do
+			conn:Disconnect()
+		end
+		bushCooldownConns[root] = nil
+	end
+	local hl = cooldownHighlights[root]
+	if hl then
+		hl:Destroy()
+		cooldownHighlights[root] = nil
+	end
+end
+
 local function attachPrompt(root: Instance)
 	if bushByModel[root] then
 		return
@@ -220,15 +273,8 @@ local function attachPrompt(root: Instance)
 
 	bushByModel[root] = prompt
 	bushAnchor[root] = anchor
-
-	root.DescendantAdded:Connect(function(ch)
-		if ch:IsA("ProximityPrompt") and ch ~= bushByModel[root] then
-			ch:Destroy()
-		end
-	end)
 end
 
-local bushCooldownConns: { [Instance]: { RBXScriptConnection } } = {}
 local syncCooldownVisuals: () -> () = function() end
 
 local function wireBushCooldownSignals(root: Instance)
@@ -243,40 +289,109 @@ local function wireBushCooldownSignals(root: Instance)
 	table.insert(conns, root:GetAttributeChangedSignal(BUSH_ON_COOLDOWN_ATTR):Connect(bump))
 	table.insert(conns, root:GetAttributeChangedSignal(BUSH_COOLDOWN_ENDS_ATTR):Connect(bump))
 	bushCooldownConns[root] = conns
-	root.Destroying:Once(function()
-		local existing = bushCooldownConns[root]
-		if existing then
-			for _, conn in existing do
-				conn:Disconnect()
+end
+
+local function wireBushLifecycle(root: Instance)
+	if bushLifecycleConns[root] then
+		return
+	end
+	local conns: { RBXScriptConnection } = {}
+	table.insert(
+		conns,
+		root.Destroying:Connect(function()
+			unregisterBush(root)
+		end)
+	)
+	table.insert(
+		conns,
+		root.AncestryChanged:Connect(function(_, parent)
+			if parent == nil then
+				unregisterBush(root)
 			end
-			bushCooldownConns[root] = nil
+		end)
+	)
+	table.insert(
+		conns,
+		root.DescendantAdded:Connect(function(ch)
+			if ch:IsA("ProximityPrompt") and ch ~= bushByModel[root] and ch:GetAttribute(BUSH_MANAGED_ATTR) ~= true then
+				ch:Destroy()
+			end
+		end)
+	)
+	bushLifecycleConns[root] = conns
+end
+
+local function bushApproxPos(root: Instance): Vector3?
+	local anchor = bushAnchor[root]
+	if anchor and anchor.Parent then
+		return anchor.Position
+	end
+	local part = anchorFor(root)
+	if part then
+		bushAnchor[root] = part
+		return part.Position
+	end
+	if root:IsA("Model") then
+		local ok, pivot = pcall(function()
+			return (root :: Model):GetPivot()
+		end)
+		if ok and typeof(pivot) == "CFrame" then
+			return pivot.Position
 		end
-	end)
+	elseif root:IsA("BasePart") then
+		return root.Position
+	end
+	return nil
+end
+
+local function syncNearbyBushPrompts()
+	local now = os.clock()
+	if now - lastPromptProximitySyncAt < PROMPT_PROXIMITY_SYNC_INTERVAL then
+		return
+	end
+	lastPromptProximitySyncAt = now
+
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return
+	end
+	local pos = hrp.Position
+
+	for root in bushKnown do
+		if not root.Parent then
+			unregisterBush(root)
+			continue
+		end
+		local wp = bushApproxPos(root)
+		if not wp then
+			continue
+		end
+		local dist = (wp - pos).Magnitude
+		if dist <= PROMPT_ATTACH_RANGE then
+			if not bushByModel[root] then
+				attachPrompt(root)
+			end
+		elseif dist >= PROMPT_DETACH_RANGE then
+			if bushByModel[root] and root ~= activeBush then
+				detachPrompt(root)
+			end
+		end
+	end
 end
 
 local function registerBushRootNow(root: Instance)
 	if not BushRootUtil.isDirectBushRoot(root) then
 		return
 	end
-	if bushByModel[root] then
+	if bushKnown[root] then
 		return
 	end
+	bushKnown[root] = true
 	BushShiver.trackBush(root)
 	wireBushCooldownSignals(root)
-	if anchorFor(root) then
-		attachPrompt(root)
-		return
-	end
-	if pendingParts[root] then
-		return
-	end
-	pendingParts[root] = root.DescendantAdded:Connect(function()
-		if anchorFor(root) then
-			pendingParts[root]:Disconnect()
-			pendingParts[root] = nil
-			attachPrompt(root)
-		end
-	end)
+	wireBushLifecycle(root)
+	-- Prompts are created lazily when the player is nearby (see syncNearbyBushPrompts).
 end
 
 local function ensureBushRegisterBatchLoop()
@@ -304,7 +419,7 @@ local function registerBushRoot(root: Instance)
 	if not BushRootUtil.isDirectBushRoot(root) then
 		return
 	end
-	if bushByModel[root] or pendingBushSet[root] then
+	if bushKnown[root] or pendingBushSet[root] then
 		return
 	end
 	pendingBushSet[root] = true
@@ -641,7 +756,7 @@ local function tickAim()
 
 	if mapWatchRoot and mapWatchRoot.Parent then
 		local bushN = 0
-		for _ in bushByModel do
+		for _ in bushKnown do
 			bushN += 1
 		end
 		if bushN == 0 and not bushMapScanInProgress and #pendingBushRoots == 0 then
@@ -652,6 +767,8 @@ local function tickAim()
 			end
 		end
 	end
+
+	syncNearbyBushPrompts()
 
 	local _now = os.clock()
 	for model in bushByModel do
@@ -726,7 +843,7 @@ scheduleBushMapScan = function(map: Instance)
 		lastEmptyBushScanAt = os.clock()
 		bushMapScanInProgress = false
 		local n = 0
-		for _, _ in bushByModel do
+		for _, _ in bushKnown do
 			n += 1
 		end
 		if n == 0 then
@@ -963,7 +1080,7 @@ function BushHoldInteraction.findBushByHarvestKey(key: string): Instance?
 	if typeof(key) ~= "string" or key == "" then
 		return nil
 	end
-	for bush in bushByModel do
+	for bush in bushKnown do
 		if bush.Parent and bushHarvestKey(bush) == key then
 			return bush
 		end
@@ -976,7 +1093,7 @@ function BushHoldInteraction.getPromptForBush(bush: Instance): ProximityPrompt?
 end
 
 function BushHoldInteraction.forEachRegisteredBush(fn: (Instance) -> ())
-	for bush in bushByModel do
+	for bush in bushKnown do
 		if bush.Parent then
 			fn(bush)
 		end

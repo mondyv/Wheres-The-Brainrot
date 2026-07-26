@@ -196,7 +196,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tp, tpland, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
+			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tp, tpland, spectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -1151,11 +1151,60 @@ commands.fly = {
 	description = "Toggle fly mode for yourself.",
 	run = function(sender: Player, _args: { string }): (boolean, string)
 		local enabled = sender:GetAttribute("AdminFlyEnabled") == true
+		if not enabled then
+			-- Don't fly while spectating.
+			sender:SetAttribute("AdminSpectateUserId", nil)
+		end
 		sender:SetAttribute("AdminFlyEnabled", if enabled then nil else true)
 		if enabled then
 			return true, "Fly disabled."
 		end
 		return true, "Fly enabled. WASD move, Space/E up, Ctrl/Q down."
+	end,
+}
+
+commands.spectate = {
+	usage = "spectate <player> | spectate off",
+	description = "Spectate another player. Press X (or spectate off) to exit.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		local token = args[1]
+		if not token then
+			return false, "Usage: " .. commands.spectate.usage
+		end
+		local lower = string.lower(token)
+		if lower == "off" or lower == "stop" or lower == "end" or lower == "none" then
+			sender:SetAttribute("AdminSpectateUserId", nil)
+			return true, "Spectate ended."
+		end
+
+		local targets, targetErr = resolveTargets(sender, token, false)
+		if not targets then
+			return false, targetErr or "Player not found."
+		end
+		if #targets ~= 1 then
+			return false, "Spectate only supports one player at a time."
+		end
+		local target = targets[1]
+		if target == sender then
+			sender:SetAttribute("AdminSpectateUserId", nil)
+			return true, "Spectate ended."
+		end
+		if not target.Character or not target.Character:FindFirstChildOfClass("Humanoid") then
+			return false, string.format("%s has no character to spectate.", target.Name)
+		end
+
+		sender:SetAttribute("AdminFlyEnabled", nil)
+		sender:SetAttribute("AdminSpectateUserId", target.UserId)
+		return true, string.format("Spectating %s. Press X to exit.", target.Name)
+	end,
+}
+commands.spec = commands.spectate
+commands.unspectate = {
+	usage = "unspectate",
+	description = "Stop spectating.",
+	run = function(sender: Player, _args: { string }): (boolean, string)
+		sender:SetAttribute("AdminSpectateUserId", nil)
+		return true, "Spectate ended."
 	end,
 }
 
@@ -1186,6 +1235,11 @@ local function runCommand(sender: Player, raw: any): { ok: boolean, message: str
 	end
 	return { ok = resultOk == true, message = tostring(resultMessage or "") }
 end
+
+Players.PlayerRemoving:Connect(function(leaving)
+	leaving:SetAttribute("AdminSpectateUserId", nil)
+	leaving:SetAttribute("AdminFlyEnabled", nil)
+end)
 
 commandRF.OnServerInvoke = function(sender: Player, raw: any)
 	return runCommand(sender, raw)

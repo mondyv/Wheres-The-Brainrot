@@ -189,6 +189,9 @@ task.defer(function()
 				require(script.AdminFlyController).init()
 			end,
 			function()
+				require(script.AdminSpectateController).init()
+			end,
+			function()
 				require(script.TutorialController).init()
 			end,
 			function()

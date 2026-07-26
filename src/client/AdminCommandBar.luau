@@ -149,6 +149,7 @@ local COMMAND_ALIASES: { [string]: string } = {
 	tpl = "tpland",
 	teleport = "tp",
 	["goto"] = "tp",
+	spec = "spectate",
 }
 
 local COMMAND_HINTS: { [string]: string } = {
@@ -160,6 +161,8 @@ local COMMAND_HINTS: { [string]: string } = {
 	rebirth = "Force rebirth (skip requirements)",
 	tp = "Teleport to a player, or teleport players to someone",
 	tpland = "Teleport players to a land revive/spawn pad",
+	spectate = "Spectate a player (X to exit)",
+	unspectate = "Stop spectating",
 	serverspawn = "Force a rarity spawn on this server",
 	globalspawn = "Force a rarity spawn on every server",
 	servernotif = "Top notification on this server",
@@ -380,6 +383,8 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "ban PlayerName forever", hint = "Permanent experience ban" },
 		{ fill = "unban PlayerName", hint = COMMAND_HINTS.unban },
 		{ fill = "playtutorial", hint = COMMAND_HINTS.playtutorial },
+		{ fill = "spectate PlayerName", hint = COMMAND_HINTS.spectate },
+		{ fill = "spectate off", hint = "Stop spectating" },
 		{ fill = "fly", hint = COMMAND_HINTS.fly },
 	}
 end
@@ -433,16 +438,24 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 		or cmdName == "ban"
 		or cmdName == "unban"
 		or cmdName == "tp"
+		or cmdName == "spectate"
 	then
 		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
 			for _, playerName in filterByPrefix(catalog.players, partial) do
-				if playerName ~= "all" or (cmdName ~= "kick" and cmdName ~= "ban" and cmdName ~= "unban") then
+				if playerName ~= "all" or (cmdName ~= "kick" and cmdName ~= "ban" and cmdName ~= "unban" and cmdName ~= "spectate") then
 					pushSuggestion(out, prefix .. playerName, "player target")
 				end
 			end
 			if cmdName == "tp" and startsWith("to", partial) then
 				pushSuggestion(out, prefix .. "to", "optional keyword")
+			end
+			if cmdName == "spectate" then
+				for _, sample in { "off", "stop" } do
+					if startsWith(sample, partial) then
+						pushSuggestion(out, prefix .. sample, "stop spectating")
+					end
+				end
 			end
 		end
 	end

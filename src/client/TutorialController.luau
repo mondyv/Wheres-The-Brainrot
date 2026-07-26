@@ -36,11 +36,9 @@ local M = {}
 local PANEL_OPEN = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local PANEL_SWAP = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local EXCLAIM_PULSE = TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
-local ARROW_JUMP_UP = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local ARROW_HANG = TweenInfo.new(0.08, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
-local ARROW_FALL = TweenInfo.new(0.34, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local ARROW_SQUASH = TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local ARROW_RECOVER = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local ARROW_BOB_HZ = 1.15
+local ARROW_BOB_AMP = 2.35
+local ARROW_SQUASH_AMP = 0.1
 local CLICK_BOUNCE = TweenInfo.new(0.38, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 
 local active = false
@@ -54,6 +52,7 @@ local dotsLabel: TextLabel? = nil
 local panelScale: UIScale? = nil
 local worldArrowBb: BillboardGui? = nil
 local worldArrowImg: ImageLabel? = nil
+local arrowAnimConn: RBXScriptConnection? = nil
 local uiPointer: ImageLabel? = nil
 local pointerGui: ScreenGui? = nil
 local pointerRoot: Frame? = nil
@@ -325,6 +324,10 @@ local function stopLayoutSync()
 end
 
 local function clearWorldArrowImpl()
+	if arrowAnimConn then
+		arrowAnimConn:Disconnect()
+		arrowAnimConn = nil
+	end
 	if worldArrowBb then
 		worldArrowBb:Destroy()
 		worldArrowBb = nil
@@ -719,74 +722,26 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	img.ScaleType = Enum.ScaleType.Fit
 	img.Parent = bb
 
-	local scale = Instance.new("UIScale")
-	scale.Scale = 1
-	scale.Parent = img
-
 	worldArrowBb = bb
 	worldArrowImg = img
 
-	task.spawn(function()
-		while worldArrowImg == img and img.Parent and active and not chromeSuppressed do
-			-- Jump up (stretch tall / thin)
-			bb.StudsOffset = baseOffset
-			scale.Scale = 1
-			img.Size = UDim2.fromScale(0.82, 1.18)
-			local jump = TweenService:Create(bb, ARROW_JUMP_UP, {
-				StudsOffset = baseOffset + Vector3.new(0, 3.2, 0),
-			})
-			local stretch = TweenService:Create(img, ARROW_JUMP_UP, {
-				Size = UDim2.fromScale(0.78, 1.28),
-			})
-			jump:Play()
-			stretch:Play()
-			jump.Completed:Wait()
-			if worldArrowImg ~= img then
-				break
-			end
-
-			-- Tiny hang
-			local hang = TweenService:Create(bb, ARROW_HANG, {
-				StudsOffset = baseOffset + Vector3.new(0, 3.45, 0),
-			})
-			hang:Play()
-			hang.Completed:Wait()
-			if worldArrowImg ~= img then
-				break
-			end
-
-			-- Fall down
-			local fall = TweenService:Create(bb, ARROW_FALL, {
-				StudsOffset = baseOffset,
-			})
-			local unstretch = TweenService:Create(img, ARROW_FALL, {
-				Size = UDim2.fromScale(1.05, 0.92),
-			})
-			fall:Play()
-			unstretch:Play()
-			fall.Completed:Wait()
-			if worldArrowImg ~= img then
-				break
-			end
-
-			-- Land squash
-			local squash = TweenService:Create(img, ARROW_SQUASH, {
-				Size = UDim2.fromScale(1.28, 0.62),
-			})
-			squash:Play()
-			squash.Completed:Wait()
-			if worldArrowImg ~= img then
-				break
-			end
-
-			-- Recover
-			local recover = TweenService:Create(img, ARROW_RECOVER, {
-				Size = UDim2.fromScale(1, 1),
-			})
-			recover:Play()
-			recover.Completed:Wait()
-			task.wait(0.12)
+	-- Continuous sine bob — no tween loop seams / pause between cycles.
+	local phase = 0
+	arrowAnimConn = RunService.RenderStepped:Connect(function(dt)
+		if worldArrowImg ~= img or not img.Parent or not active or chromeSuppressed then
+			return
 		end
+		phase += dt * ARROW_BOB_HZ * math.pi * 2
+		local wave = math.sin(phase)
+		-- Soft land bias: spend a bit longer near the bottom without stopping.
+		local t = wave * 0.5 + 0.5 -- 0 at bottom of sine trough... actually 0 when sin=-1
+		-- Remap so 0 = apex (high), 1 = ground (low), with ease toward ground.
+		local ground = t * t
+		local y = ARROW_BOB_AMP * (1 - ground)
+		bb.StudsOffset = baseOffset + Vector3.new(0, y, 0)
+		local wide = 1 + ground * ARROW_SQUASH_AMP
+		local tall = 1 - ground * (ARROW_SQUASH_AMP * 0.85)
+		img.Size = UDim2.fromScale(wide, tall)
 	end)
 end
 

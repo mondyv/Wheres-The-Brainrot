@@ -381,16 +381,48 @@ M.PLOT_CHANCES = {
 
 M.MAX_LEVEL = 90
 
+local RARITY_ALIASES: { [string]: string } = {
+	mythical = "mythic",
+	god = "brainrot god",
+	godly = "brainrot god",
+	brainrotgod = "brainrot god",
+	["brain rot god"] = "brainrot god",
+}
+
+function M.normalizeRarityId(rarity: string): string
+	local key = string.lower((string.gsub(rarity, "^%s*(.-)%s*$", "%1")))
+	key = string.gsub(key, "[_%-]+", " ")
+	key = string.gsub(key, "%s+", " ")
+	local compact = string.gsub(key, "%s+", "")
+	return RARITY_ALIASES[key] or RARITY_ALIASES[compact] or key
+end
+
 function M.incomePerSecond(brainrot: BrainrotDef, level: number, mutationId: string): number
-	local r = M.RARITY_BY_ID[brainrot.rarity]
+	local rarityId = M.normalizeRarityId(brainrot.rarity)
+	local r = M.RARITY_BY_ID[rarityId]
 	if not r then
+		local catalog = M.getByName(brainrot.name)
+		if catalog then
+			rarityId = catalog.rarity
+			r = M.RARITY_BY_ID[rarityId]
+		end
+	end
+	if not r then
+		return 0
+	end
+	local baseIncome = brainrot.baseIncome
+	if typeof(baseIncome) ~= "number" or baseIncome <= 0 then
+		local catalog = M.getByName(brainrot.name)
+		baseIncome = if catalog then catalog.baseIncome else 0
+	end
+	if baseIncome <= 0 then
 		return 0
 	end
 	local mut = M.MUTATION_BY_ID[mutationId]
 	local mm = if mut then mut.multiplier else 1
 	local lvl = math.clamp(math.floor(level), 1, M.MAX_LEVEL)
 	local factor = r.maxMultiplier ^ ((lvl - 1) / (M.MAX_LEVEL - 1))
-	return brainrot.baseIncome * mm * factor
+	return baseIncome * mm * factor
 end
 
 -- Cost to go from level → level+1. Returns 0 if already maxed.

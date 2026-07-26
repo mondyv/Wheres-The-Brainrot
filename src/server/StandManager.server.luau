@@ -55,7 +55,7 @@ local COLLECT_VFX_MIN_INTERVAL = 0.25 -- prevents duplicate collect remotes from
 local CASH_PAD_DISPLAY_INTERVAL = 1 -- cash pad label/attribute refresh cadence (once per second)
 local CASH_PAD_DISPLAY_STAGGER_BUCKETS = 16
 local INCOME_TICK_INTERVAL = 0.25
-local INCOME_STANDS_PER_HEARTBEAT = 4
+local INCOME_STANDS_PER_HEARTBEAT = 24
 local UPGRADE_DEBOUNCE = 0.08 -- blocks duplicate upgrade fires from GUI + remote on the same click
 local PICKUP_DEBOUNCE = 0.35 -- blocks duplicate inventory adds from double prompt triggers
 local PROMPT_PLACE_DISTANCE = 10
@@ -587,7 +587,32 @@ local function isOwner(state: StandState, player: Player): boolean
 end
 
 local function recomputeIncomePerSecond(state: StandState): number
-	if not state.brainrotName or not state.rarity then
+	if not state.brainrotName then
+		return 0
+	end
+	-- Repair missing/invalid income identity so stands don't sit forever at $0.
+	local catalog = Brainrots.getByName(state.brainrotName)
+	if catalog then
+		if typeof(state.baseIncome) ~= "number" or state.baseIncome <= 0 then
+			state.baseIncome = catalog.baseIncome
+			state.stand:SetAttribute("BrainrotBaseIncome", state.baseIncome)
+		end
+		local rarityOk = typeof(state.rarity) == "string"
+			and Brainrots.RARITY_BY_ID[Brainrots.normalizeRarityId(state.rarity)] ~= nil
+		if not rarityOk then
+			state.rarity = catalog.rarity
+			state.stand:SetAttribute("BrainrotRarity", state.rarity)
+		else
+			local normalized = Brainrots.normalizeRarityId(state.rarity :: string)
+			if normalized ~= state.rarity then
+				state.rarity = normalized
+				state.stand:SetAttribute("BrainrotRarity", state.rarity)
+			end
+		end
+	elseif typeof(state.rarity) == "string" then
+		state.rarity = Brainrots.normalizeRarityId(state.rarity)
+	end
+	if not state.rarity then
 		return 0
 	end
 	local def = {
@@ -1031,6 +1056,15 @@ local function applyStandFromSave(
 	state.mutation = entry.mutation
 	state.level = math.max(1, math.floor(entry.level))
 	state.baseIncome = entry.baseIncome
+	if state.baseIncome <= 0 then
+		local catalog = Brainrots.getByName(entry.brainrotName)
+		if catalog then
+			state.baseIncome = catalog.baseIncome
+		end
+	end
+	if typeof(state.rarity) == "string" then
+		state.rarity = Brainrots.normalizeRarityId(state.rarity)
+	end
 	state.sourcePath = entry.sourcePath
 	state.accumulated = math.max(0, entry.accumulated)
 	state.offlinePending = 0
@@ -1383,6 +1417,18 @@ local function placeBrainrotOnStand(player: Player, state: StandState)
 	state.mutation = entry.mutation or toolMutation or "normal"
 	state.level = math.max(1, math.floor(entry.level or toolLevel or 1))
 	state.baseIncome = entry.baseIncome or toolBaseIncome or 0
+	if state.baseIncome <= 0 and typeof(state.brainrotName) == "string" then
+		local catalog = Brainrots.getByName(state.brainrotName)
+		if catalog then
+			state.baseIncome = catalog.baseIncome
+			if typeof(state.rarity) ~= "string" or state.rarity == "" then
+				state.rarity = catalog.rarity
+			end
+		end
+	end
+	if typeof(state.rarity) == "string" then
+		state.rarity = Brainrots.normalizeRarityId(state.rarity)
+	end
 	state.sourcePath = entry.sourcePath or toolSourcePath or ""
 	state.accumulated = 0
 	state.offlinePending = 0

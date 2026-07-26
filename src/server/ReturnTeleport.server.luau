@@ -158,12 +158,20 @@ local function fulfillPaidReturn(player: Player, productId: number): boolean
 	end
 	local carried = countCarriedBrainrots(player, character)
 	if carried <= 0 then
-		return false
+		-- Purchase already went through — still send them home so they aren't stranded.
+		warn("[ReturnTeleport] paid return with 0 carry models for", player.Name, "— teleporting anyway")
+		local ok = select(1, teleportHome(player, character))
+		if ok then
+			notifyAfterPlotReturn(player)
+			ensurePaidRemote():FireClient(player)
+		end
+		return ok
 	end
-	-- Product N only fulfills when carrying N (clamped 1–11)
-	if ReturnConfig.clampCount(carried) ~= expected then
+	-- Prefer exact product tier, but still fulfill if haul count drifted by ±1 during prompt.
+	local clamped = ReturnConfig.clampCount(carried)
+	if clamped ~= expected and math.abs(clamped - expected) > 1 then
 		warn("[ReturnTeleport] product/count mismatch for", player.Name, "product", productId, "carry", carried)
-		return false
+		-- Still teleport + deliver so Robux purchase isn't wasted.
 	end
 	local ok = select(1, teleportHome(player, character))
 	if ok then

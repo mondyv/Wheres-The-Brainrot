@@ -309,6 +309,9 @@ end
 local function enrichEntryFromCatalog(entry: BrainrotInvEntry)
 	local def = Brainrots.getByName(entry.name)
 	if not def then
+		if typeof(entry.rarity) == "string" then
+			entry.rarity = Brainrots.normalizeRarityId(entry.rarity)
+		end
 		return
 	end
 	if (entry.baseIncome or 0) <= 0 then
@@ -316,6 +319,13 @@ local function enrichEntryFromCatalog(entry: BrainrotInvEntry)
 		entry.rarity = def.rarity
 	elseif typeof(entry.rarity) ~= "string" or entry.rarity == "" then
 		entry.rarity = def.rarity
+	else
+		local normalized = Brainrots.normalizeRarityId(entry.rarity)
+		if Brainrots.RARITY_BY_ID[normalized] == nil then
+			entry.rarity = def.rarity
+		else
+			entry.rarity = normalized
+		end
 	end
 end
 
@@ -2300,7 +2310,9 @@ local function collectCarriedBrainrotsForPlayer(plr: Player): { Model }
 		if seen[m] or not m.Parent then
 			return
 		end
-		if m:GetAttribute("BrainrotCarryPhase") ~= "Carried" then
+		local phase = m:GetAttribute("BrainrotCarryPhase")
+		-- Include Floating/Pop so paid return still finds hauls mid-animation.
+		if phase ~= "Carried" and phase ~= "Floating" and phase ~= "Pop" then
 			return
 		end
 		if m:GetAttribute("OwnerUserId") ~= plr.UserId then
@@ -2378,6 +2390,13 @@ local function tryRedeemAllAtDeposit(player: Player, depositPart: BasePart?)
 	syncBrainrotCarryCountAttr(player)
 
 	if addedAny and lastEquipSlot then
+		-- Server-equip first so plot-return has a Tool even if the client sync races.
+		if equipBrainrotSlotForPlayer then
+			local equippedIdx = equipBrainrotSlotForPlayer(player, lastEquipSlot, true)
+			if equippedIdx then
+				lastEquipSlot = equippedIdx
+			end
+		end
 		notifyClientInventorySync(player, lastEquipSlot, true)
 	end
 end
@@ -2433,27 +2452,35 @@ end
 -- Paid return lands on the plot; if already inside RedWall, Touched never fires.
 local function handleAfterPlotReturn(player: Player)
 	carryRedeemDebounce[player] = nil
-	reseatAllCarriedBrainrots(player)
-	task.defer(function()
+
+	local function recoverAndDeliver()
 		if not player.Parent then
 			return
 		end
+		reseatAllCarriedBrainrots(player)
+		local carries = collectCarriedBrainrotsForPlayer(player)
+		if #carries == 0 then
+			return false
+		end
 		if isPlayerInsideDeposit(player) then
 			tryRedeemAllAtDeposit(player, nil)
-			return
-		end
-		task.delay(0.2, function()
-			if not player.Parent then
-				return
-			end
-			if #collectCarriedBrainrotsForPlayer(player) == 0 then
-				return
-			end
+			-- If redeem failed (full inventory), keep them reseated on the head.
 			reseatAllCarriedBrainrots(player)
-			if isPlayerInsideDeposit(player) then
-				tryRedeemAllAtDeposit(player, nil)
-			end
-		end)
+		end
+		return #collectCarriedBrainrotsForPlayer(player) > 0
+			or player:GetAttribute("BrainrotCarryCount") == 0
+	end
+
+	-- Immediate + short retries — teleport can leave carries unwelded for a frame.
+	recoverAndDeliver()
+	task.defer(function()
+		recoverAndDeliver()
+	end)
+	task.delay(0.15, function()
+		recoverAndDeliver()
+	end)
+	task.delay(0.45, function()
+		recoverAndDeliver()
 	end)
 end
 

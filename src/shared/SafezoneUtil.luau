@@ -261,6 +261,10 @@ function SafezoneUtil.awaitCacheReady(timeoutSec: number): boolean
 	return cachesBuilt == true
 end
 
+function SafezoneUtil.isCacheReady(): boolean
+	return cachesBuilt == true
+end
+
 function SafezoneUtil.isWorldPointInReddie(worldPoint: Vector3): boolean
 	ensureCaches()
 	return isWorldPointInsideParts(worldPoint, cachedReddieParts)

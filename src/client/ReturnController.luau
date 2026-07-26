@@ -62,6 +62,8 @@ local pollAccum = 0
 local heartbeatConn: RBXScriptConnection? = nil
 local wasInSafezone = true
 local deferredShowPending = false
+local outsideStreak = 0
+local OUTSIDE_STREAK_TO_SHOW = 3
 local pendingPaidProductId: number? = nil
 local paidFinishLock = false
 local lastPaidCount = -1
@@ -377,6 +379,10 @@ local function shouldShowReturnChrome(): boolean
 	if not character then
 		return false
 	end
+	-- Until zone parts are cached, treat as safezone — never flash Return at spawn / sell stand.
+	if not SafezoneUtil.isCacheReady() then
+		return false
+	end
 	if SafezoneUtil.isCharacterInSafezone(character) then
 		return false
 	end
@@ -434,8 +440,25 @@ local function applyVisibility(show: boolean, instant: boolean?)
 	if not returnFrame or not frameScale then
 		return
 	end
+	if not show then
+		-- Always hard-hide both buttons in safezone / when chrome must be off.
+		-- (SideUI restore after Sell can leave a child Visible even if visibleTarget was already false.)
+		if freeBtn then
+			freeBtn.Visible = false
+			freeBtn.Active = false
+		end
+		if paidBtn then
+			paidBtn.Visible = false
+			paidBtn.Active = false
+		end
+	end
 	if visibleTarget == show and not instant then
-		syncModeButtons()
+		if show then
+			syncModeButtons()
+		else
+			returnFrame.Visible = false
+			frameScale.Scale = 0.72
+		end
 		return
 	end
 	visibleTarget = show
@@ -465,6 +488,12 @@ local function applyVisibility(show: boolean, instant: boolean?)
 	else
 		stopIdleMotion()
 		setButtonsActive(false)
+		if freeBtn then
+			freeBtn.Visible = false
+		end
+		if paidBtn then
+			paidBtn.Visible = false
+		end
 		if instant then
 			returnFrame.Visible = false
 			frameScale.Scale = 0.72
@@ -805,27 +834,63 @@ function ReturnController.init()
 		pollAccum = 0
 
 		local character = player.Character
-		local inSafezone = if character then SafezoneUtil.isCharacterInSafezone(character) else true
+		local inSafezone = if not character or not SafezoneUtil.isCacheReady()
+			then true
+			else SafezoneUtil.isCharacterInSafezone(character)
 		local crossingOut = wasInSafezone and not inSafezone
 		wasInSafezone = inSafezone
 
-		if crossingOut and shouldShowReturnChrome() then
+		if inSafezone then
+			outsideStreak = 0
+			refreshVisibility(true)
+			return
+		end
+
+		outsideStreak += 1
+		local wantShow = outsideStreak >= OUTSIDE_STREAK_TO_SHOW and shouldShowReturnChrome()
+
+		if crossingOut and wantShow then
 			if not deferredShowPending then
 				deferredShowPending = true
 				task.defer(function()
 					task.wait(0.03)
 					deferredShowPending = false
-					refreshVisibility(false)
+					if outsideStreak >= OUTSIDE_STREAK_TO_SHOW then
+						refreshVisibility(false)
+					end
 				end)
 			end
 			return
 		end
 
-		refreshVisibility(false)
+		if wantShow then
+			refreshVisibility(false)
+		else
+			applyVisibility(false, true)
+		end
 	end)
 
-	wasInSafezone = if player.Character then SafezoneUtil.isCharacterInSafezone(player.Character) else true
+	wasInSafezone = if player.Character and SafezoneUtil.isCacheReady()
+		then SafezoneUtil.isCharacterInSafezone(player.Character)
+		else true
+	outsideStreak = 0
 	refreshVisibility(true)
+
+	-- After Sell / store panels restore SideUI, re-hide Return if still in safezone.
+	task.spawn(function()
+		local main = PlayerGuiMain.ensure(player)
+		local sideUI = main:WaitForChild("SideUI", 30)
+		if not sideUI or not sideUI:IsA("GuiObject") then
+			return
+		end
+		sideUI:GetPropertyChangedSignal("Visible"):Connect(function()
+			if (sideUI :: GuiObject).Visible then
+				task.defer(function()
+					refreshVisibility(true)
+				end)
+			end
+		end)
+	end)
 end
 
 return ReturnController

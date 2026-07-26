@@ -66,6 +66,7 @@ type Swarm = {
 
 local activeSwarms: { [Instance]: Swarm } = {}
 local wired = false
+local enabled = true
 local heartbeatConn: RBXScriptConnection? = nil
 local rootFolder: Folder? = nil
 local refreshAccum = 0.0
@@ -226,6 +227,10 @@ local function playerPos(): Vector3?
 end
 
 local function refresh()
+	if not enabled then
+		clearAll()
+		return
+	end
 	local char = player.Character
 	if not char or SafezoneUtil.isCharacterInSafezone(char) then
 		clearAll()
@@ -334,6 +339,15 @@ local function stepFlies(dt: number)
 	end
 end
 
+function FireflyController.setEnabled(on: boolean)
+	enabled = on == true
+	if not enabled then
+		clearAll()
+	elseif wired then
+		refresh()
+	end
+end
+
 function FireflyController.init()
 	if wired then
 		return
@@ -364,6 +378,9 @@ function FireflyController.init()
 		heartbeatConn:Disconnect()
 	end
 	heartbeatConn = RunService.Heartbeat:Connect(function(dt)
+		if not enabled then
+			return
+		end
 		refreshAccum += dt
 		if refreshAccum >= REFRESH_SEC then
 			refreshAccum = 0

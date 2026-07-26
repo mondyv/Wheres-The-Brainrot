@@ -29,6 +29,16 @@ local NIGHT_ATMO = {
 	Haze = 2.85,
 }
 
+-- Low-graphics night: thinner fog, cheaper atmosphere.
+local NIGHT_ATMO_LOW = {
+	Density = 0.28,
+	Offset = 0.08,
+	Color = Color3.fromRGB(52, 56, 58),
+	Decay = Color3.fromRGB(64, 68, 70),
+	Glare = 0,
+	Haze = 1.1,
+}
+
 -- Faint mist inside safe zone — softens distance so the base isn't crystal-clear
 local SAFEZONE_FOG = {
 	densityAdd = 0.18,
@@ -42,6 +52,20 @@ local SAFEZONE_FOG = {
 	mistColor = Color3.fromRGB(198, 204, 210),
 	mistDecay = Color3.fromRGB(155, 160, 166),
 	mistMix = 0.28,
+}
+
+local SAFEZONE_FOG_LOW = {
+	densityAdd = 0.06,
+	densityMin = 0.12,
+	densityMax = 0.2,
+	hazeAdd = 0.25,
+	hazeMin = 0.35,
+	hazeMax = 0.7,
+	offsetBias = 0,
+	glareMax = 0.02,
+	mistColor = Color3.fromRGB(198, 204, 210),
+	mistDecay = Color3.fromRGB(155, 160, 166),
+	mistMix = 0.12,
 }
 
 type AtmoSnap = {
@@ -59,6 +83,7 @@ local player = Players.LocalPlayer
 local activeTweens: { Tween } = {}
 local inSafezone = true
 local wired = false
+local lowGraphics = false
 local _pollConn: RBXScriptConnection? = nil
 local dayAtmo: AtmoSnap? = nil
 
@@ -137,14 +162,15 @@ end
 
 local function safezoneAtmo(): AtmoSnap
 	local day = dayAtmo :: AtmoSnap
-	local mix = SAFEZONE_FOG.mistMix
+	local fog = if lowGraphics then SAFEZONE_FOG_LOW else SAFEZONE_FOG
+	local mix = fog.mistMix
 	return {
-		Density = math.clamp(math.max(day.Density, SAFEZONE_FOG.densityMin) + SAFEZONE_FOG.densityAdd, SAFEZONE_FOG.densityMin, SAFEZONE_FOG.densityMax),
-		Offset = day.Offset + SAFEZONE_FOG.offsetBias,
-		Color = day.Color:Lerp(SAFEZONE_FOG.mistColor, mix),
-		Decay = day.Decay:Lerp(SAFEZONE_FOG.mistDecay, mix * 0.85),
-		Glare = math.min(day.Glare, SAFEZONE_FOG.glareMax),
-		Haze = math.clamp(math.max(day.Haze, SAFEZONE_FOG.hazeMin) + SAFEZONE_FOG.hazeAdd, SAFEZONE_FOG.hazeMin, SAFEZONE_FOG.hazeMax),
+		Density = math.clamp(math.max(day.Density, fog.densityMin) + fog.densityAdd, fog.densityMin, fog.densityMax),
+		Offset = day.Offset + fog.offsetBias,
+		Color = day.Color:Lerp(fog.mistColor, mix),
+		Decay = day.Decay:Lerp(fog.mistDecay, mix * 0.85),
+		Glare = math.min(day.Glare, fog.glareMax),
+		Haze = math.clamp(math.max(day.Haze, fog.hazeMin) + fog.hazeAdd, fog.hazeMin, fog.hazeMax),
 	}
 end
 
@@ -153,7 +179,7 @@ local function applyProfile(night: boolean, instant: boolean?)
 	local atmo = ensureAtmosphere()
 	cancelTweens()
 
-	local goal = if night then NIGHT_ATMO else safezoneAtmo()
+	local goal = if night then (if lowGraphics then NIGHT_ATMO_LOW else NIGHT_ATMO) else safezoneAtmo()
 
 	if instant then
 		atmo.Density = goal.Density
@@ -189,6 +215,20 @@ local function setInSafezone(nextIn: boolean, force: boolean?)
 	end
 	inSafezone = nextIn
 	applyProfile(not nextIn, force == true)
+end
+
+function SafeZoneLightingController.setLowGraphics(on: boolean)
+	local nextOn = on == true
+	if lowGraphics == nextOn then
+		if wired then
+			applyProfile(not inSafezone, true)
+		end
+		return
+	end
+	lowGraphics = nextOn
+	if wired then
+		applyProfile(not inSafezone, true)
+	end
 end
 
 function SafeZoneLightingController.init()

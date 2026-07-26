@@ -267,6 +267,7 @@ local function normalizeSettings(raw: any): PlayerDataSchema.PlayerSettingsSaveD
 			globalMessagesEnabled = d.globalMessagesEnabled,
 			spiderCutsceneEnabled = d.spiderCutsceneEnabled,
 			shopCutsceneEnabled = d.shopCutsceneEnabled,
+			lowGraphicsEnabled = d.lowGraphicsEnabled,
 		}
 	end
 	-- Migrate legacy skipSpiderCutscene → spiderCutsceneEnabled (both old values map to ON / short cutscene).
@@ -286,6 +287,7 @@ local function normalizeSettings(raw: any): PlayerDataSchema.PlayerSettingsSaveD
 		globalMessagesEnabled = readBool(raw.globalMessagesEnabled, d.globalMessagesEnabled),
 		spiderCutsceneEnabled = spiderCutscene,
 		shopCutsceneEnabled = readBool(raw.shopCutsceneEnabled, d.shopCutsceneEnabled),
+		lowGraphicsEnabled = readBool(raw.lowGraphicsEnabled, d.lowGraphicsEnabled),
 	}
 end
 
@@ -300,11 +302,13 @@ local function applySettings(player: Player, raw: any)
 	player:SetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR, settings.globalMessagesEnabled)
 	player:SetAttribute(PlayerDataSchema.SETTINGS_SPIDER_CUTSCENE_ATTR, settings.spiderCutsceneEnabled)
 	player:SetAttribute(PlayerDataSchema.SETTINGS_SHOP_CUTSCENE_ATTR, settings.shopCutsceneEnabled)
+	player:SetAttribute(PlayerDataSchema.SETTINGS_LOW_GRAPHICS_ATTR, settings.lowGraphicsEnabled)
 	player:SetAttribute("SlowWalkEnabled", settings.slowWalkEnabled)
 	player:SetAttribute("ShowOtherBrainrots", settings.showOtherBrainrots)
 	player:SetAttribute("BrainrotVFXEnabled", settings.brainrotVfxEnabled)
 	player:SetAttribute("SpiderCutsceneEnabled", settings.spiderCutsceneEnabled)
 	player:SetAttribute("ShopCutsceneEnabled", settings.shopCutsceneEnabled)
+	player:SetAttribute("LowGraphicsEnabled", settings.lowGraphicsEnabled)
 end
 
 local function collectSettings(player: Player): PlayerDataSchema.PlayerSettingsSaveData
@@ -318,6 +322,7 @@ local function collectSettings(player: Player): PlayerDataSchema.PlayerSettingsS
 		globalMessagesEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR),
 		spiderCutsceneEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_SPIDER_CUTSCENE_ATTR),
 		shopCutsceneEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_SHOP_CUTSCENE_ATTR),
+		lowGraphicsEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_LOW_GRAPHICS_ATTR),
 	})
 end
 
@@ -405,6 +410,7 @@ function M.savePlayerSettings(player: Player, patch: any)
 		globalMessagesEnabled = if patch.globalMessagesEnabled ~= nil then patch.globalMessagesEnabled else current.globalMessagesEnabled,
 		spiderCutsceneEnabled = if patch.spiderCutsceneEnabled ~= nil then patch.spiderCutsceneEnabled else current.spiderCutsceneEnabled,
 		shopCutsceneEnabled = if patch.shopCutsceneEnabled ~= nil then patch.shopCutsceneEnabled else current.shopCutsceneEnabled,
+		lowGraphicsEnabled = if patch.lowGraphicsEnabled ~= nil then patch.lowGraphicsEnabled else current.lowGraphicsEnabled,
 	})
 	applySettings(player, merged)
 	if player:GetAttribute(LOADED_ATTR) == true then

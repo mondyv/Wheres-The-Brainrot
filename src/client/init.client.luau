@@ -337,6 +337,9 @@ task.defer(function()
 				require(script.FireflyController).init()
 			end,
 			function()
+				require(script.LowGraphicsController).init()
+			end,
+			function()
 				require(script.WebTrapController).init()
 			end,
 			function()

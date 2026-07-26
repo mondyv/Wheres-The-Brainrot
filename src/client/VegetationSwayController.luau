@@ -68,6 +68,7 @@ local swayStepAccum = 0
 local heartbeatConn: RBXScriptConnection? = nil
 local charConns: { RBXScriptConnection } = {}
 local lastMoveFlat = Vector3.new(0, 0, -1)
+local enabled = true
 
 local function disconnectList(list: { RBXScriptConnection })
 	for _, conn in list do
@@ -415,6 +416,9 @@ local function bindCharacter(character: Model)
 end
 
 local function onHeartbeat(dt: number)
+	if not enabled then
+		return
+	end
 	if activeCount > 0 then
 		swayStepAccum += dt
 		if swayStepAccum >= SWAY_STEP_INTERVAL then
@@ -445,6 +449,13 @@ local function onHeartbeat(dt: number)
 	local ok, err = pcall(scanAroundCharacter, character, humanoid, hrp :: BasePart)
 	if not ok then
 		warn("[VegetationSwayController] error:", err)
+	end
+end
+
+function M.setEnabled(on: boolean)
+	enabled = on == true
+	if not enabled then
+		clearAllSways()
 	end
 end
 

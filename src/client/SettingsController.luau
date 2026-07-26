@@ -9,6 +9,7 @@
 	• Row whose label contains "vfx" (or Button4) → BrainrotVFXEnabled; default on.
 	• Button5 → SpiderCutsceneEnabled; default on = full spider cinematic (drop + rage + shoot). Off = soft look-at + QTE (still letterbox / HUD hide).
 	• Button6 → ShopCutsceneEnabled; default on = Undertale stand greetings. Off = walk up and open panels directly.
+	• Button7 → LowGraphicsEnabled; default off. Turns off Brainrot VFX + lighter lighting / no fireflies / no grass sway.
 --]]
 
 local Players          = game:GetService("Players")
@@ -309,6 +310,9 @@ local function classifySettingsRow(buttonRow: Instance): string?
 	if n == "Button6" then
 		return "shop_cutscene"
 	end
+	if n == "Button7" then
+		return "low_graphics"
+	end
 	local title = getButtonRowTitle(buttonRow)
 	if title:find("ui sound", 1, true) then
 		return "ui_sounds"
@@ -327,6 +331,9 @@ local function classifySettingsRow(buttonRow: Instance): string?
 	end
 	if title:find("spider", 1, true) then
 		return "spider_cutscene"
+	end
+	if title:find("low", 1, true) and title:find("graphic", 1, true) then
+		return "low_graphics"
 	end
 	if title:find("vfx", 1, true) or title:find("visual", 1, true) then
 		return "brainrot_vfx"
@@ -376,6 +383,23 @@ local function setShopCutsceneRowNameLabel(buttonRow: Instance)
 	for _, node in labels do
 		if node:IsA("TextLabel") or node:IsA("TextButton") then
 			(node :: TextLabel).Text = "Shop Cutscene"
+		end
+	end
+end
+
+local function setLowGraphicsRowNameLabel(buttonRow: Instance)
+	local labels: { Instance } = {}
+	local nameNode = buttonRow:FindFirstChild("Name")
+	if nameNode then
+		table.insert(labels, nameNode)
+	end
+	local vfxLabel = buttonRow:FindFirstChild("Brainrot VFX")
+	if vfxLabel then
+		table.insert(labels, vfxLabel)
+	end
+	for _, node in labels do
+		if node:IsA("TextLabel") or node:IsA("TextButton") then
+			(node :: TextLabel).Text = "Low Graphics"
 		end
 	end
 end
@@ -562,6 +586,7 @@ function SettingsController.init()
 	local spiderCutsceneToggleRow: Instance? = nil
 	local shopCutsceneToggleRow: Instance? = nil
 	local globalMessagesToggleRow: Instance? = nil
+	local lowGraphicsToggleRow: Instance? = nil
 	for _, child in ipairs(container:GetChildren()) do
 		if child.Name:match("^Button%d+$") or child.Name == "GlobalMessages" then
 			local kind = classifySettingsRow(child)
@@ -585,6 +610,9 @@ function SettingsController.init()
 				setShopCutsceneRowNameLabel(child)
 			elseif kind == "global_messages" then
 				globalMessagesToggleRow = child
+			elseif kind == "low_graphics" then
+				lowGraphicsToggleRow = child
+				setLowGraphicsRowNameLabel(child)
 			end
 		end
 	end
@@ -607,6 +635,10 @@ function SettingsController.init()
 	if player:GetAttribute("ShopCutsceneEnabled") == nil then
 		player:SetAttribute("ShopCutsceneEnabled", true)
 		player:SetAttribute(PlayerDataSchema.SETTINGS_SHOP_CUTSCENE_ATTR, true)
+	end
+	if player:GetAttribute("LowGraphicsEnabled") == nil then
+		player:SetAttribute("LowGraphicsEnabled", false)
+		player:SetAttribute(PlayerDataSchema.SETTINGS_LOW_GRAPHICS_ATTR, false)
 	end
 
 	local function configureSettingsContainer()
@@ -693,6 +725,7 @@ function SettingsController.init()
 			elseif child == brainrotVfxToggleRow then true
 			elseif child == spiderCutsceneToggleRow then true
 			elseif child == shopCutsceneToggleRow then true
+			elseif child == lowGraphicsToggleRow then false
 			elseif child == globalMessagesToggleRow then player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR) ~= false
 			else readInitialOn(onOff)
 		if child == showOthersToggleRow then
@@ -703,6 +736,8 @@ function SettingsController.init()
 			toggleOn = player:GetAttribute("SpiderCutsceneEnabled") ~= false
 		elseif child == shopCutsceneToggleRow then
 			toggleOn = player:GetAttribute("ShopCutsceneEnabled") ~= false
+		elseif child == lowGraphicsToggleRow then
+			toggleOn = player:GetAttribute("LowGraphicsEnabled") == true
 		elseif child == slowToggleRow then
 			toggleOn = player:GetAttribute("SlowWalkEnabled") == true
 		elseif child == globalMessagesToggleRow then
@@ -719,7 +754,9 @@ function SettingsController.init()
 		if child == shopCutsceneToggleRow then
 			setShopCutsceneRowNameLabel(child)
 		end
-
+		if child == lowGraphicsToggleRow then
+			setLowGraphicsRowNameLabel(child)
+		end
 		local clickable = findClickable(child)
 		if not clickable then
 			warn("[SettingsController] No GuiButton under " .. child.Name)
@@ -739,6 +776,22 @@ function SettingsController.init()
 		end
 
 		clickable.MouseButton1Down:Connect(function()
+			-- Re-sync from attributes so external flips (e.g. Low Graphics → VFX off) stay correct.
+			if child == brainrotVfxToggleRow then
+				toggleOn = player:GetAttribute("BrainrotVFXEnabled") ~= false
+			elseif child == lowGraphicsToggleRow then
+				toggleOn = player:GetAttribute("LowGraphicsEnabled") == true
+			elseif child == showOthersToggleRow then
+				toggleOn = player:GetAttribute("ShowOtherBrainrots") ~= false
+			elseif child == spiderCutsceneToggleRow then
+				toggleOn = player:GetAttribute("SpiderCutsceneEnabled") ~= false
+			elseif child == shopCutsceneToggleRow then
+				toggleOn = player:GetAttribute("ShopCutsceneEnabled") ~= false
+			elseif child == slowToggleRow then
+				toggleOn = player:GetAttribute("SlowWalkEnabled") == true
+			elseif child == globalMessagesToggleRow then
+				toggleOn = player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR) ~= false
+			end
 			toggleOn = not toggleOn
 			applyToggleVisuals(onOff, toggleOn)
 			setToggleFaceText(onOff, toggleOn)
@@ -757,6 +810,7 @@ function SettingsController.init()
 			end
 			if child == brainrotVfxToggleRow then
 				player:SetAttribute("BrainrotVFXEnabled", toggleOn)
+				player:SetAttribute(PlayerDataSchema.SETTINGS_BRAINROT_VFX_ATTR, toggleOn)
 				queueSettingsSave({ brainrotVfxEnabled = toggleOn })
 			end
 			if child == spiderCutsceneToggleRow then
@@ -772,6 +826,25 @@ function SettingsController.init()
 			if child == globalMessagesToggleRow then
 				player:SetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR, toggleOn)
 				queueSettingsSave({ globalMessagesEnabled = toggleOn })
+			end
+			if child == lowGraphicsToggleRow then
+				player:SetAttribute("LowGraphicsEnabled", toggleOn)
+				player:SetAttribute(PlayerDataSchema.SETTINGS_LOW_GRAPHICS_ATTR, toggleOn)
+				if toggleOn then
+					-- Turning low graphics on also flips Brainrot VFX off (can re-enable after).
+					player:SetAttribute("BrainrotVFXEnabled", false)
+					player:SetAttribute(PlayerDataSchema.SETTINGS_BRAINROT_VFX_ATTR, false)
+					if brainrotVfxToggleRow then
+						local vfxOnOff = getOnOffFolder(brainrotVfxToggleRow)
+						if vfxOnOff then
+							applyToggleVisuals(vfxOnOff, false)
+							setToggleFaceText(vfxOnOff, false)
+						end
+					end
+					queueSettingsSave({ lowGraphicsEnabled = true, brainrotVfxEnabled = false })
+				else
+					queueSettingsSave({ lowGraphicsEnabled = false })
+				end
 			end
 		end)
 	end

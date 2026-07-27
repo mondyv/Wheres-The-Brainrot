@@ -1,8 +1,8 @@
 -- [ACTIVE] SafeZoneLightingController
 --[[
 	Outside the safe zone: smoky dark Atmosphere night.
-	Inside: mid-range mist — shops/base stay readable, lands beyond ~1–2 fade out.
-	Day is snapped once at boot before any fog/night is applied.
+	Inside: sunny near the base/shops; haze thickens with distance so Land 2+
+	soft-covers. Day is snapped once at boot before any fog/night is applied.
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -38,33 +38,34 @@ local NIGHT_ATMO_LOW = {
 	Haze = 2.35,
 }
 
--- Mid mist in safe zone — clear near base, lands farther out fade
+-- Sunny near-field, stronger distant haze (Land 2+ soft-covered)
 local SAFEZONE_FOG = {
-	densityAdd = 0.2,
-	densityMin = 0.24,
-	densityMax = 0.36,
-	hazeAdd = 1.15,
-	hazeMin = 1.1,
-	hazeMax = 1.9,
-	offsetBias = 0.02,
-	glareMax = 0.03,
-	mistColor = Color3.fromRGB(190, 196, 202),
-	mistDecay = Color3.fromRGB(148, 154, 160),
-	mistMix = 0.3,
+	densityAdd = 0.28,
+	densityMin = 0.32,
+	densityMax = 0.46,
+	hazeAdd = 1.7,
+	hazeMin = 1.65,
+	hazeMax = 2.55,
+	-- Push fog start out so shops/base stay bright & sunny.
+	offsetBias = 0.11,
+	glareMax = 0.07,
+	mistColor = Color3.fromRGB(228, 232, 218),
+	mistDecay = Color3.fromRGB(182, 190, 168),
+	mistMix = 0.2,
 }
 
 local SAFEZONE_FOG_LOW = {
-	densityAdd = 0.16,
-	densityMin = 0.2,
-	densityMax = 0.3,
-	hazeAdd = 0.9,
-	hazeMin = 0.85,
-	hazeMax = 1.55,
-	offsetBias = 0.03,
-	glareMax = 0.028,
-	mistColor = Color3.fromRGB(190, 196, 202),
-	mistDecay = Color3.fromRGB(148, 154, 160),
-	mistMix = 0.24,
+	densityAdd = 0.22,
+	densityMin = 0.26,
+	densityMax = 0.38,
+	hazeAdd = 1.35,
+	hazeMin = 1.25,
+	hazeMax = 2.1,
+	offsetBias = 0.1,
+	glareMax = 0.055,
+	mistColor = Color3.fromRGB(228, 232, 218),
+	mistDecay = Color3.fromRGB(182, 190, 168),
+	mistMix = 0.16,
 }
 
 type AtmoSnap = {

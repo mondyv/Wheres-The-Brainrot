@@ -342,6 +342,18 @@ function M.resolveLandAtPosition(worldPos: Vector3): number
 	return resolveLandByNearest(worldPos)
 end
 
+--- Highest *xHitbox display luck covering this position (1 if none).
+function M.resolveDisplayLuckAtPosition(worldPos: Vector3): number
+	ensureDiscovery()
+	local best = 1
+	for _, entry in landHitboxes do
+		if entry.part.Parent and isPointWithinLandHitbox(worldPos, entry.part) and entry.displayLuck > best then
+			best = entry.displayLuck
+		end
+	end
+	return best
+end
+
 --- True only when standing inside a land multiplier hitbox (no nearest-land fallback).
 --- Use for tutorial / gate checks where spawn must not count as Land 1.
 function M.isInsideLandHitbox(worldPos: Vector3, land: number?): boolean

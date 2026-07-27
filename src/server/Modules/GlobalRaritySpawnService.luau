@@ -147,19 +147,25 @@ local function isLootableBush(inst: Instance): boolean
 	return BushRootUtil.isBushContainer(inst.Parent)
 end
 
-local function landWeight(land: number): number
+local function landWeight(land: number, displayLuck: number, minDisplayLuck: number): number
 	if land < C.MIN_SPAWN_LAND or land > C.MAX_SPAWN_LAND then
 		return 0
 	end
-	return (C.MAX_SPAWN_LAND - land + 1)
+	if displayLuck < minDisplayLuck then
+		return 0
+	end
+	-- Prefer deeper / higher-luck bushes so godly+secret sit far out.
+	return math.max(1, displayLuck) * (land - C.MIN_SPAWN_LAND + 1)
 end
 
-local cachedSpawnCandidates: { { bush: Instance, weight: number } } = {}
+type SpawnCandidate = { bush: Instance, weight: number, displayLuck: number, land: number }
+
+local cachedSpawnCandidates: { SpawnCandidate } = {}
 local spawnCacheBuiltAt = 0
 local SPAWN_CACHE_TTL = 30
 
-local function buildSpawnBushList(): { { bush: Instance, weight: number } }
-	local out: { { bush: Instance, weight: number } } = {}
+local function buildSpawnBushList(): { SpawnCandidate }
+	local out: { SpawnCandidate } = {}
 	local seen: { [Instance]: boolean } = {}
 	local map = Workspace:FindFirstChild("Map")
 	if not map then
@@ -171,11 +177,15 @@ local function buildSpawnBushList(): { { bush: Instance, weight: number } }
 				if isLootableBush(child) and not seen[child] then
 					seen[child] = true
 					local pos = bushWorldPos(child)
-					-- Use land hitboxes (not Spawn pads) so rare spawns can land on real bushes.
 					local land = LandResolver.resolveLandAtPosition(pos)
-					local w = if typeof(land) == "number" then landWeight(land) else 0
-					if w > 0 then
-						table.insert(out, { bush = child, weight = w })
+					local displayLuck = LandResolver.resolveDisplayLuckAtPosition(pos)
+					if typeof(land) == "number" and land >= C.MIN_SPAWN_LAND and land <= C.MAX_SPAWN_LAND then
+						table.insert(out, {
+							bush = child,
+							weight = 1,
+							displayLuck = displayLuck,
+							land = land,
+						})
 					end
 				end
 			end
@@ -189,14 +199,17 @@ local function refreshSpawnBushCache()
 	spawnCacheBuiltAt = os.clock()
 end
 
-local function collectSpawnBushes(): { { bush: Instance, weight: number } }
+local function collectSpawnBushesForTier(minDisplayLuck: number): { { bush: Instance, weight: number } }
 	if #cachedSpawnCandidates == 0 or (os.clock() - spawnCacheBuiltAt) > SPAWN_CACHE_TTL then
 		refreshSpawnBushCache()
 	end
 	local out: { { bush: Instance, weight: number } } = {}
 	for _, c in cachedSpawnCandidates do
 		if c.bush.Parent and isLootableBush(c.bush) then
-			table.insert(out, c)
+			local w = landWeight(c.land, c.displayLuck, minDisplayLuck)
+			if w > 0 then
+				table.insert(out, { bush = c.bush, weight = w })
+			end
 		end
 	end
 	return out
@@ -334,6 +347,8 @@ local function brainrotIsAvailable(def: any): boolean
 end
 
 local function rollGlobalSpawn(tierId: string): (Instance?, ActiveSpawn?)
+	local tier = C.tierById(tierId)
+	local minLuck = if tier then tier.minDisplayLuck else 1
 	local pool = Brainrots.brainrotsOfRarity(tierId :: any, brainrotIsAvailable)
 	if #pool == 0 then
 		pool = Brainrots.brainrotsOfRarity(tierId :: any, nil)
@@ -344,7 +359,7 @@ local function rollGlobalSpawn(tierId: string): (Instance?, ActiveSpawn?)
 	local pick = pool[math.random(1, #pool)]
 	local mutationId = Brainrots.rollMutation(C.MAX_SPAWN_LAND)
 	local level = Brainrots.rollBushHarvestLevel()
-	local bush = pickWeightedBush(collectSpawnBushes())
+	local bush = pickWeightedBush(collectSpawnBushesForTier(minLuck))
 	if not bush then
 		return nil, nil
 	end
@@ -451,9 +466,7 @@ local function advanceState(state: GlobalState): (boolean, string?)
 		changed = true
 	end
 
-	-- Intervals are multiples of mythic (5/10/15/20m), so several tiers often
-	-- expire together. Collect due tiers and prefer the rarest; never burn a
-	-- full interval just because another marker is already active.
+	-- Prefer rarest due tier. Stagger the others so sign timers don't sync to one clock.
 	local dueTiers: { GlobalRaritySpawnConfig.TierDef } = {}
 	for _, tier in C.TIERS do
 		local endsAt = state.timers[tier.id]
@@ -465,9 +478,10 @@ local function advanceState(state: GlobalState): (boolean, string?)
 	if #dueTiers > 0 then
 		if state.active then
 			local deferTo = math.max(now + 1, state.active.endsAt + 1)
-			for _, tier in dueTiers do
-				if state.timers[tier.id] ~= deferTo then
-					state.timers[tier.id] = deferTo
+			for i, tier in dueTiers do
+				local nextAt = deferTo + (i - 1) * 60
+				if state.timers[tier.id] ~= nextAt then
+					state.timers[tier.id] = nextAt
 					changed = true
 				end
 			end
@@ -481,9 +495,12 @@ local function advanceState(state: GlobalState): (boolean, string?)
 					changed = true
 					spawnedId = tier.id
 					local retryAt = (state.active and state.active.endsAt or now) + 1
+					local stagger = 0
 					for j = 1, #dueTiers do
 						if dueTiers[j].id ~= tier.id then
-							state.timers[dueTiers[j].id] = retryAt
+							stagger += 1
+							-- Keep full intervals staggered instead of stacking on one retry time.
+							state.timers[dueTiers[j].id] = retryAt + (stagger - 1) * 60
 							changed = true
 						end
 					end
@@ -495,8 +512,8 @@ local function advanceState(state: GlobalState): (boolean, string?)
 			else
 				-- Bush/pool not ready — retry soon instead of leaving timers stuck at 0.
 				local retryAt = now + 5
-				for _, tier in dueTiers do
-					state.timers[tier.id] = retryAt
+				for i, tier in dueTiers do
+					state.timers[tier.id] = retryAt + (i - 1) * 5
 					changed = true
 				end
 			end

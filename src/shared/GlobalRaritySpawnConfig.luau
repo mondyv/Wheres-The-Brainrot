@@ -1,7 +1,7 @@
 -- [ACTIVE] GlobalRaritySpawnConfig
 --[[
 	Per-server rarity spawn timers — each new server starts its own countdown.
-	Mythical 5:00, Legendary 10:00, Godly 20:00, Secret 30:00.
+	Mythical 10:00, Legendary 20:00, Godly 30:00, Secret 40:00.
 ]]
 
 local M = {}
@@ -15,46 +15,52 @@ export type TierDef = {
 	timerRowName: string,
 	timerRowAliases: { string },
 	spawnMessage: string,
+	-- Sign spawns only on bushes inside hitboxes with at least this display luck (e.g. 1250x).
+	minDisplayLuck: number,
 }
 
 M.TIERS = {
 	{
 		id = "mythic",
-		intervalSec = 300,
+		intervalSec = 600,
 		displayName = "Mythical",
 		timerRowName = "Mythical",
 		timerRowAliases = { "Mythical" },
 		spawnMessage = "A Mythical brainrot has spawned!",
+		minDisplayLuck = 150,
 	},
 	{
 		id = "legendary",
-		intervalSec = 600,
+		intervalSec = 1200,
 		displayName = "Legendary",
 		timerRowName = "Legendary",
 		timerRowAliases = { "Legendary" },
 		spawnMessage = "A Legendary brainrot has spawned!",
+		minDisplayLuck = 450,
 	},
 	{
 		id = "brainrot god",
-		intervalSec = 1200,
+		intervalSec = 1800,
 		displayName = "GODLY",
 		timerRowName = "BrainrotGod",
 		timerRowAliases = { "BrainrotGod", "Godly", "GODLY" },
 		spawnMessage = "A GODLY brainrot has spawned!",
+		minDisplayLuck = 1000,
 	},
 	{
 		id = "secret",
-		intervalSec = 1800,
+		intervalSec = 2400,
 		displayName = "Secret",
 		timerRowName = "Secret",
 		timerRowAliases = { "Secret" },
 		spawnMessage = "A Secret brainrot has spawned!",
+		minDisplayLuck = 1000,
 	},
 } :: { TierDef }
 
 M.MARKER_DURATION_SEC = 120
 M.MIN_SPAWN_LAND = 3
-M.MAX_SPAWN_LAND = 8
+M.MAX_SPAWN_LAND = 10
 
 M.SPAWN_CMD_TOPIC = "GlobalRaritySpawnCmd_v1"
 

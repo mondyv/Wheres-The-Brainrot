@@ -2766,7 +2766,11 @@ Players.PlayerRemoving:Connect(function(p)
 		charRemovingConns[p] = nil
 	end
 	-- Defer inventory wipe so PlayerDataService can export on PlayerRemoving first.
+	-- Skip during Roblox Restart-all-servers so BindToClose can still re-export if needed.
 	task.defer(function()
+		if game:GetAttribute("ServerClosing") == true then
+			return
+		end
 		brainrotInventories[p] = nil
 		brainrotParkedInExpandedBackpack[p] = nil
 		brainrotHotbarSlots[p] = nil

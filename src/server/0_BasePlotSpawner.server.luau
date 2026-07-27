@@ -452,7 +452,11 @@ Players.PlayerRemoving:Connect(function(player: Player)
 	local slot = playerToSlot[player]
 	playerToSlot[player] = nil
 	-- Defer plot teardown so PlayerDataService can export stand brainrots before models are destroyed.
+	-- Skip during Roblox Restart-all-servers so BindToClose saves still see stands.
 	task.defer(function()
+		if game:GetAttribute("ServerClosing") == true then
+			return
+		end
 		player:SetAttribute("AssignedPlotSlot", nil)
 		if typeof(slot) ~= "number" then
 			return

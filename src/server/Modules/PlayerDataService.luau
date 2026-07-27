@@ -54,8 +54,11 @@ local sessionCanSave: { [Player]: boolean } = {}
 local lastGoodPayload: { [number]: PlayerDataSchema.PlayerSaveData } = {}
 -- Set true only for intentional wipe (resetdata / admin reset).
 local allowEmptyOverwrite: { [Player]: boolean } = {}
+-- Roblox Creator "Restart / shut down all servers" — BindToClose + mass leaves.
+local serverClosing = false
 local SAVE_ATTEMPTS = 4
 local SAVE_RETRY_WAIT = 0.75
+local BIND_TO_CLOSE_BUDGET_SEC = 25
 
 local function getInternalFolder(): Folder
 	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
@@ -726,7 +729,122 @@ local function writeBackup(player: Player, payload: PlayerDataSchema.PlayerSaveD
 	end
 end
 
-function M.savePlayerData(player: Player): boolean
+local function shallowCopyEntries(list: { any }): { any }
+	local out = table.create(#list)
+	for i, entry in list do
+		out[i] = entry
+	end
+	return out
+end
+
+type MergeOpts = {
+	forceEmpty: boolean,
+	restoreEmptyInventory: boolean,
+	restoreEmptyStands: boolean,
+}
+
+-- Merge a live snapshot against a prior good profile (session or DataStore).
+-- Protects against leave/BindToClose races after inventory/plot teardown yields.
+local function mergeAgainstPrior(
+	payload: PlayerDataSchema.PlayerSaveData,
+	prior: PlayerDataSchema.PlayerSaveData,
+	opts: MergeOpts
+): PlayerDataSchema.PlayerSaveData
+	if opts.forceEmpty then
+		return payload
+	end
+
+	local restoredInv = false
+	local restoredStands = false
+
+	if opts.restoreEmptyInventory and #payload.inventory == 0 and #prior.inventory > 0 then
+		warn("[PlayerDataService] refusing inventory wipe - keeping prior inventory")
+		payload.inventory = shallowCopyEntries(prior.inventory) :: any
+		payload.parkedSlots = shallowCopyEntries(prior.parkedSlots) :: any
+		payload.equipSlot = prior.equipSlot
+		restoredInv = true
+	end
+
+	if opts.restoreEmptyStands and #payload.stands == 0 and #prior.stands > 0 then
+		warn("[PlayerDataService] refusing stands wipe - keeping prior stands")
+		payload.stands = shallowCopyEntries(prior.stands) :: any
+		restoredStands = true
+	end
+
+	if payload.rebirthCount < prior.rebirthCount then
+		warn("[PlayerDataService] refusing rebirth downgrade", payload.rebirthCount, "<", prior.rebirthCount)
+		payload.rebirthCount = prior.rebirthCount
+	end
+	if payload.baseFloorLevel < prior.baseFloorLevel then
+		warn("[PlayerDataService] refusing floor downgrade", payload.baseFloorLevel, "<", prior.baseFloorLevel)
+		payload.baseFloorLevel = prior.baseFloorLevel
+	end
+	if payload.powerLevel < prior.powerLevel then
+		payload.powerLevel = prior.powerLevel
+	end
+	if payload.ropeLevel < prior.ropeLevel then
+		payload.ropeLevel = prior.ropeLevel
+	end
+	if payload.carryLevel < prior.carryLevel then
+		payload.carryLevel = prior.carryLevel
+	end
+	if payload.totalPlayTimeSeconds < prior.totalPlayTimeSeconds then
+		payload.totalPlayTimeSeconds = prior.totalPlayTimeSeconds
+	end
+
+	-- Cash → 0 while restoring wiped inventory/stands is almost always a shutdown race.
+	if payload.cash <= 0 and prior.cash > 0 and (restoredInv or restoredStands or serverClosing) then
+		warn("[PlayerDataService] refusing cash wipe during restore/shutdown", prior.cash)
+		payload.cash = prior.cash
+	end
+
+	if typeof(prior.giftedGamepasses) == "table" then
+		if typeof(payload.giftedGamepasses) ~= "table" then
+			payload.giftedGamepasses = {}
+		end
+		for id, owned in prior.giftedGamepasses do
+			if owned == true then
+				payload.giftedGamepasses[id] = true
+			end
+		end
+	end
+	if typeof(prior.storePurchases) == "table" then
+		if typeof(payload.storePurchases) ~= "table" then
+			payload.storePurchases = {}
+		end
+		for id, count in prior.storePurchases do
+			local cur = payload.storePurchases[id]
+			local priorN = if typeof(count) == "number" then count else 0
+			local curN = if typeof(cur) == "number" then cur else 0
+			if priorN > curN then
+				payload.storePurchases[id] = priorN
+			end
+		end
+	end
+	if #payload.indexUnlocks < #prior.indexUnlocks then
+		local seen: { [string]: boolean } = {}
+		for _, key in payload.indexUnlocks do
+			seen[key] = true
+		end
+		for _, key in prior.indexUnlocks do
+			if not seen[key] then
+				table.insert(payload.indexUnlocks, key)
+				seen[key] = true
+			end
+		end
+		table.sort(payload.indexUnlocks)
+	end
+	if prior.tutorialCompleted and not payload.tutorialCompleted then
+		payload.tutorialCompleted = true
+	end
+	if prior.tutorialCashGranted and not payload.tutorialCashGranted then
+		payload.tutorialCashGranted = true
+	end
+
+	return payload
+end
+
+function M.savePlayerData(player: Player, precollected: PlayerDataSchema.PlayerSaveData?): boolean
 	if not persistenceEnabled or not playerStore then
 		return false
 	end
@@ -735,7 +853,10 @@ function M.savePlayerData(player: Player): boolean
 		return false
 	end
 
-	-- Wait out a concurrent autosave instead of silently skipping the leave/shutdown save.
+	-- Snapshot BEFORE waiting: unbind/BindToClose often yield, and deferred leave
+	-- teardown (inventory wipe / plot destroy) runs in that gap.
+	local payload = precollected or M.collectSaveData(player)
+
 	local waitDeadline = os.clock() + 12
 	while saveInFlight[player] and os.clock() < waitDeadline do
 		task.wait(0.1)
@@ -746,51 +867,79 @@ function M.savePlayerData(player: Player): boolean
 
 	saveInFlight[player] = true
 	local key = tostring(player.UserId)
-	local payload = M.collectSaveData(player)
 	local prev = lastGoodPayload[player.UserId]
 	local forceEmpty = allowEmptyOverwrite[player] == true
 
-	-- Never overwrite a rich profile with an empty inventory/stands snapshot unless reset.
+	local brainrotCount = player:GetAttribute("BrainrotCount")
+	local carryCount = player:GetAttribute("BrainrotCarryCount")
+	local stillHasItems = (typeof(brainrotCount) == "number" and brainrotCount > 0)
+		or (typeof(carryCount) == "number" and carryCount > 0)
+	local hasPlot = typeof(player:GetAttribute("AssignedPlotSlot")) == "number"
+	-- Roblox "Restart all servers": always prefer prior content over empty exports.
+	local restoreEmptyInventory = forceEmpty == false and (serverClosing or stillHasItems)
+	local restoreEmptyStands = forceEmpty == false and (serverClosing or hasPlot)
+	-- Both empty vs a rich prior = classic leave teardown race (even if attrs already cleared).
+	if
+		not forceEmpty
+		and prev
+		and #payload.inventory == 0
+		and #payload.stands == 0
+		and (#prev.inventory > 0 or #prev.stands > 0)
+	then
+		restoreEmptyInventory = true
+		restoreEmptyStands = true
+	end
+
+	local mergeOpts: MergeOpts = {
+		forceEmpty = forceEmpty,
+		restoreEmptyInventory = restoreEmptyInventory,
+		restoreEmptyStands = restoreEmptyStands,
+	}
+
 	if not forceEmpty and prev then
-		local brainrotCount = player:GetAttribute("BrainrotCount")
-		local carryCount = player:GetAttribute("BrainrotCarryCount")
-		local stillHasItems = (typeof(brainrotCount) == "number" and brainrotCount > 0)
-			or (typeof(carryCount) == "number" and carryCount > 0)
-		if #payload.inventory == 0 and #prev.inventory > 0 and stillHasItems then
-			warn("[PlayerDataService] refusing inventory wipe for", player.Name, "- keeping previous inventory")
-			payload.inventory = prev.inventory
-			payload.parkedSlots = prev.parkedSlots
-			payload.equipSlot = prev.equipSlot
-		end
-		if #payload.stands == 0 and #prev.stands > 0 and typeof(player:GetAttribute("AssignedPlotSlot")) == "number" then
-			warn("[PlayerDataService] refusing stands wipe for", player.Name, "- keeping previous stands")
-			payload.stands = prev.stands
-		end
-		-- Simultaneous empty inventory+stands vs prior content = export race on leave/shutdown.
-		if
-			#payload.inventory == 0
-			and #payload.stands == 0
-			and (#prev.inventory > 0 or #prev.stands > 0)
-		then
-			warn("[PlayerDataService] refusing full wipe snapshot for", player.Name)
-			if #prev.inventory > 0 then
-				payload.inventory = prev.inventory
-				payload.parkedSlots = prev.parkedSlots
-				payload.equipSlot = prev.equipSlot
-			end
-			if #prev.stands > 0 then
-				payload.stands = prev.stands
-			end
-		end
+		payload = mergeAgainstPrior(payload, prev, mergeOpts)
 	end
 
 	writeBackup(player, payload)
 
 	local ok = false
 	local err: any = nil
+	local written: PlayerDataSchema.PlayerSaveData? = nil
 	for attempt = 1, SAVE_ATTEMPTS do
 		ok, err = pcall(function()
-			playerStore:SetAsync(key, payload)
+			playerStore:UpdateAsync(key, function(old)
+				if forceEmpty then
+					written = payload
+					return payload
+				end
+				local oldNorm = if typeof(old) == "table" then normalizeLoadedData(old) else nil
+				local toWrite = payload
+				if oldNorm then
+					-- Against DataStore: on shutdown always refuse empty overwrites of rich profiles.
+					-- Otherwise only refuse when this session still believes the player owns that content.
+					local dsOpts: MergeOpts = {
+						forceEmpty = false,
+						restoreEmptyInventory = serverClosing or restoreEmptyInventory,
+						restoreEmptyStands = serverClosing or restoreEmptyStands,
+					}
+					toWrite = mergeAgainstPrior(payload, oldNorm, dsOpts)
+					if
+						#toWrite.inventory == 0
+						and #oldNorm.inventory > 0
+						and #toWrite.stands == 0
+						and #oldNorm.stands > 0
+						and toWrite.rebirthCount <= oldNorm.rebirthCount
+						and toWrite.cash < oldNorm.cash
+						and oldNorm.cash > 0
+					then
+						warn("[PlayerDataService] UpdateAsync abort destructive overwrite for", player.Name)
+						written = nil
+						return nil
+					end
+				end
+				written = toWrite
+				return toWrite
+			end)
 		end)
 		if ok then
 			break
@@ -807,26 +956,53 @@ function M.savePlayerData(player: Player): boolean
 		return false
 	end
 
-	lastGoodPayload[player.UserId] = payload
-	player:SetAttribute(PLAY_TIME_ATTR, payload.totalPlayTimeSeconds)
-	sessionPlayBase[player] = payload.totalPlayTimeSeconds
-	sessionJoinAt[player] = os.clock()
+	-- UpdateAsync returned nil → destructive write aborted; DataStore unchanged.
+	if written == nil then
+		return true
+	end
+
+	lastGoodPayload[player.UserId] = written
+	if player.Parent then
+		player:SetAttribute(PLAY_TIME_ATTR, written.totalPlayTimeSeconds)
+		sessionPlayBase[player] = written.totalPlayTimeSeconds
+		sessionJoinAt[player] = os.clock()
+	end
 	return true
 end
 
 function M.saveAllOnlinePlayers(): number
-	local saved = 0
-	local list = Players:GetPlayers()
-	for i, player in list do
+	serverClosing = true
+	pcall(function()
+		game:SetAttribute("ServerClosing", true)
+	end)
+
+	-- Collect every snapshot synchronously first (no yields) so mass kicks / deferred
+	-- teardowns cannot empty exports mid-loop.
+	local snapshots: { [Player]: PlayerDataSchema.PlayerSaveData } = {}
+	for _, player in Players:GetPlayers() do
 		if player:GetAttribute(LOADED_ATTR) == true and sessionCanSave[player] ~= false then
-			if M.savePlayerData(player) then
+			snapshots[player] = M.collectSaveData(player)
+		end
+	end
+
+	local saved = 0
+	local pending = 0
+	for player, snapshot in snapshots do
+		pending += 1
+		task.spawn(function()
+			if M.savePlayerData(player, snapshot) then
 				saved += 1
 			end
-		end
-		-- Stagger to stay under DataStore budget during mass shutdown.
-		if i % 2 == 0 then
-			task.wait(0.35)
-		end
+			pending -= 1
+		end)
+	end
+
+	local deadline = os.clock() + BIND_TO_CLOSE_BUDGET_SEC
+	while pending > 0 and os.clock() < deadline do
+		task.wait(0.1)
+	end
+	if pending > 0 then
+		warn("[PlayerDataService] BindToClose timed out with", pending, "saves still pending")
 	end
 	return saved
 end
@@ -1020,14 +1196,18 @@ function M.bindPlayer(player: Player)
 end
 
 function M.unbindPlayer(player: Player)
-	-- If an autosave is mid-flight, wait for it to finish so the final leave-save
-	-- isn't silently skipped (savePlayerData returns false while saveInFlight is set).
+	-- Collect BEFORE any yield so deferred BushHarvest/plot teardown cannot empty exports.
+	local snapshot: PlayerDataSchema.PlayerSaveData? = nil
+	if sessionCanSave[player] ~= false and persistenceEnabled and playerStore then
+		snapshot = M.collectSaveData(player)
+	end
+
 	local deadline = os.clock() + 12
 	while saveInFlight[player] and os.clock() < deadline do
 		task.wait(0.1)
 	end
-	if sessionCanSave[player] ~= false then
-		M.savePlayerData(player)
+	if snapshot then
+		M.savePlayerData(player, snapshot)
 	end
 	sessionJoinAt[player] = nil
 	sessionPlayBase[player] = nil
@@ -1084,7 +1264,8 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 game:BindToClose(function()
-	-- Mass-save everyone still in the server before Roblox tears the instance down.
+	-- Roblox Creator "Restart / shut down all servers" invokes BindToClose on each
+	-- instance. Snapshot+save everyone before the process is killed (~30s budget).
 	M.saveAllOnlinePlayers()
 end)
 

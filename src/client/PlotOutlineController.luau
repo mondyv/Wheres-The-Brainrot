@@ -1,9 +1,9 @@
 -- [ACTIVE] PlotOutlineController
 --[[
-	While the local player is in the shared safezone, THEIR owned plot gets a
-	white Highlight outline that wraps plot meshes (not a giant SelectionBox).
-	Fades out as they walk onto the pad. Same fade for a clean client "Your Plot"
-	billboard — Studio PlotGUI markers stay disabled (they look blown-out).
+	Safezone only, YOUR plot only:
+	• Highlight outline wrapping the owned plot meshes (fades as you approach).
+	• Studio PlotGUI "Your Plot" + arrow — keep the authored look, soft size lock,
+	  same distance fade. Never show on other players' bases.
 ]]
 
 local Players = game:GetService("Players")
@@ -14,7 +14,6 @@ local Workspace = game:GetService("Workspace")
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
-local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local player = Players.LocalPlayer
 
@@ -23,21 +22,18 @@ local FADE_START_DIST = 72
 local FADE_END_DIST = 18
 local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
 local OUTLINE_FAR_TRANSPARENCY = 0.35
--- Occluded wraps meshes without AlwaysOnTop GPU cost on every plot part.
-local MARKER_BILLBOARD_SIZE = UDim2.fromOffset(90, 36)
-local MARKER_TEXT_SIZE = 16
-local MARKER_STUDS_OFFSET = Vector3.new(0, 10, 0)
+-- Soft lock so PlotGUI never blows up; matches the good Studio look (~80–100px).
+local MARKER_SIZE = UDim2.fromOffset(88, 72)
+local MARKER_MAX_DISTANCE = 160
 
 local PlotOutlineController = {}
 
 local plotHighlight: Highlight? = nil
-local markerBb: BillboardGui? = nil
-local markerLabel: TextLabel? = nil
-local markerAdornee: BasePart? = nil
 local pollConn: RBXScriptConnection? = nil
 local accum = 0
 local cachedPlot: Instance? = nil
 local cachedCenter: Vector3? = nil
+local cachedMarkers: { LayerCollector } = {}
 local wired = false
 
 local function isOwnedByLocalPlayer(plot: Instance): boolean
@@ -52,16 +48,7 @@ local function destroyOutline()
 	end
 end
 
-local function destroyMarker()
-	if markerBb then
-		markerBb:Destroy()
-		markerBb = nil
-	end
-	markerLabel = nil
-	markerAdornee = nil
-end
-
-local function isStudioOwnershipMarker(inst: Instance, plotRoot: Instance): boolean
+local function isYourPlotMarker(inst: Instance, plotRoot: Instance): boolean
 	local x: Instance? = inst
 	while x and x ~= plotRoot do
 		if x.Name == "PlotGUI" then
@@ -90,101 +77,76 @@ local function isStudioOwnershipMarker(inst: Instance, plotRoot: Instance): bool
 	return false
 end
 
--- Studio markers look bad when scaled — keep them permanently off; we draw our own.
-local function suppressStudioMarkers(plot: Instance?)
+local function refreshMarkers(plot: Instance?)
+	table.clear(cachedMarkers)
 	if not plot then
 		return
 	end
 	for _, d in ipairs(plot:GetDescendants()) do
-		if (d:IsA("BillboardGui") or d:IsA("SurfaceGui")) and isStudioOwnershipMarker(d, plot) then
-			(d :: LayerCollector).Enabled = false
+		if (d:IsA("BillboardGui") or d:IsA("SurfaceGui")) and isYourPlotMarker(d, plot) then
+			table.insert(cachedMarkers, d :: LayerCollector)
 		end
 	end
 end
 
-local function resolveMarkerAdornee(plot: Instance): BasePart?
-	local story1 = PlotPaths.firstStoryFolder(plot)
-	local searchRoot: Instance = if story1 then story1 else plot
-	for _, d in ipairs(searchRoot:GetDescendants()) do
-		if d:IsA("BasePart") then
-			local n = string.gsub(string.lower(d.Name), "%s+", "")
-			if n == "name" or string.find(n, "plotusername", 1, true) or n == "guipart" then
-				return d
-			end
-		end
-	end
-	if plot:IsA("Model") then
-		local m = plot :: Model
-		if m.PrimaryPart then
-			return m.PrimaryPart
-		end
-	end
-	return plot:FindFirstChildWhichIsA("BasePart", true)
-end
-
-local function ensureMarker(plot: Instance): BillboardGui?
-	local adornee = resolveMarkerAdornee(plot)
-	if not adornee then
-		return nil
-	end
-
-	local bb = markerBb
-	if not bb or not bb.Parent or markerAdornee ~= adornee then
-		if bb then
-			bb:Destroy()
-		end
-		bb = Instance.new("BillboardGui")
-		bb.Name = "YourPlotMarker"
+local function lockMarkerLook(gui: LayerCollector)
+	if gui:IsA("BillboardGui") then
+		local bb = gui :: BillboardGui
+		bb.Size = MARKER_SIZE
+		bb.MaxDistance = MARKER_MAX_DISTANCE
 		bb.AlwaysOnTop = true
 		bb.LightInfluence = 0
-		bb.Size = MARKER_BILLBOARD_SIZE
-		bb.StudsOffset = MARKER_STUDS_OFFSET
-		bb.MaxDistance = 160
-		bb.Enabled = false
-		bb.Adornee = adornee
-		bb.Parent = Workspace.CurrentCamera or player:FindFirstChildOfClass("PlayerGui")
-
-		local label = Instance.new("TextLabel")
-		label.Name = "Label"
-		label.BackgroundTransparency = 1
-		label.Size = UDim2.fromScale(1, 1)
-		label.Text = "Your Plot"
-		label.TextColor3 = Color3.fromRGB(255, 255, 255)
-		label.TextStrokeColor3 = Color3.fromRGB(20, 20, 30)
-		label.TextStrokeTransparency = 0.35
-		label.TextScaled = false
-		label.TextSize = MARKER_TEXT_SIZE
-		label.Font = Enum.Font.GothamBold
-		UiFonts.applyBodyLabel(label, MARKER_TEXT_SIZE, 10)
-		label.Parent = bb
-
-		markerBb = bb
-		markerLabel = label
-		markerAdornee = adornee
+		-- Strip scale hacks from earlier passes so Studio art stays crisp.
+		local sc = bb:FindFirstChild("PlotMarkerScaleCap")
+		if sc then
+			sc:Destroy()
+		end
+		for _, d in ipairs(bb:GetDescendants()) do
+			local bad = d:FindFirstChild("PlotMarkerScaleCap")
+			if bad then
+				bad:Destroy()
+			end
+			if d:IsA("UIScale") and d.Name == "PlotMarkerScaleCap" then
+				d:Destroy()
+			end
+		end
+	elseif gui:IsA("SurfaceGui") then
+		-- Prefer billboard PlotGUI; keep SurfaceGui markers off (they look wrong up close).
+		(gui :: SurfaceGui).Enabled = false
 	end
-
-	return bb
 end
 
 local function applyMarkerFade(transparency: number, visible: boolean)
-	local bb = markerBb
-	local label = markerLabel
-	if not bb or not label then
-		return
-	end
 	if visible and (not cachedPlot or not isOwnedByLocalPlayer(cachedPlot)) then
 		visible = false
 		transparency = 1
 	end
-	bb.Enabled = visible
-	if not visible then
-		return
+	for _, gui in ipairs(cachedMarkers) do
+		if not gui.Parent then
+			continue
+		end
+		if gui:IsA("SurfaceGui") then
+			gui.Enabled = false
+			continue
+		end
+		lockMarkerLook(gui)
+		gui.Enabled = visible
+		if not visible then
+			continue
+		end
+		for _, d in ipairs(gui:GetDescendants()) do
+			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+				local img = d :: ImageLabel
+				img.ImageTransparency = transparency
+			elseif d:IsA("TextLabel") or d:IsA("TextButton") then
+				local text = d :: TextLabel
+				text.TextTransparency = transparency
+				text.TextStrokeTransparency = math.clamp(transparency + 0.2, 0, 1)
+			end
+		end
 	end
-	label.TextTransparency = transparency
-	label.TextStrokeTransparency = math.clamp(transparency + 0.25, 0, 1)
 end
 
--- Highlight wraps each mesh silhouette on the owned plot only.
 local function ensureOutline(plot: Instance): Highlight?
 	local hl = plotHighlight
 	if not hl or not hl.Parent or hl.Adornee ~= plot then
@@ -229,16 +191,15 @@ local function refreshCachedPlot()
 		plot = nil
 	end
 	if cachedPlot ~= plot then
+		applyMarkerFade(1, false)
 		destroyOutline()
-		destroyMarker()
 	end
 	cachedPlot = plot
 	cachedCenter = if plot then resolvePlotCenter(plot) else nil
-	if plot then
-		suppressStudioMarkers(plot)
-	else
+	refreshMarkers(plot)
+	if not plot then
 		destroyOutline()
-		destroyMarker()
+		applyMarkerFade(1, false)
 	end
 end
 
@@ -272,12 +233,15 @@ local function tickOutline()
 
 	if not cachedPlot or not cachedPlot.Parent or not isOwnedByLocalPlayer(cachedPlot) then
 		refreshCachedPlot()
+	elseif #cachedMarkers == 0 then
+		refreshMarkers(cachedPlot)
 	end
+
 	local plot = cachedPlot
 	local center = cachedCenter
 	if not plot or not center or not isOwnedByLocalPlayer(plot) then
 		destroyOutline()
-		destroyMarker()
+		applyMarkerFade(1, false)
 		return
 	end
 
@@ -285,8 +249,6 @@ local function tickOutline()
 	if not hrp or not hrp:IsA("BasePart") then
 		return
 	end
-
-	suppressStudioMarkers(plot)
 
 	local dist = xzDist(hrp.Position, center)
 	local transparency = outlineTransparencyForDistance(dist)
@@ -298,10 +260,6 @@ local function tickOutline()
 		hl.OutlineTransparency = transparency
 		hl.OutlineColor = OUTLINE_COLOR
 		hl.FillTransparency = 1
-	end
-
-	if visible then
-		ensureMarker(plot)
 	end
 	applyMarkerFade(transparency, visible)
 end

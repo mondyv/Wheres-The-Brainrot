@@ -152,16 +152,39 @@ function M.firstStoryFolder(plot: Instance): Instance?
 	return plot:FindFirstChild("1st Story")
 end
 
-function M.findPlotForAssignedSlot(player: Player): Instance?
-	local slot = player:GetAttribute("AssignedPlotSlot")
-	if typeof(slot) ~= "number" then
-		return nil
-	end
+function M.findPlotOwnedByPlayer(player: Player): Instance?
 	local folder = M.findSpawnAndBasesFolder()
 	if not folder then
 		return nil
 	end
-	return folder:FindFirstChild("Plot_" .. tostring(math.floor(slot)))
+	for _, ch in ipairs(folder:GetChildren()) do
+		if M.isPlotRoot(ch) and ch:GetAttribute("PlotOwnerUserId") == player.UserId then
+			return ch
+		end
+	end
+	return nil
+end
+
+function M.findPlotForAssignedSlot(player: Player): Instance?
+	local folder = M.findSpawnAndBasesFolder()
+	if not folder then
+		return nil
+	end
+
+	local slot = player:GetAttribute("AssignedPlotSlot")
+	if typeof(slot) == "number" then
+		local bySlot = folder:FindFirstChild("Plot_" .. tostring(math.floor(slot)))
+		if bySlot and M.isPlotRoot(bySlot) then
+			local uid = bySlot:GetAttribute("PlotOwnerUserId")
+			-- Prefer assigned slot only when it is actually yours (or still unclaimed).
+			if typeof(uid) ~= "number" or uid == player.UserId then
+				return bySlot
+			end
+		end
+	end
+
+	-- Slot stale / occupied by someone else — fall back to PlotOwnerUserId.
+	return M.findPlotOwnedByPlayer(player)
 end
 
 return M

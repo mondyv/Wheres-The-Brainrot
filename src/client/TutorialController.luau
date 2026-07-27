@@ -59,6 +59,7 @@ local worldArrowBb: BillboardGui? = nil
 local worldArrowImg: ImageLabel? = nil
 local arrowAnimConn: RBXScriptConnection? = nil
 local worldHighlight: Highlight? = nil
+local worldOutlineBox: SelectionBox? = nil
 local uiPointer: ImageLabel? = nil
 local uiPointerBb: BillboardGui? = nil
 local pointerGui: ScreenGui? = nil
@@ -595,6 +596,28 @@ local function clearWorldHighlight()
 		worldHighlight:Destroy()
 		worldHighlight = nil
 	end
+	if worldOutlineBox then
+		worldOutlineBox:Destroy()
+		worldOutlineBox = nil
+	end
+end
+
+local function resolveOutlineFloorPart(root: Instance): BasePart?
+	local story1 = PlotPaths.firstStoryFolder(root)
+	local floor = story1 and (story1:FindFirstChild("Floor") or story1:FindFirstChild("floor"))
+	if floor and floor:IsA("BasePart") then
+		return floor
+	end
+	if floor then
+		local part = floor:FindFirstChildWhichIsA("BasePart", true)
+		if part then
+			return part
+		end
+	end
+	if root:IsA("BasePart") then
+		return root
+	end
+	return root:FindFirstChildWhichIsA("BasePart", true)
 end
 
 local function outlineWorld(adornee: Instance?)
@@ -602,6 +625,32 @@ local function outlineWorld(adornee: Instance?)
 	if not adornee or not adornee.Parent then
 		return
 	end
+
+	-- Full plot models are too large for Highlight (often invisible). Use a thick
+	-- SelectionBox on the floor pad instead — same approach as PlotOutlineController.
+	local useBox = PlotPaths.isPlotRoot(adornee)
+		or (adornee:IsA("Model") and adornee:FindFirstChild("1 Story") ~= nil)
+		or (adornee:IsA("Model") and adornee:FindFirstChild("1st Story") ~= nil)
+
+	if useBox then
+		local floorPart = resolveOutlineFloorPart(adornee)
+		if not floorPart then
+			return
+		end
+		local box = Instance.new("SelectionBox")
+		box.Name = "TutorialWorldOutlineBox"
+		box.Color3 = Color3.fromRGB(255, 236, 70)
+		box.SurfaceColor3 = Color3.fromRGB(255, 236, 70)
+		box.SurfaceTransparency = 0.85
+		box.LineThickness = 0.18
+		box.Transparency = 0.05
+		box.Visible = true
+		box.Adornee = floorPart
+		box.Parent = Workspace.CurrentCamera or adornee
+		worldOutlineBox = box
+		return
+	end
+
 	local hl = Instance.new("Highlight")
 	hl.Name = "TutorialWorldOutline"
 	hl.FillTransparency = 1

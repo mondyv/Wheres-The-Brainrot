@@ -87,6 +87,42 @@ local function isPlotGuiRelated(inst: Instance, plotRoot: Instance): boolean
 	return false
 end
 
+local function isUnderPlotUsername(inst: Instance, plotRoot: Instance): boolean
+	local x: Instance? = inst
+	while x and x ~= plotRoot do
+		if x.Name == "PlotUsername" or string.gsub(string.lower(x.Name), "%s+", "") == "plotusername" then
+			return true
+		end
+		x = x.Parent
+	end
+	return false
+end
+
+-- Studio "Your Plot" markers live under PlotGUI / PlotUsername; never show on others' bases.
+local function isYourPlotOwnershipMarker(inst: Instance, plotRoot: Instance): boolean
+	if isPlotGuiRelated(inst, plotRoot) then
+		return true
+	end
+	if inst:IsA("BillboardGui") and isUnderPlotUsername(inst, plotRoot) then
+		return true
+	end
+	local ak = string.gsub(string.lower(inst.Name), "[^a-z0-9]", "")
+	if string.find(ak, "yourplot", 1, true) or ak == "plotmarker" or ak == "ownermarker" then
+		return true
+	end
+	if inst:IsA("BillboardGui") or inst:IsA("SurfaceGui") then
+		for _, d in ipairs(inst:GetDescendants()) do
+			if d:IsA("TextLabel") or d:IsA("TextButton") then
+				local t = string.gsub(string.lower(d.Text), "%s+", "")
+				if string.find(t, "yourplot", 1, true) then
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
 local function isStandDisplayModelAncestor(inst: Instance, plotRoot: Instance): boolean
 	local x: Instance? = inst
 	while x and x ~= plotRoot do
@@ -101,8 +137,13 @@ end
 local function isProtectedPlotUi(inst: Instance, plotRoot: Instance): boolean
 	local x: Instance? = inst
 	while x and x ~= plotRoot do
-		if x.Name == "LevelPanel" or x.Name == "Button" or x.Name == "PlotUsername" then
+		if x.Name == "LevelPanel" or x.Name == "Button" then
 			return true
+		end
+		-- PlotUsername SurfaceGui (name plate) stays visible on claimed plots;
+		-- ownership Billboards under it are handled separately as mine-only.
+		if x.Name == "PlotUsername" or string.gsub(string.lower(x.Name), "%s+", "") == "plotusername" then
+			return inst:IsA("SurfaceGui")
 		end
 		if x:IsA("Model") then
 			local ak = string.gsub(string.lower(x.Name), "[^a-z0-9]", "")
@@ -113,6 +154,11 @@ local function isProtectedPlotUi(inst: Instance, plotRoot: Instance): boolean
 		x = x.Parent
 	end
 	return false
+end
+
+local function isMyPlot(plotRoot: Instance): boolean
+	local uid = plotRoot:GetAttribute("PlotOwnerUserId")
+	return typeof(uid) == "number" and uid == player.UserId
 end
 
 local function setLayerCollectorViewOnly(d: LayerCollector)
@@ -170,7 +216,7 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 	end
 
 	if d:IsA("BillboardGui") then
-		if isPlotGuiRelated(d, plotRoot) then
+		if isYourPlotOwnershipMarker(d, plotRoot) then
 			d.Enabled = mine
 			if mine then
 				d.MaxDistance = PLOT_GUI_MAX_DISTANCE
@@ -187,7 +233,7 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 			d.MaxDistance = PLOT_GUI_OTHER_MAX_DISTANCE
 		end
 	elseif d:IsA("SurfaceGui") then
-		if isPlotGuiRelated(d, plotRoot) then
+		if isYourPlotOwnershipMarker(d, plotRoot) then
 			d.Enabled = mine
 		elseif isProtectedPlotUi(d, plotRoot) then
 			d.Enabled = true
@@ -215,8 +261,7 @@ local rebuildPlotGuiCache: (Instance) -> ()
 local applyPlotMarker: (Instance) -> ()
 
 applyPlotMarker = function(plotRoot: Instance)
-	local uid = plotRoot:GetAttribute("PlotOwnerUserId")
-	local mine = typeof(uid) == "number" and uid == player.UserId
+	local mine = isMyPlot(plotRoot)
 	local unclaimed = plotIsUnclaimed(plotRoot)
 	local list = plotLayerCollectors[plotRoot]
 	if not list then

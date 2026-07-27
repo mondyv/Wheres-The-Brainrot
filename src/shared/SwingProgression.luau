@@ -1,7 +1,10 @@
 -- [ACTIVE] SwingProgression
 -- Unified swing upgrade curves: one progression factor drives power, speed, zip, and launch.
+-- Soft caps shape the early curve; levels past the soft cap keep growing (no hard power freeze).
 local M = {}
 
+-- Soft reference levels for the early curve (feel through mid-game).
+-- Past these, progressT continues to grow so high upgrades still throw farther / reach more.
 M.POWER_MAX_LEVEL = 300
 M.ROPE_MAX_LEVEL = 100
 
@@ -15,21 +18,37 @@ local function floorLevel(n: number): number
 	return math.max(0, math.floor(n))
 end
 
--- Early levels matter more; late levels soften toward the cap (no flat early grind).
-function M.progressT(level: number, maxLevel: number): number
-	local cap = math.max(1, maxLevel)
-	local linear = math.clamp(floorLevel(level) / cap, 0, 1)
+-- Early levels matter more; past softCap, keep growing with mild diminishing returns (never flat).
+function M.progressT(level: number, softCap: number): number
+	local cap = math.max(1, softCap)
+	local lv = floorLevel(level)
+	local linear = math.clamp(lv / cap, 0, 1)
 	local curved = linear ^ 0.55
-	return linear * 0.3 + curved * 0.7
+	local base = linear * 0.3 + curved * 0.7
+	if lv <= cap then
+		return base
+	end
+	local over = (lv - cap) / cap
+	-- Smooth diminishing: still meaningful at 400, 600, 1000+ without exploding.
+	local post = over / (1 + over * 0.28)
+	return base + post * 1.15
 end
 
 -- Throw/release scales faster at low power so early upgrades feel rewarding.
-function M.launchProgressT(level: number, maxLevel: number): number
-	local cap = math.max(1, maxLevel)
-	local linear = math.clamp(floorLevel(level) / cap, 0, 1)
+function M.launchProgressT(level: number, softCap: number): number
+	local cap = math.max(1, softCap)
+	local lv = floorLevel(level)
+	local linear = math.clamp(lv / cap, 0, 1)
 	local early = linear ^ 0.38
-	local base = M.progressT(level, maxLevel)
-	return math.clamp(base * 0.35 + early * 0.65, 0, 1)
+	local base = M.progressT(math.min(lv, cap), softCap)
+	local earlyBlend = math.clamp(base * 0.35 + early * 0.65, 0, 1)
+	if lv <= cap then
+		return earlyBlend
+	end
+	local over = (lv - cap) / cap
+	local post = over / (1 + over * 0.24)
+	-- Launch gets a bit more post-cap growth than general swing (throw distance).
+	return earlyBlend + post * 1.45
 end
 
 function M.displayPower(level: number): number
@@ -78,13 +97,13 @@ function M.powerStats(powerLevel: number): PowerStats
 		swingArcForce = 34 + t * 50,
 		swingSpeedPump = 0.9 + t * 1.4,
 		zipToward = 25 + t * 18,
-		launchImpulseBase = 20 + lt * 14,
-		launchMomentumRatio = 0.24 + lt * 0.12,
-		launchVelocityCarry = 0.20 + lt * 0.06,
-		maxLaunchSpeed = maxSwingSpeed + 22 + lt * 22,
-		launchChargeBonus = 14 + lt * 10,
-		launchUpImpulse = 4.5 + lt * 3,
-		launchDeadhangImpulse = 22 + lt * 8,
+		launchImpulseBase = 20 + lt * 16,
+		launchMomentumRatio = 0.24 + lt * 0.14,
+		launchVelocityCarry = 0.20 + lt * 0.08,
+		maxLaunchSpeed = maxSwingSpeed + 22 + lt * 28,
+		launchChargeBonus = 14 + lt * 12,
+		launchUpImpulse = 4.5 + lt * 3.5,
+		launchDeadhangImpulse = 22 + lt * 10,
 	}
 end
 

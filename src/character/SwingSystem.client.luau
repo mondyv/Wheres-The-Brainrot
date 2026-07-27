@@ -514,10 +514,10 @@ local function getPowerScale()
 	local stats = getPowerStats()
 	if stats then
 		if typeof(stats.maxSwingSpeed) == "number" and stats.maxSwingSpeed > 0 then
-			return math.clamp(stats.maxSwingSpeed / C.MAX_SWING_SPEED, 0.75, 3.25)
+			return math.clamp(stats.maxSwingSpeed / C.MAX_SWING_SPEED, 0.75, 6.5)
 		end
 		if typeof(stats.steeringForce) == "number" and stats.steeringForce > 0 then
-			return math.clamp(stats.steeringForce / C.STEER_FORCE, 0.75, 3.25)
+			return math.clamp(stats.steeringForce / C.STEER_FORCE, 0.75, 6.5)
 		end
 	end
 
@@ -525,7 +525,7 @@ local function getPowerScale()
 	if not rawPower then
 		local force = getFirstNumberAttribute({ "SwingForce" })
 		if force and force > 0 then
-			return math.clamp(force / C.STEER_FORCE, 0.75, 3.25)
+			return math.clamp(force / C.STEER_FORCE, 0.75, 6.5)
 		end
 		return 1
 	end
@@ -534,29 +534,29 @@ local function getPowerScale()
 		rawPower = rawPower / 100
 	end
 
-	return math.clamp(rawPower, 0.65, 3.25)
+	return math.clamp(rawPower, 0.65, 6.5)
 end
 
 local function getSwingRange()
 	local ropeStats = getRopeStats()
 	if ropeStats and typeof(ropeStats.reachStuds) == "number" and ropeStats.reachStuds > 0 then
-		return math.clamp(ropeStats.reachStuds, 40, 190)
+		return math.clamp(ropeStats.reachStuds, 40, 380)
 	end
 
 	local rangeAttr = getFirstNumberAttribute({ "SwingRange", "ReachDistance", "Reach_Distance" })
 	if rangeAttr and rangeAttr > 0 then
-		return math.clamp(rangeAttr, 40, 190)
+		return math.clamp(rangeAttr, 40, 380)
 	end
 
 	local powerScale = getPowerScale()
-	return math.clamp(C.SWING_RANGE * (0.9 + (powerScale - 1) * 0.25), 65, 165)
+	return math.clamp(C.SWING_RANGE * (0.9 + (powerScale - 1) * 0.25), 65, 280)
 end
 
 local function getRopeMaxLength()
 	return math.clamp(
 		C.ROPE_MAX_LENGTH + math.max(getSwingRange() - C.SWING_RANGE, 0) * 0.55,
 		C.ROPE_MIN_LENGTH + C.ROPE_HANG_PULL_MIN_GAP + 4,
-		118
+		190
 	)
 end
 
@@ -567,9 +567,9 @@ end
 local function getLaunchScale()
 	local stats = getPowerStats()
 	if stats and typeof(stats.maxLaunchSpeed) == "number" and stats.maxLaunchSpeed > 0 then
-		return math.clamp(stats.maxLaunchSpeed / C.LAUNCH_SPEED_CAP, 0.86, 3.05)
+		return math.clamp(stats.maxLaunchSpeed / C.LAUNCH_SPEED_CAP, 0.86, 6.0)
 	end
-	return math.clamp(0.9 + (getPowerScale() - 1) * 0.82, 0.86, 2.75)
+	return math.clamp(0.9 + (getPowerScale() - 1) * 0.82, 0.86, 5.5)
 end
 
 local function getSteerForce()
@@ -1032,7 +1032,7 @@ local function createReleaseStyleController(humanoid, hrp)
 		local inputBoost = math.clamp(forwardCharge + forwardHoldBonus * 0.35, 0, 1.35)
 		local momentumBoost = math.clamp(momentum or 0, 0, 1)
 		local cap = C.LAUNCH_SPEED_CAP
-			* math.clamp(1 + (launchScale - 1) * 1.05, 0.9, 3.15)
+			* math.clamp(1 + (launchScale - 1) * 1.05, 0.9, 5.8)
 			* (1 + momentumBoost * C.SWING_MOMENTUM_LAUNCH_BONUS * 0.86)
 
 		local horizontalSpeed = (
@@ -1043,7 +1043,7 @@ local function createReleaseStyleController(humanoid, hrp)
 		)
 			* holdMult
 			* launchScale
-			* math.clamp(0.96 + (launchScale - 1) * 0.36, 0.9, 1.72)
+			* math.clamp(0.96 + (launchScale - 1) * 0.36, 0.9, 2.35)
 		local upwardSpeed = (
 			C.LAUNCH_UP_DV
 			+ C.LAUNCH_CHARGE_DV * charge * 0.72
@@ -2672,7 +2672,7 @@ local function boot(character)
 	end
 
 	function st.getAirborneTargetUiRange()
-		return math.clamp(getSwingRange() + C.AIRBORNE_TARGET_UI_EXTRA, 75, 270)
+			return math.clamp(getSwingRange() + C.AIRBORNE_TARGET_UI_EXTRA, 75, 420)
 	end
 
 	function st.targetDistanceAndPoint(target)
@@ -4352,7 +4352,7 @@ local function boot(character)
 		local ropeStretchCeiling = math.min(
 			baseRopeMax,
 			ropeRestLength
-				+ C.ROPE_STRETCH_MAX_EXTRA * math.clamp(0.85 + (getPowerScale() - 1) * 0.82, 0.85, 2.75)
+				+ C.ROPE_STRETCH_MAX_EXTRA * math.clamp(0.85 + (getPowerScale() - 1) * 0.82, 0.85, 4.5)
 				+ math.max(baseRopeMax - C.ROPE_MAX_LENGTH, 0) * 0.9
 		)
 		local ropeMax = math.max(ropeStretchFloor, ropeStretchCeiling, ropeMaxFloor)
@@ -4551,7 +4551,7 @@ local function boot(character)
 		end
 
 		local restLength = math.clamp(getRopeRestLength(), C.ROPE_MIN_LENGTH, ropeMax)
-		local flexScale = math.clamp(0.85 + (getPowerScale() - 1) * 0.82, 0.85, 2.75)
+		local flexScale = math.clamp(0.85 + (getPowerScale() - 1) * 0.82, 0.85, 4.5)
 		local stretchMinLength = math.min(ropeMax, restLength + C.ROPE_HANG_PULL_MIN_GAP)
 		local stretchMaxLength = math.max(
 			stretchMinLength,

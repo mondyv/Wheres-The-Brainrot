@@ -479,27 +479,28 @@ function M.hideForeignOwnershipMarkers()
 end
 
 function M.init()
-	local folder = PlotPaths.waitForSpawnAndBasesFolder(120)
-	if not folder then
-		warn("[PlotMarkerVisibility] Spawn And Bases missing (expected workspace.Lands.Spawn And Bases)")
-		return
-	end
-	for _, ch in ipairs(folder:GetChildren()) do
-		hookPlotRoot(ch)
-	end
-	folder.ChildAdded:Connect(function(ch)
-		hookPlotRoot(ch)
-	end)
-	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
+	task.spawn(function()
+		local folder = PlotPaths.waitForSpawnAndBasesFolder(45)
+		if not folder then
+			warn("[PlotMarkerVisibility] Spawn And Bases missing (expected workspace.Lands.Spawn And Bases)")
+			return
+		end
+		for _, ch in ipairs(folder:GetChildren()) do
+			hookPlotRoot(ch)
+			task.wait()
+		end
+		folder.ChildAdded:Connect(function(ch)
+			hookPlotRoot(ch)
+		end)
+		player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
+			refreshAllMarkersInFolder(folder)
+			hideForeignOwnershipMarkers(folder)
+		end)
 		refreshAllMarkersInFolder(folder)
 		hideForeignOwnershipMarkers(folder)
-	end)
-	refreshAllMarkersInFolder(folder)
-	hideForeignOwnershipMarkers(folder)
-	-- Streaming / late PlotGUI reparent: periodically re-kill foreign markers.
-	task.spawn(function()
+		-- Streaming / late PlotGUI reparent: periodically re-kill foreign markers.
 		while folder.Parent do
-			task.wait(1.5)
+			task.wait(2.5)
 			hideForeignOwnershipMarkers(folder)
 		end
 	end)

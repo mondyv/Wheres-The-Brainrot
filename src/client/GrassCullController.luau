@@ -2,18 +2,17 @@
 --[[
 	Client-only land content cull (kept name for init wiring).
 
-	When a Map.Lands/LandN is more than KEEP_RADIUS lands away:
-	  - Park (reparent into a local cache) every non-essential child so grass,
-	    bushes, trees, rocks, and decor stop rendering.
-	  - Restore when the player is back within range.
-	Nothing is Destroy'd.
+	For Map.Lands/LandN when the land is 2+ away from the player:
+	  - Park (reparent into a local cache) every direct child that is NOT essential.
+	  - Restore when the player is within ±1 land again.
+	Nothing is Destroy'd — safe to bring back.
 
-	Also:
-	  - Never keep Models/Folders just because they're named "Island"/"Ground"
-	    (that used to leave thousands of nested grassparts loaded).
-	  - Only BasePart walk surfaces + spawn/hitboxes stay on far lands.
-	  - On the current land, strip CastShadow / CanCollide on grassparts in batches.
-	  - If land can't be resolved, park ALL land decor (don't leave the whole map up).
+	Always kept on far lands:
+	  Spawn / hitboxes / ComingSoon / walk-surface BaseParts / scripts
+
+	IMPORTANT: only bare BaseParts named Ground/Floor/etc. are kept — never whole
+	Models named Island (those used to keep thousands of nested grassparts loaded).
+	Cull starts after a short delay so join/loading is never blocked by reparents.
 ]]
 
 local Players = game:GetService("Players")
@@ -25,11 +24,10 @@ local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local M = {}
 
--- Current land only — lands ahead / behind / 2+ away stay parked.
-local KEEP_RADIUS = 0
-local POLL_SEC = 0.35
-local FORCE_APPLY_SEC = 2.0
-local SHADOW_STRIP_PER_FRAME = 90
+-- Keep current land and ±KEEP_RADIUS. Unload when abs(delta) > KEEP_RADIUS.
+local KEEP_RADIUS = 1
+local POLL_SEC = 0.45
+local START_DELAY_SEC = 4
 local FEATURE_ENABLED = true
 
 local player = Players.LocalPlayer
@@ -37,8 +35,8 @@ local wired = false
 local heartbeatConn: RBXScriptConnection? = nil
 local landsChildConn: RBXScriptConnection? = nil
 local accum = 0.0
-local forceAccum = 0.0
 local currentLand = 0
+local cullActive = false
 
 type CullEntry = {
 	inst: Instance,
@@ -51,42 +49,6 @@ local landFolders: { [number]: Instance } = {}
 local landChildConns: { [number]: RBXScriptConnection } = {}
 
 local cacheFolder: Folder? = nil
-
--- Grassparts waiting for one-time shadow/collision strip (current land only).
-local shadowQueue: { BasePart } = {}
-local shadowQueued: { [BasePart]: boolean } = {}
-local shadowDone: { [BasePart]: boolean } = {}
-
-local HEAVY_EXACT: { [string]: boolean } = {
-	grass = true,
-	bushes = true,
-	bush = true,
-	bushscript = true,
-	bushscripts = true,
-	trees = true,
-	tree = true,
-	rocks = true,
-	rock = true,
-	decor = true,
-	decoration = true,
-	decorations = true,
-	foliage = true,
-	props = true,
-	prop = true,
-	plants = true,
-	plant = true,
-	flowers = true,
-	flower = true,
-	leaves = true,
-	leaf = true,
-	detail = true,
-	details = true,
-	mesh = true,
-	meshes = true,
-	vegetation = true,
-	scenery = true,
-	clutter = true,
-}
 
 local function getCache(): Folder
 	local existing = cacheFolder
@@ -113,33 +75,27 @@ local function landNumberFromFolder(landFolder: Instance): number?
 	return tonumber(n)
 end
 
-local function alnumLower(name: string): string
-	return string.gsub(string.lower(name), "[^a-z0-9]", "")
-end
-
--- Essential gameplay / footing only. Models named Island/Ground are NOT kept whole.
 local function shouldKeepChild(inst: Instance): boolean
 	if inst:IsA("BaseScript") or inst:IsA("ModuleScript") then
 		return true
 	end
 
 	local name = string.lower(inst.Name)
-	local ak = alnumLower(inst.Name)
 
-	if name == "spawn" or name == "spawnpart" or name == "landspawn" or ak == "spawn" then
+	if name == "spawn" or name == "spawnpart" or name == "landspawn" then
 		return true
 	end
-	if string.find(name, "hitbox", 1, true) or string.find(ak, "hitbox", 1, true) then
+	if string.find(name, "hitbox", 1, true) then
 		return true
 	end
-	if string.find(ak, "comingsoon", 1, true) then
+	if string.find(name, "comingsoon", 1, true) then
 		return true
 	end
-	if string.find(ak, "safezone", 1, true) then
+	if string.find(name, "safezone", 1, true) then
 		return true
 	end
 
-	-- Only bare BaseParts used as walk surfaces — never Models/Folders with these names.
+	-- Walk surfaces: BaseParts only. Models named Island/Ground must NOT stay whole.
 	if not inst:IsA("BasePart") then
 		return false
 	end
@@ -155,10 +111,6 @@ local function shouldKeepChild(inst: Instance): boolean
 		or name == "platform"
 		or name == "collision"
 		or name == "walkway"
-		or ak == "ground"
-		or ak == "floor"
-		or ak == "baseplate"
-		or ak == "collision"
 	then
 		return true
 	end
@@ -166,35 +118,18 @@ local function shouldKeepChild(inst: Instance): boolean
 	return false
 end
 
-local function isHeavyDecorName(name: string): boolean
-	local ak = alnumLower(name)
-	if HEAVY_EXACT[ak] then
-		return true
-	end
-	if string.find(ak, "grass", 1, true) then
-		return true
-	end
-	if string.find(ak, "bush", 1, true) then
-		return true
-	end
-	if string.find(ak, "foliage", 1, true) or string.find(ak, "vegetation", 1, true) then
-		return true
-	end
-	if string.find(ak, "tree", 1, true) and not string.find(ak, "street", 1, true) then
-		return true
-	end
-	return false
-end
-
 local function shouldKeepLand(landNum: number, playerLand: number): boolean
-	-- Unknown / safezone: park every land's decor so the whole map isn't drawn.
 	if playerLand <= 0 then
-		return false
+		-- Don't touch anything until we know where the player is (avoids mass reparent on join).
+		return true
 	end
 	return math.abs(landNum - playerLand) <= KEEP_RADIUS
 end
 
 local function parkEntry(entry: CullEntry)
+	if not cullActive then
+		return
+	end
 	local cache = getCache()
 	local inst = entry.inst
 	if not inst.Parent then
@@ -223,31 +158,6 @@ local function unregisterEntry(inst: Instance)
 	entries[inst] = nil
 end
 
-local function queueShadowStrip(root: Instance)
-	local stack: { Instance } = { root }
-	local processed = 0
-	while #stack > 0 do
-		local node = table.remove(stack) :: Instance
-		if node:IsA("BasePart") then
-			local n = string.lower(node.Name)
-			if string.find(n, "grass", 1, true) or n == "grasspart" then
-				local part = node :: BasePart
-				if not shadowDone[part] and not shadowQueued[part] then
-					shadowQueued[part] = true
-					table.insert(shadowQueue, part)
-				end
-			end
-		end
-		for _, child in node:GetChildren() do
-			table.insert(stack, child)
-		end
-		processed += 1
-		if processed % 400 == 0 then
-			task.wait()
-		end
-	end
-end
-
 local function registerCullable(landNum: number, inst: Instance)
 	if entries[inst] then
 		return
@@ -273,29 +183,29 @@ local function registerCullable(landNum: number, inst: Instance)
 
 	inst.Destroying:Once(function()
 		unregisterEntry(inst)
-		if inst:IsA("BasePart") then
-			shadowQueued[inst] = nil
-			shadowDone[inst] = nil
-		end
 	end)
 
-	if not shouldKeepLand(landNum, currentLand) then
+	if cullActive and currentLand > 0 and not shouldKeepLand(landNum, currentLand) then
 		parkEntry(entry)
-	elseif isHeavyDecorName(inst.Name) then
-		task.defer(queueShadowStrip, inst)
 	end
 end
 
 local function applyForPlayerLand(playerLand: number)
+	if not cullActive or playerLand <= 0 then
+		return
+	end
 	currentLand = playerLand
+	local parked = 0
 	for _, entry in entries do
 		if shouldKeepLand(entry.land, playerLand) then
 			restoreEntry(entry)
-			if isHeavyDecorName(entry.inst.Name) then
-				task.defer(queueShadowStrip, entry.inst)
-			end
 		else
 			parkEntry(entry)
+			parked += 1
+			-- Spread massive reparents across frames so join never freezes black.
+			if parked % 3 == 0 then
+				task.wait()
+			end
 		end
 	end
 end
@@ -339,63 +249,27 @@ local function playerLandNow(): number
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
 	if not hrp or not hrp:IsA("BasePart") then
-		return 0
+		return currentLand
 	end
 	local land = math.floor(LandResolver.resolveLandAtPosition(hrp.Position))
 	if land < 1 then
-		return 0
+		return currentLand
 	end
 	return land
 end
 
-local function pumpShadowStrip()
-	local n = #shadowQueue
-	if n == 0 then
-		return
-	end
-	local budget = SHADOW_STRIP_PER_FRAME
-	while budget > 0 and #shadowQueue > 0 do
-		local part = table.remove(shadowQueue)
-		if part then
-			shadowQueued[part] = nil
-			if part.Parent and not shadowDone[part] then
-				shadowDone[part] = true
-				part.CastShadow = false
-				if part.CanCollide then
-					part.CanCollide = false
-				end
-				if part.CanQuery then
-					part.CanQuery = false
-				end
-				if part.CanTouch then
-					part.CanTouch = false
-				end
-			end
-		end
-		budget -= 1
-	end
-end
-
 local function onHeartbeat(dt: number)
-	if not FEATURE_ENABLED then
+	if not FEATURE_ENABLED or not cullActive then
 		return
 	end
-
-	pumpShadowStrip()
-
 	accum += dt
-	forceAccum += dt
 	if accum < POLL_SEC then
 		return
 	end
 	accum = 0
 
 	local land = playerLandNow()
-	local force = forceAccum >= FORCE_APPLY_SEC
-	if force then
-		forceAccum = 0
-	end
-	if land ~= currentLand or force then
+	if land ~= currentLand and land > 0 then
 		applyForPlayerLand(land)
 	end
 end
@@ -406,14 +280,18 @@ local function onLandFolderAdded(landFolder: Instance)
 		return
 	end
 	hookLandFolder(landFolder, landNum)
-	applyForPlayerLand(currentLand)
+	if cullActive and currentLand > 0 then
+		task.defer(applyForPlayerLand, currentLand)
+	end
 end
 
 function M.setEnabled(enabled: boolean)
 	FEATURE_ENABLED = enabled
 	if enabled then
 		scanExistingLands()
-		applyForPlayerLand(playerLandNow())
+		if cullActive then
+			applyForPlayerLand(playerLandNow())
+		end
 		return
 	end
 	for _, entry in entries do
@@ -432,6 +310,9 @@ function M.init()
 	end
 
 	task.spawn(function()
+		-- Never reparent map content during loading / first frames.
+		task.wait(START_DELAY_SEC)
+
 		local lands = landsRoot()
 		local deadline = os.clock() + 30
 		while not lands and os.clock() < deadline do
@@ -445,19 +326,23 @@ function M.init()
 
 		getCache()
 		scanExistingLands()
-		-- Start parked until we know where the player is (avoids loading every land at join).
-		applyForPlayerLand(0)
-		task.wait(0.5)
-		applyForPlayerLand(playerLandNow())
+
+		local land = playerLandNow()
+		if land <= 0 then
+			local charDeadline = os.clock() + 15
+			while land <= 0 and os.clock() < charDeadline do
+				task.wait(0.5)
+				land = playerLandNow()
+			end
+		end
+
+		cullActive = true
+		if land > 0 then
+			applyForPlayerLand(land)
+		end
 
 		landsChildConn = lands.ChildAdded:Connect(onLandFolderAdded)
 		heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
-
-		player.CharacterAdded:Connect(function()
-			task.defer(function()
-				applyForPlayerLand(playerLandNow())
-			end)
-		end)
 	end)
 end
 

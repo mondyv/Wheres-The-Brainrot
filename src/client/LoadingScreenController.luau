@@ -24,6 +24,8 @@ local HOLD_AT_FULL_SEC = 0.6
 local FADE_OUT_SEC = 0.9
 local FADE_TWEEN_INFO = TweenInfo.new(FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 local RESOLVE_TIMEOUT = 45
+-- Hard cap so a long Moon export can never pin the black loading screen forever.
+local MAX_LOADING_DISPLAY_SEC = 8
 -- Wall-clock duration multiplier for moon flyover (2x slower back cam → longer load).
 local MOON_PLAYBACK_SCALE = 2
 
@@ -2159,7 +2161,7 @@ function M.run()
 	local _clipSec = if loadedMoonTrack
 		then math.max(moonClipDurationSec(loadedMoonTrack), 0.05)
 		else MIN_DISPLAY_SEC - HOLD_AT_FULL_SEC
-	local minDisplaySec = _clipSec + HOLD_AT_FULL_SEC
+	local minDisplaySec = math.min(_clipSec + HOLD_AT_FULL_SEC, MAX_LOADING_DISPLAY_SEC)
 	if not loadedMoonTrack and not cameraClipStartedAt then
 		cameraClipStartedAt = os.clock()
 	end
@@ -2169,13 +2171,13 @@ function M.run()
 		enterLoadingIsolation(playerGui)
 		local elapsed = os.clock() - startedAt
 		-- Ease toward ~92% during the clip, then finish on hold.
-		local t = math.clamp(elapsed / math.max(_clipSec, 0.05), 0, 1)
+		local t = math.clamp(elapsed / math.max(minDisplaySec - HOLD_AT_FULL_SEC, 0.05), 0, 1)
 		local eased = 1 - (1 - t) ^ 2
 		setLoadingProgress(0.08 + eased * 0.84)
 		task.wait(0.05)
 	end
 	setLoadingProgress(1)
-	task.wait(HOLD_AT_FULL_SEC)
+	task.wait(math.min(HOLD_AT_FULL_SEC, 0.6))
 
 	loadingActive = false
 	cameraClipStartedAt = nil
@@ -2183,6 +2185,7 @@ function M.run()
 		stopCameraLock()
 		stopCameraLock = nil
 	end
+	-- Always clear streaming pin even if stopCameraLock already did (idempotent).
 	endLoadingStreamingGuard(player)
 
 	-- Overlap UI fade with a soft camera drop into third-person.

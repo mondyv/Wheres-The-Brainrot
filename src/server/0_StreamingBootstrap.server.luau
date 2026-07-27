@@ -1,7 +1,8 @@
 -- [ACTIVE] 0_StreamingBootstrap.server
 --[[
 	Enable Workspace streaming early so clients don't hold the entire map in RAM.
-	Tight radii so only nearby content stays loaded (not 4–5 full lands at once).
+	Radii sized so the current land (incl. far meters on Land 9) can load, without
+	keeping ~5 full lands resident from spawn.
 ]]
 
 local Workspace = game:GetService("Workspace")
@@ -11,7 +12,7 @@ if not Workspace.StreamingEnabled then
 end
 
 pcall(function()
-	Workspace.StreamingMinRadius = 48
-	Workspace.StreamingTargetRadius = 112
+	Workspace.StreamingMinRadius = 72
+	Workspace.StreamingTargetRadius = 200
 	Workspace.StreamOutBehavior = Enum.StreamOutBehavior.Opportunistic
 end)

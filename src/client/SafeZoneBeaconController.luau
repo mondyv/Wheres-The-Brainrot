@@ -16,6 +16,8 @@ local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("U
 local M = {}
 
 local MIN_LAND_TO_SHOW = 2
+-- If land folders/hitboxes aren't streamed yet, still show once this far from spawn.
+local FALLBACK_SHOW_DISTANCE = 180
 local POLL_SEC = 0.35
 local BILLBOARD_SIZE = UDim2.fromOffset(48, 18)
 -- A bit right of the head, smaller label.
@@ -83,7 +85,8 @@ local function ensureGui(character: Model): TextLabel?
 	bb.StudsOffset = STUDS_OFFSET
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
-	bb.MaxDistance = 80
+	-- 0 = no camera-distance cutoff (far lands / zoomed camera still show meters).
+	bb.MaxDistance = 0
 	bb.Enabled = false
 
 	local label = Instance.new("TextLabel")
@@ -116,7 +119,17 @@ local function shouldShow(character: Model?, hrp: BasePart): boolean
 		lastLandPos = hrp.Position
 		cachedLand = LandResolver.resolveLandAtPosition(hrp.Position)
 	end
-	return cachedLand >= MIN_LAND_TO_SHOW
+	if cachedLand >= MIN_LAND_TO_SHOW then
+		return true
+	end
+	-- Streaming may not have far-land hitboxes yet; distance fallback keeps meters on Land 9+.
+	local center = cachedCenter
+	if not center then
+		return false
+	end
+	local delta = hrp.Position - center
+	local horiz = Vector3.new(delta.X, 0, delta.Z).Magnitude
+	return horiz >= FALLBACK_SHOW_DISTANCE
 end
 
 local function formatMeters(distance: number): string

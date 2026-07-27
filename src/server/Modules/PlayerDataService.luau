@@ -50,6 +50,12 @@ local sessionPlayBase: { [Player]: number } = {}
 local saveInFlight: { [Player]: boolean } = {}
 -- false = DataStore error; do NOT overwrite the key with empty defaults.
 local sessionCanSave: { [Player]: boolean } = {}
+-- Last successful payload this session — used to refuse accidental empty overwrites.
+local lastGoodPayload: { [number]: PlayerDataSchema.PlayerSaveData } = {}
+-- Set true only for intentional wipe (resetdata / admin reset).
+local allowEmptyOverwrite: { [Player]: boolean } = {}
+local SAVE_ATTEMPTS = 4
+local SAVE_RETRY_WAIT = 0.75
 
 local function getInternalFolder(): Folder
 	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
@@ -721,30 +727,92 @@ local function writeBackup(player: Player, payload: PlayerDataSchema.PlayerSaveD
 end
 
 function M.savePlayerData(player: Player): boolean
-	if not persistenceEnabled or not playerStore or saveInFlight[player] then
+	if not persistenceEnabled or not playerStore then
 		return false
 	end
 	if sessionCanSave[player] == false then
 		warn("[PlayerDataService] skip save — session load failed for", player.Name)
 		return false
 	end
+
+	-- Wait out a concurrent autosave instead of silently skipping the leave/shutdown save.
+	local waitDeadline = os.clock() + 12
+	while saveInFlight[player] and os.clock() < waitDeadline do
+		task.wait(0.1)
+	end
+	if saveInFlight[player] then
+		warn("[PlayerDataService] save still in flight for", player.Name, "- forcing attempt anyway")
+	end
+
 	saveInFlight[player] = true
 	local key = tostring(player.UserId)
 	local payload = M.collectSaveData(player)
-	-- Snapshot before overwrite so we can recover if something goes wrong later.
+	local prev = lastGoodPayload[player.UserId]
+	local forceEmpty = allowEmptyOverwrite[player] == true
+
+	-- Never overwrite a rich profile with an empty inventory/stands snapshot unless reset.
+	if not forceEmpty and prev then
+		local brainrotCount = player:GetAttribute("BrainrotCount")
+		local carryCount = player:GetAttribute("BrainrotCarryCount")
+		local stillHasItems = (typeof(brainrotCount) == "number" and brainrotCount > 0)
+			or (typeof(carryCount) == "number" and carryCount > 0)
+		if #payload.inventory == 0 and #prev.inventory > 0 and stillHasItems then
+			warn("[PlayerDataService] refusing inventory wipe for", player.Name, "- keeping previous inventory")
+			payload.inventory = prev.inventory
+			payload.parkedSlots = prev.parkedSlots
+			payload.equipSlot = prev.equipSlot
+		end
+		if #payload.stands == 0 and #prev.stands > 0 and typeof(player:GetAttribute("AssignedPlotSlot")) == "number" then
+			warn("[PlayerDataService] refusing stands wipe for", player.Name, "- keeping previous stands")
+			payload.stands = prev.stands
+		end
+	end
+
 	writeBackup(player, payload)
-	local ok, err = pcall(function()
-		playerStore:SetAsync(key, payload)
-	end)
+
+	local ok = false
+	local err: any = nil
+	for attempt = 1, SAVE_ATTEMPTS do
+		ok, err = pcall(function()
+			playerStore:SetAsync(key, payload)
+		end)
+		if ok then
+			break
+		end
+		warn("[PlayerDataService] save attempt", attempt, "failed for", player.Name, err)
+		task.wait(SAVE_RETRY_WAIT * attempt)
+	end
+
 	saveInFlight[player] = nil
+	allowEmptyOverwrite[player] = nil
+
 	if not ok then
-		warn("[PlayerDataService] save failed:", player.Name, err)
+		warn("[PlayerDataService] save FAILED after retries:", player.Name, err)
 		return false
 	end
+
+	lastGoodPayload[player.UserId] = payload
 	player:SetAttribute(PLAY_TIME_ATTR, payload.totalPlayTimeSeconds)
 	sessionPlayBase[player] = payload.totalPlayTimeSeconds
 	sessionJoinAt[player] = os.clock()
 	return true
+end
+
+function M.saveAllOnlinePlayers(): number
+	local saved = 0
+	local list = Players:GetPlayers()
+	for i, player in list do
+		if player:GetAttribute(LOADED_ATTR) == true and sessionCanSave[player] ~= false then
+			if M.savePlayerData(player) then
+				saved += 1
+			end
+		end
+		-- Stagger to stay under DataStore budget during mass shutdown.
+		if i % 2 == 0 then
+			task.wait(0.35)
+		end
+	end
+	return saved
 end
 
 function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
@@ -805,6 +873,7 @@ function M.resetPlayerData(player: Player): (boolean, string?)
 
 	M.waitUntilLoaded(player)
 	sessionCanSave[player] = true
+	allowEmptyOverwrite[player] = true
 	player:SetAttribute(LOAD_FAILED_ATTR, false)
 	local fresh = M.makeDefaultSaveData(player)
 
@@ -924,10 +993,12 @@ function M.bindPlayer(player: Player)
 	sessionCanSave[player] = true
 	if result.status == "loaded" and result.data then
 		M.applyLoadedData(player, result.data)
+		lastGoodPayload[player.UserId] = result.data
 	else
 		-- Confirmed new player (key missing after legacy migration attempt).
 		local fresh = M.makeDefaultSaveData(player)
 		M.applyLoadedData(player, fresh)
+		lastGoodPayload[player.UserId] = fresh
 	end
 	M.markLoaded(player)
 end
@@ -935,7 +1006,7 @@ end
 function M.unbindPlayer(player: Player)
 	-- If an autosave is mid-flight, wait for it to finish so the final leave-save
 	-- isn't silently skipped (savePlayerData returns false while saveInFlight is set).
-	local deadline = os.clock() + 10
+	local deadline = os.clock() + 12
 	while saveInFlight[player] and os.clock() < deadline do
 		task.wait(0.1)
 	end
@@ -946,6 +1017,7 @@ function M.unbindPlayer(player: Player)
 	sessionPlayBase[player] = nil
 	saveInFlight[player] = nil
 	sessionCanSave[player] = nil
+	allowEmptyOverwrite[player] = nil
 end
 
 local function waitForSaveBindables()
@@ -996,16 +1068,8 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 game:BindToClose(function()
-	for _, player in Players:GetPlayers() do
-		-- Wait out any in-flight autosave so the shutdown save isn't silently skipped.
-		local deadline = os.clock() + 10
-		while saveInFlight[player] and os.clock() < deadline do
-			task.wait(0.1)
-		end
-		if sessionCanSave[player] ~= false then
-			M.savePlayerData(player)
-		end
-	end
+	-- Mass-save everyone still in the server before Roblox tears the instance down.
+	M.saveAllOnlinePlayers()
 end)
 
 return M

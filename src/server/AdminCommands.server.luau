@@ -879,6 +879,10 @@ commands.servershutdown = {
 				return
 			end
 
+			-- Save EVERYONE before kicks so DataStore rate limits / leave races can't wipe progress.
+			local saved = PlayerDataService.saveAllOnlinePlayers()
+			warn("[AdminCommands] shutdown pre-kick saved", saved, "players")
+
 			task.wait(0.35)
 			for _, plr in Players:GetPlayers() do
 				plr:Kick("Server shutdown — update coming. Please rejoin!")

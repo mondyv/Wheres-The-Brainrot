@@ -15,18 +15,18 @@ local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local FireflyController = {}
 
--- Flip to true to re-enable fireflies (PointLights around bushes tank FPS on dense lands).
-local FEATURE_ENABLED = false
+-- Fireflies on, but capped hard so dense lands don't tank FPS.
+local FEATURE_ENABLED = true
 
 local player = Players.LocalPlayer
 
 -- Enter closer than ACTIVATE, leave farther than DEACTIVATE (hysteresis).
-local ACTIVATE_RANGE = 52
-local DEACTIVATE_RANGE = 78
-local SELECT_PCT = 16
-local MAX_ACTIVE = 4
-local FLIES_PER_BUSH = 3
-local REFRESH_SEC = 1.6
+local ACTIVATE_RANGE = 42
+local DEACTIVATE_RANGE = 64
+local SELECT_PCT = 10
+local MAX_ACTIVE = 2
+local FLIES_PER_BUSH = 2
+local REFRESH_SEC = 2.2
 local FOLDER_NAME = "BushFireflies"
 
 -- Warm orange (not pale yellow — pale + bright light reads white).

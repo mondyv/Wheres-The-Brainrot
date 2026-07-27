@@ -53,6 +53,9 @@ local colorFx: ColorCorrectionEffect? = nil
 local blurFx: BlurEffect? = nil
 local cameraConn: RBXScriptConnection? = nil
 local moveLockConn: RBXScriptConnection? = nil
+local jumpRequestConn: RBXScriptConnection? = nil
+local jumpStateConn: RBXScriptConnection? = nil
+local jumpSuppressConn: RBXScriptConnection? = nil
 local savedCameraType: Enum.CameraType? = nil
 local savedCameraSubject: Instance? = nil
 local savedFov = 70
@@ -868,7 +871,7 @@ local function setBgmWebSlow()
 end
 
 local function ensureCutsceneGui(): ScreenGui
-	if cutsceneGui and cutsceneGui.Parent and cutsceneGui:GetAttribute("QteStyle") == "clean_v2" then
+	if cutsceneGui and cutsceneGui.Parent and cutsceneGui:GetAttribute("QteStyle") == "clean_v3" then
 		return cutsceneGui
 	end
 	if cutsceneGui then
@@ -883,7 +886,7 @@ local function ensureCutsceneGui(): ScreenGui
 	gui.IgnoreGuiInset = true
 	gui.DisplayOrder = 950
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	gui:SetAttribute("QteStyle", "clean_v2")
+	gui:SetAttribute("QteStyle", "clean_v3")
 	pcall(function()
 		(gui :: any).ClipToDeviceSafeArea = false
 	end)
@@ -959,8 +962,8 @@ local function ensureCutsceneGui(): ScreenGui
 	ring.Position = UDim2.fromScale(0.5, 0.42)
 	ring.Size = UDim2.fromOffset(ringPx, ringPx)
 	ring.BackgroundTransparency = 1
-	-- Behind badge + hint so the closing stroke never covers the letter/text.
-	ring.ZIndex = 41
+	-- Above GET READY hint; badge/letter stay higher so the letter stays readable.
+	ring.ZIndex = 49
 	ring.Parent = qte
 	local ringCorner = Instance.new("UICorner")
 	ringCorner.CornerRadius = UDim.new(1, 0)
@@ -981,7 +984,7 @@ local function ensureCutsceneGui(): ScreenGui
 	badge.Size = UDim2.fromOffset(ringPx, ringPx)
 	badge.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
 	badge.BackgroundTransparency = 0
-	badge.ZIndex = 44
+	badge.ZIndex = 50
 	badge.Parent = qte
 	local badgeCorner = Instance.new("UICorner")
 	badgeCorner.CornerRadius = UDim.new(1, 0)
@@ -1001,7 +1004,7 @@ local function ensureCutsceneGui(): ScreenGui
 	keyLabel.Text = "E"
 	keyLabel.TextColor3 = Color3.fromRGB(255, 248, 220)
 	UiFonts.applyDisplayLabel(keyLabel, 42, 28)
-	keyLabel.ZIndex = 45
+	keyLabel.ZIndex = 51
 	keyLabel.Parent = badge
 
 	local keyIcon = Instance.new("ImageLabel")
@@ -1014,7 +1017,7 @@ local function ensureCutsceneGui(): ScreenGui
 	keyIcon.ImageColor3 = Color3.fromRGB(255, 248, 220)
 	keyIcon.ScaleType = Enum.ScaleType.Fit
 	keyIcon.Visible = false
-	keyIcon.ZIndex = 46
+	keyIcon.ZIndex = 52
 	keyIcon.Parent = badge
 
 	local hint = Instance.new("TextLabel")
@@ -1026,7 +1029,7 @@ local function ensureCutsceneGui(): ScreenGui
 	hint.Text = "GET READY"
 	hint.TextColor3 = Color3.fromRGB(200, 205, 220)
 	UiFonts.applyButtonLabel(hint, 12, 9)
-	hint.ZIndex = 48
+	hint.ZIndex = 40
 	hint.Parent = qte
 
 	local tapBtn = Instance.new("TextButton")
@@ -1038,7 +1041,7 @@ local function ensureCutsceneGui(): ScreenGui
 	tapBtn.BorderSizePixel = 0
 	tapBtn.Text = ""
 	tapBtn.AutoButtonColor = false
-	tapBtn.ZIndex = 50
+	tapBtn.ZIndex = 53
 	tapBtn.Visible = false
 	tapBtn.Parent = qte
 
@@ -1439,6 +1442,57 @@ local function easeCameraBackToPlayer(duration: number, _spider: Model?)
 	nv:Destroy()
 end
 
+local function clearJumpSuppress()
+	if jumpRequestConn then
+		jumpRequestConn:Disconnect()
+		jumpRequestConn = nil
+	end
+	if jumpStateConn then
+		jumpStateConn:Disconnect()
+		jumpStateConn = nil
+	end
+	if jumpSuppressConn then
+		jumpSuppressConn:Disconnect()
+		jumpSuppressConn = nil
+	end
+end
+
+local function bindJumpSuppress()
+	clearJumpSuppress()
+	jumpRequestConn = UserInputService.JumpRequest:Connect(function()
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.Jump = false
+		end
+	end)
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		jumpStateConn = hum.StateChanged:Connect(function(_old, newState)
+			if newState == Enum.HumanoidStateType.Jumping then
+				hum.Jump = false
+				hum:ChangeState(Enum.HumanoidStateType.Running)
+			end
+		end)
+	end
+	jumpSuppressConn = RunService.Heartbeat:Connect(function()
+		if not encounterActive then
+			return
+		end
+		local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if not h then
+			return
+		end
+		h.Jump = false
+		h.JumpPower = 0
+		h.JumpHeight = 0
+		h.WalkSpeed = 0
+		h:Move(Vector3.zero, false)
+		if h:GetState() == Enum.HumanoidStateType.Jumping then
+			h:ChangeState(Enum.HumanoidStateType.Running)
+		end
+	end)
+end
+
 local function lockPlayerMovement()
 	local handoff = FloatingClaimCutscene.takeMoveLockState()
 	if handoff then
@@ -1473,6 +1527,7 @@ local function lockPlayerMovement()
 		hum.WalkSpeed = 0
 		hum.JumpPower = 0
 		hum.JumpHeight = 0
+		hum.Jump = false
 		hum.AutoRotate = false
 		hum:Move(Vector3.zero, false)
 	end
@@ -1485,13 +1540,14 @@ local function lockPlayerMovement()
 			return Enum.ContextActionResult.Sink
 		end,
 		false,
-		Enum.ContextActionPriority.High.Value,
+		100000,
 		Enum.PlayerActions.CharacterForward,
 		Enum.PlayerActions.CharacterBackward,
 		Enum.PlayerActions.CharacterLeft,
 		Enum.PlayerActions.CharacterRight,
 		Enum.PlayerActions.CharacterJump
 	)
+	bindJumpSuppress()
 	if moveLockConn then
 		moveLockConn:Disconnect()
 	end
@@ -1501,15 +1557,17 @@ local function lockPlayerMovement()
 		end
 		local liveHum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 		if liveHum then
-			if liveHum.WalkSpeed ~= 0 then
-				liveHum.WalkSpeed = 0
-			end
+			liveHum.WalkSpeed = 0
+			liveHum.JumpPower = 0
+			liveHum.JumpHeight = 0
+			liveHum.Jump = false
 			liveHum:Move(Vector3.zero, false)
 		end
 	end)
 end
 
 local function unlockPlayerMovement()
+	clearJumpSuppress()
 	if moveLockConn then
 		moveLockConn:Disconnect()
 		moveLockConn = nil
@@ -2398,17 +2456,15 @@ local function runEncounter(fallbackAnchor: Vector3)
 	end
 
 	inputConn = UserInputService.InputBegan:Connect(function(input, _processed)
-		-- Ignore `processed` so bush/UI can't swallow the dodge letter (often E).
+		-- Ignore `processed` so bush/UI can't swallow the dodge letter (often E/Z).
 		if qteResolved or not encounterActive or mobileInput then
 			return
 		end
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then
 			return
 		end
+		-- Only the shown letter counts. WASD/Space/etc must not instant-fail the QTE.
 		if input.KeyCode ~= choice.key then
-			qteResolved = true
-			qteSuccess = false
-			flashTimingResult(false)
 			return
 		end
 		tryResolveQtePress()
@@ -2527,7 +2583,11 @@ function BushSpiderEncounterController.isActive(): boolean
 end
 
 function BushSpiderEncounterController.tryTriggerAfterBrainrotAccept(_model: Model)
-	if not C.ENABLED or encounterActive then
+	if encounterActive then
+		-- Spider already owns the freeze; don't release claim lock / re-enable bushes.
+		return
+	end
+	if not C.ENABLED then
 		FloatingClaimCutscene.releaseMoveLock()
 		return
 	end

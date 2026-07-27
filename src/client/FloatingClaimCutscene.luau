@@ -11,6 +11,7 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
+local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 
@@ -22,6 +23,8 @@ local LOCK_ACTION = "FloatingClaimCutsceneMoveLock"
 local GUI_NAME = "FloatingClaimCutscene"
 
 local active = false
+-- Stays true while movement is frozen, including claim→spider handoff after `active` is cleared.
+local controlsLocked = false
 local cameraConn: RBXScriptConnection? = nil
 local jumpRequestConn: RBXScriptConnection? = nil
 local jumpStateConn: RBXScriptConnection? = nil
@@ -354,7 +357,7 @@ local function bindJumpSuppress()
 		end)
 	end
 	jumpSuppressConn = RunService.Heartbeat:Connect(function()
-		if not active then
+		if not controlsLocked then
 			return
 		end
 		local h = getHumanoid()
@@ -364,6 +367,8 @@ local function bindJumpSuppress()
 		h.Jump = false
 		h.JumpPower = 0
 		h.JumpHeight = 0
+		h.WalkSpeed = 0
+		h:Move(Vector3.zero, false)
 		if h:GetState() == Enum.HumanoidStateType.Jumping then
 			h:ChangeState(Enum.HumanoidStateType.Running)
 		end
@@ -384,13 +389,17 @@ local function lockMovement()
 		hum.Jump = false
 		hum.AutoRotate = false
 	end
+	controlsLocked = true
+	BushHoldInteraction.setBushSearchLocked(true)
 	bindMoveLock()
 	bindJumpSuppress()
 end
 
 local function unlockMovement()
+	controlsLocked = false
 	clearJumpSuppress()
 	unbindMoveLock()
+	BushHoldInteraction.setBushSearchLocked(false)
 	local hum = getHumanoid()
 	if hum then
 		if typeof(savedWalkSpeed) == "number" and savedWalkSpeed > 0 then
@@ -489,12 +498,14 @@ local function restoreCamera(keepMoveLock: boolean?)
 	barRoll = 0
 
 	-- Mobile: letterbox ScreenGui (DisplayOrder 940) + move lock can leave jump/thumbstick dead.
+	-- Skip restore when handing off to spider — restoring re-enables jump/thumbstick.
 	task.defer(function()
+		if keepMoveLock then
+			return
+		end
 		MobileTouchGate.ensureTouchControlsVisible(true)
 		MobileTouchGate.restorePlayerMovement()
-		if not keepMoveLock then
-			unlockMovement()
-		end
+		unlockMovement()
 	end)
 end
 
@@ -704,6 +715,8 @@ function FloatingClaimCutscene.takeMoveLockState(): {
 	useJumpPower: boolean?,
 	autoRotate: boolean?,
 }?
+	controlsLocked = false
+	clearJumpSuppress()
 	unbindMoveLock()
 	if savedWalkSpeed == nil and savedJumpPower == nil and savedJumpHeight == nil then
 		return nil

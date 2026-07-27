@@ -14,6 +14,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
+local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local MobileHaptics = require(script.Parent.MobileHaptics)
 local UiFonts = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiFonts"))
@@ -396,6 +397,7 @@ local function lockMovement()
 		hum.Jump = false
 		hum.AutoRotate = false
 	end
+	BushHoldInteraction.setBushSearchLocked(true)
 	bindMoveLock()
 	bindJumpSuppress()
 end
@@ -403,6 +405,7 @@ end
 local function unlockMovement()
 	clearJumpSuppress()
 	unbindMoveLock()
+	BushHoldInteraction.setBushSearchLocked(false)
 	local hum = getHumanoid()
 	if hum then
 		if typeof(savedWalkSpeed) == "number" then

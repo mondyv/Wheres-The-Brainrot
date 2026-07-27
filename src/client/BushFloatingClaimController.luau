@@ -89,6 +89,9 @@ local function clearOfferPresentation(keepMoveLock: boolean?)
 		FloatingClaimCutscene.releaseMoveLock()
 	end
 	task.defer(function()
+		if keepMoveLock then
+			return
+		end
 		MobileTouchGate.ensureTouchControlsVisible(true)
 		MobileTouchGate.restorePlayerMovement()
 	end)

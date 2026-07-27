@@ -685,6 +685,9 @@ local function requestBushSearch(worldPos: Vector3, bush: Instance): any
 end
 
 local function doHarvest(prompt: ProximityPrompt)
+	if bushSearchLocked or os.clock() < bushSearchSuppressUntil then
+		return
+	end
 	local now = os.clock()
 	if lastHarvestPrompt == prompt and now - lastHarvestAt < 0.35 then
 		return

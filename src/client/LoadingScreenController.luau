@@ -1,8 +1,8 @@
 -- [ACTIVE] LoadingScreenController
 --[[
 	LoadingScreenController — full-screen join overlay:
-	Logo + tips stay; world flyover can be disabled so the client doesn't stream
-	half the map during load. Moon export kept for optional re-enable.
+	Black join background (no world flyover / streaming lag) + logo wobble,
+	throttled lava blob UI, and bottom tips. Moon flyover stays optional.
 	StarterGui.LoadingScreen + GameNameImage. Moon export: "Camera loading" (Frames/0..N).
 --]]
 
@@ -68,6 +68,17 @@ local WOBBLE_ROT_DEG = 4
 local WOBBLE_JUMP_PX = 8
 local WOBBLE_SCALE_AMOUNT = 0.022
 
+-- UI-only lava blobs (no world cam). Keep count low + throttle updates to avoid join lag.
+local LIQUID_IMAGE_IDS = {
+	"rbxassetid://114678398666932",
+	"rbxassetid://79066128728111",
+	"rbxassetid://126746861363784",
+}
+local LIQUID_BLOB_COUNT = 4
+local LIQUID_SPEED_MUL = 0.42
+local LIQUID_STYLE = "image_v2_light"
+local LIQUID_UPDATE_EVERY_N = 2 -- Heartbeat frames between blob updates
+
 local LOADING_HINTS = {
 	"Optimizing Vibes",
 	"Warming Up Bushes",
@@ -113,6 +124,7 @@ local loadingActive = false
 local gameplayReadyCallbacks: { () -> () } = {}
 local activeBlurEffect: BlurEffect? = nil
 local stopNameAnim: (() -> ())? = nil
+local stopLiquidAnim: (() -> ())? = nil
 local stopCameraLock: (() -> ())? = nil
 local fadeCanvas: CanvasGroup? = nil
 local cameraClipStartedAt: number? = nil
@@ -1717,6 +1729,157 @@ local function destroyLiquidLayers(loadingGui: ScreenGui)
 	end
 end
 
+type LiquidBlob = {
+	gui: ImageLabel,
+	baseX: number,
+	baseY: number,
+	speed: number,
+	ampY: number,
+	ampX: number,
+	phase: number,
+	rotSpeed: number,
+}
+
+local function ensureLiquidLayer(loadingGui: ScreenGui): Frame
+	local parent = getCrispUiParent(loadingGui)
+	for _, root in { parent, loadingGui:FindFirstChild("LoadingFadeCanvas") } do
+		if root then
+			local old = root:FindFirstChild("LiquidLayer")
+			if old and old:GetAttribute("LiquidStyle") ~= LIQUID_STYLE then
+				old:Destroy()
+			end
+		end
+	end
+
+	local existing = parent:FindFirstChild("LiquidLayer")
+	if existing and existing:IsA("Frame") and existing:GetAttribute("LiquidStyle") == LIQUID_STYLE then
+		return existing
+	end
+	if existing then
+		existing:Destroy()
+	end
+
+	local layer = Instance.new("Frame")
+	layer.Name = "LiquidLayer"
+	layer.BackgroundTransparency = 1
+	layer.BorderSizePixel = 0
+	layer.AnchorPoint = Vector2.new(0, 0)
+	layer.Position = UDim2.fromScale(0, 0)
+	layer.Size = UDim2.fromScale(1, 1)
+	layer.ZIndex = 3
+	layer.ClipsDescendants = true
+	layer:SetAttribute("LiquidStyle", LIQUID_STYLE)
+	layer.Parent = parent
+
+	local placements = {
+		{ 0.14, 0.24, 0.30 },
+		{ 0.82, 0.20, 0.28 },
+		{ 0.26, 0.68, 0.32 },
+		{ 0.74, 0.72, 0.28 },
+	}
+
+	for i = 1, LIQUID_BLOB_COUNT do
+		local place = placements[((i - 1) % #placements) + 1]
+		local img = Instance.new("ImageLabel")
+		img.Name = "LiquidBlob" .. i
+		img.BackgroundTransparency = 1
+		img.BorderSizePixel = 0
+		img.Image = LIQUID_IMAGE_IDS[((i - 1) % #LIQUID_IMAGE_IDS) + 1]
+		img.ImageTransparency = 0.34 + (i % 3) * 0.07
+		img.ScaleType = Enum.ScaleType.Fit
+		img.AnchorPoint = Vector2.new(0.5, 0.5)
+		img.Position = UDim2.fromScale(place[1], place[2])
+		img.Size = UDim2.fromScale(place[3], place[3])
+		img.Rotation = (i * 27) % 50 - 25
+		img.ZIndex = 3
+		img.Parent = layer
+
+		local scaleInst = Instance.new("UIScale")
+		scaleInst.Name = "BlobScale"
+		scaleInst.Scale = 1
+		scaleInst.Parent = img
+	end
+
+	task.defer(function()
+		local toPreload: { Instance } = {}
+		for _, child in layer:GetChildren() do
+			if child:IsA("ImageLabel") then
+				table.insert(toPreload, child)
+			end
+		end
+		if #toPreload > 0 then
+			local ok, err = pcall(function()
+				ContentProvider:PreloadAsync(toPreload)
+			end)
+			if not ok then
+				warn("[LoadingScreenController] liquid preload failed:", err)
+			end
+		end
+	end)
+
+	return layer
+end
+
+local function startLiquidAnim(loadingGui: ScreenGui): () -> ()
+	local layer = ensureLiquidLayer(loadingGui)
+	local blobs: { LiquidBlob } = {}
+
+	for _, child in layer:GetChildren() do
+		if child:IsA("ImageLabel") and string.sub(child.Name, 1, 10) == "LiquidBlob" then
+			local idx = tonumber(string.match(child.Name, "%d+")) or (#blobs + 1)
+			table.insert(blobs, {
+				gui = child,
+				baseX = child.Position.X.Scale,
+				baseY = child.Position.Y.Scale,
+				speed = (0.01 + (idx % 5) * 0.0035) * LIQUID_SPEED_MUL,
+				ampY = 0.04 + (idx % 3) * 0.014,
+				ampX = 0.07 + (idx % 4) * 0.025,
+				phase = idx * 1.37,
+				rotSpeed = 3.2 + (idx % 4) * 1.2,
+			})
+		end
+	end
+
+	local t = 0
+	local frameSkip = 0
+	-- Heartbeat + frame skip: lighter than per-frame RenderStepped for 4 image blobs.
+	local conn = RunService.Heartbeat:Connect(function(dt)
+		if not loadingActive then
+			return
+		end
+		t += dt
+		frameSkip += 1
+		if frameSkip < LIQUID_UPDATE_EVERY_N then
+			return
+		end
+		frameSkip = 0
+		for _, blob in blobs do
+			if not blob.gui.Parent then
+				continue
+			end
+			local wave = t * blob.speed + blob.phase
+			local drift = (t * blob.speed * 0.18) % 1.4
+			local x = blob.baseX + math.sin(wave) * blob.ampX + drift - 0.2
+			local y = blob.baseY + math.sin(wave * 0.72 + 0.6) * blob.ampY
+			if x < -0.25 then
+				x += 1.5
+			elseif x > 1.25 then
+				x -= 1.5
+			end
+			blob.gui.Position = UDim2.fromScale(x, y)
+			blob.gui.Rotation = math.sin(wave * 0.32) * blob.rotSpeed
+			local scaleInst = blob.gui:FindFirstChild("BlobScale")
+			if scaleInst and scaleInst:IsA("UIScale") then
+				scaleInst.Scale = 0.92 + 0.12 * (0.5 + 0.5 * math.sin(wave * 0.8))
+			end
+		end
+	end)
+
+	return function()
+		conn:Disconnect()
+	end
+end
+
 local function applyCrispLabel(label: TextLabel, textSize: number, bold: boolean)
 	label.TextScaled = false
 	label.RichText = false
@@ -1954,6 +2117,10 @@ local function fadeOutLoadingTogether(
 		stopNameAnim()
 		stopNameAnim = nil
 	end
+	if stopLiquidAnim then
+		stopLiquidAnim()
+		stopLiquidAnim = nil
+	end
 
 	local tweens: { Tween } = {}
 
@@ -1970,6 +2137,15 @@ local function fadeOutLoadingTogether(
 	local bottomHint = loadingGui:FindFirstChild("LoadingHint")
 	if bottomHint and bottomHint:IsA("TextLabel") then
 		table.insert(tweens, TweenService:Create(bottomHint, FADE_TWEEN_INFO, { TextTransparency = 1 }))
+	end
+
+	local liquid = loadingGui:FindFirstChild("LiquidLayer")
+	if liquid then
+		for _, child in liquid:GetDescendants() do
+			if child:IsA("ImageLabel") then
+				table.insert(tweens, TweenService:Create(child, FADE_TWEEN_INFO, { ImageTransparency = 1 }))
+			end
+		end
 	end
 
 	local canvas = fadeCanvas or loadingGui:FindFirstChild("LoadingFadeCanvas")
@@ -2116,7 +2292,11 @@ function M.run()
 	end
 
 	stopNameAnim = startGameNameSubtitleAnim(loadingGui)
-	destroyLiquidLayers(loadingGui)
+	if stopLiquidAnim then
+		stopLiquidAnim()
+		stopLiquidAnim = nil
+	end
+	stopLiquidAnim = startLiquidAnim(loadingGui)
 	preloadGameName(loadingGui)
 
 	local camera = Workspace.CurrentCamera
@@ -2186,6 +2366,10 @@ function M.run()
 	if stopNameAnim then
 		stopNameAnim()
 		stopNameAnim = nil
+	end
+	if stopLiquidAnim then
+		stopLiquidAnim()
+		stopLiquidAnim = nil
 	end
 
 	exitLoadingIsolation(playerGui)

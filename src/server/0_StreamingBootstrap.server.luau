@@ -1,7 +1,7 @@
 -- [ACTIVE] 0_StreamingBootstrap.server
 --[[
 	Enable Workspace streaming early so clients don't hold the entire map in RAM.
-	Without this, Client Memory can climb past multi-GB even in the safezone.
+	Tight radii so only nearby content stays loaded (not 4–5 full lands at once).
 ]]
 
 local Workspace = game:GetService("Workspace")
@@ -10,8 +10,8 @@ if not Workspace.StreamingEnabled then
 	Workspace.StreamingEnabled = true
 end
 
--- Keep radii modest — safezone stays loaded; lands stream in on approach.
 pcall(function()
-	Workspace.StreamingMinRadius = 64
-	Workspace.StreamingTargetRadius = 256
+	Workspace.StreamingMinRadius = 48
+	Workspace.StreamingTargetRadius = 112
+	Workspace.StreamOutBehavior = Enum.StreamOutBehavior.Opportunistic
 end)

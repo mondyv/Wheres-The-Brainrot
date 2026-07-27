@@ -1009,6 +1009,12 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 		attachHost = buyAncestor
 	elseif target.Name == "Buy" and target:IsA("GuiObject") then
 		attachHost = target
+	elseif target.Name == "__UpgradeOverlay" then
+		-- Brainrot stand: overlay is full-size; outline the Upgrade parent, hand on overlay.
+		local upgradeParent = target.Parent
+		if upgradeParent and upgradeParent:IsA("GuiObject") then
+			attachHost = upgradeParent
+		end
 	elseif target.Name == "Upgrade" and target:IsA("GuiObject") then
 		attachHost = target
 	else
@@ -1040,8 +1046,6 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 	pointer.Image = TutorialConfig.UI_CLICK_IMAGE
 	pointer.ScaleType = Enum.ScaleType.Fit
 	pointer.Active = false
-	-- Above button text / labels in the same SurfaceGui or ScreenGui.
-	pointer.ZIndex = math.max(attachHost.ZIndex + 200, 250)
 
 	local underBb = target:FindFirstAncestorOfClass("BillboardGui")
 	local underSurface = target:FindFirstAncestorOfClass("SurfaceGui")
@@ -1051,10 +1055,22 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 		clickSize = if isMobileUi()
 			then TutorialConfig.UI_CLICK_SIZE_SURFACE_MOBILE
 			else TutorialConfig.UI_CLICK_SIZE_SURFACE
-		clickSizeUp = clickSize + 8
+		clickSizeUp = clickSize + 10
 	end
 	pointer.Size = UDim2.fromOffset(clickSize, clickSize)
-	pointer.Parent = attachHost
+
+	-- Stand upgrade overlay sits at ZIndex 10000 — hand must parent above it or it's invisible.
+	local standOverlay = attachHost:FindFirstChild("__UpgradeOverlay")
+	if standOverlay and standOverlay:IsA("GuiObject") then
+		pointer.ZIndex = 10050
+		pointer.Parent = standOverlay
+	elseif target.Name == "__UpgradeOverlay" then
+		pointer.ZIndex = 10050
+		pointer.Parent = target
+	else
+		pointer.ZIndex = math.max(attachHost.ZIndex + 200, 250)
+		pointer.Parent = attachHost
+	end
 	uiPointer = pointer
 
 	task.spawn(function()
@@ -1466,23 +1482,12 @@ local function resolveStandUpgradeButton(): GuiObject?
 		local sg = level and level:FindFirstChild("SurfaceGui")
 		local frame = sg and sg:FindFirstChild("Frame")
 		local upgrade = frame and frame:FindFirstChild("Upgrade")
-		if not upgrade then
+		if not upgrade or not upgrade:IsA("GuiObject") then
 			continue
 		end
-		local overlay = upgrade:FindFirstChild("__UpgradeOverlay")
-		if overlay and overlay:IsA("GuiButton") then
-			return overlay
-		end
-		if upgrade:IsA("GuiButton") then
-			return upgrade
-		end
-		local nested = upgrade:FindFirstChildWhichIsA("GuiButton", true)
-		if nested then
-			return nested
-		end
-		if upgrade:IsA("GuiObject") then
-			return upgrade
-		end
+		-- Prefer the Upgrade frame so outline wraps the whole button; click hand
+		-- is parented above __UpgradeOverlay inside pointAtGui.
+		return upgrade :: GuiObject
 	end
 	return nil
 end
@@ -1930,8 +1935,13 @@ local function watchStepProgress()
 			local lvl = readPlacedBrainrotLevel()
 			if lvl > upgradeBaseLevel then
 				completeCurrentIf("upgradeBrainrot")
-			elseif not worldArrowBb or not uiPointer then
-				refreshPointers()
+			else
+				local upgradeBtn = resolveStandUpgradeButton()
+				if upgradeBtn and (not uiPointer or not uiPointer.Parent) then
+					pointAtGui(upgradeBtn)
+				elseif not worldArrowBb then
+					refreshPointers()
+				end
 			end
 		end
 	end)

@@ -58,6 +58,7 @@ local hudMatchScale: UIScale? = nil
 local worldArrowBb: BillboardGui? = nil
 local worldArrowImg: ImageLabel? = nil
 local arrowAnimConn: RBXScriptConnection? = nil
+local worldHighlight: Highlight? = nil
 local uiPointer: ImageLabel? = nil
 local uiPointerBb: BillboardGui? = nil
 local pointerGui: ScreenGui? = nil
@@ -89,6 +90,7 @@ local lastPointerRefresh = 0
 local pendingPointerRefresh = false
 local grantCashPlayed = false
 local pendingCelebrate = false
+local finishCelebrated = false
 
 local lockedBushPart: BasePart? = nil
 local lockedBushRoot: Instance? = nil
@@ -96,14 +98,8 @@ local lockedSwingPart: BasePart? = nil
 local uiPointerStroke: UIStroke? = nil
 local uiPointerHost: GuiObject? = nil
 
--- Confetti only after these milestones (not every tutorial step).
-local CELEBRATE_AFTER_STEP: { [string]: boolean } = {
-	grantCash = true,
-	buyPower = true,
-	claimBrainrot = true,
-	placeOnPlot = true,
-	upgradeBrainrot = true,
-}
+-- Mid-step confetti disabled — only fire once when the tutorial finishes.
+local CELEBRATE_AFTER_STEP: { [string]: boolean } = {}
 
 local clearWorldArrow: () -> ()
 local clearUiPointer: () -> ()
@@ -593,6 +589,29 @@ local function clearWorldArrowImpl()
 	end
 end
 clearWorldArrow = clearWorldArrowImpl
+
+local function clearWorldHighlight()
+	if worldHighlight then
+		worldHighlight:Destroy()
+		worldHighlight = nil
+	end
+end
+
+local function outlineWorld(adornee: Instance?)
+	clearWorldHighlight()
+	if not adornee or not adornee.Parent then
+		return
+	end
+	local hl = Instance.new("Highlight")
+	hl.Name = "TutorialWorldOutline"
+	hl.FillTransparency = 1
+	hl.OutlineTransparency = 0.05
+	hl.OutlineColor = Color3.fromRGB(255, 236, 70)
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Adornee = adornee
+	hl.Parent = Workspace.CurrentCamera or adornee
+	worldHighlight = hl
+end
 
 local function clearUiPointerImpl()
 	if uiPointerFollowConn then
@@ -1142,10 +1161,14 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 	end)
 end
 
-local function resolveUpgradeStandPart(): BasePart?
+local function resolveUpgradeStandModel(): Instance?
 	local map = Workspace:FindFirstChild("Map")
 	local stands = map and map:FindFirstChild("UIStands")
-	local upgrade = stands and stands:FindFirstChild("Upgrade Stand")
+	return stands and stands:FindFirstChild("Upgrade Stand")
+end
+
+local function resolveUpgradeStandPart(): BasePart?
+	local upgrade = resolveUpgradeStandModel()
 	if not upgrade then
 		return nil
 	end
@@ -1659,12 +1682,33 @@ local function refreshPointersImpl()
 		return
 	end
 
-	-- Claim cutscene: Accept/Decline icons are enough — no click overlay.
+	-- Claim step: outline + click the Accept icon (cutscene suppresses normal pointers).
 	if step.id == "claimBrainrot" or isClaimCutscene() then
 		clearWorldArrow()
+		clearWorldHighlight()
 		clearSpotlight()
-		clearUiPointer()
+		local offer = BushFloatingClaimController.getActiveOfferUi()
+		if offer and offer.acceptBtn then
+			if uiPointerHost ~= offer.acceptBtn or not uiPointer or not uiPointer.Parent then
+				pointAtGui(offer.acceptBtn, true)
+			end
+		else
+			clearUiPointer()
+		end
 		return
+	end
+
+	-- Upgrade stand dialogue: outline the Enter/Upgrade choice button.
+	if step.id == "visitUpgrade" and StandDialogueCutscene.isActive() then
+		local enterBtn = StandDialogueCutscene.getEnterChoiceButton()
+		if enterBtn then
+			clearWorldArrow()
+			outlineWorld(resolveUpgradeStandModel())
+			if uiPointerHost ~= enterBtn or not uiPointer or not uiPointer.Parent then
+				pointAtGui(enterBtn, true)
+			end
+			return
+		end
 	end
 
 	if chromeSuppressed or isCutsceneBusy() then
@@ -1687,8 +1731,10 @@ local function refreshPointersImpl()
 	end
 	clearUiPointer()
 	clearSpotlight()
+	clearWorldHighlight()
 
 	if step.id == "visitUpgrade" then
+		outlineWorld(resolveUpgradeStandModel())
 		pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
 	elseif step.id == "buyPower" then
 		local btn = cacheUpgradesBuyButton()
@@ -1708,22 +1754,38 @@ local function refreshPointersImpl()
 				end
 			end)
 		else
+			outlineWorld(resolveUpgradeStandModel())
 			pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
 		end
 	elseif step.id == "swingLand1" then
 		if not (lockedSwingPart and lockedSwingPart.Parent and worldArrowBb) then
 			pointAtWorld(resolveLand1SwingTarget(), arrowHeight(3))
 		end
+		if lockedSwingPart then
+			outlineWorld(lockedSwingPart)
+		end
 	elseif step.id == "searchBush" then
 		if not keepWorld then
 			pointAtWorld(resolveNearestBush(), arrowHeight(2))
 		end
+		local bushAdornee = lockedBushRoot or lockedBushPart
+		if bushAdornee then
+			outlineWorld(bushAdornee)
+		end
 	elseif step.id == "goToBase" then
 		clearLockedBush()
 		pointAtWorld(resolvePlayerBaseTarget(), arrowHeight(4))
+		local plot = PlotPaths.findPlotForAssignedSlot(player)
+		if plot then
+			outlineWorld(plot)
+		end
 	elseif step.id == "placeOnPlot" then
 		clearLockedBush()
 		pointAtWorld(resolvePlayerPlotStand(true), arrowHeight(3))
+		local plot = PlotPaths.findPlotForAssignedSlot(player)
+		if plot then
+			outlineWorld(plot)
+		end
 	elseif step.id == "upgradeBrainrot" then
 		pointAtWorld(resolvePlacedStandUpgradeTarget(), arrowHeight(4))
 		local upgradeBtn = resolveStandUpgradeButton()
@@ -1743,6 +1805,7 @@ local function finishTutorial()
 	speakToken += 1
 	stopObjectiveDots()
 	clearWorldArrow()
+	clearWorldHighlight()
 	clearUiPointer()
 	clearSpotlight()
 	stopLayoutSync()
@@ -1755,6 +1818,10 @@ local function finishTutorial()
 	end
 	table.clear(attrConns)
 	hidePanel()
+	if not finishCelebrated then
+		finishCelebrated = true
+		fireConfettiAndShake()
+	end
 	task.defer(function()
 		TopNotifController.showBroadcast("Tutorial completed!")
 	end)
@@ -1787,19 +1854,10 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 		return
 	end
 	if index > #TutorialConfig.STEPS then
-		local prevDone = if stepIndex > 0 then TutorialConfig.STEPS[stepIndex] else nil
-		if prevDone and CELEBRATE_AFTER_STEP[prevDone.id] == true then
-			requestCelebrate()
-		end
 		finishTutorial()
 		return
 	end
-	local celebrate = if opts and opts.celebrate == false then false else true
 	local first = stepIndex == 0
-	local prevStep = if stepIndex > 0 then TutorialConfig.STEPS[stepIndex] else nil
-	if celebrate and prevStep and CELEBRATE_AFTER_STEP[prevStep.id] == true and index > stepIndex then
-		requestCelebrate()
-	end
 	stepIndex = index
 	local step = TutorialConfig.STEPS[stepIndex]
 	if not step then
@@ -1863,9 +1921,13 @@ local function watchStepProgress()
 						completeCurrentIf("searchBush")
 					end
 				elseif stepBusy.id == "claimBrainrot" then
+					refreshPointers()
 					if CarryGate.isCarryingOnHead() then
 						completeCurrentIf("claimBrainrot")
 					end
+				elseif stepBusy.id == "visitUpgrade" then
+					-- Outline Upgrade choice when dialogue buttons appear.
+					refreshPointers()
 				end
 			end
 			return
@@ -2083,6 +2145,7 @@ function M.start(force: boolean?)
 	stepIndex = 0
 	grantCashPlayed = false
 	pendingCelebrate = false
+	finishCelebrated = false
 	ensureGui()
 	startLayoutSync()
 	bindGameplayHooks()
@@ -2099,6 +2162,7 @@ function M.stop()
 	speakToken += 1
 	stopObjectiveDots()
 	clearWorldArrow()
+	clearWorldHighlight()
 	clearUiPointer()
 	clearSpotlight()
 	stopLayoutSync()
@@ -2120,11 +2184,19 @@ function M.init()
 			return
 		end
 		hooksBound = true
-		BushFloatingClaimController.registerOfferHook(function(_model, _ui)
+		BushFloatingClaimController.registerOfferHook(function(_model, ui)
 			completeCurrentIf("searchBush")
-			-- Claim cutscene owns the quest chrome.
+			-- Claim cutscene owns the quest chrome; still point at Accept.
 			setChromeSuppressed(true)
-			clearUiPointer()
+			task.defer(function()
+				local step = currentStep()
+				if not active then
+					return
+				end
+				if step and step.id == "claimBrainrot" and ui and ui.acceptBtn then
+					pointAtGui(ui.acceptBtn, true)
+				end
+			end)
 		end)
 		BushFloatingClaimController.registerAcceptHook(function(_model)
 			completeCurrentIf("searchBush")

@@ -1428,6 +1428,13 @@ function StandDialogueCutscene.isActive(): boolean
 	return active
 end
 
+function StandDialogueCutscene.getEnterChoiceButton(): TextButton?
+	if not active or not choiceEnter or not choiceEnter.Parent or not choiceEnter.Visible then
+		return nil
+	end
+	return choiceEnter
+end
+
 function StandDialogueCutscene.cancel()
 	if not active then
 		return

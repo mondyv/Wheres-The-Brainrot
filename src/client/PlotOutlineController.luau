@@ -28,7 +28,6 @@ local BOX_LINE_THICKNESS = 0.14
 
 local PlotOutlineController = {}
 
-local highlight: Highlight? = nil
 local selectionBox: SelectionBox? = nil
 local pollConn: RBXScriptConnection? = nil
 local accum = 0
@@ -38,10 +37,6 @@ local cachedFloorPart: BasePart? = nil
 local wired = false
 
 local function destroyOutline()
-	if highlight then
-		highlight:Destroy()
-		highlight = nil
-	end
 	if selectionBox then
 		selectionBox:Destroy()
 		selectionBox = nil
@@ -63,32 +58,20 @@ local function resolveFloorAdornee(plot: Instance): BasePart?
 	return plot:FindFirstChildWhichIsA("BasePart", true)
 end
 
-local function ensureOutline(plot: Instance): (Highlight?, SelectionBox?)
+local function ensureOutline(plot: Instance): SelectionBox?
 	local floorPart = cachedFloorPart
 	if not floorPart or not floorPart.Parent then
 		floorPart = resolveFloorAdornee(plot)
 		cachedFloorPart = floorPart
 	end
-
-	local hl = highlight
-	if not hl or not hl.Parent or hl.Adornee ~= plot then
-		if hl then
-			hl:Destroy()
-		end
-		hl = Instance.new("Highlight")
-		hl.Name = "PlotSafezoneOutline"
-		hl.FillTransparency = 1
-		hl.OutlineTransparency = 1
-		hl.OutlineColor = OUTLINE_COLOR
-		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-		hl.Enabled = false
-		hl.Adornee = plot
-		hl.Parent = Workspace.CurrentCamera or plot
-		highlight = hl
+	if not floorPart then
+		return nil
 	end
 
+	-- SelectionBox on the floor only — never Highlight the whole plot (AlwaysOnTop
+	-- on every plot MeshPart is a major GPU hitch).
 	local box = selectionBox
-	if floorPart and (not box or not box.Parent or box.Adornee ~= floorPart) then
+	if not box or not box.Parent or box.Adornee ~= floorPart then
 		if box then
 			box:Destroy()
 		end
@@ -105,7 +88,7 @@ local function ensureOutline(plot: Instance): (Highlight?, SelectionBox?)
 		selectionBox = box
 	end
 
-	return hl, box
+	return box
 end
 
 local function resolvePlotCenter(plot: Instance): Vector3?
@@ -147,10 +130,6 @@ end
 local function tickOutline()
 	local character = player.Character
 	if not character or not SafezoneUtil.isCharacterInSafezone(character) then
-		if highlight then
-			highlight.Enabled = false
-			highlight.OutlineTransparency = 1
-		end
 		if selectionBox then
 			selectionBox.Visible = false
 			selectionBox.Transparency = 1
@@ -175,16 +154,13 @@ local function tickOutline()
 
 	local dist = xzDist(hrp.Position, center)
 	local transparency = outlineTransparencyForDistance(dist)
-	local hl, box = ensureOutline(plot)
+	local box = ensureOutline(plot)
 	local visible = transparency < 0.995
-	if hl then
-		hl.Enabled = visible
-		hl.OutlineTransparency = transparency
-	end
 	if box then
 		box.Visible = visible
 		box.Transparency = transparency
 		box.LineThickness = BOX_LINE_THICKNESS
+		box.Color3 = OUTLINE_COLOR
 	end
 end
 

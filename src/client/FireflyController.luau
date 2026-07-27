@@ -15,8 +15,8 @@ local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local FireflyController = {}
 
--- Fireflies on, but capped hard so dense lands don't tank FPS.
-local FEATURE_ENABLED = true
+-- PointLights on dense foliage tank FPS — keep off until a cheaper VFX path exists.
+local FEATURE_ENABLED = false
 
 local player = Players.LocalPlayer
 

@@ -31,8 +31,8 @@ local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
 local BUSH_COOLDOWN_ENDS_ATTR = "BushCooldownEndsAt"
 local BUSH_LOOT_PHASE_COOLDOWN = "cooldown"
 local BUSH_FLOATING_CLAIM_ATTR = "BushFloatingClaimActive"
-local AIM_TICK_INTERVAL = 0.08
-local PICK_FULL_SCAN_INTERVAL = 0.28
+local AIM_TICK_INTERVAL = 0.12
+local PICK_FULL_SCAN_INTERVAL = 0.4
 local COOLDOWN_VISUAL_SYNC_INTERVAL = 1.0
 local _BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 
@@ -63,7 +63,7 @@ local bushSearchLocked = false
 local PROMPT_ATTACH_RANGE = MAX_RANGE + 22
 local PROMPT_DETACH_RANGE = MAX_RANGE + 40
 local lastPromptProximitySyncAt = 0.0
-local PROMPT_PROXIMITY_SYNC_INTERVAL = 0.08
+local PROMPT_PROXIMITY_SYNC_INTERVAL = 0.2
 
 local pendingBushRoots: { Instance } = {}
 local pendingBushSet: { [Instance]: boolean } = {}

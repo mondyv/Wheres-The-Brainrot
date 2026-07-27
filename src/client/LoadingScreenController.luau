@@ -137,16 +137,25 @@ local function beginLoadingStreamingGuard(player: Player)
 		return
 	end
 	streamingGuardActive = true
-	if Workspace.StreamingEnabled then
-		savedStreamingMinRadius = Workspace.StreamingMinRadius
-		savedStreamingTargetRadius = Workspace.StreamingTargetRadius
-		local ok, err = pcall(function()
-			Workspace.StreamingMinRadius = LOADING_STREAM_MIN_RADIUS
-			Workspace.StreamingTargetRadius = LOADING_STREAM_TARGET_RADIUS
-		end)
-		if not ok then
-			warn("[LoadingScreenController] streaming radius clamp failed:", err)
+	-- Some Studio/runtime builds expose StreamingEnabled but not Min/Target radius.
+	-- Never read those properties outside pcall — it aborts the whole loading screen.
+	local okStream, errStream = pcall(function()
+		if Workspace.StreamingEnabled ~= true then
+			return
 		end
+		local ws = Workspace :: any
+		if typeof(ws.StreamingMinRadius) ~= "number" or typeof(ws.StreamingTargetRadius) ~= "number" then
+			return
+		end
+		savedStreamingMinRadius = ws.StreamingMinRadius
+		savedStreamingTargetRadius = ws.StreamingTargetRadius
+		ws.StreamingMinRadius = LOADING_STREAM_MIN_RADIUS
+		ws.StreamingTargetRadius = LOADING_STREAM_TARGET_RADIUS
+	end)
+	if not okStream then
+		warn("[LoadingScreenController] streaming radius clamp failed:", errStream)
+		savedStreamingMinRadius = nil
+		savedStreamingTargetRadius = nil
 	end
 	local char = player.Character
 	local focusPart = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
@@ -169,8 +178,11 @@ local function endLoadingStreamingGuard(player: Player?)
 		local minR = savedStreamingMinRadius
 		local targetR = savedStreamingTargetRadius or savedStreamingMinRadius
 		local ok, err = pcall(function()
-			Workspace.StreamingMinRadius = minR
-			Workspace.StreamingTargetRadius = targetR
+			local ws = Workspace :: any
+			if typeof(ws.StreamingMinRadius) == "number" and typeof(ws.StreamingTargetRadius) == "number" then
+				ws.StreamingMinRadius = minR
+				ws.StreamingTargetRadius = targetR
+			end
 		end)
 		if not ok then
 			warn("[LoadingScreenController] streaming radius restore failed:", err)

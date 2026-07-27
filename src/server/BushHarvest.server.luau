@@ -2892,37 +2892,6 @@ local function shiftParkedMapAfterListRemove(m: { [number]: boolean }, removedId
 	end
 end
 
--- After inserting at list index `insertIdx` (1..9), shift tucked flags so they match list positions.
-local function _mergeMapAfterBackpackInsert(m: { [number]: boolean }, insertIdx: number, insertedTucked: boolean)
-	if insertIdx > 9 then
-		return
-	end
-	local prev: { [number]: boolean } = {}
-	for j = 1, 9 do
-		if m[j] then
-			prev[j] = true
-		end
-	end
-	for j = 1, 9 do
-		m[j] = nil
-	end
-	for p = 1, 9 do
-		if p < insertIdx then
-			if prev[p] then
-				m[p] = true
-			end
-		elseif p == insertIdx then
-			if insertedTucked then
-				m[p] = true
-			end
-		else
-			if prev[p - 1] then
-				m[p] = true
-			end
-		end
-	end
-end
-
 local HOTBAR_UI_SLOTS = 9
 
 local function getHotbarSlotMap(plr: Player): { [number]: number }
@@ -3110,32 +3079,6 @@ local function setBrainrotSlotTucked(
 	end
 end
 
-local function _inventoryIndexIsBackpackVisible(map: { [number]: boolean }, index: number): boolean
-	return index > HOTBAR_UI_SLOTS or map[index] == true
-end
-
-local function moveInventoryEntryToBackpackIndex(
-	plr: Player,
-	list: { BrainrotInvEntry },
-	map: { [number]: boolean },
-	srcIdx: number,
-	destIdx: number?
-): boolean
-	if not list[srcIdx] then
-		return false
-	end
-
-	-- Backpack placement should not destroy/reindex the inventory. The normal
-	-- brainrot hotbar now uses a separate hotbar-slot map, so saving an item to
-	-- the bag is simply: clear its hotbar slot and mark it tucked when needed.
-	local slotMap = getHotbarSlotMap(plr)
-	slotMap[srcIdx] = nil
-	if srcIdx <= HOTBAR_UI_SLOTS then
-		setBrainrotSlotTucked(map, list, srcIdx, true)
-	end
-	return true
-end
-
 ensureBrainrotParkedRemote().OnServerEvent:Connect(
 	function(plr: Player, idx: any, parked: any, targetSlot: any?, backpackDestIdx: any?)
 		if typeof(idx) ~= "number" or typeof(parked) ~= "boolean" then
@@ -3157,8 +3100,7 @@ ensureBrainrotParkedRemote().OnServerEvent:Connect(
 
 		local changed = false
 		if parked then
-			-- Hotbar/backpack save path. This now tucks by state instead of always
-			-- removing/appending, which was the cause of normal brainrots reverting.
+			-- Hotbar/backpack save path. Tuck by state — do not remove/reindex the list.
 			local char = plr.Character
 			if char and i <= HOTBAR_UI_SLOTS then
 				local hum = char:FindFirstChildOfClass("Humanoid")
@@ -3170,18 +3112,21 @@ ensureBrainrotParkedRemote().OnServerEvent:Connect(
 					end
 				end
 			end
-			changed = moveInventoryEntryToBackpackIndex(plr, list, map, i, backpackDestIdx)
-			if changed then
-				destroyAllBrainrotToolsForPlayer(plr)
+			getHotbarSlotMap(plr)[i] = nil
+			if i <= HOTBAR_UI_SLOTS then
+				setBrainrotSlotTucked(map, list, i, true)
 			end
+			changed = true
+			destroyAllBrainrotToolsForPlayer(plr)
 		else
 			if typeof(backpackDestIdx) == "number" then
-				-- Backpack row → backpack row reorder. Always keep the inserted entry tucked
-				-- if it lands in 1..9 so it does not randomly jump into the hotbar.
-				changed = moveInventoryEntryToBackpackIndex(plr, list, map, i, backpackDestIdx)
-				if changed then
-					destroyAllBrainrotToolsForPlayer(plr)
+				-- Keep tucked in backpack; no list reindex (register-limit safe inline).
+				getHotbarSlotMap(plr)[i] = nil
+				if i <= HOTBAR_UI_SLOTS then
+					setBrainrotSlotTucked(map, list, i, true)
 				end
+				changed = true
+				destroyAllBrainrotToolsForPlayer(plr)
 			elseif typeof(targetSlot) == "number" then
 				changed = moveInventoryEntryToExactHotbarSlot(plr, list, map, i, targetSlot :: number)
 			else

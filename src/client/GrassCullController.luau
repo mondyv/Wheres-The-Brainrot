@@ -1,9 +1,14 @@
 -- [ACTIVE] GrassCullController
 --[[
-	Client-only grass streaming: keep Map.Lands/LandN/grass for the current land
-	and immediate neighbors (±1). When a land is 2+ away, parent its grass folder
-	into a local cache so it is not rendered / queried (not Destroy'd — restored
-	when you move back in range).
+	Client-only land content cull (kept name for init wiring).
+
+	For Map.Lands/LandN when the land is 2+ away from the player:
+	  - Park (reparent into a local cache) every direct child that is NOT essential.
+	  - Restore when the player is within ±1 land again.
+	Nothing is Destroy'd — safe to bring back.
+
+	Always kept on far lands:
+	  Spawn / hitboxes / ComingSoon / walk-surface names / scripts
 ]]
 
 local Players = game:GetService("Players")
@@ -15,8 +20,7 @@ local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local M = {}
 
--- Keep current land and ±KEEP_RADIUS. Unload when abs(delta) > KEEP_RADIUS
--- ("2 lands away" => unload at distance >= 2).
+-- Keep current land and ±KEEP_RADIUS. Unload when abs(delta) > KEEP_RADIUS.
 local KEEP_RADIUS = 1
 local POLL_SEC = 0.45
 local FEATURE_ENABLED = true
@@ -25,14 +29,20 @@ local player = Players.LocalPlayer
 local wired = false
 local heartbeatConn: RBXScriptConnection? = nil
 local landsChildConn: RBXScriptConnection? = nil
-local landsDescConn: RBXScriptConnection? = nil
 local accum = 0.0
 local currentLand = 0
 
--- grass folder -> original parent under its Land
-local grassHome: { [Instance]: Instance } = {}
--- land number -> grass folder (live or parked)
-local grassByLand: { [number]: Instance } = {}
+type CullEntry = {
+	inst: Instance,
+	home: Instance,
+	land: number,
+}
+
+-- instance -> entry (live or parked)
+local entries: { [Instance]: CullEntry } = {}
+-- land number -> land folder
+local landFolders: { [number]: Instance } = {}
+local landChildConns: { [number]: RBXScriptConnection } = {}
 
 local cacheFolder: Folder? = nil
 
@@ -42,7 +52,7 @@ local function getCache(): Folder
 		return existing
 	end
 	local folder = Instance.new("Folder")
-	folder.Name = "GrassCullCache"
+	folder.Name = "LandContentCullCache"
 	folder.Parent = player:FindFirstChild("PlayerScripts") or player
 	cacheFolder = folder
 	return folder
@@ -61,46 +71,46 @@ local function landNumberFromFolder(landFolder: Instance): number?
 	return tonumber(n)
 end
 
-local function findGrassFolder(landFolder: Instance): Instance?
-	return landFolder:FindFirstChild("grass") or landFolder:FindFirstChild("Grass")
-end
+local function shouldKeepChild(inst: Instance): boolean
+	if inst:IsA("BaseScript") or inst:IsA("ModuleScript") then
+		return true
+	end
 
-local function registerGrass(landNum: number, grass: Instance)
-	if grassByLand[landNum] == grass then
-		return
-	end
-	grassByLand[landNum] = grass
-	if grass.Parent and grass.Parent ~= getCache() then
-		grassHome[grass] = grass.Parent
-	end
-	grass.Destroying:Once(function()
-		if grassByLand[landNum] == grass then
-			grassByLand[landNum] = nil
-		end
-		grassHome[grass] = nil
-	end)
-end
+	local name = string.lower(inst.Name)
 
-local function parkGrass(grass: Instance)
-	local cache = getCache()
-	if grass.Parent == cache then
-		return
+	-- Gameplay / resolve critical
+	if name == "spawn" or name == "spawnpart" or name == "landspawn" then
+		return true
 	end
-	if grass.Parent then
-		grassHome[grass] = grass.Parent
+	if string.find(name, "hitbox", 1, true) then
+		return true
 	end
-	grass.Parent = cache
-end
+	if string.find(name, "comingsoon", 1, true) then
+		return true
+	end
+	if string.find(name, "safezone", 1, true) then
+		return true
+	end
 
-local function restoreGrass(grass: Instance)
-	local home = grassHome[grass]
-	if not home or not home.Parent then
-		return
+	-- Primary walk surfaces (keep so streaming-edge footing doesn't vanish)
+	if
+		name == "ground"
+		or name == "floor"
+		or name == "terrain"
+		or name == "baseplate"
+		or name == "path"
+		or name == "road"
+		or name == "bridge"
+		or name == "island"
+		or name == "platform"
+		or name == "collision"
+		or name == "walkway"
+		or name == "base"
+	then
+		return true
 	end
-	if grass.Parent == home then
-		return
-	end
-	grass.Parent = home
+
+	return false
 end
 
 local function shouldKeepLand(landNum: number, playerLand: number): boolean
@@ -110,20 +120,103 @@ local function shouldKeepLand(landNum: number, playerLand: number): boolean
 	return math.abs(landNum - playerLand) <= KEEP_RADIUS
 end
 
+local function parkEntry(entry: CullEntry)
+	local cache = getCache()
+	local inst = entry.inst
+	if not inst.Parent then
+		return
+	end
+	if inst.Parent == cache then
+		return
+	end
+	if inst.Parent ~= cache then
+		entry.home = inst.Parent
+	end
+	inst.Parent = cache
+end
+
+local function restoreEntry(entry: CullEntry)
+	local inst = entry.inst
+	local home = entry.home
+	if not home or not home.Parent then
+		return
+	end
+	if inst.Parent == home then
+		return
+	end
+	inst.Parent = home
+end
+
+local function unregisterEntry(inst: Instance)
+	entries[inst] = nil
+end
+
+local function registerCullable(landNum: number, inst: Instance)
+	if entries[inst] then
+		return
+	end
+	if shouldKeepChild(inst) then
+		return
+	end
+	local home = inst.Parent
+	if not home then
+		return
+	end
+	local cache = getCache()
+	if home == cache then
+		return
+	end
+
+	local entry: CullEntry = {
+		inst = inst,
+		home = home,
+		land = landNum,
+	}
+	entries[inst] = entry
+
+	inst.Destroying:Once(function()
+		unregisterEntry(inst)
+	end)
+
+	if currentLand > 0 and not shouldKeepLand(landNum, currentLand) then
+		parkEntry(entry)
+	end
+end
+
 local function applyForPlayerLand(playerLand: number)
 	if playerLand <= 0 then
 		return
 	end
-	for landNum, grass in grassByLand do
-		if not grass.Parent and grass ~= getCache() then
-			continue
-		end
-		if shouldKeepLand(landNum, playerLand) then
-			restoreGrass(grass)
+	for _, entry in entries do
+		if shouldKeepLand(entry.land, playerLand) then
+			restoreEntry(entry)
 		else
-			parkGrass(grass)
+			parkEntry(entry)
 		end
 	end
+end
+
+local function hookLandFolder(landFolder: Instance, landNum: number)
+	landFolders[landNum] = landFolder
+
+	local existingConn = landChildConns[landNum]
+	if existingConn then
+		existingConn:Disconnect()
+		landChildConns[landNum] = nil
+	end
+
+	for _, child in landFolder:GetChildren() do
+		registerCullable(landNum, child)
+	end
+
+	landChildConns[landNum] = landFolder.ChildAdded:Connect(function(child)
+		-- Defer so streaming can finish parenting attributes/children first.
+		task.defer(function()
+			if child.Parent == landFolder then
+				registerCullable(landNum, child)
+			end
+		end)
+	end)
 end
 
 local function scanExistingLands()
@@ -133,12 +226,8 @@ local function scanExistingLands()
 	end
 	for _, child in lands:GetChildren() do
 		local landNum = landNumberFromFolder(child)
-		if not landNum then
-			continue
-		end
-		local grass = findGrassFolder(child)
-		if grass then
-			registerGrass(landNum, grass)
+		if landNum then
+			hookLandFolder(child, landNum)
 		end
 	end
 end
@@ -169,49 +258,14 @@ local function onHeartbeat(dt: number)
 	end
 end
 
-local function onLandsDescendantAdded(inst: Instance)
-	if not FEATURE_ENABLED then
-		return
-	end
-	-- Grass folder itself appeared under a land.
-	if inst.Name == "grass" or inst.Name == "Grass" then
-		local landFolder = inst.Parent
-		if not landFolder then
-			return
-		end
-		local landNum = landNumberFromFolder(landFolder)
-		if not landNum then
-			return
-		end
-		registerGrass(landNum, inst)
-		if currentLand > 0 and not shouldKeepLand(landNum, currentLand) then
-			parkGrass(inst)
-		end
-		return
-	end
-end
-
 local function onLandFolderAdded(landFolder: Instance)
 	local landNum = landNumberFromFolder(landFolder)
 	if not landNum then
 		return
 	end
-	local grass = findGrassFolder(landFolder)
-	if grass then
-		registerGrass(landNum, grass)
-		if currentLand > 0 and not shouldKeepLand(landNum, currentLand) then
-			parkGrass(grass)
-		end
-	else
-		task.defer(function()
-			local late = findGrassFolder(landFolder)
-			if late then
-				registerGrass(landNum, late)
-				if currentLand > 0 and not shouldKeepLand(landNum, currentLand) then
-					parkGrass(late)
-				end
-			end
-		end)
+	hookLandFolder(landFolder, landNum)
+	if currentLand > 0 then
+		applyForPlayerLand(currentLand)
 	end
 end
 
@@ -223,9 +277,8 @@ function M.setEnabled(enabled: boolean)
 		applyForPlayerLand(currentLand)
 		return
 	end
-	-- Restore everything.
-	for _, grass in grassByLand do
-		restoreGrass(grass)
+	for _, entry in entries do
+		restoreEntry(entry)
 	end
 end
 
@@ -247,7 +300,7 @@ function M.init()
 			lands = landsRoot()
 		end
 		if not lands then
-			warn("[GrassCullController] Map.Lands missing — grass distance cull skipped")
+			warn("[GrassCullController] Map.Lands missing — land content cull skipped")
 			return
 		end
 
@@ -257,7 +310,6 @@ function M.init()
 		applyForPlayerLand(currentLand)
 
 		landsChildConn = lands.ChildAdded:Connect(onLandFolderAdded)
-		landsDescConn = lands.DescendantAdded:Connect(onLandsDescendantAdded)
 		heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
 	end)
 end

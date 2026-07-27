@@ -600,14 +600,14 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		stands = stands,
 		lastSavedAt = floorNum(raw.lastSavedAt, 0),
 		settings = normalizeSettings(raw.settings),
-		-- Missing tutorialCompleted: only skip for profiles that already have progress
-		-- (pre-tutorial ship). Brand-new / empty saves must stay incomplete.
+		-- Missing tutorialCompleted: only skip for profiles that already have real
+		-- progress (pre-tutorial ship). Do NOT infer from cash alone — starter
+		-- tutorial cash would otherwise skip first-join tutorials.
 		tutorialCompleted = if typeof(raw.tutorialCompleted) == "boolean"
 			then raw.tutorialCompleted
 			else (
-				math.max(0, if typeof(raw.cash) == "number" then raw.cash else 0) > 0
-					or floorNum(raw.rebirthCount, 0) > 0
-					or floorNum(raw.totalPlayTimeSeconds, 0) > 30
+				floorNum(raw.rebirthCount, 0) > 0
+					or floorNum(raw.totalPlayTimeSeconds, 0) > 120
 					or (typeof(raw.inventory) == "table" and next(raw.inventory) ~= nil)
 					or (typeof(raw.stands) == "table" and next(raw.stands) ~= nil)
 			),

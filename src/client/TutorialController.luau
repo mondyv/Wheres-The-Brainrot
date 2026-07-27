@@ -1071,7 +1071,24 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	end)
 end
 
-local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boolean?)
+local function cumulativeUiScale(inst: Instance): number
+	local s = 1
+	local x: Instance? = inst
+	while x do
+		if x:IsA("GuiObject") then
+			local us = x:FindFirstChildOfClass("UIScale")
+			if us then
+				s *= us.Scale
+			end
+		elseif x:IsA("LayerCollector") then
+			break
+		end
+		x = x.Parent
+	end
+	return math.max(s, 0.05)
+end
+
+local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boolean?, style: string?)
 	clearUiPointer()
 	local allow = force == true or (not chromeSuppressed and not isCutsceneBusy())
 	if not allow then
@@ -1081,6 +1098,7 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 		return
 	end
 
+	local claimStyle = style == "claim"
 	uiPointerForced = force == true
 	uiPointerHost = target
 
@@ -1106,44 +1124,66 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 		end
 	end
 
-	local stroke = Instance.new("UIStroke")
-	stroke.Name = "TutorialTargetStroke"
-	stroke.Color = Color3.fromRGB(255, 236, 70)
-	stroke.Thickness = 4.5
-	stroke.Transparency = 0
-	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	stroke.LineJoinMode = Enum.LineJoinMode.Round
-	stroke.Parent = attachHost
-	uiPointerStroke = stroke
-
-	if strokeOnly == true then
+	-- Accept/Decline: no yellow stroke — keep the checkmark readable.
+	if not claimStyle then
+		local stroke = Instance.new("UIStroke")
+		stroke.Name = "TutorialTargetStroke"
+		stroke.Color = Color3.fromRGB(255, 236, 70)
+		stroke.Thickness = 3.2
+		stroke.Transparency = 0
+		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		stroke.LineJoinMode = Enum.LineJoinMode.Round
+		stroke.Parent = attachHost
+		uiPointerStroke = stroke
+		if strokeOnly == true then
+			return
+		end
+	elseif strokeOnly == true then
 		return
 	end
 
 	local pointer = Instance.new("ImageLabel")
 	pointer.Name = "TutorialUiClick"
 	pointer.BackgroundTransparency = 1
-	pointer.AnchorPoint = Vector2.new(0.5, 0.5)
-	pointer.Position = UDim2.fromScale(0.5, 0.5)
 	pointer.Image = TutorialConfig.UI_CLICK_IMAGE
 	pointer.ScaleType = Enum.ScaleType.Fit
 	pointer.Active = false
 
 	local underBb = target:FindFirstAncestorOfClass("BillboardGui")
 	local underSurface = target:FindFirstAncestorOfClass("SurfaceGui")
+	local isUpgradeUi = attachHost.Name == "Buy"
+		or attachHost.Name == "Upgrade"
+		or target.Name == "Buy"
+		or target.Name == "Upgrade"
+		or target:FindFirstAncestor("Upgrades") ~= nil
+
 	local clickSize = TutorialConfig.UI_CLICK_SIZE
-	local clickSizeUp = clickSize + 10
-	if underBb or underSurface then
+	if claimStyle then
+		clickSize = TutorialConfig.UI_CLICK_SIZE_CLAIM
+	elseif isUpgradeUi then
+		clickSize = TutorialConfig.UI_CLICK_SIZE_UPGRADE_UI
+	elseif underBb or underSurface then
 		clickSize = if isMobileUi()
 			then TutorialConfig.UI_CLICK_SIZE_SURFACE_MOBILE
 			else TutorialConfig.UI_CLICK_SIZE_SURFACE
-		clickSizeUp = clickSize + 10
+	end
+	local clickSizeUp = clickSize + (if claimStyle then 3 else 6)
+
+	-- Claim: sit bottom-right and angle in so the checkmark stays visible.
+	if claimStyle then
+		pointer.AnchorPoint = Vector2.new(0.15, 0.1)
+		pointer.Position = UDim2.fromScale(0.88, 0.9)
+		pointer.Rotation = -38
+	else
+		pointer.AnchorPoint = Vector2.new(0.5, 0.5)
+		pointer.Position = UDim2.fromScale(0.5, 0.5)
+		pointer.Rotation = 0
 	end
 	pointer.Size = UDim2.fromOffset(clickSize, clickSize)
 
 	-- SurfaceGui text (Cost / Level) often paints over in-gui images no matter the ZIndex.
 	-- Use an AlwaysOnTop Billboard for stand upgrade so the click hand is never buried.
-	if underSurface then
+	if underSurface and not claimStyle then
 		local adornee: Instance? = underSurface.Adornee
 		if not adornee and underSurface.Parent and underSurface.Parent:IsA("BasePart") then
 			adornee = underSurface.Parent
@@ -1153,13 +1193,17 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			bb.Name = "TutorialUiClickBillboard"
 			bb.AlwaysOnTop = true
 			bb.LightInfluence = 0
-			bb.Size = UDim2.fromOffset(clickSize + 16, clickSize + 16)
-			bb.StudsOffset = Vector3.new(0, 0.15, 0)
+			bb.Size = UDim2.fromOffset(clickSize + 8, clickSize + 8)
+			-- Nudge off-center so Cost/Upgrade text stays readable.
+			bb.StudsOffset = Vector3.new(0.55, -0.2, 0)
 			bb.MaxDistance = 120
 			bb.Adornee = adornee
 			local pg = player:FindFirstChildOfClass("PlayerGui")
 			bb.Parent = pg or underSurface
-			pointer.Size = UDim2.fromScale(1, 1)
+			pointer.Size = UDim2.fromScale(0.92, 0.92)
+			pointer.AnchorPoint = Vector2.new(0.5, 0.5)
+			pointer.Position = UDim2.fromScale(0.55, 0.6)
+			pointer.Rotation = -28
 			pointer.ZIndex = 10
 			pointer.Parent = bb
 			uiPointerBb = bb
@@ -1170,27 +1214,44 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			uiPointer = pointer
 		end
 	else
-		local standOverlay = attachHost:FindFirstChild("__UpgradeOverlay")
-		if standOverlay and standOverlay:IsA("GuiObject") then
-			pointer.ZIndex = 200000
-			pointer.Parent = standOverlay
+		local parentGui: GuiObject = attachHost
+		if claimStyle and target.Parent and target.Parent:IsA("GuiObject") then
+			parentGui = target.Parent :: GuiObject
 		else
-			pointer.ZIndex = math.max(attachHost.ZIndex + 500, 1000)
-			pointer.Parent = attachHost
+			local standOverlay = attachHost:FindFirstChild("__UpgradeOverlay")
+			if standOverlay and standOverlay:IsA("GuiObject") then
+				parentGui = standOverlay
+			end
 		end
+		-- Counter parent UIScale so punch/distance scales don't balloon the hand.
+		local counter = Instance.new("UIScale")
+		counter.Name = "TutorialClickCounterScale"
+		counter.Scale = 1 / cumulativeUiScale(parentGui)
+		counter.Parent = pointer
+		pointer.ZIndex = math.max(parentGui.ZIndex + 500, 1000)
+		pointer.Parent = parentGui
 		uiPointer = pointer
 	end
+
+	local baseRot = if claimStyle then -38 else 0
+	local tipRot = if claimStyle then -28 else -10
+	local downRot = if claimStyle then -42 else 6
 
 	task.spawn(function()
 		while uiPointer == pointer and pointer.Parent and active and target.Parent do
 			if chromeSuppressed and not uiPointerForced and not isClaimCutscene() then
 				break
 			end
+			-- Keep counter scale in sync if accept button punches.
+			local counter = pointer:FindFirstChild("TutorialClickCounterScale")
+			if counter and counter:IsA("UIScale") and pointer.Parent then
+				counter.Scale = 1 / cumulativeUiScale(pointer.Parent)
+			end
 			local up = TweenService:Create(pointer, CLICK_BOUNCE, {
 				Size = if uiPointerBb
-					then UDim2.fromScale(1.12, 1.12)
+					then UDim2.fromScale(1.08, 1.08)
 					else UDim2.fromOffset(clickSizeUp, clickSizeUp),
-				Rotation = -12,
+				Rotation = tipRot,
 			})
 			up:Play()
 			up.Completed:Wait()
@@ -1201,10 +1262,13 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 				Size = if uiPointerBb
 					then UDim2.fromScale(1, 1)
 					else UDim2.fromOffset(clickSize, clickSize),
-				Rotation = 8,
+				Rotation = downRot,
 			})
 			down:Play()
 			down.Completed:Wait()
+			if claimStyle then
+				pointer.Rotation = baseRot
+			end
 			task.wait(0.04)
 		end
 	end)
@@ -1731,7 +1795,7 @@ local function refreshPointersImpl()
 		return
 	end
 
-	-- Claim step: outline + click the Accept icon (cutscene suppresses normal pointers).
+	-- Claim step: click image only (no outline), angled off the checkmark.
 	if step.id == "claimBrainrot" or isClaimCutscene() then
 		clearWorldArrow()
 		clearWorldHighlight()
@@ -1739,7 +1803,7 @@ local function refreshPointersImpl()
 		local offer = BushFloatingClaimController.getActiveOfferUi()
 		if offer and offer.acceptBtn then
 			if uiPointerHost ~= offer.acceptBtn or not uiPointer or not uiPointer.Parent then
-				pointAtGui(offer.acceptBtn, true)
+				pointAtGui(offer.acceptBtn, true, false, "claim")
 			end
 		else
 			clearUiPointer()
@@ -2202,6 +2266,23 @@ function M.start(force: boolean?)
 	advanceTo(1)
 end
 
+local function shouldRunTutorial(): boolean
+	return player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true
+end
+
+local function tryStartForFirstJoin()
+	if not player.Parent then
+		return
+	end
+	if not shouldRunTutorial() then
+		return
+	end
+	if active then
+		return
+	end
+	M.start(false)
+end
+
 function M.stop()
 	if not active then
 		return
@@ -2243,7 +2324,7 @@ function M.init()
 					return
 				end
 				if step and step.id == "claimBrainrot" and ui and ui.acceptBtn then
-					pointAtGui(ui.acceptBtn, true)
+					pointAtGui(ui.acceptBtn, true, false, "claim")
 				end
 			end)
 		end)
@@ -2270,7 +2351,7 @@ function M.init()
 			return
 		end
 
-		task.wait(1.25)
+		task.wait(0.6)
 		bindOfferHooksOnce()
 
 		GameplayUiVisibility.onRestored(function()
@@ -2287,9 +2368,13 @@ function M.init()
 			M.start(true)
 		end)
 
-		if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
-			M.start(false)
-		end
+		-- First-join / incomplete: start once loaded, and retry if attributes settle late.
+		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR):Connect(function()
+			tryStartForFirstJoin()
+		end)
+		tryStartForFirstJoin()
+		task.delay(2.5, tryStartForFirstJoin)
+		task.delay(6, tryStartForFirstJoin)
 	end)
 end
 

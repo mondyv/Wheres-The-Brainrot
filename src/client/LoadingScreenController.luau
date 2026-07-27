@@ -1,8 +1,8 @@
 -- [ACTIVE] LoadingScreenController
 --[[
 	LoadingScreenController — full-screen join overlay:
-	Moon camera flyover + heavy blur, centered GameNameImage (wobbly jump),
-	cycling tips at the bottom of the screen; hides other PlayerGui until ready.
+	Logo + tips stay; world flyover can be disabled so the client doesn't stream
+	half the map during load. Moon export kept for optional re-enable.
 	StarterGui.LoadingScreen + GameNameImage. Moon export: "Camera loading" (Frames/0..N).
 --]]
 
@@ -17,6 +17,9 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+
+-- Black join screen (no world behind). Set false to restore Moon flyover.
+local USE_BLACK_LOADING_BACKGROUND = true
 
 local MIN_DISPLAY_SEC = 2.4
 local HOLD_AT_FULL_SEC = 0.6
@@ -41,10 +44,10 @@ local CORE_GUIS_TO_HIDE: { Enum.CoreGuiType } = {
 	Enum.CoreGuiType.PlayerList,
 }
 
-local OVERLAY_COLOR = Color3.fromRGB(8, 5, 4)
-local SOLID_COVER_COLOR = Color3.fromRGB(6, 4, 3)
-local OVERLAY_TRANSPARENCY = 0.38
-local LOADING_BLUR_SIZE = 56
+local OVERLAY_COLOR = if USE_BLACK_LOADING_BACKGROUND then Color3.new(0, 0, 0) else Color3.fromRGB(8, 5, 4)
+local SOLID_COVER_COLOR = if USE_BLACK_LOADING_BACKGROUND then Color3.new(0, 0, 0) else Color3.fromRGB(6, 4, 3)
+local OVERLAY_TRANSPARENCY = if USE_BLACK_LOADING_BACKGROUND then 0 else 0.38
+local LOADING_BLUR_SIZE = if USE_BLACK_LOADING_BACKGROUND then 0 else 56
 
 local ENTRANCE_DURATION = 0.85
 local ENTRANCE_SCALE_START = 0.78
@@ -1083,6 +1086,38 @@ local function sampleMoonCameraTrack(track: MoonCameraTrack, elapsed: number, lo
 	return cf, fov
 end
 
+local function startBlackLoadingCameraLock(camera: Camera, player: Player): () -> ()
+	-- Keep cam near spawn so streaming stays local; solid black UI hides the world.
+	loadedMoonTrack = nil
+	local bindName = "LoadingScreenBlackCamera"
+
+	local function resolveCf(): CFrame
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if hrp and hrp:IsA("BasePart") then
+			local pos = (hrp :: BasePart).Position
+			return CFrame.new(pos + Vector3.new(0, 4, 10), pos + Vector3.new(0, 2, 0))
+		end
+		return defaultLoadingCFrame()
+	end
+
+	local function apply()
+		camera.CameraType = Enum.CameraType.Scriptable
+		camera.CameraSubject = nil
+		local cf = resolveCf()
+		camera.CFrame = cf
+		camera.Focus = cf
+		camera.FieldOfView = 70
+	end
+
+	apply()
+	RunService:BindToRenderStep(bindName, Enum.RenderPriority.Last.Value, apply)
+
+	return function()
+		RunService:UnbindFromRenderStep(bindName)
+	end
+end
+
 local function startLoadingCameraLock(camera: Camera, loadingGui: ScreenGui): () -> ()
 	loadedMoonTrack = nil
 	local ref = findReferenceCamera(StarterGui:FindFirstChild("LoadingScreen")) or findReferenceCamera(loadingGui)
@@ -1159,14 +1194,20 @@ end
 local function bootstrapLoadingVisuals(loadingGui: ScreenGui, player: Player)
 	ensureSolidCover(loadingGui)
 	ensureBlurOverlay(loadingGui)
-	ensureLoadingBlur()
+	if not USE_BLACK_LOADING_BACKGROUND then
+		ensureLoadingBlur()
+	end
 
 	local camera = Workspace.CurrentCamera
 	if camera and not stopCameraLock then
 		if not cameraClipStartedAt then
 			cameraClipStartedAt = os.clock()
 		end
-		stopCameraLock = startLoadingCameraLock(camera, loadingGui)
+		if USE_BLACK_LOADING_BACKGROUND then
+			stopCameraLock = startBlackLoadingCameraLock(camera, player)
+		else
+			stopCameraLock = startLoadingCameraLock(camera, loadingGui)
+		end
 	end
 
 	bindCharacterHideWhileLoading(player)
@@ -1921,6 +1962,16 @@ local function fadeOutLoadingTogether(
 		table.insert(tweens, TweenService:Create(overlay, FADE_TWEEN_INFO, { BackgroundTransparency = 1 }))
 	end
 
+	local solidCover = findSolidCover(loadingGui)
+	if solidCover and solidCover:IsA("GuiObject") and solidCover.Visible then
+		table.insert(tweens, TweenService:Create(solidCover, FADE_TWEEN_INFO, { BackgroundTransparency = 1 }))
+	end
+
+	local bottomHint = loadingGui:FindFirstChild("LoadingHint")
+	if bottomHint and bottomHint:IsA("TextLabel") then
+		table.insert(tweens, TweenService:Create(bottomHint, FADE_TWEEN_INFO, { TextTransparency = 1 }))
+	end
+
 	local canvas = fadeCanvas or loadingGui:FindFirstChild("LoadingFadeCanvas")
 	if canvas and canvas:IsA("CanvasGroup") then
 		table.insert(tweens, TweenService:Create(canvas, FADE_TWEEN_INFO, { GroupTransparency = 1 }))
@@ -2054,6 +2105,16 @@ function M.run()
 		bootstrapLoadingVisuals(loadingGui, player)
 	end
 
+	-- Black mode: keep opaque cover so the world never peeks through.
+	if USE_BLACK_LOADING_BACKGROUND then
+		ensureSolidCover(loadingGui)
+		local overlay = loadingGui:FindFirstChild("BlurOverlay")
+		if overlay and overlay:IsA("Frame") then
+			overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+			overlay.BackgroundTransparency = 0
+		end
+	end
+
 	stopNameAnim = startGameNameSubtitleAnim(loadingGui)
 	destroyLiquidLayers(loadingGui)
 	preloadGameName(loadingGui)
@@ -2063,18 +2124,24 @@ function M.run()
 		camera = Workspace:WaitForChild("Camera", 10) :: Camera?
 	end
 
-	local blur = ensureLoadingBlur()
+	local blur = if USE_BLACK_LOADING_BACKGROUND then nil else ensureLoadingBlur()
 
 	if camera and not stopCameraLock then
 		if not cameraClipStartedAt then
 			cameraClipStartedAt = os.clock()
 		end
-		stopCameraLock = startLoadingCameraLock(camera, loadingGui)
+		if USE_BLACK_LOADING_BACKGROUND then
+			stopCameraLock = startBlackLoadingCameraLock(camera, player)
+		else
+			stopCameraLock = startLoadingCameraLock(camera, loadingGui)
+		end
 	end
 
-	releaseSolidCover(loadingGui)
+	if not USE_BLACK_LOADING_BACKGROUND then
+		releaseSolidCover(loadingGui)
+	end
 
-	local _clipSec = if loadedMoonTrack
+	local _clipSec = if (not USE_BLACK_LOADING_BACKGROUND) and loadedMoonTrack
 		then math.max(moonClipDurationSec(loadedMoonTrack), 0.05)
 		else MIN_DISPLAY_SEC - HOLD_AT_FULL_SEC
 	local minDisplaySec = _clipSec + HOLD_AT_FULL_SEC
@@ -2104,7 +2171,12 @@ function M.run()
 
 	-- Overlap UI fade with a soft camera drop into third-person.
 	task.spawn(function()
-		if camera then
+		if not camera then
+			return
+		end
+		if USE_BLACK_LOADING_BACKGROUND then
+			restoreGameplayCamera(camera, player)
+		else
 			settleGameplayCamera(camera, player, 0.95)
 		end
 	end)

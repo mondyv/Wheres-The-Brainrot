@@ -1,9 +1,8 @@
 -- [ACTIVE] SafeZoneLightingController
 --[[
 	Outside the safe zone: smoky dark Atmosphere night.
-	Inside: faint mist fog (based on the place day snapshot) so the base
-	isn't crystal-clear at long range. Day is snapped once at boot before
-	any fog/night is applied.
+	Inside: heavier mist fog so distant unloaded lands don't read as empty holes.
+	Day is snapped once at boot before any fog/night is applied.
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -39,33 +38,33 @@ local NIGHT_ATMO_LOW = {
 	Haze = 2.35,
 }
 
--- Faint mist inside safe zone — softens distance so the base isn't crystal-clear
+-- Faint mist inside safe zone — denser so distant unloaded lands don't show as empty gaps
 local SAFEZONE_FOG = {
-	densityAdd = 0.18,
-	densityMin = 0.22,
-	densityMax = 0.34,
-	hazeAdd = 0.85,
-	hazeMin = 0.9,
-	hazeMax = 1.55,
-	offsetBias = -0.04,
-	glareMax = 0.035,
-	mistColor = Color3.fromRGB(198, 204, 210),
-	mistDecay = Color3.fromRGB(155, 160, 166),
-	mistMix = 0.28,
+	densityAdd = 0.34,
+	densityMin = 0.4,
+	densityMax = 0.55,
+	hazeAdd = 1.65,
+	hazeMin = 1.7,
+	hazeMax = 2.7,
+	offsetBias = -0.06,
+	glareMax = 0.025,
+	mistColor = Color3.fromRGB(185, 192, 200),
+	mistDecay = Color3.fromRGB(138, 144, 150),
+	mistMix = 0.45,
 }
 
 local SAFEZONE_FOG_LOW = {
-	densityAdd = 0.14,
-	densityMin = 0.2,
-	densityMax = 0.3,
-	hazeAdd = 0.65,
-	hazeMin = 0.75,
-	hazeMax = 1.35,
-	offsetBias = -0.03,
-	glareMax = 0.03,
-	mistColor = Color3.fromRGB(198, 204, 210),
-	mistDecay = Color3.fromRGB(155, 160, 166),
-	mistMix = 0.22,
+	densityAdd = 0.28,
+	densityMin = 0.34,
+	densityMax = 0.48,
+	hazeAdd = 1.35,
+	hazeMin = 1.4,
+	hazeMax = 2.3,
+	offsetBias = -0.05,
+	glareMax = 0.022,
+	mistColor = Color3.fromRGB(185, 192, 200),
+	mistDecay = Color3.fromRGB(138, 144, 150),
+	mistMix = 0.38,
 }
 
 type AtmoSnap = {

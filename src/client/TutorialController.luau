@@ -2305,6 +2305,7 @@ function M.start(force: boolean?)
 		-- Admin / replay only — allow a fresh end celebration.
 		sessionConfettiFired = false
 		finishCelebrated = false
+		upgradeStepEnteredAt = 0
 	end
 	ensureGui()
 	startLayoutSync()

@@ -1,134 +1,232 @@
 -- [ACTIVE] GrassCullController
 --[[
-	TEMP lag test: hide all Map.Lands/*/grass grassparts on the client.
-	Uses LocalTransparencyModifier (does NOT Destroy / does NOT change Transparency),
-	so flip HIDE_ALL_GRASS back to false to restore instantly next session.
+	Client-only grass streaming: keep Map.Lands/LandN/grass for the current land
+	and immediate neighbors (±1). When a land is 2+ away, parent its grass folder
+	into a local cache so it is not rendered / queried (not Destroy'd — restored
+	when you move back in range).
 ]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+
+local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 
 local M = {}
 
--- TEMP: set false to bring grass back.
-local HIDE_ALL_GRASS = true
-
-local HIDE_PER_FRAME = 120
-local HIDDEN_MODIFIER = 1
+-- Keep current land and ±KEEP_RADIUS. Unload when abs(delta) > KEEP_RADIUS
+-- ("2 lands away" => unload at distance >= 2).
+local KEEP_RADIUS = 1
+local POLL_SEC = 0.45
+local FEATURE_ENABLED = true
 
 local player = Players.LocalPlayer
-local pending: { BasePart } = {}
-local hiddenParts: { [BasePart]: boolean } = {}
 local wired = false
 local heartbeatConn: RBXScriptConnection? = nil
-local landsConn: RBXScriptConnection? = nil
-local descendantConns: { RBXScriptConnection } = {}
+local landsChildConn: RBXScriptConnection? = nil
+local landsDescConn: RBXScriptConnection? = nil
+local accum = 0.0
+local currentLand = 0
 
-local function isGrassPart(inst: Instance): boolean
-	return inst:IsA("BasePart") and string.lower(inst.Name) == "grasspart"
-end
+-- grass folder -> original parent under its Land
+local grassHome: { [Instance]: Instance } = {}
+-- land number -> grass folder (live or parked)
+local grassByLand: { [number]: Instance } = {}
 
-local function hidePart(part: BasePart)
-	if hiddenParts[part] then
-		return
+local cacheFolder: Folder? = nil
+
+local function getCache(): Folder
+	local existing = cacheFolder
+	if existing and existing.Parent then
+		return existing
 	end
-	hiddenParts[part] = true
-	part.LocalTransparencyModifier = HIDDEN_MODIFIER
-	part.CastShadow = false
-	part.CanCollide = false
-	part.CanTouch = false
-	part.CanQuery = false
+	local folder = Instance.new("Folder")
+	folder.Name = "GrassCullCache"
+	folder.Parent = player:FindFirstChild("PlayerScripts") or player
+	cacheFolder = folder
+	return folder
 end
 
-local function showPart(part: BasePart)
-	if not hiddenParts[part] then
-		return
-	end
-	hiddenParts[part] = nil
-	part.LocalTransparencyModifier = 0
-end
-
-local function enqueueGrassUnder(root: Instance)
-	local stack: { Instance } = { root }
-	while #stack > 0 do
-		local inst = table.remove(stack) :: Instance
-		if isGrassPart(inst) then
-			table.insert(pending, inst :: BasePart)
-		end
-		for _, child in inst:GetChildren() do
-			table.insert(stack, child)
-		end
-	end
-end
-
-local function landsFolder(): Instance?
+local function landsRoot(): Instance?
 	local map = Workspace:FindFirstChild("Map")
 	return map and map:FindFirstChild("Lands")
 end
 
-local function queueAllLands()
-	local lands = landsFolder()
+local function landNumberFromFolder(landFolder: Instance): number?
+	local n = string.match(landFolder.Name, "^Land(%d+)$")
+	if not n then
+		return nil
+	end
+	return tonumber(n)
+end
+
+local function findGrassFolder(landFolder: Instance): Instance?
+	return landFolder:FindFirstChild("grass") or landFolder:FindFirstChild("Grass")
+end
+
+local function registerGrass(landNum: number, grass: Instance)
+	if grassByLand[landNum] == grass then
+		return
+	end
+	grassByLand[landNum] = grass
+	if grass.Parent and grass.Parent ~= getCache() then
+		grassHome[grass] = grass.Parent
+	end
+	grass.Destroying:Once(function()
+		if grassByLand[landNum] == grass then
+			grassByLand[landNum] = nil
+		end
+		grassHome[grass] = nil
+	end)
+end
+
+local function parkGrass(grass: Instance)
+	local cache = getCache()
+	if grass.Parent == cache then
+		return
+	end
+	if grass.Parent then
+		grassHome[grass] = grass.Parent
+	end
+	grass.Parent = cache
+end
+
+local function restoreGrass(grass: Instance)
+	local home = grassHome[grass]
+	if not home or not home.Parent then
+		return
+	end
+	if grass.Parent == home then
+		return
+	end
+	grass.Parent = home
+end
+
+local function shouldKeepLand(landNum: number, playerLand: number): boolean
+	if playerLand <= 0 then
+		return true
+	end
+	return math.abs(landNum - playerLand) <= KEEP_RADIUS
+end
+
+local function applyForPlayerLand(playerLand: number)
+	if playerLand <= 0 then
+		return
+	end
+	for landNum, grass in grassByLand do
+		if not grass.Parent and grass ~= getCache() then
+			continue
+		end
+		if shouldKeepLand(landNum, playerLand) then
+			restoreGrass(grass)
+		else
+			parkGrass(grass)
+		end
+	end
+end
+
+local function scanExistingLands()
+	local lands = landsRoot()
 	if not lands then
 		return
 	end
-	for _, land in lands:GetChildren() do
-		local grass = land:FindFirstChild("grass")
+	for _, child in lands:GetChildren() do
+		local landNum = landNumberFromFolder(child)
+		if not landNum then
+			continue
+		end
+		local grass = findGrassFolder(child)
 		if grass then
-			enqueueGrassUnder(grass)
+			registerGrass(landNum, grass)
 		end
 	end
 end
 
-local function onHeartbeat(_dt: number)
-	if not HIDE_ALL_GRASS then
+local function playerLandNow(): number
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return currentLand
+	end
+	return math.floor(LandResolver.resolveLandAtPosition(hrp.Position))
+end
+
+local function onHeartbeat(dt: number)
+	if not FEATURE_ENABLED then
 		return
 	end
-	local n = math.min(#pending, HIDE_PER_FRAME)
-	for _ = 1, n do
-		local part = table.remove(pending)
-		if part and part.Parent then
-			hidePart(part)
-		end
+	accum += dt
+	if accum < POLL_SEC then
+		return
+	end
+	accum = 0
+
+	local land = playerLandNow()
+	if land ~= currentLand then
+		currentLand = land
+		applyForPlayerLand(currentLand)
 	end
 end
 
-local function watchLands(lands: Instance)
-	for _, conn in descendantConns do
-		conn:Disconnect()
+local function onLandsDescendantAdded(inst: Instance)
+	if not FEATURE_ENABLED then
+		return
 	end
-	table.clear(descendantConns)
+	-- Grass folder itself appeared under a land.
+	if inst.Name == "grass" or inst.Name == "Grass" then
+		local landFolder = inst.Parent
+		if not landFolder then
+			return
+		end
+		local landNum = landNumberFromFolder(landFolder)
+		if not landNum then
+			return
+		end
+		registerGrass(landNum, inst)
+		if currentLand > 0 and not shouldKeepLand(landNum, currentLand) then
+			parkGrass(inst)
+		end
+		return
+	end
+end
 
-	table.insert(
-		descendantConns,
-		lands.DescendantAdded:Connect(function(inst)
-			if not HIDE_ALL_GRASS then
-				return
-			end
-			if isGrassPart(inst) then
-				table.insert(pending, inst :: BasePart)
+local function onLandFolderAdded(landFolder: Instance)
+	local landNum = landNumberFromFolder(landFolder)
+	if not landNum then
+		return
+	end
+	local grass = findGrassFolder(landFolder)
+	if grass then
+		registerGrass(landNum, grass)
+		if currentLand > 0 and not shouldKeepLand(landNum, currentLand) then
+			parkGrass(grass)
+		end
+	else
+		task.defer(function()
+			local late = findGrassFolder(landFolder)
+			if late then
+				registerGrass(landNum, late)
+				if currentLand > 0 and not shouldKeepLand(landNum, currentLand) then
+					parkGrass(late)
+				end
 			end
 		end)
-	)
+	end
 end
 
 function M.setEnabled(enabled: boolean)
-	HIDE_ALL_GRASS = enabled
+	FEATURE_ENABLED = enabled
 	if enabled then
-		queueAllLands()
+		scanExistingLands()
+		currentLand = playerLandNow()
+		applyForPlayerLand(currentLand)
 		return
 	end
-	table.clear(pending)
-	for part in hiddenParts do
-		if part.Parent then
-			part.LocalTransparencyModifier = 0
-		end
+	-- Restore everything.
+	for _, grass in grassByLand do
+		restoreGrass(grass)
 	end
-	table.clear(hiddenParts)
-end
-
-function M.isHidden(): boolean
-	return HIDE_ALL_GRASS
 end
 
 function M.init()
@@ -137,41 +235,30 @@ function M.init()
 	end
 	wired = true
 
-	if not HIDE_ALL_GRASS then
+	if not FEATURE_ENABLED then
 		return
 	end
 
 	task.spawn(function()
-		local lands = landsFolder()
+		local lands = landsRoot()
 		local deadline = os.clock() + 30
 		while not lands and os.clock() < deadline do
 			task.wait(0.5)
-			lands = landsFolder()
+			lands = landsRoot()
 		end
 		if not lands then
-			warn("[GrassCullController] Map.Lands missing — cannot hide grass")
+			warn("[GrassCullController] Map.Lands missing — grass distance cull skipped")
 			return
 		end
 
-		watchLands(lands)
-		queueAllLands()
+		getCache()
+		scanExistingLands()
+		currentLand = playerLandNow()
+		applyForPlayerLand(currentLand)
 
-		landsConn = lands.ChildAdded:Connect(function(land)
-			local grass = land:FindFirstChild("grass")
-			if grass then
-				enqueueGrassUnder(grass)
-			else
-				task.defer(function()
-					local late = land:FindFirstChild("grass")
-					if late then
-						enqueueGrassUnder(late)
-					end
-				end)
-			end
-		end)
-
+		landsChildConn = lands.ChildAdded:Connect(onLandFolderAdded)
+		landsDescConn = lands.DescendantAdded:Connect(onLandsDescendantAdded)
 		heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
-		warn("[GrassCullController] TEMP: hiding all land grass (LocalTransparencyModifier). Set HIDE_ALL_GRASS=false to restore.")
 	end)
 end
 

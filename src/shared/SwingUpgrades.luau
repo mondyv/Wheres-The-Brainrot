@@ -258,7 +258,7 @@ for id, def in DEFS do
 	M[id] = def
 end
 
--- ── Plot / land luck (display ÷ 3 = actual; 1x = no gradient) ─────────────────
+-- ── Plot / land luck (display ÷ 6 = actual; 1x = no gradient) ─────────────────
 
 local PlotLuck = {}
 
@@ -288,7 +288,8 @@ function PlotLuck.actualLuck(displayLuck: number): number
 	if displayLuck <= 1 then
 		return 1
 	end
-	return displayLuck / 3
+	-- Soften display→backend so early lands (e.g. 450x) stay low-rarity.
+	return displayLuck / 6
 end
 
 function PlotLuck.tierIndex(displayLuck: number): number
@@ -310,7 +311,8 @@ function PlotLuck.effectivePlot(basePlot: number, displayLuck: number, maxPlot: 
 	if actual <= 1 then
 		return base
 	end
-	local boost = math.log10(actual) * 1.35
+	-- Gentle early climb (450x ≈ +1 plot); later tiers / higher bases still scale up.
+	local boost = math.log10(actual) * 0.72
 	return math.clamp(math.floor(base + boost + 0.5), 1, maxPlot)
 end
 

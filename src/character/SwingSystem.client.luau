@@ -5209,7 +5209,15 @@ local function boot(character)
 				st.stopSwing(false)
 			end
 			st.hideSwingTargetUi()
+			if player:GetAttribute("IsSwinging") ~= false then
+				player:SetAttribute("IsSwinging", false)
+			end
 			return
+		end
+
+		local swingTravel = st.isSwinging or st.isLaunched
+		if player:GetAttribute("IsSwinging") ~= swingTravel then
+			player:SetAttribute("IsSwinging", swingTravel)
 		end
 
 		camera = workspace.CurrentCamera or camera

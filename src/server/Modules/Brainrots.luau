@@ -283,14 +283,49 @@ for _, m in ipairs(M.MUTATIONS) do
 end
 
 -- Studio templates store each mutation variant inside Brainrots/<Name>/<Variant>; map mutation id to variant folder name.
+-- Primary names match BrainrotsConfig / Studio ("Golden"); "Gold" kept as alias for older places.
 M.MUTATION_TEMPLATE_FOLDER = {
 	normal  = "Normal",
-	golden  = "Gold",
+	golden  = "Golden",
 	diamond = "Diamond",
 	lava    = "Lava",
 	galaxy  = "Galaxy",
 	rainbow = "Rainbow",
 } :: { [string]: string }
+
+M.MUTATION_TEMPLATE_ALIASES = {
+	normal  = { "Normal" },
+	golden  = { "Golden", "Gold" },
+	diamond = { "Diamond" },
+	lava    = { "Lava" },
+	galaxy  = { "Galaxy" },
+	rainbow = { "Rainbow" },
+} :: { [string]: { string } }
+
+function M.mutationTemplateCandidateNames(mutationId: string): { string }
+	local aliases = M.MUTATION_TEMPLATE_ALIASES[mutationId]
+	if aliases then
+		return aliases
+	end
+	local primary = M.MUTATION_TEMPLATE_FOLDER[mutationId]
+	if typeof(primary) == "string" then
+		return { primary }
+	end
+	return {}
+end
+
+function M.mutationIdFromTemplateName(templateName: string): string?
+	local lower = string.lower(templateName)
+	if lower == "gold" or lower == "golden" then
+		return "golden"
+	end
+	for mId, folderName in pairs(M.MUTATION_TEMPLATE_FOLDER) do
+		if folderName == templateName or string.lower(folderName) == lower then
+			return mId
+		end
+	end
+	return nil
+end
 
 -- Gradient name inside BrainrotHeader.Info.Type to enable for this mutation (Normal has no gradient).
 M.MUTATION_GRADIENT_NAME = {
@@ -361,19 +396,19 @@ M.PLOT_CHANCES = {
 	},
 	[7] = {
 		categories = { common = 0, uncommon = 0, rare = 0, epic = 30, mythic = 30, legendary = 25, ["brainrot god"] = 15, secret = 0 },
-		mutations  = { normal = 46, golden = 28, diamond = 15, lava = 7, galaxy = 3, rainbow = 1 },
+		mutations  = { normal = 38, golden = 30, diamond = 17, lava = 9, galaxy = 4, rainbow = 2 },
 	},
 	[8] = {
 		categories = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 35, legendary = 30, ["brainrot god"] = 25, secret = 10 },
-		mutations  = { normal = 42, golden = 29, diamond = 16, lava = 8, galaxy = 3.5, rainbow = 1.5 },
+		mutations  = { normal = 32, golden = 31, diamond = 18, lava = 10, galaxy = 5.5, rainbow = 3.5 },
 	},
 	[9] = {
 		categories = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 0, legendary = 35, ["brainrot god"] = 40, secret = 25 },
-		mutations  = { normal = 38, golden = 30, diamond = 17, lava = 9, galaxy = 4, rainbow = 2 },
+		mutations  = { normal = 26, golden = 32, diamond = 20, lava = 11, galaxy = 6.5, rainbow = 4.5 },
 	},
 	[10] = {
 		categories = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 55, secret = 45 },
-		mutations  = { normal = 35, golden = 30, diamond = 18, lava = 10, galaxy = 5, rainbow = 2 },
+		mutations  = { normal = 20, golden = 32, diamond = 22, lava = 12, galaxy = 8, rainbow = 6 },
 	},
 } :: { [number]: PlotChanceDef }
 

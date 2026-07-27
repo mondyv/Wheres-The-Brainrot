@@ -5,6 +5,10 @@
 	Default: park non-essential LandN children when 2+ lands away (keep ±1).
 	Low Graphics: keep current land only, and also park grass/trees/rocks/decor
 	on that land (bushes stay). Never Destroy — restore when range/settings change.
+
+	Swing hitch workaround: do NOT expand keepRadius. Instead amortize reparents
+	across frames and gradually pre-restore the next land while moving fast so
+	crossing a boundary does not dump a full land restore in one frame.
 ]]
 
 local Players = game:GetService("Players")
@@ -23,6 +27,10 @@ local lowGraphics = false
 local POLL_SEC = 0.45
 local START_DELAY_SEC = 4
 local FEATURE_ENABLED = true
+-- Reparent budget: fewer per frame = smoother swing land crossings.
+local REPARENT_PER_YIELD = 1
+local FAST_MOVE_SPEED = 42
+local PREWARM_BUDGET = 2
 
 local player = Players.LocalPlayer
 local wired = false
@@ -31,6 +39,7 @@ local landsChildConn: RBXScriptConnection? = nil
 local accum = 0.0
 local currentLand = 0
 local cullActive = false
+local applyToken = 0
 
 type CullEntry = {
 	inst: Instance,
@@ -237,18 +246,42 @@ local function applyForPlayerLand(playerLand: number)
 	if not cullActive or playerLand <= 0 then
 		return
 	end
+	applyToken += 1
+	local token = applyToken
 	currentLand = playerLand
-	local parked = 0
+
+	-- Park first (cheap: leaving view), then restore slowly (entering view = hitch source).
+	local toPark: { CullEntry } = {}
+	local toRestore: { CullEntry } = {}
 	for _, entry in entries do
 		if shouldParkEntry(entry, playerLand) then
-			parkEntry(entry)
-			parked += 1
-			-- Spread massive reparents across frames so join never freezes black.
-			if parked % 3 == 0 then
-				task.wait()
-			end
+			table.insert(toPark, entry)
 		else
-			restoreEntry(entry)
+			table.insert(toRestore, entry)
+		end
+	end
+
+	local n = 0
+	for _, entry in toPark do
+		if token ~= applyToken then
+			return
+		end
+		parkEntry(entry)
+		n += 1
+		if n % REPARENT_PER_YIELD == 0 then
+			RunService.Heartbeat:Wait()
+		end
+	end
+
+	n = 0
+	for _, entry in toRestore do
+		if token ~= applyToken then
+			return
+		end
+		restoreEntry(entry)
+		n += 1
+		if n % REPARENT_PER_YIELD == 0 then
+			RunService.Heartbeat:Wait()
 		end
 	end
 end
@@ -316,19 +349,78 @@ local function playerLandNow(): number
 	return land
 end
 
+local function isFastTraveling(): boolean
+	if player:GetAttribute("IsSwinging") == true then
+		return true
+	end
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return false
+	end
+	local v = (hrp :: BasePart).AssemblyLinearVelocity
+	return Vector3.new(v.X, 0, v.Z).Magnitude >= FAST_MOVE_SPEED
+end
+
+-- Soft-prewarm the land that is about to enter keep range (no keepRadius increase).
+local function softPrewarmAhead()
+	if not cullActive or currentLand <= 0 or lowGraphics then
+		return
+	end
+	if not isFastTraveling() then
+		return
+	end
+
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return
+	end
+
+	local vel = (hrp :: BasePart).AssemblyLinearVelocity
+	local horiz = Vector3.new(vel.X, 0, vel.Z)
+	if horiz.Magnitude < FAST_MOVE_SPEED * 0.5 then
+		return
+	end
+
+	local dir = if horiz.X >= 0 then 1 else -1
+	local targetLand = currentLand + dir * (keepRadius + 1)
+	if targetLand < 1 then
+		return
+	end
+
+	local cache = getCache()
+	local restored = 0
+	for _, entry in entries do
+		if entry.land == targetLand and entry.inst.Parent == cache then
+			restoreEntry(entry)
+			restored += 1
+			if restored >= PREWARM_BUDGET then
+				break
+			end
+		end
+	end
+end
+
 local function onHeartbeat(dt: number)
 	if not FEATURE_ENABLED or not cullActive then
 		return
 	end
 	accum += dt
 	if accum < POLL_SEC then
+		-- Between polls, trickle prewarm while swinging so boundary hits stay light.
+		if isFastTraveling() then
+			softPrewarmAhead()
+		end
 		return
 	end
 	accum = 0
 
 	local land = playerLandNow()
 	if land ~= currentLand and land > 0 then
-		applyForPlayerLand(land)
+		task.spawn(applyForPlayerLand, land)
+	elseif isFastTraveling() then
+		softPrewarmAhead()
 	end
 end
 
@@ -339,7 +431,9 @@ local function onLandFolderAdded(landFolder: Instance)
 	end
 	hookLandFolder(landFolder, landNum)
 	if cullActive and currentLand > 0 then
-		task.defer(applyForPlayerLand, currentLand)
+		task.defer(function()
+			task.spawn(applyForPlayerLand, currentLand)
+		end)
 	end
 end
 
@@ -348,7 +442,7 @@ function M.setEnabled(enabled: boolean)
 	if enabled then
 		scanExistingLands()
 		if cullActive then
-			applyForPlayerLand(playerLandNow())
+			task.spawn(applyForPlayerLand, playerLandNow())
 		end
 		return
 	end
@@ -368,7 +462,9 @@ function M.setLowGraphics(enabled: boolean)
 	if cullActive then
 		local land = playerLandNow()
 		if land > 0 then
-			task.defer(applyForPlayerLand, land)
+			task.defer(function()
+				task.spawn(applyForPlayerLand, land)
+			end)
 		end
 	end
 end

@@ -558,7 +558,7 @@ local function sourcePathForTemplate(root: Folder, template: Model): string
 end
 
 -- Match variant Models stored as Brainrots/<Name>/<Variant>; if matched we treat parent folder name as the brainrot name.
-local VARIANT_FOLDER_NAMES = { Normal = true, Gold = true, Diamond = true, Lava = true, Galaxy = true, Rainbow = true }
+local VARIANT_FOLDER_NAMES = { Normal = true, Gold = true, Golden = true, Diamond = true, Lava = true, Galaxy = true, Rainbow = true }
 
 local function enrichEntryFromBrainrotsFolder(root: Folder?, entry: BrainrotInvEntry)
 	if not root then
@@ -737,7 +737,27 @@ local function collectTemplateModels(root: Folder): { Model }
 end
 
 -- ServerStorage.Brainrots/<BrainrotName>/<MutationVariant> (e.g. Brainrots/67/Normal).
--- Fallback chain: requested mutation → Normal → first available child Model.
+-- Fallback chain: requested mutation (Gold/Golden aliases) → Normal → first available child Model.
+local function pickSpawnableVariantModel(container: Instance): Model?
+	if
+		container:IsA("Model")
+		and not Brainrots.isRetiredBrainrotInstance(container)
+		and modelHasSpawnableGeometry(container :: Model)
+	then
+		return container :: Model
+	end
+	for _, child in ipairs(container:GetChildren()) do
+		if
+			child:IsA("Model")
+			and not Brainrots.isRetiredBrainrotInstance(child)
+			and modelHasSpawnableGeometry(child :: Model)
+		then
+			return child :: Model
+		end
+	end
+	return nil
+end
+
 local function findBrainrotModelByNameAndMutation(root: Folder, brainrotName: string, mutationId: string): Model?
 	if Brainrots.isRetiredBrainrotName(brainrotName) or not Brainrots.isPlayableBrainrotName(brainrotName) then
 		return nil
@@ -746,30 +766,26 @@ local function findBrainrotModelByNameAndMutation(root: Folder, brainrotName: st
 	if not nameFolder or Brainrots.isRetiredBrainrotInstance(nameFolder) then
 		return nil
 	end
-	local variantFolderName = (Brainrots :: any).MUTATION_TEMPLATE_FOLDER[mutationId]
-	if typeof(variantFolderName) == "string" then
+	for _, variantFolderName in ipairs(Brainrots.mutationTemplateCandidateNames(mutationId)) do
 		local exact = nameFolder:FindFirstChild(variantFolderName)
-		if
-			exact
-			and exact:IsA("Model")
-			and not Brainrots.isRetiredBrainrotInstance(exact)
-			and modelHasSpawnableGeometry(exact :: Model)
-		then
-			return exact :: Model
+		if exact then
+			local model = pickSpawnableVariantModel(exact)
+			if model then
+				return model
+			end
 		end
 	end
 	local fallback = nameFolder:FindFirstChild("Normal")
-	if
-		fallback
-		and fallback:IsA("Model")
-		and not Brainrots.isRetiredBrainrotInstance(fallback)
-		and modelHasSpawnableGeometry(fallback :: Model)
-	then
-		return fallback :: Model
+	if fallback then
+		local model = pickSpawnableVariantModel(fallback)
+		if model then
+			return model
+		end
 	end
 	for _, c in ipairs(nameFolder:GetChildren()) do
-		if c:IsA("Model") and not Brainrots.isRetiredBrainrotInstance(c) and modelHasSpawnableGeometry(c :: Model) then
-			return c :: Model
+		local model = pickSpawnableVariantModel(c)
+		if model then
+			return model
 		end
 	end
 	return nil
@@ -2155,14 +2171,14 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 		warn(string.format("[BushHarvest] Template missing for %s (%s)", pick.name, mutationId))
 		return
 	end
-	-- Track which variant we actually use (we may have fallen back to Normal).
-	local variantFolderName = template.Name
+	-- Keep the rolled mutation even if we fell back to a Normal mesh for visuals.
+	-- Only adopt the template's mutation when it resolves to a known variant (never demote).
 	local actualMutation = mutationId
-	for mId, folderName in (Brainrots :: any).MUTATION_TEMPLATE_FOLDER do
-		if folderName == variantFolderName then
-			actualMutation = mId
-			break
-		end
+	local fromTemplate = Brainrots.mutationIdFromTemplateName(template.Name)
+	if fromTemplate and fromTemplate ~= "normal" then
+		actualMutation = fromTemplate
+	elseif fromTemplate == "normal" and mutationId == "normal" then
+		actualMutation = "normal"
 	end
 
 	firePlayBrainrotSFX(player, pick.name)

@@ -890,11 +890,17 @@ local function findBrainrotTemplateForState(state: StandState): Model?
 	if not nameFolder then
 		return nil
 	end
-	local variantName = (Brainrots :: any).MUTATION_TEMPLATE_FOLDER[state.mutation or "normal"]
-	if typeof(variantName) == "string" then
+	for _, variantName in ipairs(Brainrots.mutationTemplateCandidateNames(state.mutation or "normal")) do
 		local v = nameFolder:FindFirstChild(variantName)
 		if v and v:IsA("Model") then
 			return v :: Model
+		end
+		if v then
+			for _, child in ipairs(v:GetChildren()) do
+				if child:IsA("Model") then
+					return child :: Model
+				end
+			end
 		end
 	end
 	local normal = nameFolder:FindFirstChild("Normal")

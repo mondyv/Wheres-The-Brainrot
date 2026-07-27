@@ -3580,12 +3580,14 @@ local function boot(character)
 					st.lastMarkerText = text
 				end
 				st.updatePreview(target)
+				player:SetAttribute("SwingPromptReady", true)
 			else
 				if st.lastMarkerText ~= "SWING BLOCKED" then
 					st.markerLabel.Text = "SWING BLOCKED"
 					st.lastMarkerText = "SWING BLOCKED"
 				end
 				st.updatePreview(target)
+				player:SetAttribute("SwingPromptReady", false)
 			end
 			st.lastVisualTarget = target
 			st.lastVisualCanSwing = canSwingNow
@@ -3596,6 +3598,7 @@ local function boot(character)
 		st.targetReadyGoal = 0
 		st.previewFadeGoal = 0
 		st.targetVisualColor = C.NOT_READY_COLOR
+		player:SetAttribute("SwingPromptReady", false)
 		if not st.targetVisualShown and not st.highlightedTarget then
 			st.clearTargetHighlight()
 			st.hidePreview()
@@ -3621,6 +3624,7 @@ local function boot(character)
 		st.highlightedPoint = nil
 		st.lastVisualTarget = nil
 		st.lastVisualCanSwing = nil
+		player:SetAttribute("SwingPromptReady", false)
 		st.clearTargetHighlight()
 		st.hideMarkerVisualNow()
 		st.hidePreview()

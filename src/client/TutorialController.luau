@@ -441,6 +441,47 @@ local function isMobileUi(): boolean
 	return UserInputService.TouchEnabled
 end
 
+local function findMobileJumpButton(): GuiButton?
+	if not UserInputService.TouchEnabled then
+		return nil
+	end
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if not pg then
+		return nil
+	end
+	local touchGui = pg:FindFirstChild("TouchGui")
+	if not touchGui then
+		return nil
+	end
+	local frame = touchGui:FindFirstChild("TouchControlFrame", true)
+	local jump = frame and frame:FindFirstChild("JumpButton")
+	if jump and jump:IsA("GuiButton") then
+		return jump
+	end
+	for _, d in touchGui:GetDescendants() do
+		if d.Name == "JumpButton" and d:IsA("GuiButton") then
+			return d :: GuiButton
+		end
+	end
+	return nil
+end
+
+local function isMobileSwingPromptReady(): boolean
+	if not isMobileUi() then
+		return false
+	end
+	if player:GetAttribute("SwingPromptReady") ~= true then
+		return false
+	end
+	local char = player.Character
+	if not char or SafezoneUtil.isCharacterInSafezone(char) then
+		return false
+	end
+	return true
+end
+
+local updateMobileJumpTutorialHighlight: () -> ()
+
 local function resolveRandomBrainrotHud(): GuiObject?
 	local main = PlayerGuiMain.ensure(player)
 	local sideUI = main and main:FindFirstChild("SideUI")
@@ -1269,6 +1310,30 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 	end)
 end
 
+updateMobileJumpTutorialHighlight = function()
+	local step = currentStep()
+	if not step or step.id ~= "swingLand1" or not active then
+		if uiPointerHost and uiPointerHost.Name == "JumpButton" then
+			clearUiPointer()
+		end
+		return
+	end
+	if not isMobileSwingPromptReady() then
+		if uiPointerHost and uiPointerHost.Name == "JumpButton" then
+			clearUiPointer()
+		end
+		return
+	end
+	local jumpBtn = findMobileJumpButton()
+	if not jumpBtn then
+		return
+	end
+	if uiPointerHost == jumpBtn and uiPointerStroke and uiPointerStroke.Parent then
+		return
+	end
+	pointAtGui(jumpBtn, true)
+end
+
 local function resolveUpgradeStandModel(): Instance?
 	local map = Workspace:FindFirstChild("Map")
 	local stands = map and map:FindFirstChild("UIStands")
@@ -1933,6 +1998,7 @@ local function refreshPointersImpl()
 		if vineAdornee then
 			outlineWorld(vineAdornee)
 		end
+		updateMobileJumpTutorialHighlight()
 	elseif step.id == "searchBush" then
 		if not keepWorld then
 			pointAtWorld(resolveNearestBush(), arrowHeight(2))
@@ -2189,6 +2255,8 @@ local function watchStepProgress()
 			-- Keep vine yellow + arrow alive (targets can stream in late).
 			if not worldArrowBb or not worldHighlight or not (lockedSwingPart and lockedSwingPart.Parent) then
 				refreshPointers()
+			else
+				updateMobileJumpTutorialHighlight()
 			end
 			-- Don't skip instantly: spawn nearest-land fallback used to count as Land 1.
 			if swingLand1EnteredAt > 0 and (now - swingLand1EnteredAt) < 0.85 then
@@ -2293,6 +2361,14 @@ local function bindGameplayHooks()
 			if step.id == "goToBase" or step.id == "placeOnPlot" or step.id == "upgradeBrainrot" then
 				refreshPointers()
 			end
+		end)
+	)
+
+	-- Mobile: highlight jump only while the swing prompt is ready (left safezone + looking at vine).
+	table.insert(
+		attrConns,
+		player:GetAttributeChangedSignal("SwingPromptReady"):Connect(function()
+			updateMobileJumpTutorialHighlight()
 		end)
 	)
 

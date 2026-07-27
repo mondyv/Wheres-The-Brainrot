@@ -976,6 +976,18 @@ local function registerLuckHitbox(part: BasePart)
 	end
 	registeredLuckParts[part] = true
 	table.insert(luckHitboxes, { part = part, displayLuck = displayLuck })
+	part.Destroying:Connect(function()
+		if not registeredLuckParts[part] then
+			return
+		end
+		registeredLuckParts[part] = nil
+		for i = #luckHitboxes, 1, -1 do
+			if luckHitboxes[i].part == part then
+				table.remove(luckHitboxes, i)
+				break
+			end
+		end
+	end)
 end
 
 local function collectLuckHitboxes(root: Instance)

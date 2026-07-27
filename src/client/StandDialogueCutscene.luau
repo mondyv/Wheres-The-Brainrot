@@ -68,6 +68,9 @@ local shakeConn: RBXScriptConnection? = nil
 local choiceHoverConn: RBXScriptConnection? = nil
 local touchSelectConn: RBXScriptConnection? = nil
 local touchPanConn: RBXScriptConnection? = nil
+local jumpRequestConn: RBXScriptConnection? = nil
+local jumpStateConn: RBXScriptConnection? = nil
+local jumpSuppressConn: RBXScriptConnection? = nil
 local typeToken = 0
 local jumpToken = 0
 local skipRequested = false
@@ -315,7 +318,7 @@ local function bindMoveLock()
 			return Enum.ContextActionResult.Sink
 		end,
 		false,
-		Enum.ContextActionPriority.High.Value,
+		100000,
 		Enum.PlayerActions.CharacterForward,
 		Enum.PlayerActions.CharacterBackward,
 		Enum.PlayerActions.CharacterLeft,
@@ -330,6 +333,55 @@ local function unbindMoveLock()
 	end)
 end
 
+local function clearJumpSuppress()
+	if jumpRequestConn then
+		jumpRequestConn:Disconnect()
+		jumpRequestConn = nil
+	end
+	if jumpStateConn then
+		jumpStateConn:Disconnect()
+		jumpStateConn = nil
+	end
+	if jumpSuppressConn then
+		jumpSuppressConn:Disconnect()
+		jumpSuppressConn = nil
+	end
+end
+
+local function bindJumpSuppress()
+	clearJumpSuppress()
+	jumpRequestConn = UserInputService.JumpRequest:Connect(function()
+		local hum = getHumanoid()
+		if hum then
+			hum.Jump = false
+		end
+	end)
+	local hum = getHumanoid()
+	if hum then
+		jumpStateConn = hum.StateChanged:Connect(function(_old, newState)
+			if newState == Enum.HumanoidStateType.Jumping then
+				hum.Jump = false
+				hum:ChangeState(Enum.HumanoidStateType.Running)
+			end
+		end)
+	end
+	jumpSuppressConn = RunService.Heartbeat:Connect(function()
+		if not active then
+			return
+		end
+		local h = getHumanoid()
+		if not h then
+			return
+		end
+		h.Jump = false
+		h.JumpPower = 0
+		h.JumpHeight = 0
+		if h:GetState() == Enum.HumanoidStateType.Jumping then
+			h:ChangeState(Enum.HumanoidStateType.Running)
+		end
+	end)
+end
+
 local function lockMovement()
 	local hum = getHumanoid()
 	if hum then
@@ -341,12 +393,15 @@ local function lockMovement()
 		hum.WalkSpeed = 0
 		hum.JumpPower = 0
 		hum.JumpHeight = 0
+		hum.Jump = false
 		hum.AutoRotate = false
 	end
 	bindMoveLock()
+	bindJumpSuppress()
 end
 
 local function unlockMovement()
+	clearJumpSuppress()
 	unbindMoveLock()
 	local hum = getHumanoid()
 	if hum then

@@ -18,6 +18,7 @@ local camera = workspace.CurrentCamera
 
 local floatingClaimCutsceneMod = nil
 local spiderEncounterMod = nil
+local standDialogueCutsceneMod = nil
 
 local function getClientModule(name)
 	local ps = player:FindFirstChild("PlayerScripts")
@@ -32,35 +33,49 @@ local function getClientModule(name)
 	return nil
 end
 
+local function isTypingBlocked()
+	return UserInputService:GetFocusedTextBox() ~= nil
+end
+
+local function moduleIsActive(cached: any, name: string): (any, boolean)
+	local mod = cached
+	if mod == nil then
+		mod = getClientModule(name) or false
+	end
+	if mod and typeof(mod.isActive) == "function" and mod.isActive() then
+		return mod, true
+	end
+	return mod, false
+end
+
 local function isGameplayCutsceneActive()
-	if floatingClaimCutsceneMod == nil then
-		floatingClaimCutsceneMod = getClientModule("FloatingClaimCutscene") or false
+	local active = false
+	floatingClaimCutsceneMod, active = moduleIsActive(floatingClaimCutsceneMod, "FloatingClaimCutscene")
+	if active then
+		return true
 	end
-	if floatingClaimCutsceneMod and typeof(floatingClaimCutsceneMod.isActive) == "function" then
-		if floatingClaimCutsceneMod.isActive() then
-			return true
-		end
+	spiderEncounterMod, active = moduleIsActive(spiderEncounterMod, "BushSpiderEncounterController")
+	if active then
+		return true
 	end
-	if spiderEncounterMod == nil then
-		spiderEncounterMod = getClientModule("BushSpiderEncounterController") or false
-	end
-	if spiderEncounterMod and typeof(spiderEncounterMod.isActive) == "function" then
-		if spiderEncounterMod.isActive() then
-			return true
-		end
+	standDialogueCutsceneMod, active = moduleIsActive(standDialogueCutsceneMod, "StandDialogueCutscene")
+	if active then
+		return true
 	end
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then
-		local claimGui = pg:FindFirstChild("FloatingClaimCutscene")
-		if claimGui and claimGui:IsA("ScreenGui") and claimGui.Enabled then
-			return true
-		end
-		local spiderGui = pg:FindFirstChild("BushSpiderCutscene")
-		if spiderGui and spiderGui:IsA("ScreenGui") and spiderGui.Enabled then
-			return true
+		for _, name in { "FloatingClaimCutscene", "BushSpiderCutscene", "StandDialogueCutscene" } do
+			local gui = pg:FindFirstChild(name)
+			if gui and gui:IsA("ScreenGui") and gui.Enabled then
+				return true
+			end
 		end
 	end
 	return false
+end
+
+local function isSwingInputBlocked()
+	return isTypingBlocked() or isGameplayCutsceneActive()
 end
 
 local sharedFolder = ReplicatedStorage:FindFirstChild("Shared") or ReplicatedStorage:WaitForChild("Shared", 10)
@@ -3045,6 +3060,9 @@ local function boot(character)
 	end
 
 	function st.holdIsActive()
+		if isSwingInputBlocked() then
+			return false
+		end
 		return st.spaceHeld
 			or st.gamepadHeld
 			or safeIsKeyDown(Enum.KeyCode.Space)
@@ -4382,6 +4400,9 @@ local function boot(character)
 			end
 
 			function st.mobileJumpPressed()
+				if isSwingInputBlocked() then
+					return
+				end
 				local now = os.clock()
 
 				st.mobileJumpHeld = true
@@ -4595,6 +4616,9 @@ local function boot(character)
 		if st.isWebTrapped() or st.isSwinging or not st.hrp.Parent then
 			return
 		end
+		if isSwingInputBlocked() then
+			return
+		end
 
 		local now = os.clock()
 		if now - st.lastTryClock < C.ATTACH_RETRY_TIME then
@@ -4644,7 +4668,9 @@ local function boot(character)
 			return
 		end
 
-		if UserInputService:GetFocusedTextBox() then
+		if isSwingInputBlocked() then
+			st.spaceHeld = false
+			st.gamepadHeld = false
 			return
 		end
 
@@ -4697,12 +4723,11 @@ local function boot(character)
 			return
 		end
 
-		if UserInputService:GetFocusedTextBox() then
-			return
-		end
-
-		if isGameplayCutsceneActive() then
+		if isSwingInputBlocked() then
 			st.humanoid.Jump = false
+			st.spaceHeld = false
+			st.gamepadHeld = false
+			st.mobileJumpHeld = false
 			return
 		end
 
@@ -5089,6 +5114,10 @@ local function boot(character)
 		end
 
 		if st.isSwinging then
+			if isSwingInputBlocked() then
+				st.stopSwing(false)
+				return
+			end
 			if not st.currentTarget or not st.currentTarget.Parent then
 				st.stopSwing(true)
 				return

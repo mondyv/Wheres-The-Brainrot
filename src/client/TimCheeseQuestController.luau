@@ -288,10 +288,12 @@ local function pulseCameraShake(duration: number, amp: number)
 		while os.clock() < endAt do
 			local t = os.clock()
 			local fade = math.clamp((endAt - t) / duration, 0, 1)
+			-- Harder kick at the start, then rumble out.
+			local punch = 1 + (fade * fade) * 1.35
 			hum.CameraOffset = Vector3.new(
-				math.sin(t * 38) * amp * fade,
-				math.cos(t * 31) * amp * 0.55 * fade,
-				0
+				math.sin(t * 52) * amp * fade * punch,
+				math.cos(t * 41) * amp * 0.75 * fade * punch,
+				math.sin(t * 29) * amp * 0.25 * fade
 			)
 			RunService.RenderStepped:Wait()
 		end
@@ -299,6 +301,19 @@ local function pulseCameraShake(duration: number, amp: number)
 			hum.CameraOffset = Vector3.zero
 		end
 	end)
+end
+
+local function landImpactShake(cam: Camera?)
+	pulseCameraShake(1.15, 1.85)
+	if not cam then
+		return
+	end
+	local startFov = cam.FieldOfView
+	local punchFov = math.clamp(startFov + 9, 55, 85)
+	cam.FieldOfView = punchFov
+	TweenService:Create(cam, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		FieldOfView = startFov,
+	}):Play()
 end
 
 local function spawnLandingDebris(landingPos: Vector3, tim: Model)
@@ -1255,8 +1270,8 @@ function M.playIntroFall()
 		clone:PivotTo(landCf)
 	end
 	spawnLandingDebris(land, clone)
-	GameSoundEffects.playGroundSmash(1.45)
-	pulseCameraShake(0.55, 0.7)
+	GameSoundEffects.playGroundSmash(1)
+	landImpactShake(cam)
 	ensureIdle(clone)
 	setBgmSlowed(false)
 

@@ -59,20 +59,18 @@ local function getTagsForPlayer(plr: Player): string
 		return plr:GetRankInGroup(GROUP_ID)
 	end)
 	if not rankOk then
-		warn("[ChatTagsController] GetRankInGroup failed:", rank)
-	end
-	if rankOk and typeof(rank) == "number" and RANK_TAGS[rank] then
+		-- Group rank API can flake; skip tag without spamming console.
+	elseif typeof(rank) == "number" and RANK_TAGS[rank] then
 		table.insert(tagParts, RANK_TAGS[rank])
 	end
 
+	-- VIP_OWNED is set by the server and replicates for all players.
+	-- UserOwnsGamePassAsync is client-local only — never call it for others.
 	local ownsVip = plr:GetAttribute(StoreConfig.ATTR.VIP_OWNED) == true
-	if not ownsVip then
+	if not ownsVip and plr == Players.LocalPlayer then
 		local vipOk, ownsVIP = pcall(function()
 			return MarketplaceService:UserOwnsGamePassAsync(plr.UserId, VIP_GAMEPASS_ID)
 		end)
-		if not vipOk then
-			warn("[ChatTagsController] UserOwnsGamePassAsync failed:", ownsVIP)
-		end
 		ownsVip = vipOk and ownsVIP == true
 	end
 	if ownsVip then

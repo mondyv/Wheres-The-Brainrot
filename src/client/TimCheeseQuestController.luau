@@ -807,11 +807,6 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	end
 end
 
-Size = UDim2.new(alpha, 0, 1, 0)
-		end
-	end
-end
-
 local function restoreMovement()
 	local char = player.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")

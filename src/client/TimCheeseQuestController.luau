@@ -463,7 +463,12 @@ local function syncPromptAndOutline()
 		if ready then
 			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.READY_OVERHEAD)
 		else
-			setQuestFloatVisible(tim, true, TimCheelocal function ensureQuestHost(): Frame?
+			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
+		end
+	end
+end
+
+local function ensureQuestHost(): Frame?
 	local main = PlayerGuiMain.ensure(player)
 	if not main then
 		return nil

@@ -323,11 +323,8 @@ local function wirePackStand(stand: Instance, pack: typeof(StoreConfig.PACKS[1])
 end
 
 local function promptGroupJoin(player: Player)
-	PlayerDataService.waitUntilLoaded(player)
+	-- Always show Roblox's group join UI. Reward claim is one-time (handled client/server after).
 	if not player.Parent then
-		return
-	end
-	if player:GetAttribute(StoreConfig.ATTR.GROUP_REWARD_CLAIMED) == true then
 		return
 	end
 	local promptRemote = ensureGroupRemotes()

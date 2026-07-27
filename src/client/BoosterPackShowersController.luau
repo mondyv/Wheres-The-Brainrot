@@ -2,7 +2,7 @@
 --[[
 	Client purchase prompts for Map.Booster Pack Showers stand hitboxes.
 	Matches the store flow: rainbow PurchaseEffect + MarketplaceService prompt on the client.
-	Group Stand: rainbow + GroupService:PromptJoinAsync, then claim one-time rare reward.
+	Group Stand: always PromptJoinAsync (Roblox group UI). Brainrot grant is one-time only.
 ]]
 
 local GroupService = game:GetService("GroupService")
@@ -13,6 +13,7 @@ local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChil
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 local PurchaseEffectClient =
 	require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchaseEffect"):WaitForChild("PurchaseEffectClient"))
+local TopNotifController = require(script.Parent.TopNotifController)
 
 local player = Players.LocalPlayer
 
@@ -47,13 +48,12 @@ local function onPromptGroupJoin(groupId: number)
 	if typeof(groupId) ~= "number" then
 		return
 	end
-	if player:GetAttribute(StoreConfig.ATTR.GROUP_REWARD_CLAIMED) == true then
-		return
-	end
 	if groupPromptBusy then
 		return
 	end
 	groupPromptBusy = true
+
+	local alreadyClaimed = player:GetAttribute(StoreConfig.ATTR.GROUP_REWARD_CLAIMED) == true
 
 	PurchaseEffectClient:init()
 	PurchaseEffectClient:show()
@@ -67,12 +67,20 @@ local function onPromptGroupJoin(groupId: number)
 
 	if not success then
 		warn("[BoosterPackShowersController] PromptJoinAsync failed:", result)
+		-- Still try claim if they're already in the group and haven't been rewarded.
+		if not alreadyClaimed then
+			claimGroupReward()
+		end
 		return
 	end
 
-	-- Joined now, or already a member who hasn't claimed yet.
+	-- Joined now, or already a member — Roblox UI handled membership.
 	if result == Enum.GroupMembershipStatus.Joined or result == Enum.GroupMembershipStatus.AlreadyMember then
-		claimGroupReward()
+		if alreadyClaimed then
+			TopNotifController.showPersonal("You already claimed the group reward!", "legendary", 3.5)
+		else
+			claimGroupReward()
+		end
 	end
 end
 

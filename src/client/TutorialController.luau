@@ -1357,20 +1357,64 @@ local function resolvePlayerBaseTarget(): BasePart?
 			return pos
 		end
 	end
+	if plot:IsA("Model") then
+		local ok, pivot = pcall(function()
+			return (plot :: Model):GetPivot()
+		end)
+		if ok and typeof(pivot) == "CFrame" then
+			-- Prefer a part near the plot pivot so we never aim at a random far descendant.
+			local best: BasePart? = nil
+			local bestDist = math.huge
+			local origin = (pivot :: CFrame).Position
+			for _, d in plot:GetDescendants() do
+				if d:IsA("BasePart") then
+					local dist = (d.Position - origin).Magnitude
+					if dist < bestDist then
+						bestDist = dist
+						best = d
+					end
+				end
+			end
+			if best then
+				return best
+			end
+		end
+	end
 	return plot:FindFirstChildWhichIsA("BasePart", true)
 end
 
 local function isPlayerAtOwnBase(): boolean
-	local char = player.Character
-	if char and SafezoneUtil.isCharacterInSafezone(char) then
+	-- Must be near THIS player's plot — shared safezone alone is not enough in multiplayer.
+	local origin = playerOrigin()
+	local target = resolvePlayerBaseTarget()
+	if target and (origin - target.Position).Magnitude <= TutorialConfig.GO_TO_BASE_DIST then
 		return true
 	end
-	local target = resolvePlayerBaseTarget()
-	if not target then
+	local plot = PlotPaths.findPlotForAssignedSlot(player)
+	if not plot then
 		return false
 	end
-	local origin = playerOrigin()
-	return (origin - target.Position).Magnitude <= TutorialConfig.GO_TO_BASE_DIST
+	local pivotPos: Vector3? = nil
+	if plot:IsA("Model") then
+		local ok, pivot = pcall(function()
+			return (plot :: Model):GetPivot()
+		end)
+		if ok and typeof(pivot) == "CFrame" then
+			pivotPos = (pivot :: CFrame).Position
+		end
+	end
+	if not pivotPos then
+		local part = plot:FindFirstChildWhichIsA("BasePart", true)
+		pivotPos = if part then part.Position else nil
+	end
+	if not pivotPos then
+		return false
+	end
+	local char = player.Character
+	if not (char and SafezoneUtil.isCharacterInSafezone(char)) then
+		return false
+	end
+	return (origin - pivotPos).Magnitude <= TutorialConfig.GO_TO_BASE_DIST * 1.35
 end
 
 local function resolvePlacedStandUpgradeTarget(): Instance?
@@ -1908,6 +1952,20 @@ local function bindGameplayHooks()
 			local lvl = player:GetAttribute(SwingUpgrades.POWER_LEVEL_ATTR)
 			if typeof(lvl) == "number" and lvl > 0 then
 				completeCurrentIf("buyPower")
+			end
+		end)
+	)
+
+	-- Plot slot can assign after tutorial starts — retarget arrows to YOUR Plot_N.
+	table.insert(
+		attrConns,
+		player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
+			local step = currentStep()
+			if not step then
+				return
+			end
+			if step.id == "goToBase" or step.id == "placeOnPlot" or step.id == "upgradeBrainrot" then
+				refreshPointers()
 			end
 		end)
 	)

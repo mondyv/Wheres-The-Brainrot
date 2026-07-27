@@ -591,16 +591,13 @@ local function startExclaimPulse()
 		end
 		local t = os.clock()
 		local sc = bang:FindFirstChild("BangScale")
-		if not (sc and sc:IsA("UIScale")) then
-			sc = Instance.new("UIScale")
-			sc.Name = "BangScale"
-			sc.Parent = bang
+		if sc and sc:IsA("UIScale") then
+			sc.Scale = 1
 		end
-		-- Bounce + wiggle so the bang reads as alive, not a static sticker.
-		(sc :: UIScale).Scale = 1 + math.sin(t * 6.2) * 0.14 + math.sin(t * 12.4) * 0.04
-		bang.Rotation = -12 + math.sin(t * 3.6) * 12
-		bang.Position = UDim2.fromOffset(0, -2 + math.sin(t * 5.4) * 3.5)
-		bang.ImageTransparency = 0.05 + math.sin(t * 4.2) * 0.08
+		bang.Rotation = -10
+		bang.ImageTransparency = 0
+		-- Soft vertical hover only.
+		bang.Position = UDim2.fromOffset(0, -2 + math.sin(t * 2.2) * 2)
 	end)
 end
 
@@ -1164,9 +1161,9 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	task.spawn(function()
 		while myPulse == pulseToken and bang.Parent do
 			local t = os.clock()
-			bangScale.Scale = 1 + math.sin(t * 6.5) * 0.16 + math.sin(t * 13) * 0.05
-			bang.Rotation = -12 + math.sin(t * 4.2) * 14
-			bang.Position = UDim2.fromOffset(10, 18 + math.sin(t * 5.5) * 4)
+			bangScale.Scale = 1
+			bang.Rotation = -12
+			bang.Position = UDim2.fromOffset(10, 18 + math.sin(t * 2.2) * 2.5)
 			RunService.RenderStepped:Wait()
 		end
 	end)

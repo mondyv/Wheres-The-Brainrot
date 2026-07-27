@@ -257,10 +257,13 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 
 	if d:IsA("BillboardGui") then
 		if isYourPlotOwnershipMarker(d, plotRoot) then
-			-- PlotOutlineController drives Enabled + distance fade (safezone only).
+			-- PlotOutlineController drives Enabled + distance fade on YOUR plot only.
+			-- Hard-off everywhere else (streaming can leave Studio defaults Enabled).
 			d.Enabled = false
 			if mine then
 				d.MaxDistance = PLOT_GUI_MAX_DISTANCE
+			else
+				d.MaxDistance = 0
 			end
 		elseif isProtectedPlotUi(d, plotRoot) or isStandDisplayModelAncestor(d, plotRoot) then
 			d.Enabled = true
@@ -275,8 +278,10 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 		end
 	elseif d:IsA("SurfaceGui") then
 		if isYourPlotOwnershipMarker(d, plotRoot) then
-			-- PlotOutlineController drives Enabled + distance fade (safezone only).
 			d.Enabled = false
+			if not mine then
+				(d :: SurfaceGui).MaxDistance = 0
+			end
 		elseif isProtectedPlotUi(d, plotRoot) then
 			d.Enabled = true
 		elseif shouldEnableStandSurfaceGui(d, plotRoot) then
@@ -355,6 +360,8 @@ local function trackLayerCollector(plotRoot: Instance, inst: Instance)
 		return
 	end
 	table.insert(list, inst :: LayerCollector)
+	-- Must apply immediately: streaming leaves Studio Enabled=true until the next full refresh.
+	applyLayerCollector(inst :: LayerCollector, plotRoot, isMyPlot(plotRoot), plotIsUnclaimed(plotRoot))
 end
 
 local function hookStandsInPlot(plotRoot: Instance, refresh: () -> ())
@@ -425,10 +432,50 @@ local function refreshAllMarkersInFolder(folder: Instance)
 	end
 end
 
+-- Hard-hide "Your Plot" / PlotGUI markers on every plot that is not yours.
+local function hideForeignOwnershipMarkers(folder: Instance)
+	for _, ch in ipairs(folder:GetChildren()) do
+		if not PlotPaths.isPlotRoot(ch) or isMyPlot(ch) then
+			continue
+		end
+		local list = plotLayerCollectors[ch]
+		if list then
+			for _, d in ipairs(list) do
+				if d.Parent and isYourPlotOwnershipMarker(d, ch) then
+					d.Enabled = false
+					if d:IsA("BillboardGui") then
+						(d :: BillboardGui).MaxDistance = 0
+					elseif d:IsA("SurfaceGui") then
+						(d :: SurfaceGui).MaxDistance = 0
+					end
+				end
+			end
+		else
+			for _, d in ipairs(ch:GetDescendants()) do
+				if (d:IsA("BillboardGui") or d:IsA("SurfaceGui")) and isYourPlotOwnershipMarker(d, ch) then
+					(d :: LayerCollector).Enabled = false
+					if d:IsA("BillboardGui") then
+						(d :: BillboardGui).MaxDistance = 0
+					elseif d:IsA("SurfaceGui") then
+						(d :: SurfaceGui).MaxDistance = 0
+					end
+				end
+			end
+		end
+	end
+end
+
 local M = {}
 
 function M.onAfterInteractiveApply(fn: () -> ())
 	table.insert(afterInteractiveApplyCallbacks, fn)
+end
+
+function M.hideForeignOwnershipMarkers()
+	local folder = PlotPaths.findSpawnAndBasesFolder()
+	if folder then
+		hideForeignOwnershipMarkers(folder)
+	end
 end
 
 function M.init()
@@ -445,8 +492,17 @@ function M.init()
 	end)
 	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
 		refreshAllMarkersInFolder(folder)
+		hideForeignOwnershipMarkers(folder)
 	end)
 	refreshAllMarkersInFolder(folder)
+	hideForeignOwnershipMarkers(folder)
+	-- Streaming / late PlotGUI reparent: periodically re-kill foreign markers.
+	task.spawn(function()
+		while folder.Parent do
+			task.wait(1.5)
+			hideForeignOwnershipMarkers(folder)
+		end
+	end)
 end
 
 return M

@@ -14,6 +14,7 @@ local Workspace = game:GetService("Workspace")
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
+local PlotMarkerVisibility = require(script.Parent:WaitForChild("PlotMarkerVisibility"))
 
 local player = Players.LocalPlayer
 
@@ -215,6 +216,11 @@ local function applyMarkerFade(transparency: number, visible: boolean)
 		if not bb.Parent then
 			continue
 		end
+		-- Drop any stale foreign marker that snuck into the cache.
+		if cachedPlot and not bb:IsDescendantOf(cachedPlot) then
+			bb.Enabled = false
+			continue
+		end
 		lockMarkerLook(bb)
 		bb.Enabled = visible
 		if not visible then
@@ -315,6 +321,7 @@ local function refreshCachedPlot()
 	cachedPlot = plot
 	cachedCenter = if plot then resolvePlotCenter(plot) else nil
 	refreshMarkers(plot)
+	PlotMarkerVisibility.hideForeignOwnershipMarkers()
 	if not plot then
 		destroyOutline()
 		applyMarkerFade(1, false)
@@ -376,6 +383,9 @@ local function tickOutline()
 	local dist = xzDist(hrp.Position, center)
 	local transparency = outlineTransparencyForDistance(dist)
 	local visible = transparency < 0.995
+	if visible then
+		PlotMarkerVisibility.hideForeignOwnershipMarkers()
+	end
 
 	local hl = ensureOutline(plot)
 	if hl then

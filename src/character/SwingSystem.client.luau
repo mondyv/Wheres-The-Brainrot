@@ -153,6 +153,14 @@ C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.98
 C.LOOK_DOWN_PITCH = -0.22
 C.LOOK_DOWN_FORWARD_DOT = 0.12
 C.MIN_TARGET_HEIGHT_OFFSET = -8
+-- Aim scoring: high reach must not prefer a far centered vine over the close one you're facing.
+-- Distance is normalized against PREFER_NEAR_STUDS (not full reach) so max reach doesn't wipe the penalty.
+C.TARGET_SCORE_ALIGN = 1.75
+C.TARGET_SCORE_CENTER = 0.7
+C.TARGET_SCORE_CENTER_LOOK_DOWN = 0.55
+C.TARGET_SCORE_DIST_WEIGHT = 2.6
+C.TARGET_SCORE_PREFER_NEAR_STUDS = 90
+C.TARGET_SCORE_NEAR_AIM_BONUS = 1.15
 C.TARGET_SCAN_INTERVAL = 0.12
 C.TARGET_SCAN_INTERVAL_GROUNDED = 0.28
 C.TARGET_CANDIDATE_EXTRA_RADIUS = 4
@@ -2651,9 +2659,12 @@ local function boot(character)
 			local centerBias
 			if lookingDown then
 				-- Horizontal centering only — vertical screen position must not steal the forward vine.
-				centerBias = (1 - math.clamp(math.abs(dx) / 0.62, 0, 1)) * 0.75
+				centerBias = (1 - math.clamp(math.abs(dx) / 0.62, 0, 1)) * C.TARGET_SCORE_CENTER_LOOK_DOWN
 			else
-				centerBias = (1 - math.clamp(screenRadius / math.max(maxScreenRadius, 0.01), 0, 1)) * 2.35
+				-- Keep center bias mild: perspective makes far vines sit near screen-center while
+				-- the close vine you're looking at often sits off-center on the viewport.
+				centerBias = (1 - math.clamp(screenRadius / math.max(maxScreenRadius, 0.01), 0, 1))
+					* C.TARGET_SCORE_CENTER
 			end
 
 			local stickBonus = 0
@@ -2661,7 +2672,21 @@ local function boot(character)
 				stickBonus = if lookingDown then 1.55 else 0.28
 			end
 
-			local score = align * 1.75 + heightBonus + centerBias + stickBonus - (dist / reach) * 0.04
+			-- Prefer nearer vines hard. Scaling by full reach made max-reach players latch onto
+			-- distant vines that happen to sit nearer screen-center.
+			local nearScale = math.max(C.TARGET_SCORE_PREFER_NEAR_STUDS, 1)
+			local distancePenalty = (dist / nearScale) * C.TARGET_SCORE_DIST_WEIGHT
+			local nearAimBonus = 0
+			if viewDot >= 0.72 then
+				nearAimBonus = (1 - math.clamp(dist / nearScale, 0, 1)) * C.TARGET_SCORE_NEAR_AIM_BONUS
+			end
+
+			local score = align * C.TARGET_SCORE_ALIGN
+				+ heightBonus
+				+ centerBias
+				+ stickBonus
+				+ nearAimBonus
+				- distancePenalty
 			if score > bestScore then
 				bestScore = score
 				best = part
@@ -2811,8 +2836,10 @@ local function boot(character)
 	function st.attachCandidateScore(target, dist, point, maxDistance)
 		camera = workspace.CurrentCamera or camera
 
-		local distanceAlpha = 1 - math.clamp(dist / math.max(maxDistance, 1), 0, 1)
-		local score = distanceAlpha * 0.72
+		-- Prefer absolute nearness over fraction-of-reach so high reach doesn't flatten scores.
+		local nearScale = math.max(math.min(maxDistance, C.TARGET_SCORE_PREFER_NEAR_STUDS), 1)
+		local nearAlpha = 1 - math.clamp(dist / nearScale, 0, 1)
+		local score = nearAlpha * 1.35
 		local toTargetFlat = flatUnit(point - st.hrp.Position)
 
 		if camera and toTargetFlat then

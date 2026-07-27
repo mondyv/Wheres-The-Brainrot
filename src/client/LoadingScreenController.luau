@@ -1489,6 +1489,7 @@ end
 local function exitLoadingIsolation(playerGui: PlayerGui)
 	loadingActive = false
 	unbindCharacterHide()
+	endLoadingStreamingGuard(Players.LocalPlayer)
 
 	if playerGuiChildConn then
 		playerGuiChildConn:Disconnect()

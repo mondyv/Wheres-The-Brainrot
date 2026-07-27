@@ -31,6 +31,7 @@ local homePivot: CFrame? = nil
 local timModel: Model? = nil
 local questHitbox: BasePart? = nil
 local introPlaying = false
+local introStartedLocal = false -- never restart fall once begun (attribute can lag)
 local dialogueBusy = false
 local lastWalkbyAt = 0.0
 local questGui: ScreenGui? = nil
@@ -38,6 +39,8 @@ local highlight: Highlight? = nil
 local talkPrompt: ProximityPrompt? = nil
 local idleTrack: AnimationTrack? = nil
 local bgmSaved: { [Sound]: number } = {}
+local hiddenPartMods: { [BasePart]: number } = {}
+local ROCK_GREEN = Color3.fromRGB(62, 168, 58)
 
 local function remotesFolder(): Folder?
 	return ReplicatedStorage:FindFirstChild("TimCheeseQuestRemotes") :: Folder?
@@ -101,6 +104,40 @@ local function setQuestFloatVisible(tim: Model, visible: boolean, text: string?)
 					end
 				end
 			end
+		end
+	end
+end
+
+-- Local-only hide until intro plays (other players still see their own Tim state).
+local function hideTimUntilIntro(tim: Model)
+	table.clear(hiddenPartMods)
+	for _, d in tim:GetDescendants() do
+		if d:IsA("BasePart") then
+			hiddenPartMods[d] = d.LocalTransparencyModifier
+			d.LocalTransparencyModifier = 1
+		elseif d:IsA("Decal") or d:IsA("Texture") then
+			d.Transparency = 1
+		elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+			d.Enabled = false
+		elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
+			d.Enabled = false
+		end
+	end
+	setQuestFloatVisible(tim, false)
+end
+
+local function revealTimForIntro(tim: Model)
+	for part, prev in hiddenPartMods do
+		if part.Parent then
+			part.LocalTransparencyModifier = prev
+		end
+	end
+	table.clear(hiddenPartMods)
+	for _, d in tim:GetDescendants() do
+		if d:IsA("Decal") or d:IsA("Texture") then
+			d.Transparency = 0
+		elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
+			d.Enabled = true
 		end
 	end
 end
@@ -171,34 +208,49 @@ local function spawnLandingDebris(landingPos: Vector3, tim: Model)
 	params.FilterDescendantsInstances = { tim }
 	local hit = Workspace:Raycast(landingPos + Vector3.new(0, 4, 0), Vector3.new(0, -20, 0), params)
 	local pos = if hit then hit.Position else landingPos
-	local color = Color3.fromRGB(110, 90, 55)
-	local material = Enum.Material.Ground
-	if hit and hit.Instance:IsA("BasePart") then
-		color = hit.Instance.Color
-		material = hit.Instance.Material
-	end
 
-	for i = 1, 22 do
+	local ring = Instance.new("Part")
+	ring.Name = "TimImpactRing"
+	ring.Shape = Enum.PartType.Cylinder
+	ring.Anchored = true
+	ring.CanCollide = false
+	ring.CanQuery = false
+	ring.CanTouch = false
+	ring.CastShadow = false
+	ring.Material = Enum.Material.Grass
+	ring.Color = ROCK_GREEN
+	ring.Size = Vector3.new(0.35, 2.5, 2.5)
+	ring.CFrame = CFrame.new(pos + Vector3.new(0, 0.2, 0)) * CFrame.Angles(0, 0, math.rad(90))
+	ring.Parent = Workspace
+	TweenService:Create(ring, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(0.2, 18, 18),
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(ring, 0.55)
+
+	for i = 1, 36 do
 		local chip = Instance.new("Part")
 		chip.Name = "TimLandingChip"
-		chip.Size = Vector3.new(0.35, 0.22, 0.45) * (0.7 + math.random() * 0.8)
-		chip.Color = color
-		chip.Material = material
+		local scale = 1.1 + math.random() * 1.6
+		chip.Size = Vector3.new(0.85, 0.55, 1.05) * scale
+		chip.Color = if i % 3 == 0 then Color3.fromRGB(48, 140, 52) else ROCK_GREEN
+		chip.Material = Enum.Material.Grass
 		chip.Anchored = true
 		chip.CanCollide = false
 		chip.CanQuery = false
 		chip.CanTouch = false
 		chip.CastShadow = false
-		chip.CFrame = CFrame.new(pos) * CFrame.Angles(0, math.rad(i * 17), 0)
+		local ang = math.rad(i * (360 / 36))
+		chip.CFrame = CFrame.new(pos + Vector3.new(0, 0.4, 0)) * CFrame.Angles(ang, ang * 0.4, 0)
 		chip.Parent = Workspace
-		local dir = Vector3.new(math.cos(i), 0.35 + math.random() * 0.5, math.sin(i)).Unit
-		local goal = pos + dir * (4 + math.random() * 5) + Vector3.new(0, 1.5, 0)
-		TweenService:Create(chip, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			CFrame = CFrame.new(goal),
+		local dir = Vector3.new(math.cos(ang), 0.55 + math.random() * 0.7, math.sin(ang)).Unit
+		local goal = pos + dir * (7 + math.random() * 8) + Vector3.new(0, 2.5 + math.random() * 2, 0)
+		TweenService:Create(chip, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			CFrame = CFrame.new(goal) * CFrame.Angles(math.random() * 2, math.random() * 2, math.random() * 2),
 			Transparency = 1,
-			Size = chip.Size * 0.2,
+			Size = chip.Size * 0.25,
 		}):Play()
-		Debris:AddItem(chip, 0.7)
+		Debris:AddItem(chip, 0.85)
 	end
 end
 
@@ -525,10 +577,11 @@ local function lockMovement(on: boolean)
 end
 
 function M.playIntroFall()
-	if introPlaying then
+	if introPlaying or introStartedLocal then
 		return
 	end
 	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
+		introStartedLocal = true
 		return
 	end
 	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
@@ -539,25 +592,36 @@ function M.playIntroFall()
 		return
 	end
 	timModel = tim
+	-- Always use Studio landing pose saved at init — never re-capture mid-fall.
 	if not homePivot then
 		homePivot = tim:GetPivot()
 	end
+	introStartedLocal = true
 	introPlaying = true
+	revealTimForIntro(tim)
 	setQuestFloatVisible(tim, false)
 	GameplayUiVisibility.hide({ keepScreenGuiNames = { "TimCheeseQuestHud", "StandDialogueCutscene" } })
 	lockMovement(true)
 	setBgmSlowed(true)
 	local wind = playWindLoop()
 
-	local land = homePivot.Position
+	local landCf = homePivot
+	local land = landCf.Position
 	local start = land + Vector3.new(0, TimCheeseQuestConfig.DROP_HEIGHT, 0)
-	tim:PivotTo(CFrame.new(start) * (homePivot - homePivot.Position))
+	local rotOnly = landCf - landCf.Position
+	tim:PivotTo(CFrame.new(start) * rotOnly)
 
 	local cam = Workspace.CurrentCamera
 	local savedType = cam and cam.CameraType
 	local savedSubject = cam and cam.CameraSubject
 	if cam then
 		cam.CameraType = Enum.CameraType.Scriptable
+	end
+
+	-- Fire early so zone poll / Touched can't restart while attribute replicates.
+	local introRE = getRE("IntroDone")
+	if introRE then
+		introRE:FireServer()
 	end
 
 	local alpha = Instance.new("NumberValue")
@@ -571,11 +635,12 @@ function M.playIntroFall()
 		local t = alpha.Value
 		local y = start.Y + (land.Y - start.Y) * (t * t)
 		local pos = Vector3.new(land.X, y, land.Z)
-		local sway = math.sin(t * 18) * (1 - t) * 2.2
-		tim:PivotTo(CFrame.new(pos + Vector3.new(sway, 0, 0)) * (homePivot - homePivot.Position))
+		local sway = math.sin(t * 22) * (1 - t) * 1.6
+		tim:PivotTo(CFrame.new(pos + Vector3.new(sway, 0, 0)) * rotOnly)
 		if cam then
-			local look = pos + Vector3.new(0, 2, 0)
-			cam.CFrame = CFrame.new(pos + Vector3.new(10, 6, 14), look)
+			-- Worm's-eye: camera near the landing pad looking UP at Tim.
+			local camPos = Vector3.new(land.X + 11, land.Y + 2.5, land.Z + 13)
+			cam.CFrame = CFrame.lookAt(camPos, pos + Vector3.new(0, 1.5, 0))
 		end
 	end)
 	tween:Play()
@@ -587,21 +652,16 @@ function M.playIntroFall()
 		wind:Stop()
 		wind:Destroy()
 	end
-	tim:PivotTo(homePivot)
+	tim:PivotTo(landCf)
 	spawnLandingDebris(land, tim)
-	GameSoundEffects.playGroundSmash(1.15)
-	pulseCameraShake(0.55, 0.42)
+	GameSoundEffects.playGroundSmash(1.45)
+	pulseCameraShake(0.85, 0.95)
 	ensureIdle(tim)
 	setBgmSlowed(false)
 
 	if cam then
 		cam.CameraType = savedType or Enum.CameraType.Custom
 		cam.CameraSubject = savedSubject
-	end
-
-	local introRE = getRE("IntroDone")
-	if introRE then
-		introRE:FireServer()
 	end
 
 	StandDialogueCutscene.play({
@@ -793,7 +853,7 @@ function M.openTimDialogue()
 end
 
 local function onHitboxTouched(other: BasePart)
-	if introPlaying then
+	if introPlaying or introStartedLocal then
 		return
 	end
 	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
@@ -870,6 +930,9 @@ function M.init()
 		task.spawn(function()
 			while questHitbox and questHitbox.Parent do
 				task.wait(0.35)
+				if introStartedLocal or introPlaying then
+					continue
+				end
 				if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
 					continue
 				end
@@ -888,14 +951,21 @@ function M.init()
 		end)
 
 		if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
+			introStartedLocal = true
 			ensureIdle(timModel)
 			setQuestFloatVisible(timModel, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
 			syncPromptAndOutline()
 			refreshQuestHud()
 		else
-			-- Hide overhead until intro lands.
-			setQuestFloatVisible(timModel, false)
+			-- Invisible + parked until they enter the hitbox (tutorial done or not).
+			hideTimUntilIntro(timModel)
 		end
+
+		player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR):Connect(function()
+			if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
+				introStartedLocal = true
+			end
+		end)
 
 		player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR):Connect(function()
 			refreshQuestHud()

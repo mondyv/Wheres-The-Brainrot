@@ -1286,7 +1286,22 @@ local function grantOfflineDouble(player: Player): (boolean, number)
 	return true, granted
 end
 
-local function clearStandState(state: StandState)
+local function notifyStandBrainrotChanged(player: Player?)
+	if not player or not player:IsA("Player") then
+		return
+	end
+	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
+	if not folder then
+		return
+	end
+	local ev = folder:FindFirstChild("StandBrainrotChanged")
+	if ev and ev:IsA("BindableEvent") then
+		ev:Fire(player)
+	end
+end
+
+local function clearStandState(state: StandState, notifyPlayer: Player?)
+	local ownerBefore = state.ownerUserId
 	clearDisplayModel(state)
 	state.ownerUserId = nil
 	state.brainrotName = nil
@@ -1306,6 +1321,14 @@ local function clearStandState(state: StandState)
 	state.stand:SetAttribute("BrainrotBaseIncome", nil)
 	setPromptText(state)
 	refreshLabels(state)
+	if notifyPlayer then
+		notifyStandBrainrotChanged(notifyPlayer)
+	elseif typeof(ownerBefore) == "number" then
+		local plr = Players:GetPlayerByUserId(ownerBefore)
+		if plr then
+			notifyStandBrainrotChanged(plr)
+		end
+	end
 end
 
 local function countStandsOnPlayerPlot(player: Player): number
@@ -1442,6 +1465,7 @@ local function placeBrainrotOnStand(player: Player, state: StandState)
 	rebuildDisplay(state)
 	setPromptText(state)
 	refreshLabels(state)
+	notifyStandBrainrotChanged(player)
 end
 
 local function getReturnInventoryFn(): BindableFunction?

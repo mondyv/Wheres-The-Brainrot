@@ -17,6 +17,15 @@ local PlayerDataService = require(script.Parent.Modules:WaitForChild("PlayerData
 local STAND_TAG = "BrainrotStand"
 local REMOTES_FOLDER = "TimCheeseQuestRemotes"
 
+local function isOwnedByPlayer(stand: Instance, uid: number): boolean
+	local owner = stand:GetAttribute("StandOwnerUserId")
+	if owner == uid then
+		return true
+	end
+	local asNum = tonumber(owner)
+	return typeof(asNum) == "number" and asNum == uid
+end
+
 local function ensureRemotes(): Folder
 	local folder = ReplicatedStorage:FindFirstChild(REMOTES_FOLDER)
 	if folder and folder:IsA("Folder") then
@@ -59,8 +68,9 @@ local claimQuestRF = ensureRF("ClaimQuest")
 
 local function countPlacedStands(player: Player): number
 	local n = 0
+	local uid = player.UserId
 	for _, stand in CollectionService:GetTagged(STAND_TAG) do
-		if stand:GetAttribute("StandOwnerUserId") == player.UserId then
+		if isOwnedByPlayer(stand, uid) then
 			local name = stand:GetAttribute("BrainrotName")
 			if typeof(name) == "string" and name ~= "" then
 				n += 1
@@ -72,8 +82,9 @@ end
 
 local function placedIncomePerSecond(player: Player): number
 	local total = 0
+	local uid = player.UserId
 	for _, stand in CollectionService:GetTagged(STAND_TAG) do
-		if stand:GetAttribute("StandOwnerUserId") == player.UserId then
+		if isOwnedByPlayer(stand, uid) then
 			local name = stand:GetAttribute("BrainrotName")
 			local rarity = stand:GetAttribute("BrainrotRarity")
 			if typeof(name) == "string" and typeof(rarity) == "string" then
@@ -267,6 +278,64 @@ task.spawn(function()
 		end
 	end
 end)
+
+-- Instant progress when a stand gains/loses a brainrot (bar shouldn't wait on poll).
+local function watchStandForQuest(stand: Instance)
+	if not stand:IsA("Model") then
+		return
+	end
+	local function bump()
+		local owner = stand:GetAttribute("StandOwnerUserId")
+		local ownerId = if owner == nil then nil else (if typeof(owner) == "number" then owner else tonumber(owner))
+		if typeof(ownerId) ~= "number" then
+			-- Cleared stand: refresh every player with an active place/income quest.
+			for _, plr in Players:GetPlayers() do
+				local idx = plr:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+				if typeof(idx) == "number" and idx >= 1 then
+					local quest = TimCheeseQuestConfig.getQuest(math.floor(idx))
+					if quest and (quest.kind == "place_stands" or quest.kind == "income") then
+						syncQuestProgress(plr)
+					end
+				end
+			end
+			return
+		end
+		local plr = Players:GetPlayerByUserId(ownerId)
+		if plr then
+			syncQuestProgress(plr)
+		end
+	end
+	stand:GetAttributeChangedSignal("BrainrotName"):Connect(bump)
+	stand:GetAttributeChangedSignal("StandOwnerUserId"):Connect(bump)
+	stand:GetAttributeChangedSignal("BrainrotBaseIncome"):Connect(bump)
+end
+
+for _, stand in CollectionService:GetTagged(STAND_TAG) do
+	watchStandForQuest(stand)
+end
+CollectionService:GetInstanceAddedSignal(STAND_TAG):Connect(watchStandForQuest)
+
+-- StandManager fires this on place/pickup so progress never waits on the poll.
+do
+	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "BrainrotInternal"
+		folder.Parent = ServerStorage
+	end
+	local ev = folder:FindFirstChild("StandBrainrotChanged")
+	if not (ev and ev:IsA("BindableEvent")) then
+		ev = Instance.new("BindableEvent")
+		ev.Name = "StandBrainrotChanged"
+		ev.Parent = folder
+	end
+	(ev :: BindableEvent).Event:Connect(function(player: Player)
+		if typeof(player) ~= "Instance" or not player:IsA("Player") then
+			return
+		end
+		syncQuestProgress(player)
+	end)
+end
 
 -- Keep map TimCheese present (streaming).
 task.spawn(function()

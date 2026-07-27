@@ -622,7 +622,16 @@ local function resolveOptionalSound(name)
 		local soundEffects = SoundService:FindFirstChild("SoundEffects")
 		s = soundEffects and soundEffects:FindFirstChild(name)
 	end
-	return s
+	if s and s:IsA("Sound") then
+		return s
+	end
+	if s then
+		local nested = s:FindFirstChildWhichIsA("Sound")
+		if nested then
+			return nested
+		end
+	end
+	return nil
 end
 
 local function playOptionalSound(name)

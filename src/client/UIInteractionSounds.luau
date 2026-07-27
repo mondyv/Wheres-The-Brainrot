@@ -2,13 +2,15 @@
 --[[
 	UIInteractionSounds — UIClick / UIHover from SoundService.UISounds.SoundGroup
 	Respects Settings: "UI Sounds" toggle + SFX slider drives SoundGroup volumes.
+	playNotif uses SoundEffects.Notification1 (same as TopNotif).
 --]]
 
 local SoundService = game:GetService("SoundService")
 
+local GameSoundEffects = require(script.Parent.GameSoundEffects)
+
 local hoverSound: Sound?
 local clickSound: Sound?
-local notifSound: Sound?
 local uiSoundsOn = true
 local lastHoverClock = 0.0
 local lastClickClock = 0.0
@@ -30,7 +32,6 @@ function UIInteractionSounds.init()
 	end
 	hoverSound = sg:FindFirstChild("UIHover") :: Sound?
 	clickSound = sg:FindFirstChild("UIClick") :: Sound?
-	notifSound = sg:FindFirstChild("UINotif") :: Sound?
 	if not hoverSound then warn("[UIInteractionSounds] UIHover sound missing") end
 	if not clickSound then warn("[UIInteractionSounds] UIClick sound missing") end
 end
@@ -58,8 +59,7 @@ function UIInteractionSounds.playClick()
 end
 
 function UIInteractionSounds.playNotif()
-	if not uiSoundsOn or not notifSound then return end
-	notifSound:Play()
+	GameSoundEffects.playNotification1()
 end
 
 return UIInteractionSounds

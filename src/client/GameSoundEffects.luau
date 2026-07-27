@@ -1,7 +1,8 @@
 -- [ACTIVE] GameSoundEffects
 --[[
 	GameSoundEffects — gameplay SFX under SoundService.SoundEffects
-	CashGrab, ErrorNotif, Drops, BushAura, BushRustles, Grass, On ProximityPrompts, GroundSmash, Purchase, Upgrade
+	CashGrab, ErrorNotif, Drops, BushAura, BushRustles, Grass, On ProximityPrompts,
+	GroundSmash, Purchase, Upgrade, Notification1, LandMultiply, Spider
 --]]
 
 local Players = game:GetService("Players")
@@ -28,6 +29,7 @@ local groundSmashTemplate: Sound?
 local purchaseTemplate: Sound?
 local upgradeTemplate: Sound?
 local notification1Template: Sound?
+local landMultiplyTemplate: Sound?
 local spiderRoarTemplate: Sound?
 local spiderWebShotTemplate: Sound?
 local spiderGettingHitTemplate: Sound?
@@ -88,6 +90,17 @@ local function findSoundIn(container: Instance?, ...: string): Sound?
 		end
 	end
 	return container:FindFirstChildWhichIsA("Sound")
+end
+
+-- SoundEffects entries may be a Sound or a Folder containing one.
+local function resolveSoundNode(node: Instance?): Sound?
+	if not node then
+		return nil
+	end
+	if node:IsA("Sound") then
+		return node
+	end
+	return findSoundIn(node)
 end
 
 local function prepareClone(template: Sound): Sound
@@ -329,7 +342,8 @@ function GameSoundEffects.init()
 		upgradeTemplate = upgrade
 	end
 
-	notification1Template = findSoundIn(root, "Notification1")
+	notification1Template = resolveSoundNode(root:FindFirstChild("Notification1"))
+	landMultiplyTemplate = resolveSoundNode(root:FindFirstChild("LandMultiply"))
 
 	table.clear(grassTemplates)
 	local grassNode = root:FindFirstChild("Grass")
@@ -578,9 +592,28 @@ end
 
 function GameSoundEffects.playNotification1()
 	if not notification1Template then
+		local root = SoundService:FindFirstChild("SoundEffects")
+		notification1Template = resolveSoundNode(root and root:FindFirstChild("Notification1"))
+	end
+	if not notification1Template then
 		return
 	end
 	local clone = prepareClone(notification1Template)
+	clone:Play()
+	clone.Ended:Once(function()
+		clone:Destroy()
+	end)
+end
+
+function GameSoundEffects.playLandMultiply()
+	if not landMultiplyTemplate then
+		local root = SoundService:FindFirstChild("SoundEffects")
+		landMultiplyTemplate = resolveSoundNode(root and root:FindFirstChild("LandMultiply"))
+	end
+	if not landMultiplyTemplate then
+		return
+	end
+	local clone = prepareClone(landMultiplyTemplate)
 	clone:Play()
 	clone.Ended:Once(function()
 		clone:Destroy()

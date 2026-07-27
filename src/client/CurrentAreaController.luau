@@ -13,6 +13,7 @@ local TweenService = game:GetService("TweenService")
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local PlotLuck = SwingUpgrades.PlotLuck
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local GameSoundEffects = require(script.Parent.GameSoundEffects)
 
 local player = Players.LocalPlayer
 
@@ -295,6 +296,8 @@ local function playIntro(displayLuck: number, tierIndex: number)
 
 	currentArea.Visible = true
 	applyLuckVisuals(displayLuck)
+	-- Land/base multiplier UI — LandMultiply only (never Notification1).
+	GameSoundEffects.playLandMultiply()
 
 	local motion = motionForTier(tierIndex)
 	local restScale = tierRestScale(tierIndex)

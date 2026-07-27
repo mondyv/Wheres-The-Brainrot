@@ -131,13 +131,16 @@ local function applyMarkerFade(transparency: number, visible: boolean)
 		end
 		for _, d in ipairs(bb:GetDescendants()) do
 			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
-				(d :: ImageLabel).ImageTransparency = transparency
-				(d :: ImageLabel).BackgroundTransparency = math.max((d :: ImageLabel).BackgroundTransparency, transparency)
+				local img = d :: ImageLabel
+				img.ImageTransparency = transparency
+				img.BackgroundTransparency = math.max(img.BackgroundTransparency, transparency)
 			elseif d:IsA("TextLabel") or d:IsA("TextButton") then
-				(d :: TextLabel).TextTransparency = transparency
-				(d :: TextLabel).TextStrokeTransparency = math.clamp(transparency + 0.2, 0, 1)
-						elseif d:IsA("Frame") then
-				(d :: Frame).BackgroundTransparency = math.max((d :: Frame).BackgroundTransparency, transparency)
+				local text = d :: TextLabel
+				text.TextTransparency = transparency
+				text.TextStrokeTransparency = math.clamp(transparency + 0.2, 0, 1)
+			elseif d:IsA("Frame") then
+				local frame = d :: Frame
+				frame.BackgroundTransparency = math.max(frame.BackgroundTransparency, transparency)
 			end
 		end
 	end

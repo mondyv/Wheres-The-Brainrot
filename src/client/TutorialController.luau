@@ -83,6 +83,7 @@ local _powerBuyButton: GuiObject? = nil
 local lastLandCheck = 0
 local _claimSpotlightActive = false
 local upgradeBaseLevel = 1
+local upgradeStepEnteredAt = 0
 local layoutConn: RBXScriptConnection? = nil
 local _panelStroke: UIStroke? = nil
 local chromeSuppressed = false
@@ -1631,7 +1632,8 @@ local function resolvePlacedStandUpgradeTarget(): Instance?
 			if ownerId ~= nil and ownerId ~= player.UserId then
 				continue
 			end
-			if typeof(d:GetAttribute("BrainrotName")) ~= "string" then
+			local brainrotName = d:GetAttribute("BrainrotName")
+			if typeof(brainrotName) ~= "string" or brainrotName == "" then
 				continue
 			end
 			local levelPanel = d:FindFirstChild("LevelPanel")
@@ -1646,6 +1648,11 @@ local function resolvePlacedStandUpgradeTarget(): Instance?
 		end
 	end
 	return nil
+end
+
+local function standHasPlacedBrainrot(stand: Model): boolean
+	local name = stand:GetAttribute("BrainrotName")
+	return typeof(name) == "string" and name ~= ""
 end
 
 local function resolveStandUpgradeButton(): GuiObject?
@@ -1664,7 +1671,7 @@ local function resolveStandUpgradeButton(): GuiObject?
 		if ownerId ~= nil and ownerId ~= player.UserId then
 			continue
 		end
-		if typeof(d:GetAttribute("BrainrotName")) ~= "string" then
+		if not standHasPlacedBrainrot(d) then
 			continue
 		end
 		local levelPanel = d:FindFirstChild("LevelPanel")
@@ -1693,7 +1700,7 @@ local function readPlacedBrainrotLevel(): number
 			if ownerId ~= nil and ownerId ~= player.UserId then
 				continue
 			end
-			if typeof(d:GetAttribute("BrainrotName")) == "string" then
+			if standHasPlacedBrainrot(d) then
 				local lvl = d:GetAttribute("BrainrotLevel")
 				if typeof(lvl) == "number" then
 					return math.max(1, math.floor(lvl))
@@ -1987,6 +1994,7 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 	end
 	if step.id == "upgradeBrainrot" then
 		upgradeBaseLevel = readPlacedBrainrotLevel()
+		upgradeStepEnteredAt = os.clock()
 	end
 	if step.id == "searchBush" then
 		clearLockedBush()
@@ -1998,6 +2006,19 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 	end
 	showPanel(step.text, first)
 	refreshPointers()
+	if step.id == "upgradeBrainrot" then
+		-- LevelPanel / Upgrade often replicates a beat after place — keep pointing.
+		task.delay(0.35, function()
+			if active and currentStep() and currentStep().id == "upgradeBrainrot" then
+				refreshPointers()
+			end
+		end)
+		task.delay(1.0, function()
+			if active and currentStep() and currentStep().id == "upgradeBrainrot" then
+				refreshPointers()
+			end
+		end)
+	end
 	if step.id == "grantCash" then
 		task.spawn(function()
 			runGrantCashStep()
@@ -2149,26 +2170,40 @@ local function watchStepProgress()
 			local plot = PlotPaths.findPlotForAssignedSlot(player)
 			if plot then
 				for _, d in plot:GetDescendants() do
-					if d:IsA("Model") and typeof(d:GetAttribute("BrainrotName")) == "string" then
-						local ownerId = d:GetAttribute("StandOwnerUserId")
-						if ownerId == nil or ownerId == player.UserId then
-							completeCurrentIf("placeOnPlot")
-							return
-						end
+					if not (d:IsA("Model") and (d:HasTag("BrainrotStand") or d:GetAttribute("BrainrotStand") == true)) then
+						continue
+					end
+					if not standHasPlacedBrainrot(d) then
+						continue
+					end
+					local ownerId = d:GetAttribute("StandOwnerUserId")
+					if ownerId == nil or ownerId == player.UserId then
+						completeCurrentIf("placeOnPlot")
+						return
 					end
 				end
 			end
 		elseif step.id == "upgradeBrainrot" and now - lastLandCheck > 0.35 then
 			lastLandCheck = now
-			local lvl = readPlacedBrainrotLevel()
-			if lvl > upgradeBaseLevel then
-				completeCurrentIf("upgradeBrainrot")
-			else
-				local upgradeBtn = resolveStandUpgradeButton()
-				if upgradeBtn and (not uiPointer or not uiPointer.Parent) then
-					pointAtGui(upgradeBtn)
+			-- Don't finish instantly — player must see the upgrade prompt.
+			if upgradeStepEnteredAt > 0 and (now - upgradeStepEnteredAt) < 1.25 then
+				local upgradeBtnEarly = resolveStandUpgradeButton()
+				if upgradeBtnEarly and (not uiPointer or not uiPointer.Parent) then
+					pointAtGui(upgradeBtnEarly)
 				elseif not worldArrowBb then
 					refreshPointers()
+				end
+			else
+				local lvl = readPlacedBrainrotLevel()
+				if lvl > upgradeBaseLevel then
+					completeCurrentIf("upgradeBrainrot")
+				else
+					local upgradeBtn = resolveStandUpgradeButton()
+					if upgradeBtn and (not uiPointer or not uiPointer.Parent) then
+						pointAtGui(upgradeBtn)
+					elseif not worldArrowBb then
+						refreshPointers()
+					end
 				end
 			end
 		end

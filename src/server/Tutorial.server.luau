@@ -33,6 +33,19 @@ local function ensureRF(name: string): RemoteFunction
 	return rf
 end
 
+local function ensureTutorialAttrs(player: Player)
+	PlayerDataService.waitUntilLoaded(player)
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == nil then
+		player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, false)
+	end
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR) == nil then
+		player:SetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR, false)
+	end
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR) == nil then
+		player:SetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR, false)
+	end
+end
+
 local completeRF = ensureRF("CompleteTutorial")
 local grantCashRF = ensureRF("GrantTutorialCash")
 
@@ -63,23 +76,11 @@ end
 -- Ensure new sessions without save data start with tutorial incomplete.
 Players.PlayerAdded:Connect(function(player)
 	task.defer(function()
-		PlayerDataService.waitUntilLoaded(player)
-		if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == nil then
-			player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, false)
-		end
-		if player:GetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR) == nil then
-			player:SetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR, false)
-		end
+		ensureTutorialAttrs(player)
 	end)
 end)
 for _, plr in Players:GetPlayers() do
 	task.defer(function()
-		PlayerDataService.waitUntilLoaded(plr)
-		if plr:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == nil then
-			plr:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, false)
-		end
-		if plr:GetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR) == nil then
-			plr:SetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR, false)
-		end
+		ensureTutorialAttrs(plr)
 	end)
 end

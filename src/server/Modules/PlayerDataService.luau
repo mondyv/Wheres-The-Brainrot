@@ -447,6 +447,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		settings = collectSettings(player),
 		tutorialCompleted = player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true,
 		tutorialCashGranted = player:GetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR) == true,
+		tutorialFirstBushClaimed = player:GetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR) == true,
 	}
 end
 
@@ -526,6 +527,7 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	applySettings(player, (data :: any).settings)
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, data.tutorialCompleted == true)
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR, data.tutorialCashGranted == true)
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR, data.tutorialFirstBushClaimed == true)
 
 	SwingUpgrades.syncGameplayStatsFromLevels(player, {
 		power = data.powerLevel,
@@ -682,6 +684,12 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		tutorialCashGranted = if typeof(raw.tutorialCashGranted) == "boolean"
 			then raw.tutorialCashGranted
 			else (math.max(0, if typeof(raw.cash) == "number" then raw.cash else 0) > 0),
+		tutorialFirstBushClaimed = if typeof(raw.tutorialFirstBushClaimed) == "boolean"
+			then raw.tutorialFirstBushClaimed
+			else (
+				(typeof(raw.inventory) == "table" and next(raw.inventory) ~= nil)
+					or (typeof(raw.stands) == "table" and next(raw.stands) ~= nil)
+			),
 	}
 end
 
@@ -937,6 +945,9 @@ local function mergeAgainstPrior(
 	end
 	if prior.tutorialCashGranted and not payload.tutorialCashGranted then
 		payload.tutorialCashGranted = true
+	end
+	if prior.tutorialFirstBushClaimed and not payload.tutorialFirstBushClaimed then
+		payload.tutorialFirstBushClaimed = true
 	end
 
 	return payload
@@ -1199,6 +1210,7 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		settings = PlayerDataSchema.DEFAULT_SETTINGS,
 		tutorialCompleted = false,
 		tutorialCashGranted = false,
+		tutorialFirstBushClaimed = false,
 	}
 end
 
@@ -1316,6 +1328,7 @@ function M.replayTutorial(player: Player)
 		return
 	end
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, false)
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR, false)
 	local nonce = player:GetAttribute(PlayerDataSchema.TUTORIAL_REPLAY_ATTR)
 	local nextNonce = if typeof(nonce) == "number" then nonce + 1 else 1
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_REPLAY_ATTR, nextNonce)

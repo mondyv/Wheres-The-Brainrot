@@ -27,6 +27,7 @@ local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):Wai
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
+local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local PlotLuck = SwingUpgrades.PlotLuck
@@ -1320,6 +1321,11 @@ attachCarriedBrainrot = function(player: Player, clone: Model)
 		return
 	end
 
+	-- First accepted bush during tutorial → later bushes use normal level rolls.
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+		player:SetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR, true)
+	end
+
 	-- Already inside RedWall deposit: skip head carry (Touched won't fire if they never left the box).
 	if isPlayerInsideDeposit(player) then
 		tryPlaySafeZoneSFXForCarry(player, clone)
@@ -2029,6 +2035,35 @@ local function resolveHiddenHarvestLevel(bushRef: Instance?): number
 	return Brainrots.rollBushHarvestLevel()
 end
 
+-- Tutorial: first bush brainrot must be level 1 so the upgrade step is affordable.
+-- Keeps forcing until they accept a claim (or already own one); later bushes roll normally.
+local function playerNeedsTutorialBushLevel1(player: Player): boolean
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+		return false
+	end
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR) == true then
+		return false
+	end
+	local inv = brainrotInventories[player]
+	if inv and #inv > 0 then
+		return false
+	end
+	if #(activeCarries[player] or {}) > 0 then
+		return false
+	end
+	if #(pendingFloats[player] or {}) > 0 then
+		return false
+	end
+	return true
+end
+
+local function resolveHarvestLevelForPlayer(player: Player, bushRef: Instance?): number
+	if playerNeedsTutorialBushLevel1(player) then
+		return 1
+	end
+	return resolveHiddenHarvestLevel(bushRef)
+end
+
 local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushRef: Instance?)
 	if not canAttemptHarvest(player, worldPosition, bushRef) then
 		return
@@ -2074,7 +2109,7 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 		local fallbackDef = Brainrots.getByName(fallbackName)
 		firePlayBrainrotSFX(player, fallbackName)
 		fireHarvestDropFX(player, if fallbackDef then fallbackDef.rarity else "common")
-		local harvestLevel = resolveHiddenHarvestLevel(bushRef)
+		local harvestLevel = resolveHarvestLevelForPlayer(player, bushRef)
 		local clone = fallback:Clone()
 		clone.Name = fallbackName
 		clone:SetAttribute("OwnerUserId", player.UserId)
@@ -2133,7 +2168,7 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 	firePlayBrainrotSFX(player, pick.name)
 	fireHarvestDropFX(player, pick.rarity)
 
-	local harvestLevel = resolveHiddenHarvestLevel(bushRef)
+	local harvestLevel = resolveHarvestLevelForPlayer(player, bushRef)
 	local clone = template:Clone()
 	clone.Name = pick.name
 	clone:SetAttribute("OwnerUserId", player.UserId)

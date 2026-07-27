@@ -77,6 +77,7 @@ export type PlayerSaveData = {
 	settings: PlayerSettingsSaveData?,
 	tutorialCompleted: boolean?,
 	tutorialCashGranted: boolean?,
+	tutorialFirstBushClaimed: boolean?,
 }
 
 local M = {}
@@ -88,6 +89,7 @@ M.LOAD_FAILED_ATTR = "PlayerDataLoadFailed"
 M.TUTORIAL_COMPLETED_ATTR = "TutorialCompleted"
 M.TUTORIAL_REPLAY_ATTR = "TutorialReplayNonce"
 M.TUTORIAL_CASH_GRANTED_ATTR = "TutorialCashGranted"
+M.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR = "TutorialFirstBushClaimed"
 
 M.SETTINGS_MUSIC_VOLUME_ATTR = "SettingsMusicVolume"
 M.SETTINGS_SFX_VOLUME_ATTR = "SettingsSfxVolume"

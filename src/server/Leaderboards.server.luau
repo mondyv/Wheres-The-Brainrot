@@ -1,10 +1,14 @@
 -- [ACTIVE] Leaderboards.server
 --[[
-	Global Cash + Play Time leaderboards.
+	Global Most Cash (plot $/s) + Play Time leaderboards.
 	Pushes OrderedDataStore scores on the server and mirrors top 10 rows to
 	ReplicatedStorage.LeaderboardData for the client to paint workspace SurfaceGuis.
+
+	"Most Cash" tracks current placed plot income/sec (not wallet Cash).
+	Scores can go down when generation drops so the board stays live.
 --]]
 
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local DataStoreService = game:GetService("DataStoreService")
@@ -12,20 +16,52 @@ local DataStoreService = game:GetService("DataStoreService")
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local LiveDataStores = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LiveDataStores"))
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
+local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Brainrots"))
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 
-local CASH_STORE_NAME = "GlobalCashLeaderboard_v1"
+-- v2: plot income/sec. Old GlobalCashLeaderboard_v1 was peak wallet Cash and polluted rankings.
+local CASH_STORE_NAME = "GlobalPlotIncomeLeaderboard_v1"
 local TIME_STORE_NAME = "GlobalPlayTimeLeaderboard_v1"
 local ROW_COUNT = 10
 local PUSH_INTERVAL_SEC = 45
 local REFRESH_INTERVAL_SEC = 90
 local DATA_FOLDER_NAME = "LeaderboardData"
+local STAND_TAG = "BrainrotStand"
 
 local leaderboardsEnabled = LiveDataStores.isEnabled()
 local cashStore = if leaderboardsEnabled then DataStoreService:GetOrderedDataStore(CASH_STORE_NAME) else nil
 local timeStore = if leaderboardsEnabled then DataStoreService:GetOrderedDataStore(TIME_STORE_NAME) else nil
 
 local nameCache: { [number]: string } = {}
+
+local function formatIncomePerSecond(n: number): string
+	return BrainrotEconomy.formatCashShort(n) .. "/s"
+end
+
+local function placedIncomePerSecond(player: Player): number
+	local total = 0
+	for _, stand in CollectionService:GetTagged(STAND_TAG) do
+		if stand:GetAttribute("StandOwnerUserId") == player.UserId then
+			local name = stand:GetAttribute("BrainrotName")
+			local rarity = stand:GetAttribute("BrainrotRarity")
+			if typeof(name) == "string" and typeof(rarity) == "string" then
+				local def = {
+					name = name,
+					rarity = rarity,
+					baseIncome = stand:GetAttribute("BrainrotBaseIncome") or 0,
+				}
+				local level = stand:GetAttribute("BrainrotLevel")
+				local mutation = stand:GetAttribute("BrainrotMutation")
+				total += Brainrots.incomePerSecond(
+					def,
+					if typeof(level) == "number" then level else 1,
+					if typeof(mutation) == "string" then mutation else "normal"
+				)
+			end
+		end
+	end
+	return total
+end
 
 local function ensureDataFolder(): Folder
 	local existing = ReplicatedStorage:FindFirstChild(DATA_FOLDER_NAME)
@@ -111,7 +147,8 @@ local function getDisplayName(userId: number): string
 	return display
 end
 
-local function pushScore(store: OrderedDataStore?, userId: number, score: number)
+-- peakOnly: never lower a stored score (play time). Live boards overwrite with current value.
+local function pushScore(store: OrderedDataStore?, userId: number, score: number, peakOnly: boolean)
 	if not store then
 		return
 	end
@@ -119,7 +156,7 @@ local function pushScore(store: OrderedDataStore?, userId: number, score: number
 	local value = math.max(0, math.floor(score))
 	local ok, err = pcall(function()
 		store:UpdateAsync(key, function(oldValue)
-			if typeof(oldValue) == "number" and oldValue >= value then
+			if peakOnly and typeof(oldValue) == "number" and oldValue >= value then
 				return oldValue
 			end
 			return value
@@ -134,11 +171,8 @@ local function pushPlayerScores(player: Player)
 	if not leaderboardsEnabled or player:GetAttribute(PlayerDataSchema.LOADED_ATTR) ~= true then
 		return
 	end
-	local cash = player:GetAttribute("Cash")
-	if typeof(cash) == "number" then
-		pushScore(cashStore, player.UserId, cash)
-	end
-	pushScore(timeStore, player.UserId, PlayerDataService.getTotalPlayTimeSeconds(player))
+	pushScore(cashStore, player.UserId, placedIncomePerSecond(player), false)
+	pushScore(timeStore, player.UserId, PlayerDataService.getTotalPlayTimeSeconds(player), true)
 end
 
 local function pushAllPlayerScores()
@@ -211,10 +245,7 @@ end
 
 local function refreshPublishedBoards()
 	if not leaderboardsEnabled then
-		local cashEntries = buildSessionEntries(function(player: Player)
-			local cash = player:GetAttribute("Cash")
-			return if typeof(cash) == "number" then cash else 0
-		end, BrainrotEconomy.formatCashShort)
+		local cashEntries = buildSessionEntries(placedIncomePerSecond, formatIncomePerSecond)
 		local timeEntries = buildSessionEntries(function(player: Player)
 			return PlayerDataService.getTotalPlayTimeSeconds(player)
 		end, BrainrotEconomy.formatPlayTime)
@@ -223,12 +254,9 @@ local function refreshPublishedBoards()
 		return
 	end
 
-	local cashEntries = fetchTop(cashStore, BrainrotEconomy.formatCashShort)
+	local cashEntries = fetchTop(cashStore, formatIncomePerSecond)
 	if #cashEntries == 0 then
-		cashEntries = buildSessionEntries(function(player: Player)
-			local cash = player:GetAttribute("Cash")
-			return if typeof(cash) == "number" then cash else 0
-		end, BrainrotEconomy.formatCashShort)
+		cashEntries = buildSessionEntries(placedIncomePerSecond, formatIncomePerSecond)
 	end
 	local timeEntries = fetchTop(timeStore, BrainrotEconomy.formatPlayTime)
 	if #timeEntries == 0 then

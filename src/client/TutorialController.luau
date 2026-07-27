@@ -90,17 +90,16 @@ local vineCacheAt = 0
 local lastPointerRefresh = 0
 local pendingPointerRefresh = false
 local grantCashPlayed = false
-local pendingCelebrate = false
 local finishCelebrated = false
+-- Hard lock for this play session — survives accidental tutorial restarts before
+-- TutorialCompleted replicates, so finish confetti cannot fire twice.
+local sessionConfettiFired = false
 
 local lockedBushPart: BasePart? = nil
 local lockedBushRoot: Instance? = nil
 local lockedSwingPart: BasePart? = nil
 local uiPointerStroke: UIStroke? = nil
 local uiPointerHost: GuiObject? = nil
-
--- Mid-step confetti disabled — only fire once when the tutorial finishes.
-local CELEBRATE_AFTER_STEP: { [string]: boolean } = {}
 
 local clearWorldArrow: () -> ()
 local clearUiPointer: () -> ()
@@ -112,6 +111,9 @@ local startObjectiveDots: (string) -> ()
 local completeCurrentIf: (TutorialConfig.StepId) -> ()
 
 local function currentStep(): TutorialConfig.StepDef?
+	if not active or stepIndex < 1 then
+		return nil
+	end
 	return TutorialConfig.STEPS[stepIndex]
 end
 
@@ -317,7 +319,13 @@ local function runGrantCashStep()
 end
 
 local function fireConfettiAndShake()
-	GameSoundEffects.playPurchaseShake()
+	-- Single burst only — celebratePurchase already plays purchase SFX + camera shake.
+	if sessionConfettiFired or finishCelebrated then
+		return
+	end
+	sessionConfettiFired = true
+	finishCelebrated = true
+
 	local essentials = ReplicatedStorage:FindFirstChild("EssentialsShared")
 	if not essentials then
 		return
@@ -332,35 +340,6 @@ local function fireConfettiAndShake()
 	if not celebrateOk then
 		warn("[TutorialController] celebratePurchase failed:", celebrateErr)
 	end
-end
-
-local function isHudPanelBlocking(): boolean
-	local frame = HUDController.getCurrentFrame()
-	return frame ~= nil and frame.Parent ~= nil and frame.Visible == true
-end
-
-local function isCelebrateBlocked(): boolean
-	return isCutsceneBusy() or isHudPanelBlocking()
-end
-
-local function tryFlushPendingCelebrate()
-	if not pendingCelebrate or not active then
-		return
-	end
-	if isCelebrateBlocked() then
-		return
-	end
-	pendingCelebrate = false
-	fireConfettiAndShake()
-end
-
-local function requestCelebrate()
-	if isCelebrateBlocked() then
-		pendingCelebrate = true
-		return
-	end
-	pendingCelebrate = false
-	fireConfettiAndShake()
 end
 
 local function stopObjectiveDotsImpl()
@@ -1914,7 +1893,7 @@ local function finishTutorial()
 		return
 	end
 	active = false
-	pendingCelebrate = false
+	stepIndex = 0
 	speakToken += 1
 	stopObjectiveDots()
 	clearWorldArrow()
@@ -1931,10 +1910,8 @@ local function finishTutorial()
 	end
 	table.clear(attrConns)
 	hidePanel()
-	if not finishCelebrated then
-		finishCelebrated = true
-		fireConfettiAndShake()
-	end
+	-- One confetti burst for the whole tutorial (guarded inside fireConfettiAndShake).
+	fireConfettiAndShake()
 	task.defer(function()
 		TopNotifController.showBroadcast("Tutorial completed!")
 	end)
@@ -2052,9 +2029,6 @@ local function watchStepProgress()
 				syncPanelToSideButtons()
 			end
 			refreshPointers()
-			tryFlushPendingCelebrate()
-		elseif pendingCelebrate then
-			tryFlushPendingCelebrate()
 		end
 
 		local step = currentStep()
@@ -2254,11 +2228,18 @@ function M.start(force: boolean?)
 	if active then
 		return
 	end
+	-- Don't restart after a finished run just because TutorialCompleted is slow to replicate.
+	if sessionConfettiFired and not force then
+		return
+	end
 	active = true
 	stepIndex = 0
 	grantCashPlayed = false
-	pendingCelebrate = false
-	finishCelebrated = false
+	if force then
+		-- Admin / replay only — allow a fresh end celebration.
+		sessionConfettiFired = false
+		finishCelebrated = false
+	end
 	ensureGui()
 	startLayoutSync()
 	bindGameplayHooks()
@@ -2267,6 +2248,9 @@ function M.start(force: boolean?)
 end
 
 local function shouldRunTutorial(): boolean
+	if sessionConfettiFired then
+		return false
+	end
 	return player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true
 end
 
@@ -2288,7 +2272,6 @@ function M.stop()
 		return
 	end
 	active = false
-	pendingCelebrate = false
 	speakToken += 1
 	stopObjectiveDots()
 	clearWorldArrow()
@@ -2359,7 +2342,6 @@ function M.init()
 				return
 			end
 			pendingPointerRefresh = true
-			tryFlushPendingCelebrate()
 		end)
 
 		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_REPLAY_ATTR):Connect(function()

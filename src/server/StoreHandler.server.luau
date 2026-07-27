@@ -651,9 +651,26 @@ local function registerReceipts()
 			return GRANTED
 		end)
 	end
-end
 
-registerReceipts()
+	-- Gift-only gamepass developer products: if bought outside an active gift
+	-- pending (or after a stuck NotProcessedYet retry), grant the buyer so Robux
+	-- is never eaten with no entitlement.
+	for gamepassId, entry in StoreConfig.GIFTABLE_GAMEPASSES do
+		local giftProductId = entry.giftProductId
+		if typeof(giftProductId) == "number" and giftProductId > 0 then
+			local passId = gamepassId
+			PH.registerProductReceipt(giftProductId, function(player)
+				local ok, err = grantGiftedGamepass(player, passId)
+				if not ok then
+					warn("[StoreHandler] Gift gamepass self-grant failed:", passId, err)
+					return NOT_PROCESSED
+				end
+				notifyPurchaseComplete(player)
+				return GRANTED
+			end)
+		end
+	end
+end
 
 -- ── Free brainrot quick button (client-driven, one-time) ──────────────────────────
 
@@ -810,6 +827,8 @@ local function grantGiftedGamepass(recipient: Player, gamepassId: number): (bool
 	savePurchaseStateSoon(recipient)
 	return true, entry.displayName
 end
+
+registerReceipts()
 
 -- Shared validation for both gift request remotes. Returns the resolved
 -- target Player, or nil + a user-facing failure message.

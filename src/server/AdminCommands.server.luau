@@ -196,7 +196,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, addluckyblock, resetdata, rebirth, tp, tpland, spectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
+			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, tp, tpland, spectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -519,6 +519,75 @@ commands.addcash = {
 }
 
 commands.cash = commands.addcash
+
+local GIFT_PASS_ALIASES: { [string]: number } = {
+	vip = StoreConfig.GAMEPASS.VIP,
+	["2xcash"] = StoreConfig.GAMEPASS.DOUBLE_CASH,
+	doublecash = StoreConfig.GAMEPASS.DOUBLE_CASH,
+	["2xupgrades"] = StoreConfig.GAMEPASS.DOUBLE_UPGRADES,
+	doubleupgrades = StoreConfig.GAMEPASS.DOUBLE_UPGRADES,
+	superluck = StoreConfig.GAMEPASS.SUPER_LUCK,
+	megaluck = StoreConfig.GAMEPASS.MEGA_LUCK,
+	xray = StoreConfig.GAMEPASS.XRAY,
+	autocollect = StoreConfig.GAMEPASS.AUTOCOLLECT,
+	collect = StoreConfig.GAMEPASS.AUTOCOLLECT,
+	collectall = StoreConfig.GAMEPASS.AUTOCOLLECT,
+	collectcash = StoreConfig.GAMEPASS.AUTOCOLLECT,
+}
+
+commands.giftpass = {
+	usage = "giftpass <player|me> <vip|2xcash|2xupgrades|superluck|megaluck|xray|autocollect>",
+	description = "Grant a gifted gamepass entitlement (for missed gift purchases).",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		if not args[1] or not args[2] then
+			return false, "Usage: " .. commands.giftpass.usage
+		end
+		local alias = string.lower(args[2])
+		local gamepassId = GIFT_PASS_ALIASES[alias]
+		if not gamepassId then
+			return false, "Unknown pass. Use: vip, 2xcash, 2xupgrades, superluck, megaluck, xray, autocollect"
+		end
+		local attr = StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID[gamepassId]
+		local ownedAttr = ({
+			[StoreConfig.GAMEPASS.VIP] = StoreConfig.ATTR.VIP_OWNED,
+			[StoreConfig.GAMEPASS.DOUBLE_CASH] = StoreConfig.ATTR.DOUBLE_CASH_OWNED,
+			[StoreConfig.GAMEPASS.DOUBLE_UPGRADES] = StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED,
+			[StoreConfig.GAMEPASS.SUPER_LUCK] = StoreConfig.ATTR.SUPER_LUCK_OWNED,
+			[StoreConfig.GAMEPASS.MEGA_LUCK] = StoreConfig.ATTR.MEGA_LUCK_OWNED,
+			[StoreConfig.GAMEPASS.XRAY] = StoreConfig.ATTR.XRAY_OWNED,
+			[StoreConfig.GAMEPASS.AUTOCOLLECT] = StoreConfig.ATTR.AUTOCOLLECT_OWNED,
+		})[gamepassId]
+		if not attr or not ownedAttr then
+			return false, "Pass is not giftable."
+		end
+
+		local targets, targetErr = resolveTargets(sender, args[1], false)
+		if not targets then
+			return false, targetErr or "No target."
+		end
+
+		local entry = StoreConfig.GIFTABLE_GAMEPASSES[gamepassId]
+		local displayName = if entry then entry.displayName else alias
+
+		for _, target in targets do
+			PlayerDataService.waitUntilLoaded(target)
+			target:SetAttribute(attr, true)
+			target:SetAttribute(ownedAttr, true)
+			if gamepassId == StoreConfig.GAMEPASS.VIP then
+				target:SetAttribute(StoreConfig.ATTR.VIP_LUCK_MULT, StoreConfig.VIP_LUCK_MULTIPLIER)
+				local freeSteals = target:GetAttribute(StoreConfig.ATTR.FREE_STEAL_COUNT)
+				if typeof(freeSteals) ~= "number" or freeSteals < StoreConfig.VIP_FREE_STEALS then
+					target:SetAttribute(StoreConfig.ATTR.FREE_STEAL_COUNT, StoreConfig.VIP_FREE_STEALS)
+				end
+			end
+			if target:GetAttribute("PlayerDataLoaded") == true then
+				PlayerDataService.savePlayerData(target)
+			end
+		end
+
+		return true, string.format("Granted gifted %s to %d player(s).", displayName, #targets)
+	end,
+}
 
 commands.addluckyblock = {
 	usage = "addluckyblock <player|me|all> <blockName> [count] [variant]",

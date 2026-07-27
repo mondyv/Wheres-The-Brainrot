@@ -51,7 +51,10 @@ local FLOAT_STROKE_SCALE = 1
 local CASH_FLOAT_START_Y_DROP = 0.35
 
 local function playerOwnsAutoCollect(): boolean
-	return player:GetAttribute(StoreConfig.ATTR.AUTOCOLLECT_OWNED) == true
+	if player:GetAttribute(StoreConfig.ATTR.AUTOCOLLECT_OWNED) == true then
+		return true
+	end
+	return player:GetAttribute(StoreConfig.ATTR.GIFTED_AUTOCOLLECT) == true
 end
 
 local function findGamepassInfo(thing: Instance): Instance?
@@ -450,6 +453,10 @@ function M.init()
 	table.insert(
 		ownershipConns,
 		player:GetAttributeChangedSignal(StoreConfig.ATTR.AUTOCOLLECT_OWNED):Connect(syncAllGamepassBillboards)
+	)
+	table.insert(
+		ownershipConns,
+		player:GetAttributeChangedSignal(StoreConfig.ATTR.GIFTED_AUTOCOLLECT):Connect(syncAllGamepassBillboards)
 	)
 	task.defer(syncAllGamepassBillboards)
 	task.defer(refreshAssignedPlotWatch)

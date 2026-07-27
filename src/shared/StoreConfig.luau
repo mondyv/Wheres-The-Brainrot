@@ -226,7 +226,8 @@ StoreConfig.GIFTABLE_GAMEPASSES = {
 	[StoreConfig.GAMEPASS.AUTOCOLLECT] = {
 		displayName = "Autocollect",
 		entitlementKey = StoreConfig.ATTR.GIFTED_AUTOCOLLECT,
-		giftProductId = nil,
+		-- Originally provided as Autocollect "dev product" id (later gamepass became 1892789728).
+		giftProductId = 3606842973,
 	},
 }
 

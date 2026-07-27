@@ -4688,7 +4688,7 @@ local function boot(character)
 			return
 		end
 
-		if isSwingInputBlocked() then
+		if isSwingInputBlocked() or processed then
 			st.spaceHeld = false
 			st.gamepadHeld = false
 			return
@@ -4697,18 +4697,14 @@ local function boot(character)
 		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space then
 			st.noteJumpPressed()
 			st.spaceHeld = true
-			if not processed then
-				st.tryAttach()
-			end
+			st.tryAttach()
 		elseif
 			input.UserInputType == Enum.UserInputType.Gamepad1
 			and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
 		then
 			st.noteJumpPressed()
 			st.gamepadHeld = true
-			if not processed then
-				st.tryAttach()
-			end
+			st.tryAttach()
 		end
 	end))
 

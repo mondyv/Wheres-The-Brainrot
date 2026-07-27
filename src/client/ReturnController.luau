@@ -18,6 +18,7 @@ local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local ReturnConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReturnConfig"))
+local WebTrapConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WebTrapConfig"))
 local TopNotifController = require(script.Parent.TopNotifController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
@@ -371,8 +372,16 @@ local function refreshPaidPrice(count: number)
 	end)
 end
 
+local function isWebTrapped(): boolean
+	return player:GetAttribute(WebTrapConfig.TRAPPED_ATTR) == true
+end
+
 local function shouldShowReturnChrome(): boolean
 	if teleportBusy then
+		return false
+	end
+	-- Stuck in a spider web — no free/paid escape hatch.
+	if isWebTrapped() then
 		return false
 	end
 	local character = player.Character
@@ -800,6 +809,10 @@ function ReturnController.init()
 
 	player:GetAttributeChangedSignal("BrainrotCarryCount"):Connect(function()
 		refreshVisibility(false)
+	end)
+
+	player:GetAttributeChangedSignal(WebTrapConfig.TRAPPED_ATTR):Connect(function()
+		refreshVisibility(true)
 	end)
 
 	player.CharacterAdded:Connect(function(character)

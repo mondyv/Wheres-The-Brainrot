@@ -12,6 +12,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local ReturnConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReturnConfig"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
+local WebTrapConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WebTrapConfig"))
 
 local RETURN_COOLDOWN_SEC = 2.5
 local GRANTED = Enum.ProductPurchaseDecision.PurchaseGranted
@@ -101,6 +102,10 @@ local function teleportHome(player: Player, character: Model): (boolean, string?
 	return true, nil
 end
 
+local function isWebTrapped(player: Player): boolean
+	return player:GetAttribute(WebTrapConfig.TRAPPED_ATTR) == true
+end
+
 local function canFreeReturn(player: Player): (boolean, string?)
 	local character = player.Character
 	if not character then
@@ -110,6 +115,10 @@ local function canFreeReturn(player: Player): (boolean, string?)
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if not humanoid or humanoid.Health <= 0 then
 		return false, "Cannot return right now"
+	end
+
+	if isWebTrapped(player) then
+		return false, "You're stuck in a web"
 	end
 
 	if SafezoneUtil.isCharacterInSafezone(character) then
@@ -154,6 +163,10 @@ local function fulfillPaidReturn(player: Player, productId: number): boolean
 	end
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if not humanoid or humanoid.Health <= 0 then
+		return false
+	end
+	-- Stuck in web: do not teleport. NOT_PROCESSED lets Roblox retry after trap ends.
+	if isWebTrapped(player) then
 		return false
 	end
 	local carried = countCarriedBrainrots(player, character)

@@ -2,6 +2,9 @@
 --[[
 	Scales Random Brainrot product odds by the player's current plot $/s.
 	Shared by server grants and client Chances UI so they stay in sync.
+
+	Design: paid roll is a small side-grade near your progression, never a
+	jump into god/secret while you're still mid-game (e.g. ~300k $/s).
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -41,33 +44,33 @@ local RARITY_ORDER: { RarityId } = {
 	"secret",
 }
 
--- Heavily nerfed vs bush land tables — Random Brainrot is a paid convenience roll,
--- not a shortcut to god/secret. High tiers stay mostly epic→legendary.
+-- Conservative rarity mix. God/secret only appear at the highest gates,
+-- and even then at tiny rates (also blocked by maxAllowedBaseIncome).
 local TIER_WEIGHTS: { [number]: { [RarityId]: number } } = {
-	[1] = { common = 88, uncommon = 12, rare = 0, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[2] = { common = 70, uncommon = 25, rare = 5, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[3] = { common = 50, uncommon = 32, rare = 15, epic = 3, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[4] = { common = 35, uncommon = 35, rare = 22, epic = 7, mythic = 1, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[5] = { common = 18, uncommon = 30, rare = 28, epic = 18, mythic = 5, legendary = 1, ["brainrot god"] = 0, secret = 0 },
-	[6] = { common = 8, uncommon = 20, rare = 30, epic = 26, mythic = 12, legendary = 4, ["brainrot god"] = 0, secret = 0 },
-	[7] = { common = 0, uncommon = 10, rare = 28, epic = 32, mythic = 22, legendary = 7, ["brainrot god"] = 1, secret = 0 },
-	[8] = { common = 0, uncommon = 0, rare = 18, epic = 34, mythic = 30, legendary = 15, ["brainrot god"] = 2.5, secret = 0.5 },
-	[9] = { common = 0, uncommon = 0, rare = 8, epic = 28, mythic = 35, legendary = 24, ["brainrot god"] = 4, secret = 1 },
-	[10] = { common = 0, uncommon = 0, rare = 0, epic = 20, mythic = 35, legendary = 35, ["brainrot god"] = 7, secret = 3 },
+	[1] = { common = 92, uncommon = 8, rare = 0, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[2] = { common = 78, uncommon = 20, rare = 2, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[3] = { common = 55, uncommon = 32, rare = 12, epic = 1, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[4] = { common = 35, uncommon = 35, rare = 24, epic = 6, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[5] = { common = 18, uncommon = 30, rare = 32, epic = 16, mythic = 4, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[6] = { common = 8, uncommon = 18, rare = 32, epic = 28, mythic = 12, legendary = 2, ["brainrot god"] = 0, secret = 0 },
+	[7] = { common = 0, uncommon = 8, rare = 24, epic = 34, mythic = 26, legendary = 8, ["brainrot god"] = 0, secret = 0 },
+	[8] = { common = 0, uncommon = 0, rare = 14, epic = 32, mythic = 34, legendary = 19.5, ["brainrot god"] = 0.5, secret = 0 },
+	[9] = { common = 0, uncommon = 0, rare = 6, epic = 24, mythic = 36, legendary = 32, ["brainrot god"] = 2, secret = 0 },
+	[10] = { common = 0, uncommon = 0, rare = 0, epic = 14, mythic = 30, legendary = 48, ["brainrot god"] = 7.7, secret = 0.3 },
 }
 
--- Much higher $/s gates so mid/late god rolls take real progression.
+-- Plot $/s required to reach each odds tier. Secrets need multi-million gen.
 local TIER_INCOME: { number } = {
-	0,
-	80,
-	250,
-	800,
-	2500,
-	8000,
-	35000,
-	120000,
-	400000,
-	1_200_000,
+	0, -- 1
+	200, -- 2
+	1_000, -- 3
+	5_000, -- 4
+	20_000, -- 5
+	75_000, -- 6
+	250_000, -- 7  (~300k still here: legendary crumbs, no god/secret)
+	750_000, -- 8  first tiny god weight (usually still capped out by maxBase)
+	2_500_000, -- 9
+	8_000_000, -- 10 secret can appear in weights (still needs maxBase ≥ ~420k)
 }
 
 M.UI_ROW_NAMES = {
@@ -106,8 +109,14 @@ end
 
 function M.maxAllowedBaseIncome(plotIncomePerSecond: number): number
 	local ips = math.max(0, plotIncomePerSecond)
-	-- Cap rolls near current gen so Random Brainrot can't jump multiple income tiers.
-	return math.max(35, ips * 0.95 + 12)
+	-- Hard soft-cap: offered unit base must stay well below current total gen
+	-- so a roll can't replace / dwarf your whole base.
+	-- 300k $/s → ~66k max base (legendary band, no god/secret).
+	-- ~550k $/s → first gods (~120k) become eligible.
+	-- ~1.9M $/s → cheapest secrets (~420k) become eligible.
+	local soft = ips * 0.22 + 20
+	local hard = ips * 0.35 + 40
+	return math.max(30, math.floor(math.min(soft, hard)))
 end
 
 function M.tierForIncome(plotIncomePerSecond: number): number
@@ -157,7 +166,6 @@ local function ensurePools()
 		if typeof(name) ~= "string" or not isPlayable(name) then
 			continue
 		end
-		-- Normalize mythic/god aliases
 		if rarity == "godly" then
 			rarity = "brainrot god"
 		elseif rarity == "mythical" then
@@ -219,7 +227,6 @@ function M.compute(plotIncomePerSecond: number): OddsResult
 		end
 	end
 
-	-- Guarantee at least one viable rarity (commons always exist under the floor).
 	local total = 0
 	for _, id in ipairs(RARITY_ORDER) do
 		total += raw[id] or 0
@@ -314,15 +321,15 @@ function M.pickName(plotIncomePerSecond: number): string?
 		return nil
 	end
 
-	-- Heavily bias toward the cheap end of the allowed band.
+	-- Strong bias to the cheap end of the allowed band.
 	local roll = math.random()
 	local idx: number
-	if roll < 0.7 then
-		idx = math.random(1, math.max(1, math.ceil(#pool * 0.3)))
-	elseif roll < 0.95 then
-		idx = math.random(1, math.max(1, math.ceil(#pool * 0.6)))
+	if roll < 0.78 then
+		idx = math.random(1, math.max(1, math.ceil(#pool * 0.22)))
+	elseif roll < 0.96 then
+		idx = math.random(1, math.max(1, math.ceil(#pool * 0.45)))
 	else
-		idx = math.random(1, math.max(1, math.ceil(#pool * 0.85)))
+		idx = math.random(1, math.max(1, math.ceil(#pool * 0.65)))
 	end
 	return pool[idx].name
 end

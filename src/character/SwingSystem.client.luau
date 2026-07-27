@@ -3068,9 +3068,18 @@ local function boot(character)
 		return st.highlightedTarget, point
 	end
 
+	function st.isHoldToSwingMode()
+		-- Default off: press jump to latch, press again to release.
+		return player:GetAttribute("HoldToSwingEnabled") == true
+	end
+
 	function st.holdIsActive()
 		if isSwingInputBlocked() then
 			return false
+		end
+		-- Toggle mode: once swinging, stay latched without holding jump.
+		if not st.isHoldToSwingMode() and st.isSwinging then
+			return true
 		end
 		return st.spaceHeld
 			or st.gamepadHeld
@@ -3084,6 +3093,15 @@ local function boot(character)
 	end
 
 	function st.readyPromptText()
+		if not st.isHoldToSwingMode() then
+			if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+				return "[PRESS JUMP] TO SWING"
+			end
+			if UserInputService.GamepadEnabled and not UserInputService.KeyboardEnabled then
+				return "[PRESS R2] TO SWING"
+			end
+			return "[PRESS SPACE] TO SWING"
+		end
 		if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
 			return "[HOLD JUMP] TO SWING"
 		end
@@ -3091,6 +3109,21 @@ local function boot(character)
 			return "[HOLD R2] TO SWING"
 		end
 		return "[HOLD SPACE] TO SWING"
+	end
+
+	function st.tryReleaseSwingFromJump()
+		if not st.isSwinging then
+			return false
+		end
+		if st.pendingSwingParams and not st.ropeConstraint then
+			st.stopSwing(false)
+			return true
+		end
+		if os.clock() - st.lastAttachClock > C.MIN_SWING_LOCK_TIME then
+			st.stopSwing(true)
+			return true
+		end
+		return false
 	end
 
 	function st.noteJumpPressed()
@@ -4330,7 +4363,8 @@ local function boot(character)
 
 		-- Attach immediately — throw VFX is cosmetic only (no latch wait).
 		st.spawnSwingRopeVisual(attachWorld, function(_latchWorld) end)
-		if st.holdIsActive() and target.Parent then
+		-- Toggle mode latches without requiring jump to stay held.
+		if (not st.isHoldToSwingMode() or st.holdIsActive()) and target.Parent then
 			st.finalizeSwingAttach(target, ropeMax, startLength, elasticRestLength, attachWorld)
 		else
 			st.stopSwing(false)
@@ -4428,6 +4462,9 @@ local function boot(character)
 				st.mobileJumpHeld = true
 				st.mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
 				st.mobileRealJumpPressUntil = now + C.MOBILE_REAL_JUMP_PRESS_WINDOW
+				if not st.isHoldToSwingMode() and st.isSwinging then
+					st.tryReleaseSwingFromJump()
+				end
 			end
 
 			function st.mobileJumpReleased()
@@ -4435,12 +4472,9 @@ local function boot(character)
 				st.mobileJumpHoldUntil = -1e9
 				st.mobileRealJumpPressUntil = -1e9
 
-				if st.isSwinging then
-					if st.pendingSwingParams and not st.ropeConstraint then
-						st.stopSwing(false)
-					elseif os.clock() - st.lastAttachClock > C.MIN_SWING_LOCK_TIME then
-						st.stopSwing(true)
-					end
+				-- Hold mode only: releasing jump launches. Toggle mode waits for next press.
+				if st.isHoldToSwingMode() and st.isSwinging then
+					st.tryReleaseSwingFromJump()
 				end
 			end
 
@@ -4696,6 +4730,10 @@ local function boot(character)
 
 		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space then
 			st.noteJumpPressed()
+			if not st.isHoldToSwingMode() and st.isSwinging then
+				st.tryReleaseSwingFromJump()
+				return
+			end
 			st.spaceHeld = true
 			st.tryAttach()
 		elseif
@@ -4703,6 +4741,10 @@ local function boot(character)
 			and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
 		then
 			st.noteJumpPressed()
+			if not st.isHoldToSwingMode() and st.isSwinging then
+				st.tryReleaseSwingFromJump()
+				return
+			end
 			st.gamepadHeld = true
 			st.tryAttach()
 		end
@@ -4711,24 +4753,16 @@ local function boot(character)
 	st.addConn(UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space then
 			st.spaceHeld = false
-			if st.isSwinging then
-				if st.pendingSwingParams and not st.ropeConstraint then
-					st.stopSwing(false)
-				elseif os.clock() - st.lastAttachClock > C.MIN_SWING_LOCK_TIME then
-					st.stopSwing(true)
-				end
+			if st.isHoldToSwingMode() and st.isSwinging then
+				st.tryReleaseSwingFromJump()
 			end
 		elseif
 			input.UserInputType == Enum.UserInputType.Gamepad1
 			and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
 		then
 			st.gamepadHeld = false
-			if st.isSwinging then
-				if st.pendingSwingParams and not st.ropeConstraint then
-					st.stopSwing(false)
-				elseif os.clock() - st.lastAttachClock > C.MIN_SWING_LOCK_TIME then
-					st.stopSwing(true)
-				end
+			if st.isHoldToSwingMode() and st.isSwinging then
+				st.tryReleaseSwingFromJump()
 			end
 		end
 	end))
@@ -4771,6 +4805,9 @@ local function boot(character)
 		st.noteJumpPressed()
 
 		if st.isSwinging then
+			if not st.isHoldToSwingMode() then
+				st.tryReleaseSwingFromJump()
+			end
 			return
 		end
 

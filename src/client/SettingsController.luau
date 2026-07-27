@@ -10,6 +10,8 @@
 	• Button5 → SpiderCutsceneEnabled; default on = full spider cinematic (drop + rage + shoot). Off = soft look-at + QTE (still letterbox / HUD hide).
 	• Button6 → ShopCutsceneEnabled; default on = Undertale stand greetings. Off = walk up and open panels directly.
 	• Button7 → LowGraphicsEnabled; default off. Turns off Brainrot VFX + lighter lighting / no fireflies / no grass sway.
+	• Button8 / "Button 8" → Turn off hold to swing. On (default) = press jump to attach, press again to release.
+	  Off = classic hold-to-swing.
 --]]
 
 local Players          = game:GetService("Players")
@@ -300,6 +302,10 @@ local function getButtonRowTitle(buttonRow: Instance): string
 	return table.concat(chunks, " ")
 end
 
+local function isSettingsToggleRow(name: string): boolean
+	return name:match("^Button%d+$") ~= nil or name:match("^Button %d+$") ~= nil or name == "GlobalMessages"
+end
+
 local function classifySettingsRow(buttonRow: Instance): string?
 	local n = buttonRow.Name
 	-- Button5 is dedicated Spider Cutscene (Studio label may still say Brainrot VFX).
@@ -312,6 +318,9 @@ local function classifySettingsRow(buttonRow: Instance): string?
 	end
 	if n == "Button7" then
 		return "low_graphics"
+	end
+	if n == "Button8" or n == "Button 8" then
+		return "hold_to_swing"
 	end
 	local title = getButtonRowTitle(buttonRow)
 	if title:find("ui sound", 1, true) then
@@ -334,6 +343,11 @@ local function classifySettingsRow(buttonRow: Instance): string?
 	end
 	if title:find("low", 1, true) and title:find("graphic", 1, true) then
 		return "low_graphics"
+	end
+	if (title:find("hold", 1, true) and title:find("swing", 1, true))
+		or title:find("turn off hold", 1, true)
+	then
+		return "hold_to_swing"
 	end
 	if title:find("vfx", 1, true) or title:find("visual", 1, true) then
 		return "brainrot_vfx"
@@ -400,6 +414,19 @@ local function setLowGraphicsRowNameLabel(buttonRow: Instance)
 	for _, node in labels do
 		if node:IsA("TextLabel") or node:IsA("TextButton") then
 			(node :: TextLabel).Text = "Low Graphics"
+		end
+	end
+end
+
+local function setHoldToSwingRowNameLabel(buttonRow: Instance)
+	local labels: { Instance } = {}
+	local nameNode = buttonRow:FindFirstChild("Name")
+	if nameNode then
+		table.insert(labels, nameNode)
+	end
+	for _, node in labels do
+		if node:IsA("TextLabel") or node:IsA("TextButton") then
+			(node :: TextLabel).Text = "Turn off hold to swing"
 		end
 	end
 end
@@ -587,8 +614,9 @@ function SettingsController.init()
 	local shopCutsceneToggleRow: Instance? = nil
 	local globalMessagesToggleRow: Instance? = nil
 	local lowGraphicsToggleRow: Instance? = nil
+	local holdToSwingToggleRow: Instance? = nil
 	for _, child in ipairs(container:GetChildren()) do
-		if child.Name:match("^Button%d+$") or child.Name == "GlobalMessages" then
+		if isSettingsToggleRow(child.Name) then
 			local kind = classifySettingsRow(child)
 			if kind == "ui_sounds" then
 				uiSoundsToggleRow = child
@@ -613,6 +641,9 @@ function SettingsController.init()
 			elseif kind == "low_graphics" then
 				lowGraphicsToggleRow = child
 				setLowGraphicsRowNameLabel(child)
+			elseif kind == "hold_to_swing" then
+				holdToSwingToggleRow = child
+				setHoldToSwingRowNameLabel(child)
 			end
 		end
 	end
@@ -639,6 +670,10 @@ function SettingsController.init()
 	if player:GetAttribute("LowGraphicsEnabled") == nil then
 		player:SetAttribute("LowGraphicsEnabled", false)
 		player:SetAttribute(PlayerDataSchema.SETTINGS_LOW_GRAPHICS_ATTR, false)
+	end
+	if player:GetAttribute("HoldToSwingEnabled") == nil then
+		player:SetAttribute("HoldToSwingEnabled", false)
+		player:SetAttribute(PlayerDataSchema.SETTINGS_HOLD_TO_SWING_ATTR, false)
 	end
 
 	local function configureSettingsContainer()
@@ -710,7 +745,7 @@ function SettingsController.init()
 	end
 
 	for _, child in ipairs(container:GetChildren()) do
-		if not child.Name:match("^Button%d+$") and child.Name ~= "GlobalMessages" then
+		if not isSettingsToggleRow(child.Name) then
 			continue
 		end
 
@@ -720,12 +755,15 @@ function SettingsController.init()
 			continue
 		end
 
+		-- "Turn off hold to swing" On = hold disabled (default). Off = classic hold-to-swing.
+		local turnOffHoldOn = player:GetAttribute("HoldToSwingEnabled") ~= true
 		local toggleOn = if child == slowToggleRow then player:GetAttribute("SlowWalkEnabled") == true
 			elseif child == showOthersToggleRow then true
 			elseif child == brainrotVfxToggleRow then true
 			elseif child == spiderCutsceneToggleRow then true
 			elseif child == shopCutsceneToggleRow then true
 			elseif child == lowGraphicsToggleRow then false
+			elseif child == holdToSwingToggleRow then turnOffHoldOn
 			elseif child == globalMessagesToggleRow then player:GetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR) ~= false
 			else readInitialOn(onOff)
 		if child == showOthersToggleRow then
@@ -738,6 +776,8 @@ function SettingsController.init()
 			toggleOn = player:GetAttribute("ShopCutsceneEnabled") ~= false
 		elseif child == lowGraphicsToggleRow then
 			toggleOn = player:GetAttribute("LowGraphicsEnabled") == true
+		elseif child == holdToSwingToggleRow then
+			toggleOn = player:GetAttribute("HoldToSwingEnabled") ~= true
 		elseif child == slowToggleRow then
 			toggleOn = player:GetAttribute("SlowWalkEnabled") == true
 		elseif child == globalMessagesToggleRow then
@@ -756,6 +796,9 @@ function SettingsController.init()
 		end
 		if child == lowGraphicsToggleRow then
 			setLowGraphicsRowNameLabel(child)
+		end
+		if child == holdToSwingToggleRow then
+			setHoldToSwingRowNameLabel(child)
 		end
 		local clickable = findClickable(child)
 		if not clickable then
@@ -781,6 +824,8 @@ function SettingsController.init()
 				toggleOn = player:GetAttribute("BrainrotVFXEnabled") ~= false
 			elseif child == lowGraphicsToggleRow then
 				toggleOn = player:GetAttribute("LowGraphicsEnabled") == true
+			elseif child == holdToSwingToggleRow then
+				toggleOn = player:GetAttribute("HoldToSwingEnabled") ~= true
 			elseif child == showOthersToggleRow then
 				toggleOn = player:GetAttribute("ShowOtherBrainrots") ~= false
 			elseif child == spiderCutsceneToggleRow then
@@ -826,6 +871,14 @@ function SettingsController.init()
 			if child == globalMessagesToggleRow then
 				player:SetAttribute(PlayerDataSchema.SETTINGS_GLOBAL_MESSAGES_ATTR, toggleOn)
 				queueSettingsSave({ globalMessagesEnabled = toggleOn })
+			end
+			if child == holdToSwingToggleRow then
+				-- UI On = turn off hold → HoldToSwingEnabled false.
+				local holdOn = not toggleOn
+				player:SetAttribute("HoldToSwingEnabled", holdOn)
+				player:SetAttribute(PlayerDataSchema.SETTINGS_HOLD_TO_SWING_ATTR, holdOn)
+				queueSettingsSave({ holdToSwingEnabled = holdOn })
+				setHoldToSwingRowNameLabel(child)
 			end
 			if child == lowGraphicsToggleRow then
 				player:SetAttribute("LowGraphicsEnabled", toggleOn)

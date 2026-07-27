@@ -46,6 +46,7 @@ export type PlayerSettingsSaveData = {
 	spiderCutsceneEnabled: boolean,
 	shopCutsceneEnabled: boolean,
 	lowGraphicsEnabled: boolean,
+	holdToSwingEnabled: boolean,
 }
 
 export type PlayerSaveData = {
@@ -96,6 +97,7 @@ M.SETTINGS_GLOBAL_MESSAGES_ATTR = "SettingsGlobalMessagesEnabled"
 M.SETTINGS_SPIDER_CUTSCENE_ATTR = "SettingsSpiderCutsceneEnabled"
 M.SETTINGS_SHOP_CUTSCENE_ATTR = "SettingsShopCutsceneEnabled"
 M.SETTINGS_LOW_GRAPHICS_ATTR = "SettingsLowGraphicsEnabled"
+M.SETTINGS_HOLD_TO_SWING_ATTR = "SettingsHoldToSwingEnabled"
 M.DEFAULT_SETTINGS = {
 	musicVolume = 0.5,
 	sfxVolume = 0.5,
@@ -107,6 +109,8 @@ M.DEFAULT_SETTINGS = {
 	spiderCutsceneEnabled = true,
 	shopCutsceneEnabled = true,
 	lowGraphicsEnabled = false,
+	-- Default off: press jump to attach, press jump again to release.
+	holdToSwingEnabled = false,
 } :: PlayerSettingsSaveData
 
 return M

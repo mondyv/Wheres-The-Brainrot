@@ -68,10 +68,10 @@ M.STEPS = {
 		text = "Buy your first Power upgrade",
 		speak = "TAP BUY ON POWER!!",
 	},
-	{
+		{
 		id = "swingLand1",
-		text = "Jump and hold to get over to the first land!",
-		speak = "JUMP AND HOLD TO GET OVER TO THE FIRST LAND!!",
+		text = "Press jump and release to get over to the next land!",
+		speak = "PRESS JUMP AND RELEASE TO GET OVER TO THE NEXT LAND!!",
 	},
 	{
 		id = "searchBush",

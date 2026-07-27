@@ -291,6 +291,7 @@ local function normalizeSettings(raw: any): PlayerDataSchema.PlayerSettingsSaveD
 			spiderCutsceneEnabled = d.spiderCutsceneEnabled,
 			shopCutsceneEnabled = d.shopCutsceneEnabled,
 			lowGraphicsEnabled = d.lowGraphicsEnabled,
+			holdToSwingEnabled = d.holdToSwingEnabled,
 		}
 	end
 	-- Migrate legacy skipSpiderCutscene → spiderCutsceneEnabled (both old values map to ON / short cutscene).
@@ -311,6 +312,7 @@ local function normalizeSettings(raw: any): PlayerDataSchema.PlayerSettingsSaveD
 		spiderCutsceneEnabled = spiderCutscene,
 		shopCutsceneEnabled = readBool(raw.shopCutsceneEnabled, d.shopCutsceneEnabled),
 		lowGraphicsEnabled = readBool(raw.lowGraphicsEnabled, d.lowGraphicsEnabled),
+		holdToSwingEnabled = readBool(raw.holdToSwingEnabled, d.holdToSwingEnabled),
 	}
 end
 
@@ -326,12 +328,14 @@ local function applySettings(player: Player, raw: any)
 	player:SetAttribute(PlayerDataSchema.SETTINGS_SPIDER_CUTSCENE_ATTR, settings.spiderCutsceneEnabled)
 	player:SetAttribute(PlayerDataSchema.SETTINGS_SHOP_CUTSCENE_ATTR, settings.shopCutsceneEnabled)
 	player:SetAttribute(PlayerDataSchema.SETTINGS_LOW_GRAPHICS_ATTR, settings.lowGraphicsEnabled)
+	player:SetAttribute(PlayerDataSchema.SETTINGS_HOLD_TO_SWING_ATTR, settings.holdToSwingEnabled)
 	player:SetAttribute("SlowWalkEnabled", settings.slowWalkEnabled)
 	player:SetAttribute("ShowOtherBrainrots", settings.showOtherBrainrots)
 	player:SetAttribute("BrainrotVFXEnabled", settings.brainrotVfxEnabled)
 	player:SetAttribute("SpiderCutsceneEnabled", settings.spiderCutsceneEnabled)
 	player:SetAttribute("ShopCutsceneEnabled", settings.shopCutsceneEnabled)
 	player:SetAttribute("LowGraphicsEnabled", settings.lowGraphicsEnabled)
+	player:SetAttribute("HoldToSwingEnabled", settings.holdToSwingEnabled)
 end
 
 local function collectSettings(player: Player): PlayerDataSchema.PlayerSettingsSaveData
@@ -346,6 +350,7 @@ local function collectSettings(player: Player): PlayerDataSchema.PlayerSettingsS
 		spiderCutsceneEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_SPIDER_CUTSCENE_ATTR),
 		shopCutsceneEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_SHOP_CUTSCENE_ATTR),
 		lowGraphicsEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_LOW_GRAPHICS_ATTR),
+		holdToSwingEnabled = player:GetAttribute(PlayerDataSchema.SETTINGS_HOLD_TO_SWING_ATTR),
 	})
 end
 
@@ -434,6 +439,7 @@ function M.savePlayerSettings(player: Player, patch: any)
 		spiderCutsceneEnabled = if patch.spiderCutsceneEnabled ~= nil then patch.spiderCutsceneEnabled else current.spiderCutsceneEnabled,
 		shopCutsceneEnabled = if patch.shopCutsceneEnabled ~= nil then patch.shopCutsceneEnabled else current.shopCutsceneEnabled,
 		lowGraphicsEnabled = if patch.lowGraphicsEnabled ~= nil then patch.lowGraphicsEnabled else current.lowGraphicsEnabled,
+		holdToSwingEnabled = if patch.holdToSwingEnabled ~= nil then patch.holdToSwingEnabled else current.holdToSwingEnabled,
 	})
 	applySettings(player, merged)
 	if player:GetAttribute(LOADED_ATTR) == true then

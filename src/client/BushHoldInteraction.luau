@@ -31,8 +31,8 @@ local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
 local BUSH_COOLDOWN_ENDS_ATTR = "BushCooldownEndsAt"
 local BUSH_LOOT_PHASE_COOLDOWN = "cooldown"
 local BUSH_FLOATING_CLAIM_ATTR = "BushFloatingClaimActive"
-local AIM_TICK_INTERVAL = 0.16
-local PICK_FULL_SCAN_INTERVAL = 0.7
+local AIM_TICK_INTERVAL = 0.08
+local PICK_FULL_SCAN_INTERVAL = 0.28
 local COOLDOWN_VISUAL_SYNC_INTERVAL = 1.0
 local _BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 
@@ -60,15 +60,15 @@ local lastPickFullScanAt = 0
 local lastCooldownVisualSyncAt = 0
 local bushSearchSuppressUntil = 0.0
 local bushSearchLocked = false
-local PROMPT_ATTACH_RANGE = MAX_RANGE + 18
-local PROMPT_DETACH_RANGE = MAX_RANGE + 36
+local PROMPT_ATTACH_RANGE = MAX_RANGE + 22
+local PROMPT_DETACH_RANGE = MAX_RANGE + 40
 local lastPromptProximitySyncAt = 0.0
-local PROMPT_PROXIMITY_SYNC_INTERVAL = 0.35
+local PROMPT_PROXIMITY_SYNC_INTERVAL = 0.08
 
 local pendingBushRoots: { Instance } = {}
 local pendingBushSet: { [Instance]: boolean } = {}
 local bushRegisterBatchConn: RBXScriptConnection? = nil
-local BUSH_REGISTER_PER_TICK = 6
+local BUSH_REGISTER_PER_TICK = 10
 local bushCooldownConns: { [Instance]: { RBXScriptConnection } } = {}
 
 local activeBush: Instance? = nil
@@ -545,19 +545,19 @@ local function pickClosest(): (Instance?, ProximityPrompt?, BasePart?)
 	end
 	local pos = hrp.Position
 	local now = os.clock()
+	-- Sticky reuse only when we already have a valid in-range target.
+	-- Never return nil for the whole interval — that made prompts take 1–2s to appear.
 	if now - lastPickFullScanAt < PICK_FULL_SCAN_INTERVAL then
 		local bush = activeBush
 		local prompt = activePrompt
 		if bush and prompt and bush.Parent and prompt.Parent and not isBushInSearchCooldown(bush) then
-			if bush:GetAttribute(BUSH_FLOATING_CLAIM_ATTR) == true then
-				return nil, nil, nil
-			end
-			local wp = promptWorldPos(prompt)
-			if wp ~= Vector3.zero and (wp - pos).Magnitude <= MAX_RANGE then
-				return bush, prompt, bushAnchor[bush] or anchorFor(bush)
+			if bush:GetAttribute(BUSH_FLOATING_CLAIM_ATTR) ~= true then
+				local wp = promptWorldPos(prompt)
+				if wp ~= Vector3.zero and (wp - pos).Magnitude <= MAX_RANGE then
+					return bush, prompt, bushAnchor[bush] or anchorFor(bush)
+				end
 			end
 		end
-		return nil, nil, nil
 	end
 	lastPickFullScanAt = now
 

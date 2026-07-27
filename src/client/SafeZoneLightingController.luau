@@ -1,8 +1,9 @@
 -- [ACTIVE] SafeZoneLightingController
 --[[
 	Outside the safe zone: smoky dark Atmosphere night.
-	Inside: sunny day lighting + distant haze (base stays bright; far lands soften).
-	Day Atmosphere + Lighting are snapped once at boot before any night apply.
+	Inside: faint mist fog (based on the place day snapshot) so the base
+	isn't crystal-clear at long range. Day is snapped once at boot before
+	any fog/night is applied.
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -28,6 +29,7 @@ local NIGHT_ATMO = {
 	Haze = 2.85,
 }
 
+-- Low-graphics night: slightly thinner fog only (keep the same look).
 local NIGHT_ATMO_LOW = {
 	Density = 0.52,
 	Offset = 0.05,
@@ -37,56 +39,33 @@ local NIGHT_ATMO_LOW = {
 	Haze = 2.35,
 }
 
--- Distant haze in safe zone — near base stays clear/sunny; far lands soften
+-- Faint mist inside safe zone — softens distance so the base isn't crystal-clear
 local SAFEZONE_FOG = {
-	densityAdd = 0.22,
-	densityMin = 0.28,
-	densityMax = 0.4,
-	hazeAdd = 1.35,
-	hazeMin = 1.25,
-	hazeMax = 2.2,
-	offsetBias = 0.09,
-	glareMin = 0.14,
-	glareMax = 0.32,
-	mistColor = Color3.fromRGB(215, 222, 228),
-	mistDecay = Color3.fromRGB(168, 176, 182),
-	mistMix = 0.2,
+	densityAdd = 0.18,
+	densityMin = 0.22,
+	densityMax = 0.34,
+	hazeAdd = 0.85,
+	hazeMin = 0.9,
+	hazeMax = 1.55,
+	offsetBias = -0.04,
+	glareMax = 0.035,
+	mistColor = Color3.fromRGB(198, 204, 210),
+	mistDecay = Color3.fromRGB(155, 160, 166),
+	mistMix = 0.28,
 }
 
 local SAFEZONE_FOG_LOW = {
-	densityAdd = 0.18,
-	densityMin = 0.24,
-	densityMax = 0.34,
-	hazeAdd = 1.05,
-	hazeMin = 1.0,
-	hazeMax = 1.85,
-	offsetBias = 0.08,
-	glareMin = 0.1,
-	glareMax = 0.24,
-	mistColor = Color3.fromRGB(215, 222, 228),
-	mistDecay = Color3.fromRGB(168, 176, 182),
-	mistMix = 0.16,
-}
-
--- Extra sunny punch on top of the place day lighting (safezone only)
-local SAFEZONE_LIGHT = {
-	brightnessAdd = 0.45,
-	ambientMix = 0.12,
-	outdoorMix = 0.16,
-	warmTop = Color3.fromRGB(255, 236, 205),
-	warmTopMix = 0.22,
-	warmBottom = Color3.fromRGB(255, 245, 230),
-	warmBottomMix = 0.1,
-}
-
-local SAFEZONE_LIGHT_LOW = {
-	brightnessAdd = 0.28,
-	ambientMix = 0.08,
-	outdoorMix = 0.1,
-	warmTop = Color3.fromRGB(255, 236, 205),
-	warmTopMix = 0.14,
-	warmBottom = Color3.fromRGB(255, 245, 230),
-	warmBottomMix = 0.06,
+	densityAdd = 0.14,
+	densityMin = 0.2,
+	densityMax = 0.3,
+	hazeAdd = 0.65,
+	hazeMin = 0.75,
+	hazeMax = 1.35,
+	offsetBias = -0.03,
+	glareMax = 0.03,
+	mistColor = Color3.fromRGB(198, 204, 210),
+	mistDecay = Color3.fromRGB(155, 160, 166),
+	mistMix = 0.22,
 }
 
 type AtmoSnap = {
@@ -98,14 +77,6 @@ type AtmoSnap = {
 	Haze: number,
 }
 
-type DayLightSnap = {
-	Brightness: number,
-	Ambient: Color3,
-	OutdoorAmbient: Color3,
-	ColorShift_Top: Color3,
-	ColorShift_Bottom: Color3,
-}
-
 local SafeZoneLightingController = {}
 
 local player = Players.LocalPlayer
@@ -115,7 +86,6 @@ local wired = false
 local lowGraphics = false
 local _pollConn: RBXScriptConnection? = nil
 local dayAtmo: AtmoSnap? = nil
-local dayLight: DayLightSnap? = nil
 
 local function cancelTweens()
 	for _, tw in activeTweens do
@@ -182,24 +152,12 @@ local function readAtmo(atmo: Atmosphere): AtmoSnap
 	}
 end
 
-local function readDayLight(): DayLightSnap
-	return {
-		Brightness = Lighting.Brightness,
-		Ambient = Lighting.Ambient,
-		OutdoorAmbient = Lighting.OutdoorAmbient,
-		ColorShift_Top = Lighting.ColorShift_Top,
-		ColorShift_Bottom = Lighting.ColorShift_Bottom,
-	}
-end
-
 -- Capture place day lighting once. Never call after night/fog has been applied.
 local function captureDayOnce()
-	if not dayAtmo then
-		dayAtmo = readAtmo(ensureAtmosphere())
+	if dayAtmo then
+		return
 	end
-	if not dayLight then
-		dayLight = readDayLight()
-	end
+	dayAtmo = readAtmo(ensureAtmosphere())
 end
 
 local function safezoneAtmo(): AtmoSnap
@@ -211,33 +169,8 @@ local function safezoneAtmo(): AtmoSnap
 		Offset = day.Offset + fog.offsetBias,
 		Color = day.Color:Lerp(fog.mistColor, mix),
 		Decay = day.Decay:Lerp(fog.mistDecay, mix * 0.85),
-		-- Force a sunny glare floor — place day often has Glare=0 so math.min alone never looked sunny.
-		Glare = math.clamp(math.max(day.Glare, fog.glareMin), fog.glareMin, fog.glareMax),
+		Glare = math.min(day.Glare, fog.glareMax),
 		Haze = math.clamp(math.max(day.Haze, fog.hazeMin) + fog.hazeAdd, fog.hazeMin, fog.hazeMax),
-	}
-end
-
-local function safezoneLightProps(): { [string]: any }
-	local day = dayLight :: DayLightSnap
-	local boost = if lowGraphics then SAFEZONE_LIGHT_LOW else SAFEZONE_LIGHT
-	local white = Color3.new(1, 1, 1)
-	return {
-		Brightness = math.clamp(day.Brightness + boost.brightnessAdd, 0, 4),
-		Ambient = day.Ambient:Lerp(white, boost.ambientMix),
-		OutdoorAmbient = day.OutdoorAmbient:Lerp(white, boost.outdoorMix),
-		ColorShift_Top = day.ColorShift_Top:Lerp(boost.warmTop, boost.warmTopMix),
-		ColorShift_Bottom = day.ColorShift_Bottom:Lerp(boost.warmBottom, boost.warmBottomMix),
-	}
-end
-
-local function restoreDayLightProps(): { [string]: any }
-	local day = dayLight :: DayLightSnap
-	return {
-		Brightness = day.Brightness,
-		Ambient = day.Ambient,
-		OutdoorAmbient = day.OutdoorAmbient,
-		ColorShift_Top = day.ColorShift_Top,
-		ColorShift_Bottom = day.ColorShift_Bottom,
 	}
 end
 
@@ -246,33 +179,26 @@ local function applyProfile(night: boolean, instant: boolean?)
 	local atmo = ensureAtmosphere()
 	cancelTweens()
 
-	local atmoGoal = if night then (if lowGraphics then NIGHT_ATMO_LOW else NIGHT_ATMO) else safezoneAtmo()
-	local lightGoal = if night then restoreDayLightProps() else safezoneLightProps()
+	local goal = if night then (if lowGraphics then NIGHT_ATMO_LOW else NIGHT_ATMO) else safezoneAtmo()
 
 	if instant then
-		atmo.Density = atmoGoal.Density
-		atmo.Offset = atmoGoal.Offset
-		atmo.Color = atmoGoal.Color
-		atmo.Decay = atmoGoal.Decay
-		atmo.Glare = atmoGoal.Glare
-		atmo.Haze = atmoGoal.Haze
-		Lighting.Brightness = lightGoal.Brightness
-		Lighting.Ambient = lightGoal.Ambient
-		Lighting.OutdoorAmbient = lightGoal.OutdoorAmbient
-		Lighting.ColorShift_Top = lightGoal.ColorShift_Top
-		Lighting.ColorShift_Bottom = lightGoal.ColorShift_Bottom
+		atmo.Density = goal.Density
+		atmo.Offset = goal.Offset
+		atmo.Color = goal.Color
+		atmo.Decay = goal.Decay
+		atmo.Glare = goal.Glare
+		atmo.Haze = goal.Haze
 		return
 	end
 
 	playTween(atmo, {
-		Density = atmoGoal.Density,
-		Offset = atmoGoal.Offset,
-		Color = atmoGoal.Color,
-		Decay = atmoGoal.Decay,
-		Glare = atmoGoal.Glare,
-		Haze = atmoGoal.Haze,
+		Density = goal.Density,
+		Offset = goal.Offset,
+		Color = goal.Color,
+		Decay = goal.Decay,
+		Glare = goal.Glare,
+		Haze = goal.Haze,
 	})
-	playTween(Lighting, lightGoal)
 end
 
 local function readInSafezone(): boolean

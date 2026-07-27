@@ -8,7 +8,7 @@ local SoundController = require(script.Parent.SoundController)
 local EffectsController = {}
 
 local lastConfettiAt = 0
-local CONFETTI_DEBOUNCE_SEC = 1.25
+local CONFETTI_DEBOUNCE_SEC = 2.5
 local purchaseSoundHandler: (() -> ())? = nil
 
 local function findAssetsFolder(): Instance?
@@ -44,13 +44,48 @@ local function findTemplate(name: string): Instance?
 	return nil
 end
 
-local function emitParticles(root: Instance, defaultCount: number)
+local function stripCloneBehaviors(root: Instance)
+	-- Studio VFX kits often ship scripts that Emit again on AncestryChanged.
+	for _, d in root:GetDescendants() do
+		if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ModuleScript") then
+			d:Destroy()
+		elseif d:IsA("Sound") then
+			d:Stop()
+			d:Destroy()
+		end
+	end
+end
+
+local function emitParticlesOnce(root: Instance, defaultCount: number)
+	-- One visual wave only: skip EmitDelay > 0 (second cannon / delayed blast),
+	-- never enable Rate/EmitDuration windows.
+	local emitters: { ParticleEmitter } = {}
+	local minDelay = math.huge
 	for _, child in root:GetDescendants() do
 		if child:IsA("ParticleEmitter") then
-			-- Burst only — disable Rate so parenting doesn't look like a second blast.
 			child.Enabled = false
 			child.Rate = 0
-			child:Emit(child:GetAttribute("EmitCount") or defaultCount)
+			local delayAttr = child:GetAttribute("EmitDelay")
+			local delaySec = if typeof(delayAttr) == "number" then math.max(0, delayAttr) else 0
+			if delaySec < minDelay then
+				minDelay = delaySec
+			end
+			table.insert(emitters, child)
+		end
+	end
+	if minDelay == math.huge then
+		return
+	end
+	for _, child in emitters do
+		local delayAttr = child:GetAttribute("EmitDelay")
+		local delaySec = if typeof(delayAttr) == "number" then math.max(0, delayAttr) else 0
+		if delaySec > minDelay + 0.001 then
+			continue
+		end
+		local countAttr = child:GetAttribute("EmitCount")
+		local count = if typeof(countAttr) == "number" then math.floor(countAttr) else defaultCount
+		if count > 0 then
+			child:Emit(count)
 		end
 	end
 end
@@ -59,12 +94,18 @@ function EffectsController.setPurchaseSoundHandler(handler: (() -> ())?)
 	purchaseSoundHandler = handler
 end
 
+function EffectsController.wasRecentCelebration(windowSec: number?): boolean
+	local window = if typeof(windowSec) == "number" then windowSec else CONFETTI_DEBOUNCE_SEC
+	return lastConfettiAt > 0 and (os.clock() - lastConfettiAt) < window
+end
+
 function EffectsController.money(parent: Instance)
 	local moneyTemplate = findTemplate("Money")
 	if parent and moneyTemplate then
 		local money = moneyTemplate:Clone()
+		stripCloneBehaviors(money)
 		money.Parent = parent
-		emitParticles(money, 30)
+		emitParticlesOnce(money, 30)
 		Debris:AddItem(money, 3)
 	end
 
@@ -83,8 +124,16 @@ function EffectsController.celebratePurchase(player: Player)
 	local confettiTemplate = findTemplate("Confetti")
 
 	if root and confettiTemplate then
+		-- Drop any leftover burst still attached from a prior celebrate.
+		for _, ch in root:GetChildren() do
+			if ch.Name == "Confetti" or ch:GetAttribute("PurchaseConfetti") == true then
+				ch:Destroy()
+			end
+		end
+
 		local confetti = confettiTemplate:Clone()
-		-- Kill continuous emitters before parenting so Rate never double-fires with Emit().
+		confetti:SetAttribute("PurchaseConfetti", true)
+		stripCloneBehaviors(confetti)
 		for _, child in confetti:GetDescendants() do
 			if child:IsA("ParticleEmitter") then
 				child.Enabled = false
@@ -92,7 +141,7 @@ function EffectsController.celebratePurchase(player: Player)
 			end
 		end
 		confetti.Parent = root
-		emitParticles(confetti, 50)
+		emitParticlesOnce(confetti, 40)
 		Debris:AddItem(confetti, 3)
 	end
 

@@ -610,8 +610,7 @@ local function applyStockAt(index: number, remaining: number)
 end
 
 local function celebrateDealerPurchase()
-	GameSoundEffects.playPurchase()
-	GameSoundEffects.playPurchaseShake()
+	-- celebratePurchase already plays purchase SFX + camera shake.
 	pcall(function()
 		require(ReplicatedStorage.EssentialsShared.EffectsController).celebratePurchase(player)
 	end)

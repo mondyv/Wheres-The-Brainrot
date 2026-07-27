@@ -336,6 +336,10 @@ local function fireConfettiAndShake()
 	if not ok or not mod or typeof(mod.celebratePurchase) ~= "function" then
 		return
 	end
+	-- Skip if a purchase/upgrade already celebrated moments ago (same finish feel).
+	if typeof(mod.wasRecentCelebration) == "function" and mod.wasRecentCelebration(2.5) then
+		return
+	end
 	local celebrateOk, celebrateErr = pcall(function()
 		mod.celebratePurchase(player)
 	end)
@@ -1892,10 +1896,13 @@ local function refreshPointersImpl()
 end
 refreshPointers = refreshPointersImpl
 
+local finishingTutorial = false
+
 local function finishTutorial()
-	if not active then
+	if not active or finishingTutorial then
 		return
 	end
+	finishingTutorial = true
 	active = false
 	stepIndex = 0
 	speakToken += 1
@@ -2269,6 +2276,7 @@ function M.start(force: boolean?)
 	grantCashPlayed = false
 	if force then
 		-- Admin / replay only — allow a fresh end celebration.
+		finishingTutorial = false
 		sessionConfettiFired = false
 		finishCelebrated = false
 		upgradeStepEnteredAt = 0

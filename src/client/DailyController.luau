@@ -626,8 +626,7 @@ end
 local applyState: (state: DailyConfig.DailyState) -> ()
 
 local function fireConfettiAndShake()
-	-- Reuse the existing purchase celebration (confetti template + camera shake + purchase SFX).
-	GameSoundEffects.playPurchaseShake()
+	-- Reuse the existing purchase celebration (confetti + purchase SFX + camera shake).
 	local essentials = ReplicatedStorage:FindFirstChild("EssentialsShared")
 	if essentials then
 		local ok, mod = pcall(require, essentials:FindFirstChild("EffectsController"))

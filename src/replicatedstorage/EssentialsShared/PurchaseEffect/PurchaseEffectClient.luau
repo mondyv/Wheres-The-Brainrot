@@ -302,9 +302,15 @@ function PurchaseEffectClient.forceHide(self: PurchaseEffectClient)
 end
 
 local lastCelebrateAt = 0
+local productConfettiToken = 0
+local productConfettiHandledToken = 0
+
 local function runPurchaseCelebration()
 	local now = os.clock()
-	if now - lastCelebrateAt < 1.25 then
+	if now - lastCelebrateAt < 2.5 then
+		return
+	end
+	if EffectsController.wasRecentCelebration(2.5) then
 		return
 	end
 	lastCelebrateAt = now
@@ -334,6 +340,7 @@ function PurchaseEffectClient.init(self: PurchaseEffectClient)
 
 	bindRemoteAsync("ProductHandlerConfetti", function()
 		-- Always restore HUD first (Finished + Confetti order varies; never leave overlay stuck).
+		productConfettiHandledToken = productConfettiToken
 		self:forceHide()
 		runPurchaseCelebration()
 	end)
@@ -352,8 +359,13 @@ function PurchaseEffectClient.init(self: PurchaseEffectClient)
 			if wasPurchased ~= true then
 				return
 			end
-			-- Fallback if Confetti remote never arrives (custom / delayed receipts).
-			task.delay(0.85, function()
+			productConfettiToken += 1
+			local token = productConfettiToken
+			-- Fallback only if Confetti remote never arrives (slow / custom receipts).
+			task.delay(1.25, function()
+				if productConfettiHandledToken >= token then
+					return
+				end
 				runPurchaseCelebration()
 			end)
 		end

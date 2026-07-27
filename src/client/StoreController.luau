@@ -573,8 +573,7 @@ local function wireFreeBrainrot(storeFrame: Instance)
 			return
 		end
 		freeCelebrated = true
-		GameSoundEffects.playPurchase()
-		GameSoundEffects.playPurchaseShake()
+		-- celebratePurchase already plays purchase SFX + camera shake.
 		pcall(function()
 			require(ReplicatedStorage.EssentialsShared.EffectsController).celebratePurchase(player)
 		end)

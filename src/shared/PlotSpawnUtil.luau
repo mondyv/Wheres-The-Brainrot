@@ -274,6 +274,93 @@ function PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot: Instance): (CFrame?, 
 	return yaw, Vector3.new(outX, height, outZ)
 end
 
+local OUTLINE_PROXY_MAX_PARTS = 400
+
+local function shouldMirrorOutlinePart(part: BasePart): boolean
+	if part.Transparency >= 0.98 then
+		return false
+	end
+	local vol = part.Size.X * part.Size.Y * part.Size.Z
+	if vol < 0.35 then
+		return false
+	end
+	local n = string.lower(part.Name)
+	if string.find(n, "humanoid", 1, true) or n == "handle" or n == "rootpart" then
+		return false
+	end
+	-- Skip brainrot display meshes (headers/pets) — keep the base structure only.
+	local anc: Instance? = part.Parent
+	while anc do
+		if anc:IsA("Model") and anc:GetAttribute("BrainrotStandDisplay") == true then
+			return false
+		end
+		anc = anc.Parent
+	end
+	return true
+end
+
+local function mirrorOutlinePartInto(model: Model, src: BasePart)
+	local clone = src:Clone()
+	for _, ch in ipairs(clone:GetChildren()) do
+		if
+			ch:IsA("Texture")
+			or ch:IsA("Decal")
+			or ch:IsA("SurfaceAppearance")
+			or ch:IsA("SurfaceGui")
+			or ch:IsA("BillboardGui")
+			or ch:IsA("ProximityPrompt")
+			or ch:IsA("ClickDetector")
+			or ch:IsA("Script")
+			or ch:IsA("LocalScript")
+			or ch:IsA("Highlight")
+			or ch:IsA("WeldConstraint")
+			or ch:IsA("Weld")
+			or ch:IsA("Motor6D")
+		then
+			ch:Destroy()
+		end
+	end
+	clone.Anchored = true
+	clone.CanCollide = false
+	clone.CanQuery = false
+	clone.CanTouch = false
+	clone.CastShadow = false
+	clone.Massless = true
+	clone.Transparency = 1
+	clone.Parent = model
+end
+
+-- Invisible mesh clones of the whole plot structure for Highlight adorn (does not wash live textures).
+function PlotSpawnUtil.buildInvisibleOutlineProxy(plot: Instance, parent: Instance?): Model?
+	local model = Instance.new("Model")
+	model.Name = "PlotOutlineHighlightProxy"
+
+	local scored: { { part: BasePart, vol: number } } = {}
+	for _, d in ipairs(plot:GetDescendants()) do
+		if d:IsA("BasePart") and shouldMirrorOutlinePart(d) then
+			local p = d :: BasePart
+			local vol = p.Size.X * p.Size.Y * p.Size.Z
+			table.insert(scored, { part = p, vol = vol })
+		end
+	end
+	table.sort(scored, function(a, b)
+		return a.vol > b.vol
+	end)
+
+	local n = math.min(#scored, OUTLINE_PROXY_MAX_PARTS)
+	for i = 1, n do
+		mirrorOutlinePartInto(model, scored[i].part)
+	end
+
+	if n == 0 then
+		model:Destroy()
+		return nil
+	end
+
+	model.Parent = parent or plot
+	return model
+end
+
 -- Random floor point on a plot, facing toward targetPos, at least minDist studs away (flat XZ).
 function PlotSpawnUtil.pickRandomAmbushPositionOnPlot(
 	plot: Instance,

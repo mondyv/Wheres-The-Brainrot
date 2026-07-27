@@ -1,9 +1,9 @@
 -- [ACTIVE] PlotOutlineController
 --[[
 	Safezone only, YOUR plot only:
-	• Highlight wraps plot silhouettes via an invisible proxy Model (never adorns the
-	  real plot — Highlight on the live base washes floor textures).
-	• Studio PlotGUI "Your Plot" + arrow, small hard size lock, same distance fade.
+	• Highlight wraps the whole base via invisible mesh proxies (never adorns the live
+	  plot — that washes floor textures).
+	• Studio PlotGUI "Your Plot" + arrow: one-line text, fades near and far (no hard cut).
 ]]
 
 local Players = game:GetService("Players")
@@ -18,16 +18,18 @@ local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local player = Players.LocalPlayer
 
 local POLL_INTERVAL = 0.12
-local FADE_START_DIST = 72
-local FADE_END_DIST = 18
+-- Invisible on the pad.
+local FADE_NEAR = 16
+-- Fully visible between these distances.
+local VISIBLE_NEAR = 28
+local VISIBLE_FAR = 78
+-- Fully faded out in the distance (soft, not MaxDistance cut).
+local FADE_FAR = 125
 local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
-local OUTLINE_FAR_TRANSPARENCY = 0.35
-local MAX_PROXY_PARTS = 80
--- Small hard lock — Studio PlotGUI blows up with Scale/TextScaled.
-local MARKER_W = 40
-local MARKER_H = 34
-local MARKER_TEXT_SIZE = 9
-local MARKER_MAX_DISTANCE = 140
+-- Wide + short so "Your Plot" stays on one line.
+local MARKER_W = 78
+local MARKER_H = 30
+local MARKER_TEXT_SIZE = 11
 
 local PlotOutlineController = {}
 
@@ -115,27 +117,45 @@ end
 
 local function lockMarkerLook(bb: BillboardGui)
 	bb.Size = UDim2.new(0, MARKER_W, 0, MARKER_H)
-	bb.MaxDistance = MARKER_MAX_DISTANCE
+	-- Soft far fade handles cutoff — don't hard-kill the billboard.
+	bb.MaxDistance = FADE_FAR + 40
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	stripScaleHacks(bb)
+
+	-- Flatten vertical stacks so "Your" / "Plot" sit on one line.
+	for _, d in ipairs(bb:GetDescendants()) do
+		if d:IsA("UIListLayout") then
+			(d :: UIListLayout).FillDirection = Enum.FillDirection.Horizontal
+			(d :: UIListLayout).HorizontalAlignment = Enum.HorizontalAlignment.Center
+			(d :: UIListLayout).VerticalAlignment = Enum.VerticalAlignment.Center
+			(d :: UIListLayout).Padding = UDim.new(0, 4)
+		end
+	end
+
 	for _, d in ipairs(bb:GetDescendants()) do
 		if d:IsA("TextLabel") or d:IsA("TextButton") then
 			local label = d :: TextLabel
+			local flat = string.gsub(label.Text, "[\r\n]+", " ")
+			flat = string.gsub(flat, "%s+", " ")
+			flat = string.gsub(flat, "^%s*(.-)%s*$", "%1")
+			if flat ~= "" then
+				label.Text = flat
+			end
 			label.TextScaled = false
+			label.TextWrapped = false
 			label.TextSize = MARKER_TEXT_SIZE
+			label.TextXAlignment = Enum.TextXAlignment.Center
+			label.TextYAlignment = Enum.TextYAlignment.Center
 			local constraint = label:FindFirstChildOfClass("UITextSizeConstraint")
 			if not constraint then
 				constraint = Instance.new("UITextSizeConstraint")
 				constraint.Parent = label
 			end
 			constraint.MaxTextSize = MARKER_TEXT_SIZE
-			constraint.MinTextSize = 7
+			constraint.MinTextSize = 8
 		elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
 			local img = d :: ImageLabel
-			if img.Size.X.Scale > 1 or img.Size.Y.Scale > 1 then
-				img.Size = UDim2.fromScale(1, 1)
-			end
 			img.ScaleType = Enum.ScaleType.Fit
 		end
 	end
@@ -160,96 +180,25 @@ local function applyMarkerFade(transparency: number, visible: boolean)
 				(d :: ImageLabel).ImageTransparency = transparency
 			elseif d:IsA("TextLabel") or d:IsA("TextButton") then
 				local text = d :: TextLabel
+				-- Fade fill + stroke together (stroke lagging made it look darker up close).
 				text.TextTransparency = transparency
-				text.TextStrokeTransparency = math.clamp(transparency + 0.2, 0, 1)
+				text.TextStrokeTransparency = transparency
 			end
 		end
 	end
 end
 
-local function shouldMirrorPart(part: BasePart): boolean
-	if part.Transparency >= 0.98 then
-		return false
-	end
-	local vol = part.Size.X * part.Size.Y * part.Size.Z
-	if vol < 1.5 then
-		return false
-	end
-	local n = string.lower(part.Name)
-	if string.find(n, "humanoid", 1, true) or n == "handle" then
-		return false
-	end
-	return true
-end
-
-local function mirrorPartInto(model: Model, src: BasePart)
-	local clone = src:Clone()
-	for _, ch in ipairs(clone:GetChildren()) do
-		if
-			ch:IsA("Texture")
-			or ch:IsA("Decal")
-			or ch:IsA("SurfaceAppearance")
-			or ch:IsA("SurfaceGui")
-			or ch:IsA("BillboardGui")
-			or ch:IsA("ProximityPrompt")
-			or ch:IsA("ClickDetector")
-			or ch:IsA("Script")
-			or ch:IsA("LocalScript")
-			or ch:IsA("Highlight")
-		then
-			ch:Destroy()
-		end
-	end
-	clone.Anchored = true
-	clone.CanCollide = false
-	clone.CanQuery = false
-	clone.CanTouch = false
-	clone.CastShadow = false
-	clone.Massless = true
-	clone.Transparency = 1
-	clone.Parent = model
-end
-
--- Invisible clones of story meshes — Highlight adorns these, not the live plot.
 local function ensureOutlineProxyModel(plot: Instance): Model?
 	if outlineProxyModel and outlineProxyModel.Parent and outlineBuiltFor == plot then
 		return outlineProxyModel
 	end
-
 	if outlineProxyModel then
 		outlineProxyModel:Destroy()
 		outlineProxyModel = nil
 	end
-
-	local story1 = PlotPaths.firstStoryFolder(plot) or plot
-	local model = Instance.new("Model")
-	model.Name = "PlotSafezoneOutlineProxy"
-	model.Parent = Workspace.CurrentCamera or plot
-
-	local scored: { { part: BasePart, vol: number } } = {}
-	for _, d in ipairs(story1:GetDescendants()) do
-		if d:IsA("BasePart") and shouldMirrorPart(d) then
-			local p = d :: BasePart
-			local vol = p.Size.X * p.Size.Y * p.Size.Z
-			table.insert(scored, { part = p, vol = vol })
-		end
-	end
-	table.sort(scored, function(a, b)
-		return a.vol > b.vol
-	end)
-
-	local n = math.min(#scored, MAX_PROXY_PARTS)
-	for i = 1, n do
-		mirrorPartInto(model, scored[i].part)
-	end
-
-	if n == 0 then
-		model:Destroy()
-		return nil
-	end
-
+	local model = PlotSpawnUtil.buildInvisibleOutlineProxy(plot, Workspace.CurrentCamera or plot)
 	outlineProxyModel = model
-	outlineBuiltFor = plot
+	outlineBuiltFor = if model then plot else nil
 	return model
 end
 
@@ -258,7 +207,6 @@ local function ensureOutline(plot: Instance): Highlight?
 	if not proxy then
 		return nil
 	end
-
 	local hl = plotHighlight
 	if not hl or not hl.Parent or hl.Adornee ~= proxy then
 		if hl then
@@ -320,15 +268,20 @@ local function xzDist(a: Vector3, b: Vector3): number
 	return math.sqrt(dx * dx + dz * dz)
 end
 
+-- 0 = fully visible, 1 = gone. Fades near the pad AND in the distance.
 local function outlineTransparencyForDistance(dist: number): number
-	if dist <= FADE_END_DIST then
+	if dist <= FADE_NEAR or dist >= FADE_FAR then
 		return 1
 	end
-	if dist >= FADE_START_DIST then
-		return OUTLINE_FAR_TRANSPARENCY
+	if dist >= VISIBLE_NEAR and dist <= VISIBLE_FAR then
+		return 0
 	end
-	local t = (dist - FADE_END_DIST) / (FADE_START_DIST - FADE_END_DIST)
-	return OUTLINE_FAR_TRANSPARENCY + (1 - OUTLINE_FAR_TRANSPARENCY) * (1 - t)
+	if dist < VISIBLE_NEAR then
+		local t = (dist - FADE_NEAR) / (VISIBLE_NEAR - FADE_NEAR)
+		return 1 - t
+	end
+	local t = (dist - VISIBLE_FAR) / (FADE_FAR - VISIBLE_FAR)
+	return t
 end
 
 local function tickOutline()

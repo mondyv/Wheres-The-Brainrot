@@ -60,8 +60,7 @@ local worldArrowBb: BillboardGui? = nil
 local worldArrowImg: ImageLabel? = nil
 local arrowAnimConn: RBXScriptConnection? = nil
 local worldHighlight: Highlight? = nil
-local worldOutlineBox: SelectionBox? = nil
-local worldOutlineProxy: BasePart? = nil
+local worldOutlineProxyModel: Model? = nil
 local uiPointer: ImageLabel? = nil
 local uiPointerBb: BillboardGui? = nil
 local pointerGui: ScreenGui? = nil
@@ -578,13 +577,9 @@ local function clearWorldHighlight()
 		worldHighlight:Destroy()
 		worldHighlight = nil
 	end
-	if worldOutlineBox then
-		worldOutlineBox:Destroy()
-		worldOutlineBox = nil
-	end
-	if worldOutlineProxy then
-		worldOutlineProxy:Destroy()
-		worldOutlineProxy = nil
+	if worldOutlineProxyModel then
+		worldOutlineProxyModel:Destroy()
+		worldOutlineProxyModel = nil
 	end
 end
 
@@ -600,65 +595,36 @@ local function resolveOwnedPlotForTutorial(): Instance?
 	return nil
 end
 
-local function ensureTutorialPlotOutlineProxy(plot: Instance): BasePart?
-	local cf, size = PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot)
-	if not cf or not size then
-		return nil
-	end
-	local proxy = worldOutlineProxy
-	if not proxy or not proxy.Parent then
-		if proxy then
-			proxy:Destroy()
-		end
-		proxy = Instance.new("Part")
-		proxy.Name = "TutorialPlotOutlineProxy"
-		proxy.Anchored = true
-		proxy.CanCollide = false
-		proxy.CanQuery = false
-		proxy.CanTouch = false
-		proxy.CastShadow = false
-		proxy.Massless = true
-		proxy.Transparency = 1
-		proxy.Material = Enum.Material.SmoothPlastic
-		proxy.Parent = Workspace.CurrentCamera or plot
-		worldOutlineProxy = proxy
-	end
-	proxy.Size = size
-	proxy.CFrame = cf
-	return proxy
-end
-
 local function outlineWorld(adornee: Instance?)
 	clearWorldHighlight()
 	if not adornee or not adornee.Parent then
 		return
 	end
 
-	-- Full plot: SelectionBox on a full-floor proxy (single Floor part is only a corner tile).
-	local useBox = PlotPaths.isPlotRoot(adornee)
+	local isPlot = PlotPaths.isPlotRoot(adornee)
 		or (adornee:IsA("Model") and adornee:FindFirstChild("1 Story") ~= nil)
 		or (adornee:IsA("Model") and adornee:FindFirstChild("1st Story") ~= nil)
 
-	if useBox then
+	if isPlot then
 		-- Never outline another player's plot during tutorial.
 		if PlotPaths.isPlotRoot(adornee) and adornee:GetAttribute("PlotOwnerUserId") ~= player.UserId then
 			return
 		end
-		local proxy = ensureTutorialPlotOutlineProxy(adornee)
+		-- Invisible mesh clones + Highlight so the whole base wraps without washing textures.
+		local proxy = PlotSpawnUtil.buildInvisibleOutlineProxy(adornee, Workspace.CurrentCamera or adornee)
 		if not proxy then
 			return
 		end
-		local box = Instance.new("SelectionBox")
-		box.Name = "TutorialWorldOutlineBox"
-		box.Color3 = Color3.fromRGB(255, 236, 70)
-		box.SurfaceColor3 = Color3.fromRGB(255, 236, 70)
-		box.SurfaceTransparency = 0.85
-		box.LineThickness = 0.18
-		box.Transparency = 0.05
-		box.Visible = true
-		box.Adornee = proxy
-		box.Parent = Workspace.CurrentCamera or adornee
-		worldOutlineBox = box
+		worldOutlineProxyModel = proxy
+		local hl = Instance.new("Highlight")
+		hl.Name = "TutorialWorldOutline"
+		hl.FillTransparency = 1
+		hl.OutlineTransparency = 0.05
+		hl.OutlineColor = Color3.fromRGB(255, 236, 70)
+		hl.DepthMode = Enum.HighlightDepthMode.Occluded
+		hl.Adornee = proxy
+		hl.Parent = Workspace.CurrentCamera or adornee
+		worldHighlight = hl
 		return
 	end
 

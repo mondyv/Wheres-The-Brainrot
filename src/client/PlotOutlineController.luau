@@ -20,11 +20,11 @@ local POLL_INTERVAL = 0.12
 local FADE_START_DIST = 72
 -- Fully invisible at/inside this distance (on the pad).
 local FADE_END_DIST = 18
-local OUTLINE_COLOR = Color3.fromRGB(170, 220, 255)
--- Farthest visible outline (still faint).
-local OUTLINE_FAR_TRANSPARENCY = 0.48
+local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
+-- Farthest visible outline (still a bit transparent).
+local OUTLINE_FAR_TRANSPARENCY = 0.42
 -- SelectionBox line thickness (Highlight has no thickness API).
-local BOX_LINE_THICKNESS = 0.055
+local BOX_LINE_THICKNESS = 0.14
 
 local PlotOutlineController = {}
 

@@ -652,18 +652,43 @@ local function registerReceipts()
 		end)
 	end
 
-	-- Gift-only gamepass developer products: if bought outside an active gift
-	-- pending (or after a stuck NotProcessedYet retry), grant the buyer so Robux
-	-- is never eaten with no entitlement.
+	-- Gift-only gamepass developer products. Always prefer an active gift intent
+	-- (grant the *target*); only self-grant when this product was bought with no gift.
 	for gamepassId, entry in StoreConfig.GIFTABLE_GAMEPASSES do
 		local giftProductId = entry.giftProductId
 		if typeof(giftProductId) == "number" and giftProductId > 0 then
 			local passId = gamepassId
-			PH.registerProductReceipt(giftProductId, function(player)
-				local ok, err = grantGiftedGamepass(player, passId)
+			local productId = giftProductId
+			PH.registerProductReceipt(productId, function(player)
+				local intent = pendingStoreGifts[player.UserId]
+				local recipient: Player = player
+				local wasGift = false
+				if intent and intent.promptedProductId == productId and intent.giftedGamepassId == passId then
+					wasGift = true
+					local target = Players:GetPlayerByUserId(intent.targetUserId)
+					if target and target.Parent then
+						recipient = target
+					end
+					clearPendingStoreGift(player.UserId)
+				end
+
+				local ok, description = grantGiftedGamepass(recipient, passId)
 				if not ok then
-					warn("[StoreHandler] Gift gamepass self-grant failed:", passId, err)
+					warn("[StoreHandler] Gift gamepass grant failed:", passId, description)
 					return NOT_PROCESSED
+				end
+
+				if wasGift then
+					if recipient == player then
+						notifyGiftResult(
+							player,
+							true,
+							"Your gift target left the server — the pass was granted to you instead."
+						)
+					else
+						notifyGiftResult(player, true, `Gift sent: {description or "pass"}!`)
+						notifyGiftReceived(recipient, player.Name, description or "a gift")
+					end
 				end
 				notifyPurchaseComplete(player)
 				return GRANTED
@@ -844,7 +869,9 @@ local function validateGiftRequest(buyer: Player, targetUserId: any): (Player?, 
 		return nil, "You can't gift yourself."
 	end
 	clearExpiredPendingStoreGift(buyer.UserId)
-	if pendingStoreGifts[buyer.UserId] then
+	local pending = pendingStoreGifts[buyer.UserId]
+	-- Only block rapid double-clicks; older intents are replaced by beginPendingGift.
+	if pending and os.clock() - pending.createdAt < 2 then
 		return nil, "You already have a gift purchase in progress."
 	end
 	return target, nil
@@ -934,20 +961,19 @@ giftBuyGamepassRE.OnServerEvent:Connect(function(buyer: Player, targetUserId: an
 	})
 end)
 
--- Cancelled/declined prompts never fire a receipt — clear the pending gift so
--- the buyer can retry immediately instead of waiting out GIFT_PENDING_TIMEOUT.
+-- Cancelled prompts: delay clear so a late ProcessReceipt still sees the gift
+-- intent (Finished(false) can race ahead of the receipt and used to grant the buyer).
+local GIFT_CANCEL_CLEAR_DELAY = 20
 MarketplaceService.PromptProductPurchaseFinished:Connect(function(playerId, productId, wasPurchased)
 	if wasPurchased then
 		return
 	end
-	local buyer = Players:GetPlayerByUserId(playerId)
-	if not buyer then
-		return
-	end
-	local pending = pendingStoreGifts[buyer.UserId]
-	if pending and pending.promptedProductId == productId then
-		clearPendingStoreGift(buyer.UserId)
-	end
+	task.delay(GIFT_CANCEL_CLEAR_DELAY, function()
+		local pending = pendingStoreGifts[playerId]
+		if pending and pending.promptedProductId == productId then
+			clearPendingStoreGift(playerId)
+		end
+	end)
 end)
 
 local function storeGiftReceiptInterceptor(buyer: Player, receiptInfo: any): Enum.ProductPurchaseDecision?
@@ -957,7 +983,7 @@ local function storeGiftReceiptInterceptor(buyer: Player, receiptInfo: any): Enu
 	end
 
 	-- Keep pending until grant succeeds so Roblox retries still route as gifts
-	-- (clearing early made cash fall through to the buyer on NotProcessedYet).
+	-- (clearing early made cash/gamepass fall through to the buyer).
 	local target = Players:GetPlayerByUserId(pending.targetUserId)
 	local targetLeft = not target or not target.Parent
 	local recipient = if targetLeft then buyer else (target :: Player)
@@ -1010,6 +1036,6 @@ end
 
 registerStoreGiftInterceptor()
 
-Players.PlayerRemoving:Connect(function(player)
-	clearPendingStoreGift(player.UserId)
-end)
+-- Do NOT clear gift intents on PlayerRemoving — ProcessReceipt can retry after
+-- the buyer rejoins, and must still know the intended recipient.
+

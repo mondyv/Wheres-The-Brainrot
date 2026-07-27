@@ -224,10 +224,9 @@ StoreConfig.GIFTABLE_GAMEPASSES = {
 		giftProductId = 3604960365,
 	},
 	[StoreConfig.GAMEPASS.AUTOCOLLECT] = {
-		displayName = "Autocollect",
+		displayName = "Collect All Cash",
 		entitlementKey = StoreConfig.ATTR.GIFTED_AUTOCOLLECT,
-		-- Originally provided as Autocollect "dev product" id (later gamepass became 1892789728).
-		giftProductId = 3606842973,
+		giftProductId = 3611827706,
 	},
 }
 
@@ -265,16 +264,14 @@ StoreConfig.CASH_BUNDLE_MULTIPLIERS = {
 -- ── Steal system ────────────────────────────────────────────────────────────────
 -- Product IDs must match Creator Dashboard names exactly (shifted IDs break grants).
 StoreConfig.STEAL_PRODUCT_BY_RARITY = {
-	common = 3602198480, -- Steal a common brainrot (49)
-	uncommon = 3602198510, -- Steal an uncommon brainrot (79)
-	rare = 3602198541, -- Steal a rare brainrot (149)
-	epic = 3602198574, -- Steal an epic brainrot
-	mythic = 3602198619, -- Steal a mythic brainrot (399)
-	legendary = 3602198661, -- Steal a Legendary Brainrot (699)
-	["brainrot god"] = 3602198691, -- Steal a Brainrot God (999)
-	-- Do NOT reuse 3602198445 — that is/was "Steal a common brainrot".
-	-- Paste the Creator Dashboard id for "Steal a Secret Brainrot" here when created.
-	-- secret = 0,
+	common = 3602198445, -- Steal a common brainrot
+	uncommon = 3602198480, -- Steal an uncommon brainrot
+	rare = 3602198510, -- Steal a rare brainrot
+	epic = 3602198541, -- Steal an epic brainrot
+	mythic = 3602198574, -- Steal a mythic brainrot
+	legendary = 3602198619, -- Steal a Legendary Brainrot
+	["brainrot god"] = 3602198661, -- Steal a Brainrot God
+	secret = 3602198691, -- Steal Secret Brainrot
 }
 
 -- Robux prices (display only) for the steal products above.
@@ -295,6 +292,7 @@ local STEAL_RARITY_ALIASES: { [string]: string } = {
 	god = "brainrot god",
 	brainrotgod = "brainrot god",
 	["brain rot god"] = "brainrot god",
+	secrets = "secret",
 }
 
 function StoreConfig.normalizeStealRarity(rarity: string): string

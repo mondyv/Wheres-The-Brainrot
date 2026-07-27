@@ -83,6 +83,7 @@ local lastLandCheck = 0
 local _claimSpotlightActive = false
 local upgradeBaseLevel = 1
 local upgradeStepEnteredAt = 0
+local swingLand1EnteredAt = 0
 local layoutConn: RBXScriptConnection? = nil
 local _panelStroke: UIStroke? = nil
 local chromeSuppressed = false
@@ -634,7 +635,8 @@ local function outlineWorld(adornee: Instance?)
 
 	local hl = Instance.new("Highlight")
 	hl.Name = "TutorialWorldOutline"
-	hl.FillTransparency = 1
+	hl.FillColor = Color3.fromRGB(255, 236, 70)
+	hl.FillTransparency = 0.72
 	hl.OutlineTransparency = 0.05
 	hl.OutlineColor = Color3.fromRGB(255, 236, 70)
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
@@ -1411,6 +1413,25 @@ local function resolveLand1SwingTarget(): BasePart?
 	return best
 end
 
+--- Prefer the whole vine model so yellow outline wraps the rope, not just SwingTarget.
+local function resolveSwingVineAdornee(swingPart: BasePart?): Instance?
+	if not swingPart or not swingPart.Parent then
+		return nil
+	end
+	local vine = swingPart.Parent
+	if vine == Workspace or vine:IsA("WorldRoot") then
+		return swingPart
+	end
+	-- Map.Vine is the global container — adorning it would yellow-highlight every vine.
+	if string.lower(vine.Name) == "vine" then
+		local p = vine.Parent
+		if p and (p.Name == "Map" or p == Workspace) then
+			return swingPart
+		end
+	end
+	return vine
+end
+
 local function clearLockedSwing()
 	lockedSwingPart = nil
 end
@@ -1858,11 +1879,13 @@ local function refreshPointersImpl()
 			pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
 		end
 	elseif step.id == "swingLand1" then
+		local swing = resolveLand1SwingTarget()
 		if not (lockedSwingPart and lockedSwingPart.Parent and worldArrowBb) then
-			pointAtWorld(resolveLand1SwingTarget(), arrowHeight(3))
+			pointAtWorld(swing, arrowHeight(3))
 		end
-		if lockedSwingPart then
-			outlineWorld(lockedSwingPart)
+		local vineAdornee = resolveSwingVineAdornee(lockedSwingPart or swing)
+		if vineAdornee then
+			outlineWorld(vineAdornee)
 		end
 	elseif step.id == "searchBush" then
 		if not keepWorld then
@@ -1974,6 +1997,7 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 		clearLockedSwing()
 	elseif step.id == "swingLand1" then
 		clearLockedSwing()
+		swingLand1EnteredAt = os.clock()
 	elseif step.id ~= "claimBrainrot" then
 		clearLockedBush()
 	end
@@ -2101,14 +2125,17 @@ local function watchStepProgress()
 			end
 		elseif step.id == "swingLand1" and now - lastLandCheck > 0.35 then
 			lastLandCheck = now
-			if not worldArrowBb then
+			-- Keep vine yellow + arrow alive (targets can stream in late).
+			if not worldArrowBb or not worldHighlight or not (lockedSwingPart and lockedSwingPart.Parent) then
 				refreshPointers()
 			end
-			local char = player.Character
-			local hrp = char and char:FindFirstChild("HumanoidRootPart")
-			if hrp and hrp:IsA("BasePart") then
-				local land = LandResolver.resolveLandAtPosition(hrp.Position)
-				if land == 1 then
+			-- Don't skip instantly: spawn nearest-land fallback used to count as Land 1.
+			if swingLand1EnteredAt > 0 and (now - swingLand1EnteredAt) < 0.85 then
+				-- still showing the vine step
+			else
+				local char = player.Character
+				local hrp = char and char:FindFirstChild("HumanoidRootPart")
+				if hrp and hrp:IsA("BasePart") and LandResolver.isInsideLandHitbox(hrp.Position, 1) then
 					clearLockedSwing()
 					completeCurrentIf("swingLand1")
 				end
@@ -2280,6 +2307,7 @@ function M.start(force: boolean?)
 		sessionConfettiFired = false
 		finishCelebrated = false
 		upgradeStepEnteredAt = 0
+		swingLand1EnteredAt = 0
 	end
 	ensureGui()
 	startLayoutSync()

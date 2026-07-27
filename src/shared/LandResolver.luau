@@ -342,6 +342,24 @@ function M.resolveLandAtPosition(worldPos: Vector3): number
 	return resolveLandByNearest(worldPos)
 end
 
+--- True only when standing inside a land multiplier hitbox (no nearest-land fallback).
+--- Use for tutorial / gate checks where spawn must not count as Land 1.
+function M.isInsideLandHitbox(worldPos: Vector3, land: number?): boolean
+	ensureDiscovery()
+	for _, entry in landHitboxes do
+		if not entry.part.Parent then
+			continue
+		end
+		if land ~= nil and entry.land ~= land then
+			continue
+		end
+		if isPointWithinLandHitbox(worldPos, entry.part) then
+			return true
+		end
+	end
+	return false
+end
+
 local function spawnCFrameFromPart(part: BasePart): CFrame
 	local top = part.CFrame.Position + Vector3.new(0, part.Size.Y * 0.5 + SPAWN_CLEARANCE, 0)
 	local look = part.CFrame.LookVector

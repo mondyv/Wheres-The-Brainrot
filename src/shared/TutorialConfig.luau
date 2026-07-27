@@ -70,8 +70,8 @@ M.STEPS = {
 	},
 	{
 		id = "swingLand1",
-		text = "Hold Jump on the middle vine, then let go to Land 1",
-		speak = "HOLD JUMP ON THE MIDDLE VINE THEN LET GO!!",
+		text = "Jump and hold to get over to the first land!",
+		speak = "JUMP AND HOLD TO GET OVER TO THE FIRST LAND!!",
 	},
 	{
 		id = "searchBush",

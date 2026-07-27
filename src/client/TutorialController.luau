@@ -2017,17 +2017,17 @@ local function refreshPointersImpl()
 		return
 	end
 
-	-- Upgrade stand dialogue: outline the Enter/Upgrade choice button.
+	-- Upgrade stand dialogue: keep world outline even while lines type; point Enter when ready.
 	if step.id == "visitUpgrade" and StandDialogueCutscene.isActive() then
+		clearWorldArrow()
+		outlineWorld(resolveUpgradeStandModel())
 		local enterBtn = StandDialogueCutscene.getEnterChoiceButton()
 		if enterBtn then
-			clearWorldArrow()
-			outlineWorld(resolveUpgradeStandModel())
 			if uiPointerHost ~= enterBtn or not uiPointer or not uiPointer.Parent then
 				pointAtGui(enterBtn, true)
 			end
-			return
 		end
+		return
 	end
 
 	if chromeSuppressed or isCutsceneBusy() then
@@ -2058,17 +2058,17 @@ local function refreshPointersImpl()
 	elseif step.id == "buyPower" then
 		local btn = cacheUpgradesBuyButton()
 		if btn and isGuiTreeVisible(btn) then
-			pointAtGui(btn)
+			pointAtGui(btn, true)
 			task.defer(function()
 				task.wait(0.2)
-				if not active or chromeSuppressed or isCutsceneBusy() then
+				if not active then
 					return
 				end
 				local cur = currentStep()
 				if cur and cur.id == "buyPower" and not uiPointer then
 					local again = cacheUpgradesBuyButton()
 					if again and isGuiTreeVisible(again) then
-						pointAtGui(again)
+						pointAtGui(again, true)
 					end
 				end
 			end)
@@ -2332,9 +2332,10 @@ local function watchStepProgress()
 			if btn and isGuiTreeVisible(btn) then
 				if not uiPointer or uiPointerHost ~= btn then
 					clearWorldArrow()
-					pointAtGui(btn)
+					pointAtGui(btn, true)
 				end
 			elseif not worldArrowBb then
+				outlineWorld(resolveUpgradeStandModel())
 				pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
 			end
 		elseif step.id == "swingLand1" and now - lastLandCheck > 0.35 then

@@ -4,6 +4,7 @@
 ]]
 
 local Debris = game:GetService("Debris")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -22,6 +23,7 @@ local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local TopNotifController = require(script.Parent.TopNotifController)
 local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
+local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
 local M = {}
@@ -35,6 +37,10 @@ local introStartedLocal = false -- never restart fall once begun (attribute can 
 local dialogueBusy = false
 local lastWalkbyAt = 0.0
 local questGui: ScreenGui? = nil
+local questHost: Frame? = nil
+local questPanel: Frame? = nil
+local forcedQuestIndex: number? = nil
+local acceptPopupGui: ScreenGui? = nil
 local highlight: Highlight? = nil
 local talkPrompt: ProximityPrompt? = nil
 local idleTrack: AnimationTrack? = nil
@@ -457,82 +463,105 @@ local function syncPromptAndOutline()
 		if ready then
 			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.READY_OVERHEAD)
 		else
-			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
-		end
+			setQuestFloatVisible(tim, true, TimCheelocal function ensureQuestHost(): Frame?
+	local main = PlayerGuiMain.ensure(player)
+	if not main then
+		return nil
 	end
+	local existing = main:FindFirstChild("TimCheeseQuestHost")
+	if existing and existing:IsA("Frame") then
+		questHost = existing
+		return existing
+	end
+	local host = Instance.new("Frame")
+	host.Name = "TimCheeseQuestHost"
+	host.BackgroundTransparency = 1
+	host.BorderSizePixel = 0
+	host.Size = UDim2.fromScale(1, 1)
+	host.Position = UDim2.fromScale(0, 0)
+	host.ZIndex = 85
+	host.ClipsDescendants = false
+	host.Active = false
+	host.Parent = main
+	questHost = host
+	return host
 end
 
-local function ensureQuestHud(): ScreenGui
-	if questGui and questGui.Parent then
-		return questGui
+local function ensureQuestHud(): Frame
+	if questPanel and questPanel.Parent then
+		return questPanel
 	end
-	local pg = player:WaitForChild("PlayerGui")
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "TimCheeseQuestHud"
-	gui.ResetOnSpawn = false
-	gui.IgnoreGuiInset = true
-	gui.DisplayOrder = 82
-	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	local host = ensureQuestHost()
+	assert(host, "TimCheeseQuestHost missing")
 
 	local panel = Instance.new("Frame")
 	panel.Name = "ObjectivePanel"
 	panel.AnchorPoint = Vector2.new(1, 0)
 	panel.Position = UDim2.new(1, -18, 0, 72)
+	panel.Size = UDim2.fromOffset(280, 0)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
-	panel.BackgroundColor3 = Color3.fromRGB(18, 16, 22)
-	panel.BackgroundTransparency = 0.12
+	panel.BackgroundColor3 = Color3.fromRGB(22, 26, 34)
+	panel.BackgroundTransparency = 0.28
 	panel.BorderSizePixel = 0
-	panel.Parent = gui
+	panel.Visible = false
+	panel.ZIndex = 100
+	panel.Parent = host
+
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = UDim.new(0, 12)
 	corner.Parent = panel
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = Color3.fromRGB(255, 220, 80)
-	stroke.Thickness = 2
+	stroke.Thickness = 1.6
+	stroke.Transparency = 0.25
 	stroke.Parent = panel
 	local pad = Instance.new("UIPadding")
-	pad.PaddingTop = UDim.new(0, 12)
-	pad.PaddingBottom = UDim.new(0, 12)
-	pad.PaddingLeft = UDim.new(0, 14)
-	pad.PaddingRight = UDim.new(0, 14)
+	pad.PaddingTop = UDim.new(0, 10)
+	pad.PaddingBottom = UDim.new(0, 10)
+	pad.PaddingLeft = UDim.new(0, 12)
+	pad.PaddingRight = UDim.new(0, 12)
 	pad.Parent = panel
 	local layout = Instance.new("UIListLayout")
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0, 8)
+	layout.Padding = UDim.new(0, 6)
 	layout.Parent = panel
+	local scale = Instance.new("UIScale")
+	scale.Name = "PanelScale"
+	scale.Scale = 1
+	scale.Parent = panel
 
 	local title = Instance.new("TextLabel")
 	title.Name = "Title"
 	title.BackgroundTransparency = 1
-	title.Size = UDim2.new(1, 0, 0, 22)
+	title.Size = UDim2.new(1, 0, 0, 20)
 	title.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	title.TextSize = 18
+	title.TextSize = 16
 	title.TextColor3 = Color3.fromRGB(255, 230, 90)
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.Text = "TIM CHEESE QUEST"
 	title.LayoutOrder = 1
 	title.Parent = panel
-	UiFonts.applyDisplayLabel(title, 18, 14)
+	UiFonts.applyDisplayLabel(title, 16, 13)
 
-	local desc = Instance.new("TextLabel")
-	desc.Name = "Description"
-	desc.BackgroundTransparency = 1
-	desc.Size = UDim2.new(1, 0, 0, 0)
-	desc.AutomaticSize = Enum.AutomaticSize.Y
-	desc.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
-	desc.TextSize = 15
-	desc.TextColor3 = Color3.fromRGB(245, 245, 245)
-	desc.TextWrapped = true
-	desc.TextXAlignment = Enum.TextXAlignment.Left
-	desc.LayoutOrder = 2
-	desc.Parent = panel
+	local body = Instance.new("TextLabel")
+	body.Name = "Body"
+	body.BackgroundTransparency = 1
+	body.Size = UDim2.new(1, 0, 0, 0)
+	body.AutomaticSize = Enum.AutomaticSize.Y
+	body.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
+	body.TextSize = 14
+	body.TextColor3 = Color3.fromRGB(245, 245, 245)
+	body.TextWrapped = true
+	body.TextXAlignment = Enum.TextXAlignment.Left
+	body.LayoutOrder = 2
+	body.Parent = panel
 
 	local progress = Instance.new("TextLabel")
 	progress.Name = "Progress"
 	progress.BackgroundTransparency = 1
-	progress.Size = UDim2.new(1, 0, 0, 18)
+	progress.Size = UDim2.new(1, 0, 0, 16)
 	progress.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	progress.TextSize = 14
+	progress.TextSize = 13
 	progress.TextColor3 = Color3.fromRGB(180, 255, 160)
 	progress.TextXAlignment = Enum.TextXAlignment.Left
 	progress.LayoutOrder = 3
@@ -540,7 +569,7 @@ local function ensureQuestHud(): ScreenGui
 
 	local barBg = Instance.new("Frame")
 	barBg.Name = "BarBg"
-	barBg.Size = UDim2.new(1, 0, 0, 10)
+	barBg.Size = UDim2.new(1, 0, 0, 8)
 	barBg.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
 	barBg.BorderSizePixel = 0
 	barBg.LayoutOrder = 4
@@ -551,102 +580,229 @@ local function ensureQuestHud(): ScreenGui
 	local barFill = Instance.new("Frame")
 	barFill.Name = "BarFill"
 	barFill.Size = UDim2.new(0, 0, 1, 0)
-	barFill.BackgroundColor3 = Color3.fromRGB(90, 220, 110)
+	barFill.BackgroundColor3 = Color3.fromRGB(255, 210, 70)
 	barFill.BorderSizePixel = 0
 	barFill.Parent = barBg
 	local fillCorner = Instance.new("UICorner")
 	fillCorner.CornerRadius = UDim.new(1, 0)
 	fillCorner.Parent = barFill
 
-	local reward = Instance.new("TextLabel")
-	reward.Name = "Reward"
-	reward.BackgroundTransparency = 1
-	reward.Size = UDim2.new(1, 0, 0, 18)
-	reward.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	reward.TextSize = 14
-	reward.TextColor3 = Color3.fromRGB(120, 255, 160)
-	reward.TextXAlignment = Enum.TextXAlignment.Left
-	reward.LayoutOrder = 5
-	reward.Parent = panel
-
-	gui.Parent = pg
-	questGui = gui
-	return gui
+	questPanel = panel
+	return panel
 end
 
 local function layoutQuestHud()
-	local gui = questGui
-	if not gui then
+	local panel = questPanel
+	if not panel then
 		return
 	end
-	local panel = gui:FindFirstChild("ObjectivePanel")
-	if not (panel and panel:IsA("Frame")) then
-		return
+	local host = ensureQuestHost()
+	if host and panel.Parent ~= host then
+		panel.Parent = host
 	end
 	local mobile = UserInputService.TouchEnabled
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1280
+	local insetY = GuiService:GetGuiInset().Y
 	if mobile or vw < 700 then
 		panel.Size = UDim2.fromOffset(math.clamp(math.floor(vw * 0.72), 180, 260), 0)
-		panel.Position = UDim2.new(1, -12, 0, 64)
+		panel.Position = UDim2.new(1, -12, 0, 14 + insetY)
 	else
-		panel.Size = UDim2.fromOffset(math.clamp(math.floor(vw * 0.28), 360, 480), 0)
-		panel.Position = UDim2.new(1, -22, 0, 76)
+		panel.Size = UDim2.fromOffset(math.clamp(math.floor(vw * 0.22), 260, 340), 0)
+		panel.Position = UDim2.new(1, -18, 0, 18 + insetY)
+	end
+end
+
+local function resolveActiveQuestIndex(): number?
+	local idx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+	if typeof(idx) == "number" and idx >= 1 then
+		if forcedQuestIndex and math.floor(idx) == forcedQuestIndex then
+			forcedQuestIndex = nil
+		end
+		return math.floor(idx)
+	end
+	if typeof(forcedQuestIndex) == "number" and forcedQuestIndex >= 1 then
+		return forcedQuestIndex
+	end
+	return nil
+end
+
+local function formatQuestBody(quest: TimCheeseQuestConfig.QuestDef, ready: boolean): string
+	if ready then
+		return "Quest completed! Go see Tim Cheese to claim."
+	end
+	return string.format("%s — %s  ·  Reward %s", quest.title, quest.description, BrainrotEconomy.formatCashShort(quest.rewardCash))
+end
+
+local function formatQuestProgress(quest: TimCheeseQuestConfig.QuestDef, p: number): string
+	if quest.kind == "place_stands" or quest.kind == "harvest" then
+		return string.format("%d / %d", math.floor(p), quest.target)
+	elseif quest.kind == "income" then
+		return string.format("%s/s", BrainrotEconomy.formatCashShort(p))
+	else
+		return string.format("%s / %s", BrainrotEconomy.formatCashShort(p), BrainrotEconomy.formatCashShort(quest.target))
 	end
 end
 
 local function refreshQuestHud()
-	local idx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+	local idx = resolveActiveQuestIndex()
 	local progressVal = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR)
 	local ready = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR) == true
-	if typeof(idx) ~= "number" or idx < 1 then
-		if questGui then
-			questGui.Enabled = false
+	if not idx then
+		if questPanel then
+			questPanel.Visible = false
 		end
 		return
 	end
-	local quest = TimCheeseQuestConfig.getQuest(math.floor(idx))
+	local quest = TimCheeseQuestConfig.getQuest(idx)
 	if not quest then
 		return
 	end
-	local gui = ensureQuestHud()
-	gui.Enabled = true
+	local panel = ensureQuestHud()
 	layoutQuestHud()
-	local panel = gui:FindFirstChild("ObjectivePanel")
-	if not panel then
-		return
-	end
-	local desc = panel:FindFirstChild("Description")
+	panel.Visible = true
+	local body = panel:FindFirstChild("Body")
 	local progress = panel:FindFirstChild("Progress")
-	local reward = panel:FindFirstChild("Reward")
 	local barBg = panel:FindFirstChild("BarBg")
 	local p = if typeof(progressVal) == "number" then progressVal else 0
-	if desc and desc:IsA("TextLabel") then
-		desc.Text = if ready then "Quest completed! Go see Tim Cheese." else quest.description
+	if body and body:IsA("TextLabel") then
+		body.Text = formatQuestBody(quest, ready)
 	end
 	if progress and progress:IsA("TextLabel") then
-		if quest.showBar then
-			progress.Text = string.format("%s  %s / %s", quest.title, BrainrotEconomy.formatCashShort(p):gsub("%$", ""), BrainrotEconomy.formatCashShort(quest.target):gsub("%$", ""))
-			if quest.kind == "place_stands" or quest.kind == "harvest" then
-				progress.Text = string.format("%s  %d / %d", quest.title, math.floor(p), quest.target)
-			elseif quest.kind == "income" then
-				progress.Text = string.format("%s  %s/s", quest.title, BrainrotEconomy.formatCashShort(p))
-			else
-				progress.Text = string.format("%s  %s", quest.title, BrainrotEconomy.formatCashShort(p))
-			end
-		else
-			progress.Text = quest.title
-		end
-	end
-	if reward and reward:IsA("TextLabel") then
-		reward.Text = "Reward: " .. BrainrotEconomy.formatCashShort(quest.rewardCash)
+		progress.Text = if quest.showBar then formatQuestProgress(quest, p) else quest.title
+		progress.Visible = quest.showBar == true or ready
 	end
 	if barBg and barBg:IsA("Frame") then
-		barBg.Visible = quest.showBar == true
+		barBg.Visible = quest.showBar == true and not ready
 		local fill = barBg:FindFirstChild("BarFill")
 		if fill and fill:IsA("Frame") then
 			local alpha = math.clamp(p / math.max(quest.target, 1), 0, 1)
 			fill.Size = UDim2.new(alpha, 0, 1, 0)
+		end
+	end
+end
+
+local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
+	local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+	if not pg then
+		return
+	end
+	if acceptPopupGui then
+		acceptPopupGui:Destroy()
+		acceptPopupGui = nil
+	end
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "TimCheeseQuestHud"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.DisplayOrder = 120
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.Parent = pg
+	acceptPopupGui = gui
+	questGui = gui
+
+	local dim = Instance.new("Frame")
+	dim.Name = "Dim"
+	dim.BackgroundColor3 = Color3.fromRGB(8, 6, 12)
+	dim.BackgroundTransparency = 1
+	dim.BorderSizePixel = 0
+	dim.Size = UDim2.fromScale(1, 1)
+	dim.Parent = gui
+
+	local card = Instance.new("Frame")
+	card.Name = "AcceptCard"
+	card.AnchorPoint = Vector2.new(0.5, 0.5)
+	card.Position = UDim2.fromScale(0.5, 0.48)
+	card.Size = UDim2.fromOffset(420, 0)
+	card.AutomaticSize = Enum.AutomaticSize.Y
+	card.BackgroundColor3 = Color3.fromRGB(24, 20, 14)
+	card.BackgroundTransparency = 0.08
+	card.BorderSizePixel = 0
+	card.Parent = gui
+	local cardCorner = Instance.new("UICorner")
+	cardCorner.CornerRadius = UDim.new(0, 16)
+	cardCorner.Parent = card
+	local cardStroke = Instance.new("UIStroke")
+	cardStroke.Color = Color3.fromRGB(255, 210, 70)
+	cardStroke.Thickness = 2.2
+	cardStroke.Parent = card
+	local cardPad = Instance.new("UIPadding")
+	cardPad.PaddingTop = UDim.new(0, 22)
+	cardPad.PaddingBottom = UDim.new(0, 22)
+	cardPad.PaddingLeft = UDim.new(0, 24)
+	cardPad.PaddingRight = UDim.new(0, 24)
+	cardPad.Parent = card
+	local cardLayout = Instance.new("UIListLayout")
+	cardLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	cardLayout.Padding = UDim.new(0, 10)
+	cardLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	cardLayout.Parent = card
+	local cardScale = Instance.new("UIScale")
+	cardScale.Scale = 0.72
+	cardScale.Parent = card
+
+	local eyebrow = Instance.new("TextLabel")
+	eyebrow.BackgroundTransparency = 1
+	eyebrow.Size = UDim2.new(1, 0, 0, 18)
+	eyebrow.FontFace = Font.fromEnum(Enum.Font.GothamBold)
+	eyebrow.TextSize = 13
+	eyebrow.TextColor3 = Color3.fromRGB(255, 220, 90)
+	eyebrow.Text = "QUEST ACCEPTED"
+	eyebrow.LayoutOrder = 1
+	eyebrow.Parent = card
+
+	local headline = Instance.new("TextLabel")
+	headline.BackgroundTransparency = 1
+	headline.Size = UDim2.new(1, 0, 0, 28)
+	headline.FontFace = Font.fromEnum(Enum.Font.GothamBold)
+	headline.TextSize = 24
+	headline.TextColor3 = Color3.new(1, 1, 1)
+	headline.Text = quest.title
+	headline.LayoutOrder = 2
+	headline.Parent = card
+	UiFonts.applyDisplayLabel(headline, 24, 18)
+
+	local info = Instance.new("TextLabel")
+	info.BackgroundTransparency = 1
+	info.Size = UDim2.new(1, 0, 0, 0)
+	info.AutomaticSize = Enum.AutomaticSize.Y
+	info.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
+	info.TextSize = 16
+	info.TextColor3 = Color3.fromRGB(235, 230, 220)
+	info.TextWrapped = true
+	info.Text = string.format("%s\nReward: %s", quest.description, BrainrotEconomy.formatCashShort(quest.rewardCash))
+	info.LayoutOrder = 3
+	info.Parent = card
+
+	local mobile = UserInputService.TouchEnabled
+	local cam = Workspace.CurrentCamera
+	local vw = if cam then cam.ViewportSize.X else 1280
+	if mobile or vw < 700 then
+		card.Size = UDim2.fromOffset(math.clamp(math.floor(vw * 0.86), 260, 360), 0)
+	end
+
+	TweenService:Create(dim, TweenInfo.new(0.22), { BackgroundTransparency = 0.45 }):Play()
+	TweenService:Create(cardScale, TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	GameSoundEffects.playPurchase()
+
+	task.wait(2.35)
+	if not gui.Parent then
+		return
+	end
+	TweenService:Create(dim, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
+	TweenService:Create(cardScale, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.86 }):Play()
+	task.wait(0.22)
+	if gui.Parent then
+		gui:Destroy()
+	end
+	if acceptPopupGui == gui then
+		acceptPopupGui = nil
+		questGui = nil
+	end
+end
+
+Size = UDim2.new(alpha, 0, 1, 0)
 		end
 	end
 end
@@ -868,6 +1024,7 @@ function M.playIntroFall()
 
 	if accepted then
 		local rf = getRF("AcceptQuest")
+		local acceptOk = false
 		if rf then
 			local ok, result = pcall(function()
 				return rf:InvokeServer()
@@ -876,10 +1033,13 @@ function M.playIntroFall()
 				warn("[TimCheeseQuestController] AcceptQuest error:", result)
 			elseif result ~= true then
 				warn("[TimCheeseQuestController] AcceptQuest rejected")
+			else
+				acceptOk = true
 			end
 		end
-		TopNotifController.showBroadcast("New quest from Tim Cheese!")
-		waitForQuestHud(2.5)
+		if acceptOk then
+			forcedQuestIndex = 1
+		end
 	else
 		StandDialogueCutscene.play({
 			standName = "TimCheese",
@@ -908,11 +1068,19 @@ function M.playIntroFall()
 		end
 	end
 
-	GameplayUiVisibility.show()
+	GameplayUiVisibility.show({ instant = true })
 	lockMovement(false)
 	introPlaying = false
-	-- Overhead stays "Quests" (never the quest title).
 	setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
+
+	if accepted then
+		local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex or 1)
+		if q then
+			playQuestAcceptPopup(q)
+		end
+		waitForQuestHud(2.5)
+		TopNotifController.showBroadcast("New quest from Tim Cheese!")
+	end
 	refreshQuestHud()
 	syncPromptAndOutline()
 end
@@ -994,10 +1162,19 @@ function M.openTimDialogue()
 			}, tim)
 			if wantAnother then
 				local acceptRF = getRF("AcceptQuest")
+				local acceptOk = false
 				if acceptRF then
-					pcall(function()
-						acceptRF:InvokeServer()
+					local ok, result = pcall(function()
+						return acceptRF:InvokeServer()
 					end)
+					acceptOk = ok and result == true
+				end
+				if acceptOk then
+					forcedQuestIndex = doneAfter + 1
+					local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex)
+					if q then
+						playQuestAcceptPopup(q)
+					end
 				end
 				TopNotifController.showBroadcast("New quest from Tim Cheese!")
 				waitForQuestHud(2.5)
@@ -1027,10 +1204,19 @@ function M.openTimDialogue()
 		}, tim)
 		if want then
 			local acceptRF = getRF("AcceptQuest")
+			local acceptOk = false
 			if acceptRF then
-				pcall(function()
-					acceptRF:InvokeServer()
+				local ok, result = pcall(function()
+					return acceptRF:InvokeServer()
 				end)
+				acceptOk = ok and result == true
+			end
+			if acceptOk then
+				forcedQuestIndex = doneCount + 1
+				local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex)
+				if q then
+					playQuestAcceptPopup(q)
+				end
 			end
 			TopNotifController.showBroadcast("New quest from Tim Cheese!")
 			waitForQuestHud(2.5)

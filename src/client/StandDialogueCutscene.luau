@@ -1492,7 +1492,10 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 
 	StandDialogueCutscene.ensureIdleAnimation(brainrot, config.brainrotName)
 	ensureGui()
-	GameplayUiVisibility.hide({ keepScreenGuiNames = { "StandDialogueCutscene" } })
+	GameplayUiVisibility.hide({
+		keepScreenGuiNames = { "StandDialogueCutscene", "TutorialObjective", "TutorialUiPointer", "TimCheeseQuestHud" },
+		keepMainChildNames = { "TutorialQuestHost", "TimCheeseQuestHost" },
+	})
 	animateLetterboxIn()
 	lockMovement()
 	startCamera(brainrot)

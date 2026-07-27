@@ -261,9 +261,14 @@ local function buildKeepSets(opts: HideOpts?)
 	table.clear(keepMainChildNames)
 	-- Frames is the panel host — never slide it (causes offset/missing shop panels)
 	keepMainChildNames.Frames = true
+	keepMainChildNames.TutorialQuestHost = true
+	keepMainChildNames.TimCheeseQuestHost = true
 	keepScreenNames.FloatingClaimCutscene = true
 	keepScreenNames.BushSpiderCutscene = true
 	keepScreenNames.StandDialogueCutscene = true
+	keepScreenNames.TimCheeseQuestHud = true
+	keepScreenNames.TutorialObjective = true
+	keepScreenNames.TutorialUiPointer = true
 	if opts then
 		if opts.keepScreenGuiNames then
 			for _, name in opts.keepScreenGuiNames do

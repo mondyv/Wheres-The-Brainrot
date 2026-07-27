@@ -567,7 +567,7 @@ end
 function ProductHandlerServer.promptPurchase(self: ProductHandlerServer, player: Player, name: string, entry: any)
 	if entry.type == "gamepass" then
 		local ownsPass = false
-		if StoreAccess.hasGiftedGamePass(player, entry.id) then
+		if StoreAccess.hasEntitledGamePass(player, entry.id) then
 			ownsPass = true
 		elseif StoreAccess.shouldTrustMarketplaceOwnership(player) then
 			local success, result = pcall(function()

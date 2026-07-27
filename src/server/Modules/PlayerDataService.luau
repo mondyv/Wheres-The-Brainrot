@@ -232,9 +232,35 @@ local function normalizeGiftedGamepasses(raw: any): PlayerDataSchema.GiftedGamep
 	return out
 end
 
+local function normalizePurchasedGamepasses(raw: any): PlayerDataSchema.PurchasedGamepassesSaveData
+	local out: PlayerDataSchema.PurchasedGamepassesSaveData = {}
+	if typeof(raw) ~= "table" then
+		return out
+	end
+
+	for gamePassId in StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID do
+		local key = tostring(gamePassId)
+		if raw[key] == true or raw[gamePassId] == true then
+			out[key] = true
+		end
+	end
+
+	return out
+end
+
 local function collectGiftedGamepasses(player: Player): PlayerDataSchema.GiftedGamepassesSaveData
 	local out: PlayerDataSchema.GiftedGamepassesSaveData = {}
 	for gamePassId, attr in StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID do
+		if typeof(attr) == "string" and player:GetAttribute(attr) == true then
+			out[tostring(gamePassId)] = true
+		end
+	end
+	return out
+end
+
+local function collectPurchasedGamepasses(player: Player): PlayerDataSchema.PurchasedGamepassesSaveData
+	local out: PlayerDataSchema.PurchasedGamepassesSaveData = {}
+	for gamePassId, attr in StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID do
 		if typeof(attr) == "string" and player:GetAttribute(attr) == true then
 			out[tostring(gamePassId)] = true
 		end
@@ -247,6 +273,15 @@ local function applyGiftedGamepasses(player: Player, raw: any)
 	for gamePassId, attr in StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID do
 		if typeof(attr) == "string" then
 			player:SetAttribute(attr, gifted[tostring(gamePassId)] == true)
+		end
+	end
+end
+
+local function applyPurchasedGamepasses(player: Player, raw: any)
+	local purchased = normalizePurchasedGamepasses(raw)
+	for gamePassId, attr in StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID do
+		if typeof(attr) == "string" then
+			player:SetAttribute(attr, purchased[tostring(gamePassId)] == true)
 		end
 	end
 end
@@ -383,6 +418,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 	local dailyBoost = player:GetAttribute(CashBoostUtil.DAILY_BOOST_ATTR)
 	local storePurchases = collectStorePurchases(player)
 	local giftedGamepasses = collectGiftedGamepasses(player)
+	local purchasedGamepasses = collectPurchasedGamepasses(player)
 
 	return {
 		version = PlayerDataSchema.VERSION,
@@ -400,6 +436,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		dailyCashBoostPercent = if typeof(dailyBoost) == "number" then math.max(0, dailyBoost) else 0,
 		storePurchases = storePurchases,
 		giftedGamepasses = giftedGamepasses,
+		purchasedGamepasses = purchasedGamepasses,
 		indexUnlocks = unlockKeys,
 		goldenNames = goldenNames,
 		inventory = inventory,
@@ -447,6 +484,28 @@ function M.savePlayerSettings(player: Player, patch: any)
 	end
 end
 
+--- Persist a real Robux gamepass purchase so ownership survives rejoin (including for creators/testers).
+function M.markGamePassPurchased(player: Player, gamePassId: number)
+	if typeof(gamePassId) ~= "number" then
+		return
+	end
+	local purchasedAttr = StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID[gamePassId]
+	if typeof(purchasedAttr) ~= "string" then
+		return
+	end
+	if player:GetAttribute(purchasedAttr) == true then
+		return
+	end
+	player:SetAttribute(purchasedAttr, true)
+	local ownedAttr = StoreConfig.OWNED_GAMEPASS_ATTR_BY_ID[gamePassId]
+	if typeof(ownedAttr) == "string" then
+		player:SetAttribute(ownedAttr, true)
+	end
+	if player:GetAttribute(LOADED_ATTR) == true then
+		M.savePlayerData(player)
+	end
+end
+
 local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSaveData)
 	player:SetAttribute("Cash", data.cash)
 	player:SetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR, data.rebirthCount)
@@ -463,6 +522,7 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 
 	applyStorePurchases(player, (data :: any).storePurchases)
 	applyGiftedGamepasses(player, (data :: any).giftedGamepasses)
+	applyPurchasedGamepasses(player, (data :: any).purchasedGamepasses)
 	applySettings(player, (data :: any).settings)
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, data.tutorialCompleted == true)
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR, data.tutorialCashGranted == true)
@@ -598,6 +658,7 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		),
 		storePurchases = normalizeStorePurchases(raw.storePurchases),
 		giftedGamepasses = normalizeGiftedGamepasses(raw.giftedGamepasses),
+		purchasedGamepasses = normalizePurchasedGamepasses(raw.purchasedGamepasses),
 		indexUnlocks = readStringArray(raw.indexUnlocks),
 		goldenNames = readStringArray(raw.goldenNames),
 		inventory = inventory,
@@ -832,6 +893,16 @@ local function mergeAgainstPrior(
 		for id, owned in prior.giftedGamepasses do
 			if owned == true then
 				payload.giftedGamepasses[id] = true
+			end
+		end
+	end
+	if typeof(prior.purchasedGamepasses) == "table" then
+		if typeof(payload.purchasedGamepasses) ~= "table" then
+			payload.purchasedGamepasses = {}
+		end
+		for id, owned in prior.purchasedGamepasses do
+			if owned == true then
+				payload.purchasedGamepasses[id] = true
 			end
 		end
 	end
@@ -1117,6 +1188,7 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		dailyCashBoostPercent = 0,
 		storePurchases = normalizeStorePurchases(nil),
 		giftedGamepasses = normalizeGiftedGamepasses(nil),
+		purchasedGamepasses = normalizePurchasedGamepasses(nil),
 		indexUnlocks = {},
 		goldenNames = {},
 		inventory = {},

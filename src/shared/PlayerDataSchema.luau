@@ -34,6 +34,7 @@ export type StorePurchasesSaveData = {
 }
 
 export type GiftedGamepassesSaveData = { [string]: boolean }
+export type PurchasedGamepassesSaveData = { [string]: boolean }
 
 export type PlayerSettingsSaveData = {
 	musicVolume: number,
@@ -72,6 +73,7 @@ export type PlayerSaveData = {
 	lastSavedAt: number,
 	storePurchases: StorePurchasesSaveData?,
 	giftedGamepasses: GiftedGamepassesSaveData?,
+	purchasedGamepasses: PurchasedGamepassesSaveData?,
 	settings: PlayerSettingsSaveData?,
 	tutorialCompleted: boolean?,
 	tutorialCashGranted: boolean?,

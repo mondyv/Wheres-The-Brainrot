@@ -98,7 +98,7 @@ local ownsFetchInFlight: { [number]: boolean } = {}
 local function playerOwnsAutoCollect(player: Player): boolean
 	local G = StoreConfig.GAMEPASS
 	local A = StoreConfig.ATTR
-	if StoreAccess.hasGiftedGamePass(player, G.AUTOCOLLECT) then
+	if StoreAccess.hasEntitledGamePass(player, G.AUTOCOLLECT) then
 		return true
 	end
 	if player:GetAttribute(A.AUTOCOLLECT_OWNED) == true then
@@ -114,7 +114,7 @@ local onOwnershipResolved: ((Player) -> ())? = nil
 local function refreshOwnershipCache(player: Player)
 	local G = StoreConfig.GAMEPASS
 	local A = StoreConfig.ATTR
-	if StoreAccess.hasGiftedGamePass(player, G.AUTOCOLLECT) or player:GetAttribute(A.AUTOCOLLECT_OWNED) == true then
+	if StoreAccess.hasEntitledGamePass(player, G.AUTOCOLLECT) or player:GetAttribute(A.AUTOCOLLECT_OWNED) == true then
 		ownsCacheByUserId[player.UserId] = true
 		if onOwnershipResolved then
 			onOwnershipResolved(player)
@@ -605,6 +605,10 @@ MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, gameP
 	if wasPurchased and gamePassId == StoreConfig.GAMEPASS.AUTOCOLLECT and player and player.Parent then
 		ownsCacheByUserId[player.UserId] = true
 		player:SetAttribute(StoreConfig.ATTR.AUTOCOLLECT_OWNED, true)
+		local purchasedAttr = StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID[gamePassId]
+		if typeof(purchasedAttr) == "string" then
+			player:SetAttribute(purchasedAttr, true)
+		end
 		task.defer(function()
 			syncAutoCollectInteractionForPlayer(player)
 			refreshAutoCollectForOwnerUserId(player.UserId)

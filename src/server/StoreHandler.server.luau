@@ -426,7 +426,7 @@ local function ownsGamePass(player: Player, gamePassId: number): boolean
 end
 
 local function isGamePassOwnedForEffects(player: Player, gamePassId: number, fromPurchase: boolean?): boolean
-	if StoreAccess.hasGiftedGamePass(player, gamePassId) then
+	if StoreAccess.hasEntitledGamePass(player, gamePassId) then
 		return true
 	end
 
@@ -437,16 +437,6 @@ local function isGamePassOwnedForEffects(player: Player, gamePassId: number, fro
 		end
 	end
 	return ownsGamePass(player, gamePassId)
-end
-
-local function hasAnyGiftedGamePass(player: Player): boolean
-	for gamePassId in StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID do
-		if StoreAccess.hasGiftedGamePass(player, gamePassId) then
-			return true
-		end
-	end
-
-	return false
 end
 
 local function clearGamePassAttributes(player: Player)
@@ -465,10 +455,9 @@ local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
 	local A = StoreConfig.ATTR
 	local G = StoreConfig.GAMEPASS
 
-	if not fromPurchase and StoreAccess.isPrivilegedMarketplaceTester(player) and not hasAnyGiftedGamePass(player) then
-		clearGamePassAttributes(player)
-		return
-	end
+	-- Creators/group owners always look like they own every pass via Marketplace.
+	-- Only honor gifted + saved Robux purchases for them (never wipe those).
+	local trustMarketplace = StoreAccess.shouldTrustMarketplaceOwnership(player)
 
 	local ownsVip = isGamePassOwnedForEffects(player, G.VIP, fromPurchase)
 	local ownsCash = isGamePassOwnedForEffects(player, G.DOUBLE_CASH, fromPurchase)
@@ -477,6 +466,21 @@ local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
 	local ownsMega = isGamePassOwnedForEffects(player, G.MEGA_LUCK, fromPurchase)
 	local ownsXray = isGamePassOwnedForEffects(player, G.XRAY, fromPurchase)
 	local ownsAutoCollect = isGamePassOwnedForEffects(player, G.AUTOCOLLECT, fromPurchase)
+
+	-- If marketplace ownership is untrusted and they have no entitlements, clear runtime owned flags.
+	if not fromPurchase and not trustMarketplace then
+		local anyEntitlement = ownsVip
+			or ownsCash
+			or ownsUpgrades
+			or ownsSuper
+			or ownsMega
+			or ownsXray
+			or ownsAutoCollect
+		if not anyEntitlement then
+			clearGamePassAttributes(player)
+			return
+		end
+	end
 
 	if ownsVip then
 		player:SetAttribute(A.VIP_OWNED, true)
@@ -499,6 +503,32 @@ local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
 	player:SetAttribute(A.MEGA_LUCK_OWNED, ownsMega)
 	player:SetAttribute(A.XRAY_OWNED, ownsXray)
 	player:SetAttribute(A.AUTOCOLLECT_OWNED, ownsAutoCollect)
+
+	-- Persist marketplace-confirmed ownership so flaky API / future tester status can't wipe it.
+	if trustMarketplace then
+		local persistedAny = false
+		local function persistIfNeeded(gamePassId: number, owns: boolean)
+			if not owns or StoreAccess.hasPurchasedGamePass(player, gamePassId) then
+				return
+			end
+			local purchasedAttr = StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID[gamePassId]
+			if typeof(purchasedAttr) ~= "string" then
+				return
+			end
+			player:SetAttribute(purchasedAttr, true)
+			persistedAny = true
+		end
+		persistIfNeeded(G.VIP, ownsVip)
+		persistIfNeeded(G.DOUBLE_CASH, ownsCash)
+		persistIfNeeded(G.DOUBLE_UPGRADES, ownsUpgrades)
+		persistIfNeeded(G.SUPER_LUCK, ownsSuper)
+		persistIfNeeded(G.MEGA_LUCK, ownsMega)
+		persistIfNeeded(G.XRAY, ownsXray)
+		persistIfNeeded(G.AUTOCOLLECT, ownsAutoCollect)
+		if persistedAny then
+			PlayerDataService.savePlayerData(player)
+		end
+	end
 end
 
 local function initPlayerAttributes(player: Player)
@@ -548,6 +578,7 @@ MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, gameP
 		-- Set owned attrs immediately so SideUI boost icons update without waiting
 		-- for UserOwnsGamePassAsync to catch up after the purchase prompt closes.
 		applyPurchasedGamePassAttributes(player, gamePassId)
+		PlayerDataService.markGamePassPurchased(player, gamePassId)
 		task.spawn(function()
 			applyGamePassEffects(player, true)
 		end)

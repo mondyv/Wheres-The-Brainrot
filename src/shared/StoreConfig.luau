@@ -65,6 +65,15 @@ StoreConfig.ATTR = {
 	GIFTED_XRAY = "GiftedXray",
 	GIFTED_AUTOCOLLECT = "GiftedAutoCollect",
 
+	-- Durable purchase record (survives rejoin for owners/testers where marketplace ownership is untrusted).
+	PURCHASED_VIP = "PurchasedVIP",
+	PURCHASED_DOUBLE_CASH = "PurchasedDoubleCash",
+	PURCHASED_DOUBLE_UPGRADES = "PurchasedDoubleUpgrades",
+	PURCHASED_SUPER_LUCK = "PurchasedSuperLuck",
+	PURCHASED_MEGA_LUCK = "PurchasedMegaLuck",
+	PURCHASED_XRAY = "PurchasedXray",
+	PURCHASED_AUTOCOLLECT = "PurchasedAutoCollect",
+
 	-- One-time / counter grants
 	EXCLUSIVE_OWNED = "ExclusiveBrainrotOwned",
 	FREE_STEAL_COUNT = "FreeStealCount",
@@ -162,6 +171,26 @@ StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID = {
 	[StoreConfig.GAMEPASS.MEGA_LUCK] = StoreConfig.ATTR.GIFTED_MEGA_LUCK,
 	[StoreConfig.GAMEPASS.XRAY] = StoreConfig.ATTR.GIFTED_XRAY,
 	[StoreConfig.GAMEPASS.AUTOCOLLECT] = StoreConfig.ATTR.GIFTED_AUTOCOLLECT,
+}
+
+StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID = {
+	[StoreConfig.GAMEPASS.VIP] = StoreConfig.ATTR.PURCHASED_VIP,
+	[StoreConfig.GAMEPASS.DOUBLE_CASH] = StoreConfig.ATTR.PURCHASED_DOUBLE_CASH,
+	[StoreConfig.GAMEPASS.DOUBLE_UPGRADES] = StoreConfig.ATTR.PURCHASED_DOUBLE_UPGRADES,
+	[StoreConfig.GAMEPASS.SUPER_LUCK] = StoreConfig.ATTR.PURCHASED_SUPER_LUCK,
+	[StoreConfig.GAMEPASS.MEGA_LUCK] = StoreConfig.ATTR.PURCHASED_MEGA_LUCK,
+	[StoreConfig.GAMEPASS.XRAY] = StoreConfig.ATTR.PURCHASED_XRAY,
+	[StoreConfig.GAMEPASS.AUTOCOLLECT] = StoreConfig.ATTR.PURCHASED_AUTOCOLLECT,
+}
+
+StoreConfig.OWNED_GAMEPASS_ATTR_BY_ID = {
+	[StoreConfig.GAMEPASS.VIP] = StoreConfig.ATTR.VIP_OWNED,
+	[StoreConfig.GAMEPASS.DOUBLE_CASH] = StoreConfig.ATTR.DOUBLE_CASH_OWNED,
+	[StoreConfig.GAMEPASS.DOUBLE_UPGRADES] = StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED,
+	[StoreConfig.GAMEPASS.SUPER_LUCK] = StoreConfig.ATTR.SUPER_LUCK_OWNED,
+	[StoreConfig.GAMEPASS.MEGA_LUCK] = StoreConfig.ATTR.MEGA_LUCK_OWNED,
+	[StoreConfig.GAMEPASS.XRAY] = StoreConfig.ATTR.XRAY_OWNED,
+	[StoreConfig.GAMEPASS.AUTOCOLLECT] = StoreConfig.ATTR.AUTOCOLLECT_OWNED,
 }
 
 -- Store gift-panel picker: developer products whose grant is redirected to the

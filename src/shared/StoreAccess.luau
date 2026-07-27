@@ -2,6 +2,7 @@
 --[[
 	Helpers for store ownership checks.
 	Roblox reports UserOwnsGamePassAsync = true for game/group owners even without a purchase.
+	Real Robux purchases are persisted via Purchased* attributes / purchasedGamepasses save data.
 --]]
 
 local M = {}
@@ -36,6 +37,19 @@ end
 function M.hasGiftedGamePass(player: Player, gamePassId: number): boolean
 	local attr = M.getGiftedGamePassAttribute(gamePassId)
 	return attr ~= nil and player:GetAttribute(attr) == true
+end
+
+function M.getPurchasedGamePassAttribute(gamePassId: number): string?
+	return StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID[gamePassId]
+end
+
+function M.hasPurchasedGamePass(player: Player, gamePassId: number): boolean
+	local attr = M.getPurchasedGamePassAttribute(gamePassId)
+	return attr ~= nil and player:GetAttribute(attr) == true
+end
+
+function M.hasEntitledGamePass(player: Player, gamePassId: number): boolean
+	return M.hasGiftedGamePass(player, gamePassId) or M.hasPurchasedGamePass(player, gamePassId)
 end
 
 return M

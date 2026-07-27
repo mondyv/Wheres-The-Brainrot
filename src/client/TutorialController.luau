@@ -760,24 +760,21 @@ local function outlineWorld(adornee: Instance?)
 		or (adornee.Parent ~= nil and adornee.Parent.Name == "UIStands")
 		or adornee:FindFirstAncestor("Upgrade Stand") ~= nil
 	if isUpgradeStand then
-		-- Keep stand UI + outline visible from anywhere in the spawn safezone.
+		-- Keep stand UI visible from anywhere in the spawn safezone.
 		ensureUnlimitedGuiDistance(adornee)
 		local standRoot = if adornee.Name == "Upgrade Stand"
 			then adornee
 			else (adornee:FindFirstAncestor("Upgrade Stand") or adornee)
 		ensureUnlimitedGuiDistance(standRoot)
-		local standProxy = buildStandOutlineProxy(standRoot, host)
-		if standProxy then
-			worldOutlineProxyModel = standProxy
-			highlightAdornee = standProxy
-		end
+		-- Highlight the real stand (fully transparent proxies often render no outline).
+		highlightAdornee = standRoot
 	end
 
 	local hl = Instance.new("Highlight")
 	hl.Name = "TutorialWorldOutline"
 	hl.FillColor = Color3.fromRGB(255, 236, 70)
-	hl.FillTransparency = 0.72
-	hl.OutlineTransparency = 0.05
+	hl.FillTransparency = 0.65
+	hl.OutlineTransparency = 0
 	hl.OutlineColor = Color3.fromRGB(255, 236, 70)
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	hl.Adornee = highlightAdornee
@@ -2303,7 +2300,11 @@ local function watchStepProgress()
 		-- Periodically re-aim world arrows only when missing (don't retarget bushes).
 		if now - lastPointerRefresh > 1.25 then
 			lastPointerRefresh = now
-			if step.id == "swingLand1" or step.id == "visitUpgrade" or step.id == "placeOnPlot" or step.id == "goToBase" then
+			if step.id == "visitUpgrade" then
+				if not worldHighlight or (not worldArrowBb and not uiPointer) then
+					refreshPointers()
+				end
+			elseif step.id == "swingLand1" or step.id == "placeOnPlot" or step.id == "goToBase" then
 				if (not worldArrowBb and not uiPointer) or not worldHighlight then
 					refreshPointers()
 				end
@@ -2323,7 +2324,15 @@ local function watchStepProgress()
 				local btn = cacheUpgradesBuyButton()
 				if btn and isGuiTreeVisible(btn) and not uiPointerStroke then
 					refreshPointers()
+				elseif not (btn and isGuiTreeVisible(btn)) and not worldHighlight then
+					refreshPointers()
 				end
+			end
+		end
+
+		if step.id == "visitUpgrade" and not isCutsceneBusy() then
+			if not worldHighlight then
+				outlineWorld(resolveUpgradeStandModel())
 			end
 		end
 
@@ -2334,9 +2343,13 @@ local function watchStepProgress()
 					clearWorldArrow()
 					pointAtGui(btn, true)
 				end
-			elseif not worldArrowBb then
-				outlineWorld(resolveUpgradeStandModel())
-				pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
+			else
+				if not worldHighlight then
+					outlineWorld(resolveUpgradeStandModel())
+				end
+				if not worldArrowBb then
+					pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
+				end
 			end
 		elseif step.id == "swingLand1" and now - lastLandCheck > 0.35 then
 			lastLandCheck = now

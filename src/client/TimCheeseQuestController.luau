@@ -40,7 +40,7 @@ local dialogueBusy = false
 local lastWalkbyAt = 0.0
 local questGui: ScreenGui? = nil -- persistent tracker ScreenGui
 local questHost: Frame? = nil -- root under questGui
-local questPanel: Frame? = nil
+local questPanel: GuiObject? = nil
 local forcedQuestIndex: number? = nil
 local acceptPopupGui: ScreenGui? = nil
 local questDotsConn: RBXScriptConnection? = nil
@@ -618,7 +618,20 @@ local function startQuestDots()
 	end)
 end
 
--- Solid cheese-ticket tracker (stud texture) on the right HUD after accept fly-in.
+-- Stud tile baked onto ImageLabels. Never use Scale Y overlays inside AutomaticSize
+-- frames — that stretches the panel to the full screen.
+local function paintStudImage(label: ImageLabel, color: Color3, imageTransparency: number)
+	label.BackgroundColor3 = color
+	label.BackgroundTransparency = 0
+	label.BorderSizePixel = 0
+	label.Image = TimCheeseQuestConfig.STUD_TEXTURE
+	label.ImageColor3 = Color3.fromRGB(120, 80, 20)
+	label.ImageTransparency = imageTransparency
+	label.ScaleType = Enum.ScaleType.Tile
+	label.TileSize = UDim2.fromOffset(28, 28)
+end
+
+-- Safe on fixed-height parents only (e.g. progress bar).
 local function addStudOverlay(parent: GuiObject, z: number, transparency: number?)
 	local existing = parent:FindFirstChild("StudOverlay")
 	if existing then
@@ -640,9 +653,9 @@ local function addStudOverlay(parent: GuiObject, z: number, transparency: number
 	return studs
 end
 
-local function ensureQuestHud(): Frame
+local function ensureQuestHud(): GuiObject
 	if questPanel and questPanel.Parent then
-		if questPanel:FindFirstChild("StudOverlay") then
+		if questPanel:GetAttribute("StudTicket") == true then
 			return questPanel
 		end
 		questPanel:Destroy()
@@ -651,15 +664,14 @@ local function ensureQuestHud(): Frame
 	local host = ensureQuestHost()
 	assert(host, "TimCheeseQuestHost missing")
 
-	local ticket = Instance.new("Frame")
+	local ticket = Instance.new("ImageLabel")
 	ticket.Name = "ObjectivePanel"
 	ticket.AnchorPoint = Vector2.new(1, 0)
 	ticket.Position = UDim2.new(1, -TutorialConfig.PANEL_RIGHT_PAD, 0, TutorialConfig.PANEL_TOP_PAD + 36)
 	ticket.Size = UDim2.fromOffset(300, 0)
 	ticket.AutomaticSize = Enum.AutomaticSize.Y
-	ticket.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
-	ticket.BackgroundTransparency = 0
-	ticket.BorderSizePixel = 0
+	paintStudImage(ticket, Color3.fromRGB(255, 214, 74), 0.78)
+	ticket:SetAttribute("StudTicket", true)
 	ticket.Visible = false
 	ticket.ZIndex = 100
 	ticket.ClipsDescendants = true
@@ -673,7 +685,6 @@ local function ensureQuestHud(): Frame
 	ticketStroke.Color = Color3.fromRGB(40, 28, 8)
 	ticketStroke.Thickness = 3.5
 	ticketStroke.Parent = ticket
-	addStudOverlay(ticket, 100, 0.78)
 	local ticketScale = Instance.new("UIScale")
 	ticketScale.Name = "PanelScale"
 	ticketScale.Scale = 1
@@ -686,11 +697,9 @@ local function ensureQuestHud(): Frame
 	pad.PaddingRight = UDim.new(0, 8)
 	pad.Parent = ticket
 
-	local inner = Instance.new("Frame")
+	local inner = Instance.new("ImageLabel")
 	inner.Name = "Inner"
-	inner.BackgroundColor3 = Color3.fromRGB(255, 244, 180)
-	inner.BackgroundTransparency = 0
-	inner.BorderSizePixel = 0
+	paintStudImage(inner, Color3.fromRGB(255, 244, 180), 0.82)
 	inner.Size = UDim2.new(1, 0, 0, 0)
 	inner.AutomaticSize = Enum.AutomaticSize.Y
 	inner.ZIndex = 101
@@ -705,7 +714,6 @@ local function ensureQuestHud(): Frame
 	dash.Thickness = 1.5
 	dash.Transparency = 0.35
 	dash.Parent = inner
-	addStudOverlay(inner, 101, 0.82)
 	local innerPad = Instance.new("UIPadding")
 	innerPad.PaddingTop = UDim.new(0, 10)
 	innerPad.PaddingBottom = UDim.new(0, 10)

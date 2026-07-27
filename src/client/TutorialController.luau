@@ -59,6 +59,7 @@ local worldArrowBb: BillboardGui? = nil
 local worldArrowImg: ImageLabel? = nil
 local arrowAnimConn: RBXScriptConnection? = nil
 local uiPointer: ImageLabel? = nil
+local uiPointerBb: BillboardGui? = nil
 local pointerGui: ScreenGui? = nil
 local _pointerRoot: Frame? = nil
 local uiPointerFollowConn: RBXScriptConnection? = nil
@@ -94,6 +95,15 @@ local lockedBushRoot: Instance? = nil
 local lockedSwingPart: BasePart? = nil
 local uiPointerStroke: UIStroke? = nil
 local uiPointerHost: GuiObject? = nil
+
+-- Confetti only after these milestones (not every tutorial step).
+local CELEBRATE_AFTER_STEP: { [string]: boolean } = {
+	grantCash = true,
+	buyPower = true,
+	claimBrainrot = true,
+	placeOnPlot = true,
+	upgradeBrainrot = true,
+}
 
 local clearWorldArrow: () -> ()
 local clearUiPointer: () -> ()
@@ -597,6 +607,10 @@ local function clearUiPointerImpl()
 		uiPointer:Destroy()
 		uiPointer = nil
 	end
+	if uiPointerBb then
+		uiPointerBb:Destroy()
+		uiPointerBb = nil
+	end
 	uiPointerHost = nil
 	uiPointerForced = false
 	if pointerGui then
@@ -1059,19 +1073,45 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 	end
 	pointer.Size = UDim2.fromOffset(clickSize, clickSize)
 
-	-- Stand upgrade overlay sits at ZIndex 10000 — hand must parent above it or it's invisible.
-	local standOverlay = attachHost:FindFirstChild("__UpgradeOverlay")
-	if standOverlay and standOverlay:IsA("GuiObject") then
-		pointer.ZIndex = 10050
-		pointer.Parent = standOverlay
-	elseif target.Name == "__UpgradeOverlay" then
-		pointer.ZIndex = 10050
-		pointer.Parent = target
+	-- SurfaceGui text (Cost / Level) often paints over in-gui images no matter the ZIndex.
+	-- Use an AlwaysOnTop Billboard for stand upgrade so the click hand is never buried.
+	if underSurface then
+		local adornee: Instance? = underSurface.Adornee
+		if not adornee and underSurface.Parent and underSurface.Parent:IsA("BasePart") then
+			adornee = underSurface.Parent
+		end
+		if adornee then
+			local bb = Instance.new("BillboardGui")
+			bb.Name = "TutorialUiClickBillboard"
+			bb.AlwaysOnTop = true
+			bb.LightInfluence = 0
+			bb.Size = UDim2.fromOffset(clickSize + 16, clickSize + 16)
+			bb.StudsOffset = Vector3.new(0, 0.15, 0)
+			bb.MaxDistance = 120
+			bb.Adornee = adornee
+			local pg = player:FindFirstChildOfClass("PlayerGui")
+			bb.Parent = pg or underSurface
+			pointer.Size = UDim2.fromScale(1, 1)
+			pointer.ZIndex = 10
+			pointer.Parent = bb
+			uiPointerBb = bb
+			uiPointer = pointer
+		else
+			pointer.ZIndex = 200000
+			pointer.Parent = attachHost
+			uiPointer = pointer
+		end
 	else
-		pointer.ZIndex = math.max(attachHost.ZIndex + 200, 250)
-		pointer.Parent = attachHost
+		local standOverlay = attachHost:FindFirstChild("__UpgradeOverlay")
+		if standOverlay and standOverlay:IsA("GuiObject") then
+			pointer.ZIndex = 200000
+			pointer.Parent = standOverlay
+		else
+			pointer.ZIndex = math.max(attachHost.ZIndex + 500, 1000)
+			pointer.Parent = attachHost
+		end
+		uiPointer = pointer
 	end
-	uiPointer = pointer
 
 	task.spawn(function()
 		while uiPointer == pointer and pointer.Parent and active and target.Parent do
@@ -1079,7 +1119,9 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 				break
 			end
 			local up = TweenService:Create(pointer, CLICK_BOUNCE, {
-				Size = UDim2.fromOffset(clickSizeUp, clickSizeUp),
+				Size = if uiPointerBb
+					then UDim2.fromScale(1.12, 1.12)
+					else UDim2.fromOffset(clickSizeUp, clickSizeUp),
 				Rotation = -12,
 			})
 			up:Play()
@@ -1088,7 +1130,9 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 				break
 			end
 			local down = TweenService:Create(pointer, CLICK_BOUNCE, {
-				Size = UDim2.fromOffset(clickSize, clickSize),
+				Size = if uiPointerBb
+					then UDim2.fromScale(1, 1)
+					else UDim2.fromOffset(clickSize, clickSize),
 				Rotation = 8,
 			})
 			down:Play()
@@ -1743,13 +1787,17 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 		return
 	end
 	if index > #TutorialConfig.STEPS then
+		local prevDone = if stepIndex > 0 then TutorialConfig.STEPS[stepIndex] else nil
+		if prevDone and CELEBRATE_AFTER_STEP[prevDone.id] == true then
+			requestCelebrate()
+		end
 		finishTutorial()
 		return
 	end
 	local celebrate = if opts and opts.celebrate == false then false else true
 	local first = stepIndex == 0
-	if celebrate and stepIndex > 0 and index > stepIndex then
-		-- Wait until cutscenes / HUD panels close so confetti isn't buried.
+	local prevStep = if stepIndex > 0 then TutorialConfig.STEPS[stepIndex] else nil
+	if celebrate and prevStep and CELEBRATE_AFTER_STEP[prevStep.id] == true and index > stepIndex then
 		requestCelebrate()
 	end
 	stepIndex = index

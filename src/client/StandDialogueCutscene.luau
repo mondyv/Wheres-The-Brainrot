@@ -60,6 +60,9 @@ export type WorldSpeechOpts = {
 	durationSec: number?,
 	voicePitchMin: number?,
 	voicePitchMax: number?,
+	textSize: number?,
+	billboardWidth: number?,
+	billboardHeight: number?,
 }
 
 local StandDialogueCutscene = {}
@@ -917,7 +920,7 @@ local function ensureGui(): ScreenGui
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.TextYAlignment = Enum.TextYAlignment.Top
 	label.TextWrapped = true
-	label.TextSize = 22
+	label.TextSize = 28
 	label.ZIndex = 31
 	UiFonts.applyBody(label)
 	label.Parent = box
@@ -932,7 +935,7 @@ local function ensureGui(): ScreenGui
 	hint.TextColor3 = Color3.fromRGB(180, 180, 180)
 	hint.TextStrokeTransparency = 0.4
 	hint.TextXAlignment = Enum.TextXAlignment.Right
-	hint.TextSize = 11
+	hint.TextSize = 12
 	hint.ZIndex = 32
 	hint.Visible = false
 	UiFonts.applyBody(hint)
@@ -1379,13 +1382,17 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 		end
 	end
 
+	local bbW = if opts and typeof(opts.billboardWidth) == "number" then opts.billboardWidth else 320
+	local bbH = if opts and typeof(opts.billboardHeight) == "number" then opts.billboardHeight else 72
+	local textSize = if opts and typeof(opts.textSize) == "number" then opts.textSize else 18
+
 	local bb = Instance.new("BillboardGui")
 	bb.Name = WORLD_SPEECH_NAME
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	bb.MaxDistance = WORLD_MAX_DISTANCE
-	bb.Size = UDim2.fromOffset(220, 48)
-	bb.StudsOffset = Vector3.new(0, 2.6, 0)
+	bb.Size = UDim2.fromOffset(bbW, bbH)
+	bb.StudsOffset = Vector3.new(0, 2.8, 0)
 	bb.Adornee = adornee
 	bb.Parent = model
 
@@ -1399,10 +1406,10 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 	label.TextStrokeTransparency = 0.15
 	label.TextWrapped = true
 	label.TextScaled = false
-	label.TextSize = 12
+	label.TextSize = textSize
 	label.TextTransparency = 0
 	UiFonts.applyBody(label)
-	UiFonts.ensureTextSizeConstraint(label, 12, 10)
+	UiFonts.ensureTextSizeConstraint(label, textSize, math.max(12, textSize - 6))
 	label.Parent = bb
 
 	local pad = Instance.new("UIPadding")
@@ -1492,8 +1499,11 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 
 	StandDialogueCutscene.ensureIdleAnimation(brainrot, config.brainrotName)
 	ensureGui()
+	if dialogueLabel then
+		dialogueLabel.TextSize = 28
+	end
 	GameplayUiVisibility.hide({
-		keepScreenGuiNames = { "StandDialogueCutscene", "TutorialObjective", "TutorialUiPointer", "TimCheeseQuestHud" },
+		keepScreenGuiNames = { "StandDialogueCutscene", "TutorialObjective", "TutorialUiPointer", "TimCheeseQuestHud", "TimCheeseQuestTracker" },
 		keepMainChildNames = { "TutorialQuestHost", "TimCheeseQuestHost" },
 	})
 	animateLetterboxIn()

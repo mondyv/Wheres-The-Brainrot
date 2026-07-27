@@ -1038,7 +1038,7 @@ local function refreshQuestHud(opts: { skipRevealGate: boolean?, playAppear: boo
 		end
 	end
 	if reward and reward:IsA("TextLabel") then
-		reward.Text = "★  " .. BrainrotEconomy.formatCashShort(quest.rewardCash)
+		reward.Text = "★  " .. TimCheeseQuestConfig.formatRewardLabel(quest)
 		reward.TextColor3 = Color3.fromRGB(255, 220, 80)
 		reward.BackgroundColor3 = Color3.fromRGB(40, 28, 8)
 		reward.BackgroundTransparency = 0
@@ -1183,7 +1183,7 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	payout.FontFace = Font.fromEnum(Enum.Font.GothamBold)
 	payout.TextSize = 14
 	payout.TextColor3 = Color3.fromRGB(255, 220, 80)
-	payout.Text = "★  " .. BrainrotEconomy.formatCashShort(quest.rewardCash)
+	payout.Text = "★  " .. TimCheeseQuestConfig.formatRewardLabel(quest)
 	payout.Parent = inner
 	local payCorner = Instance.new("UICorner")
 	payCorner.CornerRadius = UDim.new(0, 8)
@@ -1332,7 +1332,7 @@ local function buildOfferLinesForIndex(questIndex: number): { { text: string, sh
 		{ text = lead, shake = true },
 		{ text = string.format("%s — %s", quest.title, quest.description), shake = false },
 		{
-			text = string.format("Reward: %s. You in?", BrainrotEconomy.formatCashShort(quest.rewardCash)),
+			text = string.format("Reward: %s. You in?", TimCheeseQuestConfig.formatRewardLabel(quest)),
 			shake = true,
 		},
 	}
@@ -1340,6 +1340,58 @@ end
 
 local function buildFirstOfferLines(): { { text: string, shake: boolean? } }
 	return buildOfferLinesForIndex(1)
+end
+
+local function setTalkPromptEnabled(on: boolean)
+	if talkPrompt and talkPrompt.Parent then
+		talkPrompt.Enabled = on == true
+		if on then
+			pcall(function()
+				ProximityPromptEffects.stylePrompt(talkPrompt :: ProximityPrompt)
+			end)
+		else
+			pcall(function()
+				ProximityPromptEffects.forceHide(talkPrompt :: ProximityPrompt)
+			end)
+		end
+	end
+end
+
+local function acceptNextQuestAndShowHud(nextIndex: number)
+	forcedQuestIndex = nextIndex
+	questHudRevealed = false
+	local acceptRF = getRF("AcceptQuest")
+	local acceptedOk = false
+	if acceptRF then
+		local ok, result = pcall(function()
+			return acceptRF:InvokeServer()
+		end)
+		acceptedOk = ok and result == true
+		if not acceptedOk then
+			task.wait(0.35)
+			local ok2, result2 = pcall(function()
+				return acceptRF:InvokeServer()
+			end)
+			acceptedOk = ok2 and result2 == true
+			if not acceptedOk then
+				warn("[TimCheeseQuestController] AcceptQuest rejected for quest", nextIndex, result2)
+			end
+		end
+	else
+		warn("[TimCheeseQuestController] AcceptQuest remote missing")
+	end
+	local q = TimCheeseQuestConfig.getQuest(nextIndex)
+	if q then
+		playQuestAcceptPopup(q)
+	else
+		questHudRevealed = true
+		refreshQuestHud({ skipRevealGate = true, playAppear = true })
+	end
+	TopNotifController.showBroadcast("New quest from Tim Cheese!")
+	waitForQuestHud(3)
+	questHudRevealed = true
+	refreshQuestHud({ skipRevealGate = true, playAppear = true })
+	return acceptedOk
 end
 
 function M.playIntroFall()
@@ -1377,7 +1429,8 @@ function M.playIntroFall()
 		return
 	end
 
-	GameplayUiVisibility.hide({ keepScreenGuiNames = { "TimCheeseQuestHud", "StandDialogueCutscene" } })
+	GameplayUiVisibility.hide({ keepScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker", "StandDialogueCutscene" } })
+	setTalkPromptEnabled(false)
 	lockMovement(true)
 	setBgmSlowed(true)
 	local wind = playWindLoop()
@@ -1570,7 +1623,7 @@ function M.openTimDialogue()
 	if not tim then
 		return
 	end
-	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) ~= true then
+	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) ~= true and not introStartedLocal then
 		return
 	end
 
@@ -1579,27 +1632,38 @@ function M.openTimDialogue()
 	local hasQuest = typeof(idx) == "number" and idx >= 1
 	local completed = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR)
 	local doneCount = if typeof(completed) == "number" then completed else 0
+	local claimedIndex = if hasQuest then math.floor(idx :: number) else 0
 
 	-- Mid-mission: custom prompt → bubble only (no cutscene cam).
 	if hasQuest and not ready then
+		setTalkPromptEnabled(false)
 		local lines = TimCheeseQuestConfig.IN_PROGRESS_LINES
 		local msg = lines[math.random(1, #lines)]
 		StandDialogueCutscene.showWorldSpeech(tim, msg, {
 			durationSec = 2.8,
 			voicePitchMin = 0.92,
 			voicePitchMax = 1.12,
+			textSize = 22,
+			billboardWidth = 360,
+			billboardHeight = 88,
 		})
+		task.delay(3.2, function()
+			if not dialogueBusy and not introPlaying then
+				syncPromptAndOutline()
+			end
+		end)
 		return
 	end
 
 	dialogueBusy = true
+	setTalkPromptEnabled(false)
 	setQuestFloatVisible(tim, false)
 	setOutline(tim, false)
 
 	if ready then
 		local claimNow = StandDialogueCutscene.play({
 			standName = "TimCheese",
-			frameName = "TimCheese",
+			frameKey = "TimCheese",
 			brainrotName = TimCheeseQuestConfig.IDLE_ANIM_NAME,
 			enterLabel = "CLAIM",
 			exitLabel = "LATER",
@@ -1613,26 +1677,34 @@ function M.openTimDialogue()
 			return
 		end
 		local claimRF = getRF("ClaimQuest")
-		local ok, reward = false, nil
+		local ok, rewardLabel = false, nil :: any
 		if claimRF then
 			local invokeOk, a, b = pcall(function()
 				return claimRF:InvokeServer()
 			end)
 			if invokeOk then
 				ok = a == true
-				reward = b
+				rewardLabel = b
 			end
 		end
 		forcedQuestIndex = nil
-		if ok and typeof(reward) == "number" then
-			TopNotifController.showBroadcast("+" .. BrainrotEconomy.formatCashShort(reward))
+		if ok then
+			if typeof(rewardLabel) == "string" and rewardLabel ~= "" then
+				TopNotifController.showBroadcast(rewardLabel)
+			elseif typeof(rewardLabel) == "number" then
+				TopNotifController.showBroadcast("+" .. BrainrotEconomy.formatCashShort(rewardLabel))
+			end
 		end
+		-- Prefer the quest we just claimed (attribute may lag a frame).
+		local nextIdx = claimedIndex + 1
 		local completedAfter = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR)
-		local doneAfter = if typeof(completedAfter) == "number" then completedAfter else doneCount + 1
-		if doneAfter >= TimCheeseQuestConfig.questCount() then
+		if typeof(completedAfter) == "number" and completedAfter >= claimedIndex then
+			nextIdx = math.floor(completedAfter) + 1
+		end
+		if nextIdx > TimCheeseQuestConfig.questCount() then
 			StandDialogueCutscene.play({
 				standName = "TimCheese",
-				frameName = "TimCheese",
+				frameKey = "TimCheese",
 				brainrotName = TimCheeseQuestConfig.IDLE_ANIM_NAME,
 				enterLabel = "OK",
 				exitLabel = "BYE",
@@ -1643,34 +1715,20 @@ function M.openTimDialogue()
 		else
 			local wantAnother = StandDialogueCutscene.play({
 				standName = "TimCheese",
-				frameName = "TimCheese",
+				frameKey = "TimCheese",
 				brainrotName = TimCheeseQuestConfig.IDLE_ANIM_NAME,
 				enterLabel = "ACCEPT QUEST",
 				exitLabel = "DECLINE",
-				lines = buildOfferLinesForIndex(doneAfter + 1),
+				lines = buildOfferLinesForIndex(nextIdx),
 				voicePitchMin = 0.92,
 				voicePitchMax = 1.12,
 			}, tim)
 			if wantAnother then
-				forcedQuestIndex = doneAfter + 1
-				questHudRevealed = false
-				local acceptRF = getRF("AcceptQuest")
-				if acceptRF then
-					pcall(function()
-						return acceptRF:InvokeServer()
-					end)
-				end
-				local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex)
-				if q then
-					playQuestAcceptPopup(q)
-				end
-				TopNotifController.showBroadcast("New quest from Tim Cheese!")
-				waitForQuestHud(3)
-				refreshQuestHud()
+				acceptNextQuestAndShowHud(nextIdx)
 			else
 				StandDialogueCutscene.play({
 					standName = "TimCheese",
-					frameName = "TimCheese",
+					frameKey = "TimCheese",
 					brainrotName = TimCheeseQuestConfig.IDLE_ANIM_NAME,
 					enterLabel = "OK",
 					exitLabel = "BYE",
@@ -1681,36 +1739,23 @@ function M.openTimDialogue()
 			end
 		end
 	elseif not hasQuest and doneCount < TimCheeseQuestConfig.questCount() then
+		local nextIdx = math.floor(doneCount) + 1
 		local want = StandDialogueCutscene.play({
 			standName = "TimCheese",
-			frameName = "TimCheese",
+			frameKey = "TimCheese",
 			brainrotName = TimCheeseQuestConfig.IDLE_ANIM_NAME,
 			enterLabel = "ACCEPT QUEST",
 			exitLabel = "DECLINE",
-			lines = buildOfferLinesForIndex(doneCount + 1),
+			lines = buildOfferLinesForIndex(nextIdx),
 			voicePitchMin = 0.92,
 			voicePitchMax = 1.12,
 		}, tim)
 		if want then
-			forcedQuestIndex = doneCount + 1
-			questHudRevealed = false
-			local acceptRF = getRF("AcceptQuest")
-			if acceptRF then
-				pcall(function()
-					return acceptRF:InvokeServer()
-				end)
-			end
-			local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex)
-			if q then
-				playQuestAcceptPopup(q)
-			end
-			TopNotifController.showBroadcast("New quest from Tim Cheese!")
-			waitForQuestHud(3)
-			refreshQuestHud()
+			acceptNextQuestAndShowHud(nextIdx)
 		else
 			StandDialogueCutscene.play({
 				standName = "TimCheese",
-				frameName = "TimCheese",
+				frameKey = "TimCheese",
 				brainrotName = TimCheeseQuestConfig.IDLE_ANIM_NAME,
 				enterLabel = "OK",
 				exitLabel = "BYE",
@@ -1775,7 +1820,7 @@ local function tickWalkby()
 	lastWalkbyAt = os.clock()
 	local lines = TimCheeseQuestConfig.WALKBY_LINES
 	local msg = lines[math.random(1, #lines)]
-	StandDialogueCutscene.showWorldSpeech(tim, msg, { durationSec = 2.6 })
+	StandDialogueCutscene.showWorldSpeech(tim, msg, { durationSec = 2.6, textSize = 20, billboardWidth = 340, billboardHeight = 80 })
 end
 
 function M.init()

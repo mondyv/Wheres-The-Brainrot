@@ -3,6 +3,9 @@
 	Tim Cheese quest NPC (Booster Pack Showers): quest defs, dialogue, map paths.
 ]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+
 local M = {}
 
 M.MAP_FOLDER_NAME = "Booster Pack Showers"
@@ -18,6 +21,7 @@ M.WALKBY_COOLDOWN_SEC = 22
 M.PROGRESS_POLL_SEC = 0.85
 
 export type QuestKind = "place_stands" | "harvest" | "cash" | "income"
+export type RewardKind = "cash" | "lucky_block" | "brainrot"
 
 export type QuestDef = {
 	id: string,
@@ -25,10 +29,17 @@ export type QuestDef = {
 	description: string,
 	kind: QuestKind,
 	target: number,
-	rewardCash: number,
 	showBar: boolean,
+	rewardKind: RewardKind,
+	-- cash
+	rewardCash: number?,
+	-- lucky_block container name under ReplicatedStorage Lucky Blocks
+	rewardLuckyBlock: string?,
+	-- brainrot rarity id (common / uncommon / rare / …)
+	rewardBrainrotRarity: string?,
 }
 
+-- Early jobs stay modest; rewards escalate and mix cash / blocks / brainrots.
 local QUESTS: { QuestDef } = {
 	{
 		id = "place_5",
@@ -36,8 +47,9 @@ local QUESTS: { QuestDef } = {
 		description = "Collect 5 brainrots and put them on your stands.",
 		kind = "place_stands",
 		target = 5,
-		rewardCash = 200_000,
 		showBar = true,
+		rewardKind = "cash",
+		rewardCash = 250_000,
 	},
 	{
 		id = "harvest_10",
@@ -45,8 +57,9 @@ local QUESTS: { QuestDef } = {
 		description = "Search 10 bushes for brainrots.",
 		kind = "harvest",
 		target = 10,
-		rewardCash = 150_000,
 		showBar = true,
+		rewardKind = "lucky_block",
+		rewardLuckyBlock = "Starter Lucky Block",
 	},
 	{
 		id = "cash_500k",
@@ -54,8 +67,9 @@ local QUESTS: { QuestDef } = {
 		description = "Hold at least $500K cash at once.",
 		kind = "cash",
 		target = 500_000,
-		rewardCash = 250_000,
 		showBar = true,
+		rewardKind = "cash",
+		rewardCash = 400_000,
 	},
 	{
 		id = "place_8",
@@ -63,8 +77,9 @@ local QUESTS: { QuestDef } = {
 		description = "Have 8 brainrots placed on your stands.",
 		kind = "place_stands",
 		target = 8,
-		rewardCash = 300_000,
 		showBar = true,
+		rewardKind = "brainrot",
+		rewardBrainrotRarity = "common",
 	},
 	{
 		id = "income_1k",
@@ -72,8 +87,9 @@ local QUESTS: { QuestDef } = {
 		description = "Reach $1K/s plot generation.",
 		kind = "income",
 		target = 1_000,
-		rewardCash = 400_000,
 		showBar = true,
+		rewardKind = "cash",
+		rewardCash = 550_000,
 	},
 	{
 		id = "harvest_25",
@@ -81,8 +97,9 @@ local QUESTS: { QuestDef } = {
 		description = "Search 25 bushes (lifetime this quest).",
 		kind = "harvest",
 		target = 25,
-		rewardCash = 350_000,
 		showBar = true,
+		rewardKind = "lucky_block",
+		rewardLuckyBlock = "Starter Lucky Block",
 	},
 	{
 		id = "place_12",
@@ -90,8 +107,9 @@ local QUESTS: { QuestDef } = {
 		description = "Have 12 brainrots placed on your stands.",
 		kind = "place_stands",
 		target = 12,
-		rewardCash = 500_000,
 		showBar = true,
+		rewardKind = "brainrot",
+		rewardBrainrotRarity = "uncommon",
 	},
 	{
 		id = "cash_2m",
@@ -99,8 +117,9 @@ local QUESTS: { QuestDef } = {
 		description = "Hold at least $2M cash at once.",
 		kind = "cash",
 		target = 2_000_000,
-		rewardCash = 750_000,
 		showBar = true,
+		rewardKind = "cash",
+		rewardCash = 850_000,
 	},
 	{
 		id = "income_10k",
@@ -108,8 +127,9 @@ local QUESTS: { QuestDef } = {
 		description = "Reach $10K/s plot generation.",
 		kind = "income",
 		target = 10_000,
-		rewardCash = 900_000,
 		showBar = true,
+		rewardKind = "brainrot",
+		rewardBrainrotRarity = "rare",
 	},
 	{
 		id = "place_16",
@@ -117,8 +137,9 @@ local QUESTS: { QuestDef } = {
 		description = "Have 16 brainrots placed on your stands.",
 		kind = "place_stands",
 		target = 16,
-		rewardCash = 1_000_000,
 		showBar = true,
+		rewardKind = "cash",
+		rewardCash = 1_250_000,
 	},
 }
 
@@ -127,12 +148,12 @@ M.QUESTS = QUESTS
 M.INTRO_LINES = {
 	{ text = "HEY!! YOU MADE IT OUT OF THE TUTORIAL ALIVE!!", shake = true },
 	{ text = "I'm TIM CHEESE. Official quest dealer. Semi-official comedian.", shake = false },
-	{ text = "Finish jobs for me and I'll shower you in CASH. Ready when you are.", shake = true },
+	{ text = "Finish jobs for me and I'll pay in CASH, LUCKY BLOCKS, even BRAINROTS. Ready?", shake = true },
 }
 
 M.COMPLETE_LINES = {
 	{ text = "QUEST COMPLETE!! You actually did it!!", shake = true },
-	{ text = "Here's your reward — don't spend it all on one lucky block...", shake = false },
+	{ text = "Here's your reward — don't waste it!!", shake = false },
 }
 
 M.OFFER_LINES = {
@@ -174,6 +195,18 @@ M.STUD_TEXTURE = "rbxassetid://6065821980"
 M.NO_QUEST_OVERHEAD = "Quests"
 M.HAS_QUEST_OVERHEAD = "Quest Active"
 M.READY_OVERHEAD = "Talk to claim!"
+
+function M.formatRewardLabel(quest: QuestDef): string
+	if quest.rewardKind == "cash" then
+		return BrainrotEconomy.formatCashShort(quest.rewardCash or 0)
+	elseif quest.rewardKind == "lucky_block" then
+		return quest.rewardLuckyBlock or "Lucky Block"
+	elseif quest.rewardKind == "brainrot" then
+		local rarity = quest.rewardBrainrotRarity or "common"
+		return string.upper(string.sub(rarity, 1, 1)) .. string.sub(rarity, 2) .. " Brainrot"
+	end
+	return "Reward"
+end
 
 function M.getQuest(index: number): QuestDef?
 	return M.QUESTS[index]

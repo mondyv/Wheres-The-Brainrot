@@ -11,8 +11,10 @@ local Workspace = game:GetService("Workspace")
 
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
+local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local Brainrots = require(script.Parent.Modules:WaitForChild("Brainrots"))
 local PlayerDataService = require(script.Parent.Modules:WaitForChild("PlayerDataService"))
+local ItemService = require(script.Parent.Modules:WaitForChild("ItemService"))
 
 local STAND_TAG = "BrainrotStand"
 local REMOTES_FOLDER = "TimCheeseQuestRemotes"
@@ -149,6 +151,51 @@ local function addCash(player: Player, amount: number)
 	player:SetAttribute("Cash", c + math.max(0, math.floor(amount)))
 end
 
+local function grantLuckyBlock(player: Player, blockName: string): boolean
+	local folder = ServerStorage:FindFirstChild("LuckyBlockInternal")
+	local bf = folder and folder:FindFirstChild("GrantLuckyBlock")
+	if not (bf and bf:IsA("BindableFunction")) then
+		warn("[TimCheeseQuest] GrantLuckyBlock missing")
+		return false
+	end
+	local ok, success = pcall(function()
+		return (bf :: BindableFunction):Invoke(player, blockName, { equip = true })
+	end)
+	if not ok then
+		warn("[TimCheeseQuest] GrantLuckyBlock error:", success)
+		return false
+	end
+	return success == true
+end
+
+local function grantQuestReward(player: Player, quest: TimCheeseQuestConfig.QuestDef): (boolean, string)
+	local label = TimCheeseQuestConfig.formatRewardLabel(quest)
+	if quest.rewardKind == "cash" then
+		local amt = quest.rewardCash or 0
+		addCash(player, amt)
+		return true, "+" .. BrainrotEconomy.formatCashShort(amt)
+	elseif quest.rewardKind == "lucky_block" then
+		local blockName = quest.rewardLuckyBlock or "Starter Lucky Block"
+		if grantLuckyBlock(player, blockName) then
+			return true, label
+		end
+		-- Fallback cash so claim never soft-locks.
+		addCash(player, 200_000)
+		warn("[TimCheeseQuest] lucky block grant failed; gave $200K fallback")
+		return true, "+$200K (fallback)"
+	elseif quest.rewardKind == "brainrot" then
+		local rarity = quest.rewardBrainrotRarity or "common"
+		local ok, err = ItemService:GiveRandomBrainrot(player, rarity, { equip = true })
+		if ok then
+			return true, label
+		end
+		warn("[TimCheeseQuest] brainrot grant failed:", err)
+		addCash(player, 200_000)
+		return true, "+$200K (fallback)"
+	end
+	return false, "no reward"
+end
+
 local function computeProgress(player: Player, quest: TimCheeseQuestConfig.QuestDef): number
 	if quest.kind == "place_stands" then
 		return countPlacedStands(player)
@@ -245,7 +292,7 @@ declineQuestRF.OnServerInvoke = function(player: Player): boolean
 	return true
 end
 
-claimQuestRF.OnServerInvoke = function(player: Player): (boolean, number?)
+claimQuestRF.OnServerInvoke = function(player: Player): (boolean, string?)
 	if not PlayerDataService.waitUntilLoaded(player) then
 		return false, nil
 	end
@@ -266,7 +313,10 @@ claimQuestRF.OnServerInvoke = function(player: Player): (boolean, number?)
 	if doneCount >= math.floor(idx) then
 		return false, nil
 	end
-	addCash(player, quest.rewardCash)
+	local granted, label = grantQuestReward(player, quest)
+	if not granted then
+		return false, nil
+	end
 	PlayerDataService.setTimCheeseQuestState(player, {
 		questIndex = 0,
 		questProgress = 0,
@@ -274,7 +324,7 @@ claimQuestRF.OnServerInvoke = function(player: Player): (boolean, number?)
 		completedCount = math.floor(idx),
 		questReady = false,
 	})
-	return true, quest.rewardCash
+	return true, label
 end
 
 -- BushHarvest fires this when a search attempt succeeds (found or empty).

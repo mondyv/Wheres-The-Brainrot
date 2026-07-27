@@ -1,8 +1,9 @@
 -- [ACTIVE] PlotOutlineController
 --[[
 	Safezone only, YOUR plot only:
-	• SelectionBox around the full base footprint (no Highlight — that washed floor textures).
-	• Studio PlotGUI "Your Plot" + arrow, hard size-capped, same distance fade.
+	• Highlight wraps plot silhouettes via an invisible proxy Model (never adorns the
+	  real plot — Highlight on the live base washes floor textures).
+	• Studio PlotGUI "Your Plot" + arrow, small hard size lock, same distance fade.
 ]]
 
 local Players = game:GetService("Players")
@@ -20,18 +21,19 @@ local POLL_INTERVAL = 0.12
 local FADE_START_DIST = 72
 local FADE_END_DIST = 18
 local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
-local OUTLINE_FAR_TRANSPARENCY = 0.38
-local BOX_LINE_THICKNESS = 0.14
--- Hard pixel lock — Studio PlotGUI grows huge with Scale/TextScaled.
-local MARKER_W = 56
-local MARKER_H = 48
-local MARKER_TEXT_SIZE = 12
+local OUTLINE_FAR_TRANSPARENCY = 0.35
+local MAX_PROXY_PARTS = 80
+-- Small hard lock — Studio PlotGUI blows up with Scale/TextScaled.
+local MARKER_W = 40
+local MARKER_H = 34
+local MARKER_TEXT_SIZE = 9
 local MARKER_MAX_DISTANCE = 140
 
 local PlotOutlineController = {}
 
-local selectionBox: SelectionBox? = nil
-local outlineProxy: BasePart? = nil
+local plotHighlight: Highlight? = nil
+local outlineProxyModel: Model? = nil
+local outlineBuiltFor: Instance? = nil
 local pollConn: RBXScriptConnection? = nil
 local accum = 0
 local cachedPlot: Instance? = nil
@@ -45,14 +47,15 @@ local function isOwnedByLocalPlayer(plot: Instance): boolean
 end
 
 local function destroyOutline()
-	if selectionBox then
-		selectionBox:Destroy()
-		selectionBox = nil
+	if plotHighlight then
+		plotHighlight:Destroy()
+		plotHighlight = nil
 	end
-	if outlineProxy then
-		outlineProxy:Destroy()
-		outlineProxy = nil
+	if outlineProxyModel then
+		outlineProxyModel:Destroy()
+		outlineProxyModel = nil
 	end
+	outlineBuiltFor = nil
 end
 
 local function isYourPlotMarker(inst: Instance, plotRoot: Instance): boolean
@@ -93,7 +96,6 @@ local function refreshMarkers(plot: Instance?)
 		if d:IsA("BillboardGui") and isYourPlotMarker(d, plot) then
 			table.insert(cachedMarkers, d)
 		elseif d:IsA("SurfaceGui") and isYourPlotMarker(d, plot) then
-			-- SurfaceGui markers balloon with part size — keep off.
 			(d :: SurfaceGui).Enabled = false
 		end
 	end
@@ -112,7 +114,6 @@ local function stripScaleHacks(root: Instance)
 end
 
 local function lockMarkerLook(bb: BillboardGui)
-	-- Force offset pixels every tick so Studio Scale size cannot win.
 	bb.Size = UDim2.new(0, MARKER_W, 0, MARKER_H)
 	bb.MaxDistance = MARKER_MAX_DISTANCE
 	bb.AlwaysOnTop = true
@@ -129,10 +130,9 @@ local function lockMarkerLook(bb: BillboardGui)
 				constraint.Parent = label
 			end
 			constraint.MaxTextSize = MARKER_TEXT_SIZE
-			constraint.MinTextSize = 8
+			constraint.MinTextSize = 7
 		elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
 			local img = d :: ImageLabel
-			-- Keep authored relative layout; don't stretch images past the billboard.
 			if img.Size.X.Scale > 1 or img.Size.Y.Scale > 1 then
 				img.Size = UDim2.fromScale(1, 1)
 			end
@@ -167,58 +167,115 @@ local function applyMarkerFade(transparency: number, visible: boolean)
 	end
 end
 
--- Invisible proxy for SelectionBox — does not touch plot materials/textures.
-local function ensureFloorOutlineProxy(plot: Instance): BasePart?
-	local cf, size = PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot)
-	if not cf or not size then
-		return nil
+local function shouldMirrorPart(part: BasePart): boolean
+	if part.Transparency >= 0.98 then
+		return false
 	end
-	local proxy = outlineProxy
-	if not proxy or not proxy.Parent then
-		if proxy then
-			proxy:Destroy()
-		end
-		proxy = Instance.new("Part")
-		proxy.Name = "PlotSafezoneOutlineProxy"
-		proxy.Anchored = true
-		proxy.CanCollide = false
-		proxy.CanQuery = false
-		proxy.CanTouch = false
-		proxy.CastShadow = false
-		proxy.Massless = true
-		proxy.Transparency = 1
-		proxy.Material = Enum.Material.SmoothPlastic
-		proxy.Parent = Workspace.CurrentCamera or plot
-		outlineProxy = proxy
+	local vol = part.Size.X * part.Size.Y * part.Size.Z
+	if vol < 1.5 then
+		return false
 	end
-	proxy.Size = size
-	proxy.CFrame = cf
-	return proxy
+	local n = string.lower(part.Name)
+	if string.find(n, "humanoid", 1, true) or n == "handle" then
+		return false
+	end
+	return true
 end
 
-local function ensureOutline(plot: Instance): SelectionBox?
-	local proxy = ensureFloorOutlineProxy(plot)
+local function mirrorPartInto(model: Model, src: BasePart)
+	local clone = src:Clone()
+	for _, ch in ipairs(clone:GetChildren()) do
+		if
+			ch:IsA("Texture")
+			or ch:IsA("Decal")
+			or ch:IsA("SurfaceAppearance")
+			or ch:IsA("SurfaceGui")
+			or ch:IsA("BillboardGui")
+			or ch:IsA("ProximityPrompt")
+			or ch:IsA("ClickDetector")
+			or ch:IsA("Script")
+			or ch:IsA("LocalScript")
+			or ch:IsA("Highlight")
+		then
+			ch:Destroy()
+		end
+	end
+	clone.Anchored = true
+	clone.CanCollide = false
+	clone.CanQuery = false
+	clone.CanTouch = false
+	clone.CastShadow = false
+	clone.Massless = true
+	clone.Transparency = 1
+	clone.Parent = model
+end
+
+-- Invisible clones of story meshes — Highlight adorns these, not the live plot.
+local function ensureOutlineProxyModel(plot: Instance): Model?
+	if outlineProxyModel and outlineProxyModel.Parent and outlineBuiltFor == plot then
+		return outlineProxyModel
+	end
+
+	if outlineProxyModel then
+		outlineProxyModel:Destroy()
+		outlineProxyModel = nil
+	end
+
+	local story1 = PlotPaths.firstStoryFolder(plot) or plot
+	local model = Instance.new("Model")
+	model.Name = "PlotSafezoneOutlineProxy"
+	model.Parent = Workspace.CurrentCamera or plot
+
+	local scored: { { part: BasePart, vol: number } } = {}
+	for _, d in ipairs(story1:GetDescendants()) do
+		if d:IsA("BasePart") and shouldMirrorPart(d) then
+			local p = d :: BasePart
+			local vol = p.Size.X * p.Size.Y * p.Size.Z
+			table.insert(scored, { part = p, vol = vol })
+		end
+	end
+	table.sort(scored, function(a, b)
+		return a.vol > b.vol
+	end)
+
+	local n = math.min(#scored, MAX_PROXY_PARTS)
+	for i = 1, n do
+		mirrorPartInto(model, scored[i].part)
+	end
+
+	if n == 0 then
+		model:Destroy()
+		return nil
+	end
+
+	outlineProxyModel = model
+	outlineBuiltFor = plot
+	return model
+end
+
+local function ensureOutline(plot: Instance): Highlight?
+	local proxy = ensureOutlineProxyModel(plot)
 	if not proxy then
 		return nil
 	end
-	local box = selectionBox
-	if not box or not box.Parent or box.Adornee ~= proxy then
-		if box then
-			box:Destroy()
+
+	local hl = plotHighlight
+	if not hl or not hl.Parent or hl.Adornee ~= proxy then
+		if hl then
+			hl:Destroy()
 		end
-		box = Instance.new("SelectionBox")
-		box.Name = "PlotSafezoneOutlineBox"
-		box.Color3 = OUTLINE_COLOR
-		box.SurfaceColor3 = OUTLINE_COLOR
-		box.SurfaceTransparency = 1
-		box.LineThickness = BOX_LINE_THICKNESS
-		box.Transparency = 1
-		box.Visible = false
-		box.Adornee = proxy
-		box.Parent = Workspace.CurrentCamera or plot
-		selectionBox = box
+		hl = Instance.new("Highlight")
+		hl.Name = "PlotSafezoneOutline"
+		hl.FillTransparency = 1
+		hl.OutlineTransparency = 1
+		hl.OutlineColor = OUTLINE_COLOR
+		hl.DepthMode = Enum.HighlightDepthMode.Occluded
+		hl.Enabled = false
+		hl.Adornee = proxy
+		hl.Parent = Workspace.CurrentCamera or plot
+		plotHighlight = hl
 	end
-	return box
+	return hl
 end
 
 local function resolvePlotCenter(plot: Instance): Vector3?
@@ -277,9 +334,9 @@ end
 local function tickOutline()
 	local character = player.Character
 	if not character or not SafezoneUtil.isCharacterInSafezone(character) then
-		if selectionBox then
-			selectionBox.Visible = false
-			selectionBox.Transparency = 1
+		if plotHighlight then
+			plotHighlight.Enabled = false
+			plotHighlight.OutlineTransparency = 1
 		end
 		applyMarkerFade(1, false)
 		return
@@ -308,12 +365,12 @@ local function tickOutline()
 	local transparency = outlineTransparencyForDistance(dist)
 	local visible = transparency < 0.995
 
-	local box = ensureOutline(plot)
-	if box then
-		box.Visible = visible
-		box.Transparency = transparency
-		box.LineThickness = BOX_LINE_THICKNESS
-		box.Color3 = OUTLINE_COLOR
+	local hl = ensureOutline(plot)
+	if hl then
+		hl.Enabled = visible
+		hl.OutlineTransparency = transparency
+		hl.OutlineColor = OUTLINE_COLOR
+		hl.FillTransparency = 1
 	end
 	applyMarkerFade(transparency, visible)
 end

@@ -1,9 +1,8 @@
 -- [ACTIVE] PlotOutlineController
 --[[
 	Safezone only, YOUR plot only:
-	• Highlight outline wrapping the owned plot meshes (fades as you approach).
-	• Studio PlotGUI "Your Plot" + arrow — keep the authored look, soft size lock,
-	  same distance fade. Never show on other players' bases.
+	• SelectionBox around the full base footprint (no Highlight — that washed floor textures).
+	• Studio PlotGUI "Your Plot" + arrow, hard size-capped, same distance fade.
 ]]
 
 local Players = game:GetService("Players")
@@ -21,19 +20,23 @@ local POLL_INTERVAL = 0.12
 local FADE_START_DIST = 72
 local FADE_END_DIST = 18
 local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
-local OUTLINE_FAR_TRANSPARENCY = 0.35
--- Soft lock so PlotGUI never blows up; matches the good Studio look (~80–100px).
-local MARKER_SIZE = UDim2.fromOffset(88, 72)
-local MARKER_MAX_DISTANCE = 160
+local OUTLINE_FAR_TRANSPARENCY = 0.38
+local BOX_LINE_THICKNESS = 0.14
+-- Hard pixel lock — Studio PlotGUI grows huge with Scale/TextScaled.
+local MARKER_W = 56
+local MARKER_H = 48
+local MARKER_TEXT_SIZE = 12
+local MARKER_MAX_DISTANCE = 140
 
 local PlotOutlineController = {}
 
-local plotHighlight: Highlight? = nil
+local selectionBox: SelectionBox? = nil
+local outlineProxy: BasePart? = nil
 local pollConn: RBXScriptConnection? = nil
 local accum = 0
 local cachedPlot: Instance? = nil
 local cachedCenter: Vector3? = nil
-local cachedMarkers: { LayerCollector } = {}
+local cachedMarkers: { BillboardGui } = {}
 local wired = false
 
 local function isOwnedByLocalPlayer(plot: Instance): boolean
@@ -42,9 +45,13 @@ local function isOwnedByLocalPlayer(plot: Instance): boolean
 end
 
 local function destroyOutline()
-	if plotHighlight then
-		plotHighlight:Destroy()
-		plotHighlight = nil
+	if selectionBox then
+		selectionBox:Destroy()
+		selectionBox = nil
+	end
+	if outlineProxy then
+		outlineProxy:Destroy()
+		outlineProxy = nil
 	end
 end
 
@@ -83,36 +90,54 @@ local function refreshMarkers(plot: Instance?)
 		return
 	end
 	for _, d in ipairs(plot:GetDescendants()) do
-		if (d:IsA("BillboardGui") or d:IsA("SurfaceGui")) and isYourPlotMarker(d, plot) then
-			table.insert(cachedMarkers, d :: LayerCollector)
+		if d:IsA("BillboardGui") and isYourPlotMarker(d, plot) then
+			table.insert(cachedMarkers, d)
+		elseif d:IsA("SurfaceGui") and isYourPlotMarker(d, plot) then
+			-- SurfaceGui markers balloon with part size — keep off.
+			(d :: SurfaceGui).Enabled = false
 		end
 	end
 end
 
-local function lockMarkerLook(gui: LayerCollector)
-	if gui:IsA("BillboardGui") then
-		local bb = gui :: BillboardGui
-		bb.Size = MARKER_SIZE
-		bb.MaxDistance = MARKER_MAX_DISTANCE
-		bb.AlwaysOnTop = true
-		bb.LightInfluence = 0
-		-- Strip scale hacks from earlier passes so Studio art stays crisp.
-		local sc = bb:FindFirstChild("PlotMarkerScaleCap")
-		if sc then
-			sc:Destroy()
+local function stripScaleHacks(root: Instance)
+	for _, d in ipairs(root:GetDescendants()) do
+		if d:IsA("UIScale") then
+			d:Destroy()
 		end
-		for _, d in ipairs(bb:GetDescendants()) do
-			local bad = d:FindFirstChild("PlotMarkerScaleCap")
-			if bad then
-				bad:Destroy()
+	end
+	local rootScale = root:FindFirstChildOfClass("UIScale")
+	if rootScale then
+		rootScale:Destroy()
+	end
+end
+
+local function lockMarkerLook(bb: BillboardGui)
+	-- Force offset pixels every tick so Studio Scale size cannot win.
+	bb.Size = UDim2.new(0, MARKER_W, 0, MARKER_H)
+	bb.MaxDistance = MARKER_MAX_DISTANCE
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	stripScaleHacks(bb)
+	for _, d in ipairs(bb:GetDescendants()) do
+		if d:IsA("TextLabel") or d:IsA("TextButton") then
+			local label = d :: TextLabel
+			label.TextScaled = false
+			label.TextSize = MARKER_TEXT_SIZE
+			local constraint = label:FindFirstChildOfClass("UITextSizeConstraint")
+			if not constraint then
+				constraint = Instance.new("UITextSizeConstraint")
+				constraint.Parent = label
 			end
-			if d:IsA("UIScale") and d.Name == "PlotMarkerScaleCap" then
-				d:Destroy()
+			constraint.MaxTextSize = MARKER_TEXT_SIZE
+			constraint.MinTextSize = 8
+		elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
+			local img = d :: ImageLabel
+			-- Keep authored relative layout; don't stretch images past the billboard.
+			if img.Size.X.Scale > 1 or img.Size.Y.Scale > 1 then
+				img.Size = UDim2.fromScale(1, 1)
 			end
+			img.ScaleType = Enum.ScaleType.Fit
 		end
-	elseif gui:IsA("SurfaceGui") then
-		-- Prefer billboard PlotGUI; keep SurfaceGui markers off (they look wrong up close).
-		(gui :: SurfaceGui).Enabled = false
 	end
 end
 
@@ -121,23 +146,18 @@ local function applyMarkerFade(transparency: number, visible: boolean)
 		visible = false
 		transparency = 1
 	end
-	for _, gui in ipairs(cachedMarkers) do
-		if not gui.Parent then
+	for _, bb in ipairs(cachedMarkers) do
+		if not bb.Parent then
 			continue
 		end
-		if gui:IsA("SurfaceGui") then
-			gui.Enabled = false
-			continue
-		end
-		lockMarkerLook(gui)
-		gui.Enabled = visible
+		lockMarkerLook(bb)
+		bb.Enabled = visible
 		if not visible then
 			continue
 		end
-		for _, d in ipairs(gui:GetDescendants()) do
+		for _, d in ipairs(bb:GetDescendants()) do
 			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
-				local img = d :: ImageLabel
-				img.ImageTransparency = transparency
+				(d :: ImageLabel).ImageTransparency = transparency
 			elseif d:IsA("TextLabel") or d:IsA("TextButton") then
 				local text = d :: TextLabel
 				text.TextTransparency = transparency
@@ -147,24 +167,58 @@ local function applyMarkerFade(transparency: number, visible: boolean)
 	end
 end
 
-local function ensureOutline(plot: Instance): Highlight?
-	local hl = plotHighlight
-	if not hl or not hl.Parent or hl.Adornee ~= plot then
-		if hl then
-			hl:Destroy()
-		end
-		hl = Instance.new("Highlight")
-		hl.Name = "PlotSafezoneOutline"
-		hl.FillTransparency = 1
-		hl.OutlineTransparency = 1
-		hl.OutlineColor = OUTLINE_COLOR
-		hl.DepthMode = Enum.HighlightDepthMode.Occluded
-		hl.Enabled = false
-		hl.Adornee = plot
-		hl.Parent = Workspace.CurrentCamera or plot
-		plotHighlight = hl
+-- Invisible proxy for SelectionBox — does not touch plot materials/textures.
+local function ensureFloorOutlineProxy(plot: Instance): BasePart?
+	local cf, size = PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot)
+	if not cf or not size then
+		return nil
 	end
-	return hl
+	local proxy = outlineProxy
+	if not proxy or not proxy.Parent then
+		if proxy then
+			proxy:Destroy()
+		end
+		proxy = Instance.new("Part")
+		proxy.Name = "PlotSafezoneOutlineProxy"
+		proxy.Anchored = true
+		proxy.CanCollide = false
+		proxy.CanQuery = false
+		proxy.CanTouch = false
+		proxy.CastShadow = false
+		proxy.Massless = true
+		proxy.Transparency = 1
+		proxy.Material = Enum.Material.SmoothPlastic
+		proxy.Parent = Workspace.CurrentCamera or plot
+		outlineProxy = proxy
+	end
+	proxy.Size = size
+	proxy.CFrame = cf
+	return proxy
+end
+
+local function ensureOutline(plot: Instance): SelectionBox?
+	local proxy = ensureFloorOutlineProxy(plot)
+	if not proxy then
+		return nil
+	end
+	local box = selectionBox
+	if not box or not box.Parent or box.Adornee ~= proxy then
+		if box then
+			box:Destroy()
+		end
+		box = Instance.new("SelectionBox")
+		box.Name = "PlotSafezoneOutlineBox"
+		box.Color3 = OUTLINE_COLOR
+		box.SurfaceColor3 = OUTLINE_COLOR
+		box.SurfaceTransparency = 1
+		box.LineThickness = BOX_LINE_THICKNESS
+		box.Transparency = 1
+		box.Visible = false
+		box.Adornee = proxy
+		box.Parent = Workspace.CurrentCamera or plot
+		selectionBox = box
+	end
+	return box
 end
 
 local function resolvePlotCenter(plot: Instance): Vector3?
@@ -223,9 +277,9 @@ end
 local function tickOutline()
 	local character = player.Character
 	if not character or not SafezoneUtil.isCharacterInSafezone(character) then
-		if plotHighlight then
-			plotHighlight.Enabled = false
-			plotHighlight.OutlineTransparency = 1
+		if selectionBox then
+			selectionBox.Visible = false
+			selectionBox.Transparency = 1
 		end
 		applyMarkerFade(1, false)
 		return
@@ -254,12 +308,12 @@ local function tickOutline()
 	local transparency = outlineTransparencyForDistance(dist)
 	local visible = transparency < 0.995
 
-	local hl = ensureOutline(plot)
-	if hl then
-		hl.Enabled = visible
-		hl.OutlineTransparency = transparency
-		hl.OutlineColor = OUTLINE_COLOR
-		hl.FillTransparency = 1
+	local box = ensureOutline(plot)
+	if box then
+		box.Visible = visible
+		box.Transparency = transparency
+		box.LineThickness = BOX_LINE_THICKNESS
+		box.Color3 = OUTLINE_COLOR
 	end
 	applyMarkerFade(transparency, visible)
 end

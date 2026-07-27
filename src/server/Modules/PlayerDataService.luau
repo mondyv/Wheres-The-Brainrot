@@ -1323,6 +1323,41 @@ function M.setTutorialCashGranted(player: Player, granted: boolean)
 	end
 end
 
+-- Admin/tools: set swing upgrade levels (allows downgrade; updates lastGood so save merge won't revert).
+function M.setSwingUpgradeLevels(
+	player: Player,
+	patch: { power: number?, rope: number?, carry: number? }
+): SwingUpgrades.UpgradeLevels
+	local levels = SwingUpgrades.readLevels(function(name: string)
+		return player:GetAttribute(name)
+	end)
+	if typeof(patch.power) == "number" then
+		levels.power = math.max(0, math.floor(patch.power))
+	end
+	if typeof(patch.rope) == "number" then
+		levels.rope = math.max(0, math.floor(patch.rope))
+	end
+	if typeof(patch.carry) == "number" then
+		levels.carry = math.clamp(math.floor(patch.carry), 0, SwingUpgrades.MAX_CARRY_UPGRADE_LEVEL)
+	end
+
+	player:SetAttribute(SwingUpgrades.POWER_LEVEL_ATTR, levels.power)
+	player:SetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR, levels.rope)
+	player:SetAttribute(SwingUpgrades.CARRY_LEVEL_ATTR, levels.carry)
+	SwingUpgrades.syncGameplayStatsFromLevels(player, levels)
+
+	local prev = lastGoodPayload[player.UserId]
+	if prev then
+		prev.powerLevel = levels.power
+		prev.ropeLevel = levels.rope
+		prev.carryLevel = levels.carry
+	end
+	if player:GetAttribute(LOADED_ATTR) == true then
+		M.savePlayerData(player)
+	end
+	return levels
+end
+
 function M.replayTutorial(player: Player)
 	if not player.Parent then
 		return

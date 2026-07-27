@@ -11,6 +11,7 @@ local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Br
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local AdminBroadcastService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminBroadcastService"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
@@ -196,7 +197,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, tp, tpland, spectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
+			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, setcarry, setreach, tp, tpland, spectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -1206,6 +1207,80 @@ commands.rebirth = {
 		return true, string.format("Rebirthed %s (now rebirth %d).", target.Name, count)
 	end,
 }
+
+local MAX_ADMIN_POWER_REACH_LEVEL = 100_000
+
+local function runSetSwingLevel(
+	sender: Player,
+	args: { string },
+	usage: string,
+	statKey: "power" | "rope" | "carry",
+	label: string
+): (boolean, string)
+	if not args[1] or not args[2] then
+		return false, "Usage: " .. usage
+	end
+	local level = tonumber(args[2])
+	if not level then
+		return false, "Level must be a number."
+	end
+	level = math.floor(level)
+	if statKey == "carry" then
+		if level < 0 or level > SwingUpgrades.MAX_CARRY_UPGRADE_LEVEL then
+			return false, string.format("Carry level must be 0–%d.", SwingUpgrades.MAX_CARRY_UPGRADE_LEVEL)
+		end
+	elseif level < 0 or level > MAX_ADMIN_POWER_REACH_LEVEL then
+		return false, string.format("%s level must be 0–%d.", label, MAX_ADMIN_POWER_REACH_LEVEL)
+	end
+
+	local targets, targetErr = resolveTargets(sender, args[1], true)
+	if not targets then
+		return false, targetErr or "No target."
+	end
+
+	for _, target in targets do
+		PlayerDataService.waitUntilLoaded(target)
+		if statKey == "power" then
+			PlayerDataService.setSwingUpgradeLevels(target, { power = level })
+		elseif statKey == "rope" then
+			PlayerDataService.setSwingUpgradeLevels(target, { rope = level })
+		else
+			PlayerDataService.setSwingUpgradeLevels(target, { carry = level })
+		end
+	end
+
+	return true, string.format("Set %s level to %d for %d player(s).", label, level, #targets)
+end
+
+commands.setpower = {
+	usage = "setpower <player|me|all> <level>",
+	description = "Set Power upgrade level (SwingForce).",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		return runSetSwingLevel(sender, args, commands.setpower.usage, "power", "Power")
+	end,
+}
+commands.power = commands.setpower
+commands.setforce = commands.setpower
+
+commands.setcarry = {
+	usage = "setcarry <player|me|all> <level>",
+	description = "Set Carry upgrade level (max 10).",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		return runSetSwingLevel(sender, args, commands.setcarry.usage, "carry", "Carry")
+	end,
+}
+commands.carry = commands.setcarry
+
+commands.setreach = {
+	usage = "setreach <player|me|all> <level>",
+	description = "Set Swing Reach (rope) upgrade level.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		return runSetSwingLevel(sender, args, commands.setreach.usage, "rope", "Reach")
+	end,
+}
+commands.setrope = commands.setreach
+commands.reach = commands.setreach
+commands.rope = commands.setreach
 
 commands.playtutorial = {
 	usage = "playtutorial",

@@ -150,6 +150,12 @@ local COMMAND_ALIASES: { [string]: string } = {
 	teleport = "tp",
 	["goto"] = "tp",
 	spec = "spectate",
+	power = "setpower",
+	setforce = "setpower",
+	carry = "setcarry",
+	reach = "setreach",
+	rope = "setreach",
+	setrope = "setreach",
 }
 
 local COMMAND_HINTS: { [string]: string } = {
@@ -173,6 +179,9 @@ local COMMAND_HINTS: { [string]: string } = {
 	kick = "Kick a player from this server",
 	ban = "Ban a player from the experience",
 	unban = "Remove an experience ban",
+	setpower = "Set Power upgrade level",
+	setcarry = "Set Carry upgrade level (max 10)",
+	setreach = "Set Swing Reach upgrade level",
 	playtutorial = "Replay the first-join tutorial",
 	fly = "Toggle fly mode for yourself",
 }
@@ -382,6 +391,9 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "ban PlayerName 7d", hint = COMMAND_HINTS.ban },
 		{ fill = "ban PlayerName forever", hint = "Permanent experience ban" },
 		{ fill = "unban PlayerName", hint = COMMAND_HINTS.unban },
+		{ fill = "setpower me 50", hint = COMMAND_HINTS.setpower },
+		{ fill = "setcarry me 5", hint = COMMAND_HINTS.setcarry },
+		{ fill = "setreach me 50", hint = COMMAND_HINTS.setreach },
 		{ fill = "playtutorial", hint = COMMAND_HINTS.playtutorial },
 		{ fill = "spectate PlayerName", hint = COMMAND_HINTS.spectate },
 		{ fill = "spectate off", hint = "Stop spectating" },
@@ -437,6 +449,9 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 		or cmdName == "kick"
 		or cmdName == "ban"
 		or cmdName == "unban"
+		or cmdName == "setpower"
+		or cmdName == "setcarry"
+		or cmdName == "setreach"
 		or cmdName == "tp"
 		or cmdName == "spectate"
 	then
@@ -455,6 +470,18 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 					if startsWith(sample, partial) then
 						pushSuggestion(out, prefix .. sample, "stop spectating")
 					end
+				end
+			end
+		end
+	end
+
+	if (cmdName == "setpower" or cmdName == "setcarry" or cmdName == "setreach") and argIndex == 2 then
+		if #tokens > 2 or (endsWithSpace and #tokens >= 2) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(2, #tokens - 1))
+			local samples = if cmdName == "setcarry" then { "1", "5", "10" } else { "10", "25", "50", "100" }
+			for _, sample in samples do
+				if startsWith(sample, partial) then
+					pushSuggestion(out, prefix .. sample, "upgrade level")
 				end
 			end
 		end

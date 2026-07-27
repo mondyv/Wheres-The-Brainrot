@@ -1002,24 +1002,32 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 	uiPointerForced = force == true
 	uiPointerHost = target
 
-	-- Prefer the cash Buy chip so stroke sits on the green $ button, not a tiny child.
+	-- Prefer the Buy / Upgrade host so stroke + hand sit on the real clickable.
 	local attachHost = target
 	local buyAncestor = target:FindFirstAncestor("Buy")
 	if buyAncestor and buyAncestor:IsA("GuiObject") then
 		attachHost = buyAncestor
 	elseif target.Name == "Buy" and target:IsA("GuiObject") then
 		attachHost = target
+	elseif target.Name == "Upgrade" and target:IsA("GuiObject") then
+		attachHost = target
+	else
+		local upgradeAncestor = target:FindFirstAncestor("Upgrade")
+		if upgradeAncestor and upgradeAncestor:IsA("GuiObject") then
+			attachHost = upgradeAncestor
+		end
 	end
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Name = "TutorialTargetStroke"
-	stroke.Color = Color3.fromRGB(255, 230, 90)
-	stroke.Thickness = 2.6
-	stroke.Transparency = 0.1
+	stroke.Color = Color3.fromRGB(255, 236, 70)
+	stroke.Thickness = 4.5
+	stroke.Transparency = 0
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.LineJoinMode = Enum.LineJoinMode.Round
 	stroke.Parent = attachHost
 	uiPointerStroke = stroke
 
-	-- Upgrade menu: outline only (no click hand).
 	if strokeOnly == true then
 		return
 	end
@@ -1027,37 +1035,26 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 	local pointer = Instance.new("ImageLabel")
 	pointer.Name = "TutorialUiClick"
 	pointer.BackgroundTransparency = 1
-	pointer.Size = UDim2.fromOffset(46, 46)
-	pointer.AnchorPoint = Vector2.new(0.2, 0.15)
+	pointer.AnchorPoint = Vector2.new(0.5, 0.5)
+	pointer.Position = UDim2.fromScale(0.5, 0.5)
 	pointer.Image = TutorialConfig.UI_CLICK_IMAGE
 	pointer.ScaleType = Enum.ScaleType.Fit
 	pointer.Active = false
-	pointer.ZIndex = math.max(attachHost.ZIndex + 40, 80)
+	-- Above button text / labels in the same SurfaceGui or ScreenGui.
+	pointer.ZIndex = math.max(attachHost.ZIndex + 200, 250)
 
 	local underBb = target:FindFirstAncestorOfClass("BillboardGui")
 	local underSurface = target:FindFirstAncestorOfClass("SurfaceGui")
 	local clickSize = TutorialConfig.UI_CLICK_SIZE
-	local clickSizeUp = clickSize + 8
-	if underBb then
-		pointer.Size = UDim2.fromOffset(clickSize, clickSize)
-		pointer.Position = UDim2.new(0.55, 0, 0.55, 0)
-		pointer.Parent = target
-	elseif underSurface then
-		-- Stand upgrade SurfaceGui — left side, small so text stays readable.
+	local clickSizeUp = clickSize + 10
+	if underBb or underSurface then
 		clickSize = if isMobileUi()
 			then TutorialConfig.UI_CLICK_SIZE_SURFACE_MOBILE
 			else TutorialConfig.UI_CLICK_SIZE_SURFACE
-		clickSizeUp = clickSize + 4
-		pointer.Size = UDim2.fromOffset(clickSize, clickSize)
-		pointer.AnchorPoint = Vector2.new(0, 0.5)
-		pointer.Position = UDim2.new(0, 2, 0.5, 0)
-		pointer.Parent = attachHost
-	else
-		-- HUD buy chip — fingertip on lower-right (price text stays readable).
-		pointer.Size = UDim2.fromOffset(clickSize, clickSize)
-		pointer.Position = UDim2.new(1, -8, 1, -6)
-		pointer.Parent = attachHost
+		clickSizeUp = clickSize + 8
 	end
+	pointer.Size = UDim2.fromOffset(clickSize, clickSize)
+	pointer.Parent = attachHost
 	uiPointer = pointer
 
 	task.spawn(function()
@@ -1067,7 +1064,7 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			end
 			local up = TweenService:Create(pointer, CLICK_BOUNCE, {
 				Size = UDim2.fromOffset(clickSizeUp, clickSizeUp),
-				Rotation = -10,
+				Rotation = -12,
 			})
 			up:Play()
 			up.Completed:Wait()
@@ -1076,7 +1073,7 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			end
 			local down = TweenService:Create(pointer, CLICK_BOUNCE, {
 				Size = UDim2.fromOffset(clickSize, clickSize),
-				Rotation = 6,
+				Rotation = 8,
 			})
 			down:Play()
 			down.Completed:Wait()
@@ -1647,17 +1644,17 @@ local function refreshPointersImpl()
 	elseif step.id == "buyPower" then
 		local btn = cacheUpgradesBuyButton()
 		if btn and isGuiTreeVisible(btn) then
-			pointAtGui(btn, nil, true)
+			pointAtGui(btn)
 			task.defer(function()
 				task.wait(0.2)
 				if not active or chromeSuppressed or isCutsceneBusy() then
 					return
 				end
 				local cur = currentStep()
-				if cur and cur.id == "buyPower" and not uiPointerStroke then
+				if cur and cur.id == "buyPower" and not uiPointer then
 					local again = cacheUpgradesBuyButton()
 					if again and isGuiTreeVisible(again) then
-						pointAtGui(again, nil, true)
+						pointAtGui(again)
 					end
 				end
 			end)
@@ -1868,9 +1865,9 @@ local function watchStepProgress()
 		if step.id == "buyPower" then
 			local btn = cacheUpgradesBuyButton()
 			if btn and isGuiTreeVisible(btn) then
-				if not uiPointerStroke or uiPointerHost ~= btn then
+				if not uiPointer or uiPointerHost ~= btn then
 					clearWorldArrow()
-					pointAtGui(btn, nil, true)
+					pointAtGui(btn)
 				end
 			elseif not worldArrowBb then
 				pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))

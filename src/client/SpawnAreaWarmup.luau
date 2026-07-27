@@ -1,10 +1,10 @@
 -- [ACTIVE] SpawnAreaWarmup
 --[[
-	Pre-stream ONLY the spawn/safezone during loading.
+	Pre-stream ONLY a tight spawn radius during loading.
 
-	Do NOT stream Lands / bushes / wilderness here — that forced the whole map
-	into client memory (~2.5GB) and caused constant lag even in the lobby.
-	Lands stream in naturally as the player approaches.
+	Do NOT stream Lands / bushes / wilderness / red-wall rings here — that
+	forced huge chunks of the map into client memory and caused lobby lag.
+	Lands stream in naturally as the player approaches (requires StreamingEnabled).
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -25,33 +25,6 @@ local function streamAround(position: Vector3)
 	end)
 end
 
-local function streamRing(center: Vector3)
-	-- Keep tight — just enough for base + red wall approach.
-	local radii = { 50, 90 }
-	for _, radius in radii do
-		for step = 0, 5 do
-			local angle = (step / 6) * math.pi * 2
-			streamAround(center + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius))
-		end
-		task.wait()
-	end
-end
-
-local function streamRedWallEdges(spawnCenter: Vector3)
-	local wallPoints = SafezoneUtil.getRedWallSamplePositions()
-	if #wallPoints == 0 then
-		return
-	end
-	for _, wallPos in wallPoints do
-		streamAround(wallPos)
-		local away = wallPos - spawnCenter
-		if away.Magnitude > 4 then
-			streamAround(wallPos + away.Unit * 40)
-		end
-		task.wait()
-	end
-end
-
 function SpawnAreaWarmup.runAsync()
 	SafezoneUtil.warmCacheAsync()
 	SafezoneUtil.awaitCacheReady(30)
@@ -64,8 +37,7 @@ function SpawnAreaWarmup.runAsync()
 		streamAround(center)
 	end
 
-	streamRing(center)
-
+	-- Only the player's assigned plot — not every plot / red wall sample.
 	local folder = PlotPaths.waitForSpawnAndBasesFolder(45)
 	if folder then
 		local okPivot, folderPivot = pcall(function()
@@ -75,26 +47,19 @@ function SpawnAreaWarmup.runAsync()
 			streamAround((folderPivot :: CFrame).Position)
 		end
 
-		local children = folder:GetChildren()
-		for i, plot in ipairs(children) do
-			if plot:IsA("Model") or plot:IsA("BasePart") or plot:IsA("Folder") then
+		local userId = player.UserId
+		for _, plot in folder:GetChildren() do
+			if plot:GetAttribute("OwnerUserId") == userId or plot:GetAttribute("AssignedUserId") == userId then
 				local ok, pivot = pcall(function()
 					return plot:GetPivot()
 				end)
 				if ok and typeof(pivot) == "CFrame" then
 					streamAround((pivot :: CFrame).Position)
 				end
-			end
-			if i % 3 == 0 then
-				task.wait()
+				break
 			end
 		end
 	end
-
-	SafezoneUtil.awaitCacheReady(5)
-	SafezoneUtil.warmCacheAsync()
-	task.wait(0.1)
-	streamRedWallEdges(center)
 end
 
 return SpawnAreaWarmup

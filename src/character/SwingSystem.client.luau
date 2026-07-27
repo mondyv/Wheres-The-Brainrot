@@ -5504,7 +5504,7 @@ local function boot(character)
 			end
 
 			local scanMode = "none"
-			if isGameplayCutsceneActive() then
+			if isGameplayCutsceneActive() or st.isHrpInSafezone() then
 				st.hideSwingTargetUi()
 			elseif st.isAirborneForSwing() then
 				scanMode = "air"
@@ -5532,23 +5532,8 @@ local function boot(character)
 					if not scanDistance then
 						scanDistance, scanLookDot, scanScreenLimit = 0, nil, nil
 					end
-					if scanMode == "air" then
-						if st.isHrpInSafezone() then
-							st.scannedVisualTarget, st.scannedVisualCanSwing =
-								st.pickVisualSwingTarget(0, C.SAFEZONE_BLOCKED_UI_RANGE, st.highlightedTarget, true, scanLookDot, scanScreenLimit)
-						else
-							st.scannedVisualTarget, st.scannedVisualCanSwing =
-								st.pickVisualSwingTarget(scanDistance, scanDistance, st.highlightedTarget, false, scanLookDot, scanScreenLimit)
-						end
-					else
-						if st.isHrpInSafezone() then
-							st.scannedVisualTarget, st.scannedVisualCanSwing =
-								st.pickVisualSwingTarget(0, C.SAFEZONE_BLOCKED_UI_RANGE, st.highlightedTarget, true, scanLookDot, scanScreenLimit)
-						else
-							st.scannedVisualTarget, st.scannedVisualCanSwing =
-								st.pickVisualSwingTarget(scanDistance, scanDistance, st.highlightedTarget, false, scanLookDot, scanScreenLimit)
-						end
-					end
+					st.scannedVisualTarget, st.scannedVisualCanSwing =
+						st.pickVisualSwingTarget(scanDistance, scanDistance, st.highlightedTarget, false, scanLookDot, scanScreenLimit)
 					C.TARGET_MAX_CANDIDATES_PER_SCAN = prevCandidateCap
 					if
 						st.scannedVisualTarget ~= st.lastVisualTarget

@@ -541,6 +541,7 @@ local function startQuestDots()
 	end)
 end
 
+-- Persistent right-HUD tracker — same cheese-ticket look as the accept popup.
 local function ensureQuestHud(): Frame
 	if questPanel and questPanel.Parent then
 		return questPanel
@@ -548,139 +549,200 @@ local function ensureQuestHud(): Frame
 	local host = ensureQuestHost()
 	assert(host, "TimCheeseQuestHost missing")
 
-	local panel = Instance.new("Frame")
-	panel.Name = "ObjectivePanel"
-	panel.AnchorPoint = Vector2.new(1, 0)
-	panel.Position = UDim2.new(1, -TutorialConfig.PANEL_RIGHT_PAD, 0, TutorialConfig.PANEL_TOP_PAD)
-	panel.Size = UDim2.fromOffset(TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_HEIGHT)
-	panel.AutomaticSize = Enum.AutomaticSize.Y
-	panel.BackgroundColor3 = Color3.fromRGB(22, 26, 34)
-	panel.BackgroundTransparency = 0.35
-	panel.BorderSizePixel = 0
-	panel.ClipsDescendants = false
-	panel.Visible = false
-	panel.ZIndex = 100
-	panel.Parent = host
+	local ticket = Instance.new("Frame")
+	ticket.Name = "ObjectivePanel"
+	ticket.AnchorPoint = Vector2.new(1, 0)
+	ticket.Position = UDim2.new(1, -14, 0, 72)
+	ticket.Size = UDim2.fromOffset(300, 0)
+	ticket.AutomaticSize = Enum.AutomaticSize.Y
+	ticket.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
+	ticket.BorderSizePixel = 0
+	ticket.Rotation = -2
+	ticket.Visible = false
+	ticket.ZIndex = 100
+	ticket.ClipsDescendants = false
+	ticket.Parent = host
 
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 12)
-	corner.Parent = panel
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(255, 255, 255)
-	stroke.Thickness = 1
-	stroke.Transparency = 0.82
-	stroke.Parent = panel
+	local ticketCorner = Instance.new("UICorner")
+	ticketCorner.CornerRadius = UDim.new(0, 6)
+	ticketCorner.Parent = ticket
+	local ticketStroke = Instance.new("UIStroke")
+	ticketStroke.Color = Color3.fromRGB(40, 28, 8)
+	ticketStroke.Thickness = 3.5
+	ticketStroke.Parent = ticket
+	local ticketScale = Instance.new("UIScale")
+	ticketScale.Name = "PanelScale"
+	ticketScale.Scale = 1
+	ticketScale.Parent = ticket
+
 	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 12)
 	pad.PaddingTop = UDim.new(0, 8)
 	pad.PaddingBottom = UDim.new(0, 8)
-	pad.Parent = panel
-	local scale = Instance.new("UIScale")
-	scale.Name = "PanelScale"
-	scale.Scale = 1
-	scale.Parent = panel
+	pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 8)
+	pad.Parent = ticket
+
+	local inner = Instance.new("Frame")
+	inner.Name = "Inner"
+	inner.BackgroundColor3 = Color3.fromRGB(255, 244, 180)
+	inner.BorderSizePixel = 0
+	inner.Size = UDim2.new(1, 0, 0, 0)
+	inner.AutomaticSize = Enum.AutomaticSize.Y
+	inner.ZIndex = 101
+	inner.Parent = ticket
+	local innerCorner = Instance.new("UICorner")
+	innerCorner.CornerRadius = UDim.new(0, 4)
+	innerCorner.Parent = inner
+	local dash = Instance.new("UIStroke")
+	dash.Color = Color3.fromRGB(180, 120, 30)
+	dash.Thickness = 1.5
+	dash.Transparency = 0.35
+	dash.Parent = inner
+	local innerPad = Instance.new("UIPadding")
+	innerPad.PaddingTop = UDim.new(0, 10)
+	innerPad.PaddingBottom = UDim.new(0, 10)
+	innerPad.PaddingLeft = UDim.new(0, 10)
+	innerPad.PaddingRight = UDim.new(0, 10)
+	innerPad.Parent = inner
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, 6)
+	list.Parent = inner
+
+	local header = Instance.new("Frame")
+	header.Name = "Header"
+	header.BackgroundTransparency = 1
+	header.Size = UDim2.new(1, 0, 0, 40)
+	header.LayoutOrder = 1
+	header.ZIndex = 102
+	header.Parent = inner
 
 	local bang = Instance.new("ImageLabel")
 	bang.Name = "Exclaim"
 	bang.BackgroundTransparency = 1
-	bang.AnchorPoint = Vector2.new(0, 0)
-	bang.Position = UDim2.new(0, 6, 0, 4)
+	bang.Position = UDim2.fromOffset(0, -2)
 	bang.Size = UDim2.fromOffset(36, 36)
 	bang.Image = TutorialConfig.EXCLAIM_IMAGE
-	bang.ScaleType = Enum.ScaleType.Fit
-	bang.ZIndex = 3
-	bang.Parent = panel
+	bang.Rotation = -10
+	bang.ZIndex = 103
+	bang.Parent = header
 
-	local textRow = Instance.new("Frame")
-	textRow.Name = "TextRow"
-	textRow.BackgroundTransparency = 1
-	textRow.Position = UDim2.new(0, 46, 0, 2)
-	textRow.Size = UDim2.new(1, -52, 0, 0)
-	textRow.AutomaticSize = Enum.AutomaticSize.Y
-	textRow.ZIndex = 3
-	textRow.Parent = panel
+	local stamp = Instance.new("TextLabel")
+	stamp.Name = "Stamp"
+	stamp.BackgroundTransparency = 1
+	stamp.Position = UDim2.fromOffset(42, 0)
+	stamp.Size = UDim2.new(1, -42, 0, 16)
+	stamp.FontFace = Font.fromEnum(Enum.Font.GothamBold)
+	stamp.TextSize = 12
+	stamp.TextColor3 = Color3.fromRGB(160, 40, 30)
+	stamp.TextXAlignment = Enum.TextXAlignment.Left
+	stamp.Text = "TIM CHEESE JOB"
+	stamp.ZIndex = 103
+	stamp.Parent = header
 
-	local label = Instance.new("TextLabel")
-	label.Name = "ObjectiveText"
-	label.BackgroundTransparency = 1
-	label.AutomaticSize = Enum.AutomaticSize.Y
-	label.Size = UDim2.new(1, -28, 0, 0)
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.TextYAlignment = Enum.TextYAlignment.Top
-	label.TextWrapped = true
-	label.TextSize = 17
-	label.TextColor3 = Color3.fromRGB(245, 250, 255)
-	label.Text = ""
-	label.ZIndex = 3
-	label.Parent = textRow
-	UiFonts.applyBody(label)
-	local boldOk, boldFace = pcall(function()
-		return Font.new(label.FontFace.Family, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
-	end)
-	if boldOk and typeof(boldFace) == "Font" then
-		label.FontFace = boldFace
-	end
-	label.TextStrokeTransparency = 0.25
-	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.BackgroundTransparency = 1
+	title.Position = UDim2.fromOffset(42, 16)
+	title.Size = UDim2.new(1, -42, 0, 22)
+	title.FontFace = Font.fromEnum(Enum.Font.GothamBold)
+	title.TextSize = 16
+	title.TextColor3 = Color3.fromRGB(30, 24, 10)
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.TextTruncate = Enum.TextTruncate.AtEnd
+	title.Text = ""
+	title.ZIndex = 103
+	title.Parent = header
+	UiFonts.applyDisplayLabel(title, 16, 13)
 
-	local dots = Instance.new("TextLabel")
-	dots.Name = "ObjectiveDots"
-	dots.BackgroundTransparency = 1
-	dots.AnchorPoint = Vector2.new(1, 0)
-	dots.Position = UDim2.new(1, 0, 0, 0)
-	dots.Size = UDim2.fromOffset(26, 20)
-	dots.TextXAlignment = Enum.TextXAlignment.Left
-	dots.TextYAlignment = Enum.TextYAlignment.Top
-	dots.TextSize = 17
-	dots.TextColor3 = Color3.fromRGB(245, 250, 255)
-	dots.Text = ""
-	dots.ZIndex = 3
-	dots.Parent = textRow
-	UiFonts.applyBody(dots)
-	if boldOk and typeof(boldFace) == "Font" then
-		dots.FontFace = boldFace
-	end
-	dots.TextStrokeTransparency = 0.25
-	dots.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	local body = Instance.new("TextLabel")
+	body.Name = "Body"
+	body.BackgroundTransparency = 1
+	body.Size = UDim2.new(1, 0, 0, 0)
+	body.AutomaticSize = Enum.AutomaticSize.Y
+	body.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
+	body.TextSize = 13
+	body.TextColor3 = Color3.fromRGB(55, 42, 18)
+	body.TextWrapped = true
+	body.TextXAlignment = Enum.TextXAlignment.Left
+	body.Text = ""
+	body.LayoutOrder = 2
+	body.ZIndex = 102
+	body.Parent = inner
+
+	local progressRow = Instance.new("Frame")
+	progressRow.Name = "ProgressRow"
+	progressRow.BackgroundTransparency = 1
+	progressRow.Size = UDim2.new(1, 0, 0, 18)
+	progressRow.LayoutOrder = 3
+	progressRow.ZIndex = 102
+	progressRow.Parent = inner
 
 	local progress = Instance.new("TextLabel")
 	progress.Name = "Progress"
 	progress.BackgroundTransparency = 1
-	progress.Position = UDim2.new(0, 46, 0, 0)
-	progress.Size = UDim2.new(1, -52, 0, 16)
+	progress.Size = UDim2.new(1, -30, 1, 0)
 	progress.FontFace = Font.fromEnum(Enum.Font.GothamBold)
 	progress.TextSize = 13
-	progress.TextColor3 = Color3.fromRGB(180, 255, 160)
+	progress.TextColor3 = Color3.fromRGB(40, 110, 40)
 	progress.TextXAlignment = Enum.TextXAlignment.Left
 	progress.Text = ""
-	progress.ZIndex = 3
-	progress.Parent = panel
+	progress.ZIndex = 103
+	progress.Parent = progressRow
+
+	local dots = Instance.new("TextLabel")
+	dots.Name = "ObjectiveDots"
+	dots.BackgroundTransparency = 1
+	dots.AnchorPoint = Vector2.new(1, 0.5)
+	dots.Position = UDim2.new(1, 0, 0.5, 0)
+	dots.Size = UDim2.fromOffset(26, 16)
+	dots.FontFace = Font.fromEnum(Enum.Font.GothamBold)
+	dots.TextSize = 13
+	dots.TextColor3 = Color3.fromRGB(40, 110, 40)
+	dots.TextXAlignment = Enum.TextXAlignment.Left
+	dots.Text = ""
+	dots.ZIndex = 103
+	dots.Parent = progressRow
 
 	local barBg = Instance.new("Frame")
 	barBg.Name = "BarBg"
-	barBg.Position = UDim2.new(0, 46, 0, 0)
-	barBg.Size = UDim2.new(1, -52, 0, 7)
-	barBg.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+	barBg.Size = UDim2.new(1, 0, 0, 8)
+	barBg.BackgroundColor3 = Color3.fromRGB(210, 170, 70)
 	barBg.BorderSizePixel = 0
-	barBg.ZIndex = 3
-	barBg.Parent = panel
+	barBg.LayoutOrder = 4
+	barBg.ZIndex = 102
+	barBg.Parent = inner
 	local barCorner = Instance.new("UICorner")
 	barCorner.CornerRadius = UDim.new(1, 0)
 	barCorner.Parent = barBg
 	local barFill = Instance.new("Frame")
 	barFill.Name = "BarFill"
 	barFill.Size = UDim2.new(0, 0, 1, 0)
-	barFill.BackgroundColor3 = Color3.fromRGB(255, 210, 70)
+	barFill.BackgroundColor3 = Color3.fromRGB(40, 28, 8)
 	barFill.BorderSizePixel = 0
+	barFill.ZIndex = 103
 	barFill.Parent = barBg
 	local fillCorner = Instance.new("UICorner")
 	fillCorner.CornerRadius = UDim.new(1, 0)
 	fillCorner.Parent = barFill
 
-	-- Stack progress under text via list-like manual layout in refresh.
-	questPanel = panel
-	return panel
+	local payout = Instance.new("TextLabel")
+	payout.Name = "Reward"
+	payout.BackgroundColor3 = Color3.fromRGB(40, 28, 8)
+	payout.Size = UDim2.new(1, 0, 0, 26)
+	payout.FontFace = Font.fromEnum(Enum.Font.GothamBold)
+	payout.TextSize = 13
+	payout.TextColor3 = Color3.fromRGB(255, 220, 80)
+	payout.Text = ""
+	payout.LayoutOrder = 5
+	payout.ZIndex = 102
+	payout.Parent = inner
+	local payCorner = Instance.new("UICorner")
+	payCorner.CornerRadius = UDim.new(0, 8)
+	payCorner.Parent = payout
+
+	questPanel = ticket
+	return ticket
 end
 
 local function layoutQuestHud()
@@ -696,23 +758,21 @@ local function layoutQuestHud()
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1280
 	local insetY = GuiService:GetGuiInset().Y
-	local rightPad = TutorialConfig.PANEL_RIGHT_PAD
-	local topPad = TutorialConfig.PANEL_TOP_PAD + insetY
+	local rightPad = 14
+	local topPad = 72 + insetY
 	local screenW: number
 	if mobile or vw < 700 then
-		local maxW = math.floor(vw * TutorialConfig.PANEL_MOBILE_MAX_WIDTH_FRAC)
-		screenW = math.clamp(maxW, TutorialConfig.PANEL_MOBILE_MIN_WIDTH, TutorialConfig.PANEL_MOBILE_MAX_WIDTH)
+		screenW = math.clamp(math.floor(vw * 0.72), 180, 250)
 		topPad = insetY + 14
 		rightPad = 10
 	else
-		local maxW = math.floor(vw * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
-		maxW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
-		screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
+		screenW = math.clamp(math.floor(vw * 0.24), 260, 320)
 	end
 	panel.AnchorPoint = Vector2.new(1, 0)
-	panel.Size = UDim2.fromOffset(screenW, TutorialConfig.PANEL_HEIGHT)
+	panel.Size = UDim2.fromOffset(screenW, 0)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
 	panel.Position = UDim2.new(1, -rightPad, 0, topPad)
+	panel.Rotation = if mobile or vw < 700 then -1 else -2
 end
 
 local function resolveActiveQuestIndex(): number?
@@ -733,7 +793,7 @@ local function formatQuestProgress(quest: TimCheeseQuestConfig.QuestDef, p: numb
 	if quest.kind == "place_stands" or quest.kind == "harvest" then
 		return string.format("%d / %d", math.floor(p), quest.target)
 	elseif quest.kind == "income" then
-		return string.format("%s/s", BrainrotEconomy.formatCashShort(p))
+		return string.format("%s/s  goal %s/s", BrainrotEconomy.formatCashShort(p), BrainrotEconomy.formatCashShort(quest.target))
 	else
 		return string.format("%s / %s", BrainrotEconomy.formatCashShort(p), BrainrotEconomy.formatCashShort(quest.target))
 	end
@@ -758,45 +818,47 @@ local function refreshQuestHud()
 	layoutQuestHud()
 	local wasHidden = not panel.Visible
 	panel.Visible = true
-	local label = panel:FindFirstChild("ObjectiveText", true)
+
 	local p = if typeof(progressVal) == "number" then progressVal else 0
-	local objective = if ready
-		then "Quest done — talk to Tim Cheese!"
-		else string.format("%s — %s", quest.title, quest.description)
-	if label and label:IsA("TextLabel") then
-		label.Text = objective
+	local title = panel:FindFirstChild("Title", true)
+	local body = panel:FindFirstChild("Body", true)
+	local progress = panel:FindFirstChild("Progress", true)
+	local barBg = panel:FindFirstChild("BarBg", true)
+	local reward = panel:FindFirstChild("Reward", true)
+	local stamp = panel:FindFirstChild("Stamp", true)
+
+	if stamp and stamp:IsA("TextLabel") then
+		stamp.Text = if ready then "READY TO CLAIM" else "TIM CHEESE JOB"
+		stamp.TextColor3 = if ready then Color3.fromRGB(20, 120, 50) else Color3.fromRGB(160, 40, 30)
 	end
-	local function placeMeta()
-		if not panel.Parent then
-			return
-		end
-		local textRowLive = panel:FindFirstChild("TextRow")
-		local textH = if textRowLive and textRowLive:IsA("GuiObject") then math.max(textRowLive.AbsoluteSize.Y, 22) else 22
-		local progressLive = panel:FindFirstChild("Progress")
-		local barLive = panel:FindFirstChild("BarBg")
-		if progressLive and progressLive:IsA("TextLabel") then
-			progressLive.Position = UDim2.new(0, 46, 0, textH + 6)
-			progressLive.Text = if quest.showBar then formatQuestProgress(quest, p) else ("Reward " .. BrainrotEconomy.formatCashShort(quest.rewardCash))
-			progressLive.Visible = true
-		end
-		if barLive and barLive:IsA("Frame") then
-			barLive.Position = UDim2.new(0, 46, 0, textH + 26)
-			barLive.Visible = quest.showBar == true and not ready
-			local fill = barLive:FindFirstChild("BarFill")
-			if fill and fill:IsA("Frame") then
-				local alpha = math.clamp(p / math.max(quest.target, 1), 0, 1)
-				fill.Size = UDim2.new(alpha, 0, 1, 0)
-			end
+	if title and title:IsA("TextLabel") then
+		title.Text = quest.title
+	end
+	if body and body:IsA("TextLabel") then
+		body.Text = if ready then "Talk to Tim Cheese to cash out!" else quest.description
+	end
+	if progress and progress:IsA("TextLabel") then
+		progress.Text = if ready then "COMPLETE" elseif quest.showBar then formatQuestProgress(quest, p) else "In progress"
+		progress.Visible = true
+	end
+	if barBg and barBg:IsA("Frame") then
+		barBg.Visible = quest.showBar == true and not ready
+		local fill = barBg:FindFirstChild("BarFill")
+		if fill and fill:IsA("Frame") then
+			local alpha = math.clamp(p / math.max(quest.target, 1), 0, 1)
+			fill.Size = UDim2.new(alpha, 0, 1, 0)
 		end
 	end
-	placeMeta()
-	task.defer(placeMeta)
+	if reward and reward:IsA("TextLabel") then
+		reward.Text = "★  " .. BrainrotEconomy.formatCashShort(quest.rewardCash)
+	end
+
 	startQuestDots()
 	if wasHidden then
 		local sc = panel:FindFirstChild("PanelScale")
 		if sc and sc:IsA("UIScale") then
-			sc.Scale = 0.82
-			TweenService:Create(sc, TweenInfo.new(0.34, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+			sc.Scale = 0.78
+			TweenService:Create(sc, TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 		end
 	end
 end

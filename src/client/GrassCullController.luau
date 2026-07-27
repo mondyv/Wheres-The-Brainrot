@@ -1,120 +1,178 @@
 -- [ACTIVE] GrassCullController
 --[[
-	One-time CastShadow / collision strip for grassparts on the current land.
-	Does NOT toggle LocalTransparency (that hitch'd FPS without freeing the ~2GB
-	mesh RAM — only reducing grass MeshPart count in Studio drops memory).
+	TEMP lag test: hide all Map.Lands/*/grass grassparts on the client.
+	Uses LocalTransparencyModifier (does NOT Destroy / does NOT change Transparency),
+	so flip HIDE_ALL_GRASS back to false to restore instantly next session.
 ]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
-
-local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 
 local M = {}
 
-local OPTIMIZE_PER_FRAME = 60
-local REBUILD_INTERVAL = 6.0
+-- TEMP: set false to bring grass back.
+local HIDE_ALL_GRASS = true
+
+local HIDE_PER_FRAME = 120
+local HIDDEN_MODIFIER = 1
 
 local player = Players.LocalPlayer
 local pending: { BasePart } = {}
-local optimizedLand: { [number]: boolean } = {}
-local currentLand = 0
-local rebuildAccum = 0.0
+local hiddenParts: { [BasePart]: boolean } = {}
+local wired = false
 local heartbeatConn: RBXScriptConnection? = nil
+local landsConn: RBXScriptConnection? = nil
+local descendantConns: { RBXScriptConnection } = {}
 
-local function landFolderFor(land: number): Instance?
-	local map = Workspace:FindFirstChild("Map")
-	local lands = map and map:FindFirstChild("Lands")
-	if not lands then
-		return nil
-	end
-	return lands:FindFirstChild("Land" .. tostring(land))
+local function isGrassPart(inst: Instance): boolean
+	return inst:IsA("BasePart") and string.lower(inst.Name) == "grasspart"
 end
 
-local function collectGrassParts(landFolder: Instance): { BasePart }
-	local out: { BasePart } = {}
-	local grassFolder = landFolder:FindFirstChild("grass")
-	if not grassFolder then
-		return out
+local function hidePart(part: BasePart)
+	if hiddenParts[part] then
+		return
 	end
-	local stack: { Instance } = { grassFolder }
-	while #stack > 0 do
-		local inst = table.remove(stack) :: Instance
-		if inst:IsA("BasePart") and string.lower(inst.Name) == "grasspart" then
-			table.insert(out, inst)
-		end
-		for _, child in inst:GetChildren() do
-			table.insert(stack, child)
-		end
-	end
-	return out
-end
-
-local function optimizePart(part: BasePart)
+	hiddenParts[part] = true
+	part.LocalTransparencyModifier = HIDDEN_MODIFIER
 	part.CastShadow = false
 	part.CanCollide = false
 	part.CanTouch = false
 	part.CanQuery = false
 end
 
-local function queueLandOptimize(land: number)
-	if optimizedLand[land] then
+local function showPart(part: BasePart)
+	if not hiddenParts[part] then
 		return
 	end
-	optimizedLand[land] = true
-	table.clear(pending)
-	local folder = landFolderFor(land)
-	if not folder then
-		return
-	end
-	pending = collectGrassParts(folder)
+	hiddenParts[part] = nil
+	part.LocalTransparencyModifier = 0
 end
 
-local function playerPos(): Vector3?
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if hrp and hrp:IsA("BasePart") then
-		return hrp.Position
-	end
-	return nil
-end
-
-local function onHeartbeat(dt: number)
-	rebuildAccum += dt
-
-	if #pending > 0 then
-		local n = math.min(#pending, OPTIMIZE_PER_FRAME)
-		for _ = 1, n do
-			local part = table.remove(pending)
-			if part and part.Parent then
-				optimizePart(part)
-			end
+local function enqueueGrassUnder(root: Instance)
+	local stack: { Instance } = { root }
+	while #stack > 0 do
+		local inst = table.remove(stack) :: Instance
+		if isGrassPart(inst) then
+			table.insert(pending, inst :: BasePart)
 		end
-		return
+		for _, child in inst:GetChildren() do
+			table.insert(stack, child)
+		end
 	end
+end
 
-	if rebuildAccum < REBUILD_INTERVAL then
-		return
-	end
-	rebuildAccum = 0
+local function landsFolder(): Instance?
+	local map = Workspace:FindFirstChild("Map")
+	return map and map:FindFirstChild("Lands")
+end
 
-	local origin = playerPos()
-	if not origin then
+local function queueAllLands()
+	local lands = landsFolder()
+	if not lands then
 		return
 	end
-	local land = math.floor(LandResolver.resolveLandAtPosition(origin))
-	if land == currentLand then
+	for _, land in lands:GetChildren() do
+		local grass = land:FindFirstChild("grass")
+		if grass then
+			enqueueGrassUnder(grass)
+		end
+	end
+end
+
+local function onHeartbeat(_dt: number)
+	if not HIDE_ALL_GRASS then
 		return
 	end
-	currentLand = land
-	queueLandOptimize(land)
+	local n = math.min(#pending, HIDE_PER_FRAME)
+	for _ = 1, n do
+		local part = table.remove(pending)
+		if part and part.Parent then
+			hidePart(part)
+		end
+	end
+end
+
+local function watchLands(lands: Instance)
+	for _, conn in descendantConns do
+		conn:Disconnect()
+	end
+	table.clear(descendantConns)
+
+	table.insert(
+		descendantConns,
+		lands.DescendantAdded:Connect(function(inst)
+			if not HIDE_ALL_GRASS then
+				return
+			end
+			if isGrassPart(inst) then
+				table.insert(pending, inst :: BasePart)
+			end
+		end)
+	)
+end
+
+function M.setEnabled(enabled: boolean)
+	HIDE_ALL_GRASS = enabled
+	if enabled then
+		queueAllLands()
+		return
+	end
+	table.clear(pending)
+	for part in hiddenParts do
+		if part.Parent then
+			showPart(part)
+		end
+	end
+	table.clear(hiddenParts)
+end
+
+function M.isHidden(): boolean
+	return HIDE_ALL_GRASS
 end
 
 function M.init()
-	-- Disabled: walking/stripping all grassparts hitch'd without lowering the ~2.5GB
-	-- map RAM. Memory fix is not pre-streaming every land (see SpawnAreaWarmup).
+	if wired then
+		return
+	end
+	wired = true
+
+	if not HIDE_ALL_GRASS then
+		return
+	end
+
+	task.spawn(function()
+		local lands = landsFolder()
+		local deadline = os.clock() + 30
+		while not lands and os.clock() < deadline do
+			task.wait(0.5)
+			lands = landsFolder()
+		end
+		if not lands then
+			warn("[GrassCullController] Map.Lands missing — cannot hide grass")
+			return
+		end
+
+		watchLands(lands)
+		queueAllLands()
+
+		landsConn = lands.ChildAdded:Connect(function(land)
+			local grass = land:FindFirstChild("grass")
+			if grass then
+				enqueueGrassUnder(grass)
+			else
+				task.defer(function()
+					local late = land:FindFirstChild("grass")
+					if late then
+						enqueueGrassUnder(late)
+					end
+				end)
+			end
+		end)
+
+		heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
+		warn("[GrassCullController] TEMP: hiding all land grass (LocalTransparencyModifier). Set HIDE_ALL_GRASS=false to restore.")
+	end)
 end
 
 return M

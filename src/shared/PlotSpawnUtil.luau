@@ -274,70 +274,107 @@ function PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot: Instance): (CFrame?, 
 	return yaw, Vector3.new(outX, height, outZ)
 end
 
-local OUTLINE_PROXY_MAX_PARTS = 400
+local OUTLINE_PROXY_MAX_PARTS = 500
 
-local function shouldMirrorOutlinePart(part: BasePart): boolean
+-- Folders that make up the pavilion shell (pillars, roof, floor, perimeter).
+local OUTLINE_STRUCT_FOLDERS: { [string]: boolean } = {
+	floor = true,
+	ladder = true,
+	other = true,
+	outline = true,
+	pilars = true,
+	pillars = true,
+	["deco outline"] = true,
+	steps = true,
+	carpet = true,
+}
+
+-- Gameplay / UI / brainrot content — never wrap these.
+local OUTLINE_EXCLUDE_FOLDERS: { [string]: boolean } = {
+	stands = true,
+	["autocollect thing"] = true,
+	plotusername = true,
+	["upgrade/add"] = true,
+	spawn = true,
+	button = true,
+	levelpanel = true,
+	cash = true,
+	gamepasshitbox = true,
+	gamepasstext = true,
+}
+
+local function isUnderExcludedOutlineFolder(part: BasePart, plot: Instance): boolean
+	local anc: Instance? = part
+	while anc and anc ~= plot do
+		if anc:IsA("Model") and anc:GetAttribute("BrainrotStandDisplay") == true then
+			return true
+		end
+		local n = string.lower(anc.Name)
+		if OUTLINE_EXCLUDE_FOLDERS[n] then
+			return true
+		end
+		anc = anc.Parent
+	end
+	return false
+end
+
+local function isUnderStructuralOutlineFolder(part: BasePart, plot: Instance): boolean
+	local anc: Instance? = part.Parent
+	while anc and anc ~= plot do
+		if OUTLINE_STRUCT_FOLDERS[string.lower(anc.Name)] then
+			return true
+		end
+		anc = anc.Parent
+	end
+	return false
+end
+
+local function shouldMirrorOutlinePart(part: BasePart, plot: Instance): boolean
 	if part.Transparency >= 0.98 then
 		return false
 	end
 	local vol = part.Size.X * part.Size.Y * part.Size.Z
-	if vol < 0.35 then
+	if vol < 0.08 then
 		return false
 	end
 	local n = string.lower(part.Name)
 	if string.find(n, "humanoid", 1, true) or n == "handle" or n == "rootpart" then
 		return false
 	end
-	-- Skip brainrot display meshes (headers/pets) — keep the base structure only.
-	local anc: Instance? = part.Parent
-	while anc do
-		if anc:IsA("Model") and anc:GetAttribute("BrainrotStandDisplay") == true then
-			return false
-		end
-		anc = anc.Parent
+	if isUnderExcludedOutlineFolder(part, plot) then
+		return false
 	end
-	return true
+	return isUnderStructuralOutlineFolder(part, plot)
 end
 
+-- Box proxies (not MeshPart clones): Highlight skips Transparency=1 and is flaky on meshes.
 local function mirrorOutlinePartInto(model: Model, src: BasePart)
-	local clone = src:Clone()
-	for _, ch in ipairs(clone:GetChildren()) do
-		if
-			ch:IsA("Texture")
-			or ch:IsA("Decal")
-			or ch:IsA("SurfaceAppearance")
-			or ch:IsA("SurfaceGui")
-			or ch:IsA("BillboardGui")
-			or ch:IsA("ProximityPrompt")
-			or ch:IsA("ClickDetector")
-			or ch:IsA("Script")
-			or ch:IsA("LocalScript")
-			or ch:IsA("Highlight")
-			or ch:IsA("WeldConstraint")
-			or ch:IsA("Weld")
-			or ch:IsA("Motor6D")
-		then
-			ch:Destroy()
-		end
-	end
+	local clone = Instance.new("Part")
+	clone.Name = "OutlineProxy"
+	clone.Shape = Enum.PartType.Block
+	clone.Size = src.Size
+	clone.CFrame = src.CFrame
 	clone.Anchored = true
 	clone.CanCollide = false
 	clone.CanQuery = false
 	clone.CanTouch = false
 	clone.CastShadow = false
 	clone.Massless = true
-	clone.Transparency = 1
+	clone.Material = Enum.Material.SmoothPlastic
+	clone.Color = Color3.new(1, 1, 1)
+	-- Near-invisible but still >0 so Highlight outlines every segment (pillars + roof + floor).
+	clone.Transparency = 0.99
 	clone.Parent = model
 end
 
--- Invisible mesh clones of the whole plot structure for Highlight adorn (does not wash live textures).
+-- Invisible structural proxies for Highlight adorn (does not wash live textures).
 function PlotSpawnUtil.buildInvisibleOutlineProxy(plot: Instance, parent: Instance?): Model?
 	local model = Instance.new("Model")
 	model.Name = "PlotOutlineHighlightProxy"
 
 	local scored: { { part: BasePart, vol: number } } = {}
 	for _, d in ipairs(plot:GetDescendants()) do
-		if d:IsA("BasePart") and shouldMirrorOutlinePart(d) then
+		if d:IsA("BasePart") and shouldMirrorOutlinePart(d, plot) then
 			local p = d :: BasePart
 			local vol = p.Size.X * p.Size.Y * p.Size.Z
 			table.insert(scored, { part = p, vol = vol })

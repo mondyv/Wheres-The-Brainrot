@@ -27,9 +27,9 @@ local VISIBLE_FAR = 78
 local FADE_FAR = 125
 local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
 -- Wide + short so "Your Plot" stays on one line.
-local MARKER_W = 78
-local MARKER_H = 30
-local MARKER_TEXT_SIZE = 11
+local MARKER_W = 102
+local MARKER_H = 40
+local MARKER_TEXT_SIZE = 14
 
 local PlotOutlineController = {}
 
@@ -116,6 +116,31 @@ local function stripScaleHacks(root: Instance)
 	end
 end
 
+-- CanvasGroup fades text + UIStroke + images together (avoids black stroke leftover).
+local function ensureMarkerFadeCanvas(bb: BillboardGui): CanvasGroup
+	local existing = bb:FindFirstChild("MarkerFadeCanvas")
+	if existing and existing:IsA("CanvasGroup") then
+		return existing :: CanvasGroup
+	end
+	local cg = Instance.new("CanvasGroup")
+	cg.Name = "MarkerFadeCanvas"
+	cg.BackgroundTransparency = 1
+	cg.BorderSizePixel = 0
+	cg.Size = UDim2.fromScale(1, 1)
+	cg.GroupTransparency = 0
+	cg.Parent = bb
+	local move: { Instance } = {}
+	for _, ch in ipairs(bb:GetChildren()) do
+		if ch ~= cg then
+			table.insert(move, ch)
+		end
+	end
+	for _, ch in ipairs(move) do
+		ch.Parent = cg
+	end
+	return cg
+end
+
 local function lockMarkerLook(bb: BillboardGui)
 	bb.Size = UDim2.new(0, MARKER_W, 0, MARKER_H)
 	-- Soft far fade handles cutoff — don't hard-kill the billboard.
@@ -123,6 +148,7 @@ local function lockMarkerLook(bb: BillboardGui)
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	stripScaleHacks(bb)
+	ensureMarkerFadeCanvas(bb)
 
 	-- Flatten vertical stacks so "Your" / "Plot" sit on one line.
 	for _, d in ipairs(bb:GetDescendants()) do
@@ -177,15 +203,25 @@ local function applyMarkerFade(transparency: number, visible: boolean)
 		if not visible then
 			continue
 		end
+		local cg = ensureMarkerFadeCanvas(bb)
+		cg.GroupTransparency = transparency
+		-- Keep leaf transparencies at 0 so only GroupTransparency drives the fade.
 		for _, d in ipairs(bb:GetDescendants()) do
 			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
 				local img = d :: ImageLabel
-				img.ImageTransparency = transparency
+				img.ImageTransparency = 0
+				img.BackgroundTransparency = 1
 			elseif d:IsA("TextLabel") or d:IsA("TextButton") then
 				local text = d :: TextLabel
-				-- Fade fill + stroke together (stroke lagging made it look darker up close).
-				text.TextTransparency = transparency
-				text.TextStrokeTransparency = transparency
+				text.TextTransparency = 0
+				text.TextStrokeTransparency = 1
+				text.BackgroundTransparency = 1
+			elseif d:IsA("UIStroke") then
+				(d :: UIStroke).Transparency = 0
+			elseif d:IsA("Frame") or d:IsA("CanvasGroup") then
+				if d.Name ~= "MarkerFadeCanvas" then
+					(d :: GuiObject).BackgroundTransparency = 1
+				end
 			end
 		end
 	end

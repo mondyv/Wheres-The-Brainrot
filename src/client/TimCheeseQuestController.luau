@@ -503,33 +503,20 @@ local function syncPromptAndOutline()
 end
 
 local function ensureQuestHost(): Frame?
-	local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 10)
-	if not pg then
+	-- Same placement as tutorial objective: under PlayerGui.Main so it sits on the HUD.
+	local main = PlayerGuiMain.ensure(player)
+	if not main then
 		return nil
 	end
-	local gui = questGui
-	if not (gui and gui.Parent) then
-		local existing = pg:FindFirstChild("TimCheeseQuestTracker")
-		if existing and existing:IsA("ScreenGui") then
-			gui = existing
-		else
-			gui = Instance.new("ScreenGui")
-			gui.Name = "TimCheeseQuestTracker"
-			gui.ResetOnSpawn = false
-			gui.IgnoreGuiInset = true
-			gui.DisplayOrder = 95
-			gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-			gui.Enabled = true
-			gui.Parent = pg
-		end
-		questGui = gui
+	if main:IsA("ScreenGui") then
+		questGui = main
+		main.Enabled = true
 	end
-	gui.Enabled = true
-
-	local host = gui:FindFirstChild("TimCheeseQuestHost")
-	if host and host:IsA("Frame") then
-		questHost = host
-		return host
+	local existing = main:FindFirstChild("TimCheeseQuestHost")
+	if existing and existing:IsA("Frame") then
+		questHost = existing
+		existing.Visible = true
+		return existing
 	end
 	local created = Instance.new("Frame")
 	created.Name = "TimCheeseQuestHost"
@@ -537,10 +524,12 @@ local function ensureQuestHost(): Frame?
 	created.BorderSizePixel = 0
 	created.Size = UDim2.fromScale(1, 1)
 	created.Position = UDim2.fromScale(0, 0)
-	created.ZIndex = 1
+	created.AnchorPoint = Vector2.new(0, 0)
+	created.ZIndex = 90
 	created.ClipsDescendants = false
 	created.Active = false
-	created.Parent = gui
+	created.Visible = true
+	created.Parent = main
 	questHost = created
 	return created
 end
@@ -787,39 +776,38 @@ local function layoutQuestHud()
 	if host and panel.Parent ~= host then
 		panel.Parent = host
 	end
-	if questGui then
-		questGui.Enabled = true
-	end
 	local mobile = UserInputService.TouchEnabled
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1280
 	local insetY = GuiService:GetGuiInset().Y
-	local rightPad = 14
-	local topPad = 72 + insetY
+	local rightPad = TutorialConfig.PANEL_RIGHT_PAD
+	local topPad = TutorialConfig.PANEL_TOP_PAD + insetY
 	local screenW: number
 	if mobile or vw < 700 then
-		screenW = math.clamp(math.floor(vw * 0.72), 180, 250)
+		local maxW = math.floor(vw * TutorialConfig.PANEL_MOBILE_MAX_WIDTH_FRAC)
+		screenW = math.clamp(maxW, TutorialConfig.PANEL_MOBILE_MIN_WIDTH, TutorialConfig.PANEL_MOBILE_MAX_WIDTH)
 		topPad = insetY + 14
 		rightPad = 10
 	else
-		screenW = math.clamp(math.floor(vw * 0.24), 260, 320)
+		local maxW = math.floor(vw * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
+		maxW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
+		screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
 	end
 	panel.AnchorPoint = Vector2.new(1, 0)
 	panel.Size = UDim2.fromOffset(screenW, 0)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
 	panel.Position = UDim2.new(1, -rightPad, 0, topPad)
+	panel.ZIndex = 100
 end
 
 local function resolveActiveQuestIndex(): number?
 	local idx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
-	if typeof(idx) == "number" then
-		if idx >= 1 then
-			return math.floor(idx)
-		end
-		-- Server cleared the quest (claimed / none) — drop optimistic force.
+	-- Prefer live server index when an active quest exists.
+	if typeof(idx) == "number" and idx >= 1 then
 		forcedQuestIndex = nil
-		return nil
+		return math.floor(idx)
 	end
+	-- Attribute defaults to 0 before Accept replicates — keep optimistic force.
 	if typeof(forcedQuestIndex) == "number" and forcedQuestIndex >= 1 then
 		return forcedQuestIndex
 	end
@@ -847,13 +835,6 @@ local function refreshQuestHud()
 		end
 		return
 	end
-	-- Clear optimistic force once server attribute catches up.
-	if forcedQuestIndex and typeof(player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)) == "number"
-		and (player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR) :: number) >= 1
-	then
-		forcedQuestIndex = nil
-	end
-
 	local quest = TimCheeseQuestConfig.getQuest(idx)
 	if not quest then
 		return
@@ -862,8 +843,9 @@ local function refreshQuestHud()
 	layoutQuestHud()
 	local wasHidden = not panel.Visible
 	panel.Visible = true
-	if questGui then
-		questGui.Enabled = true
+	local hostLive = ensureQuestHost()
+	if hostLive then
+		hostLive.Visible = true
 	end
 
 	local p = if typeof(progressVal) == "number" then progressVal else 0
@@ -1358,13 +1340,13 @@ function M.playIntroFall()
 
 	if accepted then
 		forcedQuestIndex = forcedQuestIndex or 1
+		refreshQuestHud() -- show tracker under HUD immediately
 		local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex)
 		if q then
 			playQuestAcceptPopup(q)
 		end
-		-- Always pin tracker on the right after the ticket.
 		refreshQuestHud()
-		waitForQuestHud(3)
+		waitForQuestHud(4)
 		refreshQuestHud()
 		TopNotifController.showBroadcast("New quest from Tim Cheese!")
 	end
@@ -1420,6 +1402,7 @@ function M.openTimDialogue()
 				reward = b
 			end
 		end
+		forcedQuestIndex = nil
 		if ok and typeof(reward) == "number" then
 			TopNotifController.showBroadcast("+" .. BrainrotEconomy.formatCashShort(reward))
 		end

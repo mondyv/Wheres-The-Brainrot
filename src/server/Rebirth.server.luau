@@ -148,6 +148,13 @@ local function grantFloorRebirth(player: Player): boolean
 		return false
 	end
 	plot:SetAttribute("BaseFloorLevel", cur + 1)
+	if player:GetAttribute("PlayerDataLoaded") == true then
+		task.defer(function()
+			if player.Parent then
+				PlayerDataService.savePlayerData(player)
+			end
+		end)
+	end
 	return true
 end
 

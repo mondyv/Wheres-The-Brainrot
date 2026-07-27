@@ -178,6 +178,13 @@ local function wireUpgradeTarget(upgradeFrame: GuiObject, unlockRE: RemoteEvent,
 		if not canUnlock then
 			if reason == "cash" then
 				TopNotifController.showCantAfford()
+			elseif reason == "rebirth" then
+				local level = if plot then plot:GetAttribute("BaseFloorLevel") else 1
+				local floorLevel = if typeof(level) == "number" then math.floor(level) else 1
+				local need = RebirthConfig.requiredRebirthCountForFloor(floorLevel + 1)
+				TopNotifController.showError(string.format("Need Rebirth %d to unlock the next floor.", need))
+			elseif reason == "max" then
+				TopNotifController.showError("Your base is already at max floors.")
 			else
 				GameSoundEffects.playErrorNotif()
 			end
@@ -265,9 +272,21 @@ local function wireSignWithRetry(sign: Model, unlockRE: RemoteEvent)
 	end)
 end
 
-local function wirePlot(plot: Instance, unlockRE: RemoteEvent)
+local function isMyPlot(plot: Instance): boolean
 	local uid = plot:GetAttribute("PlotOwnerUserId")
-	if typeof(uid) ~= "number" or uid ~= player.UserId then
+	if typeof(uid) == "number" and uid == player.UserId then
+		return true
+	end
+	local assigned = player:GetAttribute("AssignedPlotSlot")
+	local plotSlot = plot:GetAttribute("PlotSlotId")
+	if typeof(assigned) == "number" and typeof(plotSlot) == "number" then
+		return math.floor(assigned) == math.floor(plotSlot)
+	end
+	return false
+end
+
+local function wirePlot(plot: Instance, unlockRE: RemoteEvent)
+	if not isMyPlot(plot) then
 		return
 	end
 	for _, d in ipairs(plot:GetDescendants()) do
@@ -283,8 +302,7 @@ local function hookPlot(plot: Instance, unlockRE: RemoteEvent)
 
 	local function sync()
 		wirePlot(plot, unlockRE)
-		local uid = plot:GetAttribute("PlotOwnerUserId")
-		local mine = typeof(uid) == "number" and uid == player.UserId
+		local mine = isMyPlot(plot)
 		if mine and not descConn then
 			descConn = plot.DescendantAdded:Connect(function(desc)
 				if isUpgradeAddSign(desc) then
@@ -337,12 +355,25 @@ function M.init()
 			return
 		end
 		unlockRE.OnClientEvent:Connect(function(ok: boolean, reason: string)
-			if ok or reason == "" or reason == "debounce" then
+			if ok == true or reason == "unlocked" then
+				GameSoundEffects.playPurchase()
+				TopNotifController.showPersonal("Floor unlocked!", "legendary", 3.5)
+				return
+			end
+			if reason == "" or reason == "debounce" then
 				return
 			end
 			if reason == "cash" then
 				TopNotifController.showCantAfford()
-			elseif reason == "max" or reason == "rebirth" then
+			elseif reason == "rebirth" then
+				TopNotifController.showError("You need more rebirths to unlock this floor.")
+			elseif reason == "max" then
+				TopNotifController.showError("Your base is already at max floors.")
+			elseif reason == "no_plot" or reason == "slot" or reason == "owner" then
+				TopNotifController.showError("That's not your plot.")
+			elseif reason == "no_sign" or reason == "wrong_sign" or reason == "no_stories" then
+				TopNotifController.showError("Floor unlock sign isn't ready — try again.")
+			else
 				GameSoundEffects.playErrorNotif()
 			end
 			warn("[BaseFloorUnlockClick] Unlock failed:", reason)
@@ -363,6 +394,13 @@ function M.init()
 		end
 		folder.ChildAdded:Connect(onPlotAdded)
 		player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
+			for _, ch in ipairs(folder:GetChildren()) do
+				if PlotPaths.isPlotRoot(ch) then
+					hookPlot(ch, unlockRE)
+				end
+			end
+		end)
+		player:GetAttributeChangedSignal(RebirthConfig.REBIRTH_COUNT_ATTR):Connect(function()
 			for _, ch in ipairs(folder:GetChildren()) do
 				if PlotPaths.isPlotRoot(ch) then
 					wirePlot(ch, unlockRE)

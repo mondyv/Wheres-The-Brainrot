@@ -34,12 +34,15 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+local ServerScriptService = game:GetService("ServerScriptService")
 local TweenService = game:GetService("TweenService")
 local _Workspace = game:GetService("Workspace")
 
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local PlotStandPlaceholders = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotStandPlaceholders"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+
+local PlayerDataService = require(ServerScriptService:WaitForChild("Server"):WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 
 local MAX_FLOOR = 4
 local FLOOR_UNLOCK_COSTS: { [number]: number } = {
@@ -470,6 +473,12 @@ local function tryUnlock(state: BaseState, signData: SignData, player: Player): 
 	signData.lastClickAt = now
 	lastUnlockAtByUserId[player.UserId] = now
 
+	-- Stay in sync with attribute (rebirth free-floor / data load can change it).
+	local attrLevel = state.base:GetAttribute("BaseFloorLevel")
+	if typeof(attrLevel) == "number" then
+		state.floorLevel = math.clamp(math.floor(attrLevel), 1, MAX_FLOOR)
+	end
+
 	if signData.storyNumber ~= state.floorLevel then
 		return false, "wrong_sign"
 	end
@@ -511,6 +520,15 @@ local function tryUnlock(state: BaseState, signData: SignData, player: Player): 
 	state.base:SetAttribute("BaseFloorLevel", state.floorLevel)
 	refreshBase(state)
 	pulseSignBurst(signData)
+
+	if player:GetAttribute("PlayerDataLoaded") == true then
+		task.defer(function()
+			if player.Parent then
+				PlayerDataService.savePlayerData(player)
+			end
+		end)
+	end
+
 	return true, nil
 end
 
@@ -701,13 +719,14 @@ end
 
 local function resolveActiveSignData(state: BaseState): SignData?
 	local signData = state.signs[state.floorLevel]
-	if signData then
+	if signData and signData.sign.Parent then
 		return signData
 	end
 	local story = state.stories[state.floorLevel]
 	if not story then
 		return nil
 	end
+	-- Story may have just been un-parked from ServerStorage — rebuild sign refs.
 	signData = buildSignData(state, state.floorLevel, story)
 	if signData then
 		state.signs[state.floorLevel] = signData
@@ -731,13 +750,33 @@ unlockRE.OnServerEvent:Connect(function(player: Player)
 		unlockRE:FireClient(player, false, "no_stories")
 		return
 	end
+
+	local attrLevel = base:GetAttribute("BaseFloorLevel")
+	if typeof(attrLevel) == "number" then
+		state.floorLevel = math.clamp(math.floor(attrLevel), 1, MAX_FLOOR)
+	end
+
 	local signData = resolveActiveSignData(state)
+	if not signData then
+		-- Last resort: rebuild every story's sign (parking can invalidate old refs).
+		for n, story in pairs(state.stories) do
+			local rebuilt = buildSignData(state, n, story)
+			if rebuilt then
+				state.signs[n] = rebuilt
+			end
+		end
+		signData = resolveActiveSignData(state)
+	end
 	if not signData then
 		unlockRE:FireClient(player, false, "no_sign")
 		return
 	end
 	local ok, reason = tryUnlock(state, signData, player)
-	unlockRE:FireClient(player, ok, reason or "")
+	if ok then
+		unlockRE:FireClient(player, true, "unlocked")
+	else
+		unlockRE:FireClient(player, false, reason or "")
+	end
 end)
 
 local function refreshPlotForPlayer(player: Player)

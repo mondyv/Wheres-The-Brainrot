@@ -1703,6 +1703,8 @@ local function boot(character)
 		mobileJumpHoldUntil = -1e9,
 		mobileJumpHeld = false,
 		mobileRealJumpPressUntil = -1e9,
+		-- Toggle mode: ignore release until the attach jump is fully released.
+		toggleNeedsJumpRelease = false,
 		targetCache = {},
 		targetSet = {},
 		targetGrid = {},
@@ -3115,6 +3117,10 @@ local function boot(character)
 		if not st.isSwinging then
 			return false
 		end
+		-- Same held jump that attached — wait for a fresh press.
+		if not st.isHoldToSwingMode() and st.toggleNeedsJumpRelease then
+			return false
+		end
 		if st.pendingSwingParams and not st.ropeConstraint then
 			st.stopSwing(false)
 			return true
@@ -3124,6 +3130,10 @@ local function boot(character)
 			return true
 		end
 		return false
+	end
+
+	function st.clearToggleJumpLatch()
+		st.toggleNeedsJumpRelease = false
 	end
 
 	function st.noteJumpPressed()
@@ -4341,6 +4351,12 @@ local function boot(character)
 		st.isLaunched = false
 		st.landedFromSwing = false
 		st.currentTarget = target
+		-- Toggle: don't treat the still-held attach jump as a release.
+		if not st.isHoldToSwingMode() then
+			st.toggleNeedsJumpRelease = true
+		else
+			st.toggleNeedsJumpRelease = false
+		end
 		st.swingTimer = 0
 		st.swingCharge = 0
 		st.forwardSwingCharge = 0
@@ -4397,6 +4413,7 @@ local function boot(character)
 
 		st.isSwinging = false
 		st.currentTarget = nil
+		st.toggleNeedsJumpRelease = false
 		st.scannedVisualTarget = nil
 		st.scannedVisualCanSwing = false
 		st.lastTargetScanClock = -1e9
@@ -4475,6 +4492,7 @@ local function boot(character)
 				st.mobileJumpHeld = false
 				st.mobileJumpHoldUntil = -1e9
 				st.mobileRealJumpPressUntil = -1e9
+				st.clearToggleJumpLatch()
 
 				-- Hold mode only: releasing jump launches. Toggle mode waits for next press.
 				if st.isHoldToSwingMode() and st.isSwinging then
@@ -4757,6 +4775,7 @@ local function boot(character)
 	st.addConn(UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == Enum.KeyCode.Space then
 			st.spaceHeld = false
+			st.clearToggleJumpLatch()
 			if st.isHoldToSwingMode() and st.isSwinging then
 				st.tryReleaseSwingFromJump()
 			end
@@ -4765,6 +4784,7 @@ local function boot(character)
 			and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
 		then
 			st.gamepadHeld = false
+			st.clearToggleJumpLatch()
 			if st.isHoldToSwingMode() and st.isSwinging then
 				st.tryReleaseSwingFromJump()
 			end
@@ -4810,6 +4830,7 @@ local function boot(character)
 
 		if st.isSwinging then
 			if not st.isHoldToSwingMode() then
+				-- Holding jump after attach must not spam-release; only a fresh press does.
 				st.tryReleaseSwingFromJump()
 			end
 			return

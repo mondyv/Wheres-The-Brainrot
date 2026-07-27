@@ -588,6 +588,17 @@ local function clearWorldHighlight()
 	end
 end
 
+local function getTutorialOutlineHost(): Folder
+	local existing = Workspace:FindFirstChild("PlotOutlineProxies")
+	if existing and existing:IsA("Folder") then
+		return existing
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = "PlotOutlineProxies"
+	folder.Parent = Workspace
+	return folder
+end
+
 local function resolveOwnedPlotForTutorial(): Instance?
 	local plot = PlotPaths.findPlotOwnedByPlayer(player)
 	if plot then
@@ -606,6 +617,7 @@ local function outlineWorld(adornee: Instance?)
 		return
 	end
 
+	local host = getTutorialOutlineHost()
 	local isPlot = PlotPaths.isPlotRoot(adornee)
 		or (adornee:IsA("Model") and adornee:FindFirstChild("1 Story") ~= nil)
 		or (adornee:IsA("Model") and adornee:FindFirstChild("1st Story") ~= nil)
@@ -615,8 +627,8 @@ local function outlineWorld(adornee: Instance?)
 		if PlotPaths.isPlotRoot(adornee) and adornee:GetAttribute("PlotOwnerUserId") ~= player.UserId then
 			return
 		end
-		-- Invisible mesh clones + Highlight so the whole base wraps without washing textures.
-		local proxy = PlotSpawnUtil.buildInvisibleOutlineProxy(adornee, Workspace.CurrentCamera or adornee)
+		-- Invisible proxies in Workspace (never CurrentCamera — camera swaps destroy children).
+		local proxy = PlotSpawnUtil.buildInvisibleOutlineProxy(adornee, host)
 		if not proxy then
 			return
 		end
@@ -626,9 +638,9 @@ local function outlineWorld(adornee: Instance?)
 		hl.FillTransparency = 1
 		hl.OutlineTransparency = 0.05
 		hl.OutlineColor = Color3.fromRGB(255, 236, 70)
-		hl.DepthMode = Enum.HighlightDepthMode.Occluded
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 		hl.Adornee = proxy
-		hl.Parent = Workspace.CurrentCamera or adornee
+		hl.Parent = host
 		worldHighlight = hl
 		return
 	end
@@ -641,7 +653,7 @@ local function outlineWorld(adornee: Instance?)
 	hl.OutlineColor = Color3.fromRGB(255, 236, 70)
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	hl.Adornee = adornee
-	hl.Parent = Workspace.CurrentCamera or adornee
+	hl.Parent = host
 	worldHighlight = hl
 end
 
@@ -1535,6 +1547,21 @@ local function resolvePlayerPlotStand(preferEmpty: boolean?): BasePart?
 	return emptyPart or filledPart
 end
 
+local function resolvePlayerPlotStandModel(preferEmpty: boolean?): Model?
+	local part = resolvePlayerPlotStand(preferEmpty)
+	if not part then
+		return nil
+	end
+	local anc: Instance? = part
+	while anc do
+		if anc:IsA("Model") and (anc:HasTag("BrainrotStand") or anc:GetAttribute("BrainrotStand") == true) then
+			return anc
+		end
+		anc = anc.Parent
+	end
+	return nil
+end
+
 local function resolvePlayerBaseTarget(): BasePart?
 	local stand = resolvePlayerPlotStand(true)
 	if stand then
@@ -1644,6 +1671,25 @@ end
 local function standHasPlacedBrainrot(stand: Model): boolean
 	local name = stand:GetAttribute("BrainrotName")
 	return typeof(name) == "string" and name ~= ""
+end
+
+local function resolvePlacedStandModel(): Model?
+	local plot = PlotPaths.findPlotForAssignedSlot(player)
+	if not plot then
+		return nil
+	end
+	for _, d in plot:GetDescendants() do
+		if d:IsA("Model") and (d:HasTag("BrainrotStand") or d:GetAttribute("BrainrotStand") == true) then
+			local ownerId = d:GetAttribute("StandOwnerUserId")
+			if ownerId ~= nil and ownerId ~= player.UserId then
+				continue
+			end
+			if standHasPlacedBrainrot(d) then
+				return d
+			end
+		end
+	end
+	return nil
 end
 
 local function resolveStandUpgradeButton(): GuiObject?
@@ -1905,12 +1951,27 @@ local function refreshPointersImpl()
 	elseif step.id == "placeOnPlot" then
 		clearLockedBush()
 		pointAtWorld(resolvePlayerPlotStand(true), arrowHeight(3))
-		local plot = resolveOwnedPlotForTutorial()
-		if plot then
-			outlineWorld(plot)
+		local standModel = resolvePlayerPlotStandModel(true)
+		if standModel then
+			outlineWorld(standModel)
+		else
+			local plot = resolveOwnedPlotForTutorial()
+			if plot then
+				outlineWorld(plot)
+			end
 		end
 	elseif step.id == "upgradeBrainrot" then
-		pointAtWorld(resolvePlacedStandUpgradeTarget(), arrowHeight(4))
+		local levelTarget = resolvePlacedStandUpgradeTarget()
+		pointAtWorld(levelTarget, arrowHeight(4))
+		-- World-highlight the Level panel (SurfaceGui UIStroke alone is hard to see).
+		if levelTarget then
+			outlineWorld(levelTarget)
+		else
+			local standModel = resolvePlacedStandModel()
+			if standModel then
+				outlineWorld(standModel)
+			end
+		end
 		local upgradeBtn = resolveStandUpgradeButton()
 		if upgradeBtn then
 			pointAtGui(upgradeBtn)
@@ -2090,11 +2151,11 @@ local function watchStepProgress()
 		if now - lastPointerRefresh > 1.25 then
 			lastPointerRefresh = now
 			if step.id == "swingLand1" or step.id == "visitUpgrade" or step.id == "placeOnPlot" or step.id == "goToBase" then
-				if not worldArrowBb and not uiPointer then
+				if (not worldArrowBb and not uiPointer) or not worldHighlight then
 					refreshPointers()
 				end
 			elseif step.id == "upgradeBrainrot" then
-				if not worldArrowBb or not uiPointer then
+				if not worldArrowBb or not uiPointer or not worldHighlight then
 					refreshPointers()
 				end
 			elseif step.id == "searchBush" then
@@ -2162,7 +2223,7 @@ local function watchStepProgress()
 			lastLandCheck = now
 			if isPlayerAtOwnBase() then
 				completeCurrentIf("goToBase")
-			elseif not worldArrowBb then
+			elseif not worldArrowBb or not worldHighlight then
 				refreshPointers()
 			end
 		elseif step.id == "placeOnPlot" and now - lastLandCheck > 0.4 then
@@ -2183,27 +2244,22 @@ local function watchStepProgress()
 					end
 				end
 			end
+			if not worldArrowBb or not worldHighlight then
+				refreshPointers()
+			end
 		elseif step.id == "upgradeBrainrot" and now - lastLandCheck > 0.35 then
 			lastLandCheck = now
 			-- Don't finish instantly — player must see the upgrade prompt.
 			if upgradeStepEnteredAt > 0 and (now - upgradeStepEnteredAt) < 1.25 then
-				local upgradeBtnEarly = resolveStandUpgradeButton()
-				if upgradeBtnEarly and (not uiPointer or not uiPointer.Parent) then
-					pointAtGui(upgradeBtnEarly)
-				elseif not worldArrowBb then
+				if not worldHighlight or not worldArrowBb or (not uiPointer or not uiPointer.Parent) then
 					refreshPointers()
 				end
 			else
 				local lvl = readPlacedBrainrotLevel()
 				if lvl > upgradeBaseLevel then
 					completeCurrentIf("upgradeBrainrot")
-				else
-					local upgradeBtn = resolveStandUpgradeButton()
-					if upgradeBtn and (not uiPointer or not uiPointer.Parent) then
-						pointAtGui(upgradeBtn)
-					elseif not worldArrowBb then
-						refreshPointers()
-					end
+				elseif not worldHighlight or not worldArrowBb or (not uiPointer or not uiPointer.Parent) then
+					refreshPointers()
 				end
 			end
 		end

@@ -629,6 +629,75 @@ local function clearWorldHighlight()
 	end
 end
 
+local function ensureUnlimitedGuiDistance(root: Instance)
+	for _, d in root:GetDescendants() do
+		if d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+			(d :: LayerCollector & { MaxDistance: number }).MaxDistance = 0
+		end
+	end
+	if root:IsA("BillboardGui") or root:IsA("SurfaceGui") then
+		(root :: LayerCollector & { MaxDistance: number }).MaxDistance = 0
+	end
+end
+
+local function buildStandOutlineProxy(adornee: Instance, host: Folder): Model?
+	local parts: { BasePart } = {}
+	if adornee:IsA("BasePart") then
+		table.insert(parts, adornee)
+	elseif adornee:IsA("Model") then
+		for _, d in adornee:GetDescendants() do
+			if d:IsA("BasePart") and d.Transparency < 0.999 and d.Size.Magnitude > 0.5 then
+				table.insert(parts, d)
+			end
+		end
+	end
+	if #parts == 0 then
+		return nil
+	end
+
+	local minV = parts[1].Position
+	local maxV = parts[1].Position
+	for _, p in parts do
+		local cf = p.CFrame
+		local half = p.Size * 0.5
+		for _, corner in {
+			cf * Vector3.new(half.X, half.Y, half.Z),
+			cf * Vector3.new(half.X, half.Y, -half.Z),
+			cf * Vector3.new(half.X, -half.Y, half.Z),
+			cf * Vector3.new(half.X, -half.Y, -half.Z),
+			cf * Vector3.new(-half.X, half.Y, half.Z),
+			cf * Vector3.new(-half.X, half.Y, -half.Z),
+			cf * Vector3.new(-half.X, -half.Y, half.Z),
+			cf * Vector3.new(-half.X, -half.Y, -half.Z),
+		} do
+			minV = Vector3.new(math.min(minV.X, corner.X), math.min(minV.Y, corner.Y), math.min(minV.Z, corner.Z))
+			maxV = Vector3.new(math.max(maxV.X, corner.X), math.max(maxV.Y, corner.Y), math.max(maxV.Z, corner.Z))
+		end
+	end
+
+	local size = maxV - minV
+	if size.Magnitude < 1 then
+		size = Vector3.new(6, 8, 6)
+	end
+	local center = (minV + maxV) * 0.5
+	local model = Instance.new("Model")
+	model.Name = "TutorialStandOutlineProxy"
+	local box = Instance.new("Part")
+	box.Name = "OutlineShell"
+	box.Anchored = true
+	box.CanCollide = false
+	box.CanQuery = false
+	box.CanTouch = false
+	box.CastShadow = false
+	box.Transparency = 1
+	box.Size = size + Vector3.new(1.2, 1.2, 1.2)
+	box.CFrame = CFrame.new(center)
+	box.Parent = model
+	model.PrimaryPart = box
+	model.Parent = host
+	return model
+end
+
 local function getTutorialOutlineHost(): Folder
 	local existing = Workspace:FindFirstChild("PlotOutlineProxies")
 	if existing and existing:IsA("Folder") then
@@ -686,6 +755,24 @@ local function outlineWorld(adornee: Instance?)
 		return
 	end
 
+	local highlightAdornee: Instance = adornee
+	local isUpgradeStand = adornee.Name == "Upgrade Stand"
+		or (adornee.Parent ~= nil and adornee.Parent.Name == "UIStands")
+		or adornee:FindFirstAncestor("Upgrade Stand") ~= nil
+	if isUpgradeStand then
+		-- Keep stand UI + outline visible from anywhere in the spawn safezone.
+		ensureUnlimitedGuiDistance(adornee)
+		local standRoot = if adornee.Name == "Upgrade Stand"
+			then adornee
+			else (adornee:FindFirstAncestor("Upgrade Stand") or adornee)
+		ensureUnlimitedGuiDistance(standRoot)
+		local standProxy = buildStandOutlineProxy(standRoot, host)
+		if standProxy then
+			worldOutlineProxyModel = standProxy
+			highlightAdornee = standProxy
+		end
+	end
+
 	local hl = Instance.new("Highlight")
 	hl.Name = "TutorialWorldOutline"
 	hl.FillColor = Color3.fromRGB(255, 236, 70)
@@ -693,7 +780,7 @@ local function outlineWorld(adornee: Instance?)
 	hl.OutlineTransparency = 0.05
 	hl.OutlineColor = Color3.fromRGB(255, 236, 70)
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	hl.Adornee = adornee
+	hl.Adornee = highlightAdornee
 	hl.Parent = host
 	worldHighlight = hl
 end
@@ -1070,7 +1157,7 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	bb.AlwaysOnTop = true
 	bb.Size = UDim2.fromOffset(arrowPx, arrowPx)
 	bb.StudsOffset = baseOffset
-	bb.MaxDistance = 500
+	bb.MaxDistance = TutorialConfig.WORLD_ARROW_MAX_DISTANCE
 	bb.Adornee = part
 	bb.Parent = player:FindFirstChild("PlayerGui") or Workspace.CurrentCamera
 
@@ -1232,7 +1319,7 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			bb.Size = UDim2.fromOffset(clickSize + 8, clickSize + 8)
 			-- Nudge off-center so Cost/Upgrade text stays readable.
 			bb.StudsOffset = Vector3.new(0.55, -0.2, 0)
-			bb.MaxDistance = 120
+			bb.MaxDistance = TutorialConfig.SURFACE_CLICK_MAX_DISTANCE
 			bb.Adornee = adornee
 			local pg = player:FindFirstChildOfClass("PlayerGui")
 			bb.Parent = pg or underSurface

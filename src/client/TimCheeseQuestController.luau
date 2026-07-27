@@ -113,8 +113,9 @@ end
 
 local function applyHideToInstance(d: Instance)
 	if d:IsA("BasePart") then
+		-- Always restore to 0 later (re-hide must not snapshot LTM=1).
 		if hiddenPartMods[d] == nil then
-			hiddenPartMods[d] = d.LocalTransparencyModifier
+			hiddenPartMods[d] = 0
 		end
 		d.LocalTransparencyModifier = 1
 	elseif d:IsA("Decal") or d:IsA("Texture") then
@@ -178,19 +179,19 @@ local function revealTimForIntro(tim: Model)
 		hideDescConn:Disconnect()
 		hideDescConn = nil
 	end
-	for part, prev in hiddenPartMods do
-		if part.Parent then
-			part.LocalTransparencyModifier = prev
-		end
-	end
 	table.clear(hiddenPartMods)
+	-- Force visible — never trust saved LTM (re-hide could have stored 1).
 	for _, d in tim:GetDescendants() do
-		if d:IsA("Decal") or d:IsA("Texture") then
+		if d:IsA("BasePart") then
+			d.LocalTransparencyModifier = 0
+		elseif d:IsA("Decal") or d:IsA("Texture") then
 			d.Transparency = 0
 		elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
 			d.Enabled = true
 		elseif d:IsA("Highlight") then
 			d.Enabled = true
+		elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+			-- float UI toggled separately
 		end
 	end
 end
@@ -648,6 +649,24 @@ local function refreshQuestHud()
 	end
 end
 
+local function restoreMovement()
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not hum then
+		return
+	end
+	local base = hum:GetAttribute("BrainrotBaseWalkSpeed")
+	if typeof(base) ~= "number" or base <= 0 then
+		base = 16
+	end
+	local slowOn = player:GetAttribute("SlowWalkEnabled") == true
+	hum.WalkSpeed = (base :: number) * (if slowOn then 0.8 else 1.15)
+	hum.UseJumpPower = true
+	hum.JumpPower = 50
+	hum.JumpHeight = 7.2
+	hum.AutoRotate = true
+end
+
 local function lockMovement(on: boolean)
 	local char = player.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -659,10 +678,63 @@ local function lockMovement(on: boolean)
 		hum.JumpPower = 0
 		hum.JumpHeight = 0
 	else
-		hum.WalkSpeed = 16
-		hum.UseJumpPower = true
-		hum.JumpPower = 50
+		restoreMovement()
 	end
+end
+
+local function placePlayerNearTim(landCf: CFrame)
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not (hrp and hrp:IsA("BasePart")) then
+		return
+	end
+	local land = landCf.Position
+	-- Stand close on Tim's front-right so dialogue cam frames his face.
+	local standPos = land + landCf.RightVector * 3.2 + landCf.LookVector * 4.2 + Vector3.new(0, 3, 0)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { char }
+	local hit = Workspace:Raycast(standPos + Vector3.new(0, 8, 0), Vector3.new(0, -24, 0), params)
+	if hit then
+		standPos = Vector3.new(standPos.X, hit.Position.Y + 3, standPos.Z)
+	end
+	hrp.AssemblyLinearVelocity = Vector3.zero
+	hrp.AssemblyAngularVelocity = Vector3.zero
+	hrp.CFrame = CFrame.lookAt(standPos, Vector3.new(land.X, standPos.Y, land.Z))
+end
+
+local function waitForQuestHud(timeoutSec: number)
+	local deadline = os.clock() + timeoutSec
+	while os.clock() < deadline do
+		local idx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+		if typeof(idx) == "number" and idx >= 1 then
+			refreshQuestHud()
+			return true
+		end
+		task.wait(0.05)
+	end
+	refreshQuestHud()
+	return false
+end
+
+local function buildOfferLinesForIndex(questIndex: number): { { text: string, shake: boolean? } }
+	local quest = TimCheeseQuestConfig.getQuest(questIndex)
+	if not quest then
+		return TimCheeseQuestConfig.OFFER_LINES
+	end
+	local lead = if questIndex <= 1 then "Alright — first job's on the HOUSE!!" else "Fresh job just dropped. Listen up!!"
+	return {
+		{ text = lead, shake = true },
+		{ text = string.format("%s — %s", quest.title, quest.description), shake = false },
+		{
+			text = string.format("Reward: %s. You in?", BrainrotEconomy.formatCashShort(quest.rewardCash)),
+			shake = true,
+		},
+	}
+end
+
+local function buildFirstOfferLines(): { { text: string, shake: boolean? } }
+	return buildOfferLinesForIndex(1)
 end
 
 function M.playIntroFall()
@@ -705,6 +777,9 @@ function M.playIntroFall()
 	setBgmSlowed(true)
 	local wind = playWindLoop()
 
+	-- Pull player beside Tim so dialogue camera isn't a distant wide shot.
+	placePlayerNearTim(landCf)
+
 	local land = landCf.Position
 	local start = land + Vector3.new(0, TimCheeseQuestConfig.DROP_HEIGHT, 0)
 	local rotOnly = landCf - landCf.Position
@@ -713,8 +788,10 @@ function M.playIntroFall()
 	local cam = Workspace.CurrentCamera
 	local savedType = cam and cam.CameraType
 	local savedSubject = cam and cam.CameraSubject
+	local savedFov = cam and cam.FieldOfView
 	if cam then
 		cam.CameraType = Enum.CameraType.Scriptable
+		cam.FieldOfView = 58
 	end
 
 	-- Fire early so zone poll / Touched can't restart while attribute replicates.
@@ -730,18 +807,22 @@ function M.playIntroFall()
 		TweenInfo.new(TimCheeseQuestConfig.FALL_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 		{ Value = 1 }
 	)
+	local right = landCf.RightVector
+	local look = landCf.LookVector
 	local conn = RunService.RenderStepped:Connect(function()
 		local t = alpha.Value
 		local y = start.Y + (land.Y - start.Y) * (t * t)
 		local pos = Vector3.new(land.X, y, land.Z)
-		local sway = math.sin(t * 22) * (1 - t) * 1.6
+		local sway = math.sin(t * 28) * (1 - t) * 0.85
 		if clone.Parent then
 			clone:PivotTo(CFrame.new(pos + Vector3.new(sway, 0, 0)) * rotOnly)
 		end
 		if cam then
-			-- Worm's-eye: camera near the landing pad looking UP at Tim.
-			local camPos = Vector3.new(land.X + 11, land.Y + 2.5, land.Z + 13)
-			cam.CFrame = CFrame.lookAt(camPos, pos + Vector3.new(0, 1.5, 0))
+			-- Close cinematic: low side angle tracking his fall into a face shot.
+			local face = pos + Vector3.new(0, 2.35, 0)
+			local camPos = face + right * 3.4 + look * 4.6 + Vector3.new(0, 0.35 - t * 0.8, 0)
+			cam.CFrame = CFrame.lookAt(camPos, face + Vector3.new(0, -0.15, 0))
+			cam.FieldOfView = 58 + (1 - t) * 8
 		end
 	end)
 	tween:Play()
@@ -758,9 +839,18 @@ function M.playIntroFall()
 	end
 	spawnLandingDebris(land, clone)
 	GameSoundEffects.playGroundSmash(1.45)
-	pulseCameraShake(0.85, 0.95)
+	pulseCameraShake(0.55, 0.7)
 	ensureIdle(clone)
 	setBgmSlowed(false)
+
+	-- Hold a tight face angle for a beat before dialogue owns the camera.
+	if cam and clone.Parent then
+		local face = land + Vector3.new(0, 2.4, 0)
+		local camPos = face + right * 2.8 + look * 3.6 + Vector3.new(0, 0.2, 0)
+		cam.CFrame = CFrame.lookAt(camPos, face)
+		cam.FieldOfView = 52
+		task.wait(0.18)
+	end
 
 	StandDialogueCutscene.play({
 		standName = "TimCheese",
@@ -773,26 +863,36 @@ function M.playIntroFall()
 		voicePitchMax = 1.12,
 	}, clone)
 
-	-- After intro talk, offer first quest (accept/decline).
+	-- Offer first quest with title / goal / reward before Accept.
 	local accepted = StandDialogueCutscene.play({
 		standName = "TimCheese",
 		frameKey = "TimCheese",
 		brainrotName = TimCheeseQuestConfig.IDLE_ANIM_NAME,
 		enterLabel = "ACCEPT QUEST",
 		exitLabel = "DECLINE",
-		lines = TimCheeseQuestConfig.OFFER_LINES,
+		lines = buildFirstOfferLines(),
 		voicePitchMin = 0.92,
 		voicePitchMax = 1.12,
 	}, clone)
 
 	if accepted then
+		local introDeadline = os.clock() + 2
+		while player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) ~= true and os.clock() < introDeadline do
+			task.wait(0.05)
+		end
 		local rf = getRF("AcceptQuest")
 		if rf then
-			pcall(function()
-				rf:InvokeServer()
+			local ok, result = pcall(function()
+				return rf:InvokeServer()
 			end)
+			if not ok then
+				warn("[TimCheeseQuestController] AcceptQuest error:", result)
+			elseif result ~= true then
+				warn("[TimCheeseQuestController] AcceptQuest rejected")
+			end
 		end
 		TopNotifController.showBroadcast("New quest from Tim Cheese!")
+		waitForQuestHud(2.5)
 	else
 		StandDialogueCutscene.play({
 			standName = "TimCheese",
@@ -809,19 +909,28 @@ function M.playIntroFall()
 	if clone.Parent then
 		clone:Destroy()
 	end
+	idleTrack = nil
 	revealTimForIntro(tim)
 	ensureIdle(tim)
 
 	if cam then
 		cam.CameraType = savedType or Enum.CameraType.Custom
 		cam.CameraSubject = savedSubject
+		if typeof(savedFov) == "number" then
+			cam.FieldOfView = savedFov
+		end
 	end
 
 	GameplayUiVisibility.show()
 	lockMovement(false)
 	introPlaying = false
-	setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
-	refreshQuestHud()
+	if accepted then
+		local q = TimCheeseQuestConfig.getQuest(1)
+		setQuestFloatVisible(tim, true, if q then q.title else TimCheeseQuestConfig.HAS_QUEST_OVERHEAD)
+		refreshQuestHud()
+	else
+		setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
+	end
 	syncPromptAndOutline()
 end
 
@@ -896,7 +1005,7 @@ function M.openTimDialogue()
 				brainrotName = TimCheeseQuestConfig.IDLE_ANIM_NAME,
 				enterLabel = "ACCEPT QUEST",
 				exitLabel = "DECLINE",
-				lines = TimCheeseQuestConfig.OFFER_LINES,
+				lines = buildOfferLinesForIndex(doneAfter + 1),
 				voicePitchMin = 0.92,
 				voicePitchMax = 1.12,
 			}, tim)
@@ -908,6 +1017,7 @@ function M.openTimDialogue()
 					end)
 				end
 				TopNotifController.showBroadcast("New quest from Tim Cheese!")
+				waitForQuestHud(2.5)
 			else
 				StandDialogueCutscene.play({
 					standName = "TimCheese",
@@ -928,7 +1038,7 @@ function M.openTimDialogue()
 			brainrotName = TimCheeseQuestConfig.IDLE_ANIM_NAME,
 			enterLabel = "ACCEPT QUEST",
 			exitLabel = "DECLINE",
-			lines = TimCheeseQuestConfig.OFFER_LINES,
+			lines = buildOfferLinesForIndex(doneCount + 1),
 			voicePitchMin = 0.92,
 			voicePitchMax = 1.12,
 		}, tim)
@@ -940,6 +1050,7 @@ function M.openTimDialogue()
 				end)
 			end
 			TopNotifController.showBroadcast("New quest from Tim Cheese!")
+			waitForQuestHud(2.5)
 		else
 			StandDialogueCutscene.play({
 				standName = "TimCheese",
@@ -957,6 +1068,7 @@ function M.openTimDialogue()
 	end
 
 	dialogueBusy = false
+	restoreMovement()
 	refreshQuestHud()
 	syncPromptAndOutline()
 end

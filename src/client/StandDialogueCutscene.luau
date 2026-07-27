@@ -387,9 +387,28 @@ end
 local function lockMovement()
 	local hum = getHumanoid()
 	if hum then
-		savedWalkSpeed = hum.WalkSpeed
-		savedJumpPower = hum.JumpPower
-		savedJumpHeight = hum.JumpHeight
+		-- Don't snapshot zero speed from an outer cutscene lock (would restore as slowed).
+		if hum.WalkSpeed > 0.05 then
+			savedWalkSpeed = hum.WalkSpeed
+		elseif savedWalkSpeed == nil then
+			local base = hum:GetAttribute("BrainrotBaseWalkSpeed")
+			if typeof(base) == "number" and base > 0 then
+				local slowOn = Players.LocalPlayer:GetAttribute("SlowWalkEnabled") == true
+				savedWalkSpeed = base * (if slowOn then 0.8 else 1.15)
+			else
+				savedWalkSpeed = 16 * 1.15
+			end
+		end
+		if hum.JumpPower > 0 then
+			savedJumpPower = hum.JumpPower
+		elseif savedJumpPower == nil then
+			savedJumpPower = 50
+		end
+		if hum.JumpHeight > 0 then
+			savedJumpHeight = hum.JumpHeight
+		elseif savedJumpHeight == nil then
+			savedJumpHeight = 7.2
+		end
 		savedUseJumpPower = hum.UseJumpPower
 		savedAutoRotate = hum.AutoRotate
 		hum.WalkSpeed = 0

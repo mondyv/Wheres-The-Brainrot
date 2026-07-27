@@ -29,7 +29,7 @@ export type QuestDef = {
 	showBar: boolean,
 }
 
-M.QUESTS: { QuestDef } = {
+local QUESTS: { QuestDef } = {
 	{
 		id = "place_5",
 		title = "Stand Starter",
@@ -121,6 +121,8 @@ M.QUESTS: { QuestDef } = {
 		showBar = true,
 	},
 }
+
+M.QUESTS = QUESTS
 
 M.INTRO_LINES = {
 	{ text = "HEY!! YOU MADE IT OUT OF THE TUTORIAL ALIVE!!", shake = true },

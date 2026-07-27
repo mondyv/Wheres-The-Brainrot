@@ -139,21 +139,23 @@ local function beginLoadingStreamingGuard(player: Player)
 	streamingGuardActive = true
 	-- Some Studio/runtime builds expose StreamingEnabled but not Min/Target radius.
 	-- Never read those properties outside pcall — it aborts the whole loading screen.
-	local okStream, errStream = pcall(function()
+	local okStream = pcall(function()
 		if Workspace.StreamingEnabled ~= true then
 			return
 		end
-		local ws = Workspace :: any
-		if typeof(ws.StreamingMinRadius) ~= "number" or typeof(ws.StreamingTargetRadius) ~= "number" then
+		-- Index via table so missing properties don't throw before pcall in some builds.
+		local wsAny = Workspace :: any
+		local minR = rawget(wsAny, "StreamingMinRadius")
+		local targetR = rawget(wsAny, "StreamingTargetRadius")
+		if typeof(minR) ~= "number" or typeof(targetR) ~= "number" then
 			return
 		end
-		savedStreamingMinRadius = ws.StreamingMinRadius
-		savedStreamingTargetRadius = ws.StreamingTargetRadius
-		ws.StreamingMinRadius = LOADING_STREAM_MIN_RADIUS
-		ws.StreamingTargetRadius = LOADING_STREAM_TARGET_RADIUS
+		savedStreamingMinRadius = minR
+		savedStreamingTargetRadius = targetR
+		wsAny.StreamingMinRadius = LOADING_STREAM_MIN_RADIUS
+		wsAny.StreamingTargetRadius = LOADING_STREAM_TARGET_RADIUS
 	end)
 	if not okStream then
-		warn("[LoadingScreenController] streaming radius clamp failed:", errStream)
 		savedStreamingMinRadius = nil
 		savedStreamingTargetRadius = nil
 	end

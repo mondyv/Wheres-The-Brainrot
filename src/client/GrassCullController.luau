@@ -121,7 +121,7 @@ function M.setEnabled(enabled: boolean)
 	table.clear(pending)
 	for part in hiddenParts do
 		if part.Parent then
-			showPart(part)
+			part.LocalTransparencyModifier = 0
 		end
 	end
 	table.clear(hiddenParts)

@@ -98,7 +98,8 @@ local function refreshMarkers(plot: Instance?)
 		if d:IsA("BillboardGui") and isYourPlotMarker(d, plot) then
 			table.insert(cachedMarkers, d)
 		elseif d:IsA("SurfaceGui") and isYourPlotMarker(d, plot) then
-			(d :: SurfaceGui).Enabled = false
+			local sg = d :: SurfaceGui
+			sg.Enabled = false
 		end
 	end
 end
@@ -126,10 +127,11 @@ local function lockMarkerLook(bb: BillboardGui)
 	-- Flatten vertical stacks so "Your" / "Plot" sit on one line.
 	for _, d in ipairs(bb:GetDescendants()) do
 		if d:IsA("UIListLayout") then
-			(d :: UIListLayout).FillDirection = Enum.FillDirection.Horizontal
-			(d :: UIListLayout).HorizontalAlignment = Enum.HorizontalAlignment.Center
-			(d :: UIListLayout).VerticalAlignment = Enum.VerticalAlignment.Center
-			(d :: UIListLayout).Padding = UDim.new(0, 4)
+			local layout = d :: UIListLayout
+			layout.FillDirection = Enum.FillDirection.Horizontal
+			layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+			layout.VerticalAlignment = Enum.VerticalAlignment.Center
+			layout.Padding = UDim.new(0, 4)
 		end
 	end
 
@@ -177,7 +179,8 @@ local function applyMarkerFade(transparency: number, visible: boolean)
 		end
 		for _, d in ipairs(bb:GetDescendants()) do
 			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
-				(d :: ImageLabel).ImageTransparency = transparency
+				local img = d :: ImageLabel
+				img.ImageTransparency = transparency
 			elseif d:IsA("TextLabel") or d:IsA("TextButton") then
 				local text = d :: TextLabel
 				-- Fade fill + stroke together (stroke lagging made it look darker up close).

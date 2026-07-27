@@ -183,6 +183,9 @@ task.defer(function()
 				require(script.ChatTagsController).init()
 			end,
 			function()
+				require(script.ServerChatTipsController).init()
+			end,
+			function()
 				require(script.CustomBubbleChatController).init()
 			end,
 			function()

@@ -1,75 +1,68 @@
 -- [ACTIVE] ServerChatTips
 --[[
-	Posts clean rich-text system tips in chat on a fixed interval.
+	Posts rotating tips on an interval. DisplaySystemMessage is client-only,
+	so the server broadcasts tip text via RemoteEvent.
 ]]
 
-local TextChatService = game:GetService("TextChatService")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local ServerChatTipsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ServerChatTipsConfig"))
 
 local messages = ServerChatTipsConfig.buildMessages()
 local index = 1
-local warnedMissingChannel = false
 
-local function resolveTipChannel(): TextChannel?
-	local channels = TextChatService:FindFirstChild("TextChannels")
-	if not channels then
-		local ok, result = pcall(function()
-			return TextChatService:WaitForChild("TextChannels", 20)
-		end)
-		if ok and result then
-			channels = result
-		end
+local function getRemotesFolder(): Folder
+	local existing = ReplicatedStorage:FindFirstChild("ServerChatTipsRemotes")
+	if existing and existing:IsA("Folder") then
+		return existing
 	end
-	if not channels then
-		return nil
-	end
-	local general = channels:FindFirstChild("RBXGeneral")
-	if general and general:IsA("TextChannel") then
-		return general
-	end
-	local system = channels:FindFirstChild("RBXSystem")
-	if system and system:IsA("TextChannel") then
-		return system
-	end
-	for _, child in ipairs(channels:GetChildren()) do
-		if child:IsA("TextChannel") then
-			return child
-		end
-	end
-	return nil
+	local folder = Instance.new("Folder")
+	folder.Name = "ServerChatTipsRemotes"
+	folder.Parent = ReplicatedStorage
+	return folder
 end
 
-local function postNextTip()
-	if #messages == 0 then
-		return
+local function ensureTipRemote(): RemoteEvent
+	local folder = getRemotesFolder()
+	local existing = folder:FindFirstChild("ShowChatTip")
+	if existing and existing:IsA("RemoteEvent") then
+		return existing
 	end
-	local channel = resolveTipChannel()
-	if not channel then
-		if not warnedMissingChannel then
-			warnedMissingChannel = true
-			warn("[ServerChatTips] TextChat TextChannels missing — tips disabled until chat loads")
-		end
-		return
+	local ev = Instance.new("RemoteEvent")
+	ev.Name = "ShowChatTip"
+	ev.Parent = folder
+	return ev
+end
+
+local tipRE = ensureTipRemote()
+
+local function nextTipText(): string?
+	if #messages == 0 then
+		return nil
 	end
 	local text = messages[index]
 	index += 1
 	if index > #messages then
 		index = 1
 	end
-	local ok, err = pcall(function()
-		channel:DisplaySystemMessage(text)
-	end)
-	if not ok then
-		warn("[ServerChatTips] DisplaySystemMessage failed:", err)
+	return text
+end
+
+local function postNextTip()
+	local text = nextTipText()
+	if not text then
+		return
 	end
+	tipRE:FireAllClients(text)
 end
 
 task.spawn(function()
 	task.wait(ServerChatTipsConfig.FIRST_DELAY_SEC)
 	while true do
-		postNextTip()
+		if #Players:GetPlayers() > 0 then
+			postNextTip()
+		end
 		task.wait(ServerChatTipsConfig.INTERVAL_SEC)
 	end
 end)

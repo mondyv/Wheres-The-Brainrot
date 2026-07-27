@@ -17,6 +17,7 @@ local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitFo
 local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+local TutorialConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TutorialConfig"))
 
 local StandDialogueCutscene = require(script.Parent.StandDialogueCutscene)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
@@ -41,6 +42,8 @@ local questHost: Frame? = nil
 local questPanel: Frame? = nil
 local forcedQuestIndex: number? = nil
 local acceptPopupGui: ScreenGui? = nil
+local questDotsConn: RBXScriptConnection? = nil
+local questDotsPhase = 0.0
 local highlight: Highlight? = nil
 local talkPrompt: ProximityPrompt? = nil
 local idleTrack: AnimationTrack? = nil
@@ -315,38 +318,54 @@ local function spawnLandingDebris(landingPos: Vector3, tim: Model)
 	ring.CastShadow = false
 	ring.Material = Enum.Material.Grass
 	ring.Color = ROCK_GREEN
-	ring.Size = Vector3.new(0.35, 2.5, 2.5)
+	ring.Size = Vector3.new(0.4, 3, 3)
 	ring.CFrame = CFrame.new(pos + Vector3.new(0, 0.2, 0)) * CFrame.Angles(0, 0, math.rad(90))
 	ring.Parent = Workspace
-	TweenService:Create(ring, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		Size = Vector3.new(0.2, 18, 18),
+	TweenService:Create(ring, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(0.2, 24, 24),
 		Transparency = 1,
 	}):Play()
-	Debris:AddItem(ring, 0.55)
+	Debris:AddItem(ring, 0.6)
 
-	for i = 1, 36 do
+	-- Second dust ring
+	local ring2 = ring:Clone()
+	ring2.Size = Vector3.new(0.25, 2, 2)
+	ring2.Color = Color3.fromRGB(40, 110, 45)
+	ring2.Parent = Workspace
+	TweenService:Create(ring2, TweenInfo.new(0.65, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(0.15, 32, 32),
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(ring2, 0.75)
+
+	for i = 1, 72 do
 		local chip = Instance.new("Part")
 		chip.Name = "TimLandingChip"
-		local scale = 1.1 + math.random() * 1.6
-		chip.Size = Vector3.new(0.85, 0.55, 1.05) * scale
-		chip.Color = if i % 3 == 0 then Color3.fromRGB(48, 140, 52) else ROCK_GREEN
-		chip.Material = Enum.Material.Grass
+		local scale = 0.85 + math.random() * 2.1
+		chip.Size = Vector3.new(0.9, 0.55, 1.15) * scale
+		local roll = i % 5
+		chip.Color = if roll == 0
+			then Color3.fromRGB(48, 140, 52)
+			elseif roll == 1 then Color3.fromRGB(90, 70, 40)
+			elseif roll == 2 then Color3.fromRGB(70, 175, 65)
+			else ROCK_GREEN
+		chip.Material = if roll == 1 then Enum.Material.Slate else Enum.Material.Grass
 		chip.Anchored = true
 		chip.CanCollide = false
 		chip.CanQuery = false
 		chip.CanTouch = false
 		chip.CastShadow = false
-		local ang = math.rad(i * (360 / 36))
-		chip.CFrame = CFrame.new(pos + Vector3.new(0, 0.4, 0)) * CFrame.Angles(ang, ang * 0.4, 0)
+		local ang = math.rad(i * (360 / 72) + math.random() * 8)
+		chip.CFrame = CFrame.new(pos + Vector3.new(0, 0.35, 0)) * CFrame.Angles(ang, ang * 0.5, 0)
 		chip.Parent = Workspace
-		local dir = Vector3.new(math.cos(ang), 0.55 + math.random() * 0.7, math.sin(ang)).Unit
-		local goal = pos + dir * (7 + math.random() * 8) + Vector3.new(0, 2.5 + math.random() * 2, 0)
-		TweenService:Create(chip, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			CFrame = CFrame.new(goal) * CFrame.Angles(math.random() * 2, math.random() * 2, math.random() * 2),
+		local dir = Vector3.new(math.cos(ang), 0.45 + math.random() * 0.95, math.sin(ang)).Unit
+		local goal = pos + dir * (6 + math.random() * 12) + Vector3.new(0, 2 + math.random() * 4.5, 0)
+		TweenService:Create(chip, TweenInfo.new(0.55 + math.random() * 0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			CFrame = CFrame.new(goal) * CFrame.Angles(math.random() * 4, math.random() * 4, math.random() * 4),
 			Transparency = 1,
-			Size = chip.Size * 0.25,
+			Size = chip.Size * 0.2,
 		}):Play()
-		Debris:AddItem(chip, 0.85)
+		Debris:AddItem(chip, 1.05)
 	end
 end
 
@@ -492,6 +511,36 @@ local function ensureQuestHost(): Frame?
 	return host
 end
 
+local function stopQuestDots()
+	if questDotsConn then
+		questDotsConn:Disconnect()
+		questDotsConn = nil
+	end
+	questDotsPhase = 0
+	if questPanel then
+		local dots = questPanel:FindFirstChild("ObjectiveDots", true)
+		if dots and dots:IsA("TextLabel") then
+			dots.Text = ""
+		end
+	end
+end
+
+local function startQuestDots()
+	stopQuestDots()
+	questDotsConn = RunService.Heartbeat:Connect(function(dt)
+		if not questPanel or not questPanel.Visible or not questPanel.Parent then
+			return
+		end
+		local dots = questPanel:FindFirstChild("ObjectiveDots", true)
+		if not (dots and dots:IsA("TextLabel")) then
+			return
+		end
+		questDotsPhase += dt
+		local step = math.floor(questDotsPhase * 2.2) % 4
+		dots.Text = string.rep(".", step)
+	end)
+end
+
 local function ensureQuestHud(): Frame
 	if questPanel and questPanel.Parent then
 		return questPanel
@@ -502,12 +551,13 @@ local function ensureQuestHud(): Frame
 	local panel = Instance.new("Frame")
 	panel.Name = "ObjectivePanel"
 	panel.AnchorPoint = Vector2.new(1, 0)
-	panel.Position = UDim2.new(1, -18, 0, 72)
-	panel.Size = UDim2.fromOffset(280, 0)
+	panel.Position = UDim2.new(1, -TutorialConfig.PANEL_RIGHT_PAD, 0, TutorialConfig.PANEL_TOP_PAD)
+	panel.Size = UDim2.fromOffset(TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_HEIGHT)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
 	panel.BackgroundColor3 = Color3.fromRGB(22, 26, 34)
-	panel.BackgroundTransparency = 0.28
+	panel.BackgroundTransparency = 0.35
 	panel.BorderSizePixel = 0
+	panel.ClipsDescendants = false
 	panel.Visible = false
 	panel.ZIndex = 100
 	panel.Parent = host
@@ -516,68 +566,104 @@ local function ensureQuestHud(): Frame
 	corner.CornerRadius = UDim.new(0, 12)
 	corner.Parent = panel
 	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(255, 220, 80)
-	stroke.Thickness = 1.6
-	stroke.Transparency = 0.25
+	stroke.Color = Color3.fromRGB(255, 255, 255)
+	stroke.Thickness = 1
+	stroke.Transparency = 0.82
 	stroke.Parent = panel
 	local pad = Instance.new("UIPadding")
-	pad.PaddingTop = UDim.new(0, 10)
-	pad.PaddingBottom = UDim.new(0, 10)
-	pad.PaddingLeft = UDim.new(0, 12)
+	pad.PaddingLeft = UDim.new(0, 8)
 	pad.PaddingRight = UDim.new(0, 12)
+	pad.PaddingTop = UDim.new(0, 8)
+	pad.PaddingBottom = UDim.new(0, 8)
 	pad.Parent = panel
-	local layout = Instance.new("UIListLayout")
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0, 6)
-	layout.Parent = panel
 	local scale = Instance.new("UIScale")
 	scale.Name = "PanelScale"
 	scale.Scale = 1
 	scale.Parent = panel
 
-	local title = Instance.new("TextLabel")
-	title.Name = "Title"
-	title.BackgroundTransparency = 1
-	title.Size = UDim2.new(1, 0, 0, 20)
-	title.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	title.TextSize = 16
-	title.TextColor3 = Color3.fromRGB(255, 230, 90)
-	title.TextXAlignment = Enum.TextXAlignment.Left
-	title.Text = "TIM CHEESE QUEST"
-	title.LayoutOrder = 1
-	title.Parent = panel
-	UiFonts.applyDisplayLabel(title, 16, 13)
+	local bang = Instance.new("ImageLabel")
+	bang.Name = "Exclaim"
+	bang.BackgroundTransparency = 1
+	bang.AnchorPoint = Vector2.new(0, 0)
+	bang.Position = UDim2.new(0, 6, 0, 4)
+	bang.Size = UDim2.fromOffset(36, 36)
+	bang.Image = TutorialConfig.EXCLAIM_IMAGE
+	bang.ScaleType = Enum.ScaleType.Fit
+	bang.ZIndex = 3
+	bang.Parent = panel
 
-	local body = Instance.new("TextLabel")
-	body.Name = "Body"
-	body.BackgroundTransparency = 1
-	body.Size = UDim2.new(1, 0, 0, 0)
-	body.AutomaticSize = Enum.AutomaticSize.Y
-	body.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
-	body.TextSize = 14
-	body.TextColor3 = Color3.fromRGB(245, 245, 245)
-	body.TextWrapped = true
-	body.TextXAlignment = Enum.TextXAlignment.Left
-	body.LayoutOrder = 2
-	body.Parent = panel
+	local textRow = Instance.new("Frame")
+	textRow.Name = "TextRow"
+	textRow.BackgroundTransparency = 1
+	textRow.Position = UDim2.new(0, 46, 0, 2)
+	textRow.Size = UDim2.new(1, -52, 0, 0)
+	textRow.AutomaticSize = Enum.AutomaticSize.Y
+	textRow.ZIndex = 3
+	textRow.Parent = panel
+
+	local label = Instance.new("TextLabel")
+	label.Name = "ObjectiveText"
+	label.BackgroundTransparency = 1
+	label.AutomaticSize = Enum.AutomaticSize.Y
+	label.Size = UDim2.new(1, -28, 0, 0)
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextYAlignment = Enum.TextYAlignment.Top
+	label.TextWrapped = true
+	label.TextSize = 17
+	label.TextColor3 = Color3.fromRGB(245, 250, 255)
+	label.Text = ""
+	label.ZIndex = 3
+	label.Parent = textRow
+	UiFonts.applyBody(label)
+	local boldOk, boldFace = pcall(function()
+		return Font.new(label.FontFace.Family, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+	end)
+	if boldOk and typeof(boldFace) == "Font" then
+		label.FontFace = boldFace
+	end
+	label.TextStrokeTransparency = 0.25
+	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+
+	local dots = Instance.new("TextLabel")
+	dots.Name = "ObjectiveDots"
+	dots.BackgroundTransparency = 1
+	dots.AnchorPoint = Vector2.new(1, 0)
+	dots.Position = UDim2.new(1, 0, 0, 0)
+	dots.Size = UDim2.fromOffset(26, 20)
+	dots.TextXAlignment = Enum.TextXAlignment.Left
+	dots.TextYAlignment = Enum.TextYAlignment.Top
+	dots.TextSize = 17
+	dots.TextColor3 = Color3.fromRGB(245, 250, 255)
+	dots.Text = ""
+	dots.ZIndex = 3
+	dots.Parent = textRow
+	UiFonts.applyBody(dots)
+	if boldOk and typeof(boldFace) == "Font" then
+		dots.FontFace = boldFace
+	end
+	dots.TextStrokeTransparency = 0.25
+	dots.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 
 	local progress = Instance.new("TextLabel")
 	progress.Name = "Progress"
 	progress.BackgroundTransparency = 1
-	progress.Size = UDim2.new(1, 0, 0, 16)
+	progress.Position = UDim2.new(0, 46, 0, 0)
+	progress.Size = UDim2.new(1, -52, 0, 16)
 	progress.FontFace = Font.fromEnum(Enum.Font.GothamBold)
 	progress.TextSize = 13
 	progress.TextColor3 = Color3.fromRGB(180, 255, 160)
 	progress.TextXAlignment = Enum.TextXAlignment.Left
-	progress.LayoutOrder = 3
+	progress.Text = ""
+	progress.ZIndex = 3
 	progress.Parent = panel
 
 	local barBg = Instance.new("Frame")
 	barBg.Name = "BarBg"
-	barBg.Size = UDim2.new(1, 0, 0, 8)
+	barBg.Position = UDim2.new(0, 46, 0, 0)
+	barBg.Size = UDim2.new(1, -52, 0, 7)
 	barBg.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
 	barBg.BorderSizePixel = 0
-	barBg.LayoutOrder = 4
+	barBg.ZIndex = 3
 	barBg.Parent = panel
 	local barCorner = Instance.new("UICorner")
 	barCorner.CornerRadius = UDim.new(1, 0)
@@ -592,6 +678,7 @@ local function ensureQuestHud(): Frame
 	fillCorner.CornerRadius = UDim.new(1, 0)
 	fillCorner.Parent = barFill
 
+	-- Stack progress under text via list-like manual layout in refresh.
 	questPanel = panel
 	return panel
 end
@@ -609,13 +696,23 @@ local function layoutQuestHud()
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1280
 	local insetY = GuiService:GetGuiInset().Y
+	local rightPad = TutorialConfig.PANEL_RIGHT_PAD
+	local topPad = TutorialConfig.PANEL_TOP_PAD + insetY
+	local screenW: number
 	if mobile or vw < 700 then
-		panel.Size = UDim2.fromOffset(math.clamp(math.floor(vw * 0.72), 180, 260), 0)
-		panel.Position = UDim2.new(1, -12, 0, 14 + insetY)
+		local maxW = math.floor(vw * TutorialConfig.PANEL_MOBILE_MAX_WIDTH_FRAC)
+		screenW = math.clamp(maxW, TutorialConfig.PANEL_MOBILE_MIN_WIDTH, TutorialConfig.PANEL_MOBILE_MAX_WIDTH)
+		topPad = insetY + 14
+		rightPad = 10
 	else
-		panel.Size = UDim2.fromOffset(math.clamp(math.floor(vw * 0.22), 260, 340), 0)
-		panel.Position = UDim2.new(1, -18, 0, 18 + insetY)
+		local maxW = math.floor(vw * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
+		maxW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
+		screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
 	end
+	panel.AnchorPoint = Vector2.new(1, 0)
+	panel.Size = UDim2.fromOffset(screenW, TutorialConfig.PANEL_HEIGHT)
+	panel.AutomaticSize = Enum.AutomaticSize.Y
+	panel.Position = UDim2.new(1, -rightPad, 0, topPad)
 end
 
 local function resolveActiveQuestIndex(): number?
@@ -630,13 +727,6 @@ local function resolveActiveQuestIndex(): number?
 		return forcedQuestIndex
 	end
 	return nil
-end
-
-local function formatQuestBody(quest: TimCheeseQuestConfig.QuestDef, ready: boolean): string
-	if ready then
-		return "Quest completed! Go see Tim Cheese to claim."
-	end
-	return string.format("%s — %s  ·  Reward %s", quest.title, quest.description, BrainrotEconomy.formatCashShort(quest.rewardCash))
 end
 
 local function formatQuestProgress(quest: TimCheeseQuestConfig.QuestDef, p: number): string
@@ -654,6 +744,7 @@ local function refreshQuestHud()
 	local progressVal = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR)
 	local ready = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR) == true
 	if not idx then
+		stopQuestDots()
 		if questPanel then
 			questPanel.Visible = false
 		end
@@ -665,26 +756,55 @@ local function refreshQuestHud()
 	end
 	local panel = ensureQuestHud()
 	layoutQuestHud()
+	local wasHidden = not panel.Visible
 	panel.Visible = true
-	local body = panel:FindFirstChild("Body")
-	local progress = panel:FindFirstChild("Progress")
-	local barBg = panel:FindFirstChild("BarBg")
+	local label = panel:FindFirstChild("ObjectiveText", true)
 	local p = if typeof(progressVal) == "number" then progressVal else 0
-	if body and body:IsA("TextLabel") then
-		body.Text = formatQuestBody(quest, ready)
+	local objective = if ready
+		then "Quest done — talk to Tim Cheese!"
+		else string.format("%s — %s", quest.title, quest.description)
+	if label and label:IsA("TextLabel") then
+		label.Text = objective
 	end
-	if progress and progress:IsA("TextLabel") then
-		progress.Text = if quest.showBar then formatQuestProgress(quest, p) else quest.title
-		progress.Visible = quest.showBar == true or ready
-	end
-	if barBg and barBg:IsA("Frame") then
-		barBg.Visible = quest.showBar == true and not ready
-		local fill = barBg:FindFirstChild("BarFill")
-		if fill and fill:IsA("Frame") then
-			local alpha = math.clamp(p / math.max(quest.target, 1), 0, 1)
-			fill.Size = UDim2.new(alpha, 0, 1, 0)
+	local function placeMeta()
+		if not panel.Parent then
+			return
+		end
+		local textRowLive = panel:FindFirstChild("TextRow")
+		local textH = if textRowLive and textRowLive:IsA("GuiObject") then math.max(textRowLive.AbsoluteSize.Y, 22) else 22
+		local progressLive = panel:FindFirstChild("Progress")
+		local barLive = panel:FindFirstChild("BarBg")
+		if progressLive and progressLive:IsA("TextLabel") then
+			progressLive.Position = UDim2.new(0, 46, 0, textH + 6)
+			progressLive.Text = if quest.showBar then formatQuestProgress(quest, p) else ("Reward " .. BrainrotEconomy.formatCashShort(quest.rewardCash))
+			progressLive.Visible = true
+		end
+		if barLive and barLive:IsA("Frame") then
+			barLive.Position = UDim2.new(0, 46, 0, textH + 26)
+			barLive.Visible = quest.showBar == true and not ready
+			local fill = barLive:FindFirstChild("BarFill")
+			if fill and fill:IsA("Frame") then
+				local alpha = math.clamp(p / math.max(quest.target, 1), 0, 1)
+				fill.Size = UDim2.new(alpha, 0, 1, 0)
+			end
 		end
 	end
+	placeMeta()
+	task.defer(placeMeta)
+	startQuestDots()
+	if wasHidden then
+		local sc = panel:FindFirstChild("PanelScale")
+		if sc and sc:IsA("UIScale") then
+			sc.Scale = 0.82
+			TweenService:Create(sc, TweenInfo.new(0.34, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		end
+	end
+end
+
+local function safeScaleTo(model: Model, scale: number)
+	pcall(function()
+		model:ScaleTo(scale)
+	end)
 end
 
 local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
@@ -709,95 +829,136 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 
 	local dim = Instance.new("Frame")
 	dim.Name = "Dim"
-	dim.BackgroundColor3 = Color3.fromRGB(8, 6, 12)
+	dim.BackgroundColor3 = Color3.fromRGB(12, 18, 10)
 	dim.BackgroundTransparency = 1
 	dim.BorderSizePixel = 0
 	dim.Size = UDim2.fromScale(1, 1)
 	dim.Parent = gui
 
-	local card = Instance.new("Frame")
-	card.Name = "AcceptCard"
-	card.AnchorPoint = Vector2.new(0.5, 0.5)
-	card.Position = UDim2.fromScale(0.5, 0.48)
-	card.Size = UDim2.fromOffset(420, 0)
-	card.AutomaticSize = Enum.AutomaticSize.Y
-	card.BackgroundColor3 = Color3.fromRGB(24, 20, 14)
-	card.BackgroundTransparency = 0.08
-	card.BorderSizePixel = 0
-	card.Parent = gui
-	local cardCorner = Instance.new("UICorner")
-	cardCorner.CornerRadius = UDim.new(0, 16)
-	cardCorner.Parent = card
-	local cardStroke = Instance.new("UIStroke")
-	cardStroke.Color = Color3.fromRGB(255, 210, 70)
-	cardStroke.Thickness = 2.2
-	cardStroke.Parent = card
-	local cardPad = Instance.new("UIPadding")
-	cardPad.PaddingTop = UDim.new(0, 22)
-	cardPad.PaddingBottom = UDim.new(0, 22)
-	cardPad.PaddingLeft = UDim.new(0, 24)
-	cardPad.PaddingRight = UDim.new(0, 24)
-	cardPad.Parent = card
-	local cardLayout = Instance.new("UIListLayout")
-	cardLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	cardLayout.Padding = UDim.new(0, 10)
-	cardLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	cardLayout.Parent = card
-	local cardScale = Instance.new("UIScale")
-	cardScale.Scale = 0.72
-	cardScale.Parent = card
+	-- Skewed cheese ticket — not a centered corporate card.
+	local ticket = Instance.new("Frame")
+	ticket.Name = "CheeseTicket"
+	ticket.AnchorPoint = Vector2.new(0.5, 0.5)
+	ticket.Position = UDim2.fromScale(0.5, 0.42)
+	ticket.Size = UDim2.fromOffset(390, 168)
+	ticket.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
+	ticket.BorderSizePixel = 0
+	ticket.Rotation = -7
+	ticket.Parent = gui
+	local ticketCorner = Instance.new("UICorner")
+	ticketCorner.CornerRadius = UDim.new(0, 6)
+	ticketCorner.Parent = ticket
+	local ticketStroke = Instance.new("UIStroke")
+	ticketStroke.Color = Color3.fromRGB(40, 28, 8)
+	ticketStroke.Thickness = 4
+	ticketStroke.Parent = ticket
 
-	local eyebrow = Instance.new("TextLabel")
-	eyebrow.BackgroundTransparency = 1
-	eyebrow.Size = UDim2.new(1, 0, 0, 18)
-	eyebrow.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	eyebrow.TextSize = 13
-	eyebrow.TextColor3 = Color3.fromRGB(255, 220, 90)
-	eyebrow.Text = "QUEST ACCEPTED"
-	eyebrow.LayoutOrder = 1
-	eyebrow.Parent = card
+	local inner = Instance.new("Frame")
+	inner.Name = "Inner"
+	inner.BackgroundColor3 = Color3.fromRGB(255, 244, 180)
+	inner.BorderSizePixel = 0
+	inner.Position = UDim2.fromOffset(10, 10)
+	inner.Size = UDim2.new(1, -20, 1, -20)
+	inner.Parent = ticket
+	local innerCorner = Instance.new("UICorner")
+	innerCorner.CornerRadius = UDim.new(0, 4)
+	innerCorner.Parent = inner
+	local dash = Instance.new("UIStroke")
+	dash.Color = Color3.fromRGB(180, 120, 30)
+	dash.Thickness = 2
+	dash.Transparency = 0.35
+	dash.Parent = inner
 
-	local headline = Instance.new("TextLabel")
-	headline.BackgroundTransparency = 1
-	headline.Size = UDim2.new(1, 0, 0, 28)
-	headline.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	headline.TextSize = 24
-	headline.TextColor3 = Color3.new(1, 1, 1)
-	headline.Text = quest.title
-	headline.LayoutOrder = 2
-	headline.Parent = card
-	UiFonts.applyDisplayLabel(headline, 24, 18)
+	local bang = Instance.new("ImageLabel")
+	bang.Name = "Bang"
+	bang.BackgroundTransparency = 1
+	bang.Position = UDim2.fromOffset(10, 18)
+	bang.Size = UDim2.fromOffset(54, 54)
+	bang.Image = TutorialConfig.EXCLAIM_IMAGE
+	bang.Rotation = -12
+	bang.Parent = inner
 
-	local info = Instance.new("TextLabel")
-	info.BackgroundTransparency = 1
-	info.Size = UDim2.new(1, 0, 0, 0)
-	info.AutomaticSize = Enum.AutomaticSize.Y
-	info.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
-	info.TextSize = 16
-	info.TextColor3 = Color3.fromRGB(235, 230, 220)
-	info.TextWrapped = true
-	info.Text = string.format("%s\nReward: %s", quest.description, BrainrotEconomy.formatCashShort(quest.rewardCash))
-	info.LayoutOrder = 3
-	info.Parent = card
+	local stamp = Instance.new("TextLabel")
+	stamp.BackgroundTransparency = 1
+	stamp.Position = UDim2.fromOffset(70, 12)
+	stamp.Size = UDim2.new(1, -84, 0, 22)
+	stamp.FontFace = Font.fromEnum(Enum.Font.GothamBold)
+	stamp.TextSize = 18
+	stamp.TextColor3 = Color3.fromRGB(160, 40, 30)
+	stamp.TextXAlignment = Enum.TextXAlignment.Left
+	stamp.Text = "JOB LOCKED IN"
+	stamp.Rotation = 1
+	stamp.Parent = inner
+
+	local title = Instance.new("TextLabel")
+	title.BackgroundTransparency = 1
+	title.Position = UDim2.fromOffset(70, 38)
+	title.Size = UDim2.new(1, -84, 0, 28)
+	title.FontFace = Font.fromEnum(Enum.Font.GothamBold)
+	title.TextSize = 22
+	title.TextColor3 = Color3.fromRGB(30, 24, 10)
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.TextTruncate = Enum.TextTruncate.AtEnd
+	title.Text = quest.title
+	title.Parent = inner
+	UiFonts.applyDisplayLabel(title, 22, 16)
+
+	local body = Instance.new("TextLabel")
+	body.BackgroundTransparency = 1
+	body.Position = UDim2.fromOffset(16, 78)
+	body.Size = UDim2.new(1, -32, 0, 40)
+	body.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
+	body.TextSize = 14
+	body.TextColor3 = Color3.fromRGB(55, 42, 18)
+	body.TextXAlignment = Enum.TextXAlignment.Left
+	body.TextYAlignment = Enum.TextYAlignment.Top
+	body.TextWrapped = true
+	body.Text = quest.description
+	body.Parent = inner
+
+	local payout = Instance.new("TextLabel")
+	payout.BackgroundColor3 = Color3.fromRGB(40, 28, 8)
+	payout.BackgroundTransparency = 0
+	payout.AnchorPoint = Vector2.new(1, 1)
+	payout.Position = UDim2.new(1, -10, 1, -10)
+	payout.Size = UDim2.fromOffset(128, 28)
+	payout.FontFace = Font.fromEnum(Enum.Font.GothamBold)
+	payout.TextSize = 14
+	payout.TextColor3 = Color3.fromRGB(255, 220, 80)
+	payout.Text = "★  " .. BrainrotEconomy.formatCashShort(quest.rewardCash)
+	payout.Parent = inner
+	local payCorner = Instance.new("UICorner")
+	payCorner.CornerRadius = UDim.new(0, 8)
+	payCorner.Parent = payout
+
+	local ticketScale = Instance.new("UIScale")
+	ticketScale.Scale = 0.55
+	ticketScale.Parent = ticket
 
 	local mobile = UserInputService.TouchEnabled
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1280
 	if mobile or vw < 700 then
-		card.Size = UDim2.fromOffset(math.clamp(math.floor(vw * 0.86), 260, 360), 0)
+		ticket.Size = UDim2.fromOffset(math.clamp(math.floor(vw * 0.88), 280, 360), 168)
 	end
 
-	TweenService:Create(dim, TweenInfo.new(0.22), { BackgroundTransparency = 0.45 }):Play()
-	TweenService:Create(cardScale, TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	TweenService:Create(dim, TweenInfo.new(0.18), { BackgroundTransparency = 0.55 }):Play()
+	TweenService:Create(ticketScale, TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	TweenService:Create(ticket, TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Rotation = -3 }):Play()
 	GameSoundEffects.playPurchase()
 
-	task.wait(2.35)
+	task.wait(2.15)
 	if not gui.Parent then
 		return
 	end
-	TweenService:Create(dim, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
-	TweenService:Create(cardScale, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.86 }):Play()
-	task.wait(0.22)
+	TweenService:Create(dim, TweenInfo.new(0.22), { BackgroundTransparency = 1 }):Play()
+	TweenService:Create(ticket, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+		Position = UDim2.fromScale(0.78, 0.12),
+		Rotation = 8,
+		BackgroundTransparency = 0.4,
+	}):Play()
+	TweenService:Create(ticketScale, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.35 }):Play()
+	task.wait(0.3)
 	if gui.Parent then
 		gui:Destroy()
 	end
@@ -941,6 +1102,7 @@ function M.playIntroFall()
 	local land = landCf.Position
 	local start = land + Vector3.new(0, TimCheeseQuestConfig.DROP_HEIGHT, 0)
 	local rotOnly = landCf - landCf.Position
+	safeScaleTo(clone, 2.65)
 	clone:PivotTo(CFrame.new(start) * rotOnly)
 	-- Idle plays through fall + talk (TimCheese brainrot anim).
 	ensureIdle(clone)
@@ -951,7 +1113,7 @@ function M.playIntroFall()
 	local savedFov = cam and cam.FieldOfView
 	if cam then
 		cam.CameraType = Enum.CameraType.Scriptable
-		cam.FieldOfView = 62
+		cam.FieldOfView = 58
 	end
 
 	local alpha = Instance.new("NumberValue")
@@ -961,18 +1123,30 @@ function M.playIntroFall()
 		TweenInfo.new(TimCheeseQuestConfig.FALL_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 		{ Value = 1 }
 	)
-	-- Fixed worm's-eye pad cam — look UP at Tim, don't chase him.
-	local camPos = Vector3.new(land.X + 7, land.Y + 1.15, land.Z + 8)
+	-- Farther worm's-eye — see the whole zip fall.
+	local camPos = Vector3.new(land.X + 18, land.Y + 2.8, land.Z + 20)
+	local lastScale = 2.65
 	local conn = RunService.RenderStepped:Connect(function()
 		local t = alpha.Value
 		local y = start.Y + (land.Y - start.Y) * (t * t)
 		local pos = Vector3.new(land.X, y, land.Z)
-		local sway = math.sin(t * 28) * (1 - t) * 0.85
+		local sway = math.sin(t * 28) * (1 - t) * 1.1
+		-- Pokemon-style: oversized spin that shrinks into place.
+		local scale = 2.65 - (1.65 * t)
+		if math.abs(scale - lastScale) > 0.03 then
+			safeScaleTo(clone, scale)
+			lastScale = scale
+		end
+		local spin = CFrame.Angles(
+			math.rad(math.sin(t * 18) * 35 * (1 - t)),
+			math.rad(t * 720),
+			math.rad(math.cos(t * 14) * 28 * (1 - t))
+		)
 		if clone.Parent then
-			clone:PivotTo(CFrame.new(pos + Vector3.new(sway, 0, 0)) * rotOnly)
+			clone:PivotTo(CFrame.new(pos + Vector3.new(sway, 0, 0)) * rotOnly * spin)
 		end
 		if cam then
-			cam.CFrame = CFrame.lookAt(camPos, pos + Vector3.new(0, 1.2, 0))
+			cam.CFrame = CFrame.lookAt(camPos, pos + Vector3.new(0, 2.2, 0))
 		end
 	end)
 	tween:Play()
@@ -984,6 +1158,7 @@ function M.playIntroFall()
 		wind:Stop()
 		wind:Destroy()
 	end
+	safeScaleTo(clone, 1)
 	if clone.Parent then
 		clone:PivotTo(landCf)
 	end
@@ -992,6 +1167,9 @@ function M.playIntroFall()
 	pulseCameraShake(0.55, 0.7)
 	ensureIdle(clone)
 	setBgmSlowed(false)
+
+	-- Beat to land / settle before he starts talking.
+	task.wait(1.0)
 
 	StandDialogueCutscene.play({
 		standName = "TimCheese",

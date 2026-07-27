@@ -391,7 +391,13 @@ local function tick(dt: number)
 	end
 	local hrpPos = (hrp :: BasePart).Position
 
-	if dialogueBusy or StandDialogueCutscene.isActive() then
+	-- External cutscenes (Tim Cheese etc.) also use StandDialogueCutscene —
+	-- only cancel when THIS controller owns the session (dialogueBusy).
+	if StandDialogueCutscene.isActive() and not dialogueBusy then
+		resetCharge()
+		return
+	end
+	if dialogueBusy then
 		resetCharge()
 		local stillInside: StandEntry? = nil
 		for _, stand in ipairs(stands) do

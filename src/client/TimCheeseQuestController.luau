@@ -40,6 +40,9 @@ local talkPrompt: ProximityPrompt? = nil
 local idleTrack: AnimationTrack? = nil
 local bgmSaved: { [Sound]: number } = {}
 local hiddenPartMods: { [BasePart]: number } = {}
+local hideKeepConn: RBXScriptConnection? = nil
+local hideDescConn: RBXScriptConnection? = nil
+local timHiddenPending = false
 local ROCK_GREEN = Color3.fromRGB(62, 168, 58)
 
 local function remotesFolder(): Folder?
@@ -108,25 +111,73 @@ local function setQuestFloatVisible(tim: Model, visible: boolean, text: string?)
 	end
 end
 
--- Local-only hide until intro plays (other players still see their own Tim state).
+local function applyHideToInstance(d: Instance)
+	if d:IsA("BasePart") then
+		if hiddenPartMods[d] == nil then
+			hiddenPartMods[d] = d.LocalTransparencyModifier
+		end
+		d.LocalTransparencyModifier = 1
+	elseif d:IsA("Decal") or d:IsA("Texture") then
+		d.Transparency = 1
+	elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+		d.Enabled = false
+	elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
+		d.Enabled = false
+	elseif d:IsA("Highlight") then
+		d.Enabled = false
+	end
+end
+
+-- Local-only hide until intro finishes (re-applied so streaming/descendants stay gone).
 local function hideTimUntilIntro(tim: Model)
+	timHiddenPending = true
 	table.clear(hiddenPartMods)
 	for _, d in tim:GetDescendants() do
-		if d:IsA("BasePart") then
-			hiddenPartMods[d] = d.LocalTransparencyModifier
-			d.LocalTransparencyModifier = 1
-		elseif d:IsA("Decal") or d:IsA("Texture") then
-			d.Transparency = 1
-		elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
-			d.Enabled = false
-		elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
-			d.Enabled = false
-		end
+		applyHideToInstance(d)
 	end
 	setQuestFloatVisible(tim, false)
+
+	if hideDescConn then
+		hideDescConn:Disconnect()
+		hideDescConn = nil
+	end
+	hideDescConn = tim.DescendantAdded:Connect(function(d)
+		if timHiddenPending then
+			applyHideToInstance(d)
+		end
+	end)
+
+	if hideKeepConn then
+		hideKeepConn:Disconnect()
+		hideKeepConn = nil
+	end
+	hideKeepConn = RunService.Heartbeat:Connect(function()
+		if not timHiddenPending or not tim.Parent then
+			return
+		end
+		for _, d in tim:GetDescendants() do
+			if d:IsA("BasePart") and d.LocalTransparencyModifier < 1 then
+				if hiddenPartMods[d] == nil then
+					hiddenPartMods[d] = d.LocalTransparencyModifier
+				end
+				d.LocalTransparencyModifier = 1
+			elseif (d:IsA("BillboardGui") or d:IsA("SurfaceGui")) and d.Enabled then
+				d.Enabled = false
+			end
+		end
+	end)
 end
 
 local function revealTimForIntro(tim: Model)
+	timHiddenPending = false
+	if hideKeepConn then
+		hideKeepConn:Disconnect()
+		hideKeepConn = nil
+	end
+	if hideDescConn then
+		hideDescConn:Disconnect()
+		hideDescConn = nil
+	end
 	for part, prev in hiddenPartMods do
 		if part.Parent then
 			part.LocalTransparencyModifier = prev
@@ -138,8 +189,46 @@ local function revealTimForIntro(tim: Model)
 			d.Transparency = 0
 		elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
 			d.Enabled = true
+		elseif d:IsA("Highlight") then
+			d.Enabled = true
 		end
 	end
+end
+
+-- Server-owned Tim can't be PivotTo'd reliably — fall/dialogue uses a local clone.
+local function makeIntroClone(tim: Model, landCf: CFrame): Model?
+	local ok, clone = pcall(function()
+		return tim:Clone()
+	end)
+	if not ok or not clone or not clone:IsA("Model") then
+		warn("[TimCheeseQuestController] clone failed:", clone)
+		return nil
+	end
+	clone.Name = "TimCheeseIntroClone"
+	for _, d in clone:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+			d.CanCollide = false
+			d.CanQuery = false
+			d.CanTouch = false
+			d.LocalTransparencyModifier = 0
+		elseif d:IsA("Decal") or d:IsA("Texture") then
+			d.Transparency = 0
+		elseif d:IsA("ProximityPrompt") or d:IsA("Script") or d:IsA("LocalScript") then
+			d:Destroy()
+		elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+			d.Enabled = false
+		elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
+			d.Enabled = true
+		end
+	end
+	local floatUi = clone:FindFirstChild(TimCheeseQuestConfig.QUEST_FLOAT_UI_NAME)
+	if floatUi then
+		floatUi:Destroy()
+	end
+	clone:PivotTo(landCf)
+	clone.Parent = Workspace
+	return clone
 end
 
 local function playWindLoop(): Sound?
@@ -598,18 +687,28 @@ function M.playIntroFall()
 	end
 	introStartedLocal = true
 	introPlaying = true
-	revealTimForIntro(tim)
+
+	-- Keep shared world Tim invisible; animate a local clone (server PivotTo snaps otherwise).
+	hideTimUntilIntro(tim)
 	setQuestFloatVisible(tim, false)
+
+	local landCf = homePivot
+	local clone = makeIntroClone(tim, landCf)
+	if not clone then
+		introPlaying = false
+		introStartedLocal = false
+		return
+	end
+
 	GameplayUiVisibility.hide({ keepScreenGuiNames = { "TimCheeseQuestHud", "StandDialogueCutscene" } })
 	lockMovement(true)
 	setBgmSlowed(true)
 	local wind = playWindLoop()
 
-	local landCf = homePivot
 	local land = landCf.Position
 	local start = land + Vector3.new(0, TimCheeseQuestConfig.DROP_HEIGHT, 0)
 	local rotOnly = landCf - landCf.Position
-	tim:PivotTo(CFrame.new(start) * rotOnly)
+	clone:PivotTo(CFrame.new(start) * rotOnly)
 
 	local cam = Workspace.CurrentCamera
 	local savedType = cam and cam.CameraType
@@ -636,7 +735,9 @@ function M.playIntroFall()
 		local y = start.Y + (land.Y - start.Y) * (t * t)
 		local pos = Vector3.new(land.X, y, land.Z)
 		local sway = math.sin(t * 22) * (1 - t) * 1.6
-		tim:PivotTo(CFrame.new(pos + Vector3.new(sway, 0, 0)) * rotOnly)
+		if clone.Parent then
+			clone:PivotTo(CFrame.new(pos + Vector3.new(sway, 0, 0)) * rotOnly)
+		end
 		if cam then
 			-- Worm's-eye: camera near the landing pad looking UP at Tim.
 			local camPos = Vector3.new(land.X + 11, land.Y + 2.5, land.Z + 13)
@@ -652,40 +753,37 @@ function M.playIntroFall()
 		wind:Stop()
 		wind:Destroy()
 	end
-	tim:PivotTo(landCf)
-	spawnLandingDebris(land, tim)
+	if clone.Parent then
+		clone:PivotTo(landCf)
+	end
+	spawnLandingDebris(land, clone)
 	GameSoundEffects.playGroundSmash(1.45)
 	pulseCameraShake(0.85, 0.95)
-	ensureIdle(tim)
+	ensureIdle(clone)
 	setBgmSlowed(false)
-
-	if cam then
-		cam.CameraType = savedType or Enum.CameraType.Custom
-		cam.CameraSubject = savedSubject
-	end
 
 	StandDialogueCutscene.play({
 		standName = "TimCheese",
-		frameName = "TimCheese",
+		frameKey = "TimCheese",
 		brainrotName = TimCheeseQuestConfig.IDLE_ANIM_NAME,
 		enterLabel = "LET'S GO",
 		exitLabel = "COOL",
 		lines = TimCheeseQuestConfig.INTRO_LINES,
 		voicePitchMin = 0.92,
 		voicePitchMax = 1.12,
-	}, tim)
+	}, clone)
 
 	-- After intro talk, offer first quest (accept/decline).
 	local accepted = StandDialogueCutscene.play({
 		standName = "TimCheese",
-		frameName = "TimCheese",
+		frameKey = "TimCheese",
 		brainrotName = TimCheeseQuestConfig.IDLE_ANIM_NAME,
 		enterLabel = "ACCEPT QUEST",
 		exitLabel = "DECLINE",
 		lines = TimCheeseQuestConfig.OFFER_LINES,
 		voicePitchMin = 0.92,
 		voicePitchMax = 1.12,
-	}, tim)
+	}, clone)
 
 	if accepted then
 		local rf = getRF("AcceptQuest")
@@ -698,14 +796,25 @@ function M.playIntroFall()
 	else
 		StandDialogueCutscene.play({
 			standName = "TimCheese",
-			frameName = "TimCheese",
+			frameKey = "TimCheese",
 			brainrotName = TimCheeseQuestConfig.IDLE_ANIM_NAME,
 			enterLabel = "OK",
 			exitLabel = "BYE",
 			lines = TimCheeseQuestConfig.DECLINE_LINES,
 			voicePitchMin = 0.92,
 			voicePitchMax = 1.12,
-		}, tim)
+		}, clone)
+	end
+
+	if clone.Parent then
+		clone:Destroy()
+	end
+	revealTimForIntro(tim)
+	ensureIdle(tim)
+
+	if cam then
+		cam.CameraType = savedType or Enum.CameraType.Custom
+		cam.CameraSubject = savedSubject
 	end
 
 	GameplayUiVisibility.show()

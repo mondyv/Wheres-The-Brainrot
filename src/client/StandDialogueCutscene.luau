@@ -37,6 +37,7 @@ local IDLE_ANIM_IDS: { [string]: number } = {
 	TatatataSahur = 126404281186060,
 	TricTracBarabum = 93169378235673,
 	OrangutiniAnanassini = 101569991072351,
+	TimCheese = 123573016645821,
 }
 
 export type DialogueLine = {
@@ -214,7 +215,9 @@ local function resolveAnimator(model: Model): Animator?
 	end
 	local controller = model:FindFirstChildOfClass("AnimationController")
 	if not controller then
-		return nil
+		controller = Instance.new("AnimationController")
+		controller.Name = "AnimationController"
+		controller.Parent = model
 	end
 	local animator = controller:FindFirstChildOfClass("Animator")
 	if animator then

@@ -157,15 +157,18 @@ introDoneRE.OnServerEvent:Connect(function(player: Player)
 		return
 	end
 	PlayerDataService.setTimCheeseIntroDone(player, true)
-	-- Auto-offer first quest after intro dialogue (client accepts via AcceptQuest).
 end)
 
 acceptQuestRF.OnServerInvoke = function(player: Player): boolean
 	if not PlayerDataService.waitUntilLoaded(player) then
 		return false
 	end
-	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) ~= true then
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
 		return false
+	end
+	-- Accept may arrive before IntroDone replicates — complete intro here too.
+	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) ~= true then
+		PlayerDataService.setTimCheeseIntroDone(player, true)
 	end
 	local completed = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR)
 	local doneCount = if typeof(completed) == "number" then math.floor(completed) else 0
@@ -174,8 +177,9 @@ acceptQuestRF.OnServerInvoke = function(player: Player): boolean
 		return false
 	end
 	local active = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+	-- Idempotent: already on a quest counts as success (Studio retests / double-fire).
 	if typeof(active) == "number" and active >= 1 then
-		return false
+		return true
 	end
 	PlayerDataService.setTimCheeseQuestState(player, {
 		questIndex = nextIndex,

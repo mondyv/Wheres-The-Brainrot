@@ -345,18 +345,24 @@ local function spawnLandingDebris(landingPos: Vector3, tim: Model)
 end
 
 local function ensureIdle(tim: Model)
+	StandDialogueCutscene.ensureIdleAnimation(tim, TimCheeseQuestConfig.IDLE_ANIM_NAME)
 	if idleTrack and idleTrack.IsPlaying then
 		return
 	end
-	StandDialogueCutscene.ensureIdleAnimation(tim, TimCheeseQuestConfig.IDLE_ANIM_NAME)
 	local controller = tim:FindFirstChildOfClass("AnimationController")
-	local animator = controller and controller:FindFirstChildOfClass("Animator")
+	if not controller then
+		controller = Instance.new("AnimationController")
+		controller.Name = "AnimationController"
+		controller.Parent = tim
+	end
+	local animator = controller:FindFirstChildOfClass("Animator")
 	if not animator then
 		local hum = tim:FindFirstChildOfClass("Humanoid")
 		animator = hum and hum:FindFirstChildOfClass("Animator")
 	end
 	if not animator then
-		return
+		animator = Instance.new("Animator")
+		animator.Parent = controller
 	end
 	for _, d in tim:GetDescendants() do
 		if d:IsA("Animation") then
@@ -450,12 +456,8 @@ local function syncPromptAndOutline()
 		setOutline(tim, ready == true)
 		if ready then
 			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.READY_OVERHEAD)
-		elseif hasQuest then
-			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.HAS_QUEST_OVERHEAD)
-		elseif not allDone then
-			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
 		else
-			setQuestFloatVisible(tim, true, "Tim Cheese")
+			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
 		end
 	end
 end
@@ -777,13 +779,15 @@ function M.playIntroFall()
 	setBgmSlowed(true)
 	local wind = playWindLoop()
 
-	-- Pull player beside Tim so dialogue camera isn't a distant wide shot.
+	-- Near Tim so dialogue framing stays close after the fall.
 	placePlayerNearTim(landCf)
 
 	local land = landCf.Position
 	local start = land + Vector3.new(0, TimCheeseQuestConfig.DROP_HEIGHT, 0)
 	local rotOnly = landCf - landCf.Position
 	clone:PivotTo(CFrame.new(start) * rotOnly)
+	-- Idle plays through fall + talk (TimCheese brainrot anim).
+	ensureIdle(clone)
 
 	local cam = Workspace.CurrentCamera
 	local savedType = cam and cam.CameraType
@@ -791,13 +795,7 @@ function M.playIntroFall()
 	local savedFov = cam and cam.FieldOfView
 	if cam then
 		cam.CameraType = Enum.CameraType.Scriptable
-		cam.FieldOfView = 58
-	end
-
-	-- Fire early so zone poll / Touched can't restart while attribute replicates.
-	local introRE = getRE("IntroDone")
-	if introRE then
-		introRE:FireServer()
+		cam.FieldOfView = 62
 	end
 
 	local alpha = Instance.new("NumberValue")
@@ -807,8 +805,8 @@ function M.playIntroFall()
 		TweenInfo.new(TimCheeseQuestConfig.FALL_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 		{ Value = 1 }
 	)
-	local right = landCf.RightVector
-	local look = landCf.LookVector
+	-- Fixed worm's-eye pad cam — look UP at Tim, don't chase him.
+	local camPos = Vector3.new(land.X + 7, land.Y + 1.15, land.Z + 8)
 	local conn = RunService.RenderStepped:Connect(function()
 		local t = alpha.Value
 		local y = start.Y + (land.Y - start.Y) * (t * t)
@@ -818,11 +816,7 @@ function M.playIntroFall()
 			clone:PivotTo(CFrame.new(pos + Vector3.new(sway, 0, 0)) * rotOnly)
 		end
 		if cam then
-			-- Close cinematic: low side angle tracking his fall into a face shot.
-			local face = pos + Vector3.new(0, 2.35, 0)
-			local camPos = face + right * 3.4 + look * 4.6 + Vector3.new(0, 0.35 - t * 0.8, 0)
-			cam.CFrame = CFrame.lookAt(camPos, face + Vector3.new(0, -0.15, 0))
-			cam.FieldOfView = 58 + (1 - t) * 8
+			cam.CFrame = CFrame.lookAt(camPos, pos + Vector3.new(0, 1.2, 0))
 		end
 	end)
 	tween:Play()
@@ -842,15 +836,6 @@ function M.playIntroFall()
 	pulseCameraShake(0.55, 0.7)
 	ensureIdle(clone)
 	setBgmSlowed(false)
-
-	-- Hold a tight face angle for a beat before dialogue owns the camera.
-	if cam and clone.Parent then
-		local face = land + Vector3.new(0, 2.4, 0)
-		local camPos = face + right * 2.8 + look * 3.6 + Vector3.new(0, 0.2, 0)
-		cam.CFrame = CFrame.lookAt(camPos, face)
-		cam.FieldOfView = 52
-		task.wait(0.18)
-	end
 
 	StandDialogueCutscene.play({
 		standName = "TimCheese",
@@ -875,11 +860,13 @@ function M.playIntroFall()
 		voicePitchMax = 1.12,
 	}, clone)
 
+	-- Mark intro done after dialogue (not at fall start — that raced AcceptQuest).
+	local introRE = getRE("IntroDone")
+	if introRE then
+		introRE:FireServer()
+	end
+
 	if accepted then
-		local introDeadline = os.clock() + 2
-		while player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) ~= true and os.clock() < introDeadline do
-			task.wait(0.05)
-		end
 		local rf = getRF("AcceptQuest")
 		if rf then
 			local ok, result = pcall(function()
@@ -924,13 +911,9 @@ function M.playIntroFall()
 	GameplayUiVisibility.show()
 	lockMovement(false)
 	introPlaying = false
-	if accepted then
-		local q = TimCheeseQuestConfig.getQuest(1)
-		setQuestFloatVisible(tim, true, if q then q.title else TimCheeseQuestConfig.HAS_QUEST_OVERHEAD)
-		refreshQuestHud()
-	else
-		setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
-	end
+	-- Overhead stays "Quests" (never the quest title).
+	setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
+	refreshQuestHud()
 	syncPromptAndOutline()
 end
 

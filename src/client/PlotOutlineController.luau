@@ -27,10 +27,12 @@ local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
 local OUTLINE_FAR_TRANSPARENCY = 0.42
 -- SelectionBox line thickness (Highlight has no thickness API).
 local BOX_LINE_THICKNESS = 0.22
--- Cap "Your Plot" marker text (SurfaceGui labels use TextSize; billboards use offset px).
-local MARKER_MAX_TEXT_SIZE = 28
-local MARKER_MIN_TEXT_SIZE = 14
-local MARKER_MAX_BILLBOARD_PX = 72
+-- Cap "Your Plot" marker (billboards are offset px; SurfaceGuis use PixelsPerStud).
+local MARKER_MAX_TEXT_SIZE = 18
+local MARKER_MIN_TEXT_SIZE = 10
+local MARKER_MAX_BILLBOARD_PX = 44
+local MARKER_MAX_GUI_SCALE = 0.62
+local MARKER_MAX_PIXELS_PER_STUD = 18
 
 local PlotOutlineController = {}
 
@@ -71,26 +73,36 @@ local function isUnderPlotUsername(inst: Instance, plotRoot: Instance): boolean
 	return false
 end
 
-local function isOwnershipMarkerBillboard(bb: BillboardGui, plotRoot: Instance): boolean
-	local x: Instance? = bb
+local function isOwnershipMarkerBillboard(inst: Instance, plotRoot: Instance): boolean
+	local x: Instance? = inst
 	while x and x ~= plotRoot do
 		if x.Name == "PlotGUI" then
 			return true
 		end
 		x = x.Parent
 	end
-	if isUnderPlotUsername(bb, plotRoot) then
-		-- Name-plate SurfaceGui lives under PlotUsername.Name — billboards here are markers.
+	if isUnderPlotUsername(inst, plotRoot) then
+		-- Name-plate SurfaceGui lives under PlotUsername.Name — markers live elsewhere.
+		local parent = inst.Parent
+		if parent and parent.Name == "Name" and parent:IsA("BasePart") then
+			return false
+		end
 		return true
 	end
-	local ak = string.gsub(string.lower(bb.Name), "[^a-z0-9]", "")
+	local ak = string.gsub(string.lower(inst.Name), "[^a-z0-9]", "")
 	if string.find(ak, "yourplot", 1, true) or string.find(ak, "thisplot", 1, true) or ak == "plotmarker" then
 		return true
 	end
-	for _, d in ipairs(bb:GetDescendants()) do
+	for _, d in ipairs(inst:GetDescendants()) do
 		local dn = string.gsub(string.lower(d.Name), "[^a-z0-9]", "")
 		if string.find(dn, "yourplot", 1, true) or string.find(dn, "thisplot", 1, true) then
 			return true
+		end
+		if d:IsA("TextLabel") or d:IsA("TextButton") then
+			local t = string.gsub(string.lower((d :: TextLabel).Text), "%s+", "")
+			if string.find(t, "yourplot", 1, true) or string.find(t, "thisplot", 1, true) or t == "plot" then
+				return true
+			end
 		end
 	end
 	return false
@@ -111,6 +123,19 @@ local function refreshMarkerBillboards(plot: Instance?)
 	end
 end
 
+local function ensureMarkerGuiScale(gui: GuiObject)
+	local sc = gui:FindFirstChild("PlotMarkerScaleCap")
+	if not sc or not sc:IsA("UIScale") then
+		if sc then
+			sc:Destroy()
+		end
+		sc = Instance.new("UIScale")
+		sc.Name = "PlotMarkerScaleCap"
+		sc.Parent = gui
+	end
+	(sc :: UIScale).Scale = MARKER_MAX_GUI_SCALE
+end
+
 local function capMarkerTextLabel(label: TextLabel)
 	local maxSize = MARKER_MAX_TEXT_SIZE
 	local minSize = MARKER_MIN_TEXT_SIZE
@@ -128,37 +153,45 @@ local function capMarkerTextLabel(label: TextLabel)
 end
 
 local function capMarkerBillboardSize(bb: BillboardGui)
-	local w = bb.Size.X.Offset
-	local h = bb.Size.Y.Offset
-	local usesScale = bb.Size.X.Scale ~= 0 or bb.Size.Y.Scale ~= 0
-	if usesScale or w <= 0 or h <= 0 or w > MARKER_MAX_BILLBOARD_PX or h > MARKER_MAX_BILLBOARD_PX then
-		local side = MARKER_MAX_BILLBOARD_PX
-		if w > 0 and h > 0 and not usesScale then
-			side = math.clamp(math.max(w, h), MARKER_MIN_TEXT_SIZE, MARKER_MAX_BILLBOARD_PX)
-		end
-		bb.Size = UDim2.fromOffset(side, side)
-	end
+	bb.Size = UDim2.fromOffset(MARKER_MAX_BILLBOARD_PX, MARKER_MAX_BILLBOARD_PX)
+	bb.MaxDistance = 140
+	ensureMarkerGuiScale(bb)
 	for _, d in ipairs(bb:GetDescendants()) do
+		if d:IsA("GuiObject") then
+			ensureMarkerGuiScale(d :: GuiObject)
+		end
 		if d:IsA("TextLabel") or d:IsA("TextButton") then
 			capMarkerTextLabel(d :: TextLabel)
+		elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
+			local img = d :: ImageLabel
+			img.Size = UDim2.fromScale(1, 1)
 		end
 	end
 end
 
 local function capMarkerSurfaceGui(sg: SurfaceGui)
+	if sg.SizingMode == Enum.SurfaceGuiSizingMode.PixelsPerStud then
+		sg.PixelsPerStud = math.min(sg.PixelsPerStud, MARKER_MAX_PIXELS_PER_STUD)
+	end
+	ensureMarkerGuiScale(sg)
 	for _, d in ipairs(sg:GetDescendants()) do
+		if d:IsA("GuiObject") then
+			ensureMarkerGuiScale(d :: GuiObject)
+		end
 		if d:IsA("TextLabel") or d:IsA("TextButton") then
 			capMarkerTextLabel(d :: TextLabel)
 		elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
 			local img = d :: ImageLabel
-			if img.Size.X.Offset > MARKER_MAX_BILLBOARD_PX or img.Size.Y.Offset > MARKER_MAX_BILLBOARD_PX then
-				img.Size = UDim2.fromOffset(MARKER_MAX_BILLBOARD_PX, MARKER_MAX_BILLBOARD_PX)
-			end
+			img.Size = UDim2.fromScale(1, 1)
 		end
 	end
 end
 
 local function applyMarkerFade(transparency: number, visible: boolean)
+	if visible and (not cachedPlot or not isOwnedByLocalPlayer(cachedPlot)) then
+		visible = false
+		transparency = 1
+	end
 	for _, bb in ipairs(cachedMarkerBillboards) do
 		if not bb.Parent then
 			continue
@@ -268,7 +301,7 @@ local function ensureOutline(plot: Instance): SelectionBox?
 end
 
 local function resolvePlotCenter(plot: Instance): Vector3?
-	local minV, maxV = PlotSpawnUtil.getPlotFloorBounds(plot)
+	local minV, maxV = PlotSpawnUtil.getPlotOutlineBounds(plot)
 	if minV and maxV then
 		return Vector3.new((minV.X + maxV.X) * 0.5, (minV.Y + maxV.Y) * 0.5, (minV.Z + maxV.Z) * 0.5)
 	end
@@ -277,6 +310,10 @@ local function resolvePlotCenter(plot: Instance): Vector3?
 	end
 	local part = plot:FindFirstChildWhichIsA("BasePart", true)
 	return if part then part.Position else nil
+end
+
+local function hideAllCachedMarkers()
+	applyMarkerFade(1, false)
 end
 
 local function refreshCachedPlot()
@@ -291,12 +328,15 @@ local function refreshCachedPlot()
 	if plot and not isOwnedByLocalPlayer(plot) then
 		plot = nil
 	end
+	if cachedPlot ~= plot then
+		hideAllCachedMarkers()
+	end
 	cachedPlot = plot
 	cachedCenter = if plot then resolvePlotCenter(plot) else nil
 	refreshMarkerBillboards(plot)
 	if not plot then
 		destroyOutline()
-		applyMarkerFade(1, false)
+		hideAllCachedMarkers()
 	end
 end
 
@@ -335,9 +375,9 @@ local function tickOutline()
 	end
 	local plot = cachedPlot
 	local center = cachedCenter
-	if not plot or not center then
+	if not plot or not center or not isOwnedByLocalPlayer(plot) then
 		destroyOutline()
-		applyMarkerFade(1, false)
+		hideAllCachedMarkers()
 		return
 	end
 
@@ -359,6 +399,31 @@ local function tickOutline()
 	applyMarkerFade(transparency, visible)
 end
 
+local function watchPlotOwnership()
+	local folder = PlotPaths.waitForSpawnAndBasesFolder(120)
+	if not folder then
+		return
+	end
+	local hooked: { [Instance]: boolean } = {}
+	local function hookPlot(plot: Instance)
+		if hooked[plot] or not PlotPaths.isPlotRoot(plot) then
+			return
+		end
+		hooked[plot] = true
+		plot:GetAttributeChangedSignal("PlotOwnerUserId"):Connect(function()
+			refreshCachedPlot()
+			task.defer(tickOutline)
+		end)
+		plot.Destroying:Once(function()
+			hooked[plot] = nil
+		end)
+	end
+	for _, ch in ipairs(folder:GetChildren()) do
+		hookPlot(ch)
+	end
+	folder.ChildAdded:Connect(hookPlot)
+end
+
 local function onHeartbeat(dt: number)
 	accum += dt
 	if accum < POLL_INTERVAL then
@@ -377,6 +442,7 @@ function PlotOutlineController.init()
 	task.spawn(function()
 		SafezoneUtil.warmCacheAsync()
 		SafezoneUtil.awaitCacheReady(8)
+		watchPlotOwnership()
 		refreshCachedPlot()
 	end)
 

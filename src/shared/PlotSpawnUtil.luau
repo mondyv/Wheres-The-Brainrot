@@ -118,6 +118,40 @@ local function groundPadBoundsOfStory(story1: Instance): (Vector3?, Vector3?)
 	return minV, maxV
 end
 
+local function unionBounds(aMin: Vector3?, aMax: Vector3?, bMin: Vector3?, bMax: Vector3?): (Vector3?, Vector3?)
+	if not aMin or not aMax then
+		return bMin, bMax
+	end
+	if not bMin or not bMax then
+		return aMin, aMax
+	end
+	return Vector3.new(
+		math.min(aMin.X, bMin.X),
+		math.min(aMin.Y, bMin.Y),
+		math.min(aMin.Z, bMin.Z)
+	), Vector3.new(
+		math.max(aMax.X, bMax.X),
+		math.max(aMax.Y, bMax.Y),
+		math.max(aMax.Z, bMax.Z)
+	)
+end
+
+local function anchorBoundsForPlot(plot: Instance): (Vector3?, Vector3?)
+	local slotId = plot:GetAttribute("PlotSlotId")
+	local posFolder = PlotPaths.findSpawnAndBasesFolder()
+	if not posFolder or typeof(slotId) ~= "number" then
+		return nil, nil
+	end
+	local anchor = posFolder:FindFirstChild("BasePOSPart" .. tostring(math.floor(slotId)))
+	if not anchor or not anchor:IsA("BasePart") then
+		return nil, nil
+	end
+	local a = anchor :: BasePart
+	local minV = Vector3.new(math.huge, math.huge, math.huge)
+	local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
+	return expandPartBounds(a.CFrame, a.Size, minV, maxV)
+end
+
 local function cfOnTopOfBounds(minV: Vector3, maxV: Vector3, face: Vector3): CFrame
 	local center = (minV + maxV) * 0.5
 	local topY = maxV.Y + SPAWN_CLEARANCE
@@ -189,19 +223,34 @@ function PlotSpawnUtil.getPlotFloorBounds(plot: Instance): (Vector3?, Vector3?)
 	return boundingBoxOf(bboxRoot)
 end
 
--- Oriented box covering the whole story-1 ground pad (for SelectionBox outlines).
+-- Full story-1 footprint for outlines (pavilion pillars, pad, etc.) — not just inner floor tiles.
+function PlotSpawnUtil.getPlotOutlineBounds(plot: Instance): (Vector3?, Vector3?)
+	local story1 = PlotPaths.firstStoryFolder(plot)
+	local minV, maxV = anchorBoundsForPlot(plot)
+	if story1 then
+		local storyMin, storyMax = boundingBoxOf(story1)
+		minV, maxV = unionBounds(minV, maxV, storyMin, storyMax)
+		local padMin, padMax = groundPadBoundsOfStory(story1)
+		minV, maxV = unionBounds(minV, maxV, padMin, padMax)
+	end
+	if minV and maxV then
+		return minV, maxV
+	end
+	return PlotSpawnUtil.getPlotFloorBounds(plot)
+end
+
+-- Oriented box covering the whole story-1 base footprint (for SelectionBox outlines).
 function PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot: Instance): (CFrame?, Vector3?)
-	local minV, maxV = PlotSpawnUtil.getPlotFloorBounds(plot)
+	local minV, maxV = PlotSpawnUtil.getPlotOutlineBounds(plot)
 	if not minV or not maxV then
 		return nil, nil
 	end
 	local size = maxV - minV
 	-- Tall enough that the perimeter reads as a 3D frame, not a flat ground decal.
-	local height = math.clamp(math.max(size.Y, 10), 10, 16)
-	local pad = 1.25
+	local height = math.clamp(math.max(size.Y, 12), 12, 20)
+	local pad = 1.5
 	local center = Vector3.new((minV.X + maxV.X) * 0.5, minV.Y + height * 0.5, (minV.Z + maxV.Z) * 0.5)
 
-	-- Prefer BasePOSPart orientation when it covers a full pad; never shrink below floor AABB.
 	local yaw = CFrame.new(center)
 	local outX = math.max(size.X, 6) + pad * 2
 	local outZ = math.max(size.Z, 6) + pad * 2
@@ -211,10 +260,8 @@ function PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot: Instance): (CFrame?, 
 		local anchor = posFolder:FindFirstChild("BasePOSPart" .. tostring(math.floor(slotId)))
 		if anchor and anchor:IsA("BasePart") then
 			local a = anchor :: BasePart
-			if a.Size.X >= 20 and a.Size.Z >= 20 then
-				outX = math.max(outX, a.Size.X)
-				outZ = math.max(outZ, a.Size.Z)
-			end
+			outX = math.max(outX, a.Size.X + pad * 2)
+			outZ = math.max(outZ, a.Size.Z + pad * 2)
 			local flat = Vector3.new(a.CFrame.LookVector.X, 0, a.CFrame.LookVector.Z)
 			if flat.Magnitude >= 0.08 then
 				yaw = CFrame.lookAt(center, center + flat.Unit)

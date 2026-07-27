@@ -173,6 +173,19 @@ local function ancestorLandFolder(part: BasePart): (number?, Instance?)
 	return nil, nil
 end
 
+local function unregisterHitbox(part: BasePart)
+	if not registeredParts[part] then
+		return
+	end
+	registeredParts[part] = nil
+	for i = #landHitboxes, 1, -1 do
+		if landHitboxes[i].part == part then
+			table.remove(landHitboxes, i)
+			break
+		end
+	end
+end
+
 local function tryRegisterHitbox(part: BasePart)
 	if registeredParts[part] then
 		return
@@ -201,6 +214,9 @@ local function tryRegisterHitbox(part: BasePart)
 	else
 		landCenters[land] = part.Position
 	end
+	part.Destroying:Connect(function()
+		unregisterHitbox(part)
+	end)
 end
 
 local function scanLandsRoot(lands: Instance)

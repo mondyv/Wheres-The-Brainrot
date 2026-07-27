@@ -62,12 +62,33 @@ local function ensureListTables()
 	end
 end
 
+local function removePartFromList(list: { BasePart }?, set: { [BasePart]: boolean }, part: BasePart)
+	if not set[part] then
+		return
+	end
+	set[part] = nil
+	if not list then
+		return
+	end
+	for i = #list, 1, -1 do
+		if list[i] == part then
+			table.remove(list, i)
+			break
+		end
+	end
+end
+
 local function tryAddPart(list: { BasePart }, set: { [BasePart]: boolean }, part: BasePart)
 	if set[part] then
 		return
 	end
 	set[part] = true
 	table.insert(list, part)
+	part.Destroying:Connect(function()
+		removePartFromList(cachedReddieParts, reddieSet, part)
+		removePartFromList(cachedInventoryParts, inventorySet, part)
+		removePartFromList(cachedRedWallParts, redWallSet, part)
+	end)
 end
 
 local function isZonePartName(name: string): boolean

@@ -67,6 +67,7 @@ local promptStyleConns: { [ProximityPrompt]: { RBXScriptConnection } } = {}
 -- Prevents concurrent showView (PromptShown + sync + repair) from stacking billboards.
 local promptBuildLocks: { [ProximityPrompt]: boolean } = {}
 local serviceWired = false
+local effectsBooted = false
 local activeBushSearchPrompt: ProximityPrompt? = nil
 local bushSharedView = nil
 local _bushWobbleBases = nil
@@ -1053,7 +1054,6 @@ end
 
 local function measureCardWidth(actionText: string, objectText: string, _holdDuration: number): number
 	local measureBounds = Vector2.new(512, 48)
-	local _TextService = game:GetService("TextService")
 	local actionSize = _TextService:GetTextSize(actionText, C.ACTION_TEXT_SIZE, UiFonts.DISPLAY_LEGACY, measureBounds)
 	local objectSize = _TextService:GetTextSize(objectText, C.OBJECT_TEXT_SIZE, UiFonts.DISPLAY_LEGACY, measureBounds)
 	local textW = math.max(actionSize.X, objectSize.X)
@@ -2929,6 +2929,11 @@ function ProximityPromptEffects.stylePrompt(prompt: ProximityPrompt)
 end
 
 function ProximityPromptEffects.init()
+	if effectsBooted then
+		return
+	end
+	effectsBooted = true
+
 	MobileTouchGate.init()
 	local function scanForPrompts(root: Instance)
 		local stack = { root }

@@ -41,6 +41,10 @@ local closePending: thread? = nil
 local introToken = 0
 local idleToken = 0
 local swingConn: RBXScriptConnection? = nil
+local heartbeatConn: RBXScriptConnection? = nil
+local wired = false
+local pruneAccum = 0
+local PRUNE_INTERVAL = 8
 
 local function cancelClose()
 	if closePending then
@@ -252,6 +256,11 @@ local function startTierIdle(tierIndex: number, motion: TierMotion)
 		return
 	end
 
+	if swingConn then
+		swingConn:Disconnect()
+		swingConn = nil
+	end
+
 	idleToken += 1
 	local myIdle = idleToken
 	local phase = math.random() * math.pi * 2
@@ -417,6 +426,29 @@ local function tick()
 	end
 end
 
+local function unregisterHitbox(part: BasePart)
+	if not registeredHitboxes[part] then
+		return
+	end
+	registeredHitboxes[part] = nil
+	for i = #zones, 1, -1 do
+		if zones[i].hitbox == part then
+			table.remove(zones, i)
+			break
+		end
+	end
+end
+
+local function pruneDeadZones()
+	for i = #zones, 1, -1 do
+		local hitbox = zones[i].hitbox
+		if not hitbox.Parent then
+			registeredHitboxes[hitbox] = nil
+			table.remove(zones, i)
+		end
+	end
+end
+
 local function tryRegisterHitbox(part: BasePart)
 	if registeredHitboxes[part] then
 		return
@@ -431,6 +463,9 @@ local function tryRegisterHitbox(part: BasePart)
 		displayLuck = displayLuck,
 		tierIndex = PlotLuck.tierIndex(displayLuck),
 	})
+	part.Destroying:Connect(function()
+		unregisterHitbox(part)
+	end)
 end
 
 local function scanLuckHitboxesChunked(root: Instance)
@@ -507,8 +542,14 @@ end
 local CurrentAreaController = {}
 
 function CurrentAreaController.init()
+	if wired then
+		return
+	end
+	wired = true
+
 	local main = PlayerGuiMain.ensure(player)
 	if not main then
+		wired = false
 		warn("[CurrentAreaController] PlayerGui.Main missing")
 		return
 	end
@@ -517,6 +558,7 @@ function CurrentAreaController.init()
 	local top = sideUI and sideUI:FindFirstChild("Top")
 	local area = top and top:FindFirstChild("CurrentArea")
 	if not area or not area:IsA("GuiObject") then
+		wired = false
 		warn("[CurrentAreaController] SideUI.Top.CurrentArea missing")
 		return
 	end
@@ -557,8 +599,16 @@ function CurrentAreaController.init()
 		hideArea()
 	end)
 
-	RunService.Heartbeat:Connect(function(dt)
+	if heartbeatConn then
+		heartbeatConn:Disconnect()
+	end
+	heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 		tickAccum += dt
+		pruneAccum += dt
+		if pruneAccum >= PRUNE_INTERVAL then
+			pruneAccum = 0
+			pruneDeadZones()
+		end
 		if tickAccum < TICK_INTERVAL then
 			return
 		end

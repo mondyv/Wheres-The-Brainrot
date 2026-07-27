@@ -2,8 +2,8 @@
 --[[
 	Keep land luck hitboxes (1xHitbox, 10xHitbox, …) persistent under streaming
 	so CurrentArea / meters still resolve on far lands like Land 9.
-	Also bumps Workspace streaming radii enough for a full land's props without
-	preloading the whole map from spawn.
+
+	Streaming radii / StreamOutBehavior live only in 0_StreamingBootstrap (+ project.json).
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -11,17 +11,6 @@ local Workspace = game:GetService("Workspace")
 
 local HITBOX_PATTERN = "^(%d+)xHitbox$"
 local PERSIST_TAG = "LandLuckHitboxPersistent"
-
-if not Workspace.StreamingEnabled then
-	Workspace.StreamingEnabled = true
-end
-
-pcall(function()
-	-- Wide enough for land meters when you're on that land; not the whole map from spawn.
-	Workspace.StreamingMinRadius = 72
-	Workspace.StreamingTargetRadius = 200
-	Workspace.StreamOutBehavior = Enum.StreamOutBehavior.Opportunistic
-end)
 
 local function markPersistent(inst: Instance)
 	local model = if inst:IsA("Model") then inst else inst:FindFirstAncestorOfClass("Model")

@@ -3121,19 +3121,27 @@ local function boot(character)
 		if not st.isHoldToSwingMode() and st.toggleNeedsJumpRelease then
 			return false
 		end
+		local released = false
 		if st.pendingSwingParams and not st.ropeConstraint then
 			st.stopSwing(false)
-			return true
-		end
-		if os.clock() - st.lastAttachClock > C.MIN_SWING_LOCK_TIME then
+			released = true
+		elseif os.clock() - st.lastAttachClock > C.MIN_SWING_LOCK_TIME then
 			st.stopSwing(true)
-			return true
+			released = true
 		end
-		return false
+		if released and not st.isHoldToSwingMode() then
+			-- Consume this jump press so we don't instantly latch onto another vine.
+			st.toggleNeedsJumpRelease = true
+		end
+		return released
 	end
 
 	function st.clearToggleJumpLatch()
 		st.toggleNeedsJumpRelease = false
+	end
+
+	function st.isToggleAttachBlocked(): boolean
+		return not st.isHoldToSwingMode() and st.toggleNeedsJumpRelease == true
 	end
 
 	function st.noteJumpPressed()
@@ -4695,6 +4703,10 @@ local function boot(character)
 		if isSwingInputBlocked() then
 			return
 		end
+		-- Toggle: after releasing (or attaching), wait until jump is fully released before a new latch.
+		if st.isToggleAttachBlocked() then
+			return
+		end
 
 		local now = os.clock()
 		if now - st.lastTryClock < C.ATTACH_RETRY_TIME then
@@ -4756,6 +4768,10 @@ local function boot(character)
 				st.tryReleaseSwingFromJump()
 				return
 			end
+			if st.isToggleAttachBlocked() then
+				st.spaceHeld = true
+				return
+			end
 			st.spaceHeld = true
 			st.tryAttach()
 		elseif
@@ -4765,6 +4781,10 @@ local function boot(character)
 			st.noteJumpPressed()
 			if not st.isHoldToSwingMode() and st.isSwinging then
 				st.tryReleaseSwingFromJump()
+				return
+			end
+			if st.isToggleAttachBlocked() then
+				st.gamepadHeld = true
 				return
 			end
 			st.gamepadHeld = true
@@ -4833,6 +4853,11 @@ local function boot(character)
 				-- Holding jump after attach must not spam-release; only a fresh press does.
 				st.tryReleaseSwingFromJump()
 			end
+			-- Always stop here while/after a swing jump — never fall through into tryAttach.
+			return
+		end
+
+		if st.isToggleAttachBlocked() then
 			return
 		end
 
@@ -5577,7 +5602,9 @@ local function boot(character)
 				st.releaseStyle.step(now, dt, st.isLaunched, st.isSwinging, st.lastLaunchClock)
 			end
 
-			if st.holdIsActive() then
+			-- Hold mode only: keep trying to latch while jump is held.
+			-- Toggle mode attaches on press edges only (never mid-air reattach after release).
+			if st.isHoldToSwingMode() and st.holdIsActive() then
 				st.tryAttach()
 			end
 

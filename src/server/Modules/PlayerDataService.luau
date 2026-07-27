@@ -52,6 +52,9 @@ local saveInFlight: { [Player]: boolean } = {}
 local sessionCanSave: { [Player]: boolean } = {}
 -- Last successful payload this session — used to refuse accidental empty overwrites.
 local lastGoodPayload: { [number]: PlayerDataSchema.PlayerSaveData } = {}
+-- Sticky stand snapshot: only cleared on intentional reset or confirmed empty autosave.
+-- Prevents Roblox Restart-all-servers leave races from persisting empty stands.
+local lastGoodStands: { [number]: { PlayerDataSchema.StandSaveEntry } } = {}
 -- Set true only for intentional wipe (resetdata / admin reset).
 local allowEmptyOverwrite: { [Player]: boolean } = {}
 -- Roblox Creator "Restart / shut down all servers" — BindToClose + mass leaves.
@@ -737,6 +740,24 @@ local function shallowCopyEntries(list: { any }): { any }
 	return out
 end
 
+local function rememberGoodStands(userId: number, standsList: { PlayerDataSchema.StandSaveEntry })
+	if #standsList > 0 then
+		lastGoodStands[userId] = shallowCopyEntries(standsList) :: any
+	end
+end
+
+local function stickyStandsFor(userId: number): { PlayerDataSchema.StandSaveEntry }?
+	local sticky = lastGoodStands[userId]
+	if sticky and #sticky > 0 then
+		return sticky
+	end
+	local prev = lastGoodPayload[userId]
+	if prev and #prev.stands > 0 then
+		return prev.stands
+	end
+	return nil
+end
+
 type MergeOpts = {
 	forceEmpty: boolean,
 	restoreEmptyInventory: boolean,
@@ -856,6 +877,10 @@ function M.savePlayerData(player: Player, precollected: PlayerDataSchema.PlayerS
 	-- Snapshot BEFORE waiting: unbind/BindToClose often yield, and deferred leave
 	-- teardown (inventory wipe / plot destroy) runs in that gap.
 	local payload = precollected or M.collectSaveData(player)
+	local isLeaveOrClose = precollected ~= nil or serverClosing
+	if #payload.stands > 0 then
+		rememberGoodStands(player.UserId, payload.stands)
+	end
 
 	local waitDeadline = os.clock() + 12
 	while saveInFlight[player] and os.clock() < waitDeadline do
@@ -867,18 +892,29 @@ function M.savePlayerData(player: Player, precollected: PlayerDataSchema.PlayerS
 
 	saveInFlight[player] = true
 	local key = tostring(player.UserId)
-	local prev = lastGoodPayload[player.UserId]
+	local userId = player.UserId
+	local prev = lastGoodPayload[userId]
 	local forceEmpty = allowEmptyOverwrite[player] == true
+	local sticky = stickyStandsFor(userId)
+
+	-- Prefer sticky/session stands over an empty export (classic restart wipe).
+	if not forceEmpty and #payload.stands == 0 and sticky then
+		warn("[PlayerDataService] empty stand export for", player.Name, "- restoring sticky stands", #sticky)
+		payload.stands = shallowCopyEntries(sticky) :: any
+	end
 
 	local brainrotCount = player:GetAttribute("BrainrotCount")
 	local carryCount = player:GetAttribute("BrainrotCarryCount")
 	local stillHasItems = (typeof(brainrotCount) == "number" and brainrotCount > 0)
 		or (typeof(carryCount) == "number" and carryCount > 0)
 	local hasPlot = typeof(player:GetAttribute("AssignedPlotSlot")) == "number"
-	-- Roblox "Restart all servers": always prefer prior content over empty exports.
-	local restoreEmptyInventory = forceEmpty == false and (serverClosing or stillHasItems)
-	local restoreEmptyStands = forceEmpty == false and (serverClosing or hasPlot)
-	-- Both empty vs a rich prior = classic leave teardown race (even if attrs already cleared).
+	local restoreEmptyInventory = forceEmpty == false and (serverClosing or isLeaveOrClose or stillHasItems)
+	local restoreEmptyStands = forceEmpty == false
+		and (
+			isLeaveOrClose
+			or hasPlot
+			or (sticky ~= nil and #sticky > 0)
+		)
 	if
 		not forceEmpty
 		and prev
@@ -900,6 +936,14 @@ function M.savePlayerData(player: Player, precollected: PlayerDataSchema.PlayerS
 		payload = mergeAgainstPrior(payload, prev, mergeOpts)
 	end
 
+	-- Final stand guard after merges.
+	if not forceEmpty and #payload.stands == 0 then
+		local again = stickyStandsFor(userId)
+		if again then
+			payload.stands = shallowCopyEntries(again) :: any
+		end
+	end
+
 	writeBackup(player, payload)
 
 	local ok = false
@@ -915,14 +959,28 @@ function M.savePlayerData(player: Player, precollected: PlayerDataSchema.PlayerS
 				local oldNorm = if typeof(old) == "table" then normalizeLoadedData(old) else nil
 				local toWrite = payload
 				if oldNorm then
-					-- Against DataStore: on shutdown always refuse empty overwrites of rich profiles.
-					-- Otherwise only refuse when this session still believes the player owns that content.
 					local dsOpts: MergeOpts = {
 						forceEmpty = false,
-						restoreEmptyInventory = serverClosing or restoreEmptyInventory,
-						restoreEmptyStands = serverClosing or restoreEmptyStands,
+						restoreEmptyInventory = serverClosing or isLeaveOrClose or restoreEmptyInventory,
+						-- Never let a restart leave wipe stands that still exist in DataStore
+						-- while this session still remembers them (or is shutting down).
+						restoreEmptyStands = isLeaveOrClose
+							or serverClosing
+							or (sticky ~= nil and #sticky > 0)
+							or restoreEmptyStands,
 					}
 					toWrite = mergeAgainstPrior(payload, oldNorm, dsOpts)
+
+					-- Hard refuse: empty stands over non-empty store during leave/shutdown.
+					if
+						#toWrite.stands == 0
+						and #oldNorm.stands > 0
+						and (isLeaveOrClose or serverClosing or (sticky ~= nil and #sticky > 0))
+					then
+						warn("[PlayerDataService] UpdateAsync keeping DataStore stands for", player.Name)
+						toWrite.stands = shallowCopyEntries(oldNorm.stands) :: any
+					end
+
 					if
 						#toWrite.inventory == 0
 						and #oldNorm.inventory > 0
@@ -956,12 +1014,31 @@ function M.savePlayerData(player: Player, precollected: PlayerDataSchema.PlayerS
 		return false
 	end
 
-	-- UpdateAsync returned nil → destructive write aborted; DataStore unchanged.
 	if written == nil then
 		return true
 	end
 
-	lastGoodPayload[player.UserId] = written
+	-- Never let a bad empty-stand write poison the sticky snapshot.
+	if not forceEmpty and #written.stands == 0 then
+		local keep = stickyStandsFor(userId)
+		if keep then
+			written.stands = shallowCopyEntries(keep) :: any
+		end
+	elseif forceEmpty then
+		lastGoodStands[userId] = {}
+	end
+
+	if #written.stands > 0 then
+		rememberGoodStands(userId, written.stands)
+	elseif not forceEmpty and not isLeaveOrClose and hasPlot then
+		-- Autosave confirmed empty plot (export empty while assigned) — allow sticky clear.
+		local liveCount = invokeInternal("CountPlayerPlotStands", player)
+		if typeof(liveCount) == "number" and liveCount == 0 then
+			lastGoodStands[userId] = {}
+		end
+	end
+
+	lastGoodPayload[userId] = written
 	if player.Parent then
 		player:SetAttribute(PLAY_TIME_ATTR, written.totalPlayTimeSeconds)
 		sessionPlayBase[player] = written.totalPlayTimeSeconds
@@ -981,7 +1058,17 @@ function M.saveAllOnlinePlayers(): number
 	local snapshots: { [Player]: PlayerDataSchema.PlayerSaveData } = {}
 	for _, player in Players:GetPlayers() do
 		if player:GetAttribute(LOADED_ATTR) == true and sessionCanSave[player] ~= false then
-			snapshots[player] = M.collectSaveData(player)
+			local snap = M.collectSaveData(player)
+			-- Prefer sticky stands if live export is already empty at shutdown.
+			if #snap.stands == 0 then
+				local sticky = stickyStandsFor(player.UserId)
+				if sticky then
+					snap.stands = shallowCopyEntries(sticky) :: any
+				end
+			else
+				rememberGoodStands(player.UserId, snap.stands)
+			end
+			snapshots[player] = snap
 		end
 	end
 
@@ -1066,6 +1153,7 @@ function M.resetPlayerData(player: Player): (boolean, string?)
 	M.waitUntilLoaded(player)
 	sessionCanSave[player] = true
 	allowEmptyOverwrite[player] = true
+	lastGoodStands[player.UserId] = {}
 	player:SetAttribute(LOAD_FAILED_ATTR, false)
 	local fresh = M.makeDefaultSaveData(player)
 
@@ -1186,11 +1274,13 @@ function M.bindPlayer(player: Player)
 	if result.status == "loaded" and result.data then
 		M.applyLoadedData(player, result.data)
 		lastGoodPayload[player.UserId] = result.data
+		rememberGoodStands(player.UserId, result.data.stands)
 	else
 		-- Confirmed new player (key missing after legacy migration attempt).
 		local fresh = M.makeDefaultSaveData(player)
 		M.applyLoadedData(player, fresh)
 		lastGoodPayload[player.UserId] = fresh
+		lastGoodStands[player.UserId] = {}
 	end
 	M.markLoaded(player)
 end
@@ -1200,6 +1290,14 @@ function M.unbindPlayer(player: Player)
 	local snapshot: PlayerDataSchema.PlayerSaveData? = nil
 	if sessionCanSave[player] ~= false and persistenceEnabled and playerStore then
 		snapshot = M.collectSaveData(player)
+		if #snapshot.stands > 0 then
+			rememberGoodStands(player.UserId, snapshot.stands)
+		else
+			local stickyLeave = stickyStandsFor(player.UserId)
+			if stickyLeave then
+				snapshot.stands = shallowCopyEntries(stickyLeave) :: any
+			end
+		end
 	end
 
 	local deadline = os.clock() + 12

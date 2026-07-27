@@ -1142,9 +1142,13 @@ end
 
 local function exportStandsForPlayer(player: Player): { any }
 	local merged: { [string]: any } = {}
+	local closing = game:GetAttribute("ServerClosing") == true
 	for _, state in pairs(stands) do
 		if state.ownerUserId == player.UserId and state.brainrotName and state.stand.Parent then
-			if playerAssignedToStandPlot(player, state.stand) then
+			-- Prefer plot-assignment check; on leave/restart plot slot may already be nil.
+			local onPlot = playerAssignedToStandPlot(player, state.stand)
+			local owned = state.stand:GetAttribute("StandOwnerUserId") == player.UserId
+			if onPlot or closing or owned then
 				local entry = buildStandSaveEntryFromState(state)
 				merged[standSaveKey(entry.standName, entry.storyName)] = entry
 			end

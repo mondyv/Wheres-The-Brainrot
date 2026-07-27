@@ -123,10 +123,9 @@ local BACKPACK_OPEN_START_SCALE = 0.92
 local BACKPACK_CLOSE_END_SCALE = 0.96
 local DRAG_GHOST_SMOOTH = 0.55 -- per-frame lerp toward cursor (higher = snappier follow)
 local MOBILE_DRAG_HOLD_SEC = 0.2 -- long-press before mobile inventory drag starts (keeps tap-to-select)
-local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 48
+local TOGGLE_BACKPACK_ICON_MIN_ABS_PX = 28
 -- Match hotbar slot Size 1:1 (scale + offset) so resize keeps the icon in sync.
 local TOGGLE_BACKPACK_ICON_SIZE_SCALE = 1
-local TOGGLE_BACKPACK_ICON_MAX_ABS_PX = 256
 
 -- ── Key → slot index map ──────────────────────────────────────────────────────
 
@@ -2180,6 +2179,7 @@ local ToolbarController = {}
 	end
 
 	local hotbarListLayout: UIListLayout? = nil
+	local hotbarListLayoutCreated = false
 	local toolbarHorizontalCenterApplied = false
 
 	local function centerToolbarChildHorizontally(gui: GuiObject)
@@ -2211,6 +2211,7 @@ local ToolbarController = {}
 		if not layout then
 			layout = Instance.new("UIListLayout")
 			layout.Parent = hotbar
+			hotbarListLayoutCreated = true
 		end
 		layout.FillDirection = Enum.FillDirection.Horizontal
 		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
@@ -2275,10 +2276,9 @@ local ToolbarController = {}
 		local minW = icon:GetAttribute("_MinW")
 		local minH = icon:GetAttribute("_MinH")
 		if typeof(minW) ~= "number" or typeof(minH) ~= "number" then
-			minW = TOGGLE_BACKPACK_ICON_MIN_ABS_PX
-			minH = TOGGLE_BACKPACK_ICON_MIN_ABS_PX
+			return
 		end
-		-- Floor only — never lock MaxSize to MinSize (that froze the icon tiny after resize).
+		-- Fixed pixel clamp only — never AbsoluteSize + ScaleWithParentSize (Studio timeout loop).
 		local aspect = icon:FindFirstChild("ToggleIconAspect")
 		if aspect then
 			aspect:Destroy()
@@ -2291,7 +2291,7 @@ local ToolbarController = {}
 		end
 		local sizeLock = constraint :: UISizeConstraint
 		sizeLock.MinSize = Vector2.new(minW :: number, minH :: number)
-		sizeLock.MaxSize = Vector2.new(TOGGLE_BACKPACK_ICON_MAX_ABS_PX, TOGGLE_BACKPACK_ICON_MAX_ABS_PX)
+		sizeLock.MaxSize = Vector2.new(minW :: number, minH :: number)
 	end
 
 	local toggleIconResizeToken = 0
@@ -2307,7 +2307,7 @@ local ToolbarController = {}
 	end
 
 	local function wireToggleBackpackIconResizeSync()
-		-- Viewport + hotbar AbsoluteSize (debounced). Avoid ScaleWithParentSize feedback loops.
+		-- Viewport-only: hotbar AbsoluteSize sync caused icon drift / spacing blowout.
 		if hotbar:GetAttribute("_ToggleIconResizeWired") == true then
 			return
 		end
@@ -2322,9 +2322,6 @@ local ToolbarController = {}
 				cam:GetPropertyChangedSignal("ViewportSize"):Connect(scheduleToggleBackpackIconLayoutRefresh)
 			end
 		end)
-		if hotbar:IsA("GuiObject") then
-			(hotbar :: GuiObject):GetPropertyChangedSignal("AbsoluteSize"):Connect(scheduleToggleBackpackIconLayoutRefresh)
-		end
 	end
 
 	local function captureToggleIconPixelSize(icon: GuiObject): (number?, number?)
@@ -2363,25 +2360,26 @@ local ToolbarController = {}
 		captureStudioToggleIconSize(icon)
 
 		local layout = ensureHotbarListLayout()
-		local HOTBAR_SLOT_PADDING_PX = 10
-		layout.Padding = UDim.new(0, HOTBAR_SLOT_PADDING_PX)
+		-- Only tighten spacing when we had to create the layout; never stomp Studio padding.
+		if hotbarListLayoutCreated then
+			layout.Padding = UDim.new(0, 2)
+		end
 		layout.FillDirection = Enum.FillDirection.Horizontal
 		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 		layout.VerticalAlignment = Enum.VerticalAlignment.Center
 
-		-- Always mirror the current hotbar slot Size (scale + offset) so window resize
-		-- cannot leave a stale pinned Offset that looks tiny next to the slots.
-		local slotTemplate = getHotbarSlotSizeTemplate()
+		-- Prefer Studio-authored size. Fall back to full hotbar slot size (no shrink).
+		local w, h = captureToggleIconPixelSize(icon)
 		local iconSize: UDim2
-		if slotTemplate then
-			iconSize = scaledToggleIconSizeFromTemplate(slotTemplate)
+		if typeof(w) == "number" and typeof(h) == "number" then
+			iconSize = UDim2.fromOffset(
+				math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(w + 0.5)),
+				math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(h + 0.5))
+			)
 		else
-			local w, h = captureToggleIconPixelSize(icon)
-			if typeof(w) == "number" and typeof(h) == "number" then
-				iconSize = UDim2.fromOffset(
-					math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(w + 0.5)),
-					math.max(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, math.floor(h + 0.5))
-				)
+			local slotTemplate = getHotbarSlotSizeTemplate()
+			if slotTemplate then
+				iconSize = scaledToggleIconSizeFromTemplate(slotTemplate)
 			else
 				iconSize = UDim2.fromOffset(TOGGLE_BACKPACK_ICON_MIN_ABS_PX, TOGGLE_BACKPACK_ICON_MIN_ABS_PX)
 			end
@@ -2394,8 +2392,7 @@ local ToolbarController = {}
 		end
 		icon.LayoutOrder = 100
 
-		-- Soft floor only — MaxSize stays high so the icon can grow with the hotbar.
-		pinToggleIconMinAbsoluteSize(icon, TOGGLE_BACKPACK_ICON_MIN_ABS_PX, TOGGLE_BACKPACK_ICON_MIN_ABS_PX)
+		pinToggleIconMinAbsoluteSize(icon, iconSize.X.Offset, iconSize.Y.Offset)
 		ensureToggleBackpackIconSizeConstraint(icon)
 	end
 

@@ -196,13 +196,15 @@ function PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot: Instance): (CFrame?, 
 		return nil, nil
 	end
 	local size = maxV - minV
-	local height = math.clamp(math.max(size.Y, 0.35), 0.35, 3)
+	-- Tall enough that the perimeter reads as a 3D frame, not a flat ground decal.
+	local height = math.clamp(math.max(size.Y, 10), 10, 16)
+	local pad = 1.25
 	local center = Vector3.new((minV.X + maxV.X) * 0.5, minV.Y + height * 0.5, (minV.Z + maxV.Z) * 0.5)
 
 	-- Prefer BasePOSPart orientation when it covers a full pad; never shrink below floor AABB.
 	local yaw = CFrame.new(center)
-	local outX = math.max(size.X, 6)
-	local outZ = math.max(size.Z, 6)
+	local outX = math.max(size.X, 6) + pad * 2
+	local outZ = math.max(size.Z, 6) + pad * 2
 	local slotId = plot:GetAttribute("PlotSlotId")
 	local posFolder = PlotPaths.findSpawnAndBasesFolder()
 	if posFolder and typeof(slotId) == "number" then

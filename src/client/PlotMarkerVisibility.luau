@@ -275,7 +275,8 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 		end
 	elseif d:IsA("SurfaceGui") then
 		if isYourPlotOwnershipMarker(d, plotRoot) then
-			d.Enabled = mine
+			-- PlotOutlineController drives Enabled + distance fade (safezone only).
+			d.Enabled = false
 		elseif isProtectedPlotUi(d, plotRoot) then
 			d.Enabled = true
 		elseif shouldEnableStandSurfaceGui(d, plotRoot) then

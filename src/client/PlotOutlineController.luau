@@ -26,10 +26,11 @@ local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
 -- Farthest visible outline (still a bit transparent).
 local OUTLINE_FAR_TRANSPARENCY = 0.42
 -- SelectionBox line thickness (Highlight has no thickness API).
-local BOX_LINE_THICKNESS = 0.16
--- Cap "Your Plot" billboard screen size (offset pixels).
-local MARKER_MAX_PX = 96
-local MARKER_MIN_PX = 48
+local BOX_LINE_THICKNESS = 0.22
+-- Cap "Your Plot" marker text (SurfaceGui labels use TextSize; billboards use offset px).
+local MARKER_MAX_TEXT_SIZE = 28
+local MARKER_MIN_TEXT_SIZE = 14
+local MARKER_MAX_BILLBOARD_PX = 72
 
 local PlotOutlineController = {}
 
@@ -40,6 +41,7 @@ local accum = 0
 local cachedPlot: Instance? = nil
 local cachedCenter: Vector3? = nil
 local cachedMarkerBillboards: { BillboardGui } = {}
+local cachedMarkerSurfaceGuis: { SurfaceGui } = {}
 local wired = false
 
 local function destroyOutline()
@@ -96,26 +98,63 @@ end
 
 local function refreshMarkerBillboards(plot: Instance?)
 	table.clear(cachedMarkerBillboards)
+	table.clear(cachedMarkerSurfaceGuis)
 	if not plot then
 		return
 	end
 	for _, d in ipairs(plot:GetDescendants()) do
 		if d:IsA("BillboardGui") and isOwnershipMarkerBillboard(d, plot) then
 			table.insert(cachedMarkerBillboards, d)
+		elseif d:IsA("SurfaceGui") and isOwnershipMarkerBillboard(d, plot) then
+			table.insert(cachedMarkerSurfaceGuis, d)
 		end
 	end
+end
+
+local function capMarkerTextLabel(label: TextLabel)
+	local maxSize = MARKER_MAX_TEXT_SIZE
+	local minSize = MARKER_MIN_TEXT_SIZE
+	local constraint = label:FindFirstChildOfClass("UITextSizeConstraint")
+	if not constraint then
+		constraint = Instance.new("UITextSizeConstraint")
+		constraint.Parent = label
+	end
+	constraint.MaxTextSize = maxSize
+	constraint.MinTextSize = minSize
+	if label.TextSize > maxSize then
+		label.TextSize = maxSize
+	end
+	label.TextScaled = false
 end
 
 local function capMarkerBillboardSize(bb: BillboardGui)
 	local w = bb.Size.X.Offset
 	local h = bb.Size.Y.Offset
 	local usesScale = bb.Size.X.Scale ~= 0 or bb.Size.Y.Scale ~= 0
-	if usesScale or w <= 0 or h <= 0 or w > MARKER_MAX_PX or h > MARKER_MAX_PX then
-		local side = MARKER_MAX_PX
+	if usesScale or w <= 0 or h <= 0 or w > MARKER_MAX_BILLBOARD_PX or h > MARKER_MAX_BILLBOARD_PX then
+		local side = MARKER_MAX_BILLBOARD_PX
 		if w > 0 and h > 0 and not usesScale then
-			side = math.clamp(math.max(w, h), MARKER_MIN_PX, MARKER_MAX_PX)
+			side = math.clamp(math.max(w, h), MARKER_MIN_TEXT_SIZE, MARKER_MAX_BILLBOARD_PX)
 		end
 		bb.Size = UDim2.fromOffset(side, side)
+	end
+	for _, d in ipairs(bb:GetDescendants()) do
+		if d:IsA("TextLabel") or d:IsA("TextButton") then
+			capMarkerTextLabel(d :: TextLabel)
+		end
+	end
+end
+
+local function capMarkerSurfaceGui(sg: SurfaceGui)
+	for _, d in ipairs(sg:GetDescendants()) do
+		if d:IsA("TextLabel") or d:IsA("TextButton") then
+			capMarkerTextLabel(d :: TextLabel)
+		elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
+			local img = d :: ImageLabel
+			if img.Size.X.Offset > MARKER_MAX_BILLBOARD_PX or img.Size.Y.Offset > MARKER_MAX_BILLBOARD_PX then
+				img.Size = UDim2.fromOffset(MARKER_MAX_BILLBOARD_PX, MARKER_MAX_BILLBOARD_PX)
+			end
+		end
 	end
 end
 
@@ -130,6 +169,30 @@ local function applyMarkerFade(transparency: number, visible: boolean)
 			continue
 		end
 		for _, d in ipairs(bb:GetDescendants()) do
+			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+				local img = d :: ImageLabel
+				img.ImageTransparency = transparency
+				img.BackgroundTransparency = math.max(img.BackgroundTransparency, transparency)
+			elseif d:IsA("TextLabel") or d:IsA("TextButton") then
+				local text = d :: TextLabel
+				text.TextTransparency = transparency
+				text.TextStrokeTransparency = math.clamp(transparency + 0.2, 0, 1)
+			elseif d:IsA("Frame") then
+				local frame = d :: Frame
+				frame.BackgroundTransparency = math.max(frame.BackgroundTransparency, transparency)
+			end
+		end
+	end
+	for _, sg in ipairs(cachedMarkerSurfaceGuis) do
+		if not sg.Parent then
+			continue
+		end
+		capMarkerSurfaceGui(sg)
+		sg.Enabled = visible
+		if not visible then
+			continue
+		end
+		for _, d in ipairs(sg:GetDescendants()) do
 			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
 				local img = d :: ImageLabel
 				img.ImageTransparency = transparency
@@ -267,7 +330,7 @@ local function tickOutline()
 
 	if not cachedPlot or not cachedPlot.Parent or not isOwnedByLocalPlayer(cachedPlot) then
 		refreshCachedPlot()
-	elseif #cachedMarkerBillboards == 0 then
+	elseif #cachedMarkerBillboards == 0 and #cachedMarkerSurfaceGuis == 0 then
 		refreshMarkerBillboards(cachedPlot)
 	end
 	local plot = cachedPlot

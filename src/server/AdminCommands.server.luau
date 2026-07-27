@@ -1159,7 +1159,7 @@ commands.fly = {
 		if enabled then
 			return true, "Fly disabled."
 		end
-		return true, "Fly enabled. WASD move, Space/E up, Ctrl/Q down."
+		return true, "Fly enabled. Joystick/WASD move, Jump/Up ascend, Down/Ctrl/Q descend."
 	end,
 }
 

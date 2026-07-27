@@ -4,7 +4,6 @@
 ]]
 
 local Debris = game:GetService("Debris")
-local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -47,6 +46,9 @@ local questDotsConn: RBXScriptConnection? = nil
 local questDotsPhase = 0.0
 local questExclaimConn: RBXScriptConnection? = nil
 local questHudRevealed = false
+local questHudBaseRightPad = TutorialConfig.PANEL_RIGHT_PAD
+local questHudBaseTop = TutorialConfig.PANEL_TOP_PAD
+local questHoverT = 0.0
 local highlight: Highlight? = nil
 local talkPrompt: ProximityPrompt? = nil
 local idleTrack: AnimationTrack? = nil
@@ -493,7 +495,7 @@ local function syncPromptAndOutline()
 	end
 	timModel = tim
 	local ready = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR) == true
-	local intro = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true
+	local intro = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true or introStartedLocal
 	local idx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
 	local hasQuest = typeof(idx) == "number" and idx >= 1
 	local completed = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR)
@@ -505,6 +507,8 @@ local function syncPromptAndOutline()
 		if talkPrompt then
 			-- Keep prompt up mid-mission so players can check in (world speech, no cutscene).
 			talkPrompt.Enabled = true
+			talkPrompt.Style = Enum.ProximityPromptStyle.Custom
+			talkPrompt:SetAttribute("CustomPromptFX", true)
 			if ready then
 				talkPrompt.ActionText = "Claim"
 			elseif hasQuest then
@@ -514,6 +518,9 @@ local function syncPromptAndOutline()
 			else
 				talkPrompt.ActionText = "Quests"
 			end
+			pcall(function()
+				ProximityPromptEffects.stylePrompt(talkPrompt)
+			end)
 		end
 		setOutline(tim, ready == true)
 		if ready then
@@ -527,19 +534,44 @@ local function syncPromptAndOutline()
 end
 
 local function ensureQuestHost(): Frame?
-	-- Same placement as tutorial objective: under PlayerGui.Main so it sits on the HUD.
-	local main = PlayerGuiMain.ensure(player)
-	if not main then
+	-- Dedicated ScreenGui so shop panels / cutscenes under Main can't cover the tracker.
+	local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
+	if not pg then
 		return nil
 	end
-	if main:IsA("ScreenGui") then
-		questGui = main
-		main.Enabled = true
+	local gui = questGui
+	if not (gui and gui.Parent) then
+		local existingGui = pg:FindFirstChild("TimCheeseQuestTracker")
+		if existingGui and existingGui:IsA("ScreenGui") then
+			gui = existingGui
+		else
+			gui = Instance.new("ScreenGui")
+			gui.Name = "TimCheeseQuestTracker"
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			gui.DisplayOrder = 110
+			gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+			gui.Parent = pg
+		end
+		gui.Enabled = true
+		gui.DisplayOrder = math.max(gui.DisplayOrder, 110)
+		questGui = gui
 	end
-	local existing = main:FindFirstChild("TimCheeseQuestHost")
+
+	-- Drop legacy host under Main so we don't double-draw a stretched leftover.
+	local main = PlayerGuiMain.ensure(player)
+	if main then
+		local legacy = main:FindFirstChild("TimCheeseQuestHost")
+		if legacy then
+			legacy:Destroy()
+		end
+	end
+
+	local existing = gui:FindFirstChild("TimCheeseQuestHost")
 	if existing and existing:IsA("Frame") then
 		questHost = existing
 		existing.Visible = true
+		existing.Size = UDim2.fromScale(1, 1)
 		return existing
 	end
 	local created = Instance.new("Frame")
@@ -549,11 +581,11 @@ local function ensureQuestHost(): Frame?
 	created.Size = UDim2.fromScale(1, 1)
 	created.Position = UDim2.fromScale(0, 0)
 	created.AnchorPoint = Vector2.new(0, 0)
-	created.ZIndex = 90
+	created.ZIndex = 1
 	created.ClipsDescendants = false
 	created.Active = false
 	created.Visible = true
-	created.Parent = main
+	created.Parent = gui
 	questHost = created
 	return created
 end
@@ -581,23 +613,27 @@ end
 
 local function startExclaimPulse()
 	stopExclaimPulse()
-	questExclaimConn = RunService.RenderStepped:Connect(function()
+	questHoverT = 0
+	-- One smooth sine bob for the whole ticket + a softer bang drift (no discrete snaps).
+	questExclaimConn = RunService.RenderStepped:Connect(function(dt)
 		if not questPanel or not questPanel.Visible or not questPanel.Parent then
 			return
 		end
+		questHoverT += dt
+		local bob = math.sin(questHoverT * 1.15) * 4
+		questPanel.Position = UDim2.new(1, -questHudBaseRightPad, 0, questHudBaseTop + bob)
+
 		local bang = questPanel:FindFirstChild("Exclaim", true)
-		if not (bang and bang:IsA("ImageLabel")) then
-			return
+		if bang and bang:IsA("ImageLabel") then
+			local bangBob = math.sin(questHoverT * 1.35 + 0.4) * 1.8
+			bang.Position = UDim2.fromOffset(0, -2 + bangBob)
+			bang.Rotation = -10
+			bang.ImageTransparency = 0
+			local sc = bang:FindFirstChild("BangScale")
+			if sc and sc:IsA("UIScale") then
+				sc.Scale = 1
+			end
 		end
-		local t = os.clock()
-		local sc = bang:FindFirstChild("BangScale")
-		if sc and sc:IsA("UIScale") then
-			sc.Scale = 1
-		end
-		bang.Rotation = -10
-		bang.ImageTransparency = 0
-		-- Soft vertical hover only.
-		bang.Position = UDim2.fromOffset(0, -2 + math.sin(t * 2.2) * 2)
 	end)
 end
 
@@ -875,38 +911,40 @@ local function layoutQuestHud()
 	if host and panel.Parent ~= host then
 		panel.Parent = host
 	end
+	if questGui then
+		questGui.Enabled = true
+		questGui.DisplayOrder = math.max(questGui.DisplayOrder, 110)
+	end
 	local mobile = UserInputService.TouchEnabled
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1280
-	local insetY = GuiService:GetGuiInset().Y
+	local vh = if cam then cam.ViewportSize.Y else 720
+	-- ScreenGui uses IgnoreGuiInset — don't add GuiInset again (that pushed PC too low / mobile wrong).
 	local rightPad = TutorialConfig.PANEL_RIGHT_PAD
-	-- PC: sit lower than tutorial so it doesn't crowd the top chrome.
-	local topPad = TutorialConfig.PANEL_TOP_PAD + insetY + 58
+	local topPad = TutorialConfig.PANEL_TOP_PAD + 28
 	local screenW: number
 	if mobile or vw < 700 then
 		local maxW = math.floor(vw * TutorialConfig.PANEL_MOBILE_MAX_WIDTH_FRAC)
 		screenW = math.clamp(maxW, TutorialConfig.PANEL_MOBILE_MIN_WIDTH, TutorialConfig.PANEL_MOBILE_MAX_WIDTH)
-		topPad = insetY + 18
-		rightPad = 10
+		topPad = math.clamp(math.floor(vh * 0.025), 10, 22)
+		rightPad = 8
 	else
 		local maxW = math.floor(vw * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
 		maxW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
 		screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
 	end
+	questHudBaseRightPad = rightPad
+	questHudBaseTop = topPad
 	panel.AnchorPoint = Vector2.new(1, 0)
 	panel.Size = UDim2.fromOffset(screenW, 0)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
 	panel.Position = UDim2.new(1, -rightPad, 0, topPad)
-	panel.ZIndex = 100
+	panel.ZIndex = 10
 end
 
 local function hudSlotPosition(): UDim2
 	layoutQuestHud()
-	if questPanel then
-		return questPanel.Position
-	end
-	local insetY = GuiService:GetGuiInset().Y
-	return UDim2.new(1, -TutorialConfig.PANEL_RIGHT_PAD, 0, TutorialConfig.PANEL_TOP_PAD + insetY + 58)
+	return UDim2.new(1, -questHudBaseRightPad, 0, questHudBaseTop)
 end
 
 local function resolveActiveQuestIndex(): number?
@@ -1459,7 +1497,16 @@ function M.playIntroFall()
 			if not ok then
 				warn("[TimCheeseQuestController] AcceptQuest error:", result)
 			elseif result ~= true then
-				warn("[TimCheeseQuestController] AcceptQuest rejected")
+				-- One retry after IntroDone / load settle (was always false from waitUntilLoaded bug).
+				task.wait(0.4)
+				local ok2, result2 = pcall(function()
+					return rf:InvokeServer()
+				end)
+				if not ok2 then
+					warn("[TimCheeseQuestController] AcceptQuest error:", result2)
+				elseif result2 ~= true then
+					warn("[TimCheeseQuestController] AcceptQuest rejected")
+				end
 			end
 		else
 			warn("[TimCheeseQuestController] AcceptQuest remote missing")
@@ -1815,6 +1862,24 @@ function M.init()
 			syncPromptAndOutline()
 		end)
 
+		local viewportConn: RBXScriptConnection? = nil
+		local function wireViewportLayout()
+			if viewportConn then
+				viewportConn:Disconnect()
+				viewportConn = nil
+			end
+			local c = Workspace.CurrentCamera
+			if not c then
+				return
+			end
+			viewportConn = c:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+				layoutQuestHud()
+			end)
+			layoutQuestHud()
+		end
+		wireViewportLayout()
+		Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(wireViewportLayout)
+
 		local accum = 0.0
 		RunService.Heartbeat:Connect(function(dt)
 			accum += dt
@@ -1823,7 +1888,10 @@ function M.init()
 			end
 			accum = 0
 			tickWalkby()
-			layoutQuestHud()
+			if questGui then
+				questGui.Enabled = true
+			end
+			syncPromptAndOutline()
 		end)
 	end)
 end

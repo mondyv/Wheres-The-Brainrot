@@ -86,13 +86,14 @@ function M.isPersistenceEnabled(): boolean
 	return persistenceEnabled
 end
 
-function M.waitUntilLoaded(player: Player)
+function M.waitUntilLoaded(player: Player): boolean
 	if not persistenceEnabled then
-		return
+		return true
 	end
 	while player.Parent and player:GetAttribute(LOADED_ATTR) ~= true do
 		player:GetAttributeChangedSignal(LOADED_ATTR):Wait()
 	end
+	return player.Parent ~= nil and player:GetAttribute(LOADED_ATTR) == true
 end
 
 local function floorNum(n: any, default: number): number

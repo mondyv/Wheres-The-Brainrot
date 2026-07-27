@@ -9,7 +9,7 @@ local M = {}
 M.INTERVAL_SEC = 30
 M.FIRST_DELAY_SEC = 12
 -- Change this to your real Discord invite (shown in chat tips).
-M.DISCORD_INVITE = "discord.gg/YOURINVITE"
+M.DISCORD_INVITE = "discord.gg/WfsqEkW75C"
 
 local function tip(emoji: string, title: string, titleRgb: string, body: string): string
 	return string.format(

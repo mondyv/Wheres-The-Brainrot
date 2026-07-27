@@ -1,23 +1,32 @@
 -- [ACTIVE] LowGraphicsController
 --[[
 	Settings → Low Graphics (Button7). Default off.
-	When on: no fireflies, no grass sway, auto-disables Brainrot VFX
-	(user can turn VFX back on while staying in low graphics).
-	Lighting stays mostly intact — only trims the heaviest post FX slightly.
+
+	When on:
+	  • Fireflies / grass sway off
+	  • Brainrot VFX auto-off (can re-enable)
+	  • Heavier land cull (current land only + hide grass/trees/rocks on it)
+	  • GlobalShadows off, lowest saved quality (best-effort)
+	  • Bloom / DoF / SunRays off
+	  • Safer fog via SafeZoneLightingController
 ]]
 
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
+local UserSettings = UserSettings
 
 local FireflyController = require(script.Parent.FireflyController)
 local VegetationSwayController = require(script.Parent.VegetationSwayController)
 local SafeZoneLightingController = require(script.Parent.SafeZoneLightingController)
+local GrassCullController = require(script.Parent.GrassCullController)
 
 local ATTR = "LowGraphicsEnabled"
 local ATTR_FX_PREV = "__LowGfxFxPrevEnabled"
+local ATTR_SHADOWS_PREV = "__LowGfxGlobalShadowsPrev"
 
 local player = Players.LocalPlayer
 local wired = false
+local savedQuality: any = nil
 
 -- Keep ColorCorrection / Blur for UI & look. Only strip costly bloom/DoF/sun rays.
 local function isHeavyFx(inst: Instance): boolean
@@ -44,11 +53,53 @@ local function setHeavyFxEnabled(enabled: boolean)
 	end
 end
 
+local function setGlobalShadowsEnabled(enabled: boolean)
+	if enabled then
+		local prev = Lighting:GetAttribute(ATTR_SHADOWS_PREV)
+		if typeof(prev) == "boolean" then
+			Lighting.GlobalShadows = prev
+		end
+		Lighting:SetAttribute(ATTR_SHADOWS_PREV, nil)
+	else
+		if Lighting:GetAttribute(ATTR_SHADOWS_PREV) == nil then
+			Lighting:SetAttribute(ATTR_SHADOWS_PREV, Lighting.GlobalShadows == true)
+		end
+		Lighting.GlobalShadows = false
+	end
+end
+
+local function setSavedQualityLowest(enabled: boolean)
+	local ok, err = pcall(function()
+		local gameSettings = UserSettings():GetService("UserGameSettings")
+		if enabled then
+			if savedQuality == nil then
+				savedQuality = gameSettings.SavedQualityLevel
+			end
+			-- Enum may differ by client build — try common lowest values.
+			local enumType = Enum.SavedQualitySetting
+			if enumType.QualityLevel1 then
+				gameSettings.SavedQualityLevel = enumType.QualityLevel1
+			elseif enumType.Automatic then
+				-- Fall through: leave automatic if QualityLevel1 missing.
+			end
+		elseif savedQuality ~= nil then
+			gameSettings.SavedQualityLevel = savedQuality
+			savedQuality = nil
+		end
+	end)
+	if not ok then
+		warn("[LowGraphicsController] SavedQualityLevel failed:", err)
+	end
+end
+
 local function apply(enabled: boolean)
 	FireflyController.setEnabled(not enabled)
 	VegetationSwayController.setEnabled(not enabled)
 	SafeZoneLightingController.setLowGraphics(enabled)
+	GrassCullController.setLowGraphics(enabled)
 	setHeavyFxEnabled(not enabled)
+	setGlobalShadowsEnabled(not enabled)
+	setSavedQualityLowest(enabled)
 end
 
 local LowGraphicsController = {}

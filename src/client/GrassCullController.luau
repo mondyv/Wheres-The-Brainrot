@@ -2,17 +2,9 @@
 --[[
 	Client-only land content cull (kept name for init wiring).
 
-	For Map.Lands/LandN when the land is 2+ away from the player:
-	  - Park (reparent into a local cache) every direct child that is NOT essential.
-	  - Restore when the player is within ±1 land again.
-	Nothing is Destroy'd — safe to bring back.
-
-	Always kept on far lands:
-	  Spawn / hitboxes / ComingSoon / walk-surface BaseParts / scripts
-
-	IMPORTANT: only bare BaseParts named Ground/Floor/etc. are kept — never whole
-	Models named Island (those used to keep thousands of nested grassparts loaded).
-	Cull starts after a short delay so join/loading is never blocked by reparents.
+	Default: park non-essential LandN children when 2+ lands away (keep ±1).
+	Low Graphics: keep current land only, and also park grass/trees/rocks/decor
+	on that land (bushes stay). Never Destroy — restore when range/settings change.
 ]]
 
 local Players = game:GetService("Players")
@@ -24,8 +16,10 @@ local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local M = {}
 
--- Keep current land and ±KEEP_RADIUS. Unload when abs(delta) > KEEP_RADIUS.
-local KEEP_RADIUS = 1
+-- Keep current land and ±keepRadius. Unload when abs(delta) > keepRadius.
+local DEFAULT_KEEP_RADIUS = 1
+local keepRadius = DEFAULT_KEEP_RADIUS
+local lowGraphics = false
 local POLL_SEC = 0.45
 local START_DELAY_SEC = 4
 local FEATURE_ENABLED = true
@@ -118,12 +112,61 @@ local function shouldKeepChild(inst: Instance): boolean
 	return false
 end
 
+local function alnumLower(name: string): string
+	return string.gsub(string.lower(name), "[^a-z0-9]", "")
+end
+
+-- Heavy decor safe to hide even on the current land in Low Graphics (never bushes).
+local function isLowGfxDecorName(name: string): boolean
+	local ak = alnumLower(name)
+	if ak == "" then
+		return false
+	end
+	if string.find(ak, "bush", 1, true) then
+		return false
+	end
+	if ak == "grass" or string.find(ak, "grass", 1, true) then
+		return true
+	end
+	if ak == "trees" or ak == "tree" or ak == "rocks" or ak == "rock" then
+		return true
+	end
+	if
+		ak == "decor"
+		or ak == "decoration"
+		or ak == "decorations"
+		or ak == "foliage"
+		or ak == "vegetation"
+		or ak == "plants"
+		or ak == "plant"
+		or ak == "leaves"
+		or ak == "flowers"
+		or ak == "clutter"
+		or ak == "scenery"
+		or ak == "props"
+	then
+		return true
+	end
+	return false
+end
+
 local function shouldKeepLand(landNum: number, playerLand: number): boolean
 	if playerLand <= 0 then
 		-- Don't touch anything until we know where the player is (avoids mass reparent on join).
 		return true
 	end
-	return math.abs(landNum - playerLand) <= KEEP_RADIUS
+	return math.abs(landNum - playerLand) <= keepRadius
+end
+
+local function shouldParkEntry(entry: CullEntry, playerLand: number): boolean
+	if not shouldKeepLand(entry.land, playerLand) then
+		return true
+	end
+	-- Low Graphics: also dump grass/trees/rocks on the land you're standing on.
+	if lowGraphics and isLowGfxDecorName(entry.inst.Name) then
+		return true
+	end
+	return false
 end
 
 local function parkEntry(entry: CullEntry)
@@ -185,7 +228,7 @@ local function registerCullable(landNum: number, inst: Instance)
 		unregisterEntry(inst)
 	end)
 
-	if cullActive and currentLand > 0 and not shouldKeepLand(landNum, currentLand) then
+	if cullActive and currentLand > 0 and shouldParkEntry(entry, currentLand) then
 		parkEntry(entry)
 	end
 end
@@ -197,15 +240,15 @@ local function applyForPlayerLand(playerLand: number)
 	currentLand = playerLand
 	local parked = 0
 	for _, entry in entries do
-		if shouldKeepLand(entry.land, playerLand) then
-			restoreEntry(entry)
-		else
+		if shouldParkEntry(entry, playerLand) then
 			parkEntry(entry)
 			parked += 1
 			-- Spread massive reparents across frames so join never freezes black.
 			if parked % 3 == 0 then
 				task.wait()
 			end
+		else
+			restoreEntry(entry)
 		end
 	end
 end
@@ -221,12 +264,27 @@ local function hookLandFolder(landFolder: Instance, landNum: number)
 
 	for _, child in landFolder:GetChildren() do
 		registerCullable(landNum, child)
+		-- One level deep: grass folders parented under Island/etc.
+		if not shouldKeepChild(child) then
+			for _, nested in child:GetChildren() do
+				if isLowGfxDecorName(nested.Name) then
+					registerCullable(landNum, nested)
+				end
+			end
+		end
 	end
 
 	landChildConns[landNum] = landFolder.ChildAdded:Connect(function(child)
 		task.defer(function()
 			if child.Parent == landFolder then
 				registerCullable(landNum, child)
+				if not shouldKeepChild(child) then
+					for _, nested in child:GetChildren() do
+						if isLowGfxDecorName(nested.Name) then
+							registerCullable(landNum, nested)
+						end
+					end
+				end
 			end
 		end)
 	end)
@@ -296,6 +354,22 @@ function M.setEnabled(enabled: boolean)
 	end
 	for _, entry in entries do
 		restoreEntry(entry)
+	end
+end
+
+-- Low Graphics: current land only + hide grass/trees/rocks on that land too.
+function M.setLowGraphics(enabled: boolean)
+	local nextOn = enabled == true
+	if lowGraphics == nextOn then
+		return
+	end
+	lowGraphics = nextOn
+	keepRadius = if nextOn then 0 else DEFAULT_KEEP_RADIUS
+	if cullActive then
+		local land = playerLandNow()
+		if land > 0 then
+			task.defer(applyForPlayerLand, land)
+		end
 	end
 end
 

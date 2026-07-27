@@ -9,7 +9,8 @@
 	• Row whose label contains "vfx" (or Button4) → BrainrotVFXEnabled; default on.
 	• Button5 → SpiderCutsceneEnabled; default on = full spider cinematic (drop + rage + shoot). Off = soft look-at + QTE (still letterbox / HUD hide).
 	• Button6 → ShopCutsceneEnabled; default on = Undertale stand greetings. Off = walk up and open panels directly.
-	• Button7 → LowGraphicsEnabled; default off. Turns off Brainrot VFX + lighter lighting / no fireflies / no grass sway.
+	• Button7 → LowGraphicsEnabled; default off. Stronger cull (current land only +
+	  hide grass/trees), no shadows/bloom/fireflies/sway, lowest quality, VFX off.
 	• Button8 / "Button 8" → Turn off hold to swing. On (default) = press jump to attach, press again to release.
 	  Off = classic hold-to-swing.
 --]]

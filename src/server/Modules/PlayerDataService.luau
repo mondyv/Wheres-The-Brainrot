@@ -766,6 +766,22 @@ function M.savePlayerData(player: Player): boolean
 			warn("[PlayerDataService] refusing stands wipe for", player.Name, "- keeping previous stands")
 			payload.stands = prev.stands
 		end
+		-- Simultaneous empty inventory+stands vs prior content = export race on leave/shutdown.
+		if
+			#payload.inventory == 0
+			and #payload.stands == 0
+			and (#prev.inventory > 0 or #prev.stands > 0)
+		then
+			warn("[PlayerDataService] refusing full wipe snapshot for", player.Name)
+			if #prev.inventory > 0 then
+				payload.inventory = prev.inventory
+				payload.parkedSlots = prev.parkedSlots
+				payload.equipSlot = prev.equipSlot
+			end
+			if #prev.stands > 0 then
+				payload.stands = prev.stands
+			end
+		end
 	end
 
 	writeBackup(player, payload)

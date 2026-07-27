@@ -1292,12 +1292,43 @@ local function notifyStandBrainrotChanged(player: Player?)
 	end
 	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
 	if not folder then
-		return
+		folder = Instance.new("Folder")
+		folder.Name = "BrainrotInternal"
+		folder.Parent = ServerStorage
 	end
 	local ev = folder:FindFirstChild("StandBrainrotChanged")
-	if ev and ev:IsA("BindableEvent") then
-		ev:Fire(player)
+	if not (ev and ev:IsA("BindableEvent")) then
+		ev = Instance.new("BindableEvent")
+		ev.Name = "StandBrainrotChanged"
+		ev.Parent = folder
 	end
+	(ev :: BindableEvent):Fire(player)
+end
+
+local function countPlacedBrainrotsForPlayer(player: Player): number
+	local n = 0
+	local uid = player.UserId
+	for _, state in pairs(stands) do
+		if state.ownerUserId == uid and typeof(state.brainrotName) == "string" and state.brainrotName ~= "" then
+			if state.stand.Parent then
+				n += 1
+			end
+		end
+	end
+	return n
+end
+
+local function placedIncomeForPlayer(player: Player): number
+	local total = 0
+	local uid = player.UserId
+	for _, state in pairs(stands) do
+		if state.ownerUserId == uid and typeof(state.brainrotName) == "string" and state.brainrotName ~= "" then
+			if state.stand.Parent then
+				total += recomputeIncomePerSecond(state)
+			end
+		end
+	end
+	return total
 end
 
 local function clearStandState(state: StandState, notifyPlayer: Player?)
@@ -2190,6 +2221,36 @@ local function ensureStandRescanRequestBindable()
 				return {}
 			end
 			return exportStandsForPlayer(playerArg :: Player)
+		end
+	end
+
+	local countBF = folder:FindFirstChild("CountPlacedBrainrots")
+	if not countBF then
+		countBF = Instance.new("BindableFunction")
+		countBF.Name = "CountPlacedBrainrots"
+		countBF.Parent = folder
+	end
+	if countBF:IsA("BindableFunction") then
+		(countBF :: BindableFunction).OnInvoke = function(playerArg: any)
+			if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+				return 0
+			end
+			return countPlacedBrainrotsForPlayer(playerArg :: Player)
+		end
+	end
+
+	local incomeBF = folder:FindFirstChild("GetPlacedIncomePerSecond")
+	if not incomeBF then
+		incomeBF = Instance.new("BindableFunction")
+		incomeBF.Name = "GetPlacedIncomePerSecond"
+		incomeBF.Parent = folder
+	end
+	if incomeBF:IsA("BindableFunction") then
+		(incomeBF :: BindableFunction).OnInvoke = function(playerArg: any)
+			if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+				return 0
+			end
+			return placedIncomeForPlayer(playerArg :: Player)
 		end
 	end
 

@@ -66,7 +66,29 @@ local acceptQuestRF = ensureRF("AcceptQuest")
 local declineQuestRF = ensureRF("DeclineQuest")
 local claimQuestRF = ensureRF("ClaimQuest")
 
+local function getBrainrotInternal(): Folder?
+	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
+	if folder and folder:IsA("Folder") then
+		return folder
+	end
+	return nil
+end
+
 local function countPlacedStands(player: Player): number
+	-- Prefer StandManager's live state — CollectionService tags can lag / miss Studio stands.
+	local folder = getBrainrotInternal()
+	local bf = folder and folder:FindFirstChild("CountPlacedBrainrots")
+	if bf and bf:IsA("BindableFunction") then
+		local ok, n = pcall(function()
+			return (bf :: BindableFunction):Invoke(player)
+		end)
+		if ok and typeof(n) == "number" then
+			return math.max(0, math.floor(n))
+		end
+		if not ok then
+			warn("[TimCheeseQuest] CountPlacedBrainrots error:", n)
+		end
+	end
 	local n = 0
 	local uid = player.UserId
 	for _, stand in CollectionService:GetTagged(STAND_TAG) do
@@ -81,6 +103,19 @@ local function countPlacedStands(player: Player): number
 end
 
 local function placedIncomePerSecond(player: Player): number
+	local folder = getBrainrotInternal()
+	local bf = folder and folder:FindFirstChild("GetPlacedIncomePerSecond")
+	if bf and bf:IsA("BindableFunction") then
+		local ok, total = pcall(function()
+			return (bf :: BindableFunction):Invoke(player)
+		end)
+		if ok and typeof(total) == "number" then
+			return math.max(0, total)
+		end
+		if not ok then
+			warn("[TimCheeseQuest] GetPlacedIncomePerSecond error:", total)
+		end
+	end
 	local total = 0
 	local uid = player.UserId
 	for _, stand in CollectionService:GetTagged(STAND_TAG) do

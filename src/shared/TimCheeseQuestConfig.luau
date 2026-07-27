@@ -156,6 +156,21 @@ M.WALKBY_LINES = {
 	"The stands aren't gonna fill themselves...",
 }
 
+-- Mid-mission check-in (world speech only — no cutscene).
+M.IN_PROGRESS_LINES = {
+	"Finish your job and then come back to me!!",
+	"Still working? Get that quest DONE first!!",
+	"No shortcuts!! Finish the mission, THEN we talk rewards.",
+	"You're mid-job!! Go finish it, then hit me up!!",
+	"Come back when the quest is DONE. I'm watching...",
+	"Chop chop!! Finish your quest before we chat!!",
+	"Quest first, cheese later. You got this!!",
+	"Don't ghost the job!! Finish it and report back!!",
+}
+
+-- Classic Roblox stud tile for the cheese ticket HUD.
+M.STUD_TEXTURE = "rbxassetid://6065821980"
+
 M.NO_QUEST_OVERHEAD = "Quests"
 M.HAS_QUEST_OVERHEAD = "Quest Active"
 M.READY_OVERHEAD = "Talk to claim!"

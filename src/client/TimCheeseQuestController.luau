@@ -25,6 +25,7 @@ local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local TopNotifController = require(script.Parent.TopNotifController)
 local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 
 local player = Players.LocalPlayer
 local M = {}
@@ -453,6 +454,11 @@ local function ensureTalkPrompt(tim: Model)
 	local existing = part:FindFirstChild("TimCheeseTalkPrompt")
 	if existing and existing:IsA("ProximityPrompt") then
 		talkPrompt = existing
+		existing.Style = Enum.ProximityPromptStyle.Custom
+		existing:SetAttribute("CustomPromptFX", true)
+		pcall(function()
+			ProximityPromptEffects.stylePrompt(existing)
+		end)
 		return existing
 	end
 	local prompt = Instance.new("ProximityPrompt")
@@ -464,8 +470,13 @@ local function ensureTalkPrompt(tim: Model)
 	prompt.RequiresLineOfSight = false
 	prompt.KeyboardKeyCode = Enum.KeyCode.E
 	prompt.GamepadKeyCode = Enum.KeyCode.ButtonX
+	prompt.Style = Enum.ProximityPromptStyle.Custom
+	prompt:SetAttribute("CustomPromptFX", true)
 	prompt.Parent = part
 	talkPrompt = prompt
+	pcall(function()
+		ProximityPromptEffects.stylePrompt(prompt)
+	end)
 	prompt.Triggered:Connect(function(who)
 		if who ~= player then
 			return
@@ -492,12 +503,23 @@ local function syncPromptAndOutline()
 	if intro and not introPlaying and not dialogueBusy then
 		ensureTalkPrompt(tim)
 		if talkPrompt then
-			talkPrompt.Enabled = ready or (not hasQuest and not allDone) or allDone
-			talkPrompt.ActionText = if ready then "Claim" elseif allDone then "Talk" else "Quests"
+			-- Keep prompt up mid-mission so players can check in (world speech, no cutscene).
+			talkPrompt.Enabled = true
+			if ready then
+				talkPrompt.ActionText = "Claim"
+			elseif hasQuest then
+				talkPrompt.ActionText = "Talk"
+			elseif allDone then
+				talkPrompt.ActionText = "Talk"
+			else
+				talkPrompt.ActionText = "Quests"
+			end
 		end
 		setOutline(tim, ready == true)
 		if ready then
 			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.READY_OVERHEAD)
+		elseif hasQuest then
+			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.HAS_QUEST_OVERHEAD)
 		else
 			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
 		end
@@ -599,10 +621,35 @@ local function startQuestDots()
 	end)
 end
 
--- Slim glass ticket on the right HUD (after accept fly-in).
+-- Solid cheese-ticket tracker (stud texture) on the right HUD after accept fly-in.
+local function addStudOverlay(parent: GuiObject, z: number, transparency: number?)
+	local existing = parent:FindFirstChild("StudOverlay")
+	if existing then
+		existing:Destroy()
+	end
+	local studs = Instance.new("ImageLabel")
+	studs.Name = "StudOverlay"
+	studs.BackgroundTransparency = 1
+	studs.BorderSizePixel = 0
+	studs.Size = UDim2.fromScale(1, 1)
+	studs.Position = UDim2.fromScale(0, 0)
+	studs.Image = TimCheeseQuestConfig.STUD_TEXTURE
+	studs.ImageColor3 = Color3.fromRGB(120, 80, 20)
+	studs.ImageTransparency = if typeof(transparency) == "number" then transparency else 0.72
+	studs.ScaleType = Enum.ScaleType.Tile
+	studs.TileSize = UDim2.fromOffset(28, 28)
+	studs.ZIndex = z
+	studs.Parent = parent
+	return studs
+end
+
 local function ensureQuestHud(): Frame
 	if questPanel and questPanel.Parent then
-		return questPanel
+		if questPanel:FindFirstChild("StudOverlay") then
+			return questPanel
+		end
+		questPanel:Destroy()
+		questPanel = nil
 	end
 	local host = ensureQuestHost()
 	assert(host, "TimCheeseQuestHost missing")
@@ -613,69 +660,70 @@ local function ensureQuestHud(): Frame
 	ticket.Position = UDim2.new(1, -TutorialConfig.PANEL_RIGHT_PAD, 0, TutorialConfig.PANEL_TOP_PAD + 36)
 	ticket.Size = UDim2.fromOffset(300, 0)
 	ticket.AutomaticSize = Enum.AutomaticSize.Y
-	ticket.BackgroundColor3 = Color3.fromRGB(255, 230, 140)
-	ticket.BackgroundTransparency = 0.92
+	ticket.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
+	ticket.BackgroundTransparency = 0
 	ticket.BorderSizePixel = 0
 	ticket.Visible = false
 	ticket.ZIndex = 100
-	ticket.ClipsDescendants = false
+	ticket.ClipsDescendants = true
 	ticket.Parent = host
 
 	local ticketCorner = Instance.new("UICorner")
-	ticketCorner.CornerRadius = UDim.new(0, 12)
+	ticketCorner.CornerRadius = UDim.new(0, 6)
 	ticketCorner.Parent = ticket
 	local ticketStroke = Instance.new("UIStroke")
-	ticketStroke.Name = "GlassStroke"
-	ticketStroke.Color = Color3.fromRGB(255, 236, 150)
-	ticketStroke.Thickness = 1.4
-	ticketStroke.Transparency = 0.62
+	ticketStroke.Name = "TicketStroke"
+	ticketStroke.Color = Color3.fromRGB(40, 28, 8)
+	ticketStroke.Thickness = 3.5
 	ticketStroke.Parent = ticket
+	addStudOverlay(ticket, 100, 0.78)
 	local ticketScale = Instance.new("UIScale")
 	ticketScale.Name = "PanelScale"
 	ticketScale.Scale = 1
 	ticketScale.Parent = ticket
 
 	local pad = Instance.new("UIPadding")
-	pad.PaddingTop = UDim.new(0, 6)
-	pad.PaddingBottom = UDim.new(0, 6)
-	pad.PaddingLeft = UDim.new(0, 6)
-	pad.PaddingRight = UDim.new(0, 6)
+	pad.PaddingTop = UDim.new(0, 8)
+	pad.PaddingBottom = UDim.new(0, 8)
+	pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 8)
 	pad.Parent = ticket
 
 	local inner = Instance.new("Frame")
 	inner.Name = "Inner"
-	inner.BackgroundColor3 = Color3.fromRGB(18, 14, 8)
-	inner.BackgroundTransparency = 0.72
+	inner.BackgroundColor3 = Color3.fromRGB(255, 244, 180)
+	inner.BackgroundTransparency = 0
 	inner.BorderSizePixel = 0
 	inner.Size = UDim2.new(1, 0, 0, 0)
 	inner.AutomaticSize = Enum.AutomaticSize.Y
 	inner.ZIndex = 101
+	inner.ClipsDescendants = true
 	inner.Parent = ticket
 	local innerCorner = Instance.new("UICorner")
-	innerCorner.CornerRadius = UDim.new(0, 9)
+	innerCorner.CornerRadius = UDim.new(0, 4)
 	innerCorner.Parent = inner
 	local dash = Instance.new("UIStroke")
 	dash.Name = "InnerStroke"
-	dash.Color = Color3.fromRGB(255, 220, 100)
-	dash.Thickness = 1
-	dash.Transparency = 0.68
-	dash.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	dash.Color = Color3.fromRGB(180, 120, 30)
+	dash.Thickness = 1.5
+	dash.Transparency = 0.35
 	dash.Parent = inner
+	addStudOverlay(inner, 101, 0.82)
 	local innerPad = Instance.new("UIPadding")
-	innerPad.PaddingTop = UDim.new(0, 8)
-	innerPad.PaddingBottom = UDim.new(0, 8)
-	innerPad.PaddingLeft = UDim.new(0, 8)
-	innerPad.PaddingRight = UDim.new(0, 8)
+	innerPad.PaddingTop = UDim.new(0, 10)
+	innerPad.PaddingBottom = UDim.new(0, 10)
+	innerPad.PaddingLeft = UDim.new(0, 10)
+	innerPad.PaddingRight = UDim.new(0, 10)
 	innerPad.Parent = inner
 	local list = Instance.new("UIListLayout")
 	list.SortOrder = Enum.SortOrder.LayoutOrder
-	list.Padding = UDim.new(0, 5)
+	list.Padding = UDim.new(0, 6)
 	list.Parent = inner
 
 	local header = Instance.new("Frame")
 	header.Name = "Header"
 	header.BackgroundTransparency = 1
-	header.Size = UDim2.new(1, 0, 0, 36)
+	header.Size = UDim2.new(1, 0, 0, 40)
 	header.LayoutOrder = 1
 	header.ZIndex = 102
 	header.Parent = inner
@@ -684,7 +732,7 @@ local function ensureQuestHud(): Frame
 	bang.Name = "Exclaim"
 	bang.BackgroundTransparency = 1
 	bang.Position = UDim2.fromOffset(0, -2)
-	bang.Size = UDim2.fromOffset(34, 34)
+	bang.Size = UDim2.fromOffset(36, 36)
 	bang.Image = TutorialConfig.EXCLAIM_IMAGE
 	bang.Rotation = -10
 	bang.ZIndex = 103
@@ -693,34 +741,30 @@ local function ensureQuestHud(): Frame
 	local stamp = Instance.new("TextLabel")
 	stamp.Name = "Stamp"
 	stamp.BackgroundTransparency = 1
-	stamp.Position = UDim2.fromOffset(40, 0)
-	stamp.Size = UDim2.new(1, -40, 0, 14)
+	stamp.Position = UDim2.fromOffset(42, 0)
+	stamp.Size = UDim2.new(1, -42, 0, 16)
 	stamp.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	stamp.TextSize = 11
-	stamp.TextColor3 = Color3.fromRGB(255, 190, 90)
+	stamp.TextSize = 12
+	stamp.TextColor3 = Color3.fromRGB(160, 40, 30)
 	stamp.TextXAlignment = Enum.TextXAlignment.Left
 	stamp.Text = "TIM CHEESE JOB"
-	stamp.TextStrokeTransparency = 0.4
-	stamp.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	stamp.ZIndex = 103
 	stamp.Parent = header
 
 	local title = Instance.new("TextLabel")
 	title.Name = "Title"
 	title.BackgroundTransparency = 1
-	title.Position = UDim2.fromOffset(40, 14)
-	title.Size = UDim2.new(1, -40, 0, 20)
+	title.Position = UDim2.fromOffset(42, 16)
+	title.Size = UDim2.new(1, -42, 0, 22)
 	title.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	title.TextSize = 15
-	title.TextColor3 = Color3.fromRGB(255, 250, 235)
+	title.TextSize = 16
+	title.TextColor3 = Color3.fromRGB(30, 24, 10)
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.TextTruncate = Enum.TextTruncate.AtEnd
 	title.Text = ""
-	title.TextStrokeTransparency = 0.35
-	title.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	title.ZIndex = 103
 	title.Parent = header
-	UiFonts.applyDisplayLabel(title, 15, 12)
+	UiFonts.applyDisplayLabel(title, 16, 13)
 
 	local body = Instance.new("TextLabel")
 	body.Name = "Body"
@@ -728,13 +772,11 @@ local function ensureQuestHud(): Frame
 	body.Size = UDim2.new(1, 0, 0, 0)
 	body.AutomaticSize = Enum.AutomaticSize.Y
 	body.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
-	body.TextSize = 12
-	body.TextColor3 = Color3.fromRGB(235, 230, 215)
+	body.TextSize = 13
+	body.TextColor3 = Color3.fromRGB(55, 42, 18)
 	body.TextWrapped = true
 	body.TextXAlignment = Enum.TextXAlignment.Left
 	body.Text = ""
-	body.TextStrokeTransparency = 0.45
-	body.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	body.LayoutOrder = 2
 	body.ZIndex = 102
 	body.Parent = inner
@@ -742,7 +784,7 @@ local function ensureQuestHud(): Frame
 	local progressRow = Instance.new("Frame")
 	progressRow.Name = "ProgressRow"
 	progressRow.BackgroundTransparency = 1
-	progressRow.Size = UDim2.new(1, 0, 0, 16)
+	progressRow.Size = UDim2.new(1, 0, 0, 18)
 	progressRow.LayoutOrder = 3
 	progressRow.ZIndex = 102
 	progressRow.Parent = inner
@@ -750,14 +792,12 @@ local function ensureQuestHud(): Frame
 	local progress = Instance.new("TextLabel")
 	progress.Name = "Progress"
 	progress.BackgroundTransparency = 1
-	progress.Size = UDim2.new(1, -28, 1, 0)
+	progress.Size = UDim2.new(1, -30, 1, 0)
 	progress.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	progress.TextSize = 12
-	progress.TextColor3 = Color3.fromRGB(180, 255, 150)
+	progress.TextSize = 13
+	progress.TextColor3 = Color3.fromRGB(40, 110, 40)
 	progress.TextXAlignment = Enum.TextXAlignment.Left
 	progress.Text = ""
-	progress.TextStrokeTransparency = 0.4
-	progress.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	progress.ZIndex = 103
 	progress.Parent = progressRow
 
@@ -766,10 +806,10 @@ local function ensureQuestHud(): Frame
 	dots.BackgroundTransparency = 1
 	dots.AnchorPoint = Vector2.new(1, 0.5)
 	dots.Position = UDim2.new(1, 0, 0.5, 0)
-	dots.Size = UDim2.fromOffset(24, 14)
+	dots.Size = UDim2.fromOffset(26, 16)
 	dots.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	dots.TextSize = 12
-	dots.TextColor3 = Color3.fromRGB(180, 255, 150)
+	dots.TextSize = 13
+	dots.TextColor3 = Color3.fromRGB(40, 110, 40)
 	dots.TextXAlignment = Enum.TextXAlignment.Left
 	dots.Text = ""
 	dots.ZIndex = 103
@@ -777,49 +817,45 @@ local function ensureQuestHud(): Frame
 
 	local barBg = Instance.new("Frame")
 	barBg.Name = "BarBg"
-	barBg.Size = UDim2.new(1, 0, 0, 7)
-	barBg.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	barBg.BackgroundTransparency = 0.82
+	barBg.Size = UDim2.new(1, 0, 0, 10)
+	barBg.BackgroundColor3 = Color3.fromRGB(210, 170, 70)
+	barBg.BackgroundTransparency = 0
 	barBg.BorderSizePixel = 0
 	barBg.LayoutOrder = 4
 	barBg.ZIndex = 102
+	barBg.ClipsDescendants = true
 	barBg.Parent = inner
 	local barCorner = Instance.new("UICorner")
 	barCorner.CornerRadius = UDim.new(1, 0)
 	barCorner.Parent = barBg
+	addStudOverlay(barBg, 102, 0.55)
 	local barFill = Instance.new("Frame")
 	barFill.Name = "BarFill"
 	barFill.Size = UDim2.new(0, 0, 1, 0)
-	barFill.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
+	barFill.BackgroundColor3 = Color3.fromRGB(40, 28, 8)
 	barFill.BorderSizePixel = 0
-	barFill.ZIndex = 103
+	barFill.ZIndex = 104
 	barFill.Parent = barBg
 	local fillCorner = Instance.new("UICorner")
 	fillCorner.CornerRadius = UDim.new(1, 0)
 	fillCorner.Parent = barFill
+	addStudOverlay(barFill, 104, 0.65)
 
 	local payout = Instance.new("TextLabel")
 	payout.Name = "Reward"
-	payout.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
-	payout.BackgroundTransparency = 0.88
-	payout.Size = UDim2.new(1, 0, 0, 22)
+	payout.BackgroundColor3 = Color3.fromRGB(40, 28, 8)
+	payout.BackgroundTransparency = 0
+	payout.Size = UDim2.new(1, 0, 0, 26)
 	payout.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	payout.TextSize = 12
-	payout.TextColor3 = Color3.fromRGB(255, 230, 120)
+	payout.TextSize = 13
+	payout.TextColor3 = Color3.fromRGB(255, 220, 80)
 	payout.Text = ""
-	payout.TextStrokeTransparency = 0.35
-	payout.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	payout.LayoutOrder = 5
 	payout.ZIndex = 102
 	payout.Parent = inner
 	local payCorner = Instance.new("UICorner")
-	payCorner.CornerRadius = UDim.new(0, 7)
+	payCorner.CornerRadius = UDim.new(0, 8)
 	payCorner.Parent = payout
-	local payStroke = Instance.new("UIStroke")
-	payStroke.Color = Color3.fromRGB(255, 214, 74)
-	payStroke.Thickness = 1
-	payStroke.Transparency = 0.7
-	payStroke.Parent = payout
 
 	questPanel = ticket
 	return ticket
@@ -930,16 +966,19 @@ local function refreshQuestHud(opts: { skipRevealGate: boolean?, playAppear: boo
 
 	if stamp and stamp:IsA("TextLabel") then
 		stamp.Text = if ready then "READY TO CLAIM" else "TIM CHEESE JOB"
-		stamp.TextColor3 = if ready then Color3.fromRGB(120, 255, 160) else Color3.fromRGB(255, 190, 90)
+		stamp.TextColor3 = if ready then Color3.fromRGB(30, 120, 50) else Color3.fromRGB(160, 40, 30)
 	end
 	if title and title:IsA("TextLabel") then
 		title.Text = quest.title
+		title.TextColor3 = Color3.fromRGB(30, 24, 10)
 	end
 	if body and body:IsA("TextLabel") then
 		body.Text = if ready then "Talk to Tim Cheese to cash out!" else quest.description
+		body.TextColor3 = Color3.fromRGB(55, 42, 18)
 	end
 	if progress and progress:IsA("TextLabel") then
 		progress.Text = if ready then "COMPLETE" elseif quest.showBar then formatQuestProgress(quest, p) else "In progress"
+		progress.TextColor3 = Color3.fromRGB(40, 110, 40)
 		progress.Visible = true
 	end
 	if barBg and barBg:IsA("Frame") then
@@ -957,6 +996,9 @@ local function refreshQuestHud(opts: { skipRevealGate: boolean?, playAppear: boo
 	end
 	if reward and reward:IsA("TextLabel") then
 		reward.Text = "★  " .. BrainrotEconomy.formatCashShort(quest.rewardCash)
+		reward.TextColor3 = Color3.fromRGB(255, 220, 80)
+		reward.BackgroundColor3 = Color3.fromRGB(40, 28, 8)
+		reward.BackgroundTransparency = 0
 	end
 
 	startQuestDots()
@@ -1139,7 +1181,7 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 		return
 	end
 
-	-- Fly into HUD slot — dissolve into glass so the final tracker feels light.
+	-- Fly into HUD slot (stays solid cheese ticket).
 	pulseToken += 1
 	local slot = hudSlotPosition()
 	local flyInfo = TweenInfo.new(0.58, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
@@ -1148,17 +1190,8 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 		AnchorPoint = Vector2.new(1, 0),
 		Position = slot,
 		Rotation = 0,
-		BackgroundTransparency = 0.92,
-		BackgroundColor3 = Color3.fromRGB(255, 230, 140),
 	}):Play()
-	TweenService:Create(ticketScale, flyInfo, { Scale = 0.38 }):Play()
-	TweenService:Create(ticketStroke, flyInfo, { Transparency = 0.7, Thickness = 1.2 }):Play()
-	TweenService:Create(inner, flyInfo, { BackgroundTransparency = 0.78, BackgroundColor3 = Color3.fromRGB(18, 14, 8) }):Play()
-	TweenService:Create(dash, flyInfo, { Transparency = 0.72, Thickness = 1 }):Play()
-	TweenService:Create(stamp, flyInfo, { TextTransparency = 0.15, TextColor3 = Color3.fromRGB(255, 190, 90) }):Play()
-	TweenService:Create(title, flyInfo, { TextTransparency = 0.08, TextColor3 = Color3.fromRGB(255, 250, 235) }):Play()
-	TweenService:Create(body, flyInfo, { TextTransparency = 0.2, TextColor3 = Color3.fromRGB(235, 230, 215) }):Play()
-	TweenService:Create(payout, flyInfo, { BackgroundTransparency = 0.85, TextTransparency = 0.05 }):Play()
+	TweenService:Create(ticketScale, flyInfo, { Scale = 0.42 }):Play()
 	task.wait(0.6)
 
 	if gui.Parent then
@@ -1464,7 +1497,7 @@ function M.playIntroFall()
 		questHudRevealed = false
 		local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex)
 		if q then
-			-- Center ticket → flies into right HUD slot, then glass tracker stays.
+			-- Center ticket → flies into right HUD slot.
 			playQuestAcceptPopup(q)
 		else
 			questHudRevealed = true
@@ -1488,15 +1521,28 @@ function M.openTimDialogue()
 	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) ~= true then
 		return
 	end
-	dialogueBusy = true
-	setQuestFloatVisible(tim, false)
-	setOutline(tim, false)
 
 	local ready = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR) == true
 	local idx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
 	local hasQuest = typeof(idx) == "number" and idx >= 1
 	local completed = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR)
 	local doneCount = if typeof(completed) == "number" then completed else 0
+
+	-- Mid-mission: custom prompt → bubble only (no cutscene cam).
+	if hasQuest and not ready then
+		local lines = TimCheeseQuestConfig.IN_PROGRESS_LINES
+		local msg = lines[math.random(1, #lines)]
+		StandDialogueCutscene.showWorldSpeech(tim, msg, {
+			durationSec = 2.8,
+			voicePitchMin = 0.92,
+			voicePitchMax = 1.12,
+		})
+		return
+	end
+
+	dialogueBusy = true
+	setQuestFloatVisible(tim, false)
+	setOutline(tim, false)
 
 	if ready then
 		local claimNow = StandDialogueCutscene.play({
@@ -1621,8 +1667,6 @@ function M.openTimDialogue()
 				voicePitchMax = 1.12,
 			}, tim)
 		end
-	else
-		StandDialogueCutscene.showWorldSpeech(tim, "Keep grinding that quest!", { durationSec = 2.4 })
 	end
 
 	dialogueBusy = false

@@ -113,18 +113,8 @@ local function onHeartbeat(dt: number)
 end
 
 function M.init()
-	if heartbeatConn then
-		return
-	end
-	task.spawn(function()
-		task.wait(3)
-		local origin = playerPos()
-		if origin then
-			currentLand = math.floor(LandResolver.resolveLandAtPosition(origin))
-			queueLandOptimize(currentLand)
-		end
-	end)
-	heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
+	-- Disabled: walking/stripping all grassparts hitch'd without lowering the ~2.5GB
+	-- map RAM. Memory fix is not pre-streaming every land (see SpawnAreaWarmup).
 end
 
 return M

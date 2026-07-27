@@ -19,15 +19,15 @@ local Workspace = game:GetService("Workspace")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
-local MIN_DISPLAY_SEC = 2.4
-local HOLD_AT_FULL_SEC = 0.6
+local MIN_DISPLAY_SEC = 1.6
+local HOLD_AT_FULL_SEC = 0.4
 local FADE_OUT_SEC = 0.9
 local FADE_TWEEN_INFO = TweenInfo.new(FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 local RESOLVE_TIMEOUT = 45
 -- Hard cap so a long Moon export can never pin the black loading screen forever.
-local MAX_LOADING_DISPLAY_SEC = 8
--- Wall-clock duration multiplier for moon flyover (2x slower back cam → longer load).
-local MOON_PLAYBACK_SCALE = 2
+local MAX_LOADING_DISPLAY_SEC = 5.5
+-- >1 slows the flyover. Was 2 (half speed); 1.5x faster than that → ~1.33.
+local MOON_PLAYBACK_SCALE = 4 / 3
 
 -- Keep stream bubble on the player while the cinematic camera flies elsewhere.
 local LOADING_STREAM_MIN_RADIUS = 64

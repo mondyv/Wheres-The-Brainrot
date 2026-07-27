@@ -27,6 +27,7 @@ local TopNotifController = require(script.Parent.TopNotifController)
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
+local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local TutorialConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TutorialConfig"))
@@ -60,6 +61,7 @@ local worldArrowImg: ImageLabel? = nil
 local arrowAnimConn: RBXScriptConnection? = nil
 local worldHighlight: Highlight? = nil
 local worldOutlineBox: SelectionBox? = nil
+local worldOutlineProxy: BasePart? = nil
 local uiPointer: ImageLabel? = nil
 local uiPointerBb: BillboardGui? = nil
 local pointerGui: ScreenGui? = nil
@@ -579,24 +581,50 @@ local function clearWorldHighlight()
 		worldOutlineBox:Destroy()
 		worldOutlineBox = nil
 	end
+	if worldOutlineProxy then
+		worldOutlineProxy:Destroy()
+		worldOutlineProxy = nil
+	end
 end
 
-local function resolveOutlineFloorPart(root: Instance): BasePart?
-	local story1 = PlotPaths.firstStoryFolder(root)
-	local floor = story1 and (story1:FindFirstChild("Floor") or story1:FindFirstChild("floor"))
-	if floor and floor:IsA("BasePart") then
-		return floor
+local function resolveOwnedPlotForTutorial(): Instance?
+	local plot = PlotPaths.findPlotOwnedByPlayer(player)
+	if plot then
+		return plot
 	end
-	if floor then
-		local part = floor:FindFirstChildWhichIsA("BasePart", true)
-		if part then
-			return part
+	local bySlot = PlotPaths.findPlotForAssignedSlot(player)
+	if bySlot and bySlot:GetAttribute("PlotOwnerUserId") == player.UserId then
+		return bySlot
+	end
+	return nil
+end
+
+local function ensureTutorialPlotOutlineProxy(plot: Instance): BasePart?
+	local cf, size = PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot)
+	if not cf or not size then
+		return nil
+	end
+	local proxy = worldOutlineProxy
+	if not proxy or not proxy.Parent then
+		if proxy then
+			proxy:Destroy()
 		end
+		proxy = Instance.new("Part")
+		proxy.Name = "TutorialPlotOutlineProxy"
+		proxy.Anchored = true
+		proxy.CanCollide = false
+		proxy.CanQuery = false
+		proxy.CanTouch = false
+		proxy.CastShadow = false
+		proxy.Massless = true
+		proxy.Transparency = 1
+		proxy.Material = Enum.Material.SmoothPlastic
+		proxy.Parent = Workspace.CurrentCamera or plot
+		worldOutlineProxy = proxy
 	end
-	if root:IsA("BasePart") then
-		return root
-	end
-	return root:FindFirstChildWhichIsA("BasePart", true)
+	proxy.Size = size
+	proxy.CFrame = cf
+	return proxy
 end
 
 local function outlineWorld(adornee: Instance?)
@@ -605,15 +633,18 @@ local function outlineWorld(adornee: Instance?)
 		return
 	end
 
-	-- Full plot models are too large for Highlight (often invisible). Use a thick
-	-- SelectionBox on the floor pad instead — same approach as PlotOutlineController.
+	-- Full plot: SelectionBox on a full-floor proxy (single Floor part is only a corner tile).
 	local useBox = PlotPaths.isPlotRoot(adornee)
 		or (adornee:IsA("Model") and adornee:FindFirstChild("1 Story") ~= nil)
 		or (adornee:IsA("Model") and adornee:FindFirstChild("1st Story") ~= nil)
 
 	if useBox then
-		local floorPart = resolveOutlineFloorPart(adornee)
-		if not floorPart then
+		-- Never outline another player's plot during tutorial.
+		if PlotPaths.isPlotRoot(adornee) and adornee:GetAttribute("PlotOwnerUserId") ~= player.UserId then
+			return
+		end
+		local proxy = ensureTutorialPlotOutlineProxy(adornee)
+		if not proxy then
 			return
 		end
 		local box = Instance.new("SelectionBox")
@@ -624,7 +655,7 @@ local function outlineWorld(adornee: Instance?)
 		box.LineThickness = 0.18
 		box.Transparency = 0.05
 		box.Visible = true
-		box.Adornee = floorPart
+		box.Adornee = proxy
 		box.Parent = Workspace.CurrentCamera or adornee
 		worldOutlineBox = box
 		return
@@ -1867,14 +1898,14 @@ local function refreshPointersImpl()
 	elseif step.id == "goToBase" then
 		clearLockedBush()
 		pointAtWorld(resolvePlayerBaseTarget(), arrowHeight(4))
-		local plot = PlotPaths.findPlotForAssignedSlot(player)
+		local plot = resolveOwnedPlotForTutorial()
 		if plot then
 			outlineWorld(plot)
 		end
 	elseif step.id == "placeOnPlot" then
 		clearLockedBush()
 		pointAtWorld(resolvePlayerPlotStand(true), arrowHeight(3))
-		local plot = PlotPaths.findPlotForAssignedSlot(player)
+		local plot = resolveOwnedPlotForTutorial()
 		if plot then
 			outlineWorld(plot)
 		end

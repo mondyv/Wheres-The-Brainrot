@@ -109,6 +109,18 @@ function PlotSpawnUtil.getPlotFloorBounds(plot: Instance): (Vector3?, Vector3?)
 	return boundingBoxOf(bboxRoot)
 end
 
+-- Axis-aligned box covering the whole story-1 floor (for SelectionBox outlines).
+function PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot: Instance): (CFrame?, Vector3?)
+	local minV, maxV = PlotSpawnUtil.getPlotFloorBounds(plot)
+	if not minV or not maxV then
+		return nil, nil
+	end
+	local size = maxV - minV
+	local height = math.clamp(math.max(size.Y, 0.35), 0.35, 3)
+	local center = Vector3.new((minV.X + maxV.X) * 0.5, minV.Y + height * 0.5, (minV.Z + maxV.Z) * 0.5)
+	return CFrame.new(center), Vector3.new(math.max(size.X, 6), height, math.max(size.Z, 6))
+end
+
 -- Random floor point on a plot, facing toward targetPos, at least minDist studs away (flat XZ).
 function PlotSpawnUtil.pickRandomAmbushPositionOnPlot(
 	plot: Instance,

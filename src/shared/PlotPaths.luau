@@ -171,20 +171,25 @@ function M.findPlotForAssignedSlot(player: Player): Instance?
 		return nil
 	end
 
+	-- Always prefer the plot you actually own.
+	local owned = M.findPlotOwnedByPlayer(player)
+	if owned then
+		return owned
+	end
+
 	local slot = player:GetAttribute("AssignedPlotSlot")
 	if typeof(slot) == "number" then
 		local bySlot = folder:FindFirstChild("Plot_" .. tostring(math.floor(slot)))
 		if bySlot and M.isPlotRoot(bySlot) then
 			local uid = bySlot:GetAttribute("PlotOwnerUserId")
-			-- Prefer assigned slot only when it is actually yours (or still unclaimed).
+			-- Only return assigned slot when unclaimed (still assigning) or yours.
 			if typeof(uid) ~= "number" or uid == player.UserId then
 				return bySlot
 			end
 		end
 	end
 
-	-- Slot stale / occupied by someone else — fall back to PlotOwnerUserId.
-	return M.findPlotOwnedByPlayer(player)
+	return nil
 end
 
 return M

@@ -1,7 +1,8 @@
 -- [ACTIVE] PlotOutlineController
 --[[
-	While the local player is in the shared safezone, their assigned plot gets a
-	faint outline. It fades out as they walk toward the base floor.
+	While the local player is in the shared safezone, THEIR owned plot gets a
+	faint outline around the full floor pad. It fades out as they walk toward it.
+	Never outlines other players' plots.
 ]]
 
 local Players = game:GetService("Players")
@@ -24,16 +25,16 @@ local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
 -- Farthest visible outline (still a bit transparent).
 local OUTLINE_FAR_TRANSPARENCY = 0.42
 -- SelectionBox line thickness (Highlight has no thickness API).
-local BOX_LINE_THICKNESS = 0.14
+local BOX_LINE_THICKNESS = 0.16
 
 local PlotOutlineController = {}
 
 local selectionBox: SelectionBox? = nil
+local outlineProxy: BasePart? = nil
 local pollConn: RBXScriptConnection? = nil
 local accum = 0
 local cachedPlot: Instance? = nil
 local cachedCenter: Vector3? = nil
-local cachedFloorPart: BasePart? = nil
 local wired = false
 
 local function destroyOutline()
@@ -41,37 +42,56 @@ local function destroyOutline()
 		selectionBox:Destroy()
 		selectionBox = nil
 	end
+	if outlineProxy then
+		outlineProxy:Destroy()
+		outlineProxy = nil
+	end
 end
 
-local function resolveFloorAdornee(plot: Instance): BasePart?
-	local story1 = PlotPaths.firstStoryFolder(plot)
-	local floor = story1 and (story1:FindFirstChild("Floor") or story1:FindFirstChild("floor"))
-	if floor and floor:IsA("BasePart") then
-		return floor
-	end
-	if floor then
-		local part = floor:FindFirstChildWhichIsA("BasePart", true)
-		if part then
-			return part
-		end
-	end
-	return plot:FindFirstChildWhichIsA("BasePart", true)
+local function isOwnedByLocalPlayer(plot: Instance): boolean
+	local uid = plot:GetAttribute("PlotOwnerUserId")
+	return typeof(uid) == "number" and uid == player.UserId
 end
 
-local function ensureOutline(plot: Instance): SelectionBox?
-	local floorPart = cachedFloorPart
-	if not floorPart or not floorPart.Parent then
-		floorPart = resolveFloorAdornee(plot)
-		cachedFloorPart = floorPart
-	end
-	if not floorPart then
+-- Invisible part matching the full floor AABB so SelectionBox wraps the whole pad.
+local function ensureFloorOutlineProxy(plot: Instance): BasePart?
+	local cf, size = PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot)
+	if not cf or not size then
 		return nil
 	end
 
-	-- SelectionBox on the floor only — never Highlight the whole plot (AlwaysOnTop
-	-- on every plot MeshPart is a major GPU hitch).
+	local proxy = outlineProxy
+	if not proxy or not proxy.Parent then
+		if proxy then
+			proxy:Destroy()
+		end
+		proxy = Instance.new("Part")
+		proxy.Name = "PlotSafezoneOutlineProxy"
+		proxy.Anchored = true
+		proxy.CanCollide = false
+		proxy.CanQuery = false
+		proxy.CanTouch = false
+		proxy.CastShadow = false
+		proxy.Massless = true
+		proxy.Transparency = 1
+		proxy.Material = Enum.Material.SmoothPlastic
+		proxy.Parent = Workspace.CurrentCamera or plot
+		outlineProxy = proxy
+	end
+
+	proxy.Size = size
+	proxy.CFrame = cf
+	return proxy
+end
+
+local function ensureOutline(plot: Instance): SelectionBox?
+	local proxy = ensureFloorOutlineProxy(plot)
+	if not proxy then
+		return nil
+	end
+
 	local box = selectionBox
-	if not box or not box.Parent or box.Adornee ~= floorPart then
+	if not box or not box.Parent or box.Adornee ~= proxy then
 		if box then
 			box:Destroy()
 		end
@@ -83,7 +103,7 @@ local function ensureOutline(plot: Instance): SelectionBox?
 		box.LineThickness = BOX_LINE_THICKNESS
 		box.Transparency = 1
 		box.Visible = false
-		box.Adornee = floorPart
+		box.Adornee = proxy
 		box.Parent = Workspace.CurrentCamera or plot
 		selectionBox = box
 	end
@@ -104,10 +124,22 @@ local function resolvePlotCenter(plot: Instance): Vector3?
 end
 
 local function refreshCachedPlot()
-	local plot = PlotPaths.findPlotForAssignedSlot(player)
+	-- Owned plot only — never outline someone else's base.
+	local plot = PlotPaths.findPlotOwnedByPlayer(player)
+	if not plot then
+		local bySlot = PlotPaths.findPlotForAssignedSlot(player)
+		if bySlot and isOwnedByLocalPlayer(bySlot) then
+			plot = bySlot
+		end
+	end
+	if plot and not isOwnedByLocalPlayer(plot) then
+		plot = nil
+	end
 	cachedPlot = plot
 	cachedCenter = if plot then resolvePlotCenter(plot) else nil
-	cachedFloorPart = if plot then resolveFloorAdornee(plot) else nil
+	if not plot then
+		destroyOutline()
+	end
 end
 
 local function xzDist(a: Vector3, b: Vector3): number
@@ -137,7 +169,7 @@ local function tickOutline()
 		return
 	end
 
-	if not cachedPlot or not cachedPlot.Parent then
+	if not cachedPlot or not cachedPlot.Parent or not isOwnedByLocalPlayer(cachedPlot) then
 		refreshCachedPlot()
 	end
 	local plot = cachedPlot

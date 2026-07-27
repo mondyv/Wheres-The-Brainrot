@@ -98,23 +98,63 @@ local function isUnderPlotUsername(inst: Instance, plotRoot: Instance): boolean
 	return false
 end
 
--- Studio "Your Plot" markers live under PlotGUI / PlotUsername; never show on others' bases.
+-- DisplayName / avatar SurfaceGui on PlotUsername.Name — visible on every claimed plot.
+local function isUsernameNamePlateSurfaceGui(inst: Instance, plotRoot: Instance): boolean
+	if not inst:IsA("SurfaceGui") then
+		return false
+	end
+	if not isUnderPlotUsername(inst, plotRoot) then
+		return false
+	end
+	local parent = inst.Parent
+	return parent ~= nil and parent.Name == "Name" and parent:IsA("BasePart")
+end
+
+local function looksLikeOwnershipMarkerName(name: string): boolean
+	local ak = string.gsub(string.lower(name), "[^a-z0-9]", "")
+	if ak == "" then
+		return false
+	end
+	if string.find(ak, "yourplot", 1, true) or string.find(ak, "thisplot", 1, true) then
+		return true
+	end
+	if ak == "plotmarker" or ak == "ownermarker" or ak == "plotclaim" or ak == "myplot" then
+		return true
+	end
+	-- Image assets often named "YourPlot", "ThisPlotArrow", etc.
+	if string.find(ak, "plot", 1, true) and (string.find(ak, "your", 1, true) or string.find(ak, "this", 1, true) or string.find(ak, "mine", 1, true) or string.find(ak, "own", 1, true)) then
+		return true
+	end
+	return false
+end
+
+local function looksLikeOwnershipMarkerText(text: string): boolean
+	local t = string.gsub(string.lower(text), "%s+", "")
+	return string.find(t, "yourplot", 1, true) ~= nil
+		or string.find(t, "thisplot", 1, true) ~= nil
+		or t == "yourbase"
+		or t == "thisbase"
+end
+
+-- Studio "Your Plot" / "This Plot" markers — never show on others' bases.
 local function isYourPlotOwnershipMarker(inst: Instance, plotRoot: Instance): boolean
 	if isPlotGuiRelated(inst, plotRoot) then
 		return true
 	end
-	if inst:IsA("BillboardGui") and isUnderPlotUsername(inst, plotRoot) then
+	-- Anything under PlotUsername except the name-plate SurfaceGui is ownership chrome.
+	if isUnderPlotUsername(inst, plotRoot) and not isUsernameNamePlateSurfaceGui(inst, plotRoot) then
 		return true
 	end
-	local ak = string.gsub(string.lower(inst.Name), "[^a-z0-9]", "")
-	if string.find(ak, "yourplot", 1, true) or ak == "plotmarker" or ak == "ownermarker" then
+	if looksLikeOwnershipMarkerName(inst.Name) then
 		return true
 	end
 	if inst:IsA("BillboardGui") or inst:IsA("SurfaceGui") then
 		for _, d in ipairs(inst:GetDescendants()) do
+			if looksLikeOwnershipMarkerName(d.Name) then
+				return true
+			end
 			if d:IsA("TextLabel") or d:IsA("TextButton") then
-				local t = string.gsub(string.lower(d.Text), "%s+", "")
-				if string.find(t, "yourplot", 1, true) then
+				if looksLikeOwnershipMarkerText(d.Text) then
 					return true
 				end
 			end
@@ -140,10 +180,9 @@ local function isProtectedPlotUi(inst: Instance, plotRoot: Instance): boolean
 		if x.Name == "LevelPanel" or x.Name == "Button" then
 			return true
 		end
-		-- PlotUsername SurfaceGui (name plate) stays visible on claimed plots;
-		-- ownership Billboards under it are handled separately as mine-only.
-		if x.Name == "PlotUsername" or string.gsub(string.lower(x.Name), "%s+", "") == "plotusername" then
-			return inst:IsA("SurfaceGui")
+		-- Only the username name-plate stays visible on other claimed plots.
+		if isUsernameNamePlateSurfaceGui(inst, plotRoot) then
+			return true
 		end
 		if x:IsA("Model") then
 			local ak = string.gsub(string.lower(x.Name), "[^a-z0-9]", "")

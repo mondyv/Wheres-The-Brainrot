@@ -6,6 +6,7 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
 local SoundService = game:GetService("SoundService")
+local TextChatService = game:GetService("TextChatService")
 
 local C = {}
 C.PRE_SIMULATION_SIGNAL = nil
@@ -33,8 +34,16 @@ local function getClientModule(name)
 	return nil
 end
 
+local function isChatInputFocused(): boolean
+	local ok, focused = pcall(function()
+		return TextChatService.ChatInputBarConfiguration.IsFocused
+	end)
+	return ok and focused == true
+end
+
 local function isTypingBlocked()
-	return UserInputService:GetFocusedTextBox() ~= nil
+	-- TextChatService chat bar is in CoreGui — GetFocusedTextBox() returns nil for it.
+	return UserInputService:GetFocusedTextBox() ~= nil or isChatInputFocused()
 end
 
 local function moduleIsActive(cached: any, name: string): (any, boolean)

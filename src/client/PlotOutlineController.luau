@@ -19,12 +19,12 @@ local player = Players.LocalPlayer
 
 local POLL_INTERVAL = 0.12
 -- Invisible on the pad.
-local FADE_NEAR = 16
+local FADE_NEAR = 18
 -- Fully visible between these distances.
-local VISIBLE_NEAR = 28
-local VISIBLE_FAR = 78
+local VISIBLE_NEAR = 36
+local VISIBLE_FAR = 120
 -- Fully faded out in the distance (soft, not MaxDistance cut).
-local FADE_FAR = 125
+local FADE_FAR = 190
 local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
 -- Wide + short so "Your Plot" stays on one line.
 local MARKER_W = 102
@@ -36,6 +36,7 @@ local PlotOutlineController = {}
 local plotHighlight: Highlight? = nil
 local outlineProxyModel: Model? = nil
 local outlineBuiltFor: Instance? = nil
+local outlineHostFolder: Folder? = nil
 local pollConn: RBXScriptConnection? = nil
 local accum = 0
 local cachedPlot: Instance? = nil
@@ -46,6 +47,22 @@ local wired = false
 local function isOwnedByLocalPlayer(plot: Instance): boolean
 	local uid = plot:GetAttribute("PlotOwnerUserId")
 	return typeof(uid) == "number" and uid == player.UserId
+end
+
+local function getOutlineHostFolder(): Folder
+	if outlineHostFolder and outlineHostFolder.Parent then
+		return outlineHostFolder
+	end
+	local existing = Workspace:FindFirstChild("PlotOutlineProxies")
+	if existing and existing:IsA("Folder") then
+		outlineHostFolder = existing
+		return existing
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = "PlotOutlineProxies"
+	folder.Parent = Workspace
+	outlineHostFolder = folder
+	return folder
 end
 
 local function destroyOutline()
@@ -235,7 +252,8 @@ local function ensureOutlineProxyModel(plot: Instance): Model?
 		outlineProxyModel:Destroy()
 		outlineProxyModel = nil
 	end
-	local model = PlotSpawnUtil.buildInvisibleOutlineProxy(plot, Workspace.CurrentCamera or plot)
+	-- Never parent to CurrentCamera — camera swaps destroy the proxy and kill the highlight.
+	local model = PlotSpawnUtil.buildInvisibleOutlineProxy(plot, getOutlineHostFolder())
 	outlineProxyModel = model
 	outlineBuiltFor = if model then plot else nil
 	return model
@@ -246,6 +264,7 @@ local function ensureOutline(plot: Instance): Highlight?
 	if not proxy then
 		return nil
 	end
+	local host = getOutlineHostFolder()
 	local hl = plotHighlight
 	if not hl or not hl.Parent or hl.Adornee ~= proxy then
 		if hl then
@@ -256,10 +275,11 @@ local function ensureOutline(plot: Instance): Highlight?
 		hl.FillTransparency = 1
 		hl.OutlineTransparency = 1
 		hl.OutlineColor = OUTLINE_COLOR
-		hl.DepthMode = Enum.HighlightDepthMode.Occluded
+		-- AlwaysOnTop so the base wrap stays readable outdoors / against cliffs.
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 		hl.Enabled = false
 		hl.Adornee = proxy
-		hl.Parent = Workspace.CurrentCamera or plot
+		hl.Parent = host
 		plotHighlight = hl
 	end
 	return hl

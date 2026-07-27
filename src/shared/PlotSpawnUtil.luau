@@ -5,6 +5,7 @@
 --]]
 
 local PlotPaths = require(script.Parent.PlotPaths)
+local Workspace = game:GetService("Workspace")
 
 local PlotSpawnUtil = {}
 
@@ -274,20 +275,7 @@ function PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot: Instance): (CFrame?, 
 	return yaw, Vector3.new(outX, height, outZ)
 end
 
-local OUTLINE_PROXY_MAX_PARTS = 500
-
--- Folders that make up the pavilion shell (pillars, roof, floor, perimeter).
-local OUTLINE_STRUCT_FOLDERS: { [string]: boolean } = {
-	floor = true,
-	ladder = true,
-	other = true,
-	outline = true,
-	pilars = true,
-	pillars = true,
-	["deco outline"] = true,
-	steps = true,
-	carpet = true,
-}
+local OUTLINE_PROXY_MAX_PARTS = 120
 
 -- Gameplay / UI / brainrot content — never wrap these.
 local OUTLINE_EXCLUDE_FOLDERS: { [string]: boolean } = {
@@ -318,23 +306,12 @@ local function isUnderExcludedOutlineFolder(part: BasePart, plot: Instance): boo
 	return false
 end
 
-local function isUnderStructuralOutlineFolder(part: BasePart, plot: Instance): boolean
-	local anc: Instance? = part.Parent
-	while anc and anc ~= plot do
-		if OUTLINE_STRUCT_FOLDERS[string.lower(anc.Name)] then
-			return true
-		end
-		anc = anc.Parent
-	end
-	return false
-end
-
 local function shouldMirrorOutlinePart(part: BasePart, plot: Instance): boolean
 	if part.Transparency >= 0.98 then
 		return false
 	end
 	local vol = part.Size.X * part.Size.Y * part.Size.Z
-	if vol < 0.08 then
+	if vol < 0.05 then
 		return false
 	end
 	local n = string.lower(part.Name)
@@ -344,7 +321,20 @@ local function shouldMirrorOutlinePart(part: BasePart, plot: Instance): boolean
 	if isUnderExcludedOutlineFolder(part, plot) then
 		return false
 	end
-	return isUnderStructuralOutlineFolder(part, plot)
+	-- Whole story-1 pavilion (pillars/roof/floor), excluding stands/UI above.
+	local story1 = PlotPaths.firstStoryFolder(plot)
+	if story1 and part:IsDescendantOf(story1) then
+		return true
+	end
+	local anc: Instance? = part.Parent
+	while anc and anc ~= plot do
+		local ln = string.lower(anc.Name)
+		if string.find(ln, "story", 1, true) or ln == "floor" or ln == "other" or ln == "ladder" then
+			return true
+		end
+		anc = anc.Parent
+	end
+	return false
 end
 
 -- Box proxies (not MeshPart clones): Highlight skips Transparency=1 and is flaky on meshes.
@@ -362,12 +352,46 @@ local function mirrorOutlinePartInto(model: Model, src: BasePart)
 	clone.Massless = true
 	clone.Material = Enum.Material.SmoothPlastic
 	clone.Color = Color3.new(1, 1, 1)
-	-- Near-invisible but still >0 so Highlight outlines every segment (pillars + roof + floor).
+	-- Near-invisible but Highlight still outlines (Transparency=1 is skipped by the engine).
 	clone.Transparency = 0.99
 	clone.Parent = model
 end
 
+local function appendFootprintFallback(model: Model, plot: Instance)
+	local cf, size = PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot)
+	if not cf or not size then
+		return
+	end
+	local shell = Instance.new("Part")
+	shell.Name = "OutlineFootprint"
+	shell.Shape = Enum.PartType.Block
+	shell.Size = size
+	shell.CFrame = cf
+	shell.Anchored = true
+	shell.CanCollide = false
+	shell.CanQuery = false
+	shell.CanTouch = false
+	shell.CastShadow = false
+	shell.Massless = true
+	shell.Material = Enum.Material.SmoothPlastic
+	shell.Color = Color3.new(1, 1, 1)
+	shell.Transparency = 0.99
+	shell.Parent = model
+end
+
+local function outlineProxyFolder(): Folder
+	local existing = Workspace:FindFirstChild("PlotOutlineProxies")
+	if existing and existing:IsA("Folder") then
+		return existing
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = "PlotOutlineProxies"
+	folder.Parent = Workspace
+	return folder
+end
+
 -- Invisible structural proxies for Highlight adorn (does not wash live textures).
+-- Parent under Workspace (never CurrentCamera — camera swaps destroy children).
 function PlotSpawnUtil.buildInvisibleOutlineProxy(plot: Instance, parent: Instance?): Model?
 	local model = Instance.new("Model")
 	model.Name = "PlotOutlineHighlightProxy"
@@ -388,13 +412,15 @@ function PlotSpawnUtil.buildInvisibleOutlineProxy(plot: Instance, parent: Instan
 	for i = 1, n do
 		mirrorOutlinePartInto(model, scored[i].part)
 	end
+	-- Always include the full footprint shell so something outlines even if story parts mismatch.
+	appendFootprintFallback(model, plot)
 
-	if n == 0 then
+	if #model:GetChildren() == 0 then
 		model:Destroy()
 		return nil
 	end
 
-	model.Parent = parent or plot
+	model.Parent = parent or outlineProxyFolder()
 	return model
 end
 

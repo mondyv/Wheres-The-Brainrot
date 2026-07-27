@@ -37,8 +37,8 @@ local introPlaying = false
 local introStartedLocal = false -- never restart fall once begun (attribute can lag)
 local dialogueBusy = false
 local lastWalkbyAt = 0.0
-local questGui: ScreenGui? = nil
-local questHost: Frame? = nil
+local questGui: ScreenGui? = nil -- persistent tracker ScreenGui
+local questHost: Frame? = nil -- root under questGui
 local questPanel: Frame? = nil
 local forcedQuestIndex: number? = nil
 local acceptPopupGui: ScreenGui? = nil
@@ -488,27 +488,46 @@ local function syncPromptAndOutline()
 end
 
 local function ensureQuestHost(): Frame?
-	local main = PlayerGuiMain.ensure(player)
-	if not main then
+	local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 10)
+	if not pg then
 		return nil
 	end
-	local existing = main:FindFirstChild("TimCheeseQuestHost")
-	if existing and existing:IsA("Frame") then
-		questHost = existing
-		return existing
+	local gui = questGui
+	if not (gui and gui.Parent) then
+		local existing = pg:FindFirstChild("TimCheeseQuestTracker")
+		if existing and existing:IsA("ScreenGui") then
+			gui = existing
+		else
+			gui = Instance.new("ScreenGui")
+			gui.Name = "TimCheeseQuestTracker"
+			gui.ResetOnSpawn = false
+			gui.IgnoreGuiInset = true
+			gui.DisplayOrder = 95
+			gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+			gui.Enabled = true
+			gui.Parent = pg
+		end
+		questGui = gui
 	end
-	local host = Instance.new("Frame")
-	host.Name = "TimCheeseQuestHost"
-	host.BackgroundTransparency = 1
-	host.BorderSizePixel = 0
-	host.Size = UDim2.fromScale(1, 1)
-	host.Position = UDim2.fromScale(0, 0)
-	host.ZIndex = 85
-	host.ClipsDescendants = false
-	host.Active = false
-	host.Parent = main
-	questHost = host
-	return host
+	gui.Enabled = true
+
+	local host = gui:FindFirstChild("TimCheeseQuestHost")
+	if host and host:IsA("Frame") then
+		questHost = host
+		return host
+	end
+	local created = Instance.new("Frame")
+	created.Name = "TimCheeseQuestHost"
+	created.BackgroundTransparency = 1
+	created.BorderSizePixel = 0
+	created.Size = UDim2.fromScale(1, 1)
+	created.Position = UDim2.fromScale(0, 0)
+	created.ZIndex = 1
+	created.ClipsDescendants = false
+	created.Active = false
+	created.Parent = gui
+	questHost = created
+	return created
 end
 
 local function stopQuestDots()
@@ -541,7 +560,7 @@ local function startQuestDots()
 	end)
 end
 
--- Persistent right-HUD tracker — same cheese-ticket look as the accept popup.
+-- Persistent right-HUD tracker — cheese ticket style (own ScreenGui so cutscenes can't eat it).
 local function ensureQuestHud(): Frame
 	if questPanel and questPanel.Parent then
 		return questPanel
@@ -557,9 +576,8 @@ local function ensureQuestHud(): Frame
 	ticket.AutomaticSize = Enum.AutomaticSize.Y
 	ticket.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
 	ticket.BorderSizePixel = 0
-	ticket.Rotation = -2
 	ticket.Visible = false
-	ticket.ZIndex = 100
+	ticket.ZIndex = 10
 	ticket.ClipsDescendants = false
 	ticket.Parent = host
 
@@ -588,7 +606,7 @@ local function ensureQuestHud(): Frame
 	inner.BorderSizePixel = 0
 	inner.Size = UDim2.new(1, 0, 0, 0)
 	inner.AutomaticSize = Enum.AutomaticSize.Y
-	inner.ZIndex = 101
+	inner.ZIndex = 11
 	inner.Parent = ticket
 	local innerCorner = Instance.new("UICorner")
 	innerCorner.CornerRadius = UDim.new(0, 4)
@@ -614,7 +632,7 @@ local function ensureQuestHud(): Frame
 	header.BackgroundTransparency = 1
 	header.Size = UDim2.new(1, 0, 0, 40)
 	header.LayoutOrder = 1
-	header.ZIndex = 102
+	header.ZIndex = 12
 	header.Parent = inner
 
 	local bang = Instance.new("ImageLabel")
@@ -624,7 +642,7 @@ local function ensureQuestHud(): Frame
 	bang.Size = UDim2.fromOffset(36, 36)
 	bang.Image = TutorialConfig.EXCLAIM_IMAGE
 	bang.Rotation = -10
-	bang.ZIndex = 103
+	bang.ZIndex = 13
 	bang.Parent = header
 
 	local stamp = Instance.new("TextLabel")
@@ -637,7 +655,7 @@ local function ensureQuestHud(): Frame
 	stamp.TextColor3 = Color3.fromRGB(160, 40, 30)
 	stamp.TextXAlignment = Enum.TextXAlignment.Left
 	stamp.Text = "TIM CHEESE JOB"
-	stamp.ZIndex = 103
+	stamp.ZIndex = 13
 	stamp.Parent = header
 
 	local title = Instance.new("TextLabel")
@@ -651,7 +669,7 @@ local function ensureQuestHud(): Frame
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.TextTruncate = Enum.TextTruncate.AtEnd
 	title.Text = ""
-	title.ZIndex = 103
+	title.ZIndex = 13
 	title.Parent = header
 	UiFonts.applyDisplayLabel(title, 16, 13)
 
@@ -667,7 +685,7 @@ local function ensureQuestHud(): Frame
 	body.TextXAlignment = Enum.TextXAlignment.Left
 	body.Text = ""
 	body.LayoutOrder = 2
-	body.ZIndex = 102
+	body.ZIndex = 12
 	body.Parent = inner
 
 	local progressRow = Instance.new("Frame")
@@ -675,7 +693,7 @@ local function ensureQuestHud(): Frame
 	progressRow.BackgroundTransparency = 1
 	progressRow.Size = UDim2.new(1, 0, 0, 18)
 	progressRow.LayoutOrder = 3
-	progressRow.ZIndex = 102
+	progressRow.ZIndex = 12
 	progressRow.Parent = inner
 
 	local progress = Instance.new("TextLabel")
@@ -687,7 +705,7 @@ local function ensureQuestHud(): Frame
 	progress.TextColor3 = Color3.fromRGB(40, 110, 40)
 	progress.TextXAlignment = Enum.TextXAlignment.Left
 	progress.Text = ""
-	progress.ZIndex = 103
+	progress.ZIndex = 13
 	progress.Parent = progressRow
 
 	local dots = Instance.new("TextLabel")
@@ -701,7 +719,7 @@ local function ensureQuestHud(): Frame
 	dots.TextColor3 = Color3.fromRGB(40, 110, 40)
 	dots.TextXAlignment = Enum.TextXAlignment.Left
 	dots.Text = ""
-	dots.ZIndex = 103
+	dots.ZIndex = 13
 	dots.Parent = progressRow
 
 	local barBg = Instance.new("Frame")
@@ -710,7 +728,7 @@ local function ensureQuestHud(): Frame
 	barBg.BackgroundColor3 = Color3.fromRGB(210, 170, 70)
 	barBg.BorderSizePixel = 0
 	barBg.LayoutOrder = 4
-	barBg.ZIndex = 102
+	barBg.ZIndex = 12
 	barBg.Parent = inner
 	local barCorner = Instance.new("UICorner")
 	barCorner.CornerRadius = UDim.new(1, 0)
@@ -720,7 +738,7 @@ local function ensureQuestHud(): Frame
 	barFill.Size = UDim2.new(0, 0, 1, 0)
 	barFill.BackgroundColor3 = Color3.fromRGB(40, 28, 8)
 	barFill.BorderSizePixel = 0
-	barFill.ZIndex = 103
+	barFill.ZIndex = 13
 	barFill.Parent = barBg
 	local fillCorner = Instance.new("UICorner")
 	fillCorner.CornerRadius = UDim.new(1, 0)
@@ -735,7 +753,7 @@ local function ensureQuestHud(): Frame
 	payout.TextColor3 = Color3.fromRGB(255, 220, 80)
 	payout.Text = ""
 	payout.LayoutOrder = 5
-	payout.ZIndex = 102
+	payout.ZIndex = 12
 	payout.Parent = inner
 	local payCorner = Instance.new("UICorner")
 	payCorner.CornerRadius = UDim.new(0, 8)
@@ -753,6 +771,9 @@ local function layoutQuestHud()
 	local host = ensureQuestHost()
 	if host and panel.Parent ~= host then
 		panel.Parent = host
+	end
+	if questGui then
+		questGui.Enabled = true
 	end
 	local mobile = UserInputService.TouchEnabled
 	local cam = Workspace.CurrentCamera
@@ -772,16 +793,17 @@ local function layoutQuestHud()
 	panel.Size = UDim2.fromOffset(screenW, 0)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
 	panel.Position = UDim2.new(1, -rightPad, 0, topPad)
-	panel.Rotation = if mobile or vw < 700 then -1 else -2
 end
 
 local function resolveActiveQuestIndex(): number?
 	local idx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
-	if typeof(idx) == "number" and idx >= 1 then
-		if forcedQuestIndex and math.floor(idx) == forcedQuestIndex then
-			forcedQuestIndex = nil
+	if typeof(idx) == "number" then
+		if idx >= 1 then
+			return math.floor(idx)
 		end
-		return math.floor(idx)
+		-- Server cleared the quest (claimed / none) — drop optimistic force.
+		forcedQuestIndex = nil
+		return nil
 	end
 	if typeof(forcedQuestIndex) == "number" and forcedQuestIndex >= 1 then
 		return forcedQuestIndex
@@ -810,6 +832,13 @@ local function refreshQuestHud()
 		end
 		return
 	end
+	-- Clear optimistic force once server attribute catches up.
+	if forcedQuestIndex and typeof(player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)) == "number"
+		and (player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR) :: number) >= 1
+	then
+		forcedQuestIndex = nil
+	end
+
 	local quest = TimCheeseQuestConfig.getQuest(idx)
 	if not quest then
 		return
@@ -818,6 +847,9 @@ local function refreshQuestHud()
 	layoutQuestHud()
 	local wasHidden = not panel.Visible
 	panel.Visible = true
+	if questGui then
+		questGui.Enabled = true
+	end
 
 	local p = if typeof(progressVal) == "number" then progressVal else 0
 	local title = panel:FindFirstChild("Title", true)
@@ -887,7 +919,6 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	gui.Parent = pg
 	acceptPopupGui = gui
-	questGui = gui
 
 	local dim = Instance.new("Frame")
 	dim.Name = "Dim"
@@ -1026,7 +1057,6 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	end
 	if acceptPopupGui == gui then
 		acceptPopupGui = nil
-		questGui = nil
 	end
 end
 
@@ -1263,8 +1293,9 @@ function M.playIntroFall()
 	end
 
 	if accepted then
+		-- Optimistic: keep tracker up even if attribute replication lags.
+		forcedQuestIndex = 1
 		local rf = getRF("AcceptQuest")
-		local acceptOk = false
 		if rf then
 			local ok, result = pcall(function()
 				return rf:InvokeServer()
@@ -1273,12 +1304,9 @@ function M.playIntroFall()
 				warn("[TimCheeseQuestController] AcceptQuest error:", result)
 			elseif result ~= true then
 				warn("[TimCheeseQuestController] AcceptQuest rejected")
-			else
-				acceptOk = true
 			end
-		end
-		if acceptOk then
-			forcedQuestIndex = 1
+		else
+			warn("[TimCheeseQuestController] AcceptQuest remote missing")
 		end
 	else
 		StandDialogueCutscene.play({
@@ -1314,11 +1342,15 @@ function M.playIntroFall()
 	setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
 
 	if accepted then
-		local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex or 1)
+		forcedQuestIndex = forcedQuestIndex or 1
+		local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex)
 		if q then
 			playQuestAcceptPopup(q)
 		end
-		waitForQuestHud(2.5)
+		-- Always pin tracker on the right after the ticket.
+		refreshQuestHud()
+		waitForQuestHud(3)
+		refreshQuestHud()
 		TopNotifController.showBroadcast("New quest from Tim Cheese!")
 	end
 	refreshQuestHud()
@@ -1401,23 +1433,21 @@ function M.openTimDialogue()
 				voicePitchMax = 1.12,
 			}, tim)
 			if wantAnother then
+				forcedQuestIndex = doneAfter + 1
 				local acceptRF = getRF("AcceptQuest")
-				local acceptOk = false
 				if acceptRF then
-					local ok, result = pcall(function()
+					pcall(function()
 						return acceptRF:InvokeServer()
 					end)
-					acceptOk = ok and result == true
 				end
-				if acceptOk then
-					forcedQuestIndex = doneAfter + 1
-					local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex)
-					if q then
-						playQuestAcceptPopup(q)
-					end
+				local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex)
+				if q then
+					playQuestAcceptPopup(q)
 				end
+				refreshQuestHud()
 				TopNotifController.showBroadcast("New quest from Tim Cheese!")
-				waitForQuestHud(2.5)
+				waitForQuestHud(3)
+				refreshQuestHud()
 			else
 				StandDialogueCutscene.play({
 					standName = "TimCheese",
@@ -1443,23 +1473,21 @@ function M.openTimDialogue()
 			voicePitchMax = 1.12,
 		}, tim)
 		if want then
+			forcedQuestIndex = doneCount + 1
 			local acceptRF = getRF("AcceptQuest")
-			local acceptOk = false
 			if acceptRF then
-				local ok, result = pcall(function()
+				pcall(function()
 					return acceptRF:InvokeServer()
 				end)
-				acceptOk = ok and result == true
 			end
-			if acceptOk then
-				forcedQuestIndex = doneCount + 1
-				local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex)
-				if q then
-					playQuestAcceptPopup(q)
-				end
+			local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex)
+			if q then
+				playQuestAcceptPopup(q)
 			end
+			refreshQuestHud()
 			TopNotifController.showBroadcast("New quest from Tim Cheese!")
-			waitForQuestHud(2.5)
+			waitForQuestHud(3)
+			refreshQuestHud()
 		else
 			StandDialogueCutscene.play({
 				standName = "TimCheese",

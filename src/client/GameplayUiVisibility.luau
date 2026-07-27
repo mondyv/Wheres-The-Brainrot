@@ -267,6 +267,7 @@ local function buildKeepSets(opts: HideOpts?)
 	keepScreenNames.BushSpiderCutscene = true
 	keepScreenNames.StandDialogueCutscene = true
 	keepScreenNames.TimCheeseQuestHud = true
+	keepScreenNames.TimCheeseQuestTracker = true
 	keepScreenNames.TutorialObjective = true
 	keepScreenNames.TutorialUiPointer = true
 	if opts then

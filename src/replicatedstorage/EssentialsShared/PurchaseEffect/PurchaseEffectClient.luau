@@ -344,9 +344,18 @@ function PurchaseEffectClient.init(self: PurchaseEffectClient)
 		end
 	end)
 
+	-- Dev products: ProcessReceipt fires ProductHandlerConfetti. Only restore HUD here
+	-- so PromptFinished + Confetti don't stack into a double burst.
 	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, _productId, wasPurchased)
 		if userId == Players.LocalPlayer.UserId then
-			self:onPurchaseFinished(wasPurchased == true)
+			self:forceHide()
+			if wasPurchased ~= true then
+				return
+			end
+			-- Fallback if Confetti remote never arrives (custom / delayed receipts).
+			task.delay(0.85, function()
+				runPurchaseCelebration()
+			end)
 		end
 	end)
 end

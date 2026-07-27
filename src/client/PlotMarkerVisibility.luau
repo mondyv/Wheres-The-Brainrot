@@ -2,7 +2,8 @@
 --[[
 	PlotMarkerVisibility (client)
 	• Unclaimed plots: all plot UI off.
-	• Your plot: stand Button / LevelPanel / floor-unlock signs + PlotGUI stay on (interactive).
+	• Your plot: stand Button / LevelPanel / floor-unlock signs stay on (interactive).
+	  PlotGUI / "Your Plot" billboards are driven by PlotOutlineController (safezone fade).
 	• Other players' claimed plots: same UI visible but non-interactive (view-only).
 	• Empty-stand billboard markers stay off everywhere.
 
@@ -256,7 +257,8 @@ local function applyLayerCollector(d: LayerCollector, plotRoot: Instance, mine: 
 
 	if d:IsA("BillboardGui") then
 		if isYourPlotOwnershipMarker(d, plotRoot) then
-			d.Enabled = mine
+			-- PlotOutlineController drives Enabled + distance fade (safezone only).
+			d.Enabled = false
 			if mine then
 				d.MaxDistance = PLOT_GUI_MAX_DISTANCE
 			end

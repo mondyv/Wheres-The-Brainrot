@@ -30,10 +30,86 @@ local function boundingBoxOf(root: Instance): (Vector3?, Vector3?)
 	local minV = Vector3.new(math.huge, math.huge, math.huge)
 	local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
 	local any = false
+	-- Include the root itself when it's a BasePart (Floor may be a single tile part).
+	if root:IsA("BasePart") then
+		any = true
+		minV, maxV = expandPartBounds(root.CFrame, root.Size, minV, maxV)
+	end
 	for _, d in ipairs(root:GetDescendants()) do
 		if d:IsA("BasePart") then
 			any = true
 			minV, maxV = expandPartBounds(d.CFrame, d.Size, minV, maxV)
+		end
+	end
+	if not any then
+		return nil, nil
+	end
+	return minV, maxV
+end
+
+-- Ground-plane pad under story 1 (all flat / low parts), not just one Floor tile.
+local function groundPadBoundsOfStory(story1: Instance): (Vector3?, Vector3?)
+	local floor = story1:FindFirstChild("Floor") or story1:FindFirstChild("floor")
+	if floor then
+		local floorMin, floorMax = boundingBoxOf(floor)
+		if floorMin and floorMax then
+			local spanX = floorMax.X - floorMin.X
+			local spanZ = floorMax.Z - floorMin.Z
+			-- Full pad already — don't pull in walls/stands.
+			if spanX >= 24 and spanZ >= 24 then
+				return floorMin, floorMax
+			end
+		end
+	end
+
+	local candidates: { BasePart } = {}
+	local minBottom = math.huge
+	local function consider(part: BasePart)
+		table.insert(candidates, part)
+		local bottom = part.Position.Y - part.Size.Y * 0.5
+		if bottom < minBottom then
+			minBottom = bottom
+		end
+	end
+
+	if floor then
+		if floor:IsA("BasePart") then
+			consider(floor)
+		end
+		for _, d in ipairs(floor:GetDescendants()) do
+			if d:IsA("BasePart") then
+				consider(d)
+			end
+		end
+	end
+
+	-- Floor is only a corner tile — expand with other low flat parts on story 1.
+	for _, d in ipairs(story1:GetDescendants()) do
+		if d:IsA("BasePart") and d.Size.Y <= 4 then
+			local n = string.lower(d.Name)
+			local looksFloor = string.find(n, "floor", 1, true)
+				or string.find(n, "pad", 1, true)
+				or string.find(n, "ground", 1, true)
+				or string.find(n, "tile", 1, true)
+			if looksFloor or d.Size.Y <= 1.75 then
+				consider(d)
+			end
+		end
+	end
+
+	if #candidates == 0 then
+		return nil, nil
+	end
+
+	local minV = Vector3.new(math.huge, math.huge, math.huge)
+	local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
+	local any = false
+	local yCutoff = minBottom + 6
+	for _, part in ipairs(candidates) do
+		local top = part.Position.Y + part.Size.Y * 0.5
+		if top <= yCutoff then
+			any = true
+			minV, maxV = expandPartBounds(part.CFrame, part.Size, minV, maxV)
 		end
 	end
 	if not any then
@@ -104,12 +180,16 @@ function PlotSpawnUtil.getPlotFloorBounds(plot: Instance): (Vector3?, Vector3?)
 	if not story1 then
 		return nil, nil
 	end
+	local padMin, padMax = groundPadBoundsOfStory(story1)
+	if padMin and padMax then
+		return padMin, padMax
+	end
 	local floor = story1:FindFirstChild("Floor") or story1:FindFirstChild("floor")
 	local bboxRoot: Instance = if floor then floor else story1
 	return boundingBoxOf(bboxRoot)
 end
 
--- Axis-aligned box covering the whole story-1 floor (for SelectionBox outlines).
+-- Oriented box covering the whole story-1 ground pad (for SelectionBox outlines).
 function PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot: Instance): (CFrame?, Vector3?)
 	local minV, maxV = PlotSpawnUtil.getPlotFloorBounds(plot)
 	if not minV or not maxV then
@@ -118,7 +198,31 @@ function PlotSpawnUtil.getPlotFloorOutlineCFrameSize(plot: Instance): (CFrame?, 
 	local size = maxV - minV
 	local height = math.clamp(math.max(size.Y, 0.35), 0.35, 3)
 	local center = Vector3.new((minV.X + maxV.X) * 0.5, minV.Y + height * 0.5, (minV.Z + maxV.Z) * 0.5)
-	return CFrame.new(center), Vector3.new(math.max(size.X, 6), height, math.max(size.Z, 6))
+
+	-- Prefer BasePOSPart orientation when it covers a full pad; never shrink below floor AABB.
+	local yaw = CFrame.new(center)
+	local outX = math.max(size.X, 6)
+	local outZ = math.max(size.Z, 6)
+	local slotId = plot:GetAttribute("PlotSlotId")
+	local posFolder = PlotPaths.findSpawnAndBasesFolder()
+	if posFolder and typeof(slotId) == "number" then
+		local anchor = posFolder:FindFirstChild("BasePOSPart" .. tostring(math.floor(slotId)))
+		if anchor and anchor:IsA("BasePart") then
+			local a = anchor :: BasePart
+			if a.Size.X >= 20 and a.Size.Z >= 20 then
+				outX = math.max(outX, a.Size.X)
+				outZ = math.max(outZ, a.Size.Z)
+			end
+			local flat = Vector3.new(a.CFrame.LookVector.X, 0, a.CFrame.LookVector.Z)
+			if flat.Magnitude >= 0.08 then
+				yaw = CFrame.lookAt(center, center + flat.Unit)
+			else
+				yaw = CFrame.new(center) * (a.CFrame - a.CFrame.Position)
+			end
+		end
+	end
+
+	return yaw, Vector3.new(outX, height, outZ)
 end
 
 -- Random floor point on a plot, facing toward targetPos, at least minDist studs away (flat XZ).

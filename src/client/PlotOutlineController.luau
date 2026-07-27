@@ -2,6 +2,7 @@
 --[[
 	While the local player is in the shared safezone, THEIR owned plot gets a
 	faint outline around the full floor pad. It fades out as they walk toward it.
+	Same distance fade for the "Your Plot" image above the base (size-capped).
 	Never outlines other players' plots.
 ]]
 
@@ -26,6 +27,9 @@ local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
 local OUTLINE_FAR_TRANSPARENCY = 0.42
 -- SelectionBox line thickness (Highlight has no thickness API).
 local BOX_LINE_THICKNESS = 0.16
+-- Cap "Your Plot" billboard screen size (offset pixels).
+local MARKER_MAX_PX = 96
+local MARKER_MIN_PX = 48
 
 local PlotOutlineController = {}
 
@@ -35,6 +39,7 @@ local pollConn: RBXScriptConnection? = nil
 local accum = 0
 local cachedPlot: Instance? = nil
 local cachedCenter: Vector3? = nil
+local cachedMarkerBillboards: { BillboardGui } = {}
 local wired = false
 
 local function destroyOutline()
@@ -51,6 +56,91 @@ end
 local function isOwnedByLocalPlayer(plot: Instance): boolean
 	local uid = plot:GetAttribute("PlotOwnerUserId")
 	return typeof(uid) == "number" and uid == player.UserId
+end
+
+local function isUnderPlotUsername(inst: Instance, plotRoot: Instance): boolean
+	local x: Instance? = inst
+	while x and x ~= plotRoot do
+		if x.Name == "PlotUsername" or string.gsub(string.lower(x.Name), "%s+", "") == "plotusername" then
+			return true
+		end
+		x = x.Parent
+	end
+	return false
+end
+
+local function isOwnershipMarkerBillboard(bb: BillboardGui, plotRoot: Instance): boolean
+	local x: Instance? = bb
+	while x and x ~= plotRoot do
+		if x.Name == "PlotGUI" then
+			return true
+		end
+		x = x.Parent
+	end
+	if isUnderPlotUsername(bb, plotRoot) then
+		-- Name-plate SurfaceGui lives under PlotUsername.Name — billboards here are markers.
+		return true
+	end
+	local ak = string.gsub(string.lower(bb.Name), "[^a-z0-9]", "")
+	if string.find(ak, "yourplot", 1, true) or string.find(ak, "thisplot", 1, true) or ak == "plotmarker" then
+		return true
+	end
+	for _, d in ipairs(bb:GetDescendants()) do
+		local dn = string.gsub(string.lower(d.Name), "[^a-z0-9]", "")
+		if string.find(dn, "yourplot", 1, true) or string.find(dn, "thisplot", 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+local function refreshMarkerBillboards(plot: Instance?)
+	table.clear(cachedMarkerBillboards)
+	if not plot then
+		return
+	end
+	for _, d in ipairs(plot:GetDescendants()) do
+		if d:IsA("BillboardGui") and isOwnershipMarkerBillboard(d, plot) then
+			table.insert(cachedMarkerBillboards, d)
+		end
+	end
+end
+
+local function capMarkerBillboardSize(bb: BillboardGui)
+	local w = bb.Size.X.Offset
+	local h = bb.Size.Y.Offset
+	local usesScale = bb.Size.X.Scale ~= 0 or bb.Size.Y.Scale ~= 0
+	if usesScale or w <= 0 or h <= 0 or w > MARKER_MAX_PX or h > MARKER_MAX_PX then
+		local side = MARKER_MAX_PX
+		if w > 0 and h > 0 and not usesScale then
+			side = math.clamp(math.max(w, h), MARKER_MIN_PX, MARKER_MAX_PX)
+		end
+		bb.Size = UDim2.fromOffset(side, side)
+	end
+end
+
+local function applyMarkerFade(transparency: number, visible: boolean)
+	for _, bb in ipairs(cachedMarkerBillboards) do
+		if not bb.Parent then
+			continue
+		end
+		capMarkerBillboardSize(bb)
+		bb.Enabled = visible
+		if not visible then
+			continue
+		end
+		for _, d in ipairs(bb:GetDescendants()) do
+			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+				(d :: ImageLabel).ImageTransparency = transparency
+				(d :: ImageLabel).BackgroundTransparency = math.max((d :: ImageLabel).BackgroundTransparency, transparency)
+			elseif d:IsA("TextLabel") or d:IsA("TextButton") then
+				(d :: TextLabel).TextTransparency = transparency
+				(d :: TextLabel).TextStrokeTransparency = math.clamp(transparency + 0.2, 0, 1)
+						elseif d:IsA("Frame") then
+				(d :: Frame).BackgroundTransparency = math.max((d :: Frame).BackgroundTransparency, transparency)
+			end
+		end
+	end
 end
 
 -- Invisible part matching the full floor AABB so SelectionBox wraps the whole pad.
@@ -137,8 +227,10 @@ local function refreshCachedPlot()
 	end
 	cachedPlot = plot
 	cachedCenter = if plot then resolvePlotCenter(plot) else nil
+	refreshMarkerBillboards(plot)
 	if not plot then
 		destroyOutline()
+		applyMarkerFade(1, false)
 	end
 end
 
@@ -166,16 +258,20 @@ local function tickOutline()
 			selectionBox.Visible = false
 			selectionBox.Transparency = 1
 		end
+		applyMarkerFade(1, false)
 		return
 	end
 
 	if not cachedPlot or not cachedPlot.Parent or not isOwnedByLocalPlayer(cachedPlot) then
 		refreshCachedPlot()
+	elseif #cachedMarkerBillboards == 0 then
+		refreshMarkerBillboards(cachedPlot)
 	end
 	local plot = cachedPlot
 	local center = cachedCenter
 	if not plot or not center then
 		destroyOutline()
+		applyMarkerFade(1, false)
 		return
 	end
 
@@ -194,6 +290,7 @@ local function tickOutline()
 		box.LineThickness = BOX_LINE_THICKNESS
 		box.Color3 = OUTLINE_COLOR
 	end
+	applyMarkerFade(transparency, visible)
 end
 
 local function onHeartbeat(dt: number)

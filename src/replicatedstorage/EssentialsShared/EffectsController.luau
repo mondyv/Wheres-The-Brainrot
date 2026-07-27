@@ -8,7 +8,7 @@ local SoundController = require(script.Parent.SoundController)
 local EffectsController = {}
 
 local lastConfettiAt = 0
-local CONFETTI_DEBOUNCE_SEC = 0.35
+local CONFETTI_DEBOUNCE_SEC = 1.25
 local purchaseSoundHandler: (() -> ())? = nil
 
 local function findAssetsFolder(): Instance?
@@ -47,6 +47,9 @@ end
 local function emitParticles(root: Instance, defaultCount: number)
 	for _, child in root:GetDescendants() do
 		if child:IsA("ParticleEmitter") then
+			-- Burst only — disable Rate so parenting doesn't look like a second blast.
+			child.Enabled = false
+			child.Rate = 0
 			child:Emit(child:GetAttribute("EmitCount") or defaultCount)
 		end
 	end
@@ -81,6 +84,13 @@ function EffectsController.celebratePurchase(player: Player)
 
 	if root and confettiTemplate then
 		local confetti = confettiTemplate:Clone()
+		-- Kill continuous emitters before parenting so Rate never double-fires with Emit().
+		for _, child in confetti:GetDescendants() do
+			if child:IsA("ParticleEmitter") then
+				child.Enabled = false
+				child.Rate = 0
+			end
+		end
 		confetti.Parent = root
 		emitParticles(confetti, 50)
 		Debris:AddItem(confetti, 3)

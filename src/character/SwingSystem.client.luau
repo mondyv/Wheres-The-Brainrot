@@ -3186,8 +3186,8 @@ local function boot(character)
 			st.previewBeam.FaceCamera = true
 			st.previewBeam.Segments = 1
 			st.previewBeam.Color = ColorSequence.new(C.PREVIEW_COLOR)
-			st.previewBeam.Transparency = st.previewTransparency(st.previewFade)
-			st.previewBeam.Enabled = true
+			st.previewBeam.Transparency = NumberSequence.new(1)
+			st.previewBeam.Enabled = false
 			st.previewBeam.Parent = st.character
 			st.lastPreviewFadeBucket = -1
 			st.lastPreviewColor = nil
@@ -3196,12 +3196,18 @@ local function boot(character)
 
 	function st.hidePreview()
 		st.previewFadeGoal = 0
+		st.previewFade = 0
 		st.previewTarget = nil
+		st.lastPreviewFadeBucket = -1
+		if st.previewBeam then
+			st.previewBeam.Enabled = false
+			st.previewBeam.Transparency = NumberSequence.new(1)
+		end
 	end
 
 	function st.destroyPreview(force)
+		st.hidePreview()
 		if not force then
-			st.hidePreview()
 			return
 		end
 		if st.previewBeam then
@@ -3238,6 +3244,10 @@ local function boot(character)
 		if not st.previewBeam then
 			return
 		end
+		if st.isHrpInSafezone() or st.previewFade <= 0.01 then
+			st.previewBeam.Enabled = false
+			return
+		end
 
 		local beamColor = st.targetReadyGoal > 0.5 and st.targetVisualColor:Lerp(C.PREVIEW_COLOR, 0.45) or C.NOT_READY_COLOR
 		if not st.previewBeam.Enabled then
@@ -3268,7 +3278,7 @@ local function boot(character)
 	end
 
 	function st.updatePreview(target)
-		if st.isSwinging or not target or not target.Parent then
+		if st.isHrpInSafezone() or st.isSwinging or not target or not target.Parent then
 			st.hidePreview()
 			return
 		end
@@ -3564,13 +3574,14 @@ local function boot(character)
 		st.lastTargetScanMode = "none"
 		st.scannedVisualTarget = nil
 		st.scannedVisualCanSwing = false
-		if st.targetVisualShown or st.highlightedTarget or st.previewFadeGoal > 0 then
-			st.updateTargetVisual(nil, false)
-		else
-			st.clearTargetHighlight()
-			st.hideMarkerVisualNow()
-			st.hidePreview()
-		end
+		st.targetVisualShown = false
+		st.highlightedTarget = nil
+		st.highlightedPoint = nil
+		st.lastVisualTarget = nil
+		st.lastVisualCanSwing = nil
+		st.clearTargetHighlight()
+		st.hideMarkerVisualNow()
+		st.hidePreview()
 	end
 
 	function st.stepTargetVisual(dt)

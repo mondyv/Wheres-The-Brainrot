@@ -2,7 +2,7 @@
 --[[
 	Map.Booster Pack Showers — walking onto a stand Hitbox prompts that pack's dev product.
 	Stand folders: Starter Stand, Mythic Stand, Godly Stand, Secret Stand, StrawberryElephantStand,
-	Group Stand (Roblox community join → one-time random rare brainrot).
+	Group Stand (Roblox community join UI always; one-time random rare brainrot on first claim).
 ]]
 
 local MarketplaceService = game:GetService("MarketplaceService")

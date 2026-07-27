@@ -78,6 +78,11 @@ export type PlayerSaveData = {
 	tutorialCompleted: boolean?,
 	tutorialCashGranted: boolean?,
 	tutorialFirstBushClaimed: boolean?,
+	timCheeseIntroDone: boolean?,
+	timCheeseQuestIndex: number?, -- 1..N active quest, 0 = none
+	timCheeseQuestProgress: number?,
+	timCheeseCompletedCount: number?, -- how many quests fully claimed
+	timCheeseHarvestProgress: number?, -- progress counter for harvest-kind quests
 }
 
 local M = {}
@@ -90,6 +95,12 @@ M.TUTORIAL_COMPLETED_ATTR = "TutorialCompleted"
 M.TUTORIAL_REPLAY_ATTR = "TutorialReplayNonce"
 M.TUTORIAL_CASH_GRANTED_ATTR = "TutorialCashGranted"
 M.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR = "TutorialFirstBushClaimed"
+M.TIM_CHEESE_INTRO_ATTR = "TimCheeseIntroDone"
+M.TIM_CHEESE_QUEST_INDEX_ATTR = "TimCheeseQuestIndex"
+M.TIM_CHEESE_QUEST_PROGRESS_ATTR = "TimCheeseQuestProgress"
+M.TIM_CHEESE_COMPLETED_ATTR = "TimCheeseCompletedCount"
+M.TIM_CHEESE_QUEST_READY_ATTR = "TimCheeseQuestReady" -- true when active quest is complete, claim pending
+M.TIM_CHEESE_HARVEST_ATTR = "TimCheeseHarvestProgress"
 
 M.SETTINGS_MUSIC_VOLUME_ATTR = "SettingsMusicVolume"
 M.SETTINGS_SFX_VOLUME_ATTR = "SettingsSfxVolume"

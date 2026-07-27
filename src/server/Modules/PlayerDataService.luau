@@ -448,6 +448,11 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		tutorialCompleted = player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true,
 		tutorialCashGranted = player:GetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR) == true,
 		tutorialFirstBushClaimed = player:GetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR) == true,
+		timCheeseIntroDone = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true,
+		timCheeseQuestIndex = math.max(0, math.floor(if typeof(player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)) == "number" then player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR) :: number else 0)),
+		timCheeseQuestProgress = math.max(0, math.floor(if typeof(player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR)) == "number" then player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR) :: number else 0)),
+		timCheeseCompletedCount = math.max(0, math.floor(if typeof(player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR)) == "number" then player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR) :: number else 0)),
+		timCheeseHarvestProgress = math.max(0, math.floor(if typeof(player:GetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR)) == "number" then player:GetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR) :: number else 0)),
 	}
 end
 
@@ -528,6 +533,12 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, data.tutorialCompleted == true)
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR, data.tutorialCashGranted == true)
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR, data.tutorialFirstBushClaimed == true)
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR, data.timCheeseIntroDone == true)
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR, math.max(0, math.floor(data.timCheeseQuestIndex or 0)))
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR, math.max(0, math.floor(data.timCheeseQuestProgress or 0)))
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR, math.max(0, math.floor(data.timCheeseCompletedCount or 0)))
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR, math.max(0, math.floor(data.timCheeseHarvestProgress or 0)))
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR, false)
 
 	SwingUpgrades.syncGameplayStatsFromLevels(player, {
 		power = data.powerLevel,
@@ -690,6 +701,11 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 				(typeof(raw.inventory) == "table" and next(raw.inventory) ~= nil)
 					or (typeof(raw.stands) == "table" and next(raw.stands) ~= nil)
 			),
+		timCheeseIntroDone = raw.timCheeseIntroDone == true,
+		timCheeseQuestIndex = math.max(0, floorNum(raw.timCheeseQuestIndex, 0)),
+		timCheeseQuestProgress = math.max(0, floorNum(raw.timCheeseQuestProgress, 0)),
+		timCheeseCompletedCount = math.max(0, floorNum(raw.timCheeseCompletedCount, 0)),
+		timCheeseHarvestProgress = math.max(0, floorNum(raw.timCheeseHarvestProgress, 0)),
 	}
 end
 
@@ -948,6 +964,12 @@ local function mergeAgainstPrior(
 	end
 	if prior.tutorialFirstBushClaimed and not payload.tutorialFirstBushClaimed then
 		payload.tutorialFirstBushClaimed = true
+	end
+	if prior.timCheeseIntroDone and not payload.timCheeseIntroDone then
+		payload.timCheeseIntroDone = true
+	end
+	if (prior.timCheeseCompletedCount or 0) > (payload.timCheeseCompletedCount or 0) then
+		payload.timCheeseCompletedCount = prior.timCheeseCompletedCount
 	end
 
 	return payload
@@ -1211,6 +1233,11 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		tutorialCompleted = false,
 		tutorialCashGranted = false,
 		tutorialFirstBushClaimed = false,
+		timCheeseIntroDone = false,
+		timCheeseQuestIndex = 0,
+		timCheeseQuestProgress = 0,
+		timCheeseCompletedCount = 0,
+		timCheeseHarvestProgress = 0,
 	}
 end
 
@@ -1318,6 +1345,49 @@ function M.setTutorialCashGranted(player: Player, granted: boolean)
 		return
 	end
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR, granted == true)
+	if player:GetAttribute(LOADED_ATTR) == true then
+		M.savePlayerData(player)
+	end
+end
+
+function M.setTimCheeseIntroDone(player: Player, done: boolean)
+	if not player.Parent then
+		return
+	end
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR, done == true)
+	if player:GetAttribute(LOADED_ATTR) == true then
+		M.savePlayerData(player)
+	end
+end
+
+function M.setTimCheeseQuestState(
+	player: Player,
+	patch: {
+		questIndex: number?,
+		questProgress: number?,
+		completedCount: number?,
+		harvestProgress: number?,
+		questReady: boolean?,
+	}
+)
+	if not player.Parent then
+		return
+	end
+	if typeof(patch.questIndex) == "number" then
+		player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR, math.max(0, math.floor(patch.questIndex)))
+	end
+	if typeof(patch.questProgress) == "number" then
+		player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR, math.max(0, math.floor(patch.questProgress)))
+	end
+	if typeof(patch.completedCount) == "number" then
+		player:SetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR, math.max(0, math.floor(patch.completedCount)))
+	end
+	if typeof(patch.harvestProgress) == "number" then
+		player:SetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR, math.max(0, math.floor(patch.harvestProgress)))
+	end
+	if typeof(patch.questReady) == "boolean" then
+		player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR, patch.questReady)
+	end
 	if player:GetAttribute(LOADED_ATTR) == true then
 		M.savePlayerData(player)
 	end

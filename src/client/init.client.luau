@@ -201,6 +201,9 @@ task.defer(function()
 				require(script.TutorialController).init()
 			end,
 			function()
+				require(script.TimCheeseQuestController).init()
+			end,
+			function()
 				local shared = ReplicatedStorage:WaitForChild("EssentialsShared", 10)
 				if not shared then
 					return

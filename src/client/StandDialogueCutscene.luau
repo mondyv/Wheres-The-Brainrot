@@ -49,6 +49,7 @@ export type StandDialogueConfig = {
 	frameName: string,
 	brainrotName: string,
 	enterLabel: string,
+	exitLabel: string?,
 	lines: { DialogueLine },
 	voicePitchMin: number,
 	voicePitchMax: number,
@@ -1480,7 +1481,7 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 		choiceEnter.Visible = false
 	end
 	if choiceExit then
-		choiceExit.Text = "* EXIT"
+		choiceExit.Text = "* " .. string.upper(config.exitLabel or "EXIT")
 		choiceExit.Visible = false
 	end
 	if soulMarker then

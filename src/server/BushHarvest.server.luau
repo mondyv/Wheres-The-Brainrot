@@ -2308,6 +2308,13 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 	local cooldownEndsAt = beginBushSearchCooldown(bush, cooldownSec)
 	scheduleRollAfterCooldown(bush, cooldownSec)
 
+	do
+		local timEvt = ServerStorage:FindFirstChild("TimCheeseBushSearched")
+		if timEvt and timEvt:IsA("BindableEvent") then
+			timEvt:Fire(player)
+		end
+	end
+
 	if hasBrainrot then
 		return {
 			ok = true,

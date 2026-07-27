@@ -1,0 +1,283 @@
+-- [ACTIVE] TimCheeseQuest.server
+--[[
+	Tim Cheese quests: intro flag, progress polling, claim/accept/decline remotes.
+]]
+
+local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
+local Workspace = game:GetService("Workspace")
+
+local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
+local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
+local Brainrots = require(script.Parent.Modules:WaitForChild("Brainrots"))
+local PlayerDataService = require(script.Parent.Modules:WaitForChild("PlayerDataService"))
+
+local STAND_TAG = "BrainrotStand"
+local REMOTES_FOLDER = "TimCheeseQuestRemotes"
+
+local function ensureRemotes(): Folder
+	local folder = ReplicatedStorage:FindFirstChild(REMOTES_FOLDER)
+	if folder and folder:IsA("Folder") then
+		return folder
+	end
+	local created = Instance.new("Folder")
+	created.Name = REMOTES_FOLDER
+	created.Parent = ReplicatedStorage
+	return created
+end
+
+local function ensureRE(name: string): RemoteEvent
+	local folder = ensureRemotes()
+	local existing = folder:FindFirstChild(name)
+	if existing and existing:IsA("RemoteEvent") then
+		return existing
+	end
+	local ev = Instance.new("RemoteEvent")
+	ev.Name = name
+	ev.Parent = folder
+	return ev
+end
+
+local function ensureRF(name: string): RemoteFunction
+	local folder = ensureRemotes()
+	local existing = folder:FindFirstChild(name)
+	if existing and existing:IsA("RemoteFunction") then
+		return existing
+	end
+	local rf = Instance.new("RemoteFunction")
+	rf.Name = name
+	rf.Parent = folder
+	return rf
+end
+
+local introDoneRE = ensureRE("IntroDone")
+local acceptQuestRF = ensureRF("AcceptQuest")
+local declineQuestRF = ensureRF("DeclineQuest")
+local claimQuestRF = ensureRF("ClaimQuest")
+
+local function countPlacedStands(player: Player): number
+	local n = 0
+	for _, stand in CollectionService:GetTagged(STAND_TAG) do
+		if stand:GetAttribute("StandOwnerUserId") == player.UserId then
+			local name = stand:GetAttribute("BrainrotName")
+			if typeof(name) == "string" and name ~= "" then
+				n += 1
+			end
+		end
+	end
+	return n
+end
+
+local function placedIncomePerSecond(player: Player): number
+	local total = 0
+	for _, stand in CollectionService:GetTagged(STAND_TAG) do
+		if stand:GetAttribute("StandOwnerUserId") == player.UserId then
+			local name = stand:GetAttribute("BrainrotName")
+			local rarity = stand:GetAttribute("BrainrotRarity")
+			if typeof(name) == "string" and typeof(rarity) == "string" then
+				local def = {
+					name = name,
+					rarity = rarity,
+					baseIncome = stand:GetAttribute("BrainrotBaseIncome") or 0,
+				}
+				local level = stand:GetAttribute("BrainrotLevel")
+				local mutation = stand:GetAttribute("BrainrotMutation")
+				total += Brainrots.incomePerSecond(
+					def,
+					if typeof(level) == "number" then level else 1,
+					if typeof(mutation) == "string" then mutation else "normal"
+				)
+			end
+		end
+	end
+	return total
+end
+
+local function addCash(player: Player, amount: number)
+	local c = player:GetAttribute("Cash")
+	if typeof(c) ~= "number" then
+		c = 0
+	end
+	player:SetAttribute("Cash", c + math.max(0, math.floor(amount)))
+end
+
+local function computeProgress(player: Player, quest: TimCheeseQuestConfig.QuestDef): number
+	if quest.kind == "place_stands" then
+		return countPlacedStands(player)
+	elseif quest.kind == "cash" then
+		local cash = player:GetAttribute("Cash")
+		return if typeof(cash) == "number" then math.floor(cash) else 0
+	elseif quest.kind == "income" then
+		return math.floor(placedIncomePerSecond(player))
+	elseif quest.kind == "harvest" then
+		local h = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR)
+		return if typeof(h) == "number" then math.floor(h) else 0
+	end
+	return 0
+end
+
+local function syncQuestProgress(player: Player)
+	if player:GetAttribute(PlayerDataSchema.LOADED_ATTR) ~= true then
+		return
+	end
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+		return
+	end
+	local idx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+	if typeof(idx) ~= "number" or idx < 1 then
+		player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR, false)
+		return
+	end
+	local quest = TimCheeseQuestConfig.getQuest(math.floor(idx))
+	if not quest then
+		return
+	end
+	local progress = computeProgress(player, quest)
+	local capped = math.min(progress, quest.target)
+	local prev = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR)
+	if prev ~= capped then
+		player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR, capped)
+	end
+	local ready = capped >= quest.target
+	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR) ~= ready then
+		player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR, ready)
+	end
+end
+
+introDoneRE.OnServerEvent:Connect(function(player: Player)
+	if not PlayerDataService.waitUntilLoaded(player) then
+		return
+	end
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+		return
+	end
+	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
+		return
+	end
+	PlayerDataService.setTimCheeseIntroDone(player, true)
+	-- Auto-offer first quest after intro dialogue (client accepts via AcceptQuest).
+end)
+
+acceptQuestRF.OnServerInvoke = function(player: Player): boolean
+	if not PlayerDataService.waitUntilLoaded(player) then
+		return false
+	end
+	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) ~= true then
+		return false
+	end
+	local completed = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR)
+	local doneCount = if typeof(completed) == "number" then math.floor(completed) else 0
+	local nextIndex = doneCount + 1
+	if nextIndex > TimCheeseQuestConfig.questCount() then
+		return false
+	end
+	local active = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+	if typeof(active) == "number" and active >= 1 then
+		return false
+	end
+	PlayerDataService.setTimCheeseQuestState(player, {
+		questIndex = nextIndex,
+		questProgress = 0,
+		harvestProgress = 0,
+		questReady = false,
+	})
+	syncQuestProgress(player)
+	return true
+end
+
+declineQuestRF.OnServerInvoke = function(player: Player): boolean
+	if not PlayerDataService.waitUntilLoaded(player) then
+		return false
+	end
+	-- Decline only clears a pending offer — active quests stay until claimed/finished.
+	return true
+end
+
+claimQuestRF.OnServerInvoke = function(player: Player): (boolean, number?)
+	if not PlayerDataService.waitUntilLoaded(player) then
+		return false, nil
+	end
+	local idx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+	if typeof(idx) ~= "number" or idx < 1 then
+		return false, nil
+	end
+	local quest = TimCheeseQuestConfig.getQuest(math.floor(idx))
+	if not quest then
+		return false, nil
+	end
+	syncQuestProgress(player)
+	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR) ~= true then
+		return false, nil
+	end
+	local completed = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR)
+	local doneCount = if typeof(completed) == "number" then math.floor(completed) else 0
+	if doneCount >= math.floor(idx) then
+		return false, nil
+	end
+	addCash(player, quest.rewardCash)
+	PlayerDataService.setTimCheeseQuestState(player, {
+		questIndex = 0,
+		questProgress = 0,
+		harvestProgress = 0,
+		completedCount = math.floor(idx),
+		questReady = false,
+	})
+	return true, quest.rewardCash
+end
+
+-- BushHarvest fires this when a search attempt succeeds (found or empty).
+local bushEvt = ServerStorage:FindFirstChild("TimCheeseBushSearched")
+if not (bushEvt and bushEvt:IsA("BindableEvent")) then
+	bushEvt = Instance.new("BindableEvent")
+	bushEvt.Name = "TimCheeseBushSearched"
+	bushEvt.Parent = ServerStorage
+end
+(bushEvt :: BindableEvent).Event:Connect(function(player: Player)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return
+	end
+	local idx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+	if typeof(idx) ~= "number" or idx < 1 then
+		return
+	end
+	local quest = TimCheeseQuestConfig.getQuest(math.floor(idx))
+	if not quest or quest.kind ~= "harvest" then
+		return
+	end
+	local h = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR)
+	local nextH = (if typeof(h) == "number" then h else 0) + 1
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR, nextH)
+	syncQuestProgress(player)
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(TimCheeseQuestConfig.PROGRESS_POLL_SEC)
+		for _, player in Players:GetPlayers() do
+			local ok, err = pcall(syncQuestProgress, player)
+			if not ok then
+				warn("[TimCheeseQuest] sync error:", err)
+			end
+		end
+	end
+end)
+
+-- Keep map TimCheese present (streaming).
+task.spawn(function()
+	local map = Workspace:WaitForChild("Map", 120)
+	if not map then
+		warn("[TimCheeseQuest] Map missing")
+		return
+	end
+	local folder = map:WaitForChild(TimCheeseQuestConfig.MAP_FOLDER_NAME, 120)
+	if not folder then
+		warn("[TimCheeseQuest] Booster Pack Showers missing")
+		return
+	end
+	local tim = folder:WaitForChild(TimCheeseQuestConfig.TIM_NAME, 60)
+	if not tim then
+		warn("[TimCheeseQuest] TimCheese missing")
+	end
+end)

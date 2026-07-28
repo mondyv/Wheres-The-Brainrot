@@ -69,7 +69,7 @@ local QUESTS: { QuestDef } = {
 		target = 500_000,
 		showBar = true,
 		rewardKind = "cash",
-		rewardCash = 400_000,
+		rewardCash = 500_000,
 	},
 	{
 		id = "place_8",
@@ -79,7 +79,7 @@ local QUESTS: { QuestDef } = {
 		target = 8,
 		showBar = true,
 		rewardKind = "brainrot",
-		rewardBrainrotRarity = "common",
+		rewardBrainrotRarity = "uncommon",
 	},
 	{
 		id = "income_1k",
@@ -89,7 +89,7 @@ local QUESTS: { QuestDef } = {
 		target = 1_000,
 		showBar = true,
 		rewardKind = "cash",
-		rewardCash = 550_000,
+		rewardCash = 650_000,
 	},
 	{
 		id = "harvest_25",
@@ -99,7 +99,7 @@ local QUESTS: { QuestDef } = {
 		target = 25,
 		showBar = true,
 		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Starter Lucky Block",
+		rewardLuckyBlock = "Mythic Lucky Block",
 	},
 	{
 		id = "place_12",
@@ -109,7 +109,7 @@ local QUESTS: { QuestDef } = {
 		target = 12,
 		showBar = true,
 		rewardKind = "brainrot",
-		rewardBrainrotRarity = "uncommon",
+		rewardBrainrotRarity = "rare",
 	},
 	{
 		id = "cash_2m",
@@ -119,7 +119,7 @@ local QUESTS: { QuestDef } = {
 		target = 2_000_000,
 		showBar = true,
 		rewardKind = "cash",
-		rewardCash = 850_000,
+		rewardCash = 950_000,
 	},
 	{
 		id = "income_10k",
@@ -129,7 +129,7 @@ local QUESTS: { QuestDef } = {
 		target = 10_000,
 		showBar = true,
 		rewardKind = "brainrot",
-		rewardBrainrotRarity = "rare",
+		rewardBrainrotRarity = "epic",
 	},
 	{
 		id = "place_16",
@@ -138,8 +138,8 @@ local QUESTS: { QuestDef } = {
 		kind = "place_stands",
 		target = 16,
 		showBar = true,
-		rewardKind = "cash",
-		rewardCash = 1_250_000,
+		rewardKind = "lucky_block",
+		rewardLuckyBlock = "Mythic Lucky Block",
 	},
 }
 
@@ -200,10 +200,17 @@ function M.formatRewardLabel(quest: QuestDef): string
 	if quest.rewardKind == "cash" then
 		return BrainrotEconomy.formatCashShort(quest.rewardCash or 0)
 	elseif quest.rewardKind == "lucky_block" then
-		return quest.rewardLuckyBlock or "Lucky Block"
+		local name = quest.rewardLuckyBlock or "Lucky Block"
+		if string.find(name, "Starter", 1, true) then
+			return "Starter Block"
+		elseif string.find(name, "Mythic", 1, true) then
+			return "Mythic Block"
+		end
+		return name
 	elseif quest.rewardKind == "brainrot" then
 		local rarity = quest.rewardBrainrotRarity or "common"
-		return string.upper(string.sub(rarity, 1, 1)) .. string.sub(rarity, 2) .. " Brainrot"
+		local nice = string.upper(string.sub(rarity, 1, 1)) .. string.sub(rarity, 2)
+		return nice .. " Brainrot"
 	end
 	return "Reward"
 end

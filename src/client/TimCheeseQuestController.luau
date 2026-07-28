@@ -48,7 +48,14 @@ local questExclaimConn: RBXScriptConnection? = nil
 local questHudRevealed = false
 local questHudBaseRightPad = TutorialConfig.PANEL_RIGHT_PAD
 local questHudBaseTop = TutorialConfig.PANEL_TOP_PAD
+local questHudAnchorY = 0
 local questHoverT = 0.0
+local questHoverY = 0.0
+local questBangHoverY = 0.0
+local questHoverFlying = false
+local questLayoutAccum = 0.0
+local questLayoutConn: RBXScriptConnection? = nil
+local QUEST_LAYOUT_HZ = 10
 local highlight: Highlight? = nil
 local talkPrompt: ProximityPrompt? = nil
 local idleTrack: AnimationTrack? = nil
@@ -609,30 +616,46 @@ local function stopExclaimPulse()
 		questExclaimConn:Disconnect()
 		questExclaimConn = nil
 	end
+	questHoverY = 0
+	questBangHoverY = 0
+	if questPanel then
+		local wrap = questPanel:FindFirstChild("FloatWrap")
+		if wrap and wrap:IsA("GuiObject") then
+			wrap.Position = UDim2.fromOffset(0, 0)
+		end
+		local bang = questPanel:FindFirstChild("Exclaim", true)
+		if bang and bang:IsA("ImageLabel") then
+			bang.Position = UDim2.fromOffset(0, -2)
+		end
+	end
 end
 
 local function startExclaimPulse()
 	stopExclaimPulse()
 	questHoverT = 0
-	-- One smooth sine bob for the whole ticket + a softer bang drift (no discrete snaps).
-	questExclaimConn = RunService.RenderStepped:Connect(function(dt)
-		if not questPanel or not questPanel.Visible or not questPanel.Parent then
+	questHoverY = 0
+	questBangHoverY = 0
+	-- Lerp on Heartbeat — never fight layoutQuestHud by moving the anchored panel root.
+	questExclaimConn = RunService.Heartbeat:Connect(function(dt)
+		if questHoverFlying or not questPanel or not questPanel.Visible or not questPanel.Parent then
+			return
+		end
+		local wrap = questPanel:FindFirstChild("FloatWrap")
+		if not (wrap and wrap:IsA("GuiObject")) then
 			return
 		end
 		questHoverT += dt
-		local bob = math.sin(questHoverT * 1.15) * 4
-		questPanel.Position = UDim2.new(1, -questHudBaseRightPad, 0, questHudBaseTop + bob)
+		local targetY = math.sin(questHoverT * 1.05) * 2.2
+		local blend = math.min(1, dt * 5)
+		questHoverY += (targetY - questHoverY) * blend
+		wrap.Position = UDim2.fromOffset(0, questHoverY)
 
 		local bang = questPanel:FindFirstChild("Exclaim", true)
 		if bang and bang:IsA("ImageLabel") then
-			local bangBob = math.sin(questHoverT * 1.35 + 0.4) * 1.8
-			bang.Position = UDim2.fromOffset(0, -2 + bangBob)
+			local bangTarget = math.sin(questHoverT * 1.2 + 0.5) * 1.1
+			questBangHoverY += (bangTarget - questBangHoverY) * blend
+			bang.Position = UDim2.fromOffset(0, -2 + questBangHoverY)
 			bang.Rotation = -10
-			bang.ImageTransparency = 0
-			local sc = bang:FindFirstChild("BangScale")
-			if sc and sc:IsA("UIScale") then
-				sc.Scale = 1
-			end
 		end
 	end)
 end
@@ -726,12 +749,22 @@ local function ensureQuestHud(): GuiObject
 	ticketScale.Scale = 1
 	ticketScale.Parent = ticket
 
+	local floatWrap = Instance.new("Frame")
+	floatWrap.Name = "FloatWrap"
+	floatWrap.BackgroundTransparency = 1
+	floatWrap.BorderSizePixel = 0
+	floatWrap.Size = UDim2.new(1, 0, 0, 0)
+	floatWrap.AutomaticSize = Enum.AutomaticSize.Y
+	floatWrap.Position = UDim2.fromOffset(0, 0)
+	floatWrap.ZIndex = 99
+	floatWrap.Parent = ticket
+
 	local pad = Instance.new("UIPadding")
 	pad.PaddingTop = UDim.new(0, 8)
 	pad.PaddingBottom = UDim.new(0, 8)
 	pad.PaddingLeft = UDim.new(0, 8)
 	pad.PaddingRight = UDim.new(0, 8)
-	pad.Parent = ticket
+	pad.Parent = floatWrap
 
 	local inner = Instance.new("ImageLabel")
 	inner.Name = "Inner"
@@ -740,7 +773,7 @@ local function ensureQuestHud(): GuiObject
 	inner.AutomaticSize = Enum.AutomaticSize.Y
 	inner.ZIndex = 101
 	inner.ClipsDescendants = true
-	inner.Parent = ticket
+	inner.Parent = floatWrap
 	local innerCorner = Instance.new("UICorner")
 	innerCorner.CornerRadius = UDim.new(0, 4)
 	innerCorner.Parent = inner
@@ -902,6 +935,24 @@ local function ensureQuestHud(): GuiObject
 	return ticket
 end
 
+local function resolveRandomBrainrotHud(): GuiObject?
+	local main = PlayerGuiMain.ensure(player)
+	local sideUI = main and main:FindFirstChild("SideUI")
+	local right = sideUI and sideUI:FindFirstChild("Right")
+	local rb = right and right:FindFirstChild("RandomBrainrot")
+	if not rb then
+		return nil
+	end
+	local activation = rb:FindFirstChild("Activation")
+	if activation and activation:IsA("GuiObject") and activation.AbsoluteSize.Y > 4 then
+		return activation
+	end
+	if rb:IsA("GuiObject") and rb.AbsoluteSize.Y > 4 then
+		return rb
+	end
+	return nil
+end
+
 local function layoutQuestHud()
 	local panel = questPanel
 	if not panel then
@@ -915,36 +966,84 @@ local function layoutQuestHud()
 		questGui.Enabled = true
 		questGui.DisplayOrder = math.max(questGui.DisplayOrder, 110)
 	end
+
 	local mobile = UserInputService.TouchEnabled
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1280
 	local vh = if cam then cam.ViewportSize.Y else 720
-	-- ScreenGui uses IgnoreGuiInset — don't add GuiInset again (that pushed PC too low / mobile wrong).
 	local rightPad = TutorialConfig.PANEL_RIGHT_PAD
-	local topPad = TutorialConfig.PANEL_TOP_PAD + 28
+	local topPad = TutorialConfig.PANEL_TOP_PAD + 6
+	local anchorY = 0
 	local screenW: number
+
 	if mobile or vw < 700 then
 		local maxW = math.floor(vw * TutorialConfig.PANEL_MOBILE_MAX_WIDTH_FRAC)
 		screenW = math.clamp(maxW, TutorialConfig.PANEL_MOBILE_MIN_WIDTH, TutorialConfig.PANEL_MOBILE_MAX_WIDTH)
-		topPad = math.clamp(math.floor(vh * 0.025), 10, 22)
-		rightPad = 8
 	else
 		local maxW = math.floor(vw * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
 		maxW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
 		screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
 	end
+
+	-- Sit just above Random Brainrot on mobile + PC when the button is laid out.
+	local rb = resolveRandomBrainrotHud()
+	if rb and host and host.AbsoluteSize.Y > 0 then
+		local hp = host.AbsolutePosition
+		local rbTop = rb.AbsolutePosition.Y - hp.Y
+		local hostRight = hp.X + host.AbsoluteSize.X
+		local rbRight = rb.AbsolutePosition.X + rb.AbsoluteSize.X
+		rightPad = math.max(8, math.floor(hostRight - rbRight))
+		anchorY = 1
+		topPad = math.max(14, math.floor(rbTop - TutorialConfig.PANEL_MOBILE_GAP_ABOVE_RIGHT))
+	elseif mobile or vw < 700 then
+		rightPad = 8
+		anchorY = 1
+		topPad = math.clamp(math.floor(vh * 0.58), 200, 420)
+	else
+		anchorY = 1
+		rightPad = TutorialConfig.PANEL_RIGHT_PAD
+		topPad = math.clamp(math.floor(vh * 0.58), 220, 440)
+	end
+
 	questHudBaseRightPad = rightPad
 	questHudBaseTop = topPad
-	panel.AnchorPoint = Vector2.new(1, 0)
+	questHudAnchorY = anchorY
+
+	panel.AnchorPoint = Vector2.new(1, anchorY)
 	panel.Size = UDim2.fromOffset(screenW, 0)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
-	panel.Position = UDim2.new(1, -rightPad, 0, topPad)
+	if not questHoverFlying then
+		panel.Position = UDim2.new(1, -rightPad, 0, topPad)
+	end
 	panel.ZIndex = 10
 end
 
 local function hudSlotPosition(): UDim2
 	layoutQuestHud()
 	return UDim2.new(1, -questHudBaseRightPad, 0, questHudBaseTop)
+end
+
+local function hudSlotAnchor(): Vector2
+	layoutQuestHud()
+	return Vector2.new(1, questHudAnchorY)
+end
+
+local function startQuestLayoutSync()
+	if questLayoutConn then
+		return
+	end
+	questLayoutAccum = 0
+	questLayoutConn = RunService.Heartbeat:Connect(function(dt)
+		if questHoverFlying or not questPanel or not questPanel.Visible then
+			return
+		end
+		questLayoutAccum += dt
+		if questLayoutAccum < (1 / QUEST_LAYOUT_HZ) then
+			return
+		end
+		questLayoutAccum = 0
+		layoutQuestHud()
+	end)
 end
 
 local function resolveActiveQuestIndex(): number?
@@ -1064,6 +1163,9 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 		acceptPopupGui = nil
 	end
 
+	questHoverFlying = true
+	stopExclaimPulse()
+
 	-- Build HUD hidden first so we know the slot to fly into.
 	ensureQuestHud()
 	layoutQuestHud()
@@ -1072,7 +1174,7 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	end
 
 	local gui = Instance.new("ScreenGui")
-	gui.Name = "TimCheeseQuestHud"
+	gui.Name = "TimCheeseQuestAccept"
 	gui.ResetOnSpawn = false
 	gui.IgnoreGuiInset = true
 	gui.DisplayOrder = 120
@@ -1091,12 +1193,12 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	local ticket = Instance.new("Frame")
 	ticket.Name = "CheeseTicket"
 	ticket.AnchorPoint = Vector2.new(0.5, 0.5)
-	ticket.Position = UDim2.fromScale(0.5, 0.46)
+	ticket.Position = UDim2.fromScale(0.5, 0.5)
 	ticket.Size = UDim2.fromOffset(390, 168)
 	ticket.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
 	ticket.BackgroundTransparency = 0.08
 	ticket.BorderSizePixel = 0
-	ticket.Rotation = -7
+	ticket.Rotation = -4
 	ticket.Parent = gui
 	local ticketCorner = Instance.new("UICorner")
 	ticketCorner.CornerRadius = UDim.new(0, 10)
@@ -1130,11 +1232,8 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	bang.Position = UDim2.fromOffset(10, 18)
 	bang.Size = UDim2.fromOffset(54, 54)
 	bang.Image = TutorialConfig.EXCLAIM_IMAGE
-	bang.Rotation = -12
+	bang.Rotation = -10
 	bang.Parent = inner
-	local bangScale = Instance.new("UIScale")
-	bangScale.Scale = 1
-	bangScale.Parent = bang
 
 	local stamp = Instance.new("TextLabel")
 	stamp.BackgroundTransparency = 1
@@ -1190,7 +1289,7 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	payCorner.Parent = payout
 
 	local ticketScale = Instance.new("UIScale")
-	ticketScale.Scale = 0.55
+	ticketScale.Scale = 0.9
 	ticketScale.Parent = ticket
 
 	local mobile = UserInputService.TouchEnabled
@@ -1200,42 +1299,47 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 		ticket.Size = UDim2.fromOffset(math.clamp(math.floor(vw * 0.88), 280, 360), 168)
 	end
 
-	-- Pulse bang while centered.
-	local pulseToken = 0
-	pulseToken += 1
-	local myPulse = pulseToken
-	task.spawn(function()
-		while myPulse == pulseToken and bang.Parent do
-			local t = os.clock()
-			bangScale.Scale = 1
-			bang.Rotation = -12
-			bang.Position = UDim2.fromOffset(10, 18 + math.sin(t * 2.2) * 2.5)
-			RunService.RenderStepped:Wait()
+	local bangBobY = 0.0
+	local bangT = 0.0
+	local pulseConn = RunService.Heartbeat:Connect(function(dt)
+		if not bang.Parent then
+			return
 		end
+		bangT += dt
+		local target = math.sin(bangT * 1.35) * 1.4
+		local blend = math.min(1, dt * 6)
+		bangBobY += (target - bangBobY) * blend
+		bang.Position = UDim2.fromOffset(10, 18 + bangBobY)
 	end)
 
-	TweenService:Create(dim, TweenInfo.new(0.18), { BackgroundTransparency = 0.55 }):Play()
-	TweenService:Create(ticketScale, TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-	TweenService:Create(ticket, TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Rotation = -3 }):Play()
+	local enterInfo = TweenInfo.new(0.36, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	TweenService:Create(dim, TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.58 }):Play()
+	TweenService:Create(ticketScale, enterInfo, { Scale = 1 }):Play()
+	TweenService:Create(ticket, enterInfo, { Rotation = -2 }):Play()
 	GameSoundEffects.playPurchase()
 
-	task.wait(1.85)
+	task.wait(1.55)
 	if not gui.Parent then
+		pulseConn:Disconnect()
+		questHoverFlying = false
 		return
 	end
 
-	-- Fly into HUD slot (stays solid cheese ticket).
-	pulseToken += 1
+	pulseConn:Disconnect()
+
+	local slotAnchor = hudSlotAnchor()
 	local slot = hudSlotPosition()
-	local flyInfo = TweenInfo.new(0.58, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
-	TweenService:Create(dim, TweenInfo.new(0.35), { BackgroundTransparency = 1 }):Play()
+	local targetW = if questPanel then questPanel.Size.X.Offset else 300
+	local flyInfo = TweenInfo.new(0.68, Enum.EasingStyle.Cubic, Enum.EasingDirection.InOut)
+	TweenService:Create(dim, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 }):Play()
 	TweenService:Create(ticket, flyInfo, {
-		AnchorPoint = Vector2.new(1, 0),
+		AnchorPoint = slotAnchor,
 		Position = slot,
 		Rotation = 0,
+		Size = UDim2.fromOffset(targetW, ticket.Size.Y.Offset),
 	}):Play()
-	TweenService:Create(ticketScale, flyInfo, { Scale = 0.42 }):Play()
-	task.wait(0.6)
+	TweenService:Create(ticketScale, flyInfo, { Scale = 1 }):Play()
+	task.wait(0.7)
 
 	if gui.Parent then
 		gui:Destroy()
@@ -1245,7 +1349,8 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	end
 
 	questHudRevealed = true
-	refreshQuestHud({ skipRevealGate = true, playAppear = true })
+	questHoverFlying = false
+	refreshQuestHud({ skipRevealGate = true, playAppear = false })
 end
 
 local function safeScaleTo(model: Model, scale: number)
@@ -1385,12 +1490,9 @@ local function acceptNextQuestAndShowHud(nextIndex: number)
 		playQuestAcceptPopup(q)
 	else
 		questHudRevealed = true
-		refreshQuestHud({ skipRevealGate = true, playAppear = true })
+		refreshQuestHud({ skipRevealGate = true, playAppear = false })
 	end
 	TopNotifController.showBroadcast("New quest from Tim Cheese!")
-	waitForQuestHud(3)
-	questHudRevealed = true
-	refreshQuestHud({ skipRevealGate = true, playAppear = true })
 	return acceptedOk
 end
 
@@ -1606,10 +1708,8 @@ function M.playIntroFall()
 			playQuestAcceptPopup(q)
 		else
 			questHudRevealed = true
-			refreshQuestHud({ skipRevealGate = true, playAppear = true })
+			refreshQuestHud({ skipRevealGate = true, playAppear = false })
 		end
-		waitForQuestHud(3)
-		refreshQuestHud()
 		TopNotifController.showBroadcast("New quest from Tim Cheese!")
 	end
 	syncPromptAndOutline()
@@ -1918,12 +2018,15 @@ function M.init()
 				return
 			end
 			viewportConn = c:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-				layoutQuestHud()
+				if questPanel and questPanel.Visible and not questHoverFlying then
+					layoutQuestHud()
+				end
 			end)
 			layoutQuestHud()
 		end
 		wireViewportLayout()
 		Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(wireViewportLayout)
+		startQuestLayoutSync()
 
 		local accum = 0.0
 		RunService.Heartbeat:Connect(function(dt)

@@ -373,6 +373,24 @@ local function landImpactShake(cam: Camera?)
 	}):Play()
 end
 
+local function fireQuestClaimCelebration()
+	-- Same confetti + purchase SFX + camera shake as daily/tutorial claims.
+	local essentials = ReplicatedStorage:FindFirstChild("EssentialsShared")
+	if not essentials then
+		return
+	end
+	local ok, mod = pcall(require, essentials:FindFirstChild("EffectsController"))
+	if not ok or not mod or typeof(mod.celebratePurchase) ~= "function" then
+		return
+	end
+	local celebrateOk, celebrateErr = pcall(function()
+		mod.celebratePurchase(player)
+	end)
+	if not celebrateOk then
+		warn("[TimCheeseQuestController] celebratePurchase failed:", celebrateErr)
+	end
+end
+
 local function spawnLandingDebris(landingPos: Vector3, tim: Model)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
@@ -2557,6 +2575,7 @@ function M.openTimDialogue()
 		end
 		forcedQuestIndex = nil
 		if ok then
+			fireQuestClaimCelebration()
 			if typeof(rewardLabel) == "string" and rewardLabel ~= "" then
 				TopNotifController.showBroadcast(rewardLabel)
 			elseif typeof(rewardLabel) == "number" then

@@ -146,21 +146,22 @@ C.ROPE_HANG_PULL_MAX_UP_SPEED = 88
 C.ROPE_SAFE_MAX_MIN_LENGTH = 24
 C.ROPE_REEL_ALWAYS_ALPHA = 0.76
 C.MIN_LOOK_DOT = 0.3
-C.AIRBORNE_TARGET_LOOK_DOT = 0.02
-C.GROUNDED_TARGET_LOOK_DOT = 0.02
-C.TARGET_SCREEN_RADIUS_LIMIT = 0.98
-C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.98
 C.LOOK_DOWN_PITCH = -0.22
 C.LOOK_DOWN_FORWARD_DOT = 0.12
 C.MIN_TARGET_HEIGHT_OFFSET = -8
--- Aim scoring: high reach must not prefer a far centered vine over the close one you're facing.
--- Distance is normalized against PREFER_NEAR_STUDS (not full reach) so max reach doesn't wipe the penalty.
-C.TARGET_SCORE_ALIGN = 1.75
-C.TARGET_SCORE_CENTER = 0.7
-C.TARGET_SCORE_CENTER_LOOK_DOWN = 0.55
-C.TARGET_SCORE_DIST_WEIGHT = 2.6
+-- Aim scoring: favor the vine you're looking at, not a slightly nearer side vine.
+C.TARGET_SCORE_ALIGN = 2.55
+C.TARGET_SCORE_CENTER = 1.9
+C.TARGET_SCORE_CENTER_LOOK_DOWN = 1.35
+C.TARGET_SCORE_DIST_WEIGHT = 1.45
 C.TARGET_SCORE_PREFER_NEAR_STUDS = 90
-C.TARGET_SCORE_NEAR_AIM_BONUS = 1.15
+C.TARGET_SCORE_NEAR_AIM_BONUS = 1.35
+C.TARGET_SCORE_LATERAL = 2.6
+C.TARGET_SCORE_LATERAL_WORLD = 2.1
+C.AIRBORNE_TARGET_LOOK_DOT = 0.08
+C.GROUNDED_TARGET_LOOK_DOT = 0.12
+C.TARGET_SCREEN_RADIUS_LIMIT = 0.85
+C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.78
 C.TARGET_SCAN_INTERVAL = 0.12
 C.TARGET_SCAN_INTERVAL_GROUNDED = 0.28
 C.TARGET_CANDIDATE_EXTRA_RADIUS = 4
@@ -2665,32 +2666,38 @@ local function boot(character)
 				-- Horizontal centering only — vertical screen position must not steal the forward vine.
 				centerBias = (1 - math.clamp(math.abs(dx) / 0.62, 0, 1)) * C.TARGET_SCORE_CENTER_LOOK_DOWN
 			else
-				-- Keep center bias mild: perspective makes far vines sit near screen-center while
-				-- the close vine you're looking at often sits off-center on the viewport.
 				centerBias = (1 - math.clamp(screenRadius / math.max(maxScreenRadius, 0.01), 0, 1))
 					* C.TARGET_SCORE_CENTER
 			end
+			-- Hard punish vines sitting left/right of the crosshair / look ray.
+			local lateralPenalty = math.abs(dx) * C.TARGET_SCORE_LATERAL
+			local alongLook = math.max(toCameraTarget:Dot(look), 0.05)
+			local onLookRay = camera.CFrame.Position + look * alongLook
+			local worldLateral = (attachWorld - onLookRay).Magnitude
+			lateralPenalty += (worldLateral / math.max(dist, 8)) * C.TARGET_SCORE_LATERAL_WORLD
 
 			local stickBonus = 0
 			if part == st.highlightedTarget or part == st.scannedVisualTarget then
-				stickBonus = if lookingDown then 1.55 else 0.28
+				stickBonus = if lookingDown then 1.55 else 0.18
 			end
 
-			-- Prefer nearer vines hard. Scaling by full reach made max-reach players latch onto
-			-- distant vines that happen to sit nearer screen-center.
+			-- Prefer nearer vines, but not enough to steal aim from a dead-ahead vine.
 			local nearScale = math.max(C.TARGET_SCORE_PREFER_NEAR_STUDS, 1)
 			local distancePenalty = (dist / nearScale) * C.TARGET_SCORE_DIST_WEIGHT
 			local nearAimBonus = 0
-			if viewDot >= 0.72 then
+			if viewDot >= 0.65 then
 				nearAimBonus = (1 - math.clamp(dist / nearScale, 0, 1)) * C.TARGET_SCORE_NEAR_AIM_BONUS
 			end
+			-- Quadratic align so dead-ahead clearly beats "kinda ahead but left".
+			local alignPower = align * math.max(align, 0)
 
-			local score = align * C.TARGET_SCORE_ALIGN
+			local score = alignPower * C.TARGET_SCORE_ALIGN
 				+ heightBonus
 				+ centerBias
 				+ stickBonus
 				+ nearAimBonus
 				- distancePenalty
+				- lateralPenalty
 			if score > bestScore then
 				bestScore = score
 				best = part
@@ -2856,17 +2863,31 @@ local function boot(character)
 	function st.attachCandidateScore(target, dist, point, maxDistance)
 		camera = workspace.CurrentCamera or camera
 
-		-- Prefer absolute nearness over fraction-of-reach so high reach doesn't flatten scores.
+		-- Prefer the vine in front of the camera over a slightly nearer side vine.
 		local nearScale = math.max(math.min(maxDistance, C.TARGET_SCORE_PREFER_NEAR_STUDS), 1)
 		local nearAlpha = 1 - math.clamp(dist / nearScale, 0, 1)
-		local score = nearAlpha * 1.35
+		local score = nearAlpha * 0.85
 		local toTargetFlat = flatUnit(point - st.hrp.Position)
 
-		if camera and toTargetFlat then
-			local lookFlat = flatUnit(camera.CFrame.LookVector)
-			if lookFlat then
-				local lookAlpha = math.clamp((toTargetFlat:Dot(lookFlat) + 1) * 0.5, 0, 1)
-				score += lookAlpha * 1.05
+		if camera then
+			local look = camera.CFrame.LookVector
+			local lookFlat = flatUnit(look)
+			if lookFlat and toTargetFlat then
+				local lookDot = toTargetFlat:Dot(lookFlat)
+				score += math.max(0, lookDot) ^ 2 * 2.8
+			end
+			local toCam = point - camera.CFrame.Position
+			if toCam.Magnitude > 0.5 then
+				local along = math.max(toCam:Dot(look), 0.05)
+				local onRay = camera.CFrame.Position + look * along
+				local lateral = (point - onRay).Magnitude
+				score -= (lateral / math.max(dist, 8)) * 2.4
+				local vp, onScreen = camera:WorldToViewportPoint(point)
+				if onScreen then
+					local size = camera.ViewportSize
+					local dx = (vp.X - size.X * 0.5) / math.max(size.X, 1)
+					score -= math.abs(dx) * 2.2
+				end
 			end
 		end
 
@@ -2874,13 +2895,13 @@ local function boot(character)
 		if not moveFlat then
 			moveFlat = flatUnit(st.hrp.AssemblyLinearVelocity)
 		end
+		-- Move direction is a weak hint only — never let strafe steal aim from look.
 		if moveFlat and toTargetFlat then
 			local moveAlpha = math.clamp((toTargetFlat:Dot(moveFlat) + 1) * 0.5, 0, 1)
-			score += moveAlpha * 0.42
+			score += moveAlpha * 0.18
 		end
 
 		if target == st.lastReleasedTarget and os.clock() - st.lastReleasedTargetClock < 0.9 then
-			-- Don't punish the vine we need as a grace return when stranded past reach.
 			local returnGrace = target == st.returnSwingTarget
 			if not returnGrace then
 				score -= 0.95

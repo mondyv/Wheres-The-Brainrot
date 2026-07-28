@@ -1010,9 +1010,7 @@ local function mergeAgainstPrior(
 	if prior.tutorialFirstBushClaimed and not payload.tutorialFirstBushClaimed then
 		payload.tutorialFirstBushClaimed = true
 	end
-	if prior.timCheeseIntroDone and not payload.timCheeseIntroDone then
-		payload.timCheeseIntroDone = true
-	end
+	-- Do NOT sticky-restore timCheeseIntroDone — intentional resets / fresh tutorials must re-trigger Tim.
 	if (prior.timCheeseCompletedCount or 0) > (payload.timCheeseCompletedCount or 0) then
 		payload.timCheeseCompletedCount = prior.timCheeseCompletedCount
 	end
@@ -1329,6 +1327,7 @@ function M.resetPlayerData(player: Player): (boolean, string?)
 	sessionCanSave[player] = true
 	allowEmptyOverwrite[player] = true
 	lastGoodStands[player.UserId] = {}
+	lastGoodPayload[player.UserId] = nil
 	player:SetAttribute(LOAD_FAILED_ATTR, false)
 	local fresh = M.makeDefaultSaveData(player)
 

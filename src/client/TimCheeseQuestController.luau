@@ -2779,7 +2779,23 @@ function M.init()
 		player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR):Connect(function()
 			if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
 				introStartedLocal = true
+				return
 			end
+			-- Data reset / wipe: re-hide Tim so intro can play again from the hitbox.
+			if introPlaying then
+				return
+			end
+			introStartedLocal = false
+			questHudRevealed = false
+			forcedQuestIndex = nil
+			local tim = timModel or resolveTim()
+			if tim then
+				hideTimUntilIntro(tim)
+				setQuestFloatVisible(tim, false)
+				setOutline(tim, false)
+			end
+			syncQuestChromeVisibility()
+			syncPromptAndOutline()
 		end)
 
 		player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR):Connect(function()

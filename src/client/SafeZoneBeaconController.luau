@@ -1,7 +1,7 @@
 -- [ACTIVE] SafeZoneBeaconController
 --[[
-	Distance label near the local character's head showing meters from the spawn safe zone.
-	Only shown when the local player is on land 2+ (and not already in the safe zone).
+	Distance label near the local character's head showing meters from the spawn safe zone edge.
+	Always shown while the player is outside the safe zone (any land / distance).
 ]]
 
 local Players = game:GetService("Players")
@@ -9,15 +9,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
-local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local M = {}
 
-local MIN_LAND_TO_SHOW = 2
--- If land folders/hitboxes aren't streamed yet, still show once this far from spawn.
-local FALLBACK_SHOW_DISTANCE = 180
 local POLL_SEC = 0.35
 local BILLBOARD_SIZE = UDim2.fromOffset(48, 18)
 -- A bit right of the head, smaller label.
@@ -31,14 +27,7 @@ local billboard: BillboardGui? = nil
 local distanceLabel: TextLabel? = nil
 local heartbeatConn: RBXScriptConnection? = nil
 local pollAccum = 0
-local centerRefreshAt = 0
-local cachedCenter: Vector3? = nil
-local CENTER_REFRESH_SEC = 4
 local lastMeters: number? = nil
-local cachedLand = 1
-local landRefreshAt = 0
-local LAND_REFRESH_SEC = 0.75
-local lastLandPos: Vector3? = nil
 
 local function destroyGui()
 	if billboard then
@@ -108,30 +97,6 @@ local function ensureGui(character: Model): TextLabel?
 	return label
 end
 
-local function shouldShow(character: Model?, hrp: BasePart): boolean
-	if SafezoneUtil.isWorldPointInSafezone(hrp.Position) then
-		return false
-	end
-	local now = os.clock()
-	local movedFar = not lastLandPos or (hrp.Position - lastLandPos).Magnitude > 18
-	if movedFar or now - landRefreshAt >= LAND_REFRESH_SEC then
-		landRefreshAt = now
-		lastLandPos = hrp.Position
-		cachedLand = LandResolver.resolveLandAtPosition(hrp.Position)
-	end
-	if cachedLand >= MIN_LAND_TO_SHOW then
-		return true
-	end
-	-- Streaming may not have far-land hitboxes yet; distance fallback keeps meters on Land 9+.
-	local center = cachedCenter
-	if not center then
-		return false
-	end
-	local delta = hrp.Position - center
-	local horiz = Vector3.new(delta.X, 0, delta.Z).Magnitude
-	return horiz >= FALLBACK_SHOW_DISTANCE
-end
-
 local function formatMeters(distance: number): string
 	local meters = math.max(0, math.floor(distance + 0.5))
 	return string.format("%dm", meters)
@@ -147,15 +112,17 @@ local function tick(_dt: number)
 		return
 	end
 
-	local now = os.clock()
-	if now - centerRefreshAt >= CENTER_REFRESH_SEC or not cachedCenter then
-		centerRefreshAt = now
-		SafezoneUtil.warmCacheAsync()
-		cachedCenter = SafezoneUtil.getSafezoneCenter()
+	local pos = (hrp :: BasePart).Position
+	if SafezoneUtil.isWorldPointInSafezone(pos) then
+		if billboard then
+			billboard.Enabled = false
+		end
+		lastMeters = nil
+		return
 	end
 
-	local center = cachedCenter
-	if not center then
+	local horiz = SafezoneUtil.getHorizontalDistanceFromSafezone(pos)
+	if horiz == nil then
 		if billboard then
 			billboard.Enabled = false
 		end
@@ -168,13 +135,6 @@ local function tick(_dt: number)
 		return
 	end
 
-	if not shouldShow(character, hrp :: BasePart) then
-		bb.Enabled = false
-		return
-	end
-
-	local delta = (hrp :: BasePart).Position - center
-	local horiz = Vector3.new(delta.X, 0, delta.Z).Magnitude
 	local meters = math.max(0, math.floor(horiz + 0.5))
 	if lastMeters ~= meters then
 		lastMeters = meters
@@ -193,7 +153,6 @@ function M.init()
 	task.spawn(function()
 		SafezoneUtil.warmCacheAsync()
 		SafezoneUtil.awaitCacheReady(8)
-		cachedCenter = SafezoneUtil.getSafezoneCenter()
 	end)
 
 	heartbeatConn = RunService.Heartbeat:Connect(function(dt)

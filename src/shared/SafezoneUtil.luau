@@ -318,6 +318,18 @@ function SafezoneUtil.getRedWallSamplePositions(): { Vector3 }
 	return out
 end
 
+local function horizontalDistanceToPartOBB(worldPoint: Vector3, part: BasePart): number
+	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
+	local halfX = part.Size.X * 0.5
+	local halfZ = part.Size.Z * 0.5
+	local px, pz = localPt.X, localPt.Z
+	local clampedX = math.clamp(px, -halfX, halfX)
+	local clampedZ = math.clamp(pz, -halfZ, halfZ)
+	local dx = px - clampedX
+	local dz = pz - clampedZ
+	return math.sqrt(dx * dx + dz * dz)
+end
+
 -- World center of the spawn safe zone (average of SafeZoneHitbox / inventory zone parts).
 function SafezoneUtil.getSafezoneCenter(): Vector3?
 	ensureCaches()
@@ -337,6 +349,31 @@ function SafezoneUtil.getSafezoneCenter(): Vector3?
 		return nil
 	end
 	return sum / n
+end
+
+--- Horizontal studs from the nearest safezone edge (0 when inside any inventory zone part).
+function SafezoneUtil.getHorizontalDistanceFromSafezone(worldPoint: Vector3): number?
+	ensureCaches()
+	local parts = cachedInventoryParts
+	if not parts or #parts == 0 then
+		return nil
+	end
+	if SafezoneUtil.isWorldPointInSafezone(worldPoint) then
+		return 0
+	end
+	local best = math.huge
+	for _, part in parts do
+		if part.Parent then
+			local d = horizontalDistanceToPartOBB(worldPoint, part)
+			if d < best then
+				best = d
+			end
+		end
+	end
+	if best == math.huge then
+		return nil
+	end
+	return best
 end
 
 function SafezoneUtil.isWorldPointInInventoryZone(worldPoint: Vector3): boolean

@@ -574,17 +574,17 @@ local function getSwingRange()
 	return math.clamp(C.SWING_RANGE * (0.9 + (powerScale - 1) * 0.25), 65, 280)
 end
 
+-- Latch/UI ready range: swing reach (not hang rope length — that was ~44 and hid all prompts).
+local function getLatchRange()
+	return math.min(getSwingRange(), C.ROPE_ABSOLUTE_MAX)
+end
+
 local function getRopeMaxLength()
 	return math.clamp(
 		C.ROPE_MAX_LENGTH + math.max(getSwingRange() - C.SWING_RANGE, 0) * 0.35,
 		C.ROPE_MIN_LENGTH + C.ROPE_HANG_PULL_MIN_GAP + 4,
 		C.ROPE_ABSOLUTE_MAX
 	)
-end
-
--- Latch/UI ready range: only as far as the live rope can actually span.
-local function getLatchRange()
-	return math.min(getSwingRange(), getRopeMaxLength())
 end
 
 local function getRopeFlexScale()
@@ -3996,17 +3996,10 @@ local function boot(character)
 	function st.updateTargetVisual(target, canSwingNow, inactiveText)
 		st.ensureVisuals()
 
-		-- Only show the swing indicator when jump will actually latch — never tease out of range.
+		-- Only show when jump can latch (no out-of-range AIM tease).
 		if target and not st.isSwinging and canSwingNow == true then
 			local attachWorld = st.resolveUiAttachWorld(target)
 			if not attachWorld then
-				st.updateTargetVisual(nil, false)
-				return nil
-			end
-			local dist = (attachWorld - st.hrp.Position).Magnitude
-			local latchRange = getLatchRange()
-			if dist < 2 or dist > latchRange then
-				st.updateTargetVisual(nil, false)
 				return nil
 			end
 			st.targetReadyGoal = 1

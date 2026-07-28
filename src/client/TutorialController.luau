@@ -2647,11 +2647,14 @@ local function restoreTutorialAfterRespawn()
 		syncPanelToSideButtons()
 		local step = currentStep()
 		if step then
-			objectiveBaseText = step.text
+			local text = if step.id == "swingLand1" and typeof(step.retryText) == "string" and step.retryText ~= ""
+				then step.retryText
+				else step.text
+			objectiveBaseText = text
 			if objectiveLabel then
-				objectiveLabel.Text = step.text
+				objectiveLabel.Text = text
 			end
-			startObjectiveDots(step.text)
+			startObjectiveDots(text)
 		end
 		refreshPointers()
 	end)

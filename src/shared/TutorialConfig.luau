@@ -59,6 +59,7 @@ export type StepDef = {
 	id: StepId,
 	text: string,
 	speak: string?,
+	retryText: string?,
 }
 
 M.STEPS = {
@@ -77,10 +78,11 @@ M.STEPS = {
 		text = "Buy your first Power upgrade",
 		speak = "TAP BUY ON POWER!!",
 	},
-		{
+	{
 		id = "swingLand1",
 		text = "Press jump and release to get over to the next land!",
 		speak = "PRESS JUMP AND RELEASE TO GET OVER TO THE NEXT LAND!!",
+		retryText = "Give it a try again! Press jump and release to swing over!",
 	},
 	{
 		id = "searchBush",

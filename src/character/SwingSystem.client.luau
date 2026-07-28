@@ -149,23 +149,26 @@ C.ROPE_HANG_PULL_WINCH_SPEED = 58
 C.ROPE_HANG_PULL_MAX_UP_SPEED = 88
 C.ROPE_SAFE_MAX_MIN_LENGTH = 24
 C.ROPE_REEL_ALWAYS_ALPHA = 0.76
-C.MIN_LOOK_DOT = 0.3
+C.MIN_LOOK_DOT = 0.48
 C.LOOK_DOWN_PITCH = -0.22
-C.LOOK_DOWN_FORWARD_DOT = 0.12
+C.LOOK_DOWN_FORWARD_DOT = 0.38
 C.MIN_TARGET_HEIGHT_OFFSET = -8
--- Aim scoring: favor the vine you're looking at, not a slightly nearer side vine.
-C.TARGET_SCORE_ALIGN = 2.55
-C.TARGET_SCORE_CENTER = 1.9
-C.TARGET_SCORE_CENTER_LOOK_DOWN = 1.35
-C.TARGET_SCORE_DIST_WEIGHT = 1.45
-C.TARGET_SCORE_PREFER_NEAR_STUDS = 90
-C.TARGET_SCORE_NEAR_AIM_BONUS = 1.35
-C.TARGET_SCORE_LATERAL = 2.6
-C.TARGET_SCORE_LATERAL_WORLD = 2.1
-C.AIRBORNE_TARGET_LOOK_DOT = 0.08
-C.GROUNDED_TARGET_LOOK_DOT = 0.12
-C.TARGET_SCREEN_RADIUS_LIMIT = 0.85
-C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.78
+-- Aim scoring: camera/crosshair first. Distance is only a tiny tiebreaker.
+C.TARGET_SCORE_ALIGN = 4.2
+C.TARGET_SCORE_CENTER = 4.8
+C.TARGET_SCORE_CENTER_LOOK_DOWN = 2.6
+C.TARGET_SCORE_DIST_WEIGHT = 0.28
+C.TARGET_SCORE_PREFER_NEAR_STUDS = 110
+C.TARGET_SCORE_NEAR_AIM_BONUS = 0.22
+C.TARGET_SCORE_LATERAL = 5.4
+C.TARGET_SCORE_LATERAL_WORLD = 3.8
+C.TARGET_SCORE_BEHIND_REJECT = 0.35
+C.TARGET_CAMERA_RAY_BONUS = 12
+C.AIRBORNE_TARGET_LOOK_DOT = 0.42
+C.GROUNDED_TARGET_LOOK_DOT = 0.48
+C.TARGET_SCREEN_RADIUS_LIMIT = 0.52
+C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.46
+C.TARGET_MAX_SCREEN_DX = 0.42
 C.TARGET_SCAN_INTERVAL = 0.12
 C.TARGET_SCAN_INTERVAL_GROUNDED = 0.28
 C.TARGET_CANDIDATE_EXTRA_RADIUS = 4
@@ -2274,6 +2277,69 @@ local function boot(character)
 		return part.Position
 	end
 
+	function st.resolveSwingPartFromHit(inst: Instance?): BasePart?
+		local cur: Instance? = inst
+		while cur do
+			if cur:IsA("BasePart") and st.targetSet[cur] then
+				return cur
+			end
+			cur = cur.Parent
+		end
+		return nil
+	end
+
+	-- One cheap camera look-ray: the vine under the crosshair wins when present.
+	function st.pickCameraLookSwingTarget(reach: number): BasePart?
+		camera = workspace.CurrentCamera or camera
+		if not camera or not st.hrp.Parent then
+			return nil
+		end
+		local maxDist = math.max(reach, 8)
+		local origin = camera.CFrame.Position
+		local look = camera.CFrame.LookVector
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		local ignored: { Instance } = { st.character }
+		params.FilterDescendantsInstances = ignored
+
+		for _ = 1, 7 do
+			params.FilterDescendantsInstances = ignored
+			local hit = workspace:Raycast(origin, look * maxDist, params)
+			if not hit then
+				return nil
+			end
+			local swing = st.resolveSwingPartFromHit(hit.Instance)
+			if swing then
+				local attachWorld = st.closestAttachWorldOnPart(swing)
+				local fromHrp = attachWorld - st.hrp.Position
+				local dist = fromHrp.Magnitude
+				if dist < 2 or dist > maxDist then
+					table.insert(ignored, hit.Instance)
+					continue
+				end
+				if attachWorld.Y < st.hrp.Position.Y + C.MIN_TARGET_HEIGHT_OFFSET then
+					table.insert(ignored, hit.Instance)
+					continue
+				end
+				local flatDir = flatUnit(fromHrp)
+				local faceFlat = flatUnit(look) or flatUnit(st.hrp.CFrame.LookVector)
+				if flatDir and faceFlat and flatDir:Dot(faceFlat) < C.TARGET_SCORE_BEHIND_REJECT then
+					-- Crosshair vine is behind the player facing — ignore.
+					table.insert(ignored, hit.Instance)
+					continue
+				end
+				return swing
+			end
+			-- Skip decor / foliage in front of the vine.
+			if hit.Instance.CanCollide and hit.Instance.Transparency < 0.85 then
+				-- Solid wall in the way — stop.
+				return nil
+			end
+			table.insert(ignored, hit.Instance)
+		end
+		return nil
+	end
+
 	function st.targetCellCoord(value)
 		return math.floor(value / C.TARGET_GRID_CELL_SIZE)
 	end
@@ -2594,6 +2660,17 @@ local function boot(character)
 		local reach = maxDistanceOverride or getSwingRange()
 		local minLookDot = minLookDotOverride or C.MIN_LOOK_DOT
 		local maxScreenRadius = maxScreenRadiusOverride or C.TARGET_SCREEN_RADIUS_LIMIT
+		local maxDx = C.TARGET_MAX_SCREEN_DX
+
+		-- Crosshair vine always wins when the look-ray hits one (no laggy multi-ray spam).
+		local rayHit = st.pickCameraLookSwingTarget(reach)
+		if rayHit then
+			local attachWorld = st.closestAttachWorldOnPart(rayHit)
+			if not requireLineOfSight or st.hasLineOfSight(rayHit, attachWorld) then
+				return rayHit
+			end
+		end
+
 		local best = nil
 		local bestScore = -math.huge
 
@@ -2624,43 +2701,48 @@ local function boot(character)
 			local flatDir = flatUnit(offset)
 			local flatAlign = if flatDir and flatLook then flatDir:Dot(flatLook) else nil
 
-			-- Never latch onto something clearly behind the player/camera facing.
-			if flatAlign ~= nil and flatAlign < C.LOOK_DOWN_FORWARD_DOT then
-				continue
-			end
-
-			if not lookingDown and viewDot < minLookDot then
-				continue
-			end
-			-- Looking down: 3D look-dot collapses; require forward flat facing instead.
-			if lookingDown and (flatAlign == nil or flatAlign < C.LOOK_DOWN_FORWARD_DOT) then
+			-- Never latch onto something behind / beside the camera facing.
+			if flatAlign ~= nil and flatAlign < C.TARGET_SCORE_BEHIND_REJECT then
 				continue
 			end
 
 			local viewportPoint, onScreen = camera:WorldToViewportPoint(attachWorld)
+			-- Behind the camera plane — never.
+			if viewportPoint.Z <= 0 then
+				continue
+			end
+
 			local vp = camera.ViewportSize
 			local dx = (viewportPoint.X - vp.X * 0.5) / math.max(vp.X, 1)
 			local dy = (viewportPoint.Y - vp.Y * 0.5) / math.max(vp.Y, 1)
 			local screenRadius = math.sqrt(dx * dx + dy * dy)
-			local horizontallyOnScreen = viewportPoint.Z > 0 and math.abs(dx) <= 0.62
+			local horizontallyOnScreen = math.abs(dx) <= maxDx
 
 			if lookingDown then
-				-- Looking down pushes the true forward vine above the viewport — keep it if still ahead.
 				if not horizontallyOnScreen then
+					continue
+				end
+				if flatAlign == nil or flatAlign < C.LOOK_DOWN_FORWARD_DOT then
 					continue
 				end
 			else
 				if not onScreen then
 					continue
 				end
+				if viewDot < minLookDot then
+					continue
+				end
 				if screenRadius > maxScreenRadius then
+					continue
+				end
+				if math.abs(dx) > maxDx then
 					continue
 				end
 			end
 
 			local align = viewDot
 			if flatAlign ~= nil then
-				align = math.max(viewDot, flatAlign * (if lookingDown then 1.05 else 0.92))
+				align = math.max(viewDot, flatAlign * (if lookingDown then 1.02 else 0.85))
 			end
 			if requireLineOfSight and not st.hasLineOfSight(part, attachWorld) then
 				continue
@@ -2668,18 +2750,17 @@ local function boot(character)
 
 			local heightBonus = 0
 			if attachWorld.Y > st.hrp.Position.Y + 5 then
-				heightBonus = 0.16
+				heightBonus = 0.1
 			end
 
+			-- Screen-center / look-ray dominance (what you're actually aiming at).
 			local centerBias
 			if lookingDown then
-				-- Horizontal centering only — vertical screen position must not steal the forward vine.
-				centerBias = (1 - math.clamp(math.abs(dx) / 0.62, 0, 1)) * C.TARGET_SCORE_CENTER_LOOK_DOWN
+				centerBias = (1 - math.clamp(math.abs(dx) / maxDx, 0, 1)) * C.TARGET_SCORE_CENTER_LOOK_DOWN
 			else
 				centerBias = (1 - math.clamp(screenRadius / math.max(maxScreenRadius, 0.01), 0, 1))
 					* C.TARGET_SCORE_CENTER
 			end
-			-- Hard punish vines sitting left/right of the crosshair / look ray.
 			local lateralPenalty = math.abs(dx) * C.TARGET_SCORE_LATERAL
 			local alongLook = math.max(toCameraTarget:Dot(look), 0.05)
 			local onLookRay = camera.CFrame.Position + look * alongLook
@@ -2688,18 +2769,17 @@ local function boot(character)
 
 			local stickBonus = 0
 			if part == st.highlightedTarget or part == st.scannedVisualTarget then
-				stickBonus = if lookingDown then 1.55 else 0.18
+				stickBonus = if lookingDown then 0.85 else 0.12
 			end
 
-			-- Prefer nearer vines, but not enough to steal aim from a dead-ahead vine.
+			-- Distance is a tiny tiebreaker only — never steals camera-center aim.
 			local nearScale = math.max(C.TARGET_SCORE_PREFER_NEAR_STUDS, 1)
 			local distancePenalty = (dist / nearScale) * C.TARGET_SCORE_DIST_WEIGHT
 			local nearAimBonus = 0
-			if viewDot >= 0.65 then
+			if viewDot >= 0.82 and screenRadius < 0.18 then
 				nearAimBonus = (1 - math.clamp(dist / nearScale, 0, 1)) * C.TARGET_SCORE_NEAR_AIM_BONUS
 			end
-			-- Quadratic align so dead-ahead clearly beats "kinda ahead but left".
-			local alignPower = align * math.max(align, 0)
+			local alignPower = align * align * math.max(align, 0)
 
 			local score = alignPower * C.TARGET_SCORE_ALIGN
 				+ heightBonus
@@ -2847,18 +2927,20 @@ local function boot(character)
 			end
 		end
 
+		-- Fallback: camera-aim score, never "nearest vine wins".
 		local best = nil
-		local bestDist = math.huge
+		local bestScore = -math.huge
 		local function considerVisual(part: BasePart?)
 			if not part then
 				return
 			end
 			local limit = if st.isReturnSwingTarget(part) then st.getAttachReachForTarget(part) else maxDistance
-			local dist, _ = st.targetDistanceAndPoint(part)
-			if dist and dist >= 2 and dist <= limit and passesVisibleChecks(part, limit) then
-				if dist < bestDist then
+			local dist, point = st.targetDistanceAndPoint(part)
+			if dist and point and dist >= 2 and dist <= limit and passesVisibleChecks(part, limit) then
+				local score = st.attachCandidateScore(part, dist, point, limit)
+				if score > bestScore then
 					best = part
-					bestDist = dist
+					bestScore = score
 				end
 			end
 		end
@@ -2873,10 +2955,10 @@ local function boot(character)
 	function st.attachCandidateScore(target, dist, point, maxDistance)
 		camera = workspace.CurrentCamera or camera
 
-		-- Prefer the vine in front of the camera over a slightly nearer side vine.
+		-- Camera / look-ray first. Nearness is a weak tiebreaker only.
 		local nearScale = math.max(math.min(maxDistance, C.TARGET_SCORE_PREFER_NEAR_STUDS), 1)
 		local nearAlpha = 1 - math.clamp(dist / nearScale, 0, 1)
-		local score = nearAlpha * 0.85
+		local score = nearAlpha * 0.2
 		local toTargetFlat = flatUnit(point - st.hrp.Position)
 
 		if camera then
@@ -2884,19 +2966,32 @@ local function boot(character)
 			local lookFlat = flatUnit(look)
 			if lookFlat and toTargetFlat then
 				local lookDot = toTargetFlat:Dot(lookFlat)
-				score += math.max(0, lookDot) ^ 2 * 2.8
+				if lookDot < C.TARGET_SCORE_BEHIND_REJECT then
+					return -1000
+				end
+				score += math.max(0, lookDot) ^ 3 * 4.5
 			end
 			local toCam = point - camera.CFrame.Position
 			if toCam.Magnitude > 0.5 then
+				local viewDot = toCam.Unit:Dot(look)
+				score += math.max(0, viewDot) ^ 3 * 3.2
 				local along = math.max(toCam:Dot(look), 0.05)
 				local onRay = camera.CFrame.Position + look * along
 				local lateral = (point - onRay).Magnitude
-				score -= (lateral / math.max(dist, 8)) * 2.4
+				score -= (lateral / math.max(dist, 8)) * 4.2
 				local vp, onScreen = camera:WorldToViewportPoint(point)
+				if vp.Z <= 0 then
+					return -1000
+				end
 				if onScreen then
 					local size = camera.ViewportSize
 					local dx = (vp.X - size.X * 0.5) / math.max(size.X, 1)
-					score -= math.abs(dx) * 2.2
+					local dy = (vp.Y - size.Y * 0.5) / math.max(size.Y, 1)
+					local screenR = math.sqrt(dx * dx + dy * dy)
+					score -= math.abs(dx) * 4.0
+					score -= screenR * 2.6
+				else
+					score -= 3.5
 				end
 			end
 		end
@@ -2908,7 +3003,7 @@ local function boot(character)
 		-- Move direction is a weak hint only — never let strafe steal aim from look.
 		if moveFlat and toTargetFlat then
 			local moveAlpha = math.clamp((toTargetFlat:Dot(moveFlat) + 1) * 0.5, 0, 1)
-			score += moveAlpha * 0.18
+			score += moveAlpha * 0.1
 		end
 
 		if target == st.lastReleasedTarget and os.clock() - st.lastReleasedTargetClock < 0.9 then
@@ -2918,12 +3013,12 @@ local function boot(character)
 			end
 		end
 		if target == st.returnSwingTarget then
-			score += 2.4
+			score += 1.6
 		end
 		if target == st.scannedVisualTarget then
-			score += 0.42
+			score += 0.35
 		elseif target == st.highlightedTarget then
-			score += 0.24
+			score += 0.18
 		end
 
 		return score
@@ -2935,8 +3030,10 @@ local function boot(character)
 		end
 		camera = workspace.CurrentCamera or camera
 
-		local lookedTarget = st.pickSwingTarget(false, maxDistance, minLookDot or 0.02, maxScreenRadius or 0.98)
-		if lookedTarget and st.canAttachToSwingTarget(lookedTarget, maxDistance, minLookDot, maxScreenRadius) then
+		local lookDot = minLookDot or C.MIN_LOOK_DOT
+		local screenLimit = maxScreenRadius or C.TARGET_SCREEN_RADIUS_LIMIT
+		local lookedTarget = st.pickSwingTarget(false, maxDistance, lookDot, screenLimit)
+		if lookedTarget and st.canAttachToSwingTarget(lookedTarget, maxDistance, lookDot, screenLimit) then
 			return lookedTarget
 		end
 
@@ -3004,7 +3101,7 @@ local function boot(character)
 		local isReturnGrace = st.isReturnSwingTarget(target) and dist > getSwingRange() * 0.9
 		local look = camera.CFrame.LookVector
 		local lookingDown = look.Y <= C.LOOK_DOWN_PITCH
-		minLookDot = minLookDot or 0.02
+		minLookDot = minLookDot or C.MIN_LOOK_DOT
 		if isReturnGrace then
 			minLookDot = math.min(minLookDot, -0.15)
 		end
@@ -3013,11 +3110,21 @@ local function boot(character)
 			return false
 		end
 
+		local flatDir = flatUnit(attachWorld - st.hrp.Position)
+		local face = flatUnit(look) or flatUnit(st.hrp.CFrame.LookVector)
+		local minFlat = if isReturnGrace then -0.35 else C.TARGET_SCORE_BEHIND_REJECT
+		if flatDir and face and flatDir:Dot(face) < minFlat then
+			return false
+		end
+
+		local vp = camera:WorldToViewportPoint(attachWorld)
+		if vp.Z <= 0 and not isReturnGrace then
+			return false
+		end
+
 		if lookingDown then
-			local flatDir = flatUnit(attachWorld - st.hrp.Position)
-			local face = flatUnit(look) or flatUnit(st.hrp.CFrame.LookVector)
-			local minFlat = if isReturnGrace then -0.35 else C.LOOK_DOWN_FORWARD_DOT
-			if not flatDir or not face or flatDir:Dot(face) < minFlat then
+			local lookDownFlat = if isReturnGrace then minFlat else C.LOOK_DOWN_FORWARD_DOT
+			if not flatDir or not face or flatDir:Dot(face) < lookDownFlat then
 				return false
 			end
 		elseif toCameraTarget.Unit:Dot(look) < minLookDot then
@@ -3075,13 +3182,13 @@ local function boot(character)
 		local flatDir = flatUnit(attachWorld - st.hrp.Position)
 		local faceFlat = flatUnit(look) or flatUnit(st.hrp.CFrame.LookVector)
 		local flatAlign = if flatDir and faceFlat then flatDir:Dot(faceFlat) else nil
-		local minFlat = if isReturnGrace then -0.35 else C.LOOK_DOWN_FORWARD_DOT
+		local minFlat = if isReturnGrace then -0.35 else C.TARGET_SCORE_BEHIND_REJECT
 		if flatAlign ~= nil and flatAlign < minFlat then
 			return false
 		end
 
 		if lookingDown then
-			if flatAlign == nil or flatAlign < minFlat then
+			if flatAlign == nil or flatAlign < (if isReturnGrace then minFlat else C.LOOK_DOWN_FORWARD_DOT) then
 				return false
 			end
 		elseif toCameraTarget.Unit:Dot(look) < minLookDot then
@@ -3092,13 +3199,17 @@ local function boot(character)
 		local vp = camera.ViewportSize
 		local dx = (viewportPoint.X - vp.X * 0.5) / math.max(vp.X, 1)
 		local dy = (viewportPoint.Y - vp.Y * 0.5) / math.max(vp.Y, 1)
-		local horizontallyOnScreen = viewportPoint.Z > 0 and math.abs(dx) <= (if isReturnGrace then 0.92 else 0.62)
+		local maxDx = if isReturnGrace then 0.92 else C.TARGET_MAX_SCREEN_DX
+		local horizontallyOnScreen = viewportPoint.Z > 0 and math.abs(dx) <= maxDx
 
 		if lookingDown then
 			if not horizontallyOnScreen then
 				return false
 			end
 		else
+			if viewportPoint.Z <= 0 then
+				return false
+			end
 			if not onScreen and not isReturnGrace then
 				return false
 			end
@@ -3107,6 +3218,8 @@ local function boot(character)
 					return false
 				end
 			elseif math.sqrt(dx * dx + dy * dy) > maxScreenRadius then
+				return false
+			elseif math.abs(dx) > maxDx then
 				return false
 			end
 		end

@@ -3375,11 +3375,12 @@ local function boot(character)
 		if st.humanoid.FloorMaterial ~= Enum.Material.Air then
 			return true
 		end
-		-- Land meshes often report FloorMaterial=Air while you're clearly standing.
+		-- Short ray so a real jump leaves "floor support" quickly (land mesh Air + long ray
+		-- kept press attach on grounded limits and forced a second jump).
 		local params = RaycastParams.new()
 		params.FilterType = Enum.RaycastFilterType.Exclude
 		params.FilterDescendantsInstances = { st.character }
-		local hit = workspace:Raycast(st.hrp.Position, Vector3.new(0, -5.25, 0), params)
+		local hit = workspace:Raycast(st.hrp.Position, Vector3.new(0, -3.15, 0), params)
 		return hit ~= nil
 	end
 
@@ -4885,7 +4886,7 @@ local function boot(character)
 				st.mobileJumpHeld = true
 				st.mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
 				st.mobileRealJumpPressUntil = now + C.MOBILE_REAL_JUMP_PRESS_WINDOW
-				st.swingPressIntentUntil = now + 0.28
+				st.swingPressIntentUntil = now + 0.45
 				if not st.isHoldToSwingMode() and st.isSwinging then
 					st.tryReleaseSwingFromJump()
 				end
@@ -5135,9 +5136,15 @@ local function boot(character)
 
 		-- Live pick on press — don't depend only on the last visual scan tick.
 		local target = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
-		if not target and st.scannedVisualTarget and st.scannedVisualCanSwing then
+		-- Ground scan canSwing is stricter than press limits — re-check the highlighted vine.
+		if not target and st.scannedVisualTarget then
 			if st.canAttachToSwingTarget(st.scannedVisualTarget, maxDistance, lookDot, screenLimit) then
 				target = st.scannedVisualTarget
+			end
+		end
+		if not target and st.highlightedTarget then
+			if st.canAttachToSwingTarget(st.highlightedTarget, maxDistance, lookDot, screenLimit) then
+				target = st.highlightedTarget
 			end
 		end
 		if not target then
@@ -5191,7 +5198,7 @@ local function boot(character)
 				return
 			end
 			st.spaceHeld = true
-			st.swingPressIntentUntil = os.clock() + 0.28
+			st.swingPressIntentUntil = os.clock() + 0.45
 			st.tryAttach()
 		elseif
 			input.UserInputType == Enum.UserInputType.Gamepad1
@@ -5207,7 +5214,7 @@ local function boot(character)
 				return
 			end
 			st.gamepadHeld = true
-			st.swingPressIntentUntil = os.clock() + 0.28
+			st.swingPressIntentUntil = os.clock() + 0.45
 			st.tryAttach()
 		end
 	end))
@@ -5270,13 +5277,27 @@ local function boot(character)
 			return
 		end
 
-		-- If a vine is latchable (live pick OR ready highlight), steal this press.
+		-- If a vine is latchable on this press, steal the hop (land OR air).
 		local maxDistance, lookDot, screenLimit = st.getSwingPressAttachLimits()
 		local liveTarget = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
-		local readyVisual = st.scannedVisualCanSwing == true and st.scannedVisualTarget ~= nil
-		if liveTarget or readyVisual then
+		local pressReady = false
+		if not liveTarget and st.scannedVisualTarget then
+			if st.canAttachToSwingTarget(st.scannedVisualTarget, maxDistance, lookDot, screenLimit) then
+				liveTarget = st.scannedVisualTarget
+				pressReady = true
+			end
+		end
+		if not liveTarget and st.highlightedTarget then
+			if st.canAttachToSwingTarget(st.highlightedTarget, maxDistance, lookDot, screenLimit) then
+				liveTarget = st.highlightedTarget
+				pressReady = true
+			end
+		end
+		-- Vine is on-screen from scan — keep trying even if this frame's aim check is tight.
+		local scannedNear = st.scannedVisualTarget ~= nil
+		if liveTarget or pressReady or scannedNear then
 			st.humanoid.Jump = false
-			st.swingPressIntentUntil = now + 0.28
+			st.swingPressIntentUntil = now + 0.45
 		elseif touchOnly and not st.isAirborneForSwing() then
 			-- Mobile ground with no vine: allow a real jump.
 			return
@@ -6067,6 +6088,10 @@ local function boot(character)
 						C.TARGET_MAX_CANDIDATES_PER_SCAN = C.TARGET_MAX_CANDIDATES_GROUNDED
 					end
 					local scanDistance, scanLookDot, scanScreenLimit = st.getSwingAttachLimits()
+					-- Ground UI must match press latch (air lookDot) or land shows red and needs a second jump.
+					if scanMode == "ground" then
+						scanDistance, scanLookDot, scanScreenLimit = st.getSwingPressAttachLimits()
+					end
 					if not scanDistance then
 						scanDistance, scanLookDot, scanScreenLimit = 0, nil, nil
 					end

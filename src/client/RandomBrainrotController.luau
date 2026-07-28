@@ -108,7 +108,7 @@ local _CONFIG = {
 	_passedTime = 0,
 
 	productId = 3604806744,
-	textTemplate = " AMOUNT",
+	textTemplate = "AMOUNT",
 
 	awaitInterval = 8,
 }

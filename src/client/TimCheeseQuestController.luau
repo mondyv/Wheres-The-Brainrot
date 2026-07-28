@@ -735,6 +735,18 @@ end
 local function ensureQuestHud(): GuiObject
 	if questPanel and questPanel.Parent then
 		if questPanel:GetAttribute("StudTicket") == true then
+			if not questPanel:FindFirstChild("HudMatchScale") then
+				local hudMatchScale = Instance.new("UIScale")
+				hudMatchScale.Name = "HudMatchScale"
+				hudMatchScale.Scale = 1
+				hudMatchScale.Parent = questPanel
+			end
+			if not questPanel:FindFirstChild("MaxSize") then
+				local sizeCap = Instance.new("UISizeConstraint")
+				sizeCap.Name = "MaxSize"
+				sizeCap.MaxSize = Vector2.new(280, 220)
+				sizeCap.Parent = questPanel
+			end
 			return questPanel
 		end
 		questPanel:Destroy()
@@ -768,6 +780,16 @@ local function ensureQuestHud(): GuiObject
 	ticketScale.Name = "PanelScale"
 	ticketScale.Scale = 1
 	ticketScale.Parent = ticket
+
+	local hudMatchScale = Instance.new("UIScale")
+	hudMatchScale.Name = "HudMatchScale"
+	hudMatchScale.Scale = 1
+	hudMatchScale.Parent = ticket
+
+	local sizeCap = Instance.new("UISizeConstraint")
+	sizeCap.Name = "MaxSize"
+	sizeCap.MaxSize = Vector2.new(280, 220)
+	sizeCap.Parent = ticket
 
 	local floatWrap = Instance.new("Frame")
 	floatWrap.Name = "FloatWrap"
@@ -973,6 +995,107 @@ local function resolveRandomBrainrotHud(): GuiObject?
 	return nil
 end
 
+local function computeQuestHudMetrics(vw: number, vh: number, mobile: boolean): (boolean, boolean, number, number)
+	local aspect = vw / math.max(vh, 1)
+	local compact = vh < 560 or vw < 780 or aspect > 2.0
+	local tiny = vh < 440 or vw < 540
+
+	local widthFrac = if tiny then 0.46 elseif compact then 0.28 elseif mobile or vw < 700 then 0.48 else 0.22
+	local screenW = math.floor(vw * widthFrac)
+	local maxW = if tiny then 190 elseif compact then 230 elseif mobile or vw < 700 then 240 else 270
+	local minW = if tiny then 148 else 164
+	screenW = math.clamp(screenW, minW, maxW)
+
+	local matchScale = 1.0
+	if tiny then
+		matchScale = 0.7
+	elseif compact then
+		matchScale = math.clamp(vh / 620, 0.66, 0.8)
+	elseif mobile or vw < 700 then
+		matchScale = TutorialConfig.PANEL_MOBILE_SCALE
+	else
+		matchScale = 0.86
+	end
+
+	local maxPanelH = vh * (if compact then 0.24 else 0.3)
+	local estH = 150 * matchScale
+	if estH > maxPanelH then
+		matchScale *= maxPanelH / estH
+	end
+	matchScale = math.clamp(matchScale, 0.62, 1)
+
+	return compact, tiny, screenW, matchScale
+end
+
+local function applyQuestHudDensity(panel: GuiObject, compact: boolean, tiny: boolean)
+	local header = panel:FindFirstChild("Header", true)
+	local bang = panel:FindFirstChild("Exclaim", true)
+	local stamp = panel:FindFirstChild("Stamp", true)
+	local title = panel:FindFirstChild("Title", true)
+	local body = panel:FindFirstChild("Body", true)
+	local progress = panel:FindFirstChild("Progress", true)
+	local reward = panel:FindFirstChild("Reward", true)
+	local barBg = panel:FindFirstChild("BarBg", true)
+	local floatPad = panel:FindFirstChild("FloatWrap", true)
+		and (panel:FindFirstChild("FloatWrap", true) :: Instance):FindFirstChildOfClass("UIPadding")
+	local innerPad = panel:FindFirstChild("Inner", true)
+		and (panel:FindFirstChild("Inner", true) :: Instance):FindFirstChildOfClass("UIPadding")
+
+	local stampSize = if tiny then 10 elseif compact then 11 else 12
+	local titleSize = if tiny then 13 elseif compact then 14 else 16
+	local bodySize = if tiny then 11 elseif compact then 12 else 13
+	local progressSize = if tiny then 11 elseif compact then 12 else 13
+	local headerH = if tiny then 34 elseif compact then 36 else 40
+	local bangSize = if tiny then 26 elseif compact then 30 else 36
+	local outerPad = if tiny then 5 elseif compact then 6 else 8
+	local contentPad = if tiny then 6 elseif compact then 8 else 10
+	local rewardH = if tiny then 20 elseif compact then 22 else 26
+	local barH = if tiny then 8 elseif compact then 9 else 10
+
+	if header and header:IsA("GuiObject") then
+		header.Size = UDim2.new(1, 0, 0, headerH)
+	end
+	if bang and bang:IsA("ImageLabel") then
+		bang.Size = UDim2.fromOffset(bangSize, bangSize)
+	end
+	if stamp and stamp:IsA("TextLabel") then
+		stamp.TextSize = stampSize
+		stamp.Size = UDim2.new(1, -(bangSize + 6), 0, stampSize + 2)
+	end
+	if title and title:IsA("TextLabel") then
+		title.TextSize = titleSize
+		title.Position = UDim2.fromOffset(bangSize + 6, stampSize)
+		title.Size = UDim2.new(1, -(bangSize + 6), 0, titleSize + 4)
+		UiFonts.ensureTextSizeConstraint(title, titleSize, math.max(10, titleSize - 3))
+	end
+	if body and body:IsA("TextLabel") then
+		body.TextSize = bodySize
+		UiFonts.ensureTextSizeConstraint(body, bodySize, math.max(9, bodySize - 3))
+	end
+	if progress and progress:IsA("TextLabel") then
+		progress.TextSize = progressSize
+	end
+	if reward and reward:IsA("TextLabel") then
+		reward.TextSize = progressSize
+		reward.Size = UDim2.new(1, 0, 0, rewardH)
+	end
+	if barBg and barBg:IsA("Frame") then
+		barBg.Size = UDim2.new(1, 0, 0, barH)
+	end
+	if floatPad then
+		floatPad.PaddingTop = UDim.new(0, outerPad)
+		floatPad.PaddingBottom = UDim.new(0, outerPad)
+		floatPad.PaddingLeft = UDim.new(0, outerPad)
+		floatPad.PaddingRight = UDim.new(0, outerPad)
+	end
+	if innerPad then
+		innerPad.PaddingTop = UDim.new(0, contentPad)
+		innerPad.PaddingBottom = UDim.new(0, contentPad)
+		innerPad.PaddingLeft = UDim.new(0, contentPad)
+		innerPad.PaddingRight = UDim.new(0, contentPad)
+	end
+end
+
 local function layoutQuestHud()
 	local panel = questPanel
 	if not panel then
@@ -991,19 +1114,10 @@ local function layoutQuestHud()
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1280
 	local vh = if cam then cam.ViewportSize.Y else 720
+	local compact, tiny, screenW, matchScale = computeQuestHudMetrics(vw, vh, mobile)
 	local rightPad = TutorialConfig.PANEL_RIGHT_PAD
 	local topPad = TutorialConfig.PANEL_TOP_PAD + 6
 	local anchorY = 0
-	local screenW: number
-
-	if mobile or vw < 700 then
-		local maxW = math.floor(vw * TutorialConfig.PANEL_MOBILE_MAX_WIDTH_FRAC)
-		screenW = math.clamp(maxW, TutorialConfig.PANEL_MOBILE_MIN_WIDTH, TutorialConfig.PANEL_MOBILE_MAX_WIDTH)
-	else
-		local maxW = math.floor(vw * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
-		maxW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
-		screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
-	end
 
 	-- Sit just above Random Brainrot on mobile + PC when the button is laid out.
 	local rb = resolveRandomBrainrotHud()
@@ -1014,15 +1128,27 @@ local function layoutQuestHud()
 		local rbRight = rb.AbsolutePosition.X + rb.AbsoluteSize.X
 		rightPad = math.max(8, math.floor(hostRight - rbRight))
 		anchorY = 1
-		topPad = math.max(14, math.floor(rbTop - TutorialConfig.PANEL_MOBILE_GAP_ABOVE_RIGHT))
+		topPad = math.max(10, math.floor(rbTop - TutorialConfig.PANEL_MOBILE_GAP_ABOVE_RIGHT))
 	elseif mobile or vw < 700 then
 		rightPad = 8
 		anchorY = 1
-		topPad = math.clamp(math.floor(vh * 0.58), 200, 420)
+		topPad = math.clamp(math.floor(vh * 0.62), 160, 360)
 	else
 		anchorY = 1
 		rightPad = TutorialConfig.PANEL_RIGHT_PAD
-		topPad = math.clamp(math.floor(vh * 0.58), 220, 440)
+		topPad = math.clamp(math.floor(vh * 0.62), 180, 380)
+	end
+
+	applyQuestHudDensity(panel, compact, tiny)
+
+	local sizeCap = panel:FindFirstChild("MaxSize")
+	if sizeCap and sizeCap:IsA("UISizeConstraint") then
+		local maxH = math.floor(vh * (if compact then 0.26 else 0.32))
+		sizeCap.MaxSize = Vector2.new(screenW, maxH)
+	end
+	local hudScale = panel:FindFirstChild("HudMatchScale")
+	if hudScale and hudScale:IsA("UIScale") then
+		hudScale.Scale = matchScale
 	end
 
 	questHudBaseRightPad = rightPad
@@ -1036,6 +1162,26 @@ local function layoutQuestHud()
 		panel.Position = UDim2.new(1, -rightPad, 0, topPad)
 	end
 	panel.ZIndex = 10
+
+	-- If bottom-anchored, nudge up when scaled height would run off the top.
+	if anchorY == 1 and not questHoverFlying then
+		task.defer(function()
+			if not panel.Parent or questHoverFlying then
+				return
+			end
+			local absH = panel.AbsoluteSize.Y
+			if absH <= 0 then
+				return
+			end
+			local minTop = math.floor(vh * 0.08)
+			local bottomY = topPad
+			local topY = bottomY - absH
+			if topY < minTop then
+				questHudBaseTop = minTop + absH
+				panel.Position = UDim2.new(1, -questHudBaseRightPad, 0, questHudBaseTop)
+			end
+		end)
+	end
 end
 
 local function hudSlotPosition(): UDim2

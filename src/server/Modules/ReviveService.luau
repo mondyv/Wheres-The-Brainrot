@@ -1,9 +1,10 @@
 -- [ACTIVE] ReviveService
 --[[
 	Revive flow (server module):
+	• CharacterAutoLoads = false so Roblox's RespawnTime never holds decline/revive.
 	• Tracks last good land while alive (death Y/ragdoll can miss hitboxes).
 	• On death: store land + spawn CFrame, prompt client with that land's product.
-	• Decline / timeout: clear pending and LoadCharacter immediately (do not zero Health / RespawnTime).
+	• Decline / timeout: clear pending and LoadCharacter immediately.
 	• Dev product receipt: LoadCharacter / teleport onto that land's Spawn.
 --]]
 
@@ -24,6 +25,8 @@ local lastGoodLand: { [Player]: number } = {}
 local lastGoodPos: { [Player]: Vector3 } = {}
 local landTrackThreads: { [Player]: thread } = {}
 local fulfillingByPlayer: { [Player]: boolean } = {}
+local declineTimeoutThreads: { [Player]: thread } = {}
+local loadingCharacter: { [Player]: boolean } = {}
 
 local revivePromptRE: RemoteEvent
 local reviveDeclinedRE: RemoteEvent
@@ -52,8 +55,42 @@ local function ensureRemoteEvent(name: string): RemoteEvent
 	return re :: RemoteEvent
 end
 
+local function cancelDeclineTimeout(player: Player)
+	local th = declineTimeoutThreads[player]
+	if th then
+		task.cancel(th)
+		declineTimeoutThreads[player] = nil
+	end
+end
+
 local function clearPending(player: Player)
+	cancelDeclineTimeout(player)
 	pendingByPlayer[player] = nil
+end
+
+local function forceLoadCharacter(player: Player)
+	if not player.Parent or loadingCharacter[player] then
+		return
+	end
+	loadingCharacter[player] = true
+	task.spawn(function()
+		local ok, err = pcall(function()
+			player:LoadCharacter()
+		end)
+		loadingCharacter[player] = nil
+		if not ok then
+			warn("[ReviveService] LoadCharacter failed:", err)
+			task.wait(0.2)
+			if player.Parent then
+				local ok2, err2 = pcall(function()
+					player:LoadCharacter()
+				end)
+				if not ok2 then
+					warn("[ReviveService] LoadCharacter retry failed:", err2)
+				end
+			end
+		end
+	end)
 end
 
 local function clearReviveSpawnAttrs(player: Player)
@@ -146,24 +183,8 @@ local function finishDecline(player: Player)
 		return
 	end
 	-- Clear pending first so a mid-decline Died cannot open a second revive.
-	-- LoadCharacter only — never Health=0 (that re-fires Died and double-prompts).
-	if pendingByPlayer[player] then
-		clearPending(player)
-	end
-
-	local ok, err = pcall(function()
-		player:LoadCharacter()
-	end)
-	if not ok then
-		warn("[ReviveService] Decline LoadCharacter failed:", err)
-		task.defer(function()
-			if player.Parent then
-				pcall(function()
-					player:LoadCharacter()
-				end)
-			end
-		end)
-	end
+	clearPending(player)
+	forceLoadCharacter(player)
 end
 
 local function applyTeleportWithRetries(player: Player, character: Model, spawnCf: CFrame)
@@ -230,7 +251,7 @@ local function fulfillRevivePurchase(player: Player): boolean
 		end)
 	end)
 
-	player:LoadCharacter()
+	forceLoadCharacter(player)
 	reviveCompleteRE:FireClient(player)
 
 	task.delay(12, function()
@@ -295,6 +316,15 @@ local function onHumanoidDied(player: Player, character: Model)
 	}
 
 	revivePromptRE:FireClient(player, tier.land, tier.productId, ReviveConfig.COUNTDOWN_SECONDS)
+
+	-- Server-side safety: if the client never declines, still respawn after countdown.
+	cancelDeclineTimeout(player)
+	declineTimeoutThreads[player] = task.delay(ReviveConfig.COUNTDOWN_SECONDS + 0.5, function()
+		declineTimeoutThreads[player] = nil
+		if pendingByPlayer[player] then
+			finishDecline(player)
+		end
+	end)
 end
 
 local function hookCharacter(player: Player, character: Model)
@@ -384,6 +414,9 @@ function ReviveService.processReceipt(receiptInfo): Enum.ProductPurchaseDecision
 end
 
 function ReviveService.init()
+	-- Own respawns so decline/purchase isn't stuck behind Roblox RespawnTime (~5s).
+	Players.CharacterAutoLoads = false
+
 	revivePromptRE = ensureRemoteEvent("RevivePrompt")
 	reviveDeclinedRE = ensureRemoteEvent("ReviveDeclined")
 	reviveCompleteRE = ensureRemoteEvent("ReviveComplete")
@@ -392,12 +425,20 @@ function ReviveService.init()
 		finishDecline(player)
 	end)
 
-	Players.PlayerAdded:Connect(hookPlayer)
+	local function ensurePlayer(player: Player)
+		hookPlayer(player)
+		if not player.Character then
+			forceLoadCharacter(player)
+		end
+	end
+
+	Players.PlayerAdded:Connect(ensurePlayer)
 	Players.PlayerRemoving:Connect(function(player)
 		stopLandTracking(player)
 		clearPending(player)
 		clearReviveSpawnAttrs(player)
 		fulfillingByPlayer[player] = nil
+		loadingCharacter[player] = nil
 		lastGoodLand[player] = nil
 		lastGoodPos[player] = nil
 		local conn = charAddedConns[player]
@@ -408,7 +449,7 @@ function ReviveService.init()
 	end)
 
 	for _, player in Players:GetPlayers() do
-		hookPlayer(player)
+		ensurePlayer(player)
 	end
 end
 

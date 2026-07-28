@@ -2231,9 +2231,9 @@ function M.openTimDialogue()
 			durationSec = 2.8,
 			voicePitchMin = 0.92,
 			voicePitchMax = 1.12,
-			textSize = 22,
-			billboardWidth = 360,
-			billboardHeight = 88,
+			textSize = 18,
+			billboardWidth = 320,
+			billboardHeight = 72,
 		})
 		task.delay(3.4, function()
 			if not dialogueBusy and not introPlaying and not StandDialogueCutscene.isActive() then
@@ -2412,7 +2412,7 @@ local function tickWalkby()
 	lastWalkbyAt = os.clock()
 	local lines = TimCheeseQuestConfig.WALKBY_LINES
 	local msg = lines[math.random(1, #lines)]
-	StandDialogueCutscene.showWorldSpeech(tim, msg, { durationSec = 2.6, textSize = 20, billboardWidth = 340, billboardHeight = 80 })
+	StandDialogueCutscene.showWorldSpeech(tim, msg, { durationSec = 2.6, textSize = 18, billboardWidth = 320, billboardHeight = 72 })
 	lockTalkPrompt(2.8)
 end
 

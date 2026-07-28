@@ -1490,13 +1490,18 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 	local bbW = if opts and typeof(opts.billboardWidth) == "number" then opts.billboardWidth else 320
 	local bbH = if opts and typeof(opts.billboardHeight) == "number" then opts.billboardHeight else 72
 	local textSize = if opts and typeof(opts.textSize) == "number" then opts.textSize else 18
+	-- Stud scale (not Offset pixels): Offset stays fixed on-screen and looks huge when you walk away.
+	local studsW = math.clamp(bbW / 40, 6, 11)
+	local studsH = math.clamp(bbH / 40, 1.4, 2.6)
 
 	local bb = Instance.new("BillboardGui")
 	bb.Name = WORLD_SPEECH_NAME
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	bb.MaxDistance = WORLD_MAX_DISTANCE
-	bb.Size = UDim2.fromOffset(bbW, bbH)
+	bb.Size = UDim2.fromScale(studsW, studsH)
+	-- Cap close-up blowup only; keep shrinking with distance so walking away doesn't balloon text.
+	bb.DistanceLowerLimit = 8
 	bb.StudsOffset = Vector3.new(0, 2.8, 0)
 	bb.Adornee = adornee
 	bb.Parent = model
@@ -1510,11 +1515,11 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 	label.TextStrokeColor3 = Color3.new(0, 0, 0)
 	label.TextStrokeTransparency = 0.15
 	label.TextWrapped = true
-	label.TextScaled = false
+	label.TextScaled = true
 	label.TextSize = textSize
 	label.TextTransparency = 0
 	UiFonts.applyBody(label)
-	UiFonts.ensureTextSizeConstraint(label, textSize, math.max(12, textSize - 6))
+	UiFonts.ensureTextSizeConstraint(label, textSize, math.max(12, textSize - 4))
 	label.Parent = bb
 
 	local pad = Instance.new("UIPadding")

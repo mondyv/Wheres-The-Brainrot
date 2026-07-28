@@ -58,6 +58,14 @@ local panelScale: UIScale? = nil
 local hudMatchScale: UIScale? = nil
 local worldArrowBb: BillboardGui? = nil
 local worldArrowImg: ImageLabel? = nil
+local guideFolder: Folder? = nil
+local guideBeam: Beam? = nil
+local guideAttachPlayer: Attachment? = nil
+local guideAttachGoal: Attachment? = nil
+local guideGoalPart: BasePart? = nil
+local guideGoalOffset = Vector3.zero
+local guideFollowConn: RBXScriptConnection? = nil
+local guideAdorneePart: BasePart? = nil
 local arrowAnimConn: RBXScriptConnection? = nil
 local worldHighlight: Highlight? = nil
 local worldOutlineProxyModel: Model? = nil
@@ -605,6 +613,23 @@ local function stopLayoutSync()
 	end
 end
 
+local function clearGuideTrail()
+	if guideFollowConn then
+		guideFollowConn:Disconnect()
+		guideFollowConn = nil
+	end
+	if guideFolder then
+		guideFolder:Destroy()
+		guideFolder = nil
+	end
+	guideBeam = nil
+	guideAttachPlayer = nil
+	guideAttachGoal = nil
+	guideGoalPart = nil
+	guideAdorneePart = nil
+	guideGoalOffset = Vector3.zero
+end
+
 local function clearWorldArrowImpl()
 	if arrowAnimConn then
 		arrowAnimConn:Disconnect()
@@ -615,8 +640,127 @@ local function clearWorldArrowImpl()
 		worldArrowBb = nil
 		worldArrowImg = nil
 	end
+	clearGuideTrail()
 end
 clearWorldArrow = clearWorldArrowImpl
+
+local function worldPosForGuide(part: BasePart, offset: Vector3): Vector3
+	return part.Position + offset
+end
+
+local function ensureGuideTrail(): boolean
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return false
+	end
+
+	if guideFolder and guideFolder.Parent and guideBeam and guideAttachPlayer and guideAttachGoal and guideGoalPart then
+		if guideAttachPlayer.Parent ~= hrp then
+			guideAttachPlayer.Parent = hrp
+			guideAttachPlayer.Position = Vector3.new(0, 1.2, 0)
+		end
+		return true
+	end
+
+	clearGuideTrail()
+
+	local folder = Instance.new("Folder")
+	folder.Name = "TutorialGuideTrail"
+	folder.Parent = Workspace
+
+	local a0 = Instance.new("Attachment")
+	a0.Name = "TutorialGuidePlayer"
+	a0.Position = Vector3.new(0, 1.2, 0)
+	a0.Parent = hrp
+
+	local goal = Instance.new("Part")
+	goal.Name = "TutorialGuideGoal"
+	goal.Anchored = true
+	goal.CanCollide = false
+	goal.CanQuery = false
+	goal.CanTouch = false
+	goal.Transparency = 1
+	goal.Size = Vector3.new(0.2, 0.2, 0.2)
+	goal.CastShadow = false
+	goal.Parent = folder
+
+	local a1 = Instance.new("Attachment")
+	a1.Name = "TutorialGuideGoalAttach"
+	a1.Parent = goal
+
+	local beam = Instance.new("Beam")
+	beam.Name = "GuideBeam"
+	beam.Attachment0 = a0
+	beam.Attachment1 = a1
+	beam.FaceCamera = true
+	beam.LightEmission = 0.65
+	beam.LightInfluence = 0
+	beam.Texture = TutorialConfig.GUIDE_BEAM_TEXTURE
+	beam.TextureLength = 4
+	beam.TextureMode = Enum.TextureMode.Wrap
+	beam.TextureSpeed = 2.4
+	beam.Width0 = TutorialConfig.GUIDE_BEAM_WIDTH0
+	beam.Width1 = TutorialConfig.GUIDE_BEAM_WIDTH1
+	beam.Segments = 24
+	beam.Color = ColorSequence.new(TutorialConfig.GUIDE_BEAM_COLOR)
+	beam.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.15),
+		NumberSequenceKeypoint.new(0.85, 0.35),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	beam.Parent = folder
+
+	guideFolder = folder
+	guideBeam = beam
+	guideAttachPlayer = a0
+	guideAttachGoal = a1
+	guideGoalPart = goal
+	return true
+end
+
+local function setGuideTrailToPart(part: BasePart?, offset: Vector3?)
+	if chromeSuppressed or isCutsceneBusy() or not part or not part.Parent then
+		clearGuideTrail()
+		return
+	end
+	if not ensureGuideTrail() then
+		return
+	end
+	guideAdorneePart = part
+	guideGoalOffset = offset or Vector3.zero
+	local goal = guideGoalPart
+	local beam = guideBeam
+	if not goal or not beam then
+		return
+	end
+	goal.CFrame = CFrame.new(worldPosForGuide(part, guideGoalOffset))
+
+	if guideFollowConn then
+		guideFollowConn:Disconnect()
+		guideFollowConn = nil
+	end
+	guideFollowConn = RunService.Heartbeat:Connect(function()
+		if not active or chromeSuppressed or not guideGoalPart or not guideBeam then
+			return
+		end
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not hrp or not hrp:IsA("BasePart") then
+			guideBeam.Enabled = false
+			return
+		end
+		local adornee = guideAdorneePart
+		if not adornee or not adornee.Parent then
+			guideBeam.Enabled = false
+			return
+		end
+		local targetPos = worldPosForGuide(adornee, guideGoalOffset)
+		guideGoalPart.CFrame = CFrame.new(targetPos)
+		local dist = (hrp.Position - targetPos).Magnitude
+		guideBeam.Enabled = dist >= TutorialConfig.GUIDE_BEAM_HIDE_DIST
+	end)
+end
 
 local function clearWorldHighlight()
 	if worldHighlight then
@@ -1170,6 +1314,7 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 
 	worldArrowBb = bb
 	worldArrowImg = img
+	setGuideTrailToPart(part, baseOffset)
 
 	-- Continuous sine bob — no tween loop seams / pause between cycles.
 	local phase = 0

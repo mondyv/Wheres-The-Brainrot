@@ -32,6 +32,12 @@ M.GO_TO_BASE_DIST = 48
 -- 0 = unlimited (must stay visible across the whole spawn safezone).
 M.WORLD_ARROW_MAX_DISTANCE = 0
 M.SURFACE_CLICK_MAX_DISTANCE = 0
+-- Body → objective guide beam (flowing chevrons).
+M.GUIDE_BEAM_TEXTURE = "rbxassetid://446111271"
+M.GUIDE_BEAM_WIDTH0 = 0.85
+M.GUIDE_BEAM_WIDTH1 = 0.45
+M.GUIDE_BEAM_COLOR = Color3.fromRGB(255, 214, 74)
+M.GUIDE_BEAM_HIDE_DIST = 14
 M.UI_CLICK_SIZE = 34
 M.UI_CLICK_SIZE_SURFACE = 30
 M.UI_CLICK_SIZE_SURFACE_MOBILE = 28

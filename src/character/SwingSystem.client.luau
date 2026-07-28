@@ -149,9 +149,9 @@ C.ROPE_HANG_PULL_WINCH_SPEED = 58
 C.ROPE_HANG_PULL_MAX_UP_SPEED = 88
 C.ROPE_SAFE_MAX_MIN_LENGTH = 24
 C.ROPE_REEL_ALWAYS_ALPHA = 0.76
-C.MIN_LOOK_DOT = 0.48
+C.MIN_LOOK_DOT = 0.4
 C.LOOK_DOWN_PITCH = -0.22
-C.LOOK_DOWN_FORWARD_DOT = 0.38
+C.LOOK_DOWN_FORWARD_DOT = 0.28
 C.MIN_TARGET_HEIGHT_OFFSET = -8
 -- Aim scoring: camera/crosshair first. Distance is only a tiny tiebreaker.
 C.TARGET_SCORE_ALIGN = 4.2
@@ -162,13 +162,13 @@ C.TARGET_SCORE_PREFER_NEAR_STUDS = 110
 C.TARGET_SCORE_NEAR_AIM_BONUS = 0.22
 C.TARGET_SCORE_LATERAL = 5.4
 C.TARGET_SCORE_LATERAL_WORLD = 3.8
-C.TARGET_SCORE_BEHIND_REJECT = 0.35
+C.TARGET_SCORE_BEHIND_REJECT = 0.22
 C.TARGET_CAMERA_RAY_BONUS = 12
-C.AIRBORNE_TARGET_LOOK_DOT = 0.42
-C.GROUNDED_TARGET_LOOK_DOT = 0.48
-C.TARGET_SCREEN_RADIUS_LIMIT = 0.52
-C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.46
-C.TARGET_MAX_SCREEN_DX = 0.42
+C.AIRBORNE_TARGET_LOOK_DOT = 0.32
+C.GROUNDED_TARGET_LOOK_DOT = 0.38
+C.TARGET_SCREEN_RADIUS_LIMIT = 0.68
+C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.6
+C.TARGET_MAX_SCREEN_DX = 0.55
 C.TARGET_SCAN_INTERVAL = 0.12
 C.TARGET_SCAN_INTERVAL_GROUNDED = 0.28
 C.TARGET_CANDIDATE_EXTRA_RADIUS = 4
@@ -1749,6 +1749,7 @@ local function boot(character)
 		lastTargetScanMode = "none",
 		scannedVisualTarget = nil,
 		scannedVisualCanSwing = false,
+		lastCameraRayTarget = nil,
 		currentTarget = nil,
 		lastReleasedTarget = nil,
 		lastReleasedTargetClock = -1e9,
@@ -2664,6 +2665,7 @@ local function boot(character)
 
 		-- Crosshair vine always wins when the look-ray hits one (no laggy multi-ray spam).
 		local rayHit = st.pickCameraLookSwingTarget(reach)
+		st.lastCameraRayTarget = rayHit
 		if rayHit then
 			local attachWorld = st.closestAttachWorldOnPart(rayHit)
 			if not requireLineOfSight or st.hasLineOfSight(rayHit, attachWorld) then
@@ -3166,6 +3168,7 @@ local function boot(character)
 		end
 
 		local isReturnGrace = st.isReturnSwingTarget(target) and dist > baseReach * 0.9
+		local isCameraRayHit = target == st.lastCameraRayTarget
 		local look = camera.CFrame.LookVector
 		local lookingDown = look.Y <= C.LOOK_DOWN_PITCH
 		local minLookDot = minLookDotOverride or C.MIN_LOOK_DOT
@@ -3185,6 +3188,14 @@ local function boot(character)
 		local minFlat = if isReturnGrace then -0.35 else C.TARGET_SCORE_BEHIND_REJECT
 		if flatAlign ~= nil and flatAlign < minFlat then
 			return false
+		end
+
+		-- Crosshair ray already proved this vine is under the look — don't fail on screen edge.
+		if isCameraRayHit then
+			if requireLineOfSight and not st.hasLineOfSight(target, attachWorld) then
+				return false
+			end
+			return true
 		end
 
 		if lookingDown then
@@ -3848,9 +3859,11 @@ local function boot(character)
 				st.updatePreview(target)
 				player:SetAttribute("SwingPromptReady", true)
 			else
-				if st.lastMarkerText ~= "SWING BLOCKED" then
-					st.markerLabel.Text = "SWING BLOCKED"
-					st.lastMarkerText = "SWING BLOCKED"
+				-- Reserve "SWING BLOCKED" for the safezone. Outside = aim hint, not a false ban.
+				local text = if st.isHrpInSafezone() then "SWING BLOCKED" else "AIM AT VINE"
+				if st.lastMarkerText ~= text then
+					st.markerLabel.Text = text
+					st.lastMarkerText = text
 				end
 				st.updatePreview(target)
 				player:SetAttribute("SwingPromptReady", false)

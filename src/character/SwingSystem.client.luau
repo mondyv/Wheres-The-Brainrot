@@ -153,22 +153,24 @@ C.MIN_LOOK_DOT = 0.3
 C.LOOK_DOWN_PITCH = -0.22
 C.LOOK_DOWN_FORWARD_DOT = 0.12
 C.MIN_TARGET_HEIGHT_OFFSET = -8
--- Aim scoring: prefer crosshair vine, but stay loose enough for grounded latch.
-C.TARGET_SCORE_ALIGN = 3.2
-C.TARGET_SCORE_CENTER = 3.4
-C.TARGET_SCORE_CENTER_LOOK_DOWN = 2.0
-C.TARGET_SCORE_DIST_WEIGHT = 0.9
-C.TARGET_SCORE_PREFER_NEAR_STUDS = 95
-C.TARGET_SCORE_NEAR_AIM_BONUS = 0.9
-C.TARGET_SCORE_LATERAL = 3.4
-C.TARGET_SCORE_LATERAL_WORLD = 2.6
-C.TARGET_SCORE_BEHIND_REJECT = 0.08
-C.TARGET_CAMERA_RAY_BONUS = 10
+-- Aim scoring: crosshair / screen-center dominates. Distance is a tiny tiebreaker.
+C.TARGET_SCORE_ALIGN = 4.8
+C.TARGET_SCORE_CENTER = 6.5
+C.TARGET_SCORE_CENTER_LOOK_DOWN = 3.2
+C.TARGET_SCORE_DIST_WEIGHT = 0.12
+C.TARGET_SCORE_PREFER_NEAR_STUDS = 110
+C.TARGET_SCORE_NEAR_AIM_BONUS = 0.15
+C.TARGET_SCORE_LATERAL = 8.5
+C.TARGET_SCORE_LATERAL_WORLD = 5.5
+C.TARGET_SCORE_BEHIND_REJECT = 0.05
+C.TARGET_CAMERA_RAY_BONUS = 25
+C.TARGET_SCREEN_LOCK_RADIUS = 0.22
+C.TARGET_SCREEN_LOCK_BONUS = 30
 C.AIRBORNE_TARGET_LOOK_DOT = 0.08
 C.GROUNDED_TARGET_LOOK_DOT = 0.12
-C.TARGET_SCREEN_RADIUS_LIMIT = 0.85
-C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.78
-C.TARGET_MAX_SCREEN_DX = 0.62
+C.TARGET_SCREEN_RADIUS_LIMIT = 0.72
+C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.65
+C.TARGET_MAX_SCREEN_DX = 0.48
 C.TARGET_SCAN_INTERVAL = 0.12
 C.TARGET_SCAN_INTERVAL_GROUNDED = 0.14
 C.TARGET_CANDIDATE_EXTRA_RADIUS = 4
@@ -2278,6 +2280,48 @@ local function boot(character)
 		return part.Position
 	end
 
+	-- Aim point = vine nearest the camera look-ray (NOT nearest the body — that picks side vines).
+	function st.aimPointOnPart(part: BasePart): Vector3
+		camera = workspace.CurrentCamera or camera
+		local center = part.Position
+		if not camera then
+			return center
+		end
+		local origin = camera.CFrame.Position
+		local look = camera.CFrame.LookVector
+		local along = math.max((center - origin):Dot(look), 0.05)
+		local onRay = origin + look * along
+		local ok, point = pcall(function()
+			return part:GetClosestPointOnSurface(onRay)
+		end)
+		if ok and typeof(point) == "Vector3" then
+			return point
+		end
+		return center
+	end
+
+	function st.getScreenAimMetrics(aimWorld: Vector3): (number, number, number, number, boolean)
+		camera = workspace.CurrentCamera or camera
+		if not camera then
+			return 1, 1, 1, -1, false
+		end
+		local look = camera.CFrame.LookVector
+		local toCam = aimWorld - camera.CFrame.Position
+		if toCam.Magnitude < 0.5 then
+			return 1, 1, 1, -1, false
+		end
+		local viewDot = toCam.Unit:Dot(look)
+		local vp, onScreen = camera:WorldToViewportPoint(aimWorld)
+		local size = camera.ViewportSize
+		local dx = (vp.X - size.X * 0.5) / math.max(size.X, 1)
+		local dy = (vp.Y - size.Y * 0.5) / math.max(size.Y, 1)
+		local screenR = math.sqrt(dx * dx + dy * dy)
+		if vp.Z <= 0 then
+			return dx, dy, 2, viewDot, false
+		end
+		return dx, dy, screenR, viewDot, onScreen == true
+	end
+
 	function st.resolveSwingPartFromHit(inst: Instance?): BasePart?
 		local cur: Instance? = inst
 		while cur do
@@ -2289,7 +2333,7 @@ local function boot(character)
 		return nil
 	end
 
-	-- One cheap camera look-ray: the vine under the crosshair wins when present.
+	-- Crosshair vine: ray first, then tightest screen-center candidate (thin vines miss rays).
 	function st.pickCameraLookSwingTarget(reach: number): BasePart?
 		camera = workspace.CurrentCamera or camera
 		if not camera or not st.hrp.Parent then
@@ -2303,42 +2347,83 @@ local function boot(character)
 		local ignored: { Instance } = { st.character }
 		params.FilterDescendantsInstances = ignored
 
-		for _ = 1, 7 do
-			params.FilterDescendantsInstances = ignored
-			local hit = workspace:Raycast(origin, look * maxDist, params)
-			if not hit then
-				return nil
-			end
-			local swing = st.resolveSwingPartFromHit(hit.Instance)
-			if swing then
-				local attachWorld = st.closestAttachWorldOnPart(swing)
-				local fromHrp = attachWorld - st.hrp.Position
-				local dist = fromHrp.Magnitude
-				if dist < 2 or dist > maxDist then
-					table.insert(ignored, hit.Instance)
-					continue
+		-- Slight look offsets catch thin vines the center ray skims past.
+		local dirs = {
+			look,
+			(look + camera.CFrame.RightVector * 0.03).Unit,
+			(look - camera.CFrame.RightVector * 0.03).Unit,
+			(look + camera.CFrame.UpVector * 0.03).Unit,
+			(look - camera.CFrame.UpVector * 0.03).Unit,
+		}
+
+		for _, dir in ipairs(dirs) do
+			table.clear(ignored)
+			table.insert(ignored, st.character)
+			for _ = 1, 8 do
+				params.FilterDescendantsInstances = ignored
+				local hit = workspace:Raycast(origin, dir * maxDist, params)
+				if not hit then
+					break
 				end
-				if attachWorld.Y < st.hrp.Position.Y + C.MIN_TARGET_HEIGHT_OFFSET then
-					table.insert(ignored, hit.Instance)
-					continue
+				local swing = st.resolveSwingPartFromHit(hit.Instance)
+				if swing then
+					local attachWorld = st.closestAttachWorldOnPart(swing)
+					local dist = (attachWorld - st.hrp.Position).Magnitude
+					if dist < 2 or dist > maxDist then
+						table.insert(ignored, hit.Instance)
+						continue
+					end
+					if attachWorld.Y < st.hrp.Position.Y + C.MIN_TARGET_HEIGHT_OFFSET then
+						table.insert(ignored, hit.Instance)
+						continue
+					end
+					-- Aim reject uses camera→vine, not body→vine (body bias picks side vines).
+					local aimWorld = st.aimPointOnPart(swing)
+					local _dx, _dy, _sr, viewDot, onScreen = st.getScreenAimMetrics(aimWorld)
+					if viewDot < 0.15 or (not onScreen and viewDot < 0.55) then
+						table.insert(ignored, hit.Instance)
+						continue
+					end
+					return swing
 				end
-				local flatDir = flatUnit(fromHrp)
-				local faceFlat = flatUnit(look) or flatUnit(st.hrp.CFrame.LookVector)
-				if flatDir and faceFlat and flatDir:Dot(faceFlat) < C.TARGET_SCORE_BEHIND_REJECT then
-					-- Crosshair vine is behind the player facing — ignore.
-					table.insert(ignored, hit.Instance)
-					continue
+				-- Skip decor/foliage; only hard-stop on big solid occluders.
+				local inst = hit.Instance
+				if inst:IsA("BasePart") and inst.CanCollide and inst.Transparency < 0.55 and inst.Size.Magnitude > 6 then
+					break
 				end
-				return swing
+				table.insert(ignored, hit.Instance)
 			end
-			-- Skip decor / foliage in front of the vine.
-			if hit.Instance.CanCollide and hit.Instance.Transparency < 0.85 then
-				-- Solid wall in the way — stop.
-				return nil
-			end
-			table.insert(ignored, hit.Instance)
 		end
-		return nil
+
+		-- Ray miss fallback: vine closest to screen center wins if it's clearly aimed.
+		local best: BasePart? = nil
+		local bestR = C.TARGET_SCREEN_LOCK_RADIUS
+		for _, part in ipairs(st.getCandidateTargets(maxDist)) do
+			if not part.Parent then
+				continue
+			end
+			local attachWorld = st.closestAttachWorldOnPart(part)
+			local dist = (attachWorld - st.hrp.Position).Magnitude
+			if dist < 2 or dist > maxDist then
+				continue
+			end
+			if attachWorld.Y < st.hrp.Position.Y + C.MIN_TARGET_HEIGHT_OFFSET then
+				continue
+			end
+			local aimWorld = st.aimPointOnPart(part)
+			local dx, _dy, screenR, viewDot, onScreen = st.getScreenAimMetrics(aimWorld)
+			if not onScreen or viewDot < 0.45 then
+				continue
+			end
+			if math.abs(dx) > C.TARGET_MAX_SCREEN_DX then
+				continue
+			end
+			if screenR < bestR then
+				bestR = screenR
+				best = part
+			end
+		end
+		return best
 	end
 
 	function st.targetCellCoord(value)
@@ -2675,6 +2760,7 @@ local function boot(character)
 
 		local best = nil
 		local bestScore = -math.huge
+		local bestScreenR = math.huge
 
 		for _, part in ipairs(st.getCandidateTargets(reach)) do
 			if not part.Parent then
@@ -2694,30 +2780,31 @@ local function boot(character)
 				continue
 			end
 
-			local toCameraTarget = attachWorld - camera.CFrame.Position
+			-- Score aim from camera look → vine, not body → vine.
+			local aimWorld = st.aimPointOnPart(part)
+			local dx, _dy, screenRadius, viewDot, onScreen = st.getScreenAimMetrics(aimWorld)
+			if viewDot < -0.05 then
+				continue
+			end
+
+			local toCameraTarget = aimWorld - camera.CFrame.Position
 			if toCameraTarget.Magnitude < 0.5 then
 				continue
 			end
 
-			local viewDot = toCameraTarget.Unit:Dot(look)
-			local flatDir = flatUnit(offset)
+			local flatDir = flatUnit(aimWorld - camera.CFrame.Position)
 			local flatAlign = if flatDir and flatLook then flatDir:Dot(flatLook) else nil
 
-			-- Never latch onto something behind / beside the camera facing.
+			-- Never latch onto something behind the camera facing.
 			if flatAlign ~= nil and flatAlign < C.TARGET_SCORE_BEHIND_REJECT then
 				continue
 			end
 
-			local viewportPoint, onScreen = camera:WorldToViewportPoint(attachWorld)
 			-- Behind the camera plane — never.
-			if viewportPoint.Z <= 0 then
+			if not onScreen and viewDot < 0.35 then
 				continue
 			end
 
-			local vp = camera.ViewportSize
-			local dx = (viewportPoint.X - vp.X * 0.5) / math.max(vp.X, 1)
-			local dy = (viewportPoint.Y - vp.Y * 0.5) / math.max(vp.Y, 1)
-			local screenRadius = math.sqrt(dx * dx + dy * dy)
 			local horizontallyOnScreen = math.abs(dx) <= maxDx
 
 			if lookingDown then
@@ -2752,7 +2839,7 @@ local function boot(character)
 
 			local heightBonus = 0
 			if attachWorld.Y > st.hrp.Position.Y + 5 then
-				heightBonus = 0.1
+				heightBonus = 0.05
 			end
 
 			-- Screen-center / look-ray dominance (what you're actually aiming at).
@@ -2766,32 +2853,47 @@ local function boot(character)
 			local lateralPenalty = math.abs(dx) * C.TARGET_SCORE_LATERAL
 			local alongLook = math.max(toCameraTarget:Dot(look), 0.05)
 			local onLookRay = camera.CFrame.Position + look * alongLook
-			local worldLateral = (attachWorld - onLookRay).Magnitude
+			local worldLateral = (aimWorld - onLookRay).Magnitude
 			lateralPenalty += (worldLateral / math.max(dist, 8)) * C.TARGET_SCORE_LATERAL_WORLD
 
+			-- Tiny sticky bias only — never enough to beat a clearly aimed vine.
 			local stickBonus = 0
 			if part == st.highlightedTarget or part == st.scannedVisualTarget then
-				stickBonus = if lookingDown then 0.85 else 0.12
+				stickBonus = if lookingDown then 0.2 else 0.04
 			end
 
-			-- Distance is a tiny tiebreaker only — never steals camera-center aim.
 			local nearScale = math.max(C.TARGET_SCORE_PREFER_NEAR_STUDS, 1)
 			local distancePenalty = (dist / nearScale) * C.TARGET_SCORE_DIST_WEIGHT
 			local nearAimBonus = 0
-			if viewDot >= 0.82 and screenRadius < 0.18 then
+			if viewDot >= 0.9 and screenRadius < 0.12 then
 				nearAimBonus = (1 - math.clamp(dist / nearScale, 0, 1)) * C.TARGET_SCORE_NEAR_AIM_BONUS
 			end
 			local alignPower = align * align * math.max(align, 0)
+			local screenLockBonus = 0
+			if screenRadius <= C.TARGET_SCREEN_LOCK_RADIUS then
+				screenLockBonus = C.TARGET_SCREEN_LOCK_BONUS * (1 - screenRadius / C.TARGET_SCREEN_LOCK_RADIUS)
+			end
+			if part == st.lastCameraRayTarget then
+				screenLockBonus += C.TARGET_CAMERA_RAY_BONUS
+			end
 
 			local score = alignPower * C.TARGET_SCORE_ALIGN
 				+ heightBonus
 				+ centerBias
 				+ stickBonus
 				+ nearAimBonus
+				+ screenLockBonus
 				- distancePenalty
 				- lateralPenalty
-			if score > bestScore then
+
+			-- Prefer tighter screen aim even when scores are close (side vine nearness can't win).
+			local better = score > bestScore + 0.05
+			if not better and math.abs(score - bestScore) <= 0.05 and screenRadius + 0.02 < bestScreenR then
+				better = true
+			end
+			if better then
 				bestScore = score
+				bestScreenR = screenRadius
 				best = part
 			end
 		end
@@ -2957,43 +3059,43 @@ local function boot(character)
 	function st.attachCandidateScore(target, dist, point, maxDistance)
 		camera = workspace.CurrentCamera or camera
 
-		-- Camera / look-ray first. Nearness is a weak tiebreaker only.
+		-- Camera / screen-center first. Nearness is a weak tiebreaker only.
 		local nearScale = math.max(math.min(maxDistance, C.TARGET_SCORE_PREFER_NEAR_STUDS), 1)
 		local nearAlpha = 1 - math.clamp(dist / nearScale, 0, 1)
-		local score = nearAlpha * 0.2
-		local toTargetFlat = flatUnit(point - st.hrp.Position)
+		local score = nearAlpha * 0.08
+		local aimWorld = if target:IsA("BasePart") then st.aimPointOnPart(target) else point
+		local toTargetFlat = flatUnit(aimWorld - st.hrp.Position)
 
 		if camera then
 			local look = camera.CFrame.LookVector
 			local lookFlat = flatUnit(look)
-			if lookFlat and toTargetFlat then
-				local lookDot = toTargetFlat:Dot(lookFlat)
+			local camFlat = flatUnit(aimWorld - camera.CFrame.Position)
+			if lookFlat and camFlat then
+				local lookDot = camFlat:Dot(lookFlat)
 				if lookDot < C.TARGET_SCORE_BEHIND_REJECT then
 					return -1000
 				end
-				score += math.max(0, lookDot) ^ 3 * 4.5
+				score += math.max(0, lookDot) ^ 3 * 5.5
 			end
-			local toCam = point - camera.CFrame.Position
+			local dx, _dy, screenR, viewDot, onScreen = st.getScreenAimMetrics(aimWorld)
+			if viewDot < -0.05 then
+				return -1000
+			end
+			score += math.max(0, viewDot) ^ 3 * 4.0
+			local toCam = aimWorld - camera.CFrame.Position
 			if toCam.Magnitude > 0.5 then
-				local viewDot = toCam.Unit:Dot(look)
-				score += math.max(0, viewDot) ^ 3 * 3.2
 				local along = math.max(toCam:Dot(look), 0.05)
 				local onRay = camera.CFrame.Position + look * along
-				local lateral = (point - onRay).Magnitude
-				score -= (lateral / math.max(dist, 8)) * 4.2
-				local vp, onScreen = camera:WorldToViewportPoint(point)
-				if vp.Z <= 0 then
-					return -1000
-				end
-				if onScreen then
-					local size = camera.ViewportSize
-					local dx = (vp.X - size.X * 0.5) / math.max(size.X, 1)
-					local dy = (vp.Y - size.Y * 0.5) / math.max(size.Y, 1)
-					local screenR = math.sqrt(dx * dx + dy * dy)
-					score -= math.abs(dx) * 4.0
-					score -= screenR * 2.6
-				else
-					score -= 3.5
+				local lateral = (aimWorld - onRay).Magnitude
+				score -= (lateral / math.max(dist, 8)) * C.TARGET_SCORE_LATERAL_WORLD
+			end
+			if not onScreen then
+				score -= 5.0
+			else
+				score -= math.abs(dx) * C.TARGET_SCORE_LATERAL
+				score -= screenR * 4.5
+				if screenR <= C.TARGET_SCREEN_LOCK_RADIUS then
+					score += C.TARGET_SCREEN_LOCK_BONUS * (1 - screenR / C.TARGET_SCREEN_LOCK_RADIUS)
 				end
 			end
 		end
@@ -3005,7 +3107,7 @@ local function boot(character)
 		-- Move direction is a weak hint only — never let strafe steal aim from look.
 		if moveFlat and toTargetFlat then
 			local moveAlpha = math.clamp((toTargetFlat:Dot(moveFlat) + 1) * 0.5, 0, 1)
-			score += moveAlpha * 0.1
+			score += moveAlpha * 0.05
 		end
 
 		if target == st.lastReleasedTarget and os.clock() - st.lastReleasedTargetClock < 0.9 then
@@ -3015,12 +3117,15 @@ local function boot(character)
 			end
 		end
 		if target == st.returnSwingTarget then
-			score += 1.6
+			score += 0.8
+		end
+		if target == st.lastCameraRayTarget then
+			score += C.TARGET_CAMERA_RAY_BONUS
 		end
 		if target == st.scannedVisualTarget then
-			score += 0.35
+			score += 0.1
 		elseif target == st.highlightedTarget then
-			score += 0.18
+			score += 0.05
 		end
 
 		return score
@@ -3034,6 +3139,14 @@ local function boot(character)
 
 		local lookDot = minLookDot or C.MIN_LOOK_DOT
 		local screenLimit = maxScreenRadius or C.TARGET_SCREEN_RADIUS_LIMIT
+
+		-- Hard prefer whatever is under / nearest the crosshair.
+		local rayHit = st.pickCameraLookSwingTarget(maxDistance)
+		st.lastCameraRayTarget = rayHit
+		if rayHit and st.canAttachToSwingTarget(rayHit, maxDistance, lookDot, screenLimit) then
+			return rayHit
+		end
+
 		local lookedTarget = st.pickSwingTarget(false, maxDistance, lookDot, screenLimit)
 		if lookedTarget and st.canAttachToSwingTarget(lookedTarget, maxDistance, lookDot, screenLimit) then
 			return lookedTarget

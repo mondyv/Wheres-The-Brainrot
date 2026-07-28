@@ -533,6 +533,8 @@ function FloatingClaimCutscene.begin(model: Model?, zoomIntensity: number?)
 		cam.CameraType = Enum.CameraType.Scriptable
 		GameplayUiVisibility.hide({
 			keepScreenGuiNames = { "FloatingClaimCutscene", "TutorialUiPointer" },
+			hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker" },
+			hideMainChildNames = { "TimCheeseQuestHost" },
 		})
 		animateLetterboxIn()
 		lockMovement()

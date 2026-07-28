@@ -27,10 +27,13 @@ local lowGraphics = false
 local POLL_SEC = 0.45
 local START_DELAY_SEC = 4
 local FEATURE_ENABLED = true
--- Reparent budget: fewer per frame = smoother swing land crossings.
-local REPARENT_PER_YIELD = 1
+-- Reparent budget: restore terrain/island first (see restorePriority), a few per frame.
+local REPARENT_PER_YIELD = 3
 local FAST_MOVE_SPEED = 42
-local PREWARM_BUDGET = 2
+local PREWARM_BUDGET = 6
+local STREAM_AHEAD_STUDS = 220
+local lastStreamAt = 0.0
+local STREAM_COOLDOWN = 0.85
 
 local player = Players.LocalPlayer
 local wired = false
@@ -78,6 +81,10 @@ local function landNumberFromFolder(landFolder: Instance): number?
 	return tonumber(n)
 end
 
+local function alnumLower(name: string): string
+	return string.gsub(string.lower(name), "[^a-z0-9]", "")
+end
+
 local function shouldKeepChild(inst: Instance): boolean
 	if inst:IsA("BaseScript") or inst:IsA("ModuleScript") then
 		return true
@@ -98,7 +105,21 @@ local function shouldKeepChild(inst: Instance): boolean
 		return true
 	end
 
-	-- Walk surfaces: BaseParts only. Models named Island/Ground must NOT stay whole.
+	-- Keep walk mesh models resident so bushes never pop in before the land.
+	local ak = alnumLower(inst.Name)
+	if
+		ak == "island"
+		or ak == "ground"
+		or ak == "terrain"
+		or ak == "floor"
+		or ak == "baseplate"
+		or ak == "landmesh"
+		or ak == "land"
+	then
+		return true
+	end
+
+	-- Walk surfaces: BaseParts only for everything else.
 	if not inst:IsA("BasePart") then
 		return false
 	end
@@ -119,10 +140,6 @@ local function shouldKeepChild(inst: Instance): boolean
 	end
 
 	return false
-end
-
-local function alnumLower(name: string): string
-	return string.gsub(string.lower(name), "[^a-z0-9]", "")
 end
 
 -- Heavy decor safe to hide even on the current land in Low Graphics (never bushes).
@@ -157,6 +174,26 @@ local function isLowGfxDecorName(name: string): boolean
 		return true
 	end
 	return false
+end
+
+local function restorePriority(entry: CullEntry): number
+	local ak = alnumLower(entry.inst.Name)
+	if
+		ak == "island"
+		or ak == "ground"
+		or ak == "terrain"
+		or ak == "floor"
+		or ak == "baseplate"
+		or ak == "landmesh"
+		or ak == "land"
+		or string.find(ak, "hitbox", 1, true)
+	then
+		return 0
+	end
+	if string.find(ak, "bush", 1, true) then
+		return 2
+	end
+	return 1
 end
 
 local function shouldKeepLand(landNum: number, playerLand: number): boolean
@@ -272,6 +309,15 @@ local function applyForPlayerLand(playerLand: number)
 			RunService.Heartbeat:Wait()
 		end
 	end
+
+	table.sort(toRestore, function(a, b)
+		local pa = restorePriority(a)
+		local pb = restorePriority(b)
+		if pa ~= pb then
+			return pa < pb
+		end
+		return a.land < b.land
+	end)
 
 	n = 0
 	for _, entry in toRestore do
@@ -389,15 +435,38 @@ local function softPrewarmAhead()
 		return
 	end
 
+	-- Ask streaming for the next land before we restore culled instances.
+	local now = os.clock()
+	if now - lastStreamAt >= STREAM_COOLDOWN and Workspace.StreamingEnabled then
+		lastStreamAt = now
+		local ahead = (hrp :: BasePart).Position + horiz.Unit * STREAM_AHEAD_STUDS
+		task.spawn(function()
+			local ok, err = pcall(function()
+				Workspace:RequestStreamAroundAsync(ahead)
+			end)
+			if not ok then
+				warn("[GrassCullController] RequestStreamAroundAsync failed:", err)
+			end
+		end)
+	end
+
 	local cache = getCache()
-	local restored = 0
+	local pending: { CullEntry } = {}
 	for _, entry in entries do
 		if entry.land == targetLand and entry.inst.Parent == cache then
-			restoreEntry(entry)
-			restored += 1
-			if restored >= PREWARM_BUDGET then
-				break
-			end
+			table.insert(pending, entry)
+		end
+	end
+	table.sort(pending, function(a, b)
+		return restorePriority(a) < restorePriority(b)
+	end)
+
+	local restored = 0
+	for _, entry in pending do
+		restoreEntry(entry)
+		restored += 1
+		if restored >= PREWARM_BUDGET then
+			break
 		end
 	end
 end

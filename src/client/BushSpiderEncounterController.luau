@@ -2236,7 +2236,11 @@ local function runEncounter(fallbackAnchor: Vector3)
 	-- OFF: ground spawn + soft look-at + QTE (still letterbox / HUD hide).
 	local cutsceneOn = player:GetAttribute("SpiderCutsceneEnabled") ~= false
 	local didHideHud = true
-	GameplayUiVisibility.hide({ keepScreenGuiNames = { "BushSpiderCutscene" } })
+	GameplayUiVisibility.hide({
+		keepScreenGuiNames = { "BushSpiderCutscene" },
+		hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker" },
+		hideMainChildNames = { "TimCheeseQuestHost" },
+	})
 	animateLetterboxIn()
 	if cutsceneOn then
 		ensurePostFx()

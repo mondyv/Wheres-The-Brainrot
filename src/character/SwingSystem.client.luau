@@ -121,11 +121,11 @@ C.SWING_RANGE = 102
 C.ROPE_MAX_LENGTH = 44
 C.ROPE_MIN_LENGTH = 13
 C.ROPE_REST_LENGTH_MULT = 0.48
-C.ROPE_STRETCH_MAX_EXTRA = 26
+C.ROPE_STRETCH_MAX_EXTRA = 38
 -- Rope stretch flex must NOT scale with launch power — that hung players into kill zones.
-C.ROPE_STRETCH_FLEX_CAP = 1.35
-C.ROPE_ABSOLUTE_MAX = 78
-C.ROPE_MAX_HANG_DEPTH = 38
+C.ROPE_STRETCH_FLEX_CAP = 1.45
+C.ROPE_ABSOLUTE_MAX = 108
+C.ROPE_MAX_HANG_DEPTH = 56
 C.ROPE_MOMENTUM_LENGTH_MULT = 0.68
 C.ROPE_DISTANCE_STRETCH_MULT = 0.22
 C.ROPE_LENGTH_RESPONSE = 24
@@ -4692,8 +4692,8 @@ local function boot(character)
 				restLength + C.ROPE_STRETCH_MAX_EXTRA * flexScale + math.max(ropeMax - C.ROPE_MAX_LENGTH, 0) * 0.45
 			)
 		)
-		-- Floor-aware hang cap: never pay rope out into void/kill depth under the vine.
-		local maxPowerStretch = restLength + C.ROPE_STRETCH_MAX_EXTRA
+		-- Floor-aware hang cap: allow real stretch play, but never pay rope into void/kill depth.
+		local maxPowerStretch = restLength + C.ROPE_STRETCH_MAX_EXTRA * flexScale
 		st.rayParams.FilterDescendantsInstances = { st.character }
 		local floorHit = workspace:Raycast(
 			anchorWorld,
@@ -4702,15 +4702,14 @@ local function boot(character)
 		)
 		local floorCap = math.min(maxPowerStretch, restLength + C.ROPE_MAX_HANG_DEPTH)
 		if floorHit then
+			-- Leave more hang room above floor so the rope still feels elastic.
+			local floorRoom = (anchorWorld.Y - floorHit.Position.Y) - math.max(C.FLOOR_CLEARANCE * 0.55, 2.5)
 			floorCap = math.min(
 				floorCap,
-				math.max(
-					restLength + C.ROPE_HANG_PULL_MIN_GAP,
-					(anchorWorld.Y - floorHit.Position.Y) - C.FLOOR_CLEARANCE
-				)
+				math.max(restLength + C.ROPE_HANG_PULL_MIN_GAP, floorRoom)
 			)
 		end
-		stretchMaxLength = math.min(stretchMaxLength, floorCap, maxPowerStretch)
+		stretchMaxLength = math.min(stretchMaxLength, floorCap)
 
 		local moveAmount = st.humanoid.MoveDirection.Magnitude
 		local idleHoldAlpha = 0

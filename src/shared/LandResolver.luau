@@ -342,16 +342,29 @@ function M.resolveLandAtPosition(worldPos: Vector3): number
 	return resolveLandByNearest(worldPos)
 end
 
---- Highest *xHitbox display luck covering this position (1 if none).
+--- Highest *xHitbox display luck covering this position.
+--- Falls back to the nearest land's best known hitbox luck so meters stay up
+--- even when the player is between OBBs or a hitbox briefly streamed out.
 function M.resolveDisplayLuckAtPosition(worldPos: Vector3): number
 	ensureDiscovery()
-	local best = 1
+	local best = 0
 	for _, entry in landHitboxes do
 		if entry.part.Parent and isPointWithinLandHitbox(worldPos, entry.part) and entry.displayLuck > best then
 			best = entry.displayLuck
 		end
 	end
-	return best
+	if best > 0 then
+		return best
+	end
+
+	local land = resolveLandByNearest(worldPos)
+	local landBest = 0
+	for _, entry in landHitboxes do
+		if entry.land == land and entry.displayLuck > landBest then
+			landBest = entry.displayLuck
+		end
+	end
+	return if landBest > 0 then landBest else 1
 end
 
 --- True only when standing inside a land multiplier hitbox (no nearest-land fallback).

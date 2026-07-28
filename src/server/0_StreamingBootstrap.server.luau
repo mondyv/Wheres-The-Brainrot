@@ -12,7 +12,8 @@ if not Workspace.StreamingEnabled then
 end
 
 pcall(function()
-	Workspace.StreamingMinRadius = 72
-	Workspace.StreamingTargetRadius = 200
+	-- Larger radii so land meshes arrive with (or before) bushes when swinging in.
+	Workspace.StreamingMinRadius = 112
+	Workspace.StreamingTargetRadius = 280
 	Workspace.StreamOutBehavior = Enum.StreamOutBehavior.Opportunistic
 end)

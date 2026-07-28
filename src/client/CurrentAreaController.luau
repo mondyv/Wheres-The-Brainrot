@@ -1,8 +1,8 @@
 -- [ACTIVE] CurrentAreaController
 --[[
-	Shows SideUI.Top.CurrentArea when the player enters a land luck hitbox.
-	Enables the matching UIGradient on LuckText + Multiplier (1x = default, no gradient).
-	Animates the container only — text stays gradient-only (no extra borders / label scaling).
+	Shows SideUI.Top.CurrentArea whenever the player is outside the safezone
+	(unless a gameplay cutscene has hidden HUD). Uses land luck hitboxes with
+	nearest-land fallback so the meter does not flicker between OBBs / streaming.
 --]]
 
 local Players = game:GetService("Players")
@@ -10,10 +10,17 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
-local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local SwingUpgrades = require(Shared:WaitForChild("SwingUpgrades"))
 local PlotLuck = SwingUpgrades.PlotLuck
+local LandResolver = require(Shared:WaitForChild("LandResolver"))
+local SafezoneUtil = require(Shared:WaitForChild("SafezoneUtil"))
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
+local StandDialogueCutscene = require(script.Parent.StandDialogueCutscene)
+local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
+local BushSpiderEncounterController = require(script.Parent.BushSpiderEncounterController)
 
 local player = Players.LocalPlayer
 
@@ -395,38 +402,71 @@ local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart, padding
 	return math.abs(localPt.X) <= half.X and math.abs(localPt.Y) <= half.Y and math.abs(localPt.Z) <= half.Z
 end
 
-local function findActiveZone(): LuckZone?
-	local char = player.Character
-	if not char then
-		return nil
+local function isCutsceneBlockingMeters(): boolean
+	if GameplayUiVisibility.isHidden() then
+		return true
 	end
-	local hrp = char:FindFirstChild("HumanoidRootPart")
-	if not hrp or not hrp:IsA("BasePart") then
-		return nil
+	if StandDialogueCutscene.isActive() then
+		return true
 	end
-	local pos = (hrp :: BasePart).Position
+	if FloatingClaimCutscene.isActive() then
+		return true
+	end
+	if BushSpiderEncounterController.isActive() then
+		return true
+	end
+	return false
+end
 
-	local best: LuckZone? = nil
+local function resolveMeterLuck(pos: Vector3): number?
+	-- Prefer live OBB (most accurate), then LandResolver nearest-land fallback.
+	local best: number? = nil
 	for _, zone in ipairs(zones) do
 		if not zone.hitbox.Parent then
 			continue
 		end
-		if isPointInsidePartOBB(pos, zone.hitbox, 2.75) and (not best or zone.displayLuck > best.displayLuck) then
-			best = zone
+		if isPointInsidePartOBB(pos, zone.hitbox, 2.75) and (not best or zone.displayLuck > best) then
+			best = zone.displayLuck
 		end
 	end
-	return best
+	if best then
+		return best
+	end
+	local fallback = LandResolver.resolveDisplayLuckAtPosition(pos)
+	if typeof(fallback) == "number" and fallback >= 1 then
+		return fallback
+	end
+	return nil
 end
 
 local function tick()
-	local zone = findActiveZone()
-	if zone then
-		showArea(zone.displayLuck)
-	else
+	if isCutsceneBlockingMeters() then
+		cancelClose()
+		if activeDisplayLuck then
+			hideArea()
+		end
+		return
+	end
+
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
 		if activeDisplayLuck and not closePending then
 			scheduleHide()
 		end
+		return
 	end
+	local pos = (hrp :: BasePart).Position
+
+	if SafezoneUtil.isWorldPointInSafezone(pos) then
+		if activeDisplayLuck and not closePending then
+			scheduleHide()
+		end
+		return
+	end
+
+	local luck = resolveMeterLuck(pos) or 1
+	showArea(luck)
 end
 
 local function unregisterHitbox(part: BasePart)

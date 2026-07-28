@@ -19,6 +19,8 @@ local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("U
 local TutorialConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TutorialConfig"))
 
 local StandDialogueCutscene = require(script.Parent.StandDialogueCutscene)
+local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
+local BushSpiderEncounterController = require(script.Parent.BushSpiderEncounterController)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local TopNotifController = require(script.Parent.TopNotifController)
@@ -59,6 +61,9 @@ local questAnimBusy = false
 local questCollapseTween: Tween? = nil
 local questArrowTween: Tween? = nil
 local questPanelScaleTween: Tween? = nil
+local questArrowBlendTween: Tween? = nil
+local questArrowBlendValue: NumberValue? = nil
+local questArrowFollowConn: RBXScriptConnection? = nil
 local questHoverBang: ImageLabel? = nil
 local questFloatWrap: GuiObject? = nil
 local questBangPulseGen = 0
@@ -670,11 +675,47 @@ local function setQuestHudSuppressed(on: boolean)
 		if questPanel then
 			questPanel.Visible = false
 		end
+		if questArrowBtn then
+			questArrowBtn.Visible = false
+		end
 	elseif questHudRevealed then
 		if questGui then
 			questGui.Enabled = true
 		end
+		if questArrowBtn then
+			questArrowBtn.Visible = true
+		end
 		refreshQuestHud()
+	end
+end
+
+local function isQuestBlockingCutscene(): boolean
+	if introPlaying or dialogueBusy then
+		return true
+	end
+	if StandDialogueCutscene.isActive() then
+		return true
+	end
+	if FloatingClaimCutscene.isActive() then
+		return true
+	end
+	if BushSpiderEncounterController.isActive() then
+		return true
+	end
+	return false
+end
+
+local function syncQuestHudCutsceneGate()
+	if isQuestBlockingCutscene() then
+		if not questHudSuppressed then
+			setQuestHudSuppressed(true)
+		elseif questGui and questGui.Enabled then
+			questGui.Enabled = false
+		end
+		return
+	end
+	if questHudSuppressed then
+		setQuestHudSuppressed(false)
 	end
 end
 
@@ -1157,6 +1198,18 @@ local function cancelCollapseTweens()
 		questPanelScaleTween:Cancel()
 		questPanelScaleTween = nil
 	end
+	if questArrowBlendTween then
+		questArrowBlendTween:Cancel()
+		questArrowBlendTween = nil
+	end
+	if questArrowFollowConn then
+		questArrowFollowConn:Disconnect()
+		questArrowFollowConn = nil
+	end
+	if questArrowBlendValue then
+		questArrowBlendValue:Destroy()
+		questArrowBlendValue = nil
+	end
 end
 
 stopArrowPulse = function()
@@ -1272,28 +1325,50 @@ toggleQuestHudCollapsed = function()
 	local goal = expandedHudPosition()
 
 	if questHudCollapsed then
-		-- Tutorial-style tuck: short slide + scale down, arrow parks on the right.
+		-- Arrow stays glued to the ticket corner every frame while the panel tucks,
+		-- then blends to the parked edge tab so it never "escapes" mid-tween.
 		questAnimBusy = true
 		local host = panel.Parent
 		freezePanelSize()
 		local from = panel.Position
 		local tuck = UDim2.new(1, from.X.Offset + QUEST_SLIDE_PX, 0, from.Y.Offset)
+		placeArrowOnTicket()
 
+		local blend = Instance.new("NumberValue")
+		blend.Value = 0
+		questArrowBlendValue = blend
+		local parkedY = questHudBaseTop
 		if arrow and host and host:IsA("GuiObject") then
-			local parked = arrowHostPosFromAbsolute(host, arrow.AbsolutePosition, arrow.AbsoluteSize)
-			questParkedArrowY = parked.Y.Offset
-			arrow.Parent = host
-			arrow.AnchorPoint = Vector2.new(1, 0)
-			arrow.Position = parked
-			arrow.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
-			arrow.ZIndex = 200
-			arrow.Visible = true
-			local arrowTw = TweenService:Create(arrow, QUEST_PANEL_SWAP, {
-				Position = UDim2.new(1, -8, 0, questParkedArrowY),
-				Rotation = 180,
-			})
-			questArrowTween = arrowTw
-			arrowTw:Play()
+			local startHost = ticketArrowHostGoal()
+			if startHost then
+				parkedY = startHost.Y.Offset
+				questParkedArrowY = parkedY
+				arrow.Parent = host
+				arrow.AnchorPoint = Vector2.new(1, 0)
+				arrow.Position = startHost
+				arrow.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
+				arrow.ZIndex = 200
+				arrow.Visible = true
+				arrow.Rotation = 0
+			end
+			local parked = UDim2.new(1, -8, 0, parkedY)
+			questArrowFollowConn = blend:GetPropertyChangedSignal("Value"):Connect(function()
+				if not arrow or not arrow.Parent then
+					return
+				end
+				local a = math.clamp(blend.Value, 0, 1)
+				-- First half: stick to live ticket corner; second half: ease to parked tab.
+				local follow = ticketArrowHostGoal() or parked
+				local stick = math.clamp(a / 0.45, 0, 1)
+				local toPark = math.clamp((a - 0.45) / 0.55, 0, 1)
+				local eased = toPark * toPark * (3 - 2 * toPark)
+				local fromPos = follow
+				arrow.Position = fromPos:Lerp(parked, eased)
+				arrow.Rotation = 180 * math.clamp(stick, 0, 1)
+			end)
+			local blendTw = TweenService:Create(blend, QUEST_PANEL_SWAP, { Value = 1 })
+			questArrowBlendTween = blendTw
+			blendTw:Play()
 		else
 			questParkedArrowY = questHudBaseTop
 		end
@@ -1317,19 +1392,19 @@ toggleQuestHudCollapsed = function()
 			if ticket and ticket:IsA("GuiObject") then
 				ticket.Visible = false
 			end
-			-- Park shell fully off-screen so layout can't peek it.
 			local slideW = math.max(questPanel.Size.X.Offset, 160)
 			questPanel.Position = UDim2.new(1, slideW + 24, 0, questHudBaseTop)
 			if panelScale then
 				panelScale.Scale = 1
 			end
+			cancelCollapseTweens()
 			placeArrowParked()
 			questAnimBusy = false
 			startArrowPulse()
 		end)
 		tw:Play()
 	else
-		-- Tutorial-style reveal: arrow reattached first so it rides with the panel.
+		-- Expand: attach arrow to ticket first so it rides the panel in as one unit.
 		questAnimBusy = true
 		local ticket = panel:FindFirstChild("Ticket")
 		if ticket and ticket:IsA("GuiObject") then
@@ -2527,12 +2602,13 @@ function M.init()
 		local accum = 0.0
 		RunService.Heartbeat:Connect(function(dt)
 			accum += dt
-			if accum < 1.1 then
+			if accum < 0.35 then
 				return
 			end
 			accum = 0
 			tickWalkby()
-			if questGui then
+			syncQuestHudCutsceneGate()
+			if questGui and not questHudSuppressed then
 				questGui.Enabled = true
 			end
 			syncPromptAndOutline()

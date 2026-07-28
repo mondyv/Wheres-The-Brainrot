@@ -1016,6 +1016,45 @@ function HUDController.getCurrentFrame(): Frame?
 	return currentFrame
 end
 
+-- Swap the open HUD panel without clearing blur/chrome (e.g. Sell → SellInfo confirm).
+function HUDController.replaceOpenFrame(frame: Frame)
+	ensureHudRoots()
+	makeChromeClickThrough(sideUI)
+	local prev = currentFrame
+	currentFrame = frame
+	if prev and prev ~= frame and prev.Parent then
+		local prevTween = closeTweenByFrame[prev]
+		if prevTween then
+			prevTween:Cancel()
+			closeTweenByFrame[prev] = nil
+		end
+		prev.Visible = false
+		prev.Active = false
+		local prevScale = getOrAddUIScale(prev)
+		prevScale.Scale = panelRestScale(prev) * 0.82
+	end
+	frame.Active = true
+	if frame.ZIndex < 20 then
+		frame.ZIndex = 20
+	end
+	ensurePanelClickSink(frame)
+	ensurePanelCloseOnTop(frame)
+	for _, d in frame:GetDescendants() do
+		if d.Name == "_PanelClickSink" then
+			continue
+		end
+		if d:IsA("GuiButton") or d:IsA("ScrollingFrame") or d:IsA("TextBox") then
+			(d :: GuiObject).Active = true
+			if d:IsA("GuiButton") and (d :: GuiObject).ZIndex < 2 then
+				(d :: GuiObject).ZIndex = 2
+			end
+		end
+	end
+	hidePanelChrome()
+	animateOpen(frame)
+	syncFramesInputPassthrough()
+end
+
 HUDController.applyHoverAndClick = applyHoverAndClick
 
 return HUDController

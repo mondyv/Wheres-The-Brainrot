@@ -118,6 +118,7 @@ local PANEL_CONTENT: {
 } = {
 	Shop = { containers = { "Container" } },
 	Sell = { containers = { "Container" } },
+	SellInfo = { containers = { "Info", "Buttons", "Notice" } },
 	Store = { containers = { "StoreFrame" } },
 	Daily = { containers = { "Container" } },
 	Index = {

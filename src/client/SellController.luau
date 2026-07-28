@@ -1,6 +1,6 @@
 -- [ACTIVE] SellController
 --[[
-	Sell UI — inventory rows, per-item sell, Sell All, optional SellInfo confirm.
+	Sell UI — inventory rows, per-item sell, Sell All; SellInfo confirm is its own panel.
 --]]
 
 local Players = game:GetService("Players")
@@ -25,6 +25,7 @@ local rowTemplate: Frame? = nil
 local nothingLabel: TextLabel? = nil
 local sellAllBtn: GuiButton? = nil
 local busy = false
+local refreshSerial = 0
 type PendingConfirm =
 	{ kind: "one", idx: number, entry: InvEntry, price: number }
 	| { kind: "all", count: number, totalPrice: number }
@@ -395,14 +396,42 @@ local function getRemotes()
 	return nil, nil
 end
 
-local function setSellInfoVisible(on: boolean)
-	if sellInfoFrame then
-		if on and sellFrame then
-			sellInfoFrame.ZIndex = math.max(sellFrame.ZIndex, 1) + 10
-		end
-		sellInfoFrame.Visible = on
+local function clearSellRows()
+	if not container then
+		return
 	end
-	-- Keep Sell visible under confirm so HUD currentFrame / blur chrome stay valid.
+	for _, c in container:GetChildren() do
+		if c == rowTemplate or CONTAINER_SKIP_DESTROY[c.Name] then
+			continue
+		end
+		if c:IsA("GuiObject") then
+			c:Destroy()
+		end
+	end
+	if rowTemplate then
+		rowTemplate.Visible = false
+	end
+end
+
+local function setSellInfoVisible(on: boolean)
+	if not sellInfoFrame then
+		return
+	end
+	if on then
+		-- Own panel (not stacked on Sell) — keep HUD blur/chrome via replaceOpenFrame.
+		HUDController.replaceOpenFrame(sellInfoFrame)
+		return
+	end
+	if HUDController.getCurrentFrame() == sellInfoFrame then
+		if sellFrame then
+			HUDController.replaceOpenFrame(sellFrame)
+		else
+			sellInfoFrame.Visible = false
+			HUDController.forceClearPanelModal()
+		end
+		return
+	end
+	sellInfoFrame.Visible = false
 end
 
 local function formatSellConfirmMessage(entry: InvEntry, price: number): string
@@ -632,12 +661,10 @@ refreshSellList = function()
 		warn("[SellController] Sell list refresh skipped — Container or row template missing")
 		return
 	end
+	refreshSerial += 1
+	local mySerial = refreshSerial
 	configureSellContainer()
-	for _, c in container:GetChildren() do
-		if c:IsA("Frame") and c ~= rowTemplate and not CONTAINER_SKIP_DESTROY[c.Name] then
-			c:Destroy()
-		end
-	end
+	clearSellRows()
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
 	local getFn = folder and folder:FindFirstChild("GetBrainrotInventory")
 	if not getFn or not getFn:IsA("RemoteFunction") then
@@ -646,6 +673,9 @@ refreshSellList = function()
 	local ok, pack = pcall(function()
 		return getFn:InvokeServer()
 	end)
+	if mySerial ~= refreshSerial then
+		return
+	end
 	if not ok then
 		warn("[SellController] GetBrainrotInventory failed:", pack)
 		return
@@ -657,6 +687,11 @@ refreshSellList = function()
 	if typeof(entries) ~= "table" then
 		entries = {}
 	end
+	-- InvokeServer yields — clear again so a concurrent refresh cannot leave doubles.
+	clearSellRows()
+	if mySerial ~= refreshSerial then
+		return
+	end
 	if nothingLabel then
 		nothingLabel.Visible = (#entries == 0)
 	end
@@ -666,6 +701,7 @@ refreshSellList = function()
 			row.Name = "Row_" .. tostring(i)
 			row.Visible = true
 			row.LayoutOrder = i
+			row:SetAttribute("SellGeneratedRow", true)
 			row.Parent = container
 			populateRow(row, entry :: InvEntry, i)
 		end

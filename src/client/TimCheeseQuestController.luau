@@ -82,6 +82,9 @@ local placeArrowOnTicket: () -> ()
 local placeArrowParked: () -> ()
 local startArrowPulse: () -> ()
 local stopArrowPulse: () -> ()
+local stopExclaimPulse: () -> ()
+local stopQuestDots: () -> ()
+local refreshQuestHud: (opts: { skipRevealGate: boolean?, playAppear: boolean? }?) -> ()
 local highlight: Highlight? = nil
 local talkPrompt: ProximityPrompt? = nil
 local idleTrack: AnimationTrack? = nil
@@ -675,7 +678,7 @@ local function setQuestHudSuppressed(on: boolean)
 	end
 end
 
-local function stopQuestDots()
+stopQuestDots = function()
 	if questDotsConn then
 		questDotsConn:Disconnect()
 		questDotsConn = nil
@@ -689,7 +692,7 @@ local function stopQuestDots()
 	end
 end
 
-local function stopExclaimPulse()
+stopExclaimPulse = function()
 	questBangPulseGen += 1
 	if questExclaimConn then
 		questExclaimConn:Disconnect()
@@ -1544,7 +1547,7 @@ local function formatQuestProgress(quest: TimCheeseQuestConfig.QuestDef, p: numb
 	end
 end
 
-local function refreshQuestHud(opts: { skipRevealGate: boolean?, playAppear: boolean? }?)
+refreshQuestHud = function(opts: { skipRevealGate: boolean?, playAppear: boolean? }?)
 	if questHudSuppressed then
 		if questPanel then
 			questPanel.Visible = false

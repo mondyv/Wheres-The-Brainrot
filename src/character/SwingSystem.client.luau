@@ -3554,6 +3554,8 @@ local function boot(character)
 		if released and not st.isHoldToSwingMode() then
 			-- Consume this jump press so we don't instantly latch onto another vine.
 			st.toggleNeedsJumpRelease = true
+			-- Kill press-intent retries — release must not auto-grab the next vine.
+			st.swingPressIntentUntil = -1e9
 		end
 		return released
 	end
@@ -4848,6 +4850,7 @@ local function boot(character)
 		st.isSwinging = false
 		st.currentTarget = nil
 		st.toggleNeedsJumpRelease = false
+		st.swingPressIntentUntil = -1e9
 		st.scannedVisualTarget = nil
 		st.scannedVisualCanSwing = false
 		st.lastTargetScanClock = -1e9
@@ -4917,10 +4920,12 @@ local function boot(character)
 				st.mobileJumpHeld = true
 				st.mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
 				st.mobileRealJumpPressUntil = now + C.MOBILE_REAL_JUMP_PRESS_WINDOW
-				st.swingPressIntentUntil = now + 0.45
 				if not st.isHoldToSwingMode() and st.isSwinging then
 					st.tryReleaseSwingFromJump()
+					return
 				end
+				-- Only arm attach-intent when this press is trying to latch (not release).
+				st.swingPressIntentUntil = now + 0.18
 			end
 
 			function st.mobileJumpReleased()
@@ -5229,7 +5234,12 @@ local function boot(character)
 				return
 			end
 			st.spaceHeld = true
-			st.swingPressIntentUntil = os.clock() + 0.45
+			-- Short grounded settle only — never a long air auto-latch window.
+			if st.isGroundedForSwing() or st.hasFloorSupportForSwing() then
+				st.swingPressIntentUntil = os.clock() + 0.18
+			else
+				st.swingPressIntentUntil = -1e9
+			end
 			st.tryAttach()
 		elseif
 			input.UserInputType == Enum.UserInputType.Gamepad1
@@ -5245,7 +5255,11 @@ local function boot(character)
 				return
 			end
 			st.gamepadHeld = true
-			st.swingPressIntentUntil = os.clock() + 0.45
+			if st.isGroundedForSwing() or st.hasFloorSupportForSwing() then
+				st.swingPressIntentUntil = os.clock() + 0.18
+			else
+				st.swingPressIntentUntil = -1e9
+			end
 			st.tryAttach()
 		end
 	end))
@@ -5308,29 +5322,30 @@ local function boot(character)
 			return
 		end
 
-		-- If a vine is latchable on this press, steal the hop (land OR air).
+		-- Only steal the hop when a vine is actually latchable this press.
 		local maxDistance, lookDot, screenLimit = st.getSwingPressAttachLimits()
 		local liveTarget = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
-		local pressReady = false
 		if not liveTarget and st.scannedVisualTarget then
 			if st.canAttachToSwingTarget(st.scannedVisualTarget, maxDistance, lookDot, screenLimit) then
 				liveTarget = st.scannedVisualTarget
-				pressReady = true
 			end
 		end
 		if not liveTarget and st.highlightedTarget then
 			if st.canAttachToSwingTarget(st.highlightedTarget, maxDistance, lookDot, screenLimit) then
 				liveTarget = st.highlightedTarget
-				pressReady = true
 			end
 		end
-		-- Vine is on-screen from scan — keep trying even if this frame's aim check is tight.
-		local scannedNear = st.scannedVisualTarget ~= nil
-		if liveTarget or pressReady or scannedNear then
+		local grounded = st.isGroundedForSwing() or st.hasFloorSupportForSwing()
+		if liveTarget then
 			st.humanoid.Jump = false
-			st.swingPressIntentUntil = now + 0.45
-		elseif touchOnly and not st.isAirborneForSwing() then
-			-- Mobile ground with no vine: allow a real jump.
+			-- Ground only: tiny settle window. Air attach is press-edge only (no auto-retry).
+			if grounded then
+				st.swingPressIntentUntil = now + 0.18
+			else
+				st.swingPressIntentUntil = -1e9
+			end
+		elseif touchOnly and grounded then
+			-- Mobile ground with no latchable vine: allow a real jump.
 			return
 		elseif st.isAirborneForSwing() then
 			st.humanoid.Jump = false
@@ -6086,10 +6101,14 @@ local function boot(character)
 			end
 
 			-- Hold mode: keep trying while jump is held.
-			-- Toggle mode: brief press-intent window so one tap can latch after a tiny hop/aim settle.
+			-- Toggle mode: short ground-only settle window (never air auto-latch after release).
 			if st.isHoldToSwingMode() and st.holdIsActive() then
 				st.tryAttach()
-			elseif not st.isHoldToSwingMode() and now < st.swingPressIntentUntil then
+			elseif
+				not st.isHoldToSwingMode()
+				and now < st.swingPressIntentUntil
+				and (st.isGroundedForSwing() or st.hasFloorSupportForSwing())
+			then
 				st.tryAttach()
 			end
 
@@ -6119,9 +6138,13 @@ local function boot(character)
 						C.TARGET_MAX_CANDIDATES_PER_SCAN = C.TARGET_MAX_CANDIDATES_GROUNDED
 					end
 					local scanDistance, scanLookDot, scanScreenLimit = st.getSwingAttachLimits()
-					-- Ground UI must match press latch (air lookDot) or land shows red and needs a second jump.
+					-- Ground UI: show latchable with the same press checks (don't green-light far vines
+					-- that jump can't actually grab until you walk closer).
 					if scanMode == "ground" then
-						scanDistance, scanLookDot, scanScreenLimit = st.getSwingPressAttachLimits()
+						local pressDist, pressLook, pressScreen = st.getSwingPressAttachLimits()
+						scanLookDot, scanScreenLimit = pressLook, pressScreen
+						-- Keep ground ready range honest — not inflated beyond live swing reach.
+						scanDistance = pressDist
 					end
 					if not scanDistance then
 						scanDistance, scanLookDot, scanScreenLimit = 0, nil, nil

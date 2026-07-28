@@ -55,8 +55,17 @@ local questBangHoverY = 0.0
 local questHoverFlying = false
 local questLayoutAccum = 0.0
 local questLayoutConn: RBXScriptConnection? = nil
-local QUEST_LAYOUT_HZ = 10
+local QUEST_LAYOUT_HZ = 8
 local questHudSuppressed = false
+local questHudCollapsed = false
+local questCollapseTween: Tween? = nil
+local questHoverWrap: GuiObject? = nil
+local questHoverBang: ImageLabel? = nil
+local promptLockedUntil = 0.0
+local COLLAPSE_ARROW_IMAGE = "rbxassetid://128709527394819"
+local COLLAPSE_PEEK_PX = 34
+local toggleQuestHudCollapsed: () -> ()
+local layoutQuestHud: () -> ()
 local highlight: Highlight? = nil
 local talkPrompt: ProximityPrompt? = nil
 local idleTrack: AnimationTrack? = nil
@@ -509,28 +518,38 @@ local function syncPromptAndOutline()
 	local completed = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR)
 	local doneCount = if typeof(completed) == "number" then completed else 0
 	local allDone = doneCount >= TimCheeseQuestConfig.questCount()
+	local promptLocked = dialogueBusy
+		or introPlaying
+		or StandDialogueCutscene.isActive()
+		or os.clock() < promptLockedUntil
 
-	if intro and not introPlaying and not dialogueBusy then
+	if intro and not introPlaying and not dialogueBusy and not StandDialogueCutscene.isActive() then
 		ensureTalkPrompt(tim)
 		if talkPrompt then
-			-- Keep prompt up mid-mission so players can check in (world speech, no cutscene).
-			talkPrompt.Enabled = true
-			talkPrompt.Style = Enum.ProximityPromptStyle.Custom
-			talkPrompt:SetAttribute("CustomPromptFX", true)
-			if ready then
-				talkPrompt.ActionText = "Claim"
-			elseif hasQuest then
-				talkPrompt.ActionText = "Talk"
-			elseif allDone then
-				talkPrompt.ActionText = "Talk"
+			if promptLocked then
+				talkPrompt.Enabled = false
+				pcall(function()
+					ProximityPromptEffects.forceHide(talkPrompt :: ProximityPrompt)
+				end)
 			else
-				talkPrompt.ActionText = "Quests"
+				talkPrompt.Enabled = true
+				talkPrompt.Style = Enum.ProximityPromptStyle.Custom
+				talkPrompt:SetAttribute("CustomPromptFX", true)
+				if ready then
+					talkPrompt.ActionText = "Claim"
+				elseif hasQuest then
+					talkPrompt.ActionText = "Talk"
+				elseif allDone then
+					talkPrompt.ActionText = "Talk"
+				else
+					talkPrompt.ActionText = "Quests"
+				end
+				pcall(function()
+					ProximityPromptEffects.stylePrompt(talkPrompt)
+				end)
 			end
-			pcall(function()
-				ProximityPromptEffects.stylePrompt(talkPrompt)
-			end)
 		end
-		setOutline(tim, ready == true)
+		setOutline(tim, ready == true and not promptLocked)
 		if ready then
 			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.READY_OVERHEAD)
 		elseif hasQuest then
@@ -538,6 +557,21 @@ local function syncPromptAndOutline()
 		else
 			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
 		end
+	elseif talkPrompt then
+		talkPrompt.Enabled = false
+		pcall(function()
+			ProximityPromptEffects.forceHide(talkPrompt :: ProximityPrompt)
+		end)
+	end
+end
+
+local function lockTalkPrompt(durationSec: number)
+	promptLockedUntil = math.max(promptLockedUntil, os.clock() + math.max(0.1, durationSec))
+	if talkPrompt and talkPrompt.Parent then
+		talkPrompt.Enabled = false
+		pcall(function()
+			ProximityPromptEffects.forceHide(talkPrompt :: ProximityPrompt)
+		end)
 	end
 end
 
@@ -638,43 +672,56 @@ local function stopExclaimPulse()
 	end
 	questHoverY = 0
 	questBangHoverY = 0
-	if questPanel then
-		local wrap = questPanel:FindFirstChild("FloatWrap")
-		if wrap and wrap:IsA("GuiObject") then
-			wrap.Position = UDim2.fromOffset(0, 0)
-		end
-		local bang = questPanel:FindFirstChild("Exclaim", true)
-		if bang and bang:IsA("ImageLabel") then
-			bang.Position = UDim2.fromOffset(0, -2)
-		end
+	if questHoverWrap then
+		questHoverWrap.Position = UDim2.fromOffset(0, 0)
+	end
+	if questHoverBang then
+		questHoverBang.Position = UDim2.fromOffset(0, -1)
+	end
+end
+
+local function cacheHoverTargets()
+	questHoverWrap = nil
+	questHoverBang = nil
+	if not questPanel then
+		return
+	end
+	local wrap = questPanel:FindFirstChild("FloatWrap")
+	if wrap and wrap:IsA("GuiObject") then
+		questHoverWrap = wrap
+	end
+	local bang = questPanel:FindFirstChild("Exclaim", true)
+	if bang and bang:IsA("ImageLabel") then
+		questHoverBang = bang
 	end
 end
 
 local function startExclaimPulse()
 	stopExclaimPulse()
+	cacheHoverTargets()
 	questHoverT = 0
 	questHoverY = 0
 	questBangHoverY = 0
-	-- Lerp on Heartbeat — never fight layoutQuestHud by moving the anchored panel root.
-	questExclaimConn = RunService.Heartbeat:Connect(function(dt)
-		if questHoverFlying or not questPanel or not questPanel.Visible or not questPanel.Parent then
+	-- Direct sine on BindToRenderStep — no FindFirstChild, no layout fights.
+	questExclaimConn = RunService.RenderStepped:Connect(function(dt)
+		if questHoverFlying or questHudCollapsed or not questPanel or not questPanel.Visible or not questPanel.Parent then
 			return
 		end
-		local wrap = questPanel:FindFirstChild("FloatWrap")
-		if not (wrap and wrap:IsA("GuiObject")) then
-			return
+		local wrap = questHoverWrap
+		if not wrap or wrap.Parent == nil then
+			cacheHoverTargets()
+			wrap = questHoverWrap
+			if not wrap then
+				return
+			end
 		end
 		questHoverT += dt
-		local targetY = math.sin(questHoverT * 1.05) * 2.2
-		local blend = math.min(1, dt * 5)
-		questHoverY += (targetY - questHoverY) * blend
-		wrap.Position = UDim2.fromOffset(0, questHoverY)
-
-		local bang = questPanel:FindFirstChild("Exclaim", true)
-		if bang and bang:IsA("ImageLabel") then
-			local bangTarget = math.sin(questHoverT * 1.2 + 0.5) * 1.1
-			questBangHoverY += (bangTarget - questBangHoverY) * blend
-			bang.Position = UDim2.fromOffset(0, -2 + questBangHoverY)
+		-- Soft float; apply directly (lerp made it feel laggy / rubber-bandy).
+		local bob = math.sin(questHoverT * 1.35) * 2.5
+		wrap.Position = UDim2.fromOffset(0, bob)
+		local bang = questHoverBang
+		if bang and bang.Parent then
+			bang.Position = UDim2.fromOffset(0, -1 + math.sin(questHoverT * 1.55 + 0.4) * 1.2)
 			bang.Rotation = -10
 		end
 	end)
@@ -734,13 +781,14 @@ end
 
 local function ensureQuestHud(): GuiObject
 	if questPanel and questPanel.Parent then
-		if questPanel:GetAttribute("StudTicket") == true and questPanel:GetAttribute("HudLayout") == "wide_v2" then
+		if questPanel:GetAttribute("StudTicket") == true and questPanel:GetAttribute("HudLayout") == "wide_v3" then
 			if not questPanel:FindFirstChild("HudMatchScale") then
 				local hudMatchScale = Instance.new("UIScale")
 				hudMatchScale.Name = "HudMatchScale"
 				hudMatchScale.Scale = 1
 				hudMatchScale.Parent = questPanel
 			end
+			cacheHoverTargets()
 			return questPanel
 		end
 		questPanel:Destroy()
@@ -757,10 +805,10 @@ local function ensureQuestHud(): GuiObject
 	ticket.AutomaticSize = Enum.AutomaticSize.Y
 	paintStudImage(ticket, Color3.fromRGB(255, 214, 74), 0.78)
 	ticket:SetAttribute("StudTicket", true)
-	ticket:SetAttribute("HudLayout", "wide_v2")
+	ticket:SetAttribute("HudLayout", "wide_v3")
 	ticket.Visible = false
 	ticket.ZIndex = 100
-	ticket.ClipsDescendants = true
+	ticket.ClipsDescendants = false
 	ticket.Parent = host
 
 	local ticketCorner = Instance.new("UICorner")
@@ -848,7 +896,7 @@ local function ensureQuestHud(): GuiObject
 	stamp.Name = "Stamp"
 	stamp.BackgroundTransparency = 1
 	stamp.Position = UDim2.fromOffset(38, 0)
-	stamp.Size = UDim2.new(1, -38, 0, 13)
+	stamp.Size = UDim2.new(1, -70, 0, 13)
 	stamp.FontFace = Font.fromEnum(Enum.Font.GothamBold)
 	stamp.TextSize = 11
 	stamp.TextColor3 = Color3.fromRGB(160, 40, 30)
@@ -861,7 +909,7 @@ local function ensureQuestHud(): GuiObject
 	title.Name = "Title"
 	title.BackgroundTransparency = 1
 	title.Position = UDim2.fromOffset(38, 13)
-	title.Size = UDim2.new(1, -38, 0, 20)
+	title.Size = UDim2.new(1, -70, 0, 20)
 	title.FontFace = Font.fromEnum(Enum.Font.GothamBold)
 	title.TextSize = 16
 	title.TextColor3 = Color3.fromRGB(30, 24, 10)
@@ -963,8 +1011,81 @@ local function ensureQuestHud(): GuiObject
 	payCorner.CornerRadius = UDim.new(0, 6)
 	payCorner.Parent = payout
 
+	-- Collapse arrow (faces right when expanded; flips 180 when tucked away).
+	local collapse = Instance.new("ImageButton")
+	collapse.Name = "CollapseArrow"
+	collapse.BackgroundTransparency = 1
+	collapse.AnchorPoint = Vector2.new(1, 0)
+	collapse.Position = UDim2.new(1, -2, 0, 2)
+	collapse.Size = UDim2.fromOffset(28, 28)
+	collapse.Image = COLLAPSE_ARROW_IMAGE
+	collapse.ScaleType = Enum.ScaleType.Fit
+	collapse.Rotation = 0
+	collapse.ZIndex = 120
+	collapse.AutoButtonColor = true
+	collapse.Parent = ticket
+
 	questPanel = ticket
+	cacheHoverTargets()
+	collapse.Activated:Connect(function()
+		toggleQuestHudCollapsed()
+	end)
 	return ticket
+end
+
+local function expandedHudPosition(): UDim2
+	return UDim2.new(1, -questHudBaseRightPad, 0, questHudBaseTop)
+end
+
+local function collapsedHudPosition(): UDim2
+	local w = if questPanel then math.max(questPanel.AbsoluteSize.X, questPanel.Size.X.Offset) else 280
+	-- With AnchorPoint.X = 1, positive X offset parks most of the panel off-screen right,
+	-- leaving COLLAPSE_PEEK_PX of the right edge (and the arrow) visible.
+	return UDim2.new(1, math.max(8, w - COLLAPSE_PEEK_PX), 0, questHudBaseTop)
+end
+
+local function applyCollapseArrowVisual()
+	if not questPanel then
+		return
+	end
+	local arrow = questPanel:FindFirstChild("CollapseArrow")
+	if not (arrow and arrow:IsA("ImageButton")) then
+		return
+	end
+	-- Asset faces right. Expanded = right (hide me). Collapsed = left (bring me back).
+	local goalRot = if questHudCollapsed then 180 else 0
+	TweenService:Create(arrow, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Rotation = goalRot,
+	}):Play()
+end
+
+toggleQuestHudCollapsed = function()
+	if not questPanel or questHoverFlying then
+		return
+	end
+	questHudCollapsed = not questHudCollapsed
+	if questCollapseTween then
+		questCollapseTween:Cancel()
+		questCollapseTween = nil
+	end
+	layoutQuestHud()
+	local goal = if questHudCollapsed then collapsedHudPosition() else expandedHudPosition()
+	local tw = TweenService:Create(
+		questPanel,
+		TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Position = goal }
+	)
+	questCollapseTween = tw
+	applyCollapseArrowVisual()
+	if questHudCollapsed then
+		stopExclaimPulse()
+		if questHoverWrap then
+			questHoverWrap.Position = UDim2.fromOffset(0, 0)
+		end
+	else
+		startExclaimPulse()
+	end
+	tw:Play()
 end
 
 local function resolveRandomBrainrotHud(): GuiObject?
@@ -985,7 +1106,7 @@ local function resolveRandomBrainrotHud(): GuiObject?
 	return nil
 end
 
-local function layoutQuestHud()
+layoutQuestHud = function()
 	local panel = questPanel
 	if not panel then
 		return
@@ -1009,11 +1130,11 @@ local function layoutQuestHud()
 	local screenW: number
 	local matchScale = 1
 
-	-- Same width / scale rules as TutorialController objective panel.
 	if mobile or vw < 700 then
-		local maxW = math.floor(vw * TutorialConfig.PANEL_MOBILE_MAX_WIDTH_FRAC)
-		screenW = math.clamp(maxW, TutorialConfig.PANEL_MOBILE_MIN_WIDTH, TutorialConfig.PANEL_MOBILE_MAX_WIDTH)
-		matchScale = TutorialConfig.PANEL_MOBILE_SCALE
+		-- Smaller than tutorial — quest ticket has more rows of content.
+		local maxW = math.floor(vw * 0.58)
+		screenW = math.clamp(maxW, 150, 200)
+		matchScale = if vh < 640 then 0.78 else 0.84
 	else
 		local maxW = math.floor(vw * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
 		maxW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
@@ -1036,7 +1157,6 @@ local function layoutQuestHud()
 		anchorY = 1
 		topPad = math.clamp(math.floor(vh * 0.62), 160, 360)
 	else
-		-- PC fallback: top-right like tutorial when RB isn't ready yet.
 		anchorY = 0
 		rightPad = TutorialConfig.PANEL_RIGHT_PAD
 		topPad = TutorialConfig.PANEL_TOP_PAD + 6
@@ -1055,9 +1175,20 @@ local function layoutQuestHud()
 	panel.Size = UDim2.fromOffset(screenW, TutorialConfig.PANEL_HEIGHT)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
 	if not questHoverFlying then
-		panel.Position = UDim2.new(1, -rightPad, 0, topPad)
+		if questHudCollapsed then
+			local w = math.max(panel.AbsoluteSize.X, screenW)
+			panel.Position = UDim2.new(1, math.max(8, w - COLLAPSE_PEEK_PX), 0, topPad)
+		else
+			panel.Position = UDim2.new(1, -rightPad, 0, topPad)
+		end
 	end
 	panel.ZIndex = 10
+
+	local arrow = panel:FindFirstChild("CollapseArrow")
+	if arrow and arrow:IsA("ImageButton") then
+		arrow.Rotation = if questHudCollapsed then 180 else 0
+		arrow.Visible = true
+	end
 end
 
 local function hudSlotPosition(): UDim2
@@ -1076,7 +1207,7 @@ local function startQuestLayoutSync()
 	end
 	questLayoutAccum = 0
 	questLayoutConn = RunService.Heartbeat:Connect(function(dt)
-		if questHoverFlying or not questPanel or not questPanel.Visible then
+		if questHoverFlying or questHudCollapsed or not questPanel or not questPanel.Visible then
 			return
 		end
 		questLayoutAccum += dt
@@ -1792,7 +1923,7 @@ function M.openTimDialogue()
 
 	-- Mid-mission: custom prompt → bubble only (no cutscene cam).
 	if hasQuest and not ready then
-		setTalkPromptEnabled(false)
+		lockTalkPrompt(3.4)
 		local lines = TimCheeseQuestConfig.IN_PROGRESS_LINES
 		local msg = lines[math.random(1, #lines)]
 		StandDialogueCutscene.showWorldSpeech(tim, msg, {
@@ -1803,8 +1934,8 @@ function M.openTimDialogue()
 			billboardWidth = 360,
 			billboardHeight = 88,
 		})
-		task.delay(3.2, function()
-			if not dialogueBusy and not introPlaying then
+		task.delay(3.4, function()
+			if not dialogueBusy and not introPlaying and not StandDialogueCutscene.isActive() then
 				syncPromptAndOutline()
 			end
 		end)
@@ -1813,6 +1944,7 @@ function M.openTimDialogue()
 
 	dialogueBusy = true
 	setQuestHudSuppressed(true)
+	lockTalkPrompt(0.5)
 	setTalkPromptEnabled(false)
 	setQuestFloatVisible(tim, false)
 	setOutline(tim, false)
@@ -1980,6 +2112,7 @@ local function tickWalkby()
 	local lines = TimCheeseQuestConfig.WALKBY_LINES
 	local msg = lines[math.random(1, #lines)]
 	StandDialogueCutscene.showWorldSpeech(tim, msg, { durationSec = 2.6, textSize = 20, billboardWidth = 340, billboardHeight = 80 })
+	lockTalkPrompt(2.8)
 end
 
 function M.init()

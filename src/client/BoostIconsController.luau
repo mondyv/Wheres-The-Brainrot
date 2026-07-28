@@ -324,17 +324,11 @@ local ICON_DEFS = {
 		title = "X-Ray Vision",
 		description = "See what brainrot is hiding inside targeted bushes",
 	},
-	["Autocollect"] = {
+	["Collect All"] = {
 		id = StoreConfig.GAMEPASS.AUTOCOLLECT,
 		attr = StoreConfig.ATTR.AUTOCOLLECT_OWNED,
-		title = "Autocollect",
-		description = "Collect all stand cash at once from your Autocollect pad",
-	},
-	["Auto Collect"] = {
-		id = StoreConfig.GAMEPASS.AUTOCOLLECT,
-		attr = StoreConfig.ATTR.AUTOCOLLECT_OWNED,
-		title = "Autocollect",
-		description = "Collect all stand cash at once from your Autocollect pad",
+		title = "Collect All",
+		description = "Collect all stand cash at once from your Collect All pad",
 	},
 }
 

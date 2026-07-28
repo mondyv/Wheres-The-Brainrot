@@ -574,17 +574,17 @@ local function getSwingRange()
 	return math.clamp(C.SWING_RANGE * (0.9 + (powerScale - 1) * 0.25), 65, 280)
 end
 
--- Latch/UI ready range: never farther than the rope can actually span.
-local function getLatchRange()
-	return math.min(getSwingRange(), C.ROPE_ABSOLUTE_MAX)
-end
-
 local function getRopeMaxLength()
 	return math.clamp(
 		C.ROPE_MAX_LENGTH + math.max(getSwingRange() - C.SWING_RANGE, 0) * 0.35,
 		C.ROPE_MIN_LENGTH + C.ROPE_HANG_PULL_MIN_GAP + 4,
 		C.ROPE_ABSOLUTE_MAX
 	)
+end
+
+-- Latch/UI ready range: only as far as the live rope can actually span.
+local function getLatchRange()
+	return math.min(getSwingRange(), getRopeMaxLength())
 end
 
 local function getRopeFlexScale()
@@ -3996,19 +3996,27 @@ local function boot(character)
 	function st.updateTargetVisual(target, canSwingNow, inactiveText)
 		st.ensureVisuals()
 
-		if target and not st.isSwinging then
+		-- Only show the swing indicator when jump will actually latch — never tease out of range.
+		if target and not st.isSwinging and canSwingNow == true then
 			local attachWorld = st.resolveUiAttachWorld(target)
 			if not attachWorld then
+				st.updateTargetVisual(nil, false)
 				return nil
 			end
-			st.targetReadyGoal = canSwingNow and 1 or 0
+			local dist = (attachWorld - st.hrp.Position).Magnitude
+			local latchRange = getLatchRange()
+			if dist < 2 or dist > latchRange then
+				st.updateTargetVisual(nil, false)
+				return nil
+			end
+			st.targetReadyGoal = 1
 			st.previewFadeGoal = 1
 			st.highlightedTarget = target
 			st.highlightedPoint = attachWorld
 			st.targetVisualShown = true
 
 			st.updateTargetHighlight(target)
-			st.setTargetHighlightColor(canSwingNow)
+			st.setTargetHighlightColor(true)
 			st.markerAnchorPart.CFrame = CFrame.new(attachWorld)
 			if st.markerGui.Adornee ~= st.markerAnchorPart then
 				st.markerGui.Adornee = st.markerAnchorPart
@@ -4020,26 +4028,15 @@ local function boot(character)
 				st.markerGui.Enabled = true
 			end
 
-			if canSwingNow then
-				local text = st.readyPromptText()
-				if st.lastMarkerText ~= text then
-					st.markerLabel.Text = text
-					st.lastMarkerText = text
-				end
-				st.updatePreview(target)
-				player:SetAttribute("SwingPromptReady", true)
-			else
-				-- Reserve "SWING BLOCKED" for the safezone. Outside = aim hint, not a false ban.
-				local text = if st.isHrpInSafezone() then "SWING BLOCKED" else "AIM AT VINE"
-				if st.lastMarkerText ~= text then
-					st.markerLabel.Text = text
-					st.lastMarkerText = text
-				end
-				st.updatePreview(target)
-				player:SetAttribute("SwingPromptReady", false)
+			local text = st.readyPromptText()
+			if st.lastMarkerText ~= text then
+				st.markerLabel.Text = text
+				st.lastMarkerText = text
 			end
+			st.updatePreview(target)
+			player:SetAttribute("SwingPromptReady", true)
 			st.lastVisualTarget = target
-			st.lastVisualCanSwing = canSwingNow
+			st.lastVisualCanSwing = true
 
 			return attachWorld
 		end

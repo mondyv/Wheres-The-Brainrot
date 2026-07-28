@@ -81,6 +81,9 @@ local QUEST_FLOAT_BOB = TweenInfo.new(0.75, Enum.EasingStyle.Sine, Enum.EasingDi
 local QUEST_BANG_IDLE = TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 local QUEST_FLOAT_BOB_PX = 7
 local QUEST_SLIDE_PX = 96
+-- Distinct from Shop Stand (0.88–1.2) / Sell (deep) / Upgrade (1.2–1.55).
+local TIM_VOICE_PITCH_MIN = 1.48
+local TIM_VOICE_PITCH_MAX = 1.82
 local toggleQuestHudCollapsed: () -> ()
 local layoutQuestHud: () -> ()
 local placeArrowOnTicket: () -> ()
@@ -2184,8 +2187,8 @@ function M.playIntroFall()
 		enterLabel = "LET'S GO",
 		exitLabel = "COOL",
 		lines = TimCheeseQuestConfig.INTRO_LINES,
-		voicePitchMin = 0.92,
-		voicePitchMax = 1.12,
+		voicePitchMin = TIM_VOICE_PITCH_MIN,
+		voicePitchMax = TIM_VOICE_PITCH_MAX,
 	}, clone)
 
 	-- Offer first quest with title / goal / reward before Accept.
@@ -2196,8 +2199,8 @@ function M.playIntroFall()
 		enterLabel = "ACCEPT QUEST",
 		exitLabel = "DECLINE",
 		lines = buildFirstOfferLines(),
-		voicePitchMin = 0.92,
-		voicePitchMax = 1.12,
+		voicePitchMin = TIM_VOICE_PITCH_MIN,
+		voicePitchMax = TIM_VOICE_PITCH_MAX,
 	}, clone)
 
 	-- Mark intro done after dialogue (not at fall start — that raced AcceptQuest).
@@ -2239,8 +2242,8 @@ function M.playIntroFall()
 			enterLabel = "OK",
 			exitLabel = "BYE",
 			lines = TimCheeseQuestConfig.DECLINE_LINES,
-			voicePitchMin = 0.92,
-			voicePitchMax = 1.12,
+			voicePitchMin = TIM_VOICE_PITCH_MIN,
+			voicePitchMax = TIM_VOICE_PITCH_MAX,
 		}, clone)
 	end
 
@@ -2307,8 +2310,8 @@ function M.openTimDialogue()
 		local msg = lines[math.random(1, #lines)]
 		StandDialogueCutscene.showWorldSpeech(tim, msg, {
 			durationSec = 2.8,
-			voicePitchMin = 0.92,
-			voicePitchMax = 1.12,
+			voicePitchMin = TIM_VOICE_PITCH_MIN,
+			voicePitchMax = TIM_VOICE_PITCH_MAX,
 			textSize = 18,
 			billboardWidth = 320,
 			billboardHeight = 72,
@@ -2336,8 +2339,8 @@ function M.openTimDialogue()
 			enterLabel = "CLAIM",
 			exitLabel = "LATER",
 			lines = TimCheeseQuestConfig.COMPLETE_LINES,
-			voicePitchMin = 0.92,
-			voicePitchMax = 1.12,
+			voicePitchMin = TIM_VOICE_PITCH_MIN,
+			voicePitchMax = TIM_VOICE_PITCH_MAX,
 		}, tim)
 		if not claimNow then
 			dialogueBusy = false
@@ -2378,8 +2381,8 @@ function M.openTimDialogue()
 				enterLabel = "OK",
 				exitLabel = "BYE",
 				lines = TimCheeseQuestConfig.ALL_DONE_LINES,
-				voicePitchMin = 0.92,
-				voicePitchMax = 1.12,
+				voicePitchMin = TIM_VOICE_PITCH_MIN,
+				voicePitchMax = TIM_VOICE_PITCH_MAX,
 			}, tim)
 		else
 			local wantAnother = StandDialogueCutscene.play({
@@ -2389,8 +2392,8 @@ function M.openTimDialogue()
 				enterLabel = "ACCEPT QUEST",
 				exitLabel = "DECLINE",
 				lines = buildOfferLinesForIndex(nextIdx),
-				voicePitchMin = 0.92,
-				voicePitchMax = 1.12,
+				voicePitchMin = TIM_VOICE_PITCH_MIN,
+				voicePitchMax = TIM_VOICE_PITCH_MAX,
 			}, tim)
 			if wantAnother then
 				acceptNextQuestAndShowHud(nextIdx)
@@ -2402,8 +2405,8 @@ function M.openTimDialogue()
 					enterLabel = "OK",
 					exitLabel = "BYE",
 					lines = TimCheeseQuestConfig.DECLINE_LINES,
-					voicePitchMin = 0.92,
-					voicePitchMax = 1.12,
+					voicePitchMin = TIM_VOICE_PITCH_MIN,
+					voicePitchMax = TIM_VOICE_PITCH_MAX,
 				}, tim)
 			end
 		end
@@ -2416,8 +2419,8 @@ function M.openTimDialogue()
 			enterLabel = "ACCEPT QUEST",
 			exitLabel = "DECLINE",
 			lines = buildOfferLinesForIndex(nextIdx),
-			voicePitchMin = 0.92,
-			voicePitchMax = 1.12,
+			voicePitchMin = TIM_VOICE_PITCH_MIN,
+			voicePitchMax = TIM_VOICE_PITCH_MAX,
 		}, tim)
 		if want then
 			acceptNextQuestAndShowHud(nextIdx)
@@ -2429,8 +2432,8 @@ function M.openTimDialogue()
 				enterLabel = "OK",
 				exitLabel = "BYE",
 				lines = TimCheeseQuestConfig.DECLINE_LINES,
-				voicePitchMin = 0.92,
-				voicePitchMax = 1.12,
+				voicePitchMin = TIM_VOICE_PITCH_MIN,
+				voicePitchMax = TIM_VOICE_PITCH_MAX,
 			}, tim)
 		end
 	end

@@ -734,18 +734,12 @@ end
 
 local function ensureQuestHud(): GuiObject
 	if questPanel and questPanel.Parent then
-		if questPanel:GetAttribute("StudTicket") == true then
+		if questPanel:GetAttribute("StudTicket") == true and questPanel:GetAttribute("HudLayout") == "wide_v2" then
 			if not questPanel:FindFirstChild("HudMatchScale") then
 				local hudMatchScale = Instance.new("UIScale")
 				hudMatchScale.Name = "HudMatchScale"
 				hudMatchScale.Scale = 1
 				hudMatchScale.Parent = questPanel
-			end
-			if not questPanel:FindFirstChild("MaxSize") then
-				local sizeCap = Instance.new("UISizeConstraint")
-				sizeCap.Name = "MaxSize"
-				sizeCap.MaxSize = Vector2.new(340, 280)
-				sizeCap.Parent = questPanel
 			end
 			return questPanel
 		end
@@ -759,10 +753,11 @@ local function ensureQuestHud(): GuiObject
 	ticket.Name = "ObjectivePanel"
 	ticket.AnchorPoint = Vector2.new(1, 0)
 	ticket.Position = UDim2.new(1, -TutorialConfig.PANEL_RIGHT_PAD, 0, TutorialConfig.PANEL_TOP_PAD + 36)
-	ticket.Size = UDim2.fromOffset(300, 0)
+	ticket.Size = UDim2.fromOffset(TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_HEIGHT)
 	ticket.AutomaticSize = Enum.AutomaticSize.Y
 	paintStudImage(ticket, Color3.fromRGB(255, 214, 74), 0.78)
 	ticket:SetAttribute("StudTicket", true)
+	ticket:SetAttribute("HudLayout", "wide_v2")
 	ticket.Visible = false
 	ticket.ZIndex = 100
 	ticket.ClipsDescendants = true
@@ -774,7 +769,7 @@ local function ensureQuestHud(): GuiObject
 	local ticketStroke = Instance.new("UIStroke")
 	ticketStroke.Name = "TicketStroke"
 	ticketStroke.Color = Color3.fromRGB(40, 28, 8)
-	ticketStroke.Thickness = 3.5
+	ticketStroke.Thickness = 3
 	ticketStroke.Parent = ticket
 	local ticketScale = Instance.new("UIScale")
 	ticketScale.Name = "PanelScale"
@@ -785,11 +780,6 @@ local function ensureQuestHud(): GuiObject
 	hudMatchScale.Name = "HudMatchScale"
 	hudMatchScale.Scale = 1
 	hudMatchScale.Parent = ticket
-
-	local sizeCap = Instance.new("UISizeConstraint")
-	sizeCap.Name = "MaxSize"
-	sizeCap.MaxSize = Vector2.new(340, 280)
-	sizeCap.Parent = ticket
 
 	local floatWrap = Instance.new("Frame")
 	floatWrap.Name = "FloatWrap"
@@ -802,10 +792,10 @@ local function ensureQuestHud(): GuiObject
 	floatWrap.Parent = ticket
 
 	local pad = Instance.new("UIPadding")
-	pad.PaddingTop = UDim.new(0, 8)
-	pad.PaddingBottom = UDim.new(0, 8)
-	pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 8)
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
+	pad.PaddingLeft = UDim.new(0, 6)
+	pad.PaddingRight = UDim.new(0, 6)
 	pad.Parent = floatWrap
 
 	local inner = Instance.new("ImageLabel")
@@ -822,24 +812,24 @@ local function ensureQuestHud(): GuiObject
 	local dash = Instance.new("UIStroke")
 	dash.Name = "InnerStroke"
 	dash.Color = Color3.fromRGB(180, 120, 30)
-	dash.Thickness = 1.5
+	dash.Thickness = 1.4
 	dash.Transparency = 0.35
 	dash.Parent = inner
 	local innerPad = Instance.new("UIPadding")
-	innerPad.PaddingTop = UDim.new(0, 10)
-	innerPad.PaddingBottom = UDim.new(0, 10)
-	innerPad.PaddingLeft = UDim.new(0, 10)
-	innerPad.PaddingRight = UDim.new(0, 10)
+	innerPad.PaddingTop = UDim.new(0, 6)
+	innerPad.PaddingBottom = UDim.new(0, 6)
+	innerPad.PaddingLeft = UDim.new(0, 8)
+	innerPad.PaddingRight = UDim.new(0, 8)
 	innerPad.Parent = inner
 	local list = Instance.new("UIListLayout")
 	list.SortOrder = Enum.SortOrder.LayoutOrder
-	list.Padding = UDim.new(0, 6)
+	list.Padding = UDim.new(0, 4)
 	list.Parent = inner
 
 	local header = Instance.new("Frame")
 	header.Name = "Header"
 	header.BackgroundTransparency = 1
-	header.Size = UDim2.new(1, 0, 0, 40)
+	header.Size = UDim2.new(1, 0, 0, 34)
 	header.LayoutOrder = 1
 	header.ZIndex = 102
 	header.Parent = inner
@@ -847,8 +837,8 @@ local function ensureQuestHud(): GuiObject
 	local bang = Instance.new("ImageLabel")
 	bang.Name = "Exclaim"
 	bang.BackgroundTransparency = 1
-	bang.Position = UDim2.fromOffset(0, -2)
-	bang.Size = UDim2.fromOffset(36, 36)
+	bang.Position = UDim2.fromOffset(0, -1)
+	bang.Size = UDim2.fromOffset(32, 32)
 	bang.Image = TutorialConfig.EXCLAIM_IMAGE
 	bang.Rotation = -10
 	bang.ZIndex = 103
@@ -857,10 +847,10 @@ local function ensureQuestHud(): GuiObject
 	local stamp = Instance.new("TextLabel")
 	stamp.Name = "Stamp"
 	stamp.BackgroundTransparency = 1
-	stamp.Position = UDim2.fromOffset(42, 0)
-	stamp.Size = UDim2.new(1, -42, 0, 16)
+	stamp.Position = UDim2.fromOffset(38, 0)
+	stamp.Size = UDim2.new(1, -38, 0, 13)
 	stamp.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	stamp.TextSize = 12
+	stamp.TextSize = 11
 	stamp.TextColor3 = Color3.fromRGB(160, 40, 30)
 	stamp.TextXAlignment = Enum.TextXAlignment.Left
 	stamp.Text = "TIM CHEESE JOB"
@@ -870,8 +860,8 @@ local function ensureQuestHud(): GuiObject
 	local title = Instance.new("TextLabel")
 	title.Name = "Title"
 	title.BackgroundTransparency = 1
-	title.Position = UDim2.fromOffset(42, 16)
-	title.Size = UDim2.new(1, -42, 0, 22)
+	title.Position = UDim2.fromOffset(38, 13)
+	title.Size = UDim2.new(1, -38, 0, 20)
 	title.FontFace = Font.fromEnum(Enum.Font.GothamBold)
 	title.TextSize = 16
 	title.TextColor3 = Color3.fromRGB(30, 24, 10)
@@ -900,7 +890,7 @@ local function ensureQuestHud(): GuiObject
 	local progressRow = Instance.new("Frame")
 	progressRow.Name = "ProgressRow"
 	progressRow.BackgroundTransparency = 1
-	progressRow.Size = UDim2.new(1, 0, 0, 18)
+	progressRow.Size = UDim2.new(1, 0, 0, 16)
 	progressRow.LayoutOrder = 3
 	progressRow.ZIndex = 102
 	progressRow.Parent = inner
@@ -910,7 +900,7 @@ local function ensureQuestHud(): GuiObject
 	progress.BackgroundTransparency = 1
 	progress.Size = UDim2.new(1, -30, 1, 0)
 	progress.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	progress.TextSize = 13
+	progress.TextSize = 12
 	progress.TextColor3 = Color3.fromRGB(40, 110, 40)
 	progress.TextXAlignment = Enum.TextXAlignment.Left
 	progress.Text = ""
@@ -924,7 +914,7 @@ local function ensureQuestHud(): GuiObject
 	dots.Position = UDim2.new(1, 0, 0.5, 0)
 	dots.Size = UDim2.fromOffset(26, 16)
 	dots.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	dots.TextSize = 13
+	dots.TextSize = 12
 	dots.TextColor3 = Color3.fromRGB(40, 110, 40)
 	dots.TextXAlignment = Enum.TextXAlignment.Left
 	dots.Text = ""
@@ -933,7 +923,7 @@ local function ensureQuestHud(): GuiObject
 
 	local barBg = Instance.new("Frame")
 	barBg.Name = "BarBg"
-	barBg.Size = UDim2.new(1, 0, 0, 10)
+	barBg.Size = UDim2.new(1, 0, 0, 8)
 	barBg.BackgroundColor3 = Color3.fromRGB(210, 170, 70)
 	barBg.BackgroundTransparency = 0
 	barBg.BorderSizePixel = 0
@@ -961,16 +951,16 @@ local function ensureQuestHud(): GuiObject
 	payout.Name = "Reward"
 	payout.BackgroundColor3 = Color3.fromRGB(40, 28, 8)
 	payout.BackgroundTransparency = 0
-	payout.Size = UDim2.new(1, 0, 0, 26)
+	payout.Size = UDim2.new(1, 0, 0, 22)
 	payout.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	payout.TextSize = 13
+	payout.TextSize = 12
 	payout.TextColor3 = Color3.fromRGB(255, 220, 80)
 	payout.Text = ""
 	payout.LayoutOrder = 5
 	payout.ZIndex = 102
 	payout.Parent = inner
 	local payCorner = Instance.new("UICorner")
-	payCorner.CornerRadius = UDim.new(0, 8)
+	payCorner.CornerRadius = UDim.new(0, 6)
 	payCorner.Parent = payout
 
 	questPanel = ticket
@@ -1013,33 +1003,25 @@ local function layoutQuestHud()
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1280
 	local vh = if cam then cam.ViewportSize.Y else 720
-	local aspect = vw / math.max(vh, 1)
-	-- Only shrink on genuinely small / ultra-wide short windows — keep fullscreen PC normal-sized.
-	local compact = vh < 520 or (aspect > 2.15 and vh < 700)
-	local tiny = vh < 400 or vw < 500
-
-	local screenW: number
-	local matchScale = 1
-	if tiny then
-		screenW = math.clamp(math.floor(vw * 0.5), 160, 210)
-		matchScale = 0.82
-	elseif compact then
-		screenW = math.clamp(math.floor(vw * 0.26), 200, 260)
-		matchScale = math.clamp(vh / 640, 0.78, 0.92)
-	elseif mobile or vw < 700 then
-		screenW = math.clamp(math.floor(vw * 0.55), TutorialConfig.PANEL_MOBILE_MIN_WIDTH, TutorialConfig.PANEL_MOBILE_MAX_WIDTH)
-		matchScale = TutorialConfig.PANEL_MOBILE_SCALE
-	else
-		-- Normal PC / fullscreen: readable ticket, not a postage stamp.
-		screenW = math.clamp(math.floor(vw * 0.2), 280, 320)
-		matchScale = 1
-	end
-
 	local rightPad = TutorialConfig.PANEL_RIGHT_PAD
 	local topPad = TutorialConfig.PANEL_TOP_PAD + 6
 	local anchorY = 0
+	local screenW: number
+	local matchScale = 1
 
-	-- Sit just above Random Brainrot on mobile + PC when the button is laid out.
+	-- Same width / scale rules as TutorialController objective panel.
+	if mobile or vw < 700 then
+		local maxW = math.floor(vw * TutorialConfig.PANEL_MOBILE_MAX_WIDTH_FRAC)
+		screenW = math.clamp(maxW, TutorialConfig.PANEL_MOBILE_MIN_WIDTH, TutorialConfig.PANEL_MOBILE_MAX_WIDTH)
+		matchScale = TutorialConfig.PANEL_MOBILE_SCALE
+	else
+		local maxW = math.floor(vw * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
+		maxW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
+		screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
+		matchScale = TutorialConfig.PANEL_PC_SCALE
+	end
+
+	-- Sit just above Random Brainrot (same idea as tutorial on mobile / side UI).
 	local rb = resolveRandomBrainrotHud()
 	if rb and host and host.AbsoluteSize.Y > 0 then
 		local hp = host.AbsolutePosition
@@ -1054,17 +1036,12 @@ local function layoutQuestHud()
 		anchorY = 1
 		topPad = math.clamp(math.floor(vh * 0.62), 160, 360)
 	else
-		anchorY = 1
+		-- PC fallback: top-right like tutorial when RB isn't ready yet.
+		anchorY = 0
 		rightPad = TutorialConfig.PANEL_RIGHT_PAD
-		topPad = math.clamp(math.floor(vh * 0.62), 180, 380)
+		topPad = TutorialConfig.PANEL_TOP_PAD + 6
 	end
 
-	local sizeCap = panel:FindFirstChild("MaxSize")
-	if sizeCap and sizeCap:IsA("UISizeConstraint") then
-		-- Cap height so tall AutoSize tickets don't dominate short viewports.
-		local maxH = math.floor(vh * (if compact or tiny then 0.34 else 0.42))
-		sizeCap.MaxSize = Vector2.new(screenW + 40, math.max(120, maxH))
-	end
 	local hudScale = panel:FindFirstChild("HudMatchScale")
 	if hudScale and hudScale:IsA("UIScale") then
 		hudScale.Scale = matchScale
@@ -1075,7 +1052,7 @@ local function layoutQuestHud()
 	questHudAnchorY = anchorY
 
 	panel.AnchorPoint = Vector2.new(1, anchorY)
-	panel.Size = UDim2.fromOffset(screenW, 0)
+	panel.Size = UDim2.fromOffset(screenW, TutorialConfig.PANEL_HEIGHT)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
 	if not questHoverFlying then
 		panel.Position = UDim2.new(1, -rightPad, 0, topPad)

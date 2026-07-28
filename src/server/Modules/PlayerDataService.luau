@@ -59,9 +59,33 @@ local lastGoodStands: { [number]: { PlayerDataSchema.StandSaveEntry } } = {}
 local allowEmptyOverwrite: { [Player]: boolean } = {}
 -- Roblox Creator "Restart / shut down all servers" — BindToClose + mass leaves.
 local serverClosing = false
-local SAVE_ATTEMPTS = 4
+local SAVE_ATTEMPTS = 5
 local SAVE_RETRY_WAIT = 0.75
 local BIND_TO_CLOSE_BUDGET_SEC = 25
+local BACKUP_RETRY_ATTEMPTS = 3
+-- Autosave every 180s — don't double API load with a backup each time.
+local BACKUP_THROTTLE_SEC = 120
+
+local lastBackupAt: { [number]: number } = {}
+
+local function isTransientDatastoreError(err: any): boolean
+	local msg = if typeof(err) == "string" then err else tostring(err)
+	local lower = string.lower(msg)
+	return string.find(lower, "http 500", 1, true) ~= nil
+		or string.find(lower, "http 502", 1, true) ~= nil
+		or string.find(lower, "http 503", 1, true) ~= nil
+		or string.find(lower, "http 429", 1, true) ~= nil
+		or string.find(lower, "throttl", 1, true) ~= nil
+		or string.find(lower, "service unavailable", 1, true) ~= nil
+		or string.find(lower, "internal server", 1, true) ~= nil
+end
+
+local function saveRetryDelay(attempt: number, err: any): number
+	if isTransientDatastoreError(err) then
+		return 1.25 + attempt * 1.1
+	end
+	return SAVE_RETRY_WAIT * attempt
+end
 
 local function getInternalFolder(): Folder
 	local folder = ServerStorage:FindFirstChild("BrainrotInternal")
@@ -811,17 +835,37 @@ function M.loadPlayerData(player: Player): PlayerDataSchema.PlayerSaveData?
 	return result.data
 end
 
-local function writeBackup(player: Player, payload: PlayerDataSchema.PlayerSaveData)
+local function writeBackup(player: Player, payload: PlayerDataSchema.PlayerSaveData, force: boolean?)
 	if not backupStore then
 		return
 	end
-	local key = tostring(player.UserId) .. "_" .. tostring(os.time())
-	local ok, err = pcall(function()
-		backupStore:SetAsync(key, payload)
-	end)
-	if not ok then
-		warn("[PlayerDataService] backup write failed:", player.Name, err)
+	local userId = player.UserId
+	local now = os.clock()
+	if not force and (now - (lastBackupAt[userId] or 0)) < BACKUP_THROTTLE_SEC then
+		return
 	end
+	lastBackupAt[userId] = now
+
+	task.spawn(function()
+		local key = tostring(userId) .. "_" .. tostring(os.time())
+		local lastErr: any = nil
+		for attempt = 1, BACKUP_RETRY_ATTEMPTS do
+			local ok, err = pcall(function()
+				backupStore:SetAsync(key, payload)
+			end)
+			if ok then
+				return
+			end
+			lastErr = err
+			if attempt < BACKUP_RETRY_ATTEMPTS and isTransientDatastoreError(err) then
+				task.wait(saveRetryDelay(attempt, err))
+			else
+				break
+			end
+		end
+		local hint = if isTransientDatastoreError(lastErr) then " (Roblox API blip — main save still retried)" else ""
+		warn("[PlayerDataService] backup write failed:", player.Name, lastErr, hint)
+	end)
 end
 
 local function shallowCopyEntries(list: { any }): { any }
@@ -1055,7 +1099,7 @@ function M.savePlayerData(player: Player, precollected: PlayerDataSchema.PlayerS
 		end
 	end
 
-	writeBackup(player, payload)
+	writeBackup(player, payload, isLeaveOrClose or serverClosing)
 
 	local ok = false
 	local err: any = nil
@@ -1113,15 +1157,28 @@ function M.savePlayerData(player: Player, precollected: PlayerDataSchema.PlayerS
 		if ok then
 			break
 		end
-		warn("[PlayerDataService] save attempt", attempt, "failed for", player.Name, err)
-		task.wait(SAVE_RETRY_WAIT * attempt)
+		local transient = isTransientDatastoreError(err)
+		warn(
+			"[PlayerDataService] save attempt",
+			attempt,
+			"failed for",
+			player.Name,
+			err,
+			if transient then "(transient — retrying)" else ""
+		)
+		if attempt < SAVE_ATTEMPTS then
+			task.wait(saveRetryDelay(attempt, err))
+		end
 	end
 
 	saveInFlight[player] = nil
 	allowEmptyOverwrite[player] = nil
 
 	if not ok then
-		warn("[PlayerDataService] save FAILED after retries:", player.Name, err)
+		local hint = if isTransientDatastoreError(err)
+			then " — Roblox DataStore HTTP 500/503 blip; rejoin or wait a minute"
+			else ""
+		warn("[PlayerDataService] save FAILED after retries:", player.Name, err, hint)
 		return false
 	end
 

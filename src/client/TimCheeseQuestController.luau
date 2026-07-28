@@ -63,7 +63,8 @@ local questHoverWrap: GuiObject? = nil
 local questHoverBang: ImageLabel? = nil
 local promptLockedUntil = 0.0
 local COLLAPSE_ARROW_IMAGE = "rbxassetid://128709527394819"
-local COLLAPSE_PEEK_PX = 34
+local COLLAPSE_ARROW_SIZE = 26
+local COLLAPSE_PEEK_PX = 32 -- how much of the ticket's right edge stays on-screen when tucked
 local toggleQuestHudCollapsed: () -> ()
 local layoutQuestHud: () -> ()
 local highlight: Highlight? = nil
@@ -597,6 +598,13 @@ local function ensureQuestHost(): Frame?
 		end
 		gui.Enabled = true
 		gui.DisplayOrder = math.max(gui.DisplayOrder, 110)
+		gui.IgnoreGuiInset = true
+		pcall(function()
+			(gui :: any).ClipToDeviceSafeArea = false
+		end)
+		pcall(function()
+			(gui :: any).ScreenInsets = Enum.ScreenInsets.None
+		end)
 		questGui = gui
 	end
 
@@ -614,6 +622,7 @@ local function ensureQuestHost(): Frame?
 		questHost = existing
 		existing.Visible = true
 		existing.Size = UDim2.fromScale(1, 1)
+		existing.ClipsDescendants = false
 		return existing
 	end
 	local created = Instance.new("Frame")
@@ -781,7 +790,7 @@ end
 
 local function ensureQuestHud(): GuiObject
 	if questPanel and questPanel.Parent then
-		if questPanel:GetAttribute("StudTicket") == true and questPanel:GetAttribute("HudLayout") == "wide_v3" then
+		if questPanel:GetAttribute("StudTicket") == true and questPanel:GetAttribute("HudLayout") == "wide_v4" then
 			if not questPanel:FindFirstChild("HudMatchScale") then
 				local hudMatchScale = Instance.new("UIScale")
 				hudMatchScale.Name = "HudMatchScale"
@@ -797,19 +806,40 @@ local function ensureQuestHud(): GuiObject
 	local host = ensureQuestHost()
 	assert(host, "TimCheeseQuestHost missing")
 
+	-- Shell owns layout/collapse. Ticket is the cheese card. Arrow sits in the ticket's right edge.
+	local shell = Instance.new("Frame")
+	shell.Name = "ObjectivePanel"
+	shell.BackgroundTransparency = 1
+	shell.BorderSizePixel = 0
+	shell.AnchorPoint = Vector2.new(1, 0)
+	shell.Position = UDim2.new(1, -TutorialConfig.PANEL_RIGHT_PAD, 0, TutorialConfig.PANEL_TOP_PAD + 36)
+	shell.Size = UDim2.fromOffset(TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_HEIGHT)
+	shell.AutomaticSize = Enum.AutomaticSize.Y
+	shell:SetAttribute("StudTicket", true)
+	shell:SetAttribute("HudLayout", "wide_v4")
+	shell.Visible = false
+	shell.ZIndex = 100
+	shell.ClipsDescendants = false
+	shell.Parent = host
+
+	local ticketScale = Instance.new("UIScale")
+	ticketScale.Name = "PanelScale"
+	ticketScale.Scale = 1
+	ticketScale.Parent = shell
+
+	local hudMatchScale = Instance.new("UIScale")
+	hudMatchScale.Name = "HudMatchScale"
+	hudMatchScale.Scale = 1
+	hudMatchScale.Parent = shell
+
 	local ticket = Instance.new("ImageLabel")
-	ticket.Name = "ObjectivePanel"
-	ticket.AnchorPoint = Vector2.new(1, 0)
-	ticket.Position = UDim2.new(1, -TutorialConfig.PANEL_RIGHT_PAD, 0, TutorialConfig.PANEL_TOP_PAD + 36)
-	ticket.Size = UDim2.fromOffset(TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_HEIGHT)
+	ticket.Name = "Ticket"
+	ticket.Size = UDim2.new(1, 0, 0, 0)
 	ticket.AutomaticSize = Enum.AutomaticSize.Y
-	paintStudImage(ticket, Color3.fromRGB(255, 214, 74), 0.78)
-	ticket:SetAttribute("StudTicket", true)
-	ticket:SetAttribute("HudLayout", "wide_v3")
-	ticket.Visible = false
 	ticket.ZIndex = 100
 	ticket.ClipsDescendants = false
-	ticket.Parent = host
+	paintStudImage(ticket, Color3.fromRGB(255, 214, 74), 0.78)
+	ticket.Parent = shell
 
 	local ticketCorner = Instance.new("UICorner")
 	ticketCorner.CornerRadius = UDim.new(0, 6)
@@ -817,17 +847,8 @@ local function ensureQuestHud(): GuiObject
 	local ticketStroke = Instance.new("UIStroke")
 	ticketStroke.Name = "TicketStroke"
 	ticketStroke.Color = Color3.fromRGB(40, 28, 8)
-	ticketStroke.Thickness = 3
+	ticketStroke.Thickness = 2.5
 	ticketStroke.Parent = ticket
-	local ticketScale = Instance.new("UIScale")
-	ticketScale.Name = "PanelScale"
-	ticketScale.Scale = 1
-	ticketScale.Parent = ticket
-
-	local hudMatchScale = Instance.new("UIScale")
-	hudMatchScale.Name = "HudMatchScale"
-	hudMatchScale.Scale = 1
-	hudMatchScale.Parent = ticket
 
 	local floatWrap = Instance.new("Frame")
 	floatWrap.Name = "FloatWrap"
@@ -840,10 +861,10 @@ local function ensureQuestHud(): GuiObject
 	floatWrap.Parent = ticket
 
 	local pad = Instance.new("UIPadding")
-	pad.PaddingTop = UDim.new(0, 6)
-	pad.PaddingBottom = UDim.new(0, 6)
-	pad.PaddingLeft = UDim.new(0, 6)
-	pad.PaddingRight = UDim.new(0, 6)
+	pad.PaddingTop = UDim.new(0, 5)
+	pad.PaddingBottom = UDim.new(0, 5)
+	pad.PaddingLeft = UDim.new(0, 5)
+	pad.PaddingRight = UDim.new(0, 5)
 	pad.Parent = floatWrap
 
 	local inner = Instance.new("ImageLabel")
@@ -860,24 +881,24 @@ local function ensureQuestHud(): GuiObject
 	local dash = Instance.new("UIStroke")
 	dash.Name = "InnerStroke"
 	dash.Color = Color3.fromRGB(180, 120, 30)
-	dash.Thickness = 1.4
+	dash.Thickness = 1.2
 	dash.Transparency = 0.35
 	dash.Parent = inner
 	local innerPad = Instance.new("UIPadding")
-	innerPad.PaddingTop = UDim.new(0, 6)
-	innerPad.PaddingBottom = UDim.new(0, 6)
-	innerPad.PaddingLeft = UDim.new(0, 8)
-	innerPad.PaddingRight = UDim.new(0, 8)
+	innerPad.PaddingTop = UDim.new(0, 5)
+	innerPad.PaddingBottom = UDim.new(0, 5)
+	innerPad.PaddingLeft = UDim.new(0, 7)
+	innerPad.PaddingRight = UDim.new(0, 28)
 	innerPad.Parent = inner
 	local list = Instance.new("UIListLayout")
 	list.SortOrder = Enum.SortOrder.LayoutOrder
-	list.Padding = UDim.new(0, 4)
+	list.Padding = UDim.new(0, 3)
 	list.Parent = inner
 
 	local header = Instance.new("Frame")
 	header.Name = "Header"
 	header.BackgroundTransparency = 1
-	header.Size = UDim2.new(1, 0, 0, 34)
+	header.Size = UDim2.new(1, 0, 0, 30)
 	header.LayoutOrder = 1
 	header.ZIndex = 102
 	header.Parent = inner
@@ -886,7 +907,7 @@ local function ensureQuestHud(): GuiObject
 	bang.Name = "Exclaim"
 	bang.BackgroundTransparency = 1
 	bang.Position = UDim2.fromOffset(0, -1)
-	bang.Size = UDim2.fromOffset(32, 32)
+	bang.Size = UDim2.fromOffset(28, 28)
 	bang.Image = TutorialConfig.EXCLAIM_IMAGE
 	bang.Rotation = -10
 	bang.ZIndex = 103
@@ -895,10 +916,10 @@ local function ensureQuestHud(): GuiObject
 	local stamp = Instance.new("TextLabel")
 	stamp.Name = "Stamp"
 	stamp.BackgroundTransparency = 1
-	stamp.Position = UDim2.fromOffset(38, 0)
-	stamp.Size = UDim2.new(1, -70, 0, 13)
+	stamp.Position = UDim2.fromOffset(32, 0)
+	stamp.Size = UDim2.new(1, -34, 0, 12)
 	stamp.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	stamp.TextSize = 11
+	stamp.TextSize = 10
 	stamp.TextColor3 = Color3.fromRGB(160, 40, 30)
 	stamp.TextXAlignment = Enum.TextXAlignment.Left
 	stamp.Text = "TIM CHEESE JOB"
@@ -908,17 +929,17 @@ local function ensureQuestHud(): GuiObject
 	local title = Instance.new("TextLabel")
 	title.Name = "Title"
 	title.BackgroundTransparency = 1
-	title.Position = UDim2.fromOffset(38, 13)
-	title.Size = UDim2.new(1, -70, 0, 20)
+	title.Position = UDim2.fromOffset(32, 12)
+	title.Size = UDim2.new(1, -34, 0, 18)
 	title.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	title.TextSize = 16
+	title.TextSize = 14
 	title.TextColor3 = Color3.fromRGB(30, 24, 10)
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.TextTruncate = Enum.TextTruncate.AtEnd
 	title.Text = ""
 	title.ZIndex = 103
 	title.Parent = header
-	UiFonts.applyDisplayLabel(title, 16, 13)
+	UiFonts.applyDisplayLabel(title, 14, 11)
 
 	local body = Instance.new("TextLabel")
 	body.Name = "Body"
@@ -926,7 +947,7 @@ local function ensureQuestHud(): GuiObject
 	body.Size = UDim2.new(1, 0, 0, 0)
 	body.AutomaticSize = Enum.AutomaticSize.Y
 	body.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
-	body.TextSize = 13
+	body.TextSize = 12
 	body.TextColor3 = Color3.fromRGB(55, 42, 18)
 	body.TextWrapped = true
 	body.TextXAlignment = Enum.TextXAlignment.Left
@@ -938,7 +959,7 @@ local function ensureQuestHud(): GuiObject
 	local progressRow = Instance.new("Frame")
 	progressRow.Name = "ProgressRow"
 	progressRow.BackgroundTransparency = 1
-	progressRow.Size = UDim2.new(1, 0, 0, 16)
+	progressRow.Size = UDim2.new(1, 0, 0, 14)
 	progressRow.LayoutOrder = 3
 	progressRow.ZIndex = 102
 	progressRow.Parent = inner
@@ -946,9 +967,9 @@ local function ensureQuestHud(): GuiObject
 	local progress = Instance.new("TextLabel")
 	progress.Name = "Progress"
 	progress.BackgroundTransparency = 1
-	progress.Size = UDim2.new(1, -30, 1, 0)
+	progress.Size = UDim2.new(1, -28, 1, 0)
 	progress.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	progress.TextSize = 12
+	progress.TextSize = 11
 	progress.TextColor3 = Color3.fromRGB(40, 110, 40)
 	progress.TextXAlignment = Enum.TextXAlignment.Left
 	progress.Text = ""
@@ -960,9 +981,9 @@ local function ensureQuestHud(): GuiObject
 	dots.BackgroundTransparency = 1
 	dots.AnchorPoint = Vector2.new(1, 0.5)
 	dots.Position = UDim2.new(1, 0, 0.5, 0)
-	dots.Size = UDim2.fromOffset(26, 16)
+	dots.Size = UDim2.fromOffset(24, 14)
 	dots.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	dots.TextSize = 12
+	dots.TextSize = 11
 	dots.TextColor3 = Color3.fromRGB(40, 110, 40)
 	dots.TextXAlignment = Enum.TextXAlignment.Left
 	dots.Text = ""
@@ -971,7 +992,7 @@ local function ensureQuestHud(): GuiObject
 
 	local barBg = Instance.new("Frame")
 	barBg.Name = "BarBg"
-	barBg.Size = UDim2.new(1, 0, 0, 8)
+	barBg.Size = UDim2.new(1, 0, 0, 7)
 	barBg.BackgroundColor3 = Color3.fromRGB(210, 170, 70)
 	barBg.BackgroundTransparency = 0
 	barBg.BorderSizePixel = 0
@@ -999,9 +1020,9 @@ local function ensureQuestHud(): GuiObject
 	payout.Name = "Reward"
 	payout.BackgroundColor3 = Color3.fromRGB(40, 28, 8)
 	payout.BackgroundTransparency = 0
-	payout.Size = UDim2.new(1, 0, 0, 22)
+	payout.Size = UDim2.new(1, 0, 0, 20)
 	payout.FontFace = Font.fromEnum(Enum.Font.GothamBold)
-	payout.TextSize = 12
+	payout.TextSize = 11
 	payout.TextColor3 = Color3.fromRGB(255, 220, 80)
 	payout.Text = ""
 	payout.LayoutOrder = 5
@@ -1011,48 +1032,67 @@ local function ensureQuestHud(): GuiObject
 	payCorner.CornerRadius = UDim.new(0, 6)
 	payCorner.Parent = payout
 
-	-- Collapse arrow (faces right when expanded; flips 180 when tucked away).
+	-- Arrow tab on the ticket's right edge so collapsing right leaves it peeking on-screen.
 	local collapse = Instance.new("ImageButton")
 	collapse.Name = "CollapseArrow"
-	collapse.BackgroundTransparency = 1
+	collapse.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
+	collapse.BackgroundTransparency = 0.12
+	collapse.BorderSizePixel = 0
 	collapse.AnchorPoint = Vector2.new(1, 0)
-	collapse.Position = UDim2.new(1, -2, 0, 2)
-	collapse.Size = UDim2.fromOffset(28, 28)
+	collapse.Position = UDim2.new(1, -5, 0, 5)
+	collapse.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
 	collapse.Image = COLLAPSE_ARROW_IMAGE
 	collapse.ScaleType = Enum.ScaleType.Fit
 	collapse.Rotation = 0
-	collapse.ZIndex = 120
+	collapse.ZIndex = 130
 	collapse.AutoButtonColor = true
 	collapse.Parent = ticket
+	local collapseCorner = Instance.new("UICorner")
+	collapseCorner.CornerRadius = UDim.new(0, 5)
+	collapseCorner.Parent = collapse
+	local collapseStroke = Instance.new("UIStroke")
+	collapseStroke.Color = Color3.fromRGB(40, 28, 8)
+	collapseStroke.Thickness = 1.5
+	collapseStroke.Parent = collapse
 
-	questPanel = ticket
+	questPanel = shell
 	cacheHoverTargets()
 	collapse.Activated:Connect(function()
 		toggleQuestHudCollapsed()
 	end)
-	return ticket
+	return shell
+end
+
+local function panelVisualWidth(): number
+	if not questPanel then
+		return 200
+	end
+	local abs = questPanel.AbsoluteSize.X
+	if abs > 4 then
+		return abs
+	end
+	return math.max(questPanel.Size.X.Offset, 160)
 end
 
 local function expandedHudPosition(): UDim2
-	return UDim2.new(1, -questHudBaseRightPad, 0, questHudBaseTop)
+	local edge = math.max(questHudBaseRightPad, 10)
+	return UDim2.new(1, -edge, 0, questHudBaseTop)
 end
 
 local function collapsedHudPosition(): UDim2
-	local w = if questPanel then math.max(questPanel.AbsoluteSize.X, questPanel.Size.X.Offset) else 280
-	-- With AnchorPoint.X = 1, positive X offset parks most of the panel off-screen right,
-	-- leaving COLLAPSE_PEEK_PX of the right edge (and the arrow) visible.
-	return UDim2.new(1, math.max(8, w - COLLAPSE_PEEK_PX), 0, questHudBaseTop)
+	local w = panelVisualWidth()
+	-- Push almost fully off-screen; leave only the arrow tab peeking from the right.
+	return UDim2.new(1, math.max(w - COLLAPSE_PEEK_PX, math.floor(w * 0.88)), 0, questHudBaseTop)
 end
 
 local function applyCollapseArrowVisual()
 	if not questPanel then
 		return
 	end
-	local arrow = questPanel:FindFirstChild("CollapseArrow")
+	local arrow = questPanel:FindFirstChild("CollapseArrow", true)
 	if not (arrow and arrow:IsA("ImageButton")) then
 		return
 	end
-	-- Asset faces right. Expanded = right (hide me). Collapsed = left (bring me back).
 	local goalRot = if questHudCollapsed then 180 else 0
 	TweenService:Create(arrow, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 		Rotation = goalRot,
@@ -1069,23 +1109,28 @@ toggleQuestHudCollapsed = function()
 		questCollapseTween = nil
 	end
 	layoutQuestHud()
-	local goal = if questHudCollapsed then collapsedHudPosition() else expandedHudPosition()
-	local tw = TweenService:Create(
-		questPanel,
-		TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Position = goal }
-	)
-	questCollapseTween = tw
-	applyCollapseArrowVisual()
-	if questHudCollapsed then
-		stopExclaimPulse()
-		if questHoverWrap then
-			questHoverWrap.Position = UDim2.fromOffset(0, 0)
+	task.defer(function()
+		if not questPanel then
+			return
 		end
-	else
-		startExclaimPulse()
-	end
-	tw:Play()
+		local goal = if questHudCollapsed then collapsedHudPosition() else expandedHudPosition()
+		local tw = TweenService:Create(
+			questPanel,
+			TweenInfo.new(0.34, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Position = goal }
+		)
+		questCollapseTween = tw
+		applyCollapseArrowVisual()
+		if questHudCollapsed then
+			stopExclaimPulse()
+			if questHoverWrap then
+				questHoverWrap.Position = UDim2.fromOffset(0, 0)
+			end
+		else
+			startExclaimPulse()
+		end
+		tw:Play()
+	end)
 end
 
 local function resolveRandomBrainrotHud(): GuiObject?
@@ -1118,6 +1163,13 @@ layoutQuestHud = function()
 	if questGui then
 		questGui.Enabled = true
 		questGui.DisplayOrder = math.max(questGui.DisplayOrder, 110)
+		questGui.IgnoreGuiInset = true
+		pcall(function()
+			(questGui :: any).ClipToDeviceSafeArea = false
+		end)
+		pcall(function()
+			(questGui :: any).ScreenInsets = Enum.ScreenInsets.None
+		end)
 	end
 
 	local mobile = UserInputService.TouchEnabled
@@ -1131,29 +1183,25 @@ layoutQuestHud = function()
 	local matchScale = 1
 
 	if mobile or vw < 700 then
-		-- Smaller than tutorial — quest ticket has more rows of content.
-		local maxW = math.floor(vw * 0.58)
-		screenW = math.clamp(maxW, 150, 200)
-		matchScale = if vh < 640 then 0.78 else 0.84
+		local maxW = math.floor(vw * 0.48)
+		screenW = math.clamp(maxW, 132, 168)
+		matchScale = if vh < 700 then 0.72 else 0.78
 	else
-		local maxW = math.floor(vw * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
-		maxW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
-		screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
-		matchScale = TutorialConfig.PANEL_PC_SCALE
+		screenW = math.clamp(math.floor(vw * 0.22), 260, 340)
+		matchScale = 0.94
 	end
 
-	-- Sit just above Random Brainrot (same idea as tutorial on mobile / side UI).
 	local rb = resolveRandomBrainrotHud()
 	if rb and host and host.AbsoluteSize.Y > 0 then
 		local hp = host.AbsolutePosition
 		local rbTop = rb.AbsolutePosition.Y - hp.Y
 		local hostRight = hp.X + host.AbsoluteSize.X
 		local rbRight = rb.AbsolutePosition.X + rb.AbsoluteSize.X
-		rightPad = math.max(8, math.floor(hostRight - rbRight))
+		rightPad = math.max(10, math.floor(hostRight - rbRight))
 		anchorY = 1
 		topPad = math.max(10, math.floor(rbTop - TutorialConfig.PANEL_MOBILE_GAP_ABOVE_RIGHT))
 	elseif mobile or vw < 700 then
-		rightPad = 8
+		rightPad = 10
 		anchorY = 1
 		topPad = math.clamp(math.floor(vh * 0.62), 160, 360)
 	else
@@ -1176,15 +1224,19 @@ layoutQuestHud = function()
 	panel.AutomaticSize = Enum.AutomaticSize.Y
 	if not questHoverFlying then
 		if questHudCollapsed then
-			local w = math.max(panel.AbsoluteSize.X, screenW)
-			panel.Position = UDim2.new(1, math.max(8, w - COLLAPSE_PEEK_PX), 0, topPad)
+			panel.Position = UDim2.new(1, screenW - COLLAPSE_PEEK_PX, 0, topPad)
+			task.defer(function()
+				if questPanel == panel and questHudCollapsed and not questHoverFlying then
+					panel.Position = collapsedHudPosition()
+				end
+			end)
 		else
 			panel.Position = UDim2.new(1, -rightPad, 0, topPad)
 		end
 	end
 	panel.ZIndex = 10
 
-	local arrow = panel:FindFirstChild("CollapseArrow")
+	local arrow = panel:FindFirstChild("CollapseArrow", true)
 	if arrow and arrow:IsA("ImageButton") then
 		arrow.Rotation = if questHudCollapsed then 180 else 0
 		arrow.Visible = true

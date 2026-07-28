@@ -2557,6 +2557,10 @@ function M.playIntroFall()
 		TopNotifController.showBroadcast("New quest from Tim Cheese!")
 	end
 	setQuestHudSuppressed(false)
+	-- Mobile AbsolutePosition settles after cutscene UI restore — force HUD on like claim path.
+	if accepted then
+		ensureQuestHudVisibleAfterDialogue()
+	end
 	syncPromptAndOutline()
 end
 

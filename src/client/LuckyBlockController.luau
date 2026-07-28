@@ -1,42 +1,83 @@
 -- [ACTIVE] LuckyBlockController
 --[[
 	LuckyBlockController
-	Client side of the Star-Rainbow lucky block tool.
+	Client side of lucky block tools.
 
-	When the equipped lucky block is activated:
-	• Fires LuckyBlockRoll to the server.
-	• On LuckyBlockShakeStart from the server, shakes the tool (Handle local CFrame offset) +
-	  starts the Secret/Godly bush aura SFX as the build-up.
-	• After the shake duration, the server grants + auto-equips the rolled brainrot through the
-	  existing inventory flow; the brainrot SFX comes through the standard PlayBrainrotSFX path.
+	On activate → LuckyBlockRoll. On LuckyBlockShakeStart → cinematic open:
+	drop block → ground shake → burst → brainrot emerge/hover → hop to head → shrink in.
 ]]
 
+local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
-local _TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local CutsceneConfig = require(Shared:WaitForChild("LuckyBlockCutsceneConfig"))
+local MobileTouchGate = require(Shared:WaitForChild("MobileTouchGate"))
 
 local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
+local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local OtherVfxController = require(script.Parent.OtherVfxController)
 
 local player = Players.LocalPlayer
 
-local SHAKE_RADIUS_STUDS = 0.12
-local SHAKE_FREQ_HZ = 7
-local SHAKE_ROT_DEG = 10
+local LOCK_ACTION = "LuckyBlockCutsceneMoveLock"
+local GUI_NAME = "LuckyBlockCutscene"
 
 local LuckyBlockController = {}
 
 local rollRE: RemoteEvent? = nil
 local shakeStartRE: RemoteEvent? = nil
 local activeAuraSound: Sound? = nil
-local activeShakeToken = 0
-local activeShakeConn: RBXScriptConnection? = nil
+local cutsceneToken = 0
+
+local cameraConn: RBXScriptConnection? = nil
+local shakeConn: RBXScriptConnection? = nil
+local floatConn: RBXScriptConnection? = nil
+local hopConn: RBXScriptConnection? = nil
+local shrinkConn: RBXScriptConnection? = nil
+local revealWatchConn: RBXScriptConnection? = nil
+
+local savedCameraType: Enum.CameraType? = nil
+local savedCameraSubject: Instance? = nil
+local savedFov: number? = nil
+local savedWalkSpeed: number? = nil
+local savedJumpPower: number? = nil
+local savedJumpHeight: number? = nil
+local savedUseJumpPower: boolean? = nil
+local savedAutoRotate: boolean? = nil
+local cutsceneGui: ScreenGui? = nil
+local letterTop: Frame? = nil
+local letterBottom: Frame? = nil
+local focusPart: BasePart? = nil
+local blockModel: Model? = nil
 
 local function isLuckyBlockTool(tool: Instance): boolean
 	return tool:IsA("Tool") and tool:GetAttribute("LuckyBlockTool") == true
+end
+
+local function getHRP(): BasePart?
+	local char = player.Character
+	if not char then
+		return nil
+	end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		return hrp
+	end
+	return nil
+end
+
+local function getHumanoid(): Humanoid?
+	local char = player.Character
+	if not char then
+		return nil
+	end
+	return char:FindFirstChildOfClass("Humanoid")
 end
 
 local function bushAuraTemplate(): Sound?
@@ -86,62 +127,586 @@ local function startAura()
 	activeAuraSound = clone
 end
 
-local function stopShake()
-	if activeShakeConn then
-		activeShakeConn:Disconnect()
-		activeShakeConn = nil
+local function disconnect(conn: RBXScriptConnection?)
+	if conn then
+		conn:Disconnect()
 	end
 end
 
-local function startShake(tool: Tool, durationSec: number)
-	stopShake()
-	activeShakeToken += 1
-	local token = activeShakeToken
-	local handle = tool:FindFirstChild("Handle") :: BasePart?
-	if not handle then
+local function stopAnimConns()
+	disconnect(cameraConn)
+	cameraConn = nil
+	disconnect(shakeConn)
+	shakeConn = nil
+	disconnect(floatConn)
+	floatConn = nil
+	disconnect(hopConn)
+	hopConn = nil
+	disconnect(shrinkConn)
+	shrinkConn = nil
+	disconnect(revealWatchConn)
+	revealWatchConn = nil
+end
+
+local function setToolHidden(tool: Tool?, hidden: boolean)
+	if not tool then
 		return
 	end
-	local startedAt = os.clock()
-	local baseGrip = tool.Grip
-	local rotPhase = math.random() * math.pi * 2
-	activeShakeConn = RunService.Heartbeat:Connect(function()
-		if token ~= activeShakeToken then
+	local mod = if hidden then 1 else 0
+	for _, d in tool:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.LocalTransparencyModifier = mod
+		elseif d:IsA("Decal") or d:IsA("Texture") then
+			d.LocalTransparencyModifier = mod
+		end
+	end
+end
+
+local function destroyBlockModel()
+	if blockModel and blockModel.Parent then
+		blockModel:Destroy()
+	end
+	blockModel = nil
+	focusPart = nil
+end
+
+local function lockMovement()
+	local hum = getHumanoid()
+	if hum then
+		if savedWalkSpeed == nil then
+			savedWalkSpeed = hum.WalkSpeed
+			savedJumpPower = hum.JumpPower
+			savedJumpHeight = hum.JumpHeight
+			savedUseJumpPower = hum.UseJumpPower
+			savedAutoRotate = hum.AutoRotate
+		end
+		hum.WalkSpeed = 0
+		hum.JumpPower = 0
+		hum.JumpHeight = 0
+		hum.AutoRotate = false
+	end
+	ContextActionService:BindAction(LOCK_ACTION, function()
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.PlayerActions.CharacterForward, Enum.PlayerActions.CharacterBackward, Enum.PlayerActions.CharacterLeft, Enum.PlayerActions.CharacterRight, Enum.PlayerActions.CharacterJump)
+end
+
+local function unlockMovement()
+	ContextActionService:UnbindAction(LOCK_ACTION)
+	MobileTouchGate.ensureTouchControlsVisible(true)
+	MobileTouchGate.restorePlayerMovement()
+	local hum = getHumanoid()
+	if hum then
+		if savedWalkSpeed ~= nil then
+			hum.WalkSpeed = savedWalkSpeed
+		end
+		if savedJumpPower ~= nil then
+			hum.JumpPower = savedJumpPower
+		end
+		if savedJumpHeight ~= nil then
+			hum.JumpHeight = savedJumpHeight
+		end
+		if savedUseJumpPower ~= nil then
+			hum.UseJumpPower = savedUseJumpPower
+		end
+		if savedAutoRotate ~= nil then
+			hum.AutoRotate = savedAutoRotate
+		end
+	end
+	savedWalkSpeed = nil
+	savedJumpPower = nil
+	savedJumpHeight = nil
+	savedUseJumpPower = nil
+	savedAutoRotate = nil
+end
+
+local function ensureLetterbox(): ScreenGui
+	if cutsceneGui and cutsceneGui.Parent and letterTop and letterBottom then
+		return cutsceneGui
+	end
+	if cutsceneGui then
+		cutsceneGui:Destroy()
+	end
+	local gui = Instance.new("ScreenGui")
+	gui.Name = GUI_NAME
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.DisplayOrder = 945
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	pcall(function()
+		(gui :: any).ClipToDeviceSafeArea = false
+	end)
+	pcall(function()
+		(gui :: any).ScreenInsets = Enum.ScreenInsets.None
+	end)
+	gui.Parent = player:WaitForChild("PlayerGui")
+
+	local top = Instance.new("Frame")
+	top.Name = "LetterTop"
+	top.BackgroundColor3 = Color3.new(0, 0, 0)
+	top.BorderSizePixel = 0
+	top.AnchorPoint = Vector2.new(0.5, 0)
+	top.Position = UDim2.new(0.5, 0, 0, 0)
+	top.Size = UDim2.new(1.2, 0, 0.12, 0)
+	top.Parent = gui
+
+	local bottom = Instance.new("Frame")
+	bottom.Name = "LetterBottom"
+	bottom.BackgroundColor3 = Color3.new(0, 0, 0)
+	bottom.BorderSizePixel = 0
+	bottom.AnchorPoint = Vector2.new(0.5, 1)
+	bottom.Position = UDim2.new(0.5, 0, 1, 0)
+	bottom.Size = UDim2.new(1.2, 0, 0.12, 0)
+	bottom.Parent = gui
+
+	cutsceneGui = gui
+	letterTop = top
+	letterBottom = bottom
+	return gui
+end
+
+local function destroyLetterbox()
+	if cutsceneGui then
+		cutsceneGui:Destroy()
+	end
+	cutsceneGui = nil
+	letterTop = nil
+	letterBottom = nil
+end
+
+local function restoreCamera()
+	local cam = Workspace.CurrentCamera
+	if cam then
+		if savedCameraType then
+			cam.CameraType = savedCameraType
+		end
+		if savedCameraSubject then
+			cam.CameraSubject = savedCameraSubject
+		end
+		if savedFov then
+			cam.FieldOfView = savedFov
+		end
+	end
+	savedCameraType = nil
+	savedCameraSubject = nil
+	savedFov = nil
+end
+
+local function faceToward(target: Vector3)
+	local hrp = getHRP()
+	if not hrp then
+		return
+	end
+	local flat = Vector3.new(target.X - hrp.Position.X, 0, target.Z - hrp.Position.Z)
+	if flat.Magnitude < 0.05 then
+		return
+	end
+	hrp.CFrame = CFrame.new(hrp.Position, hrp.Position + flat.Unit)
+end
+
+local function resolveGroundCf(hrp: BasePart): CFrame
+	local look = hrp.CFrame.LookVector
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < 0.05 then
+		flat = Vector3.new(0, 0, -1)
+	else
+		flat = flat.Unit
+	end
+	local probe = hrp.Position + flat * 4.2 + Vector3.new(0, 2.5, 0)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local char = player.Character
+	if char then
+		params.FilterDescendantsInstances = { char }
+	end
+	local hit = Workspace:Raycast(probe, Vector3.new(0, -18, 0), params)
+	local groundY = if hit then hit.Position.Y else (hrp.Position.Y - 3)
+	local pos = Vector3.new(probe.X, groundY + 0.65, probe.Z)
+	return CFrame.lookAt(pos, Vector3.new(hrp.Position.X, pos.Y, hrp.Position.Z))
+end
+
+local function cloneToolAsWorldModel(tool: Tool, atCf: CFrame): Model?
+	local model = Instance.new("Model")
+	model.Name = "LuckyBlockCutsceneBlock"
+	local handle = tool:FindFirstChild("Handle")
+	if not (handle and handle:IsA("BasePart")) then
+		model:Destroy()
+		return nil
+	end
+	local baseCf = handle.CFrame
+	local primary: BasePart? = nil
+	for _, d in tool:GetDescendants() do
+		if d:IsA("BasePart") then
+			local c = d:Clone()
+			c.Anchored = true
+			c.CanCollide = false
+			c.CanQuery = false
+			c.CanTouch = false
+			c.Massless = true
+			c.Parent = model
+			local offset = baseCf:ToObjectSpace(d.CFrame)
+			c.CFrame = atCf * offset
+			if d == handle then
+				primary = c
+			end
+		end
+	end
+	if primary then
+		model.PrimaryPart = primary
+	end
+	model.Parent = Workspace
+	return model
+end
+
+local function modelFocus(model: Model): Vector3
+	local ok, boxCf, boxSize = pcall(function()
+		return model:GetBoundingBox()
+	end)
+	if ok and typeof(boxCf) == "CFrame" and typeof(boxSize) == "Vector3" then
+		return boxCf.Position + Vector3.new(0, boxSize.Y * 0.05, 0)
+	end
+	return model:GetPivot().Position
+end
+
+local function startCinematicCamera(token: number)
+	local cam = Workspace.CurrentCamera
+	local hrp = getHRP()
+	if not cam or not hrp then
+		return
+	end
+	savedCameraType = cam.CameraType
+	savedCameraSubject = cam.CameraSubject
+	savedFov = cam.FieldOfView
+	cam.CameraType = Enum.CameraType.Scriptable
+	cam.FieldOfView = 52
+
+	local blendFrom = cam.CFrame
+	local blendT0 = os.clock()
+	local blendDur = 0.55
+	local phase = 0
+
+	disconnect(cameraConn)
+	cameraConn = RunService.RenderStepped:Connect(function(dt)
+		if token ~= cutsceneToken then
 			return
 		end
-		if not tool.Parent or not handle.Parent then
-			stopShake()
+		local liveCam = Workspace.CurrentCamera
+		local liveHrp = getHRP()
+		local hum = getHumanoid()
+		if not liveCam or not liveHrp then
 			return
 		end
-		local elapsed = os.clock() - startedAt
-		local frac = math.clamp(elapsed / durationSec, 0, 1)
-		-- Ramp the amplitude up so the shake builds rather than slamming.
-		local amp = 0.15 + frac * 0.85
-		local t = elapsed * math.pi * 2 * SHAKE_FREQ_HZ
-		local jitterX = (math.noise(t * 0.13, rotPhase, 0) - 0.5) * 2 * SHAKE_RADIUS_STUDS * amp
-		local jitterY = (math.noise(rotPhase, t * 0.13, 0.5) - 0.5) * 2 * SHAKE_RADIUS_STUDS * amp
-		local jitterZ = (math.noise(t * 0.13, 0.5, rotPhase + 1) - 0.5) * 2 * SHAKE_RADIUS_STUDS * amp
-		local rot = math.sin(t) * math.rad(SHAKE_ROT_DEG) * amp
-		tool.Grip = baseGrip * CFrame.new(jitterX, jitterY, jitterZ) * CFrame.Angles(rot, rot * 0.5, rot * 0.3)
-		if elapsed >= durationSec then
-			tool.Grip = baseGrip
-			stopShake()
+		if hum then
+			hum:Move(Vector3.zero, false)
+		end
+		phase += dt
+
+		local focus = liveHrp.Position + Vector3.new(0, 1.4, 0)
+		if focusPart and focusPart.Parent then
+			focus = focusPart.Position + Vector3.new(0, 0.9, 0)
+		elseif blockModel and blockModel.Parent then
+			focus = modelFocus(blockModel)
+		end
+
+		local right = liveHrp.CFrame.RightVector
+		local back = -liveHrp.CFrame.LookVector
+		local camPos = focus + right * 5.8 + Vector3.new(0, 3.6, 0) + back * 4.4
+		-- Subtle orbit sway during shake/hover.
+		local sway = math.sin(phase * 0.9) * 0.35
+		camPos += right * sway
+		local goal = CFrame.lookAt(camPos, focus + Vector3.new(0, 0.4, 0))
+
+		local blendAlpha = math.clamp((os.clock() - blendT0) / blendDur, 0, 1)
+		local eased = 1 - (1 - blendAlpha) ^ 3
+		liveCam.CFrame = blendFrom:Lerp(goal, eased)
+		if blendAlpha >= 1 then
+			blendFrom = goal
+			blendT0 = os.clock() - blendDur
 		end
 	end)
 end
 
-local function handleShakeStart(payload: any)
-	if typeof(payload) ~= "table" then
+local function waitToken(token: number, sec: number)
+	local t0 = os.clock()
+	while os.clock() - t0 < sec do
+		if token ~= cutsceneToken then
+			return false
+		end
+		task.wait(0.05)
+	end
+	return token == cutsceneToken
+end
+
+local function findRevealModel(): Model?
+	local folder = Workspace:FindFirstChild(CutsceneConfig.REVEAL_FOLDER_NAME)
+	if not folder then
+		return nil
+	end
+	for _, c in folder:GetChildren() do
+		if c:IsA("Model") and c:GetAttribute(CutsceneConfig.REVEAL_ATTR) == true then
+			if c:GetAttribute(CutsceneConfig.OWNER_ATTR) == player.UserId then
+				return c
+			end
+		end
+	end
+	return nil
+end
+
+local function waitForReveal(token: number, timeoutSec: number): Model?
+	local existing = findRevealModel()
+	if existing then
+		return existing
+	end
+	local folder = Workspace:FindFirstChild(CutsceneConfig.REVEAL_FOLDER_NAME)
+		or Workspace:WaitForChild(CutsceneConfig.REVEAL_FOLDER_NAME, timeoutSec)
+	if not folder or token ~= cutsceneToken then
+		return findRevealModel()
+	end
+	local found: Model? = nil
+	local done = false
+	disconnect(revealWatchConn)
+	revealWatchConn = folder.ChildAdded:Connect(function(c)
+		if done then
+			return
+		end
+		if c:IsA("Model") and c:GetAttribute(CutsceneConfig.REVEAL_ATTR) == true then
+			if c:GetAttribute(CutsceneConfig.OWNER_ATTR) == player.UserId then
+				found = c
+				done = true
+			end
+		end
+	end)
+	local t0 = os.clock()
+	while not done and os.clock() - t0 < timeoutSec do
+		if token ~= cutsceneToken then
+			break
+		end
+		local again = findRevealModel()
+		if again then
+			found = again
+			done = true
+			break
+		end
+		task.wait(0.05)
+	end
+	disconnect(revealWatchConn)
+	revealWatchConn = nil
+	return found
+end
+
+local function animateGroundShake(model: Model, durationSec: number, token: number)
+	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if not primary then
 		return
 	end
-	local duration = if typeof(payload.durationSec) == "number" then math.max(0.2, payload.durationSec) else 2.0
+	focusPart = primary
+	local baseCf = model:GetPivot()
+	local t0 = os.clock()
+	disconnect(shakeConn)
+	shakeConn = RunService.Heartbeat:Connect(function()
+		if token ~= cutsceneToken or not model.Parent then
+			disconnect(shakeConn)
+			shakeConn = nil
+			return
+		end
+		local elapsed = os.clock() - t0
+		local frac = math.clamp(elapsed / durationSec, 0, 1)
+		local amp = 0.08 + frac * 0.42
+		local t = elapsed * math.pi * 2 * 8.5
+		local jx = math.sin(t * 1.13) * amp
+		local jz = math.cos(t * 0.97) * amp * 0.85
+		local jy = math.abs(math.sin(t * 1.7)) * amp * 0.35
+		local tilt = math.sin(t) * math.rad(7 + frac * 14)
+		model:PivotTo(baseCf * CFrame.new(jx, jy, jz) * CFrame.Angles(tilt * 0.55, tilt * 0.25, -tilt * 0.4))
+		if elapsed >= durationSec then
+			model:PivotTo(baseCf)
+			disconnect(shakeConn)
+			shakeConn = nil
+		end
+	end)
+	waitToken(token, durationSec)
+end
+
+local function animateHover(model: Model, durationSec: number, token: number)
+	local anchor = model:GetPivot().Position
+	local _, baseYaw, _ = model:GetPivot():ToEulerAnglesYXZ()
+	local t0 = os.clock()
+	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if primary then
+		focusPart = primary
+	end
+	disconnect(floatConn)
+	floatConn = RunService.Heartbeat:Connect(function()
+		if token ~= cutsceneToken or not model.Parent then
+			disconnect(floatConn)
+			floatConn = nil
+			return
+		end
+		local elapsed = os.clock() - t0
+		local bob = math.sin(elapsed * 2.8) * 0.38
+		local panX = math.sin(elapsed * 0.75) * 0.45
+		local panZ = math.sin(elapsed * 0.62) * 0.45
+		local yaw = baseYaw + elapsed * 0.55
+		local tilt = math.sin(elapsed * 1.9) * 0.08
+		local pos = anchor + Vector3.new(panX, 1.05 + bob, panZ)
+		model:PivotTo(CFrame.new(pos) * CFrame.Angles(tilt * 0.35, yaw, tilt))
+		if elapsed >= durationSec then
+			disconnect(floatConn)
+			floatConn = nil
+		end
+	end)
+	waitToken(token, durationSec)
+end
+
+local function animateEmerge(model: Model, durationSec: number, token: number)
+	local startCf = model:GetPivot()
+	local goalCf = startCf * CFrame.new(0, 2.55, 0)
+	local t0 = os.clock()
+	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if primary then
+		focusPart = primary
+	end
+	while os.clock() - t0 < durationSec do
+		if token ~= cutsceneToken or not model.Parent then
+			return
+		end
+		local alpha = math.clamp((os.clock() - t0) / durationSec, 0, 1)
+		local eased = 1 - (1 - alpha) ^ 3
+		model:PivotTo(startCf:Lerp(goalCf, eased))
+		RunService.Heartbeat:Wait()
+	end
+	if model.Parent then
+		model:PivotTo(goalCf)
+	end
+end
+
+local function animateHopToHead(model: Model, durationSec: number, token: number)
 	local char = player.Character
 	if not char then
 		return
 	end
-	local tool = nil
+	local startPos = model:GetPivot().Position
+	local startCf = model:GetPivot()
+	local _, startYaw, _ = startCf:ToEulerAnglesYXZ()
+	local startScale = 1
+	pcall(function()
+		startScale = model:GetScale()
+	end)
+	local t0 = os.clock()
+
+	local function liveGoal(): Vector3
+		local head = char:FindFirstChild("Head")
+		if head and head:IsA("BasePart") then
+			return head.Position + Vector3.new(0, head.Size.Y * 0.55 + 0.35, 0)
+		end
+		local hrp = getHRP()
+		if hrp then
+			return hrp.Position + Vector3.new(0, 2.85, 0)
+		end
+		return startPos + Vector3.new(0, 3, 0)
+	end
+
+	disconnect(hopConn)
+	hopConn = RunService.Heartbeat:Connect(function()
+		if token ~= cutsceneToken or not model.Parent then
+			disconnect(hopConn)
+			hopConn = nil
+			return
+		end
+		local alpha = math.clamp((os.clock() - t0) / durationSec, 0, 1)
+		local e = 1 - (1 - alpha) ^ 3
+		local goalPos = liveGoal()
+		local along = startPos:Lerp(goalPos, e)
+		local hopY = math.sin(alpha * math.pi) * 4.2
+		local pos = along + Vector3.new(0, hopY, 0)
+		local scaleMul = if alpha < 0.4 then (1 - (alpha / 0.4) * 0.28) else (0.72 + (1 - (1 - ((alpha - 0.4) / 0.6)) ^ 2) * 0.28)
+		pcall(function()
+			model:ScaleTo(startScale * scaleMul)
+		end)
+		local spin = startYaw + alpha * math.pi * 1.25
+		model:PivotTo(CFrame.new(pos) * CFrame.Angles(0, spin, math.sin(alpha * math.pi) * 0.12))
+		local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+		if primary then
+			focusPart = primary
+		end
+		if alpha >= 1 then
+			disconnect(hopConn)
+			hopConn = nil
+		end
+	end)
+	waitToken(token, durationSec)
+end
+
+local function animateShrinkAway(model: Model, durationSec: number, token: number)
+	local startCf = model:GetPivot()
+	local startScale = 1
+	pcall(function()
+		startScale = model:GetScale()
+	end)
+	local cam = Workspace.CurrentCamera
+	local sinkTarget = startCf.Position + Vector3.new(0, -0.4, 0)
+	if cam then
+		-- Drift toward lower-center of view (inventory feel).
+		sinkTarget = cam.CFrame:PointToWorldSpace(Vector3.new(0.35, -0.85, -2.2))
+	end
+	local t0 = os.clock()
+	disconnect(shrinkConn)
+	shrinkConn = RunService.Heartbeat:Connect(function()
+		if token ~= cutsceneToken or not model.Parent then
+			disconnect(shrinkConn)
+			shrinkConn = nil
+			return
+		end
+		local alpha = math.clamp((os.clock() - t0) / durationSec, 0, 1)
+		local e = alpha * alpha
+		local pos = startCf.Position:Lerp(sinkTarget, e)
+		local spin = alpha * math.pi * 2.4
+		pcall(function()
+			model:ScaleTo(math.max(0.02, startScale * (1 - e * 0.97)))
+		end)
+		model:PivotTo(CFrame.new(pos) * CFrame.Angles(spin * 0.35, spin, spin * 0.2))
+		if alpha >= 1 then
+			disconnect(shrinkConn)
+			shrinkConn = nil
+		end
+	end)
+	waitToken(token, durationSec)
+end
+
+local function endCutscene(token: number)
+	if token ~= cutsceneToken then
+		return
+	end
+	stopAnimConns()
+	stopAura()
+	GameSoundEffects.stopLuckyBlockShake()
+	destroyBlockModel()
+	destroyLetterbox()
+	restoreCamera()
+	unlockMovement()
+	GameplayUiVisibility.show()
+end
+
+local function runCutscene(payload: any)
+	cutsceneToken += 1
+	local token = cutsceneToken
+	stopAnimConns()
+	destroyBlockModel()
+
+	local dropSec = if typeof(payload.dropSec) == "number" then payload.dropSec else CutsceneConfig.DROP_SEC
+	local groundShakeSec = if typeof(payload.groundShakeSec) == "number"
+		then payload.groundShakeSec
+		else CutsceneConfig.GROUND_SHAKE_SEC
+
+	local char = player.Character
+	local hrp = getHRP()
+	if not char or not hrp then
+		return
+	end
+
+	local tool: Tool? = nil
 	for _, c in ipairs(char:GetChildren()) do
 		if c:IsA("Tool") and c:GetAttribute("LuckyBlockTool") == true then
-			tool = c :: Tool
+			tool = c
 			break
 		end
 	end
@@ -150,32 +715,152 @@ local function handleShakeStart(payload: any)
 		if bp then
 			for _, c in ipairs(bp:GetChildren()) do
 				if c:IsA("Tool") and c:GetAttribute("LuckyBlockTool") == true then
-					tool = c :: Tool
+					tool = c
 					break
 				end
 			end
 		end
 	end
+
+	ensureLetterbox()
+	GameplayUiVisibility.hide({
+		keepScreenGuiNames = { GUI_NAME, "TutorialUiPointer" },
+		hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker" },
+		hideMainChildNames = { "TimCheeseQuestHost" },
+	})
+	lockMovement()
+
+	local groundCf = resolveGroundCf(hrp)
+	faceToward(groundCf.Position)
+
+	local handCf = hrp.CFrame * CFrame.new(0.6, 1.1, -1.1)
 	if tool then
-		startShake(tool, duration)
 		local handle = tool:FindFirstChild("Handle")
 		if handle and handle:IsA("BasePart") then
-			OtherVfxController.playLuckyBlockOpen(handle)
-		else
-			local hrp = char and char:FindFirstChild("HumanoidRootPart")
-			if hrp and hrp:IsA("BasePart") then
-				OtherVfxController.playLuckyBlockOpen(hrp)
+			handCf = handle.CFrame
+		end
+		setToolHidden(tool, true)
+		blockModel = cloneToolAsWorldModel(tool, handCf)
+	end
+
+	startCinematicCamera(token)
+	startAura()
+
+	-- Drop to ground.
+	if blockModel and blockModel.Parent then
+		local startDrop = blockModel:GetPivot()
+		local t0 = os.clock()
+		while os.clock() - t0 < dropSec do
+			if token ~= cutsceneToken then
+				endCutscene(token)
+				return
 			end
+			local alpha = math.clamp((os.clock() - t0) / dropSec, 0, 1)
+			local eased = alpha * alpha
+			local mid = startDrop:Lerp(groundCf, eased)
+			local bounce = math.sin(alpha * math.pi) * 1.15 * (1 - alpha)
+			blockModel:PivotTo(mid * CFrame.new(0, bounce, 0))
+			local primary = blockModel.PrimaryPart or blockModel:FindFirstChildWhichIsA("BasePart", true)
+			if primary then
+				focusPart = primary
+			end
+			RunService.Heartbeat:Wait()
+		end
+		blockModel:PivotTo(groundCf)
+	else
+		if not waitToken(token, dropSec) then
+			endCutscene(token)
+			return
 		end
 	end
-	startAura()
-	GameSoundEffects.playLuckyBlockShake(duration)
-	task.delay(duration, function()
-		stopAura()
-		stopShake()
-		GameSoundEffects.stopLuckyBlockShake()
-		-- One-shot punch at the reveal.
-		GameSoundEffects.playPurchaseShake()
+
+	-- Ground shake + camera rumble matching shake window.
+	GameSoundEffects.playLuckyBlockShake(groundShakeSec)
+	if blockModel and blockModel.Parent then
+		animateGroundShake(blockModel, groundShakeSec, token)
+	else
+		if not waitToken(token, groundShakeSec) then
+			endCutscene(token)
+			return
+		end
+	end
+	if token ~= cutsceneToken then
+		endCutscene(token)
+		return
+	end
+
+	GameSoundEffects.stopLuckyBlockShake()
+	GameSoundEffects.playPurchaseShake()
+
+	-- Burst.
+	local burstAtPart = focusPart
+	if burstAtPart and burstAtPart.Parent then
+		OtherVfxController.playLuckyBlockOpen(burstAtPart)
+	else
+		OtherVfxController.playLuckyBlockOpen(groundCf)
+	end
+	destroyBlockModel()
+
+	local reveal = waitForReveal(token, CutsceneConfig.BURST_HOLD_SEC + 1.25)
+	if token ~= cutsceneToken then
+		endCutscene(token)
+		return
+	end
+
+	if reveal and reveal.Parent then
+		-- Place at ground focus if server spawned offset.
+		local primary = reveal.PrimaryPart or reveal:FindFirstChildWhichIsA("BasePart", true)
+		if primary then
+			focusPart = primary
+		end
+		animateEmerge(reveal, CutsceneConfig.EMERGE_SEC, token)
+		if token ~= cutsceneToken then
+			endCutscene(token)
+			return
+		end
+		animateHover(reveal, CutsceneConfig.HOVER_SEC, token)
+		if token ~= cutsceneToken then
+			endCutscene(token)
+			return
+		end
+		animateHopToHead(reveal, CutsceneConfig.HOP_SEC, token)
+		if token ~= cutsceneToken then
+			endCutscene(token)
+			return
+		end
+		animateShrinkAway(reveal, CutsceneConfig.SHRINK_SEC, token)
+	else
+		-- Fallback: wait out remaining cutscene time.
+		local remain = CutsceneConfig.EMERGE_SEC
+			+ CutsceneConfig.HOVER_SEC
+			+ CutsceneConfig.HOP_SEC
+			+ CutsceneConfig.SHRINK_SEC
+		waitToken(token, remain)
+	end
+
+	-- Soft camera handoff before / as grant lands.
+	waitToken(token, CutsceneConfig.CAM_RESTORE_SEC * 0.35)
+	endCutscene(token)
+end
+
+local function handleShakeStart(payload: any)
+	if typeof(payload) ~= "table" then
+		return
+	end
+	task.spawn(function()
+		local ok, err = pcall(runCutscene, payload)
+		if not ok then
+			warn("[LuckyBlockController] cutscene error:", err)
+			cutsceneToken += 1
+			stopAnimConns()
+			stopAura()
+			GameSoundEffects.stopLuckyBlockShake()
+			destroyBlockModel()
+			destroyLetterbox()
+			restoreCamera()
+			unlockMovement()
+			GameplayUiVisibility.show()
+		end
 	end)
 end
 
@@ -221,7 +906,6 @@ local function bindToBackpack(bp: Instance)
 end
 
 function LuckyBlockController.init()
-	-- Wait for the server-side remotes.
 	task.spawn(function()
 		local folder = ReplicatedStorage:WaitForChild("LuckyBlockRemotes", 60)
 		if not folder then
@@ -238,7 +922,18 @@ function LuckyBlockController.init()
 	if player.Character then
 		bindToCharacter(player.Character)
 	end
-	player.CharacterAdded:Connect(bindToCharacter)
+	player.CharacterAdded:Connect(function(char)
+		cutsceneToken += 1
+		stopAnimConns()
+		stopAura()
+		GameSoundEffects.stopLuckyBlockShake()
+		destroyBlockModel()
+		destroyLetterbox()
+		restoreCamera()
+		unlockMovement()
+		GameplayUiVisibility.show()
+		bindToCharacter(char)
+	end)
 
 	local bp = player:FindFirstChildOfClass("Backpack")
 	if bp then

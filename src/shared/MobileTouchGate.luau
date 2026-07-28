@@ -29,6 +29,7 @@ local MODAL_OVERLAY_NAMES = {
 	"ReviveDim",
 	"LoadingScreen",
 	"FloatingClaimCutscene",
+	"LuckyBlockCutscene",
 	"BushSpiderCutscene",
 	"StandDialogueCutscene",
 	"PanelModalDim",

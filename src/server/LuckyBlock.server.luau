@@ -9,21 +9,25 @@
 	Client → server flow when the equipped lucky block is clicked:
 	  1. Client fires LuckyBlockRoll RemoteEvent with the tool reference.
 	  2. Server validates ownership + cooldown, picks the brainrot to grant, and replies
-	     with a LuckyBlockShakeStart event ({ durationSec, brainrotName, rarity }).
-	  3. After the shake elapses server destroys the tool, fires the brainrot SFX, and
-	     hands the brainrot through BrainrotInternal.GrantBrainrotAndEquip so it auto-
-	     equips in the player's hand, triggers Index unlock, and pushes inventory sync.
+	     with a LuckyBlockShakeStart event ({ durationSec, brainrotName, rarity, …phases }).
+	  3. Mid-cutscene: destroy the lucky block and spawn a temporary workspace reveal model.
+	  4. At cutscene end: destroy the reveal, fire brainrot SFX, and GrantBrainrotAndEquip.
 ]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+local Workspace = game:GetService("Workspace")
 
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
-local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local StoreConfig = require(Shared:WaitForChild("StoreConfig"))
+local CutsceneConfig = require(Shared:WaitForChild("LuckyBlockCutsceneConfig"))
+local BrainrotCarryVisual = require(Shared:WaitForChild("BrainrotCarryVisual"))
 
-local SHAKE_DURATION_SEC = 2.4
+local CUTSCENE_TOTAL_SEC = CutsceneConfig.totalDurationSec()
+local REVEAL_SPAWN_AT_SEC = CutsceneConfig.revealSpawnAtSec()
 
 -- Default roll weights for the brainrot that pops out of the (star rainbow) lucky block.
 local RARITY_WEIGHTS: { [string]: number } = {
@@ -447,6 +451,133 @@ local function destroyRolledLuckyBlock(player: Player, tool: Tool)
 	end
 end
 
+local activeReveals: { [Player]: Model } = {}
+
+local function ensureRevealFolder(): Folder
+	local existing = Workspace:FindFirstChild(CutsceneConfig.REVEAL_FOLDER_NAME)
+	if existing and existing:IsA("Folder") then
+		return existing
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = CutsceneConfig.REVEAL_FOLDER_NAME
+	folder.Parent = Workspace
+	return folder
+end
+
+local function clearReveal(player: Player)
+	local model = activeReveals[player]
+	activeReveals[player] = nil
+	if model and model.Parent then
+		model:Destroy()
+	end
+end
+
+local function findBrainrotTemplate(brainrotName: string): Model?
+	local root = Brainrots.getBrainrotsFolder()
+	if not root then
+		return nil
+	end
+	local nameFolder = Brainrots.findBrainrotStorageFolder(root, brainrotName)
+	if not nameFolder then
+		return nil
+	end
+	for _, variantName in ipairs(Brainrots.mutationTemplateCandidateNames("normal")) do
+		local v = nameFolder:FindFirstChild(variantName)
+		if v and v:IsA("Model") then
+			return v :: Model
+		end
+		if v then
+			for _, child in ipairs(v:GetChildren()) do
+				if child:IsA("Model") then
+					return child :: Model
+				end
+			end
+		end
+	end
+	local normal = nameFolder:FindFirstChild("Normal")
+	if normal and normal:IsA("Model") then
+		return normal :: Model
+	end
+	for _, c in ipairs(nameFolder:GetChildren()) do
+		if c:IsA("Model") then
+			return c :: Model
+		end
+		if c:IsA("Folder") or c:IsA("Model") then
+			for _, child in ipairs(c:GetChildren()) do
+				if child:IsA("Model") then
+					return child :: Model
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function setRevealPhysics(model: Model)
+	pcall(function()
+		BrainrotCarryVisual.applyNonColliding(model)
+	end)
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+			d.CanCollide = false
+			d.CanQuery = false
+			d.CanTouch = false
+			d.Massless = true
+			d.CastShadow = true
+		elseif d:IsA("ProximityPrompt") or d:IsA("Script") or d:IsA("LocalScript") then
+			d:Destroy()
+		end
+	end
+end
+
+local function resolveRevealCFrame(player: Player): CFrame
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return CFrame.new(0, 5, 0)
+	end
+	local look = hrp.CFrame.LookVector
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < 0.05 then
+		flat = Vector3.new(0, 0, -1)
+	else
+		flat = flat.Unit
+	end
+	local probe = hrp.Position + flat * 4.2 + Vector3.new(0, 2.5, 0)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { char }
+	local hit = Workspace:Raycast(probe, Vector3.new(0, -18, 0), params)
+	local groundY = if hit then hit.Position.Y else (hrp.Position.Y - 3)
+	local pos = Vector3.new(probe.X, groundY + 0.65, probe.Z)
+	return CFrame.lookAt(pos, Vector3.new(hrp.Position.X, pos.Y, hrp.Position.Z))
+end
+
+local function spawnRevealModel(player: Player, brainrotName: string): Model?
+	clearReveal(player)
+	local template = findBrainrotTemplate(brainrotName)
+	if not template then
+		warn("[LuckyBlock] No brainrot template for reveal:", brainrotName)
+		return nil
+	end
+	local clone = template:Clone()
+	clone.Name = "LuckyBlockReveal_" .. brainrotName
+	clone:SetAttribute(CutsceneConfig.REVEAL_ATTR, true)
+	clone:SetAttribute(CutsceneConfig.OWNER_ATTR, player.UserId)
+	clone:SetAttribute("BrainrotName", brainrotName)
+	setRevealPhysics(clone)
+	local targetCf = resolveRevealCFrame(player)
+	-- Start slightly underground so the client can emerge it.
+	clone:PivotTo(targetCf * CFrame.new(0, -1.35, 0))
+	pcall(function()
+		BrainrotCarryVisual.applyScaleForLevel(clone, 1)
+	end)
+	clone.Parent = ensureRevealFolder()
+	activeReveals[player] = clone
+	return clone
+end
+
 local function pickRarityWeighted(weights: { [string]: number }): string
 	local total = 0
 	for _, w in pairs(weights) do
@@ -591,6 +722,7 @@ local function tryRoll(player: Player, requestedTool: Instance?)
 	end
 
 	rollInFlight[player] = true
+	clearReveal(player)
 
 	-- Lock the tool from being clicked again mid-shake.
 	tool:SetAttribute("LuckyBlockRolling", true)
@@ -599,16 +731,27 @@ local function tryRoll(player: Player, requestedTool: Instance?)
 	end)
 
 	shakeStartRE:FireClient(player, {
-		durationSec = SHAKE_DURATION_SEC,
+		durationSec = CUTSCENE_TOTAL_SEC,
+		dropSec = CutsceneConfig.DROP_SEC,
+		groundShakeSec = CutsceneConfig.GROUND_SHAKE_SEC,
+		burstAtSec = CutsceneConfig.burstAtSec(),
+		revealSpawnAtSec = REVEAL_SPAWN_AT_SEC,
 		brainrotName = pick.name,
 		rarity = pick.rarity,
 	})
 
-	task.delay(SHAKE_DURATION_SEC, function()
-		rollInFlight[player] = nil
-		destroyRolledLuckyBlock(player, tool)
+	task.delay(REVEAL_SPAWN_AT_SEC, function()
 		if player.Parent == nil then
-			-- Player left during the shake; nothing to grant or fire.
+			return
+		end
+		destroyRolledLuckyBlock(player, tool)
+		spawnRevealModel(player, pick.name)
+	end)
+
+	task.delay(CUTSCENE_TOTAL_SEC, function()
+		rollInFlight[player] = nil
+		clearReveal(player)
+		if player.Parent == nil then
 			return
 		end
 
@@ -641,4 +784,5 @@ end)
 
 Players.PlayerRemoving:Connect(function(player)
 	rollInFlight[player] = nil
+	clearReveal(player)
 end)

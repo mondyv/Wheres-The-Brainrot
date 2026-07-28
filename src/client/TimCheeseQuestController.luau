@@ -56,6 +56,7 @@ local questHoverFlying = false
 local questLayoutAccum = 0.0
 local questLayoutConn: RBXScriptConnection? = nil
 local QUEST_LAYOUT_HZ = 10
+local questHudSuppressed = false
 local highlight: Highlight? = nil
 local talkPrompt: ProximityPrompt? = nil
 local idleTrack: AnimationTrack? = nil
@@ -597,6 +598,25 @@ local function ensureQuestHost(): Frame?
 	return created
 end
 
+local function setQuestHudSuppressed(on: boolean)
+	questHudSuppressed = on == true
+	if questHudSuppressed then
+		stopExclaimPulse()
+		stopQuestDots()
+		if questGui then
+			questGui.Enabled = false
+		end
+		if questPanel then
+			questPanel.Visible = false
+		end
+	elseif questHudRevealed then
+		if questGui then
+			questGui.Enabled = true
+		end
+		refreshQuestHud()
+	end
+end
+
 local function stopQuestDots()
 	if questDotsConn then
 		questDotsConn:Disconnect()
@@ -1069,6 +1089,12 @@ local function formatQuestProgress(quest: TimCheeseQuestConfig.QuestDef, p: numb
 end
 
 local function refreshQuestHud(opts: { skipRevealGate: boolean?, playAppear: boolean? }?)
+	if questHudSuppressed then
+		if questPanel then
+			questPanel.Visible = false
+		end
+		return
+	end
 	local idx = resolveActiveQuestIndex()
 	local progressVal = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR)
 	local ready = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR) == true
@@ -1531,7 +1557,12 @@ function M.playIntroFall()
 		return
 	end
 
-	GameplayUiVisibility.hide({ keepScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker", "StandDialogueCutscene" } })
+	GameplayUiVisibility.hide({
+		keepScreenGuiNames = { "StandDialogueCutscene" },
+		hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker" },
+		hideMainChildNames = { "TimCheeseQuestHost" },
+	})
+	setQuestHudSuppressed(true)
 	setTalkPromptEnabled(false)
 	lockMovement(true)
 	setBgmSlowed(true)
@@ -1712,6 +1743,7 @@ function M.playIntroFall()
 		end
 		TopNotifController.showBroadcast("New quest from Tim Cheese!")
 	end
+	setQuestHudSuppressed(false)
 	syncPromptAndOutline()
 end
 
@@ -1756,6 +1788,7 @@ function M.openTimDialogue()
 	end
 
 	dialogueBusy = true
+	setQuestHudSuppressed(true)
 	setTalkPromptEnabled(false)
 	setQuestFloatVisible(tim, false)
 	setOutline(tim, false)
@@ -1773,6 +1806,7 @@ function M.openTimDialogue()
 		}, tim)
 		if not claimNow then
 			dialogueBusy = false
+			setQuestHudSuppressed(false)
 			syncPromptAndOutline()
 			return
 		end
@@ -1867,6 +1901,7 @@ function M.openTimDialogue()
 	end
 
 	dialogueBusy = false
+	setQuestHudSuppressed(false)
 	restoreMovement()
 	refreshQuestHud()
 	syncPromptAndOutline()

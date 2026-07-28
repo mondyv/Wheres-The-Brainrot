@@ -70,8 +70,8 @@ function M.applyButtonLabel(label: TextLabel | TextButton, textSize: number?, mi
 	M.applyButton(label)
 	if typeof(textSize) == "number" then
 		label.TextSize = textSize
-		if label:IsA("TextLabel") then
-			M.ensureTextSizeConstraint(label, textSize, minSize)
+		if label:IsA("TextLabel") or label:IsA("TextButton") then
+			M.ensureTextSizeConstraint(label :: TextLabel, textSize, minSize)
 		end
 	end
 end

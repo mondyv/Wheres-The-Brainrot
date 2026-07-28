@@ -128,6 +128,16 @@ local mouseLookY = 0
 local touchPanX = 0
 local touchPanY = 0
 local boxShakeBasePos: UDim2? = nil
+local choiceFrame: Frame? = nil
+local dialogueLayoutConn: RBXScriptConnection? = nil
+local dialogueViewportConn: RBXScriptConnection? = nil
+local DIALOGUE_LAYOUT_HZ = 12
+
+local CUTSCENE_HIDE_OPTS = {
+	keepScreenGuiNames = { "StandDialogueCutscene" },
+	hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker" },
+	hideMainChildNames = { "TimCheeseQuestHost" },
+}
 
 type ChoiceHoverState = {
 	btn: TextButton,
@@ -476,7 +486,89 @@ local function stopShake()
 	end
 end
 
-local updateChoiceVisuals: () -> ()
+local function viewportSize(): Vector2
+	local cam = Workspace.CurrentCamera
+	return if cam then cam.ViewportSize else Vector2.new(1280, 720)
+end
+
+local function syncDialogueLayout()
+	if not dialogueBox or not dialogueLabel then
+		return
+	end
+	local vp = viewportSize()
+	local vw, vh = vp.X, vp.Y
+	local touch = UserInputService.TouchEnabled
+	local compact = touch or vw < 1100 or vh < 620
+	local tiny = vw < 520 or vh < 400
+
+	local dialogueTextSize = if tiny then 14 elseif compact then 17 elseif vh < 720 then 22 else 26
+	local buttonTextSize = if tiny then 11 elseif compact then 14 else 18
+	local dialogueH = math.clamp(math.floor(vh * (if compact then 0.24 else 0.20)), 80, 156)
+	local choiceH = math.clamp(math.floor(vh * 0.24), 96, 176)
+
+	-- Keep dialogue and choices in separate columns so text never sits under buttons.
+	dialogueBox.AnchorPoint = Vector2.new(0, 1)
+	dialogueBox.Position = UDim2.new(0.03, 0, 0.90, 0)
+	dialogueBox.Size = UDim2.new(if compact then 0.56 else 0.58, 0, 0, dialogueH)
+
+	if choiceFrame then
+		choiceFrame.AnchorPoint = Vector2.new(1, 0.5)
+		choiceFrame.Position = UDim2.new(0.985, 0, 0.50, 0)
+		choiceFrame.Size = UDim2.new(if compact then 0.38 else 0.30, 0, 0, choiceH)
+	end
+
+	dialogueLabel.TextSize = dialogueTextSize
+	UiFonts.ensureTextSizeConstraint(dialogueLabel, dialogueTextSize, math.max(10, dialogueTextSize - 8))
+
+	if choiceEnter then
+		choiceEnter.TextSize = buttonTextSize
+		choiceEnter.TextWrapped = true
+		UiFonts.applyButtonLabel(choiceEnter, buttonTextSize, math.max(9, buttonTextSize - 4))
+	end
+	if choiceExit then
+		choiceExit.TextSize = buttonTextSize
+		choiceExit.TextWrapped = true
+		UiFonts.applyButtonLabel(choiceExit, buttonTextSize, math.max(9, buttonTextSize - 4))
+	end
+
+	boxShakeBasePos = dialogueBox.Position
+end
+
+local function stopDialogueLayoutSync()
+	if dialogueLayoutConn then
+		dialogueLayoutConn:Disconnect()
+		dialogueLayoutConn = nil
+	end
+	if dialogueViewportConn then
+		dialogueViewportConn:Disconnect()
+		dialogueViewportConn = nil
+	end
+end
+
+local function startDialogueLayoutSync()
+	stopDialogueLayoutSync()
+	local accum = 0.0
+	dialogueLayoutConn = RunService.Heartbeat:Connect(function(dt)
+		if not active then
+			return
+		end
+		accum += dt
+		if accum < (1 / DIALOGUE_LAYOUT_HZ) then
+			return
+		end
+		accum = 0
+		syncDialogueLayout()
+	end)
+	local cam = Workspace.CurrentCamera
+	if cam then
+		dialogueViewportConn = cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+			if active then
+				syncDialogueLayout()
+			end
+		end)
+	end
+	syncDialogueLayout()
+end
 
 local function stopSoulSpin()
 	soulSpinning = false
@@ -722,15 +814,21 @@ local function startShake()
 	end
 	boxShakeBasePos = dialogueBox.Position
 	local base = boxShakeBasePos
+	local vp = viewportSize()
+	local compact = vp.X < 900 or vp.Y < 620
+	local ampX = if compact then 3 else 6
+	local ampY = if compact then 2.5 else 5
 	shakeConn = RunService.RenderStepped:Connect(function()
 		if not dialogueBox or not base then
 			return
 		end
-		local ox = (math.random() - 0.5) * 10
-		local oy = (math.random() - 0.5) * 8
+		local ox = (math.random() - 0.5) * ampX
+		local oy = (math.random() - 0.5) * ampY
 		dialogueBox.Position = UDim2.new(base.X.Scale, base.X.Offset + ox, base.Y.Scale, base.Y.Offset + oy)
 	end)
 end
+
+local updateChoiceVisuals: () -> ()
 
 local function stopInput()
 	pcall(function()
@@ -784,6 +882,8 @@ local function styleChoiceButton(btn: TextButton)
 	end
 	pad.PaddingLeft = UDim.new(0, 14)
 	pad.PaddingRight = UDim.new(0, 10)
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
 end
 
 updateChoiceVisuals = function()
@@ -920,9 +1020,9 @@ local function ensureGui(): ScreenGui
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.TextYAlignment = Enum.TextYAlignment.Top
 	label.TextWrapped = true
-	label.TextSize = 28
+	label.TextSize = 26
 	label.ZIndex = 31
-	UiFonts.applyBody(label)
+	UiFonts.applyBodyLabel(label, 26, 14)
 	label.Parent = box
 
 	local hint = Instance.new("TextLabel")
@@ -959,9 +1059,10 @@ local function ensureGui(): ScreenGui
 	enterBtn.Size = UDim2.new(1, 0, 0.42, 0)
 	enterBtn.Position = UDim2.new(0, 0, 0.02, 0)
 	enterBtn.Text = "* ENTER"
-	enterBtn.TextSize = 22
+	enterBtn.TextSize = 18
+	enterBtn.TextWrapped = true
 	enterBtn.ZIndex = 41
-	UiFonts.applyBody(enterBtn)
+	UiFonts.applyButtonLabel(enterBtn, 18, 11)
 	styleChoiceButton(enterBtn)
 	enterBtn.Parent = choices
 
@@ -970,9 +1071,10 @@ local function ensureGui(): ScreenGui
 	exitBtn.Size = UDim2.new(1, 0, 0.42, 0)
 	exitBtn.Position = UDim2.new(0, 0, 0.54, 0)
 	exitBtn.Text = "* EXIT"
-	exitBtn.TextSize = 22
+	exitBtn.TextSize = 18
+	exitBtn.TextWrapped = true
 	exitBtn.ZIndex = 41
-	UiFonts.applyBody(exitBtn)
+	UiFonts.applyButtonLabel(exitBtn, 18, 11)
 	styleChoiceButton(exitBtn)
 	exitBtn.Parent = choices
 
@@ -1013,8 +1115,10 @@ local function ensureGui(): ScreenGui
 	skipHint = hint
 	choiceEnter = enterBtn
 	choiceExit = exitBtn
+	choiceFrame = choices
 	soulMarker = soul
 	boxShakeBasePos = box.Position
+	syncDialogueLayout()
 	return gui
 end
 
@@ -1317,6 +1421,7 @@ local function finishSession(choseEnter: boolean): boolean
 	typeToken += 1
 	stopShake()
 	stopTalkJump()
+	stopDialogueLayoutSync()
 	animateLetterboxOut()
 	active = false
 	if cutsceneGui then
@@ -1499,13 +1604,9 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 
 	StandDialogueCutscene.ensureIdleAnimation(brainrot, config.brainrotName)
 	ensureGui()
-	if dialogueLabel then
-		dialogueLabel.TextSize = 28
-	end
-	GameplayUiVisibility.hide({
-		keepScreenGuiNames = { "StandDialogueCutscene", "TutorialObjective", "TutorialUiPointer", "TimCheeseQuestHud", "TimCheeseQuestTracker" },
-		keepMainChildNames = { "TutorialQuestHost", "TimCheeseQuestHost" },
-	})
+	syncDialogueLayout()
+	GameplayUiVisibility.hide(CUTSCENE_HIDE_OPTS)
+	startDialogueLayoutSync()
 	animateLetterboxIn()
 	lockMovement()
 	startCamera(brainrot)

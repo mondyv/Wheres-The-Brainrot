@@ -63,6 +63,8 @@ local restoreCallbacks: { () -> () } = {}
 export type HideOpts = {
 	keepScreenGuiNames: { string }?,
 	keepMainChildNames: { string }?,
+	hideScreenGuiNames: { string }?,
+	hideMainChildNames: { string }?,
 }
 
 export type ShowOpts = {
@@ -279,6 +281,16 @@ local function buildKeepSets(opts: HideOpts?)
 		if opts.keepMainChildNames then
 			for _, name in opts.keepMainChildNames do
 				keepMainChildNames[name] = true
+			end
+		end
+		if opts.hideScreenGuiNames then
+			for _, name in opts.hideScreenGuiNames do
+				keepScreenNames[name] = nil
+			end
+		end
+		if opts.hideMainChildNames then
+			for _, name in opts.hideMainChildNames do
+				keepMainChildNames[name] = nil
 			end
 		end
 	end
@@ -625,6 +637,16 @@ function M.hide(opts: HideOpts?)
 			if opts.keepMainChildNames then
 				for _, name in opts.keepMainChildNames do
 					keepMainChildNames[name] = true
+				end
+			end
+			if opts.hideScreenGuiNames then
+				for _, name in opts.hideScreenGuiNames do
+					keepScreenNames[name] = nil
+				end
+			end
+			if opts.hideMainChildNames then
+				for _, name in opts.hideMainChildNames do
+					keepMainChildNames[name] = nil
 				end
 			end
 		end

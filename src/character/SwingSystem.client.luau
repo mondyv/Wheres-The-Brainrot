@@ -159,6 +159,7 @@ C.TARGET_SCORE_CENTER = 6.5
 C.TARGET_SCORE_CENTER_LOOK_DOWN = 3.2
 C.TARGET_SCORE_DIST_WEIGHT = 0.12
 C.TARGET_SCORE_PREFER_NEAR_STUDS = 110
+C.TARGET_SCORE_PREFER_NEAR_REACH_FRAC = 0.42
 C.TARGET_SCORE_NEAR_AIM_BONUS = 0.15
 C.TARGET_SCORE_LATERAL = 8.5
 C.TARGET_SCORE_LATERAL_WORLD = 5.5
@@ -173,10 +174,13 @@ C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.65
 C.TARGET_MAX_SCREEN_DX = 0.48
 C.TARGET_SCAN_INTERVAL = 0.12
 C.TARGET_SCAN_INTERVAL_GROUNDED = 0.14
+C.TARGET_SCAN_INTERVAL_FAST = 0.05
+C.TARGET_SCAN_FAST_SPEED = 55
 C.TARGET_CANDIDATE_EXTRA_RADIUS = 4
 C.TARGET_GRID_CELL_SIZE = 64
 C.TARGET_MAX_CANDIDATES_PER_SCAN = 45
 C.TARGET_MAX_CANDIDATES_GROUNDED = 28
+C.TARGET_MAX_CANDIDATES_HIGH_REACH = 72
 C.TARGET_FULL_SCAN_FALLBACK_LIMIT = 180
 C.TARGET_ENABLE_VINE_NAME_FALLBACK = false
 C.TARGET_BACKGROUND_SEED_ENABLED = false
@@ -574,9 +578,9 @@ local function getSwingRange()
 	return math.clamp(C.SWING_RANGE * (0.9 + (powerScale - 1) * 0.25), 65, 280)
 end
 
--- Latch/UI ready range: swing reach (not hang rope length — that was ~44 and hid all prompts).
+-- Latch/UI ready range = live swing reach (Reach upgrade). Do NOT cap to rope hang max.
 local function getLatchRange()
-	return math.min(getSwingRange(), C.ROPE_ABSOLUTE_MAX)
+	return getSwingRange()
 end
 
 local function getRopeMaxLength()
@@ -2657,50 +2661,53 @@ local function boot(character)
 		local candidates = {}
 		local seen = {}
 		local invalidTargets = {}
+		local candidateCap = math.max(
+			C.TARGET_MAX_CANDIDATES_PER_SCAN,
+			if radius > 140 then C.TARGET_MAX_CANDIDATES_HIGH_REACH else C.TARGET_MAX_CANDIDATES_PER_SCAN
+		)
 
 		local centerX = st.targetCellCoord(origin.X)
 		local centerY = st.targetCellCoord(origin.Y)
 		local centerZ = st.targetCellCoord(origin.Z)
 		local cellRadius = math.max(1, math.ceil(radius / C.TARGET_GRID_CELL_SIZE))
-		local candidateLimitHit = false
 
-		for x = centerX - cellRadius, centerX + cellRadius do
-			if candidateLimitHit then
-				break
-			end
-			for y = centerY - cellRadius, centerY + cellRadius do
-				if candidateLimitHit then
-					break
-				end
-				for z = centerZ - cellRadius, centerZ + cellRadius do
-					if candidateLimitHit then
-						break
-					end
-					local cell = st.targetGrid[st.targetGridKeyFromCoords(x, y, z)]
-					if cell then
-						for part in pairs(cell) do
-							if not seen[part] then
-								seen[part] = true
-								if not part.Parent then
-									table.insert(invalidTargets, part)
-									continue
-								end
-								if not st.targetSet[part] or part:IsDescendantOf(st.character) then
-									continue
-								end
+		-- Walk cells center-out so high reach doesn't fill the candidate cap with far vines first.
+		for shell = 0, cellRadius do
+			local x0, x1 = centerX - shell, centerX + shell
+			local y0, y1 = centerY - shell, centerY + shell
+			local z0, z1 = centerZ - shell, centerZ + shell
+			for x = x0, x1 do
+				for y = y0, y1 do
+					for z = z0, z1 do
+						if shell > 0 and x ~= x0 and x ~= x1 and y ~= y0 and y ~= y1 and z ~= z0 and z ~= z1 then
+							continue
+						end
+						local cell = st.targetGrid[st.targetGridKeyFromCoords(x, y, z)]
+						if cell then
+							for part in pairs(cell) do
+								if not seen[part] then
+									seen[part] = true
+									if not part.Parent then
+										table.insert(invalidTargets, part)
+										continue
+									end
+									if not st.targetSet[part] or part:IsDescendantOf(st.character) then
+										continue
+									end
 
-								local halfSize = part.Size.Magnitude * 0.5
-								if (part.Position - origin).Magnitude <= radius + halfSize then
-									table.insert(candidates, part)
-									if #candidates >= C.TARGET_MAX_CANDIDATES_PER_SCAN then
-										candidateLimitHit = true
-										break
+									local halfSize = part.Size.Magnitude * 0.5
+									if (part.Position - origin).Magnitude <= radius + halfSize then
+										table.insert(candidates, part)
 									end
 								end
 							end
 						end
 					end
 				end
+			end
+			-- Once the near shells already exceed the cap, keep nearest below.
+			if shell >= 1 and #candidates >= candidateCap * 2 then
+				break
 			end
 		end
 
@@ -2723,6 +2730,19 @@ local function boot(character)
 					end
 				end
 			end
+		end
+
+		if #candidates > candidateCap then
+			table.sort(candidates, function(a, b)
+				local da = (a.Position - origin).Magnitude
+				local db = (b.Position - origin).Magnitude
+				return da < db
+			end)
+			local trimmed = table.create(candidateCap)
+			for i = 1, candidateCap do
+				trimmed[i] = candidates[i]
+			end
+			return trimmed
 		end
 
 		return candidates
@@ -2894,7 +2914,10 @@ local function boot(character)
 				stickBonus = if lookingDown then 0.2 else 0.04
 			end
 
-			local nearScale = math.max(C.TARGET_SCORE_PREFER_NEAR_STUDS, 1)
+			local nearScale = math.max(
+				C.TARGET_SCORE_PREFER_NEAR_STUDS,
+				math.max(reach, 1) * C.TARGET_SCORE_PREFER_NEAR_REACH_FRAC
+			)
 			local distancePenalty = (dist / nearScale) * C.TARGET_SCORE_DIST_WEIGHT
 			local nearAimBonus = 0
 			if viewDot >= 0.9 and screenRadius < 0.12 then
@@ -3086,7 +3109,10 @@ local function boot(character)
 		camera = workspace.CurrentCamera or camera
 
 		-- Camera / screen-center first, but high reach must still prefer the nearer vine.
-		local nearCap = math.min(math.max(maxDistance, 1), C.TARGET_SCORE_PREFER_NEAR_STUDS)
+		local nearCap = math.max(
+			C.TARGET_SCORE_PREFER_NEAR_STUDS,
+			math.max(maxDistance, 1) * C.TARGET_SCORE_PREFER_NEAR_REACH_FRAC
+		)
 		local nearAlpha = 1 - math.clamp(dist / nearCap, 0, 1)
 		local score = nearAlpha * nearAlpha * 3.4
 		local aimWorld = if target:IsA("BasePart") then st.aimPointOnPart(target) else point
@@ -6185,6 +6211,9 @@ local function boot(character)
 				st.hideSwingTargetUi()
 			else
 				local scanInterval = if scanMode == "ground" then C.TARGET_SCAN_INTERVAL_GROUNDED else C.TARGET_SCAN_INTERVAL
+				if speed >= C.TARGET_SCAN_FAST_SPEED then
+					scanInterval = math.min(scanInterval, C.TARGET_SCAN_INTERVAL_FAST)
+				end
 				local needsScan = scanMode ~= st.lastTargetScanMode
 					or now - st.lastTargetScanClock >= scanInterval
 					or (st.scannedVisualTarget ~= nil and not st.scannedVisualTarget.Parent)
@@ -6194,8 +6223,13 @@ local function boot(character)
 					st.lastTargetScanClock = now
 					st.lastTargetScanMode = scanMode
 					local prevCandidateCap = C.TARGET_MAX_CANDIDATES_PER_SCAN
+					local reachNow = getSwingRange()
 					if scanMode == "ground" then
-						C.TARGET_MAX_CANDIDATES_PER_SCAN = C.TARGET_MAX_CANDIDATES_GROUNDED
+						C.TARGET_MAX_CANDIDATES_PER_SCAN = if reachNow > 140
+							then C.TARGET_MAX_CANDIDATES_HIGH_REACH
+							else C.TARGET_MAX_CANDIDATES_GROUNDED
+					elseif reachNow > 140 then
+						C.TARGET_MAX_CANDIDATES_PER_SCAN = math.max(prevCandidateCap, C.TARGET_MAX_CANDIDATES_HIGH_REACH)
 					end
 					local scanDistance, scanLookDot, scanScreenLimit = st.getSwingAttachLimits()
 					-- Ground UI: show latchable with the same press checks (don't green-light far vines

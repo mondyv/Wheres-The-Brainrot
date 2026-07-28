@@ -4692,6 +4692,26 @@ local function boot(character)
 				restLength + C.ROPE_STRETCH_MAX_EXTRA * flexScale + math.max(ropeMax - C.ROPE_MAX_LENGTH, 0) * 0.45
 			)
 		)
+		-- Floor-aware hang cap: never pay rope out into void/kill depth under the vine.
+		local maxPowerStretch = restLength + C.ROPE_STRETCH_MAX_EXTRA
+		st.rayParams.FilterDescendantsInstances = { st.character }
+		local floorHit = workspace:Raycast(
+			anchorWorld,
+			Vector3.new(0, -(math.max(ropeMax, stretchMaxLength) + 40), 0),
+			st.rayParams
+		)
+		local floorCap = math.min(maxPowerStretch, restLength + C.ROPE_MAX_HANG_DEPTH)
+		if floorHit then
+			floorCap = math.min(
+				floorCap,
+				math.max(
+					restLength + C.ROPE_HANG_PULL_MIN_GAP,
+					(anchorWorld.Y - floorHit.Position.Y) - C.FLOOR_CLEARANCE
+				)
+			)
+		end
+		stretchMaxLength = math.min(stretchMaxLength, floorCap, maxPowerStretch)
+
 		local moveAmount = st.humanoid.MoveDirection.Magnitude
 		local idleHoldAlpha = 0
 		if moveAmount < 0.06 and st.forwardSwingCharge < 0.08 then

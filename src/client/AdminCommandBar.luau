@@ -140,6 +140,8 @@ local COMMAND_ALIASES: { [string]: string } = {
 	servernotifs = "servernotif",
 	shutdown = "servershutdown",
 	servershut = "servershutdown",
+	restart = "serverrestart",
+	serverreboot = "serverrestart",
 	sluck = "serverluck",
 	gluck = "globalluck",
 	spawnglobal = "serverspawn",
@@ -174,6 +176,7 @@ local COMMAND_HINTS: { [string]: string } = {
 	servernotif = "Top notification on this server",
 	globalnotif = "Top notification on all servers",
 	servershutdown = "Countdown then shut down THIS server only",
+	serverrestart = "Countdown then restart THIS server (teleport players back)",
 	serverluck = "Set luck on THIS server + announce",
 	globalluck = "Set luck on ALL servers + announce",
 	kick = "Kick a player from this server",
@@ -384,6 +387,8 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "globalnotif Double luck weekend!", hint = COMMAND_HINTS.globalnotif },
 		{ fill = "servershutdown 60", hint = COMMAND_HINTS.servershutdown },
 		{ fill = "servershutdown 5m", hint = "Shut down this server in 5 minutes" },
+		{ fill = "serverrestart 60", hint = COMMAND_HINTS.serverrestart },
+		{ fill = "serverrestart 5m", hint = "Restart this server in 5 minutes" },
 		{ fill = "serverluck 4x 10m", hint = COMMAND_HINTS.serverluck },
 		{ fill = "globalluck 4x 10m", hint = COMMAND_HINTS.globalluck },
 		{ fill = "serverluck off", hint = "Clear luck on this server" },
@@ -578,12 +583,16 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 				end
 			end
 		end
-	elseif cmdName == "servershutdown" then
+	elseif cmdName == "servershutdown" or cmdName == "serverrestart" then
 		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
 			for _, sample in { "30", "60", "30s", "2m", "5m" } do
 				if startsWith(sample, partial) then
-					pushSuggestion(out, prefix .. sample, "this server only")
+					pushSuggestion(
+						out,
+						prefix .. sample,
+						if cmdName == "serverrestart" then "restart this server" else "this server only"
+					)
 				end
 			end
 		end

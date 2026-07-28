@@ -487,7 +487,16 @@ function TopNotifController.showBroadcast(
 	local display = VerifiedCreators.formatBroadcast(message, senderName, senderUserId)
 
 	-- Countdown / persistent admin banners: refresh text in place instead of stacking.
-	if isShowing and not activeIsError and host and label and string.find(message, "Server shutdown", 1, true) then
+	if
+		isShowing
+		and not activeIsError
+		and host
+		and label
+		and (
+			string.find(message, "Server shutdown", 1, true)
+			or string.find(message, "Server restart", 1, true)
+		)
+	then
 		label.Text = display
 		hideToken += 1
 		local token = hideToken

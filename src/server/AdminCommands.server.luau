@@ -5,6 +5,7 @@ local Players = game:GetService("Players")
 local MessagingService = game:GetService("MessagingService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+local TeleportService = game:GetService("TeleportService")
 
 local AdminAllowlist = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminAllowlist"))
 local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Brainrots"))
@@ -197,7 +198,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, setcarry, setreach, tp, tpland, spectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
+			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, setcarry, setreach, tp, tpland, spectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverrestart, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -911,6 +912,71 @@ local function formatCountdown(totalSec: number): string
 	return string.format("%ds", sec)
 end
 
+local function startServerMaintenanceCountdown(
+	sender: Player,
+	seconds: number,
+	mode: "shutdown" | "restart"
+): (boolean, string)
+	shutdownToken += 1
+	local token = shutdownToken
+	local endsAt = os.clock() + seconds
+	local senderName = sender.Name
+	local senderUserId = sender.UserId
+	local label = if mode == "restart" then "restart" else "shutdown"
+
+	task.spawn(function()
+		local lastBroadcastAt = -math.huge
+		while token == shutdownToken do
+			local remaining = math.max(0, math.ceil(endsAt - os.clock()))
+			local interval = if remaining <= 10 then 1 elseif remaining <= 60 then 5 else 10
+			local now = os.clock()
+			if now - lastBroadcastAt >= interval - 0.05 or remaining <= 0 then
+				lastBroadcastAt = now
+				local msg = if remaining <= 0
+					then string.format("Server %s — update coming now!", label)
+					else string.format("Server %s — update coming in %s", label, formatCountdown(remaining))
+				AdminBroadcastService.broadcastServer(msg, senderName, senderUserId, interval + 1.5)
+			end
+			if remaining <= 0 then
+				break
+			end
+			task.wait(0.25)
+		end
+
+		if token ~= shutdownToken then
+			return
+		end
+
+		-- Save EVERYONE before leave so DataStore rate limits / leave races can't wipe progress.
+		local saved = PlayerDataService.saveAllOnlinePlayers()
+		warn("[AdminCommands]", label, "pre-leave saved", saved, "players")
+
+		task.wait(0.35)
+		local online = Players:GetPlayers()
+		if mode == "restart" then
+			if #online == 0 then
+				return
+			end
+			local ok, err = pcall(function()
+				TeleportService:TeleportAsync(game.PlaceId, online)
+			end)
+			if not ok then
+				warn("[AdminCommands] serverrestart teleport failed:", err)
+				for _, plr in online do
+					plr:Kick("Server restart — please rejoin!")
+				end
+			end
+			return
+		end
+
+		for _, plr in online do
+			plr:Kick("Server shutdown — update coming. Please rejoin!")
+		end
+	end)
+
+	return true, string.format("Server %s started: %s", label, formatCountdown(seconds))
+end
+
 commands.servershutdown = {
 	usage = "servershutdown <seconds|30s|5m>",
 	description = "Countdown top notif on THIS server, then kick everyone (not global).",
@@ -919,51 +985,25 @@ commands.servershutdown = {
 		if not seconds then
 			return false, "Usage: " .. commands.servershutdown.usage
 		end
-
-		shutdownToken += 1
-		local token = shutdownToken
-		local endsAt = os.clock() + seconds
-		local senderName = sender.Name
-		local senderUserId = sender.UserId
-
-		task.spawn(function()
-			local lastBroadcastAt = -math.huge
-			while token == shutdownToken do
-				local remaining = math.max(0, math.ceil(endsAt - os.clock()))
-				local interval = if remaining <= 10 then 1 elseif remaining <= 60 then 5 else 10
-				local now = os.clock()
-				if now - lastBroadcastAt >= interval - 0.05 or remaining <= 0 then
-					lastBroadcastAt = now
-					local msg = if remaining <= 0
-						then "Server shutdown — update coming now!"
-						else string.format("Server shutdown — update coming in %s", formatCountdown(remaining))
-					AdminBroadcastService.broadcastServer(msg, senderName, senderUserId, interval + 1.5)
-				end
-				if remaining <= 0 then
-					break
-				end
-				task.wait(0.25)
-			end
-
-			if token ~= shutdownToken then
-				return
-			end
-
-			-- Save EVERYONE before kicks so DataStore rate limits / leave races can't wipe progress.
-			local saved = PlayerDataService.saveAllOnlinePlayers()
-			warn("[AdminCommands] shutdown pre-kick saved", saved, "players")
-
-			task.wait(0.35)
-			for _, plr in Players:GetPlayers() do
-				plr:Kick("Server shutdown — update coming. Please rejoin!")
-			end
-		end)
-
-		return true, string.format("Server shutdown started: %s", formatCountdown(seconds))
+		return startServerMaintenanceCountdown(sender, seconds, "shutdown")
 	end,
 }
 commands.shutdown = commands.servershutdown
 commands.servershut = commands.servershutdown
+
+commands.serverrestart = {
+	usage = "serverrestart <seconds|30s|5m>",
+	description = "Countdown top notif on THIS server, save everyone, then teleport them into a fresh server.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		local seconds = parseShutdownSeconds(args[1])
+		if not seconds then
+			return false, "Usage: " .. commands.serverrestart.usage
+		end
+		return startServerMaintenanceCountdown(sender, seconds, "restart")
+	end,
+}
+commands.restart = commands.serverrestart
+commands.serverreboot = commands.serverrestart
 
 local MAX_REASON_LEN = 200
 local DEFAULT_KICK_REASON = "You have been kicked by an admin."

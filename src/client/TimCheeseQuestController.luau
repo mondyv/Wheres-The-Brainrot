@@ -1584,6 +1584,20 @@ local function guiRestTopLeftAndSize(gui: GuiObject): (Vector2, Vector2)
 	return restPos, restSize
 end
 
+local function isCompactQuestHud(): boolean
+	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+		return true
+	end
+	local ok, preferred = pcall(function()
+		return (UserInputService :: any).PreferredInput
+	end)
+	if ok and preferred == Enum.PreferredInput.Touch then
+		return true
+	end
+	local cam = Workspace.CurrentCamera
+	return cam ~= nil and cam.ViewportSize.X < 700
+end
+
 layoutQuestHud = function()
 	local panel = questPanel
 	if not panel then
@@ -1612,7 +1626,7 @@ layoutQuestHud = function()
 		questGui.Enabled = false
 	end
 
-	local mobile = UserInputService.TouchEnabled
+	local compact = isCompactQuestHud()
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1280
 	local vh = if cam then cam.ViewportSize.Y else 720
@@ -1622,33 +1636,51 @@ layoutQuestHud = function()
 	local screenW: number
 	local matchScale = 1
 
-	if mobile or vw < 700 then
-		local maxW = math.floor(vw * 0.48)
-		screenW = math.clamp(maxW, 148, 188)
-		matchScale = if vh < 700 then 0.72 else 0.78
+	if compact then
+		local maxW = math.floor(vw * 0.72)
+		screenW = math.clamp(maxW, 180, 260)
+		matchScale = if vh < 700 then 0.88 else 0.92
 	else
 		screenW = math.clamp(math.floor(vw * 0.24), 290, 380)
 		matchScale = 0.94
 	end
 
 	local rb = resolveRandomBrainrotHud()
+	local usedRb = false
 	if rb and host and host.AbsoluteSize.Y > 0 then
 		local hp = host.AbsolutePosition
 		local rbPos, rbSize = guiRestTopLeftAndSize(rb)
 		local rbTop = rbPos.Y - hp.Y
-		local hostRight = hp.X + host.AbsoluteSize.X
-		local rbRight = rbPos.X + rbSize.X
-		rightPad = math.max(10, math.floor(hostRight - rbRight))
-		anchorY = 1
-		topPad = math.max(10, math.floor(rbTop - QUEST_GAP_ABOVE_RB))
-	elseif mobile or vw < 700 then
-		rightPad = 10
-		anchorY = 1
-		topPad = math.clamp(math.floor(vh * 0.62), 160, 360)
-	else
-		anchorY = 0
-		rightPad = TutorialConfig.PANEL_RIGHT_PAD
-		topPad = TutorialConfig.PANEL_TOP_PAD + 6
+		-- After mobile cutscenes AbsolutePosition can be 0 for a few frames — that parked
+		-- a bottom-anchored panel above the screen. Only trust settled coords.
+		if rbSize.Y > 8 and rbTop > 72 and rbTop < vh - 20 then
+			local hostRight = hp.X + host.AbsoluteSize.X
+			local rbRight = rbPos.X + rbSize.X
+			rightPad = math.max(10, math.floor(hostRight - rbRight))
+			anchorY = 1
+			topPad = math.max(10, math.floor(rbTop - QUEST_GAP_ABOVE_RB))
+			usedRb = true
+		end
+	end
+	if not usedRb then
+		if compact then
+			-- Hang from top-right (tutorial-style) so the ticket can't leave the screen.
+			rightPad = 10
+			anchorY = 0
+			topPad = 14
+		else
+			anchorY = 0
+			rightPad = TutorialConfig.PANEL_RIGHT_PAD
+			topPad = TutorialConfig.PANEL_TOP_PAD + 6
+		end
+	end
+
+	-- Keep bottom-anchored panels on-screen even if RandomBrainrot jumps.
+	if anchorY >= 0.5 then
+		local estH = math.max(TutorialConfig.PANEL_HEIGHT * matchScale, 96)
+		local minTop = math.floor(estH + 16)
+		local maxTop = math.max(minTop, math.floor(vh - 16))
+		topPad = math.clamp(math.floor(topPad), minTop, maxTop)
 	end
 
 	local hudScale = panel:FindFirstChild("HudMatchScale")
@@ -1745,15 +1777,18 @@ local function formatQuestProgress(quest: TimCheeseQuestConfig.QuestDef, p: numb
 end
 
 refreshQuestHud = function(opts: { skipRevealGate: boolean?, playAppear: boolean? }?)
+	local skipGate = opts ~= nil and opts.skipRevealGate == true
+	local playAppear = opts ~= nil and opts.playAppear == true
 	if questHudSuppressed then
-		syncQuestChromeVisibility()
+		-- Don't wipe a just-revealed panel while dialogue suppress is still on.
+		if not skipGate then
+			syncQuestChromeVisibility()
+		end
 		return
 	end
 	local idx = resolveActiveQuestIndex()
 	local progressVal = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR)
 	local ready = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR) == true
-	local skipGate = opts ~= nil and opts.skipRevealGate == true
-	local playAppear = opts ~= nil and opts.playAppear == true
 	if not idx then
 		stopQuestDots()
 		stopExclaimPulse()
@@ -1837,6 +1872,29 @@ refreshQuestHud = function(opts: { skipRevealGate: boolean?, playAppear: boolean
 			TweenService:Create(sc, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 		end
 	end
+end
+
+local function ensureQuestHudVisibleAfterDialogue()
+	local idx = resolveActiveQuestIndex()
+	if not idx then
+		refreshQuestHud()
+		return
+	end
+	questHudRevealed = true
+	questHudCollapsed = false
+	questAnimBusy = false
+	questHoverFlying = false
+	refreshQuestHud({ skipRevealGate = true, playAppear = false })
+	syncQuestChromeVisibility()
+	layoutQuestHud()
+	-- Mobile AbsolutePosition settles a beat after cutscene UI restore.
+	task.delay(0.2, function()
+		if not questHudRevealed or dialogueBusy or questHudSuppressed then
+			return
+		end
+		layoutQuestHud()
+		syncQuestChromeVisibility()
+	end)
 end
 
 local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
@@ -1978,7 +2036,7 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	ticketScale.Scale = 0.9
 	ticketScale.Parent = ticket
 
-	local mobile = UserInputService.TouchEnabled
+	local mobile = isCompactQuestHud()
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1280
 	if mobile or vw < 700 then
@@ -2008,6 +2066,10 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	if not gui.Parent then
 		pulseConn:Disconnect()
 		questHoverFlying = false
+		-- Popup got wiped (common on mobile UI restore) — still reveal the live HUD.
+		questHudRevealed = true
+		questAnimBusy = false
+		refreshQuestHud({ skipRevealGate = true, playAppear = true })
 		return
 	end
 
@@ -2656,7 +2718,7 @@ function M.openTimDialogue()
 	dialogueBusy = false
 	setQuestHudSuppressed(false)
 	restoreMovement()
-	refreshQuestHud()
+	ensureQuestHudVisibleAfterDialogue()
 	syncPromptAndOutline()
 end
 

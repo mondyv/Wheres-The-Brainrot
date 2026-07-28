@@ -3,7 +3,7 @@
 	Revive flow (server module):
 	• Tracks last good land while alive (death Y/ragdoll can miss hitboxes).
 	• On death: store land + spawn CFrame, prompt client with that land's product.
-	• Decline / timeout: clear pending and LoadCharacter immediately (no RespawnTime wait).
+	• Decline / timeout: clear pending and LoadCharacter immediately (do not zero Health / RespawnTime).
 	• Dev product receipt: LoadCharacter / teleport onto that land's Spawn.
 --]]
 
@@ -145,20 +145,13 @@ local function finishDecline(player: Player)
 	if fulfillingByPlayer[player] then
 		return
 	end
-	-- Always clear + force respawn. Don't gate on Health — dead characters can
-	-- linger and Players.RespawnTime makes Decline feel stuck.
+	-- Clear pending first so a mid-decline Died cannot open a second revive.
+	-- LoadCharacter only — never Health=0 (that re-fires Died and double-prompts).
 	if pendingByPlayer[player] then
 		clearPending(player)
 	end
 
 	local ok, err = pcall(function()
-		local character = player.Character
-		if character then
-			local humanoid = character:FindFirstChildOfClass("Humanoid")
-			if humanoid and humanoid.Health > 0 then
-				humanoid.Health = 0
-			end
-		end
 		player:LoadCharacter()
 	end)
 	if not ok then
@@ -391,11 +384,6 @@ function ReviveService.processReceipt(receiptInfo): Enum.ProductPurchaseDecision
 end
 
 function ReviveService.init()
-	-- Decline must never wait on the default ~5s RespawnTime soft-lock.
-	pcall(function()
-		Players.RespawnTime = 0
-	end)
-
 	revivePromptRE = ensureRemoteEvent("RevivePrompt")
 	reviveDeclinedRE = ensureRemoteEvent("ReviveDeclined")
 	reviveCompleteRE = ensureRemoteEvent("ReviveComplete")

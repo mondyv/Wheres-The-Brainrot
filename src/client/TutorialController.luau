@@ -655,7 +655,18 @@ local function ensureGuideTrail(): boolean
 		return false
 	end
 
-	if guideFolder and guideFolder.Parent and guideBeam and guideAttachPlayer and guideAttachGoal and guideGoalPart then
+	if
+		guideFolder
+		and guideFolder.Parent
+		and guideBeam
+		and guideBeam.Parent
+		and guideAttachPlayer
+		and guideAttachPlayer.Parent
+		and guideAttachGoal
+		and guideAttachGoal.Parent
+		and guideGoalPart
+		and guideGoalPart.Parent
+	then
 		if guideAttachPlayer.Parent ~= hrp then
 			guideAttachPlayer.Parent = hrp
 			guideAttachPlayer.Position = Vector3.new(0, 1.2, 0)
@@ -1020,9 +1031,23 @@ end
 clearSpotlight = clearSpotlightImpl
 
 local function ensureGui()
-	if gui and gui.Parent then
+	if gui and gui.Parent and panel and panel.Parent then
 		return
 	end
+	if gui then
+		gui:Destroy()
+		gui = nil
+	end
+	panel = nil
+	_questRoot = nil
+	_exclaim = nil
+	objectiveLabel = nil
+	dotsLabel = nil
+	panelScale = nil
+	hudMatchScale = nil
+	dimOverlay = nil
+	spotlightHole = nil
+	_questHost = nil
 	local pg = player:WaitForChild("PlayerGui", 30)
 	if not pg then
 		return
@@ -2582,6 +2607,42 @@ local function watchStepProgress()
 	end)
 end
 
+local function restoreTutorialAfterRespawn()
+	if not active then
+		return
+	end
+	task.defer(function()
+		if not active or not player.Parent then
+			return
+		end
+		-- Character death destroys guide attachments / can orphan the quest panel host.
+		clearGuideTrail()
+		ensureGui()
+		if isCutsceneBusy() then
+			pendingPointerRefresh = true
+			return
+		end
+		setChromeSuppressed(false)
+		pendingPointerRefresh = false
+		if gui then
+			gui.Enabled = true
+		end
+		if panel then
+			panel.Visible = true
+		end
+		syncPanelToSideButtons()
+		local step = currentStep()
+		if step then
+			objectiveBaseText = step.text
+			if objectiveLabel then
+				objectiveLabel.Text = step.text
+			end
+			startObjectiveDots(step.text)
+		end
+		refreshPointers()
+	end)
+end
+
 local function bindGameplayHooks()
 	for _, conn in attrConns do
 		conn:Disconnect()
@@ -2791,6 +2852,19 @@ function M.init()
 				return
 			end
 			pendingPointerRefresh = true
+		end)
+
+		local ReviveController = require(script.Parent.ReviveController)
+		ReviveController.registerHudRestoredCallback(function()
+			restoreTutorialAfterRespawn()
+		end)
+
+		player.CharacterAdded:Connect(function()
+			if active then
+				restoreTutorialAfterRespawn()
+			else
+				tryStartForFirstJoin()
+			end
 		end)
 
 		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_REPLAY_ATTR):Connect(function()

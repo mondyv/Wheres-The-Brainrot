@@ -506,15 +506,15 @@ local function syncDialogueLayout()
 	local dialogueH = math.clamp(math.floor(vh * (if compact then 0.24 else 0.20)), 80, 156)
 	local choiceH = math.clamp(math.floor(vh * 0.24), 96, 176)
 
-	-- Keep dialogue box centered (Undertale-style). Choices sit under it.
+	-- Centered dialogue box; Undertale-style choices on the right.
 	dialogueBox.AnchorPoint = Vector2.new(0.5, 1)
 	dialogueBox.Position = UDim2.new(0.5, 0, 0.90, 0)
-	dialogueBox.Size = UDim2.new(if compact then 0.88 else 0.72, 0, 0, dialogueH)
+	dialogueBox.Size = UDim2.new(if compact then 0.72 else 0.62, 0, 0, dialogueH)
 
 	if choiceFrame then
-		choiceFrame.AnchorPoint = Vector2.new(0.5, 0)
-		choiceFrame.Position = UDim2.new(0.5, 0, 0.915, 0)
-		choiceFrame.Size = UDim2.new(if compact then 0.72 else 0.42, 0, 0, choiceH)
+		choiceFrame.AnchorPoint = Vector2.new(1, 0.5)
+		choiceFrame.Position = UDim2.new(0.96, 0, 0.48, 0)
+		choiceFrame.Size = UDim2.new(if compact then 0.32 else 0.24, 0, 0, choiceH)
 	end
 
 	dialogueLabel.TextSize = dialogueTextSize
@@ -941,7 +941,7 @@ local function confirmChoice(enter: boolean)
 end
 
 local function ensureGui(): ScreenGui
-	local STYLE = "center_arcade_v2"
+	local STYLE = "center_arcade_v3"
 	if
 		cutsceneGui
 		and cutsceneGui.Parent
@@ -1062,9 +1062,9 @@ local function ensureGui(): ScreenGui
 	local choices = Instance.new("Frame")
 	choices.Name = "Choices"
 	choices.BackgroundTransparency = 1
-	choices.AnchorPoint = Vector2.new(0.5, 0)
-	choices.Position = UDim2.new(0.5, 0, 0.915, 0)
-	choices.Size = UDim2.new(0.42, 0, 0.22, 0)
+	choices.AnchorPoint = Vector2.new(1, 0.5)
+	choices.Position = UDim2.new(0.96, 0, 0.48, 0)
+	choices.Size = UDim2.new(0.24, 0, 0.26, 0)
 	choices.ZIndex = 40
 	choices.Parent = gui
 

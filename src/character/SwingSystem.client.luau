@@ -220,12 +220,9 @@ C.LAUNCH_UP_DV = 62
 C.LAUNCH_CHARGE_DV = 22
 C.LAUNCH_FORWARD_INPUT_DV = 68
 C.LAUNCH_SPEED_CAP = 175
--- Soft-cap horizontal launch so power can't throw much farther than rope reach (strand fix).
-C.LAUNCH_REACH_TRAVEL_MULT = 0.95
-C.LAUNCH_REACH_AIR_TIME = 1.35
 -- After a launch, always allow re-latch onto the vine you came from past normal reach.
-C.RETURN_SWING_REACH_MULT = 2.85
-C.RETURN_SWING_REACH_BONUS = 110
+C.RETURN_SWING_REACH_MULT = 3.5
+C.RETURN_SWING_REACH_BONUS = 180
 C.LAUNCH_STYLE_TIME = 1.85
 C.LAUNCH_STYLE_TILT_TIME = 0.38
 C.LAUNCH_STYLE_ORIENT_RESPONSIVENESS = 62

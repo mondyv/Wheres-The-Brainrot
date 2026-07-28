@@ -13,7 +13,7 @@ local M = {}
 
 local DATA_FOLDER_NAME = "LeaderboardData"
 local BOARD_NAMES = { "Cash", "Time" }
-local ROW_COUNT = 10
+local ROW_COUNT = 100
 local RETRY_INTERVAL_SEC = 8
 
 local function readRows(boardFolder: Folder): { LeaderboardUI.RowEntry }

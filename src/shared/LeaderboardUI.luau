@@ -15,7 +15,7 @@ export type RowEntry = {
 	amountText: string,
 }
 
-local ROW_COUNT = 10
+local ROW_COUNT = 100
 
 local BOARD_KEYS = { "Cash", "Time" }
 
@@ -137,6 +137,10 @@ local function rowHasScoreColumns(row: Instance): boolean
 end
 
 local function findEntriesRoot(surfaceGui: SurfaceGui): Instance
+	local scroll = surfaceGui:FindFirstChild("LeaderboardScroll", true)
+	if scroll and scroll:IsA("ScrollingFrame") then
+		return scroll
+	end
 	local preferred = { "Container", "Entries", "List", "Rows", "ScrollingFrame", "Frame" }
 	for _, name in preferred do
 		for _, desc in surfaceGui:GetDescendants() do
@@ -404,14 +408,150 @@ local function paintRow(row: Instance, entry: RowEntry?, rank: number)
 	end
 end
 
+local function ensureScrollableRows(surfaceGui: SurfaceGui): GuiObject?
+	surfaceGui.Enabled = true
+	surfaceGui.Active = true
+	local root = findEntriesRoot(surfaceGui)
+	if not (root and root:IsA("GuiObject")) then
+		return nil
+	end
+
+	local scroll: ScrollingFrame? = nil
+	if root:IsA("ScrollingFrame") then
+		scroll = root
+	elseif root.Parent and root.Parent:IsA("ScrollingFrame") then
+		scroll = root.Parent :: ScrollingFrame
+	else
+		local existing = root:FindFirstChild("LeaderboardScroll")
+		if existing and existing:IsA("ScrollingFrame") then
+			scroll = existing
+		else
+			local sf = Instance.new("ScrollingFrame")
+			sf.Name = "LeaderboardScroll"
+			sf.BackgroundTransparency = 1
+			sf.BorderSizePixel = 0
+			sf.Size = UDim2.fromScale(1, 1)
+			sf.Position = UDim2.fromScale(0, 0)
+			sf.ScrollBarThickness = 8
+			sf.ScrollingDirection = Enum.ScrollingDirection.Y
+			sf.ScrollingEnabled = true
+			sf.Active = true
+			sf.Selectable = true
+			sf.CanvasSize = UDim2.fromOffset(0, 0)
+			pcall(function()
+				(sf :: any).AutomaticCanvasSize = Enum.AutomaticSize.Y
+			end)
+			-- Move existing row children into the scroll pane.
+			local toMove: { Instance } = {}
+			for _, child in root:GetChildren() do
+				if child:IsA("GuiObject") then
+					local n = child.Name
+					if tonumber(n) or string.match(n, "^Row%d+") or string.match(n, "^Slot%d+") then
+						table.insert(toMove, child)
+					elseif rowHasScoreColumns(child) then
+						table.insert(toMove, child)
+					end
+				end
+			end
+			sf.Parent = root
+			for _, child in toMove do
+				child.Parent = sf
+			end
+			scroll = sf
+		end
+	end
+
+	if not scroll then
+		return root
+	end
+
+	scroll.ScrollingEnabled = true
+	scroll.Active = true
+	scroll.Visible = true
+	pcall(function()
+		(scroll :: any).AutomaticCanvasSize = Enum.AutomaticSize.Y
+	end)
+
+	local list = scroll:FindFirstChildOfClass("UIListLayout")
+	if not list then
+		list = Instance.new("UIListLayout")
+		list.Name = "LeaderboardList"
+		list.SortOrder = Enum.SortOrder.LayoutOrder
+		list.Padding = UDim.new(0, 2)
+		list.Parent = scroll
+	end
+
+	local template = scroll:FindFirstChild("1")
+		or scroll:FindFirstChild("Row1")
+		or scroll:FindFirstChild("Slot1")
+	if not template then
+		for _, child in scroll:GetChildren() do
+			if child:IsA("GuiObject") and rowHasScoreColumns(child) then
+				template = child
+				break
+			end
+		end
+	end
+	if not template or not template:IsA("GuiObject") then
+		return scroll
+	end
+
+	local rowH = template.AbsoluteSize.Y
+	if rowH < 4 then
+		rowH = math.max(template.Size.Y.Offset, 28)
+	end
+
+	for rank = 1, ROW_COUNT do
+		local name = tostring(rank)
+		local row = scroll:FindFirstChild(name)
+		if not row then
+			row = template:Clone()
+			row.Name = name
+			row.Parent = scroll
+		end
+		if row:IsA("GuiObject") then
+			row.LayoutOrder = rank
+			row.Visible = true
+			if row.Size.Y.Offset <= 0 and row.Size.Y.Scale <= 0 then
+				row.Size = UDim2.new(1, 0, 0, rowH)
+			end
+		end
+	end
+
+	-- Hide leftover non-numeric template duplicates that would clutter the list.
+	for _, child in scroll:GetChildren() do
+		if child:IsA("GuiObject") and child ~= list then
+			local n = child.Name
+			if not tonumber(n) and (string.match(n, "^Row%d+") or string.match(n, "^Slot%d+") or child == template) then
+				if child.Name ~= "1" then
+					child.Visible = false
+				end
+			end
+		end
+	end
+
+	scroll.CanvasSize = UDim2.fromOffset(0, ROW_COUNT * (rowH + 2) + 8)
+	return scroll
+end
+
 function M.renderSurfaceGui(surfaceGui: SurfaceGui, entries: { RowEntry }): boolean
+	ensureScrollableRows(surfaceGui)
 	local rows = findRowFrames(surfaceGui)
 	if #rows == 0 then
 		return false
 	end
 	surfaceGui.Enabled = true
+	surfaceGui.Active = true
 	for index, row in ipairs(rows) do
 		paintRow(row, entries[index], index)
+	end
+	-- Hide unused cloned rows past published entry count.
+	for index = #entries + 1, #rows do
+		local row = rows[index]
+		if row and row:IsA("GuiObject") then
+			-- Keep slot visible with placeholder via paintRow(nil) for empty ranks.
+			paintRow(row, nil, index)
+		end
 	end
 	return true
 end

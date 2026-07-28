@@ -122,6 +122,10 @@ C.ROPE_MAX_LENGTH = 44
 C.ROPE_MIN_LENGTH = 13
 C.ROPE_REST_LENGTH_MULT = 0.48
 C.ROPE_STRETCH_MAX_EXTRA = 26
+-- Rope stretch flex must NOT scale with launch power — that hung players into kill zones.
+C.ROPE_STRETCH_FLEX_CAP = 1.35
+C.ROPE_ABSOLUTE_MAX = 78
+C.ROPE_MAX_HANG_DEPTH = 38
 C.ROPE_MOMENTUM_LENGTH_MULT = 0.68
 C.ROPE_DISTANCE_STRETCH_MULT = 0.22
 C.ROPE_LENGTH_RESPONSE = 24
@@ -221,9 +225,10 @@ C.LAUNCH_UP_DV = 62
 C.LAUNCH_CHARGE_DV = 22
 C.LAUNCH_FORWARD_INPUT_DV = 68
 C.LAUNCH_SPEED_CAP = 175
--- After a launch, always allow re-latch onto the vine you came from past normal reach.
-C.RETURN_SWING_REACH_MULT = 3.5
-C.RETURN_SWING_REACH_BONUS = 180
+-- After a launch, always allow re-latch onto the vine you came from (even past normal reach).
+C.RETURN_SWING_REACH_MULT = 5.0
+C.RETURN_SWING_REACH_BONUS = 280
+C.RETURN_SWING_MAX_DIST = 450
 C.LAUNCH_STYLE_TIME = 1.85
 C.LAUNCH_STYLE_TILT_TIME = 0.38
 C.LAUNCH_STYLE_ORIENT_RESPONSIVENESS = 62
@@ -566,10 +571,15 @@ end
 
 local function getRopeMaxLength()
 	return math.clamp(
-		C.ROPE_MAX_LENGTH + math.max(getSwingRange() - C.SWING_RANGE, 0) * 0.55,
+		C.ROPE_MAX_LENGTH + math.max(getSwingRange() - C.SWING_RANGE, 0) * 0.35,
 		C.ROPE_MIN_LENGTH + C.ROPE_HANG_PULL_MIN_GAP + 4,
-		190
+		C.ROPE_ABSOLUTE_MAX
 	)
+end
+
+local function getRopeFlexScale()
+	-- Keep rope hang length stable; launch power is separate.
+	return math.clamp(0.9 + (getPowerScale() - 1) * 0.08, 0.85, C.ROPE_STRETCH_FLEX_CAP)
 end
 
 local function getRopeRestLength()
@@ -3024,7 +3034,7 @@ local function boot(character)
 	function st.getAttachReachForTarget(target: BasePart?): number
 		local base = getSwingRange()
 		if st.isReturnSwingTarget(target) then
-			return math.max(base * C.RETURN_SWING_REACH_MULT, base + C.RETURN_SWING_REACH_BONUS)
+			return math.min(C.RETURN_SWING_MAX_DIST, math.max(base * C.RETURN_SWING_REACH_MULT, base + C.RETURN_SWING_REACH_BONUS))
 		end
 		return base
 	end
@@ -4288,7 +4298,8 @@ local function boot(character)
 		st.rayParams.FilterDescendantsInstances = { st.character }
 		local hit = workspace:Raycast(st.hrp.Position, Vector3.new(0, -130, 0), st.rayParams)
 		local floorY = hit and hit.Position.Y or (st.hrp.Position.Y - 80)
-		local minSafeY = math.max(floorY + C.FLOOR_CLEARANCE, anchorWorld.Y - (ropeLength or getRopeMaxLength()) * 0.72)
+		local hangCap = math.min((ropeLength or getRopeMaxLength()) * 0.55, C.ROPE_MAX_HANG_DEPTH)
+		local minSafeY = math.max(floorY + C.FLOOR_CLEARANCE, anchorWorld.Y - hangCap)
 		local margin = st.hrp.Position.Y - minSafeY
 		if margin <= 0 then
 			return 0.18
@@ -4465,14 +4476,15 @@ local function boot(character)
 		st.releaseStyle.cancel()
 
 		local ropeMaxFloor = math.max(C.ROPE_SAFE_MAX_MIN_LENGTH, C.ROPE_MIN_LENGTH + C.ROPE_HANG_PULL_MIN_GAP + 8)
+		local flexScale = getRopeFlexScale()
 		local ropeStretchFloor = math.min(baseRopeMax, ropeRestLength + C.ROPE_HANG_PULL_MIN_GAP)
 		local ropeStretchCeiling = math.min(
 			baseRopeMax,
 			ropeRestLength
-				+ C.ROPE_STRETCH_MAX_EXTRA * math.clamp(0.85 + (getPowerScale() - 1) * 0.82, 0.85, 4.5)
-				+ math.max(baseRopeMax - C.ROPE_MAX_LENGTH, 0) * 0.9
+				+ C.ROPE_STRETCH_MAX_EXTRA * flexScale
+				+ math.max(baseRopeMax - C.ROPE_MAX_LENGTH, 0) * 0.45
 		)
-		local ropeMax = math.max(ropeStretchFloor, ropeStretchCeiling, ropeMaxFloor)
+		local ropeMax = math.min(C.ROPE_ABSOLUTE_MAX, math.max(ropeStretchFloor, ropeStretchCeiling, ropeMaxFloor))
 
 		local elasticRestLength = math.clamp(ropeRestLength, C.ROPE_MIN_LENGTH, ropeMax)
 		local normalStartLength =
@@ -4671,13 +4683,13 @@ local function boot(character)
 		end
 
 		local restLength = math.clamp(getRopeRestLength(), C.ROPE_MIN_LENGTH, ropeMax)
-		local flexScale = math.clamp(0.85 + (getPowerScale() - 1) * 0.82, 0.85, 4.5)
+		local flexScale = getRopeFlexScale()
 		local stretchMinLength = math.min(ropeMax, restLength + C.ROPE_HANG_PULL_MIN_GAP)
 		local stretchMaxLength = math.max(
 			stretchMinLength,
 			math.min(
 				ropeMax,
-				restLength + C.ROPE_STRETCH_MAX_EXTRA * flexScale + math.max(ropeMax - C.ROPE_MAX_LENGTH, 0) * 0.9
+				restLength + C.ROPE_STRETCH_MAX_EXTRA * flexScale + math.max(ropeMax - C.ROPE_MAX_LENGTH, 0) * 0.45
 			)
 		)
 		local moveAmount = st.humanoid.MoveDirection.Magnitude

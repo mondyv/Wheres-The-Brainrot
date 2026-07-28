@@ -1,6 +1,6 @@
 -- [ACTIVE] LeaderboardRankController
 --[[
-	Top-10 cash/time leaderboard overhead badges + chat tags for ranked players.
+	Top-10 cash/time overhead badges + chat tags (board itself shows top 100).
 	Reads ReplicatedStorage.LeaderboardData published by Leaderboards.server.
 --]]
 
@@ -16,7 +16,7 @@ local M = {}
 
 local DATA_FOLDER_NAME = "LeaderboardData"
 local BOARD_NAMES = { "Cash", "Time" }
-local ROW_COUNT = 10
+local TAG_ROW_COUNT = 10 -- badges/tags only; boards show top 100
 local SAFEZONE_POLL_INTERVAL = 0.2
 
 local localPlayer = Players.LocalPlayer
@@ -68,7 +68,7 @@ local wiredData = false
 local function readBoardRanks(boardFolder: Folder): { [number]: BoardRank }
 	local out: { [number]: BoardRank } = {}
 	local boardName = boardFolder.Name
-	for rank = 1, ROW_COUNT do
+	for rank = 1, TAG_ROW_COUNT do
 		local rowFolder = boardFolder:FindFirstChild(tostring(rank))
 		if not rowFolder then
 			continue
@@ -310,7 +310,7 @@ local function hookDataFolder(dataFolder: Folder)
 	for _, boardName in BOARD_NAMES do
 		local boardFolder = dataFolder:FindFirstChild(boardName)
 		if boardFolder and boardFolder:IsA("Folder") then
-			for rank = 1, ROW_COUNT do
+			for rank = 1, TAG_ROW_COUNT do
 				local rowFolder = boardFolder:FindFirstChild(tostring(rank))
 				if rowFolder and rowFolder:IsA("Folder") then
 					for _, child in rowFolder:GetChildren() do

@@ -1,7 +1,7 @@
 -- [ACTIVE] Leaderboards.server
 --[[
 	Global Most Cash (plot $/s) + Play Time leaderboards.
-	Pushes OrderedDataStore scores on the server and mirrors top 10 rows to
+	Pushes OrderedDataStore scores on the server and mirrors top 100 rows to
 	ReplicatedStorage.LeaderboardData for the client to paint workspace SurfaceGuis.
 
 	"Most Cash" tracks current placed plot income/sec (not wallet Cash).
@@ -22,7 +22,7 @@ local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForC
 -- v2: plot income/sec. Old GlobalCashLeaderboard_v1 was peak wallet Cash and polluted rankings.
 local CASH_STORE_NAME = "GlobalPlotIncomeLeaderboard_v1"
 local TIME_STORE_NAME = "GlobalPlayTimeLeaderboard_v1"
-local ROW_COUNT = 10
+local ROW_COUNT = 100
 local PUSH_INTERVAL_SEC = 45
 local REFRESH_INTERVAL_SEC = 90
 local DATA_FOLDER_NAME = "LeaderboardData"

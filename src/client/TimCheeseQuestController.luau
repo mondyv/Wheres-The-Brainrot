@@ -86,6 +86,8 @@ local TIM_VOICE_PITCH_MIN = 1.48
 local TIM_VOICE_PITCH_MAX = 1.82
 -- Space between quest ticket bottom and RandomBrainrot top (rest pose, not hover-scaled).
 local QUEST_GAP_ABOVE_RB = 28
+local QUEST_EDGE_SLIDE = TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local QUEST_ARROW_EDGE_PAD = 8
 local toggleQuestHudCollapsed: () -> ()
 local layoutQuestHud: () -> ()
 local placeArrowOnTicket: () -> ()
@@ -1268,8 +1270,12 @@ placeArrowParked = function()
 	end
 	questArrowBtn.Parent = host
 	questArrowBtn.AnchorPoint = Vector2.new(1, 0)
-	local y = if questParkedArrowY ~= 0 then questParkedArrowY else questHudBaseTop
-	questArrowBtn.Position = UDim2.new(1, -8, 0, y)
+	-- Locked to the ticket-arrow height captured on collapse — never snap to panel bottom pad.
+	local y = questParkedArrowY
+	if y == 0 then
+		y = questHudBaseTop
+	end
+	questArrowBtn.Position = UDim2.new(1, -QUEST_ARROW_EDGE_PAD, 0, y)
 	questArrowBtn.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
 	questArrowBtn.Rotation = 180
 	questArrowBtn.Visible = true
@@ -1315,6 +1321,11 @@ local function unfreezePanelAutoY(screenW: number?)
 	questPanel.AutomaticSize = Enum.AutomaticSize.Y
 end
 
+local function panelHiddenOffset(panel: GuiObject): number
+	local w = math.max(panel.AbsoluteSize.X, panel.Size.X.Offset, 160)
+	return math.ceil(w) + 20
+end
+
 toggleQuestHudCollapsed = function()
 	if not questPanel or questHoverFlying or questAnimBusy then
 		return
@@ -1327,63 +1338,52 @@ toggleQuestHudCollapsed = function()
 	local panel = questPanel
 	local arrow = questArrowBtn
 	local panelScale = getPanelScale()
+	if panelScale then
+		panelScale.Scale = 1
+	end
 	local goal = expandedHudPosition()
 
 	if questHudCollapsed then
-		-- Arrow stays glued to the ticket corner every frame while the panel tucks,
-		-- then blends to the parked edge tab so it never "escapes" mid-tween.
+		-- Pure edge slide: panel keeps size and glides off-screen to the right.
 		questAnimBusy = true
 		local host = panel.Parent
 		freezePanelSize()
 		local from = panel.Position
-		local tuck = UDim2.new(1, from.X.Offset + QUEST_SLIDE_PX, 0, from.Y.Offset)
-		placeArrowOnTicket()
+		local hiddenX = panelHiddenOffset(panel)
+		local tuck = UDim2.new(1, hiddenX, 0, from.Y.Offset)
 
-		local blend = Instance.new("NumberValue")
-		blend.Value = 0
-		questArrowBlendValue = blend
+		-- Capture arrow height from the ticket corner BEFORE sliding, then park at that Y.
+		placeArrowOnTicket()
 		local parkedY = questHudBaseTop
 		if arrow and host and host:IsA("GuiObject") then
 			local startHost = ticketArrowHostGoal()
 			if startHost then
 				parkedY = startHost.Y.Offset
-				questParkedArrowY = parkedY
-				arrow.Parent = host
-				arrow.AnchorPoint = Vector2.new(1, 0)
-				arrow.Position = startHost
-				arrow.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
-				arrow.ZIndex = 200
-				arrow.Visible = true
-				arrow.Rotation = 0
+			else
+				parkedY = math.floor(arrow.AbsolutePosition.Y - host.AbsolutePosition.Y + 0.5)
 			end
-			local parked = UDim2.new(1, -8, 0, parkedY)
-			questArrowFollowConn = blend:GetPropertyChangedSignal("Value"):Connect(function()
-				if not arrow or not arrow.Parent then
-					return
-				end
-				local a = math.clamp(blend.Value, 0, 1)
-				-- First half: stick to live ticket corner; second half: ease to parked tab.
-				local follow = ticketArrowHostGoal() or parked
-				local stick = math.clamp(a / 0.45, 0, 1)
-				local toPark = math.clamp((a - 0.45) / 0.55, 0, 1)
-				local eased = toPark * toPark * (3 - 2 * toPark)
-				local fromPos = follow
-				arrow.Position = fromPos:Lerp(parked, eased)
-				arrow.Rotation = 180 * math.clamp(stick, 0, 1)
-			end)
-			local blendTw = TweenService:Create(blend, QUEST_PANEL_SWAP, { Value = 1 })
-			questArrowBlendTween = blendTw
-			blendTw:Play()
+			questParkedArrowY = parkedY
+			arrow.Parent = host
+			arrow.AnchorPoint = Vector2.new(1, 0)
+			arrow.Position = startHost or UDim2.new(1, -QUEST_ARROW_EDGE_PAD, 0, parkedY)
+			arrow.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
+			arrow.ZIndex = 200
+			arrow.Visible = true
+			arrow.Rotation = 0
+
+			local parked = UDim2.new(1, -QUEST_ARROW_EDGE_PAD, 0, parkedY)
+			-- Arrow only slides horizontally to the edge tab — Y stays locked.
+			local arrowTw = TweenService:Create(arrow, QUEST_EDGE_SLIDE, {
+				Position = parked,
+				Rotation = 180,
+			})
+			questArrowTween = arrowTw
+			arrowTw:Play()
 		else
-			questParkedArrowY = questHudBaseTop
+			questParkedArrowY = parkedY
 		end
 
-		if panelScale then
-			local st = TweenService:Create(panelScale, QUEST_PANEL_SWAP, { Scale = 0.8 })
-			questPanelScaleTween = st
-			st:Play()
-		end
-		local tw = TweenService:Create(panel, QUEST_PANEL_SWAP, { Position = tuck })
+		local tw = TweenService:Create(panel, QUEST_EDGE_SLIDE, { Position = tuck })
 		questCollapseTween = tw
 		tw.Completed:Connect(function(playbackState)
 			if playbackState ~= Enum.PlaybackState.Completed then
@@ -1397,8 +1397,8 @@ toggleQuestHudCollapsed = function()
 			if ticket and ticket:IsA("GuiObject") then
 				ticket.Visible = false
 			end
-			local slideW = math.max(questPanel.Size.X.Offset, 160)
-			questPanel.Position = UDim2.new(1, slideW + 24, 0, questHudBaseTop)
+			-- Stay fully off-screen at the same vertical slot.
+			questPanel.Position = UDim2.new(1, panelHiddenOffset(questPanel), 0, from.Y.Offset)
 			if panelScale then
 				panelScale.Scale = 1
 			end
@@ -1409,31 +1409,29 @@ toggleQuestHudCollapsed = function()
 		end)
 		tw:Play()
 	else
-		-- Expand: attach arrow to ticket first so it rides the panel in as one unit.
+		-- Expand: same size, slide in from past the right edge — no scale pop.
 		questAnimBusy = true
 		local ticket = panel:FindFirstChild("Ticket")
 		if ticket and ticket:IsA("GuiObject") then
 			ticket.Visible = true
 		end
 		local slideW = math.max(panel.Size.X.Offset, 160)
+		if panel.AbsoluteSize.X > 4 then
+			slideW = math.max(slideW, math.ceil(panel.AbsoluteSize.X))
+		end
 		panel.AnchorPoint = Vector2.new(1, questHudAnchorY)
 		panel.AutomaticSize = Enum.AutomaticSize.None
 		panel.Size = UDim2.fromOffset(slideW, math.max(panel.Size.Y.Offset, 80))
-		panel.Position = UDim2.new(1, goal.X.Offset + QUEST_SLIDE_PX, 0, goal.Y.Offset)
+		local hiddenX = panelHiddenOffset(panel)
+		panel.Position = UDim2.new(1, hiddenX, 0, goal.Y.Offset)
 		placeArrowOnTicket()
 		if arrow then
 			arrow.Rotation = 180
-			local arrowTw = TweenService:Create(arrow, QUEST_PANEL_SWAP, { Rotation = 0 })
+			local arrowTw = TweenService:Create(arrow, QUEST_EDGE_SLIDE, { Rotation = 0 })
 			questArrowTween = arrowTw
 			arrowTw:Play()
 		end
-		if panelScale then
-			panelScale.Scale = 0.82
-			local st = TweenService:Create(panelScale, QUEST_PANEL_OPEN, { Scale = 1 })
-			questPanelScaleTween = st
-			st:Play()
-		end
-		local tw = TweenService:Create(panel, QUEST_PANEL_SWAP, { Position = goal })
+		local tw = TweenService:Create(panel, QUEST_EDGE_SLIDE, { Position = goal })
 		questCollapseTween = tw
 		tw.Completed:Connect(function(playbackState)
 			if playbackState ~= Enum.PlaybackState.Completed then
@@ -1562,15 +1560,11 @@ layoutQuestHud = function()
 		if ticket and ticket:IsA("GuiObject") then
 			ticket.Visible = false
 		end
-		-- Keep shell parked off-screen; arrow lives on host at last known ticket-top Y.
+		-- Keep shell parked fully off-screen; arrow stays at captured ticket-top Y.
 		local slideW = math.max(panel.Size.X.Offset, screenW, 160)
 		panel.AutomaticSize = Enum.AutomaticSize.None
 		panel.Size = UDim2.fromOffset(slideW, math.max(panel.Size.Y.Offset, 40))
-		panel.Position = UDim2.new(1, slideW + 24, 0, topPad)
-		if questParkedArrowY == 0 then
-			-- Fallback only before first collapse capture.
-			questParkedArrowY = topPad
-		end
+		panel.Position = UDim2.new(1, slideW + 20, 0, topPad)
 		placeArrowParked()
 	else
 		panel.Size = UDim2.fromOffset(screenW, TutorialConfig.PANEL_HEIGHT)

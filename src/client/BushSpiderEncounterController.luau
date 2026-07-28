@@ -2213,6 +2213,10 @@ local function runEncounter(fallbackAnchor: Vector3)
 		warn("[BushSpiderEncounterController] EssentialAssets.Spider missing")
 		FloatingClaimCutscene.releaseMoveLock()
 		BushHoldInteraction.setBushSearchLocked(false)
+		task.defer(function()
+			MobileTouchGate.ensureTouchControlsVisible(true)
+			MobileTouchGate.restorePlayerMovement()
+		end)
 		return
 	end
 
@@ -2614,6 +2618,24 @@ function BushSpiderEncounterController.init()
 	player.CharacterAdded:Connect(function()
 		clearSpiderEncounterCharacterFx()
 		forceRestoreBgm()
+		-- Death mid-encounter can skip finishEncounter; force camera/touch restore.
+		if encounterActive then
+			encounterActive = false
+			hideTimingQTE()
+			stopSpideySenses()
+			clearPostFx()
+			if cutsceneGui then
+				cutsceneGui.Enabled = false
+			end
+			restoreCamera()
+			GameplayUiVisibility.show()
+			BushHoldInteraction.setBushSearchLocked(false)
+		else
+			task.defer(function()
+				MobileTouchGate.ensureTouchControlsVisible(true)
+				MobileTouchGate.restorePlayerMovement()
+			end)
+		end
 	end)
 
 	local remotes = ReplicatedStorage:WaitForChild("Remotes", 60)

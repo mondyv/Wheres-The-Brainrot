@@ -782,6 +782,8 @@ local function startChoiceHoverLoop()
 	ensureSoulTrackLoop()
 end
 
+local updateChoiceVisuals: () -> ()
+
 local function wireChoiceHover(btn: TextButton)
 	local state: ChoiceHoverState = {
 		btn = btn,

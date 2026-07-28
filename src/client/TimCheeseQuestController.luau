@@ -1225,8 +1225,10 @@ local function resolveActiveQuestIndex(): number?
 end
 
 local function formatQuestProgress(quest: TimCheeseQuestConfig.QuestDef, p: number): string
-	if quest.kind == "place_stands" or quest.kind == "harvest" then
+	if quest.kind == "place_stands" or quest.kind == "harvest" or quest.kind == "own_rarity" then
 		return string.format("%d / %d", math.floor(p), quest.target)
+	elseif quest.kind == "own_brainrot" then
+		return if p >= 1 then "Found!" else "Not yet"
 	elseif quest.kind == "income" then
 		return string.format("%s/s  goal %s/s", BrainrotEconomy.formatCashShort(p), BrainrotEconomy.formatCashShort(quest.target))
 	else

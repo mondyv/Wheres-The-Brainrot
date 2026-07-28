@@ -168,6 +168,65 @@ local function grantLuckyBlock(player: Player, blockName: string): boolean
 	return success == true
 end
 
+local function playerOwnsBrainrotName(player: Player, brainrotName: string): boolean
+	if typeof(brainrotName) ~= "string" or brainrotName == "" then
+		return false
+	end
+	local has = ItemService:HasBrainrot(player, brainrotName, 0.5)
+	if has then
+		return true
+	end
+	local uid = player.UserId
+	for _, stand in CollectionService:GetTagged(STAND_TAG) do
+		if isOwnedByPlayer(stand, uid) then
+			local name = stand:GetAttribute("BrainrotName")
+			if typeof(name) == "string" and name == brainrotName then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function countOwnedBrainrotsOfRarity(player: Player, rarityId: string): number
+	if typeof(rarityId) ~= "string" or rarityId == "" then
+		return 0
+	end
+	local want = Brainrots.normalizeRarityId(rarityId)
+	local total = 0
+
+	local inventory, err = ItemService:GetInventory(player, 0.5)
+	if not err and inventory then
+		for _, item in inventory do
+			if typeof(item.name) == "string" then
+				local def = Brainrots.getByName(item.name)
+				if def and Brainrots.normalizeRarityId(def.rarity) == want then
+					total += 1
+				end
+			end
+		end
+	end
+
+	local uid = player.UserId
+	for _, stand in CollectionService:GetTagged(STAND_TAG) do
+		if isOwnedByPlayer(stand, uid) then
+			local name = stand:GetAttribute("BrainrotName")
+			local rarity = stand:GetAttribute("BrainrotRarity")
+			if typeof(name) == "string" and name ~= "" then
+				local def = Brainrots.getByName(name)
+				local standRarity = if typeof(rarity) == "string" then Brainrots.normalizeRarityId(rarity)
+					elseif def then Brainrots.normalizeRarityId(def.rarity)
+					else nil
+				if standRarity == want then
+					total += 1
+				end
+			end
+		end
+	end
+
+	return total
+end
+
 local function grantQuestReward(player: Player, quest: TimCheeseQuestConfig.QuestDef): (boolean, string)
 	local label = TimCheeseQuestConfig.formatRewardLabel(quest)
 	if quest.rewardKind == "cash" then
@@ -207,6 +266,11 @@ local function computeProgress(player: Player, quest: TimCheeseQuestConfig.Quest
 	elseif quest.kind == "harvest" then
 		local h = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR)
 		return if typeof(h) == "number" then math.floor(h) else 0
+	elseif quest.kind == "own_brainrot" then
+		local targetName = quest.questTargetBrainrot
+		return if playerOwnsBrainrotName(player, targetName or "") then 1 else 0
+	elseif quest.kind == "own_rarity" then
+		return countOwnedBrainrotsOfRarity(player, quest.questTargetRarity or "")
 	end
 	return 0
 end
@@ -378,7 +442,7 @@ local function watchStandForQuest(stand: Instance)
 				local idx = plr:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
 				if typeof(idx) == "number" and idx >= 1 then
 					local quest = TimCheeseQuestConfig.getQuest(math.floor(idx))
-					if quest and (quest.kind == "place_stands" or quest.kind == "income") then
+					if quest and (quest.kind == "place_stands" or quest.kind == "income" or quest.kind == "own_brainrot" or quest.kind == "own_rarity") then
 						syncQuestProgress(plr)
 					end
 				end

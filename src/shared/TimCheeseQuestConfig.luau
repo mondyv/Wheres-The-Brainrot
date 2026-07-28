@@ -20,7 +20,7 @@ M.FALL_DURATION = 0.7
 M.WALKBY_COOLDOWN_SEC = 22
 M.PROGRESS_POLL_SEC = 0.85
 
-export type QuestKind = "place_stands" | "harvest" | "cash" | "income"
+export type QuestKind = "place_stands" | "harvest" | "cash" | "income" | "own_brainrot" | "own_rarity"
 export type RewardKind = "cash" | "lucky_block" | "brainrot"
 
 export type QuestDef = {
@@ -37,9 +37,19 @@ export type QuestDef = {
 	rewardLuckyBlock: string?,
 	-- brainrot rarity id (common / uncommon / rare / …)
 	rewardBrainrotRarity: string?,
+	-- own_brainrot: exact brainrot id (inventory or stand)
+	questTargetBrainrot: string?,
+	-- own_rarity: count brainrots of this rarity (inventory + stands)
+	questTargetRarity: string?,
 }
 
--- Early jobs stay modest; rewards escalate and mix cash / blocks / brainrots.
+local function prettyBrainrotName(name: string): string
+	return (name:gsub("(%u)", " %1"):gsub("^%s+", ""))
+end
+
+M.prettyBrainrotName = prettyBrainrotName
+
+-- Slow early curve; mythic blocks only late; mix hunt / grind / economy quests.
 local QUESTS: { QuestDef } = {
 	{
 		id = "place_5",
@@ -49,27 +59,28 @@ local QUESTS: { QuestDef } = {
 		target = 5,
 		showBar = true,
 		rewardKind = "cash",
-		rewardCash = 250_000,
+		rewardCash = 150_000,
 	},
 	{
-		id = "harvest_10",
+		id = "harvest_15",
 		title = "Bush Scout",
-		description = "Search 10 bushes for brainrots.",
+		description = "Search 15 bushes for brainrots.",
 		kind = "harvest",
-		target = 10,
-		showBar = true,
-		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Starter Lucky Block",
-	},
-	{
-		id = "cash_500k",
-		title = "Pocket Padding",
-		description = "Hold at least $500K cash at once.",
-		kind = "cash",
-		target = 500_000,
+		target = 15,
 		showBar = true,
 		rewardKind = "cash",
-		rewardCash = 500_000,
+		rewardCash = 200_000,
+	},
+	{
+		id = "find_brr",
+		title = "Tim's Favorite",
+		description = "Find and hold Brr Brr Patapim (backpack or stand).",
+		kind = "own_brainrot",
+		target = 1,
+		showBar = true,
+		questTargetBrainrot = "BrrBrrPatapim",
+		rewardKind = "lucky_block",
+		rewardLuckyBlock = "Starter Lucky Block",
 	},
 	{
 		id = "place_8",
@@ -82,24 +93,56 @@ local QUESTS: { QuestDef } = {
 		rewardBrainrotRarity = "uncommon",
 	},
 	{
-		id = "income_1k",
-		title = "Passive Hustle",
-		description = "Reach $1K/s plot generation.",
-		kind = "income",
-		target = 1_000,
+		id = "cash_400k",
+		title = "Pocket Padding",
+		description = "Hold at least $400K cash at once.",
+		kind = "cash",
+		target = 400_000,
 		showBar = true,
 		rewardKind = "cash",
-		rewardCash = 650_000,
+		rewardCash = 300_000,
 	},
 	{
-		id = "harvest_25",
+		id = "harvest_40",
 		title = "Leaf Legend",
-		description = "Search 25 bushes (lifetime this quest).",
+		description = "Search 40 bushes (lifetime this quest).",
 		kind = "harvest",
-		target = 25,
+		target = 40,
 		showBar = true,
-		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Mythic Lucky Block",
+		rewardKind = "brainrot",
+		rewardBrainrotRarity = "uncommon",
+	},
+	{
+		id = "income_1_5k",
+		title = "Passive Hustle",
+		description = "Reach $1.5K/s plot generation.",
+		kind = "income",
+		target = 1_500,
+		showBar = true,
+		rewardKind = "brainrot",
+		rewardBrainrotRarity = "rare",
+	},
+	{
+		id = "own_rare",
+		title = "Rare Collector",
+		description = "Own any Rare brainrot (backpack or stand).",
+		kind = "own_rarity",
+		target = 1,
+		showBar = true,
+		questTargetRarity = "rare",
+		rewardKind = "cash",
+		rewardCash = 550_000,
+	},
+	{
+		id = "find_bananito",
+		title = "Tropical Hunt",
+		description = "Find and hold Bananito Delfinito (backpack or stand).",
+		kind = "own_brainrot",
+		target = 1,
+		showBar = true,
+		questTargetBrainrot = "BananitoDelfinito",
+		rewardKind = "cash",
+		rewardCash = 650_000,
 	},
 	{
 		id = "place_12",
@@ -108,8 +151,8 @@ local QUESTS: { QuestDef } = {
 		kind = "place_stands",
 		target = 12,
 		showBar = true,
-		rewardKind = "brainrot",
-		rewardBrainrotRarity = "rare",
+		rewardKind = "cash",
+		rewardCash = 800_000,
 	},
 	{
 		id = "cash_2m",
@@ -118,18 +161,28 @@ local QUESTS: { QuestDef } = {
 		kind = "cash",
 		target = 2_000_000,
 		showBar = true,
-		rewardKind = "cash",
-		rewardCash = 950_000,
-	},
-	{
-		id = "income_10k",
-		title = "Generation God",
-		description = "Reach $10K/s plot generation.",
-		kind = "income",
-		target = 10_000,
-		showBar = true,
 		rewardKind = "brainrot",
 		rewardBrainrotRarity = "epic",
+	},
+	{
+		id = "harvest_80",
+		title = "Bush Master",
+		description = "Search 80 bushes (lifetime this quest).",
+		kind = "harvest",
+		target = 80,
+		showBar = true,
+		rewardKind = "lucky_block",
+		rewardLuckyBlock = "Mythic Lucky Block",
+	},
+	{
+		id = "income_8k",
+		title = "Generation God",
+		description = "Reach $8K/s plot generation.",
+		kind = "income",
+		target = 8_000,
+		showBar = true,
+		rewardKind = "brainrot",
+		rewardBrainrotRarity = "legendary",
 	},
 	{
 		id = "place_16",
@@ -139,7 +192,7 @@ local QUESTS: { QuestDef } = {
 		target = 16,
 		showBar = true,
 		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Mythic Lucky Block",
+		rewardLuckyBlock = "Secret Lucky Block",
 	},
 }
 
@@ -205,6 +258,8 @@ function M.formatRewardLabel(quest: QuestDef): string
 			return "Starter Block"
 		elseif string.find(name, "Mythic", 1, true) then
 			return "Mythic Block"
+		elseif string.find(name, "Secret", 1, true) then
+			return "Secret Block"
 		end
 		return name
 	elseif quest.rewardKind == "brainrot" then

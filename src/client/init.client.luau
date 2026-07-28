@@ -117,13 +117,13 @@ task.defer(function()
 				require(script.PlotMarkerVisibility).init()
 			end,
 			function()
+				require(script.ProximityPromptEffects).init()
+			end,
+			function()
 				require(script.BrainrotStandController).init()
 			end,
 			function()
 				require(script.BrainrotHeaderController).init()
-			end,
-			function()
-				require(script.ProximityPromptEffects).init()
 			end,
 			function()
 				require(script.BushHoldInteraction).init()

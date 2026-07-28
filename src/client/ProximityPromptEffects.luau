@@ -2749,7 +2749,19 @@ local function wireStylePrompt(prompt: ProximityPrompt)
 
 	table.insert(
 		conns,
+		prompt:GetPropertyChangedSignal("Style"):Connect(function()
+			if prompt.Style ~= Enum.ProximityPromptStyle.Custom then
+				prompt.Style = Enum.ProximityPromptStyle.Custom
+			end
+		end)
+	)
+
+	table.insert(
+		conns,
 		prompt:GetPropertyChangedSignal("Enabled"):Connect(function()
+			if prompt.Style ~= Enum.ProximityPromptStyle.Custom then
+				prompt.Style = Enum.ProximityPromptStyle.Custom
+			end
 			if isManagedBushPrompt(prompt) then
 				if not prompt.Enabled then
 					stopBushCameraShake()
@@ -3176,6 +3188,8 @@ function ProximityPromptEffects.init()
 	local promptRoot = Workspace:FindFirstChild("Map") or Workspace
 	promptRoot.DescendantAdded:Connect(function(desc)
 		if desc:IsA("ProximityPrompt") then
+			-- Lock Custom immediately so streamed/enabled prompts never flash Default UI.
+			desc.Style = Enum.ProximityPromptStyle.Custom
 			ProximityPromptEffects.stylePrompt(desc)
 		end
 	end)

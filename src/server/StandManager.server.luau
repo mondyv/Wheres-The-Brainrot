@@ -244,6 +244,8 @@ local function getPlayerHRP(player: Player): BasePart?
 end
 
 local function configureStandProximityPrompt(prompt: ProximityPrompt, maxDistance: number?)
+	-- Custom before Enabled — otherwise clients flash the default Roblox prompt UI.
+	prompt.Style = Enum.ProximityPromptStyle.Custom
 	prompt.HoldDuration = 0
 	prompt.RequiresLineOfSight = false
 	prompt.Exclusivity = Enum.ProximityPromptExclusivity.OnePerButton
@@ -269,14 +271,16 @@ local function ensureStandProximityPrompt(stand: Model, spawnPart: BasePart): Pr
 	if not prompt then
 		prompt = Instance.new("ProximityPrompt")
 		prompt.Name = "StandProximityPrompt"
+		prompt.Style = Enum.ProximityPromptStyle.Custom
+		prompt.Enabled = false
 	end
 	for _, d in ipairs(stand:GetDescendants()) do
 		if d:IsA("ProximityPrompt") and d ~= prompt then
 			d:Destroy()
 		end
 	end
-	prompt.Parent = anchor
 	configureStandProximityPrompt(prompt, PROMPT_PLACE_DISTANCE)
+	prompt.Parent = anchor
 	return prompt
 end
 
@@ -756,6 +760,7 @@ local function setPromptText(state: StandState)
 		prompt.MaxActivationDistance = PROMPT_PLACE_DISTANCE
 	end
 	configureStandProximityPrompt(prompt, if state.brainrotName then PROMPT_PICKUP_DISTANCE else PROMPT_PLACE_DISTANCE)
+	prompt.Style = Enum.ProximityPromptStyle.Custom
 	prompt.Enabled = true
 end
 

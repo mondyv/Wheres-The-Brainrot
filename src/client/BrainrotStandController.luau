@@ -851,13 +851,17 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 	end
 
 	if closest then
-		closest.prompt.Enabled = true
-		lastEnabledStandPrompts[closest.prompt] = true
-		ProximityPromptEffects.syncStandProximityUi(closest.prompt)
+		local pp = closest.prompt
+		-- Style Custom before Enabled — avoids a one-frame default Roblox prompt flash.
+		pp.Style = Enum.ProximityPromptStyle.Custom
+		ProximityPromptEffects.stylePrompt(pp)
+		pp.Enabled = true
+		lastEnabledStandPrompts[pp] = true
+		ProximityPromptEffects.syncStandProximityUi(pp)
 		-- Always ensure the card exists (safe no-op if already live). Skipping when the
 		-- prompt identity was unchanged left Pick Up / Place missing after hide/facing flicker.
-		ProximityPromptEffects.syncStandPlaceProximityUi(closest.prompt)
-		_lastShownStandPrompt = closest.prompt
+		ProximityPromptEffects.syncStandPlaceProximityUi(pp)
+		_lastShownStandPrompt = pp
 	else
 		ProximityPromptEffects.syncStandProximityUi(nil)
 		_lastShownStandPrompt = nil

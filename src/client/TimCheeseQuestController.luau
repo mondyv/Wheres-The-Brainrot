@@ -98,6 +98,10 @@ local stopExclaimPulse: () -> ()
 local stopQuestDots: () -> ()
 local refreshQuestHud: (opts: { skipRevealGate: boolean?, playAppear: boolean? }?) -> ()
 local highlight: Highlight? = nil
+local lastOutlineOn: boolean? = nil
+local lastPromptAction: string? = nil
+local lastFloatText: string? = nil
+local lastPromptEnabled: boolean? = nil
 local talkPrompt: ProximityPrompt? = nil
 local idleTrack: AnimationTrack? = nil
 local bgmSaved: { [Sound]: number } = {}
@@ -474,29 +478,44 @@ local function ensureIdle(tim: Model)
 end
 
 local function setOutline(tim: Model, on: boolean)
+	if on then
+		if highlight and highlight.Parent then
+			if highlight.Adornee ~= tim then
+				highlight.Adornee = tim
+			end
+			lastOutlineOn = true
+			return
+		end
+		local hl = Instance.new("Highlight")
+		hl.Name = "TimCheeseQuestOutline"
+		hl.FillColor = Color3.fromRGB(255, 236, 70)
+		hl.OutlineColor = Color3.fromRGB(255, 236, 70)
+		hl.FillTransparency = 0.72
+		hl.OutlineTransparency = 0
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		hl.Adornee = tim
+		hl.Parent = Workspace
+		highlight = hl
+		lastOutlineOn = true
+		return
+	end
+	if lastOutlineOn == false and not highlight then
+		return
+	end
+	lastOutlineOn = false
 	if highlight then
 		highlight:Destroy()
 		highlight = nil
 	end
-	if not on then
-		return
-	end
-	local hl = Instance.new("Highlight")
-	hl.Name = "TimCheeseQuestOutline"
-	hl.FillColor = Color3.fromRGB(255, 236, 70)
-	hl.OutlineColor = Color3.fromRGB(255, 236, 70)
-	hl.FillTransparency = 0.72
-	hl.OutlineTransparency = 0
-	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	hl.Adornee = tim
-	hl.Parent = Workspace
-	highlight = hl
 end
 
 local function ensureTalkPrompt(tim: Model)
 	if talkPrompt and talkPrompt.Parent then
 		return talkPrompt
 	end
+	-- Prompt instance changed — force next sync to re-apply action/enabled.
+	lastPromptAction = nil
+	lastPromptEnabled = nil
 	local part = tim.PrimaryPart or tim:FindFirstChildWhichIsA("BasePart", true)
 	if not part then
 		return nil
@@ -557,42 +576,52 @@ local function syncPromptAndOutline()
 	if intro and not introPlaying and not dialogueBusy and not StandDialogueCutscene.isActive() then
 		ensureTalkPrompt(tim)
 		if talkPrompt then
-			if promptLocked then
-				talkPrompt.Enabled = false
-				pcall(function()
-					ProximityPromptEffects.forceHide(talkPrompt :: ProximityPrompt)
-				end)
-			else
-				talkPrompt.Enabled = true
+			local wantEnabled = not promptLocked
+			local actionText = if ready
+				then "Claim"
+				elseif hasQuest then "Talk"
+				elseif allDone then "Talk"
+				else "Quests"
+			if lastPromptEnabled ~= wantEnabled then
+				lastPromptEnabled = wantEnabled
+				talkPrompt.Enabled = wantEnabled
+				if not wantEnabled then
+					pcall(function()
+						ProximityPromptEffects.forceHide(talkPrompt :: ProximityPrompt)
+					end)
+				end
+			end
+			if wantEnabled then
 				talkPrompt.Style = Enum.ProximityPromptStyle.Custom
 				talkPrompt:SetAttribute("CustomPromptFX", true)
-				if ready then
-					talkPrompt.ActionText = "Claim"
-				elseif hasQuest then
-					talkPrompt.ActionText = "Talk"
-				elseif allDone then
-					talkPrompt.ActionText = "Talk"
-				else
-					talkPrompt.ActionText = "Quests"
+				if lastPromptAction ~= actionText then
+					lastPromptAction = actionText
+					talkPrompt.ActionText = actionText
+					-- Restyle only when the prompt text/state actually changes.
+					pcall(function()
+						ProximityPromptEffects.stylePrompt(talkPrompt)
+					end)
 				end
-				pcall(function()
-					ProximityPromptEffects.stylePrompt(talkPrompt)
-				end)
 			end
 		end
 		setOutline(tim, ready == true and not promptLocked)
-		if ready then
-			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.READY_OVERHEAD)
-		elseif hasQuest then
-			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.HAS_QUEST_OVERHEAD)
-		else
-			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
+		local floatText = if ready
+			then TimCheeseQuestConfig.READY_OVERHEAD
+			elseif hasQuest then TimCheeseQuestConfig.HAS_QUEST_OVERHEAD
+			else TimCheeseQuestConfig.NO_QUEST_OVERHEAD
+		if lastFloatText ~= floatText then
+			lastFloatText = floatText
+			setQuestFloatVisible(tim, true, floatText)
 		end
 	elseif talkPrompt then
-		talkPrompt.Enabled = false
-		pcall(function()
-			ProximityPromptEffects.forceHide(talkPrompt :: ProximityPrompt)
-		end)
+		if lastPromptEnabled ~= false then
+			lastPromptEnabled = false
+			talkPrompt.Enabled = false
+			pcall(function()
+				ProximityPromptEffects.forceHide(talkPrompt :: ProximityPrompt)
+			end)
+		end
+		setOutline(tim, false)
 	end
 end
 
@@ -2778,7 +2807,8 @@ function M.init()
 		local accum = 0.0
 		RunService.Heartbeat:Connect(function(dt)
 			accum += dt
-			if accum < 0.35 then
+			-- Prompt/outline sync is now cheap (cached), but no need to spam it.
+			if accum < 0.75 then
 				return
 			end
 			accum = 0

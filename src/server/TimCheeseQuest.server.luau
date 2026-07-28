@@ -291,6 +291,13 @@ local function syncQuestProgress(player: Player)
 	if not quest then
 		return
 	end
+	-- Already claimable — skip expensive stand scans until they claim.
+	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR) == true then
+		local prev = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR)
+		if typeof(prev) == "number" and prev >= quest.target then
+			return
+		end
+	end
 	local progress = computeProgress(player, quest)
 	local capped = math.min(progress, quest.target)
 	local prev = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR)

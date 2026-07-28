@@ -1069,14 +1069,6 @@ local function createReleaseStyleController(humanoid, hrp)
 		if targetVelocity.Magnitude > cap then
 			targetVelocity = targetVelocity.Unit * cap
 		end
-		-- Soft-cap horizontal throw vs current rope reach so overshoots are rare.
-		local reach = getSwingRange()
-		local maxHoriz = math.max(40, reach * C.LAUNCH_REACH_TRAVEL_MULT / math.max(C.LAUNCH_REACH_AIR_TIME, 0.5))
-		local horiz = Vector3.new(targetVelocity.X, 0, targetVelocity.Z)
-		if horiz.Magnitude > maxHoriz then
-			horiz = horiz.Unit * maxHoriz
-			targetVelocity = Vector3.new(horiz.X, targetVelocity.Y, horiz.Z)
-		end
 		hrp.AssemblyLinearVelocity = targetVelocity
 
 		state.launchDir = launchDir

@@ -149,26 +149,26 @@ C.ROPE_HANG_PULL_WINCH_SPEED = 58
 C.ROPE_HANG_PULL_MAX_UP_SPEED = 88
 C.ROPE_SAFE_MAX_MIN_LENGTH = 24
 C.ROPE_REEL_ALWAYS_ALPHA = 0.76
-C.MIN_LOOK_DOT = 0.4
+C.MIN_LOOK_DOT = 0.28
 C.LOOK_DOWN_PITCH = -0.22
-C.LOOK_DOWN_FORWARD_DOT = 0.28
+C.LOOK_DOWN_FORWARD_DOT = 0.18
 C.MIN_TARGET_HEIGHT_OFFSET = -8
 -- Aim scoring: camera/crosshair first. Distance is only a tiny tiebreaker.
-C.TARGET_SCORE_ALIGN = 4.2
-C.TARGET_SCORE_CENTER = 4.8
-C.TARGET_SCORE_CENTER_LOOK_DOWN = 2.6
-C.TARGET_SCORE_DIST_WEIGHT = 0.28
-C.TARGET_SCORE_PREFER_NEAR_STUDS = 110
-C.TARGET_SCORE_NEAR_AIM_BONUS = 0.22
-C.TARGET_SCORE_LATERAL = 5.4
-C.TARGET_SCORE_LATERAL_WORLD = 3.8
-C.TARGET_SCORE_BEHIND_REJECT = 0.22
+C.TARGET_SCORE_ALIGN = 3.6
+C.TARGET_SCORE_CENTER = 3.8
+C.TARGET_SCORE_CENTER_LOOK_DOWN = 2.2
+C.TARGET_SCORE_DIST_WEIGHT = 0.55
+C.TARGET_SCORE_PREFER_NEAR_STUDS = 100
+C.TARGET_SCORE_NEAR_AIM_BONUS = 0.55
+C.TARGET_SCORE_LATERAL = 4.2
+C.TARGET_SCORE_LATERAL_WORLD = 3.0
+C.TARGET_SCORE_BEHIND_REJECT = 0.12
 C.TARGET_CAMERA_RAY_BONUS = 12
-C.AIRBORNE_TARGET_LOOK_DOT = 0.32
-C.GROUNDED_TARGET_LOOK_DOT = 0.38
-C.TARGET_SCREEN_RADIUS_LIMIT = 0.68
-C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.6
-C.TARGET_MAX_SCREEN_DX = 0.55
+C.AIRBORNE_TARGET_LOOK_DOT = 0.16
+C.GROUNDED_TARGET_LOOK_DOT = 0.2
+C.TARGET_SCREEN_RADIUS_LIMIT = 0.78
+C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.72
+C.TARGET_MAX_SCREEN_DX = 0.62
 C.TARGET_SCAN_INTERVAL = 0.12
 C.TARGET_SCAN_INTERVAL_GROUNDED = 0.28
 C.TARGET_CANDIDATE_EXTRA_RADIUS = 4
@@ -5059,6 +5059,9 @@ local function boot(character)
 				return
 			end
 			st.spaceHeld = true
+			if st.scannedVisualCanSwing == true and st.scannedVisualTarget ~= nil then
+				st.humanoid.Jump = false
+			end
 			st.tryAttach()
 		elseif
 			input.UserInputType == Enum.UserInputType.Gamepad1
@@ -5074,6 +5077,9 @@ local function boot(character)
 				return
 			end
 			st.gamepadHeld = true
+			if st.scannedVisualCanSwing == true and st.scannedVisualTarget ~= nil then
+				st.humanoid.Jump = false
+			end
 			st.tryAttach()
 		end
 	end))
@@ -5119,18 +5125,17 @@ local function boot(character)
 				return
 			end
 			st.mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
-
-			-- Only steal the jump button for swinging when airborne / already swinging /
-			-- a ready vine is latched. On the ground with no target, allow a real jump.
-			local stealForSwing = st.isSwinging
-				or st.isAirborneForSwing()
-				or (st.scannedVisualCanSwing == true and st.scannedVisualTarget ~= nil)
-			if not stealForSwing then
-				st.noteJumpPressed()
-				return
-			end
-			st.humanoid.Jump = false
 		end
+
+		-- Steal jump whenever a vine is ready / already swinging / airborne.
+		-- (Keyboard used to fall through and still Jump — felt like "space only jumps".)
+		local readySwing = st.scannedVisualCanSwing == true and st.scannedVisualTarget ~= nil
+		local stealForSwing = st.isSwinging or st.isAirborneForSwing() or readySwing
+		if not stealForSwing then
+			st.noteJumpPressed()
+			return
+		end
+		st.humanoid.Jump = false
 
 		st.noteJumpPressed()
 

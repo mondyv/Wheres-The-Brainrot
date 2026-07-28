@@ -1966,23 +1966,84 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 
 	pulseConn:Disconnect()
 
-	-- Settle layout once, then fly to a fixed slot (no mid-flight layout jitter).
+	-- Build/measure HUD at final slot, park it inside the right border, then fly ticket in.
+	questHudRevealed = true
+	ensureQuestHud()
 	layoutQuestHud()
 	task.wait()
-	local slotAnchor = hudSlotAnchor()
-	local slot = hudSlotPosition()
-	local flyInfo = TweenInfo.new(0.52, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	layoutQuestHud()
+
+	local panel = questPanel
+	local slideW = 300
+	local panelH = 110
+	local topPad = questHudBaseTop
+	local rightPad = questHudBaseRightPad
+	local anchorY = questHudAnchorY
+	if panel then
+		local measuredW = math.max(panel.Size.X.Offset, 160)
+		if panel.AbsoluteSize.X > 4 then
+			measuredW = math.max(measuredW, math.ceil(panel.AbsoluteSize.X))
+		end
+		slideW = measuredW
+		if panel.AbsoluteSize.Y > 4 then
+			panelH = math.ceil(panel.AbsoluteSize.Y)
+		else
+			panelH = math.max(panel.Size.Y.Offset, TutorialConfig.PANEL_HEIGHT, 90)
+		end
+		questAnimBusy = true
+		if questGui then
+			questGui.Enabled = true
+		end
+		panel.Visible = true
+		panel.AnchorPoint = Vector2.new(1, anchorY)
+		panel.AutomaticSize = Enum.AutomaticSize.None
+		panel.Size = UDim2.fromOffset(slideW, panelH)
+		-- Park fully past the right edge ("inside" the border).
+		panel.Position = UDim2.new(1, slideW + 36, 0, topPad)
+		local ticketHud = panel:FindFirstChild("Ticket")
+		if ticketHud and ticketHud:IsA("GuiObject") then
+			ticketHud.Visible = true
+		end
+		if questArrowBtn then
+			questArrowBtn.Visible = false
+		end
+	end
+
+	-- Ticket flies into the border at the HUD's vertical center height.
+	local midY = if anchorY >= 0.5 then topPad - panelH * 0.5 else topPad + panelH * 0.5
+	local borderEntry = UDim2.new(1, 28, 0, midY)
+	local flyInfo = TweenInfo.new(0.55, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
 	TweenService:Create(dim, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 }):Play()
-	-- Keep size stable; only slide + rotate into the HUD slot.
 	TweenService:Create(ticket, flyInfo, {
-		AnchorPoint = slotAnchor,
-		Position = slot,
-		Rotation = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = borderEntry,
+		Rotation = 6,
 	}):Play()
-	local hudMatch = if questPanel then questPanel:FindFirstChild("HudMatchScale") else nil
-	local endScale = if hudMatch and hudMatch:IsA("UIScale") then hudMatch.Scale else 0.94
-	TweenService:Create(ticketScale, flyInfo, { Scale = endScale }):Play()
-	task.wait(0.54)
+	TweenService:Create(ticketScale, flyInfo, { Scale = 0.28 }):Play()
+	TweenService:Create(ticket, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+		BackgroundTransparency = 1,
+	}):Play()
+	for _, d in ticket:GetDescendants() do
+		if d:IsA("TextLabel") or d:IsA("TextButton") then
+			TweenService:Create(d, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				TextTransparency = 1,
+				TextStrokeTransparency = 1,
+			}):Play()
+		elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
+			TweenService:Create(d, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				ImageTransparency = 1,
+			}):Play()
+		elseif d:IsA("UIStroke") then
+			TweenService:Create(d, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				Transparency = 1,
+			}):Play()
+		elseif d:IsA("Frame") then
+			TweenService:Create(d, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				BackgroundTransparency = 1,
+			}):Play()
+		end
+	end
+	task.wait(0.56)
 
 	if gui.Parent then
 		gui:Destroy()
@@ -1991,16 +2052,35 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 		acceptPopupGui = nil
 	end
 
-	questHudRevealed = true
+	-- HUD slides out of the border into its slot.
 	questHoverFlying = false
-	-- Soft handoff — no Back-easing pop that fights the fly landing.
-	if questPanel then
-		local sc = questPanel:FindFirstChild("PanelScale")
-		if sc and sc:IsA("UIScale") then
-			sc.Scale = 1
+	if panel and panel.Parent then
+		local goal = UDim2.new(1, -rightPad, 0, topPad)
+		local slideInfo = TweenInfo.new(0.48, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+		if questArrowBtn then
+			questArrowBtn.Visible = true
+			questArrowBtn.Rotation = 180
+			TweenService:Create(questArrowBtn, slideInfo, { Rotation = 0 }):Play()
 		end
+		local tw = TweenService:Create(panel, slideInfo, { Position = goal })
+		tw.Completed:Connect(function(playbackState)
+			if playbackState ~= Enum.PlaybackState.Completed then
+				questAnimBusy = false
+				return
+			end
+			unfreezePanelAutoY(slideW)
+			questAnimBusy = false
+			refreshQuestHud({ skipRevealGate = true, playAppear = false })
+			startExclaimPulse()
+			if canShowQuestChrome() then
+				startArrowPulse()
+			end
+		end)
+		tw:Play()
+	else
+		questAnimBusy = false
+		refreshQuestHud({ skipRevealGate = true, playAppear = false })
 	end
-	refreshQuestHud({ skipRevealGate = true, playAppear = false })
 end
 
 local function safeScaleTo(model: Model, scale: number)

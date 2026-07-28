@@ -149,32 +149,32 @@ C.ROPE_HANG_PULL_WINCH_SPEED = 58
 C.ROPE_HANG_PULL_MAX_UP_SPEED = 88
 C.ROPE_SAFE_MAX_MIN_LENGTH = 24
 C.ROPE_REEL_ALWAYS_ALPHA = 0.76
-C.MIN_LOOK_DOT = 0.28
+C.MIN_LOOK_DOT = 0.3
 C.LOOK_DOWN_PITCH = -0.22
-C.LOOK_DOWN_FORWARD_DOT = 0.18
+C.LOOK_DOWN_FORWARD_DOT = 0.12
 C.MIN_TARGET_HEIGHT_OFFSET = -8
--- Aim scoring: camera/crosshair first. Distance is only a tiny tiebreaker.
-C.TARGET_SCORE_ALIGN = 3.6
-C.TARGET_SCORE_CENTER = 3.8
-C.TARGET_SCORE_CENTER_LOOK_DOWN = 2.2
-C.TARGET_SCORE_DIST_WEIGHT = 0.55
-C.TARGET_SCORE_PREFER_NEAR_STUDS = 100
-C.TARGET_SCORE_NEAR_AIM_BONUS = 0.55
-C.TARGET_SCORE_LATERAL = 4.2
-C.TARGET_SCORE_LATERAL_WORLD = 3.0
-C.TARGET_SCORE_BEHIND_REJECT = 0.12
-C.TARGET_CAMERA_RAY_BONUS = 12
-C.AIRBORNE_TARGET_LOOK_DOT = 0.16
-C.GROUNDED_TARGET_LOOK_DOT = 0.2
-C.TARGET_SCREEN_RADIUS_LIMIT = 0.78
-C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.72
+-- Aim scoring: prefer crosshair vine, but stay loose enough for grounded latch.
+C.TARGET_SCORE_ALIGN = 3.2
+C.TARGET_SCORE_CENTER = 3.4
+C.TARGET_SCORE_CENTER_LOOK_DOWN = 2.0
+C.TARGET_SCORE_DIST_WEIGHT = 0.9
+C.TARGET_SCORE_PREFER_NEAR_STUDS = 95
+C.TARGET_SCORE_NEAR_AIM_BONUS = 0.9
+C.TARGET_SCORE_LATERAL = 3.4
+C.TARGET_SCORE_LATERAL_WORLD = 2.6
+C.TARGET_SCORE_BEHIND_REJECT = 0.08
+C.TARGET_CAMERA_RAY_BONUS = 10
+C.AIRBORNE_TARGET_LOOK_DOT = 0.08
+C.GROUNDED_TARGET_LOOK_DOT = 0.12
+C.TARGET_SCREEN_RADIUS_LIMIT = 0.85
+C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT = 0.78
 C.TARGET_MAX_SCREEN_DX = 0.62
 C.TARGET_SCAN_INTERVAL = 0.12
-C.TARGET_SCAN_INTERVAL_GROUNDED = 0.28
+C.TARGET_SCAN_INTERVAL_GROUNDED = 0.14
 C.TARGET_CANDIDATE_EXTRA_RADIUS = 4
 C.TARGET_GRID_CELL_SIZE = 64
 C.TARGET_MAX_CANDIDATES_PER_SCAN = 45
-C.TARGET_MAX_CANDIDATES_GROUNDED = 18
+C.TARGET_MAX_CANDIDATES_GROUNDED = 28
 C.TARGET_FULL_SCAN_FALLBACK_LIMIT = 180
 C.TARGET_ENABLE_VINE_NAME_FALLBACK = false
 C.TARGET_BACKGROUND_SEED_ENABLED = false
@@ -5005,19 +5005,23 @@ local function boot(character)
 		end
 		local groundedAttempt = st.isGroundedForSwing()
 
-		if not st.scannedVisualTarget or not st.scannedVisualCanSwing then
+		-- Live pick on press — don't depend only on the last visual scan tick
+		-- (ground scans are slower and made grounded latch feel like "jump first").
+		local target = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
+		if not target and st.scannedVisualTarget and st.scannedVisualCanSwing then
+			if st.canAttachToSwingTarget(st.scannedVisualTarget, maxDistance, lookDot, screenLimit) then
+				target = st.scannedVisualTarget
+			end
+		end
+		if not target then
 			if not (groundedAttempt and now - st.lastGroundJumpClock < 0.25) then
 				st.lastTryClock = now
 			end
 			return
 		end
 
-		if st.canAttachToSwingTarget(st.scannedVisualTarget, maxDistance, lookDot, screenLimit) then
-			st.lastTryClock = now
-			st.startSwing(st.scannedVisualTarget)
-		elseif not (groundedAttempt and now - st.lastGroundJumpClock < 0.25) then
-			st.lastTryClock = now
-		end
+		st.lastTryClock = now
+		st.startSwing(target)
 	end
 
 	-- Mobile fallback removed to keep Luau boot() under the 200 local-register limit.
@@ -5059,9 +5063,6 @@ local function boot(character)
 				return
 			end
 			st.spaceHeld = true
-			if st.scannedVisualCanSwing == true and st.scannedVisualTarget ~= nil then
-				st.humanoid.Jump = false
-			end
 			st.tryAttach()
 		elseif
 			input.UserInputType == Enum.UserInputType.Gamepad1
@@ -5077,9 +5078,6 @@ local function boot(character)
 				return
 			end
 			st.gamepadHeld = true
-			if st.scannedVisualCanSwing == true and st.scannedVisualTarget ~= nil then
-				st.humanoid.Jump = false
-			end
 			st.tryAttach()
 		end
 	end))
@@ -5125,17 +5123,31 @@ local function boot(character)
 				return
 			end
 			st.mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
-		end
 
-		-- Steal jump whenever a vine is ready / already swinging / airborne.
-		-- (Keyboard used to fall through and still Jump — felt like "space only jumps".)
-		local readySwing = st.scannedVisualCanSwing == true and st.scannedVisualTarget ~= nil
-		local stealForSwing = st.isSwinging or st.isAirborneForSwing() or readySwing
-		if not stealForSwing then
-			st.noteJumpPressed()
-			return
+			-- Only steal the jump button for swinging when airborne / already swinging /
+			-- a ready vine is latched. On the ground with no target, allow a real jump.
+			local stealForSwing = st.isSwinging
+				or st.isAirborneForSwing()
+				or (st.scannedVisualCanSwing == true and st.scannedVisualTarget ~= nil)
+			if not stealForSwing then
+				-- Still attempt a live ground latch before giving up to a normal jump.
+				local maxDistance, lookDot, screenLimit = st.getSwingAttachLimits()
+				local liveTarget = if maxDistance
+					then st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
+					else nil
+				if liveTarget then
+					st.humanoid.Jump = false
+					st.noteJumpPressed()
+					if not st.isToggleAttachBlocked() then
+						st.tryAttach()
+					end
+					return
+				end
+				st.noteJumpPressed()
+				return
+			end
+			st.humanoid.Jump = false
 		end
-		st.humanoid.Jump = false
 
 		st.noteJumpPressed()
 
@@ -5150,6 +5162,19 @@ local function boot(character)
 
 		if st.isToggleAttachBlocked() then
 			return
+		end
+
+		-- Grounded latch: cancel the hop when a vine is actually attachable.
+		if st.isGroundedForSwing() then
+			local maxDistance, lookDot, screenLimit = st.getSwingAttachLimits()
+			local liveTarget = if maxDistance
+				then st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
+				else nil
+			if liveTarget then
+				st.humanoid.Jump = false
+			end
+		elseif st.isAirborneForSwing() then
+			st.humanoid.Jump = false
 		end
 
 		st.stopTrack(st.landedTrack, 0.08)

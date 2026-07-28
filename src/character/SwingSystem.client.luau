@@ -220,6 +220,12 @@ C.LAUNCH_UP_DV = 62
 C.LAUNCH_CHARGE_DV = 22
 C.LAUNCH_FORWARD_INPUT_DV = 68
 C.LAUNCH_SPEED_CAP = 175
+-- Soft-cap horizontal launch so power can't throw much farther than rope reach (strand fix).
+C.LAUNCH_REACH_TRAVEL_MULT = 0.95
+C.LAUNCH_REACH_AIR_TIME = 1.35
+-- After a launch, always allow re-latch onto the vine you came from past normal reach.
+C.RETURN_SWING_REACH_MULT = 2.85
+C.RETURN_SWING_REACH_BONUS = 110
 C.LAUNCH_STYLE_TIME = 1.85
 C.LAUNCH_STYLE_TILT_TIME = 0.38
 C.LAUNCH_STYLE_ORIENT_RESPONSIVENESS = 62
@@ -1066,6 +1072,14 @@ local function createReleaseStyleController(humanoid, hrp)
 		if targetVelocity.Magnitude > cap then
 			targetVelocity = targetVelocity.Unit * cap
 		end
+		-- Soft-cap horizontal throw vs current rope reach so overshoots are rare.
+		local reach = getSwingRange()
+		local maxHoriz = math.max(40, reach * C.LAUNCH_REACH_TRAVEL_MULT / math.max(C.LAUNCH_REACH_AIR_TIME, 0.5))
+		local horiz = Vector3.new(targetVelocity.X, 0, targetVelocity.Z)
+		if horiz.Magnitude > maxHoriz then
+			horiz = horiz.Unit * maxHoriz
+			targetVelocity = Vector3.new(horiz.X, targetVelocity.Y, horiz.Z)
+		end
 		hrp.AssemblyLinearVelocity = targetVelocity
 
 		state.launchDir = launchDir
@@ -1735,6 +1749,7 @@ local function boot(character)
 		currentTarget = nil,
 		lastReleasedTarget = nil,
 		lastReleasedTargetClock = -1e9,
+		returnSwingTarget = nil,
 		highlightedTarget = nil,
 		highlightedPoint = nil,
 		targetVisualShown = false,
@@ -2776,11 +2791,19 @@ local function boot(character)
 		local lookingDown = camera ~= nil and camera.CFrame.LookVector.Y <= C.LOOK_DOWN_PITCH
 
 		local function passesVisibleChecks(target, distanceLimit)
-			return st.isVisibleSwingTarget(target, distanceLimit, minLookDot)
+			local limit = distanceLimit
+			if st.isReturnSwingTarget(target) then
+				limit = math.max(distanceLimit, st.getAttachReachForTarget(target))
+			end
+			return st.isVisibleSwingTarget(target, limit, minLookDot)
 		end
 
 		local function passesAttachChecks(target, distanceLimit)
-			return st.isSpecificSwingTargetReady(target, false, distanceLimit, minLookDot, maxScreenRadius)
+			local limit = distanceLimit
+			if st.isReturnSwingTarget(target) then
+				limit = math.max(distanceLimit, st.getAttachReachForTarget(target))
+			end
+			return st.isSpecificSwingTargetReady(target, false, limit, minLookDot, maxScreenRadius)
 		end
 
 		local function preferredStillForward(target)
@@ -2820,15 +2843,23 @@ local function boot(character)
 
 		local best = nil
 		local bestDist = math.huge
-		for _, part in ipairs(st.getCandidateTargets(maxDistance)) do
+		local function considerVisual(part: BasePart?)
+			if not part then
+				return
+			end
+			local limit = if st.isReturnSwingTarget(part) then st.getAttachReachForTarget(part) else maxDistance
 			local dist, _ = st.targetDistanceAndPoint(part)
-			if dist and dist >= 2 and dist <= maxDistance and passesVisibleChecks(part, maxDistance) then
+			if dist and dist >= 2 and dist <= limit and passesVisibleChecks(part, limit) then
 				if dist < bestDist then
 					best = part
 					bestDist = dist
 				end
 			end
 		end
+		for _, part in ipairs(st.getCandidateTargets(maxDistance)) do
+			considerVisual(part)
+		end
+		considerVisual(st.returnSwingTarget)
 
 		return best, best ~= nil and not inSafezone and passesAttachChecks(best, readyDistance)
 	end
@@ -2860,7 +2891,14 @@ local function boot(character)
 		end
 
 		if target == st.lastReleasedTarget and os.clock() - st.lastReleasedTargetClock < 0.9 then
-			score -= 0.95
+			-- Don't punish the vine we need as a grace return when stranded past reach.
+			local returnGrace = target == st.returnSwingTarget
+			if not returnGrace then
+				score -= 0.95
+			end
+		end
+		if target == st.returnSwingTarget then
+			score += 2.4
 		end
 		if target == st.scannedVisualTarget then
 			score += 0.42
@@ -2913,8 +2951,13 @@ local function boot(character)
 		end
 		consider(st.highlightedTarget)
 		consider(st.lastReleasedTarget)
+		consider(st.returnSwingTarget)
 		for _, part in ipairs(st.getCandidateTargets(maxDistance)) do
 			consider(part)
+		end
+		-- Far return vine may be outside the normal candidate grid — still try it.
+		if st.returnSwingTarget then
+			consider(st.returnSwingTarget)
 		end
 
 		return best
@@ -2930,13 +2973,21 @@ local function boot(character)
 		end
 
 		local dist, attachWorld = st.targetDistanceAndPoint(target)
-		if not dist or dist < 2 or dist > maxDistance then
+		local reach = maxDistance
+		if st.isReturnSwingTarget(target) then
+			reach = math.max(maxDistance, st.getAttachReachForTarget(target))
+		end
+		if not dist or dist < 2 or dist > reach then
 			return false
 		end
 
+		local isReturnGrace = st.isReturnSwingTarget(target) and dist > getSwingRange() * 0.9
 		local look = camera.CFrame.LookVector
 		local lookingDown = look.Y <= C.LOOK_DOWN_PITCH
 		minLookDot = minLookDot or 0.02
+		if isReturnGrace then
+			minLookDot = math.min(minLookDot, -0.15)
+		end
 		local toCameraTarget = attachWorld - camera.CFrame.Position
 		if toCameraTarget.Magnitude < 0.5 then
 			return false
@@ -2945,7 +2996,8 @@ local function boot(character)
 		if lookingDown then
 			local flatDir = flatUnit(attachWorld - st.hrp.Position)
 			local face = flatUnit(look) or flatUnit(st.hrp.CFrame.LookVector)
-			if not flatDir or not face or flatDir:Dot(face) < C.LOOK_DOWN_FORWARD_DOT then
+			local minFlat = if isReturnGrace then -0.35 else C.LOOK_DOWN_FORWARD_DOT
+			if not flatDir or not face or flatDir:Dot(face) < minFlat then
 				return false
 			end
 		elseif toCameraTarget.Unit:Dot(look) < minLookDot then
@@ -2953,6 +3005,18 @@ local function boot(character)
 		end
 
 		return true
+	end
+
+	function st.isReturnSwingTarget(target: BasePart?): boolean
+		return target ~= nil and target == st.returnSwingTarget and target.Parent ~= nil
+	end
+
+	function st.getAttachReachForTarget(target: BasePart?): number
+		local base = getSwingRange()
+		if st.isReturnSwingTarget(target) then
+			return math.max(base * C.RETURN_SWING_REACH_MULT, base + C.RETURN_SWING_REACH_BONUS)
+		end
+		return base
 	end
 
 	function st.isSpecificSwingTargetReady(
@@ -2968,15 +3032,21 @@ local function boot(character)
 		end
 
 		local dist, attachWorld = st.targetDistanceAndPoint(target)
-		local reach = maxDistanceOverride or getSwingRange()
+		local baseReach = getSwingRange()
+		local reach = maxDistanceOverride or st.getAttachReachForTarget(target)
 		if not dist or dist < 2 or dist > reach then
 			return false
 		end
 
+		local isReturnGrace = st.isReturnSwingTarget(target) and dist > baseReach * 0.9
 		local look = camera.CFrame.LookVector
 		local lookingDown = look.Y <= C.LOOK_DOWN_PITCH
 		local minLookDot = minLookDotOverride or C.MIN_LOOK_DOT
 		local maxScreenRadius = maxScreenRadiusOverride or C.TARGET_SCREEN_RADIUS_LIMIT
+		if isReturnGrace then
+			minLookDot = math.min(minLookDot, -0.15)
+			maxScreenRadius = math.max(maxScreenRadius, 1.15)
+		end
 		local toCameraTarget = attachWorld - camera.CFrame.Position
 		if toCameraTarget.Magnitude < 0.5 then
 			return false
@@ -2985,12 +3055,13 @@ local function boot(character)
 		local flatDir = flatUnit(attachWorld - st.hrp.Position)
 		local faceFlat = flatUnit(look) or flatUnit(st.hrp.CFrame.LookVector)
 		local flatAlign = if flatDir and faceFlat then flatDir:Dot(faceFlat) else nil
-		if flatAlign ~= nil and flatAlign < C.LOOK_DOWN_FORWARD_DOT then
+		local minFlat = if isReturnGrace then -0.35 else C.LOOK_DOWN_FORWARD_DOT
+		if flatAlign ~= nil and flatAlign < minFlat then
 			return false
 		end
 
 		if lookingDown then
-			if flatAlign == nil or flatAlign < C.LOOK_DOWN_FORWARD_DOT then
+			if flatAlign == nil or flatAlign < minFlat then
 				return false
 			end
 		elseif toCameraTarget.Unit:Dot(look) < minLookDot then
@@ -3001,17 +3072,21 @@ local function boot(character)
 		local vp = camera.ViewportSize
 		local dx = (viewportPoint.X - vp.X * 0.5) / math.max(vp.X, 1)
 		local dy = (viewportPoint.Y - vp.Y * 0.5) / math.max(vp.Y, 1)
-		local horizontallyOnScreen = viewportPoint.Z > 0 and math.abs(dx) <= 0.62
+		local horizontallyOnScreen = viewportPoint.Z > 0 and math.abs(dx) <= (if isReturnGrace then 0.92 else 0.62)
 
 		if lookingDown then
 			if not horizontallyOnScreen then
 				return false
 			end
 		else
-			if not onScreen then
+			if not onScreen and not isReturnGrace then
 				return false
 			end
-			if math.sqrt(dx * dx + dy * dy) > maxScreenRadius then
+			if isReturnGrace then
+				if viewportPoint.Z <= 0 and not horizontallyOnScreen then
+					return false
+				end
+			elseif math.sqrt(dx * dx + dy * dy) > maxScreenRadius then
 				return false
 			end
 		end
@@ -3067,7 +3142,11 @@ local function boot(character)
 		if not target or not target.Parent or not attachLimit then
 			return false
 		end
-		return st.isSpecificSwingTargetReady(target, false, attachLimit, minLookDot, maxScreenRadius)
+		local reach = attachLimit
+		if st.isReturnSwingTarget(target) then
+			reach = math.max(attachLimit, st.getAttachReachForTarget(target))
+		end
+		return st.isSpecificSwingTargetReady(target, false, reach, minLookDot, maxScreenRadius)
 	end
 
 	function st.isGroundedForCameraAssist()
@@ -4249,6 +4328,7 @@ local function boot(character)
 		st.attachShakeSeed = math.random() * 1000
 		st.swingTimer = 0
 		st.activeRopeMaxLength = ropeMax
+		st.returnSwingTarget = nil
 
 		st.ropeCatchStartLength = startLength
 		st.ropeCatchUntil = os.clock() + C.ROPE_CATCH_ELASTIC_TIME
@@ -4454,6 +4534,9 @@ local function boot(character)
 		local snapAnchorWorld = st.anchorAttachment and st.anchorAttachment.Parent and st.anchorAttachment.WorldPosition or nil
 		st.lastReleasedTarget = st.currentTarget
 		st.lastReleasedTargetClock = os.clock()
+		if doLaunch and st.currentTarget then
+			st.returnSwingTarget = st.currentTarget
+		end
 
 		st.isSwinging = false
 		st.currentTarget = nil

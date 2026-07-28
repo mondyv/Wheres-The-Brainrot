@@ -1604,33 +1604,43 @@ end
 
 local function restoreCamera()
 	stopCameraRig()
+	-- Kill modal overlay immediately so MobileTouchGate can fix TouchGui vs Main.
+	if cutsceneGui then
+		cutsceneGui.Enabled = false
+		for _, d in cutsceneGui:GetDescendants() do
+			if d:IsA("GuiObject") then
+				d.Active = false
+			end
+		end
+	end
 	local cam = Workspace.CurrentCamera
 	if not cam then
 		unlockPlayerMovement()
+		task.defer(function()
+			MobileTouchGate.ensureTouchControlsVisible(true)
+			MobileTouchGate.restorePlayerMovement()
+		end)
 		return
 	end
 	local goalFov = if savedFov > 0 then savedFov else defaultFov
 	cam.FieldOfView = goalFov
-	if savedCameraType then
-		cam.CameraType = savedCameraType
-		if savedCameraSubject then
-			cam.CameraSubject = savedCameraSubject
-		end
-	else
-		cam.CameraType = Enum.CameraType.Custom
-		local char = player.Character
-		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if hum then
-			cam.CameraSubject = hum
-		end
-	end
+	-- Always Custom after spider — restoring Scriptable leaves mobile look dead.
+	cam.CameraType = Enum.CameraType.Custom
 	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 	if hum then
+		cam.CameraSubject = hum
 		hum.CameraOffset = Vector3.zero
+	elseif savedCameraSubject then
+		cam.CameraSubject = savedCameraSubject
 	end
 	savedCameraType = nil
 	savedCameraSubject = nil
 	unlockPlayerMovement()
+	task.defer(function()
+		MobileTouchGate.ensureTouchControlsVisible(true)
+		MobileTouchGate.restorePlayerMovement()
+		unlockPlayerMovement()
+	end)
 end
 
 local function pulseCameraShake(duration: number, amp: number)

@@ -264,12 +264,10 @@ local function buildKeepSets(opts: HideOpts?)
 	-- Frames is the panel host — never slide it (causes offset/missing shop panels)
 	keepMainChildNames.Frames = true
 	keepMainChildNames.TutorialQuestHost = true
-	keepMainChildNames.TimCheeseQuestHost = true
+	-- Tim Cheese quest HUD must hide with shop/stand panels (not stay on top).
 	keepScreenNames.FloatingClaimCutscene = true
 	keepScreenNames.BushSpiderCutscene = true
 	keepScreenNames.StandDialogueCutscene = true
-	keepScreenNames.TimCheeseQuestHud = true
-	keepScreenNames.TimCheeseQuestTracker = true
 	keepScreenNames.TutorialObjective = true
 	keepScreenNames.TutorialUiPointer = true
 	if opts then

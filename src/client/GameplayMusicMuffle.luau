@@ -3,6 +3,9 @@
 	Muffled / blurry BGM while panels or cutscenes hide the HUD.
 	Equalizer only (no reverb — reverb reads as underwater).
 	Ref-counted to match nested GameplayUiVisibility hides.
+
+	Booth tracks are already a different playlist — skip muffling while a booth
+	is active so shop/sell/upgrade music stays clear.
 ]]
 
 local SoundService = game:GetService("SoundService")
@@ -21,6 +24,7 @@ local MUFFLE_MID = -16
 local MUFFLE_LOW = 0
 
 local depth = 0
+local muffledOn = false
 local activeTweens: { Tween } = {}
 
 local function cancelTweens()
@@ -75,7 +79,25 @@ local function ensureEq(group: SoundGroup): EqualizerSoundEffect
 	return eq :: EqualizerSoundEffect
 end
 
+local function isBoothMusicActive(): boolean
+	local ok, bgm = pcall(function()
+		return require(script.Parent.BackgroundMusicController)
+	end)
+	if not ok or typeof(bgm) ~= "table" then
+		return false
+	end
+	local getBooth = (bgm :: any).getActiveBooth
+	if typeof(getBooth) ~= "function" then
+		return false
+	end
+	return getBooth() ~= nil
+end
+
 local function applyMuffle(on: boolean)
+	if muffledOn == on then
+		return
+	end
+	muffledOn = on
 	local group = getMusicGroup()
 	if not group then
 		return
@@ -99,11 +121,14 @@ local function applyMuffle(on: boolean)
 	end
 end
 
+function M.sync()
+	-- Booth playlist replaces world BGM — keep it dry (no muffle blur).
+	applyMuffle(depth > 0 and not isBoothMusicActive())
+end
+
 function M.push()
 	depth += 1
-	if depth == 1 then
-		applyMuffle(true)
-	end
+	M.sync()
 end
 
 function M.pop()
@@ -111,9 +136,7 @@ function M.pop()
 		return
 	end
 	depth -= 1
-	if depth == 0 then
-		applyMuffle(false)
-	end
+	M.sync()
 end
 
 function M.forceClear()

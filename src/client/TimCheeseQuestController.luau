@@ -624,19 +624,20 @@ local function ensureQuestHost(): Frame?
 			gui.IgnoreGuiInset = true
 			gui.DisplayOrder = 110
 			gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+			gui.Enabled = false
 			gui.Parent = pg
 		end
-		gui.Enabled = true
-		gui.DisplayOrder = math.max(gui.DisplayOrder, 110)
-		gui.IgnoreGuiInset = true
-		pcall(function()
-			(gui :: any).ClipToDeviceSafeArea = false
-		end)
-		pcall(function()
-			(gui :: any).ScreenInsets = Enum.ScreenInsets.None
-		end)
 		questGui = gui
 	end
+	gui.Enabled = questHudRevealed and not questHudSuppressed and not introPlaying and not dialogueBusy
+	gui.DisplayOrder = math.max(gui.DisplayOrder, 110)
+	gui.IgnoreGuiInset = true
+	pcall(function()
+		(gui :: any).ClipToDeviceSafeArea = false
+	end)
+	pcall(function()
+		(gui :: any).ScreenInsets = Enum.ScreenInsets.None
+	end)
 
 	-- Drop legacy host under Main so we don't double-draw a stretched leftover.
 	local main = PlayerGuiMain.ensure(player)
@@ -650,9 +651,6 @@ local function ensureQuestHost(): Frame?
 	local existing = gui:FindFirstChild("TimCheeseQuestHost")
 	if existing and existing:IsA("Frame") then
 		questHost = existing
-		existing.Visible = true
-		existing.Size = UDim2.fromScale(1, 1)
-		existing.ClipsDescendants = false
 		return existing
 	end
 	local created = Instance.new("Frame")
@@ -671,11 +669,13 @@ local function ensureQuestHost(): Frame?
 	return created
 end
 
-local function setQuestHudSuppressed(on: boolean)
-	questHudSuppressed = on == true
-	if questHudSuppressed then
-		stopExclaimPulse()
-		stopQuestDots()
+local function canShowQuestChrome(): boolean
+	return questHudRevealed and not questHudSuppressed and not introPlaying and not dialogueBusy
+end
+
+local function syncQuestChromeVisibility()
+	if not canShowQuestChrome() then
+		stopArrowPulse()
 		if questGui then
 			questGui.Enabled = false
 		end
@@ -685,19 +685,53 @@ local function setQuestHudSuppressed(on: boolean)
 		if questArrowBtn then
 			questArrowBtn.Visible = false
 		end
-	elseif questHudRevealed then
+		return
+	end
+	if questGui then
+		questGui.Enabled = true
+	end
+	if questArrowBtn then
+		questArrowBtn.Visible = true
+	end
+	if questPanel then
+		questPanel.Visible = true
+		if questHudCollapsed then
+			local ticket = questPanel:FindFirstChild("Ticket")
+			if ticket and ticket:IsA("GuiObject") then
+				ticket.Visible = false
+			end
+		end
+	end
+end
+
+local function setQuestHudSuppressed(on: boolean)
+	questHudSuppressed = on == true
+	if questHudSuppressed then
+		stopExclaimPulse()
+		stopQuestDots()
+		stopArrowPulse()
 		if questGui then
-			questGui.Enabled = true
+			questGui.Enabled = false
+		end
+		if questPanel then
+			questPanel.Visible = false
 		end
 		if questArrowBtn then
-			questArrowBtn.Visible = true
+			questArrowBtn.Visible = false
 		end
-		refreshQuestHud()
+	else
+		syncQuestChromeVisibility()
+		if questHudRevealed then
+			refreshQuestHud()
+		end
 	end
 end
 
 local function isQuestBlockingCutscene(): boolean
 	if introPlaying or dialogueBusy then
+		return true
+	end
+	if GameplayUiVisibility.isHidden() then
 		return true
 	end
 	if StandDialogueCutscene.isActive() then
@@ -716,13 +750,24 @@ local function syncQuestHudCutsceneGate()
 	if isQuestBlockingCutscene() then
 		if not questHudSuppressed then
 			setQuestHudSuppressed(true)
-		elseif questGui and questGui.Enabled then
-			questGui.Enabled = false
+		else
+			-- Keep chrome hard-off even if something re-enabled the ScreenGui.
+			if questGui and questGui.Enabled then
+				questGui.Enabled = false
+			end
+			if questArrowBtn then
+				questArrowBtn.Visible = false
+			end
+			if questPanel then
+				questPanel.Visible = false
+			end
 		end
 		return
 	end
 	if questHudSuppressed then
 		setQuestHudSuppressed(false)
+	else
+		syncQuestChromeVisibility()
 	end
 end
 
@@ -1172,7 +1217,7 @@ local function ensureQuestHud(): GuiObject
 	collapse.Activated:Connect(function()
 		toggleQuestHudCollapsed()
 	end)
-	startArrowPulse()
+	collapse.Visible = false
 	return shell
 end
 
@@ -1256,8 +1301,8 @@ placeArrowOnTicket = function()
 	questArrowBtn.Position = UDim2.new(1, -4, 0, 4)
 	questArrowBtn.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
 	questArrowBtn.Rotation = 0
-	questArrowBtn.Visible = true
 	questArrowBtn.ZIndex = 130
+	questArrowBtn.Visible = canShowQuestChrome()
 end
 
 placeArrowParked = function()
@@ -1278,8 +1323,8 @@ placeArrowParked = function()
 	questArrowBtn.Position = UDim2.new(1, -QUEST_ARROW_EDGE_PAD, 0, y)
 	questArrowBtn.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
 	questArrowBtn.Rotation = 180
-	questArrowBtn.Visible = true
 	questArrowBtn.ZIndex = 200
+	questArrowBtn.Visible = canShowQuestChrome()
 end
 
 local function arrowHostPosFromAbsolute(host: GuiObject, absPos: Vector2, absSize: Vector2): UDim2
@@ -1330,6 +1375,9 @@ toggleQuestHudCollapsed = function()
 	if not questPanel or questHoverFlying or questAnimBusy then
 		return
 	end
+	if not canShowQuestChrome() then
+		return
+	end
 	questHudCollapsed = not questHudCollapsed
 	cancelCollapseTweens()
 	stopArrowPulse()
@@ -1350,6 +1398,11 @@ toggleQuestHudCollapsed = function()
 		freezePanelSize()
 		local from = panel.Position
 		local hiddenX = panelHiddenOffset(panel)
+		-- If already near-hidden, nudge from left so the slide is always visible.
+		if from.X.Offset >= hiddenX - 8 then
+			from = UDim2.new(1, -math.max(questHudBaseRightPad, 10), 0, from.Y.Offset)
+			panel.Position = from
+		end
 		local tuck = UDim2.new(1, hiddenX, 0, from.Y.Offset)
 
 		-- Capture arrow height from the ticket corner BEFORE sliding, then park at that Y.
@@ -1372,7 +1425,6 @@ toggleQuestHudCollapsed = function()
 			arrow.Rotation = 0
 
 			local parked = UDim2.new(1, -QUEST_ARROW_EDGE_PAD, 0, parkedY)
-			-- Arrow only slides horizontally to the edge tab — Y stays locked.
 			local arrowTw = TweenService:Create(arrow, QUEST_EDGE_SLIDE, {
 				Position = parked,
 				Rotation = 180,
@@ -1397,7 +1449,6 @@ toggleQuestHudCollapsed = function()
 			if ticket and ticket:IsA("GuiObject") then
 				ticket.Visible = false
 			end
-			-- Stay fully off-screen at the same vertical slot.
 			questPanel.Position = UDim2.new(1, panelHiddenOffset(questPanel), 0, from.Y.Offset)
 			if panelScale then
 				panelScale.Scale = 1
@@ -1405,7 +1456,9 @@ toggleQuestHudCollapsed = function()
 			cancelCollapseTweens()
 			placeArrowParked()
 			questAnimBusy = false
-			startArrowPulse()
+			if canShowQuestChrome() then
+				startArrowPulse()
+			end
 		end)
 		tw:Play()
 	else
@@ -1419,13 +1472,15 @@ toggleQuestHudCollapsed = function()
 		if panel.AbsoluteSize.X > 4 then
 			slideW = math.max(slideW, math.ceil(panel.AbsoluteSize.X))
 		end
+		panel.Visible = true
 		panel.AnchorPoint = Vector2.new(1, questHudAnchorY)
 		panel.AutomaticSize = Enum.AutomaticSize.None
 		panel.Size = UDim2.fromOffset(slideW, math.max(panel.Size.Y.Offset, 80))
-		local hiddenX = panelHiddenOffset(panel)
+		local hiddenX = math.max(panelHiddenOffset(panel), slideW + 20)
 		panel.Position = UDim2.new(1, hiddenX, 0, goal.Y.Offset)
 		placeArrowOnTicket()
 		if arrow then
+			arrow.Visible = true
 			arrow.Rotation = 180
 			local arrowTw = TweenService:Create(arrow, QUEST_EDGE_SLIDE, { Rotation = 0 })
 			questArrowTween = arrowTw
@@ -1445,7 +1500,9 @@ toggleQuestHudCollapsed = function()
 			questAnimBusy = false
 			layoutQuestHud()
 			startExclaimPulse()
-			startArrowPulse()
+			if canShowQuestChrome() then
+				startArrowPulse()
+			end
 		end)
 		tw:Play()
 	end
@@ -1485,11 +1542,16 @@ layoutQuestHud = function()
 	if not panel then
 		return
 	end
+	-- Don't build/position chrome before Tim has given a quest.
+	if not questHudRevealed and not questAnimBusy then
+		syncQuestChromeVisibility()
+		return
+	end
 	local host = ensureQuestHost()
 	if host and panel.Parent ~= host then
 		panel.Parent = host
 	end
-	if questGui then
+	if questGui and canShowQuestChrome() then
 		questGui.Enabled = true
 		questGui.DisplayOrder = math.max(questGui.DisplayOrder, 110)
 		questGui.IgnoreGuiInset = true
@@ -1499,6 +1561,8 @@ layoutQuestHud = function()
 		pcall(function()
 			(questGui :: any).ScreenInsets = Enum.ScreenInsets.None
 		end)
+	elseif questGui then
+		questGui.Enabled = false
 	end
 
 	local mobile = UserInputService.TouchEnabled
@@ -1635,9 +1699,7 @@ end
 
 refreshQuestHud = function(opts: { skipRevealGate: boolean?, playAppear: boolean? }?)
 	if questHudSuppressed then
-		if questPanel then
-			questPanel.Visible = false
-		end
+		syncQuestChromeVisibility()
 		return
 	end
 	local idx = resolveActiveQuestIndex()
@@ -1649,14 +1711,13 @@ refreshQuestHud = function(opts: { skipRevealGate: boolean?, playAppear: boolean
 		stopQuestDots()
 		stopExclaimPulse()
 		questHudRevealed = false
-		if questPanel then
-			questPanel.Visible = false
-		end
+		syncQuestChromeVisibility()
 		return
 	end
 	-- Gate: only after accept fly-in, or rejoin init that set questHudRevealed.
 	-- Do NOT auto-reveal on server index — that raced the center→HUD fly.
 	if not questHudRevealed and not skipGate then
+		syncQuestChromeVisibility()
 		return
 	end
 
@@ -1667,6 +1728,10 @@ refreshQuestHud = function(opts: { skipRevealGate: boolean?, playAppear: boolean
 	local panel = ensureQuestHud()
 	layoutQuestHud()
 	local wasHidden = not panel.Visible
+	syncQuestChromeVisibility()
+	if not canShowQuestChrome() then
+		return
+	end
 	panel.Visible = true
 
 	local p = if typeof(progressVal) == "number" then progressVal else 0
@@ -1715,6 +1780,9 @@ refreshQuestHud = function(opts: { skipRevealGate: boolean?, playAppear: boolean
 	end
 
 	startQuestDots()
+	if not questHudCollapsed and not questAnimBusy then
+		startArrowPulse()
+	end
 	if (wasHidden or playAppear) and questHudRevealed then
 		local sc = panel:FindFirstChild("PanelScale")
 		if sc and sc:IsA("UIScale") then
@@ -2565,6 +2633,8 @@ function M.init()
 		else
 			-- Invisible + parked until they enter the hitbox (tutorial done or not).
 			hideTimUntilIntro(timModel)
+			questHudRevealed = false
+			syncQuestChromeVisibility()
 		end
 
 		player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR):Connect(function()
@@ -2600,11 +2670,15 @@ function M.init()
 				return
 			end
 			viewportConn = c:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-				if questPanel and questPanel.Visible and not questHoverFlying then
+				if questPanel and questPanel.Visible and not questHoverFlying and questHudRevealed then
 					layoutQuestHud()
 				end
 			end)
-			layoutQuestHud()
+			if questHudRevealed then
+				layoutQuestHud()
+			else
+				syncQuestChromeVisibility()
+			end
 		end
 		wireViewportLayout()
 		Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(wireViewportLayout)
@@ -2619,9 +2693,6 @@ function M.init()
 			accum = 0
 			tickWalkby()
 			syncQuestHudCutsceneGate()
-			if questGui and not questHudSuppressed then
-				questGui.Enabled = true
-			end
 			syncPromptAndOutline()
 		end)
 	end)

@@ -69,6 +69,15 @@ function BackgroundMusicController.setActiveBooth(boothKey: BoothKey?)
 	if resolveAndApplyFn then
 		resolveAndApplyFn()
 	end
+	-- Booth music is a different playlist — drop the panel muffle blur on it.
+	task.defer(function()
+		local ok, muffle = pcall(function()
+			return require(script.Parent.GameplayMusicMuffle)
+		end)
+		if ok and typeof(muffle) == "table" and typeof((muffle :: any).sync) == "function" then
+			(muffle :: any).sync()
+		end
+	end)
 end
 
 function BackgroundMusicController.getActiveBooth(): BoothKey?

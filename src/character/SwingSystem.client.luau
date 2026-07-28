@@ -3013,18 +3013,12 @@ local function boot(character)
 		local lookingDown = camera ~= nil and camera.CFrame.LookVector.Y <= C.LOOK_DOWN_PITCH
 
 		local function passesVisibleChecks(target, distanceLimit)
-			local limit = distanceLimit
-			if st.isReturnSwingTarget(target) then
-				limit = math.max(distanceLimit, st.getAttachReachForTarget(target))
-			end
+			local limit = math.min(distanceLimit, st.getEffectiveLatchLimit(target))
 			return st.isVisibleSwingTarget(target, limit, minLookDot)
 		end
 
 		local function passesAttachChecks(target, distanceLimit)
-			local limit = distanceLimit
-			if st.isReturnSwingTarget(target) then
-				limit = math.max(distanceLimit, st.getAttachReachForTarget(target))
-			end
+			local limit = math.min(distanceLimit, st.getEffectiveLatchLimit(target))
 			return st.isSpecificSwingTargetReady(target, false, limit, minLookDot, maxScreenRadius)
 		end
 
@@ -3070,7 +3064,7 @@ local function boot(character)
 			if not part then
 				return
 			end
-			local limit = if st.isReturnSwingTarget(part) then st.getAttachReachForTarget(part) else maxDistance
+			local limit = st.getEffectiveLatchLimit(part)
 			local dist, point = st.targetDistanceAndPoint(part)
 			if dist and point and dist >= 2 and dist <= limit and passesVisibleChecks(part, limit) then
 				local score = st.attachCandidateScore(part, dist, point, limit)
@@ -3243,14 +3237,14 @@ local function boot(character)
 
 		local dist, attachWorld = st.targetDistanceAndPoint(target)
 		local reach = maxDistance
-		if st.isReturnSwingTarget(target) then
-			reach = math.max(maxDistance, st.getAttachReachForTarget(target))
-		end
 		if not dist or dist < 2 or dist > reach then
 			return false
 		end
 
-		local isReturnGrace = st.isReturnSwingTarget(target) and dist > getSwingRange() * 0.9
+		local isReturnGrace = st.isReturnSwingTarget(target)
+			and st.isAirborneForSwing()
+			and not st.hasFloorSupportForSwing()
+			and dist > getSwingRange() * 0.9
 		local look = camera.CFrame.LookVector
 		local lookingDown = look.Y <= C.LOOK_DOWN_PITCH
 		minLookDot = minLookDot or C.MIN_LOOK_DOT
@@ -3298,6 +3292,25 @@ local function boot(character)
 		return base
 	end
 
+	-- Shared UI+press latch distance. Return-vine grace is air-only — on ground it caused
+	-- green prompts past what jump would accept.
+	function st.getEffectiveLatchLimit(target: BasePart?): number
+		local base = getLatchRange()
+		if
+			target
+			and st.isReturnSwingTarget(target)
+			and st.isAirborneForSwing()
+			and not st.hasFloorSupportForSwing()
+		then
+			return math.max(base, st.getAttachReachForTarget(target))
+		end
+		return base
+	end
+
+	function st.clearReturnSwingTarget()
+		st.returnSwingTarget = nil
+	end
+
 	function st.isSpecificSwingTargetReady(
 		target,
 		requireLineOfSight,
@@ -3317,7 +3330,10 @@ local function boot(character)
 			return false
 		end
 
-		local isReturnGrace = st.isReturnSwingTarget(target) and dist > baseReach * 0.9
+		local isReturnGrace = st.isReturnSwingTarget(target)
+			and st.isAirborneForSwing()
+			and not st.hasFloorSupportForSwing()
+			and dist > baseReach * 0.9
 		local isCameraRayHit = target == st.lastCameraRayTarget
 		local look = camera.CFrame.LookVector
 		local lookingDown = look.Y <= C.LOOK_DOWN_PITCH
@@ -3454,10 +3470,7 @@ local function boot(character)
 		if not target or not target.Parent or not attachLimit then
 			return false
 		end
-		local reach = attachLimit
-		if st.isReturnSwingTarget(target) then
-			reach = math.max(attachLimit, st.getAttachReachForTarget(target))
-		end
+		local reach = math.min(attachLimit, st.getEffectiveLatchLimit(target))
 		return st.isSpecificSwingTargetReady(target, false, reach, minLookDot, maxScreenRadius)
 	end
 
@@ -4737,13 +4750,14 @@ local function boot(character)
 
 		local closestWorld = st.closestAttachWorldOnPart(target)
 		local dist = (closestWorld - st.hrp.Position).Magnitude
-		if dist < 2 or dist > attachLimit then
+		local latchLimit = math.min(attachLimit, st.getEffectiveLatchLimit(target))
+		if dist < 2 or dist > latchLimit then
 			return
 		end
 
 		-- UI already marked this vine ready — don't fail the press on a flaky re-aim check.
 		if not trustReady then
-			if not st.canAttachToSwingTarget(target, attachLimit, minLookDot, maxScreenRadius) then
+			if not st.canAttachToSwingTarget(target, latchLimit, minLookDot, maxScreenRadius) then
 				return
 			end
 		end
@@ -5171,7 +5185,8 @@ local function boot(character)
 		-- If the prompt already says ready, latch THAT vine — don't lose it to a re-pick miss.
 		if st.scannedVisualCanSwing and st.scannedVisualTarget and st.scannedVisualTarget.Parent then
 			local readyDist = select(1, st.targetDistanceAndPoint(st.scannedVisualTarget))
-			if readyDist and readyDist >= 2 and readyDist <= maxDistance then
+			local latchLimit = st.getEffectiveLatchLimit(st.scannedVisualTarget)
+			if readyDist and readyDist >= 2 and readyDist <= latchLimit then
 				st.lastTryClock = now
 				st.humanoid.Jump = false
 				st.startSwing(st.scannedVisualTarget, true)
@@ -5182,12 +5197,26 @@ local function boot(character)
 		-- Live pick on press — don't depend only on the last visual scan tick.
 		local target = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
 		if not target and st.scannedVisualTarget then
-			if st.canAttachToSwingTarget(st.scannedVisualTarget, maxDistance, lookDot, screenLimit) then
+			local readyDist = select(1, st.targetDistanceAndPoint(st.scannedVisualTarget))
+			local latchLimit = st.getEffectiveLatchLimit(st.scannedVisualTarget)
+			if
+				readyDist
+				and readyDist >= 2
+				and readyDist <= latchLimit
+				and st.canAttachToSwingTarget(st.scannedVisualTarget, latchLimit, lookDot, screenLimit)
+			then
 				target = st.scannedVisualTarget
 			end
 		end
 		if not target and st.highlightedTarget then
-			if st.canAttachToSwingTarget(st.highlightedTarget, maxDistance, lookDot, screenLimit) then
+			local readyDist = select(1, st.targetDistanceAndPoint(st.highlightedTarget))
+			local latchLimit = st.getEffectiveLatchLimit(st.highlightedTarget)
+			if
+				readyDist
+				and readyDist >= 2
+				and readyDist <= latchLimit
+				and st.canAttachToSwingTarget(st.highlightedTarget, latchLimit, lookDot, screenLimit)
+			then
 				target = st.highlightedTarget
 			end
 		end
@@ -5336,7 +5365,8 @@ local function boot(character)
 		-- Prefer UI-ready vine so green prompt always matches the jump press.
 		if st.scannedVisualCanSwing and st.scannedVisualTarget and st.scannedVisualTarget.Parent then
 			local readyDist = select(1, st.targetDistanceAndPoint(st.scannedVisualTarget))
-			if readyDist and readyDist >= 2 and readyDist <= maxDistance then
+			local latchLimit = st.getEffectiveLatchLimit(st.scannedVisualTarget)
+			if readyDist and readyDist >= 2 and readyDist <= latchLimit then
 				liveTarget = st.scannedVisualTarget
 			end
 		end
@@ -5344,7 +5374,14 @@ local function boot(character)
 			liveTarget = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
 		end
 		if not liveTarget and st.highlightedTarget then
-			if st.canAttachToSwingTarget(st.highlightedTarget, maxDistance, lookDot, screenLimit) then
+			local readyDist = select(1, st.targetDistanceAndPoint(st.highlightedTarget))
+			local latchLimit = st.getEffectiveLatchLimit(st.highlightedTarget)
+			if
+				readyDist
+				and readyDist >= 2
+				and readyDist <= latchLimit
+				and st.canAttachToSwingTarget(st.highlightedTarget, latchLimit, lookDot, screenLimit)
+			then
 				liveTarget = st.highlightedTarget
 			end
 		end
@@ -5420,6 +5457,7 @@ local function boot(character)
 				local impactSpeed = st.landingSpeed
 				st.landedFromSwing = false
 				st.isLaunched = false
+				st.clearReturnSwingTarget()
 				st.landingSpeed = 0
 				st.isAirborne = false
 				stopWindLoopSfx()
@@ -5465,6 +5503,7 @@ local function boot(character)
 			-- Otherwise the landing auto-stop task can think the launch is still active and leave the clip running.
 			st.landedFromSwing = false
 			st.isLaunched = false
+			st.clearReturnSwingTarget()
 			st.landingSpeed = 0
 			stopWindLoopSfx()
 
@@ -5491,6 +5530,9 @@ local function boot(character)
 			end)
 		elseif newState == Enum.HumanoidStateType.Running or newState == Enum.HumanoidStateType.RunningNoPhysics then
 			st.isAirborne = false
+			if not st.isSwinging then
+				st.clearReturnSwingTarget()
+			end
 
 			if not st.isSwinging then
 				st.forceSwingHumanoidControl()
@@ -5714,6 +5756,7 @@ local function boot(character)
 			local impactSpeed = st.landingSpeed
 			st.landedFromSwing = false
 			st.isLaunched = false
+			st.clearReturnSwingTarget()
 			st.landingSpeed = 0
 			st.isAirborne = false
 			stopWindLoopSfx()
@@ -6162,6 +6205,9 @@ local function boot(character)
 						scanLookDot, scanScreenLimit = pressLook, pressScreen
 						-- Keep ground ready range honest — not inflated beyond live swing reach.
 						scanDistance = pressDist
+						st.clearReturnSwingTarget()
+					elseif scanMode == "air" and st.returnSwingTarget then
+						scanDistance = math.max(scanDistance, st.getEffectiveLatchLimit(st.returnSwingTarget))
 					end
 					if not scanDistance then
 						scanDistance, scanLookDot, scanScreenLimit = 0, nil, nil

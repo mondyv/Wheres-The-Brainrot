@@ -215,6 +215,14 @@ local function getGrantCashRemote(): RemoteFunction?
 	return nil
 end
 
+local function setTutorialSoftRespawn(enabled: boolean)
+	local folder = ReplicatedStorage:FindFirstChild("TutorialRemotes")
+	local re = folder and folder:FindFirstChild("SetTutorialSoftRespawn")
+	if re and re:IsA("RemoteEvent") then
+		re:FireServer(enabled)
+	end
+end
+
 local function findCashAmountLabel(): TextLabel?
 	local main = PlayerGuiMain.ensure(player)
 	local sideUI = main and main:FindFirstChild("SideUI")
@@ -2311,6 +2319,7 @@ local function finishTutorial()
 	finishingTutorial = true
 	active = false
 	stepIndex = 0
+	setTutorialSoftRespawn(false)
 	speakToken += 1
 	stopObjectiveDots()
 	clearWorldArrow()
@@ -2378,9 +2387,14 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 	if step.id == "searchBush" then
 		clearLockedBush()
 		clearLockedSwing()
+		-- Past the swing lesson — normal death / revive panel from here on.
+		setTutorialSoftRespawn(false)
 	elseif step.id == "swingLand1" then
 		clearLockedSwing()
 		swingLand1EnteredAt = os.clock()
+		setTutorialSoftRespawn(true)
+	elseif step.id == "grantCash" or step.id == "visitUpgrade" or step.id == "buyPower" then
+		setTutorialSoftRespawn(true)
 	elseif step.id ~= "claimBrainrot" then
 		clearLockedBush()
 	end

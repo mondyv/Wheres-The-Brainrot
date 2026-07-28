@@ -44,10 +44,43 @@ local function ensureTutorialAttrs(player: Player)
 	if player:GetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR) == nil then
 		player:SetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR, false)
 	end
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+		-- Soft respawn until tutorial client advances past the swing step.
+		if player:GetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR) == nil then
+			player:SetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR, true)
+		end
+	else
+		player:SetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR, false)
+	end
 end
 
 local completeRF = ensureRF("CompleteTutorial")
 local grantCashRF = ensureRF("GrantTutorialCash")
+
+local function ensureRE(name: string): RemoteEvent
+	local folder = getFolder()
+	local existing = folder:FindFirstChild(name)
+	if existing and existing:IsA("RemoteEvent") then
+		return existing
+	end
+	local re = Instance.new("RemoteEvent")
+	re.Name = name
+	re.Parent = folder
+	return re
+end
+
+local softRespawnRE = ensureRE("SetTutorialSoftRespawn")
+
+softRespawnRE.OnServerEvent:Connect(function(player: Player, enabled: any)
+	if not player or not player.Parent then
+		return
+	end
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+		player:SetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR, false)
+		return
+	end
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR, enabled == true)
+end)
 
 completeRF.OnServerInvoke = function(player: Player): boolean
 	if not player or not player.Parent then
@@ -55,6 +88,7 @@ completeRF.OnServerInvoke = function(player: Player): boolean
 	end
 	PlayerDataService.waitUntilLoaded(player)
 	PlayerDataService.setTutorialCompleted(player, true)
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR, false)
 	return true
 end
 

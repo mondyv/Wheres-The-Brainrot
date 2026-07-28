@@ -581,6 +581,14 @@ local function onPlayerAdded(player: Player)
 	task.spawn(function()
 		PlayerDataService.waitUntilLoaded(player)
 		applyGamePassEffects(player)
+		-- Marketplace ownership can lag right after join — retry so pre-bought passes unlock.
+		for _, delaySec in { 2, 6, 15 } do
+			task.wait(delaySec)
+			if not player.Parent then
+				return
+			end
+			applyGamePassEffects(player)
+		end
 	end)
 end
 
@@ -588,6 +596,59 @@ Players.PlayerAdded:Connect(onPlayerAdded)
 for _, p in Players:GetPlayers() do
 	onPlayerAdded(p)
 end
+
+-- Client reports "I already own this" from local Marketplace; server re-verifies.
+local function ensureClaimOwnedGamepassRemote(): RemoteEvent
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+	if not remotes then
+		remotes = Instance.new("Folder")
+		remotes.Name = "Remotes"
+		remotes.Parent = ReplicatedStorage
+	end
+	local existing = remotes:FindFirstChild("ClaimOwnedGamepass")
+	if existing and existing:IsA("RemoteEvent") then
+		return existing
+	end
+	local re = Instance.new("RemoteEvent")
+	re.Name = "ClaimOwnedGamepass"
+	re.Parent = remotes
+	return re
+end
+
+local claimOwnedGamepassRE = ensureClaimOwnedGamepassRemote()
+claimOwnedGamepassRE.OnServerEvent:Connect(function(player: Player, gamePassId: any)
+	if not player or not player.Parent or typeof(gamePassId) ~= "number" then
+		return
+	end
+	if GAMEPASS_OWNED_ATTR_BY_ID[gamePassId] == nil then
+		return
+	end
+	if StoreAccess.hasEntitledGamePass(player, gamePassId) then
+		applyPurchasedGamePassAttributes(player, gamePassId)
+		applyGamePassEffects(player, true)
+		return
+	end
+	if not StoreAccess.shouldTrustMarketplaceOwnership(player) then
+		return
+	end
+	task.spawn(function()
+		if not player.Parent then
+			return
+		end
+		local ok, owned = pcall(function()
+			return MarketplaceService:UserOwnsGamePassAsync(player.UserId, gamePassId)
+		end)
+		if not ok then
+			warn("[StoreHandler] ClaimOwnedGamepass verify failed:", owned)
+			return
+		end
+		if owned == true then
+			applyPurchasedGamePassAttributes(player, gamePassId)
+			PlayerDataService.markGamePassPurchased(player, gamePassId)
+			applyGamePassEffects(player, true)
+		end
+	end)
+end)
 
 MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, gamePassId, wasPurchased)
 	if not player or not player.Parent then

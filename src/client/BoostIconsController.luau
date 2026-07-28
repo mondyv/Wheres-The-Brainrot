@@ -324,6 +324,18 @@ local ICON_DEFS = {
 		title = "X-Ray Vision",
 		description = "See what brainrot is hiding inside targeted bushes",
 	},
+	["Autocollect"] = {
+		id = StoreConfig.GAMEPASS.AUTOCOLLECT,
+		attr = StoreConfig.ATTR.AUTOCOLLECT_OWNED,
+		title = "Autocollect",
+		description = "Collect all stand cash at once from your Autocollect pad",
+	},
+	["Auto Collect"] = {
+		id = StoreConfig.GAMEPASS.AUTOCOLLECT,
+		attr = StoreConfig.ATTR.AUTOCOLLECT_OWNED,
+		title = "Autocollect",
+		description = "Collect all stand cash at once from your Autocollect pad",
+	},
 }
 
 local function normalizeIconName(name: string): string
@@ -371,7 +383,18 @@ end
 
 -- Server StoreHandler owns these attrs — don't Marketplace-poll on join (that flashes icons).
 local function isGamePassOwned(def: { id: number, attr: string }): boolean
-	return player:GetAttribute(def.attr) == true
+	if player:GetAttribute(def.attr) == true then
+		return true
+	end
+	local purchasedAttr = StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID[def.id]
+	if typeof(purchasedAttr) == "string" and player:GetAttribute(purchasedAttr) == true then
+		return true
+	end
+	local giftedAttr = StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID[def.id]
+	if typeof(giftedAttr) == "string" and player:GetAttribute(giftedAttr) == true then
+		return true
+	end
+	return false
 end
 
 local function setupIcons(iconsFolder: Instance)
@@ -396,7 +419,22 @@ local function setupIcons(iconsFolder: Instance)
 	refreshIconsFolderVisible(iconsFolder)
 
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, gamePassId, wasPurchased)
-		if plr ~= player or not wasPurchased then
+		if plr ~= player then
+			return
+		end
+		-- Already-owned prompts finish with wasPurchased=false — still refresh icons.
+		if not wasPurchased then
+			task.defer(function()
+				for iconName, def in ICON_DEFS do
+					if def.id == gamePassId then
+						local icon = resolveBoostIcon(iconsFolder, iconName)
+						if icon then
+							icon.Visible = isGamePassOwned(def)
+						end
+					end
+				end
+				refreshIconsFolderVisible(iconsFolder)
+			end)
 			return
 		end
 		for iconName, def in ICON_DEFS do
@@ -420,6 +458,28 @@ local function setupIcons(iconsFolder: Instance)
 			end
 			refreshIconsFolderVisible(iconsFolder)
 		end)
+	end)
+
+	-- Claim pre-owned passes so SideUI icons appear without re-buying.
+	task.spawn(function()
+		local remotes = ReplicatedStorage:WaitForChild("Remotes", 20)
+		local claim = remotes and remotes:WaitForChild("ClaimOwnedGamepass", 10)
+		if not claim or not claim:IsA("RemoteEvent") then
+			return
+		end
+		local seen: { [number]: boolean } = {}
+		for _, def in ICON_DEFS do
+			if seen[def.id] or isGamePassOwned(def) then
+				continue
+			end
+			seen[def.id] = true
+			local ok, owned = pcall(function()
+				return MarketplaceService:UserOwnsGamePassAsync(player.UserId, def.id)
+			end)
+			if ok and owned == true then
+				claim:FireServer(def.id)
+			end
+		end
 	end)
 end
 

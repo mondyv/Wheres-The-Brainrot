@@ -3,7 +3,7 @@
 	Rebirth tiers — explicit requirements per rebirth (shared client + server).
 	• Every 3rd rebirth (3, 6, 9 …) also grants +1 base floor.
 	• Income multiplier comes from the tier table (1.10x, 1.25x, …).
-	• UI cash % shows cumulative total: 5%, 7%, 9% … (+2% per rebirth tier).
+	• UI cash % scales harder at higher rebirths (2% → 4% → 6% → 8% steps).
 --]]
 
 local M = {}
@@ -121,61 +121,61 @@ local TIER_DEFINITIONS: { TierDef } = {
 	},
 	{
 		cashCost = 6_000_000_000,
-		incomeMultiplier = 5.30,
+		incomeMultiplier = 6.00,
 		brainrot1 = br(2, "BombombiniGusini", "mythic"),
 		brainrot2 = br(3, "CavalloVirtuoso", "mythic"),
 	},
 	{
 		cashCost = 20_000_000_000,
-		incomeMultiplier = 6.25,
+		incomeMultiplier = 7.50,
 		brainrot1 = br(2, "DragonCannelloni", "mythic"),
 		brainrot2 = br(3, "GorilloWatermelondrillo", "mythic"),
 	},
 	{
 		cashCost = 80_000_000_000,
-		incomeMultiplier = 7.40,
+		incomeMultiplier = 9.50,
 		brainrot1 = br(2, "GraipusMedussi", "legendary"),
 		brainrot2 = br(3, "LioneloCactuseli", "legendary"),
 	},
 	{
 		cashCost = 250_000_000_000,
-		incomeMultiplier = 8.75,
+		incomeMultiplier = 12.00,
 		brainrot1 = br(2, "TralaleroTralala", "legendary"),
 		brainrot2 = br(3, "TriplitoTralaleritos", "legendary"),
 	},
 	{
 		cashCost = 750_000_000_000,
-		incomeMultiplier = 10.50,
+		incomeMultiplier = 15.50,
 		brainrot1 = br(2, "NuclearoDinosauro", "legendary"),
 		brainrot2 = br(3, "EspressoSignora", "legendary"),
 	},
 	{
 		cashCost = 2_500_000_000_000,
-		incomeMultiplier = 12.50,
+		incomeMultiplier = 20.00,
 		brainrot1 = br(2, "LaGrandeCombination", "brainrot god"),
 		brainrot2 = br(3, "Illuminati", "brainrot god"),
 	},
 	{
 		cashCost = 8_000_000_000_000,
-		incomeMultiplier = 15.00,
+		incomeMultiplier = 26.00,
 		brainrot1 = br(2, "SkibidiToilet", "brainrot god"),
 		brainrot2 = br(3, "Meowl", "brainrot god"),
 	},
 	{
 		cashCost = 30_000_000_000_000,
-		incomeMultiplier = 18.00,
+		incomeMultiplier = 34.00,
 		brainrot1 = br(2, "LaVaccaSaturnoSaturnita", "brainrot god"),
 		brainrot2 = br(3, "KarkerkarKurkur", "secret"),
 	},
 	{
 		cashCost = 120_000_000_000_000,
-		incomeMultiplier = 22.00,
+		incomeMultiplier = 45.00,
 		brainrot1 = br(2, "67", "secret"),
 		brainrot2 = br(3, "69", "secret"),
 	},
 	{
 		cashCost = 500_000_000_000_000,
-		incomeMultiplier = 27.50,
+		incomeMultiplier = 60.00,
 		brainrot1 = br(2, "StrawberrelliFlamingelli", "secret"),
 		brainrot2 = br(3, "LosTralalelitos", "secret"),
 	},
@@ -235,9 +235,31 @@ function M.playerCanCashUnlockFloor(player: Player, targetFloor: number): boolea
 	return M.getRebirthCount(player) >= M.requiredRebirthCountForFloor(targetFloor)
 end
 
+function M.moneyPercentStepForTier(tier: number): number
+	local t = math.max(1, math.floor(tier))
+	if t <= 1 then
+		return M.MONEY_PERCENT_BASE
+	end
+	-- Early rebirths stay gentle; late rebirths pay off much harder.
+	if t <= 5 then
+		return 2
+	end
+	if t <= 10 then
+		return 4
+	end
+	if t <= 15 then
+		return 6
+	end
+	return 8
+end
+
 function M.moneyPercentDisplayForTier(tier: number): number
 	local t = math.max(1, math.floor(tier))
-	return M.MONEY_PERCENT_BASE + (t - 1) * M.MONEY_PERCENT_STEP
+	local total = 0
+	for i = 1, t do
+		total += M.moneyPercentStepForTier(i)
+	end
+	return total
 end
 
 function M.moneyRewardTextForTier(tier: number): string

@@ -468,6 +468,25 @@ function M.init()
 	task.defer(syncAllGamepassBillboards)
 	task.defer(refreshAssignedPlotWatch)
 
+	-- Pre-owned Autocollect: ask server to verify + unlock if Roblox already granted it.
+	task.spawn(function()
+		if playerOwnsAutoCollect() then
+			return
+		end
+		local MarketplaceService = game:GetService("MarketplaceService")
+		local ok, owned = pcall(function()
+			return MarketplaceService:UserOwnsGamePassAsync(player.UserId, StoreConfig.GAMEPASS.AUTOCOLLECT)
+		end)
+		if not ok or owned ~= true then
+			return
+		end
+		local remotes = ReplicatedStorage:WaitForChild("Remotes", 20)
+		local claim = remotes and remotes:WaitForChild("ClaimOwnedGamepass", 10)
+		if claim and claim:IsA("RemoteEvent") then
+			claim:FireServer(StoreConfig.GAMEPASS.AUTOCOLLECT)
+		end
+	end)
+
 	local remotes = ReplicatedStorage:WaitForChild("StandRemotes", 60)
 	if remotes then
 		local ev = remotes:WaitForChild("AutoCollectCashCollectedFX", 30)

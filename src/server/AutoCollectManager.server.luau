@@ -116,6 +116,9 @@ local function refreshOwnershipCache(player: Player)
 	local A = StoreConfig.ATTR
 	if StoreAccess.hasEntitledGamePass(player, G.AUTOCOLLECT) or player:GetAttribute(A.AUTOCOLLECT_OWNED) == true then
 		ownsCacheByUserId[player.UserId] = true
+		if StoreAccess.hasEntitledGamePass(player, G.AUTOCOLLECT) then
+			player:SetAttribute(A.AUTOCOLLECT_OWNED, true)
+		end
 		if onOwnershipResolved then
 			onOwnershipResolved(player)
 		end
@@ -130,17 +133,41 @@ local function refreshOwnershipCache(player: Player)
 	end
 	ownsFetchInFlight[player.UserId] = true
 	task.spawn(function()
-		local ok, owned = pcall(function()
-			return MarketplaceService:UserOwnsGamePassAsync(player.UserId, G.AUTOCOLLECT)
-		end)
+		local owned = false
+		for attempt = 1, 3 do
+			local ok, result = pcall(function()
+				return MarketplaceService:UserOwnsGamePassAsync(player.UserId, G.AUTOCOLLECT)
+			end)
+			if ok and result == true then
+				owned = true
+				break
+			end
+			if not ok then
+				warn("[AutoCollectManager] UserOwnsGamePassAsync failed:", result)
+			end
+			if attempt < 3 then
+				task.wait(1.5 * attempt)
+			end
+		end
 		ownsFetchInFlight[player.UserId] = nil
-		if not ok then
-			warn("[AutoCollectManager] UserOwnsGamePassAsync failed:", owned)
+		if not player.Parent then
 			return
 		end
-		ownsCacheByUserId[player.UserId] = owned == true
-		if owned == true then
+		ownsCacheByUserId[player.UserId] = owned
+		if owned then
 			player:SetAttribute(A.AUTOCOLLECT_OWNED, true)
+			local purchasedAttr = StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID[G.AUTOCOLLECT]
+			if typeof(purchasedAttr) == "string" then
+				player:SetAttribute(purchasedAttr, true)
+			end
+			task.defer(function()
+				local okPds, PlayerDataService = pcall(function()
+					return require(script.Parent.Modules.PlayerDataService)
+				end)
+				if okPds and PlayerDataService and typeof(PlayerDataService.markGamePassPurchased) == "function" then
+					PlayerDataService.markGamePassPurchased(player, G.AUTOCOLLECT)
+				end
+			end)
 		end
 		if onOwnershipResolved then
 			onOwnershipResolved(player)

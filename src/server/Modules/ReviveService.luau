@@ -13,6 +13,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
+local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
+local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
 
 type PendingRevive = {
 	land: number,
@@ -270,11 +272,50 @@ local function fulfillRevivePurchase(player: Player): boolean
 	return true
 end
 
+local function resolveTutorialSoftRespawnCFrame(): CFrame?
+	local map = workspace:FindFirstChild(TimCheeseQuestConfig.MAP_FOLDER_NAME)
+		or workspace:FindFirstChild("Map")
+	local root = map or workspace
+	local hitbox = root:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME, true)
+	if hitbox and hitbox:IsA("BasePart") then
+		return hitbox.CFrame + Vector3.new(0, hitbox.Size.Y * 0.5 + 3, 0)
+	end
+	local trigger = root:FindFirstChild(TimCheeseQuestConfig.QUEST_TRIGGER_NAME, true)
+	if trigger and trigger:IsA("BasePart") then
+		return trigger.CFrame + Vector3.new(0, trigger.Size.Y * 0.5 + 3, 0)
+	end
+	local tim = root:FindFirstChild(TimCheeseQuestConfig.TIM_NAME, true)
+	if tim and tim:IsA("Model") then
+		return tim:GetPivot() + Vector3.new(0, 4, 0)
+	end
+	return nil
+end
+
+local function softRespawnAtTutorialHitbox(player: Player)
+	clearPending(player)
+	local spawnCf = resolveTutorialSoftRespawnCFrame()
+	if spawnCf then
+		storeReviveSpawnAttrs(player, spawnCf)
+	else
+		clearReviveSpawnAttrs(player)
+	end
+	forceLoadCharacter(player)
+end
+
 local function onHumanoidDied(player: Player, character: Model)
 	if pendingByPlayer[player] then
 		return
 	end
 	stopLandTracking(player)
+
+	-- Tutorial swing practice: skip death panel, dump them at the quest hitbox.
+	if
+		player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true
+		and player:GetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR) == true
+	then
+		softRespawnAtTutorialHitbox(player)
+		return
+	end
 
 	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	local worldPos = if hrp then hrp.Position else Vector3.zero

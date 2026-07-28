@@ -54,7 +54,10 @@ local function playerOwnsAutoCollect(): boolean
 	if player:GetAttribute(StoreConfig.ATTR.AUTOCOLLECT_OWNED) == true then
 		return true
 	end
-	return player:GetAttribute(StoreConfig.ATTR.GIFTED_AUTOCOLLECT) == true
+	if player:GetAttribute(StoreConfig.ATTR.GIFTED_AUTOCOLLECT) == true then
+		return true
+	end
+	return player:GetAttribute(StoreConfig.ATTR.PURCHASED_AUTOCOLLECT) == true
 end
 
 local function findGamepassInfo(thing: Instance): Instance?
@@ -457,6 +460,10 @@ function M.init()
 	table.insert(
 		ownershipConns,
 		player:GetAttributeChangedSignal(StoreConfig.ATTR.GIFTED_AUTOCOLLECT):Connect(syncAllGamepassBillboards)
+	)
+	table.insert(
+		ownershipConns,
+		player:GetAttributeChangedSignal(StoreConfig.ATTR.PURCHASED_AUTOCOLLECT):Connect(syncAllGamepassBillboards)
 	)
 	task.defer(syncAllGamepassBillboards)
 	task.defer(refreshAssignedPlotWatch)

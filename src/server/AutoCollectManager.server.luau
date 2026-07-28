@@ -377,6 +377,25 @@ local function refreshAutoCollectForOwnerUserId(ownerUserId: number)
 	end
 end
 
+local function grantAutoCollectOwned(player: Player)
+	ownsCacheByUserId[player.UserId] = true
+	player:SetAttribute(StoreConfig.ATTR.AUTOCOLLECT_OWNED, true)
+	local purchasedAttr = StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID[StoreConfig.GAMEPASS.AUTOCOLLECT]
+	if typeof(purchasedAttr) == "string" then
+		player:SetAttribute(purchasedAttr, true)
+	end
+	syncAutoCollectInteractionForPlayer(player)
+	refreshAutoCollectForOwnerUserId(player.UserId)
+	task.defer(function()
+		local ok, PlayerDataService = pcall(function()
+			return require(script.Parent.Modules.PlayerDataService)
+		end)
+		if ok and PlayerDataService and typeof(PlayerDataService.markGamePassPurchased) == "function" then
+			PlayerDataService.markGamePassPurchased(player, StoreConfig.GAMEPASS.AUTOCOLLECT)
+		end
+	end)
+end
+
 local function promptAutoCollectPurchase(player: Player)
 	local now = os.clock()
 	local last = gamepassTouchAtByPlayer[player]
@@ -386,14 +405,40 @@ local function promptAutoCollectPurchase(player: Player)
 	gamepassTouchAtByPlayer[player] = now
 
 	if playerOwnsAutoCollect(player) then
+		syncAutoCollectInteractionForPlayer(player)
 		return
 	end
 
-	local effectRemote = ReplicatedStorage:FindFirstChild("PurchaseEffectRemote")
-	if effectRemote and effectRemote:IsA("RemoteEvent") then
-		effectRemote:FireClient(player)
-	end
-	MarketplaceService:PromptGamePassPurchase(player, StoreConfig.GAMEPASS.AUTOCOLLECT)
+	-- Live marketplace check before prompting — already-owned players must not keep
+	-- hitting the Roblox "You already own this item" loop with a broken pad.
+	task.spawn(function()
+		if not player.Parent then
+			return
+		end
+		if playerOwnsAutoCollect(player) then
+			grantAutoCollectOwned(player)
+			return
+		end
+		if StoreAccess.shouldTrustMarketplaceOwnership(player) then
+			local ok, owned = pcall(function()
+				return MarketplaceService:UserOwnsGamePassAsync(player.UserId, StoreConfig.GAMEPASS.AUTOCOLLECT)
+			end)
+			if not ok then
+				warn("[AutoCollectManager] pre-prompt ownership check failed:", owned)
+			elseif owned == true then
+				grantAutoCollectOwned(player)
+				return
+			end
+		end
+		if not player.Parent then
+			return
+		end
+		local effectRemote = ReplicatedStorage:FindFirstChild("PurchaseEffectRemote")
+		if effectRemote and effectRemote:IsA("RemoteEvent") then
+			effectRemote:FireClient(player)
+		end
+		MarketplaceService:PromptGamePassPurchase(player, StoreConfig.GAMEPASS.AUTOCOLLECT)
+	end)
 end
 
 local function collectAllFromAutoCollect(player: Player, thing: Instance, plot: Instance)
@@ -602,18 +647,36 @@ Players.PlayerRemoving:Connect(function(player: Player)
 end)
 
 MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, gamePassId, wasPurchased)
-	if wasPurchased and gamePassId == StoreConfig.GAMEPASS.AUTOCOLLECT and player and player.Parent then
-		ownsCacheByUserId[player.UserId] = true
-		player:SetAttribute(StoreConfig.ATTR.AUTOCOLLECT_OWNED, true)
-		local purchasedAttr = StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID[gamePassId]
-		if typeof(purchasedAttr) == "string" then
-			player:SetAttribute(purchasedAttr, true)
-		end
-		task.defer(function()
-			syncAutoCollectInteractionForPlayer(player)
-			refreshAutoCollectForOwnerUserId(player.UserId)
-		end)
+	if gamePassId ~= StoreConfig.GAMEPASS.AUTOCOLLECT or not player or not player.Parent then
+		return
 	end
+	if wasPurchased then
+		grantAutoCollectOwned(player)
+		return
+	end
+	-- Already owned / cancelled — verify so the pad unlocks if Roblox already granted it.
+	task.spawn(function()
+		if not player.Parent then
+			return
+		end
+		if playerOwnsAutoCollect(player) then
+			grantAutoCollectOwned(player)
+			return
+		end
+		if not StoreAccess.shouldTrustMarketplaceOwnership(player) then
+			return
+		end
+		local ok, owned = pcall(function()
+			return MarketplaceService:UserOwnsGamePassAsync(player.UserId, StoreConfig.GAMEPASS.AUTOCOLLECT)
+		end)
+		if not ok then
+			warn("[AutoCollectManager] already-owned verify failed:", owned)
+			return
+		end
+		if owned == true then
+			grantAutoCollectOwned(player)
+		end
+	end)
 end)
 
 ensureRefreshBindable()

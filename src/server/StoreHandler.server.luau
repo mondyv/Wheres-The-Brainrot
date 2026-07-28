@@ -415,14 +415,18 @@ local function applyPurchasedGamePassAttributes(player: Player, gamePassId: numb
 	end
 end
 
-local function ownsGamePass(player: Player, gamePassId: number): boolean
+local function ownsGamePass(player: Player, gamePassId: number): boolean?
 	if not StoreAccess.shouldTrustMarketplaceOwnership(player) then
 		return false
 	end
 	local ok, result = pcall(function()
 		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, gamePassId)
 	end)
-	return ok and result == true
+	if not ok then
+		warn("[StoreHandler] UserOwnsGamePassAsync failed:", gamePassId, result)
+		return nil
+	end
+	return result == true
 end
 
 local function isGamePassOwnedForEffects(player: Player, gamePassId: number, fromPurchase: boolean?): boolean
@@ -436,7 +440,19 @@ local function isGamePassOwnedForEffects(player: Player, gamePassId: number, fro
 			return true
 		end
 	end
-	return ownsGamePass(player, gamePassId)
+
+	local marketplaceOwns = ownsGamePass(player, gamePassId)
+	if marketplaceOwns == true then
+		return true
+	end
+	-- API failure: keep any existing owned flag instead of wiping a real purchase.
+	if marketplaceOwns == nil then
+		local ownedAttr = GAMEPASS_OWNED_ATTR_BY_ID[gamePassId]
+		if ownedAttr and player:GetAttribute(ownedAttr) == true then
+			return true
+		end
+	end
+	return false
 end
 
 local function clearGamePassAttributes(player: Player)
@@ -574,7 +590,14 @@ for _, p in Players:GetPlayers() do
 end
 
 MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, gamePassId, wasPurchased)
-	if wasPurchased and player and player.Parent then
+	if not player or not player.Parent then
+		return
+	end
+	if typeof(gamePassId) ~= "number" or GAMEPASS_OWNED_ATTR_BY_ID[gamePassId] == nil then
+		return
+	end
+
+	if wasPurchased then
 		-- Set owned attrs immediately so SideUI boost icons update without waiting
 		-- for UserOwnsGamePassAsync to catch up after the purchase prompt closes.
 		applyPurchasedGamePassAttributes(player, gamePassId)
@@ -583,7 +606,36 @@ MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, gameP
 			applyGamePassEffects(player, true)
 		end)
 		notifyPurchaseComplete(player)
+		return
 	end
+
+	-- Already-owned prompts finish with wasPurchased=false ("You already own this item").
+	-- Still verify + persist so Autocollect / store pads stop re-prompting.
+	task.spawn(function()
+		if not player.Parent then
+			return
+		end
+		if StoreAccess.hasEntitledGamePass(player, gamePassId) then
+			applyPurchasedGamePassAttributes(player, gamePassId)
+			applyGamePassEffects(player, true)
+			return
+		end
+		if not StoreAccess.shouldTrustMarketplaceOwnership(player) then
+			return
+		end
+		local ok, owned = pcall(function()
+			return MarketplaceService:UserOwnsGamePassAsync(player.UserId, gamePassId)
+		end)
+		if not ok then
+			warn("[StoreHandler] already-owned verify failed:", owned)
+			return
+		end
+		if owned == true then
+			applyPurchasedGamePassAttributes(player, gamePassId)
+			PlayerDataService.markGamePassPurchased(player, gamePassId)
+			applyGamePassEffects(player, true)
+		end
+	end)
 end)
 
 -- ── Developer-product receipt handlers ────────────────────────────────────────────

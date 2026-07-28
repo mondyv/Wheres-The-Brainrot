@@ -1966,19 +1966,23 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 
 	pulseConn:Disconnect()
 
+	-- Settle layout once, then fly to a fixed slot (no mid-flight layout jitter).
+	layoutQuestHud()
+	task.wait()
 	local slotAnchor = hudSlotAnchor()
 	local slot = hudSlotPosition()
-	local targetW = if questPanel then questPanel.Size.X.Offset else 300
-	local flyInfo = TweenInfo.new(0.68, Enum.EasingStyle.Cubic, Enum.EasingDirection.InOut)
-	TweenService:Create(dim, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 }):Play()
+	local flyInfo = TweenInfo.new(0.52, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	TweenService:Create(dim, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 }):Play()
+	-- Keep size stable; only slide + rotate into the HUD slot.
 	TweenService:Create(ticket, flyInfo, {
 		AnchorPoint = slotAnchor,
 		Position = slot,
 		Rotation = 0,
-		Size = UDim2.fromOffset(targetW, ticket.Size.Y.Offset),
 	}):Play()
-	TweenService:Create(ticketScale, flyInfo, { Scale = 1 }):Play()
-	task.wait(0.7)
+	local hudMatch = if questPanel then questPanel:FindFirstChild("HudMatchScale") else nil
+	local endScale = if hudMatch and hudMatch:IsA("UIScale") then hudMatch.Scale else 0.94
+	TweenService:Create(ticketScale, flyInfo, { Scale = endScale }):Play()
+	task.wait(0.54)
 
 	if gui.Parent then
 		gui:Destroy()
@@ -1989,6 +1993,13 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 
 	questHudRevealed = true
 	questHoverFlying = false
+	-- Soft handoff — no Back-easing pop that fights the fly landing.
+	if questPanel then
+		local sc = questPanel:FindFirstChild("PanelScale")
+		if sc and sc:IsA("UIScale") then
+			sc.Scale = 1
+		end
+	end
 	refreshQuestHud({ skipRevealGate = true, playAppear = false })
 end
 

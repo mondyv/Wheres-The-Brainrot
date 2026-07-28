@@ -546,12 +546,21 @@ local function closeRevivePanel(declined: boolean)
 	sessionActive = false
 	cancelCountdown()
 
-	-- Tell server first so LoadCharacter starts while the panel tweens out.
+	-- Tell server first so LoadCharacter starts immediately.
 	if declined and reviveDeclinedRE then
 		reviveDeclinedRE:FireServer()
 	end
 
 	local panel = revivePanel
+	-- Decline: snap UI away so respawn isn't gated on the close tween.
+	if declined then
+		panel.Visible = false
+		local scale = getOrAddUIScale(panel)
+		scale.Scale = 1
+		cleanupReviveSession()
+		return
+	end
+
 	animatePanelOut(panel, function()
 		cleanupReviveSession()
 	end)

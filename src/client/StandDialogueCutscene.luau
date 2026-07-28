@@ -506,29 +506,32 @@ local function syncDialogueLayout()
 	local dialogueH = math.clamp(math.floor(vh * (if compact then 0.24 else 0.20)), 80, 156)
 	local choiceH = math.clamp(math.floor(vh * 0.24), 96, 176)
 
-	-- Keep dialogue and choices in separate columns so text never sits under buttons.
-	dialogueBox.AnchorPoint = Vector2.new(0, 1)
-	dialogueBox.Position = UDim2.new(0.03, 0, 0.90, 0)
-	dialogueBox.Size = UDim2.new(if compact then 0.56 else 0.58, 0, 0, dialogueH)
+	-- Keep dialogue box centered (Undertale-style). Choices sit under it.
+	dialogueBox.AnchorPoint = Vector2.new(0.5, 1)
+	dialogueBox.Position = UDim2.new(0.5, 0, 0.90, 0)
+	dialogueBox.Size = UDim2.new(if compact then 0.88 else 0.72, 0, 0, dialogueH)
 
 	if choiceFrame then
-		choiceFrame.AnchorPoint = Vector2.new(1, 0.5)
-		choiceFrame.Position = UDim2.new(0.985, 0, 0.50, 0)
-		choiceFrame.Size = UDim2.new(if compact then 0.38 else 0.30, 0, 0, choiceH)
+		choiceFrame.AnchorPoint = Vector2.new(0.5, 0)
+		choiceFrame.Position = UDim2.new(0.5, 0, 0.915, 0)
+		choiceFrame.Size = UDim2.new(if compact then 0.72 else 0.42, 0, 0, choiceH)
 	end
 
 	dialogueLabel.TextSize = dialogueTextSize
-	UiFonts.ensureTextSizeConstraint(dialogueLabel, dialogueTextSize, math.max(10, dialogueTextSize - 8))
+	UiFonts.applyBodyLabel(dialogueLabel, dialogueTextSize, math.max(10, dialogueTextSize - 8))
 
 	if choiceEnter then
 		choiceEnter.TextSize = buttonTextSize
 		choiceEnter.TextWrapped = true
-		UiFonts.applyButtonLabel(choiceEnter, buttonTextSize, math.max(9, buttonTextSize - 4))
+		-- Same pixel font as dialogue text (Montserrat often fails to resolve here).
+		UiFonts.applyBody(choiceEnter)
+		UiFonts.ensureTextSizeConstraint(choiceEnter :: any, buttonTextSize, math.max(9, buttonTextSize - 4))
 	end
 	if choiceExit then
 		choiceExit.TextSize = buttonTextSize
 		choiceExit.TextWrapped = true
-		UiFonts.applyButtonLabel(choiceExit, buttonTextSize, math.max(9, buttonTextSize - 4))
+		UiFonts.applyBody(choiceExit)
+		UiFonts.ensureTextSizeConstraint(choiceExit :: any, buttonTextSize, math.max(9, buttonTextSize - 4))
 	end
 
 	boxShakeBasePos = dialogueBox.Position
@@ -938,7 +941,17 @@ local function confirmChoice(enter: boolean)
 end
 
 local function ensureGui(): ScreenGui
-	if cutsceneGui and cutsceneGui.Parent and dialogueLabel and choiceEnter and choiceExit and soulMarker and dialogueBox then
+	local STYLE = "center_arcade_v2"
+	if
+		cutsceneGui
+		and cutsceneGui.Parent
+		and cutsceneGui:GetAttribute("Style") == STYLE
+		and dialogueLabel
+		and choiceEnter
+		and choiceExit
+		and soulMarker
+		and dialogueBox
+	then
 		return cutsceneGui
 	end
 	if cutsceneGui then
@@ -954,6 +967,7 @@ local function ensureGui(): ScreenGui
 	gui.IgnoreGuiInset = true
 	gui.DisplayOrder = 950
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui:SetAttribute("Style", STYLE)
 	pcall(function()
 		(gui :: any).ClipToDeviceSafeArea = false
 	end)
@@ -1048,9 +1062,9 @@ local function ensureGui(): ScreenGui
 	local choices = Instance.new("Frame")
 	choices.Name = "Choices"
 	choices.BackgroundTransparency = 1
-	choices.AnchorPoint = Vector2.new(1, 0.5)
-	choices.Position = UDim2.new(0.96, 0, 0.48, 0)
-	choices.Size = UDim2.new(0.24, 0, 0.26, 0)
+	choices.AnchorPoint = Vector2.new(0.5, 0)
+	choices.Position = UDim2.new(0.5, 0, 0.915, 0)
+	choices.Size = UDim2.new(0.42, 0, 0.22, 0)
 	choices.ZIndex = 40
 	choices.Parent = gui
 
@@ -1062,8 +1076,9 @@ local function ensureGui(): ScreenGui
 	enterBtn.TextSize = 18
 	enterBtn.TextWrapped = true
 	enterBtn.ZIndex = 41
-	UiFonts.applyButtonLabel(enterBtn, 18, 11)
 	styleChoiceButton(enterBtn)
+	UiFonts.applyBody(enterBtn)
+	UiFonts.ensureTextSizeConstraint(enterBtn :: any, 18, 11)
 	enterBtn.Parent = choices
 
 	local exitBtn = Instance.new("TextButton")
@@ -1074,8 +1089,9 @@ local function ensureGui(): ScreenGui
 	exitBtn.TextSize = 18
 	exitBtn.TextWrapped = true
 	exitBtn.ZIndex = 41
-	UiFonts.applyButtonLabel(exitBtn, 18, 11)
 	styleChoiceButton(exitBtn)
+	UiFonts.applyBody(exitBtn)
+	UiFonts.ensureTextSizeConstraint(exitBtn :: any, 18, 11)
 	exitBtn.Parent = choices
 
 	local soul = Instance.new("ImageLabel")

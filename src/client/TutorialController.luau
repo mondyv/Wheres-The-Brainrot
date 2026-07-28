@@ -1314,7 +1314,9 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 
 	worldArrowBb = bb
 	worldArrowImg = img
-	setGuideTrailToPart(part, baseOffset)
+	-- Trail aims at the world object itself, not the floating billboard arrow height.
+	local objectOffset = Vector3.new(0, math.max(part.Size.Y * 0.35, 2), 0)
+	setGuideTrailToPart(part, objectOffset)
 
 	-- Continuous sine bob — no tween loop seams / pause between cycles.
 	local phase = 0

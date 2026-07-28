@@ -145,16 +145,31 @@ local function finishDecline(player: Player)
 	if fulfillingByPlayer[player] then
 		return
 	end
-	if not pendingByPlayer[player] then
-		return
+	-- Always clear + force respawn. Don't gate on Health — dead characters can
+	-- linger and Players.RespawnTime makes Decline feel stuck.
+	if pendingByPlayer[player] then
+		clearPending(player)
 	end
-	clearPending(player)
 
-	-- Instant respawn — default Players.RespawnTime (~5s) feels like a softlock on Decline.
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	if not character or not humanoid or humanoid.Health <= 0 then
+	local ok, err = pcall(function()
+		local character = player.Character
+		if character then
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if humanoid and humanoid.Health > 0 then
+				humanoid.Health = 0
+			end
+		end
 		player:LoadCharacter()
+	end)
+	if not ok then
+		warn("[ReviveService] Decline LoadCharacter failed:", err)
+		task.defer(function()
+			if player.Parent then
+				pcall(function()
+					player:LoadCharacter()
+				end)
+			end
+		end)
 	end
 end
 
@@ -376,6 +391,11 @@ function ReviveService.processReceipt(receiptInfo): Enum.ProductPurchaseDecision
 end
 
 function ReviveService.init()
+	-- Decline must never wait on the default ~5s RespawnTime soft-lock.
+	pcall(function()
+		Players.RespawnTime = 0
+	end)
+
 	revivePromptRE = ensureRemoteEvent("RevivePrompt")
 	reviveDeclinedRE = ensureRemoteEvent("ReviveDeclined")
 	reviveCompleteRE = ensureRemoteEvent("ReviveComplete")

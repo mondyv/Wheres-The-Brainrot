@@ -2339,7 +2339,7 @@ local function finishTutorial()
 	-- One confetti burst for the whole tutorial (guarded inside fireConfettiAndShake).
 	fireConfettiAndShake()
 	task.defer(function()
-		TopNotifController.showBroadcast("Tutorial completed!")
+		TopNotifController.showBroadcast("Tutorial completed! You got a Starter Lucky Block!")
 	end)
 	local rf = getCompleteRemote()
 	if rf then

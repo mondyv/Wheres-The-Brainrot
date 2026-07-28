@@ -49,6 +49,8 @@ local DROP_SHAKE_DURATION = 0.38
 
 local purchaseShakeStepBound = false
 local purchaseShakeEndAt = 0.0
+local purchaseShakeDuration = 0.42
+local purchaseShakeAmp = 0.14
 local PURCHASE_SHAKE_STEP = "PurchaseCelebrationCameraShake"
 local PURCHASE_SHAKE_POS = 0.14
 local PURCHASE_SHAKE_SPEED = 13
@@ -247,11 +249,10 @@ local function stopPurchaseCameraShake()
 	end
 end
 
-local function startPurchaseCameraShake()
-	if ClientSFXVolume.getVolume() <= 0 then
-		return
-	end
-	purchaseShakeEndAt = os.clock() + PURCHASE_SHAKE_DURATION
+local function startPurchaseCameraShake(durationSec: number?, amp: number?)
+	purchaseShakeDuration = math.max(0.15, if typeof(durationSec) == "number" then durationSec else PURCHASE_SHAKE_DURATION)
+	purchaseShakeAmp = if typeof(amp) == "number" and amp > 0 then amp else PURCHASE_SHAKE_POS
+	purchaseShakeEndAt = os.clock() + purchaseShakeDuration
 	if purchaseShakeStepBound then
 		return
 	end
@@ -265,13 +266,16 @@ local function startPurchaseCameraShake()
 		if not hum then
 			return
 		end
-		local fade = math.clamp((purchaseShakeEndAt - os.clock()) / PURCHASE_SHAKE_DURATION, 0, 1)
-		local amp = PURCHASE_SHAKE_POS * fade
+		local remaining = purchaseShakeEndAt - os.clock()
+		local elapsed = purchaseShakeDuration - remaining
+		local build = math.clamp(elapsed / math.max(purchaseShakeDuration * 0.45, 0.05), 0, 1)
+		local fade = math.clamp(remaining / purchaseShakeDuration, 0, 1)
+		local ampNow = purchaseShakeAmp * math.max(build, fade * 0.35)
 		local t = os.clock() * PURCHASE_SHAKE_SPEED
 		hum.CameraOffset = Vector3.new(
-			(math.noise(t, 0.5, 0) - 0.5) * 2 * amp,
-			(math.noise(0.5, t, 1.5) - 0.5) * 2 * amp,
-			(math.noise(t, 2.5, 0.5) - 0.5) * 2 * amp * 0.35
+			(math.noise(t, 0.5, 0) - 0.5) * 2 * ampNow,
+			(math.noise(0.5, t, 1.5) - 0.5) * 2 * ampNow,
+			(math.noise(t, 2.5, 0.5) - 0.5) * 2 * ampNow * 0.35
 		)
 	end)
 end
@@ -487,7 +491,16 @@ function GameSoundEffects.playPurchase()
 end
 
 function GameSoundEffects.playPurchaseShake()
-	startPurchaseCameraShake()
+	startPurchaseCameraShake(nil, nil)
+end
+
+-- Continuous camera shake while a lucky block is winding up / shaking.
+function GameSoundEffects.playLuckyBlockShake(durationSec: number)
+	startPurchaseCameraShake(math.max(0.2, durationSec), 0.11)
+end
+
+function GameSoundEffects.stopLuckyBlockShake()
+	stopPurchaseCameraShake()
 end
 
 function GameSoundEffects.playUpgrade()

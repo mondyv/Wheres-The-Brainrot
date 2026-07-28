@@ -152,6 +152,8 @@ local COMMAND_ALIASES: { [string]: string } = {
 	teleport = "tp",
 	["goto"] = "tp",
 	spec = "spectate",
+	fspectate = "forcespectate",
+	makespectate = "forcespectate",
 	power = "setpower",
 	setforce = "setpower",
 	carry = "setcarry",
@@ -170,6 +172,7 @@ local COMMAND_HINTS: { [string]: string } = {
 	tp = "Teleport to a player, or teleport players to someone",
 	tpland = "Teleport players to a land revive/spawn pad",
 	spectate = "Spectate a player (X to exit)",
+	forcespectate = "Force a player to spectate another player",
 	unspectate = "Stop spectating",
 	serverspawn = "Force a rarity spawn on this server",
 	globalspawn = "Force a rarity spawn on every server",
@@ -377,7 +380,8 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "addinventory me NoobiniPizzanini", hint = "Give brainrot (equipped)" },
 		{ fill = "addinventory me NoobiniPizzanini 3 golden 5", hint = "Count, mutation, level" },
 		{ fill = "addcash me 1000000", hint = COMMAND_HINTS.addcash },
-		{ fill = 'addluckyblock me "star rainbow"', hint = COMMAND_HINTS.addluckyblock },
+		{ fill = 'addluckyblock me "Starter Lucky Block"', hint = COMMAND_HINTS.addluckyblock },
+		{ fill = 'addluckyblock me "star rainbow"', hint = "Grant star rainbow lucky block" },
 		{ fill = "resetdata me", hint = COMMAND_HINTS.resetdata },
 		{ fill = "rebirth", hint = "Force rebirth yourself" },
 		{ fill = "rebirth me", hint = COMMAND_HINTS.rebirth },
@@ -402,6 +406,8 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "playtutorial", hint = COMMAND_HINTS.playtutorial },
 		{ fill = "spectate PlayerName", hint = COMMAND_HINTS.spectate },
 		{ fill = "spectate off", hint = "Stop spectating" },
+		{ fill = "forcespectate PlayerA PlayerB", hint = COMMAND_HINTS.forcespectate },
+		{ fill = "forcespectate PlayerA off", hint = "Clear forced spectate" },
 		{ fill = "fly", hint = COMMAND_HINTS.fly },
 	}
 end
@@ -459,11 +465,12 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 		or cmdName == "setreach"
 		or cmdName == "tp"
 		or cmdName == "spectate"
+		or cmdName == "forcespectate"
 	then
 		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
 			for _, playerName in filterByPrefix(catalog.players, partial) do
-				if playerName ~= "all" or (cmdName ~= "kick" and cmdName ~= "ban" and cmdName ~= "unban" and cmdName ~= "spectate") then
+				if playerName ~= "all" or (cmdName ~= "kick" and cmdName ~= "ban" and cmdName ~= "unban" and cmdName ~= "spectate" and cmdName ~= "forcespectate") then
 					pushSuggestion(out, prefix .. playerName, "player target")
 				end
 			end
@@ -475,6 +482,18 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 					if startsWith(sample, partial) then
 						pushSuggestion(out, prefix .. sample, "stop spectating")
 					end
+				end
+			end
+		elseif cmdName == "forcespectate" and argIndex == 2 and (#tokens > 2 or (endsWithSpace and #tokens >= 2)) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(2, #tokens - 1))
+			for _, playerName in filterByPrefix(catalog.players, partial) do
+				if playerName ~= "all" then
+					pushSuggestion(out, prefix .. playerName, "spectate target")
+				end
+			end
+			for _, sample in { "off", "stop" } do
+				if startsWith(sample, partial) then
+					pushSuggestion(out, prefix .. sample, "clear spectate")
 				end
 			end
 		end

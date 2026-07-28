@@ -3,12 +3,14 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local TutorialConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TutorialConfig"))
 
 local GRANT_AMOUNT = TutorialConfig.STARTER_CASH
+local STARTER_LUCKY_BLOCK = TutorialConfig.STARTER_LUCKY_BLOCK
 
 local function getFolder(): Folder
 	local existing = ReplicatedStorage:FindFirstChild("TutorialRemotes")
@@ -31,6 +33,28 @@ local function ensureRF(name: string): RemoteFunction
 	rf.Name = name
 	rf.Parent = folder
 	return rf
+end
+
+local function grantStarterLuckyBlock(player: Player)
+	local folder = ServerStorage:FindFirstChild("LuckyBlockInternal")
+	local bf = folder and folder:FindFirstChild("GrantLuckyBlock")
+	if not (bf and bf:IsA("BindableFunction")) then
+		warn("[Tutorial] GrantLuckyBlock missing — starter lucky block skipped")
+		return
+	end
+	local ok, success = pcall(function()
+		return (bf :: BindableFunction):Invoke(player, STARTER_LUCKY_BLOCK, {
+			equip = true,
+			variant = "basic",
+		})
+	end)
+	if not ok then
+		warn("[Tutorial] GrantLuckyBlock error:", success)
+		return
+	end
+	if success ~= true then
+		warn("[Tutorial] GrantLuckyBlock returned false for", player.Name)
+	end
 end
 
 local function ensureTutorialAttrs(player: Player)
@@ -87,8 +111,12 @@ completeRF.OnServerInvoke = function(player: Player): boolean
 		return false
 	end
 	PlayerDataService.waitUntilLoaded(player)
+	local alreadyDone = player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true
 	PlayerDataService.setTutorialCompleted(player, true)
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR, false)
+	if not alreadyDone then
+		grantStarterLuckyBlock(player)
+	end
 	return true
 end
 

@@ -169,11 +169,12 @@ local function handleShakeStart(payload: any)
 		end
 	end
 	startAura()
+	GameSoundEffects.playLuckyBlockShake(duration)
 	task.delay(duration, function()
 		stopAura()
 		stopShake()
-		-- Drop shake camera shake comes from the standard harvest-drop FX once the brainrot is granted;
-		-- play a one-shot purchase shake so the player feels the reveal.
+		GameSoundEffects.stopLuckyBlockShake()
+		-- One-shot punch at the reveal.
 		GameSoundEffects.playPurchaseShake()
 	end)
 end

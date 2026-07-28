@@ -75,8 +75,34 @@ end
 
 local function splitWords(raw: string): { string }
 	local out: { string } = {}
-	for token in string.gmatch(raw, "%S+") do
-		table.insert(out, token)
+	local i = 1
+	local n = #raw
+	while i <= n do
+		while i <= n and string.match(string.sub(raw, i, i), "%s") do
+			i += 1
+		end
+		if i > n then
+			break
+		end
+		local c = string.sub(raw, i, i)
+		if c == '"' or c == "'" then
+			local quote = c
+			i += 1
+			local startAt = i
+			while i <= n and string.sub(raw, i, i) ~= quote do
+				i += 1
+			end
+			table.insert(out, string.sub(raw, startAt, i - 1))
+			if i <= n then
+				i += 1
+			end
+		else
+			local startAt = i
+			while i <= n and not string.match(string.sub(raw, i, i), "%s") do
+				i += 1
+			end
+			table.insert(out, string.sub(raw, startAt, i - 1))
+		end
 	end
 	return out
 end
@@ -165,6 +191,29 @@ local LUCKY_BLOCK_NAMES = {
 	"Secret Lucky Block",
 }
 
+local function resolveLuckyBlockName(args: { string }, startIndex: number): (string?, number, string?)
+	if not args[startIndex] then
+		return nil, startIndex, "Missing lucky block name."
+	end
+	-- Exact / quoted single token first.
+	local first = args[startIndex]
+	for _, name in LUCKY_BLOCK_NAMES do
+		if string.lower(name) == string.lower(first) or normalizeKey(name) == normalizeKey(first) then
+			return name, startIndex + 1, nil
+		end
+	end
+	-- Join remaining words until a catalog name matches (unquoted "Starter Lucky Block").
+	for endIndex = startIndex, #args do
+		local joined = table.concat(args, " ", startIndex, endIndex)
+		for _, name in LUCKY_BLOCK_NAMES do
+			if string.lower(name) == string.lower(joined) or normalizeKey(name) == normalizeKey(joined) then
+				return name, endIndex + 1, nil
+			end
+		end
+	end
+	return nil, startIndex, string.format("Unknown lucky block '%s'. Try: Starter Lucky Block, star rainbow, …", first)
+end
+
 local MUTATION_NAMES = { "normal", "golden", "diamond", "lava", "galaxy", "rainbow" }
 
 local function buildAutocompleteCatalog(sender: Player)
@@ -198,7 +247,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, setcarry, setreach, tp, tpland, spectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverrestart, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
+			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverrestart, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -592,7 +641,7 @@ commands.giftpass = {
 }
 
 commands.addluckyblock = {
-	usage = "addluckyblock <player|me|all> <blockName> [count] [variant]",
+	usage = 'addluckyblock <player|me|all> "<blockName>" [count] [variant]',
 	description = "Grant a lucky block tool.",
 	run = function(sender: Player, args: { string }): (boolean, string)
 		if not args[1] or not args[2] then
@@ -604,14 +653,19 @@ commands.addluckyblock = {
 			return false, targetErr or "No target."
 		end
 
-		local blockName = args[2]
+		local blockName, nextIndex, blockErr = resolveLuckyBlockName(args, 2)
+		if not blockName then
+			return false, blockErr or ("Usage: " .. commands.addluckyblock.usage)
+		end
+
 		local count = 1
 		local variant: string? = nil
-		if tonumber(args[3]) then
-			count = math.clamp(math.floor(tonumber(args[3]) :: number), 1, MAX_GRANT_COUNT)
-			variant = args[4]
-		else
-			variant = args[3]
+		local countArg = args[nextIndex]
+		if tonumber(countArg) then
+			count = math.clamp(math.floor(tonumber(countArg) :: number), 1, MAX_GRANT_COUNT)
+			variant = args[nextIndex + 1]
+		elseif typeof(countArg) == "string" and countArg ~= "" then
+			variant = countArg
 		end
 
 		local grant = waitForLuckyBlockBindable("GrantLuckyBlock")
@@ -623,16 +677,23 @@ commands.addluckyblock = {
 		for _, target in targets do
 			PlayerDataService.waitUntilLoaded(target)
 			for _ = 1, count do
-				local ok = (grant :: BindableFunction):Invoke(target, blockName, {
-					equip = true,
-					variant = variant,
-				})
-				if ok then
+				local invokeOk, ok = pcall(function()
+					return (grant :: BindableFunction):Invoke(target, blockName, {
+						equip = true,
+						variant = variant,
+					})
+				end)
+				if not invokeOk then
+					warn("[AdminCommands] addluckyblock invoke failed:", ok)
+				elseif ok then
 					granted += 1
 				end
 			end
 		end
 
+		if granted <= 0 then
+			return false, string.format("Failed to grant '%s' (check Backpack / Lucky Blocks templates).", blockName)
+		end
 		return true, string.format("Granted %d lucky block(s) (%s) to %d player(s).", granted, blockName, #targets)
 	end,
 }
@@ -1396,11 +1457,50 @@ commands.unspectate = {
 	end,
 }
 
+commands.forcespectate = {
+	usage = "forcespectate <watcher> <target> | forcespectate <watcher> off",
+	description = "Force a player to spectate another player (or clear their spectate).",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		if not args[1] or not args[2] then
+			return false, "Usage: " .. commands.forcespectate.usage
+		end
+		local watchers, watcherErr = resolveTargets(sender, args[1], false)
+		if not watchers then
+			return false, watcherErr or "Watcher not found."
+		end
+		if #watchers ~= 1 then
+			return false, "forcespectate only supports one watcher at a time."
+		end
+		local watcher = watchers[1]
+		local token = string.lower(args[2])
+		if token == "off" or token == "stop" or token == "end" or token == "none" then
+			watcher:SetAttribute("AdminSpectateUserId", nil)
+			return true, string.format("Cleared spectate for %s.", watcher.Name)
+		end
+		local targets, targetErr = resolveTargets(sender, args[2], false)
+		if not targets then
+			return false, targetErr or "Target not found."
+		end
+		if #targets ~= 1 then
+			return false, "forcespectate only supports one target at a time."
+		end
+		local target = targets[1]
+		if target == watcher then
+			watcher:SetAttribute("AdminSpectateUserId", nil)
+			return true, string.format("Cleared spectate for %s.", watcher.Name)
+		end
+		if not target.Character or not target.Character:FindFirstChildOfClass("Humanoid") then
+			return false, string.format("%s has no character to spectate.", target.Name)
+		end
+		watcher:SetAttribute("AdminFlyEnabled", nil)
+		watcher:SetAttribute("AdminSpectateUserId", target.UserId)
+		return true, string.format("%s is now spectating %s.", watcher.Name, target.Name)
+	end,
+}
+commands.fspectate = commands.forcespectate
+commands.makespectate = commands.forcespectate
+
 local function runCommand(sender: Player, raw: any): { ok: boolean, message: string }
-	if not AdminAllowlist.isPlayerAllowed(sender) then
-		warn("[AdminCommands] blocked admin invoke from", sender.Name, sender.UserId)
-		return { ok = false, message = "You are not allowed to use admin commands." }
-	end
 	if typeof(raw) ~= "string" or raw == "" then
 		return { ok = false, message = "Type 'help' for commands." }
 	end
@@ -1408,6 +1508,22 @@ local function runCommand(sender: Player, raw: any): { ok: boolean, message: str
 	local words = splitWords(raw)
 	local commandName = string.lower(words[1] or "")
 	table.remove(words, 1)
+
+	-- Anyone can clear their own forced/self spectate (forcespectate targets may not be admins).
+	if commandName == "unspectate" or (commandName == "spectate" and words[1] and ({
+		off = true,
+		stop = true,
+		["end"] = true,
+		none = true,
+	})[string.lower(words[1])]) then
+		sender:SetAttribute("AdminSpectateUserId", nil)
+		return { ok = true, message = "Spectate ended." }
+	end
+
+	if not AdminAllowlist.isPlayerAllowed(sender) then
+		warn("[AdminCommands] blocked admin invoke from", sender.Name, sender.UserId)
+		return { ok = false, message = "You are not allowed to use admin commands." }
+	end
 
 	local command = commands[commandName]
 	if not command then

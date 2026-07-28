@@ -28,6 +28,7 @@ M.PANEL_MOBILE_SCALE = 0.92
 M.PANEL_MOBILE_GAP_ABOVE_RIGHT = 8
 M.PANEL_PC_SCALE = 1.08
 M.STARTER_CASH = 500
+M.STARTER_LUCKY_BLOCK = "Starter Lucky Block"
 M.GO_TO_BASE_DIST = 48
 -- 0 = unlimited (must stay visible across the whole spawn safezone).
 M.WORLD_ARROW_MAX_DISTANCE = 0

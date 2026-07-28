@@ -3370,12 +3370,24 @@ local function boot(character)
 		return st.isAirborne
 	end
 
+	function st.hasFloorSupportForSwing(): boolean
+		if st.humanoid.FloorMaterial ~= Enum.Material.Air then
+			return true
+		end
+		-- Land meshes often report FloorMaterial=Air while you're clearly standing.
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = { st.character }
+		local hit = workspace:Raycast(st.hrp.Position, Vector3.new(0, -5.25, 0), params)
+		return hit ~= nil
+	end
+
 	function st.isGroundedForSwing()
 		if st.isSwinging or st.isLaunched or st.isAirborneForSwing() then
 			return false
 		end
-		if st.humanoid.FloorMaterial == Enum.Material.Air then
-			return false
+		if st.hasFloorSupportForSwing() then
+			return true
 		end
 
 		local state = st.humanoid:GetState()
@@ -3386,13 +3398,18 @@ local function boot(character)
 	end
 
 	function st.getSwingAttachLimits()
-		if st.isAirborneForSwing() then
-			return getSwingRange(), C.AIRBORNE_TARGET_LOOK_DOT, C.TARGET_SCREEN_RADIUS_LIMIT
+		local range = getSwingRange()
+		if st.isAirborneForSwing() and not st.hasFloorSupportForSwing() then
+			return range, C.AIRBORNE_TARGET_LOOK_DOT, C.TARGET_SCREEN_RADIUS_LIMIT
 		end
-		if st.isGroundedForSwing() then
-			return getSwingRange(), C.GROUNDED_TARGET_LOOK_DOT, C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT
-		end
-		return nil
+		-- Standing / land / ambiguous — NEVER return nil (that forced jump-then-grapple).
+		return range, C.GROUNDED_TARGET_LOOK_DOT, C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT
+	end
+
+	-- Press latch uses the looser air screen gate so land standing grapples first try.
+	function st.getSwingPressAttachLimits()
+		local range, lookDot, _screen = st.getSwingAttachLimits()
+		return range, lookDot, C.TARGET_SCREEN_RADIUS_LIMIT
 	end
 
 	function st.canAttachToSwingTarget(target, attachLimit, minLookDot, maxScreenRadius)
@@ -4683,7 +4700,7 @@ local function boot(character)
 			return
 		end
 
-		local attachLimit, minLookDot, maxScreenRadius = st.getSwingAttachLimits()
+		local attachLimit, minLookDot, maxScreenRadius = st.getSwingPressAttachLimits()
 		if not attachLimit then
 			return
 		end
@@ -4705,12 +4722,8 @@ local function boot(character)
 		local baseRopeMax = getRopeMaxLength()
 		local ropeRestLength = getRopeRestLength()
 
-		local airborneAttach = st.isAirborneForSwing()
-		local groundedAttach = st.isGroundedForSwing()
-
-		if not airborneAttach and not groundedAttach then
-			return
-		end
+		-- Don't gate on Running vs Jumping vs FloorMaterial quirks — land meshes desync those.
+		-- Distance + canAttach already validated the vine.
 
 		st.releaseStyle.cancel()
 
@@ -5112,14 +5125,13 @@ local function boot(character)
 			return
 		end
 
-		local maxDistance, lookDot, screenLimit = st.getSwingAttachLimits()
+		local maxDistance, lookDot, screenLimit = st.getSwingPressAttachLimits()
 		if not maxDistance then
 			return
 		end
-		local groundedAttempt = st.isGroundedForSwing()
+		local groundedAttempt = st.isGroundedForSwing() or st.hasFloorSupportForSwing()
 
-		-- Live pick on press — don't depend only on the last visual scan tick
-		-- (ground scans are slower and made grounded latch feel like "jump first").
+		-- Live pick on press — don't depend only on the last visual scan tick.
 		local target = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
 		if not target and st.scannedVisualTarget and st.scannedVisualCanSwing then
 			if st.canAttachToSwingTarget(st.scannedVisualTarget, maxDistance, lookDot, screenLimit) then
@@ -5134,6 +5146,7 @@ local function boot(character)
 		end
 
 		st.lastTryClock = now
+		st.humanoid.Jump = false
 		st.startSwing(target)
 	end
 
@@ -5236,30 +5249,6 @@ local function boot(character)
 				return
 			end
 			st.mobileJumpHoldUntil = now + C.MOBILE_JUMP_HOLD_GRACE
-
-			-- Only steal the jump button for swinging when airborne / already swinging /
-			-- a ready vine is latched. On the ground with no target, allow a real jump.
-			local stealForSwing = st.isSwinging
-				or st.isAirborneForSwing()
-				or (st.scannedVisualCanSwing == true and st.scannedVisualTarget ~= nil)
-			if not stealForSwing then
-				-- Still attempt a live ground latch before giving up to a normal jump.
-				local maxDistance, lookDot, screenLimit = st.getSwingAttachLimits()
-				local liveTarget = if maxDistance
-					then st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
-					else nil
-				if liveTarget then
-					st.humanoid.Jump = false
-					st.noteJumpPressed()
-					if not st.isToggleAttachBlocked() then
-						st.tryAttach()
-					end
-					return
-				end
-				st.noteJumpPressed()
-				return
-			end
-			st.humanoid.Jump = false
 		end
 
 		st.noteJumpPressed()
@@ -5277,15 +5266,14 @@ local function boot(character)
 			return
 		end
 
-		-- Grounded latch: cancel the hop when a vine is actually attachable.
-		if st.isGroundedForSwing() then
-			local maxDistance, lookDot, screenLimit = st.getSwingAttachLimits()
-			local liveTarget = if maxDistance
-				then st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
-				else nil
-			if liveTarget then
-				st.humanoid.Jump = false
-			end
+		-- If a vine is latchable, steal this press (ground OR air). No jump-first required.
+		local maxDistance, lookDot, screenLimit = st.getSwingPressAttachLimits()
+		local liveTarget = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
+		if liveTarget then
+			st.humanoid.Jump = false
+		elseif touchOnly and not st.isAirborneForSwing() then
+			-- Mobile ground with no vine: allow a real jump.
+			return
 		elseif st.isAirborneForSwing() then
 			st.humanoid.Jump = false
 		end

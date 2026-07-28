@@ -103,6 +103,17 @@ function M.restorePlayerMovement()
 	if hum then
 		hum.PlatformStand = false
 		hum.AutoRotate = true
+		-- Roblox hides JumpButton while jump stats are zeroed — always leave a usable value.
+		if hum.UseJumpPower then
+			if hum.JumpPower <= 0 then
+				hum.JumpPower = 50
+			end
+		elseif hum.JumpHeight <= 0 then
+			hum.JumpHeight = 7.2
+		end
+		if hum.JumpHeight <= 0 then
+			hum.JumpHeight = 7.2
+		end
 	end
 end
 

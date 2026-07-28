@@ -1496,13 +1496,13 @@ end
 local function lockPlayerMovement()
 	local handoff = FloatingClaimCutscene.takeMoveLockState()
 	if handoff then
-		if typeof(handoff.walkSpeed) == "number" then
+		if typeof(handoff.walkSpeed) == "number" and handoff.walkSpeed > 0.05 then
 			savedWalkSpeed = handoff.walkSpeed
 		end
-		if typeof(handoff.jumpPower) == "number" then
+		if typeof(handoff.jumpPower) == "number" and handoff.jumpPower > 0 then
 			savedJumpPower = handoff.jumpPower
 		end
-		if typeof(handoff.jumpHeight) == "number" then
+		if typeof(handoff.jumpHeight) == "number" and handoff.jumpHeight > 0 then
 			savedJumpHeight = handoff.jumpHeight
 		end
 		if typeof(handoff.useJumpPower) == "boolean" then
@@ -1519,7 +1519,7 @@ local function lockPlayerMovement()
 		if savedWalkSpeed == nil then
 			-- Don't capture a zeroed speed from a prior cutscene freeze.
 			savedWalkSpeed = if hum.WalkSpeed > 0.05 then hum.WalkSpeed else 16
-			savedJumpPower = hum.JumpPower
+			savedJumpPower = if hum.JumpPower > 0 then hum.JumpPower else 50
 			savedJumpHeight = if hum.JumpHeight > 0 then hum.JumpHeight else 7.2
 			savedUseJumpPower = hum.UseJumpPower
 			savedAutoRotate = hum.AutoRotate
@@ -1577,29 +1577,53 @@ local function unlockPlayerMovement()
 	end)
 	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 	if hum then
-		if typeof(savedWalkSpeed) == "number" then
+		if typeof(savedWalkSpeed) == "number" and savedWalkSpeed > 0.05 then
 			hum.WalkSpeed = savedWalkSpeed
+		elseif hum.WalkSpeed <= 0.05 then
+			hum.WalkSpeed = 16
 		end
 		if typeof(savedUseJumpPower) == "boolean" then
 			hum.UseJumpPower = savedUseJumpPower
 		end
+		-- Never leave jump at 0 — Roblox hides the mobile JumpButton when both are zeroed.
 		if typeof(savedJumpPower) == "number" then
-			hum.JumpPower = savedJumpPower
+			hum.JumpPower = if savedJumpPower > 0 then savedJumpPower else 50
+		elseif hum.UseJumpPower and hum.JumpPower <= 0 then
+			hum.JumpPower = 50
 		end
 		if typeof(savedJumpHeight) == "number" then
-			hum.JumpHeight = savedJumpHeight
+			hum.JumpHeight = if savedJumpHeight > 0 then savedJumpHeight else 7.2
 		elseif hum.JumpHeight <= 0 then
 			hum.JumpHeight = 7.2
 		end
 		if typeof(savedAutoRotate) == "boolean" then
 			hum.AutoRotate = savedAutoRotate
+		else
+			hum.AutoRotate = true
 		end
+		hum.PlatformStand = false
 	end
 	savedWalkSpeed = nil
 	savedJumpPower = nil
 	savedJumpHeight = nil
 	savedUseJumpPower = nil
 	savedAutoRotate = nil
+end
+
+local function restoreMobileControlsAfterSpider()
+	unlockPlayerMovement()
+	MobileTouchGate.ensureTouchControlsVisible(true)
+	MobileTouchGate.restorePlayerMovement()
+	-- HUD slide-in can cover TouchGui again a beat later — re-assert jump.
+	task.delay(0.35, function()
+		unlockPlayerMovement()
+		MobileTouchGate.ensureTouchControlsVisible(true)
+		MobileTouchGate.restorePlayerMovement()
+	end)
+	task.delay(0.85, function()
+		MobileTouchGate.ensureTouchControlsVisible(true)
+		MobileTouchGate.restorePlayerMovement()
+	end)
 end
 
 local function restoreCamera()
@@ -1610,16 +1634,13 @@ local function restoreCamera()
 		for _, d in cutsceneGui:GetDescendants() do
 			if d:IsA("GuiObject") then
 				d.Active = false
+				d.Visible = false
 			end
 		end
 	end
 	local cam = Workspace.CurrentCamera
 	if not cam then
-		unlockPlayerMovement()
-		task.defer(function()
-			MobileTouchGate.ensureTouchControlsVisible(true)
-			MobileTouchGate.restorePlayerMovement()
-		end)
+		restoreMobileControlsAfterSpider()
 		return
 	end
 	local goalFov = if savedFov > 0 then savedFov else defaultFov
@@ -1635,12 +1656,7 @@ local function restoreCamera()
 	end
 	savedCameraType = nil
 	savedCameraSubject = nil
-	unlockPlayerMovement()
-	task.defer(function()
-		MobileTouchGate.ensureTouchControlsVisible(true)
-		MobileTouchGate.restorePlayerMovement()
-		unlockPlayerMovement()
-	end)
+	restoreMobileControlsAfterSpider()
 end
 
 local function pulseCameraShake(duration: number, amp: number)
@@ -2093,10 +2109,18 @@ local function finishEncounter(spider: Model?, web: Model?, didHideHud: boolean?
 	forceRestoreBgm()
 	clearPostFx()
 	animateLetterboxOut()
+	if cutsceneGui then
+		cutsceneGui.Enabled = false
+	end
 	restoreCamera()
 	if didHideHud ~= false then
 		GameplayUiVisibility.show()
 	end
+	-- HUD restore can raise Main over TouchGui — re-assert jump after it lands.
+	task.defer(function()
+		MobileTouchGate.ensureTouchControlsVisible(true)
+		MobileTouchGate.restorePlayerMovement()
+	end)
 	BushHoldInteraction.setBushSearchLocked(false)
 
 	if spider and spider.Parent then
@@ -2618,6 +2642,14 @@ end
 
 function BushSpiderEncounterController.init()
 	MobileTouchGate.init()
+	GameplayUiVisibility.onRestored(function()
+		-- After any HUD slide-in that followed the spider hide, keep jump visible.
+		if encounterActive then
+			return
+		end
+		MobileTouchGate.ensureTouchControlsVisible(true)
+		MobileTouchGate.restorePlayerMovement()
+	end)
 
 	player.CharacterAdded:Connect(function()
 		clearSpiderEncounterCharacterFx()

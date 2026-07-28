@@ -546,14 +546,15 @@ local function closeRevivePanel(declined: boolean)
 	sessionActive = false
 	cancelCountdown()
 
+	-- Tell server first so LoadCharacter starts while the panel tweens out.
+	if declined and reviveDeclinedRE then
+		reviveDeclinedRE:FireServer()
+	end
+
 	local panel = revivePanel
 	animatePanelOut(panel, function()
 		cleanupReviveSession()
 	end)
-
-	if declined and reviveDeclinedRE then
-		reviveDeclinedRE:FireServer()
-	end
 end
 
 local function startCountdown(duration: number)

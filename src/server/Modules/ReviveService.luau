@@ -3,7 +3,7 @@
 	Revive flow (server module):
 	• Tracks last good land while alive (death Y/ragdoll can miss hitboxes).
 	• On death: store land + spawn CFrame, prompt client with that land's product.
-	• Decline / timeout: clear pending — player stays on normal plot respawn.
+	• Decline / timeout: clear pending and LoadCharacter immediately (no RespawnTime wait).
 	• Dev product receipt: LoadCharacter / teleport onto that land's Spawn.
 --]]
 
@@ -149,6 +149,13 @@ local function finishDecline(player: Player)
 		return
 	end
 	clearPending(player)
+
+	-- Instant respawn — default Players.RespawnTime (~5s) feels like a softlock on Decline.
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not character or not humanoid or humanoid.Health <= 0 then
+		player:LoadCharacter()
+	end
 end
 
 local function applyTeleportWithRetries(player: Player, character: Model, spawnCf: CFrame)

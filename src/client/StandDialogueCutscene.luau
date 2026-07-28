@@ -830,8 +830,6 @@ local function startShake()
 	end)
 end
 
-local updateChoiceVisuals: () -> ()
-
 local function stopInput()
 	pcall(function()
 		ContextActionService:UnbindAction(SELECT_ACTION)

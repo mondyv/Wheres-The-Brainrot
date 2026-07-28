@@ -442,7 +442,7 @@ local function softPrewarmAhead()
 		local ahead = (hrp :: BasePart).Position + horiz.Unit * STREAM_AHEAD_STUDS
 		task.spawn(function()
 			local ok, err = pcall(function()
-				Workspace:RequestStreamAroundAsync(ahead)
+				player:RequestStreamAroundAsync(ahead)
 			end)
 			if not ok then
 				warn("[GrassCullController] RequestStreamAroundAsync failed:", err)

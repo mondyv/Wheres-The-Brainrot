@@ -16,12 +16,12 @@ local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local SpawnAreaWarmup = {}
 
-local function streamAround(position: Vector3)
+local function streamAround(player: Player, position: Vector3)
 	if not Workspace.StreamingEnabled then
 		return
 	end
 	pcall(function()
-		Workspace:RequestStreamAroundAsync(position)
+		player:RequestStreamAroundAsync(position)
 	end)
 end
 
@@ -34,7 +34,7 @@ function SpawnAreaWarmup.runAsync()
 	local hrp = char:WaitForChild("HumanoidRootPart", 15)
 	local center = if hrp and hrp:IsA("BasePart") then (hrp :: BasePart).Position else Vector3.zero
 	if hrp and hrp:IsA("BasePart") then
-		streamAround(center)
+		streamAround(player, center)
 	end
 
 	-- Only the player's assigned plot — not every plot / red wall sample.
@@ -44,7 +44,7 @@ function SpawnAreaWarmup.runAsync()
 			return folder:GetPivot()
 		end)
 		if okPivot and typeof(folderPivot) == "CFrame" then
-			streamAround((folderPivot :: CFrame).Position)
+			streamAround(player, (folderPivot :: CFrame).Position)
 		end
 
 		local userId = player.UserId
@@ -54,7 +54,7 @@ function SpawnAreaWarmup.runAsync()
 					return plot:GetPivot()
 				end)
 				if ok and typeof(pivot) == "CFrame" then
-					streamAround((pivot :: CFrame).Position)
+					streamAround(player, (pivot :: CFrame).Position)
 				end
 				break
 			end

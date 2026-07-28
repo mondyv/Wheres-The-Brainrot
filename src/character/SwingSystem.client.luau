@@ -574,6 +574,11 @@ local function getSwingRange()
 	return math.clamp(C.SWING_RANGE * (0.9 + (powerScale - 1) * 0.25), 65, 280)
 end
 
+-- Latch/UI ready range: never farther than the rope can actually span.
+local function getLatchRange()
+	return math.min(getSwingRange(), C.ROPE_ABSOLUTE_MAX)
+end
+
 local function getRopeMaxLength()
 	return math.clamp(
 		C.ROPE_MAX_LENGTH + math.max(getSwingRange() - C.SWING_RANGE, 0) * 0.35,
@@ -2929,7 +2934,7 @@ local function boot(character)
 	end
 
 	function st.getAirborneTargetUiRange()
-			return math.clamp(getSwingRange() + C.AIRBORNE_TARGET_UI_EXTRA, 75, 420)
+		return getLatchRange()
 	end
 
 	function st.targetDistanceAndPoint(target)
@@ -3431,7 +3436,7 @@ local function boot(character)
 	end
 
 	function st.getSwingAttachLimits()
-		local range = getSwingRange()
+		local range = getLatchRange()
 		if st.isAirborneForSwing() and not st.hasFloorSupportForSwing() then
 			return range, C.AIRBORNE_TARGET_LOOK_DOT, C.TARGET_SCREEN_RADIUS_LIMIT
 		end
@@ -3439,9 +3444,9 @@ local function boot(character)
 		return range, C.GROUNDED_TARGET_LOOK_DOT, C.GROUNDED_TARGET_SCREEN_RADIUS_LIMIT
 	end
 
-	-- Press latch: always use air lookDot so ground vines latch on the first jump press.
+	-- Press latch: same latch range as UI ready (rope-capped).
 	function st.getSwingPressAttachLimits()
-		local range = getSwingRange()
+		local range = getLatchRange()
 		return range, C.AIRBORNE_TARGET_LOOK_DOT, C.TARGET_SCREEN_RADIUS_LIMIT
 	end
 
@@ -4722,7 +4727,7 @@ local function boot(character)
 		playOptionalSound("Wind Loop")
 	end
 
-	function st.startSwing(target)
+	function st.startSwing(target, trustReady: boolean?)
 		if st.isWebTrapped() or st.isSwinging or not target or not target.Parent then
 			return
 		end
@@ -4740,20 +4745,23 @@ local function boot(character)
 			return
 		end
 
-		if not st.canAttachToSwingTarget(target, attachLimit, minLookDot, maxScreenRadius) then
-			return
-		end
-
 		local closestWorld = st.closestAttachWorldOnPart(target)
 		local dist = (closestWorld - st.hrp.Position).Magnitude
 		if dist < 2 or dist > attachLimit then
 			return
 		end
 
+		-- UI already marked this vine ready — don't fail the press on a flaky re-aim check.
+		if not trustReady then
+			if not st.canAttachToSwingTarget(target, attachLimit, minLookDot, maxScreenRadius) then
+				return
+			end
+		end
+
 		local attachWorld = resolveLockedSwingAttachWorld(target)
 		st.lockedAttachWorld = attachWorld
 		st.advanceSwingHandSide()
-		local _reach = getSwingRange()
+		local _reach = getLatchRange()
 		local baseRopeMax = getRopeMaxLength()
 		local ropeRestLength = getRopeRestLength()
 
@@ -5170,9 +5178,19 @@ local function boot(character)
 		end
 		local groundedAttempt = st.isGroundedForSwing() or st.hasFloorSupportForSwing()
 
+		-- If the prompt already says ready, latch THAT vine — don't lose it to a re-pick miss.
+		if st.scannedVisualCanSwing and st.scannedVisualTarget and st.scannedVisualTarget.Parent then
+			local readyDist = select(1, st.targetDistanceAndPoint(st.scannedVisualTarget))
+			if readyDist and readyDist >= 2 and readyDist <= maxDistance then
+				st.lastTryClock = now
+				st.humanoid.Jump = false
+				st.startSwing(st.scannedVisualTarget, true)
+				return
+			end
+		end
+
 		-- Live pick on press — don't depend only on the last visual scan tick.
 		local target = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
-		-- Ground scan canSwing is stricter than press limits — re-check the highlighted vine.
 		if not target and st.scannedVisualTarget then
 			if st.canAttachToSwingTarget(st.scannedVisualTarget, maxDistance, lookDot, screenLimit) then
 				target = st.scannedVisualTarget
@@ -5192,7 +5210,7 @@ local function boot(character)
 
 		st.lastTryClock = now
 		st.humanoid.Jump = false
-		st.startSwing(target)
+		st.startSwing(target, false)
 	end
 
 	-- Mobile fallback removed to keep Luau boot() under the 200 local-register limit.
@@ -5324,11 +5342,16 @@ local function boot(character)
 
 		-- Only steal the hop when a vine is actually latchable this press.
 		local maxDistance, lookDot, screenLimit = st.getSwingPressAttachLimits()
-		local liveTarget = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
-		if not liveTarget and st.scannedVisualTarget then
-			if st.canAttachToSwingTarget(st.scannedVisualTarget, maxDistance, lookDot, screenLimit) then
+		local liveTarget = nil
+		-- Prefer UI-ready vine so green prompt always matches the jump press.
+		if st.scannedVisualCanSwing and st.scannedVisualTarget and st.scannedVisualTarget.Parent then
+			local readyDist = select(1, st.targetDistanceAndPoint(st.scannedVisualTarget))
+			if readyDist and readyDist >= 2 and readyDist <= maxDistance then
 				liveTarget = st.scannedVisualTarget
 			end
+		end
+		if not liveTarget then
+			liveTarget = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit)
 		end
 		if not liveTarget and st.highlightedTarget then
 			if st.canAttachToSwingTarget(st.highlightedTarget, maxDistance, lookDot, screenLimit) then
@@ -5338,9 +5361,8 @@ local function boot(character)
 		local grounded = st.isGroundedForSwing() or st.hasFloorSupportForSwing()
 		if liveTarget then
 			st.humanoid.Jump = false
-			-- Ground only: tiny settle window. Air attach is press-edge only (no auto-retry).
 			if grounded then
-				st.swingPressIntentUntil = now + 0.18
+				st.swingPressIntentUntil = now + 0.22
 			else
 				st.swingPressIntentUntil = -1e9
 			end
@@ -5354,7 +5376,12 @@ local function boot(character)
 		st.stopTrack(st.landedTrack, 0.08)
 		st.humanoid.PlatformStand = false
 		st.humanoid.AutoRotate = true
-		st.tryAttach()
+		if liveTarget and st.scannedVisualCanSwing and liveTarget == st.scannedVisualTarget then
+			st.lastTryClock = now
+			st.startSwing(liveTarget, true)
+		else
+			st.tryAttach()
+		end
 	end))
 
 	if C.PRE_SIMULATION_SIGNAL then

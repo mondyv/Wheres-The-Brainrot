@@ -84,6 +84,8 @@ local QUEST_SLIDE_PX = 96
 -- Distinct from Shop Stand (0.88–1.2) / Sell (deep) / Upgrade (1.2–1.55).
 local TIM_VOICE_PITCH_MIN = 1.48
 local TIM_VOICE_PITCH_MAX = 1.82
+-- Space between quest ticket bottom and RandomBrainrot top (rest pose, not hover-scaled).
+local QUEST_GAP_ABOVE_RB = 28
 local toggleQuestHudCollapsed: () -> ()
 local layoutQuestHud: () -> ()
 local placeArrowOnTicket: () -> ()
@@ -1456,17 +1458,28 @@ local function resolveRandomBrainrotHud(): GuiObject?
 	local sideUI = main and main:FindFirstChild("SideUI")
 	local right = sideUI and sideUI:FindFirstChild("Right")
 	local rb = right and right:FindFirstChild("RandomBrainrot")
-	if not rb then
-		return nil
-	end
-	local activation = rb:FindFirstChild("Activation")
-	if activation and activation:IsA("GuiObject") and activation.AbsoluteSize.Y > 4 then
-		return activation
-	end
-	if rb:IsA("GuiObject") and rb.AbsoluteSize.Y > 4 then
+	-- Prefer the frame slot (layout-stable). Activation is only a fallback —
+	-- hover UIScale on Activation/frame must not pull the quest HUD around.
+	if rb and rb:IsA("GuiObject") and rb.AbsoluteSize.Y > 4 then
 		return rb
 	end
 	return nil
+end
+
+-- Undo hover UIScale so AbsolutePosition stays at the button's rest slot.
+local function guiRestTopLeftAndSize(gui: GuiObject): (Vector2, Vector2)
+	local scale = 1
+	local uiScale = gui:FindFirstChildOfClass("UIScale")
+	if uiScale and uiScale:IsA("UIScale") and uiScale.Scale > 0.01 then
+		scale = uiScale.Scale
+	end
+	local absPos = gui.AbsolutePosition
+	local absSize = gui.AbsoluteSize
+	local ap = gui.AnchorPoint
+	local restSize = Vector2.new(absSize.X / scale, absSize.Y / scale)
+	local restPos = absPos
+		+ Vector2.new(absSize.X * (1 - 1 / scale) * ap.X, absSize.Y * (1 - 1 / scale) * ap.Y)
+	return restPos, restSize
 end
 
 layoutQuestHud = function()
@@ -1512,12 +1525,13 @@ layoutQuestHud = function()
 	local rb = resolveRandomBrainrotHud()
 	if rb and host and host.AbsoluteSize.Y > 0 then
 		local hp = host.AbsolutePosition
-		local rbTop = rb.AbsolutePosition.Y - hp.Y
+		local rbPos, rbSize = guiRestTopLeftAndSize(rb)
+		local rbTop = rbPos.Y - hp.Y
 		local hostRight = hp.X + host.AbsoluteSize.X
-		local rbRight = rb.AbsolutePosition.X + rb.AbsoluteSize.X
+		local rbRight = rbPos.X + rbSize.X
 		rightPad = math.max(10, math.floor(hostRight - rbRight))
 		anchorY = 1
-		topPad = math.max(10, math.floor(rbTop - TutorialConfig.PANEL_MOBILE_GAP_ABOVE_RIGHT))
+		topPad = math.max(10, math.floor(rbTop - QUEST_GAP_ABOVE_RB))
 	elseif mobile or vw < 700 then
 		rightPad = 10
 		anchorY = 1

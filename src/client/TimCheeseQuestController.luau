@@ -58,21 +58,26 @@ local questLayoutConn: RBXScriptConnection? = nil
 local QUEST_LAYOUT_HZ = 8
 local questHudSuppressed = false
 local questHudCollapsed = false
+local questAnimBusy = false
 local questCollapseTween: Tween? = nil
+local questArrowTween: Tween? = nil
+local questFloatTween: Tween? = nil
 local questHoverWrap: GuiObject? = nil
 local questHoverBang: ImageLabel? = nil
+local questFloatScale: UIScale? = nil
 local promptLockedUntil = 0.0
 local COLLAPSE_ARROW_IMAGE = "rbxassetid://128709527394819"
-local COLLAPSE_ARROW_SIZE = 28
+local COLLAPSE_ARROW_SIZE = 30
 local questArrowBtn: ImageButton? = nil
 local questArrowScale: UIScale? = nil
-local questArrowHoverConn: RBXScriptConnection? = nil
-local questArrowHoverT = 0.0
+local questArrowPulseTween: Tween? = nil
+local questParkedArrowY = 0
 local toggleQuestHudCollapsed: () -> ()
 local layoutQuestHud: () -> ()
-local applyQuestCollapsedVisual: () -> ()
-local startArrowIdleHover: () -> ()
-local stopArrowIdleHover: () -> ()
+local placeArrowOnTicket: () -> ()
+local placeArrowParked: () -> ()
+local startArrowPulse: () -> ()
+local stopArrowPulse: () -> ()
 local highlight: Highlight? = nil
 local talkPrompt: ProximityPrompt? = nil
 local idleTrack: AnimationTrack? = nil
@@ -680,30 +685,51 @@ local function stopQuestDots()
 	end
 end
 
-local function stopExclaimPulse()
-	if questExclaimConn then
-		questExclaimConn:Disconnect()
-		questExclaimConn = nil
+local function stopFloatBob()
+	if questFloatTween then
+		questFloatTween:Cancel()
+		questFloatTween = nil
 	end
-	questHoverY = 0
-	questBangHoverY = 0
+	if questFloatScale then
+		questFloatScale.Scale = 1
+	end
 	if questHoverWrap then
 		questHoverWrap.Position = UDim2.fromOffset(0, 0)
 	end
 	if questHoverBang then
 		questHoverBang.Position = UDim2.fromOffset(0, -1)
+		questHoverBang.Rotation = -10
 	end
+end
+
+local function stopExclaimPulse()
+	if questExclaimConn then
+		questExclaimConn:Disconnect()
+		questExclaimConn = nil
+	end
+	stopFloatBob()
 end
 
 local function cacheHoverTargets()
 	questHoverWrap = nil
 	questHoverBang = nil
+	questFloatScale = nil
 	if not questPanel then
 		return
 	end
-	local wrap = questPanel:FindFirstChild("FloatWrap")
+	local wrap = questPanel:FindFirstChild("FloatWrap", true)
 	if wrap and wrap:IsA("GuiObject") then
 		questHoverWrap = wrap
+		local sc = wrap:FindFirstChild("FloatBobScale")
+		if sc and sc:IsA("UIScale") then
+			questFloatScale = sc
+		else
+			local created = Instance.new("UIScale")
+			created.Name = "FloatBobScale"
+			created.Scale = 1
+			created.Parent = wrap
+			questFloatScale = created
+		end
 	end
 	local bang = questPanel:FindFirstChild("Exclaim", true)
 	if bang and bang:IsA("ImageLabel") then
@@ -714,32 +740,24 @@ end
 local function startExclaimPulse()
 	stopExclaimPulse()
 	cacheHoverTargets()
-	questHoverT = 0
-	questHoverY = 0
-	questBangHoverY = 0
-	-- Direct sine on BindToRenderStep — no FindFirstChild, no layout fights.
-	questExclaimConn = RunService.RenderStepped:Connect(function(dt)
-		if questHoverFlying or questHudCollapsed or not questPanel or not questPanel.Visible or not questPanel.Parent then
-			return
-		end
-		local wrap = questHoverWrap
-		if not wrap or wrap.Parent == nil then
-			cacheHoverTargets()
-			wrap = questHoverWrap
-			if not wrap then
-				return
-			end
-		end
-		questHoverT += dt
-		-- Soft float; apply directly (lerp made it feel laggy / rubber-bandy).
-		local bob = math.sin(questHoverT * 1.35) * 2.5
-		wrap.Position = UDim2.fromOffset(0, bob)
-		local bang = questHoverBang
-		if bang and bang.Parent then
-			bang.Position = UDim2.fromOffset(0, -1 + math.sin(questHoverT * 1.55 + 0.4) * 1.2)
-			bang.Rotation = -10
-		end
-	end)
+	if questAnimBusy or questHoverFlying or questHudCollapsed then
+		return
+	end
+	if not questFloatScale then
+		return
+	end
+	-- Smooth scale breathing — no per-frame Position writes (avoids pixel jitter).
+	local tw = TweenService:Create(
+		questFloatScale,
+		TweenInfo.new(1.15, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+		{ Scale = 1.018 }
+	)
+	questFloatTween = tw
+	tw:Play()
+	if questHoverBang then
+		questHoverBang.Position = UDim2.fromOffset(0, -1)
+		questHoverBang.Rotation = -10
+	end
 end
 
 local function startQuestDots()
@@ -796,7 +814,7 @@ end
 
 local function ensureQuestHud(): GuiObject
 	if questPanel and questPanel.Parent then
-		if questPanel:GetAttribute("StudTicket") == true and questPanel:GetAttribute("HudLayout") == "wide_v5" then
+		if questPanel:GetAttribute("StudTicket") == true and questPanel:GetAttribute("HudLayout") == "wide_v6" then
 			questArrowBtn = questPanel:FindFirstChild("CollapseArrow", true) :: ImageButton?
 			if questArrowBtn then
 				questArrowScale = questArrowBtn:FindFirstChildOfClass("UIScale")
@@ -820,7 +838,7 @@ local function ensureQuestHud(): GuiObject
 	shell.Size = UDim2.fromOffset(TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_HEIGHT)
 	shell.AutomaticSize = Enum.AutomaticSize.Y
 	shell:SetAttribute("StudTicket", true)
-	shell:SetAttribute("HudLayout", "wide_v5")
+	shell:SetAttribute("HudLayout", "wide_v6")
 	shell.Visible = false
 	shell.ZIndex = 100
 	shell.ClipsDescendants = false
@@ -1037,7 +1055,7 @@ local function ensureQuestHud(): GuiObject
 	payCorner.Parent = payout
 
 	-- Plain image arrow (no panel behind it). Lives on the ticket when open;
-	-- when collapsed it reparents to the shell and parks on the screen edge.
+	-- when collapsed it reparents to the quest host and parks on the screen edge.
 	local collapse = Instance.new("ImageButton")
 	collapse.Name = "CollapseArrow"
 	collapse.BackgroundTransparency = 1
@@ -1057,20 +1075,29 @@ local function ensureQuestHud(): GuiObject
 	arrowScale.Scale = 1
 	arrowScale.Parent = collapse
 
+	local floatBob = Instance.new("UIScale")
+	floatBob.Name = "FloatBobScale"
+	floatBob.Scale = 1
+	floatBob.Parent = floatWrap
+
 	questPanel = shell
 	questArrowBtn = collapse
 	questArrowScale = arrowScale
 	cacheHoverTargets()
 
 	local function setArrowHover(on: boolean)
-		if not questArrowScale then
+		if questAnimBusy or not questArrowScale then
 			return
 		end
+		stopArrowPulse()
 		TweenService:Create(
 			questArrowScale,
-			TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ Scale = if on then 1.18 else 1 }
+			TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Scale = if on then 1.14 else 1 }
 		):Play()
+		if not on then
+			startArrowPulse()
+		end
 	end
 	collapse.MouseEnter:Connect(function()
 		setArrowHover(true)
@@ -1081,7 +1108,7 @@ local function ensureQuestHud(): GuiObject
 	collapse.Activated:Connect(function()
 		toggleQuestHudCollapsed()
 	end)
-	startArrowIdleHover()
+	startArrowPulse()
 	return shell
 end
 
@@ -1090,164 +1117,194 @@ local function expandedHudPosition(): UDim2
 	return UDim2.new(1, -edge, 0, questHudBaseTop)
 end
 
-local function collapsedArrowPosition(): UDim2
-	-- Fully on-screen pull-tab at the right edge (IgnoreGuiInset host).
-	return UDim2.new(1, -8, 0, questHudBaseTop)
-end
-
-stopArrowIdleHover = function()
-	if questArrowHoverConn then
-		questArrowHoverConn:Disconnect()
-		questArrowHoverConn = nil
-	end
-	questArrowHoverT = 0
-end
-
-startArrowIdleHover = function()
-	stopArrowIdleHover()
-	if not questArrowBtn then
-		return
-	end
-	questArrowHoverT = 0
-	questArrowHoverConn = RunService.RenderStepped:Connect(function(dt)
-		if not questArrowBtn or not questArrowBtn.Parent then
-			return
-		end
-		questArrowHoverT += dt
-		local bob = math.sin(questArrowHoverT * 2.4) * 2.2
-		if questHudCollapsed then
-			questArrowBtn.AnchorPoint = Vector2.new(0.5, 0)
-			questArrowBtn.Position = UDim2.new(0.5, 0, 0, math.max(0, bob))
-		else
-			questArrowBtn.AnchorPoint = Vector2.new(1, 0)
-			questArrowBtn.Position = UDim2.new(1, -4, 0, 4 + bob * 0.55)
-		end
-	end)
-end
-
-applyQuestCollapsedVisual = function()
-	if not questPanel then
-		return
-	end
-	local ticket = questPanel:FindFirstChild("Ticket")
-	local arrow = questArrowBtn or (questPanel:FindFirstChild("CollapseArrow", true) :: ImageButton?)
-	questArrowBtn = arrow
-
-	if questHudCollapsed then
-		if ticket and ticket:IsA("GuiObject") then
-			ticket.Visible = false
-		end
-		if arrow then
-			arrow.Parent = questPanel
-			arrow.AnchorPoint = Vector2.new(0.5, 0)
-			arrow.Position = UDim2.new(0.5, 0, 0, 0)
-			arrow.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
-			arrow.Rotation = 180
-			arrow.Visible = true
-			arrow.ZIndex = 200
-		end
-		-- Shell shrinks to the arrow hit target so nothing else peeks.
-		local hudScale = questPanel:FindFirstChild("HudMatchScale")
-		if hudScale and hudScale:IsA("UIScale") then
-			hudScale.Scale = 1
-		end
-		questPanel.AutomaticSize = Enum.AutomaticSize.None
-		questPanel.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE + 8, COLLAPSE_ARROW_SIZE + 8)
-		questPanel.Position = collapsedArrowPosition()
-		startArrowIdleHover()
-	else
-		stopArrowIdleHover()
-		if ticket and ticket:IsA("GuiObject") then
-			ticket.Visible = true
-		end
-		if arrow and ticket then
-			arrow.Parent = ticket
-			arrow.AnchorPoint = Vector2.new(1, 0)
-			arrow.Position = UDim2.new(1, -4, 0, 4)
-			arrow.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
-			arrow.Rotation = 0
-			arrow.Visible = true
-			arrow.ZIndex = 130
-		end
-		questPanel.AutomaticSize = Enum.AutomaticSize.Y
-		startArrowIdleHover()
-	end
-end
-
-local function applyCollapseArrowVisual()
-	if not questArrowBtn then
-		return
-	end
-	local goalRot = if questHudCollapsed then 180 else 0
-	TweenService:Create(questArrowBtn, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		Rotation = goalRot,
-	}):Play()
-end
-
-local function panelVisualWidth(): number
-	if not questPanel then
-		return 200
-	end
-	local abs = questPanel.AbsoluteSize.X
-	if abs > 4 then
-		return abs
-	end
-	return math.max(questPanel.Size.X.Offset, 160)
-end
-
-toggleQuestHudCollapsed = function()
-	if not questPanel or questHoverFlying then
-		return
-	end
-	questHudCollapsed = not questHudCollapsed
+local function cancelCollapseTweens()
 	if questCollapseTween then
 		questCollapseTween:Cancel()
 		questCollapseTween = nil
 	end
+	if questArrowTween then
+		questArrowTween:Cancel()
+		questArrowTween = nil
+	end
+end
+
+stopArrowPulse = function()
+	if questArrowPulseTween then
+		questArrowPulseTween:Cancel()
+		questArrowPulseTween = nil
+	end
+	if questArrowScale then
+		questArrowScale.Scale = 1
+	end
+end
+
+startArrowPulse = function()
+	stopArrowPulse()
+	if not questArrowScale or questAnimBusy then
+		return
+	end
+	local tw = TweenService:Create(
+		questArrowScale,
+		TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+		{ Scale = 1.08 }
+	)
+	questArrowPulseTween = tw
+	tw:Play()
+end
+
+placeArrowOnTicket = function()
+	if not questPanel or not questArrowBtn then
+		return
+	end
+	local ticket = questPanel:FindFirstChild("Ticket")
+	if not (ticket and ticket:IsA("GuiObject")) then
+		return
+	end
+	questArrowBtn.Parent = ticket
+	questArrowBtn.AnchorPoint = Vector2.new(1, 0)
+	questArrowBtn.Position = UDim2.new(1, -4, 0, 4)
+	questArrowBtn.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
+	questArrowBtn.Rotation = 0
+	questArrowBtn.Visible = true
+	questArrowBtn.ZIndex = 130
+end
+
+placeArrowParked = function()
+	if not questPanel or not questArrowBtn then
+		return
+	end
+	local host = questPanel.Parent
+	if not (host and host:IsA("GuiObject")) then
+		return
+	end
+	-- Park on host (not shell) so shell can stay off-screen without stretching.
+	questArrowBtn.Parent = host
+	questArrowBtn.AnchorPoint = Vector2.new(1, 0)
+	local y = if questParkedArrowY > 0 then questParkedArrowY else questHudBaseTop
+	questArrowBtn.Position = UDim2.new(1, -8, 0, y)
+	questArrowBtn.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
+	questArrowBtn.Rotation = 180
+	questArrowBtn.Visible = true
+	questArrowBtn.ZIndex = 200
+end
+
+local function freezePanelSize()
+	if not questPanel then
+		return
+	end
+	local abs = questPanel.AbsoluteSize
+	questPanel.AutomaticSize = Enum.AutomaticSize.None
+	questPanel.Size = UDim2.fromOffset(math.max(abs.X, 1), math.max(abs.Y, 1))
+end
+
+local function unfreezePanelAutoY(screenW: number?)
+	if not questPanel then
+		return
+	end
+	local w = screenW or math.max(questPanel.Size.X.Offset, 160)
+	questPanel.Size = UDim2.fromOffset(w, TutorialConfig.PANEL_HEIGHT)
+	questPanel.AutomaticSize = Enum.AutomaticSize.Y
+end
+
+toggleQuestHudCollapsed = function()
+	if not questPanel or questHoverFlying or questAnimBusy then
+		return
+	end
+	questHudCollapsed = not questHudCollapsed
+	cancelCollapseTweens()
+	stopArrowPulse()
+	stopExclaimPulse()
+
+	local panel = questPanel
+	local arrow = questArrowBtn
+	local infoOut = TweenInfo.new(0.34, Enum.EasingStyle.Quint, Enum.EasingDirection.InOut)
+	local infoIn = TweenInfo.new(0.38, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 
 	if questHudCollapsed then
-		stopExclaimPulse()
-		if questHoverWrap then
-			questHoverWrap.Position = UDim2.fromOffset(0, 0)
+		questAnimBusy = true
+		local host = panel.Parent
+		freezePanelSize()
+		local slideW = math.max(panel.AbsoluteSize.X, panel.Size.X.Offset, 160)
+		local off = UDim2.new(1, slideW + 24, 0, questHudBaseTop)
+
+		-- Detach arrow onto host at its current screen spot, then slide it to the edge.
+		if arrow and host and host:IsA("GuiObject") then
+			local abs = arrow.AbsolutePosition
+			local hp = host.AbsolutePosition
+			local fromX = math.floor(abs.X - hp.X + arrow.AbsoluteSize.X + 0.5) -- right edge (anchor 1,0)
+			local fromY = math.floor(abs.Y - hp.Y + 0.5)
+			questParkedArrowY = fromY
+			arrow.Parent = host
+			arrow.AnchorPoint = Vector2.new(1, 0)
+			arrow.Position = UDim2.fromOffset(fromX, fromY)
+			arrow.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
+			arrow.ZIndex = 200
+			arrow.Visible = true
+			local arrowTw = TweenService:Create(arrow, infoOut, {
+				Position = UDim2.new(1, -8, 0, fromY),
+				Rotation = 180,
+			})
+			questArrowTween = arrowTw
+			arrowTw:Play()
+		else
+			questParkedArrowY = questHudBaseTop
 		end
-		-- Slide ticket off, then park the bare arrow on the right edge.
-		local slideW = panelVisualWidth()
-		local off = UDim2.new(1, slideW, 0, questHudBaseTop)
-		local tw = TweenService:Create(
-			questPanel,
-			TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-			{ Position = off }
-		)
+
+		local tw = TweenService:Create(panel, infoOut, { Position = off })
 		questCollapseTween = tw
-		tw.Completed:Connect(function()
-			if not questHudCollapsed or not questPanel then
+		tw.Completed:Connect(function(playbackState)
+			if playbackState ~= Enum.PlaybackState.Completed then
 				return
 			end
-			applyQuestCollapsedVisual()
-			applyCollapseArrowVisual()
+			if not questPanel or not questHudCollapsed then
+				questAnimBusy = false
+				return
+			end
+			local ticket = questPanel:FindFirstChild("Ticket")
+			if ticket and ticket:IsA("GuiObject") then
+				ticket.Visible = false
+			end
+			placeArrowParked()
+			questAnimBusy = false
+			startArrowPulse()
 		end)
 		tw:Play()
-		-- Flip arrow mid-tuck.
-		if questArrowBtn then
-			TweenService:Create(questArrowBtn, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Rotation = 180,
+	else
+		-- Expand: keep arrow parked while ticket slides in (no mid-flight reparent).
+		questAnimBusy = true
+		local ticket = panel:FindFirstChild("Ticket")
+		if ticket and ticket:IsA("GuiObject") then
+			ticket.Visible = true
+		end
+		placeArrowParked()
+		local slideW = math.max(panel.Size.X.Offset, 160)
+		panel.AnchorPoint = Vector2.new(1, questHudAnchorY)
+		panel.AutomaticSize = Enum.AutomaticSize.None
+		panel.Size = UDim2.fromOffset(slideW, math.max(panel.Size.Y.Offset, 80))
+		panel.Position = UDim2.new(1, slideW + 24, 0, questHudBaseTop)
+		local goal = expandedHudPosition()
+		local tw = TweenService:Create(panel, infoIn, { Position = goal })
+		questCollapseTween = tw
+		if arrow then
+			TweenService:Create(arrow, TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+				Rotation = 0,
 			}):Play()
 		end
-	else
-		-- Restore ticket, then slide back in.
-		applyQuestCollapsedVisual()
-		layoutQuestHud()
-		local slideW = panelVisualWidth()
-		questPanel.Position = UDim2.new(1, slideW, 0, questHudBaseTop)
-		local goal = expandedHudPosition()
-		local tw = TweenService:Create(
-			questPanel,
-			TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ Position = goal }
-		)
-		questCollapseTween = tw
-		applyCollapseArrowVisual()
-		startExclaimPulse()
+		tw.Completed:Connect(function(playbackState)
+			if playbackState ~= Enum.PlaybackState.Completed then
+				return
+			end
+			if not questPanel or questHudCollapsed then
+				questAnimBusy = false
+				return
+			end
+			placeArrowOnTicket()
+			unfreezePanelAutoY(slideW)
+			questAnimBusy = false
+			layoutQuestHud()
+			startExclaimPulse()
+			startArrowPulse()
+		end)
 		tw:Play()
 	end
 end
@@ -1338,9 +1395,24 @@ layoutQuestHud = function()
 	questHudBaseTop = topPad
 	questHudAnchorY = anchorY
 
+	-- Never fight an in-flight collapse/expand tween.
+	if questAnimBusy then
+		return
+	end
+
 	panel.AnchorPoint = Vector2.new(1, anchorY)
 	if questHudCollapsed then
-		applyQuestCollapsedVisual()
+		local ticket = panel:FindFirstChild("Ticket")
+		if ticket and ticket:IsA("GuiObject") then
+			ticket.Visible = false
+		end
+		-- Keep shell parked off-screen; arrow lives on host.
+		local slideW = math.max(panel.Size.X.Offset, screenW, 160)
+		panel.AutomaticSize = Enum.AutomaticSize.None
+		panel.Size = UDim2.fromOffset(slideW, math.max(panel.Size.Y.Offset, 40))
+		panel.Position = UDim2.new(1, slideW + 24, 0, topPad)
+		questParkedArrowY = topPad
+		placeArrowParked()
 	else
 		panel.Size = UDim2.fromOffset(screenW, TutorialConfig.PANEL_HEIGHT)
 		panel.AutomaticSize = Enum.AutomaticSize.Y
@@ -1351,14 +1423,7 @@ layoutQuestHud = function()
 		if ticket and ticket:IsA("GuiObject") then
 			ticket.Visible = true
 		end
-		if questArrowBtn and ticket then
-			if questArrowBtn.Parent ~= ticket then
-				questArrowBtn.Parent = ticket
-			end
-			questArrowBtn.AnchorPoint = Vector2.new(1, 0)
-			questArrowBtn.Rotation = 0
-			questArrowBtn.Visible = true
-		end
+		placeArrowOnTicket()
 	end
 	panel.ZIndex = 10
 end
@@ -1379,7 +1444,7 @@ local function startQuestLayoutSync()
 	end
 	questLayoutAccum = 0
 	questLayoutConn = RunService.Heartbeat:Connect(function(dt)
-		if questHoverFlying or questHudCollapsed or not questPanel or not questPanel.Visible then
+		if questAnimBusy or questHoverFlying or questHudCollapsed or not questPanel or not questPanel.Visible then
 			return
 		end
 		questLayoutAccum += dt

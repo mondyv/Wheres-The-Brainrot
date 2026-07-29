@@ -1894,9 +1894,7 @@ local function resolveLand1SwingTarget(): BasePart?
 end
 
 local function resolveReturnSwingTarget(): BasePart?
-	if lockedSwingPart and lockedSwingPart.Parent then
-		return lockedSwingPart
-	end
+	-- Always re-pick: prefer the closest vine that still leads toward base.
 	lockedSwingPart = nil
 	refreshVineCache()
 	local origin = playerOrigin()
@@ -1919,7 +1917,8 @@ local function resolveReturnSwingTarget(): BasePart?
 		end
 	end
 	local toAim = aim - origin
-	local aimDir = if toAim.Magnitude > 1 then toAim.Unit else Vector3.new(0, 0, 1)
+	local flatToAim = Vector3.new(toAim.X, 0, toAim.Z)
+	local aimDir = if flatToAim.Magnitude > 1 then flatToAim.Unit else Vector3.new(0, 0, 1)
 	local best: BasePart? = nil
 	local bestScore = math.huge
 	for _, part in vineCache do
@@ -1927,15 +1926,18 @@ local function resolveReturnSwingTarget(): BasePart?
 			continue
 		end
 		local offset = part.Position - origin
-		local dist = offset.Magnitude
-		if dist < 6 or dist > 180 then
+		local flat = Vector3.new(offset.X, 0, offset.Z)
+		local dist = flat.Magnitude
+		if dist < 5 or dist > 160 then
 			continue
 		end
-		local along = offset:Dot(aimDir)
-		if along < 4 then
+		local along = flat:Dot(aimDir)
+		-- Must make some progress toward base (not behind you).
+		if along < 2 then
 			continue
 		end
-		local score = dist * 0.35 - along * 0.55
+		-- Closest vine wins; tiny along bonus so equally near vines prefer the corridor.
+		local score = dist - along * 0.08
 		if score < bestScore then
 			bestScore = score
 			best = part
@@ -1945,8 +1947,9 @@ local function resolveReturnSwingTarget(): BasePart?
 		bestScore = math.huge
 		for _, part in vineCache do
 			if part.Parent then
-				local dist = (part.Position - origin).Magnitude
-				if dist < bestScore and dist > 5 then
+				local flat = Vector3.new(part.Position.X - origin.X, 0, part.Position.Z - origin.Z)
+				local dist = flat.Magnitude
+				if dist < bestScore and dist > 4 then
 					bestScore = dist
 					best = part
 				end
@@ -2814,11 +2817,8 @@ local function watchStepProgress()
 				completeCurrentIf("goToBase")
 			else
 				if swingCoach.goToBaseLite then
-					if not worldArrowBb or not worldHighlight or not (lockedSwingPart and lockedSwingPart.Parent) then
-						refreshPointers()
-					else
-						updateMobileJumpTutorialHighlight()
-					end
+					-- Re-pick closest return vine as the player moves.
+					refreshPointers()
 				elseif not worldArrowBb or not worldHighlight then
 					refreshPointers()
 				end

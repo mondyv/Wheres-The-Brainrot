@@ -1031,6 +1031,13 @@ function BushHoldInteraction.init()
 			local holdPrompt = prompt
 
 			ProximityPromptEffects.beginManagedBushHold(holdPrompt)
+			-- Tim intro (and similar) can abort the hold before it starts — clear phantom hold
+			-- so later searches aren't stuck waiting on a dead token / locked UI.
+			if not ProximityPromptEffects.isBushSearchActive() then
+				bushSearchHoldToken += 1
+				bushSearchHoldPrompt = nil
+				return Enum.ContextActionResult.Sink
+			end
 
 			-- Hard completion path: do not depend on the custom UI, PromptTriggered, or key release.
 			-- If the player keeps holding long enough, the harvest request fires exactly once.

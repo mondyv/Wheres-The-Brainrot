@@ -63,6 +63,7 @@ export type WorldSpeechOpts = {
 	textSize: number?,
 	billboardWidth: number?,
 	billboardHeight: number?,
+	studsOffset: Vector3?,
 }
 
 local StandDialogueCutscene = {}
@@ -1518,7 +1519,8 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 	bb.Size = UDim2.fromScale(studsW, studsH)
 	-- Cap close-up blowup only; keep shrinking with distance so walking away doesn't balloon text.
 	bb.DistanceLowerLimit = 8
-	bb.StudsOffset = Vector3.new(0, 2.8, 0)
+	local offset = if opts and typeof(opts.studsOffset) == "Vector3" then opts.studsOffset else Vector3.new(0, 2.8, 0)
+	bb.StudsOffset = offset
 	bb.Adornee = adornee
 	bb.Parent = model
 
@@ -1585,6 +1587,14 @@ end
 
 function StandDialogueCutscene.isActive(): boolean
 	return active
+end
+
+function StandDialogueCutscene.showLetterbox()
+	animateLetterboxIn()
+end
+
+function StandDialogueCutscene.hideLetterbox()
+	animateLetterboxOut()
 end
 
 function StandDialogueCutscene.getEnterChoiceButton(): TextButton?

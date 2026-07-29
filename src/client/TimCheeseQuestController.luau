@@ -2410,6 +2410,7 @@ local function speakOnHead(model: Model, message: string, holdSec: number?)
 		textSize = 20,
 		billboardWidth = 380,
 		billboardHeight = 88,
+		studsOffset = Vector3.new(0, 1.05, 0),
 	})
 	local typeDur = #message * 0.042 + 0.2
 	task.wait(typeDur + hold + 0.15)
@@ -2490,13 +2491,22 @@ function M.playIntroFall()
 		return
 	end
 
-	-- No letterbox / full HUD wipe — over-shoulder cam only.
+	-- Letterbox bars + over-shoulder cam while Tim drops / talks.
 	setQuestHudSuppressed(true)
 	setTalkPromptEnabled(false)
 	setBushPromptsHiddenForIntro(true)
+	StandDialogueCutscene.showLetterbox()
 	lockMovement(true)
 	setBgmSlowed(true)
 	local wind = playWindLoop()
+
+	local function cleanupIntroUi()
+		StandDialogueCutscene.hideLetterbox()
+		lockMovement(false)
+		setBushPromptsHiddenForIntro(false)
+		setBgmSlowed(false)
+		GameplayUiVisibility.show({ instant = true })
+	end
 
 	local land = landCf.Position
 	local groundY = land.Y
@@ -2576,7 +2586,7 @@ function M.playIntroFall()
 	ensureIdle(clone)
 	setBgmSlowed(false)
 
-	-- Settle — keep over-shoulder framing on Tim (no letterbox bars).
+	-- Settle — keep over-shoulder framing on Tim.
 	task.wait(0.55)
 	local talkCamConn: RBXScriptConnection? = nil
 	talkCamConn = RunService.RenderStepped:Connect(function()
@@ -2602,6 +2612,9 @@ function M.playIntroFall()
 		talkCamConn:Disconnect()
 		talkCamConn = nil
 	end
+
+	-- Unlock bush search immediately — AcceptQuest can yield and used to soft-lock searching.
+	setBushPromptsHiddenForIntro(false)
 
 	local introRE = getRE("IntroDone")
 	if introRE then
@@ -2645,9 +2658,7 @@ function M.playIntroFall()
 		end
 	end
 
-	GameplayUiVisibility.show({ instant = true })
-	lockMovement(false)
-	setBushPromptsHiddenForIntro(false)
+	cleanupIntroUi()
 	introPlaying = false
 
 	forcedQuestIndex = forcedQuestIndex or 1

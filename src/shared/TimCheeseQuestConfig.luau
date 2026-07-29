@@ -39,14 +39,14 @@ export type QuestDef = {
 
 local QUESTS: { QuestDef } = {
 	{
-		id = "search_15",
+		id = "search_5",
 		title = "Bush Scout",
-		description = "Search 15 bushes for brainrots.",
+		description = "Search 5 bushes for brainrots.",
 		kind = "harvest",
-		target = 15,
+		target = 5,
 		showBar = true,
 		rewardKind = "cash",
-		rewardCash = 200_000,
+		rewardCash = 100_000,
 	},
 	{
 		id = "claim_5",
@@ -77,7 +77,7 @@ M.QUESTS = QUESTS
 M.INTRO_LINES = {
 	{ text = "Hey!! My name is Tim Cheese!", shake = true },
 	{ text = "I need your help collecting brainrots!", shake = false },
-	{ text = "Please search 15 bushes and come back to me after!", shake = true },
+	{ text = "Please search 5 bushes and come back to me after!", shake = true },
 }
 
 M.COMPLETE_LINES = {

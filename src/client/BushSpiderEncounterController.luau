@@ -1090,6 +1090,8 @@ local function animateLetterboxIn()
 	gui.Enabled = true
 	local barIn = TweenInfo.new(0.45, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 	if letterTop and letterBottom then
+		letterTop.Visible = true
+		letterBottom.Visible = true
 		TweenService:Create(letterTop, barIn, {
 			Size = UDim2.new(1.4, 0, 0.12, 0),
 		}):Play()
@@ -1628,15 +1630,10 @@ end
 
 local function restoreCamera()
 	stopCameraRig()
-	-- Kill modal overlay immediately so MobileTouchGate can fix TouchGui vs Main.
+	-- Disable the ScreenGui only — do NOT wipe descendant Visible.
+	-- Reused QTE widgets (Badge/Hint/Progress) must stay Visible for the next encounter.
 	if cutsceneGui then
 		cutsceneGui.Enabled = false
-		for _, d in cutsceneGui:GetDescendants() do
-			if d:IsA("GuiObject") then
-				d.Active = false
-				d.Visible = false
-			end
-		end
 	end
 	local cam = Workspace.CurrentCamera
 	if not cam then
@@ -1900,6 +1897,16 @@ local function pickRandomQtePosition()
 end
 
 local function refreshTimingUiPresentation(mobileInput: boolean, choiceLabel: string)
+	if timingRoot then
+		local badge = timingRoot:FindFirstChild("Badge")
+		if badge and badge:IsA("GuiObject") then
+			badge.Visible = true
+		end
+		local progress = timingRoot:FindFirstChild("ProgressTrack")
+		if progress and progress:IsA("GuiObject") then
+			progress.Visible = true
+		end
+	end
 	if timingLetter then
 		timingLetter.Visible = not mobileInput
 		if not mobileInput then
@@ -1910,10 +1917,15 @@ local function refreshTimingUiPresentation(mobileInput: boolean, choiceLabel: st
 		timingKeyIcon.Visible = mobileInput
 	end
 	if timingHint then
+		timingHint.Visible = true
 		timingHint.Text = if mobileInput then "TAP!" else "NOW!"
 	end
 	if timingRing then
 		timingRing.Visible = true
+	end
+	if timingTapBtn then
+		timingTapBtn.Visible = mobileInput
+		timingTapBtn.Active = mobileInput
 	end
 end
 

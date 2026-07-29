@@ -11,6 +11,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local CashBoostUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("CashBoostUtil"))
 local DailyConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("DailyConfig"))
@@ -573,6 +574,11 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 
 	sessionPlayBase[player] = data.totalPlayTimeSeconds
 	sessionJoinAt[player] = os.clock()
+	-- Fresh 10-minute frictionless death window each load / reset.
+	player:SetAttribute(
+		PlayerDataSchema.FRICTIONLESS_DEATH_UNTIL_ATTR,
+		Workspace:GetServerTimeNow() + PlayerDataSchema.FRICTIONLESS_DEATH_SECONDS
+	)
 end
 
 local function applyPlotFloor(player: Player, floorLevel: number)
@@ -1336,6 +1342,10 @@ function M.resetPlayerData(player: Player): (boolean, string?)
 	SwingUpgrades.resetLevels(player)
 	player:SetAttribute("BrainrotCarryCount", 0)
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, false)
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR, true)
+	local nonce = player:GetAttribute(PlayerDataSchema.TUTORIAL_REPLAY_ATTR)
+	local nextNonce = if typeof(nonce) == "number" then nonce + 1 else 1
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_REPLAY_ATTR, nextNonce)
 	applyPlotFloor(player, fresh.baseFloorLevel)
 
 	invokeInternal("ImportInventoryFromSave", player, {

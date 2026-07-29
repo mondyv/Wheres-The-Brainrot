@@ -96,6 +96,9 @@ M.TUTORIAL_REPLAY_ATTR = "TutorialReplayNonce"
 M.TUTORIAL_CASH_GRANTED_ATTR = "TutorialCashGranted"
 M.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR = "TutorialFirstBushClaimed"
 M.TUTORIAL_SOFT_RESPAWN_ATTR = "TutorialSoftRespawn"
+-- Workspace:GetServerTimeNow() deadline for frictionless death (plot soft-respawn, no revive UI).
+M.FRICTIONLESS_DEATH_UNTIL_ATTR = "FrictionlessDeathUntil"
+M.FRICTIONLESS_DEATH_SECONDS = 600
 M.TIM_CHEESE_INTRO_ATTR = "TimCheeseIntroDone"
 M.TIM_CHEESE_QUEST_INDEX_ATTR = "TimCheeseQuestIndex"
 M.TIM_CHEESE_QUEST_PROGRESS_ATTR = "TimCheeseQuestProgress"

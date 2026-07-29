@@ -51,6 +51,7 @@ local stepIndex = 0
 local gui: ScreenGui? = nil
 local _questRoot: Frame? = nil
 local panel: Frame? = nil
+local skipTutorialBtn: TextButton? = nil
 local _exclaim: ImageLabel? = nil
 local objectiveLabel: TextLabel? = nil
 local dotsLabel: TextLabel? = nil
@@ -165,6 +166,9 @@ local function setChromeSuppressed(suppressed: boolean)
 		if panel then
 			panel.Visible = false
 		end
+		if skipTutorialBtn then
+			skipTutorialBtn.Visible = false
+		end
 		if gui then
 			-- Quest panel lives under Main.TutorialQuestHost (right side).
 			gui.Enabled = false
@@ -172,6 +176,9 @@ local function setChromeSuppressed(suppressed: boolean)
 	elseif active then
 		if panel then
 			panel.Visible = true
+		end
+		if skipTutorialBtn then
+			skipTutorialBtn.Visible = true
 		end
 		if gui then
 			gui.Enabled = true
@@ -606,6 +613,35 @@ local function syncPanelToSideButtonsImpl()
 	end
 	panel.ZIndex = 100
 	panel.Visible = active and not chromeSuppressed
+
+	if skipTutorialBtn then
+		if skipTutorialBtn.Parent ~= host then
+			skipTutorialBtn.Parent = host
+		end
+		local gap = TutorialConfig.SKIP_BTN_GAP
+		local panelH = math.max(panel.AbsoluteSize.Y, TutorialConfig.PANEL_HEIGHT)
+		local skipY: number
+		if anchorY == 1 then
+			-- Panel grows upward from topPad; sit just above its top edge.
+			skipY = topPad - panelH - gap
+		else
+			skipY = topPad - gap
+		end
+		skipTutorialBtn.AnchorPoint = Vector2.new(1, 1)
+		skipTutorialBtn.Position = UDim2.new(1, -rightPad, 0, skipY)
+		skipTutorialBtn.Size = UDim2.fromOffset(
+			math.clamp(math.floor(screenW * 0.55), TutorialConfig.SKIP_BTN_MIN_WIDTH, screenW),
+			TutorialConfig.SKIP_BTN_HEIGHT
+		)
+		if hudMatchScale then
+			local skipScale = skipTutorialBtn:FindFirstChild("HudMatchScale")
+			if skipScale and skipScale:IsA("UIScale") then
+				skipScale.Scale = matchScale
+			end
+		end
+		skipTutorialBtn.ZIndex = 101
+		skipTutorialBtn.Visible = active and not chromeSuppressed and panel.Visible
+	end
 end
 syncPanelToSideButtons = syncPanelToSideButtonsImpl
 
@@ -1041,6 +1077,8 @@ local function bushHasBrainrotLoot(bush: Instance): boolean
 	return true
 end
 
+local finishTutorial: (opts: { skipped: boolean? }?) -> ()
+
 local function clearSpotlightImpl()
 	_claimSpotlightActive = false
 	if dimOverlay then
@@ -1061,6 +1099,7 @@ local function ensureGui()
 		gui = nil
 	end
 	panel = nil
+	skipTutorialBtn = nil
 	_questRoot = nil
 	_exclaim = nil
 	objectiveLabel = nil
@@ -1227,10 +1266,46 @@ local function ensureGui()
 	holeStroke.Transparency = 0.7
 	holeStroke.Parent = hole
 
+	local skipBtn = Instance.new("TextButton")
+	skipBtn.Name = "SkipTutorial"
+	skipBtn.AutoButtonColor = true
+	skipBtn.AnchorPoint = Vector2.new(1, 1)
+	skipBtn.Position = UDim2.new(1, -TutorialConfig.PANEL_RIGHT_PAD, 0, TutorialConfig.PANEL_TOP_PAD - TutorialConfig.SKIP_BTN_GAP)
+	skipBtn.Size = UDim2.fromOffset(TutorialConfig.SKIP_BTN_MIN_WIDTH, TutorialConfig.SKIP_BTN_HEIGHT)
+	skipBtn.BackgroundColor3 = Color3.fromRGB(28, 32, 42)
+	skipBtn.BackgroundTransparency = 0.2
+	skipBtn.BorderSizePixel = 0
+	skipBtn.Text = "Skip Tutorial"
+	skipBtn.TextSize = 14
+	skipBtn.TextColor3 = Color3.fromRGB(230, 236, 245)
+	skipBtn.Visible = false
+	skipBtn.ZIndex = 101
+	skipBtn.Parent = rootFrame
+	UiFonts.applyBody(skipBtn)
+	local skipBoldOk, skipBoldFace = pcall(function()
+		return Font.new(skipBtn.FontFace.Family, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+	end)
+	if skipBoldOk and typeof(skipBoldFace) == "Font" then
+		skipBtn.FontFace = skipBoldFace
+	end
+	local skipCorner = Instance.new("UICorner")
+	skipCorner.CornerRadius = UDim.new(0, 8)
+	skipCorner.Parent = skipBtn
+	local skipStroke = Instance.new("UIStroke")
+	skipStroke.Color = Color3.fromRGB(255, 255, 255)
+	skipStroke.Thickness = 1
+	skipStroke.Transparency = 0.82
+	skipStroke.Parent = skipBtn
+	local skipMatch = Instance.new("UIScale")
+	skipMatch.Name = "HudMatchScale"
+	skipMatch.Scale = 1
+	skipMatch.Parent = skipBtn
+
 	screen.Parent = pg
 	gui = screen
 	_questRoot = rootFrame
 	panel = panelFrame
+	skipTutorialBtn = skipBtn
 	_exclaim = bang
 	objectiveLabel = label
 	dotsLabel = dots
@@ -1238,6 +1313,10 @@ local function ensureGui()
 	hudMatchScale = matchScale
 	dimOverlay = dim
 	spotlightHole = hole
+
+	skipBtn.MouseButton1Click:Connect(function()
+		finishTutorial({ skipped = true })
+	end)
 
 	-- Parent under Main host so resize stays glued on the right.
 	syncPanelToSideButtons()
@@ -1297,6 +1376,9 @@ end
 local function hidePanel()
 	if not panel or not panelScale then
 		return
+	end
+	if skipTutorialBtn then
+		skipTutorialBtn.Visible = false
 	end
 	local s = panelScale
 	local p = panel
@@ -2332,7 +2414,7 @@ refreshPointers = refreshPointersImpl
 
 local finishingTutorial = false
 
-local function finishTutorial()
+finishTutorial = function(opts: { skipped: boolean? }?)
 	if not active or finishingTutorial then
 		return
 	end
@@ -2356,10 +2438,17 @@ local function finishTutorial()
 	end
 	table.clear(attrConns)
 	hidePanel()
-	-- One confetti burst for the whole tutorial (guarded inside fireConfettiAndShake).
-	fireConfettiAndShake()
+	local skipped = opts ~= nil and opts.skipped == true
+	if not skipped then
+		-- One confetti burst for the whole tutorial (guarded inside fireConfettiAndShake).
+		fireConfettiAndShake()
+	end
 	task.defer(function()
-		TopNotifController.showBroadcast("Tutorial completed! You got a Starter Lucky Block!")
+		if skipped then
+			TopNotifController.showBroadcast("You skipped the tutorial! You got a Starter Lucky Block!")
+		else
+			TopNotifController.showBroadcast("Tutorial completed! You got a Starter Lucky Block!")
+		end
 	end)
 	local rf = getCompleteRemote()
 	if rf then
@@ -2664,6 +2753,9 @@ local function restoreTutorialAfterRespawn()
 		end
 		if panel then
 			panel.Visible = true
+		end
+		if skipTutorialBtn then
+			skipTutorialBtn.Visible = true
 		end
 		syncPanelToSideButtons()
 		local step = currentStep()

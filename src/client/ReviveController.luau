@@ -11,12 +11,14 @@ local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
 
 local HUDController = require(script.Parent.HUDController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
+local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 
 local player = Players.LocalPlayer
 
@@ -26,6 +28,7 @@ local BLUR_SIZE = 32
 local DIM_GUI_NAME = "ReviveDim"
 local DIM_COLOR = Color3.fromRGB(0, 0, 0)
 local DIM_TRANSPARENCY = 0.38
+local FRICTIONLESS_FADE_GUI_NAME = "FrictionlessDeathFade"
 
 local OPEN_TWEEN = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_TWEEN = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
@@ -741,10 +744,85 @@ end
 
 -- Client only plays death FX here. Land/product come from server RevivePrompt
 -- so streaming / wrong local resolve can't prompt the Land 1 product.
+local function isTutorialSoftDeath(): boolean
+	return player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true
+		and player:GetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR) == true
+end
+
+local function isFrictionlessDeathActive(): boolean
+	local untilT = player:GetAttribute(PlayerDataSchema.FRICTIONLESS_DEATH_UNTIL_ATTR)
+	if typeof(untilT) ~= "number" then
+		return false
+	end
+	return Workspace:GetServerTimeNow() < untilT
+end
+
+local function playFrictionlessBlackFade()
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if not pg then
+		return
+	end
+	local existing = pg:FindFirstChild(FRICTIONLESS_FADE_GUI_NAME)
+	if existing then
+		existing:Destroy()
+	end
+
+	local screen = Instance.new("ScreenGui")
+	screen.Name = FRICTIONLESS_FADE_GUI_NAME
+	screen.ResetOnSpawn = false
+	screen.IgnoreGuiInset = true
+	screen.DisplayOrder = 2000
+	screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+	local cover = Instance.new("Frame")
+	cover.Name = "Cover"
+	cover.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	cover.BackgroundTransparency = 1
+	cover.BorderSizePixel = 0
+	cover.Size = UDim2.fromScale(1, 1)
+	cover.Active = false
+	cover.Parent = screen
+	screen.Parent = pg
+
+	local fadeIn = TweenInfo.new(
+		ReviveConfig.FRICTIONLESS_FADE_IN_SECONDS,
+		Enum.EasingStyle.Quad,
+		Enum.EasingDirection.Out
+	)
+	local fadeOut = TweenInfo.new(
+		ReviveConfig.FRICTIONLESS_FADE_OUT_SECONDS,
+		Enum.EasingStyle.Quad,
+		Enum.EasingDirection.In
+	)
+
+	task.spawn(function()
+		local twIn = TweenService:Create(cover, fadeIn, { BackgroundTransparency = 0 })
+		twIn:Play()
+		twIn.Completed:Wait()
+		task.wait(ReviveConfig.FRICTIONLESS_FADE_HOLD_SECONDS)
+		if not cover.Parent then
+			return
+		end
+		local twOut = TweenService:Create(cover, fadeOut, { BackgroundTransparency = 1 })
+		twOut:Play()
+		twOut.Completed:Wait()
+		if screen.Parent then
+			screen:Destroy()
+		end
+	end)
+end
+
 local function onLocalDeath(_character: Model)
 	stopRobloxOofSounds()
 	playDeathSfx()
 	startEarRinging()
+	-- Tutorial soft-respawn keeps existing SFX-only death (no fade / no revive UI).
+	if isTutorialSoftDeath() then
+		return
+	end
+	if isFrictionlessDeathActive() then
+		playFrictionlessBlackFade()
+	end
 end
 
 local function hookCharacter(character: Model)

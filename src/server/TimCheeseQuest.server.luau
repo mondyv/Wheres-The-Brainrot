@@ -12,6 +12,7 @@ local Workspace = game:GetService("Workspace")
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local Brainrots = require(script.Parent.Modules:WaitForChild("Brainrots"))
 local PlayerDataService = require(script.Parent.Modules:WaitForChild("PlayerDataService"))
 local ItemService = require(script.Parent.Modules:WaitForChild("ItemService"))
@@ -235,7 +236,14 @@ local function grantQuestReward(player: Player, quest: TimCheeseQuestConfig.Ques
 		return true, "+" .. BrainrotEconomy.formatCashShort(amt)
 	elseif quest.rewardKind == "lucky_block" then
 		local blockName = quest.rewardLuckyBlock or "Starter Lucky Block"
-		if grantLuckyBlock(player, blockName) then
+		local count = math.max(1, math.floor(quest.rewardLuckyBlockCount or 1))
+		local grantedAny = false
+		for _ = 1, count do
+			if grantLuckyBlock(player, blockName) then
+				grantedAny = true
+			end
+		end
+		if grantedAny then
 			return true, label
 		end
 		-- Fallback cash so claim never soft-locks.
@@ -256,21 +264,19 @@ local function grantQuestReward(player: Player, quest: TimCheeseQuestConfig.Ques
 end
 
 local function computeProgress(player: Player, quest: TimCheeseQuestConfig.QuestDef): number
-	if quest.kind == "place_stands" then
-		return countPlacedStands(player)
-	elseif quest.kind == "cash" then
-		local cash = player:GetAttribute("Cash")
-		return if typeof(cash) == "number" then math.floor(cash) else 0
-	elseif quest.kind == "income" then
-		return math.floor(placedIncomePerSecond(player))
-	elseif quest.kind == "harvest" then
+	if quest.kind == "harvest" or quest.kind == "accept_claims" then
 		local h = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR)
 		return if typeof(h) == "number" then math.floor(h) else 0
-	elseif quest.kind == "own_brainrot" then
-		local targetName = quest.questTargetBrainrot
-		return if playerOwnsBrainrotName(player, targetName or "") then 1 else 0
-	elseif quest.kind == "own_rarity" then
-		return countOwnedBrainrotsOfRarity(player, quest.questTargetRarity or "")
+	elseif quest.kind == "reach_land" then
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if hrp and hrp:IsA("BasePart") then
+			local land = LandResolver.resolveLandAtPosition(hrp.Position)
+			if typeof(land) == "number" and land >= quest.target then
+				return quest.target
+			end
+		end
+		return 0
 	end
 	return 0
 end
@@ -423,6 +429,44 @@ end
 	syncQuestProgress(player)
 end)
 
+local function bumpAcceptClaims(player: Player)
+	local idx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+	if typeof(idx) ~= "number" or idx < 1 then
+		return
+	end
+	local quest = TimCheeseQuestConfig.getQuest(math.floor(idx))
+	if not quest or quest.kind ~= "accept_claims" then
+		return
+	end
+	local h = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR)
+	local nextH = (if typeof(h) == "number" then h else 0) + 1
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR, nextH)
+	syncQuestProgress(player)
+end
+
+-- Floating claim accept → Brainrot Collector progress.
+task.spawn(function()
+	local bushRemotes = ReplicatedStorage:WaitForChild("BushRemotes", 90)
+	if not bushRemotes then
+		warn("[TimCheeseQuest] BushRemotes missing — accept_claims quest won't track")
+		return
+	end
+	local decision = bushRemotes:WaitForChild("FloatingClaimDecision", 60)
+	if not (decision and decision:IsA("RemoteEvent")) then
+		warn("[TimCheeseQuest] FloatingClaimDecision missing — accept_claims quest won't track")
+		return
+	end
+	(decision :: RemoteEvent).OnServerEvent:Connect(function(player: Player, _clone: any, decisionStr: any)
+		if typeof(player) ~= "Instance" or not player:IsA("Player") then
+			return
+		end
+		if decisionStr ~= "accept" then
+			return
+		end
+		bumpAcceptClaims(player)
+	end)
+end)
+
 task.spawn(function()
 	while true do
 		task.wait(TimCheeseQuestConfig.PROGRESS_POLL_SEC)
@@ -449,7 +493,7 @@ local function watchStandForQuest(stand: Instance)
 				local idx = plr:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
 				if typeof(idx) == "number" and idx >= 1 then
 					local quest = TimCheeseQuestConfig.getQuest(math.floor(idx))
-					if quest and (quest.kind == "place_stands" or quest.kind == "income" or quest.kind == "own_brainrot" or quest.kind == "own_rarity") then
+					if quest and (quest.kind == "reach_land" or quest.kind == "harvest" or quest.kind == "accept_claims") then
 						syncQuestProgress(plr)
 					end
 				end

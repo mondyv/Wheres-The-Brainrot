@@ -1,6 +1,6 @@
 -- [ACTIVE] TimCheeseQuestConfig
 --[[
-	Tim Cheese quest NPC (Booster Pack Showers): quest defs, dialogue, map paths.
+	Tim Cheese quest NPC: 3 starter quests, head-speech intro, map paths.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -15,12 +15,12 @@ M.QUEST_HITBOX_NAME = "QuestHitbox"
 M.QUEST_FLOAT_UI_NAME = "QuestFLoatUI" -- Studio spelling
 M.IDLE_ANIM_NAME = "TimCheese"
 
-M.DROP_HEIGHT = 95
-M.FALL_DURATION = 0.7
+M.DROP_HEIGHT = 78
+M.FALL_DURATION = 0.78
 M.WALKBY_COOLDOWN_SEC = 22
 M.PROGRESS_POLL_SEC = 0.85
 
-export type QuestKind = "place_stands" | "harvest" | "cash" | "income" | "own_brainrot" | "own_rarity"
+export type QuestKind = "harvest" | "accept_claims" | "reach_land"
 export type RewardKind = "cash" | "lucky_block" | "brainrot"
 
 export type QuestDef = {
@@ -31,38 +31,15 @@ export type QuestDef = {
 	target: number,
 	showBar: boolean,
 	rewardKind: RewardKind,
-	-- cash
 	rewardCash: number?,
-	-- lucky_block container name under ReplicatedStorage Lucky Blocks
 	rewardLuckyBlock: string?,
-	-- brainrot rarity id (common / uncommon / rare / …)
+	rewardLuckyBlockCount: number?,
 	rewardBrainrotRarity: string?,
-	-- own_brainrot: exact brainrot id (inventory or stand)
-	questTargetBrainrot: string?,
-	-- own_rarity: count brainrots of this rarity (inventory + stands)
-	questTargetRarity: string?,
 }
 
-local function prettyBrainrotName(name: string): string
-	return (name:gsub("(%u)", " %1"):gsub("^%s+", ""))
-end
-
-M.prettyBrainrotName = prettyBrainrotName
-
--- Slow early curve; mythic blocks only late; mix hunt / grind / economy quests.
 local QUESTS: { QuestDef } = {
 	{
-		id = "place_5",
-		title = "Stand Starter",
-		description = "Collect 5 brainrots and put them on your stands.",
-		kind = "place_stands",
-		target = 5,
-		showBar = true,
-		rewardKind = "cash",
-		rewardCash = 150_000,
-	},
-	{
-		id = "harvest_15",
+		id = "search_15",
 		title = "Bush Scout",
 		description = "Search 15 bushes for brainrots.",
 		kind = "harvest",
@@ -72,136 +49,35 @@ local QUESTS: { QuestDef } = {
 		rewardCash = 200_000,
 	},
 	{
-		id = "find_brr",
-		title = "Tim's Favorite",
-		description = "Find and hold Brr Brr Patapim (backpack or stand).",
-		kind = "own_brainrot",
-		target = 1,
+		id = "claim_5",
+		title = "Brainrot Collector",
+		description = "Accept 5 brainrots from bushes.",
+		kind = "accept_claims",
+		target = 5,
 		showBar = true,
-		questTargetBrainrot = "BrrBrrPatapim",
 		rewardKind = "lucky_block",
 		rewardLuckyBlock = "Starter Lucky Block",
+		rewardLuckyBlockCount = 2,
 	},
 	{
-		id = "place_8",
-		title = "Base Builder",
-		description = "Have 8 brainrots placed on your stands.",
-		kind = "place_stands",
-		target = 8,
-		showBar = true,
-		rewardKind = "brainrot",
-		rewardBrainrotRarity = "uncommon",
-	},
-	{
-		id = "cash_400k",
-		title = "Pocket Padding",
-		description = "Hold at least $400K cash at once.",
-		kind = "cash",
-		target = 400_000,
+		id = "land_2",
+		title = "Land Hopper",
+		description = "Upgrade your Power and swing over to Land 2!",
+		kind = "reach_land",
+		target = 2,
 		showBar = true,
 		rewardKind = "cash",
-		rewardCash = 300_000,
-	},
-	{
-		id = "harvest_40",
-		title = "Leaf Legend",
-		description = "Search 40 bushes (lifetime this quest).",
-		kind = "harvest",
-		target = 40,
-		showBar = true,
-		rewardKind = "brainrot",
-		rewardBrainrotRarity = "epic",
-	},
-	{
-		id = "income_300k",
-		title = "Passive Hustle",
-		description = "Reach $300K/s plot generation.",
-		kind = "income",
-		target = 300_000,
-		showBar = true,
-		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Mythic Lucky Block",
-	},
-	{
-		id = "own_epic",
-		title = "Epic Collector",
-		description = "Own any Epic brainrot (backpack or stand).",
-		kind = "own_rarity",
-		target = 1,
-		showBar = true,
-		questTargetRarity = "epic",
-		rewardKind = "cash",
-		rewardCash = 1_000_000,
-	},
-	{
-		id = "find_smurfcat",
-		title = "Epic Hunt",
-		description = "Find and hold Smurf Cat (backpack or stand).",
-		kind = "own_brainrot",
-		target = 1,
-		showBar = true,
-		questTargetBrainrot = "SmurfCat",
-		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Mythic Lucky Block",
-	},
-	{
-		id = "place_12",
-		title = "Full House",
-		description = "Have 12 brainrots placed on your stands.",
-		kind = "place_stands",
-		target = 12,
-		showBar = true,
-		rewardKind = "cash",
-		rewardCash = 10_000_000,
-	},
-	{
-		id = "cash_2m",
-		title = "Millionaire Vibes",
-		description = "Hold at least $2M cash at once.",
-		kind = "cash",
-		target = 2_000_000,
-		showBar = true,
-		rewardKind = "brainrot",
-		rewardBrainrotRarity = "epic",
-	},
-	{
-		id = "harvest_80",
-		title = "Bush Master",
-		description = "Search 80 bushes (lifetime this quest).",
-		kind = "harvest",
-		target = 80,
-		showBar = true,
-		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Mythic Lucky Block",
-	},
-	{
-		id = "income_1m",
-		title = "Generation God",
-		description = "Reach $1M/s plot generation.",
-		kind = "income",
-		target = 1_000_000,
-		showBar = true,
-		rewardKind = "brainrot",
-		rewardBrainrotRarity = "legendary",
-	},
-	{
-		id = "place_16",
-		title = "Cheese Champion",
-		description = "Have 16 brainrots placed on your stands.",
-		kind = "place_stands",
-		target = 16,
-		showBar = true,
-		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Secret Lucky Block",
+		rewardCash = 500_000,
 	},
 }
 
 M.QUESTS = QUESTS
 
+-- Intro: head text only (no speech-box / buttons).
 M.INTRO_LINES = {
-	{ text = "HEY!! YOU MADE IT OUT OF THE TUTORIAL ALIVE!!", shake = true },
-	{ text = "I'm TIM CHEESE. Official quest dealer. Semi-official comedian.", shake = false },
-	{ text = "Finish jobs for me and I'll pay in CASH, LUCKY BLOCKS, even BRAINROTS. Ready?", shake = true },
+	{ text = "Hey!! My name is Tim Cheese!", shake = true },
+	{ text = "I need your help collecting brainrots!", shake = false },
+	{ text = "Please search 15 bushes and come back to me after!", shake = true },
 }
 
 M.COMPLETE_LINES = {
@@ -227,41 +103,37 @@ M.WALKBY_LINES = {
 	"Psst... Tim Cheese has work for you.",
 	"Don't leave me hanging with empty quests!",
 	"Hey! Yeah you. Quest time?",
-	"The stands aren't gonna fill themselves...",
 }
 
--- Mid-mission check-in (world speech only — no cutscene).
 M.IN_PROGRESS_LINES = {
 	"Finish your job and then come back to me!!",
 	"Still working? Get that quest DONE first!!",
-	"No shortcuts!! Finish the mission, THEN we talk rewards.",
-	"You're mid-job!! Go finish it, then hit me up!!",
 	"Come back when the quest is DONE. I'm watching...",
 	"Chop chop!! Finish your quest before we chat!!",
-	"Quest first, cheese later. You got this!!",
-	"Don't ghost the job!! Finish it and report back!!",
 }
 
--- Classic Roblox stud tile for the cheese ticket HUD.
 M.STUD_TEXTURE = "rbxassetid://6065821980"
 
 M.NO_QUEST_OVERHEAD = "Quests"
 M.HAS_QUEST_OVERHEAD = "Quest Active"
-M.READY_OVERHEAD = "Talk to claim!"
+M.READY_OVERHEAD = "Visit me!"
+M.VISIT_OVERHEAD = "Talk to me!"
 
 function M.formatRewardLabel(quest: QuestDef): string
 	if quest.rewardKind == "cash" then
 		return BrainrotEconomy.formatCashShort(quest.rewardCash or 0)
 	elseif quest.rewardKind == "lucky_block" then
 		local name = quest.rewardLuckyBlock or "Lucky Block"
-		if string.find(name, "Starter", 1, true) then
-			return "Starter Block"
-		elseif string.find(name, "Mythic", 1, true) then
-			return "Mythic Block"
-		elseif string.find(name, "Secret", 1, true) then
-			return "Secret Block"
+		local count = math.max(1, math.floor(quest.rewardLuckyBlockCount or 1))
+		local short = if string.find(name, "Starter", 1, true)
+			then "Starter Block"
+			elseif string.find(name, "Mythic", 1, true) then "Mythic Block"
+			elseif string.find(name, "Secret", 1, true) then "Secret Block"
+			else name
+		if count > 1 then
+			return string.format("%dx %s", count, short)
 		end
-		return name
+		return short
 	elseif quest.rewardKind == "brainrot" then
 		local rarity = quest.rewardBrainrotRarity or "common"
 		local nice = string.upper(string.sub(rarity, 1, 1)) .. string.sub(rarity, 2)

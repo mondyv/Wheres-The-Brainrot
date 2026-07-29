@@ -718,6 +718,15 @@ local function doHarvest(prompt: ProximityPrompt)
 	if not bush then
 		return
 	end
+	-- First Land-1 bush after tutorial: Tim Cheese intro cutscene (blocks this harvest).
+	do
+		local okIntercept, intercept = pcall(function()
+			return require(script.Parent.TimCheeseQuestController).tryInterceptBushForIntro(bush)
+		end)
+		if okIntercept and intercept == true then
+			return
+		end
+	end
 	OtherVfxController.playBushOpenedBurst(bush)
 	if bushSearchInFlight[bush] then
 		return

@@ -2342,16 +2342,46 @@ local function resolveIntroLandCFrameNearPlayer(): CFrame?
 	if not (hrp and hrp:IsA("BasePart")) then
 		return nil
 	end
+	-- Slightly behind-and-to-the-side so over-shoulder cam can frame Tim cleanly.
 	local behind = -hrp.CFrame.LookVector
 	local right = hrp.CFrame.RightVector
-	local probe = hrp.Position + behind * 7.5 + right * 1.6 + Vector3.new(0, 6, 0)
+	local probe = hrp.Position + behind * 6.2 + right * 2.4 + Vector3.new(0, 8, 0)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { char }
-	local hit = Workspace:Raycast(probe, Vector3.new(0, -28, 0), params)
-	local ground = if hit then hit.Position else (hrp.Position + behind * 7.5)
-	local landPos = Vector3.new(ground.X, ground.Y + 0.15, ground.Z)
+	local hit = Workspace:Raycast(probe, Vector3.new(0, -36, 0), params)
+	local ground = if hit then hit.Position else (hrp.Position + behind * 6.2 + right * 2.4)
+	-- Feet sit on ground — pivot lift applied after clone lands via liftCloneToGround.
+	local landPos = Vector3.new(ground.X, ground.Y, ground.Z)
 	return CFrame.lookAt(landPos, Vector3.new(hrp.Position.X, landPos.Y, hrp.Position.Z))
+end
+
+local function liftCloneToGround(clone: Model, groundY: number)
+	local minY = math.huge
+	for _, d in clone:GetDescendants() do
+		if d:IsA("BasePart") and d.Transparency < 1 then
+			local half = d.Size.Y * 0.5
+			-- Conservative bottom using world AABB corners of the oriented part.
+			local cf = d.CFrame
+			local hs = d.Size * 0.5
+			for _, ox in { -1, 1 } do
+				for _, oy in { -1, 1 } do
+					for _, oz in { -1, 1 } do
+						local world = cf:PointToWorldSpace(Vector3.new(hs.X * ox, hs.Y * oy, hs.Z * oz))
+						minY = math.min(minY, world.Y)
+					end
+				end
+			end
+			minY = math.min(minY, cf.Position.Y - half)
+		end
+	end
+	if minY == math.huge then
+		return
+	end
+	local lift = (groundY + 0.2) - minY
+	if math.abs(lift) > 0.01 then
+		clone:PivotTo(clone:GetPivot() + Vector3.new(0, lift, 0))
+	end
 end
 
 local function speakOnHead(model: Model, message: string, holdSec: number?)
@@ -2436,11 +2466,7 @@ function M.playIntroFall()
 		return
 	end
 
-	GameplayUiVisibility.hide({
-		keepScreenGuiNames = { "StandDialogueCutscene" },
-		hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker" },
-		hideMainChildNames = { "TimCheeseQuestHost" },
-	})
+	-- No letterbox / full HUD wipe — over-shoulder cam only.
 	setQuestHudSuppressed(true)
 	setTalkPromptEnabled(false)
 	lockMovement(true)
@@ -2448,6 +2474,7 @@ function M.playIntroFall()
 	local wind = playWindLoop()
 
 	local land = landCf.Position
+	local groundY = land.Y
 	local start = land + Vector3.new(0, TimCheeseQuestConfig.DROP_HEIGHT, 0)
 	local rotOnly = landCf - landCf.Position
 	safeScaleTo(clone, 2.65)
@@ -2460,7 +2487,7 @@ function M.playIntroFall()
 	local savedFov = cam and cam.FieldOfView
 	if cam then
 		cam.CameraType = Enum.CameraType.Scriptable
-		cam.FieldOfView = 56
+		cam.FieldOfView = 60
 	end
 
 	local alpha = Instance.new("NumberValue")
@@ -2470,13 +2497,10 @@ function M.playIntroFall()
 		TweenInfo.new(TimCheeseQuestConfig.FALL_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 		{ Value = 1 }
 	)
-	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-	local camSide = if hrp and hrp:IsA("BasePart") then hrp.CFrame.RightVector else Vector3.new(1, 0, 0)
-	local camPos = land + camSide * 14 + Vector3.new(0, 5.5, 0) + Vector3.new(0, 0, 8)
 	local lastScale = 2.65
 	local conn = RunService.RenderStepped:Connect(function()
 		local t = alpha.Value
-		local y = start.Y + (land.Y - start.Y) * (t * t)
+		local y = start.Y + (groundY - start.Y) * (t * t)
 		local pos = Vector3.new(land.X, y, land.Z)
 		local sway = math.sin(t * 28) * (1 - t) * 1.1
 		local scale = 2.65 - (1.65 * t)
@@ -2492,8 +2516,13 @@ function M.playIntroFall()
 		if clone.Parent then
 			clone:PivotTo(CFrame.new(pos + Vector3.new(sway, 0, 0)) * rotOnly * spin)
 		end
-		if cam then
-			cam.CFrame = CFrame.lookAt(camPos, pos + Vector3.new(0, 2.2, 0))
+		-- Over-the-shoulder: behind the player, looking at falling Tim.
+		local liveHrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if cam and liveHrp and liveHrp:IsA("BasePart") then
+			local back = -liveHrp.CFrame.LookVector
+			local right = liveHrp.CFrame.RightVector
+			local camPos = liveHrp.Position + back * 5.8 + right * 2.1 + Vector3.new(0, 3.4, 0)
+			cam.CFrame = CFrame.lookAt(camPos, pos + Vector3.new(0, 2.4, 0))
 		end
 	end)
 	tween:Play()
@@ -2508,25 +2537,45 @@ function M.playIntroFall()
 	safeScaleTo(clone, 1)
 	if clone.Parent then
 		clone:PivotTo(landCf)
+		liftCloneToGround(clone, groundY)
+		-- Second pass after scale settles (meshes can lag one frame).
+		task.wait(0.05)
+		if clone.Parent then
+			liftCloneToGround(clone, groundY)
+		end
 	end
-	spawnLandingDebris(land, clone)
+	local landedPos = clone:GetPivot().Position
+	spawnLandingDebris(Vector3.new(landedPos.X, groundY, landedPos.Z), clone)
 	GameSoundEffects.playGroundSmash(1)
 	landImpactShake(cam)
 	ensureIdle(clone)
 	setBgmSlowed(false)
 
-	-- Settle, then head-speech only (no speech box / buttons).
-	task.wait(0.85)
-	if cam then
-		local face = land + Vector3.new(0, 3.2, 0)
-		cam.CFrame = CFrame.lookAt(camPos * 0.35 + (land + camSide * 9 + Vector3.new(0, 4.2, 0)) * 0.65, face)
-	end
+	-- Settle — keep over-shoulder framing on Tim (no letterbox bars).
+	task.wait(0.55)
+	local talkCamConn: RBXScriptConnection? = nil
+	talkCamConn = RunService.RenderStepped:Connect(function()
+		local liveHrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if not cam or not clone.Parent or not (liveHrp and liveHrp:IsA("BasePart")) then
+			return
+		end
+		local timPos = clone:GetPivot().Position + Vector3.new(0, 2.6, 0)
+		local back = -liveHrp.CFrame.LookVector
+		local right = liveHrp.CFrame.RightVector
+		local camPos = liveHrp.Position + back * 5.2 + right * 2.4 + Vector3.new(0, 3.2, 0)
+		cam.CFrame = CFrame.lookAt(camPos, timPos)
+	end)
 
 	for _, line in TimCheeseQuestConfig.INTRO_LINES do
 		if not clone.Parent then
 			break
 		end
 		speakOnHead(clone, line.text, if line.shake then 1.75 else 1.45)
+	end
+
+	if talkCamConn then
+		talkCamConn:Disconnect()
+		talkCamConn = nil
 	end
 
 	local introRE = getRE("IntroDone")
@@ -2574,7 +2623,6 @@ function M.playIntroFall()
 	GameplayUiVisibility.show({ instant = true })
 	lockMovement(false)
 	introPlaying = false
-	setQuestFloatVisible(tim, true, TimCheeseQuestConfig.HAS_QUEST_OVERHEAD)
 
 	forcedQuestIndex = forcedQuestIndex or 1
 	questHudRevealed = false

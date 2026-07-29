@@ -280,6 +280,20 @@ function M.claimFloatingBrainrot(deps: Deps, player: Player, clone: Model): bool
 	deps.removePendingFloat(player, clone)
 	deps.syncBrainrotCarryCountAttr(player)
 
+	task.spawn(function()
+		local ok, PDS = pcall(function()
+			return require(script.Parent:WaitForChild("PlayerDataService"))
+		end)
+		if ok and PDS and typeof(PDS.incrementBrainrotAcceptCount) == "function" then
+			local okInc, errInc = pcall(PDS.incrementBrainrotAcceptCount, player)
+			if not okInc then
+				warn("[BushHarvestFloating] incrementBrainrotAcceptCount error:", errInc)
+			end
+		elseif not ok then
+			warn("[BushHarvestFloating] PlayerDataService require failed:", PDS)
+		end
+	end)
+
 	playClaimTween(clone, char, function()
 		if not clone.Parent then
 			return

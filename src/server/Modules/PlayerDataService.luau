@@ -479,6 +479,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		timCheeseQuestProgress = math.max(0, math.floor(if typeof(player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR)) == "number" then player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR) :: number else 0)),
 		timCheeseCompletedCount = math.max(0, math.floor(if typeof(player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR)) == "number" then player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR) :: number else 0)),
 		timCheeseHarvestProgress = math.max(0, math.floor(if typeof(player:GetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR)) == "number" then player:GetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR) :: number else 0)),
+		brainrotAcceptCount = math.max(0, math.floor(if typeof(player:GetAttribute(PlayerDataSchema.BRAINROT_ACCEPT_COUNT_ATTR)) == "number" then player:GetAttribute(PlayerDataSchema.BRAINROT_ACCEPT_COUNT_ATTR) :: number else 0)),
 	}
 end
 
@@ -565,6 +566,7 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR, math.max(0, math.floor(data.timCheeseCompletedCount or 0)))
 	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR, math.max(0, math.floor(data.timCheeseHarvestProgress or 0)))
 	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR, false)
+	player:SetAttribute(PlayerDataSchema.BRAINROT_ACCEPT_COUNT_ATTR, math.max(0, math.floor(data.brainrotAcceptCount or 0)))
 
 	SwingUpgrades.syncGameplayStatsFromLevels(player, {
 		power = data.powerLevel,
@@ -737,6 +739,7 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		timCheeseQuestProgress = math.max(0, floorNum(raw.timCheeseQuestProgress, 0)),
 		timCheeseCompletedCount = math.max(0, floorNum(raw.timCheeseCompletedCount, 0)),
 		timCheeseHarvestProgress = math.max(0, floorNum(raw.timCheeseHarvestProgress, 0)),
+		brainrotAcceptCount = math.max(0, floorNum(raw.brainrotAcceptCount, 0)),
 	}
 end
 
@@ -1020,6 +1023,9 @@ local function mergeAgainstPrior(
 	if (prior.timCheeseCompletedCount or 0) > (payload.timCheeseCompletedCount or 0) then
 		payload.timCheeseCompletedCount = prior.timCheeseCompletedCount
 	end
+	if (prior.brainrotAcceptCount or 0) > (payload.brainrotAcceptCount or 0) then
+		payload.brainrotAcceptCount = prior.brainrotAcceptCount
+	end
 
 	return payload
 end
@@ -1300,6 +1306,7 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		timCheeseQuestProgress = 0,
 		timCheeseCompletedCount = 0,
 		timCheeseHarvestProgress = 0,
+		brainrotAcceptCount = 0,
 	}
 end
 
@@ -1425,6 +1432,19 @@ function M.setTimCheeseIntroDone(player: Player, done: boolean)
 	if player:GetAttribute(LOADED_ATTR) == true then
 		M.savePlayerData(player)
 	end
+end
+
+function M.incrementBrainrotAcceptCount(player: Player): number
+	if not player.Parent then
+		return 0
+	end
+	local cur = player:GetAttribute(PlayerDataSchema.BRAINROT_ACCEPT_COUNT_ATTR)
+	local nextCount = math.max(0, math.floor(if typeof(cur) == "number" then cur else 0)) + 1
+	player:SetAttribute(PlayerDataSchema.BRAINROT_ACCEPT_COUNT_ATTR, nextCount)
+	if player:GetAttribute(LOADED_ATTR) == true then
+		M.savePlayerData(player)
+	end
+	return nextCount
 end
 
 function M.setTimCheeseQuestState(

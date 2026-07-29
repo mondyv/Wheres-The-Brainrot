@@ -718,15 +718,6 @@ local function doHarvest(prompt: ProximityPrompt)
 	if not bush then
 		return
 	end
-	-- First Land-1 bush after tutorial: Tim Cheese intro cutscene (blocks this harvest).
-	do
-		local okIntercept, intercept = pcall(function()
-			return require(script.Parent.TimCheeseQuestController).tryInterceptBushForIntro(bush)
-		end)
-		if okIntercept and intercept == true then
-			return
-		end
-	end
 	OtherVfxController.playBushOpenedBurst(bush)
 	if bushSearchInFlight[bush] then
 		return
@@ -929,6 +920,27 @@ function BushHoldInteraction.init()
 
 	BushShiver.init()
 	ProximityPromptEffects.setBushHoldCompleteHandler(doHarvest)
+	ProximityPromptEffects.setBushHoldBeganHandler(function(prompt: ProximityPrompt): boolean?
+		local bush: Instance? = bushRootFromPrompt(prompt)
+		if not bush then
+			for model, pr in bushByModel do
+				if pr == prompt then
+					bush = model
+					break
+				end
+			end
+		end
+		if bush then
+			bush = BushRootUtil.resolveBushRoot(bush) or bush
+		end
+		local ok, intercept = pcall(function()
+			return require(script.Parent.TimCheeseQuestController).tryInterceptBushForIntro(bush)
+		end)
+		if ok and intercept == true then
+			return true
+		end
+		return false
+	end)
 
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then

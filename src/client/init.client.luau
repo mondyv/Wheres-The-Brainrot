@@ -361,6 +361,9 @@ task.defer(function()
 				require(script.BushFloatingClaimController).init()
 			end,
 			function()
+				require(script.BaseReturnGuideController).init()
+			end,
+			function()
 				require(script.GlobalRaritySpawnController).init()
 			end,
 			function()

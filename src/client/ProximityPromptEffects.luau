@@ -79,6 +79,7 @@ local cameraShakeActive = false
 local bushCameraShakeStepBound = false
 local bushHoldLockUntil = 0
 local bushHoldCompleteHandler: ((ProximityPrompt) -> ())? = nil
+local bushHoldBeganHandler: ((ProximityPrompt) -> boolean?)? = nil
 local bushHoldCompleteHooks: { (ProximityPrompt, () -> ()) -> boolean } = {}
 local managedBushHoldActive: ProximityPrompt? = nil
 local directBushHoldPrompt: ProximityPrompt? = nil
@@ -102,6 +103,10 @@ local ProximityPromptEffects = {}
 
 function ProximityPromptEffects.setBushHoldCompleteHandler(handler: ((ProximityPrompt) -> ())?)
 	bushHoldCompleteHandler = handler
+end
+
+function ProximityPromptEffects.setBushHoldBeganHandler(handler: ((ProximityPrompt) -> boolean?)?)
+	bushHoldBeganHandler = handler
 end
 
 function ProximityPromptEffects.registerBushHoldCompleteHook(hook: (ProximityPrompt, () -> ()) -> boolean)
@@ -1599,6 +1604,15 @@ function ProximityPromptEffects.beginManagedBushHold(prompt: ProximityPrompt)
 	end
 	if managedBushHoldActive and managedBushHoldActive ~= prompt then
 		return
+	end
+	local began = bushHoldBeganHandler
+	if began then
+		local ok, block = pcall(began, prompt)
+		if ok and block == true then
+			return
+		elseif not ok then
+			warn("[ProximityPromptEffects] bushHoldBeganHandler error:", block)
+		end
 	end
 	managedBushHoldActive = prompt
 	activeBushSearchPrompt = prompt

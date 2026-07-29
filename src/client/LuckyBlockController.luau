@@ -8,10 +8,12 @@
 ]]
 
 local ContextActionService = game:GetService("ContextActionService")
+local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
@@ -55,6 +57,7 @@ local letterTop: Frame? = nil
 local letterBottom: Frame? = nil
 local focusPart: BasePart? = nil
 local blockModel: Model? = nil
+local camShakeAmp = 0
 local hiddenTool: Tool? = nil
 local hiddenToolTrans: { [BasePart]: number } = {}
 local hiddenToolDecalTrans: { [Decal | Texture]: number } = {}
@@ -495,6 +498,16 @@ local function startCinematicCamera(token: number)
 		-- Subtle orbit sway during shake/hover.
 		local sway = math.sin(phase * 0.9) * 0.35
 		camPos += right * sway
+		-- Screen shake while the lucky block is rumbling on the ground.
+		if camShakeAmp > 0.001 then
+			local t = phase * 55
+			local amp = camShakeAmp
+			camPos += Vector3.new(
+				math.sin(t * 1.17) * amp,
+				math.cos(t * 1.41) * amp * 0.72,
+				math.sin(t * 0.93) * amp * 0.85
+			)
+		end
 		local goal = CFrame.lookAt(camPos, focus + Vector3.new(0, 0.4, 0))
 
 		local blendAlpha = math.clamp((os.clock() - blendT0) / blendDur, 0, 1)
@@ -583,9 +596,11 @@ local function animateGroundShake(model: Model, durationSec: number, token: numb
 	focusPart = primary
 	local baseCf = model:GetPivot()
 	local t0 = os.clock()
+	camShakeAmp = 0.08
 	disconnect(shakeConn)
 	shakeConn = RunService.Heartbeat:Connect(function()
 		if token ~= cutsceneToken or not model.Parent then
+			camShakeAmp = 0
 			disconnect(shakeConn)
 			shakeConn = nil
 			return
@@ -593,6 +608,7 @@ local function animateGroundShake(model: Model, durationSec: number, token: numb
 		local elapsed = os.clock() - t0
 		local frac = math.clamp(elapsed / durationSec, 0, 1)
 		local amp = 0.08 + frac * 0.42
+		camShakeAmp = 0.12 + frac * 0.55
 		local t = elapsed * math.pi * 2 * 8.5
 		local jx = math.sin(t * 1.13) * amp
 		local jz = math.cos(t * 0.97) * amp * 0.85
@@ -601,11 +617,64 @@ local function animateGroundShake(model: Model, durationSec: number, token: numb
 		model:PivotTo(baseCf * CFrame.new(jx, jy, jz) * CFrame.Angles(tilt * 0.55, tilt * 0.25, -tilt * 0.4))
 		if elapsed >= durationSec then
 			model:PivotTo(baseCf)
+			camShakeAmp = 0
 			disconnect(shakeConn)
 			shakeConn = nil
 		end
 	end)
 	waitToken(token, durationSec)
+	camShakeAmp = 0
+end
+
+local function spawnBurstDebris(at: Vector3)
+	local ring = Instance.new("Part")
+	ring.Name = "LuckyBlockBurstRing"
+	ring.Shape = Enum.PartType.Cylinder
+	ring.Anchored = true
+	ring.CanCollide = false
+	ring.CanQuery = false
+	ring.CanTouch = false
+	ring.CastShadow = false
+	ring.Material = Enum.Material.Neon
+	ring.Color = Color3.fromRGB(255, 210, 80)
+	ring.Size = Vector3.new(0.35, 2.4, 2.4)
+	ring.CFrame = CFrame.new(at + Vector3.new(0, 0.25, 0)) * CFrame.Angles(0, 0, math.rad(90))
+	ring.Parent = Workspace
+	TweenService:Create(ring, TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(0.15, 18, 18),
+		Transparency = 1,
+	}):Play()
+	Debris:AddItem(ring, 0.55)
+
+	for i = 1, 48 do
+		local chip = Instance.new("Part")
+		chip.Name = "LuckyBlockBurstChip"
+		local scale = 0.55 + math.random() * 1.35
+		chip.Size = Vector3.new(0.7, 0.45, 0.9) * scale
+		local roll = i % 4
+		chip.Color = if roll == 0
+			then Color3.fromRGB(255, 210, 80)
+			elseif roll == 1 then Color3.fromRGB(255, 160, 40)
+			elseif roll == 2 then Color3.fromRGB(90, 70, 40)
+			else Color3.fromRGB(255, 240, 140)
+		chip.Material = if roll == 2 then Enum.Material.Slate else Enum.Material.Neon
+		chip.Anchored = true
+		chip.CanCollide = false
+		chip.CanQuery = false
+		chip.CanTouch = false
+		chip.CastShadow = false
+		local ang = math.rad(i * (360 / 48) + math.random() * 10)
+		chip.CFrame = CFrame.new(at + Vector3.new(0, 0.4, 0))
+		chip.Parent = Workspace
+		local dir = Vector3.new(math.cos(ang), 0.55 + math.random() * 1.1, math.sin(ang)).Unit
+		local goal = at + dir * (5 + math.random() * 10) + Vector3.new(0, 2 + math.random() * 5, 0)
+		TweenService:Create(chip, TweenInfo.new(0.5 + math.random() * 0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			CFrame = CFrame.new(goal) * CFrame.Angles(math.random() * 5, math.random() * 5, math.random() * 5),
+			Transparency = 1,
+			Size = chip.Size * 0.15,
+		}):Play()
+		Debris:AddItem(chip, 1.0)
+	end
 end
 
 local function animateHover(model: Model, durationSec: number, token: number)
@@ -641,7 +710,9 @@ end
 
 local function animateEmerge(model: Model, durationSec: number, token: number)
 	local startCf = model:GetPivot()
-	local goalCf = startCf * CFrame.new(0, 2.55, 0)
+	-- Shoot upward hard, then settle a bit lower into the hover band.
+	local peakCf = startCf * CFrame.new(0, 4.6, 0)
+	local settleCf = startCf * CFrame.new(0, 2.35, 0)
 	local t0 = os.clock()
 	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
 	if primary then
@@ -652,12 +723,19 @@ local function animateEmerge(model: Model, durationSec: number, token: number)
 			return
 		end
 		local alpha = math.clamp((os.clock() - t0) / durationSec, 0, 1)
-		local eased = 1 - (1 - alpha) ^ 3
-		model:PivotTo(startCf:Lerp(goalCf, eased))
+		if alpha < 0.45 then
+			local a = alpha / 0.45
+			local eased = 1 - (1 - a) ^ 3
+			model:PivotTo(startCf:Lerp(peakCf, eased))
+		else
+			local a = (alpha - 0.45) / 0.55
+			local eased = a * a * (3 - 2 * a)
+			model:PivotTo(peakCf:Lerp(settleCf, eased))
+		end
 		RunService.Heartbeat:Wait()
 	end
 	if model.Parent then
-		model:PivotTo(goalCf)
+		model:PivotTo(settleCf)
 	end
 end
 
@@ -758,6 +836,7 @@ local function endCutscene(token: number)
 	if token ~= cutsceneToken then
 		return
 	end
+	camShakeAmp = 0
 	stopAnimConns()
 	stopAura()
 	GameSoundEffects.stopLuckyBlockShake()
@@ -904,9 +983,20 @@ local function runCutscene(payload: any)
 
 	GameSoundEffects.stopLuckyBlockShake()
 	GameSoundEffects.playPurchaseShake()
+	GameSoundEffects.playGroundSmash(1.15)
+	camShakeAmp = 0.7
+	task.delay(0.28, function()
+		if token == cutsceneToken then
+			camShakeAmp = 0
+		end
+	end)
 
 	-- Burst.
 	local burstAtPart = focusPart
+	local burstPos = if burstAtPart and burstAtPart.Parent
+		then burstAtPart.Position
+		else groundCf.Position
+	spawnBurstDebris(burstPos)
 	if burstAtPart and burstAtPart.Parent then
 		OtherVfxController.playLuckyBlockOpen(burstAtPart)
 	else

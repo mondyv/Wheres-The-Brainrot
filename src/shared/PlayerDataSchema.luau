@@ -83,6 +83,7 @@ export type PlayerSaveData = {
 	timCheeseQuestProgress: number?,
 	timCheeseCompletedCount: number?, -- how many quests fully claimed
 	timCheeseHarvestProgress: number?, -- progress counter for harvest-kind quests
+	brainrotAcceptCount: number?, -- career floating-claim accepts (base-return guide)
 }
 
 local M = {}
@@ -105,6 +106,8 @@ M.TIM_CHEESE_QUEST_PROGRESS_ATTR = "TimCheeseQuestProgress"
 M.TIM_CHEESE_COMPLETED_ATTR = "TimCheeseCompletedCount"
 M.TIM_CHEESE_QUEST_READY_ATTR = "TimCheeseQuestReady" -- true when active quest is complete, claim pending
 M.TIM_CHEESE_HARVEST_ATTR = "TimCheeseHarvestProgress"
+M.BRAINROT_ACCEPT_COUNT_ATTR = "BrainrotAcceptCount"
+M.BASE_RETURN_GUIDE_ACCEPTS = 20
 
 M.SETTINGS_MUSIC_VOLUME_ATTR = "SettingsMusicVolume"
 M.SETTINGS_SFX_VOLUME_ATTR = "SettingsSfxVolume"

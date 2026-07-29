@@ -238,6 +238,10 @@ local function collectTargets(main: Instance): { GuiObject }
 		sideUIRef = sideUI :: GuiObject
 		for _, sub in sideUI:GetChildren() do
 			if sub:IsA("GuiObject") then
+				-- Keep mobile admin entry visible through shop/cutscene HUD hides.
+				if sub.Name == "AdminFrame" then
+					continue
+				end
 				addTarget(sub :: GuiObject)
 			end
 		end

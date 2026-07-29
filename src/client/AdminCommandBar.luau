@@ -109,6 +109,7 @@ local commandHistory: { string } = {}
 local historyIndex = 0
 local mobileAdminFrame: GuiObject? = nil
 local mobileAdminButtonHost: GuiObject? = nil
+local mobileAdminFrameBasePos: UDim2? = nil
 local mobileAdminWired = false
 local suggestionScrollTouch: InputObject? = nil
 local suggestionScrollStartY = 0
@@ -193,7 +194,9 @@ local COMMAND_HINTS: { [string]: string } = {
 }
 
 local function isPhoneLike(): boolean
-	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+	-- Any touch device should get the SideUI admin button. Many phones report
+	-- KeyboardEnabled=true (on-screen keyboard), which used to hide the button forever.
+	if UserInputService.TouchEnabled then
 		return true
 	end
 	local ok, preferred = pcall(function()
@@ -207,6 +210,26 @@ end
 
 local function isAdminAllowed(): boolean
 	return player:GetAttribute(ADMIN_ALLOWED_ATTR) == true
+end
+
+local function syncMobileAdminButton()
+	local frame = mobileAdminFrame
+	local host = mobileAdminButtonHost
+	local show = isAdminAllowed() and isPhoneLike()
+	if frame then
+		frame.Visible = show
+		-- Cutscene HUD hide can park SideUI children off-screen; snap AdminFrame back.
+		if show and mobileAdminFrameBasePos then
+			frame.Position = mobileAdminFrameBasePos
+		end
+	end
+	if host then
+		host.Visible = show
+		host.Active = show
+		pcall(function()
+			(host :: any).Interactable = show
+		end)
+	end
 end
 
 local refreshSuggestions: () -> ()
@@ -1517,6 +1540,7 @@ local function wireMobileAdminButton()
 	mobileAdminWired = true
 	mobileAdminFrame = adminFrame :: GuiObject
 	mobileAdminButtonHost = host :: GuiObject
+	mobileAdminFrameBasePos = (adminFrame :: GuiObject).Position
 	;(adminFrame :: GuiObject).Visible = false
 	host.Visible = false
 	;(adminFrame :: GuiObject).Active = false
@@ -1567,6 +1591,19 @@ local function wireMobileAdminButton()
 	player:GetAttributeChangedSignal(ADMIN_ALLOWED_ATTR):Connect(syncMobileAdminButton)
 	UserInputService:GetPropertyChangedSignal("KeyboardEnabled"):Connect(syncMobileAdminButton)
 	UserInputService:GetPropertyChangedSignal("TouchEnabled"):Connect(syncMobileAdminButton)
+
+	-- After shop/cutscene HUD restore, AdminFrame can stay parked off-screen — re-assert.
+	local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
+	GameplayUiVisibility.onRestored(function()
+		task.defer(syncMobileAdminButton)
+	end)
+	if sideUI and sideUI:IsA("GuiObject") then
+		sideUI:GetPropertyChangedSignal("Visible"):Connect(function()
+			if (sideUI :: GuiObject).Visible then
+				task.defer(syncMobileAdminButton)
+			end
+		end)
+	end
 end
 
 local function isToggleKey(keyCode: Enum.KeyCode): boolean

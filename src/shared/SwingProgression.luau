@@ -108,12 +108,14 @@ function M.powerStats(powerLevel: number): PowerStats
 end
 
 -- Backend reach grows ~2.5× slower than power/speed (UI display unchanged).
-local REACH_STUDS_RANGE = 258
+-- Base is high enough that new players can swing back from Land 1 without early Reach buys.
+local REACH_STUDS_BASE = 72
+local REACH_STUDS_RANGE = 242
 
 function M.ropeStats(ropeLevel: number): RopeStats
 	local t = M.progressT(ropeLevel, M.ROPE_MAX_LEVEL)
 	return {
-		reachStuds = 56 + t * REACH_STUDS_RANGE,
+		reachStuds = REACH_STUDS_BASE + t * REACH_STUDS_RANGE,
 	}
 end
 

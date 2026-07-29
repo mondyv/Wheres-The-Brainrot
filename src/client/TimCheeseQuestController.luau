@@ -37,6 +37,8 @@ local timModel: Model? = nil
 local questHitbox: BasePart? = nil
 local introPlaying = false
 local introStartedLocal = false -- never restart fall once begun (attribute can lag)
+local introScheduleToken = 0
+local INTRO_AFTER_TUTORIAL_DELAY_SEC = 2.4
 local dialogueBusy = false
 local lastWalkbyAt = 0.0
 local questGui: ScreenGui? = nil -- persistent tracker ScreenGui
@@ -2335,6 +2337,63 @@ local function acceptNextQuestAndShowHud(nextIndex: number)
 	return acceptedOk
 end
 
+-- New players: after tutorial, Tim should intro without requiring the QuestHitbox walk-in.
+-- Hitbox/poll remain as backups for anyone who somehow skips the schedule.
+local function scheduleIntroAfterTutorial(reason: string)
+	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
+		return
+	end
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+		return
+	end
+	if introPlaying or introStartedLocal then
+		return
+	end
+	introScheduleToken += 1
+	local token = introScheduleToken
+	task.spawn(function()
+		task.wait(INTRO_AFTER_TUTORIAL_DELAY_SEC)
+		if token ~= introScheduleToken then
+			return
+		end
+		if introPlaying or introStartedLocal then
+			return
+		end
+		if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
+			return
+		end
+		if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+			return
+		end
+		-- Wait for Tim to stream in (map may still be loading after tutorial).
+		local deadline = os.clock() + 45
+		while os.clock() < deadline do
+			if token ~= introScheduleToken then
+				return
+			end
+			timModel = resolveTim()
+			if timModel then
+				if not homePivot then
+					homePivot = timModel:GetPivot()
+				end
+				break
+			end
+			task.wait(0.35)
+		end
+		if token ~= introScheduleToken or not timModel then
+			warn("[TimCheeseQuestController] intro after tutorial aborted — Tim missing (", reason, ")")
+			return
+		end
+		if introPlaying or introStartedLocal then
+			return
+		end
+		if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
+			return
+		end
+		M.playIntroFall()
+	end)
+end
+
 function M.playIntroFall()
 	if introPlaying or introStartedLocal then
 		return
@@ -2836,10 +2895,13 @@ function M.init()
 			end
 			refreshQuestHud()
 		else
-			-- Invisible + parked until they enter the hitbox (tutorial done or not).
+			-- Invisible + parked until intro (tutorial complete auto-starts, hitbox is backup).
 			hideTimUntilIntro(timModel)
 			questHudRevealed = false
 			syncQuestChromeVisibility()
+			if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+				scheduleIntroAfterTutorial("join_post_tutorial")
+			end
 		end
 
 		player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR):Connect(function()
@@ -2878,6 +2940,9 @@ function M.init()
 		end)
 		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR):Connect(function()
 			syncPromptAndOutline()
+			if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+				scheduleIntroAfterTutorial("tutorial_complete")
+			end
 		end)
 
 		local viewportConn: RBXScriptConnection? = nil

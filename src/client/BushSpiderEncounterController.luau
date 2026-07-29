@@ -871,7 +871,7 @@ local function setBgmWebSlow()
 end
 
 local function ensureCutsceneGui(): ScreenGui
-	if cutsceneGui and cutsceneGui.Parent and cutsceneGui:GetAttribute("QteStyle") == "clean_v3" then
+	if cutsceneGui and cutsceneGui.Parent and cutsceneGui:GetAttribute("QteStyle") == "clean_v4" then
 		return cutsceneGui
 	end
 	if cutsceneGui then
@@ -879,6 +879,16 @@ local function ensureCutsceneGui(): ScreenGui
 		cutsceneGui = nil
 		letterTop = nil
 		letterBottom = nil
+		timingRoot = nil
+		timingRing = nil
+		timingRingScale = nil
+		timingRingStroke = nil
+		timingLetter = nil
+		timingKeyIcon = nil
+		timingHint = nil
+		timingRootScale = nil
+		timingTapBtn = nil
+		timingProgressFill = nil
 	end
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "BushSpiderCutscene"
@@ -886,7 +896,7 @@ local function ensureCutsceneGui(): ScreenGui
 	gui.IgnoreGuiInset = true
 	gui.DisplayOrder = 950
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	gui:SetAttribute("QteStyle", "clean_v3")
+	gui:SetAttribute("QteStyle", "clean_v4")
 	pcall(function()
 		(gui :: any).ClipToDeviceSafeArea = false
 	end)
@@ -1886,6 +1896,10 @@ local function hideTimingQTE()
 	if timingRoot then
 		timingRoot.Visible = false
 	end
+	if timingTapBtn then
+		timingTapBtn.Visible = false
+		timingTapBtn.Active = false
+	end
 end
 
 local function pickRandomQtePosition()
@@ -1927,6 +1941,36 @@ local function refreshTimingUiPresentation(mobileInput: boolean, choiceLabel: st
 		timingTapBtn.Visible = mobileInput
 		timingTapBtn.Active = mobileInput
 	end
+end
+
+-- Always re-enable QTE chrome before a round — never rely on leftover Visible from a prior fight.
+local function prepareTimingQteForShow(mobileInput: boolean, choiceLabel: string)
+	if letterTop then
+		letterTop.Visible = true
+	end
+	if letterBottom then
+		letterBottom.Visible = true
+	end
+	if timingRoot then
+		timingRoot.Visible = true
+		local badge = timingRoot:FindFirstChild("Badge")
+		if badge and badge:IsA("GuiObject") then
+			badge.Visible = true
+		end
+		local progress = timingRoot:FindFirstChild("ProgressTrack")
+		if progress and progress:IsA("GuiObject") then
+			progress.Visible = true
+		end
+		local ring = timingRoot:FindFirstChild("Ring")
+		if ring and ring:IsA("GuiObject") then
+			ring.Visible = true
+		end
+		local hint = timingRoot:FindFirstChild("Hint")
+		if hint and hint:IsA("GuiObject") then
+			hint.Visible = true
+		end
+	end
+	refreshTimingUiPresentation(mobileInput, choiceLabel)
 end
 
 local function flashCharacterTint(color: Color3, duration: number, intense: boolean?)
@@ -2125,6 +2169,23 @@ local function finishEncounter(spider: Model?, web: Model?, didHideHud: boolean?
 		cutsceneGui.Enabled = false
 	end
 	restoreCamera()
+	-- Rebuild QTE UI next fight so letter/hint can never stay stuck invisible.
+	if cutsceneGui then
+		cutsceneGui:Destroy()
+		cutsceneGui = nil
+		letterTop = nil
+		letterBottom = nil
+		timingRoot = nil
+		timingRing = nil
+		timingRingScale = nil
+		timingRingStroke = nil
+		timingLetter = nil
+		timingKeyIcon = nil
+		timingHint = nil
+		timingRootScale = nil
+		timingTapBtn = nil
+		timingProgressFill = nil
+	end
 	if didHideHud ~= false then
 		GameplayUiVisibility.show()
 	end
@@ -2429,7 +2490,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 	gui.Enabled = true
 	local choice = C.TIMING_LETTERS[math.random(1, #C.TIMING_LETTERS)]
 	local mobileInput = isMobileSpiderInput()
-	refreshTimingUiPresentation(mobileInput, choice.label)
+	prepareTimingQteForShow(mobileInput, choice.label)
 	if timingLetter and not mobileInput then
 		timingLetter.TextColor3 = Color3.fromRGB(255, 248, 220)
 	end

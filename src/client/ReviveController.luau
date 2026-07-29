@@ -11,6 +11,7 @@ local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local HUDController = require(script.Parent.HUDController)
@@ -46,6 +47,7 @@ local revivePriceLabel: TextLabel? = nil
 local sessionActive = false
 local purchasePromptOpen = false
 local countdownConn: RBXScriptConnection? = nil
+local elsewhereDeclineConn: RBXScriptConnection? = nil
 local currentProductId: number? = nil
 local currentLand: number? = nil
 
@@ -455,6 +457,56 @@ local function cancelCountdown()
 	end
 end
 
+local function disconnectElsewhereDecline()
+	if elsewhereDeclineConn then
+		elsewhereDeclineConn:Disconnect()
+		elsewhereDeclineConn = nil
+	end
+end
+
+local function isUnderReviveButton(guiObject: Instance?): boolean
+	local host = reviveBtnHost
+	if not host or not guiObject then
+		return false
+	end
+	local cur: Instance? = guiObject
+	while cur do
+		if cur == host then
+			return true
+		end
+		cur = cur.Parent
+	end
+	return false
+end
+
+local closeRevivePanel: (declined: boolean) -> ()
+
+local function bindElsewhereDecline()
+	disconnectElsewhereDecline()
+	elsewhereDeclineConn = UserInputService.InputBegan:Connect(function(input: InputObject, _gameProcessed: boolean)
+		if not sessionActive or purchasePromptOpen then
+			return
+		end
+		if
+			input.UserInputType ~= Enum.UserInputType.MouseButton1
+			and input.UserInputType ~= Enum.UserInputType.Touch
+		then
+			return
+		end
+		local pg = player:FindFirstChildOfClass("PlayerGui")
+		if pg then
+			local objs = pg:GetGuiObjectsAtPosition(input.Position.X, input.Position.Y)
+			for _, obj in objs do
+				if isUnderReviveButton(obj) then
+					return
+				end
+			end
+		end
+		-- Anywhere except the paid Revive button → same as Decline (easy escape).
+		closeRevivePanel(true)
+	end)
+end
+
 local function animatePanelIn(panel: GuiObject)
 	local scale = getOrAddUIScale(panel)
 	scale.Scale = 0.78
@@ -533,6 +585,7 @@ end
 
 local function cleanupReviveSession()
 	cancelCountdown()
+	disconnectElsewhereDecline()
 	stopEarRinging()
 	setBgmSlowed(false)
 	hideReviveBackdrop()
@@ -542,12 +595,13 @@ local function cleanupReviveSession()
 	currentLand = nil
 end
 
-local function closeRevivePanel(declined: boolean)
+closeRevivePanel = function(declined: boolean)
 	if not sessionActive or not revivePanel then
 		return
 	end
 	sessionActive = false
 	cancelCountdown()
+	disconnectElsewhereDecline()
 
 	-- Tell server first so LoadCharacter starts immediately.
 	if declined and reviveDeclinedRE then
@@ -722,6 +776,7 @@ local function openRevivePanel(land: number, productId: number, countdownSec: nu
 	refreshRegionalPrice(productId)
 	animatePanelIn(panel)
 	startCountdown(countdownSec)
+	bindElsewhereDecline()
 end
 
 local function resolveSoundTemplates()

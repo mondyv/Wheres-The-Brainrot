@@ -369,7 +369,7 @@ local function resolveGroundCf(hrp: BasePart): CFrame
 	else
 		flat = flat.Unit
 	end
-	local probe = hrp.Position + flat * 4.2 + Vector3.new(0, 2.5, 0)
+	local probe = hrp.Position + flat * 5.8 + Vector3.new(0, 2.5, 0)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	local char = player.Character
@@ -400,8 +400,13 @@ local function cloneToolAsWorldModel(tool: Tool, atCf: CFrame): Model?
 			c.CanQuery = false
 			c.CanTouch = false
 			c.Massless = true
-			-- Clone may inherit hide modifiers — force fully visible on the floor prop.
-			c.Transparency = 0
+			-- Keep source transparency (invisible hitboxes stay invisible; don't force them opaque).
+			local nameLower = string.lower(d.Name)
+			local hidePart = d.Transparency >= 1
+				or nameLower == "hitbox"
+				or nameLower == "collision"
+				or string.find(nameLower, "hitbox", 1, true) ~= nil
+			c.Transparency = if hidePart then 1 else d.Transparency
 			c.LocalTransparencyModifier = 0
 			c.Parent = model
 			local offset = baseCf:ToObjectSpace(d.CFrame)
@@ -411,7 +416,9 @@ local function cloneToolAsWorldModel(tool: Tool, atCf: CFrame): Model?
 			end
 			for _, ch in c:GetChildren() do
 				if ch:IsA("Decal") or ch:IsA("Texture") then
-					ch.Transparency = 0
+					if c.Transparency >= 1 then
+						ch.Transparency = 1
+					end
 					pcall(function()
 						(ch :: any).LocalTransparencyModifier = 0
 					end)

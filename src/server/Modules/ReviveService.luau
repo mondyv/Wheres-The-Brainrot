@@ -15,7 +15,6 @@ local Workspace = game:GetService("Workspace")
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
-local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
 
 type PendingRevive = {
@@ -312,17 +311,6 @@ local function isFrictionlessDeathActive(player: Player): boolean
 	return Workspace:GetServerTimeNow() < untilT
 end
 
-local function softRespawnAtPlot(player: Player)
-	clearPending(player)
-	local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
-	if spawnCf then
-		storeReviveSpawnAttrs(player, spawnCf)
-	else
-		clearReviveSpawnAttrs(player)
-	end
-	forceLoadCharacter(player)
-end
-
 local function onHumanoidDied(player: Player, character: Model)
 	if pendingByPlayer[player] then
 		return
@@ -338,9 +326,9 @@ local function onHumanoidDied(player: Player, character: Model)
 		return
 	end
 
-	-- First 10 minutes of the session: fade + instant plot respawn, no revive UI.
+	-- First 10 minutes of the session: fade + instant Tim hitbox respawn, no revive UI.
 	if isFrictionlessDeathActive(player) then
-		softRespawnAtPlot(player)
+		softRespawnAtTutorialHitbox(player)
 		return
 	end
 

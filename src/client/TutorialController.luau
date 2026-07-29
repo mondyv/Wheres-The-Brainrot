@@ -4,14 +4,16 @@
 	Persists completion via PlayerDataService (TutorialCompleted attribute).
 ]]
 
-local Players = game:GetService("Players")
-local CollectionService = game:GetService("CollectionService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local Workspace = game:GetService("Workspace")
-local GuiService = game:GetService("GuiService")
-local UserInputService = game:GetService("UserInputService")
+local Svc = {
+	Players = game:GetService("Players"),
+	CollectionService = game:GetService("CollectionService"),
+	ReplicatedStorage = game:GetService("ReplicatedStorage"),
+	RunService = game:GetService("RunService"),
+	TweenService = game:GetService("TweenService"),
+	Workspace = game:GetService("Workspace"),
+	GuiService = game:GetService("GuiService"),
+	UserInputService = game:GetService("UserInputService"),
+}
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -24,18 +26,18 @@ local BushSpiderEncounterController = require(script.Parent.BushSpiderEncounterC
 local CarryGate = require(script.Parent.CarryGate)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local TopNotifController = require(script.Parent.TopNotifController)
-local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
-local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
-local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
-local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
-local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
-local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
-local TutorialConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TutorialConfig"))
-local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
-local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
+local LandResolver = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
+local PlayerDataSchema = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
+local PlotPaths = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
+local PlotSpawnUtil = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
+local BushRootUtil = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
+local SwingUpgrades = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
+local TutorialConfig = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TutorialConfig"))
+local UiFonts = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+local SafezoneUtil = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local JumpButtonSwingRing = require(script.Parent:WaitForChild("JumpButtonSwingRing"))
 
-local player = Players.LocalPlayer
+local player = Svc.Players.LocalPlayer
 
 local M = {}
 
@@ -93,10 +95,12 @@ local lastLandCheck = 0
 local _claimSpotlightActive = false
 local upgradeBaseLevel = 1
 local upgradeStepEnteredAt = 0
-local swingLand1EnteredAt = 0
-local swingReleaseHintShown = false
-local swingGreatJobShown = false
-local goToBaseSwingCoach = false
+local swingCoach = {
+	land1EnteredAt = 0,
+	releaseHintShown = false,
+	greatJobShown = false,
+	goToBaseLite = false,
+}
 local layoutConn: RBXScriptConnection? = nil
 local _panelStroke: UIStroke? = nil
 local chromeSuppressed = false
@@ -204,7 +208,7 @@ local function getCompleteRemote(): RemoteFunction?
 	if completeRF and completeRF.Parent then
 		return completeRF
 	end
-	local folder = ReplicatedStorage:FindFirstChild("TutorialRemotes")
+	local folder = Svc.ReplicatedStorage:FindFirstChild("TutorialRemotes")
 	local rf = folder and folder:FindFirstChild("CompleteTutorial")
 	if rf and rf:IsA("RemoteFunction") then
 		completeRF = rf
@@ -217,7 +221,7 @@ local function getGrantCashRemote(): RemoteFunction?
 	if grantCashRF and grantCashRF.Parent then
 		return grantCashRF
 	end
-	local folder = ReplicatedStorage:FindFirstChild("TutorialRemotes")
+	local folder = Svc.ReplicatedStorage:FindFirstChild("TutorialRemotes")
 	local rf = folder and folder:FindFirstChild("GrantTutorialCash")
 	if rf and rf:IsA("RemoteFunction") then
 		grantCashRF = rf
@@ -227,7 +231,7 @@ local function getGrantCashRemote(): RemoteFunction?
 end
 
 local function setTutorialSoftRespawn(enabled: boolean)
-	local folder = ReplicatedStorage:FindFirstChild("TutorialRemotes")
+	local folder = Svc.ReplicatedStorage:FindFirstChild("TutorialRemotes")
 	local re = folder and folder:FindFirstChild("SetTutorialSoftRespawn")
 	if re and re:IsA("RemoteEvent") then
 		re:FireServer(enabled)
@@ -284,8 +288,8 @@ local function playStarterCashFx(amount: number)
 	scale.Scale = 0.55
 	scale.Parent = popup
 
-	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.15 }):Play()
-	TweenService:Create(
+	Svc.TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.15 }):Play()
+	Svc.TweenService:Create(
 		popup,
 		TweenInfo.new(1.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{
@@ -305,8 +309,8 @@ local function playStarterCashFx(amount: number)
 		local base = cashLabel.TextColor3
 		cashLabel.TextColor3 = Color3.fromRGB(110, 255, 150)
 		sc.Scale = 1.22
-		TweenService:Create(sc, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-		TweenService:Create(
+		Svc.TweenService:Create(sc, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		Svc.TweenService:Create(
 			cashLabel,
 			TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 			{ TextColor3 = base }
@@ -356,7 +360,7 @@ local function fireConfettiAndShake()
 	sessionConfettiFired = true
 	finishCelebrated = true
 
-	local essentials = ReplicatedStorage:FindFirstChild("EssentialsShared")
+	local essentials = Svc.ReplicatedStorage:FindFirstChild("EssentialsShared")
 	if not essentials then
 		return
 	end
@@ -399,7 +403,7 @@ local function startObjectiveDotsImpl(baseText: string)
 		dotsLabel.Text = ""
 		dotsLabel.Visible = true
 	end
-	dotsConn = RunService.Heartbeat:Connect(function(dt)
+	dotsConn = Svc.RunService.Heartbeat:Connect(function(dt)
 		if not active or chromeSuppressed or not dotsLabel or not dotsLabel.Parent then
 			return
 		end
@@ -427,7 +431,7 @@ local function typeObjective(displayText: string)
 end
 
 local function viewportSize(): Vector2
-	local cam = Workspace.CurrentCamera
+	local cam = Svc.Workspace.CurrentCamera
 	if cam then
 		return cam.ViewportSize
 	end
@@ -465,11 +469,11 @@ local function isHudPanelOpen(): boolean
 end
 
 local function isMobileUi(): boolean
-	return UserInputService.TouchEnabled
+	return Svc.UserInputService.TouchEnabled
 end
 
 local function findMobileJumpButton(): GuiButton?
-	if not UserInputService.TouchEnabled then
+	if not Svc.UserInputService.TouchEnabled then
 		return nil
 	end
 	local pg = player:FindFirstChildOfClass("PlayerGui")
@@ -530,7 +534,7 @@ end
 local function hostTopInset(host: Frame): number
 	local screen = host:FindFirstAncestorOfClass("ScreenGui")
 	if screen and screen.IgnoreGuiInset then
-		return GuiService:GetGuiInset().Y
+		return Svc.GuiService:GetGuiInset().Y
 	end
 	return 0
 end
@@ -655,7 +659,7 @@ local function startLayoutSync()
 	end
 	layoutSyncAccum = 0
 	-- Throttled — writing Size/Position every RenderStepped can starve Studio/CorePackages.
-	layoutConn = RunService.Heartbeat:Connect(function(dt)
+	layoutConn = Svc.RunService.Heartbeat:Connect(function(dt)
 		if not active or chromeSuppressed then
 			return
 		end
@@ -740,7 +744,7 @@ local function ensureGuideTrail(): boolean
 
 	local folder = Instance.new("Folder")
 	folder.Name = "TutorialGuideTrail"
-	folder.Parent = Workspace
+	folder.Parent = Svc.Workspace
 
 	local a0 = Instance.new("Attachment")
 	a0.Name = "TutorialGuidePlayer"
@@ -813,7 +817,7 @@ local function setGuideTrailToPart(part: BasePart?, offset: Vector3?)
 		guideFollowConn:Disconnect()
 		guideFollowConn = nil
 	end
-	guideFollowConn = RunService.Heartbeat:Connect(function()
+	guideFollowConn = Svc.RunService.Heartbeat:Connect(function()
 		if not active or chromeSuppressed or not guideGoalPart or not guideBeam then
 			return
 		end
@@ -916,13 +920,13 @@ local function buildStandOutlineProxy(adornee: Instance, host: Folder): Model?
 end
 
 local function getTutorialOutlineHost(): Folder
-	local existing = Workspace:FindFirstChild("PlotOutlineProxies")
+	local existing = Svc.Workspace:FindFirstChild("PlotOutlineProxies")
 	if existing and existing:IsA("Folder") then
 		return existing
 	end
 	local folder = Instance.new("Folder")
 	folder.Name = "PlotOutlineProxies"
-	folder.Parent = Workspace
+	folder.Parent = Svc.Workspace
 	return folder
 end
 
@@ -954,7 +958,7 @@ local function outlineWorld(adornee: Instance?)
 		if PlotPaths.isPlotRoot(adornee) and adornee:GetAttribute("PlotOwnerUserId") ~= player.UserId then
 			return
 		end
-		-- Invisible proxies in Workspace (never CurrentCamera — camera swaps destroy children).
+		-- Invisible proxies in Svc.Workspace (never CurrentCamera — camera swaps destroy children).
 		local proxy = PlotSpawnUtil.buildInvisibleOutlineProxy(adornee, host)
 		if not proxy then
 			return
@@ -1327,7 +1331,7 @@ local function ensureGui()
 
 	task.spawn(function()
 		while active and bang.Parent do
-			local up = TweenService:Create(bang, EXCLAIM_PULSE, {
+			local up = Svc.TweenService:Create(bang, EXCLAIM_PULSE, {
 				Size = UDim2.fromOffset(40, 40),
 				Rotation = -8,
 			})
@@ -1336,7 +1340,7 @@ local function ensureGui()
 			if not bang.Parent or not active then
 				break
 			end
-			local down = TweenService:Create(bang, EXCLAIM_PULSE, {
+			local down = Svc.TweenService:Create(bang, EXCLAIM_PULSE, {
 				Size = UDim2.fromOffset(34, 34),
 				Rotation = 8,
 			})
@@ -1369,10 +1373,10 @@ local function showPanel(text: string, animateIn: boolean)
 	syncPanelToSideButtons()
 	if animateIn then
 		panelScale.Scale = 0.82
-		TweenService:Create(panelScale, PANEL_OPEN, { Scale = 1 }):Play()
+		Svc.TweenService:Create(panelScale, PANEL_OPEN, { Scale = 1 }):Play()
 	else
 		panelScale.Scale = 0.92
-		TweenService:Create(panelScale, PANEL_SWAP, { Scale = 1 }):Play()
+		Svc.TweenService:Create(panelScale, PANEL_SWAP, { Scale = 1 }):Play()
 	end
 	typeObjective(text)
 end
@@ -1387,8 +1391,8 @@ local function hidePanel()
 	local s = panelScale
 	local p = panel
 	local g = gui
-	TweenService:Create(s, PANEL_SWAP, { Scale = 0.8 }):Play()
-	local tw = TweenService:Create(p, PANEL_SWAP, {
+	Svc.TweenService:Create(s, PANEL_SWAP, { Scale = 0.8 }):Play()
+	local tw = Svc.TweenService:Create(p, PANEL_SWAP, {
 		Position = UDim2.new(1, p.Position.X.Offset + 90, 0, p.Position.Y.Offset),
 	})
 	tw:Play()
@@ -1436,7 +1440,7 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	bb.Adornee = part
 	local pg = player:FindFirstChildOfClass("PlayerGui")
 	-- Prefer PlayerGui; camera fallback if PlayerGui isn't ready yet on mobile join.
-	bb.Parent = pg or Workspace.CurrentCamera
+	bb.Parent = pg or Svc.Workspace.CurrentCamera
 
 	local img = Instance.new("ImageLabel")
 	img.BackgroundTransparency = 1
@@ -1460,7 +1464,7 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 
 	-- Continuous sine bob — offset only (don't thrash image Size; that looked broken on mobile).
 	local phase = 0
-	arrowAnimConn = RunService.RenderStepped:Connect(function(dt)
+	arrowAnimConn = Svc.RunService.RenderStepped:Connect(function(dt)
 		if worldArrowImg ~= img or not img.Parent or not active or chromeSuppressed then
 			return
 		end
@@ -1653,7 +1657,7 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			if counter and counter:IsA("UIScale") and pointer.Parent then
 				counter.Scale = 1 / cumulativeUiScale(pointer.Parent)
 			end
-			local up = TweenService:Create(pointer, CLICK_BOUNCE, {
+			local up = Svc.TweenService:Create(pointer, CLICK_BOUNCE, {
 				Size = if uiPointerBb
 					then UDim2.fromScale(1.08, 1.08)
 					else UDim2.fromOffset(clickSizeUp, clickSizeUp),
@@ -1664,7 +1668,7 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			if uiPointer ~= pointer then
 				break
 			end
-			local down = TweenService:Create(pointer, CLICK_BOUNCE, {
+			local down = Svc.TweenService:Create(pointer, CLICK_BOUNCE, {
 				Size = if uiPointerBb
 					then UDim2.fromScale(1, 1)
 					else UDim2.fromOffset(clickSize, clickSize),
@@ -1699,8 +1703,8 @@ updateMobileJumpTutorialHighlight = function()
 			if uiPointerHost and uiPointerHost.Name == "JumpButton" then
 				clearUiPointer()
 			end
-			if not swingReleaseHintShown then
-				swingReleaseHintShown = true
+			if not swingCoach.releaseHintShown then
+				swingCoach.releaseHintShown = true
 				showPanel("Press jump again to let go!", false)
 			end
 			return
@@ -1713,7 +1717,7 @@ updateMobileJumpTutorialHighlight = function()
 		return
 	end
 
-	if step.id == "goToBase" and goToBaseSwingCoach then
+	if step.id == "goToBase" and swingCoach.goToBaseLite then
 		if swinging then
 			JumpButtonSwingRing.setTutorialCoach(nil)
 			return
@@ -1734,7 +1738,7 @@ updateMobileJumpTutorialHighlight = function()
 end
 
 local function resolveUpgradeStandModel(): Instance?
-	local map = Workspace:FindFirstChild("Map")
+	local map = Svc.Workspace:FindFirstChild("Map")
 	local stands = map and map:FindFirstChild("UIStands")
 	return stands and stands:FindFirstChild("Upgrade Stand")
 end
@@ -1774,7 +1778,7 @@ local function land1Aim(): Vector3
 	if spawnCf then
 		return spawnCf.Position
 	end
-	local map = Workspace:FindFirstChild("Map")
+	local map = Svc.Workspace:FindFirstChild("Map")
 	local lands = map and map:FindFirstChild("Lands")
 	local land1 = lands and lands:FindFirstChild("Land1")
 	if land1 and land1:IsA("Model") then
@@ -1795,7 +1799,7 @@ local function refreshVineCache()
 	vineCacheAt = os.clock()
 	table.clear(vineCache)
 
-	for _, inst in CollectionService:GetTagged("SwingTarget") do
+	for _, inst in Svc.CollectionService:GetTagged("SwingTarget") do
 		if inst:IsA("BasePart") and inst.Parent then
 			table.insert(vineCache, inst)
 		end
@@ -1806,7 +1810,7 @@ local function refreshVineCache()
 	end
 
 	-- Tags often missing in Studio — fall back to named parts under Map.Vine (capped).
-	local map = Workspace:FindFirstChild("Map")
+	local map = Svc.Workspace:FindFirstChild("Map")
 	local vine = map and map:FindFirstChild("Vine")
 	if not vine then
 		return
@@ -1906,7 +1910,7 @@ local function resolveReturnSwingTarget(): BasePart?
 			aim = (pivot :: CFrame).Position
 		end
 	else
-		local map = Workspace:FindFirstChild("Map")
+		local map = Svc.Workspace:FindFirstChild("Map")
 		local spawn = map and (map:FindFirstChild("Spawn") or map:FindFirstChild("Safezone"))
 		if spawn and spawn:IsA("BasePart") then
 			aim = spawn.Position
@@ -1959,13 +1963,13 @@ local function resolveSwingVineAdornee(swingPart: BasePart?): Instance?
 		return nil
 	end
 	local vine = swingPart.Parent
-	if vine == Workspace or vine:IsA("WorldRoot") then
+	if vine == Svc.Workspace or vine:IsA("WorldRoot") then
 		return swingPart
 	end
 	-- Map.Vine is the global container — adorning it would yellow-highlight every vine.
 	if string.lower(vine.Name) == "vine" then
 		local p = vine.Parent
-		if p and (p.Name == "Map" or p == Workspace) then
+		if p and (p.Name == "Map" or p == Svc.Workspace) then
 			return swingPart
 		end
 	end
@@ -2472,7 +2476,7 @@ local function refreshPointersImpl()
 		end
 	elseif step.id == "goToBase" then
 		clearLockedBush()
-		if goToBaseSwingCoach and not isPlayerAtOwnBase() and isMobileSwingPromptReady() then
+		if swingCoach.goToBaseLite and not isPlayerAtOwnBase() and isMobileSwingPromptReady() then
 			local swing = resolveReturnSwingTarget()
 			if swing then
 				pointAtWorld(swing, arrowHeight(3))
@@ -2494,7 +2498,7 @@ local function refreshPointersImpl()
 			if plot then
 				outlineWorld(plot)
 			end
-			if goToBaseSwingCoach then
+			if swingCoach.goToBaseLite then
 				updateMobileJumpTutorialHighlight()
 			end
 		end
@@ -2557,7 +2561,7 @@ finishTutorial = function(opts: { skipped: boolean? }?)
 	table.clear(attrConns)
 	hidePanel()
 	JumpButtonSwingRing.setTutorialCoach(nil)
-	goToBaseSwingCoach = false
+	swingCoach.goToBaseLite = false
 	local skipped = opts ~= nil and opts.skipped == true
 	if not skipped then
 		-- One confetti burst for the whole tutorial (guarded inside fireConfettiAndShake).
@@ -2615,21 +2619,21 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 	end
 	if step.id == "swingLand1" then
 		clearLockedSwing()
-		swingLand1EnteredAt = os.clock()
-		swingReleaseHintShown = false
-		swingGreatJobShown = false
-		goToBaseSwingCoach = false
+		swingCoach.land1EnteredAt = os.clock()
+		swingCoach.releaseHintShown = false
+		swingCoach.greatJobShown = false
+		swingCoach.goToBaseLite = false
 		setTutorialSoftRespawn(true)
 	elseif step.id == "goToBase" then
 		clearLockedSwing()
-		goToBaseSwingCoach = true
+		swingCoach.goToBaseLite = true
 		setTutorialSoftRespawn(false)
 	elseif step.id == "grantCash" or step.id == "visitUpgrade" or step.id == "buyPower" then
 		setTutorialSoftRespawn(true)
 	elseif step.id == "searchBush" then
 		clearLockedBush()
 		clearLockedSwing()
-		goToBaseSwingCoach = false
+		swingCoach.goToBaseLite = false
 		JumpButtonSwingRing.setTutorialCoach(nil)
 		-- Past the swing lesson — normal death / revive panel from here on.
 		setTutorialSoftRespawn(false)
@@ -2679,7 +2683,7 @@ local function watchStepProgress()
 	if heartbeatConn then
 		heartbeatConn:Disconnect()
 	end
-	heartbeatConn = RunService.Heartbeat:Connect(function()
+	heartbeatConn = Svc.RunService.Heartbeat:Connect(function()
 		if not active then
 			return
 		end
@@ -2785,7 +2789,7 @@ local function watchStepProgress()
 				updateMobileJumpTutorialHighlight()
 			end
 			-- Don't skip instantly: spawn nearest-land fallback used to count as Land 1.
-			if swingLand1EnteredAt > 0 and (now - swingLand1EnteredAt) < 0.85 then
+			if swingCoach.land1EnteredAt > 0 and (now - swingCoach.land1EnteredAt) < 0.85 then
 				-- still showing the vine step
 			else
 				local char = player.Character
@@ -2793,8 +2797,8 @@ local function watchStepProgress()
 				if hrp and hrp:IsA("BasePart") and LandResolver.isInsideLandHitbox(hrp.Position, 1) then
 					clearLockedSwing()
 					JumpButtonSwingRing.setTutorialCoach(nil)
-					if not swingGreatJobShown then
-						swingGreatJobShown = true
+					if not swingCoach.greatJobShown then
+						swingCoach.greatJobShown = true
 						TopNotifController.showBroadcast("Great job!")
 					end
 					completeCurrentIf("swingLand1")
@@ -2803,12 +2807,12 @@ local function watchStepProgress()
 		elseif step.id == "goToBase" and now - lastLandCheck > 0.35 then
 			lastLandCheck = now
 			if isPlayerAtOwnBase() then
-				goToBaseSwingCoach = false
+				swingCoach.goToBaseLite = false
 				JumpButtonSwingRing.setTutorialCoach(nil)
 				clearLockedSwing()
 				completeCurrentIf("goToBase")
 			else
-				if goToBaseSwingCoach then
+				if swingCoach.goToBaseLite then
 					if not worldArrowBb or not worldHighlight or not (lockedSwingPart and lockedSwingPart.Parent) then
 						refreshPointers()
 					else
@@ -3030,7 +3034,7 @@ function M.start(force: boolean?)
 		sessionConfettiFired = false
 		finishCelebrated = false
 		upgradeStepEnteredAt = 0
-		swingLand1EnteredAt = 0
+		swingCoach.land1EnteredAt = 0
 	end
 	ensureGui()
 	startLayoutSync()
@@ -3081,7 +3085,7 @@ function M.stop()
 	table.clear(attrConns)
 	hidePanel()
 	JumpButtonSwingRing.setTutorialCoach(nil)
-	goToBaseSwingCoach = false
+	swingCoach.goToBaseLite = false
 end
 
 function M.init()

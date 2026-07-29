@@ -3564,8 +3564,8 @@ local function boot(character)
 	end
 
 	function st.isHoldToSwingMode()
-		-- Default off: press jump to latch, press again to release.
-		return player:GetAttribute("HoldToSwingEnabled") == true
+		-- Default on: hold jump to latch, release to let go.
+		return player:GetAttribute("HoldToSwingEnabled") ~= false
 	end
 
 	function st.holdIsActive()

@@ -128,8 +128,8 @@ M.DEFAULT_SETTINGS = {
 	spiderCutsceneEnabled = true,
 	shopCutsceneEnabled = true,
 	lowGraphicsEnabled = false,
-	-- Default off: press jump to attach, press jump again to release.
-	holdToSwingEnabled = false,
+	-- Default on: hold jump to attach, release to let go. Settings toggle turns this off (tap to latch / tap to release).
+	holdToSwingEnabled = true,
 } :: PlayerSettingsSaveData
 
 return M

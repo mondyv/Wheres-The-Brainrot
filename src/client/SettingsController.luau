@@ -11,8 +11,8 @@
 	• Button6 → ShopCutsceneEnabled; default on = Undertale stand greetings. Off = walk up and open panels directly.
 	• Button7 → LowGraphicsEnabled; default off. Stronger cull (current land only +
 	  hide grass/trees), no shadows/bloom/fireflies/sway, lowest quality, VFX off.
-	• Button8 / "Button 8" → Turn off hold to swing. On (default) = press jump to attach, press again to release.
-	  Off = classic hold-to-swing.
+	• Button8 / "Button 8" → Turn off hold to swing. Off (default) = hold jump to attach, release to let go.
+	  On = press jump to attach, press again to release.
 --]]
 
 local Players          = game:GetService("Players")
@@ -673,8 +673,8 @@ function SettingsController.init()
 		player:SetAttribute(PlayerDataSchema.SETTINGS_LOW_GRAPHICS_ATTR, false)
 	end
 	if player:GetAttribute("HoldToSwingEnabled") == nil then
-		player:SetAttribute("HoldToSwingEnabled", false)
-		player:SetAttribute(PlayerDataSchema.SETTINGS_HOLD_TO_SWING_ATTR, false)
+		player:SetAttribute("HoldToSwingEnabled", true)
+		player:SetAttribute(PlayerDataSchema.SETTINGS_HOLD_TO_SWING_ATTR, true)
 	end
 
 	local function configureSettingsContainer()
@@ -756,7 +756,7 @@ function SettingsController.init()
 			continue
 		end
 
-		-- "Turn off hold to swing" On = hold disabled (default). Off = classic hold-to-swing.
+		-- "Turn off hold to swing" Off (default) = classic hold. On = tap to latch / tap to release.
 		local turnOffHoldOn = player:GetAttribute("HoldToSwingEnabled") ~= true
 		local toggleOn = if child == slowToggleRow then player:GetAttribute("SlowWalkEnabled") == true
 			elseif child == showOthersToggleRow then true

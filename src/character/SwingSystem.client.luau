@@ -153,20 +153,25 @@ C.MIN_LOOK_DOT = 0.3
 C.LOOK_DOWN_PITCH = -0.22
 C.LOOK_DOWN_FORWARD_DOT = 0.12
 C.MIN_TARGET_HEIGHT_OFFSET = -8
--- Aim scoring: crosshair / screen-center dominates. Distance is a tiny tiebreaker.
+-- Aim scoring: crosshair / screen-center dominates, but nearer vines along look must win.
 C.TARGET_SCORE_ALIGN = 4.8
-C.TARGET_SCORE_CENTER = 6.5
+C.TARGET_SCORE_CENTER = 5.2
 C.TARGET_SCORE_CENTER_LOOK_DOWN = 3.2
-C.TARGET_SCORE_DIST_WEIGHT = 0.12
-C.TARGET_SCORE_PREFER_NEAR_STUDS = 110
-C.TARGET_SCORE_PREFER_NEAR_REACH_FRAC = 0.42
-C.TARGET_SCORE_NEAR_AIM_BONUS = 0.15
+C.TARGET_SCORE_DIST_WEIGHT = 1.15
+C.TARGET_SCORE_PREFER_NEAR_STUDS = 90
+C.TARGET_SCORE_PREFER_NEAR_REACH_FRAC = 0.32
+C.TARGET_SCORE_NEAR_AIM_BONUS = 1.8
 C.TARGET_SCORE_LATERAL = 8.5
 C.TARGET_SCORE_LATERAL_WORLD = 5.5
 C.TARGET_SCORE_BEHIND_REJECT = 0.05
 C.TARGET_CAMERA_RAY_BONUS = 25
 C.TARGET_SCREEN_LOCK_RADIUS = 0.22
-C.TARGET_SCREEN_LOCK_BONUS = 30
+C.TARGET_SCREEN_LOCK_BONUS = 22
+-- Look-cone for "first vine in front of camera" (angular, clamped — not depth*loose).
+C.TARGET_LOOK_CONE_TAN = 0.16
+C.TARGET_LOOK_CONE_MIN_LATERAL = 5.5
+C.TARGET_LOOK_CONE_MAX_LATERAL = 8.5
+C.TARGET_LOOK_DEPTH_PREFER = 6
 C.AIRBORNE_TARGET_LOOK_DOT = 0.08
 C.GROUNDED_TARGET_LOOK_DOT = 0.12
 C.TARGET_SCREEN_RADIUS_LIMIT = 0.72
@@ -2369,6 +2374,16 @@ local function boot(character)
 			return true, screenR, viewDot
 		end
 
+		local function maxLookLateral(depth: number): number
+			-- Angular cone with a near floor + far cap so high reach can't "see through"
+			-- a slightly off-center near vine to a dead-center far one.
+			return math.clamp(
+				depth * C.TARGET_LOOK_CONE_TAN,
+				C.TARGET_LOOK_CONE_MIN_LATERAL,
+				C.TARGET_LOOK_CONE_MAX_LATERAL
+			)
+		end
+
 		-- Prefer the nearest vine along look. Ray can miss thin near vines and hit far ones.
 		local best: BasePart? = nil
 		local bestDepth = math.huge
@@ -2393,17 +2408,18 @@ local function boot(character)
 			end
 			local onRay = origin + look * depth
 			local lateral = (aimWorld - onRay).Magnitude
-			-- Tight cone so "first in front of camera" wins over far centered vines.
-			local maxLateral = math.max(2.8, depth * 0.055)
-			if lateral > maxLateral then
+			if lateral > maxLookLateral(depth) then
 				continue
 			end
 			local okAim, screenR = acceptAim(aimWorld)
 			if not okAim then
 				continue
 			end
-			-- Nearer along look wins; tiny depth ties break toward screen center.
-			if depth < bestDepth - 2 or (math.abs(depth - bestDepth) <= 2 and screenR < bestScreenR) then
+			-- Nearer along look always wins; screen-center only breaks near ties.
+			if
+				depth + 0.5 < bestDepth
+				or (math.abs(depth - bestDepth) <= 1.5 and screenR < bestScreenR)
+			then
 				bestDepth = depth
 				bestScreenR = screenR
 				best = part
@@ -2919,9 +2935,13 @@ local function boot(character)
 				math.max(reach, 1) * C.TARGET_SCORE_PREFER_NEAR_REACH_FRAC
 			)
 			local distancePenalty = (dist / nearScale) * C.TARGET_SCORE_DIST_WEIGHT
-			local nearAimBonus = 0
-			if viewDot >= 0.9 and screenRadius < 0.12 then
-				nearAimBonus = (1 - math.clamp(dist / nearScale, 0, 1)) * C.TARGET_SCORE_NEAR_AIM_BONUS
+			-- Extra push so high reach can't crown a max-range vine over the first one in view.
+			if dist > nearScale then
+				distancePenalty += ((dist - nearScale) / math.max(reach - nearScale, 1)) * 3.2
+			end
+			local nearAimBonus = (1 - math.clamp(dist / nearScale, 0, 1)) * C.TARGET_SCORE_NEAR_AIM_BONUS
+			if viewDot >= 0.82 and screenRadius < 0.28 then
+				nearAimBonus *= 1.35
 			end
 			local alignPower = align * align * math.max(align, 0)
 			local screenLockBonus = 0
@@ -2941,9 +2961,16 @@ local function boot(character)
 				- distancePenalty
 				- lateralPenalty
 
-			-- Prefer tighter screen aim even when scores are close (side vine nearness can't win).
-			local better = score > bestScore + 0.05
-			if not better and math.abs(score - bestScore) <= 0.05 and screenRadius + 0.02 < bestScreenR then
+			-- Prefer nearer vines when scores are close (high reach must not skip first vine).
+			local better = score > bestScore + 0.08
+			if not better and math.abs(score - bestScore) <= 0.35 then
+				local bestDist = if best then (st.closestAttachWorldOnPart(best) - st.hrp.Position).Magnitude else math.huge
+				if dist + 4 < bestDist then
+					better = true
+				elseif math.abs(dist - bestDist) <= 4 and screenRadius + 0.02 < bestScreenR then
+					better = true
+				end
+			elseif not better and math.abs(score - bestScore) <= 0.08 and screenRadius + 0.02 < bestScreenR then
 				better = true
 			end
 			if better then
@@ -3114,7 +3141,7 @@ local function boot(character)
 			math.max(maxDistance, 1) * C.TARGET_SCORE_PREFER_NEAR_REACH_FRAC
 		)
 		local nearAlpha = 1 - math.clamp(dist / nearCap, 0, 1)
-		local score = nearAlpha * nearAlpha * 3.4
+		local score = nearAlpha * nearAlpha * 5.5
 		local aimWorld = if target:IsA("BasePart") then st.aimPointOnPart(target) else point
 		local toTargetFlat = flatUnit(aimWorld - st.hrp.Position)
 
@@ -3141,9 +3168,10 @@ local function boot(character)
 				local onRay = camera.CFrame.Position + look * along
 				local lateral = (aimWorld - onRay).Magnitude
 				score -= (lateral / math.max(dist, 8)) * C.TARGET_SCORE_LATERAL_WORLD
-				-- Extra penalty for far vines when a short latch is possible (high reach).
-				if maxDistance > 140 and dist > nearCap then
-					score -= ((dist - nearCap) / math.max(maxDistance - nearCap, 1)) * 4.0
+				-- Depth along look: nearer vines in the cone beat far centered ones.
+				score -= (math.max(depth, 0) / math.max(nearCap, 1)) * 2.4
+				if maxDistance > 120 and dist > nearCap then
+					score -= ((dist - nearCap) / math.max(maxDistance - nearCap, 1)) * 5.5
 				end
 			end
 			if not onScreen then

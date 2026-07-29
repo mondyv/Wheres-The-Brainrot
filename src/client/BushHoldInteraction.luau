@@ -176,19 +176,25 @@ end
 
 local function setAllBushPromptsEnabled(enabledPrompt: ProximityPrompt?)
 	-- Only toggle previous + next. Walking Enabled on every bush each retarget hitchs.
+	-- Never disable the prompt currently being held — that kills search shake mid-walk.
+	local heldPrompt = if ProximityPromptEffects.isBushSearchActive()
+		then (bushSearchHoldPrompt or enabledPrompt)
+		else nil
 	if lastEnabledBushPrompt and lastEnabledBushPrompt ~= enabledPrompt and lastEnabledBushPrompt.Parent then
-		lastEnabledBushPrompt.Enabled = false
+		if lastEnabledBushPrompt ~= heldPrompt then
+			lastEnabledBushPrompt.Enabled = false
+		end
 	end
 	if enabledPrompt and enabledPrompt.Parent then
 		enabledPrompt.Enabled = true
 	elseif not enabledPrompt then
 		for _, p in bushByModel do
-			if p.Parent and p.Enabled then
+			if p.Parent and p.Enabled and p ~= heldPrompt then
 				p.Enabled = false
 			end
 		end
 	end
-	lastEnabledBushPrompt = enabledPrompt
+	lastEnabledBushPrompt = enabledPrompt or heldPrompt
 end
 
 local function detachPrompt(root: Instance)
@@ -780,6 +786,30 @@ local function tickAim()
 		end
 	end
 	syncCooldownVisualsIfDue(false)
+
+	-- Freeze retarget while holding a bush open — switching/disabling the prompt
+	-- mid-hold kills wobble/camera shake even though harvest still completes.
+	if ProximityPromptEffects.isBushSearchActive() and bushSearchHoldPrompt and bushSearchHoldPrompt.Parent then
+		local heldPrompt = bushSearchHoldPrompt
+		local heldBush = activeBush
+		for model, p in bushByModel do
+			if p == heldPrompt then
+				heldBush = model
+				break
+			end
+		end
+		if heldBush then
+			if hl then
+				applyBushHighlight(hl, heldBush, false)
+			end
+			if heldPrompt.Enabled ~= true then
+				heldPrompt.Enabled = true
+			end
+			setActive(heldBush, heldPrompt, bushAnchor[heldBush])
+			GameSoundEffects.syncBushAura(heldBush)
+		end
+		return
+	end
 
 	-- Block new bush search only at carry capacity; cooldown lock visuals still update while partially loaded.
 	local bush: Instance?, prompt: ProximityPrompt?, anchor: BasePart?

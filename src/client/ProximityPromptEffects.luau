@@ -2764,8 +2764,11 @@ local function wireStylePrompt(prompt: ProximityPrompt)
 			end
 			if isManagedBushPrompt(prompt) then
 				if not prompt.Enabled then
-					stopBushCameraShake()
-					stopBushWobble()
+					-- Retarget may flip Enabled off mid-hold; don't kill shake for the active hold.
+					if managedBushHoldActive ~= prompt then
+						stopBushCameraShake()
+						stopBushWobble()
+					end
 				end
 				return
 			end
@@ -3227,7 +3230,8 @@ function ProximityPromptEffects.init()
 	-- BushHoldInteraction already picks the closest bush and calls suppressBushSearchUi.
 	-- Only re-validate the current prompt — never scan all styledPrompts each tick.
 	local function resolveManagedBushPrompt(): ProximityPrompt?
-		if managedBushHoldActive and managedBushHoldActive.Parent and managedBushHoldActive.Enabled then
+		-- Keep the active hold even if Enabled briefly flickered during walk-retarget.
+		if managedBushHoldActive and managedBushHoldActive.Parent then
 			return managedBushHoldActive
 		end
 		if CarryGate.isFull() then

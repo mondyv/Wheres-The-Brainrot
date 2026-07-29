@@ -702,6 +702,14 @@ local function openRevivePanel(land: number, productId: number, countdownSec: nu
 	end
 
 	hideGameplayHud(main)
+	-- Return chrome can stay Visible under a hidden SideUI; clear it so a SideUI flash
+	-- during revive cannot show the paid Return button next to Decline/Revive.
+	pcall(function()
+		local ReturnController = require(script.Parent.ReturnController)
+		if typeof((ReturnController :: any).forceHide) == "function" then
+			(ReturnController :: any).forceHide()
+		end
+	end)
 	showReviveBackdrop()
 	collectBgmSounds()
 	setBgmSlowed(true)
@@ -757,6 +765,10 @@ local function hookCharacter(character: Model)
 end
 
 local ReviveController = {}
+
+function ReviveController.isSessionActive(): boolean
+	return sessionActive
+end
 
 function ReviveController.registerHudRestoredCallback(fn: () -> ())
 	table.insert(hudRestoredCallbacks, fn)

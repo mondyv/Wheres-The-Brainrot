@@ -376,6 +376,38 @@ local function isWebTrapped(): boolean
 	return player:GetAttribute(WebTrapConfig.TRAPPED_ATTR) == true
 end
 
+local function isCharacterAlive(character: Model): boolean
+	local hum = character:FindFirstChildOfClass("Humanoid")
+	if not hum then
+		return false
+	end
+	if hum.Health <= 0 then
+		return false
+	end
+	local ok, state = pcall(function()
+		return hum:GetState()
+	end)
+	if ok and state == Enum.HumanoidStateType.Dead then
+		return false
+	end
+	return true
+end
+
+local function isReviveSessionActive(): boolean
+	local ok, revive = pcall(function()
+		return require(script.Parent.ReviveController)
+	end)
+	if not ok or typeof(revive) ~= "table" then
+		return false
+	end
+	local fn = (revive :: any).isSessionActive
+	if typeof(fn) ~= "function" then
+		return false
+	end
+	local okCall, active = pcall(fn)
+	return okCall and active == true
+end
+
 local function shouldShowReturnChrome(): boolean
 	if teleportBusy then
 		return false
@@ -384,8 +416,15 @@ local function shouldShowReturnChrome(): boolean
 	if isWebTrapped() then
 		return false
 	end
+	-- Never show Return over the death revive / decline panel.
+	if isReviveSessionActive() then
+		return false
+	end
 	local character = player.Character
 	if not character then
+		return false
+	end
+	if not isCharacterAlive(character) then
 		return false
 	end
 	-- Until zone parts are cached, treat as safezone — never flash Return at spawn / sell stand.
@@ -741,6 +780,10 @@ local function watchCharacterCarry(character: Model)
 	end))
 end
 
+function ReturnController.forceHide()
+	applyVisibility(false, true)
+end
+
 function ReturnController.init()
 	local rf = ReplicatedStorage:WaitForChild("ReturnToPlot", 60)
 	if rf and rf:IsA("RemoteFunction") then
@@ -817,16 +860,52 @@ function ReturnController.init()
 
 	player.CharacterAdded:Connect(function(character)
 		watchCharacterCarry(character)
+		local hum = character:WaitForChild("Humanoid", 10)
+		if hum and hum:IsA("Humanoid") then
+			hum.Died:Connect(function()
+				-- Snap Return off before revive SideUI races can bring it back.
+				applyVisibility(false, true)
+			end)
+			hum.HealthChanged:Connect(function(hp)
+				if hp <= 0 and visibleTarget then
+					applyVisibility(false, true)
+				end
+			end)
+		end
 		task.defer(function()
 			refreshVisibility(true)
 		end)
 	end)
 	player.CharacterRemoving:Connect(function()
 		clearCharCarryConns()
+		applyVisibility(false, true)
 	end)
 	if player.Character then
 		watchCharacterCarry(player.Character)
+		local hum = player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.Died:Connect(function()
+				applyVisibility(false, true)
+			end)
+			hum.HealthChanged:Connect(function(hp)
+				if hp <= 0 and visibleTarget then
+					applyVisibility(false, true)
+				end
+			end)
+		end
 	end
+
+	-- After revive HUD restore, re-evaluate (still dead → stay hidden; alive → normal rules).
+	task.spawn(function()
+		local ok, revive = pcall(function()
+			return require(script.Parent.ReviveController)
+		end)
+		if ok and typeof(revive) == "table" and typeof((revive :: any).registerHudRestoredCallback) == "function" then
+			(revive :: any).registerHudRestoredCallback(function()
+				refreshVisibility(true)
+			end)
+		end
+	end)
 
 	if heartbeatConn then
 		heartbeatConn:Disconnect()
@@ -894,8 +973,14 @@ function ReturnController.init()
 		sideUI:GetPropertyChangedSignal("Visible"):Connect(function()
 			if (sideUI :: GuiObject).Visible then
 				task.defer(function()
+					-- If SideUI was re-shown during revive, force Return off.
 					refreshVisibility(true)
 				end)
+			else
+				-- SideUI hidden (revive / cutscene) — clear Return target so it can't flash back on.
+				if visibleTarget then
+					applyVisibility(false, true)
+				end
 			end
 		end)
 	end)

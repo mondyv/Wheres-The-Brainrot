@@ -3564,8 +3564,8 @@ local function boot(character)
 	end
 
 	function st.isHoldToSwingMode()
-		-- Default on: hold jump to latch, release to let go.
-		return player:GetAttribute("HoldToSwingEnabled") ~= false
+		-- Default off: press jump to latch, press again to release.
+		return player:GetAttribute("HoldToSwingEnabled") == true
 	end
 
 	function st.holdIsActive()
@@ -4846,6 +4846,9 @@ local function boot(character)
 		local startLength = elasticCatchStartLength
 
 		st.isSwinging = true
+		pcall(function()
+			player:SetAttribute("IsSwinging", true)
+		end)
 		st.isLaunched = false
 		st.landedFromSwing = false
 		st.currentTarget = target
@@ -4913,6 +4916,9 @@ local function boot(character)
 		end
 
 		st.isSwinging = false
+		pcall(function()
+			player:SetAttribute("IsSwinging", false)
+		end)
 		st.currentTarget = nil
 		st.toggleNeedsJumpRelease = false
 		st.swingPressIntentUntil = -1e9
@@ -6395,6 +6401,9 @@ end
 local dispose = nil
 
 player.CharacterAdded:Connect(function(character)
+	pcall(function()
+		player:SetAttribute("IsSwinging", false)
+	end)
 	if dispose then
 		dispose()
 		dispose = nil

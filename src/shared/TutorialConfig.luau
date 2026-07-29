@@ -85,9 +85,9 @@ M.STEPS = {
 	},
 	{
 		id = "swingLand1",
-		text = "Press jump and release to get over to the next land!",
-		speak = "PRESS JUMP AND RELEASE TO GET OVER TO THE NEXT LAND!!",
-		retryText = "Give it a try again! Press jump and release to swing over!",
+		text = "Look at a vine, then press jump to swing over!",
+		speak = "LOOK AT A VINE AND PRESS JUMP TO SWING OVER!!",
+		retryText = "Press jump again to let go, then land on the next land!",
 	},
 	{
 		id = "searchBush",
@@ -103,6 +103,7 @@ M.STEPS = {
 		id = "goToBase",
 		text = "Go back to your base",
 		speak = "HEAD HOME TO YOUR BASE!!",
+		retryText = "Press jump near a vine to swing back!",
 	},
 	{
 		id = "placeOnPlot",

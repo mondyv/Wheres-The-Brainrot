@@ -33,6 +33,7 @@ local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local TutorialConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TutorialConfig"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
+local JumpButtonSwingRing = require(script.Parent:WaitForChild("JumpButtonSwingRing"))
 
 local player = Players.LocalPlayer
 
@@ -93,6 +94,9 @@ local _claimSpotlightActive = false
 local upgradeBaseLevel = 1
 local upgradeStepEnteredAt = 0
 local swingLand1EnteredAt = 0
+local swingReleaseHintShown = false
+local swingGreatJobShown = false
+local goToBaseSwingCoach = false
 local layoutConn: RBXScriptConnection? = nil
 local _panelStroke: UIStroke? = nil
 local chromeSuppressed = false
@@ -1678,26 +1682,55 @@ end
 
 updateMobileJumpTutorialHighlight = function()
 	local step = currentStep()
-	if not step or step.id ~= "swingLand1" or not active then
+	if not active or not step then
+		JumpButtonSwingRing.setTutorialCoach(nil)
 		if uiPointerHost and uiPointerHost.Name == "JumpButton" then
 			clearUiPointer()
 		end
 		return
 	end
-	if not isMobileSwingPromptReady() then
-		if uiPointerHost and uiPointerHost.Name == "JumpButton" then
-			clearUiPointer()
+
+	local swinging = player:GetAttribute("IsSwinging") == true
+
+	if step.id == "swingLand1" then
+		if swinging then
+			-- Green ring is driven by IsSwinging; coach text covers "let go".
+			JumpButtonSwingRing.setTutorialCoach(nil)
+			if uiPointerHost and uiPointerHost.Name == "JumpButton" then
+				clearUiPointer()
+			end
+			if not swingReleaseHintShown then
+				swingReleaseHintShown = true
+				showPanel("Press jump again to let go!", false)
+			end
+			return
+		end
+		if isMobileSwingPromptReady() then
+			JumpButtonSwingRing.setTutorialCoach("press")
+		else
+			JumpButtonSwingRing.setTutorialCoach(nil)
 		end
 		return
 	end
-	local jumpBtn = findMobileJumpButton()
-	if not jumpBtn then
+
+	if step.id == "goToBase" and goToBaseSwingCoach then
+		if swinging then
+			JumpButtonSwingRing.setTutorialCoach(nil)
+			return
+		end
+		if isMobileSwingPromptReady() then
+			JumpButtonSwingRing.setTutorialCoach("lite")
+			local retry = "Press jump near a vine to swing!"
+			if objectiveBaseText ~= retry then
+				showPanel(retry, false)
+			end
+		else
+			JumpButtonSwingRing.setTutorialCoach(nil)
+		end
 		return
 	end
-	if uiPointerHost == jumpBtn and uiPointerStroke and uiPointerStroke.Parent then
-		return
-	end
-	pointAtGui(jumpBtn, true)
+
+	JumpButtonSwingRing.setTutorialCoach(nil)
 end
 
 local function resolveUpgradeStandModel(): Instance?
@@ -1852,6 +1885,70 @@ local function resolveLand1SwingTarget(): BasePart?
 		end
 	end
 
+	lockedSwingPart = best
+	return best
+end
+
+local function resolveReturnSwingTarget(): BasePart?
+	if lockedSwingPart and lockedSwingPart.Parent then
+		return lockedSwingPart
+	end
+	lockedSwingPart = nil
+	refreshVineCache()
+	local origin = playerOrigin()
+	local aim = origin
+	local plot = PlotPaths.findPlotForAssignedSlot(player)
+	if plot and plot:IsA("Model") then
+		local ok, pivot = pcall(function()
+			return (plot :: Model):GetPivot()
+		end)
+		if ok and typeof(pivot) == "CFrame" then
+			aim = (pivot :: CFrame).Position
+		end
+	else
+		local map = Workspace:FindFirstChild("Map")
+		local spawn = map and (map:FindFirstChild("Spawn") or map:FindFirstChild("Safezone"))
+		if spawn and spawn:IsA("BasePart") then
+			aim = spawn.Position
+		elseif spawn and spawn:IsA("Model") then
+			aim = spawn:GetPivot().Position
+		end
+	end
+	local toAim = aim - origin
+	local aimDir = if toAim.Magnitude > 1 then toAim.Unit else Vector3.new(0, 0, 1)
+	local best: BasePart? = nil
+	local bestScore = math.huge
+	for _, part in vineCache do
+		if not part.Parent then
+			continue
+		end
+		local offset = part.Position - origin
+		local dist = offset.Magnitude
+		if dist < 6 or dist > 180 then
+			continue
+		end
+		local along = offset:Dot(aimDir)
+		if along < 4 then
+			continue
+		end
+		local score = dist * 0.35 - along * 0.55
+		if score < bestScore then
+			bestScore = score
+			best = part
+		end
+	end
+	if not best then
+		bestScore = math.huge
+		for _, part in vineCache do
+			if part.Parent then
+				local dist = (part.Position - origin).Magnitude
+				if dist < bestScore and dist > 5 then
+					bestScore = dist
+					best = part
+				end
+			end
+		end
+	end
 	lockedSwingPart = best
 	return best
 end
@@ -2375,10 +2472,31 @@ local function refreshPointersImpl()
 		end
 	elseif step.id == "goToBase" then
 		clearLockedBush()
-		pointAtWorld(resolvePlayerBaseTarget(), arrowHeight(4))
-		local plot = resolveOwnedPlotForTutorial()
-		if plot then
-			outlineWorld(plot)
+		if goToBaseSwingCoach and not isPlayerAtOwnBase() and isMobileSwingPromptReady() then
+			local swing = resolveReturnSwingTarget()
+			if swing then
+				pointAtWorld(swing, arrowHeight(3))
+				local vineAdornee = resolveSwingVineAdornee(swing)
+				if vineAdornee then
+					outlineWorld(vineAdornee)
+				end
+			else
+				pointAtWorld(resolvePlayerBaseTarget(), arrowHeight(4))
+				local plot = resolveOwnedPlotForTutorial()
+				if plot then
+					outlineWorld(plot)
+				end
+			end
+			updateMobileJumpTutorialHighlight()
+		else
+			pointAtWorld(resolvePlayerBaseTarget(), arrowHeight(4))
+			local plot = resolveOwnedPlotForTutorial()
+			if plot then
+				outlineWorld(plot)
+			end
+			if goToBaseSwingCoach then
+				updateMobileJumpTutorialHighlight()
+			end
 		end
 	elseif step.id == "placeOnPlot" then
 		clearLockedBush()
@@ -2438,6 +2556,8 @@ finishTutorial = function(opts: { skipped: boolean? }?)
 	end
 	table.clear(attrConns)
 	hidePanel()
+	JumpButtonSwingRing.setTutorialCoach(nil)
+	goToBaseSwingCoach = false
 	local skipped = opts ~= nil and opts.skipped == true
 	if not skipped then
 		-- One confetti burst for the whole tutorial (guarded inside fireConfettiAndShake).
@@ -2493,17 +2613,26 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 		upgradeBaseLevel = readPlacedBrainrotLevel()
 		upgradeStepEnteredAt = os.clock()
 	end
-	if step.id == "searchBush" then
-		clearLockedBush()
-		clearLockedSwing()
-		-- Past the swing lesson — normal death / revive panel from here on.
-		setTutorialSoftRespawn(false)
-	elseif step.id == "swingLand1" then
+	if step.id == "swingLand1" then
 		clearLockedSwing()
 		swingLand1EnteredAt = os.clock()
+		swingReleaseHintShown = false
+		swingGreatJobShown = false
+		goToBaseSwingCoach = false
 		setTutorialSoftRespawn(true)
+	elseif step.id == "goToBase" then
+		clearLockedSwing()
+		goToBaseSwingCoach = true
+		setTutorialSoftRespawn(false)
 	elseif step.id == "grantCash" or step.id == "visitUpgrade" or step.id == "buyPower" then
 		setTutorialSoftRespawn(true)
+	elseif step.id == "searchBush" then
+		clearLockedBush()
+		clearLockedSwing()
+		goToBaseSwingCoach = false
+		JumpButtonSwingRing.setTutorialCoach(nil)
+		-- Past the swing lesson — normal death / revive panel from here on.
+		setTutorialSoftRespawn(false)
 	elseif step.id ~= "claimBrainrot" then
 		clearLockedBush()
 	end
@@ -2663,7 +2792,30 @@ local function watchStepProgress()
 				local hrp = char and char:FindFirstChild("HumanoidRootPart")
 				if hrp and hrp:IsA("BasePart") and LandResolver.isInsideLandHitbox(hrp.Position, 1) then
 					clearLockedSwing()
+					JumpButtonSwingRing.setTutorialCoach(nil)
+					if not swingGreatJobShown then
+						swingGreatJobShown = true
+						TopNotifController.showBroadcast("Great job!")
+					end
 					completeCurrentIf("swingLand1")
+				end
+			end
+		elseif step.id == "goToBase" and now - lastLandCheck > 0.35 then
+			lastLandCheck = now
+			if isPlayerAtOwnBase() then
+				goToBaseSwingCoach = false
+				JumpButtonSwingRing.setTutorialCoach(nil)
+				clearLockedSwing()
+				completeCurrentIf("goToBase")
+			else
+				if goToBaseSwingCoach then
+					if not worldArrowBb or not worldHighlight or not (lockedSwingPart and lockedSwingPart.Parent) then
+						refreshPointers()
+					else
+						updateMobileJumpTutorialHighlight()
+					end
+				elseif not worldArrowBb or not worldHighlight then
+					refreshPointers()
 				end
 			end
 		elseif step.id == "searchBush" and now - lastLandCheck > 0.5 then
@@ -2683,13 +2835,6 @@ local function watchStepProgress()
 			lastLandCheck = now
 			if CarryGate.isCarryingOnHead() then
 				completeCurrentIf("claimBrainrot")
-			end
-		elseif step.id == "goToBase" and now - lastLandCheck > 0.35 then
-			lastLandCheck = now
-			if isPlayerAtOwnBase() then
-				completeCurrentIf("goToBase")
-			elseif not worldArrowBb or not worldHighlight then
-				refreshPointers()
 			end
 		elseif step.id == "placeOnPlot" and now - lastLandCheck > 0.4 then
 			lastLandCheck = now
@@ -2810,6 +2955,13 @@ local function bindGameplayHooks()
 			updateMobileJumpTutorialHighlight()
 		end)
 	)
+	table.insert(
+		attrConns,
+		player:GetAttributeChangedSignal("IsSwinging"):Connect(function()
+			updateMobileJumpTutorialHighlight()
+			JumpButtonSwingRing.refresh()
+		end)
+	)
 
 	local main = PlayerGuiMain.ensure(player)
 	if main then
@@ -2928,6 +3080,8 @@ function M.stop()
 	end
 	table.clear(attrConns)
 	hidePanel()
+	JumpButtonSwingRing.setTutorialCoach(nil)
+	goToBaseSwingCoach = false
 end
 
 function M.init()

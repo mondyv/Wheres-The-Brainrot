@@ -201,6 +201,9 @@ task.defer(function()
 				require(script.TutorialController).init()
 			end,
 			function()
+				require(script.JumpButtonSwingRing).init()
+			end,
+			function()
 				require(script.TimCheeseQuestController).init()
 			end,
 			function()

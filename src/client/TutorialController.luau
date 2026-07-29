@@ -2476,7 +2476,8 @@ local function refreshPointersImpl()
 		end
 	elseif step.id == "goToBase" then
 		clearLockedBush()
-		if swingCoach.goToBaseLite and not isPlayerAtOwnBase() and isMobileSwingPromptReady() then
+		if swingCoach.goToBaseLite and not isPlayerAtOwnBase() then
+			-- Always highlight a return vine (PC + mobile); jump coach still gates on SwingPromptReady.
 			local swing = resolveReturnSwingTarget()
 			if swing then
 				pointAtWorld(swing, arrowHeight(3))

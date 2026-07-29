@@ -934,7 +934,7 @@ local function runCutscene(payload: any)
 	end
 
 	startCinematicCamera(token)
-	startAura()
+	-- No looping Godly/angelic bush aura during this cutscene.
 
 	-- Drop to ground in front of the player.
 	if blockModel and blockModel.Parent then
@@ -982,7 +982,7 @@ local function runCutscene(payload: any)
 	end
 
 	GameSoundEffects.stopLuckyBlockShake()
-	GameSoundEffects.playPurchaseShake()
+	stopAura()
 	GameSoundEffects.playGroundSmash(1.15)
 	camShakeAmp = 0.7
 	task.delay(0.28, function()

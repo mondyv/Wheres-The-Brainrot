@@ -2358,16 +2358,17 @@ local function resolveIntroLandCFrameNearPlayer(): CFrame?
 	if not (hrp and hrp:IsA("BasePart")) then
 		return nil
 	end
-	-- Slightly behind-and-to-the-side so over-shoulder cam can frame Tim cleanly.
-	local behind = -hrp.CFrame.LookVector
+	-- Land ahead of the player with room for a side / over-shoulder shot (not in the cam's face).
+	local forward = hrp.CFrame.LookVector
 	local right = hrp.CFrame.RightVector
-	local probe = hrp.Position + behind * 6.2 + right * 2.4 + Vector3.new(0, 8, 0)
+	local flatDist = 16.5
+	local side = 3.2
+	local probe = hrp.Position + forward * flatDist + right * side + Vector3.new(0, 10, 0)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { char }
-	local hit = Workspace:Raycast(probe, Vector3.new(0, -36, 0), params)
-	local ground = if hit then hit.Position else (hrp.Position + behind * 6.2 + right * 2.4)
-	-- Feet sit on ground — pivot lift applied after clone lands via liftCloneToGround.
+	local hit = Workspace:Raycast(probe, Vector3.new(0, -42, 0), params)
+	local ground = if hit then hit.Position else (hrp.Position + forward * flatDist + right * side)
 	local landPos = Vector3.new(ground.X, ground.Y, ground.Z)
 	return CFrame.lookAt(landPos, Vector3.new(hrp.Position.X, landPos.Y, hrp.Position.Z))
 end
@@ -2540,13 +2541,13 @@ function M.playIntroFall()
 		if clone.Parent then
 			clone:PivotTo(CFrame.new(pos + Vector3.new(sway, 0, 0)) * rotOnly * spin)
 		end
-		-- Over-the-shoulder: behind the player, looking at falling Tim.
+		-- Over-the-shoulder: behind/side of player, looking out at Tim in the distance.
 		local liveHrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 		if cam and liveHrp and liveHrp:IsA("BasePart") then
 			local back = -liveHrp.CFrame.LookVector
 			local right = liveHrp.CFrame.RightVector
-			local camPos = liveHrp.Position + back * 5.8 + right * 2.1 + Vector3.new(0, 3.4, 0)
-			cam.CFrame = CFrame.lookAt(camPos, pos + Vector3.new(0, 2.4, 0))
+			local camPos = liveHrp.Position + back * 4.2 + right * 3.4 + Vector3.new(0, 3.8, 0)
+			cam.CFrame = CFrame.lookAt(camPos, pos + Vector3.new(0, 3.2, 0))
 		end
 	end)
 	tween:Play()
@@ -2586,7 +2587,7 @@ function M.playIntroFall()
 		local timPos = clone:GetPivot().Position + Vector3.new(0, 2.6, 0)
 		local back = -liveHrp.CFrame.LookVector
 		local right = liveHrp.CFrame.RightVector
-		local camPos = liveHrp.Position + back * 5.2 + right * 2.4 + Vector3.new(0, 3.2, 0)
+		local camPos = liveHrp.Position + back * 3.8 + right * 3.6 + Vector3.new(0, 3.6, 0)
 		cam.CFrame = CFrame.lookAt(camPos, timPos)
 	end)
 

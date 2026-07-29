@@ -670,7 +670,7 @@ local function playTemplate(
 	pathParts: { string },
 	at: CFrame | BasePart,
 	lifetimeSec: number?,
-	opts: { noLights: boolean?, particleScale: number? }?
+	opts: { noLights: boolean?, particleScale: number?, muteSounds: boolean? }?
 )
 	local template = findTemplate(pathParts)
 	if not template then
@@ -681,6 +681,17 @@ local function playTemplate(
 	local clone = template:Clone()
 	if opts and opts.noLights then
 		stripLights(clone)
+	end
+	if opts and opts.muteSounds then
+		if clone:IsA("Sound") then
+			clone:Destroy()
+			return
+		end
+		for _, d in clone:GetDescendants() do
+			if d:IsA("Sound") then
+				d:Destroy()
+			end
+		end
 	end
 	if opts and typeof(opts.particleScale) == "number" then
 		scaleParticleSizes(clone, opts.particleScale)
@@ -912,7 +923,8 @@ function OtherVfxController.playBushOpenedBurst(bush: Instance)
 end
 
 function OtherVfxController.playLuckyBlockOpen(at: CFrame | BasePart)
-	playTemplate({ "Bush Opening", "Luckyblock" }, at)
+	-- Visual burst only — no choir/angelic template SFX (ground smash plays separately).
+	playTemplate({ "Bush Opening", "Luckyblock" }, at, nil, { muteSounds = true })
 end
 
 --- Upgrade VFX: parent Attachments onto the brainrot BasePart, then run Bezier off those slots.

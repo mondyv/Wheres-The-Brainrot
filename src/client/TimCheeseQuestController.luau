@@ -29,6 +29,22 @@ local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 
+local function setBushPromptsHiddenForIntro(hidden: boolean)
+	-- Lazy require avoids circular load with BushHoldInteraction → TimCheeseQuestController.
+	local ok, BushHoldInteraction = pcall(function()
+		return require(script.Parent.BushHoldInteraction)
+	end)
+	if not ok or not BushHoldInteraction then
+		warn("[TimCheeseQuestController] BushHoldInteraction require failed:", BushHoldInteraction)
+		ProximityPromptEffects.hideBushSearch()
+		return
+	end
+	BushHoldInteraction.setBushSearchLocked(hidden == true)
+	if hidden then
+		ProximityPromptEffects.hideBushSearch()
+	end
+end
+
 local player = Players.LocalPlayer
 local M = {}
 local wired = false
@@ -2424,6 +2440,8 @@ function M.tryInterceptBushForIntro(bush: Instance?): boolean
 	if land ~= 1 then
 		return false
 	end
+	-- Hide the bush E card immediately (before fall starts).
+	setBushPromptsHiddenForIntro(true)
 	task.spawn(function()
 		M.playIntroFall()
 	end)
@@ -2436,13 +2454,16 @@ function M.playIntroFall()
 	end
 	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
 		introStartedLocal = true
+		setBushPromptsHiddenForIntro(false)
 		return
 	end
 	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+		setBushPromptsHiddenForIntro(false)
 		return
 	end
 	local tim = resolveTim()
 	if not tim then
+		setBushPromptsHiddenForIntro(false)
 		return
 	end
 	timModel = tim
@@ -2451,6 +2472,7 @@ function M.playIntroFall()
 	end
 	local landCf = resolveIntroLandCFrameNearPlayer()
 	if not landCf then
+		setBushPromptsHiddenForIntro(false)
 		return
 	end
 	introStartedLocal = true
@@ -2463,12 +2485,14 @@ function M.playIntroFall()
 	if not clone then
 		introPlaying = false
 		introStartedLocal = false
+		setBushPromptsHiddenForIntro(false)
 		return
 	end
 
 	-- No letterbox / full HUD wipe — over-shoulder cam only.
 	setQuestHudSuppressed(true)
 	setTalkPromptEnabled(false)
+	setBushPromptsHiddenForIntro(true)
 	lockMovement(true)
 	setBgmSlowed(true)
 	local wind = playWindLoop()
@@ -2622,6 +2646,7 @@ function M.playIntroFall()
 
 	GameplayUiVisibility.show({ instant = true })
 	lockMovement(false)
+	setBushPromptsHiddenForIntro(false)
 	introPlaying = false
 
 	forcedQuestIndex = forcedQuestIndex or 1

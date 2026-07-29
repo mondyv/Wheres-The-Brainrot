@@ -524,6 +524,11 @@ local function hostTopInset(host: Frame): number
 	return 0
 end
 
+local layoutSyncAccum = 0.0
+local LAYOUT_SYNC_HZ = 10
+local lastMobilePanelTopPad: number? = nil
+local lastMobilePanelRightPad: number? = nil
+
 local function syncPanelToSideButtonsImpl()
 	if not panel or chromeSuppressed then
 		return
@@ -561,14 +566,24 @@ local function syncPanelToSideButtonsImpl()
 			local rbTop = rb.AbsolutePosition.Y - hp.Y
 			local hostRight = hp.X + host.AbsoluteSize.X
 			local rbRight = rb.AbsolutePosition.X + rb.AbsoluteSize.X
-			rightPad = math.max(8, hostRight - rbRight)
-			-- Anchor bottom of panel just above RandomBrainrot.
+			local wantRight = math.max(8, hostRight - rbRight)
+			local wantTop = math.max(insetY + 10, rbTop - TutorialConfig.PANEL_MOBILE_GAP_ABOVE_RIGHT)
+			-- Hysteresis: ignore tiny AbsolutePosition jitter that made the panel "breathe" on mobile.
+			if lastMobilePanelRightPad == nil or math.abs(wantRight - lastMobilePanelRightPad) >= 8 then
+				lastMobilePanelRightPad = wantRight
+			end
+			if lastMobilePanelTopPad == nil or math.abs(wantTop - lastMobilePanelTopPad) >= 10 then
+				lastMobilePanelTopPad = wantTop
+			end
+			rightPad = lastMobilePanelRightPad :: number
+			topPad = lastMobilePanelTopPad :: number
 			anchorY = 1
-			topPad = math.max(insetY + 10, rbTop - TutorialConfig.PANEL_MOBILE_GAP_ABOVE_RIGHT)
 		else
 			topPad = insetY + 14
 			rightPad = 10
 			anchorY = 0
+			lastMobilePanelTopPad = nil
+			lastMobilePanelRightPad = nil
 		end
 	else
 		local maxW = math.floor(vp.X * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
@@ -578,6 +593,8 @@ local function syncPanelToSideButtonsImpl()
 		topPad = TutorialConfig.PANEL_TOP_PAD + insetY
 		rightPad = TutorialConfig.PANEL_RIGHT_PAD
 		anchorY = 0
+		lastMobilePanelTopPad = nil
+		lastMobilePanelRightPad = nil
 	end
 
 	panel.AnchorPoint = Vector2.new(1, anchorY)
@@ -591,9 +608,6 @@ local function syncPanelToSideButtonsImpl()
 	panel.Visible = active and not chromeSuppressed
 end
 syncPanelToSideButtons = syncPanelToSideButtonsImpl
-
-local layoutSyncAccum = 0.0
-local LAYOUT_SYNC_HZ = 10
 
 local function startLayoutSync()
 	if layoutConn then
@@ -1325,15 +1339,18 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	end
 
 	local baseOffset = offset or arrowHeight()
-	local arrowPx = TutorialConfig.WORLD_ARROW_SIZE
+	local arrowPx = if isMobileUi() then TutorialConfig.WORLD_ARROW_SIZE_MOBILE else TutorialConfig.WORLD_ARROW_SIZE
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "TutorialWorldArrow"
 	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
 	bb.Size = UDim2.fromOffset(arrowPx, arrowPx)
 	bb.StudsOffset = baseOffset
 	bb.MaxDistance = TutorialConfig.WORLD_ARROW_MAX_DISTANCE
 	bb.Adornee = part
-	bb.Parent = player:FindFirstChild("PlayerGui") or Workspace.CurrentCamera
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	-- Prefer PlayerGui; camera fallback if PlayerGui isn't ready yet on mobile join.
+	bb.Parent = pg or Workspace.CurrentCamera
 
 	local img = Instance.new("ImageLabel")
 	img.BackgroundTransparency = 1
@@ -1345,29 +1362,32 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	img.ScaleType = Enum.ScaleType.Fit
 	img.Parent = bb
 
+	local bobScale = Instance.new("UIScale")
+	bobScale.Scale = 1
+	bobScale.Parent = img
+
 	worldArrowBb = bb
 	worldArrowImg = img
 	-- Trail aims at the world object itself, not the floating billboard arrow height.
 	local objectOffset = Vector3.new(0, math.max(part.Size.Y * 0.35, 2), 0)
 	setGuideTrailToPart(part, objectOffset)
 
-	-- Continuous sine bob — no tween loop seams / pause between cycles.
+	-- Continuous sine bob — offset only (don't thrash image Size; that looked broken on mobile).
 	local phase = 0
 	arrowAnimConn = RunService.RenderStepped:Connect(function(dt)
 		if worldArrowImg ~= img or not img.Parent or not active or chromeSuppressed then
 			return
 		end
+		if not bb.Parent or bb.Adornee == nil then
+			return
+		end
 		phase += dt * ARROW_BOB_HZ * math.pi * 2
 		local wave = math.sin(phase)
-		-- Soft land bias: spend a bit longer near the bottom without stopping.
-		local t = wave * 0.5 + 0.5 -- 0 at bottom of sine trough... actually 0 when sin=-1
-		-- Remap so 0 = apex (high), 1 = ground (low), with ease toward ground.
+		local t = wave * 0.5 + 0.5
 		local ground = t * t
 		local y = ARROW_BOB_AMP * (1 - ground)
 		bb.StudsOffset = baseOffset + Vector3.new(0, y, 0)
-		local wide = 1 + ground * ARROW_SQUASH_AMP
-		local tall = 1 - ground * (ARROW_SQUASH_AMP * 0.85)
-		img.Size = UDim2.fromScale(wide, tall)
+		bobScale.Scale = 1 + ground * ARROW_SQUASH_AMP * 0.35
 	end)
 end
 
@@ -2484,7 +2504,8 @@ local function watchStepProgress()
 		local now = os.clock()
 
 		-- Periodically re-aim world arrows only when missing (don't retarget bushes).
-		if now - lastPointerRefresh > 1.25 then
+		local refreshEvery = if isMobileUi() then 0.55 else 1.25
+		if now - lastPointerRefresh > refreshEvery then
 			lastPointerRefresh = now
 			if step.id == "visitUpgrade" then
 				if not worldHighlight or (not worldArrowBb and not uiPointer) then

@@ -55,6 +55,10 @@ local letterTop: Frame? = nil
 local letterBottom: Frame? = nil
 local focusPart: BasePart? = nil
 local blockModel: Model? = nil
+local hiddenTool: Tool? = nil
+local hiddenToolTrans: { [BasePart]: number } = {}
+local hiddenToolDecalTrans: { [Decal | Texture]: number } = {}
+local keepToolHiddenConn: RBXScriptConnection? = nil
 
 local function isLuckyBlockTool(tool: Instance): boolean
 	return tool:IsA("Tool") and tool:GetAttribute("LuckyBlockTool") == true
@@ -148,17 +152,71 @@ local function stopAnimConns()
 	revealWatchConn = nil
 end
 
+local function clearToolHideState()
+	disconnect(keepToolHiddenConn)
+	keepToolHiddenConn = nil
+	if hiddenTool and hiddenTool.Parent then
+		for part, t in hiddenToolTrans do
+			if part.Parent then
+				part.Transparency = t
+				part.LocalTransparencyModifier = 0
+			end
+		end
+		for d, t in hiddenToolDecalTrans do
+			if d.Parent then
+				d.Transparency = t
+				if d:IsA("Decal") or d:IsA("Texture") then
+					(d :: any).LocalTransparencyModifier = 0
+				end
+			end
+		end
+	end
+	table.clear(hiddenToolTrans)
+	table.clear(hiddenToolDecalTrans)
+	hiddenTool = nil
+end
+
+local function forceHideToolVisual(tool: Tool)
+	clearToolHideState()
+	hiddenTool = tool
+	for _, d in tool:GetDescendants() do
+		if d:IsA("BasePart") then
+			hiddenToolTrans[d] = d.Transparency
+			d.Transparency = 1
+			d.LocalTransparencyModifier = 1
+		elseif d:IsA("Decal") or d:IsA("Texture") then
+			hiddenToolDecalTrans[d] = d.Transparency
+			d.Transparency = 1
+			pcall(function()
+				(d :: any).LocalTransparencyModifier = 1
+			end)
+		end
+	end
+	-- Keep re-applying — tool weld/replication can snap transparency back briefly.
+	disconnect(keepToolHiddenConn)
+	keepToolHiddenConn = RunService.Heartbeat:Connect(function()
+		if not hiddenTool or not hiddenTool.Parent then
+			disconnect(keepToolHiddenConn)
+			keepToolHiddenConn = nil
+			return
+		end
+		for part in hiddenToolTrans do
+			if part.Parent then
+				part.Transparency = 1
+				part.LocalTransparencyModifier = 1
+			end
+		end
+	end)
+end
+
 local function setToolHidden(tool: Tool?, hidden: boolean)
 	if not tool then
 		return
 	end
-	local mod = if hidden then 1 else 0
-	for _, d in tool:GetDescendants() do
-		if d:IsA("BasePart") then
-			d.LocalTransparencyModifier = mod
-		elseif d:IsA("Decal") or d:IsA("Texture") then
-			d.LocalTransparencyModifier = mod
-		end
+	if hidden then
+		forceHideToolVisual(tool)
+	else
+		clearToolHideState()
 	end
 end
 
@@ -342,16 +400,33 @@ local function cloneToolAsWorldModel(tool: Tool, atCf: CFrame): Model?
 			c.CanQuery = false
 			c.CanTouch = false
 			c.Massless = true
+			-- Clone may inherit hide modifiers — force fully visible on the floor prop.
+			c.Transparency = 0
+			c.LocalTransparencyModifier = 0
 			c.Parent = model
 			local offset = baseCf:ToObjectSpace(d.CFrame)
 			c.CFrame = atCf * offset
 			if d == handle then
 				primary = c
 			end
+			for _, ch in c:GetChildren() do
+				if ch:IsA("Decal") or ch:IsA("Texture") then
+					ch.Transparency = 0
+					pcall(function()
+						(ch :: any).LocalTransparencyModifier = 0
+					end)
+				end
+			end
 		end
 	end
 	if primary then
 		model.PrimaryPart = primary
+	elseif model:FindFirstChildWhichIsA("BasePart", true) then
+		model.PrimaryPart = model:FindFirstChildWhichIsA("BasePart", true)
+	end
+	if not model.PrimaryPart then
+		model:Destroy()
+		return nil
 	end
 	model.Parent = Workspace
 	return model
@@ -680,6 +755,7 @@ local function endCutscene(token: number)
 	stopAura()
 	GameSoundEffects.stopLuckyBlockShake()
 	destroyBlockModel()
+	clearToolHideState()
 	destroyLetterbox()
 	restoreCamera()
 	unlockMovement()
@@ -739,16 +815,46 @@ local function runCutscene(payload: any)
 		if handle and handle:IsA("BasePart") then
 			handCf = handle.CFrame
 		end
-		setToolHidden(tool, true)
+		-- Clone the visible tool FIRST, then hide / unequip so the hand is empty.
 		blockModel = cloneToolAsWorldModel(tool, handCf)
+		local hum = getHumanoid()
+		if hum then
+			pcall(function()
+				hum:UnequipTools()
+			end)
+		end
+		-- Tool may now be in Backpack — still hide so hotbar flash doesn't show it.
+		forceHideToolVisual(tool)
+	end
+
+	-- If clone failed, still don't leave a block in-hand for the cutscene.
+	if not blockModel then
+		local placeholder = Instance.new("Part")
+		placeholder.Name = "LuckyBlockCutsceneBlock"
+		placeholder.Anchored = true
+		placeholder.CanCollide = false
+		placeholder.CanQuery = false
+		placeholder.CanTouch = false
+		placeholder.Material = Enum.Material.Neon
+		placeholder.Color = Color3.fromRGB(255, 210, 80)
+		placeholder.Size = Vector3.new(2.2, 2.2, 2.2)
+		placeholder.CFrame = handCf
+		local model = Instance.new("Model")
+		model.Name = "LuckyBlockCutsceneBlock"
+		placeholder.Parent = model
+		model.PrimaryPart = placeholder
+		model.Parent = Workspace
+		blockModel = model
 	end
 
 	startCinematicCamera(token)
 	startAura()
 
-	-- Drop to ground.
+	-- Drop to ground in front of the player.
 	if blockModel and blockModel.Parent then
-		local startDrop = blockModel:GetPivot()
+		local dropModel = blockModel
+		local startDrop = handCf
+		dropModel:PivotTo(startDrop)
 		local t0 = os.clock()
 		while os.clock() - t0 < dropSec do
 			if token ~= cutsceneToken then
@@ -759,14 +865,14 @@ local function runCutscene(payload: any)
 			local eased = alpha * alpha
 			local mid = startDrop:Lerp(groundCf, eased)
 			local bounce = math.sin(alpha * math.pi) * 1.15 * (1 - alpha)
-			blockModel:PivotTo(mid * CFrame.new(0, bounce, 0))
-			local primary = blockModel.PrimaryPart or blockModel:FindFirstChildWhichIsA("BasePart", true)
+			dropModel:PivotTo(mid * CFrame.new(0, bounce, 0))
+			local primary = dropModel.PrimaryPart or dropModel:FindFirstChildWhichIsA("BasePart", true)
 			if primary then
 				focusPart = primary
 			end
 			RunService.Heartbeat:Wait()
 		end
-		blockModel:PivotTo(groundCf)
+		dropModel:PivotTo(groundCf)
 	else
 		if not waitToken(token, dropSec) then
 			endCutscene(token)
@@ -856,6 +962,7 @@ local function handleShakeStart(payload: any)
 			stopAura()
 			GameSoundEffects.stopLuckyBlockShake()
 			destroyBlockModel()
+			clearToolHideState()
 			destroyLetterbox()
 			restoreCamera()
 			unlockMovement()
@@ -928,6 +1035,7 @@ function LuckyBlockController.init()
 		stopAura()
 		GameSoundEffects.stopLuckyBlockShake()
 		destroyBlockModel()
+		clearToolHideState()
 		destroyLetterbox()
 		restoreCamera()
 		unlockMovement()

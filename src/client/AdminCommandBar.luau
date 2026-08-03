@@ -182,7 +182,7 @@ local COMMAND_HINTS: { [string]: string } = {
 	servershutdown = "Countdown then shut down THIS server only",
 	serverrestart = "Countdown then restart THIS server (teleport players back)",
 	serverluck = "Set luck on THIS server + announce",
-	globalluck = "Set luck on ALL servers + announce",
+	globalluck = "Set luck on ALL servers until time runs out (1d / 7d / off)",
 	kick = "Kick a player from this server",
 	ban = "Ban a player from the experience",
 	unban = "Remove an experience ban",
@@ -416,8 +416,10 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "servershutdown 5m", hint = "Shut down this server in 5 minutes" },
 		{ fill = "serverrestart 60", hint = COMMAND_HINTS.serverrestart },
 		{ fill = "serverrestart 5m", hint = "Restart this server in 5 minutes" },
+		{ fill = "globalluck 4x 1d", hint = COMMAND_HINTS.globalluck },
+		{ fill = "globalluck 8x 7d", hint = "week-long global luck" },
 		{ fill = "serverluck 4x 10m", hint = COMMAND_HINTS.serverluck },
-		{ fill = "globalluck 4x 10m", hint = COMMAND_HINTS.globalluck },
+		{ fill = "globalluck off", hint = "Stop global luck everywhere" },
 		{ fill = "serverluck off", hint = "Clear luck on this server" },
 		{ fill = "kick PlayerName", hint = COMMAND_HINTS.kick },
 		{ fill = "ban PlayerName 7d", hint = COMMAND_HINTS.ban },
@@ -652,7 +654,7 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 			end
 		elseif argIndex == 2 and (#tokens > 2 or (endsWithSpace and #tokens >= 2)) then
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(2, #tokens - 1))
-			for _, sample in { "5m", "10m", "30m", "1h" } do
+			for _, sample in { "10m", "1h", "6h", "1d", "3d", "7d" } do
 				if startsWith(sample, partial) then
 					pushSuggestion(out, prefix .. sample, "duration")
 				end

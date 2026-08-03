@@ -6,6 +6,7 @@
 	• Plays collect VFX + sound when all stand cash is claimed at once.
 --]]
 
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -43,6 +44,7 @@ local plotWatchConns: { RBXScriptConnection } = {}
 -- Cached set of this plot's stand models so the per-second cash refresh never has to
 -- GetDescendants() the whole plot (that scan was running several times a second).
 local trackedStands: { [Model]: boolean } = {}
+local marketplaceOwnsAutoCollect = false
 
 local wirePadView: (Instance) -> ()
 
@@ -57,7 +59,29 @@ local function playerOwnsAutoCollect(): boolean
 	if player:GetAttribute(StoreConfig.ATTR.GIFTED_AUTOCOLLECT) == true then
 		return true
 	end
-	return player:GetAttribute(StoreConfig.ATTR.PURCHASED_AUTOCOLLECT) == true
+	if player:GetAttribute(StoreConfig.ATTR.PURCHASED_AUTOCOLLECT) == true then
+		return true
+	end
+	return marketplaceOwnsAutoCollect
+end
+
+local function tryClaimOwnedAutoCollect()
+	if playerOwnsAutoCollect() then
+		return
+	end
+	local ok, owned = pcall(function()
+		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, StoreConfig.GAMEPASS.AUTOCOLLECT)
+	end)
+	if not ok or owned ~= true then
+		return
+	end
+	marketplaceOwnsAutoCollect = true
+	syncAllGamepassBillboards()
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+	local claim = remotes and remotes:FindFirstChild("ClaimOwnedGamepass")
+	if claim and claim:IsA("RemoteEvent") then
+		claim:FireServer(StoreConfig.GAMEPASS.AUTOCOLLECT)
+	end
 end
 
 local function findGamepassInfo(thing: Instance): Instance?
@@ -455,35 +479,43 @@ end
 function M.init()
 	table.insert(
 		ownershipConns,
-		player:GetAttributeChangedSignal(StoreConfig.ATTR.AUTOCOLLECT_OWNED):Connect(syncAllGamepassBillboards)
+		player:GetAttributeChangedSignal(StoreConfig.ATTR.GIFTED_AUTOCOLLECT):Connect(function()
+			if player:GetAttribute(StoreConfig.ATTR.GIFTED_AUTOCOLLECT) == true then
+				marketplaceOwnsAutoCollect = true
+			end
+			syncAllGamepassBillboards()
+		end)
 	)
 	table.insert(
 		ownershipConns,
-		player:GetAttributeChangedSignal(StoreConfig.ATTR.GIFTED_AUTOCOLLECT):Connect(syncAllGamepassBillboards)
+		player:GetAttributeChangedSignal(StoreConfig.ATTR.PURCHASED_AUTOCOLLECT):Connect(function()
+			if player:GetAttribute(StoreConfig.ATTR.PURCHASED_AUTOCOLLECT) == true then
+				marketplaceOwnsAutoCollect = true
+			end
+			syncAllGamepassBillboards()
+		end)
 	)
 	table.insert(
 		ownershipConns,
-		player:GetAttributeChangedSignal(StoreConfig.ATTR.PURCHASED_AUTOCOLLECT):Connect(syncAllGamepassBillboards)
+		player:GetAttributeChangedSignal(StoreConfig.ATTR.AUTOCOLLECT_OWNED):Connect(function()
+			if player:GetAttribute(StoreConfig.ATTR.AUTOCOLLECT_OWNED) == true then
+				marketplaceOwnsAutoCollect = true
+			end
+			syncAllGamepassBillboards()
+		end)
 	)
 	task.defer(syncAllGamepassBillboards)
 	task.defer(refreshAssignedPlotWatch)
 
-	-- Pre-owned Autocollect: ask server to verify + unlock if Roblox already granted it.
 	task.spawn(function()
-		if playerOwnsAutoCollect() then
-			return
-		end
-		local MarketplaceService = game:GetService("MarketplaceService")
-		local ok, owned = pcall(function()
-			return MarketplaceService:UserOwnsGamePassAsync(player.UserId, StoreConfig.GAMEPASS.AUTOCOLLECT)
-		end)
-		if not ok or owned ~= true then
-			return
-		end
-		local remotes = ReplicatedStorage:WaitForChild("Remotes", 20)
-		local claim = remotes and remotes:WaitForChild("ClaimOwnedGamepass", 10)
-		if claim and claim:IsA("RemoteEvent") then
-			claim:FireServer(StoreConfig.GAMEPASS.AUTOCOLLECT)
+		for _, delaySec in { 0, 2, 6, 15 } do
+			if delaySec > 0 then
+				task.wait(delaySec)
+			end
+			if not player.Parent then
+				return
+			end
+			tryClaimOwnedAutoCollect()
 		end
 	end)
 

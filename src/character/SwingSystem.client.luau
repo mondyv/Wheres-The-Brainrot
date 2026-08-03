@@ -171,6 +171,9 @@ C.TARGET_SCREEN_LOCK_BONUS = 22
 C.TARGET_LOOK_CONE_TAN = 0.16
 C.TARGET_LOOK_CONE_MIN_LATERAL = 5.5
 C.TARGET_LOOK_CONE_MAX_LATERAL = 8.5
+-- High reach must not latch a far vine when a nearer one sits along the same look line.
+C.TARGET_DEPTH_FRONT_SLACK = 12
+C.TARGET_DEPTH_TIE_EPS = 1.0
 C.AIRBORNE_TARGET_LOOK_DOT = 0.08
 C.GROUNDED_TARGET_LOOK_DOT = 0.12
 C.TARGET_SCREEN_RADIUS_LIMIT = 0.72
@@ -2294,6 +2297,86 @@ local function boot(character)
 		return part.Position
 	end
 
+	-- Front-most depth of a vine along the camera look (bbox corners — not center/aim point).
+	function st.nearestLookDepthOnPart(part: BasePart): number
+		camera = workspace.CurrentCamera or camera
+		if not camera then
+			return (part.Position - st.hrp.Position).Magnitude
+		end
+		local origin = camera.CFrame.Position
+		local look = camera.CFrame.LookVector
+		local cf = part.CFrame
+		local hs = part.Size * 0.5
+		local minDepth = math.huge
+		for sx = -1, 1, 2 do
+			for sy = -1, 1, 2 do
+				for sz = -1, 1, 2 do
+					local corner = cf:PointToWorldSpace(Vector3.new(hs.X * sx, hs.Y * sy, hs.Z * sz))
+					local depth = (corner - origin):Dot(look)
+					if depth > 0 then
+						minDepth = math.min(minDepth, depth)
+					end
+				end
+			end
+		end
+		if minDepth < math.huge then
+			return minDepth
+		end
+		return math.max((part.Position - origin):Dot(look), 0.05)
+	end
+
+	function st.getFrontLookDepthCutoff(maxDist: number, minLookDot: number?): number?
+		camera = workspace.CurrentCamera or camera
+		if not camera or not st.hrp.Parent then
+			return nil
+		end
+		local minDepth = math.huge
+		local minLook = minLookDot or C.MIN_LOOK_DOT
+		for _, part in ipairs(st.getCandidateTargets(maxDist)) do
+			if not part.Parent or part:IsDescendantOf(st.character) then
+				continue
+			end
+			local attachWorld = st.closestAttachWorldOnPart(part)
+			local bodyDist = (attachWorld - st.hrp.Position).Magnitude
+			if bodyDist < 2 or bodyDist > maxDist then
+				continue
+			end
+			if attachWorld.Y < st.hrp.Position.Y + C.MIN_TARGET_HEIGHT_OFFSET then
+				continue
+			end
+			local aimWorld = st.aimPointOnPart(part)
+			local _dx, _dy, _screenR, viewDot, onScreen = st.getScreenAimMetrics(aimWorld)
+			if viewDot < minLook or (not onScreen and viewDot < 0.35) then
+				continue
+			end
+			local frontDepth = st.nearestLookDepthOnPart(part)
+			if frontDepth >= 4 and frontDepth <= maxDist then
+				minDepth = math.min(minDepth, frontDepth)
+			end
+		end
+		if minDepth >= math.huge then
+			return nil
+		end
+		return minDepth + C.TARGET_DEPTH_FRONT_SLACK
+	end
+
+	function st.isBehindFrontSwingDepth(part: BasePart, maxDist: number, depthCutoff: number?, minLookDot: number?): boolean
+		if not depthCutoff then
+			return false
+		end
+		local frontDepth = st.nearestLookDepthOnPart(part)
+		if frontDepth <= depthCutoff then
+			return false
+		end
+		-- Side vines at a similar depth stay eligible; only drop vines clearly behind the front row.
+		local aimWorld = st.aimPointOnPart(part)
+		local _dx, _dy, screenR, viewDot, onScreen = st.getScreenAimMetrics(aimWorld)
+		if not onScreen or viewDot < (minLookDot or C.MIN_LOOK_DOT) then
+			return false
+		end
+		return screenR <= C.TARGET_SCREEN_RADIUS_LIMIT
+	end
+
 	-- Aim point = vine nearest the camera look-ray (NOT nearest the body — that picks side vines).
 	function st.aimPointOnPart(part: BasePart): Vector3
 		camera = workspace.CurrentCamera or camera
@@ -2383,12 +2466,17 @@ local function boot(character)
 			)
 		end
 
+		local depthCutoff = st.getFrontLookDepthCutoff(maxDist, 0.22)
+
 		-- Prefer the nearest vine along look. Ray can miss thin near vines and hit far ones.
 		local best: BasePart? = nil
 		local bestDepth = math.huge
 		local bestScreenR = math.huge
 		for _, part in ipairs(st.getCandidateTargets(maxDist)) do
 			if not part.Parent then
+				continue
+			end
+			if st.isBehindFrontSwingDepth(part, maxDist, depthCutoff, 0.22) then
 				continue
 			end
 			local attachWorld = st.closestAttachWorldOnPart(part)
@@ -2400,26 +2488,25 @@ local function boot(character)
 				continue
 			end
 			local aimWorld = st.aimPointOnPart(part)
-			local toAim = aimWorld - origin
-			local depth = toAim:Dot(look)
-			if depth < 4 or depth > maxDist then
+			local frontDepth = st.nearestLookDepthOnPart(part)
+			if frontDepth < 4 or frontDepth > maxDist then
 				continue
 			end
-			local onRay = origin + look * depth
+			local onRay = origin + look * frontDepth
 			local lateral = (aimWorld - onRay).Magnitude
-			if lateral > maxLookLateral(depth) then
+			if lateral > maxLookLateral(frontDepth) then
 				continue
 			end
 			local okAim, screenR = acceptAim(aimWorld)
 			if not okAim then
 				continue
 			end
-			-- Nearer along look always wins; screen-center only breaks near ties.
+			-- Nearer along look always wins; screen-center only breaks near ties at similar depth.
 			if
-				depth + 0.5 < bestDepth
-				or (math.abs(depth - bestDepth) <= 1.5 and screenR < bestScreenR)
+				frontDepth + C.TARGET_DEPTH_TIE_EPS < bestDepth
+				or (math.abs(frontDepth - bestDepth) <= C.TARGET_DEPTH_TIE_EPS and screenR < bestScreenR)
 			then
-				bestDepth = depth
+				bestDepth = frontDepth
 				bestScreenR = screenR
 				best = part
 			end
@@ -2428,7 +2515,8 @@ local function boot(character)
 			return best
 		end
 
-		-- Fallback: center ray (thin vines / empty candidate grid).
+		-- Fallback: center ray (thin vines / empty candidate grid). Walk the ray and keep
+		-- the nearest valid swing target — never stop at the first far vine the ray reaches.
 		local dirs = {
 			look,
 			(look + camera.CFrame.RightVector * 0.03).Unit,
@@ -2437,6 +2525,8 @@ local function boot(character)
 			(look - camera.CFrame.UpVector * 0.03).Unit,
 		}
 
+		local rayBest: BasePart? = nil
+		local rayBestDepth = math.huge
 		for _, dir in ipairs(dirs) do
 			table.clear(ignored)
 			table.insert(ignored, st.character)
@@ -2458,13 +2548,23 @@ local function boot(character)
 						table.insert(ignored, hit.Instance)
 						continue
 					end
+					if st.isBehindFrontSwingDepth(swing, maxDist, depthCutoff, 0.22) then
+						table.insert(ignored, swing)
+						continue
+					end
 					local aimWorld = st.aimPointOnPart(swing)
 					local okAim = acceptAim(aimWorld)
 					if not okAim then
-						table.insert(ignored, hit.Instance)
+						table.insert(ignored, swing)
 						continue
 					end
-					return swing
+					local frontDepth = st.nearestLookDepthOnPart(swing)
+					if frontDepth < rayBestDepth then
+						rayBestDepth = frontDepth
+						rayBest = swing
+					end
+					table.insert(ignored, swing)
+					continue
 				end
 				local inst = hit.Instance
 				if inst:IsA("BasePart") and inst.CanCollide and inst.Transparency < 0.55 and inst.Size.Magnitude > 6 then
@@ -2474,7 +2574,7 @@ local function boot(character)
 			end
 		end
 
-		return nil
+		return rayBest
 	end
 
 	function st.targetCellCoord(value)
@@ -2814,6 +2914,7 @@ local function boot(character)
 		local minLookDot = minLookDotOverride or C.MIN_LOOK_DOT
 		local maxScreenRadius = maxScreenRadiusOverride or C.TARGET_SCREEN_RADIUS_LIMIT
 		local maxDx = C.TARGET_MAX_SCREEN_DX
+		local depthCutoff = st.getFrontLookDepthCutoff(reach, minLookDot)
 
 		-- Crosshair vine always wins when the look-ray hits one (no laggy multi-ray spam).
 		local rayHit = st.pickCameraLookSwingTarget(reach)
@@ -2828,12 +2929,16 @@ local function boot(character)
 		local best = nil
 		local bestScore = -math.huge
 		local bestScreenR = math.huge
+		local bestFrontDepth = math.huge
 
 		for _, part in ipairs(st.getCandidateTargets(reach)) do
 			if not part.Parent then
 				continue
 			end
 			if part:IsDescendantOf(st.character) then
+				continue
+			end
+			if st.isBehindFrontSwingDepth(part, reach, depthCutoff, minLookDot) then
 				continue
 			end
 
@@ -2942,6 +3047,7 @@ local function boot(character)
 			if viewDot >= 0.82 and screenRadius < 0.28 then
 				nearAimBonus *= 1.35
 			end
+			local frontDepth = st.nearestLookDepthOnPart(part)
 			local alignPower = align * align * math.max(align, 0)
 			local screenLockBonus = 0
 			if screenRadius <= C.TARGET_SCREEN_LOCK_RADIUS then
@@ -2959,6 +3065,7 @@ local function boot(character)
 				+ screenLockBonus
 				- distancePenalty
 				- lateralPenalty
+				- (frontDepth / math.max(nearScale, 1)) * 2.8
 
 			-- Prefer nearer vines when scores are close (high reach must not skip first vine).
 			local better = score > bestScore + 0.08
@@ -2966,15 +3073,27 @@ local function boot(character)
 				local bestDist = if best then (st.closestAttachWorldOnPart(best) - st.hrp.Position).Magnitude else math.huge
 				if dist + 4 < bestDist then
 					better = true
+				elseif frontDepth + C.TARGET_DEPTH_TIE_EPS < bestFrontDepth then
+					better = true
 				elseif math.abs(dist - bestDist) <= 4 and screenRadius + 0.02 < bestScreenR then
 					better = true
+				elseif
+					math.abs(frontDepth - bestFrontDepth) <= C.TARGET_DEPTH_TIE_EPS
+					and screenRadius + 0.02 < bestScreenR
+				then
+					better = true
 				end
-			elseif not better and math.abs(score - bestScore) <= 0.08 and screenRadius + 0.02 < bestScreenR then
-				better = true
+			elseif not better and math.abs(score - bestScore) <= 0.08 then
+				if frontDepth + C.TARGET_DEPTH_TIE_EPS < bestFrontDepth then
+					better = true
+				elseif math.abs(frontDepth - bestFrontDepth) <= C.TARGET_DEPTH_TIE_EPS and screenRadius + 0.02 < bestScreenR then
+					better = true
+				end
 			end
 			if better then
 				bestScore = score
 				bestScreenR = screenRadius
+				bestFrontDepth = frontDepth
 				best = part
 			end
 		end
@@ -3109,8 +3228,12 @@ local function boot(character)
 		-- Fallback: camera-aim score, never "nearest vine wins".
 		local best = nil
 		local bestScore = -math.huge
+		local depthCutoff = st.getFrontLookDepthCutoff(maxDistance, minLookDot)
 		local function considerVisual(part: BasePart?)
 			if not part then
+				return
+			end
+			if st.isBehindFrontSwingDepth(part, maxDistance, depthCutoff, minLookDot) then
 				return
 			end
 			local limit = st.getEffectiveLatchLimit(part)
@@ -3133,6 +3256,13 @@ local function boot(character)
 
 	function st.attachCandidateScore(target, dist, point, maxDistance)
 		camera = workspace.CurrentCamera or camera
+
+		if target:IsA("BasePart") then
+			local depthCutoff = st.getFrontLookDepthCutoff(maxDistance, C.MIN_LOOK_DOT)
+			if st.isBehindFrontSwingDepth(target, maxDistance, depthCutoff, C.MIN_LOOK_DOT) then
+				return -1000
+			end
+		end
 
 		-- Camera / screen-center first, but high reach must still prefer the nearer vine.
 		local nearCap = math.max(
@@ -3162,13 +3292,14 @@ local function boot(character)
 			score += math.max(0, viewDot) ^ 3 * 4.0
 			local toCam = aimWorld - camera.CFrame.Position
 			local depth = toCam:Dot(look)
+			local frontDepth = if target:IsA("BasePart") then st.nearestLookDepthOnPart(target) else depth
 			if toCam.Magnitude > 0.5 then
 				local along = math.max(depth, 0.05)
 				local onRay = camera.CFrame.Position + look * along
 				local lateral = (aimWorld - onRay).Magnitude
 				score -= (lateral / math.max(dist, 8)) * C.TARGET_SCORE_LATERAL_WORLD
 				-- Depth along look: nearer vines in the cone beat far centered ones.
-				score -= (math.max(depth, 0) / math.max(nearCap, 1)) * 2.4
+				score -= (math.max(frontDepth, 0) / math.max(nearCap, 1)) * 3.6
 				if maxDistance > 120 and dist > nearCap then
 					score -= ((dist - nearCap) / math.max(maxDistance - nearCap, 1)) * 5.5
 				end

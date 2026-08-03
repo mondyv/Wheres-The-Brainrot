@@ -101,6 +101,11 @@ local QUEST_SLIDE_PX = 96
 -- Distinct from Shop Stand (0.88–1.2) / Sell (deep) / Upgrade (1.2–1.55).
 local TIM_VOICE_PITCH_MIN = 1.48
 local TIM_VOICE_PITCH_MAX = 1.82
+local INTRO_CUTSCENE_HIDE_OPTS = {
+	keepScreenGuiNames = { "StandDialogueCutscene" },
+	hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker" },
+	hideMainChildNames = { "TimCheeseQuestHost" },
+}
 -- Space between quest ticket bottom and RandomBrainrot top (rest pose, not hover-scaled).
 local QUEST_GAP_ABOVE_RB = 28
 local QUEST_EDGE_SLIDE = TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -388,6 +393,173 @@ local function landImpactShake(cam: Camera?)
 	TweenService:Create(cam, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
 		FieldOfView = startFov,
 	}):Play()
+end
+
+local introMouseLookX = 0
+local introMouseLookY = 0
+local introTouchPanX = 0
+local introTouchPanY = 0
+local introTouchPanConn: RBXScriptConnection? = nil
+local introJumpToken = 0
+local introJumpBasePivot: CFrame? = nil
+local introJumpActive = false
+
+local function flatUnit(from: Vector3, to: Vector3): Vector3
+	local flat = Vector3.new(to.X - from.X, 0, to.Z - from.Z)
+	if flat.Magnitude < 0.05 then
+		return Vector3.new(0, 0, -1)
+	end
+	return flat.Unit
+end
+
+local function resetIntroCameraLook()
+	introMouseLookX = 0
+	introMouseLookY = 0
+	introTouchPanX = 0
+	introTouchPanY = 0
+end
+
+local function bindIntroTouchPan()
+	if introTouchPanConn then
+		return
+	end
+	if not UserInputService.TouchEnabled then
+		return
+	end
+	introTouchPanConn = UserInputService.TouchMoved:Connect(function(input, _processed)
+		if not introPlaying or input.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+		introTouchPanX = math.clamp(introTouchPanX + input.Delta.X * 0.004, -1, 1)
+		introTouchPanY = math.clamp(introTouchPanY + input.Delta.Y * 0.004, -1, 1)
+	end)
+end
+
+local function unbindIntroTouchPan()
+	if introTouchPanConn then
+		introTouchPanConn:Disconnect()
+		introTouchPanConn = nil
+	end
+	introTouchPanX = 0
+	introTouchPanY = 0
+end
+
+local function updateIntroCameraLook(dt: number, cam: Camera)
+	local viewport = cam.ViewportSize
+	local mouse = UserInputService:GetMouseLocation()
+	local nx = ((mouse.X / math.max(viewport.X, 1)) - 0.5) * 2
+	local ny = ((mouse.Y / math.max(viewport.Y, 1)) - 0.5) * 2
+	nx = math.clamp(nx + introTouchPanX, -1, 1)
+	ny = math.clamp(ny + introTouchPanY, -1, 1)
+	local lookSmooth = math.min(dt * 7.5, 1)
+	introMouseLookX += (nx - introMouseLookX) * lookSmooth
+	introMouseLookY += (ny - introMouseLookY) * lookSmooth
+end
+
+type IntroCamOpts = {
+	pullBack: number?,
+	sideBase: number?,
+	heightBase: number?,
+}
+
+local function computeIntroShoulderCamera(
+	hrp: BasePart,
+	focusPos: Vector3,
+	phase: number,
+	dt: number,
+	cam: Camera,
+	savedFov: number?,
+	opts: IntroCamOpts?
+): (CFrame, number)
+	updateIntroCameraLook(dt, cam)
+
+	local playerPos = hrp.Position + Vector3.new(0, 1.4, 0)
+	local mid = playerPos:Lerp(focusPos, 0.52)
+	local toFocus = flatUnit(playerPos, focusPos)
+	local right = toFocus:Cross(Vector3.yAxis)
+	if right.Magnitude < 0.05 then
+		right = hrp.CFrame.RightVector
+	else
+		right = right.Unit
+	end
+
+	local pullBack = if opts and typeof(opts.pullBack) == "number" then opts.pullBack else 5.4
+	local sideBase = if opts and typeof(opts.sideBase) == "number" then opts.sideBase else 3.4
+	local heightBase = if opts and typeof(opts.heightBase) == "number" then opts.heightBase else 3.5
+
+	local sidePull = sideBase + introMouseLookX * 3.8
+	local height = heightBase - introMouseLookY * 1.5
+	local pull = pullBack - math.abs(introMouseLookX) * 0.55
+
+	local driftX = math.sin(phase * 0.85) * 0.42 + math.sin(phase * 1.65) * 0.14
+	local driftY = math.sin(phase * 1.05) * 0.28 + math.cos(phase * 0.62) * 0.1
+	local driftOrbit = math.sin(phase * 0.45) * 0.34
+
+	local camPos = mid - toFocus * pull + right * (sidePull + driftOrbit) + Vector3.new(driftX, height + driftY, 0)
+	local lookAt = focusPos
+		+ right * (0.4 + introMouseLookX * 1.25)
+		+ Vector3.new(0, -introMouseLookY * 0.7, 0)
+		+ Vector3.new(math.sin(phase * 0.72) * 0.18, math.cos(phase * 0.58) * 0.12, 0)
+	local goalCf = CFrame.lookAt(camPos, lookAt)
+	local baseFov = savedFov or 60
+	local goalFov = baseFov - 3 + math.abs(introMouseLookX) * 2.2 + math.abs(introMouseLookY) * 1.1 + math.sin(phase * 0.9) * 0.75
+
+	return goalCf, goalFov
+end
+
+local function stopIntroTalkJump(model: Model?)
+	introJumpActive = false
+	introJumpToken += 1
+	if model and model.Parent and introJumpBasePivot then
+		pcall(function()
+			model:PivotTo(introJumpBasePivot)
+		end)
+	end
+	introJumpBasePivot = nil
+end
+
+local function startIntroTalkJump(model: Model)
+	stopIntroTalkJump(model)
+	introJumpActive = true
+	introJumpToken += 1
+	local token = introJumpToken
+	introJumpBasePivot = model:GetPivot()
+	task.spawn(function()
+		while introJumpActive and token == introJumpToken and model.Parent do
+			local base = introJumpBasePivot
+			if not base then
+				break
+			end
+			local up = base + Vector3.new(0, 0.45, 0)
+			local t0 = os.clock()
+			while introJumpActive and os.clock() - t0 < 0.11 and token == introJumpToken do
+				local a = (os.clock() - t0) / 0.11
+				model:PivotTo(base:Lerp(up, a))
+				RunService.Heartbeat:Wait()
+			end
+			if not introJumpActive or token ~= introJumpToken then
+				break
+			end
+			local t1 = os.clock()
+			while introJumpActive and os.clock() - t1 < 0.11 and token == introJumpToken do
+				local a = (os.clock() - t1) / 0.11
+				model:PivotTo(up:Lerp(base, a))
+				RunService.Heartbeat:Wait()
+			end
+			if not introJumpActive or token ~= introJumpToken then
+				break
+			end
+			if introJumpBasePivot then
+				model:PivotTo(introJumpBasePivot)
+			end
+			task.wait(0.07)
+		end
+		if introJumpActive and token == introJumpToken and model.Parent and introJumpBasePivot then
+			pcall(function()
+				model:PivotTo(introJumpBasePivot)
+			end)
+		end
+	end)
 end
 
 local function fireQuestClaimCelebration()
@@ -1785,12 +1957,7 @@ local function resolveActiveQuestIndex(): number?
 end
 
 local function formatQuestProgress(quest: TimCheeseQuestConfig.QuestDef, p: number): string
-	if quest.kind == "harvest" or quest.kind == "accept_claims" then
-		return string.format("%d / %d", math.floor(p), quest.target)
-	elseif quest.kind == "reach_land" then
-		return if p >= quest.target then "Land 2 reached!" else "Not on Land 2 yet"
-	end
-	return string.format("%d / %d", math.floor(p), quest.target)
+	return TimCheeseQuestConfig.formatProgressLabel(quest, p)
 end
 
 refreshQuestHud = function(opts: { skipRevealGate: boolean?, playAppear: boolean? }?)
@@ -1955,7 +2122,8 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	ticket.Name = "CheeseTicket"
 	ticket.AnchorPoint = Vector2.new(0.5, 0.5)
 	ticket.Position = UDim2.fromScale(0.5, 0.5)
-	ticket.Size = UDim2.fromOffset(390, 168)
+	ticket.Size = UDim2.fromOffset(390, 0)
+	ticket.AutomaticSize = Enum.AutomaticSize.Y
 	ticket.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
 	ticket.BackgroundTransparency = 0.08
 	ticket.BorderSizePixel = 0
@@ -1969,14 +2137,21 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	ticketStroke.Thickness = 3
 	ticketStroke.Transparency = 0.15
 	ticketStroke.Parent = ticket
+	local ticketPad = Instance.new("UIPadding")
+	ticketPad.PaddingTop = UDim.new(0, 10)
+	ticketPad.PaddingBottom = UDim.new(0, 10)
+	ticketPad.PaddingLeft = UDim.new(0, 10)
+	ticketPad.PaddingRight = UDim.new(0, 10)
+	ticketPad.Parent = ticket
 
 	local inner = Instance.new("Frame")
 	inner.Name = "Inner"
 	inner.BackgroundColor3 = Color3.fromRGB(255, 244, 180)
 	inner.BackgroundTransparency = 0.12
 	inner.BorderSizePixel = 0
-	inner.Position = UDim2.fromOffset(10, 10)
-	inner.Size = UDim2.new(1, -20, 1, -20)
+	inner.Size = UDim2.new(1, 0, 0, 0)
+	inner.AutomaticSize = Enum.AutomaticSize.Y
+	inner.ClipsDescendants = true
 	inner.Parent = ticket
 	local innerCorner = Instance.new("UICorner")
 	innerCorner.CornerRadius = UDim.new(0, 7)
@@ -1986,45 +2161,62 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	dash.Thickness = 1.6
 	dash.Transparency = 0.35
 	dash.Parent = inner
+	local innerPad = Instance.new("UIPadding")
+	innerPad.PaddingTop = UDim.new(0, 8)
+	innerPad.PaddingBottom = UDim.new(0, 8)
+	innerPad.PaddingLeft = UDim.new(0, 10)
+	innerPad.PaddingRight = UDim.new(0, 10)
+	innerPad.Parent = inner
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, 6)
+	list.Parent = inner
+
+	local header = Instance.new("Frame")
+	header.Name = "Header"
+	header.BackgroundTransparency = 1
+	header.Size = UDim2.new(1, 0, 0, 66)
+	header.LayoutOrder = 1
+	header.Parent = inner
 
 	local bang = Instance.new("ImageLabel")
 	bang.Name = "Bang"
 	bang.BackgroundTransparency = 1
-	bang.Position = UDim2.fromOffset(10, 18)
+	bang.Position = UDim2.fromOffset(0, 4)
 	bang.Size = UDim2.fromOffset(54, 54)
 	bang.Image = TutorialConfig.EXCLAIM_IMAGE
 	bang.Rotation = -10
-	bang.Parent = inner
+	bang.Parent = header
 
 	local stamp = Instance.new("TextLabel")
 	stamp.BackgroundTransparency = 1
-	stamp.Position = UDim2.fromOffset(70, 12)
-	stamp.Size = UDim2.new(1, -84, 0, 22)
+	stamp.Position = UDim2.fromOffset(62, 6)
+	stamp.Size = UDim2.new(1, -70, 0, 22)
 	stamp.FontFace = Font.fromEnum(Enum.Font.GothamBold)
 	stamp.TextSize = 18
 	stamp.TextColor3 = Color3.fromRGB(160, 40, 30)
 	stamp.TextXAlignment = Enum.TextXAlignment.Left
 	stamp.Text = "JOB LOCKED IN"
 	stamp.Rotation = 1
-	stamp.Parent = inner
+	stamp.Parent = header
 
 	local title = Instance.new("TextLabel")
 	title.BackgroundTransparency = 1
-	title.Position = UDim2.fromOffset(70, 38)
-	title.Size = UDim2.new(1, -84, 0, 28)
+	title.Position = UDim2.fromOffset(62, 32)
+	title.Size = UDim2.new(1, -70, 0, 28)
 	title.FontFace = Font.fromEnum(Enum.Font.GothamBold)
 	title.TextSize = 22
 	title.TextColor3 = Color3.fromRGB(30, 24, 10)
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.TextTruncate = Enum.TextTruncate.AtEnd
 	title.Text = quest.title
-	title.Parent = inner
+	title.Parent = header
 	UiFonts.applyDisplayLabel(title, 22, 16)
 
 	local body = Instance.new("TextLabel")
 	body.BackgroundTransparency = 1
-	body.Position = UDim2.fromOffset(16, 78)
-	body.Size = UDim2.new(1, -32, 0, 40)
+	body.Size = UDim2.new(1, 0, 0, 0)
+	body.AutomaticSize = Enum.AutomaticSize.Y
 	body.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
 	body.TextSize = 14
 	body.TextColor3 = Color3.fromRGB(55, 42, 18)
@@ -2032,22 +2224,26 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	body.TextYAlignment = Enum.TextYAlignment.Top
 	body.TextWrapped = true
 	body.Text = quest.description
+	body.LayoutOrder = 2
 	body.Parent = inner
 
 	local payout = Instance.new("TextLabel")
 	payout.BackgroundColor3 = Color3.fromRGB(40, 28, 8)
 	payout.BackgroundTransparency = 0.25
-	payout.AnchorPoint = Vector2.new(1, 1)
-	payout.Position = UDim2.new(1, -10, 1, -10)
-	payout.Size = UDim2.fromOffset(128, 28)
+	payout.Size = UDim2.new(1, 0, 0, 28)
 	payout.FontFace = Font.fromEnum(Enum.Font.GothamBold)
 	payout.TextSize = 14
 	payout.TextColor3 = Color3.fromRGB(255, 220, 80)
 	payout.Text = "★  " .. TimCheeseQuestConfig.formatRewardLabel(quest)
+	payout.LayoutOrder = 3
 	payout.Parent = inner
 	local payCorner = Instance.new("UICorner")
 	payCorner.CornerRadius = UDim.new(0, 8)
 	payCorner.Parent = payout
+	local payPad = Instance.new("UIPadding")
+	payPad.PaddingLeft = UDim.new(0, 8)
+	payPad.PaddingRight = UDim.new(0, 8)
+	payPad.Parent = payout
 
 	local ticketScale = Instance.new("UIScale")
 	ticketScale.Scale = 0.9
@@ -2057,7 +2253,7 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	local cam = Workspace.CurrentCamera
 	local vw = if cam then cam.ViewportSize.X else 1280
 	if mobile or vw < 700 then
-		ticket.Size = UDim2.fromOffset(math.clamp(math.floor(vw * 0.88), 280, 360), 168)
+		ticket.Size = UDim2.fromOffset(math.clamp(math.floor(vw * 0.88), 280, 360), 0)
 	end
 
 	local bangBobY = 0.0
@@ -2070,7 +2266,7 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 		local target = math.sin(bangT * 1.35) * 1.4
 		local blend = math.min(1, dt * 6)
 		bangBobY += (target - bangBobY) * blend
-		bang.Position = UDim2.fromOffset(10, 18 + bangBobY)
+		bang.Position = UDim2.fromOffset(0, 4 + bangBobY)
 	end)
 
 	local enterInfo = TweenInfo.new(0.36, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -2288,6 +2484,16 @@ local function buildOfferLinesForIndex(questIndex: number): { { text: string, sh
 	if not quest then
 		return TimCheeseQuestConfig.OFFER_LINES
 	end
+	if typeof(quest.offerLine) == "string" and quest.offerLine ~= "" then
+		return {
+			{ text = quest.offerLine, shake = false },
+			{ text = string.format("%s — %s", quest.title, quest.description), shake = false },
+			{
+				text = string.format("Reward: %s. You in?", TimCheeseQuestConfig.formatRewardLabel(quest)),
+				shake = true,
+			},
+		}
+	end
 	local lead = if questIndex <= 1 then "Alright — first job's on the HOUSE!!" else "Fresh job just dropped. Listen up!!"
 	return {
 		{ text = lead, shake = true },
@@ -2403,6 +2609,7 @@ end
 
 local function speakOnHead(model: Model, message: string, holdSec: number?)
 	local hold = if typeof(holdSec) == "number" then holdSec else 1.55
+	startIntroTalkJump(model)
 	StandDialogueCutscene.showWorldSpeech(model, message, {
 		durationSec = hold,
 		voicePitchMin = TIM_VOICE_PITCH_MIN,
@@ -2413,7 +2620,9 @@ local function speakOnHead(model: Model, message: string, holdSec: number?)
 		studsOffset = Vector3.new(0, 1.05, 0),
 	})
 	local typeDur = #message * 0.042 + 0.2
-	task.wait(typeDur + hold + 0.15)
+	task.wait(typeDur)
+	stopIntroTalkJump(model)
+	task.wait(hold + 0.15)
 end
 
 -- Intro starts when the player first tries to open a Land 1 bush after tutorial.
@@ -2495,18 +2704,26 @@ function M.playIntroFall()
 	setQuestHudSuppressed(true)
 	setTalkPromptEnabled(false)
 	setBushPromptsHiddenForIntro(true)
+	GameplayUiVisibility.hide(INTRO_CUTSCENE_HIDE_OPTS)
 	StandDialogueCutscene.showLetterbox()
 	lockMovement(true)
 	setBgmSlowed(true)
 	local wind = playWindLoop()
 
 	local function cleanupIntroUi()
+		unbindIntroTouchPan()
+		resetIntroCameraLook()
+		stopIntroTalkJump(clone)
 		StandDialogueCutscene.hideLetterbox()
 		lockMovement(false)
 		setBushPromptsHiddenForIntro(false)
 		setBgmSlowed(false)
 		GameplayUiVisibility.show({ instant = true })
 	end
+
+	resetIntroCameraLook()
+	bindIntroTouchPan()
+	local introCamPhase = 0
 
 	local land = landCf.Position
 	local groundY = land.Y
@@ -2533,7 +2750,8 @@ function M.playIntroFall()
 		{ Value = 1 }
 	)
 	local lastScale = 2.65
-	local conn = RunService.RenderStepped:Connect(function()
+	local conn = RunService.RenderStepped:Connect(function(dt)
+		introCamPhase += dt
 		local t = alpha.Value
 		local y = start.Y + (groundY - start.Y) * (t * t)
 		local pos = Vector3.new(land.X, y, land.Z)
@@ -2551,13 +2769,20 @@ function M.playIntroFall()
 		if clone.Parent then
 			clone:PivotTo(CFrame.new(pos + Vector3.new(sway, 0, 0)) * rotOnly * spin)
 		end
-		-- Over-the-shoulder: behind/side of player, looking out at Tim in the distance.
 		local liveHrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 		if cam and liveHrp and liveHrp:IsA("BasePart") then
-			local back = -liveHrp.CFrame.LookVector
-			local right = liveHrp.CFrame.RightVector
-			local camPos = liveHrp.Position + back * 4.2 + right * 3.4 + Vector3.new(0, 3.8, 0)
-			cam.CFrame = CFrame.lookAt(camPos, pos + Vector3.new(0, 3.2, 0))
+			local focusPos = pos + Vector3.new(0, 3.2, 0)
+			local goalCf, goalFov = computeIntroShoulderCamera(
+				liveHrp,
+				focusPos,
+				introCamPhase,
+				dt,
+				cam,
+				savedFov,
+				{ pullBack = 6.1, sideBase = 3.8, heightBase = 4.0 }
+			)
+			cam.CFrame = goalCf
+			cam.FieldOfView = goalFov
 		end
 	end)
 	tween:Play()
@@ -2589,16 +2814,24 @@ function M.playIntroFall()
 	-- Settle — keep over-shoulder framing on Tim.
 	task.wait(0.55)
 	local talkCamConn: RBXScriptConnection? = nil
-	talkCamConn = RunService.RenderStepped:Connect(function()
+	talkCamConn = RunService.RenderStepped:Connect(function(dt)
+		introCamPhase += dt
 		local liveHrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 		if not cam or not clone.Parent or not (liveHrp and liveHrp:IsA("BasePart")) then
 			return
 		end
 		local timPos = clone:GetPivot().Position + Vector3.new(0, 2.6, 0)
-		local back = -liveHrp.CFrame.LookVector
-		local right = liveHrp.CFrame.RightVector
-		local camPos = liveHrp.Position + back * 3.8 + right * 3.6 + Vector3.new(0, 3.6, 0)
-		cam.CFrame = CFrame.lookAt(camPos, timPos)
+		local goalCf, goalFov = computeIntroShoulderCamera(
+			liveHrp,
+			timPos,
+			introCamPhase,
+			dt,
+			cam,
+			savedFov,
+			{ pullBack = 5.2, sideBase = 3.5, heightBase = 3.6 }
+		)
+		cam.CFrame = goalCf
+		cam.FieldOfView = goalFov
 	end)
 
 	for _, line in TimCheeseQuestConfig.INTRO_LINES do
@@ -2607,6 +2840,7 @@ function M.playIntroFall()
 		end
 		speakOnHead(clone, line.text, if line.shake then 1.75 else 1.45)
 	end
+	stopIntroTalkJump(clone)
 
 	if talkCamConn then
 		talkCamConn:Disconnect()
@@ -2686,6 +2920,11 @@ function M.openTimDialogue()
 	end
 	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) ~= true and not introStartedLocal then
 		return
+	end
+
+	local timTalkRE = getRE("TimTalked")
+	if timTalkRE then
+		timTalkRE:FireServer()
 	end
 
 	local ready = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR) == true
@@ -2869,6 +3108,24 @@ function M.init()
 			questHudRevealed = false
 			syncQuestChromeVisibility()
 		end
+
+		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_REPLAY_ATTR):Connect(function()
+			introStartedLocal = false
+			introPlaying = false
+			forcedQuestIndex = nil
+			questHudRevealed = false
+			dialogueBusy = false
+			setQuestHudSuppressed(false)
+			stopIntroTalkJump(timModel)
+			local tim = timModel or resolveTim()
+			if tim then
+				hideTimUntilIntro(tim)
+				setQuestFloatVisible(tim, false)
+				setOutline(tim, false)
+			end
+			syncQuestChromeVisibility()
+			syncPromptAndOutline()
+		end)
 
 		player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR):Connect(function()
 			if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then

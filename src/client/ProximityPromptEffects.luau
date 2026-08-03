@@ -70,10 +70,7 @@ local serviceWired = false
 local effectsBooted = false
 local activeBushSearchPrompt: ProximityPrompt? = nil
 local bushSharedView = nil
-local _bushWobbleBases = nil
-local _bushWobbleSeed = 0.0
-local bushWobbleModel = nil
-local bushWobbleBasePivot = nil
+local bushWobbleBases: { [Instance]: CFrame } = {}
 local bushWobbleStepBound = false
 local cameraShakeActive = false
 local bushCameraShakeStepBound = false
@@ -1182,13 +1179,8 @@ local function stopBushCameraShake()
 end
 
 local function startBushCameraShake()
-	if cameraShakeActive and bushCameraShakeStepBound then
-		return
-	end
+	stopBushCameraShake()
 	cameraShakeActive = true
-	if bushCameraShakeStepBound then
-		return
-	end
 	bushCameraShakeStepBound = true
 	RunService:BindToRenderStep(C.BUSH_CAM_SHAKE_STEP, Enum.RenderPriority.Camera.Value + 50, function()
 		if not cameraShakeActive then
@@ -1209,9 +1201,7 @@ local function startBushCameraShake()
 end
 
 local function applyBushWobble(t: number, seed: number)
-	local bush = bushWobbleModel
-	local base = bushWobbleBasePivot
-	if not bush or not base or not bush.Parent then
+	if next(bushWobbleBases) == nil then
 		return
 	end
 	local nx = math.noise(t * 9, seed, 0) * C.BUSH_WOBBLE_POS
@@ -1220,44 +1210,84 @@ local function applyBushWobble(t: number, seed: number)
 	local rx = math.noise(t * 7, seed + 3, 2) * C.BUSH_WOBBLE_ROT
 	local ry = math.noise(seed + 4, t * 7, 3) * C.BUSH_WOBBLE_ROT * 1.2
 	local rz = math.noise(t * 7, seed + 5, 4) * C.BUSH_WOBBLE_ROT * 0.7
-	pcall(function()
-		bush:PivotTo(base * CFrame.new(nx, ny, nz) * CFrame.Angles(rx, ry, rz))
-	end)
+	local offset = CFrame.new(nx, ny, nz) * CFrame.Angles(rx, ry, rz)
+	for target, base in bushWobbleBases do
+		if not target.Parent then
+			continue
+		end
+		pcall(function()
+			if target:IsA("Model") then
+				target:PivotTo(base * offset)
+			elseif target:IsA("BasePart") then
+				target.CFrame = base * offset
+			end
+		end)
+	end
+end
+
+local function restoreBushWobbleTransforms()
+	for target, base in bushWobbleBases do
+		if not target.Parent then
+			continue
+		end
+		pcall(function()
+			if target:IsA("Model") then
+				target:PivotTo(base)
+			elseif target:IsA("BasePart") then
+				target.CFrame = base
+			end
+		end)
+	end
+	table.clear(bushWobbleBases)
+end
+
+local function captureBushWobbleBases(root: Instance): boolean
+	table.clear(bushWobbleBases)
+	for _, target in BushRootUtil.getShakeTargets(root) do
+		if target:IsA("Model") then
+			bushWobbleBases[target] = target:GetPivot()
+		elseif target:IsA("BasePart") then
+			bushWobbleBases[target] = target.CFrame
+		end
+	end
+	return next(bushWobbleBases) ~= nil
 end
 
 local function stopBushWobble()
 	stopBushWobbleRenderStep()
 	OtherVfxController.stopBushSearchShake()
-	if bushWobbleModel and bushWobbleBasePivot and bushWobbleModel.Parent then
-		pcall(function()
-			bushWobbleModel:PivotTo(bushWobbleBasePivot :: CFrame)
-		end)
-	end
-	bushWobbleModel = nil
-	bushWobbleBasePivot = nil
+	restoreBushWobbleTransforms()
 end
 
 local function beginBushWobble(prompt: ProximityPrompt)
-	local bush = findBushModelForPrompt(prompt)
+	local bush = findBushRootForPrompt(prompt)
 	if not bush or not bush.Parent then
 		stopBushWobble()
 		return
 	end
 	stopBushWobble()
 
-	bushWobbleModel = bush
-	bushWobbleBasePivot = bush:GetPivot()
+	if not captureBushWobbleBases(bush) then
+		return
+	end
 	OtherVfxController.playBushSearchShake(bush)
 
 	local bushWobbleSeed = math.random() * 10
 	bushWobbleStepBound = true
 
 	RunService:BindToRenderStep(C.BUSH_WOBBLE_STEP, Enum.RenderPriority.Last.Value, function()
-		if not bushWobbleModel or not bushWobbleBasePivot then
+		if next(bushWobbleBases) == nil then
 			stopBushWobbleRenderStep()
 			return
 		end
-		if not bushWobbleModel.Parent then
+		local anyAlive = false
+		for target in bushWobbleBases do
+			if target.Parent then
+				anyAlive = true
+				break
+			end
+		end
+		if not anyAlive then
 			stopBushWobble()
 			return
 		end
@@ -1559,6 +1589,10 @@ local function fireManagedBushHoldComplete(prompt: ProximityPrompt)
 		return
 	end
 	bushHoldLockUntil = os.clock() + 0.45
+	managedBushHoldActive = nil
+	if directBushHoldPrompt == prompt then
+		directBushHoldPrompt = nil
+	end
 	GameSoundEffects.stopBushSearchLoop()
 	stopBushCameraShake()
 	stopBushWobble()
@@ -1599,10 +1633,17 @@ function ProximityPromptEffects.beginManagedBushHold(prompt: ProximityPrompt)
 	if not isManagedBushPrompt(prompt) or CarryGate.isFull() or not prompt.Enabled then
 		return
 	end
-	if os.clock() < bushHoldLockUntil or managedBushHoldActive == prompt then
+	if managedBushHoldActive and managedBushHoldActive.Parent == nil then
+		managedBushHoldActive = nil
+	end
+	if managedBushHoldActive == prompt then
 		return
 	end
-	if managedBushHoldActive and managedBushHoldActive ~= prompt then
+	if
+		managedBushHoldActive
+		and managedBushHoldActive ~= prompt
+		and managedBushHoldActive.Parent ~= nil
+	then
 		return
 	end
 	local began = bushHoldBeganHandler

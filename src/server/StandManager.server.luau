@@ -633,7 +633,7 @@ local function upgradeLevelGainForPlayer(player: Player?): number
 		return BrainrotStandConfig.NORMAL_LEVEL_GAIN
 	end
 	if player:GetAttribute(StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED) == true then
-		return BrainrotStandConfig.PLUS_25_LEVEL_GAIN
+		return BrainrotStandConfig.DOUBLE_UPGRADE_LEVEL_GAIN
 	end
 	return BrainrotStandConfig.NORMAL_LEVEL_GAIN
 end
@@ -1764,7 +1764,7 @@ local function applyStandUpgrade(state: StandState, player: Player, levelGain: n
 		local cost = recomputeUpgradeCost(state)
 		local cash = player:GetAttribute("Cash")
 		local c = if typeof(cash) == "number" then cash else 0
-		if c < cost then
+		if math.floor(c + 0.5) < math.floor(cost) then
 			return false
 		end
 		player:SetAttribute("Cash", c - cost)
@@ -1789,10 +1789,6 @@ end
 
 local function upgradeStandBrainrot(state: StandState, player: Player)
 	local levelGain = upgradeLevelGainForPlayer(player)
-	if levelGain > BrainrotStandConfig.NORMAL_LEVEL_GAIN then
-		upgradeFeedbackRE:FireClient(player, false, "robux_plus25")
-		return
-	end
 	if applyStandUpgrade(state, player, levelGain, true) then
 		upgradeFeedbackRE:FireClient(player, true, "ok")
 	else
@@ -2444,12 +2440,12 @@ prepareRobuxStandUpgradeRE.OnServerEvent:Connect(function(player: Player, standA
 		return
 	end
 	if mode == "plus25" then
-		if upgradeLevelGainForPlayer(player) <= BrainrotStandConfig.NORMAL_LEVEL_GAIN then
+		if player:GetAttribute(StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED) ~= true then
 			return
 		end
 		setPendingRobuxStandUpgrade(player, state, mode)
 	elseif mode == "cant_afford" then
-		if upgradeLevelGainForPlayer(player) > BrainrotStandConfig.NORMAL_LEVEL_GAIN then
+		if player:GetAttribute(StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED) == true then
 			return
 		end
 		setPendingRobuxStandUpgrade(player, state, mode)

@@ -1010,20 +1010,20 @@ local function mergeAgainstPrior(
 		end
 		table.sort(payload.indexUnlocks)
 	end
-	if prior.tutorialCompleted and not payload.tutorialCompleted then
+	if prior.tutorialCompleted and not payload.tutorialCompleted and not mergeOpts.forceEmpty then
 		payload.tutorialCompleted = true
 	end
-	if prior.tutorialCashGranted and not payload.tutorialCashGranted then
+	if prior.tutorialCashGranted and not payload.tutorialCashGranted and not mergeOpts.forceEmpty then
 		payload.tutorialCashGranted = true
 	end
-	if prior.tutorialFirstBushClaimed and not payload.tutorialFirstBushClaimed then
+	if prior.tutorialFirstBushClaimed and not payload.tutorialFirstBushClaimed and not mergeOpts.forceEmpty then
 		payload.tutorialFirstBushClaimed = true
 	end
 	-- Do NOT sticky-restore timCheeseIntroDone — intentional resets / fresh tutorials must re-trigger Tim.
-	if (prior.timCheeseCompletedCount or 0) > (payload.timCheeseCompletedCount or 0) then
+	if (prior.timCheeseCompletedCount or 0) > (payload.timCheeseCompletedCount or 0) and not mergeOpts.forceEmpty then
 		payload.timCheeseCompletedCount = prior.timCheeseCompletedCount
 	end
-	if (prior.brainrotAcceptCount or 0) > (payload.brainrotAcceptCount or 0) then
+	if (prior.brainrotAcceptCount or 0) > (payload.brainrotAcceptCount or 0) and not mergeOpts.forceEmpty then
 		payload.brainrotAcceptCount = prior.brainrotAcceptCount
 	end
 
@@ -1349,6 +1349,14 @@ function M.resetPlayerData(player: Player): (boolean, string?)
 	SwingUpgrades.resetLevels(player)
 	player:SetAttribute("BrainrotCarryCount", 0)
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, false)
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR, false)
+	player:SetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR, false)
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR, false)
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR, 0)
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR, 0)
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR, 0)
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR, 0)
+	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR, false)
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR, true)
 	local nonce = player:GetAttribute(PlayerDataSchema.TUTORIAL_REPLAY_ATTR)
 	local nextNonce = if typeof(nonce) == "number" then nonce + 1 else 1

@@ -7,7 +7,7 @@
 local M = {}
 
 M.ENABLED = true
-M.TRIGGER_CHANCE = 0.2
+M.TRIGGER_CHANCE = 0.3
 
 M.SPIDER_TEMPLATE_PATH = { "EssentialAssets", "Spider" }
 M.SPIDER_VFX_FOLDER_PATH = { "EssentialAssets", "SpiderVFX" }

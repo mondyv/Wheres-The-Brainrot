@@ -26,6 +26,7 @@ local BushSpiderEncounterController = require(script.Parent.BushSpiderEncounterC
 local CarryGate = require(script.Parent.CarryGate)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local TopNotifController = require(script.Parent.TopNotifController)
+local HudRescue = require(script.Parent.HudRescue)
 local LandResolver = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local PlayerDataSchema = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local PlotPaths = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
@@ -118,6 +119,7 @@ local sessionConfettiFired = false
 local lockedBushPart: BasePart? = nil
 local lockedBushRoot: Instance? = nil
 local lockedSwingPart: BasePart? = nil
+local tutorialDeathConn: RBXScriptConnection? = nil
 local uiPointerStroke: UIStroke? = nil
 local uiPointerHost: GuiObject? = nil
 
@@ -1406,6 +1408,14 @@ local function hidePanel()
 	end)
 end
 
+local function hasLiveWorldArrow(): boolean
+	return worldArrowBb ~= nil
+		and worldArrowBb.Parent ~= nil
+		and worldArrowImg ~= nil
+		and worldArrowImg.Parent ~= nil
+		and arrowAnimConn ~= nil
+end
+
 local function arrowHeight(extra: number?): Vector3
 	return Vector3.new(0, TutorialConfig.WORLD_ARROW_HEIGHT + (extra or 0), 0)
 end
@@ -1894,8 +1904,12 @@ local function resolveLand1SwingTarget(): BasePart?
 end
 
 local function resolveReturnSwingTarget(): BasePart?
-	-- Always re-pick: prefer the closest vine that still leads toward base.
+	-- Stick to one middle vine toward base (same corridor scoring as swingLand1).
+	if lockedSwingPart and lockedSwingPart.Parent then
+		return lockedSwingPart
+	end
 	lockedSwingPart = nil
+
 	refreshVineCache()
 	local origin = playerOrigin()
 	local aim = origin
@@ -1919,6 +1933,12 @@ local function resolveReturnSwingTarget(): BasePart?
 	local toAim = aim - origin
 	local flatToAim = Vector3.new(toAim.X, 0, toAim.Z)
 	local aimDir = if flatToAim.Magnitude > 1 then flatToAim.Unit else Vector3.new(0, 0, 1)
+	local right = aimDir:Cross(Vector3.yAxis)
+	if right.Magnitude < 0.05 then
+		right = Vector3.new(1, 0, 0)
+	else
+		right = right.Unit
+	end
 	local best: BasePart? = nil
 	local bestScore = math.huge
 	for _, part in vineCache do
@@ -1936,8 +1956,9 @@ local function resolveReturnSwingTarget(): BasePart?
 		if along < 2 then
 			continue
 		end
-		-- Closest vine wins; tiny along bonus so equally near vines prefer the corridor.
-		local score = dist - along * 0.08
+		local lateral = math.abs(flat:Dot(right))
+		-- Middle vine = low lateral offset from the player→base corridor.
+		local score = lateral * 2.8 + dist * 0.2 + (part.Position - aim).Magnitude * 0.05
 		if score < bestScore then
 			bestScore = score
 			best = part
@@ -2461,7 +2482,7 @@ local function refreshPointersImpl()
 		end
 	elseif step.id == "swingLand1" then
 		local swing = resolveLand1SwingTarget()
-		if not (lockedSwingPart and lockedSwingPart.Parent and worldArrowBb) then
+		if not (lockedSwingPart and lockedSwingPart.Parent and hasLiveWorldArrow()) then
 			pointAtWorld(swing, arrowHeight(3))
 		end
 		local vineAdornee = resolveSwingVineAdornee(lockedSwingPart or swing)
@@ -2479,7 +2500,10 @@ local function refreshPointersImpl()
 		end
 	elseif step.id == "goToBase" then
 		clearLockedBush()
-		if swingCoach.goToBaseLite and not isPlayerAtOwnBase() then
+		local char = player.Character
+		local inSafezone = char and SafezoneUtil.isCharacterInSafezone(char)
+		local needReturnSwing = swingCoach.goToBaseLite and not isPlayerAtOwnBase() and not inSafezone
+		if needReturnSwing then
 			-- Always highlight a return vine (PC + mobile); jump coach still gates on SwingPromptReady.
 			local swing = resolveReturnSwingTarget()
 			if swing then
@@ -2787,7 +2811,7 @@ local function watchStepProgress()
 		elseif step.id == "swingLand1" and now - lastLandCheck > 0.35 then
 			lastLandCheck = now
 			-- Keep vine yellow + arrow alive (targets can stream in late).
-			if not worldArrowBb or not worldHighlight or not (lockedSwingPart and lockedSwingPart.Parent) then
+			if not hasLiveWorldArrow() or not worldHighlight or not (lockedSwingPart and lockedSwingPart.Parent) then
 				refreshPointers()
 			else
 				updateMobileJumpTutorialHighlight()
@@ -2816,9 +2840,21 @@ local function watchStepProgress()
 				clearLockedSwing()
 				completeCurrentIf("goToBase")
 			else
-				if swingCoach.goToBaseLite then
-					-- Re-pick closest return vine as the player moves.
+				local char = player.Character
+				if swingCoach.goToBaseLite and char and SafezoneUtil.isCharacterInSafezone(char) then
+					swingCoach.goToBaseLite = false
+					clearLockedSwing()
+					JumpButtonSwingRing.setTutorialCoach(nil)
+					objectiveBaseText = step.text
+					if objectiveLabel then
+						objectiveLabel.Text = step.text
+					end
+					startObjectiveDots(step.text)
 					refreshPointers()
+				elseif swingCoach.goToBaseLite then
+					if not hasLiveWorldArrow() or not worldHighlight then
+						refreshPointers()
+					end
 				elseif not worldArrowBb or not worldHighlight then
 					refreshPointers()
 				end
@@ -2881,6 +2917,29 @@ local function watchStepProgress()
 	end)
 end
 
+local function bindTutorialDeathHook(character: Model)
+	if tutorialDeathConn then
+		tutorialDeathConn:Disconnect()
+		tutorialDeathConn = nil
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		humanoid = character:WaitForChild("Humanoid", 10) :: Humanoid?
+	end
+	if not humanoid then
+		return
+	end
+	tutorialDeathConn = humanoid.Died:Connect(function()
+		if not active or player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+			return
+		end
+		local step = currentStep()
+		local hint = if step and typeof(step.retryText) == "string" and step.retryText ~= "" then step.retryText else nil
+		local ReviveController = require(script.Parent.ReviveController)
+		ReviveController.markTutorialDeath(hint)
+	end)
+end
+
 local function restoreTutorialAfterRespawn()
 	if not active then
 		return
@@ -2889,6 +2948,16 @@ local function restoreTutorialAfterRespawn()
 		if not active or not player.Parent then
 			return
 		end
+		local ReviveController = require(script.Parent.ReviveController)
+		ReviveController.clearDeathPresentation()
+		ReviveController.restoreGameplayAfterSoftDeath()
+		HudRescue.run("tutorial-respawn")
+		task.delay(0.55, function()
+			if not active or not player.Parent then
+				return
+			end
+			ReviveController.flushPendingTryAgainNotif()
+		end)
 		-- Character death destroys guide attachments / can orphan the quest panel host.
 		clearGuideTrail()
 		ensureGui()
@@ -2911,6 +2980,8 @@ local function restoreTutorialAfterRespawn()
 		local step = currentStep()
 		if step then
 			local text = if step.id == "swingLand1" and typeof(step.retryText) == "string" and step.retryText ~= ""
+				then step.retryText
+				elseif step.id == "goToBase" and swingCoach.goToBaseLite and typeof(step.retryText) == "string" and step.retryText ~= ""
 				then step.retryText
 				else step.text
 			objectiveBaseText = text
@@ -3087,6 +3158,10 @@ function M.stop()
 	hidePanel()
 	JumpButtonSwingRing.setTutorialCoach(nil)
 	swingCoach.goToBaseLite = false
+	if tutorialDeathConn then
+		tutorialDeathConn:Disconnect()
+		tutorialDeathConn = nil
+	end
 end
 
 function M.init()
@@ -3148,13 +3223,18 @@ function M.init()
 			restoreTutorialAfterRespawn()
 		end)
 
-		player.CharacterAdded:Connect(function()
+		player.CharacterAdded:Connect(function(character)
+			bindTutorialDeathHook(character)
 			if active then
 				restoreTutorialAfterRespawn()
 			else
 				tryStartForFirstJoin()
 			end
 		end)
+
+		if player.Character then
+			bindTutorialDeathHook(player.Character)
+		end
 
 		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_REPLAY_ATTR):Connect(function()
 			M.stop()
@@ -3164,6 +3244,10 @@ function M.init()
 
 		-- First-join / incomplete: start once loaded, and retry if attributes settle late.
 		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR):Connect(function()
+			if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+				sessionConfettiFired = false
+				finishCelebrated = false
+			end
 			tryStartForFirstJoin()
 		end)
 		tryStartForFirstJoin()

@@ -67,6 +67,7 @@ local savedUseJumpPower: boolean? = nil
 local savedAutoRotate: boolean? = nil
 local dodgeResolved = false
 local spiderKillRE: RemoteEvent? = nil
+local spiderSurvivedRE: RemoteEvent? = nil
 local activeSpideySensesRoot: Instance? = nil
 
 local GREEN_OK = Color3.fromRGB(70, 255, 130)
@@ -2661,6 +2662,9 @@ local function runEncounter(fallbackAnchor: Vector3)
 	hideTimingQTE()
 
 	if dodgeResolved then
+		if spiderSurvivedRE then
+			spiderSurvivedRE:FireServer()
+		end
 		task.wait(0.22)
 		if cutsceneOn then
 			easeCameraBackToPlayer(0.55, spider)
@@ -2752,6 +2756,10 @@ function BushSpiderEncounterController.init()
 		local re = remotes:WaitForChild("BushSpiderEncounterKill", 15)
 		if re and re:IsA("RemoteEvent") then
 			spiderKillRE = re
+		end
+		local survived = remotes:WaitForChild("BushSpiderEncounterSurvived", 15)
+		if survived and survived:IsA("RemoteEvent") then
+			spiderSurvivedRE = survived
 		end
 	end
 

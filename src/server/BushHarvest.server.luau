@@ -32,6 +32,8 @@ local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local PlotLuck = SwingUpgrades.PlotLuck
 local LuckBoost = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckBoost"))
+local BushLuckyBlockConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushLuckyBlockConfig"))
+local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 
 type BrainrotInvEntry = {
 	name: string,
@@ -2241,6 +2243,32 @@ end
 
 local lastBushSearchAt: { [Player]: number } = {}
 
+local function tryOpenBushLuckyBlock(player: Player, worldPosition: Vector3): boolean
+	local land = LandResolver.resolveLandAtPosition(worldPosition)
+	if typeof(land) ~= "number" then
+		land = 1
+	end
+	local chance = BushLuckyBlockConfig.chanceForLand(land)
+	if math.random() > chance then
+		return false
+	end
+	local blockName, variant = BushLuckyBlockConfig.pickBlockForLand(land)
+	local folder = ServerStorage:FindFirstChild("LuckyBlockInternal")
+	local bf = folder and folder:FindFirstChild("OpenFromWorld")
+	if not (bf and bf:IsA("BindableFunction")) then
+		warn("[BushHarvest] LuckyBlockInternal.OpenFromWorld missing")
+		return false
+	end
+	local ok, opened = pcall(function()
+		return (bf :: BindableFunction):Invoke(player, blockName, worldPosition, { variant = variant })
+	end)
+	if not ok then
+		warn("[BushHarvest] OpenFromWorld failed:", opened)
+		return false
+	end
+	return opened == true
+end
+
 --[[
 	processBushSearch — reads current HasHiddenBrainrot; RollBushState runs only after cooldown ends.
 ]]
@@ -2298,9 +2326,15 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 	end
 
 	local hasBrainrot = bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
+	local dropOrigin = if bush:IsA("BasePart") then bush.Position else bush:GetPivot().Position
+	-- Rare jackpot: lucky block cutscene from the bush (replaces empty / brainrot for this search).
+	local luckyOpened = tryOpenBushLuckyBlock(player, dropOrigin)
 
 	-- Harvest while hidden-loot attributes are still set. beginBushSearchCooldown clears them.
-	if hasBrainrot then
+	if luckyOpened then
+		clearEmptyBushMessageState(bush)
+		FlashBushColor(bush, Color3.fromRGB(255, 210, 80))
+	elseif hasBrainrot then
 		clearEmptyBushMessageState(bush)
 		FlashBushColor(bush, Color3.fromRGB(52, 215, 88))
 		if bush:GetAttribute("GlobalRaritySpawn") == true then
@@ -2327,14 +2361,16 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 	do
 		local timEvt = ServerStorage:FindFirstChild("TimCheeseBushSearched")
 		if timEvt and timEvt:IsA("BindableEvent") then
-			timEvt:Fire(player)
+			local searchLand = LandResolver.resolveLandAtPosition(worldPosition)
+			timEvt:Fire(player, if typeof(searchLand) == "number" then searchLand else nil)
 		end
 	end
 
-	if hasBrainrot then
+	if hasBrainrot or luckyOpened then
 		return {
 			ok = true,
 			found = true,
+			luckyBlock = luckyOpened,
 			cooldownSec = cooldownSec,
 			cooldownEndsAt = cooldownEndsAt,
 		}

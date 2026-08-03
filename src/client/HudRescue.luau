@@ -183,4 +183,8 @@ function HudRescue.init()
 	end)
 end
 
+function HudRescue.run(reason: string)
+	rescueOnce(reason)
+end
+
 return HudRescue

@@ -1139,8 +1139,24 @@ local function ensureGui(): ScreenGui
 	return gui
 end
 
-local function animateLetterboxIn()
+local function setDialoguePanelVisible(visible: boolean)
+	if dialogueBox then
+		dialogueBox.Visible = visible
+	end
+	if choiceFrame then
+		choiceFrame.Visible = visible
+	end
+	if soulMarker and not visible then
+		soulMarker.Visible = false
+	end
+	if skipHint and not visible then
+		skipHint.Visible = false
+	end
+end
+
+local function animateLetterboxIn(letterboxOnly: boolean?)
 	local gui = ensureGui()
+	setDialoguePanelVisible(letterboxOnly ~= true)
 	gui.Enabled = true
 	local info = TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 	if letterTop then
@@ -1590,7 +1606,7 @@ function StandDialogueCutscene.isActive(): boolean
 end
 
 function StandDialogueCutscene.showLetterbox()
-	animateLetterboxIn()
+	animateLetterboxIn(true)
 end
 
 function StandDialogueCutscene.hideLetterbox()
@@ -1638,7 +1654,8 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 	syncDialogueLayout()
 	GameplayUiVisibility.hide(CUTSCENE_HIDE_OPTS)
 	startDialogueLayoutSync()
-	animateLetterboxIn()
+	animateLetterboxIn(false)
+	setDialoguePanelVisible(true)
 	lockMovement()
 	startCamera(brainrot)
 	bindTouchChoiceInput()

@@ -47,10 +47,10 @@ local RARITY_ORDER: { RarityId } = {
 -- Conservative rarity mix. God/secret only appear at the highest gates,
 -- and even then at tiny rates (also blocked by maxAllowedBaseIncome).
 local TIER_WEIGHTS: { [number]: { [RarityId]: number } } = {
-	[1] = { common = 92, uncommon = 8, rare = 0, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[2] = { common = 78, uncommon = 20, rare = 2, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[3] = { common = 55, uncommon = 32, rare = 12, epic = 1, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[4] = { common = 35, uncommon = 35, rare = 24, epic = 6, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[1] = { common = 84, uncommon = 14, rare = 2, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[2] = { common = 68, uncommon = 26, rare = 6, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[3] = { common = 48, uncommon = 30, rare = 18, epic = 4, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[4] = { common = 30, uncommon = 32, rare = 28, epic = 10, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
 	[5] = { common = 18, uncommon = 30, rare = 32, epic = 16, mythic = 4, legendary = 0, ["brainrot god"] = 0, secret = 0 },
 	[6] = { common = 8, uncommon = 18, rare = 32, epic = 28, mythic = 12, legendary = 2, ["brainrot god"] = 0, secret = 0 },
 	[7] = { common = 0, uncommon = 8, rare = 24, epic = 34, mythic = 26, legendary = 8, ["brainrot god"] = 0, secret = 0 },
@@ -62,15 +62,15 @@ local TIER_WEIGHTS: { [number]: { [RarityId]: number } } = {
 -- Plot $/s required to reach each odds tier. Secrets need multi-million gen.
 local TIER_INCOME: { number } = {
 	0, -- 1
-	200, -- 2
-	1_000, -- 3
-	5_000, -- 4
+	150, -- 2
+	750, -- 3
+	4_000, -- 4
 	20_000, -- 5
 	75_000, -- 6
-	250_000, -- 7  (~300k still here: legendary crumbs, no god/secret)
-	750_000, -- 8  first tiny god weight (usually still capped out by maxBase)
+	250_000, -- 7
+	750_000, -- 8
 	2_500_000, -- 9
-	8_000_000, -- 10 secret can appear in weights (still needs maxBase ≥ ~420k)
+	8_000_000, -- 10
 }
 
 M.UI_ROW_NAMES = {

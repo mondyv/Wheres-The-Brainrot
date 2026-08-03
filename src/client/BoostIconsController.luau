@@ -516,6 +516,23 @@ local lastAmountText = ""
 
 local function formatMMSS(seconds: number): string
 	seconds = math.max(0, math.floor(seconds))
+	-- Single-line compact labels so the clover timer never wraps top/bottom.
+	if seconds >= 86400 then
+		local d = math.floor(seconds / 86400)
+		local h = math.floor((seconds % 86400) / 3600)
+		if h > 0 then
+			return string.format("%dD%dh", d, h)
+		end
+		return string.format("%dD", d)
+	end
+	if seconds >= 3600 then
+		local h = math.floor(seconds / 3600)
+		local m = math.floor((seconds % 3600) / 60)
+		if m > 0 then
+			return string.format("%dh%02dm", h, m)
+		end
+		return string.format("%dh", h)
+	end
 	return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
 end
 
@@ -625,6 +642,11 @@ local function init()
 			local timer = sl:FindFirstChild("Timer")
 			if timer and (timer:IsA("TextLabel") or timer:IsA("TextButton")) then
 				serverLuckTimer = timer :: TextLabel
+				serverLuckTimer.TextWrapped = false
+				serverLuckTimer.TextScaled = false
+				serverLuckTimer.TextTruncate = Enum.TextTruncate.None
+				serverLuckTimer.TextXAlignment = Enum.TextXAlignment.Center
+				serverLuckTimer.TextYAlignment = Enum.TextYAlignment.Center
 			end
 		end
 	end

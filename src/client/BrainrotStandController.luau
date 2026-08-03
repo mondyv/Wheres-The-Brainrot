@@ -31,11 +31,8 @@ local PlotMarkerVisibility = require(script.Parent.PlotMarkerVisibility)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
-local BrainrotStandConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotStandConfig"))
-local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local MobileHaptics = require(script.Parent.MobileHaptics)
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
-local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 
 local STAND_TAG = "BrainrotStand"
 local STAND_ACCUMULATED_ATTR = "StandAccumulatedCash"
@@ -75,7 +72,6 @@ end
 
 local remotes: Folder? = nil
 local upgradeRE: RemoteEvent? = nil
-local prepareRobuxStandUpgradeRE: RemoteEvent? = nil
 local upgradeFeedbackRE: RemoteEvent? = nil
 local collectFXRE: RemoteEvent? = nil
 
@@ -1169,26 +1165,10 @@ local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 	end
 end
 
-local function localUpgradeLevelGain(): number
-	if player:GetAttribute(StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED) == true then
-		return BrainrotStandConfig.PLUS_25_LEVEL_GAIN
-	end
-	return BrainrotStandConfig.NORMAL_LEVEL_GAIN
-end
-
 local function showCantAffordNotif()
 	if typeof(TopNotifController.showCantAfford) == "function" then
 		TopNotifController.showCantAfford()
 	end
-end
-
-local function promptRobuxStandUpgrade(stand: Model, mode: string, productId: number)
-	if prepareRobuxStandUpgradeRE then
-		prepareRobuxStandUpgradeRE:FireServer(stand, mode)
-	end
-	pcall(function()
-		PurchasePrompt.promptProduct(productId)
-	end)
 end
 
 local function affordVisualKey(view: StandView): string
@@ -1213,7 +1193,7 @@ local function affordVisualKey(view: StandView): string
 	end
 	local cash = player:GetAttribute("Cash")
 	local balance = if typeof(cash) == "number" then cash else 0
-	if balance < cost then
+	if math.floor(balance + 0.5) < math.floor(cost) then
 		return "cant_afford"
 	end
 	return "default"
@@ -1379,17 +1359,6 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 	local function tryFireUpgrade()
 		local now = os.clock()
 		if (lastUpgradeRequestAt[stand] or 0) + UPGRADE_REQUEST_COOLDOWN > now then
-			return
-		end
-		local view = views[stand]
-		if localUpgradeLevelGain() >= BrainrotStandConfig.PLUS_25_LEVEL_GAIN then
-			lastUpgradeRequestAt[stand] = now
-			promptRobuxStandUpgrade(stand, "plus25", BrainrotStandConfig.PLUS_25_DEV_PRODUCT_ID)
-			return
-		end
-		if view and affordVisualKey(view) == "cant_afford" then
-			lastUpgradeRequestAt[stand] = now
-			promptRobuxStandUpgrade(stand, "cant_afford", BrainrotStandConfig.CANT_AFFORD_DEV_PRODUCT_ID)
 			return
 		end
 		lastUpgradeRequestAt[stand] = now
@@ -1903,7 +1872,6 @@ function M.init()
 		return
 	end
 	upgradeRE = (remotes :: Folder):WaitForChild("UpgradeStandBrainrot", 45) :: RemoteEvent
-	prepareRobuxStandUpgradeRE = (remotes :: Folder):WaitForChild("PrepareRobuxStandUpgrade", 45) :: RemoteEvent
 	upgradeFeedbackRE = (remotes :: Folder):WaitForChild("StandUpgradeFeedback", 45) :: RemoteEvent
 	collectFXRE = (remotes :: Folder):WaitForChild("StandCashCollectedFX", 45) :: RemoteEvent
 	if not upgradeRE or not upgradeFeedbackRE or not collectFXRE then

@@ -195,6 +195,10 @@ local function executeSteal(thief: Player, stand: Instance?, fallbackRarity: str
 	local granted = grantBrainrotToThief(thief, stolen)
 	if granted then
 		fireThiefFeedback(thief, stolen)
+		local timEvt = ServerStorage:FindFirstChild("TimCheeseStealSuccess")
+		if timEvt and timEvt:IsA("BindableEvent") then
+			timEvt:Fire(thief)
+		end
 	end
 	return granted
 end

@@ -404,6 +404,36 @@ local function refreshAutoCollectForOwnerUserId(ownerUserId: number)
 	end
 end
 
+local function firePurchaseEffect(player: Player)
+	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
+	local events = assets and assets:FindFirstChild("Events")
+	local re = events and events:FindFirstChild("PurchaseEffectShow")
+	if re and re:IsA("RemoteEvent") then
+		re:FireClient(player)
+	end
+end
+
+local function verifyMarketplaceOwnsAutoCollect(player: Player): boolean
+	if not StoreAccess.shouldTrustMarketplaceOwnership(player) then
+		return false
+	end
+	for attempt = 1, 3 do
+		local ok, owned = pcall(function()
+			return MarketplaceService:UserOwnsGamePassAsync(player.UserId, StoreConfig.GAMEPASS.AUTOCOLLECT)
+		end)
+		if ok and owned == true then
+			return true
+		end
+		if not ok then
+			warn("[AutoCollectManager] UserOwnsGamePassAsync failed:", owned)
+		end
+		if attempt < 3 then
+			task.wait(0.6 * attempt)
+		end
+	end
+	return false
+end
+
 local function grantAutoCollectOwned(player: Player)
 	ownsCacheByUserId[player.UserId] = true
 	player:SetAttribute(StoreConfig.ATTR.AUTOCOLLECT_OWNED, true)
@@ -436,34 +466,35 @@ local function promptAutoCollectPurchase(player: Player)
 		return
 	end
 
-	-- Live marketplace check before prompting — already-owned players must not keep
-	-- hitting the Roblox "You already own this item" loop with a broken pad.
+	local waitStart = os.clock()
+	while ownsFetchInFlight[player.UserId] and os.clock() - waitStart < 2.5 do
+		task.wait(0.1)
+	end
+	if playerOwnsAutoCollect(player) then
+		syncAutoCollectInteractionForPlayer(player)
+		return
+	end
+
 	task.spawn(function()
 		if not player.Parent then
 			return
 		end
 		if playerOwnsAutoCollect(player) then
-			grantAutoCollectOwned(player)
+			syncAutoCollectInteractionForPlayer(player)
 			return
 		end
-		if StoreAccess.shouldTrustMarketplaceOwnership(player) then
-			local ok, owned = pcall(function()
-				return MarketplaceService:UserOwnsGamePassAsync(player.UserId, StoreConfig.GAMEPASS.AUTOCOLLECT)
-			end)
-			if not ok then
-				warn("[AutoCollectManager] pre-prompt ownership check failed:", owned)
-			elseif owned == true then
-				grantAutoCollectOwned(player)
-				return
-			end
+		if verifyMarketplaceOwnsAutoCollect(player) then
+			grantAutoCollectOwned(player)
+			return
 		end
 		if not player.Parent then
 			return
 		end
-		local effectRemote = ReplicatedStorage:FindFirstChild("PurchaseEffectRemote")
-		if effectRemote and effectRemote:IsA("RemoteEvent") then
-			effectRemote:FireClient(player)
+		if playerOwnsAutoCollect(player) then
+			syncAutoCollectInteractionForPlayer(player)
+			return
 		end
+		firePurchaseEffect(player)
 		MarketplaceService:PromptGamePassPurchase(player, StoreConfig.GAMEPASS.AUTOCOLLECT)
 	end)
 end
@@ -647,18 +678,54 @@ onOwnershipResolved = function(player: Player)
 	if not player.Parent then
 		return
 	end
+	if playerOwnsAutoCollect(player) then
+		ownsCacheByUserId[player.UserId] = true
+	end
 	syncAutoCollectInteractionForPlayer(player)
+	refreshAutoCollectForOwnerUserId(player.UserId)
 end
 
-local function onPlayerAdded(player: Player)
-	player:GetAttributeChangedSignal(StoreConfig.ATTR.AUTOCOLLECT_OWNED):Connect(function()
-		syncAutoCollectInteractionForPlayer(player)
-	end)
-	-- Resolve ownership once in the background; updates CanTouch when it returns.
+local function scheduleOwnershipSync(player: Player)
 	task.defer(function()
+		if not player.Parent then
+			return
+		end
 		refreshOwnershipCache(player)
 		syncAutoCollectInteractionForPlayer(player)
 	end)
+	for _, delaySec in { 2, 6, 15 } do
+		task.delay(delaySec, function()
+			if not player.Parent then
+				return
+			end
+			if playerOwnsAutoCollect(player) then
+				grantAutoCollectOwned(player)
+				return
+			end
+			refreshOwnershipCache(player)
+			syncAutoCollectInteractionForPlayer(player)
+		end)
+	end
+end
+
+local function onPlayerAdded(player: Player)
+	local A = StoreConfig.ATTR
+	for _, attr in { A.AUTOCOLLECT_OWNED, A.PURCHASED_AUTOCOLLECT, A.GIFTED_AUTOCOLLECT } do
+		player:GetAttributeChangedSignal(attr):Connect(function()
+			if playerOwnsAutoCollect(player) then
+				ownsCacheByUserId[player.UserId] = true
+			end
+			syncAutoCollectInteractionForPlayer(player)
+			refreshAutoCollectForOwnerUserId(player.UserId)
+		end)
+	end
+	player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
+		syncAutoCollectInteractionForPlayer(player)
+		if playerOwnsAutoCollect(player) then
+			refreshAutoCollectForOwnerUserId(player.UserId)
+		end
+	end)
+	scheduleOwnershipSync(player)
 end
 
 Players.PlayerAdded:Connect(onPlayerAdded)

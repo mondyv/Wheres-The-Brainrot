@@ -531,10 +531,13 @@ local function setRevealPhysics(model: Model)
 	end
 end
 
-local function resolveRevealCFrame(player: Player): CFrame
+local function resolveRevealCFrame(player: Player, nearPos: Vector3?): CFrame
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
 	if not hrp or not hrp:IsA("BasePart") then
+		if typeof(nearPos) == "Vector3" then
+			return CFrame.new(nearPos + Vector3.new(0, 1.2, 0))
+		end
 		return CFrame.new(0, 5, 0)
 	end
 	local look = hrp.CFrame.LookVector
@@ -544,17 +547,20 @@ local function resolveRevealCFrame(player: Player): CFrame
 	else
 		flat = flat.Unit
 	end
-	local probe = hrp.Position + flat * 4.2 + Vector3.new(0, 2.5, 0)
+	local probe = if typeof(nearPos) == "Vector3"
+		then nearPos + Vector3.new(0, 2.5, 0)
+		else hrp.Position + flat * 4.2 + Vector3.new(0, 2.5, 0)
+	local fallbackY = if typeof(nearPos) == "Vector3" then nearPos.Y else hrp.Position.Y
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { char }
 	local hit = Workspace:Raycast(probe, Vector3.new(0, -18, 0), params)
-	local groundY = if hit then hit.Position.Y else (hrp.Position.Y - 3)
+	local groundY = if hit then hit.Position.Y else (fallbackY - 3)
 	local pos = Vector3.new(probe.X, groundY + 0.65, probe.Z)
 	return CFrame.lookAt(pos, Vector3.new(hrp.Position.X, pos.Y, hrp.Position.Z))
 end
 
-local function spawnRevealModel(player: Player, brainrotName: string): Model?
+local function spawnRevealModel(player: Player, brainrotName: string, nearPos: Vector3?): Model?
 	clearReveal(player)
 	local template = findBrainrotTemplate(brainrotName)
 	if not template then
@@ -567,7 +573,7 @@ local function spawnRevealModel(player: Player, brainrotName: string): Model?
 	clone:SetAttribute(CutsceneConfig.OWNER_ATTR, player.UserId)
 	clone:SetAttribute("BrainrotName", brainrotName)
 	setRevealPhysics(clone)
-	local targetCf = resolveRevealCFrame(player)
+	local targetCf = resolveRevealCFrame(player, nearPos)
 	-- Start slightly underground so the client can emerge it.
 	clone:PivotTo(targetCf * CFrame.new(0, -1.35, 0))
 	pcall(function()
@@ -698,37 +704,44 @@ end
 
 local rollInFlight: { [Player]: boolean } = {}
 
-local function tryRoll(player: Player, requestedTool: Instance?)
-	if rollInFlight[player] then
-		return
-	end
-
-	local tool = getActivatedLuckyBlock(player, requestedTool)
-	if not tool then
-		return
-	end
-	local weights = weightsForKind(tool:GetAttribute("LuckyBlockKind"))
-	local pick: any = nil
+local function pickBrainrotForKind(kind: string?): any?
+	local weights = weightsForKind(kind)
 	for _ = 1, 4 do
 		local rarity = pickRarityWeighted(weights)
 		local def = pickRandomBrainrotByRarity(rarity)
 		if def then
-			pick = def
-			break
+			return def
 		end
 	end
-	if not pick then
-		return
-	end
+	return nil
+end
 
+local function beginLuckyBlockCutscene(
+	player: Player,
+	pick: any,
+	opts: {
+		tool: Tool?,
+		worldDrop: boolean?,
+		dropOrigin: Vector3?,
+		blockKind: string?,
+		blockVariant: string?,
+	}?
+)
 	rollInFlight[player] = true
 	clearReveal(player)
 
-	-- Lock the tool from being clicked again mid-shake.
-	tool:SetAttribute("LuckyBlockRolling", true)
-	pcall(function()
-		(tool :: Tool).Enabled = false
-	end)
+	local tool = if opts then opts.tool else nil
+	local worldDrop = if opts then opts.worldDrop == true else false
+	local dropOrigin = if opts and typeof(opts.dropOrigin) == "Vector3" then opts.dropOrigin else nil
+	local blockKind = if opts and typeof(opts.blockKind) == "string" then opts.blockKind else nil
+	local blockVariant = if opts and typeof(opts.blockVariant) == "string" then opts.blockVariant else nil
+
+	if tool then
+		tool:SetAttribute("LuckyBlockRolling", true)
+		pcall(function()
+			(tool :: Tool).Enabled = false
+		end)
+	end
 
 	shakeStartRE:FireClient(player, {
 		durationSec = CUTSCENE_TOTAL_SEC,
@@ -738,14 +751,20 @@ local function tryRoll(player: Player, requestedTool: Instance?)
 		revealSpawnAtSec = REVEAL_SPAWN_AT_SEC,
 		brainrotName = pick.name,
 		rarity = pick.rarity,
+		worldDrop = worldDrop,
+		dropOrigin = dropOrigin,
+		blockKind = blockKind,
+		blockVariant = blockVariant,
 	})
 
 	task.delay(REVEAL_SPAWN_AT_SEC, function()
 		if player.Parent == nil then
 			return
 		end
-		destroyRolledLuckyBlock(player, tool)
-		spawnRevealModel(player, pick.name)
+		if tool then
+			destroyRolledLuckyBlock(player, tool)
+		end
+		spawnRevealModel(player, pick.name, dropOrigin)
 	end)
 
 	task.delay(CUTSCENE_TOTAL_SEC, function()
@@ -768,6 +787,11 @@ local function tryRoll(player: Player, requestedTool: Instance?)
 			end)
 			if not okGrant then
 				warn("[LuckyBlock] GrantBrainrotAndEquip failed for", player.Name, ":", errGrant)
+			else
+				local timEvt = ServerStorage:FindFirstChild("TimCheeseLuckyBlockOpened")
+				if timEvt and timEvt:IsA("BindableEvent") then
+					timEvt:Fire(player)
+				end
 			end
 		end
 
@@ -776,6 +800,61 @@ local function tryRoll(player: Player, requestedTool: Instance?)
 			sfxRE:FireClient(player, pick.name)
 		end
 	end)
+end
+
+local function tryRoll(player: Player, requestedTool: Instance?)
+	if rollInFlight[player] then
+		return
+	end
+
+	local tool = getActivatedLuckyBlock(player, requestedTool)
+	if not tool then
+		return
+	end
+	local pick = pickBrainrotForKind(tool:GetAttribute("LuckyBlockKind"))
+	if not pick then
+		return
+	end
+
+	beginLuckyBlockCutscene(player, pick, {
+		tool = tool,
+		blockKind = if typeof(tool:GetAttribute("LuckyBlockKind")) == "string"
+			then tool:GetAttribute("LuckyBlockKind") :: string
+			else nil,
+	})
+end
+
+local openFromWorldBF = ensureBindable("OpenFromWorld")
+openFromWorldBF.OnInvoke = function(plrArg: any, blockNameArg: any, worldPosArg: any, optsArg: any): boolean
+	if typeof(plrArg) ~= "Instance" or not (plrArg :: Instance):IsA("Player") then
+		return false
+	end
+	local plr = plrArg :: Player
+	if rollInFlight[plr] then
+		return false
+	end
+	local blockName = if typeof(blockNameArg) == "string" and blockNameArg ~= "" then blockNameArg else "Starter Lucky Block"
+	local worldPos = if typeof(worldPosArg) == "Vector3" then worldPosArg else nil
+	local variant: string? = nil
+	if typeof(optsArg) == "table" and typeof(optsArg.variant) == "string" then
+		variant = optsArg.variant
+	end
+	-- Ensure template exists before starting the cutscene.
+	if not findLuckyBlockTemplate(blockName, variant) then
+		warn("[LuckyBlock] OpenFromWorld: no template for", blockName, "variant:", variant)
+		return false
+	end
+	local pick = pickBrainrotForKind(blockName)
+	if not pick then
+		return false
+	end
+	beginLuckyBlockCutscene(plr, pick, {
+		worldDrop = true,
+		dropOrigin = worldPos,
+		blockKind = blockName,
+		blockVariant = variant,
+	})
+	return true
 end
 
 rollRE.OnServerEvent:Connect(function(player: Player, requestedTool: Instance?)

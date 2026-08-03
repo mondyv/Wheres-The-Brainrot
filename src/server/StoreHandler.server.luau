@@ -253,11 +253,27 @@ end
 
 -- ── Server-wide luck ──────────────────────────────────────────────────────────────
 
+local DataStoreService = game:GetService("DataStoreService")
+
 local serverLuckMultiplier = 1
 local serverLuckEndsAt = 0
 local ADMIN_GLOBAL_LUCK_TOPIC = "AdminGlobalServerLuck_v1"
+local GLOBAL_LUCK_STORE_NAME = "GlobalServerLuck_v1"
+local GLOBAL_LUCK_KEY = "Active"
 local MAX_ADMIN_LUCK_MULT = 256
-local MAX_ADMIN_LUCK_DURATION = 86400
+local MAX_ADMIN_LUCK_DURATION = 7 * 86400 -- 1 week
+
+local globalLuckStore = nil
+do
+	local ok, store = pcall(function()
+		return DataStoreService:GetDataStore(GLOBAL_LUCK_STORE_NAME)
+	end)
+	if ok then
+		globalLuckStore = store
+	else
+		warn("[ServerLuck] Global luck DataStore unavailable:", store)
+	end
+end
 
 local function publishServerLuck()
 	ReplicatedStorage:SetAttribute(StoreConfig.SERVER_LUCK_MULT_ATTR, serverLuckMultiplier)
@@ -266,18 +282,87 @@ local function publishServerLuck()
 	serverLuckUpdatedRE:FireAllClients(serverLuckMultiplier, remaining)
 end
 
-local function setServerLuckAbsolute(multiplier: number, durationSec: number): (number, number)
+local function applyServerLuckState(multiplier: number, endsAt: number)
 	local mult = math.clamp(multiplier, 1, MAX_ADMIN_LUCK_MULT)
-	if mult <= 1 then
+	local endTime = if typeof(endsAt) == "number" then math.floor(endsAt) else 0
+	if mult <= 1 or endTime <= os.time() then
 		serverLuckMultiplier = 1
 		serverLuckEndsAt = 0
 	else
-		local dur = math.clamp(math.floor(durationSec + 0.5), 1, MAX_ADMIN_LUCK_DURATION)
 		serverLuckMultiplier = mult
-		serverLuckEndsAt = os.time() + dur
+		serverLuckEndsAt = endTime
 	end
 	publishServerLuck()
+end
+
+local function setServerLuckAbsolute(multiplier: number, durationSec: number): (number, number)
+	local mult = math.clamp(multiplier, 1, MAX_ADMIN_LUCK_MULT)
+	if mult <= 1 then
+		applyServerLuckState(1, 0)
+	else
+		local dur = math.clamp(math.floor(durationSec + 0.5), 1, MAX_ADMIN_LUCK_DURATION)
+		applyServerLuckState(mult, os.time() + dur)
+	end
 	return serverLuckMultiplier, math.max(0, serverLuckEndsAt - os.time())
+end
+
+local function saveGlobalLuckToStore(multiplier: number, endsAt: number)
+	if not globalLuckStore then
+		return
+	end
+	local payload = {
+		multiplier = multiplier,
+		endsAt = endsAt,
+		updatedAt = os.time(),
+	}
+	task.spawn(function()
+		local ok, err = pcall(function()
+			globalLuckStore:SetAsync(GLOBAL_LUCK_KEY, payload)
+		end)
+		if not ok then
+			warn("[ServerLuck] Failed to persist global luck:", err)
+		end
+	end)
+end
+
+local function setGlobalServerLuckAbsolute(multiplier: number, durationSec: number): (number, number)
+	local mult = math.clamp(multiplier, 1, MAX_ADMIN_LUCK_MULT)
+	local endsAt = 0
+	if mult > 1 then
+		local dur = math.clamp(math.floor(durationSec + 0.5), 1, MAX_ADMIN_LUCK_DURATION)
+		endsAt = os.time() + dur
+	end
+	applyServerLuckState(mult, endsAt)
+	saveGlobalLuckToStore(serverLuckMultiplier, serverLuckEndsAt)
+	return serverLuckMultiplier, math.max(0, serverLuckEndsAt - os.time())
+end
+
+local function loadGlobalLuckFromStore()
+	if not globalLuckStore then
+		return
+	end
+	local ok, data = pcall(function()
+		return globalLuckStore:GetAsync(GLOBAL_LUCK_KEY)
+	end)
+	if not ok then
+		warn("[ServerLuck] Failed to load global luck:", data)
+		return
+	end
+	if typeof(data) ~= "table" then
+		return
+	end
+	local mult = data.multiplier
+	local endsAt = data.endsAt
+	if typeof(mult) ~= "number" or typeof(endsAt) ~= "number" then
+		return
+	end
+	if mult > 1 and endsAt > os.time() then
+		applyServerLuckState(mult, endsAt)
+		warn("[ServerLuck] Restored global luck", mult .. "x until", endsAt)
+	elseif mult > 1 and endsAt <= os.time() then
+		-- Expired while no servers were up — clear the store.
+		saveGlobalLuckToStore(1, 0)
+	end
 end
 
 local function addServerLuck(player: Player?)
@@ -329,9 +414,20 @@ setServerLuckBF.OnInvoke = function(multiplier: any, durationSec: any): any
 	end
 	local dur = if typeof(durationSec) == "number" then durationSec else StoreConfig.SERVER_LUCK_DURATION
 	local mult, remaining = setServerLuckAbsolute(multiplier, dur)
-	return { ok = true, multiplier = mult, remaining = remaining }
+	return { ok = true, multiplier = mult, remaining = remaining, endsAt = serverLuckEndsAt }
 end
 
+local setGlobalServerLuckBF = ensureStoreInternalBindable("SetGlobalServerLuck")
+setGlobalServerLuckBF.OnInvoke = function(multiplier: any, durationSec: any): any
+	if typeof(multiplier) ~= "number" then
+		return { ok = false }
+	end
+	local dur = if typeof(durationSec) == "number" then durationSec else StoreConfig.SERVER_LUCK_DURATION
+	local mult, remaining = setGlobalServerLuckAbsolute(multiplier, dur)
+	return { ok = true, multiplier = mult, remaining = remaining, endsAt = serverLuckEndsAt }
+end
+
+loadGlobalLuckFromStore()
 publishServerLuck()
 
 task.spawn(function()
@@ -341,11 +437,13 @@ task.spawn(function()
 			serverLuckMultiplier = 1
 			serverLuckEndsAt = 0
 			publishServerLuck()
+			-- Keep DataStore clear so new servers don't revive an expired event.
+			saveGlobalLuckToStore(1, 0)
 		end
 	end
 end)
 
--- Admin globalluck — every server applies the same absolute multiplier.
+-- Admin globalluck — every live server applies the same absolute end time.
 task.spawn(function()
 	local MessagingService = game:GetService("MessagingService")
 	local AdminBroadcastService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminBroadcastService"))
@@ -355,17 +453,23 @@ task.spawn(function()
 				return
 			end
 			local data = packet.Data
-			-- Origin server already applied + announced.
+			-- Origin server already applied + announced + persisted.
 			if typeof(data.originJobId) == "string" and data.originJobId == game.JobId then
 				return
 			end
 			local mult = data.multiplier
-			local dur = data.durationSec
 			if typeof(mult) ~= "number" then
 				return
 			end
-			local duration = if typeof(dur) == "number" then dur else StoreConfig.SERVER_LUCK_DURATION
-			local applied, remaining = setServerLuckAbsolute(mult, duration)
+			local endsAt = data.endsAt
+			if typeof(endsAt) ~= "number" then
+				local dur = data.durationSec
+				local duration = if typeof(dur) == "number" then dur else StoreConfig.SERVER_LUCK_DURATION
+				endsAt = if mult <= 1 then 0 else os.time() + duration
+			end
+			applyServerLuckState(mult, endsAt)
+			local applied = serverLuckMultiplier
+			local remaining = math.max(0, serverLuckEndsAt - os.time())
 			local senderName = if typeof(data.sender) == "string" then data.sender else nil
 			local senderUserId = if typeof(data.senderUserId) == "number" then data.senderUserId else nil
 			local msg = if applied <= 1
@@ -373,7 +477,11 @@ task.spawn(function()
 				else string.format(
 					"set global luck to %gx for %s",
 					applied,
-					if remaining >= 60
+					if remaining >= 86400
+						then string.format("%dD", math.floor(remaining / 86400 + 0.5))
+						elseif remaining >= 3600
+						then string.format("%dh", math.floor(remaining / 3600 + 0.5))
+						elseif remaining >= 60
 						then string.format("%dm", math.floor(remaining / 60 + 0.5))
 						else string.format("%ds", remaining)
 				)
@@ -405,6 +513,10 @@ local function applyPurchasedGamePassAttributes(player: Player, gamePassId: numb
 		return
 	end
 	player:SetAttribute(ownedAttr, true)
+	local purchasedAttr = StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID[gamePassId]
+	if typeof(purchasedAttr) == "string" then
+		player:SetAttribute(purchasedAttr, true)
+	end
 	if gamePassId == StoreConfig.GAMEPASS.VIP then
 		player:SetAttribute(StoreConfig.ATTR.VIP_LUCK_MULT, StoreConfig.VIP_LUCK_MULTIPLIER)
 		local current = player:GetAttribute(StoreConfig.ATTR.FREE_STEAL_COUNT)

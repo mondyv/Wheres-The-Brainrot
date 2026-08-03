@@ -6,6 +6,7 @@
 local M = {}
 
 M.NORMAL_LEVEL_GAIN = 1
+M.DOUBLE_UPGRADE_LEVEL_GAIN = 2
 M.PLUS_25_LEVEL_GAIN = 25
 
 -- Robux: +25 levels per upgrade (2× Upgrades gamepass tier).

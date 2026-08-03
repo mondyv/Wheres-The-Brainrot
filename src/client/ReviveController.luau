@@ -20,6 +20,7 @@ local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
+local CharacterWorldNotif = require(script.Parent.CharacterWorldNotif)
 
 local player = Players.LocalPlayer
 
@@ -30,6 +31,7 @@ local DIM_GUI_NAME = "ReviveDim"
 local DIM_COLOR = Color3.fromRGB(0, 0, 0)
 local DIM_TRANSPARENCY = 0.38
 local FRICTIONLESS_FADE_GUI_NAME = "FrictionlessDeathFade"
+local TRY_AGAIN_TOAST_GUI_NAME = "TryAgainToast"
 
 local OPEN_TWEEN = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_TWEEN = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
@@ -61,6 +63,9 @@ local bgmSpeedTweens: { [Sound]: Tween } = {}
 
 local hiddenHud: { { inst: GuiObject, wasVisible: boolean } } = {}
 local hudRestoredCallbacks: { () -> () } = {}
+local pendingTryAgainNotif = false
+local pendingTryAgainHint: string? = nil
+local tryAgainScheduleToken = 0
 local priceLabelTemplate: string? = nil
 
 local reviveDeclinedRE: RemoteEvent? = nil
@@ -722,6 +727,8 @@ local function openRevivePanel(land: number, productId: number, countdownSec: nu
 		return
 	end
 	sessionActive = true
+	pendingTryAgainNotif = false
+	pendingTryAgainHint = nil
 
 	local main = resolveMainGui()
 	if not main then
@@ -812,6 +819,208 @@ local function isFrictionlessDeathActive(): boolean
 	return Workspace:GetServerTimeNow() < untilT
 end
 
+local function shouldShowTryAgainNotif(): boolean
+	if isFrictionlessDeathActive() or isTutorialSoftDeath() then
+		return true
+	end
+	return player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true
+end
+
+local function ensureHudVisibleForNotif()
+	local main = PlayerGuiMain.ensure(player)
+	if not main then
+		return
+	end
+	main.Enabled = true
+	local sideUI = main:FindFirstChild("SideUI")
+	if sideUI and sideUI:IsA("GuiObject") then
+		(sideUI :: GuiObject).Visible = true
+	end
+	if sideUI then
+		local top = sideUI:FindFirstChild("Top")
+		if top and top:IsA("GuiObject") then
+			(top :: GuiObject).Visible = true
+		end
+	end
+end
+
+local function destroyTryAgainToast()
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if not pg then
+		return
+	end
+	local existing = pg:FindFirstChild(TRY_AGAIN_TOAST_GUI_NAME)
+	if existing then
+		existing:Destroy()
+	end
+end
+
+local function showTryAgainOverlay(headline: string, sub: string?)
+	destroyTryAgainToast()
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if not pg then
+		return
+	end
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = TRY_AGAIN_TOAST_GUI_NAME
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.DisplayOrder = 1650
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+	local card = Instance.new("Frame")
+	card.Name = "Card"
+	card.AnchorPoint = Vector2.new(0.5, 0)
+	card.Position = UDim2.new(0.5, 0, 0, 68)
+	card.AutomaticSize = Enum.AutomaticSize.Y
+	card.Size = UDim2.fromOffset(340, 0)
+	card.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
+	card.BackgroundTransparency = 0.06
+	card.BorderSizePixel = 0
+	card.Parent = gui
+	local cardCorner = Instance.new("UICorner")
+	cardCorner.CornerRadius = UDim.new(0, 12)
+	cardCorner.Parent = card
+	local cardStroke = Instance.new("UIStroke")
+	cardStroke.Color = Color3.fromRGB(255, 236, 150)
+	cardStroke.Thickness = 2.5
+	cardStroke.Transparency = 0.1
+	cardStroke.Parent = card
+	local cardPad = Instance.new("UIPadding")
+	cardPad.PaddingTop = UDim.new(0, 12)
+	cardPad.PaddingBottom = UDim.new(0, 12)
+	cardPad.PaddingLeft = UDim.new(0, 14)
+	cardPad.PaddingRight = UDim.new(0, 14)
+	cardPad.Parent = card
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, 4)
+	list.Parent = card
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Headline"
+	title.BackgroundTransparency = 1
+	title.Size = UDim2.new(1, 0, 0, 28)
+	title.FontFace = Font.fromEnum(Enum.Font.GothamBold)
+	title.TextSize = 24
+	title.TextColor3 = Color3.fromRGB(160, 40, 30)
+	title.TextXAlignment = Enum.TextXAlignment.Center
+	title.Text = headline
+	title.LayoutOrder = 1
+	title.Parent = card
+
+	if typeof(sub) == "string" and sub ~= "" then
+		local body = Instance.new("TextLabel")
+		body.Name = "Hint"
+		body.BackgroundTransparency = 1
+		body.Size = UDim2.new(1, 0, 0, 0)
+		body.AutomaticSize = Enum.AutomaticSize.Y
+		body.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
+		body.TextSize = 15
+		body.TextColor3 = Color3.fromRGB(40, 30, 12)
+		body.TextXAlignment = Enum.TextXAlignment.Center
+		body.TextWrapped = true
+		body.Text = sub
+		body.LayoutOrder = 2
+		body.Parent = card
+	end
+
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.82
+	scale.Parent = card
+
+	gui.Parent = pg
+	UIInteractionSounds.playNotif()
+	TweenService:Create(scale, TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+
+	task.delay(4.8, function()
+		if not gui.Parent then
+			return
+		end
+		local fade = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		TweenService:Create(card, fade, { BackgroundTransparency = 1 }):Play()
+		if cardStroke.Parent then
+			TweenService:Create(cardStroke, fade, { Transparency = 1 }):Play()
+		end
+		for _, label in card:GetDescendants() do
+			if label:IsA("TextLabel") then
+				TweenService:Create(label, fade, { TextTransparency = 1, TextStrokeTransparency = 1 }):Play()
+			end
+		end
+		task.delay(fade.Time + 0.05, function()
+			if gui.Parent then
+				gui:Destroy()
+			end
+		end)
+	end)
+end
+
+local function computeTryAgainDelaySec(): number
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if pg and pg:FindFirstChild(FRICTIONLESS_FADE_GUI_NAME) then
+		return ReviveConfig.FRICTIONLESS_FADE_IN_SECONDS
+			+ ReviveConfig.FRICTIONLESS_FADE_HOLD_SECONDS
+			+ ReviveConfig.FRICTIONLESS_FADE_OUT_SECONDS * 0.5
+			+ 0.12
+	end
+	return 0.4
+end
+
+local function showTryAgainNotif(hint: string?)
+	local headline = "Try again!"
+	local sub = if typeof(hint) == "string" and hint ~= "" then hint else "You've got this!"
+	ensureHudVisibleForNotif()
+	showTryAgainOverlay(headline, sub)
+	task.spawn(function()
+		local char = player.Character
+		if not char then
+			char = player.CharacterAdded:Wait()
+		end
+		if not char then
+			return
+		end
+		local adornee = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+		if not adornee then
+			adornee = char:WaitForChild("HumanoidRootPart", 4)
+		end
+		if adornee then
+			CharacterWorldNotif.show(char, sub, {
+				color = Color3.fromRGB(255, 220, 120),
+			})
+		end
+	end)
+end
+
+local function flushPendingTryAgainNotif(): boolean
+	if not pendingTryAgainNotif then
+		return false
+	end
+	pendingTryAgainNotif = false
+	local hint = pendingTryAgainHint
+	pendingTryAgainHint = nil
+	showTryAgainNotif(hint)
+	return true
+end
+
+local function schedulePendingTryAgainNotif()
+	if not pendingTryAgainNotif then
+		return
+	end
+	tryAgainScheduleToken += 1
+	local token = tryAgainScheduleToken
+	local delaySec = computeTryAgainDelaySec()
+	task.delay(delaySec, function()
+		if token ~= tryAgainScheduleToken or not pendingTryAgainNotif then
+			return
+		end
+		pcall(function()
+			require(script.Parent.HudRescue).run("try-again-notif")
+		end)
+		flushPendingTryAgainNotif()
+	end)
+end
+
 local function playFrictionlessBlackFade()
 	local pg = player:FindFirstChildOfClass("PlayerGui")
 	if not pg then
@@ -871,6 +1080,9 @@ local function onLocalDeath(_character: Model)
 	stopRobloxOofSounds()
 	playDeathSfx()
 	startEarRinging()
+	if shouldShowTryAgainNotif() then
+		pendingTryAgainNotif = true
+	end
 	-- Tutorial soft-respawn keeps existing SFX-only death (no fade / no revive UI).
 	if isTutorialSoftDeath() then
 		return
@@ -907,6 +1119,81 @@ function ReviveController.registerHudRestoredCallback(fn: () -> ())
 	table.insert(hudRestoredCallbacks, fn)
 end
 
+-- Clears death SFX presentation (ear ring, slowed BGM) after respawn when no revive UI is open.
+function ReviveController.clearDeathPresentation()
+	if sessionActive then
+		return
+	end
+	stopEarRinging()
+	setBgmSlowed(false)
+end
+
+function ReviveController.restoreGameplayAfterSoftDeath()
+	if sessionActive then
+		return
+	end
+	stopEarRinging()
+	setBgmSlowed(false)
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if pg then
+		local fade = pg:FindFirstChild(FRICTIONLESS_FADE_GUI_NAME)
+		if fade then
+			fade:Destroy()
+		end
+		if dimGui and dimGui.Parent then
+			dimGui:Destroy()
+			dimGui = nil
+			dimFrame = nil
+		end
+	end
+	if blurEffect and blurEffect.Parent then
+		blurEffect:Destroy()
+		blurEffect = nil
+	end
+	local hum = getHumanoid()
+	if hum then
+		hum.CameraOffset = Vector3.zero
+	end
+	local cam = Workspace.CurrentCamera
+	if cam then
+		cam.CameraType = Enum.CameraType.Custom
+		if hum then
+			cam.CameraSubject = hum
+		end
+	end
+	local ok, purchaseFx = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchaseEffect"):WaitForChild(
+			"PurchaseEffectClient"
+		))
+	end)
+	if ok and purchaseFx and typeof(purchaseFx.forceHide) == "function" then
+		pcall(function()
+			purchaseFx:forceHide()
+		end)
+	end
+end
+
+function ReviveController.markTutorialDeath(hint: string?)
+	pendingTryAgainNotif = true
+	if typeof(hint) == "string" and hint ~= "" then
+		pendingTryAgainHint = hint
+	end
+end
+
+function ReviveController.setTryAgainHint(hint: string?)
+	if typeof(hint) == "string" and hint ~= "" then
+		pendingTryAgainHint = hint
+	end
+end
+
+function ReviveController.showTryAgainNotif(hint: string?)
+	showTryAgainNotif(hint or pendingTryAgainHint)
+end
+
+function ReviveController.flushPendingTryAgainNotif(): boolean
+	return flushPendingTryAgainNotif()
+end
+
 function ReviveController.init()
 	resolveSoundTemplates()
 
@@ -931,6 +1218,8 @@ function ReviveController.init()
 		end)
 
 		reviveCompleteRE.OnClientEvent:Connect(function()
+			pendingTryAgainNotif = false
+			pendingTryAgainHint = nil
 			if sessionActive then
 				sessionActive = false
 				cancelCountdown()
@@ -955,6 +1244,10 @@ function ReviveController.init()
 	end)
 
 	player.CharacterAdded:Connect(function(character)
+		ReviveController.restoreGameplayAfterSoftDeath()
+		if pendingTryAgainNotif then
+			schedulePendingTryAgainNotif()
+		end
 		hookCharacter(character)
 	end)
 

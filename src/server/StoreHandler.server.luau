@@ -28,6 +28,7 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local PlayerDataService = require(script.Parent.Modules:WaitForChild("PlayerDataService"))
 local ItemService = require(script.Parent.Modules:WaitForChild("ItemService"))
+local AnalyticsFunnelService = require(script.Parent.Modules:WaitForChild("AnalyticsFunnelService"))
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
@@ -224,6 +225,7 @@ local closeStoreRE = ensureRemoteEvent("CloseStore")
 local function notifyPurchaseComplete(player: Player)
 	if player and player.Parent then
 		closeStoreRE:FireClient(player)
+		AnalyticsFunnelService.shopPurchased(player)
 	end
 end
 
@@ -770,6 +772,8 @@ MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, gameP
 		return
 	end
 
+	AnalyticsFunnelService.shopPrompted(player)
+
 	if wasPurchased then
 		-- Set owned attrs immediately so SideUI boost icons update without waiting
 		-- for UserOwnsGamePassAsync to catch up after the purchase prompt closes.
@@ -1221,6 +1225,10 @@ end)
 -- intent (Finished(false) can race ahead of the receipt and used to grant the buyer).
 local GIFT_CANCEL_CLEAR_DELAY = 20
 MarketplaceService.PromptProductPurchaseFinished:Connect(function(playerId, productId, wasPurchased)
+	local player = Players:GetPlayerByUserId(playerId)
+	if player and player.Parent then
+		AnalyticsFunnelService.shopPrompted(player)
+	end
 	if wasPurchased then
 		return
 	end

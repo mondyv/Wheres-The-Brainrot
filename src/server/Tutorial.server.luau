@@ -6,6 +6,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
+local AnalyticsFunnelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local TutorialConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TutorialConfig"))
 
@@ -116,6 +117,7 @@ completeRF.OnServerInvoke = function(player: Player): boolean
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR, false)
 	if not alreadyDone then
 		grantStarterLuckyBlock(player)
+		AnalyticsFunnelService.logOnboardingId(player, "tutorial_completed", { allowSkip = true })
 	end
 	return true
 end
@@ -132,6 +134,7 @@ grantCashRF.OnServerInvoke = function(player: Player): (boolean, number)
 	local c = if typeof(cash) == "number" then cash else 0
 	player:SetAttribute("Cash", c + GRANT_AMOUNT)
 	PlayerDataService.setTutorialCashGranted(player, true)
+	AnalyticsFunnelService.logOnboardingId(player, "got_starter_cash", { allowSkip = true })
 	return true, GRANT_AMOUNT
 end
 

@@ -774,6 +774,11 @@ local function init()
 		if storeFrame.Visible then
 			refreshCashBundles()
 			refreshFreeBrainrot()
+			local folder = ReplicatedStorage:FindFirstChild("AnalyticsRemotes")
+			local re = folder and folder:FindFirstChild("ReportShopOpened")
+			if re and re:IsA("RemoteEvent") then
+				re:FireServer()
+			end
 		end
 	end
 	storeFrame:GetPropertyChangedSignal("Visible"):Connect(onStoreVisibility)

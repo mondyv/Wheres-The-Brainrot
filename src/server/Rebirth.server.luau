@@ -11,8 +11,9 @@ local ServerStorage = game:GetService("ServerStorage")
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
-local IndexService = require(script.Parent:WaitForChild("Modules"):WaitForChild("IndexService"))
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
+local AnalyticsFunnelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
+local IndexService = require(script.Parent:WaitForChild("Modules"):WaitForChild("IndexService"))
 
 local MAX_FLOOR = 4
 
@@ -171,6 +172,10 @@ local function performRebirth(player: Player, opts: { skipRequirements: boolean?
 	local newCount = snapshot.rebirthCount + 1
 	player:SetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR, newCount)
 	player:SetAttribute(RebirthConfig.MONEY_MULT_ATTR, RebirthConfig.moneyMultiplierForCount(newCount))
+
+	if newCount == 1 then
+		AnalyticsFunnelService.onFirstRebirth(player)
+	end
 
 	if RebirthConfig.isFloorRebirth(newCount) then
 		grantFloorRebirth(player)

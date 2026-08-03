@@ -35,6 +35,7 @@ local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
 local BrainrotHeader = require(Modules:WaitForChild("BrainrotHeader"))
 local BrainrotAnimations = require(Modules:WaitForChild("BrainrotAnimations"))
+local AnalyticsFunnelService = require(Modules:WaitForChild("AnalyticsFunnelService"))
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local PlotStandPlaceholders = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotStandPlaceholders"))
 local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
@@ -1508,6 +1509,7 @@ local function placeBrainrotOnStand(player: Player, state: StandState)
 	setPromptText(state)
 	refreshLabels(state)
 	notifyStandBrainrotChanged(player)
+	AnalyticsFunnelService.logOnboardingId(player, "placed_on_stand", { allowSkip = true })
 end
 
 local function getReturnInventoryFn(): BindableFunction?
@@ -1772,6 +1774,7 @@ local function applyStandUpgrade(state: StandState, player: Player, levelGain: n
 
 	state.level = math.min(Brainrots.MAX_LEVEL, state.level + levelGain)
 	state.stand:SetAttribute("BrainrotLevel", state.level)
+	AnalyticsFunnelService.logOnboardingId(player, "upgraded_brainrot", { allowSkip = true })
 	if state.displayModel and state.displayModel.Parent then
 		state.displayModel:SetAttribute("BrainrotLevel", state.level)
 		BrainrotCarryVisual.applyScaleForLevel(state.displayModel, state.level)

@@ -281,6 +281,22 @@ function M.claimFloatingBrainrot(deps: Deps, player: Player, clone: Model): bool
 	deps.syncBrainrotCarryCountAttr(player)
 
 	task.spawn(function()
+		local okFunnel, Funnel = pcall(function()
+			return require(script.Parent:WaitForChild("AnalyticsFunnelService"))
+		end)
+		if okFunnel and Funnel and typeof(Funnel.logOnboardingId) == "function" then
+			local okLog, errLog = pcall(function()
+				Funnel.logOnboardingId(player, "claimed_brainrot", { allowSkip = true })
+			end)
+			if not okLog then
+				warn("[BushHarvestFloating] onboarding claim log failed:", errLog)
+			end
+		elseif not okFunnel then
+			warn("[BushHarvestFloating] AnalyticsFunnelService require failed:", Funnel)
+		end
+	end)
+
+	task.spawn(function()
 		local ok, PDS = pcall(function()
 			return require(script.Parent:WaitForChild("PlayerDataService"))
 		end)

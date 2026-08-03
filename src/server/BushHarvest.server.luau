@@ -35,6 +35,7 @@ local PlotLuck = SwingUpgrades.PlotLuck
 local LuckBoost = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckBoost"))
 local BushLuckyBlockConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushLuckyBlockConfig"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
+local AnalyticsFunnelService = require(Modules:WaitForChild("AnalyticsFunnelService"))
 
 type BrainrotInvEntry = {
 	name: string,
@@ -2330,6 +2331,9 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 	local dropOrigin = if bush:IsA("BasePart") then bush.Position else bush:GetPivot().Position
 	-- Rare jackpot: lucky block cutscene from the bush (replaces empty / brainrot for this search).
 	local luckyOpened = tryOpenBushLuckyBlock(player, dropOrigin)
+	if luckyOpened or hasBrainrot then
+		AnalyticsFunnelService.logOnboardingId(player, "opened_bush", { allowSkip = true })
+	end
 
 	-- Harvest while hidden-loot attributes are still set. beginBushSearchCooldown clears them.
 	if luckyOpened then

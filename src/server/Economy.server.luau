@@ -6,6 +6,18 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local SwingUpgrades = require(ReplicatedStorage.Shared.SwingUpgrades)
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
+local AnalyticsFunnelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
+
+local function isPowerUpgrade(upgradeId: string): boolean
+	return upgradeId == "Power1" or upgradeId == "Power10" or upgradeId == "Power25"
+end
+
+local function noteFirstPowerPurchase(player: Player, upgradeId: string)
+	if not isPowerUpgrade(upgradeId) then
+		return
+	end
+	AnalyticsFunnelService.logOnboardingId(player, "bought_power", { allowSkip = true })
+end
 
 local STARTING_CASH = 0 -- starter cash comes from the tutorial grant
 
@@ -94,6 +106,7 @@ purchaseFn.OnServerInvoke = function(player: Player, upgradeId: any): (boolean, 
 	if not SwingUpgrades.grantUpgrade(player, id) then
 		return false, "Grant failed"
 	end
+	noteFirstPowerPurchase(player, id)
 	return true, nil
 end
 
@@ -110,7 +123,11 @@ local function fulfillRobuxUpgradeReceipt(player: Player): boolean
 		return false
 	end
 	pendingRobuxUpgrade[player] = nil
-	return SwingUpgrades.grantUpgrade(player, upgradeId)
+	local granted = SwingUpgrades.grantUpgrade(player, upgradeId)
+	if granted then
+		noteFirstPowerPurchase(player, upgradeId)
+	end
+	return granted
 end
 
 local function ensureInternalFolder(): Folder

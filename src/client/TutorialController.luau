@@ -240,6 +240,14 @@ local function setTutorialSoftRespawn(enabled: boolean)
 	end
 end
 
+local function reportOnboardingStep(stepId: string)
+	local folder = Svc.ReplicatedStorage:FindFirstChild("AnalyticsRemotes")
+	local re = folder and folder:FindFirstChild("ReportOnboardingStep")
+	if re and re:IsA("RemoteEvent") then
+		re:FireServer(stepId)
+	end
+end
+
 local function findCashAmountLabel(): TextLabel?
 	local main = PlayerGuiMain.ensure(player)
 	local sideUI = main and main:FindFirstChild("SideUI")
@@ -2695,6 +2703,7 @@ local function completeCurrentIfImpl(id: TutorialConfig.StepId)
 	if not step or step.id ~= id then
 		return
 	end
+	reportOnboardingStep(id)
 	advanceTo(stepIndex + 1)
 end
 completeCurrentIf = completeCurrentIfImpl

@@ -21,6 +21,7 @@ local Workspace = game:GetService("Workspace")
 
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
+local AnalyticsFunnelService = require(Modules:WaitForChild("AnalyticsFunnelService"))
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StoreConfig = require(Shared:WaitForChild("StoreConfig"))
 local CutsceneConfig = require(Shared:WaitForChild("LuckyBlockCutsceneConfig"))
@@ -791,6 +792,9 @@ local function beginLuckyBlockCutscene(
 				local timEvt = ServerStorage:FindFirstChild("TimCheeseLuckyBlockOpened")
 				if timEvt and timEvt:IsA("BindableEvent") then
 					timEvt:Fire(player)
+				end
+				if blockKind and string.find(string.lower(blockKind), "starter", 1, true) then
+					AnalyticsFunnelService.logOnboardingId(player, "opened_starter_lucky_block", { allowSkip = true })
 				end
 			end
 		end

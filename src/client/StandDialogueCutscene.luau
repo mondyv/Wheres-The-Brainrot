@@ -28,9 +28,9 @@ local SELECT_ACTION = "StandDialogueSelect"
 local WORLD_SPEECH_NAME = "StandBrainrotSpeech"
 local ARROW_IMAGE = "rbxassetid://92898814478474"
 
-local LETTER_DELAY = 0.048
-local LINE_PAUSE = 0.22
-local WORLD_LETTER_DELAY = 0.042
+local LETTER_DELAY = 0.026
+local LINE_PAUSE = 0.12
+local WORLD_LETTER_DELAY = 0.022
 local WORLD_MAX_DISTANCE = 160
 
 local IDLE_ANIM_IDS: { [string]: number } = {
@@ -58,6 +58,8 @@ export type StandDialogueConfig = {
 
 export type WorldSpeechOpts = {
 	durationSec: number?,
+	letterDelay: number?,
+	minDurationSec: number?,
 	voicePitchMin: number?,
 	voicePitchMax: number?,
 	textSize: number?,
@@ -81,7 +83,11 @@ local jumpSuppressConn: RBXScriptConnection? = nil
 local typeToken = 0
 local jumpToken = 0
 local skipRequested = false
+local conversationSkip = false
 local typingActive = false
+local letterboxSkipBtn: TextButton? = nil
+local letterboxSkipConn: RBXScriptConnection? = nil
+local letterboxSkipCallback: (() -> ())? = nil
 
 local _savedCameraType: Enum.CameraType? = nil
 local savedCameraSubject: Instance? = nil
@@ -922,6 +928,7 @@ end
 local function requestSkip()
 	if typingActive and not choicesReady then
 		skipRequested = true
+		conversationSkip = true
 	end
 end
 
@@ -942,7 +949,7 @@ local function confirmChoice(enter: boolean)
 end
 
 local function ensureGui(): ScreenGui
-	local STYLE = "center_arcade_v3"
+	local STYLE = "center_arcade_v4"
 	if
 		cutsceneGui
 		and cutsceneGui.Parent
@@ -952,6 +959,7 @@ local function ensureGui(): ScreenGui
 		and choiceExit
 		and soulMarker
 		and dialogueBox
+		and letterboxSkipBtn
 	then
 		return cutsceneGui
 	end
@@ -998,6 +1006,30 @@ local function ensureGui(): ScreenGui
 	bottom.ZIndex = 10
 	bottom.Active = false
 	bottom.Parent = gui
+
+	local letterSkip = Instance.new("TextButton")
+	letterSkip.Name = "LetterboxSkip"
+	letterSkip.BackgroundTransparency = 1
+	letterSkip.AutoButtonColor = false
+	letterSkip.Text = if UserInputService.TouchEnabled then "TAP TO SKIP" else "CLICK TO SKIP"
+	letterSkip.TextColor3 = Color3.fromRGB(210, 210, 210)
+	letterSkip.TextStrokeColor3 = Color3.new(0, 0, 0)
+	letterSkip.TextStrokeTransparency = 0.35
+	letterSkip.TextSize = 16
+	letterSkip.Font = Enum.Font.GothamBold
+	letterSkip.AnchorPoint = Vector2.new(0.5, 0.5)
+	letterSkip.Position = UDim2.fromScale(0.5, 0.5)
+	letterSkip.Size = UDim2.new(0.5, 0, 0.55, 0)
+	letterSkip.ZIndex = 15
+	letterSkip.Visible = false
+	letterSkip.Parent = bottom
+	UiFonts.applyBody(letterSkip)
+	local letterSkipBoldOk, letterSkipBold = pcall(function()
+		return Font.new(letterSkip.FontFace.Family, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+	end)
+	if letterSkipBoldOk and typeof(letterSkipBold) == "Font" then
+		letterSkip.FontFace = letterSkipBold
+	end
 
 	local box = Instance.new("TextButton")
 	box.Name = "DialogueBox"
@@ -1127,6 +1159,7 @@ local function ensureGui(): ScreenGui
 	cutsceneGui = gui
 	letterTop = top
 	letterBottom = bottom
+	letterboxSkipBtn = letterSkip
 	dialogueBox = box
 	dialogueLabel = label
 	skipHint = hint
@@ -1230,11 +1263,18 @@ local function typeLine(line: DialogueLine)
 	typeToken += 1
 	local token = typeToken
 	typingActive = true
-	skipRequested = false
+	-- Keep conversationSkip so one click can dump the rest of the cutscene.
+	skipRequested = conversationSkip
 	label.Text = ""
 	refreshSkipHintText()
 	if skipHint then
 		skipHint.Visible = true
+	end
+	if conversationSkip then
+		label.Text = fullText
+		stopShake()
+		typingActive = false
+		return
 	end
 	if line.shake then
 		startShake()
@@ -1243,7 +1283,7 @@ local function typeLine(line: DialogueLine)
 	end
 
 	for i = 1, #fullText do
-		if token ~= typeToken or not active or skipRequested then
+		if token ~= typeToken or not active or skipRequested or conversationSkip then
 			break
 		end
 		local ch = string.sub(fullText, i, i)
@@ -1259,9 +1299,6 @@ local function typeLine(line: DialogueLine)
 	end
 	stopShake()
 	typingActive = false
-	if skipHint then
-		skipHint.Visible = false
-	end
 end
 
 local function bindTouchChoiceInput()
@@ -1563,7 +1600,8 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 	pad.PaddingBottom = UDim.new(0, 2)
 	pad.Parent = label
 
-	local typeDuration = #message * WORLD_LETTER_DELAY + 0.15
+	local letterDelay = if opts and typeof(opts.letterDelay) == "number" then opts.letterDelay else WORLD_LETTER_DELAY
+	local typeDuration = #message * letterDelay + 0.1
 	task.spawn(function()
 		for i = 1, #message do
 			if token ~= worldSpeechToken or not bb.Parent then
@@ -1574,31 +1612,60 @@ function StandDialogueCutscene.showWorldSpeech(model: Model, message: string, op
 			if ch ~= " " then
 				playVoiceLetter()
 			end
-			task.wait(WORLD_LETTER_DELAY)
+			task.wait(letterDelay)
 		end
 		if token == worldSpeechToken and bb.Parent then
 			label.Text = message
 		end
 	end)
 
-	local holdAfter = if opts and typeof(opts.durationSec) == "number" then opts.durationSec else 1.4
-	local dur = math.max(typeDuration + holdAfter, 2.2)
+	local holdAfter = if opts and typeof(opts.durationSec) == "number" then opts.durationSec else 0.75
+	local minDur = if opts and typeof(opts.minDurationSec) == "number" then opts.minDurationSec else 0
+	local dur = math.max(typeDuration + holdAfter, minDur)
 	task.delay(dur, function()
 		activeVoicePitchMin = savedPitchMin
 		activeVoicePitchMax = savedPitchMax
 		if token ~= worldSpeechToken or not bb.Parent then
 			return
 		end
-		TweenService:Create(label, TweenInfo.new(0.25), {
+		TweenService:Create(label, TweenInfo.new(0.18), {
 			TextTransparency = 1,
 			TextStrokeTransparency = 1,
 		}):Play()
-		task.delay(0.28, function()
+		task.delay(0.2, function()
 			if bb.Parent then
 				bb:Destroy()
 			end
 		end)
 	end)
+end
+
+function StandDialogueCutscene.cancelWorldSpeech()
+	worldSpeechToken += 1
+end
+
+function StandDialogueCutscene.setLetterboxSkipVisible(visible: boolean, onSkip: (() -> ())?)
+	ensureGui()
+	letterboxSkipCallback = onSkip
+	if letterboxSkipConn then
+		letterboxSkipConn:Disconnect()
+		letterboxSkipConn = nil
+	end
+	if letterboxSkipBtn then
+		letterboxSkipBtn.Text = if UserInputService.TouchEnabled then "TAP TO SKIP" else "CLICK TO SKIP"
+		letterboxSkipBtn.Visible = visible == true
+		if visible == true then
+			letterboxSkipConn = letterboxSkipBtn.Activated:Connect(function()
+				local cb = letterboxSkipCallback
+				if cb then
+					cb()
+				end
+			end)
+		end
+	end
+	if letterBottom then
+		letterBottom.Active = visible == true
+	end
 end
 
 function StandDialogueCutscene.isActive(): boolean
@@ -1610,6 +1677,7 @@ function StandDialogueCutscene.showLetterbox()
 end
 
 function StandDialogueCutscene.hideLetterbox()
+	StandDialogueCutscene.setLetterboxSkipVisible(false, nil)
 	animateLetterboxOut()
 end
 
@@ -1641,6 +1709,7 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 	finishing = false
 	choicesReady = false
 	skipRequested = false
+	conversationSkip = false
 	typingActive = false
 	selectedIndex = 1
 	lastHapticSelectedIndex = 0
@@ -1736,15 +1805,15 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 
 	startTalkJump(brainrot)
 	for _, line in ipairs(config.lines) do
-		if not active or skipRequested then
+		if not active or conversationSkip then
 			break
 		end
 		typeLine(line)
-		if not active or skipRequested then
+		if not active or conversationSkip then
 			break
 		end
 		local pauseStart = os.clock()
-		while os.clock() - pauseStart < LINE_PAUSE and active and not skipRequested do
+		while os.clock() - pauseStart < LINE_PAUSE and active and not conversationSkip do
 			task.wait()
 		end
 	end

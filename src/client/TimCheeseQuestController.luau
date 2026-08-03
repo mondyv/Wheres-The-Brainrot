@@ -54,6 +54,7 @@ local timModel: Model? = nil
 local questHitbox: BasePart? = nil
 local introPlaying = false
 local introStartedLocal = false -- never restart fall once begun (attribute can lag)
+local introDialogueSkip = false
 local dialogueBusy = false
 local lastWalkbyAt = 0.0
 local questGui: ScreenGui? = nil -- persistent tracker ScreenGui
@@ -101,6 +102,9 @@ local QUEST_SLIDE_PX = 96
 -- Distinct from Shop Stand (0.88–1.2) / Sell (deep) / Upgrade (1.2–1.55).
 local TIM_VOICE_PITCH_MIN = 1.48
 local TIM_VOICE_PITCH_MAX = 1.82
+local TIM_LETTER_DELAY = 0.018
+local TIM_LINE_HOLD = 0.55
+local TIM_LINE_HOLD_SHAKE = 0.7
 local INTRO_CUTSCENE_HIDE_OPTS = {
 	keepScreenGuiNames = { "StandDialogueCutscene" },
 	hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker" },
@@ -2608,10 +2612,16 @@ local function liftCloneToGround(clone: Model, groundY: number)
 end
 
 local function speakOnHead(model: Model, message: string, holdSec: number?)
-	local hold = if typeof(holdSec) == "number" then holdSec else 1.55
+	if introDialogueSkip then
+		return
+	end
+	local hold = if typeof(holdSec) == "number" then holdSec else TIM_LINE_HOLD
+	local letterDelay = TIM_LETTER_DELAY
 	startIntroTalkJump(model)
 	StandDialogueCutscene.showWorldSpeech(model, message, {
 		durationSec = hold,
+		letterDelay = letterDelay,
+		minDurationSec = 0,
 		voicePitchMin = TIM_VOICE_PITCH_MIN,
 		voicePitchMax = TIM_VOICE_PITCH_MAX,
 		textSize = 20,
@@ -2619,10 +2629,26 @@ local function speakOnHead(model: Model, message: string, holdSec: number?)
 		billboardHeight = 88,
 		studsOffset = Vector3.new(0, 1.05, 0),
 	})
-	local typeDur = #message * 0.042 + 0.2
-	task.wait(typeDur)
+	local typeDur = #message * letterDelay + 0.08
+	local t0 = os.clock()
+	while os.clock() - t0 < typeDur do
+		if introDialogueSkip then
+			StandDialogueCutscene.cancelWorldSpeech()
+			stopIntroTalkJump(model)
+			return
+		end
+		task.wait()
+	end
 	stopIntroTalkJump(model)
-	task.wait(hold + 0.15)
+	local holdLeft = hold + 0.08
+	local t1 = os.clock()
+	while os.clock() - t1 < holdLeft do
+		if introDialogueSkip then
+			StandDialogueCutscene.cancelWorldSpeech()
+			return
+		end
+		task.wait()
+	end
 end
 
 -- Intro starts when the player first tries to open a Land 1 bush after tutorial.
@@ -2663,6 +2689,7 @@ function M.playIntroFall()
 	if introPlaying or introStartedLocal then
 		return
 	end
+	introDialogueSkip = false
 	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
 		introStartedLocal = true
 		setBushPromptsHiddenForIntro(false)
@@ -2812,7 +2839,7 @@ function M.playIntroFall()
 	setBgmSlowed(false)
 
 	-- Settle — keep over-shoulder framing on Tim.
-	task.wait(0.55)
+	task.wait(0.35)
 	local talkCamConn: RBXScriptConnection? = nil
 	talkCamConn = RunService.RenderStepped:Connect(function(dt)
 		introCamPhase += dt
@@ -2834,12 +2861,19 @@ function M.playIntroFall()
 		cam.FieldOfView = goalFov
 	end)
 
+	introDialogueSkip = false
+	StandDialogueCutscene.setLetterboxSkipVisible(true, function()
+		introDialogueSkip = true
+		StandDialogueCutscene.cancelWorldSpeech()
+	end)
+
 	for _, line in TimCheeseQuestConfig.INTRO_LINES do
-		if not clone.Parent then
+		if introDialogueSkip or not clone.Parent then
 			break
 		end
-		speakOnHead(clone, line.text, if line.shake then 1.75 else 1.45)
+		speakOnHead(clone, line.text, if line.shake then TIM_LINE_HOLD_SHAKE else TIM_LINE_HOLD)
 	end
+	StandDialogueCutscene.setLetterboxSkipVisible(false, nil)
 	stopIntroTalkJump(clone)
 
 	if talkCamConn then
@@ -2940,14 +2974,16 @@ function M.openTimDialogue()
 		local lines = TimCheeseQuestConfig.IN_PROGRESS_LINES
 		local msg = lines[math.random(1, #lines)]
 		StandDialogueCutscene.showWorldSpeech(tim, msg, {
-			durationSec = 2.8,
+			durationSec = 1.4,
+			letterDelay = TIM_LETTER_DELAY,
+			minDurationSec = 0,
 			voicePitchMin = TIM_VOICE_PITCH_MIN,
 			voicePitchMax = TIM_VOICE_PITCH_MAX,
 			textSize = 18,
 			billboardWidth = 320,
 			billboardHeight = 72,
 		})
-		task.delay(3.4, function()
+		task.delay(2.2, function()
 			if not dialogueBusy and not introPlaying and not StandDialogueCutscene.isActive() then
 				syncPromptAndOutline()
 			end
@@ -3007,14 +3043,14 @@ function M.openTimDialogue()
 		end
 		if nextIdx > TimCheeseQuestConfig.questCount() then
 			for _, line in TimCheeseQuestConfig.ALL_DONE_LINES do
-				speakOnHead(tim, line.text, 1.5)
+				speakOnHead(tim, line.text, TIM_LINE_HOLD_SHAKE)
 			end
 		else
 			local offer = TimCheeseQuestConfig.getQuest(nextIdx)
 			if offer then
-				speakOnHead(tim, "Nice work!! Next job:", 1.15)
-				speakOnHead(tim, string.format("%s — %s", offer.title, offer.description), 2.0)
-				speakOnHead(tim, "Reward: " .. TimCheeseQuestConfig.formatRewardLabel(offer), 1.35)
+				speakOnHead(tim, "Nice work!! Next job:", TIM_LINE_HOLD)
+				speakOnHead(tim, string.format("%s — %s", offer.title, offer.description), 0.95)
+				speakOnHead(tim, "Reward: " .. TimCheeseQuestConfig.formatRewardLabel(offer), TIM_LINE_HOLD)
 			end
 			acceptNextQuestAndShowHud(nextIdx)
 		end
@@ -3022,8 +3058,8 @@ function M.openTimDialogue()
 		local nextIdx = math.floor(doneCount) + 1
 		local offer = TimCheeseQuestConfig.getQuest(nextIdx)
 		if offer then
-			speakOnHead(tim, string.format("%s — %s", offer.title, offer.description), 2.0)
-			speakOnHead(tim, "Reward: " .. TimCheeseQuestConfig.formatRewardLabel(offer), 1.35)
+			speakOnHead(tim, string.format("%s — %s", offer.title, offer.description), 0.95)
+			speakOnHead(tim, "Reward: " .. TimCheeseQuestConfig.formatRewardLabel(offer), TIM_LINE_HOLD)
 		end
 		acceptNextQuestAndShowHud(nextIdx)
 	end

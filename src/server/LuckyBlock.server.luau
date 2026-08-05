@@ -709,6 +709,7 @@ grantBF.OnInvoke = function(plrArg: any, blockNameArg: any, optsArg: any): boole
 		return false
 	end
 	tool.Parent = bp
+	recordLuckyBlockIndexUnlock(plr, blockName)
 	if shouldEquip then
 		local function tryEquip(): boolean
 			local hum = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")

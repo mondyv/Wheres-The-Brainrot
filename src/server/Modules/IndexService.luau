@@ -177,31 +177,17 @@ local function findLuckyBlockTemplate(blockId: string, variant: string?): Model?
 end
 
 function M.getLuckyBlockIcon(blockId: string): string
+	-- Prefer curated UI icons from Lucky Block Icons.
+	local fromIcons = LuckyBlockCatalog.resolveIconAssetId(blockId)
+	if fromIcons ~= "" then
+		return fromIcons
+	end
 	local def = LuckyBlockCatalog.get(blockId)
 	local template = findLuckyBlockTemplate(blockId, if def then def.variant else nil)
 	if template then
 		local icon = pickIconFromModel(template)
 		if icon ~= "" then
 			return icon
-		end
-	end
-	-- Fallback: Lucky Block Icons folder
-	local root = ReplicatedStorage:FindFirstChild("Lucky Blocks")
-	local icons = root and root:FindFirstChild("Lucky Block Icons")
-	if icons then
-		local node = icons:FindFirstChild(blockId, true)
-		if node then
-			if node:IsA("ImageLabel") and node.Image ~= "" then
-				return node.Image
-			end
-			if node:IsA("ImageButton") and node.Image ~= "" then
-				return node.Image
-			end
-			for _, d in node:GetDescendants() do
-				if (d:IsA("ImageLabel") or d:IsA("ImageButton")) and d.Image ~= "" then
-					return d.Image
-				end
-			end
 		end
 	end
 	return ""

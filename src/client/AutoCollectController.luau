@@ -47,6 +47,7 @@ local trackedStands: { [Model]: boolean } = {}
 local marketplaceOwnsAutoCollect = false
 
 local wirePadView: (Instance) -> ()
+local syncAllGamepassBillboards: () -> ()
 
 local CASH_FLOAT_TEXT_SIZE = 28
 local FLOAT_STROKE_SCALE = 1
@@ -156,7 +157,7 @@ local function syncGamepassBillboard(view: PadView)
 	end
 end
 
-local function syncAllGamepassBillboards()
+syncAllGamepassBillboards = function()
 	for _, view in pairs(padViews) do
 		syncGamepassBillboard(view)
 	end

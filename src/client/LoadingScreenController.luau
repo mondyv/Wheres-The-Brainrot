@@ -147,11 +147,15 @@ local function beginLoadingStreamingGuard(player: Player)
 		if Workspace.StreamingEnabled ~= true then
 			return
 		end
-		-- Index via table so missing properties don't throw before pcall in some builds.
+		-- Property may be missing on some Studio builds — only touch inside pcall.
 		local wsAny = Workspace :: any
-		local minR = rawget(wsAny, "StreamingMinRadius")
-		local targetR = rawget(wsAny, "StreamingTargetRadius")
-		if typeof(minR) ~= "number" or typeof(targetR) ~= "number" then
+		local minOk, minR = pcall(function()
+			return wsAny.StreamingMinRadius
+		end)
+		local targetOk, targetR = pcall(function()
+			return wsAny.StreamingTargetRadius
+		end)
+		if not minOk or not targetOk or typeof(minR) ~= "number" or typeof(targetR) ~= "number" then
 			return
 		end
 		savedStreamingMinRadius = minR
@@ -181,19 +185,22 @@ local function endLoadingStreamingGuard(player: Player?)
 	end
 	streamingGuardActive = false
 	-- Always restore to gameplay radii — ignore Studio's saved 256/512.
-	-- Use rawget: some Studio builds error on missing StreamingMinRadius even inside typeof().
+	-- Nested pcall: some Studio builds lack StreamingMinRadius entirely.
 	local ok, err = pcall(function()
 		local ws = Workspace :: any
-		local minR = rawget(ws, "StreamingMinRadius")
-		local targetR = rawget(ws, "StreamingTargetRadius")
-		if typeof(minR) == "number" and typeof(targetR) == "number" then
+		local minOk, minR = pcall(function()
+			return ws.StreamingMinRadius
+		end)
+		local targetOk, targetR = pcall(function()
+			return ws.StreamingTargetRadius
+		end)
+		if minOk and targetOk and typeof(minR) == "number" and typeof(targetR) == "number" then
 			ws.StreamingMinRadius = GAMEPLAY_STREAM_MIN_RADIUS
 			ws.StreamingTargetRadius = GAMEPLAY_STREAM_TARGET_RADIUS
 		end
 	end)
 	if not ok then
-		-- Silent on unsupported builds; radii simply stay as-is.
-		if typeof(err) == "string" and not string.find(err, "StreamingMinRadius", 1, true) then
+		if typeof(err) == "string" and not string.find(err, "StreamingMinRadius", 1, true) and not string.find(err, "rawget", 1, true) then
 			warn("[LoadingScreenController] streaming radius restore failed:", err)
 		end
 	end

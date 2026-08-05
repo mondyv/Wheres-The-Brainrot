@@ -168,6 +168,10 @@ local function applyOddsToChancesFrame(odds: any)
 			continue
 		end
 		local pct = odds.percents[rarityId] or 0
+		local display = RandomBrainrotOdds.DISPLAY_NAMES[rarityId] or rowName
+		setLabelText(row, "Rarity", display)
+		-- Studio Dash label is often empty — keep a visible separator.
+		setLabelText(row, "Dash", "—")
 		setLabelText(row, "Chance", RandomBrainrotOdds.formatPercent(pct))
 		if row:IsA("GuiObject") then
 			(row :: GuiObject).Visible = true

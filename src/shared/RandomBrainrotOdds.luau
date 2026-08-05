@@ -50,27 +50,39 @@ local TIER_WEIGHTS: { [number]: { [RarityId]: number } } = {
 	[1] = { common = 84, uncommon = 14, rare = 2, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
 	[2] = { common = 68, uncommon = 26, rare = 6, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
 	[3] = { common = 48, uncommon = 30, rare = 18, epic = 4, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[4] = { common = 30, uncommon = 32, rare = 28, epic = 10, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[5] = { common = 18, uncommon = 30, rare = 32, epic = 16, mythic = 4, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[6] = { common = 8, uncommon = 18, rare = 32, epic = 28, mythic = 12, legendary = 2, ["brainrot god"] = 0, secret = 0 },
-	[7] = { common = 0, uncommon = 8, rare = 24, epic = 34, mythic = 26, legendary = 8, ["brainrot god"] = 0, secret = 0 },
-	[8] = { common = 0, uncommon = 0, rare = 14, epic = 32, mythic = 34, legendary = 19.5, ["brainrot god"] = 0.5, secret = 0 },
-	[9] = { common = 0, uncommon = 0, rare = 6, epic = 24, mythic = 36, legendary = 32, ["brainrot god"] = 2, secret = 0 },
-	[10] = { common = 0, uncommon = 0, rare = 0, epic = 14, mythic = 30, legendary = 48, ["brainrot god"] = 7.7, secret = 0.3 },
+	[4] = { common = 28, uncommon = 30, rare = 28, epic = 12, mythic = 2, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[5] = { common = 14, uncommon = 26, rare = 30, epic = 20, mythic = 10, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[6] = { common = 6, uncommon = 16, rare = 28, epic = 28, mythic = 18, legendary = 4, ["brainrot god"] = 0, secret = 0 },
+	[7] = { common = 0, uncommon = 8, rare = 22, epic = 32, mythic = 28, legendary = 10, ["brainrot god"] = 0, secret = 0 },
+	[8] = { common = 0, uncommon = 0, rare = 12, epic = 30, mythic = 34, legendary = 23.5, ["brainrot god"] = 0.5, secret = 0 },
+	[9] = { common = 0, uncommon = 0, rare = 6, epic = 22, mythic = 34, legendary = 36, ["brainrot god"] = 2, secret = 0 },
+	[10] = { common = 0, uncommon = 0, rare = 0, epic = 12, mythic = 28, legendary = 50, ["brainrot god"] = 9.7, secret = 0.3 },
 }
 
--- Plot $/s required to reach each odds tier. Secrets need multi-million gen.
+-- Plot $/s required to reach each odds tier.
+-- Gates align with cheapest units of newly unlocked rarities (mythic ~6.2k base).
 local TIER_INCOME: { number } = {
 	0, -- 1
 	150, -- 2
 	750, -- 3
-	4_000, -- 4
-	20_000, -- 5
-	75_000, -- 6
-	250_000, -- 7
-	750_000, -- 8
-	2_500_000, -- 9
-	8_000_000, -- 10
+	4_000, -- 4  (tiny mythic tease)
+	12_000, -- 5  (real mythic odds — ~2 low mythics placed)
+	45_000, -- 6  (legendary tease)
+	150_000, -- 7
+	500_000, -- 8  (tiny god)
+	1_800_000, -- 9
+	6_000_000, -- 10 (tiny secret)
+}
+
+-- When a mid-tier rarity has weight, allow at least its cheapest playable unit
+-- so Chances never shows 0% while the tier table says otherwise.
+local FORCE_CHEAPEST_RARITIES: { [RarityId]: boolean } = {
+	common = true,
+	uncommon = true,
+	rare = true,
+	epic = true,
+	mythic = true,
+	legendary = true,
 }
 
 M.UI_ROW_NAMES = {
@@ -105,18 +117,6 @@ local function isPlayable(name: string): boolean
 		return false
 	end
 	return true
-end
-
-function M.maxAllowedBaseIncome(plotIncomePerSecond: number): number
-	local ips = math.max(0, plotIncomePerSecond)
-	-- Hard soft-cap: offered unit base must stay well below current total gen
-	-- so a roll can't replace / dwarf your whole base.
-	-- 300k $/s → ~66k max base (legendary band, no god/secret).
-	-- ~550k $/s → first gods (~120k) become eligible.
-	-- ~1.9M $/s → cheapest secrets (~420k) become eligible.
-	local soft = ips * 0.22 + 20
-	local hard = ips * 0.35 + 40
-	return math.max(30, math.floor(math.min(soft, hard)))
 end
 
 function M.tierForIncome(plotIncomePerSecond: number): number
@@ -205,6 +205,35 @@ local function filterPool(rarity: RarityId, maxBase: number): { { name: string, 
 		end
 	end
 	return out
+end
+
+function M.maxAllowedBaseIncome(plotIncomePerSecond: number): number
+	ensurePools()
+	local ips = math.max(0, plotIncomePerSecond)
+	-- Soft cap keeps paid rolls as side-grades, not base-replacers.
+	-- Slightly more generous than before so mid-rarities aren't stuck at 0%.
+	local soft = ips * 0.30 + 80
+	local hard = ips * 0.48 + 120
+	local baseCap = math.max(30, math.floor(math.min(soft, hard)))
+
+	local tier = M.tierForIncome(ips)
+	local source = TIER_WEIGHTS[tier] or TIER_WEIGHTS[1]
+	local mins = minIncomeByRarity :: { [RarityId]: number }
+	local need = baseCap
+	-- Plot-relative ceiling so forcing cheapest mythic/legendary never goes crazy.
+	local plotCap = math.floor(ips * 0.65 + 150)
+
+	for _, id in ipairs(RARITY_ORDER) do
+		local w = source[id] or 0
+		if w > 0 and FORCE_CHEAPEST_RARITIES[id] then
+			local minBase = mins[id] or 0
+			if minBase > 0 then
+				need = math.max(need, math.min(minBase, plotCap))
+			end
+		end
+	end
+
+	return need
 end
 
 function M.compute(plotIncomePerSecond: number): OddsResult

@@ -1388,6 +1388,7 @@ local function hideNonLoadingScreenGuis(playerGui: PlayerGui)
 	local main = playerGui:FindFirstChild("Main")
 	if main and main:IsA("ScreenGui") then
 		main.Enabled = false
+		PlayerGuiMain.hideAdminPanelUnlessAllowed(main)
 		local sideUI = main:FindFirstChild("SideUI")
 		if sideUI and sideUI:IsA("GuiObject") then
 			(sideUI :: GuiObject).Visible = false
@@ -1438,6 +1439,7 @@ local function enterLoadingIsolation(playerGui: PlayerGui)
 			end
 			if child:IsA("ScreenGui") and child.Name == "Main" then
 				PlayerGuiMain.dedupe(playerGui)
+				PlayerGuiMain.hideAdminPanelUnlessAllowed(child)
 				-- Keep Main off until exitLoadingIsolation — inventory must not show through loading.
 				child.Enabled = false
 				return
@@ -1457,6 +1459,7 @@ local function prepareGameplayUIBeforeReveal(playerGui: PlayerGui)
 	if not main then
 		return
 	end
+	PlayerGuiMain.hideAdminPanelUnlessAllowed(main)
 
 	local frames = main:FindFirstChild("Frames")
 	if frames then
@@ -1545,6 +1548,7 @@ local function exitLoadingIsolation(playerGui: PlayerGui)
 	PlayerGuiMain.finalize(playerGui)
 	local main = playerGui:FindFirstChild("Main")
 	if main and main:IsA("ScreenGui") then
+		PlayerGuiMain.hideAdminPanelUnlessAllowed(main)
 		main.Enabled = true
 		local sideUI = main:FindFirstChild("SideUI")
 		if sideUI and sideUI:IsA("GuiObject") then
@@ -2084,6 +2088,7 @@ function M.showEarly()
 	loadingActive = true
 	setCoreGuisVisible(false)
 	hideNonLoadingScreenGuis(playerGui)
+	PlayerGuiMain.hideAdminPanelUnlessAllowed(playerGui:FindFirstChild("Main"))
 
 	local loadingGui = findLoadingScreenGui(playerGui)
 	if loadingGui then

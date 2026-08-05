@@ -36,6 +36,33 @@ local function findAllMains(playerGui: PlayerGui): { ScreenGui }
 	return mains
 end
 
+-- Hide Studio-authored AdminFrame/button until AdminCommandBar opts in.
+-- Call early during load so the join UI flash never shows it to everyone.
+function PlayerGuiMain.hideAdminPanelUnlessAllowed(root: Instance?, _player: Player?)
+	local main: Instance? = root
+	if not main then
+		local plr = Players.LocalPlayer
+		local pg = plr and plr:FindFirstChild("PlayerGui")
+		main = pg and pg:FindFirstChild("Main")
+	end
+	if not main then
+		return
+	end
+	local sideUI = main:FindFirstChild("SideUI")
+	local adminFrame = (sideUI and sideUI:FindFirstChild("AdminFrame"))
+		or main:FindFirstChild("AdminFrame", true)
+	if not adminFrame or not adminFrame:IsA("GuiObject") then
+		return
+	end
+	local host = adminFrame:FindFirstChild("Admin Panel Button")
+		or adminFrame:FindFirstChild("AdminPanelButton")
+	;(adminFrame :: GuiObject).Visible = false
+	if host and host:IsA("GuiObject") then
+		host.Visible = false
+		host.Active = false
+	end
+end
+
 function PlayerGuiMain.dedupe(playerGui: PlayerGui): ScreenGui?
 	local mains = findAllMains(playerGui)
 	if #mains == 0 then
@@ -43,6 +70,7 @@ function PlayerGuiMain.dedupe(playerGui: PlayerGui): ScreenGui?
 	end
 	if #mains == 1 then
 		mains[1].ResetOnSpawn = false
+		PlayerGuiMain.hideAdminPanelUnlessAllowed(mains[1])
 		return mains[1]
 	end
 
@@ -55,6 +83,7 @@ function PlayerGuiMain.dedupe(playerGui: PlayerGui): ScreenGui?
 		mains[i]:Destroy()
 	end
 	best.ResetOnSpawn = false
+	PlayerGuiMain.hideAdminPanelUnlessAllowed(best)
 	return best
 end
 
@@ -119,6 +148,7 @@ function PlayerGuiMain.finalize(playerGui: PlayerGui?)
 
 	local main = PlayerGuiMain.dedupe(pg)
 	if main then
+		PlayerGuiMain.hideAdminPanelUnlessAllowed(main)
 		-- LoadingScreen keeps Main disabled until isolation exits; don't fight it here.
 		local loading = pg:FindFirstChild("LoadingScreen")
 		local loadingOn = loading and loading:IsA("ScreenGui") and loading.Enabled

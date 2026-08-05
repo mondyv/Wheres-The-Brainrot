@@ -1644,6 +1644,20 @@ function M.init()
 		warn("[AdminCommandBar] PlayerGui missing; admin bar not wired")
 		return
 	end
+	-- Hide Studio admin button immediately — don't wait for wireMobileAdminButton.
+	PlayerGuiMain.hideAdminPanelUnlessAllowed(playerGui:FindFirstChild("Main"))
+	playerGui.ChildAdded:Connect(function(child)
+		if child.Name == "Main" then
+			PlayerGuiMain.hideAdminPanelUnlessAllowed(child)
+			task.defer(syncMobileAdminButton)
+		end
+	end)
+	player:GetAttributeChangedSignal(ADMIN_ALLOWED_ATTR):Connect(function()
+		if player:GetAttribute(ADMIN_ALLOWED_ATTR) ~= true then
+			PlayerGuiMain.hideAdminPanelUnlessAllowed(playerGui:FindFirstChild("Main"))
+		end
+		syncMobileAdminButton()
+	end)
 	buildGui(playerGui)
 	wireSuggestionTouchScroll()
 	task.spawn(function()

@@ -174,6 +174,9 @@ task.defer(function()
 				require(script.BrainrotVisualSettings).init()
 			end,
 			function()
+				require(script.BrainrotRainbowMutationEffect).init()
+			end,
+			function()
 				require(script.AutoCollectController).init()
 			end,
 			function()

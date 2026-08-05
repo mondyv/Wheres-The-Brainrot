@@ -601,11 +601,7 @@ local function refreshQuest(goldenCount: number, questComplete: boolean)
 	if not questsFrame then
 		return
 	end
-	-- Golden quest is brainrot-mutation only.
-	if selectedMutation == IndexConfig.LUCKY_BLOCK_TAB then
-		questsFrame.Visible = false
-		return
-	end
+	-- Golden quest stays visible on all Index tabs (including Lucky Blocks).
 	questsFrame.Visible = true
 	local amount = progressAmount
 		or findLabel(questsFrame, { "Amount", "Collected", "ProgressText", "TextLabel" })

@@ -715,6 +715,8 @@ local ToolbarController = {}
 
 	local refreshParkedExtraToolsUI: () -> ()
 	local setBackpackPanelOpen: (boolean) -> ()
+	local findBackpackTemplateRow: (Instance?) -> GuiObject?
+	local applyBackpackSlotPanelAppearance: (GuiButton, boolean) -> ()
 
 	-- Defined after hotbarSlotScaleHost (see below).
 	local playEquipSlotAnimation: (number) -> ()
@@ -990,7 +992,7 @@ local ToolbarController = {}
 		return defaults
 	end
 
-	local function applyBackpackSlotPanelAppearance(btn: GuiButton, occupied: boolean)
+	applyBackpackSlotPanelAppearance = function(btn: GuiButton, occupied: boolean)
 		local defaults = captureBackpackSlotPanelDefaults(btn)
 		local stroke = btn:FindFirstChildOfClass("UIStroke")
 
@@ -1111,7 +1113,7 @@ local ToolbarController = {}
 	local BACKPACK_UI_ROW_ATTRIBUTE = "ToolbarBackpackUiRow"
 	local backpackTemplateRow: GuiObject? = nil
 
-	local function findBackpackTemplateRow(container: Instance?): GuiObject?
+	findBackpackTemplateRow = function(container: Instance?): GuiObject?
 		if not container then
 			return nil
 		end

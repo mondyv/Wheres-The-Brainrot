@@ -6,9 +6,9 @@
 	Low Graphics: keep current land only, and also park grass/trees/rocks/decor
 	on that land (bushes stay). Never Destroy — restore when range/settings change.
 
-	Swing hitch workaround: do NOT expand keepRadius. Instead amortize reparents
-	across frames and gradually pre-restore the next land while moving fast so
-	crossing a boundary does not dump a full land restore in one frame.
+	Never restore parked grass/props until that land's walk mesh (Island/ground)
+	is present. Force-restoring from the local cache before the island streams
+	in is what spawned high-tri decor with no land mass underneath.
 ]]
 
 local Players = game:GetService("Players")
@@ -30,7 +30,6 @@ local FEATURE_ENABLED = true
 -- Reparent budget: restore terrain/island first (see restorePriority), a few per frame.
 local REPARENT_PER_YIELD = 3
 local FAST_MOVE_SPEED = 42
-local PREWARM_BUDGET = 6
 local STREAM_AHEAD_STUDS = 220
 local lastStreamAt = 0.0
 local STREAM_COOLDOWN = 0.85
@@ -215,6 +214,33 @@ local function shouldParkEntry(entry: CullEntry, playerLand: number): boolean
 	return false
 end
 
+local function landFolderHasWalkMesh(landNum: number): boolean
+	local folder = landFolders[landNum]
+	if not folder or not folder.Parent then
+		return false
+	end
+	for _, child in folder:GetChildren() do
+		if not shouldKeepChild(child) then
+			continue
+		end
+		local n = string.lower(child.Name)
+		if
+			n == "spawn"
+			or n == "spawnpart"
+			or n == "landspawn"
+			or string.find(n, "comingsoon", 1, true)
+			or string.find(n, "safezone", 1, true)
+			or string.find(n, "hitbox", 1, true)
+			or child:IsA("BaseScript")
+			or child:IsA("ModuleScript")
+		then
+			continue
+		end
+		return true
+	end
+	return false
+end
+
 local function parkEntry(entry: CullEntry)
 	if not cullActive then
 		return
@@ -238,6 +264,10 @@ local function restoreEntry(entry: CullEntry)
 		return
 	end
 	if inst.Parent == home then
+		return
+	end
+	-- Do not force grass/props into Workspace while the land mesh is still out.
+	if not landFolderHasWalkMesh(entry.land) then
 		return
 	end
 	inst.Parent = home
@@ -355,15 +385,19 @@ local function hookLandFolder(landFolder: Instance, landNum: number)
 
 	landChildConns[landNum] = landFolder.ChildAdded:Connect(function(child)
 		task.defer(function()
-			if child.Parent == landFolder then
-				registerCullable(landNum, child)
-				if not shouldKeepChild(child) then
-					for _, nested in child:GetChildren() do
-						if isLowGfxDecorName(nested.Name) then
-							registerCullable(landNum, nested)
-						end
+			if child.Parent ~= landFolder then
+				return
+			end
+			registerCullable(landNum, child)
+			if not shouldKeepChild(child) then
+				for _, nested in child:GetChildren() do
+					if isLowGfxDecorName(nested.Name) then
+						registerCullable(landNum, nested)
 					end
 				end
+			elseif cullActive and currentLand > 0 then
+				-- Land mesh just streamed in — safe to put parked decor back.
+				task.spawn(applyForPlayerLand, currentLand)
 			end
 		end)
 	end)
@@ -408,7 +442,8 @@ local function isFastTraveling(): boolean
 	return Vector3.new(v.X, 0, v.Z).Magnitude >= FAST_MOVE_SPEED
 end
 
--- Soft-prewarm the land that is about to enter keep range (no keepRadius increase).
+-- Soft-prewarm: only request Roblox streaming ahead. Never force-restore
+-- cached grass/props (that races ahead of the land mesh = high tris, no island).
 local function softPrewarmAhead()
 	if not cullActive or currentLand <= 0 or lowGraphics then
 		return
@@ -429,13 +464,6 @@ local function softPrewarmAhead()
 		return
 	end
 
-	local dir = if horiz.X >= 0 then 1 else -1
-	local targetLand = currentLand + dir * (keepRadius + 1)
-	if targetLand < 1 then
-		return
-	end
-
-	-- Ask streaming for the next land before we restore culled instances.
 	local now = os.clock()
 	if now - lastStreamAt >= STREAM_COOLDOWN and Workspace.StreamingEnabled then
 		lastStreamAt = now
@@ -448,26 +476,6 @@ local function softPrewarmAhead()
 				warn("[GrassCullController] RequestStreamAroundAsync failed:", err)
 			end
 		end)
-	end
-
-	local cache = getCache()
-	local pending: { CullEntry } = {}
-	for _, entry in entries do
-		if entry.land == targetLand and entry.inst.Parent == cache then
-			table.insert(pending, entry)
-		end
-	end
-	table.sort(pending, function(a, b)
-		return restorePriority(a) < restorePriority(b)
-	end)
-
-	local restored = 0
-	for _, entry in pending do
-		restoreEntry(entry)
-		restored += 1
-		if restored >= PREWARM_BUDGET then
-			break
-		end
 	end
 end
 

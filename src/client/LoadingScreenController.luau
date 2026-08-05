@@ -32,6 +32,10 @@ local MOON_PLAYBACK_SCALE = 4 / 3
 -- Keep stream bubble on the player while the cinematic camera flies elsewhere.
 local LOADING_STREAM_MIN_RADIUS = 64
 local LOADING_STREAM_TARGET_RADIUS = 96
+-- After loading, force these (Studio place often still has 256/512 which keeps
+-- half the map + grass resident = high tris). Server Workspace props don't drive client streaming.
+local GAMEPLAY_STREAM_MIN_RADIUS = 112
+local GAMEPLAY_STREAM_TARGET_RADIUS = 280
 
 local DEFAULT_CAMERA_POS = Vector3.new(1452.568, 100.564, 518.559)
 local DEFAULT_CAMERA_RAD = Vector3.new(math.rad(4.555), math.rad(18.409), 0)
@@ -176,19 +180,16 @@ local function endLoadingStreamingGuard(player: Player?)
 		return
 	end
 	streamingGuardActive = false
-	if savedStreamingMinRadius ~= nil then
-		local minR = savedStreamingMinRadius
-		local targetR = savedStreamingTargetRadius or savedStreamingMinRadius
-		local ok, err = pcall(function()
-			local ws = Workspace :: any
-			if typeof(ws.StreamingMinRadius) == "number" and typeof(ws.StreamingTargetRadius) == "number" then
-				ws.StreamingMinRadius = minR
-				ws.StreamingTargetRadius = targetR
-			end
-		end)
-		if not ok then
-			warn("[LoadingScreenController] streaming radius restore failed:", err)
+	-- Always restore to gameplay radii — ignore Studio's saved 256/512.
+	local ok, err = pcall(function()
+		local ws = Workspace :: any
+		if typeof(ws.StreamingMinRadius) == "number" and typeof(ws.StreamingTargetRadius) == "number" then
+			ws.StreamingMinRadius = GAMEPLAY_STREAM_MIN_RADIUS
+			ws.StreamingTargetRadius = GAMEPLAY_STREAM_TARGET_RADIUS
 		end
+	end)
+	if not ok then
+		warn("[LoadingScreenController] streaming radius restore failed:", err)
 	end
 	savedStreamingMinRadius = nil
 	savedStreamingTargetRadius = nil

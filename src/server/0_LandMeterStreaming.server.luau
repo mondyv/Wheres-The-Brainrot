@@ -1,9 +1,11 @@
 -- [ACTIVE] 0_LandMeterStreaming.server
 --[[
-	Keep land luck hitboxes (1xHitbox, 10xHitbox, …) persistent under streaming
+	Keep land luck hitboxes (1xHitbox, 10xHitbox, …) available under streaming
 	so CurrentArea / meters still resolve on far lands like Land 9.
 
-	Streaming radii / StreamOutBehavior live only in 0_StreamingBootstrap (+ project.json).
+	CRITICAL: never mark Land*/Island/Map ancestors Persistent — that pinned
+	entire lands (including grass) in memory and blew triangle counts.
+	Only a tiny dedicated wrapper model around each hitbox is Persistent.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -11,16 +13,61 @@ local Workspace = game:GetService("Workspace")
 
 local HITBOX_PATTERN = "^(%d+)xHitbox$"
 local PERSIST_TAG = "LandLuckHitboxPersistent"
+local WRAPPER_NAME = "_LandLuckHitboxPersist"
 
-local function markPersistent(inst: Instance)
-	local model = if inst:IsA("Model") then inst else inst:FindFirstAncestorOfClass("Model")
-	if model then
-		pcall(function()
-			model.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
-		end)
+local function isUnsafePersistName(name: string): boolean
+	if string.match(name, "^Land%d+$") then
+		return true
 	end
-	if not CollectionService:HasTag(inst, PERSIST_TAG) then
-		CollectionService:AddTag(inst, PERSIST_TAG)
+	local ak = string.gsub(string.lower(name), "[^a-z0-9]", "")
+	return ak == "island"
+		or ak == "ground"
+		or ak == "terrain"
+		or ak == "lands"
+		or ak == "map"
+		or ak == "grass"
+		or string.find(ak, "grass", 1, true) ~= nil
+end
+
+local function ensureHitboxPersistModel(part: BasePart): Model?
+	local parent = part.Parent
+	if parent and parent:IsA("Model") and parent.Name == WRAPPER_NAME then
+		return parent
+	end
+	if not parent then
+		return nil
+	end
+	-- Keep wrapper under the same land folder so LandResolver ancestry still works.
+	local wrap = Instance.new("Model")
+	wrap.Name = WRAPPER_NAME
+	wrap.Parent = parent
+	part.Parent = wrap
+	return wrap
+end
+
+local function markPersistent(part: BasePart)
+	local wrap = ensureHitboxPersistModel(part)
+	if not wrap or isUnsafePersistName(wrap.Name) then
+		return
+	end
+	-- Clear Persistent on any accidental land/island ancestor from older builds.
+	local ancestor = wrap.Parent
+	while ancestor and ancestor ~= Workspace do
+		if ancestor:IsA("Model") and isUnsafePersistName(ancestor.Name) then
+			pcall(function()
+				(ancestor :: Model).ModelStreamingMode = Enum.ModelStreamingMode.Default
+			end)
+		end
+		ancestor = ancestor.Parent
+	end
+	pcall(function()
+		wrap.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
+	end)
+	if not CollectionService:HasTag(part, PERSIST_TAG) then
+		CollectionService:AddTag(part, PERSIST_TAG)
+	end
+	if not CollectionService:HasTag(wrap, PERSIST_TAG) then
+		CollectionService:AddTag(wrap, PERSIST_TAG)
 	end
 end
 

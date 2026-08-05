@@ -26,6 +26,15 @@ task.defer(function()
 	local LoadingScreenController = require(script.LoadingScreenController)
 	local PlayerGuiMain = require(script.PlayerGuiMain)
 
+	-- Client streaming radii (server Workspace values do not drive the local streamer).
+	pcall(function()
+		local Workspace = game:GetService("Workspace")
+		if Workspace.StreamingEnabled == true then
+			(Workspace :: any).StreamingMinRadius = 112
+			(Workspace :: any).StreamingTargetRadius = 280
+		end
+	end)
+
 	LoadingScreenController.showEarly()
 
 	pcall(function()

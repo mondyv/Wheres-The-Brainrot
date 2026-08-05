@@ -191,9 +191,11 @@ function M.createEquipBrainrotSlotForPlayer(deps: EquipDeps): (Player, number, b
 		end
 		-- assignEntryToLowestFreeHotbarSlot returns a hotbar cell (1..9), not an inventory
 		-- index. Keep `idx` as the inventory entry so we equip the correct brainrot.
+		-- forceEquip (bag click): still equip even when the hotbar is full — tool stays
+		-- parked in the expanded backpack UI while held.
 		if idx > deps.HOTBAR_UI_SLOTS or map[idx] then
 			local hotbarSlot = deps.assignEntryToLowestFreeHotbarSlot(player, list, map, idx)
-			if not hotbarSlot then
+			if not hotbarSlot and not forceEquip then
 				return nil
 			end
 		end

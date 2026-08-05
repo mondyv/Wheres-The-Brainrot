@@ -3,6 +3,8 @@
 	Shared buy-button visuals using Main.Purchased (or Main.GameGradients.Purchased).
 --]]
 
+local Players = game:GetService("Players")
+
 local MainGradientButtons = {}
 
 local PURCHASED_CLONE = "_MainPurchasedGradient"
@@ -11,6 +13,7 @@ local BUY_TEXT_NAMES = { "Name", "Text", "Cost", "Robux", "Price", "Label" }
 local purchasedTemplate: UIGradient? = nil
 local purchasedTextByHost: { [GuiObject]: string } = {}
 local priceIconVisibleByHost: { [GuiObject]: { [GuiObject]: boolean } } = {}
+local missingTemplateWarned = false
 
 local function setAllGradientsEnabled(root: Instance, enabled: boolean)
 	if root:IsA("UIGradient") then
@@ -107,17 +110,45 @@ local function clearCloneGradients(parent: Instance)
 	end
 end
 
+local function asPurchasedGradient(node: Instance?): UIGradient?
+	if not node then
+		return nil
+	end
+	if node:IsA("UIGradient") then
+		return node
+	end
+	local nested = node:FindFirstChildWhichIsA("UIGradient")
+	if nested then
+		return nested
+	end
+	return nil
+end
+
 local function findPurchasedTemplate(main: ScreenGui): UIGradient?
 	local gradientsFolder = main:FindFirstChild("GameGradients")
 	if gradientsFolder then
-		local nested = gradientsFolder:FindFirstChild("Purchased")
-		if nested and nested:IsA("UIGradient") then
+		local nested = asPurchasedGradient(gradientsFolder:FindFirstChild("Purchased"))
+		if nested then
 			return nested
 		end
+		-- Case / alternate names sometimes used in Studio.
+		for _, child in gradientsFolder:GetChildren() do
+			if string.lower(child.Name) == "purchased" then
+				local g = asPurchasedGradient(child)
+				if g then
+					return g
+				end
+			end
+		end
 	end
-	local direct = main:FindFirstChild("Purchased")
-	if direct and direct:IsA("UIGradient") then
+	local direct = asPurchasedGradient(main:FindFirstChild("Purchased"))
+	if direct then
 		return direct
+	end
+	for _, d in main:GetDescendants() do
+		if d:IsA("UIGradient") and string.lower(d.Name) == "purchased" then
+			return d
+		end
 	end
 	return nil
 end
@@ -157,21 +188,54 @@ local function hideHighlightOn(buyHost: GuiObject)
 	end
 end
 
+local function warnMissingOnce(context: string)
+	if missingTemplateWarned then
+		return
+	end
+	missingTemplateWarned = true
+	warn("[MainGradientButtons]", context, "— add UIGradient Purchased under Main or Main.GameGradients")
+end
+
+local function ensureTemplate(main: ScreenGui?): UIGradient?
+	if purchasedTemplate and purchasedTemplate.Parent then
+		return purchasedTemplate
+	end
+	if main then
+		local found = findPurchasedTemplate(main)
+		if found then
+			purchasedTemplate = found
+			found.Enabled = false
+			return found
+		end
+	end
+	local plr = Players.LocalPlayer
+	local pg = plr and plr:FindFirstChildOfClass("PlayerGui")
+	local gui = pg and pg:FindFirstChild("Main")
+	if gui and gui:IsA("ScreenGui") then
+		local found = findPurchasedTemplate(gui)
+		if found then
+			purchasedTemplate = found
+			found.Enabled = false
+			return found
+		end
+	end
+	return nil
+end
+
 function MainGradientButtons.init(main: ScreenGui)
 	local purchased = findPurchasedTemplate(main)
 	if not purchased then
 		local gradientsFolder = main:WaitForChild("GameGradients", 8)
 		if gradientsFolder then
 			local nested = gradientsFolder:WaitForChild("Purchased", 5)
-			if nested and nested:IsA("UIGradient") then
-				purchased = nested
-			end
+			purchased = asPurchasedGradient(nested)
 		end
 		if not purchased then
 			local direct = main:WaitForChild("Purchased", 5)
-			if direct and direct:IsA("UIGradient") then
-				purchased = direct
-			end
+			purchased = asPurchasedGradient(direct)
+		end
+		if not purchased then
+			purchased = findPurchasedTemplate(main)
 		end
 	end
 	if purchased then
@@ -179,7 +243,7 @@ function MainGradientButtons.init(main: ScreenGui)
 		purchased.Enabled = false
 	else
 		purchasedTemplate = nil
-		warn("[MainGradientButtons] Purchased UIGradient missing under Main or Main.GameGradients")
+		warnMissingOnce("Purchased UIGradient missing under Main or Main.GameGradients")
 	end
 end
 
@@ -213,16 +277,28 @@ function MainGradientButtons.applyDefault(buyHost: GuiObject)
 end
 
 function MainGradientButtons.applyPurchasedGradient(buyHost: GuiObject)
-	if not purchasedTemplate then
-		warn("[MainGradientButtons] applyPurchasedGradient skipped — template missing")
+	local template = ensureTemplate(nil)
+	if not template then
+		warnMissingOnce("applyPurchasedGradient skipped — template missing")
 		return
 	end
-	applyTemplateToTargets(buyHost, purchasedTemplate, PURCHASED_CLONE)
+	applyTemplateToTargets(buyHost, template, PURCHASED_CLONE)
 end
 
 function MainGradientButtons.applyPurchased(buyHost: GuiObject, text: string?)
-	if not purchasedTemplate then
-		warn("[MainGradientButtons] applyPurchased skipped — template missing")
+	local template = ensureTemplate(nil)
+	if not template then
+		-- Still flip label / hide robux so purchased state is readable without gradient.
+		warnMissingOnce("applyPurchased skipped — template missing")
+		setPriceRobuxIconsVisible(buyHost, false)
+		local label = findBuyTextLabel(buyHost)
+		if label then
+			if purchasedTextByHost[buyHost] == nil then
+				purchasedTextByHost[buyHost] = label.Text
+			end
+			label.Text = text or "Purchased"
+		end
+		hideHighlightOn(buyHost)
 		return
 	end
 	MainGradientButtons.applyPurchasedGradient(buyHost)

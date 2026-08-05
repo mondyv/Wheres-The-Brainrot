@@ -623,6 +623,7 @@ end
 
 local function init()
 	local main = PlayerGuiMain.ensure(player)
+	MainGradientButtons.init(main)
 	if not main then
 		warn("[StoreController] Main ScreenGui missing")
 		return

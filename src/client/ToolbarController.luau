@@ -3125,7 +3125,7 @@ local ToolbarController = {}
 		end
 	end
 
-	-- Click inventory row: place on hotbar if needed, then equip (no drag required).
+	-- Click inventory row: place on hotbar if free, otherwise equip from bag (no hotbar required).
 	local function requestEquipFromBackpack(listIdx: number)
 		if not canUseToolbar then
 			return
@@ -3151,10 +3151,47 @@ local ToolbarController = {}
 
 		if uiSlot then
 			setHotbarSelection(uiSlot)
+		else
+			-- Hotbar full — clear selection ring; server still force-equips from bag.
+			setHotbarSelection(nil, false)
 		end
 		requestEquipBrainrotSlot(listIdx, true)
 		task.defer(rebuildSlots)
 		task.delay(0.15, rebuildSlots)
+	end
+
+	-- Lucky blocks / extra tools parked in the bag: tap to equip without a hotbar cell.
+	local function requestEquipFromBackpackExtra(tool: Tool)
+		if not canUseToolbar then
+			return
+		end
+		if not tool.Parent then
+			return
+		end
+		local hum = getHumanoid()
+		if not hum then
+			return
+		end
+		local char = player.Character
+		local equipped = char and char:FindFirstChildOfClass("Tool")
+		if equipped == tool then
+			hum:UnequipTools()
+			setHotbarSelection(nil, false)
+			task.defer(rebuildSlots)
+			return
+		end
+		-- Prefer a free hotbar pin when available so the slot ring tracks equip.
+		local freeSlot = firstEmptyHotbarSlot(nil)
+		if freeSlot and slotCanAcceptExtraToolDrop(freeSlot) then
+			unparkExtraToolToHotbar(tool, freeSlot)
+			setHotbarSelection(freeSlot)
+		else
+			setHotbarSelection(nil, false)
+		end
+		hum:EquipTool(tool)
+		UIInteractionSounds.playClick()
+		task.defer(rebuildSlots)
+		refreshParkedExtraToolsUI()
 	end
 
 	local function wireBrainrotBackpackEquips()
@@ -4527,6 +4564,8 @@ local ToolbarController = {}
 			if (rawEnd - pnd.start).Magnitude < DRAG_THRESHOLD_PX then
 				if pnd.kind == "backpack" then
 					requestEquipFromBackpack(pnd.idx)
+				elseif pnd.kind == "backpack_extra" and pnd.tool then
+					requestEquipFromBackpackExtra(pnd.tool :: Tool)
 				end
 				clearDragGhost()
 				return

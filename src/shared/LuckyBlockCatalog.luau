@@ -4,6 +4,8 @@
 	  • folder name under ReplicatedStorage["Lucky Blocks"]["lucky blocks"]
 	  • default visual variant Model
 	  • brainrot rarity roll weights when opened
+	  • Index rarity accent (indexRarity) — matches block identity / color, not
+	    necessarily the single highest drop weight
 	  • Index icon paths under ["Lucky Block Icons"].Normal / .Rainbow
 
 	Rarity ids match Brainrots / StoreConfig steal tables.
@@ -18,6 +20,8 @@ export type BlockDef = {
 	variant: string?, -- child Model name (nil = first Model child)
 	displayName: string,
 	tier: number, -- 1 = weakest … higher = better (bush progression)
+	-- Index / UI rarity color (must match BrainrotHeaderStyle keys).
+	indexRarity: string,
 	drops: { [string]: number }, -- rarity → weight
 	-- ReplicatedStorage["Lucky Blocks"]["Lucky Block Icons"].Normal[iconFolder]
 	iconFolder: string?,
@@ -25,14 +29,16 @@ export type BlockDef = {
 	iconChild: string?,
 }
 
--- Ordered weak → strong. Each block has a clear main pool + a small jackpot
--- (usually ~3–8%) at the next rarity so opens stay rewarding without feeling identical.
+-- Ordered weak → strong. Visuals / indexRarity align with rarity colors:
+-- uncommon → starter/troll, rare → neon, epic → purple/1, mythic → 67,
+-- legendary → yellow/heart, godly → blue, secret → transparent/star/ruby…
 local BLOCKS: { BlockDef } = {
 	{
 		id = "Starter Lucky Block",
 		variant = "basic",
 		displayName = "Starter Lucky Block",
 		tier = 1,
+		indexRarity = "uncommon",
 		drops = { uncommon = 62, rare = 33, epic = 5 },
 		iconFolder = "Starter Lucky Block",
 		iconChild = "Basic Lucky Block",
@@ -42,6 +48,7 @@ local BLOCKS: { BlockDef } = {
 		variant = "troll",
 		displayName = "Troll Lucky Block",
 		tier = 2,
+		indexRarity = "uncommon",
 		drops = { uncommon = 50, rare = 35, epic = 12, mythic = 3 },
 		iconFolder = "Troll Lucky Block",
 		iconChild = "Troll Lucky Block",
@@ -51,6 +58,7 @@ local BLOCKS: { BlockDef } = {
 		variant = "neon",
 		displayName = "Neon Lucky Block",
 		tier = 3,
+		indexRarity = "rare",
 		drops = { rare = 58, epic = 37, mythic = 5 },
 		iconFolder = "Neon Lucky Block",
 		iconChild = "Neon Lucky Block",
@@ -60,7 +68,8 @@ local BLOCKS: { BlockDef } = {
 		variant = "1",
 		displayName = "One Lucky Block",
 		tier = 4,
-		drops = { rare = 28, epic = 62, mythic = 8, legendary = 2 },
+		indexRarity = "epic",
+		drops = { rare = 22, epic = 62, mythic = 14, legendary = 2 },
 		iconFolder = "1 Lucky Block",
 		iconChild = "1 Lucky Block",
 	},
@@ -69,7 +78,9 @@ local BLOCKS: { BlockDef } = {
 		variant = "67",
 		displayName = "Mythic Lucky Block",
 		tier = 5,
-		drops = { rare = 22, epic = 68, mythic = 10 },
+		indexRarity = "mythic",
+		-- Named mythic → mythic-primary pool (was epic-heavy before).
+		drops = { epic = 18, mythic = 70, legendary = 12 },
 		iconFolder = "Mythic Lucky Block",
 		iconChild = "67 Lucky Block",
 	},
@@ -78,6 +89,7 @@ local BLOCKS: { BlockDef } = {
 		variant = "purple",
 		displayName = "Purple Lucky Block",
 		tier = 6,
+		indexRarity = "epic",
 		drops = { epic = 58, mythic = 36, legendary = 6 },
 		iconFolder = "Purple Lucky Block",
 		iconChild = "Purple Lucky Block",
@@ -87,16 +99,19 @@ local BLOCKS: { BlockDef } = {
 		variant = "Yellow",
 		displayName = "Yellow Lucky Block",
 		tier = 7,
-		drops = { epic = 30, mythic = 60, legendary = 10 },
+		indexRarity = "legendary",
+		drops = { epic = 18, mythic = 42, legendary = 40 },
 		iconFolder = "Yellow Lucky Block",
 		iconChild = "Yellow Lucky Block",
 	},
 	{
+		-- Blue cube = godly tier (not uncommon).
 		id = "Godly Luckyblock",
 		variant = "blue",
 		displayName = "Godly Lucky Block",
 		tier = 8,
-		drops = { epic = 18, mythic = 70, legendary = 12 },
+		indexRarity = "brainrot god",
+		drops = { mythic = 22, legendary = 33, ["brainrot god"] = 45 },
 		iconFolder = "Godly Lucky Block",
 		iconChild = "Blue Lucky Block",
 	},
@@ -105,7 +120,8 @@ local BLOCKS: { BlockDef } = {
 		variant = "Heart",
 		displayName = "Heart Lucky Block",
 		tier = 9,
-		drops = { mythic = 42, legendary = 48, ["brainrot god"] = 7, epic = 3 },
+		indexRarity = "legendary",
+		drops = { mythic = 35, legendary = 52, ["brainrot god"] = 10, epic = 3 },
 		iconFolder = "Heart Lucky Block",
 		iconChild = "Heart Lucky Block",
 	},
@@ -114,7 +130,8 @@ local BLOCKS: { BlockDef } = {
 		variant = "chamber",
 		displayName = "Chamber Lucky Block",
 		tier = 10,
-		drops = { mythic = 32, legendary = 50, ["brainrot god"] = 14, secret = 4 },
+		indexRarity = "brainrot god",
+		drops = { mythic = 28, legendary = 42, ["brainrot god"] = 24, secret = 6 },
 		iconFolder = "Latern Lucky Block",
 		iconChild = "Latern Lucky Block",
 	},
@@ -123,7 +140,8 @@ local BLOCKS: { BlockDef } = {
 		variant = "rainbow",
 		displayName = "Rainbow Lucky Block",
 		tier = 11,
-		drops = { mythic = 18, legendary = 52, ["brainrot god"] = 24, secret = 6 },
+		indexRarity = "brainrot god",
+		drops = { mythic = 16, legendary = 40, ["brainrot god"] = 36, secret = 8 },
 		iconFolder = "Rainbow Lucky Block",
 		iconChild = "Rainbow Lucky Block",
 	},
@@ -132,7 +150,8 @@ local BLOCKS: { BlockDef } = {
 		variant = "transparent",
 		displayName = "Secret Lucky Block",
 		tier = 12,
-		drops = { legendary = 40, ["brainrot god"] = 35, secret = 18, mythic = 7 },
+		indexRarity = "secret",
+		drops = { legendary = 28, ["brainrot god"] = 32, secret = 40 },
 		iconFolder = "Secret Lucky Block",
 		iconChild = "Transparent Lucky Block",
 	},
@@ -141,7 +160,8 @@ local BLOCKS: { BlockDef } = {
 		variant = "star rainbow",
 		displayName = "Star Lucky Block",
 		tier = 13,
-		drops = { legendary = 22, ["brainrot god"] = 48, secret = 30 },
+		indexRarity = "secret",
+		drops = { legendary = 18, ["brainrot god"] = 42, secret = 40 },
 		iconFolder = "Star Lucky Block",
 		iconChild = "Star Lucky Block",
 	},
@@ -150,7 +170,8 @@ local BLOCKS: { BlockDef } = {
 		variant = "red ruby",
 		displayName = "Ruby Lucky Block",
 		tier = 14,
-		drops = { legendary = 15, ["brainrot god"] = 35, secret = 50 },
+		indexRarity = "secret",
+		drops = { legendary = 12, ["brainrot god"] = 33, secret = 55 },
 		iconFolder = "Lucky Block",
 		iconChild = "Red Lucky Block",
 	},
@@ -159,7 +180,8 @@ local BLOCKS: { BlockDef } = {
 		variant = "1 opposite",
 		displayName = "Opposite Lucky Block",
 		tier = 15,
-		drops = { ["brainrot god"] = 38, secret = 62 },
+		indexRarity = "secret",
+		drops = { ["brainrot god"] = 35, secret = 65 },
 		iconFolder = "Opposite Lucky Block",
 		iconChild = "Opposite Lucky Block",
 	},
@@ -259,11 +281,14 @@ function M.formatDropsMultiline(id: string): string
 	return table.concat(parts, "\n")
 end
 
--- Highest-weight drop rarity — used for Index row accent styling.
+-- Index / UI rarity accent for this block (explicit), falling back to top drop weight.
 function M.primaryDropRarity(id: string): string
 	local def = byId[id]
 	if not def then
 		return "common"
+	end
+	if typeof(def.indexRarity) == "string" and def.indexRarity ~= "" then
+		return def.indexRarity
 	end
 	local rows = sortedDropRows(def)
 	if #rows == 0 then
@@ -369,18 +394,26 @@ function M.resolveIconAssetId(blockId: string): string
 		if not style then
 			continue
 		end
-		local aliases = if styleName == "Rainbow" then rainbowFolderAliases else { folderName }
-		for _, alias in aliases do
-			local group = style:FindFirstChild(alias)
-			if group then
-				local tex = resolveFromIconGroup(group, preferred)
-				if tex ~= "" then
-					return tex
+		-- Exact folder match first (avoids Starter accidentally resolving Blue).
+		local group = style:FindFirstChild(folderName)
+		if group then
+			local tex = resolveFromIconGroup(group, preferred)
+			if tex ~= "" then
+				return tex
+			end
+		end
+		for _, alias in rainbowFolderAliases do
+			if alias ~= folderName then
+				local alt = style:FindFirstChild(alias)
+				if alt then
+					local tex = resolveFromIconGroup(alt, preferred)
+					if tex ~= "" then
+						return tex
+					end
 				end
 			end
 		end
 	end
-
 	return ""
 end
 

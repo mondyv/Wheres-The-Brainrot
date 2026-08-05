@@ -18,113 +18,128 @@ export type BlockDef = {
 	drops: { [string]: number }, -- rarity → weight
 }
 
--- Ordered weak → strong for docs / admin lists.
--- Each pool keeps its main tiers, plus a small jackpot chance (~3–8%) one step up.
+-- Ordered weak → strong. Each block has a clear main pool + a small jackpot
+-- (usually ~3–8%) at the next rarity so opens stay rewarding without feeling identical.
 M.BLOCKS: { BlockDef } = {
 	{
 		id = "Starter Lucky Block",
 		variant = "basic",
 		displayName = "Starter Lucky Block",
 		tier = 1,
-		drops = { uncommon = 57, rare = 38, epic = 5 },
+		-- Mostly uncommon; rare common; tiny epic jackpot.
+		drops = { uncommon = 62, rare = 33, epic = 5 },
 	},
 	{
 		id = "troll",
 		variant = "troll",
 		displayName = "Troll Lucky Block",
 		tier = 2,
-		drops = { uncommon = 42, rare = 42, epic = 12, mythic = 4 },
+		-- Chaotic low pool: uncommon heavy, then rare, small epic, tiny mythic.
+		drops = { uncommon = 50, rare = 35, epic = 12, mythic = 3 },
 	},
 	{
 		id = "neon",
 		variant = "neon",
 		displayName = "Neon Lucky Block",
 		tier = 3,
-		drops = { rare = 52, epic = 42, mythic = 6 },
+		-- Rare-first opener into epic; tiny mythic.
+		drops = { rare = 58, epic = 37, mythic = 5 },
 	},
 	{
 		id = "1",
 		variant = "1",
 		displayName = "One Lucky Block",
 		tier = 4,
-		drops = { rare = 42, epic = 52, mythic = 6 },
+		-- Epic-first (flip of Neon); tiny mythic + razor legendary.
+		drops = { rare = 28, epic = 62, mythic = 8, legendary = 2 },
 	},
 	{
 		id = "Mythic Lucky Block",
 		variant = "67",
 		displayName = "Mythic Lucky Block",
 		tier = 5,
-		drops = { rare = 32, epic = 60, mythic = 8 },
+		-- Epic workhorse with a real mythic tease.
+		drops = { rare = 22, epic = 68, mythic = 10 },
 	},
 	{
 		id = "purple",
 		variant = "purple",
 		displayName = "Purple Lucky Block",
 		tier = 6,
-		drops = { epic = 52, mythic = 42, legendary = 6 },
+		-- Epic → mythic bridge; small legendary.
+		drops = { epic = 58, mythic = 36, legendary = 6 },
 	},
 	{
 		id = "yellow",
 		variant = "Yellow",
 		displayName = "Yellow Lucky Block",
 		tier = 7,
-		drops = { epic = 42, mythic = 52, legendary = 6 },
+		-- Mythic-leaning (unlike Purple); better legendary tease.
+		drops = { epic = 30, mythic = 60, legendary = 10 },
 	},
 	{
 		id = "Godly Luckyblock",
 		variant = "blue",
 		displayName = "Godly Lucky Block",
 		tier = 8,
-		drops = { epic = 32, mythic = 60, legendary = 8 },
+		-- Mythic main; leftover epic; solid legendary jackpot.
+		drops = { epic = 18, mythic = 70, legendary = 12 },
 	},
 	{
 		id = "heart",
 		variant = "Heart",
 		displayName = "Heart Lucky Block",
 		tier = 9,
-		drops = { epic = 18, mythic = 48, legendary = 28, ["brainrot god"] = 6 },
+		-- Legendary enters the main pool; tiny brainrot god.
+		drops = { mythic = 42, legendary = 48, ["brainrot god"] = 7, epic = 3 },
 	},
 	{
 		id = "chamber",
 		variant = "chamber",
 		displayName = "Chamber Lucky Block",
 		tier = 10,
-		drops = { mythic = 38, legendary = 42, ["brainrot god"] = 15, secret = 5 },
+		-- Legendary + mythic; brainrot god secondary; tiny secret.
+		drops = { mythic = 32, legendary = 50, ["brainrot god"] = 14, secret = 4 },
 	},
 	{
 		id = "rainbow",
 		variant = "rainbow",
 		displayName = "Rainbow Lucky Block",
 		tier = 11,
-		drops = { mythic = 28, legendary = 47, ["brainrot god"] = 20, secret = 5 },
+		-- God-leaning vs Chamber; still mostly legendary.
+		drops = { mythic = 18, legendary = 52, ["brainrot god"] = 24, secret = 6 },
 	},
 	{
 		id = "Secret Lucky Block",
 		variant = "transparent",
 		displayName = "Secret Lucky Block",
 		tier = 12,
-		drops = { mythic = 22, legendary = 42, ["brainrot god"] = 22, secret = 14 },
+		-- First block where secret is a real outcome (not just a tease).
+		drops = { legendary = 40, ["brainrot god"] = 35, secret = 18, mythic = 7 },
 	},
 	{
 		id = "star",
 		variant = "star rainbow",
 		displayName = "Star Lucky Block",
 		tier = 13,
-		drops = { legendary = 32, ["brainrot god"] = 38, secret = 30 },
+		-- Brainrot god primary; secret strong; less legendary filler.
+		drops = { legendary = 22, ["brainrot god"] = 48, secret = 30 },
 	},
 	{
 		id = "ruby",
 		variant = "red ruby",
 		displayName = "Ruby Lucky Block",
 		tier = 14,
-		drops = { legendary = 22, ["brainrot god"] = 40, secret = 38 },
+		-- Secret hunter (flip of Star's god focus).
+		drops = { legendary = 15, ["brainrot god"] = 35, secret = 50 },
 	},
 	{
 		id = "1 opposite",
 		variant = "1 opposite",
 		displayName = "Opposite Lucky Block",
 		tier = 15,
-		drops = { ["brainrot god"] = 42, secret = 58 },
+		-- Top end only: secret-heavy with brainrot god.
+		drops = { ["brainrot god"] = 38, secret = 62 },
 	},
 }
 

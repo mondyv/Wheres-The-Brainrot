@@ -381,12 +381,12 @@ end)
 task.spawn(function()
 	local folder = findWebsFolder()
 	if not folder then
-		local map = Workspace:WaitForChild("Map", 120)
-		local webs = map and map:WaitForChild("Webs", 120)
+		local map = Workspace:WaitForChild("Map", 30)
+		local webs = map and map:WaitForChild("Webs", 5)
 		folder = webs
 	end
 	if not folder then
-		warn("[WebTrap] Workspace.Map.Webs not found — web traps disabled")
+		-- Webs were removed from the map — traps stay off quietly.
 		return
 	end
 	wireWebsRoot(folder)

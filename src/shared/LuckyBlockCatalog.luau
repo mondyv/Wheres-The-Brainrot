@@ -20,7 +20,7 @@ export type BlockDef = {
 
 -- Ordered weak → strong. Each block has a clear main pool + a small jackpot
 -- (usually ~3–8%) at the next rarity so opens stay rewarding without feeling identical.
-M.BLOCKS: { BlockDef } = {
+local BLOCKS: { BlockDef } = {
 	{
 		id = "Starter Lucky Block",
 		variant = "basic",
@@ -142,6 +142,8 @@ M.BLOCKS: { BlockDef } = {
 		drops = { ["brainrot god"] = 38, secret = 62 },
 	},
 }
+
+M.BLOCKS = BLOCKS
 
 local byId: { [string]: BlockDef } = {}
 for _, def in M.BLOCKS do

@@ -181,15 +181,21 @@ local function endLoadingStreamingGuard(player: Player?)
 	end
 	streamingGuardActive = false
 	-- Always restore to gameplay radii — ignore Studio's saved 256/512.
+	-- Use rawget: some Studio builds error on missing StreamingMinRadius even inside typeof().
 	local ok, err = pcall(function()
 		local ws = Workspace :: any
-		if typeof(ws.StreamingMinRadius) == "number" and typeof(ws.StreamingTargetRadius) == "number" then
+		local minR = rawget(ws, "StreamingMinRadius")
+		local targetR = rawget(ws, "StreamingTargetRadius")
+		if typeof(minR) == "number" and typeof(targetR) == "number" then
 			ws.StreamingMinRadius = GAMEPLAY_STREAM_MIN_RADIUS
 			ws.StreamingTargetRadius = GAMEPLAY_STREAM_TARGET_RADIUS
 		end
 	end)
 	if not ok then
-		warn("[LoadingScreenController] streaming radius restore failed:", err)
+		-- Silent on unsupported builds; radii simply stay as-is.
+		if typeof(err) == "string" and not string.find(err, "StreamingMinRadius", 1, true) then
+			warn("[LoadingScreenController] streaming radius restore failed:", err)
+		end
 	end
 	savedStreamingMinRadius = nil
 	savedStreamingTargetRadius = nil

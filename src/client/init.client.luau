@@ -301,7 +301,8 @@ task.defer(function()
 	end)
 
 	task.spawn(function()
-		task.wait(6)
+		-- Warm assigned plot ASAP so join teleport lands on streamed collision.
+		task.wait(0.25)
 		local warmOk, warmErr = pcall(function()
 			require(script.SpawnAreaWarmup).runAsync()
 		end)

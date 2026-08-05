@@ -2,6 +2,8 @@
 --[[
 	PlotPlayerSpawn (server)
 	Teleports players onto their assigned plot's first floor on join and respawn.
+	Streams the destination first and retries briefly so tight Streaming radii
+	don't drop the character through an unstreamed floor.
 --]]
 
 local Players = game:GetService("Players")
@@ -21,7 +23,11 @@ local function waitForAssignedPlot(player: Player, character: Model): Instance?
 		end
 		local plot = PlotPaths.findPlotForAssignedSlot(player)
 		if plot and plot.Parent then
-			return plot
+			-- Prefer a plot that already has a Story/Spawn so we don't teleport onto air.
+			local spawnCf = PlotSpawnUtil.findFirstFloorSpawnCFrame(plot)
+			if spawnCf then
+				return plot
+			end
 		end
 		task.wait(0.1)
 	end
@@ -50,7 +56,7 @@ local function teleportToPlotSpawn(player: Player, character: Model)
 	if reviveCf then
 		local targetPos = reviveCf.Position
 		-- Keep attrs briefly so late plot hooks don't overwrite the land revive.
-		PlotSpawnUtil.teleportCharacterToCFrame(character, reviveCf)
+		PlotSpawnUtil.streamAndTeleportWithRetries(player, character, reviveCf)
 		task.delay(2.5, function()
 			if not player.Parent then
 				return
@@ -75,12 +81,16 @@ local function teleportToPlotSpawn(player: Player, character: Model)
 		return
 	end
 
-	PlotSpawnUtil.teleportCharacterToCFrame(character, spawnCf)
+	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, spawnCf)
 end
 
 local function onCharacter(player: Player, character: Model)
 	task.spawn(function()
+		-- Brief yield so HumanoidRootPart exists; streaming retry handles the rest.
 		task.wait(0.05)
+		if not character.Parent or not player.Parent then
+			return
+		end
 		teleportToPlotSpawn(player, character)
 	end)
 end

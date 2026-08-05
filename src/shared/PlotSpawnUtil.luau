@@ -486,7 +486,7 @@ function PlotSpawnUtil.teleportCharacterToCFrame(character: Model, spawnCf: CFra
 		hrp = character:WaitForChild("HumanoidRootPart", 8) :: BasePart?
 	end
 	if not hrp then
-		return
+		return false
 	end
 
 	-- Move via HRP so welded head-carries stay in the character assembly.
@@ -494,6 +494,54 @@ function PlotSpawnUtil.teleportCharacterToCFrame(character: Model, spawnCf: CFra
 	hrp.CFrame = spawnCf
 	hrp.AssemblyLinearVelocity = Vector3.zero
 	hrp.AssemblyAngularVelocity = Vector3.zero
+	return true
+end
+
+-- Stream the destination, teleport, then re-apply for a short window so the
+-- character doesn't fall through an unstreamed plot floor (tight client radii).
+function PlotSpawnUtil.streamAndTeleportWithRetries(player: Player, character: Model, spawnCf: CFrame)
+	if Workspace.StreamingEnabled then
+		local ok, err = pcall(function()
+			player:RequestStreamAroundAsync(spawnCf.Position, 6)
+		end)
+		if not ok then
+			warn("[PlotSpawnUtil] RequestStreamAroundAsync failed:", err)
+		end
+	end
+
+	PlotSpawnUtil.teleportCharacterToCFrame(character, spawnCf)
+
+	task.spawn(function()
+		for _ = 1, 12 do
+			task.wait(0.2)
+			if not player.Parent then
+				return
+			end
+			local char = player.Character
+			if not char or char ~= character or not char.Parent then
+				return
+			end
+			local humanoid = char:FindFirstChildOfClass("Humanoid")
+			if not humanoid or humanoid.Health <= 0 then
+				return
+			end
+			local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+			if hrp then
+				local drift = (hrp.Position - spawnCf.Position).Magnitude
+				-- Still falling / slid far from spawn pad — snap again.
+				if drift > 8 or hrp.Position.Y < spawnCf.Position.Y - 12 then
+					PlotSpawnUtil.teleportCharacterToCFrame(char, spawnCf)
+				elseif drift <= 8 then
+					-- Settled near spawn; one final zero-velocity settle then stop.
+					hrp.AssemblyLinearVelocity = Vector3.zero
+					hrp.AssemblyAngularVelocity = Vector3.zero
+					return
+				end
+			else
+				PlotSpawnUtil.teleportCharacterToCFrame(char, spawnCf)
+			end
+		end
+	end)
 end
 
 return PlotSpawnUtil

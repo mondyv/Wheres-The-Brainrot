@@ -22,11 +22,13 @@ local Workspace = game:GetService("Workspace")
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
 local AnalyticsFunnelService = require(Modules:WaitForChild("AnalyticsFunnelService"))
+local IndexService = require(Modules:WaitForChild("IndexService"))
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StoreConfig = require(Shared:WaitForChild("StoreConfig"))
 local CutsceneConfig = require(Shared:WaitForChild("LuckyBlockCutsceneConfig"))
 local BrainrotCarryVisual = require(Shared:WaitForChild("BrainrotCarryVisual"))
 local LuckyBlockCatalog = require(Shared:WaitForChild("LuckyBlockCatalog"))
+local IndexConfig = require(Shared:WaitForChild("IndexConfig"))
 
 local CUTSCENE_TOTAL_SEC = CutsceneConfig.totalDurationSec()
 local REVEAL_SPAWN_AT_SEC = CutsceneConfig.revealSpawnAtSec()
@@ -46,6 +48,33 @@ local function weightsForKind(kind: string?): { [string]: number }
 		return RARITY_WEIGHTS_BY_KIND[kind]
 	end
 	return RARITY_WEIGHTS
+end
+
+local function recordLuckyBlockIndexUnlock(player: Player, blockKind: string?)
+	if typeof(blockKind) ~= "string" or blockKind == "" then
+		return
+	end
+	local kind = blockKind
+	-- Normalize legacy alias so Index keys stay stable.
+	if kind == "star rainbow" then
+		kind = "star"
+	end
+	local isNew = IndexService.recordUnlock(player, kind, IndexConfig.LUCKY_BLOCK_TAB)
+	if not isNew then
+		return
+	end
+	local remotes = ReplicatedStorage:FindFirstChild("IndexRemotes")
+	local unlockedRE = remotes and remotes:FindFirstChild("IndexUnlocked")
+	if unlockedRE and unlockedRE:IsA("RemoteEvent") then
+		local display = LuckyBlockCatalog.displayName(kind)
+		unlockedRE:FireClient(player, {
+			name = display,
+			mutation = IndexConfig.LUCKY_BLOCK_TAB,
+			unlockName = kind,
+			goldenCount = IndexService.getGoldenCount(player),
+			questComplete = player:GetAttribute("IndexGoldenQuestComplete") == true,
+		})
+	end
 end
 
 -- ── Remotes ─────────────────────────────────────────────────────────────────
@@ -793,6 +822,7 @@ local function beginLuckyBlockCutscene(
 			if not okGrant then
 				warn("[LuckyBlock] GrantBrainrotAndEquip failed for", player.Name, ":", errGrant)
 			else
+				recordLuckyBlockIndexUnlock(player, blockKind)
 				local timEvt = ServerStorage:FindFirstChild("TimCheeseLuckyBlockOpened")
 				if timEvt and timEvt:IsA("BindableEvent") then
 					timEvt:Fire(player)

@@ -3,6 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local IndexConfig = require(ReplicatedStorage.Shared.IndexConfig)
+local LuckyBlockCatalog = require(ReplicatedStorage.Shared.LuckyBlockCatalog)
 local RebirthConfig = require(ReplicatedStorage.Shared.RebirthConfig)
 local Brainrots = require(script.Parent:WaitForChild("Brainrots"))
 
@@ -14,6 +15,7 @@ local unlockedByPlayer: { [Player]: UnlockMap } = {}
 local goldenNamesByPlayer: { [Player]: { [string]: boolean } } = {}
 
 local brainrotsFolder: Folder? = nil
+local luckyBlocksListFolder: Folder? = nil
 
 local function getBrainrotsFolder(): Folder?
 	if brainrotsFolder and brainrotsFolder.Parent then
@@ -53,9 +55,43 @@ local function findVariantTemplate(brainrotName: string, mutationId: string): Mo
 end
 
 local function pickIconFromModel(model: Model): string
+	local function readIconNode(node: Instance): string
+		if node:IsA("ImageLabel") and node.Image ~= "" then
+			return node.Image
+		end
+		if node:IsA("ImageButton") and node.Image ~= "" then
+			return node.Image
+		end
+		if node:IsA("Decal") and node.Texture ~= "" then
+			return node.Texture
+		end
+		return ""
+	end
+	local iconNode = model:FindFirstChild("Icon")
+	if iconNode then
+		local tex = readIconNode(iconNode)
+		if tex ~= "" then
+			return tex
+		end
+		for _, d in iconNode:GetDescendants() do
+			local tex = readIconNode(d)
+			if tex ~= "" then
+				return tex
+			end
+		end
+	end
 	for _, d in model:GetDescendants() do
-		if d:IsA("ImageLabel") and d.Image ~= "" then
-			return d.Image
+		if d.Name == "Icon" then
+			local tex = readIconNode(d)
+			if tex ~= "" then
+				return tex
+			end
+		end
+	end
+	for _, d in model:GetDescendants() do
+		local tex = readIconNode(d)
+		if tex ~= "" then
+			return tex
 		end
 	end
 	return ""
@@ -72,6 +108,101 @@ function M.getIconFor(brainrotName: string, mutationId: string): string
 	local fallback = findVariantTemplate(brainrotName, "normal")
 	if fallback then
 		return pickIconFromModel(fallback)
+	end
+	return ""
+end
+
+local function getLuckyBlocksList(): Folder?
+	if luckyBlocksListFolder and luckyBlocksListFolder.Parent then
+		return luckyBlocksListFolder
+	end
+	local root = ReplicatedStorage:FindFirstChild("Lucky Blocks")
+	if not root then
+		return nil
+	end
+	local list = root:FindFirstChild("lucky blocks") or root:FindFirstChild("Lucky Blocks")
+	if list and list:IsA("Folder") then
+		luckyBlocksListFolder = list
+		return list
+	end
+	return nil
+end
+
+local function firstModelChild(container: Instance): Model?
+	for _, c in ipairs(container:GetChildren()) do
+		if c:IsA("Model") then
+			return c
+		end
+	end
+	return nil
+end
+
+local function findLuckyBlockTemplate(blockId: string, variant: string?): Model?
+	local root = getLuckyBlocksList()
+	if not root then
+		return nil
+	end
+	local node: Instance? = root:FindFirstChild(blockId)
+	if not node then
+		for _, d in ipairs(root:GetDescendants()) do
+			if d.Name == blockId then
+				node = d
+				break
+			end
+		end
+	end
+	if not node then
+		return nil
+	end
+	local childModel = firstModelChild(node)
+	if childModel then
+		if typeof(variant) == "string" and variant ~= "" then
+			local exact = node:FindFirstChild(variant)
+			if exact and exact:IsA("Model") then
+				return exact
+			end
+			local lower = string.lower(variant)
+			for _, d in ipairs(node:GetDescendants()) do
+				if d:IsA("Model") and string.lower(d.Name) == lower then
+					return d
+				end
+			end
+		end
+		return childModel
+	end
+	if node:IsA("Model") then
+		return node :: Model
+	end
+	return nil
+end
+
+function M.getLuckyBlockIcon(blockId: string): string
+	local def = LuckyBlockCatalog.get(blockId)
+	local template = findLuckyBlockTemplate(blockId, if def then def.variant else nil)
+	if template then
+		local icon = pickIconFromModel(template)
+		if icon ~= "" then
+			return icon
+		end
+	end
+	-- Fallback: Lucky Block Icons folder
+	local root = ReplicatedStorage:FindFirstChild("Lucky Blocks")
+	local icons = root and root:FindFirstChild("Lucky Block Icons")
+	if icons then
+		local node = icons:FindFirstChild(blockId, true)
+		if node then
+			if node:IsA("ImageLabel") and node.Image ~= "" then
+				return node.Image
+			end
+			if node:IsA("ImageButton") and node.Image ~= "" then
+				return node.Image
+			end
+			for _, d in node:GetDescendants() do
+				if (d:IsA("ImageLabel") or d:IsA("ImageButton")) and d.Image ~= "" then
+					return d.Image
+				end
+			end
+		end
 	end
 	return ""
 end
@@ -231,6 +362,53 @@ function M.buildCatalog(): { { name: string, rarity: string, baseIncome: number 
 	return out
 end
 
+function M.packLuckyBlockStateForClient(player: Player): {
+	unlocked: { [string]: boolean },
+	goldenCount: number,
+	questComplete: boolean,
+	catalog: {
+		{
+			name: string,
+			displayName: string,
+			rarity: string,
+			baseIncome: number,
+			icon: string,
+			tier: number,
+			dropsSummary: string,
+			dropsMultiline: string,
+			kind: string,
+		}
+	},
+}
+	local unlockMap = M.getUnlockMap(player)
+	local unlocked: { [string]: boolean } = {}
+	for k, v in unlockMap do
+		if v then
+			unlocked[k] = true
+		end
+	end
+	local catalog = {}
+	for _, def in LuckyBlockCatalog.BLOCKS do
+		table.insert(catalog, {
+			name = def.id,
+			displayName = def.displayName,
+			rarity = LuckyBlockCatalog.primaryDropRarity(def.id),
+			baseIncome = 0,
+			icon = M.getLuckyBlockIcon(def.id),
+			tier = def.tier,
+			dropsSummary = LuckyBlockCatalog.formatDropsSummary(def.id),
+			dropsMultiline = LuckyBlockCatalog.formatDropsMultiline(def.id),
+			kind = "luckyblock",
+		})
+	end
+	return {
+		unlocked = unlocked,
+		goldenCount = M.getGoldenCount(player),
+		questComplete = player:GetAttribute("IndexGoldenQuestComplete") == true,
+		catalog = catalog,
+	}
+end
+
 function M.packStateForClient(
 	player: Player,
 	mutationId: string
@@ -240,6 +418,9 @@ function M.packStateForClient(
 	questComplete: boolean,
 	catalog: { { name: string, rarity: string, baseIncome: number, icon: string } },
 }
+	if mutationId == IndexConfig.LUCKY_BLOCK_TAB then
+		return M.packLuckyBlockStateForClient(player)
+	end
 	local unlockMap = M.getUnlockMap(player)
 	local unlocked: { [string]: boolean } = {}
 	for k, v in unlockMap do

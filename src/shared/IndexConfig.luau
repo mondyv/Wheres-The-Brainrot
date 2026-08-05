@@ -10,6 +10,8 @@ M.CASH_BOOST_MULT = 1.25
 
 M.MUTATION_TABS = { "normal", "golden", "diamond", "lava", "galaxy", "rainbow" }
 
+M.LUCKY_BLOCK_TAB = "luckyblock"
+
 M.TAB_BUTTON_NAME = {
 	normal = "Normal",
 	golden = "Gold",
@@ -26,6 +28,7 @@ M.TAB_DISPLAY_NAME = {
 	lava = "Lava",
 	galaxy = "Galaxy",
 	rainbow = "Rainbow",
+	luckyblock = "Lucky Blocks",
 }
 
 M.TAB_NOTIF_NAME = {
@@ -35,7 +38,10 @@ M.TAB_NOTIF_NAME = {
 	lava = "Notif Lava",
 	galaxy = "Notif Galaxy",
 	rainbow = "Notif Rainbow",
+	luckyblock = "Notif LuckyBlock",
 }
+
+M.HEADER_LUCKY_BLOCK_ICON = "Lucky Block Icon"
 
 M.RARITY_SORT = {
 	common = 1,

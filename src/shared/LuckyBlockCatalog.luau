@@ -180,23 +180,21 @@ function M.displayName(id: string): string
 	return if def then def.displayName else id
 end
 
-function M.formatDropsSummary(id: string): string
-	local def = byId[id]
-	if not def then
-		return "?"
-	end
-	local parts: { string } = {}
+local function sortedDropRows(def: BlockDef): { { name: string, w: number, pct: number } }
 	local total = 0
 	for _, w in def.drops do
 		total += w
 	end
+	local rows: { { name: string, w: number, pct: number } } = {}
 	if total <= 0 then
-		return "?"
+		return rows
 	end
-	-- Stable-ish order by weight desc.
-	local rows: { { name: string, w: number } } = {}
 	for name, w in def.drops do
-		table.insert(rows, { name = name, w = w })
+		table.insert(rows, {
+			name = name,
+			w = w,
+			pct = math.floor((w / total) * 100 + 0.5),
+		})
 	end
 	table.sort(rows, function(a, b)
 		if a.w ~= b.w then
@@ -204,11 +202,50 @@ function M.formatDropsSummary(id: string): string
 		end
 		return a.name < b.name
 	end)
-	for _, row in rows do
-		local pct = math.floor((row.w / total) * 100 + 0.5)
-		table.insert(parts, string.format("%s %d%%", row.name, pct))
+	return rows
+end
+
+function M.formatDropsSummary(id: string): string
+	local def = byId[id]
+	if not def then
+		return "?"
+	end
+	local parts: { string } = {}
+	for _, row in sortedDropRows(def) do
+		table.insert(parts, string.format("%s %d%%", row.name, row.pct))
+	end
+	if #parts == 0 then
+		return "?"
 	end
 	return table.concat(parts, ", ")
+end
+
+function M.formatDropsMultiline(id: string): string
+	local def = byId[id]
+	if not def then
+		return "?"
+	end
+	local parts: { string } = { "Drops:" }
+	for _, row in sortedDropRows(def) do
+		table.insert(parts, string.format("• %s  %d%%", row.name, row.pct))
+	end
+	if #parts == 1 then
+		return "?"
+	end
+	return table.concat(parts, "\n")
+end
+
+-- Highest-weight drop rarity — used for Index row accent styling.
+function M.primaryDropRarity(id: string): string
+	local def = byId[id]
+	if not def then
+		return "common"
+	end
+	local rows = sortedDropRows(def)
+	if #rows == 0 then
+		return "common"
+	end
+	return rows[1].name
 end
 
 return M

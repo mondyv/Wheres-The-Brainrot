@@ -14,6 +14,7 @@ local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local IndexConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("IndexConfig"))
+local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
@@ -58,6 +59,7 @@ local tabNotifInnerPulseTweens: { [string]: Tween } = {}
 local pendingTabNotifs: { [string]: boolean } = {}
 local tooltipLabel: TextLabel? = nil
 local tooltipGui: ScreenGui? = nil
+local luckyBlockHeaderBtn: GuiButton? = nil
 
 local selectedMutation = "normal"
 local catalogRows: { Frame } = {}
@@ -67,7 +69,7 @@ local questBarTween: Tween? = nil
 local rowHoverConns: { RBXScriptConnection } = {}
 local selectMutation: (mutationId: string) -> ()
 local stateCache: { [string]: any } = {}
-local sortedCatalogCache: { [string]: { { name: string, rarity: string, baseIncome: number, icon: string } } } = {}
+local sortedCatalogCache: { [string]: { any } } = {}
 local _gridMutation: string? = nil
 local rebuildToken = 0
 local ROW_BATCH_SIZE = 14
@@ -427,9 +429,22 @@ local function incomeForCatalog(entry: { name: string, rarity: string, baseIncom
 end
 
 local function sortCatalog(
-	catalog: { { name: string, rarity: string, baseIncome: number, icon: string? } },
+	catalog: { any },
 	mutationId: string
 )
+	if mutationId == IndexConfig.LUCKY_BLOCK_TAB then
+		table.sort(catalog, function(a, b)
+			local ta = if typeof(a.tier) == "number" then a.tier else 99
+			local tb = if typeof(b.tier) == "number" then b.tier else 99
+			if ta ~= tb then
+				return ta < tb
+			end
+			local na = if typeof(a.displayName) == "string" then a.displayName else a.name
+			local nb = if typeof(b.displayName) == "string" then b.displayName else b.name
+			return na < nb
+		end)
+		return
+	end
 	table.sort(catalog, function(a, b)
 		local ia = incomeForCatalog(a, mutationId)
 		local ib = incomeForCatalog(b, mutationId)
@@ -461,18 +476,25 @@ end
 
 local function populateRow(
 	row: Frame,
-	entry: { name: string, rarity: string, baseIncome: number, icon: string },
+	entry: any,
 	mutationId: string,
 	unlocked: boolean,
 	_animateRow: boolean?,
 	_rowIndex: number?,
 	_animStartedAt: number?
 )
+	local isLucky = mutationId == IndexConfig.LUCKY_BLOCK_TAB or entry.kind == "luckyblock"
+	local displayName = if typeof(entry.displayName) == "string" and entry.displayName ~= ""
+		then entry.displayName
+		elseif typeof(entry.name) == "string"
+		then entry.name
+		else "Lucky Block"
+
 	local frame = row:FindFirstChild("Frame") or row
 	local icon = frame:FindFirstChild("Icon", true)
-	if icon and icon:IsA("ImageLabel") then
-		if entry.icon ~= "" then
-			icon.Image = entry.icon
+	if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
+		if typeof(entry.icon) == "string" and entry.icon ~= "" then
+			(icon :: ImageLabel).Image = entry.icon
 		end
 		setBlackoutOnIcon(icon, not unlocked)
 	end
@@ -480,7 +502,7 @@ local function populateRow(
 	local nameLabel = frame:FindFirstChild("Name", true)
 	if nameLabel and nameLabel:IsA("TextLabel") then
 		if unlocked then
-			BrainrotHeaderStyle.setTextOnNode(nameLabel, entry.name)
+			BrainrotHeaderStyle.setTextOnNode(nameLabel, displayName)
 			nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 		else
 			nameLabel.Text = "???"
@@ -494,7 +516,11 @@ local function populateRow(
 		local rarityNode = info:FindFirstChild("Rarity", true)
 		if rarityNode then
 			if unlocked then
-				BrainrotHeaderStyle.applyRarityLabel(rarityNode, entry.rarity)
+				if isLucky then
+					BrainrotHeaderStyle.applyRarityLabel(rarityNode, entry.rarity or "epic")
+				else
+					BrainrotHeaderStyle.applyRarityLabel(rarityNode, entry.rarity)
+				end
 			else
 				BrainrotHeaderStyle.setTextOnNode(rarityNode, "???")
 				BrainrotHeaderStyle.selectGradient(rarityNode, nil)
@@ -503,7 +529,15 @@ local function populateRow(
 		local typeNode = info:FindFirstChild("Type", true)
 		if typeNode then
 			if unlocked then
-				BrainrotHeaderStyle.applyMutationLabel(typeNode, mutationId)
+				if isLucky then
+					BrainrotHeaderStyle.setTextOnNode(typeNode, "Lucky Block")
+					BrainrotHeaderStyle.selectGradient(typeNode, nil)
+					if typeNode:IsA("GuiObject") then
+						(typeNode :: GuiObject).Visible = true
+					end
+				else
+					BrainrotHeaderStyle.applyMutationLabel(typeNode, mutationId)
+				end
 			else
 				BrainrotHeaderStyle.setTextOnNode(typeNode, "???")
 				BrainrotHeaderStyle.selectGradient(typeNode, nil)
@@ -516,7 +550,11 @@ local function populateRow(
 		local strokeHost = decor:FindFirstChild("Highlight", true)
 		if strokeHost then
 			local rs = strokeHost:FindFirstChild("RarityStroke", true) or strokeHost
-			BrainrotHeaderStyle.applyRarityStroke(rs, entry.rarity)
+			if unlocked then
+				BrainrotHeaderStyle.applyRarityStroke(rs, entry.rarity)
+			else
+				BrainrotHeaderStyle.selectGradient(rs, nil)
+			end
 		end
 	end
 
@@ -524,35 +562,51 @@ local function populateRow(
 	local rowScale = getOrAddUIScale(rowHost)
 	rowScale.Scale = 1
 
-	if icon and icon:IsA("GuiObject") then
-		table.insert(
-			rowHoverConns,
-			icon.MouseEnter:Connect(function()
-				if not tooltipLabel then
-					return
-				end
+	-- Hover the whole entry box (not only the icon).
+	table.insert(
+		rowHoverConns,
+		rowHost.MouseEnter:Connect(function()
+			if not tooltipLabel then
+				return
+			end
+			if isLucky then
+				local tip = if typeof(entry.dropsMultiline) == "string" and entry.dropsMultiline ~= ""
+					then entry.dropsMultiline
+					elseif typeof(entry.name) == "string"
+					then LuckyBlockCatalog.formatDropsMultiline(entry.name)
+					else "?"
+				tooltipLabel.Text = tip
+				tooltipLabel.TextColor3 = Color3.fromRGB(255, 245, 210)
+			else
 				local rate = incomeForCatalog(entry, mutationId)
 				tooltipLabel.Text = BrainrotEconomy.formatCashShort(rate) .. "/s"
-				tooltipLabel.Visible = true
-				TweenService:Create(rowScale, ROW_HOVER_TWEEN, { Scale = 1.03 }):Play()
-			end)
-		)
-		table.insert(
-			rowHoverConns,
-			icon.MouseLeave:Connect(function()
-				if tooltipLabel then
-					tooltipLabel.Visible = false
-				end
-				TweenService:Create(rowScale, ROW_HOVER_TWEEN, { Scale = 1 }):Play()
-			end)
-		)
-	end
+				tooltipLabel.TextColor3 = Color3.fromRGB(220, 255, 230)
+			end
+			tooltipLabel.Visible = true
+			TweenService:Create(rowScale, ROW_HOVER_TWEEN, { Scale = 1.03 }):Play()
+		end)
+	)
+	table.insert(
+		rowHoverConns,
+		rowHost.MouseLeave:Connect(function()
+			if tooltipLabel then
+				tooltipLabel.Visible = false
+			end
+			TweenService:Create(rowScale, ROW_HOVER_TWEEN, { Scale = 1 }):Play()
+		end)
+	)
 end
 
 local function refreshQuest(goldenCount: number, questComplete: boolean)
 	if not questsFrame then
 		return
 	end
+	-- Golden quest is brainrot-mutation only.
+	if selectedMutation == IndexConfig.LUCKY_BLOCK_TAB then
+		questsFrame.Visible = false
+		return
+	end
+	questsFrame.Visible = true
 	local amount = progressAmount
 		or findLabel(questsFrame, { "Amount", "Collected", "ProgressText", "TextLabel" })
 	if amount then
@@ -590,16 +644,13 @@ local function clearGrid()
 	end
 end
 
-local function buildSortedCatalog(
-	catalog: { any },
-	mutationId: string
-): { { name: string, rarity: string, baseIncome: number, icon: string } }
+local function buildSortedCatalog(catalog: { any }, mutationId: string): { any }
 	local cached = sortedCatalogCache[mutationId]
 	if cached then
 		return cached
 	end
 
-	local list: { { name: string, rarity: string, baseIncome: number, icon: string } } = {}
+	local list: { any } = {}
 	for _, e in catalog do
 		if typeof(e) == "table" then
 			table.insert(list, e)
@@ -753,6 +804,19 @@ local function updateHeader()
 	end
 end
 
+local function applyLuckyBlockHeaderVisual(selected: boolean)
+	if not luckyBlockHeaderBtn then
+		return
+	end
+	applyTabVisual(luckyBlockHeaderBtn, selected)
+	local scale = getOrAddUIScale(luckyBlockHeaderBtn)
+	if selected then
+		scale.Scale = 1.08
+	else
+		scale.Scale = 1
+	end
+end
+
 selectMutation = function(mutationId: string)
 	if not IndexConfig.TAB_DISPLAY_NAME[mutationId] then
 		return
@@ -768,6 +832,13 @@ selectMutation = function(mutationId: string)
 				applyTabVisual(btn, mutId == selectedMutation)
 			end
 		end
+	end
+	applyLuckyBlockHeaderVisual(mutationId == IndexConfig.LUCKY_BLOCK_TAB)
+	if questsFrame then
+		questsFrame.Visible = mutationId ~= IndexConfig.LUCKY_BLOCK_TAB
+	end
+	if tooltipLabel then
+		tooltipLabel.Visible = false
 	end
 	loadMutationGrid(mutationId, false)
 end
@@ -790,7 +861,11 @@ local function showIndexNotif(name: string, mutationId: string)
 		return
 	end
 	local typeName = IndexConfig.TAB_DISPLAY_NAME[mutationId] or mutationId
-	indexNotifLabel.Text = string.format("%s %s Has been added to index!", typeName, name)
+	if mutationId == IndexConfig.LUCKY_BLOCK_TAB then
+		indexNotifLabel.Text = string.format("%s has been added to index!", name)
+	else
+		indexNotifLabel.Text = string.format("%s %s Has been added to index!", typeName, name)
+	end
 	indexNotifLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	BrainrotHeaderStyle.selectGradient(indexNotifLabel, BrainrotHeaderStyle.MUTATION_GRADIENT_NAME[mutationId])
 
@@ -817,22 +892,32 @@ local function ensureTooltip()
 
 	local lbl = Instance.new("TextLabel")
 	lbl.Name = "Tip"
-	lbl.BackgroundTransparency = 0.35
+	lbl.BackgroundTransparency = 0.28
 	lbl.BackgroundColor3 = Color3.fromRGB(12, 14, 18)
 	lbl.TextColor3 = Color3.fromRGB(220, 255, 230)
-	UiFonts.applyBodyLabel(lbl, 11, 7)
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.TextYAlignment = Enum.TextYAlignment.Top
+	lbl.TextWrapped = false
+	lbl.RichText = false
+	UiFonts.applyBodyLabel(lbl, 12, 8)
 	lbl.AutomaticSize = Enum.AutomaticSize.XY
 	lbl.Visible = false
+	lbl.ZIndex = 50
 	lbl.Parent = sg
 	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 8)
-	pad.PaddingTop = UDim.new(0, 4)
-	pad.PaddingBottom = UDim.new(0, 4)
+	pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
 	pad.Parent = lbl
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 6)
+	corner.CornerRadius = UDim.new(0, 8)
 	corner.Parent = lbl
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 1.2
+	stroke.Color = Color3.fromRGB(255, 210, 90)
+	stroke.Transparency = 0.35
+	stroke.Parent = lbl
 	tooltipLabel = lbl
 
 	UserInputService.InputChanged:Connect(function(input)
@@ -840,7 +925,7 @@ local function ensureTooltip()
 			return
 		end
 		local pos = input.Position
-		tooltipLabel.Position = UDim2.fromOffset(pos.X + 4, pos.Y + 4)
+		tooltipLabel.Position = UDim2.fromOffset(pos.X + 14, pos.Y + 14)
 	end)
 end
 
@@ -936,7 +1021,50 @@ function IndexController.init()
 		end
 	end
 
-	local header = indexFrame:FindFirstChild("Header", true)
+	local header = indexFrame:FindFirstChild("Header") or indexFrame:FindFirstChild("Header", true)
+	if header then
+		local luckyIcon = header:FindFirstChild(IndexConfig.HEADER_LUCKY_BLOCK_ICON)
+			or header:FindFirstChild(IndexConfig.HEADER_LUCKY_BLOCK_ICON, true)
+		if luckyIcon then
+			local btn = resolveTabButton(luckyIcon)
+			if btn then
+				luckyBlockHeaderBtn = btn
+				btn.Active = true
+				pcall(function()
+					(btn :: any).Interactable = true
+				end)
+				local hoverScale = getOrAddUIScale(btn)
+				btn.MouseButton1Click:Connect(function()
+					UIInteractionSounds.playClick()
+					TweenService:Create(hoverScale, CLICK_TWEEN, { Scale = 0.94 }):Play()
+					task.delay(0.08, function()
+						if hoverScale.Parent then
+							TweenService:Create(hoverScale, HOVER_TWEEN, {
+								Scale = if selectedMutation == IndexConfig.LUCKY_BLOCK_TAB then 1.08 else 1,
+							}):Play()
+						end
+					end)
+					selectMutation(IndexConfig.LUCKY_BLOCK_TAB)
+				end)
+				btn.MouseEnter:Connect(function()
+					if selectedMutation ~= IndexConfig.LUCKY_BLOCK_TAB then
+						TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1.06 }):Play()
+					end
+				end)
+				btn.MouseLeave:Connect(function()
+					TweenService:Create(hoverScale, HOVER_TWEEN, {
+						Scale = if selectedMutation == IndexConfig.LUCKY_BLOCK_TAB then 1.08 else 1,
+					}):Play()
+				end)
+				applyLuckyBlockHeaderVisual(false)
+			else
+				warn("[IndexController] Lucky Block Icon has no GuiButton")
+			end
+		else
+			warn("[IndexController] Header missing Lucky Block Icon")
+		end
+	end
+
 	local closeBtn = if header then header:FindFirstChild("Close", true) or header:FindFirstChild("X", true) else nil
 	if closeBtn and closeBtn:IsA("GuiButton") then
 		UIButtonEffects.wireGlistenCloseButton(closeBtn, function()
@@ -1018,10 +1146,13 @@ function IndexController.init()
 					end
 					local name = payload.name
 					local mutation = payload.mutation
+					local unlockName = if typeof(payload.unlockName) == "string" then payload.unlockName else name
 					if typeof(name) == "string" and typeof(mutation) == "string" then
 						showIndexNotif(name, mutation)
 						onIndexUnlock(mutation)
-						patchCachedUnlock(mutation, name, payload)
+						if typeof(unlockName) == "string" then
+							patchCachedUnlock(mutation, unlockName, payload)
+						end
 						if not (indexFrame and indexFrame.Visible) then
 							showIndexSidebarBadge()
 						end
@@ -1032,10 +1163,12 @@ function IndexController.init()
 						end
 						refreshStateInBackground(mutation, false)
 					end
-					refreshQuest(
-						if typeof(payload.goldenCount) == "number" then math.floor(payload.goldenCount) else 0,
-						payload.questComplete == true
-					)
+					if mutation ~= IndexConfig.LUCKY_BLOCK_TAB then
+						refreshQuest(
+							if typeof(payload.goldenCount) == "number" then math.floor(payload.goldenCount) else 0,
+							payload.questComplete == true
+						)
+					end
 				end)
 			end
 		end

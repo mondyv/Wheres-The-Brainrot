@@ -1046,7 +1046,14 @@ local function runCutscene(payload: any)
 	end
 
 	if worldDrop then
-		TopNotifController.showPersonal("Lucky Block!", "legendary", 3.2)
+		local label = if typeof(blockKind) == "string" then blockKind else "Lucky Block"
+		local okCat, Catalog = pcall(function()
+			return require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
+		end)
+		if okCat and Catalog and typeof(Catalog.displayName) == "function" and typeof(blockKind) == "string" then
+			label = Catalog.displayName(blockKind)
+		end
+		TopNotifController.showPersonal(label .. "!", "legendary", 3.2)
 	end
 
 	local tool: Tool? = nil

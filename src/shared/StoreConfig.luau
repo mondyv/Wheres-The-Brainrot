@@ -146,7 +146,7 @@ StoreConfig.PACKS = {
 		productId = StoreConfig.PRODUCT.SECRET_PACK,
 		boughtAttr = StoreConfig.ATTR.SECRET_PACK_BOUGHT,
 		luckyBlock = "Secret Lucky Block",
-		luckyBlockVariant = nil, -- use the container's first child Model
+		luckyBlockVariant = "transparent",
 		cash = 150000000000,
 		brainrot = "NuclearoDinosauro",
 		frameName = "SecretPack",
@@ -270,12 +270,9 @@ function StoreConfig.getGiftGamepassProductId(gamepassId: number): number?
 end
 
 -- Per-lucky-block rarity roll pools (rarity ids match Brainrots.RarityId).
-StoreConfig.LUCKY_BLOCK_RARITY_WEIGHTS = {
-	["Starter Lucky Block"] = { uncommon = 60, rare = 40 },
-	["Mythic Lucky Block"] = { rare = 60, epic = 40 },
-	["Godly Luckyblock"] = { epic = 60, mythic = 40 },
-	["Secret Lucky Block"] = { mythic = 60, legendary = 40 },
-}
+-- Source of truth: Shared.LuckyBlockCatalog (keeps bush / store / admin in sync).
+local LuckyBlockCatalog = require(script.Parent:WaitForChild("LuckyBlockCatalog"))
+StoreConfig.LUCKY_BLOCK_RARITY_WEIGHTS = LuckyBlockCatalog.rarityWeightsById()
 
 StoreConfig.EXCLUSIVE_BRAINROT_NAME = "StrawberryElephant"
 StoreConfig.EXCLUSIVE_BRAINROT_SOURCE_PATH = "StrawberryElephant/Normal"

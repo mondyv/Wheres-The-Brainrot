@@ -16,6 +16,7 @@ local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local AdminBroadcastService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminBroadcastService"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
+local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
 
 local COMMAND_REMOTE_NAME = "AdminCommand"
 local CATALOG_REMOTE_NAME = "AdminAutocomplete"
@@ -183,13 +184,8 @@ local function waitForRebirthBindable(name: string): BindableFunction?
 	return waitForBindable("RebirthInternal", name, 10)
 end
 
-local LUCKY_BLOCK_NAMES = {
-	"star rainbow",
-	"Starter Lucky Block",
-	"Mythic Lucky Block",
-	"Godly Luckyblock",
-	"Secret Lucky Block",
-}
+local LUCKY_BLOCK_NAMES = LuckyBlockCatalog.allIds()
+table.insert(LUCKY_BLOCK_NAMES, 1, "star rainbow") -- legacy alias
 
 local function resolveLuckyBlockName(args: { string }, startIndex: number): (string?, number, string?)
 	if not args[startIndex] then
@@ -666,6 +662,9 @@ commands.addluckyblock = {
 			variant = args[nextIndex + 1]
 		elseif typeof(countArg) == "string" and countArg ~= "" then
 			variant = countArg
+		end
+		if typeof(variant) ~= "string" or variant == "" then
+			variant = LuckyBlockCatalog.defaultVariant(blockName)
 		end
 
 		local grant = waitForLuckyBlockBindable("GrantLuckyBlock")

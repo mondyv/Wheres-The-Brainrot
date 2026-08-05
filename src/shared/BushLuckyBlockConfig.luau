@@ -1,7 +1,11 @@
 -- [ACTIVE] BushLuckyBlockConfig
 --[[
 	Rare lucky-block drops from bush searches. Chance + block tier scale with land.
+	Block ids / variants come from LuckyBlockCatalog.
 ]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
 
 local M = {}
 
@@ -19,25 +23,89 @@ M.CHANCE_BY_LAND = {
 	[10] = 0.055,
 }
 
--- Weighted block kinds per land (higher lands unlock better blocks).
+-- Weighted block kinds per land (higher lands unlock better catalog tiers).
 M.BLOCK_WEIGHTS_BY_LAND = {
-	[1] = { ["Starter Lucky Block"] = 100 },
-	[2] = { ["Starter Lucky Block"] = 100 },
-	[3] = { ["Starter Lucky Block"] = 92, ["Mythic Lucky Block"] = 8 },
-	[4] = { ["Starter Lucky Block"] = 82, ["Mythic Lucky Block"] = 18 },
-	[5] = { ["Starter Lucky Block"] = 70, ["Mythic Lucky Block"] = 28, ["Godly Luckyblock"] = 2 },
-	[6] = { ["Starter Lucky Block"] = 55, ["Mythic Lucky Block"] = 38, ["Godly Luckyblock"] = 7 },
-	[7] = { ["Starter Lucky Block"] = 40, ["Mythic Lucky Block"] = 45, ["Godly Luckyblock"] = 14, ["Secret Lucky Block"] = 1 },
-	[8] = { ["Starter Lucky Block"] = 28, ["Mythic Lucky Block"] = 48, ["Godly Luckyblock"] = 20, ["Secret Lucky Block"] = 4 },
-	[9] = { ["Starter Lucky Block"] = 18, ["Mythic Lucky Block"] = 45, ["Godly Luckyblock"] = 28, ["Secret Lucky Block"] = 9 },
-	[10] = { ["Starter Lucky Block"] = 10, ["Mythic Lucky Block"] = 40, ["Godly Luckyblock"] = 35, ["Secret Lucky Block"] = 15 },
-}
-
-M.VARIANT_BY_BLOCK = {
-	["Starter Lucky Block"] = "basic",
-	["Mythic Lucky Block"] = "67",
-	["Godly Luckyblock"] = "blue",
-	["Secret Lucky Block"] = nil,
+	[1] = {
+		["Starter Lucky Block"] = 88,
+		["troll"] = 12,
+	},
+	[2] = {
+		["Starter Lucky Block"] = 75,
+		["troll"] = 18,
+		["neon"] = 7,
+	},
+	[3] = {
+		["Starter Lucky Block"] = 55,
+		["troll"] = 18,
+		["neon"] = 15,
+		["1"] = 8,
+		["Mythic Lucky Block"] = 4,
+	},
+	[4] = {
+		["Starter Lucky Block"] = 40,
+		["neon"] = 18,
+		["1"] = 16,
+		["Mythic Lucky Block"] = 18,
+		["purple"] = 8,
+	},
+	[5] = {
+		["Starter Lucky Block"] = 28,
+		["neon"] = 12,
+		["1"] = 14,
+		["Mythic Lucky Block"] = 22,
+		["purple"] = 14,
+		["yellow"] = 8,
+		["Godly Luckyblock"] = 2,
+	},
+	[6] = {
+		["Mythic Lucky Block"] = 22,
+		["purple"] = 18,
+		["yellow"] = 16,
+		["Godly Luckyblock"] = 14,
+		["heart"] = 12,
+		["neon"] = 10,
+		["1"] = 8,
+	},
+	[7] = {
+		["Mythic Lucky Block"] = 12,
+		["purple"] = 14,
+		["yellow"] = 14,
+		["Godly Luckyblock"] = 18,
+		["heart"] = 16,
+		["chamber"] = 12,
+		["rainbow"] = 8,
+		["Secret Lucky Block"] = 6,
+	},
+	[8] = {
+		["Godly Luckyblock"] = 16,
+		["heart"] = 16,
+		["chamber"] = 16,
+		["rainbow"] = 14,
+		["Secret Lucky Block"] = 14,
+		["star"] = 10,
+		["yellow"] = 8,
+		["purple"] = 6,
+	},
+	[9] = {
+		["heart"] = 12,
+		["chamber"] = 14,
+		["rainbow"] = 16,
+		["Secret Lucky Block"] = 16,
+		["star"] = 14,
+		["ruby"] = 12,
+		["1 opposite"] = 6,
+		["Godly Luckyblock"] = 10,
+	},
+	[10] = {
+		["chamber"] = 10,
+		["rainbow"] = 12,
+		["Secret Lucky Block"] = 14,
+		["star"] = 16,
+		["ruby"] = 18,
+		["1 opposite"] = 14,
+		["heart"] = 8,
+		["Godly Luckyblock"] = 8,
+	},
 }
 
 function M.chanceForLand(land: number): number
@@ -55,7 +123,7 @@ function M.pickBlockForLand(land: number): (string, string?)
 		end
 	end
 	if total <= 0 then
-		return "Starter Lucky Block", M.VARIANT_BY_BLOCK["Starter Lucky Block"]
+		return "Starter Lucky Block", LuckyBlockCatalog.defaultVariant("Starter Lucky Block")
 	end
 	local r = math.random() * total
 	local acc = 0
@@ -69,7 +137,7 @@ function M.pickBlockForLand(land: number): (string, string?)
 			end
 		end
 	end
-	return chosen, M.VARIANT_BY_BLOCK[chosen]
+	return chosen, LuckyBlockCatalog.defaultVariant(chosen)
 end
 
 return M

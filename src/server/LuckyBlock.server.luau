@@ -26,6 +26,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StoreConfig = require(Shared:WaitForChild("StoreConfig"))
 local CutsceneConfig = require(Shared:WaitForChild("LuckyBlockCutsceneConfig"))
 local BrainrotCarryVisual = require(Shared:WaitForChild("BrainrotCarryVisual"))
+local LuckyBlockCatalog = require(Shared:WaitForChild("LuckyBlockCatalog"))
 
 local CUTSCENE_TOTAL_SEC = CutsceneConfig.totalDurationSec()
 local REVEAL_SPAWN_AT_SEC = CutsceneConfig.revealSpawnAtSec()
@@ -660,6 +661,9 @@ grantBF.OnInvoke = function(plrArg: any, blockNameArg: any, optsArg: any): boole
 			variant = optsArg.variant
 		end
 	end
+	if typeof(variant) ~= "string" or variant == "" then
+		variant = LuckyBlockCatalog.defaultVariant(blockName)
+	end
 
 	local template = findLuckyBlockTemplate(blockName, variant)
 	if not template then
@@ -842,6 +846,9 @@ openFromWorldBF.OnInvoke = function(plrArg: any, blockNameArg: any, worldPosArg:
 	local variant: string? = nil
 	if typeof(optsArg) == "table" and typeof(optsArg.variant) == "string" then
 		variant = optsArg.variant
+	end
+	if typeof(variant) ~= "string" or variant == "" then
+		variant = LuckyBlockCatalog.defaultVariant(blockName)
 	end
 	-- Ensure template exists before starting the cutscene.
 	if not findLuckyBlockTemplate(blockName, variant) then

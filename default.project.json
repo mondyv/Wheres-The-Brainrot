@@ -70,8 +70,8 @@
       "$properties": {
         "FilteringEnabled": true,
         "StreamingEnabled": true,
-        "StreamingMinRadius": 112,
-        "StreamingTargetRadius": 280
+        "StreamingMinRadius": 256,
+        "StreamingTargetRadius": 512
       },
       "Baseplate": {
         "$className": "Part",

@@ -399,7 +399,10 @@ local function buildLuckyBlockTool(template: Model, blockName: string): Tool?
 	tool:SetAttribute("LuckyBlockTool", true)
 	tool:SetAttribute("LuckyBlockKind", blockName)
 
-	local icon = pickIconFromModel(template)
+	local icon = LuckyBlockCatalog.resolveIconAssetId(blockName)
+	if icon == "" then
+		icon = pickIconFromModel(template)
+	end
 	if icon ~= "" then
 		pcall(function()
 			tool.TextureId = icon

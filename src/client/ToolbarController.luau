@@ -42,6 +42,7 @@ local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
+local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
 local BrainrotItemTooltip = require(script.Parent.BrainrotItemTooltip)
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 
@@ -367,6 +368,17 @@ local ToolbarController = {}
 		local tex = (tool :: any).TextureId
 		if typeof(tex) == "string" and tex ~= "" then
 			return tex
+		end
+		if tool:GetAttribute("LuckyBlockTool") == true then
+			local kind = tool:GetAttribute("LuckyBlockKind")
+			if typeof(kind) == "string" and kind ~= "" then
+				local ok, asset = pcall(function()
+					return LuckyBlockCatalog.resolveIconAssetId(kind)
+				end)
+				if ok and typeof(asset) == "string" and asset ~= "" then
+					return asset
+				end
+			end
 		end
 		return ""
 	end
@@ -702,6 +714,7 @@ local ToolbarController = {}
 	end
 
 	local refreshParkedExtraToolsUI: () -> ()
+	local setBackpackPanelOpen: (boolean) -> ()
 
 	-- Defined after hotbarSlotScaleHost (see below).
 	local playEquipSlotAnimation: (number) -> ()
@@ -837,26 +850,121 @@ local ToolbarController = {}
 			return
 		end
 
+		-- Drop rows for tools that are no longer parked / no longer exist.
+		for tool, row in pairs(extraToolRowByTool) do
+			if not isExtraToolParked(tool) or not tool.Parent then
+				if row and row.Parent then
+					row:Destroy()
+				end
+				extraToolRowByTool[tool] = nil
+			end
+		end
+
+		for i = #parkedExtraTools, 1, -1 do
+			local tool = parkedExtraTools[i]
+			if not tool.Parent then
+				table.remove(parkedExtraTools, i)
+			end
+		end
+
+		local template = findBackpackTemplateRow(container)
+		if not template then
+			local fallback = container:FindFirstChild("1")
+			if fallback and fallback:IsA("GuiObject") then
+				template = fallback :: GuiObject
+			end
+		end
+		if not template then
+			return
+		end
+
+		-- Clear leftover host from older attempts (extras now live as grid siblings).
 		local oldHost = container:FindFirstChild("__ExtraTools")
 		if oldHost then
 			oldHost:Destroy()
 		end
-
-		for _, child in container:GetChildren() do
-			if child:IsA("GuiObject") and string.sub(child.Name, 1, 8) == "__Extra_" then
-				child:Destroy()
+		if backpackFrameRef then
+			local frameHost = backpackFrameRef:FindFirstChild("__ExtraTools")
+			if frameHost then
+				frameHost:Destroy()
 			end
 		end
 
-		for tool, row in pairs(extraToolRowByTool) do
-			if row and row.Parent then
-				row:Destroy()
-			end
-			extraToolRowByTool[tool] = nil
-		end
+		for index, tool in ipairs(parkedExtraTools) do
+			local row = extraToolRowByTool[tool]
+			if not row or not row.Parent then
+				row = (template :: GuiObject):Clone()
+				row:SetAttribute("_ToolbarBackpackTemplate", nil)
+				row:SetAttribute("_ToolbarGeneratedBackpackRow", nil)
+				row:SetAttribute("ToolbarBackpackUiRow", nil)
+				row.Name = "__Extra_" .. tostring(index)
+				row.LayoutOrder = MAX_BACKPACK_BRAINROT_SLOTS + index
+				row.Visible = true
+				row.Parent = container
+				extraToolRowByTool[tool] = row
 
-		-- Keep the brainrot Container clean: only numbered brainrot cells belong here.
-		-- Extra/lucky-block UI should use its own container, not this grid.
+				local btn = slotPrimaryButton(row :: GuiObject)
+				if btn then
+					passthroughChildClicks(btn :: GuiObject)
+					styleToolbarSlotButton(btn)
+					applyBackpackSlotPanelAppearance(btn, true)
+					local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
+					btn.MouseEnter:Connect(function()
+						if not canUseToolbar then
+							return
+						end
+						UIInteractionSounds.playHover()
+						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.1 }):Play()
+					end)
+					btn.MouseLeave:Connect(function()
+						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
+					end)
+					btn.MouseButton1Down:Connect(function()
+						if not canUseToolbar then
+							return
+						end
+						local tex = toolDisplayTexture(tool)
+						if tex == "" then
+							tex = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+						end
+						activeToolbarDrag = true
+						pendingToolbarDrag = {
+							kind = "backpack_extra",
+							idx = index,
+							start = UserInputService:GetMouseLocation(),
+							texture = tex,
+							rowButton = btn,
+							isExtraTool = true,
+							tool = tool,
+						}
+					end)
+				end
+			else
+				row.Name = "__Extra_" .. tostring(index)
+				row.LayoutOrder = MAX_BACKPACK_BRAINROT_SLOTS + index
+				row.Visible = true
+				if row.Parent ~= container then
+					row.Parent = container
+				end
+			end
+
+			local surface = toolSlotSurface(row :: GuiObject)
+			local tex = toolDisplayTexture(tool)
+			setSlotIcons(
+				surface,
+				if tex ~= "" then tex else "rbxasset://textures/ui/GuiImagePlaceholder.png",
+				true
+			)
+			local rate = surface:FindFirstChild("Rate")
+			if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
+				local kind = tool:GetAttribute("LuckyBlockKind")
+				rate.Text = if typeof(kind) == "string" and kind ~= "" then kind else tool.Name
+			end
+			local key = surface:FindFirstChild("Key")
+			if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
+				key.Text = "LB"
+			end
+		end
 	end
 
 	type BackpackSlotPanelDefaults = {
@@ -2631,8 +2739,17 @@ local ToolbarController = {}
 				if not placedInHotbar and tool.Parent then
 					removeExtraToolFromAllHotbarSlots(tool)
 
-					if not isExtraToolParked(tool) then
+					local wasParked = isExtraToolParked(tool)
+					if not wasParked then
 						table.insert(parkedExtraTools, tool)
+						-- Open bag so the parked lucky block is obvious when hotbar is full.
+						if tool:GetAttribute("LuckyBlockTool") == true then
+							task.defer(function()
+								if setBackpackPanelOpen and canUseToolbar then
+									setBackpackPanelOpen(true)
+								end
+							end)
+						end
 					end
 				end
 			end

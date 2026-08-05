@@ -830,9 +830,6 @@ selectMutation = function(mutationId: string)
 		end
 	end
 	applyLuckyBlockHeaderVisual(mutationId == IndexConfig.LUCKY_BLOCK_TAB)
-	if questsFrame then
-		questsFrame.Visible = mutationId ~= IndexConfig.LUCKY_BLOCK_TAB
-	end
 	if tooltipLabel then
 		tooltipLabel.Visible = false
 	end

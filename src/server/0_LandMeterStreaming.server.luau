@@ -3,6 +3,9 @@
 	Keep land luck hitboxes (1xHitbox, 10xHitbox, …) persistent under streaming
 	so CurrentArea / meters still resolve on far lands like Land 9.
 
+	Only mark a small hitbox wrapper model Persistent — never Land*/Island ancestors
+	(that would pin entire lands + grass in memory).
+
 	Streaming radii / StreamOutBehavior live only in 0_StreamingBootstrap (+ project.json).
 ]]
 
@@ -11,16 +14,51 @@ local Workspace = game:GetService("Workspace")
 
 local HITBOX_PATTERN = "^(%d+)xHitbox$"
 local PERSIST_TAG = "LandLuckHitboxPersistent"
+local WRAPPER_NAME = "_LandLuckHitboxPersist"
 
-local function markPersistent(inst: Instance)
-	local model = if inst:IsA("Model") then inst else inst:FindFirstAncestorOfClass("Model")
-	if model then
-		pcall(function()
-			model.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
-		end)
+local function isLandOrIslandName(name: string): boolean
+	local lower = string.lower(name)
+	if string.match(name, "^Land%d+$") then
+		return true
 	end
-	if not CollectionService:HasTag(inst, PERSIST_TAG) then
-		CollectionService:AddTag(inst, PERSIST_TAG)
+	local ak = string.gsub(lower, "[^a-z0-9]", "")
+	return ak == "island"
+		or ak == "ground"
+		or ak == "terrain"
+		or ak == "lands"
+		or ak == "map"
+end
+
+local function ensureHitboxPersistModel(part: BasePart): Model
+	local parent = part.Parent
+	if parent and parent:IsA("Model") and parent.Name == WRAPPER_NAME then
+		return parent
+	end
+	-- Don't reuse Land/Island models — wrap the part in its own tiny persistent model.
+	local wrap = Instance.new("Model")
+	wrap.Name = WRAPPER_NAME
+	if parent then
+		wrap.Parent = parent
+	else
+		wrap.Parent = Workspace
+	end
+	part.Parent = wrap
+	return wrap
+end
+
+local function markPersistent(part: BasePart)
+	local wrap = ensureHitboxPersistModel(part)
+	if isLandOrIslandName(wrap.Name) then
+		return
+	end
+	pcall(function()
+		wrap.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
+	end)
+	if not CollectionService:HasTag(part, PERSIST_TAG) then
+		CollectionService:AddTag(part, PERSIST_TAG)
+	end
+	if not CollectionService:HasTag(wrap, PERSIST_TAG) then
+		CollectionService:AddTag(wrap, PERSIST_TAG)
 	end
 end
 

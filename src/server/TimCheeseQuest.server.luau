@@ -342,5 +342,12 @@ task.spawn(function()
 	local tim = folder:WaitForChild(TimCheeseQuestConfig.TIM_NAME, 60)
 	if not tim then
 		warn("[TimCheeseQuest] TimCheese missing")
+		return
+	end
+	-- Keep Tim replicated under tight streaming so the quest client can find him.
+	if tim:IsA("Model") then
+		pcall(function()
+			(tim :: Model).ModelStreamingMode = Enum.ModelStreamingMode.Persistent
+		end)
 	end
 end)

@@ -1704,7 +1704,7 @@ local ToolbarController = {}
 		end
 	end
 
-	local function setBackpackPanelOpen(open: boolean)
+	setBackpackPanelOpen = function(open: boolean)
 		if open and not canUseToolbar then
 			return
 		end

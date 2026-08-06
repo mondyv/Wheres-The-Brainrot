@@ -69,6 +69,7 @@ export type BootConfig = {
 	shiftParkedMapAfterListRemove: ({ [number]: boolean }, number) -> (),
 	getBushRemotesFolder: () -> Folder,
 	ensureEquipBrainrotRemote: () -> RemoteEvent,
+	offerFloatingBrainrot: ((any, any) -> boolean)?,
 }
 
 local function ensureInternalFolder(): Folder
@@ -494,6 +495,13 @@ function M.boot(config: BootConfig)
 		notifyIndexDeposited = config.notifyIndexDeposited,
 		HOTBAR_UI_SLOTS = config.HOTBAR_UI_SLOTS,
 	})
+
+	if typeof(config.offerFloatingBrainrot) == "function" then
+		local offerBF = ensureBindable("OfferFloatingBrainrot")
+		offerBF.OnInvoke = function(playerArg: any, payloadArg: any): boolean
+			return config.offerFloatingBrainrot(playerArg, payloadArg)
+		end
+	end
 
 	ensureEquipBestBrainrotRemote().OnServerEvent:Connect(function(player: Player)
 		equipBestBrainrotForPlayer(player)

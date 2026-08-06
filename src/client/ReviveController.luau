@@ -74,6 +74,7 @@ local hudRestoredCallbacks: { () -> () } = {}
 local pendingTryAgainNotif = false
 local pendingTryAgainHint: string? = nil
 local tryAgainScheduleToken = 0
+local lastTryAgainDeathAt = 0
 local priceLabelTemplate: string? = nil
 
 local reviveDeclinedRE: RemoteEvent? = nil
@@ -980,22 +981,32 @@ local function showTryAgainNotif(hint: string?)
 	local sub = if typeof(hint) == "string" and hint ~= "" then hint else "You've got this!"
 	ensureHudVisibleForNotif()
 	showTryAgainOverlay(headline, sub)
+	pcall(function()
+		require(script.Parent.TopNotifController).showPersonal(headline, "legendary", 3.8)
+	end)
 	task.spawn(function()
 		local char = player.Character
-		if not char then
+		if not char or not char.Parent then
 			char = player.CharacterAdded:Wait()
 		end
 		if not char then
 			return
 		end
+		-- Wait for head/HRP so the meters-style world notif can attach.
 		local adornee = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
 		if not adornee then
 			adornee = char:WaitForChild("HumanoidRootPart", 4)
 		end
 		if adornee then
-			CharacterWorldNotif.show(char, sub, {
+			CharacterWorldNotif.show(char, headline, {
 				color = Color3.fromRGB(255, 220, 120),
+				offset = Vector3.new(2.4, 1.55, 0),
 			})
+			task.delay(4.2, function()
+				if CharacterWorldNotif.getBaseText() == headline then
+					CharacterWorldNotif.dismiss()
+				end
+			end)
 		end
 	end)
 end
@@ -1084,12 +1095,23 @@ local function playFrictionlessBlackFade()
 	end)
 end
 
-local function onLocalDeath(_character: Model)
+local function onLocalDeath(character: Model)
 	stopRobloxOofSounds()
 	playDeathSfx()
 	startEarRinging()
 	if shouldShowTryAgainNotif() then
 		pendingTryAgainNotif = true
+		lastTryAgainDeathAt = os.clock()
+		-- Soft respawn can CharacterAdded before Died finishes; schedule if already alive again.
+		task.defer(function()
+			if not pendingTryAgainNotif then
+				return
+			end
+			local live = player.Character
+			if live and live ~= character then
+				schedulePendingTryAgainNotif()
+			end
+		end)
 	end
 	-- Tutorial soft-respawn keeps existing SFX-only death (no fade / no revive UI).
 	if isTutorialSoftDeath() then
@@ -1144,10 +1166,8 @@ function ReviveController.restoreGameplayAfterSoftDeath()
 	setBgmSlowed(false)
 	local pg = player:FindFirstChildOfClass("PlayerGui")
 	if pg then
-		local fade = pg:FindFirstChild(FRICTIONLESS_FADE_GUI_NAME)
-		if fade then
-			fade:Destroy()
-		end
+		-- Keep FrictionlessDeathFade alive so the blackout covers respawn and
+		-- Try again can schedule after the fade finishes.
 		if dimGui and dimGui.Parent then
 			dimGui:Destroy()
 			dimGui = nil
@@ -1183,6 +1203,7 @@ end
 
 function ReviveController.markTutorialDeath(hint: string?)
 	pendingTryAgainNotif = true
+	lastTryAgainDeathAt = os.clock()
 	if typeof(hint) == "string" and hint ~= "" then
 		pendingTryAgainHint = hint
 	end
@@ -1253,9 +1274,26 @@ function ReviveController.init()
 
 	player.CharacterAdded:Connect(function(character)
 		ReviveController.restoreGameplayAfterSoftDeath()
-		if pendingTryAgainNotif then
-			schedulePendingTryAgainNotif()
-		end
+		-- Soft LoadCharacter can beat Humanoid.Died on the client; catch late pending flags.
+		task.defer(function()
+			if
+				not pendingTryAgainNotif
+				and shouldShowTryAgainNotif()
+				and lastTryAgainDeathAt > 0
+				and (os.clock() - lastTryAgainDeathAt) < 4
+			then
+				pendingTryAgainNotif = true
+			end
+			if pendingTryAgainNotif then
+				schedulePendingTryAgainNotif()
+			else
+				task.delay(0.2, function()
+					if pendingTryAgainNotif then
+						schedulePendingTryAgainNotif()
+					end
+				end)
+			end
+		end)
 		hookCharacter(character)
 	end)
 

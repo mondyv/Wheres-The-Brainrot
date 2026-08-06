@@ -746,7 +746,7 @@ local function doHarvest(prompt: ProximityPrompt)
 			local kind = if typeof(result.luckyBlockName) == "string" then result.luckyBlockName else "Lucky Block"
 			local label = LuckyBlockCatalog.displayName(kind)
 			local rarity = LuckyBlockCatalog.primaryDropRarity(kind)
-			TopNotifController.showPersonal("Found " .. label .. "!", rarity, 4.5)
+			TopNotifController.showPersonal(label .. "!", rarity, 4.5)
 			GameSoundEffects.playClick()
 		end
 		-- Empty-bush message is shown server-side (BushHarvest.showEmptyBushMessage).

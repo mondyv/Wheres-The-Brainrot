@@ -1,17 +1,18 @@
 -- [ACTIVE] LuckyBlock.server
 --[[
-	LuckyBlock.server
-	Authority for the Star-Rainbow lucky block tool.
+	Lucky block authority — Star-Rainbow / catalog blocks.
 
 	Exposes ServerStorage.LuckyBlockInternal.GrantLuckyBlock(player, blockName) so other
-	systems (Daily Day 7) can hand the player the tool.
+	systems (Daily Day 7) can hand the player the tool, and OpenFromWorld for bush
+	jackpots (optional floatClaim → accept/decline after the open cutscene).
 
 	Client → server flow when the equipped lucky block is clicked:
 	  1. Client fires LuckyBlockRoll RemoteEvent with the tool reference.
 	  2. Server validates ownership + cooldown, picks the brainrot to grant, and replies
 	     with a LuckyBlockShakeStart event ({ durationSec, brainrotName, rarity, …phases }).
 	  3. Mid-cutscene: destroy the lucky block and spawn a temporary workspace reveal model.
-	  4. At cutscene end: destroy the reveal, fire brainrot SFX, and GrantBrainrotAndEquip.
+	  4. At cutscene end: destroy the reveal, fire brainrot SFX, and GrantBrainrotAndEquip
+	     (or OfferFloatingBrainrot when floatClaimAfter is set for bush pulls).
 ]]
 
 local Players = game:GetService("Players")
@@ -763,6 +764,8 @@ local function beginLuckyBlockCutscene(
 		dropOrigin: Vector3?,
 		blockKind: string?,
 		blockVariant: string?,
+		floatClaimAfter: boolean?,
+		bushKey: string?,
 	}?
 )
 	rollInFlight[player] = true
@@ -773,6 +776,8 @@ local function beginLuckyBlockCutscene(
 	local dropOrigin = if opts and typeof(opts.dropOrigin) == "Vector3" then opts.dropOrigin else nil
 	local blockKind = if opts and typeof(opts.blockKind) == "string" then opts.blockKind else nil
 	local blockVariant = if opts and typeof(opts.blockVariant) == "string" then opts.blockVariant else nil
+	local floatClaimAfter = if opts then opts.floatClaimAfter == true else false
+	local bushKey = if opts and typeof(opts.bushKey) == "string" then opts.bushKey else nil
 
 	if tool then
 		tool:SetAttribute("LuckyBlockRolling", true)
@@ -812,6 +817,55 @@ local function beginLuckyBlockCutscene(
 			return
 		end
 
+		local function markOpened()
+			recordLuckyBlockIndexUnlock(player, blockKind)
+			local timEvt = ServerStorage:FindFirstChild("TimCheeseLuckyBlockOpened")
+			if timEvt and timEvt:IsA("BindableEvent") then
+				timEvt:Fire(player)
+			end
+			if blockKind and string.find(string.lower(blockKind), "starter", 1, true) then
+				AnalyticsFunnelService.logOnboardingId(player, "opened_starter_lucky_block", { allowSkip = true })
+			end
+		end
+
+		-- Bush jackpots: after the open cutscene, float the brainrot with accept/decline
+		-- (same claim UI as a normal bush find) instead of auto-equipping.
+		if floatClaimAfter then
+			local offer = brainrotInternalBF("OfferFloatingBrainrot")
+			local origin = dropOrigin
+			if typeof(origin) ~= "Vector3" then
+				local char = player.Character
+				local hrp = char and char:FindFirstChild("HumanoidRootPart")
+				if hrp and hrp:IsA("BasePart") then
+					origin = hrp.Position
+				end
+			end
+			local offered = false
+			if offer and typeof(origin) == "Vector3" then
+				local okOffer, errOffer = pcall(function()
+					offered = offer:Invoke(player, {
+						name = pick.name,
+						rarity = pick.rarity,
+						mutation = "normal",
+						level = 1,
+						baseIncome = pick.baseIncome,
+						worldPosition = origin,
+						bushKey = bushKey,
+						skipSfx = true,
+					}) == true
+				end)
+				if not okOffer then
+					warn("[LuckyBlock] OfferFloatingBrainrot failed for", player.Name, ":", errOffer)
+					offered = false
+				end
+			end
+			if offered then
+				markOpened()
+				return
+			end
+			warn("[LuckyBlock] float claim failed; falling back to GrantBrainrotAndEquip")
+		end
+
 		local grant = brainrotInternalBF("GrantBrainrotAndEquip")
 		if grant then
 			local okGrant, errGrant = pcall(function()
@@ -826,14 +880,7 @@ local function beginLuckyBlockCutscene(
 			if not okGrant then
 				warn("[LuckyBlock] GrantBrainrotAndEquip failed for", player.Name, ":", errGrant)
 			else
-				recordLuckyBlockIndexUnlock(player, blockKind)
-				local timEvt = ServerStorage:FindFirstChild("TimCheeseLuckyBlockOpened")
-				if timEvt and timEvt:IsA("BindableEvent") then
-					timEvt:Fire(player)
-				end
-				if blockKind and string.find(string.lower(blockKind), "starter", 1, true) then
-					AnalyticsFunnelService.logOnboardingId(player, "opened_starter_lucky_block", { allowSkip = true })
-				end
+				markOpened()
 			end
 		end
 
@@ -878,8 +925,16 @@ openFromWorldBF.OnInvoke = function(plrArg: any, blockNameArg: any, worldPosArg:
 	local blockName = if typeof(blockNameArg) == "string" and blockNameArg ~= "" then blockNameArg else "Starter Lucky Block"
 	local worldPos = if typeof(worldPosArg) == "Vector3" then worldPosArg else nil
 	local variant: string? = nil
-	if typeof(optsArg) == "table" and typeof(optsArg.variant) == "string" then
-		variant = optsArg.variant
+	local floatClaimAfter = false
+	local bushKey: string? = nil
+	if typeof(optsArg) == "table" then
+		if typeof(optsArg.variant) == "string" then
+			variant = optsArg.variant
+		end
+		floatClaimAfter = optsArg.floatClaim == true or optsArg.floatClaimAfter == true
+		if typeof(optsArg.bushKey) == "string" and optsArg.bushKey ~= "" then
+			bushKey = optsArg.bushKey
+		end
 	end
 	if typeof(variant) ~= "string" or variant == "" then
 		variant = LuckyBlockCatalog.defaultVariant(blockName)
@@ -898,6 +953,8 @@ openFromWorldBF.OnInvoke = function(plrArg: any, blockNameArg: any, worldPosArg:
 		dropOrigin = worldPos,
 		blockKind = blockName,
 		blockVariant = variant,
+		floatClaimAfter = floatClaimAfter,
+		bushKey = bushKey,
 	})
 	return true
 end

@@ -2245,7 +2245,106 @@ end
 
 local lastBushSearchAt: { [Player]: number } = {}
 
-local function tryGrantBushLuckyBlock(player: Player, worldPosition: Vector3): (boolean, string?)
+local function spawnFloatingClaimForPick(
+	player: Player,
+	worldPosition: Vector3,
+	pick: any,
+	mutationId: string,
+	opts: {
+		bushKey: string?,
+		level: number?,
+		skipSfx: boolean?,
+		skipDropFx: boolean?,
+	}?
+): boolean
+	local char = player.Character
+	if not char then
+		return false
+	end
+	local brainrots = Brainrots.getBrainrotsFolder()
+	if not brainrots then
+		warn("[BushHarvest] OfferFloatingBrainrot: Brainrots folder missing")
+		return false
+	end
+	local mut = if mutationId ~= "" then mutationId else "normal"
+	local template = findBrainrotModelByNameAndMutation(brainrots :: Folder, pick.name, mut)
+	if not template then
+		warn(string.format("[BushHarvest] OfferFloatingBrainrot template missing for %s (%s)", tostring(pick.name), mut))
+		return false
+	end
+
+	local actualMutation = mut
+	local fromTemplate = Brainrots.mutationIdFromTemplateName(template.Name)
+	if fromTemplate and fromTemplate ~= "normal" then
+		actualMutation = fromTemplate
+	elseif fromTemplate == "normal" and mut == "normal" then
+		actualMutation = "normal"
+	end
+
+	if not (opts and opts.skipSfx == true) then
+		firePlayBrainrotSFX(player, pick.name)
+	end
+	if not (opts and opts.skipDropFx == true) then
+		fireHarvestDropFX(player, pick.rarity)
+	end
+
+	local harvestLevel = if opts and typeof(opts.level) == "number" then math.max(1, math.floor(opts.level)) else 1
+	local luckMultiplier = LuckBoost.totalLuckMultiplier(player)
+	local plot, _basePlot, displayLuck = resolveHarvestPlot(worldPosition, luckMultiplier)
+
+	local clone = template:Clone()
+	clone.Name = pick.name
+	clone:SetAttribute("OwnerUserId", player.UserId)
+	clone:SetAttribute("BrainrotCarryPhase", "Pop")
+	clone:SetAttribute("BrainrotSourcePath", template.Parent.Name .. "/" .. template.Name)
+	clone:SetAttribute("BrainrotName", pick.name)
+	clone:SetAttribute("BrainrotRarity", pick.rarity)
+	clone:SetAttribute("BrainrotMutation", actualMutation)
+	clone:SetAttribute("BrainrotBaseIncome", pick.baseIncome)
+	clone:SetAttribute("BrainrotLevel", harvestLevel)
+	clone:SetAttribute("BrainrotPlot", plot)
+	clone:SetAttribute("BrainrotDisplayLuck", displayLuck)
+	if opts and typeof(opts.bushKey) == "string" and opts.bushKey ~= "" then
+		clone:SetAttribute("BrainrotHarvestBushKey", opts.bushKey)
+	end
+
+	for _, d in clone:GetDescendants() do
+		if d:IsA("ProximityPrompt") then
+			d:Destroy()
+		end
+	end
+
+	clone.Parent = workspace
+	local facePos = char:GetPivot().Position
+	local spawnCf, baseYaw = spawnBrainrotAboveBush(clone, worldPosition, harvestLevel, facePos)
+	placeModelAtWorld(clone, spawnCf)
+	setAllPartsPhysics(clone, true, true)
+
+	local harvestIncome = Brainrots.incomePerSecond(pick, harvestLevel, actualMutation)
+	BrainrotHeader.attach(clone, {
+		name = pick.name,
+		rarity = pick.rarity,
+		mutation = actualMutation,
+		level = harvestLevel,
+		incomePerSecond = harvestIncome,
+	})
+
+	local anchorPos = spawnCf.Position
+	popSpawnEffect(clone, function()
+		if not clone.Parent or player.Character ~= char then
+			if clone.Parent then
+				clone:Destroy()
+			end
+			return
+		end
+		clone:SetAttribute("BrainrotCarryPhase", "Floating")
+		setAllPartsPhysics(clone, true, true)
+		startFloatingClaimOffer(player, char, clone, anchorPos, baseYaw)
+	end)
+	return true
+end
+
+local function tryOpenBushLuckyBlock(player: Player, worldPosition: Vector3, bushRef: Instance?): (boolean, string?)
 	local land = LandResolver.resolveLandAtPosition(worldPosition)
 	if typeof(land) ~= "number" then
 		land = 1
@@ -2256,35 +2355,42 @@ local function tryGrantBushLuckyBlock(player: Player, worldPosition: Vector3): (
 	end
 	local blockName, variant = BushLuckyBlockConfig.pickBlockForLand(land)
 	local folder = ServerStorage:FindFirstChild("LuckyBlockInternal")
-	local bf = folder and folder:FindFirstChild("GrantLuckyBlock")
-	if not (bf and bf:IsA("BindableFunction")) then
-		warn("[BushHarvest] LuckyBlockInternal.GrantLuckyBlock missing")
+	local openBF = folder and folder:FindFirstChild("OpenFromWorld")
+	if not (openBF and openBF:IsA("BindableFunction")) then
+		warn("[BushHarvest] LuckyBlockInternal.OpenFromWorld missing")
 		return false, nil
 	end
 
-	local function grant(name: string, var: string?): boolean
-		local ok, granted = pcall(function()
-			return (bf :: BindableFunction):Invoke(player, name, {
+	local bushKey: string? = nil
+	if bushRef and isValidBushRef(bushRef) then
+		local pos = if bushRef:IsA("BasePart") then bushRef.Position else bushRef:GetPivot().Position
+		bushKey = string.format("%.0f_%.0f_%.0f", pos.X, pos.Y, pos.Z)
+	end
+
+	local function open(name: string, var: string?): boolean
+		local ok, opened = pcall(function()
+			return (openBF :: BindableFunction):Invoke(player, name, worldPosition, {
 				variant = var,
-				equip = true,
+				floatClaim = true,
+				bushKey = bushKey,
 			})
 		end)
 		if not ok then
-			warn("[BushHarvest] GrantLuckyBlock failed:", granted)
+			warn("[BushHarvest] OpenFromWorld failed:", opened)
 			return false
 		end
-		return granted == true
+		return opened == true
 	end
 
-	if grant(blockName, variant) then
+	if open(blockName, variant) then
 		return true, blockName
 	end
 	-- Fallback so a missing high-tier Studio template never voids the jackpot.
-	if blockName ~= "Starter Lucky Block" and grant("Starter Lucky Block", "basic") then
-		warn("[BushHarvest] Granted Starter Lucky Block fallback; missing template for", blockName)
+	if blockName ~= "Starter Lucky Block" and open("Starter Lucky Block", "basic") then
+		warn("[BushHarvest] Opened Starter Lucky Block fallback; missing template for", blockName)
 		return true, "Starter Lucky Block"
 	end
-	warn("[BushHarvest] GrantLuckyBlock returned false for", blockName)
+	warn("[BushHarvest] OpenFromWorld returned false for", blockName)
 	return false, nil
 end
 
@@ -2346,8 +2452,8 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 
 	local hasBrainrot = bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
 	local dropOrigin = if bush:IsA("BasePart") then bush.Position else bush:GetPivot().Position
-	-- Rare jackpot: grant a lucky-block tool (findable item; player opens it later).
-	local luckyOpened, luckyBlockName = tryGrantBushLuckyBlock(player, dropOrigin)
+	-- Rare jackpot: open lucky-block cutscene at the bush, then floating accept/decline.
+	local luckyOpened, luckyBlockName = tryOpenBushLuckyBlock(player, dropOrigin, bush)
 	if luckyOpened or hasBrainrot then
 		AnalyticsFunnelService.logOnboardingId(player, "opened_bush", { allowSkip = true })
 	end
@@ -3002,6 +3108,43 @@ require(Modules:WaitForChild("BushHarvestInternal")).boot({
 	shiftParkedMapAfterListRemove = hotbarApi.shiftParkedMapAfterListRemove,
 	getBushRemotesFolder = getBushRemotesFolder,
 	ensureEquipBrainrotRemote = hotbarApi.ensureEquipBrainrotRemote,
+	offerFloatingBrainrot = function(playerArg: any, payloadArg: any): boolean
+		if typeof(playerArg) ~= "Instance" or not (playerArg :: Instance):IsA("Player") then
+			return false
+		end
+		if typeof(payloadArg) ~= "table" then
+			return false
+		end
+		local plr = playerArg :: Player
+		local payload = payloadArg :: any
+		local name = if typeof(payload.name) == "string" then payload.name else nil
+		if not name or name == "" then
+			return false
+		end
+		local worldPosition = payload.worldPosition
+		if typeof(worldPosition) ~= "Vector3" then
+			return false
+		end
+		local def = Brainrots.getByName(name)
+		local pick = {
+			name = name,
+			rarity = if typeof(payload.rarity) == "string"
+				then payload.rarity
+				else (if def then def.rarity else "common"),
+			baseIncome = if typeof(payload.baseIncome) == "number"
+				then payload.baseIncome
+				else (if def then def.baseIncome else 0),
+		}
+		local mutation = if typeof(payload.mutation) == "string" then payload.mutation else "normal"
+		local level = if typeof(payload.level) == "number" then payload.level else 1
+		local bushKey = if typeof(payload.bushKey) == "string" then payload.bushKey else nil
+		return spawnFloatingClaimForPick(plr, worldPosition, pick, mutation, {
+			bushKey = bushKey,
+			level = level,
+			skipSfx = payload.skipSfx == true,
+			skipDropFx = payload.skipDropFx == true,
+		})
+	end,
 })
 
 task.defer(function()

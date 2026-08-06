@@ -1,6 +1,7 @@
 -- [ACTIVE] BushLuckyBlockConfig
 --[[
-	Rare lucky-block drops from bush searches. Chance + block tier scale with land.
+	Rare lucky-block jackpots from bush searches. Chance + block tier scale with land.
+	Opens the lucky-block cutscene at the bush, then floating accept/decline for the reward.
 	Block ids / variants come from LuckyBlockCatalog.
 ]]
 
@@ -9,7 +10,7 @@ local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitF
 
 local M = {}
 
--- Per-land chance to grant a lucky-block tool on a successful bush search.
+-- Per-land chance to open a lucky-block cutscene on a bush search (then accept/decline).
 -- Tuned to be findable early (≈1/20 on land 1) without flooding high lands.
 M.CHANCE_BY_LAND = {
 	[1] = 0.050,

@@ -314,14 +314,15 @@ local function replacePlotSlot(slot: number, plot: Model)
 end
 
 local function promoteStubToFullPlot(slot: number, player: Player)
-	-- Reserve immediately so PlotPlayerSpawn / other systems can resolve the slot
-	-- while the full base clones in (no silent "No assigned plot").
+	-- Reserve the slot in-memory first so tryAssignPlayer won't double-assign.
+	-- Do NOT set AssignedPlotSlot until the full base exists — early attribute
+	-- teleports PlotPlayerSpawn onto the stub / mid-replace model (underground).
 	playerToSlot[player] = slot
-	player:SetAttribute("AssignedPlotSlot", slot)
 
 	local folder = findSpawnFolder()
 	local template = getBaseTemplate()
 	if not folder or not template then
+		playerToSlot[player] = nil
 		warn(
 			"[BasePlotSpawner] Cannot promote plot stub — missing Spawn And Bases or Base template (check EssentialAssets.Templates.Base)"
 		)
@@ -329,13 +330,15 @@ local function promoteStubToFullPlot(slot: number, player: Player)
 	end
 	local pos = folder:FindFirstChild(POS_NAME_PREFIX .. tostring(slot))
 	if not pos or not pos:IsA("BasePart") then
+		playerToSlot[player] = nil
 		warn("[BasePlotSpawner] Missing BasePOSPart for slot", slot)
 		return
 	end
 
 	local existing = folder:FindFirstChild("Plot_" .. tostring(slot))
 	if existing then
-		-- Rename first so the new full plot can take Plot_N without a gap.
+		-- Drop owner + rename so plot lookups never treat the stub as ready.
+		existing:SetAttribute("PlotOwnerUserId", nil)
 		existing.Name = "Plot_" .. tostring(slot) .. "_Replacing"
 	end
 
@@ -351,9 +354,12 @@ local function promoteStubToFullPlot(slot: number, player: Player)
 		local stub = spawnFloorStub(template, pos, slot, folder)
 		replacePlotSlot(slot, stub)
 		stub:SetAttribute("PlotOwnerUserId", player.UserId)
+		player:SetAttribute("AssignedPlotSlot", slot)
 		return
 	end
 	replacePlotSlot(slot, plotOrErr :: Model)
+	-- Full Spawn pad is ready — now PlotPlayerSpawn can teleport safely.
+	player:SetAttribute("AssignedPlotSlot", slot)
 end
 
 local function spawnBasesOnce(folder: Instance): boolean

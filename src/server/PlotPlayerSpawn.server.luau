@@ -31,13 +31,17 @@ local function waitForAssignedPlot(player: Player, character: Model): Instance?
 		if plot and plot.Parent then
 			fallback = plot
 			-- Wait for the real Spawn pad (full base), not a stub floor fallback.
-			if PlotSpawnUtil.plotHasSpawnPad(plot) then
+			if PlotPaths.isSpawnReadyPlot(plot) and PlotSpawnUtil.plotHasSpawnPad(plot) then
 				return plot
 			end
 		end
 		task.wait(0.15)
 	end
-	return fallback or PlotPaths.findPlotForAssignedSlot(player)
+	local last = fallback or PlotPaths.findPlotForAssignedSlot(player)
+	if last and PlotPaths.isSpawnReadyPlot(last) then
+		return last
+	end
+	return last
 end
 
 local function teleportToPlotSpawn(player: Player, character: Model)

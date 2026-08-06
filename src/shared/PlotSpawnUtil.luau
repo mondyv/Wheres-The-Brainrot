@@ -10,9 +10,10 @@ local Workspace = game:GetService("Workspace")
 local PlotSpawnUtil = {}
 
 local SPAWN_CLEARANCE = 3.25
-local STREAM_RETRIES = 20
+local STREAM_RETRIES = 28
 local STREAM_RETRY_INTERVAL = 0.25
-local STREAM_RADIUS_SEC = 10
+-- Longer stream window helps console / PS4 emulation (tighter client radii).
+local STREAM_RADIUS_SEC = 14
 
 local function expandPartBounds(cf: CFrame, size: Vector3, minV: Vector3, maxV: Vector3): (Vector3, Vector3)
 	local hs = size * 0.5
@@ -286,9 +287,14 @@ local function cframeOnSpawnAnchor(anchor: BasePart, plot: Instance): CFrame
 
 	local origin = top + Vector3.new(0, 12, 0)
 	local hit = Workspace:Raycast(origin, Vector3.new(0, -48, 0), params)
+	-- Default to the pad top. Only trust a ray hit that lands near the pad —
+	-- accepting any hit below top.Y+6 used basements / buried parts and spawned players underground.
 	local standY = top.Y + SPAWN_CLEARANCE
-	if hit and hit.Position.Y <= top.Y + 6 then
-		standY = hit.Position.Y + SPAWN_CLEARANCE
+	if hit then
+		local dy = hit.Position.Y - top.Y
+		if dy >= -2.5 and dy <= 6 then
+			standY = hit.Position.Y + SPAWN_CLEARANCE
+		end
 	end
 
 	local pos = Vector3.new(top.X, standY, top.Z)

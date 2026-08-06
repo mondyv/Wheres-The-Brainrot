@@ -144,6 +144,20 @@ function M.isPlotRoot(inst: Instance): boolean
 	return string.match(inst.Name, "^Plot_%d+$") ~= nil
 end
 
+-- True for a playable base (has / will have Spawn), not a floor stub or mid-replace leftover.
+function M.isSpawnReadyPlot(inst: Instance): boolean
+	if not M.isPlotRoot(inst) then
+		return false
+	end
+	if inst:GetAttribute("PlotFloorStub") == true then
+		return false
+	end
+	if string.find(inst.Name, "_Replacing", 1, true) then
+		return false
+	end
+	return true
+end
+
 function M.firstStoryFolder(plot: Instance): Instance?
 	local s = plot:FindFirstChild("1 Story")
 	if s then
@@ -157,12 +171,18 @@ function M.findPlotOwnedByPlayer(player: Player): Instance?
 	if not folder then
 		return nil
 	end
+	local fallback: Instance? = nil
 	for _, ch in ipairs(folder:GetChildren()) do
 		if M.isPlotRoot(ch) and ch:GetAttribute("PlotOwnerUserId") == player.UserId then
-			return ch
+			if M.isSpawnReadyPlot(ch) then
+				return ch
+			end
+			if not fallback then
+				fallback = ch
+			end
 		end
 	end
-	return nil
+	return fallback
 end
 
 function M.findPlotForAssignedSlot(player: Player): Instance?
@@ -171,16 +191,16 @@ function M.findPlotForAssignedSlot(player: Player): Instance?
 		return nil
 	end
 
-	-- Always prefer the plot you actually own.
+	-- Always prefer the plot you actually own (full base over stub / replacing).
 	local owned = M.findPlotOwnedByPlayer(player)
-	if owned then
+	if owned and M.isSpawnReadyPlot(owned) then
 		return owned
 	end
 
 	local slot = player:GetAttribute("AssignedPlotSlot")
 	if typeof(slot) == "number" then
 		local bySlot = folder:FindFirstChild("Plot_" .. tostring(math.floor(slot)))
-		if bySlot and M.isPlotRoot(bySlot) then
+		if bySlot and M.isSpawnReadyPlot(bySlot) then
 			local uid = bySlot:GetAttribute("PlotOwnerUserId")
 			-- Only return assigned slot when unclaimed (still assigning) or yours.
 			if typeof(uid) ~= "number" or uid == player.UserId then
@@ -189,7 +209,8 @@ function M.findPlotForAssignedSlot(player: Player): Instance?
 		end
 	end
 
-	return nil
+	-- Last resort: owned stub (caller may wait for promote).
+	return owned
 end
 
 return M

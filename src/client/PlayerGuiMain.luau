@@ -5,12 +5,16 @@
 	2. Prefer the replicated instance (never clone while one already exists)
 	3. Remove duplicate Main ScreenGuis if both exist
 	4. Clone from StarterGui.Main only as a last resort
+	5. Keep watching PlayerGui so late clones can't leave a second cash HUD
 --]]
 
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
 
 local PlayerGuiMain = {}
+
+local watchedPlayerGui: PlayerGui? = nil
+local childAddedConn: RBXScriptConnection? = nil
 
 local function scoreMain(gui: ScreenGui): number
 	local score = 0
@@ -34,6 +38,38 @@ local function findAllMains(playerGui: PlayerGui): { ScreenGui }
 		end
 	end
 	return mains
+end
+
+-- Place files sometimes ship two Cash frames under Counters; keep one with Amount.
+local function dedupeCashCounters(main: ScreenGui)
+	local sideUI = main:FindFirstChild("SideUI")
+	local counters = sideUI and sideUI:FindFirstChild("Counters")
+	if not counters then
+		return
+	end
+
+	local cashFrames: { GuiObject } = {}
+	for _, child in counters:GetChildren() do
+		if child.Name == "Cash" and child:IsA("GuiObject") then
+			table.insert(cashFrames, child)
+		end
+	end
+	if #cashFrames <= 1 then
+		return
+	end
+
+	table.sort(cashFrames, function(a, b)
+		local aAmount = a:FindFirstChild("Amount") ~= nil
+		local bAmount = b:FindFirstChild("Amount") ~= nil
+		if aAmount ~= bAmount then
+			return aAmount
+		end
+		return a.Visible and not b.Visible
+	end)
+
+	for i = 2, #cashFrames do
+		cashFrames[i]:Destroy()
+	end
 end
 
 -- Hide Studio-authored AdminFrame/button until AdminCommandBar opts in.
@@ -71,6 +107,7 @@ function PlayerGuiMain.dedupe(playerGui: PlayerGui): ScreenGui?
 	if #mains == 1 then
 		mains[1].ResetOnSpawn = false
 		PlayerGuiMain.hideAdminPanelUnlessAllowed(mains[1])
+		dedupeCashCounters(mains[1])
 		return mains[1]
 	end
 
@@ -84,16 +121,49 @@ function PlayerGuiMain.dedupe(playerGui: PlayerGui): ScreenGui?
 	end
 	best.ResetOnSpawn = false
 	PlayerGuiMain.hideAdminPanelUnlessAllowed(best)
+	dedupeCashCounters(best)
 	return best
 end
 
+local function watchPlayerGui(playerGui: PlayerGui)
+	if watchedPlayerGui == playerGui and childAddedConn then
+		return
+	end
+	if childAddedConn then
+		childAddedConn:Disconnect()
+		childAddedConn = nil
+	end
+	watchedPlayerGui = playerGui
+	childAddedConn = playerGui.ChildAdded:Connect(function(child)
+		if child:IsA("ScreenGui") and child.Name == "Main" then
+			task.defer(function()
+				if playerGui.Parent then
+					PlayerGuiMain.dedupe(playerGui)
+				end
+			end)
+		end
+	end)
+end
+
 local function cloneFromStarter(playerGui: PlayerGui): ScreenGui?
+	-- Never clone while a Main already exists (even mid-replication).
+	local existing = PlayerGuiMain.dedupe(playerGui)
+	if existing then
+		return existing
+	end
+
 	local template = StarterGui:FindFirstChild("Main")
 	if not template or not template:IsA("ScreenGui") then
 		template = StarterGui:WaitForChild("Main", 15)
 	end
 	if not template or not template:IsA("ScreenGui") then
 		return nil
+	end
+
+	-- Re-check after WaitForChild — Roblox may have replicated Main in the meantime.
+	existing = PlayerGuiMain.dedupe(playerGui)
+	if existing then
+		return existing
 	end
 
 	local clone = template:Clone()
@@ -107,6 +177,7 @@ function PlayerGuiMain.ensure(player: Player?, timeout: number?): ScreenGui
 	local plr = player or Players.LocalPlayer
 	local playerGui = plr:WaitForChild("PlayerGui")
 	local waitSec = timeout or 120
+	watchPlayerGui(playerGui)
 
 	if not plr.Character then
 		plr.CharacterAdded:Wait()
@@ -146,6 +217,7 @@ function PlayerGuiMain.finalize(playerGui: PlayerGui?)
 		return nil
 	end
 
+	watchPlayerGui(pg)
 	local main = PlayerGuiMain.dedupe(pg)
 	if main then
 		PlayerGuiMain.hideAdminPanelUnlessAllowed(main)

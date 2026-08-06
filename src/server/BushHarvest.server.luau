@@ -294,6 +294,12 @@ local function tryPlaySafeZoneSFXForCarry(player: Player, carry: Model)
 	if safeZoneSfxPlayedForCarry[carry] then
 		return
 	end
+	-- Lucky-block hauls aren't brainrots — don't fire PlayBrainrotSFX with the block display name.
+	if carry:GetAttribute("LuckyBlockCarry") == true then
+		safeZoneSfxPlayedForCarry[carry] = true
+		fireSafeZoneFlash(player)
+		return
+	end
 	local name = getCarryBrainrotName(carry)
 	if not name then
 		warn("[BushHarvest] Safe zone SFX: could not resolve brainrot name for carry " .. carry:GetFullName())

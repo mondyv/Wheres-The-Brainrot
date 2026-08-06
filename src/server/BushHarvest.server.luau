@@ -34,6 +34,7 @@ local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local PlotLuck = SwingUpgrades.PlotLuck
 local LuckBoost = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckBoost"))
 local BushLuckyBlockConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushLuckyBlockConfig"))
+local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local AnalyticsFunnelService = require(Modules:WaitForChild("AnalyticsFunnelService"))
 
@@ -58,6 +59,9 @@ local BUSH_HIDDEN_NAME_ATTR = "HiddenBrainrotName"
 local BUSH_HIDDEN_MUTATION_ATTR = "HiddenBrainrotMutation"
 local BUSH_HIDDEN_LEVEL_ATTR = "HiddenBrainrotLevel"
 local BUSH_HIDDEN_BASE_INCOME_ATTR = "HiddenBrainrotBaseIncome"
+local BUSH_HAS_LUCKY_ATTR = "HasHiddenLuckyBlock"
+local BUSH_HIDDEN_LUCKY_KIND_ATTR = "HiddenLuckyBlockKind"
+local BUSH_HIDDEN_LUCKY_VARIANT_ATTR = "HiddenLuckyBlockVariant"
 local BUSH_ON_COOLDOWN_ATTR = "BushOnCooldown"
 local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
 local BUSH_COOLDOWN_ENDS_ATTR = "BushCooldownEndsAt"
@@ -645,6 +649,37 @@ local function redeemSingleCarryModel(player: Player, carry: Model): number?
 	end
 	if carry:GetAttribute("OwnerUserId") ~= player.UserId then
 		depositDebug("redeem abort: owner mismatch", player.Name, carry:GetFullName())
+		return nil
+	end
+
+	-- Bush lucky-block carries deposit into a tool (not brainrot inventory).
+	if carry:GetAttribute("LuckyBlockCarry") == true then
+		local kind = carry:GetAttribute("LuckyBlockKind")
+		local variant = carry:GetAttribute("LuckyBlockVariant")
+		local blockName = if typeof(kind) == "string" and kind ~= "" then kind else "Starter Lucky Block"
+		local folder = ServerStorage:FindFirstChild("LuckyBlockInternal")
+		local bf = folder and folder:FindFirstChild("GrantLuckyBlock")
+		if not (bf and bf:IsA("BindableFunction")) then
+			warn("[BushHarvest] GrantLuckyBlock missing on lucky carry deposit")
+			return nil
+		end
+		local ok, granted = pcall(function()
+			return (bf :: BindableFunction):Invoke(player, blockName, {
+				variant = if typeof(variant) == "string" then variant else nil,
+				equip = true,
+			})
+		end)
+		if not ok then
+			warn("[BushHarvest] GrantLuckyBlock on deposit failed:", granted)
+			return nil
+		end
+		if granted ~= true then
+			depositDebug("redeem FAIL: GrantLuckyBlock returned false", player.Name, blockName)
+			return nil
+		end
+		safeZoneSfxPlayedForCarry[carry] = nil
+		carry:Destroy()
+		depositDebug("redeem lucky block OK", player.Name, blockName)
 		return nil
 	end
 
@@ -1468,6 +1503,30 @@ local function clearHiddenBrainrotLoot(bush: Instance)
 	bush:SetAttribute(BUSH_HIDDEN_BASE_INCOME_ATTR, nil)
 end
 
+local function clearHiddenLuckyLoot(bush: Instance)
+	bush:SetAttribute(BUSH_HAS_LUCKY_ATTR, nil)
+	bush:SetAttribute(BUSH_HIDDEN_LUCKY_KIND_ATTR, nil)
+	bush:SetAttribute(BUSH_HIDDEN_LUCKY_VARIANT_ATTR, nil)
+end
+
+local function rollHiddenLuckyLoot(bush: Instance, worldPosition: Vector3)
+	clearHiddenLuckyLoot(bush)
+	local land = LandResolver.resolveLandAtPosition(worldPosition)
+	if typeof(land) ~= "number" then
+		land = 1
+	end
+	local chance = BushLuckyBlockConfig.chanceForLand(land)
+	if math.random() > chance then
+		return
+	end
+	local blockName, variant = BushLuckyBlockConfig.pickBlockForLand(land)
+	bush:SetAttribute(BUSH_HAS_LUCKY_ATTR, true)
+	bush:SetAttribute(BUSH_HIDDEN_LUCKY_KIND_ATTR, blockName)
+	if typeof(variant) == "string" and variant ~= "" then
+		bush:SetAttribute(BUSH_HIDDEN_LUCKY_VARIANT_ATTR, variant)
+	end
+end
+
 local function rollHiddenBrainrotLoot(bush: Instance)
 	clearHiddenBrainrotLoot(bush)
 	local brainrots = Brainrots.getBrainrotsFolder()
@@ -1510,13 +1569,16 @@ local function RollBushState(bush: Instance): boolean
 	else
 		clearHiddenBrainrotLoot(bush)
 	end
-	return hasBrainrot
+	local pos = if bush:IsA("BasePart") then bush.Position else bush:GetPivot().Position
+	rollHiddenLuckyLoot(bush, pos)
+	return hasBrainrot or bush:GetAttribute(BUSH_HAS_LUCKY_ATTR) == true
 end
 
 local function beginBushSearchCooldown(bush: Instance, cooldownSec: number): number
 	local endsAt = workspace:GetServerTimeNow() + cooldownSec
 	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, false)
 	clearHiddenBrainrotLoot(bush)
+	clearHiddenLuckyLoot(bush)
 	bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, true)
 	bush:SetAttribute(BUSH_LOOT_PHASE_ATTR, BUSH_LOOT_PHASE_COOLDOWN)
 	bush:SetAttribute(BUSH_COOLDOWN_ENDS_ATTR, endsAt)
@@ -2344,54 +2406,107 @@ local function spawnFloatingClaimForPick(
 	return true
 end
 
-local function tryOpenBushLuckyBlock(player: Player, worldPosition: Vector3, bushRef: Instance?): (boolean, string?)
-	local land = LandResolver.resolveLandAtPosition(worldPosition)
-	if typeof(land) ~= "number" then
-		land = 1
-	end
-	local chance = BushLuckyBlockConfig.chanceForLand(land)
-	if math.random() > chance then
+local function tryOfferBushLuckyBlock(player: Player, worldPosition: Vector3, bushRef: Instance?): (boolean, string?)
+	if not bushRef or bushRef:GetAttribute(BUSH_HAS_LUCKY_ATTR) ~= true then
 		return false, nil
 	end
-	local blockName, variant = BushLuckyBlockConfig.pickBlockForLand(land)
-	local folder = ServerStorage:FindFirstChild("LuckyBlockInternal")
-	local openBF = folder and folder:FindFirstChild("OpenFromWorld")
-	if not (openBF and openBF:IsA("BindableFunction")) then
-		warn("[BushHarvest] LuckyBlockInternal.OpenFromWorld missing")
+	local blockName = bushRef:GetAttribute(BUSH_HIDDEN_LUCKY_KIND_ATTR)
+	if typeof(blockName) ~= "string" or blockName == "" then
+		blockName = "Starter Lucky Block"
+	end
+	local variant = bushRef:GetAttribute(BUSH_HIDDEN_LUCKY_VARIANT_ATTR)
+	if typeof(variant) ~= "string" or variant == "" then
+		variant = nil
+	end
+
+	local char = player.Character
+	if not char then
 		return false, nil
 	end
 
-	local bushKey: string? = nil
+	local folder = ServerStorage:FindFirstChild("LuckyBlockInternal")
+	local cloneBF = folder and folder:FindFirstChild("CloneWorldModel")
+	if not (cloneBF and cloneBF:IsA("BindableFunction")) then
+		warn("[BushHarvest] LuckyBlockInternal.CloneWorldModel missing")
+		return false, nil
+	end
+
+	local okClone, cloneOrErr = pcall(function()
+		return (cloneBF :: BindableFunction):Invoke(blockName, variant)
+	end)
+	if not okClone or typeof(cloneOrErr) ~= "Instance" or not (cloneOrErr :: Instance):IsA("Model") then
+		-- Fallback starter so a missing high-tier template never voids the jackpot.
+		if blockName ~= "Starter Lucky Block" then
+			okClone, cloneOrErr = pcall(function()
+				return (cloneBF :: BindableFunction):Invoke("Starter Lucky Block", "basic")
+			end)
+			if okClone and typeof(cloneOrErr) == "Instance" and (cloneOrErr :: Instance):IsA("Model") then
+				warn("[BushHarvest] Lucky CloneWorldModel fallback to Starter for", blockName)
+				blockName = "Starter Lucky Block"
+				variant = "basic"
+			else
+				warn("[BushHarvest] CloneWorldModel failed:", cloneOrErr)
+				return false, nil
+			end
+		else
+			warn("[BushHarvest] CloneWorldModel failed:", cloneOrErr)
+			return false, nil
+		end
+	end
+
+	local clone = cloneOrErr :: Model
+	clone:SetAttribute("OwnerUserId", player.UserId)
+	clone:SetAttribute("BrainrotCarryPhase", "Pop")
+	clone:SetAttribute("LuckyBlockCarry", true)
+	clone:SetAttribute("LuckyBlockKind", blockName)
+	if typeof(variant) == "string" then
+		clone:SetAttribute("LuckyBlockVariant", variant)
+	end
+	clone:SetAttribute("BrainrotName", LuckyBlockCatalog.displayName(blockName))
+	clone:SetAttribute("BrainrotRarity", LuckyBlockCatalog.primaryDropRarity(blockName))
+	clone:SetAttribute("BrainrotMutation", "normal")
+	clone:SetAttribute("BrainrotLevel", 1)
+	clone:SetAttribute("BrainrotBaseIncome", 0)
 	if bushRef and isValidBushRef(bushRef) then
 		local pos = if bushRef:IsA("BasePart") then bushRef.Position else bushRef:GetPivot().Position
-		bushKey = string.format("%.0f_%.0f_%.0f", pos.X, pos.Y, pos.Z)
+		clone:SetAttribute("BrainrotHarvestBushKey", string.format("%.0f_%.0f_%.0f", pos.X, pos.Y, pos.Z))
 	end
 
-	local function open(name: string, var: string?): boolean
-		local ok, opened = pcall(function()
-			return (openBF :: BindableFunction):Invoke(player, name, worldPosition, {
-				variant = var,
-				floatClaim = true,
-				bushKey = bushKey,
-			})
-		end)
-		if not ok then
-			warn("[BushHarvest] OpenFromWorld failed:", opened)
-			return false
+	for _, d in clone:GetDescendants() do
+		if d:IsA("ProximityPrompt") then
+			d:Destroy()
 		end
-		return opened == true
 	end
 
-	if open(blockName, variant) then
-		return true, blockName
-	end
-	-- Fallback so a missing high-tier Studio template never voids the jackpot.
-	if blockName ~= "Starter Lucky Block" and open("Starter Lucky Block", "basic") then
-		warn("[BushHarvest] Opened Starter Lucky Block fallback; missing template for", blockName)
-		return true, "Starter Lucky Block"
-	end
-	warn("[BushHarvest] OpenFromWorld returned false for", blockName)
-	return false, nil
+	clone.Parent = workspace
+	local facePos = char:GetPivot().Position
+	local spawnCf, baseYaw = spawnBrainrotAboveBush(clone, worldPosition, 1, facePos)
+	placeModelAtWorld(clone, spawnCf)
+	setAllPartsPhysics(clone, true, true)
+
+	BrainrotHeader.attach(clone, {
+		name = LuckyBlockCatalog.displayName(blockName),
+		rarity = LuckyBlockCatalog.primaryDropRarity(blockName),
+		mutation = "normal",
+		level = 1,
+		incomePerSecond = 0,
+	})
+
+	local anchorPos = spawnCf.Position
+	popSpawnEffect(clone, function()
+		if not clone.Parent or player.Character ~= char then
+			if clone.Parent then
+				clone:Destroy()
+			end
+			return
+		end
+		clone:SetAttribute("BrainrotCarryPhase", "Floating")
+		setAllPartsPhysics(clone, true, true)
+		startFloatingClaimOffer(player, char, clone, anchorPos, baseYaw)
+	end)
+
+	clearHiddenLuckyLoot(bushRef)
+	return true, blockName
 end
 
 --[[
@@ -2452,8 +2567,8 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 
 	local hasBrainrot = bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
 	local dropOrigin = if bush:IsA("BasePart") then bush.Position else bush:GetPivot().Position
-	-- Rare jackpot: open lucky-block cutscene at the bush, then floating accept/decline.
-	local luckyOpened, luckyBlockName = tryOpenBushLuckyBlock(player, dropOrigin, bush)
+	-- Rare jackpot: float a lucky-block model (accept → carry → RedWall deposits tool).
+	local luckyOpened, luckyBlockName = tryOfferBushLuckyBlock(player, worldPosition, bush)
 	if luckyOpened or hasBrainrot then
 		AnalyticsFunnelService.logOnboardingId(player, "opened_bush", { allowSkip = true })
 	end

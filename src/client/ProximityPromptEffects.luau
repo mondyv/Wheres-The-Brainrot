@@ -1278,10 +1278,22 @@ local function beginBushWobble(prompt: ProximityPrompt)
 	end
 	stopBushWobble()
 
-	if not captureBushWobbleBases(bush) then
+	local captured = captureBushWobbleBases(bush)
+	if not captured then
+		-- Some bush layouts have no Model/Part shake targets — still try a leaf part.
+		local part = if bush:IsA("BasePart") then bush else bush:FindFirstChildWhichIsA("BasePart", true)
+		if part and part:IsA("BasePart") then
+			bushWobbleBases[part] = part.CFrame
+			captured = true
+		end
+	end
+
+	-- Always play leaf-shake VFX even if transform wobble has nothing to move.
+	OtherVfxController.playBushSearchShake(bush)
+
+	if not captured then
 		return
 	end
-	OtherVfxController.playBushSearchShake(bush)
 
 	local bushWobbleSeed = math.random() * 10
 	bushWobbleStepBound = true

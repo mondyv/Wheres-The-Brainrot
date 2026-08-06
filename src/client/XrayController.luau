@@ -14,6 +14,7 @@ local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChil
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
+local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
 local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
 local PromptConfig = require(script.Parent.ProximityPromptEffectsConfig)
 
@@ -25,6 +26,8 @@ local BUSH_HIDDEN_NAME_ATTR = "HiddenBrainrotName"
 local BUSH_HIDDEN_MUTATION_ATTR = "HiddenBrainrotMutation"
 local BUSH_HIDDEN_LEVEL_ATTR = "HiddenBrainrotLevel"
 local BUSH_HIDDEN_BASE_INCOME_ATTR = "HiddenBrainrotBaseIncome"
+local BUSH_HAS_LUCKY_ATTR = "HasHiddenLuckyBlock"
+local BUSH_HIDDEN_LUCKY_KIND_ATTR = "HiddenLuckyBlockKind"
 
 local DEFAULT_BB_SIZE = UDim2.fromOffset(300, 140)
 local EMPTY_BB_SIZE = UDim2.fromOffset(320, 58)
@@ -220,12 +223,29 @@ end
 
 local function readHiddenLoot(bush: Instance): {
 	hasBrainrot: boolean,
+	hasLucky: boolean,
 	name: string?,
 	rarity: string?,
 	mutation: string?,
 	level: number,
 	incomePerSecond: number,
+	isLuckyBlock: boolean,
 }
+	local hasLucky = bush:GetAttribute(BUSH_HAS_LUCKY_ATTR) == true
+	local luckyKind = bush:GetAttribute(BUSH_HIDDEN_LUCKY_KIND_ATTR)
+	if hasLucky and typeof(luckyKind) == "string" and luckyKind ~= "" then
+		return {
+			hasBrainrot = false,
+			hasLucky = true,
+			isLuckyBlock = true,
+			name = LuckyBlockCatalog.displayName(luckyKind),
+			rarity = LuckyBlockCatalog.primaryDropRarity(luckyKind),
+			mutation = "normal",
+			level = 1,
+			incomePerSecond = 0,
+		}
+	end
+
 	local hasBrainrot = bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
 	local hiddenName = bush:GetAttribute(BUSH_HIDDEN_NAME_ATTR)
 	local hiddenRarity = bush:GetAttribute(BUSH_HIDDEN_RARITY_ATTR)
@@ -236,6 +256,8 @@ local function readHiddenLoot(bush: Instance): {
 	if not hasBrainrot or typeof(hiddenName) ~= "string" or hiddenName == "" then
 		return {
 			hasBrainrot = false,
+			hasLucky = false,
+			isLuckyBlock = false,
 			level = 1,
 			incomePerSecond = 0,
 		}
@@ -255,6 +277,8 @@ local function readHiddenLoot(bush: Instance): {
 
 	return {
 		hasBrainrot = true,
+		hasLucky = false,
+		isLuckyBlock = false,
 		name = hiddenName,
 		rarity = rarity,
 		mutation = mutation,
@@ -327,7 +351,7 @@ local function updateForBush(bush: Instance)
 
 	local loot = readHiddenLoot(bush)
 
-	if loot.hasBrainrot and loot.name and loot.rarity then
+	if (loot.hasBrainrot or loot.hasLucky) and loot.name and loot.rarity then
 		billboard.Size = fullBillboardSize
 		local mutation = loot.mutation or "normal"
 		BrainrotHeaderStyle.applyInfoFrame(infoFrame, {
@@ -335,7 +359,7 @@ local function updateForBush(bush: Instance)
 			rarity = loot.rarity,
 			mutation = mutation,
 			level = loot.level,
-			rateText = formatRate(loot.incomePerSecond),
+			rateText = if loot.isLuckyBlock then "Lucky Block" else formatRate(loot.incomePerSecond),
 		})
 		hideInfoChild(infoFrame, "Level")
 
@@ -350,14 +374,21 @@ local function updateForBush(bush: Instance)
 			if typeLabelLayout then
 				applyLabelLayout(typeNode, typeLabelLayout)
 			end
-			BrainrotHeaderStyle.applyMutationLabel(typeNode, mutation)
-			typeNode.Visible = true
+			if loot.isLuckyBlock then
+				clearLabelGradients(typeNode)
+				typeNode.Text = "Lucky Block"
+				typeNode.TextColor3 = Color3.fromRGB(255, 220, 120)
+				typeNode.Visible = true
+			else
+				BrainrotHeaderStyle.applyMutationLabel(typeNode, mutation)
+				typeNode.Visible = true
+			end
 			typeNode.TextTransparency = 0
 			typeNode.TextStrokeTransparency = 0
 			typeNode.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 		end
 
-		applyPanelStrokeColor(loot.rarity, mutation)
+		applyPanelStrokeColor(loot.rarity, if loot.isLuckyBlock then nil else mutation)
 	else
 		billboard.Size = EMPTY_BB_SIZE
 		applyEmptyHiddenState(infoFrame)
@@ -389,6 +420,8 @@ local function onActiveBushChanged(bush: Instance?)
 		BUSH_HIDDEN_MUTATION_ATTR,
 		BUSH_HIDDEN_LEVEL_ATTR,
 		BUSH_HIDDEN_BASE_INCOME_ATTR,
+		BUSH_HAS_LUCKY_ATTR,
+		BUSH_HIDDEN_LUCKY_KIND_ATTR,
 	}
 	for _, attr in attrs do
 		table.insert(activeBushConns, bush:GetAttributeChangedSignal(attr):Connect(refresh))
@@ -399,11 +432,8 @@ local function bushOutlineGradient(bush: Instance): ColorSequence?
 	if not ownsXrayVision() then
 		return nil
 	end
-	if bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) ~= true then
-		return nil
-	end
 	local loot = readHiddenLoot(bush)
-	if not loot or not loot.hasBrainrot then
+	if not loot or (not loot.hasBrainrot and not loot.hasLucky) then
 		return nil
 	end
 	-- Outline follows rarity (mutation still shown in the header Type label).

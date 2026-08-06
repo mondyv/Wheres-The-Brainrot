@@ -1,7 +1,8 @@
 -- [ACTIVE] BushLuckyBlockConfig
 --[[
 	Rare lucky-block jackpots from bush searches. Chance + block tier scale with land.
-	Opens the lucky-block cutscene at the bush, then floating accept/decline for the reward.
+	Pre-rolled onto bushes (xray can see them). Search floats the block for accept/decline;
+	accept carries it to RedWall, which grants the openable lucky-block tool.
 	Block ids / variants come from LuckyBlockCatalog.
 ]]
 

@@ -959,6 +959,28 @@ local function tryRoll(player: Player, requestedTool: Instance?)
 	})
 end
 
+local cloneWorldBF = ensureBindable("CloneWorldModel")
+cloneWorldBF.OnInvoke = function(blockNameArg: any, variantArg: any): Model?
+	local blockName = if typeof(blockNameArg) == "string" and blockNameArg ~= "" then blockNameArg else "Starter Lucky Block"
+	local variant: string? = if typeof(variantArg) == "string" and variantArg ~= "" then variantArg else nil
+	if typeof(variant) ~= "string" or variant == "" then
+		variant = LuckyBlockCatalog.defaultVariant(blockName)
+	end
+	local template = findLuckyBlockTemplate(blockName, variant)
+	if not template then
+		warn("[LuckyBlock] CloneWorldModel: no template for", blockName, "variant:", variant)
+		return nil
+	end
+	local clone = template:Clone()
+	clone.Name = blockName
+	for _, d in clone:GetDescendants() do
+		if d:IsA("ProximityPrompt") or d:IsA("ClickDetector") or d:IsA("Script") or d:IsA("LocalScript") then
+			d:Destroy()
+		end
+	end
+	return clone
+end
+
 local openFromWorldBF = ensureBindable("OpenFromWorld")
 openFromWorldBF.OnInvoke = function(plrArg: any, blockNameArg: any, worldPosArg: any, optsArg: any): boolean
 	if typeof(plrArg) ~= "Instance" or not (plrArg :: Instance):IsA("Player") then

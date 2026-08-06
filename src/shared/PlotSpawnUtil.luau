@@ -177,45 +177,101 @@ local function flatLookFromPart(part: BasePart): Vector3
 end
 
 -- Prefer the dedicated Spawn pad under story 1 (never a stand Spawn).
+-- Template path: Templates.Base["1 Story"].Other.Spawn
 function PlotSpawnUtil.findPlotSpawnAnchor(plot: Instance): BasePart?
 	local story1 = PlotPaths.firstStoryFolder(plot)
 	if not story1 then
 		return nil
 	end
 
-	local spawnNode = story1:FindFirstChild("Spawn") or story1:FindFirstChild("spawn")
-	if not spawnNode then
-		for _, d in ipairs(story1:GetChildren()) do
-			if string.lower(d.Name) == "spawn" then
-				spawnNode = d
-				break
+	local function isUnderStands(inst: Instance): boolean
+		local anc: Instance? = inst.Parent
+		while anc and anc ~= story1 and anc ~= plot do
+			local n = string.lower(anc.Name)
+			if n == "stands" then
+				return true
 			end
+			anc = anc.Parent
 		end
-	end
-	if not spawnNode then
-		return nil
+		return false
 	end
 
-	if spawnNode:IsA("BasePart") then
-		return spawnNode
+	local function asSpawnPart(node: Instance?): BasePart?
+		if not node then
+			return nil
+		end
+		if isUnderStands(node) then
+			return nil
+		end
+		if node:IsA("BasePart") then
+			return node
+		end
+		local named = node:FindFirstChild("Spawn") or node:FindFirstChild("spawn")
+		if named and named:IsA("BasePart") and not isUnderStands(named) then
+			return named
+		end
+		local best: BasePart? = nil
+		local bestArea = -1
+		for _, d in ipairs(node:GetDescendants()) do
+			if d:IsA("BasePart") and not isUnderStands(d) then
+				local area = d.Size.X * d.Size.Z
+				if area > bestArea then
+					bestArea = area
+					best = d
+				end
+			end
+		end
+		return best
 	end
-	-- Prefer a child literally named Spawn / a large pad part.
-	local named = spawnNode:FindFirstChild("Spawn") or spawnNode:FindFirstChild("spawn")
-	if named and named:IsA("BasePart") then
-		return named
+
+	-- 1) Direct under story 1
+	local spawnNode = story1:FindFirstChild("Spawn") or story1:FindFirstChild("spawn")
+	local part = asSpawnPart(spawnNode)
+	if part then
+		return part
 	end
-	local best: BasePart? = nil
-	local bestArea = -1
-	for _, d in ipairs(spawnNode:GetDescendants()) do
-		if d:IsA("BasePart") then
-			local area = d.Size.X * d.Size.Z
-			if area > bestArea then
-				bestArea = area
-				best = d
+
+	-- 2) Template layout: 1 Story / Other / Spawn
+	local other = story1:FindFirstChild("Other") or story1:FindFirstChild("other")
+	if other then
+		spawnNode = other:FindFirstChild("Spawn") or other:FindFirstChild("spawn")
+		part = asSpawnPart(spawnNode)
+		if part then
+			return part
+		end
+	end
+
+	-- 3) Case-insensitive scan of story-1 children + Other children
+	for _, d in ipairs(story1:GetChildren()) do
+		if string.lower(d.Name) == "spawn" then
+			part = asSpawnPart(d)
+			if part then
+				return part
 			end
 		end
 	end
-	return best
+	if other then
+		for _, d in ipairs(other:GetChildren()) do
+			if string.lower(d.Name) == "spawn" then
+				part = asSpawnPart(d)
+				if part then
+					return part
+				end
+			end
+		end
+	end
+
+	-- 4) Deep search under story 1, skipping stand Spawns
+	for _, d in ipairs(story1:GetDescendants()) do
+		if string.lower(d.Name) == "spawn" and not isUnderStands(d) then
+			part = asSpawnPart(d)
+			if part then
+				return part
+			end
+		end
+	end
+
+	return nil
 end
 
 local function cframeOnSpawnAnchor(anchor: BasePart, plot: Instance): CFrame

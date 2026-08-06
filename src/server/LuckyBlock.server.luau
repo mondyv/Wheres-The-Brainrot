@@ -30,9 +30,17 @@ local CutsceneConfig = require(Shared:WaitForChild("LuckyBlockCutsceneConfig"))
 local BrainrotCarryVisual = require(Shared:WaitForChild("BrainrotCarryVisual"))
 local LuckyBlockCatalog = require(Shared:WaitForChild("LuckyBlockCatalog"))
 local IndexConfig = require(Shared:WaitForChild("IndexConfig"))
+local SafezoneUtil = require(Shared:WaitForChild("SafezoneUtil"))
 
 local CUTSCENE_TOTAL_SEC = CutsceneConfig.totalDurationSec()
 local REVEAL_SPAWN_AT_SEC = CutsceneConfig.revealSpawnAtSec()
+
+local OPEN_DENIED_MESSAGES = {
+	"Can't open this here!",
+	"Open lucky blocks at base!",
+	"Head back to the safe zone!",
+	"Not out here — open it at home!",
+}
 
 -- Default roll weights for the brainrot that pops out of the (star rainbow) lucky block.
 local RARITY_WEIGHTS: { [string]: number } = {
@@ -103,6 +111,40 @@ end
 
 local rollRE = ensureRemoteEvent("LuckyBlockRoll")
 local shakeStartRE = ensureRemoteEvent("LuckyBlockShakeStart")
+local denyRE = ensureRemoteEvent("LuckyBlockDenied")
+
+local lastDenyAt: { [Player]: number } = {}
+
+local function canOpenLuckyBlockInZone(player: Player): boolean
+	local char = player.Character
+	if not char then
+		return false
+	end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if SafezoneUtil.isCharacterInSafezone(char) then
+		return true
+	end
+	if SafezoneUtil.isCharacterInToolbarZone(char) then
+		return true
+	end
+	if SafezoneUtil.isCharacterInInventoryZone(char) then
+		return true
+	end
+	if hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position) then
+		return true
+	end
+	return false
+end
+
+local function fireOpenDenied(player: Player)
+	local now = os.clock()
+	if (lastDenyAt[player] or 0) + 1.1 > now then
+		return
+	end
+	lastDenyAt[player] = now
+	local msg = OPEN_DENIED_MESSAGES[math.random(1, #OPEN_DENIED_MESSAGES)]
+	denyRE:FireClient(player, msg)
+end
 
 -- ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -900,6 +942,10 @@ local function tryRoll(player: Player, requestedTool: Instance?)
 	if not tool then
 		return
 	end
+	if not canOpenLuckyBlockInZone(player) then
+		fireOpenDenied(player)
+		return
+	end
 	local pick = pickBrainrotForKind(tool:GetAttribute("LuckyBlockKind"))
 	if not pick then
 		return
@@ -965,5 +1011,6 @@ end)
 
 Players.PlayerRemoving:Connect(function(player)
 	rollInFlight[player] = nil
+	lastDenyAt[player] = nil
 	clearReveal(player)
 end)

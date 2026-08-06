@@ -19,8 +19,10 @@ local Workspace = game:GetService("Workspace")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CutsceneConfig = require(Shared:WaitForChild("LuckyBlockCutsceneConfig"))
 local MobileTouchGate = require(Shared:WaitForChild("MobileTouchGate"))
+local SafezoneUtil = require(Shared:WaitForChild("SafezoneUtil"))
 
 local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
+local CharacterWorldNotif = require(script.Parent.CharacterWorldNotif)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local OtherVfxController = require(script.Parent.OtherVfxController)
@@ -31,12 +33,21 @@ local player = Players.LocalPlayer
 local LOCK_ACTION = "LuckyBlockCutsceneMoveLock"
 local GUI_NAME = "LuckyBlockCutscene"
 
+local OPEN_DENIED_MESSAGES = {
+	"Can't open this here!",
+	"Open lucky blocks at base!",
+	"Head back to the safe zone!",
+	"Not out here — open it at home!",
+}
+
 local LuckyBlockController = {}
 
 local rollRE: RemoteEvent? = nil
 local shakeStartRE: RemoteEvent? = nil
+local denyRE: RemoteEvent? = nil
 local activeAuraSound: Sound? = nil
 local cutsceneToken = 0
+local lastLocalDenyAt = 0
 
 local cameraConn: RBXScriptConnection? = nil
 local shakeConn: RBXScriptConnection? = nil
@@ -67,6 +78,49 @@ local keepToolHiddenConn: RBXScriptConnection? = nil
 
 local function isLuckyBlockTool(tool: Instance): boolean
 	return tool:IsA("Tool") and tool:GetAttribute("LuckyBlockTool") == true
+end
+
+local function canOpenLuckyBlockInZone(): boolean
+	local char = player.Character
+	if not char then
+		return false
+	end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if SafezoneUtil.isCharacterInSafezone(char) then
+		return true
+	end
+	if SafezoneUtil.isCharacterInToolbarZone(char) then
+		return true
+	end
+	if SafezoneUtil.isCharacterInInventoryZone(char) then
+		return true
+	end
+	if hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall((hrp :: BasePart).Position) then
+		return true
+	end
+	return false
+end
+
+local function showOpenDeniedNotif(message: string?)
+	local now = os.clock()
+	if now - lastLocalDenyAt < 1.05 then
+		return
+	end
+	lastLocalDenyAt = now
+	local msg = if typeof(message) == "string" and message ~= ""
+		then message
+		else OPEN_DENIED_MESSAGES[math.random(1, #OPEN_DENIED_MESSAGES)]
+	TopNotifController.showError(msg)
+	pcall(function()
+		GameSoundEffects.playErrorNotif()
+	end)
+	CharacterWorldNotif.show(player.Character, msg, {
+		color = Color3.fromRGB(255, 150, 120),
+		offset = Vector3.new(2.4, 1.55, 0),
+		lifetimeSec = 3.2,
+		ellipsis = false,
+		hideRankBadges = true,
+	})
 end
 
 local function getHRP(): BasePart?
@@ -1292,6 +1346,10 @@ local function bindTool(tool: Tool)
 		if tool:GetAttribute("LuckyBlockRolling") == true then
 			return
 		end
+		if not canOpenLuckyBlockInZone() then
+			showOpenDeniedNotif(nil)
+			return
+		end
 		if not rollRE then
 			return
 		end
@@ -1326,6 +1384,9 @@ end
 
 function LuckyBlockController.init()
 	task.spawn(function()
+		SafezoneUtil.warmCacheAsync()
+	end)
+	task.spawn(function()
 		local folder = ReplicatedStorage:WaitForChild("LuckyBlockRemotes", 60)
 		if not folder then
 			warn("[LuckyBlockController] LuckyBlockRemotes folder missing")
@@ -1333,8 +1394,14 @@ function LuckyBlockController.init()
 		end
 		rollRE = folder:WaitForChild("LuckyBlockRoll", 30) :: RemoteEvent?
 		shakeStartRE = folder:WaitForChild("LuckyBlockShakeStart", 30) :: RemoteEvent?
+		denyRE = folder:WaitForChild("LuckyBlockDenied", 30) :: RemoteEvent?
 		if shakeStartRE then
 			shakeStartRE.OnClientEvent:Connect(handleShakeStart)
+		end
+		if denyRE then
+			denyRE.OnClientEvent:Connect(function(message: any)
+				showOpenDeniedNotif(if typeof(message) == "string" then message else nil)
+			end)
 		end
 	end)
 

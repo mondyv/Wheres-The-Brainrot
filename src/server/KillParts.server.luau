@@ -8,7 +8,8 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 
 local DEBOUNCE_SEC = 0.75
-local SPAWN_IMMUNITY_SEC = 2.5
+-- Longer than soft-respawn teleport retries so falling into Killparts cannot death-loop.
+local SPAWN_IMMUNITY_SEC = 5
 local FOLDER_PATH = { "Map", "Land Borders", "Killparts" }
 
 local wired: { [BasePart]: boolean } = {}

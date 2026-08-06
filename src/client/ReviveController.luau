@@ -830,6 +830,9 @@ local function isTutorialSoftDeath(): boolean
 end
 
 local function isFrictionlessDeathActive(): boolean
+	if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
+		return true
+	end
 	local untilT = player:GetAttribute(PlayerDataSchema.FRICTIONLESS_DEATH_UNTIL_ATTR)
 	if typeof(untilT) ~= "number" then
 		return false
@@ -1269,6 +1272,10 @@ function ReviveController.init()
 		end
 
 		revivePromptRE.OnClientEvent:Connect(function(land: number, productId: number, countdownSec: number?)
+			-- Temporary: all deaths soft-respawn server-side; ignore revive / decline UI.
+			if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
+				return
+			end
 			local duration = if typeof(countdownSec) == "number" then countdownSec else ReviveConfig.COUNTDOWN_SECONDS
 			openRevivePanel(land, productId, duration)
 		end)

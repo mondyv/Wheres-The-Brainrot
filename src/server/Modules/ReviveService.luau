@@ -3,9 +3,10 @@
 	Revive flow (server module):
 	• CharacterAutoLoads = false so Roblox's RespawnTime never holds decline/revive.
 	• Tracks last good land while alive (death Y/ragdoll can miss hitboxes).
-	• On death: store land + spawn CFrame, prompt client with that land's product.
-	• Decline / timeout: clear pending and LoadCharacter immediately.
-	• Dev product receipt: LoadCharacter / teleport onto that land's Spawn.
+	• FAST_RESPAWN_ALL_DEATHS (temporary): every death LoadCharacters onto QuestHitbox —
+	  no decline / paid revive UI. Paid revive path kept for when the flag is off.
+	• Otherwise: prompt client with land product; decline / timeout LoadCharacter;
+	  purchase teleports onto that land's Spawn.
 --]]
 
 local Players = game:GetService("Players")
@@ -273,17 +274,33 @@ local function fulfillRevivePurchase(player: Player): boolean
 	return true
 end
 
-local function resolveTutorialSoftRespawnCFrame(): CFrame?
+local lastSoftRespawnAt: { [Player]: number } = {}
+
+local function cframeOnTopOfPart(part: BasePart, clearance: number): CFrame
+	local top = (part.CFrame * CFrame.new(0, part.Size.Y * 0.5, 0)).Position
+	local look = part.CFrame.LookVector
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < 0.08 then
+		flat = Vector3.new(0, 0, -1)
+	else
+		flat = flat.Unit
+	end
+	local pos = top + Vector3.new(0, clearance, 0)
+	return CFrame.lookAt(pos, pos + flat)
+end
+
+local function resolveHitboxSoftRespawnCFrame(): CFrame?
 	local map = workspace:FindFirstChild(TimCheeseQuestConfig.MAP_FOLDER_NAME)
 		or workspace:FindFirstChild("Map")
 	local root = map or workspace
+	local clearance = ReviveConfig.HITBOX_RESPAWN_CLEARANCE
 	local hitbox = root:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME, true)
 	if hitbox and hitbox:IsA("BasePart") then
-		return hitbox.CFrame + Vector3.new(0, hitbox.Size.Y * 0.5 + 3, 0)
+		return cframeOnTopOfPart(hitbox, clearance)
 	end
 	local trigger = root:FindFirstChild(TimCheeseQuestConfig.QUEST_TRIGGER_NAME, true)
 	if trigger and trigger:IsA("BasePart") then
-		return trigger.CFrame + Vector3.new(0, trigger.Size.Y * 0.5 + 3, 0)
+		return cframeOnTopOfPart(trigger, clearance)
 	end
 	local tim = root:FindFirstChild(TimCheeseQuestConfig.TIM_NAME, true)
 	if tim and tim:IsA("Model") then
@@ -292,26 +309,23 @@ local function resolveTutorialSoftRespawnCFrame(): CFrame?
 	return nil
 end
 
-local function softRespawnAtTutorialHitbox(player: Player)
+local function softRespawnAtHitbox(player: Player)
 	clearPending(player)
-	local spawnCf = resolveTutorialSoftRespawnCFrame()
+	lastSoftRespawnAt[player] = os.clock()
+	local spawnCf = resolveHitboxSoftRespawnCFrame()
 	if spawnCf then
 		storeReviveSpawnAttrs(player, spawnCf)
 	else
 		clearReviveSpawnAttrs(player)
+		warn("[ReviveService] QuestHitbox missing — soft respawn without pinned CFrame")
 	end
 	forceLoadCharacter(player)
 end
 
--- Frictionless (first 10 min): instant respawn on the player's own plot — not Tim's
--- quest hitbox, which can sit near kill zones and soft-death-loop newcomers.
-local function softRespawnAtOwnPlot(player: Player)
-	clearPending(player)
-	clearReviveSpawnAttrs(player)
-	forceLoadCharacter(player)
-end
-
 local function isFrictionlessDeathActive(player: Player): boolean
+	if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
+		return true
+	end
 	local untilT = player:GetAttribute(PlayerDataSchema.FRICTIONLESS_DEATH_UNTIL_ATTR)
 	if typeof(untilT) ~= "number" then
 		return false
@@ -320,23 +334,38 @@ local function isFrictionlessDeathActive(player: Player): boolean
 end
 
 local function onHumanoidDied(player: Player, character: Model)
+	stopLandTracking(player)
+
+	-- Cooldown: falling into kill zones can Died→LoadCharacter→Died in a tight loop.
+	local lastAt = lastSoftRespawnAt[player]
+	if typeof(lastAt) == "number" and (os.clock() - lastAt) < ReviveConfig.SOFT_RESPAWN_COOLDOWN_SEC then
+		clearPending(player)
+		forceLoadCharacter(player)
+		return
+	end
+
+	-- Temporary: all deaths → fast respawn on QuestHitbox (no decline / revive panel).
+	if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
+		softRespawnAtHitbox(player)
+		return
+	end
+
 	if pendingByPlayer[player] then
 		return
 	end
-	stopLandTracking(player)
 
 	-- Tutorial swing practice: skip death panel, dump them at the quest hitbox.
 	if
 		player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true
 		and player:GetAttribute(PlayerDataSchema.TUTORIAL_SOFT_RESPAWN_ATTR) == true
 	then
-		softRespawnAtTutorialHitbox(player)
+		softRespawnAtHitbox(player)
 		return
 	end
 
-	-- First 10 minutes of the session: fade + instant plot respawn, no revive UI.
+	-- First 10 minutes of the session: fade + instant hitbox respawn, no revive UI.
 	if isFrictionlessDeathActive(player) then
-		softRespawnAtOwnPlot(player)
+		softRespawnAtHitbox(player)
 		return
 	end
 
@@ -503,6 +532,7 @@ function ReviveService.init()
 		clearReviveSpawnAttrs(player)
 		fulfillingByPlayer[player] = nil
 		loadingCharacter[player] = nil
+		lastSoftRespawnAt[player] = nil
 		lastGoodLand[player] = nil
 		lastGoodPos[player] = nil
 		local conn = charAddedConns[player]

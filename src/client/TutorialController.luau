@@ -37,6 +37,7 @@ local TutorialConfig = require(Svc.ReplicatedStorage:WaitForChild("Shared"):Wait
 local UiFonts = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local SafezoneUtil = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local JumpButtonSwingRing = require(script.Parent:WaitForChild("JumpButtonSwingRing"))
+local GamepadInput = require(script.Parent.GamepadInput)
 
 local player = Svc.Players.LocalPlayer
 
@@ -195,7 +196,7 @@ local function setChromeSuppressed(suppressed: boolean)
 		end
 		pendingPointerRefresh = true
 		local step = currentStep()
-		local text = if step then step.text elseif objectiveBaseText ~= "" then objectiveBaseText else nil
+		local text = if step then resolveStepText(step) elseif objectiveBaseText ~= "" then objectiveBaseText else nil
 		if text then
 			objectiveBaseText = text
 			if objectiveLabel then
@@ -479,7 +480,22 @@ local function isHudPanelOpen(): boolean
 end
 
 local function isMobileUi(): boolean
+	if GamepadInput.isPreferred() then
+		return false
+	end
 	return Svc.UserInputService.TouchEnabled
+end
+
+local function isControllerUi(): boolean
+	return GamepadInput.isPreferred()
+end
+
+local function resolveStepText(step: TutorialConfig.StepDef): string
+	return TutorialConfig.stepText(step, isControllerUi())
+end
+
+local function resolveStepRetry(step: TutorialConfig.StepDef): string?
+	return TutorialConfig.stepRetryText(step, isControllerUi())
 end
 
 local function findMobileJumpButton(): GuiButton?
@@ -1723,7 +1739,7 @@ updateMobileJumpTutorialHighlight = function()
 			end
 			if not swingCoach.releaseHintShown then
 				swingCoach.releaseHintShown = true
-				showPanel("Press jump again to let go!", false)
+				showPanel(if isControllerUi() then "Press A / ✕ again to let go!" else "Press jump again to let go!", false)
 			end
 			return
 		end
@@ -1742,7 +1758,9 @@ updateMobileJumpTutorialHighlight = function()
 		end
 		if isMobileSwingPromptReady() then
 			JumpButtonSwingRing.setTutorialCoach("lite")
-			local retry = "Press jump near a vine to swing!"
+			local retry = if isControllerUi()
+				then "Press A / ✕ near a vine to swing!"
+				else "Press jump near a vine to swing!"
 			if objectiveBaseText ~= retry then
 				showPanel(retry, false)
 			end
@@ -2676,7 +2694,7 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 	elseif step.id ~= "claimBrainrot" then
 		clearLockedBush()
 	end
-	showPanel(step.text, first)
+	showPanel(resolveStepText(step), first)
 	refreshPointers()
 	if step.id == "upgradeBrainrot" then
 		-- LevelPanel / Upgrade often replicates a beat after place — keep pointing.
@@ -2854,11 +2872,11 @@ local function watchStepProgress()
 					swingCoach.goToBaseLite = false
 					clearLockedSwing()
 					JumpButtonSwingRing.setTutorialCoach(nil)
-					objectiveBaseText = step.text
+					objectiveBaseText = resolveStepText(step)
 					if objectiveLabel then
-						objectiveLabel.Text = step.text
+						objectiveLabel.Text = resolveStepText(step)
 					end
-					startObjectiveDots(step.text)
+					startObjectiveDots(resolveStepText(step))
 					refreshPointers()
 				elseif swingCoach.goToBaseLite then
 					if not hasLiveWorldArrow() or not worldHighlight then
@@ -2943,7 +2961,7 @@ local function bindTutorialDeathHook(character: Model)
 			return
 		end
 		local step = currentStep()
-		local hint = if step and typeof(step.retryText) == "string" and step.retryText ~= "" then step.retryText else nil
+		local hint = resolveStepRetry(step)
 		local ReviveController = require(script.Parent.ReviveController)
 		ReviveController.markTutorialDeath(hint)
 	end)
@@ -2988,11 +3006,12 @@ local function restoreTutorialAfterRespawn()
 		syncPanelToSideButtons()
 		local step = currentStep()
 		if step then
-			local text = if step.id == "swingLand1" and typeof(step.retryText) == "string" and step.retryText ~= ""
-				then step.retryText
-				elseif step.id == "goToBase" and swingCoach.goToBaseLite and typeof(step.retryText) == "string" and step.retryText ~= ""
-				then step.retryText
-				else step.text
+			local retry = resolveStepRetry(step)
+			local text = if step.id == "swingLand1" and typeof(retry) == "string" and retry ~= ""
+				then retry
+				elseif step.id == "goToBase" and swingCoach.goToBaseLite and typeof(retry) == "string" and retry ~= ""
+				then retry
+				else resolveStepText(step)
 			objectiveBaseText = text
 			if objectiveLabel then
 				objectiveLabel.Text = text

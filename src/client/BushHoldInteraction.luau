@@ -15,10 +15,12 @@ local Workspace = game:GetService("Workspace")
 local BushShiver = require(script.Parent.BushShiver)
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
+local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local OtherVfxController = require(script.Parent.OtherVfxController)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
+local TopNotifController = require(script.Parent.TopNotifController)
 
 local player = Players.LocalPlayer
 
@@ -739,6 +741,13 @@ local function doHarvest(prompt: ProximityPrompt)
 			if result.found ~= true then
 				ProximityPromptEffects.showBushCooldownBanner(prompt, cooldownEndsAt)
 			end
+		end
+		if result.luckyBlock == true then
+			local kind = if typeof(result.luckyBlockName) == "string" then result.luckyBlockName else "Lucky Block"
+			local label = LuckyBlockCatalog.displayName(kind)
+			local rarity = LuckyBlockCatalog.primaryDropRarity(kind)
+			TopNotifController.showPersonal("Found " .. label .. "!", rarity, 4.5)
+			GameSoundEffects.playClick()
 		end
 		-- Empty-bush message is shown server-side (BushHarvest.showEmptyBushMessage).
 	end

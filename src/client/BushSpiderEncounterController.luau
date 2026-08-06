@@ -18,6 +18,7 @@ local BushFloatingClaimController = require(script.Parent.BushFloatingClaimContr
 local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
 local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local GamepadInput = require(script.Parent.GamepadInput)
 local LandAmbushUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandAmbushUtil"))
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
@@ -77,7 +78,14 @@ local FLASH_HIT = Color3.fromRGB(255, 72, 68)
 local FLASH_DODGE = Color3.fromRGB(55, 255, 130)
 
 local function isMobileSpiderInput(): boolean
+	if GamepadInput.isPreferred() then
+		return false
+	end
 	return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+end
+
+local function isGamepadSpiderInput(): boolean
+	return GamepadInput.isPreferred()
 end
 
 local function smoothstep(alpha: number): number
@@ -1911,7 +1919,8 @@ local function pickRandomQtePosition()
 	timingRoot.Position = UDim2.fromScale(0.5, 0.70)
 end
 
-local function refreshTimingUiPresentation(mobileInput: boolean, choiceLabel: string)
+local function refreshTimingUiPresentation(mobileInput: boolean, choiceLabel: string, gamepadInput: boolean?)
+	local pad = gamepadInput == true
 	if timingRoot then
 		local badge = timingRoot:FindFirstChild("Badge")
 		if badge and badge:IsA("GuiObject") then
@@ -1923,17 +1932,40 @@ local function refreshTimingUiPresentation(mobileInput: boolean, choiceLabel: st
 		end
 	end
 	if timingLetter then
-		timingLetter.Visible = not mobileInput
-		if not mobileInput then
+		-- Gamepad uses platform glyph icon; keyboard uses letter; mobile uses tap icon.
+		timingLetter.Visible = not mobileInput and not pad
+		if timingLetter.Visible then
 			timingLetter.Text = choiceLabel
 		end
 	end
 	if timingKeyIcon then
-		timingKeyIcon.Visible = mobileInput
+		if pad then
+			local img = GamepadInput.faceImage(C.QTE_GAMEPAD_KEY)
+			timingKeyIcon.Visible = img ~= ""
+			if img ~= "" then
+				timingKeyIcon.Image = img
+				timingKeyIcon.ImageColor3 = Color3.fromRGB(255, 248, 220)
+			end
+			if timingLetter and img == "" then
+				timingLetter.Visible = true
+				timingLetter.Text = GamepadInput.faceLabel(C.QTE_GAMEPAD_KEY)
+			end
+		else
+			timingKeyIcon.Visible = mobileInput
+			if mobileInput then
+				timingKeyIcon.Image = PromptFxConfig.TOUCH_TAP_ICON
+			end
+		end
 	end
 	if timingHint then
 		timingHint.Visible = true
-		timingHint.Text = if mobileInput then "TAP!" else "NOW!"
+		if mobileInput then
+			timingHint.Text = "TAP!"
+		elseif pad then
+			timingHint.Text = "PRESS " .. string.upper(GamepadInput.faceLabel(C.QTE_GAMEPAD_KEY)) .. "!"
+		else
+			timingHint.Text = "NOW!"
+		end
 	end
 	if timingRing then
 		timingRing.Visible = true
@@ -1945,7 +1977,7 @@ local function refreshTimingUiPresentation(mobileInput: boolean, choiceLabel: st
 end
 
 -- Always re-enable QTE chrome before a round — never rely on leftover Visible from a prior fight.
-local function prepareTimingQteForShow(mobileInput: boolean, choiceLabel: string)
+local function prepareTimingQteForShow(mobileInput: boolean, choiceLabel: string, gamepadInput: boolean?)
 	if letterTop then
 		letterTop.Visible = true
 	end
@@ -1971,7 +2003,7 @@ local function prepareTimingQteForShow(mobileInput: boolean, choiceLabel: string
 			hint.Visible = true
 		end
 	end
-	refreshTimingUiPresentation(mobileInput, choiceLabel)
+	refreshTimingUiPresentation(mobileInput, choiceLabel, gamepadInput)
 end
 
 local function flashCharacterTint(color: Color3, duration: number, intense: boolean?)
@@ -2489,10 +2521,13 @@ local function runEncounter(fallbackAnchor: Vector3)
 
 	local gui = ensureCutsceneGui()
 	gui.Enabled = true
-	local choice = C.TIMING_LETTERS[math.random(1, #C.TIMING_LETTERS)]
 	local mobileInput = isMobileSpiderInput()
-	prepareTimingQteForShow(mobileInput, choice.label)
-	if timingLetter and not mobileInput then
+	local gamepadInput = isGamepadSpiderInput()
+	local choice = C.TIMING_LETTERS[math.random(1, #C.TIMING_LETTERS)]
+	local qteKey = if gamepadInput then C.QTE_GAMEPAD_KEY else choice.key
+	local qteLabel = if gamepadInput then GamepadInput.faceLabel(C.QTE_GAMEPAD_KEY) else choice.label
+	prepareTimingQteForShow(mobileInput, qteLabel, gamepadInput)
+	if timingLetter and not mobileInput and not gamepadInput then
 		timingLetter.TextColor3 = Color3.fromRGB(255, 248, 220)
 	end
 	if timingHint then
@@ -2571,16 +2606,35 @@ local function runEncounter(fallbackAnchor: Vector3)
 		end)
 	end
 
+	-- Bind QTE key at high priority so bush/UI / free-look can't swallow it.
+	local QTE_ACTION = "BushSpiderQtePress"
+	ContextActionService:BindActionAtPriority(QTE_ACTION, function(_name, state, input)
+		if state ~= Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Pass
+		end
+		if qteResolved or not encounterActive or mobileInput then
+			return Enum.ContextActionResult.Pass
+		end
+		if input.KeyCode ~= qteKey then
+			return Enum.ContextActionResult.Pass
+		end
+		tryResolveQtePress()
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.ContextActionPriority.High.Value + 20, qteKey)
+
 	inputConn = UserInputService.InputBegan:Connect(function(input, _processed)
 		-- Ignore `processed` so bush/UI can't swallow the dodge letter (often E/Z).
 		if qteResolved or not encounterActive or mobileInput then
 			return
 		end
-		if input.UserInputType ~= Enum.UserInputType.Keyboard then
+		if gamepadInput then
+			if input.UserInputType ~= Enum.UserInputType.Gamepad1 then
+				return
+			end
+		elseif input.UserInputType ~= Enum.UserInputType.Keyboard then
 			return
 		end
-		-- Only the shown letter counts. WASD/Space/etc must not instant-fail the QTE.
-		if input.KeyCode ~= choice.key then
+		if input.KeyCode ~= qteKey then
 			return
 		end
 		tryResolveQtePress()
@@ -2631,7 +2685,13 @@ local function runEncounter(fallbackAnchor: Vector3)
 		end
 		if timingHint then
 			if travelAlpha >= C.QTE_CLOSE_MIN and travelAlpha <= C.QTE_CLOSE_MAX then
-				timingHint.Text = if mobileInput then "TAP!" else "NOW!"
+				if mobileInput then
+					timingHint.Text = "TAP!"
+				elseif gamepadInput then
+					timingHint.Text = "PRESS " .. string.upper(GamepadInput.faceLabel(C.QTE_GAMEPAD_KEY)) .. "!"
+				else
+					timingHint.Text = "NOW!"
+				end
 				timingHint.TextColor3 = Color3.fromRGB(120, 255, 170)
 			else
 				timingHint.Text = if mobileInput then "WAIT..." else "GET READY"
@@ -2642,6 +2702,9 @@ local function runEncounter(fallbackAnchor: Vector3)
 		RunService.RenderStepped:Wait()
 	end
 
+	pcall(function()
+		ContextActionService:UnbindAction(QTE_ACTION)
+	end)
 	if inputConn then
 		inputConn:Disconnect()
 	end

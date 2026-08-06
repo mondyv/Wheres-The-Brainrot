@@ -24,6 +24,7 @@
 
 local Players = game:GetService("Players")
 local ContextActionService = game:GetService("ContextActionService")
+local GamepadService = game:GetService("GamepadService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local GuiService = game:GetService("GuiService")
@@ -33,6 +34,7 @@ local UserInputService = game:GetService("UserInputService")
 local _Workspace = game:GetService("Workspace")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local GamepadInput = require(script.Parent.GamepadInput)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local CarryGate = require(script.Parent.CarryGate)
 local DropTargets = require(script.Parent.ToolbarDropTargets)
@@ -717,6 +719,27 @@ local ToolbarController = {}
 	local setBackpackPanelOpen: (boolean) -> ()
 	local findBackpackTemplateRow: (Instance?) -> GuiObject?
 	local applyBackpackSlotPanelAppearance: (GuiButton, boolean) -> ()
+	local gamepadCursorEnabled = false
+
+	local function syncToolbarGamepadCursor()
+		local want = GamepadInput.isPreferred()
+			and canUseToolbar
+			and (isBackpackPanelOpen or pendingToolbarDrag ~= nil or activeToolbarDrag)
+		if want == gamepadCursorEnabled then
+			return
+		end
+		gamepadCursorEnabled = want
+		local ok, err = pcall(function()
+			if want then
+				GamepadService:EnableGamepadCursor(backpackFrameRef or toolbar)
+			else
+				GamepadService:DisableGamepadCursor()
+			end
+		end)
+		if not ok then
+			warn("[ToolbarController] gamepad cursor sync failed:", err)
+		end
+	end
 
 	-- Defined after hotbarSlotScaleHost (see below).
 	local playEquipSlotAnimation: (number) -> ()
@@ -1753,6 +1776,7 @@ local ToolbarController = {}
 			sc.Scale = BACKPACK_OPEN_START_SCALE
 			ensureBackpackChromeVisible(f)
 			scrollBackpackToTop(f)
+			syncToolbarGamepadCursor()
 			task.defer(function()
 				if not isBackpackPanelOpen or backpackFrameRef ~= f then
 					return
@@ -1788,6 +1812,7 @@ local ToolbarController = {}
 					for i = 1, #slots do
 						refreshSlotVisual(i)
 					end
+					syncToolbarGamepadCursor()
 					task.defer(function()
 						if not isBackpackPanelOpen and not isBackpackPanelClosing then
 							animateToggleBackpackIcon(true)
@@ -1995,6 +2020,7 @@ local ToolbarController = {}
 			return
 		end
 		canUseToolbar = inZone
+		syncToolbarGamepadCursor()
 
 		if not inZone then
 			zoneExitUiToken += 1
@@ -4432,7 +4458,7 @@ local ToolbarController = {}
 			revealInventoryAfterLoadIfReady()
 		end)
 
-		-- `(`)` key opens / closes the brainrot backpack (matches the on-screen prompt text).
+		-- ` / Y opens / closes the brainrot backpack (Y = Triangle on PlayStation).
 		if backpackFrame then
 			ContextActionService:BindActionAtPriority("ToolbarOpenBackpack", function(_, state, _)
 				if state ~= Enum.UserInputState.Begin then
@@ -4447,7 +4473,11 @@ local ToolbarController = {}
 				setBackpackPanelOpen(not isBackpackPanelOpen)
 				UIInteractionSounds.playClick()
 				return Enum.ContextActionResult.Sink
-			end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Backquote)
+			end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Backquote, GamepadInput.SECONDARY)
+
+			GamepadInput.onPreferredChanged(function()
+				syncToolbarGamepadCursor()
+			end)
 		end
 
 		UserInputService.InputChanged:Connect(function(input, _gp)
@@ -4457,12 +4487,17 @@ local ToolbarController = {}
 			if
 				input.UserInputType ~= Enum.UserInputType.MouseMovement
 				and input.UserInputType ~= Enum.UserInputType.Touch
+				and input.UserInputType ~= Enum.UserInputType.Gamepad1
 			then
 				return
 			end
 			local pnd = pendingToolbarDrag
 			if not pnd or not pnd.texture then
 				return
+			end
+			-- Keep cursor alive while dragging on gamepad so stick moves the ghost.
+			if GamepadInput.isPreferred() then
+				syncToolbarGamepadCursor()
 			end
 			local m = UserInputService:GetMouseLocation()
 			if input.UserInputType == Enum.UserInputType.Touch then
@@ -4525,10 +4560,10 @@ local ToolbarController = {}
 		end)
 
 		UserInputService.InputEnded:Connect(function(input, _gp)
-			if
-				input.UserInputType ~= Enum.UserInputType.MouseButton1
-				and input.UserInputType ~= Enum.UserInputType.Touch
-			then
+			local isPrimaryClick = input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch
+				or (input.UserInputType == Enum.UserInputType.Gamepad1 and input.KeyCode == GamepadInput.ACCEPT)
+			if not isPrimaryClick then
 				return
 			end
 			if not toolbarInputAllowed() then
@@ -4536,6 +4571,7 @@ local ToolbarController = {}
 				pendingToolbarDrag = nil
 				lastResolvedHotbarDropSlot = nil
 				clearDragGhost()
+				syncToolbarGamepadCursor()
 				return
 			end
 			local pnd = pendingToolbarDrag
@@ -4544,6 +4580,7 @@ local ToolbarController = {}
 			if not pnd then
 				lastResolvedHotbarDropSlot = nil
 				clearDragGhost()
+				syncToolbarGamepadCursor()
 				return
 			end
 			local rawEnd = UserInputService:GetMouseLocation()
@@ -4556,6 +4593,7 @@ local ToolbarController = {}
 				if not resolvedIdx then
 					clearDragGhost()
 					lastResolvedHotbarDropSlot = nil
+					syncToolbarGamepadCursor()
 					return
 				end
 				pnd.idx = resolvedIdx
@@ -4568,6 +4606,7 @@ local ToolbarController = {}
 					requestEquipFromBackpackExtra(pnd.tool :: Tool)
 				end
 				clearDragGhost()
+				syncToolbarGamepadCursor()
 				return
 			end
 			local mouseWindow = dtScreenPointWithGuiInset(rawEnd)
@@ -4723,6 +4762,7 @@ local ToolbarController = {}
 					UIInteractionSounds.playClick()
 				end
 			end
+			syncToolbarGamepadCursor()
 		end)
 
 		task.spawn(function()

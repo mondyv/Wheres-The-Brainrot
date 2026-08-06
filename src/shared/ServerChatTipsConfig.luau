@@ -29,6 +29,8 @@ function M.buildMessages(): { string }
 		tip("FRIENDS", "rgb(255,170,90)", "Invite your friends — swing, steal, and grow together!"),
 		tip("TIP", "rgb(180,140,255)", "Upgrade brainrots on your stands for bigger $/s!"),
 		tip("TIP", "rgb(90,210,255)", "Rebirth to unlock more power, floors, and progression!"),
+		tip("CONTROLLER", "rgb(120,200,255)", "On controller: open inventory with Y / △, accept claims with A / ✕, decline with B / ○."),
+		tip("CONTROLLER", "rgb(160,180,255)", "Spider dodge: press A / ✕ when the ring turns green — no free-look needed!"),
 		tip("COMMUNITY", "rgb(120,140,255)", string.format("Codes, news & hangouts in Discord → %s", discord)),
 		tip("THANKS", "rgb(255,200,120)", "Thanks for playing Where's the Brainrot — have fun out there!"),
 	}

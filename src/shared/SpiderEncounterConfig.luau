@@ -45,6 +45,8 @@ M.RING_CLOSED_SCALE = 1.0
 M.SPIDER_YAW_OFFSET = math.pi
 M.QTE_CLOSE_MIN = 0.72
 M.QTE_CLOSE_MAX = 1.18
+-- Keyboard letters for PC. Gamepad always uses ButtonA (Cross on PlayStation).
+M.QTE_GAMEPAD_KEY = Enum.KeyCode.ButtonA
 M.TIMING_LETTERS = {
 	{ label = "E", key = Enum.KeyCode.E },
 	{ label = "Q", key = Enum.KeyCode.Q },

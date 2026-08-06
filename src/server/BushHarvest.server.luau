@@ -2245,30 +2245,47 @@ end
 
 local lastBushSearchAt: { [Player]: number } = {}
 
-local function tryOpenBushLuckyBlock(player: Player, worldPosition: Vector3): boolean
+local function tryGrantBushLuckyBlock(player: Player, worldPosition: Vector3): (boolean, string?)
 	local land = LandResolver.resolveLandAtPosition(worldPosition)
 	if typeof(land) ~= "number" then
 		land = 1
 	end
 	local chance = BushLuckyBlockConfig.chanceForLand(land)
 	if math.random() > chance then
-		return false
+		return false, nil
 	end
 	local blockName, variant = BushLuckyBlockConfig.pickBlockForLand(land)
 	local folder = ServerStorage:FindFirstChild("LuckyBlockInternal")
-	local bf = folder and folder:FindFirstChild("OpenFromWorld")
+	local bf = folder and folder:FindFirstChild("GrantLuckyBlock")
 	if not (bf and bf:IsA("BindableFunction")) then
-		warn("[BushHarvest] LuckyBlockInternal.OpenFromWorld missing")
-		return false
+		warn("[BushHarvest] LuckyBlockInternal.GrantLuckyBlock missing")
+		return false, nil
 	end
-	local ok, opened = pcall(function()
-		return (bf :: BindableFunction):Invoke(player, blockName, worldPosition, { variant = variant })
-	end)
-	if not ok then
-		warn("[BushHarvest] OpenFromWorld failed:", opened)
-		return false
+
+	local function grant(name: string, var: string?): boolean
+		local ok, granted = pcall(function()
+			return (bf :: BindableFunction):Invoke(player, name, {
+				variant = var,
+				equip = true,
+			})
+		end)
+		if not ok then
+			warn("[BushHarvest] GrantLuckyBlock failed:", granted)
+			return false
+		end
+		return granted == true
 	end
-	return opened == true
+
+	if grant(blockName, variant) then
+		return true, blockName
+	end
+	-- Fallback so a missing high-tier Studio template never voids the jackpot.
+	if blockName ~= "Starter Lucky Block" and grant("Starter Lucky Block", "basic") then
+		warn("[BushHarvest] Granted Starter Lucky Block fallback; missing template for", blockName)
+		return true, "Starter Lucky Block"
+	end
+	warn("[BushHarvest] GrantLuckyBlock returned false for", blockName)
+	return false, nil
 end
 
 --[[
@@ -2329,8 +2346,8 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 
 	local hasBrainrot = bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
 	local dropOrigin = if bush:IsA("BasePart") then bush.Position else bush:GetPivot().Position
-	-- Rare jackpot: lucky block cutscene from the bush (replaces empty / brainrot for this search).
-	local luckyOpened = tryOpenBushLuckyBlock(player, dropOrigin)
+	-- Rare jackpot: grant a lucky-block tool (findable item; player opens it later).
+	local luckyOpened, luckyBlockName = tryGrantBushLuckyBlock(player, dropOrigin)
 	if luckyOpened or hasBrainrot then
 		AnalyticsFunnelService.logOnboardingId(player, "opened_bush", { allowSkip = true })
 	end
@@ -2376,6 +2393,7 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 			ok = true,
 			found = true,
 			luckyBlock = luckyOpened,
+			luckyBlockName = luckyBlockName,
 			cooldownSec = cooldownSec,
 			cooldownEndsAt = cooldownEndsAt,
 		}

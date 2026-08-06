@@ -17,6 +17,7 @@ local Workspace = game:GetService("Workspace")
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local GamepadInput = require(script.Parent.GamepadInput)
 local OtherVfxController = require(script.Parent.OtherVfxController)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
@@ -271,7 +272,34 @@ local function viewIsActive(view: PromptView): boolean
 end
 
 local function prefersGamepadInput(): boolean
-	return UserInputService.GamepadEnabled and UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1
+	return GamepadInput.isPreferred()
+end
+
+local function gamepadButtonLabel(keyCode: Enum.KeyCode): string
+	return GamepadInput.faceLabel(keyCode)
+end
+
+local function showGamepadKeyIcon(view: PromptView, keyCode: Enum.KeyCode)
+	local label = view.keyLabel
+	local icon = view.keyIcon
+	local img = GamepadInput.faceImage(keyCode)
+	if img == "" then
+		icon.Visible = false
+		label.Visible = true
+		label.Text = gamepadButtonLabel(keyCode)
+		return
+	end
+	label.Text = ""
+	label.Visible = false
+	icon.Visible = true
+	icon.ImageTransparency = 0
+	icon.ImageColor3 = Color3.new(1, 1, 1)
+	icon.ScaleType = Enum.ScaleType.Fit
+	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.Position = UDim2.fromScale(0.5, 0.5)
+	icon.Size = UDim2.fromOffset(28, 28)
+	icon.ZIndex = 10
+	icon.Image = img
 end
 
 local function isMobilePlatform(): boolean
@@ -364,23 +392,6 @@ local function usesTouchPromptIcon(): boolean
 	return prefersTouchInput()
 end
 
-local function gamepadButtonLabel(keyCode: Enum.KeyCode): string
-	if keyCode == Enum.KeyCode.ButtonX then
-		return "X"
-	elseif keyCode == Enum.KeyCode.ButtonY then
-		return "Y"
-	elseif keyCode == Enum.KeyCode.ButtonA then
-		return "A"
-	elseif keyCode == Enum.KeyCode.ButtonB then
-		return "B"
-	end
-	local name = keyCode.Name
-	if string.sub(name, 1, 6) == "Button" and #name == 7 then
-		return string.sub(name, 7, 7)
-	end
-	return "•"
-end
-
 local function isBushSearchPrompt(prompt: ProximityPrompt): boolean
 	return CarryGate.isBushSearchPrompt(prompt)
 end
@@ -435,7 +446,7 @@ local function refreshKeyLabel(view: PromptView)
 	end
 
 	if inputType == Enum.ProximityPromptInputType.Gamepad then
-		showText(gamepadButtonLabel(prompt.GamepadKeyCode))
+		showGamepadKeyIcon(view, prompt.GamepadKeyCode)
 		return
 	end
 	-- Touch devices: always finger badge (same asset as stand). Never keyboard "E".

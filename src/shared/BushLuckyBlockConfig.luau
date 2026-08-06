@@ -9,18 +9,19 @@ local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitF
 
 local M = {}
 
--- Per-land chance to drop a lucky block on a successful bush search.
+-- Per-land chance to grant a lucky-block tool on a successful bush search.
+-- Tuned to be findable early (≈1/20 on land 1) without flooding high lands.
 M.CHANCE_BY_LAND = {
-	[1] = 0.012,
-	[2] = 0.016,
-	[3] = 0.020,
-	[4] = 0.025,
-	[5] = 0.030,
-	[6] = 0.035,
-	[7] = 0.040,
-	[8] = 0.045,
-	[9] = 0.050,
-	[10] = 0.055,
+	[1] = 0.050,
+	[2] = 0.055,
+	[3] = 0.060,
+	[4] = 0.070,
+	[5] = 0.080,
+	[6] = 0.090,
+	[7] = 0.100,
+	[8] = 0.110,
+	[9] = 0.120,
+	[10] = 0.130,
 }
 
 -- Weighted block kinds per land (higher lands unlock better catalog tiers).

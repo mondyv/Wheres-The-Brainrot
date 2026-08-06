@@ -5,12 +5,14 @@
 ]]
 
 local Players = game:GetService("Players")
+local ContextActionService = game:GetService("ContextActionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local GamepadInput = require(script.Parent.GamepadInput)
 local RaritySpawnStyle = require(script.Parent.RaritySpawnStyle)
 local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
@@ -205,6 +207,102 @@ type TrackedOffer = {
 
 local tracked: { [Model]: TrackedOffer } = {}
 local activeOfferEntry: TrackedOffer? = nil
+
+local CLAIM_ACCEPT_ACTION = "FloatingClaimGamepadAccept"
+local CLAIM_DECLINE_ACTION = "FloatingClaimGamepadDecline"
+local claimHotkeysBound = false
+
+local function applyHotkeyHint(btn: TextButton, keyCode: Enum.KeyCode, show: boolean)
+	local hint = btn:FindFirstChild("HotkeyHint")
+	local icon = btn:FindFirstChild("HotkeyIcon")
+	local img = GamepadInput.faceImage(keyCode)
+	if icon and icon:IsA("ImageLabel") then
+		if show and img ~= "" then
+			icon.Image = img
+			icon.Visible = true
+			if hint and hint:IsA("TextLabel") then
+				hint.Visible = false
+			end
+			return
+		end
+		icon.Visible = false
+	end
+	if hint and hint:IsA("TextLabel") then
+		hint.Text = GamepadInput.faceLabel(keyCode)
+		hint.Visible = show
+	end
+end
+
+local function refreshClaimHotkeyHints()
+	local show = GamepadInput.isPreferred()
+	for _, entry in tracked do
+		if entry.acceptBtn and entry.acceptBtn.Parent then
+			applyHotkeyHint(entry.acceptBtn, GamepadInput.ACCEPT, show and not entry.decisionLocked)
+		end
+		if entry.declineBtn and entry.declineBtn.Parent then
+			applyHotkeyHint(entry.declineBtn, GamepadInput.DECLINE, show and not entry.decisionLocked)
+		end
+	end
+end
+
+local function unbindClaimGamepadHotkeys()
+	if not claimHotkeysBound then
+		return
+	end
+	claimHotkeysBound = false
+	pcall(function()
+		ContextActionService:UnbindAction(CLAIM_ACCEPT_ACTION)
+	end)
+	pcall(function()
+		ContextActionService:UnbindAction(CLAIM_DECLINE_ACTION)
+	end)
+end
+
+local function bindClaimGamepadHotkeys()
+	if claimHotkeysBound then
+		return
+	end
+	claimHotkeysBound = true
+	ContextActionService:BindActionAtPriority(CLAIM_ACCEPT_ACTION, function(_n, state, _input)
+		if state ~= Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Pass
+		end
+		local ui = BushFloatingClaimController.getActiveOfferUi()
+		if not ui then
+			return Enum.ContextActionResult.Pass
+		end
+		if not MobileTouchGate.canTapUi() then
+			return Enum.ContextActionResult.Pass
+		end
+		ui.acceptBtn:Activate()
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.ContextActionPriority.High.Value + 15, GamepadInput.ACCEPT)
+
+	ContextActionService:BindActionAtPriority(CLAIM_DECLINE_ACTION, function(_n, state, _input)
+		if state ~= Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Pass
+		end
+		local ui = BushFloatingClaimController.getActiveOfferUi()
+		if not ui then
+			return Enum.ContextActionResult.Pass
+		end
+		if not MobileTouchGate.canTapUi() then
+			return Enum.ContextActionResult.Pass
+		end
+		ui.declineBtn:Activate()
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.ContextActionPriority.High.Value + 15, GamepadInput.DECLINE)
+end
+
+local function syncClaimGamepadHotkeys()
+	local hasOffer = BushFloatingClaimController.getActiveOfferUi() ~= nil
+	if hasOffer then
+		bindClaimGamepadHotkeys()
+	else
+		unbindClaimGamepadHotkeys()
+	end
+	refreshClaimHotkeyHints()
+end
 
 function BushFloatingClaimController.getActiveOfferUi(): {
 	acceptBtn: TextButton,
@@ -645,6 +743,7 @@ local function untrack(model: Model, restoreBushCooldown: boolean?)
 	if activeOfferEntry == entry then
 		activeOfferEntry = nil
 	end
+	syncClaimGamepadHotkeys()
 	ambushPendingByModel[model] = nil
 	if next(tracked) == nil then
 		clearOfferPresentation()
@@ -662,6 +761,7 @@ local function lockDecision(entry: TrackedOffer)
 	entry.decisionLocked = true
 	entry.acceptBtn.Active = false
 	entry.declineBtn.Active = false
+	syncClaimGamepadHotkeys()
 end
 
 local function styleChoiceButton(
@@ -705,14 +805,40 @@ local function styleChoiceButton(
 	local icon = Instance.new("ImageLabel")
 	icon.Name = "Icon"
 	icon.AnchorPoint = Vector2.new(0.5, 0.5)
-	icon.Position = UDim2.fromScale(0.5, 0.5)
-	icon.Size = UDim2.fromScale(0.72, 0.72)
+	icon.Position = UDim2.fromScale(0.5, 0.42)
+	icon.Size = UDim2.fromScale(0.58, 0.58)
 	icon.BackgroundTransparency = 1
 	icon.Image = iconImage
 	icon.ImageColor3 = iconColor
 	icon.ScaleType = Enum.ScaleType.Fit
 	icon.ZIndex = 2
 	icon.Parent = btn
+
+	local hotkey = Instance.new("TextLabel")
+	hotkey.Name = "HotkeyHint"
+	hotkey.AnchorPoint = Vector2.new(0.5, 1)
+	hotkey.Position = UDim2.new(0.5, 0, 1, -3)
+	hotkey.Size = UDim2.new(1, -4, 0, 14)
+	hotkey.BackgroundTransparency = 1
+	hotkey.Text = ""
+	hotkey.TextColor3 = Color3.fromRGB(255, 255, 255)
+	hotkey.TextStrokeTransparency = 0.35
+	hotkey.Visible = false
+	hotkey.ZIndex = 4
+	UiFonts.applyButtonLabel(hotkey, 11, 8)
+	hotkey.Parent = btn
+
+	local hotkeyIcon = Instance.new("ImageLabel")
+	hotkeyIcon.Name = "HotkeyIcon"
+	hotkeyIcon.AnchorPoint = Vector2.new(0.5, 1)
+	hotkeyIcon.Position = UDim2.new(0.5, 0, 1, -2)
+	hotkeyIcon.Size = UDim2.fromOffset(16, 16)
+	hotkeyIcon.BackgroundTransparency = 1
+	hotkeyIcon.Image = ""
+	hotkeyIcon.Visible = false
+	hotkeyIcon.ZIndex = 4
+	hotkeyIcon.ScaleType = Enum.ScaleType.Fit
+	hotkeyIcon.Parent = btn
 
 	local scale = getOrAddUIScale(btn)
 	scale.Scale = 0.01
@@ -1346,6 +1472,7 @@ local function trackModel(model: Model)
 	snapOfferLayout(entry)
 	attachBushOfferVisuals(entry, model)
 	updateBillboardPositions(entry)
+	syncClaimGamepadHotkeys()
 
 	-- Ambush roll / lurking VFX — keep the offer cutscene so the sense notifier
 	-- isn't just floating text with no cinematic.
@@ -1617,6 +1744,11 @@ function BushFloatingClaimController.init()
 			end)
 		end
 	end)
+
+	GamepadInput.onPreferredChanged(function()
+		syncClaimGamepadHotkeys()
+	end)
+	syncClaimGamepadHotkeys()
 end
 
 return BushFloatingClaimController

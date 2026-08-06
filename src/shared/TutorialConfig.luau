@@ -65,6 +65,9 @@ export type StepDef = {
 	text: string,
 	speak: string?,
 	retryText: string?,
+	controllerText: string?,
+	controllerSpeak: string?,
+	controllerRetryText: string?,
 }
 
 M.STEPS = {
@@ -82,39 +85,74 @@ M.STEPS = {
 		id = "buyPower",
 		text = "Buy your first Power upgrade",
 		speak = "TAP BUY ON POWER!!",
+		controllerText = "Select Buy on Power with the cursor, then press A / ✕",
+		controllerSpeak = "SELECT BUY ON POWER!!",
 	},
 	{
 		id = "swingLand1",
 		text = "Look at a vine, then press jump to swing over!",
 		speak = "LOOK AT A VINE AND PRESS JUMP TO SWING OVER!!",
 		retryText = "Press jump again to let go, then land on the next land!",
+		controllerText = "Aim at a vine, then press A / ✕ to swing!",
+		controllerSpeak = "AIM AT A VINE AND PRESS A TO SWING!!",
+		controllerRetryText = "Press A / ✕ again to let go, then land on the next land!",
 	},
 	{
 		id = "searchBush",
 		text = "Open a bush for a brainrot",
 		speak = "OPEN A BUSH AND FIND A BRAINROT!!",
+		controllerText = "Hold X / □ near a bush to search",
+		controllerSpeak = "HOLD X NEAR A BUSH TO SEARCH!!",
 	},
 	{
 		id = "claimBrainrot",
 		text = "Accept your brainrot",
 		speak = "HIT ACCEPT TO CLAIM IT!!",
+		controllerText = "Press A / ✕ to Accept, or B / ○ to Decline",
+		controllerSpeak = "PRESS A TO ACCEPT!!",
 	},
 	{
 		id = "goToBase",
 		text = "Go back to your base",
 		speak = "HEAD HOME TO YOUR BASE!!",
 		retryText = "Press jump near a vine to swing back!",
+		controllerRetryText = "Press A / ✕ near a vine to swing back!",
 	},
 	{
 		id = "placeOnPlot",
 		text = "Place the brainrot on a stand",
 		speak = "PUT IT DOWN ON A STAND!!",
+		controllerText = "Stand near a plot and press X / □ to place",
+		controllerSpeak = "PRESS X TO PLACE ON A STAND!!",
 	},
 	{
 		id = "upgradeBrainrot",
 		text = "Upgrade your brainrot",
 		speak = "TAP UPGRADE ON YOUR BRAINROT!!",
+		controllerText = "Select Upgrade on your brainrot, then press A / ✕",
+		controllerSpeak = "SELECT UPGRADE ON YOUR BRAINROT!!",
 	},
 }
+
+function M.stepText(step: StepDef, forController: boolean): string
+	if forController and typeof(step.controllerText) == "string" and step.controllerText ~= "" then
+		return step.controllerText
+	end
+	return step.text
+end
+
+function M.stepSpeak(step: StepDef, forController: boolean): string?
+	if forController and typeof(step.controllerSpeak) == "string" and step.controllerSpeak ~= "" then
+		return step.controllerSpeak
+	end
+	return step.speak
+end
+
+function M.stepRetryText(step: StepDef, forController: boolean): string?
+	if forController and typeof(step.controllerRetryText) == "string" and step.controllerRetryText ~= "" then
+		return step.controllerRetryText
+	end
+	return step.retryText
+end
 
 return M

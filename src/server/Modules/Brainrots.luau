@@ -628,6 +628,11 @@ function M.getTemplatesFolder(): Folder?
 	if f and f:IsA("Folder") then
 		return f
 	end
+	local essential = ReplicatedStorage:FindFirstChild("EssentialAssets")
+	local eaTemplates = essential and essential:FindFirstChild("Templates")
+	if eaTemplates and eaTemplates:IsA("Folder") then
+		return eaTemplates :: Folder
+	end
 	local legacy = ReplicatedStorage:FindFirstChild("Templates")
 	if legacy and legacy:IsA("Folder") then
 		return legacy
@@ -648,12 +653,49 @@ function M.waitTemplatesFolder(timeoutSec: number?): Folder?
 	return M.getTemplatesFolder()
 end
 
-function M.getBaseTemplate(): Instance?
-	local templates = M.getTemplatesFolder()
-	if not templates then
-		return nil
+local function isUsableBaseTemplate(template: Instance): boolean
+	if not (template:IsA("Model") or template:IsA("Folder")) then
+		return false
 	end
-	return templates:FindFirstChild("Base")
+	if template:FindFirstChild("1 Story") or template:FindFirstChild("1st Story") then
+		return true
+	end
+	for _, ch in ipairs(template:GetChildren()) do
+		if ch:IsA("Model") or ch:IsA("Folder") then
+			return true
+		end
+	end
+	return #template:GetDescendants() > 0
+end
+
+function M.getBaseTemplate(): Instance?
+	local candidates: { Instance } = {}
+	local function push(folder: Instance?)
+		if not folder then
+			return
+		end
+		local base = folder:FindFirstChild("Base")
+		if base then
+			table.insert(candidates, base)
+		end
+	end
+	push(ServerStorage:FindFirstChild("Templates"))
+	local essential = ReplicatedStorage:FindFirstChild("EssentialAssets")
+	push(essential and essential:FindFirstChild("Templates"))
+	push(ReplicatedStorage:FindFirstChild("Templates"))
+
+	local fallback: Instance? = nil
+	for _, template in ipairs(candidates) do
+		if isUsableBaseTemplate(template) then
+			if template:FindFirstChild("1 Story") or template:FindFirstChild("1st Story") then
+				return template
+			end
+			if not fallback then
+				fallback = template
+			end
+		end
+	end
+	return fallback
 end
 
 return M

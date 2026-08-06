@@ -13,7 +13,7 @@ local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild(
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 
-local ASSIGN_WAIT_SEC = 35
+local ASSIGN_WAIT_SEC = 60
 
 local function waitForAssignedPlot(player: Player, character: Model): Instance?
 	local deadline = os.clock() + ASSIGN_WAIT_SEC
@@ -21,6 +21,11 @@ local function waitForAssignedPlot(player: Player, character: Model): Instance?
 	while os.clock() < deadline do
 		if not character.Parent or not player.Parent then
 			return nil
+		end
+		-- Wait until the plot spawner has reserved a slot for this player.
+		if typeof(player:GetAttribute("AssignedPlotSlot")) ~= "number" then
+			task.wait(0.15)
+			continue
 		end
 		local plot = PlotPaths.findPlotForAssignedSlot(player)
 		if plot and plot.Parent then
@@ -74,7 +79,13 @@ local function teleportToPlotSpawn(player: Player, character: Model)
 
 	local plot = waitForAssignedPlot(player, character)
 	if not plot or not plot.Parent then
-		warn("[PlotPlayerSpawn] No assigned plot for", player.Name)
+		warn(
+			"[PlotPlayerSpawn] No assigned plot for",
+			player.Name,
+			"(AssignedPlotSlot=",
+			player:GetAttribute("AssignedPlotSlot"),
+			")"
+		)
 		return
 	end
 
@@ -111,9 +122,11 @@ local function hookPlayer(player: Player)
 		end),
 		player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
 			local char = player.Character
-			if char then
+			if char and typeof(player:GetAttribute("AssignedPlotSlot")) == "number" then
 				task.defer(function()
-					teleportToPlotSpawn(player, char)
+					if char.Parent and player.Parent then
+						teleportToPlotSpawn(player, char)
+					end
 				end)
 			end
 		end),

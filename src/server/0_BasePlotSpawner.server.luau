@@ -12,6 +12,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local PlotRuntimeTune = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotRuntimeTune"))
+local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 
 local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Brainrots"))
 
@@ -20,7 +21,7 @@ local MAX_SLOTS = 7
 local POS_NAME_PREFIX = "BasePOSPart"
 local SPAWNED_ATTR = "_PlotTemplatesSpawned"
 local SPAWN_VERSION_ATTR = "_PlotSpawnVersion"
-local SPAWN_VERSION = 14
+local SPAWN_VERSION = 15
 local STUB_ATTR = "PlotFloorStub"
 
 local slotToBase: { [number]: Instance } = {}
@@ -64,6 +65,10 @@ local function scheduleReplaceNotifications(plot: Instance?)
 end
 
 local function findSpawnFolder(): Instance?
+	local viaPaths = PlotPaths.findSpawnAndBasesFolder()
+	if viaPaths then
+		return viaPaths
+	end
 	local map = Workspace:FindFirstChild("Map")
 	if not map then
 		return nil
@@ -71,9 +76,20 @@ local function findSpawnFolder(): Instance?
 	return map:FindFirstChild("Spawn And Bases")
 end
 
+local function firstStoryFolder(root: Instance): Instance?
+	local s = root:FindFirstChild("1 Story")
+	if s then
+		return s
+	end
+	return root:FindFirstChild("1st Story")
+end
+
 local function isUsableBaseTemplate(template: Instance): boolean
 	if not (template:IsA("Model") or template:IsA("Folder")) then
 		return false
+	end
+	if firstStoryFolder(template) then
+		return true
 	end
 	for _, ch in ipairs(template:GetChildren()) do
 		if ch:IsA("Model") or ch:IsA("Folder") then
@@ -84,23 +100,40 @@ local function isUsableBaseTemplate(template: Instance): boolean
 end
 
 local function getBaseTemplate(): Instance?
-	local templates = ServerStorage:FindFirstChild("Templates") or Brainrots.waitTemplatesFolder(0)
-	if not templates then
-		return nil
+	-- Prefer Brainrots resolver (ServerStorage + EssentialAssets + legacy RS).
+	local fromShared = Brainrots.getBaseTemplate()
+	if fromShared and isUsableBaseTemplate(fromShared) then
+		return fromShared
 	end
-	local template = templates:FindFirstChild(TEMPLATE_NAME)
-	if template and isUsableBaseTemplate(template) then
-		return template
-	end
-	return nil
-end
 
-local function firstStoryFolder(root: Instance): Instance?
-	local s = root:FindFirstChild("1 Story")
-	if s then
-		return s
+	local candidates: { Instance } = {}
+	local function push(folder: Instance?)
+		if not folder then
+			return
+		end
+		local base = folder:FindFirstChild(TEMPLATE_NAME)
+		if base then
+			table.insert(candidates, base)
+		end
 	end
-	return root:FindFirstChild("1st Story")
+	push(ServerStorage:FindFirstChild("Templates"))
+	local essential = ReplicatedStorage:FindFirstChild("EssentialAssets")
+	push(essential and essential:FindFirstChild("Templates"))
+	push(ReplicatedStorage:FindFirstChild("Templates"))
+	push(Brainrots.waitTemplatesFolder(0))
+
+	local fallback: Instance? = nil
+	for _, template in ipairs(candidates) do
+		if isUsableBaseTemplate(template) then
+			if firstStoryFolder(template) then
+				return template
+			end
+			if not fallback then
+				fallback = template
+			end
+		end
+	end
+	return fallback
 end
 
 local function hideAnchorPart(pos: BasePart)
@@ -281,28 +314,46 @@ local function replacePlotSlot(slot: number, plot: Model)
 end
 
 local function promoteStubToFullPlot(slot: number, player: Player)
+	-- Reserve immediately so PlotPlayerSpawn / other systems can resolve the slot
+	-- while the full base clones in (no silent "No assigned plot").
+	playerToSlot[player] = slot
+	player:SetAttribute("AssignedPlotSlot", slot)
+
 	local folder = findSpawnFolder()
 	local template = getBaseTemplate()
 	if not folder or not template then
+		warn(
+			"[BasePlotSpawner] Cannot promote plot stub — missing Spawn And Bases or Base template (check EssentialAssets.Templates.Base)"
+		)
 		return
 	end
 	local pos = folder:FindFirstChild(POS_NAME_PREFIX .. tostring(slot))
 	if not pos or not pos:IsA("BasePart") then
+		warn("[BasePlotSpawner] Missing BasePOSPart for slot", slot)
 		return
 	end
+
 	local existing = folder:FindFirstChild("Plot_" .. tostring(slot))
 	if existing then
+		-- Rename first so the new full plot can take Plot_N without a gap.
+		existing.Name = "Plot_" .. tostring(slot) .. "_Replacing"
+	end
+
+	local ok, plotOrErr = pcall(function()
+		return spawnFullPlot(template, pos, slot, folder, player.UserId)
+	end)
+	if existing and existing.Parent then
 		existing:Destroy()
 	end
-	task.defer(function()
-		if not player.Parent then
-			return
-		end
-		local plot = spawnFullPlot(template, pos, slot, folder, player.UserId)
-		replacePlotSlot(slot, plot)
-		player:SetAttribute("AssignedPlotSlot", slot)
-		playerToSlot[player] = slot
-	end)
+	if not ok or typeof(plotOrErr) ~= "Instance" then
+		warn("[BasePlotSpawner] spawnFullPlot failed for slot", slot, ":", plotOrErr)
+		-- Recreate a stub so the slot isn't empty forever.
+		local stub = spawnFloorStub(template, pos, slot, folder)
+		replacePlotSlot(slot, stub)
+		stub:SetAttribute("PlotOwnerUserId", player.UserId)
+		return
+	end
+	replacePlotSlot(slot, plotOrErr :: Model)
 end
 
 local function spawnBasesOnce(folder: Instance): boolean
@@ -395,6 +446,7 @@ local function bootOnce(): boolean
 		return false
 	end
 	if not getBaseTemplate() then
+		warn("[BasePlotSpawner] Base template missing — expected ServerStorage.Templates.Base or ReplicatedStorage.EssentialAssets.Templates.Base")
 		return false
 	end
 
@@ -418,14 +470,22 @@ local function hookTemplateWatchers()
 
 	task.spawn(function()
 		local templates = Brainrots.waitTemplatesFolder(120)
-		if not templates then
-			return
+		if templates then
+			templates.ChildAdded:Connect(function(ch)
+				if ch.Name == TEMPLATE_NAME then
+					task.defer(bootOnce)
+				end
+			end)
 		end
-		templates.ChildAdded:Connect(function(ch)
-			if ch.Name == TEMPLATE_NAME then
-				task.defer(bootOnce)
-			end
-		end)
+		local essential = ReplicatedStorage:FindFirstChild("EssentialAssets")
+		local eaTemplates = essential and essential:FindFirstChild("Templates")
+		if eaTemplates then
+			eaTemplates.ChildAdded:Connect(function(ch)
+				if ch.Name == TEMPLATE_NAME then
+					task.defer(bootOnce)
+				end
+			end)
+		end
 		bootOnce()
 	end)
 
@@ -435,7 +495,23 @@ local function hookTemplateWatchers()
 			return
 		end
 		map:WaitForChild("Spawn And Bases", 120)
+		PlotPaths.invalidateSpawnAndBasesCache()
 		bootOnce()
+	end)
+
+	-- Keep retrying boot if Map / template arrive late (common with streaming Studio places).
+	task.spawn(function()
+		for _ = 1, 60 do
+			if bootComplete then
+				return
+			end
+			task.wait(2)
+			PlotPaths.invalidateSpawnAndBasesCache()
+			bootOnce()
+		end
+		if not bootComplete then
+			warn("[BasePlotSpawner] Boot never completed — plots will not assign")
+		end
 	end)
 end
 

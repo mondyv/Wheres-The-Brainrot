@@ -23,6 +23,14 @@ local dismissToken = 0
 local FADE_IN = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local FADE_OUT = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
+export type ShowOpts = {
+	offset: Vector3?,
+	color: Color3?,
+	lifetimeSec: number?,
+	ellipsis: boolean?,
+	hideRankBadges: boolean?,
+}
+
 local function resolveAdornee(character: Model?): BasePart?
 	if not character then
 		return nil
@@ -52,6 +60,18 @@ local function stopFollow()
 	end
 end
 
+local function setRankBadgeSuppress(suppressed: boolean)
+	local ok, RankController = pcall(function()
+		return require(script.Parent.LeaderboardRankController)
+	end)
+	if not ok or not RankController then
+		return
+	end
+	if typeof(RankController.setLocalWorldNotifSuppress) == "function" then
+		RankController.setLocalWorldNotifSuppress(suppressed)
+	end
+end
+
 local function destroyActive()
 	stopDots()
 	stopFollow()
@@ -62,6 +82,7 @@ local function destroyActive()
 	activeBillboard = nil
 	activeLabel = nil
 	baseText = ""
+	setRankBadgeSuppress(false)
 end
 
 local function startEllipsis(label: TextLabel)
@@ -92,11 +113,14 @@ function CharacterWorldNotif.dismiss()
 	activeBillboard = nil
 	activeLabel = nil
 	baseText = ""
+	setRankBadgeSuppress(false)
 
-	TweenService:Create(label, FADE_OUT, {
-		TextTransparency = 1,
-		TextStrokeTransparency = 1,
-	}):Play()
+	if label.Parent then
+		TweenService:Create(label, FADE_OUT, {
+			TextTransparency = 1,
+			TextStrokeTransparency = 1,
+		}):Play()
+	end
 	task.delay(FADE_OUT.Time + 0.03, function()
 		if bb.Parent then
 			bb:Destroy()
@@ -112,7 +136,7 @@ function CharacterWorldNotif.getBaseText(): string
 	return baseText
 end
 
-function CharacterWorldNotif.show(character: Model?, message: string, opts: { offset: Vector3?, color: Color3? }?)
+function CharacterWorldNotif.show(character: Model?, message: string, opts: ShowOpts?)
 	if typeof(message) ~= "string" or message == "" then
 		return
 	end
@@ -126,8 +150,14 @@ function CharacterWorldNotif.show(character: Model?, message: string, opts: { of
 
 	local offset = if opts and opts.offset then opts.offset else Vector3.new(2.8, 1.35, 0)
 	local textColor = if opts and opts.color then opts.color else Color3.fromRGB(255, 228, 170)
+	local useEllipsis = not (opts and opts.ellipsis == false)
+	local lifetimeSec = if opts and typeof(opts.lifetimeSec) == "number" then opts.lifetimeSec else nil
+	local hideBadges = not (opts and opts.hideRankBadges == false)
 
 	baseText = message
+	if hideBadges then
+		setRankBadgeSuppress(true)
+	end
 
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "CharacterWorldNotif"
@@ -162,7 +192,9 @@ function CharacterWorldNotif.show(character: Model?, message: string, opts: { of
 		TextTransparency = 0,
 		TextStrokeTransparency = 0.35,
 	}):Play()
-	startEllipsis(label)
+	if useEllipsis then
+		startEllipsis(label)
+	end
 
 	local token = dismissToken
 	followConn = RunService.RenderStepped:Connect(function()
@@ -174,8 +206,22 @@ function CharacterWorldNotif.show(character: Model?, message: string, opts: { of
 		local liveAdornee = resolveAdornee(liveChar)
 		if liveAdornee and liveAdornee ~= bb.Adornee then
 			bb.Adornee = liveAdornee
+			if bb.Parent ~= liveChar and liveChar then
+				bb.Parent = liveChar
+			end
 		end
 	end)
+
+	if typeof(lifetimeSec) == "number" and lifetimeSec > 0 then
+		task.delay(lifetimeSec, function()
+			if token ~= dismissToken then
+				return
+			end
+			if activeBillboard == bb then
+				CharacterWorldNotif.dismiss()
+			end
+		end)
+	end
 end
 
 return CharacterWorldNotif

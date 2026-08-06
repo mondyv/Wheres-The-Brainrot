@@ -105,16 +105,25 @@ local function muteDefaultDeathSound(sound: Sound)
 	if not isDefaultRobloxDeathSound(sound) then
 		return
 	end
+	-- Mute only — Destroying "Died" during character teardown races Roblox parenting.
 	sound.Volume = 0
-	sound:Stop()
-	sound:Destroy()
+	pcall(function()
+		sound:Stop()
+	end)
 end
 
 local function stopRobloxOofSounds()
 	for _, inst in SoundService:GetDescendants() do
 		if inst:IsA("Sound") and isDefaultRobloxDeathSound(inst) then
-			inst:Stop()
-			inst:Destroy()
+			muteDefaultDeathSound(inst)
+		end
+	end
+	local char = player.Character
+	if char then
+		for _, desc in char:GetDescendants() do
+			if desc:IsA("Sound") and isDefaultRobloxDeathSound(desc) then
+				muteDefaultDeathSound(desc)
+			end
 		end
 	end
 end
@@ -976,9 +985,28 @@ local function computeTryAgainDelaySec(): number
 	return 0.4
 end
 
+local function pickTryAgainLines(hint: string?): (string, string)
+	if typeof(hint) == "string" and hint ~= "" then
+		return "Try again!", hint
+	end
+	local lines = {
+		{ "Try again!", "You've got this!" },
+		{ "Try again!", "Shake it off!" },
+		{ "Back at it!", "Keep swinging!" },
+		{ "One more go!", "You can do this!" },
+		{ "Try again!", "Don't stop now!" },
+		{ "Up you get!", "Almost had it!" },
+		{ "Try again!", "Next swing's yours!" },
+		{ "Shake it off!", "Back into the bushes!" },
+		{ "Try again!", "No quitters!" },
+		{ "Again!", "You've got this!" },
+	}
+	local pick = lines[math.random(1, #lines)]
+	return pick[1], pick[2]
+end
+
 local function showTryAgainNotif(hint: string?)
-	local headline = "Try again!"
-	local sub = if typeof(hint) == "string" and hint ~= "" then hint else "You've got this!"
+	local headline, sub = pickTryAgainLines(hint)
 	ensureHudVisibleForNotif()
 	showTryAgainOverlay(headline, sub)
 	pcall(function()
@@ -998,15 +1026,14 @@ local function showTryAgainNotif(hint: string?)
 			adornee = char:WaitForChild("HumanoidRootPart", 4)
 		end
 		if adornee then
-			CharacterWorldNotif.show(char, headline, {
+			-- World line uses sub for variety; lifetime auto-dismisses + hides rank badges.
+			CharacterWorldNotif.show(char, sub, {
 				color = Color3.fromRGB(255, 220, 120),
 				offset = Vector3.new(2.4, 1.55, 0),
+				lifetimeSec = 3.6,
+				ellipsis = false,
+				hideRankBadges = true,
 			})
-			task.delay(4.2, function()
-				if CharacterWorldNotif.getBaseText() == headline then
-					CharacterWorldNotif.dismiss()
-				end
-			end)
 		end
 	end)
 end

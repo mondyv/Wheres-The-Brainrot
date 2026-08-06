@@ -203,6 +203,8 @@ type TrackedOffer = {
 	layoutTimerY: number,
 	conns: { RBXScriptConnection },
 	spiderSenseActive: boolean,
+	invokeAccept: (() -> ())?,
+	invokeDecline: (() -> ())?,
 }
 
 local tracked: { [Model]: TrackedOffer } = {}
@@ -267,30 +269,38 @@ local function bindClaimGamepadHotkeys()
 		if state ~= Enum.UserInputState.Begin then
 			return Enum.ContextActionResult.Pass
 		end
-		local ui = BushFloatingClaimController.getActiveOfferUi()
-		if not ui then
+		local entry = activeOfferEntry
+		if not entry or entry.decisionLocked then
 			return Enum.ContextActionResult.Pass
 		end
 		if not MobileTouchGate.canTapUi() then
 			return Enum.ContextActionResult.Pass
 		end
-		ui.acceptBtn:Activate()
-		return Enum.ContextActionResult.Sink
+		local invoke = entry.invokeAccept
+		if typeof(invoke) == "function" then
+			invoke()
+			return Enum.ContextActionResult.Sink
+		end
+		return Enum.ContextActionResult.Pass
 	end, false, Enum.ContextActionPriority.High.Value + 15, GamepadInput.ACCEPT)
 
 	ContextActionService:BindActionAtPriority(CLAIM_DECLINE_ACTION, function(_n, state, _input)
 		if state ~= Enum.UserInputState.Begin then
 			return Enum.ContextActionResult.Pass
 		end
-		local ui = BushFloatingClaimController.getActiveOfferUi()
-		if not ui then
+		local entry = activeOfferEntry
+		if not entry or entry.decisionLocked then
 			return Enum.ContextActionResult.Pass
 		end
 		if not MobileTouchGate.canTapUi() then
 			return Enum.ContextActionResult.Pass
 		end
-		ui.declineBtn:Activate()
-		return Enum.ContextActionResult.Sink
+		local invoke = entry.invokeDecline
+		if typeof(invoke) == "function" then
+			invoke()
+			return Enum.ContextActionResult.Sink
+		end
+		return Enum.ContextActionResult.Pass
 	end, false, Enum.ContextActionPriority.High.Value + 15, GamepadInput.DECLINE)
 end
 
@@ -1490,7 +1500,7 @@ local function trackModel(model: Model)
 	local acceptIconColor = Color3.fromRGB(170, 255, 200)
 	local declineIconColor = Color3.fromRGB(255, 190, 185)
 
-	for _, conn in bindChoiceButtonPress(entry.acceptBtn, entry.acceptScale, entry.acceptPanelScale, function()
+	local function onAcceptPressed()
 		if entry.decisionLocked then
 			return
 		end
@@ -1509,11 +1519,9 @@ local function trackModel(model: Model)
 			fireAcceptHooks(model)
 		end
 		animateOfferOut(entry, false, true)
-	end) do
-		table.insert(entry.conns, conn)
 	end
 
-	for _, conn in bindChoiceButtonPress(entry.declineBtn, entry.declineScale, entry.declinePanelScale, function()
+	local function onDeclinePressed()
 		if entry.decisionLocked then
 			return
 		end
@@ -1526,7 +1534,16 @@ local function trackModel(model: Model)
 		animateOfferOut(entry, true)
 		fireDecision(model, "decline")
 		fireDeclineHooks(model)
-	end) do
+	end
+
+	entry.invokeAccept = onAcceptPressed
+	entry.invokeDecline = onDeclinePressed
+
+	for _, conn in bindChoiceButtonPress(entry.acceptBtn, entry.acceptScale, entry.acceptPanelScale, onAcceptPressed) do
+		table.insert(entry.conns, conn)
+	end
+
+	for _, conn in bindChoiceButtonPress(entry.declineBtn, entry.declineScale, entry.declinePanelScale, onDeclinePressed) do
 		table.insert(entry.conns, conn)
 	end
 

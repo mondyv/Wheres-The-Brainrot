@@ -63,6 +63,7 @@ local ranksByUserId: { [number]: { BoardRank } } = {}
 local badgeByPlayer: { [Player]: BillboardGui } = {}
 local charAddedConns: { [Player]: RBXScriptConnection } = {}
 local chatBubbleSuppress: { [Player]: boolean } = {}
+local localWorldNotifSuppress = false
 local wiredData = false
 
 local function readBoardRanks(boardFolder: Folder): { [number]: BoardRank }
@@ -228,6 +229,10 @@ local function shouldShowBadge(player: Player): boolean
 	if chatBubbleSuppress[player] == true then
 		return false
 	end
+	-- Hide local overhead rank icons while a character world notif (Try again, etc.) is up.
+	if localWorldNotifSuppress and player == localPlayer then
+		return false
+	end
 	-- Hide overhead rank icons during cutscenes / panel HUD hide.
 	if GameplayUiVisibility.isHidden() then
 		return false
@@ -272,6 +277,11 @@ function M.setChatBubbleSuppress(player: Player, suppressed: boolean)
 		chatBubbleSuppress[player] = nil
 	end
 	refreshPlayerBadge(player)
+end
+
+function M.setLocalWorldNotifSuppress(suppressed: boolean)
+	localWorldNotifSuppress = suppressed == true
+	refreshPlayerBadge(localPlayer)
 end
 
 local function refreshAllBadges(forceRebuild: boolean?)

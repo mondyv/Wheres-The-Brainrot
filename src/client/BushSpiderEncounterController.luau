@@ -2240,12 +2240,15 @@ end
 local function killPlayerFromSpiderHit()
 	local char = player.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	if not hum then
+	if not hum or not char then
 		return
 	end
 	if hum.Health <= 0 then
 		return
 	end
+	-- Capture the dying character so a soft/frictionless respawn cannot be killed
+	-- by deferred/delayed follow-up hits meant for the old body.
+	local dyingChar = char
 	hum.BreakJointsOnDeath = true
 	if spiderKillRE then
 		spiderKillRE:FireServer()
@@ -2255,7 +2258,10 @@ local function killPlayerFromSpiderHit()
 	end)
 	hum.Health = 0
 	task.defer(function()
-		if not hum.Parent then
+		if player.Character ~= dyingChar then
+			return
+		end
+		if not hum.Parent or hum.Parent ~= dyingChar then
 			return
 		end
 		if hum.Health > 0 then
@@ -2264,10 +2270,9 @@ local function killPlayerFromSpiderHit()
 			end
 			hum.Health = 0
 		end
-		local liveChar = player.Character
-		if liveChar and liveChar.Parent and hum.Health <= 0 then
+		if dyingChar.Parent and hum.Health <= 0 then
 			pcall(function()
-				liveChar:BreakJoints()
+				dyingChar:BreakJoints()
 			end)
 		end
 	end)
@@ -2754,7 +2759,6 @@ local function runEncounter(fallbackAnchor: Vector3)
 	-- Restore BGM before death so ReviveController doesn't snapshot the combat slowdown.
 	forceRestoreBgm()
 	killPlayerFromSpiderHit()
-	task.delay(0.15, killPlayerFromSpiderHit)
 	waitSec(0.95)
 	finishEncounter(spider, web, didHideHud)
 	return

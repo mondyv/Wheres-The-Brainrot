@@ -303,6 +303,14 @@ local function softRespawnAtTutorialHitbox(player: Player)
 	forceLoadCharacter(player)
 end
 
+-- Frictionless (first 10 min): instant respawn on the player's own plot — not Tim's
+-- quest hitbox, which can sit near kill zones and soft-death-loop newcomers.
+local function softRespawnAtOwnPlot(player: Player)
+	clearPending(player)
+	clearReviveSpawnAttrs(player)
+	forceLoadCharacter(player)
+end
+
 local function isFrictionlessDeathActive(player: Player): boolean
 	local untilT = player:GetAttribute(PlayerDataSchema.FRICTIONLESS_DEATH_UNTIL_ATTR)
 	if typeof(untilT) ~= "number" then
@@ -326,9 +334,9 @@ local function onHumanoidDied(player: Player, character: Model)
 		return
 	end
 
-	-- First 10 minutes of the session: fade + instant Tim hitbox respawn, no revive UI.
+	-- First 10 minutes of the session: fade + instant plot respawn, no revive UI.
 	if isFrictionlessDeathActive(player) then
-		softRespawnAtTutorialHitbox(player)
+		softRespawnAtOwnPlot(player)
 		return
 	end
 

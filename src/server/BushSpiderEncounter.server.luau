@@ -47,11 +47,18 @@ killRE.OnServerEvent:Connect(function(plr: Player)
 	end
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if humanoid and humanoid.Health > 0 then
+		local dyingChar = character
 		humanoid.BreakJointsOnDeath = true
 		humanoid.Health = 0
-		if character.Parent and humanoid.Health <= 0 then
-			character:BreakJoints()
-		end
+		task.defer(function()
+			-- Never BreakJoints a soft-respawned replacement character.
+			if plr.Character ~= dyingChar then
+				return
+			end
+			if dyingChar.Parent and humanoid.Parent == dyingChar and humanoid.Health <= 0 then
+				dyingChar:BreakJoints()
+			end
+		end)
 	end
 end)
 

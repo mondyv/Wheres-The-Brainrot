@@ -8,10 +8,12 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 
 local DEBOUNCE_SEC = 0.75
+local SPAWN_IMMUNITY_SEC = 2.5
 local FOLDER_PATH = { "Map", "Land Borders", "Killparts" }
 
 local wired: { [BasePart]: boolean } = {}
 local debounceUntil: { [Player]: number } = {}
+local spawnImmuneUntil: { [Player]: number } = {}
 local playerConns: { [Player]: { RBXScriptConnection } } = {}
 
 local function resolveKillpartsFolder(): Instance?
@@ -43,6 +45,10 @@ local function onKillPartTouched(hit: BasePart)
 		return
 	end
 	local now = os.clock()
+	local immuneUntil = spawnImmuneUntil[player]
+	if immuneUntil and now < immuneUntil then
+		return
+	end
 	local untilT = debounceUntil[player]
 	if untilT and now < untilT then
 		return
@@ -104,7 +110,9 @@ local function hookPlayer(player: Player)
 	table.insert(
 		list,
 		player.CharacterAdded:Connect(function()
-			debounceUntil[player] = nil
+			local now = os.clock()
+			debounceUntil[player] = now + SPAWN_IMMUNITY_SEC
+			spawnImmuneUntil[player] = now + SPAWN_IMMUNITY_SEC
 		end)
 	)
 end
@@ -112,6 +120,7 @@ end
 Players.PlayerAdded:Connect(hookPlayer)
 Players.PlayerRemoving:Connect(function(player)
 	debounceUntil[player] = nil
+	spawnImmuneUntil[player] = nil
 	local list = playerConns[player]
 	if list then
 		for _, c in list do

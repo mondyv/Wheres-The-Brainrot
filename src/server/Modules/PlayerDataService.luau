@@ -924,7 +924,7 @@ local function mergeAgainstPrior(
 	local restoredStands = false
 
 	if opts.restoreEmptyInventory and #payload.inventory == 0 and #prior.inventory > 0 then
-		warn("[PlayerDataService] refusing inventory wipe - keeping prior inventory")
+		-- Expected on leave/shutdown: other scripts clear tools before save finishes.
 		payload.inventory = shallowCopyEntries(prior.inventory) :: any
 		payload.parkedSlots = shallowCopyEntries(prior.parkedSlots) :: any
 		payload.equipSlot = prior.equipSlot
@@ -932,7 +932,6 @@ local function mergeAgainstPrior(
 	end
 
 	if opts.restoreEmptyStands and #payload.stands == 0 and #prior.stands > 0 then
-		warn("[PlayerDataService] refusing stands wipe - keeping prior stands")
 		payload.stands = shallowCopyEntries(prior.stands) :: any
 		restoredStands = true
 	end

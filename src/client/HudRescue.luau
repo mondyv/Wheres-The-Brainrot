@@ -1,7 +1,8 @@
 -- [ACTIVE] HudRescue
 --[[
 	Studio/join safety net: force-restores Main + SideUI, clears stuck overlays,
-	restores camera, and prints a short diagnostic so we can see what's wrong.
+	restores camera. Warns only when it actually changed something (avoids
+	spammy try-again / soft-respawn logs that look like errors).
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -14,7 +15,8 @@ local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 
 local HudRescue = {}
 
-local function rescueOnce(reason: string)
+local function rescueOnce(reason: string, opts: { quietOk: boolean? }?)
+	local quietOk = opts ~= nil and opts.quietOk == true
 	local player = Players.LocalPlayer
 	local pg = player:FindFirstChild("PlayerGui")
 	if not pg then
@@ -23,10 +25,12 @@ local function rescueOnce(reason: string)
 	end
 
 	local lines = { "[HudRescue] " .. reason }
+	local changed = false
 
 	local loading = pg:FindFirstChild("LoadingScreen")
 	if loading and loading:IsA("ScreenGui") and loading.Enabled then
 		loading.Enabled = false
+		changed = true
 		table.insert(lines, "disabled LoadingScreen")
 	end
 
@@ -34,6 +38,7 @@ local function rescueOnce(reason: string)
 		local gui = pg:FindFirstChild(name)
 		if gui and gui:IsA("ScreenGui") and gui.Enabled then
 			gui.Enabled = false
+			changed = true
 			table.insert(lines, "disabled " .. name)
 		end
 	end
@@ -43,17 +48,24 @@ local function rescueOnce(reason: string)
 	if mainForChrome and mainForChrome:IsA("ScreenGui") then
 		local side = mainForChrome:FindFirstChild("SideUI")
 		if side and side:IsA("GuiObject") then
+			if side.Active then
+				changed = true
+				table.insert(lines, "SideUI.Active=false")
+			end
 			side.Active = false
-			table.insert(lines, "SideUI.Active=false")
 		end
 		local frames = mainForChrome:FindFirstChild("Frames")
 		if frames and frames:IsA("GuiObject") then
 			local sideZ = if side and side:IsA("GuiObject") then side.ZIndex else 1
 			if frames.ZIndex <= sideZ then
 				frames.ZIndex = sideZ + 10
+				changed = true
 				table.insert(lines, "Frames.ZIndex=" .. tostring(frames.ZIndex))
 			end
-			frames.Active = false
+			if frames.Active then
+				frames.Active = false
+				changed = true
+			end
 		end
 	end
 
@@ -63,6 +75,7 @@ local function rescueOnce(reason: string)
 			if child.Name ~= "Rainbow" and child:IsA("GuiObject") and (child.Visible or child.Active) then
 				child.Visible = false
 				child.Active = false
+				changed = true
 				table.insert(lines, "hid Purchasing." .. child.Name)
 			end
 		end
@@ -81,21 +94,28 @@ local function rescueOnce(reason: string)
 	if main and main:IsA("ScreenGui") then
 		if not main.Enabled then
 			main.Enabled = true
+			changed = true
 			table.insert(lines, "enabled Main")
 		end
 		local sideUI = main:FindFirstChild("SideUI")
 		if sideUI and sideUI:IsA("GuiObject") then
 			if not (sideUI :: GuiObject).Visible and not GameplayUiVisibility.isHidden() then
 				(sideUI :: GuiObject).Visible = true
+				changed = true
 				table.insert(lines, "showed SideUI")
 			elseif GameplayUiVisibility.isHidden() then
 				table.insert(lines, "skipped SideUI show (panel/cutscene hide active)")
 			end
-			table.insert(lines, string.format("Main.Enabled=%s SideUI.Visible=%s", tostring(main.Enabled), tostring((sideUI :: GuiObject).Visible)))
+			table.insert(
+				lines,
+				string.format("Main.Enabled=%s SideUI.Visible=%s", tostring(main.Enabled), tostring((sideUI :: GuiObject).Visible))
+			)
 		else
+			changed = true
 			table.insert(lines, "SideUI MISSING under Main")
 		end
 	else
+		changed = true
 		table.insert(lines, "Main ScreenGui MISSING under PlayerGui")
 	end
 
@@ -103,12 +123,14 @@ local function rescueOnce(reason: string)
 	if cam then
 		if cam.CameraType ~= Enum.CameraType.Custom then
 			cam.CameraType = Enum.CameraType.Custom
+			changed = true
 			table.insert(lines, "camera -> Custom")
 		end
 		local char = player.Character
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
 		if hum and cam.CameraSubject ~= hum then
 			cam.CameraSubject = hum
+			changed = true
 			table.insert(lines, "camera subject -> Humanoid")
 		end
 	end
@@ -117,9 +139,11 @@ local function rescueOnce(reason: string)
 		if fx:IsA("BlurEffect") and (fx.Name == "LoadingBlur" or fx.Name == "ReviveBlur" or fx.Size > 0) then
 			if fx.Name == "LoadingBlur" or fx.Name == "ReviveBlur" then
 				fx:Destroy()
+				changed = true
 				table.insert(lines, "removed " .. fx.Name)
 			elseif fx.Size > 8 then
 				fx.Size = 0
+				changed = true
 				table.insert(lines, "cleared blur Size")
 			end
 		end
@@ -132,7 +156,10 @@ local function rescueOnce(reason: string)
 			local bb = inst:FindFirstChild("BrainrotInfoBillboard", true)
 			if bb and bb:IsA("BillboardGui") then
 				headerCount += 1
-				bb.Enabled = true
+				if not bb.Enabled then
+					bb.Enabled = true
+					changed = true
+				end
 			end
 		end
 	end
@@ -141,7 +168,10 @@ local function rescueOnce(reason: string)
 		for _, ch in playerGui:GetChildren() do
 			if ch:IsA("BillboardGui") and ch.Name == "BrainrotInfoBillboard" then
 				headerCount += 1
-				ch.Enabled = true
+				if not ch.Enabled then
+					ch.Enabled = true
+					changed = true
+				end
 			end
 		end
 	end
@@ -169,22 +199,26 @@ local function rescueOnce(reason: string)
 	table.insert(lines, "standDisplays=" .. tostring(standDisplays))
 	table.insert(lines, "templateBB=" .. tostring(hasBb))
 
-	warn(table.concat(lines, " | "))
+	if changed or not quietOk then
+		warn(table.concat(lines, " | "))
+	end
 end
 
 function HudRescue.init()
 	task.defer(function()
 		task.wait(1)
-		rescueOnce("t+1s")
+		rescueOnce("t+1s", { quietOk = true })
 		task.wait(4)
-		rescueOnce("t+5s")
+		rescueOnce("t+5s", { quietOk = true })
 		task.wait(10)
-		rescueOnce("t+15s")
+		rescueOnce("t+15s", { quietOk = true })
 	end)
 end
 
 function HudRescue.run(reason: string)
-	rescueOnce(reason)
+	-- Soft-death try-again restores are routine — only log when something was wrong.
+	local quiet = reason == "try-again-notif" or reason == "tutorial-respawn"
+	rescueOnce(reason, { quietOk = quiet })
 end
 
 return HudRescue

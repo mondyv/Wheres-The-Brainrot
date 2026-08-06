@@ -74,6 +74,9 @@ local hudRestoredCallbacks: { () -> () } = {}
 local pendingTryAgainNotif = false
 local pendingTryAgainHint: string? = nil
 local tryAgainScheduleToken = 0
+local tryAgainFlushing = false
+local lastTryAgainShownAt = 0
+local TRY_AGAIN_MIN_INTERVAL_SEC = 2.5
 local lastTryAgainDeathAt = 0
 local priceLabelTemplate: string? = nil
 
@@ -1042,13 +1045,26 @@ local function showTryAgainNotif(hint: string?)
 end
 
 local function flushPendingTryAgainNotif(): boolean
-	if not pendingTryAgainNotif then
+	if not pendingTryAgainNotif or tryAgainFlushing then
 		return false
 	end
+	-- Soft respawn schedules from Died + CharacterAdded; only show one toast.
+	if lastTryAgainShownAt > 0 and (os.clock() - lastTryAgainShownAt) < TRY_AGAIN_MIN_INTERVAL_SEC then
+		pendingTryAgainNotif = false
+		pendingTryAgainHint = nil
+		return false
+	end
+	tryAgainFlushing = true
 	pendingTryAgainNotif = false
 	local hint = pendingTryAgainHint
 	pendingTryAgainHint = nil
-	showTryAgainNotif(hint)
+	lastTryAgainShownAt = os.clock()
+	local ok, err = pcall(showTryAgainNotif, hint)
+	tryAgainFlushing = false
+	if not ok then
+		warn("[ReviveController] try-again notif failed:", err)
+		return false
+	end
 	return true
 end
 
@@ -1060,9 +1076,13 @@ local function schedulePendingTryAgainNotif()
 	local token = tryAgainScheduleToken
 	local delaySec = computeTryAgainDelaySec()
 	task.delay(delaySec, function()
-		if token ~= tryAgainScheduleToken or not pendingTryAgainNotif then
+		if token ~= tryAgainScheduleToken then
 			return
 		end
+		if not pendingTryAgainNotif then
+			return
+		end
+		-- Light HUD restore without Studio spam — only warn when something actually changed.
 		pcall(function()
 			require(script.Parent.HudRescue).run("try-again-notif")
 		end)
@@ -1132,16 +1152,8 @@ local function onLocalDeath(character: Model)
 	if shouldShowTryAgainNotif() then
 		pendingTryAgainNotif = true
 		lastTryAgainDeathAt = os.clock()
-		-- Soft respawn can CharacterAdded before Died finishes; schedule if already alive again.
-		task.defer(function()
-			if not pendingTryAgainNotif then
-				return
-			end
-			local live = player.Character
-			if live and live ~= character then
-				schedulePendingTryAgainNotif()
-			end
-		end)
+		-- Do not schedule here — CharacterAdded is the single owner of try-again timing
+		-- so Died + respawn cannot double-fire HudRescue / toast.
 	end
 	-- Tutorial soft-respawn keeps existing SFX-only death (no fade / no revive UI).
 	if isTutorialSoftDeath() then

@@ -530,9 +530,9 @@ local function characterHasBrainrotToolEquipped(char: Model?): boolean
 	return false
 end
 
--- Place prompts when a brainrot Tool is equipped or the player is carrying from a bush haul.
+-- Place prompts when a brainrot Tool is equipped or the player is carrying a placeable bush haul.
 local function canShowPlaceBrainrotPrompt(): boolean
-	return characterHasBrainrotToolEquipped(player.Character) or CarryGate.isCarrying()
+	return characterHasBrainrotToolEquipped(player.Character) or CarryGate.isCarryingPlaceableBrainrot()
 end
 
 local function isStealProximityPrompt(pp: ProximityPrompt): boolean

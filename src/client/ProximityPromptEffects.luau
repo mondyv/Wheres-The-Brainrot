@@ -164,9 +164,9 @@ local function playerHasBrainrotToolEquipped(): boolean
 	return false
 end
 
--- Empty-stand "Place" custom card: Tool equipped or bush-style carry (no tool yet).
+-- Empty-stand "Place" custom card: brainrot Tool equipped or placeable bush haul (not lucky blocks).
 local function canShowPlaceBrainrotUi(): boolean
-	return playerHasBrainrotToolEquipped() or CarryGate.isCarrying()
+	return playerHasBrainrotToolEquipped() or CarryGate.isCarryingPlaceableBrainrot()
 end
 
 local function isPlaceBrainrotPrompt(prompt: ProximityPrompt): boolean

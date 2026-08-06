@@ -98,6 +98,45 @@ function CarryGate.isCarrying(): boolean
 	return false
 end
 
+-- True when carrying at least one placeable brainrot (excludes lucky-block hauls).
+function CarryGate.isCarryingPlaceableBrainrot(): boolean
+	local char = player.Character
+	if not char then
+		return false
+	end
+	for _, d in char:GetDescendants() do
+		if d:IsA("Model") then
+			if d:GetAttribute("LuckyBlockCarry") == true then
+				continue
+			end
+			local phase = d:GetAttribute("BrainrotCarryPhase")
+			if phase == "Carried" or phase == "Floating" or phase == "Pop" then
+				return true
+			end
+			local owner = d:GetAttribute("OwnerUserId")
+			if typeof(owner) == "number" and owner == player.UserId and d.Parent == char then
+				if d:GetAttribute("BrainrotName") ~= nil then
+					return true
+				end
+			end
+		end
+	end
+	for _, child in char:GetChildren() do
+		if child:IsA("Model") and child ~= char then
+			if child:GetAttribute("LuckyBlockCarry") == true then
+				continue
+			end
+			local owner = child:GetAttribute("OwnerUserId")
+			if typeof(owner) == "number" and owner == player.UserId then
+				if child:GetAttribute("BrainrotName") ~= nil or child:GetAttribute("BrainrotCarryPhase") ~= nil then
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
 -- True when a brainrot is welded on the character's head (not floating/pop phase).
 function CarryGate.isCarryingOnHead(): boolean
 	local char = player.Character

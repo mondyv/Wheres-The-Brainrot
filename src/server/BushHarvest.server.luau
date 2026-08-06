@@ -640,7 +640,7 @@ local function carryModelToInventoryEntry(carry: Model): BrainrotInvEntry
 	return entry
 end
 
--- Returns the new inventory list index on success (used to auto-equip the brainrot just deposited).
+-- Returns inventory list index for brainrots, 0 for lucky-block tool grant success, or nil on failure.
 local function redeemSingleCarryModel(player: Player, carry: Model): number?
 	if not carry or not carry.Parent then
 		depositDebug("redeem abort: carry missing parent", player.Name)
@@ -679,7 +679,7 @@ local function redeemSingleCarryModel(player: Player, carry: Model): number?
 		safeZoneSfxPlayedForCarry[carry] = nil
 		carry:Destroy()
 		depositDebug("redeem lucky block OK", player.Name, blockName)
-		return nil
+		return 0
 	end
 
 	local brainrotName = getCarryBrainrotName(carry) or carry.Name
@@ -1384,17 +1384,11 @@ attachCarriedBrainrot = function(player: Player, clone: Model)
 	if isPlayerInsideDeposit(player) then
 		tryPlaySafeZoneSFXForCarry(player, clone)
 		local newSlot = redeemSingleCarryModel(player, clone)
-		if newSlot then
+		if newSlot ~= nil then
 			local map = brainrotParkedInExpandedBackpack[player]
 			if not map then
 				map = {}
 				brainrotParkedInExpandedBackpack[player] = map
-			end
-			local invList = brainrotInventories[player]
-			-- Place on hotbar, but auto-equip must use the inventory index (newSlot),
-			-- not the visual hotbar cell — those no longer mirror 1:1.
-			if invList then
-				assignEntryToLowestFreeHotbarSlot(player, invList, map, newSlot)
 			end
 			local carryList = activeCarries[player]
 			if carryList then
@@ -1405,7 +1399,14 @@ attachCarriedBrainrot = function(player: Player, clone: Model)
 				end
 			end
 			syncBrainrotCarryCountAttr(player)
-			notifyClientInventorySync(player, newSlot, true)
+			-- 0 = lucky-block tool granted (not a brainrot inventory index).
+			if newSlot > 0 then
+				local invList = brainrotInventories[player]
+				if invList then
+					assignEntryToLowestFreeHotbarSlot(player, invList, map, newSlot)
+				end
+				notifyClientInventorySync(player, newSlot, true)
+			end
 		end
 		return
 	end
@@ -2233,11 +2234,16 @@ local function tryRedeemAllAtDeposit(player: Player, depositPart: BasePart?)
 	for _, carry in ipairs(carries) do
 		local brainrotName = getCarryBrainrotName(carry) or carry.Name
 		local newSlot = redeemSingleCarryModel(player, carry)
-		if not newSlot then
+		if newSlot == nil then
 			depositDebug("carry redeem stopped (inventory full?)", player.Name, brainrotName)
 			break
 		end
 		removeCarryFromActiveList(player, carry)
+		-- Lucky-block tool grant: no brainrot inventory/hotbar slot.
+		if newSlot == 0 then
+			depositDebug("lucky tool granted at RedWall", player.Name, brainrotName)
+			continue
+		end
 		addedAny = true
 		local invList = brainrotInventories[player]
 		if invList then
@@ -2425,15 +2431,22 @@ local function tryRedeemPendingFloatsAtDeposit(player: Player)
 			continue
 		end
 
+		local isLuckyCarry = clone:GetAttribute("LuckyBlockCarry") == true
 		list = brainrotInventories[player]
 		map = brainrotParkedInExpandedBackpack[player] or map
-		if not list or findLowestFreeHotbarSlot(player, list, map) == nil then
-			break
+		-- Lucky blocks become tools — they don't need a free brainrot hotbar slot.
+		if not isLuckyCarry then
+			if not list or findLowestFreeHotbarSlot(player, list, map) == nil then
+				break
+			end
 		end
 
 		local newSlot = redeemSingleCarryModel(player, clone)
-		if not newSlot then
+		if newSlot == nil then
 			break
+		end
+		if newSlot == 0 then
+			continue
 		end
 
 		list = brainrotInventories[player]

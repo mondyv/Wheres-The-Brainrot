@@ -352,6 +352,22 @@ local ToolbarController = {}
 	local function applySlotIconStyle(icon: ImageLabel)
 		icon.ScaleType = Enum.ScaleType.Fit
 		icon.BackgroundTransparency = 1
+		icon.ImageColor3 = Color3.new(1, 1, 1)
+		icon.ImageTransparency = 0
+	end
+
+	local function luckyBlockDisplayLabel(tool: Tool): string
+		local kind = tool:GetAttribute("LuckyBlockKind")
+		if typeof(kind) == "string" and kind ~= "" then
+			local ok, name = pcall(function()
+				return LuckyBlockCatalog.displayName(kind)
+			end)
+			if ok and typeof(name) == "string" and name ~= "" then
+				return name
+			end
+			return kind
+		end
+		return tool.Name
 	end
 
 	local function setSlotIcons(surface: GuiObject, image: string, visible: boolean)
@@ -982,8 +998,7 @@ local ToolbarController = {}
 			)
 			local rate = surface:FindFirstChild("Rate")
 			if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
-				local kind = tool:GetAttribute("LuckyBlockKind")
-				rate.Text = if typeof(kind) == "string" and kind ~= "" then kind else tool.Name
+				rate.Text = luckyBlockDisplayLabel(tool)
 			end
 			local key = surface:FindFirstChild("Key")
 			if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
@@ -2250,22 +2265,33 @@ local ToolbarController = {}
 
 		if slotTools[index] ~= nil then
 			local tool = slotTools[index] :: Tool
-			local invIdx = tool:GetAttribute("BrainrotInvIndex")
-			local entryForTool = nil
-			if typeof(invIdx) == "number" then
-				local ei = math.clamp(math.floor(invIdx), 1, math.max(1, #brainrotEntries))
-				entryForTool = brainrotEntries[ei]
-			end
-			local tex = toolDisplayTexture(tool)
-			if entryForTool and entryForTool.icon ~= "" then
-				tex = entryForTool.icon
-			end
-			setSlotIcons(surface, (tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png", true)
-			if keyLabel and (keyLabel:IsA("TextLabel") or keyLabel:IsA("TextButton")) then
-				keyLabel.Text = tostring(index)
-			end
-			if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
-				rate.Text = if entryForTool then formatEntryIncomeLabel(entryForTool) else tool.Name
+			if tool:GetAttribute("LuckyBlockTool") == true then
+				local tex = toolDisplayTexture(tool)
+				setSlotIcons(surface, (tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png", true)
+				if keyLabel and (keyLabel:IsA("TextLabel") or keyLabel:IsA("TextButton")) then
+					keyLabel.Text = tostring(index)
+				end
+				if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
+					rate.Text = luckyBlockDisplayLabel(tool)
+				end
+			else
+				local invIdx = tool:GetAttribute("BrainrotInvIndex")
+				local entryForTool = nil
+				if typeof(invIdx) == "number" then
+					local ei = math.clamp(math.floor(invIdx), 1, math.max(1, #brainrotEntries))
+					entryForTool = brainrotEntries[ei]
+				end
+				local tex = toolDisplayTexture(tool)
+				if entryForTool and entryForTool.icon ~= "" then
+					tex = entryForTool.icon
+				end
+				setSlotIcons(surface, (tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png", true)
+				if keyLabel and (keyLabel:IsA("TextLabel") or keyLabel:IsA("TextButton")) then
+					keyLabel.Text = tostring(index)
+				end
+				if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
+					rate.Text = if entryForTool then formatEntryIncomeLabel(entryForTool) else tool.Name
+				end
 			end
 		elseif brainrotEntry ~= nil and brainrotIdx and brainrotParkedInUI[brainrotIdx] ~= true then
 			local e = brainrotEntry :: { name: string, icon: string, sourcePath: string }

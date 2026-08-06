@@ -435,7 +435,7 @@ local function buildLuckyBlockTool(template: Model, blockName: string): Tool?
 	end
 
 	local tool = Instance.new("Tool")
-	tool.Name = "Lucky Block"
+	tool.Name = LuckyBlockCatalog.displayName(blockName)
 	tool.RequiresHandle = true
 	tool.CanBeDropped = false
 	tool.ManualActivationOnly = false

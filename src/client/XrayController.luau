@@ -354,38 +354,56 @@ local function updateForBush(bush: Instance)
 	if (loot.hasBrainrot or loot.hasLucky) and loot.name and loot.rarity then
 		billboard.Size = fullBillboardSize
 		local mutation = loot.mutation or "normal"
-		BrainrotHeaderStyle.applyInfoFrame(infoFrame, {
-			name = loot.name,
-			rarity = loot.rarity,
-			mutation = mutation,
-			level = loot.level,
-			rateText = if loot.isLuckyBlock then "Lucky Block" else formatRate(loot.incomePerSecond),
-		})
-		hideInfoChild(infoFrame, "Level")
+		if loot.isLuckyBlock then
+			BrainrotHeaderStyle.applyInfoFrame(infoFrame, {
+				name = loot.name,
+				rarity = loot.rarity,
+				mutation = "normal",
+				level = 1,
+				rateText = "",
+			})
+			hideInfoChild(infoFrame, "Level")
+			hideInfoChild(infoFrame, "Rate")
+			hideInfoChild(infoFrame, "Type")
 
-		local nameNode = resolveInfoTextLabel(infoFrame, "Name")
-		if nameNode then
-			ensureNameReadable(nameNode)
-			BrainrotHeaderStyle.setTextOnNode(nameNode, loot.name)
-		end
-
-		local typeNode = resolveInfoTextLabel(infoFrame, "Type")
-		if typeNode then
-			if typeLabelLayout then
-				applyLabelLayout(typeNode, typeLabelLayout)
+			local nameNode = resolveInfoTextLabel(infoFrame, "Name")
+			if nameNode then
+				ensureNameReadable(nameNode)
+				BrainrotHeaderStyle.setTextOnNode(nameNode, loot.name)
 			end
-			if loot.isLuckyBlock then
-				clearLabelGradients(typeNode)
-				typeNode.Text = "Lucky Block"
-				typeNode.TextColor3 = Color3.fromRGB(255, 220, 120)
-				typeNode.Visible = true
-			else
+
+			local rarityNode = resolveInfoTextLabel(infoFrame, "Rarity")
+			if rarityNode then
+				BrainrotHeaderStyle.applyRarityLabel(rarityNode, loot.rarity)
+				rarityNode.Visible = true
+			end
+		else
+			BrainrotHeaderStyle.applyInfoFrame(infoFrame, {
+				name = loot.name,
+				rarity = loot.rarity,
+				mutation = mutation,
+				level = loot.level,
+				rateText = formatRate(loot.incomePerSecond),
+			})
+			hideInfoChild(infoFrame, "Level")
+
+			local nameNode = resolveInfoTextLabel(infoFrame, "Name")
+			if nameNode then
+				ensureNameReadable(nameNode)
+				BrainrotHeaderStyle.setTextOnNode(nameNode, loot.name)
+			end
+
+			local typeNode = resolveInfoTextLabel(infoFrame, "Type")
+			if typeNode then
+				if typeLabelLayout then
+					applyLabelLayout(typeNode, typeLabelLayout)
+				end
 				BrainrotHeaderStyle.applyMutationLabel(typeNode, mutation)
 				typeNode.Visible = true
+				typeNode.TextTransparency = 0
+				typeNode.TextStrokeTransparency = 0
+				typeNode.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 			end
-			typeNode.TextTransparency = 0
-			typeNode.TextStrokeTransparency = 0
-			typeNode.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 		end
 
 		applyPanelStrokeColor(loot.rarity, if loot.isLuckyBlock then nil else mutation)

@@ -12,6 +12,7 @@ local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
 
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
+local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
 local SpawnAreaWarmup = {}
@@ -80,13 +81,18 @@ function SpawnAreaWarmup.runAsync()
 			end
 			local story = PlotPaths.firstStoryFolder(plot)
 			if story then
-				local spawnNode = story:FindFirstChild("Spawn")
-				if spawnNode and spawnNode:IsA("BasePart") then
-					streamAround(player, spawnNode.Position)
-				elseif spawnNode then
-					local part = spawnNode:FindFirstChildWhichIsA("BasePart", true)
-					if part then
-						streamAround(player, part.Position)
+				local spawnAnchor = PlotSpawnUtil.findPlotSpawnAnchor(plot)
+				if spawnAnchor then
+					streamAround(player, spawnAnchor.Position)
+				else
+					local spawnNode = story:FindFirstChild("Spawn")
+					if spawnNode and spawnNode:IsA("BasePart") then
+						streamAround(player, spawnNode.Position)
+					elseif spawnNode then
+						local part = spawnNode:FindFirstChildWhichIsA("BasePart", true)
+						if part then
+							streamAround(player, part.Position)
+						end
 					end
 				end
 			end

@@ -13,25 +13,26 @@ local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild(
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 
-local ASSIGN_WAIT_SEC = 20
+local ASSIGN_WAIT_SEC = 35
 
 local function waitForAssignedPlot(player: Player, character: Model): Instance?
 	local deadline = os.clock() + ASSIGN_WAIT_SEC
+	local fallback: Instance? = nil
 	while os.clock() < deadline do
 		if not character.Parent or not player.Parent then
 			return nil
 		end
 		local plot = PlotPaths.findPlotForAssignedSlot(player)
 		if plot and plot.Parent then
-			-- Prefer a plot that already has a Story/Spawn so we don't teleport onto air.
-			local spawnCf = PlotSpawnUtil.findFirstFloorSpawnCFrame(plot)
-			if spawnCf then
+			fallback = plot
+			-- Wait for the real Spawn pad (full base), not a stub floor fallback.
+			if PlotSpawnUtil.plotHasSpawnPad(plot) then
 				return plot
 			end
 		end
-		task.wait(0.1)
+		task.wait(0.15)
 	end
-	return PlotPaths.findPlotForAssignedSlot(player)
+	return fallback or PlotPaths.findPlotForAssignedSlot(player)
 end
 
 local function teleportToPlotSpawn(player: Player, character: Model)
@@ -73,11 +74,13 @@ local function teleportToPlotSpawn(player: Player, character: Model)
 
 	local plot = waitForAssignedPlot(player, character)
 	if not plot or not plot.Parent then
+		warn("[PlotPlayerSpawn] No assigned plot for", player.Name)
 		return
 	end
 
 	local spawnCf = PlotSpawnUtil.findFirstFloorSpawnCFrame(plot)
 	if not spawnCf then
+		warn("[PlotPlayerSpawn] No Spawn/floor CFrame on plot for", player.Name)
 		return
 	end
 
@@ -86,9 +89,10 @@ end
 
 local function onCharacter(player: Player, character: Model)
 	task.spawn(function()
-		-- Brief yield so HumanoidRootPart exists; streaming retry handles the rest.
-		task.wait(0.05)
-		if not character.Parent or not player.Parent then
+		-- Wait for HRP so the first teleport isn't dropped.
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+			or character:WaitForChild("HumanoidRootPart", 8)
+		if not hrp or not character.Parent or not player.Parent then
 			return
 		end
 		teleportToPlotSpawn(player, character)

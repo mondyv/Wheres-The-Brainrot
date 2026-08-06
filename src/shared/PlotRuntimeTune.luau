@@ -13,7 +13,12 @@ function M.tune(plot: Instance)
 		elseif d:IsA("BasePart") then
 			local p = d :: BasePart
 			p.CastShadow = false
-			if p.Size.Y < 0.25 and (p.Size.X * p.Size.Z) < 120 then
+			local n = string.lower(p.Name)
+			-- Never strip collision from spawn pads / floors — causes underground spawn falls.
+			local keepCollide = n == "spawn"
+				or string.find(n, "floor", 1, true) ~= nil
+				or string.find(n, "spawn", 1, true) ~= nil
+			if not keepCollide and p.Size.Y < 0.25 and (p.Size.X * p.Size.Z) < 120 then
 				p.CanCollide = false
 				p.CanQuery = false
 				p.CanTouch = false

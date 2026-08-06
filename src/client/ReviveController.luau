@@ -24,6 +24,14 @@ local CharacterWorldNotif = require(script.Parent.CharacterWorldNotif)
 
 local player = Players.LocalPlayer
 
+local function getHumanoid(): Humanoid?
+	local char = player.Character
+	if not char then
+		return nil
+	end
+	return char:FindFirstChildOfClass("Humanoid")
+end
+
 local REVIVE_FRAME_NAME = "Revive PopUP"
 local BLUR_NAME = "ReviveBlur"
 local BLUR_SIZE = 32

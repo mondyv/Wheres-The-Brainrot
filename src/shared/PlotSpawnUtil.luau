@@ -9,7 +9,10 @@ local Workspace = game:GetService("Workspace")
 
 local PlotSpawnUtil = {}
 
-local SPAWN_CLEARANCE = 4
+local SPAWN_CLEARANCE = 3.25
+local STREAM_RETRIES = 20
+local STREAM_RETRY_INTERVAL = 0.25
+local STREAM_RADIUS_SEC = 10
 
 local function expandPartBounds(cf: CFrame, size: Vector3, minV: Vector3, maxV: Vector3): (Vector3, Vector3)
 	local hs = size * 0.5
@@ -164,29 +167,87 @@ local function cfOnTopOfBounds(minV: Vector3, maxV: Vector3, face: Vector3): CFr
 	return CFrame.lookAt(pos, pos + flat.Unit)
 end
 
-function PlotSpawnUtil.findFirstFloorSpawnCFrame(plot: Instance): CFrame?
+local function flatLookFromPart(part: BasePart): Vector3
+	local look = part.CFrame.LookVector
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < 0.08 then
+		flat = Vector3.new(0, 0, -1)
+	end
+	return flat.Unit
+end
+
+-- Prefer the dedicated Spawn pad under story 1 (never a stand Spawn).
+function PlotSpawnUtil.findPlotSpawnAnchor(plot: Instance): BasePart?
 	local story1 = PlotPaths.firstStoryFolder(plot)
 	if not story1 then
 		return nil
 	end
 
-	local spawnNode = story1:FindFirstChild("Spawn")
-	if spawnNode then
-		local anchor: BasePart? = nil
-		if spawnNode:IsA("BasePart") then
-			anchor = spawnNode
-		else
-			anchor = spawnNode:FindFirstChildWhichIsA("BasePart", true)
-		end
-		if anchor then
-			local top = anchor.CFrame.Position + Vector3.new(0, anchor.Size.Y * 0.5 + SPAWN_CLEARANCE, 0)
-			local look = anchor.CFrame.LookVector
-			local flat = Vector3.new(look.X, 0, look.Z)
-			if flat.Magnitude < 0.08 then
-				flat = Vector3.new(0, 0, -1)
+	local spawnNode = story1:FindFirstChild("Spawn") or story1:FindFirstChild("spawn")
+	if not spawnNode then
+		for _, d in ipairs(story1:GetChildren()) do
+			if string.lower(d.Name) == "spawn" then
+				spawnNode = d
+				break
 			end
-			return CFrame.lookAt(top, top + flat.Unit)
 		end
+	end
+	if not spawnNode then
+		return nil
+	end
+
+	if spawnNode:IsA("BasePart") then
+		return spawnNode
+	end
+	-- Prefer a child literally named Spawn / a large pad part.
+	local named = spawnNode:FindFirstChild("Spawn") or spawnNode:FindFirstChild("spawn")
+	if named and named:IsA("BasePart") then
+		return named
+	end
+	local best: BasePart? = nil
+	local bestArea = -1
+	for _, d in ipairs(spawnNode:GetDescendants()) do
+		if d:IsA("BasePart") then
+			local area = d.Size.X * d.Size.Z
+			if area > bestArea then
+				bestArea = area
+				best = d
+			end
+		end
+	end
+	return best
+end
+
+local function cframeOnSpawnAnchor(anchor: BasePart, plot: Instance): CFrame
+	-- World-space top of the pad (respects part rotation), then a small lift for HRP.
+	local top = (anchor.CFrame * CFrame.new(0, anchor.Size.Y * 0.5, 0)).Position
+	local face = flatLookFromPart(anchor)
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Include
+	params.FilterDescendantsInstances = { plot }
+	params.IgnoreWater = true
+
+	local origin = top + Vector3.new(0, 12, 0)
+	local hit = Workspace:Raycast(origin, Vector3.new(0, -48, 0), params)
+	local standY = top.Y + SPAWN_CLEARANCE
+	if hit and hit.Position.Y <= top.Y + 6 then
+		standY = hit.Position.Y + SPAWN_CLEARANCE
+	end
+
+	local pos = Vector3.new(top.X, standY, top.Z)
+	return CFrame.lookAt(pos, pos + face)
+end
+
+function PlotSpawnUtil.findFirstFloorSpawnCFrame(plot: Instance): CFrame?
+	local anchor = PlotSpawnUtil.findPlotSpawnAnchor(plot)
+	if anchor then
+		return cframeOnSpawnAnchor(anchor, plot)
+	end
+
+	local story1 = PlotPaths.firstStoryFolder(plot)
+	if not story1 then
+		return nil
 	end
 
 	local floor = story1:FindFirstChild("Floor") or story1:FindFirstChild("floor")
@@ -200,14 +261,18 @@ function PlotSpawnUtil.findFirstFloorSpawnCFrame(plot: Instance): CFrame?
 	local posPart = PlotPaths.findSpawnAndBasesFolder()
 	local slotId = plot:GetAttribute("PlotSlotId")
 	if posPart and typeof(slotId) == "number" then
-		local anchor = posPart:FindFirstChild("BasePOSPart" .. tostring(math.floor(slotId)))
-		if anchor and anchor:IsA("BasePart") then
-			local look = (anchor :: BasePart).CFrame.LookVector
-			face = Vector3.new(look.X, 0, look.Z)
+		local basePos = posPart:FindFirstChild("BasePOSPart" .. tostring(math.floor(slotId)))
+		if basePos and basePos:IsA("BasePart") then
+			face = flatLookFromPart(basePos)
 		end
 	end
 
 	return cfOnTopOfBounds(minV, maxV, face)
+end
+
+-- True when the plot has the real Spawn pad (full base), not just a stub floor.
+function PlotSpawnUtil.plotHasSpawnPad(plot: Instance): boolean
+	return PlotSpawnUtil.findPlotSpawnAnchor(plot) ~= nil
 end
 
 function PlotSpawnUtil.getPlotFloorBounds(plot: Instance): (Vector3?, Vector3?)
@@ -498,11 +563,12 @@ function PlotSpawnUtil.teleportCharacterToCFrame(character: Model, spawnCf: CFra
 end
 
 -- Stream the destination, teleport, then re-apply for a short window so the
--- character doesn't fall through an unstreamed plot floor (tight client radii).
+-- character doesn't fall through an unstreamed plot floor (tight client radii /
+-- console streaming).
 function PlotSpawnUtil.streamAndTeleportWithRetries(player: Player, character: Model, spawnCf: CFrame)
 	if Workspace.StreamingEnabled then
 		local ok, err = pcall(function()
-			player:RequestStreamAroundAsync(spawnCf.Position, 6)
+			player:RequestStreamAroundAsync(spawnCf.Position, STREAM_RADIUS_SEC)
 		end)
 		if not ok then
 			warn("[PlotSpawnUtil] RequestStreamAroundAsync failed:", err)
@@ -512,8 +578,8 @@ function PlotSpawnUtil.streamAndTeleportWithRetries(player: Player, character: M
 	PlotSpawnUtil.teleportCharacterToCFrame(character, spawnCf)
 
 	task.spawn(function()
-		for _ = 1, 12 do
-			task.wait(0.2)
+		for _ = 1, STREAM_RETRIES do
+			task.wait(STREAM_RETRY_INTERVAL)
 			if not player.Parent then
 				return
 			end
@@ -528,8 +594,14 @@ function PlotSpawnUtil.streamAndTeleportWithRetries(player: Player, character: M
 			local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
 			if hrp then
 				local drift = (hrp.Position - spawnCf.Position).Magnitude
+				local sunk = hrp.Position.Y < spawnCf.Position.Y - 6
 				-- Still falling / slid far from spawn pad — snap again.
-				if drift > 8 or hrp.Position.Y < spawnCf.Position.Y - 12 then
+				if drift > 8 or sunk then
+					if Workspace.StreamingEnabled and (drift > 20 or sunk) then
+						pcall(function()
+							player:RequestStreamAroundAsync(spawnCf.Position, STREAM_RADIUS_SEC)
+						end)
+					end
 					PlotSpawnUtil.teleportCharacterToCFrame(char, spawnCf)
 				elseif drift <= 8 then
 					-- Settled near spawn; one final zero-velocity settle then stop.

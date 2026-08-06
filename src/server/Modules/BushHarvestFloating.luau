@@ -452,4 +452,8 @@ function M.wireDecisionRemote(deps: Deps)
 	end)
 end
 
+-- Create remotes as soon as this module loads so TimCheeseQuest can bind even if
+-- BushHarvest.wireDecisionRemote runs later (or briefly fails to finish).
+M.ensureDecisionRemote()
+
 return M

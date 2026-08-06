@@ -16,11 +16,12 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
-local TweenService = game:GetService("TweenService")
 
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
 local BushHarvestBrainrotEquip = require(Modules:WaitForChild("BushHarvestBrainrotEquip"))
+local BushHarvestEmptyMessage = require(Modules:WaitForChild("BushHarvestEmptyMessage"))
+local BushHarvestLucky = require(Modules:WaitForChild("BushHarvestLucky"))
 local IndexService = require(Modules:WaitForChild("IndexService"))
 local PlayerDataService = require(Modules:WaitForChild("PlayerDataService"))
 local BrainrotHeader = require(Modules:WaitForChild("BrainrotHeader"))
@@ -33,10 +34,11 @@ local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local PlotLuck = SwingUpgrades.PlotLuck
 local LuckBoost = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckBoost"))
-local BushLuckyBlockConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushLuckyBlockConfig"))
-local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local AnalyticsFunnelService = require(Modules:WaitForChild("AnalyticsFunnelService"))
+
+-- Create FloatingClaimDecision ASAP so TimCheeseQuest can bind before full bush boot finishes.
+require(Modules:WaitForChild("BushHarvestFloating")).ensureDecisionRemote()
 
 type BrainrotInvEntry = {
 	name: string,
@@ -59,9 +61,6 @@ local BUSH_HIDDEN_NAME_ATTR = "HiddenBrainrotName"
 local BUSH_HIDDEN_MUTATION_ATTR = "HiddenBrainrotMutation"
 local BUSH_HIDDEN_LEVEL_ATTR = "HiddenBrainrotLevel"
 local BUSH_HIDDEN_BASE_INCOME_ATTR = "HiddenBrainrotBaseIncome"
-local BUSH_HAS_LUCKY_ATTR = "HasHiddenLuckyBlock"
-local BUSH_HIDDEN_LUCKY_KIND_ATTR = "HiddenLuckyBlockKind"
-local BUSH_HIDDEN_LUCKY_VARIANT_ATTR = "HiddenLuckyBlockVariant"
 local BUSH_ON_COOLDOWN_ATTR = "BushOnCooldown"
 local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
 local BUSH_COOLDOWN_ENDS_ATTR = "BushCooldownEndsAt"
@@ -1503,30 +1502,6 @@ local function clearHiddenBrainrotLoot(bush: Instance)
 	bush:SetAttribute(BUSH_HIDDEN_BASE_INCOME_ATTR, nil)
 end
 
-local function clearHiddenLuckyLoot(bush: Instance)
-	bush:SetAttribute(BUSH_HAS_LUCKY_ATTR, nil)
-	bush:SetAttribute(BUSH_HIDDEN_LUCKY_KIND_ATTR, nil)
-	bush:SetAttribute(BUSH_HIDDEN_LUCKY_VARIANT_ATTR, nil)
-end
-
-local function rollHiddenLuckyLoot(bush: Instance, worldPosition: Vector3)
-	clearHiddenLuckyLoot(bush)
-	local land = LandResolver.resolveLandAtPosition(worldPosition)
-	if typeof(land) ~= "number" then
-		land = 1
-	end
-	local chance = BushLuckyBlockConfig.chanceForLand(land)
-	if math.random() > chance then
-		return
-	end
-	local blockName, variant = BushLuckyBlockConfig.pickBlockForLand(land)
-	bush:SetAttribute(BUSH_HAS_LUCKY_ATTR, true)
-	bush:SetAttribute(BUSH_HIDDEN_LUCKY_KIND_ATTR, blockName)
-	if typeof(variant) == "string" and variant ~= "" then
-		bush:SetAttribute(BUSH_HIDDEN_LUCKY_VARIANT_ATTR, variant)
-	end
-end
-
 local function rollHiddenBrainrotLoot(bush: Instance)
 	clearHiddenBrainrotLoot(bush)
 	local brainrots = Brainrots.getBrainrotsFolder()
@@ -1570,15 +1545,15 @@ local function RollBushState(bush: Instance): boolean
 		clearHiddenBrainrotLoot(bush)
 	end
 	local pos = if bush:IsA("BasePart") then bush.Position else bush:GetPivot().Position
-	rollHiddenLuckyLoot(bush, pos)
-	return hasBrainrot or bush:GetAttribute(BUSH_HAS_LUCKY_ATTR) == true
+	BushHarvestLucky.rollHiddenLuckyLoot(bush, pos)
+	return hasBrainrot or bush:GetAttribute(BushHarvestLucky.HAS_ATTR) == true
 end
 
 local function beginBushSearchCooldown(bush: Instance, cooldownSec: number): number
 	local endsAt = workspace:GetServerTimeNow() + cooldownSec
 	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, false)
 	clearHiddenBrainrotLoot(bush)
-	clearHiddenLuckyLoot(bush)
+	BushHarvestLucky.clearHiddenLuckyLoot(bush)
 	bush:SetAttribute(BUSH_ON_COOLDOWN_ATTR, true)
 	bush:SetAttribute(BUSH_LOOT_PHASE_ATTR, BUSH_LOOT_PHASE_COOLDOWN)
 	bush:SetAttribute(BUSH_COOLDOWN_ENDS_ATTR, endsAt)
@@ -1691,378 +1666,14 @@ local function bushSearchPosition(bushRef: Instance?, worldPosition: Vector3): V
 	return worldPosition
 end
 
--- Scoped block: empty-bush billboard/flash helpers (keeps module locals under Luau's 200-register limit).
 local FlashBushColor: (Instance, Color3, number?) -> ()
 local clearEmptyBushMessageState: (Instance) -> ()
 local showEmptyBushMessage: (Instance) -> ()
-
 do
-	local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
-	local EMPTY_BUSH_MESSAGE = "No brainrots hiding!"
-	local EMPTY_BUSH_MESSAGE_LIFETIME = 4
-	local EMPTY_BUSH_FADE_DURATION = 1
-	local EMPTY_BUSH_HOLD_DURATION = EMPTY_BUSH_MESSAGE_LIFETIME - EMPTY_BUSH_FADE_DURATION
-	local EMPTY_BUSH_BILLBOARD_NAME = "BushEmptyMessage"
-	local BUSH_PROMPT_LIFT_SCALE = 0.66
-	local BUSH_MESSAGE_FLOAT_ABOVE_PROMPT = 2.75
-	local BUSH_FLASH_RED = Color3.fromRGB(225, 48, 48)
-	local BUSH_FLASH_RESTORE_DURATION = 1.0
-	local BUSH_ERROR_SHAKE_DURATION = 0.5
-	local emptyBushMessageHideToken: { [Instance]: number } = {}
-	local bushFlashToken: { [Instance]: number } = {}
-	local bushFlashTweens: { [Instance]: { Tween } } = {}
-	local bushFlashOriginalColors: { [Instance]: { [BasePart]: Color3 } } = {}
-	local bushErrorShakeToken: { [Instance]: number } = {}
-
-	local function findBushPromptCenterWorld(bush: Instance): Vector3?
-		for _, desc in bush:GetDescendants() do
-			if desc:IsA("Attachment") and desc.Name == "_BushPromptCenter" then
-				return desc.WorldPosition
-			end
-		end
-		return nil
-	end
-
-	local function bushAlertFloatWorldPosition(bush: Instance): Vector3?
-		local promptCenter = findBushPromptCenterWorld(bush)
-		if promptCenter then
-			local topY = bushWorldTopY(bush, promptCenter.Y)
-			return Vector3.new(
-				promptCenter.X,
-				math.max(promptCenter.Y + BUSH_MESSAGE_FLOAT_ABOVE_PROMPT, topY + 3.5),
-				promptCenter.Z
-			)
-		end
-
-		if bush:IsA("Model") then
-			local minV, maxV = BrainrotCarryVisual.getWorldAabb(bush :: Model)
-			if minV and maxV then
-				local center = (minV + maxV) * 0.5
-				local height = math.max(0.5, maxV.Y - minV.Y)
-				local promptY = center.Y + height * BUSH_PROMPT_LIFT_SCALE
-				return Vector3.new(
-					center.X,
-					math.max(promptY + BUSH_MESSAGE_FLOAT_ABOVE_PROMPT, maxV.Y + 3.5),
-					center.Z
-				)
-			end
-		elseif bush:IsA("BasePart") then
-			local part = bush :: BasePart
-			local topY = part.Position.Y + part.Size.Y * 0.5
-			local promptY = part.Position.Y + part.Size.Y * BUSH_PROMPT_LIFT_SCALE + 1
-			return Vector3.new(
-				part.Position.X,
-				math.max(promptY + BUSH_MESSAGE_FLOAT_ABOVE_PROMPT, topY + 3.5),
-				part.Position.Z
-			)
-		end
-
-		return nil
-	end
-
-	local function ensureEmptyBushBillboardAnchor(bush: Instance): BasePart?
-		local worldPos = bushAlertFloatWorldPosition(bush)
-		if not worldPos then
-			if bush:IsA("BasePart") then
-				return bush
-			end
-			if bush:IsA("Model") then
-				local model = bush :: Model
-				if model.PrimaryPart then
-					return model.PrimaryPart
-				end
-				return model:FindFirstChildWhichIsA("BasePart", true)
-			end
-			return nil
-		end
-
-		local existing = bush:FindFirstChild(BUSH_EMPTY_MESSAGE_ANCHOR_NAME)
-		if existing and existing:IsA("BasePart") then
-			existing.CFrame = CFrame.new(worldPos)
-			return existing
-		end
-
-		local anchor = Instance.new("Part")
-		anchor.Name = BUSH_EMPTY_MESSAGE_ANCHOR_NAME
-		anchor.Anchored = true
-		anchor.CanCollide = false
-		anchor.CanQuery = false
-		anchor.CanTouch = false
-		anchor.Transparency = 1
-		anchor.Size = Vector3.new(0.15, 0.15, 0.15)
-		anchor.CFrame = CFrame.new(worldPos)
-		anchor.Parent = bush
-		return anchor
-	end
-
-	local function isVisibleBushPart(part: BasePart): boolean
-		if part.Name == BUSH_EMPTY_MESSAGE_ANCHOR_NAME or part.Name == "_BushPromptAnchor" then
-			return false
-		end
-		if part.Transparency >= 1 then
-			return false
-		end
-		local lowerName = string.lower(part.Name)
-		if string.find(lowerName, "hitbox", 1, true) or string.find(lowerName, "collision", 1, true) then
-			return false
-		end
-		return true
-	end
-
-	local function collectVisibleBushParts(bush: Instance): { BasePart }
-		local parts: { BasePart } = {}
-		if bush:IsA("BasePart") and isVisibleBushPart(bush) then
-			table.insert(parts, bush)
-		end
-		for _, desc in bush:GetDescendants() do
-			if desc:IsA("BasePart") and isVisibleBushPart(desc) then
-				table.insert(parts, desc)
-			end
-		end
-		return parts
-	end
-
-	local function cancelBushFlashTweens(bush: Instance)
-		local tweens = bushFlashTweens[bush]
-		if not tweens then
-			return
-		end
-		for _, tween in tweens do
-			tween:Cancel()
-		end
-		bushFlashTweens[bush] = nil
-	end
-
-	local function captureBushTransform(bush: Instance): CFrame?
-		if bush:IsA("Model") then
-			return bush:GetPivot()
-		end
-		if bush:IsA("BasePart") then
-			return bush.CFrame
-		end
-		return nil
-	end
-
-	local function applyBushTransform(bush: Instance, cf: CFrame)
-		if bush:IsA("Model") then
-			bush:PivotTo(cf)
-		elseif bush:IsA("BasePart") then
-			bush.CFrame = cf
-		end
-	end
-
-	local function flashBushColor(bush: Instance, flashColor: Color3, restoreDuration: number?)
-		local duration = restoreDuration or BUSH_FLASH_RESTORE_DURATION
-		local token = (bushFlashToken[bush] or 0) + 1
-		bushFlashToken[bush] = token
-		cancelBushFlashTweens(bush)
-
-		local parts = collectVisibleBushParts(bush)
-		if #parts == 0 then
-			return
-		end
-
-		local originals = bushFlashOriginalColors[bush]
-		if not originals then
-			originals = {}
-			bushFlashOriginalColors[bush] = originals
-		end
-
-		for _, part in parts do
-			if not originals[part] then
-				originals[part] = part.Color
-			end
-			part.Color = flashColor
-		end
-
-		local tweens: { Tween } = {}
-		bushFlashTweens[bush] = tweens
-		local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-		for _, part in parts do
-			local originalColor = originals[part]
-			if originalColor then
-				local tween = TweenService:Create(part, tweenInfo, { Color = originalColor })
-				tween:Play()
-				table.insert(tweens, tween)
-			end
-		end
-	end
-
-	local function ErrorShakeBush(bush: Instance, duration: number?)
-		local shakeDuration = duration or BUSH_ERROR_SHAKE_DURATION
-		local token = (bushErrorShakeToken[bush] or 0) + 1
-		bushErrorShakeToken[bush] = token
-
-		task.spawn(function()
-			local base = captureBushTransform(bush)
-			if not base then
-				return
-			end
-
-			local start = os.clock()
-			local endAt = start + shakeDuration
-			local step = 1 / 40
-			local posAmp = 0.035
-			local rotAmp = math.rad(2.2)
-
-			while bush.Parent and token == bushErrorShakeToken[bush] and os.clock() < endAt do
-				local elapsed = os.clock() - start
-				local fade = 1 - math.clamp(elapsed / shakeDuration, 0, 1)
-				local side = if math.floor(elapsed * 16) % 2 == 0 then 1 else -1
-				local offset = CFrame.new(side * posAmp * fade, 0, 0) * CFrame.Angles(0, 0, side * rotAmp * fade)
-				applyBushTransform(bush, base * offset)
-				task.wait(step)
-			end
-
-			if token == bushErrorShakeToken[bush] and bush.Parent then
-				applyBushTransform(bush, base)
-			end
-		end)
-	end
-
-	local function _getBushAdornee(bush: Instance): BasePart?
-		if bush:IsA("BasePart") then
-			return bush
-		end
-		if bush:IsA("Model") then
-			local model = bush :: Model
-			if model.PrimaryPart then
-				return model.PrimaryPart
-			end
-			return model:FindFirstChildWhichIsA("BasePart", true)
-		end
-		return nil
-	end
-
-	local function _bushWorldTopY(bush: Instance, fallbackY: number): number
-		if bush:IsA("Model") then
-			return bushTopWorldY(bush :: Model, fallbackY)
-		end
-		if bush:IsA("BasePart") then
-			local part = bush :: BasePart
-			return part.Position.Y + part.Size.Y * 0.5
-		end
-		return fallbackY
-	end
-
-	local function resetEmptyBushMessageVisuals(billboard: BillboardGui)
-		local label = billboard:FindFirstChild("Text")
-		if not label or not label:IsA("TextLabel") then
-			return
-		end
-		label.TextTransparency = 0
-		local textStroke = label:FindFirstChildOfClass("UIStroke")
-		if textStroke then
-			textStroke.Transparency = 0
-		end
-	end
-
-	local function createEmptyBushBillboard(bush: Instance, anchor: BasePart): BillboardGui
-		local billboard = Instance.new("BillboardGui")
-		billboard.Name = EMPTY_BUSH_BILLBOARD_NAME
-		billboard.Adornee = anchor
-		billboard.AlwaysOnTop = true
-		billboard.LightInfluence = 0
-		billboard.Size = UDim2.fromOffset(300, 44)
-		billboard.StudsOffset = Vector3.zero
-		billboard.MaxDistance = 80
-		billboard.Parent = bush
-
-		local label = Instance.new("TextLabel")
-		label.Name = "Text"
-		label.Size = UDim2.fromScale(1, 1)
-		label.BackgroundTransparency = 1
-		label.Text = EMPTY_BUSH_MESSAGE
-		label.TextWrapped = true
-		label.TextColor3 = Color3.fromRGB(240, 255, 244)
-		UiFonts.applyBodyLabel(label, 20, 14)
-		label.Parent = billboard
-
-		local textStroke = Instance.new("UIStroke")
-		textStroke.Color = Color3.fromRGB(0, 0, 0)
-		textStroke.Thickness = 2
-		textStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-		textStroke.Transparency = 0
-		textStroke.Parent = label
-
-		return billboard
-	end
-
-	local function destroyEmptyBushMessageArtifacts(bush: Instance)
-		local billboard = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
-		if billboard and billboard:IsA("BillboardGui") then
-			billboard:Destroy()
-		end
-		local anchor = bush:FindFirstChild(BUSH_EMPTY_MESSAGE_ANCHOR_NAME)
-		if anchor and anchor:IsA("BasePart") then
-			anchor:Destroy()
-		end
-	end
-
-	local function clearEmptyBushMessageStateImpl(bush: Instance)
-		emptyBushMessageHideToken[bush] = (emptyBushMessageHideToken[bush] or 0) + 1
-		destroyEmptyBushMessageArtifacts(bush)
-	end
-
-	local function fadeOutAndDestroyEmptyBushMessage(bush: Instance, token: number)
-		task.delay(EMPTY_BUSH_HOLD_DURATION, function()
-			if not bush.Parent or emptyBushMessageHideToken[bush] ~= token then
-				return
-			end
-
-			local billboard = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
-			if not billboard or not billboard:IsA("BillboardGui") then
-				emptyBushMessageHideToken[bush] = nil
-				return
-			end
-
-			local fadeInfo = TweenInfo.new(EMPTY_BUSH_FADE_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-			local label = billboard:FindFirstChild("Text")
-			if label and label:IsA("TextLabel") then
-				TweenService:Create(label, fadeInfo, { TextTransparency = 1 }):Play()
-				local textStroke = label:FindFirstChildOfClass("UIStroke")
-				if textStroke then
-					TweenService:Create(textStroke, fadeInfo, { Transparency = 1 }):Play()
-				end
-			end
-
-			task.delay(EMPTY_BUSH_FADE_DURATION, function()
-				if not bush.Parent or emptyBushMessageHideToken[bush] ~= token then
-					return
-				end
-				destroyEmptyBushMessageArtifacts(bush)
-				emptyBushMessageHideToken[bush] = nil
-			end)
-		end)
-	end
-
-	local function showEmptyBushMessageImpl(bush: Instance)
-		flashBushColor(bush, BUSH_FLASH_RED, BUSH_FLASH_RESTORE_DURATION)
-		ErrorShakeBush(bush, BUSH_ERROR_SHAKE_DURATION)
-
-		local anchor = ensureEmptyBushBillboardAnchor(bush)
-		if not anchor then
-			return
-		end
-
-		local token = (emptyBushMessageHideToken[bush] or 0) + 1
-		emptyBushMessageHideToken[bush] = token
-
-		local existing = bush:FindFirstChild(EMPTY_BUSH_BILLBOARD_NAME)
-		if existing and existing:IsA("BillboardGui") then
-			existing.Adornee = anchor
-			existing.StudsOffset = Vector3.zero
-			resetEmptyBushMessageVisuals(existing)
-		else
-			createEmptyBushBillboard(bush, anchor)
-		end
-
-		fadeOutAndDestroyEmptyBushMessage(bush, token)
-	end
-
-	FlashBushColor = flashBushColor
-	clearEmptyBushMessageState = clearEmptyBushMessageStateImpl
-	showEmptyBushMessage = showEmptyBushMessageImpl
+	local emptyApi = BushHarvestEmptyMessage.create({ bushTopWorldY = bushTopWorldY })
+	FlashBushColor = emptyApi.FlashBushColor
+	clearEmptyBushMessageState = emptyApi.clearEmptyBushMessageState
+	showEmptyBushMessage = emptyApi.showEmptyBushMessage
 end
 
 local function canAttemptHarvest(player: Player, worldPosition: Vector3, bushRef: Instance?): boolean
@@ -2406,107 +2017,18 @@ local function spawnFloatingClaimForPick(
 	return true
 end
 
+local luckyOfferDeps = {
+	isValidBushRef = isValidBushRef,
+	spawnBrainrotAboveBush = spawnBrainrotAboveBush,
+	placeModelAtWorld = placeModelAtWorld,
+	setAllPartsPhysics = setAllPartsPhysics,
+	popSpawnEffect = popSpawnEffect,
+	startFloatingClaimOffer = startFloatingClaimOffer,
+	BrainrotHeader = BrainrotHeader,
+}
+
 local function tryOfferBushLuckyBlock(player: Player, worldPosition: Vector3, bushRef: Instance?): (boolean, string?)
-	if not bushRef or bushRef:GetAttribute(BUSH_HAS_LUCKY_ATTR) ~= true then
-		return false, nil
-	end
-	local blockName = bushRef:GetAttribute(BUSH_HIDDEN_LUCKY_KIND_ATTR)
-	if typeof(blockName) ~= "string" or blockName == "" then
-		blockName = "Starter Lucky Block"
-	end
-	local variant = bushRef:GetAttribute(BUSH_HIDDEN_LUCKY_VARIANT_ATTR)
-	if typeof(variant) ~= "string" or variant == "" then
-		variant = nil
-	end
-
-	local char = player.Character
-	if not char then
-		return false, nil
-	end
-
-	local folder = ServerStorage:FindFirstChild("LuckyBlockInternal")
-	local cloneBF = folder and folder:FindFirstChild("CloneWorldModel")
-	if not (cloneBF and cloneBF:IsA("BindableFunction")) then
-		warn("[BushHarvest] LuckyBlockInternal.CloneWorldModel missing")
-		return false, nil
-	end
-
-	local okClone, cloneOrErr = pcall(function()
-		return (cloneBF :: BindableFunction):Invoke(blockName, variant)
-	end)
-	if not okClone or typeof(cloneOrErr) ~= "Instance" or not (cloneOrErr :: Instance):IsA("Model") then
-		-- Fallback starter so a missing high-tier template never voids the jackpot.
-		if blockName ~= "Starter Lucky Block" then
-			okClone, cloneOrErr = pcall(function()
-				return (cloneBF :: BindableFunction):Invoke("Starter Lucky Block", "basic")
-			end)
-			if okClone and typeof(cloneOrErr) == "Instance" and (cloneOrErr :: Instance):IsA("Model") then
-				warn("[BushHarvest] Lucky CloneWorldModel fallback to Starter for", blockName)
-				blockName = "Starter Lucky Block"
-				variant = "basic"
-			else
-				warn("[BushHarvest] CloneWorldModel failed:", cloneOrErr)
-				return false, nil
-			end
-		else
-			warn("[BushHarvest] CloneWorldModel failed:", cloneOrErr)
-			return false, nil
-		end
-	end
-
-	local clone = cloneOrErr :: Model
-	clone:SetAttribute("OwnerUserId", player.UserId)
-	clone:SetAttribute("BrainrotCarryPhase", "Pop")
-	clone:SetAttribute("LuckyBlockCarry", true)
-	clone:SetAttribute("LuckyBlockKind", blockName)
-	if typeof(variant) == "string" then
-		clone:SetAttribute("LuckyBlockVariant", variant)
-	end
-	clone:SetAttribute("BrainrotName", LuckyBlockCatalog.displayName(blockName))
-	clone:SetAttribute("BrainrotRarity", LuckyBlockCatalog.primaryDropRarity(blockName))
-	clone:SetAttribute("BrainrotMutation", "normal")
-	clone:SetAttribute("BrainrotLevel", 1)
-	clone:SetAttribute("BrainrotBaseIncome", 0)
-	if bushRef and isValidBushRef(bushRef) then
-		local pos = if bushRef:IsA("BasePart") then bushRef.Position else bushRef:GetPivot().Position
-		clone:SetAttribute("BrainrotHarvestBushKey", string.format("%.0f_%.0f_%.0f", pos.X, pos.Y, pos.Z))
-	end
-
-	for _, d in clone:GetDescendants() do
-		if d:IsA("ProximityPrompt") then
-			d:Destroy()
-		end
-	end
-
-	clone.Parent = workspace
-	local facePos = char:GetPivot().Position
-	local spawnCf, baseYaw = spawnBrainrotAboveBush(clone, worldPosition, 1, facePos)
-	placeModelAtWorld(clone, spawnCf)
-	setAllPartsPhysics(clone, true, true)
-
-	BrainrotHeader.attach(clone, {
-		name = LuckyBlockCatalog.displayName(blockName),
-		rarity = LuckyBlockCatalog.primaryDropRarity(blockName),
-		mutation = "normal",
-		level = 1,
-		incomePerSecond = 0,
-	})
-
-	local anchorPos = spawnCf.Position
-	popSpawnEffect(clone, function()
-		if not clone.Parent or player.Character ~= char then
-			if clone.Parent then
-				clone:Destroy()
-			end
-			return
-		end
-		clone:SetAttribute("BrainrotCarryPhase", "Floating")
-		setAllPartsPhysics(clone, true, true)
-		startFloatingClaimOffer(player, char, clone, anchorPos, baseYaw)
-	end)
-
-	clearHiddenLuckyLoot(bushRef)
-	return true, blockName
+	return BushHarvestLucky.tryOfferBushLuckyBlock(luckyOfferDeps, player, worldPosition, bushRef)
 end
 
 --[[
@@ -2566,7 +2088,6 @@ local function processBushSearch(player: Player, worldPosition: Vector3, bushRef
 	end
 
 	local hasBrainrot = bush:GetAttribute(BUSH_HAS_BRAINROT_ATTR) == true
-	local dropOrigin = if bush:IsA("BasePart") then bush.Position else bush:GetPivot().Position
 	-- Rare jackpot: float a lucky-block model (accept → carry → RedWall deposits tool).
 	local luckyOpened, luckyBlockName = tryOfferBushLuckyBlock(player, worldPosition, bush)
 	if luckyOpened or hasBrainrot then

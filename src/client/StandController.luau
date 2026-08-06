@@ -35,6 +35,7 @@ local FRAME_TO_BOOTH = {
 local STAND_CONFIG = {
 	{
 		standName = "Shop Stand",
+		standAliases = { "Shop Stand", "Dealer Stand", "Brainrot Dealer", "Shop", "Dealer" },
 		hitboxName = "ShopPadHitbox",
 		frameName = "Shop",
 		brainrotName = "TatatataSahur",
@@ -49,6 +50,7 @@ local STAND_CONFIG = {
 	},
 	{
 		standName = "Sell Stand",
+		standAliases = { "Sell Stand", "Sell" },
 		hitboxName = "SellPadHitbox",
 		frameName = "Sell",
 		brainrotName = "TricTracBarabum",
@@ -63,6 +65,7 @@ local STAND_CONFIG = {
 	},
 	{
 		standName = "Upgrade Stand",
+		standAliases = { "Upgrade Stand", "Upgrade" },
 		hitboxName = "UpgradePadHitbox",
 		frameName = "Upgrades",
 		brainrotName = "OrangutiniAnanassini",
@@ -97,12 +100,14 @@ local CHARGE_GUI_NAME = "StandPadCharge"
 local CHARGE_TWEEN = TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 local stands: { StandEntry } = {}
+local registeredHitboxes: { [BasePart]: boolean } = {}
 local activeStandFrame: string? = nil
 local activeStandEntry: StandEntry? = nil
 local closePending: thread? = nil
 local dialogueBusy = false
 local dismissedStandKey: string? = nil
 local openedPanelFromDialogue = false
+local heartbeatStarted = false
 
 local chargeStand: StandEntry? = nil
 local chargeAmount = 0
@@ -305,6 +310,103 @@ local function findBrainrotModel(standFolder: Instance, brainrotName: string): M
 	return nil
 end
 
+local function normalizeStandKey(name: string): string
+	return string.lower((string.gsub(name, "%s+", "")))
+end
+
+local function findStandFolderForConfig(uiStands: Instance, cfg: any): Instance?
+	local aliases = cfg.standAliases or { cfg.standName }
+	for _, alias in ipairs(aliases) do
+		local direct = uiStands:FindFirstChild(alias)
+		if direct then
+			return direct
+		end
+	end
+	local wanted = normalizeStandKey(cfg.standName)
+	for _, child in uiStands:GetChildren() do
+		if normalizeStandKey(child.Name) == wanted then
+			return child
+		end
+		for _, alias in ipairs(aliases) do
+			if normalizeStandKey(child.Name) == normalizeStandKey(alias) then
+				return child
+			end
+		end
+	end
+	-- Last resort: folder that contains the expected pad hitbox.
+	for _, child in uiStands:GetChildren() do
+		local hit = child:FindFirstChild(cfg.hitboxName, true)
+		if hit and hit:IsA("BasePart") then
+			return child
+		end
+	end
+	return nil
+end
+
+local function findHitbox(standFolder: Instance, hitboxName: string): BasePart?
+	local direct = standFolder:FindFirstChild(hitboxName)
+	if direct and direct:IsA("BasePart") then
+		return direct
+	end
+	local deep = standFolder:FindFirstChild(hitboxName, true)
+	if deep and deep:IsA("BasePart") then
+		return deep
+	end
+	return nil
+end
+
+local function registerStand(cfg: any, standFolder: Instance): boolean
+	local hitbox = findHitbox(standFolder, cfg.hitboxName)
+	if not hitbox then
+		return false
+	end
+	if registeredHitboxes[hitbox] then
+		return true
+	end
+
+	local brainrot = findBrainrotModel(standFolder, cfg.brainrotName)
+	if brainrot then
+		StandDialogueCutscene.ensureIdleAnimation(brainrot, cfg.brainrotName)
+	else
+		warn("[StandController] Brainrot model missing on " .. tostring(standFolder.Name))
+	end
+
+	registeredHitboxes[hitbox] = true
+	table.insert(stands, {
+		hitbox = hitbox,
+		standFolder = standFolder,
+		brainrot = brainrot,
+		frameName = cfg.frameName,
+		brainrotName = cfg.brainrotName,
+		enterLabel = cfg.enterLabel,
+		lines = cfg.lines,
+		standName = cfg.standName,
+		voicePitchMin = cfg.voicePitchMin,
+		voicePitchMax = cfg.voicePitchMax,
+		goodbye = cfg.goodbye,
+	})
+	return true
+end
+
+local function tryRegisterAll(uiStands: Instance)
+	for _, cfg in ipairs(STAND_CONFIG) do
+		local already = false
+		for _, entry in ipairs(stands) do
+			if entry.standName == cfg.standName then
+				already = true
+				break
+			end
+		end
+		if already then
+			continue
+		end
+		local standFolder = findStandFolderForConfig(uiStands, cfg)
+		if standFolder then
+			registerStand(cfg, standFolder)
+		end
+	end
+end
+
 local function openPanelDirect(stand: StandEntry)
 	dismissedStandKey = nil
 	activeStandFrame = stand.frameName
@@ -472,57 +574,62 @@ end
 local StandController = {}
 
 function StandController.init()
-	local map = workspace:WaitForChild("Map", 20)
+	local map = workspace:WaitForChild("Map", 60)
 	if not map then
 		warn("[StandController] workspace.Map not found")
 		return
 	end
 
-	local uiStands = map:WaitForChild("UIStands", 15)
+	local uiStands = map:WaitForChild("UIStands", 60)
 	if not uiStands then
 		warn("[StandController] workspace.Map.UIStands not found")
 		return
 	end
 
-	for _, cfg in ipairs(STAND_CONFIG) do
-		local standFolder = uiStands:WaitForChild(cfg.standName, 10)
-		if not standFolder then
-			warn("[StandController] Stand not found: " .. cfg.standName)
-			continue
+	tryRegisterAll(uiStands)
+
+	-- Streaming: stands may arrive after boot — keep trying as they stream in.
+	uiStands.ChildAdded:Connect(function()
+		task.defer(function()
+			tryRegisterAll(uiStands)
+		end)
+	end)
+	uiStands.DescendantAdded:Connect(function(desc)
+		if desc:IsA("BasePart") and string.find(desc.Name, "Hitbox", 1, true) then
+			task.defer(function()
+				tryRegisterAll(uiStands)
+			end)
 		end
+	end)
 
-		local hitbox = standFolder:WaitForChild(cfg.hitboxName, 10) :: BasePart?
-		if not hitbox then
-			warn("[StandController] Hitbox not found: " .. cfg.hitboxName)
-			continue
+	-- Periodic catch-up for late streaming (Shop Stand often streams after Sell/Upgrade).
+	task.spawn(function()
+		for _ = 1, 40 do
+			if #stands >= #STAND_CONFIG then
+				break
+			end
+			task.wait(1.5)
+			tryRegisterAll(uiStands)
 		end
-
-		local brainrot = findBrainrotModel(standFolder, cfg.brainrotName)
-		if brainrot then
-			StandDialogueCutscene.ensureIdleAnimation(brainrot, cfg.brainrotName)
-		else
-			warn("[StandController] Brainrot model missing on " .. cfg.standName)
+		if #stands == 0 then
+			warn("[StandController] No stands loaded – check UIStands names / streaming")
+		elseif #stands < #STAND_CONFIG then
+			local missing = {}
+			for _, cfg in ipairs(STAND_CONFIG) do
+				local found = false
+				for _, entry in ipairs(stands) do
+					if entry.standName == cfg.standName then
+						found = true
+						break
+					end
+				end
+				if not found then
+					table.insert(missing, cfg.standName)
+				end
+			end
+			warn("[StandController] Still missing stands:", table.concat(missing, ", "))
 		end
-
-		table.insert(stands, {
-			hitbox = hitbox,
-			standFolder = standFolder,
-			brainrot = brainrot,
-			frameName = cfg.frameName,
-			brainrotName = cfg.brainrotName,
-			enterLabel = cfg.enterLabel,
-			lines = cfg.lines,
-			standName = cfg.standName,
-			voicePitchMin = cfg.voicePitchMin,
-			voicePitchMax = cfg.voicePitchMax,
-			goodbye = cfg.goodbye,
-		})
-	end
-
-	if #stands == 0 then
-		warn("[StandController] No stands loaded – check UIStands names")
-		return
-	end
+	end)
 
 	player.CharacterAdded:Connect(function()
 		cancelPendingClose()
@@ -537,14 +644,17 @@ function StandController.init()
 		dialogueBusy = false
 	end)
 
-	local heartbeatConn = RunService.Heartbeat:Connect(function(dt)
-		tick(dt)
-	end)
-	player.AncestryChanged:Connect(function(_, parent)
-		if not parent and heartbeatConn then
-			heartbeatConn:Disconnect()
-		end
-	end)
+	if not heartbeatStarted then
+		heartbeatStarted = true
+		local heartbeatConn = RunService.Heartbeat:Connect(function(dt)
+			tick(dt)
+		end)
+		player.AncestryChanged:Connect(function(_, parent)
+			if not parent and heartbeatConn then
+				heartbeatConn:Disconnect()
+			end
+		end)
+	end
 end
 
 return StandController

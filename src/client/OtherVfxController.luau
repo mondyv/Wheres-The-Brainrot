@@ -4,6 +4,8 @@
 	emitters stay Disabled; script calls :Emit(EmitCount) once (after EmitDelay).
 	Supports EmitDuration (brief enable window), Beam Width0/Width1/Duration tweens.
 	Bush search: BushEffect pulsed across the bush volume while shaking; BushEffectBurst on open.
+	UpgradeBR/OnUpgrade: Fading Glow on host + Bezier.Part flight (Trail on, particle :Emit bursts),
+	then EmitOnFinish burst and Trail off at path end.
 ]]
 
 local Debris = game:GetService("Debris")
@@ -16,10 +18,22 @@ local OtherVfxController = {}
 
 local LIFETIME_SEC = 5
 local UPGRADE_LIFETIME_SEC = 6.5
-local BEZIER_DURATION = 0.55
+local BEZIER_DURATION = 0.7
 -- One frame+ after Clone/Parent so particle textures can load before Emit.
 local EMIT_SETTLE_SEC = 0.08
 local DEFAULT_EMIT_FALLBACK = 16
+
+local function easeOutCubic(t: number): number
+	local u = 1 - math.clamp(t, 0, 1)
+	return 1 - u * u * u
+end
+
+local function cubicBezier3(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, t: number): Vector3
+	local u = 1 - t
+	local uu = u * u
+	local tt = t * t
+	return (uu * u) * p0 + (3 * uu * t) * p1 + (3 * u * tt) * p2 + (tt * t) * p3
+end
 
 local function findOtherVfxFolder(): Instance?
 	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
@@ -282,58 +296,137 @@ local function scaleParticleSizes(root: Instance, mult: number)
 	end
 end
 
-local function collectBezierWorldPoints(pointsFolder: Instance): { Vector3 }
-	local numbered: { { i: number, p: Vector3 } } = {}
+type BezierKnot = {
+	i: number,
+	p: Vector3,
+	t0: Vector3?,
+	t1: Vector3?,
+}
+
+local function worldPosOf(inst: Instance): Vector3?
+	if inst:IsA("BasePart") then
+		return inst.Position
+	end
+	if inst:IsA("Attachment") then
+		return inst.WorldPosition
+	end
+	local att = inst:FindFirstChildWhichIsA("Attachment", true)
+	if att then
+		return att.WorldPosition
+	end
+	local part = inst:FindFirstChildWhichIsA("BasePart", true)
+	if part then
+		return part.Position
+	end
+	return nil
+end
+
+local function findNamedWorldPos(parent: Instance, name: string): Vector3?
+	local child = parent:FindFirstChild(name)
+	if not child then
+		return nil
+	end
+	return worldPosOf(child)
+end
+
+--- Collect numbered Points with optional T0/T1 tangent handles (plugin Bezier layout).
+local function collectBezierKnots(pointsFolder: Instance): { BezierKnot }
+	local numbered: { BezierKnot } = {}
 	for _, child in pointsFolder:GetChildren() do
 		local idx = tonumber(child.Name)
 		if not idx then
 			continue
 		end
-		local pos: Vector3? = nil
-		if child:IsA("BasePart") then
-			pos = child.Position
-		elseif child:IsA("Attachment") then
-			pos = child.WorldPosition
-		else
-			local att = child:FindFirstChildWhichIsA("Attachment", true)
-			local part = child:FindFirstChildWhichIsA("BasePart", true)
-			if att then
-				pos = att.WorldPosition
-			elseif part then
-				pos = part.Position
-			end
+		local pos = worldPosOf(child)
+		if not pos then
+			continue
 		end
-		if pos then
-			table.insert(numbered, { i = idx, p = pos })
-		end
+		table.insert(numbered, {
+			i = idx,
+			p = pos,
+			t0 = findNamedWorldPos(child, "T0"),
+			t1 = findNamedWorldPos(child, "T1"),
+		})
 	end
 	table.sort(numbered, function(a, b)
 		return a.i < b.i
 	end)
-	local out: { Vector3 } = {}
-	for _, entry in numbered do
-		table.insert(out, entry.p)
-	end
-	return out
+	return numbered
 end
 
-local function samplePolyline(points: { Vector3 }, alpha: number): Vector3
-	if #points == 0 then
+local function sampleBezierPath(knots: { BezierKnot }, alpha: number): Vector3
+	if #knots == 0 then
 		return Vector3.zero
 	end
-	if #points == 1 then
-		return points[1]
+	if #knots == 1 then
+		return knots[1].p
 	end
-	local t = math.clamp(alpha, 0, 1) * (#points - 1)
+	local t = math.clamp(alpha, 0, 1) * (#knots - 1)
 	local i = math.floor(t) + 1
 	local f = t - math.floor(t)
-	local a = points[i]
-	local b = points[math.min(i + 1, #points)]
-	return a:Lerp(b, f)
+	local a = knots[i]
+	local b = knots[math.min(i + 1, #knots)]
+	local p0 = a.p
+	local p3 = b.p
+	local p1 = a.t1 or p0:Lerp(p3, 1 / 3)
+	local p2 = b.t0 or p0:Lerp(p3, 2 / 3)
+	return cubicBezier3(p0, p1, p2, p3, f)
+end
+
+--- One-shot ParticleEmitter bursts only — never leave emitters Enabled (plugin burst style).
+local function emitParticleBursts(root: Instance, skipUnder: Instance?)
+	local function skip(inst: Instance): boolean
+		return skipUnder ~= nil and (inst == skipUnder or inst:IsDescendantOf(skipUnder))
+	end
+	local function emitOne(emitter: ParticleEmitter)
+		if skip(emitter) then
+			return
+		end
+		emitter.Enabled = false
+		local delayAttr = emitter:GetAttribute("EmitDelay")
+		local delaySec = if typeof(delayAttr) == "number" then math.max(0, delayAttr) else 0
+		local countAttr = emitter:GetAttribute("EmitCount")
+		local count = if typeof(countAttr) == "number" then math.floor(countAttr) else nil
+		local burst = 0
+		if typeof(count) == "number" and count > 0 then
+			burst = count
+		else
+			burst = math.max(DEFAULT_EMIT_FALLBACK, math.floor(emitter.Rate))
+		end
+		task.delay(delaySec, function()
+			if not emitter.Parent or burst <= 0 then
+				return
+			end
+			emitter.Enabled = false
+			emitter:Emit(burst)
+		end)
+	end
+	if root:IsA("ParticleEmitter") then
+		emitOne(root)
+	end
+	for _, d in root:GetDescendants() do
+		if d:IsA("ParticleEmitter") then
+			emitOne(d)
+		end
+	end
+end
+
+local function setTrailsEnabled(root: Instance, enabled: boolean, skipUnder: Instance?)
+	local function skip(inst: Instance): boolean
+		return skipUnder ~= nil and (inst == skipUnder or inst:IsDescendantOf(skipUnder))
+	end
+	for _, d in root:GetDescendants() do
+		if skip(d) then
+			continue
+		end
+		if d:IsA("Trail") or d:IsA("Beam") then
+			d.Enabled = enabled
+		end
+	end
 end
 
 --- Trails need Attachment0 + Attachment1. Specs (Blurred Spec, etc.) live on those same
---- Attachments under Bezier.Part — wire and emit them the same way as the root Fading Glow.
+--- Attachments under Bezier.Part — wire trails, then :Emit() every ParticleEmitter once.
 local function prepareMoverFlightVfx(mover: BasePart, emitOnFinish: Instance?)
 	local attachments: { Attachment } = {}
 	for _, ch in mover:GetChildren() do
@@ -374,22 +467,8 @@ local function prepareMoverFlightVfx(mover: BasePart, emitOnFinish: Instance?)
 		end
 	end
 
-	-- Emit every spec/particle on the mover attachments (Blurred Spec 21, etc.).
-	for _, att in attachments do
-		emitAll(att, emitOnFinish, nil)
-		for _, d in att:GetDescendants() do
-			if emitOnFinish and d:IsDescendantOf(emitOnFinish) then
-				continue
-			end
-			if d:IsA("ParticleEmitter") then
-				d.Enabled = true
-			elseif d:IsA("Trail") then
-				d.Attachment0 = attachments[1]
-				d.Attachment1 = attachments[2]
-				d.Enabled = true
-			end
-		end
-	end
+	-- Burst every particle under the flight Part (Blurred Spec 21, etc.) — never leave Enabled.
+	emitParticleBursts(mover, emitOnFinish)
 end
 
 --- Put orphan Trail / ParticleEmitter / Beam onto Attachments under the mover so they
@@ -457,50 +536,64 @@ local function runBezierIfPresent(root: Instance, hostCf: CFrame): boolean
 
 	nestOrphanFxOntoAttachments(mover)
 
-	local points = collectBezierWorldPoints(pointsFolder)
-	if #points < 2 then
-		points = {
-			hostCf.Position,
-			hostCf.Position + hostCf.UpVector * 4 + hostCf.LookVector * 2,
-			hostCf.Position + hostCf.UpVector * 2,
+	local knots = collectBezierKnots(pointsFolder)
+	if #knots < 2 then
+		knots = {
+			{ i = 1, p = hostCf.Position, t0 = nil, t1 = nil },
+			{
+				i = 2,
+				p = hostCf.Position + hostCf.UpVector * 4 + hostCf.LookVector * 2,
+				t0 = nil,
+				t1 = nil,
+			},
+			{ i = 3, p = hostCf.Position + hostCf.UpVector * 2, t0 = nil, t1 = nil },
 		}
 	end
 
 	local emitOnFinish = mover:FindFirstChild("EmitOnFinish")
-	-- Root glow (Fading Glow) + everything outside the finish burst.
-	emitAll(root, emitOnFinish, nil)
-	-- Wire Trail/Beam to Bezier.Part attachments and emit Blurred Spec layers on them.
+	-- Root glow (Fading Glow) outside Bezier — skip the whole Bezier tree so Part isn't double-fired.
+	emitAll(root, bezier, nil)
+	-- Wire Trail on Bezier.Part, enable for the flight, :Emit() all Part particles.
 	prepareMoverFlightVfx(mover, emitOnFinish)
 
-	mover.CFrame = CFrame.new(points[1])
+	mover.CFrame = CFrame.new(knots[1].p)
 	local started = os.clock()
 	local conn: RBXScriptConnection? = nil
 	conn = RunService.Heartbeat:Connect(function()
 		if not mover.Parent then
 			if conn then
 				conn:Disconnect()
+				conn = nil
 			end
 			return
 		end
-		local alpha = math.clamp((os.clock() - started) / BEZIER_DURATION, 0, 1)
-		local pos = samplePolyline(points, alpha)
-		local look = if alpha < 0.99 then samplePolyline(points, math.min(1, alpha + 0.05)) else pos + Vector3.yAxis
+		local raw = math.clamp((os.clock() - started) / BEZIER_DURATION, 0, 1)
+		local alpha = easeOutCubic(raw)
+		local pos = sampleBezierPath(knots, alpha)
+		local look = if alpha < 0.99
+			then sampleBezierPath(knots, math.min(1, alpha + 0.04))
+			else pos + Vector3.yAxis
 		mover.CFrame = CFrame.lookAt(pos, look)
-		if alpha >= 1 then
+		if raw >= 1 then
 			if conn then
 				conn:Disconnect()
+				conn = nil
 			end
+			-- Trail/beam off when the flight ends.
+			setTrailsEnabled(mover, false, emitOnFinish)
+			for _, d in mover:GetDescendants() do
+				if emitOnFinish and d:IsDescendantOf(emitOnFinish) then
+					continue
+				end
+				if d:IsA("ParticleEmitter") then
+					d.Enabled = false
+				end
+			end
+			-- Finish burst from EmitOnFinish folder.
 			if emitOnFinish then
 				emitAll(emitOnFinish, nil, nil)
 			else
-				emitAll(mover, nil, nil)
-			end
-			for _, d in mover:GetDescendants() do
-				if d:IsA("Trail") or d:IsA("Beam") or d:IsA("ParticleEmitter") then
-					if not (emitOnFinish and d:IsDescendantOf(emitOnFinish)) then
-						d.Enabled = false
-					end
-				end
+				emitParticleBursts(mover, nil)
 			end
 		end
 	end)
@@ -1018,6 +1111,7 @@ function OtherVfxController.playBrainrotUpgrade(at: CFrame | BasePart)
 	end
 
 	task.delay(EMIT_SETTLE_SEC, function()
+		-- Fading Glow attachments were reparented onto the brainrot — burst them once.
 		for _, att in movedAtts do
 			if att.Parent then
 				emitAll(att, nil, nil)

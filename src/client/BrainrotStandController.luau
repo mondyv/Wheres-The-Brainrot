@@ -24,6 +24,7 @@ local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):Wai
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local OtherVfxController = require(script.Parent.OtherVfxController)
 local MainGradientButtons = require(script.Parent.MainGradientButtons)
 local TopNotifController = require(script.Parent.TopNotifController)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -1507,6 +1508,25 @@ local function findStandDisplayModel(stand: Model): Model?
 	return nil
 end
 
+local function resolveStandUpgradeVfxHost(stand: Model): BasePart?
+	local display = findStandDisplayModel(stand)
+	if display then
+		local primary = display.PrimaryPart or display:FindFirstChildWhichIsA("BasePart", true)
+		if primary then
+			return primary
+		end
+	end
+	return resolveStandVfxRoot(stand)
+end
+
+local function playStandUpgradeVfx(stand: Model)
+	local host = resolveStandUpgradeVfxHost(stand)
+	if not host then
+		return
+	end
+	OtherVfxController.playBrainrotUpgrade(host)
+end
+
 local function hopStandBrainrot(stand: Model)
 	local now = os.clock()
 	if (lastBrainrotHopAt[stand] or 0) + BRAINROT_HOP_COOLDOWN > now then
@@ -1677,6 +1697,7 @@ local function hookStandLevelPulse(stand: Model, view: StandView)
 		affordVisualByView[view] = nil
 		refreshStandUpgradeAfford(view)
 		hopStandBrainrot(stand)
+		playStandUpgradeVfx(stand)
 	end)
 end
 

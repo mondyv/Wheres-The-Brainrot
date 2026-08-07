@@ -5,6 +5,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
 
 local M = {}
 
@@ -19,6 +20,8 @@ M.DROP_HEIGHT = 78
 M.FALL_DURATION = 0.78
 M.WALKBY_COOLDOWN_SEC = 22
 M.PROGRESS_POLL_SEC = 0.85
+-- After tutorial completes, wait this long then show the quest-accept appearance (no Tim fall).
+M.POST_TUTORIAL_QUEST_DELAY_SEC = 5
 
 export type QuestKind =
 	"harvest"
@@ -65,14 +68,17 @@ export type QuestDef = {
 local QUESTS: { QuestDef } = {
 	-- Act 1 — Tim's Intern
 	{
-		id = "search_5",
-		title = "Bush Scout",
-		description = "Search 5 bushes for brainrots.",
-		kind = "harvest",
-		target = 5,
+		id = "land_1",
+		title = "First Land",
+		description = "Get over to Land 1!",
+		kind = "reach_land",
+		target = 1,
 		showBar = true,
-		rewardKind = "cash",
-		rewardCash = 100_000,
+		rewardKind = "lucky_block",
+		rewardLuckyBlock = "troll",
+		rewardLuckyBlockCount = 1,
+		offerLine = "First job: swing out to Land 1. Go go go!!",
+		completeLine = "You made Land 1!! Here's a Troll Lucky Block!!",
 	},
 	{
 		id = "land_2",
@@ -81,8 +87,9 @@ local QUESTS: { QuestDef } = {
 		kind = "reach_land",
 		target = 2,
 		showBar = true,
-		rewardKind = "cash",
-		rewardCash = 500_000,
+		rewardKind = "lucky_block",
+		rewardLuckyBlock = "neon",
+		rewardLuckyBlockCount = 1,
 		offerLine = "Land 2 is waiting. Power up and swing over!!",
 		completeLine = "You made Land 2!! Tim Cheese is so proud!!",
 	},
@@ -117,7 +124,7 @@ local QUESTS: { QuestDef } = {
 		target = 6,
 		showBar = true,
 		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Starter Lucky Block",
+		rewardLuckyBlock = "neon",
 		rewardLuckyBlockCount = 1,
 		offerLine = "Every brainrot you see? TAKE IT. Tim's orders.",
 		completeLine = "Six accepts! That's the Tim Cheese way!!",
@@ -141,7 +148,7 @@ local QUESTS: { QuestDef } = {
 		target = 3,
 		showBar = true,
 		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Mythic Lucky Block",
+		rewardLuckyBlock = "1",
 		rewardLuckyBlockCount = 1,
 		offerLine = "Land 3 has better vibes. Go check it out.",
 		completeLine = "You made it!! Tim Cheese tourism board approves!!",
@@ -195,7 +202,7 @@ local QUESTS: { QuestDef } = {
 		target = 40,
 		showBar = true,
 		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Godly Luckyblock",
+		rewardLuckyBlock = "purple",
 		rewardLuckyBlockCount = 1,
 		completeLine = "LEGEND STATUS UNLOCKED!!",
 	},
@@ -208,7 +215,7 @@ local QUESTS: { QuestDef } = {
 		target = 5,
 		showBar = true,
 		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Secret Lucky Block",
+		rewardLuckyBlock = "yellow",
 		rewardLuckyBlockCount = 1,
 		offerLine = "Land 5. That's where the real cheese lives.",
 		completeLine = "PEAK CHEESE ACHIEVED!! I'm not crying!!",
@@ -241,7 +248,7 @@ local QUESTS: { QuestDef } = {
 		target = 3,
 		showBar = true,
 		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Mythic Lucky Block",
+		rewardLuckyBlock = "heart",
 		rewardLuckyBlockCount = 1,
 	},
 	{
@@ -284,7 +291,7 @@ local QUESTS: { QuestDef } = {
 		target = 1,
 		showBar = true,
 		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Godly Luckyblock",
+		rewardLuckyBlock = "chamber",
 		rewardLuckyBlockCount = 1,
 		offerLine = "Rebirth once. Fresh start. Like a new cheese wheel.",
 		completeLine = "REBORN!! The cheese has been reset!!",
@@ -333,7 +340,7 @@ local QUESTS: { QuestDef } = {
 		target = 1,
 		showBar = true,
 		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Godly Luckyblock",
+		rewardLuckyBlock = "rainbow",
 		rewardLuckyBlockCount = 1,
 		trackMutation = "golden",
 	},
@@ -355,7 +362,7 @@ local QUESTS: { QuestDef } = {
 		target = 2,
 		showBar = true,
 		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Starter Lucky Block",
+		rewardLuckyBlock = "troll",
 		rewardLuckyBlockCount = 1,
 	},
 	{
@@ -386,7 +393,7 @@ local QUESTS: { QuestDef } = {
 		target = 2,
 		showBar = true,
 		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Mythic Lucky Block",
+		rewardLuckyBlock = "Secret Lucky Block",
 		rewardLuckyBlockCount = 1,
 	},
 	{
@@ -407,8 +414,9 @@ local QUESTS: { QuestDef } = {
 		kind = "talk_while_quest",
 		target = 5,
 		showBar = true,
-		rewardKind = "cash",
-		rewardCash = 100_000,
+		rewardKind = "lucky_block",
+		rewardLuckyBlock = "star",
+		rewardLuckyBlockCount = 1,
 	},
 	{
 		id = "claim_rare_1",
@@ -418,7 +426,7 @@ local QUESTS: { QuestDef } = {
 		target = 1,
 		showBar = false,
 		rewardKind = "lucky_block",
-		rewardLuckyBlock = "Starter Lucky Block",
+		rewardLuckyBlock = "1 opposite",
 		rewardLuckyBlockCount = 1,
 		trackRarity = "rare",
 	},
@@ -441,7 +449,7 @@ M.COUNTER_QUEST_KINDS = {
 M.INTRO_LINES = {
 	{ text = "Hey!! My name is Tim Cheese!", shake = true },
 	{ text = "I need your help collecting brainrots!", shake = false },
-	{ text = "Please search 5 bushes and come back to me after!", shake = true },
+	{ text = "First job: get over to Land 1!!", shake = true },
 }
 
 M.COMPLETE_LINES = {
@@ -488,13 +496,9 @@ function M.formatRewardLabel(quest: QuestDef): string
 		return BrainrotEconomy.formatCashShort(quest.rewardCash or 0)
 	elseif quest.rewardKind == "lucky_block" then
 		local name = quest.rewardLuckyBlock or "Lucky Block"
+		local def = LuckyBlockCatalog.get(name)
+		local short = if def then def.displayName else name
 		local count = math.max(1, math.floor(quest.rewardLuckyBlockCount or 1))
-		local short = if string.find(name, "Starter", 1, true)
-			then "Starter Block"
-			elseif string.find(name, "Mythic", 1, true) then "Mythic Block"
-			elseif string.find(name, "Godly", 1, true) then "Godly Block"
-			elseif string.find(name, "Secret", 1, true) then "Secret Block"
-			else name
 		if count > 1 then
 			return string.format("%dx %s", count, short)
 		end

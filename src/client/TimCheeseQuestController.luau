@@ -12,7 +12,12 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
-local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
+local LandResolver = nil -- intro bush intercept removed; land resolve is server-side only
+-- keep require graph stable for hot-reload / other requires nearby
+do
+	LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
+end
+_ = LandResolver
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
@@ -2651,297 +2656,92 @@ local function speakOnHead(model: Model, message: string, holdSec: number?)
 	end
 end
 
--- Intro starts when the player first tries to open a Land 1 bush after tutorial.
-function M.tryInterceptBushForIntro(bush: Instance?): boolean
-	if introPlaying or introStartedLocal then
-		return false
-	end
-	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
-		return false
-	end
-	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
-		return false
-	end
-	if not bush then
-		return false
-	end
-	local part = if bush:IsA("BasePart") then bush else bush:FindFirstChildWhichIsA("BasePart", true)
-	local pos = if part and part:IsA("BasePart")
-		then part.Position
-		elseif bush:IsA("Model") then (bush :: Model):GetPivot().Position
-		else nil
-	if typeof(pos) ~= "Vector3" then
-		return false
-	end
-	local land = LandResolver.resolveLandAtPosition(pos)
-	if land ~= 1 then
-		return false
-	end
-	-- Hide the bush E card immediately (before fall starts).
-	setBushPromptsHiddenForIntro(true)
-	task.spawn(function()
-		M.playIntroFall()
-	end)
-	return true
+-- Tim fall cutscene disabled — quests start from post-tutorial delay instead.
+function M.tryInterceptBushForIntro(_bush: Instance?): boolean
+	return false
 end
 
-function M.playIntroFall()
-	if introPlaying or introStartedLocal then
-		return
-	end
-	introDialogueSkip = false
-	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
-		introStartedLocal = true
-		setBushPromptsHiddenForIntro(false)
+-- Reveal Tim + auto-accept first quest + quest appearance popup (no fall cutscene).
+function M.beginQuestsWithoutAppearance()
+	if introPlaying then
 		return
 	end
 	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
-		setBushPromptsHiddenForIntro(false)
 		return
 	end
-	local tim = resolveTim()
-	if not tim then
-		setBushPromptsHiddenForIntro(false)
+	local liveIdx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+	if typeof(liveIdx) == "number" and liveIdx >= 1 then
+		introStartedLocal = true
+		questHudRevealed = true
+		local tim = resolveTim()
+		if tim then
+			revealTimForIntro(tim)
+			ensureIdle(tim)
+			setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
+		end
+		refreshQuestHud({ skipRevealGate = true, playAppear = false })
+		syncPromptAndOutline()
 		return
 	end
-	timModel = tim
-	if not homePivot then
-		homePivot = tim:GetPivot()
+	local completed = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR)
+	if typeof(completed) == "number" and completed >= TimCheeseQuestConfig.questCount() then
+		return
 	end
-	local landCf = resolveIntroLandCFrameNearPlayer()
-	if not landCf then
-		setBushPromptsHiddenForIntro(false)
+	if introStartedLocal then
 		return
 	end
 	introStartedLocal = true
-	introPlaying = true
 
-	hideTimUntilIntro(tim)
-	setQuestFloatVisible(tim, false)
-
-	local clone = makeIntroClone(tim, landCf)
-	if not clone then
-		introPlaying = false
-		introStartedLocal = false
-		setBushPromptsHiddenForIntro(false)
-		return
+	local tim = resolveTim()
+	if tim then
+		timModel = tim
+		revealTimForIntro(tim)
+		ensureIdle(tim)
+		setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
 	end
-
-	-- Letterbox bars + over-shoulder cam while Tim drops / talks.
-	setQuestHudSuppressed(true)
-	setTalkPromptEnabled(false)
-	setBushPromptsHiddenForIntro(true)
-	GameplayUiVisibility.hide(INTRO_CUTSCENE_HIDE_OPTS)
-	StandDialogueCutscene.showLetterbox()
-	lockMovement(true)
-	setBgmSlowed(true)
-	local wind = playWindLoop()
-
-	local function cleanupIntroUi()
-		unbindIntroTouchPan()
-		resetIntroCameraLook()
-		stopIntroTalkJump(clone)
-		StandDialogueCutscene.hideLetterbox()
-		lockMovement(false)
-		setBushPromptsHiddenForIntro(false)
-		setBgmSlowed(false)
-		GameplayUiVisibility.show({ instant = true })
-	end
-
-	resetIntroCameraLook()
-	bindIntroTouchPan()
-	local introCamPhase = 0
-
-	local land = landCf.Position
-	local groundY = land.Y
-	local start = land + Vector3.new(0, TimCheeseQuestConfig.DROP_HEIGHT, 0)
-	local rotOnly = landCf - landCf.Position
-	safeScaleTo(clone, 2.65)
-	clone:PivotTo(CFrame.new(start) * rotOnly)
-	ensureIdle(clone)
-
-	local cam = Workspace.CurrentCamera
-	local savedType = cam and cam.CameraType
-	local savedSubject = cam and cam.CameraSubject
-	local savedFov = cam and cam.FieldOfView
-	if cam then
-		cam.CameraType = Enum.CameraType.Scriptable
-		cam.FieldOfView = 60
-	end
-
-	local alpha = Instance.new("NumberValue")
-	alpha.Value = 0
-	local tween = TweenService:Create(
-		alpha,
-		TweenInfo.new(TimCheeseQuestConfig.FALL_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-		{ Value = 1 }
-	)
-	local lastScale = 2.65
-	local conn = RunService.RenderStepped:Connect(function(dt)
-		introCamPhase += dt
-		local t = alpha.Value
-		local y = start.Y + (groundY - start.Y) * (t * t)
-		local pos = Vector3.new(land.X, y, land.Z)
-		local sway = math.sin(t * 28) * (1 - t) * 1.1
-		local scale = 2.65 - (1.65 * t)
-		if math.abs(scale - lastScale) > 0.03 then
-			safeScaleTo(clone, scale)
-			lastScale = scale
-		end
-		local spin = CFrame.Angles(
-			math.rad(math.sin(t * 18) * 35 * (1 - t)),
-			math.rad(t * 720),
-			math.rad(math.cos(t * 14) * 28 * (1 - t))
-		)
-		if clone.Parent then
-			clone:PivotTo(CFrame.new(pos + Vector3.new(sway, 0, 0)) * rotOnly * spin)
-		end
-		local liveHrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		if cam and liveHrp and liveHrp:IsA("BasePart") then
-			local focusPos = pos + Vector3.new(0, 3.2, 0)
-			local goalCf, goalFov = computeIntroShoulderCamera(
-				liveHrp,
-				focusPos,
-				introCamPhase,
-				dt,
-				cam,
-				savedFov,
-				{ pullBack = 6.1, sideBase = 3.8, heightBase = 4.0 }
-			)
-			cam.CFrame = goalCf
-			cam.FieldOfView = goalFov
-		end
-	end)
-	tween:Play()
-	tween.Completed:Wait()
-	conn:Disconnect()
-	alpha:Destroy()
-
-	if wind then
-		wind:Stop()
-		wind:Destroy()
-	end
-	safeScaleTo(clone, 1)
-	if clone.Parent then
-		clone:PivotTo(landCf)
-		liftCloneToGround(clone, groundY)
-		-- Second pass after scale settles (meshes can lag one frame).
-		task.wait(0.05)
-		if clone.Parent then
-			liftCloneToGround(clone, groundY)
-		end
-	end
-	local landedPos = clone:GetPivot().Position
-	spawnLandingDebris(Vector3.new(landedPos.X, groundY, landedPos.Z), clone)
-	GameSoundEffects.playGroundSmash(1)
-	landImpactShake(cam)
-	ensureIdle(clone)
-	setBgmSlowed(false)
-
-	-- Settle — keep over-shoulder framing on Tim.
-	task.wait(0.35)
-	local talkCamConn: RBXScriptConnection? = nil
-	talkCamConn = RunService.RenderStepped:Connect(function(dt)
-		introCamPhase += dt
-		local liveHrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		if not cam or not clone.Parent or not (liveHrp and liveHrp:IsA("BasePart")) then
-			return
-		end
-		local timPos = clone:GetPivot().Position + Vector3.new(0, 2.6, 0)
-		local goalCf, goalFov = computeIntroShoulderCamera(
-			liveHrp,
-			timPos,
-			introCamPhase,
-			dt,
-			cam,
-			savedFov,
-			{ pullBack = 5.2, sideBase = 3.5, heightBase = 3.6 }
-		)
-		cam.CFrame = goalCf
-		cam.FieldOfView = goalFov
-	end)
-
-	introDialogueSkip = false
-	StandDialogueCutscene.setLetterboxSkipVisible(true, function()
-		introDialogueSkip = true
-		StandDialogueCutscene.cancelWorldSpeech()
-	end)
-
-	for _, line in TimCheeseQuestConfig.INTRO_LINES do
-		if introDialogueSkip or not clone.Parent then
-			break
-		end
-		speakOnHead(clone, line.text, if line.shake then TIM_LINE_HOLD_SHAKE else TIM_LINE_HOLD)
-	end
-	StandDialogueCutscene.setLetterboxSkipVisible(false, nil)
-	stopIntroTalkJump(clone)
-
-	if talkCamConn then
-		talkCamConn:Disconnect()
-		talkCamConn = nil
-	end
-
-	-- Unlock bush search immediately — AcceptQuest can yield and used to soft-lock searching.
-	setBushPromptsHiddenForIntro(false)
 
 	local introRE = getRE("IntroDone")
 	if introRE then
 		introRE:FireServer()
 	end
 
-	-- Auto-start first quest — no accept/decline UI.
-	forcedQuestIndex = 1
-	local rf = getRF("AcceptQuest")
-	if rf then
-		local ok, result = pcall(function()
-			return rf:InvokeServer()
-		end)
-		if not ok then
-			warn("[TimCheeseQuestController] AcceptQuest error:", result)
-		elseif result ~= true then
-			task.wait(0.35)
-			local ok2, result2 = pcall(function()
-				return rf:InvokeServer()
-			end)
-			if not ok2 or result2 ~= true then
-				warn("[TimCheeseQuestController] AcceptQuest rejected")
-			end
-		end
-	else
-		warn("[TimCheeseQuestController] AcceptQuest remote missing")
-	end
-
-	if clone.Parent then
-		clone:Destroy()
-	end
-	idleTrack = nil
-	revealTimForIntro(tim)
-	ensureIdle(tim)
-
-	if cam then
-		cam.CameraType = savedType or Enum.CameraType.Custom
-		cam.CameraSubject = savedSubject
-		if typeof(savedFov) == "number" then
-			cam.FieldOfView = savedFov
-		end
-	end
-
-	cleanupIntroUi()
-	introPlaying = false
-
-	forcedQuestIndex = forcedQuestIndex or 1
-	questHudRevealed = false
-	local q = TimCheeseQuestConfig.getQuest(forcedQuestIndex)
-	if q then
-		playQuestAcceptPopup(q)
-	else
-		questHudRevealed = true
-		refreshQuestHud({ skipRevealGate = true, playAppear = false })
-	end
-	TopNotifController.showBroadcast("New quest from Tim Cheese!")
-	setQuestHudSuppressed(false)
-	ensureQuestHudVisibleAfterDialogue()
+	acceptNextQuestAndShowHud(1)
 	syncPromptAndOutline()
+end
+
+local postTutorialQuestToken = 0
+
+local function schedulePostTutorialQuests()
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+		return
+	end
+	local liveIdx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+	if typeof(liveIdx) == "number" and liveIdx >= 1 then
+		return
+	end
+	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true and introStartedLocal then
+		-- Already past the first handoff.
+		if questHudRevealed then
+			return
+		end
+	end
+	postTutorialQuestToken += 1
+	local token = postTutorialQuestToken
+	local delaySec = TimCheeseQuestConfig.POST_TUTORIAL_QUEST_DELAY_SEC
+	task.delay(delaySec, function()
+		if token ~= postTutorialQuestToken then
+			return
+		end
+		if not player.Parent then
+			return
+		end
+		M.beginQuestsWithoutAppearance()
+	end)
+end
+
+function M.playIntroFall()
+	-- Legacy entry point — redirect to non-cutscene quest start.
+	M.beginQuestsWithoutAppearance()
 end
 
 function M.openTimDialogue()
@@ -3131,18 +2931,27 @@ function M.init()
 		if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
 			introStartedLocal = true
 			ensureIdle(timModel)
+			revealTimForIntro(timModel)
 			setQuestFloatVisible(timModel, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
 			syncPromptAndOutline()
 			local liveIdx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
 			if typeof(liveIdx) == "number" and liveIdx >= 1 then
 				questHudRevealed = true
+			else
+				-- Tutorial done earlier but first quest never accepted — start after delay.
+				if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+					schedulePostTutorialQuests()
+				end
 			end
 			refreshQuestHud()
 		else
-			-- Invisible until first Land-1 bush open after tutorial.
+			-- Invisible until post-tutorial quest handoff (no Tim fall appearance).
 			hideTimUntilIntro(timModel)
 			questHudRevealed = false
 			syncQuestChromeVisibility()
+			if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+				schedulePostTutorialQuests()
+			end
 		end
 
 		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_REPLAY_ATTR):Connect(function()
@@ -3150,6 +2959,7 @@ function M.init()
 			introPlaying = false
 			forcedQuestIndex = nil
 			questHudRevealed = false
+			postTutorialQuestToken += 1
 			dialogueBusy = false
 			setQuestHudSuppressed(false)
 			stopIntroTalkJump(timModel)
@@ -3198,6 +3008,9 @@ function M.init()
 		end)
 		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR):Connect(function()
 			syncPromptAndOutline()
+			if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+				schedulePostTutorialQuests()
+			end
 		end)
 
 		local viewportConn: RBXScriptConnection? = nil

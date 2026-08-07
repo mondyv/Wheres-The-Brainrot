@@ -1,0 +1,33 @@
+#,id,title,description,kind,target,rewardKind,rewardSummary,rewardLuckyBlock,rewardLuckyBlockCount,rewardCash,rewardBrainrotRarity,trackLand,trackRarity,trackMutation,offerLine,completeLine
+1,land_1,First Land,Get over to Land 1!,reach_land,1,lucky_block,1× Troll Lucky Block,troll,1,,,,,,First job: swing out to Land 1. Go go go!!,You made Land 1!! Here's a Troll Lucky Block!!
+2,land_2,Land Hopper,Upgrade your Power and swing over to Land 2!,reach_land,2,lucky_block,1× Neon Lucky Block,neon,1,,,,,,Land 2 is waiting. Power up and swing over!!,You made Land 2!! Tim Cheese is so proud!!
+3,claim_5,Brainrot Collector,Accept 5 brainrots from bushes.,accept_claims,5,lucky_block,2× Starter Lucky Block,Starter Lucky Block,2,,,,,,,
+4,search_10,Bush Addict,"Search 10 bushes. Tim calls it \""research.\",harvest,10,brainrot,brainrot (uncommon),,,,uncommon,,,,I need MORE bush data. Go touch grass. Literally.,Ten bushes?! You're hired forever!!
+5,claim_6,No Refunds,Accept 6 brainrots from bushes.,accept_claims,6,lucky_block,1× Neon Lucky Block,neon,1,,,,,,Every brainrot you see? TAKE IT. Tim's orders.,Six accepts! That's the Tim Cheese way!!
+6,search_15,Leaf Pusher,Search 15 bushes. Your hands smell like grass now.,harvest,15,cash,"$200,000",,,200_000,,,,,,
+7,land_3,Sky Tourist,Reach Land 3. Tim wants a photo.,reach_land,3,lucky_block,1× One Lucky Block,1,1,,,,,,Land 3 has better vibes. Go check it out.,You made it!! Tim Cheese tourism board approves!!
+8,claim_10,Yes Man,Accept 10 brainrots from bushes.,accept_claims,10,brainrot,brainrot (rare),,,,rare,,,,,
+9,search_25,Bush Connoisseur,Search 25 bushes. Tim thinks you're obsessed.,harvest,25,cash,"$350,000",,,350_000,,,,,,
+10,land_4,Cloud Walker,Reach Land 4. Tim is genuinely impressed.,reach_land,4,lucky_block,1× Mythic Lucky Block,Mythic Lucky Block,1,,,,,,,
+11,claim_15,Brainrot Believer,Accept 15 brainrots. Tim trusts you now.,accept_claims,15,brainrot,brainrot (epic),,,,epic,,,,,
+12,search_40,Tim's Favorite Employee,Search 40 bushes. Tim put your name on a plaque.,harvest,40,lucky_block,1× Purple Lucky Block,purple,1,,,,,,,LEGEND STATUS UNLOCKED!!
+13,land_5,Peak Cheese,Reach Land 5. Tim's final geography lesson.,reach_land,5,lucky_block,1× Yellow Lucky Block,yellow,1,,,,,,Land 5. That's where the real cheese lives.,PEAK CHEESE ACHIEVED!! I'm not crying!!
+14,claim_20,Accept Everything,Accept 20 brainrots. Tim stopped counting.,accept_claims,20,cash,"$750,000",,,750_000,,,,,,
+15,place_5,Stand Builder,Place 5 brainrots on your stands.,place_stands,5,brainrot,brainrot (rare),,,,rare,,,,,
+16,power_3,Power Trip,Upgrade your Power to level 3.,upgrade_power,3,lucky_block,1× Heart Lucky Block,heart,1,,,,,,,
+17,income_1k,Money Printer,"Earn $1,000/sec from placed brainrots.",income_rate,1000,cash,"$500,000",,,500_000,,,,,,
+18,open_block_3,Crack Open,Open 3 Lucky Blocks. Tim wants to watch.,open_lucky_blocks,3,lucky_block,1× Godly Lucky Block,Godly Luckyblock,1,,,,,,,
+19,own_epic_3,Epic Squad,Own 3 Epic brainrots (bag or stands).,own_rarity,3,brainrot,brainrot (epic),,,,epic,,epic,,,
+20,rebirth_1,Born Again,"Rebirth once. Tim says you're \""resetting the cheese.\",rebirth_count,1,lucky_block,1× Chamber Lucky Block,chamber,1,,,,,,Rebirth once. Fresh start. Like a new cheese wheel.,REBORN!! The cheese has been reset!!
+21,spider_survive_1,"Eight Legs, Zero Fear",Survive a bush spider encounter.,spider_survive,1,cash,"$150,000",,,150_000,,,,,Heard there's spiders in the bushes. Go say hi.,You LIVED?! Okay you're actually tough!!
+22,spider_survive_3,Arachnid Veteran,Survive 3 spider encounters.,spider_survive,3,lucky_block,1× Mythic Lucky Block,Mythic Lucky Block,1,,,,,,,
+23,decline_5,Hard Pass,Decline 5 floating brainrot claims.,decline_claims,5,brainrot,brainrot (uncommon),,,,uncommon,,,,Decline some brainrots. Be picky. Like me.,"Wow, standards?? Respect."
+24,golden_1,Shiny Finder,Discover 1 Golden mutation brainrot.,find_mutation,1,lucky_block,1× Rainbow Lucky Block,rainbow,1,,,,,golden,,
+25,steal_1,Cheese Thief,Successfully steal 1 brainrot.,steal_brainrot,1,cash,"$400,000",,,400_000,,,,,,
+26,rope_2,Long Reach,Upgrade your Rope to level 2.,upgrade_rope,2,lucky_block,1× Troll Lucky Block,troll,1,,,,,,,
+27,carry_2,Heavy Hauler,Upgrade your Carry to level 2.,upgrade_carry,2,brainrot,brainrot (rare),,,,rare,,,,,
+28,fill_stands,No Empty Slots,Fill every stand slot on your plot.,fill_stands,1,brainrot,brainrot (epic),,,,epic,,,,,
+29,open_block_2,Double Crack,Open 2 Lucky Blocks.,open_lucky_blocks,2,lucky_block,1× Secret Lucky Block,Secret Lucky Block,1,,,,,,,
+30,harvest_land_20,Homebody,Search 20 bushes on Land 1.,harvest_land,20,cash,"$250,000",,,250_000,,1,,,,
+31,talk_tim_5,Tim's Best Friend,Talk to Tim 5 times while on a quest.,talk_while_quest,5,lucky_block,1× Star Lucky Block,star,1,,,,,,,
+32,claim_rare_1,Jackpot Pull,Accept a Rare-or-higher brainrot from a bush.,claim_min_rarity,1,lucky_block,1× Opposite Lucky Block,1 opposite,1,,,,rare,,,

@@ -12,7 +12,8 @@ local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local WebTrapConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WebTrapConfig"))
 
-local COOLDOWN_SEC = 1.6
+-- Short guard so double-taps / Activated+Down don't chain teleports. Fade already covers most spam.
+local COOLDOWN_SEC = 0.55
 local HRP_CLEARANCE = 3.1
 
 local STAND_DEST = {

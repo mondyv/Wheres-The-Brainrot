@@ -427,10 +427,16 @@ local function onNavActivated(dest: string)
 
 	local ok, errMsg = navRF:InvokeServer(dest)
 	if not ok then
-		if typeof(errMsg) == "string" and errMsg ~= "" then
-			TopNotifController.showError(errMsg)
-		else
-			TopNotifController.showError("Cannot teleport right now")
+		-- Cooldown is intentional spam guard — don't toast "please wait" (feels broken).
+		local silent = typeof(errMsg) == "string"
+			and (string.find(string.lower(errMsg), "please wait", 1, true) ~= nil
+				or string.find(string.lower(errMsg), "wait a moment", 1, true) ~= nil)
+		if not silent then
+			if typeof(errMsg) == "string" and errMsg ~= "" then
+				TopNotifController.showError(errMsg)
+			else
+				TopNotifController.showError("Cannot teleport right now")
+			end
 		end
 	else
 		UIInteractionSounds.playNotif()
@@ -473,7 +479,7 @@ local function wireButton(state: BtnState)
 	end)
 	btn.MouseLeave:Connect(function()
 		state.hovering = false
-		UIButtonEffects.hideHoverEffects(btn)
+		-- Let glisten / diagonal shine finish — cutting them on leave looks abrupt.
 		local targetScale = if visibleTarget then 1 else state.scale.Scale
 		TweenService:Create(state.scale, RELEASE_TWEEN, { Scale = targetScale }):Play()
 		TweenService:Create(state.host, RELEASE_TWEEN, { Rotation = state.restRotation }):Play()

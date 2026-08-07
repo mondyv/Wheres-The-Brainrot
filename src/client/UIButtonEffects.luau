@@ -451,6 +451,10 @@ function M.playDiagonalSweep(btn: GuiObject)
 
 	local host = resolveSweepHost(btn)
 	local clip = ensureSweepClip(host, btn)
+	-- Let an in-flight shine finish; restarting on re-hover looks choppy.
+	if clip:GetAttribute("__DiagSweepPlaying") == true then
+		return
+	end
 	stopSweepOnClip(clip)
 	clip:SetAttribute("__DiagSweepPlaying", true)
 

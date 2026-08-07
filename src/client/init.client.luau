@@ -77,6 +77,7 @@ task.defer(function()
 		require(script.UIEffectsBootstrap).init()
 		require(script.TabScreenController).init()
 		require(script.ReturnController).init()
+		require(script.SafezoneTopButtonsController).init()
 		require(script.RandomBrainrotController):Init()
 	end
 

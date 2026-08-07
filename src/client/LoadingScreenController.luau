@@ -1508,6 +1508,11 @@ local function prepareGameplayUIBeforeReveal(playerGui: PlayerGui)
 		if currentArea and currentArea:IsA("GuiObject") then
 			(currentArea :: GuiObject).Visible = false
 		end
+		-- Safezone quick-nav (Sell / Base / Upgrade) — controller reveals after load.
+		local buttons = top:FindFirstChild("Buttons")
+		if buttons and buttons:IsA("GuiObject") then
+			(buttons :: GuiObject).Visible = false
+		end
 	end
 end
 

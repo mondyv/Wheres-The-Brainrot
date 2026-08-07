@@ -795,6 +795,12 @@ local function openRevivePanel(land: number, productId: number, countdownSec: nu
 			(ReturnController :: any).forceHide()
 		end
 	end)
+	pcall(function()
+		local SafezoneTopButtonsController = require(script.Parent.SafezoneTopButtonsController)
+		if typeof((SafezoneTopButtonsController :: any).forceHide) == "function" then
+			(SafezoneTopButtonsController :: any).forceHide()
+		end
+	end)
 	showReviveBackdrop()
 	collectBgmSounds()
 	setBgmSlowed(true)

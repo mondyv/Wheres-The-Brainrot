@@ -1,6 +1,7 @@
 -- [ACTIVE] TimCheeseQuestController
 --[[
-	Tim Cheese intro fall cutscene, quest HUD, claim dialogue, walk-by speech.
+	Tim Cheese quest HUD, claim dialogue, walk-by speech.
+	Quests auto-start 5s after tutorial (quest appearance popup; no Tim fall cutscene).
 ]]
 
 local Debris = game:GetService("Debris")
@@ -12,12 +13,6 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
-local LandResolver = nil -- intro bush intercept removed; land resolve is server-side only
--- keep require graph stable for hot-reload / other requires nearby
-do
-	LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
-end
-_ = LandResolver
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))

@@ -109,7 +109,7 @@ local function computeChaseAxes(playerPos: Vector3): (Vector3, Vector3)
 	return toSafe, -toSafe
 end
 
--- Upright facing along chaseDir (mesh yaw offset applied once).
+-- Upright facing along chaseDir (no lean toward the player).
 local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
 	local flat = Vector3.new(chaseDir.X, 0, chaseDir.Z)
 	if flat.Magnitude < 0.05 then
@@ -117,8 +117,9 @@ local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
 	else
 		flat = flat.Unit
 	end
-	local look = pos + flat
-	return CFrame.lookAt(pos, look) * CFrame.Angles(0, C.WAVE_FACE_YAW_OFFSET, 0)
+	-- lookAt + world up keeps the mesh level (no pitch toward the player).
+	return CFrame.lookAt(pos, pos + flat, Vector3.yAxis)
+		* CFrame.Angles(C.WAVE_FACE_PITCH_OFFSET or 0, C.WAVE_FACE_YAW_OFFSET, 0)
 end
 
 local function hideChaseHud()
@@ -427,38 +428,84 @@ local function attachExclamation()
 	end
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "WaveWebExclamation"
-	bb.Size = UDim2.fromOffset(64, 64)
-	bb.StudsOffset = Vector3.new(0, 2.8, 0)
+	bb.Size = UDim2.fromOffset(72, 72)
+	bb.StudsOffset = Vector3.new(0, 2.6, 0)
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
+	bb.MaxDistance = 120
 	bb.Parent = head
 
-	local scale = Instance.new("UIScale")
-	scale.Scale = 0.2
-	scale.Parent = bb
-
 	local img = Instance.new("ImageLabel")
+	img.Name = "Bang"
 	img.BackgroundTransparency = 1
+	img.AnchorPoint = Vector2.new(0.5, 0.5)
+	img.Position = UDim2.fromScale(0.5, 0.5)
 	img.Size = UDim2.fromScale(1, 1)
 	img.Image = C.EXCLAMATION_IMAGE
+	img.ImageTransparency = 1
+	img.Rotation = -18
 	img.Parent = bb
 
-	TweenService:Create(scale, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.05
+	scale.Parent = img
+
+	-- Pop in: fade + overshoot scale + settle rotation.
+	TweenService:Create(img, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		ImageTransparency = 0,
+	}):Play()
+	TweenService:Create(scale, TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Scale = 1.15,
+	}):Play()
+	TweenService:Create(img, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Rotation = 0,
+	}):Play()
+
 	exclamationGui = bb
 
-	-- Brief WOAH — auto-clear so it never sticks through the chase.
 	local shown = bb
+	local pulseToken = chaseToken
+	task.spawn(function()
+		task.wait(0.38)
+		if exclamationGui ~= shown or pulseToken ~= chaseToken then
+			return
+		end
+		-- Soft heartbeat pulse while visible.
+		while exclamationGui == shown and pulseToken == chaseToken do
+			local up = TweenService:Create(scale, TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {
+				Scale = 1.28,
+			})
+			up:Play()
+			up.Completed:Wait()
+			if exclamationGui ~= shown then
+				return
+			end
+			local down = TweenService:Create(scale, TweenInfo.new(0.22, Enum.EasingStyle.Sine, Enum.EasingDirection.In), {
+				Scale = 1.05,
+			})
+			down:Play()
+			down.Completed:Wait()
+		end
+	end)
+
 	task.delay(C.EXCLAMATION_SEC, function()
+		if exclamationGui ~= shown then
+			return
+		end
+		local s = img:FindFirstChildOfClass("UIScale")
+		if s then
+			TweenService:Create(s, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+				Scale = 0.2,
+			}):Play()
+		end
+		local fade = TweenService:Create(img, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			ImageTransparency = 1,
+			Rotation = 12,
+		})
+		fade:Play()
+		fade.Completed:Wait()
 		if exclamationGui == shown then
-			local s = shown:FindFirstChildOfClass("UIScale")
-			if s then
-				local tw = TweenService:Create(s, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.15 })
-				tw:Play()
-				tw.Completed:Wait()
-			end
-			if exclamationGui == shown then
-				clearExclamation()
-			end
+			clearExclamation()
 		end
 	end)
 end
@@ -954,7 +1001,11 @@ local function runChase(token: number)
 	local forward = toSafe
 	local wavePos = playerPos + awayFromSafe * C.WAVE_SPAWN_DISTANCE
 	wavePos = Vector3.new(wavePos.X, groundYAt(wavePos.X, wavePos.Z, playerPos.Y) + 2, wavePos.Z)
+	local smoothPos = wavePos
 	wave:PivotTo(waveFacingCf(wavePos, forward))
+
+	-- Opening rumble when the web appears.
+	pulseCameraShake(1.1, 0.22, token)
 
 	if renderConn then
 		renderConn:Disconnect()
@@ -993,32 +1044,34 @@ local function runChase(token: number)
 		local elapsed = os.clock() - chaseStart
 		local speed = C.speedForLand(currentLand())
 		-- Mild ramp so it doesn't instantly top out.
-		speed *= 0.85 + 0.15 * math.clamp(elapsed / 10, 0, 1)
+		speed *= 0.9 + 0.1 * math.clamp(elapsed / 8, 0, 1)
 
 		-- Barrel straight toward safezone — no player-tracking turn.
 		wavePos += forward * speed * dt
 		local gy = groundYAt(wavePos.X, wavePos.Z, pPos.Y) + 2
 		wavePos = Vector3.new(wavePos.X, gy, wavePos.Z)
 
-		local bob = math.sin(phase * 1.55) * 1.6
-		local visualPos = wavePos + Vector3.new(0, bob, 0)
-		wave:PivotTo(waveFacingCf(visualPos, forward))
+		local bob = math.sin(phase * 1.35) * 0.85
+		local targetVisual = wavePos + Vector3.new(0, bob, 0)
+		-- Soft follow so the mesh feels fluid instead of snappy.
+		local blend = 1 - math.exp(-dt * 10)
+		smoothPos = smoothPos:Lerp(targetVisual, blend)
+		wave:PivotTo(waveFacingCf(smoothPos, forward))
 
 		local toPlayer = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
 		local distXZ = toPlayer.Magnitude
 		local threat = 1 - math.clamp(distXZ / 90, 0, 1)
 		local beat = (math.sin(phase * (2.8 + threat * 3.4)) + 1) * 0.5
-		showHeartbeat(threat * (0.35 + beat * 0.45))
+		local pulse = threat * (0.35 + beat * 0.45)
+		showHeartbeat(pulse)
 
-		if threat > 0.35 then
-			hum.CameraOffset = Vector3.new(
-				math.sin(phase * 28) * threat * 0.18,
-				math.cos(phase * 22) * threat * 0.1,
-				0
-			)
-		else
-			hum.CameraOffset = Vector3.zero
-		end
+		-- Camera shake locked to heartbeat intensity (always a little rumble in chase).
+		local shake = 0.06 + pulse * 0.55
+		hum.CameraOffset = Vector3.new(
+			math.sin(phase * 41) * shake,
+			math.cos(phase * 33) * shake * 0.65,
+			math.sin(phase * 27) * shake * 0.35
+		)
 
 		if distXZ <= C.WAVE_KILL_DISTANCE then
 			requestKill()

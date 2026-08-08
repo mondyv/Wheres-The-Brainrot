@@ -28,20 +28,21 @@ M.SPIDER_MAX_PLAYER_DISTANCE = 58
 M.LAND_EDGE_MARGIN = 14
 M.SPIDER_PRELOAD_SEC = 0.45
 
--- Far enough to feel like a tsunami rolling in.
-M.WAVE_SPAWN_DISTANCE = 175
+-- Closer so threat arrives sooner; still readable runway.
+M.WAVE_SPAWN_DISTANCE = 125
 -- Kill when the wave center gets this close (studs, XZ).
-M.WAVE_KILL_DISTANCE = 16
--- Extra yaw if the Wave Web mesh faces the wrong axis (radians).
--- 0 = LookVector = travel direction; tweak ±90/180 if the mesh forward differs.
-M.WAVE_FACE_YAW_OFFSET = 0
+M.WAVE_KILL_DISTANCE = 18
+-- Mesh forward vs travel direction (radians). 90° = side-facing mesh.
+M.WAVE_FACE_YAW_OFFSET = math.rad(90)
+-- Flatten any asset pitch lean toward the player.
+M.WAVE_FACE_PITCH_OFFSET = math.rad(-8)
 
--- Land-scaled chase speed (studs/sec). Land 1 is leisurely; Land 10 is the threat.
-M.WAVE_SPEED_LAND1 = 18
-M.WAVE_SPEED_LAND10 = 42
+-- Land-scaled chase speed (studs/sec).
+M.WAVE_SPEED_LAND1 = 28
+M.WAVE_SPEED_LAND10 = 55
 
 M.SAFEZONE_CONFIRM_SEC = 0.22
-M.EXCLAMATION_SEC = 1.25
+M.EXCLAMATION_SEC = 1.35
 
 M.BGM_CHASE_SPEED = 0.72
 M.BGM_RESTORE_FADE = 0.65

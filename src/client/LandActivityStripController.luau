@@ -96,23 +96,14 @@ local function getOrAddUIScale(parent: GuiObject): UIScale
 	return s
 end
 
-local function findRainbowGradientTemplate(): UIGradient?
-	local folder = StarterGui:FindFirstChild("Gradients")
-	if not folder then
-		return nil
+local function rainbowColorAt(phase: number): ColorSequence
+	local keys = table.create(7)
+	for i = 0, 6 do
+		local t = i / 6
+		local hue = (t + phase) % 1
+		keys[i + 1] = ColorSequenceKeypoint.new(t, Color3.fromHSV(hue, 0.92, 1))
 	end
-	local node = folder:FindFirstChild("Rainbow")
-	if not node then
-		return nil
-	end
-	if node:IsA("UIGradient") then
-		return node
-	end
-	local nested = node:FindFirstChildWhichIsA("UIGradient", true)
-	if nested then
-		return nested
-	end
-	return nil
+	return ColorSequence.new(keys)
 end
 
 local function applyRainbowToTrack(track: Frame): UIGradient?
@@ -121,28 +112,13 @@ local function applyRainbowToTrack(track: Frame): UIGradient?
 			ch:Destroy()
 		end
 	end
-	local template = findRainbowGradientTemplate()
-	local grad: UIGradient
-	if template then
-		grad = template:Clone()
-		grad.Name = "Rainbow"
-		grad.Enabled = true
-	else
-		-- Fallback if StarterGui.Gradients.Rainbow isn't replicated yet.
-		grad = Instance.new("UIGradient")
-		grad.Name = "Rainbow"
-		grad.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 70)),
-			ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 180, 40)),
-			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(80, 255, 120)),
-			ColorSequenceKeypoint.new(0.6, Color3.fromRGB(60, 180, 255)),
-			ColorSequenceKeypoint.new(0.8, Color3.fromRGB(160, 90, 255)),
-			ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 70, 200)),
-		})
-	end
-	-- Horizontal across the bar; animation scrolls Offset, not Rotation.
+	-- HSV rainbow so scroll never snaps to a red fill / hard Offset wrap.
+	local grad = Instance.new("UIGradient")
+	grad.Name = "Rainbow"
+	grad.Enabled = true
 	grad.Rotation = 0
 	grad.Offset = Vector2.zero
+	grad.Color = rainbowColorAt(0)
 	grad.Parent = track
 	return grad
 end
@@ -213,19 +189,15 @@ end
 
 local function setStripAlpha(alpha: number)
 	if plateFrame then
-		-- Very soft glass — almost fades into the world.
-		plateFrame.BackgroundTransparency = 0.72 + (1 - alpha) * 0.28
-		local stroke = plateFrame:FindFirstChildOfClass("UIStroke")
-		if stroke then
-			stroke.Transparency = 0.88 + (1 - alpha) * 0.12
-		end
+		-- Soft fade plate — no stroke, edges fall off via UIGradient.
+		plateFrame.BackgroundTransparency = 0.55 + (1 - alpha) * 0.45
 	end
 	local track = trackFrame or (plateFrame and plateFrame:FindFirstChild("Track"))
 	if track and track:IsA("GuiObject") then
-		track.BackgroundTransparency = 0.08 + (1 - alpha) * 0.92
+		track.BackgroundTransparency = 0.05 + (1 - alpha) * 0.95
 		local stroke = track:FindFirstChildOfClass("UIStroke")
 		if stroke then
-			stroke.Transparency = 0.9 + (1 - alpha) * 0.1
+			stroke.Transparency = 0.35 + (1 - alpha) * 0.65
 		end
 	end
 	for _, token in landTokens do
@@ -682,14 +654,14 @@ local function buildStrip(parentGui: PlayerGui)
 	scale.Scale = 0.78
 	scale.Parent = root
 
-	-- Soft transparent glass plate (no heavy border / texture).
+	-- Soft transparent plate — no stroke; horizontal fade so edges dissolve.
 	local plate = Instance.new("Frame")
 	plate.Name = "Plate"
 	plate.AnchorPoint = Vector2.new(0.5, 1)
 	plate.Position = UDim2.new(0.5, 0, 1, 0)
 	plate.Size = UDim2.new(1, 0, 0, plateH)
 	plate.BackgroundColor3 = PLATE
-	plate.BackgroundTransparency = 0.72
+	plate.BackgroundTransparency = 0.55
 	plate.BorderSizePixel = 0
 	plate.ZIndex = 40
 	plate.ClipsDescendants = false
@@ -700,22 +672,25 @@ local function buildStrip(parentGui: PlayerGui)
 	plateCorner.CornerRadius = UDim.new(1, 0)
 	plateCorner.Parent = plate
 
-	-- Soft fade-out rim (barely there).
-	local plateStroke = Instance.new("UIStroke")
-	plateStroke.Color = PLATE_EDGE
-	plateStroke.Thickness = 1
-	plateStroke.Transparency = 0.88
-	plateStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	plateStroke.Parent = plate
+	local plateFade = Instance.new("UIGradient")
+	plateFade.Name = "EdgeFade"
+	plateFade.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.92),
+		NumberSequenceKeypoint.new(0.12, 0.35),
+		NumberSequenceKeypoint.new(0.5, 0.15),
+		NumberSequenceKeypoint.new(0.88, 0.35),
+		NumberSequenceKeypoint.new(1, 0.92),
+	})
+	plateFade.Parent = plate
 
-	-- Rainbow gradient track (clones StarterGui.Gradients.Rainbow).
+	-- Rainbow track with a real visible border.
 	local track = Instance.new("Frame")
 	track.Name = "Track"
 	track.AnchorPoint = Vector2.new(0.5, 0.5)
 	track.Position = UDim2.fromScale(0.5, 0.34)
 	track.Size = UDim2.new(1, -14, 0, if compact then 12 else 14)
 	track.BackgroundColor3 = TRACK
-	track.BackgroundTransparency = 0.08
+	track.BackgroundTransparency = 0.05
 	track.BorderSizePixel = 0
 	track.ZIndex = 43
 	track.Parent = plate
@@ -725,8 +700,8 @@ local function buildStrip(parentGui: PlayerGui)
 	trackCorner.Parent = track
 	local trackStroke = Instance.new("UIStroke")
 	trackStroke.Color = Color3.fromRGB(255, 255, 255)
-	trackStroke.Thickness = 1
-	trackStroke.Transparency = 0.9
+	trackStroke.Thickness = 1.75
+	trackStroke.Transparency = 0.35
 	trackStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	trackStroke.Parent = track
 	trackRainbow = applyRainbowToTrack(track)
@@ -818,7 +793,7 @@ local function buildStrip(parentGui: PlayerGui)
 	if bobConn then
 		bobConn:Disconnect()
 	end
-	-- Gentle rock + slow horizontal rainbow scroll (rightward).
+	-- Gentle rock + seamless rainbow hue scroll (no Offset wrap snap).
 	bobConn = RunService.Heartbeat:Connect(function(dt)
 		if not visibleTarget or not stripRoot then
 			return
@@ -828,8 +803,8 @@ local function buildStrip(parentGui: PlayerGui)
 		local grad = trackRainbow
 		if grad and grad.Parent then
 			grad.Rotation = 0
-			-- Continuous scroll; keep Offset in a stable wrap so the bar stays filled.
-			grad.Offset = Vector2.new((bobPhase * 0.18) % 1, 0)
+			grad.Offset = Vector2.zero
+			grad.Color = rainbowColorAt(bobPhase * 0.12)
 		end
 	end)
 

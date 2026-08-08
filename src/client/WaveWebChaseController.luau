@@ -295,29 +295,44 @@ local function ensureFxGui(): ScreenGui
 	gui.Name = "WaveWebChaseFx"
 	gui.ResetOnSpawn = false
 	gui.IgnoreGuiInset = true
-	gui.DisplayOrder = 55
+	gui.DisplayOrder = 80
 	gui.Enabled = false
 	gui.Parent = player:WaitForChild("PlayerGui")
 
-	local frame = Instance.new("Frame")
-	frame.Name = "Heartbeat"
-	frame.BackgroundColor3 = Color3.fromRGB(120, 12, 18)
-	frame.BackgroundTransparency = 1
-	frame.BorderSizePixel = 0
-	frame.Size = UDim2.fromScale(1, 1)
-	frame.Parent = gui
+	local root = Instance.new("Frame")
+	root.Name = "Heartbeat"
+	root.BackgroundTransparency = 1
+	root.BorderSizePixel = 0
+	root.Size = UDim2.fromScale(1, 1)
+	root.Parent = gui
 
-	local grad = Instance.new("UIGradient")
-	grad.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.08),
-		NumberSequenceKeypoint.new(0.32, 0.55),
-		NumberSequenceKeypoint.new(0.62, 0.88),
-		NumberSequenceKeypoint.new(1, 1),
-	})
-	grad.Rotation = 90
-	grad.Parent = frame
+	local function edge(name: string, size: UDim2, pos: UDim2, rot: number)
+		local f = Instance.new("Frame")
+		f.Name = name
+		f.BackgroundColor3 = Color3.fromRGB(160, 18, 28)
+		f.BackgroundTransparency = 1
+		f.BorderSizePixel = 0
+		f.Size = size
+		f.Position = pos
+		f.Parent = root
+		local g = Instance.new("UIGradient")
+		g.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.05),
+			NumberSequenceKeypoint.new(0.55, 0.55),
+			NumberSequenceKeypoint.new(1, 1),
+		})
+		g.Rotation = rot
+		g.Parent = f
+		return f
+	end
 
-	heartbeatFrame = frame
+	-- Soft red heartbeat edges (not a full-screen wash).
+	edge("Top", UDim2.new(1, 0, 0.22, 0), UDim2.fromScale(0, 0), 90)
+	edge("Bottom", UDim2.new(1, 0, 0.22, 0), UDim2.new(0, 0, 0.78, 0), -90)
+	edge("Left", UDim2.new(0.18, 0, 1, 0), UDim2.fromScale(0, 0), 0)
+	edge("Right", UDim2.new(0.18, 0, 1, 0), UDim2.new(0.82, 0, 0, 0), 180)
+
+	heartbeatFrame = root
 	fxGui = gui
 	return gui
 end
@@ -358,16 +373,22 @@ end
 local function showHeartbeat(intensity: number)
 	local gui = ensureFxGui()
 	gui.Enabled = true
+	local i = math.clamp(intensity, 0, 1)
+	local edgeAlpha = 1 - math.clamp(0.2 + i * 0.55, 0.2, 0.72)
 	if heartbeatFrame then
-		heartbeatFrame.BackgroundTransparency = 1 - math.clamp(intensity * 0.42, 0, 0.38)
+		for _, ch in heartbeatFrame:GetChildren() do
+			if ch:IsA("Frame") then
+				ch.BackgroundTransparency = edgeAlpha
+			end
+		end
 	end
 	if colorFx then
-		colorFx.TintColor = Color3.fromRGB(255, 210, 210):Lerp(Color3.new(1, 1, 1), 1 - intensity * 0.35)
-		colorFx.Contrast = intensity * 0.12
-		colorFx.Saturation = -intensity * 0.08
+		colorFx.TintColor = Color3.fromRGB(255, 190, 190):Lerp(Color3.new(1, 1, 1), 1 - i * 0.4)
+		colorFx.Contrast = i * 0.14
+		colorFx.Saturation = -i * 0.1
 	end
 	if blurFx then
-		blurFx.Size = intensity * 2.2
+		blurFx.Size = i * 1.6
 	end
 end
 
@@ -376,7 +397,11 @@ local function hideHeartbeat()
 		fxGui.Enabled = false
 	end
 	if heartbeatFrame then
-		heartbeatFrame.BackgroundTransparency = 1
+		for _, ch in heartbeatFrame:GetChildren() do
+			if ch:IsA("Frame") then
+				ch.BackgroundTransparency = 1
+			end
+		end
 	end
 	clearPostFx()
 end
@@ -451,6 +476,12 @@ local function requestKill()
 	end
 end
 
+local savedWalkSpeed: number? = nil
+local savedJumpPower: number? = nil
+local savedJumpHeight: number? = nil
+local savedUseJumpPower: boolean? = nil
+local savedAutoRotate: boolean? = nil
+
 local function lockMovement()
 	ContextActionService:BindActionAtPriority(
 		MOVE_LOCK_ACTION,
@@ -467,6 +498,13 @@ local function lockMovement()
 	)
 	local hum = getHumanoid()
 	if hum then
+		if savedWalkSpeed == nil then
+			savedWalkSpeed = if hum.WalkSpeed > 0 then hum.WalkSpeed else 16
+			savedJumpPower = hum.JumpPower
+			savedJumpHeight = hum.JumpHeight
+			savedUseJumpPower = hum.UseJumpPower
+			savedAutoRotate = hum.AutoRotate
+		end
 		hum.WalkSpeed = 0
 		hum.JumpPower = 0
 		hum.JumpHeight = 0
@@ -479,6 +517,8 @@ local function lockMovement()
 		local h = getHumanoid()
 		if h and chaseActive then
 			h.WalkSpeed = 0
+			h.JumpPower = 0
+			h.JumpHeight = 0
 		end
 	end)
 end
@@ -491,11 +531,30 @@ local function unlockMovement()
 	end
 	local hum = getHumanoid()
 	if hum then
-		hum.WalkSpeed = 16
-		hum.JumpPower = 50
-		hum.JumpHeight = 7.2
-		hum.AutoRotate = true
+		local walk = savedWalkSpeed
+		if typeof(walk) ~= "number" or walk <= 0 then
+			walk = 16
+		end
+		hum.WalkSpeed = walk
+		if savedUseJumpPower == false then
+			hum.UseJumpPower = false
+			hum.JumpHeight = if typeof(savedJumpHeight) == "number" and savedJumpHeight > 0 then savedJumpHeight else 7.2
+		else
+			hum.UseJumpPower = true
+			hum.JumpPower = if typeof(savedJumpPower) == "number" and savedJumpPower > 0 then savedJumpPower else 50
+			if hum.JumpHeight <= 0 then
+				hum.JumpHeight = 7.2
+			end
+		end
+		hum.AutoRotate = if savedAutoRotate == nil then true else savedAutoRotate
+		hum.PlatformStand = false
 	end
+	savedWalkSpeed = nil
+	savedJumpPower = nil
+	savedJumpHeight = nil
+	savedUseJumpPower = nil
+	savedAutoRotate = nil
+	MobileTouchGate.ensureTouchControlsVisible(true)
 	MobileTouchGate.restorePlayerMovement()
 end
 
@@ -673,10 +732,32 @@ local function runIntro(token: number, playerPos: Vector3)
 		return
 	end
 
+	-- Create FX gui before HUD hide so keepScreenNames can preserve it.
+	ensureFxGui()
 	hideChaseHud()
 	attachExclamation()
 	saveCamera(cam)
 	lockMovement()
+
+	-- WOAH beat first: hold on the player with the ! before any spider drop.
+	local woahDur = math.max(0.85, C.EXCLAMATION_SEC * 0.85)
+	if renderConn then
+		renderConn:Disconnect()
+	end
+	renderConn = RunService.RenderStepped:Connect(function()
+		if not chaseActive or token ~= chaseToken or not cam then
+			return
+		end
+		local hrp = getHRP()
+		local pPos = if hrp then hrp.Position else playerPos
+		local chest = pPos + Vector3.new(0, 1.6, 0)
+		cam.CFrame = CFrame.lookAt(chest + Vector3.new(3.2, 1.4, 5.5), chest)
+		cam.FieldOfView = defaultFov + 4
+	end)
+	task.wait(woahDur)
+	if token ~= chaseToken then
+		return
+	end
 
 	local spiderTemplate = findAsset(C.SPIDER_TEMPLATE_PATH)
 	if spiderTemplate and spiderTemplate:IsA("Model") then
@@ -794,6 +875,7 @@ local function runIntro(token: number, playerPos: Vector3)
 	releaseToGameplay(token)
 end
 
+
 local function runChase(token: number)
 	local waveTemplate = findAsset(C.WAVE_WEB_PATH)
 	if not waveTemplate or not waveTemplate:IsA("Model") then
@@ -839,6 +921,8 @@ local function runChase(token: number)
 
 	-- HUD already hidden at intro start.
 	ensurePostFx()
+	ensureFxGui()
+	showHeartbeat(0.35)
 	setBgmChase(true)
 	BushHoldInteraction.setBushSearchLocked(true)
 

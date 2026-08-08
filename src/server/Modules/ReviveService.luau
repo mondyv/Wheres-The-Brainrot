@@ -383,16 +383,19 @@ local function onHumanoidDied(player: Player, character: Model)
 	end
 
 	-- Cooldown: falling into kill zones can Died→LoadCharacter→Died in a tight loop.
-	-- Still pin QuestHitbox so PlotPlayerSpawn doesn't dump them on a random default spawn.
 	local lastAt = lastSoftRespawnAt[player]
 	if typeof(lastAt) == "number" and (os.clock() - lastAt) < ReviveConfig.SOFT_RESPAWN_COOLDOWN_SEC then
-		softRespawnAtHitbox(player)
+		if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
+			softRespawnAtPlotBase(player)
+		else
+			softRespawnAtHitbox(player)
+		end
 		return
 	end
 
-	-- Temporary: all deaths → fast respawn on QuestHitbox (no decline / revive panel).
+	-- Temporary: all deaths → fast respawn on plot Base (same as Base button).
 	if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
-		softRespawnAtHitbox(player)
+		softRespawnAtPlotBase(player)
 		return
 	end
 
@@ -409,9 +412,13 @@ local function onHumanoidDied(player: Player, character: Model)
 		return
 	end
 
-	-- First 10 minutes of the session: fade + instant hitbox respawn, no revive UI.
+	-- First 10 minutes of the session: fade + instant Base respawn, no revive UI.
 	if isFrictionlessDeathActive(player) then
-		softRespawnAtHitbox(player)
+		if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
+			softRespawnAtPlotBase(player)
+		else
+			softRespawnAtHitbox(player)
+		end
 		return
 	end
 

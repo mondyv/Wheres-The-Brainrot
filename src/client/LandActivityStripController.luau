@@ -764,7 +764,7 @@ local function buildStrip(parentGui: PlayerGui)
 			return
 		end
 		bobPhase += dt
-		stripRoot.Rotation = math.sin(bobPhase * 0.9) * 1.6
+		stripRoot.Rotation = math.sin(bobPhase * 0.55) * 0.35
 	end)
 
 	task.spawn(function()

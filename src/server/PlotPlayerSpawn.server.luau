@@ -2,7 +2,8 @@
 --[[
 	PlotPlayerSpawn (server)
 	Join / respawn → same plot Spawn pad as the safezone "Base" button.
-	Soft-revive attrs (QuestHitbox) only win when they look sane vs the plot pad.
+	When FAST_RESPAWN_ALL_DEATHS is on, always use Base (ignore QuestHitbox soft pins
+	that fight PlotPlayerSpawn vs ReviveService).
 --]]
 
 local Players = game:GetService("Players")
@@ -18,6 +19,7 @@ local function clearReviveSpawnAttrs(player: Player)
 	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, nil)
 	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_POS_ATTR, nil)
 	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_LOOK_ATTR, nil)
+	player:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, nil)
 end
 
 local function readReviveCFrame(player: Player): CFrame?
@@ -66,16 +68,33 @@ end
 
 local function teleportToPlotSpawn(player: Player, character: Model)
 	local baseCf = waitForBaseSpawnCFrame(player, character)
+
+	-- Fast soft-respawn mode: always Base button pad (one owner for join/death spawn).
+	if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
+		clearReviveSpawnAttrs(player)
+		if not baseCf then
+			warn(
+				"[PlotPlayerSpawn] No Base spawn for",
+				player.Name,
+				"(AssignedPlotSlot=",
+				player:GetAttribute("AssignedPlotSlot"),
+				")"
+			)
+			return
+		end
+		PlotSpawnUtil.streamAndTeleportWithRetries(player, character, baseCf, true)
+		return
+	end
+
 	local reviveCf = readReviveCFrame(player)
 
-	-- Soft-respawn pin (Tim Cheese hitbox) — only if it isn't clearly under the plot pad.
+	-- Soft-respawn pin — only if it isn't clearly under the plot pad.
 	if reviveCf and baseCf then
 		if reviveCf.Position.Y < baseCf.Position.Y - 10 then
 			clearReviveSpawnAttrs(player)
 			reviveCf = nil
 		end
 	elseif reviveCf and not baseCf then
-		-- Base not ready yet; still honor a pin if it has a sane Y.
 		if reviveCf.Position.Y < 1 then
 			clearReviveSpawnAttrs(player)
 			reviveCf = nil
@@ -149,18 +168,17 @@ local function hookPlayer(player: Player)
 	end
 end
 
-for _, player in Players:GetPlayers() do
-	hookPlayer(player)
-end
 Players.PlayerAdded:Connect(hookPlayer)
+for _, plr in Players:GetPlayers() do
+	hookPlayer(plr)
+end
 
 Players.PlayerRemoving:Connect(function(player)
 	local conns = playerConns[player]
 	if conns then
-		for _, conn in conns do
-			conn:Disconnect()
+		for _, c in conns do
+			c:Disconnect()
 		end
 		playerConns[player] = nil
 	end
-	clearReviveSpawnAttrs(player)
 end)

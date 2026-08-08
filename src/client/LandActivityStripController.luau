@@ -2,7 +2,7 @@
 --[[
 	Outside the safe zone:
 	• Hides SideUI.Right.RandomBrainrot (only restores it inside the safe zone)
-	• Shows a minimal land radar (L1→L10) with player headshots
+	• Shows a cartoony land radar (L1→L10) with player headshots above luck tokens
 	Inside safe zone / HUD hidden: strip hides.
 ]]
 
@@ -24,27 +24,29 @@ local player = Players.LocalPlayer
 local LAND_ATTR = "CurrentLand"
 local MAX_LAND = 10
 local POLL_SEC = 0.18
-local SHOW_TWEEN = TweenInfo.new(0.32, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-local HIDE_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local MOVE_TWEEN = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local SHOW_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local HIDE_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local MOVE_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local INSIDE_STREAK = 2
 local OUTSIDE_STREAK = 2
 
--- Cartoony grass radar — chunky outline, sunny accents, big readable heads.
-local BAR = Color3.fromRGB(88, 178, 72)
-local BAR_DARK = Color3.fromRGB(42, 58, 36)
-local RAIL = Color3.fromRGB(255, 244, 168)
-local ACCENT = Color3.fromRGB(255, 220, 72)
-local LABEL = Color3.fromRGB(255, 255, 255)
-local LABEL_SHADOW = Color3.fromRGB(42, 58, 36)
-local YOU_RING = Color3.fromRGB(255, 92, 92)
+-- Cartoon sticker palette (cheese plate + grass track + ink outlines).
+local PLATE = Color3.fromRGB(255, 232, 140)
+local PLATE_EDGE = Color3.fromRGB(58, 38, 18)
+local TRACK = Color3.fromRGB(74, 168, 78)
+local TRACK_DARK = Color3.fromRGB(38, 98, 48)
+local TOKEN = Color3.fromRGB(255, 248, 210)
+local TOKEN_INK = Color3.fromRGB(58, 38, 18)
+local YOU_RING = Color3.fromRGB(255, 70, 70)
 local OTHER_RING = Color3.fromRGB(255, 255, 255)
+local STEM = Color3.fromRGB(58, 38, 18)
 
 type AvatarSlot = {
 	player: Player,
 	root: Frame,
 	icon: ImageLabel,
 	ring: UIStroke,
+	stem: Frame?,
 	nameTip: TextLabel?,
 	land: number,
 	stackIndex: number,
@@ -52,11 +54,13 @@ type AvatarSlot = {
 
 local randomBrainrotFrame: GuiObject? = nil
 local stripGui: ScreenGui? = nil
-local stripRoot: CanvasGroup? = nil
+local stripRoot: Frame? = nil
 local stripScale: UIScale? = nil
+local plateFrame: Frame? = nil
 local avatarsHost: Frame? = nil
 local landTicks: { Frame } = {}
 local landLabels: { TextLabel } = {}
+local landTokens: { Frame } = {}
 
 local slotsByUserId: { [number]: AvatarSlot } = {}
 local attrConns: { [Player]: RBXScriptConnection } = {}
@@ -67,6 +71,8 @@ local outsideStreak = 0
 local insideStreak = 0
 local heartbeatConn: RBXScriptConnection? = nil
 local pulseToken = 0
+local bobConn: RBXScriptConnection? = nil
+local bobPhase = 0
 
 local function headshotUrl(userId: number): string
 	return string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", userId)
@@ -89,7 +95,7 @@ end
 
 local function landXScale(land: number): number
 	local t = (math.clamp(land, 1, MAX_LAND) - 1) / (MAX_LAND - 1)
-	return 0.035 + t * 0.93
+	return 0.05 + t * 0.9
 end
 
 local function isOutsideSafezone(): boolean
@@ -110,7 +116,6 @@ local function shouldShowStrip(): boolean
 	return isOutsideSafezone()
 end
 
--- RandomBrainrot is a safezone-only HUD piece — never flash it outside / under panels.
 local function shouldShowRandomBrainrot(): boolean
 	if GameplayUiVisibility.isHidden() then
 		return false
@@ -152,6 +157,36 @@ local function cancelVisibilityTween()
 	end
 end
 
+local function setStripAlpha(alpha: number)
+	-- Frame-based fade (CanvasGroup was clipping heads outside its rect).
+	if plateFrame then
+		plateFrame.BackgroundTransparency = 0.08 + (1 - alpha) * 0.92
+		local stroke = plateFrame:FindFirstChildOfClass("UIStroke")
+		if stroke then
+			stroke.Transparency = (1 - alpha) * 0.95
+		end
+	end
+	for _, token in landTokens do
+		token.BackgroundTransparency = 0.05 + (1 - alpha) * 0.95
+		local stroke = token:FindFirstChildOfClass("UIStroke")
+		if stroke then
+			stroke.Transparency = (1 - alpha) * 0.95
+		end
+	end
+	for _, label in landLabels do
+		label.TextTransparency = 1 - alpha
+		label.TextStrokeTransparency = 0.45 + (1 - alpha) * 0.55
+	end
+	for _, slot in slotsByUserId do
+		slot.root.Visible = alpha > 0.08
+		slot.icon.ImageTransparency = 1 - alpha
+		slot.ring.Transparency = 1 - alpha
+		if slot.stem then
+			slot.stem.BackgroundTransparency = 0.15 + (1 - alpha) * 0.85
+		end
+	end
+end
+
 local function applyVisibility(show: boolean, instant: boolean?)
 	if not stripRoot or not stripScale then
 		return
@@ -168,35 +203,50 @@ local function applyVisibility(show: boolean, instant: boolean?)
 		stripRoot.Visible = true
 		if instant then
 			stripScale.Scale = 1
-			stripRoot.GroupTransparency = 0
+			setStripAlpha(1)
 			return
 		end
-		stripScale.Scale = 0.92
-		stripRoot.GroupTransparency = 1
+		stripScale.Scale = 0.78
+		setStripAlpha(0)
 		visibilityTween = TweenService:Create(stripScale, SHOW_TWEEN, { Scale = 1 })
 		visibilityTween:Play()
-		TweenService:Create(stripRoot, TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			GroupTransparency = 0,
-		}):Play()
+		local nv = Instance.new("NumberValue")
+		nv.Value = 0
+		local tw = TweenService:Create(nv, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Value = 1 })
+		local conn = nv.Changed:Connect(function()
+			setStripAlpha(nv.Value)
+		end)
+		tw.Completed:Once(function()
+			conn:Disconnect()
+			nv:Destroy()
+			setStripAlpha(1)
+		end)
+		tw:Play()
 	else
-		-- Only restore RandomBrainrot when actually in safezone (never mid-panel / jungle).
 		syncRandomBrainrot()
 		if instant then
 			stripRoot.Visible = false
-			stripScale.Scale = 0.92
-			stripRoot.GroupTransparency = 1
+			stripScale.Scale = 0.78
+			setStripAlpha(0)
 			return
 		end
-		visibilityTween = TweenService:Create(stripScale, HIDE_TWEEN, { Scale = 0.92 })
+		visibilityTween = TweenService:Create(stripScale, HIDE_TWEEN, { Scale = 0.86 })
 		visibilityTween:Play()
-		TweenService:Create(stripRoot, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-			GroupTransparency = 1,
-		}):Play()
-		visibilityTween.Completed:Connect(function(state)
-			if state == Enum.PlaybackState.Completed and not visibleTarget and stripRoot then
+		local nv = Instance.new("NumberValue")
+		nv.Value = 1
+		local tw = TweenService:Create(nv, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Value = 0 })
+		local conn = nv.Changed:Connect(function()
+			setStripAlpha(nv.Value)
+		end)
+		tw.Completed:Once(function()
+			conn:Disconnect()
+			nv:Destroy()
+			setStripAlpha(0)
+			if not visibleTarget and stripRoot then
 				stripRoot.Visible = false
 			end
 		end)
+		tw:Play()
 	end
 end
 
@@ -238,83 +288,136 @@ local function ensureSlot(plr: Player): AvatarSlot?
 		return nil
 	end
 
-	local size = if isMobile() then 36 else 42
+	local size = if isMobile() then 40 else 48
 	local root = Instance.new("Frame")
 	root.Name = "Avatar_" .. tostring(plr.UserId)
 	root.AnchorPoint = Vector2.new(0.5, 1)
 	root.Size = UDim2.fromOffset(size, size)
 	root.BackgroundTransparency = 1
 	root.BorderSizePixel = 0
-	root.ZIndex = 50
+	root.ZIndex = 60
 	root.Active = true
 	root.Parent = avatarsHost
 
-	-- Soft drop shadow under the head so it pops off the bar.
+	-- Stick/stem down to the land token.
+	local stem = Instance.new("Frame")
+	stem.Name = "Stem"
+	stem.AnchorPoint = Vector2.new(0.5, 0)
+	stem.Position = UDim2.new(0.5, 0, 1, -2)
+	stem.Size = UDim2.fromOffset(3, if isMobile() then 14 else 16)
+	stem.BackgroundColor3 = STEM
+	stem.BackgroundTransparency = 0.15
+	stem.BorderSizePixel = 0
+	stem.ZIndex = 58
+	stem.Parent = root
+	local stemCorner = Instance.new("UICorner")
+	stemCorner.CornerRadius = UDim.new(1, 0)
+	stemCorner.Parent = stem
+
 	local shadow = Instance.new("Frame")
 	shadow.Name = "Shadow"
 	shadow.AnchorPoint = Vector2.new(0.5, 0.5)
-	shadow.Position = UDim2.new(0.5, 0, 0.5, 2)
-	shadow.Size = UDim2.new(1, 4, 1, 4)
+	shadow.Position = UDim2.new(0.5, 1, 0.5, 3)
+	shadow.Size = UDim2.new(1, 6, 1, 6)
 	shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	shadow.BackgroundTransparency = 0.55
+	shadow.BackgroundTransparency = 0.62
 	shadow.BorderSizePixel = 0
-	shadow.ZIndex = 49
+	shadow.ZIndex = 59
 	shadow.Parent = root
 	local shadowCorner = Instance.new("UICorner")
 	shadowCorner.CornerRadius = UDim.new(1, 0)
 	shadowCorner.Parent = shadow
 
+	local badge = Instance.new("Frame")
+	badge.Name = "Badge"
+	badge.Size = UDim2.fromScale(1, 1)
+	badge.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	badge.BorderSizePixel = 0
+	badge.ZIndex = 61
+	badge.Parent = root
+	local badgeCorner = Instance.new("UICorner")
+	badgeCorner.CornerRadius = UDim.new(1, 0)
+	badgeCorner.Parent = badge
+
+	local ink = Instance.new("UIStroke")
+	ink.Thickness = 3
+	ink.Color = PLATE_EDGE
+	ink.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	ink.Parent = badge
+
 	local icon = Instance.new("ImageLabel")
 	icon.Name = "Head"
-	icon.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-	icon.BackgroundTransparency = 0
+	icon.BackgroundTransparency = 1
 	icon.BorderSizePixel = 0
-	icon.Size = UDim2.fromScale(1, 1)
+	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.Position = UDim2.fromScale(0.5, 0.5)
+	icon.Size = UDim2.fromScale(0.86, 0.86)
 	icon.Image = headshotUrl(plr.UserId)
 	icon.ScaleType = Enum.ScaleType.Crop
-	icon.ZIndex = 52
+	icon.ZIndex = 62
 	icon.Active = false
-	icon.Parent = root
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(1, 0)
-	corner.Parent = icon
+	icon.Parent = badge
+	local iconCorner = Instance.new("UICorner")
+	iconCorner.CornerRadius = UDim.new(1, 0)
+	iconCorner.Parent = icon
 
 	local ring = Instance.new("UIStroke")
-	ring.Thickness = if plr == player then 3.5 else 3
+	ring.Thickness = if plr == player then 3.5 else 2.5
 	ring.Color = if plr == player then YOU_RING else OTHER_RING
 	ring.Transparency = 0
 	ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	ring.Parent = icon
 
-	local outerRing = Instance.new("UIStroke")
-	outerRing.Thickness = 1.5
-	outerRing.Color = BAR_DARK
-	outerRing.Transparency = 0
-	outerRing.Parent = icon
+	if plr == player then
+		local pin = Instance.new("TextLabel")
+		pin.Name = "YouPin"
+		pin.AnchorPoint = Vector2.new(0.5, 1)
+		pin.Position = UDim2.new(0.5, 0, 0, 2)
+		pin.Size = UDim2.fromOffset(28, 14)
+		pin.BackgroundColor3 = YOU_RING
+		pin.BackgroundTransparency = 0
+		pin.BorderSizePixel = 0
+		pin.Text = "YOU"
+		pin.TextColor3 = Color3.fromRGB(255, 255, 255)
+		pin.TextSize = 9
+		pin.ZIndex = 70
+		UiFonts.applyBody(pin)
+		pin.Parent = root
+		local pinCorner = Instance.new("UICorner")
+		pinCorner.CornerRadius = UDim.new(0, 6)
+		pinCorner.Parent = pin
+		local pinStroke = Instance.new("UIStroke")
+		pinStroke.Thickness = 2
+		pinStroke.Color = PLATE_EDGE
+		pinStroke.Parent = pin
+	end
 
 	local tip = Instance.new("TextLabel")
 	tip.Name = "NameTip"
-	tip.BackgroundColor3 = Color3.fromRGB(8, 10, 9)
-	tip.BackgroundTransparency = 0.2
-	tip.Size = UDim2.new(0, 76, 0, 15)
-	tip.Position = UDim2.new(0.5, 0, 0, -6)
+	tip.BackgroundColor3 = PLATE
+	tip.BackgroundTransparency = 0.05
+	tip.Size = UDim2.new(0, 84, 0, 16)
+	tip.Position = UDim2.new(0.5, 0, 0, -18)
 	tip.AnchorPoint = Vector2.new(0.5, 1)
 	tip.Text = plr.DisplayName
-	tip.TextColor3 = Color3.fromRGB(245, 255, 248)
+	tip.TextColor3 = PLATE_EDGE
 	tip.TextStrokeTransparency = 1
 	tip.TextSize = 10
 	tip.TextTruncate = Enum.TextTruncate.AtEnd
 	tip.Visible = false
-	tip.ZIndex = 60
+	tip.ZIndex = 80
 	UiFonts.applyBody(tip)
 	tip.Parent = root
 	local tipCorner = Instance.new("UICorner")
-	tipCorner.CornerRadius = UDim.new(0, 5)
+	tipCorner.CornerRadius = UDim.new(0, 7)
 	tipCorner.Parent = tip
+	local tipStroke = Instance.new("UIStroke")
+	tipStroke.Thickness = 2
+	tipStroke.Color = PLATE_EDGE
+	tipStroke.Parent = tip
 	local tipPad = Instance.new("UIPadding")
-	tipPad.PaddingLeft = UDim.new(0, 5)
-	tipPad.PaddingRight = UDim.new(0, 5)
+	tipPad.PaddingLeft = UDim.new(0, 6)
+	tipPad.PaddingRight = UDim.new(0, 6)
 	tipPad.Parent = tip
 
 	root.MouseEnter:Connect(function()
@@ -329,6 +432,7 @@ local function ensureSlot(plr: Player): AvatarSlot?
 		root = root,
 		icon = icon,
 		ring = ring,
+		stem = stem,
 		nameTip = tip,
 		land = 0,
 		stackIndex = 0,
@@ -355,18 +459,17 @@ local function layoutStacks()
 		end
 	end
 
+	local headY = if isMobile() then 46 else 54
 	for land, list in byLand do
 		local baseX = landXScale(land)
 		for i, slot in ipairs(list) do
 			slot.stackIndex = i
 			local stack = i - 1
-			local xJitter = ((stack % 3) - 1) * 0.01
-			local yLift = stack * (if isMobile() then 12 else 14)
-			-- Heads sit clearly above the chunky bar.
-			local goal = UDim2.new(baseX + xJitter, 0, 0, if isMobile() then 38 else 42)
-			goal = UDim2.new(goal.X.Scale, goal.X.Offset, goal.Y.Scale, goal.Y.Offset - yLift)
+			local xJitter = ((stack % 3) - 1) * 0.012
+			local yLift = stack * (if isMobile() then 13 else 15)
+			local goal = UDim2.new(baseX + xJitter, 0, 0, headY - yLift)
 			slot.root.AnchorPoint = Vector2.new(0.5, 1)
-			slot.root.ZIndex = 50 + stack + (if slot.player == player then 10 else 0)
+			slot.root.ZIndex = 60 + stack + (if slot.player == player then 12 else 0)
 			TweenService:Create(slot.root, MOVE_TWEEN, { Position = goal }):Play()
 
 			if slot.player == player then
@@ -374,7 +477,7 @@ local function layoutStacks()
 				slot.ring.Thickness = 3.5
 			else
 				slot.ring.Color = OTHER_RING
-				slot.ring.Thickness = 3
+				slot.ring.Thickness = 2.5
 			end
 			slot.ring.Transparency = 0
 		end
@@ -396,7 +499,7 @@ local function syncPlayerSlot(plr: Player)
 	if slot.land ~= land then
 		slot.land = land
 		local scale = getOrAddUIScale(slot.root)
-		scale.Scale = 0.75
+		scale.Scale = 0.7
 		TweenService:Create(scale, SHOW_TWEEN, { Scale = 1 }):Play()
 	end
 	layoutStacks()
@@ -434,17 +537,17 @@ local function startLocalPulse()
 			local slot = slotsByUserId[player.UserId]
 			if slot and slot.root.Parent and visibleTarget then
 				local scale = getOrAddUIScale(slot.root)
-				TweenService:Create(scale, TweenInfo.new(0.65, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-					Scale = 1.1,
+				TweenService:Create(scale, TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+					Scale = 1.12,
 				}):Play()
-				task.wait(0.65)
+				task.wait(0.55)
 				if token ~= pulseToken then
 					break
 				end
-				TweenService:Create(scale, TweenInfo.new(0.65, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
+				TweenService:Create(scale, TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
 					Scale = 1,
 				}):Play()
-				task.wait(0.65)
+				task.wait(0.55)
 			else
 				task.wait(0.4)
 			end
@@ -475,9 +578,9 @@ end
 
 local function buildStrip(parentGui: PlayerGui)
 	local compact = isMobile()
-	local barHeight = if compact then 26 else 28
-	local height = if compact then 68 else 76
-	local widthScale = if compact then 0.78 else 0.56
+	local plateH = if compact then 34 else 38
+	local height = if compact then 86 else 96
+	local widthScale = if compact then 0.84 else 0.6
 
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "LandActivityStripGui"
@@ -489,118 +592,144 @@ local function buildStrip(parentGui: PlayerGui)
 	gui.Parent = parentGui
 	stripGui = gui
 
-	local root = Instance.new("CanvasGroup")
+	-- Plain Frame (not CanvasGroup) so heads above the plate aren't clipped.
+	local root = Instance.new("Frame")
 	root.Name = "LandActivityStrip"
 	root.AnchorPoint = Vector2.new(0.5, 1)
-	root.Position = UDim2.new(0.5, 0, 1, if compact then -6 else -8)
+	root.Position = UDim2.new(0.5, 0, 1, if compact then -4 else -6)
 	root.Size = UDim2.new(widthScale, 0, 0, height)
 	root.BackgroundTransparency = 1
 	root.BorderSizePixel = 0
-	root.GroupTransparency = 1
 	root.Visible = false
 	root.ZIndex = 40
 	root.ClipsDescendants = false
 	root.Parent = gui
 
 	local scale = Instance.new("UIScale")
-	scale.Scale = 0.92
+	scale.Scale = 0.78
 	scale.Parent = root
 
-	local bar = Instance.new("Frame")
-	bar.Name = "Bar"
-	bar.AnchorPoint = Vector2.new(0.5, 1)
-	bar.Position = UDim2.new(0.5, 0, 1, 0)
-	bar.Size = UDim2.new(1, 0, 0, barHeight)
-	bar.BackgroundColor3 = BAR
-	bar.BackgroundTransparency = 0
-	bar.BorderSizePixel = 0
-	bar.ZIndex = 40
-	bar.Parent = root
+	-- Drop shadow under the cheese plate.
+	local drop = Instance.new("Frame")
+	drop.Name = "DropShadow"
+	drop.AnchorPoint = Vector2.new(0.5, 1)
+	drop.Position = UDim2.new(0.5, 2, 1, 3)
+	drop.Size = UDim2.new(1, 8, 0, plateH + 4)
+	drop.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	drop.BackgroundTransparency = 0.72
+	drop.BorderSizePixel = 0
+	drop.ZIndex = 39
+	drop.Parent = root
+	local dropCorner = Instance.new("UICorner")
+	dropCorner.CornerRadius = UDim.new(0, 18)
+	dropCorner.Parent = drop
 
-	local barCorner = Instance.new("UICorner")
-	barCorner.CornerRadius = UDim.new(0, 14)
-	barCorner.Parent = bar
+	local plate = Instance.new("Frame")
+	plate.Name = "Plate"
+	plate.AnchorPoint = Vector2.new(0.5, 1)
+	plate.Position = UDim2.new(0.5, 0, 1, 0)
+	plate.Size = UDim2.new(1, 0, 0, plateH)
+	plate.BackgroundColor3 = PLATE
+	plate.BackgroundTransparency = 0.08
+	plate.BorderSizePixel = 0
+	plate.ZIndex = 40
+	plate.Parent = root
+	plateFrame = plate
 
-	local barStroke = Instance.new("UIStroke")
-	barStroke.Color = BAR_DARK
-	barStroke.Thickness = 3
-	barStroke.Transparency = 0
-	barStroke.Parent = bar
+	local plateCorner = Instance.new("UICorner")
+	plateCorner.CornerRadius = UDim.new(0, 16)
+	plateCorner.Parent = plate
 
-	local barShine = Instance.new("UIGradient")
-	barShine.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 210, 96)),
-		ColorSequenceKeypoint.new(0.5, BAR),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(66, 148, 58)),
+	local plateStroke = Instance.new("UIStroke")
+	plateStroke.Color = PLATE_EDGE
+	plateStroke.Thickness = 3.5
+	plateStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	plateStroke.Parent = plate
+
+	local plateShine = Instance.new("UIGradient")
+	plateShine.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 246, 190)),
+		ColorSequenceKeypoint.new(0.55, PLATE),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(236, 198, 92)),
 	})
-	barShine.Rotation = 90
-	barShine.Parent = bar
+	plateShine.Rotation = 90
+	plateShine.Parent = plate
 
-	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0, 12)
-	pad.PaddingRight = UDim.new(0, 12)
-	pad.PaddingTop = UDim.new(0, 2)
-	pad.PaddingBottom = UDim.new(0, 2)
-	pad.Parent = bar
+	-- Grass track inset.
+	local track = Instance.new("Frame")
+	track.Name = "Track"
+	track.AnchorPoint = Vector2.new(0.5, 0.5)
+	track.Position = UDim2.fromScale(0.5, 0.42)
+	track.Size = UDim2.new(1, -18, 0, if compact then 10 else 12)
+	track.BackgroundColor3 = TRACK
+	track.BorderSizePixel = 0
+	track.ZIndex = 41
+	track.Parent = plate
+	local trackCorner = Instance.new("UICorner")
+	trackCorner.CornerRadius = UDim.new(1, 0)
+	trackCorner.Parent = track
+	local trackStroke = Instance.new("UIStroke")
+	trackStroke.Color = TRACK_DARK
+	trackStroke.Thickness = 2
+	trackStroke.Parent = track
+	local trackGrad = Instance.new("UIGradient")
+	trackGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(98, 196, 96)),
+		ColorSequenceKeypoint.new(0.5, TRACK),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(56, 140, 64)),
+	})
+	trackGrad.Rotation = 90
+	trackGrad.Parent = track
 
-	local rail = Instance.new("Frame")
-	rail.Name = "Rail"
-	rail.AnchorPoint = Vector2.new(0.5, 0)
-	rail.Position = UDim2.new(0.5, 0, 0, 6)
-	rail.Size = UDim2.new(1, -8, 0, 3)
-	rail.BackgroundColor3 = RAIL
-	rail.BackgroundTransparency = 0.08
-	rail.BorderSizePixel = 0
-	rail.ZIndex = 41
-	rail.Parent = bar
-	local railCorner = Instance.new("UICorner")
-	railCorner.CornerRadius = UDim.new(1, 0)
-	railCorner.Parent = rail
-
-	local ticksHost = Instance.new("Frame")
-	ticksHost.Name = "Ticks"
-	ticksHost.BackgroundTransparency = 1
-	ticksHost.Size = UDim2.fromScale(1, 1)
-	ticksHost.ZIndex = 42
-	ticksHost.Parent = bar
+	local tokensHost = Instance.new("Frame")
+	tokensHost.Name = "Tokens"
+	tokensHost.BackgroundTransparency = 1
+	tokensHost.Size = UDim2.fromScale(1, 1)
+	tokensHost.ZIndex = 45
+	tokensHost.Parent = plate
 
 	table.clear(landTicks)
 	table.clear(landLabels)
+	table.clear(landTokens)
 	for land = 1, MAX_LAND do
 		local x = landXScale(land)
 
-		local tick = Instance.new("Frame")
-		tick.Name = "Tick" .. tostring(land)
-		tick.AnchorPoint = Vector2.new(0.5, 0)
-		tick.Position = UDim2.new(x, 0, 0, 5)
-		tick.Size = UDim2.fromOffset(4, 4)
-		tick.BackgroundColor3 = ACCENT
-		tick.BackgroundTransparency = 0
-		tick.BorderSizePixel = 0
-		tick.ZIndex = 43
-		tick.Parent = ticksHost
-		local tickCorner = Instance.new("UICorner")
-		tickCorner.CornerRadius = UDim.new(1, 0)
-		tickCorner.Parent = tick
-		local tickStroke = Instance.new("UIStroke")
-		tickStroke.Color = BAR_DARK
-		tickStroke.Thickness = 1
-		tickStroke.Parent = tick
-		table.insert(landTicks, tick)
+		local peg = Instance.new("Frame")
+		peg.Name = "Peg" .. tostring(land)
+		peg.AnchorPoint = Vector2.new(0.5, 0.5)
+		peg.Position = UDim2.new(x, 0, 0.42, 0)
+		peg.Size = UDim2.fromOffset(6, 6)
+		peg.BackgroundColor3 = Color3.fromRGB(255, 220, 70)
+		peg.BorderSizePixel = 0
+		peg.ZIndex = 46
+		peg.Parent = tokensHost
+		local pegCorner = Instance.new("UICorner")
+		pegCorner.CornerRadius = UDim.new(1, 0)
+		pegCorner.Parent = peg
+		local pegStroke = Instance.new("UIStroke")
+		pegStroke.Color = PLATE_EDGE
+		pegStroke.Thickness = 1.5
+		pegStroke.Parent = peg
+		table.insert(landTicks, peg)
 
-		local pill = Instance.new("Frame")
-		pill.Name = "Pill" .. tostring(land)
-		pill.AnchorPoint = Vector2.new(0.5, 0)
-		pill.Position = UDim2.new(x, 0, 0, 11)
-		pill.Size = UDim2.fromOffset(if compact then 30 else 34, if compact then 14 else 15)
-		pill.BackgroundColor3 = BAR_DARK
-		pill.BackgroundTransparency = 0.12
-		pill.BorderSizePixel = 0
-		pill.ZIndex = 43
-		pill.Parent = ticksHost
-		local pillCorner = Instance.new("UICorner")
-		pillCorner.CornerRadius = UDim.new(1, 0)
-		pillCorner.Parent = pill
+		local token = Instance.new("Frame")
+		token.Name = "Token" .. tostring(land)
+		token.AnchorPoint = Vector2.new(0.5, 0)
+		token.Position = UDim2.new(x, 0, 0.58, 0)
+		token.Size = UDim2.fromOffset(if compact then 30 else 34, if compact then 15 else 16)
+		token.BackgroundColor3 = TOKEN
+		token.BackgroundTransparency = 0.05
+		token.BorderSizePixel = 0
+		token.ZIndex = 47
+		token.Parent = tokensHost
+		local tokenCorner = Instance.new("UICorner")
+		tokenCorner.CornerRadius = UDim.new(0, 8)
+		tokenCorner.Parent = token
+		local tokenStroke = Instance.new("UIStroke")
+		tokenStroke.Color = TOKEN_INK
+		tokenStroke.Thickness = 2
+		tokenStroke.Parent = token
+		table.insert(landTokens, token)
 
 		local label = Instance.new("TextLabel")
 		label.Name = "L" .. tostring(land)
@@ -609,13 +738,12 @@ local function buildStrip(parentGui: PlayerGui)
 		label.Position = UDim2.fromScale(0.5, 0.5)
 		label.Size = UDim2.fromScale(1, 1)
 		label.Text = formatLandLuckLabel(land)
-		label.TextColor3 = LABEL
-		label.TextStrokeColor3 = LABEL_SHADOW
-		label.TextStrokeTransparency = 0.35
+		label.TextColor3 = TOKEN_INK
+		label.TextStrokeTransparency = 1
 		label.TextSize = if compact then 9 else 10
-		label.ZIndex = 44
+		label.ZIndex = 48
 		UiFonts.applyBody(label)
-		label.Parent = pill
+		label.Parent = token
 		table.insert(landLabels, label)
 	end
 
@@ -623,13 +751,25 @@ local function buildStrip(parentGui: PlayerGui)
 	avatars.Name = "Avatars"
 	avatars.BackgroundTransparency = 1
 	avatars.Size = UDim2.fromScale(1, 1)
-	avatars.ZIndex = 50
+	avatars.ZIndex = 60
 	avatars.ClipsDescendants = false
 	avatars.Parent = root
 
 	stripRoot = root
 	stripScale = scale
 	avatarsHost = avatars
+
+	if bobConn then
+		bobConn:Disconnect()
+	end
+	bobConn = RunService.Heartbeat:Connect(function(dt)
+		if not visibleTarget or not stripRoot then
+			return
+		end
+		bobPhase += dt
+		local y = if compact then -4 else -6
+		stripRoot.Position = UDim2.new(0.5, 0, 1, y + math.sin(bobPhase * 1.6) * 1.5)
+	end)
 
 	task.spawn(function()
 		for _ = 1, 12 do

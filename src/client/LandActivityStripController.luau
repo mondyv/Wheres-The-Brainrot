@@ -9,7 +9,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
@@ -33,7 +32,6 @@ local OUTSIDE_STREAK = 2
 
 -- Soft glass plate + rainbow track + readable luck chips (no loud yellow borders).
 local PLATE = Color3.fromRGB(12, 18, 16)
-local PLATE_EDGE = Color3.fromRGB(255, 255, 255)
 local TRACK = Color3.fromRGB(255, 255, 255)
 local TOKEN = Color3.fromRGB(18, 22, 20)
 local TOKEN_FACE = Color3.fromRGB(255, 250, 235)

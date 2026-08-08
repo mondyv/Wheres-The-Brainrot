@@ -9,11 +9,12 @@ local Workspace = game:GetService("Workspace")
 
 local PlotSpawnUtil = {}
 
-local SPAWN_CLEARANCE = 3.25
-local STREAM_RETRIES = 28
-local STREAM_RETRY_INTERVAL = 0.25
+local SPAWN_CLEARANCE = 4.5
+local STREAM_RETRIES = 40
+local STREAM_RETRY_INTERVAL = 0.2
 -- Longer stream window helps console / PS4 emulation (tighter client radii).
 local STREAM_RADIUS_SEC = 14
+local SUNK_Y_THRESHOLD = 1.25
 
 local function expandPartBounds(cf: CFrame, size: Vector3, minV: Vector3, maxV: Vector3): (Vector3, Vector3)
 	local hs = size * 0.5
@@ -638,6 +639,12 @@ function PlotSpawnUtil.streamAndTeleportWithRetries(player: Player, character: M
 	end
 
 	PlotSpawnUtil.teleportCharacterToCFrame(character, spawnCf)
+	-- Immediate second snap after stream request — first frame often falls through.
+	task.defer(function()
+		if player.Parent and player.Character == character then
+			PlotSpawnUtil.teleportCharacterToCFrame(character, spawnCf)
+		end
+	end)
 
 	task.spawn(function()
 		for _ = 1, STREAM_RETRIES do
@@ -656,8 +663,8 @@ function PlotSpawnUtil.streamAndTeleportWithRetries(player: Player, character: M
 			local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
 			if hrp then
 				local drift = (hrp.Position - spawnCf.Position).Magnitude
-				local sunk = hrp.Position.Y < spawnCf.Position.Y - 6
-				-- Still falling / slid far from spawn pad — snap again.
+				local sunk = hrp.Position.Y < spawnCf.Position.Y - SUNK_Y_THRESHOLD
+				-- Still falling / under the pad / slid far — snap again.
 				if drift > 8 or sunk then
 					if Workspace.StreamingEnabled and (drift > 20 or sunk) then
 						pcall(function()
@@ -665,11 +672,16 @@ function PlotSpawnUtil.streamAndTeleportWithRetries(player: Player, character: M
 						end)
 					end
 					PlotSpawnUtil.teleportCharacterToCFrame(char, spawnCf)
-				elseif drift <= 8 then
+				elseif drift <= 6 then
 					-- Settled near spawn; one final zero-velocity settle then stop.
 					hrp.AssemblyLinearVelocity = Vector3.zero
 					hrp.AssemblyAngularVelocity = Vector3.zero
-					return
+					-- Final floor check — if we dipped under, keep correcting.
+					if hrp.Position.Y < spawnCf.Position.Y - SUNK_Y_THRESHOLD then
+						PlotSpawnUtil.teleportCharacterToCFrame(char, spawnCf)
+					else
+						return
+					end
 				end
 			else
 				PlotSpawnUtil.teleportCharacterToCFrame(char, spawnCf)

@@ -34,6 +34,11 @@ local function refreshPlayer(player: Player)
 		setLand(player, 0)
 		return
 	end
+	-- Until zone parts are cached, stay on "base" so jungle UI doesn't flash at spawn.
+	if not SafezoneUtil.isCacheReady() then
+		setLand(player, 0)
+		return
+	end
 	if SafezoneUtil.isCharacterInSafezone(character) then
 		setLand(player, 0)
 		return

@@ -46,6 +46,18 @@ local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolea
 		and math.abs(localPt.Z) <= half.Z
 end
 
+-- Safezone volumes are flat pads. Falling through an unstreamed floor (or slight
+-- Y drift) must still count as "in base" — otherwise Return / land strip flash on.
+local function isPointInsideSafezonePart(worldPoint: Vector3, part: BasePart): boolean
+	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
+	local half = part.Size * 0.5
+	local xzPad = 5
+	local ySlack = math.max(half.Y + 64, 120)
+	return math.abs(localPt.X) <= half.X + xzPad
+		and math.abs(localPt.Z) <= half.Z + xzPad
+		and math.abs(localPt.Y) <= ySlack
+end
+
 local function getSpawnBasesFolder(): Instance?
 	local map = workspace:FindFirstChild("Map")
 	if not map then
@@ -270,6 +282,18 @@ local function isWorldPointInsideParts(worldPoint: Vector3, parts: { BasePart }?
 	return false
 end
 
+local function isWorldPointInsideSafezoneParts(worldPoint: Vector3, parts: { BasePart }?): boolean
+	if not parts or #parts == 0 then
+		return false
+	end
+	for _, part in parts do
+		if part.Parent and isPointInsideSafezonePart(worldPoint, part) then
+			return true
+		end
+	end
+	return false
+end
+
 function SafezoneUtil.awaitCacheReady(timeoutSec: number): boolean
 	local deadline = os.clock() + math.max(timeoutSec, 0)
 	ensureCaches()
@@ -297,7 +321,7 @@ end
 
 function SafezoneUtil.isWorldPointInSafezone(worldPoint: Vector3): boolean
 	ensureCaches()
-	return isWorldPointInsideParts(worldPoint, cachedInventoryParts)
+	return isWorldPointInsideSafezoneParts(worldPoint, cachedInventoryParts)
 end
 
 function SafezoneUtil.isWorldPointInRedWall(worldPoint: Vector3): boolean

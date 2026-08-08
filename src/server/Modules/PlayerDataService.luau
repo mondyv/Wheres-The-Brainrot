@@ -362,6 +362,10 @@ local function normalizeSettings(raw: any): PlayerDataSchema.PlayerSettingsSaveD
 	elseif raw.skipSpiderCutscene ~= nil then
 		spiderCutscene = true
 	end
+	-- One-shot: shop cutscenes now default OFF. After migration flag is saved, respect player choice.
+	local shopCutscene = if raw.shopCutsceneDefaultOffMigrated == true
+		then readBool(raw.shopCutsceneEnabled, d.shopCutsceneEnabled)
+		else false
 	return {
 		musicVolume = clamp01(raw.musicVolume, d.musicVolume),
 		sfxVolume = clamp01(raw.sfxVolume, d.sfxVolume),
@@ -371,7 +375,7 @@ local function normalizeSettings(raw: any): PlayerDataSchema.PlayerSettingsSaveD
 		brainrotVfxEnabled = readBool(raw.brainrotVfxEnabled, d.brainrotVfxEnabled),
 		globalMessagesEnabled = readBool(raw.globalMessagesEnabled, d.globalMessagesEnabled),
 		spiderCutsceneEnabled = spiderCutscene,
-		shopCutsceneEnabled = readBool(raw.shopCutsceneEnabled, d.shopCutsceneEnabled),
+		shopCutsceneEnabled = shopCutscene,
 		lowGraphicsEnabled = readBool(raw.lowGraphicsEnabled, d.lowGraphicsEnabled),
 		holdToSwingEnabled = readBool(raw.holdToSwingEnabled, d.holdToSwingEnabled),
 	}
@@ -470,7 +474,12 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		equipSlot = equipSlot,
 		stands = stands,
 		lastSavedAt = os.time(),
-		settings = collectSettings(player),
+		settings = (function()
+			local s = collectSettings(player) :: any
+			-- Persist one-shot migration so we don't keep resetting players who re-enable cutscenes.
+			s.shopCutsceneDefaultOffMigrated = true
+			return s
+		end)(),
 		tutorialCompleted = player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true,
 		tutorialCashGranted = player:GetAttribute(PlayerDataSchema.TUTORIAL_CASH_GRANTED_ATTR) == true,
 		tutorialFirstBushClaimed = player:GetAttribute(PlayerDataSchema.TUTORIAL_FIRST_BUSH_CLAIMED_ATTR) == true,

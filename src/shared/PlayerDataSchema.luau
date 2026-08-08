@@ -129,7 +129,8 @@ M.DEFAULT_SETTINGS = {
 	brainrotVfxEnabled = true,
 	globalMessagesEnabled = true,
 	spiderCutsceneEnabled = true,
-	shopCutsceneEnabled = true,
+	-- Off by default: charge bar + overhead welcome, then open the panel (no Undertale cutscene).
+	shopCutsceneEnabled = false,
 	lowGraphicsEnabled = false,
 	-- Default off: press jump to attach, press jump again to release.
 	holdToSwingEnabled = false,

@@ -68,8 +68,8 @@ local function blurTargetSize(): number
 end
 
 -- Tween configs
-local OPEN_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local CLOSE_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+local OPEN_TWEEN = TweenInfo.new(0.44, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local CLOSE_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.In)
 local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
@@ -437,13 +437,17 @@ local function animateOpen(frame: Frame)
 	frame.Visible = true
 	local rest = panelRestScale(frame)
 	local scale = getOrAddUIScale(frame)
-	scale.Scale = rest * 0.82
+	scale.Scale = rest * 0.78
+	frame.Rotation = -1.2
 	TweenService:Create(scale, OPEN_TWEEN, { Scale = rest }):Play()
+	TweenService:Create(frame, TweenInfo.new(0.36, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Rotation = 0,
+	}):Play()
 	PanelSlideIn.playForPanel(frame)
 end
 
 local function animateClose(frame: Frame)
-	PanelSlideIn.cancel()
+	PanelSlideIn.playCloseForPanel(frame)
 	local prevTween = closeTweenByFrame[frame]
 	if prevTween then
 		prevTween:Cancel()
@@ -451,13 +455,17 @@ local function animateClose(frame: Frame)
 	end
 	local rest = panelRestScale(frame)
 	local scale = getOrAddUIScale(frame)
-	local t = TweenService:Create(scale, CLOSE_TWEEN, { Scale = rest * 0.72 })
+	TweenService:Create(frame, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+		Rotation = 1.4,
+	}):Play()
+	local t = TweenService:Create(scale, CLOSE_TWEEN, { Scale = rest * 0.78 })
 	closeTweenByFrame[frame] = t
 	t.Completed:Once(function()
 		closeTweenByFrame[frame] = nil
 		frame.Visible = false
 		frame.Active = false
-		scale.Scale = rest * 0.82
+		frame.Rotation = 0
+		scale.Scale = rest * 0.78
 		panelClosing = false
 		if syncFramesInputPassthrough then
 			syncFramesInputPassthrough()

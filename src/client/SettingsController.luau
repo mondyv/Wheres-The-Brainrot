@@ -8,7 +8,8 @@
 	• Row whose label contains "other" (or Button3) → ShowOtherBrainrots; default on.
 	• Row whose label contains "vfx" (or Button4) → BrainrotVFXEnabled; default on.
 	• Button5 → SpiderCutsceneEnabled; default on = full spider cinematic (drop + rage + shoot). Off = soft look-at + QTE (still letterbox / HUD hide).
-	• Button6 → ShopCutsceneEnabled; default on = Undertale stand greetings. Off = walk up and open panels directly.
+	• Button6 → ShopCutsceneEnabled; default off = charge bar + overhead welcome, then open panel.
+	  On = Undertale stand greetings before Enter/Exit.
 	• Button7 → LowGraphicsEnabled; default off. Stronger cull (current land only +
 	  hide grass/trees), no shadows/bloom/fireflies/sway, lowest quality, VFX off.
 	• Button8 / "Button 8" → Turn off hold to swing. On (default) = press jump to attach, press again to release.
@@ -665,8 +666,8 @@ function SettingsController.init()
 		player:SetAttribute(PlayerDataSchema.SETTINGS_SPIDER_CUTSCENE_ATTR, true)
 	end
 	if player:GetAttribute("ShopCutsceneEnabled") == nil then
-		player:SetAttribute("ShopCutsceneEnabled", true)
-		player:SetAttribute(PlayerDataSchema.SETTINGS_SHOP_CUTSCENE_ATTR, true)
+		player:SetAttribute("ShopCutsceneEnabled", false)
+		player:SetAttribute(PlayerDataSchema.SETTINGS_SHOP_CUTSCENE_ATTR, false)
 	end
 	if player:GetAttribute("LowGraphicsEnabled") == nil then
 		player:SetAttribute("LowGraphicsEnabled", false)
@@ -774,7 +775,7 @@ function SettingsController.init()
 		elseif child == spiderCutsceneToggleRow then
 			toggleOn = player:GetAttribute("SpiderCutsceneEnabled") ~= false
 		elseif child == shopCutsceneToggleRow then
-			toggleOn = player:GetAttribute("ShopCutsceneEnabled") ~= false
+			toggleOn = player:GetAttribute("ShopCutsceneEnabled") == true
 		elseif child == lowGraphicsToggleRow then
 			toggleOn = player:GetAttribute("LowGraphicsEnabled") == true
 		elseif child == holdToSwingToggleRow then
@@ -832,7 +833,7 @@ function SettingsController.init()
 			elseif child == spiderCutsceneToggleRow then
 				toggleOn = player:GetAttribute("SpiderCutsceneEnabled") ~= false
 			elseif child == shopCutsceneToggleRow then
-				toggleOn = player:GetAttribute("ShopCutsceneEnabled") ~= false
+				toggleOn = player:GetAttribute("ShopCutsceneEnabled") == true
 			elseif child == slowToggleRow then
 				toggleOn = player:GetAttribute("SlowWalkEnabled") == true
 			elseif child == globalMessagesToggleRow then

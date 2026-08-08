@@ -2,9 +2,8 @@
 --[[
 	StandController
 	• Hitbox detection for UIStands pads
-	• Undertale-style dialogue cutscene before opening Shop / Sell / Upgrades
-	• Charge-in pad fill (~0.55s) before dialogue when cutscenes enabled
-	• Ensures stand brainrot idle animations play
+	• Default: charge bar + overhead welcome → open Shop / Sell / Upgrades panel
+	• Optional ShopCutsceneEnabled: Undertale dialogue before Enter/Exit
 	• Goodbye speech near brainrot when leaving after shopping or choosing Exit
 
 	Workspace path:  workspace.Map.UIStands.<Stand Name>.<HitboxPart>
@@ -114,6 +113,7 @@ local chargeAmount = 0
 local chargeBillboard: BillboardGui? = nil
 local chargeFill: Frame? = nil
 local chargeFillTween: Tween? = nil
+local welcomeShownFor: StandEntry? = nil
 
 local function syncBoothMusic(stand: StandEntry?)
 	local key = if stand then FRAME_TO_BOOTH[stand.frameName] else nil
@@ -128,7 +128,8 @@ local function cancelPendingClose()
 end
 
 local function shopCutsceneEnabled(): boolean
-	return player:GetAttribute("ShopCutsceneEnabled") ~= false
+	-- Explicit true only — nil/false = charge + direct open (default).
+	return player:GetAttribute("ShopCutsceneEnabled") == true
 end
 
 local function getHRP(): BasePart?
@@ -237,8 +238,12 @@ local function setChargeVisual(alpha: number)
 end
 
 local function resetCharge()
+	if welcomeShownFor then
+		StandDialogueCutscene.cancelWorldSpeech()
+	end
 	chargeStand = nil
 	chargeAmount = 0
+	welcomeShownFor = nil
 	destroyChargeUi()
 end
 
@@ -308,6 +313,36 @@ local function findBrainrotModel(standFolder: Instance, brainrotName: string): M
 		end
 	end
 	return nil
+end
+
+local function getWelcomeText(stand: StandEntry): string
+	local first = stand.lines[1]
+	if first and typeof(first.text) == "string" and first.text ~= "" then
+		return first.text
+	end
+	return "HEY!!"
+end
+
+local function showChargeWelcome(stand: StandEntry)
+	if welcomeShownFor == stand then
+		return
+	end
+	welcomeShownFor = stand
+	local brainrot = stand.brainrot
+	if not brainrot or not brainrot.Parent then
+		brainrot = findBrainrotModel(stand.standFolder, stand.brainrotName)
+		stand.brainrot = brainrot
+	end
+	if not brainrot then
+		return
+	end
+	StandDialogueCutscene.showWorldSpeech(brainrot, getWelcomeText(stand), {
+		durationSec = 1.45,
+		textSize = 16,
+		studsOffset = Vector3.new(0, 3.15, 0),
+		voicePitchMin = stand.voicePitchMin,
+		voicePitchMax = stand.voicePitchMax,
+	})
 end
 
 local function normalizeStandKey(name: string): string
@@ -465,7 +500,7 @@ local function beginDialogue(stand: StandEntry)
 	end)
 end
 
-local function updateCharge(stand: StandEntry, dt: number)
+local function updateCharge(stand: StandEntry, dt: number, onComplete: () -> ())
 	if not canChargeOnStand(stand) then
 		resetCharge()
 		return
@@ -473,12 +508,20 @@ local function updateCharge(stand: StandEntry, dt: number)
 	if chargeStand ~= stand then
 		chargeStand = stand
 		chargeAmount = 0
+		-- Direct-open path: welcome chatter while the pad charges.
+		if not shopCutsceneEnabled() then
+			showChargeWelcome(stand)
+		end
 	end
 	chargeAmount += dt / CHARGE_DURATION
 	setChargeVisual(chargeAmount)
 	if chargeAmount >= 1 then
-		resetCharge()
-		beginDialogue(stand)
+		-- Keep welcome balloon — don't cancelWorldSpeech via resetCharge.
+		welcomeShownFor = nil
+		chargeStand = nil
+		chargeAmount = 0
+		destroyChargeUi()
+		onComplete()
 	end
 end
 
@@ -553,10 +596,13 @@ local function tick(dt: number)
 		end
 
 		if not shopCutsceneEnabled() then
-			resetCharge()
-			openPanelDirect(insideStand)
+			updateCharge(insideStand, dt, function()
+				openPanelDirect(insideStand)
+			end)
 		else
-			updateCharge(insideStand, dt)
+			updateCharge(insideStand, dt, function()
+				beginDialogue(insideStand)
+			end)
 		end
 	else
 		dismissedStandKey = nil

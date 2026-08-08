@@ -1642,6 +1642,19 @@ end
 
 function StandDialogueCutscene.cancelWorldSpeech()
 	worldSpeechToken += 1
+	-- Clear any lingering overhead speech billboards on stand brainrots.
+	local map = workspace:FindFirstChild("Map")
+	local uiStands = map and map:FindFirstChild("UIStands")
+	if not uiStands then
+		return
+	end
+	for _, standFolder in uiStands:GetChildren() do
+		for _, d in standFolder:GetDescendants() do
+			if d.Name == WORLD_SPEECH_NAME then
+				d:Destroy()
+			end
+		end
+	end
 end
 
 function StandDialogueCutscene.setLetterboxSkipVisible(visible: boolean, onSkip: (() -> ())?)

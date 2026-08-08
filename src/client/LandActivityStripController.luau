@@ -16,8 +16,7 @@ local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
-local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
-local PlotLuck = SwingUpgrades.PlotLuck
+local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
 
 local LandActivityStripController = {}
@@ -64,6 +63,7 @@ type AvatarSlot = {
 }
 
 local randomBrainrotFrame: GuiObject? = nil
+local stripGui: ScreenGui? = nil
 local stripRoot: CanvasGroup? = nil
 local stripScale: UIScale? = nil
 local avatarsHost: Frame? = nil
@@ -226,7 +226,7 @@ local function ensureSlot(plr: Player): AvatarSlot?
 		return nil
 	end
 
-	local size = if isMobile() then 28 else 34
+	local size = if isMobile() then 16 else 18
 	local root = Instance.new("Frame")
 	root.Name = "Avatar_" .. tostring(plr.UserId)
 	root.AnchorPoint = Vector2.new(0.5, 1)
@@ -319,9 +319,9 @@ local function layoutStacks()
 		for i, slot in ipairs(list) do
 			slot.stackIndex = i
 			local stack = i - 1
-			local xJitter = ((stack % 3) - 1) * 0.012
-			local yLift = stack * (if isMobile() then 10 else 12)
-			local goal = UDim2.new(baseX + xJitter, 0, 1, -4 - yLift)
+			local xJitter = ((stack % 3) - 1) * 0.01
+			local yLift = stack * (if isMobile() then 7 else 8)
+			local goal = UDim2.new(baseX + xJitter, 0, 1, -2 - yLift)
 			slot.root.ZIndex = 20 + stack + (if slot.player == player then 5 else 0)
 			TweenService:Create(slot.root, MOVE_TWEEN, { Position = goal }):Play()
 
@@ -419,28 +419,62 @@ local function paintStudImage(label: ImageLabel, color: Color3, imageTransparenc
 	label.ImageColor3 = CHEESE_STUD
 	label.ImageTransparency = imageTransparency
 	label.ScaleType = Enum.ScaleType.Tile
-	label.TileSize = UDim2.fromOffset(28, 28)
+	label.TileSize = UDim2.fromOffset(22, 22)
 end
 
-local function buildStrip(parent: Instance)
+local function formatLandLuckLabel(land: number): string
+	-- Entry luck per land so L1→L10 stay ascending (max-of-folder scrambled the strip).
+	local luck = LandResolver.getEntryDisplayLuckForLand(land)
+	if luck <= 1 then
+		return "1x"
+	end
+	local n = math.floor(luck + 0.5)
+	if n >= 1000 then
+		return string.format("%dkx", math.floor(n / 1000 + 0.5))
+	end
+	return tostring(n) .. "x"
+end
+
+local function refreshLandLabels()
+	for land = 1, MAX_LAND do
+		local label = landLabels[land]
+		if label and label.Parent then
+			label.Text = formatLandLuckLabel(land)
+		end
+	end
+end
+
+local function buildStrip(parentGui: PlayerGui)
 	local compact = isMobile()
-	local height = if compact then 62 else 74
-	local widthScale = if compact then 0.94 else 0.74
+	local height = if compact then 32 else 34
+	local widthScale = if compact then 0.62 else 0.4
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "LandActivityStripGui"
+	gui.IgnoreGuiInset = true
+	gui.ResetOnSpawn = false
+	-- Below modal panels (offline / revive ~90+) so it never covers Decline.
+	gui.DisplayOrder = 18
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.Enabled = true
+	gui.Parent = parentGui
+	stripGui = gui
 
 	local root = Instance.new("CanvasGroup")
 	root.Name = "LandActivityStrip"
 	root.AnchorPoint = Vector2.new(0.5, 1)
-	root.Position = UDim2.new(0.5, 0, 1, if compact then -76 else -92)
+	-- Flush to the real bottom of the screen (IgnoreGuiInset).
+	root.Position = UDim2.new(0.5, 0, 1, if compact then -4 else -5)
 	root.Size = UDim2.new(widthScale, 0, 0, height)
 	root.BackgroundTransparency = 1
 	root.BorderSizePixel = 0
 	root.GroupTransparency = 1
 	root.Visible = false
 	root.ZIndex = 40
-	root.Parent = parent
+	root.Parent = gui
 
 	local scale = Instance.new("UIScale")
-	scale.Scale = 0.82
+	scale.Scale = 0.7
 	scale.Parent = root
 
 	-- Outer cheese ticket (matches Tim Cheese quest card).
@@ -449,76 +483,61 @@ local function buildStrip(parent: Instance)
 	ticket.Size = UDim2.fromScale(1, 1)
 	ticket.ZIndex = 40
 	ticket.ClipsDescendants = false
-	paintStudImage(ticket, CHEESE_OUTER, 0.78)
+	paintStudImage(ticket, CHEESE_OUTER, 0.8)
 	ticket.Parent = root
 
 	local ticketCorner = Instance.new("UICorner")
-	ticketCorner.CornerRadius = UDim.new(0, 8)
+	ticketCorner.CornerRadius = UDim.new(0, 6)
 	ticketCorner.Parent = ticket
 	local ticketStroke = Instance.new("UIStroke")
 	ticketStroke.Color = CHEESE_STROKE
-	ticketStroke.Thickness = 2.5
+	ticketStroke.Thickness = 2
 	ticketStroke.Parent = ticket
 
 	local floatPad = Instance.new("UIPadding")
-	floatPad.PaddingTop = UDim.new(0, 5)
-	floatPad.PaddingBottom = UDim.new(0, 5)
-	floatPad.PaddingLeft = UDim.new(0, 6)
-	floatPad.PaddingRight = UDim.new(0, 6)
+	floatPad.PaddingTop = UDim.new(0, 3)
+	floatPad.PaddingBottom = UDim.new(0, 3)
+	floatPad.PaddingLeft = UDim.new(0, 5)
+	floatPad.PaddingRight = UDim.new(0, 5)
 	floatPad.Parent = ticket
 
 	local inner = Instance.new("ImageLabel")
 	inner.Name = "Inner"
-	paintStudImage(inner, CHEESE_INNER, 0.82)
+	paintStudImage(inner, CHEESE_INNER, 0.84)
 	inner.Size = UDim2.fromScale(1, 1)
 	inner.ZIndex = 41
 	inner.ClipsDescendants = false
 	inner.Parent = ticket
 	local innerCorner = Instance.new("UICorner")
-	innerCorner.CornerRadius = UDim.new(0, 5)
+	innerCorner.CornerRadius = UDim.new(0, 4)
 	innerCorner.Parent = inner
 	local dash = Instance.new("UIStroke")
 	dash.Color = CHEESE_DASH
-	dash.Thickness = 1.2
-	dash.Transparency = 0.35
+	dash.Thickness = 1
+	dash.Transparency = 0.4
 	dash.Parent = inner
 
 	local title = Instance.new("TextLabel")
 	title.Name = "Title"
 	title.BackgroundTransparency = 1
 	title.AnchorPoint = Vector2.new(0, 0)
-	title.Position = UDim2.new(0, 8, 0, 3)
-	title.Size = UDim2.new(0.5, 0, 0, 14)
-	title.Text = "!! SERVER LANDS !!"
+	title.Position = UDim2.new(0, 6, 0, 1)
+	title.Size = UDim2.new(0.55, 0, 0, 11)
+	title.Text = "SERVER LANDS"
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.TextColor3 = CHEESE_STROKE
 	title.TextStrokeColor3 = Color3.fromRGB(255, 244, 180)
 	title.TextStrokeTransparency = 0.55
-	title.TextSize = 12
+	title.TextSize = 10
 	title.ZIndex = 45
 	UiFonts.applyBody(title)
 	title.Parent = inner
 
-	local subtitle = Instance.new("TextLabel")
-	subtitle.Name = "Subtitle"
-	subtitle.BackgroundTransparency = 1
-	subtitle.AnchorPoint = Vector2.new(1, 0)
-	subtitle.Position = UDim2.new(1, -8, 0, 3)
-	subtitle.Size = UDim2.new(0.45, 0, 0, 14)
-	subtitle.Text = "who's where"
-	subtitle.TextXAlignment = Enum.TextXAlignment.Right
-	subtitle.TextColor3 = CHEESE_DASH
-	subtitle.TextTransparency = 0.1
-	subtitle.TextSize = 11
-	subtitle.ZIndex = 45
-	UiFonts.applyBody(subtitle)
-	subtitle.Parent = inner
-
 	local trackFrame = Instance.new("Frame")
 	trackFrame.Name = "Track"
 	trackFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-	trackFrame.Position = UDim2.new(0.5, 0, 0.58, 0)
-	trackFrame.Size = UDim2.new(0.92, 0, 0, 5)
+	trackFrame.Position = UDim2.new(0.5, 0, 0.62, 0)
+	trackFrame.Size = UDim2.new(0.94, 0, 0, 3)
 	trackFrame.BackgroundColor3 = CHEESE_STROKE
 	trackFrame.BackgroundTransparency = 0.55
 	trackFrame.BorderSizePixel = 0
@@ -551,8 +570,8 @@ local function buildStrip(parent: Instance)
 		local tick = Instance.new("Frame")
 		tick.Name = "Tick" .. tostring(land)
 		tick.AnchorPoint = Vector2.new(0.5, 0.5)
-		tick.Position = UDim2.new(x, 0, 0.58, 0)
-		tick.Size = UDim2.fromOffset(8, 8)
+		tick.Position = UDim2.new(x, 0, 0.62, 0)
+		tick.Size = UDim2.fromOffset(5, 5)
 		tick.BackgroundColor3 = LAND_COLORS[land]
 		tick.BorderSizePixel = 0
 		tick.ZIndex = 44
@@ -562,8 +581,8 @@ local function buildStrip(parent: Instance)
 		tickCorner.Parent = tick
 		local tickStroke = Instance.new("UIStroke")
 		tickStroke.Color = CHEESE_STROKE
-		tickStroke.Thickness = 1.2
-		tickStroke.Transparency = 0.2
+		tickStroke.Thickness = 1
+		tickStroke.Transparency = 0.25
 		tickStroke.Parent = tick
 		table.insert(landTicks, tick)
 
@@ -571,13 +590,12 @@ local function buildStrip(parent: Instance)
 		label.Name = "L" .. tostring(land)
 		label.BackgroundTransparency = 1
 		label.AnchorPoint = Vector2.new(0.5, 0)
-		label.Position = UDim2.new(x, 0, 0.58, 9)
-		label.Size = UDim2.fromOffset(30, 12)
-		local luck = PlotLuck.DISPLAY_TIERS[land] or land
-		label.Text = if land == 1 then "1x" else (tostring(math.floor(luck)) .. "x")
+		label.Position = UDim2.new(x, 0, 0.62, 5)
+		label.Size = UDim2.fromOffset(28, 10)
+		label.Text = formatLandLuckLabel(land)
 		label.TextColor3 = CHEESE_STROKE
 		label.TextTransparency = 0.05
-		label.TextSize = 10
+		label.TextSize = 8
 		label.ZIndex = 44
 		UiFonts.applyBody(label)
 		label.Parent = ticksHost
@@ -595,6 +613,14 @@ local function buildStrip(parent: Instance)
 	stripRoot = root
 	stripScale = scale
 	avatarsHost = avatars
+
+	-- Luck hitboxes stream in late — refresh labels a few times.
+	task.spawn(function()
+		for _ = 1, 12 do
+			task.wait(1.25)
+			refreshLandLabels()
+		end
+	end)
 end
 
 function LandActivityStripController.init()
@@ -613,9 +639,16 @@ function LandActivityStripController.init()
 		warn("[LandActivityStripController] SideUI.Right.RandomBrainrot missing")
 	end
 
-	-- Parent under Main so GameplayUiVisibility can slide SideUI without losing the strip;
-	-- we manually hide with HUD.
-	buildStrip(main)
+	local playerGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 15)
+	if not playerGui or not playerGui:IsA("PlayerGui") then
+		warn("[LandActivityStripController] PlayerGui missing")
+		return
+	end
+	local existing = playerGui:FindFirstChild("LandActivityStripGui")
+	if existing then
+		existing:Destroy()
+	end
+	buildStrip(playerGui)
 
 	for _, plr in Players:GetPlayers() do
 		hookPlayer(plr)

@@ -65,9 +65,9 @@ local function teleportToPlotSpawn(player: Player, character: Model)
 
 	if reviveCf then
 		local targetPos = reviveCf.Position
-		-- Keep attrs briefly so late plot hooks don't overwrite the land revive.
+		-- Keep attrs longer so late AssignedPlotSlot hooks don't yank soft-respawn off QuestHitbox.
 		PlotSpawnUtil.streamAndTeleportWithRetries(player, character, reviveCf)
-		task.delay(2.5, function()
+		task.delay(6, function()
 			if not player.Parent then
 				return
 			end
@@ -93,7 +93,9 @@ local function teleportToPlotSpawn(player: Player, character: Model)
 		return
 	end
 
-	local spawnCf = PlotSpawnUtil.findFirstFloorSpawnCFrame(plot)
+	-- Same pad as ReturnTeleport (first-floor plot spawn).
+	local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+		or PlotSpawnUtil.findFirstFloorSpawnCFrame(plot)
 	if not spawnCf then
 		warn("[PlotPlayerSpawn] No Spawn/floor CFrame on plot for", player.Name)
 		return

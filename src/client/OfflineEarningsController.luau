@@ -30,7 +30,7 @@ local PANEL_HOST_NAME = "OfflineEarningsHost"
 local DIM_DISPLAY_ORDER = 90
 local PANEL_DISPLAY_ORDER = 95
 local DIM_COLOR = Color3.fromRGB(0, 0, 0)
-local DIM_TRANSPARENCY = 0.42
+local DIM_TRANSPARENCY = 0.58
 local AUTO_DECLINE_SEC = 45
 
 local OPEN_TWEEN = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
@@ -484,8 +484,36 @@ local function refreshRobuxPrice()
 	end)
 end
 
-local function wireButton(host: GuiObject, onClick: () -> (), alsoScale: GuiObject?)
+local function styleDeclineButton(host: GuiObject)
+	-- Soft, small, pinned to the bottom of the offline card / screen.
+	host.AnchorPoint = Vector2.new(0.5, 1)
+	host.Position = UDim2.new(0.5, 0, 1, -10)
+	if host.Size.Y.Offset > 36 or host.Size.Y.Scale > 0.12 then
+		host.Size = UDim2.new(0.4, 0, 0, 26)
+	end
+	host.BackgroundTransparency = math.max(host.BackgroundTransparency, 0.55)
+	if host:IsA("ImageLabel") or host:IsA("ImageButton") then
+		(host :: any).ImageTransparency = math.max((host :: any).ImageTransparency or 0, 0.4)
+	end
+	for _, d in host:GetDescendants() do
+		if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+			d.ImageTransparency = math.max(d.ImageTransparency, 0.35)
+		elseif d:IsA("Frame") and d.BackgroundTransparency < 0.5 then
+			d.BackgroundTransparency = 0.55
+		end
+	end
 	local scale = getOrAddUIScale(host)
+	scale.Scale = 0.78
+end
+
+local function wireButton(host: GuiObject, onClick: () -> (), alsoScale: GuiObject?)
+	if host.Name == "Decline Button" then
+		styleDeclineButton(host)
+	end
+	local scale = getOrAddUIScale(host)
+	local restScale = if host.Name == "Decline Button" then 0.78 else 1
+	local hoverScale = if host.Name == "Decline Button" then 0.84 else 1.06
+	local clickScale = if host.Name == "Decline Button" then 0.72 else 0.94
 	local extraScale: UIScale? = nil
 	if alsoScale and alsoScale ~= host then
 		extraScale = getOrAddUIScale(alsoScale)
@@ -508,19 +536,19 @@ local function wireButton(host: GuiObject, onClick: () -> (), alsoScale: GuiObje
 	end
 	clickBtn.MouseEnter:Connect(function()
 		UIInteractionSounds.playHover()
-		setScale(1.06)
+		setScale(hoverScale)
 	end)
 	clickBtn.MouseLeave:Connect(function()
-		setScale(1)
+		setScale(restScale)
 	end)
 	clickBtn.MouseButton1Down:Connect(function()
-		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.94 }):Play()
+		TweenService:Create(scale, CLICK_TWEEN, { Scale = clickScale }):Play()
 		if extraScale then
-			TweenService:Create(extraScale, CLICK_TWEEN, { Scale = 0.94 }):Play()
+			TweenService:Create(extraScale, CLICK_TWEEN, { Scale = clickScale }):Play()
 		end
 	end)
 	clickBtn.MouseButton1Up:Connect(function()
-		setScale(1.06)
+		setScale(hoverScale)
 	end)
 	clickBtn.Activated:Connect(function()
 		UIInteractionSounds.playClick()

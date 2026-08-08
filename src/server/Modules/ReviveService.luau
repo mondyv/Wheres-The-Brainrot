@@ -290,21 +290,46 @@ local function cframeOnTopOfPart(part: BasePart, clearance: number): CFrame
 end
 
 local function resolveHitboxSoftRespawnCFrame(): CFrame?
-	local map = workspace:FindFirstChild(TimCheeseQuestConfig.MAP_FOLDER_NAME)
-		or workspace:FindFirstChild("Map")
-	local root = map or workspace
+	-- Tim Cheese lives under workspace.Map["Booster Pack Showers"], not workspace root.
+	local map = Workspace:FindFirstChild("Map")
+	local folder = map and map:FindFirstChild(TimCheeseQuestConfig.MAP_FOLDER_NAME)
 	local clearance = ReviveConfig.HITBOX_RESPAWN_CLEARANCE
-	local hitbox = root:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME, true)
-	if hitbox and hitbox:IsA("BasePart") then
-		return cframeOnTopOfPart(hitbox, clearance)
+
+	local function fromPart(part: BasePart): CFrame
+		return cframeOnTopOfPart(part, clearance)
 	end
-	local trigger = root:FindFirstChild(TimCheeseQuestConfig.QUEST_TRIGGER_NAME, true)
-	if trigger and trigger:IsA("BasePart") then
-		return cframeOnTopOfPart(trigger, clearance)
+
+	if folder then
+		local trigger = folder:FindFirstChild(TimCheeseQuestConfig.QUEST_TRIGGER_NAME)
+		if trigger then
+			local hitbox = trigger:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME)
+			if hitbox and hitbox:IsA("BasePart") then
+				return fromPart(hitbox)
+			end
+			if trigger:IsA("BasePart") then
+				return fromPart(trigger)
+			end
+			local deep = trigger:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME, true)
+			if deep and deep:IsA("BasePart") then
+				return fromPart(deep)
+			end
+		end
+		local hitbox = folder:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME, true)
+		if hitbox and hitbox:IsA("BasePart") then
+			return fromPart(hitbox)
+		end
+		local tim = folder:FindFirstChild(TimCheeseQuestConfig.TIM_NAME)
+		if tim and tim:IsA("Model") then
+			return tim:GetPivot() + Vector3.new(0, 4, 0)
+		end
 	end
-	local tim = root:FindFirstChild(TimCheeseQuestConfig.TIM_NAME, true)
-	if tim and tim:IsA("Model") then
-		return tim:GetPivot() + Vector3.new(0, 4, 0)
+
+	-- Last-resort deep search under Map only (never workspace root — wrong folder names collide).
+	if map then
+		local hitbox = map:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME, true)
+		if hitbox and hitbox:IsA("BasePart") then
+			return fromPart(hitbox)
+		end
 	end
 	return nil
 end
@@ -337,10 +362,10 @@ local function onHumanoidDied(player: Player, character: Model)
 	stopLandTracking(player)
 
 	-- Cooldown: falling into kill zones can Died→LoadCharacter→Died in a tight loop.
+	-- Still pin QuestHitbox so PlotPlayerSpawn doesn't dump them on a random default spawn.
 	local lastAt = lastSoftRespawnAt[player]
 	if typeof(lastAt) == "number" and (os.clock() - lastAt) < ReviveConfig.SOFT_RESPAWN_COOLDOWN_SEC then
-		clearPending(player)
-		forceLoadCharacter(player)
+		softRespawnAtHitbox(player)
 		return
 	end
 

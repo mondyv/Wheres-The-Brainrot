@@ -37,7 +37,7 @@ local BLUR_NAME = "ReviveBlur"
 local BLUR_SIZE = 32
 local DIM_GUI_NAME = "ReviveDim"
 local DIM_COLOR = Color3.fromRGB(0, 0, 0)
-local DIM_TRANSPARENCY = 0.38
+local DIM_TRANSPARENCY = 0.62
 local FRICTIONLESS_FADE_GUI_NAME = "FrictionlessDeathFade"
 local TRY_AGAIN_TOAST_GUI_NAME = "TryAgainToast"
 
@@ -581,7 +581,30 @@ local function wireReviveButton(host: GuiObject, onClick: () -> ())
 end
 
 local function wireDeclineButton(host: GuiObject, onClick: () -> ())
+	-- Pin to the very bottom of the revive panel: small + soft.
+	host.AnchorPoint = Vector2.new(0.5, 1)
+	host.Position = UDim2.new(0.5, 0, 1, -8)
+	if host.Size.Y.Offset > 36 or host.Size.Y.Scale > 0.12 then
+		host.Size = UDim2.new(0.42, 0, 0, 28)
+	else
+		host.Size = UDim2.new(math.min(host.Size.X.Scale, 0.45), host.Size.X.Offset, 0, math.min(28, math.max(22, host.AbsoluteSize.Y)))
+	end
+	host.BackgroundTransparency = math.max(host.BackgroundTransparency, 0.55)
+	if host:IsA("ImageLabel") or host:IsA("ImageButton") then
+		(host :: any).ImageTransparency = math.max((host :: any).ImageTransparency or 0, 0.4)
+	end
+	for _, d in host:GetDescendants() do
+		if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+			d.ImageTransparency = math.max(d.ImageTransparency, 0.35)
+		elseif d:IsA("Frame") and d.BackgroundTransparency < 0.5 then
+			d.BackgroundTransparency = 0.55
+		elseif d:IsA("TextLabel") or d:IsA("TextButton") then
+			d.TextTransparency = math.min(d.TextTransparency, 0.15)
+		end
+	end
+
 	local scale = getOrAddUIScale(host)
+	scale.Scale = 0.78
 	local clickBtn = host:FindFirstChild("__DeclineClick") :: TextButton?
 	if not clickBtn then
 		clickBtn = Instance.new("TextButton")
@@ -594,17 +617,17 @@ local function wireDeclineButton(host: GuiObject, onClick: () -> ())
 	end
 	clickBtn.MouseEnter:Connect(function()
 		UIInteractionSounds.playHover()
-		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.05 }):Play()
+		TweenService:Create(scale, HOVER_TWEEN, { Scale = 0.84 }):Play()
 	end)
 	clickBtn.MouseLeave:Connect(function()
-		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1 }):Play()
+		TweenService:Create(scale, HOVER_TWEEN, { Scale = 0.78 }):Play()
 	end)
 	clickBtn.MouseButton1Down:Connect(function()
 		UIInteractionSounds.playClick()
-		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.95 }):Play()
+		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.72 }):Play()
 	end)
 	clickBtn.MouseButton1Up:Connect(function()
-		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.05 }):Play()
+		TweenService:Create(scale, HOVER_TWEEN, { Scale = 0.84 }):Play()
 	end)
 	clickBtn.Activated:Connect(onClick)
 end

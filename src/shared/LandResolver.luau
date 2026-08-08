@@ -342,6 +342,45 @@ function M.resolveLandAtPosition(worldPos: Vector3): number
 	return resolveLandByNearest(worldPos)
 end
 
+--- Best *xHitbox display luck registered for a land folder (1x, 10x, …).
+function M.getDisplayLuckForLand(land: number): number
+	ensureDiscovery()
+	local want = math.clamp(math.floor(land), 1, MAX_LAND)
+	local best = 0
+	for _, entry in landHitboxes do
+		if entry.land == want and entry.displayLuck > best then
+			best = entry.displayLuck
+		end
+	end
+	return if best > 0 then best else 1
+end
+
+--- Entry (lowest) *xHitbox luck for a land — used for ordered L1→L10 strip labels.
+--- Falls back to PlotLuck.DISPLAY_TIERS (extrapolated past 8 tiers so L9/L10 stay ascending).
+function M.getEntryDisplayLuckForLand(land: number): number
+	ensureDiscovery()
+	local want = math.clamp(math.floor(land), 1, MAX_LAND)
+	local lowest = math.huge
+	for _, entry in landHitboxes do
+		if entry.land == want and entry.displayLuck < lowest then
+			lowest = entry.displayLuck
+		end
+	end
+	if lowest < math.huge then
+		return lowest
+	end
+	local tiers = PlotLuck.DISPLAY_TIERS
+	local known = tiers[want]
+	if typeof(known) == "number" then
+		return known
+	end
+	local lastIdx = #tiers
+	local last = tiers[lastIdx] or 1750
+	local prev = tiers[math.max(1, lastIdx - 1)] or (last * 0.7)
+	local step = math.max(250, last - prev)
+	return last + (want - lastIdx) * step
+end
+
 --- Highest *xHitbox display luck covering this position.
 --- Falls back to the nearest land's best known hitbox luck so meters stay up
 --- even when the player is between OBBs or a hitbox briefly streamed out.

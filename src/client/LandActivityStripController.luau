@@ -140,7 +140,9 @@ local function applyRainbowToTrack(track: Frame): UIGradient?
 			ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 70, 200)),
 		})
 	end
+	-- Horizontal across the bar; animation scrolls Offset, not Rotation.
 	grad.Rotation = 0
+	grad.Offset = Vector2.zero
 	grad.Parent = track
 	return grad
 end
@@ -211,11 +213,11 @@ end
 
 local function setStripAlpha(alpha: number)
 	if plateFrame then
-		-- Soft transparent glass (not a heavy opaque board).
-		plateFrame.BackgroundTransparency = 0.42 + (1 - alpha) * 0.58
+		-- Very soft glass — almost fades into the world.
+		plateFrame.BackgroundTransparency = 0.72 + (1 - alpha) * 0.28
 		local stroke = plateFrame:FindFirstChildOfClass("UIStroke")
 		if stroke then
-			stroke.Transparency = 0.72 + (1 - alpha) * 0.28
+			stroke.Transparency = 0.88 + (1 - alpha) * 0.12
 		end
 	end
 	local track = trackFrame or (plateFrame and plateFrame:FindFirstChild("Track"))
@@ -223,21 +225,21 @@ local function setStripAlpha(alpha: number)
 		track.BackgroundTransparency = 0.08 + (1 - alpha) * 0.92
 		local stroke = track:FindFirstChildOfClass("UIStroke")
 		if stroke then
-			stroke.Transparency = 0.7 + (1 - alpha) * 0.3
+			stroke.Transparency = 0.9 + (1 - alpha) * 0.1
 		end
 	end
 	for _, token in landTokens do
-		token.BackgroundTransparency = 0.12 + (1 - alpha) * 0.88
+		token.BackgroundTransparency = 0.18 + (1 - alpha) * 0.82
 		local stroke = token:FindFirstChildOfClass("UIStroke")
 		if stroke then
-			stroke.Transparency = 0.62 + (1 - alpha) * 0.38
+			stroke.Transparency = 0.78 + (1 - alpha) * 0.22
 		end
 	end
 	for _, peg in landTicks do
-		peg.BackgroundTransparency = 0.15 + (1 - alpha) * 0.85
+		peg.BackgroundTransparency = 0.2 + (1 - alpha) * 0.8
 		local stroke = peg:FindFirstChildOfClass("UIStroke")
 		if stroke then
-			stroke.Transparency = 0.55 + (1 - alpha) * 0.45
+			stroke.Transparency = 0.75 + (1 - alpha) * 0.25
 		end
 	end
 	for _, label in landLabels do
@@ -687,7 +689,7 @@ local function buildStrip(parentGui: PlayerGui)
 	plate.Position = UDim2.new(0.5, 0, 1, 0)
 	plate.Size = UDim2.new(1, 0, 0, plateH)
 	plate.BackgroundColor3 = PLATE
-	plate.BackgroundTransparency = 0.42
+	plate.BackgroundTransparency = 0.72
 	plate.BorderSizePixel = 0
 	plate.ZIndex = 40
 	plate.ClipsDescendants = false
@@ -698,10 +700,11 @@ local function buildStrip(parentGui: PlayerGui)
 	plateCorner.CornerRadius = UDim.new(1, 0)
 	plateCorner.Parent = plate
 
+	-- Soft fade-out rim (barely there).
 	local plateStroke = Instance.new("UIStroke")
 	plateStroke.Color = PLATE_EDGE
 	plateStroke.Thickness = 1
-	plateStroke.Transparency = 0.72
+	plateStroke.Transparency = 0.88
 	plateStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	plateStroke.Parent = plate
 
@@ -723,7 +726,7 @@ local function buildStrip(parentGui: PlayerGui)
 	local trackStroke = Instance.new("UIStroke")
 	trackStroke.Color = Color3.fromRGB(255, 255, 255)
 	trackStroke.Thickness = 1
-	trackStroke.Transparency = 0.7
+	trackStroke.Transparency = 0.9
 	trackStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	trackStroke.Parent = track
 	trackRainbow = applyRainbowToTrack(track)
@@ -755,9 +758,9 @@ local function buildStrip(parentGui: PlayerGui)
 		pegCorner.CornerRadius = UDim.new(1, 0)
 		pegCorner.Parent = peg
 		local pegStroke = Instance.new("UIStroke")
-		pegStroke.Color = Color3.fromRGB(20, 24, 22)
+		pegStroke.Color = Color3.fromRGB(255, 255, 255)
 		pegStroke.Thickness = 1
-		pegStroke.Transparency = 0.55
+		pegStroke.Transparency = 0.75
 		pegStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		pegStroke.Parent = peg
 		table.insert(landTicks, peg)
@@ -768,7 +771,7 @@ local function buildStrip(parentGui: PlayerGui)
 		token.Position = UDim2.new(x, 0, 0.54, 0)
 		token.Size = UDim2.fromOffset(if compact then 34 else 38, if compact then 17 else 18)
 		token.BackgroundColor3 = TOKEN
-		token.BackgroundTransparency = 0.12
+		token.BackgroundTransparency = 0.18
 		token.BorderSizePixel = 0
 		token.ZIndex = 52
 		token.Parent = tokensHost
@@ -778,7 +781,7 @@ local function buildStrip(parentGui: PlayerGui)
 		local tokenStroke = Instance.new("UIStroke")
 		tokenStroke.Color = TOKEN_EDGE
 		tokenStroke.Thickness = 1
-		tokenStroke.Transparency = 0.62
+		tokenStroke.Transparency = 0.78
 		tokenStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		tokenStroke.Parent = token
 		table.insert(landTokens, token)
@@ -815,7 +818,7 @@ local function buildStrip(parentGui: PlayerGui)
 	if bobConn then
 		bobConn:Disconnect()
 	end
-	-- Gentle rock + scrolling rainbow on the track.
+	-- Gentle rock + slow horizontal rainbow scroll (rightward).
 	bobConn = RunService.Heartbeat:Connect(function(dt)
 		if not visibleTarget or not stripRoot then
 			return
@@ -824,8 +827,9 @@ local function buildStrip(parentGui: PlayerGui)
 		stripRoot.Rotation = math.sin(bobPhase * 0.55) * 0.35
 		local grad = trackRainbow
 		if grad and grad.Parent then
-			grad.Rotation = (bobPhase * 48) % 360
-			grad.Offset = Vector2.new(math.sin(bobPhase * 0.9) * 0.42, 0)
+			grad.Rotation = 0
+			-- Continuous scroll; keep Offset in a stable wrap so the bar stays filled.
+			grad.Offset = Vector2.new((bobPhase * 0.18) % 1, 0)
 		end
 	end)
 

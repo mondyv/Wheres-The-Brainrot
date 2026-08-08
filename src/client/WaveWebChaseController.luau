@@ -31,6 +31,8 @@ local WaveWebChaseController = {}
 local MOVE_LOCK_ACTION = "WaveWebChaseMoveLock"
 
 local chaseActive = false
+-- True only while intro camera/move lock is on (NOT during free-run chase).
+local cinematicLocked = false
 local chaseToken = 0
 local renderConn: RBXScriptConnection? = nil
 local moveLockConn: RBXScriptConnection? = nil
@@ -483,6 +485,7 @@ local savedUseJumpPower: boolean? = nil
 local savedAutoRotate: boolean? = nil
 
 local function lockMovement()
+	cinematicLocked = true
 	ContextActionService:BindActionAtPriority(
 		MOVE_LOCK_ACTION,
 		function()
@@ -499,7 +502,14 @@ local function lockMovement()
 	local hum = getHumanoid()
 	if hum then
 		if savedWalkSpeed == nil then
-			savedWalkSpeed = if hum.WalkSpeed > 0 then hum.WalkSpeed else 16
+			local base = hum:GetAttribute("BrainrotBaseWalkSpeed")
+			if typeof(base) == "number" and base > 0 then
+				savedWalkSpeed = base
+			elseif hum.WalkSpeed > 0.05 then
+				savedWalkSpeed = hum.WalkSpeed
+			else
+				savedWalkSpeed = 16
+			end
 			savedJumpPower = hum.JumpPower
 			savedJumpHeight = hum.JumpHeight
 			savedUseJumpPower = hum.UseJumpPower
@@ -515,7 +525,8 @@ local function lockMovement()
 	end
 	moveLockConn = RunService.Heartbeat:Connect(function()
 		local h = getHumanoid()
-		if h and chaseActive then
+		-- Only while cinematic intro is locked — never during free chase.
+		if h and cinematicLocked then
 			h.WalkSpeed = 0
 			h.JumpPower = 0
 			h.JumpHeight = 0
@@ -524,6 +535,7 @@ local function lockMovement()
 end
 
 local function unlockMovement()
+	cinematicLocked = false
 	ContextActionService:UnbindAction(MOVE_LOCK_ACTION)
 	if moveLockConn then
 		moveLockConn:Disconnect()
@@ -532,8 +544,13 @@ local function unlockMovement()
 	local hum = getHumanoid()
 	if hum then
 		local walk = savedWalkSpeed
-		if typeof(walk) ~= "number" or walk <= 0 then
-			walk = 16
+		local base = hum:GetAttribute("BrainrotBaseWalkSpeed")
+		if typeof(walk) ~= "number" or walk <= 0.05 then
+			if typeof(base) == "number" and base > 0 then
+				walk = base
+			else
+				walk = 16
+			end
 		end
 		hum.WalkSpeed = walk
 		if savedUseJumpPower == false then
@@ -548,6 +565,7 @@ local function unlockMovement()
 		end
 		hum.AutoRotate = if savedAutoRotate == nil then true else savedAutoRotate
 		hum.PlatformStand = false
+		hum.Jump = false
 	end
 	savedWalkSpeed = nil
 	savedJumpPower = nil
@@ -668,6 +686,7 @@ end
 
 local function finishChase(didHideHud: boolean)
 	chaseActive = false
+	cinematicLocked = false
 	chaseToken += 1
 	destroyChaseInstances()
 	clearExclamation()
@@ -883,8 +902,10 @@ local function runChase(token: number)
 		return
 	end
 
-	-- Make sure we never re-lock camera mid-chase.
+	-- Make sure we never re-lock camera mid-chase; unlock swing/move for the run.
 	releaseToGameplay(token)
+	FloatingClaimCutscene.releaseMoveLock()
+	MobileTouchGate.restorePlayerMovement()
 	killFired = false
 
 	local wave = waveTemplate:Clone()
@@ -928,12 +949,12 @@ local function runChase(token: number)
 
 	local hrp = getHRP()
 	local playerPos = if hrp then hrp.Position else Vector3.zero
-	local _toSafe, awayFromSafe = computeChaseAxes(playerPos)
-	-- Spawn a bit behind the player, then chase straight at them (upright, fixed yaw).
+	local toSafe, awayFromSafe = computeChaseAxes(playerPos)
+	-- Fixed corridor: spawn behind player, face + travel toward safezone only.
+	local forward = toSafe
 	local wavePos = playerPos + awayFromSafe * C.WAVE_SPAWN_DISTANCE
 	wavePos = Vector3.new(wavePos.X, groundYAt(wavePos.X, wavePos.Z, playerPos.Y) + 2, wavePos.Z)
-	local initialDir = flatUnitXZ(wavePos, playerPos)
-	wave:PivotTo(waveFacingCf(wavePos, initialDir))
+	wave:PivotTo(waveFacingCf(wavePos, forward))
 
 	if renderConn then
 		renderConn:Disconnect()
@@ -974,19 +995,17 @@ local function runChase(token: number)
 		-- Mild ramp so it doesn't instantly top out.
 		speed *= 0.85 + 0.15 * math.clamp(elapsed / 10, 0, 1)
 
-		-- Chase the player (no trail leash). Move toward their current position.
-		local toPlayer = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
-		local distXZ = toPlayer.Magnitude
-		local chaseDir = if distXZ > 0.05 then toPlayer.Unit else Vector3.new(0, 0, -1)
-		wavePos += chaseDir * speed * dt
+		-- Barrel straight toward safezone — no player-tracking turn.
+		wavePos += forward * speed * dt
 		local gy = groundYAt(wavePos.X, wavePos.Z, pPos.Y) + 2
 		wavePos = Vector3.new(wavePos.X, gy, wavePos.Z)
 
-		-- Soft float bob only — keep facing locked upright (no pitch/roll tumble).
 		local bob = math.sin(phase * 1.55) * 1.6
 		local visualPos = wavePos + Vector3.new(0, bob, 0)
-		wave:PivotTo(waveFacingCf(visualPos, chaseDir))
+		wave:PivotTo(waveFacingCf(visualPos, forward))
 
+		local toPlayer = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
+		local distXZ = toPlayer.Magnitude
 		local threat = 1 - math.clamp(distXZ / 90, 0, 1)
 		local beat = (math.sin(phase * (2.8 + threat * 3.4)) + 1) * 0.5
 		showHeartbeat(threat * (0.35 + beat * 0.45))
@@ -1073,6 +1092,11 @@ local function runSequence(_model: Model)
 end
 
 function WaveWebChaseController.isActive(): boolean
+	-- Swing / input gates: only block during cinematic intro lock.
+	return cinematicLocked
+end
+
+function WaveWebChaseController.isChaseActive(): boolean
 	return chaseActive
 end
 

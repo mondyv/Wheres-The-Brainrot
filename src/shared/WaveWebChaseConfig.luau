@@ -33,7 +33,8 @@ M.WAVE_SPAWN_DISTANCE = 175
 -- Kill when the wave center gets this close (studs, XZ).
 M.WAVE_KILL_DISTANCE = 16
 -- Extra yaw if the Wave Web mesh faces the wrong axis (radians).
-M.WAVE_FACE_YAW_OFFSET = math.rad(90)
+-- 0 = LookVector = travel direction; tweak ±90/180 if the mesh forward differs.
+M.WAVE_FACE_YAW_OFFSET = 0
 
 -- Land-scaled chase speed (studs/sec). Land 1 is leisurely; Land 10 is the threat.
 M.WAVE_SPEED_LAND1 = 18

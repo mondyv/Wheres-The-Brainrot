@@ -351,15 +351,53 @@ local function softRespawnAtPlotBase(player: Player)
 	clearPending(player)
 	lastSoftRespawnAt[player] = os.clock()
 	player:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, nil)
+	-- Never pin QuestHitbox — death always lands on the Base button Spawn pad.
+	clearReviveSpawnAttrs(player)
+
 	local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
-	local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
-	if spawnCf then
-		storeReviveSpawnAttrs(player, spawnCf)
-	else
-		-- Let PlotPlayerSpawn wait for Base pad (no QuestHitbox pin).
-		clearReviveSpawnAttrs(player)
-	end
+
+	local conn: RBXScriptConnection? = nil
+	local done = false
+	conn = player.CharacterAdded:Connect(function(newChar)
+		if done then
+			return
+		end
+		done = true
+		if conn then
+			conn:Disconnect()
+			conn = nil
+		end
+		task.spawn(function()
+			local deadline = os.clock() + 60
+			local spawnCf: CFrame? = nil
+			while os.clock() < deadline do
+				if not player.Parent or not newChar.Parent then
+					return
+				end
+				spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+				if spawnCf then
+					break
+				end
+				task.wait(0.15)
+			end
+			if not spawnCf then
+				warn("[ReviveService] softRespawnAtPlotBase: no Base spawn for", player.Name)
+				return
+			end
+			if player.Parent and newChar.Parent then
+				PlotSpawnUtil.streamAndTeleportWithRetries(player, newChar, spawnCf, true)
+			end
+		end)
+	end)
+
 	forceLoadCharacter(player)
+
+	task.delay(70, function()
+		if conn then
+			conn:Disconnect()
+			conn = nil
+		end
+	end)
 end
 
 local function isFrictionlessDeathActive(player: Player): boolean

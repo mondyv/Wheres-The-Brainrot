@@ -79,7 +79,7 @@ local function isGameplayCutsceneActive()
 	end
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then
-		for _, name in { "FloatingClaimCutscene", "BushSpiderCutscene", "WaveWebChaseFx", "StandDialogueCutscene" } do
+		for _, name in { "FloatingClaimCutscene", "BushSpiderCutscene", "StandDialogueCutscene" } do
 			local gui = pg:FindFirstChild(name)
 			if gui and gui:IsA("ScreenGui") and gui.Enabled then
 				return true

@@ -28,7 +28,13 @@ end
 
 function GameplayCutsceneGate.isWaveWebChaseActive(): boolean
 	local mod = controller("WaveWebChaseController")
-	return mod ~= nil and mod.isActive() == true
+	if not mod then
+		return false
+	end
+	if typeof(mod.isChaseActive) == "function" then
+		return mod.isChaseActive() == true
+	end
+	return mod.isActive() == true
 end
 
 function GameplayCutsceneGate.isAmbushOrChaseActive(): boolean

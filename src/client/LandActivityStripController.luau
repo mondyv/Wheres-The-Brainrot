@@ -17,7 +17,6 @@ local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
-local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
 
 local LandActivityStripController = {}
 
@@ -31,28 +30,27 @@ local MOVE_TWEEN = TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirect
 local INSIDE_STREAK = 2
 local OUTSIDE_STREAK = 2
 
-local CHEESE_PLATE = Color3.fromRGB(255, 214, 74)
-local CHEESE_CREAM = Color3.fromRGB(255, 236, 170)
-local CHEESE_STROKE = Color3.fromRGB(32, 22, 8)
-local CHEESE_INK = Color3.fromRGB(48, 32, 10)
-local CHEESE_DASH = Color3.fromRGB(160, 100, 28)
-local CHEESE_STUD = Color3.fromRGB(140, 90, 25)
-local YOU_RING = Color3.fromRGB(255, 140, 30)
-local YOU_GLOW = Color3.fromRGB(255, 210, 90)
-local TRACK_RECESS = Color3.fromRGB(55, 36, 12)
+local GLASS = Color3.fromRGB(28, 72, 48)
+local GLASS_INNER = Color3.fromRGB(36, 96, 58)
+local GLASS_STROKE = Color3.fromRGB(120, 220, 150)
+local INK = Color3.fromRGB(220, 255, 230)
+local INK_DARK = Color3.fromRGB(12, 32, 20)
+local YOU_RING = Color3.fromRGB(255, 210, 90)
+local YOU_GLOW = Color3.fromRGB(180, 255, 140)
+local TRACK = Color3.fromRGB(16, 40, 26)
 
--- Warm cheese → toasted gradient across lands (not neon rainbow).
+-- Soft green → lime heat across lands.
 local LAND_COLORS: { Color3 } = {
-	Color3.fromRGB(255, 236, 140),
-	Color3.fromRGB(255, 220, 100),
-	Color3.fromRGB(255, 200, 70),
-	Color3.fromRGB(250, 175, 55),
-	Color3.fromRGB(240, 150, 45),
-	Color3.fromRGB(230, 130, 40),
-	Color3.fromRGB(220, 110, 40),
-	Color3.fromRGB(210, 95, 45),
-	Color3.fromRGB(195, 80, 40),
-	Color3.fromRGB(175, 65, 35),
+	Color3.fromRGB(160, 230, 150),
+	Color3.fromRGB(150, 220, 130),
+	Color3.fromRGB(140, 210, 115),
+	Color3.fromRGB(130, 200, 100),
+	Color3.fromRGB(120, 190, 90),
+	Color3.fromRGB(110, 180, 85),
+	Color3.fromRGB(100, 170, 80),
+	Color3.fromRGB(95, 160, 75),
+	Color3.fromRGB(90, 150, 70),
+	Color3.fromRGB(80, 140, 65),
 }
 
 type AvatarSlot = {
@@ -229,10 +227,10 @@ local function ensureSlot(plr: Player): AvatarSlot?
 		return nil
 	end
 
-	local size = if isMobile() then 22 else 26
+	local size = if isMobile() then 20 else 24
 	local root = Instance.new("Frame")
 	root.Name = "Avatar_" .. tostring(plr.UserId)
-	root.AnchorPoint = Vector2.new(0.5, 1)
+	root.AnchorPoint = Vector2.new(0.5, 0.5)
 	root.Size = UDim2.fromOffset(size, size)
 	root.BackgroundTransparency = 1
 	root.BorderSizePixel = 0
@@ -240,12 +238,12 @@ local function ensureSlot(plr: Player): AvatarSlot?
 	root.Active = true
 	root.Parent = avatarsHost
 
-	-- Opaque disc so heads don't dissolve into the cheese plate.
+	-- Opaque disc so heads read on glass.
 	local pedestal = Instance.new("Frame")
 	pedestal.Name = "Pedestal"
 	pedestal.Size = UDim2.fromScale(1, 1)
-	pedestal.BackgroundColor3 = CHEESE_CREAM
-	pedestal.BackgroundTransparency = 0.05
+	pedestal.BackgroundColor3 = Color3.fromRGB(18, 48, 30)
+	pedestal.BackgroundTransparency = 0.1
 	pedestal.BorderSizePixel = 0
 	pedestal.ZIndex = 50
 	pedestal.Parent = root
@@ -253,14 +251,14 @@ local function ensureSlot(plr: Player): AvatarSlot?
 	pedCorner.CornerRadius = UDim.new(1, 0)
 	pedCorner.Parent = pedestal
 	local pedStroke = Instance.new("UIStroke")
-	pedStroke.Color = CHEESE_STROKE
-	pedStroke.Thickness = 1.5
-	pedStroke.Transparency = 0.15
+	pedStroke.Color = GLASS_STROKE
+	pedStroke.Thickness = 1.4
+	pedStroke.Transparency = 0.25
 	pedStroke.Parent = pedestal
 
 	local icon = Instance.new("ImageLabel")
 	icon.Name = "Head"
-	icon.BackgroundColor3 = Color3.fromRGB(28, 22, 14)
+	icon.BackgroundColor3 = Color3.fromRGB(20, 40, 28)
 	icon.BackgroundTransparency = 0
 	icon.BorderSizePixel = 0
 	icon.Size = UDim2.new(1, -3, 1, -3)
@@ -277,8 +275,8 @@ local function ensureSlot(plr: Player): AvatarSlot?
 	corner.Parent = icon
 
 	local ring = Instance.new("UIStroke")
-	ring.Thickness = if plr == player then 2.4 else 1.6
-	ring.Color = if plr == player then YOU_RING else CHEESE_STROKE
+	ring.Thickness = if plr == player then 2.4 else 1.5
+	ring.Color = if plr == player then YOU_RING else GLASS_STROKE
 	ring.Transparency = 0
 	ring.Parent = icon
 
@@ -287,19 +285,19 @@ local function ensureSlot(plr: Player): AvatarSlot?
 		glow.Name = "YouGlow"
 		glow.Thickness = 4
 		glow.Color = YOU_GLOW
-		glow.Transparency = 0.45
+		glow.Transparency = 0.5
 		glow.Parent = pedestal
 	end
 
 	local tip = Instance.new("TextLabel")
 	tip.Name = "NameTip"
-	tip.BackgroundColor3 = CHEESE_STROKE
-	tip.BackgroundTransparency = 0.12
+	tip.BackgroundColor3 = INK_DARK
+	tip.BackgroundTransparency = 0.15
 	tip.Size = UDim2.new(0, 72, 0, 14)
 	tip.Position = UDim2.new(0.5, 0, 0, -4)
 	tip.AnchorPoint = Vector2.new(0.5, 1)
 	tip.Text = plr.DisplayName
-	tip.TextColor3 = CHEESE_CREAM
+	tip.TextColor3 = INK
 	tip.TextStrokeTransparency = 1
 	tip.TextSize = 10
 	tip.TextTruncate = Enum.TextTruncate.AtEnd
@@ -361,10 +359,10 @@ local function layoutStacks()
 			slot.stackIndex = i
 			local stack = i - 1
 			local xJitter = ((stack % 3) - 1) * 0.012
-			local yLift = stack * (if isMobile() then 9 else 11)
-			-- Sit above the land pills / track.
-			local goal = UDim2.new(baseX + xJitter, 0, 0.58, -yLift)
-			slot.root.AnchorPoint = Vector2.new(0.5, 1)
+			local yLift = stack * (if isMobile() then 8 else 10)
+			-- Heads live in the TOP band; luck pills stay on the bottom track.
+			local goal = UDim2.new(baseX + xJitter, 0, 0.32, -yLift)
+			slot.root.AnchorPoint = Vector2.new(0.5, 0.5)
 			slot.root.ZIndex = 50 + stack + (if slot.player == player then 8 else 0)
 			TweenService:Create(slot.root, MOVE_TWEEN, { Position = goal }):Play()
 
@@ -373,11 +371,11 @@ local function layoutStacks()
 				slot.ring.Transparency = 0
 				slot.ring.Thickness = 2.4
 			else
-				slot.ring.Color = CHEESE_STROKE
-				slot.ring.Transparency = 0.05
-				slot.ring.Thickness = 1.6
+				slot.ring.Color = GLASS_STROKE
+				slot.ring.Transparency = 0.1
+				slot.ring.Thickness = 1.5
 			end
-			slot.icon.BackgroundColor3 = Color3.fromRGB(28, 22, 14)
+			slot.icon.BackgroundColor3 = Color3.fromRGB(20, 40, 28)
 		end
 	end
 end
@@ -454,17 +452,6 @@ local function startLocalPulse()
 	end)
 end
 
-local function paintStudImage(label: ImageLabel, color: Color3, imageTransparency: number)
-	label.BackgroundColor3 = color
-	label.BackgroundTransparency = 0
-	label.BorderSizePixel = 0
-	label.Image = TimCheeseQuestConfig.STUD_TEXTURE
-	label.ImageColor3 = CHEESE_STUD
-	label.ImageTransparency = imageTransparency
-	label.ScaleType = Enum.ScaleType.Tile
-	label.TileSize = UDim2.fromOffset(18, 18)
-end
-
 local function formatLandLuckLabel(land: number): string
 	-- Entry luck per land so L1→L10 stay ascending (max-of-folder scrambled the strip).
 	local luck = LandResolver.getEntryDisplayLuckForLand(land)
@@ -489,14 +476,14 @@ end
 
 local function buildStrip(parentGui: PlayerGui)
 	local compact = isMobile()
-	local height = if compact then 54 else 58
-	local widthScale = if compact then 0.78 else 0.56
+	-- Tall enough for head row + luck row (no overlap).
+	local height = if compact then 62 else 68
+	local widthScale = if compact then 0.8 else 0.58
 
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "LandActivityStripGui"
 	gui.IgnoreGuiInset = true
 	gui.ResetOnSpawn = false
-	-- Below modal panels (offline / revive ~90+) so it never covers Decline.
 	gui.DisplayOrder = 18
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	gui.Enabled = true
@@ -516,118 +503,86 @@ local function buildStrip(parentGui: PlayerGui)
 	root.Parent = gui
 
 	local scale = Instance.new("UIScale")
-	scale.Scale = 0.78
+	scale.Scale = 0.82
 	scale.Parent = root
 
-	-- Soft shadow plate under the ticket.
-	local shadow = Instance.new("Frame")
-	shadow.Name = "Shadow"
-	shadow.AnchorPoint = Vector2.new(0.5, 0.5)
-	shadow.Position = UDim2.new(0.5, 0, 0.5, 3)
-	shadow.Size = UDim2.new(1, 6, 1, 6)
-	shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	shadow.BackgroundTransparency = 0.55
-	shadow.BorderSizePixel = 0
-	shadow.ZIndex = 39
-	shadow.Parent = root
-	local shadowCorner = Instance.new("UICorner")
-	shadowCorner.CornerRadius = UDim.new(0, 10)
-	shadowCorner.Parent = shadow
-
-	-- Opaque cheese ticket — readable, not washed out.
-	local ticket = Instance.new("ImageLabel")
+	-- Soft green glass plate (readable, not opaque cheese).
+	local ticket = Instance.new("Frame")
 	ticket.Name = "Ticket"
 	ticket.Size = UDim2.fromScale(1, 1)
+	ticket.BackgroundColor3 = GLASS
+	ticket.BackgroundTransparency = 0.28
+	ticket.BorderSizePixel = 0
 	ticket.ZIndex = 40
 	ticket.ClipsDescendants = false
-	paintStudImage(ticket, CHEESE_PLATE, 0.92)
 	ticket.Parent = root
 
 	local ticketCorner = Instance.new("UICorner")
-	ticketCorner.CornerRadius = UDim.new(0, 9)
+	ticketCorner.CornerRadius = UDim.new(0, 10)
 	ticketCorner.Parent = ticket
 	local ticketStroke = Instance.new("UIStroke")
-	ticketStroke.Color = CHEESE_STROKE
-	ticketStroke.Thickness = 2.5
-	ticketStroke.Transparency = 0
+	ticketStroke.Color = GLASS_STROKE
+	ticketStroke.Thickness = 1.6
+	ticketStroke.Transparency = 0.35
 	ticketStroke.Parent = ticket
 
+	local glassGrad = Instance.new("UIGradient")
+	glassGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 110, 70)),
+		ColorSequenceKeypoint.new(0.55, Color3.fromRGB(24, 68, 44)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(18, 50, 34)),
+	})
+	glassGrad.Rotation = 90
+	glassGrad.Parent = ticket
+
 	local floatPad = Instance.new("UIPadding")
-	floatPad.PaddingTop = UDim.new(0, 5)
+	floatPad.PaddingTop = UDim.new(0, 4)
 	floatPad.PaddingBottom = UDim.new(0, 5)
-	floatPad.PaddingLeft = UDim.new(0, 7)
-	floatPad.PaddingRight = UDim.new(0, 7)
+	floatPad.PaddingLeft = UDim.new(0, 8)
+	floatPad.PaddingRight = UDim.new(0, 8)
 	floatPad.Parent = ticket
 
 	local inner = Instance.new("Frame")
 	inner.Name = "Inner"
 	inner.Size = UDim2.fromScale(1, 1)
-	inner.BackgroundColor3 = CHEESE_CREAM
-	inner.BackgroundTransparency = 0.08
+	inner.BackgroundColor3 = GLASS_INNER
+	inner.BackgroundTransparency = 0.42
 	inner.BorderSizePixel = 0
 	inner.ZIndex = 41
 	inner.ClipsDescendants = false
 	inner.Parent = ticket
 	local innerCorner = Instance.new("UICorner")
-	innerCorner.CornerRadius = UDim.new(0, 6)
+	innerCorner.CornerRadius = UDim.new(0, 7)
 	innerCorner.Parent = inner
-	local dash = Instance.new("UIStroke")
-	dash.Color = CHEESE_DASH
-	dash.Thickness = 1.4
-	dash.Transparency = 0.2
-	dash.Parent = inner
-
-	-- Subtle stud overlay on cream (very light — contrast stays high).
-	local studWash = Instance.new("ImageLabel")
-	studWash.Name = "StudWash"
-	studWash.Size = UDim2.fromScale(1, 1)
-	studWash.BackgroundTransparency = 1
-	studWash.Image = TimCheeseQuestConfig.STUD_TEXTURE
-	studWash.ImageColor3 = CHEESE_STUD
-	studWash.ImageTransparency = 0.94
-	studWash.ScaleType = Enum.ScaleType.Tile
-	studWash.TileSize = UDim2.fromOffset(16, 16)
-	studWash.ZIndex = 42
-	studWash.Parent = inner
-	local studCorner = Instance.new("UICorner")
-	studCorner.CornerRadius = UDim.new(0, 6)
-	studCorner.Parent = studWash
-
-	-- Title chip
-	local titleChip = Instance.new("Frame")
-	titleChip.Name = "TitleChip"
-	titleChip.AnchorPoint = Vector2.new(0, 0)
-	titleChip.Position = UDim2.new(0, 5, 0, 3)
-	titleChip.Size = UDim2.new(0, 88, 0, 14)
-	titleChip.BackgroundColor3 = CHEESE_STROKE
-	titleChip.BackgroundTransparency = 0.08
-	titleChip.BorderSizePixel = 0
-	titleChip.ZIndex = 46
-	titleChip.Parent = inner
-	local titleChipCorner = Instance.new("UICorner")
-	titleChipCorner.CornerRadius = UDim.new(0, 4)
-	titleChipCorner.Parent = titleChip
+	local innerStroke = Instance.new("UIStroke")
+	innerStroke.Color = GLASS_STROKE
+	innerStroke.Thickness = 1
+	innerStroke.Transparency = 0.55
+	innerStroke.Parent = inner
 
 	local title = Instance.new("TextLabel")
 	title.Name = "Title"
 	title.BackgroundTransparency = 1
-	title.Size = UDim2.fromScale(1, 1)
-	title.Text = "WHO'S WHERE"
-	title.TextXAlignment = Enum.TextXAlignment.Center
-	title.TextColor3 = CHEESE_CREAM
-	title.TextSize = 10
-	title.ZIndex = 47
+	title.AnchorPoint = Vector2.new(0, 0)
+	title.Position = UDim2.new(0, 4, 0, 1)
+	title.Size = UDim2.new(0.4, 0, 0, 11)
+	title.Text = "LANDS"
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.TextColor3 = INK
+	title.TextTransparency = 0.15
+	title.TextSize = 9
+	title.ZIndex = 46
 	UiFonts.applyBody(title)
-	title.Parent = titleChip
+	title.Parent = inner
 
-	-- Recessed track under land pills.
+	-- Luck track sits in the BOTTOM band only.
 	local trackFrame = Instance.new("Frame")
 	trackFrame.Name = "Track"
 	trackFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-	trackFrame.Position = UDim2.new(0.5, 0, 0.78, 0)
-	trackFrame.Size = UDim2.new(0.94, 0, 0, 5)
-	trackFrame.BackgroundColor3 = TRACK_RECESS
-	trackFrame.BackgroundTransparency = 0.15
+	trackFrame.Position = UDim2.new(0.5, 0, 0.82, 0)
+	trackFrame.Size = UDim2.new(0.94, 0, 0, 4)
+	trackFrame.BackgroundColor3 = TRACK
+	trackFrame.BackgroundTransparency = 0.25
 	trackFrame.BorderSizePixel = 0
 	trackFrame.ZIndex = 43
 	trackFrame.Parent = inner
@@ -638,14 +593,14 @@ local function buildStrip(parentGui: PlayerGui)
 
 	local trackGlow = Instance.new("UIGradient")
 	trackGlow.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 236, 140)),
-		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 160, 45)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(160, 55, 28)),
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(140, 230, 160)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(90, 200, 120)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 150, 90)),
 	})
 	trackGlow.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.35),
+		NumberSequenceKeypoint.new(0, 0.4),
 		NumberSequenceKeypoint.new(0.5, 0.15),
-		NumberSequenceKeypoint.new(1, 0.35),
+		NumberSequenceKeypoint.new(1, 0.4),
 	})
 	trackGlow.Parent = trackFrame
 
@@ -662,14 +617,13 @@ local function buildStrip(parentGui: PlayerGui)
 		local x = landXScale(land)
 		local landCol = LAND_COLORS[land]
 
-		-- Opaque luck pill — readable at a glance.
 		local pill = Instance.new("Frame")
 		pill.Name = "Tick" .. tostring(land)
 		pill.AnchorPoint = Vector2.new(0.5, 0.5)
-		pill.Position = UDim2.new(x, 0, 0.78, 0)
+		pill.Position = UDim2.new(x, 0, 0.82, 0)
 		pill.Size = UDim2.fromOffset(if compact then 26 else 30, if compact then 13 else 14)
 		pill.BackgroundColor3 = landCol
-		pill.BackgroundTransparency = 0.05
+		pill.BackgroundTransparency = 0.12
 		pill.BorderSizePixel = 0
 		pill.ZIndex = 45
 		pill.Parent = ticksHost
@@ -677,9 +631,9 @@ local function buildStrip(parentGui: PlayerGui)
 		pillCorner.CornerRadius = UDim.new(0, 4)
 		pillCorner.Parent = pill
 		local pillStroke = Instance.new("UIStroke")
-		pillStroke.Color = CHEESE_STROKE
-		pillStroke.Thickness = 1.2
-		pillStroke.Transparency = 0.1
+		pillStroke.Color = INK_DARK
+		pillStroke.Thickness = 1
+		pillStroke.Transparency = 0.35
 		pillStroke.Parent = pill
 		table.insert(landTicks, pill)
 
@@ -688,7 +642,7 @@ local function buildStrip(parentGui: PlayerGui)
 		label.BackgroundTransparency = 1
 		label.Size = UDim2.fromScale(1, 1)
 		label.Text = formatLandLuckLabel(land)
-		label.TextColor3 = CHEESE_INK
+		label.TextColor3 = INK_DARK
 		label.TextTransparency = 0
 		label.TextSize = if compact then 8 else 9
 		label.ZIndex = 46
@@ -697,6 +651,7 @@ local function buildStrip(parentGui: PlayerGui)
 		table.insert(landLabels, label)
 	end
 
+	-- Avatar row is its own host in the TOP band (never covers luck pills).
 	local avatars = Instance.new("Frame")
 	avatars.Name = "Avatars"
 	avatars.BackgroundTransparency = 1
@@ -709,7 +664,6 @@ local function buildStrip(parentGui: PlayerGui)
 	stripScale = scale
 	avatarsHost = avatars
 
-	-- Luck hitboxes stream in late — refresh labels a few times.
 	task.spawn(function()
 		for _ = 1, 12 do
 			task.wait(1.25)

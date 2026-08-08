@@ -35,6 +35,7 @@ local RandomBrainrotOdds = require(Shared.RandomBrainrotOdds)
 local HUDController = require(script.Parent.HUDController)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local PanelSlideIn = require(Shared:WaitForChild("PanelSlideIn"))
 
 local Maid = require(Packages.Maid)
 local Promise = require(Packages.Promise)
@@ -243,11 +244,15 @@ resolveRandomBrainrotUi = function(): (ImageButton, Instance, Instance)
 		:WaitForChild("Right")
 		:WaitForChild("RandomBrainrot")
 		:WaitForChild("Activation") :: ImageButton
-	local storePack = gui:WaitForChild("Frames")
-		:WaitForChild("Store")
-		:WaitForChild("StoreFrame")
-		:WaitForChild("Container")
-		:WaitForChild("RandomBrainrot")
+	local storeFrame = gui:WaitForChild("Frames"):WaitForChild("Store"):WaitForChild("StoreFrame")
+	-- Container may be a CanvasGroup clip wrapper (PanelSlideIn) with scroll inside.
+	local containerHost = PanelSlideIn.waitChild(storeFrame, "Container", 15)
+		or storeFrame:FindFirstChild("Container", true)
+	assert(containerHost, "[RandomBrainrotController] StoreFrame.Container missing")
+	local container = PanelSlideIn.unwrapScrollHost(containerHost) or containerHost
+	local storePack = container:FindFirstChild("RandomBrainrot")
+		or containerHost:FindFirstChild("RandomBrainrot", true)
+	assert(storePack, "[RandomBrainrotController] Store RandomBrainrot pack missing")
 	return activation, activation.Chances, storePack
 end
 

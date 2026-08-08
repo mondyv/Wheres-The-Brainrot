@@ -47,6 +47,7 @@ end
 
 -- UIScale on ScrollingFrame (or ancestors) unclips the full canvas. CanvasGroup
 -- still clips its children when scaled — wrap once, animate the wrapper.
+-- Keep the ORIGINAL name on the CanvasGroup so WaitForChild("Container") still works.
 local function wrapScrollingFrame(scroll: ScrollingFrame)
 	if scroll:GetAttribute(WRAPPED_ATTR) == true then
 		return
@@ -61,8 +62,9 @@ local function wrapScrollingFrame(scroll: ScrollingFrame)
 		return
 	end
 
+	local originalName = scroll.Name
 	local clip = Instance.new("CanvasGroup")
-	clip.Name = "_PanelScrollClip"
+	clip.Name = originalName
 	clip:SetAttribute(CLIP_ATTR, true)
 	clip.BackgroundTransparency = 1
 	clip.BorderSizePixel = 0
@@ -76,12 +78,54 @@ local function wrapScrollingFrame(scroll: ScrollingFrame)
 	clip.Visible = scroll.Visible
 	clip.Parent = parent
 
+	scroll.Name = "_ClippedScroll"
 	scroll.Size = UDim2.fromScale(1, 1)
 	scroll.Position = UDim2.fromScale(0, 0)
 	scroll.AnchorPoint = Vector2.new(0, 0)
 	scroll.ClipsDescendants = true
 	scroll.Parent = clip
 	scroll:SetAttribute(WRAPPED_ATTR, true)
+	scroll:SetAttribute("_OriginalScrollName", originalName)
+end
+
+-- Prefer the real ScrollingFrame inside a clip CanvasGroup (same public name).
+function M.unwrapScrollHost(host: Instance?): Instance?
+	if not host then
+		return nil
+	end
+	if host:IsA("CanvasGroup") and host:GetAttribute(CLIP_ATTR) == true then
+		local inner = host:FindFirstChild("_ClippedScroll")
+		if inner then
+			return inner
+		end
+		return host:FindFirstChildWhichIsA("ScrollingFrame")
+	end
+	return host
+end
+
+function M.waitChild(parent: Instance, name: string, timeoutSec: number?): Instance?
+	local timeout = if typeof(timeoutSec) == "number" then timeoutSec else 10
+	local existing = parent:FindFirstChild(name)
+	if existing then
+		return existing
+	end
+	local deadline = os.clock() + timeout
+	while os.clock() < deadline do
+		existing = parent:FindFirstChild(name)
+		if existing then
+			return existing
+		end
+		-- Legacy wrap name from older sessions.
+		local legacy = parent:FindFirstChild("_PanelScrollClip")
+		if legacy then
+			local inner = legacy:FindFirstChild(name) or legacy:FindFirstChild("_ClippedScroll")
+			if inner then
+				return if name == "_ClippedScroll" then inner else (legacy:FindFirstChild(name) or legacy)
+			end
+		end
+		task.wait(0.1)
+	end
+	return nil
 end
 
 local function ensureScrollClips(frame: Frame)

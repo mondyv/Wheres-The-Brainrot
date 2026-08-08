@@ -941,16 +941,14 @@ function IndexController.init()
 	headerTitle = findLabel(indexFrame, { "Title", "HeaderTitle", "Name" })
 		or (indexFrame:FindFirstChild("Header") and findLabel(indexFrame.Header, { "Title", "Name" }))
 	-- Prefer direct child so we don't grab a nested Decor/Container by mistake.
-	-- After PanelSlideIn wraps scrolls, Container may live under _PanelScrollClip.
+	-- After PanelSlideIn wraps scrolls, Container may be a CanvasGroup clip host.
+	local PanelSlideIn = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PanelSlideIn"))
 	local containerInst = indexFrame:FindFirstChild("Container")
 	if not containerInst then
-		local clip = indexFrame:FindFirstChild("_PanelScrollClip")
-		if clip then
-			containerInst = clip:FindFirstChild("Container")
-		end
-	end
-	if not containerInst then
 		containerInst = indexFrame:FindFirstChild("Container", true)
+	end
+	if containerInst then
+		containerInst = PanelSlideIn.unwrapScrollHost(containerInst) or containerInst
 	end
 	container = if containerInst and containerInst:IsA("ScrollingFrame")
 		then containerInst

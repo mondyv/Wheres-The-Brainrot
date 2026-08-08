@@ -1,9 +1,8 @@
 -- [ACTIVE] PlotPlayerSpawn.server
 --[[
 	PlotPlayerSpawn (server)
-	Teleports players onto their assigned plot's first floor on join and respawn.
-	Streams the destination first and retries briefly so tight Streaming radii
-	don't drop the character through an unstreamed floor.
+	Join / respawn → same plot Spawn pad as the safezone "Base" button.
+	Soft-revive attrs (QuestHitbox) only win when they look sane vs the plot pad.
 --]]
 
 local Players = game:GetService("Players")
@@ -15,41 +14,17 @@ local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local ASSIGN_WAIT_SEC = 60
 
-local function waitForAssignedPlot(player: Player, character: Model): Instance?
-	local deadline = os.clock() + ASSIGN_WAIT_SEC
-	local fallback: Instance? = nil
-	while os.clock() < deadline do
-		if not character.Parent or not player.Parent then
-			return nil
-		end
-		-- Wait until the plot spawner has reserved a slot for this player.
-		if typeof(player:GetAttribute("AssignedPlotSlot")) ~= "number" then
-			task.wait(0.15)
-			continue
-		end
-		local plot = PlotPaths.findPlotForAssignedSlot(player)
-		if plot and plot.Parent then
-			fallback = plot
-			-- Wait for the real Spawn pad (full base), not a stub floor fallback.
-			if PlotPaths.isSpawnReadyPlot(plot) and PlotSpawnUtil.plotHasSpawnPad(plot) then
-				return plot
-			end
-		end
-		task.wait(0.15)
-	end
-	local last = fallback or PlotPaths.findPlotForAssignedSlot(player)
-	if last and PlotPaths.isSpawnReadyPlot(last) then
-		return last
-	end
-	return last
+local function clearReviveSpawnAttrs(player: Player)
+	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, nil)
+	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_POS_ATTR, nil)
+	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_LOOK_ATTR, nil)
 end
 
-local function teleportToPlotSpawn(player: Player, character: Model)
+local function readReviveCFrame(player: Player): CFrame?
 	local posAttr = player:GetAttribute(ReviveConfig.REVIVE_SPAWN_POS_ATTR)
 	local lookAttr = player:GetAttribute(ReviveConfig.REVIVE_SPAWN_LOOK_ATTR)
 	local legacyCf = player:GetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR)
 
-	local reviveCf: CFrame? = nil
 	if typeof(posAttr) == "Vector3" then
 		local look = if typeof(lookAttr) == "Vector3" then lookAttr else Vector3.new(0, 0, -1)
 		local flat = Vector3.new(look.X, 0, look.Z)
@@ -58,14 +33,57 @@ local function teleportToPlotSpawn(player: Player, character: Model)
 		else
 			flat = flat.Unit
 		end
-		reviveCf = CFrame.lookAt(posAttr, posAttr + flat)
-	elseif typeof(legacyCf) == "CFrame" then
-		reviveCf = legacyCf
+		return CFrame.lookAt(posAttr, posAttr + flat)
+	end
+	if typeof(legacyCf) == "CFrame" then
+		return legacyCf
+	end
+	return nil
+end
+
+-- Same destination the Base top-button uses — wait until the pad actually exists.
+local function waitForBaseSpawnCFrame(player: Player, character: Model): CFrame?
+	local deadline = os.clock() + ASSIGN_WAIT_SEC
+	while os.clock() < deadline do
+		if not character.Parent or not player.Parent then
+			return nil
+		end
+		if typeof(player:GetAttribute("AssignedPlotSlot")) ~= "number" then
+			task.wait(0.15)
+			continue
+		end
+		local plot = PlotPaths.findPlotForAssignedSlot(player)
+		if plot and plot.Parent and PlotPaths.isSpawnReadyPlot(plot) and PlotSpawnUtil.plotHasSpawnPad(plot) then
+			local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+			if spawnCf then
+				return spawnCf
+			end
+		end
+		task.wait(0.15)
+	end
+	return PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+end
+
+local function teleportToPlotSpawn(player: Player, character: Model)
+	local baseCf = waitForBaseSpawnCFrame(player, character)
+	local reviveCf = readReviveCFrame(player)
+
+	-- Soft-respawn pin (Tim Cheese hitbox) — only if it isn't clearly under the plot pad.
+	if reviveCf and baseCf then
+		if reviveCf.Position.Y < baseCf.Position.Y - 10 then
+			clearReviveSpawnAttrs(player)
+			reviveCf = nil
+		end
+	elseif reviveCf and not baseCf then
+		-- Base not ready yet; still honor a pin if it has a sane Y.
+		if reviveCf.Position.Y < 1 then
+			clearReviveSpawnAttrs(player)
+			reviveCf = nil
+		end
 	end
 
 	if reviveCf then
 		local targetPos = reviveCf.Position
-		-- Keep attrs longer so late AssignedPlotSlot hooks don't yank soft-respawn off QuestHitbox.
 		PlotSpawnUtil.streamAndTeleportWithRetries(player, character, reviveCf)
 		task.delay(6, function()
 			if not player.Parent then
@@ -73,18 +91,15 @@ local function teleportToPlotSpawn(player: Player, character: Model)
 			end
 			local stillPos = player:GetAttribute(ReviveConfig.REVIVE_SPAWN_POS_ATTR)
 			if typeof(stillPos) == "Vector3" and (stillPos - targetPos).Magnitude < 1 then
-				player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, nil)
-				player:SetAttribute(ReviveConfig.REVIVE_SPAWN_POS_ATTR, nil)
-				player:SetAttribute(ReviveConfig.REVIVE_SPAWN_LOOK_ATTR, nil)
+				clearReviveSpawnAttrs(player)
 			end
 		end)
 		return
 	end
 
-	local plot = waitForAssignedPlot(player, character)
-	if not plot or not plot.Parent then
+	if not baseCf then
 		warn(
-			"[PlotPlayerSpawn] No assigned plot for",
+			"[PlotPlayerSpawn] No Base spawn for",
 			player.Name,
 			"(AssignedPlotSlot=",
 			player:GetAttribute("AssignedPlotSlot"),
@@ -93,20 +108,12 @@ local function teleportToPlotSpawn(player: Player, character: Model)
 		return
 	end
 
-	-- Same pad as ReturnTeleport (first-floor plot spawn).
-	local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
-		or PlotSpawnUtil.findFirstFloorSpawnCFrame(plot)
-	if not spawnCf then
-		warn("[PlotPlayerSpawn] No Spawn/floor CFrame on plot for", player.Name)
-		return
-	end
-
-	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, spawnCf, true)
+	-- Identical path to SafezoneQuickNav "Base".
+	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, baseCf, true)
 end
 
 local function onCharacter(player: Player, character: Model)
 	task.spawn(function()
-		-- Wait for HRP so the first teleport isn't dropped.
 		local hrp = character:FindFirstChild("HumanoidRootPart")
 			or character:WaitForChild("HumanoidRootPart", 8)
 		if not hrp or not character.Parent or not player.Parent then
@@ -155,4 +162,5 @@ Players.PlayerRemoving:Connect(function(player)
 		end
 		playerConns[player] = nil
 	end
+	clearReviveSpawnAttrs(player)
 end)

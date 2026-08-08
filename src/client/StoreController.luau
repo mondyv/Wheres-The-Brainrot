@@ -20,6 +20,7 @@ local TweenService = game:GetService("TweenService")
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
+local PanelSlideIn = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PanelSlideIn"))
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local HUDController = require(script.Parent.HUDController)
@@ -630,7 +631,9 @@ local function init()
 	end
 	local frames = main:WaitForChild("Frames")
 	local storeFrame = frames:WaitForChild("Store")
-	local container = storeFrame:WaitForChild("StoreFrame"):WaitForChild("Container")
+	local storeInner = storeFrame:WaitForChild("StoreFrame")
+	local containerHost = PanelSlideIn.waitChild(storeInner, "Container", 15) or storeInner:WaitForChild("Container")
+	local container = PanelSlideIn.unwrapScrollHost(containerHost) or containerHost
 
 	-- Gamepass panels live across "Gamepasses" and "Gamepasses2".
 	local gamepassContainers = { container:FindFirstChild("Gamepasses"), container:FindFirstChild("Gamepasses2") }

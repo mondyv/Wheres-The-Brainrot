@@ -9,12 +9,29 @@ local Workspace = game:GetService("Workspace")
 
 local PlotSpawnUtil = {}
 
-local SPAWN_CLEARANCE = 4.5
+local SPAWN_CLEARANCE = 3
 local STREAM_RETRIES = 40
 local STREAM_RETRY_INTERVAL = 0.2
 -- Longer stream window helps console / PS4 emulation (tighter client radii).
 local STREAM_RADIUS_SEC = 14
 local SUNK_Y_THRESHOLD = 1.25
+
+-- Highest world-Y corner of a part (works for rotated Spawn pads).
+local function worldTopY(part: BasePart): number
+	local half = part.Size * 0.5
+	local maxY = -math.huge
+	for sx = -1, 1, 2 do
+		for sy = -1, 1, 2 do
+			for sz = -1, 1, 2 do
+				local p = (part.CFrame * CFrame.new(half.X * sx, half.Y * sy, half.Z * sz)).Position
+				if p.Y > maxY then
+					maxY = p.Y
+				end
+			end
+		end
+	end
+	return maxY
+end
 
 local function expandPartBounds(cf: CFrame, size: Vector3, minV: Vector3, maxV: Vector3): (Vector3, Vector3)
 	local hs = size * 0.5
@@ -276,29 +293,11 @@ function PlotSpawnUtil.findPlotSpawnAnchor(plot: Instance): BasePart?
 	return nil
 end
 
-local function cframeOnSpawnAnchor(anchor: BasePart, plot: Instance): CFrame
-	-- World-space top of the pad (respects part rotation), then a small lift for HRP.
-	local top = (anchor.CFrame * CFrame.new(0, anchor.Size.Y * 0.5, 0)).Position
+local function cframeOnSpawnAnchor(anchor: BasePart, _plot: Instance): CFrame
+	-- Treat the plot Spawn part like a SpawnLocation: stand on its top, facing its look.
 	local face = flatLookFromPart(anchor)
-
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Include
-	params.FilterDescendantsInstances = { plot }
-	params.IgnoreWater = true
-
-	local origin = top + Vector3.new(0, 12, 0)
-	local hit = Workspace:Raycast(origin, Vector3.new(0, -48, 0), params)
-	-- Default to the pad top. Only trust a ray hit that lands near the pad —
-	-- accepting any hit below top.Y+6 used basements / buried parts and spawned players underground.
-	local standY = top.Y + SPAWN_CLEARANCE
-	if hit then
-		local dy = hit.Position.Y - top.Y
-		if dy >= -2.5 and dy <= 6 then
-			standY = hit.Position.Y + SPAWN_CLEARANCE
-		end
-	end
-
-	local pos = Vector3.new(top.X, standY, top.Z)
+	local topY = worldTopY(anchor)
+	local pos = Vector3.new(anchor.Position.X, topY + SPAWN_CLEARANCE, anchor.Position.Z)
 	return CFrame.lookAt(pos, pos + face)
 end
 
@@ -628,21 +627,39 @@ end
 -- Stream the destination, teleport, then re-apply for a short window so the
 -- character doesn't fall through an unstreamed plot floor (tight client radii /
 -- console streaming).
-function PlotSpawnUtil.streamAndTeleportWithRetries(player: Player, character: Model, spawnCf: CFrame)
+-- When reResolvePlotSpawn is true, each snap re-reads the live plot Spawn part
+-- (pad may finish pivoting / streaming in after the first CF was captured).
+function PlotSpawnUtil.streamAndTeleportWithRetries(
+	player: Player,
+	character: Model,
+	spawnCf: CFrame,
+	reResolvePlotSpawn: boolean?
+)
+	local function targetCf(): CFrame
+		if reResolvePlotSpawn then
+			local live = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+			if live then
+				return live
+			end
+		end
+		return spawnCf
+	end
+
+	local initial = targetCf()
 	if Workspace.StreamingEnabled then
 		local ok, err = pcall(function()
-			player:RequestStreamAroundAsync(spawnCf.Position, STREAM_RADIUS_SEC)
+			player:RequestStreamAroundAsync(initial.Position, STREAM_RADIUS_SEC)
 		end)
 		if not ok then
 			warn("[PlotSpawnUtil] RequestStreamAroundAsync failed:", err)
 		end
 	end
 
-	PlotSpawnUtil.teleportCharacterToCFrame(character, spawnCf)
+	PlotSpawnUtil.teleportCharacterToCFrame(character, targetCf())
 	-- Immediate second snap after stream request — first frame often falls through.
 	task.defer(function()
 		if player.Parent and player.Character == character then
-			PlotSpawnUtil.teleportCharacterToCFrame(character, spawnCf)
+			PlotSpawnUtil.teleportCharacterToCFrame(character, targetCf())
 		end
 	end)
 
@@ -660,31 +677,32 @@ function PlotSpawnUtil.streamAndTeleportWithRetries(player: Player, character: M
 			if not humanoid or humanoid.Health <= 0 then
 				return
 			end
+			local dest = targetCf()
 			local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
 			if hrp then
-				local drift = (hrp.Position - spawnCf.Position).Magnitude
-				local sunk = hrp.Position.Y < spawnCf.Position.Y - SUNK_Y_THRESHOLD
+				local drift = (hrp.Position - dest.Position).Magnitude
+				local sunk = hrp.Position.Y < dest.Position.Y - SUNK_Y_THRESHOLD
 				-- Still falling / under the pad / slid far — snap again.
 				if drift > 8 or sunk then
 					if Workspace.StreamingEnabled and (drift > 20 or sunk) then
 						pcall(function()
-							player:RequestStreamAroundAsync(spawnCf.Position, STREAM_RADIUS_SEC)
+							player:RequestStreamAroundAsync(dest.Position, STREAM_RADIUS_SEC)
 						end)
 					end
-					PlotSpawnUtil.teleportCharacterToCFrame(char, spawnCf)
+					PlotSpawnUtil.teleportCharacterToCFrame(char, dest)
 				elseif drift <= 6 then
 					-- Settled near spawn; one final zero-velocity settle then stop.
 					hrp.AssemblyLinearVelocity = Vector3.zero
 					hrp.AssemblyAngularVelocity = Vector3.zero
 					-- Final floor check — if we dipped under, keep correcting.
-					if hrp.Position.Y < spawnCf.Position.Y - SUNK_Y_THRESHOLD then
-						PlotSpawnUtil.teleportCharacterToCFrame(char, spawnCf)
+					if hrp.Position.Y < dest.Position.Y - SUNK_Y_THRESHOLD then
+						PlotSpawnUtil.teleportCharacterToCFrame(char, dest)
 					else
 						return
 					end
 				end
 			else
-				PlotSpawnUtil.teleportCharacterToCFrame(char, spawnCf)
+				PlotSpawnUtil.teleportCharacterToCFrame(char, dest)
 			end
 		end
 	end)

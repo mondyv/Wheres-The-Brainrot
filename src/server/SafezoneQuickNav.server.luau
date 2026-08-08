@@ -178,7 +178,7 @@ local function onNavigate(player: Player, destRaw: any): (boolean, string?)
 	if not destCf then
 		return false, destErr or "Destination missing"
 	end
-	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, destCf)
+	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, destCf, dest == "Base")
 	lastNavAt[player] = os.clock()
 	return true, nil
 end

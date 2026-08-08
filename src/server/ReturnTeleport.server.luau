@@ -98,7 +98,7 @@ local function teleportHome(player: Player, character: Model): (boolean, string?
 		return false, "Base not ready yet"
 	end
 	-- Stream + retries so return doesn't drop through an unstreamed floor.
-	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, spawnCf)
+	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, spawnCf, true)
 	lastReturnAt[player] = os.clock()
 	return true, nil
 end

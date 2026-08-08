@@ -214,25 +214,78 @@ local function gatherOpenTargets(frame: Frame): { GuiObject }
 	return targets
 end
 
+local function hostHasScrolling(host: GuiObject): boolean
+	if host:IsA("ScrollingFrame") then
+		return true
+	end
+	return host:FindFirstChildWhichIsA("ScrollingFrame", true) ~= nil
+end
+
+-- UIScale on a ScrollingFrame (or its ancestor) briefly unclips the full canvas —
+-- that one-frame "see the whole list" flash. Prefer clip + delayed Visible instead.
+local function prepareScrollSafe(host: GuiObject)
+	host.ClipsDescendants = true
+	if host:IsA("ScrollingFrame") then
+		(host :: ScrollingFrame).ClipsDescendants = true
+	end
+	for _, d in host:GetDescendants() do
+		if d:IsA("ScrollingFrame") then
+			d.ClipsDescendants = true
+		end
+	end
+end
+
+-- Squash open targets BEFORE the panel is Visible so nothing flashes at full size.
+function M.prepareForPanel(frame: Frame)
+	local targets = gatherOpenTargets(frame)
+	for i, host in ipairs(targets) do
+		prepareScrollSafe(host)
+		if hostHasScrolling(host) then
+			-- Hide scroll hosts until their turn — never UIScale them.
+			host.Visible = false
+		else
+			local startScale = if i == 1 then 0.88 else 0.82
+			getOrAddScale(host).Scale = startScale
+		end
+	end
+
+	local container = resolveHost(frame, "Container") or resolveHost(frame, "StoreFrame")
+	if container then
+		prepareScrollSafe(container)
+	end
+end
+
 function M.playForPanel(frame: Frame)
 	M.cancel()
 	animGeneration += 1
 	local myGen = animGeneration
 
+	-- Ensure prepare ran even if caller forgot (idempotent).
+	M.prepareForPanel(frame)
+
 	local targets = gatherOpenTargets(frame)
 	for i, host in ipairs(targets) do
 		local delaySec = (i - 1) * 0.04
 		local startScale = if i == 1 then 0.88 else 0.82
-		task.delay(delaySec, function()
-			if myGen ~= animGeneration or not host.Parent then
-				return
-			end
-			M.slideGui(host, {
-				startScale = startScale,
-				generation = myGen,
-				tweenInfo = OPEN_TWEEN,
-			})
-		end)
+		if hostHasScrolling(host) then
+			task.delay(delaySec, function()
+				if myGen ~= animGeneration or not host.Parent then
+					return
+				end
+				prepareScrollSafe(host)
+				host.Visible = true
+			end)
+		else
+			-- Scale already set in prepare — only tween after stagger.
+			task.delay(delaySec, function()
+				if myGen ~= animGeneration or not host.Parent then
+					return
+				end
+				local scale = getOrAddScale(host)
+				scale.Scale = startScale
+				TweenService:Create(scale, OPEN_TWEEN, { Scale = 1 }):Play()
+			end)
+		end
 	end
 
 	local recipe = PANEL_CONTENT[frame.Name]
@@ -262,8 +315,9 @@ function M.playForPanel(frame: Frame)
 	end
 
 	-- Soft pop on a few direct children of Container (rows / cards) for Index-like feel.
+	-- Skip when the container scrolls — UIScale on list rows unclips the canvas.
 	local container = resolveHost(frame, "Container") or resolveHost(frame, "StoreFrame")
-	if container and frame.Name ~= "Index" then
+	if container and frame.Name ~= "Index" and not hostHasScrolling(container) then
 		local kids = collectDirectGuiChildren(container, {
 			UIListLayout = true,
 			UIPadding = true,
@@ -298,6 +352,9 @@ function M.playCloseForPanel(frame: Frame)
 		if not host.Parent then
 			continue
 		end
+		if hostHasScrolling(host) then
+			continue
+		end
 		local scale = getOrAddScale(host)
 		TweenService:Create(scale, CLOSE_CONTENT_TWEEN, { Scale = 0.9 }):Play()
 	end
@@ -321,6 +378,10 @@ function M.playCloseForPanel(frame: Frame)
 			local scale = host:FindFirstChild("PanelSlideScale")
 			if scale and scale:IsA("UIScale") then
 				scale.Scale = 1
+			end
+			-- Restore scroll hosts so the next open can prepare them again.
+			if hostHasScrolling(host) and host.Parent then
+				host.Visible = true
 			end
 		end
 	end)

@@ -101,7 +101,7 @@ local function teleportToPlotSpawn(player: Player, character: Model)
 		return
 	end
 
-	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, spawnCf)
+	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, spawnCf, true)
 end
 
 local function onCharacter(player: Player, character: Model)

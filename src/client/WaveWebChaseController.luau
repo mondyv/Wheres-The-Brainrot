@@ -5,6 +5,7 @@
 ]]
 
 local Debris = game:GetService("Debris")
+local ContentProvider = game:GetService("ContentProvider")
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -622,6 +623,38 @@ local function finishChase(didHideHud: boolean)
 	MobileTouchGate.ensureTouchControlsVisible(true)
 end
 
+local function setModelLocalHidden(model: Model, hidden: boolean)
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.LocalTransparencyModifier = if hidden then 1 else 0
+		end
+	end
+end
+
+local function preloadModel(model: Model)
+	local assets: { Instance } = { model }
+	for _, d in model:GetDescendants() do
+		if d:IsA("MeshPart") or d:IsA("SpecialMesh") or d:IsA("Decal") or d:IsA("Texture") then
+			table.insert(assets, d)
+		end
+	end
+	local ok, err = pcall(function()
+		ContentProvider:PreloadAsync(assets)
+	end)
+	if not ok then
+		warn("[WaveWebChaseController] preload failed:", err)
+	end
+	task.wait(C.SPIDER_PRELOAD_SEC)
+end
+
+local function currentLand(): number
+	local raw = player:GetAttribute("CurrentLand")
+	if typeof(raw) == "number" then
+		return math.clamp(math.floor(raw), 1, 10)
+	end
+	return 1
+end
+
 -- End cinematic: free camera + movement so the player can sprint to safezone.
 local function releaseToGameplay(token: number)
 	if token ~= chaseToken then
@@ -652,9 +685,15 @@ local function runIntro(token: number, playerPos: Vector3)
 		local spider = spiderTemplate:Clone()
 		spider.Name = "WaveWebChaseSpider"
 		stabilizeSpider(spider)
+		setModelLocalHidden(spider, true)
 		spider:PivotTo(cfFacingTarget(dropStart, playerPos))
 		spider.Parent = Workspace
 		activeSpider = spider
+		preloadModel(spider)
+		if token ~= chaseToken then
+			return
+		end
+		setModelLocalHidden(spider, false)
 
 		pulseCameraShake(0.5, 0.16, token)
 
@@ -769,8 +808,14 @@ local function runChase(token: number)
 	local wave = waveTemplate:Clone()
 	wave.Name = "WaveWebChase"
 	prepareWaveModel(wave)
+	setModelLocalHidden(wave, true)
 	wave.Parent = Workspace
 	activeWave = wave
+	preloadModel(wave)
+	if token ~= chaseToken then
+		return
+	end
+	setModelLocalHidden(wave, false)
 
 	local function emitWaveFx()
 		if not activeWave then
@@ -841,8 +886,9 @@ local function runChase(token: number)
 		end
 
 		local elapsed = os.clock() - chaseStart
-		local ramp = math.clamp(elapsed / C.WAVE_SPEED_RAMP_SEC, 0, 1)
-		local speed = C.WAVE_BASE_SPEED + (C.WAVE_MAX_SPEED - C.WAVE_BASE_SPEED) * ramp
+		local speed = C.speedForLand(currentLand())
+		-- Mild ramp so it doesn't instantly top out.
+		speed *= 0.85 + 0.15 * math.clamp(elapsed / 10, 0, 1)
 
 		-- Chase the player (no trail leash). Move toward their current position.
 		local toPlayer = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)

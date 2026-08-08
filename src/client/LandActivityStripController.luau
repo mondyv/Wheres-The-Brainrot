@@ -30,20 +30,16 @@ local MOVE_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Quint, Enum.EasingDirect
 local INSIDE_STREAK = 2
 local OUTSIDE_STREAK = 2
 
--- Wood board radar — dark planks, bright luck chips, high-contrast text.
-local PLATE = Color3.fromRGB(92, 58, 28)
-local PLATE_LIGHT = Color3.fromRGB(138, 92, 48)
-local PLATE_EDGE = Color3.fromRGB(28, 16, 8)
-local TRACK = Color3.fromRGB(48, 128, 62)
-local TRACK_DARK = Color3.fromRGB(24, 72, 34)
-local TOKEN = Color3.fromRGB(28, 22, 16)
+-- Simple glass plate + bright green track + readable luck chips.
+local PLATE = Color3.fromRGB(12, 18, 16)
+local PLATE_EDGE = Color3.fromRGB(255, 255, 255)
+local TRACK = Color3.fromRGB(64, 220, 96)
+local TRACK_DARK = Color3.fromRGB(24, 140, 52)
+local TOKEN = Color3.fromRGB(18, 22, 20)
 local TOKEN_FACE = Color3.fromRGB(255, 236, 120)
-local TOKEN_INK = Color3.fromRGB(255, 248, 210)
 local YOU_RING = Color3.fromRGB(255, 64, 64)
 local OTHER_RING = Color3.fromRGB(255, 255, 255)
-local STEM = Color3.fromRGB(28, 16, 8)
--- Soft wood-noise tile (built-in Roblox surface noise works well tiled).
-local WOOD_TEX = "rbxassetid://6372755229"
+local STEM = Color3.fromRGB(255, 255, 255)
 
 type AvatarSlot = {
 	player: Player,
@@ -162,31 +158,46 @@ local function cancelVisibilityTween()
 end
 
 local function setStripAlpha(alpha: number)
-	-- Frame-based fade (CanvasGroup was clipping heads outside its rect).
 	if plateFrame then
-		plateFrame.BackgroundTransparency = 0.08 + (1 - alpha) * 0.92
+		-- Soft transparent glass (not a heavy opaque board).
+		plateFrame.BackgroundTransparency = 0.42 + (1 - alpha) * 0.58
 		local stroke = plateFrame:FindFirstChildOfClass("UIStroke")
+		if stroke then
+			stroke.Transparency = 0.72 + (1 - alpha) * 0.28
+		end
+	end
+	local track = plateFrame and plateFrame:FindFirstChild("Track")
+	if track and track:IsA("GuiObject") then
+		track.BackgroundTransparency = (1 - alpha) * 0.95
+		local stroke = track:FindFirstChildOfClass("UIStroke")
 		if stroke then
 			stroke.Transparency = (1 - alpha) * 0.95
 		end
 	end
 	for _, token in landTokens do
-		token.BackgroundTransparency = 0.05 + (1 - alpha) * 0.95
+		token.BackgroundTransparency = 0.12 + (1 - alpha) * 0.88
 		local stroke = token:FindFirstChildOfClass("UIStroke")
 		if stroke then
 			stroke.Transparency = (1 - alpha) * 0.95
 		end
+	end
+	for _, peg in landTicks do
+		peg.BackgroundTransparency = (1 - alpha) * 0.95
 	end
 	for _, label in landLabels do
 		label.TextTransparency = 1 - alpha
 		label.TextStrokeTransparency = 0.15 + (1 - alpha) * 0.85
 	end
 	for _, slot in slotsByUserId do
-		slot.root.Visible = alpha > 0.08
+		slot.root.Visible = alpha > 0.05
 		slot.icon.ImageTransparency = 1 - alpha
 		slot.ring.Transparency = 1 - alpha
 		if slot.stem then
-			slot.stem.BackgroundTransparency = 0.15 + (1 - alpha) * 0.85
+			slot.stem.BackgroundTransparency = 0.35 + (1 - alpha) * 0.65
+		end
+		local badge = slot.root:FindFirstChild("Badge")
+		if badge and badge:IsA("GuiObject") then
+			badge.BackgroundTransparency = (1 - alpha) * 0.9
 		end
 	end
 end
@@ -292,14 +303,14 @@ local function ensureSlot(plr: Player): AvatarSlot?
 		return nil
 	end
 
-	local size = if isMobile() then 40 else 48
+	local size = if isMobile() then 44 else 52
 	local root = Instance.new("Frame")
 	root.Name = "Avatar_" .. tostring(plr.UserId)
 	root.AnchorPoint = Vector2.new(0.5, 1)
 	root.Size = UDim2.fromOffset(size, size)
 	root.BackgroundTransparency = 1
 	root.BorderSizePixel = 0
-	root.ZIndex = 60
+	root.ZIndex = 80
 	root.Active = true
 	root.Parent = avatarsHost
 
@@ -307,12 +318,12 @@ local function ensureSlot(plr: Player): AvatarSlot?
 	local stem = Instance.new("Frame")
 	stem.Name = "Stem"
 	stem.AnchorPoint = Vector2.new(0.5, 0)
-	stem.Position = UDim2.new(0.5, 0, 1, -2)
-	stem.Size = UDim2.fromOffset(3, if isMobile() then 14 else 16)
+	stem.Position = UDim2.new(0.5, 0, 1, -1)
+	stem.Size = UDim2.fromOffset(3, if isMobile() then 16 else 18)
 	stem.BackgroundColor3 = STEM
-	stem.BackgroundTransparency = 0.15
+	stem.BackgroundTransparency = 0.35
 	stem.BorderSizePixel = 0
-	stem.ZIndex = 58
+	stem.ZIndex = 78
 	stem.Parent = root
 	local stemCorner = Instance.new("UICorner")
 	stemCorner.CornerRadius = UDim.new(1, 0)
@@ -324,9 +335,9 @@ local function ensureSlot(plr: Player): AvatarSlot?
 	shadow.Position = UDim2.new(0.5, 1, 0.5, 3)
 	shadow.Size = UDim2.new(1, 6, 1, 6)
 	shadow.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	shadow.BackgroundTransparency = 0.62
+	shadow.BackgroundTransparency = 0.55
 	shadow.BorderSizePixel = 0
-	shadow.ZIndex = 59
+	shadow.ZIndex = 79
 	shadow.Parent = root
 	local shadowCorner = Instance.new("UICorner")
 	shadowCorner.CornerRadius = UDim.new(1, 0)
@@ -337,7 +348,7 @@ local function ensureSlot(plr: Player): AvatarSlot?
 	badge.Size = UDim2.fromScale(1, 1)
 	badge.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 	badge.BorderSizePixel = 0
-	badge.ZIndex = 61
+	badge.ZIndex = 81
 	badge.Parent = root
 	local badgeCorner = Instance.new("UICorner")
 	badgeCorner.CornerRadius = UDim.new(1, 0)
@@ -345,20 +356,21 @@ local function ensureSlot(plr: Player): AvatarSlot?
 
 	local ink = Instance.new("UIStroke")
 	ink.Thickness = 3
-	ink.Color = PLATE_EDGE
+	ink.Color = Color3.fromRGB(20, 24, 22)
 	ink.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	ink.Parent = badge
 
 	local icon = Instance.new("ImageLabel")
 	icon.Name = "Head"
-	icon.BackgroundTransparency = 1
+	icon.BackgroundColor3 = Color3.fromRGB(40, 44, 42)
+	icon.BackgroundTransparency = 0
 	icon.BorderSizePixel = 0
 	icon.AnchorPoint = Vector2.new(0.5, 0.5)
 	icon.Position = UDim2.fromScale(0.5, 0.5)
-	icon.Size = UDim2.fromScale(0.86, 0.86)
+	icon.Size = UDim2.fromScale(0.88, 0.88)
 	icon.Image = headshotUrl(plr.UserId)
 	icon.ScaleType = Enum.ScaleType.Crop
-	icon.ZIndex = 62
+	icon.ZIndex = 82
 	icon.Active = false
 	icon.Parent = badge
 	local iconCorner = Instance.new("UICorner")
@@ -384,7 +396,7 @@ local function ensureSlot(plr: Player): AvatarSlot?
 		pin.Text = "YOU"
 		pin.TextColor3 = Color3.fromRGB(255, 255, 255)
 		pin.TextSize = 9
-		pin.ZIndex = 70
+		pin.ZIndex = 90
 		UiFonts.applyBody(pin)
 		pin.Parent = root
 		local pinCorner = Instance.new("UICorner")
@@ -392,7 +404,7 @@ local function ensureSlot(plr: Player): AvatarSlot?
 		pinCorner.Parent = pin
 		local pinStroke = Instance.new("UIStroke")
 		pinStroke.Thickness = 2
-		pinStroke.Color = PLATE_EDGE
+		pinStroke.Color = Color3.fromRGB(20, 24, 22)
 		pinStroke.Parent = pin
 	end
 
@@ -463,17 +475,17 @@ local function layoutStacks()
 		end
 	end
 
-	local headY = if isMobile() then 46 else 54
+	local headY = if isMobile() then 48 else 56
 	for land, list in byLand do
 		local baseX = landXScale(land)
 		for i, slot in ipairs(list) do
 			slot.stackIndex = i
 			local stack = i - 1
 			local xJitter = ((stack % 3) - 1) * 0.012
-			local yLift = stack * (if isMobile() then 13 else 15)
+			local yLift = stack * (if isMobile() then 14 else 16)
 			local goal = UDim2.new(baseX + xJitter, 0, 0, headY - yLift)
 			slot.root.AnchorPoint = Vector2.new(0.5, 1)
-			slot.root.ZIndex = 60 + stack + (if slot.player == player then 12 else 0)
+			slot.root.ZIndex = 80 + stack + (if slot.player == player then 12 else 0)
 			TweenService:Create(slot.root, MOVE_TWEEN, { Position = goal }):Play()
 
 			if slot.player == player then
@@ -582,9 +594,9 @@ end
 
 local function buildStrip(parentGui: PlayerGui)
 	local compact = isMobile()
-	local plateH = if compact then 40 else 44
-	local height = if compact then 92 else 102
-	local widthScale = if compact then 0.86 else 0.62
+	local plateH = if compact then 36 else 40
+	local height = if compact then 94 else 104
+	local widthScale = if compact then 0.84 else 0.6
 
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "LandActivityStripGui"
@@ -612,95 +624,37 @@ local function buildStrip(parentGui: PlayerGui)
 	scale.Scale = 0.78
 	scale.Parent = root
 
-	local drop = Instance.new("Frame")
-	drop.Name = "DropShadow"
-	drop.AnchorPoint = Vector2.new(0.5, 1)
-	drop.Position = UDim2.new(0.5, 2, 1, 4)
-	drop.Size = UDim2.new(1, 10, 0, plateH + 6)
-	drop.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	drop.BackgroundTransparency = 0.68
-	drop.BorderSizePixel = 0
-	drop.ZIndex = 39
-	drop.Parent = root
-	local dropCorner = Instance.new("UICorner")
-	dropCorner.CornerRadius = UDim.new(0, 14)
-	dropCorner.Parent = drop
-
+	-- Soft transparent glass plate (no heavy border / texture).
 	local plate = Instance.new("Frame")
 	plate.Name = "Plate"
 	plate.AnchorPoint = Vector2.new(0.5, 1)
 	plate.Position = UDim2.new(0.5, 0, 1, 0)
 	plate.Size = UDim2.new(1, 0, 0, plateH)
 	plate.BackgroundColor3 = PLATE
-	plate.BackgroundTransparency = 0
+	plate.BackgroundTransparency = 0.42
 	plate.BorderSizePixel = 0
 	plate.ZIndex = 40
-	plate.ClipsDescendants = true
+	plate.ClipsDescendants = false
 	plate.Parent = root
 	plateFrame = plate
 
 	local plateCorner = Instance.new("UICorner")
-	plateCorner.CornerRadius = UDim.new(0, 12)
+	plateCorner.CornerRadius = UDim.new(1, 0)
 	plateCorner.Parent = plate
 
 	local plateStroke = Instance.new("UIStroke")
 	plateStroke.Color = PLATE_EDGE
-	plateStroke.Thickness = 4
+	plateStroke.Thickness = 1
+	plateStroke.Transparency = 0.72
 	plateStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	plateStroke.Parent = plate
 
-	-- Horizontal wood planks.
-	for i = 1, 4 do
-		local plank = Instance.new("Frame")
-		plank.Name = "Plank" .. i
-		plank.Size = UDim2.new(1, 0, 0.25, 0)
-		plank.Position = UDim2.new(0, 0, (i - 1) * 0.25, 0)
-		plank.BackgroundColor3 = if i % 2 == 0 then PLATE_LIGHT else PLATE
-		plank.BackgroundTransparency = 0
-		plank.BorderSizePixel = 0
-		plank.ZIndex = 40
-		plank.Parent = plate
-		local seam = Instance.new("Frame")
-		seam.Size = UDim2.new(1, 0, 0, 1)
-		seam.Position = UDim2.new(0, 0, 1, -1)
-		seam.BackgroundColor3 = PLATE_EDGE
-		seam.BackgroundTransparency = 0.45
-		seam.BorderSizePixel = 0
-		seam.ZIndex = 41
-		seam.Parent = plank
-	end
-
-	-- Tiled wood/noise texture wash.
-	local grain = Instance.new("ImageLabel")
-	grain.Name = "WoodGrain"
-	grain.BackgroundTransparency = 1
-	grain.Size = UDim2.fromScale(1, 1)
-	grain.Image = WOOD_TEX
-	grain.ImageTransparency = 0.72
-	grain.ScaleType = Enum.ScaleType.Tile
-	grain.TileSize = UDim2.fromOffset(64, 64)
-	grain.ZIndex = 42
-	grain.Parent = plate
-
-	local plateShine = Instance.new("UIGradient")
-	plateShine.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 130, 80)),
-		ColorSequenceKeypoint.new(0.45, Color3.fromRGB(255, 255, 255)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 42, 20)),
-	})
-	plateShine.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.35),
-		NumberSequenceKeypoint.new(0.5, 0.55),
-		NumberSequenceKeypoint.new(1, 0.2),
-	})
-	plateShine.Rotation = 90
-	plateShine.Parent = grain
-
+	-- Bright green gradient track.
 	local track = Instance.new("Frame")
 	track.Name = "Track"
 	track.AnchorPoint = Vector2.new(0.5, 0.5)
-	track.Position = UDim2.fromScale(0.5, 0.36)
-	track.Size = UDim2.new(1, -16, 0, if compact then 11 else 13)
+	track.Position = UDim2.fromScale(0.5, 0.34)
+	track.Size = UDim2.new(1, -14, 0, if compact then 12 else 14)
 	track.BackgroundColor3 = TRACK
 	track.BorderSizePixel = 0
 	track.ZIndex = 43
@@ -710,13 +664,14 @@ local function buildStrip(parentGui: PlayerGui)
 	trackCorner.Parent = track
 	local trackStroke = Instance.new("UIStroke")
 	trackStroke.Color = TRACK_DARK
-	trackStroke.Thickness = 2.5
+	trackStroke.Thickness = 1.5
+	trackStroke.Transparency = 0.25
 	trackStroke.Parent = track
 	local trackGrad = Instance.new("UIGradient")
 	trackGrad.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(92, 190, 100)),
-		ColorSequenceKeypoint.new(0.5, TRACK),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(32, 96, 44)),
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 255, 140)),
+		ColorSequenceKeypoint.new(0.45, TRACK),
+		ColorSequenceKeypoint.new(1, TRACK_DARK),
 	})
 	trackGrad.Rotation = 90
 	trackGrad.Parent = track
@@ -737,7 +692,7 @@ local function buildStrip(parentGui: PlayerGui)
 		local peg = Instance.new("Frame")
 		peg.Name = "Peg" .. tostring(land)
 		peg.AnchorPoint = Vector2.new(0.5, 0.5)
-		peg.Position = UDim2.new(x, 0, 0.36, 0)
+		peg.Position = UDim2.new(x, 0, 0.34, 0)
 		peg.Size = UDim2.fromOffset(7, 7)
 		peg.BackgroundColor3 = TOKEN_FACE
 		peg.BorderSizePixel = 0
@@ -747,18 +702,18 @@ local function buildStrip(parentGui: PlayerGui)
 		pegCorner.CornerRadius = UDim.new(1, 0)
 		pegCorner.Parent = peg
 		local pegStroke = Instance.new("UIStroke")
-		pegStroke.Color = PLATE_EDGE
-		pegStroke.Thickness = 2
+		pegStroke.Color = Color3.fromRGB(20, 24, 22)
+		pegStroke.Thickness = 1.5
 		pegStroke.Parent = peg
 		table.insert(landTicks, peg)
 
 		local token = Instance.new("Frame")
 		token.Name = "Token" .. tostring(land)
 		token.AnchorPoint = Vector2.new(0.5, 0)
-		token.Position = UDim2.new(x, 0, 0.55, 0)
+		token.Position = UDim2.new(x, 0, 0.54, 0)
 		token.Size = UDim2.fromOffset(if compact then 34 else 38, if compact then 17 else 18)
 		token.BackgroundColor3 = TOKEN
-		token.BackgroundTransparency = 0
+		token.BackgroundTransparency = 0.12
 		token.BorderSizePixel = 0
 		token.ZIndex = 52
 		token.Parent = tokensHost
@@ -767,7 +722,7 @@ local function buildStrip(parentGui: PlayerGui)
 		tokenCorner.Parent = token
 		local tokenStroke = Instance.new("UIStroke")
 		tokenStroke.Color = TOKEN_FACE
-		tokenStroke.Thickness = 2.2
+		tokenStroke.Thickness = 2
 		tokenStroke.Parent = token
 		table.insert(landTokens, token)
 
@@ -792,7 +747,7 @@ local function buildStrip(parentGui: PlayerGui)
 	avatars.Name = "Avatars"
 	avatars.BackgroundTransparency = 1
 	avatars.Size = UDim2.fromScale(1, 1)
-	avatars.ZIndex = 60
+	avatars.ZIndex = 80
 	avatars.ClipsDescendants = false
 	avatars.Parent = root
 
@@ -803,13 +758,13 @@ local function buildStrip(parentGui: PlayerGui)
 	if bobConn then
 		bobConn:Disconnect()
 	end
+	-- Gentle rock (rotation), not a bouncing position hop.
 	bobConn = RunService.Heartbeat:Connect(function(dt)
 		if not visibleTarget or not stripRoot then
 			return
 		end
 		bobPhase += dt
-		local y = if compact then -4 else -6
-		stripRoot.Position = UDim2.new(0.5, 0, 1, y + math.sin(bobPhase * 1.6) * 1.5)
+		stripRoot.Rotation = math.sin(bobPhase * 0.9) * 1.6
 	end)
 
 	task.spawn(function()

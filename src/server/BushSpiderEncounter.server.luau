@@ -1,10 +1,14 @@
 -- [ACTIVE] BushSpiderEncounter.server
 --[[
-	Server-authoritative kill when the bush spider web hits the player (Revive flow).
+	Server-authoritative kill when spider/wave web hits the player (Revive flow).
+	Wave web deaths pin plot Base spawn instead of QuestHitbox.
 --]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
+local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 
 local KILL_REMOTE = "BushSpiderEncounterKill"
 local KILL_COOLDOWN = 2.5
@@ -41,6 +45,17 @@ killRE.OnServerEvent:Connect(function(plr: Player)
 	end
 	lastKillAt[plr] = now
 
+	-- Prefer plot Base on next soft respawn (Wave Web chase uses this kill remote).
+	plr:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, true)
+	local baseCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(plr)
+	if baseCf then
+		plr:SetAttribute(ReviveConfig.REVIVE_SPAWN_POS_ATTR, baseCf.Position)
+		plr:SetAttribute(ReviveConfig.REVIVE_SPAWN_LOOK_ATTR, baseCf.LookVector)
+		pcall(function()
+			plr:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, baseCf)
+		end)
+	end
+
 	local character = plr.Character
 	if not character then
 		return
@@ -51,7 +66,6 @@ killRE.OnServerEvent:Connect(function(plr: Player)
 		humanoid.BreakJointsOnDeath = true
 		humanoid.Health = 0
 		task.defer(function()
-			-- Never BreakJoints a soft-respawned replacement character.
 			if plr.Character ~= dyingChar then
 				return
 			end

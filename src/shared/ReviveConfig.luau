@@ -19,6 +19,8 @@ M.SOFT_RESPAWN_COOLDOWN_SEC = 1.25
 M.REVIVE_SPAWN_ATTR = "ReviveSpawnCFrame" -- legacy
 M.REVIVE_SPAWN_POS_ATTR = "ReviveSpawnPos"
 M.REVIVE_SPAWN_LOOK_ATTR = "ReviveSpawnLook"
+-- Set by wave-web kill remote so soft respawn goes to the player's plot base.
+M.WAVE_WEB_DEATH_ATTR = "WaveWebChaseDeath"
 M.MAX_LAND = 10
 
 export type ReviveTier = {

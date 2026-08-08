@@ -347,6 +347,21 @@ local function softRespawnAtHitbox(player: Player)
 	forceLoadCharacter(player)
 end
 
+local function softRespawnAtPlotBase(player: Player)
+	clearPending(player)
+	lastSoftRespawnAt[player] = os.clock()
+	player:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, nil)
+	local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
+	local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+	if spawnCf then
+		storeReviveSpawnAttrs(player, spawnCf)
+	else
+		-- Let PlotPlayerSpawn wait for Base pad (no QuestHitbox pin).
+		clearReviveSpawnAttrs(player)
+	end
+	forceLoadCharacter(player)
+end
+
 local function isFrictionlessDeathActive(player: Player): boolean
 	if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
 		return true
@@ -360,6 +375,12 @@ end
 
 local function onHumanoidDied(player: Player, character: Model)
 	stopLandTracking(player)
+
+	-- Wave Web chase kill → plot Base (not Tim Cheese hitbox).
+	if player:GetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR) == true then
+		softRespawnAtPlotBase(player)
+		return
+	end
 
 	-- Cooldown: falling into kill zones can Died→LoadCharacter→Died in a tight loop.
 	-- Still pin QuestHitbox so PlotPlayerSpawn doesn't dump them on a random default spawn.

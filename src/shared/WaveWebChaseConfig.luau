@@ -26,20 +26,28 @@ M.SPIDER_YAW_OFFSET = math.pi
 M.SPIDER_MIN_PLAYER_DISTANCE = 22
 M.SPIDER_MAX_PLAYER_DISTANCE = 58
 M.LAND_EDGE_MARGIN = 14
+M.SPIDER_PRELOAD_SEC = 0.45
 
-M.WAVE_SPAWN_DISTANCE = 78
-M.WAVE_BASE_SPEED = 40
-M.WAVE_MAX_SPEED = 64
-M.WAVE_SPEED_RAMP_SEC = 16
+-- Far enough to feel like a tsunami rolling in.
+M.WAVE_SPAWN_DISTANCE = 175
 -- Kill when the wave center gets this close (studs, XZ).
 M.WAVE_KILL_DISTANCE = 16
 -- Extra yaw if the Wave Web mesh faces the wrong axis (radians).
 M.WAVE_FACE_YAW_OFFSET = math.rad(90)
+
+-- Land-scaled chase speed (studs/sec). Land 1 is leisurely; Land 10 is the threat.
+M.WAVE_SPEED_LAND1 = 18
+M.WAVE_SPEED_LAND10 = 42
 
 M.SAFEZONE_CONFIRM_SEC = 0.22
 M.EXCLAMATION_SEC = 1.1
 
 M.BGM_CHASE_SPEED = 0.72
 M.BGM_RESTORE_FADE = 0.65
+
+function M.speedForLand(land: number): number
+	local t = (math.clamp(land, 1, 10) - 1) / 9
+	return M.WAVE_SPEED_LAND1 + (M.WAVE_SPEED_LAND10 - M.WAVE_SPEED_LAND1) * t
+end
 
 return M

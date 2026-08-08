@@ -46,6 +46,8 @@ local activeSpider: Model? = nil
 local activeWave: Model? = nil
 local bgmSpeedSaved: { [Sound]: number } = {}
 local bgmSpeedTweens: { [Sound]: Tween } = {}
+local killRE: RemoteEvent? = nil
+local killFired = false
 
 local function getHRP(): BasePart?
 	local char = player.Character
@@ -358,6 +360,13 @@ local function hideHeartbeat()
 	clearPostFx()
 end
 
+local function clearExclamation()
+	if exclamationGui then
+		exclamationGui:Destroy()
+		exclamationGui = nil
+	end
+end
+
 local function attachExclamation()
 	local char = player.Character
 	local head = char and char:FindFirstChild("Head")
@@ -388,12 +397,36 @@ local function attachExclamation()
 
 	TweenService:Create(scale, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 	exclamationGui = bb
+
+	-- Brief WOAH — auto-clear so it never sticks through the chase.
+	local shown = bb
+	task.delay(C.EXCLAMATION_SEC, function()
+		if exclamationGui == shown then
+			local s = shown:FindFirstChildOfClass("UIScale")
+			if s then
+				local tw = TweenService:Create(s, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0.15 })
+				tw:Play()
+				tw.Completed:Wait()
+			end
+			if exclamationGui == shown then
+				clearExclamation()
+			end
+		end
+	end)
 end
 
-local function clearExclamation()
-	if exclamationGui then
-		exclamationGui:Destroy()
-		exclamationGui = nil
+local function requestKill()
+	if killFired then
+		return
+	end
+	killFired = true
+	if killRE then
+		killRE:FireServer()
+	else
+		local hum = getHumanoid()
+		if hum then
+			hum.Health = 0
+		end
 	end
 end
 
@@ -569,6 +602,18 @@ local function finishChase(didHideHud: boolean)
 	MobileTouchGate.ensureTouchControlsVisible(true)
 end
 
+-- End cinematic: free camera + movement so the player can sprint to safezone.
+local function releaseToGameplay(token: number)
+	if token ~= chaseToken then
+		return
+	end
+	clearExclamation()
+	restoreCamera()
+	unlockMovement()
+	MobileTouchGate.ensureTouchControlsVisible(true)
+	MobileTouchGate.restorePlayerMovement()
+end
+
 local function runIntro(token: number, playerPos: Vector3)
 	local cam = Workspace.CurrentCamera
 	if not cam then
@@ -605,7 +650,12 @@ local function runIntro(token: number, playerPos: Vector3)
 			local hrp = getHRP()
 			local lookPos = if hrp then hrp.Position + Vector3.new(0, 1.4, 0) else playerPos
 			local front = flatUnitXZ(spiderPos, lookPos)
-			local right = front:Cross(Vector3.yAxis).Unit
+			local right = front:Cross(Vector3.yAxis)
+			if right.Magnitude < 0.05 then
+				right = Vector3.new(1, 0, 0)
+			else
+				right = right.Unit
+			end
 			local dist = 15 + math.sin(phase * 1.4) * 3.5
 			local camPos = spiderPos + front * dist + right * 5.5 + Vector3.new(0, 5.5 + math.sin(phase * 2.1) * 1.2, 0)
 			cam.CFrame = CFrame.lookAt(camPos, spiderPos + Vector3.new(0, 2, 0))
@@ -650,10 +700,14 @@ local function runIntro(token: number, playerPos: Vector3)
 		task.wait(0.35)
 	end
 
-	-- Whip pan toward the incoming wave behind the player.
+	if token ~= chaseToken then
+		return
+	end
+
+	-- Brief look-back at the wave, then hand control back.
 	local revealStart = os.clock()
-	local revealDur = 1.35
-	local toSafe, awayFromSafe = computeChaseAxes(playerPos)
+	local revealDur = 1.1
+	local _toSafe, awayFromSafe = computeChaseAxes(playerPos)
 	local waveHintPos = playerPos + awayFromSafe * (C.WAVE_SPAWN_DISTANCE * 0.55)
 	if renderConn then
 		renderConn:Disconnect()
@@ -667,14 +721,17 @@ local function runIntro(token: number, playerPos: Vector3)
 		local hrp = getHRP()
 		local pPos = if hrp then hrp.Position else playerPos
 		local chest = pPos + Vector3.new(0, 1.5, 0)
-		local overShoulder = chest + toSafe * 6 + Vector3.new(0, 3.2, 0)
+		local overShoulder = chest - awayFromSafe * 6 + Vector3.new(0, 3.2, 0)
 		local lookBack = CFrame.lookAt(overShoulder, waveHintPos + Vector3.new(0, 8, 0))
-		local startLook = chest + toSafe * 4 + Vector3.new(0, 2.5, 0)
-		local startCf = CFrame.lookAt(startLook, pPos + awayFromSafe * 40 + Vector3.new(0, 6, 0))
+		local startLook = chest + Vector3.new(0, 2.5, 0) - awayFromSafe * 4
+		local startCf = CFrame.lookAt(startLook, waveHintPos + Vector3.new(0, 6, 0))
 		cam.CFrame = startCf:Lerp(lookBack, eased)
-		cam.FieldOfView = defaultFov + 10 * (1 - eased * 0.35)
+		cam.FieldOfView = defaultFov + 8 * (1 - eased * 0.4)
 	end)
 	task.wait(revealDur)
+
+	-- Critical: leave cinematic camera so the player can run.
+	releaseToGameplay(token)
 end
 
 local function runChase(token: number)
@@ -683,6 +740,10 @@ local function runChase(token: number)
 		warn("[WaveWebChaseController] EssentialAssets['Wave Web'] missing")
 		return
 	end
+
+	-- Make sure we never re-lock camera mid-chase.
+	releaseToGameplay(token)
+	killFired = false
 
 	local wave = waveTemplate:Clone()
 	wave.Name = "WaveWebChase"
@@ -708,6 +769,7 @@ local function runChase(token: number)
 	local safezoneTimer = 0
 	local didHideHud = true
 	local lastWaveEmit = 0
+	local escaped = false
 
 	GameplayUiVisibility.hide({
 		keepScreenGuiNames = { "WaveWebChaseFx" },
@@ -716,33 +778,33 @@ local function runChase(token: number)
 	})
 	ensurePostFx()
 	setBgmChase(true)
-	unlockMovement()
 	BushHoldInteraction.setBushSearchLocked(true)
 
 	local hrp = getHRP()
 	local playerPos = if hrp then hrp.Position else Vector3.zero
-	local toSafe, awayFromSafe = computeChaseAxes(playerPos)
+	local _toSafe, awayFromSafe = computeChaseAxes(playerPos)
+	-- Spawn behind the player (away from safezone), then chase straight at them.
 	local wavePos = playerPos + awayFromSafe * C.WAVE_SPAWN_DISTANCE
 	wavePos = Vector3.new(wavePos.X, groundYAt(wavePos.X, wavePos.Z, playerPos.Y) + 2, wavePos.Z)
+	wave:PivotTo(CFrame.lookAt(wavePos, playerPos))
 
 	if renderConn then
 		renderConn:Disconnect()
 	end
-	renderConn = RunService.RenderStepped:Connect(function(dt)
+	-- Heartbeat/chase tick only — do NOT take CameraType.Scriptable.
+	renderConn = RunService.Heartbeat:Connect(function(dt)
 		if not chaseActive or token ~= chaseToken then
 			return
 		end
-		local cam = Workspace.CurrentCamera
 		local root = getHRP()
 		local hum = getHumanoid()
 		local character = player.Character
-		if not cam or not root or not hum or not character then
+		if not root or not hum or not character or not activeWave then
 			return
 		end
 
 		phase += dt
 		local pPos = root.Position
-		toSafe, awayFromSafe = computeChaseAxes(pPos)
 
 		if phase - lastWaveEmit > 0.42 then
 			lastWaveEmit = phase
@@ -752,6 +814,7 @@ local function runChase(token: number)
 		if SafezoneUtil.isCharacterInSafezone(character) then
 			safezoneTimer += dt
 			if safezoneTimer >= C.SAFEZONE_CONFIRM_SEC then
+				escaped = true
 				chaseActive = false
 				return
 			end
@@ -763,45 +826,58 @@ local function runChase(token: number)
 		local ramp = math.clamp(elapsed / C.WAVE_SPEED_RAMP_SEC, 0, 1)
 		local speed = C.WAVE_BASE_SPEED + (C.WAVE_MAX_SPEED - C.WAVE_BASE_SPEED) * ramp
 
-		local trailTarget = pPos + awayFromSafe * C.WAVE_TRAIL_DISTANCE
-		trailTarget = Vector3.new(trailTarget.X, groundYAt(trailTarget.X, trailTarget.Z, pPos.Y) + 1.8, trailTarget.Z)
-		wavePos = wavePos:Lerp(trailTarget, math.min(1, dt * 1.35))
-		wavePos += toSafe * speed * dt
+		-- Chase the player (no trail leash). Move toward their current position.
+		local toPlayer = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
+		local distXZ = toPlayer.Magnitude
+		local chaseDir = if distXZ > 0.05 then toPlayer.Unit else Vector3.new(0, 0, -1)
+		wavePos += chaseDir * speed * dt
+		local gy = groundYAt(wavePos.X, wavePos.Z, pPos.Y) + 2
+		wavePos = Vector3.new(wavePos.X, gy, wavePos.Z)
 
 		local bob = math.sin(phase * 1.75) * 2.4 + math.sin(phase * 0.62) * 1.1
-		local swayX = math.sin(phase * 0.88) * 2.2
-		local swayZ = math.cos(phase * 1.05) * 1.6
+		local swayX = math.sin(phase * 0.88) * 1.8
+		local swayZ = math.cos(phase * 1.05) * 1.4
 		local roll = math.sin(phase * 1.2) * math.rad(5)
 		local pitch = math.sin(phase * 0.74) * math.rad(4)
 		local visualPos = wavePos + Vector3.new(swayX, bob, swayZ)
-		local faceTarget = visualPos + toSafe * 24 + Vector3.new(0, bob * 0.35, 0)
+		local faceTarget = visualPos + chaseDir * 24 + Vector3.new(0, bob * 0.25, 0)
 		wave:PivotTo(CFrame.lookAt(visualPos, faceTarget) * CFrame.Angles(pitch, 0, roll))
 
-		local distToWave = (Vector3.new(pPos.X, 0, pPos.Z) - Vector3.new(wavePos.X, 0, wavePos.Z)).Magnitude
-		local threat = 1 - math.clamp(distToWave / 95, 0, 1)
+		local threat = 1 - math.clamp(distXZ / 90, 0, 1)
 		local beat = (math.sin(phase * (2.8 + threat * 3.4)) + 1) * 0.5
 		showHeartbeat(threat * (0.35 + beat * 0.45))
 
-		local shoulder = pPos + toSafe * 5.5 + Vector3.new(0, 2.8, 0)
-		local lookTarget = visualPos + Vector3.new(0, 6, 0)
-		local camPos = shoulder + awayFromSafe * 2.5 + Vector3.new(0, math.sin(phase * 1.6) * 0.35, 0)
-		local shake = threat * 0.22
-		cam.CFrame = CFrame.lookAt(camPos, lookTarget)
-			* CFrame.new(math.sin(phase * 31) * shake, math.cos(phase * 27) * shake * 0.6, 0)
-		cam.FieldOfView = defaultFov + 4 + threat * 10 + math.sin(phase * 2.2) * threat * 2
+		-- Soft camera shake only (keep default camera).
+		if threat > 0.35 then
+			hum.CameraOffset = Vector3.new(
+				math.sin(phase * 28) * threat * 0.18,
+				math.cos(phase * 22) * threat * 0.1,
+				0
+			)
+		else
+			hum.CameraOffset = Vector3.zero
+		end
 
-		if distToWave <= C.WAVE_CATCH_DISTANCE then
-			local push = toSafe * C.WAVE_CATCH_PUSH_SPEED
-			root.AssemblyLinearVelocity = Vector3.new(push.X, math.max(root.AssemblyLinearVelocity.Y, 18), push.Z)
-			pulseCameraShake(0.35, 0.28, token)
+		if distXZ <= C.WAVE_KILL_DISTANCE then
+			requestKill()
+			chaseActive = false
+			return
 		end
 	end)
 
 	while chaseActive and token == chaseToken do
-		RunService.Heartbeat:Wait()
+		task.wait(0.05)
+	end
+
+	local hum = getHumanoid()
+	if hum then
+		hum.CameraOffset = Vector3.zero
 	end
 
 	finishChase(didHideHud)
+	if not escaped and killFired then
+		-- finishChase already ran; kill remote handles death.
+	end
 end
 
 local function runSequence(_model: Model)
@@ -823,6 +899,7 @@ local function runSequence(_model: Model)
 	chaseActive = true
 	chaseToken += 1
 	local token = chaseToken
+	killFired = false
 
 	local ok, err = pcall(function()
 		task.wait(C.DELAY_AFTER_ACCEPT_SEC)
@@ -830,12 +907,12 @@ local function runSequence(_model: Model)
 			return
 		end
 
-		local hrp = getHRP()
-		if not hrp or SafezoneUtil.isCharacterInSafezone(player.Character) then
+		local liveHrp = getHRP()
+		if not liveHrp or SafezoneUtil.isCharacterInSafezone(player.Character) then
 			return
 		end
 
-		local playerPos = hrp.Position
+		local playerPos = liveHrp.Position
 		runIntro(token, playerPos)
 		if token ~= chaseToken then
 			return
@@ -859,9 +936,23 @@ end
 function WaveWebChaseController.init()
 	MobileTouchGate.init()
 
+	task.spawn(function()
+		local remotes = ReplicatedStorage:WaitForChild("Remotes", 60)
+		if remotes then
+			local re = remotes:WaitForChild("BushSpiderEncounterKill", 15)
+			if re and re:IsA("RemoteEvent") then
+				killRE = re
+			end
+		end
+	end)
+
 	player.CharacterAdded:Connect(function()
 		if chaseActive then
 			finishChase(true)
+		else
+			clearExclamation()
+			restoreCamera()
+			unlockMovement()
 		end
 	end)
 

@@ -106,6 +106,26 @@ local function computeChaseAxes(playerPos: Vector3): (Vector3, Vector3)
 	return toSafe, -toSafe
 end
 
+-- Upright facing along chaseDir (mesh yaw offset applied once).
+local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
+	local flat = Vector3.new(chaseDir.X, 0, chaseDir.Z)
+	if flat.Magnitude < 0.05 then
+		flat = Vector3.new(0, 0, -1)
+	else
+		flat = flat.Unit
+	end
+	local look = pos + flat
+	return CFrame.lookAt(pos, look) * CFrame.Angles(0, C.WAVE_FACE_YAW_OFFSET, 0)
+end
+
+local function hideChaseHud()
+	GameplayUiVisibility.hide({
+		keepScreenGuiNames = { "WaveWebChaseFx" },
+		hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker", "LandActivityStripGui" },
+		hideMainChildNames = { "TimCheeseQuestHost" },
+	})
+end
+
 local function groundYAt(x: number, z: number, refY: number): number
 	local origin = Vector3.new(x, refY + 80, z)
 	local params = RaycastParams.new()
@@ -620,6 +640,7 @@ local function runIntro(token: number, playerPos: Vector3)
 		return
 	end
 
+	hideChaseHud()
 	attachExclamation()
 	saveCamera(cam)
 	lockMovement()
@@ -771,11 +792,7 @@ local function runChase(token: number)
 	local lastWaveEmit = 0
 	local escaped = false
 
-	GameplayUiVisibility.hide({
-		keepScreenGuiNames = { "WaveWebChaseFx" },
-		hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker" },
-		hideMainChildNames = { "TimCheeseQuestHost" },
-	})
+	-- HUD already hidden at intro start.
 	ensurePostFx()
 	setBgmChase(true)
 	BushHoldInteraction.setBushSearchLocked(true)
@@ -783,10 +800,11 @@ local function runChase(token: number)
 	local hrp = getHRP()
 	local playerPos = if hrp then hrp.Position else Vector3.zero
 	local _toSafe, awayFromSafe = computeChaseAxes(playerPos)
-	-- Spawn behind the player (away from safezone), then chase straight at them.
+	-- Spawn a bit behind the player, then chase straight at them (upright, fixed yaw).
 	local wavePos = playerPos + awayFromSafe * C.WAVE_SPAWN_DISTANCE
 	wavePos = Vector3.new(wavePos.X, groundYAt(wavePos.X, wavePos.Z, playerPos.Y) + 2, wavePos.Z)
-	wave:PivotTo(CFrame.lookAt(wavePos, playerPos))
+	local initialDir = flatUnitXZ(wavePos, playerPos)
+	wave:PivotTo(waveFacingCf(wavePos, initialDir))
 
 	if renderConn then
 		renderConn:Disconnect()
@@ -834,20 +852,15 @@ local function runChase(token: number)
 		local gy = groundYAt(wavePos.X, wavePos.Z, pPos.Y) + 2
 		wavePos = Vector3.new(wavePos.X, gy, wavePos.Z)
 
-		local bob = math.sin(phase * 1.75) * 2.4 + math.sin(phase * 0.62) * 1.1
-		local swayX = math.sin(phase * 0.88) * 1.8
-		local swayZ = math.cos(phase * 1.05) * 1.4
-		local roll = math.sin(phase * 1.2) * math.rad(5)
-		local pitch = math.sin(phase * 0.74) * math.rad(4)
-		local visualPos = wavePos + Vector3.new(swayX, bob, swayZ)
-		local faceTarget = visualPos + chaseDir * 24 + Vector3.new(0, bob * 0.25, 0)
-		wave:PivotTo(CFrame.lookAt(visualPos, faceTarget) * CFrame.Angles(pitch, 0, roll))
+		-- Soft float bob only — keep facing locked upright (no pitch/roll tumble).
+		local bob = math.sin(phase * 1.55) * 1.6
+		local visualPos = wavePos + Vector3.new(0, bob, 0)
+		wave:PivotTo(waveFacingCf(visualPos, chaseDir))
 
 		local threat = 1 - math.clamp(distXZ / 90, 0, 1)
 		local beat = (math.sin(phase * (2.8 + threat * 3.4)) + 1) * 0.5
 		showHeartbeat(threat * (0.35 + beat * 0.45))
 
-		-- Soft camera shake only (keep default camera).
 		if threat > 0.35 then
 			hum.CameraOffset = Vector3.new(
 				math.sin(phase * 28) * threat * 0.18,

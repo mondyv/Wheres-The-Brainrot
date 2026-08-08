@@ -30,16 +30,20 @@ local MOVE_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Quint, Enum.EasingDirect
 local INSIDE_STREAK = 2
 local OUTSIDE_STREAK = 2
 
--- Cartoon sticker palette (cheese plate + grass track + ink outlines).
-local PLATE = Color3.fromRGB(255, 232, 140)
-local PLATE_EDGE = Color3.fromRGB(58, 38, 18)
-local TRACK = Color3.fromRGB(74, 168, 78)
-local TRACK_DARK = Color3.fromRGB(38, 98, 48)
-local TOKEN = Color3.fromRGB(255, 248, 210)
-local TOKEN_INK = Color3.fromRGB(58, 38, 18)
-local YOU_RING = Color3.fromRGB(255, 70, 70)
+-- Wood board radar — dark planks, bright luck chips, high-contrast text.
+local PLATE = Color3.fromRGB(92, 58, 28)
+local PLATE_LIGHT = Color3.fromRGB(138, 92, 48)
+local PLATE_EDGE = Color3.fromRGB(28, 16, 8)
+local TRACK = Color3.fromRGB(48, 128, 62)
+local TRACK_DARK = Color3.fromRGB(24, 72, 34)
+local TOKEN = Color3.fromRGB(28, 22, 16)
+local TOKEN_FACE = Color3.fromRGB(255, 236, 120)
+local TOKEN_INK = Color3.fromRGB(255, 248, 210)
+local YOU_RING = Color3.fromRGB(255, 64, 64)
 local OTHER_RING = Color3.fromRGB(255, 255, 255)
-local STEM = Color3.fromRGB(58, 38, 18)
+local STEM = Color3.fromRGB(28, 16, 8)
+-- Soft wood-noise tile (built-in Roblox surface noise works well tiled).
+local WOOD_TEX = "rbxassetid://6372755229"
 
 type AvatarSlot = {
 	player: Player,
@@ -175,7 +179,7 @@ local function setStripAlpha(alpha: number)
 	end
 	for _, label in landLabels do
 		label.TextTransparency = 1 - alpha
-		label.TextStrokeTransparency = 0.45 + (1 - alpha) * 0.55
+		label.TextStrokeTransparency = 0.15 + (1 - alpha) * 0.85
 	end
 	for _, slot in slotsByUserId do
 		slot.root.Visible = alpha > 0.08
@@ -394,13 +398,13 @@ local function ensureSlot(plr: Player): AvatarSlot?
 
 	local tip = Instance.new("TextLabel")
 	tip.Name = "NameTip"
-	tip.BackgroundColor3 = PLATE
-	tip.BackgroundTransparency = 0.05
+	tip.BackgroundColor3 = Color3.fromRGB(28, 18, 10)
+	tip.BackgroundTransparency = 0.08
 	tip.Size = UDim2.new(0, 84, 0, 16)
 	tip.Position = UDim2.new(0.5, 0, 0, -18)
 	tip.AnchorPoint = Vector2.new(0.5, 1)
 	tip.Text = plr.DisplayName
-	tip.TextColor3 = PLATE_EDGE
+	tip.TextColor3 = TOKEN_FACE
 	tip.TextStrokeTransparency = 1
 	tip.TextSize = 10
 	tip.TextTruncate = Enum.TextTruncate.AtEnd
@@ -413,7 +417,7 @@ local function ensureSlot(plr: Player): AvatarSlot?
 	tipCorner.Parent = tip
 	local tipStroke = Instance.new("UIStroke")
 	tipStroke.Thickness = 2
-	tipStroke.Color = PLATE_EDGE
+	tipStroke.Color = TOKEN_FACE
 	tipStroke.Parent = tip
 	local tipPad = Instance.new("UIPadding")
 	tipPad.PaddingLeft = UDim.new(0, 6)
@@ -578,9 +582,9 @@ end
 
 local function buildStrip(parentGui: PlayerGui)
 	local compact = isMobile()
-	local plateH = if compact then 34 else 38
-	local height = if compact then 86 else 96
-	local widthScale = if compact then 0.84 else 0.6
+	local plateH = if compact then 40 else 44
+	local height = if compact then 92 else 102
+	local widthScale = if compact then 0.86 else 0.62
 
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "LandActivityStripGui"
@@ -592,7 +596,6 @@ local function buildStrip(parentGui: PlayerGui)
 	gui.Parent = parentGui
 	stripGui = gui
 
-	-- Plain Frame (not CanvasGroup) so heads above the plate aren't clipped.
 	local root = Instance.new("Frame")
 	root.Name = "LandActivityStrip"
 	root.AnchorPoint = Vector2.new(0.5, 1)
@@ -609,19 +612,18 @@ local function buildStrip(parentGui: PlayerGui)
 	scale.Scale = 0.78
 	scale.Parent = root
 
-	-- Drop shadow under the cheese plate.
 	local drop = Instance.new("Frame")
 	drop.Name = "DropShadow"
 	drop.AnchorPoint = Vector2.new(0.5, 1)
-	drop.Position = UDim2.new(0.5, 2, 1, 3)
-	drop.Size = UDim2.new(1, 8, 0, plateH + 4)
+	drop.Position = UDim2.new(0.5, 2, 1, 4)
+	drop.Size = UDim2.new(1, 10, 0, plateH + 6)
 	drop.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	drop.BackgroundTransparency = 0.72
+	drop.BackgroundTransparency = 0.68
 	drop.BorderSizePixel = 0
 	drop.ZIndex = 39
 	drop.Parent = root
 	local dropCorner = Instance.new("UICorner")
-	dropCorner.CornerRadius = UDim.new(0, 18)
+	dropCorner.CornerRadius = UDim.new(0, 14)
 	dropCorner.Parent = drop
 
 	local plate = Instance.new("Frame")
@@ -630,53 +632,91 @@ local function buildStrip(parentGui: PlayerGui)
 	plate.Position = UDim2.new(0.5, 0, 1, 0)
 	plate.Size = UDim2.new(1, 0, 0, plateH)
 	plate.BackgroundColor3 = PLATE
-	plate.BackgroundTransparency = 0.08
+	plate.BackgroundTransparency = 0
 	plate.BorderSizePixel = 0
 	plate.ZIndex = 40
+	plate.ClipsDescendants = true
 	plate.Parent = root
 	plateFrame = plate
 
 	local plateCorner = Instance.new("UICorner")
-	plateCorner.CornerRadius = UDim.new(0, 16)
+	plateCorner.CornerRadius = UDim.new(0, 12)
 	plateCorner.Parent = plate
 
 	local plateStroke = Instance.new("UIStroke")
 	plateStroke.Color = PLATE_EDGE
-	plateStroke.Thickness = 3.5
+	plateStroke.Thickness = 4
 	plateStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	plateStroke.Parent = plate
 
+	-- Horizontal wood planks.
+	for i = 1, 4 do
+		local plank = Instance.new("Frame")
+		plank.Name = "Plank" .. i
+		plank.Size = UDim2.new(1, 0, 0.25, 0)
+		plank.Position = UDim2.new(0, 0, (i - 1) * 0.25, 0)
+		plank.BackgroundColor3 = if i % 2 == 0 then PLATE_LIGHT else PLATE
+		plank.BackgroundTransparency = 0
+		plank.BorderSizePixel = 0
+		plank.ZIndex = 40
+		plank.Parent = plate
+		local seam = Instance.new("Frame")
+		seam.Size = UDim2.new(1, 0, 0, 1)
+		seam.Position = UDim2.new(0, 0, 1, -1)
+		seam.BackgroundColor3 = PLATE_EDGE
+		seam.BackgroundTransparency = 0.45
+		seam.BorderSizePixel = 0
+		seam.ZIndex = 41
+		seam.Parent = plank
+	end
+
+	-- Tiled wood/noise texture wash.
+	local grain = Instance.new("ImageLabel")
+	grain.Name = "WoodGrain"
+	grain.BackgroundTransparency = 1
+	grain.Size = UDim2.fromScale(1, 1)
+	grain.Image = WOOD_TEX
+	grain.ImageTransparency = 0.72
+	grain.ScaleType = Enum.ScaleType.Tile
+	grain.TileSize = UDim2.fromOffset(64, 64)
+	grain.ZIndex = 42
+	grain.Parent = plate
+
 	local plateShine = Instance.new("UIGradient")
 	plateShine.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 246, 190)),
-		ColorSequenceKeypoint.new(0.55, PLATE),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(236, 198, 92)),
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 130, 80)),
+		ColorSequenceKeypoint.new(0.45, Color3.fromRGB(255, 255, 255)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 42, 20)),
+	})
+	plateShine.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.35),
+		NumberSequenceKeypoint.new(0.5, 0.55),
+		NumberSequenceKeypoint.new(1, 0.2),
 	})
 	plateShine.Rotation = 90
-	plateShine.Parent = plate
+	plateShine.Parent = grain
 
-	-- Grass track inset.
 	local track = Instance.new("Frame")
 	track.Name = "Track"
 	track.AnchorPoint = Vector2.new(0.5, 0.5)
-	track.Position = UDim2.fromScale(0.5, 0.42)
-	track.Size = UDim2.new(1, -18, 0, if compact then 10 else 12)
+	track.Position = UDim2.fromScale(0.5, 0.36)
+	track.Size = UDim2.new(1, -16, 0, if compact then 11 else 13)
 	track.BackgroundColor3 = TRACK
 	track.BorderSizePixel = 0
-	track.ZIndex = 41
+	track.ZIndex = 43
 	track.Parent = plate
 	local trackCorner = Instance.new("UICorner")
 	trackCorner.CornerRadius = UDim.new(1, 0)
 	trackCorner.Parent = track
 	local trackStroke = Instance.new("UIStroke")
 	trackStroke.Color = TRACK_DARK
-	trackStroke.Thickness = 2
+	trackStroke.Thickness = 2.5
 	trackStroke.Parent = track
 	local trackGrad = Instance.new("UIGradient")
 	trackGrad.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(98, 196, 96)),
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(92, 190, 100)),
 		ColorSequenceKeypoint.new(0.5, TRACK),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(56, 140, 64)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(32, 96, 44)),
 	})
 	trackGrad.Rotation = 90
 	trackGrad.Parent = track
@@ -685,7 +725,7 @@ local function buildStrip(parentGui: PlayerGui)
 	tokensHost.Name = "Tokens"
 	tokensHost.BackgroundTransparency = 1
 	tokensHost.Size = UDim2.fromScale(1, 1)
-	tokensHost.ZIndex = 45
+	tokensHost.ZIndex = 50
 	tokensHost.Parent = plate
 
 	table.clear(landTicks)
@@ -697,37 +737,37 @@ local function buildStrip(parentGui: PlayerGui)
 		local peg = Instance.new("Frame")
 		peg.Name = "Peg" .. tostring(land)
 		peg.AnchorPoint = Vector2.new(0.5, 0.5)
-		peg.Position = UDim2.new(x, 0, 0.42, 0)
-		peg.Size = UDim2.fromOffset(6, 6)
-		peg.BackgroundColor3 = Color3.fromRGB(255, 220, 70)
+		peg.Position = UDim2.new(x, 0, 0.36, 0)
+		peg.Size = UDim2.fromOffset(7, 7)
+		peg.BackgroundColor3 = TOKEN_FACE
 		peg.BorderSizePixel = 0
-		peg.ZIndex = 46
+		peg.ZIndex = 51
 		peg.Parent = tokensHost
 		local pegCorner = Instance.new("UICorner")
 		pegCorner.CornerRadius = UDim.new(1, 0)
 		pegCorner.Parent = peg
 		local pegStroke = Instance.new("UIStroke")
 		pegStroke.Color = PLATE_EDGE
-		pegStroke.Thickness = 1.5
+		pegStroke.Thickness = 2
 		pegStroke.Parent = peg
 		table.insert(landTicks, peg)
 
 		local token = Instance.new("Frame")
 		token.Name = "Token" .. tostring(land)
 		token.AnchorPoint = Vector2.new(0.5, 0)
-		token.Position = UDim2.new(x, 0, 0.58, 0)
-		token.Size = UDim2.fromOffset(if compact then 30 else 34, if compact then 15 else 16)
+		token.Position = UDim2.new(x, 0, 0.55, 0)
+		token.Size = UDim2.fromOffset(if compact then 34 else 38, if compact then 17 else 18)
 		token.BackgroundColor3 = TOKEN
-		token.BackgroundTransparency = 0.05
+		token.BackgroundTransparency = 0
 		token.BorderSizePixel = 0
-		token.ZIndex = 47
+		token.ZIndex = 52
 		token.Parent = tokensHost
 		local tokenCorner = Instance.new("UICorner")
-		tokenCorner.CornerRadius = UDim.new(0, 8)
+		tokenCorner.CornerRadius = UDim.new(0, 7)
 		tokenCorner.Parent = token
 		local tokenStroke = Instance.new("UIStroke")
-		tokenStroke.Color = TOKEN_INK
-		tokenStroke.Thickness = 2
+		tokenStroke.Color = TOKEN_FACE
+		tokenStroke.Thickness = 2.2
 		tokenStroke.Parent = token
 		table.insert(landTokens, token)
 
@@ -738,10 +778,11 @@ local function buildStrip(parentGui: PlayerGui)
 		label.Position = UDim2.fromScale(0.5, 0.5)
 		label.Size = UDim2.fromScale(1, 1)
 		label.Text = formatLandLuckLabel(land)
-		label.TextColor3 = TOKEN_INK
-		label.TextStrokeTransparency = 1
-		label.TextSize = if compact then 9 else 10
-		label.ZIndex = 48
+		label.TextColor3 = TOKEN_FACE
+		label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		label.TextStrokeTransparency = 0.15
+		label.TextSize = if compact then 11 else 12
+		label.ZIndex = 53
 		UiFonts.applyBody(label)
 		label.Parent = token
 		table.insert(landLabels, label)

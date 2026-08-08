@@ -1042,11 +1042,8 @@ end
 
 local function showTryAgainNotif(hint: string?)
 	local headline, sub = pickTryAgainLines(hint)
-	ensureHudVisibleForNotif()
-	showTryAgainOverlay(headline, sub)
-	pcall(function()
-		require(script.Parent.TopNotifController).showPersonal(headline, "legendary", 3.8)
-	end)
+	-- Character billboard only — no top toast / TopNotif double-up.
+	destroyTryAgainToast()
 	task.spawn(function()
 		local char = player.Character
 		if not char or not char.Parent then
@@ -1055,14 +1052,16 @@ local function showTryAgainNotif(hint: string?)
 		if not char then
 			return
 		end
-		-- Wait for head/HRP so the meters-style world notif can attach.
 		local adornee = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
 		if not adornee then
 			adornee = char:WaitForChild("HumanoidRootPart", 4)
 		end
 		if adornee then
-			-- World line uses sub for variety; lifetime auto-dismisses + hides rank badges.
-			CharacterWorldNotif.show(char, sub, {
+			local line = headline
+			if typeof(sub) == "string" and sub ~= "" and sub ~= headline then
+				line = headline .. " " .. sub
+			end
+			CharacterWorldNotif.show(char, line, {
 				color = Color3.fromRGB(255, 220, 120),
 				offset = Vector3.new(2.4, 1.55, 0),
 				lifetimeSec = 3.6,

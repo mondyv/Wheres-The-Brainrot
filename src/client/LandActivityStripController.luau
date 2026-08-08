@@ -9,6 +9,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
@@ -30,13 +31,13 @@ local MOVE_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Quint, Enum.EasingDirect
 local INSIDE_STREAK = 2
 local OUTSIDE_STREAK = 2
 
--- Simple glass plate + bright green track + readable luck chips.
+-- Soft glass plate + rainbow track + readable luck chips (no loud yellow borders).
 local PLATE = Color3.fromRGB(12, 18, 16)
 local PLATE_EDGE = Color3.fromRGB(255, 255, 255)
-local TRACK = Color3.fromRGB(64, 220, 96)
-local TRACK_DARK = Color3.fromRGB(24, 140, 52)
+local TRACK = Color3.fromRGB(255, 255, 255)
 local TOKEN = Color3.fromRGB(18, 22, 20)
-local TOKEN_FACE = Color3.fromRGB(255, 236, 120)
+local TOKEN_FACE = Color3.fromRGB(255, 250, 235)
+local TOKEN_EDGE = Color3.fromRGB(255, 255, 255)
 local YOU_RING = Color3.fromRGB(255, 64, 64)
 local OTHER_RING = Color3.fromRGB(255, 255, 255)
 local STEM = Color3.fromRGB(255, 255, 255)
@@ -61,6 +62,8 @@ local avatarsHost: Frame? = nil
 local landTicks: { Frame } = {}
 local landLabels: { TextLabel } = {}
 local landTokens: { Frame } = {}
+local trackRainbow: UIGradient? = nil
+local trackFrame: Frame? = nil
 
 local slotsByUserId: { [number]: AvatarSlot } = {}
 local attrConns: { [Player]: RBXScriptConnection } = {}
@@ -91,6 +94,55 @@ local function getOrAddUIScale(parent: GuiObject): UIScale
 	s.Scale = 1
 	s.Parent = parent
 	return s
+end
+
+local function findRainbowGradientTemplate(): UIGradient?
+	local folder = StarterGui:FindFirstChild("Gradients")
+	if not folder then
+		return nil
+	end
+	local node = folder:FindFirstChild("Rainbow")
+	if not node then
+		return nil
+	end
+	if node:IsA("UIGradient") then
+		return node
+	end
+	local nested = node:FindFirstChildWhichIsA("UIGradient", true)
+	if nested then
+		return nested
+	end
+	return nil
+end
+
+local function applyRainbowToTrack(track: Frame): UIGradient?
+	for _, ch in track:GetChildren() do
+		if ch:IsA("UIGradient") then
+			ch:Destroy()
+		end
+	end
+	local template = findRainbowGradientTemplate()
+	local grad: UIGradient
+	if template then
+		grad = template:Clone()
+		grad.Name = "Rainbow"
+		grad.Enabled = true
+	else
+		-- Fallback if StarterGui.Gradients.Rainbow isn't replicated yet.
+		grad = Instance.new("UIGradient")
+		grad.Name = "Rainbow"
+		grad.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 70)),
+			ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 180, 40)),
+			ColorSequenceKeypoint.new(0.4, Color3.fromRGB(80, 255, 120)),
+			ColorSequenceKeypoint.new(0.6, Color3.fromRGB(60, 180, 255)),
+			ColorSequenceKeypoint.new(0.8, Color3.fromRGB(160, 90, 255)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 70, 200)),
+		})
+	end
+	grad.Rotation = 0
+	grad.Parent = track
+	return grad
 end
 
 local function landXScale(land: number): number
@@ -166,23 +218,27 @@ local function setStripAlpha(alpha: number)
 			stroke.Transparency = 0.72 + (1 - alpha) * 0.28
 		end
 	end
-	local track = plateFrame and plateFrame:FindFirstChild("Track")
+	local track = trackFrame or (plateFrame and plateFrame:FindFirstChild("Track"))
 	if track and track:IsA("GuiObject") then
-		track.BackgroundTransparency = (1 - alpha) * 0.95
+		track.BackgroundTransparency = 0.08 + (1 - alpha) * 0.92
 		local stroke = track:FindFirstChildOfClass("UIStroke")
 		if stroke then
-			stroke.Transparency = (1 - alpha) * 0.95
+			stroke.Transparency = 0.7 + (1 - alpha) * 0.3
 		end
 	end
 	for _, token in landTokens do
 		token.BackgroundTransparency = 0.12 + (1 - alpha) * 0.88
 		local stroke = token:FindFirstChildOfClass("UIStroke")
 		if stroke then
-			stroke.Transparency = (1 - alpha) * 0.95
+			stroke.Transparency = 0.62 + (1 - alpha) * 0.38
 		end
 	end
 	for _, peg in landTicks do
-		peg.BackgroundTransparency = (1 - alpha) * 0.95
+		peg.BackgroundTransparency = 0.15 + (1 - alpha) * 0.85
+		local stroke = peg:FindFirstChildOfClass("UIStroke")
+		if stroke then
+			stroke.Transparency = 0.55 + (1 - alpha) * 0.45
+		end
 	end
 	for _, label in landLabels do
 		label.TextTransparency = 1 - alpha
@@ -649,32 +705,28 @@ local function buildStrip(parentGui: PlayerGui)
 	plateStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	plateStroke.Parent = plate
 
-	-- Bright green gradient track.
+	-- Rainbow gradient track (clones StarterGui.Gradients.Rainbow).
 	local track = Instance.new("Frame")
 	track.Name = "Track"
 	track.AnchorPoint = Vector2.new(0.5, 0.5)
 	track.Position = UDim2.fromScale(0.5, 0.34)
 	track.Size = UDim2.new(1, -14, 0, if compact then 12 else 14)
 	track.BackgroundColor3 = TRACK
+	track.BackgroundTransparency = 0.08
 	track.BorderSizePixel = 0
 	track.ZIndex = 43
 	track.Parent = plate
+	trackFrame = track
 	local trackCorner = Instance.new("UICorner")
 	trackCorner.CornerRadius = UDim.new(1, 0)
 	trackCorner.Parent = track
 	local trackStroke = Instance.new("UIStroke")
-	trackStroke.Color = TRACK_DARK
-	trackStroke.Thickness = 1.5
-	trackStroke.Transparency = 0.25
+	trackStroke.Color = Color3.fromRGB(255, 255, 255)
+	trackStroke.Thickness = 1
+	trackStroke.Transparency = 0.7
+	trackStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	trackStroke.Parent = track
-	local trackGrad = Instance.new("UIGradient")
-	trackGrad.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 255, 140)),
-		ColorSequenceKeypoint.new(0.45, TRACK),
-		ColorSequenceKeypoint.new(1, TRACK_DARK),
-	})
-	trackGrad.Rotation = 90
-	trackGrad.Parent = track
+	trackRainbow = applyRainbowToTrack(track)
 
 	local tokensHost = Instance.new("Frame")
 	tokensHost.Name = "Tokens"
@@ -694,7 +746,8 @@ local function buildStrip(parentGui: PlayerGui)
 		peg.AnchorPoint = Vector2.new(0.5, 0.5)
 		peg.Position = UDim2.new(x, 0, 0.34, 0)
 		peg.Size = UDim2.fromOffset(7, 7)
-		peg.BackgroundColor3 = TOKEN_FACE
+		peg.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		peg.BackgroundTransparency = 0.15
 		peg.BorderSizePixel = 0
 		peg.ZIndex = 51
 		peg.Parent = tokensHost
@@ -703,7 +756,9 @@ local function buildStrip(parentGui: PlayerGui)
 		pegCorner.Parent = peg
 		local pegStroke = Instance.new("UIStroke")
 		pegStroke.Color = Color3.fromRGB(20, 24, 22)
-		pegStroke.Thickness = 1.5
+		pegStroke.Thickness = 1
+		pegStroke.Transparency = 0.55
+		pegStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		pegStroke.Parent = peg
 		table.insert(landTicks, peg)
 
@@ -721,8 +776,10 @@ local function buildStrip(parentGui: PlayerGui)
 		tokenCorner.CornerRadius = UDim.new(0, 7)
 		tokenCorner.Parent = token
 		local tokenStroke = Instance.new("UIStroke")
-		tokenStroke.Color = TOKEN_FACE
-		tokenStroke.Thickness = 2
+		tokenStroke.Color = TOKEN_EDGE
+		tokenStroke.Thickness = 1
+		tokenStroke.Transparency = 0.62
+		tokenStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		tokenStroke.Parent = token
 		table.insert(landTokens, token)
 
@@ -758,13 +815,18 @@ local function buildStrip(parentGui: PlayerGui)
 	if bobConn then
 		bobConn:Disconnect()
 	end
-	-- Gentle rock (rotation), not a bouncing position hop.
+	-- Gentle rock + scrolling rainbow on the track.
 	bobConn = RunService.Heartbeat:Connect(function(dt)
 		if not visibleTarget or not stripRoot then
 			return
 		end
 		bobPhase += dt
 		stripRoot.Rotation = math.sin(bobPhase * 0.55) * 0.35
+		local grad = trackRainbow
+		if grad and grad.Parent then
+			grad.Rotation = (bobPhase * 48) % 360
+			grad.Offset = Vector2.new(math.sin(bobPhase * 0.9) * 0.42, 0)
+		end
 	end)
 
 	task.spawn(function()

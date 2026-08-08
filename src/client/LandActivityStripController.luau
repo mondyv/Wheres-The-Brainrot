@@ -55,7 +55,7 @@ type AvatarSlot = {
 }
 
 local randomBrainrotFrame: GuiObject? = nil
-local stripRoot: Frame? = nil
+local stripRoot: CanvasGroup? = nil
 local stripScale: UIScale? = nil
 local avatarsHost: Frame? = nil
 local landTicks: { Frame } = {}

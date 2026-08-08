@@ -30,12 +30,14 @@ local MOVE_TWEEN = TweenInfo.new(0.4, Enum.EasingStyle.Quint, Enum.EasingDirecti
 local INSIDE_STREAK = 2
 local OUTSIDE_STREAK = 2
 
--- Minimal dark glass + mint accent (readable heads, no cheese/retro chrome).
-local BAR = Color3.fromRGB(10, 14, 12)
-local RAIL = Color3.fromRGB(255, 255, 255)
-local ACCENT = Color3.fromRGB(110, 255, 170)
-local LABEL = Color3.fromRGB(210, 230, 218)
-local YOU_RING = Color3.fromRGB(255, 220, 90)
+-- Cartoony grass radar — chunky outline, sunny accents, big readable heads.
+local BAR = Color3.fromRGB(88, 178, 72)
+local BAR_DARK = Color3.fromRGB(42, 58, 36)
+local RAIL = Color3.fromRGB(255, 244, 168)
+local ACCENT = Color3.fromRGB(255, 220, 72)
+local LABEL = Color3.fromRGB(255, 255, 255)
+local LABEL_SHADOW = Color3.fromRGB(42, 58, 36)
+local YOU_RING = Color3.fromRGB(255, 92, 92)
 local OTHER_RING = Color3.fromRGB(255, 255, 255)
 
 type AvatarSlot = {
@@ -236,7 +238,7 @@ local function ensureSlot(plr: Player): AvatarSlot?
 		return nil
 	end
 
-	local size = if isMobile() then 28 else 32
+	local size = if isMobile() then 36 else 42
 	local root = Instance.new("Frame")
 	root.Name = "Avatar_" .. tostring(plr.UserId)
 	root.AnchorPoint = Vector2.new(0.5, 1)
@@ -264,13 +266,13 @@ local function ensureSlot(plr: Player): AvatarSlot?
 
 	local icon = Instance.new("ImageLabel")
 	icon.Name = "Head"
-	icon.BackgroundColor3 = Color3.fromRGB(22, 26, 24)
+	icon.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 	icon.BackgroundTransparency = 0
 	icon.BorderSizePixel = 0
 	icon.Size = UDim2.fromScale(1, 1)
 	icon.Image = headshotUrl(plr.UserId)
 	icon.ScaleType = Enum.ScaleType.Crop
-	icon.ZIndex = 51
+	icon.ZIndex = 52
 	icon.Active = false
 	icon.Parent = root
 
@@ -279,10 +281,17 @@ local function ensureSlot(plr: Player): AvatarSlot?
 	corner.Parent = icon
 
 	local ring = Instance.new("UIStroke")
-	ring.Thickness = if plr == player then 2.5 else 2
+	ring.Thickness = if plr == player then 3.5 else 3
 	ring.Color = if plr == player then YOU_RING else OTHER_RING
 	ring.Transparency = 0
+	ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 	ring.Parent = icon
+
+	local outerRing = Instance.new("UIStroke")
+	outerRing.Thickness = 1.5
+	outerRing.Color = BAR_DARK
+	outerRing.Transparency = 0
+	outerRing.Parent = icon
 
 	local tip = Instance.new("TextLabel")
 	tip.Name = "NameTip"
@@ -352,19 +361,20 @@ local function layoutStacks()
 			slot.stackIndex = i
 			local stack = i - 1
 			local xJitter = ((stack % 3) - 1) * 0.01
-			local yLift = stack * (if isMobile() then 10 else 12)
-			-- Sit on the rail: bottom of icon rests on the thin bar.
-			local goal = UDim2.new(baseX + xJitter, 0, 0.42, -yLift)
+			local yLift = stack * (if isMobile() then 12 else 14)
+			-- Heads sit clearly above the chunky bar.
+			local goal = UDim2.new(baseX + xJitter, 0, 0, if isMobile() then 38 else 42)
+			goal = UDim2.new(goal.X.Scale, goal.X.Offset, goal.Y.Scale, goal.Y.Offset - yLift)
 			slot.root.AnchorPoint = Vector2.new(0.5, 1)
 			slot.root.ZIndex = 50 + stack + (if slot.player == player then 10 else 0)
 			TweenService:Create(slot.root, MOVE_TWEEN, { Position = goal }):Play()
 
 			if slot.player == player then
 				slot.ring.Color = YOU_RING
-				slot.ring.Thickness = 2.5
+				slot.ring.Thickness = 3.5
 			else
 				slot.ring.Color = OTHER_RING
-				slot.ring.Thickness = 2
+				slot.ring.Thickness = 3
 			end
 			slot.ring.Transparency = 0
 		end
@@ -465,9 +475,9 @@ end
 
 local function buildStrip(parentGui: PlayerGui)
 	local compact = isMobile()
-	-- Thin bar; heads float above it (extra height is transparent).
-	local height = if compact then 44 else 48
-	local widthScale = if compact then 0.72 else 0.5
+	local barHeight = if compact then 26 else 28
+	local height = if compact then 68 else 76
+	local widthScale = if compact then 0.78 else 0.56
 
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "LandActivityStripGui"
@@ -482,74 +492,70 @@ local function buildStrip(parentGui: PlayerGui)
 	local root = Instance.new("CanvasGroup")
 	root.Name = "LandActivityStrip"
 	root.AnchorPoint = Vector2.new(0.5, 1)
-	root.Position = UDim2.new(0.5, 0, 1, if compact then -8 else -10)
+	root.Position = UDim2.new(0.5, 0, 1, if compact then -6 else -8)
 	root.Size = UDim2.new(widthScale, 0, 0, height)
 	root.BackgroundTransparency = 1
 	root.BorderSizePixel = 0
 	root.GroupTransparency = 1
 	root.Visible = false
 	root.ZIndex = 40
+	root.ClipsDescendants = false
 	root.Parent = gui
 
 	local scale = Instance.new("UIScale")
 	scale.Scale = 0.92
 	scale.Parent = root
 
-	-- Just the bar — no title chip / nested panels.
 	local bar = Instance.new("Frame")
 	bar.Name = "Bar"
 	bar.AnchorPoint = Vector2.new(0.5, 1)
 	bar.Position = UDim2.new(0.5, 0, 1, 0)
-	bar.Size = UDim2.new(1, 0, 0, if compact then 22 else 24)
+	bar.Size = UDim2.new(1, 0, 0, barHeight)
 	bar.BackgroundColor3 = BAR
-	bar.BackgroundTransparency = 0.22
+	bar.BackgroundTransparency = 0
 	bar.BorderSizePixel = 0
 	bar.ZIndex = 40
 	bar.Parent = root
 
 	local barCorner = Instance.new("UICorner")
-	barCorner.CornerRadius = UDim.new(1, 0)
+	barCorner.CornerRadius = UDim.new(0, 14)
 	barCorner.Parent = bar
 
 	local barStroke = Instance.new("UIStroke")
-	barStroke.Color = ACCENT
-	barStroke.Thickness = 1.2
-	barStroke.Transparency = 0.55
+	barStroke.Color = BAR_DARK
+	barStroke.Thickness = 3
+	barStroke.Transparency = 0
 	barStroke.Parent = bar
 
+	local barShine = Instance.new("UIGradient")
+	barShine.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 210, 96)),
+		ColorSequenceKeypoint.new(0.5, BAR),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(66, 148, 58)),
+	})
+	barShine.Rotation = 90
+	barShine.Parent = bar
+
 	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0, 10)
-	pad.PaddingRight = UDim.new(0, 10)
-	pad.PaddingTop = UDim.new(0, 0)
-	pad.PaddingBottom = UDim.new(0, 0)
+	pad.PaddingLeft = UDim.new(0, 12)
+	pad.PaddingRight = UDim.new(0, 12)
+	pad.PaddingTop = UDim.new(0, 2)
+	pad.PaddingBottom = UDim.new(0, 2)
 	pad.Parent = bar
 
-	-- Accent hairline rail.
 	local rail = Instance.new("Frame")
 	rail.Name = "Rail"
 	rail.AnchorPoint = Vector2.new(0.5, 0)
-	rail.Position = UDim2.new(0.5, 0, 0, 5)
-	rail.Size = UDim2.new(1, 0, 0, 2)
+	rail.Position = UDim2.new(0.5, 0, 0, 6)
+	rail.Size = UDim2.new(1, -8, 0, 3)
 	rail.BackgroundColor3 = RAIL
-	rail.BackgroundTransparency = 0.72
+	rail.BackgroundTransparency = 0.08
 	rail.BorderSizePixel = 0
 	rail.ZIndex = 41
 	rail.Parent = bar
 	local railCorner = Instance.new("UICorner")
 	railCorner.CornerRadius = UDim.new(1, 0)
 	railCorner.Parent = rail
-	local railGlow = Instance.new("UIGradient")
-	railGlow.Color = ColorSequence.new({
-		ColorSequenceKeypoint.new(0, ACCENT),
-		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(200, 255, 220)),
-		ColorSequenceKeypoint.new(1, ACCENT),
-	})
-	railGlow.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.35),
-		NumberSequenceKeypoint.new(0.5, 0),
-		NumberSequenceKeypoint.new(1, 0.35),
-	})
-	railGlow.Parent = rail
 
 	local ticksHost = Instance.new("Frame")
 	ticksHost.Name = "Ticks"
@@ -566,35 +572,53 @@ local function buildStrip(parentGui: PlayerGui)
 		local tick = Instance.new("Frame")
 		tick.Name = "Tick" .. tostring(land)
 		tick.AnchorPoint = Vector2.new(0.5, 0)
-		tick.Position = UDim2.new(x, 0, 0, 4)
-		tick.Size = UDim2.fromOffset(3, 3)
+		tick.Position = UDim2.new(x, 0, 0, 5)
+		tick.Size = UDim2.fromOffset(4, 4)
 		tick.BackgroundColor3 = ACCENT
-		tick.BackgroundTransparency = 0.15
+		tick.BackgroundTransparency = 0
 		tick.BorderSizePixel = 0
 		tick.ZIndex = 43
 		tick.Parent = ticksHost
 		local tickCorner = Instance.new("UICorner")
 		tickCorner.CornerRadius = UDim.new(1, 0)
 		tickCorner.Parent = tick
+		local tickStroke = Instance.new("UIStroke")
+		tickStroke.Color = BAR_DARK
+		tickStroke.Thickness = 1
+		tickStroke.Parent = tick
 		table.insert(landTicks, tick)
+
+		local pill = Instance.new("Frame")
+		pill.Name = "Pill" .. tostring(land)
+		pill.AnchorPoint = Vector2.new(0.5, 0)
+		pill.Position = UDim2.new(x, 0, 0, 11)
+		pill.Size = UDim2.fromOffset(if compact then 30 else 34, if compact then 14 else 15)
+		pill.BackgroundColor3 = BAR_DARK
+		pill.BackgroundTransparency = 0.12
+		pill.BorderSizePixel = 0
+		pill.ZIndex = 43
+		pill.Parent = ticksHost
+		local pillCorner = Instance.new("UICorner")
+		pillCorner.CornerRadius = UDim.new(1, 0)
+		pillCorner.Parent = pill
 
 		local label = Instance.new("TextLabel")
 		label.Name = "L" .. tostring(land)
 		label.BackgroundTransparency = 1
-		label.AnchorPoint = Vector2.new(0.5, 0)
-		label.Position = UDim2.new(x, 0, 0, 9)
-		label.Size = UDim2.fromOffset(32, 12)
+		label.AnchorPoint = Vector2.new(0.5, 0.5)
+		label.Position = UDim2.fromScale(0.5, 0.5)
+		label.Size = UDim2.fromScale(1, 1)
 		label.Text = formatLandLuckLabel(land)
 		label.TextColor3 = LABEL
-		label.TextTransparency = 0.08
+		label.TextStrokeColor3 = LABEL_SHADOW
+		label.TextStrokeTransparency = 0.35
 		label.TextSize = if compact then 9 else 10
-		label.ZIndex = 43
+		label.ZIndex = 44
 		UiFonts.applyBody(label)
-		label.Parent = ticksHost
+		label.Parent = pill
 		table.insert(landLabels, label)
 	end
 
-	-- Avatars float above the bar (parented to root so they aren't clipped by bar height).
 	local avatars = Instance.new("Frame")
 	avatars.Name = "Avatars"
 	avatars.BackgroundTransparency = 1

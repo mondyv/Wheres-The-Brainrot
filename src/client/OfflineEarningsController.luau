@@ -485,25 +485,28 @@ local function refreshRobuxPrice()
 end
 
 local function styleDeclineButton(host: GuiObject)
-	-- Soft, small, pinned to the bottom of the offline card / screen.
-	host.AnchorPoint = Vector2.new(0.5, 1)
-	host.Position = UDim2.new(0.5, 0, 1, -10)
-	if host.Size.Y.Offset > 36 or host.Size.Y.Scale > 0.12 then
-		host.Size = UDim2.new(0.4, 0, 0, 26)
+	host.Visible = true
+	host.ZIndex = math.max(host.ZIndex, 30)
+	if host:IsA("GuiObject") then
+		(host :: GuiObject).Active = true
 	end
-	host.BackgroundTransparency = math.max(host.BackgroundTransparency, 0.55)
+	-- Nudge smaller / softer without hiding it off-screen.
+	if host.Size.Y.Offset > 40 or host.Size.Y.Scale > 0.14 then
+		host.Size = UDim2.new(host.Size.X.Scale, host.Size.X.Offset, 0, 30)
+	end
+	host.BackgroundTransparency = math.clamp(host.BackgroundTransparency, 0.25, 0.72)
 	if host:IsA("ImageLabel") or host:IsA("ImageButton") then
-		(host :: any).ImageTransparency = math.max((host :: any).ImageTransparency or 0, 0.4)
+		(host :: any).ImageTransparency = math.clamp((host :: any).ImageTransparency or 0, 0, 0.25)
 	end
 	for _, d in host:GetDescendants() do
-		if d:IsA("ImageLabel") or d:IsA("ImageButton") then
-			d.ImageTransparency = math.max(d.ImageTransparency, 0.35)
-		elseif d:IsA("Frame") and d.BackgroundTransparency < 0.5 then
-			d.BackgroundTransparency = 0.55
+		if d:IsA("TextLabel") or d:IsA("TextButton") then
+			d.TextTransparency = math.clamp(d.TextTransparency, 0, 0.15)
+		elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
+			d.ImageTransparency = math.clamp(d.ImageTransparency, 0, 0.25)
 		end
 	end
 	local scale = getOrAddUIScale(host)
-	scale.Scale = 0.78
+	scale.Scale = 0.9
 end
 
 local function wireButton(host: GuiObject, onClick: () -> (), alsoScale: GuiObject?)
@@ -511,9 +514,9 @@ local function wireButton(host: GuiObject, onClick: () -> (), alsoScale: GuiObje
 		styleDeclineButton(host)
 	end
 	local scale = getOrAddUIScale(host)
-	local restScale = if host.Name == "Decline Button" then 0.78 else 1
-	local hoverScale = if host.Name == "Decline Button" then 0.84 else 1.06
-	local clickScale = if host.Name == "Decline Button" then 0.72 else 0.94
+	local restScale = if host.Name == "Decline Button" then 0.9 else 1
+	local hoverScale = if host.Name == "Decline Button" then 0.96 else 1.06
+	local clickScale = if host.Name == "Decline Button" then 0.84 else 0.94
 	local extraScale: UIScale? = nil
 	if alsoScale and alsoScale ~= host then
 		extraScale = getOrAddUIScale(alsoScale)
@@ -639,8 +642,8 @@ local function openPanel(amount: number)
 	end
 	-- Dim covers Main/SideUI; panel is lifted into its own higher DisplayOrder host.
 
-	declineBtn = frame:FindFirstChild("Decline Button") :: GuiObject?
-	doubleBtn = frame:FindFirstChild("Double Button") :: GuiObject?
+	declineBtn = frame:FindFirstChild("Decline Button", true) :: GuiObject?
+	doubleBtn = frame:FindFirstChild("Double Button", true) :: GuiObject?
 	priceLabel = resolvePriceLabel(frame)
 	local title = frame:FindFirstChild("AnimateThis")
 	if title and title:IsA("GuiObject") then
@@ -718,7 +721,7 @@ function OfflineEarningsController.init()
 		if frame and frame:IsA("GuiObject") then
 			panel = frame
 			frame.Visible = false
-			declineBtn = frame:FindFirstChild("Decline Button") :: GuiObject?
+			declineBtn = frame:FindFirstChild("Decline Button", true) :: GuiObject?
 			doubleBtn = frame:FindFirstChild("Double Button") :: GuiObject?
 			priceLabel = resolvePriceLabel(frame)
 			local cash = frame:FindFirstChild("HowMuchCashYouEarnedText")

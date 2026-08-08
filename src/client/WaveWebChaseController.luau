@@ -690,14 +690,6 @@ local function runChase(token: number)
 	wave.Parent = Workspace
 	activeWave = wave
 
-	emitWaveFx()
-
-	local chaseStart = os.clock()
-	local phase = 0
-	local safezoneTimer = 0
-	local didHideHud = true
-	local lastWaveEmit = 0
-
 	local function emitWaveFx()
 		if not activeWave then
 			return
@@ -708,6 +700,14 @@ local function runChase(token: number)
 			end
 		end
 	end
+
+	emitWaveFx()
+
+	local chaseStart = os.clock()
+	local phase = 0
+	local safezoneTimer = 0
+	local didHideHud = true
+	local lastWaveEmit = 0
 
 	GameplayUiVisibility.hide({
 		keepScreenGuiNames = { "WaveWebChaseFx" },
@@ -824,26 +824,32 @@ local function runSequence(_model: Model)
 	chaseToken += 1
 	local token = chaseToken
 
-	task.wait(C.DELAY_AFTER_ACCEPT_SEC)
-	if token ~= chaseToken then
-		chaseActive = false
-		return
-	end
+	local ok, err = pcall(function()
+		task.wait(C.DELAY_AFTER_ACCEPT_SEC)
+		if token ~= chaseToken then
+			return
+		end
 
-	hrp = getHRP()
-	if not hrp or SafezoneUtil.isCharacterInSafezone(player.Character) then
-		chaseActive = false
-		return
-	end
+		local hrp = getHRP()
+		if not hrp or SafezoneUtil.isCharacterInSafezone(player.Character) then
+			return
+		end
 
-	local playerPos = hrp.Position
-	runIntro(token, playerPos)
-	if token ~= chaseToken then
-		chaseActive = false
-		return
-	end
+		local playerPos = hrp.Position
+		runIntro(token, playerPos)
+		if token ~= chaseToken then
+			return
+		end
 
-	runChase(token)
+		runChase(token)
+	end)
+
+	if not ok then
+		warn("[WaveWebChaseController] sequence error:", err)
+	end
+	if chaseActive and token == chaseToken then
+		finishChase(GameplayUiVisibility.isHidden())
+	end
 end
 
 function WaveWebChaseController.isActive(): boolean

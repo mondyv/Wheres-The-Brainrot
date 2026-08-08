@@ -434,7 +434,7 @@ end
 local syncFramesInputPassthrough: () -> ()
 
 local function animateOpen(frame: Frame)
-	-- Clip/squash content before Visible so scroll containers never flash full canvas.
+	-- CanvasGroup-wrap scrolls + pre-squash scales before Visible (keeps clip + no flash).
 	PanelSlideIn.prepareForPanel(frame)
 	frame.Visible = true
 	local rest = panelRestScale(frame)

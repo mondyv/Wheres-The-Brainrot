@@ -5,6 +5,7 @@
 	• Header / containers / footers: staggered UIScale pop-in
 	• Index TypeButtons: staggered tab pop (layout untouched)
 	• Close: content scales down slightly ahead of / with the shell
+	• ScrollingFrames wrap in CanvasGroup so UIScale never unclips the canvas
 ]]
 
 local TweenService = game:GetService("TweenService")
@@ -15,6 +16,8 @@ local OPEN_TWEEN = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirecti
 local TAB_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_CONTENT_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local DEFAULT_STAGGER = 0.048
+local CLIP_ATTR = "_PanelScrollClip"
+local WRAPPED_ATTR = "_PanelScrollWrapped"
 
 local animGeneration = 0
 
@@ -42,6 +45,76 @@ function M.cancel()
 	animGeneration += 1
 end
 
+-- UIScale on ScrollingFrame (or ancestors) unclips the full canvas. CanvasGroup
+-- still clips its children when scaled — wrap once, animate the wrapper.
+local function wrapScrollingFrame(scroll: ScrollingFrame)
+	if scroll:GetAttribute(WRAPPED_ATTR) == true then
+		return
+	end
+	local parent = scroll.Parent
+	if not parent then
+		return
+	end
+	if parent:IsA("CanvasGroup") and parent:GetAttribute(CLIP_ATTR) == true then
+		scroll:SetAttribute(WRAPPED_ATTR, true)
+		scroll.ClipsDescendants = true
+		return
+	end
+
+	local clip = Instance.new("CanvasGroup")
+	clip.Name = "_PanelScrollClip"
+	clip:SetAttribute(CLIP_ATTR, true)
+	clip.BackgroundTransparency = 1
+	clip.BorderSizePixel = 0
+	clip.GroupTransparency = 0
+	clip.ClipsDescendants = true
+	clip.Size = scroll.Size
+	clip.Position = scroll.Position
+	clip.AnchorPoint = scroll.AnchorPoint
+	clip.LayoutOrder = scroll.LayoutOrder
+	clip.ZIndex = scroll.ZIndex
+	clip.Visible = scroll.Visible
+	clip.Parent = parent
+
+	scroll.Size = UDim2.fromScale(1, 1)
+	scroll.Position = UDim2.fromScale(0, 0)
+	scroll.AnchorPoint = Vector2.new(0, 0)
+	scroll.ClipsDescendants = true
+	scroll.Parent = clip
+	scroll:SetAttribute(WRAPPED_ATTR, true)
+end
+
+local function ensureScrollClips(frame: Frame)
+	if frame:IsA("ScrollingFrame") then
+		wrapScrollingFrame(frame)
+	end
+	for _, d in frame:GetDescendants() do
+		if d:IsA("ScrollingFrame") then
+			wrapScrollingFrame(d)
+		end
+	end
+end
+
+local function animRoot(gui: GuiObject): GuiObject
+	if gui:IsA("ScrollingFrame") then
+		local p = gui.Parent
+		if p and p:IsA("CanvasGroup") and p:GetAttribute(CLIP_ATTR) == true then
+			return p
+		end
+	end
+	return gui
+end
+
+local function hostHasScrolling(host: GuiObject): boolean
+	if host:IsA("ScrollingFrame") then
+		return true
+	end
+	if host:IsA("CanvasGroup") and host:GetAttribute(CLIP_ATTR) == true then
+		return true
+	end
+	return host:FindFirstChildWhichIsA("ScrollingFrame", true) ~= nil
+end
+
 function M.slideGui(gui: GuiObject?, opts: SlideOpts?)
 	if not gui or not gui.Parent then
 		return
@@ -51,10 +124,11 @@ function M.slideGui(gui: GuiObject?, opts: SlideOpts?)
 	local tweenInfo = options.tweenInfo or OPEN_TWEEN
 	local myGen = if typeof(options.generation) == "number" then options.generation else animGeneration
 
-	local scale = getOrAddScale(gui)
+	local target = animRoot(gui)
+	local scale = getOrAddScale(target)
 	scale.Scale = startScale
 	task.defer(function()
-		if myGen ~= animGeneration or not gui.Parent then
+		if myGen ~= animGeneration or not target.Parent then
 			scale.Scale = 1
 			return
 		end
@@ -86,10 +160,11 @@ function M.slideInSequence(guis: { GuiObject }, opts: SlideOpts?)
 		if not gui.Parent then
 			continue
 		end
-		local scale = getOrAddScale(gui)
+		local target = animRoot(gui)
+		local scale = getOrAddScale(target)
 		scale.Scale = startScale
 		task.delay((i - 1) * stagger, function()
-			if myGen ~= animGeneration or not gui.Parent then
+			if myGen ~= animGeneration or not target.Parent then
 				return
 			end
 			TweenService:Create(scale, tweenInfo, { Scale = 1 }):Play()
@@ -134,6 +209,10 @@ local function collectDirectGuiChildren(parent: Instance?, skipNames: { [string]
 			then
 				continue
 			end
+			-- Clip wrappers aren't content rows.
+			if child:IsA("CanvasGroup") and child:GetAttribute(CLIP_ATTR) == true then
+				continue
+			end
 			table.insert(out, child)
 		end
 	end
@@ -173,6 +252,13 @@ local function resolveHost(frame: Frame, name: string): GuiObject?
 	local host = frame:FindFirstChild(name)
 	if not host then
 		host = frame:FindFirstChild(name, true)
+	end
+	-- Prefer the real scroll inside a clip wrapper named after the host.
+	if host and host:IsA("CanvasGroup") and host:GetAttribute(CLIP_ATTR) == true then
+		local scroll = host:FindFirstChildWhichIsA("ScrollingFrame")
+		if scroll then
+			return scroll
+		end
 	end
 	if host and host:IsA("GuiObject") then
 		return host
@@ -214,44 +300,13 @@ local function gatherOpenTargets(frame: Frame): { GuiObject }
 	return targets
 end
 
-local function hostHasScrolling(host: GuiObject): boolean
-	if host:IsA("ScrollingFrame") then
-		return true
-	end
-	return host:FindFirstChildWhichIsA("ScrollingFrame", true) ~= nil
-end
-
--- UIScale on a ScrollingFrame (or its ancestor) briefly unclips the full canvas —
--- that one-frame "see the whole list" flash. Prefer clip + delayed Visible instead.
-local function prepareScrollSafe(host: GuiObject)
-	host.ClipsDescendants = true
-	if host:IsA("ScrollingFrame") then
-		(host :: ScrollingFrame).ClipsDescendants = true
-	end
-	for _, d in host:GetDescendants() do
-		if d:IsA("ScrollingFrame") then
-			d.ClipsDescendants = true
-		end
-	end
-end
-
--- Squash open targets BEFORE the panel is Visible so nothing flashes at full size.
+-- Wrap scrolls + squash scales BEFORE the panel is Visible (no flash, full anims).
 function M.prepareForPanel(frame: Frame)
+	ensureScrollClips(frame)
 	local targets = gatherOpenTargets(frame)
 	for i, host in ipairs(targets) do
-		prepareScrollSafe(host)
-		if hostHasScrolling(host) then
-			-- Hide scroll hosts until their turn — never UIScale them.
-			host.Visible = false
-		else
-			local startScale = if i == 1 then 0.88 else 0.82
-			getOrAddScale(host).Scale = startScale
-		end
-	end
-
-	local container = resolveHost(frame, "Container") or resolveHost(frame, "StoreFrame")
-	if container then
-		prepareScrollSafe(container)
+		local startScale = if i == 1 then 0.88 else 0.82
+		getOrAddScale(animRoot(host)).Scale = startScale
 	end
 end
 
@@ -260,32 +315,23 @@ function M.playForPanel(frame: Frame)
 	animGeneration += 1
 	local myGen = animGeneration
 
-	-- Ensure prepare ran even if caller forgot (idempotent).
+	ensureScrollClips(frame)
 	M.prepareForPanel(frame)
 
 	local targets = gatherOpenTargets(frame)
 	for i, host in ipairs(targets) do
 		local delaySec = (i - 1) * 0.04
 		local startScale = if i == 1 then 0.88 else 0.82
-		if hostHasScrolling(host) then
-			task.delay(delaySec, function()
-				if myGen ~= animGeneration or not host.Parent then
-					return
-				end
-				prepareScrollSafe(host)
-				host.Visible = true
-			end)
-		else
-			-- Scale already set in prepare — only tween after stagger.
-			task.delay(delaySec, function()
-				if myGen ~= animGeneration or not host.Parent then
-					return
-				end
-				local scale = getOrAddScale(host)
-				scale.Scale = startScale
-				TweenService:Create(scale, OPEN_TWEEN, { Scale = 1 }):Play()
-			end)
-		end
+		task.delay(delaySec, function()
+			if myGen ~= animGeneration or not host.Parent then
+				return
+			end
+			M.slideGui(host, {
+				startScale = startScale,
+				generation = myGen,
+				tweenInfo = OPEN_TWEEN,
+			})
+		end)
 	end
 
 	local recipe = PANEL_CONTENT[frame.Name]
@@ -294,6 +340,10 @@ function M.playForPanel(frame: Frame)
 			or frame:FindFirstChild(recipe.staggerParent, true)
 		local tabs = M.collectNamedChildren(parent, recipe.staggerNames)
 		if #tabs > 0 then
+			-- Pre-squash tabs so they don't flash at full size before stagger.
+			for _, tab in tabs do
+				getOrAddScale(tab).Scale = 0.72
+			end
 			M.slideInSequence(tabs, {
 				stagger = 0.05,
 				startScale = 0.72,
@@ -314,8 +364,8 @@ function M.playForPanel(frame: Frame)
 		end
 	end
 
-	-- Soft pop on a few direct children of Container (rows / cards) for Index-like feel.
-	-- Skip when the container scrolls — UIScale on list rows unclips the canvas.
+	-- Soft pop on a few direct children of Container (rows / cards).
+	-- Skip scroll hosts — scaling grid rows still spills past the canvas.
 	local container = resolveHost(frame, "Container") or resolveHost(frame, "StoreFrame")
 	if container and frame.Name ~= "Index" and not hostHasScrolling(container) then
 		local kids = collectDirectGuiChildren(container, {
@@ -324,7 +374,6 @@ function M.playForPanel(frame: Frame)
 			ScrollBarAdjuster = true,
 			TypeButtons = true,
 		})
-		-- Cap so huge scrolling lists don't stagger forever.
 		local maxKids = math.min(#kids, 8)
 		if maxKids >= 2 then
 			local slice: { GuiObject } = {}
@@ -352,14 +401,10 @@ function M.playCloseForPanel(frame: Frame)
 		if not host.Parent then
 			continue
 		end
-		if hostHasScrolling(host) then
-			continue
-		end
-		local scale = getOrAddScale(host)
+		local scale = getOrAddScale(animRoot(host))
 		TweenService:Create(scale, CLOSE_CONTENT_TWEEN, { Scale = 0.9 }):Play()
 	end
 
-	-- Also tuck Index tabs / visible container kids.
 	local recipe = PANEL_CONTENT[frame.Name]
 	if recipe and recipe.staggerParent and recipe.staggerNames then
 		local parent = frame:FindFirstChild(recipe.staggerParent)
@@ -375,13 +420,10 @@ function M.playCloseForPanel(frame: Frame)
 			return
 		end
 		for _, host in ipairs(targets) do
-			local scale = host:FindFirstChild("PanelSlideScale")
+			local root = animRoot(host)
+			local scale = root:FindFirstChild("PanelSlideScale")
 			if scale and scale:IsA("UIScale") then
 				scale.Scale = 1
-			end
-			-- Restore scroll hosts so the next open can prepare them again.
-			if hostHasScrolling(host) and host.Parent then
-				host.Visible = true
 			end
 		end
 	end)

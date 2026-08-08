@@ -3,7 +3,7 @@
 	Plays EssentialAssets.OtherVFX with the standard Studio emit-plugin pattern:
 	emitters stay Disabled; script calls :Emit(EmitCount) once (after EmitDelay).
 	Supports EmitDuration (brief enable window), Beam Width0/Width1/Duration tweens.
-	Bush search: BushEffect pulsed across the bush volume while shaking; BushEffectBurst on open.
+	Bush search: one BushEffect on the bush (pulsed Emit while holding); BushEffectBurst on open.
 	UpgradeBR/OnUpgrade: Fading Glow on host + Bezier.Part flight (Trail on, particle :Emit bursts),
 	then EmitOnFinish burst and Trail off at path end.
 ]]
@@ -970,20 +970,61 @@ local function sampleBushVolumePoints(bush: Instance, count: number): { CFrame }
 	return points
 end
 
-local BUSH_VFX_OPTS = { noLights = true, particleScale = 1.35 }
-
-local function playScattered(pathParts: { string }, bush: Instance, pointCount: number)
-	for _, cf in sampleBushVolumePoints(bush, pointCount) do
-		playTemplate(pathParts, cf, nil, BUSH_VFX_OPTS)
-	end
-end
+local BUSH_VFX_OPTS = { noLights = true }
 
 local bushShakeToken = 0
+local bushShakeClone: Instance? = nil
+local bushShakeHost: BasePart? = nil
 local BUSH_SHAKE_PULSE_SEC = 0.55
-local BUSH_SHAKE_POINTS = 7
-local BUSH_BURST_POINTS = 10
 
---- Leaves/debris while searching (hold shake). Sparse pulsed Emit across the bush volume.
+local function bushCenterCf(bush: Instance): CFrame
+	local cf, _size = getBushVolume(bush)
+	return cf
+end
+
+local function bushVfxHostPart(bush: Instance): BasePart?
+	if bush:IsA("BasePart") then
+		return bush
+	end
+	if bush:IsA("Model") then
+		return bush.PrimaryPart or bush:FindFirstChildWhichIsA("BasePart", true)
+	end
+	return bush:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function clearBushShakeClone()
+	if bushShakeClone then
+		bushShakeClone:Destroy()
+		bushShakeClone = nil
+	end
+	bushShakeHost = nil
+end
+
+local function ensureBushShakeClone(bush: Instance): Instance?
+	if bushShakeClone and bushShakeClone.Parent and bushShakeHost and bushShakeHost.Parent then
+		return bushShakeClone
+	end
+	clearBushShakeClone()
+	local template = findTemplate({ "Bush Opening", "BushEffect" })
+	if not template then
+		warn("[OtherVfxController] missing template: Bush Opening/BushEffect")
+		return nil
+	end
+	local hostPart = bushVfxHostPart(bush)
+	if not hostPart then
+		warn("[OtherVfxController] no host part for bush VFX")
+		return nil
+	end
+	local clone = template:Clone()
+	stripLights(clone)
+	disableAllFx(clone)
+	placeClone(clone, hostPart)
+	bushShakeClone = clone
+	bushShakeHost = hostPart
+	return clone
+end
+
+--- Leaves/debris while searching — single BushEffect on the bush, pulsed Emit (not scattered clones).
 function OtherVfxController.playBushSearchShake(bush: Instance)
 	bushShakeToken += 1
 	local token = bushShakeToken
@@ -991,7 +1032,16 @@ function OtherVfxController.playBushSearchShake(bush: Instance)
 		if token ~= bushShakeToken or not bush.Parent then
 			return
 		end
-		playScattered({ "Bush Opening", "BushEffect" }, bush, BUSH_SHAKE_POINTS)
+		local clone = ensureBushShakeClone(bush)
+		if not clone or not clone.Parent then
+			return
+		end
+		task.defer(function()
+			if token ~= bushShakeToken or not clone.Parent then
+				return
+			end
+			emitAll(clone, nil, { noLights = true })
+		end)
 	end
 	pulse()
 	task.spawn(function()
@@ -1007,12 +1057,13 @@ end
 
 function OtherVfxController.stopBushSearchShake()
 	bushShakeToken += 1
+	clearBushShakeClone()
 end
 
---- Final burst when search completes — scattered through the bush volume.
+--- Final burst when search completes — one BushEffectBurst at the bush center.
 function OtherVfxController.playBushOpenedBurst(bush: Instance)
 	OtherVfxController.stopBushSearchShake()
-	playScattered({ "Bush Opening", "BushEffectBurst" }, bush, BUSH_BURST_POINTS)
+	playTemplate({ "Bush Opening", "BushEffectBurst" }, bushCenterCf(bush), nil, BUSH_VFX_OPTS)
 end
 
 function OtherVfxController.playLuckyBlockOpen(at: CFrame | BasePart)

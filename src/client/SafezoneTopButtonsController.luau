@@ -446,7 +446,12 @@ local function onNavActivated(dest: string)
 	teleportBusy = false
 	insideStreak = INSIDE_STREAK_TO_SHOW
 	outsideStreak = 0
-	refreshVisibility(true)
+	-- Animate back in (hide used playHideAnimated; don't snap).
+	if shouldShowButtons() then
+		playShowAnimated()
+	else
+		refreshVisibility(false)
+	end
 end
 
 local function wireButton(state: BtnState)

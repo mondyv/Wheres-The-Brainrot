@@ -21,6 +21,7 @@ local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local StandDialogueCutscene = require(script.Parent.StandDialogueCutscene)
 local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
 local BushSpiderEncounterController = require(script.Parent.BushSpiderEncounterController)
+local WaveWebChaseController = require(script.Parent.WaveWebChaseController)
 
 local player = Players.LocalPlayer
 
@@ -412,7 +413,7 @@ local function isCutsceneBlockingMeters(): boolean
 	if FloatingClaimCutscene.isActive() then
 		return true
 	end
-	if BushSpiderEncounterController.isActive() then
+	if BushSpiderEncounterController.isActive() or WaveWebChaseController.isActive() then
 		return true
 	end
 	return false

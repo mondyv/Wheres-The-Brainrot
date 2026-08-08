@@ -31,6 +31,7 @@ local MODAL_OVERLAY_NAMES = {
 	"FloatingClaimCutscene",
 	"LuckyBlockCutscene",
 	"BushSpiderCutscene",
+	"WaveWebChaseFx",
 	"StandDialogueCutscene",
 	"PanelModalDim",
 }

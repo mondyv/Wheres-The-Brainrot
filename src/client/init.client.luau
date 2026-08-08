@@ -149,6 +149,9 @@ task.defer(function()
 				require(script.BushSpiderEncounterController).init()
 			end,
 			function()
+				require(script.WaveWebChaseController).init()
+			end,
+			function()
 				require(script.CurrentAreaController).init()
 			end,
 			function()

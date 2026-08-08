@@ -271,6 +271,7 @@ local function buildKeepSets(opts: HideOpts?)
 	-- Tim Cheese quest HUD must hide with shop/stand panels (not stay on top).
 	keepScreenNames.FloatingClaimCutscene = true
 	keepScreenNames.BushSpiderCutscene = true
+	keepScreenNames.WaveWebChaseFx = true
 	keepScreenNames.StandDialogueCutscene = true
 	keepScreenNames.TutorialObjective = true
 	keepScreenNames.TutorialUiPointer = true

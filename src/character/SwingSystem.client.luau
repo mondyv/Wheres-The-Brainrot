@@ -57,6 +57,8 @@ local function moduleIsActive(cached: any, name: string): (any, boolean)
 	return mod, false
 end
 
+local waveWebChaseMod: any = nil
+
 local function isGameplayCutsceneActive()
 	local active = false
 	floatingClaimCutsceneMod, active = moduleIsActive(floatingClaimCutsceneMod, "FloatingClaimCutscene")
@@ -67,13 +69,17 @@ local function isGameplayCutsceneActive()
 	if active then
 		return true
 	end
+	waveWebChaseMod, active = moduleIsActive(waveWebChaseMod, "WaveWebChaseController")
+	if active then
+		return true
+	end
 	standDialogueCutsceneMod, active = moduleIsActive(standDialogueCutsceneMod, "StandDialogueCutscene")
 	if active then
 		return true
 	end
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then
-		for _, name in { "FloatingClaimCutscene", "BushSpiderCutscene", "StandDialogueCutscene" } do
+		for _, name in { "FloatingClaimCutscene", "BushSpiderCutscene", "WaveWebChaseFx", "StandDialogueCutscene" } do
 			local gui = pg:FindFirstChild(name)
 			if gui and gui:IsA("ScreenGui") and gui.Enabled then
 				return true

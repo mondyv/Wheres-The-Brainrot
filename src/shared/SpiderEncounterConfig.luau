@@ -6,7 +6,7 @@
 
 local M = {}
 
-M.ENABLED = true
+M.ENABLED = false
 M.TRIGGER_CHANCE = 0.3
 
 M.SPIDER_TEMPLATE_PATH = { "EssentialAssets", "Spider" }

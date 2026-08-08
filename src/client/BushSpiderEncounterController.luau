@@ -2831,10 +2831,11 @@ function BushSpiderEncounterController.init()
 	end
 
 	BushFloatingClaimController.registerAcceptHook(function(model: Model)
+		if not C.ENABLED then
+			return
+		end
 		if BushFloatingClaimController.consumeAmbushOnAccept(model) then
 			BushSpiderEncounterController.tryTriggerAfterBrainrotAccept(model)
-		else
-			FloatingClaimCutscene.releaseMoveLock()
 		end
 	end)
 end

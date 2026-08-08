@@ -23,6 +23,7 @@ local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
 local BushFloatingClaimController = require(script.Parent.BushFloatingClaimController)
 local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
 local BushSpiderEncounterController = require(script.Parent.BushSpiderEncounterController)
+local WaveWebChaseController = require(script.Parent.WaveWebChaseController)
 local CarryGate = require(script.Parent.CarryGate)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local TopNotifController = require(script.Parent.TopNotifController)
@@ -141,7 +142,9 @@ local function currentStep(): TutorialConfig.StepDef?
 end
 
 local function isDialogueOrSpiderCutscene(): boolean
-	return StandDialogueCutscene.isActive() or BushSpiderEncounterController.isActive()
+	return StandDialogueCutscene.isActive()
+		or BushSpiderEncounterController.isActive()
+		or WaveWebChaseController.isActive()
 end
 
 local function isClaimCutscene(): boolean

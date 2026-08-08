@@ -117,20 +117,8 @@ local function noteAmbushDeclined(model: Model)
 	ambushPendingByModel[model] = nil
 end
 
-local function beginSpiderSenseForOffer(model: Model)
-	if ambushPendingByModel[model] ~= nil then
-		return
-	end
-	local willAmbush = rollSpiderAmbush()
-	ambushPendingByModel[model] = willAmbush
-	if not willAmbush then
-		return
-	end
-	spiderArcActive = true
-	CharacterWorldNotif.show(player.Character, spiderSenseMessage(), {
-		color = Color3.fromRGB(255, 210, 130),
-	})
-	SpiderSenseFx.startLurkingSense()
+local function beginSpiderSenseForOffer(_model: Model)
+	-- Spider ambush cutscene replaced by Wave Web chase.
 end
 
 function BushFloatingClaimController.registerAcceptHook(fn: (Model) -> ())
@@ -1506,7 +1494,7 @@ local function trackModel(model: Model)
 		end
 		lockDecision(entry)
 		entry.acceptedOffer = true
-		local keepLockedForSpider = ambushPendingByModel[model] == true
+		local keepLockedForSpider = false
 		clearOfferPresentation(keepLockedForSpider)
 		punchButton(entry.acceptScale, entry.acceptBtn, Color3.fromRGB(160, 255, 190))
 		GameSoundEffects.playProximityPromptAppear()

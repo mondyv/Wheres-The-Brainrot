@@ -34,7 +34,7 @@ local function rescueOnce(reason: string, opts: { quietOk: boolean? }?)
 		table.insert(lines, "disabled LoadingScreen")
 	end
 
-	for _, name in { "Purchasing", "OfflineEarningsDim", "OfflineEarningsHost", "ReviveDim", "FloatingClaimCutscene", "BushSpiderCutscene" } do
+	for _, name in { "Purchasing", "OfflineEarningsDim", "OfflineEarningsHost", "ReviveDim", "FloatingClaimCutscene", "BushSpiderCutscene", "WaveWebChaseFx" } do
 		local gui = pg:FindFirstChild(name)
 		if gui and gui:IsA("ScreenGui") and gui.Enabled then
 			gui.Enabled = false

@@ -32,10 +32,7 @@ M.SPIDER_PRELOAD_SEC = 0.45
 M.WAVE_SPAWN_DISTANCE = 125
 -- Kill when the wave center gets this close (studs, XZ).
 M.WAVE_KILL_DISTANCE = 18
--- Mesh forward vs travel direction (radians). 90° = side-facing mesh.
-M.WAVE_FACE_YAW_OFFSET = math.rad(90)
--- Flatten any asset pitch lean toward the player.
-M.WAVE_FACE_PITCH_OFFSET = math.rad(-8)
+-- Wave Web mesh faces the player at Studio Orientation 0, 90, 0 (applied in waveFacingCf).
 
 -- Land-scaled chase speed (studs/sec).
 M.WAVE_SPEED_LAND1 = 28

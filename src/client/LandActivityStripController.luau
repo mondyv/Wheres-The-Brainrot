@@ -492,6 +492,54 @@ local function ensureSlot(plr: Player): AvatarSlot?
 	return slot
 end
 
+local function formatLandLuckLabel(land: number): string
+	local luck = LandResolver.getEntryDisplayLuckForLand(land)
+	if luck <= 1 then
+		return "1x"
+	end
+	local n = math.floor(luck + 0.5)
+	if n >= 1000 then
+		return string.format("%dk", math.floor(n / 1000 + 0.5)) .. "x"
+	end
+	return tostring(n) .. "x"
+end
+
+local function refreshLandLabels()
+	for land = 1, MAX_LAND do
+		local label = landLabels[land]
+		if label and label.Parent then
+			label.Text = formatLandLuckLabel(land)
+		end
+	end
+end
+
+-- Only your current land: slightly whiter / brighter token stroke (not other players).
+local function refreshYouLandHighlight()
+	local raw = player:GetAttribute(LAND_ATTR)
+	local land = if typeof(raw) == "number" then math.floor(raw) else 0
+	if land < 1 or land > MAX_LAND then
+		land = 0
+	end
+	highlightedLand = land
+	for i, token in landTokens do
+		local stroke = token:FindFirstChildOfClass("UIStroke")
+		if not stroke then
+			continue
+		end
+		local isYou = i == land
+		stroke:SetAttribute("YouLand", isYou)
+		if isYou then
+			stroke.Color = TOKEN_EDGE_YOU
+			stroke.Thickness = 1.75
+			stroke.Transparency = 0.28
+		else
+			stroke.Color = TOKEN_EDGE
+			stroke.Thickness = 1
+			stroke.Transparency = 0.78
+		end
+	end
+end
+
 local function layoutStacks()
 	local byLand: { [number]: { AvatarSlot } } = {}
 	for _, slot in slotsByUserId do
@@ -610,57 +658,6 @@ local function startLocalPulse()
 			end
 		end
 	end)
-end
-
-local function formatLandLuckLabel(land: number): string
-	local luck = LandResolver.getEntryDisplayLuckForLand(land)
-	if luck <= 1 then
-		return "1x"
-	end
-	local n = math.floor(luck + 0.5)
-	if n >= 1000 then
-		return string.format("%dk", math.floor(n / 1000 + 0.5)) .. "x"
-	end
-	return tostring(n) .. "x"
-end
-
-local function refreshLandLabels()
-	for land = 1, MAX_LAND do
-		local label = landLabels[land]
-		if label and label.Parent then
-			label.Text = formatLandLuckLabel(land)
-		end
-	end
-end
-
--- Only your current land: slightly whiter / brighter token stroke (not other players).
-local function refreshYouLandHighlight()
-	local raw = player:GetAttribute(LAND_ATTR)
-	local land = if typeof(raw) == "number" then math.floor(raw) else 0
-	if land < 1 or land > MAX_LAND then
-		land = 0
-	end
-	if land == highlightedLand and land > 0 then
-		-- Still refresh stroke attrs in case alpha tween ran.
-	end
-	highlightedLand = land
-	for i, token in landTokens do
-		local stroke = token:FindFirstChildOfClass("UIStroke")
-		if not stroke then
-			continue
-		end
-		local isYou = i == land
-		stroke:SetAttribute("YouLand", isYou)
-		if isYou then
-			stroke.Color = TOKEN_EDGE_YOU
-			stroke.Thickness = 1.75
-			stroke.Transparency = 0.28
-		else
-			stroke.Color = TOKEN_EDGE
-			stroke.Thickness = 1
-			stroke.Transparency = 0.78
-		end
-	end
 end
 
 local function buildStrip(parentGui: PlayerGui)

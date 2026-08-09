@@ -109,7 +109,8 @@ local function computeChaseAxes(playerPos: Vector3): (Vector3, Vector3)
 	return toSafe, -toSafe
 end
 
--- Upright facing along chaseDir. Mesh faces you at Studio Orientation 0, 90, 0.
+-- Upright facing along chaseDir. Mesh faces you at Studio Orientation 0, -90, 0
+-- relative to travel (0, +90 was still sideways the wrong way).
 local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
 	local flat = Vector3.new(chaseDir.X, 0, chaseDir.Z)
 	if flat.Magnitude < 0.05 then
@@ -117,11 +118,10 @@ local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
 	else
 		flat = flat.Unit
 	end
-	-- Travel yaw (LookVector = flat), then exact mesh correction 0°, 90°, 0°.
 	local travelYaw = math.atan2(-flat.X, -flat.Z)
 	return CFrame.new(pos)
 		* CFrame.fromOrientation(0, travelYaw, 0)
-		* CFrame.fromOrientation(0, math.rad(90), 0)
+		* CFrame.fromOrientation(0, math.rad(-90), 0)
 end
 
 local function hideChaseHud()

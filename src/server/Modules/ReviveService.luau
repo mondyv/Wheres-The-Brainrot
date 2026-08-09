@@ -348,6 +348,9 @@ local function softRespawnAtHitbox(player: Player)
 end
 
 local function softRespawnAtPlotBase(player: Player)
+	if lastSoftRespawnAt[player] and (os.clock() - lastSoftRespawnAt[player]) < 0.35 then
+		return
+	end
 	clearPending(player)
 	lastSoftRespawnAt[player] = os.clock()
 	player:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, nil)
@@ -368,17 +371,20 @@ local function softRespawnAtPlotBase(player: Player)
 			conn = nil
 		end
 		task.spawn(function()
-			local deadline = os.clock() + 60
-			local spawnCf: CFrame? = nil
-			while os.clock() < deadline do
-				if not player.Parent or not newChar.Parent then
-					return
+			-- Prefer the live Base/Return pad CF immediately (same as Base button).
+			local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+			if not spawnCf then
+				local deadline = os.clock() + 8
+				while os.clock() < deadline do
+					if not player.Parent or not newChar.Parent then
+						return
+					end
+					spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+					if spawnCf then
+						break
+					end
+					task.wait(0.1)
 				end
-				spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
-				if spawnCf then
-					break
-				end
-				task.wait(0.15)
 			end
 			if not spawnCf then
 				warn("[ReviveService] softRespawnAtPlotBase: no Base spawn for", player.Name)
@@ -392,7 +398,7 @@ local function softRespawnAtPlotBase(player: Player)
 
 	forceLoadCharacter(player)
 
-	task.delay(70, function()
+	task.delay(12, function()
 		if conn then
 			conn:Disconnect()
 			conn = nil
@@ -545,6 +551,10 @@ local function hookPlayer(player: Player)
 end
 
 local ReviveService = {}
+
+function ReviveService.softRespawnAtPlotBase(player: Player)
+	softRespawnAtPlotBase(player)
+end
 
 function ReviveService.processReceipt(receiptInfo): Enum.ProductPurchaseDecision?
 	if not ReviveConfig.isReviveProduct(receiptInfo.ProductId) then

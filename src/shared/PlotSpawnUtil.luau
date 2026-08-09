@@ -12,8 +12,8 @@ local PlotSpawnUtil = {}
 local SPAWN_CLEARANCE = 3
 local STREAM_RETRIES = 40
 local STREAM_RETRY_INTERVAL = 0.2
--- Longer stream window helps console / PS4 emulation (tighter client radii).
-local STREAM_RADIUS_SEC = 14
+-- Used only as RequestStreamAroundAsync timeout; first teleport must not wait on this.
+local STREAM_RADIUS_SEC = 3
 local SUNK_Y_THRESHOLD = 1.25
 
 -- Highest world-Y corner of a part (works for rotated Spawn pads).
@@ -645,18 +645,26 @@ function PlotSpawnUtil.streamAndTeleportWithRetries(
 		return spawnCf
 	end
 
-	local initial = targetCf()
+	-- Snap to Base/Return pad FIRST. Never leave the player at a random default
+	-- spawn while RequestStreamAroundAsync blocks (that felt like a long wrong respawn).
+	PlotSpawnUtil.teleportCharacterToCFrame(character, targetCf())
+
 	if Workspace.StreamingEnabled then
-		local ok, err = pcall(function()
-			player:RequestStreamAroundAsync(initial.Position, STREAM_RADIUS_SEC)
+		task.spawn(function()
+			local dest = targetCf()
+			local ok, err = pcall(function()
+				player:RequestStreamAroundAsync(dest.Position, STREAM_RADIUS_SEC)
+			end)
+			if not ok then
+				warn("[PlotSpawnUtil] RequestStreamAroundAsync failed:", err)
+			end
+			if player.Parent and player.Character == character then
+				PlotSpawnUtil.teleportCharacterToCFrame(character, targetCf())
+			end
 		end)
-		if not ok then
-			warn("[PlotSpawnUtil] RequestStreamAroundAsync failed:", err)
-		end
 	end
 
-	PlotSpawnUtil.teleportCharacterToCFrame(character, targetCf())
-	-- Immediate second snap after stream request — first frame often falls through.
+	-- Immediate second snap — first frame often falls through an unstreamed floor.
 	task.defer(function()
 		if player.Parent and player.Character == character then
 			PlotSpawnUtil.teleportCharacterToCFrame(character, targetCf())

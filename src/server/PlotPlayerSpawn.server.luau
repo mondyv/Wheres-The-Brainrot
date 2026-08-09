@@ -43,8 +43,14 @@ local function readReviveCFrame(player: Player): CFrame?
 	return nil
 end
 
--- Same destination the Base top-button uses — wait until the pad actually exists.
+-- Same destination the Base top-button uses — prefer an immediate pad CF.
 local function waitForBaseSpawnCFrame(player: Player, character: Model): CFrame?
+	-- Fast path: already have the same CF Return / Base button use.
+	local ready = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+	if ready then
+		return ready
+	end
+
 	local deadline = os.clock() + ASSIGN_WAIT_SEC
 	while os.clock() < deadline do
 		if not character.Parent or not player.Parent then
@@ -55,7 +61,7 @@ local function waitForBaseSpawnCFrame(player: Player, character: Model): CFrame?
 			continue
 		end
 		local plot = PlotPaths.findPlotForAssignedSlot(player)
-		if plot and plot.Parent and PlotPaths.isSpawnReadyPlot(plot) and PlotSpawnUtil.plotHasSpawnPad(plot) then
+		if plot and plot.Parent then
 			local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
 			if spawnCf then
 				return spawnCf

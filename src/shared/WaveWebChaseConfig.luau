@@ -32,7 +32,7 @@ M.SPIDER_PRELOAD_SEC = 0.45
 M.WAVE_SPAWN_DISTANCE = 125
 -- Kill when the wave center gets this close (studs, XZ).
 M.WAVE_KILL_DISTANCE = 18
--- Wave Web mesh faces the player at Studio Orientation 0, 90, 0 (applied in waveFacingCf).
+-- Wave Web mesh faces the player at Studio Orientation 0, -90, 0 relative to travel.
 
 -- Land-scaled chase speed (studs/sec).
 M.WAVE_SPEED_LAND1 = 28

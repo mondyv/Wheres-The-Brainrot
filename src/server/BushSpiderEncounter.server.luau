@@ -1,14 +1,15 @@
 -- [ACTIVE] BushSpiderEncounter.server
 --[[
-	Server-authoritative kill when spider/wave web hits the player (Revive flow).
-	Wave web deaths pin plot Base spawn instead of QuestHitbox.
+	Server-authoritative kill when spider/wave web hits the player.
+	Wave web deaths soft-respawn immediately onto the same plot Spawn pad as
+	Return / Base button (no QuestHitbox, no long stream wait before snap).
 --]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
+local ReviveService = require(script.Parent:WaitForChild("Modules"):WaitForChild("ReviveService"))
 
 local KILL_REMOTE = "BushSpiderEncounterKill"
 local KILL_COOLDOWN = 2.5
@@ -45,35 +46,9 @@ killRE.OnServerEvent:Connect(function(plr: Player)
 	end
 	lastKillAt[plr] = now
 
-	-- Prefer plot Base on next soft respawn (Wave Web chase uses this kill remote).
+	-- Immediate Base/Return pad respawn (Died handler is skipped via soft-respawn debounce).
 	plr:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, true)
-	local baseCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(plr)
-	if baseCf then
-		plr:SetAttribute(ReviveConfig.REVIVE_SPAWN_POS_ATTR, baseCf.Position)
-		plr:SetAttribute(ReviveConfig.REVIVE_SPAWN_LOOK_ATTR, baseCf.LookVector)
-		pcall(function()
-			plr:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, baseCf)
-		end)
-	end
-
-	local character = plr.Character
-	if not character then
-		return
-	end
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if humanoid and humanoid.Health > 0 then
-		local dyingChar = character
-		humanoid.BreakJointsOnDeath = true
-		humanoid.Health = 0
-		task.defer(function()
-			if plr.Character ~= dyingChar then
-				return
-			end
-			if dyingChar.Parent and humanoid.Parent == dyingChar and humanoid.Health <= 0 then
-				dyingChar:BreakJoints()
-			end
-		end)
-	end
+	ReviveService.softRespawnAtPlotBase(plr)
 end)
 
 Players.PlayerRemoving:Connect(function(plr)

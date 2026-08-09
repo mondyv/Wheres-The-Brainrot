@@ -17,6 +17,7 @@ local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
+local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
 
 local LandActivityStripController = {}
 
@@ -36,9 +37,12 @@ local TRACK = Color3.fromRGB(255, 255, 255)
 local TOKEN = Color3.fromRGB(18, 22, 20)
 local TOKEN_FACE = Color3.fromRGB(255, 250, 235)
 local TOKEN_EDGE = Color3.fromRGB(255, 255, 255)
+local TOKEN_EDGE_YOU = Color3.fromRGB(255, 255, 255)
 local YOU_RING = Color3.fromRGB(255, 64, 64)
 local OTHER_RING = Color3.fromRGB(255, 255, 255)
 local STEM = Color3.fromRGB(255, 255, 255)
+local STUD_TEX = TimCheeseQuestConfig.STUD_TEXTURE
+local highlightedLand = 0
 
 type AvatarSlot = {
 	player: Player,
@@ -202,7 +206,10 @@ local function setStripAlpha(alpha: number)
 		token.BackgroundTransparency = 0.18 + (1 - alpha) * 0.82
 		local stroke = token:FindFirstChildOfClass("UIStroke")
 		if stroke then
-			stroke.Transparency = 0.78 + (1 - alpha) * 0.22
+			-- Keep your-land highlight brighter; others stay soft.
+			local isYouLand = stroke:GetAttribute("YouLand") == true
+			local baseT = if isYouLand then 0.28 else 0.78
+			stroke.Transparency = baseT + (1 - alpha) * (1 - baseT)
 		end
 	end
 	for _, peg in landTicks do
@@ -534,6 +541,9 @@ local function syncPlayerSlot(plr: Player)
 	if land < 1 or land > MAX_LAND then
 		destroySlot(plr.UserId)
 		layoutStacks()
+		if plr == player then
+			refreshYouLandHighlight()
+		end
 		return
 	end
 	local slot = ensureSlot(plr)
@@ -547,6 +557,9 @@ local function syncPlayerSlot(plr: Player)
 		TweenService:Create(scale, SHOW_TWEEN, { Scale = 1 }):Play()
 	end
 	layoutStacks()
+	if plr == player then
+		refreshYouLandHighlight()
+	end
 end
 
 local function syncAllSlots()
@@ -616,6 +629,36 @@ local function refreshLandLabels()
 		local label = landLabels[land]
 		if label and label.Parent then
 			label.Text = formatLandLuckLabel(land)
+		end
+	end
+end
+
+-- Only your current land: slightly whiter / brighter token stroke (not other players).
+local function refreshYouLandHighlight()
+	local raw = player:GetAttribute(LAND_ATTR)
+	local land = if typeof(raw) == "number" then math.floor(raw) else 0
+	if land < 1 or land > MAX_LAND then
+		land = 0
+	end
+	if land == highlightedLand and land > 0 then
+		-- Still refresh stroke attrs in case alpha tween ran.
+	end
+	highlightedLand = land
+	for i, token in landTokens do
+		local stroke = token:FindFirstChildOfClass("UIStroke")
+		if not stroke then
+			continue
+		end
+		local isYou = i == land
+		stroke:SetAttribute("YouLand", isYou)
+		if isYou then
+			stroke.Color = TOKEN_EDGE_YOU
+			stroke.Thickness = 1.75
+			stroke.Transparency = 0.28
+		else
+			stroke.Color = TOKEN_EDGE
+			stroke.Thickness = 1
+			stroke.Transparency = 0.78
 		end
 	end
 end
@@ -704,6 +747,24 @@ local function buildStrip(parentGui: PlayerGui)
 	trackStroke.Parent = track
 	trackRainbow = applyRainbowToTrack(track)
 
+	-- Dotted stud wash over the rainbow (same stud tile as Tim Cheese UI).
+	local studs = Instance.new("ImageLabel")
+	studs.Name = "StudOverlay"
+	studs.BackgroundTransparency = 1
+	studs.BorderSizePixel = 0
+	studs.Size = UDim2.fromScale(1, 1)
+	studs.Position = UDim2.fromScale(0, 0)
+	studs.Image = STUD_TEX
+	studs.ImageColor3 = Color3.fromRGB(255, 255, 255)
+	studs.ImageTransparency = 0.55
+	studs.ScaleType = Enum.ScaleType.Tile
+	studs.TileSize = UDim2.fromOffset(12, 12)
+	studs.ZIndex = 44
+	studs.Parent = track
+	local studCorner = Instance.new("UICorner")
+	studCorner.CornerRadius = UDim.new(1, 0)
+	studCorner.Parent = studs
+
 	local tokensHost = Instance.new("Frame")
 	tokensHost.Name = "Tokens"
 	tokensHost.BackgroundTransparency = 1
@@ -775,6 +836,7 @@ local function buildStrip(parentGui: PlayerGui)
 		label.Parent = token
 		table.insert(landLabels, label)
 	end
+	refreshYouLandHighlight()
 
 	local avatars = Instance.new("Frame")
 	avatars.Name = "Avatars"
@@ -891,6 +953,7 @@ function LandActivityStripController.init()
 		refreshVisibility(false)
 		if visibleTarget then
 			syncAllSlots()
+			refreshYouLandHighlight()
 		end
 	end)
 end

@@ -22,6 +22,7 @@ local M = {}
 
 -- Keep current land and ±keepRadius. Unload when abs(delta) > keepRadius.
 local DEFAULT_KEEP_RADIUS = 1
+local SWING_KEEP_RADIUS = 2
 local keepRadius = DEFAULT_KEEP_RADIUS
 local lowGraphics = false
 local POLL_SEC = 0.45
@@ -29,10 +30,16 @@ local START_DELAY_SEC = 4
 local FEATURE_ENABLED = true
 -- Reparent budget: restore terrain/island first (see restorePriority), a few per frame.
 local REPARENT_PER_YIELD = 3
-local FAST_MOVE_SPEED = 42
-local STREAM_AHEAD_STUDS = 220
+local REPARENT_PER_YIELD_SWING = 10
+local FAST_MOVE_SPEED = 36
+local STREAM_AHEAD_STUDS = 180
+local STREAM_FAR_STUDS = 320
 local lastStreamAt = 0.0
-local STREAM_COOLDOWN = 0.85
+local STREAM_COOLDOWN = 0.35
+local GAMEPLAY_STREAM_TARGET = 280
+local SWING_STREAM_TARGET = 420
+local swingStreamBoosted = false
+local wasFastTraveling = false
 
 local player = Players.LocalPlayer
 local wired = false
@@ -195,12 +202,30 @@ local function restorePriority(entry: CullEntry): number
 	return 1
 end
 
+local function isFastTraveling(): boolean
+	if player:GetAttribute("IsSwinging") == true then
+		return true
+	end
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return false
+	end
+	local v = (hrp :: BasePart).AssemblyLinearVelocity
+	return Vector3.new(v.X, 0, v.Z).Magnitude >= FAST_MOVE_SPEED
+end
+
 local function shouldKeepLand(landNum: number, playerLand: number): boolean
 	if playerLand <= 0 then
 		-- Don't touch anything until we know where the player is (avoids mass reparent on join).
 		return true
 	end
-	return math.abs(landNum - playerLand) <= keepRadius
+	local radius = keepRadius
+	-- While swinging / fast travel, keep one extra land ahead so tops aren't parked.
+	if not lowGraphics and isFastTraveling() then
+		radius = math.max(radius, SWING_KEEP_RADIUS)
+	end
+	return math.abs(landNum - playerLand) <= radius
 end
 
 local function shouldParkEntry(entry: CullEntry, playerLand: number): boolean
@@ -329,13 +354,14 @@ local function applyForPlayerLand(playerLand: number)
 	end
 
 	local n = 0
+	local parkBudget = if isFastTraveling() then REPARENT_PER_YIELD_SWING else REPARENT_PER_YIELD
 	for _, entry in toPark do
 		if token ~= applyToken then
 			return
 		end
 		parkEntry(entry)
 		n += 1
-		if n % REPARENT_PER_YIELD == 0 then
+		if n % parkBudget == 0 then
 			RunService.Heartbeat:Wait()
 		end
 	end
@@ -350,13 +376,14 @@ local function applyForPlayerLand(playerLand: number)
 	end)
 
 	n = 0
+	local restoreBudget = if isFastTraveling() then REPARENT_PER_YIELD_SWING else REPARENT_PER_YIELD
 	for _, entry in toRestore do
 		if token ~= applyToken then
 			return
 		end
 		restoreEntry(entry)
 		n += 1
-		if n % REPARENT_PER_YIELD == 0 then
+		if n % restoreBudget == 0 then
 			RunService.Heartbeat:Wait()
 		end
 	end
@@ -429,26 +456,29 @@ local function playerLandNow(): number
 	return land
 end
 
-local function isFastTraveling(): boolean
-	if player:GetAttribute("IsSwinging") == true then
-		return true
+local function setSwingStreamBoost(on: boolean)
+	if swingStreamBoosted == on then
+		return
 	end
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if not hrp or not hrp:IsA("BasePart") then
-		return false
-	end
-	local v = (hrp :: BasePart).AssemblyLinearVelocity
-	return Vector3.new(v.X, 0, v.Z).Magnitude >= FAST_MOVE_SPEED
+	swingStreamBoosted = on
+	pcall(function()
+		local wsAny = Workspace :: any
+		if on then
+			wsAny.StreamingTargetRadius = SWING_STREAM_TARGET
+		else
+			wsAny.StreamingTargetRadius = GAMEPLAY_STREAM_TARGET
+		end
+	end)
 end
 
--- Soft-prewarm: only request Roblox streaming ahead. Never force-restore
--- cached grass/props (that races ahead of the land mesh = high tris, no island).
+-- Soft-prewarm: request Roblox streaming ahead along swing velocity.
+-- Never force-restore cached grass/props before the island mesh streams in.
 local function softPrewarmAhead()
-	if not cullActive or currentLand <= 0 or lowGraphics then
+	if not Workspace.StreamingEnabled then
 		return
 	end
 	if not isFastTraveling() then
+		setSwingStreamBoost(false)
 		return
 	end
 
@@ -460,23 +490,41 @@ local function softPrewarmAhead()
 
 	local vel = (hrp :: BasePart).AssemblyLinearVelocity
 	local horiz = Vector3.new(vel.X, 0, vel.Z)
-	if horiz.Magnitude < FAST_MOVE_SPEED * 0.5 then
+	local look = Vector3.new((hrp :: BasePart).CFrame.LookVector.X, 0, (hrp :: BasePart).CFrame.LookVector.Z)
+	local dir: Vector3
+	if horiz.Magnitude >= FAST_MOVE_SPEED * 0.35 then
+		dir = horiz.Unit
+	elseif look.Magnitude > 0.05 then
+		dir = look.Unit
+	else
 		return
 	end
 
+	setSwingStreamBoost(true)
+
 	local now = os.clock()
-	if now - lastStreamAt >= STREAM_COOLDOWN and Workspace.StreamingEnabled then
-		lastStreamAt = now
-		local ahead = (hrp :: BasePart).Position + horiz.Unit * STREAM_AHEAD_STUDS
-		task.spawn(function()
-			local ok, err = pcall(function()
-				player:RequestStreamAroundAsync(ahead)
-			end)
-			if not ok then
-				warn("[GrassCullController] RequestStreamAroundAsync failed:", err)
-			end
-		end)
+	if now - lastStreamAt < STREAM_COOLDOWN then
+		return
 	end
+	lastStreamAt = now
+
+	local origin = (hrp :: BasePart).Position
+	local near = origin + dir * STREAM_AHEAD_STUDS
+	local far = origin + dir * STREAM_FAR_STUDS
+	task.spawn(function()
+		local ok1, err1 = pcall(function()
+			player:RequestStreamAroundAsync(near, 4)
+		end)
+		if not ok1 then
+			warn("[GrassCullController] RequestStreamAroundAsync failed:", err1)
+		end
+		local ok2, err2 = pcall(function()
+			player:RequestStreamAroundAsync(far, 4)
+		end)
+		if not ok2 then
+			warn("[GrassCullController] RequestStreamAroundAsync far failed:", err2)
+		end
+	end)
 end
 
 local function onHeartbeat(dt: number)
@@ -488,17 +536,30 @@ local function onHeartbeat(dt: number)
 		-- Between polls, trickle prewarm while swinging so boundary hits stay light.
 		if isFastTraveling() then
 			softPrewarmAhead()
+		else
+			setSwingStreamBoost(false)
 		end
 		return
 	end
 	accum = 0
 
 	local land = playerLandNow()
+	local fast = isFastTraveling()
 	if land ~= currentLand and land > 0 then
 		task.spawn(applyForPlayerLand, land)
-	elseif isFastTraveling() then
+	elseif fast then
 		softPrewarmAhead()
+		-- Expand keep radius once when swing starts so next land tops stay resident.
+		if not wasFastTraveling and (land > 0 or currentLand > 0) then
+			task.spawn(applyForPlayerLand, land > 0 and land or currentLand)
+		end
+	elseif wasFastTraveling then
+		setSwingStreamBoost(false)
+		if land > 0 or currentLand > 0 then
+			task.spawn(applyForPlayerLand, land > 0 and land or currentLand)
+		end
 	end
+	wasFastTraveling = fast
 end
 
 local function onLandFolderAdded(landFolder: Instance)

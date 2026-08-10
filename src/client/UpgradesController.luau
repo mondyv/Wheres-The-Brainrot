@@ -531,10 +531,13 @@ local function playPowerGainFlash(amountLabel: TextLabel)
 	if leftover then
 		leftover:Destroy()
 	end
-	local parentScale = amountLabel.Parent and amountLabel.Parent:FindFirstChild("PowerHitScale")
-	if parentScale and parentScale:IsA("UIScale") then
-		parentScale.Scale = 1
-	end
+
+	local powerFrame = amountLabel.Parent
+	-- Floater already punched the chip when it landed — don't double-hit.
+	local recentlyPulsed = powerFrame
+		and powerFrame:IsA("GuiObject")
+		and (os.clock() - ((powerFrame:GetAttribute("PowerPulseAt") :: number?) or 0)) < 0.55
+
 	amountLabel.TextColor3 = POWER_FLASH_WHITE
 	TweenService:Create(
 		amountLabel,
@@ -548,6 +551,36 @@ local function playPowerGainFlash(amountLabel: TextLabel)
 				TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 				{ TextColor3 = base }
 			):Play()
+		end
+	end)
+
+	if recentlyPulsed or not powerFrame or not powerFrame:IsA("GuiObject") then
+		return
+	end
+
+	local sc = powerFrame:FindFirstChild("PowerChipScale")
+	if not sc or not sc:IsA("UIScale") then
+		local legacy = powerFrame:FindFirstChild("PowerHitScale")
+		if legacy then
+			legacy:Destroy()
+		end
+		sc = Instance.new("UIScale")
+		sc.Name = "PowerChipScale"
+		sc.Scale = 1
+		sc.Parent = powerFrame
+	end
+	local token = ((powerFrame:GetAttribute("PowerPulseToken") :: number?) or 0) + 1
+	powerFrame:SetAttribute("PowerPulseToken", token)
+	powerFrame:SetAttribute("PowerPulseAt", os.clock())
+	sc.Scale = 1
+	TweenService
+		:Create(sc, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.18 })
+		:Play()
+	task.delay(0.1, function()
+		if sc.Parent and powerFrame:GetAttribute("PowerPulseToken") == token then
+			TweenService
+				:Create(sc, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
+				:Play()
 		end
 	end)
 end

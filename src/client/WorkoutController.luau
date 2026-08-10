@@ -355,38 +355,85 @@ local function resolvePowerHudColor(amountLabel: TextLabel?): Color3
 	return POWER_HUD_YELLOW
 end
 
--- Soft gold flash on the Power amount only — never touch Size/AnchorPoint (that hid the counter).
-local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?)
-	if amountLabel and amountLabel:IsA("TextLabel") then
-		local label = amountLabel :: TextLabel
-		-- Kill leftover hit scales that could leave text at Scale 0.
-		local badScale = label:FindFirstChild("PowerHitScale")
-		if badScale then
-			badScale:Destroy()
-		end
-		label.TextTransparency = 0
-		local base = label.TextColor3
-		label.TextColor3 = POWER_HIT_WHITE
-		TweenService:Create(
-			label,
-			TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ TextColor3 = POWER_HUD_YELLOW }
-		):Play()
-		task.delay(0.18, function()
-			if label.Parent then
-				TweenService:Create(
-					label,
-					TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-					{ TextColor3 = base }
-				):Play()
-			end
-		end)
+local function ensureChipScale(chip: GuiObject): UIScale
+	local sc = chip:FindFirstChild("PowerChipScale")
+	if sc and sc:IsA("UIScale") then
+		return sc
 	end
-	if powerFrame then
-		local sc = powerFrame:FindFirstChild("PowerHitScale")
-		if sc and sc:IsA("UIScale") then
-			sc.Scale = 1
+	-- Wipe old broken hit scales from prior experiments.
+	local legacy = chip:FindFirstChild("PowerHitScale")
+	if legacy then
+		legacy:Destroy()
+	end
+	local made = Instance.new("UIScale")
+	made.Name = "PowerChipScale"
+	made.Scale = 1
+	made.Parent = chip
+	return made
+end
+
+local function spawnHitLight(layer: Frame, screen: Vector2, strength: number?)
+	local s = strength or 1
+	local lp = layer.AbsolutePosition
+	local glow = Instance.new("Frame")
+	glow.Name = "PowerHitLight"
+	glow.AnchorPoint = Vector2.new(0.5, 0.5)
+	glow.Position = UDim2.fromOffset(screen.X - lp.X, screen.Y - lp.Y)
+	glow.Size = UDim2.fromOffset(22 * s, 22 * s)
+	glow.BackgroundColor3 = POWER_HUD_YELLOW
+	glow.BackgroundTransparency = 0.25
+	glow.BorderSizePixel = 0
+	glow.ZIndex = 85
+	glow.Parent = layer
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = glow
+	TweenService:Create(
+		glow,
+		TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{
+			Size = UDim2.fromOffset(88 * s, 88 * s),
+			BackgroundTransparency = 1,
+		}
+	):Play()
+	task.delay(0.42, function()
+		if glow.Parent then
+			glow:Destroy()
 		end
+	end)
+end
+
+-- Chip gets big + soft light. Never touch Size/AnchorPoint (that hid the counter).
+local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?, layer: Frame?)
+	if powerFrame and powerFrame:IsA("GuiObject") then
+		local token = ((powerFrame:GetAttribute("PowerPulseToken") :: number?) or 0) + 1
+		powerFrame:SetAttribute("PowerPulseToken", token)
+		powerFrame:SetAttribute("PowerPulseAt", os.clock())
+
+		local sc = ensureChipScale(powerFrame)
+		sc.Scale = 1
+		local up = TweenService:Create(
+			sc,
+			TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+			{ Scale = 1.2 }
+		)
+		up:Play()
+		up.Completed:Connect(function()
+			if powerFrame:GetAttribute("PowerPulseToken") ~= token then
+				return
+			end
+			TweenService:Create(
+				sc,
+				TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Scale = 1 }
+			):Play()
+		end)
+
+		if layer and layer.Parent then
+			local center = powerFrame.AbsolutePosition + powerFrame.AbsoluteSize * 0.5
+			spawnHitLight(layer, center, 1.15)
+		end
+
 		local icon = powerFrame:FindFirstChild("Icon")
 		if icon and icon:IsA("ImageLabel") then
 			local baseC = icon.ImageColor3
@@ -397,6 +444,31 @@ local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?)
 				{ ImageColor3 = baseC }
 			):Play()
 		end
+	end
+
+	if amountLabel and amountLabel:IsA("TextLabel") then
+		local label = amountLabel :: TextLabel
+		local bad = label:FindFirstChild("PowerHitScale")
+		if bad then
+			bad:Destroy()
+		end
+		label.TextTransparency = 0
+		local base = label.TextColor3
+		label.TextColor3 = POWER_HIT_WHITE
+		TweenService:Create(
+			label,
+			TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ TextColor3 = POWER_HUD_YELLOW }
+		):Play()
+		task.delay(0.2, function()
+			if label.Parent then
+				TweenService:Create(
+					label,
+					TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ TextColor3 = base }
+				):Play()
+			end
+		end)
 	end
 end
 
@@ -444,7 +516,6 @@ local function spawnPowerFloater(gain: number)
 		return UDim2.fromOffset(screen.X - lp.X, screen.Y - lp.Y)
 	end
 
-	-- Same moment as white flash — no long hold before +N shows.
 	if not layer.Parent or not powerFrame.Parent then
 		return
 	end
@@ -468,6 +539,9 @@ local function spawnPowerFloater(gain: number)
 		startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 48)
 	end
 
+	-- Soft burst behind the +N as it appears with the white flash.
+	spawnHitLight(layer, Vector2.new(startPos.X.Offset + layer.AbsolutePosition.X, startPos.Y.Offset + layer.AbsolutePosition.Y), 0.85)
+
 	local row = Instance.new("Frame")
 	row.Name = "PowerGainFloater"
 	row.BackgroundTransparency = 1
@@ -483,7 +557,7 @@ local function spawnPowerFloater(gain: number)
 	layout.FillDirection = Enum.FillDirection.Horizontal
 	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
-	layout.Padding = UDim.new(0, 4)
+	layout.Padding = UDim.new(0, 5)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = row
 
@@ -500,9 +574,9 @@ local function spawnPowerFloater(gain: number)
 	label.LayoutOrder = 1
 	label.ZIndex = 91
 	label.Parent = row
-	UiFonts.applyBodyLabel(label, 24, 16)
+	UiFonts.applyBodyLabel(label, 30, 18)
 	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = 2.4
+	stroke.Thickness = 2.8
 	stroke.Color = Color3.fromRGB(35, 24, 6)
 	stroke.Transparency = 0
 	stroke.Parent = label
@@ -510,7 +584,7 @@ local function spawnPowerFloater(gain: number)
 	local muscle = Instance.new("ImageLabel")
 	muscle.Name = "Muscle"
 	muscle.BackgroundTransparency = 1
-	muscle.Size = UDim2.fromOffset(26, 26)
+	muscle.Size = UDim2.fromOffset(34, 34)
 	muscle.Image = "rbxassetid://73088512205933"
 	muscle.ImageTransparency = 0
 	muscle.ScaleType = Enum.ScaleType.Fit
@@ -519,20 +593,19 @@ local function spawnPowerFloater(gain: number)
 	muscle.Parent = row
 
 	local scale = Instance.new("UIScale")
-	scale.Scale = 0.55
+	scale.Scale = 0.4
 	scale.Parent = row
 	TweenService:Create(
 		scale,
-		TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = 1.08 }
+		TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1.2 }
 	):Play()
 
-	-- Tiny lift, then suck into the Power counter.
 	local startX, startY = startPos.X.Offset, startPos.Y.Offset
-	local liftY = startY - 28
+	local liftY = startY - 34
 	TweenService:Create(
 		row,
-		TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Position = UDim2.fromOffset(startX, liftY) }
 	):Play()
 
@@ -544,13 +617,13 @@ local function spawnPowerFloater(gain: number)
 		local t = progress.Value
 		local one = 1 - t
 		local midX = (fromX + liveEnd.X.Offset) * 0.5
-		local midY = math.min(fromY, liveEnd.Y.Offset) - 36
+		local midY = math.min(fromY, liveEnd.Y.Offset) - 42
 		local x = one * one * fromX + 2 * one * t * midX + t * t * liveEnd.X.Offset
 		local y = one * one * fromY + 2 * one * t * midY + t * t * liveEnd.Y.Offset
 		row.Position = UDim2.fromOffset(x, y)
 	end)
 
-	task.delay(0.2, function()
+	task.delay(0.22, function()
 		if not row.Parent then
 			progConn:Disconnect()
 			progress:Destroy()
@@ -571,11 +644,11 @@ local function spawnPowerFloater(gain: number)
 				return
 			end
 			row.Position = toLayerOffset(destScreen())
-			pulsePowerHud(amountGui, powerFrame :: GuiObject)
+			pulsePowerHud(amountGui, powerFrame :: GuiObject, layer)
 			local suck = TweenService:Create(
 				scale,
 				TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-				{ Scale = 0.35 }
+				{ Scale = 0.4 }
 			)
 			TweenService:Create(
 				label,

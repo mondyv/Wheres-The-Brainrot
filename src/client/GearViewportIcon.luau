@@ -4,51 +4,69 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
+local GearRainbowFX = require(script.Parent.GearRainbowFX)
 
 local M = {}
 
 local VF_NAME = "GearViewport"
-local gearsFolder: Folder? = nil
 local spinConns: { [ViewportFrame]: RBXScriptConnection } = {}
-
-local function getGearsFolder(): Folder?
-	if gearsFolder and gearsFolder.Parent then
-		return gearsFolder
-	end
-	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
-	local folder = assets and assets:FindFirstChild("Gears")
-	if folder and folder:IsA("Folder") then
-		gearsFolder = folder
-		return folder
-	end
-	return nil
-end
-
-local function getTemplate(gearId: number): Model?
-	local def = GearConfig.get(gearId)
-	if not def then
-		return nil
-	end
-	local folder = getGearsFolder()
-	if not folder then
-		return nil
-	end
-	local inst = folder:FindFirstChild(def.assetName)
-	if inst and inst:IsA("Model") then
-		return inst
-	end
-	return nil
-end
 
 local function getPrimary(model: Model): BasePart?
 	if model.PrimaryPart then
 		return model.PrimaryPart
 	end
-	local primary = model:FindFirstChild("Primary")
+	local primary = model:FindFirstChild("Primary", true)
 	if primary and primary:IsA("BasePart") then
 		return primary
 	end
 	return model:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function enableVfx(root: Instance)
+	for _, d in root:GetDescendants() do
+		if d:IsA("ParticleEmitter") then
+			d.Enabled = true
+			-- Viewport previews need a stronger rate or they look empty.
+			if d.Rate < 8 then
+				d.Rate = 14
+			end
+			if d.Lifetime < 1.2 then
+				d.Lifetime = 1.35
+			end
+		elseif d:IsA("Beam") or d:IsA("Trail") or d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
+			(d :: any).Enabled = true
+		elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+			(d :: Light).Enabled = true
+			(d :: Light).Brightness = math.max((d :: Light).Brightness, 1.25)
+		end
+	end
+end
+
+local function makeFallbackModel(gearId: number): Model
+	local def = GearConfig.get(gearId)
+	local model = Instance.new("Model")
+	model.Name = if def then def.name else ("Gear " .. tostring(gearId))
+	local bar = Instance.new("Part")
+	bar.Name = "Primary"
+	bar.Size = Vector3.new(0.35, 0.35, 2.4)
+	bar.Color = Color3.fromRGB(90 + gearId * 8, 90, 140)
+	bar.Material = Enum.Material.SmoothPlastic
+	bar.Anchored = true
+	bar.CanCollide = false
+	bar.Parent = model
+	local left = Instance.new("Part")
+	left.Size = Vector3.new(0.9, 0.9, 0.5)
+	left.Color = bar.Color
+	left.Material = Enum.Material.SmoothPlastic
+	left.Anchored = true
+	left.CanCollide = false
+	left.CFrame = bar.CFrame * CFrame.new(0, 0, -1.2)
+	left.Parent = model
+	local right = left:Clone()
+	right.CFrame = bar.CFrame * CFrame.new(0, 0, 1.2)
+	right.Parent = model
+	model.PrimaryPart = bar
+	return model
 end
 
 local function stopSpin(vf: ViewportFrame)
@@ -64,6 +82,12 @@ function M.clear(host: Instance)
 	if existing then
 		if existing:IsA("ViewportFrame") then
 			stopSpin(existing)
+			local world = existing:FindFirstChildOfClass("WorldModel")
+			if world then
+				for _, child in world:GetChildren() do
+					GearRainbowFX.detach(child)
+				end
+			end
 		end
 		existing:Destroy()
 	end
@@ -75,14 +99,13 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 		return existing
 	end
 
-	local template = getTemplate(gearId)
-	if not template then
-		return nil
+	local clone = GearConfig.cloneGearModel(gearId)
+	if not clone then
+		clone = makeFallbackModel(gearId)
 	end
 
 	M.clear(host)
 
-	-- Hide static ImageLabel icons under the same host so the viewport shows through.
 	for _, d in host:GetChildren() do
 		if d:IsA("ImageLabel") and (d.Name == "Icon" or d.Name == "icon") then
 			d.Visible = false
@@ -97,16 +120,15 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	vf.Position = UDim2.fromScale(0.5, 0.5)
 	vf.AnchorPoint = Vector2.new(0.5, 0.5)
 	vf.ZIndex = host.ZIndex + 1
-	vf.Ambient = Color3.fromRGB(200, 200, 210)
+	vf.Ambient = Color3.fromRGB(200, 205, 220)
 	vf.LightColor = Color3.fromRGB(255, 255, 255)
-	vf.LightDirection = Vector3.new(-0.4, -1, -0.35)
+	vf.LightDirection = Vector3.new(-0.35, -1, -0.4)
 	vf:SetAttribute("GearId", gearId)
 	vf.Parent = host
 
 	local world = Instance.new("WorldModel")
 	world.Parent = vf
 
-	local clone = template:Clone()
 	for _, d in clone:GetDescendants() do
 		if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ProximityPrompt") then
 			d:Destroy()
@@ -114,8 +136,10 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 			d.Anchored = true
 			d.CanCollide = false
 			d.Massless = true
+			d.CastShadow = false
 		end
 	end
+	enableVfx(clone)
 	clone.Parent = world
 
 	local primary = getPrimary(clone)
@@ -123,15 +147,18 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 		clone.PrimaryPart = primary
 	end
 
-	local extents = clone:GetExtentsSize()
-	local maxDim = math.max(extents.X, extents.Y, extents.Z, 0.1)
+	local okExtents, extents = pcall(function()
+		return clone:GetExtentsSize()
+	end)
+	local size = if okExtents then extents else Vector3.new(2, 2, 2)
+	local maxDim = math.max(size.X, size.Y, size.Z, 0.1)
 	local cam = Instance.new("Camera")
 	cam.FieldOfView = 35
 	cam.Parent = vf
 	vf.CurrentCamera = cam
 
 	local pivot = if primary then primary.CFrame else clone:GetPivot()
-	local distance = maxDim * 1.55
+	local distance = maxDim * 1.65
 	local yaw = 0
 
 	local function updateCam()
@@ -143,6 +170,10 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 		end
 	end
 	updateCam()
+
+	if gearId == 6 then
+		GearRainbowFX.attach(clone)
+	end
 
 	local shouldRotate = not (opts and opts.rotate == false)
 	if shouldRotate then
@@ -159,6 +190,7 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	vf.AncestryChanged:Connect(function(_, parent)
 		if not parent then
 			stopSpin(vf)
+			GearRainbowFX.detach(clone)
 		end
 	end)
 

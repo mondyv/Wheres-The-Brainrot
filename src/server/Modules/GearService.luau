@@ -9,34 +9,8 @@ local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local GearService = {}
 
-local gearsFolder: Folder? = nil
 local workoutSessions: { [Player]: { gearId: number, conn: RBXScriptConnection?, lastTick: number } } = {}
 local playerConns: { [Player]: { RBXScriptConnection } } = {}
-
-local function getGearsFolder(): Folder?
-	if gearsFolder and gearsFolder.Parent then
-		return gearsFolder
-	end
-	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
-	local folder = assets and assets:FindFirstChild("Gears")
-	if folder and folder:IsA("Folder") then
-		gearsFolder = folder
-		return folder
-	end
-	return nil
-end
-
-local function getGearTemplate(def: GearConfig.GearDef): Model?
-	local folder = getGearsFolder()
-	if not folder then
-		return nil
-	end
-	local inst = folder:FindFirstChild(def.assetName)
-	if inst and inst:IsA("Model") then
-		return inst
-	end
-	return nil
-end
 
 local function getHandlePart(model: Model): BasePart?
 	if model.PrimaryPart and model.PrimaryPart:IsA("BasePart") then
@@ -80,7 +54,7 @@ function GearService.findGearTool(player: Player, gearId: number): Tool?
 end
 
 function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
-	local template = getGearTemplate(def)
+	local clone = GearConfig.cloneGearModel(def.id)
 	local tool = Instance.new("Tool")
 	tool.Name = def.name
 	tool.RequiresHandle = true
@@ -88,14 +62,25 @@ function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
 	tool.ManualActivationOnly = false
 	tool:SetAttribute(GearConfig.GEAR_TOOL_ATTR, true)
 	tool:SetAttribute(GearConfig.GEAR_ID_ATTR, def.id)
-	tool:SetAttribute("ToolbarPriority", 1000 - def.id) -- lower id = first in hotbar
+	tool:SetAttribute("ToolbarPriority", 1000 - def.id)
+	if def.id == 6 then
+		tool:SetAttribute("RainbowGear", true)
+	end
 
 	local handle: BasePart
-	if template then
-		local clone = template:Clone()
+	if clone then
 		for _, d in clone:GetDescendants() do
 			if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ProximityPrompt") then
 				d:Destroy()
+			elseif
+				d:IsA("ParticleEmitter")
+				or d:IsA("Beam")
+				or d:IsA("Trail")
+				or d:IsA("Fire")
+				or d:IsA("Smoke")
+				or d:IsA("Sparkles")
+			then
+				(d :: any).Enabled = true
 			end
 		end
 		local main = getHandlePart(clone)
@@ -127,6 +112,12 @@ function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
 				w.Parent = main
 			end
 		end
+		-- Keep non-part VFX under the tool (attachments/emitters move with parts).
+		for _, d in clone:GetChildren() do
+			if not d:IsA("BasePart") and not d:IsA("Script") and not d:IsA("LocalScript") then
+				d.Parent = tool
+			end
+		end
 		clone:Destroy()
 		handle = main
 	else
@@ -143,19 +134,59 @@ function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
 	return tool
 end
 
+local function destroyAllGearTools(player: Player)
+	local function wipe(root: Instance?)
+		if not root then
+			return
+		end
+		for _, c in root:GetChildren() do
+			if c:IsA("Tool") and c:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
+				c:Destroy()
+			end
+		end
+	end
+	wipe(player:FindFirstChildOfClass("Backpack"))
+	wipe(player.Character)
+end
+
 function GearService.ensureTools(player: Player)
 	local backpack = player:FindFirstChildOfClass("Backpack")
 	if not backpack then
 		return
 	end
-	local owned = GearService.getOwnedSet(player)
-	for _, def in GearConfig.GEARS do
-		if owned[def.id] then
-			if not GearService.findGearTool(player, def.id) then
-				local tool = GearService.buildGearTool(def)
-				if tool then
-					tool.Parent = backpack
+	local equipped = player:GetAttribute(GearConfig.EQUIPPED_GEAR_ATTR)
+	local equippedId = if typeof(equipped) == "number" then math.floor(equipped) else 0
+
+	-- Only one dumbbell tool at a time (the equipped one).
+	if equippedId <= 0 or not GearService.owns(player, equippedId) then
+		destroyAllGearTools(player)
+		return
+	end
+
+	local existing = GearService.findGearTool(player, equippedId)
+	-- Remove every other gear tool.
+	local function purgeOthers(root: Instance?)
+		if not root then
+			return
+		end
+		for _, c in root:GetChildren() do
+			if c:IsA("Tool") and c:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
+				local id = c:GetAttribute(GearConfig.GEAR_ID_ATTR)
+				if id ~= equippedId then
+					c:Destroy()
 				end
+			end
+		end
+	end
+	purgeOthers(backpack)
+	purgeOthers(player.Character)
+
+	if not existing then
+		local def = GearConfig.get(equippedId)
+		if def then
+			local tool = GearService.buildGearTool(def)
+			if tool then
+				tool.Parent = backpack
 			end
 		end
 	end
@@ -170,32 +201,46 @@ function GearService.grantGear(player: Player, gearId: number): boolean
 	if owned[gearId] then
 		return true
 	end
-	if not GearConfig.isUnlocked(gearId, owned) then
-		return false
-	end
 	owned[gearId] = true
 	GearService.setOwnedSet(player, owned)
-	GearService.ensureTools(player)
+	-- Don't auto-equip; shop Equip button grants the single tool.
 	return true
 end
 
 function GearService.equipGear(player: Player, gearId: number): (boolean, string?)
 	if gearId == 0 then
+		GearService.stopWorkout(player)
 		player:SetAttribute(GearConfig.EQUIPPED_GEAR_ATTR, 0)
+		destroyAllGearTools(player)
 		return true, nil
 	end
 	if not GearService.owns(player, gearId) then
 		return false, "Not owned"
 	end
+	GearService.stopWorkout(player)
 	player:SetAttribute(GearConfig.EQUIPPED_GEAR_ATTR, gearId)
-	-- Put tool in character for immediate use.
-	local tool = GearService.findGearTool(player, gearId)
+	destroyAllGearTools(player)
+	local def = GearConfig.get(gearId)
+	if not def then
+		return false, "Unknown gear"
+	end
+	local tool = GearService.buildGearTool(def)
+	if not tool then
+		return false, "Tool build failed"
+	end
 	local character = player.Character
-	if tool and character then
+	local backpack = player:FindFirstChildOfClass("Backpack")
+	if character then
 		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		tool.Parent = character
 		if humanoid then
 			humanoid:EquipTool(tool)
 		end
+	elseif backpack then
+		tool.Parent = backpack
+	else
+		tool:Destroy()
+		return false, "No backpack"
 	end
 	return true, nil
 end
@@ -265,9 +310,6 @@ function GearService.purchaseCash(player: Player, gearId: number): (boolean, str
 	local owned = GearService.getOwnedSet(player)
 	if owned[gearId] then
 		return false, "Already owned"
-	end
-	if not GearConfig.isUnlocked(gearId, owned) then
-		return false, "Locked"
 	end
 	local cash = player:GetAttribute("Cash")
 	if typeof(cash) ~= "number" or cash < def.cashPrice then

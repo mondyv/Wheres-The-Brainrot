@@ -466,6 +466,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		end)(),
 		equippedGearId = floorNum(player:GetAttribute("EquippedGearId"), 0),
 		powerEdited = player:GetAttribute("PowerEdited") == true,
+		powerForceResetV1 = player:GetAttribute("PowerForceResetV1") == true,
 		totalPlayTimeSeconds = M.getTotalPlayTimeSeconds(player),
 		baseFloorLevel = floorLevel,
 		dailyDayClaimed = floorNum(player:GetAttribute(DailyConfig.DAY_ATTR), 0),
@@ -566,11 +567,20 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	player:SetAttribute(SwingUpgrades.CARRY_LEVEL_ATTR, data.carryLevel)
 
 	local workoutPower = data.workoutPower
-	if typeof(workoutPower) ~= "number" or workoutPower <= 0 then
+	-- One-time wipe of test/edited workout Power for all players.
+	if data.powerForceResetV1 ~= true then
+		workoutPower = 0
+		data.workoutPower = 0
+		data.powerEdited = false
+		data.powerForceResetV1 = true
+	elseif typeof(workoutPower) ~= "number" then
 		workoutPower = WorkoutPower.migratePowerFromLegacyLevels(data.powerLevel, data.ropeLevel)
+	else
+		workoutPower = math.max(0, workoutPower)
 	end
 	player:SetAttribute(GearConfig.POWER_ATTR, math.max(0, math.floor(workoutPower)))
 	player:SetAttribute(GearConfig.POWER_EDITED_ATTR, data.powerEdited == true)
+	player:SetAttribute("PowerForceResetV1", data.powerForceResetV1 == true)
 	player:SetAttribute(GearConfig.OWNED_GEARS_ATTR, if typeof(data.ownedGears) == "string" then data.ownedGears else "")
 	player:SetAttribute(GearConfig.EQUIPPED_GEAR_ATTR, math.max(0, math.floor(data.equippedGearId or 0)))
 	WorkoutPower.syncSwingFromPower(player)
@@ -718,6 +728,7 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		ownedGears = if typeof(raw.ownedGears) == "string" then raw.ownedGears else "",
 		equippedGearId = floorNum(raw.equippedGearId, 0),
 		powerEdited = raw.powerEdited == true,
+		powerForceResetV1 = raw.powerForceResetV1 == true,
 		totalPlayTimeSeconds = floorNum(raw.totalPlayTimeSeconds, 0),
 		baseFloorLevel = math.clamp(floorNum(raw.baseFloorLevel, 1), 1, 4),
 		dailyDayClaimed = floorNum(raw.dailyDayClaimed, 0),
@@ -979,10 +990,9 @@ local function mergeAgainstPrior(
 	if payload.carryLevel < prior.carryLevel then
 		payload.carryLevel = prior.carryLevel
 	end
-	local priorPower = prior.workoutPower or 0
-	local payloadPower = payload.workoutPower or 0
-	if payloadPower < priorPower then
-		payload.workoutPower = priorPower
+	-- workoutPower may decrease via Edit Power / one-time reset — do not clamp up.
+	if prior.powerForceResetV1 == true then
+		payload.powerForceResetV1 = true
 	end
 	if typeof(prior.ownedGears) == "string" and prior.ownedGears ~= "" then
 		local priorSet = GearConfig.parseOwned(prior.ownedGears)
@@ -1322,6 +1332,7 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		ownedGears = "",
 		equippedGearId = 0,
 		powerEdited = false,
+		powerForceResetV1 = true,
 		totalPlayTimeSeconds = 0,
 		baseFloorLevel = 1,
 		dailyDayClaimed = 0,
@@ -1432,6 +1443,7 @@ function M.resetPlayerData(player: Player): (boolean, string?)
 end
 
 function M.applyLoadedData(player: Player, data: PlayerDataSchema.PlayerSaveData)
+	local needsPowerResetSave = data.powerForceResetV1 ~= true
 	IndexService.importUnlocks(player, data.indexUnlocks, data.goldenNames)
 	applyAttributes(player, data)
 	applyPlotFloor(player, data.baseFloorLevel)
@@ -1446,6 +1458,9 @@ function M.applyLoadedData(player: Player, data: PlayerDataSchema.PlayerSaveData
 			if not okRefresh then
 				warn("[PlayerDataService] RefreshRebirthState invoke failed:", errRefresh)
 			end
+		end
+		if needsPowerResetSave and player.Parent and player:GetAttribute(LOADED_ATTR) == true then
+			M.savePlayerData(player)
 		end
 	end)
 end

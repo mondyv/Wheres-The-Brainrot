@@ -8,6 +8,7 @@ local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+local GearRainbowFX = require(script.Parent.GearRainbowFX)
 
 local player = Players.LocalPlayer
 
@@ -26,7 +27,6 @@ end)
 local toolConns: { RBXScriptConnection } = {}
 local charConns: { RBXScriptConnection } = {}
 local boundTools: { [Tool]: boolean } = {}
-local workoutBillboard: BillboardGui? = nil
 local workoutTrack: AnimationTrack? = nil
 local workoutAnim: Animation? = nil
 local footWeld: WeldConstraint? = nil
@@ -182,36 +182,6 @@ local function lockMovement(humanoid: Humanoid, locked: boolean)
 	end
 end
 
-local function destroyWorkoutBillboard()
-	if workoutBillboard then
-		workoutBillboard:Destroy()
-		workoutBillboard = nil
-	end
-end
-
-local function showWorkoutBillboard(character: Model)
-	destroyWorkoutBillboard()
-	local head = character:FindFirstChild("Head")
-	if not head or not head:IsA("BasePart") then
-		return
-	end
-	local bb = Instance.new("BillboardGui")
-	bb.Name = "WorkoutVisual"
-	bb.Size = UDim2.fromOffset(88, 88)
-	bb.StudsOffset = Vector3.new(1.35, 1.1, 0)
-	bb.AlwaysOnTop = true
-	bb.MaxDistance = 90
-	bb.Adornee = head
-	bb.Parent = head
-	local img = Instance.new("ImageLabel")
-	img.Name = "Muscle"
-	img.BackgroundTransparency = 1
-	img.Size = UDim2.fromScale(1, 1)
-	img.Image = GearConfig.WORKOUT_IMAGE
-	img.Parent = bb
-	workoutBillboard = bb
-end
-
 local function clearBodyHighlight()
 	if bodyHighlight then
 		bodyHighlight:Destroy()
@@ -282,32 +252,23 @@ local function spawnPowerFloater(gain: number)
 		return
 	end
 
-	-- Spawn beside the muscle billboard (not the body center).
+	-- Spawn beside the head (no floating muscle icon).
 	local startX: number
 	local startY: number
-	if workoutBillboard and workoutBillboard.Adornee and workoutBillboard.Adornee:IsA("BasePart") then
-		local adornee = workoutBillboard.Adornee :: BasePart
-		local world = adornee.Position + Vector3.new(1.6, 1.2, 0)
-		local screenPos, onScreen = cam:WorldToViewportPoint(world)
-		if onScreen then
-			startX = screenPos.X + 18
-			startY = screenPos.Y - 10
-		else
-			return
-		end
-	else
-		local character = player.Character
-		local hrp = character and character:FindFirstChild("HumanoidRootPart")
-		if not hrp or not hrp:IsA("BasePart") then
-			return
-		end
-		local screenPos, onScreen = cam:WorldToViewportPoint(hrp.Position + Vector3.new(0, 2.2, 0))
-		if not onScreen then
-			return
-		end
-		startX = screenPos.X
-		startY = screenPos.Y
+	local character = player.Character
+	local head = character and character:FindFirstChild("Head")
+	local anchor = if head and head:IsA("BasePart")
+		then head
+		else (character and character:FindFirstChild("HumanoidRootPart"))
+	if not anchor or not anchor:IsA("BasePart") then
+		return
 	end
+	local screenPos, onScreen = cam:WorldToViewportPoint(anchor.Position + Vector3.new(1.2, 1.0, 0))
+	if not onScreen then
+		return
+	end
+	startX = screenPos.X + 12
+	startY = screenPos.Y - 8
 
 	local label = Instance.new("TextLabel")
 	label.BackgroundTransparency = 1
@@ -375,7 +336,6 @@ end
 local function cleanupWorkoutVisuals()
 	stopWorkoutAnim()
 	clearFootAttach()
-	destroyWorkoutBillboard()
 	clearBodyHighlight()
 	local hum = getHumanoid(player.Character)
 	if hum then
@@ -388,6 +348,14 @@ local function onUnequip()
 		pcall(function()
 			stopWorkoutFn:InvokeServer()
 		end)
+	end
+	local char = player.Character
+	if char then
+		for _, c in char:GetChildren() do
+			if c:IsA("Tool") and c:GetAttribute("RainbowGear") == true then
+				GearRainbowFX.detach(c)
+			end
+		end
 	end
 	cleanupWorkoutVisuals()
 end
@@ -422,7 +390,9 @@ local function bindTool(tool: Tool)
 			lockMovement(hum, true)
 			attachGearToFeet(character, tool)
 			playWorkoutAnim(character)
-			showWorkoutBillboard(character)
+			if tool:GetAttribute("RainbowGear") == true then
+				GearRainbowFX.attach(tool)
+			end
 		end
 	end
 

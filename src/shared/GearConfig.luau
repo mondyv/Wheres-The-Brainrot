@@ -1,5 +1,7 @@
 -- [ACTIVE] GearConfig
 -- Workout gear catalog (Upgrades panel + tools + Robux products).
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local M = {}
 
 export type GearDef = {
@@ -214,11 +216,9 @@ function M.encodeOwned(set: { [number]: boolean }): string
 	return table.concat(parts, ",")
 end
 
-function M.isUnlocked(gearId: number, owned: { [number]: boolean }): boolean
-	if gearId <= 1 then
-		return true
-	end
-	return owned[gearId - 1] == true
+function M.isUnlocked(_gearId: number, _owned: { [number]: boolean }): boolean
+	-- All gears are available to buy; no progression lock.
+	return true
 end
 
 function M.rarityDisplay(rarity: string): string
@@ -227,6 +227,106 @@ function M.rarityDisplay(rarity: string): string
 		return "Mythical"
 	end
 	return string.upper(string.sub(r, 1, 1)) .. string.lower(string.sub(r, 2))
+end
+
+local function getGearsFolder(): Folder?
+	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
+	local folder = assets and assets:FindFirstChild("Gears")
+	if folder and folder:IsA("Folder") then
+		return folder
+	end
+	return nil
+end
+
+local function nameMatchesGear(childName: string, def: GearDef): boolean
+	local lower = string.lower(childName)
+	local idStr = tostring(def.id)
+	if lower == string.lower(def.assetName) or lower == string.lower(def.name) then
+		return true
+	end
+	if lower == "gear" .. idStr or lower == "gear_" .. idStr or lower == "gear " .. idStr then
+		return true
+	end
+	if string.find(lower, "gear%s*" .. idStr, 1) then
+		return true
+	end
+	-- Distinctive name tokens only (avoid matching every "*Dumbbell*").
+	local skip = {
+		dumbbell = true,
+		orb = true,
+		holes = true,
+		planets = true,
+		the = true,
+	}
+	for token in string.gmatch(string.lower(def.name), "%w+") do
+		if #token >= 4 and not skip[token] and string.find(lower, token, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+function M.findGearAsset(gearId: number): Instance?
+	local def = byId[gearId]
+	if not def then
+		return nil
+	end
+	local folder = getGearsFolder()
+	if not folder then
+		return nil
+	end
+	local exact = folder:FindFirstChild(def.assetName)
+	if exact then
+		return exact
+	end
+	for _, child in folder:GetChildren() do
+		if nameMatchesGear(child.Name, def) then
+			return child
+		end
+	end
+	return nil
+end
+
+-- Clone Studio gear (Model / Folder / Tool / Part) into a fresh Model for tools/viewports.
+function M.cloneGearModel(gearId: number): Model?
+	local src = M.findGearAsset(gearId)
+	if not src then
+		return nil
+	end
+	if src:IsA("Model") then
+		return src:Clone()
+	end
+	local nested = src:FindFirstChildWhichIsA("Model")
+	if nested then
+		return nested:Clone()
+	end
+	local wrapper = Instance.new("Model")
+	wrapper.Name = src.Name
+	if src:IsA("BasePart") then
+		local part = src:Clone()
+		part.Parent = wrapper
+		wrapper.PrimaryPart = part
+		return wrapper
+	end
+	local bag = src:Clone()
+	for _, child in bag:GetChildren() do
+		child.Parent = wrapper
+	end
+	bag:Destroy()
+	local primary = wrapper:FindFirstChild("Primary", true)
+	if primary and primary:IsA("BasePart") then
+		wrapper.PrimaryPart = primary
+	else
+		local any = wrapper:FindFirstChildWhichIsA("BasePart", true)
+		if any then
+			wrapper.PrimaryPart = any
+		end
+	end
+	if not wrapper.PrimaryPart then
+		wrapper:Destroy()
+		return nil
+	end
+	return wrapper
 end
 
 return M

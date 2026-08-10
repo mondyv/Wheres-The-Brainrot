@@ -61,6 +61,7 @@ export type PlayerSaveData = {
 	ownedGears: string?, -- comma-separated gear ids
 	equippedGearId: number?,
 	powerEdited: boolean?,
+	powerForceResetV1: boolean?, -- one-time wipe of test workout Power
 	totalPlayTimeSeconds: number,
 	baseFloorLevel: number,
 	dailyDayClaimed: number,

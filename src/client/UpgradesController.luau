@@ -228,7 +228,6 @@ end
 
 local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 	local owned = ownedSet()
-	local unlocked = GearConfig.isUnlocked(def.id, owned)
 	local isOwned = owned[def.id] == true
 	local isEquipped = equippedId() == def.id
 	local cash = player:GetAttribute("Cash")
@@ -260,12 +259,7 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 
 	local locked = row:FindFirstChild("Locked")
 	if locked and locked:IsA("GuiObject") then
-		locked.Visible = not unlocked
-		local needed = locked:FindFirstChild("AmountNeeded")
-		if needed and needed:IsA("TextLabel") then
-			local prev = GearConfig.get(def.id - 1)
-			needed.Text = if prev then ("Own " .. prev.name) else "Locked"
-		end
+		locked.Visible = false
 	end
 
 	local buyButtons = row:FindFirstChild("BuyButtons")
@@ -275,11 +269,7 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 
 	local robux = buyButtons:FindFirstChild("BuyRobux")
 	if robux and robux:IsA("GuiObject") then
-		robux.Visible = (not isOwned) and unlocked and def.robuxProductId ~= nil
-		local priceLabel = robux:FindFirstChild("Price", true)
-		if priceLabel and priceLabel:IsA("TextLabel") and def.robuxProductId then
-			-- Product price text is filled by Studio; leave as-is if present.
-		end
+		robux.Visible = (not isOwned) and def.robuxProductId ~= nil
 	end
 
 	local host = findBuyHost(buyButtons)
@@ -289,13 +279,7 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 
 	local costLabel = findCostLabel(host)
 	local state: "buy" | "equip" | "equipped" | "locked"
-	if not unlocked then
-		state = "locked"
-		if costLabel then
-			costLabel.Text = "Locked"
-		end
-		MainGradientButtons.applyPurchasedGradient(host)
-	elseif isEquipped then
+	if isEquipped then
 		state = "equipped"
 		if costLabel then
 			costLabel.Text = "Equipped"
@@ -359,10 +343,6 @@ local function wireGearRow(row: Instance, def: GearConfig.GearDef, refreshAll: (
 			return
 		end
 		local owned = ownedSet()
-		if not GearConfig.isUnlocked(def.id, owned) then
-			GameSoundEffects.playErrorNotif()
-			return
-		end
 		if owned[def.id] then
 			if not equipFn then
 				return
@@ -855,11 +835,13 @@ local function openEditBar(main: ScreenGui)
 		UIButtonEffects.wireScaleButtonAnim(okBtn, function()
 			local a = frame:GetAttribute("Alpha")
 			local alphaVal = if typeof(a) == "number" then a else 1
-			local amount = math.floor(alphaVal * currentMax() + 0.5)
-			-- Never raise above current Power via this UI.
-			amount = math.min(amount, math.floor(currentMax()))
+			local maxP = currentMax()
+			local amount = math.floor(alphaVal * maxP + 0.5)
+			amount = math.min(amount, math.floor(maxP))
+			-- Full slider = keep / restore default (clear Edited). Lower = mark edited.
+			local markEdited = amount < maxP
 			if setPowerFn then
-				local ok = setPowerFn:InvokeServer(amount)
+				local ok = setPowerFn:InvokeServer(amount, markEdited)
 				if ok then
 					GameSoundEffects.playUpgrade()
 					updatePowerLabel()

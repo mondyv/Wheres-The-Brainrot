@@ -121,14 +121,18 @@ stopWorkoutFn.OnServerInvoke = function(player: Player): boolean
 	return true
 end
 
-setPowerFn.OnServerInvoke = function(player: Player, amountAny: any): (boolean, string?)
+setPowerFn.OnServerInvoke = function(player: Player, amountAny: any, editedAny: any): (boolean, string?)
 	if typeof(amountAny) ~= "number" then
 		return false, "Invalid"
 	end
 	local current = WorkoutPower.readPower(player)
-	-- Edit bar can only lower (or keep) current Power — never raise.
 	local amount = math.clamp(math.floor(amountAny), 0, math.floor(current))
-	WorkoutPower.setPower(player, amount, true)
+	local markEdited = editedAny == true and amount < current
+	-- Full amount (default end of bar) clears (Edited).
+	if amount >= math.floor(current) then
+		markEdited = false
+	end
+	WorkoutPower.setPower(player, amount, markEdited)
 	pcall(function()
 		PlayerDataService.savePlayerData(player)
 	end)
@@ -151,14 +155,8 @@ local function fulfillRobuxGear(player: Player, gearId: number?): boolean
 	if typeof(id) ~= "number" then
 		return false
 	end
-	local owned = GearService.getOwnedSet(player)
-	-- Allow Robux skip-lock: grant previous gears if needed so purchase isn't wasted.
-	for i = 1, id do
-		if not owned[i] then
-			owned[i] = true
-		end
-	end
-	GearService.setOwnedSet(player, owned)
+	-- No progression locks — Robux only grants the purchased gear.
+	GearService.grantGear(player, id)
 	GearService.ensureTools(player)
 	noteFirstGear(player, id)
 	pcall(function()

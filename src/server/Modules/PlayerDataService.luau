@@ -460,6 +460,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		ropeLevel = floorNum(player:GetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR), 0),
 		carryLevel = floorNum(player:GetAttribute(SwingUpgrades.CARRY_LEVEL_ATTR), 0),
 		workoutPower = floorNum(player:GetAttribute("Power"), 0),
+		workoutPowerMax = floorNum(player:GetAttribute("PowerMax"), 0),
 		ownedGears = (function()
 			local raw = player:GetAttribute("OwnedGears")
 			return if typeof(raw) == "string" then raw else ""
@@ -567,18 +568,34 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	player:SetAttribute(SwingUpgrades.CARRY_LEVEL_ATTR, data.carryLevel)
 
 	local workoutPower = data.workoutPower
+	local workoutPowerMax = data.workoutPowerMax
 	-- One-time wipe of test/edited workout Power for all players.
 	if data.powerForceResetV1 ~= true then
 		workoutPower = 0
+		workoutPowerMax = 0
 		data.workoutPower = 0
+		data.workoutPowerMax = 0
 		data.powerEdited = false
 		data.powerForceResetV1 = true
 	elseif typeof(workoutPower) ~= "number" then
 		workoutPower = WorkoutPower.migratePowerFromLegacyLevels(data.powerLevel, data.ropeLevel)
+		workoutPowerMax = workoutPower
 	else
 		workoutPower = math.max(0, workoutPower)
+		if typeof(workoutPowerMax) ~= "number" then
+			-- Migrate: ceiling was never stored — use active Power as max.
+			workoutPowerMax = workoutPower
+		else
+			workoutPowerMax = math.max(workoutPower, workoutPowerMax)
+		end
+	end
+	if data.powerEdited ~= true then
+		-- Unedited: keep active glued to ceiling.
+		workoutPowerMax = math.max(workoutPower, workoutPowerMax or 0)
+		workoutPower = workoutPowerMax
 	end
 	player:SetAttribute(GearConfig.POWER_ATTR, math.max(0, math.floor(workoutPower)))
+	player:SetAttribute(GearConfig.POWER_MAX_ATTR, math.max(0, math.floor(workoutPowerMax)))
 	player:SetAttribute(GearConfig.POWER_EDITED_ATTR, data.powerEdited == true)
 	player:SetAttribute("PowerForceResetV1", data.powerForceResetV1 == true)
 	player:SetAttribute(GearConfig.OWNED_GEARS_ATTR, if typeof(data.ownedGears) == "string" then data.ownedGears else "")
@@ -725,6 +742,7 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		ropeLevel = floorNum(raw.ropeLevel, 0),
 		carryLevel = floorNum(raw.carryLevel, 0),
 		workoutPower = floorNum(raw.workoutPower, 0),
+		workoutPowerMax = floorNum(raw.workoutPowerMax, floorNum(raw.workoutPower, 0)),
 		ownedGears = if typeof(raw.ownedGears) == "string" then raw.ownedGears else "",
 		equippedGearId = floorNum(raw.equippedGearId, 0),
 		powerEdited = raw.powerEdited == true,
@@ -991,6 +1009,15 @@ local function mergeAgainstPrior(
 		payload.carryLevel = prior.carryLevel
 	end
 	-- workoutPower may decrease via Edit Power / one-time reset — do not clamp up.
+	-- workoutPowerMax only grows from workouts — never allow a lower save to wipe ceiling.
+	local priorMax = prior.workoutPowerMax
+	local payloadMax = payload.workoutPowerMax
+	if typeof(priorMax) == "number" then
+		local pMax = if typeof(payloadMax) == "number" then payloadMax else 0
+		payload.workoutPowerMax = math.max(priorMax, pMax, payload.workoutPower or 0)
+	elseif typeof(payloadMax) ~= "number" then
+		payload.workoutPowerMax = math.max(0, payload.workoutPower or 0)
+	end
 	if prior.powerForceResetV1 == true then
 		payload.powerForceResetV1 = true
 	end
@@ -1329,6 +1356,7 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		ropeLevel = 0,
 		carryLevel = 0,
 		workoutPower = 0,
+		workoutPowerMax = 0,
 		ownedGears = "",
 		equippedGearId = 0,
 		powerEdited = false,
@@ -1551,13 +1579,13 @@ function M.setSwingUpgradeLevels(
 	patch: { power: number?, rope: number?, carry: number? }
 ): SwingUpgrades.UpgradeLevels
 	if typeof(patch.power) == "number" then
-		-- Treat admin setpower as absolute workout Power amount.
-		WorkoutPower.setPower(player, math.max(0, math.floor(patch.power)), true)
+		-- Treat admin setpower as absolute workout Power amount (raises ceiling too).
+		WorkoutPower.setPowerAbsolute(player, math.max(0, math.floor(patch.power)), false)
 	elseif typeof(patch.rope) == "number" then
 		-- Reach alone: bump Power so combined swing level matches.
 		local ropeLevel = math.max(0, math.floor(patch.rope))
-		local targetPower = math.max(WorkoutPower.readPower(player), WorkoutPower.migratePowerFromLegacyLevels(0, ropeLevel))
-		WorkoutPower.setPower(player, targetPower, true)
+		local targetPower = math.max(WorkoutPower.readPowerMax(player), WorkoutPower.migratePowerFromLegacyLevels(0, ropeLevel))
+		WorkoutPower.setPowerAbsolute(player, targetPower, false)
 	end
 	-- Carry upgrades removed — always fixed.
 	player:SetAttribute(SwingUpgrades.CARRY_LEVEL_ATTR, 0)
@@ -1574,7 +1602,8 @@ function M.setSwingUpgradeLevels(
 		prev.ropeLevel = levels.rope
 		prev.carryLevel = 0
 		prev.workoutPower = WorkoutPower.readPower(player)
-		prev.powerEdited = true
+		prev.workoutPowerMax = WorkoutPower.readPowerMax(player)
+		prev.powerEdited = WorkoutPower.isEdited(player)
 	end
 
 	if player:GetAttribute(LOADED_ATTR) == true then

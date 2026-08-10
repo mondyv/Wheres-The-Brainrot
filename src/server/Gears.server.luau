@@ -125,11 +125,11 @@ setPowerFn.OnServerInvoke = function(player: Player, amountAny: any, editedAny: 
 	if typeof(amountAny) ~= "number" then
 		return false, "Invalid"
 	end
-	local current = WorkoutPower.readPower(player)
-	local amount = math.clamp(math.floor(amountAny), 0, math.floor(current))
-	local markEdited = editedAny == true and amount < current
-	-- Full amount (default end of bar) clears (Edited).
-	if amount >= math.floor(current) then
+	local maxP = WorkoutPower.readPowerMax(player)
+	local amount = math.clamp(math.floor(amountAny), 0, math.floor(maxP))
+	-- Full max clears (Edited); anything lower keeps the nerf.
+	local markEdited = amount < math.floor(maxP)
+	if editedAny == false then
 		markEdited = false
 	end
 	WorkoutPower.setPower(player, amount, markEdited)

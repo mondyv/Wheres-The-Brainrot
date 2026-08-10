@@ -58,6 +58,7 @@ export type PlayerSaveData = {
 	ropeLevel: number,
 	carryLevel: number,
 	workoutPower: number?,
+	workoutPowerMax: number?, -- true ceiling; Edit can restore active Power up to this
 	ownedGears: string?, -- comma-separated gear ids
 	equippedGearId: number?,
 	powerEdited: boolean?,

@@ -771,7 +771,7 @@ local function openEditBar(main: ScreenGui)
 		title.Name = "Title"
 		title.BackgroundTransparency = 1
 		title.Size = UDim2.new(1, 0, 0, 26)
-		title.Text = "Lower Power"
+		title.Text = "Edit Power"
 		title.TextColor3 = Color3.new(1, 1, 1)
 		title.TextScaled = false
 		title.ZIndex = 51
@@ -786,7 +786,7 @@ local function openEditBar(main: ScreenGui)
 		hint.BackgroundTransparency = 1
 		hint.Size = UDim2.new(1, 0, 0, 16)
 		hint.Position = UDim2.fromOffset(0, 28)
-		hint.Text = "Drag down from your current Power"
+		hint.Text = "Slide to set active Power — max grows when you work out"
 		hint.TextColor3 = Color3.fromRGB(200, 205, 220)
 		hint.TextTransparency = 0.15
 		hint.ZIndex = 51
@@ -991,8 +991,8 @@ local function openEditBar(main: ScreenGui)
 			local alphaVal = if typeof(a) == "number" then a else 1
 			local maxP = currentMax()
 			local amount = math.floor(alphaVal * maxP + 0.5)
-			amount = math.min(amount, math.floor(maxP))
-			-- Full slider = keep / restore default (clear Edited). Lower = mark edited.
+			amount = math.clamp(amount, 0, math.floor(maxP))
+			-- Full slider = restore true max (clear Edited). Lower = keep nerf.
 			local markEdited = amount < maxP
 			if setPowerFn then
 				local ok = setPowerFn:InvokeServer(amount, markEdited)
@@ -1019,13 +1019,22 @@ local function openEditBar(main: ScreenGui)
 	local fill = track:FindFirstChild("Fill") :: Frame
 	local knob = track:FindFirstChild("Knob") :: Frame
 
-	-- Cap = current Power only (can only lower).
-	local maxPower = math.max(0, math.floor(WorkoutPower.readPower(player)))
+	-- Cap = true PowerMax (workouts raise this). Active Power can go up or down within it.
+	local maxPower = math.max(0, math.floor(WorkoutPower.readPowerMax(player)))
+	local activePower = math.max(0, math.floor(WorkoutPower.readPower(player)))
+	local alpha = if maxPower > 0 then math.clamp(activePower / maxPower, 0, 1) else 1
 	frame:SetAttribute("MaxPower", maxPower)
-	frame:SetAttribute("Alpha", 1)
-	fill.Size = UDim2.fromScale(1, 1)
-	knob.Position = UDim2.new(1, 0, 0.5, 0)
-	valueLabel.Text = formatPower(maxPower)
+	frame:SetAttribute("Alpha", alpha)
+	fill.Size = UDim2.fromScale(alpha, 1)
+	knob.Position = UDim2.new(alpha, 0, 0.5, 0)
+	valueLabel.Text = formatPower(math.floor(alpha * maxPower + 0.5))
+
+	local hint = frame:FindFirstChild("Hint")
+	if hint and hint:IsA("TextLabel") then
+		hint.Text = "Max "
+			.. formatPower(maxPower)
+			.. " — slide up to restore, or down to nerf"
+	end
 
 	local sc = frame:FindFirstChildOfClass("UIScale")
 	if not sc then

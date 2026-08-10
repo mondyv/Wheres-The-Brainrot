@@ -170,6 +170,7 @@ M.GEAR_ID_ATTR = "WorkoutGearId"
 M.OWNED_GEARS_ATTR = "OwnedGears" -- comma-separated ids e.g. "1,3,5"
 M.EQUIPPED_GEAR_ATTR = "EquippedGearId"
 M.POWER_ATTR = "Power"
+M.POWER_MAX_ATTR = "PowerMax" -- true ceiling; Edit Power can only set active Power ≤ this
 M.POWER_EDITED_ATTR = "PowerEdited"
 M.WORKOUT_ACTIVE_ATTR = "WorkoutActive"
 

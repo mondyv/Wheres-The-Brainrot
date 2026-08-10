@@ -125,8 +125,9 @@ setPowerFn.OnServerInvoke = function(player: Player, amountAny: any): (boolean, 
 	if typeof(amountAny) ~= "number" then
 		return false, "Invalid"
 	end
-	-- Soft cap for edited power (admin can go higher via commands).
-	local amount = math.clamp(math.floor(amountAny), 0, 1e12)
+	local current = WorkoutPower.readPower(player)
+	-- Edit bar can only lower (or keep) current Power — never raise.
+	local amount = math.clamp(math.floor(amountAny), 0, math.floor(current))
 	WorkoutPower.setPower(player, amount, true)
 	pcall(function()
 		PlayerDataService.savePlayerData(player)

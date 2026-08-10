@@ -1,5 +1,5 @@
 -- [ACTIVE] WorkoutController
--- Equipped gear activation: lock movement, white flash, +power floaters into SideUI Power.
+-- Gear activate: feet attach (handstand), curl anim, white Highlight fade, +power floaters.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
@@ -7,6 +7,7 @@ local TweenService = game:GetService("TweenService")
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local player = Players.LocalPlayer
 
@@ -28,10 +29,14 @@ local boundTools: { [Tool]: boolean } = {}
 local workoutBillboard: BillboardGui? = nil
 local workoutTrack: AnimationTrack? = nil
 local workoutAnim: Animation? = nil
+local footWeld: WeldConstraint? = nil
+local footMotor: Motor6D? = nil
+local bodyHighlight: Highlight? = nil
 local walkSpeedBefore: number? = nil
 local jumpPowerBefore: number? = nil
 local jumpHeightBefore: number? = nil
 local floaterLayer: Frame? = nil
+local handleTransparency: { [BasePart]: number } = {}
 
 local function clearToolConns()
 	for _, c in toolConns do
@@ -52,11 +57,69 @@ local function getHumanoid(character: Model?): Humanoid?
 	return character and character:FindFirstChildOfClass("Humanoid")
 end
 
+local function findFoot(character: Model): BasePart?
+	for _, name in { "RightFoot", "LeftFoot", "Right Leg", "Left Leg" } do
+		local p = character:FindFirstChild(name)
+		if p and p:IsA("BasePart") then
+			return p
+		end
+	end
+	local lower = character:FindFirstChild("LowerTorso") or character:FindFirstChild("Torso")
+	if lower and lower:IsA("BasePart") then
+		return lower
+	end
+	return nil
+end
+
 local function stopWorkoutAnim()
 	if workoutTrack then
 		workoutTrack:Stop(0.15)
 		workoutTrack = nil
 	end
+end
+
+local function clearFootAttach()
+	if footWeld then
+		footWeld:Destroy()
+		footWeld = nil
+	end
+	if footMotor then
+		footMotor:Destroy()
+		footMotor = nil
+	end
+	for part, tr in handleTransparency do
+		if part.Parent then
+			part.LocalTransparencyModifier = 0
+			part.Transparency = tr
+		end
+	end
+	table.clear(handleTransparency)
+end
+
+local function attachGearToFeet(character: Model, tool: Tool)
+	clearFootAttach()
+	local foot = findFoot(character)
+	local handle = tool:FindFirstChild("Handle")
+	if not foot or not handle or not handle:IsA("BasePart") then
+		return
+	end
+
+	-- Break default hand grip so the barbell can sit on the feet (handstand).
+	for _, name in { "RightGrip", "LeftGrip" } do
+		local grip = character:FindFirstChild(name)
+		if grip then
+			grip:Destroy()
+		end
+	end
+
+	-- Orient barbell across both feet.
+	handle.CFrame = foot.CFrame * CFrame.new(0, -0.15, 0) * CFrame.Angles(0, 0, math.rad(90))
+	local weld = Instance.new("WeldConstraint")
+	weld.Name = "WorkoutFootWeld"
+	weld.Part0 = foot
+	weld.Part1 = handle
+	weld.Parent = handle
+	footWeld = weld
 end
 
 local function playWorkoutAnim(character: Model)
@@ -134,13 +197,14 @@ local function showWorkoutBillboard(character: Model)
 	end
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "WorkoutVisual"
-	bb.Size = UDim2.fromOffset(120, 120)
-	bb.StudsOffset = Vector3.new(0, 2.6, 0)
+	bb.Size = UDim2.fromOffset(88, 88)
+	bb.StudsOffset = Vector3.new(1.35, 1.1, 0)
 	bb.AlwaysOnTop = true
-	bb.MaxDistance = 80
+	bb.MaxDistance = 90
 	bb.Adornee = head
 	bb.Parent = head
 	local img = Instance.new("ImageLabel")
+	img.Name = "Muscle"
 	img.BackgroundTransparency = 1
 	img.Size = UDim2.fromScale(1, 1)
 	img.Image = GearConfig.WORKOUT_IMAGE
@@ -148,23 +212,48 @@ local function showWorkoutBillboard(character: Model)
 	workoutBillboard = bb
 end
 
-local function flashWhite(character: Model)
-	local parts: { BasePart } = {}
-	local originals: { [BasePart]: Color3 } = {}
-	for _, d in character:GetDescendants() do
-		if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart" then
-			table.insert(parts, d)
-			originals[d] = d.Color
-			d.Color = Color3.new(1, 1, 1)
-		end
+local function clearBodyHighlight()
+	if bodyHighlight then
+		bodyHighlight:Destroy()
+		bodyHighlight = nil
 	end
-	task.delay(0.12, function()
-		for _, p in parts do
-			if p.Parent and originals[p] then
-				p.Color = originals[p]
-			end
+end
+
+local function flashWhite(character: Model)
+	clearBodyHighlight()
+	local hl = Instance.new("Highlight")
+	hl.Name = "WorkoutPowerFlash"
+	hl.Adornee = character
+	hl.DepthMode = Enum.HighlightDepthMode.Occluded
+	hl.FillColor = Color3.new(1, 1, 1)
+	hl.OutlineColor = Color3.new(1, 1, 1)
+	hl.FillTransparency = 0.15
+	hl.OutlineTransparency = 0.35
+	hl.Parent = character
+	bodyHighlight = hl
+
+	local proxy = Instance.new("NumberValue")
+	proxy.Value = 0.15
+	local tw = TweenService:Create(
+		proxy,
+		TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Value = 1 }
+	)
+	proxy:GetPropertyChangedSignal("Value"):Connect(function()
+		if hl.Parent then
+			hl.FillTransparency = proxy.Value
+			hl.OutlineTransparency = math.clamp(proxy.Value + 0.2, 0, 1)
 		end
 	end)
+	tw.Completed:Connect(function()
+		proxy:Destroy()
+		if bodyHighlight == hl then
+			clearBodyHighlight()
+		elseif hl.Parent then
+			hl:Destroy()
+		end
+	end)
+	tw:Play()
 end
 
 local function ensureFloaterLayer(main: ScreenGui): Frame
@@ -184,62 +273,114 @@ end
 local function spawnPowerFloater(gain: number)
 	local main = PlayerGuiMain.ensure(player)
 	local layer = ensureFloaterLayer(main)
-	local counters = main:FindFirstChild("SideUI") and (main.SideUI :: Instance):FindFirstChild("Counters")
+	local counters = main:FindFirstChild("SideUI") and (main :: any).SideUI:FindFirstChild("Counters")
 	local powerFrame = counters and counters:FindFirstChild("Power")
-	local target = powerFrame and powerFrame:FindFirstChild("Amount")
-	local character = player.Character
-	local hrp = character and character:FindFirstChild("HumanoidRootPart")
-	if not hrp or not hrp:IsA("BasePart") then
-		return
-	end
+	local target = powerFrame and (powerFrame:FindFirstChild("Amount") or powerFrame:FindFirstChildWhichIsA("TextLabel"))
 
 	local cam = workspace.CurrentCamera
 	if not cam then
 		return
 	end
-	local screenPos, onScreen = cam:WorldToViewportPoint(hrp.Position + Vector3.new(0, 2, 0))
-	if not onScreen then
-		return
+
+	-- Spawn beside the muscle billboard (not the body center).
+	local startX: number
+	local startY: number
+	if workoutBillboard and workoutBillboard.Adornee and workoutBillboard.Adornee:IsA("BasePart") then
+		local adornee = workoutBillboard.Adornee :: BasePart
+		local world = adornee.Position + Vector3.new(1.6, 1.2, 0)
+		local screenPos, onScreen = cam:WorldToViewportPoint(world)
+		if onScreen then
+			startX = screenPos.X + 18
+			startY = screenPos.Y - 10
+		else
+			return
+		end
+	else
+		local character = player.Character
+		local hrp = character and character:FindFirstChild("HumanoidRootPart")
+		if not hrp or not hrp:IsA("BasePart") then
+			return
+		end
+		local screenPos, onScreen = cam:WorldToViewportPoint(hrp.Position + Vector3.new(0, 2.2, 0))
+		if not onScreen then
+			return
+		end
+		startX = screenPos.X
+		startY = screenPos.Y
 	end
 
 	local label = Instance.new("TextLabel")
 	label.BackgroundTransparency = 1
-	label.Size = UDim2.fromOffset(90, 28)
-	label.Position = UDim2.fromOffset(screenPos.X - 45, screenPos.Y - 14)
-	label.Font = Enum.Font.GothamBold
-	label.TextScaled = true
-	label.TextColor3 = Color3.fromRGB(120, 255, 140)
+	label.Size = UDim2.fromOffset(110, 34)
+	label.Position = UDim2.fromOffset(startX - 20, startY - 16)
+	label.TextScaled = false
+	label.TextColor3 = Color3.fromRGB(120, 255, 150)
 	label.Text = "+" .. BrainrotEconomy.formatNumberShort(gain)
+	label.TextTransparency = 0
 	label.ZIndex = 81
 	label.Parent = layer
+	UiFonts.applyBodyLabel(label, 22, 14)
 	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = 2
+	stroke.Thickness = 2.5
+	stroke.Color = Color3.new(0, 0, 0)
 	stroke.Parent = label
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.55
+	scale.Parent = label
 
 	local endPos = label.Position
 	if target and target:IsA("GuiObject") then
 		local abs = target.AbsolutePosition
 		local size = target.AbsoluteSize
-		endPos = UDim2.fromOffset(abs.X + size.X * 0.5 - 45, abs.Y + size.Y * 0.5 - 14)
+		endPos = UDim2.fromOffset(abs.X + size.X * 0.35, abs.Y + size.Y * 0.15)
 	end
 
-	local tween = TweenService:Create(
+	TweenService:Create(
+		scale,
+		TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1.12 }
+	):Play()
+	task.delay(0.18, function()
+		if scale.Parent then
+			TweenService:Create(scale, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.9 })
+				:Play()
+		end
+	end)
+
+	local move = TweenService:Create(
 		label,
-		TweenInfo.new(0.85, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Position = endPos, TextTransparency = 0.15 }
+		TweenInfo.new(0.75, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+		{ Position = endPos }
 	)
-	tween:Play()
-	tween.Completed:Connect(function()
+	move:Play()
+	move.Completed:Connect(function()
 		local fade = TweenService:Create(
 			label,
-			TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 			{ TextTransparency = 1 }
 		)
+		local fadeStroke = TweenService:Create(
+			stroke,
+			TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ Transparency = 1 }
+		)
 		fade:Play()
+		fadeStroke:Play()
 		fade.Completed:Connect(function()
 			label:Destroy()
 		end)
 	end)
+end
+
+local function cleanupWorkoutVisuals()
+	stopWorkoutAnim()
+	clearFootAttach()
+	destroyWorkoutBillboard()
+	clearBodyHighlight()
+	local hum = getHumanoid(player.Character)
+	if hum then
+		lockMovement(hum, false)
+	end
 end
 
 local function onUnequip()
@@ -248,12 +389,7 @@ local function onUnequip()
 			stopWorkoutFn:InvokeServer()
 		end)
 	end
-	stopWorkoutAnim()
-	destroyWorkoutBillboard()
-	local hum = getHumanoid(player.Character)
-	if hum then
-		lockMovement(hum, false)
-	end
+	cleanupWorkoutVisuals()
 end
 
 local function bindTool(tool: Tool)
@@ -264,12 +400,6 @@ local function bindTool(tool: Tool)
 		return
 	end
 	boundTools[tool] = true
-	table.insert(
-		toolConns,
-		tool.Equipped:Connect(function()
-			-- Wait for activate to start workout.
-		end)
-	)
 	table.insert(
 		toolConns,
 		tool.Unequipped:Connect(function()
@@ -298,6 +428,7 @@ local function bindTool(tool: Tool)
 			local hum = getHumanoid(character)
 			if character and hum then
 				lockMovement(hum, true)
+				attachGearToFeet(character, tool)
 				playWorkoutAnim(character)
 				showWorkoutBillboard(character)
 			end
@@ -319,7 +450,7 @@ end
 local function bindCharacter(character: Model)
 	clearToolConns()
 	clearCharConns()
-	onUnequip()
+	cleanupWorkoutVisuals()
 	scanTools(player:FindFirstChildOfClass("Backpack"))
 	scanTools(character)
 	table.insert(
@@ -363,12 +494,7 @@ local function init()
 
 	player:GetAttributeChangedSignal(GearConfig.WORKOUT_ACTIVE_ATTR):Connect(function()
 		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
-			stopWorkoutAnim()
-			destroyWorkoutBillboard()
-			local hum = getHumanoid(player.Character)
-			if hum then
-				lockMovement(hum, false)
-			end
+			cleanupWorkoutVisuals()
 		end
 	end)
 end

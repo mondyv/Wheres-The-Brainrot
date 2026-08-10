@@ -872,7 +872,11 @@ local function ensureQuestHost(): Frame?
 		end
 		questGui = gui
 	end
-	gui.Enabled = questHudRevealed and not questHudSuppressed and not introPlaying and not dialogueBusy
+	gui.Enabled = questHudRevealed
+		and not questHudSuppressed
+		and not introPlaying
+		and not dialogueBusy
+		and not GameplayUiVisibility.isHidden()
 	gui.DisplayOrder = math.max(gui.DisplayOrder, 110)
 	gui.IgnoreGuiInset = true
 	pcall(function()
@@ -913,7 +917,11 @@ local function ensureQuestHost(): Frame?
 end
 
 local function canShowQuestChrome(): boolean
-	return questHudRevealed and not questHudSuppressed and not introPlaying and not dialogueBusy
+	return questHudRevealed
+		and not questHudSuppressed
+		and not introPlaying
+		and not dialogueBusy
+		and not GameplayUiVisibility.isHidden()
 end
 
 local function syncQuestChromeVisibility()
@@ -3033,10 +3041,17 @@ function M.init()
 		Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(wireViewportLayout)
 		startQuestLayoutSync()
 
+		GameplayUiVisibility.onHidden(function()
+			syncQuestHudCutsceneGate()
+		end)
+		GameplayUiVisibility.onRestored(function()
+			syncQuestHudCutsceneGate()
+		end)
+
 		local accum = 0.0
 		RunService.Heartbeat:Connect(function(dt)
 			accum += dt
-			if accum < 0.75 then
+			if accum < 0.2 then
 				return
 			end
 			accum = 0

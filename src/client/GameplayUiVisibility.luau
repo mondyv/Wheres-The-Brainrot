@@ -59,6 +59,19 @@ local keepMainChildNames: { [string]: boolean } = {}
 local sideUIRef: GuiObject? = nil
 local sideUIWasVisible = true
 local restoreCallbacks: { () -> () } = {}
+local hideCallbacks: { () -> () } = {}
+
+local function fireHidden()
+	for _, cb in hideCallbacks do
+		task.defer(cb)
+	end
+end
+
+local function fireRestored()
+	for _, cb in restoreCallbacks do
+		task.defer(cb)
+	end
+end
 
 export type HideOpts = {
 	keepScreenGuiNames: { string }?,
@@ -307,12 +320,6 @@ local function waveDelay(index: number, count: number): number
 	return (index - 1) * stagger
 end
 
-local function fireRestored()
-	for _, cb in restoreCallbacks do
-		task.defer(cb)
-	end
-end
-
 local function restoreScreenGuis()
 	for _, entry in screenSnaps do
 		if entry.gui.Parent then
@@ -484,6 +491,35 @@ local function snapshotAndSlideOut()
 		})
 	end
 
+	-- Slide Tim Cheese quest chrome with SideUI (dedicated ScreenGui, not under Main).
+	local pgEarly = player:FindFirstChild("PlayerGui")
+	local questTracker = pgEarly and pgEarly:FindFirstChild("TimCheeseQuestTracker")
+	if questTracker and questTracker:IsA("ScreenGui") and questTracker.Enabled then
+		local host = questTracker:FindFirstChild("TimCheeseQuestHost")
+		if host then
+			for _, child in host:GetChildren() do
+				if child:IsA("GuiObject") and (child :: GuiObject).Visible then
+					local gui = child :: GuiObject
+					local basePos = lastingBasePos[gui]
+					if not basePos then
+						basePos = gui.Position
+						lastingBasePos[gui] = basePos
+					else
+						gui.Position = basePos
+					end
+					table.insert(pending, {
+						inst = gui,
+						wasVisible = true,
+						basePos = basePos,
+						slidePos = computeSlidePos(gui, vp),
+						order = waveOrderKey(gui, vp),
+						clips = gui.ClipsDescendants,
+					})
+				end
+			end
+		end
+	end
+
 	if sideUIRef then
 		sideUIWasVisible = sideUIRef.Visible
 	end
@@ -522,6 +558,19 @@ local function snapshotAndSlideOut()
 		for _, ch in pg:GetChildren() do
 			if ch:IsA("ScreenGui") and not keepScreenNames[ch.Name] then
 				if ch.Name == "Main" then
+					continue
+				end
+				-- Quest tracker slides with chrome; disable after the slide parks.
+				if ch.Name == "TimCheeseQuestTracker" then
+					table.insert(screenSnaps, { gui = ch, wasEnabled = ch.Enabled })
+					task.delay(totalOut, function()
+						if gen ~= animGen or hideCount <= 0 then
+							return
+						end
+						if ch.Parent then
+							ch.Enabled = false
+						end
+					end)
 					continue
 				end
 				table.insert(screenSnaps, { gui = ch, wasEnabled = ch.Enabled })
@@ -627,6 +676,7 @@ function M.hide(opts: HideOpts?)
 	if hideCount == 1 then
 		buildKeepSets(opts)
 		GameplayMusicMuffle.push()
+		fireHidden()
 		snapshotAndSlideOut()
 	else
 		-- Nested hide (e.g. dialogue → panel): keep Frames, don't re-snapshot
@@ -658,6 +708,7 @@ function M.hide(opts: HideOpts?)
 		if frames and frames:IsA("GuiObject") then
 			(frames :: GuiObject).Visible = true
 		end
+		fireHidden()
 	end
 end
 
@@ -690,6 +741,10 @@ end
 
 function M.onRestored(callback: () -> ())
 	table.insert(restoreCallbacks, callback)
+end
+
+function M.onHidden(callback: () -> ())
+	table.insert(hideCallbacks, callback)
 end
 
 return M

@@ -20,6 +20,7 @@ local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChil
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+local GearViewportIcon = require(script.Parent.GearViewportIcon)
 
 local player = Players.LocalPlayer
 
@@ -190,10 +191,15 @@ local function ensureGearRows(container: Instance)
 	end
 	for i = 1, #GearConfig.GEARS do
 		local name = tostring(i)
-		if not container:FindFirstChild(name) then
-			local clone = template:Clone()
-			clone.Name = name
-			clone.Parent = container
+		local row = container:FindFirstChild(name)
+		if not row then
+			row = template:Clone()
+			row.Name = name
+			row.Parent = container
+		end
+		if row:IsA("GuiObject") then
+			(row :: GuiObject).LayoutOrder = i
+			(row :: GuiObject).Visible = true
 		end
 	end
 	-- Hide leftover non-gear upgrade rows from old place files.
@@ -208,8 +214,12 @@ local function ensureGearRows(container: Instance)
 				or child.Name == "Reach10"
 				or child.Name == "Reach25"
 				or child.Name == "Carry1"
+				or child.Name == "SPACE"
 			then
-				child.Visible = false
+				-- keep SPACE spacers; hide legacy upgrade ids
+				if child.Name ~= "SPACE" then
+					child.Visible = false
+				end
 			end
 		end
 	end
@@ -229,6 +239,11 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 		(nameLabel :: TextLabel).Text = def.name
 	end
 	applyRarityGradients(row, def.rarity)
+
+	local iconFrame = row:FindFirstChild("IconFrame")
+	if iconFrame and iconFrame:IsA("GuiObject") then
+		GearViewportIcon.mount(iconFrame, def.id, { rotate = true })
+	end
 
 	local powerFrame = row:FindFirstChild("Power")
 	local powerText = powerFrame and (powerFrame:FindFirstChild("Power") or powerFrame:FindFirstChildWhichIsA("TextLabel"))
@@ -574,103 +589,166 @@ local function closeEditBar()
 	if editBarGui then
 		editBarGui.Visible = false
 	end
+	local ok, main = pcall(function()
+		return PlayerGuiMain.ensure(player)
+	end)
+	if ok and main then
+		local dim = main:FindFirstChild("PowerEditDim")
+		if dim and dim:IsA("GuiObject") then
+			dim.Visible = false
+		end
+	end
 end
 
 local function openEditBar(main: ScreenGui)
+	local dim = main:FindFirstChild("PowerEditDim")
+	if not dim then
+		dim = Instance.new("TextButton")
+		dim.Name = "PowerEditDim"
+		dim.Size = UDim2.fromScale(1, 1)
+		dim.BackgroundColor3 = Color3.new(0, 0, 0)
+		dim.BackgroundTransparency = 0.45
+		dim.BorderSizePixel = 0
+		dim.Text = ""
+		dim.AutoButtonColor = false
+		dim.ZIndex = 48
+		dim.Visible = false
+		dim.Parent = main
+		;(dim :: TextButton).MouseButton1Click:Connect(function()
+			closeEditBar()
+		end)
+	end
+	;(dim :: GuiObject).Visible = true
+
 	if not editBarGui then
 		local frame = Instance.new("Frame")
 		frame.Name = "PowerEditBar"
 		frame.AnchorPoint = Vector2.new(0.5, 0.5)
-		frame.Position = UDim2.fromScale(0.5, 0.55)
-		frame.Size = UDim2.fromOffset(360, 140)
-		frame.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+		frame.Position = UDim2.fromScale(0.5, 0.52)
+		frame.Size = UDim2.fromOffset(380, 168)
+		frame.BackgroundColor3 = Color3.fromRGB(22, 24, 32)
+		frame.BackgroundTransparency = 0.12
 		frame.BorderSizePixel = 0
 		frame.ZIndex = 50
 		frame.Parent = main
 		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 12)
+		corner.CornerRadius = UDim.new(0, 14)
 		corner.Parent = frame
 		local stroke = Instance.new("UIStroke")
-		stroke.Thickness = 3
-		stroke.Color = Color3.new(0, 0, 0)
+		stroke.Thickness = 2.5
+		stroke.Color = Color3.fromRGB(255, 255, 255)
+		stroke.Transparency = 0.72
 		stroke.Parent = frame
+		local pad = Instance.new("UIPadding")
+		pad.PaddingTop = UDim.new(0, 12)
+		pad.PaddingBottom = UDim.new(0, 12)
+		pad.PaddingLeft = UDim.new(0, 14)
+		pad.PaddingRight = UDim.new(0, 14)
+		pad.Parent = frame
 
 		local title = Instance.new("TextLabel")
 		title.Name = "Title"
 		title.BackgroundTransparency = 1
-		title.Size = UDim2.new(1, -20, 0, 28)
-		title.Position = UDim2.fromOffset(10, 10)
-		title.Font = Enum.Font.GothamBold
-		title.Text = "Edit Power"
+		title.Size = UDim2.new(1, 0, 0, 26)
+		title.Text = "Lower Power"
 		title.TextColor3 = Color3.new(1, 1, 1)
-		title.TextScaled = true
+		title.TextScaled = false
 		title.ZIndex = 51
 		title.Parent = frame
+		UiFonts.applyBodyLabel(title, 20, 14)
 		local titleStroke = Instance.new("UIStroke")
 		titleStroke.Thickness = 2
 		titleStroke.Parent = title
 
+		local hint = Instance.new("TextLabel")
+		hint.Name = "Hint"
+		hint.BackgroundTransparency = 1
+		hint.Size = UDim2.new(1, 0, 0, 16)
+		hint.Position = UDim2.fromOffset(0, 28)
+		hint.Text = "Drag down from your current Power"
+		hint.TextColor3 = Color3.fromRGB(200, 205, 220)
+		hint.TextTransparency = 0.15
+		hint.ZIndex = 51
+		hint.Parent = frame
+		UiFonts.applyBodyLabel(hint, 12, 9)
+
 		local valueLabel = Instance.new("TextLabel")
 		valueLabel.Name = "Value"
 		valueLabel.BackgroundTransparency = 1
-		valueLabel.Size = UDim2.new(1, -20, 0, 24)
-		valueLabel.Position = UDim2.fromOffset(10, 42)
-		valueLabel.Font = Enum.Font.GothamBold
-		valueLabel.TextColor3 = Color3.new(1, 1, 1)
-		valueLabel.TextScaled = true
+		valueLabel.Size = UDim2.new(1, 0, 0, 28)
+		valueLabel.Position = UDim2.fromOffset(0, 48)
+		valueLabel.TextColor3 = Color3.fromRGB(140, 255, 170)
 		valueLabel.ZIndex = 51
 		valueLabel.Parent = frame
+		UiFonts.applyBodyLabel(valueLabel, 24, 16)
 		local valueStroke = Instance.new("UIStroke")
 		valueStroke.Thickness = 2
 		valueStroke.Parent = valueLabel
 
 		local track = Instance.new("Frame")
 		track.Name = "Track"
-		track.Size = UDim2.new(1, -40, 0, 14)
-		track.Position = UDim2.new(0, 20, 0, 78)
-		track.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+		track.Size = UDim2.new(1, -8, 0, 16)
+		track.Position = UDim2.new(0, 4, 0, 88)
+		track.BackgroundColor3 = Color3.fromRGB(40, 44, 58)
+		track.BackgroundTransparency = 0.2
 		track.BorderSizePixel = 0
 		track.ZIndex = 51
 		track.Parent = frame
 		local trackCorner = Instance.new("UICorner")
 		trackCorner.CornerRadius = UDim.new(1, 0)
 		trackCorner.Parent = track
+		local trackStroke = Instance.new("UIStroke")
+		trackStroke.Thickness = 1.5
+		trackStroke.Transparency = 0.55
+		trackStroke.Parent = track
 
 		local fill = Instance.new("Frame")
 		fill.Name = "Fill"
-		fill.Size = UDim2.fromScale(0, 1)
-		fill.BackgroundColor3 = Color3.fromRGB(80, 220, 120)
+		fill.Size = UDim2.fromScale(1, 1)
+		fill.BackgroundColor3 = Color3.fromRGB(85, 220, 130)
+		fill.BackgroundTransparency = 0.08
 		fill.BorderSizePixel = 0
 		fill.ZIndex = 52
 		fill.Parent = track
 		local fillCorner = Instance.new("UICorner")
 		fillCorner.CornerRadius = UDim.new(1, 0)
 		fillCorner.Parent = fill
+		local fillGrad = Instance.new("UIGradient")
+		fillGrad.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(70, 190, 110)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(160, 255, 180)),
+		})
+		fillGrad.Parent = fill
 
 		local knob = Instance.new("Frame")
 		knob.Name = "Knob"
-		knob.Size = UDim2.fromOffset(22, 22)
+		knob.Size = UDim2.fromOffset(24, 24)
 		knob.AnchorPoint = Vector2.new(0.5, 0.5)
-		knob.Position = UDim2.fromScale(0, 0.5)
+		knob.Position = UDim2.fromScale(1, 0.5)
 		knob.BackgroundColor3 = Color3.new(1, 1, 1)
+		knob.BackgroundTransparency = 0.05
 		knob.BorderSizePixel = 0
 		knob.ZIndex = 53
 		knob.Parent = track
 		local knobCorner = Instance.new("UICorner")
 		knobCorner.CornerRadius = UDim.new(1, 0)
 		knobCorner.Parent = knob
+		local knobStroke = Instance.new("UIStroke")
+		knobStroke.Thickness = 2
+		knobStroke.Color = Color3.fromRGB(30, 30, 36)
+		knobStroke.Parent = knob
 
 		local okBtn = Instance.new("TextButton")
 		okBtn.Name = "Ok"
-		okBtn.Size = UDim2.fromOffset(100, 28)
-		okBtn.Position = UDim2.new(0.5, -110, 1, -36)
-		okBtn.BackgroundColor3 = Color3.fromRGB(70, 190, 90)
+		okBtn.Size = UDim2.fromOffset(110, 30)
+		okBtn.Position = UDim2.new(0.5, -118, 1, -34)
+		okBtn.BackgroundColor3 = Color3.fromRGB(70, 190, 100)
+		okBtn.BackgroundTransparency = 0.08
 		okBtn.Text = "Okay"
 		okBtn.TextColor3 = Color3.new(1, 1, 1)
-		okBtn.Font = Enum.Font.GothamBold
-		okBtn.TextScaled = true
 		okBtn.ZIndex = 51
 		okBtn.Parent = frame
+		UiFonts.applyButtonLabel(okBtn, 16, 12)
 		local okStroke = Instance.new("UIStroke")
 		okStroke.Thickness = 2
 		okStroke.Parent = okBtn
@@ -680,15 +758,15 @@ local function openEditBar(main: ScreenGui)
 
 		local cancelBtn = Instance.new("TextButton")
 		cancelBtn.Name = "Cancel"
-		cancelBtn.Size = UDim2.fromOffset(100, 28)
-		cancelBtn.Position = UDim2.new(0.5, 10, 1, -36)
-		cancelBtn.BackgroundColor3 = Color3.fromRGB(180, 70, 70)
+		cancelBtn.Size = UDim2.fromOffset(110, 30)
+		cancelBtn.Position = UDim2.new(0.5, 8, 1, -34)
+		cancelBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 80)
+		cancelBtn.BackgroundTransparency = 0.12
 		cancelBtn.Text = "Cancel"
 		cancelBtn.TextColor3 = Color3.new(1, 1, 1)
-		cancelBtn.Font = Enum.Font.GothamBold
-		cancelBtn.TextScaled = true
 		cancelBtn.ZIndex = 51
 		cancelBtn.Parent = frame
+		UiFonts.applyButtonLabel(cancelBtn, 16, 12)
 		local cancelStroke = Instance.new("UIStroke")
 		cancelStroke.Thickness = 2
 		cancelStroke.Parent = cancelBtn
@@ -696,7 +774,6 @@ local function openEditBar(main: ScreenGui)
 		cancelCorner.CornerRadius = UDim.new(0, 8)
 		cancelCorner.Parent = cancelBtn
 
-		-- Wire drag + buttons once at creation.
 		local dragging = false
 		local movedConn: RBXScriptConnection? = nil
 		local endedConn: RBXScriptConnection? = nil
@@ -712,11 +789,11 @@ local function openEditBar(main: ScreenGui)
 			end
 		end
 
-		frame:SetAttribute("MaxPower", 1_000_000)
+		frame:SetAttribute("MaxPower", 0)
 
 		local function currentMax(): number
 			local m = frame:GetAttribute("MaxPower")
-			return if typeof(m) == "number" then m else 1_000_000
+			return if typeof(m) == "number" then math.max(0, m) else 0
 		end
 
 		local function applyAlpha(a: number)
@@ -732,9 +809,9 @@ local function openEditBar(main: ScreenGui)
 			local absSize = track.AbsoluteSize.X
 			if absSize <= 0 then
 				local cur = frame:GetAttribute("Alpha")
-				return if typeof(cur) == "number" then cur else 0
+				return if typeof(cur) == "number" then cur else 1
 			end
-			return (x - absPos) / absSize
+			return math.clamp((x - absPos) / absSize, 0, 1)
 		end
 
 		knob.InputBegan:Connect(function(input)
@@ -776,8 +853,10 @@ local function openEditBar(main: ScreenGui)
 
 		UIButtonEffects.wireScaleButtonAnim(okBtn, function()
 			local a = frame:GetAttribute("Alpha")
-			local alphaVal = if typeof(a) == "number" then a else 0
+			local alphaVal = if typeof(a) == "number" then a else 1
 			local amount = math.floor(alphaVal * currentMax() + 0.5)
+			-- Never raise above current Power via this UI.
+			amount = math.min(amount, math.floor(currentMax()))
 			if setPowerFn then
 				local ok = setPowerFn:InvokeServer(amount)
 				if ok then
@@ -803,13 +882,22 @@ local function openEditBar(main: ScreenGui)
 	local fill = track:FindFirstChild("Fill") :: Frame
 	local knob = track:FindFirstChild("Knob") :: Frame
 
-	local maxPower = math.max(1_000_000, WorkoutPower.readPower(player) * 4, 10_000)
+	-- Cap = current Power only (can only lower).
+	local maxPower = math.max(0, math.floor(WorkoutPower.readPower(player)))
 	frame:SetAttribute("MaxPower", maxPower)
-	local alpha = math.clamp(WorkoutPower.readPower(player) / maxPower, 0, 1)
-	frame:SetAttribute("Alpha", alpha)
-	fill.Size = UDim2.fromScale(alpha, 1)
-	knob.Position = UDim2.new(alpha, 0, 0.5, 0)
-	valueLabel.Text = formatPower(math.floor(alpha * maxPower + 0.5))
+	frame:SetAttribute("Alpha", 1)
+	fill.Size = UDim2.fromScale(1, 1)
+	knob.Position = UDim2.new(1, 0, 0.5, 0)
+	valueLabel.Text = formatPower(maxPower)
+
+	local sc = frame:FindFirstChildOfClass("UIScale")
+	if not sc then
+		sc = Instance.new("UIScale")
+		sc.Parent = frame
+	end
+	sc.Scale = 0.92
+	TweenService:Create(sc, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 })
+		:Play()
 end
 
 local function init()

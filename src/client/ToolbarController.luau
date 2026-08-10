@@ -45,7 +45,9 @@ local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
 local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
+local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local BrainrotItemTooltip = require(script.Parent.BrainrotItemTooltip)
+local GearViewportIcon = require(script.Parent.GearViewportIcon)
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 
 local player = Players.LocalPlayer
@@ -387,11 +389,19 @@ local ToolbarController = {}
 	end
 
 	local function setSlotIcons(surface: GuiObject, image: string, visible: boolean)
+		GearViewportIcon.clear(surface)
 		for _, icon in slotIconTargets(surface) do
 			applySlotIconStyle(icon)
 			icon.Image = image
 			icon.Visible = visible
 		end
+	end
+
+	local function setSlotGearViewport(surface: GuiObject, gearId: number)
+		for _, icon in slotIconTargets(surface) do
+			icon.Visible = false
+		end
+		GearViewportIcon.mount(surface, gearId, { rotate = false })
 	end
 
 	local function toolDisplayTexture(tool: Tool): string
@@ -1006,19 +1016,36 @@ local ToolbarController = {}
 			end
 
 			local surface = toolSlotSurface(row :: GuiObject)
-			local tex = toolDisplayTexture(tool)
-			setSlotIcons(
-				surface,
-				if tex ~= "" then tex else "rbxasset://textures/ui/GuiImagePlaceholder.png",
-				true
-			)
-			local rate = surface:FindFirstChild("Rate")
-			if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
-				rate.Text = luckyBlockDisplayLabel(tool)
-			end
-			local key = surface:FindFirstChild("Key")
-			if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
-				key.Text = "LB"
+			if tool:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
+				local gearId = tool:GetAttribute(GearConfig.GEAR_ID_ATTR)
+				if typeof(gearId) == "number" then
+					setSlotGearViewport(surface, gearId)
+				else
+					setSlotIcons(surface, "rbxasset://textures/ui/GuiImagePlaceholder.png", true)
+				end
+				local rate = surface:FindFirstChild("Rate")
+				if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
+					rate.Text = tool.Name
+				end
+				local key = surface:FindFirstChild("Key")
+				if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
+					key.Text = "GEAR"
+				end
+			else
+				local tex = toolDisplayTexture(tool)
+				setSlotIcons(
+					surface,
+					if tex ~= "" then tex else "rbxasset://textures/ui/GuiImagePlaceholder.png",
+					true
+				)
+				local rate = surface:FindFirstChild("Rate")
+				if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
+					rate.Text = luckyBlockDisplayLabel(tool)
+				end
+				local key = surface:FindFirstChild("Key")
+				if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
+					key.Text = "LB"
+				end
 			end
 		end
 	end
@@ -2281,7 +2308,20 @@ local ToolbarController = {}
 
 		if slotTools[index] ~= nil then
 			local tool = slotTools[index] :: Tool
-			if tool:GetAttribute("LuckyBlockTool") == true then
+			if tool:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
+				local gearId = tool:GetAttribute(GearConfig.GEAR_ID_ATTR)
+				if typeof(gearId) == "number" then
+					setSlotGearViewport(surface, gearId)
+				else
+					setSlotIcons(surface, "rbxasset://textures/ui/GuiImagePlaceholder.png", true)
+				end
+				if keyLabel and (keyLabel:IsA("TextLabel") or keyLabel:IsA("TextButton")) then
+					keyLabel.Text = tostring(index)
+				end
+				if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
+					rate.Text = tool.Name
+				end
+			elseif tool:GetAttribute("LuckyBlockTool") == true then
 				local tex = toolDisplayTexture(tool)
 				setSlotIcons(surface, (tex ~= "") and tex or "rbxasset://textures/ui/GuiImagePlaceholder.png", true)
 				if keyLabel and (keyLabel:IsA("TextLabel") or keyLabel:IsA("TextButton")) then

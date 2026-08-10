@@ -24,6 +24,9 @@ local GearViewportIcon = require(script.Parent.GearViewportIcon)
 
 local player = Players.LocalPlayer
 
+-- Same private-use Robux glyph the dealer / store UI uses ().
+local ROBUX_ICON = utf8.char(0xE002)
+
 local purchaseFn: RemoteFunction? = nil
 local equipFn: RemoteFunction? = nil
 local setPowerFn: RemoteFunction? = nil
@@ -275,9 +278,10 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 	if robux and robux:IsA("GuiObject") then
 		robux.Visible = (not isOwned) and def.robuxProductId ~= nil
 		if def.robuxPrice then
+			MainGradientButtons.applyDefault(robux)
 			local priceLabel = robux:FindFirstChild("Price", true) or robux:FindFirstChildWhichIsA("TextLabel", true)
 			if priceLabel and (priceLabel:IsA("TextLabel") or priceLabel:IsA("TextButton")) then
-				(priceLabel :: TextLabel).Text = tostring(def.robuxPrice)
+				(priceLabel :: TextLabel).Text = ROBUX_ICON .. tostring(def.robuxPrice)
 			end
 		end
 	end

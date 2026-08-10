@@ -585,6 +585,7 @@ local function spawnPowerFloater(gain: number)
 			startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 70)
 		end
 
+		-- Big cooked pop when the + appears, then fly into the Power HUD.
 		local row = Instance.new("Frame")
 		row.Name = "PowerGainFloater"
 		row.BackgroundTransparency = 1
@@ -601,11 +602,10 @@ local function spawnPowerFloater(gain: number)
 		layout.FillDirection = Enum.FillDirection.Horizontal
 		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 		layout.VerticalAlignment = Enum.VerticalAlignment.Center
-		layout.Padding = UDim.new(0, 2)
+		layout.Padding = UDim.new(0, 6)
 		layout.SortOrder = Enum.SortOrder.LayoutOrder
 		layout.Parent = row
 
-		-- +N then muscle, packed tight (no fixed 80px gap).
 		local label = Instance.new("TextLabel")
 		label.Name = "Gain"
 		label.BackgroundTransparency = 1
@@ -618,16 +618,16 @@ local function spawnPowerFloater(gain: number)
 		label.LayoutOrder = 1
 		label.ZIndex = 91
 		label.Parent = row
-		UiFonts.applyBodyLabel(label, 20, 13)
+		UiFonts.applyBodyLabel(label, 36, 22)
 		local stroke = Instance.new("UIStroke")
-		stroke.Thickness = 2.2
+		stroke.Thickness = 3.4
 		stroke.Color = Color3.fromRGB(40, 28, 8)
 		stroke.Parent = label
 
 		local muscle = Instance.new("ImageLabel")
 		muscle.Name = "Muscle"
 		muscle.BackgroundTransparency = 1
-		muscle.Size = UDim2.fromOffset(20, 20)
+		muscle.Size = UDim2.fromOffset(40, 40)
 		muscle.Image = "rbxassetid://73088512205933"
 		muscle.ScaleType = Enum.ScaleType.Fit
 		muscle.ImageColor3 = Color3.new(1, 1, 1)
@@ -636,13 +636,25 @@ local function spawnPowerFloater(gain: number)
 		muscle.Parent = row
 
 		local scale = Instance.new("UIScale")
-		scale.Scale = 0.5
+		scale.Scale = 0.25
 		scale.Parent = row
-		TweenService:Create(
+		-- Punch in big, settle, then travel.
+		local popIn = TweenService:Create(
 			scale,
-			TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-			{ Scale = 1.08 }
-		):Play()
+			TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+			{ Scale = 1.45 }
+		)
+		popIn:Play()
+		popIn.Completed:Connect(function()
+			if not row.Parent then
+				return
+			end
+			TweenService:Create(
+				scale,
+				TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Scale = 1.22 }
+			):Play()
+		end)
 
 		local progress = Instance.new("NumberValue")
 		progress.Value = 0
@@ -652,49 +664,59 @@ local function spawnPowerFloater(gain: number)
 			local t = progress.Value
 			local one = 1 - t
 			local midX = (startX + liveEnd.X.Offset) * 0.5
-			local midY = math.min(startY, liveEnd.Y.Offset) - 40
+			local midY = math.min(startY, liveEnd.Y.Offset) - 56
 			local x = one * one * startX + 2 * one * t * midX + t * t * liveEnd.X.Offset
 			local y = one * one * startY + 2 * one * t * midY + t * t * liveEnd.Y.Offset
 			row.Position = UDim2.fromOffset(x, y)
 		end)
 
-		local move = TweenService:Create(
-			progress,
-			TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
-			{ Value = 1 }
-		)
-		move:Play()
-		move.Completed:Connect(function()
-			progConn:Disconnect()
-			progress:Destroy()
-			row.Position = toLayerOffset(destScreen())
-			pulsePowerHud(amountGui, powerFrame :: GuiObject)
-			local suck = TweenService:Create(
-				scale,
-				TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-				{ Scale = 0.1 }
+		task.delay(0.32, function()
+			if not row.Parent then
+				progConn:Disconnect()
+				progress:Destroy()
+				return
+			end
+			local move = TweenService:Create(
+				progress,
+				TweenInfo.new(0.65, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
+				{ Value = 1 }
 			)
-			local fadeLabel = TweenService:Create(
-				label,
-				TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ TextTransparency = 1 }
-			)
-			local fadeStroke = TweenService:Create(
-				stroke,
-				TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ Transparency = 1 }
-			)
-			local fadeMuscle = TweenService:Create(
-				muscle,
-				TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ ImageTransparency = 1 }
-			)
-			suck:Play()
-			fadeLabel:Play()
-			fadeStroke:Play()
-			fadeMuscle:Play()
-			suck.Completed:Connect(function()
-				row:Destroy()
+			move:Play()
+			move.Completed:Connect(function()
+				progConn:Disconnect()
+				progress:Destroy()
+				if not row.Parent then
+					return
+				end
+				row.Position = toLayerOffset(destScreen())
+				pulsePowerHud(amountGui, powerFrame :: GuiObject)
+				local suck = TweenService:Create(
+					scale,
+					TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+					{ Scale = 0.12 }
+				)
+				local fadeLabel = TweenService:Create(
+					label,
+					TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ TextTransparency = 1 }
+				)
+				local fadeStroke = TweenService:Create(
+					stroke,
+					TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ Transparency = 1 }
+				)
+				local fadeMuscle = TweenService:Create(
+					muscle,
+					TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ ImageTransparency = 1 }
+				)
+				suck:Play()
+				fadeLabel:Play()
+				fadeStroke:Play()
+				fadeMuscle:Play()
+				suck.Completed:Connect(function()
+					row:Destroy()
+				end)
 			end)
 		end)
 	end)

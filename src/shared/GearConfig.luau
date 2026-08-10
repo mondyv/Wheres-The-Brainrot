@@ -301,6 +301,7 @@ function M.findGearAsset(gearId: number): Instance?
 end
 
 -- Clone Studio gear (Model / Folder / Tool / Part) into a fresh Model for tools/viewports.
+-- Always keep sibling VFX / Attachment folders — never clone only the nested Model.
 function M.cloneGearModel(gearId: number): Model?
 	local src = M.findGearAsset(gearId)
 	if not src then
@@ -308,10 +309,6 @@ function M.cloneGearModel(gearId: number): Model?
 	end
 	if src:IsA("Model") then
 		return src:Clone()
-	end
-	local nested = src:FindFirstChildWhichIsA("Model")
-	if nested then
-		return nested:Clone()
 	end
 	local wrapper = Instance.new("Model")
 	wrapper.Name = src.Name

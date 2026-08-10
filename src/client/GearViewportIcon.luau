@@ -12,41 +12,64 @@ local VF_NAME = "GearViewport"
 local spinConns: { [ViewportFrame]: RBXScriptConnection } = {}
 
 local function enableVfx(root: Instance)
+	local primary = if root:IsA("Model") then root.PrimaryPart else nil
+	if not primary and root:IsA("Model") then
+		primary = root:FindFirstChildWhichIsA("BasePart", true)
+	end
+
 	for _, d in root:GetDescendants() do
 		if d:IsA("ParticleEmitter") then
 			d.Enabled = true
-			d.LockedToPart = false
-			-- ViewportFrames often need a stronger burst or they look empty.
+			-- Keep particles glued to the spinning viewport model.
+			d.LockedToPart = true
 			local rate = d.Rate
 			if typeof(rate) == "number" then
-				d.Rate = math.max(rate, 18)
+				d.Rate = math.max(rate * 2.5, 40)
 			end
 			local life = d.Lifetime
-			if typeof(life) == "NumberRange" and life.Min < 1.1 then
-				d.Lifetime = NumberRange.new(1.2, 1.8)
+			if typeof(life) == "NumberRange" then
+				d.Lifetime = NumberRange.new(math.max(life.Min, 0.9), math.max(life.Max, 1.6))
 			end
-			if d.Drag > 2 then
-				d.Drag = 1
+			-- Enlarge so tiny shop icons still show sparkle.
+			local sz = d.Size
+			if typeof(sz) == "NumberSequence" then
+				local keys = sz.Keypoints
+				local boosted = table.create(#keys)
+				for i, kp in keys do
+					boosted[i] = NumberSequenceKeypoint.new(kp.Time, math.max(kp.Value * 2.2, 0.35), kp.Envelope)
+				end
+				d.Size = NumberSequence.new(boosted)
 			end
-			-- Kick a visible burst immediately.
+			if d.Drag > 1.5 then
+				d.Drag = 0.6
+			end
+			d.Brightness = math.max(d.Brightness, 2)
+			-- Orphaned emitters (parented under Folder) won't render — weld to a part.
+			if primary and not d:FindFirstAncestorWhichIsA("BasePart") then
+				local att = Instance.new("Attachment")
+				att.Name = "ViewportVfxAttach"
+				att.Parent = primary
+				d.Parent = att
+			end
 			pcall(function()
-				d:Emit(math.clamp(math.floor(d.Rate * 0.35), 4, 24))
+				d:Emit(math.clamp(math.floor(d.Rate * 0.55), 10, 48))
 			end)
 		elseif d:IsA("Beam") then
 			d.Enabled = true
-			d.Width0 = math.max(d.Width0, 0.12)
-			d.Width1 = math.max(d.Width1, 0.12)
+			d.Width0 = math.max(d.Width0 * 1.5, 0.18)
+			d.Width1 = math.max(d.Width1 * 1.5, 0.18)
+			d.Brightness = math.max(d.Brightness, 2)
 		elseif d:IsA("Trail") then
 			d.Enabled = true
-			d.Lifetime = math.max(d.Lifetime, 0.35)
+			d.Lifetime = math.max(d.Lifetime, 0.45)
 		elseif d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
 			local fx = d :: any
 			fx.Enabled = true
 		elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
 			local light = d :: Light
 			light.Enabled = true
-			light.Brightness = math.max(light.Brightness, 2)
-			light.Range = math.max(light.Range, 8)
+			light.Brightness = math.max(light.Brightness, 3)
+			light.Range = math.max(light.Range, 12)
 		end
 	end
 end
@@ -55,7 +78,7 @@ local function burstVfx(root: Instance)
 	for _, d in root:GetDescendants() do
 		if d:IsA("ParticleEmitter") and d.Enabled then
 			pcall(function()
-				d:Emit(math.clamp(math.floor(d.Rate * 0.3), 3, 18))
+				d:Emit(math.clamp(math.floor(d.Rate * 0.45), 8, 36))
 			end)
 		end
 	end
@@ -139,9 +162,9 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	vf.Position = UDim2.fromScale(0.5, 0.5)
 	vf.AnchorPoint = Vector2.new(0.5, 0.5)
 	vf.ZIndex = host.ZIndex + 1
-	vf.Ambient = Color3.fromRGB(210, 215, 230)
+	vf.Ambient = Color3.fromRGB(230, 235, 255)
 	vf.LightColor = Color3.fromRGB(255, 255, 255)
-	vf.LightDirection = Vector3.new(-0.3, -1, -0.45)
+	vf.LightDirection = Vector3.new(-0.25, -1, -0.4)
 	vf:SetAttribute("GearId", gearId)
 	vf.Parent = host
 
@@ -177,8 +200,8 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	-- Extra fill light so particles/beams read in the tiny shop icons.
 	local fillLight = Instance.new("PointLight")
 	fillLight.Name = "ViewportFillLight"
-	fillLight.Brightness = 2.5
-	fillLight.Range = math.max(10, maxDim * 4)
+	fillLight.Brightness = 4
+	fillLight.Range = math.max(14, maxDim * 5)
 	fillLight.Color = Color3.fromRGB(255, 250, 240)
 	local lightPart = Instance.new("Part")
 	lightPart.Name = "ViewportLightAnchor"

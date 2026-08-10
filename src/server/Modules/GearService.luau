@@ -270,6 +270,16 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 	player:SetAttribute(GearConfig.EQUIPPED_GEAR_ATTR, gearId)
 	player:SetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR, true)
 
+	local function applyGainTick()
+		WorkoutPower.addPower(player, def.powerGain)
+		local pulse = player:GetAttribute("WorkoutPowerPulse")
+		player:SetAttribute("WorkoutPowerPulse", (if typeof(pulse) == "number" then pulse else 0) + 1)
+		player:SetAttribute("WorkoutLastGain", def.powerGain)
+	end
+
+	-- Immediate first gain so white flash + +N land together on activate.
+	applyGainTick()
+
 	local last = os.clock()
 	local session = { gearId = gearId, conn = nil :: RBXScriptConnection?, lastTick = last }
 	session.conn = RunService.Heartbeat:Connect(function()
@@ -292,11 +302,7 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 			return
 		end
 		session.lastTick = now
-		WorkoutPower.addPower(player, def.powerGain)
-		-- Client listens to Power change + WorkoutActive for VFX; fire a pulse attr.
-		local pulse = player:GetAttribute("WorkoutPowerPulse")
-		player:SetAttribute("WorkoutPowerPulse", (if typeof(pulse) == "number" then pulse else 0) + 1)
-		player:SetAttribute("WorkoutLastGain", def.powerGain)
+		applyGainTick()
 	end)
 	workoutSessions[player] = session
 	return true, nil

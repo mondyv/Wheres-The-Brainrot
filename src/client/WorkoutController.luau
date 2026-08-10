@@ -347,7 +347,6 @@ end
 local function resolvePowerHudColor(amountLabel: TextLabel?): Color3
 	if amountLabel then
 		local c = amountLabel.TextColor3
-		-- Ignore near-white / near-black defaults; keep gold.
 		local _, s, v = c:ToHSV()
 		if s > 0.15 and v > 0.35 then
 			return c
@@ -356,185 +355,48 @@ local function resolvePowerHudColor(amountLabel: TextLabel?): Color3
 	return POWER_HUD_YELLOW
 end
 
-local function ensureHitScale(host: GuiObject): UIScale
-	local sc = host:FindFirstChild("PowerHitScale")
-	if sc and sc:IsA("UIScale") then
-		return sc
-	end
-	local made = Instance.new("UIScale")
-	made.Name = "PowerHitScale"
-	made.Scale = 1
-	made.Parent = host
-	return made
-end
-
--- Resize the whole Power chip in-layout (center feel). Never scale Amount alone —
--- that makes left-aligned digits slide away as the number grows.
-local function punchChipResize(chip: GuiObject, peak: number)
-	local token = (chip:GetAttribute("PowerPulseToken") :: number?) or 0
-	token += 1
-	chip:SetAttribute("PowerPulseToken", token)
-	chip:SetAttribute("PowerPulseAt", os.clock())
-
-	local origSize = chip.Size
-	local origAuto = chip.AutomaticSize
-	local w = math.max(chip.AbsoluteSize.X, 1)
-	local h = math.max(chip.AbsoluteSize.Y, 1)
-	chip.AutomaticSize = Enum.AutomaticSize.None
-	chip.Size = UDim2.fromOffset(w, h)
-
-	local sc = ensureHitScale(chip)
-	sc.Scale = 1
-	-- Anchor scale to chip center so it pops in place inside the list slot.
-	local prevAp = chip.AnchorPoint
-	chip.AnchorPoint = Vector2.new(0.5, 0.5)
-
-	local up = TweenService:Create(
-		sc,
-		TweenInfo.new(0.11, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = peak }
-	)
-	up:Play()
-	up.Completed:Connect(function()
-		if chip:GetAttribute("PowerPulseToken") ~= token then
-			return
+-- Soft gold flash on the Power amount only — never touch Size/AnchorPoint (that hid the counter).
+local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?)
+	if amountLabel and amountLabel:IsA("TextLabel") then
+		local label = amountLabel :: TextLabel
+		-- Kill leftover hit scales that could leave text at Scale 0.
+		local badScale = label:FindFirstChild("PowerHitScale")
+		if badScale then
+			badScale:Destroy()
 		end
-		local down = TweenService:Create(
-			sc,
-			TweenInfo.new(0.34, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out),
-			{ Scale = 1 }
-		)
-		down:Play()
-		down.Completed:Connect(function()
-			if chip:GetAttribute("PowerPulseToken") ~= token then
-				return
+		label.TextTransparency = 0
+		local base = label.TextColor3
+		label.TextColor3 = POWER_HIT_WHITE
+		TweenService:Create(
+			label,
+			TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ TextColor3 = POWER_HUD_YELLOW }
+		):Play()
+		task.delay(0.18, function()
+			if label.Parent then
+				TweenService:Create(
+					label,
+					TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ TextColor3 = base }
+				):Play()
 			end
-			sc.Scale = 1
-			chip.AnchorPoint = prevAp
-			chip.Size = origSize
-			chip.AutomaticSize = origAuto
 		end)
-	end)
-end
-
--- Soft round wash — parented to a non-clipping mount so it never reads as a box.
-local function softHitBloom(host: GuiObject, mount: GuiObject, diameter: number)
-	local glowName = "PowerHitGlow_" .. host.Name
-	local old = mount:FindFirstChild(glowName)
-	if old then
-		old:Destroy()
 	end
-	local bloom = Instance.new("Frame")
-	bloom.Name = glowName
-	bloom.AnchorPoint = Vector2.new(0.5, 0.5)
-	local hostCenter = host.AbsolutePosition + host.AbsoluteSize * 0.5
-	local mountPos = mount.AbsolutePosition
-	bloom.Position = UDim2.fromOffset(hostCenter.X - mountPos.X, hostCenter.Y - mountPos.Y)
-	bloom.Size = UDim2.fromOffset(diameter, diameter)
-	bloom.BackgroundColor3 = POWER_HUD_YELLOW
-	bloom.BackgroundTransparency = 0.58
-	bloom.BorderSizePixel = 0
-	bloom.ZIndex = math.max(host.ZIndex, mount.ZIndex) + 1
-	bloom.Parent = mount
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(1, 0)
-	corner.Parent = bloom
-	TweenService:Create(
-		bloom,
-		TweenInfo.new(0.38, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{
-			BackgroundTransparency = 1,
-			Size = UDim2.fromOffset(diameter * 1.7, diameter * 1.7),
-		}
-	):Play()
-	task.delay(0.42, function()
-		if bloom.Parent then
-			bloom:Destroy()
+	if powerFrame then
+		local sc = powerFrame:FindFirstChild("PowerHitScale")
+		if sc and sc:IsA("UIScale") then
+			sc.Scale = 1
 		end
-	end)
-end
-
-local function flashAmountLabel(label: TextLabel)
-	local baseColor = label.TextColor3
-	label.TextColor3 = POWER_HIT_WHITE
-	TweenService:Create(
-		label,
-		TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ TextColor3 = POWER_HUD_YELLOW }
-	):Play()
-	task.delay(0.2, function()
-		if label.Parent then
+		local icon = powerFrame:FindFirstChild("Icon")
+		if icon and icon:IsA("ImageLabel") then
+			local baseC = icon.ImageColor3
+			icon.ImageColor3 = POWER_HIT_WHITE
 			TweenService:Create(
-				label,
-				TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ TextColor3 = baseColor }
+				icon,
+				TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ ImageColor3 = baseC }
 			):Play()
 		end
-	end)
-
-	local oldStroke = label:FindFirstChild("PowerHitTextStroke")
-	if oldStroke then
-		oldStroke:Destroy()
-	end
-	local textStroke = Instance.new("UIStroke")
-	textStroke.Name = "PowerHitTextStroke"
-	textStroke.Color = POWER_HUD_YELLOW
-	textStroke.Thickness = 0
-	textStroke.Transparency = 0.15
-	textStroke.Parent = label
-	TweenService:Create(
-		textStroke,
-		TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Thickness = 2.2 }
-	):Play()
-	task.delay(0.12, function()
-		if not textStroke.Parent then
-			return
-		end
-		TweenService:Create(
-			textStroke,
-			TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-			{ Thickness = 0, Transparency = 1 }
-		):Play()
-		task.delay(0.35, function()
-			if textStroke.Parent then
-				textStroke:Destroy()
-			end
-		end)
-	end)
-end
-
-local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?)
-	local icon: GuiObject? = nil
-	if powerFrame then
-		local found = powerFrame:FindFirstChild("Icon")
-		if found and found:IsA("GuiObject") then
-			icon = found
-		end
-	end
-	local mount: GuiObject? = powerFrame or amountLabel or icon
-	if not mount then
-		return
-	end
-
-	-- One chip pop — whole counter resizes in place (not the text drifting).
-	if powerFrame then
-		punchChipResize(powerFrame, 1.18)
-		softHitBloom(powerFrame, powerFrame, math.max(powerFrame.AbsoluteSize.X, powerFrame.AbsoluteSize.Y) * 0.95)
-	end
-
-	if icon and icon:IsA("ImageLabel") then
-		local baseC = icon.ImageColor3
-		icon.ImageColor3 = POWER_HIT_WHITE
-		TweenService:Create(
-			icon,
-			TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ ImageColor3 = baseC }
-		):Play()
-	end
-
-	if amountLabel and amountLabel:IsA("TextLabel") then
-		flashAmountLabel(amountLabel :: TextLabel)
 	end
 end
 
@@ -550,10 +412,10 @@ local function spawnPowerFloater(gain: number)
 
 	local icon = powerFrame:FindFirstChild("Icon")
 	local amountLabel = powerFrame:FindFirstChild("Amount") or powerFrame:FindFirstChildWhichIsA("TextLabel")
-	local iconGui: GuiObject? = if icon and icon:IsA("GuiObject") then icon :: GuiObject else nil
 	local amountGui: GuiObject? = if amountLabel and amountLabel:IsA("GuiObject")
 		then amountLabel :: GuiObject
 		else nil
+	local iconGui: GuiObject? = if icon and icon:IsA("GuiObject") then icon :: GuiObject else nil
 
 	local hudColor = resolvePowerHudColor(
 		if amountLabel and amountLabel:IsA("TextLabel") then amountLabel :: TextLabel else nil
@@ -569,13 +431,10 @@ local function spawnPowerFloater(gain: number)
 	end
 
 	local function destScreen(): Vector2
-		if iconGui and amountGui then
-			-- Land between muscle + number so the chip feels like one target.
-			return (absCenter(iconGui) + absCenter(amountGui)) * 0.5
+		if amountGui then
+			return absCenter(amountGui)
 		elseif iconGui then
 			return absCenter(iconGui)
-		elseif amountGui then
-			return absCenter(amountGui)
 		end
 		return absCenter(powerFrame :: GuiObject)
 	end
@@ -585,165 +444,157 @@ local function spawnPowerFloater(gain: number)
 		return UDim2.fromOffset(screen.X - lp.X, screen.Y - lp.Y)
 	end
 
-	-- Wait one frame so AbsolutePosition is valid after layout.
-	task.defer(function()
-		if not layer.Parent or not powerFrame.Parent then
+	-- Same moment as white flash — no long hold before +N shows.
+	if not layer.Parent or not powerFrame.Parent then
+		return
+	end
+
+	local character = player.Character
+	local head = character and character:FindFirstChild("Head")
+	local anchor = if head and head:IsA("BasePart")
+		then head
+		else (character and character:FindFirstChild("HumanoidRootPart"))
+
+	local endPos = toLayerOffset(destScreen())
+	local startPos = endPos
+	if anchor and anchor:IsA("BasePart") then
+		local screenPos, onScreen = cam:WorldToViewportPoint(anchor.Position + Vector3.new(0, 1.35, 0))
+		if onScreen then
+			startPos = toLayerOffset(Vector2.new(screenPos.X, screenPos.Y))
+		else
+			startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 48)
+		end
+	else
+		startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 48)
+	end
+
+	local row = Instance.new("Frame")
+	row.Name = "PowerGainFloater"
+	row.BackgroundTransparency = 1
+	row.BorderSizePixel = 0
+	row.AutomaticSize = Enum.AutomaticSize.XY
+	row.Size = UDim2.fromOffset(0, 0)
+	row.AnchorPoint = Vector2.new(0.5, 0.5)
+	row.Position = startPos
+	row.ZIndex = 90
+	row.Parent = layer
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.Padding = UDim.new(0, 4)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = row
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Gain"
+	label.BackgroundTransparency = 1
+	label.AutomaticSize = Enum.AutomaticSize.XY
+	label.Size = UDim2.fromOffset(0, 0)
+	label.TextColor3 = hudColor
+	label.TextTransparency = 0
+	label.Text = "+" .. BrainrotEconomy.formatNumberShort(gain)
+	label.TextXAlignment = Enum.TextXAlignment.Center
+	label.TextYAlignment = Enum.TextYAlignment.Center
+	label.LayoutOrder = 1
+	label.ZIndex = 91
+	label.Parent = row
+	UiFonts.applyBodyLabel(label, 24, 16)
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 2.4
+	stroke.Color = Color3.fromRGB(35, 24, 6)
+	stroke.Transparency = 0
+	stroke.Parent = label
+
+	local muscle = Instance.new("ImageLabel")
+	muscle.Name = "Muscle"
+	muscle.BackgroundTransparency = 1
+	muscle.Size = UDim2.fromOffset(26, 26)
+	muscle.Image = "rbxassetid://73088512205933"
+	muscle.ImageTransparency = 0
+	muscle.ScaleType = Enum.ScaleType.Fit
+	muscle.LayoutOrder = 2
+	muscle.ZIndex = 91
+	muscle.Parent = row
+
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.55
+	scale.Parent = row
+	TweenService:Create(
+		scale,
+		TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1.08 }
+	):Play()
+
+	-- Tiny lift, then suck into the Power counter.
+	local startX, startY = startPos.X.Offset, startPos.Y.Offset
+	local liftY = startY - 28
+	TweenService:Create(
+		row,
+		TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Position = UDim2.fromOffset(startX, liftY) }
+	):Play()
+
+	local progress = Instance.new("NumberValue")
+	progress.Value = 0
+	local fromX, fromY = startX, liftY
+	local progConn = progress:GetPropertyChangedSignal("Value"):Connect(function()
+		local liveEnd = toLayerOffset(destScreen())
+		local t = progress.Value
+		local one = 1 - t
+		local midX = (fromX + liveEnd.X.Offset) * 0.5
+		local midY = math.min(fromY, liveEnd.Y.Offset) - 36
+		local x = one * one * fromX + 2 * one * t * midX + t * t * liveEnd.X.Offset
+		local y = one * one * fromY + 2 * one * t * midY + t * t * liveEnd.Y.Offset
+		row.Position = UDim2.fromOffset(x, y)
+	end)
+
+	task.delay(0.2, function()
+		if not row.Parent then
+			progConn:Disconnect()
+			progress:Destroy()
 			return
 		end
-
-		local endScreen = destScreen()
-		local endPos = toLayerOffset(endScreen)
-
-		local character = player.Character
-		local head = character and character:FindFirstChild("Head")
-		local anchor = if head and head:IsA("BasePart")
-			then head
-			else (character and character:FindFirstChild("HumanoidRootPart"))
-
-		local startPos = endPos
-		if anchor and anchor:IsA("BasePart") and cam then
-			local screenPos, onScreen = cam:WorldToViewportPoint(anchor.Position + Vector3.new(0, 1.1, 0))
-			if onScreen then
-				startPos = toLayerOffset(Vector2.new(screenPos.X, screenPos.Y))
-			else
-				startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 70)
-			end
-		else
-			startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 70)
-		end
-
-		-- Big cooked pop when the + appears, then fly into the Power HUD.
-		local row = Instance.new("Frame")
-		row.Name = "PowerGainFloater"
-		row.BackgroundTransparency = 1
-		row.BackgroundColor3 = Color3.new(0, 0, 0)
-		row.BorderSizePixel = 0
-		row.AutomaticSize = Enum.AutomaticSize.XY
-		row.Size = UDim2.fromOffset(0, 0)
-		row.AnchorPoint = Vector2.new(0.5, 0.5)
-		row.Position = startPos
-		row.ZIndex = 90
-		row.Parent = layer
-
-		local layout = Instance.new("UIListLayout")
-		layout.FillDirection = Enum.FillDirection.Horizontal
-		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		layout.VerticalAlignment = Enum.VerticalAlignment.Center
-		layout.Padding = UDim.new(0, 6)
-		layout.SortOrder = Enum.SortOrder.LayoutOrder
-		layout.Parent = row
-
-		local label = Instance.new("TextLabel")
-		label.Name = "Gain"
-		label.BackgroundTransparency = 1
-		label.AutomaticSize = Enum.AutomaticSize.XY
-		label.Size = UDim2.fromOffset(0, 0)
-		label.TextColor3 = hudColor
-		label.Text = "+" .. BrainrotEconomy.formatNumberShort(gain)
-		label.TextXAlignment = Enum.TextXAlignment.Center
-		label.TextYAlignment = Enum.TextYAlignment.Center
-		label.LayoutOrder = 1
-		label.ZIndex = 91
-		label.Parent = row
-		UiFonts.applyBodyLabel(label, 36, 22)
-		local stroke = Instance.new("UIStroke")
-		stroke.Thickness = 3.4
-		stroke.Color = Color3.fromRGB(40, 28, 8)
-		stroke.Parent = label
-
-		local muscle = Instance.new("ImageLabel")
-		muscle.Name = "Muscle"
-		muscle.BackgroundTransparency = 1
-		muscle.Size = UDim2.fromOffset(40, 40)
-		muscle.Image = "rbxassetid://73088512205933"
-		muscle.ScaleType = Enum.ScaleType.Fit
-		muscle.ImageColor3 = Color3.new(1, 1, 1)
-		muscle.LayoutOrder = 2
-		muscle.ZIndex = 91
-		muscle.Parent = row
-
-		local scale = Instance.new("UIScale")
-		scale.Scale = 0.25
-		scale.Parent = row
-		-- Punch in big, settle, then travel.
-		local popIn = TweenService:Create(
-			scale,
-			TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-			{ Scale = 1.45 }
+		fromX = row.Position.X.Offset
+		fromY = row.Position.Y.Offset
+		local move = TweenService:Create(
+			progress,
+			TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ Value = 1 }
 		)
-		popIn:Play()
-		popIn.Completed:Connect(function()
+		move:Play()
+		move.Completed:Connect(function()
+			progConn:Disconnect()
+			progress:Destroy()
 			if not row.Parent then
 				return
 			end
-			TweenService:Create(
+			row.Position = toLayerOffset(destScreen())
+			pulsePowerHud(amountGui, powerFrame :: GuiObject)
+			local suck = TweenService:Create(
 				scale,
-				TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Scale = 1.22 }
-			):Play()
-		end)
-
-		local progress = Instance.new("NumberValue")
-		progress.Value = 0
-		local startX, startY = startPos.X.Offset, startPos.Y.Offset
-		local progConn = progress:GetPropertyChangedSignal("Value"):Connect(function()
-			local liveEnd = toLayerOffset(destScreen())
-			local t = progress.Value
-			local one = 1 - t
-			local midX = (startX + liveEnd.X.Offset) * 0.5
-			local midY = math.min(startY, liveEnd.Y.Offset) - 56
-			local x = one * one * startX + 2 * one * t * midX + t * t * liveEnd.X.Offset
-			local y = one * one * startY + 2 * one * t * midY + t * t * liveEnd.Y.Offset
-			row.Position = UDim2.fromOffset(x, y)
-		end)
-
-		task.delay(0.32, function()
-			if not row.Parent then
-				progConn:Disconnect()
-				progress:Destroy()
-				return
-			end
-			local move = TweenService:Create(
-				progress,
-				TweenInfo.new(0.65, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
-				{ Value = 1 }
+				TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+				{ Scale = 0.35 }
 			)
-			move:Play()
-			move.Completed:Connect(function()
-				progConn:Disconnect()
-				progress:Destroy()
-				if not row.Parent then
-					return
-				end
-				row.Position = toLayerOffset(destScreen())
-				pulsePowerHud(amountGui, powerFrame :: GuiObject)
-				local suck = TweenService:Create(
-					scale,
-					TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-					{ Scale = 0.12 }
-				)
-				local fadeLabel = TweenService:Create(
-					label,
-					TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-					{ TextTransparency = 1 }
-				)
-				local fadeStroke = TweenService:Create(
-					stroke,
-					TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-					{ Transparency = 1 }
-				)
-				local fadeMuscle = TweenService:Create(
-					muscle,
-					TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-					{ ImageTransparency = 1 }
-				)
-				suck:Play()
-				fadeLabel:Play()
-				fadeStroke:Play()
-				fadeMuscle:Play()
-				suck.Completed:Connect(function()
-					row:Destroy()
-				end)
+			TweenService:Create(
+				label,
+				TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ TextTransparency = 1 }
+			):Play()
+			TweenService:Create(
+				stroke,
+				TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ Transparency = 1 }
+			):Play()
+			TweenService:Create(
+				muscle,
+				TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ ImageTransparency = 1 }
+			):Play()
+			suck:Play()
+			suck.Completed:Connect(function()
+				row:Destroy()
 			end)
 		end)
 	end)

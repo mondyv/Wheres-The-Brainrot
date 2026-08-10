@@ -526,8 +526,15 @@ local function playPowerGainFlash(amountLabel: TextLabel)
 		powerBaseColor = amountLabel.TextColor3
 	end
 	local base = powerBaseColor :: Color3
-	-- Color only — chip resize is handled by WorkoutController.pulsePowerHud.
-	-- Scaling Amount here made left-aligned digits slide sideways.
+	amountLabel.TextTransparency = 0
+	local leftover = amountLabel:FindFirstChild("PowerHitScale")
+	if leftover then
+		leftover:Destroy()
+	end
+	local parentScale = amountLabel.Parent and amountLabel.Parent:FindFirstChild("PowerHitScale")
+	if parentScale and parentScale:IsA("UIScale") then
+		parentScale.Scale = 1
+	end
 	amountLabel.TextColor3 = POWER_FLASH_WHITE
 	TweenService:Create(
 		amountLabel,
@@ -538,41 +545,11 @@ local function playPowerGainFlash(amountLabel: TextLabel)
 		if amountLabel.Parent then
 			TweenService:Create(
 				amountLabel,
-				TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 				{ TextColor3 = base }
 			):Play()
 		end
 	end)
-
-	local powerFrame = amountLabel.Parent
-	if powerFrame and powerFrame:IsA("GuiObject") then
-		local token = (powerFrame:GetAttribute("PowerPulseToken") :: number?) or 0
-		-- Skip if workout floater already punched this frame.
-		if token == 0 or (os.clock() - ((powerFrame:GetAttribute("PowerPulseAt") :: number?) or 0)) > 0.45 then
-			local sc = getOrAddUIScale(powerFrame)
-			local prevAp = powerFrame.AnchorPoint
-			powerFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-			powerFrame:SetAttribute("PowerPulseAt", os.clock())
-			powerFrame:SetAttribute("PowerPulseToken", token + 1)
-			sc.Scale = 1
-			TweenService
-				:Create(sc, TweenInfo.new(0.11, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.16 })
-				:Play()
-			task.delay(0.11, function()
-				if not sc.Parent then
-					return
-				end
-				TweenService
-					:Create(sc, TweenInfo.new(0.34, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out), { Scale = 1 })
-					:Play()
-				task.delay(0.36, function()
-					if powerFrame.Parent then
-						powerFrame.AnchorPoint = prevAp
-					end
-				end)
-			end)
-		end
-	end
 end
 
 local function updatePowerLabel()
@@ -689,8 +666,16 @@ local function ensurePowerCounter(counters: Instance): TextLabel?
 	end
 	local amount = powerFrame:FindFirstChild("Amount")
 	if amount and amount:IsA("TextLabel") then
-		-- Keep digits growing in place during count-up (no sideways slide).
+		amount.TextTransparency = 0
 		amount.TextXAlignment = Enum.TextXAlignment.Center
+		local hitScale = amount:FindFirstChild("PowerHitScale")
+		if hitScale then
+			hitScale:Destroy()
+		end
+		local frameScale = powerFrame:FindFirstChild("PowerHitScale")
+		if frameScale and frameScale:IsA("UIScale") then
+			frameScale.Scale = 1
+		end
 		return amount
 	end
 	return powerFrame:FindFirstChildWhichIsA("TextLabel", true)

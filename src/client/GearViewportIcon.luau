@@ -20,30 +20,30 @@ local function enableVfx(root: Instance)
 	for _, d in root:GetDescendants() do
 		if d:IsA("ParticleEmitter") then
 			d.Enabled = true
-			-- Keep particles glued to the spinning viewport model.
 			d.LockedToPart = true
+			d.LightEmission = math.max(d.LightEmission, 0.65)
+			d.Brightness = math.max(d.Brightness, 3)
 			local rate = d.Rate
 			if typeof(rate) == "number" then
-				d.Rate = math.max(rate * 2.5, 40)
+				-- Rate 0 assets are burst-only — give them a steady viewport trickle.
+				d.Rate = if rate <= 0 then 28 else math.max(rate * 3, 48)
 			end
 			local life = d.Lifetime
 			if typeof(life) == "NumberRange" then
-				d.Lifetime = NumberRange.new(math.max(life.Min, 0.9), math.max(life.Max, 1.6))
+				d.Lifetime = NumberRange.new(math.max(life.Min, 1.0), math.max(life.Max, 1.8))
 			end
-			-- Enlarge so tiny shop icons still show sparkle.
 			local sz = d.Size
 			if typeof(sz) == "NumberSequence" then
 				local keys = sz.Keypoints
 				local boosted = table.create(#keys)
 				for i, kp in keys do
-					boosted[i] = NumberSequenceKeypoint.new(kp.Time, math.max(kp.Value * 2.2, 0.35), kp.Envelope)
+					boosted[i] = NumberSequenceKeypoint.new(kp.Time, math.max(kp.Value * 3.2, 0.55), kp.Envelope)
 				end
 				d.Size = NumberSequence.new(boosted)
 			end
-			if d.Drag > 1.5 then
-				d.Drag = 0.6
+			if d.Drag > 1.2 then
+				d.Drag = 0.4
 			end
-			d.Brightness = math.max(d.Brightness, 2)
 			-- Orphaned emitters (parented under Folder) won't render — weld to a part.
 			if primary and not d:FindFirstAncestorWhichIsA("BasePart") then
 				local att = Instance.new("Attachment")
@@ -52,24 +52,24 @@ local function enableVfx(root: Instance)
 				d.Parent = att
 			end
 			pcall(function()
-				d:Emit(math.clamp(math.floor(d.Rate * 0.55), 10, 48))
+				d:Emit(math.clamp(math.floor(math.max(d.Rate, 24) * 0.7), 14, 64))
 			end)
 		elseif d:IsA("Beam") then
 			d.Enabled = true
-			d.Width0 = math.max(d.Width0 * 1.5, 0.18)
-			d.Width1 = math.max(d.Width1 * 1.5, 0.18)
-			d.Brightness = math.max(d.Brightness, 2)
+			d.Width0 = math.max(d.Width0 * 1.8, 0.22)
+			d.Width1 = math.max(d.Width1 * 1.8, 0.22)
+			d.Brightness = math.max(d.Brightness, 3)
 		elseif d:IsA("Trail") then
 			d.Enabled = true
-			d.Lifetime = math.max(d.Lifetime, 0.45)
+			d.Lifetime = math.max(d.Lifetime, 0.5)
 		elseif d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
 			local fx = d :: any
 			fx.Enabled = true
 		elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
 			local light = d :: Light
 			light.Enabled = true
-			light.Brightness = math.max(light.Brightness, 3)
-			light.Range = math.max(light.Range, 12)
+			light.Brightness = math.max(light.Brightness, 4)
+			light.Range = math.max(light.Range, 14)
 		end
 	end
 end
@@ -78,7 +78,7 @@ local function burstVfx(root: Instance)
 	for _, d in root:GetDescendants() do
 		if d:IsA("ParticleEmitter") and d.Enabled then
 			pcall(function()
-				d:Emit(math.clamp(math.floor(d.Rate * 0.45), 8, 36))
+				d:Emit(math.clamp(math.floor(math.max(d.Rate, 24) * 0.55), 12, 48))
 			end)
 		end
 	end
@@ -179,10 +179,14 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 			d.CanCollide = false
 			d.Massless = true
 			d.CastShadow = false
+			-- Keep parts visible enough for attached viewport particles.
+			if d.Transparency >= 1 and d:FindFirstChildWhichIsA("ParticleEmitter", true) then
+				d.Transparency = 0.99
+			end
 		end
 	end
-	enableVfx(clone)
 	clone.Parent = world
+	enableVfx(clone)
 
 	-- Frame the full bounding box (Primary can sit at the bottom and crop the rest).
 	local okBb, bb = pcall(function()

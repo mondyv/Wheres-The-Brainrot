@@ -307,29 +307,57 @@ function M.cloneGearModel(gearId: number): Model?
 	if not src then
 		return nil
 	end
+	local def = byId[gearId]
+	local wrapper: Model
 	if src:IsA("Model") then
-		return src:Clone()
-	end
-	local wrapper = Instance.new("Model")
-	wrapper.Name = src.Name
-	if src:IsA("BasePart") then
-		local part = src:Clone()
-		part.Parent = wrapper
-		wrapper.PrimaryPart = part
-		return wrapper
-	end
-	local bag = src:Clone()
-	for _, child in bag:GetChildren() do
-		child.Parent = wrapper
-	end
-	bag:Destroy()
-	local primary = wrapper:FindFirstChild("Primary", true)
-	if primary and primary:IsA("BasePart") then
-		wrapper.PrimaryPart = primary
+		wrapper = src:Clone()
 	else
-		local any = wrapper:FindFirstChildWhichIsA("BasePart", true)
-		if any then
-			wrapper.PrimaryPart = any
+		wrapper = Instance.new("Model")
+		wrapper.Name = src.Name
+		if src:IsA("BasePart") then
+			local part = src:Clone()
+			part.Parent = wrapper
+			wrapper.PrimaryPart = part
+		else
+			local bag = src:Clone()
+			for _, child in bag:GetChildren() do
+				child.Parent = wrapper
+			end
+			bag:Destroy()
+		end
+	end
+
+	-- Pull sibling FX folders in EssentialAssets.Gears (often named "Gear N VFX" / "FX").
+	local folder = getGearsFolder()
+	if folder and def then
+		for _, child in folder:GetChildren() do
+			if child == src then
+				continue
+			end
+			local lower = string.lower(child.Name)
+			local idStr = tostring(def.id)
+			local looksFx = string.find(lower, "vfx", 1, true)
+				or string.find(lower, "fx", 1, true)
+				or string.find(lower, "effect", 1, true)
+				or string.find(lower, "particle", 1, true)
+			local looksGear = nameMatchesGear(child.Name, def)
+				or string.find(lower, "gear%s*" .. idStr, 1) ~= nil
+			if looksFx and looksGear then
+				local fxClone = child:Clone()
+				fxClone.Parent = wrapper
+			end
+		end
+	end
+
+	if not wrapper.PrimaryPart then
+		local primary = wrapper:FindFirstChild("Primary", true)
+		if primary and primary:IsA("BasePart") then
+			wrapper.PrimaryPart = primary
+		else
+			local any = wrapper:FindFirstChildWhichIsA("BasePart", true)
+			if any then
+				wrapper.PrimaryPart = any
+			end
 		end
 	end
 	if not wrapper.PrimaryPart then

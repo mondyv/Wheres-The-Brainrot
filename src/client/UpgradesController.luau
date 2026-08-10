@@ -522,6 +522,17 @@ local POWER_FLASH_GOLD = Color3.fromRGB(255, 214, 90)
 local POWER_FLASH_WHITE = Color3.fromRGB(255, 252, 235)
 
 local function resolveMuscleIcon(powerFrame: Instance): ImageLabel?
+	local cluster = powerFrame:FindFirstChild("PowerPulseCluster")
+	if cluster then
+		local nested = cluster:FindFirstChild("ImageLabel") or cluster:FindFirstChild("Icon")
+		if nested and nested:IsA("ImageLabel") then
+			return nested
+		end
+		local any = cluster:FindFirstChildWhichIsA("ImageLabel")
+		if any then
+			return any
+		end
+	end
 	local direct = powerFrame:FindFirstChild("ImageLabel")
 	if direct and direct:IsA("ImageLabel") then
 		return direct
@@ -541,57 +552,77 @@ end
 -- Scale Amount + muscle only (not Edit / whole SideUI chip) so hits land in the right place.
 local function ensurePulseCluster(powerFrame: GuiObject): Frame
 	local existing = powerFrame:FindFirstChild("PowerPulseCluster")
+	local amount = powerFrame:FindFirstChild("Amount")
+		or (existing and existing:FindFirstChild("Amount"))
+	local muscle = resolveMuscleIcon(powerFrame)
 	if existing and existing:IsA("Frame") then
-		-- Recover if Amount drifted outside after a Studio sync.
-		local amount = powerFrame:FindFirstChild("Amount")
 		if amount and amount:IsA("GuiObject") and amount.Parent ~= existing then
 			amount.Parent = existing
 		end
-		local muscle = resolveMuscleIcon(powerFrame)
 		if muscle and muscle.Parent ~= existing then
 			muscle.Parent = existing
 		end
-		return existing
+	else
+		existing = Instance.new("Frame")
+		existing.Name = "PowerPulseCluster"
+		existing.BackgroundTransparency = 1
+		existing.BorderSizePixel = 0
+		existing.AutomaticSize = Enum.AutomaticSize.XY
+		existing.Size = UDim2.fromOffset(0, 0)
+		existing.AnchorPoint = Vector2.new(0.5, 0.5)
+		local order = 0
+		if muscle then
+			order = muscle.LayoutOrder
+		elseif amount and amount:IsA("GuiObject") then
+			order = amount.LayoutOrder
+		end
+		existing.LayoutOrder = order
+		existing.ZIndex = powerFrame.ZIndex
+
+		local layout = Instance.new("UIListLayout")
+		layout.Name = "PulseLayout"
+		layout.FillDirection = Enum.FillDirection.Horizontal
+		layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+		layout.VerticalAlignment = Enum.VerticalAlignment.Center
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Padding = UDim.new(0, 8)
+		layout.Parent = existing
+
+		existing.Parent = powerFrame
 	end
 
-	local amount = powerFrame:FindFirstChild("Amount")
-	local muscle = resolveMuscleIcon(powerFrame)
-
-	local cluster = Instance.new("Frame")
-	cluster.Name = "PowerPulseCluster"
-	cluster.BackgroundTransparency = 1
-	cluster.BorderSizePixel = 0
-	cluster.AutomaticSize = Enum.AutomaticSize.XY
-	cluster.Size = UDim2.fromOffset(0, 0)
-	cluster.AnchorPoint = Vector2.new(0.5, 0.5)
-	local order = 0
-	if amount and amount:IsA("GuiObject") then
-		order = amount.LayoutOrder
-	elseif muscle then
-		order = muscle.LayoutOrder
+	local cluster = existing :: Frame
+	local layout = cluster:FindFirstChild("PulseLayout")
+	if layout and layout:IsA("UIListLayout") then
+		layout.Padding = UDim.new(0, 8)
+		layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
 	end
-	cluster.LayoutOrder = order
-	cluster.ZIndex = powerFrame.ZIndex
 
-	local layout = Instance.new("UIListLayout")
-	layout.Name = "PulseLayout"
-	layout.FillDirection = Enum.FillDirection.Horizontal
-	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	layout.VerticalAlignment = Enum.VerticalAlignment.Center
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0, 4)
-	layout.Parent = cluster
-
-	if amount and amount:IsA("GuiObject") then
-		amount.LayoutOrder = 1
-		amount.Parent = cluster
-	end
+	-- Icon LEFT, number RIGHT — never let growing Amount sit on top of the muscle.
 	if muscle then
-		muscle.LayoutOrder = 2
+		muscle.LayoutOrder = 1
+		muscle.Size = UDim2.fromOffset(36, 36)
+		muscle.ScaleType = Enum.ScaleType.Fit
+		muscle.BackgroundTransparency = 1
+		muscle.Image = GearConfig.WORKOUT_IMAGE
+		muscle.ImageTransparency = 0
+		muscle.Visible = true
+		muscle.ZIndex = math.max(muscle.ZIndex, (amount and amount:IsA("GuiObject") and amount.ZIndex or 1) + 1)
 		muscle.Parent = cluster
 	end
+	if amount and amount:IsA("TextLabel") then
+		amount.LayoutOrder = 2
+		amount.TextXAlignment = Enum.TextXAlignment.Left
+		amount.TextYAlignment = Enum.TextYAlignment.Center
+		amount.TextTransparency = 0
+		-- Keep text from drawing under the icon as digits grow.
+		amount.ClipsDescendants = false
+		amount.Parent = cluster
+	elseif amount and amount:IsA("GuiObject") then
+		amount.LayoutOrder = 2
+		amount.Parent = cluster
+	end
 
-	cluster.Parent = powerFrame
 	return cluster
 end
 
@@ -747,8 +778,10 @@ local function ensurePowerCounter(counters: Instance): TextLabel?
 
 	-- Studio Power already has Edit + ImageLabel — never crush it to Cash size.
 	local muscle = resolveMuscleIcon(powerFrame)
-	if muscle and muscle.Image == "" then
+	if muscle then
 		muscle.Image = GearConfig.WORKOUT_IMAGE
+		muscle.ImageTransparency = 0
+		muscle.Visible = true
 	end
 
 	ensurePulseCluster(powerFrame)

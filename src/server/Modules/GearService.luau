@@ -10,6 +10,8 @@ local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local GearService = {}
 
 local workoutSessions: { [Player]: { gearId: number, conn: RBXScriptConnection?, lastTick: number } } = {}
+local lastWorkoutGainAt: { [number]: number } = {}
+local WORKOUT_GAIN_COOLDOWN = 1.0
 local playerConns: { [Player]: { RBXScriptConnection } } = {}
 
 local function getHandlePart(model: Model): BasePart?
@@ -261,21 +263,35 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 	if not GearService.owns(player, gearId) then
 		return false, "Not owned"
 	end
+
+	-- Already curling this gear — ignore spam re-equip / re-invoke.
+	local existing = workoutSessions[player]
+	if existing and existing.gearId == gearId then
+		return true, nil
+	end
+
 	GearService.stopWorkout(player)
 	player:SetAttribute(GearConfig.EQUIPPED_GEAR_ATTR, gearId)
 	player:SetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR, true)
 
 	local function applyGainTick()
+		local now = os.clock()
+		local prev = lastWorkoutGainAt[player.UserId] or 0
+		if now - prev < WORKOUT_GAIN_COOLDOWN then
+			return false
+		end
+		lastWorkoutGainAt[player.UserId] = now
 		WorkoutPower.addPower(player, def.powerGain)
 		local pulse = player:GetAttribute("WorkoutPowerPulse")
 		player:SetAttribute("WorkoutPowerPulse", (if typeof(pulse) == "number" then pulse else 0) + 1)
 		player:SetAttribute("WorkoutLastGain", def.powerGain)
+		return true
 	end
 
-	-- Immediate first gain so white flash + +N land together on activate.
+	-- First gain only if cooldown allows (blocks hotbar spam for free +power).
 	applyGainTick()
 
-	local last = os.clock()
+	local last = lastWorkoutGainAt[player.UserId] or os.clock()
 	local session = { gearId = gearId, conn = nil :: RBXScriptConnection?, lastTick = last }
 	session.conn = RunService.Heartbeat:Connect(function()
 		if not player.Parent then
@@ -293,11 +309,12 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 			return
 		end
 		local now = os.clock()
-		if now - session.lastTick < 1 then
+		if now - session.lastTick < WORKOUT_GAIN_COOLDOWN then
 			return
 		end
-		session.lastTick = now
-		applyGainTick()
+		if applyGainTick() then
+			session.lastTick = now
+		end
 	end)
 	workoutSessions[player] = session
 	return true, nil
@@ -347,6 +364,7 @@ function GearService.init()
 	Players.PlayerAdded:Connect(bindPlayer)
 	Players.PlayerRemoving:Connect(function(player)
 		GearService.stopWorkout(player)
+		lastWorkoutGainAt[player.UserId] = nil
 		local conns = playerConns[player]
 		if conns then
 			for _, c in conns do

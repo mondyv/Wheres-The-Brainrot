@@ -456,7 +456,8 @@ local function webProjectileCFrame(pos: Vector3, flightDir: Vector3, tipLocal: V
 		upHint = Vector3.xAxis
 	end
 	-- lookAt aims LookVector (-Z) along flight; map model tip axis onto that -Z.
-	return CFrame.lookAt(pos, pos + dir, upHint) * rotationMappingLocalToNegZ(tip)
+	-- Extra 180° yaw: many Shooting Web meshes are authored facing +Z / opposite the Point.
+	return CFrame.lookAt(pos, pos + dir, upHint) * rotationMappingLocalToNegZ(tip) * CFrame.Angles(0, math.pi, 0)
 end
 
 local function getWebProjectilePosition(web: Model): Vector3
@@ -2501,6 +2502,8 @@ local function runEncounter(fallbackAnchor: Vector3)
 	else
 		flightDir = flightDir.Unit
 	end
+	-- Lock impact at fire time — do not home onto the player each frame.
+	local lockedImpact = getWebImpactPos(flightDir, shotTarget, spider, web)
 	setWebProjectileCFrame(web, spiderShoot, flightDir)
 
 	GameSoundEffects.playSpiderWebShot()
@@ -2661,9 +2664,8 @@ local function runEncounter(fallbackAnchor: Vector3)
 
 		playerAim = getPlayerChestPos(fallbackAnchor)
 		spider:PivotTo(cfFacingTarget(spider:GetPivot().Position, playerAim))
-		shotTarget = getWebImpactPos(flightDir, getPlayerChestPos(fallbackAnchor), spider, web)
 		currentEased = smoothstep(math.clamp(travelAlpha, 0, 1))
-		local pos = spiderShoot:Lerp(shotTarget, currentEased)
+		local pos = spiderShoot:Lerp(lockedImpact, currentEased)
 		setWebProjectileCFrame(web, pos, flightDir)
 
 		if timingProgressFill then
@@ -2748,7 +2750,7 @@ local function runEncounter(fallbackAnchor: Vector3)
 	task.wait(0.1)
 	stopCameraRig()
 
-	local hitTarget = getWebImpactPos(flightDir, getPlayerChestPos(fallbackAnchor), spider, web)
+	local hitTarget = lockedImpact
 	snapWebToImpact(web, getWebProjectilePosition(web), hitTarget, flightDir, 0.14)
 	holdHitImpactCamera(hitTarget, spider:GetPivot().Position)
 

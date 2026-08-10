@@ -132,6 +132,8 @@ local refreshPointers: () -> ()
 local stopObjectiveDots: () -> ()
 local startObjectiveDots: (string) -> ()
 local completeCurrentIf: (TutorialConfig.StepId) -> ()
+local resolveStepText: (TutorialConfig.StepDef) -> string
+local resolveStepRetry: (TutorialConfig.StepDef) -> string?
 
 local function currentStep(): TutorialConfig.StepDef?
 	if not active or stepIndex < 1 then
@@ -490,13 +492,16 @@ local function isControllerUi(): boolean
 	return GamepadInput.isPreferred()
 end
 
-local function resolveStepText(step: TutorialConfig.StepDef): string
+local function resolveStepTextImpl(step: TutorialConfig.StepDef): string
 	return TutorialConfig.stepText(step, isControllerUi())
 end
 
-local function resolveStepRetry(step: TutorialConfig.StepDef): string?
+local function resolveStepRetryImpl(step: TutorialConfig.StepDef): string?
 	return TutorialConfig.stepRetryText(step, isControllerUi())
 end
+
+resolveStepText = resolveStepTextImpl
+resolveStepRetry = resolveStepRetryImpl
 
 local function findMobileJumpButton(): GuiButton?
 	if not Svc.UserInputService.TouchEnabled then

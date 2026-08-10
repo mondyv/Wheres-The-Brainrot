@@ -383,45 +383,158 @@ local function resolvePowerHudColor(amountLabel: TextLabel?): Color3
 	return POWER_HUD_YELLOW
 end
 
-local function pulsePowerHud(amountLabel: GuiObject?)
+local function ensureHudScale(host: GuiObject): UIScale
+	local sc = powerHudScale
+	if sc and sc.Parent == host then
+		return sc
+	end
+	sc = host:FindFirstChildOfClass("UIScale")
+	if not sc then
+		sc = Instance.new("UIScale")
+		sc.Scale = 1
+		sc.Parent = host
+	end
+	powerHudScale = sc
+	return sc
+end
+
+local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?)
 	if not amountLabel then
 		return
 	end
-	local host = amountLabel.Parent
-	local scaleHost: GuiObject = if host and host:IsA("GuiObject") then host :: GuiObject else amountLabel
-	local sc = powerHudScale
-	if not sc or sc.Parent ~= scaleHost then
-		sc = scaleHost:FindFirstChildOfClass("UIScale")
-		if not sc then
-			sc = Instance.new("UIScale")
-			sc.Scale = 1
-			sc.Parent = scaleHost
-		end
-		powerHudScale = sc
+	local host: GuiObject = if powerFrame then powerFrame else amountLabel
+	local parent = amountLabel.Parent
+	if not powerFrame and parent and parent:IsA("GuiObject") then
+		host = parent :: GuiObject
 	end
+
+	local sc = ensureHudScale(host)
 	sc.Scale = 1
 	local up = TweenService:Create(
 		sc,
-		TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = 1.22 }
+		TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1.28 }
 	)
 	up:Play()
 	up.Completed:Connect(function()
 		if sc.Parent then
 			TweenService:Create(
 				sc,
-				TweenInfo.new(0.28, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out),
+				TweenInfo.new(0.32, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out),
 				{ Scale = 1 }
 			):Play()
 		end
 	end)
-	if amountLabel:IsA("TextLabel") then
-		local base = amountLabel.TextColor3
-		amountLabel.TextColor3 = Color3.new(1, 1, 1)
+
+	-- Soft yellow bloom behind the counter (simple frame so we don't depend on a glow decal).
+	local glow = host:FindFirstChild("PowerHitGlow")
+	if glow then
+		glow:Destroy()
+	end
+	local bloom = Instance.new("Frame")
+	bloom.Name = "PowerHitGlow"
+	bloom.AnchorPoint = Vector2.new(0.5, 0.5)
+	bloom.Position = UDim2.fromScale(0.5, 0.5)
+	bloom.Size = UDim2.fromScale(1.15, 1.25)
+	bloom.BackgroundColor3 = POWER_HUD_YELLOW
+	bloom.BackgroundTransparency = 0.35
+	bloom.BorderSizePixel = 0
+	bloom.ZIndex = math.max(0, host.ZIndex - 1)
+	bloom.Parent = host
+	local bloomCorner = Instance.new("UICorner")
+	bloomCorner.CornerRadius = UDim.new(0.35, 0)
+	bloomCorner.Parent = bloom
+	TweenService:Create(
+		bloom,
+		TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ BackgroundTransparency = 1, Size = UDim2.fromScale(1.65, 1.85) }
+	):Play()
+	task.delay(0.48, function()
+		if bloom.Parent then
+			bloom:Destroy()
+		end
+	end)
+
+	-- Bright rim flash on the counter frame.
+	local rim = host:FindFirstChild("PowerHitRim")
+	if rim then
+		rim:Destroy()
+	end
+	local rimStroke = Instance.new("UIStroke")
+	rimStroke.Name = "PowerHitRim"
+	rimStroke.Thickness = 0
+	rimStroke.Color = Color3.fromRGB(255, 245, 180)
+	rimStroke.Transparency = 0
+	rimStroke.Parent = host
+	TweenService:Create(
+		rimStroke,
+		TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Thickness = 3.5 }
+	):Play()
+	task.delay(0.1, function()
+		if not rimStroke.Parent then
+			return
+		end
 		TweenService:Create(
-			amountLabel,
-			TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ TextColor3 = base }
+			rimStroke,
+			TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ Thickness = 0, Transparency = 1 }
+		):Play()
+		task.delay(0.45, function()
+			if rimStroke.Parent then
+				rimStroke:Destroy()
+			end
+		end)
+	end)
+
+	if amountLabel:IsA("TextLabel") then
+		local label = amountLabel :: TextLabel
+		local baseColor = label.TextColor3
+		local baseStroke: UIStroke? = label:FindFirstChildOfClass("UIStroke")
+		local baseStrokeColor = if baseStroke then baseStroke.Color else nil
+		local baseStrokeThick = if baseStroke then baseStroke.Thickness else nil
+
+		label.TextColor3 = Color3.fromRGB(255, 255, 230)
+		TweenService:Create(
+			label,
+			TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ TextColor3 = POWER_HUD_YELLOW }
+		):Play()
+		task.delay(0.18, function()
+			if label.Parent then
+				TweenService:Create(
+					label,
+					TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					{ TextColor3 = baseColor }
+				):Play()
+			end
+		end)
+
+		if baseStroke then
+			baseStroke.Color = Color3.fromRGB(255, 240, 160)
+			baseStroke.Thickness = (baseStrokeThick or 2) + 1.5
+			TweenService:Create(
+				baseStroke,
+				TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{
+					Color = baseStrokeColor or Color3.new(0, 0, 0),
+					Thickness = baseStrokeThick or 2,
+				}
+			):Play()
+		end
+	end
+
+	-- Flash any icon sitting in the Power counter.
+	local icon = host:FindFirstChild("Icon") or host:FindFirstChildWhichIsA("ImageLabel")
+	if icon and icon:IsA("ImageLabel") and icon.Name ~= "PowerHitGlow" then
+		local baseT = icon.ImageTransparency
+		local baseC = icon.ImageColor3
+		icon.ImageTransparency = 0
+		icon.ImageColor3 = Color3.fromRGB(255, 255, 220)
+		TweenService:Create(
+			icon,
+			TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ ImageColor3 = baseC, ImageTransparency = baseT }
 		):Play()
 	end
 end
@@ -434,6 +547,7 @@ local function spawnPowerFloater(gain: number)
 	local target = powerFrame and (powerFrame:FindFirstChild("Amount") or powerFrame:FindFirstChildWhichIsA("TextLabel"))
 	local amountLabel = if target and target:IsA("TextLabel") then target :: TextLabel else nil
 	local hudColor = resolvePowerHudColor(amountLabel)
+	local powerGui = if powerFrame and powerFrame:IsA("GuiObject") then powerFrame :: GuiObject else nil
 
 	local cam = workspace.CurrentCamera
 	if not cam then
@@ -475,10 +589,10 @@ local function spawnPowerFloater(gain: number)
 	local muscle = Instance.new("ImageLabel")
 	muscle.Name = "Muscle"
 	muscle.BackgroundTransparency = 1
-	muscle.Size = UDim2.fromOffset(30, 30)
-	muscle.Image = GearConfig.WORKOUT_IMAGE
+	muscle.Size = UDim2.fromOffset(32, 32)
+	muscle.Image = "rbxassetid://73088512205933"
 	muscle.ScaleType = Enum.ScaleType.Fit
-	muscle.ImageColor3 = hudColor
+	muscle.ImageColor3 = Color3.new(1, 1, 1)
 	muscle.LayoutOrder = 1
 	muscle.ZIndex = 82
 	muscle.Parent = row
@@ -525,8 +639,11 @@ local function spawnPowerFloater(gain: number)
 	)
 	move:Play()
 	move.Completed:Connect(function()
-		-- Combine into the Power counter: suck-in + HUD pop.
-		pulsePowerHud(if target and target:IsA("GuiObject") then target :: GuiObject else nil)
+		-- Combine into the Power counter: suck-in + light-up hit.
+		pulsePowerHud(
+			if target and target:IsA("GuiObject") then target :: GuiObject else nil,
+			powerGui
+		)
 		local suck = TweenService:Create(
 			scale,
 			TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.In),

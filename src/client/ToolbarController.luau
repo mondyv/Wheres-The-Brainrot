@@ -322,19 +322,19 @@ local ToolbarController = {}
 		end
 		addFrom(getBackpack())
 		addFrom(player.Character)
-		-- Workout gears first (ToolbarPriority), then other extras.
+		-- Workout gears always first, then ToolbarPriority, then name.
 		table.sort(out, function(a: Tool, b: Tool)
+			local aGear = a:GetAttribute("WorkoutGearTool") == true
+			local bGear = b:GetAttribute("WorkoutGearTool") == true
+			if aGear ~= bGear then
+				return aGear
+			end
 			local ap = a:GetAttribute("ToolbarPriority")
 			local bp = b:GetAttribute("ToolbarPriority")
 			local an = if typeof(ap) == "number" then ap else 0
 			local bn = if typeof(bp) == "number" then bp else 0
 			if an ~= bn then
 				return an > bn
-			end
-			local aGear = a:GetAttribute("WorkoutGearTool") == true
-			local bGear = b:GetAttribute("WorkoutGearTool") == true
-			if aGear ~= bGear then
-				return aGear
 			end
 			return a.Name < b.Name
 		end)
@@ -755,6 +755,46 @@ local ToolbarController = {}
 		extraToolSlotByIndex[toSlot] = tool
 		sanitizeExtraToolSlotPins()
 		return true
+	end
+
+	local function findWorkoutGearTool(): Tool?
+		for _, tool in ipairs(collectExtraHotbarTools()) do
+			if tool:GetAttribute("WorkoutGearTool") == true and tool.Parent then
+				return tool
+			end
+		end
+		for _, tool in ipairs(parkedExtraTools) do
+			if tool:GetAttribute("WorkoutGearTool") == true and tool.Parent then
+				return tool
+			end
+		end
+		return nil
+	end
+
+	-- Dumbbell / workout gear always owns hotbar slot 1; brainrots there go to backpack UI.
+	local function ensureWorkoutGearOwnsHotbarSlot1(maxHotbar: number)
+		if maxHotbar < 1 then
+			return
+		end
+		local gearTool = findWorkoutGearTool()
+		if not gearTool then
+			return
+		end
+
+		if slotHasActiveBrainrot(1) then
+			requestTuckBrainrotHotbarSlot(1)
+		end
+		slotTools[1] = nil
+
+		local occupant = extraToolSlotByIndex[1]
+		if occupant and occupant ~= gearTool and occupant.Parent then
+			parkExtraToolInBackpack(occupant, 1)
+		end
+
+		removeExtraToolFromParkedList(gearTool)
+		removeExtraToolFromAllHotbarSlots(gearTool)
+		extraToolSlotByIndex[1] = gearTool
+		slotTools[1] = gearTool
 	end
 
 	local refreshParkedExtraToolsUI: () -> ()
@@ -2811,6 +2851,9 @@ local ToolbarController = {}
 			end
 		end
 
+		-- Workout gear always claims slot 1 (brainrot there → backpack inventory UI).
+		ensureWorkoutGearOwnsHotbarSlot1(maxHotbar)
+
 		local extras = collectExtraHotbarTools()
 		local assignedExtras: { [Tool]: boolean } = {}
 
@@ -2822,10 +2865,25 @@ local ToolbarController = {}
 				else
 					extraToolSlotByIndex[idx] = nil
 				end
+			elseif idx == 1 and tool:GetAttribute("WorkoutGearTool") == true and tool.Parent then
+				-- Keep gear pinned even if slotTools was briefly occupied during rebuild.
+				slotTools[1] = tool
+				assignedExtras[tool] = true
 			end
 		end
 
 		for _, tool in ipairs(extras) do
+			if tool:GetAttribute("WorkoutGearTool") == true then
+				-- Already forced onto slot 1 above — never park gear in the bag.
+				removeExtraToolFromParkedList(tool)
+				if not assignedExtras[tool] then
+					extraToolSlotByIndex[1] = tool
+					slotTools[1] = tool
+					assignedExtras[tool] = true
+				end
+				continue
+			end
+
 			if isExtraToolParked(tool) then
 				continue
 			end

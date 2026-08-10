@@ -62,7 +62,8 @@ function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
 	tool.ManualActivationOnly = false
 	tool:SetAttribute(GearConfig.GEAR_TOOL_ATTR, true)
 	tool:SetAttribute(GearConfig.GEAR_ID_ATTR, def.id)
-	tool:SetAttribute("ToolbarPriority", 1000 - def.id)
+	-- Highest toolbar priority — custom hotbar keeps workout gear in slot 1.
+	tool:SetAttribute("ToolbarPriority", 100_000)
 	if def.id == 6 then
 		tool:SetAttribute("RainbowGear", true)
 	end

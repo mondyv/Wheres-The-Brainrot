@@ -526,20 +526,57 @@ end
 
 local function ensurePowerCounter(counters: Instance): TextLabel?
 	local powerFrame = counters:FindFirstChild("Power")
+	local cash = counters:FindFirstChild("Cash")
 	if not powerFrame then
-		local cash = counters:FindFirstChild("Cash")
 		if cash and cash:IsA("GuiObject") then
 			powerFrame = cash:Clone()
 			powerFrame.Name = "Power"
+			local cashGui = cash :: GuiObject
+			local pf = powerFrame :: GuiObject
+			pf.Size = cashGui.Size
+			pf.AutomaticSize = Enum.AutomaticSize.None
 			powerFrame.Parent = counters
 			local layout = counters:FindFirstChildOfClass("UIListLayout")
 			if layout then
-				(powerFrame :: GuiObject).LayoutOrder = (cash :: GuiObject).LayoutOrder + 1
+				pf.LayoutOrder = cashGui.LayoutOrder + 1
 			end
+			local icon = powerFrame:FindFirstChild("Icon")
+			if icon and icon:IsA("ImageLabel") then
+				icon.Image = GearConfig.WORKOUT_IMAGE
+			end
+		end
+	elseif powerFrame:IsA("GuiObject") and cash and cash:IsA("GuiObject") then
+		-- Existing place Power may be stretch-sized; pin to Cash chip size.
+		local pf = powerFrame :: GuiObject
+		local cashGui = cash :: GuiObject
+		if pf.AbsoluteSize.X > cashGui.AbsoluteSize.X * 1.8 then
+			pf.Size = cashGui.Size
+			pf.AutomaticSize = Enum.AutomaticSize.None
 		end
 	end
 	if not powerFrame then
 		return nil
+	end
+	-- Ensure a stable Icon target for floater aim / hit glow.
+	local icon = powerFrame:FindFirstChild("Icon")
+	if not icon then
+		local anyImg = powerFrame:FindFirstChildWhichIsA("ImageLabel", true)
+		if anyImg then
+			anyImg.Name = "Icon"
+			if anyImg:IsA("ImageLabel") then
+				anyImg.Image = GearConfig.WORKOUT_IMAGE
+			end
+		else
+			local made = Instance.new("ImageLabel")
+			made.Name = "Icon"
+			made.BackgroundTransparency = 1
+			made.Size = UDim2.fromOffset(36, 36)
+			made.Image = GearConfig.WORKOUT_IMAGE
+			made.ScaleType = Enum.ScaleType.Fit
+			made.Parent = powerFrame
+		end
+	elseif icon:IsA("ImageLabel") and icon.Image == "" then
+		icon.Image = GearConfig.WORKOUT_IMAGE
 	end
 	local amount = powerFrame:FindFirstChild("Amount")
 	if amount and amount:IsA("TextLabel") then

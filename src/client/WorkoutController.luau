@@ -40,12 +40,12 @@ local walkSpeedBefore: number? = nil
 local jumpPowerBefore: number? = nil
 local jumpHeightBefore: number? = nil
 local floaterLayer: Frame? = nil
-local powerHudScale: UIScale? = nil
 local handleTransparency: { [BasePart]: number } = {}
 local handleBaseTransparency: { [BasePart]: number } = {}
 
 -- Match SideUI Power HUD (yellowish gold). Runtime sample overrides if available.
 local POWER_HUD_YELLOW = Color3.fromRGB(255, 214, 90)
+local POWER_HIT_WHITE = Color3.fromRGB(255, 252, 235)
 
 local function clearToolConns()
 	for _, c in toolConns do
@@ -356,144 +356,158 @@ local function resolvePowerHudColor(amountLabel: TextLabel?): Color3
 	return POWER_HUD_YELLOW
 end
 
-local function ensureHudScale(host: GuiObject): UIScale
-	local sc = powerHudScale
-	if sc and sc.Parent == host then
+local function ensureHitScale(host: GuiObject): UIScale
+	local sc = host:FindFirstChild("PowerHitScale")
+	if sc and sc:IsA("UIScale") then
 		return sc
 	end
-	sc = host:FindFirstChildOfClass("UIScale")
-	if not sc then
-		sc = Instance.new("UIScale")
-		sc.Scale = 1
-		sc.Parent = host
-	end
-	powerHudScale = sc
-	return sc
+	local made = Instance.new("UIScale")
+	made.Name = "PowerHitScale"
+	made.Scale = 1
+	made.Parent = host
+	return made
 end
 
-local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?)
-	local host: GuiObject? = nil
-	if powerFrame then
-		local icon = powerFrame:FindFirstChild("Icon")
-		if icon and icon:IsA("GuiObject") then
-			host = icon
-		else
-			host = powerFrame
-		end
-	elseif amountLabel then
-		host = amountLabel
-	end
-	if not host then
-		return
-	end
-
-	local sc = ensureHudScale(host)
+local function punchScale(host: GuiObject, peak: number)
+	local sc = ensureHitScale(host)
 	sc.Scale = 1
 	local up = TweenService:Create(
 		sc,
-		TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = 1.28 }
+		TweenInfo.new(0.09, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = peak }
 	)
 	up:Play()
 	up.Completed:Connect(function()
 		if sc.Parent then
 			TweenService:Create(
 				sc,
-				TweenInfo.new(0.32, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out),
+				TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 				{ Scale = 1 }
 			):Play()
 		end
 	end)
+end
 
-	-- Tiny fixed-pixel glow on the icon only (never stretch across SideUI).
-	local glow = host:FindFirstChild("PowerHitGlow")
-	if glow then
-		glow:Destroy()
+-- Soft round wash — parented to a non-clipping mount so it never reads as a box.
+local function softHitBloom(host: GuiObject, mount: GuiObject, diameter: number)
+	local glowName = "PowerHitGlow_" .. host.Name
+	local old = mount:FindFirstChild(glowName)
+	if old then
+		old:Destroy()
 	end
 	local bloom = Instance.new("Frame")
-	bloom.Name = "PowerHitGlow"
+	bloom.Name = glowName
 	bloom.AnchorPoint = Vector2.new(0.5, 0.5)
-	bloom.Position = UDim2.fromScale(0.5, 0.5)
-	bloom.Size = UDim2.fromOffset(64, 64)
+	local hostCenter = host.AbsolutePosition + host.AbsoluteSize * 0.5
+	local mountPos = mount.AbsolutePosition
+	bloom.Position = UDim2.fromOffset(hostCenter.X - mountPos.X, hostCenter.Y - mountPos.Y)
+	bloom.Size = UDim2.fromOffset(diameter, diameter)
 	bloom.BackgroundColor3 = POWER_HUD_YELLOW
-	bloom.BackgroundTransparency = 0.4
+	bloom.BackgroundTransparency = 0.58
 	bloom.BorderSizePixel = 0
-	bloom.ZIndex = math.max(1, host.ZIndex)
-	bloom.Parent = host
-	local bloomCorner = Instance.new("UICorner")
-	bloomCorner.CornerRadius = UDim.new(1, 0)
-	bloomCorner.Parent = bloom
+	bloom.ZIndex = math.max(host.ZIndex, mount.ZIndex) + 1
+	bloom.Parent = mount
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = bloom
 	TweenService:Create(
 		bloom,
-		TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ BackgroundTransparency = 1, Size = UDim2.fromOffset(96, 96) }
+		TweenInfo.new(0.38, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{
+			BackgroundTransparency = 1,
+			Size = UDim2.fromOffset(diameter * 1.7, diameter * 1.7),
+		}
 	):Play()
-	task.delay(0.45, function()
+	task.delay(0.42, function()
 		if bloom.Parent then
 			bloom:Destroy()
 		end
 	end)
+end
 
-	local rim = host:FindFirstChild("PowerHitRim")
-	if rim then
-		rim:Destroy()
-	end
-	local rimStroke = Instance.new("UIStroke")
-	rimStroke.Name = "PowerHitRim"
-	rimStroke.Thickness = 0
-	rimStroke.Color = Color3.fromRGB(255, 245, 180)
-	rimStroke.Transparency = 0
-	rimStroke.Parent = host
-	TweenService:Create(
-		rimStroke,
-		TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Thickness = 3 }
-	):Play()
-	task.delay(0.1, function()
-		if not rimStroke.Parent then
-			return
+local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?)
+	local icon: GuiObject? = nil
+	if powerFrame then
+		local found = powerFrame:FindFirstChild("Icon")
+		if found and found:IsA("GuiObject") then
+			icon = found
 		end
-		TweenService:Create(
-			rimStroke,
-			TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-			{ Thickness = 0, Transparency = 1 }
-		):Play()
-		task.delay(0.4, function()
-			if rimStroke.Parent then
-				rimStroke:Destroy()
-			end
-		end)
-	end)
+	end
+	local mount: GuiObject = powerFrame or amountLabel or icon
+	if not mount then
+		return
+	end
+
+	if powerFrame then
+		punchScale(powerFrame, 1.06)
+	end
+
+	if icon then
+		punchScale(icon, 1.2)
+		softHitBloom(icon, mount, 36)
+		if icon:IsA("ImageLabel") then
+			local baseC = icon.ImageColor3
+			icon.ImageColor3 = POWER_HIT_WHITE
+			TweenService:Create(
+				icon,
+				TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ ImageColor3 = baseC }
+			):Play()
+		end
+	end
 
 	if amountLabel and amountLabel:IsA("TextLabel") then
 		local label = amountLabel :: TextLabel
+		punchScale(label, 1.22)
+		softHitBloom(label, mount, 52)
+
 		local baseColor = label.TextColor3
-		label.TextColor3 = Color3.fromRGB(255, 255, 230)
+		label.TextColor3 = POWER_HIT_WHITE
 		TweenService:Create(
 			label,
-			TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 			{ TextColor3 = POWER_HUD_YELLOW }
 		):Play()
-		task.delay(0.18, function()
+		task.delay(0.22, function()
 			if label.Parent then
 				TweenService:Create(
 					label,
-					TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+					TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 					{ TextColor3 = baseColor }
 				):Play()
 			end
 		end)
-	end
 
-	if host:IsA("ImageLabel") then
-		local baseT = host.ImageTransparency
-		local baseC = host.ImageColor3
-		host.ImageColor3 = Color3.fromRGB(255, 255, 220)
+		local oldStroke = label:FindFirstChild("PowerHitTextStroke")
+		if oldStroke then
+			oldStroke:Destroy()
+		end
+		local textStroke = Instance.new("UIStroke")
+		textStroke.Name = "PowerHitTextStroke"
+		textStroke.Color = POWER_HUD_YELLOW
+		textStroke.Thickness = 0
+		textStroke.Transparency = 0.15
+		textStroke.Parent = label
 		TweenService:Create(
-			host,
-			TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ ImageColor3 = baseC, ImageTransparency = baseT }
+			textStroke,
+			TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Thickness = 2.4 }
 		):Play()
+		task.delay(0.12, function()
+			if not textStroke.Parent then
+				return
+			end
+			TweenService:Create(
+				textStroke,
+				TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ Thickness = 0, Transparency = 1 }
+			):Play()
+			task.delay(0.35, function()
+				if textStroke.Parent then
+					textStroke:Destroy()
+				end
+			end)
+		end)
 	end
 end
 
@@ -507,14 +521,12 @@ local function spawnPowerFloater(gain: number)
 		return
 	end
 
-	-- Aim at the small muscle icon / amount — never the stretched Power container.
 	local icon = powerFrame:FindFirstChild("Icon")
 	local amountLabel = powerFrame:FindFirstChild("Amount") or powerFrame:FindFirstChildWhichIsA("TextLabel")
-	local destGui: GuiObject = if icon and icon:IsA("GuiObject")
-		then icon :: GuiObject
-		elseif amountLabel and amountLabel:IsA("GuiObject")
+	local iconGui: GuiObject? = if icon and icon:IsA("GuiObject") then icon :: GuiObject else nil
+	local amountGui: GuiObject? = if amountLabel and amountLabel:IsA("GuiObject")
 		then amountLabel :: GuiObject
-		else powerFrame :: GuiObject
+		else nil
 
 	local hudColor = resolvePowerHudColor(
 		if amountLabel and amountLabel:IsA("TextLabel") then amountLabel :: TextLabel else nil
@@ -529,6 +541,18 @@ local function spawnPowerFloater(gain: number)
 		return gui.AbsolutePosition + gui.AbsoluteSize * 0.5
 	end
 
+	local function destScreen(): Vector2
+		if iconGui and amountGui then
+			-- Land between muscle + number so the chip feels like one target.
+			return (absCenter(iconGui) + absCenter(amountGui)) * 0.5
+		elseif iconGui then
+			return absCenter(iconGui)
+		elseif amountGui then
+			return absCenter(amountGui)
+		end
+		return absCenter(powerFrame :: GuiObject)
+	end
+
 	local function toLayerOffset(screen: Vector2): UDim2
 		local lp = layer.AbsolutePosition
 		return UDim2.fromOffset(screen.X - lp.X, screen.Y - lp.Y)
@@ -536,11 +560,11 @@ local function spawnPowerFloater(gain: number)
 
 	-- Wait one frame so AbsolutePosition is valid after layout.
 	task.defer(function()
-		if not layer.Parent or not destGui.Parent then
+		if not layer.Parent or not powerFrame.Parent then
 			return
 		end
 
-		local endScreen = absCenter(destGui)
+		local endScreen = destScreen()
 		local endPos = toLayerOffset(endScreen)
 
 		local character = player.Character
@@ -555,7 +579,6 @@ local function spawnPowerFloater(gain: number)
 			if onScreen then
 				startPos = toLayerOffset(Vector2.new(screenPos.X, screenPos.Y))
 			else
-				-- Start just below the Power icon if head is off-screen.
 				startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 70)
 			end
 		else
@@ -567,7 +590,8 @@ local function spawnPowerFloater(gain: number)
 		row.BackgroundTransparency = 1
 		row.BackgroundColor3 = Color3.new(0, 0, 0)
 		row.BorderSizePixel = 0
-		row.Size = UDim2.fromOffset(120, 36)
+		row.AutomaticSize = Enum.AutomaticSize.XY
+		row.Size = UDim2.fromOffset(0, 0)
 		row.AnchorPoint = Vector2.new(0.5, 0.5)
 		row.Position = startPos
 		row.ZIndex = 90
@@ -577,28 +601,21 @@ local function spawnPowerFloater(gain: number)
 		layout.FillDirection = Enum.FillDirection.Horizontal
 		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 		layout.VerticalAlignment = Enum.VerticalAlignment.Center
-		layout.Padding = UDim.new(0, 4)
+		layout.Padding = UDim.new(0, 2)
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
 		layout.Parent = row
 
-		local muscle = Instance.new("ImageLabel")
-		muscle.Name = "Muscle"
-		muscle.BackgroundTransparency = 1
-		muscle.Size = UDim2.fromOffset(28, 28)
-		muscle.Image = "rbxassetid://73088512205933"
-		muscle.ScaleType = Enum.ScaleType.Fit
-		muscle.ImageColor3 = Color3.new(1, 1, 1)
-		muscle.LayoutOrder = 1
-		muscle.ZIndex = 91
-		muscle.Parent = row
-
+		-- +N then muscle, packed tight (no fixed 80px gap).
 		local label = Instance.new("TextLabel")
 		label.Name = "Gain"
 		label.BackgroundTransparency = 1
-		label.Size = UDim2.fromOffset(80, 32)
+		label.AutomaticSize = Enum.AutomaticSize.XY
+		label.Size = UDim2.fromOffset(0, 0)
 		label.TextColor3 = hudColor
 		label.Text = "+" .. BrainrotEconomy.formatNumberShort(gain)
-		label.TextXAlignment = Enum.TextXAlignment.Left
-		label.LayoutOrder = 2
+		label.TextXAlignment = Enum.TextXAlignment.Center
+		label.TextYAlignment = Enum.TextYAlignment.Center
+		label.LayoutOrder = 1
 		label.ZIndex = 91
 		label.Parent = row
 		UiFonts.applyBodyLabel(label, 20, 13)
@@ -606,6 +623,17 @@ local function spawnPowerFloater(gain: number)
 		stroke.Thickness = 2.2
 		stroke.Color = Color3.fromRGB(40, 28, 8)
 		stroke.Parent = label
+
+		local muscle = Instance.new("ImageLabel")
+		muscle.Name = "Muscle"
+		muscle.BackgroundTransparency = 1
+		muscle.Size = UDim2.fromOffset(20, 20)
+		muscle.Image = "rbxassetid://73088512205933"
+		muscle.ScaleType = Enum.ScaleType.Fit
+		muscle.ImageColor3 = Color3.new(1, 1, 1)
+		muscle.LayoutOrder = 2
+		muscle.ZIndex = 91
+		muscle.Parent = row
 
 		local scale = Instance.new("UIScale")
 		scale.Scale = 0.5
@@ -616,12 +644,11 @@ local function spawnPowerFloater(gain: number)
 			{ Scale = 1.08 }
 		):Play()
 
-		-- Re-sample end each tick so we track the real icon (not a stretched parent).
 		local progress = Instance.new("NumberValue")
 		progress.Value = 0
 		local startX, startY = startPos.X.Offset, startPos.Y.Offset
 		local progConn = progress:GetPropertyChangedSignal("Value"):Connect(function()
-			local liveEnd = toLayerOffset(absCenter(destGui))
+			local liveEnd = toLayerOffset(destScreen())
 			local t = progress.Value
 			local one = 1 - t
 			local midX = (startX + liveEnd.X.Offset) * 0.5
@@ -640,11 +667,8 @@ local function spawnPowerFloater(gain: number)
 		move.Completed:Connect(function()
 			progConn:Disconnect()
 			progress:Destroy()
-			row.Position = toLayerOffset(absCenter(destGui))
-			pulsePowerHud(
-				if amountLabel and amountLabel:IsA("GuiObject") then amountLabel :: GuiObject else nil,
-				powerFrame :: GuiObject
-			)
+			row.Position = toLayerOffset(destScreen())
+			pulsePowerHud(amountGui, powerFrame :: GuiObject)
 			local suck = TweenService:Create(
 				scale,
 				TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.In),

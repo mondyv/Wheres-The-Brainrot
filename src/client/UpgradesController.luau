@@ -55,6 +55,9 @@ local pendingCashBundlePurchase = false
 
 local powerAmountLabel: TextLabel? = nil
 local lastShownPower = 0
+local powerTween: Tween? = nil
+local powerProxy: NumberValue? = nil
+local powerBaseColor: Color3? = nil
 local editBarGui: Frame? = nil
 local editBarDragging = false
 
@@ -511,17 +514,99 @@ local function isCashBundleProduct(productId: number): boolean
 	return StoreConfig.CASH_BUNDLE_MULTIPLIERS[productId] ~= nil
 end
 
+local POWER_FLASH_GOLD = Color3.fromRGB(255, 214, 90)
+local POWER_FLASH_WHITE = Color3.fromRGB(255, 252, 235)
+
+local function playPowerGainFlash(amountLabel: TextLabel)
+	if not powerBaseColor then
+		powerBaseColor = amountLabel.TextColor3
+	end
+	local base = powerBaseColor :: Color3
+	local punch = getOrAddUIScale(amountLabel)
+	punch.Scale = 1
+	TweenService
+		:Create(punch, TweenInfo.new(0.08, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.2 })
+		:Play()
+	task.delay(0.08, function()
+		if punch.Parent then
+			TweenService
+				:Create(punch, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
+				:Play()
+		end
+	end)
+	amountLabel.TextColor3 = POWER_FLASH_WHITE
+	TweenService:Create(
+		amountLabel,
+		TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ TextColor3 = POWER_FLASH_GOLD }
+	):Play()
+	task.delay(0.2, function()
+		if amountLabel.Parent then
+			TweenService:Create(
+				amountLabel,
+				TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ TextColor3 = base }
+			):Play()
+		end
+	end)
+end
+
 local function updatePowerLabel()
 	if not powerAmountLabel then
 		return
 	end
 	local power = WorkoutPower.readPower(player)
-	lastShownPower = power
-	local text = formatPower(power)
-	if WorkoutPower.isEdited(player) then
-		text ..= " (Edited)"
+	local edited = WorkoutPower.isEdited(player)
+	local target = power
+
+	local function applyText(n: number)
+		local text = formatPower(n)
+		if edited then
+			text ..= " (Edited)"
+		end
+		powerAmountLabel.Text = text
 	end
-	powerAmountLabel.Text = text
+
+	if powerTween then
+		powerTween:Cancel()
+		powerTween = nil
+	end
+	if powerProxy then
+		powerProxy:Destroy()
+		powerProxy = nil
+	end
+
+	local gained = target > lastShownPower + 0.5
+	local dropped = target < lastShownPower - 0.5
+	if not gained and not dropped then
+		lastShownPower = target
+		applyText(target)
+		return
+	end
+
+	if gained then
+		playPowerGainFlash(powerAmountLabel)
+	end
+
+	local start = lastShownPower
+	local proxy = Instance.new("NumberValue")
+	proxy.Value = start
+	powerProxy = proxy
+	local ti = TweenInfo.new(if gained then 0.38 else 0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	powerTween = TweenService:Create(proxy, ti, { Value = target })
+	proxy:GetPropertyChangedSignal("Value"):Connect(function()
+		applyText(proxy.Value)
+	end)
+	powerTween.Completed:Connect(function()
+		lastShownPower = target
+		applyText(target)
+		if powerProxy == proxy then
+			powerProxy = nil
+		end
+		proxy:Destroy()
+		powerTween = nil
+	end)
+	powerTween:Play()
 end
 
 local function ensurePowerCounter(counters: Instance): TextLabel?

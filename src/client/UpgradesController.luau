@@ -629,7 +629,7 @@ local function ensurePulseCluster(powerFrame: GuiObject): Frame
 		layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
 	end
 
-	-- Icon LEFT, number RIGHT — restore original counter text size.
+	-- Icon LEFT, number RIGHT — match Cash icon size so the muscle doesn't vanish.
 	if amount and amount:IsA("TextLabel") and amount.Parent ~= cluster then
 		lockPowerAmountTextSize(amount)
 	elseif amount and amount:IsA("TextLabel") then
@@ -637,13 +637,33 @@ local function ensurePulseCluster(powerFrame: GuiObject): Frame
 	end
 	if muscle then
 		muscle.LayoutOrder = 1
-		if muscle.AbsoluteSize.X < 8 or muscle.AbsoluteSize.Y < 8 then
-			muscle.Size = UDim2.fromOffset(42, 42)
+		-- Snapshot size before AutomaticSize cluster collapses scale-based icons.
+		local px = muscle.AbsoluteSize.X
+		local py = muscle.AbsoluteSize.Y
+		local counters = powerFrame.Parent
+		local cash = counters and counters:FindFirstChild("Cash")
+		local cashIcon = cash
+			and (cash:FindFirstChild("ImageLabel") or cash:FindFirstChildWhichIsA("ImageLabel", true))
+		if cashIcon and cashIcon:IsA("GuiObject") and cashIcon.AbsoluteSize.X >= 20 then
+			px = cashIcon.AbsoluteSize.X
+			py = cashIcon.AbsoluteSize.Y
+		end
+		if px < 36 or py < 36 then
+			px = 52
+			py = 52
+		end
+		muscle.AutomaticSize = Enum.AutomaticSize.None
+		muscle.Size = UDim2.fromOffset(math.floor(px + 0.5), math.floor(py + 0.5))
+		local aspect = muscle:FindFirstChildOfClass("UIAspectRatioConstraint")
+		if aspect then
+			local side = math.max(px, py)
+			muscle.Size = UDim2.fromOffset(math.floor(side + 0.5), math.floor(side + 0.5))
 		end
 		muscle.ScaleType = Enum.ScaleType.Fit
 		muscle.BackgroundTransparency = 1
 		muscle.Image = GearConfig.WORKOUT_IMAGE
 		muscle.ImageTransparency = 0
+		muscle.ImageColor3 = Color3.new(1, 1, 1)
 		muscle.Visible = true
 		muscle.ZIndex = math.max(muscle.ZIndex, (amount and amount:IsA("GuiObject") and amount.ZIndex or 1) + 1)
 		muscle.Parent = cluster

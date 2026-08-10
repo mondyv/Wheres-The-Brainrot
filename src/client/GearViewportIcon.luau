@@ -11,36 +11,50 @@ local M = {}
 local VF_NAME = "GearViewport"
 local spinConns: { [ViewportFrame]: RBXScriptConnection } = {}
 
-local function getPrimary(model: Model): BasePart?
-	if model.PrimaryPart then
-		return model.PrimaryPart
-	end
-	local primary = model:FindFirstChild("Primary", true)
-	if primary and primary:IsA("BasePart") then
-		return primary
-	end
-	return model:FindFirstChildWhichIsA("BasePart", true)
-end
-
 local function enableVfx(root: Instance)
 	for _, d in root:GetDescendants() do
 		if d:IsA("ParticleEmitter") then
 			d.Enabled = true
-			-- Viewport previews need a stronger rate or they look empty.
-			-- Rate is a number; Lifetime is a NumberRange — never compare NumberRange < number.
+			d.LockedToPart = false
+			-- ViewportFrames often need a stronger burst or they look empty.
 			local rate = d.Rate
-			if typeof(rate) == "number" and rate < 8 then
-				d.Rate = 14
+			if typeof(rate) == "number" then
+				d.Rate = math.max(rate, 18)
 			end
 			local life = d.Lifetime
-			if typeof(life) == "NumberRange" and life.Min < 1.2 then
-				d.Lifetime = NumberRange.new(1.35, 1.55)
+			if typeof(life) == "NumberRange" and life.Min < 1.1 then
+				d.Lifetime = NumberRange.new(1.2, 1.8)
 			end
-		elseif d:IsA("Beam") or d:IsA("Trail") or d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
+			if d.Drag > 2 then
+				d.Drag = 1
+			end
+			-- Kick a visible burst immediately.
+			pcall(function()
+				d:Emit(math.clamp(math.floor(d.Rate * 0.35), 4, 24))
+			end)
+		elseif d:IsA("Beam") then
+			d.Enabled = true
+			d.Width0 = math.max(d.Width0, 0.12)
+			d.Width1 = math.max(d.Width1, 0.12)
+		elseif d:IsA("Trail") then
+			d.Enabled = true
+			d.Lifetime = math.max(d.Lifetime, 0.35)
+		elseif d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
 			(d :: any).Enabled = true
 		elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
 			(d :: Light).Enabled = true
-			(d :: Light).Brightness = math.max((d :: Light).Brightness, 1.25)
+			(d :: Light).Brightness = math.max((d :: Light).Brightness, 2)
+			(d :: Light).Range = math.max((d :: Light).Range, 8)
+		end
+	end
+end
+
+local function burstVfx(root: Instance)
+	for _, d in root:GetDescendants() do
+		if d:IsA("ParticleEmitter") and d.Enabled then
+			pcall(function()
+				d:Emit(math.clamp(math.floor(d.Rate * 0.3), 3, 18))
+			end)
 		end
 	end
 end
@@ -123,9 +137,9 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	vf.Position = UDim2.fromScale(0.5, 0.5)
 	vf.AnchorPoint = Vector2.new(0.5, 0.5)
 	vf.ZIndex = host.ZIndex + 1
-	vf.Ambient = Color3.fromRGB(200, 205, 220)
+	vf.Ambient = Color3.fromRGB(210, 215, 230)
 	vf.LightColor = Color3.fromRGB(255, 255, 255)
-	vf.LightDirection = Vector3.new(-0.35, -1, -0.4)
+	vf.LightDirection = Vector3.new(-0.3, -1, -0.45)
 	vf:SetAttribute("GearId", gearId)
 	vf.Parent = host
 
@@ -145,34 +159,55 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	enableVfx(clone)
 	clone.Parent = world
 
-	local primary = getPrimary(clone)
-	if primary then
-		clone.PrimaryPart = primary
-	end
-
-	local okExtents, extents = pcall(function()
-		return clone:GetExtentsSize()
+	-- Frame the full bounding box (Primary can sit at the bottom and crop the rest).
+	local okBb, bb = pcall(function()
+		local cf, size = clone:GetBoundingBox()
+		return { cf = cf, size = size }
 	end)
-	local size = if okExtents then extents else Vector3.new(2, 2, 2)
-	local maxDim = math.max(size.X, size.Y, size.Z, 0.1)
+	local size = Vector3.new(2, 2, 2)
+	if okBb and typeof(bb) == "table" and bb.cf and bb.size then
+		clone:PivotTo(clone:GetPivot() - bb.cf.Position)
+		size = bb.size
+	end
+	local maxDim = math.max(size.X, size.Y, size.Z, 0.15)
+	local homePivot = clone:GetPivot()
+
+	-- Extra fill light so particles/beams read in the tiny shop icons.
+	local fillLight = Instance.new("PointLight")
+	fillLight.Name = "ViewportFillLight"
+	fillLight.Brightness = 2.5
+	fillLight.Range = math.max(10, maxDim * 4)
+	fillLight.Color = Color3.fromRGB(255, 250, 240)
+	local lightPart = Instance.new("Part")
+	lightPart.Name = "ViewportLightAnchor"
+	lightPart.Anchored = true
+	lightPart.CanCollide = false
+	lightPart.CanQuery = false
+	lightPart.CanTouch = false
+	lightPart.Transparency = 1
+	lightPart.Size = Vector3.new(0.2, 0.2, 0.2)
+	lightPart.CFrame = CFrame.new(0, maxDim * 0.35, maxDim * 0.4)
+	fillLight.Parent = lightPart
+	lightPart.Parent = world
+
 	local cam = Instance.new("Camera")
-	cam.FieldOfView = 35
+	cam.FieldOfView = 32
 	cam.Parent = vf
 	vf.CurrentCamera = cam
 
-	local pivot = if primary then primary.CFrame else clone:GetPivot()
-	local distance = maxDim * 1.65
+	local distance = maxDim * 1.95
 	local yaw = 0
+	local emitAcc = 0.0
 
 	local function updateCam()
-		local rot = CFrame.Angles(0, yaw, 0) * CFrame.Angles(math.rad(-18), 0, 0)
-		local lookAt = pivot.Position
-		cam.CFrame = CFrame.new(lookAt + rot:VectorToWorldSpace(Vector3.new(0, maxDim * 0.12, distance)), lookAt)
-		if clone.PrimaryPart then
-			clone:PivotTo(CFrame.new(lookAt) * CFrame.Angles(0, yaw * 0.35, 0))
-		end
+		local rot = CFrame.Angles(0, yaw, 0) * CFrame.Angles(math.rad(-16), 0, 0)
+		local camPos = rot:VectorToWorldSpace(Vector3.new(0, maxDim * 0.06, distance))
+		cam.CFrame = CFrame.new(camPos, Vector3.zero)
+		-- Spin model around bounding-box center (world origin after centering).
+		clone:PivotTo(CFrame.Angles(0, yaw * 0.4, 0) * homePivot)
 	end
 	updateCam()
+	burstVfx(clone)
 
 	if gearId == 6 then
 		GearRainbowFX.attach(clone)
@@ -185,8 +220,26 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 				stopSpin(vf)
 				return
 			end
-			yaw += dt * 1.15
+			yaw += dt * 1.05
 			updateCam()
+			emitAcc += dt
+			if emitAcc >= 0.4 then
+				emitAcc = 0
+				burstVfx(clone)
+			end
+		end)
+	else
+		-- Still pulse VFX for static hotbar icons.
+		spinConns[vf] = RunService.RenderStepped:Connect(function(dt)
+			if not vf.Parent then
+				stopSpin(vf)
+				return
+			end
+			emitAcc += dt
+			if emitAcc >= 0.45 then
+				emitAcc = 0
+				burstVfx(clone)
+			end
 		end)
 	end
 

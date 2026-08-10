@@ -63,7 +63,7 @@ local GEARS: { GearDef } = {
 	},
 	{
 		id = 5,
-		name = "Plate",
+		name = "Plate Dumbbell",
 		rarity = "uncommon",
 		weightLbs = 225,
 		powerGain = 150,

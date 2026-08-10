@@ -360,7 +360,6 @@ local function ensureChipScale(chip: GuiObject): UIScale
 	if sc and sc:IsA("UIScale") then
 		return sc
 	end
-	-- Wipe old broken hit scales from prior experiments.
 	local legacy = chip:FindFirstChild("PowerHitScale")
 	if legacy then
 		legacy:Destroy()
@@ -370,6 +369,71 @@ local function ensureChipScale(chip: GuiObject): UIScale
 	made.Scale = 1
 	made.Parent = chip
 	return made
+end
+
+local function resolveMuscleIcon(powerFrame: Instance): ImageLabel?
+	local direct = powerFrame:FindFirstChild("ImageLabel")
+	if direct and direct:IsA("ImageLabel") then
+		return direct
+	end
+	-- May already be inside PowerPulseCluster
+	local cluster = powerFrame:FindFirstChild("PowerPulseCluster")
+	if cluster then
+		local nested = cluster:FindFirstChild("ImageLabel") or cluster:FindFirstChild("Icon")
+		if nested and nested:IsA("ImageLabel") then
+			return nested
+		end
+		local any = cluster:FindFirstChildWhichIsA("ImageLabel")
+		if any then
+			return any
+		end
+	end
+	local named = powerFrame:FindFirstChild("Icon")
+	if named and named:IsA("ImageLabel") then
+		return named
+	end
+	for _, child in powerFrame:GetChildren() do
+		if child:IsA("ImageLabel") then
+			return child
+		end
+	end
+	return nil
+end
+
+local function resolvePulseCluster(powerFrame: GuiObject): GuiObject
+	local existing = powerFrame:FindFirstChild("PowerPulseCluster")
+	if existing and existing:IsA("GuiObject") then
+		return existing
+	end
+	-- UpgradesController usually creates this; build a minimal one if missing.
+	local amount = powerFrame:FindFirstChild("Amount")
+	local muscle = resolveMuscleIcon(powerFrame)
+	local cluster = Instance.new("Frame")
+	cluster.Name = "PowerPulseCluster"
+	cluster.BackgroundTransparency = 1
+	cluster.BorderSizePixel = 0
+	cluster.AutomaticSize = Enum.AutomaticSize.XY
+	cluster.Size = UDim2.fromOffset(0, 0)
+	cluster.AnchorPoint = Vector2.new(0.5, 0.5)
+	cluster.LayoutOrder = if amount and amount:IsA("GuiObject") then amount.LayoutOrder else 0
+	cluster.ZIndex = powerFrame.ZIndex
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 4)
+	layout.Parent = cluster
+	if amount and amount:IsA("GuiObject") then
+		amount.LayoutOrder = 1
+		amount.Parent = cluster
+	end
+	if muscle then
+		muscle.LayoutOrder = 2
+		muscle.Parent = cluster
+	end
+	cluster.Parent = powerFrame
+	return cluster
 end
 
 local function spawnHitLight(layer: Frame, screen: Vector2, strength: number?)
@@ -403,47 +467,56 @@ local function spawnHitLight(layer: Frame, screen: Vector2, strength: number?)
 	end)
 end
 
--- Chip gets big + soft light. Never touch Size/AnchorPoint (that hid the counter).
+-- Punch Amount+muscle cluster only (never whole Power — Edit made aim/scale feel wrong).
 local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?, layer: Frame?)
-	if powerFrame and powerFrame:IsA("GuiObject") then
-		local token = ((powerFrame:GetAttribute("PowerPulseToken") :: number?) or 0) + 1
-		powerFrame:SetAttribute("PowerPulseToken", token)
-		powerFrame:SetAttribute("PowerPulseAt", os.clock())
+	if not powerFrame or not powerFrame:IsA("GuiObject") then
+		return
+	end
 
-		local sc = ensureChipScale(powerFrame)
-		sc.Scale = 1
-		local up = TweenService:Create(
+	-- Strip mistaken whole-chip scale from earlier builds.
+	local badChip = powerFrame:FindFirstChild("PowerChipScale")
+	if badChip and badChip:IsA("UIScale") and badChip.Parent == powerFrame then
+		badChip:Destroy()
+	end
+
+	local cluster = resolvePulseCluster(powerFrame)
+	local token = ((cluster:GetAttribute("PowerPulseToken") :: number?) or 0) + 1
+	cluster:SetAttribute("PowerPulseToken", token)
+	cluster:SetAttribute("PowerPulseAt", os.clock())
+
+	local sc = ensureChipScale(cluster)
+	sc.Scale = 1
+	local up = TweenService:Create(
+		sc,
+		TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1.22 }
+	)
+	up:Play()
+	up.Completed:Connect(function()
+		if cluster:GetAttribute("PowerPulseToken") ~= token then
+			return
+		end
+		TweenService:Create(
 			sc,
-			TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-			{ Scale = 1.2 }
-		)
-		up:Play()
-		up.Completed:Connect(function()
-			if powerFrame:GetAttribute("PowerPulseToken") ~= token then
-				return
-			end
-			TweenService:Create(
-				sc,
-				TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Scale = 1 }
-			):Play()
-		end)
+			TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Scale = 1 }
+		):Play()
+	end)
 
-		if layer and layer.Parent then
-			local center = powerFrame.AbsolutePosition + powerFrame.AbsoluteSize * 0.5
-			spawnHitLight(layer, center, 1.15)
-		end
+	if layer and layer.Parent then
+		local center = cluster.AbsolutePosition + cluster.AbsoluteSize * 0.5
+		spawnHitLight(layer, center, 1.1)
+	end
 
-		local icon = powerFrame:FindFirstChild("Icon")
-		if icon and icon:IsA("ImageLabel") then
-			local baseC = icon.ImageColor3
-			icon.ImageColor3 = POWER_HIT_WHITE
-			TweenService:Create(
-				icon,
-				TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ ImageColor3 = baseC }
-			):Play()
-		end
+	local muscle = resolveMuscleIcon(powerFrame)
+	if muscle then
+		local baseC = muscle.ImageColor3
+		muscle.ImageColor3 = POWER_HIT_WHITE
+		TweenService:Create(
+			muscle,
+			TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ ImageColor3 = baseC }
+		):Play()
 	end
 
 	if amountLabel and amountLabel:IsA("TextLabel") then
@@ -482,12 +555,12 @@ local function spawnPowerFloater(gain: number)
 		return
 	end
 
-	local icon = powerFrame:FindFirstChild("Icon")
-	local amountLabel = powerFrame:FindFirstChild("Amount") or powerFrame:FindFirstChildWhichIsA("TextLabel")
+	local cluster = resolvePulseCluster(powerFrame)
+	local amountLabel = cluster:FindFirstChild("Amount") or powerFrame:FindFirstChild("Amount", true)
 	local amountGui: GuiObject? = if amountLabel and amountLabel:IsA("GuiObject")
 		then amountLabel :: GuiObject
 		else nil
-	local iconGui: GuiObject? = if icon and icon:IsA("GuiObject") then icon :: GuiObject else nil
+	local iconGui: GuiObject? = resolveMuscleIcon(powerFrame)
 
 	local hudColor = resolvePowerHudColor(
 		if amountLabel and amountLabel:IsA("TextLabel") then amountLabel :: TextLabel else nil
@@ -503,7 +576,13 @@ local function spawnPowerFloater(gain: number)
 	end
 
 	local function destScreen(): Vector2
-		if amountGui then
+		-- Aim at the amount+muscle cluster, never the full Power row (Edit skews center).
+		if cluster.AbsoluteSize.X > 1 then
+			return absCenter(cluster)
+		end
+		if amountGui and iconGui then
+			return (absCenter(amountGui) + absCenter(iconGui)) * 0.5
+		elseif amountGui then
 			return absCenter(amountGui)
 		elseif iconGui then
 			return absCenter(iconGui)
@@ -539,8 +618,11 @@ local function spawnPowerFloater(gain: number)
 		startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 48)
 	end
 
-	-- Soft burst behind the +N as it appears with the white flash.
-	spawnHitLight(layer, Vector2.new(startPos.X.Offset + layer.AbsolutePosition.X, startPos.Y.Offset + layer.AbsolutePosition.Y), 0.85)
+	spawnHitLight(
+		layer,
+		Vector2.new(startPos.X.Offset + layer.AbsolutePosition.X, startPos.Y.Offset + layer.AbsolutePosition.Y),
+		0.85
+	)
 
 	local row = Instance.new("Frame")
 	row.Name = "PowerGainFloater"

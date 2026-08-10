@@ -521,6 +521,80 @@ end
 local POWER_FLASH_GOLD = Color3.fromRGB(255, 214, 90)
 local POWER_FLASH_WHITE = Color3.fromRGB(255, 252, 235)
 
+local function resolveMuscleIcon(powerFrame: Instance): ImageLabel?
+	local direct = powerFrame:FindFirstChild("ImageLabel")
+	if direct and direct:IsA("ImageLabel") then
+		return direct
+	end
+	local named = powerFrame:FindFirstChild("Icon")
+	if named and named:IsA("ImageLabel") then
+		return named
+	end
+	for _, child in powerFrame:GetChildren() do
+		if child:IsA("ImageLabel") then
+			return child
+		end
+	end
+	return nil
+end
+
+-- Scale Amount + muscle only (not Edit / whole SideUI chip) so hits land in the right place.
+local function ensurePulseCluster(powerFrame: GuiObject): Frame
+	local existing = powerFrame:FindFirstChild("PowerPulseCluster")
+	if existing and existing:IsA("Frame") then
+		-- Recover if Amount drifted outside after a Studio sync.
+		local amount = powerFrame:FindFirstChild("Amount")
+		if amount and amount:IsA("GuiObject") and amount.Parent ~= existing then
+			amount.Parent = existing
+		end
+		local muscle = resolveMuscleIcon(powerFrame)
+		if muscle and muscle.Parent ~= existing then
+			muscle.Parent = existing
+		end
+		return existing
+	end
+
+	local amount = powerFrame:FindFirstChild("Amount")
+	local muscle = resolveMuscleIcon(powerFrame)
+
+	local cluster = Instance.new("Frame")
+	cluster.Name = "PowerPulseCluster"
+	cluster.BackgroundTransparency = 1
+	cluster.BorderSizePixel = 0
+	cluster.AutomaticSize = Enum.AutomaticSize.XY
+	cluster.Size = UDim2.fromOffset(0, 0)
+	cluster.AnchorPoint = Vector2.new(0.5, 0.5)
+	local order = 0
+	if amount and amount:IsA("GuiObject") then
+		order = amount.LayoutOrder
+	elseif muscle then
+		order = muscle.LayoutOrder
+	end
+	cluster.LayoutOrder = order
+	cluster.ZIndex = powerFrame.ZIndex
+
+	local layout = Instance.new("UIListLayout")
+	layout.Name = "PulseLayout"
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 4)
+	layout.Parent = cluster
+
+	if amount and amount:IsA("GuiObject") then
+		amount.LayoutOrder = 1
+		amount.Parent = cluster
+	end
+	if muscle then
+		muscle.LayoutOrder = 2
+		muscle.Parent = cluster
+	end
+
+	cluster.Parent = powerFrame
+	return cluster
+end
+
 local function playPowerGainFlash(amountLabel: TextLabel)
 	if not powerBaseColor then
 		powerBaseColor = amountLabel.TextColor3
@@ -532,11 +606,17 @@ local function playPowerGainFlash(amountLabel: TextLabel)
 		leftover:Destroy()
 	end
 
-	local powerFrame = amountLabel.Parent
-	-- Floater already punched the chip when it landed — don't double-hit.
-	local recentlyPulsed = powerFrame
-		and powerFrame:IsA("GuiObject")
-		and (os.clock() - ((powerFrame:GetAttribute("PowerPulseAt") :: number?) or 0)) < 0.55
+	local cluster = amountLabel.Parent
+	if not (cluster and cluster:IsA("GuiObject") and cluster.Name == "PowerPulseCluster") then
+		local powerFrame = amountLabel:FindFirstAncestor("Power")
+		if powerFrame and powerFrame:IsA("GuiObject") then
+			cluster = ensurePulseCluster(powerFrame)
+		end
+	end
+
+	local recentlyPulsed = cluster
+		and cluster:IsA("GuiObject")
+		and (os.clock() - ((cluster:GetAttribute("PowerPulseAt") :: number?) or 0)) < 0.55
 
 	amountLabel.TextColor3 = POWER_FLASH_WHITE
 	TweenService:Create(
@@ -554,30 +634,26 @@ local function playPowerGainFlash(amountLabel: TextLabel)
 		end
 	end)
 
-	if recentlyPulsed or not powerFrame or not powerFrame:IsA("GuiObject") then
+	if recentlyPulsed or not cluster or not cluster:IsA("GuiObject") then
 		return
 	end
 
-	local sc = powerFrame:FindFirstChild("PowerChipScale")
+	local sc = cluster:FindFirstChild("PowerChipScale")
 	if not sc or not sc:IsA("UIScale") then
-		local legacy = powerFrame:FindFirstChild("PowerHitScale")
-		if legacy then
-			legacy:Destroy()
-		end
 		sc = Instance.new("UIScale")
 		sc.Name = "PowerChipScale"
 		sc.Scale = 1
-		sc.Parent = powerFrame
+		sc.Parent = cluster
 	end
-	local token = ((powerFrame:GetAttribute("PowerPulseToken") :: number?) or 0) + 1
-	powerFrame:SetAttribute("PowerPulseToken", token)
-	powerFrame:SetAttribute("PowerPulseAt", os.clock())
+	local token = ((cluster:GetAttribute("PowerPulseToken") :: number?) or 0) + 1
+	cluster:SetAttribute("PowerPulseToken", token)
+	cluster:SetAttribute("PowerPulseAt", os.clock())
 	sc.Scale = 1
 	TweenService
 		:Create(sc, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.18 })
 		:Play()
 	task.delay(0.1, function()
-		if sc.Parent and powerFrame:GetAttribute("PowerPulseToken") == token then
+		if sc.Parent and cluster:GetAttribute("PowerPulseToken") == token then
 			TweenService
 				:Create(sc, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
 				:Play()
@@ -659,53 +735,32 @@ local function ensurePowerCounter(counters: Instance): TextLabel?
 			if layout then
 				pf.LayoutOrder = cashGui.LayoutOrder + 1
 			end
-			local icon = powerFrame:FindFirstChild("Icon")
-			if icon and icon:IsA("ImageLabel") then
-				icon.Image = GearConfig.WORKOUT_IMAGE
+			local muscle = resolveMuscleIcon(powerFrame)
+			if muscle then
+				muscle.Image = GearConfig.WORKOUT_IMAGE
 			end
 		end
-	elseif powerFrame:IsA("GuiObject") and cash and cash:IsA("GuiObject") then
-		-- Existing place Power may be stretch-sized; pin to Cash chip size.
-		local pf = powerFrame :: GuiObject
-		local cashGui = cash :: GuiObject
-		if pf.AbsoluteSize.X > cashGui.AbsoluteSize.X * 1.8 then
-			pf.Size = cashGui.Size
-			pf.AutomaticSize = Enum.AutomaticSize.None
-		end
 	end
-	if not powerFrame then
+	if not powerFrame or not powerFrame:IsA("GuiObject") then
 		return nil
 	end
-	-- Ensure a stable Icon target for floater aim / hit glow.
-	local icon = powerFrame:FindFirstChild("Icon")
-	if not icon then
-		local anyImg = powerFrame:FindFirstChildWhichIsA("ImageLabel", true)
-		if anyImg then
-			anyImg.Name = "Icon"
-			if anyImg:IsA("ImageLabel") then
-				anyImg.Image = GearConfig.WORKOUT_IMAGE
-			end
-		else
-			local made = Instance.new("ImageLabel")
-			made.Name = "Icon"
-			made.BackgroundTransparency = 1
-			made.Size = UDim2.fromOffset(36, 36)
-			made.Image = GearConfig.WORKOUT_IMAGE
-			made.ScaleType = Enum.ScaleType.Fit
-			made.Parent = powerFrame
-		end
-	elseif icon:IsA("ImageLabel") and icon.Image == "" then
-		icon.Image = GearConfig.WORKOUT_IMAGE
+
+	-- Studio Power already has Edit + ImageLabel — never crush it to Cash size.
+	local muscle = resolveMuscleIcon(powerFrame)
+	if muscle and muscle.Image == "" then
+		muscle.Image = GearConfig.WORKOUT_IMAGE
 	end
-	local amount = powerFrame:FindFirstChild("Amount")
+
+	ensurePulseCluster(powerFrame)
+
+	local amount = powerFrame:FindFirstChild("Amount", true)
 	if amount and amount:IsA("TextLabel") then
 		amount.TextTransparency = 0
-		amount.TextXAlignment = Enum.TextXAlignment.Center
 		local hitScale = amount:FindFirstChild("PowerHitScale")
 		if hitScale then
 			hitScale:Destroy()
 		end
-		local frameScale = powerFrame:FindFirstChild("PowerHitScale")
+		local frameScale = powerFrame:FindFirstChild("PowerChipScale") or powerFrame:FindFirstChild("PowerHitScale")
 		if frameScale and frameScale:IsA("UIScale") then
 			frameScale.Scale = 1
 		end

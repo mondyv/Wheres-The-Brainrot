@@ -229,20 +229,14 @@ function GearService.equipGear(player: Player, gearId: number): (boolean, string
 	if not tool then
 		return false, "Tool build failed"
 	end
-	local character = player.Character
+	-- Put in backpack / hotbar only — do not EquipTool. Auto-equip was starting
+	-- workouts while the upgrades shop was still open.
 	local backpack = player:FindFirstChildOfClass("Backpack")
-	if character then
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		tool.Parent = character
-		if humanoid then
-			humanoid:EquipTool(tool)
-		end
-	elseif backpack then
-		tool.Parent = backpack
-	else
+	if not backpack then
 		tool:Destroy()
 		return false, "No backpack"
 	end
+	tool.Parent = backpack
 	return true, nil
 end
 

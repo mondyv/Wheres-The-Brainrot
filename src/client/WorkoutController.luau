@@ -782,6 +782,18 @@ local function onUnequip()
 	cleanupWorkoutVisuals()
 end
 
+local function isUpgradesShopOpen(): boolean
+	local ok, main = pcall(function()
+		return PlayerGuiMain.ensure(player)
+	end)
+	if not ok or not main then
+		return false
+	end
+	local frames = main:FindFirstChild("Frames")
+	local upgrades = frames and frames:FindFirstChild("Upgrades")
+	return upgrades ~= nil and upgrades:IsA("GuiObject") and upgrades.Visible == true
+end
+
 local function bindTool(tool: Tool)
 	if tool:GetAttribute(GearConfig.GEAR_TOOL_ATTR) ~= true then
 		return
@@ -797,6 +809,10 @@ local function bindTool(tool: Tool)
 			return
 		end
 		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+			return
+		end
+		-- Never start curls while browsing the gear shop.
+		if isUpgradesShopOpen() then
 			return
 		end
 		if not startWorkoutFn then

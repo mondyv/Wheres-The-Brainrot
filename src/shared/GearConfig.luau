@@ -14,7 +14,7 @@ export type GearDef = {
 }
 
 -- Cash prices: Gear 1 affordable with tutorial $500; rest scale with power gain.
-M.GEARS: { GearDef } = {
+local GEARS: { GearDef } = {
 	{
 		id = 1,
 		name = "Tree Branch",
@@ -147,7 +147,9 @@ M.GEARS: { GearDef } = {
 	},
 }
 
+M.GEARS = GEARS
 M.WORKOUT_IMAGE = "rbxassetid://73088512205933"
+M.WORKOUT_ANIMATION_ID = "rbxassetid://118202501576957"
 M.GEAR_TOOL_ATTR = "WorkoutGearTool"
 M.GEAR_ID_ATTR = "WorkoutGearId"
 M.OWNED_GEARS_ATTR = "OwnedGears" -- comma-separated ids e.g. "1,3,5"

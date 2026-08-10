@@ -26,6 +26,8 @@ local toolConns: { RBXScriptConnection } = {}
 local charConns: { RBXScriptConnection } = {}
 local boundTools: { [Tool]: boolean } = {}
 local workoutBillboard: BillboardGui? = nil
+local workoutTrack: AnimationTrack? = nil
+local workoutAnim: Animation? = nil
 local walkSpeedBefore: number? = nil
 local jumpPowerBefore: number? = nil
 local jumpHeightBefore: number? = nil
@@ -48,6 +50,43 @@ end
 
 local function getHumanoid(character: Model?): Humanoid?
 	return character and character:FindFirstChildOfClass("Humanoid")
+end
+
+local function stopWorkoutAnim()
+	if workoutTrack then
+		workoutTrack:Stop(0.15)
+		workoutTrack = nil
+	end
+end
+
+local function playWorkoutAnim(character: Model)
+	stopWorkoutAnim()
+	local humanoid = getHumanoid(character)
+	if not humanoid then
+		return
+	end
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = humanoid
+	end
+	if not workoutAnim then
+		workoutAnim = Instance.new("Animation")
+		workoutAnim.Name = "WorkoutBarbellCurl"
+		workoutAnim.AnimationId = GearConfig.WORKOUT_ANIMATION_ID
+	end
+	local ok, trackOrErr = pcall(function()
+		return (animator :: Animator):LoadAnimation(workoutAnim :: Animation)
+	end)
+	if not ok or typeof(trackOrErr) ~= "Instance" then
+		warn("[WorkoutController] LoadAnimation failed:", trackOrErr)
+		return
+	end
+	local track = trackOrErr :: AnimationTrack
+	track.Looped = true
+	track.Priority = Enum.AnimationPriority.Action
+	track:Play(0.15)
+	workoutTrack = track
 end
 
 local function lockMovement(humanoid: Humanoid, locked: boolean)
@@ -209,6 +248,7 @@ local function onUnequip()
 			stopWorkoutFn:InvokeServer()
 		end)
 	end
+	stopWorkoutAnim()
 	destroyWorkoutBillboard()
 	local hum = getHumanoid(player.Character)
 	if hum then
@@ -258,6 +298,7 @@ local function bindTool(tool: Tool)
 			local hum = getHumanoid(character)
 			if character and hum then
 				lockMovement(hum, true)
+				playWorkoutAnim(character)
 				showWorkoutBillboard(character)
 			end
 		end)
@@ -322,6 +363,7 @@ local function init()
 
 	player:GetAttributeChangedSignal(GearConfig.WORKOUT_ACTIVE_ATTR):Connect(function()
 		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+			stopWorkoutAnim()
 			destroyWorkoutBillboard()
 			local hum = getHumanoid(player.Character)
 			if hum then

@@ -56,6 +56,7 @@ local pendingCashBundlePurchase = false
 local powerAmountLabel: TextLabel? = nil
 local lastShownPower = 0
 local editBarGui: Frame? = nil
+local editBarDragging = false
 
 local function formatCash(n: number): string
 	return BrainrotEconomy.formatCashShort(n)
@@ -270,6 +271,12 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 	local robux = buyButtons:FindFirstChild("BuyRobux")
 	if robux and robux:IsA("GuiObject") then
 		robux.Visible = (not isOwned) and def.robuxProductId ~= nil
+		if def.robuxPrice then
+			local priceLabel = robux:FindFirstChild("Price", true) or robux:FindFirstChildWhichIsA("TextLabel", true)
+			if priceLabel and (priceLabel:IsA("TextLabel") or priceLabel:IsA("TextButton")) then
+				(priceLabel :: TextLabel).Text = tostring(def.robuxPrice)
+			end
+		end
 	end
 
 	local host = findBuyHost(buyButtons)
@@ -344,6 +351,10 @@ local function wireGearRow(row: Instance, def: GearConfig.GearDef, refreshAll: (
 		end
 		local owned = ownedSet()
 		if owned[def.id] then
+			if equippedId() == def.id then
+				-- Already equipped — no buy/upgrade SFX.
+				return
+			end
 			if not equipFn then
 				return
 			end
@@ -351,7 +362,8 @@ local function wireGearRow(row: Instance, def: GearConfig.GearDef, refreshAll: (
 			local ok, err = equipFn:InvokeServer(def.id)
 			inFlight = false
 			if ok then
-				GameSoundEffects.playUpgrade()
+				-- Soft confirm only — never play purchase/upgrade buy SFX on equip.
+				GameSoundEffects.playNotification1()
 				refreshAll()
 			else
 				GameSoundEffects.playErrorNotif()
@@ -383,7 +395,8 @@ local function wireGearRow(row: Instance, def: GearConfig.GearDef, refreshAll: (
 		local ok, err = purchaseFn:InvokeServer(def.id)
 		inFlight = false
 		if ok then
-			GameSoundEffects.playUpgrade()
+			-- SFX + pulse immediately, then refresh rows (viewport remount can lag).
+			GameSoundEffects.playPurchase()
 			playRowPurchasePulse(row)
 			refreshAll()
 		else
@@ -567,6 +580,7 @@ local function ensureEditButton(powerFrame: Instance): GuiButton?
 end
 
 local function closeEditBar()
+	editBarDragging = false
 	if editBarGui then
 		editBarGui.Visible = false
 	end
@@ -596,6 +610,10 @@ local function openEditBar(main: ScreenGui)
 		dim.Visible = false
 		dim.Parent = main
 		;(dim :: TextButton).MouseButton1Click:Connect(function()
+			-- Dragging the slider often releases over the dim — don't close mid-edit.
+			if editBarDragging then
+				return
+			end
 			closeEditBar()
 		end)
 	end
@@ -760,6 +778,7 @@ local function openEditBar(main: ScreenGui)
 		local endedConn: RBXScriptConnection? = nil
 		local function stopDrag()
 			dragging = false
+			editBarDragging = false
 			if movedConn then
 				movedConn:Disconnect()
 				movedConn = nil
@@ -795,31 +814,44 @@ local function openEditBar(main: ScreenGui)
 			return math.clamp((x - absPos) / absSize, 0, 1)
 		end
 
+		local function beginDrag(inputX: number)
+			dragging = true
+			editBarDragging = true
+			applyAlpha(alphaFromInput(inputX))
+			if movedConn then
+				movedConn:Disconnect()
+			end
+			if endedConn then
+				endedConn:Disconnect()
+			end
+			movedConn = UserInputService.InputChanged:Connect(function(chg)
+				if not dragging then
+					return
+				end
+				if
+					chg.UserInputType == Enum.UserInputType.MouseMovement
+					or chg.UserInputType == Enum.UserInputType.Touch
+				then
+					applyAlpha(alphaFromInput(chg.Position.X))
+				end
+			end)
+			endedConn = UserInputService.InputEnded:Connect(function(ended)
+				if
+					ended.UserInputType == Enum.UserInputType.MouseButton1
+					or ended.UserInputType == Enum.UserInputType.Touch
+				then
+					-- Defer clear so dim's click (same release) sees editBarDragging=true.
+					task.defer(stopDrag)
+				end
+			end)
+		end
+
 		knob.InputBegan:Connect(function(input)
 			if
 				input.UserInputType == Enum.UserInputType.MouseButton1
 				or input.UserInputType == Enum.UserInputType.Touch
 			then
-				dragging = true
-				movedConn = UserInputService.InputChanged:Connect(function(chg)
-					if not dragging then
-						return
-					end
-					if
-						chg.UserInputType == Enum.UserInputType.MouseMovement
-						or chg.UserInputType == Enum.UserInputType.Touch
-					then
-						applyAlpha(alphaFromInput(chg.Position.X))
-					end
-				end)
-				endedConn = UserInputService.InputEnded:Connect(function(ended)
-					if
-						ended.UserInputType == Enum.UserInputType.MouseButton1
-						or ended.UserInputType == Enum.UserInputType.Touch
-					then
-						stopDrag()
-					end
-				end)
+				beginDrag(input.Position.X)
 			end
 		end)
 
@@ -828,7 +860,7 @@ local function openEditBar(main: ScreenGui)
 				input.UserInputType == Enum.UserInputType.MouseButton1
 				or input.UserInputType == Enum.UserInputType.Touch
 			then
-				applyAlpha(alphaFromInput(input.Position.X))
+				beginDrag(input.Position.X)
 			end
 		end)
 

@@ -1,7 +1,8 @@
 -- [ACTIVE] WorkoutController
--- Gear activate: hand curl anim, white Highlight fade, +power floaters into HUD.
+-- Gear activate: bar across both feet during curl, white flash, +power floaters into HUD.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -29,12 +30,18 @@ local charConns: { RBXScriptConnection } = {}
 local boundTools: { [Tool]: boolean } = {}
 local workoutTrack: AnimationTrack? = nil
 local workoutAnim: Animation? = nil
+local footMotor: Motor6D? = nil
+local footProp: Model? = nil
+local gripKillConn: RBXScriptConnection? = nil
+local gripChildConn: RBXScriptConnection? = nil
+local footPoseConn: RBXScriptConnection? = nil
 local bodyHighlight: Highlight? = nil
 local walkSpeedBefore: number? = nil
 local jumpPowerBefore: number? = nil
 local jumpHeightBefore: number? = nil
 local floaterLayer: Frame? = nil
 local powerHudScale: UIScale? = nil
+local handleTransparency: { [BasePart]: number } = {}
 
 -- Match SideUI Power HUD (yellowish gold). Runtime sample overrides if available.
 local POWER_HUD_YELLOW = Color3.fromRGB(255, 214, 90)
@@ -58,11 +65,235 @@ local function getHumanoid(character: Model?): Humanoid?
 	return character and character:FindFirstChildOfClass("Humanoid")
 end
 
+local function findFeet(character: Model): (BasePart?, BasePart?)
+	local right = character:FindFirstChild("RightFoot") or character:FindFirstChild("Right Leg")
+	local left = character:FindFirstChild("LeftFoot") or character:FindFirstChild("Left Leg")
+	local r = if right and right:IsA("BasePart") then right :: BasePart else nil
+	local l = if left and left:IsA("BasePart") then left :: BasePart else nil
+	return r, l
+end
+
 local function stopWorkoutAnim()
 	if workoutTrack then
 		workoutTrack:Stop(0.15)
 		workoutTrack = nil
 	end
+end
+
+local function destroyHandGrips(character: Model)
+	for _, child in character:GetChildren() do
+		if child:IsA("Motor6D") or child:IsA("Weld") or child:IsA("WeldConstraint") then
+			if string.find(string.lower(child.Name), "grip", 1, true) then
+				child:Destroy()
+			end
+		end
+	end
+	for _, limbName in { "RightHand", "LeftHand", "Right Arm", "Left Arm" } do
+		local limb = character:FindFirstChild(limbName)
+		if limb then
+			for _, c in limb:GetChildren() do
+				if (c:IsA("Motor6D") or c:IsA("Weld")) and string.find(string.lower(c.Name), "grip", 1, true) then
+					c:Destroy()
+				end
+			end
+		end
+	end
+end
+
+local function restoreToolVisibility()
+	for part, tr in handleTransparency do
+		if part.Parent then
+			part.LocalTransparencyModifier = tr
+		end
+	end
+	table.clear(handleTransparency)
+end
+
+local function hideToolVisibility(tool: Tool)
+	restoreToolVisibility()
+	for _, d in tool:GetDescendants() do
+		if d:IsA("BasePart") then
+			handleTransparency[d] = d.LocalTransparencyModifier
+			d.LocalTransparencyModifier = 1
+		end
+	end
+end
+
+local function clearFootAttach()
+	if gripKillConn then
+		gripKillConn:Disconnect()
+		gripKillConn = nil
+	end
+	if gripChildConn then
+		gripChildConn:Disconnect()
+		gripChildConn = nil
+	end
+	if footPoseConn then
+		footPoseConn:Disconnect()
+		footPoseConn = nil
+	end
+	if footMotor then
+		footMotor:Destroy()
+		footMotor = nil
+	end
+	if footProp then
+		footProp:Destroy()
+		footProp = nil
+	end
+	restoreToolVisibility()
+end
+
+-- Hide the hand-held tool and show a prop spanning both soles (handstand bar).
+local function attachGearAcrossFeet(character: Model, tool: Tool)
+	clearFootAttach()
+	local rightFoot, leftFoot = findFeet(character)
+	local handle = tool:FindFirstChild("Handle")
+	if not handle or not handle:IsA("BasePart") then
+		return
+	end
+	local anchorFoot = rightFoot or leftFoot
+	if not anchorFoot then
+		return
+	end
+
+	hideToolVisibility(tool)
+	destroyHandGrips(character)
+	gripKillConn = RunService.Heartbeat:Connect(function()
+		local char = player.Character
+		if char then
+			destroyHandGrips(char)
+		end
+	end)
+	gripChildConn = character.ChildAdded:Connect(function(child)
+		if
+			(child:IsA("Motor6D") or child:IsA("Weld") or child:IsA("WeldConstraint"))
+			and string.find(string.lower(child.Name), "grip", 1, true)
+		then
+			task.defer(function()
+				if child.Parent then
+					child:Destroy()
+				end
+			end)
+		end
+	end)
+
+	local prop = Instance.new("Model")
+	prop.Name = "WorkoutFootProp"
+	local primary: BasePart? = nil
+	local clones: { BasePart } = {}
+	for _, d in tool:GetDescendants() do
+		if d:IsA("BasePart") then
+			local c = d:Clone()
+			c.Anchored = false
+			c.CanCollide = false
+			c.Massless = true
+			c.CanQuery = false
+			c.CanTouch = false
+			c.LocalTransparencyModifier = 0
+			local worldCf = d.CFrame
+			c.Parent = prop
+			c.CFrame = worldCf
+			table.insert(clones, c)
+			if d == handle or d.Name == "Handle" then
+				primary = c
+			end
+		end
+	end
+	for _, d in tool:GetChildren() do
+		if not d:IsA("BasePart") and not d:IsA("Script") and not d:IsA("LocalScript") then
+			local okClone, cloned = pcall(function()
+				return d:Clone()
+			end)
+			if okClone and cloned then
+				cloned.Parent = prop
+			end
+		end
+	end
+	if not primary then
+		primary = clones[1]
+	end
+	if not primary then
+		prop:Destroy()
+		restoreToolVisibility()
+		return
+	end
+	primary.Name = "Handle"
+	for _, p in clones do
+		if p ~= primary then
+			local w = Instance.new("WeldConstraint")
+			w.Part0 = primary
+			w.Part1 = p
+			w.Parent = primary
+		end
+	end
+
+	-- Midpoint between both soles so the bar sits across the legs.
+	local soleOffset = Vector3.new(0, -anchorFoot.Size.Y * 0.5 - 0.1, 0)
+	local midWorld: CFrame
+	if rightFoot and leftFoot then
+		local a = rightFoot.CFrame:PointToWorldSpace(soleOffset)
+		local b = leftFoot.CFrame:PointToWorldSpace(soleOffset)
+		local mid = (a + b) * 0.5
+		local across = (b - a)
+		if across.Magnitude < 0.05 then
+			across = rightFoot.CFrame.RightVector
+		end
+		local right = across.Unit
+		local up = ((rightFoot.CFrame.UpVector + leftFoot.CFrame.UpVector) * 0.5).Unit
+		if up.Magnitude < 0.1 then
+			up = Vector3.new(0, 1, 0)
+		end
+		local look = right:Cross(up).Unit
+		up = look:Cross(right).Unit
+		midWorld = CFrame.fromMatrix(mid, right, up)
+	else
+		midWorld = anchorFoot.CFrame * CFrame.new(soleOffset) * CFrame.Angles(0, math.rad(90), math.rad(90))
+	end
+
+	primary.CFrame = midWorld
+	local motor = Instance.new("Motor6D")
+	motor.Name = "WorkoutFootMotor"
+	motor.Part0 = anchorFoot
+	motor.Part1 = primary
+	motor.C0 = anchorFoot.CFrame:ToObjectSpace(midWorld)
+	motor.C1 = CFrame.new()
+	motor.Parent = anchorFoot
+	footMotor = motor
+
+	footPoseConn = RunService.RenderStepped:Connect(function()
+		if not footMotor or footMotor ~= motor or not motor.Parent then
+			return
+		end
+		local rf, lf = findFeet(player.Character or character)
+		local footA = rf or lf
+		if not footA then
+			return
+		end
+		local sole = Vector3.new(0, -footA.Size.Y * 0.5 - 0.1, 0)
+		local pose: CFrame
+		if rf and lf then
+			local a = rf.CFrame:PointToWorldSpace(sole)
+			local b = lf.CFrame:PointToWorldSpace(sole)
+			local mid = (a + b) * 0.5
+			local across = b - a
+			if across.Magnitude < 0.05 then
+				across = rf.CFrame.RightVector
+			end
+			local right = across.Unit
+			local up = (rf.CFrame.UpVector + lf.CFrame.UpVector) * 0.5
+			up = if up.Magnitude > 0.1 then up.Unit else Vector3.yAxis
+			local look = right:Cross(up)
+			look = if look.Magnitude > 0.1 then look.Unit else rf.CFrame.LookVector
+			up = look:Cross(right).Unit
+			pose = CFrame.fromMatrix(mid, right, up)
+		else
+			pose = footA.CFrame * CFrame.new(sole) * CFrame.Angles(0, math.rad(90), math.rad(90))
+		end
+		motor.C0 = anchorFoot.CFrame:ToObjectSpace(pose)
+	end)
+
+	prop.Parent = character
+	footProp = prop
 end
 
 local function playWorkoutAnim(character: Model)
@@ -354,71 +585,86 @@ end
 local function spawnPowerFloater(gain: number)
 	local main = PlayerGuiMain.ensure(player)
 	local layer = ensureFloaterLayer(main)
-	local counters = main:FindFirstChild("SideUI") and (main :: any).SideUI:FindFirstChild("Counters")
+	local sideUI = main:FindFirstChild("SideUI")
+	local counters = sideUI and sideUI:FindFirstChild("Counters")
 	local powerFrame = counters and counters:FindFirstChild("Power")
-	local target = powerFrame and (powerFrame:FindFirstChild("Amount") or powerFrame:FindFirstChildWhichIsA("TextLabel"))
-	local amountLabel = if target and target:IsA("TextLabel") then target :: TextLabel else nil
-	local hudColor = resolvePowerHudColor(amountLabel)
-	local powerGui = if powerFrame and powerFrame:IsA("GuiObject") then powerFrame :: GuiObject else nil
+	-- Prefer the whole Power counter frame so we hit the HUD chip, not a nested label.
+	local destGui: GuiObject? = if powerFrame and powerFrame:IsA("GuiObject") then powerFrame :: GuiObject else nil
+	local amountLabel = powerFrame
+		and (powerFrame:FindFirstChild("Amount") or powerFrame:FindFirstChildWhichIsA("TextLabel"))
+	if not destGui and amountLabel and amountLabel:IsA("GuiObject") then
+		destGui = amountLabel :: GuiObject
+	end
+	if not destGui then
+		return
+	end
+	local hudColor = resolvePowerHudColor(
+		if amountLabel and amountLabel:IsA("TextLabel") then amountLabel :: TextLabel else nil
+	)
 
 	local cam = workspace.CurrentCamera
 	if not cam then
 		return
 	end
 
-	-- Convert screen pixels → layer-local so the tween doesn't jump/teleport.
-	local function toLayer(screenX: number, screenY: number): Vector2
-		local origin = layer.AbsolutePosition
-		return Vector2.new(screenX - origin.X, screenY - origin.Y)
+	-- Map screen AbsolutePosition → layer UDim2 (scale) so UIScale/inset can't send it off to the right.
+	local function absCenterToLayer(gui: GuiObject): UDim2
+		local center = gui.AbsolutePosition + gui.AbsoluteSize * 0.5
+		local lp = layer.AbsolutePosition
+		local ls = layer.AbsoluteSize
+		if ls.X <= 1 or ls.Y <= 1 then
+			return UDim2.fromScale(0.5, 0.5)
+		end
+		return UDim2.fromScale((center.X - lp.X) / ls.X, (center.Y - lp.Y) / ls.Y)
 	end
 
+	local function viewportToLayer(vx: number, vy: number): UDim2
+		local lp = layer.AbsolutePosition
+		local ls = layer.AbsoluteSize
+		if ls.X <= 1 or ls.Y <= 1 then
+			return UDim2.fromScale(0.5, 0.5)
+		end
+		return UDim2.fromScale((vx - lp.X) / ls.X, (vy - lp.Y) / ls.Y)
+	end
+
+	local endPos = absCenterToLayer(destGui)
+
 	local character = player.Character
-	-- Spawn near the raised hand (or head fallback) so it tracks the curl.
 	local hand = character
 		and (
-			character:FindFirstChild("RightHand")
-			or character:FindFirstChild("Right Arm")
+			character:FindFirstChild("RightFoot")
+			or character:FindFirstChild("LeftFoot")
+			or character:FindFirstChild("RightHand")
 			or character:FindFirstChild("Head")
 		)
 	local anchor = if hand and hand:IsA("BasePart")
 		then hand
 		else (character and character:FindFirstChild("HumanoidRootPart"))
-	if not anchor or not anchor:IsA("BasePart") then
-		return
-	end
 
-	local endScreen: Vector2
-	if target and target:IsA("GuiObject") then
-		local abs = target.AbsolutePosition
-		local size = target.AbsoluteSize
-		endScreen = Vector2.new(abs.X + size.X * 0.5, abs.Y + size.Y * 0.5)
+	local startPos = endPos
+	if anchor and anchor:IsA("BasePart") then
+		local screenPos, onScreen = cam:WorldToViewportPoint(anchor.Position + Vector3.new(0, 0.4, 0))
+		if onScreen then
+			startPos = viewportToLayer(screenPos.X, screenPos.Y)
+			-- Keep start on the same half of the screen as the counter (avoids flying to the wrong side).
+			local endX = endPos.X.Scale
+			local startX = startPos.X.Scale
+			if math.abs(startX - endX) > 0.35 then
+				startPos = UDim2.fromScale(endX + (if startX > endX then 0.08 else -0.08), startPos.Y.Scale)
+			end
+		else
+			startPos = UDim2.fromScale(endPos.X.Scale, math.clamp(endPos.Y.Scale + 0.08, 0, 1))
+		end
 	else
-		return
+		startPos = UDim2.fromScale(endPos.X.Scale, math.clamp(endPos.Y.Scale + 0.08, 0, 1))
 	end
-
-	local world = anchor.Position + Vector3.new(0, 0.6, 0)
-	local screenPos, onScreen = cam:WorldToViewportPoint(world)
-	if not onScreen then
-		-- Still show from a bit below the counter if camera can't see the hand.
-		screenPos = Vector3.new(endScreen.X, endScreen.Y + 70, 0)
-	end
-
-	-- Bias start toward the counter so it doesn't fly from the wrong side.
-	local startScreen = Vector2.new(screenPos.X, screenPos.Y)
-	local toward = (endScreen - startScreen)
-	if toward.Magnitude > 8 then
-		startScreen = startScreen + toward.Unit * math.min(28, toward.Magnitude * 0.12)
-	end
-
-	local startLocal = toLayer(startScreen.X, startScreen.Y)
-	local endLocal = toLayer(endScreen.X, endScreen.Y)
 
 	local row = Instance.new("Frame")
 	row.Name = "PowerGainFloater"
 	row.BackgroundTransparency = 1
 	row.Size = UDim2.fromOffset(150, 40)
 	row.AnchorPoint = Vector2.new(0.5, 0.5)
-	row.Position = UDim2.fromOffset(startLocal.X, startLocal.Y)
+	row.Position = startPos
 	row.ZIndex = 81
 	row.Parent = layer
 
@@ -469,19 +715,19 @@ local function spawnPowerFloater(gain: number)
 		{ Scale = 1.12 }
 	):Play()
 
-	-- Smooth arc (not a straight Position tween that can look like a teleport).
+	local startX, startY = startPos.X.Scale, startPos.Y.Scale
+	local endX, endY = endPos.X.Scale, endPos.Y.Scale
+	local midX = (startX + endX) * 0.5
+	local midY = math.min(startY, endY) - 0.06
+
 	local progress = Instance.new("NumberValue")
 	progress.Value = 0
-	local mid = Vector2.new(
-		(startLocal.X + endLocal.X) * 0.5,
-		math.min(startLocal.Y, endLocal.Y) - 48
-	)
 	local progConn = progress:GetPropertyChangedSignal("Value"):Connect(function()
 		local t = progress.Value
 		local one = 1 - t
-		local x = one * one * startLocal.X + 2 * one * t * mid.X + t * t * endLocal.X
-		local y = one * one * startLocal.Y + 2 * one * t * mid.Y + t * t * endLocal.Y
-		row.Position = UDim2.fromOffset(x, y)
+		local x = one * one * startX + 2 * one * t * midX + t * t * endX
+		local y = one * one * startY + 2 * one * t * midY + t * t * endY
+		row.Position = UDim2.fromScale(x, y)
 	end)
 	local move = TweenService:Create(
 		progress,
@@ -492,9 +738,12 @@ local function spawnPowerFloater(gain: number)
 	move.Completed:Connect(function()
 		progConn:Disconnect()
 		progress:Destroy()
+		-- Re-sample destination in case HUD moved/layout settled.
+		local liveEnd = absCenterToLayer(destGui)
+		row.Position = liveEnd
 		pulsePowerHud(
-			if target and target:IsA("GuiObject") then target :: GuiObject else nil,
-			powerGui
+			if amountLabel and amountLabel:IsA("GuiObject") then amountLabel :: GuiObject else destGui,
+			if powerFrame and powerFrame:IsA("GuiObject") then powerFrame :: GuiObject else nil
 		)
 		local suck = TweenService:Create(
 			scale,
@@ -528,6 +777,7 @@ end
 
 local function cleanupWorkoutVisuals()
 	stopWorkoutAnim()
+	clearFootAttach()
 	clearBodyHighlight()
 	local hum = getHumanoid(player.Character)
 	if hum then
@@ -580,6 +830,7 @@ local function bindTool(tool: Tool)
 		local hum = getHumanoid(character)
 		if character and hum then
 			lockMovement(hum, true)
+			attachGearAcrossFeet(character, tool)
 			playWorkoutAnim(character)
 			if tool:GetAttribute("RainbowGear") == true then
 				GearRainbowFX.attach(tool)

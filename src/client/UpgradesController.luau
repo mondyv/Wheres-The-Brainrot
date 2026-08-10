@@ -61,6 +61,7 @@ local lastShownPower = 0
 local powerTween: Tween? = nil
 local powerProxy: NumberValue? = nil
 local powerBaseColor: Color3? = nil
+local powerAnimToken = 0
 local editBarGui: Frame? = nil
 local editBarDragging = false
 
@@ -753,13 +754,15 @@ local function playPowerGainFlash(amountLabel: TextLabel)
 	end)
 end
 
-local function updatePowerLabel()
+local function updatePowerLabel(opts: { target: number?, instant: boolean? }?)
 	if not powerAmountLabel then
 		return
 	end
-	local power = WorkoutPower.readPower(player)
 	local edited = WorkoutPower.isEdited(player)
-	local target = power
+	local target = if opts and typeof(opts.target) == "number"
+		then opts.target :: number
+		else WorkoutPower.readPower(player)
+	local instant = opts ~= nil and opts.instant == true
 
 	local function applyText(n: number)
 		local text = formatPower(n)
@@ -790,17 +793,28 @@ local function updatePowerLabel()
 		playPowerGainFlash(powerAmountLabel)
 	end
 
+	-- Workout gains: snap with the +N floater (don't wait on Power replication / tween lag).
+	if instant and gained then
+		lastShownPower = target
+		applyText(target)
+		return
+	end
+
 	local start = lastShownPower
 	local proxy = Instance.new("NumberValue")
 	proxy.Value = start
 	powerProxy = proxy
-	-- Snappy count-up — long tweens feel laggy next to the floater hit.
+	powerAnimToken += 1
+	local token = powerAnimToken
 	local ti = TweenInfo.new(if gained then 0.06 else 0.08, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
 	powerTween = TweenService:Create(proxy, ti, { Value = target })
 	proxy:GetPropertyChangedSignal("Value"):Connect(function()
 		applyText(proxy.Value)
 	end)
 	powerTween.Completed:Connect(function()
+		if token ~= powerAnimToken then
+			return
+		end
 		lastShownPower = target
 		applyText(target)
 		if powerProxy == proxy then
@@ -810,6 +824,22 @@ local function updatePowerLabel()
 		powerTween = nil
 	end)
 	powerTween:Play()
+end
+
+-- Same signal as the white flash / +N floater — keep the HUD number in lockstep.
+local function onWorkoutPowerPulse()
+	if not powerAmountLabel then
+		return
+	end
+	local gain = player:GetAttribute("WorkoutLastGain")
+	local g = if typeof(gain) == "number" then gain else 0
+	local actual = WorkoutPower.readPower(player)
+	local predicted = lastShownPower + math.max(0, g)
+	local target = math.max(actual, predicted)
+	if target <= lastShownPower + 0.5 then
+		return
+	end
+	updatePowerLabel({ target = target, instant = true })
 end
 
 local function ensurePowerCounter(counters: Instance): TextLabel?
@@ -1359,6 +1389,8 @@ local function init()
 			end
 		end)
 	end
+
+	player:GetAttributeChangedSignal("WorkoutPowerPulse"):Connect(onWorkoutPowerPulse)
 
 	upgrades:GetPropertyChangedSignal("Visible"):Connect(function()
 		if upgrades.Visible then

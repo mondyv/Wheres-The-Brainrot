@@ -282,9 +282,9 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 		end
 		lastWorkoutGainAt[player.UserId] = now
 		WorkoutPower.addPower(player, def.powerGain)
+		player:SetAttribute("WorkoutLastGain", def.powerGain)
 		local pulse = player:GetAttribute("WorkoutPowerPulse")
 		player:SetAttribute("WorkoutPowerPulse", (if typeof(pulse) == "number" then pulse else 0) + 1)
-		player:SetAttribute("WorkoutLastGain", def.powerGain)
 		return true
 	end
 

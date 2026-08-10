@@ -320,6 +320,22 @@ local ToolbarController = {}
 		end
 		addFrom(getBackpack())
 		addFrom(player.Character)
+		-- Workout gears first (ToolbarPriority), then other extras.
+		table.sort(out, function(a: Tool, b: Tool)
+			local ap = a:GetAttribute("ToolbarPriority")
+			local bp = b:GetAttribute("ToolbarPriority")
+			local an = if typeof(ap) == "number" then ap else 0
+			local bn = if typeof(bp) == "number" then bp else 0
+			if an ~= bn then
+				return an > bn
+			end
+			local aGear = a:GetAttribute("WorkoutGearTool") == true
+			local bGear = b:GetAttribute("WorkoutGearTool") == true
+			if aGear ~= bGear then
+				return aGear
+			end
+			return a.Name < b.Name
+		end)
 		return out
 	end
 

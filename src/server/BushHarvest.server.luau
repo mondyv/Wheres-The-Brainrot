@@ -96,12 +96,9 @@ local brainrotParkedInExpandedBackpack: { [Player]: { [number]: boolean } } = {}
 -- inventory list with fake/blank entries.
 local brainrotHotbarSlots: { [Player]: { [number]: number } } = {}
 
-local function carryCapacityForPlayer(plr: Player): number
-	local v = plr:GetAttribute("Carry")
-	if typeof(v) ~= "number" then
-		return 1
-	end
-	return math.max(1, math.floor(v))
+local function carryCapacityForPlayer(_plr: Player): number
+	-- Multiple-brainrot carry upgrade removed.
+	return 1
 end
 
 local function syncBrainrotCarryCountAttr(plr: Player)

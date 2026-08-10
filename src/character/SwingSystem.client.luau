@@ -113,6 +113,7 @@ end
 local SafezoneUtil = tryRequireModule(sharedFolder, "SafezoneUtil")
 local SwingUpgrades = tryRequireModule(sharedFolder, "SwingUpgrades")
 local SwingProgression = tryRequireModule(sharedFolder, "SwingProgression")
+local WorkoutPower = tryRequireModule(sharedFolder, "WorkoutPower")
 local WebTrapConfig = tryRequireModule(sharedFolder, "WebTrapConfig")
 local UiFonts = tryRequireModule(sharedFolder, "UiFonts")
 
@@ -510,6 +511,11 @@ local function getPowerStats()
 	if typeof(attrName) == "string" then
 		level = player:GetAttribute(attrName)
 	end
+	-- Combined Power: use workout Power → swing level when available.
+	local workoutPower = player:GetAttribute("Power")
+	if typeof(workoutPower) == "number" and WorkoutPower then
+		level = WorkoutPower.swingLevelFromPower(workoutPower)
+	end
 	if typeof(level) ~= "number" then
 		level = getFirstNumberAttribute({ "SwingPowerLevel", "PowerLevel" }) or 0
 	end
@@ -531,10 +537,16 @@ local function getRopeStats()
 		return nil
 	end
 
-	local attrName = SwingUpgrades.ROPE_LEVEL_ATTR
+	-- Reach is combined into workout Power (same level as swing force).
 	local level = nil
-	if typeof(attrName) == "string" then
-		level = player:GetAttribute(attrName)
+	local workoutPower = player:GetAttribute("Power")
+	if typeof(workoutPower) == "number" and WorkoutPower then
+		level = WorkoutPower.swingLevelFromPower(workoutPower)
+	else
+		local attrName = SwingUpgrades.ROPE_LEVEL_ATTR
+		if typeof(attrName) == "string" then
+			level = player:GetAttribute(attrName)
+		end
 	end
 	if typeof(level) ~= "number" then
 		level = getFirstNumberAttribute({ "RopeLevel", "SwingRopeLevel" }) or 0

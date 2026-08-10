@@ -2361,14 +2361,9 @@ local function cacheUpgradesBuyButton()
 		return nil
 	end
 	local container = upgrades:FindFirstChild("Container") or upgrades:FindFirstChild("Container", true)
-	local row = (container and container:FindFirstChild("Power10")) or upgrades:FindFirstChild("Power10", true)
+	local row = (container and container:FindFirstChild("1")) or upgrades:FindFirstChild("1", true)
 	if not row and container then
-		for _, ch in container:GetChildren() do
-			if typeof(ch.Name) == "string" and string.find(string.lower(ch.Name), "power", 1, true) then
-				row = ch
-				break
-			end
-		end
+		row = container:FindFirstChild("Power10") or upgrades:FindFirstChild("Power10", true)
 	end
 	if not row then
 		return nil
@@ -2377,8 +2372,8 @@ local function cacheUpgradesBuyButton()
 	if not buyButtons then
 		return nil
 	end
-	-- Cash buy only (never BuyRobux / Close).
-	local buy = buyButtons:FindFirstChild("Buy")
+	-- Cash buy / equip host (never BuyRobux / Close).
+	local buy = buyButtons:FindFirstChild("Buy/Equip/Equipped/Locked") or buyButtons:FindFirstChild("Buy")
 	if not buy then
 		return nil
 	end
@@ -2485,7 +2480,7 @@ local function refreshPointersImpl()
 	if step.id == "visitUpgrade" then
 		outlineWorld(resolveUpgradeStandModel())
 		pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
-	elseif step.id == "buyPower" then
+	elseif step.id == "buyPower" or step.id == "equipGear" then
 		local btn = cacheUpgradesBuyButton()
 		if btn and isGuiTreeVisible(btn) then
 			pointAtGui(btn, true)
@@ -2495,7 +2490,7 @@ local function refreshPointersImpl()
 					return
 				end
 				local cur = currentStep()
-				if cur and cur.id == "buyPower" and not uiPointer then
+				if cur and (cur.id == "buyPower" or cur.id == "equipGear") and not uiPointer then
 					local again = cacheUpgradesBuyButton()
 					if again and isGuiTreeVisible(again) then
 						pointAtGui(again, true)
@@ -2505,6 +2500,15 @@ local function refreshPointersImpl()
 		else
 			outlineWorld(resolveUpgradeStandModel())
 			pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
+		end
+	elseif step.id == "useWorkout" then
+		clearWorldArrow()
+		clearWorldHighlight()
+		-- Point players at hotbar / body — world arrow on character.
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if hrp and hrp:IsA("BasePart") then
+			pointAtWorld(hrp, arrowHeight(2))
 		end
 	elseif step.id == "swingLand1" then
 		local swing = resolveLand1SwingTarget()
@@ -2682,7 +2686,7 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 		clearLockedSwing()
 		swingCoach.goToBaseLite = true
 		setTutorialSoftRespawn(false)
-	elseif step.id == "grantCash" or step.id == "visitUpgrade" or step.id == "buyPower" then
+	elseif step.id == "grantCash" or step.id == "visitUpgrade" or step.id == "buyPower" or step.id == "equipGear" or step.id == "useWorkout" then
 		setTutorialSoftRespawn(true)
 	elseif step.id == "searchBush" then
 		clearLockedBush()
@@ -2804,7 +2808,7 @@ local function watchStepProgress()
 				if not worldArrowBb then
 					refreshPointers()
 				end
-			elseif step.id == "buyPower" then
+			elseif step.id == "buyPower" or step.id == "equipGear" then
 				local btn = cacheUpgradesBuyButton()
 				if btn and isGuiTreeVisible(btn) and not uiPointerStroke then
 					refreshPointers()
@@ -2820,7 +2824,7 @@ local function watchStepProgress()
 			end
 		end
 
-		if step.id == "buyPower" then
+		if step.id == "buyPower" or step.id == "equipGear" then
 			local btn = cacheUpgradesBuyButton()
 			if btn and isGuiTreeVisible(btn) then
 				if not uiPointer or uiPointerHost ~= btn then
@@ -2834,6 +2838,10 @@ local function watchStepProgress()
 				if not worldArrowBb then
 					pointAtWorld(resolveUpgradeStandPart(), arrowHeight(4))
 				end
+			end
+		elseif step.id == "useWorkout" then
+			if player:GetAttribute("WorkoutActive") == true then
+				completeCurrentIf("useWorkout")
 			end
 		elseif step.id == "swingLand1" and now - lastLandCheck > 0.35 then
 			lastLandCheck = now
@@ -3030,9 +3038,36 @@ local function bindGameplayHooks()
 
 	table.insert(
 		attrConns,
+		player:GetAttributeChangedSignal("OwnedGears"):Connect(function()
+			local owned = player:GetAttribute("OwnedGears")
+			if typeof(owned) == "string" and (owned == "1" or string.find("," .. owned .. ",", ",1,", 1, true)) then
+				completeCurrentIf("buyPower")
+			end
+		end)
+	)
+	table.insert(
+		attrConns,
+		player:GetAttributeChangedSignal("EquippedGearId"):Connect(function()
+			local id = player:GetAttribute("EquippedGearId")
+			if typeof(id) == "number" and id >= 1 then
+				completeCurrentIf("equipGear")
+			end
+		end)
+	)
+	table.insert(
+		attrConns,
+		player:GetAttributeChangedSignal("WorkoutActive"):Connect(function()
+			if player:GetAttribute("WorkoutActive") == true then
+				completeCurrentIf("useWorkout")
+			end
+		end)
+	)
+	-- Legacy fallback if OwnedGears not yet set.
+	table.insert(
+		attrConns,
 		player:GetAttributeChangedSignal(SwingUpgrades.POWER_LEVEL_ATTR):Connect(function()
-			local lvl = player:GetAttribute(SwingUpgrades.POWER_LEVEL_ATTR)
-			if typeof(lvl) == "number" and lvl > 0 then
+			local owned = player:GetAttribute("OwnedGears")
+			if typeof(owned) == "string" and owned ~= "" then
 				completeCurrentIf("buyPower")
 			end
 		end)
@@ -3080,7 +3115,8 @@ local function bindGameplayHooks()
 						completeCurrentIf("visitUpgrade")
 						task.defer(function()
 							task.wait(0.2)
-							if currentStep() and currentStep().id == "buyPower" then
+							local cur = currentStep()
+							if cur and (cur.id == "buyPower" or cur.id == "equipGear") then
 								refreshPointers()
 							end
 						end)

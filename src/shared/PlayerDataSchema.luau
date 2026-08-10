@@ -57,6 +57,10 @@ export type PlayerSaveData = {
 	powerLevel: number,
 	ropeLevel: number,
 	carryLevel: number,
+	workoutPower: number?,
+	ownedGears: string?, -- comma-separated gear ids
+	equippedGearId: number?,
+	powerEdited: boolean?,
 	totalPlayTimeSeconds: number,
 	baseFloorLevel: number,
 	dailyDayClaimed: number,

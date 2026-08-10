@@ -53,6 +53,8 @@ export type StepId =
 	"grantCash"
 	| "visitUpgrade"
 	| "buyPower"
+	| "equipGear"
+	| "useWorkout"
 	| "swingLand1"
 	| "searchBush"
 	| "claimBrainrot"
@@ -83,10 +85,24 @@ M.STEPS = {
 	},
 	{
 		id = "buyPower",
-		text = "Buy your first Power upgrade",
-		speak = "TAP BUY ON POWER!!",
-		controllerText = "Select Buy on Power with the cursor, then press A / ✕",
-		controllerSpeak = "SELECT BUY ON POWER!!",
+		text = "Buy your first workout gear",
+		speak = "TAP BUY ON TREE BRANCH!!",
+		controllerText = "Select Buy on Tree Branch with the cursor, then press A / ✕",
+		controllerSpeak = "SELECT BUY ON TREE BRANCH!!",
+	},
+	{
+		id = "equipGear",
+		text = "Equip your Tree Branch",
+		speak = "TAP EQUIP ON TREE BRANCH!!",
+		controllerText = "Select Equip on Tree Branch, then press A / ✕",
+		controllerSpeak = "SELECT EQUIP!!",
+	},
+	{
+		id = "useWorkout",
+		text = "Press your gear to work out!",
+		speak = "PRESS YOUR GEAR TO WORK OUT!!",
+		controllerText = "Select your gear in the hotbar, then press A / ✕ to work out",
+		controllerSpeak = "PRESS YOUR GEAR TO WORK OUT!!",
 	},
 	{
 		id = "swingLand1",

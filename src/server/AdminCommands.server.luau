@@ -243,7 +243,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverrestart, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
+			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, grantgear, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverrestart, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -1369,14 +1369,48 @@ local function runSetSwingLevel(
 end
 
 commands.setpower = {
-	usage = "setpower <player|me|all> <level>",
-	description = "Set Power upgrade level (SwingForce).",
+	usage = "setpower <player|me|all> <amount>",
+	description = "Set workout Power (drives swing force + reach).",
 	run = function(sender: Player, args: { string }): (boolean, string)
 		return runSetSwingLevel(sender, args, commands.setpower.usage, "power", "Power")
 	end,
 }
 commands.power = commands.setpower
 commands.setforce = commands.setpower
+
+commands.grantgear = {
+	usage = "grantgear <player|me|all> <gearId>",
+	description = "Grant a workout gear by id (1-13).",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		if not args[1] or not args[2] then
+			return false, "Usage: " .. commands.grantgear.usage
+		end
+		local gearId = tonumber(args[2])
+		if not gearId then
+			return false, "Gear id must be a number (1-13)."
+		end
+		gearId = math.floor(gearId)
+		local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
+		local GearService = require(script.Parent:WaitForChild("Modules"):WaitForChild("GearService"))
+		if not GearConfig.get(gearId) then
+			return false, "Unknown gear id."
+		end
+		local targets, targetErr = resolveTargets(sender, args[1], true)
+		if not targets then
+			return false, targetErr or "No target."
+		end
+		for _, target in targets do
+			PlayerDataService.waitUntilLoaded(target)
+			-- Unlock path: grant 1..gearId
+			for i = 1, gearId do
+				GearService.grantGear(target, i)
+			end
+			PlayerDataService.savePlayerData(target)
+		end
+		return true, string.format("Granted gear %d (and prerequisites) to %d player(s).", gearId, #targets)
+	end,
+}
+commands.gear = commands.grantgear
 
 commands.setcarry = {
 	usage = "setcarry <player|me|all> <level>",

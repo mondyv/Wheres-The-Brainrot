@@ -7,8 +7,8 @@ local player = Players.LocalPlayer
 local CarryGate = {}
 
 local function carryCapacity(): number
-	local cap = player:GetAttribute("Carry")
-	return if typeof(cap) == "number" then math.max(1, math.floor(cap)) else 1
+	-- Multiple-brainrot carry upgrade removed; always 1.
+	return 1
 end
 
 local function countOnCharacter(char: Model): number

@@ -21,6 +21,8 @@ local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild(
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
+local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
+local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 
 local IndexService = require(script.Parent:WaitForChild("IndexService"))
 
@@ -457,6 +459,13 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		powerLevel = floorNum(player:GetAttribute(SwingUpgrades.POWER_LEVEL_ATTR), 0),
 		ropeLevel = floorNum(player:GetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR), 0),
 		carryLevel = floorNum(player:GetAttribute(SwingUpgrades.CARRY_LEVEL_ATTR), 0),
+		workoutPower = floorNum(player:GetAttribute("Power"), 0),
+		ownedGears = (function()
+			local raw = player:GetAttribute("OwnedGears")
+			return if typeof(raw) == "string" then raw else ""
+		end)(),
+		equippedGearId = floorNum(player:GetAttribute("EquippedGearId"), 0),
+		powerEdited = player:GetAttribute("PowerEdited") == true,
 		totalPlayTimeSeconds = M.getTotalPlayTimeSeconds(player),
 		baseFloorLevel = floorLevel,
 		dailyDayClaimed = floorNum(player:GetAttribute(DailyConfig.DAY_ATTR), 0),
@@ -555,6 +564,16 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	player:SetAttribute(SwingUpgrades.POWER_LEVEL_ATTR, data.powerLevel)
 	player:SetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR, data.ropeLevel)
 	player:SetAttribute(SwingUpgrades.CARRY_LEVEL_ATTR, data.carryLevel)
+
+	local workoutPower = data.workoutPower
+	if typeof(workoutPower) ~= "number" or workoutPower <= 0 then
+		workoutPower = WorkoutPower.migratePowerFromLegacyLevels(data.powerLevel, data.ropeLevel)
+	end
+	player:SetAttribute(GearConfig.POWER_ATTR, math.max(0, math.floor(workoutPower)))
+	player:SetAttribute(GearConfig.POWER_EDITED_ATTR, data.powerEdited == true)
+	player:SetAttribute(GearConfig.OWNED_GEARS_ATTR, if typeof(data.ownedGears) == "string" then data.ownedGears else "")
+	player:SetAttribute(GearConfig.EQUIPPED_GEAR_ATTR, math.max(0, math.floor(data.equippedGearId or 0)))
+	WorkoutPower.syncSwingFromPower(player)
 	player:SetAttribute(PLAY_TIME_ATTR, data.totalPlayTimeSeconds)
 	player:SetAttribute(DailyConfig.DAY_ATTR, data.dailyDayClaimed)
 	player:SetAttribute(DailyConfig.CLAIMED_MASK_ATTR, data.dailyClaimedMask)
@@ -576,12 +595,6 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR, math.max(0, math.floor(data.timCheeseHarvestProgress or 0)))
 	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR, false)
 	player:SetAttribute(PlayerDataSchema.BRAINROT_ACCEPT_COUNT_ATTR, math.max(0, math.floor(data.brainrotAcceptCount or 0)))
-
-	SwingUpgrades.syncGameplayStatsFromLevels(player, {
-		power = data.powerLevel,
-		rope = data.ropeLevel,
-		carry = data.carryLevel,
-	})
 
 	sessionPlayBase[player] = data.totalPlayTimeSeconds
 	sessionJoinAt[player] = os.clock()
@@ -701,6 +714,10 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		powerLevel = floorNum(raw.powerLevel, 0),
 		ropeLevel = floorNum(raw.ropeLevel, 0),
 		carryLevel = floorNum(raw.carryLevel, 0),
+		workoutPower = floorNum(raw.workoutPower, 0),
+		ownedGears = if typeof(raw.ownedGears) == "string" then raw.ownedGears else "",
+		equippedGearId = floorNum(raw.equippedGearId, 0),
+		powerEdited = raw.powerEdited == true,
 		totalPlayTimeSeconds = floorNum(raw.totalPlayTimeSeconds, 0),
 		baseFloorLevel = math.clamp(floorNum(raw.baseFloorLevel, 1), 1, 4),
 		dailyDayClaimed = floorNum(raw.dailyDayClaimed, 0),
@@ -961,6 +978,19 @@ local function mergeAgainstPrior(
 	end
 	if payload.carryLevel < prior.carryLevel then
 		payload.carryLevel = prior.carryLevel
+	end
+	local priorPower = prior.workoutPower or 0
+	local payloadPower = payload.workoutPower or 0
+	if payloadPower < priorPower then
+		payload.workoutPower = priorPower
+	end
+	if typeof(prior.ownedGears) == "string" and prior.ownedGears ~= "" then
+		local priorSet = GearConfig.parseOwned(prior.ownedGears)
+		local payloadSet = GearConfig.parseOwned(payload.ownedGears)
+		for id in priorSet do
+			payloadSet[id] = true
+		end
+		payload.ownedGears = GearConfig.encodeOwned(payloadSet)
 	end
 	if payload.totalPlayTimeSeconds < prior.totalPlayTimeSeconds then
 		payload.totalPlayTimeSeconds = prior.totalPlayTimeSeconds
@@ -1288,6 +1318,10 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		powerLevel = 0,
 		ropeLevel = 0,
 		carryLevel = 0,
+		workoutPower = 0,
+		ownedGears = "",
+		equippedGearId = 0,
+		powerEdited = false,
 		totalPlayTimeSeconds = 0,
 		baseFloorLevel = 1,
 		dailyDayClaimed = 0,
@@ -1496,35 +1530,38 @@ function M.setTimCheeseQuestState(
 	end
 end
 
--- Admin/tools: set swing upgrade levels (allows downgrade; updates lastGood so save merge won't revert).
+-- Admin/tools: set workout Power (and/or legacy level fields). Power drives swing.
 function M.setSwingUpgradeLevels(
 	player: Player,
 	patch: { power: number?, rope: number?, carry: number? }
 ): SwingUpgrades.UpgradeLevels
+	if typeof(patch.power) == "number" then
+		-- Treat admin setpower as absolute workout Power amount.
+		WorkoutPower.setPower(player, math.max(0, math.floor(patch.power)), true)
+	elseif typeof(patch.rope) == "number" then
+		-- Reach alone: bump Power so combined swing level matches.
+		local ropeLevel = math.max(0, math.floor(patch.rope))
+		local targetPower = math.max(WorkoutPower.readPower(player), WorkoutPower.migratePowerFromLegacyLevels(0, ropeLevel))
+		WorkoutPower.setPower(player, targetPower, true)
+	end
+	-- Carry upgrades removed — always fixed.
+	player:SetAttribute(SwingUpgrades.CARRY_LEVEL_ATTR, 0)
+	player:SetAttribute("Carry", WorkoutPower.FIXED_CARRY)
+	WorkoutPower.syncSwingFromPower(player)
+
 	local levels = SwingUpgrades.readLevels(function(name: string)
 		return player:GetAttribute(name)
 	end)
-	if typeof(patch.power) == "number" then
-		levels.power = math.max(0, math.floor(patch.power))
-	end
-	if typeof(patch.rope) == "number" then
-		levels.rope = math.max(0, math.floor(patch.rope))
-	end
-	if typeof(patch.carry) == "number" then
-		levels.carry = math.clamp(math.floor(patch.carry), 0, SwingUpgrades.MAX_CARRY_UPGRADE_LEVEL)
-	end
-
-	player:SetAttribute(SwingUpgrades.POWER_LEVEL_ATTR, levels.power)
-	player:SetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR, levels.rope)
-	player:SetAttribute(SwingUpgrades.CARRY_LEVEL_ATTR, levels.carry)
-	SwingUpgrades.syncGameplayStatsFromLevels(player, levels)
 
 	local prev = lastGoodPayload[player.UserId]
 	if prev then
 		prev.powerLevel = levels.power
 		prev.ropeLevel = levels.rope
-		prev.carryLevel = levels.carry
+		prev.carryLevel = 0
+		prev.workoutPower = WorkoutPower.readPower(player)
+		prev.powerEdited = true
 	end
+
 	if player:GetAttribute(LOADED_ATTR) == true then
 		M.savePlayerData(player)
 	end

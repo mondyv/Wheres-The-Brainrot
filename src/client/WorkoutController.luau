@@ -2,6 +2,7 @@
 -- Gear activate: feet attach (handstand), curl anim, white Highlight fade, +power floaters.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -29,14 +30,17 @@ local charConns: { RBXScriptConnection } = {}
 local boundTools: { [Tool]: boolean } = {}
 local workoutTrack: AnimationTrack? = nil
 local workoutAnim: Animation? = nil
-local footWeld: WeldConstraint? = nil
 local footMotor: Motor6D? = nil
+local gripKillConn: RBXScriptConnection? = nil
 local bodyHighlight: Highlight? = nil
 local walkSpeedBefore: number? = nil
 local jumpPowerBefore: number? = nil
 local jumpHeightBefore: number? = nil
 local floaterLayer: Frame? = nil
-local handleTransparency: { [BasePart]: number } = {}
+local powerHudScale: UIScale? = nil
+
+-- Match SideUI Power HUD (yellowish gold). Runtime sample overrides if available.
+local POWER_HUD_YELLOW = Color3.fromRGB(255, 214, 90)
 
 local function clearToolConns()
 	for _, c in toolConns do
@@ -58,6 +62,7 @@ local function getHumanoid(character: Model?): Humanoid?
 end
 
 local function findFoot(character: Model): BasePart?
+	-- Prefer the sole at the end of the leg (R15 foot / R6 leg).
 	for _, name in { "RightFoot", "LeftFoot", "Right Leg", "Left Leg" } do
 		local p = character:FindFirstChild(name)
 		if p and p:IsA("BasePart") then
@@ -78,22 +83,24 @@ local function stopWorkoutAnim()
 	end
 end
 
+local function destroyHandGrips(character: Model)
+	for _, name in { "RightGrip", "LeftGrip" } do
+		local grip = character:FindFirstChild(name)
+		if grip then
+			grip:Destroy()
+		end
+	end
+end
+
 local function clearFootAttach()
-	if footWeld then
-		footWeld:Destroy()
-		footWeld = nil
+	if gripKillConn then
+		gripKillConn:Disconnect()
+		gripKillConn = nil
 	end
 	if footMotor then
 		footMotor:Destroy()
 		footMotor = nil
 	end
-	for part, tr in handleTransparency do
-		if part.Parent then
-			part.LocalTransparencyModifier = 0
-			part.Transparency = tr
-		end
-	end
-	table.clear(handleTransparency)
 end
 
 local function attachGearToFeet(character: Model, tool: Tool)
@@ -104,22 +111,26 @@ local function attachGearToFeet(character: Model, tool: Tool)
 		return
 	end
 
-	-- Break default hand grip so the barbell can sit on the feet (handstand).
-	for _, name in { "RightGrip", "LeftGrip" } do
-		local grip = character:FindFirstChild(name)
-		if grip then
-			grip:Destroy()
+	-- Kill default hand grips so the bar sits on the sole, not in the hands.
+	destroyHandGrips(character)
+	gripKillConn = RunService.Heartbeat:Connect(function()
+		local char = player.Character
+		if not char then
+			return
 		end
-	end
+		destroyHandGrips(char)
+	end)
 
-	-- Orient barbell across both feet.
-	handle.CFrame = foot.CFrame * CFrame.new(0, -0.15, 0) * CFrame.Angles(0, 0, math.rad(90))
-	local weld = Instance.new("WeldConstraint")
-	weld.Name = "WorkoutFootWeld"
-	weld.Part0 = foot
-	weld.Part1 = handle
-	weld.Parent = handle
-	footWeld = weld
+	-- Motor6D at the bottom of the foot (end of the leg), bar across the sole.
+	local soleY = -foot.Size.Y * 0.5 - 0.08
+	local motor = Instance.new("Motor6D")
+	motor.Name = "WorkoutFootMotor"
+	motor.Part0 = foot
+	motor.Part1 = handle
+	motor.C0 = CFrame.new(0, soleY, 0) * CFrame.Angles(0, math.rad(90), math.rad(90))
+	motor.C1 = CFrame.new()
+	motor.Parent = foot
+	footMotor = motor
 end
 
 local function playWorkoutAnim(character: Model)
@@ -240,21 +251,75 @@ local function ensureFloaterLayer(main: ScreenGui): Frame
 	return layer
 end
 
+local function resolvePowerHudColor(amountLabel: TextLabel?): Color3
+	if amountLabel then
+		local c = amountLabel.TextColor3
+		-- Ignore near-white / near-black defaults; keep gold.
+		local _, s, v = c:ToHSV()
+		if s > 0.15 and v > 0.35 then
+			return c
+		end
+	end
+	return POWER_HUD_YELLOW
+end
+
+local function pulsePowerHud(amountLabel: GuiObject?)
+	if not amountLabel then
+		return
+	end
+	local host = amountLabel.Parent
+	local scaleHost: GuiObject = if host and host:IsA("GuiObject") then host :: GuiObject else amountLabel
+	local sc = powerHudScale
+	if not sc or sc.Parent ~= scaleHost then
+		sc = scaleHost:FindFirstChildOfClass("UIScale")
+		if not sc then
+			sc = Instance.new("UIScale")
+			sc.Scale = 1
+			sc.Parent = scaleHost
+		end
+		powerHudScale = sc
+	end
+	sc.Scale = 1
+	local up = TweenService:Create(
+		sc,
+		TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1.22 }
+	)
+	up:Play()
+	up.Completed:Connect(function()
+		if sc.Parent then
+			TweenService:Create(
+				sc,
+				TweenInfo.new(0.28, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out),
+				{ Scale = 1 }
+			):Play()
+		end
+	end)
+	if amountLabel:IsA("TextLabel") then
+		local base = amountLabel.TextColor3
+		amountLabel.TextColor3 = Color3.new(1, 1, 1)
+		TweenService:Create(
+			amountLabel,
+			TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ TextColor3 = base }
+		):Play()
+	end
+end
+
 local function spawnPowerFloater(gain: number)
 	local main = PlayerGuiMain.ensure(player)
 	local layer = ensureFloaterLayer(main)
 	local counters = main:FindFirstChild("SideUI") and (main :: any).SideUI:FindFirstChild("Counters")
 	local powerFrame = counters and counters:FindFirstChild("Power")
 	local target = powerFrame and (powerFrame:FindFirstChild("Amount") or powerFrame:FindFirstChildWhichIsA("TextLabel"))
+	local amountLabel = if target and target:IsA("TextLabel") then target :: TextLabel else nil
+	local hudColor = resolvePowerHudColor(amountLabel)
 
 	local cam = workspace.CurrentCamera
 	if not cam then
 		return
 	end
 
-	-- Spawn beside the head (no floating muscle icon).
-	local startX: number
-	local startY: number
 	local character = player.Character
 	local head = character and character:FindFirstChild("Head")
 	local anchor = if head and head:IsA("BasePart")
@@ -263,72 +328,111 @@ local function spawnPowerFloater(gain: number)
 	if not anchor or not anchor:IsA("BasePart") then
 		return
 	end
-	local screenPos, onScreen = cam:WorldToViewportPoint(anchor.Position + Vector3.new(1.2, 1.0, 0))
+	local screenPos, onScreen = cam:WorldToViewportPoint(anchor.Position + Vector3.new(1.15, 0.85, 0))
 	if not onScreen then
 		return
 	end
-	startX = screenPos.X + 12
-	startY = screenPos.Y - 8
+	local startX = screenPos.X + 10
+	local startY = screenPos.Y - 6
+
+	-- Container: muscle icon + yellowish +N (matches Power HUD).
+	local row = Instance.new("Frame")
+	row.Name = "PowerGainFloater"
+	row.BackgroundTransparency = 1
+	row.Size = UDim2.fromOffset(150, 40)
+	row.Position = UDim2.fromOffset(startX - 24, startY - 18)
+	row.ZIndex = 81
+	row.Parent = layer
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.Padding = UDim.new(0, 4)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = row
+
+	local muscle = Instance.new("ImageLabel")
+	muscle.Name = "Muscle"
+	muscle.BackgroundTransparency = 1
+	muscle.Size = UDim2.fromOffset(30, 30)
+	muscle.Image = GearConfig.WORKOUT_IMAGE
+	muscle.ScaleType = Enum.ScaleType.Fit
+	muscle.ImageColor3 = hudColor
+	muscle.LayoutOrder = 1
+	muscle.ZIndex = 82
+	muscle.Parent = row
 
 	local label = Instance.new("TextLabel")
+	label.Name = "Gain"
 	label.BackgroundTransparency = 1
 	label.Size = UDim2.fromOffset(110, 34)
-	label.Position = UDim2.fromOffset(startX - 20, startY - 16)
 	label.TextScaled = false
-	label.TextColor3 = Color3.fromRGB(120, 255, 150)
+	label.TextColor3 = hudColor
 	label.Text = "+" .. BrainrotEconomy.formatNumberShort(gain)
+	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.TextTransparency = 0
-	label.ZIndex = 81
-	label.Parent = layer
+	label.LayoutOrder = 2
+	label.ZIndex = 82
+	label.Parent = row
 	UiFonts.applyBodyLabel(label, 22, 14)
 	local stroke = Instance.new("UIStroke")
 	stroke.Thickness = 2.5
-	stroke.Color = Color3.new(0, 0, 0)
+	stroke.Color = Color3.fromRGB(40, 28, 8)
 	stroke.Parent = label
-	local scale = Instance.new("UIScale")
-	scale.Scale = 0.55
-	scale.Parent = label
 
-	local endPos = label.Position
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.45
+	scale.Parent = row
+
+	local endPos = row.Position
 	if target and target:IsA("GuiObject") then
 		local abs = target.AbsolutePosition
 		local size = target.AbsoluteSize
-		endPos = UDim2.fromOffset(abs.X + size.X * 0.35, abs.Y + size.Y * 0.15)
+		endPos = UDim2.fromOffset(abs.X + size.X * 0.2, abs.Y + size.Y * 0.1)
 	end
 
 	TweenService:Create(
 		scale,
-		TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = 1.12 }
+		TweenInfo.new(0.24, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1.15 }
 	):Play()
-	task.delay(0.18, function()
-		if scale.Parent then
-			TweenService:Create(scale, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.9 })
-				:Play()
-		end
-	end)
 
 	local move = TweenService:Create(
-		label,
-		TweenInfo.new(0.75, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+		row,
+		TweenInfo.new(0.7, Enum.EasingStyle.Quint, Enum.EasingDirection.InOut),
 		{ Position = endPos }
 	)
 	move:Play()
 	move.Completed:Connect(function()
-		local fade = TweenService:Create(
+		-- Combine into the Power counter: suck-in + HUD pop.
+		pulsePowerHud(if target and target:IsA("GuiObject") then target :: GuiObject else nil)
+		local suck = TweenService:Create(
+			scale,
+			TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+			{ Scale = 0.15 }
+		)
+		local fadeLabel = TweenService:Create(
 			label,
-			TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 			{ TextTransparency = 1 }
 		)
 		local fadeStroke = TweenService:Create(
 			stroke,
-			TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 			{ Transparency = 1 }
 		)
-		fade:Play()
+		local fadeMuscle = TweenService:Create(
+			muscle,
+			TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ ImageTransparency = 1 }
+		)
+		suck:Play()
+		fadeLabel:Play()
 		fadeStroke:Play()
-		fade.Completed:Connect(function()
-			label:Destroy()
+		fadeMuscle:Play()
+		suck.Completed:Connect(function()
+			row:Destroy()
 		end)
 	end)
 end

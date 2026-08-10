@@ -10,6 +10,7 @@ local RunService = game:GetService("RunService")
 
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
+local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 
 local M = {}
@@ -61,7 +62,7 @@ type BoardRank = {
 
 local ranksByUserId: { [number]: { BoardRank } } = {}
 local badgeByPlayer: { [Player]: BillboardGui } = {}
-local charAddedConns: { [Player]: RBXScriptConnection } = {}
+local playerConns: { [Player]: { RBXScriptConnection } } = {}
 local chatBubbleSuppress: { [Player]: boolean } = {}
 local localWorldNotifSuppress = false
 local wiredData = false
@@ -233,6 +234,10 @@ local function shouldShowBadge(player: Player): boolean
 	if localWorldNotifSuppress and player == localPlayer then
 		return false
 	end
+	-- Hide overhead rank icons while that player is working out (dumbbell on feet).
+	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+		return false
+	end
 	-- Hide overhead rank icons during cutscenes / panel HUD hide.
 	if GameplayUiVisibility.isHidden() then
 		return false
@@ -291,14 +296,28 @@ local function refreshAllBadges(forceRebuild: boolean?)
 end
 
 local function hookPlayer(player: Player)
-	if charAddedConns[player] then
-		charAddedConns[player]:Disconnect()
+	local existing = playerConns[player]
+	if existing then
+		for _, c in existing do
+			c:Disconnect()
+		end
 	end
-	charAddedConns[player] = player.CharacterAdded:Connect(function()
-		task.defer(function()
+	local conns: { RBXScriptConnection } = {}
+	table.insert(
+		conns,
+		player.CharacterAdded:Connect(function()
+			task.defer(function()
+				refreshPlayerBadge(player)
+			end)
+		end)
+	)
+	table.insert(
+		conns,
+		player:GetAttributeChangedSignal(GearConfig.WORKOUT_ACTIVE_ATTR):Connect(function()
 			refreshPlayerBadge(player)
 		end)
-	end)
+	)
+	playerConns[player] = conns
 	if player.Character then
 		task.defer(function()
 			refreshPlayerBadge(player)
@@ -366,10 +385,12 @@ function M.init()
 	Players.PlayerRemoving:Connect(function(player)
 		destroyBadge(player)
 		chatBubbleSuppress[player] = nil
-		local conn = charAddedConns[player]
-		if conn then
-			conn:Disconnect()
-			charAddedConns[player] = nil
+		local conns = playerConns[player]
+		if conns then
+			for _, c in conns do
+				c:Disconnect()
+			end
+			playerConns[player] = nil
 		end
 	end)
 

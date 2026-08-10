@@ -1,8 +1,7 @@
 -- [ACTIVE] WorkoutController
--- Gear activate: feet attach (handstand), curl anim, white Highlight fade, +power floaters.
+-- Gear activate: hand curl anim, white Highlight fade, +power floaters into HUD.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -30,17 +29,12 @@ local charConns: { RBXScriptConnection } = {}
 local boundTools: { [Tool]: boolean } = {}
 local workoutTrack: AnimationTrack? = nil
 local workoutAnim: Animation? = nil
-local footMotor: Motor6D? = nil
-local footProp: Model? = nil
-local gripKillConn: RBXScriptConnection? = nil
-local gripChildConn: RBXScriptConnection? = nil
 local bodyHighlight: Highlight? = nil
 local walkSpeedBefore: number? = nil
 local jumpPowerBefore: number? = nil
 local jumpHeightBefore: number? = nil
 local floaterLayer: Frame? = nil
 local powerHudScale: UIScale? = nil
-local handleTransparency: { [BasePart]: number } = {}
 
 -- Match SideUI Power HUD (yellowish gold). Runtime sample overrides if available.
 local POWER_HUD_YELLOW = Color3.fromRGB(255, 214, 90)
@@ -64,193 +58,11 @@ local function getHumanoid(character: Model?): Humanoid?
 	return character and character:FindFirstChildOfClass("Humanoid")
 end
 
-local function findFoot(character: Model): BasePart?
-	-- Prefer the sole at the end of the leg (R15 foot / R6 leg).
-	for _, name in { "RightFoot", "LeftFoot", "Right Leg", "Left Leg" } do
-		local p = character:FindFirstChild(name)
-		if p and p:IsA("BasePart") then
-			return p
-		end
-	end
-	local lower = character:FindFirstChild("LowerTorso") or character:FindFirstChild("Torso")
-	if lower and lower:IsA("BasePart") then
-		return lower
-	end
-	return nil
-end
-
 local function stopWorkoutAnim()
 	if workoutTrack then
 		workoutTrack:Stop(0.15)
 		workoutTrack = nil
 	end
-end
-
-local function destroyHandGrips(character: Model)
-	for _, child in character:GetChildren() do
-		if child:IsA("Motor6D") or child:IsA("Weld") or child:IsA("WeldConstraint") then
-			local name = string.lower(child.Name)
-			if string.find(name, "grip", 1, true) then
-				child:Destroy()
-			end
-		end
-	end
-	-- Also strip any hand→handle joints the Tool recreates under limbs.
-	for _, limbName in { "RightHand", "LeftHand", "Right Arm", "Left Arm" } do
-		local limb = character:FindFirstChild(limbName)
-		if limb then
-			for _, c in limb:GetChildren() do
-				if c:IsA("Motor6D") or c:IsA("Weld") then
-					local n = string.lower(c.Name)
-					if string.find(n, "grip", 1, true) then
-						c:Destroy()
-					end
-				end
-			end
-		end
-	end
-end
-
-local function restoreToolVisibility()
-	for part, tr in handleTransparency do
-		if part.Parent then
-			part.LocalTransparencyModifier = tr
-		end
-	end
-	table.clear(handleTransparency)
-end
-
-local function hideToolVisibility(tool: Tool)
-	restoreToolVisibility()
-	for _, d in tool:GetDescendants() do
-		if d:IsA("BasePart") then
-			handleTransparency[d] = d.LocalTransparencyModifier
-			d.LocalTransparencyModifier = 1
-		end
-	end
-end
-
-local function clearFootAttach()
-	if gripKillConn then
-		gripKillConn:Disconnect()
-		gripKillConn = nil
-	end
-	if gripChildConn then
-		gripChildConn:Disconnect()
-		gripChildConn = nil
-	end
-	if footMotor then
-		footMotor:Destroy()
-		footMotor = nil
-	end
-	if footProp then
-		footProp:Destroy()
-		footProp = nil
-	end
-	restoreToolVisibility()
-end
-
-local function attachGearToFeet(character: Model, tool: Tool)
-	clearFootAttach()
-	local foot = findFoot(character)
-	local handle = tool:FindFirstChild("Handle")
-	if not foot or not handle or not handle:IsA("BasePart") then
-		return
-	end
-
-	-- Real Tool stays equipped (workout detection) but hidden — grip keeps fighting
-	-- the foot motor during the flip, so we show a separate prop on the sole instead.
-	hideToolVisibility(tool)
-	destroyHandGrips(character)
-
-	local function killGrips()
-		local char = player.Character
-		if char then
-			destroyHandGrips(char)
-		end
-	end
-	gripKillConn = RunService.Heartbeat:Connect(killGrips)
-	gripChildConn = character.ChildAdded:Connect(function(child)
-		if child:IsA("Motor6D") or child:IsA("Weld") or child:IsA("WeldConstraint") then
-			local n = string.lower(child.Name)
-			if string.find(n, "grip", 1, true) then
-				task.defer(function()
-					if child.Parent then
-						child:Destroy()
-					end
-				end)
-			end
-		end
-	end)
-
-	local prop = Instance.new("Model")
-	prop.Name = "WorkoutFootProp"
-
-	local primary: BasePart? = nil
-	local clones: { BasePart } = {}
-	local worldCf: { [BasePart]: CFrame } = {}
-	for _, d in tool:GetDescendants() do
-		if d:IsA("BasePart") then
-			local c = d:Clone()
-			c.Anchored = false
-			c.CanCollide = false
-			c.Massless = true
-			c.CanQuery = false
-			c.CanTouch = false
-			c.LocalTransparencyModifier = 0
-			worldCf[c] = d.CFrame
-			c.Parent = prop
-			c.CFrame = worldCf[c]
-			table.insert(clones, c)
-			if d == handle or d.Name == "Handle" then
-				primary = c
-			end
-		end
-	end
-	-- Carry loose VFX folders that lived under the tool (not under parts).
-	for _, d in tool:GetChildren() do
-		if not d:IsA("BasePart") and not d:IsA("Script") and not d:IsA("LocalScript") then
-			local okClone, cloned = pcall(function()
-				return d:Clone()
-			end)
-			if okClone and cloned then
-				cloned.Parent = prop
-			end
-		end
-	end
-
-	if not primary then
-		primary = clones[1]
-	end
-	if not primary then
-		prop:Destroy()
-		restoreToolVisibility()
-		return
-	end
-	primary.Name = "Handle"
-
-	for _, p in clones do
-		if p ~= primary then
-			local w = Instance.new("WeldConstraint")
-			w.Part0 = primary
-			w.Part1 = p
-			w.Parent = primary
-		end
-	end
-
-	-- Sole of the foot (end of the leg). Follows the flip with the foot bone.
-	local soleY = -foot.Size.Y * 0.5 - 0.12
-	local motor = Instance.new("Motor6D")
-	motor.Name = "WorkoutFootMotor"
-	motor.Part0 = foot
-	motor.Part1 = primary
-	motor.C0 = CFrame.new(0, soleY, 0) * CFrame.Angles(0, math.rad(90), math.rad(90))
-	motor.C1 = CFrame.new()
-	motor.Parent = foot
-	footMotor = motor
-
-	prop.Parent = character
-	footProp = prop
 end
 
 local function playWorkoutAnim(character: Model)
@@ -554,33 +366,65 @@ local function spawnPowerFloater(gain: number)
 		return
 	end
 
+	-- Convert screen pixels → layer-local so the tween doesn't jump/teleport.
+	local function toLayer(screenX: number, screenY: number): Vector2
+		local origin = layer.AbsolutePosition
+		return Vector2.new(screenX - origin.X, screenY - origin.Y)
+	end
+
 	local character = player.Character
-	local head = character and character:FindFirstChild("Head")
-	local anchor = if head and head:IsA("BasePart")
-		then head
+	-- Spawn near the raised hand (or head fallback) so it tracks the curl.
+	local hand = character
+		and (
+			character:FindFirstChild("RightHand")
+			or character:FindFirstChild("Right Arm")
+			or character:FindFirstChild("Head")
+		)
+	local anchor = if hand and hand:IsA("BasePart")
+		then hand
 		else (character and character:FindFirstChild("HumanoidRootPart"))
 	if not anchor or not anchor:IsA("BasePart") then
 		return
 	end
-	local screenPos, onScreen = cam:WorldToViewportPoint(anchor.Position + Vector3.new(1.15, 0.85, 0))
-	if not onScreen then
+
+	local endScreen: Vector2
+	if target and target:IsA("GuiObject") then
+		local abs = target.AbsolutePosition
+		local size = target.AbsoluteSize
+		endScreen = Vector2.new(abs.X + size.X * 0.5, abs.Y + size.Y * 0.5)
+	else
 		return
 	end
-	local startX = screenPos.X + 10
-	local startY = screenPos.Y - 6
 
-	-- Container: muscle icon + yellowish +N (matches Power HUD).
+	local world = anchor.Position + Vector3.new(0, 0.6, 0)
+	local screenPos, onScreen = cam:WorldToViewportPoint(world)
+	if not onScreen then
+		-- Still show from a bit below the counter if camera can't see the hand.
+		screenPos = Vector3.new(endScreen.X, endScreen.Y + 70, 0)
+	end
+
+	-- Bias start toward the counter so it doesn't fly from the wrong side.
+	local startScreen = Vector2.new(screenPos.X, screenPos.Y)
+	local toward = (endScreen - startScreen)
+	if toward.Magnitude > 8 then
+		startScreen = startScreen + toward.Unit * math.min(28, toward.Magnitude * 0.12)
+	end
+
+	local startLocal = toLayer(startScreen.X, startScreen.Y)
+	local endLocal = toLayer(endScreen.X, endScreen.Y)
+
 	local row = Instance.new("Frame")
 	row.Name = "PowerGainFloater"
 	row.BackgroundTransparency = 1
 	row.Size = UDim2.fromOffset(150, 40)
-	row.Position = UDim2.fromOffset(startX - 24, startY - 18)
+	row.AnchorPoint = Vector2.new(0.5, 0.5)
+	row.Position = UDim2.fromOffset(startLocal.X, startLocal.Y)
 	row.ZIndex = 81
 	row.Parent = layer
 
 	local layout = Instance.new("UIListLayout")
 	layout.FillDirection = Enum.FillDirection.Horizontal
-	layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
 	layout.Padding = UDim.new(0, 4)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -619,49 +463,57 @@ local function spawnPowerFloater(gain: number)
 	scale.Scale = 0.45
 	scale.Parent = row
 
-	local endPos = row.Position
-	if target and target:IsA("GuiObject") then
-		local abs = target.AbsolutePosition
-		local size = target.AbsoluteSize
-		endPos = UDim2.fromOffset(abs.X + size.X * 0.2, abs.Y + size.Y * 0.1)
-	end
-
 	TweenService:Create(
 		scale,
-		TweenInfo.new(0.24, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = 1.15 }
+		TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1.12 }
 	):Play()
 
+	-- Smooth arc (not a straight Position tween that can look like a teleport).
+	local progress = Instance.new("NumberValue")
+	progress.Value = 0
+	local mid = Vector2.new(
+		(startLocal.X + endLocal.X) * 0.5,
+		math.min(startLocal.Y, endLocal.Y) - 48
+	)
+	local progConn = progress:GetPropertyChangedSignal("Value"):Connect(function()
+		local t = progress.Value
+		local one = 1 - t
+		local x = one * one * startLocal.X + 2 * one * t * mid.X + t * t * endLocal.X
+		local y = one * one * startLocal.Y + 2 * one * t * mid.Y + t * t * endLocal.Y
+		row.Position = UDim2.fromOffset(x, y)
+	end)
 	local move = TweenService:Create(
-		row,
-		TweenInfo.new(0.7, Enum.EasingStyle.Quint, Enum.EasingDirection.InOut),
-		{ Position = endPos }
+		progress,
+		TweenInfo.new(0.78, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut),
+		{ Value = 1 }
 	)
 	move:Play()
 	move.Completed:Connect(function()
-		-- Combine into the Power counter: suck-in + light-up hit.
+		progConn:Disconnect()
+		progress:Destroy()
 		pulsePowerHud(
 			if target and target:IsA("GuiObject") then target :: GuiObject else nil,
 			powerGui
 		)
 		local suck = TweenService:Create(
 			scale,
-			TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-			{ Scale = 0.15 }
+			TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+			{ Scale = 0.12 }
 		)
 		local fadeLabel = TweenService:Create(
 			label,
-			TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 			{ TextTransparency = 1 }
 		)
 		local fadeStroke = TweenService:Create(
 			stroke,
-			TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 			{ Transparency = 1 }
 		)
 		local fadeMuscle = TweenService:Create(
 			muscle,
-			TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 			{ ImageTransparency = 1 }
 		)
 		suck:Play()
@@ -676,7 +528,6 @@ end
 
 local function cleanupWorkoutVisuals()
 	stopWorkoutAnim()
-	clearFootAttach()
 	clearBodyHighlight()
 	local hum = getHumanoid(player.Character)
 	if hum then
@@ -729,7 +580,6 @@ local function bindTool(tool: Tool)
 		local hum = getHumanoid(character)
 		if character and hum then
 			lockMovement(hum, true)
-			attachGearToFeet(character, tool)
 			playWorkoutAnim(character)
 			if tool:GetAttribute("RainbowGear") == true then
 				GearRainbowFX.attach(tool)

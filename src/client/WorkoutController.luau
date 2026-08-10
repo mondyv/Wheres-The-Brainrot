@@ -368,23 +368,52 @@ local function ensureHitScale(host: GuiObject): UIScale
 	return made
 end
 
-local function punchScale(host: GuiObject, peak: number)
-	local sc = ensureHitScale(host)
+-- Resize the whole Power chip in-layout (center feel). Never scale Amount alone —
+-- that makes left-aligned digits slide away as the number grows.
+local function punchChipResize(chip: GuiObject, peak: number)
+	local token = (chip:GetAttribute("PowerPulseToken") :: number?) or 0
+	token += 1
+	chip:SetAttribute("PowerPulseToken", token)
+	chip:SetAttribute("PowerPulseAt", os.clock())
+
+	local origSize = chip.Size
+	local origAuto = chip.AutomaticSize
+	local w = math.max(chip.AbsoluteSize.X, 1)
+	local h = math.max(chip.AbsoluteSize.Y, 1)
+	chip.AutomaticSize = Enum.AutomaticSize.None
+	chip.Size = UDim2.fromOffset(w, h)
+
+	local sc = ensureHitScale(chip)
 	sc.Scale = 1
+	-- Anchor scale to chip center so it pops in place inside the list slot.
+	local prevAp = chip.AnchorPoint
+	chip.AnchorPoint = Vector2.new(0.5, 0.5)
+
 	local up = TweenService:Create(
 		sc,
-		TweenInfo.new(0.09, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		TweenInfo.new(0.11, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
 		{ Scale = peak }
 	)
 	up:Play()
 	up.Completed:Connect(function()
-		if sc.Parent then
-			TweenService:Create(
-				sc,
-				TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Scale = 1 }
-			):Play()
+		if chip:GetAttribute("PowerPulseToken") ~= token then
+			return
 		end
+		local down = TweenService:Create(
+			sc,
+			TweenInfo.new(0.34, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out),
+			{ Scale = 1 }
+		)
+		down:Play()
+		down.Completed:Connect(function()
+			if chip:GetAttribute("PowerPulseToken") ~= token then
+				return
+			end
+			sc.Scale = 1
+			chip.AnchorPoint = prevAp
+			chip.Size = origSize
+			chip.AutomaticSize = origAuto
+		end)
 	end)
 end
 
@@ -425,6 +454,56 @@ local function softHitBloom(host: GuiObject, mount: GuiObject, diameter: number)
 	end)
 end
 
+local function flashAmountLabel(label: TextLabel)
+	local baseColor = label.TextColor3
+	label.TextColor3 = POWER_HIT_WHITE
+	TweenService:Create(
+		label,
+		TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ TextColor3 = POWER_HUD_YELLOW }
+	):Play()
+	task.delay(0.2, function()
+		if label.Parent then
+			TweenService:Create(
+				label,
+				TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ TextColor3 = baseColor }
+			):Play()
+		end
+	end)
+
+	local oldStroke = label:FindFirstChild("PowerHitTextStroke")
+	if oldStroke then
+		oldStroke:Destroy()
+	end
+	local textStroke = Instance.new("UIStroke")
+	textStroke.Name = "PowerHitTextStroke"
+	textStroke.Color = POWER_HUD_YELLOW
+	textStroke.Thickness = 0
+	textStroke.Transparency = 0.15
+	textStroke.Parent = label
+	TweenService:Create(
+		textStroke,
+		TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Thickness = 2.2 }
+	):Play()
+	task.delay(0.12, function()
+		if not textStroke.Parent then
+			return
+		end
+		TweenService:Create(
+			textStroke,
+			TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ Thickness = 0, Transparency = 1 }
+		):Play()
+		task.delay(0.35, function()
+			if textStroke.Parent then
+				textStroke:Destroy()
+			end
+		end)
+	end)
+end
+
 local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?)
 	local icon: GuiObject? = nil
 	if powerFrame then
@@ -433,81 +512,29 @@ local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?)
 			icon = found
 		end
 	end
-	local mount: GuiObject = powerFrame or amountLabel or icon
+	local mount: GuiObject? = powerFrame or amountLabel or icon
 	if not mount then
 		return
 	end
 
+	-- One chip pop — whole counter resizes in place (not the text drifting).
 	if powerFrame then
-		punchScale(powerFrame, 1.06)
+		punchChipResize(powerFrame, 1.18)
+		softHitBloom(powerFrame, powerFrame, math.max(powerFrame.AbsoluteSize.X, powerFrame.AbsoluteSize.Y) * 0.95)
 	end
 
-	if icon then
-		punchScale(icon, 1.2)
-		softHitBloom(icon, mount, 36)
-		if icon:IsA("ImageLabel") then
-			local baseC = icon.ImageColor3
-			icon.ImageColor3 = POWER_HIT_WHITE
-			TweenService:Create(
-				icon,
-				TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ ImageColor3 = baseC }
-			):Play()
-		end
+	if icon and icon:IsA("ImageLabel") then
+		local baseC = icon.ImageColor3
+		icon.ImageColor3 = POWER_HIT_WHITE
+		TweenService:Create(
+			icon,
+			TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ ImageColor3 = baseC }
+		):Play()
 	end
 
 	if amountLabel and amountLabel:IsA("TextLabel") then
-		local label = amountLabel :: TextLabel
-		punchScale(label, 1.22)
-		softHitBloom(label, mount, 52)
-
-		local baseColor = label.TextColor3
-		label.TextColor3 = POWER_HIT_WHITE
-		TweenService:Create(
-			label,
-			TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ TextColor3 = POWER_HUD_YELLOW }
-		):Play()
-		task.delay(0.22, function()
-			if label.Parent then
-				TweenService:Create(
-					label,
-					TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-					{ TextColor3 = baseColor }
-				):Play()
-			end
-		end)
-
-		local oldStroke = label:FindFirstChild("PowerHitTextStroke")
-		if oldStroke then
-			oldStroke:Destroy()
-		end
-		local textStroke = Instance.new("UIStroke")
-		textStroke.Name = "PowerHitTextStroke"
-		textStroke.Color = POWER_HUD_YELLOW
-		textStroke.Thickness = 0
-		textStroke.Transparency = 0.15
-		textStroke.Parent = label
-		TweenService:Create(
-			textStroke,
-			TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ Thickness = 2.4 }
-		):Play()
-		task.delay(0.12, function()
-			if not textStroke.Parent then
-				return
-			end
-			TweenService:Create(
-				textStroke,
-				TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ Thickness = 0, Transparency = 1 }
-			):Play()
-			task.delay(0.35, function()
-				if textStroke.Parent then
-					textStroke:Destroy()
-				end
-			end)
-		end)
+		flashAmountLabel(amountLabel :: TextLabel)
 	end
 end
 

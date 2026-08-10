@@ -604,6 +604,13 @@ function PlotSpawnUtil.getAssignedPlotSpawnCFrame(player: Player): CFrame?
 	if not plot or not plot.Parent then
 		return nil
 	end
+	-- Never use floor-stub / mid-replace CFs — those put players under the map.
+	if not PlotPaths.isSpawnReadyPlot(plot) then
+		return nil
+	end
+	if not PlotSpawnUtil.plotHasSpawnPad(plot) then
+		return nil
+	end
 	return PlotSpawnUtil.findFirstFloorSpawnCFrame(plot)
 end
 
@@ -618,9 +625,60 @@ function PlotSpawnUtil.teleportCharacterToCFrame(character: Model, spawnCf: CFra
 
 	-- Move via HRP so welded head-carries stay in the character assembly.
 	-- Model:PivotTo can desync nested carry models after a long-distance teleport.
+	hrp.Anchored = false
 	hrp.CFrame = spawnCf
 	hrp.AssemblyLinearVelocity = Vector3.zero
 	hrp.AssemblyAngularVelocity = Vector3.zero
+	return true
+end
+
+-- Canonical Base / Return / join / death teleport.
+-- Waits for the real plot Spawn pad (not a stub), pins HRP so the player
+-- never walks around on the default baseplate SpawnLocation, then uses the
+-- same stream+retry path as the Return button.
+function PlotSpawnUtil.teleportPlayerHome(player: Player, character: Model, timeoutSec: number?): boolean
+	local hrp = character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	if not hrp then
+		hrp = character:WaitForChild("HumanoidRootPart", 8) :: BasePart?
+	end
+	if not hrp or not character.Parent or not player.Parent then
+		return false
+	end
+
+	-- Freeze on the default spawn until the Base pad CF exists.
+	hrp.Anchored = true
+	hrp.AssemblyLinearVelocity = Vector3.zero
+	hrp.AssemblyAngularVelocity = Vector3.zero
+
+	local timeout = if typeof(timeoutSec) == "number" then timeoutSec else 60
+	local deadline = os.clock() + math.max(0.5, timeout)
+	local spawnCf: CFrame? = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+	while not spawnCf and os.clock() < deadline do
+		if not player.Parent or not character.Parent or player.Character ~= character then
+			if hrp.Parent then
+				hrp.Anchored = false
+			end
+			return false
+		end
+		task.wait(0.1)
+		spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+	end
+
+	if not spawnCf then
+		if hrp.Parent then
+			hrp.Anchored = false
+		end
+		warn(
+			"[PlotSpawnUtil] teleportPlayerHome: no Base Spawn pad for",
+			player.Name,
+			"(AssignedPlotSlot=",
+			player:GetAttribute("AssignedPlotSlot"),
+			")"
+		)
+		return false
+	end
+
+	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, spawnCf, true)
 	return true
 end
 

@@ -3,8 +3,8 @@
 	Revive flow (server module):
 	• CharacterAutoLoads = false so Roblox's RespawnTime never holds decline/revive.
 	• Tracks last good land while alive (death Y/ragdoll can miss hitboxes).
-	• FAST_RESPAWN_ALL_DEATHS (temporary): every death LoadCharacters onto QuestHitbox —
-	  no decline / paid revive UI. Paid revive path kept for when the flag is off.
+	• FAST_RESPAWN_ALL_DEATHS: LoadCharacter only — PlotPlayerSpawn teleports to the
+	  same Base / Return Spawn pad (no second CharacterAdded race).
 	• Otherwise: prompt client with land product; decline / timeout LoadCharacter;
 	  purchase teleports onto that land's Spawn.
 --]]
@@ -334,7 +334,24 @@ local function resolveHitboxSoftRespawnCFrame(): CFrame?
 	return nil
 end
 
+local function softRespawnAtPlotBase(player: Player)
+	if lastSoftRespawnAt[player] and (os.clock() - lastSoftRespawnAt[player]) < 0.35 then
+		return
+	end
+	clearPending(player)
+	lastSoftRespawnAt[player] = os.clock()
+	player:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, nil)
+	-- Clear soft pins — PlotPlayerSpawn CharacterAdded owns the Base/Return teleport.
+	clearReviveSpawnAttrs(player)
+	forceLoadCharacter(player)
+end
+
 local function softRespawnAtHitbox(player: Player)
+	-- Prefer Base pad whenever fast-respawn mode is on (same as Return / My Base).
+	if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
+		softRespawnAtPlotBase(player)
+		return
+	end
 	clearPending(player)
 	lastSoftRespawnAt[player] = os.clock()
 	local spawnCf = resolveHitboxSoftRespawnCFrame()
@@ -345,65 +362,6 @@ local function softRespawnAtHitbox(player: Player)
 		warn("[ReviveService] QuestHitbox missing — soft respawn without pinned CFrame")
 	end
 	forceLoadCharacter(player)
-end
-
-local function softRespawnAtPlotBase(player: Player)
-	if lastSoftRespawnAt[player] and (os.clock() - lastSoftRespawnAt[player]) < 0.35 then
-		return
-	end
-	clearPending(player)
-	lastSoftRespawnAt[player] = os.clock()
-	player:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, nil)
-	-- Never pin QuestHitbox — death always lands on the Base button Spawn pad.
-	clearReviveSpawnAttrs(player)
-
-	local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
-
-	local conn: RBXScriptConnection? = nil
-	local done = false
-	conn = player.CharacterAdded:Connect(function(newChar)
-		if done then
-			return
-		end
-		done = true
-		if conn then
-			conn:Disconnect()
-			conn = nil
-		end
-		task.spawn(function()
-			-- Prefer the live Base/Return pad CF immediately (same as Base button).
-			local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
-			if not spawnCf then
-				local deadline = os.clock() + 8
-				while os.clock() < deadline do
-					if not player.Parent or not newChar.Parent then
-						return
-					end
-					spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
-					if spawnCf then
-						break
-					end
-					task.wait(0.1)
-				end
-			end
-			if not spawnCf then
-				warn("[ReviveService] softRespawnAtPlotBase: no Base spawn for", player.Name)
-				return
-			end
-			if player.Parent and newChar.Parent then
-				PlotSpawnUtil.streamAndTeleportWithRetries(player, newChar, spawnCf, true)
-			end
-		end)
-	end)
-
-	forceLoadCharacter(player)
-
-	task.delay(12, function()
-		if conn then
-			conn:Disconnect()
-			conn = nil
-		end
-	end)
 end
 
 local function isFrictionlessDeathActive(player: Player): boolean

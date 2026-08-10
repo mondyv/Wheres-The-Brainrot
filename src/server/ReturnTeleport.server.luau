@@ -93,12 +93,10 @@ local function notifyAfterPlotReturn(player: Player)
 end
 
 local function teleportHome(player: Player, character: Model): (boolean, string?)
-	local spawnCf = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
-	if not spawnCf then
+	-- Identical helper used by join / death / safezone Base button.
+	if not PlotSpawnUtil.teleportPlayerHome(player, character, 12) then
 		return false, "Base not ready yet"
 	end
-	-- Stream + retries so return doesn't drop through an unstreamed floor.
-	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, spawnCf, true)
 	lastReturnAt[player] = os.clock()
 	return true, nil
 end

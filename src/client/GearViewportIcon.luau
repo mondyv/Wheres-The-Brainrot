@@ -40,11 +40,13 @@ local function enableVfx(root: Instance)
 			d.Enabled = true
 			d.Lifetime = math.max(d.Lifetime, 0.35)
 		elseif d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
-			(d :: any).Enabled = true
+			local fx = d :: any
+			fx.Enabled = true
 		elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-			(d :: Light).Enabled = true
-			(d :: Light).Brightness = math.max((d :: Light).Brightness, 2)
-			(d :: Light).Range = math.max((d :: Light).Range, 8)
+			local light = d :: Light
+			light.Enabled = true
+			light.Brightness = math.max(light.Brightness, 2)
+			light.Range = math.max(light.Range, 8)
 		end
 	end
 end

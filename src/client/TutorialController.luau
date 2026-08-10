@@ -3184,26 +3184,6 @@ function M.start(force: boolean?)
 	advanceTo(1)
 end
 
-local function shouldRunTutorial(): boolean
-	if sessionConfettiFired then
-		return false
-	end
-	return player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true
-end
-
-local function tryStartForFirstJoin()
-	if not player.Parent then
-		return
-	end
-	if not shouldRunTutorial() then
-		return
-	end
-	if active then
-		return
-	end
-	M.start(false)
-end
-
 function M.stop()
 	if not active then
 		return
@@ -3234,6 +3214,27 @@ function M.stop()
 end
 
 function M.init()
+	-- Nested to stay under Luau's 200 main-chunk local register limit.
+	local function shouldRunTutorial(): boolean
+		if sessionConfettiFired then
+			return false
+		end
+		return player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true
+	end
+
+	local function tryStartForFirstJoin()
+		if not player.Parent then
+			return
+		end
+		if not shouldRunTutorial() then
+			return
+		end
+		if active then
+			return
+		end
+		M.start(false)
+	end
+
 	local hooksBound = false
 	local function bindOfferHooksOnce()
 		if hooksBound then

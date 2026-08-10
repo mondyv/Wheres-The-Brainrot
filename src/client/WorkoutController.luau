@@ -454,13 +454,13 @@ local function spawnHitLight(layer: Frame, screen: Vector2, strength: number?)
 	corner.Parent = glow
 	TweenService:Create(
 		glow,
-		TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{
-			Size = UDim2.fromOffset(88 * s, 88 * s),
+			Size = UDim2.fromOffset(100 * s, 100 * s),
 			BackgroundTransparency = 1,
 		}
 	):Play()
-	task.delay(0.42, function()
+	task.delay(0.3, function()
 		if glow.Parent then
 			glow:Destroy()
 		end
@@ -485,11 +485,11 @@ local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?, la
 	cluster:SetAttribute("PowerPulseAt", os.clock())
 
 	local sc = ensureChipScale(cluster)
-	sc.Scale = 1
+	sc.Scale = 0.9
 	local up = TweenService:Create(
 		sc,
-		TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = 1.22 }
+		TweenInfo.new(0.07, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1.32 }
 	)
 	up:Play()
 	up.Completed:Connect(function()
@@ -498,7 +498,7 @@ local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?, la
 		end
 		TweenService:Create(
 			sc,
-			TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 			{ Scale = 1 }
 		):Play()
 	end)
@@ -675,19 +675,19 @@ local function spawnPowerFloater(gain: number)
 	muscle.Parent = row
 
 	local scale = Instance.new("UIScale")
-	scale.Scale = 0.4
+	scale.Scale = 0.35
 	scale.Parent = row
 	TweenService:Create(
 		scale,
-		TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = 1.2 }
+		TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1.18 }
 	):Play()
 
 	local startX, startY = startPos.X.Offset, startPos.Y.Offset
-	local liftY = startY - 34
+	local liftY = startY - 28
 	TweenService:Create(
 		row,
-		TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Position = UDim2.fromOffset(startX, liftY) }
 	):Play()
 
@@ -699,13 +699,13 @@ local function spawnPowerFloater(gain: number)
 		local t = progress.Value
 		local one = 1 - t
 		local midX = (fromX + liveEnd.X.Offset) * 0.5
-		local midY = math.min(fromY, liveEnd.Y.Offset) - 42
+		local midY = math.min(fromY, liveEnd.Y.Offset) - 36
 		local x = one * one * fromX + 2 * one * t * midX + t * t * liveEnd.X.Offset
 		local y = one * one * fromY + 2 * one * t * midY + t * t * liveEnd.Y.Offset
 		row.Position = UDim2.fromOffset(x, y)
 	end)
 
-	task.delay(0.22, function()
+	task.delay(0.12, function()
 		if not row.Parent then
 			progConn:Disconnect()
 			progress:Destroy()
@@ -715,7 +715,7 @@ local function spawnPowerFloater(gain: number)
 		fromY = row.Position.Y.Offset
 		local move = TweenService:Create(
 			progress,
-			TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 			{ Value = 1 }
 		)
 		move:Play()
@@ -729,22 +729,22 @@ local function spawnPowerFloater(gain: number)
 			pulsePowerHud(amountGui, powerFrame :: GuiObject, layer)
 			local suck = TweenService:Create(
 				scale,
-				TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-				{ Scale = 0.4 }
+				TweenInfo.new(0.09, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+				{ Scale = 0.35 }
 			)
 			TweenService:Create(
 				label,
-				TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				TweenInfo.new(0.09, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 				{ TextTransparency = 1 }
 			):Play()
 			TweenService:Create(
 				stroke,
-				TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				TweenInfo.new(0.09, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 				{ Transparency = 1 }
 			):Play()
 			TweenService:Create(
 				muscle,
-				TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				TweenInfo.new(0.09, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 				{ ImageTransparency = 1 }
 			):Play()
 			suck:Play()

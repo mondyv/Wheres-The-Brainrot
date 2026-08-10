@@ -73,6 +73,7 @@ local heartbeatConn: RBXScriptConnection? = nil
 local insideStreak = 0
 local outsideStreak = 0
 local lastFireAt = 0
+local lastNavSuccessAt = 0
 
 local function getOrAddUIScale(parent: GuiObject): UIScale
 	local s = parent:FindFirstChildOfClass("UIScale")
@@ -201,7 +202,7 @@ local function isReviveSessionActive(): boolean
 	return okCall and active == true
 end
 
-local function shouldShowButtons(): boolean
+	local function shouldShowButtons(): boolean
 	if teleportBusy then
 		return false
 	end
@@ -221,7 +222,18 @@ local function shouldShowButtons(): boolean
 	if not SafezoneUtil.isCacheReady() then
 		return false
 	end
-	return SafezoneUtil.isCharacterInSafezone(character)
+	-- Match toolbar / server nav: inventory safezone, reddie, or red-wall spawn pad.
+	if SafezoneUtil.isCharacterInSafezone(character) then
+		return true
+	end
+	if SafezoneUtil.isCharacterInToolbarZone(character) then
+		return true
+	end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") and SafezoneUtil.isWorldPointInRedWall(hrp.Position) then
+		return true
+	end
+	return false
 end
 
 local function setButtonsActive(active: boolean)
@@ -405,7 +417,8 @@ local function onNavActivated(dest: string)
 		return
 	end
 	local now = os.clock()
-	if now - lastFireAt < 0.35 then
+	-- Guard double-Activated (teleport succeeds, then stale 2nd invoke toasts).
+	if now - lastFireAt < 0.65 then
 		return
 	end
 	lastFireAt = now
@@ -427,10 +440,14 @@ local function onNavActivated(dest: string)
 
 	local ok, errMsg = navRF:InvokeServer(dest)
 	if not ok then
-		-- Cooldown is intentional spam guard — don't toast "please wait" (feels broken).
-		local silent = typeof(errMsg) == "string"
-			and (string.find(string.lower(errMsg), "please wait", 1, true) ~= nil
-				or string.find(string.lower(errMsg), "wait a moment", 1, true) ~= nil)
+		local lower = if typeof(errMsg) == "string" then string.lower(errMsg) else ""
+		-- Cooldown spam + false "safe zone" after a successful hop (duplicate fire / mid-warp).
+		local silent = string.find(lower, "please wait", 1, true) ~= nil
+			or string.find(lower, "wait a moment", 1, true) ~= nil
+			or (
+				os.clock() - lastNavSuccessAt < 1.5
+				and string.find(lower, "safe zone", 1, true) ~= nil
+			)
 		if not silent then
 			if typeof(errMsg) == "string" and errMsg ~= "" then
 				TopNotifController.showError(errMsg)
@@ -439,6 +456,7 @@ local function onNavActivated(dest: string)
 			end
 		end
 	else
+		lastNavSuccessAt = os.clock()
 		UIInteractionSounds.playNotif()
 	end
 

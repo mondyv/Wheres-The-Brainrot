@@ -307,11 +307,8 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 		end
 	else
 		state = "buy"
-		if balance < def.cashPrice then
-			MainGradientButtons.applyPurchasedGradient(host)
-		else
-			MainGradientButtons.applyDefault(host)
-		end
+		-- Keep green buy chrome even when cash is short (don't gray out prices).
+		MainGradientButtons.applyDefault(host)
 		if costLabel then
 			costLabel.Text = formatCash(def.cashPrice)
 		end
@@ -549,6 +546,40 @@ local function resolveMuscleIcon(powerFrame: Instance): ImageLabel?
 	return nil
 end
 
+-- Lock Amount TextSize BEFORE reparenting into AutomaticSize cluster.
+-- TextScaled labels collapse to tiny text when their parent shrinks.
+local function lockPowerAmountTextSize(amount: TextLabel)
+	if amount:GetAttribute("PowerAmtSizeLocked") == true then
+		return
+	end
+	amount:SetAttribute("PowerAmtSizeLocked", true)
+
+	local ts: number? = nil
+	local counters = amount:FindFirstAncestor("Counters")
+	local cash = counters and counters:FindFirstChild("Cash")
+	local cashAmt = cash and cash:FindFirstChild("Amount", true)
+	if cashAmt and cashAmt:IsA("TextLabel") then
+		if not cashAmt.TextScaled and cashAmt.TextSize >= 14 then
+			ts = cashAmt.TextSize
+		elseif cashAmt.AbsoluteSize.Y > 8 then
+			ts = math.floor(cashAmt.AbsoluteSize.Y * 0.72)
+		end
+	end
+	if not ts then
+		if amount.TextScaled and amount.AbsoluteSize.Y > 8 then
+			ts = math.floor(amount.AbsoluteSize.Y * 0.72)
+		elseif amount.TextSize >= 14 then
+			ts = amount.TextSize
+		else
+			ts = 28
+		end
+	end
+	amount.TextScaled = false
+	amount.TextSize = math.clamp(ts :: number, 18, 48)
+	amount.AutomaticSize = Enum.AutomaticSize.XY
+	amount.Size = UDim2.fromOffset(0, 0)
+end
+
 -- Scale Amount + muscle only (not Edit / whole SideUI chip) so hits land in the right place.
 local function ensurePulseCluster(powerFrame: GuiObject): Frame
 	local existing = powerFrame:FindFirstChild("PowerPulseCluster")
@@ -598,10 +629,17 @@ local function ensurePulseCluster(powerFrame: GuiObject): Frame
 		layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
 	end
 
-	-- Icon LEFT, number RIGHT — never let growing Amount sit on top of the muscle.
+	-- Icon LEFT, number RIGHT — restore original counter text size.
+	if amount and amount:IsA("TextLabel") and amount.Parent ~= cluster then
+		lockPowerAmountTextSize(amount)
+	elseif amount and amount:IsA("TextLabel") then
+		lockPowerAmountTextSize(amount)
+	end
 	if muscle then
 		muscle.LayoutOrder = 1
-		muscle.Size = UDim2.fromOffset(36, 36)
+		if muscle.AbsoluteSize.X < 8 or muscle.AbsoluteSize.Y < 8 then
+			muscle.Size = UDim2.fromOffset(42, 42)
+		end
 		muscle.ScaleType = Enum.ScaleType.Fit
 		muscle.BackgroundTransparency = 1
 		muscle.Image = GearConfig.WORKOUT_IMAGE
@@ -615,8 +653,11 @@ local function ensurePulseCluster(powerFrame: GuiObject): Frame
 		amount.TextXAlignment = Enum.TextXAlignment.Left
 		amount.TextYAlignment = Enum.TextYAlignment.Center
 		amount.TextTransparency = 0
-		-- Keep text from drawing under the icon as digits grow.
 		amount.ClipsDescendants = false
+		local sc = amount:FindFirstChildOfClass("UIScale")
+		if sc and sc.Name ~= "PowerChipScale" then
+			sc.Scale = 1
+		end
 		amount.Parent = cluster
 	elseif amount and amount:IsA("GuiObject") then
 		amount.LayoutOrder = 2
@@ -647,19 +688,19 @@ local function playPowerGainFlash(amountLabel: TextLabel)
 
 	local recentlyPulsed = cluster
 		and cluster:IsA("GuiObject")
-		and (os.clock() - ((cluster:GetAttribute("PowerPulseAt") :: number?) or 0)) < 0.55
+		and (os.clock() - ((cluster:GetAttribute("PowerPulseAt") :: number?) or 0)) < 0.22
 
 	amountLabel.TextColor3 = POWER_FLASH_WHITE
 	TweenService:Create(
 		amountLabel,
-		TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		TweenInfo.new(0.05, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ TextColor3 = POWER_FLASH_GOLD }
 	):Play()
-	task.delay(0.22, function()
+	task.delay(0.12, function()
 		if amountLabel.Parent then
 			TweenService:Create(
 				amountLabel,
-				TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 				{ TextColor3 = base }
 			):Play()
 		end
@@ -679,14 +720,14 @@ local function playPowerGainFlash(amountLabel: TextLabel)
 	local token = ((cluster:GetAttribute("PowerPulseToken") :: number?) or 0) + 1
 	cluster:SetAttribute("PowerPulseToken", token)
 	cluster:SetAttribute("PowerPulseAt", os.clock())
-	sc.Scale = 1
+	sc.Scale = 0.88
 	TweenService
-		:Create(sc, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.18 })
+		:Create(sc, TweenInfo.new(0.07, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.28 })
 		:Play()
-	task.delay(0.1, function()
+	task.delay(0.07, function()
 		if sc.Parent and cluster:GetAttribute("PowerPulseToken") == token then
 			TweenService
-				:Create(sc, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
+				:Create(sc, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
 				:Play()
 		end
 	end)
@@ -733,7 +774,8 @@ local function updatePowerLabel()
 	local proxy = Instance.new("NumberValue")
 	proxy.Value = start
 	powerProxy = proxy
-	local ti = TweenInfo.new(if gained then 0.38 else 0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	-- Snappy count-up — long tweens feel laggy next to the floater hit.
+	local ti = TweenInfo.new(if gained then 0.06 else 0.08, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
 	powerTween = TweenService:Create(proxy, ti, { Value = target })
 	proxy:GetPropertyChangedSignal("Value"):Connect(function()
 		applyText(proxy.Value)

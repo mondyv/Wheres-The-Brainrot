@@ -152,7 +152,16 @@ local function canNavigate(player: Player): (boolean, string?)
 	if player:GetAttribute(WebTrapConfig.TRAPPED_ATTR) == true then
 		return false, "You're stuck in a web"
 	end
-	if not SafezoneUtil.isCharacterInSafezone(character) then
+	-- Match client button visibility — warm cache so server isn't empty on first press.
+	SafezoneUtil.warmCacheAsync()
+	SafezoneUtil.awaitCacheReady(1.5)
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	local inZone = SafezoneUtil.isCharacterInSafezone(character)
+		or SafezoneUtil.isCharacterInToolbarZone(character)
+	if not inZone and hrp and hrp:IsA("BasePart") then
+		inZone = SafezoneUtil.isWorldPointInRedWall(hrp.Position)
+	end
+	if not inZone then
 		return false, "Only available in the safe zone"
 	end
 	if not cooldownOk(player) then

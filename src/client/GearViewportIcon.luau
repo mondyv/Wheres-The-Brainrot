@@ -1,17 +1,36 @@
 -- [ACTIVE] GearViewportIcon
 -- Rotating ViewportFrame previews of EssentialAssets.Gears for shop + hotbar.
+-- NOTE: ParticleEmitters do NOT render inside ViewportFrames — use neon spark parts + UI overlay.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
-local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
+local Shared = ReplicatedStorage:WaitForChild("Shared")
+local GearConfig = require(Shared:WaitForChild("GearConfig"))
+local BrainrotHeaderStyle = require(Shared:WaitForChild("BrainrotHeaderStyle"))
 local GearRainbowFX = require(script.Parent.GearRainbowFX)
 
 local M = {}
 
 local VF_NAME = "GearViewport"
+local UI_VFX_NAME = "GearUiVfx"
 local spinConns: { [ViewportFrame]: RBXScriptConnection } = {}
+local uiVfxConns: { [GuiObject]: RBXScriptConnection } = {}
 
-local function enableVfx(root: Instance)
+local function accentForGear(gearId: number): Color3
+	local def = GearConfig.get(gearId)
+	local rarity = if def then def.rarity else "common"
+	local ok, color = pcall(function()
+		return BrainrotHeaderStyle.rarityAccentColor(rarity)
+	end)
+	if ok and typeof(color) == "Color3" then
+		return color
+	end
+	return Color3.fromRGB(255, 220, 120)
+end
+
+local function enablePartFx(root: Instance)
+	-- Lights/beams/trails sometimes help; ParticleEmitters are kept enabled but won't draw in VF.
 	local primary = if root:IsA("Model") then root.PrimaryPart else nil
 	if not primary and root:IsA("Model") then
 		primary = root:FindFirstChildWhichIsA("BasePart", true)
@@ -21,39 +40,12 @@ local function enableVfx(root: Instance)
 		if d:IsA("ParticleEmitter") then
 			d.Enabled = true
 			d.LockedToPart = true
-			d.LightEmission = math.max(d.LightEmission, 0.65)
-			d.Brightness = math.max(d.Brightness, 3)
-			local rate = d.Rate
-			if typeof(rate) == "number" then
-				-- Rate 0 assets are burst-only — give them a steady viewport trickle.
-				d.Rate = if rate <= 0 then 28 else math.max(rate * 3, 48)
-			end
-			local life = d.Lifetime
-			if typeof(life) == "NumberRange" then
-				d.Lifetime = NumberRange.new(math.max(life.Min, 1.0), math.max(life.Max, 1.8))
-			end
-			local sz = d.Size
-			if typeof(sz) == "NumberSequence" then
-				local keys = sz.Keypoints
-				local boosted = table.create(#keys)
-				for i, kp in keys do
-					boosted[i] = NumberSequenceKeypoint.new(kp.Time, math.max(kp.Value * 3.2, 0.55), kp.Envelope)
-				end
-				d.Size = NumberSequence.new(boosted)
-			end
-			if d.Drag > 1.2 then
-				d.Drag = 0.4
-			end
-			-- Orphaned emitters (parented under Folder) won't render — weld to a part.
 			if primary and not d:FindFirstAncestorWhichIsA("BasePart") then
 				local att = Instance.new("Attachment")
 				att.Name = "ViewportVfxAttach"
 				att.Parent = primary
 				d.Parent = att
 			end
-			pcall(function()
-				d:Emit(math.clamp(math.floor(math.max(d.Rate, 24) * 0.7), 14, 64))
-			end)
 		elseif d:IsA("Beam") then
 			d.Enabled = true
 			d.Width0 = math.max(d.Width0 * 1.8, 0.22)
@@ -74,14 +66,141 @@ local function enableVfx(root: Instance)
 	end
 end
 
-local function burstVfx(root: Instance)
-	for _, d in root:GetDescendants() do
-		if d:IsA("ParticleEmitter") and d.Enabled then
-			pcall(function()
-				d:Emit(math.clamp(math.floor(math.max(d.Rate, 24) * 0.55), 12, 48))
-			end)
+-- Neon balls DO render in ViewportFrames — use them as visible "particles".
+local function addNeonSparks(clone: Model, maxDim: number, color: Color3, count: number)
+	for i = 1, count do
+		local p = Instance.new("Part")
+		p.Name = "ViewportSpark"
+		p.Shape = Enum.PartType.Ball
+		local s = maxDim * (0.045 + (i % 3) * 0.018)
+		p.Size = Vector3.new(s, s, s)
+		p.Material = Enum.Material.Neon
+		p.Color = color
+		p.Anchored = true
+		p.CanCollide = false
+		p.CanQuery = false
+		p.CanTouch = false
+		p.CastShadow = false
+		p.Massless = true
+		p:SetAttribute("SparkAngle", (i / count) * math.pi * 2)
+		p:SetAttribute("SparkRadius", maxDim * (0.42 + (i % 4) * 0.07))
+		p:SetAttribute("SparkY", maxDim * (0.12 * ((i % 3) - 1)))
+		p:SetAttribute("SparkSpin", 1.6 + (i % 5) * 0.35)
+		p.Parent = clone
+	end
+end
+
+local function updateNeonSparks(clone: Model, dt: number, rainbow: boolean)
+	for _, d in clone:GetChildren() do
+		if d.Name == "ViewportSpark" and d:IsA("BasePart") then
+			local a = ((d:GetAttribute("SparkAngle") :: number?) or 0) + dt * ((d:GetAttribute("SparkSpin") :: number?) or 2)
+			d:SetAttribute("SparkAngle", a)
+			local r = (d:GetAttribute("SparkRadius") :: number?) or 0.5
+			local y = (d:GetAttribute("SparkY") :: number?) or 0
+			d.CFrame = CFrame.new(math.cos(a) * r, y + math.sin(a * 1.7) * r * 0.12, math.sin(a) * r)
+			if rainbow then
+				d.Color = Color3.fromHSV((os.clock() * 0.35 + a * 0.08) % 1, 0.85, 1)
+			end
 		end
 	end
+end
+
+local function clearUiVfx(host: Instance)
+	local conn = uiVfxConns[host :: GuiObject]
+	if conn then
+		conn:Disconnect()
+		uiVfxConns[host :: GuiObject] = nil
+	end
+	local existing = host:FindFirstChild(UI_VFX_NAME)
+	if existing then
+		existing:Destroy()
+	end
+end
+
+-- 2D sparkle rain over the icon (ViewportFrame can't draw ParticleEmitters).
+local function mountUiVfx(host: GuiObject, gearId: number, vf: ViewportFrame)
+	clearUiVfx(host)
+	local accent = accentForGear(gearId)
+
+	local layer = Instance.new("Frame")
+	layer.Name = UI_VFX_NAME
+	layer.BackgroundTransparency = 1
+	layer.BorderSizePixel = 0
+	layer.Size = UDim2.fromScale(1, 1)
+	layer.Position = UDim2.fromScale(0.5, 0.5)
+	layer.AnchorPoint = Vector2.new(0.5, 0.5)
+	layer.ClipsDescendants = true
+	layer.ZIndex = vf.ZIndex + 1
+	layer.Parent = host
+
+	local glow = Instance.new("Frame")
+	glow.Name = "Glow"
+	glow.AnchorPoint = Vector2.new(0.5, 0.5)
+	glow.Position = UDim2.fromScale(0.5, 0.5)
+	glow.Size = UDim2.fromScale(0.72, 0.72)
+	glow.BackgroundColor3 = accent
+	glow.BackgroundTransparency = 0.72
+	glow.BorderSizePixel = 0
+	glow.ZIndex = layer.ZIndex
+	glow.Parent = layer
+	local glowCorner = Instance.new("UICorner")
+	glowCorner.CornerRadius = UDim.new(1, 0)
+	glowCorner.Parent = glow
+
+	local pulse = Instance.new("UIScale")
+	pulse.Scale = 1
+	pulse.Parent = glow
+	TweenService:Create(
+		pulse,
+		TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+		{ Scale = 1.18 }
+	):Play()
+
+	local spawnAcc = 0.0
+	uiVfxConns[host] = RunService.RenderStepped:Connect(function(dt)
+		if not layer.Parent or not host.Parent then
+			clearUiVfx(host)
+			return
+		end
+		spawnAcc += dt
+		if spawnAcc < 0.07 then
+			return
+		end
+		spawnAcc = 0
+
+		local spark = Instance.new("ImageLabel")
+		spark.Name = "Spark"
+		spark.BackgroundTransparency = 1
+		spark.Image = "rbxasset://textures/particles/sparkles_main.dds"
+		spark.ImageColor3 = if gearId == 6 then Color3.fromHSV(os.clock() % 1, 0.8, 1) else accent
+		spark.ImageTransparency = 0.05
+		spark.Size = UDim2.fromOffset(10 + math.random(0, 10), 10 + math.random(0, 10))
+		spark.AnchorPoint = Vector2.new(0.5, 0.5)
+		spark.Position = UDim2.fromScale(0.15 + math.random() * 0.7, 0.2 + math.random() * 0.55)
+		spark.ZIndex = layer.ZIndex + 1
+		spark.Parent = layer
+
+		local life = 0.35 + math.random() * 0.25
+		local endPos = UDim2.fromScale(
+			spark.Position.X.Scale + (math.random() - 0.5) * 0.25,
+			spark.Position.Y.Scale - (0.18 + math.random() * 0.22)
+		)
+		TweenService:Create(
+			spark,
+			TweenInfo.new(life, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{
+				Position = endPos,
+				ImageTransparency = 1,
+				Size = UDim2.fromOffset(4, 4),
+				Rotation = math.random(-40, 40),
+			}
+		):Play()
+		task.delay(life + 0.02, function()
+			if spark.Parent then
+				spark:Destroy()
+			end
+		end)
+	end)
 end
 
 local function makeFallbackModel(gearId: number): Model
@@ -120,6 +239,7 @@ local function stopSpin(vf: ViewportFrame)
 end
 
 function M.clear(host: Instance)
+	clearUiVfx(host)
 	local existing = host:FindFirstChild(VF_NAME)
 	if existing then
 		if existing:IsA("ViewportFrame") then
@@ -138,6 +258,9 @@ end
 function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size: UDim2? }?): ViewportFrame?
 	local existing = host:FindFirstChild(VF_NAME)
 	if existing and existing:IsA("ViewportFrame") and existing:GetAttribute("GearId") == gearId then
+		if not host:FindFirstChild(UI_VFX_NAME) then
+			mountUiVfx(host, gearId, existing)
+		end
 		return existing
 	end
 
@@ -179,16 +302,14 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 			d.CanCollide = false
 			d.Massless = true
 			d.CastShadow = false
-			-- Keep parts visible enough for attached viewport particles.
-			if d.Transparency >= 1 and d:FindFirstChildWhichIsA("ParticleEmitter", true) then
+			if d.Transparency >= 1 then
 				d.Transparency = 0.99
 			end
 		end
 	end
 	clone.Parent = world
-	enableVfx(clone)
+	enablePartFx(clone)
 
-	-- Frame the full bounding box (Primary can sit at the bottom and crop the rest).
 	local okBb, bb = pcall(function()
 		local cf, size = clone:GetBoundingBox()
 		return { cf = cf, size = size }
@@ -200,12 +321,13 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	end
 	local maxDim = math.max(size.X, size.Y, size.Z, 0.15)
 	local homePivot = clone:GetPivot()
+	local accent = accentForGear(gearId)
+	addNeonSparks(clone, maxDim, accent, if gearId >= 6 then 10 else 7)
 
-	-- Extra fill light so particles/beams read in the tiny shop icons.
 	local fillLight = Instance.new("PointLight")
 	fillLight.Name = "ViewportFillLight"
-	fillLight.Brightness = 4
-	fillLight.Range = math.max(14, maxDim * 5)
+	fillLight.Brightness = 5
+	fillLight.Range = math.max(16, maxDim * 5)
 	fillLight.Color = Color3.fromRGB(255, 250, 240)
 	local lightPart = Instance.new("Part")
 	lightPart.Name = "ViewportLightAnchor"
@@ -226,56 +348,41 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 
 	local distance = maxDim * 1.95
 	local yaw = 0
-	local emitAcc = 0.0
+	local rainbow = gearId == 6
 
 	local function updateCam()
 		local rot = CFrame.Angles(0, yaw, 0) * CFrame.Angles(math.rad(-16), 0, 0)
 		local camPos = rot:VectorToWorldSpace(Vector3.new(0, maxDim * 0.06, distance))
 		cam.CFrame = CFrame.new(camPos, Vector3.zero)
-		-- Spin model around bounding-box center (world origin after centering).
 		clone:PivotTo(CFrame.Angles(0, yaw * 0.4, 0) * homePivot)
 	end
 	updateCam()
-	burstVfx(clone)
+	updateNeonSparks(clone, 0, rainbow)
 
-	if gearId == 6 then
+	if rainbow then
 		GearRainbowFX.attach(clone)
 	end
 
+	mountUiVfx(host, gearId, vf)
+
 	local shouldRotate = not (opts and opts.rotate == false)
-	if shouldRotate then
-		spinConns[vf] = RunService.RenderStepped:Connect(function(dt)
-			if not vf.Parent then
-				stopSpin(vf)
-				return
-			end
+	spinConns[vf] = RunService.RenderStepped:Connect(function(dt)
+		if not vf.Parent then
+			stopSpin(vf)
+			return
+		end
+		if shouldRotate then
 			yaw += dt * 1.05
 			updateCam()
-			emitAcc += dt
-			if emitAcc >= 0.4 then
-				emitAcc = 0
-				burstVfx(clone)
-			end
-		end)
-	else
-		-- Still pulse VFX for static hotbar icons.
-		spinConns[vf] = RunService.RenderStepped:Connect(function(dt)
-			if not vf.Parent then
-				stopSpin(vf)
-				return
-			end
-			emitAcc += dt
-			if emitAcc >= 0.45 then
-				emitAcc = 0
-				burstVfx(clone)
-			end
-		end)
-	end
+		end
+		updateNeonSparks(clone, dt, rainbow)
+	end)
 
 	vf.AncestryChanged:Connect(function(_, parent)
 		if not parent then
 			stopSpin(vf)
 			GearRainbowFX.detach(clone)
+			clearUiVfx(host)
 		end
 	end)
 

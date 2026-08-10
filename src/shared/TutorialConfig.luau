@@ -99,10 +99,10 @@ M.STEPS = {
 	},
 	{
 		id = "useWorkout",
-		text = "Press your gear to work out!",
-		speak = "PRESS YOUR GEAR TO WORK OUT!!",
-		controllerText = "Select your gear in the hotbar, then press A / ✕ to work out",
-		controllerSpeak = "PRESS YOUR GEAR TO WORK OUT!!",
+		text = "Equip your gear to work out!",
+		speak = "EQUIP YOUR GEAR TO WORK OUT!!",
+		controllerText = "Select your gear in the hotbar to equip and work out",
+		controllerSpeak = "EQUIP YOUR GEAR TO WORK OUT!!",
 	},
 	{
 		id = "swingLand1",

@@ -198,8 +198,9 @@ local function ensureGearRows(container: Instance)
 			row.Parent = container
 		end
 		if row:IsA("GuiObject") then
-			(row :: GuiObject).LayoutOrder = i
-			(row :: GuiObject).Visible = true
+			local gui = row :: GuiObject
+			gui.LayoutOrder = i
+			gui.Visible = true
 		end
 	end
 	-- Hide leftover non-gear upgrade rows from old place files.

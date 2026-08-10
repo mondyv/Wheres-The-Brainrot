@@ -400,40 +400,49 @@ local function bindTool(tool: Tool)
 		return
 	end
 	boundTools[tool] = true
+
+	local function startWorkoutFromEquip()
+		local gearId = tool:GetAttribute(GearConfig.GEAR_ID_ATTR)
+		if typeof(gearId) ~= "number" then
+			return
+		end
+		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+			return
+		end
+		if not startWorkoutFn then
+			return
+		end
+		local ok = startWorkoutFn:InvokeServer(gearId)
+		if not ok then
+			return
+		end
+		local character = player.Character
+		local hum = getHumanoid(character)
+		if character and hum then
+			lockMovement(hum, true)
+			attachGearToFeet(character, tool)
+			playWorkoutAnim(character)
+			showWorkoutBillboard(character)
+		end
+	end
+
+	table.insert(
+		toolConns,
+		tool.Equipped:Connect(function()
+			startWorkoutFromEquip()
+		end)
+	)
 	table.insert(
 		toolConns,
 		tool.Unequipped:Connect(function()
 			onUnequip()
 		end)
 	)
-	table.insert(
-		toolConns,
-		tool.Activated:Connect(function()
-			local gearId = tool:GetAttribute(GearConfig.GEAR_ID_ATTR)
-			if typeof(gearId) ~= "number" then
-				return
-			end
-			if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
-				onUnequip()
-				return
-			end
-			if not startWorkoutFn then
-				return
-			end
-			local ok = startWorkoutFn:InvokeServer(gearId)
-			if not ok then
-				return
-			end
-			local character = player.Character
-			local hum = getHumanoid(character)
-			if character and hum then
-				lockMovement(hum, true)
-				attachGearToFeet(character, tool)
-				playWorkoutAnim(character)
-				showWorkoutBillboard(character)
-			end
-		end)
-	)
+
+	-- If already equipped when we bind (hotbar swap / respawn edge cases).
+	if tool.Parent == player.Character then
+		task.defer(startWorkoutFromEquip)
+	end
 end
 
 local function scanTools(root: Instance?)

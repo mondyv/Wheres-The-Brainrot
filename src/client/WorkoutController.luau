@@ -31,13 +31,16 @@ local boundTools: { [Tool]: boolean } = {}
 local workoutTrack: AnimationTrack? = nil
 local workoutAnim: Animation? = nil
 local footMotor: Motor6D? = nil
+local footProp: Model? = nil
 local gripKillConn: RBXScriptConnection? = nil
+local gripChildConn: RBXScriptConnection? = nil
 local bodyHighlight: Highlight? = nil
 local walkSpeedBefore: number? = nil
 local jumpPowerBefore: number? = nil
 local jumpHeightBefore: number? = nil
 local floaterLayer: Frame? = nil
 local powerHudScale: UIScale? = nil
+local handleTransparency: { [BasePart]: number } = {}
 
 -- Match SideUI Power HUD (yellowish gold). Runtime sample overrides if available.
 local POWER_HUD_YELLOW = Color3.fromRGB(255, 214, 90)
@@ -84,10 +87,45 @@ local function stopWorkoutAnim()
 end
 
 local function destroyHandGrips(character: Model)
-	for _, name in { "RightGrip", "LeftGrip" } do
-		local grip = character:FindFirstChild(name)
-		if grip then
-			grip:Destroy()
+	for _, child in character:GetChildren() do
+		if child:IsA("Motor6D") or child:IsA("Weld") or child:IsA("WeldConstraint") then
+			local name = string.lower(child.Name)
+			if string.find(name, "grip", 1, true) then
+				child:Destroy()
+			end
+		end
+	end
+	-- Also strip any hand→handle joints the Tool recreates under limbs.
+	for _, limbName in { "RightHand", "LeftHand", "Right Arm", "Left Arm" } do
+		local limb = character:FindFirstChild(limbName)
+		if limb then
+			for _, c in limb:GetChildren() do
+				if c:IsA("Motor6D") or c:IsA("Weld") then
+					local n = string.lower(c.Name)
+					if string.find(n, "grip", 1, true) then
+						c:Destroy()
+					end
+				end
+			end
+		end
+	end
+end
+
+local function restoreToolVisibility()
+	for part, tr in handleTransparency do
+		if part.Parent then
+			part.LocalTransparencyModifier = tr
+		end
+	end
+	table.clear(handleTransparency)
+end
+
+local function hideToolVisibility(tool: Tool)
+	restoreToolVisibility()
+	for _, d in tool:GetDescendants() do
+		if d:IsA("BasePart") then
+			handleTransparency[d] = d.LocalTransparencyModifier
+			d.LocalTransparencyModifier = 1
 		end
 	end
 end
@@ -97,10 +135,19 @@ local function clearFootAttach()
 		gripKillConn:Disconnect()
 		gripKillConn = nil
 	end
+	if gripChildConn then
+		gripChildConn:Disconnect()
+		gripChildConn = nil
+	end
 	if footMotor then
 		footMotor:Destroy()
 		footMotor = nil
 	end
+	if footProp then
+		footProp:Destroy()
+		footProp = nil
+	end
+	restoreToolVisibility()
 end
 
 local function attachGearToFeet(character: Model, tool: Tool)
@@ -111,26 +158,99 @@ local function attachGearToFeet(character: Model, tool: Tool)
 		return
 	end
 
-	-- Kill default hand grips so the bar sits on the sole, not in the hands.
+	-- Real Tool stays equipped (workout detection) but hidden — grip keeps fighting
+	-- the foot motor during the flip, so we show a separate prop on the sole instead.
+	hideToolVisibility(tool)
 	destroyHandGrips(character)
-	gripKillConn = RunService.Heartbeat:Connect(function()
+
+	local function killGrips()
 		local char = player.Character
-		if not char then
-			return
+		if char then
+			destroyHandGrips(char)
 		end
-		destroyHandGrips(char)
+	end
+	gripKillConn = RunService.Heartbeat:Connect(killGrips)
+	gripChildConn = character.ChildAdded:Connect(function(child)
+		if child:IsA("Motor6D") or child:IsA("Weld") or child:IsA("WeldConstraint") then
+			local n = string.lower(child.Name)
+			if string.find(n, "grip", 1, true) then
+				task.defer(function()
+					if child.Parent then
+						child:Destroy()
+					end
+				end)
+			end
+		end
 	end)
 
-	-- Motor6D at the bottom of the foot (end of the leg), bar across the sole.
-	local soleY = -foot.Size.Y * 0.5 - 0.08
+	local prop = Instance.new("Model")
+	prop.Name = "WorkoutFootProp"
+
+	local primary: BasePart? = nil
+	local clones: { BasePart } = {}
+	local worldCf: { [BasePart]: CFrame } = {}
+	for _, d in tool:GetDescendants() do
+		if d:IsA("BasePart") then
+			local c = d:Clone()
+			c.Anchored = false
+			c.CanCollide = false
+			c.Massless = true
+			c.CanQuery = false
+			c.CanTouch = false
+			c.LocalTransparencyModifier = 0
+			worldCf[c] = d.CFrame
+			c.Parent = prop
+			c.CFrame = worldCf[c]
+			table.insert(clones, c)
+			if d == handle or d.Name == "Handle" then
+				primary = c
+			end
+		end
+	end
+	-- Carry loose VFX folders that lived under the tool (not under parts).
+	for _, d in tool:GetChildren() do
+		if not d:IsA("BasePart") and not d:IsA("Script") and not d:IsA("LocalScript") then
+			local okClone, cloned = pcall(function()
+				return d:Clone()
+			end)
+			if okClone and cloned then
+				cloned.Parent = prop
+			end
+		end
+	end
+
+	if not primary then
+		primary = clones[1]
+	end
+	if not primary then
+		prop:Destroy()
+		restoreToolVisibility()
+		return
+	end
+	primary.Name = "Handle"
+
+	for _, p in clones do
+		if p ~= primary then
+			local w = Instance.new("WeldConstraint")
+			w.Part0 = primary
+			w.Part1 = p
+			w.Parent = primary
+		end
+	end
+
+	-- Sole of the foot (end of the leg). Follows the flip with the foot bone.
+	local soleY = -foot.Size.Y * 0.5 - 0.12
 	local motor = Instance.new("Motor6D")
 	motor.Name = "WorkoutFootMotor"
 	motor.Part0 = foot
-	motor.Part1 = handle
+	motor.Part1 = primary
 	motor.C0 = CFrame.new(0, soleY, 0) * CFrame.Angles(0, math.rad(90), math.rad(90))
 	motor.C1 = CFrame.new()
 	motor.Parent = foot
 	footMotor = motor
+
+	prop.Parent = character
+	footProp = prop
 end
 
 local function playWorkoutAnim(character: Model)

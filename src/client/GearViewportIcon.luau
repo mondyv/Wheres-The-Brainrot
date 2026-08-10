@@ -27,11 +27,14 @@ local function enableVfx(root: Instance)
 		if d:IsA("ParticleEmitter") then
 			d.Enabled = true
 			-- Viewport previews need a stronger rate or they look empty.
-			if d.Rate < 8 then
+			-- Rate is a number; Lifetime is a NumberRange — never compare NumberRange < number.
+			local rate = d.Rate
+			if typeof(rate) == "number" and rate < 8 then
 				d.Rate = 14
 			end
-			if d.Lifetime < 1.2 then
-				d.Lifetime = 1.35
+			local life = d.Lifetime
+			if typeof(life) == "NumberRange" and life.Min < 1.2 then
+				d.Lifetime = NumberRange.new(1.35, 1.55)
 			end
 		elseif d:IsA("Beam") or d:IsA("Trail") or d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
 			(d :: any).Enabled = true

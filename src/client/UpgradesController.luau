@@ -978,8 +978,8 @@ local function setEditProgressVisual(alpha: number)
 			bar.Size = UDim2.new(alpha, 0, yScale, yOff)
 		end
 	end
-	local knob = buttons:FindFirstChild("Button")
-	if knob and knob:IsA("GuiObject") and bar and bar:IsA("GuiObject") then
+	local knob = buttons:FindFirstChild("Slider")
+	if knob and knob:IsA("GuiObject") then
 		-- Keep authored Y; slide along the progress track.
 		knob.AnchorPoint = Vector2.new(0.5, knob.AnchorPoint.Y)
 		knob.Position = UDim2.new(alpha, 0, knob.Position.Y.Scale, knob.Position.Y.Offset)
@@ -1006,7 +1006,7 @@ local function wireEditPowerFrame(frame: Frame)
 
 	local buttons = frame:FindFirstChild("Buttons")
 	local bar = buttons and buttons:FindFirstChild("Progress bar")
-	local knob = buttons and buttons:FindFirstChild("Button")
+	local knob = buttons and buttons:FindFirstChild("Slider")
 	local cancelHost = buttons and buttons:FindFirstChild("CancelButton")
 	local okayHost = buttons and buttons:FindFirstChild("OkayButton")
 	local header = frame:FindFirstChild("Header")

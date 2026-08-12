@@ -232,73 +232,113 @@ end
 
 local function refreshHud(animateBar: boolean?)
 	local lv, xp, needed = readState()
+	local text = "Lvl " .. tostring(lv)
 	if hudLvl then
-		hudLvl.Text = tostring(lv)
+		hudLvl.Text = text
 	end
-	local shadow = hudRoot and hudRoot:FindFirstChild("UserLVL shadow", true)
+	local shadow = hudRoot and hudRoot:FindFirstChild("UserLVL shadow")
 	if shadow and (shadow:IsA("TextLabel") or shadow:IsA("TextButton")) then
-		(shadow :: TextLabel).Text = tostring(lv)
+		(shadow :: TextLabel).Text = text
 	end
 	setProgressFill(hudBar, LevelConfig.progressAlpha(xp, needed), animateBar == true)
 end
 
-local function setCheckVisible(host: Instance?, claimed: boolean)
+local function setNamedVisible(host: Instance?, names: { string }, visible: boolean)
 	if not host then
 		return
 	end
-	for _, name in { "Check", "Checkmark", "Claimed", "CheckMark", "Tick" } do
+	for _, name in names do
 		local n = host:FindFirstChild(name, true)
 		if n and n:IsA("GuiObject") then
-			n.Visible = claimed
+			n.Visible = visible
 		end
-	end
-	-- Common pattern: ImageLabel named Icon swaps — also toggle any "On"/"Off".
-	local on = host:FindFirstChild("On", true)
-	local off = host:FindFirstChild("Off", true)
-	if on and on:IsA("GuiObject") then
-		on.Visible = claimed
-	end
-	if off and off:IsA("GuiObject") then
-		off.Visible = not claimed
 	end
 end
 
-local function applyPrizeButton(btn: Instance?, reward: LevelConfig.LevelReward?, claimed: boolean)
+local function setLabelPair(host: Instance?, primaryName: string, shadowName: string?, text: string)
+	if not host then
+		return
+	end
+	local primary = host:FindFirstChild(primaryName)
+	if primary and (primary:IsA("TextLabel") or primary:IsA("TextButton")) then
+		(primary :: TextLabel).Text = text
+	end
+	if shadowName then
+		local shadow = host:FindFirstChild(shadowName)
+		if shadow and (shadow:IsA("TextLabel") or shadow:IsA("TextButton")) then
+			(shadow :: TextLabel).Text = text
+		end
+	end
+end
+
+local function applyPrizeButton(btn: Instance?, prizeIndex: number, reward: LevelConfig.LevelReward?, claimed: boolean)
 	if not btn or not btn:IsA("GuiObject") then
 		return
 	end
 	if reward then
-		local nameLabel = findText(btn, { "Name", "Price", "Amount", "Text" })
-		if nameLabel then
-			-- Prefer showing the amount on the primary label if it looks like a prize amount slot.
-			if string.find(string.lower(nameLabel.Name), "name", 1, true) then
-				nameLabel.Text = reward.displayAmount
-			else
-				nameLabel.Text = reward.displayAmount
-			end
+		local nameKey = "Prize " .. tostring(prizeIndex) .. " name"
+		local shadowKey = "Prize " .. tostring(prizeIndex) .. " name shadow"
+		setLabelPair(btn, nameKey, shadowKey, reward.displayAmount)
+		local info = btn:FindFirstChild("Info")
+		if info and (info:IsA("TextLabel") or info:IsA("TextButton")) then
+			(info :: TextLabel).Text = reward.displayName
 		end
-		-- Fill extra name labels with display name when multiple exist.
-		local labels = {}
-		for _, d in btn:GetDescendants() do
-			if d:IsA("TextLabel") or d:IsA("TextButton") then
-				table.insert(labels, d)
-			end
-		end
-		if #labels >= 2 then
-			labels[1].Text = reward.displayAmount
-			labels[2].Text = reward.displayName
-		elseif #labels == 1 then
-			labels[1].Text = reward.displayAmount .. " " .. reward.displayName
+		local infoShadow = btn:FindFirstChild("Info shadow")
+		if infoShadow and (infoShadow:IsA("TextLabel") or infoShadow:IsA("TextButton")) then
+			(infoShadow :: TextLabel).Text = reward.displayName
 		end
 	end
-	setCheckVisible(btn, claimed)
+	setNamedVisible(btn, {
+		"Prize " .. tostring(prizeIndex) .. " checkmark",
+		"Prize 1 checkmark",
+		"Prize 2 checkmark",
+		"Checkmark",
+		"Check",
+	}, claimed)
+end
+
+local function refreshProgressXpLabels(progress: Instance?, xp: number, needed: number, level: number)
+	if not progress then
+		return
+	end
+	local xpText = string.format("%d/%dxp", math.floor(xp), math.floor(needed))
+	local lvlText = "LVL " .. tostring(level)
+	for _, d in progress:GetChildren() do
+		if d:IsA("TextLabel") or d:IsA("TextButton") then
+			local lower = string.lower(d.Name)
+			if string.find(lower, "xp", 1, true) or string.find(lower, "progress", 1, true) then
+				d.Text = xpText
+			elseif string.find(lower, "lvl", 1, true) or string.find(lower, "level", 1, true) then
+				d.Text = lvlText
+			end
+		end
+	end
+	-- Fallback: unlabeled TextLabels under ProgressXP (left = XP, right = LVL).
+	local texts: { TextLabel } = {}
+	for _, d in progress:GetChildren() do
+		if d:IsA("TextLabel") or d:IsA("TextButton") then
+			table.insert(texts, d :: TextLabel)
+		end
+	end
+	if #texts == 2 then
+		local a, b = texts[1], texts[2]
+		if a.AbsolutePosition.X <= b.AbsolutePosition.X then
+			a.Text = xpText
+			b.Text = lvlText
+		else
+			b.Text = xpText
+			a.Text = lvlText
+		end
+	elseif #texts == 1 then
+		texts[1].Text = xpText .. "  " .. lvlText
+	end
 end
 
 local function refreshLevelInfo()
 	if not levelFrame then
 		return
 	end
-	local playerLevel = select(1, readState())
+	local playerLevel, playerXp, playerNeeded = readState()
 	browseLevel = math.clamp(browseLevel, 1, LevelConfig.MAX_LEVEL)
 	local rewards = LevelConfig.rewardsForLevel(browseLevel)
 	local claimed = browseLevel <= playerLevel
@@ -306,41 +346,37 @@ local function refreshLevelInfo()
 	local rewardsRoot = levelFrame:FindFirstChild("Rewards")
 	local main = rewardsRoot and rewardsRoot:FindFirstChild("Main")
 	if main then
-		local nameLabel = findText(main, { "Player Name For Profile", "Name" })
-		if nameLabel then
-			nameLabel.Text = player.DisplayName
-		end
-		local lvlLabel = findText(main, { "Player Level For Profile" })
-		if lvlLabel then
-			lvlLabel.Text = "Level " .. tostring(browseLevel)
-		end
-		local icon = main:FindFirstChild("Player Icon", true)
+		setLabelPair(main, "Player Name For Profile", "Player Name For Profile Shadow", player.DisplayName)
+		local levelText = "Level " .. tostring(browseLevel)
+		-- Studio uses both casings.
+		setLabelPair(main, "Player level for profile", "Player Level For Profile Shadow", levelText)
+		setLabelPair(main, "Player Level For Profile", nil, levelText)
+		local icon = main:FindFirstChild("Player Icon")
 		if icon and icon:IsA("ImageLabel") then
 			loadPfp(icon)
 		end
 	end
 
-	local header = levelFrame:FindFirstChild("Header")
-	local headerName = header and findText(header, { "Name" })
-	if headerName then
-		headerName.Text = "Level " .. tostring(browseLevel)
-	end
-
 	local progress = levelFrame:FindFirstChild("ProgressXP")
-	local fill = progress and (progress:FindFirstChild("ImageLabel") or progress:FindFirstChildWhichIsA("GuiObject"))
+	local fill = progress and progress:FindFirstChild("EditThisForBarFill")
+	local fillGui = if fill and fill:IsA("GuiObject") then fill else nil
 	if browseLevel == playerLevel then
-		local _, xp, needed = readState()
-		setProgressFill(if fill and fill:IsA("GuiObject") then fill else nil, LevelConfig.progressAlpha(xp, needed), true)
+		setProgressFill(fillGui, LevelConfig.progressAlpha(playerXp, playerNeeded), true)
+		refreshProgressXpLabels(progress, playerXp, playerNeeded, browseLevel)
 	elseif browseLevel < playerLevel then
-		setProgressFill(if fill and fill:IsA("GuiObject") then fill else nil, 1, false)
+		local needed = LevelConfig.xpRequiredForLevel(browseLevel)
+		setProgressFill(fillGui, 1, false)
+		refreshProgressXpLabels(progress, needed, needed, browseLevel)
 	else
-		setProgressFill(if fill and fill:IsA("GuiObject") then fill else nil, 0, false)
+		local needed = LevelConfig.xpRequiredForLevel(browseLevel)
+		setProgressFill(fillGui, 0, false)
+		refreshProgressXpLabels(progress, 0, needed, browseLevel)
 	end
 
 	local buttons = levelFrame:FindFirstChild("Buttons")
 	if buttons then
-		applyPrizeButton(buttons:FindFirstChild("Button2"), rewards[1], claimed)
-		applyPrizeButton(buttons:FindFirstChild("Button3"), rewards[2], claimed)
+		applyPrizeButton(buttons:FindFirstChild("Button2"), 1, rewards[1], claimed)
+		applyPrizeButton(buttons:FindFirstChild("Button3"), 2, rewards[2], claimed)
 	end
 end
 

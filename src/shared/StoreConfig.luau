@@ -240,8 +240,7 @@ StoreConfig.GIFTABLE_GAMEPASSES = {
 	[StoreConfig.GAMEPASS.DOUBLE_POWER] = {
 		displayName = "2x Power",
 		entitlementKey = StoreConfig.ATTR.GIFTED_DOUBLE_POWER,
-		-- Reuses the old Super Luck gift product slot until a dedicated gift product is made.
-		giftProductId = 3604960821,
+		giftProductId = 3707440184,
 	},
 	[StoreConfig.GAMEPASS.MEGA_LUCK] = {
 		displayName = "Mega Luck",

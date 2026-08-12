@@ -70,9 +70,9 @@ function LevelService.addXp(player: Player, amount: number, _reason: string?): n
 	local leveled = false
 	local reached = level
 
-	-- Cap runaway multi-level from huge grants (safety).
+	-- Cap at MAX_LEVEL; ignore leftover XP once capped.
 	local guard = 0
-	while guard < 50 do
+	while level < LevelConfig.MAX_LEVEL and guard < 200 do
 		guard += 1
 		local needed = LevelConfig.xpRequiredForLevel(level)
 		if xp < needed then
@@ -83,6 +83,10 @@ function LevelService.addXp(player: Player, amount: number, _reason: string?): n
 		reached = level
 		leveled = true
 		grantLevelRewards(player, level)
+	end
+	if level >= LevelConfig.MAX_LEVEL then
+		level = LevelConfig.MAX_LEVEL
+		xp = math.min(xp, LevelConfig.xpRequiredForLevel(level))
 	end
 
 	syncAttrs(player, level, xp)

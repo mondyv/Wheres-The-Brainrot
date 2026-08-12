@@ -29,6 +29,9 @@ local browseLevel = 1
 local wired = false
 local floaterLayer: Frame? = nil
 local barTween: Tween? = nil
+local panelBarTween: Tween? = nil
+local xpAnimToken = 0
+local pendingBarAlpha: number? = nil
 
 local function fireConfettiAndShake()
 	local essentials = ReplicatedStorage:FindFirstChild("EssentialsShared")
@@ -59,6 +62,29 @@ local function findText(root: Instance?, names: { string }): TextLabel?
 	return nil
 end
 
+-- Keep Studio-authored text size; TextScaled blows up short strings like "Level 4".
+local function lockStudioTextSize(label: TextLabel, maxSize: number?)
+	if label:GetAttribute("LevelTextSizeLocked") == true then
+		return
+	end
+	local cap = maxSize or 22
+	local size = label.TextSize
+	if label.TextScaled and label.AbsoluteSize.Y > 4 then
+		size = math.floor(label.AbsoluteSize.Y * 0.42)
+	end
+	size = math.clamp(math.floor(size), 10, cap)
+	label.TextScaled = false
+	label.TextSize = size
+	local constraint = label:FindFirstChildOfClass("UITextSizeConstraint")
+	if not constraint then
+		constraint = Instance.new("UITextSizeConstraint")
+		constraint.Parent = label
+	end
+	constraint.MaxTextSize = size
+	constraint.MinTextSize = math.max(8, size - 6)
+	label:SetAttribute("LevelTextSizeLocked", true)
+end
+
 -- Studio bar size at wire-time is the authored max; never exceed that.
 local function captureBarFullSize(fill: GuiObject)
 	if fill:GetAttribute("BarFullCaptured") == true then
@@ -71,28 +97,38 @@ local function captureBarFullSize(fill: GuiObject)
 	fill:SetAttribute("BarFullCaptured", true)
 end
 
-local function setProgressFill(fill: GuiObject?, alpha: number, animate: boolean?)
-	if not fill then
-		return
-	end
+local function barGoalSize(fill: GuiObject, alpha: number): UDim2
 	captureBarFullSize(fill)
 	alpha = math.clamp(alpha, 0, 1)
 	local xs = (fill:GetAttribute("BarFullXScale") :: number?) or 0
 	local xo = (fill:GetAttribute("BarFullXOffset") :: number?) or 0
 	local ys = (fill:GetAttribute("BarFullYScale") :: number?) or fill.Size.Y.Scale
 	local yo = (fill:GetAttribute("BarFullYOffset") :: number?) or fill.Size.Y.Offset
-	local goal = UDim2.new(xs * alpha, xo * alpha, ys, yo)
+	return UDim2.new(xs * alpha, xo * alpha, ys, yo)
+end
+
+local function setProgressFill(fill: GuiObject?, alpha: number, animate: boolean?, tweenSlot: "hud" | "panel"?)
+	if not fill then
+		return
+	end
+	local goal = barGoalSize(fill, alpha)
+	local slot = tweenSlot or "hud"
 	if animate then
-		if barTween then
-			barTween:Cancel()
-			barTween = nil
+		local existing = if slot == "panel" then panelBarTween else barTween
+		if existing then
+			existing:Cancel()
 		end
-		barTween = TweenService:Create(
+		local tw = TweenService:Create(
 			fill,
-			TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 			{ Size = goal }
 		)
-		barTween:Play()
+		if slot == "panel" then
+			panelBarTween = tw
+		else
+			barTween = tw
+		end
+		tw:Play()
 	else
 		fill.Size = goal
 	end
@@ -111,6 +147,32 @@ local function ensureFloaterLayer(main: ScreenGui): Frame
 	layer.Parent = main
 	floaterLayer = layer
 	return layer
+end
+
+local function spawnXpHitLight(layer: Frame, screen: Vector2)
+	local lp = layer.AbsolutePosition
+	local glow = Instance.new("Frame")
+	glow.Name = "XpHitLight"
+	glow.AnchorPoint = Vector2.new(0.5, 0.5)
+	glow.Position = UDim2.fromOffset(screen.X - lp.X, screen.Y - lp.Y)
+	glow.Size = UDim2.fromOffset(18, 18)
+	glow.BackgroundColor3 = Color3.fromRGB(120, 255, 180)
+	glow.BackgroundTransparency = 0.2
+	glow.BorderSizePixel = 0
+	glow.ZIndex = 85
+	glow.Parent = layer
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = glow
+	TweenService:Create(glow, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = UDim2.fromOffset(90, 90),
+		BackgroundTransparency = 1,
+	}):Play()
+	task.delay(0.34, function()
+		if glow.Parent then
+			glow:Destroy()
+		end
+	end)
 end
 
 local function pulseLevelHudChip()
@@ -136,15 +198,30 @@ local function pulseLevelHudChip()
 	end)
 end
 
-local function spawnXpFloater(gain: number)
+local function applyPendingHudBar()
+	if pendingBarAlpha == nil then
+		return
+	end
+	local alpha = pendingBarAlpha
+	pendingBarAlpha = nil
+	setProgressFill(hudBar, alpha, true, "hud")
+end
+
+local function spawnXpFloater(gain: number, onArrive: (() -> ())?)
 	local main = PlayerGuiMain.ensure(player)
 	local layer = ensureFloaterLayer(main)
 	if not hudRoot or not hudRoot.Parent then
+		if onArrive then
+			onArrive()
+		end
 		return
 	end
 
 	local cam = workspace.CurrentCamera
 	if not cam then
+		if onArrive then
+			onArrive()
+		end
 		return
 	end
 
@@ -175,11 +252,16 @@ local function spawnXpFloater(gain: number)
 		if onScreen then
 			startPos = toLayerOffset(Vector2.new(screenPos.X, screenPos.Y))
 		else
-			startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 48)
+			startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 64)
 		end
 	else
-		startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 48)
+		startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 64)
 	end
+
+	spawnXpHitLight(
+		layer,
+		Vector2.new(startPos.X.Offset + layer.AbsolutePosition.X, startPos.Y.Offset + layer.AbsolutePosition.Y)
+	)
 
 	local label = Instance.new("TextLabel")
 	label.Name = "XpGainFloater"
@@ -199,16 +281,16 @@ local function spawnXpFloater(gain: number)
 	stroke.Parent = label
 
 	local scale = Instance.new("UIScale")
-	scale.Scale = 0.35
+	scale.Scale = 0.3
 	scale.Parent = label
-	TweenService:Create(scale, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.15 })
+	TweenService:Create(scale, TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.2 })
 		:Play()
 
 	local startX, startY = startPos.X.Offset, startPos.Y.Offset
-	local liftY = startY - 28
+	local liftY = startY - 34
 	TweenService:Create(
 		label,
-		TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Position = UDim2.fromOffset(startX, liftY) }
 	):Play()
 
@@ -220,23 +302,26 @@ local function spawnXpFloater(gain: number)
 		local t = progress.Value
 		local one = 1 - t
 		local midX = (fromX + liveEnd.X.Offset) * 0.5
-		local midY = math.min(fromY, liveEnd.Y.Offset) - 36
+		local midY = math.min(fromY, liveEnd.Y.Offset) - 48
 		local x = one * one * fromX + 2 * one * t * midX + t * t * liveEnd.X.Offset
 		local y = one * one * fromY + 2 * one * t * midY + t * t * liveEnd.Y.Offset
 		label.Position = UDim2.fromOffset(x, y)
 	end)
 
-	task.delay(0.12, function()
+	task.delay(0.14, function()
 		if not label.Parent then
 			conn:Disconnect()
 			progress:Destroy()
+			if onArrive then
+				onArrive()
+			end
 			return
 		end
 		fromX = label.Position.X.Offset
 		fromY = label.Position.Y.Offset
 		local move = TweenService:Create(
 			progress,
-			TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 			{ Value = 1 }
 		)
 		move:Play()
@@ -244,11 +329,19 @@ local function spawnXpFloater(gain: number)
 			conn:Disconnect()
 			progress:Destroy()
 			if not label.Parent then
+				if onArrive then
+					onArrive()
+				end
 				return
 			end
-			label.Position = toLayerOffset(destScreen())
+			local dest = destScreen()
+			label.Position = toLayerOffset(dest)
+			spawnXpHitLight(layer, dest)
 			pulseLevelHudChip()
-			TweenService:Create(scale, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.In), { Scale = 0.35 })
+			if onArrive then
+				onArrive()
+			end
+			TweenService:Create(scale, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.In), { Scale = 0.3 })
 				:Play()
 			TweenService:Create(label, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
 				TextTransparency = 1,
@@ -303,7 +396,14 @@ local function refreshHud(animateBar: boolean?)
 	if shadow and (shadow:IsA("TextLabel") or shadow:IsA("TextButton")) then
 		(shadow :: TextLabel).Text = text
 	end
-	setProgressFill(hudBar, LevelConfig.progressAlpha(xp, needed), animateBar == true)
+	local alpha = LevelConfig.progressAlpha(xp, needed)
+	if animateBar == true then
+		pendingBarAlpha = alpha
+		-- If no floater is mid-flight, apply immediately.
+		setProgressFill(hudBar, alpha, true, "hud")
+	else
+		setProgressFill(hudBar, alpha, false, "hud")
+	end
 end
 
 local function setNamedVisible(host: Instance?, names: { string }, visible: boolean)
@@ -318,23 +418,37 @@ local function setNamedVisible(host: Instance?, names: { string }, visible: bool
 	end
 end
 
-local function setLabelPair(host: Instance?, primaryName: string, shadowName: string?, text: string)
+local function setLabelPair(host: Instance?, primaryName: string, shadowName: string?, text: string, maxSize: number?)
 	if not host then
 		return
 	end
 	local primary = host:FindFirstChild(primaryName)
 	if primary and (primary:IsA("TextLabel") or primary:IsA("TextButton")) then
+		lockStudioTextSize(primary :: TextLabel, maxSize)
 		(primary :: TextLabel).Text = text
 	end
 	if shadowName then
 		local shadow = host:FindFirstChild(shadowName)
 		if shadow and (shadow:IsA("TextLabel") or shadow:IsA("TextButton")) then
+			lockStudioTextSize(shadow :: TextLabel, maxSize)
 			(shadow :: TextLabel).Text = text
 		end
 	end
 end
 
-local function applyPrizeButton(btn: Instance?, prizeIndex: number, reward: LevelConfig.LevelReward?, claimed: boolean)
+local function resolveCashIcon(): string
+	local main = PlayerGuiMain.ensure(player)
+	local side = main:FindFirstChild("SideUI")
+	local counters = side and side:FindFirstChild("Counters")
+	local cash = counters and counters:FindFirstChild("Cash")
+	local icon = cash and (cash:FindFirstChild("Icon") or cash:FindFirstChild("ImageLabel") or cash:FindFirstChildWhichIsA("ImageLabel", true))
+	if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) and icon.Image ~= "" then
+		return icon.Image
+	end
+	return "rbxassetid://4590657391"
+end
+
+local function applyPrizeButton(btn: Instance?, prizeIndex: number, reward: LevelConfig.LevelReward?, claimed: boolean, cashIcon: string)
 	if not btn or not btn:IsA("GuiObject") then
 		return
 	end
@@ -350,6 +464,18 @@ local function applyPrizeButton(btn: Instance?, prizeIndex: number, reward: Leve
 		if infoShadow and (infoShadow:IsA("TextLabel") or infoShadow:IsA("TextButton")) then
 			(infoShadow :: TextLabel).Text = reward.displayName
 		end
+		local iconNames = {
+			"Prize " .. tostring(prizeIndex) .. " icon",
+			"Icon",
+		}
+		for _, iconName in iconNames do
+			local icon = btn:FindFirstChild(iconName, true)
+			if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
+				icon.Image = cashIcon
+				icon.ImageTransparency = 0
+				icon.Visible = true
+			end
+		end
 	end
 	setNamedVisible(btn, {
 		"Prize " .. tostring(prizeIndex) .. " checkmark",
@@ -360,44 +486,180 @@ local function applyPrizeButton(btn: Instance?, prizeIndex: number, reward: Leve
 	}, claimed)
 end
 
-local function refreshProgressXpLabels(progress: Instance?, xp: number, needed: number, level: number)
+local function isXpProgressLabel(label: TextLabel): boolean
+	local lower = string.lower(label.Name)
+	local text = string.lower(label.Text)
+	if string.find(lower, "editthis", 1, true) then
+		return false
+	end
+	if string.find(lower, "xp", 1, true) or string.find(text, "xp", 1, true) then
+		return true
+	end
+	if string.find(text, "/", 1, true) and string.find(text, "%d") then
+		return true
+	end
+	return false
+end
+
+local function isLvlProgressLabel(label: TextLabel): boolean
+	local lower = string.lower(label.Name)
+	local text = string.lower(label.Text)
+	if string.find(lower, "editthis", 1, true) then
+		return false
+	end
+	if string.find(lower, "lvl", 1, true) or string.find(lower, "level", 1, true) then
+		return true
+	end
+	if string.find(text, "lvl", 1, true) then
+		return true
+	end
+	return false
+end
+
+local function ensureProgressLabels(progress: Instance): (TextLabel?, TextLabel?)
+	local searchRoots: { Instance } = { progress }
+	if levelFrame then
+		table.insert(searchRoots, levelFrame)
+	end
+
+	local xpLabel: TextLabel? = nil
+	local lvlLabel: TextLabel? = nil
+
+	local function consider(label: TextLabel)
+		if label:IsDescendantOf(progress) == false and label.Parent ~= progress then
+			-- Prefer labels that sit on/near the progress bar.
+			local okNear = false
+			if progress:IsA("GuiObject") then
+				local p = progress :: GuiObject
+				local ly = label.AbsolutePosition.Y
+				local py = p.AbsolutePosition.Y
+				local ph = p.AbsoluteSize.Y
+				if ph > 0 and ly >= py - 30 and ly <= py + ph + 30 then
+					okNear = true
+				end
+			end
+			if not okNear and label.Parent ~= levelFrame then
+				return
+			end
+		end
+		if not xpLabel and isXpProgressLabel(label) and not isLvlProgressLabel(label) then
+			xpLabel = label
+		elseif not lvlLabel and isLvlProgressLabel(label) then
+			lvlLabel = label
+		end
+	end
+
+	for _, root in searchRoots do
+		for _, d in root:GetDescendants() do
+			if d:IsA("TextLabel") or d:IsA("TextButton") then
+				consider(d :: TextLabel)
+			end
+		end
+		for _, d in root:GetChildren() do
+			if d:IsA("TextLabel") or d:IsA("TextButton") then
+				consider(d :: TextLabel)
+			end
+		end
+	end
+
+	-- Fallback: any two text labels under ProgressXP by screen X.
+	if not xpLabel or not lvlLabel then
+		local texts: { TextLabel } = {}
+		for _, d in progress:GetDescendants() do
+			if (d:IsA("TextLabel") or d:IsA("TextButton")) and not string.find(string.lower(d.Name), "editthis", 1, true) then
+				table.insert(texts, d :: TextLabel)
+			end
+		end
+		table.sort(texts, function(a, b)
+			return a.AbsolutePosition.X < b.AbsolutePosition.X
+		end)
+		if #texts >= 2 then
+			xpLabel = xpLabel or texts[1]
+			lvlLabel = lvlLabel or texts[#texts]
+		elseif #texts == 1 then
+			xpLabel = xpLabel or texts[1]
+		end
+	end
+
+	-- Studio placeholders may be missing as TextLabels — create them once on ProgressXP.
+	if not xpLabel then
+		local made = Instance.new("TextLabel")
+		made.Name = "XpProgressText"
+		made.BackgroundTransparency = 1
+		made.AnchorPoint = Vector2.new(0, 0.5)
+		made.Position = UDim2.new(0, 8, 0.5, 0)
+		made.Size = UDim2.fromOffset(120, 22)
+		made.TextXAlignment = Enum.TextXAlignment.Left
+		made.TextColor3 = Color3.new(1, 1, 1)
+		made.ZIndex = 5
+		made.Parent = progress
+		UiFonts.applyBodyLabel(made, 16, 12)
+		lockStudioTextSize(made)
+		xpLabel = made
+	end
+	if not lvlLabel then
+		local made = Instance.new("TextLabel")
+		made.Name = "LvlProgressText"
+		made.BackgroundTransparency = 1
+		made.AnchorPoint = Vector2.new(1, 0.5)
+		made.Position = UDim2.new(1, -8, 0.5, 0)
+		made.Size = UDim2.fromOffset(90, 22)
+		made.TextXAlignment = Enum.TextXAlignment.Right
+		made.TextColor3 = Color3.new(1, 1, 1)
+		made.ZIndex = 5
+		made.Parent = progress
+		UiFonts.applyBodyLabel(made, 16, 12)
+		lockStudioTextSize(made)
+		lvlLabel = made
+	end
+	return xpLabel, lvlLabel
+end
+
+local function refreshProgressXpLabels(progress: Instance?, xp: number, needed: number, level: number, animate: boolean?)
 	if not progress then
 		return
 	end
 	local xpText = string.format("%d/%dxp", math.floor(xp), math.floor(needed))
 	local lvlText = "LVL " .. tostring(level)
-	for _, d in progress:GetChildren() do
-		if d:IsA("TextLabel") or d:IsA("TextButton") then
-			local lower = string.lower(d.Name)
-			if string.find(lower, "xp", 1, true) or string.find(lower, "progress", 1, true) then
-				d.Text = xpText
-			elseif string.find(lower, "lvl", 1, true) or string.find(lower, "level", 1, true) then
-				d.Text = lvlText
-			end
-		end
-	end
-	-- Fallback: unlabeled TextLabels under ProgressXP (left = XP, right = LVL).
-	local texts: { TextLabel } = {}
-	for _, d in progress:GetChildren() do
-		if d:IsA("TextLabel") or d:IsA("TextButton") then
-			table.insert(texts, d :: TextLabel)
-		end
-	end
-	if #texts == 2 then
-		local a, b = texts[1], texts[2]
-		if a.AbsolutePosition.X <= b.AbsolutePosition.X then
-			a.Text = xpText
-			b.Text = lvlText
+	local xpLabel, lvlLabel = ensureProgressLabels(progress)
+	if xpLabel then
+		lockStudioTextSize(xpLabel)
+		if animate and xpLabel.Text ~= xpText then
+			xpAnimToken += 1
+			local token = xpAnimToken
+			local proxy = Instance.new("NumberValue")
+			local startXp = tonumber(string.match(xpLabel.Text, "^(%d+)")) or 0
+			proxy.Value = startXp
+			local conn = proxy:GetPropertyChangedSignal("Value"):Connect(function()
+				if token ~= xpAnimToken then
+					return
+				end
+				xpLabel.Text = string.format("%d/%dxp", math.floor(proxy.Value + 0.5), math.floor(needed))
+			end)
+			local tw = TweenService:Create(
+				proxy,
+				TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Value = xp }
+			)
+			tw:Play()
+			tw.Completed:Connect(function()
+				conn:Disconnect()
+				proxy:Destroy()
+				if token == xpAnimToken then
+					xpLabel.Text = xpText
+				end
+			end)
 		else
-			b.Text = xpText
-			a.Text = lvlText
+			xpLabel.Text = xpText
 		end
-	elseif #texts == 1 then
-		texts[1].Text = xpText .. "  " .. lvlText
+	end
+	if lvlLabel then
+		lockStudioTextSize(lvlLabel)
+		lvlLabel.Text = lvlText
 	end
 end
 
-local function refreshLevelInfo()
+local function refreshLevelInfo(animateBar: boolean?)
 	if not levelFrame then
 		return
 	end
@@ -405,15 +667,15 @@ local function refreshLevelInfo()
 	browseLevel = math.clamp(browseLevel, 1, LevelConfig.MAX_LEVEL)
 	local rewards = LevelConfig.rewardsForLevel(browseLevel)
 	local claimed = browseLevel <= playerLevel
+	local cashIcon = resolveCashIcon()
 
 	local rewardsRoot = levelFrame:FindFirstChild("Rewards")
 	local main = rewardsRoot and rewardsRoot:FindFirstChild("Main")
 	if main then
-		setLabelPair(main, "Player Name For Profile", "Player Name For Profile Shadow", player.DisplayName)
+		setLabelPair(main, "Player Name For Profile", "Player Name For Profile Shadow", player.DisplayName, 18)
 		local levelText = "Level " .. tostring(browseLevel)
-		-- Studio uses both casings.
-		setLabelPair(main, "Player level for profile", "Player Level For Profile Shadow", levelText)
-		setLabelPair(main, "Player Level For Profile", nil, levelText)
+		-- Studio primary is lowercase "level"; shadow uses capital "Level".
+		setLabelPair(main, "Player level for profile", "Player Level For Profile Shadow", levelText, 16)
 		local icon = main:FindFirstChild("Player Icon")
 		if icon and icon:IsA("ImageLabel") then
 			loadPfp(icon)
@@ -421,35 +683,36 @@ local function refreshLevelInfo()
 	end
 
 	local progress = levelFrame:FindFirstChild("ProgressXP")
-	local fill = progress and progress:FindFirstChild("EditThisForBarFill")
+	local fill = progress and progress:FindFirstChild("EditThisForBarFill", true)
 	local fillGui = if fill and fill:IsA("GuiObject") then fill else nil
 	if fillGui then
 		captureBarFullSize(fillGui)
 	end
+	local doAnim = animateBar == true
 	if browseLevel == playerLevel then
-		setProgressFill(fillGui, LevelConfig.progressAlpha(playerXp, playerNeeded), true)
-		refreshProgressXpLabels(progress, playerXp, playerNeeded, browseLevel)
+		setProgressFill(fillGui, LevelConfig.progressAlpha(playerXp, playerNeeded), doAnim, "panel")
+		refreshProgressXpLabels(progress, playerXp, playerNeeded, browseLevel, doAnim)
 	elseif browseLevel < playerLevel then
 		local needed = LevelConfig.xpRequiredForLevel(browseLevel)
-		setProgressFill(fillGui, 1, false)
-		refreshProgressXpLabels(progress, needed, needed, browseLevel)
+		setProgressFill(fillGui, 1, false, "panel")
+		refreshProgressXpLabels(progress, needed, needed, browseLevel, false)
 	else
 		local needed = LevelConfig.xpRequiredForLevel(browseLevel)
-		setProgressFill(fillGui, 0, false)
-		refreshProgressXpLabels(progress, 0, needed, browseLevel)
+		setProgressFill(fillGui, 0, false, "panel")
+		refreshProgressXpLabels(progress, 0, needed, browseLevel, false)
 	end
 
 	local buttons = levelFrame:FindFirstChild("Buttons")
 	if buttons then
-		applyPrizeButton(buttons:FindFirstChild("Button2"), 1, rewards[1], claimed)
-		applyPrizeButton(buttons:FindFirstChild("Button3"), 2, rewards[2], claimed)
+		applyPrizeButton(buttons:FindFirstChild("Button2"), 1, rewards[1], claimed, cashIcon)
+		applyPrizeButton(buttons:FindFirstChild("Button3"), 2, rewards[2], claimed, cashIcon)
 	end
 end
 
 local function openLevelInfo()
 	browseLevel = select(1, readState())
 	HUDController.openFrameByName("Level Info")
-	refreshLevelInfo()
+	refreshLevelInfo(false)
 end
 
 local function wireLevelInfo(frame: Frame)
@@ -473,6 +736,28 @@ local function wireLevelInfo(frame: Frame)
 	local rewardsRoot = frame:FindFirstChild("Rewards")
 	local main = rewardsRoot and rewardsRoot:FindFirstChild("Main")
 	if main then
+		-- Lock profile text sizes once AbsoluteSize is ready.
+		task.defer(function()
+			for _, name in {
+				"Player Name For Profile",
+				"Player Name For Profile Shadow",
+			} do
+				local n = main:FindFirstChild(name)
+				if n and (n:IsA("TextLabel") or n:IsA("TextButton")) then
+					lockStudioTextSize(n :: TextLabel, 18)
+				end
+			end
+			for _, name in {
+				"Player level for profile",
+				"Player Level For Profile Shadow",
+			} do
+				local n = main:FindFirstChild(name)
+				if n and (n:IsA("TextLabel") or n:IsA("TextButton")) then
+					lockStudioTextSize(n :: TextLabel, 16)
+				end
+			end
+		end)
+
 		local left = main:FindFirstChild("Level Left", true)
 		local right = main:FindFirstChild("Level Right", true)
 		local function wireNav(node: Instance?, delta: number)
@@ -494,7 +779,7 @@ local function wireLevelInfo(frame: Frame)
 				UIButtonEffects.wireScaleButtonAnim(btn, function()
 					browseLevel = math.clamp(browseLevel + delta, 1, LevelConfig.MAX_LEVEL)
 					UIInteractionSounds.playClick()
-					refreshLevelInfo()
+					refreshLevelInfo(false)
 				end)
 			end
 		end
@@ -502,9 +787,18 @@ local function wireLevelInfo(frame: Frame)
 		wireNav(right, 1)
 	end
 
+	local progress = frame:FindFirstChild("ProgressXP")
+	if progress then
+		ensureProgressLabels(progress)
+		local fill = progress:FindFirstChild("EditThisForBarFill", true)
+		if fill and fill:IsA("GuiObject") then
+			captureBarFullSize(fill)
+		end
+	end
+
 	frame:GetPropertyChangedSignal("Visible"):Connect(function()
 		if frame.Visible then
-			refreshLevelInfo()
+			refreshLevelInfo(false)
 		end
 	end)
 end
@@ -526,7 +820,6 @@ local function wireHud(main: ScreenGui)
 	local bar = highlight and highlight:FindFirstChild("Progress bar")
 	hudBar = if bar and bar:IsA("GuiObject") then bar else nil
 	if hudBar then
-		-- Capture Studio max size before any fill shrink (authored size = full bar).
 		captureBarFullSize(hudBar)
 	end
 	local pfp = highlight and highlight:FindFirstChild("UserPFP")
@@ -557,12 +850,30 @@ end
 local function onXpPulse()
 	local gain = player:GetAttribute(LevelConfig.LAST_XP_GAIN_ATTR)
 	local g = if typeof(gain) == "number" then gain else 0
-	if g > 0 then
-		spawnXpFloater(g)
+	local lv, xp, needed = readState()
+	local alpha = LevelConfig.progressAlpha(xp, needed)
+
+	-- Update level text immediately; animate bar when floater lands.
+	if hudLvl then
+		hudLvl.Text = "Lvl " .. tostring(lv)
 	end
-	refreshHud(true)
-	if levelFrame and levelFrame.Visible then
-		refreshLevelInfo()
+	local shadow = hudRoot and hudRoot:FindFirstChild("UserLVL shadow")
+	if shadow and (shadow:IsA("TextLabel") or shadow:IsA("TextButton")) then
+		(shadow :: TextLabel).Text = "Lvl " .. tostring(lv)
+	end
+	pendingBarAlpha = alpha
+
+	local function onArrive()
+		applyPendingHudBar()
+		if levelFrame and levelFrame.Visible then
+			refreshLevelInfo(true)
+		end
+	end
+
+	if g > 0 then
+		spawnXpFloater(g, onArrive)
+	else
+		onArrive()
 	end
 end
 
@@ -580,7 +891,7 @@ local function onLevelUpPulse()
 	browseLevel = lv
 	refreshHud(true)
 	if levelFrame and levelFrame.Visible then
-		refreshLevelInfo()
+		refreshLevelInfo(true)
 	else
 		task.delay(0.35, function()
 			openLevelInfo()
@@ -605,14 +916,19 @@ function M.init()
 	wireHud(main)
 
 	player:GetAttributeChangedSignal(LevelConfig.LEVEL_ATTR):Connect(function()
-		refreshHud(true)
+		local lv = select(1, readState())
+		if hudLvl then
+			hudLvl.Text = "Lvl " .. tostring(lv)
+		end
+		local shadow = hudRoot and hudRoot:FindFirstChild("UserLVL shadow")
+		if shadow and (shadow:IsA("TextLabel") or shadow:IsA("TextButton")) then
+			(shadow :: TextLabel).Text = "Lvl " .. tostring(lv)
+		end
 		if levelFrame and levelFrame.Visible then
-			refreshLevelInfo()
+			refreshLevelInfo(true)
 		end
 	end)
-	player:GetAttributeChangedSignal(LevelConfig.XP_ATTR):Connect(function()
-		refreshHud(true)
-	end)
+	-- Bar / floater handled by XpGainPulse so we don't snap twice.
 	player:GetAttributeChangedSignal(LevelConfig.XP_GAIN_PULSE_ATTR):Connect(onXpPulse)
 	player:GetAttributeChangedSignal(LevelConfig.LEVEL_UP_PULSE_ATTR):Connect(onLevelUpPulse)
 
@@ -628,6 +944,19 @@ function M.init()
 					player:SetAttribute(LevelConfig.LEVEL_UP_TO_ATTR, reached)
 				end
 				onLevelUpPulse()
+			end)
+		end
+		local xpGainRE = remotes:FindFirstChild("PlayerXpGain")
+		if xpGainRE and xpGainRE:IsA("RemoteEvent") then
+			xpGainRE.OnClientEvent:Connect(function(gain: any)
+				-- Attribute pulse is primary; remote is a backup if pulse was missed.
+				if typeof(gain) == "number" and gain > 0 then
+					local last = player:GetAttribute(LevelConfig.LAST_XP_GAIN_ATTR)
+					if last ~= gain then
+						player:SetAttribute(LevelConfig.LAST_XP_GAIN_ATTR, gain)
+						onXpPulse()
+					end
+				end
 			end)
 		end
 	end)

@@ -2,7 +2,7 @@
 --[[
 	StoreHandler.server
 	Wires every Store item that isn't already owned by another system:
-	• Gamepass effects (VIP, 2x Cash, 2x Upgrades, Super/Mega Luck, X-Ray) applied
+	• Gamepass effects (VIP, 2x Cash, 2x Upgrades, 2x Power, Mega Luck, X-Ray) applied
 	  on PlayerAdded and re-checked after a gamepass purchase finishes.
 	• Developer-product receipts (Exclusive Brainrot, Server Luck, Booster Packs,
 	  Cash Bundles) registered through ProductHandlerServer.registerProductReceipt.
@@ -504,7 +504,7 @@ local GAMEPASS_OWNED_ATTR_BY_ID: { [number]: string } = {
 	[StoreConfig.GAMEPASS.XRAY] = StoreConfig.ATTR.XRAY_OWNED,
 	[StoreConfig.GAMEPASS.DOUBLE_UPGRADES] = StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED,
 	[StoreConfig.GAMEPASS.DOUBLE_CASH] = StoreConfig.ATTR.DOUBLE_CASH_OWNED,
-	[StoreConfig.GAMEPASS.SUPER_LUCK] = StoreConfig.ATTR.SUPER_LUCK_OWNED,
+	[StoreConfig.GAMEPASS.DOUBLE_POWER] = StoreConfig.ATTR.DOUBLE_POWER_OWNED,
 	[StoreConfig.GAMEPASS.MEGA_LUCK] = StoreConfig.ATTR.MEGA_LUCK_OWNED,
 	[StoreConfig.GAMEPASS.AUTOCOLLECT] = StoreConfig.ATTR.AUTOCOLLECT_OWNED,
 }
@@ -575,7 +575,7 @@ local function clearGamePassAttributes(player: Player)
 	player:SetAttribute(A.VIP_LUCK_MULT, 1)
 	player:SetAttribute(A.DOUBLE_CASH_OWNED, false)
 	player:SetAttribute(A.DOUBLE_UPGRADES_OWNED, false)
-	player:SetAttribute(A.SUPER_LUCK_OWNED, false)
+	player:SetAttribute(A.DOUBLE_POWER_OWNED, false)
 	player:SetAttribute(A.MEGA_LUCK_OWNED, false)
 	player:SetAttribute(A.XRAY_OWNED, false)
 	player:SetAttribute(A.AUTOCOLLECT_OWNED, false)
@@ -592,7 +592,7 @@ local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
 	local ownsVip = isGamePassOwnedForEffects(player, G.VIP, fromPurchase)
 	local ownsCash = isGamePassOwnedForEffects(player, G.DOUBLE_CASH, fromPurchase)
 	local ownsUpgrades = isGamePassOwnedForEffects(player, G.DOUBLE_UPGRADES, fromPurchase)
-	local ownsSuper = isGamePassOwnedForEffects(player, G.SUPER_LUCK, fromPurchase)
+	local ownsDoublePower = isGamePassOwnedForEffects(player, G.DOUBLE_POWER, fromPurchase)
 	local ownsMega = isGamePassOwnedForEffects(player, G.MEGA_LUCK, fromPurchase)
 	local ownsXray = isGamePassOwnedForEffects(player, G.XRAY, fromPurchase)
 	local ownsAutoCollect = isGamePassOwnedForEffects(player, G.AUTOCOLLECT, fromPurchase)
@@ -602,7 +602,7 @@ local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
 		local anyEntitlement = ownsVip
 			or ownsCash
 			or ownsUpgrades
-			or ownsSuper
+			or ownsDoublePower
 			or ownsMega
 			or ownsXray
 			or ownsAutoCollect
@@ -629,7 +629,7 @@ local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
 
 	player:SetAttribute(A.DOUBLE_CASH_OWNED, ownsCash)
 	player:SetAttribute(A.DOUBLE_UPGRADES_OWNED, ownsUpgrades)
-	player:SetAttribute(A.SUPER_LUCK_OWNED, ownsSuper)
+	player:SetAttribute(A.DOUBLE_POWER_OWNED, ownsDoublePower)
 	player:SetAttribute(A.MEGA_LUCK_OWNED, ownsMega)
 	player:SetAttribute(A.XRAY_OWNED, ownsXray)
 	player:SetAttribute(A.AUTOCOLLECT_OWNED, ownsAutoCollect)
@@ -651,7 +651,7 @@ local function applyGamePassEffects(player: Player, fromPurchase: boolean?)
 		persistIfNeeded(G.VIP, ownsVip)
 		persistIfNeeded(G.DOUBLE_CASH, ownsCash)
 		persistIfNeeded(G.DOUBLE_UPGRADES, ownsUpgrades)
-		persistIfNeeded(G.SUPER_LUCK, ownsSuper)
+		persistIfNeeded(G.DOUBLE_POWER, ownsDoublePower)
 		persistIfNeeded(G.MEGA_LUCK, ownsMega)
 		persistIfNeeded(G.XRAY, ownsXray)
 		persistIfNeeded(G.AUTOCOLLECT, ownsAutoCollect)

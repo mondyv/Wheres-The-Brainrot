@@ -732,102 +732,6 @@ local function setupFrameButton(button: GuiButton, frame: Frame)
 	wireFrameVisibleBackdropCleanup(frame)
 end
 
--- ── SlowButton toggle ─────────────────────────────────────────────────────────
--- Must be defined BEFORE HUDController.init so the local is in scope.
-
-local function setupSlowButton()
-	local slowBtn = sideUI:FindFirstChild("SlowButton", true)
-	if not slowBtn then
-		warn("[HUDController] SlowButton not found")
-		return
-	end
-
-	local offImg = slowBtn:FindFirstChild("Off")
-	local onImg = slowBtn:FindFirstChild("On")
-
-	local decor = slowBtn:FindFirstChild("Decor")
-	local stud = decor and decor:FindFirstChild("Stud")
-	local studOff = stud and stud:FindFirstChild("Off")
-	local studOn = stud and stud:FindFirstChild("On")
-
-	local nameLabel = slowBtn:FindFirstChild("Name")
-
-	local function setToggleGraphic(inst: Instance?, visible: boolean)
-		if not inst then
-			return
-		end
-		if inst:IsA("UIGradient") then
-			(inst :: UIGradient).Enabled = visible
-		elseif inst:IsA("GuiObject") then
-			(inst :: GuiObject).Visible = visible
-		end
-	end
-
-	local function applyStateFromAttribute()
-		local isOn = player:GetAttribute("SlowWalkEnabled") == true
-		setToggleGraphic(offImg, not isOn)
-		setToggleGraphic(onImg, isOn)
-		setToggleGraphic(studOff, not isOn)
-		setToggleGraphic(studOn, isOn)
-		if nameLabel and nameLabel:IsA("TextLabel") then
-			(nameLabel :: TextLabel).Text = if isOn then "Slow: On" else "Slow: Off"
-		elseif nameLabel and nameLabel:IsA("TextButton") then
-			(nameLabel :: TextButton).Text = if isOn then "Slow: On" else "Slow: Off"
-		end
-	end
-
-	if player:GetAttribute("SlowWalkEnabled") == nil then
-		player:SetAttribute("SlowWalkEnabled", false)
-	end
-	applyStateFromAttribute()
-
-	player:GetAttributeChangedSignal("SlowWalkEnabled"):Connect(applyStateFromAttribute)
-
-	local btn: GuiButton? = if slowBtn:IsA("GuiButton")
-		then slowBtn :: GuiButton
-		else (slowBtn:FindFirstChildOfClass("ImageButton") or slowBtn:FindFirstChildOfClass("TextButton") :: GuiButton?)
-
-	if not btn then
-		warn("[HUDController] SlowButton has no clickable GuiButton child")
-		return
-	end
-
-	local scale = getOrAddUIScale(slowBtn :: Instance)
-
-	btn.MouseEnter:Connect(function()
-		UIInteractionSounds.playHover()
-		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.03 }):Play()
-		UIButtonEffects.playBorderGlisten(slowBtn :: GuiObject)
-	end)
-	btn.MouseLeave:Connect(function()
-		UIButtonEffects.hideHoverEffects(slowBtn :: GuiObject)
-		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.0 }):Play()
-	end)
-	btn.MouseButton1Down:Connect(function()
-		UIInteractionSounds.playClick()
-		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.97 }):Play()
-	end)
-	btn.MouseButton1Up:Connect(function()
-		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.03 }):Play()
-	end)
-
-	btn.MouseButton1Click:Connect(function()
-		player:SetAttribute("SlowWalkEnabled", not (player:GetAttribute("SlowWalkEnabled") == true))
-
-		local pulse = TweenService:Create(
-			scale,
-			TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ Scale = 1.08 }
-		)
-		pulse.Completed:Once(function()
-			TweenService
-				:Create(scale, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.0 })
-				:Play()
-		end)
-		pulse:Play()
-	end)
-end
-
 -- ── Public API ────────────────────────────────────────────────────────────────
 
 function HUDController.init()
@@ -874,9 +778,6 @@ function HUDController.init()
 	else
 		warn("[HUDController] Invite button not found")
 	end
-
-	-- SlowButton toggle
-	setupSlowButton()
 
 	-- Cash counter + button → opens Store scrolled to cash bundles at the bottom
 	local counters = sideUI:FindFirstChild("Counters")

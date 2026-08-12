@@ -573,7 +573,8 @@ local GIFT_PASS_ALIASES: { [string]: number } = {
 	doublecash = StoreConfig.GAMEPASS.DOUBLE_CASH,
 	["2xupgrades"] = StoreConfig.GAMEPASS.DOUBLE_UPGRADES,
 	doubleupgrades = StoreConfig.GAMEPASS.DOUBLE_UPGRADES,
-	superluck = StoreConfig.GAMEPASS.SUPER_LUCK,
+	["2xpower"] = StoreConfig.GAMEPASS.DOUBLE_POWER,
+	doublepower = StoreConfig.GAMEPASS.DOUBLE_POWER,
 	megaluck = StoreConfig.GAMEPASS.MEGA_LUCK,
 	xray = StoreConfig.GAMEPASS.XRAY,
 	autocollect = StoreConfig.GAMEPASS.AUTOCOLLECT,
@@ -583,7 +584,7 @@ local GIFT_PASS_ALIASES: { [string]: number } = {
 }
 
 commands.giftpass = {
-	usage = "giftpass <player|me> <vip|2xcash|2xupgrades|superluck|megaluck|xray|autocollect>",
+	usage = "giftpass <player|me> <vip|2xcash|2xupgrades|2xpower|megaluck|xray|autocollect>",
 	description = "Grant a gifted gamepass entitlement (for missed gift purchases).",
 	run = function(sender: Player, args: { string }): (boolean, string)
 		if not args[1] or not args[2] then
@@ -592,14 +593,14 @@ commands.giftpass = {
 		local alias = string.lower(args[2])
 		local gamepassId = GIFT_PASS_ALIASES[alias]
 		if not gamepassId then
-			return false, "Unknown pass. Use: vip, 2xcash, 2xupgrades, superluck, megaluck, xray, autocollect"
+			return false, "Unknown pass. Use: vip, 2xcash, 2xupgrades, 2xpower, megaluck, xray, autocollect"
 		end
 		local attr = StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID[gamepassId]
 		local ownedAttr = ({
 			[StoreConfig.GAMEPASS.VIP] = StoreConfig.ATTR.VIP_OWNED,
 			[StoreConfig.GAMEPASS.DOUBLE_CASH] = StoreConfig.ATTR.DOUBLE_CASH_OWNED,
 			[StoreConfig.GAMEPASS.DOUBLE_UPGRADES] = StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED,
-			[StoreConfig.GAMEPASS.SUPER_LUCK] = StoreConfig.ATTR.SUPER_LUCK_OWNED,
+			[StoreConfig.GAMEPASS.DOUBLE_POWER] = StoreConfig.ATTR.DOUBLE_POWER_OWNED,
 			[StoreConfig.GAMEPASS.MEGA_LUCK] = StoreConfig.ATTR.MEGA_LUCK_OWNED,
 			[StoreConfig.GAMEPASS.XRAY] = StoreConfig.ATTR.XRAY_OWNED,
 			[StoreConfig.GAMEPASS.AUTOCOLLECT] = StoreConfig.ATTR.AUTOCOLLECT_OWNED,

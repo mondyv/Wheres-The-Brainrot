@@ -306,11 +306,11 @@ local ICON_DEFS = {
 		title = "2× Upgrades",
 		description = "Each stand upgrade grants +25 levels (Robux)",
 	},
-	["Super Luck"] = {
-		id = StoreConfig.GAMEPASS.SUPER_LUCK,
-		attr = StoreConfig.ATTR.SUPER_LUCK_OWNED,
-		title = "Super Luck",
-		description = "+100% better brainrot chances when harvesting bushes",
+	["2x Power"] = {
+		id = StoreConfig.GAMEPASS.DOUBLE_POWER,
+		attr = StoreConfig.ATTR.DOUBLE_POWER_OWNED,
+		title = "2× Power",
+		description = "Double Power gained every time you work out",
 	},
 	["Mega Luck"] = {
 		id = StoreConfig.GAMEPASS.MEGA_LUCK,
@@ -624,7 +624,7 @@ local function init()
 			bindTooltip(
 				overall :: GuiObject,
 				"Overall Luck",
-				"Combined luck multiplier from VIP, Super Luck, MEGA Luck, and server luck",
+				"Combined luck multiplier from VIP, MEGA Luck, and server luck",
 				readGuiAccentColor(overall :: GuiObject)
 			)
 		end
@@ -652,7 +652,7 @@ local function init()
 	end
 
 	-- Luck sources → overall luck refresh.
-	for _, attr in { StoreConfig.ATTR.VIP_LUCK_MULT, StoreConfig.ATTR.SUPER_LUCK_OWNED, StoreConfig.ATTR.MEGA_LUCK_OWNED } do
+	for _, attr in { StoreConfig.ATTR.VIP_LUCK_MULT, StoreConfig.ATTR.MEGA_LUCK_OWNED } do
 		player:GetAttributeChangedSignal(attr):Connect(refreshOverallLuck)
 	end
 	ReplicatedStorage:GetAttributeChangedSignal(StoreConfig.SERVER_LUCK_MULT_ATTR):Connect(function()

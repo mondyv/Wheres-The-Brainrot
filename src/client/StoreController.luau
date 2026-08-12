@@ -644,7 +644,7 @@ local function init()
 		StoreConfig.GAMEPASS.DOUBLE_UPGRADES,
 		StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED
 	)
-	wireGamePass(gamepassContainers, "SuperLuck", StoreConfig.GAMEPASS.SUPER_LUCK, StoreConfig.ATTR.SUPER_LUCK_OWNED)
+	wireGamePass(gamepassContainers, "DoublePower", StoreConfig.GAMEPASS.DOUBLE_POWER, StoreConfig.ATTR.DOUBLE_POWER_OWNED)
 	wireGamePass(gamepassContainers, "MEGALuck", StoreConfig.GAMEPASS.MEGA_LUCK, StoreConfig.ATTR.MEGA_LUCK_OWNED)
 	wireGamePass(gamepassContainers, "XrayVision", StoreConfig.GAMEPASS.XRAY, StoreConfig.ATTR.XRAY_OWNED)
 	wireGamePass(

@@ -5,7 +5,6 @@
 
 	Sources, all multiplied together:
 	• VIP gamepass        → VIPLuckMultiplier attribute (4x)
-	• Super Luck gamepass → SuperLuckOwned attribute   (2x)
 	• MEGA Luck gamepass  → MegaLuckOwned attribute     (3.5x)
 	• Server Luck product → ReplicatedStorage ServerLuckMultiplier attribute
 
@@ -35,20 +34,12 @@ function LuckBoost.playerLuckMultiplier(player: Player): number
 		mult *= vip
 	end
 
-	if player:GetAttribute(StoreConfig.ATTR.SUPER_LUCK_OWNED) == true then
-		mult *= StoreConfig.SUPER_LUCK_MULTIPLIER
-	end
-
 	if player:GetAttribute(StoreConfig.ATTR.MEGA_LUCK_OWNED) == true then
 		mult *= StoreConfig.MEGA_LUCK_MULTIPLIER
 	end
 
+	mult *= LuckBoost.serverLuckMultiplier()
 	return mult
-end
-
--- Total including the server-wide multiplier.
-function LuckBoost.totalLuckMultiplier(player: Player): number
-	return LuckBoost.playerLuckMultiplier(player) * LuckBoost.serverLuckMultiplier()
 end
 
 return LuckBoost

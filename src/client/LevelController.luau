@@ -59,18 +59,29 @@ local function findText(root: Instance?, names: { string }): TextLabel?
 	return nil
 end
 
+-- Studio bar size at wire-time is the authored max; never exceed that.
+local function captureBarFullSize(fill: GuiObject)
+	if fill:GetAttribute("BarFullCaptured") == true then
+		return
+	end
+	fill:SetAttribute("BarFullXScale", fill.Size.X.Scale)
+	fill:SetAttribute("BarFullXOffset", fill.Size.X.Offset)
+	fill:SetAttribute("BarFullYScale", fill.Size.Y.Scale)
+	fill:SetAttribute("BarFullYOffset", fill.Size.Y.Offset)
+	fill:SetAttribute("BarFullCaptured", true)
+end
+
 local function setProgressFill(fill: GuiObject?, alpha: number, animate: boolean?)
 	if not fill then
 		return
 	end
+	captureBarFullSize(fill)
 	alpha = math.clamp(alpha, 0, 1)
-	local goal = UDim2.new(alpha, 0, fill.Size.Y.Scale, fill.Size.Y.Offset)
-	-- If Studio used offset-only height, keep Y offset.
-	if fill.Size.Y.Scale == 0 and fill.Size.Y.Offset > 0 then
-		goal = UDim2.new(alpha, 0, 0, fill.Size.Y.Offset)
-	elseif fill.Size.Y.Scale == 0 and fill.Size.Y.Offset == 0 then
-		goal = UDim2.fromScale(alpha, 1)
-	end
+	local xs = (fill:GetAttribute("BarFullXScale") :: number?) or 0
+	local xo = (fill:GetAttribute("BarFullXOffset") :: number?) or 0
+	local ys = (fill:GetAttribute("BarFullYScale") :: number?) or fill.Size.Y.Scale
+	local yo = (fill:GetAttribute("BarFullYOffset") :: number?) or fill.Size.Y.Offset
+	local goal = UDim2.new(xs * alpha, xo * alpha, ys, yo)
 	if animate then
 		if barTween then
 			barTween:Cancel()
@@ -102,6 +113,29 @@ local function ensureFloaterLayer(main: ScreenGui): Frame
 	return layer
 end
 
+local function pulseLevelHudChip()
+	if not hudRoot or not hudRoot:IsA("GuiObject") then
+		return
+	end
+	local sc = hudRoot:FindFirstChild("LevelHudPulse")
+	if not sc or not sc:IsA("UIScale") then
+		sc = Instance.new("UIScale")
+		sc.Name = "LevelHudPulse"
+		sc.Parent = hudRoot
+	end
+	local token = ((hudRoot:GetAttribute("LevelHudPulseToken") :: number?) or 0) + 1
+	hudRoot:SetAttribute("LevelHudPulseToken", token)
+	sc.Scale = 0.94
+	TweenService:Create(sc, TweenInfo.new(0.08, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.1 })
+		:Play()
+	task.delay(0.08, function()
+		if sc.Parent and hudRoot and hudRoot:GetAttribute("LevelHudPulseToken") == token then
+			TweenService:Create(sc, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
+				:Play()
+		end
+	end)
+end
+
 local function spawnXpFloater(gain: number)
 	local main = PlayerGuiMain.ensure(player)
 	local layer = ensureFloaterLayer(main)
@@ -109,55 +143,97 @@ local function spawnXpFloater(gain: number)
 		return
 	end
 
-	local dest = hudRoot.AbsolutePosition + hudRoot.AbsoluteSize * 0.5
-	local start = dest + Vector2.new(0, 56)
-	local lp = layer.AbsolutePosition
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return
+	end
+
+	local function destScreen(): Vector2
+		local root = hudRoot :: GuiObject
+		local bar = hudBar
+		if bar and bar.Parent and bar.AbsoluteSize.X > 1 then
+			return bar.AbsolutePosition + bar.AbsoluteSize * 0.5
+		end
+		return root.AbsolutePosition + root.AbsoluteSize * 0.5
+	end
+
+	local function toLayerOffset(screen: Vector2): UDim2
+		local lp = layer.AbsolutePosition
+		return UDim2.fromOffset(screen.X - lp.X, screen.Y - lp.Y)
+	end
+
+	local character = player.Character
+	local head = character and character:FindFirstChild("Head")
+	local anchor = if head and head:IsA("BasePart")
+		then head
+		else (character and character:FindFirstChild("HumanoidRootPart"))
+
+	local endPos = toLayerOffset(destScreen())
+	local startPos = endPos
+	if anchor and anchor:IsA("BasePart") then
+		local screenPos, onScreen = cam:WorldToViewportPoint(anchor.Position + Vector3.new(0, 1.35, 0))
+		if onScreen then
+			startPos = toLayerOffset(Vector2.new(screenPos.X, screenPos.Y))
+		else
+			startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 48)
+		end
+	else
+		startPos = UDim2.fromOffset(endPos.X.Offset, endPos.Y.Offset + 48)
+	end
 
 	local label = Instance.new("TextLabel")
 	label.Name = "XpGainFloater"
 	label.BackgroundTransparency = 1
 	label.AnchorPoint = Vector2.new(0.5, 0.5)
-	label.Position = UDim2.fromOffset(start.X - lp.X, start.Y - lp.Y)
+	label.Position = startPos
 	label.Size = UDim2.fromOffset(0, 0)
 	label.AutomaticSize = Enum.AutomaticSize.XY
 	label.Text = "+" .. BrainrotEconomy.formatNumberShort(gain) .. " XP"
 	label.TextColor3 = Color3.fromRGB(120, 255, 180)
 	label.ZIndex = 90
 	label.Parent = layer
-	UiFonts.applyBodyLabel(label, 26, 16)
+	UiFonts.applyBodyLabel(label, 28, 17)
 	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = 2.4
+	stroke.Thickness = 2.6
 	stroke.Color = Color3.fromRGB(20, 40, 28)
 	stroke.Parent = label
 
 	local scale = Instance.new("UIScale")
-	scale.Scale = 0.4
+	scale.Scale = 0.35
 	scale.Parent = label
-	TweenService:Create(scale, TweenInfo.new(0.12, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.15 })
+	TweenService:Create(scale, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.15 })
 		:Play()
+
+	local startX, startY = startPos.X.Offset, startPos.Y.Offset
+	local liftY = startY - 28
+	TweenService:Create(
+		label,
+		TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Position = UDim2.fromOffset(startX, liftY) }
+	):Play()
 
 	local progress = Instance.new("NumberValue")
 	progress.Value = 0
-	local fromX, fromY = start.X - lp.X, start.Y - lp.Y - 20
-	label.Position = UDim2.fromOffset(fromX, fromY)
+	local fromX, fromY = startX, liftY
 	local conn = progress:GetPropertyChangedSignal("Value"):Connect(function()
-		local live = (hudRoot :: GuiObject).AbsolutePosition + (hudRoot :: GuiObject).AbsoluteSize * 0.5
+		local liveEnd = toLayerOffset(destScreen())
 		local t = progress.Value
 		local one = 1 - t
-		local endX, endY = live.X - lp.X, live.Y - lp.Y
-		local midX = (fromX + endX) * 0.5
-		local midY = math.min(fromY, endY) - 30
-		local x = one * one * fromX + 2 * one * t * midX + t * t * endX
-		local y = one * one * fromY + 2 * one * t * midY + t * t * endY
+		local midX = (fromX + liveEnd.X.Offset) * 0.5
+		local midY = math.min(fromY, liveEnd.Y.Offset) - 36
+		local x = one * one * fromX + 2 * one * t * midX + t * t * liveEnd.X.Offset
+		local y = one * one * fromY + 2 * one * t * midY + t * t * liveEnd.Y.Offset
 		label.Position = UDim2.fromOffset(x, y)
 	end)
 
-	task.delay(0.1, function()
+	task.delay(0.12, function()
 		if not label.Parent then
 			conn:Disconnect()
 			progress:Destroy()
 			return
 		end
+		fromX = label.Position.X.Offset
+		fromY = label.Position.Y.Offset
 		local move = TweenService:Create(
 			progress,
 			TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
@@ -167,7 +243,12 @@ local function spawnXpFloater(gain: number)
 		move.Completed:Connect(function()
 			conn:Disconnect()
 			progress:Destroy()
-			TweenService:Create(scale, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.In), { Scale = 0.4 })
+			if not label.Parent then
+				return
+			end
+			label.Position = toLayerOffset(destScreen())
+			pulseLevelHudChip()
+			TweenService:Create(scale, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.In), { Scale = 0.35 })
 				:Play()
 			TweenService:Create(label, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
 				TextTransparency = 1,
@@ -178,24 +259,6 @@ local function spawnXpFloater(gain: number)
 			task.delay(0.12, function()
 				label:Destroy()
 			end)
-			-- Punch HUD chip.
-			if hudRoot and hudRoot:IsA("GuiObject") then
-				local sc = hudRoot:FindFirstChild("LevelHudPulse")
-				if not sc or not sc:IsA("UIScale") then
-					sc = Instance.new("UIScale")
-					sc.Name = "LevelHudPulse"
-					sc.Parent = hudRoot
-				end
-				sc.Scale = 1
-				TweenService:Create(sc, TweenInfo.new(0.08, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.12 })
-					:Play()
-				task.delay(0.08, function()
-					if sc.Parent then
-						TweenService:Create(sc, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
-							:Play()
-					end
-				end)
-			end
 		end)
 	end)
 end
@@ -360,6 +423,9 @@ local function refreshLevelInfo()
 	local progress = levelFrame:FindFirstChild("ProgressXP")
 	local fill = progress and progress:FindFirstChild("EditThisForBarFill")
 	local fillGui = if fill and fill:IsA("GuiObject") then fill else nil
+	if fillGui then
+		captureBarFullSize(fillGui)
+	end
 	if browseLevel == playerLevel then
 		setProgressFill(fillGui, LevelConfig.progressAlpha(playerXp, playerNeeded), true)
 		refreshProgressXpLabels(progress, playerXp, playerNeeded, browseLevel)
@@ -459,6 +525,10 @@ local function wireHud(main: ScreenGui)
 	local highlight = decor and decor:FindFirstChild("Highlight")
 	local bar = highlight and highlight:FindFirstChild("Progress bar")
 	hudBar = if bar and bar:IsA("GuiObject") then bar else nil
+	if hudBar then
+		-- Capture Studio max size before any fill shrink (authored size = full bar).
+		captureBarFullSize(hudBar)
+	end
 	local pfp = highlight and highlight:FindFirstChild("UserPFP")
 	if pfp and pfp:IsA("ImageLabel") then
 		hudPfp = pfp

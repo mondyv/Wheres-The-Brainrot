@@ -485,11 +485,11 @@ local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?, la
 	cluster:SetAttribute("PowerPulseAt", os.clock())
 
 	local sc = ensureChipScale(cluster)
-	sc.Scale = 0.9
+	sc.Scale = 0.96
 	local up = TweenService:Create(
 		sc,
 		TweenInfo.new(0.07, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = 1.32 }
+		{ Scale = 1.12 }
 	)
 	up:Play()
 	up.Completed:Connect(function()

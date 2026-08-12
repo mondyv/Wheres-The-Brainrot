@@ -732,31 +732,12 @@ local function playPowerGainFlash(amountLabel: TextLabel)
 		end
 	end)
 
+	-- Scale punch lives on floater impact (WorkoutController). Color-only here
+	-- so workout +N doesn't double-animate the counter oversized.
 	if recentlyPulsed or not cluster or not cluster:IsA("GuiObject") then
 		return
 	end
-
-	local sc = cluster:FindFirstChild("PowerChipScale")
-	if not sc or not sc:IsA("UIScale") then
-		sc = Instance.new("UIScale")
-		sc.Name = "PowerChipScale"
-		sc.Scale = 1
-		sc.Parent = cluster
-	end
-	local token = ((cluster:GetAttribute("PowerPulseToken") :: number?) or 0) + 1
-	cluster:SetAttribute("PowerPulseToken", token)
 	cluster:SetAttribute("PowerPulseAt", os.clock())
-	sc.Scale = 0.88
-	TweenService
-		:Create(sc, TweenInfo.new(0.07, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.28 })
-		:Play()
-	task.delay(0.07, function()
-		if sc.Parent and cluster:GetAttribute("PowerPulseToken") == token then
-			TweenService
-				:Create(sc, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
-				:Play()
-		end
-	end)
 end
 
 local function updatePowerLabel(opts: { target: number?, instant: boolean? }?)

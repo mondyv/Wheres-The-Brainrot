@@ -17,7 +17,8 @@ M.MAX_LEVEL = 100
 
 -- XP amounts for gameplay hooks.
 M.XP = {
-	workout = 2,
+	-- Granted once every WORKOUT_XP_EVERY_GAINS workout power ticks (not each tick).
+	workout = 8,
 	sell = 15,
 	daily = 50,
 	timQuest = 100,
@@ -26,6 +27,7 @@ M.XP = {
 	steal = 25,
 	luckyBlock = 20,
 }
+M.WORKOUT_XP_EVERY_GAINS = 5
 
 export type LevelReward = {
 	id: number,

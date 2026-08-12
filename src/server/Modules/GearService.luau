@@ -14,6 +14,7 @@ local GearService = {}
 
 local workoutSessions: { [Player]: { gearId: number, conn: RBXScriptConnection?, lastTick: number } } = {}
 local lastWorkoutGainAt: { [number]: number } = {}
+local workoutXpStreak: { [number]: number } = {}
 local WORKOUT_GAIN_COOLDOWN = 1.0
 local playerConns: { [Player]: { RBXScriptConnection } } = {}
 
@@ -292,7 +293,14 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 		player:SetAttribute("WorkoutLastGain", gain)
 		local pulse = player:GetAttribute("WorkoutPowerPulse")
 		player:SetAttribute("WorkoutPowerPulse", (if typeof(pulse) == "number" then pulse else 0) + 1)
-		LevelService.addXp(player, LevelConfig.XP.workout, "workout")
+		local uid = player.UserId
+		local streak = (workoutXpStreak[uid] or 0) + 1
+		if streak >= LevelConfig.WORKOUT_XP_EVERY_GAINS then
+			workoutXpStreak[uid] = 0
+			LevelService.addXp(player, LevelConfig.XP.workout, "workout")
+		else
+			workoutXpStreak[uid] = streak
+		end
 		return true
 	end
 
@@ -373,6 +381,7 @@ function GearService.init()
 	Players.PlayerRemoving:Connect(function(player)
 		GearService.stopWorkout(player)
 		lastWorkoutGainAt[player.UserId] = nil
+		workoutXpStreak[player.UserId] = nil
 		local conns = playerConns[player]
 		if conns then
 			for _, c in conns do

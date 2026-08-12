@@ -394,7 +394,8 @@ local function refreshHud(animateBar: boolean?)
 	end
 	local shadow = hudRoot and hudRoot:FindFirstChild("UserLVL shadow")
 	if shadow and (shadow:IsA("TextLabel") or shadow:IsA("TextButton")) then
-		(shadow :: TextLabel).Text = text
+		local shadowLabel = shadow :: TextLabel
+		shadowLabel.Text = text
 	end
 	local alpha = LevelConfig.progressAlpha(xp, needed)
 	if animateBar == true then
@@ -425,13 +426,15 @@ local function setLabelPair(host: Instance?, primaryName: string, shadowName: st
 	local primary = host:FindFirstChild(primaryName)
 	if primary and (primary:IsA("TextLabel") or primary:IsA("TextButton")) then
 		lockStudioTextSize(primary :: TextLabel, maxSize)
-		(primary :: TextLabel).Text = text
+		local primaryLabel = primary :: TextLabel
+		primaryLabel.Text = text
 	end
 	if shadowName then
 		local shadow = host:FindFirstChild(shadowName)
 		if shadow and (shadow:IsA("TextLabel") or shadow:IsA("TextButton")) then
 			lockStudioTextSize(shadow :: TextLabel, maxSize)
-			(shadow :: TextLabel).Text = text
+			local shadowLabel = shadow :: TextLabel
+			shadowLabel.Text = text
 		end
 	end
 end
@@ -458,11 +461,13 @@ local function applyPrizeButton(btn: Instance?, prizeIndex: number, reward: Leve
 		setLabelPair(btn, nameKey, shadowKey, reward.displayAmount)
 		local info = btn:FindFirstChild("Info")
 		if info and (info:IsA("TextLabel") or info:IsA("TextButton")) then
-			(info :: TextLabel).Text = reward.displayName
+			local infoLabel = info :: TextLabel
+			infoLabel.Text = reward.displayName
 		end
 		local infoShadow = btn:FindFirstChild("Info shadow")
 		if infoShadow and (infoShadow:IsA("TextLabel") or infoShadow:IsA("TextButton")) then
-			(infoShadow :: TextLabel).Text = reward.displayName
+			local infoShadowLabel = infoShadow :: TextLabel
+			infoShadowLabel.Text = reward.displayName
 		end
 		local iconNames = {
 			"Prize " .. tostring(prizeIndex) .. " icon",
@@ -736,6 +741,15 @@ local function wireLevelInfo(frame: Frame)
 	local rewardsRoot = frame:FindFirstChild("Rewards")
 	local main = rewardsRoot and rewardsRoot:FindFirstChild("Main")
 	if main then
+		-- Remove leftover code-made overlays from older builds.
+		for _, name in { "__LevelNav", "__LevelHudClick" } do
+			local leftover = main:FindFirstChild(name, true)
+			while leftover do
+				leftover:Destroy()
+				leftover = main:FindFirstChild(name, true)
+			end
+		end
+
 		-- Lock profile text sizes once AbsoluteSize is ready.
 		task.defer(function()
 			for _, name in {
@@ -765,21 +779,22 @@ local function wireLevelInfo(frame: Frame)
 				return
 			end
 			local btn: GuiButton? = if node:IsA("GuiButton") then node else node:FindFirstChildWhichIsA("GuiButton", true)
-			if not btn and node:IsA("GuiObject") then
-				local overlay = Instance.new("TextButton")
-				overlay.Name = "__LevelNav"
-				overlay.BackgroundTransparency = 1
-				overlay.Text = ""
-				overlay.Size = UDim2.fromScale(1, 1)
-				overlay.ZIndex = (node :: GuiObject).ZIndex + 2
-				overlay.Parent = node
-				btn = overlay
+			local function onNav()
+				browseLevel = math.clamp(browseLevel + delta, 1, LevelConfig.MAX_LEVEL)
+				UIInteractionSounds.playClick()
+				refreshLevelInfo(false)
 			end
 			if btn then
-				UIButtonEffects.wireScaleButtonAnim(btn, function()
-					browseLevel = math.clamp(browseLevel + delta, 1, LevelConfig.MAX_LEVEL)
-					UIInteractionSounds.playClick()
-					refreshLevelInfo(false)
+				UIButtonEffects.wireScaleButtonAnim(btn, onNav)
+			elseif node:IsA("GuiObject") then
+				-- Use Studio host directly — do not invent overlay buttons.
+				node.InputBegan:Connect(function(input)
+					if
+						input.UserInputType == Enum.UserInputType.MouseButton1
+						or input.UserInputType == Enum.UserInputType.Touch
+					then
+						onNav()
+					end
 				end)
 			end
 		end
@@ -829,20 +844,23 @@ local function wireHud(main: ScreenGui)
 	end
 
 	local clickBtn: GuiButton? = if chip:IsA("GuiButton") then chip else chip:FindFirstChildWhichIsA("GuiButton", true)
-	if not clickBtn then
-		local overlay = Instance.new("TextButton")
-		overlay.Name = "__LevelHudClick"
-		overlay.BackgroundTransparency = 1
-		overlay.Text = ""
-		overlay.Size = UDim2.fromScale(1, 1)
-		overlay.ZIndex = chip.ZIndex + 5
-		overlay.Parent = chip
-		clickBtn = overlay
-	end
-	UIButtonEffects.wireScaleButtonAnim(clickBtn, function()
+	local function openFromHud()
 		UIInteractionSounds.playClick()
 		openLevelInfo()
-	end)
+	end
+	if clickBtn then
+		UIButtonEffects.wireScaleButtonAnim(clickBtn, openFromHud)
+	else
+		-- Studio LevelOnhHud may be a Frame — click the chip itself, no overlay button.
+		chip.InputBegan:Connect(function(input)
+			if
+				input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch
+			then
+				openFromHud()
+			end
+		end)
+	end
 
 	refreshHud(false)
 end
@@ -859,7 +877,8 @@ local function onXpPulse()
 	end
 	local shadow = hudRoot and hudRoot:FindFirstChild("UserLVL shadow")
 	if shadow and (shadow:IsA("TextLabel") or shadow:IsA("TextButton")) then
-		(shadow :: TextLabel).Text = "Lvl " .. tostring(lv)
+		local shadowLabel = shadow :: TextLabel
+		shadowLabel.Text = "Lvl " .. tostring(lv)
 	end
 	pendingBarAlpha = alpha
 
@@ -922,7 +941,8 @@ function M.init()
 		end
 		local shadow = hudRoot and hudRoot:FindFirstChild("UserLVL shadow")
 		if shadow and (shadow:IsA("TextLabel") or shadow:IsA("TextButton")) then
-			(shadow :: TextLabel).Text = "Lvl " .. tostring(lv)
+			local shadowLabel = shadow :: TextLabel
+		shadowLabel.Text = "Lvl " .. tostring(lv)
 		end
 		if levelFrame and levelFrame.Visible then
 			refreshLevelInfo(true)

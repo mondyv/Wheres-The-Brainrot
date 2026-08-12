@@ -881,34 +881,24 @@ local function ensurePowerCounter(counters: Instance): TextLabel?
 end
 
 local function ensureEditButton(powerFrame: Instance): GuiButton?
+	-- Prefer Studio-authored Edit control; never invent a duplicate.
 	local existing = powerFrame:FindFirstChild("Edit")
-	if existing and existing:IsA("GuiButton") then
-		return existing
+		or powerFrame:FindFirstChild("EditButton")
+		or powerFrame:FindFirstChild("Edit Power")
+	if existing then
+		if existing:IsA("GuiButton") then
+			return existing
+		end
+		local nested = existing:FindFirstChildWhichIsA("GuiButton", true)
+		if nested then
+			return nested
+		end
 	end
-	local btn = Instance.new("TextButton")
-	btn.Name = "Edit"
-	btn.Size = UDim2.fromOffset(44, 22)
-	btn.Position = UDim2.new(1, -4, 0.5, 0)
-	btn.AnchorPoint = Vector2.new(1, 0.5)
-	btn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-	btn.BorderSizePixel = 0
-	btn.Text = "Edit"
-	btn.TextColor3 = Color3.new(1, 1, 1)
-	btn.TextScaled = true
-	btn.Font = Enum.Font.GothamBold
-	btn.ZIndex = 5
-	btn.Parent = powerFrame
-	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = 2
-	stroke.Color = Color3.new(0, 0, 0)
-	stroke.Parent = btn
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 6)
-	corner.Parent = btn
-	pcall(function()
-		UiFonts.applyButtonLabel(btn)
-	end)
-	return btn
+	local any = powerFrame:FindFirstChildWhichIsA("GuiButton", true)
+	if any and string.find(string.lower(any.Name), "edit", 1, true) then
+		return any
+	end
+	return nil
 end
 
 local function findEditClickButton(host: Instance?): GuiButton?
@@ -935,9 +925,21 @@ local function setEditPowerLabels(amount: number)
 	for _, name in { "PowerNumber", "PowerNumber shadow" } do
 		local node = (bg and bg:FindFirstChild(name)) or (buttons and buttons:FindFirstChild(name, true))
 		if node and (node:IsA("TextLabel") or node:IsA("TextButton")) then
-			(node :: TextLabel).Text = text
+			local label = node :: TextLabel
+			label.Text = text
 		end
 	end
+end
+
+local function captureEditBarFullSize(bar: GuiObject)
+	if bar:GetAttribute("EditBarFullCaptured") == true then
+		return
+	end
+	bar:SetAttribute("EditBarFullXScale", bar.Size.X.Scale)
+	bar:SetAttribute("EditBarFullXOffset", bar.Size.X.Offset)
+	bar:SetAttribute("EditBarFullYScale", bar.Size.Y.Scale)
+	bar:SetAttribute("EditBarFullYOffset", bar.Size.Y.Offset)
+	bar:SetAttribute("EditBarFullCaptured", true)
 end
 
 local function setEditProgressVisual(alpha: number)
@@ -952,16 +954,15 @@ local function setEditProgressVisual(alpha: number)
 	end
 	local bar = buttons:FindFirstChild("Progress bar")
 	if bar and bar:IsA("GuiObject") then
-		local yScale, yOff = bar.Size.Y.Scale, bar.Size.Y.Offset
-		if yScale == 0 and yOff == 0 then
-			bar.Size = UDim2.fromScale(alpha, 1)
-		else
-			bar.Size = UDim2.new(alpha, 0, yScale, yOff)
-		end
+		captureEditBarFullSize(bar)
+		local xs = (bar:GetAttribute("EditBarFullXScale") :: number?) or 0
+		local xo = (bar:GetAttribute("EditBarFullXOffset") :: number?) or 0
+		local ys = (bar:GetAttribute("EditBarFullYScale") :: number?) or bar.Size.Y.Scale
+		local yo = (bar:GetAttribute("EditBarFullYOffset") :: number?) or bar.Size.Y.Offset
+		bar.Size = UDim2.new(xs * alpha, xo * alpha, ys, yo)
 	end
 	local knob = buttons:FindFirstChild("Slider")
 	if knob and knob:IsA("GuiObject") then
-		-- Keep authored Y; slide along the progress track.
 		knob.AnchorPoint = Vector2.new(0.5, knob.AnchorPoint.Y)
 		knob.Position = UDim2.new(alpha, 0, knob.Position.Y.Scale, knob.Position.Y.Offset)
 	end
@@ -988,11 +989,17 @@ local function wireEditPowerFrame(frame: Frame)
 	local buttons = frame:FindFirstChild("Buttons")
 	local bar = buttons and buttons:FindFirstChild("Progress bar")
 	local knob = buttons and buttons:FindFirstChild("Slider")
+	local trackBg = buttons and buttons:FindFirstChild("BG")
 	local cancelHost = buttons and buttons:FindFirstChild("CancelButton")
 	local okayHost = buttons and buttons:FindFirstChild("OkayButton")
 	local header = frame:FindFirstChild("Header")
 	local headerButtons = header and header:FindFirstChild("Buttons")
 	local closeHost = headerButtons and headerButtons:FindFirstChild("Close")
+
+	-- Capture Studio max bar size once before any shrink.
+	if bar and bar:IsA("GuiObject") then
+		captureEditBarFullSize(bar)
+	end
 
 	local movedConn: RBXScriptConnection? = nil
 	local endedConn: RBXScriptConnection? = nil
@@ -1010,30 +1017,27 @@ local function wireEditPowerFrame(frame: Frame)
 	end
 
 	local function alphaFromInput(x: number): number
-		local track = if bar and bar:IsA("GuiObject") then bar else nil
+		-- Track width comes from BG (full rail), not the shrinking Progress bar fill.
+		local track: GuiObject? = nil
+		if trackBg and trackBg:IsA("GuiObject") and trackBg.AbsoluteSize.X > 8 then
+			track = trackBg
+		elseif bar and bar:IsA("GuiObject") then
+			track = bar
+		end
 		if not track then
 			return editAlpha
 		end
-		-- Use full Buttons row width if the bar has already shrunk with alpha.
-		local host = buttons
-		local absPos = if host and host:IsA("GuiObject") then host.AbsolutePosition.X else track.AbsolutePosition.X
-		local absSize = if host and host:IsA("GuiObject") then host.AbsoluteSize.X else track.AbsoluteSize.X
-		-- Prefer the bar's original full width via attribute.
+		local absPos = track.AbsolutePosition.X
+		local absSize = track.AbsoluteSize.X
 		local full = frame:GetAttribute("EditTrackWidth")
+		local left = frame:GetAttribute("EditTrackLeft")
 		if typeof(full) == "number" and full > 8 then
-			absPos = track.AbsolutePosition.X
-			-- When bar shrinks from the left/right, AbsolutePosition may move — use parent.
-			local parent = track.Parent
-			if parent and parent:IsA("GuiObject") then
-				absPos = parent.AbsolutePosition.X + (parent.AbsoluteSize.X - full) * 0.5
-				-- Fallback: store left edge once at full size.
-			end
-			local left = frame:GetAttribute("EditTrackLeft")
-			if typeof(left) == "number" then
-				absPos = left
-			end
 			absSize = full
-		elseif absSize <= 0 then
+		end
+		if typeof(left) == "number" then
+			absPos = left
+		end
+		if absSize <= 0 then
 			return editAlpha
 		end
 		return math.clamp((x - absPos) / absSize, 0, 1)
@@ -1042,13 +1046,10 @@ local function wireEditPowerFrame(frame: Frame)
 	local function beginDrag(inputX: number)
 		editDragging = true
 		editBarDragging = true
-		-- Capture full track metrics once while visible at current layout.
-		if bar and bar:IsA("GuiObject") then
-			if typeof(frame:GetAttribute("EditTrackWidth")) ~= "number" then
-				-- Progress bars ship at max — AbsoluteSize.X is the full track.
-				frame:SetAttribute("EditTrackWidth", math.max(bar.AbsoluteSize.X, 1))
-				frame:SetAttribute("EditTrackLeft", bar.AbsolutePosition.X)
-			end
+		local measure = if trackBg and trackBg:IsA("GuiObject") then trackBg else bar
+		if measure and measure:IsA("GuiObject") then
+			frame:SetAttribute("EditTrackWidth", math.max(measure.AbsoluteSize.X, 1))
+			frame:SetAttribute("EditTrackLeft", measure.AbsolutePosition.X)
 		end
 		setEditProgressVisual(alphaFromInput(inputX))
 		if movedConn then
@@ -1091,22 +1092,14 @@ local function wireEditPowerFrame(frame: Frame)
 			end
 		end)
 	end
+	-- Studio controls only — no code-made hit overlays.
+	local leftoverHit = buttons and buttons:FindFirstChild("__EditDragHit")
+	if leftoverHit then
+		leftoverHit:Destroy()
+	end
+	bindDragTarget(trackBg)
 	bindDragTarget(bar)
 	bindDragTarget(knob)
-	-- Invisible full-width hit target so shrinking fill stays draggable.
-	if buttons and buttons:IsA("GuiObject") and not buttons:FindFirstChild("__EditDragHit") then
-		local hit = Instance.new("TextButton")
-		hit.Name = "__EditDragHit"
-		hit.BackgroundTransparency = 1
-		hit.Text = ""
-		hit.AutoButtonColor = false
-		hit.Size = UDim2.new(1, 0, 0, 40)
-		hit.Position = UDim2.new(0, 0, 0.5, 0)
-		hit.AnchorPoint = Vector2.new(0, 0.5)
-		hit.ZIndex = buttons.ZIndex + 3
-		hit.Parent = buttons
-		bindDragTarget(hit)
-	end
 
 	local function onOkay()
 		local amount = math.clamp(math.floor(editAlpha * editMaxPower + 0.5), 0, math.floor(editMaxPower))
@@ -1128,12 +1121,40 @@ local function wireEditPowerFrame(frame: Frame)
 	local closeBtn = findEditClickButton(closeHost)
 	if okayBtn then
 		UIButtonEffects.wireScaleButtonAnim(okayBtn, onOkay)
+	elseif okayHost and okayHost:IsA("GuiObject") then
+		-- Studio Okay may be a Frame shell — click the host itself.
+		okayHost.InputBegan:Connect(function(input)
+			if
+				input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch
+			then
+				onOkay()
+			end
+		end)
 	end
 	if cancelBtn then
 		UIButtonEffects.wireScaleButtonAnim(cancelBtn, closeEditBar)
+	elseif cancelHost and cancelHost:IsA("GuiObject") then
+		cancelHost.InputBegan:Connect(function(input)
+			if
+				input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch
+			then
+				closeEditBar()
+			end
+		end)
 	end
 	if closeBtn then
 		UIButtonEffects.wireGlistenCloseButton(closeBtn, closeEditBar)
+	elseif closeHost and closeHost:IsA("GuiObject") then
+		closeHost.InputBegan:Connect(function(input)
+			if
+				input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch
+			then
+				closeEditBar()
+			end
+		end)
 	end
 end
 
@@ -1157,23 +1178,30 @@ local function openEditBar(_main: ScreenGui)
 	HUDController.openFrameByName("Edit Power")
 	frame.Visible = true
 
-	-- Capture full track size while bar is still at max (Studio default).
+	-- Measure Studio max track, then apply current power alpha (never force Size X Scale = 1).
 	task.defer(function()
 		if not editFrame then
 			return
 		end
 		local buttons = editFrame:FindFirstChild("Buttons")
 		local bar = buttons and buttons:FindFirstChild("Progress bar")
+		local trackBg = buttons and buttons:FindFirstChild("BG")
 		if bar and bar:IsA("GuiObject") then
-			-- Reset to full before measuring / applying alpha.
-			local yScale, yOff = bar.Size.Y.Scale, bar.Size.Y.Offset
-			if yScale == 0 and yOff == 0 then
-				bar.Size = UDim2.fromScale(1, 1)
+			-- Restore authored full size before measuring / applying fill.
+			if bar:GetAttribute("EditBarFullCaptured") == true then
+				local xs = (bar:GetAttribute("EditBarFullXScale") :: number?) or 0
+				local xo = (bar:GetAttribute("EditBarFullXOffset") :: number?) or 0
+				local ys = (bar:GetAttribute("EditBarFullYScale") :: number?) or bar.Size.Y.Scale
+				local yo = (bar:GetAttribute("EditBarFullYOffset") :: number?) or bar.Size.Y.Offset
+				bar.Size = UDim2.new(xs, xo, ys, yo)
 			else
-				bar.Size = UDim2.new(1, 0, yScale, yOff)
+				captureEditBarFullSize(bar)
 			end
-			editFrame:SetAttribute("EditTrackWidth", math.max(bar.AbsoluteSize.X, 1))
-			editFrame:SetAttribute("EditTrackLeft", bar.AbsolutePosition.X)
+		end
+		local measure = if trackBg and trackBg:IsA("GuiObject") then trackBg else bar
+		if measure and measure:IsA("GuiObject") then
+			editFrame:SetAttribute("EditTrackWidth", math.max(measure.AbsoluteSize.X, 1))
+			editFrame:SetAttribute("EditTrackLeft", measure.AbsolutePosition.X)
 		end
 		setEditProgressVisual(alpha)
 	end)
@@ -1201,11 +1229,22 @@ local function init()
 	updatePowerLabel()
 	local powerFrame = counters:FindFirstChild("Power")
 	if powerFrame then
+		-- Remove old code-made Edit if Studio now has one (or leave Studio-only).
+		local made = powerFrame:FindFirstChild("Edit")
+		if made and made:IsA("TextButton") and made:GetAttribute("StudioEdit") ~= true then
+			-- Keep only if no other edit control exists; otherwise destroy fake.
+			local studioEdit = powerFrame:FindFirstChild("EditButton") or powerFrame:FindFirstChild("Edit Power")
+			if studioEdit then
+				made:Destroy()
+			end
+		end
 		local editBtn = ensureEditButton(powerFrame)
 		if editBtn then
 			UIButtonEffects.wireScaleButtonAnim(editBtn, function()
 				openEditBar(main)
 			end)
+		else
+			warn("[UpgradesController] No Studio Edit button under SideUI.Counters.Power")
 		end
 	end
 

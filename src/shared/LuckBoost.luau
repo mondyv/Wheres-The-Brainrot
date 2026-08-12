@@ -38,8 +38,12 @@ function LuckBoost.playerLuckMultiplier(player: Player): number
 		mult *= StoreConfig.MEGA_LUCK_MULTIPLIER
 	end
 
-	mult *= LuckBoost.serverLuckMultiplier()
 	return mult
+end
+
+-- Total including the server-wide multiplier.
+function LuckBoost.totalLuckMultiplier(player: Player): number
+	return LuckBoost.playerLuckMultiplier(player) * LuckBoost.serverLuckMultiplier()
 end
 
 return LuckBoost

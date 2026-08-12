@@ -62,7 +62,12 @@ local powerTween: Tween? = nil
 local powerProxy: NumberValue? = nil
 local powerBaseColor: Color3? = nil
 local powerAnimToken = 0
-local editBarGui: Frame? = nil
+local editFrame: Frame? = nil
+local editWired = false
+local editDragging = false
+local editAlpha = 1
+local editMaxPower = 0
+local editBarGui: Frame? = nil -- legacy name kept unused; Studio frame is editFrame
 local editBarDragging = false
 
 local function formatCash(n: number): string
@@ -925,274 +930,178 @@ local function ensureEditButton(powerFrame: Instance): GuiButton?
 	return btn
 end
 
-local function closeEditBar()
-	editBarDragging = false
-	if editBarGui then
-		editBarGui.Visible = false
+local function findEditClickButton(host: Instance?): GuiButton?
+	if not host then
+		return nil
 	end
-	local ok, main = pcall(function()
-		return PlayerGuiMain.ensure(player)
-	end)
-	if ok and main then
-		local dim = main:FindFirstChild("PowerEditDim")
-		if dim and dim:IsA("GuiObject") then
-			dim.Visible = false
+	if host:IsA("GuiButton") then
+		return host
+	end
+	local nested = host:FindFirstChild("Button")
+	if nested and nested:IsA("GuiButton") then
+		return nested
+	end
+	return host:FindFirstChildWhichIsA("GuiButton", true)
+end
+
+local function setEditPowerLabels(amount: number)
+	if not editFrame then
+		return
+	end
+	local buttons = editFrame:FindFirstChild("Buttons")
+	local bg = buttons and buttons:FindFirstChild("BG")
+	local text = formatPower(amount)
+	for _, name in { "PowerNumber", "PowerNumber shadow" } do
+		local node = (bg and bg:FindFirstChild(name)) or (buttons and buttons:FindFirstChild(name, true))
+		if node and (node:IsA("TextLabel") or node:IsA("TextButton")) then
+			(node :: TextLabel).Text = text
 		end
 	end
 end
 
-local function openEditBar(main: ScreenGui)
-	local dim = main:FindFirstChild("PowerEditDim")
-	if not dim then
-		dim = Instance.new("TextButton")
-		dim.Name = "PowerEditDim"
-		dim.Size = UDim2.fromScale(1, 1)
-		dim.BackgroundColor3 = Color3.new(0, 0, 0)
-		dim.BackgroundTransparency = 0.45
-		dim.BorderSizePixel = 0
-		dim.Text = ""
-		dim.AutoButtonColor = false
-		dim.ZIndex = 48
-		dim.Visible = false
-		dim.Parent = main
-		;(dim :: TextButton).MouseButton1Click:Connect(function()
-			-- Dragging the slider often releases over the dim — don't close mid-edit.
-			if editBarDragging then
+local function setEditProgressVisual(alpha: number)
+	alpha = math.clamp(alpha, 0, 1)
+	editAlpha = alpha
+	if not editFrame then
+		return
+	end
+	local buttons = editFrame:FindFirstChild("Buttons")
+	if not buttons then
+		return
+	end
+	local bar = buttons:FindFirstChild("Progress bar")
+	if bar and bar:IsA("GuiObject") then
+		local yScale, yOff = bar.Size.Y.Scale, bar.Size.Y.Offset
+		if yScale == 0 and yOff == 0 then
+			bar.Size = UDim2.fromScale(alpha, 1)
+		else
+			bar.Size = UDim2.new(alpha, 0, yScale, yOff)
+		end
+	end
+	local knob = buttons:FindFirstChild("Button")
+	if knob and knob:IsA("GuiObject") and bar and bar:IsA("GuiObject") then
+		-- Keep authored Y; slide along the progress track.
+		knob.AnchorPoint = Vector2.new(0.5, knob.AnchorPoint.Y)
+		knob.Position = UDim2.new(alpha, 0, knob.Position.Y.Scale, knob.Position.Y.Offset)
+	end
+	setEditPowerLabels(math.floor(alpha * editMaxPower + 0.5))
+end
+
+local function closeEditBar()
+	editDragging = false
+	editBarDragging = false
+	local HUDController = require(script.Parent.HUDController)
+	HUDController.closeFrameByName("Edit Power")
+	if editFrame then
+		editFrame.Visible = false
+	end
+end
+
+local function wireEditPowerFrame(frame: Frame)
+	if editWired then
+		return
+	end
+	editWired = true
+	editFrame = frame
+
+	local buttons = frame:FindFirstChild("Buttons")
+	local bar = buttons and buttons:FindFirstChild("Progress bar")
+	local knob = buttons and buttons:FindFirstChild("Button")
+	local cancelHost = buttons and buttons:FindFirstChild("CancelButton")
+	local okayHost = buttons and buttons:FindFirstChild("OkayButton")
+	local header = frame:FindFirstChild("Header")
+	local headerButtons = header and header:FindFirstChild("Buttons")
+	local closeHost = headerButtons and headerButtons:FindFirstChild("Close")
+
+	local movedConn: RBXScriptConnection? = nil
+	local endedConn: RBXScriptConnection? = nil
+	local function stopDrag()
+		editDragging = false
+		editBarDragging = false
+		if movedConn then
+			movedConn:Disconnect()
+			movedConn = nil
+		end
+		if endedConn then
+			endedConn:Disconnect()
+			endedConn = nil
+		end
+	end
+
+	local function alphaFromInput(x: number): number
+		local track = if bar and bar:IsA("GuiObject") then bar else nil
+		if not track then
+			return editAlpha
+		end
+		-- Use full Buttons row width if the bar has already shrunk with alpha.
+		local host = buttons
+		local absPos = if host and host:IsA("GuiObject") then host.AbsolutePosition.X else track.AbsolutePosition.X
+		local absSize = if host and host:IsA("GuiObject") then host.AbsoluteSize.X else track.AbsoluteSize.X
+		-- Prefer the bar's original full width via attribute.
+		local full = frame:GetAttribute("EditTrackWidth")
+		if typeof(full) == "number" and full > 8 then
+			absPos = track.AbsolutePosition.X
+			-- When bar shrinks from the left/right, AbsolutePosition may move — use parent.
+			local parent = track.Parent
+			if parent and parent:IsA("GuiObject") then
+				absPos = parent.AbsolutePosition.X + (parent.AbsoluteSize.X - full) * 0.5
+				-- Fallback: store left edge once at full size.
+			end
+			local left = frame:GetAttribute("EditTrackLeft")
+			if typeof(left) == "number" then
+				absPos = left
+			end
+			absSize = full
+		elseif absSize <= 0 then
+			return editAlpha
+		end
+		return math.clamp((x - absPos) / absSize, 0, 1)
+	end
+
+	local function beginDrag(inputX: number)
+		editDragging = true
+		editBarDragging = true
+		-- Capture full track metrics once while visible at current layout.
+		if bar and bar:IsA("GuiObject") then
+			if typeof(frame:GetAttribute("EditTrackWidth")) ~= "number" then
+				-- Progress bars ship at max — AbsoluteSize.X is the full track.
+				frame:SetAttribute("EditTrackWidth", math.max(bar.AbsoluteSize.X, 1))
+				frame:SetAttribute("EditTrackLeft", bar.AbsolutePosition.X)
+			end
+		end
+		setEditProgressVisual(alphaFromInput(inputX))
+		if movedConn then
+			movedConn:Disconnect()
+		end
+		if endedConn then
+			endedConn:Disconnect()
+		end
+		movedConn = UserInputService.InputChanged:Connect(function(chg)
+			if not editDragging then
 				return
 			end
-			closeEditBar()
+			if
+				chg.UserInputType == Enum.UserInputType.MouseMovement
+				or chg.UserInputType == Enum.UserInputType.Touch
+			then
+				setEditProgressVisual(alphaFromInput(chg.Position.X))
+			end
+		end)
+		endedConn = UserInputService.InputEnded:Connect(function(ended)
+			if
+				ended.UserInputType == Enum.UserInputType.MouseButton1
+				or ended.UserInputType == Enum.UserInputType.Touch
+			then
+				task.defer(stopDrag)
+			end
 		end)
 	end
-	;(dim :: GuiObject).Visible = true
 
-	if not editBarGui then
-		local frame = Instance.new("Frame")
-		frame.Name = "PowerEditBar"
-		frame.AnchorPoint = Vector2.new(0.5, 0.5)
-		frame.Position = UDim2.fromScale(0.5, 0.52)
-		frame.Size = UDim2.fromOffset(380, 168)
-		frame.BackgroundColor3 = Color3.fromRGB(22, 24, 32)
-		frame.BackgroundTransparency = 0.12
-		frame.BorderSizePixel = 0
-		frame.ZIndex = 50
-		frame.Parent = main
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 14)
-		corner.Parent = frame
-		local stroke = Instance.new("UIStroke")
-		stroke.Thickness = 2.5
-		stroke.Color = Color3.fromRGB(255, 255, 255)
-		stroke.Transparency = 0.72
-		stroke.Parent = frame
-		local pad = Instance.new("UIPadding")
-		pad.PaddingTop = UDim.new(0, 12)
-		pad.PaddingBottom = UDim.new(0, 12)
-		pad.PaddingLeft = UDim.new(0, 14)
-		pad.PaddingRight = UDim.new(0, 14)
-		pad.Parent = frame
-
-		local title = Instance.new("TextLabel")
-		title.Name = "Title"
-		title.BackgroundTransparency = 1
-		title.Size = UDim2.new(1, 0, 0, 26)
-		title.Text = "Edit Power"
-		title.TextColor3 = Color3.new(1, 1, 1)
-		title.TextScaled = false
-		title.ZIndex = 51
-		title.Parent = frame
-		UiFonts.applyBodyLabel(title, 20, 14)
-		local titleStroke = Instance.new("UIStroke")
-		titleStroke.Thickness = 2
-		titleStroke.Parent = title
-
-		local hint = Instance.new("TextLabel")
-		hint.Name = "Hint"
-		hint.BackgroundTransparency = 1
-		hint.Size = UDim2.new(1, 0, 0, 16)
-		hint.Position = UDim2.fromOffset(0, 28)
-		hint.Text = "Slide to set active Power — max grows when you work out"
-		hint.TextColor3 = Color3.fromRGB(200, 205, 220)
-		hint.TextTransparency = 0.15
-		hint.ZIndex = 51
-		hint.Parent = frame
-		UiFonts.applyBodyLabel(hint, 12, 9)
-
-		local valueLabel = Instance.new("TextLabel")
-		valueLabel.Name = "Value"
-		valueLabel.BackgroundTransparency = 1
-		valueLabel.Size = UDim2.new(1, 0, 0, 28)
-		valueLabel.Position = UDim2.fromOffset(0, 48)
-		valueLabel.TextColor3 = Color3.fromRGB(140, 255, 170)
-		valueLabel.ZIndex = 51
-		valueLabel.Parent = frame
-		UiFonts.applyBodyLabel(valueLabel, 24, 16)
-		local valueStroke = Instance.new("UIStroke")
-		valueStroke.Thickness = 2
-		valueStroke.Parent = valueLabel
-
-		local track = Instance.new("Frame")
-		track.Name = "Track"
-		track.Size = UDim2.new(1, -8, 0, 16)
-		track.Position = UDim2.new(0, 4, 0, 88)
-		track.BackgroundColor3 = Color3.fromRGB(40, 44, 58)
-		track.BackgroundTransparency = 0.2
-		track.BorderSizePixel = 0
-		track.ZIndex = 51
-		track.Parent = frame
-		local trackCorner = Instance.new("UICorner")
-		trackCorner.CornerRadius = UDim.new(1, 0)
-		trackCorner.Parent = track
-		local trackStroke = Instance.new("UIStroke")
-		trackStroke.Thickness = 1.5
-		trackStroke.Transparency = 0.55
-		trackStroke.Parent = track
-
-		local fill = Instance.new("Frame")
-		fill.Name = "Fill"
-		fill.Size = UDim2.fromScale(1, 1)
-		fill.BackgroundColor3 = Color3.fromRGB(85, 220, 130)
-		fill.BackgroundTransparency = 0.08
-		fill.BorderSizePixel = 0
-		fill.ZIndex = 52
-		fill.Parent = track
-		local fillCorner = Instance.new("UICorner")
-		fillCorner.CornerRadius = UDim.new(1, 0)
-		fillCorner.Parent = fill
-		local fillGrad = Instance.new("UIGradient")
-		fillGrad.Color = ColorSequence.new({
-			ColorSequenceKeypoint.new(0, Color3.fromRGB(70, 190, 110)),
-			ColorSequenceKeypoint.new(1, Color3.fromRGB(160, 255, 180)),
-		})
-		fillGrad.Parent = fill
-
-		local knob = Instance.new("Frame")
-		knob.Name = "Knob"
-		knob.Size = UDim2.fromOffset(24, 24)
-		knob.AnchorPoint = Vector2.new(0.5, 0.5)
-		knob.Position = UDim2.fromScale(1, 0.5)
-		knob.BackgroundColor3 = Color3.new(1, 1, 1)
-		knob.BackgroundTransparency = 0.05
-		knob.BorderSizePixel = 0
-		knob.ZIndex = 53
-		knob.Parent = track
-		local knobCorner = Instance.new("UICorner")
-		knobCorner.CornerRadius = UDim.new(1, 0)
-		knobCorner.Parent = knob
-		local knobStroke = Instance.new("UIStroke")
-		knobStroke.Thickness = 2
-		knobStroke.Color = Color3.fromRGB(30, 30, 36)
-		knobStroke.Parent = knob
-
-		local okBtn = Instance.new("TextButton")
-		okBtn.Name = "Ok"
-		okBtn.Size = UDim2.fromOffset(110, 30)
-		okBtn.Position = UDim2.new(0.5, -118, 1, -34)
-		okBtn.BackgroundColor3 = Color3.fromRGB(70, 190, 100)
-		okBtn.BackgroundTransparency = 0.08
-		okBtn.Text = "Okay"
-		okBtn.TextColor3 = Color3.new(1, 1, 1)
-		okBtn.ZIndex = 51
-		okBtn.Parent = frame
-		UiFonts.applyButtonLabel(okBtn, 16, 12)
-		local okStroke = Instance.new("UIStroke")
-		okStroke.Thickness = 2
-		okStroke.Parent = okBtn
-		local okCorner = Instance.new("UICorner")
-		okCorner.CornerRadius = UDim.new(0, 8)
-		okCorner.Parent = okBtn
-
-		local cancelBtn = Instance.new("TextButton")
-		cancelBtn.Name = "Cancel"
-		cancelBtn.Size = UDim2.fromOffset(110, 30)
-		cancelBtn.Position = UDim2.new(0.5, 8, 1, -34)
-		cancelBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 80)
-		cancelBtn.BackgroundTransparency = 0.12
-		cancelBtn.Text = "Cancel"
-		cancelBtn.TextColor3 = Color3.new(1, 1, 1)
-		cancelBtn.ZIndex = 51
-		cancelBtn.Parent = frame
-		UiFonts.applyButtonLabel(cancelBtn, 16, 12)
-		local cancelStroke = Instance.new("UIStroke")
-		cancelStroke.Thickness = 2
-		cancelStroke.Parent = cancelBtn
-		local cancelCorner = Instance.new("UICorner")
-		cancelCorner.CornerRadius = UDim.new(0, 8)
-		cancelCorner.Parent = cancelBtn
-
-		local dragging = false
-		local movedConn: RBXScriptConnection? = nil
-		local endedConn: RBXScriptConnection? = nil
-		local function stopDrag()
-			dragging = false
-			editBarDragging = false
-			if movedConn then
-				movedConn:Disconnect()
-				movedConn = nil
-			end
-			if endedConn then
-				endedConn:Disconnect()
-				endedConn = nil
-			end
+	local function bindDragTarget(node: Instance?)
+		if not node or not node:IsA("GuiObject") then
+			return
 		end
-
-		frame:SetAttribute("MaxPower", 0)
-
-		local function currentMax(): number
-			local m = frame:GetAttribute("MaxPower")
-			return if typeof(m) == "number" then math.max(0, m) else 0
-		end
-
-		local function applyAlpha(a: number)
-			a = math.clamp(a, 0, 1)
-			frame:SetAttribute("Alpha", a)
-			fill.Size = UDim2.fromScale(a, 1)
-			knob.Position = UDim2.new(a, 0, 0.5, 0)
-			valueLabel.Text = formatPower(math.floor(a * currentMax() + 0.5))
-		end
-
-		local function alphaFromInput(x: number): number
-			local absPos = track.AbsolutePosition.X
-			local absSize = track.AbsoluteSize.X
-			if absSize <= 0 then
-				local cur = frame:GetAttribute("Alpha")
-				return if typeof(cur) == "number" then cur else 1
-			end
-			return math.clamp((x - absPos) / absSize, 0, 1)
-		end
-
-		local function beginDrag(inputX: number)
-			dragging = true
-			editBarDragging = true
-			applyAlpha(alphaFromInput(inputX))
-			if movedConn then
-				movedConn:Disconnect()
-			end
-			if endedConn then
-				endedConn:Disconnect()
-			end
-			movedConn = UserInputService.InputChanged:Connect(function(chg)
-				if not dragging then
-					return
-				end
-				if
-					chg.UserInputType == Enum.UserInputType.MouseMovement
-					or chg.UserInputType == Enum.UserInputType.Touch
-				then
-					applyAlpha(alphaFromInput(chg.Position.X))
-				end
-			end)
-			endedConn = UserInputService.InputEnded:Connect(function(ended)
-				if
-					ended.UserInputType == Enum.UserInputType.MouseButton1
-					or ended.UserInputType == Enum.UserInputType.Touch
-				then
-					-- Defer clear so dim's click (same release) sees editBarDragging=true.
-					task.defer(stopDrag)
-				end
-			end)
-		end
-
-		knob.InputBegan:Connect(function(input)
+		node.InputBegan:Connect(function(input)
 			if
 				input.UserInputType == Enum.UserInputType.MouseButton1
 				or input.UserInputType == Enum.UserInputType.Touch
@@ -1200,74 +1109,93 @@ local function openEditBar(main: ScreenGui)
 				beginDrag(input.Position.X)
 			end
 		end)
-
-		track.InputBegan:Connect(function(input)
-			if
-				input.UserInputType == Enum.UserInputType.MouseButton1
-				or input.UserInputType == Enum.UserInputType.Touch
-			then
-				beginDrag(input.Position.X)
-			end
-		end)
-
-		UIButtonEffects.wireScaleButtonAnim(okBtn, function()
-			local a = frame:GetAttribute("Alpha")
-			local alphaVal = if typeof(a) == "number" then a else 1
-			local maxP = currentMax()
-			local amount = math.floor(alphaVal * maxP + 0.5)
-			amount = math.clamp(amount, 0, math.floor(maxP))
-			-- Full slider = restore true max (clear Edited). Lower = keep nerf.
-			local markEdited = amount < maxP
-			if setPowerFn then
-				local ok = setPowerFn:InvokeServer(amount, markEdited)
-				if ok then
-					GameSoundEffects.playUpgrade()
-					updatePowerLabel()
-				else
-					GameSoundEffects.playErrorNotif()
-				end
-			end
-			closeEditBar()
-		end)
-		UIButtonEffects.wireScaleButtonAnim(cancelBtn, function()
-			closeEditBar()
-		end)
-
-		editBarGui = frame
+	end
+	bindDragTarget(bar)
+	bindDragTarget(knob)
+	-- Invisible full-width hit target so shrinking fill stays draggable.
+	if buttons and buttons:IsA("GuiObject") and not buttons:FindFirstChild("__EditDragHit") then
+		local hit = Instance.new("TextButton")
+		hit.Name = "__EditDragHit"
+		hit.BackgroundTransparency = 1
+		hit.Text = ""
+		hit.AutoButtonColor = false
+		hit.Size = UDim2.new(1, 0, 0, 40)
+		hit.Position = UDim2.new(0, 0, 0.5, 0)
+		hit.AnchorPoint = Vector2.new(0, 0.5)
+		hit.ZIndex = buttons.ZIndex + 3
+		hit.Parent = buttons
+		bindDragTarget(hit)
 	end
 
-	local frame = editBarGui :: Frame
-	frame.Visible = true
-	local valueLabel = frame:FindFirstChild("Value") :: TextLabel
-	local track = frame:FindFirstChild("Track") :: Frame
-	local fill = track:FindFirstChild("Fill") :: Frame
-	local knob = track:FindFirstChild("Knob") :: Frame
+	local function onOkay()
+		local amount = math.clamp(math.floor(editAlpha * editMaxPower + 0.5), 0, math.floor(editMaxPower))
+		local markEdited = amount < editMaxPower
+		if setPowerFn then
+			local ok = setPowerFn:InvokeServer(amount, markEdited)
+			if ok then
+				GameSoundEffects.playUpgrade()
+				updatePowerLabel()
+			else
+				GameSoundEffects.playErrorNotif()
+			end
+		end
+		closeEditBar()
+	end
 
-	-- Cap = true PowerMax (workouts raise this). Active Power can go up or down within it.
-	local maxPower = math.max(0, math.floor(WorkoutPower.readPowerMax(player)))
+	local okayBtn = findEditClickButton(okayHost)
+	local cancelBtn = findEditClickButton(cancelHost)
+	local closeBtn = findEditClickButton(closeHost)
+	if okayBtn then
+		UIButtonEffects.wireScaleButtonAnim(okayBtn, onOkay)
+	end
+	if cancelBtn then
+		UIButtonEffects.wireScaleButtonAnim(cancelBtn, closeEditBar)
+	end
+	if closeBtn then
+		UIButtonEffects.wireGlistenCloseButton(closeBtn, closeEditBar)
+	end
+end
+
+local function openEditBar(_main: ScreenGui)
+	local main = PlayerGuiMain.ensure(player)
+	local frames = main:FindFirstChild("Frames")
+	local frame = frames and frames:FindFirstChild("Edit Power")
+	if not frame or not frame:IsA("Frame") then
+		warn("[UpgradesController] Frames['Edit Power'] missing")
+		GameSoundEffects.playErrorNotif()
+		return
+	end
+	wireEditPowerFrame(frame)
+	editFrame = frame
+
+	editMaxPower = math.max(0, math.floor(WorkoutPower.readPowerMax(player)))
 	local activePower = math.max(0, math.floor(WorkoutPower.readPower(player)))
-	local alpha = if maxPower > 0 then math.clamp(activePower / maxPower, 0, 1) else 1
-	frame:SetAttribute("MaxPower", maxPower)
-	frame:SetAttribute("Alpha", alpha)
-	fill.Size = UDim2.fromScale(alpha, 1)
-	knob.Position = UDim2.new(alpha, 0, 0.5, 0)
-	valueLabel.Text = formatPower(math.floor(alpha * maxPower + 0.5))
+	local alpha = if editMaxPower > 0 then math.clamp(activePower / editMaxPower, 0, 1) else 1
 
-	local hint = frame:FindFirstChild("Hint")
-	if hint and hint:IsA("TextLabel") then
-		hint.Text = "Max "
-			.. formatPower(maxPower)
-			.. " — slide up to restore, or down to nerf"
-	end
+	local HUDController = require(script.Parent.HUDController)
+	HUDController.openFrameByName("Edit Power")
+	frame.Visible = true
 
-	local sc = frame:FindFirstChildOfClass("UIScale")
-	if not sc then
-		sc = Instance.new("UIScale")
-		sc.Parent = frame
-	end
-	sc.Scale = 0.92
-	TweenService:Create(sc, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 })
-		:Play()
+	-- Capture full track size while bar is still at max (Studio default).
+	task.defer(function()
+		if not editFrame then
+			return
+		end
+		local buttons = editFrame:FindFirstChild("Buttons")
+		local bar = buttons and buttons:FindFirstChild("Progress bar")
+		if bar and bar:IsA("GuiObject") then
+			-- Reset to full before measuring / applying alpha.
+			local yScale, yOff = bar.Size.Y.Scale, bar.Size.Y.Offset
+			if yScale == 0 and yOff == 0 then
+				bar.Size = UDim2.fromScale(1, 1)
+			else
+				bar.Size = UDim2.new(1, 0, yScale, yOff)
+			end
+			editFrame:SetAttribute("EditTrackWidth", math.max(bar.AbsoluteSize.X, 1))
+			editFrame:SetAttribute("EditTrackLeft", bar.AbsolutePosition.X)
+		end
+		setEditProgressVisual(alpha)
+	end)
 end
 
 local function init()

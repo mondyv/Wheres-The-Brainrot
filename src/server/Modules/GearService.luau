@@ -6,6 +6,8 @@ local RunService = game:GetService("RunService")
 
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
+local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
+local LevelService = require(script.Parent:WaitForChild("LevelService"))
 
 local GearService = {}
 
@@ -285,6 +287,7 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 		player:SetAttribute("WorkoutLastGain", def.powerGain)
 		local pulse = player:GetAttribute("WorkoutPowerPulse")
 		player:SetAttribute("WorkoutPowerPulse", (if typeof(pulse) == "number" then pulse else 0) + 1)
+		LevelService.addXp(player, LevelConfig.XP.workout, "workout")
 		return true
 	end
 

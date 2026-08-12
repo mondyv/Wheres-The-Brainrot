@@ -21,7 +21,9 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local ServerStorage = game:GetService("ServerStorage")
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
 local Brainrots = require(ServerScriptService:WaitForChild("Server"):WaitForChild("Modules"):WaitForChild("Brainrots"))
+local LevelService = require(ServerScriptService:WaitForChild("Server"):WaitForChild("Modules"):WaitForChild("LevelService"))
 
 local GRANTED = Enum.ProductPurchaseDecision.PurchaseGranted
 local STEAL_RANGE = 32
@@ -195,6 +197,7 @@ local function executeSteal(thief: Player, stand: Instance?, fallbackRarity: str
 	local granted = grantBrainrotToThief(thief, stolen)
 	if granted then
 		fireThiefFeedback(thief, stolen)
+		LevelService.addXp(thief, LevelConfig.XP.steal, "steal")
 		local timEvt = ServerStorage:FindFirstChild("TimCheeseStealSuccess")
 		if timEvt and timEvt:IsA("BindableEvent") then
 			timEvt:Fire(thief)

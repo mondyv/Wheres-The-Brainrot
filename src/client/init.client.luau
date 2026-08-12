@@ -109,6 +109,7 @@ task.defer(function()
 			function()
 				require(script.UpgradesController).init()
 				require(script.WorkoutController).init()
+				require(script.LevelController).init()
 			end,
 			function()
 				require(script.DealerShopController).init()

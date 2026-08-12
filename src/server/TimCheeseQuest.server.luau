@@ -14,6 +14,8 @@ local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):Wa
 local PlayerDataService = require(script.Parent.Modules:WaitForChild("PlayerDataService"))
 local TimCheeseQuestTracker = require(script.Parent.Modules:WaitForChild("TimCheeseQuestTracker"))
 local AnalyticsFunnelService = require(script.Parent.Modules:WaitForChild("AnalyticsFunnelService"))
+local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
+local LevelService = require(script.Parent.Modules:WaitForChild("LevelService"))
 
 local STAND_TAG = "BrainrotStand"
 local REMOTES_FOLDER = "TimCheeseQuestRemotes"
@@ -164,6 +166,7 @@ claimQuestRF.OnServerInvoke = function(player: Player): (boolean, string?)
 	})
 	local allDone = math.floor(idx) >= TimCheeseQuestConfig.questCount()
 	AnalyticsFunnelService.onTimQuestClaimed(player, math.floor(idx), allDone)
+	LevelService.addXp(player, LevelConfig.XP.timQuest, "tim_quest")
 	return true, label
 end
 

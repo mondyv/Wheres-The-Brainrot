@@ -25,6 +25,7 @@ local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 
 local IndexService = require(script.Parent:WaitForChild("IndexService"))
+local LevelService = require(script.Parent:WaitForChild("LevelService"))
 
 local M = {}
 
@@ -500,6 +501,8 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		timCheeseCompletedCount = math.max(0, math.floor(if typeof(player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR)) == "number" then player:GetAttribute(PlayerDataSchema.TIM_CHEESE_COMPLETED_ATTR) :: number else 0)),
 		timCheeseHarvestProgress = math.max(0, math.floor(if typeof(player:GetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR)) == "number" then player:GetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR) :: number else 0)),
 		brainrotAcceptCount = math.max(0, math.floor(if typeof(player:GetAttribute(PlayerDataSchema.BRAINROT_ACCEPT_COUNT_ATTR)) == "number" then player:GetAttribute(PlayerDataSchema.BRAINROT_ACCEPT_COUNT_ATTR) :: number else 0)),
+		playerLevel = math.max(1, math.floor(if typeof(player:GetAttribute("PlayerLevel")) == "number" then player:GetAttribute("PlayerLevel") :: number else 1)),
+		playerXp = math.max(0, math.floor(if typeof(player:GetAttribute("PlayerXP")) == "number" then player:GetAttribute("PlayerXP") :: number else 0)),
 	}
 end
 
@@ -622,6 +625,7 @@ local function applyAttributes(player: Player, data: PlayerDataSchema.PlayerSave
 	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_HARVEST_ATTR, math.max(0, math.floor(data.timCheeseHarvestProgress or 0)))
 	player:SetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR, false)
 	player:SetAttribute(PlayerDataSchema.BRAINROT_ACCEPT_COUNT_ATTR, math.max(0, math.floor(data.brainrotAcceptCount or 0)))
+	LevelService.applyLoaded(player, data.playerLevel, data.playerXp)
 
 	sessionPlayBase[player] = data.totalPlayTimeSeconds
 	sessionJoinAt[player] = os.clock()
@@ -795,6 +799,8 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		timCheeseCompletedCount = math.max(0, floorNum(raw.timCheeseCompletedCount, 0)),
 		timCheeseHarvestProgress = math.max(0, floorNum(raw.timCheeseHarvestProgress, 0)),
 		brainrotAcceptCount = math.max(0, floorNum(raw.brainrotAcceptCount, 0)),
+		playerLevel = math.max(1, floorNum(raw.playerLevel, 1)),
+		playerXp = math.max(0, floorNum(raw.playerXp, 0)),
 	}
 end
 
@@ -1388,6 +1394,8 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		timCheeseCompletedCount = 0,
 		timCheeseHarvestProgress = 0,
 		brainrotAcceptCount = 0,
+		playerLevel = 1,
+		playerXp = 0,
 	}
 end
 

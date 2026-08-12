@@ -23,6 +23,8 @@ local Workspace = game:GetService("Workspace")
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
 local AnalyticsFunnelService = require(Modules:WaitForChild("AnalyticsFunnelService"))
+local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
+local LevelService = require(Modules:WaitForChild("LevelService"))
 local IndexService = require(Modules:WaitForChild("IndexService"))
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local StoreConfig = require(Shared:WaitForChild("StoreConfig"))
@@ -861,6 +863,7 @@ local function beginLuckyBlockCutscene(
 
 		local function markOpened()
 			recordLuckyBlockIndexUnlock(player, blockKind)
+			LevelService.addXp(player, LevelConfig.XP.luckyBlock, "lucky_block")
 			local timEvt = ServerStorage:FindFirstChild("TimCheeseLuckyBlockOpened")
 			if timEvt and timEvt:IsA("BindableEvent") then
 				timEvt:Fire(player)

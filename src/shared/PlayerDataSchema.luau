@@ -90,6 +90,8 @@ export type PlayerSaveData = {
 	timCheeseCompletedCount: number?, -- how many quests fully claimed
 	timCheeseHarvestProgress: number?, -- progress counter for harvest-kind quests
 	brainrotAcceptCount: number?, -- career floating-claim accepts (base-return guide)
+	playerLevel: number?,
+	playerXp: number?, -- XP into current playerLevel
 }
 
 local M = {}

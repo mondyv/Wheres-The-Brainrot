@@ -16,6 +16,8 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local DailyConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("DailyConfig"))
+local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
+local LevelService = require(script.Parent:WaitForChild("LevelService"))
 
 export type GrantFn = (player: Player, reward: DailyConfig.DailyReward) -> (boolean, string?)
 
@@ -101,6 +103,7 @@ function DailyService.claim(player: Player, day: number): (boolean, string?, Dai
 	end
 
 	DailyConfig.markDayClaimed(player, day)
+	LevelService.addXp(player, LevelConfig.XP.daily, "daily")
 
 	local skipAll = player:GetAttribute(DailyConfig.SKIP_ALL_ATTR) == true
 	if skipAll then

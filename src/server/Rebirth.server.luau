@@ -14,6 +14,8 @@ local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 local AnalyticsFunnelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
 local IndexService = require(script.Parent:WaitForChild("Modules"):WaitForChild("IndexService"))
+local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
+local LevelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("LevelService"))
 
 local MAX_FLOOR = 4
 
@@ -186,6 +188,7 @@ local function performRebirth(player: Player, opts: { skipRequirements: boolean?
 	end
 
 	pushState(player)
+	LevelService.addXp(player, LevelConfig.XP.rebirth, "rebirth")
 	return true, nil
 end
 

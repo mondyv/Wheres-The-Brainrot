@@ -10,6 +10,8 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
+local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
+
 local M = {}
 
 M.FLOAT_CLAIM_DURATION = 15
@@ -307,6 +309,15 @@ function M.claimFloatingBrainrot(deps: Deps, player: Player, clone: Model): bool
 			end
 		elseif not ok then
 			warn("[BushHarvestFloating] PlayerDataService require failed:", PDS)
+		end
+		local okLvl, LevelService = pcall(function()
+			return require(script.Parent:WaitForChild("LevelService"))
+		end)
+		if okLvl and LevelService and typeof(LevelService.addXp) == "function" then
+			local okXp, errXp = pcall(LevelService.addXp, player, LevelConfig.XP.acceptBrainrot, "accept_brainrot")
+			if not okXp then
+				warn("[BushHarvestFloating] addXp error:", errXp)
+			end
 		end
 	end)
 

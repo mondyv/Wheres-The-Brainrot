@@ -8,6 +8,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
+local LevelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("LevelService"))
 
 local function getBushRemotes(): Folder
 	local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
@@ -50,6 +52,7 @@ local function sellAtIndex(player: Player, idx: number): (boolean, string?, numb
 	end
 	local price = BrainrotEconomy.sellPrice(entry :: BrainrotEconomy.InvEntry)
 	payout(player, price)
+	LevelService.addXp(player, LevelConfig.XP.sell, "sell")
 	return true, nil, price
 end
 

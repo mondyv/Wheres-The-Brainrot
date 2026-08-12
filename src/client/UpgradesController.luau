@@ -177,7 +177,8 @@ local function applyRarityGradients(row: Instance, rarity: string)
 		end)
 		local textNode = BrainrotHeaderStyle.resolveTextLabel(rarityLabel) or rarityLabel
 		if textNode:IsA("TextLabel") or textNode:IsA("TextButton") then
-			(textNode :: TextLabel).Text = GearConfig.rarityDisplay(rarity)
+			local rarityLabel = textNode :: TextLabel
+			rarityLabel.Text = GearConfig.rarityDisplay(rarity)
 		end
 	end
 	local iconFrame = row:FindFirstChild("IconFrame")
@@ -249,7 +250,8 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 	local info = row:FindFirstChild("Info")
 	local nameLabel = info and info:FindFirstChild("Name")
 	if nameLabel and (nameLabel:IsA("TextLabel") or nameLabel:IsA("TextButton")) then
-		(nameLabel :: TextLabel).Text = def.name
+		local gearNameLabel = nameLabel :: TextLabel
+		gearNameLabel.Text = def.name
 	end
 	applyRarityGradients(row, def.rarity)
 
@@ -287,7 +289,8 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 			MainGradientButtons.applyDefault(robux)
 			local priceLabel = robux:FindFirstChild("Price", true) or robux:FindFirstChildWhichIsA("TextLabel", true)
 			if priceLabel and (priceLabel:IsA("TextLabel") or priceLabel:IsA("TextButton")) then
-				(priceLabel :: TextLabel).Text = ROBUX_ICON .. tostring(def.robuxPrice)
+				local priceText = priceLabel :: TextLabel
+				priceText.Text = ROBUX_ICON .. tostring(def.robuxPrice)
 			end
 		end
 	end

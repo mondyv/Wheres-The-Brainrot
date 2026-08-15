@@ -9,13 +9,10 @@ local SpiderSenseFx = {}
 
 local activeRoots: { Instance } = {}
 
-local function findVfxFolder(): Folder?
+local function findVfxFolder(): Instance?
 	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
 	local vfx = assets and assets:FindFirstChild("SpiderVFX")
-	if vfx and vfx:IsA("Folder") then
-		return vfx
-	end
-	return nil
+	return vfx
 end
 
 local function findTemplate(name: string): Instance?
@@ -23,7 +20,17 @@ local function findTemplate(name: string): Instance?
 	if not folder then
 		return nil
 	end
-	return folder:FindFirstChild(name)
+	local exact = folder:FindFirstChild(name)
+	if exact then
+		return exact
+	end
+	local want = string.lower(name)
+	for _, child in folder:GetChildren() do
+		if string.lower(child.Name) == want then
+			return child
+		end
+	end
+	return nil
 end
 
 local function setEnabled(root: Instance, enabled: boolean)
@@ -171,6 +178,72 @@ end
 function SpiderSenseFx.startLurkingSense()
 	-- Player-only VFX (not the spider encounter variant).
 	SpiderSenseFx.startOnPlayer({ "Spidey senses human" })
+end
+
+function SpiderSenseFx.attachNamed(templateName: string, host: BasePart, cloneName: string): Instance?
+	local template = findTemplate(templateName)
+	if not template then
+		warn("[SpiderSenseFx] Missing SpiderVFX template:", templateName)
+		return nil
+	end
+	local attached = attachToHost(template, host, cloneName)
+	if attached then
+		table.insert(activeRoots, attached)
+		emitParticles(attached, 22)
+		playSounds(attached)
+	end
+	return attached
+end
+
+function SpiderSenseFx.playNamedAt(templateName: string, worldCf: CFrame, lifetime: number): Instance?
+	local template = findTemplate(templateName)
+	if not template then
+		warn("[SpiderSenseFx] Missing SpiderVFX template:", templateName)
+		return nil
+	end
+	local clone = template:Clone()
+	clone.Name = "SpiderVfx_" .. templateName
+	if clone:IsA("Model") then
+		clone:PivotTo(worldCf)
+		clone.Parent = workspace
+	elseif clone:IsA("BasePart") then
+		clone.CFrame = worldCf
+		clone.Parent = workspace
+	elseif clone:IsA("Attachment") then
+		local anchor = Instance.new("Part")
+		anchor.Name = "SpiderVfxAnchor"
+		anchor.Size = Vector3.new(0.2, 0.2, 0.2)
+		anchor.Transparency = 1
+		anchor.Anchored = true
+		anchor.CanCollide = false
+		anchor.CanQuery = false
+		anchor.CanTouch = false
+		anchor.CFrame = worldCf
+		anchor.Parent = workspace
+		clone.Parent = anchor
+		clone = anchor
+	else
+		clone.Parent = workspace
+		local part = clone:FindFirstChildWhichIsA("BasePart", true)
+		if part then
+			local delta = worldCf.Position - part.Position
+			for _, d in clone:GetDescendants() do
+				if d:IsA("BasePart") then
+					d.CFrame = d.CFrame + delta
+				end
+			end
+		end
+	end
+	setEnabled(clone, true)
+	emitParticles(clone, 24)
+	playSounds(clone)
+	task.delay(math.max(lifetime, 0.4), function()
+		if clone.Parent then
+			setEnabled(clone, false)
+			clone:Destroy()
+		end
+	end)
+	return clone
 end
 
 return SpiderSenseFx

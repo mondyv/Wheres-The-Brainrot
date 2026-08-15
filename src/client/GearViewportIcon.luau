@@ -2,6 +2,9 @@
 -- Rotating ViewportFrame previews of EssentialAssets.Gears for shop + hotbar.
 -- ViewportFrames cannot draw ParticleEmitters — we re-host the gear's OWN emitters
 -- on a tiny camera-aligned part so their existing VFX can show over the icon.
+-- Shop icons: ViewportFrame lives on a BillboardGui in front of Main, and the row
+-- card is inset so world particles show through the icon hole (not behind the panel).
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
@@ -12,9 +15,11 @@ local M = {}
 
 local VF_NAME = "GearViewport"
 local PROXY_FOLDER_NAME = "GearIconFxProxies"
+local SHOP_BB_ORDER = 80 -- Main modal DisplayOrder is 50
 local spinConns: { [ViewportFrame]: RBXScriptConnection } = {}
 local proxyConns: { [GuiObject]: RBXScriptConnection } = {}
 local proxyParts: { [GuiObject]: BasePart } = {}
+local shopBillboards: { [GuiObject]: BillboardGui } = {}
 
 local function scaleNumberSequence(seq: NumberSequence, mult: number): NumberSequence
 	local keys = seq.Keypoints
@@ -55,6 +60,58 @@ local function enableAuthoredFx(root: Instance)
 	end
 end
 
+local function isUpgradesHost(host: GuiObject): boolean
+	local p: Instance? = host
+	while p do
+		if p.Name == "Upgrades" then
+			return true
+		end
+		p = p.Parent
+	end
+	return false
+end
+
+local function punchShopIconHole(host: GuiObject)
+	if host:GetAttribute("IconFxHolePunched") == true then
+		return
+	end
+	local w = host.AbsoluteSize.X
+	if w < 8 then
+		return
+	end
+	host:SetAttribute("IconFxHolePunched", true)
+	host.BackgroundTransparency = 1
+	host.ClipsDescendants = false
+	local row = host.Parent
+	if not (row and row:IsA("GuiObject")) then
+		return
+	end
+	row.ClipsDescendants = false
+	local container = row.Parent
+	if container and container:IsA("GuiObject") then
+		container.ClipsDescendants = false
+	end
+	-- Full-bleed card chrome would cover world particles; start it after the icon.
+	for _, child in row:GetChildren() do
+		if child == host or not child:IsA("GuiObject") then
+			continue
+		end
+		local n = child.Name
+		if n ~= "Decor" and n ~= "BG" and n ~= "Highlight" and n ~= "Shadow" then
+			continue
+		end
+		if child.Size.X.Scale < 0.9 then
+			continue
+		end
+		if child:GetAttribute("IconFxHoleInset") == true then
+			continue
+		end
+		child:SetAttribute("IconFxHoleInset", true)
+		child.Position = UDim2.new(0, w, child.Position.Y.Scale, child.Position.Y.Offset)
+		child.Size = UDim2.new(1, -w, child.Size.Y.Scale, child.Size.Y.Offset)
+	end
+end
+
 local function clearFxProxy(host: GuiObject)
 	local conn = proxyConns[host]
 	if conn then
@@ -66,10 +123,48 @@ local function clearFxProxy(host: GuiObject)
 		part:Destroy()
 		proxyParts[host] = nil
 	end
+	local bb = shopBillboards[host]
+	if bb then
+		bb:Destroy()
+		shopBillboards[host] = nil
+	end
+end
+
+local function ensureShopBillboard(host: GuiObject, part: BasePart, vf: ViewportFrame): BillboardGui?
+	local existing = shopBillboards[host]
+	if existing and existing.Parent then
+		existing.Adornee = part
+		if vf.Parent ~= existing then
+			vf.Parent = existing
+		end
+		return existing
+	end
+	local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if not pg then
+		return nil
+	end
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "GearShopIconOverlay"
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.MaxDistance = 1e6
+	bb.ResetOnSpawn = false
+	bb.Active = false
+	bb.ClipsDescendants = false
+	bb.Size = UDim2.fromOffset(math.max(host.AbsoluteSize.X, 8), math.max(host.AbsoluteSize.Y, 8))
+	bb.DisplayOrder = SHOP_BB_ORDER
+	bb.Adornee = part
+	bb.Parent = pg
+	vf.Size = UDim2.fromScale(1, 1)
+	vf.Position = UDim2.fromScale(0.5, 0.5)
+	vf.AnchorPoint = Vector2.new(0.5, 0.5)
+	vf.Parent = bb
+	shopBillboards[host] = bb
+	return bb
 end
 
 -- Clone the gear's own ParticleEmitters into world space (VF can't draw them).
-local function mountFxProxy(host: GuiObject, sourceModel: Model)
+local function mountFxProxy(host: GuiObject, sourceModel: Model, vf: ViewportFrame)
 	clearFxProxy(host)
 
 	local emitters: { ParticleEmitter } = {}
@@ -113,6 +208,7 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model)
 		local e = src:Clone()
 		e.LockedToPart = true
 		e.Enabled = true
+		e.ZOffset = math.max(e.ZOffset, 3)
 		if typeof(e.Size) == "NumberSequence" then
 			e.Size = scaleNumberSequence(e.Size, SIZE_MULT)
 		end
@@ -128,6 +224,11 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model)
 		end)
 	end
 
+	if isUpgradesHost(host) then
+		ensureShopBillboard(host, part, vf)
+	end
+
+	local shop = isUpgradesHost(host)
 	proxyConns[host] = RunService.RenderStepped:Connect(function()
 		if not host.Parent or not part.Parent then
 			clearFxProxy(host)
@@ -139,6 +240,10 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model)
 		end
 		if not host.Visible or host.AbsoluteSize.X < 2 or host.AbsoluteSize.Y < 2 then
 			part.CFrame = CFrame.new(0, -1e6, 0)
+			local bbHide = shopBillboards[host]
+			if bbHide then
+				bbHide.Enabled = false
+			end
 			return
 		end
 		-- Hide when ancestor ScreenGui/frame is invisible.
@@ -156,7 +261,15 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model)
 		end
 		if not vis then
 			part.CFrame = CFrame.new(0, -1e6, 0)
+			local bbHide = shopBillboards[host]
+			if bbHide then
+				bbHide.Enabled = false
+			end
 			return
+		end
+
+		if shop then
+			punchShopIconHole(host)
 		end
 
 		local center = host.AbsolutePosition + host.AbsoluteSize * 0.5
@@ -165,6 +278,13 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model)
 		local depth = 2.4
 		local pos = ray.Origin + ray.Direction.Unit * depth
 		part.CFrame = CFrame.lookAt(pos, pos + camera.CFrame.LookVector, camera.CFrame.UpVector)
+
+		local bb = shopBillboards[host]
+		if bb then
+			bb.Enabled = true
+			bb.Adornee = part
+			bb.Size = UDim2.fromOffset(host.AbsoluteSize.X, host.AbsoluteSize.Y)
+		end
 	end)
 end
 
@@ -224,6 +344,10 @@ end
 
 function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size: UDim2? }?): ViewportFrame?
 	local existing = host:FindFirstChild(VF_NAME)
+	if not existing then
+		local bb = shopBillboards[host]
+		existing = bb and bb:FindFirstChild(VF_NAME)
+	end
 	if existing and existing:IsA("ViewportFrame") and existing:GetAttribute("GearId") == gearId then
 		return existing
 	end
@@ -320,7 +444,7 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	updateCam()
 
 	-- Re-host authored particle emitters so they can actually render over the icon.
-	mountFxProxy(host, clone)
+	mountFxProxy(host, clone, vf)
 
 	if gearId == 6 then
 		GearRainbowFX.attach(clone)

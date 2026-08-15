@@ -6,7 +6,8 @@
 	  • brainrot rarity roll weights when opened
 	  • Index rarity accent (indexRarity) — matches block identity / color, not
 	    necessarily the single highest drop weight
-	  • Index icon paths under ["Lucky Block Icons"].Normal / .Rainbow
+	  • Index icon paths under ["Lucky Block Icons"].Normal only
+	    (do not use .Rainbow or Golden/Galaxy/Diamond variants for the base icon)
 
 	Rarity ids match Brainrots / StoreConfig steal tables.
 ]]
@@ -25,7 +26,8 @@ export type BlockDef = {
 	drops: { [string]: number }, -- rarity → weight
 	-- ReplicatedStorage["Lucky Blocks"]["Lucky Block Icons"].Normal[iconFolder]
 	iconFolder: string?,
-	-- Preferred child under that folder (base / non-mutation icon)
+	-- Preferred child under that folder (base / non-mutation icon).
+	-- Nil when Studio has no base child (only Golden/Galaxy/Diamond variants).
 	iconChild: string?,
 }
 
@@ -41,7 +43,8 @@ local BLOCKS: { BlockDef } = {
 		indexRarity = "uncommon",
 		drops = { uncommon = 62, rare = 33, epic = 5 },
 		iconFolder = "Starter Lucky Block",
-		iconChild = "Basic Lucky Block",
+		-- Studio only has Golden/Galaxy/Diamond Basic children — use folder image / model fallback.
+		iconChild = nil,
 	},
 	{
 		id = "troll",
@@ -82,7 +85,8 @@ local BLOCKS: { BlockDef } = {
 		-- Named mythic → mythic-primary pool (was epic-heavy before).
 		drops = { epic = 18, mythic = 70, legendary = 12 },
 		iconFolder = "Mythic Lucky Block",
-		iconChild = "67 Lucky Block",
+		-- Studio: Golden/Galaxy/Diamond 67 only (no base "67 Lucky Block").
+		iconChild = nil,
 	},
 	{
 		id = "purple",
@@ -113,7 +117,8 @@ local BLOCKS: { BlockDef } = {
 		indexRarity = "brainrot god",
 		drops = { mythic = 22, legendary = 33, ["brainrot god"] = 45 },
 		iconFolder = "Godly Lucky Block",
-		iconChild = "Blue Lucky Block",
+		-- Studio: Golden/Galaxy/Diamond Blue only (no base "Blue Lucky Block").
+		iconChild = nil,
 	},
 	{
 		id = "heart",
@@ -157,7 +162,7 @@ local BLOCKS: { BlockDef } = {
 	},
 	{
 		id = "star",
-		variant = "star rainbow",
+		variant = "star",
 		displayName = "Star Lucky Block",
 		tier = 13,
 		indexRarity = "secret",
@@ -297,7 +302,39 @@ function M.primaryDropRarity(id: string): string
 	return rows[1].name
 end
 
-local function readImageAsset(node: Instance?): string
+local GENERIC_IMAGE_NAMES: { [string]: boolean } = {
+	imagelabel = true,
+	imagebutton = true,
+	image = true,
+}
+
+local function isMutationIconName(name: string): boolean
+	local lower = string.lower(name)
+	return string.find(lower, "diamond", 1, true) ~= nil
+		or string.find(lower, "galaxy", 1, true) ~= nil
+		or string.find(lower, "golden", 1, true) ~= nil
+end
+
+local function isGenericImageName(name: string): boolean
+	return GENERIC_IMAGE_NAMES[string.lower(name)] == true
+end
+
+local function findChildIgnoreCase(parent: Instance, name: string): Instance?
+	local exact = parent:FindFirstChild(name)
+	if exact then
+		return exact
+	end
+	local want = string.lower(name)
+	for _, child in parent:GetChildren() do
+		if string.lower(child.Name) == want then
+			return child
+		end
+	end
+	return nil
+end
+
+-- Only the named node (or a direct ImageLabel inside it) — never walk mutation siblings.
+local function readNamedIcon(node: Instance?): string
 	if not node then
 		return ""
 	end
@@ -307,51 +344,49 @@ local function readImageAsset(node: Instance?): string
 	if node:IsA("ImageButton") and node.Image ~= "" then
 		return node.Image
 	end
-	local direct = node:FindFirstChildWhichIsA("ImageLabel") or node:FindFirstChildWhichIsA("ImageButton")
-	if direct and (direct :: any).Image ~= "" then
-		return (direct :: any).Image
-	end
-	for _, d in node:GetDescendants() do
-		if (d:IsA("ImageLabel") or d:IsA("ImageButton")) and d.Image ~= "" then
-			return d.Image
+	for _, child in node:GetChildren() do
+		if (child:IsA("ImageLabel") or child:IsA("ImageButton")) and not isMutationIconName(child.Name) then
+			local img = (child :: any).Image
+			if typeof(img) == "string" and img ~= "" then
+				return img
+			end
 		end
 	end
 	return ""
 end
 
-local function isMutationIconName(name: string): boolean
-	local lower = string.lower(name)
-	return string.find(lower, "diamond", 1, true) == 1
-		or string.find(lower, "galaxy", 1, true) == 1
-		or string.find(lower, "golden", 1, true) == 1
-end
-
 local function resolveFromIconGroup(group: Instance, preferredNames: { string }): string
 	for _, name in preferredNames do
 		if name ~= "" then
-			local child = group:FindFirstChild(name)
+			local child = findChildIgnoreCase(group, name)
 			if child then
-				local tex = readImageAsset(child)
+				local tex = readNamedIcon(child)
 				if tex ~= "" then
 					return tex
 				end
 			end
 		end
 	end
-	-- Prefer any non-mutation child.
+
+	-- Many folders ARE the base ImageLabel, with Golden/Galaxy/Diamond as extra children.
+	local selfTex = readNamedIcon(group)
+	if selfTex ~= "" and (group:IsA("ImageLabel") or group:IsA("ImageButton")) then
+		return selfTex
+	end
+
 	for _, child in group:GetChildren() do
-		if not isMutationIconName(child.Name) then
-			local tex = readImageAsset(child)
-			if tex ~= "" then
-				return tex
-			end
+		if isGenericImageName(child.Name) or isMutationIconName(child.Name) then
+			continue
+		end
+		local tex = readNamedIcon(child)
+		if tex ~= "" then
+			return tex
 		end
 	end
-	-- Last resort: any image under the group (may be Golden/Diamond).
-	return readImageAsset(group)
+	return ""
 end
 
--- Resolves rbxassetid from Lucky Block Icons (Normal first, then Rainbow).
+-- Resolves rbxassetid from Lucky Block Icons.Normal only (Studio source of truth).
 function M.resolveIconAssetId(blockId: string): string
 	local def = byId[blockId]
 	local root = ReplicatedStorage:FindFirstChild("Lucky Blocks")
@@ -369,52 +404,16 @@ function M.resolveIconAssetId(blockId: string): string
 		table.insert(preferred, def.displayName)
 	end
 	table.insert(preferred, folderName)
-	if def and typeof(def.variant) == "string" then
-		table.insert(preferred, def.variant .. " Lucky Block")
-		table.insert(preferred, def.variant)
-	end
 
-	-- Rainbow folder often uses variant names (Basic / 67 / Blue / Transparent).
-	local rainbowFolderAliases: { string } = { folderName }
-	if def and def.iconChild then
-		table.insert(rainbowFolderAliases, 1, def.iconChild)
+	local style = findChildIgnoreCase(icons, "Normal")
+	if not style then
+		return ""
 	end
-	if blockId == "Starter Lucky Block" then
-		table.insert(rainbowFolderAliases, 1, "Basic Lucky Block")
-	elseif blockId == "Mythic Lucky Block" then
-		table.insert(rainbowFolderAliases, 1, "67 Lucky Block")
-	elseif blockId == "Godly Luckyblock" then
-		table.insert(rainbowFolderAliases, 1, "Blue Lucky Block")
-	elseif blockId == "Secret Lucky Block" then
-		table.insert(rainbowFolderAliases, 1, "Transparent Lucky Block")
+	local group = findChildIgnoreCase(style, folderName)
+	if not group then
+		return ""
 	end
-
-	for _, styleName in { "Normal", "Rainbow" } do
-		local style = icons:FindFirstChild(styleName)
-		if not style then
-			continue
-		end
-		-- Exact folder match first (avoids Starter accidentally resolving Blue).
-		local group = style:FindFirstChild(folderName)
-		if group then
-			local tex = resolveFromIconGroup(group, preferred)
-			if tex ~= "" then
-				return tex
-			end
-		end
-		for _, alias in rainbowFolderAliases do
-			if alias ~= folderName then
-				local alt = style:FindFirstChild(alias)
-				if alt then
-					local tex = resolveFromIconGroup(alt, preferred)
-					if tex ~= "" then
-						return tex
-					end
-				end
-			end
-		end
-	end
-	return ""
+	return resolveFromIconGroup(group, preferred)
 end
 
 return M

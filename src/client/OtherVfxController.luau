@@ -6,6 +6,7 @@
 	Bush search: one BushEffect on the bush (pulsed Emit while holding); BushEffectBurst on open.
 	UpgradeBR/OnUpgrade: Fading Glow on host + Bezier.Part flight (Trail on, particle :Emit bursts),
 	then EmitOnFinish burst and Trail off at path end.
+	Level Up vfx: weld dummy R6 VFX onto the local character for ~1s then fade.
 ]]
 
 local Debris = game:GetService("Debris")
@@ -1177,6 +1178,146 @@ function OtherVfxController.playBrainrotUpgrade(at: CFrame | BasePart)
 	end)
 
 	Debris:AddItem(clone, UPGRADE_LIFETIME_SEC)
+end
+
+local LEVEL_UP_HOLD_SEC = 1.0
+local LEVEL_UP_FADE_SEC = 0.35
+local LEVEL_UP_DESTROY_SEC = 1.55
+
+local BODY_PART_ALIASES: { [string]: { string } } = {
+	Torso = { "UpperTorso", "Torso", "HumanoidRootPart" },
+	Head = { "Head" },
+	["Left Arm"] = { "LeftUpperArm", "Left Arm" },
+	["Right Arm"] = { "RightUpperArm", "Right Arm" },
+	["Left Leg"] = { "LeftUpperLeg", "Left Leg" },
+	["Right Leg"] = { "RightUpperLeg", "Right Leg" },
+	HumanoidRootPart = { "HumanoidRootPart" },
+}
+
+local levelUpToken = 0
+local activeLevelUpRoot: Instance? = nil
+
+local function findCharacterPart(character: Model, dummyName: string): BasePart?
+	local aliases = BODY_PART_ALIASES[dummyName]
+	if aliases then
+		for _, name in aliases do
+			local inst = character:FindFirstChild(name)
+			if inst and inst:IsA("BasePart") then
+				return inst
+			end
+		end
+	end
+	local exact = character:FindFirstChild(dummyName)
+	if exact and exact:IsA("BasePart") then
+		return exact
+	end
+	return nil
+end
+
+local function fadeThenDestroy(root: Instance, token: number)
+	task.delay(LEVEL_UP_HOLD_SEC, function()
+		if token ~= levelUpToken or not root.Parent then
+			return
+		end
+		disableAllFx(root)
+		for _, d in root:GetDescendants() do
+			if d:IsA("ParticleEmitter") then
+				d.Rate = 0
+				d.Enabled = false
+			elseif d:IsA("Beam") or d:IsA("Trail") then
+				d.Enabled = false
+			elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+				TweenService:Create(d, TweenInfo.new(LEVEL_UP_FADE_SEC), { Brightness = 0 }):Play()
+			end
+		end
+	end)
+	task.delay(LEVEL_UP_DESTROY_SEC, function()
+		if token ~= levelUpToken then
+			return
+		end
+		if root.Parent then
+			root:Destroy()
+		end
+		if activeLevelUpRoot == root then
+			activeLevelUpRoot = nil
+		end
+	end)
+end
+
+--- One-shot body VFX from EssentialAssets.OtherVFX["Level Up vfx"].
+function OtherVfxController.playLevelUpOnCharacter(character: Model)
+	if not character or not character.Parent then
+		return
+	end
+	local template = findTemplate({ "Level Up vfx" })
+	if not template then
+		warn("[OtherVfxController] missing template: Level Up vfx")
+		return
+	end
+
+	levelUpToken += 1
+	local token = levelUpToken
+	if activeLevelUpRoot and activeLevelUpRoot.Parent then
+		activeLevelUpRoot:Destroy()
+	end
+
+	local clone = template:Clone()
+	clone.Name = "LevelUpVfx"
+	for _, d in clone:GetDescendants() do
+		if d:IsA("Humanoid") or d:IsA("Animator") or d:IsA("Script") or d:IsA("LocalScript") then
+			d:Destroy()
+		elseif d:IsA("Motor6D") or d:IsA("Weld") then
+			d:Destroy()
+		end
+	end
+
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not (hrp and hrp:IsA("BasePart")) then
+		hrp = character:FindFirstChildWhichIsA("BasePart")
+	end
+	if not hrp then
+		clone:Destroy()
+		return
+	end
+
+	clone.Parent = character
+	activeLevelUpRoot = clone
+
+	for _, d in clone:GetDescendants() do
+		if d:IsA("BasePart") then
+			local host = findCharacterPart(character, d.Name) or hrp
+			d.Anchored = false
+			d.CanCollide = false
+			d.CanQuery = false
+			d.CanTouch = false
+			d.Massless = true
+			d.CastShadow = false
+			d.Transparency = 1
+			d.CFrame = host.CFrame
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = host
+			weld.Part1 = d
+			weld.Parent = d
+		end
+	end
+
+	-- Stable burst (Sparks / Open / Lines) follows the torso if it isn't a BasePart tree.
+	local stable = clone:FindFirstChild("Stable")
+	if stable and not stable:FindFirstChildWhichIsA("BasePart", true) then
+		local torso = findCharacterPart(character, "Torso") or hrp
+		stable.Parent = torso
+	end
+
+	disableAllFx(clone)
+	task.delay(EMIT_SETTLE_SEC, function()
+		if token ~= levelUpToken or not clone.Parent then
+			return
+		end
+		emitAll(clone, nil, nil)
+		playSounds(clone)
+	end)
+
+	fadeThenDestroy(clone, token)
 end
 
 return OtherVfxController

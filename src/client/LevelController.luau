@@ -15,6 +15,7 @@ local CharacterWorldNotif = require(script.Parent.CharacterWorldNotif)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local OtherVfxController = require(script.Parent.OtherVfxController)
 
 local player = Players.LocalPlayer
 
@@ -971,7 +972,8 @@ local function onLevelUpPulse(rewardsArg: { LevelConfig.LevelReward }?)
 		cashTotal = math.floor(attrCash)
 	end
 
-	GameSoundEffects.playUpgrade()
+	GameSoundEffects.playLevelUp()
+	OtherVfxController.playLevelUpOnCharacter(player.Character)
 	fireConfettiAndShake()
 	rockLevelHudChip()
 	browseLevel = lv

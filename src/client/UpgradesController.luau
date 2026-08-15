@@ -914,6 +914,13 @@ local function findEditClickButton(host: Instance?): GuiButton?
 	if not host then
 		return nil
 	end
+	if host:IsA("ImageButton") then
+		return host
+	end
+	local img = host:FindFirstChildWhichIsA("ImageButton", true)
+	if img then
+		return img
+	end
 	if host:IsA("GuiButton") then
 		return host
 	end
@@ -922,6 +929,37 @@ local function findEditClickButton(host: Instance?): GuiButton?
 		return nested
 	end
 	return host:FindFirstChildWhichIsA("GuiButton", true)
+end
+
+-- Studio Okay/Cancel are image buttons; leftover Text on them looks like faint captions.
+local function hideAuthoredButtonCaption(host: Instance?)
+	if not host then
+		return
+	end
+	local function hideText(gui: Instance)
+		if gui:IsA("TextButton") or gui:IsA("ImageButton") then
+			local btn = gui :: TextButton
+			if btn:IsA("ImageButton") or (btn:IsA("TextButton") and btn.Text ~= "") then
+				local hasArt = btn:IsA("ImageButton") and (btn :: ImageButton).Image ~= ""
+				if hasArt or host:FindFirstChild("Decor") or host:FindFirstChild("Icon") or host:FindFirstChild("BG") then
+					pcall(function()
+						(btn :: any).Text = ""
+						(btn :: any).TextTransparency = 1
+					end)
+				end
+			end
+		elseif gui:IsA("TextLabel") then
+			local t = string.lower((gui :: TextLabel).Text)
+			if t == "okay" or t == "ok" or t == "cancel" or t == "close" or t == "confirm" then
+				(gui :: TextLabel).TextTransparency = 1
+				(gui :: TextLabel).Visible = false
+			end
+		end
+	end
+	hideText(host)
+	for _, d in host:GetDescendants() do
+		hideText(d)
+	end
 end
 
 local function setEditPowerLabels(amount: number)
@@ -1058,6 +1096,9 @@ local function wireEditPowerFrame(frame: Frame)
 	local header = frame:FindFirstChild("Header")
 	local headerButtons = header and header:FindFirstChild("Buttons")
 	local closeHost = headerButtons and headerButtons:FindFirstChild("Close")
+	hideAuthoredButtonCaption(okayHost)
+	hideAuthoredButtonCaption(cancelHost)
+	hideAuthoredButtonCaption(closeHost)
 
 	if bar and bar:IsA("GuiObject") then
 		captureEditBarFullSize(bar)

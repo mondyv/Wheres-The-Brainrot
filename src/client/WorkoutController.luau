@@ -10,6 +10,7 @@ local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local GearRainbowFX = require(script.Parent.GearRainbowFX)
+local OtherVfxController = require(script.Parent.OtherVfxController)
 
 local player = Players.LocalPlayer
 
@@ -897,7 +898,10 @@ local function init()
 	if player.Character then
 		bindCharacter(player.Character)
 	end
-	player.CharacterAdded:Connect(bindCharacter)
+	player.CharacterAdded:Connect(function(character)
+		OtherVfxController.clearLevelUpVfx()
+		bindCharacter(character)
+	end)
 
 	player:GetAttributeChangedSignal("WorkoutPowerPulse"):Connect(function()
 		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
@@ -915,10 +919,13 @@ local function init()
 	end)
 
 	player:GetAttributeChangedSignal(GearConfig.WORKOUT_ACTIVE_ATTR):Connect(function()
-		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+		local on = player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true
+		OtherVfxController.setWorkoutAuraEnabled(on)
+		if not on then
 			cleanupWorkoutVisuals()
 		end
 	end)
+	OtherVfxController.setWorkoutAuraEnabled(player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true)
 end
 
 return {

@@ -1182,7 +1182,6 @@ end
 
 local LEVEL_UP_HOLD_SEC = 1.0
 local LEVEL_UP_FADE_SEC = 0.35
-local LEVEL_UP_DESTROY_SEC = 1.55
 
 local BODY_PART_ALIASES: { [string]: { string } } = {
 	Torso = { "UpperTorso", "Torso", "HumanoidRootPart" },
@@ -1196,6 +1195,7 @@ local BODY_PART_ALIASES: { [string]: { string } } = {
 
 local levelUpToken = 0
 local activeLevelUpRoot: Instance? = nil
+local workoutAuraEnabled = false
 
 local function findCharacterPart(character: Model, dummyName: string): BasePart?
 	local aliases = BODY_PART_ALIASES[dummyName]
@@ -1214,37 +1214,103 @@ local function findCharacterPart(character: Model, dummyName: string): BasePart?
 	return nil
 end
 
-local function fadeThenDestroy(root: Instance, token: number)
-	task.delay(LEVEL_UP_HOLD_SEC, function()
-		if token ~= levelUpToken or not root.Parent then
-			return
+local function isWorkoutAuraName(name: string): boolean
+	local n = string.lower(name)
+	return n == "sparks" or n == "lines" or n == "lineb"
+end
+
+local function setFxEnabled(root: Instance, on: boolean)
+	local function apply(inst: Instance)
+		if inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam") then
+			inst.Enabled = on
+		elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+			inst.Enabled = on
 		end
-		disableAllFx(root)
-		for _, d in root:GetDescendants() do
-			if d:IsA("ParticleEmitter") then
-				d.Rate = 0
-				d.Enabled = false
-			elseif d:IsA("Beam") or d:IsA("Trail") then
-				d.Enabled = false
-			elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-				TweenService:Create(d, TweenInfo.new(LEVEL_UP_FADE_SEC), { Brightness = 0 }):Play()
+	end
+	apply(root)
+	for _, d in root:GetDescendants() do
+		apply(d)
+	end
+end
+
+local function applyWorkoutAuraState()
+	if not activeLevelUpRoot or not activeLevelUpRoot.Parent then
+		return
+	end
+	for _, d in activeLevelUpRoot:GetDescendants() do
+		if isWorkoutAuraName(d.Name) then
+			setFxEnabled(d, workoutAuraEnabled)
+		end
+	end
+end
+
+local function pruneBurstKeepAura(root: Instance)
+	local toDestroy: { Instance } = {}
+	for _, d in root:GetDescendants() do
+		if
+			d:IsA("ParticleEmitter")
+			or d:IsA("Beam")
+			or d:IsA("Trail")
+			or d:IsA("PointLight")
+			or d:IsA("SpotLight")
+			or d:IsA("SurfaceLight")
+		then
+			local parentName = if d.Parent then d.Parent.Name else ""
+			if not isWorkoutAuraName(d.Name) and not isWorkoutAuraName(parentName) then
+				table.insert(toDestroy, d)
 			end
 		end
-	end)
-	task.delay(LEVEL_UP_DESTROY_SEC, function()
-		if token ~= levelUpToken then
-			return
+	end
+	for _, inst in toDestroy do
+		if inst.Parent then
+			inst:Destroy()
 		end
-		if root.Parent then
-			root:Destroy()
+	end
+	applyWorkoutAuraState()
+end
+
+local function stripStaleCharacterVfx(character: Model)
+	local stale = character:FindFirstChild("LevelUpVfx")
+	if stale then
+		stale:Destroy()
+	end
+	for _, d in character:GetDescendants() do
+		if d.Name == "Stable" and d:GetAttribute("__LevelUpVfx") == true then
+			d:Destroy()
 		end
-		if activeLevelUpRoot == root then
-			activeLevelUpRoot = nil
-		end
-	end)
+	end
+end
+
+local function ensureWorldFolder(): Folder
+	local existing = Workspace:FindFirstChild("LevelUpVfxWorld")
+	if existing and existing:IsA("Folder") then
+		return existing
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = "LevelUpVfxWorld"
+	folder.Parent = Workspace
+	return folder
+end
+
+function OtherVfxController.clearLevelUpVfx()
+	levelUpToken += 1
+	if activeLevelUpRoot and activeLevelUpRoot.Parent then
+		activeLevelUpRoot:Destroy()
+	end
+	activeLevelUpRoot = nil
+	local folder = Workspace:FindFirstChild("LevelUpVfxWorld")
+	if folder then
+		folder:Destroy()
+	end
+end
+
+function OtherVfxController.setWorkoutAuraEnabled(on: boolean)
+	workoutAuraEnabled = on == true
+	applyWorkoutAuraState()
 end
 
 --- One-shot body VFX from EssentialAssets.OtherVFX["Level Up vfx"].
+--- Burst plays ~1s then fades; Sparks/Lines stay and only emit while working out.
 function OtherVfxController.playLevelUpOnCharacter(character: Model)
 	if not character or not character.Parent then
 		return
@@ -1255,6 +1321,7 @@ function OtherVfxController.playLevelUpOnCharacter(character: Model)
 		return
 	end
 
+	stripStaleCharacterVfx(character)
 	levelUpToken += 1
 	local token = levelUpToken
 	if activeLevelUpRoot and activeLevelUpRoot.Parent then
@@ -1263,6 +1330,7 @@ function OtherVfxController.playLevelUpOnCharacter(character: Model)
 
 	local clone = template:Clone()
 	clone.Name = "LevelUpVfx"
+	clone:SetAttribute("__LevelUpVfx", true)
 	for _, d in clone:GetDescendants() do
 		if d:IsA("Humanoid") or d:IsA("Animator") or d:IsA("Script") or d:IsA("LocalScript") then
 			d:Destroy()
@@ -1280,7 +1348,8 @@ function OtherVfxController.playLevelUpOnCharacter(character: Model)
 		return
 	end
 
-	clone.Parent = character
+	-- Keep dummy parts OUT of the character or Humanoid/workout breaks.
+	clone.Parent = ensureWorldFolder()
 	activeLevelUpRoot = clone
 
 	for _, d in clone:GetDescendants() do
@@ -1301,13 +1370,6 @@ function OtherVfxController.playLevelUpOnCharacter(character: Model)
 		end
 	end
 
-	-- Stable burst (Sparks / Open / Lines) follows the torso if it isn't a BasePart tree.
-	local stable = clone:FindFirstChild("Stable")
-	if stable and not stable:FindFirstChildWhichIsA("BasePart", true) then
-		local torso = findCharacterPart(character, "Torso") or hrp
-		stable.Parent = torso
-	end
-
 	disableAllFx(clone)
 	task.delay(EMIT_SETTLE_SEC, function()
 		if token ~= levelUpToken or not clone.Parent then
@@ -1317,7 +1379,23 @@ function OtherVfxController.playLevelUpOnCharacter(character: Model)
 		playSounds(clone)
 	end)
 
-	fadeThenDestroy(clone, token)
+	task.delay(LEVEL_UP_HOLD_SEC, function()
+		if token ~= levelUpToken or not clone.Parent then
+			return
+		end
+		disableAllFx(clone)
+		for _, d in clone:GetDescendants() do
+			if d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+				TweenService:Create(d, TweenInfo.new(LEVEL_UP_FADE_SEC), { Brightness = 0 }):Play()
+			end
+		end
+		task.delay(LEVEL_UP_FADE_SEC, function()
+			if token ~= levelUpToken or not clone.Parent then
+				return
+			end
+			pruneBurstKeepAura(clone)
+		end)
+	end)
 end
 
 return OtherVfxController

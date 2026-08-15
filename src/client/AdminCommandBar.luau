@@ -170,6 +170,9 @@ local COMMAND_ALIASES: { [string]: string } = {
 	setforce = "setpower",
 	gear = "grantgear",
 	grantgear = "grantgear",
+	levelup = "levelup",
+	addlevel = "levelup",
+	lvlup = "levelup",
 	carry = "setcarry",
 	reach = "setreach",
 	rope = "setreach",
@@ -201,6 +204,7 @@ local COMMAND_HINTS: { [string]: string } = {
 	unban = "Remove an experience ban",
 	setpower = "Set workout Power amount",
 	grantgear = "Grant workout gear (1-13)",
+	levelup = "Grant account levels (test VFX)",
 	setcarry = "Set Carry (disabled — always 1)",
 	setreach = "Set Reach via Power (legacy)",
 	playtutorial = "Replay the first-join tutorial",
@@ -441,6 +445,7 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "unban PlayerName", hint = COMMAND_HINTS.unban },
 		{ fill = "setpower me 500", hint = COMMAND_HINTS.setpower },
 		{ fill = "grantgear me 1", hint = COMMAND_HINTS.grantgear },
+		{ fill = "levelup me", hint = COMMAND_HINTS.levelup },
 		{ fill = "setcarry me 5", hint = COMMAND_HINTS.setcarry },
 		{ fill = "setreach me 50", hint = COMMAND_HINTS.setreach },
 		{ fill = "playtutorial", hint = COMMAND_HINTS.playtutorial },
@@ -502,6 +507,7 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 		or cmdName == "unban"
 		or cmdName == "setpower"
 		or cmdName == "grantgear"
+		or cmdName == "levelup"
 		or cmdName == "setcarry"
 		or cmdName == "setreach"
 		or cmdName == "tp"
@@ -540,16 +546,21 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 		end
 	end
 
-	if (cmdName == "setpower" or cmdName == "setcarry" or cmdName == "setreach" or cmdName == "grantgear") and argIndex == 2 then
+	if (cmdName == "setpower" or cmdName == "setcarry" or cmdName == "setreach" or cmdName == "grantgear" or cmdName == "levelup") and argIndex == 2 then
 		if #tokens > 2 or (endsWithSpace and #tokens >= 2) then
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(2, #tokens - 1))
 			local samples = if cmdName == "setcarry"
 				then { "1", "5", "10" }
 				elseif cmdName == "grantgear" then { "1", "5", "13" }
+				elseif cmdName == "levelup" then { "1", "5", "10" }
 				else { "10", "25", "50", "100", "1000" }
 			for _, sample in samples do
 				if startsWith(sample, partial) then
-					pushSuggestion(out, prefix .. sample, if cmdName == "grantgear" then "gear id" else "power amount")
+					local hint = if cmdName == "grantgear"
+						then "gear id"
+						elseif cmdName == "levelup" then "levels"
+						else "power amount"
+					pushSuggestion(out, prefix .. sample, hint)
 				end
 			end
 		end

@@ -243,7 +243,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, grantgear, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverrestart, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
+			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, grantgear, levelup, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverrestart, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -508,7 +508,7 @@ commands.addinv = commands.addinventory
 
 commands.resetdata = {
 	usage = "resetdata <player|me|all>",
-	description = "Reset cash, upgrades, rebirth, index, inventory, stands, and saved data.",
+	description = "Reset cash, upgrades, rebirth, index, inventory, stands, gears, and saved data.",
 	run = function(sender: Player, args: { string }): (boolean, string)
 		if not args[1] then
 			return false, "Usage: " .. commands.resetdata.usage
@@ -1412,6 +1412,50 @@ commands.grantgear = {
 	end,
 }
 commands.gear = commands.grantgear
+
+commands.levelup = {
+	usage = "levelup [player|me|all] [levels]",
+	description = "Grant account levels (tests level-up VFX/rewards). Defaults to you, 1 level.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		local targetToken = args[1]
+		local count = 1
+		local targets: { Player }?
+		if not targetToken then
+			targets = { sender }
+		elseif tonumber(targetToken) ~= nil and args[2] == nil then
+			targets = { sender }
+			count = math.floor(tonumber(targetToken) :: number)
+		else
+			local resolved, targetErr = resolveTargets(sender, targetToken, true)
+			if not resolved then
+				return false, targetErr or "No target."
+			end
+			targets = resolved
+			if args[2] then
+				local n = tonumber(args[2])
+				if not n then
+					return false, "Levels must be a number."
+				end
+				count = math.floor(n)
+			end
+		end
+		count = math.clamp(count, 1, 50)
+		local LevelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("LevelService"))
+		local messages: { string } = {}
+		for _, target in targets do
+			PlayerDataService.waitUntilLoaded(target)
+			local gained = LevelService.grantLevels(target, count)
+			PlayerDataService.savePlayerData(target)
+			table.insert(
+				messages,
+				string.format("%s → level %d (+%d)", target.Name, LevelService.readLevel(target), gained)
+			)
+		end
+		return true, "Level up: " .. table.concat(messages, "; ")
+	end,
+}
+commands.addlevel = commands.levelup
+commands.lvlup = commands.levelup
 
 commands.setcarry = {
 	usage = "setcarry <player|me|all> <level>",

@@ -156,8 +156,8 @@ local function fulfillRobuxGear(player: Player, gearId: number?): boolean
 		return false
 	end
 	-- No progression locks — Robux only grants the purchased gear.
-	GearService.grantGear(player, id)
-	GearService.ensureTools(player)
+	-- Auto-equip swaps the hotbar tool; does not put it in the character's hand.
+	GearService.grantGear(player, id, true)
 	noteFirstGear(player, id)
 	pcall(function()
 		PlayerDataService.savePlayerData(player)

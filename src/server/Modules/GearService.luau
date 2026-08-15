@@ -199,19 +199,31 @@ function GearService.ensureTools(player: Player)
 	end
 end
 
-function GearService.grantGear(player: Player, gearId: number): boolean
+function GearService.grantGear(player: Player, gearId: number, autoEquip: boolean?): boolean
 	local def = GearConfig.get(gearId)
 	if not def then
 		return false
 	end
 	local owned = GearService.getOwnedSet(player)
-	if owned[gearId] then
-		return true
+	if not owned[gearId] then
+		owned[gearId] = true
+		GearService.setOwnedSet(player, owned)
 	end
-	owned[gearId] = true
-	GearService.setOwnedSet(player, owned)
-	-- Don't auto-equip; shop Equip button grants the single tool.
+	if autoEquip then
+		-- Backpack/hotbar swap only — equipGear never EquipTool / never starts a workout.
+		local ok, err = GearService.equipGear(player, gearId)
+		if not ok then
+			warn("[GearService] auto-equip after grant failed:", err)
+		end
+	end
 	return true
+end
+
+function GearService.resetLoadout(player: Player)
+	GearService.stopWorkout(player)
+	GearService.setOwnedSet(player, {})
+	player:SetAttribute(GearConfig.EQUIPPED_GEAR_ATTR, 0)
+	destroyAllGearTools(player)
 end
 
 function GearService.equipGear(player: Player, gearId: number): (boolean, string?)
@@ -351,7 +363,7 @@ function GearService.purchaseCash(player: Player, gearId: number): (boolean, str
 		return false, "Not enough cash"
 	end
 	player:SetAttribute("Cash", cash - def.cashPrice)
-	if not GearService.grantGear(player, gearId) then
+	if not GearService.grantGear(player, gearId, true) then
 		player:SetAttribute("Cash", cash)
 		return false, "Grant failed"
 	end

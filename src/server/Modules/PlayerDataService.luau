@@ -26,6 +26,7 @@ local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild
 
 local IndexService = require(script.Parent:WaitForChild("IndexService"))
 local LevelService = require(script.Parent:WaitForChild("LevelService"))
+local GearService = require(script.Parent:WaitForChild("GearService"))
 
 local M = {}
 
@@ -1435,6 +1436,7 @@ function M.resetPlayerData(player: Player): (boolean, string?)
 
 	IndexService.importUnlocks(player, {}, {})
 	applyAttributes(player, fresh)
+	GearService.resetLoadout(player)
 	SwingUpgrades.resetLevels(player)
 	player:SetAttribute("BrainrotCarryCount", 0)
 	player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, false)

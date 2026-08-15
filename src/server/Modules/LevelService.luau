@@ -163,4 +163,32 @@ function LevelService.addXp(player: Player, amount: number, _reason: string?): n
 	return gain
 end
 
+-- Grant N account levels in one XP apply (one level-up VFX for the final level).
+function LevelService.grantLevels(player: Player, count: number): number
+	if not player.Parent then
+		return 0
+	end
+	local n = math.clamp(math.floor(count), 1, 50)
+	local startLevel = LevelService.readLevel(player)
+	if startLevel >= LevelConfig.MAX_LEVEL then
+		return 0
+	end
+	local xp = LevelService.readXp(player)
+	local level = startLevel
+	local remaining = n
+	local total = 0
+	while remaining > 0 and level < LevelConfig.MAX_LEVEL do
+		local needed = LevelConfig.xpRequiredForLevel(level)
+		total += math.max(0, needed - xp)
+		xp = 0
+		level += 1
+		remaining -= 1
+	end
+	if total <= 0 then
+		return 0
+	end
+	LevelService.addXp(player, total, "admin")
+	return math.max(0, LevelService.readLevel(player) - startLevel)
+end
+
 return LevelService

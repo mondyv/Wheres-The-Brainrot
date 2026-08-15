@@ -50,6 +50,20 @@ local activeWave: Model? = nil
 local bgmSpeedSaved: { [Sound]: number } = {}
 local bgmSpeedTweens: { [Sound]: Tween } = {}
 local killRE: RemoteEvent? = nil
+local waveStartRE: RemoteEvent? = nil
+local waveEscapeRE: RemoteEvent? = nil
+
+local function reportWaveStarted()
+	if waveStartRE then
+		waveStartRE:FireServer()
+	end
+end
+
+local function reportWaveEscaped()
+	if waveEscapeRE then
+		waveEscapeRE:FireServer()
+	end
+end
 local killFired = false
 
 local function getHRP(): BasePart?
@@ -989,6 +1003,8 @@ local function runChase(token: number)
 	local lastWaveEmit = 0
 	local escaped = false
 
+	reportWaveStarted()
+
 	-- HUD already hidden at intro start.
 	ensurePostFx()
 	ensureFxGui()
@@ -1037,6 +1053,7 @@ local function runChase(token: number)
 			if safezoneTimer >= C.SAFEZONE_CONFIRM_SEC then
 				escaped = true
 				chaseActive = false
+				reportWaveEscaped()
 				return
 			end
 		else
@@ -1164,6 +1181,17 @@ function WaveWebChaseController.init()
 			local re = remotes:WaitForChild("BushSpiderEncounterKill", 15)
 			if re and re:IsA("RemoteEvent") then
 				killRE = re
+			end
+		end
+		local analytics = ReplicatedStorage:WaitForChild("AnalyticsRemotes", 30)
+		if analytics then
+			local startRE = analytics:FindFirstChild("ReportWaveChaseStarted")
+			local escapeRE = analytics:FindFirstChild("ReportWaveChaseEscaped")
+			if startRE and startRE:IsA("RemoteEvent") then
+				waveStartRE = startRE
+			end
+			if escapeRE and escapeRE:IsA("RemoteEvent") then
+				waveEscapeRE = escapeRE
 			end
 		end
 	end)

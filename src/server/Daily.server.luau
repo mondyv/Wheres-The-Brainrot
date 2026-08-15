@@ -20,6 +20,7 @@ local CashBoostUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
 local DailyService = require(Modules:WaitForChild("DailyService"))
+local AnalyticsFunnelService = require(Modules:WaitForChild("AnalyticsFunnelService"))
 
 local function getRemotesFolder(): Folder
 	local folder = ReplicatedStorage:FindFirstChild("DailyRemotes")
@@ -229,6 +230,7 @@ claimRF.OnServerInvoke = function(player: Player, dayArg: any)
 	local day = math.floor(dayArg)
 	local ok, err, state = DailyService.claim(player, day)
 	if ok then
+		AnalyticsFunnelService.onFirstDailyClaim(player)
 		claimedRE:FireClient(player, { day = day, state = state })
 	end
 	return ok, err, state

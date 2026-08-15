@@ -13,6 +13,8 @@ local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local ReturnConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReturnConfig"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local WebTrapConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WebTrapConfig"))
+local AnalyticsFunnelService =
+	require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
 
 local RETURN_COOLDOWN_SEC = 2.5
 local GRANTED = Enum.ProductPurchaseDecision.PurchaseGranted
@@ -98,6 +100,7 @@ local function teleportHome(player: Player, character: Model): (boolean, string?
 		return false, "Base not ready yet"
 	end
 	lastReturnAt[player] = os.clock()
+	AnalyticsFunnelService.onFirstReturn(player)
 	return true, nil
 end
 

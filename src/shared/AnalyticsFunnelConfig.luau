@@ -1,8 +1,10 @@
 -- [ACTIVE] AnalyticsFunnelConfig
 --[[
 	Creator Hub Analytics funnel step definitions.
-	Onboarding = one-time FTUE (LogOnboardingFunnelStepEvent).
-	Progression / Shop = LogFunnelStepEvent (shop uses a per-checkout session id).
+
+	Onboarding  = LogOnboardingFunnelStepEvent (one-time FTUE)
+	Other funnels = LogFunnelStepEvent with a stable per-player session id
+	                (except Shop + WaveChase, which use per-attempt sessions)
 ]]
 
 local M = {}
@@ -13,27 +15,42 @@ export type OnboardingStep = {
 	name: string,
 }
 
--- Detailed FTUE funnel — mirrors TutorialConfig.STEPS plus join / complete.
+export type FunnelStep = {
+	step: number,
+	id: string,
+	name: string,
+	land: number?,
+	questIndex: number?,
+	rebirthCount: number?,
+}
+
+----------------------------------------------------------------
+-- Onboarding (FTUE) — mirrors TutorialConfig.STEPS
+----------------------------------------------------------------
+
 M.ONBOARDING = {
 	{ step = 1, id = "player_joined", name = "Player Joined" },
 	{ step = 2, id = "got_starter_cash", name = "Got Starter Cash" },
 	{ step = 3, id = "visited_upgrade", name = "Visited Upgrade Stand" },
 	{ step = 4, id = "bought_power", name = "Bought First Power" },
-	{ step = 5, id = "swung_vine", name = "Swung Across Vine" },
-	{ step = 6, id = "opened_bush", name = "Opened Bush" },
-	{ step = 7, id = "claimed_brainrot", name = "Claimed Brainrot" },
-	{ step = 8, id = "returned_to_base", name = "Returned to Base" },
-	{ step = 9, id = "placed_on_stand", name = "Placed on Stand" },
-	{ step = 10, id = "upgraded_brainrot", name = "Upgraded Brainrot" },
-	{ step = 11, id = "tutorial_completed", name = "Tutorial Completed" },
-	{ step = 12, id = "opened_starter_lucky_block", name = "Opened Starter Lucky Block" },
+	{ step = 5, id = "equipped_gear", name = "Equipped Gear" },
+	{ step = 6, id = "used_workout", name = "Used Workout" },
+	{ step = 7, id = "swung_vine", name = "Swung Across Vine" },
+	{ step = 8, id = "opened_bush", name = "Opened Bush" },
+	{ step = 9, id = "claimed_brainrot", name = "Claimed Brainrot" },
+	{ step = 10, id = "returned_to_base", name = "Returned to Base" },
+	{ step = 11, id = "placed_on_stand", name = "Placed on Stand" },
+	{ step = 12, id = "upgraded_brainrot", name = "Upgraded Brainrot" },
+	{ step = 13, id = "tutorial_completed", name = "Tutorial Completed" },
+	{ step = 14, id = "opened_starter_lucky_block", name = "Opened Starter Lucky Block" },
 } :: { OnboardingStep }
 
--- Tutorial objective id → onboarding step id (fired when that objective completes).
 M.TUTORIAL_ID_TO_ONBOARDING = {
 	grantCash = "got_starter_cash",
 	visitUpgrade = "visited_upgrade",
 	buyPower = "bought_power",
+	equipGear = "equipped_gear",
+	useWorkout = "used_workout",
 	swingLand1 = "swung_vine",
 	searchBush = "opened_bush",
 	claimBrainrot = "claimed_brainrot",
@@ -42,9 +59,17 @@ M.TUTORIAL_ID_TO_ONBOARDING = {
 	upgradeBrainrot = "upgraded_brainrot",
 }
 
-M.PROGRESSION_FUNNEL = "WorldProgression"
+M.ONBOARDING_MAX_STEP = 14
 
-M.PROGRESSION = {
+----------------------------------------------------------------
+-- World progression — land depth (stable across joins)
+----------------------------------------------------------------
+
+M.WORLD_FUNNEL = "WorldProgression"
+-- Keep PROGRESSION_FUNNEL alias for older call sites.
+M.PROGRESSION_FUNNEL = M.WORLD_FUNNEL
+
+M.WORLD = {
 	{ step = 1, id = "land_2", name = "Reached Land 2", land = 2 },
 	{ step = 2, id = "land_3", name = "Reached Land 3", land = 3 },
 	{ step = 3, id = "land_4", name = "Reached Land 4", land = 4 },
@@ -54,23 +79,86 @@ M.PROGRESSION = {
 	{ step = 7, id = "land_8", name = "Reached Land 8", land = 8 },
 	{ step = 8, id = "land_9", name = "Reached Land 9", land = 9 },
 	{ step = 9, id = "land_10", name = "Reached Land 10", land = 10 },
-	{ step = 10, id = "first_rebirth", name = "First Rebirth" },
-	{ step = 11, id = "tim_quest_1", name = "Tim Quest 1 Complete", questIndex = 1 },
-	{ step = 12, id = "tim_quest_3", name = "Tim Quest 3 Complete", questIndex = 3 },
-	{ step = 13, id = "tim_quest_5", name = "Tim Quest 5 Complete", questIndex = 5 },
-	{ step = 14, id = "tim_quest_10", name = "Tim Quest 10 Complete", questIndex = 10 },
-	{ step = 15, id = "tim_all_quests", name = "All Tim Quests Complete" },
-}
+} :: { FunnelStep }
+
+-- Back-compat alias used by older service helpers.
+M.PROGRESSION = M.WORLD
+
+----------------------------------------------------------------
+-- Tim Cheese quests — every claim (stable across joins)
+----------------------------------------------------------------
+
+M.TIM_QUEST_FUNNEL = "TimCheeseQuests"
+M.TIM_QUEST_COUNT = 32
+
+local timQuestSteps: { FunnelStep } = {}
+for i = 1, M.TIM_QUEST_COUNT do
+	table.insert(timQuestSteps, {
+		step = i,
+		id = ("tim_quest_%d"):format(i),
+		name = ("Tim Quest %d"):format(i),
+		questIndex = i,
+	})
+end
+table.insert(timQuestSteps, {
+	step = M.TIM_QUEST_COUNT + 1,
+	id = "tim_all_quests",
+	name = "All Tim Quests Complete",
+})
+M.TIM_QUEST = timQuestSteps
+
+----------------------------------------------------------------
+-- Rebirth depth
+----------------------------------------------------------------
+
+M.REBIRTH_FUNNEL = "Rebirth"
+M.REBIRTH = {
+	{ step = 1, id = "rebirth_1", name = "Rebirth 1", rebirthCount = 1 },
+	{ step = 2, id = "rebirth_2", name = "Rebirth 2", rebirthCount = 2 },
+	{ step = 3, id = "rebirth_3", name = "Rebirth 3", rebirthCount = 3 },
+	{ step = 4, id = "rebirth_5", name = "Rebirth 5", rebirthCount = 5 },
+	{ step = 5, id = "rebirth_10", name = "Rebirth 10", rebirthCount = 10 },
+	{ step = 6, id = "rebirth_15", name = "Rebirth 15", rebirthCount = 15 },
+	{ step = 7, id = "rebirth_20", name = "Rebirth 20", rebirthCount = 20 },
+} :: { FunnelStep }
+
+----------------------------------------------------------------
+-- Core economy loop (first-time milestones, typical order)
+----------------------------------------------------------------
+
+M.CORE_LOOP_FUNNEL = "CoreLoop"
+M.CORE_LOOP = {
+	{ step = 1, id = "first_sell", name = "First Sell" },
+	{ step = 2, id = "first_return", name = "First Return Home" },
+	{ step = 3, id = "first_daily", name = "First Daily Claim" },
+	{ step = 4, id = "first_lucky_block", name = "Opened Non-Starter Lucky Block" },
+} :: { FunnelStep }
+
+----------------------------------------------------------------
+-- Wave Web chase (per-chase session)
+----------------------------------------------------------------
+
+M.WAVE_CHASE_FUNNEL = "WaveChase"
+M.WAVE_CHASE = {
+	{ step = 1, id = "wave_started", name = "Chase Started" },
+	{ step = 2, id = "wave_escaped", name = "Escaped to Safezone" },
+	{ step = 3, id = "wave_died", name = "Died to Wave" },
+} :: { FunnelStep }
+
+----------------------------------------------------------------
+-- Store checkout (per-checkout session)
+----------------------------------------------------------------
 
 M.SHOP_FUNNEL = "StoreCheckout"
-
 M.SHOP = {
 	{ step = 1, name = "Opened Store" },
 	{ step = 2, name = "Prompted Purchase" },
 	{ step = 3, name = "Purchase Completed" },
 }
 
-M.ONBOARDING_MAX_STEP = 12
+----------------------------------------------------------------
+-- Lookups
+----------------------------------------------------------------
 
 function M.onboardingById(id: string): OnboardingStep?
 	for _, def in M.ONBOARDING do
@@ -90,8 +178,8 @@ function M.onboardingByStep(step: number): OnboardingStep?
 	return nil
 end
 
-function M.progressionById(id: string): any?
-	for _, def in M.PROGRESSION do
+local function findIn(list: { FunnelStep }, id: string): FunnelStep?
+	for _, def in list do
 		if def.id == id then
 			return def
 		end
@@ -99,8 +187,12 @@ function M.progressionById(id: string): any?
 	return nil
 end
 
-function M.progressionForLand(land: number): any?
-	for _, def in M.PROGRESSION do
+function M.progressionById(id: string): FunnelStep?
+	return findIn(M.WORLD, id)
+end
+
+function M.progressionForLand(land: number): FunnelStep?
+	for _, def in M.WORLD do
 		if def.land == land then
 			return def
 		end
@@ -108,13 +200,34 @@ function M.progressionForLand(land: number): any?
 	return nil
 end
 
-function M.progressionForQuest(questIndex: number): any?
-	for _, def in M.PROGRESSION do
+function M.timQuestById(id: string): FunnelStep?
+	return findIn(M.TIM_QUEST, id)
+end
+
+function M.timQuestForIndex(questIndex: number): FunnelStep?
+	for _, def in M.TIM_QUEST do
 		if def.questIndex == questIndex then
 			return def
 		end
 	end
 	return nil
+end
+
+function M.rebirthForCount(count: number): FunnelStep?
+	for _, def in M.REBIRTH do
+		if def.rebirthCount == count then
+			return def
+		end
+	end
+	return nil
+end
+
+function M.coreLoopById(id: string): FunnelStep?
+	return findIn(M.CORE_LOOP, id)
+end
+
+function M.waveChaseById(id: string): FunnelStep?
+	return findIn(M.WAVE_CHASE, id)
 end
 
 return M

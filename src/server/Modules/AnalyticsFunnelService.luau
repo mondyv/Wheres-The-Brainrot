@@ -17,18 +17,76 @@ local M = {}
 local IS_STUDIO = RunService:IsStudio()
 
 local lastOnboardingStep: { [Player]: number } = {}
-local lastProgressionStep: { [Player]: number } = {}
+-- funnelName → last completed step number (stable funnels)
+local lastFunnelStep: { [Player]: { [string]: number } } = {}
+-- per-attempt sessions (shop / wave chase)
 local shopSessionId: { [Player]: string } = {}
 local shopSessionStep: { [Player]: number } = {}
+local waveSessionId: { [Player]: string } = {}
+local waveSessionStep: { [Player]: number } = {}
+-- Core-loop / lucky-block: track whether starter block already counted
+local openedNonStarterLucky: { [Player]: boolean } = {}
 
 local function canSend(): boolean
 	return not IS_STUDIO
 end
 
-local function progressionSessionId(player: Player): string
-	-- Stable per-user id so one-time progression continues across joins.
-	return ("prog-%d"):format(player.UserId)
+local function stableSessionId(player: Player, funnelName: string): string
+	return ("%s-%d"):format(funnelName, player.UserId)
 end
+
+local function getLast(player: Player, funnelName: string): number
+	local map = lastFunnelStep[player]
+	if not map then
+		return 0
+	end
+	return map[funnelName] or 0
+end
+
+local function setLast(player: Player, funnelName: string, step: number)
+	local map = lastFunnelStep[player]
+	if not map then
+		map = {}
+		lastFunnelStep[player] = map
+	end
+	map[funnelName] = step
+end
+
+local function logFunnelStep(player: Player, funnelName: string, sessionId: string, step: number, name: string)
+	if not canSend() then
+		return
+	end
+	local ok, err = pcall(function()
+		AnalyticsService:LogFunnelStepEvent(player, funnelName, sessionId, step, name)
+	end)
+	if not ok then
+		warn("[AnalyticsFunnel]", funnelName, "failed:", name, err)
+	end
+end
+
+local function advanceStable(
+	player: Player,
+	funnelName: string,
+	def: { step: number, id: string, name: string },
+	opts: { allowSkip: boolean? }?
+)
+	local last = getLast(player, funnelName)
+	if def.step <= last then
+		return
+	end
+	local allowSkip = opts ~= nil and opts.allowSkip == true
+	if not allowSkip and def.step > last + 1 then
+		-- Fill skipped steps so Creator Hub drop-off stays readable.
+		-- Callers that jump ahead should pass allowSkip and/or pre-fill.
+		return
+	end
+	setLast(player, funnelName, def.step)
+	logFunnelStep(player, funnelName, stableSessionId(player, funnelName), def.step, def.name)
+end
+
+----------------------------------------------------------------
+-- Onboarding
+----------------------------------------------------------------
 
 function M.logOnboardingId(player: Player, stepId: string, opts: { allowSkip: boolean? }?)
 	if typeof(player) ~= "Instance" or not player:IsA("Player") then
@@ -43,7 +101,6 @@ function M.logOnboardingId(player: Player, stepId: string, opts: { allowSkip: bo
 		return
 	end
 	local allowSkip = opts ~= nil and opts.allowSkip == true
-	-- Client reports must advance one step at a time (anti-exploit).
 	if not allowSkip and def.step > last + 1 then
 		return
 	end
@@ -67,6 +124,10 @@ function M.logOnboardingStep(player: Player, stepNumber: number, opts: { allowSk
 	M.logOnboardingId(player, def.id, opts)
 end
 
+----------------------------------------------------------------
+-- World / land progression
+----------------------------------------------------------------
+
 function M.logProgressionId(player: Player, stepId: string)
 	if typeof(player) ~= "Instance" or not player:IsA("Player") then
 		return
@@ -75,26 +136,7 @@ function M.logProgressionId(player: Player, stepId: string)
 	if not def then
 		return
 	end
-	local last = lastProgressionStep[player] or 0
-	if def.step <= last then
-		return
-	end
-	lastProgressionStep[player] = def.step
-	if not canSend() then
-		return
-	end
-	local ok, err = pcall(function()
-		AnalyticsService:LogFunnelStepEvent(
-			player,
-			AnalyticsFunnelConfig.PROGRESSION_FUNNEL,
-			progressionSessionId(player),
-			def.step,
-			def.name
-		)
-	end)
-	if not ok then
-		warn("[AnalyticsFunnel] progression failed:", stepId, err)
-	end
+	advanceStable(player, AnalyticsFunnelConfig.WORLD_FUNNEL, def, { allowSkip = true })
 end
 
 function M.onReachedLand(player: Player, land: number)
@@ -102,27 +144,175 @@ function M.onReachedLand(player: Player, land: number)
 		return
 	end
 	local n = math.floor(land)
-	-- Log every milestone up to current land (skipped steps auto-complete in Hub).
-	for _, def in AnalyticsFunnelConfig.PROGRESSION do
+	for _, def in AnalyticsFunnelConfig.WORLD do
 		if typeof(def.land) == "number" and def.land <= n then
-			M.logProgressionId(player, def.id)
+			advanceStable(player, AnalyticsFunnelConfig.WORLD_FUNNEL, def, { allowSkip = true })
 		end
 	end
 end
 
+----------------------------------------------------------------
+-- Tim Cheese quests
+----------------------------------------------------------------
+
 function M.onTimQuestClaimed(player: Player, questIndex: number, allDone: boolean?)
-	local def = AnalyticsFunnelConfig.progressionForQuest(questIndex)
-	if def then
-		M.logProgressionId(player, def.id)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return
+	end
+	if typeof(questIndex) ~= "number" then
+		return
+	end
+	local idx = math.floor(questIndex)
+	-- Fill 1..idx so Hub shows a clean drop-off curve.
+	for _, def in AnalyticsFunnelConfig.TIM_QUEST do
+		if typeof(def.questIndex) == "number" and def.questIndex <= idx then
+			advanceStable(player, AnalyticsFunnelConfig.TIM_QUEST_FUNNEL, def, { allowSkip = true })
+		end
 	end
 	if allDone then
-		M.logProgressionId(player, "tim_all_quests")
+		local allDef = AnalyticsFunnelConfig.timQuestById("tim_all_quests")
+		if allDef then
+			advanceStable(player, AnalyticsFunnelConfig.TIM_QUEST_FUNNEL, allDef, { allowSkip = true })
+		end
 	end
 end
 
+----------------------------------------------------------------
+-- Rebirth
+----------------------------------------------------------------
+
 function M.onFirstRebirth(player: Player)
-	M.logProgressionId(player, "first_rebirth")
+	M.onRebirth(player, 1)
 end
+
+function M.onRebirth(player: Player, rebirthCount: number)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return
+	end
+	if typeof(rebirthCount) ~= "number" then
+		return
+	end
+	local n = math.floor(rebirthCount)
+	for _, def in AnalyticsFunnelConfig.REBIRTH do
+		if typeof(def.rebirthCount) == "number" and def.rebirthCount <= n then
+			advanceStable(player, AnalyticsFunnelConfig.REBIRTH_FUNNEL, def, { allowSkip = true })
+		end
+	end
+end
+
+----------------------------------------------------------------
+-- Core loop (first sell / return / daily / lucky block)
+----------------------------------------------------------------
+
+function M.logCoreLoopId(player: Player, stepId: string)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return
+	end
+	local def = AnalyticsFunnelConfig.coreLoopById(stepId)
+	if not def then
+		return
+	end
+	-- Allow skip so first daily can fire even if they never sold, etc.
+	advanceStable(player, AnalyticsFunnelConfig.CORE_LOOP_FUNNEL, def, { allowSkip = true })
+end
+
+function M.onFirstSell(player: Player)
+	M.logCoreLoopId(player, "first_sell")
+end
+
+function M.onFirstReturn(player: Player)
+	M.logCoreLoopId(player, "first_return")
+end
+
+function M.onFirstDailyClaim(player: Player)
+	M.logCoreLoopId(player, "first_daily")
+end
+
+function M.onLuckyBlockOpened(player: Player, isStarter: boolean?)
+	if isStarter == true then
+		return
+	end
+	if openedNonStarterLucky[player] then
+		return
+	end
+	openedNonStarterLucky[player] = true
+	M.logCoreLoopId(player, "first_lucky_block")
+end
+
+----------------------------------------------------------------
+-- Wave chase (per-chase session)
+----------------------------------------------------------------
+
+function M.waveChaseStarted(player: Player)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return
+	end
+	local id = HttpService:GenerateGUID(false)
+	waveSessionId[player] = id
+	waveSessionStep[player] = 0
+	local def = AnalyticsFunnelConfig.waveChaseById("wave_started")
+	if not def then
+		return
+	end
+	waveSessionStep[player] = def.step
+	logFunnelStep(player, AnalyticsFunnelConfig.WAVE_CHASE_FUNNEL, id, def.step, def.name)
+end
+
+function M.waveChaseEscaped(player: Player)
+	local session = waveSessionId[player]
+	if not session then
+		M.waveChaseStarted(player)
+		session = waveSessionId[player]
+	end
+	if not session then
+		return
+	end
+	local def = AnalyticsFunnelConfig.waveChaseById("wave_escaped")
+	if not def then
+		return
+	end
+	local last = waveSessionStep[player] or 0
+	if def.step <= last then
+		return
+	end
+	waveSessionStep[player] = def.step
+	logFunnelStep(player, AnalyticsFunnelConfig.WAVE_CHASE_FUNNEL, session, def.step, def.name)
+	waveSessionId[player] = nil
+	waveSessionStep[player] = nil
+end
+
+function M.waveChaseDied(player: Player)
+	local session = waveSessionId[player]
+	if not session then
+		M.waveChaseStarted(player)
+		session = waveSessionId[player]
+	end
+	if not session then
+		return
+	end
+	local def = AnalyticsFunnelConfig.waveChaseById("wave_died")
+	if not def then
+		return
+	end
+	local last = waveSessionStep[player] or 0
+	-- Escaped already ended the session; death after escape shouldn't fire.
+	if last >= 2 then
+		waveSessionId[player] = nil
+		waveSessionStep[player] = nil
+		return
+	end
+	if def.step <= last then
+		return
+	end
+	waveSessionStep[player] = def.step
+	logFunnelStep(player, AnalyticsFunnelConfig.WAVE_CHASE_FUNNEL, session, def.step, def.name)
+	waveSessionId[player] = nil
+	waveSessionStep[player] = nil
+end
+
+----------------------------------------------------------------
+-- Shop checkout
+----------------------------------------------------------------
 
 function M.beginShopSession(player: Player): string?
 	if typeof(player) ~= "Instance" or not player:IsA("Player") then
@@ -149,28 +339,13 @@ function M.logShopStep(player: Player, stepNumber: number, stepName: string?)
 	if stepNumber <= last then
 		return
 	end
-	-- Checkout sessions may jump Opened → Prompted if open wasn't reported.
 	shopSessionStep[player] = stepNumber
 	local name = stepName
 	if typeof(name) ~= "string" or name == "" then
 		local def = AnalyticsFunnelConfig.SHOP[stepNumber]
 		name = if def then def.name else ("Step " .. tostring(stepNumber))
 	end
-	if not canSend() then
-		return
-	end
-	local ok, err = pcall(function()
-		AnalyticsService:LogFunnelStepEvent(
-			player,
-			AnalyticsFunnelConfig.SHOP_FUNNEL,
-			session,
-			stepNumber,
-			name
-		)
-	end)
-	if not ok then
-		warn("[AnalyticsFunnel] shop failed:", stepNumber, err)
-	end
+	logFunnelStep(player, AnalyticsFunnelConfig.SHOP_FUNNEL, session, stepNumber, name)
 end
 
 function M.shopOpened(player: Player)
@@ -200,9 +375,12 @@ end
 
 Players.PlayerRemoving:Connect(function(player)
 	lastOnboardingStep[player] = nil
-	lastProgressionStep[player] = nil
+	lastFunnelStep[player] = nil
 	shopSessionId[player] = nil
 	shopSessionStep[player] = nil
+	waveSessionId[player] = nil
+	waveSessionStep[player] = nil
+	openedNonStarterLucky[player] = nil
 end)
 
 return M

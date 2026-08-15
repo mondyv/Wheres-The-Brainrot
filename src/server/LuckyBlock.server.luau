@@ -870,6 +870,8 @@ local function beginLuckyBlockCutscene(
 			end
 			if blockKind and string.find(string.lower(blockKind), "starter", 1, true) then
 				AnalyticsFunnelService.logOnboardingId(player, "opened_starter_lucky_block", { allowSkip = true })
+			else
+				AnalyticsFunnelService.onLuckyBlockOpened(player, false)
 			end
 		end
 

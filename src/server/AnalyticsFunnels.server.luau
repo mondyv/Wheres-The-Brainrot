@@ -1,7 +1,7 @@
 -- [ACTIVE] AnalyticsFunnels.server
 --[[
 	Wires Creator Hub funnel remotes + land progression polling.
-	Onboarding / shop / progression logging helpers live in AnalyticsFunnelService.
+	Onboarding / shop / progression / wave helpers live in AnalyticsFunnelService.
 ]]
 
 local Players = game:GetService("Players")
@@ -41,6 +41,12 @@ end
 
 local reportOnboardingRE = ensureRE("ReportOnboardingStep")
 local reportShopOpenRE = ensureRE("ReportShopOpened")
+local reportWaveStartRE = ensureRE("ReportWaveChaseStarted")
+local reportWaveEscapeRE = ensureRE("ReportWaveChaseEscaped")
+
+local WAVE_REPORT_COOLDOWN = 2.5
+local lastWaveStartAt: { [Player]: number } = {}
+local lastWaveEscapeAt: { [Player]: number } = {}
 
 -- Client may only report known tutorial → onboarding ids, one step at a time.
 reportOnboardingRE.OnServerEvent:Connect(function(player: Player, stepId: any)
@@ -71,6 +77,30 @@ reportShopOpenRE.OnServerEvent:Connect(function(player: Player)
 	AnalyticsFunnelService.shopOpened(player)
 end)
 
+reportWaveStartRE.OnServerEvent:Connect(function(player: Player)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return
+	end
+	local now = os.clock()
+	if (lastWaveStartAt[player] or 0) + WAVE_REPORT_COOLDOWN > now then
+		return
+	end
+	lastWaveStartAt[player] = now
+	AnalyticsFunnelService.waveChaseStarted(player)
+end)
+
+reportWaveEscapeRE.OnServerEvent:Connect(function(player: Player)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return
+	end
+	local now = os.clock()
+	if (lastWaveEscapeAt[player] or 0) + WAVE_REPORT_COOLDOWN > now then
+		return
+	end
+	lastWaveEscapeAt[player] = now
+	AnalyticsFunnelService.waveChaseEscaped(player)
+end)
+
 local function onPlayerJoined(player: Player)
 	task.defer(function()
 		if not player.Parent then
@@ -84,6 +114,11 @@ Players.PlayerAdded:Connect(onPlayerJoined)
 for _, plr in Players:GetPlayers() do
 	onPlayerJoined(plr)
 end
+
+Players.PlayerRemoving:Connect(function(player)
+	lastWaveStartAt[player] = nil
+	lastWaveEscapeAt[player] = nil
+end)
 
 -- Progression: land milestones (server-authoritative position check).
 task.spawn(function()

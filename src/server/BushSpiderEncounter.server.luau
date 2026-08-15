@@ -48,6 +48,12 @@ killRE.OnServerEvent:Connect(function(plr: Player)
 
 	-- Immediate Base/Return pad respawn (Died handler is skipped via soft-respawn debounce).
 	plr:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, true)
+	local okFunnel, Funnel = pcall(function()
+		return require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
+	end)
+	if okFunnel and Funnel and typeof(Funnel.waveChaseDied) == "function" then
+		Funnel.waveChaseDied(plr)
+	end
 	ReviveService.softRespawnAtPlotBase(plr)
 end)
 

@@ -187,6 +187,7 @@ local function performRebirth(player: Player, opts: { skipRequirements: boolean?
 	if newCount == 1 then
 		AnalyticsFunnelService.onFirstRebirth(player)
 	end
+	AnalyticsFunnelService.onRebirth(player, newCount)
 
 	if RebirthConfig.isFloorRebirth(newCount) then
 		grantFloorRebirth(player)

@@ -19,24 +19,24 @@ local POLL_INTERVAL = 0.25
 local FADE_INFO = TweenInfo.new(1.45, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 local CC_LEGACY_NAME = "SafeZoneNightCC"
 
--- Dark nighty fog outside safe zone
+-- Dark nighty fog outside safe zone (readable, not pitch black).
 local NIGHT_ATMO = {
-	Density = 0.62,
-	Offset = 0.05,
-	Color = Color3.fromRGB(46, 50, 52),
-	Decay = Color3.fromRGB(58, 62, 64),
-	Glare = 0.03,
-	Haze = 2.85,
+	Density = 0.36,
+	Offset = 0.14,
+	Color = Color3.fromRGB(62, 68, 78),
+	Decay = Color3.fromRGB(72, 78, 88),
+	Glare = 0.06,
+	Haze = 1.55,
 }
 
 -- Low-graphics night: slightly thinner fog only (keep the same look).
 local NIGHT_ATMO_LOW = {
-	Density = 0.52,
-	Offset = 0.05,
-	Color = Color3.fromRGB(46, 50, 52),
-	Decay = Color3.fromRGB(58, 62, 64),
-	Glare = 0.02,
-	Haze = 2.35,
+	Density = 0.3,
+	Offset = 0.16,
+	Color = Color3.fromRGB(62, 68, 78),
+	Decay = Color3.fromRGB(72, 78, 88),
+	Glare = 0.05,
+	Haze = 1.25,
 }
 
 -- Faint mist inside safe zone — softens distance so the base isn't crystal-clear

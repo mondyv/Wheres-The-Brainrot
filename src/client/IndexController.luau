@@ -311,41 +311,88 @@ local function showIndexSidebarBadge()
 	startIndexBadgeSway()
 end
 
-local function setGradientEnabled(root: Instance, enabled: boolean)
-	if root:IsA("UIGradient") then
-		root.Enabled = enabled
+local function tabNameKey(name: string): string
+	return string.lower((string.gsub(name, "[%s_%-]", "")))
+end
+
+local SELECTED_KEYS: { [string]: boolean } = {
+	selected = true,
+	on = true,
+	active = true,
+	sel = true,
+}
+
+local UNSELECTED_KEYS: { [string]: boolean } = {
+	notselected = true,
+	unselected = true,
+	deselected = true,
+	off = true,
+	idle = true,
+	inactive = true,
+	unsel = true,
+}
+
+local function classifyTabState(key: string): string?
+	if key == "" then
+		return nil
 	end
-	for _, d in root:GetDescendants() do
-		if d:IsA("UIGradient") then
-			d.Enabled = enabled
+	if UNSELECTED_KEYS[key]
+		or string.find(key, "notselect", 1, true)
+		or string.find(key, "unselect", 1, true)
+	then
+		return "off"
+	end
+	if SELECTED_KEYS[key] or string.find(key, "select", 1, true) then
+		return "on"
+	end
+	return nil
+end
+
+local function setTabStateNode(node: Instance, on: boolean)
+	if node:IsA("UIGradient") then
+		node.Enabled = on
+		return
+	end
+	if node:IsA("UIStroke") then
+		node.Enabled = on
+		return
+	end
+	if node:IsA("Folder") or node:IsA("Configuration") then
+		for _, child in node:GetChildren() do
+			setTabStateNode(child, on)
 		end
+		return
+	end
+	if node:IsA("GuiObject") then
+		(node :: GuiObject).Visible = on
 	end
 end
 
 local function applyTabVisual(tabBtn: Instance, selected: boolean)
-	local selectedGrad = tabBtn:FindFirstChild("Selected", true)
-	local notSelectedGrad = tabBtn:FindFirstChild("NotSelected", true)
+	local selectedNodes: { Instance } = {}
+	local unselectedNodes: { Instance } = {}
 
-	if selectedGrad then
-		if selectedGrad:IsA("UIGradient") then
-			selectedGrad.Enabled = selected
-		elseif selectedGrad:IsA("GuiObject") then
-			(selectedGrad :: GuiObject).Visible = selected
-			setGradientEnabled(selectedGrad, selected)
-		else
-			setGradientEnabled(selectedGrad, selected)
+	local function consider(inst: Instance)
+		if inst == tabBtn then
+			return
+		end
+		local kind = classifyTabState(tabNameKey(inst.Name))
+		if kind == "off" then
+			table.insert(unselectedNodes, inst)
+		elseif kind == "on" then
+			table.insert(selectedNodes, inst)
 		end
 	end
 
-	if notSelectedGrad then
-		if notSelectedGrad:IsA("UIGradient") then
-			notSelectedGrad.Enabled = not selected
-		elseif notSelectedGrad:IsA("GuiObject") then
-			(notSelectedGrad :: GuiObject).Visible = not selected
-			setGradientEnabled(notSelectedGrad, not selected)
-		else
-			setGradientEnabled(notSelectedGrad, not selected)
-		end
+	for _, d in tabBtn:GetDescendants() do
+		consider(d)
+	end
+
+	for _, node in selectedNodes do
+		setTabStateNode(node, selected)
+	end
+	for _, node in unselectedNodes do
+		setTabStateNode(node, not selected)
 	end
 end
 

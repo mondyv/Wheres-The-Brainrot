@@ -2,8 +2,9 @@
 -- Rotating ViewportFrame previews of EssentialAssets.Gears for shop + hotbar.
 -- ViewportFrames cannot draw ParticleEmitters — we re-host the gear's OWN emitters
 -- on a tiny camera-aligned part so their existing VFX can show over the icon.
--- Shop icons: ViewportFrame lives on a BillboardGui in front of Main, and the row
+-- Shop icons: ViewportFrame lives on a ScreenGui in front of Main, and the row
 -- card is inset so world particles show through the icon hole (not behind the panel).
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -19,7 +20,9 @@ local SHOP_BB_ORDER = 80 -- Main modal DisplayOrder is 50
 local spinConns: { [ViewportFrame]: RBXScriptConnection } = {}
 local proxyConns: { [GuiObject]: RBXScriptConnection } = {}
 local proxyParts: { [GuiObject]: BasePart } = {}
-local shopBillboards: { [GuiObject]: BillboardGui } = {}
+local shopOverlays: { [GuiObject]: ScreenGui } = {}
+local shopViewports: { [GuiObject]: ViewportFrame } = {}
+local shopOverlayGui: ScreenGui? = nil
 
 local function scaleNumberSequence(seq: NumberSequence, mult: number): NumberSequence
 	local keys = seq.Keypoints
@@ -123,44 +126,58 @@ local function clearFxProxy(host: GuiObject)
 		part:Destroy()
 		proxyParts[host] = nil
 	end
-	local bb = shopBillboards[host]
-	if bb then
-		bb:Destroy()
-		shopBillboards[host] = nil
-	end
+	shopOverlays[host] = nil
+	shopViewports[host] = nil
 end
 
-local function ensureShopBillboard(host: GuiObject, part: BasePart, vf: ViewportFrame): BillboardGui?
-	local existing = shopBillboards[host]
-	if existing and existing.Parent then
-		existing.Adornee = part
-		if vf.Parent ~= existing then
-			vf.Parent = existing
-		end
-		return existing
+local function ensureShopOverlayGui(): ScreenGui?
+	if shopOverlayGui and shopOverlayGui.Parent then
+		return shopOverlayGui
 	end
 	local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
 	if not pg then
 		return nil
 	end
-	local bb = Instance.new("BillboardGui")
-	bb.Name = "GearShopIconOverlay"
-	bb.AlwaysOnTop = true
-	bb.LightInfluence = 0
-	bb.MaxDistance = 1e6
-	bb.ResetOnSpawn = false
-	bb.Active = false
-	bb.ClipsDescendants = false
-	bb.Size = UDim2.fromOffset(math.max(host.AbsoluteSize.X, 8), math.max(host.AbsoluteSize.Y, 8))
-	bb.DisplayOrder = SHOP_BB_ORDER
-	bb.Adornee = part
-	bb.Parent = pg
-	vf.Size = UDim2.fromScale(1, 1)
-	vf.Position = UDim2.fromScale(0.5, 0.5)
-	vf.AnchorPoint = Vector2.new(0.5, 0.5)
-	vf.Parent = bb
-	shopBillboards[host] = bb
-	return bb
+	-- Destroy leftover BillboardGui from older builds (DisplayOrder is invalid on it).
+	local stale = pg:FindFirstChild("GearShopIconOverlay")
+	if stale and not stale:IsA("ScreenGui") then
+		stale:Destroy()
+	end
+	local existing = pg:FindFirstChild("GearShopIconOverlay")
+	if existing and existing:IsA("ScreenGui") then
+		shopOverlayGui = existing
+		return existing
+	end
+	local sg = Instance.new("ScreenGui")
+	sg.Name = "GearShopIconOverlay"
+	sg.ResetOnSpawn = false
+	sg.IgnoreGuiInset = true
+	sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	sg.DisplayOrder = SHOP_BB_ORDER
+	sg.Parent = pg
+	shopOverlayGui = sg
+	return sg
+end
+
+local function syncShopViewport(host: GuiObject, vf: ViewportFrame)
+	local inset = GuiService:GetGuiInset()
+	vf.AnchorPoint = Vector2.new(0, 0)
+	vf.Position = UDim2.fromOffset(host.AbsolutePosition.X + inset.X, host.AbsolutePosition.Y + inset.Y)
+	vf.Size = UDim2.fromOffset(math.max(host.AbsoluteSize.X, 8), math.max(host.AbsoluteSize.Y, 8))
+end
+
+local function ensureShopOverlay(host: GuiObject, vf: ViewportFrame): ScreenGui?
+	local sg = ensureShopOverlayGui()
+	if not sg then
+		return nil
+	end
+	if vf.Parent ~= sg then
+		vf.Parent = sg
+	end
+	syncShopViewport(host, vf)
+	shopOverlays[host] = sg
+	shopViewports[host] = vf
+	return sg
 end
 
 -- Clone the gear's own ParticleEmitters into world space (VF can't draw them).
@@ -225,7 +242,7 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model, vf: ViewportFra
 	end
 
 	if isUpgradesHost(host) then
-		ensureShopBillboard(host, part, vf)
+		ensureShopOverlay(host, vf)
 	end
 
 	local shop = isUpgradesHost(host)
@@ -238,11 +255,11 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model, vf: ViewportFra
 		if not camera then
 			return
 		end
+		local overlayVf = shopViewports[host]
 		if not host.Visible or host.AbsoluteSize.X < 2 or host.AbsoluteSize.Y < 2 then
 			part.CFrame = CFrame.new(0, -1e6, 0)
-			local bbHide = shopBillboards[host]
-			if bbHide then
-				bbHide.Enabled = false
+			if overlayVf then
+				overlayVf.Visible = false
 			end
 			return
 		end
@@ -261,9 +278,8 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model, vf: ViewportFra
 		end
 		if not vis then
 			part.CFrame = CFrame.new(0, -1e6, 0)
-			local bbHide = shopBillboards[host]
-			if bbHide then
-				bbHide.Enabled = false
+			if overlayVf then
+				overlayVf.Visible = false
 			end
 			return
 		end
@@ -279,11 +295,9 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model, vf: ViewportFra
 		local pos = ray.Origin + ray.Direction.Unit * depth
 		part.CFrame = CFrame.lookAt(pos, pos + camera.CFrame.LookVector, camera.CFrame.UpVector)
 
-		local bb = shopBillboards[host]
-		if bb then
-			bb.Enabled = true
-			bb.Adornee = part
-			bb.Size = UDim2.fromOffset(host.AbsoluteSize.X, host.AbsoluteSize.Y)
+		if overlayVf then
+			overlayVf.Visible = true
+			syncShopViewport(host, overlayVf)
 		end
 	end)
 end
@@ -323,11 +337,26 @@ local function stopSpin(vf: ViewportFrame)
 	end
 end
 
-function M.clear(host: Instance)
-	if host:IsA("GuiObject") then
-		clearFxProxy(host)
-	end
+local function findMountedViewport(host: GuiObject): ViewportFrame?
 	local existing = host:FindFirstChild(VF_NAME)
+	if existing and existing:IsA("ViewportFrame") then
+		return existing
+	end
+	local overlayVf = shopViewports[host]
+	if overlayVf and overlayVf.Parent then
+		return overlayVf
+	end
+	return nil
+end
+
+function M.clear(host: Instance)
+	local existing: Instance? = nil
+	if host:IsA("GuiObject") then
+		existing = findMountedViewport(host)
+		clearFxProxy(host)
+	else
+		existing = host:FindFirstChild(VF_NAME)
+	end
 	if existing then
 		if existing:IsA("ViewportFrame") then
 			stopSpin(existing)
@@ -343,11 +372,7 @@ function M.clear(host: Instance)
 end
 
 function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size: UDim2? }?): ViewportFrame?
-	local existing = host:FindFirstChild(VF_NAME)
-	if not existing then
-		local bb = shopBillboards[host]
-		existing = bb and bb:FindFirstChild(VF_NAME)
-	end
+	local existing = findMountedViewport(host)
 	if existing and existing:IsA("ViewportFrame") and existing:GetAttribute("GearId") == gearId then
 		return existing
 	end

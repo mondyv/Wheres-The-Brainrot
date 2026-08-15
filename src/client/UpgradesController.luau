@@ -257,7 +257,12 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 
 	local iconFrame = row:FindFirstChild("IconFrame")
 	if iconFrame and iconFrame:IsA("GuiObject") then
-		GearViewportIcon.mount(iconFrame, def.id, { rotate = true })
+		local okMount, mountErr = pcall(function()
+			GearViewportIcon.mount(iconFrame, def.id, { rotate = true })
+		end)
+		if not okMount then
+			warn("[UpgradesController] gear icon mount failed:", mountErr)
+		end
 	end
 
 	local powerFrame = row:FindFirstChild("Power")

@@ -392,6 +392,26 @@ function M.ensureRarityGradient(node: Instance, rarityId: string)
 	clone.Parent = host
 end
 
+function M.ensureTypeGradient(node: Instance, mutationId: string)
+	local gradientName = M.MUTATION_GRADIENT_NAME[mutationId]
+	if not gradientName then
+		return
+	end
+	local host = M.gradientHost(node)
+	for _, gradient in collectGradientChildren(node) do
+		if gradientNameMatches(gradient.Name, { gradientName }) then
+			return
+		end
+	end
+	local template = findTypeGradientTemplate({ gradientName })
+	if not template then
+		return
+	end
+	local clone = template:Clone()
+	clone.Enabled = true
+	clone.Parent = host
+end
+
 function M.applyRarityLabel(node: Instance, rarityId: string)
 	local display = M.RARITY_DISPLAY_NAME[rarityId] or string.upper(rarityId)
 	M.setTextOnNode(node, display)
@@ -413,6 +433,7 @@ function M.applyMutationLabel(node: Instance, mutationId: string)
 	local gradientName = M.MUTATION_GRADIENT_NAME[mutationId]
 	local display = M.MUTATION_DISPLAY_NAME[mutationId] or mutationId
 	M.setTextOnNode(node, display)
+	M.ensureTypeGradient(node, mutationId)
 	M.selectGradient(node, gradientName)
 	if node:IsA("GuiObject") then
 		(node :: GuiObject).Visible = true

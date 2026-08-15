@@ -440,35 +440,15 @@ local function setLabelPair(host: Instance?, primaryName: string, shadowName: st
 end
 
 local function resolveCashIcon(): string
-	local main = PlayerGuiMain.ensure(player)
-	local side = main:FindFirstChild("SideUI")
-	local counters = side and side:FindFirstChild("Counters")
-	local cash = counters and counters:FindFirstChild("Cash")
-	local icon = cash and (cash:FindFirstChild("Icon") or cash:FindFirstChild("ImageLabel") or cash:FindFirstChildWhichIsA("ImageLabel", true))
-	if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) and icon.Image ~= "" then
-		return icon.Image
-	end
-	return "rbxassetid://4590657391"
+	return "rbxassetid://70813633481126"
 end
 
 local function applyPrizeButton(btn: Instance?, prizeIndex: number, reward: LevelConfig.LevelReward?, claimed: boolean, cashIcon: string)
 	if not btn or not btn:IsA("GuiObject") then
 		return
 	end
+	-- Studio owns all prize text. Only swap icons + checkmarks.
 	if reward then
-		local nameKey = "Prize " .. tostring(prizeIndex) .. " name"
-		local shadowKey = "Prize " .. tostring(prizeIndex) .. " name shadow"
-		setLabelPair(btn, nameKey, shadowKey, reward.displayAmount)
-		local info = btn:FindFirstChild("Info")
-		if info and (info:IsA("TextLabel") or info:IsA("TextButton")) then
-			local infoLabel = info :: TextLabel
-			infoLabel.Text = reward.displayName
-		end
-		local infoShadow = btn:FindFirstChild("Info shadow")
-		if infoShadow and (infoShadow:IsA("TextLabel") or infoShadow:IsA("TextButton")) then
-			local infoShadowLabel = infoShadow :: TextLabel
-			infoShadowLabel.Text = reward.displayName
-		end
 		local iconNames = {
 			"Prize " .. tostring(prizeIndex) .. " icon",
 			"Icon",
@@ -677,10 +657,6 @@ local function refreshLevelInfo(animateBar: boolean?)
 	local rewardsRoot = levelFrame:FindFirstChild("Rewards")
 	local main = rewardsRoot and rewardsRoot:FindFirstChild("Main")
 	if main then
-		setLabelPair(main, "Player Name For Profile", "Player Name For Profile Shadow", player.DisplayName, 18)
-		local levelText = "Level " .. tostring(browseLevel)
-		-- Studio primary is lowercase "level"; shadow uses capital "Level".
-		setLabelPair(main, "Player level for profile", "Player Level For Profile Shadow", levelText, 16)
 		local icon = main:FindFirstChild("Player Icon")
 		if icon and icon:IsA("ImageLabel") then
 			loadPfp(icon)
@@ -696,15 +672,10 @@ local function refreshLevelInfo(animateBar: boolean?)
 	local doAnim = animateBar == true
 	if browseLevel == playerLevel then
 		setProgressFill(fillGui, LevelConfig.progressAlpha(playerXp, playerNeeded), doAnim, "panel")
-		refreshProgressXpLabels(progress, playerXp, playerNeeded, browseLevel, doAnim)
 	elseif browseLevel < playerLevel then
-		local needed = LevelConfig.xpRequiredForLevel(browseLevel)
 		setProgressFill(fillGui, 1, false, "panel")
-		refreshProgressXpLabels(progress, needed, needed, browseLevel, false)
 	else
-		local needed = LevelConfig.xpRequiredForLevel(browseLevel)
 		setProgressFill(fillGui, 0, false, "panel")
-		refreshProgressXpLabels(progress, 0, needed, browseLevel, false)
 	end
 
 	local buttons = levelFrame:FindFirstChild("Buttons")
@@ -750,28 +721,6 @@ local function wireLevelInfo(frame: Frame)
 			end
 		end
 
-		-- Lock profile text sizes once AbsoluteSize is ready.
-		task.defer(function()
-			for _, name in {
-				"Player Name For Profile",
-				"Player Name For Profile Shadow",
-			} do
-				local n = main:FindFirstChild(name)
-				if n and (n:IsA("TextLabel") or n:IsA("TextButton")) then
-					lockStudioTextSize(n :: TextLabel, 18)
-				end
-			end
-			for _, name in {
-				"Player level for profile",
-				"Player Level For Profile Shadow",
-			} do
-				local n = main:FindFirstChild(name)
-				if n and (n:IsA("TextLabel") or n:IsA("TextButton")) then
-					lockStudioTextSize(n :: TextLabel, 16)
-				end
-			end
-		end)
-
 		local left = main:FindFirstChild("Level Left", true)
 		local right = main:FindFirstChild("Level Right", true)
 		local function wireNav(node: Instance?, delta: number)
@@ -804,7 +753,6 @@ local function wireLevelInfo(frame: Frame)
 
 	local progress = frame:FindFirstChild("ProgressXP")
 	if progress then
-		ensureProgressLabels(progress)
 		local fill = progress:FindFirstChild("EditThisForBarFill", true)
 		if fill and fill:IsA("GuiObject") then
 			captureBarFullSize(fill)

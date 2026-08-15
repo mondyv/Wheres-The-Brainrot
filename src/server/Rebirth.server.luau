@@ -8,17 +8,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
-local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
-local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
-local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
-local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
-local AnalyticsFunnelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
-local IndexService = require(script.Parent:WaitForChild("Modules"):WaitForChild("IndexService"))
-local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
-local LevelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("LevelService"))
-
-local MAX_FLOOR = 4
-
+-- Create remotes before any requires so a later load error never leaves the client waiting forever.
 local function getRemotesFolder(): Folder
 	local folder = ReplicatedStorage:FindFirstChild("Remotes")
 	if not folder then
@@ -32,6 +22,10 @@ end
 local function ensureRemoteFunction(name: string): RemoteFunction
 	local folder = getRemotesFolder()
 	local rf = folder:FindFirstChild(name)
+	if rf and not rf:IsA("RemoteFunction") then
+		rf:Destroy()
+		rf = nil
+	end
 	if not rf then
 		rf = Instance.new("RemoteFunction")
 		rf.Name = name
@@ -43,6 +37,10 @@ end
 local function ensureRemoteEvent(name: string): RemoteEvent
 	local folder = getRemotesFolder()
 	local re = folder:FindFirstChild(name)
+	if re and not re:IsA("RemoteEvent") then
+		re:Destroy()
+		re = nil
+	end
 	if not re then
 		re = Instance.new("RemoteEvent")
 		re.Name = name
@@ -54,6 +52,17 @@ end
 local getStateRF = ensureRemoteFunction("GetRebirthState")
 local performRF = ensureRemoteFunction("PerformRebirth")
 local updatedRE = ensureRemoteEvent("RebirthUpdated")
+
+local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
+local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
+local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
+local AnalyticsFunnelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
+local IndexService = require(script.Parent:WaitForChild("Modules"):WaitForChild("IndexService"))
+local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
+local LevelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("LevelService"))
+
+local MAX_FLOOR = 4
 
 local function makeIndexDiscoveredCheck(player: Player): (name: string) -> boolean
 	return function(name: string): boolean

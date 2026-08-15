@@ -891,9 +891,14 @@ function RebirthController.init()
 
 	local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
 	if remotes then
-		getStateRF = remotes:WaitForChild("GetRebirthState") :: RemoteFunction
-		performRF = remotes:WaitForChild("PerformRebirth") :: RemoteFunction
-		updatedRE = remotes:WaitForChild("RebirthUpdated") :: RemoteEvent
+		getStateRF = remotes:WaitForChild("GetRebirthState", 30) :: RemoteFunction?
+		performRF = remotes:WaitForChild("PerformRebirth", 30) :: RemoteFunction?
+		updatedRE = remotes:WaitForChild("RebirthUpdated", 30) :: RemoteEvent?
+		if not getStateRF then
+			warn("[RebirthController] GetRebirthState remote missing")
+		end
+	else
+		warn("[RebirthController] Remotes folder missing")
 	end
 
 	local buttons = rebirthFrame:FindFirstChild("Buttons")

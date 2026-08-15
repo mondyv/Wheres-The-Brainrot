@@ -289,6 +289,7 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 		if player:GetAttribute(StoreConfig.ATTR.DOUBLE_POWER_OWNED) == true then
 			gain = math.floor(gain * StoreConfig.DOUBLE_POWER_MULTIPLIER + 0.5)
 		end
+		gain = WorkoutPower.scaleWorkoutGain(gain, WorkoutPower.readPowerMax(player))
 		WorkoutPower.addPower(player, gain)
 		player:SetAttribute("WorkoutLastGain", gain)
 		local pulse = player:GetAttribute("WorkoutPowerPulse")

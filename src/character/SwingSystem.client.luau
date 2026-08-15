@@ -537,11 +537,15 @@ local function getRopeStats()
 		return nil
 	end
 
-	-- Reach is combined into workout Power (same level as swing force).
+	-- Reach uses a slower Power mapping than swing force.
 	local level = nil
 	local workoutPower = player:GetAttribute("Power")
 	if typeof(workoutPower) == "number" and WorkoutPower then
-		level = WorkoutPower.swingLevelFromPower(workoutPower)
+		if typeof(WorkoutPower.reachLevelFromPower) == "function" then
+			level = WorkoutPower.reachLevelFromPower(workoutPower)
+		else
+			level = WorkoutPower.swingLevelFromPower(workoutPower)
+		end
 	else
 		local attrName = SwingUpgrades.ROPE_LEVEL_ATTR
 		if typeof(attrName) == "string" then

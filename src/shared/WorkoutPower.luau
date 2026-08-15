@@ -12,16 +12,39 @@ M.POWER_MAX_ATTR = GearConfig.POWER_MAX_ATTR
 M.POWER_EDITED_ATTR = GearConfig.POWER_EDITED_ATTR
 M.FIXED_CARRY = 1
 
--- Map absolute workout Power → swing upgrade level used by SwingProgression.
--- Soft log so early Tree Branch (+2/s) matters and late Jupiter (+300k/s) does not explode.
+-- Map absolute workout Power → swing force/speed level.
+-- Slow log: early Tree Branch still moves the needle; Jupiter does not max the rope.
 function M.swingLevelFromPower(power: number): number
 	local p = math.max(0, power)
 	if p <= 0 then
 		return 0
 	end
-	-- ~Power 10 → ~8, Power 100 → ~40, Power 10k → ~120, Power 1e6 → ~200, Power 1e8 → ~280
-	local level = math.floor(55 * math.log10(1 + p / 8))
+	-- ~20 → 4, ~200 → 20, ~2k → 45, ~50k → 84, ~1e6 → 120
+	local level = math.floor(28 * math.log10(1 + p / 50))
 	return math.clamp(level, 0, 100_000)
+end
+
+-- Reach climbs much slower than force so Land 1 stays swingable without covering the whole map.
+function M.reachLevelFromPower(power: number): number
+	local p = math.max(0, power)
+	if p <= 0 then
+		return 0
+	end
+	-- ~20 → 0, ~200 → 5, ~2k → 16, ~50k → 35, ~1e6 → 53, ~1e8 → 81
+	local level = math.floor(14 * math.log10(1 + p / 150))
+	return math.clamp(level, 0, 100_000)
+end
+
+-- Late workouts grant less Power so the number (and reach) do not explode on Jupiter.
+function M.scaleWorkoutGain(rawGain: number, currentMax: number): number
+	local raw = math.max(0, rawGain)
+	if raw <= 0 then
+		return 0
+	end
+	local maxP = math.max(0, currentMax)
+	local scale = 1 / (1 + (maxP / 8000) ^ 0.55)
+	scale = math.clamp(scale, 0.08, 1)
+	return math.max(1, math.floor(raw * scale + 0.5))
 end
 
 function M.readPower(player: Player): number
@@ -54,13 +77,14 @@ end
 
 function M.syncSwingFromPower(player: Player)
 	local power = M.readPower(player)
-	local level = M.swingLevelFromPower(power)
-	player:SetAttribute(SwingUpgrades.POWER_LEVEL_ATTR, level)
-	player:SetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR, level)
+	local forceLevel = M.swingLevelFromPower(power)
+	local reachLevel = M.reachLevelFromPower(power)
+	player:SetAttribute(SwingUpgrades.POWER_LEVEL_ATTR, forceLevel)
+	player:SetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR, reachLevel)
 	-- Carry upgrade removed — always 1 brainrot.
 	player:SetAttribute(SwingUpgrades.CARRY_LEVEL_ATTR, 0)
-	player:SetAttribute("SwingForce", SwingProgression.displayPower(level))
-	player:SetAttribute("SwingRange", SwingProgression.displayReach(level))
+	player:SetAttribute("SwingForce", SwingProgression.displayPower(forceLevel))
+	player:SetAttribute("SwingRange", SwingProgression.displayReach(reachLevel))
 	player:SetAttribute("Carry", M.FIXED_CARRY)
 end
 

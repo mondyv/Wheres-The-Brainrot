@@ -301,7 +301,7 @@ local function prepareWaveModel(model: Model)
 	end
 end
 
-local function spawnTsunami(playerPos: Vector3): (Vector3, Vector3)?
+local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	if activeWave and activeWave.Parent and waveTravelPos and waveForward then
 		return waveTravelPos, waveForward
 	end

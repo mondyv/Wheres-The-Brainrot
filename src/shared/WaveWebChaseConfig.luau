@@ -28,11 +28,14 @@ M.SPIDER_MAX_PLAYER_DISTANCE = 58
 M.LAND_EDGE_MARGIN = 14
 M.SPIDER_PRELOAD_SEC = 0.45
 
--- Closer so threat arrives sooner; still readable runway.
-M.WAVE_SPAWN_DISTANCE = 125
--- Kill when the wave center gets this close (studs, XZ).
-M.WAVE_KILL_DISTANCE = 18
--- Wave Web mesh faces the player at Studio Orientation 0, -90, 0 relative to travel.
+-- Tsunami originates at the lands map center (NOT behind the player).
+-- Positive = start that many studs past mid-map, away from safezone, then roll in.
+M.WAVE_SPAWN_BACK_FROM_CENTER = 35
+-- Kill when the tsunami front reaches this far past the player along travel (studs).
+M.WAVE_KILL_DISTANCE = 14
+-- Model scale for wall/tsunami presence.
+M.WAVE_SCALE = 1.75
+-- Wave Web mesh faces travel at Studio Orientation 0, -90, 0 relative to travel.
 
 -- Land-scaled chase speed (studs/sec).
 M.WAVE_SPEED_LAND1 = 28

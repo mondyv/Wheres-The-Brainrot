@@ -117,10 +117,47 @@ local function resolveSpiderSpawn(playerPos: Vector3): Vector3
 	return playerPos + Vector3.new(C.SPIDER_MIN_PLAYER_DISTANCE, 2, 0)
 end
 
-local function computeChaseAxes(playerPos: Vector3): (Vector3, Vector3)
-	local safeCenter = SafezoneUtil.getSafezoneCenter() or playerPos
-	local toSafe = flatUnitXZ(playerPos, safeCenter)
-	return toSafe, -toSafe
+-- Average of Land1–10 centers — fixed mid-map origin for the tsunami (never player-based).
+local function resolveMapCenter(): Vector3
+	local map = Workspace:FindFirstChild("Map")
+	local lands = map and map:FindFirstChild("Lands")
+	if lands then
+		local sum = Vector3.zero
+		local n = 0
+		for i = 1, 10 do
+			local folder = lands:FindFirstChild("Land" .. tostring(i))
+			if folder then
+				local part: BasePart? = nil
+				if folder:IsA("Model") then
+					part = (folder :: Model).PrimaryPart
+				end
+				if not part then
+					part = folder:FindFirstChildWhichIsA("BasePart", true)
+				end
+				if part then
+					sum += part.Position
+					n += 1
+				end
+			end
+		end
+		if n > 0 then
+			return sum / n
+		end
+	end
+	local safe = SafezoneUtil.getSafezoneCenter()
+	if safe then
+		return safe
+	end
+	return Vector3.zero
+end
+
+-- Fixed world corridor: mid-map → safezone. Wave never retargets to the player.
+local function computeTsunamiCorridor(): (Vector3, Vector3, Vector3)
+	local mapCenter = resolveMapCenter()
+	local safeCenter = SafezoneUtil.getSafezoneCenter() or mapCenter
+	local toSafe = flatUnitXZ(mapCenter, safeCenter)
+	local spawnPos = mapCenter - toSafe * C.WAVE_SPAWN_BACK_FROM_CENTER
+	return spawnPos, toSafe, mapCenter
 end
 
 -- Upright facing along chaseDir. Mesh faces you at Studio Orientation 0, -90, 0
@@ -927,11 +964,12 @@ local function runIntro(token: number, playerPos: Vector3)
 		return
 	end
 
-	-- Brief look-back at the wave, then hand control back.
+	-- Brief look-back at the mid-map tsunami, then hand control back.
 	local revealStart = os.clock()
 	local revealDur = 1.1
-	local _toSafe, awayFromSafe = computeChaseAxes(playerPos)
-	local waveHintPos = playerPos + awayFromSafe * (C.WAVE_SPAWN_DISTANCE * 0.55)
+	local waveSpawn, toSafe = computeTsunamiCorridor()
+	local waveHintPos = waveSpawn
+	local awayFromSafe = -toSafe
 	if renderConn then
 		renderConn:Disconnect()
 	end
@@ -974,6 +1012,15 @@ local function runChase(token: number)
 	local wave = waveTemplate:Clone()
 	wave.Name = "WaveWebChase"
 	prepareWaveModel(wave)
+	local scale = C.WAVE_SCALE
+	if typeof(scale) == "number" and scale > 0 and scale ~= 1 then
+		local okScale, errScale = pcall(function()
+			wave:ScaleTo(scale)
+		end)
+		if not okScale then
+			warn("[WaveWebChaseController] ScaleTo failed:", errScale)
+		end
+	end
 	setModelLocalHidden(wave, true)
 	wave.Parent = Workspace
 	activeWave = wave
@@ -1014,11 +1061,13 @@ local function runChase(token: number)
 
 	local hrp = getHRP()
 	local playerPos = if hrp then hrp.Position else Vector3.zero
-	local toSafe, awayFromSafe = computeChaseAxes(playerPos)
-	-- Fixed corridor: spawn behind player, face + travel toward safezone only.
-	local forward = toSafe
-	local wavePos = playerPos + awayFromSafe * C.WAVE_SPAWN_DISTANCE
-	wavePos = Vector3.new(wavePos.X, groundYAt(wavePos.X, wavePos.Z, playerPos.Y) + 2, wavePos.Z)
+	-- Fixed mid-map tsunami: spawn at lands center corridor, roll toward safezone only.
+	local spawnPos, forward = computeTsunamiCorridor()
+	local wavePos = Vector3.new(
+		spawnPos.X,
+		groundYAt(spawnPos.X, spawnPos.Z, playerPos.Y) + 2,
+		spawnPos.Z
+	)
 	local smoothPos = wavePos
 	wave:PivotTo(waveFacingCf(wavePos, forward))
 
@@ -1065,26 +1114,26 @@ local function runChase(token: number)
 		-- Mild ramp so it doesn't instantly top out.
 		speed *= 0.9 + 0.1 * math.clamp(elapsed / 8, 0, 1)
 
-		-- Barrel straight toward safezone — no player-tracking turn.
+		-- Tsunami barrel: fixed mid-map lane toward safezone — never tracks the player.
 		wavePos += forward * speed * dt
 		local gy = groundYAt(wavePos.X, wavePos.Z, pPos.Y) + 2
 		wavePos = Vector3.new(wavePos.X, gy, wavePos.Z)
 
 		local bob = math.sin(phase * 1.35) * 0.85
 		local targetVisual = wavePos + Vector3.new(0, bob, 0)
-		-- Soft follow so the mesh feels fluid instead of snappy.
 		local blend = 1 - math.exp(-dt * 10)
 		smoothPos = smoothPos:Lerp(targetVisual, blend)
 		wave:PivotTo(waveFacingCf(smoothPos, forward))
 
-		local toPlayer = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
-		local distXZ = toPlayer.Magnitude
-		local threat = 1 - math.clamp(distXZ / 90, 0, 1)
+		-- Front-plane kill: how far the player is ahead of the wave along travel.
+		local rel = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
+		local along = rel:Dot(forward)
+		local distAhead = math.max(along, 0)
+		local threat = 1 - math.clamp(distAhead / 110, 0, 1)
 		local beat = (math.sin(phase * (2.8 + threat * 3.4)) + 1) * 0.5
 		local pulse = threat * (0.35 + beat * 0.45)
 		showHeartbeat(pulse)
 
-		-- Camera shake locked to heartbeat intensity (always a little rumble in chase).
 		local shake = 0.06 + pulse * 0.55
 		hum.CameraOffset = Vector3.new(
 			math.sin(phase * 41) * shake,
@@ -1092,7 +1141,8 @@ local function runChase(token: number)
 			math.sin(phase * 27) * shake * 0.35
 		)
 
-		if distXZ <= C.WAVE_KILL_DISTANCE then
+		-- Caught when the tsunami front reaches you (map-wide lane — no dodge sideways).
+		if along <= C.WAVE_KILL_DISTANCE then
 			requestKill()
 			chaseActive = false
 			return

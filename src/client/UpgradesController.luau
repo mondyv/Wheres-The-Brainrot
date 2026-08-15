@@ -756,7 +756,6 @@ local function updatePowerLabel(opts: { target: number?, instant: boolean? }?)
 	local target = if opts and typeof(opts.target) == "number"
 		then opts.target :: number
 		else WorkoutPower.readPower(player)
-	local instant = opts ~= nil and opts.instant == true
 
 	local function applyText(n: number)
 		local text = formatPower(n)
@@ -785,10 +784,7 @@ local function updatePowerLabel(opts: { target: number?, instant: boolean? }?)
 
 	if gained then
 		playPowerGainFlash(powerAmountLabel)
-	end
-
-	-- Workout gains: snap with the +N floater (don't wait on Power replication / tween lag).
-	if instant and gained then
+		-- Snap immediately — counting the HUD up feels a second late vs the +N floater.
 		lastShownPower = target
 		applyText(target)
 		return
@@ -800,7 +796,7 @@ local function updatePowerLabel(opts: { target: number?, instant: boolean? }?)
 	powerProxy = proxy
 	powerAnimToken += 1
 	local token = powerAnimToken
-	local ti = TweenInfo.new(if gained then 0.06 else 0.08, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+	local ti = TweenInfo.new(0.08, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
 	powerTween = TweenService:Create(proxy, ti, { Value = target })
 	proxy:GetPropertyChangedSignal("Value"):Connect(function()
 		applyText(proxy.Value)

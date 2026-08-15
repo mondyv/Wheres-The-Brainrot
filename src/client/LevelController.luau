@@ -178,52 +178,71 @@ local function spawnXpHitLight(layer: Frame, screen: Vector2)
 	end)
 end
 
-local function pulseLevelHudChip()
+-- Bounce host: Decor/Highlight so button UIScale hover on LevelOnhHud doesn't cancel the hit.
+local function resolveLevelAnimHost(): GuiObject?
 	if not hudRoot or not hudRoot:IsA("GuiObject") then
+		return nil
+	end
+	local decor = hudRoot:FindFirstChild("Decor")
+	if decor and decor:IsA("GuiObject") then
+		return decor
+	end
+	local highlight = hudRoot:FindFirstChild("Highlight", true)
+	if highlight and highlight:IsA("GuiObject") then
+		return highlight
+	end
+	return hudRoot
+end
+
+local function pulseLevelHudChip()
+	local host = resolveLevelAnimHost()
+	if not host then
 		return
 	end
-	local sc = hudRoot:FindFirstChild("LevelHudPulse")
+	local sc = host:FindFirstChild("LevelHudPulse")
 	if not sc or not sc:IsA("UIScale") then
 		sc = Instance.new("UIScale")
 		sc.Name = "LevelHudPulse"
-		sc.Parent = hudRoot
+		sc.Scale = 1
+		sc.Parent = host
 	end
-	local token = ((hudRoot:GetAttribute("LevelHudPulseToken") :: number?) or 0) + 1
-	hudRoot:SetAttribute("LevelHudPulseToken", token)
-	sc.Scale = 0.94
-	TweenService:Create(sc, TweenInfo.new(0.08, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.1 })
+	local token = ((host:GetAttribute("LevelHudPulseToken") :: number?) or 0) + 1
+	host:SetAttribute("LevelHudPulseToken", token)
+	sc.Scale = 0.92
+	TweenService:Create(sc, TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.16 })
 		:Play()
-	task.delay(0.08, function()
-		if sc.Parent and hudRoot and hudRoot:GetAttribute("LevelHudPulseToken") == token then
-			TweenService:Create(sc, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
+	task.delay(0.1, function()
+		if sc.Parent and host:GetAttribute("LevelHudPulseToken") == token then
+			TweenService:Create(sc, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
 				:Play()
 		end
 	end)
 end
 
--- Soft rock so XP gains feel alive on the HUD chip.
+-- Rock + scale when XP floater lands on the counter.
 local function rockLevelHudChip()
-	if not hudRoot or not hudRoot:IsA("GuiObject") then
+	local host = resolveLevelAnimHost()
+	if not host then
 		return
 	end
 	pulseLevelHudChip()
 	hudRockToken += 1
 	local token = hudRockToken
-	local chip = hudRoot
-	local base = 0
+	local baseRot = 0
+	host.Rotation = baseRot - 11
 	local function tweenRot(to: number, dur: number, style: Enum.EasingStyle)
-		if not chip.Parent or token ~= hudRockToken then
+		if not host.Parent or token ~= hudRockToken then
 			return
 		end
-		TweenService:Create(chip, TweenInfo.new(dur, style, Enum.EasingDirection.Out), { Rotation = to }):Play()
+		TweenService:Create(host, TweenInfo.new(dur, style, Enum.EasingDirection.Out), { Rotation = to }):Play()
 	end
-	tweenRot(base - 7, 0.06, Enum.EasingStyle.Quad)
-	task.delay(0.06, function()
-		tweenRot(base + 9, 0.08, Enum.EasingStyle.Quad)
+	tweenRot(baseRot + 12, 0.07, Enum.EasingStyle.Quad)
+	task.delay(0.07, function()
+		tweenRot(baseRot - 7, 0.08, Enum.EasingStyle.Quad)
 		task.delay(0.08, function()
-			tweenRot(base - 4, 0.07, Enum.EasingStyle.Quad)
+			tweenRot(baseRot + 4, 0.07, Enum.EasingStyle.Quad)
 			task.delay(0.07, function()
-				tweenRot(base, 0.1, Enum.EasingStyle.Back)
+				tweenRot(baseRot, 0.12, Enum.EasingStyle.Back)
 			end)
 		end)
 	end)
@@ -466,7 +485,7 @@ local function spawnXpFloater(gain: number, onArrive: (() -> ())?)
 			local dest = destScreen()
 			label.Position = toLayerOffset(dest)
 			spawnXpHitLight(layer, dest)
-			pulseLevelHudChip()
+			rockLevelHudChip()
 			if onArrive then
 				onArrive()
 			end
@@ -920,10 +939,6 @@ local function onXpPulse()
 		shadowLabel.Text = "Lvl " .. tostring(lv)
 	end
 	pendingBarAlpha = alpha
-
-	if g > 0 then
-		rockLevelHudChip()
-	end
 
 	local function onArrive()
 		applyPendingHudBar()

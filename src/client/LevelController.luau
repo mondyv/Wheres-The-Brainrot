@@ -6,11 +6,12 @@ local TweenService = game:GetService("TweenService")
 
 local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local HUDController = require(script.Parent.HUDController)
-local TopNotifController = require(script.Parent.TopNotifController)
+local CharacterWorldNotif = require(script.Parent.CharacterWorldNotif)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
@@ -32,6 +33,8 @@ local barTween: Tween? = nil
 local panelBarTween: Tween? = nil
 local xpAnimToken = 0
 local pendingBarAlpha: number? = nil
+local pendingLevelRewards: { LevelConfig.LevelReward }? = nil
+local hudRockToken = 0
 
 local function fireConfettiAndShake()
 	local essentials = ReplicatedStorage:FindFirstChild("EssentialsShared")
@@ -194,6 +197,132 @@ local function pulseLevelHudChip()
 		if sc.Parent and hudRoot and hudRoot:GetAttribute("LevelHudPulseToken") == token then
 			TweenService:Create(sc, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 })
 				:Play()
+		end
+	end)
+end
+
+-- Soft rock so XP gains feel alive on the HUD chip.
+local function rockLevelHudChip()
+	if not hudRoot or not hudRoot:IsA("GuiObject") then
+		return
+	end
+	pulseLevelHudChip()
+	hudRockToken += 1
+	local token = hudRockToken
+	local chip = hudRoot
+	local base = 0
+	local function tweenRot(to: number, dur: number, style: Enum.EasingStyle)
+		if not chip.Parent or token ~= hudRockToken then
+			return
+		end
+		TweenService:Create(chip, TweenInfo.new(dur, style, Enum.EasingDirection.Out), { Rotation = to }):Play()
+	end
+	tweenRot(base - 7, 0.06, Enum.EasingStyle.Quad)
+	task.delay(0.06, function()
+		tweenRot(base + 9, 0.08, Enum.EasingStyle.Quad)
+		task.delay(0.08, function()
+			tweenRot(base - 4, 0.07, Enum.EasingStyle.Quad)
+			task.delay(0.07, function()
+				tweenRot(base, 0.1, Enum.EasingStyle.Back)
+			end)
+		end)
+	end)
+end
+
+local function findCashAmountLabel(): TextLabel?
+	local main = PlayerGuiMain.ensure(player)
+	local counters = main:FindFirstChild("Counters", true)
+	local cashFrame = counters and counters:FindFirstChild("Cash")
+	if not cashFrame then
+		return nil
+	end
+	for _, name in { "Amount", "Cash", "Value", "Text" } do
+		local n = cashFrame:FindFirstChild(name, true)
+		if n and (n:IsA("TextLabel") or n:IsA("TextButton")) then
+			return n :: TextLabel
+		end
+	end
+	for _, d in cashFrame:GetDescendants() do
+		if d:IsA("TextLabel") and string.find(d.Text, "%$") then
+			return d
+		end
+	end
+	return nil
+end
+
+local function playCashRewardFx(amount: number)
+	if amount <= 0 then
+		return
+	end
+	local cashLabel = findCashAmountLabel()
+	local host: GuiObject? = cashLabel and cashLabel.Parent :: GuiObject?
+	if not host then
+		local main = PlayerGuiMain.ensure(player)
+		host = main
+	end
+	if not host then
+		return
+	end
+
+	GameSoundEffects.playCashGrab()
+
+	local popup = Instance.new("TextLabel")
+	popup.Name = "LevelCashPopup"
+	popup.BackgroundTransparency = 1
+	popup.Size = UDim2.fromOffset(180, 40)
+	popup.AnchorPoint = Vector2.new(0.5, 1)
+	if cashLabel then
+		local mid = cashLabel.AbsolutePosition + cashLabel.AbsoluteSize * 0.5
+		local hp = host.AbsolutePosition
+		popup.Position = UDim2.fromOffset(mid.X - hp.X, mid.Y - hp.Y - 6)
+	else
+		popup.Position = UDim2.new(0.5, 0, 0.18, 0)
+	end
+	popup.Text = "+" .. BrainrotEconomy.formatCashShort(amount)
+	popup.TextSize = 28
+	popup.Font = Enum.Font.GothamBold
+	popup.TextColor3 = Color3.fromRGB(90, 255, 140)
+	popup.TextStrokeTransparency = 0.35
+	popup.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	popup.ZIndex = 200
+	popup.Parent = host
+
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.55
+	scale.Parent = popup
+
+	TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.15 }):Play()
+	TweenService:Create(
+		popup,
+		TweenInfo.new(1.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{
+			Position = popup.Position + UDim2.fromOffset(0, -54),
+			TextTransparency = 1,
+			TextStrokeTransparency = 1,
+		}
+	):Play()
+
+	if cashLabel then
+		local sc = cashLabel:FindFirstChildOfClass("UIScale")
+		if not sc then
+			sc = Instance.new("UIScale")
+			sc.Scale = 1
+			sc.Parent = cashLabel
+		end
+		local base = cashLabel.TextColor3
+		cashLabel.TextColor3 = Color3.fromRGB(110, 255, 150)
+		sc.Scale = 1.22
+		TweenService:Create(sc, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		TweenService:Create(
+			cashLabel,
+			TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ TextColor3 = base }
+		):Play()
+	end
+
+	task.delay(1.25, function()
+		if popup.Parent then
+			popup:Destroy()
 		end
 	end)
 end
@@ -441,6 +570,16 @@ local function resolveCashIcon(): string
 	return "rbxassetid://70813633481126"
 end
 
+local function resolveRewardIcon(reward: LevelConfig.LevelReward, cashIcon: string): string
+	if reward.kind == "lucky_block" and typeof(reward.luckyBlockId) == "string" then
+		local asset = LuckyBlockCatalog.resolveIconAssetId(reward.luckyBlockId)
+		if typeof(asset) == "string" and asset ~= "" then
+			return asset
+		end
+	end
+	return cashIcon
+end
+
 local function applyPrizeButton(btn: Instance?, prizeIndex: number, reward: LevelConfig.LevelReward?, claimed: boolean, cashIcon: string)
 	if not btn or not btn:IsA("GuiObject") then
 		return
@@ -451,6 +590,7 @@ local function applyPrizeButton(btn: Instance?, prizeIndex: number, reward: Leve
 		local shadowKey = "Prize " .. tostring(prizeIndex) .. " name shadow"
 		setLabelPair(btn, nameKey, shadowKey, reward.displayAmount)
 		setLabelPair(btn, "Name", nil, reward.displayAmount)
+		local iconImage = resolveRewardIcon(reward, cashIcon)
 		local iconNames = {
 			"Prize " .. tostring(prizeIndex) .. " icon",
 			"Icon",
@@ -458,7 +598,7 @@ local function applyPrizeButton(btn: Instance?, prizeIndex: number, reward: Leve
 		for _, iconName in iconNames do
 			local icon = btn:FindFirstChild(iconName, true)
 			if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
-				icon.Image = cashIcon
+				icon.Image = iconImage
 				icon.ImageTransparency = 0
 				icon.Visible = true
 			end
@@ -781,6 +921,10 @@ local function onXpPulse()
 	end
 	pendingBarAlpha = alpha
 
+	if g > 0 then
+		rockLevelHudChip()
+	end
+
 	local function onArrive()
 		applyPendingHudBar()
 		if levelFrame and levelFrame.Visible then
@@ -796,24 +940,44 @@ local function onXpPulse()
 end
 
 local lastLevelCelebrateAt = 0
-local function onLevelUpPulse()
+local function onLevelUpPulse(rewardsArg: { LevelConfig.LevelReward }?)
 	if os.clock() - lastLevelCelebrateAt < 0.6 then
 		return
 	end
 	lastLevelCelebrateAt = os.clock()
 	local to = player:GetAttribute(LevelConfig.LEVEL_UP_TO_ATTR)
 	local lv = if typeof(to) == "number" then math.floor(to) else select(1, readState())
-	TopNotifController.showPersonal("Level up! You reached Level " .. tostring(lv) .. "!", nil, 5)
+	local rewards = rewardsArg or pendingLevelRewards or LevelConfig.rewardsForLevel(lv)
+	pendingLevelRewards = nil
+
+	local cashTotal = LevelConfig.totalCashFromRewards(rewards)
+	local attrCash = player:GetAttribute(LevelConfig.LAST_LEVEL_CASH_ATTR)
+	if typeof(attrCash) == "number" and attrCash > cashTotal then
+		cashTotal = math.floor(attrCash)
+	end
+
 	GameSoundEffects.playUpgrade()
 	fireConfettiAndShake()
+	rockLevelHudChip()
 	browseLevel = lv
 	refreshHud(true)
+
+	-- Body celebration — do not open Level Info or use top toast.
+	local summary = LevelConfig.formatRewardSummary(rewards)
+	CharacterWorldNotif.showCelebration(player.Character, "Level " .. tostring(lv) .. "!", {
+		subtitle = if summary ~= "" then summary else nil,
+		lifetimeSec = 3.6,
+		color = Color3.fromRGB(255, 220, 90),
+		offset = Vector3.new(0, 3.15, 0),
+	})
+
+	if cashTotal > 0 then
+		playCashRewardFx(cashTotal)
+	end
+
+	-- If the player already has Level Info open, refresh claimed state — never auto-open.
 	if levelFrame and levelFrame.Visible then
 		refreshLevelInfo(true)
-	else
-		task.delay(0.35, function()
-			openLevelInfo()
-		end)
 	end
 end
 
@@ -858,11 +1022,14 @@ function M.init()
 		end
 		local levelUpRE = remotes:WaitForChild("PlayerLevelUp", 30)
 		if levelUpRE and levelUpRE:IsA("RemoteEvent") then
-			levelUpRE.OnClientEvent:Connect(function(reached: any)
+			levelUpRE.OnClientEvent:Connect(function(reached: any, rewards: any)
 				if typeof(reached) == "number" then
 					player:SetAttribute(LevelConfig.LEVEL_UP_TO_ATTR, reached)
 				end
-				onLevelUpPulse()
+				if typeof(rewards) == "table" then
+					pendingLevelRewards = rewards :: { LevelConfig.LevelReward }
+				end
+				onLevelUpPulse(if typeof(rewards) == "table" then rewards :: { LevelConfig.LevelReward } else nil)
 			end)
 		end
 		local xpGainRE = remotes:FindFirstChild("PlayerXpGain")

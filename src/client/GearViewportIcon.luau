@@ -1,11 +1,8 @@
 -- [ACTIVE] GearViewportIcon
 -- Rotating ViewportFrame previews of EssentialAssets.Gears for shop + hotbar.
 -- ViewportFrames cannot draw ParticleEmitters — we re-host the gear's OWN emitters
--- on a tiny camera-aligned part so their existing VFX can show over the icon.
--- Shop icons: ViewportFrame lives on a ScreenGui in front of Main, and the row
--- card is inset so world particles show through the icon hole (not behind the panel).
-local GuiService = game:GetService("GuiService")
-local Players = game:GetService("Players")
+-- on a tiny camera-aligned part so their existing VFX can still show in world space.
+-- The 3D mesh always stays inside the slot ViewportFrame (never reparented off the icon).
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
@@ -16,13 +13,9 @@ local M = {}
 
 local VF_NAME = "GearViewport"
 local PROXY_FOLDER_NAME = "GearIconFxProxies"
-local SHOP_BB_ORDER = 80 -- Main modal DisplayOrder is 50
 local spinConns: { [ViewportFrame]: RBXScriptConnection } = {}
 local proxyConns: { [GuiObject]: RBXScriptConnection } = {}
 local proxyParts: { [GuiObject]: BasePart } = {}
-local shopOverlays: { [GuiObject]: ScreenGui } = {}
-local shopViewports: { [GuiObject]: ViewportFrame } = {}
-local shopOverlayGui: ScreenGui? = nil
 
 local function scaleNumberSequence(seq: NumberSequence, mult: number): NumberSequence
 	local keys = seq.Keypoints
@@ -31,6 +24,86 @@ local function scaleNumberSequence(seq: NumberSequence, mult: number): NumberSeq
 		out[i] = NumberSequenceKeypoint.new(kp.Time, math.max(kp.Value * mult, 0.02), kp.Envelope * mult)
 	end
 	return NumberSequence.new(out)
+end
+
+local function looksLikeFxPart(part: BasePart): boolean
+	local n = string.lower(part.Name)
+	return string.find(n, "vfx", 1, true) ~= nil
+		or string.find(n, "fx", 1, true) ~= nil
+		or string.find(n, "emitter", 1, true) ~= nil
+		or string.find(n, "particle", 1, true) ~= nil
+		or string.find(n, "hitbox", 1, true) ~= nil
+end
+
+-- Transparent VFX-only meshes render as empty/black in a ViewportFrame.
+local function revealHiddenMeshes(root: Instance)
+	local parts: { BasePart } = {}
+	for _, d in root:GetDescendants() do
+		if d:IsA("BasePart") then
+			table.insert(parts, d)
+		end
+	end
+	local visible = 0
+	for _, p in parts do
+		if p.Transparency < 0.85 and not looksLikeFxPart(p) then
+			visible += 1
+		end
+	end
+	if visible > 0 then
+		return
+	end
+	for _, p in parts do
+		if p.Transparency >= 0.85 then
+			p.Transparency = 0.2
+			if p.Material == Enum.Material.ForceField or p.Material == Enum.Material.Glass then
+				p.Material = Enum.Material.Neon
+			end
+		end
+	end
+end
+
+local function iconPartList(root: Instance): { BasePart }
+	local parts: { BasePart } = {}
+	for _, d in root:GetDescendants() do
+		if d:IsA("BasePart") and d.Transparency < 0.9 and not looksLikeFxPart(d) then
+			table.insert(parts, d)
+		end
+	end
+	if #parts == 0 then
+		for _, d in root:GetDescendants() do
+			if d:IsA("BasePart") then
+				table.insert(parts, d)
+			end
+		end
+	end
+	return parts
+end
+
+local function boundsFromParts(parts: { BasePart }): (Vector3, Vector3)
+	if #parts == 0 then
+		return Vector3.zero, Vector3.zero
+	end
+	local minV = Vector3.new(math.huge, math.huge, math.huge)
+	local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
+	for _, p in parts do
+		local cf = p.CFrame
+		local half = p.Size * 0.5
+		for _, corner in {
+			Vector3.new(-1, -1, -1),
+			Vector3.new(-1, -1, 1),
+			Vector3.new(-1, 1, -1),
+			Vector3.new(-1, 1, 1),
+			Vector3.new(1, -1, -1),
+			Vector3.new(1, -1, 1),
+			Vector3.new(1, 1, -1),
+			Vector3.new(1, 1, 1),
+		} do
+			local w = cf:PointToWorldSpace(half * corner)
+			minV = Vector3.new(math.min(minV.X, w.X), math.min(minV.Y, w.Y), math.min(minV.Z, w.Z))
+			maxV = Vector3.new(math.max(maxV.X, w.X), math.max(maxV.Y, w.Y), math.max(maxV.Z, w.Z))
+		end
+	end
+	return (minV + maxV) * 0.5, maxV - minV
 end
 
 -- Enable / reparent the gear's authored FX only (no synthetic particles).
@@ -63,58 +136,6 @@ local function enableAuthoredFx(root: Instance)
 	end
 end
 
-local function isUpgradesHost(host: GuiObject): boolean
-	local p: Instance? = host
-	while p do
-		if p.Name == "Upgrades" then
-			return true
-		end
-		p = p.Parent
-	end
-	return false
-end
-
-local function punchShopIconHole(host: GuiObject)
-	if host:GetAttribute("IconFxHolePunched") == true then
-		return
-	end
-	local w = host.AbsoluteSize.X
-	if w < 8 then
-		return
-	end
-	host:SetAttribute("IconFxHolePunched", true)
-	host.BackgroundTransparency = 1
-	host.ClipsDescendants = false
-	local row = host.Parent
-	if not (row and row:IsA("GuiObject")) then
-		return
-	end
-	row.ClipsDescendants = false
-	local container = row.Parent
-	if container and container:IsA("GuiObject") then
-		container.ClipsDescendants = false
-	end
-	-- Full-bleed card chrome would cover world particles; start it after the icon.
-	for _, child in row:GetChildren() do
-		if child == host or not child:IsA("GuiObject") then
-			continue
-		end
-		local n = child.Name
-		if n ~= "Decor" and n ~= "BG" and n ~= "Highlight" and n ~= "Shadow" then
-			continue
-		end
-		if child.Size.X.Scale < 0.9 then
-			continue
-		end
-		if child:GetAttribute("IconFxHoleInset") == true then
-			continue
-		end
-		child:SetAttribute("IconFxHoleInset", true)
-		child.Position = UDim2.new(0, w, child.Position.Y.Scale, child.Position.Y.Offset)
-		child.Size = UDim2.new(1, -w, child.Size.Y.Scale, child.Size.Y.Offset)
-	end
-end
-
 local function clearFxProxy(host: GuiObject)
 	local conn = proxyConns[host]
 	if conn then
@@ -126,62 +147,10 @@ local function clearFxProxy(host: GuiObject)
 		part:Destroy()
 		proxyParts[host] = nil
 	end
-	shopOverlays[host] = nil
-	shopViewports[host] = nil
-end
-
-local function ensureShopOverlayGui(): ScreenGui?
-	if shopOverlayGui and shopOverlayGui.Parent then
-		return shopOverlayGui
-	end
-	local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
-	if not pg then
-		return nil
-	end
-	-- Destroy leftover BillboardGui from older builds (DisplayOrder is invalid on it).
-	local stale = pg:FindFirstChild("GearShopIconOverlay")
-	if stale and not stale:IsA("ScreenGui") then
-		stale:Destroy()
-	end
-	local existing = pg:FindFirstChild("GearShopIconOverlay")
-	if existing and existing:IsA("ScreenGui") then
-		shopOverlayGui = existing
-		return existing
-	end
-	local sg = Instance.new("ScreenGui")
-	sg.Name = "GearShopIconOverlay"
-	sg.ResetOnSpawn = false
-	sg.IgnoreGuiInset = true
-	sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	sg.DisplayOrder = SHOP_BB_ORDER
-	sg.Parent = pg
-	shopOverlayGui = sg
-	return sg
-end
-
-local function syncShopViewport(host: GuiObject, vf: ViewportFrame)
-	local inset = GuiService:GetGuiInset()
-	vf.AnchorPoint = Vector2.new(0, 0)
-	vf.Position = UDim2.fromOffset(host.AbsolutePosition.X + inset.X, host.AbsolutePosition.Y + inset.Y)
-	vf.Size = UDim2.fromOffset(math.max(host.AbsoluteSize.X, 8), math.max(host.AbsoluteSize.Y, 8))
-end
-
-local function ensureShopOverlay(host: GuiObject, vf: ViewportFrame): ScreenGui?
-	local sg = ensureShopOverlayGui()
-	if not sg then
-		return nil
-	end
-	if vf.Parent ~= sg then
-		vf.Parent = sg
-	end
-	syncShopViewport(host, vf)
-	shopOverlays[host] = sg
-	shopViewports[host] = vf
-	return sg
 end
 
 -- Clone the gear's own ParticleEmitters into world space (VF can't draw them).
-local function mountFxProxy(host: GuiObject, sourceModel: Model, vf: ViewportFrame)
+local function mountFxProxy(host: GuiObject, sourceModel: Model)
 	clearFxProxy(host)
 
 	local emitters: { ParticleEmitter } = {}
@@ -219,7 +188,6 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model, vf: ViewportFra
 	part.Parent = folder
 	proxyParts[host] = part
 
-	-- Shrink authored emitters so they read at icon scale (same textures/colors/settings).
 	local SIZE_MULT = 0.12
 	for _, src in emitters do
 		local e = src:Clone()
@@ -229,23 +197,16 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model, vf: ViewportFra
 		if typeof(e.Size) == "NumberSequence" then
 			e.Size = scaleNumberSequence(e.Size, SIZE_MULT)
 		end
-		-- Keep a gentle trickle even if the asset is burst-only.
 		if e.Rate <= 0 then
 			e.Rate = 8
 		end
 		e.Parent = part
-		-- Mute the VF copy — it can't draw anyway, avoids double work.
 		src.Enabled = false
 		pcall(function()
 			e:Emit(4)
 		end)
 	end
 
-	if isUpgradesHost(host) then
-		ensureShopOverlay(host, vf)
-	end
-
-	local shop = isUpgradesHost(host)
 	proxyConns[host] = RunService.RenderStepped:Connect(function()
 		if not host.Parent or not part.Parent then
 			clearFxProxy(host)
@@ -255,15 +216,10 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model, vf: ViewportFra
 		if not camera then
 			return
 		end
-		local overlayVf = shopViewports[host]
 		if not host.Visible or host.AbsoluteSize.X < 2 or host.AbsoluteSize.Y < 2 then
 			part.CFrame = CFrame.new(0, -1e6, 0)
-			if overlayVf then
-				overlayVf.Visible = false
-			end
 			return
 		end
-		-- Hide when ancestor ScreenGui/frame is invisible.
 		local vis = true
 		local p: Instance? = host
 		while p do
@@ -278,27 +234,14 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model, vf: ViewportFra
 		end
 		if not vis then
 			part.CFrame = CFrame.new(0, -1e6, 0)
-			if overlayVf then
-				overlayVf.Visible = false
-			end
 			return
-		end
-
-		if shop then
-			punchShopIconHole(host)
 		end
 
 		local center = host.AbsolutePosition + host.AbsoluteSize * 0.5
 		local ray = camera:ViewportPointToRay(center.X, center.Y)
-		-- Depth tuned so particles sit over the icon, not the world.
 		local depth = 2.4
 		local pos = ray.Origin + ray.Direction.Unit * depth
 		part.CFrame = CFrame.lookAt(pos, pos + camera.CFrame.LookVector, camera.CFrame.UpVector)
-
-		if overlayVf then
-			overlayVf.Visible = true
-			syncShopViewport(host, overlayVf)
-		end
 	end)
 end
 
@@ -337,26 +280,11 @@ local function stopSpin(vf: ViewportFrame)
 	end
 end
 
-local function findMountedViewport(host: GuiObject): ViewportFrame?
-	local existing = host:FindFirstChild(VF_NAME)
-	if existing and existing:IsA("ViewportFrame") then
-		return existing
-	end
-	local overlayVf = shopViewports[host]
-	if overlayVf and overlayVf.Parent then
-		return overlayVf
-	end
-	return nil
-end
-
 function M.clear(host: Instance)
-	local existing: Instance? = nil
 	if host:IsA("GuiObject") then
-		existing = findMountedViewport(host)
 		clearFxProxy(host)
-	else
-		existing = host:FindFirstChild(VF_NAME)
 	end
+	local existing = host:FindFirstChild(VF_NAME)
 	if existing then
 		if existing:IsA("ViewportFrame") then
 			stopSpin(existing)
@@ -372,7 +300,7 @@ function M.clear(host: Instance)
 end
 
 function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size: UDim2? }?): ViewportFrame?
-	local existing = findMountedViewport(host)
+	local existing = host:FindFirstChild(VF_NAME)
 	if existing and existing:IsA("ViewportFrame") and existing:GetAttribute("GearId") == gearId then
 		return existing
 	end
@@ -393,6 +321,7 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	local vf = Instance.new("ViewportFrame")
 	vf.Name = VF_NAME
 	vf.BackgroundTransparency = 1
+	vf.BackgroundColor3 = Color3.fromRGB(12, 14, 22)
 	vf.BorderSizePixel = 0
 	vf.Size = if opts and opts.size then opts.size else UDim2.fromScale(1, 1)
 	vf.Position = UDim2.fromScale(0.5, 0.5)
@@ -400,7 +329,7 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	vf.ZIndex = host.ZIndex + 1
 	vf.Ambient = Color3.fromRGB(230, 235, 255)
 	vf.LightColor = Color3.fromRGB(255, 255, 255)
-	vf.LightDirection = Vector3.new(-0.25, -1, -0.4)
+	vf.LightDirection = Vector3.new(-0.45, -0.85, -0.55)
 	vf:SetAttribute("GearId", gearId)
 	vf.Parent = host
 
@@ -415,23 +344,41 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 			d.CanCollide = false
 			d.Massless = true
 			d.CastShadow = false
-			if d.Transparency >= 1 and d:FindFirstChildWhichIsA("ParticleEmitter", true) then
-				d.Transparency = 0.99
-			end
 		end
 	end
 	clone.Parent = world
 	enableAuthoredFx(clone)
+	revealHiddenMeshes(clone)
 
-	local okBb, bb = pcall(function()
-		local cf, size = clone:GetBoundingBox()
-		return { cf = cf, size = size }
-	end)
-	local size = Vector3.new(2, 2, 2)
-	if okBb and typeof(bb) == "table" and bb.cf and bb.size then
-		clone:PivotTo(clone:GetPivot() - bb.cf.Position)
-		size = bb.size
+	local parts = iconPartList(clone)
+	local center, size = boundsFromParts(parts)
+	if size.Magnitude < 0.05 then
+		local okBb, bb = pcall(function()
+			local cf, sz = clone:GetBoundingBox()
+			return { cf = cf, size = sz }
+		end)
+		if okBb and typeof(bb) == "table" and bb.cf and bb.size then
+			center = bb.cf.Position
+			size = bb.size
+		else
+			center = Vector3.zero
+			size = Vector3.new(2, 2, 2)
+		end
 	end
+	clone:PivotTo(clone:GetPivot() - center)
+
+	-- Longest axis → world X so dumbbells aren't camera-end-on.
+	parts = iconPartList(clone)
+	center, size = boundsFromParts(parts)
+	if size.Z >= size.X and size.Z >= size.Y then
+		clone:PivotTo(CFrame.Angles(0, math.rad(90), 0) * clone:GetPivot())
+	elseif size.Y >= size.X and size.Y >= size.Z then
+		clone:PivotTo(CFrame.Angles(0, 0, math.rad(-90)) * clone:GetPivot())
+	end
+	parts = iconPartList(clone)
+	center, size = boundsFromParts(parts)
+	clone:PivotTo(clone:GetPivot() - center)
+
 	local maxDim = math.max(size.X, size.Y, size.Z, 0.15)
 	local homePivot = clone:GetPivot()
 
@@ -453,29 +400,29 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	lightPart.Parent = world
 
 	local cam = Instance.new("Camera")
-	cam.FieldOfView = 32
+	cam.FieldOfView = 28
 	cam.Parent = vf
 	vf.CurrentCamera = cam
 
-	local distance = maxDim * 1.95
-	local yaw = 0
+	local distance = maxDim * 2.15
+	local shouldRotate = not (opts and opts.rotate == false)
+	-- Hotbar: frozen 3/4 view. Shop: same pose as the spin start.
+	local yaw = math.rad(48)
 
 	local function updateCam()
-		local rot = CFrame.Angles(0, yaw, 0) * CFrame.Angles(math.rad(-16), 0, 0)
-		local camPos = rot:VectorToWorldSpace(Vector3.new(0, maxDim * 0.06, distance))
+		local rot = CFrame.Angles(0, yaw, 0) * CFrame.Angles(math.rad(-18), 0, math.rad(-8))
+		local camPos = rot:VectorToWorldSpace(Vector3.new(0, maxDim * 0.08, distance))
 		cam.CFrame = CFrame.new(camPos, Vector3.zero)
-		clone:PivotTo(CFrame.Angles(0, yaw * 0.4, 0) * homePivot)
+		clone:PivotTo(CFrame.Angles(0, yaw * 0.15, 0) * homePivot)
 	end
 	updateCam()
 
-	-- Re-host authored particle emitters so they can actually render over the icon.
-	mountFxProxy(host, clone, vf)
+	mountFxProxy(host, clone)
 
 	if gearId == 6 then
 		GearRainbowFX.attach(clone)
 	end
 
-	local shouldRotate = not (opts and opts.rotate == false)
 	spinConns[vf] = RunService.RenderStepped:Connect(function(dt)
 		if not vf.Parent then
 			stopSpin(vf)

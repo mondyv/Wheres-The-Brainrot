@@ -11,6 +11,7 @@ M.XP_GAIN_PULSE_ATTR = "XpGainPulse"
 M.LAST_XP_GAIN_ATTR = "LastXpGain"
 M.LEVEL_UP_PULSE_ATTR = "LevelUpPulse"
 M.LEVEL_UP_TO_ATTR = "LevelUpTo"
+M.LAST_LEVEL_CASH_ATTR = "LastLevelRewardCash"
 
 -- Hard cap; Level 200 requirement is 1000 XP.
 M.MAX_LEVEL = 200
@@ -29,13 +30,54 @@ M.XP = {
 }
 M.WORKOUT_XP_EVERY_GAINS = 5
 
+export type LevelRewardKind = "cash" | "lucky_block"
+
 export type LevelReward = {
 	id: number,
-	kind: "cash",
-	amount: number,
+	kind: LevelRewardKind,
+	amount: number?, -- cash only
+	luckyBlockId: string?, -- lucky_block only (LuckyBlockCatalog id)
 	displayAmount: string,
 	displayName: string,
 }
+
+local function cashReward(id: number, amount: number): LevelReward
+	return {
+		id = id,
+		kind = "cash",
+		amount = amount,
+		displayAmount = "+" .. BrainrotEconomy.formatCashShort(amount),
+		displayName = "Cash",
+	}
+end
+
+local function luckyReward(id: number, blockId: string, displayName: string): LevelReward
+	return {
+		id = id,
+		kind = "lucky_block",
+		luckyBlockId = blockId,
+		amount = 0,
+		displayAmount = displayName,
+		displayName = displayName,
+	}
+end
+
+-- Second prize slot: cash most levels; lucky blocks on milestones.
+local function secondRewardForLevel(lv: number): LevelReward
+	if lv % 100 == 0 then
+		return luckyReward(2, "Mythic Lucky Block", "Mythic Block")
+	elseif lv % 50 == 0 then
+		return luckyReward(2, "purple", "Purple Block")
+	elseif lv % 25 == 0 then
+		return luckyReward(2, "neon", "Neon Block")
+	elseif lv % 10 == 0 then
+		return luckyReward(2, "troll", "Troll Block")
+	elseif lv % 5 == 0 then
+		return luckyReward(2, "Starter Lucky Block", "Starter Block")
+	end
+	local cashB = math.floor(12_000 * lv * (lv + 3))
+	return cashReward(2, cashB)
+end
 
 -- XP required to go from `level` → `level + 1` (index = current level).
 local XP_TO_NEXT: { [number]: number } = {
@@ -252,23 +294,32 @@ end
 function M.rewardsForLevel(level: number): { LevelReward }
 	local lv = math.max(1, math.floor(level))
 	local cashA = math.floor(20_000 * lv * lv)
-	local cashB = math.floor(12_000 * lv * (lv + 3))
 	return {
-		{
-			id = 1,
-			kind = "cash",
-			amount = cashA,
-			displayAmount = "+" .. BrainrotEconomy.formatCashShort(cashA),
-			displayName = "Cash",
-		},
-		{
-			id = 2,
-			kind = "cash",
-			amount = cashB,
-			displayAmount = "+" .. BrainrotEconomy.formatCashShort(cashB),
-			displayName = "Cash",
-		},
+		cashReward(1, cashA),
+		secondRewardForLevel(lv),
 	}
+end
+
+function M.totalCashFromRewards(rewards: { LevelReward }): number
+	local total = 0
+	for _, reward in rewards do
+		if reward.kind == "cash" and typeof(reward.amount) == "number" then
+			total += math.max(0, math.floor(reward.amount))
+		end
+	end
+	return total
+end
+
+function M.formatRewardSummary(rewards: { LevelReward }): string
+	local parts = {}
+	for _, reward in rewards do
+		if reward.kind == "cash" then
+			table.insert(parts, reward.displayAmount)
+		else
+			table.insert(parts, reward.displayName)
+		end
+	end
+	return table.concat(parts, "  ·  ")
 end
 
 function M.progressAlpha(xp: number, needed: number): number

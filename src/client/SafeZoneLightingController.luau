@@ -19,24 +19,38 @@ local POLL_INTERVAL = 0.25
 local FADE_INFO = TweenInfo.new(1.45, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
 local CC_LEGACY_NAME = "SafeZoneNightCC"
 
--- Dark nighty fog outside safe zone (readable, not pitch black).
+-- Dark nighty fog outside safe zone (moody, still readable).
 local NIGHT_ATMO = {
-	Density = 0.36,
-	Offset = 0.14,
-	Color = Color3.fromRGB(62, 68, 78),
-	Decay = Color3.fromRGB(72, 78, 88),
-	Glare = 0.06,
-	Haze = 1.55,
+	Density = 0.46,
+	Offset = 0.08,
+	Color = Color3.fromRGB(28, 32, 42),
+	Decay = Color3.fromRGB(18, 20, 28),
+	Glare = 0.02,
+	Haze = 2.05,
 }
 
--- Low-graphics night: slightly thinner fog only (keep the same look).
+-- Low-graphics night: a bit thinner, same dark grade.
 local NIGHT_ATMO_LOW = {
-	Density = 0.3,
-	Offset = 0.16,
-	Color = Color3.fromRGB(62, 68, 78),
-	Decay = Color3.fromRGB(72, 78, 88),
-	Glare = 0.05,
-	Haze = 1.25,
+	Density = 0.38,
+	Offset = 0.1,
+	Color = Color3.fromRGB(34, 38, 48),
+	Decay = Color3.fromRGB(22, 24, 32),
+	Glare = 0.02,
+	Haze = 1.7,
+}
+
+local NIGHT_CC = {
+	Brightness = -0.16,
+	Contrast = 0.14,
+	Saturation = -0.18,
+	TintColor = Color3.fromRGB(168, 178, 210),
+}
+
+local DAY_CC = {
+	Brightness = 0,
+	Contrast = 0,
+	Saturation = 0,
+	TintColor = Color3.fromRGB(255, 255, 255),
 }
 
 -- Faint mist inside safe zone — softens distance so the base isn't crystal-clear
@@ -103,11 +117,26 @@ local function playTween(inst: Instance, props: { [string]: any })
 	return tw
 end
 
-local function cleanupLegacy()
+local function ensureNightCC(): ColorCorrectionEffect
 	local existing = Lighting:FindFirstChild(CC_LEGACY_NAME)
+	if existing and existing:IsA("ColorCorrectionEffect") then
+		return existing
+	end
 	if existing then
 		existing:Destroy()
 	end
+	local cc = Instance.new("ColorCorrectionEffect")
+	cc.Name = CC_LEGACY_NAME
+	cc.Brightness = 0
+	cc.Contrast = 0
+	cc.Saturation = 0
+	cc.TintColor = Color3.fromRGB(255, 255, 255)
+	cc.Enabled = true
+	cc.Parent = Lighting
+	return cc
+end
+
+local function cleanupLegacy()
 	local rays = Lighting:FindFirstChild("SafeZoneSunRays")
 	if rays then
 		rays:Destroy()
@@ -180,6 +209,8 @@ local function applyProfile(night: boolean, instant: boolean?)
 	cancelTweens()
 
 	local goal = if night then (if lowGraphics then NIGHT_ATMO_LOW else NIGHT_ATMO) else safezoneAtmo()
+	local cc = ensureNightCC()
+	local ccGoal = if night then NIGHT_CC else DAY_CC
 
 	if instant then
 		atmo.Density = goal.Density
@@ -188,6 +219,10 @@ local function applyProfile(night: boolean, instant: boolean?)
 		atmo.Decay = goal.Decay
 		atmo.Glare = goal.Glare
 		atmo.Haze = goal.Haze
+		cc.Brightness = ccGoal.Brightness
+		cc.Contrast = ccGoal.Contrast
+		cc.Saturation = ccGoal.Saturation
+		cc.TintColor = ccGoal.TintColor
 		return
 	end
 
@@ -198,6 +233,12 @@ local function applyProfile(night: boolean, instant: boolean?)
 		Decay = goal.Decay,
 		Glare = goal.Glare,
 		Haze = goal.Haze,
+	})
+	playTween(cc, {
+		Brightness = ccGoal.Brightness,
+		Contrast = ccGoal.Contrast,
+		Saturation = ccGoal.Saturation,
+		TintColor = ccGoal.TintColor,
 	})
 end
 

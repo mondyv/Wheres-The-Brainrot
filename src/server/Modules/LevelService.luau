@@ -1,6 +1,7 @@
 -- [ACTIVE] LevelService
 -- Server authority for player XP / level-ups / auto-granted rewards.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
 
@@ -8,6 +9,20 @@ local LevelService = {}
 
 local levelUpRE: RemoteEvent? = nil
 local xpGainRE: RemoteEvent? = nil
+local grantLuckyBlockBF: BindableFunction? = nil
+
+local function resolveGrantLuckyBlock(): BindableFunction?
+	if grantLuckyBlockBF and grantLuckyBlockBF.Parent then
+		return grantLuckyBlockBF
+	end
+	local folder = ServerStorage:FindFirstChild("LuckyBlockInternal")
+	local bf = folder and folder:FindFirstChild("GrantLuckyBlock")
+	if bf and bf:IsA("BindableFunction") then
+		grantLuckyBlockBF = bf
+		return bf
+	end
+	return nil
+end
 
 local function addCash(player: Player, amount: number)
 	local n = math.max(0, math.floor(amount))
@@ -17,6 +32,26 @@ local function addCash(player: Player, amount: number)
 	local c = player:GetAttribute("Cash")
 	local cur = if typeof(c) == "number" then c else 0
 	player:SetAttribute("Cash", cur + n)
+end
+
+local function grantLuckyBlock(player: Player, blockId: string): boolean
+	local bf = resolveGrantLuckyBlock()
+	if not bf then
+		warn("[LevelService] GrantLuckyBlock missing — skipping lucky block reward")
+		return false
+	end
+	local ok, success = pcall(function()
+		return bf:Invoke(player, blockId, { equip = true })
+	end)
+	if not ok then
+		warn("[LevelService] GrantLuckyBlock error:", success)
+		return false
+	end
+	if success ~= true then
+		warn("[LevelService] GrantLuckyBlock returned false for", blockId)
+		return false
+	end
+	return true
 end
 
 local function syncAttrs(player: Player, level: number, xp: number)
@@ -47,13 +82,29 @@ function LevelService.applyLoaded(player: Player, level: number?, xp: number?)
 	syncAttrs(player, lv, x)
 end
 
-local function grantLevelRewards(player: Player, newLevel: number)
+local function grantLevelRewards(player: Player, newLevel: number): { LevelConfig.LevelReward }
 	local rewards = LevelConfig.rewardsForLevel(newLevel)
+	local cashTotal = 0
 	for _, reward in rewards do
 		if reward.kind == "cash" then
-			addCash(player, reward.amount)
+			local amt = if typeof(reward.amount) == "number" then reward.amount else 0
+			addCash(player, amt)
+			cashTotal += math.max(0, math.floor(amt))
+		elseif reward.kind == "lucky_block" then
+			local blockId = reward.luckyBlockId
+			if typeof(blockId) == "string" and blockId ~= "" then
+				if not grantLuckyBlock(player, blockId) then
+					-- Soft fallback so the level-up still feels rewarding.
+					local fallback = math.max(50_000, math.floor(8_000 * newLevel * newLevel))
+					addCash(player, fallback)
+					cashTotal += fallback
+					warn("[LevelService] lucky block grant failed; gave cash fallback", fallback)
+				end
+			end
 		end
 	end
+	player:SetAttribute(LevelConfig.LAST_LEVEL_CASH_ATTR, cashTotal)
+	return rewards
 end
 
 function LevelService.addXp(player: Player, amount: number, _reason: string?): number
@@ -69,6 +120,7 @@ function LevelService.addXp(player: Player, amount: number, _reason: string?): n
 	local xp = LevelService.readXp(player) + gain
 	local leveled = false
 	local reached = level
+	local lastRewards: { LevelConfig.LevelReward }? = nil
 
 	-- Cap at MAX_LEVEL; ignore leftover XP once capped.
 	local guard = 0
@@ -82,7 +134,7 @@ function LevelService.addXp(player: Player, amount: number, _reason: string?): n
 		level += 1
 		reached = level
 		leveled = true
-		grantLevelRewards(player, level)
+		lastRewards = grantLevelRewards(player, level)
 	end
 	if level >= LevelConfig.MAX_LEVEL then
 		level = LevelConfig.MAX_LEVEL
@@ -102,8 +154,9 @@ function LevelService.addXp(player: Player, amount: number, _reason: string?): n
 		player:SetAttribute(LevelConfig.LEVEL_UP_TO_ATTR, reached)
 		local up = player:GetAttribute(LevelConfig.LEVEL_UP_PULSE_ATTR)
 		player:SetAttribute(LevelConfig.LEVEL_UP_PULSE_ATTR, (if typeof(up) == "number" then up else 0) + 1)
+		local rewards = lastRewards or LevelConfig.rewardsForLevel(reached)
 		if levelUpRE then
-			levelUpRE:FireClient(player, reached, LevelConfig.rewardsForLevel(reached))
+			levelUpRE:FireClient(player, reached, rewards)
 		end
 	end
 

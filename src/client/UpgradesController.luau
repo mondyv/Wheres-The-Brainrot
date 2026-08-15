@@ -756,7 +756,7 @@ local function updatePowerLabel(opts: { target: number?, instant: boolean? }?)
 	local function applyText(n: number)
 		local text = formatPower(n)
 		if edited then
-			text ..= " (Edited)"
+			text ..= " ✏"
 		end
 		powerAmountLabel.Text = text
 	end
@@ -950,6 +950,20 @@ local function captureEditBarFullSize(bar: GuiObject)
 	bar:SetAttribute("EditBarFullCaptured", true)
 end
 
+-- Studio slider sits at the last (100%) position — that pose is the max, not Scale=1.
+local function captureEditSliderMax(knob: GuiObject)
+	if knob:GetAttribute("EditSliderMaxCaptured") == true then
+		return
+	end
+	knob:SetAttribute("EditSliderMaxXScale", knob.Position.X.Scale)
+	knob:SetAttribute("EditSliderMaxXOffset", knob.Position.X.Offset)
+	knob:SetAttribute("EditSliderYScale", knob.Position.Y.Scale)
+	knob:SetAttribute("EditSliderYOffset", knob.Position.Y.Offset)
+	knob:SetAttribute("EditSliderAnchorX", knob.AnchorPoint.X)
+	knob:SetAttribute("EditSliderAnchorY", knob.AnchorPoint.Y)
+	knob:SetAttribute("EditSliderMaxCaptured", true)
+end
+
 local function restoreEditBarFullSize(bar: GuiObject)
 	captureEditBarFullSize(bar)
 	local xs = (bar:GetAttribute("EditBarFullXScale") :: number?) or 0
@@ -957,6 +971,18 @@ local function restoreEditBarFullSize(bar: GuiObject)
 	local ys = (bar:GetAttribute("EditBarFullYScale") :: number?) or bar.Size.Y.Scale
 	local yo = (bar:GetAttribute("EditBarFullYOffset") :: number?) or bar.Size.Y.Offset
 	bar.Size = UDim2.new(xs, xo, ys, yo)
+end
+
+local function restoreEditSliderMax(knob: GuiObject)
+	captureEditSliderMax(knob)
+	local xs = (knob:GetAttribute("EditSliderMaxXScale") :: number?) or knob.Position.X.Scale
+	local xo = (knob:GetAttribute("EditSliderMaxXOffset") :: number?) or knob.Position.X.Offset
+	local ys = (knob:GetAttribute("EditSliderYScale") :: number?) or knob.Position.Y.Scale
+	local yo = (knob:GetAttribute("EditSliderYOffset") :: number?) or knob.Position.Y.Offset
+	local ax = (knob:GetAttribute("EditSliderAnchorX") :: number?) or knob.AnchorPoint.X
+	local ay = (knob:GetAttribute("EditSliderAnchorY") :: number?) or knob.AnchorPoint.Y
+	knob.AnchorPoint = Vector2.new(ax, ay)
+	knob.Position = UDim2.new(xs, xo, ys, yo)
 end
 
 local function setEditProgressVisual(alpha: number)
@@ -980,8 +1006,15 @@ local function setEditProgressVisual(alpha: number)
 	end
 	local knob = buttons:FindFirstChild("Slider")
 	if knob and knob:IsA("GuiObject") then
-		knob.AnchorPoint = Vector2.new(0.5, knob.AnchorPoint.Y)
-		knob.Position = UDim2.new(alpha, 0, knob.Position.Y.Scale, knob.Position.Y.Offset)
+		captureEditSliderMax(knob)
+		local xs = (knob:GetAttribute("EditSliderMaxXScale") :: number?) or 0
+		local xo = (knob:GetAttribute("EditSliderMaxXOffset") :: number?) or 0
+		local ys = (knob:GetAttribute("EditSliderYScale") :: number?) or knob.Position.Y.Scale
+		local yo = (knob:GetAttribute("EditSliderYOffset") :: number?) or knob.Position.Y.Offset
+		local ax = (knob:GetAttribute("EditSliderAnchorX") :: number?) or knob.AnchorPoint.X
+		local ay = (knob:GetAttribute("EditSliderAnchorY") :: number?) or knob.AnchorPoint.Y
+		knob.AnchorPoint = Vector2.new(ax, ay)
+		knob.Position = UDim2.new(xs * alpha, xo * alpha, ys, yo)
 	end
 	setEditPowerLabels(math.floor(alpha * editMaxPower + 0.5))
 end
@@ -1030,6 +1063,7 @@ local function wireEditPowerFrame(frame: Frame)
 		bar.Active = true
 	end
 	if knob and knob:IsA("GuiObject") then
+		captureEditSliderMax(knob)
 		knob.Active = true
 	end
 
@@ -1258,10 +1292,14 @@ local function openEditBar(_main: ScreenGui)
 		end
 		local buttons = editFrame:FindFirstChild("Buttons")
 		local bar = buttons and buttons:FindFirstChild("Progress bar")
+		local knob = buttons and buttons:FindFirstChild("Slider")
 		if bar and bar:IsA("GuiObject") then
 			restoreEditBarFullSize(bar)
 			editFrame:SetAttribute("EditTrackWidth", math.max(bar.AbsoluteSize.X, 1))
 			editFrame:SetAttribute("EditTrackLeft", bar.AbsolutePosition.X)
+		end
+		if knob and knob:IsA("GuiObject") then
+			restoreEditSliderMax(knob)
 		end
 		setEditProgressVisual(alpha)
 	end)
@@ -1289,22 +1327,29 @@ local function init()
 	updatePowerLabel()
 	local powerFrame = counters:FindFirstChild("Power")
 	if powerFrame then
-		-- Remove old code-made Edit if Studio now has one (or leave Studio-only).
-		local made = powerFrame:FindFirstChild("Edit")
-		if made and made:IsA("TextButton") and made:GetAttribute("StudioEdit") ~= true then
-			-- Keep only if no other edit control exists; otherwise destroy fake.
-			local studioEdit = powerFrame:FindFirstChild("EditButton") or powerFrame:FindFirstChild("Edit Power")
-			if studioEdit then
-				made:Destroy()
-			end
+		local fakeEdit = powerFrame:FindFirstChild("Edit")
+		if fakeEdit and fakeEdit:IsA("TextButton") and fakeEdit.Text == "Edit" then
+			fakeEdit:Destroy()
+		end
+		local function openPowerEdit()
+			openEditBar(main)
 		end
 		local editBtn = ensureEditButton(powerFrame)
 		if editBtn then
-			UIButtonEffects.wireScaleButtonAnim(editBtn, function()
-				openEditBar(main)
+			UIButtonEffects.wireScaleButtonAnim(editBtn, openPowerEdit)
+		end
+		-- Pencil on the amount is the edited marker; tap the chip to open Studio Edit Power.
+		if powerFrame:IsA("GuiButton") then
+			UIButtonEffects.wireScaleButtonAnim(powerFrame, openPowerEdit)
+		elseif powerFrame:IsA("GuiObject") then
+			powerFrame.InputBegan:Connect(function(input)
+				if
+					input.UserInputType == Enum.UserInputType.MouseButton1
+					or input.UserInputType == Enum.UserInputType.Touch
+				then
+					openPowerEdit()
+				end
 			end)
-		else
-			warn("[UpgradesController] No Studio Edit button under SideUI.Counters.Power")
 		end
 	end
 

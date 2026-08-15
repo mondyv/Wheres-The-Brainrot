@@ -419,20 +419,18 @@ local function setNamedVisible(host: Instance?, names: { string }, visible: bool
 	end
 end
 
-local function setLabelPair(host: Instance?, primaryName: string, shadowName: string?, text: string, maxSize: number?)
+local function setLabelPair(host: Instance?, primaryName: string, shadowName: string?, text: string, _maxSize: number?)
 	if not host then
 		return
 	end
 	local primary = host:FindFirstChild(primaryName)
 	if primary and (primary:IsA("TextLabel") or primary:IsA("TextButton")) then
-		lockStudioTextSize(primary :: TextLabel, maxSize)
 		local primaryLabel = primary :: TextLabel
 		primaryLabel.Text = text
 	end
 	if shadowName then
 		local shadow = host:FindFirstChild(shadowName)
 		if shadow and (shadow:IsA("TextLabel") or shadow:IsA("TextButton")) then
-			lockStudioTextSize(shadow :: TextLabel, maxSize)
 			local shadowLabel = shadow :: TextLabel
 			shadowLabel.Text = text
 		end
@@ -447,8 +445,12 @@ local function applyPrizeButton(btn: Instance?, prizeIndex: number, reward: Leve
 	if not btn or not btn:IsA("GuiObject") then
 		return
 	end
-	-- Studio owns all prize text. Only swap icons + checkmarks.
+	-- Fill Studio placeholder text only — do not change size/font.
 	if reward then
+		local nameKey = "Prize " .. tostring(prizeIndex) .. " name"
+		local shadowKey = "Prize " .. tostring(prizeIndex) .. " name shadow"
+		setLabelPair(btn, nameKey, shadowKey, reward.displayAmount)
+		setLabelPair(btn, "Name", nil, reward.displayAmount)
 		local iconNames = {
 			"Prize " .. tostring(prizeIndex) .. " icon",
 			"Icon",
@@ -566,80 +568,20 @@ local function ensureProgressLabels(progress: Instance): (TextLabel?, TextLabel?
 		end
 	end
 
-	-- Studio placeholders may be missing as TextLabels — create them once on ProgressXP.
-	if not xpLabel then
-		local made = Instance.new("TextLabel")
-		made.Name = "XpProgressText"
-		made.BackgroundTransparency = 1
-		made.AnchorPoint = Vector2.new(0, 0.5)
-		made.Position = UDim2.new(0, 8, 0.5, 0)
-		made.Size = UDim2.fromOffset(120, 22)
-		made.TextXAlignment = Enum.TextXAlignment.Left
-		made.TextColor3 = Color3.new(1, 1, 1)
-		made.ZIndex = 5
-		made.Parent = progress
-		UiFonts.applyBodyLabel(made, 16, 12)
-		lockStudioTextSize(made)
-		xpLabel = made
-	end
-	if not lvlLabel then
-		local made = Instance.new("TextLabel")
-		made.Name = "LvlProgressText"
-		made.BackgroundTransparency = 1
-		made.AnchorPoint = Vector2.new(1, 0.5)
-		made.Position = UDim2.new(1, -8, 0.5, 0)
-		made.Size = UDim2.fromOffset(90, 22)
-		made.TextXAlignment = Enum.TextXAlignment.Right
-		made.TextColor3 = Color3.new(1, 1, 1)
-		made.ZIndex = 5
-		made.Parent = progress
-		UiFonts.applyBodyLabel(made, 16, 12)
-		lockStudioTextSize(made)
-		lvlLabel = made
-	end
 	return xpLabel, lvlLabel
 end
 
-local function refreshProgressXpLabels(progress: Instance?, xp: number, needed: number, level: number, animate: boolean?)
+local function refreshProgressXpLabels(progress: Instance?, xp: number, needed: number, nextLevel: number)
 	if not progress then
 		return
 	end
 	local xpText = string.format("%d/%dxp", math.floor(xp), math.floor(needed))
-	local lvlText = "LVL " .. tostring(level)
+	local lvlText = "LVL " .. tostring(nextLevel)
 	local xpLabel, lvlLabel = ensureProgressLabels(progress)
 	if xpLabel then
-		lockStudioTextSize(xpLabel)
-		if animate and xpLabel.Text ~= xpText then
-			xpAnimToken += 1
-			local token = xpAnimToken
-			local proxy = Instance.new("NumberValue")
-			local startXp = tonumber(string.match(xpLabel.Text, "^(%d+)")) or 0
-			proxy.Value = startXp
-			local conn = proxy:GetPropertyChangedSignal("Value"):Connect(function()
-				if token ~= xpAnimToken then
-					return
-				end
-				xpLabel.Text = string.format("%d/%dxp", math.floor(proxy.Value + 0.5), math.floor(needed))
-			end)
-			local tw = TweenService:Create(
-				proxy,
-				TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Value = xp }
-			)
-			tw:Play()
-			tw.Completed:Connect(function()
-				conn:Disconnect()
-				proxy:Destroy()
-				if token == xpAnimToken then
-					xpLabel.Text = xpText
-				end
-			end)
-		else
-			xpLabel.Text = xpText
-		end
+		xpLabel.Text = xpText
 	end
 	if lvlLabel then
-		lockStudioTextSize(lvlLabel)
 		lvlLabel.Text = lvlText
 	end
 end
@@ -657,6 +599,9 @@ local function refreshLevelInfo(animateBar: boolean?)
 	local rewardsRoot = levelFrame:FindFirstChild("Rewards")
 	local main = rewardsRoot and rewardsRoot:FindFirstChild("Main")
 	if main then
+		setLabelPair(main, "Player Name For Profile", "Player Name For Profile Shadow", player.DisplayName)
+		local levelText = "Level " .. tostring(browseLevel)
+		setLabelPair(main, "Player level for profile", "Player Level For Profile Shadow", levelText)
 		local icon = main:FindFirstChild("Player Icon")
 		if icon and icon:IsA("ImageLabel") then
 			loadPfp(icon)
@@ -670,12 +615,18 @@ local function refreshLevelInfo(animateBar: boolean?)
 		captureBarFullSize(fillGui)
 	end
 	local doAnim = animateBar == true
+	local nextLevel = math.min(browseLevel + 1, LevelConfig.MAX_LEVEL)
 	if browseLevel == playerLevel then
 		setProgressFill(fillGui, LevelConfig.progressAlpha(playerXp, playerNeeded), doAnim, "panel")
+		refreshProgressXpLabels(progress, playerXp, playerNeeded, nextLevel)
 	elseif browseLevel < playerLevel then
+		local needed = LevelConfig.xpRequiredForLevel(browseLevel)
 		setProgressFill(fillGui, 1, false, "panel")
+		refreshProgressXpLabels(progress, needed, needed, nextLevel)
 	else
+		local needed = LevelConfig.xpRequiredForLevel(browseLevel)
 		setProgressFill(fillGui, 0, false, "panel")
+		refreshProgressXpLabels(progress, 0, needed, nextLevel)
 	end
 
 	local buttons = levelFrame:FindFirstChild("Buttons")

@@ -120,11 +120,42 @@ local function resolveSpiderSpawn(playerPos: Vector3): Vector3
 	return playerPos + Vector3.new(C.SPIDER_MIN_PLAYER_DISTANCE, 2, 0)
 end
 
--- Tsunami behind the player, rolling toward safezone (never map-center / off-screen).
-local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
-	local safeCenter = SafezoneUtil.getSafezoneCenter() or playerPos
-	local toSafe = flatUnitXZ(playerPos, safeCenter)
-	local spawnPos = playerPos - toSafe * C.WAVE_SPAWN_BEHIND_PLAYER
+-- Average of Land1–10 — fixed mid-map origin (never behind the player).
+local function resolveMapCenter(): Vector3
+	local map = Workspace:FindFirstChild("Map")
+	local lands = map and map:FindFirstChild("Lands")
+	if lands then
+		local sum = Vector3.zero
+		local n = 0
+		for i = 1, 10 do
+			local folder = lands:FindFirstChild("Land" .. tostring(i))
+			if folder then
+				local part: BasePart? = nil
+				if folder:IsA("Model") then
+					part = (folder :: Model).PrimaryPart
+				end
+				if not part then
+					part = folder:FindFirstChildWhichIsA("BasePart", true)
+				end
+				if part then
+					sum += part.Position
+					n += 1
+				end
+			end
+		end
+		if n > 0 then
+			return sum / n
+		end
+	end
+	return SafezoneUtil.getSafezoneCenter() or Vector3.zero
+end
+
+-- Fixed corridor: mid-map → safezone. Wave never tracks the player.
+local function computeTsunamiCorridor(_playerPos: Vector3): (Vector3, Vector3)
+	local mapCenter = resolveMapCenter()
+	local safeCenter = SafezoneUtil.getSafezoneCenter() or mapCenter
+	local toSafe = flatUnitXZ(mapCenter, safeCenter)
+	local spawnPos = mapCenter - toSafe * C.WAVE_SPAWN_BACK_FROM_CENTER
 	return spawnPos, toSafe
 end
 
@@ -189,17 +220,25 @@ local function stabilizeSpider(model: Model)
 end
 
 local function enableWaveFx(root: Instance, emitBurst: boolean, playAudio: boolean)
+	-- Keep light: never mass-Emit or mass-Play — that freezes when Wave Web is dense.
+	local emitted = 0
 	for _, d in root:GetDescendants() do
-		if d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") or d:IsA("Fire") or d:IsA("Smoke") then
+		if d:IsA("ParticleEmitter") then
+			d.Enabled = true
+			if emitBurst and emitted < 6 then
+				emitted += 1
+				pcall(function()
+					d:Emit(math.clamp(d:GetAttribute("EmitCount") or 6, 2, 10))
+				end)
+			end
+		elseif d:IsA("Beam") or d:IsA("Trail") then
 			(d :: any).Enabled = true
-		end
-		if emitBurst and d:IsA("ParticleEmitter") then
+		elseif playAudio and d:IsA("Sound") and emitted == 0 then
+			-- One sound max on spawn.
+			emitted = 1
 			pcall(function()
-				d:Emit(math.clamp(d:GetAttribute("EmitCount") or 12, 4, 32))
+				d:Play()
 			end)
-		end
-		if playAudio and d:IsA("Sound") then
-			d:Play()
 		end
 	end
 end
@@ -290,13 +329,16 @@ local function prepareWaveModel(model: Model)
 			d.CanCollide = false
 			d.CanQuery = false
 			d.CanTouch = false
-			d.CastShadow = true
+			-- Huge web + shadows = freezes; mesh still reads fine without them.
+			d.CastShadow = false
 		elseif d:IsA("ParticleEmitter") then
+			-- Cap rates so authored dense VFX cannot nuke the client.
+			d.Rate = math.min(d.Rate, 12)
 			d.Enabled = true
-		elseif d:IsA("Beam") then
-			d.Enabled = true
-		elseif d:IsA("Trail") then
-			d.Enabled = true
+		elseif d:IsA("Beam") or d:IsA("Trail") then
+			(d :: any).Enabled = true
+		elseif d:IsA("Sound") then
+			d.Playing = false
 		end
 	end
 end
@@ -310,20 +352,16 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 		warn("[WaveWebChaseController] EssentialAssets['Wave Web'] missing")
 		return nil
 	end
-	local wave = cloneAsModel(src, "WaveWebChase")
-	if not wave then
+	local ok, waveOrErr = pcall(function()
+		return cloneAsModel(src, "WaveWebChase")
+	end)
+	if not ok or not waveOrErr then
+		warn("[WaveWebChaseController] Wave Web clone failed:", waveOrErr)
 		return nil
 	end
+	local wave = waveOrErr :: Model
 	prepareWaveModel(wave)
-	local scale = C.WAVE_SCALE
-	if typeof(scale) == "number" and scale > 0 and scale ~= 1 then
-		local okScale, errScale = pcall(function()
-			wave:ScaleTo(scale)
-		end)
-		if not okScale then
-			warn("[WaveWebChaseController] ScaleTo failed:", errScale)
-		end
-	end
+	-- Intentionally never ScaleTo — Wave Web at 2x+ hard-crashes many clients.
 	local spawnPos, forward = computeTsunamiCorridor(playerPos)
 	local gy = groundYAt(spawnPos.X, spawnPos.Z, playerPos.Y) + 2
 	local pos = Vector3.new(spawnPos.X, gy, spawnPos.Z)
@@ -332,7 +370,8 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	activeWave = wave
 	waveTravelPos = pos
 	waveForward = forward
-	enableWaveFx(wave, true, true)
+	-- One light FX pass only (no mass Emit / no mass audio).
+	enableWaveFx(wave, false, true)
 	return pos, forward
 end
 
@@ -1037,13 +1076,13 @@ local function runIntro(token: number, playerPos: Vector3)
 		return
 	end
 
-	-- Brief look-back at the tsunami spawning behind the player, then hand control back.
+	-- Brief look-back at the mid-map cobweb, then hand control back.
 	local revealStart = os.clock()
-	local revealDur = 1.1
+	local revealDur = 1.0
 	local lookHrp = getHRP()
 	local lookPos = if lookHrp then lookHrp.Position else playerPos
 	local waveSpawn, toSafe = spawnTsunami(lookPos)
-	if not waveSpawn then
+	if not waveSpawn or not toSafe then
 		waveSpawn, toSafe = computeTsunamiCorridor(lookPos)
 	end
 	local waveHintPos = waveSpawn
@@ -1083,6 +1122,7 @@ local function runChase(token: number)
 
 	local hrp0 = getHRP()
 	local playerPos = if hrp0 then hrp0.Position else Vector3.zero
+	-- Wave already spawned mid-map during intro; reuse it.
 	local spawnPos, forward = spawnTsunami(playerPos)
 	if not spawnPos or not forward or not activeWave then
 		warn("[WaveWebChaseController] EssentialAssets['Wave Web'] missing")
@@ -1090,25 +1130,14 @@ local function runChase(token: number)
 	end
 	local wave = activeWave
 
-	local function emitWaveFx()
-		if not activeWave then
-			return
-		end
-		enableWaveFx(activeWave, true, false)
-	end
-
-	emitWaveFx()
-
 	local chaseStart = os.clock()
 	local phase = 0
 	local safezoneTimer = 0
 	local didHideHud = true
-	local lastWaveEmit = 0
 	local escaped = false
 
 	reportWaveStarted()
 
-	-- HUD already hidden at intro start.
 	ensurePostFx()
 	ensureFxGui()
 	showHeartbeat(0.35)
@@ -1119,13 +1148,12 @@ local function runChase(token: number)
 	local smoothPos = wavePos
 	wave:PivotTo(waveFacingCf(wavePos, forward))
 
-	-- Opening rumble when the web appears.
-	pulseCameraShake(1.1, 0.22, token)
+	pulseCameraShake(0.7, 0.16, token)
 
 	if renderConn then
 		renderConn:Disconnect()
 	end
-	-- Heartbeat/chase tick only — do NOT take CameraType.Scriptable.
+	-- Simple chase: mid-map wave rolls toward safezone. Run home or die.
 	renderConn = RunService.Heartbeat:Connect(function(dt)
 		if not chaseActive or token ~= chaseToken then
 			return
@@ -1139,11 +1167,6 @@ local function runChase(token: number)
 
 		phase += dt
 		local pPos = root.Position
-
-		if phase - lastWaveEmit > 0.42 then
-			lastWaveEmit = phase
-			emitWaveFx()
-		end
 
 		if SafezoneUtil.isCharacterInSafezone(character) then
 			safezoneTimer += dt
@@ -1159,21 +1182,19 @@ local function runChase(token: number)
 
 		local elapsed = os.clock() - chaseStart
 		local speed = C.speedForLand(currentLand())
-		-- Mild ramp so it doesn't instantly top out.
 		speed *= 0.9 + 0.1 * math.clamp(elapsed / 8, 0, 1)
 
-		-- Tsunami barrel: fixed mid-map lane toward safezone — never tracks the player.
 		wavePos += forward * speed * dt
+		waveTravelPos = wavePos
 		local gy = groundYAt(wavePos.X, wavePos.Z, pPos.Y) + 2
 		wavePos = Vector3.new(wavePos.X, gy, wavePos.Z)
 
-		local bob = math.sin(phase * 1.35) * 0.85
+		local bob = math.sin(phase * 1.2) * 0.6
 		local targetVisual = wavePos + Vector3.new(0, bob, 0)
 		local blend = 1 - math.exp(-dt * 10)
 		smoothPos = smoothPos:Lerp(targetVisual, blend)
 		wave:PivotTo(waveFacingCf(smoothPos, forward))
 
-		-- Front-plane kill: how far the player is ahead of the wave along travel.
 		local rel = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
 		local along = rel:Dot(forward)
 		local distAhead = math.max(along, 0)
@@ -1182,14 +1203,13 @@ local function runChase(token: number)
 		local pulse = threat * (0.35 + beat * 0.45)
 		showHeartbeat(pulse)
 
-		local shake = 0.06 + pulse * 0.55
+		local shake = 0.05 + pulse * 0.4
 		hum.CameraOffset = Vector3.new(
 			math.sin(phase * 41) * shake,
 			math.cos(phase * 33) * shake * 0.65,
 			math.sin(phase * 27) * shake * 0.35
 		)
 
-		-- Caught when the tsunami front reaches you (map-wide lane — no dodge sideways).
 		if along <= C.WAVE_KILL_DISTANCE then
 			requestKill()
 			chaseActive = false

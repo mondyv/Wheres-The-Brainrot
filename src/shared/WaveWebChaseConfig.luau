@@ -1,8 +1,7 @@
 -- [ACTIVE] WaveWebChaseConfig
 --[[
-	After accepting a bush brainrot: spider intro + Wave Web tsunami chase to safezone.
-	Assets: ReplicatedStorage.EssentialAssets["Wave Web"], EssentialAssets.Spider,
-	EssentialAssets.SpiderVFX (Blow, Spidey senses, Spidey senses human, Shooting Web)
+	After accepting a bush brainrot: spider intro → Wave Web appears mid-map →
+	player runs to safezone. Keep this light — heavy ScaleTo / particle bursts crash clients.
 ]]
 
 local M = {}
@@ -30,22 +29,19 @@ M.SPIDER_YAW_OFFSET = math.pi
 M.SPIDER_MIN_PLAYER_DISTANCE = 22
 M.SPIDER_MAX_PLAYER_DISTANCE = 58
 M.LAND_EDGE_MARGIN = 14
-M.SPIDER_PRELOAD_SEC = 0.45
+M.SPIDER_PRELOAD_SEC = 0.35
 
--- Spawn this far behind the player (opposite safezone) so the wall is on-screen.
-M.WAVE_SPAWN_BEHIND_PLAYER = 56
--- Kill when the tsunami front reaches this far past the player along travel (studs).
-M.WAVE_KILL_DISTANCE = 14
--- Model scale for wall/tsunami presence.
-M.WAVE_SCALE = 2.1
--- Wave Web mesh faces travel at Studio Orientation 0, -90, 0 relative to travel.
+-- Mid-map tsunami: lands centroid, offset away from safezone, then rolls toward base.
+M.WAVE_SPAWN_BACK_FROM_CENTER = 40
+M.WAVE_KILL_DISTANCE = 16
+-- Never ScaleTo the Wave Web mesh — it freezes/crashes Studio & clients.
+M.WAVE_SCALE = 1
 
--- Land-scaled chase speed (studs/sec).
-M.WAVE_SPEED_LAND1 = 28
-M.WAVE_SPEED_LAND10 = 55
+M.WAVE_SPEED_LAND1 = 30
+M.WAVE_SPEED_LAND10 = 52
 
 M.SAFEZONE_CONFIRM_SEC = 0.22
-M.EXCLAMATION_SEC = 1.35
+M.EXCLAMATION_SEC = 1.2
 
 M.BGM_CHASE_SPEED = 0.72
 M.BGM_RESTORE_FADE = 0.65

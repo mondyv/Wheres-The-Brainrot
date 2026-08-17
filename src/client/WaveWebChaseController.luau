@@ -1,7 +1,7 @@
 -- [ACTIVE] WaveWebChaseController
 --[[
 	After every bush brainrot accept: brief delay → spider drop/roar intro →
-	Wave Web tsunami chase toward safezone. HUD hides during chase; red heartbeat vignette.
+	the map-placed Wave Web rolls toward safezone. HUD hides during chase; red heartbeat vignette.
 ]]
 
 local Debris = game:GetService("Debris")
@@ -48,6 +48,8 @@ local blurFx: BlurEffect? = nil
 local exclamationGui: BillboardGui? = nil
 local activeSpider: Model? = nil
 local activeWave: Model? = nil
+local mapWaveRestCf: CFrame? = nil
+local usingMapWave = false
 local waveTravelPos: Vector3? = nil
 local waveForward: Vector3? = nil
 local bgmSpeedSaved: { [Sound]: number } = {}
@@ -150,28 +152,17 @@ local function resolveMapCenter(): Vector3
 	return SafezoneUtil.getSafezoneCenter() or Vector3.zero
 end
 
--- Fixed corridor: mid-map → safezone. Wave never tracks the player.
-local function computeTsunamiCorridor(_playerPos: Vector3): (Vector3, Vector3)
-	local mapCenter = resolveMapCenter()
-	local safeCenter = SafezoneUtil.getSafezoneCenter() or mapCenter
-	local toSafe = flatUnitXZ(mapCenter, safeCenter)
-	local spawnPos = mapCenter - toSafe * C.WAVE_SPAWN_BACK_FROM_CENTER
-	return spawnPos, toSafe
+-- Corridor: map Wave Web rest position → safezone. Wave never tracks the player.
+local function computeTsunamiCorridor(fromPos: Vector3): (Vector3, Vector3)
+	local safeCenter = SafezoneUtil.getSafezoneCenter() or resolveMapCenter()
+	local toSafe = flatUnitXZ(fromPos, safeCenter)
+	return fromPos, toSafe
 end
 
--- Upright facing along chaseDir. Mesh faces you at Studio Orientation 0, -90, 0
--- relative to travel (0, +90 was still sideways the wrong way).
-local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
-	local flat = Vector3.new(chaseDir.X, 0, chaseDir.Z)
-	if flat.Magnitude < 0.05 then
-		flat = Vector3.new(0, 0, -1)
-	else
-		flat = flat.Unit
-	end
-	local travelYaw = math.atan2(-flat.X, -flat.Z)
-	return CFrame.new(pos)
-		* CFrame.fromOrientation(0, travelYaw, 0)
-		* CFrame.fromOrientation(0, math.rad(-90), 0)
+-- Keep the map Wave Web's authored rotation; only translate.
+local function waveAt(pos: Vector3): CFrame
+	local rest = mapWaveRestCf or CFrame.new(pos)
+	return CFrame.new(pos) * (rest - rest.Position)
 end
 
 local function hideChaseHud()
@@ -180,25 +171,6 @@ local function hideChaseHud()
 		hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker", "LandActivityStripGui" },
 		hideMainChildNames = { "TimCheeseQuestHost" },
 	})
-end
-
-local function groundYAt(x: number, z: number, refY: number): number
-	local origin = Vector3.new(x, refY + 80, z)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	local ignore: { Instance } = {}
-	if activeSpider then
-		table.insert(ignore, activeSpider)
-	end
-	if activeWave then
-		table.insert(ignore, activeWave)
-	end
-	params.FilterDescendantsInstances = ignore
-	local hit = Workspace:Raycast(origin, Vector3.new(0, -220, 0), params)
-	if hit then
-		return hit.Position.Y
-	end
-	return refY
 end
 
 local function stabilizeSpider(model: Model)
@@ -243,51 +215,53 @@ local function enableWaveFx(root: Instance, emitBurst: boolean, playAudio: boole
 	end
 end
 
-local function findWaveTemplate(): Instance?
-	local direct = findAsset(C.WAVE_WEB_PATH)
-	if direct then
-		return direct
-	end
-	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
-	if not assets then
+local function namedWaveIn(parent: Instance?): Instance?
+	if not parent then
 		return nil
 	end
-	for _, folderName in { "OtherVFX", "Events", "SpiderVFX" } do
-		local folder = assets:FindFirstChild(folderName)
-		if folder then
-			local named = folder:FindFirstChild("Wave Web") or folder:FindFirstChild("WaveWeb")
-			if named then
-				return named
-			end
+	for _, name in C.MAP_WAVE_WEB_NAMES do
+		local inst = parent:FindFirstChild(name)
+		if inst then
+			return inst
 		end
 	end
 	return nil
 end
 
-local function cloneAsModel(src: Instance, name: string): Model?
-	local clone = src:Clone()
-	if clone:IsA("Model") then
-		clone.Name = name
-		return clone
+local function asWaveModel(inst: Instance?): Model?
+	if not inst then
+		return nil
 	end
-	local model = Instance.new("Model")
-	model.Name = name
-	clone.Parent = model
-	local part = model:FindFirstChildWhichIsA("BasePart", true)
-	if not part then
-		local anchor = Instance.new("Part")
-		anchor.Name = "Root"
-		anchor.Size = Vector3.new(4, 8, 24)
-		anchor.Transparency = 1
-		anchor.Anchored = true
-		anchor.CanCollide = false
-		anchor.CanQuery = false
-		anchor.CanTouch = false
-		anchor.Parent = model
-		part = anchor
+	if inst:IsA("Model") then
+		return inst
 	end
-	model.PrimaryPart = part
-	return model
+	local nested = inst:FindFirstChildWhichIsA("Model")
+	if nested then
+		return nested
+	end
+	return nil
+end
+
+-- The Wave Web already placed in the map (mid-map tsunami). Never clone RS EssentialAssets.
+local function findMapWave(): Model?
+	local map = Workspace:FindFirstChild("Map")
+	local found = asWaveModel(namedWaveIn(Workspace))
+		or asWaveModel(namedWaveIn(map))
+		or asWaveModel(namedWaveIn(map and map:FindFirstChild("Lands")))
+		or asWaveModel(namedWaveIn(map and map:FindFirstChild("Environment")))
+		or asWaveModel(namedWaveIn(map and map:FindFirstChild("Props")))
+	if found then
+		return found
+	end
+	if map then
+		for _, child in map:GetChildren() do
+			found = asWaveModel(namedWaveIn(child))
+			if found then
+				return found
+			end
+		end
+	end
+	return nil
 end
 
 local function spiderHostPart(spider: Model): BasePart?
@@ -315,62 +289,28 @@ local function playScreechVfx(spider: Model, landPos: Vector3)
 	SpiderSenseFx.playNamedAt(C.SPIDER_BLOW_VFX_NAME, CFrame.new(landPos + Vector3.new(0, 1.2, 0)), 1.6)
 end
 
-local function prepareWaveModel(model: Model)
-	local primary = model.PrimaryPart
-	if not primary then
-		primary = model:FindFirstChildWhichIsA("BasePart", true)
-		if primary then
-			model.PrimaryPart = primary
-		end
-	end
-	for _, d in model:GetDescendants() do
-		if d:IsA("BasePart") then
-			d.Anchored = true
-			d.CanCollide = false
-			d.CanQuery = false
-			d.CanTouch = false
-			-- Huge web + shadows = freezes; mesh still reads fine without them.
-			d.CastShadow = false
-		elseif d:IsA("ParticleEmitter") then
-			-- Cap rates so authored dense VFX cannot nuke the client.
-			d.Rate = math.min(d.Rate, 12)
-			d.Enabled = true
-		elseif d:IsA("Beam") or d:IsA("Trail") then
-			(d :: any).Enabled = true
-		elseif d:IsA("Sound") then
-			d.Playing = false
-		end
-	end
-end
-
-local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
+local function spawnTsunami(_playerPos: Vector3): (Vector3?, Vector3?)
 	if activeWave and activeWave.Parent and waveTravelPos and waveForward then
 		return waveTravelPos, waveForward
 	end
-	local src = findWaveTemplate()
-	if not src then
-		warn("[WaveWebChaseController] EssentialAssets['Wave Web'] missing")
+	local wave = findMapWave()
+	if not wave then
+		warn("[WaveWebChaseController] Map Wave Web missing — will not clone EssentialAssets['Wave Web']")
 		return nil
 	end
-	local ok, waveOrErr = pcall(function()
-		return cloneAsModel(src, "WaveWebChase")
-	end)
-	if not ok or not waveOrErr then
-		warn("[WaveWebChaseController] Wave Web clone failed:", waveOrErr)
-		return nil
+	if not mapWaveRestCf then
+		mapWaveRestCf = wave:GetPivot()
 	end
-	local wave = waveOrErr :: Model
-	prepareWaveModel(wave)
 	-- Intentionally never ScaleTo — Wave Web at 2x+ hard-crashes many clients.
-	local spawnPos, forward = computeTsunamiCorridor(playerPos)
-	local gy = groundYAt(spawnPos.X, spawnPos.Z, playerPos.Y) + 2
-	local pos = Vector3.new(spawnPos.X, gy, spawnPos.Z)
-	wave:PivotTo(waveFacingCf(pos, forward))
-	wave.Parent = Workspace
+	local restPos = mapWaveRestCf.Position
+	local spawnPos, forward = computeTsunamiCorridor(restPos)
+	-- Keep authored height; do not snap the map cobweb to ground.
+	local pos = Vector3.new(spawnPos.X, restPos.Y, spawnPos.Z)
+	wave:PivotTo(waveAt(pos))
 	activeWave = wave
+	usingMapWave = true
 	waveTravelPos = pos
 	waveForward = forward
-	-- One light FX pass only (no mass Emit / no mass audio).
 	enableWaveFx(wave, false, true)
 	return pos, forward
 end
@@ -888,9 +828,14 @@ local function destroyChaseInstances()
 		activeSpider = nil
 	end
 	if activeWave then
-		activeWave:Destroy()
+		if usingMapWave and mapWaveRestCf and activeWave.Parent then
+			activeWave:PivotTo(mapWaveRestCf)
+		elseif not usingMapWave then
+			activeWave:Destroy()
+		end
 		activeWave = nil
 	end
+	usingMapWave = false
 	waveTravelPos = nil
 	waveForward = nil
 end
@@ -1125,7 +1070,7 @@ local function runChase(token: number)
 	-- Wave already spawned mid-map during intro; reuse it.
 	local spawnPos, forward = spawnTsunami(playerPos)
 	if not spawnPos or not forward or not activeWave then
-		warn("[WaveWebChaseController] EssentialAssets['Wave Web'] missing")
+		warn("[WaveWebChaseController] Map Wave Web missing — skipping tsunami")
 		return
 	end
 	local wave = activeWave
@@ -1146,7 +1091,7 @@ local function runChase(token: number)
 
 	local wavePos = waveTravelPos or spawnPos
 	local smoothPos = wavePos
-	wave:PivotTo(waveFacingCf(wavePos, forward))
+	wave:PivotTo(waveAt(wavePos))
 
 	pulseCameraShake(0.7, 0.16, token)
 
@@ -1186,14 +1131,14 @@ local function runChase(token: number)
 
 		wavePos += forward * speed * dt
 		waveTravelPos = wavePos
-		local gy = groundYAt(wavePos.X, wavePos.Z, pPos.Y) + 2
-		wavePos = Vector3.new(wavePos.X, gy, wavePos.Z)
+		local restY = if mapWaveRestCf then mapWaveRestCf.Position.Y else wavePos.Y
+		wavePos = Vector3.new(wavePos.X, restY, wavePos.Z)
 
 		local bob = math.sin(phase * 1.2) * 0.6
 		local targetVisual = wavePos + Vector3.new(0, bob, 0)
 		local blend = 1 - math.exp(-dt * 10)
 		smoothPos = smoothPos:Lerp(targetVisual, blend)
-		wave:PivotTo(waveFacingCf(smoothPos, forward))
+		wave:PivotTo(waveAt(smoothPos))
 
 		local rel = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
 		local along = rel:Dot(forward)

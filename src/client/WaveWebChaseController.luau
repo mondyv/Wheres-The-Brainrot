@@ -222,6 +222,7 @@ end
 local function enableWaveFx(root: Instance, emitBurst: boolean, playAudio: boolean)
 	-- Keep light: never mass-Emit or mass-Play — that freezes when Wave Web is dense.
 	local emitted = 0
+	local playedSound = false
 	for _, d in root:GetDescendants() do
 		if d:IsA("ParticleEmitter") then
 			d.Enabled = true
@@ -233,9 +234,8 @@ local function enableWaveFx(root: Instance, emitBurst: boolean, playAudio: boole
 			end
 		elseif d:IsA("Beam") or d:IsA("Trail") then
 			(d :: any).Enabled = true
-		elseif playAudio and d:IsA("Sound") and emitted == 0 then
-			-- One sound max on spawn.
-			emitted = 1
+		elseif playAudio and d:IsA("Sound") and not playedSound then
+			playedSound = true
 			pcall(function()
 				d:Play()
 			end)

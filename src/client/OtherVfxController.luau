@@ -1363,51 +1363,19 @@ function OtherVfxController.clearLevelUpVfx()
 	end
 end
 
-function OtherVfxController.setWorkoutAuraEnabled(on: boolean)
-	workoutAuraEnabled = on == true
-	if not workoutAuraEnabled then
-		destroyWorkoutLines()
-		return
-	end
-	OtherVfxController.clearLevelUpVfx()
-	local character = Players.LocalPlayer.Character
-	if not character then
-		return
-	end
-	if activeWorkoutLinesRoot and activeWorkoutLinesRoot.Parent then
-		applyWorkoutLinesState()
-		return
-	end
-
-	local clone = cloneLevelUpTemplate()
-	if not clone then
-		return
-	end
-	clone.Name = "WorkoutLinesVfx"
-	disableAllFx(clone)
-	pruneToLinesOnly(clone)
-
+--- Workout body VFX disabled — only real level-ups play the Level Up template.
+function OtherVfxController.setWorkoutAuraEnabled(_on: boolean)
+	workoutAuraEnabled = false
+	destroyWorkoutLines()
 	local folder = Workspace:FindFirstChild("WorkoutLinesVfxWorld")
-	if not (folder and folder:IsA("Folder")) then
-		folder = Instance.new("Folder")
-		folder.Name = "WorkoutLinesVfxWorld"
-		folder.Parent = Workspace
+	if folder then
+		folder:Destroy()
 	end
-	clone.Parent = folder
-	if not weldCloneToCharacter(clone, character) then
-		clone:Destroy()
-		return
-	end
-	activeWorkoutLinesRoot = clone
-	applyWorkoutLinesState()
 end
 
---- One-shot body VFX. Skipped while working out so curls only show looping Lines.
+--- One-shot body VFX on real level-ups (including mid-workout).
 function OtherVfxController.playLevelUpOnCharacter(character: Model)
 	if not character or not character.Parent then
-		return
-	end
-	if Players.LocalPlayer:GetAttribute("WorkoutActive") == true then
 		return
 	end
 

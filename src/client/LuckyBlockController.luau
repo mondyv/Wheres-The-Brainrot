@@ -80,6 +80,50 @@ local function isLuckyBlockTool(tool: Instance): boolean
 	return tool:IsA("Tool") and tool:GetAttribute("LuckyBlockTool") == true
 end
 
+-- SoundService.SoundEffects["Luckyblock sfx"] child names.
+local LUCKY_HOLD_SFX_BY_KIND: { [string]: string } = {
+	["Starter Lucky Block"] = "Starter Block",
+	["troll"] = "Troll Block",
+	["neon"] = "Neon Block",
+	["1"] = "Neon Block",
+	["Mythic Lucky Block"] = "Mythic Block",
+	["purple"] = "Hell Block",
+	["yellow"] = "Yellow Block",
+	["Godly Luckyblock"] = "Godly Block",
+	["heart"] = "Heart Block",
+	["chamber"] = "Galaxy Block",
+	["rainbow"] = "Rainbow Block",
+	["Secret Lucky Block"] = "Secret Block",
+	["star"] = "Star Block",
+	["ruby"] = "Ruby Block",
+	["1 opposite"] = "Secret Block Mutated",
+	["Star-Rainbow"] = "Secret Rainbow Block",
+	["star rainbow"] = "Secret Rainbow Block",
+}
+
+local function resolveLuckyHoldSfxKey(tool: Tool): string?
+	local kind = tool:GetAttribute("LuckyBlockKind")
+	if typeof(kind) == "string" then
+		local mapped = LUCKY_HOLD_SFX_BY_KIND[kind]
+		if mapped then
+			return mapped
+		end
+		local lower = string.lower(kind)
+		for id, sfx in LUCKY_HOLD_SFX_BY_KIND do
+			if string.lower(id) == lower then
+				return sfx
+			end
+		end
+	end
+	-- "Troll Lucky Block" → "Troll Block"
+	local name = tool.Name
+	local stripped = string.gsub(name, " Lucky", "")
+	if stripped ~= "" then
+		return stripped
+	end
+	return nil
+end
+
 local function canOpenLuckyBlockInZone(): boolean
 	local char = player.Character
 	if not char then
@@ -902,7 +946,7 @@ local function animateHopToHead(model: Model, durationSec: number, token: number
 	local function liveGoal(): Vector3
 		local head = char:FindFirstChild("Head")
 		if head and head:IsA("BasePart") then
-			return head.Position + Vector3.new(0, head.Size.Y * 0.55 + 0.35, 0)
+			return head.Position + Vector3.new(0, head.Size.Y * 0.55 + 0.45, 0)
 		end
 		local hrp = getHRP()
 		if hrp then
@@ -912,6 +956,7 @@ local function animateHopToHead(model: Model, durationSec: number, token: number
 	end
 
 	disconnect(hopConn)
+	-- Clean last-moment leap onto the head (no random body orbit).
 	hopConn = RunService.Heartbeat:Connect(function()
 		if token ~= cutsceneToken or not model.Parent then
 			disconnect(hopConn)
@@ -919,18 +964,17 @@ local function animateHopToHead(model: Model, durationSec: number, token: number
 			return
 		end
 		local alpha = math.clamp((os.clock() - t0) / durationSec, 0, 1)
-		local e = 1 - (1 - alpha) ^ 3
+		local e = alpha * alpha * (3 - 2 * alpha)
 		local goalPos = liveGoal()
 		local along = startPos:Lerp(goalPos, e)
-		local hopY = math.sin(alpha * math.pi) * 2.15
+		local hopY = math.sin(alpha * math.pi) * 3.1
 		local pos = along + Vector3.new(0, hopY, 0)
-		local scaleMul = if alpha < 0.4 then (1 - (alpha / 0.4) * 0.18) else (0.82 + (1 - (1 - ((alpha - 0.4) / 0.6)) ^ 2) * 0.18)
+		local scaleMul = 1 - e * 0.12
 		pcall(function()
 			model:ScaleTo(startScale * scaleMul)
 		end)
-		local spin = startYaw + alpha * math.pi * 0.55
-		model:PivotTo(CFrame.new(pos) * CFrame.Angles(0, spin, math.sin(alpha * math.pi) * 0.05))
-		-- Keep camera on the player during hop so it doesn't chase the arc.
+		local spin = startYaw + e * math.pi * 0.35
+		model:PivotTo(CFrame.new(pos) * CFrame.Angles(0, spin, 0))
 		focusPart = nil
 		if alpha >= 1 then
 			disconnect(hopConn)
@@ -1280,11 +1324,13 @@ local function runCutscene(payload: any)
 		if primary then
 			focusPart = primary
 		end
+		-- Floating BrainrotHeader should already be on the reveal (server attach).
 		animateEmerge(reveal, CutsceneConfig.EMERGE_SEC, token)
 		if token ~= cutsceneToken then
 			endCutscene(token)
 			return
 		end
+		-- Short hover so the floating UI reads, then last-moment hop to head.
 		animateHover(reveal, CutsceneConfig.HOVER_SEC, token)
 		if token ~= cutsceneToken then
 			endCutscene(token)
@@ -1342,6 +1388,22 @@ local function bindTool(tool: Tool)
 		return
 	end
 	tool:SetAttribute("__LuckyBlockBound", true)
+
+	-- Hold-out SFX once per equip (not retriggerable by spam-equip within the gate).
+	tool.Equipped:Connect(function()
+		if tool:GetAttribute("__LuckyHoldSfxPlayed") == true then
+			return
+		end
+		tool:SetAttribute("__LuckyHoldSfxPlayed", true)
+		local key = resolveLuckyHoldSfxKey(tool)
+		if key then
+			GameSoundEffects.playLuckyBlockHold(key)
+		end
+	end)
+	tool.Unequipped:Connect(function()
+		tool:SetAttribute("__LuckyHoldSfxPlayed", nil)
+	end)
+
 	tool.Activated:Connect(function()
 		if tool:GetAttribute("LuckyBlockRolling") == true then
 			return

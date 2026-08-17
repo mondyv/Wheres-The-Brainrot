@@ -33,6 +33,7 @@ local BrainrotCarryVisual = require(Shared:WaitForChild("BrainrotCarryVisual"))
 local LuckyBlockCatalog = require(Shared:WaitForChild("LuckyBlockCatalog"))
 local IndexConfig = require(Shared:WaitForChild("IndexConfig"))
 local SafezoneUtil = require(Shared:WaitForChild("SafezoneUtil"))
+local BrainrotHeader = require(Modules:WaitForChild("BrainrotHeader"))
 
 local CUTSCENE_TOTAL_SEC = CutsceneConfig.totalDurationSec()
 local REVEAL_SPAWN_AT_SEC = CutsceneConfig.revealSpawnAtSec()
@@ -658,8 +659,32 @@ local function spawnRevealModel(player: Player, brainrotName: string, nearPos: V
 	pcall(function()
 		BrainrotCarryVisual.applyScaleForLevel(clone, 1)
 	end)
+	local def = Brainrots.getByName and Brainrots.getByName(brainrotName)
+	if not def then
+		for _, d in ipairs(Brainrots.BRAINROTS) do
+			if d.name == brainrotName then
+				def = d
+				break
+			end
+		end
+	end
+	local rarity = if def and typeof(def.rarity) == "string" then def.rarity else "common"
+	local income = if def and typeof(def.baseIncome) == "number" then def.baseIncome else 0
+	clone:SetAttribute("BrainrotRarity", rarity)
+	clone:SetAttribute("BrainrotMutation", "normal")
+	clone:SetAttribute("BrainrotLevel", 1)
+	clone:SetAttribute("BrainrotBaseIncome", income)
 	clone.Parent = ensureRevealFolder()
 	activeReveals[player] = clone
+	pcall(function()
+		BrainrotHeader.attach(clone, {
+			name = brainrotName,
+			rarity = rarity,
+			mutation = "normal",
+			level = 1,
+			incomePerSecond = income,
+		}, { alwaysOnTop = true, studsOffset = Vector3.new(0, 2.4, 0) })
+	end)
 	return clone
 end
 

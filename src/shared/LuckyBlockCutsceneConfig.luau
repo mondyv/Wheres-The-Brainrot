@@ -13,12 +13,12 @@ M.GROUND_SHAKE_SEC = 2.15
 M.BURST_HOLD_SEC = 0.22
 -- Brainrot rises / settles into hover.
 M.EMERGE_SEC = 0.85
--- Hover like bush float offer.
-M.HOVER_SEC = 1.55
--- Arc hop onto the player's head.
-M.HOP_SEC = 0.58
+-- Hover like bush float offer (short — then hop to head).
+M.HOVER_SEC = 0.75
+-- Arc hop onto the player's head (last moment collect).
+M.HOP_SEC = 0.72
 -- Shrink tiny (into inventory feel).
-M.SHRINK_SEC = 0.72
+M.SHRINK_SEC = 0.45
 -- Camera restore after shrink.
 M.CAM_RESTORE_SEC = 0.45
 

@@ -737,4 +737,54 @@ function GameSoundEffects.playSpiderDodge()
 	playSpiderSound(spiderDodgeTemplate)
 end
 
+-- Play once when a lucky block is held out. `sfxKey` is the SoundEffects child name
+-- under SoundService.SoundEffects["Luckyblock sfx"] (e.g. "Troll Block").
+local lastLuckyHoldKey: string? = nil
+local lastLuckyHoldAt = 0.0
+
+function GameSoundEffects.playLuckyBlockHold(sfxKey: string)
+	if ClientSFXVolume.getVolume() <= 0 then
+		return
+	end
+	if typeof(sfxKey) ~= "string" or sfxKey == "" then
+		return
+	end
+	local now = os.clock()
+	-- Hard anti-spam: same key within 0.8s, or any hold within 0.25s.
+	if lastLuckyHoldKey == sfxKey and (now - lastLuckyHoldAt) < 0.8 then
+		return
+	end
+	if (now - lastLuckyHoldAt) < 0.25 then
+		return
+	end
+	lastLuckyHoldKey = sfxKey
+	lastLuckyHoldAt = now
+
+	local root = SoundService:FindFirstChild("SoundEffects")
+	local folder = root and root:FindFirstChild("Luckyblock sfx")
+	if not folder then
+		warn("[GameSoundEffects] SoundEffects['Luckyblock sfx'] missing")
+		return
+	end
+	local template = resolveSoundNode(folder:FindFirstChild(sfxKey))
+	if not template then
+		-- Fuzzy: strip " Lucky" / match start
+		for _, child in folder:GetChildren() do
+			if child:IsA("Sound") or child:IsA("Folder") then
+				local n = string.lower(child.Name)
+				local key = string.lower(sfxKey)
+				if n == key or string.find(n, key, 1, true) or string.find(key, n, 1, true) then
+					template = resolveSoundNode(child)
+					break
+				end
+			end
+		end
+	end
+	if not template then
+		warn("[GameSoundEffects] Luckyblock sfx missing:", sfxKey)
+		return
+	end
+	playTemplate(template)
+end
+
 return GameSoundEffects

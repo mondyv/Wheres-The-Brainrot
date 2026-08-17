@@ -58,6 +58,7 @@ local pendingCashBundlePurchase = false
 
 local powerAmountLabel: TextLabel? = nil
 local lastShownPower = 0
+local pendingWorkoutPower: number? = nil
 local powerTween: Tween? = nil
 local powerProxy: NumberValue? = nil
 local powerBaseColor: Color3? = nil
@@ -748,7 +749,7 @@ local function playPowerGainFlash(amountLabel: TextLabel)
 	cluster:SetAttribute("PowerPulseAt", os.clock())
 end
 
-local function updatePowerLabel(opts: { target: number?, instant: boolean? }?)
+local function updatePowerLabel(opts: { target: number?, instant: boolean?, deferWorkout: boolean? }?)
 	if not powerAmountLabel then
 		return
 	end
@@ -782,10 +783,17 @@ local function updatePowerLabel(opts: { target: number?, instant: boolean? }?)
 		return
 	end
 
+	-- Workout gains wait for the +N floater to land before changing the number.
+	if gained and opts and opts.deferWorkout == true then
+		pendingWorkoutPower = target
+		return
+	end
+
 	if gained or (opts and opts.instant == true) then
 		playPowerGainFlash(powerAmountLabel)
 		lastShownPower = target
 		applyText(target)
+		pendingWorkoutPower = nil
 		return
 	end
 
@@ -815,7 +823,7 @@ local function updatePowerLabel(opts: { target: number?, instant: boolean? }?)
 	powerTween:Play()
 end
 
--- Same signal as the white flash / +N floater — snap the HUD number immediately.
+-- Pulse only stores the pending value — HUD text commits when the +N floater lands.
 local function onWorkoutPowerPulse()
 	if not powerAmountLabel then
 		return
@@ -825,6 +833,17 @@ local function onWorkoutPowerPulse()
 	local actual = WorkoutPower.readPower(player)
 	local predicted = lastShownPower + math.max(0, g)
 	local target = math.max(actual, predicted)
+	if target > lastShownPower + 0.5 then
+		pendingWorkoutPower = target
+	end
+end
+
+local function commitPowerHudFromFloater()
+	local target = pendingWorkoutPower
+	if typeof(target) ~= "number" then
+		target = WorkoutPower.readPower(player)
+	end
+	pendingWorkoutPower = nil
 	updatePowerLabel({ target = target, instant = true })
 end
 
@@ -1500,7 +1519,15 @@ local function init()
 	} do
 		player:GetAttributeChangedSignal(attr):Connect(function()
 			if attr == GearConfig.POWER_ATTR or attr == GearConfig.POWER_EDITED_ATTR then
-				updatePowerLabel({ instant = true })
+				-- While curling, wait for the +N floater to land before flipping the number.
+				if
+					attr == GearConfig.POWER_ATTR
+					and player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true
+				then
+					updatePowerLabel({ deferWorkout = true })
+				else
+					updatePowerLabel({ instant = true })
+				end
 			end
 			if upgrades.Visible then
 				queueRefreshAllRows()
@@ -1541,6 +1568,7 @@ end
 return {
 	init = boot,
 	snapPowerHud = onWorkoutPowerPulse,
+	commitPowerHudFromFloater = commitPowerHudFromFloater,
 	markCashBundlePurchasePending = function()
 		pendingCashBundlePurchase = true
 	end,

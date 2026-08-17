@@ -554,6 +554,9 @@ local function spawnPowerFloater(gain: number)
 	local counters = sideUI and sideUI:FindFirstChild("Counters")
 	local powerFrame = counters and counters:FindFirstChild("Power")
 	if not powerFrame or not powerFrame:IsA("GuiObject") then
+		if typeof(UpgradesController.commitPowerHudFromFloater) == "function" then
+			UpgradesController.commitPowerHudFromFloater()
+		end
 		return
 	end
 
@@ -729,6 +732,9 @@ local function spawnPowerFloater(gain: number)
 			end
 			row.Position = toLayerOffset(destScreen())
 			pulsePowerHud(amountGui, powerFrame :: GuiObject, layer)
+			if typeof(UpgradesController.commitPowerHudFromFloater) == "function" then
+				UpgradesController.commitPowerHudFromFloater()
+			end
 			local suck = TweenService:Create(
 				scale,
 				TweenInfo.new(0.09, Enum.EasingStyle.Back, Enum.EasingDirection.In),
@@ -921,17 +927,11 @@ local function init()
 		if g > 0 then
 			spawnPowerFloater(g)
 		end
-		UpgradesController.snapPowerHud()
-	end)
-
-	player:GetAttributeChangedSignal(GearConfig.WORKOUT_ACTIVE_ATTR):Connect(function()
-		local on = player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true
-		OtherVfxController.setWorkoutAuraEnabled(on)
-		if not on then
-			cleanupWorkoutVisuals()
+		-- Don't snap the power number here — wait until the +N floater lands.
+		if typeof(UpgradesController.snapPowerHud) == "function" then
+			UpgradesController.snapPowerHud()
 		end
 	end)
-	OtherVfxController.setWorkoutAuraEnabled(player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true)
 
 	player:GetAttributeChangedSignal(GearConfig.WORKOUT_ACTIVE_ATTR):Connect(function()
 		local on = player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true

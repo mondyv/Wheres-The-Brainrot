@@ -1112,6 +1112,7 @@ local function endCutscene(token: number)
 	stopAnimConns()
 	stopAura()
 	GameSoundEffects.stopLuckyBlockShake()
+	GameSoundEffects.stopLuckyBlockOpenSfx()
 	destroyBlockModel()
 	clearToolHideState()
 	destroyLetterbox()
@@ -1268,8 +1269,9 @@ local function runCutscene(payload: any)
 		end
 	end
 
-	-- Ground shake + camera rumble matching shake window.
+	-- Ground shake + 4s Block Open SFX (rumble, then open hit at the burst).
 	GameSoundEffects.playLuckyBlockShake(groundShakeSec)
+	GameSoundEffects.playLuckyBlockOpenSfx()
 	if blockModel and blockModel.Parent then
 		animateGroundShake(blockModel, groundShakeSec, token)
 	else
@@ -1285,7 +1287,6 @@ local function runCutscene(payload: any)
 
 	GameSoundEffects.stopLuckyBlockShake()
 	stopAura()
-	GameSoundEffects.playGroundSmash(1.15)
 	camShakeAmp = 0.55
 	task.delay(0.22, function()
 		if token == cutsceneToken then
@@ -1373,6 +1374,7 @@ local function handleShakeStart(payload: any)
 			stopAnimConns()
 			stopAura()
 			GameSoundEffects.stopLuckyBlockShake()
+			GameSoundEffects.stopLuckyBlockOpenSfx()
 			destroyBlockModel()
 			clearToolHideState()
 			destroyLetterbox()
@@ -1475,6 +1477,7 @@ function LuckyBlockController.init()
 		stopAnimConns()
 		stopAura()
 		GameSoundEffects.stopLuckyBlockShake()
+		GameSoundEffects.stopLuckyBlockOpenSfx()
 		destroyBlockModel()
 		clearToolHideState()
 		destroyLetterbox()

@@ -787,4 +787,47 @@ function GameSoundEffects.playLuckyBlockHold(sfxKey: string)
 	playTemplate(template)
 end
 
+-- Full lucky-block rumble + open (~4s). One instance; stop if the cutscene aborts.
+local activeBlockOpen: Sound? = nil
+
+function GameSoundEffects.playLuckyBlockOpenSfx()
+	GameSoundEffects.stopLuckyBlockOpenSfx()
+	if ClientSFXVolume.getVolume() <= 0 then
+		return
+	end
+	local root = SoundService:FindFirstChild("SoundEffects")
+	local folder = root and root:FindFirstChild("Luckyblock sfx")
+	local template = resolveSoundNode(folder and folder:FindFirstChild("Block Open"))
+	if not template then
+		warn("[GameSoundEffects] SoundEffects['Luckyblock sfx']['Block Open'] missing")
+		return
+	end
+	local clone = prepareClone(template)
+	clone.Parent = SoundService
+	activeBlockOpen = clone
+	clone:Play()
+	clone.Ended:Once(function()
+		if activeBlockOpen == clone then
+			activeBlockOpen = nil
+		end
+		if clone.Parent then
+			clone:Destroy()
+		end
+	end)
+end
+
+function GameSoundEffects.stopLuckyBlockOpenSfx()
+	local s = activeBlockOpen
+	activeBlockOpen = nil
+	if not s then
+		return
+	end
+	pcall(function()
+		s:Stop()
+	end)
+	if s.Parent then
+		s:Destroy()
+	end
+end
+
 return GameSoundEffects

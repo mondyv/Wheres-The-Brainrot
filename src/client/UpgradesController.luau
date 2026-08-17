@@ -910,13 +910,6 @@ local function findEditClickButton(host: Instance?): GuiButton?
 	if not host then
 		return nil
 	end
-	if host:IsA("ImageButton") then
-		return host
-	end
-	local img = host:FindFirstChildWhichIsA("ImageButton", true)
-	if img then
-		return img
-	end
 	if host:IsA("GuiButton") then
 		return host
 	end

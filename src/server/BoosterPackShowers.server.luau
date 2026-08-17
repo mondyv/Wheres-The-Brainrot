@@ -592,7 +592,7 @@ ensureGroupLikedRemote().OnServerEvent:Connect(function(player: Player)
 		end)
 	end
 end)
-ensureGroupClaimRemote().OnInvoke = function(player: Player): (boolean, string?)
+ensureGroupClaimRemote().OnServerInvoke = function(player: Player): (boolean, string?)
 	if typeof(player) ~= "Instance" or not player:IsA("Player") then
 		return false, "invalid"
 	end

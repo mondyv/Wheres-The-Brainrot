@@ -20,9 +20,9 @@ local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"
 local HUDController = require(script.Parent.HUDController)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
-local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local TopNotifController = require(script.Parent.TopNotifController)
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
 local player = Players.LocalPlayer
 
@@ -54,6 +54,9 @@ local chargeBillboard: BillboardGui? = nil
 local chargeFill: Frame? = nil
 local chargeFillTween: Tween? = nil
 local heartbeatConn: RBXScriptConnection? = nil
+local sessionStartedAt = os.clock()
+local SESSION_FAVORITE_DELAY_SEC = 360
+local sessionFavoritePrompted = false
 
 local likeCheck: GuiObject? = nil
 local joinCheck: GuiObject? = nil
@@ -111,12 +114,12 @@ local function findRowButton(row: Instance?): GuiButton?
 	if not row then
 		return nil
 	end
+	if row:IsA("GuiButton") then
+		return row
+	end
 	local nested = row:FindFirstChild("Button")
 	if nested and nested:IsA("GuiButton") then
 		return nested
-	end
-	if row:IsA("GuiButton") then
-		return row
 	end
 	return row:FindFirstChildWhichIsA("GuiButton", true)
 end
@@ -286,7 +289,6 @@ local function applyRewardPreview(frame: Frame)
 	local rewardName = main:FindFirstChild("RewardName")
 	if rewardName and (rewardName:IsA("TextLabel") or rewardName:IsA("TextButton")) then
 		(rewardName :: TextLabel).Text = name
-		BrainrotHeaderStyle.applyRarityLabel(rewardName, rarity)
 	end
 	local rarityNode = main:FindFirstChild("Rarity")
 	if rarityNode then
@@ -322,7 +324,12 @@ local function wireFreeRewardsPanel()
 	applyRewardPreview(frame)
 
 	local buttons = frame:FindFirstChild("Buttons")
-	local likeRow = buttons and (buttons:FindFirstChild("Like The game") or buttons:FindFirstChild("Like The Game"))
+	local likeRow = buttons
+		and (
+			buttons:FindFirstChild("LikeTheGameButton")
+			or buttons:FindFirstChild("Like The game")
+			or buttons:FindFirstChild("Like The Game")
+		)
 	local joinRow = buttons and buttons:FindFirstChild("JoinTheGroupButton")
 	local claimRow = buttons and buttons:FindFirstChild("ClaimButton")
 
@@ -335,24 +342,15 @@ local function wireFreeRewardsPanel()
 
 	local likeBtn = findRowButton(likeRow)
 	if likeBtn then
-		UIButtonEffects.wireScaleButtonAnim(likeBtn, function()
-			UIInteractionSounds.playClick()
-			promptLikeGame()
-		end)
+		UIButtonEffects.wireScaleButtonAnim(likeBtn, promptLikeGame)
 	end
 	local joinBtn = findRowButton(joinRow)
 	if joinBtn then
-		UIButtonEffects.wireScaleButtonAnim(joinBtn, function()
-			UIInteractionSounds.playClick()
-			promptJoinGroup()
-		end)
+		UIButtonEffects.wireScaleButtonAnim(joinBtn, promptJoinGroup)
 	end
 	local claimBtn = findRowButton(claimRow)
 	if claimBtn then
-		UIButtonEffects.wireScaleButtonAnim(claimBtn, function()
-			UIInteractionSounds.playClick()
-			claimReward()
-		end)
+		UIButtonEffects.wireScaleButtonAnim(claimBtn, claimReward)
 	end
 
 	AvatarEditorService.PromptSetFavoriteCompleted:Connect(function(result)
@@ -535,7 +533,33 @@ local function scheduleClose()
 	end)
 end
 
+local function trySessionFavoritePrompt()
+	if sessionFavoritePrompted then
+		return
+	end
+	if os.clock() - sessionStartedAt < SESSION_FAVORITE_DELAY_SEC then
+		return
+	end
+	if alreadyClaimed() or likedSaved() then
+		sessionFavoritePrompted = true
+		return
+	end
+	if HUDController.getCurrentFrame() then
+		return
+	end
+	local char = player.Character
+	if not char or not SafezoneUtil.isCacheReady() then
+		return
+	end
+	if not SafezoneUtil.isCharacterInSafezone(char) then
+		return
+	end
+	sessionFavoritePrompted = true
+	promptLikeGame()
+end
+
 local function tick(dt: number)
+	trySessionFavoritePrompt()
 	local hrp = getHRP()
 	local hitbox = resolveGroupHitbox()
 	if not hrp or not hitbox then
@@ -593,6 +617,9 @@ function BoosterPackShowersController.init()
 	end)
 
 	task.defer(wireFreeRewardsPanel)
+	task.spawn(function()
+		SafezoneUtil.warmCacheAsync()
+	end)
 
 	if not heartbeatConn then
 		heartbeatConn = RunService.Heartbeat:Connect(function(dt)

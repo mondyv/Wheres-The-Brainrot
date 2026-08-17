@@ -25,6 +25,7 @@ local PROMPT_REMOTE_FOLDER = "StoreRemotes"
 local PROMPT_REMOTE_NAME = "BoosterShowerProductPrompt"
 local GROUP_PROMPT_REMOTE_NAME = "GroupStandPrompt"
 local GROUP_CLAIM_REMOTE_NAME = "GroupStandClaim"
+local GROUP_LIKED_REMOTE_NAME = "GroupStandLiked"
 local GROUP_MEMBERSHIP_RETRY_SEC = 8
 
 local EXCLUSIVE_PRODUCT_ID = StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT
@@ -45,8 +46,8 @@ local wiredStands: { [Instance]: boolean } = {}
 local wiredHitboxes: { [BasePart]: boolean } = {}
 local claimInFlight: { [Player]: boolean } = {}
 local promptProductRemote: RemoteEvent? = nil
-local groupPromptRemote: RemoteEvent? = nil
-local groupClaimRemote: RemoteEvent? = nil
+local groupClaimRemote: RemoteFunction? = nil
+local groupLikedRemote: RemoteEvent? = nil
 
 local function ensureStoreRemote(name: string): RemoteEvent
 	local folder = ReplicatedStorage:FindFirstChild(PROMPT_REMOTE_FOLDER)
@@ -64,6 +65,26 @@ local function ensureStoreRemote(name: string): RemoteEvent
 	return ev :: RemoteEvent
 end
 
+local function ensureStoreRemoteFunction(name: string): RemoteFunction
+	local folder = ReplicatedStorage:FindFirstChild(PROMPT_REMOTE_FOLDER)
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = PROMPT_REMOTE_FOLDER
+		folder.Parent = ReplicatedStorage
+	end
+	local existing = folder:FindFirstChild(name)
+	if existing and existing:IsA("RemoteFunction") then
+		return existing
+	end
+	if existing then
+		existing:Destroy()
+	end
+	local rf = Instance.new("RemoteFunction")
+	rf.Name = name
+	rf.Parent = folder
+	return rf
+end
+
 local function ensurePromptProductRemote(): RemoteEvent
 	if promptProductRemote and promptProductRemote.Parent then
 		return promptProductRemote
@@ -72,14 +93,20 @@ local function ensurePromptProductRemote(): RemoteEvent
 	return promptProductRemote
 end
 
-local function ensureGroupRemotes(): (RemoteEvent, RemoteEvent)
-	if not (groupPromptRemote and groupPromptRemote.Parent) then
-		groupPromptRemote = ensureStoreRemote(GROUP_PROMPT_REMOTE_NAME)
+local function ensureGroupClaimRemote(): RemoteFunction
+	if groupClaimRemote and groupClaimRemote.Parent then
+		return groupClaimRemote
 	end
-	if not (groupClaimRemote and groupClaimRemote.Parent) then
-		groupClaimRemote = ensureStoreRemote(GROUP_CLAIM_REMOTE_NAME)
+	groupClaimRemote = ensureStoreRemoteFunction(GROUP_CLAIM_REMOTE_NAME)
+	return groupClaimRemote
+end
+
+local function ensureGroupLikedRemote(): RemoteEvent
+	if groupLikedRemote and groupLikedRemote.Parent then
+		return groupLikedRemote
 	end
-	return groupPromptRemote :: RemoteEvent, groupClaimRemote :: RemoteEvent
+	groupLikedRemote = ensureStoreRemote(GROUP_LIKED_REMOTE_NAME)
+	return groupLikedRemote
 end
 
 local function firePurchaseEffect(player: Player)
@@ -322,17 +349,9 @@ local function wirePackStand(stand: Instance, pack: typeof(StoreConfig.PACKS[1])
 	end, true)
 end
 
-local function promptGroupJoin(player: Player)
-	-- Always show Roblox's group join UI. Reward claim is one-time (handled client/server after).
-	if not player.Parent then
-		return
-	end
-	local promptRemote = ensureGroupRemotes()
-	promptRemote:FireClient(player, GROUP_ID)
-end
-
 local function wireGroupStand(stand: Instance)
-	ensureHitboxWired(stand, promptGroupJoin, true)
+	-- Client owns the stand charge timer and Frames["Free Rewards"] panel.
+	wiredStands[stand] = true
 end
 
 local function waitForBrainrotGrantBF(timeoutSec: number?): BindableFunction?
@@ -348,12 +367,16 @@ local function waitForBrainrotGrantBF(timeoutSec: number?): BindableFunction?
 	return nil
 end
 
-local function pickRandomRareBrainrot(): typeof(Brainrots.BRAINROTS[1])?
-	local pool = Brainrots.brainrotsOfRarity("rare")
+local function pickGroupRewardBrainrot(): typeof(Brainrots.BRAINROTS[1])?
+	local named = Brainrots.getByName(StoreConfig.GROUP_REWARD_BRAINROT)
+	if named then
+		return named
+	end
+	local pool = Brainrots.brainrotsOfRarity("epic")
 	if #pool == 0 then
 		return nil
 	end
-	return pool[math.random(1, #pool)]
+	return pool[1]
 end
 
 local function playerIsInGroup(player: Player): boolean
@@ -398,6 +421,9 @@ local function grantGroupReward(player: Player): (boolean, string?)
 	claimInFlight[player] = true
 
 	local ok, err = pcall(function()
+		if player:GetAttribute(StoreConfig.ATTR.GROUP_REWARD_LIKED) ~= true then
+			error("not_liked")
+		end
 		if not waitUntilInGroup(player, GROUP_MEMBERSHIP_RETRY_SEC) then
 			error("not_in_group")
 		end
@@ -406,9 +432,9 @@ local function grantGroupReward(player: Player): (boolean, string?)
 			error("already_claimed")
 		end
 
-		local pick = pickRandomRareBrainrot()
+		local pick = pickGroupRewardBrainrot()
 		if not pick then
-			error("no_rare_pool")
+			error("no_epic_pool")
 		end
 
 		local grant = waitForBrainrotGrantBF(15)
@@ -443,7 +469,7 @@ local function grantGroupReward(player: Player): (boolean, string?)
 	claimInFlight[player] = nil
 	if not ok then
 		local msg = if typeof(err) == "string" then err else "claim_failed"
-		if msg ~= "not_in_group" and msg ~= "already_claimed" then
+		if msg ~= "not_in_group" and msg ~= "already_claimed" and msg ~= "not_liked" then
 			warn("[BoosterPackShowers] Group reward failed for", player.Name, msg)
 		end
 		return false, msg
@@ -552,13 +578,26 @@ local function ensureMapHooked()
 end
 
 ensurePromptProductRemote()
-local _, claimRemote = ensureGroupRemotes()
-claimRemote.OnServerEvent:Connect(function(player: Player)
+ensureGroupLikedRemote().OnServerEvent:Connect(function(player: Player)
 	if typeof(player) ~= "Instance" or not player:IsA("Player") then
 		return
 	end
-	grantGroupReward(player)
+	if player:GetAttribute(StoreConfig.ATTR.GROUP_REWARD_CLAIMED) == true then
+		return
+	end
+	player:SetAttribute(StoreConfig.ATTR.GROUP_REWARD_LIKED, true)
+	if player:GetAttribute("PlayerDataLoaded") == true then
+		pcall(function()
+			PlayerDataService.savePlayerData(player)
+		end)
+	end
 end)
+ensureGroupClaimRemote().OnInvoke = function(player: Player): (boolean, string?)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return false, "invalid"
+	end
+	return grantGroupReward(player)
+end
 
 ensureMapHooked()
 task.spawn(function()

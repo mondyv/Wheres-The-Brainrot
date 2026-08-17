@@ -5072,6 +5072,10 @@ local function boot(character)
 		pcall(function()
 			player:SetAttribute("IsSwinging", false)
 		end)
+		local sfx = getClientModule("GameSoundEffects")
+		if sfx and typeof(sfx.playRelease) == "function" then
+			pcall(sfx.playRelease)
+		end
 		st.currentTarget = nil
 		st.toggleNeedsJumpRelease = false
 		st.swingPressIntentUntil = -1e9

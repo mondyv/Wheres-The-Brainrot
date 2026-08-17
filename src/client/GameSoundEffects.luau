@@ -2,7 +2,7 @@
 --[[
 	GameSoundEffects — gameplay SFX under SoundService.SoundEffects
 	CashGrab, ErrorNotif, Drops, BushAura, BushRustles, Grass, On ProximityPrompts,
-	GroundSmash, Purchase, Upgrade, Level Up Sfx, Notification1, LandMultiply, Spider
+	GroundSmash, Purchase, Upgrade, Level Up Sfx, Notification1, LandMultiply, Spider, Release
 --]]
 
 local Players = game:GetService("Players")
@@ -29,6 +29,7 @@ local groundSmashTemplate: Sound?
 local purchaseTemplate: Sound?
 local upgradeTemplate: Sound?
 local levelUpTemplate: Sound?
+local releaseTemplate: Sound?
 local notification1Template: Sound?
 local landMultiplyTemplate: Sound?
 local spiderRoarTemplate: Sound?
@@ -347,6 +348,7 @@ function GameSoundEffects.init()
 		upgradeTemplate = upgrade
 	end
 	levelUpTemplate = resolveSoundNode(root:FindFirstChild("Level Up Sfx"))
+	releaseTemplate = resolveSoundNode(root:FindFirstChild("Release"))
 
 	notification1Template = resolveSoundNode(root:FindFirstChild("Notification1"))
 	landMultiplyTemplate = resolveSoundNode(root:FindFirstChild("LandMultiply"))
@@ -527,6 +529,21 @@ function GameSoundEffects.playUpgrade()
 	clone.Ended:Once(function()
 		clone:Destroy()
 	end)
+end
+
+function GameSoundEffects.playRelease()
+	if ClientSFXVolume.getVolume() <= 0 then
+		return
+	end
+	if not releaseTemplate then
+		local root = SoundService:FindFirstChild("SoundEffects")
+		releaseTemplate = resolveSoundNode(root and root:FindFirstChild("Release"))
+	end
+	if not releaseTemplate then
+		warn("[GameSoundEffects] SoundEffects.Release missing")
+		return
+	end
+	playTemplate(releaseTemplate)
 end
 
 function GameSoundEffects.playLevelUp()

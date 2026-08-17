@@ -29,6 +29,7 @@ export type StorePurchasesSaveData = {
 	exclusiveOwned: boolean,
 	freeUncommonClaimed: boolean,
 	groupRewardClaimed: boolean,
+	groupRewardLiked: boolean,
 	freeStealCount: number,
 	packPurchases: { [string]: number },
 }

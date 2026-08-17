@@ -195,6 +195,7 @@ local function collectStorePurchases(player: Player): { [string]: any }
 		exclusiveOwned = player:GetAttribute(A.EXCLUSIVE_OWNED) == true,
 		freeUncommonClaimed = player:GetAttribute(A.FREE_UNCOMMON_CLAIMED) == true,
 		groupRewardClaimed = player:GetAttribute(A.GROUP_REWARD_CLAIMED) == true,
+		groupRewardLiked = player:GetAttribute(A.GROUP_REWARD_LIKED) == true,
 		freeStealCount = floorNum(player:GetAttribute(A.FREE_STEAL_COUNT), 0),
 		packPurchases = packPurchases,
 	}
@@ -205,6 +206,7 @@ local function normalizeStorePurchases(raw: any): { [string]: any }
 		exclusiveOwned = false,
 		freeUncommonClaimed = false,
 		groupRewardClaimed = false,
+		groupRewardLiked = false,
 		freeStealCount = 0,
 		packPurchases = {},
 	}
@@ -216,6 +218,7 @@ local function normalizeStorePurchases(raw: any): { [string]: any }
 	out.exclusiveOwned = readBool(raw.exclusiveOwned, false)
 	out.freeUncommonClaimed = readBool(raw.freeUncommonClaimed, false)
 	out.groupRewardClaimed = readBool(raw.groupRewardClaimed, false)
+	out.groupRewardLiked = readBool(raw.groupRewardLiked, false)
 	out.freeStealCount = floorNum(raw.freeStealCount, 0)
 
 	local rawPacks = raw.packPurchases
@@ -236,6 +239,7 @@ local function applyStorePurchases(player: Player, raw: any)
 	player:SetAttribute(A.EXCLUSIVE_OWNED, data.exclusiveOwned == true)
 	player:SetAttribute(A.FREE_UNCOMMON_CLAIMED, data.freeUncommonClaimed == true)
 	player:SetAttribute(A.GROUP_REWARD_CLAIMED, data.groupRewardClaimed == true)
+	player:SetAttribute(A.GROUP_REWARD_LIKED, data.groupRewardLiked == true)
 	player:SetAttribute(A.FREE_STEAL_COUNT, floorNum(data.freeStealCount, 0))
 
 	for _, pack in StoreConfig.PACKS do

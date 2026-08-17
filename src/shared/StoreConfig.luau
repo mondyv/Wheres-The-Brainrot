@@ -79,6 +79,7 @@ StoreConfig.ATTR = {
 	FREE_STEAL_COUNT = "FreeStealCount",
 	FREE_UNCOMMON_CLAIMED = "FreeUncommonClaimed",
 	GROUP_REWARD_CLAIMED = "GroupRewardClaimed",
+	GROUP_REWARD_LIKED = "GroupRewardLiked",
 
 	-- Booster pack purchase counters (capped at 2)
 	STARTER_PACK_BOUGHT = "StarterPackBought",
@@ -87,9 +88,11 @@ StoreConfig.ATTR = {
 	SECRET_PACK_BOUGHT = "SecretPackBought",
 }
 
--- UV Unwrapped community — Group Stand join reward.
+-- UV Unwrapped community — Group Stand join + like reward (epic Nyan Cat).
 StoreConfig.GROUP_ID = 34716703
 StoreConfig.GROUP_STAND_NAME = "Group Stand"
+StoreConfig.GROUP_REWARD_BRAINROT = "NyanCat"
+StoreConfig.FREE_REWARDS_FRAME = "Free Rewards"
 
 -- Replicated (ReplicatedStorage) attributes for server-wide luck.
 StoreConfig.SERVER_LUCK_MULT_ATTR = "ServerLuckMultiplier"

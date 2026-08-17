@@ -782,9 +782,8 @@ local function updatePowerLabel(opts: { target: number?, instant: boolean? }?)
 		return
 	end
 
-	if gained then
+	if gained or (opts and opts.instant == true) then
 		playPowerGainFlash(powerAmountLabel)
-		-- Snap immediately — counting the HUD up feels a second late vs the +N floater.
 		lastShownPower = target
 		applyText(target)
 		return
@@ -816,7 +815,7 @@ local function updatePowerLabel(opts: { target: number?, instant: boolean? }?)
 	powerTween:Play()
 end
 
--- Same signal as the white flash / +N floater — keep the HUD number in lockstep.
+-- Same signal as the white flash / +N floater — snap the HUD number immediately.
 local function onWorkoutPowerPulse()
 	if not powerAmountLabel then
 		return
@@ -826,9 +825,6 @@ local function onWorkoutPowerPulse()
 	local actual = WorkoutPower.readPower(player)
 	local predicted = lastShownPower + math.max(0, g)
 	local target = math.max(actual, predicted)
-	if target <= lastShownPower + 0.5 then
-		return
-	end
 	updatePowerLabel({ target = target, instant = true })
 end
 
@@ -1477,7 +1473,7 @@ local function init()
 	} do
 		player:GetAttributeChangedSignal(attr):Connect(function()
 			if attr == GearConfig.POWER_ATTR or attr == GearConfig.POWER_EDITED_ATTR then
-				updatePowerLabel()
+				updatePowerLabel({ instant = true })
 			end
 			if upgrades.Visible then
 				queueRefreshAllRows()
@@ -1517,6 +1513,7 @@ end
 
 return {
 	init = boot,
+	snapPowerHud = onWorkoutPowerPulse,
 	markCashBundlePurchasePending = function()
 		pendingCashBundlePurchase = true
 	end,

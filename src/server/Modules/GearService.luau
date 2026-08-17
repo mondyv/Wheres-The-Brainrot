@@ -320,7 +320,7 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 	-- First gain only if cooldown allows (blocks hotbar spam for free +power).
 	applyGainTick()
 
-	local last = lastWorkoutGainAt[player.UserId] or os.clock()
+	local last = lastWorkoutGainAt[player.UserId] or 0
 	local session = { gearId = gearId, conn = nil :: RBXScriptConnection?, lastTick = last }
 	session.conn = RunService.Heartbeat:Connect(function()
 		if not player.Parent then

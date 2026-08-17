@@ -6,10 +6,12 @@
 	Bush search: one BushEffect on the bush (pulsed Emit while holding); BushEffectBurst on open.
 	UpgradeBR/OnUpgrade: Fading Glow on host + Bezier.Part flight (Trail on, particle :Emit bursts),
 	then EmitOnFinish burst and Trail off at path end.
-	Level Up vfx: weld dummy R6 VFX onto the local character for ~1s then fade.
+	Level Up vfx: one-shot weld on the local character (not during workout).
+	Workout: looping Lines only from that template — no start burst / sparks.
 ]]
 
 local Debris = game:GetService("Debris")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
@@ -1195,6 +1197,7 @@ local BODY_PART_ALIASES: { [string]: { string } } = {
 
 local levelUpToken = 0
 local activeLevelUpRoot: Instance? = nil
+local activeWorkoutLinesRoot: Instance? = nil
 local workoutAuraEnabled = false
 
 local function findCharacterPart(character: Model, dummyName: string): BasePart?
@@ -1214,9 +1217,9 @@ local function findCharacterPart(character: Model, dummyName: string): BasePart?
 	return nil
 end
 
-local function isWorkoutAuraName(name: string): boolean
+local function isLineAuraName(name: string): boolean
 	local n = string.lower(name)
-	return n == "sparks" or n == "lines" or n == "lineb"
+	return n == "lines" or n == "lineb" or n == "line"
 end
 
 local function setFxEnabled(root: Instance, on: boolean)
@@ -1233,18 +1236,7 @@ local function setFxEnabled(root: Instance, on: boolean)
 	end
 end
 
-local function applyWorkoutAuraState()
-	if not activeLevelUpRoot or not activeLevelUpRoot.Parent then
-		return
-	end
-	for _, d in activeLevelUpRoot:GetDescendants() do
-		if isWorkoutAuraName(d.Name) then
-			setFxEnabled(d, workoutAuraEnabled)
-		end
-	end
-end
-
-local function pruneBurstKeepAura(root: Instance)
+local function pruneToLinesOnly(root: Instance)
 	local toDestroy: { Instance } = {}
 	for _, d in root:GetDescendants() do
 		if
@@ -1254,9 +1246,10 @@ local function pruneBurstKeepAura(root: Instance)
 			or d:IsA("PointLight")
 			or d:IsA("SpotLight")
 			or d:IsA("SurfaceLight")
+			or d:IsA("Sound")
 		then
 			local parentName = if d.Parent then d.Parent.Name else ""
-			if not isWorkoutAuraName(d.Name) and not isWorkoutAuraName(parentName) then
+			if not isLineAuraName(d.Name) and not isLineAuraName(parentName) then
 				table.insert(toDestroy, d)
 			end
 		end
@@ -1266,7 +1259,17 @@ local function pruneBurstKeepAura(root: Instance)
 			inst:Destroy()
 		end
 	end
-	applyWorkoutAuraState()
+end
+
+local function applyWorkoutLinesState()
+	if not activeWorkoutLinesRoot or not activeWorkoutLinesRoot.Parent then
+		return
+	end
+	for _, d in activeWorkoutLinesRoot:GetDescendants() do
+		if isLineAuraName(d.Name) then
+			setFxEnabled(d, workoutAuraEnabled)
+		end
+	end
 end
 
 local function stripStaleCharacterVfx(character: Model)
@@ -1292,66 +1295,25 @@ local function ensureWorldFolder(): Folder
 	return folder
 end
 
-function OtherVfxController.clearLevelUpVfx()
-	levelUpToken += 1
-	if activeLevelUpRoot and activeLevelUpRoot.Parent then
-		activeLevelUpRoot:Destroy()
+local function destroyWorkoutLines()
+	if activeWorkoutLinesRoot and activeWorkoutLinesRoot.Parent then
+		activeWorkoutLinesRoot:Destroy()
 	end
-	activeLevelUpRoot = nil
-	local folder = Workspace:FindFirstChild("LevelUpVfxWorld")
+	activeWorkoutLinesRoot = nil
+	local folder = Workspace:FindFirstChild("WorkoutLinesVfxWorld")
 	if folder then
 		folder:Destroy()
 	end
 end
 
-function OtherVfxController.setWorkoutAuraEnabled(on: boolean)
-	workoutAuraEnabled = on == true
-	applyWorkoutAuraState()
-end
-
---- One-shot body VFX from EssentialAssets.OtherVFX["Level Up vfx"].
---- Burst plays ~1s then fades; Sparks/Lines stay and only emit while working out.
-function OtherVfxController.playLevelUpOnCharacter(character: Model)
-	if not character or not character.Parent then
-		return
-	end
-	local template = findTemplate({ "Level Up vfx" })
-	if not template then
-		warn("[OtherVfxController] missing template: Level Up vfx")
-		return
-	end
-
-	stripStaleCharacterVfx(character)
-	levelUpToken += 1
-	local token = levelUpToken
-	if activeLevelUpRoot and activeLevelUpRoot.Parent then
-		activeLevelUpRoot:Destroy()
-	end
-
-	local clone = template:Clone()
-	clone.Name = "LevelUpVfx"
-	clone:SetAttribute("__LevelUpVfx", true)
-	for _, d in clone:GetDescendants() do
-		if d:IsA("Humanoid") or d:IsA("Animator") or d:IsA("Script") or d:IsA("LocalScript") then
-			d:Destroy()
-		elseif d:IsA("Motor6D") or d:IsA("Weld") then
-			d:Destroy()
-		end
-	end
-
+local function weldCloneToCharacter(clone: Instance, character: Model): boolean
 	local hrp = character:FindFirstChild("HumanoidRootPart")
 	if not (hrp and hrp:IsA("BasePart")) then
 		hrp = character:FindFirstChildWhichIsA("BasePart")
 	end
 	if not hrp then
-		clone:Destroy()
-		return
+		return false
 	end
-
-	-- Keep dummy parts OUT of the character or Humanoid/workout breaks.
-	clone.Parent = ensureWorldFolder()
-	activeLevelUpRoot = clone
-
 	for _, d in clone:GetDescendants() do
 		if d:IsA("BasePart") then
 			local host = findCharacterPart(character, d.Name) or hrp
@@ -1369,6 +1331,106 @@ function OtherVfxController.playLevelUpOnCharacter(character: Model)
 			weld.Parent = d
 		end
 	end
+	return true
+end
+
+local function cloneLevelUpTemplate(): Instance?
+	local template = findTemplate({ "Level Up vfx" })
+	if not template then
+		warn("[OtherVfxController] missing template: Level Up vfx")
+		return nil
+	end
+	local clone = template:Clone()
+	for _, d in clone:GetDescendants() do
+		if d:IsA("Humanoid") or d:IsA("Animator") or d:IsA("Script") or d:IsA("LocalScript") then
+			d:Destroy()
+		elseif d:IsA("Motor6D") or d:IsA("Weld") then
+			d:Destroy()
+		end
+	end
+	return clone
+end
+
+function OtherVfxController.clearLevelUpVfx()
+	levelUpToken += 1
+	if activeLevelUpRoot and activeLevelUpRoot.Parent then
+		activeLevelUpRoot:Destroy()
+	end
+	activeLevelUpRoot = nil
+	local folder = Workspace:FindFirstChild("LevelUpVfxWorld")
+	if folder then
+		folder:Destroy()
+	end
+end
+
+function OtherVfxController.setWorkoutAuraEnabled(on: boolean)
+	workoutAuraEnabled = on == true
+	if not workoutAuraEnabled then
+		destroyWorkoutLines()
+		return
+	end
+	OtherVfxController.clearLevelUpVfx()
+	local character = Players.LocalPlayer.Character
+	if not character then
+		return
+	end
+	if activeWorkoutLinesRoot and activeWorkoutLinesRoot.Parent then
+		applyWorkoutLinesState()
+		return
+	end
+
+	local clone = cloneLevelUpTemplate()
+	if not clone then
+		return
+	end
+	clone.Name = "WorkoutLinesVfx"
+	disableAllFx(clone)
+	pruneToLinesOnly(clone)
+
+	local folder = Workspace:FindFirstChild("WorkoutLinesVfxWorld")
+	if not (folder and folder:IsA("Folder")) then
+		folder = Instance.new("Folder")
+		folder.Name = "WorkoutLinesVfxWorld"
+		folder.Parent = Workspace
+	end
+	clone.Parent = folder
+	if not weldCloneToCharacter(clone, character) then
+		clone:Destroy()
+		return
+	end
+	activeWorkoutLinesRoot = clone
+	applyWorkoutLinesState()
+end
+
+--- One-shot body VFX. Skipped while working out so curls only show looping Lines.
+function OtherVfxController.playLevelUpOnCharacter(character: Model)
+	if not character or not character.Parent then
+		return
+	end
+	if Players.LocalPlayer:GetAttribute("WorkoutActive") == true then
+		return
+	end
+
+	stripStaleCharacterVfx(character)
+	levelUpToken += 1
+	local token = levelUpToken
+	if activeLevelUpRoot and activeLevelUpRoot.Parent then
+		activeLevelUpRoot:Destroy()
+	end
+
+	local clone = cloneLevelUpTemplate()
+	if not clone then
+		return
+	end
+	clone.Name = "LevelUpVfx"
+	clone:SetAttribute("__LevelUpVfx", true)
+
+	clone.Parent = ensureWorldFolder()
+	if not weldCloneToCharacter(clone, character) then
+		clone:Destroy()
+		return
+	end
+	activeLevelUpRoot = clone
 
 	disableAllFx(clone)
 	task.delay(EMIT_SETTLE_SEC, function()
@@ -1393,7 +1455,12 @@ function OtherVfxController.playLevelUpOnCharacter(character: Model)
 			if token ~= levelUpToken or not clone.Parent then
 				return
 			end
-			pruneBurstKeepAura(clone)
+			if clone.Parent then
+				clone:Destroy()
+			end
+			if activeLevelUpRoot == clone then
+				activeLevelUpRoot = nil
+			end
 		end)
 	end)
 end

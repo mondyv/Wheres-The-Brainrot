@@ -342,15 +342,15 @@ local function wireFreeRewardsPanel()
 
 	local likeBtn = findRowButton(likeRow)
 	if likeBtn then
-		UIButtonEffects.wireScaleButtonAnim(likeBtn, promptLikeGame)
+		UIButtonEffects.wireSubtleScaleButtonAnim(likeBtn, promptLikeGame)
 	end
 	local joinBtn = findRowButton(joinRow)
 	if joinBtn then
-		UIButtonEffects.wireScaleButtonAnim(joinBtn, promptJoinGroup)
+		UIButtonEffects.wireSubtleScaleButtonAnim(joinBtn, promptJoinGroup)
 	end
 	local claimBtn = findRowButton(claimRow)
 	if claimBtn then
-		UIButtonEffects.wireScaleButtonAnim(claimBtn, claimReward)
+		UIButtonEffects.wireSubtleScaleButtonAnim(claimBtn, claimReward)
 	end
 
 	AvatarEditorService.PromptSetFavoriteCompleted:Connect(function(result)

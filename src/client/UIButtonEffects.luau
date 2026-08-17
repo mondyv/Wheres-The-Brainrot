@@ -561,6 +561,42 @@ function M.wireScaleButtonAnim(btn: GuiButton, onActivated: () -> ())
 	end)
 end
 
+-- Small hover/press for dense panels (Free Rewards). No Back overshoot.
+function M.wireSubtleScaleButtonAnim(btn: GuiButton, onActivated: () -> ())
+	local scale = getOrAddUIScale(btn)
+	local hovering = false
+	local hoverInfo = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local clickInfo = TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+	local function tweenScale(target: number, info: TweenInfo)
+		TweenService:Create(scale, info, { Scale = target }):Play()
+	end
+
+	bindPointerHover(
+		btn,
+		function()
+			hovering = true
+			UIInteractionSounds.playHover()
+			tweenScale(1.03, hoverInfo)
+		end,
+		function()
+			hovering = false
+			tweenScale(1, hoverInfo)
+		end
+	)
+	btn.MouseButton1Down:Connect(function()
+		if not canFireUiTap() then
+			return
+		end
+		UIInteractionSounds.playClick()
+		tweenScale(0.98, clickInfo)
+		onActivated()
+	end)
+	btn.MouseButton1Up:Connect(function()
+		tweenScale(if hovering then 1.03 else 1, hoverInfo)
+	end)
+end
+
 -- Sidebar buttons: tilt + scale; glisten + sweep only while hovered.
 function M.wireTiltHoverButton(
 	btn: GuiButton,

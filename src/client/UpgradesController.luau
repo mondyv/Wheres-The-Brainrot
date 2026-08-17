@@ -920,6 +920,40 @@ local function findEditClickButton(host: Instance?): GuiButton?
 	return host:FindFirstChildWhichIsA("GuiButton", true)
 end
 
+local function ensureEditActionCaption(host: Instance?, title: string)
+	if not host then
+		return
+	end
+	local function showLabel(label: TextLabel)
+		label.Visible = true
+		label.TextTransparency = 0
+		if label.Text == "" then
+			label.Text = title
+		end
+	end
+	local named = host:FindFirstChild("Name") or host:FindFirstChild("TextLabel")
+	if named and (named:IsA("TextLabel") or named:IsA("TextButton")) then
+		showLabel(named :: TextLabel)
+		return
+	end
+	for _, d in host:GetDescendants() do
+		if d:IsA("TextLabel") or d:IsA("TextButton") then
+			local t = string.lower((d :: TextLabel).Text)
+			if t == "" or t == "cancel" or t == "okay" or t == "ok" or t == "set" then
+				showLabel(d :: TextLabel)
+				return
+			end
+		end
+	end
+	if host:IsA("TextButton") or host:IsA("ImageButton") then
+		local btn = host :: TextButton
+		if btn.Text == "" then
+			btn.Text = title
+		end
+		btn.TextTransparency = 0
+	end
+end
+
 -- Studio Okay/Cancel are image buttons; leftover Text on them looks like faint captions.
 local function hideAuthoredButtonCaption(host: Instance?)
 	if not host then
@@ -1085,9 +1119,9 @@ local function wireEditPowerFrame(frame: Frame)
 	local header = frame:FindFirstChild("Header")
 	local headerButtons = header and header:FindFirstChild("Buttons")
 	local closeHost = headerButtons and headerButtons:FindFirstChild("Close")
-	hideAuthoredButtonCaption(okayHost)
-	hideAuthoredButtonCaption(cancelHost)
 	hideAuthoredButtonCaption(closeHost)
+	ensureEditActionCaption(okayHost, "Set")
+	ensureEditActionCaption(cancelHost, "Cancel")
 
 	if bar and bar:IsA("GuiObject") then
 		captureEditBarFullSize(bar)

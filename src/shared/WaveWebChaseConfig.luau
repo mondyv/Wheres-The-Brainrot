@@ -1,7 +1,7 @@
 -- [ACTIVE] WaveWebChaseConfig
 --[[
-	After accepting a bush brainrot: spider intro → the map-placed Wave Web
-	(mid-map tsunami) rolls toward the safezone. Never clone EssentialAssets["Wave Web"].
+	After accepting a bush brainrot: spider intro → clone EssentialAssets["Wave Web"]
+	at mid-map and roll it toward the safezone like a tsunami.
 	Keep this light — heavy ScaleTo / particle bursts crash clients.
 ]]
 
@@ -9,8 +9,7 @@ local M = {}
 
 M.ENABLED = true
 
--- Workspace/Map instance names (already in the place). Do not clone RS Wave Web.
-M.MAP_WAVE_WEB_NAMES = { "Wave Web", "WaveWeb" }
+M.WAVE_WEB_PATH = { "EssentialAssets", "Wave Web" }
 M.SPIDER_TEMPLATE_PATH = { "EssentialAssets", "Spider" }
 M.SPIDER_VFX_FOLDER_PATH = { "EssentialAssets", "SpiderVFX" }
 M.SPIDER_BLOW_VFX_NAME = "Blow"
@@ -33,6 +32,8 @@ M.SPIDER_MAX_PLAYER_DISTANCE = 58
 M.LAND_EDGE_MARGIN = 14
 M.SPIDER_PRELOAD_SEC = 0.35
 
+-- Mid-map tsunami: lands centroid, offset away from safezone, then rolls toward base.
+M.WAVE_SPAWN_BACK_FROM_CENTER = 40
 M.WAVE_KILL_DISTANCE = 16
 -- Never ScaleTo the Wave Web mesh — it freezes/crashes Studio & clients.
 M.WAVE_SCALE = 1

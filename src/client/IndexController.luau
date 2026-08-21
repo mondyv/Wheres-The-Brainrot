@@ -64,6 +64,7 @@ local luckyBlockHeaderBtn: GuiButton? = nil
 local selectedMutation = "normal"
 local catalogRows: { Frame } = {}
 local getStateRF: RemoteFunction? = nil
+local collectRF: RemoteFunction? = nil
 local unlockedRE: RemoteEvent? = nil
 local questBarTween: Tween? = nil
 local rowHoverConns: { RBXScriptConnection } = {}
@@ -626,6 +627,28 @@ local function populateRow(
 	local rowScale = getOrAddUIScale(rowHost)
 	rowScale.Scale = 1
 
+	row:SetAttribute("IndexName", entry.name)
+	row:SetAttribute("IndexMutation", mutationId)
+	row:SetAttribute("IndexRarity", if typeof(entry.rarity) == "string" then entry.rarity else "common")
+
+	local collectHost = row:FindFirstChild("Collect")
+	if collectHost and collectHost:IsA("GuiObject") then
+		local pendingCollect = unlocked and row:GetAttribute("IndexCollected") ~= true
+		collectHost.Visible = pendingCollect
+		if pendingCollect then
+			collectHost.Visible = true
+			collectHost.ZIndex = math.max(collectHost.ZIndex, 6)
+			local hostScale = getOrAddUIScale(collectHost)
+			hostScale.Scale = 1
+			local prize = collectHost:FindFirstChild("Prize")
+			local xpLabel = prize and (prize:FindFirstChild("XpAmount") or prize:FindFirstChild("XpAmount", true))
+			if xpLabel and (xpLabel:IsA("TextLabel") or xpLabel:IsA("TextButton")) then
+				local xpAmt = IndexConfig.collectXpFor(entry.rarity, mutationId)
+				(xpLabel :: TextLabel).Text = "+" .. tostring(xpAmt) .. " XP"
+			end
+		end
+	end
+
 	-- Hover the whole entry box (not only the icon).
 	table.insert(
 		rowHoverConns,
@@ -659,6 +682,82 @@ local function populateRow(
 			TweenService:Create(rowScale, ROW_HOVER_TWEEN, { Scale = 1 }):Play()
 		end)
 	)
+end
+
+local function hideCollectChrome(row: Frame)
+	row:SetAttribute("IndexCollected", true)
+	local collectHost = row:FindFirstChild("Collect")
+	if collectHost and collectHost:IsA("GuiObject") then
+		local scale = getOrAddUIScale(collectHost)
+		local tw = TweenService:Create(scale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+			Scale = 0.01,
+		})
+		tw:Play()
+		tw.Completed:Once(function()
+			collectHost.Visible = false
+			scale.Scale = 1
+		end)
+	end
+end
+
+local function wireCollectButton(row: Frame)
+	local collectHost = row:FindFirstChild("Collect")
+	if not collectHost then
+		return
+	end
+	local btn = collectHost:FindFirstChild("CollectButton")
+	if not (btn and btn:IsA("GuiButton")) then
+		btn = collectHost:FindFirstChildWhichIsA("GuiButton", true)
+	end
+	if not btn or not btn:IsA("GuiButton") then
+		return
+	end
+	if btn:GetAttribute("IndexCollectWired") == true then
+		return
+	end
+	btn:SetAttribute("IndexCollectWired", true)
+	btn.Active = true
+	pcall(function()
+		(btn :: any).Interactable = true
+	end)
+	UIButtonEffects.wireScaleButtonAnim(btn, function()
+		if row:GetAttribute("IndexCollected") == true then
+			return
+		end
+		if not collectRF then
+			return
+		end
+		local name = row:GetAttribute("IndexName")
+		local mutationId = row:GetAttribute("IndexMutation")
+		if typeof(name) ~= "string" or typeof(mutationId) ~= "string" then
+			return
+		end
+		local origin = btn.AbsolutePosition + btn.AbsoluteSize * 0.5
+		local LevelController = require(script.Parent.LevelController)
+		if typeof(LevelController.setNextXpOrigin) == "function" then
+			LevelController.setNextXpOrigin(origin)
+		end
+		local ok, result = pcall(function()
+			return collectRF:InvokeServer(name, mutationId)
+		end)
+		if not ok then
+			warn("[IndexController] CollectIndexEntry failed:", result)
+			LevelController.clearNextXpOrigin()
+			return
+		end
+		if typeof(result) ~= "table" or result.ok ~= true then
+			LevelController.clearNextXpOrigin()
+			return
+		end
+		local cached = stateCache[mutationId]
+		if cached then
+			if typeof(cached.collected) ~= "table" then
+				cached.collected = {}
+			end
+			cached.collected[IndexConfig.unlockKey(name, mutationId)] = true
+		end
+		hideCollectChrome(row)
+	end)
 end
 
 local function refreshQuest(goldenCount: number, questComplete: boolean)
@@ -765,7 +864,11 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 			row.LayoutOrder = order
 			local key = IndexConfig.unlockKey(entry.name, selectedMutation)
 			local isUnlocked = unlocked[key] == true
+			local collectedMap = state.collected
+			local isCollected = typeof(collectedMap) == "table" and collectedMap[key] == true
+			row:SetAttribute("IndexCollected", isCollected)
 			populateRow(row, entry, selectedMutation, isUnlocked, false, i, nil)
+			wireCollectButton(row)
 		end
 		index = batchEnd + 1
 		if index <= #list then
@@ -1062,6 +1165,10 @@ function IndexController.init()
 		end
 		if rowTemplate then
 			rowTemplate.Visible = false
+			local collectOnTemplate = rowTemplate:FindFirstChild("Collect")
+			if collectOnTemplate and collectOnTemplate:IsA("GuiObject") then
+				collectOnTemplate.Visible = false
+			end
 		else
 			warn("[IndexController] Index Container has no row template")
 		end
@@ -1212,7 +1319,11 @@ function IndexController.init()
 		local remotes = ReplicatedStorage:WaitForChild("IndexRemotes", 60)
 		if remotes then
 			local rf = remotes:WaitForChild("GetIndexState", 30)
+			local collectFn = remotes:WaitForChild("CollectIndexEntry", 30)
 			local re = remotes:WaitForChild("IndexUnlocked", 30)
+			if collectFn and collectFn:IsA("RemoteFunction") then
+				collectRF = collectFn
+			end
 			if rf and rf:IsA("RemoteFunction") then
 				getStateRF = rf
 				-- Warm normal tab cache so first open isn't empty; grid still only builds when visible.

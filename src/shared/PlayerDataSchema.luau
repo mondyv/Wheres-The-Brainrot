@@ -72,6 +72,7 @@ export type PlayerSaveData = {
 	dailySkipAllOwned: boolean,
 	dailyCashBoostPercent: number,
 	indexUnlocks: { string },
+	indexCollected: { string }?,
 	goldenNames: { string },
 	inventory: { BrainrotInvSaveEntry },
 	parkedSlots: { number },

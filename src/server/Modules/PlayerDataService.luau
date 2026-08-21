@@ -485,6 +485,7 @@ function M.collectSaveData(player: Player): PlayerDataSchema.PlayerSaveData
 		giftedGamepasses = giftedGamepasses,
 		purchasedGamepasses = purchasedGamepasses,
 		indexUnlocks = unlockKeys,
+		indexCollected = IndexService.exportCollected(player),
 		goldenNames = goldenNames,
 		inventory = inventory,
 		parkedSlots = parkedSlots,
@@ -770,6 +771,9 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		giftedGamepasses = normalizeGiftedGamepasses(raw.giftedGamepasses),
 		purchasedGamepasses = normalizePurchasedGamepasses(raw.purchasedGamepasses),
 		indexUnlocks = readStringArray(raw.indexUnlocks),
+		indexCollected = if raw.indexCollected == nil
+			then readStringArray(raw.indexUnlocks)
+			else readStringArray(raw.indexCollected),
 		goldenNames = readStringArray(raw.goldenNames),
 		inventory = inventory,
 		parkedSlots = {},
@@ -1096,6 +1100,27 @@ local function mergeAgainstPrior(
 		end
 		table.sort(payload.indexUnlocks)
 	end
+	local priorCollected = prior.indexCollected or prior.indexUnlocks
+	local payloadCollected = payload.indexCollected or payload.indexUnlocks
+	if typeof(priorCollected) == "table" then
+		if typeof(payloadCollected) ~= "table" then
+			payloadCollected = {}
+		end
+		if #payloadCollected < #priorCollected then
+			local seenC: { [string]: boolean } = {}
+			for _, key in payloadCollected do
+				seenC[key] = true
+			end
+			for _, key in priorCollected do
+				if not seenC[key] then
+					table.insert(payloadCollected, key)
+					seenC[key] = true
+				end
+			end
+			table.sort(payloadCollected)
+		end
+		payload.indexCollected = payloadCollected
+	end
 	if prior.tutorialCompleted and not payload.tutorialCompleted and not mergeOpts.forceEmpty then
 		payload.tutorialCompleted = true
 	end
@@ -1383,6 +1408,7 @@ function M.makeDefaultSaveData(_player: Player): PlayerDataSchema.PlayerSaveData
 		giftedGamepasses = normalizeGiftedGamepasses(nil),
 		purchasedGamepasses = normalizePurchasedGamepasses(nil),
 		indexUnlocks = {},
+		indexCollected = {},
 		goldenNames = {},
 		inventory = {},
 		parkedSlots = {},
@@ -1486,7 +1512,7 @@ end
 
 function M.applyLoadedData(player: Player, data: PlayerDataSchema.PlayerSaveData)
 	local needsPowerResetSave = data.powerForceResetV1 ~= true
-	IndexService.importUnlocks(player, data.indexUnlocks, data.goldenNames)
+	IndexService.importUnlocks(player, data.indexUnlocks, data.goldenNames, data.indexCollected)
 	applyAttributes(player, data)
 	applyPlotFloor(player, data.baseFloorLevel)
 	applyInventory(player, data)

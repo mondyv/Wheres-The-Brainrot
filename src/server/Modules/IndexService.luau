@@ -12,6 +12,7 @@ local M = {}
 type UnlockMap = { [string]: boolean }
 
 local unlockedByPlayer: { [Player]: UnlockMap } = {}
+local collectedByPlayer: { [Player]: UnlockMap } = {}
 local goldenNamesByPlayer: { [Player]: { [string]: boolean } } = {}
 
 local brainrotsFolder: Folder? = nil
@@ -197,6 +198,9 @@ local function ensureMaps(player: Player)
 	if not unlockedByPlayer[player] then
 		unlockedByPlayer[player] = {}
 	end
+	if not collectedByPlayer[player] then
+		collectedByPlayer[player] = {}
+	end
 	if not goldenNamesByPlayer[player] then
 		goldenNamesByPlayer[player] = {}
 	end
@@ -231,6 +235,7 @@ end
 
 function M.clearPlayer(player: Player)
 	unlockedByPlayer[player] = nil
+	collectedByPlayer[player] = nil
 	goldenNamesByPlayer[player] = nil
 end
 
@@ -284,7 +289,7 @@ function M.exportGoldenNames(player: Player): { string }
 	return out
 end
 
-function M.importUnlocks(player: Player, unlockKeys: { string }, goldenNames: { string })
+function M.importUnlocks(player: Player, unlockKeys: { string }, goldenNames: { string }, collectedKeys: { string }?)
 	ensureMaps(player)
 	local map: UnlockMap = {}
 	for _, key in unlockKeys do
@@ -293,6 +298,20 @@ function M.importUnlocks(player: Player, unlockKeys: { string }, goldenNames: { 
 		end
 	end
 	unlockedByPlayer[player] = map
+
+	local collected: UnlockMap = {}
+	if collectedKeys == nil then
+		for key in map do
+			collected[key] = true
+		end
+	else
+		for _, key in collectedKeys do
+			if typeof(key) == "string" and key ~= "" then
+				collected[key] = true
+			end
+		end
+	end
+	collectedByPlayer[player] = collected
 
 	local golden: { [string]: boolean } = {}
 	for _, name in goldenNames do
@@ -334,6 +353,81 @@ function M.recordUnlock(player: Player, name: string, mutationId: string): boole
 		end
 	end
 	return true
+end
+
+function M.exportCollected(player: Player): { string }
+	ensureMaps(player)
+	local out: { string } = {}
+	local map = collectedByPlayer[player]
+	if not map then
+		return out
+	end
+	for key, on in map do
+		if on then
+			table.insert(out, key)
+		end
+	end
+	table.sort(out)
+	return out
+end
+
+function M.isCollected(player: Player, name: string, mutationId: string): boolean
+	local map = collectedByPlayer[player]
+	if not map then
+		return false
+	end
+	return map[IndexConfig.unlockKey(name, mutationId)] == true
+end
+
+local function rarityForEntry(name: string, mutationId: string): string
+	if mutationId == IndexConfig.LUCKY_BLOCK_TAB then
+		return LuckyBlockCatalog.primaryDropRarity(name)
+	end
+	for _, def in Brainrots.BRAINROTS do
+		if def.name == name then
+			return def.rarity
+		end
+	end
+	return "common"
+end
+
+-- Returns xp granted, or 0 if rejected.
+function M.tryCollect(player: Player, name: string, mutationId: string): number
+	ensureMaps(player)
+	if typeof(name) ~= "string" or name == "" then
+		return 0
+	end
+	if typeof(mutationId) ~= "string" or not IndexConfig.TAB_DISPLAY_NAME[mutationId] then
+		return 0
+	end
+	local key = IndexConfig.unlockKey(name, mutationId)
+	local unlocked = unlockedByPlayer[player]
+	local collected = collectedByPlayer[player]
+	if not unlocked or not collected then
+		return 0
+	end
+	if unlocked[key] ~= true then
+		return 0
+	end
+	if collected[key] == true then
+		return 0
+	end
+	collected[key] = true
+	return IndexConfig.collectXpFor(rarityForEntry(name, mutationId), mutationId)
+end
+
+function M.collectedMap(player: Player): UnlockMap
+	ensureMaps(player)
+	local out: UnlockMap = {}
+	local map = collectedByPlayer[player]
+	if map then
+		for k, v in map do
+			if v then
+				out[k] = true
+			end
+		end
+	end
+	return out
 end
 
 function M.buildCatalog(): { { name: string, rarity: string, baseIncome: number } }
@@ -389,6 +483,7 @@ function M.packLuckyBlockStateForClient(player: Player): {
 	end
 	return {
 		unlocked = unlocked,
+		collected = M.collectedMap(player),
 		goldenCount = M.getGoldenCount(player),
 		questComplete = player:GetAttribute("IndexGoldenQuestComplete") == true,
 		catalog = catalog,
@@ -425,6 +520,7 @@ function M.packStateForClient(
 	end
 	return {
 		unlocked = unlocked,
+		collected = M.collectedMap(player),
 		goldenCount = M.getGoldenCount(player),
 		questComplete = player:GetAttribute("IndexGoldenQuestComplete") == true,
 		catalog = catalog,

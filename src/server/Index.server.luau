@@ -10,6 +10,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local Modules = script.Parent:WaitForChild("Modules")
 local IndexService = require(Modules:WaitForChild("IndexService"))
 local PlayerDataService = require(Modules:WaitForChild("PlayerDataService"))
+local LevelService = require(Modules:WaitForChild("LevelService"))
 local IndexConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("IndexConfig"))
 
 local function ensureRemotes(): Folder
@@ -54,6 +55,32 @@ getStateRF.OnServerInvoke = function(player: Player, mutationId: any)
 		mut = "normal"
 	end
 	return IndexService.packStateForClient(player, mut)
+end
+
+local collectRF = remotes:FindFirstChild("CollectIndexEntry") :: RemoteFunction?
+if not collectRF then
+	collectRF = Instance.new("RemoteFunction")
+	collectRF.Name = "CollectIndexEntry"
+	collectRF.Parent = remotes
+end
+
+local lastCollectAt: { [Player]: number } = {}
+
+collectRF.OnServerInvoke = function(player: Player, name: any, mutationId: any)
+	if typeof(name) ~= "string" or typeof(mutationId) ~= "string" then
+		return { ok = false, xp = 0 }
+	end
+	local now = os.clock()
+	if (lastCollectAt[player] or 0) + 0.25 > now then
+		return { ok = false, xp = 0 }
+	end
+	lastCollectAt[player] = now
+	local xp = IndexService.tryCollect(player, name, mutationId)
+	if xp <= 0 then
+		return { ok = false, xp = 0 }
+	end
+	LevelService.addXp(player, xp, "index_collect")
+	return { ok = true, xp = xp }
 end
 
 local internal = ensureInternal()
@@ -107,6 +134,7 @@ for _, p in Players:GetPlayers() do
 end
 
 Players.PlayerRemoving:Connect(function(player)
+	lastCollectAt[player] = nil
 	task.defer(function()
 		IndexService.clearPlayer(player)
 	end)

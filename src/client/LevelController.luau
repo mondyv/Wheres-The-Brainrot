@@ -356,7 +356,11 @@ local function applyPendingHudBar()
 	setProgressFill(hudBar, alpha, true, "hud")
 end
 
+local pendingXpOrigin: Vector2? = nil
+
 local function spawnXpFloater(gain: number, onArrive: (() -> ())?)
+	local origin = pendingXpOrigin
+	pendingXpOrigin = nil
 	local main = PlayerGuiMain.ensure(player)
 	local layer = ensureFloaterLayer(main)
 	if not hudRoot or not hudRoot.Parent then
@@ -396,7 +400,9 @@ local function spawnXpFloater(gain: number, onArrive: (() -> ())?)
 
 	local endPos = toLayerOffset(destScreen())
 	local startPos = endPos
-	if anchor and anchor:IsA("BasePart") then
+	if origin then
+		startPos = toLayerOffset(origin)
+	elseif anchor and anchor:IsA("BasePart") then
 		local screenPos, onScreen = cam:WorldToViewportPoint(anchor.Position + Vector3.new(0, 1.35, 0))
 		if onScreen then
 			startPos = toLayerOffset(Vector2.new(screenPos.X, screenPos.Y))
@@ -1066,6 +1072,14 @@ function M.init()
 	end)
 
 	refreshHud(false)
+end
+
+function M.setNextXpOrigin(screen: Vector2)
+	pendingXpOrigin = screen
+end
+
+function M.clearNextXpOrigin()
+	pendingXpOrigin = nil
 end
 
 return M

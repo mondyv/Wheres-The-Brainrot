@@ -46,9 +46,9 @@ function M.launchProgressT(level: number, softCap: number): number
 		return earlyBlend
 	end
 	local over = (lv - cap) / cap
-	local post = over / (1 + over * 0.24)
-	-- Launch gets a bit more post-cap growth than general swing (throw distance).
-	return earlyBlend + post * 1.45
+	local post = over / (1 + over * 0.16)
+	-- Launch keeps climbing after the soft cap so rope throws don't freeze.
+	return earlyBlend + post * 2.15
 end
 
 function M.displayPower(level: number): number
@@ -100,7 +100,7 @@ function M.powerStats(powerLevel: number): PowerStats
 		launchImpulseBase = 20 + lt * 16,
 		launchMomentumRatio = 0.24 + lt * 0.14,
 		launchVelocityCarry = 0.20 + lt * 0.08,
-		maxLaunchSpeed = maxSwingSpeed + 22 + lt * 28,
+		maxLaunchSpeed = 95 + lt * 210,
 		launchChargeBonus = 14 + lt * 12,
 		launchUpImpulse = 4.5 + lt * 3.5,
 		launchDeadhangImpulse = 22 + lt * 10,

@@ -324,8 +324,6 @@ local SELECTED_KEYS: { [string]: boolean } = {
 	selectedbg = true,
 	selectedbackground = true,
 	onbg = true,
-	highlight = true,
-	glow = true,
 }
 
 local UNSELECTED_KEYS: { [string]: boolean } = {
@@ -382,7 +380,36 @@ local function setTabStateNode(node: Instance, on: boolean)
 	end
 end
 
+local function setDirectTabChrome(tabBtn: Instance, selected: boolean)
+	local sel = tabBtn:FindFirstChild("Selected")
+	local unsel = tabBtn:FindFirstChild("NotSelected")
+	local function apply(node: Instance?, on: boolean)
+		if not node then
+			return
+		end
+		if node:IsA("UIGradient") or node:IsA("UIStroke") then
+			(node :: any).Enabled = on
+			return
+		end
+		if node:IsA("GuiObject") then
+			local gui = node :: GuiObject
+			gui.Visible = on
+			if on then
+				gui.ZIndex = math.max(gui.ZIndex, 3)
+			end
+		end
+		for _, d in node:GetDescendants() do
+			if d:IsA("UIGradient") or d:IsA("UIStroke") then
+				(d :: any).Enabled = on
+			end
+		end
+	end
+	apply(sel, selected)
+	apply(unsel, not selected)
+end
+
 local function applyTabVisual(tabBtn: Instance, selected: boolean)
+	setDirectTabChrome(tabBtn, selected)
 	local selectedNodes: { Instance } = {}
 	local unselectedNodes: { Instance } = {}
 
@@ -445,12 +472,13 @@ local function wireTabInteractions(tabRoot: Instance, mutationId: string)
 	end)
 	local tiltTarget = resolveTabTiltTarget(tabRoot, btn)
 	-- Dedicated scale so PanelSlideScale on the tab root doesn't fight hover.
-	local scale = btn:FindFirstChild("IndexTabHoverScale")
+	local scaleHost: GuiObject = if tabRoot:IsA("GuiObject") then (tabRoot :: GuiObject) else btn
+	local scale = scaleHost:FindFirstChild("IndexTabHoverScale")
 	if not (scale and scale:IsA("UIScale")) then
 		scale = Instance.new("UIScale")
 		scale.Name = "IndexTabHoverScale"
 		scale.Scale = 1
-		scale.Parent = btn
+		scale.Parent = scaleHost
 	end
 	local hoverScale = scale :: UIScale
 
@@ -462,9 +490,17 @@ local function wireTabInteractions(tabRoot: Instance, mutationId: string)
 		end
 		lastFire = now
 		UIInteractionSounds.playClick()
-		TweenService:Create(hoverScale, CLICK_TWEEN, { Scale = 0.94 }):Play()
-		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 2.5 }):Play()
+		TweenService:Create(hoverScale, CLICK_TWEEN, { Scale = 0.86 }):Play()
+		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 3.5 }):Play()
 		selectMutation(mutationId)
+		task.delay(0.08, function()
+			if hoverScale.Parent then
+				TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1.06 }):Play()
+			end
+			if tiltTarget.Parent then
+				TweenService:Create(tiltTarget, TILT_RESET, { Rotation = 0 }):Play()
+			end
+		end)
 	end
 
 	btn.MouseEnter:Connect(function()

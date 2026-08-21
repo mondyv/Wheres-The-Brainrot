@@ -632,9 +632,10 @@ end
 local function getLaunchScale()
 	local stats = getPowerStats()
 	if stats and typeof(stats.maxLaunchSpeed) == "number" and stats.maxLaunchSpeed > 0 then
-		return math.clamp(stats.maxLaunchSpeed / C.LAUNCH_SPEED_CAP, 0.86, 6.0)
+		-- Ratio against a low baseline so high Power keeps adding throw, not flattening at the cap.
+		return math.clamp(stats.maxLaunchSpeed / 88, 0.9, 10)
 	end
-	return math.clamp(0.9 + (getPowerScale() - 1) * 0.82, 0.86, 5.5)
+	return math.clamp(0.9 + (getPowerScale() - 1) * 1.15, 0.9, 8)
 end
 
 local function getSteerForce()
@@ -1097,7 +1098,7 @@ local function createReleaseStyleController(humanoid, hrp)
 		local inputBoost = math.clamp(forwardCharge + forwardHoldBonus * 0.35, 0, 1.35)
 		local momentumBoost = math.clamp(momentum or 0, 0, 1)
 		local cap = C.LAUNCH_SPEED_CAP
-			* math.clamp(1 + (launchScale - 1) * 1.05, 0.9, 5.8)
+			* math.clamp(0.72 + (launchScale - 1) * 0.95, 0.85, 12)
 			* (1 + momentumBoost * C.SWING_MOMENTUM_LAUNCH_BONUS * 0.86)
 
 		local horizontalSpeed = (
@@ -1108,7 +1109,6 @@ local function createReleaseStyleController(humanoid, hrp)
 		)
 			* holdMult
 			* launchScale
-			* math.clamp(0.96 + (launchScale - 1) * 0.36, 0.9, 2.35)
 		local upwardSpeed = (
 			C.LAUNCH_UP_DV
 			+ C.LAUNCH_CHARGE_DV * charge * 0.72
@@ -1116,12 +1116,16 @@ local function createReleaseStyleController(humanoid, hrp)
 			+ momentumBoost * 12.5
 		)
 			* holdMult
-			* launchScale
+			* math.clamp(0.92 + launchScale * 0.18, 1, 2.4)
 			* math.clamp(1 + momentumBoost * 0.22, 1, 1.28)
 		local targetVelocity = launchDir * horizontalSpeed + Vector3.new(0, upwardSpeed, 0)
 
-		if targetVelocity.Magnitude > cap then
-			targetVelocity = targetVelocity.Unit * cap
+		local mag = targetVelocity.Magnitude
+		if mag > cap then
+			-- Soft cap: still grow past the reference speed instead of freezing high Power.
+			local extra = mag - cap
+			local soft = cap + extra / (1 + extra / math.max(cap, 1) * 0.42)
+			targetVelocity = targetVelocity.Unit * soft
 		end
 		hrp.AssemblyLinearVelocity = targetVelocity
 

@@ -130,8 +130,14 @@ local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
 	return Vector3.new(spawnPos.X, C.WAVE_CRUISE_Y, spawnPos.Z), toSafe
 end
 
-local function waveFacingCf(pos: Vector3, _chaseDir: Vector3): CFrame
-	return CFrame.new(pos) * CFrame.fromOrientation(0, math.rad(C.WAVE_SPAWN_YAW_DEG), 0)
+local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
+	local dir = Vector3.new(chaseDir.X, 0, chaseDir.Z)
+	if dir.Magnitude < 0.05 then
+		dir = Vector3.new(0, 0, -1)
+	else
+		dir = dir.Unit
+	end
+	return CFrame.lookAt(pos, pos + dir) * CFrame.fromOrientation(0, math.rad(C.WAVE_YAW_OFFSET_DEG), 0)
 end
 
 local function hideChaseHud()
@@ -637,6 +643,40 @@ local function attachExclamation()
 	end)
 end
 
+local function fadeOutSpider(model: Model, duration: number)
+	if not model.Parent then
+		return
+	end
+	local info = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	local startCf = model:GetPivot()
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			TweenService:Create(d, info, { Transparency = 1 }):Play()
+		elseif d:IsA("Decal") or d:IsA("Texture") then
+			TweenService:Create(d, info, { Transparency = 1 }):Play()
+		elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
+			(d :: any).Enabled = false
+		end
+	end
+	local nv = Instance.new("NumberValue")
+	nv.Value = 0
+	local conn = nv:GetPropertyChangedSignal("Value"):Connect(function()
+		if not model.Parent then
+			return
+		end
+		local t = nv.Value
+		model:PivotTo(startCf * CFrame.new(0, -10 * t, 0) * CFrame.Angles(0, t * 0.85, t * 0.12))
+	end)
+	local tw = TweenService:Create(nv, info, { Value = 1 })
+	tw:Play()
+	tw.Completed:Wait()
+	conn:Disconnect()
+	nv:Destroy()
+	if model.Parent then
+		model:Destroy()
+	end
+end
+
 local function requestKill()
 	if killFired then
 		return
@@ -1060,10 +1100,12 @@ local function runIntro(token: number, playerPos: Vector3)
 			return
 		end
 
-		if activeSpider then
-			activeSpider:Destroy()
-			activeSpider = nil
-		end
+		local leaving = spider
+		activeSpider = nil
+		task.spawn(function()
+			fadeOutSpider(leaving, 0.72)
+		end)
+		task.wait(0.18)
 	else
 		warn("[WaveWebChaseController] EssentialAssets.Spider missing — skipping drop intro")
 		task.wait(0.35)

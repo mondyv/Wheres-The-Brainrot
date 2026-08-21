@@ -1377,11 +1377,35 @@ local function wireEditPowerFrame(frame: Frame)
 		closeEditBar()
 	end
 
+	local function playPress(host: Instance?)
+		if not host or not host:IsA("GuiObject") then
+			return
+		end
+		local gui = host :: GuiObject
+		local scale = gui:FindFirstChildOfClass("UIScale")
+		if not scale then
+			scale = Instance.new("UIScale")
+			scale.Scale = 1
+			scale.Parent = gui
+		end
+		TweenService:Create(scale, TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Scale = 0.88,
+		}):Play()
+		task.delay(0.08, function()
+			if scale.Parent then
+				TweenService:Create(scale, TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+					Scale = 1.06,
+				}):Play()
+			end
+		end)
+	end
+
 	local function tryOkay()
 		if not canFireAction() then
 			return
 		end
 		UIInteractionSounds.playClick()
+		playPress(okayHost)
 		onOkay()
 	end
 
@@ -1435,7 +1459,13 @@ local function wireEditPowerFrame(frame: Frame)
 			tryOkay()
 			return
 		end
-		if pointInHost(cancelHost, x, y) or pointInHost(closeHost, x, y) then
+		if pointInHost(cancelHost, x, y) then
+			playPress(cancelHost)
+			tryClose()
+			return
+		end
+		if pointInHost(closeHost, x, y) then
+			playPress(closeHost)
 			tryClose()
 			return
 		end

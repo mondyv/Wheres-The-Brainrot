@@ -34,7 +34,8 @@ M.SPIDER_PRELOAD_SEC = 0.35
 
 -- Close behind the player, then rise to this authored height.
 M.WAVE_CRUISE_Y = 92.301
-M.WAVE_SPAWN_YAW_DEG = 90
+-- Extra yaw on top of lookAt along travel. Mesh uses Roblox look (-Z).
+M.WAVE_YAW_OFFSET_DEG = 0
 M.WAVE_BEHIND_STUDS = 78
 M.WAVE_RISE_STUDS = 34
 M.WAVE_RISE_SEC = 0.52

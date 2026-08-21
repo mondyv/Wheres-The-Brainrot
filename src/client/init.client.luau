@@ -190,6 +190,9 @@ task.defer(function()
 				require(script.BoosterPackShowersController).init()
 			end,
 			function()
+				require(script.MailboxFeedbackController).init()
+			end,
+			function()
 				require(script.StealController).init()
 			end,
 			function()

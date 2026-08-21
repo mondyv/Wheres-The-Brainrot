@@ -423,6 +423,7 @@ local function spawnXpFloater(gain: number, onArrive: (() -> ())?)
 	label.TextColor3 = Color3.fromRGB(120, 255, 180)
 	label.ZIndex = 90
 	label.Parent = layer
+	GameSoundEffects.playXpCollect()
 	UiFonts.applyBodyLabel(label, 28, 17)
 	local stroke = Instance.new("UIStroke")
 	stroke.Thickness = 2.6

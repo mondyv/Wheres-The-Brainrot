@@ -167,7 +167,7 @@ local function wireBuyButton(host: GuiObject, onClick: () -> ()): BuyButtonState
 		if not state.enabled then
 			return
 		end
-		UIInteractionSounds.playClick()
+		UIInteractionSounds.playStoreClick()
 		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.94 }):Play()
 		-- Fire on Down: scaling the host shrinks _StoreClick and cancels Activated.
 		activated()

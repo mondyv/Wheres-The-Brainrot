@@ -321,14 +321,23 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 			costLabel.Text = "Equip"
 		end
 	else
-		state = "buy"
-		-- Keep green buy chrome even when cash is short (don't gray out prices).
-		MainGradientButtons.applyDefault(host)
+		local canAfford = balance >= def.cashPrice
+		if canAfford then
+			state = "buy"
+			MainGradientButtons.applyDefault(host)
+		else
+			-- Same gray Equipped/Locked gradient as owned-equipped, so unaffordable isn't confused with buyable.
+			state = "locked"
+			MainGradientButtons.applyPurchasedGradient(host)
+		end
 		if costLabel then
 			costLabel.Text = formatCash(def.cashPrice)
 		end
 	end
 	setStateGradients(host, state)
+	if row:IsA("GuiObject") then
+		setStateGradients(row :: GuiObject, state)
+	end
 end
 
 local function getOrAddUIScale(obj: GuiObject): UIScale

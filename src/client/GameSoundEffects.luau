@@ -30,6 +30,8 @@ local purchaseTemplate: Sound?
 local upgradeTemplate: Sound?
 local levelUpTemplate: Sound?
 local releaseTemplate: Sound?
+local liftingTemplate: Sound?
+local xpCollectTemplate: Sound?
 local notification1Template: Sound?
 local landMultiplyTemplate: Sound?
 local spiderRoarTemplate: Sound?
@@ -349,6 +351,9 @@ function GameSoundEffects.init()
 	end
 	levelUpTemplate = resolveSoundNode(root:FindFirstChild("Level Up Sfx"))
 	releaseTemplate = resolveSoundNode(root:FindFirstChild("Release"))
+	liftingTemplate = resolveSoundNode(root:FindFirstChild("Lifting"))
+	local xpFolder = root:FindFirstChild("Xp SFX")
+	xpCollectTemplate = findSoundIn(xpFolder, "Xp Collect") or resolveSoundNode(xpFolder)
 
 	notification1Template = resolveSoundNode(root:FindFirstChild("Notification1"))
 	landMultiplyTemplate = resolveSoundNode(root:FindFirstChild("LandMultiply"))
@@ -546,6 +551,31 @@ function GameSoundEffects.playRelease()
 	playTemplate(releaseTemplate)
 end
 
+function GameSoundEffects.playLifting()
+	if not liftingTemplate then
+		local root = SoundService:FindFirstChild("SoundEffects")
+		liftingTemplate = resolveSoundNode(root and root:FindFirstChild("Lifting"))
+	end
+	if not liftingTemplate then
+		warn("[GameSoundEffects] SoundEffects.Lifting missing")
+		return
+	end
+	playTemplate(liftingTemplate)
+end
+
+function GameSoundEffects.playXpCollect()
+	if not xpCollectTemplate then
+		local root = SoundService:FindFirstChild("SoundEffects")
+		local xpFolder = root and root:FindFirstChild("Xp SFX")
+		xpCollectTemplate = findSoundIn(xpFolder, "Xp Collect") or resolveSoundNode(xpFolder)
+	end
+	if not xpCollectTemplate then
+		warn("[GameSoundEffects] SoundEffects['Xp SFX']['Xp Collect'] missing")
+		return
+	end
+	playTemplate(xpCollectTemplate)
+end
+
 function GameSoundEffects.playLevelUp()
 	if ClientSFXVolume.getVolume() <= 0 then
 		return
@@ -651,6 +681,7 @@ function GameSoundEffects.playNotification1()
 		return
 	end
 	local clone = prepareClone(notification1Template)
+	clone.Parent = SoundService
 	clone:Play()
 	clone.Ended:Once(function()
 		clone:Destroy()

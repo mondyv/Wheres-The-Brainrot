@@ -11,6 +11,7 @@ local TweenService = game:GetService("TweenService")
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local VerifiedCreators = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("VerifiedCreators"))
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local RaritySpawnStyle = require(script.Parent.RaritySpawnStyle)
 
@@ -463,7 +464,7 @@ function TopNotifController.showRaritySpawn(message: string, rarityId: string, l
 	if not host then
 		TopNotifController.init()
 	end
-	GameSoundEffects.playNotification1()
+	UIInteractionSounds.playNotif()
 	enqueue(message, false, rarityId, lifetimeSec)
 end
 
@@ -528,7 +529,7 @@ function TopNotifController.showBroadcast(
 		return
 	end
 
-	GameSoundEffects.playNotification1()
+	UIInteractionSounds.playNotif()
 	enqueue(display, false, "legendary", lifetimeSec)
 end
 

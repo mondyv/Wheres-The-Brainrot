@@ -12,6 +12,7 @@ local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("U
 local GearRainbowFX = require(script.Parent.GearRainbowFX)
 local OtherVfxController = require(script.Parent.OtherVfxController)
 local UpgradesController = require(script.Parent.UpgradesController)
+local GameSoundEffects = require(script.Parent.GameSoundEffects)
 
 local player = Players.LocalPlayer
 
@@ -307,6 +308,7 @@ local function flashWhite(character: Model)
 	hl.OutlineTransparency = 0.35
 	hl.Parent = character
 	bodyHighlight = hl
+	GameSoundEffects.playLifting()
 
 	local proxy = Instance.new("NumberValue")
 	proxy.Value = 0.15

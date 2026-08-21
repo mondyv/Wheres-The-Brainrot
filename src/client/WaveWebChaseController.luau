@@ -642,14 +642,67 @@ local function requestKill()
 		return
 	end
 	killFired = true
-	if killRE then
-		killRE:FireServer()
-	else
-		local hum = getHumanoid()
-		if hum then
-			hum.Health = 0
-		end
+	chaseActive = false
+	local hum = getHumanoid()
+	if hum then
+		hum.CameraOffset = Vector3.zero
 	end
+	destroyChaseInstances()
+
+	task.spawn(function()
+		local pg = player:FindFirstChildOfClass("PlayerGui")
+		if not pg then
+			pg = player:WaitForChild("PlayerGui", 5) :: PlayerGui?
+		end
+		if not pg then
+			if killRE then
+				killRE:FireServer()
+			end
+			return
+		end
+
+		local existing = pg:FindFirstChild("WaveWebDeathFade")
+		if existing then
+			existing:Destroy()
+		end
+		local sg = Instance.new("ScreenGui")
+		sg.Name = "WaveWebDeathFade"
+		sg.IgnoreGuiInset = true
+		sg.ResetOnSpawn = false
+		sg.DisplayOrder = 2500
+		sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+		local cover = Instance.new("Frame")
+		cover.Name = "Cover"
+		cover.BackgroundColor3 = Color3.new(0, 0, 0)
+		cover.BackgroundTransparency = 1
+		cover.BorderSizePixel = 0
+		cover.Size = UDim2.fromScale(1, 1)
+		cover.Active = false
+		cover.Parent = sg
+		sg.Parent = pg
+
+		local fadeIn = TweenService:Create(
+			cover,
+			TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ BackgroundTransparency = 0 }
+		)
+		fadeIn:Play()
+		fadeIn.Completed:Wait()
+		if killRE then
+			killRE:FireServer()
+		end
+		task.wait(0.45)
+		local fadeOut = TweenService:Create(
+			cover,
+			TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ BackgroundTransparency = 1 }
+		)
+		fadeOut:Play()
+		fadeOut.Completed:Wait()
+		if sg.Parent then
+			sg:Destroy()
+		end
+	end)
 end
 
 local savedWalkSpeed: number? = nil
@@ -1153,7 +1206,7 @@ local function runChase(token: number)
 			math.sin(phase * 27) * shake * 0.35
 		)
 
-		if along <= C.WAVE_KILL_DISTANCE then
+		if os.clock() - chaseStart >= C.WAVE_KILL_GRACE_SEC and along <= C.WAVE_KILL_DISTANCE then
 			requestKill()
 			chaseActive = false
 			return

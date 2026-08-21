@@ -1,7 +1,7 @@
 -- [ACTIVE] WaveWebChaseConfig
 --[[
-	After accepting a bush brainrot: spider intro → Wave Web rises close behind
-	the player and rolls toward the safezone like a tsunami.
+	After accepting a bush brainrot: spider intro → Wave Web rises behind the
+	player (with a head start) and rolls toward the safezone like a tsunami.
 	Keep this light — heavy ScaleTo / particle bursts crash clients.
 ]]
 
@@ -35,10 +35,11 @@ M.SPIDER_PRELOAD_SEC = 0.35
 -- Close behind the player, then rise to this authored height.
 M.WAVE_CRUISE_Y = 92.301
 M.WAVE_SPAWN_YAW_DEG = 90
-M.WAVE_BEHIND_STUDS = 16
+M.WAVE_BEHIND_STUDS = 78
 M.WAVE_RISE_STUDS = 34
 M.WAVE_RISE_SEC = 0.52
-M.WAVE_KILL_DISTANCE = 16
+M.WAVE_KILL_DISTANCE = 8
+M.WAVE_KILL_GRACE_SEC = 2.1
 -- Never ScaleTo the Wave Web mesh — it freezes/crashes Studio & clients.
 M.WAVE_SCALE = 1
 

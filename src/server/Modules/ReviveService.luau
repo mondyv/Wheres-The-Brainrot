@@ -14,6 +14,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
+local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
@@ -346,6 +347,32 @@ local function softRespawnAtPlotBase(player: Player)
 	forceLoadCharacter(player)
 end
 
+-- Keep the same character: fade-friendly home teleport (no LoadCharacter hitch).
+local function softTeleportHomeAlive(player: Player)
+	if lastSoftRespawnAt[player] and (os.clock() - lastSoftRespawnAt[player]) < 0.45 then
+		return
+	end
+	clearPending(player)
+	lastSoftRespawnAt[player] = os.clock()
+	player:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, nil)
+	clearReviveSpawnAttrs(player)
+
+	local character = player.Character
+	if not character or not character.Parent then
+		forceLoadCharacter(player)
+		return
+	end
+	local hum = character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		if hum.Health <= 0 then
+			forceLoadCharacter(player)
+			return
+		end
+		hum.Health = hum.MaxHealth
+	end
+	PlotSpawnUtil.teleportPlayerHome(player, character, 12)
+end
+
 local function softRespawnAtHitbox(player: Player)
 	-- Prefer Base pad whenever fast-respawn mode is on (same as Return / My Base).
 	if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
@@ -509,6 +536,10 @@ local function hookPlayer(player: Player)
 end
 
 local ReviveService = {}
+
+function ReviveService.softTeleportHomeAlive(player: Player)
+	softTeleportHomeAlive(player)
+end
 
 function ReviveService.softRespawnAtPlotBase(player: Player)
 	softRespawnAtPlotBase(player)

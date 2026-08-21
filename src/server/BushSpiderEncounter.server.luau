@@ -1,14 +1,12 @@
 -- [ACTIVE] BushSpiderEncounter.server
 --[[
-	Server-authoritative kill when spider/wave web hits the player.
-	Wave web deaths soft-respawn immediately onto the same plot Spawn pad as
-	Return / Base button (no QuestHitbox, no long stream wait before snap).
+	Server-authoritative catch-up when wave web reaches the player.
+	Teleports them home alive (no LoadCharacter) so the client can fade.
 --]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 local ReviveService = require(script.Parent:WaitForChild("Modules"):WaitForChild("ReviveService"))
 
 local KILL_REMOTE = "BushSpiderEncounterKill"
@@ -46,15 +44,14 @@ killRE.OnServerEvent:Connect(function(plr: Player)
 	end
 	lastKillAt[plr] = now
 
-	-- Immediate Base/Return pad respawn (Died handler is skipped via soft-respawn debounce).
-	plr:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, true)
 	local okFunnel, Funnel = pcall(function()
 		return require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
 	end)
 	if okFunnel and Funnel and typeof(Funnel.waveChaseDied) == "function" then
 		Funnel.waveChaseDied(plr)
 	end
-	ReviveService.softRespawnAtPlotBase(plr)
+	-- Home teleport without dying — client already faded to black.
+	ReviveService.softTeleportHomeAlive(plr)
 end)
 
 Players.PlayerRemoving:Connect(function(plr)

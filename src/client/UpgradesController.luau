@@ -9,6 +9,7 @@ local Players = game:GetService("Players")
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local MainGradientButtons = require(script.Parent.MainGradientButtons)
 local TopNotifController = require(script.Parent.TopNotifController)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -1314,24 +1315,48 @@ local function wireEditPowerFrame(frame: Frame)
 	bindDragTarget(bar)
 	bindDragTarget(knob)
 
-	-- Drag anywhere on the authored track while the panel is open (Slider is often a tiny ImageLabel).
-	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if gameProcessed then
+	local lastActionAt = 0
+	local function pointInHost(host: Instance?, x: number, y: number): boolean
+		if not host or not host:IsA("GuiObject") then
+			return false
+		end
+		local gui = host :: GuiObject
+		local p = gui.AbsolutePosition
+		local s = gui.AbsoluteSize
+		local pad = 10
+		return x >= p.X - pad and x <= p.X + s.X + pad and y >= p.Y - pad and y <= p.Y + s.Y + pad
+	end
+
+	local function canFireAction(): boolean
+		local now = os.clock()
+		if now - lastActionAt < 0.35 then
+			return false
+		end
+		lastActionAt = now
+		return true
+	end
+
+	local function passClicksThrough(host: Instance?)
+		if not host then
 			return
 		end
-		if not frame.Visible then
-			return
+		if host:IsA("GuiObject") then
+			(host :: GuiObject).Active = true
 		end
-		if
-			input.UserInputType ~= Enum.UserInputType.MouseButton1
-			and input.UserInputType ~= Enum.UserInputType.Touch
-		then
-			return
+		for _, d in host:GetDescendants() do
+			if d:IsA("GuiObject") then
+				(d :: GuiObject).Active = false
+				if d:IsA("GuiButton") then
+					pcall(function()
+						(d :: any).Interactable = false
+					end)
+				end
+			end
 		end
-		if pointInTrack(input.Position.X, input.Position.Y) then
-			beginDrag(input.Position.X)
-		end
-	end)
+	end
+	passClicksThrough(okayHost)
+	passClicksThrough(cancelHost)
+	passClicksThrough(closeHost)
 
 	local function onOkay()
 		local amount = math.clamp(math.floor(editAlpha * editMaxPower + 0.5), 0, math.floor(editMaxPower))
@@ -1352,45 +1377,72 @@ local function wireEditPowerFrame(frame: Frame)
 		closeEditBar()
 	end
 
-	local okayBtn = if okayHost and okayHost:IsA("GuiObject") then ensureFullClickCover(okayHost) else nil
-	local cancelBtn = if cancelHost and cancelHost:IsA("GuiObject") then ensureFullClickCover(cancelHost) else nil
-	local closeBtn = if closeHost and closeHost:IsA("GuiObject") then ensureFullClickCover(closeHost) else nil
-	if okayBtn then
-		UIButtonEffects.wireScaleButtonAnim(okayBtn, onOkay)
-	elseif okayHost and okayHost:IsA("GuiObject") then
-		okayHost.InputBegan:Connect(function(input)
-			if
-				input.UserInputType == Enum.UserInputType.MouseButton1
-				or input.UserInputType == Enum.UserInputType.Touch
-			then
-				onOkay()
-			end
+	local function tryOkay()
+		if not canFireAction() then
+			return
+		end
+		UIInteractionSounds.playClick()
+		onOkay()
+	end
+
+	local function tryClose()
+		if not canFireAction() then
+			return
+		end
+		UIInteractionSounds.playClick()
+		closeEditBar()
+	end
+
+	local function hoverHost(host: Instance?)
+		if not host or not host:IsA("GuiObject") then
+			return
+		end
+		local gui = host :: GuiObject
+		local scale = gui:FindFirstChildOfClass("UIScale")
+		if not scale then
+			scale = Instance.new("UIScale")
+			scale.Scale = 1
+			scale.Parent = gui
+		end
+		gui.MouseEnter:Connect(function()
+			TweenService:Create(scale, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Scale = 1.06,
+			}):Play()
+		end)
+		gui.MouseLeave:Connect(function()
+			TweenService:Create(scale, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Scale = 1,
+			}):Play()
 		end)
 	end
-	if cancelBtn then
-		UIButtonEffects.wireScaleButtonAnim(cancelBtn, closeEditBar)
-	elseif cancelHost and cancelHost:IsA("GuiObject") then
-		cancelHost.InputBegan:Connect(function(input)
-			if
-				input.UserInputType == Enum.UserInputType.MouseButton1
-				or input.UserInputType == Enum.UserInputType.Touch
-			then
-				closeEditBar()
-			end
-		end)
-	end
-	if closeBtn then
-		UIButtonEffects.wireGlistenCloseButton(closeBtn, closeEditBar)
-	elseif closeHost and closeHost:IsA("GuiObject") then
-		closeHost.InputBegan:Connect(function(input)
-			if
-				input.UserInputType == Enum.UserInputType.MouseButton1
-				or input.UserInputType == Enum.UserInputType.Touch
-			then
-				closeEditBar()
-			end
-		end)
-	end
+	hoverHost(okayHost)
+	hoverHost(cancelHost)
+
+	-- Screen-space hit test so Studio overlays / HUD Active flags can't eat the press.
+	UserInputService.InputBegan:Connect(function(input, _gameProcessed)
+		if not frame.Visible then
+			return
+		end
+		if
+			input.UserInputType ~= Enum.UserInputType.MouseButton1
+			and input.UserInputType ~= Enum.UserInputType.Touch
+		then
+			return
+		end
+		local x = input.Position.X
+		local y = input.Position.Y
+		if pointInHost(okayHost, x, y) then
+			tryOkay()
+			return
+		end
+		if pointInHost(cancelHost, x, y) or pointInHost(closeHost, x, y) then
+			tryClose()
+			return
+		end
+		if pointInTrack(x, y) then
+			beginDrag(x)
+		end
+	end)
 end
 
 local function openEditBar(_main: ScreenGui)
@@ -1429,6 +1481,32 @@ local function openEditBar(_main: ScreenGui)
 			restoreEditSliderMax(knob)
 		end
 		setEditProgressVisual(alpha)
+		for _, name in { "OkayButton", "CancelButton" } do
+			local host = buttons and buttons:FindFirstChild(name)
+			if host then
+				if host:IsA("GuiObject") then
+					(host :: GuiObject).Active = true
+				end
+				for _, d in host:GetDescendants() do
+					if d:IsA("GuiObject") then
+						(d :: GuiObject).Active = false
+					end
+				end
+			end
+		end
+		local header = editFrame:FindFirstChild("Header")
+		local closeHost = header and header:FindFirstChild("Buttons")
+		closeHost = closeHost and closeHost:FindFirstChild("Close")
+		if closeHost then
+			if closeHost:IsA("GuiObject") then
+				(closeHost :: GuiObject).Active = true
+			end
+			for _, d in closeHost:GetDescendants() do
+				if d:IsA("GuiObject") then
+					(d :: GuiObject).Active = false
+				end
+			end
+		end
 	end)
 end
 

@@ -19,6 +19,7 @@ local Workspace = game:GetService("Workspace")
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local LuckBoost = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckBoost"))
+local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 
@@ -507,6 +508,26 @@ local function refreshOverallLuck()
 	end
 end
 
+local powerBoostHost: GuiObject? = nil
+local powerBoostAmount: TextLabel? = nil
+
+local function refreshPowerBoostHud()
+	if not powerBoostHost then
+		return
+	end
+	local count = RebirthConfig.getRebirthCount(player)
+	local pct = if count > 0 then RebirthConfig.powerPercentDisplayForTier(count) else 0
+	local show = pct > 0
+	powerBoostHost.Visible = show
+	if powerBoostAmount and show then
+		local text = string.format("+%d%%", pct)
+		if powerBoostAmount.Text ~= text then
+			powerBoostAmount.Text = text
+			pulse(powerBoostAmount)
+		end
+	end
+end
+
 -- ── Server luck frame ──────────────────────────────────────────────────────────────
 
 local serverLuckFrame: GuiObject? = nil
@@ -628,6 +649,21 @@ local function init()
 				readGuiAccentColor(overall :: GuiObject)
 			)
 		end
+		local powerBoost = boost:FindFirstChild("PowerBoost")
+		if powerBoost and powerBoost:IsA("GuiObject") then
+			powerBoostHost = powerBoost
+			powerBoost.Visible = false
+			local amt = powerBoost:FindFirstChild("Amount")
+			if amt and (amt:IsA("TextLabel") or amt:IsA("TextButton")) then
+				powerBoostAmount = amt :: TextLabel
+			end
+			bindTooltip(
+				powerBoost,
+				"Power Boost",
+				"Workout Power gain from rebirths. Stacks each rebirth.",
+				readGuiAccentColor(powerBoost)
+			)
+		end
 	end
 
 	local slFrame = sideUI:FindFirstChild("ServerLuckFrame")
@@ -674,8 +710,12 @@ local function init()
 		end
 	end)
 
+	player:GetAttributeChangedSignal(RebirthConfig.REBIRTH_COUNT_ATTR):Connect(refreshPowerBoostHud)
+	player:GetAttributeChangedSignal(RebirthConfig.POWER_MULT_ATTR):Connect(refreshPowerBoostHud)
+
 	refreshOverallLuck()
 	refreshServerLuckFrame()
+	refreshPowerBoostHud()
 
 	-- Live countdown for the server luck timer.
 	local accum = 0

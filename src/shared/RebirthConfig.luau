@@ -16,6 +16,7 @@ M.SKIP_DEV_PRODUCT_ID = 3598815788
 
 M.REBIRTH_COUNT_ATTR = "RebirthCount"
 M.MONEY_MULT_ATTR = "RebirthMoneyMult"
+M.POWER_MULT_ATTR = "RebirthPowerMult"
 M.CAN_REBIRTH_ATTR = "RebirthCanRebirth"
 M.FLOOR_REWARD_ATTR = "RebirthNextIsFloor"
 
@@ -51,6 +52,8 @@ export type RebirthSnapshot = {
 	moneyMultiplier: number,
 	nextMoneyMultiplier: number,
 	moneyPercentDisplay: number,
+	powerGainMultiplier: number,
+	powerPercentDisplay: number,
 	brainrotReqs: { BrainrotReqState },
 }
 
@@ -266,6 +269,33 @@ function M.moneyRewardTextForTier(tier: number): string
 	return string.format("+%d%%", M.moneyPercentDisplayForTier(tier))
 end
 
+function M.powerPercentStepForTier(tier: number): number
+	return M.moneyPercentStepForTier(tier)
+end
+
+function M.powerPercentDisplayForTier(tier: number): number
+	return M.moneyPercentDisplayForTier(tier)
+end
+
+function M.powerRewardTextForTier(tier: number): string
+	return string.format("+%d%%", M.powerPercentDisplayForTier(tier))
+end
+
+function M.powerGainMultiplierForCount(rebirthCount: number): number
+	if rebirthCount <= 0 then
+		return 1
+	end
+	return 1 + M.powerPercentDisplayForTier(rebirthCount) / 100
+end
+
+function M.getPowerGainMultiplier(player: Player): number
+	local v = player:GetAttribute(M.POWER_MULT_ATTR)
+	if typeof(v) == "number" and v > 0 then
+		return v
+	end
+	return M.powerGainMultiplierForCount(M.getRebirthCount(player))
+end
+
 function M.moneyMultiplierForCount(rebirthCount: number): number
 	if rebirthCount <= 0 then
 		return 1
@@ -327,6 +357,8 @@ function M.buildSnapshot(player: Player, isDiscovered: (name: string) -> boolean
 			moneyMultiplier = M.getMoneyMultiplier(player),
 			nextMoneyMultiplier = maxMult,
 			moneyPercentDisplay = M.moneyPercentDisplayForTier(count),
+			powerGainMultiplier = M.powerGainMultiplierForCount(count),
+			powerPercentDisplay = M.powerPercentDisplayForTier(count),
 			brainrotReqs = {},
 		}
 	end
@@ -358,6 +390,8 @@ function M.buildSnapshot(player: Player, isDiscovered: (name: string) -> boolean
 		moneyMultiplier = M.getMoneyMultiplier(player),
 		nextMoneyMultiplier = nextMult,
 		moneyPercentDisplay = if tierDef then M.moneyPercentDisplayForTier(tier) else 0,
+		powerGainMultiplier = M.powerGainMultiplierForCount(count),
+		powerPercentDisplay = if tierDef then M.powerPercentDisplayForTier(tier) else M.powerPercentDisplayForTier(count),
 		brainrotReqs = brainrotReqs,
 	}
 end

@@ -1,9 +1,10 @@
 -- [ACTIVE] WorkoutPower
 -- Workout Power drives swing force + reach (combined). Carry stays fixed at 1.
 -- PowerMax = true ceiling from workouts; Power = active (may be edited down).
-local SwingProgression = require(script.Parent.SwingProgression)
-local SwingUpgrades = require(script.Parent.SwingUpgrades)
-local GearConfig = require(script.Parent.GearConfig)
+local SwingProgression = require(script.Parent:WaitForChild("SwingProgression"))
+local SwingUpgrades = require(script.Parent:WaitForChild("SwingUpgrades"))
+local GearConfig = require(script.Parent:WaitForChild("GearConfig"))
+local LandPowerConfig = require(script.Parent:WaitForChild("LandPowerConfig"))
 
 local M = {}
 
@@ -14,6 +15,7 @@ M.FIXED_CARRY = 1
 
 -- Map absolute workout Power → swing force/speed level.
 -- Slow log: early Tree Branch still moves the needle; Jupiter does not max the rope.
+-- Near the next land lock, swing ramps up so you can actually cross the gap.
 function M.swingLevelFromPower(power: number): number
 	local p = math.max(0, power)
 	if p <= 0 then
@@ -21,6 +23,8 @@ function M.swingLevelFromPower(power: number): number
 	end
 	-- ~20 → 4, ~200 → 20, ~2k → 45, ~50k → 84, ~1e6 → 120
 	local level = math.floor(28 * math.log10(1 + p / 50))
+	local peak = LandPowerConfig.swingPeakAlpha(p)
+	level = math.floor(level * (0.48 + 0.52 * peak) + 0.5)
 	return math.clamp(level, 0, 100_000)
 end
 
@@ -32,6 +36,8 @@ function M.reachLevelFromPower(power: number): number
 	end
 	-- ~20 → 0, ~200 → 5, ~2k → 16, ~50k → 35, ~1e6 → 53, ~1e8 → 81
 	local level = math.floor(14 * math.log10(1 + p / 150))
+	local peak = LandPowerConfig.swingPeakAlpha(p)
+	level = math.floor(level * (0.42 + 0.58 * peak) + 0.5)
 	return math.clamp(level, 0, 100_000)
 end
 

@@ -8,6 +8,7 @@ local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild
 local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
 local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local LevelService = require(script.Parent:WaitForChild("LevelService"))
 
 local GearService = {}
@@ -302,6 +303,7 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 			gain = math.floor(gain * StoreConfig.DOUBLE_POWER_MULTIPLIER + 0.5)
 		end
 		gain = WorkoutPower.scaleWorkoutGain(gain, WorkoutPower.readPowerMax(player))
+		gain = math.max(1, math.floor(gain * RebirthConfig.getPowerGainMultiplier(player) + 0.5))
 		WorkoutPower.addPower(player, gain)
 		player:SetAttribute("WorkoutLastGain", gain)
 		local pulse = player:GetAttribute("WorkoutPowerPulse")

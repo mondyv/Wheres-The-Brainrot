@@ -59,8 +59,10 @@ local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 local AnalyticsFunnelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
 local IndexService = require(script.Parent:WaitForChild("Modules"):WaitForChild("IndexService"))
+local GearService = require(script.Parent:WaitForChild("Modules"):WaitForChild("GearService"))
 local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
 local LevelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("LevelService"))
+local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
 
 local MAX_FLOOR = 4
 
@@ -83,6 +85,7 @@ local function syncPlayerRebirthAttrs(player: Player, snapshot: RebirthConfig.Re
 	player:SetAttribute(RebirthConfig.CAN_REBIRTH_ATTR, snapshot.canRebirth)
 	player:SetAttribute(RebirthConfig.FLOOR_REWARD_ATTR, snapshot.isFloorRebirth)
 	player:SetAttribute(RebirthConfig.MONEY_MULT_ATTR, snapshot.moneyMultiplier)
+	player:SetAttribute(RebirthConfig.POWER_MULT_ATTR, snapshot.powerGainMultiplier)
 end
 
 local lastPushedSnapshot: { [Player]: RebirthConfig.RebirthSnapshot } = {}
@@ -145,10 +148,6 @@ local function onPlayerCashChanged(player: Player)
 	pushState(player)
 end
 
-local function resetSwingUpgrades(player: Player)
-	SwingUpgrades.resetLevels(player)
-end
-
 local function grantFloorRebirth(player: Player): boolean
 	local plot = PlotPaths.findPlotForAssignedSlot(player)
 	if not plot then
@@ -183,6 +182,7 @@ local function performRebirth(player: Player, opts: { skipRequirements: boolean?
 	local newCount = snapshot.rebirthCount + 1
 	player:SetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR, newCount)
 	player:SetAttribute(RebirthConfig.MONEY_MULT_ATTR, RebirthConfig.moneyMultiplierForCount(newCount))
+	player:SetAttribute(RebirthConfig.POWER_MULT_ATTR, RebirthConfig.powerGainMultiplierForCount(newCount))
 
 	if newCount == 1 then
 		AnalyticsFunnelService.onFirstRebirth(player)
@@ -193,12 +193,25 @@ local function performRebirth(player: Player, opts: { skipRequirements: boolean?
 		grantFloorRebirth(player)
 	end
 
-	if not options.keepUpgrades then
-		resetSwingUpgrades(player)
-	end
+	-- Rebirth only wipes cash, workout Power, and gear. Index / stands / floors stay.
+	player:SetAttribute("Cash", 0)
+	WorkoutPower.setPowerAbsolute(player, 0, false)
+	GearService.resetLoadout(player)
+	task.defer(function()
+		if player.Parent then
+			GearService.grantGear(player, 1, true)
+		end
+	end)
 
-	pushState(player)
+	pushState(player, true)
 	LevelService.addXp(player, LevelConfig.XP.rebirth, "rebirth")
+	if player:GetAttribute("PlayerDataLoaded") == true then
+		task.defer(function()
+			if player.Parent then
+				PlayerDataService.savePlayerData(player)
+			end
+		end)
+	end
 	return true, nil
 end
 
@@ -243,7 +256,21 @@ local function initPlayer(player: Player)
 	if player:GetAttribute(RebirthConfig.MONEY_MULT_ATTR) == nil then
 		player:SetAttribute(
 			RebirthConfig.MONEY_MULT_ATTR,
-			RebirthConfig.moneyMultiplierForCount(0)
+			RebirthConfig.moneyMultiplierForCount(
+				if typeof(player:GetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR)) == "number"
+					then player:GetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR) :: number
+					else 0
+			)
+		)
+	end
+	if player:GetAttribute(RebirthConfig.POWER_MULT_ATTR) == nil then
+		player:SetAttribute(
+			RebirthConfig.POWER_MULT_ATTR,
+			RebirthConfig.powerGainMultiplierForCount(
+				if typeof(player:GetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR)) == "number"
+					then player:GetAttribute(RebirthConfig.REBIRTH_COUNT_ATTR) :: number
+					else 0
+			)
 		)
 	end
 	pushState(player, true)

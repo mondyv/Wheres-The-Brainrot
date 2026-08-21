@@ -430,7 +430,12 @@ local function applyMoneyRewardText(frame: Frame, rewardText: string)
 	if not rewards then
 		return
 	end
+	local items = rewards:FindFirstChild("Items")
+	local powerBoost = items and items:FindFirstChild("PowerBoost")
 	for _, desc in rewards:GetDescendants() do
+		if powerBoost and (desc == powerBoost or desc:IsDescendantOf(powerBoost)) then
+			continue
+		end
 		if not desc:IsA("TextLabel") then
 			continue
 		end
@@ -440,6 +445,17 @@ local function applyMoneyRewardText(frame: Frame, rewardText: string)
 			desc.Text = rewardText
 		end
 	end
+end
+
+local function applyPowerBoostCard(frame: Frame, rewardText: string)
+	local rewards = frame:FindFirstChild("Rewards")
+	local items = rewards and rewards:FindFirstChild("Items")
+	local card = items and items:FindFirstChild("PowerBoost")
+	if not (card and card:IsA("GuiObject")) then
+		return
+	end
+	card.Visible = true
+	setCardText(card :: Frame, rewardText, "Power", nil, true)
 end
 
 local function setGuiTreeVisible(root: Instance?, visible: boolean)
@@ -601,6 +617,7 @@ local function applyMaxRebirthUi(frame: Frame, snapshot: RebirthConfig.RebirthSn
 	setCardText(floorCard, nil, nil, nil, false)
 	setCardText(moneyCard, moneyRewardText, "Money (MAX)", moneyIcon, true)
 	applyMoneyRewardText(frame, moneyRewardText)
+	applyPowerBoostCard(frame, RebirthConfig.powerRewardTextForTier(snapshot.rebirthCount))
 
 	local headerName = frame:FindFirstChild("Header", true)
 	headerName = headerName and headerName:FindFirstChild("Name")
@@ -740,6 +757,7 @@ local function applySnapshot(snapshot: RebirthConfig.RebirthSnapshot, main: Scre
 		setCardText(moneyCard, moneyRewardText, "Money", moneyIcon, true)
 		applyMoneyRewardText(frame, moneyRewardText)
 	end
+	applyPowerBoostCard(frame, RebirthConfig.powerRewardTextForTier(snapshot.nextTier))
 
 	local rebirthInfoHost = frame:FindFirstChild("Buttons", true)
 	rebirthInfoHost = rebirthInfoHost and rebirthInfoHost:FindFirstChild("Rebirth")

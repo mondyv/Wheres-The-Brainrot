@@ -99,7 +99,7 @@ function M.powerStats(powerLevel: number): PowerStats
 		launchImpulseBase = 20 + lt * 16,
 		launchMomentumRatio = 0.24 + lt * 0.14,
 		launchVelocityCarry = 0.20 + lt * 0.08,
-		maxLaunchSpeed = maxSwingSpeed + 20 + lt * 34,
+		maxLaunchSpeed = maxSwingSpeed + 36 + lt * 95,
 		launchChargeBonus = 14 + lt * 12,
 		launchUpImpulse = 4.5 + lt * 3.5,
 		launchDeadhangImpulse = 22 + lt * 10,

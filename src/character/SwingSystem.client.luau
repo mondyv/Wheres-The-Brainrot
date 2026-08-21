@@ -632,9 +632,9 @@ end
 local function getLaunchScale()
 	local stats = getPowerStats()
 	if stats and typeof(stats.maxLaunchSpeed) == "number" and stats.maxLaunchSpeed > 0 then
-		return math.clamp(stats.maxLaunchSpeed / C.LAUNCH_SPEED_CAP, 0.88, 1.72)
+		return math.clamp(stats.maxLaunchSpeed / 145, 0.92, 2.55)
 	end
-	return math.clamp(0.9 + (getPowerScale() - 1) * 0.55, 0.88, 1.65)
+	return math.clamp(0.92 + (getPowerScale() - 1) * 0.72, 0.92, 2.4)
 end
 
 local function getSteerForce()
@@ -1097,8 +1097,8 @@ local function createReleaseStyleController(humanoid, hrp)
 		local inputBoost = math.clamp(forwardCharge + forwardHoldBonus * 0.35, 0, 1.35)
 		local momentumBoost = math.clamp(momentum or 0, 0, 1)
 		local cap = C.LAUNCH_SPEED_CAP
-			* math.clamp(0.92 + (launchScale - 1) * 0.7, 0.9, 1.78)
-			* (1 + momentumBoost * C.SWING_MOMENTUM_LAUNCH_BONUS * 0.7)
+			* math.clamp(0.95 + (launchScale - 1) * 0.82, 0.95, 2.45)
+			* (1 + momentumBoost * C.SWING_MOMENTUM_LAUNCH_BONUS * 0.75)
 
 		local horizontalSpeed = (
 			C.LAUNCH_FORWARD_DV
@@ -1108,7 +1108,7 @@ local function createReleaseStyleController(humanoid, hrp)
 		)
 			* holdMult
 			* launchScale
-			* math.clamp(0.96 + (launchScale - 1) * 0.22, 0.92, 1.35)
+			* math.clamp(0.96 + (launchScale - 1) * 0.28, 0.94, 1.55)
 		local upwardSpeed = (
 			C.LAUNCH_UP_DV
 			+ C.LAUNCH_CHARGE_DV * charge * 0.72

@@ -1,7 +1,7 @@
 -- [ACTIVE] WaveWebChaseConfig
 --[[
-	After accepting a bush brainrot: spider intro → Wave Web rises behind the
-	player (with a head start) and rolls toward the safezone like a tsunami.
+	After accepting a bush brainrot: spider intro → Wave Web rises on the
+	authored mid-map axis (player X, fixed Y/Z, yaw 90°) and rolls toward them.
 	Keep this light — heavy ScaleTo / particle bursts crash clients.
 ]]
 
@@ -32,10 +32,10 @@ M.SPIDER_MAX_PLAYER_DISTANCE = 58
 M.LAND_EDGE_MARGIN = 14
 M.SPIDER_PRELOAD_SEC = 0.35
 
--- Close behind the player, then rise to this authored height.
+-- Authored Wave Web pose. X follows the player; Y/Z/yaw stay on this axis.
+M.WAVE_SPAWN_POS = Vector3.new(1448.013, 92.301, 205.634)
+M.WAVE_SPAWN_YAW_DEG = 90
 M.WAVE_CRUISE_Y = 92.301
--- Extra yaw on top of lookAt along travel. Mesh uses Roblox look (-Z).
-M.WAVE_YAW_OFFSET_DEG = 0
 M.WAVE_BEHIND_STUDS = 78
 M.WAVE_RISE_STUDS = 34
 M.WAVE_RISE_SEC = 0.52

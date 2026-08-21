@@ -122,22 +122,17 @@ local function resolveSpiderSpawn(playerPos: Vector3): Vector3
 	return playerPos + Vector3.new(C.SPIDER_MIN_PLAYER_DISTANCE, 2, 0)
 end
 
--- Close behind the player (away from safezone) so they can sprint home.
+-- Authored axis: player X, fixed Y/Z, yaw 90. Chase along Z toward the player.
 local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
-	local safeCenter = SafezoneUtil.getSafezoneCenter() or (playerPos + Vector3.new(0, 0, -40))
-	local toSafe = flatUnitXZ(playerPos, safeCenter)
-	local spawnPos = playerPos - toSafe * C.WAVE_BEHIND_STUDS
-	return Vector3.new(spawnPos.X, C.WAVE_CRUISE_Y, spawnPos.Z), toSafe
+	local rest = C.WAVE_SPAWN_POS
+	local spawnPos = Vector3.new(playerPos.X, rest.Y, rest.Z)
+	local dz = playerPos.Z - rest.Z
+	local toPlayer = if math.abs(dz) >= 4 then Vector3.new(0, 0, math.sign(dz)) else Vector3.new(0, 0, -1)
+	return spawnPos, toPlayer
 end
 
-local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
-	local dir = Vector3.new(chaseDir.X, 0, chaseDir.Z)
-	if dir.Magnitude < 0.05 then
-		dir = Vector3.new(0, 0, -1)
-	else
-		dir = dir.Unit
-	end
-	return CFrame.lookAt(pos, pos + dir) * CFrame.fromOrientation(0, math.rad(C.WAVE_YAW_OFFSET_DEG), 0)
+local function waveFacingCf(pos: Vector3, _chaseDir: Vector3): CFrame
+	return CFrame.new(pos) * CFrame.fromOrientation(0, math.rad(C.WAVE_SPAWN_YAW_DEG), 0)
 end
 
 local function hideChaseHud()
@@ -648,7 +643,6 @@ local function fadeOutSpider(model: Model, duration: number)
 		return
 	end
 	local info = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-	local startCf = model:GetPivot()
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") then
 			TweenService:Create(d, info, { Transparency = 1 }):Play()
@@ -658,20 +652,7 @@ local function fadeOutSpider(model: Model, duration: number)
 			(d :: any).Enabled = false
 		end
 	end
-	local nv = Instance.new("NumberValue")
-	nv.Value = 0
-	local conn = nv:GetPropertyChangedSignal("Value"):Connect(function()
-		if not model.Parent then
-			return
-		end
-		local t = nv.Value
-		model:PivotTo(startCf * CFrame.new(0, -10 * t, 0) * CFrame.Angles(0, t * 0.85, t * 0.12))
-	end)
-	local tw = TweenService:Create(nv, info, { Value = 1 })
-	tw:Play()
-	tw.Completed:Wait()
-	conn:Disconnect()
-	nv:Destroy()
+	task.wait(duration)
 	if model.Parent then
 		model:Destroy()
 	end
@@ -1045,6 +1026,7 @@ local function runIntro(token: number, playerPos: Vector3)
 		setModelLocalHidden(spider, false)
 
 		pulseCameraShake(0.5, 0.16, token)
+		GameSoundEffects.playSpiderRoar()
 
 		local phase = 0
 		if renderConn then
@@ -1083,7 +1065,6 @@ local function runIntro(token: number, playerPos: Vector3)
 		spawnSpiderImpact(landPos)
 		playScreechVfx(spider, landPos)
 		pulseCameraShake(0.85, 0.48, token)
-		GameSoundEffects.playSpiderRoar()
 
 		local animator = resolveAnimator(spider)
 		local rageTrack = if animator then loadTrack(animator, C.SPIDER_ANIM.RAGE) else nil

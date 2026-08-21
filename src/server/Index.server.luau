@@ -80,7 +80,32 @@ collectRF.OnServerInvoke = function(player: Player, name: any, mutationId: any)
 		return { ok = false, xp = 0 }
 	end
 	LevelService.addXp(player, xp, "index_collect")
-	return { ok = true, xp = xp }
+	return { ok = true, xp = xp, pending = IndexService.pendingCollectCount(player) }
+end
+
+local collectAllRF = remotes:FindFirstChild("CollectAllIndexEntries") :: RemoteFunction?
+if not collectAllRF then
+	collectAllRF = Instance.new("RemoteFunction")
+	collectAllRF.Name = "CollectAllIndexEntries"
+	collectAllRF.Parent = remotes
+end
+
+collectAllRF.OnServerInvoke = function(player: Player)
+	local now = os.clock()
+	if (lastCollectAt[player] or 0) + 0.35 > now then
+		return { ok = false, xp = 0, count = 0, pending = IndexService.pendingCollectCount(player) }
+	end
+	lastCollectAt[player] = now
+	local xp, count = IndexService.tryCollectAll(player)
+	if xp > 0 then
+		LevelService.addXp(player, xp, "index_collect_all")
+	end
+	return {
+		ok = count > 0,
+		xp = xp,
+		count = count,
+		pending = IndexService.pendingCollectCount(player),
+	}
 end
 
 local internal = ensureInternal()

@@ -65,9 +65,12 @@ local selectedMutation = "normal"
 local catalogRows: { Frame } = {}
 local getStateRF: RemoteFunction? = nil
 local collectRF: RemoteFunction? = nil
+local collectAllRF: RemoteFunction? = nil
 local unlockedRE: RemoteEvent? = nil
 local questBarTween: Tween? = nil
 local rowHoverConns: { RBXScriptConnection } = {}
+local collectAllBtn: GuiButton? = nil
+local pendingCollects = 0
 local selectMutation: (mutationId: string) -> ()
 local stateCache: { [string]: any } = {}
 local sortedCatalogCache: { [string]: { any } } = {}
@@ -387,6 +390,19 @@ local function setChromeNode(node: Instance, on: boolean)
 end
 
 local function applyTabVisual(tabBtn: Instance, selected: boolean)
+	-- Studio tab highlight is TypeButtons.<Tab>.Sellect (image). Hidden unless selected.
+	local function applySellect(node: Instance)
+		if node.Name == "Sellect" or node.Name == "Select" then
+			if node:IsA("GuiObject") then
+				(node :: GuiObject).Visible = selected
+			end
+		end
+	end
+	applySellect(tabBtn)
+	for _, d in tabBtn:GetDescendants() do
+		applySellect(d)
+	end
+
 	-- Studio chrome is TypeButtons.<Tab>.Selected / .NotSelected (often UIGradients
 	-- on the same button — only one can render, so disable both first).
 	local sel = tabBtn:FindFirstChild("Selected")
@@ -688,6 +704,9 @@ local function hideCollectChrome(row: Frame)
 	row:SetAttribute("IndexCollected", true)
 	local collectHost = row:FindFirstChild("Collect")
 	if collectHost and collectHost:IsA("GuiObject") then
+		if not collectHost.Visible then
+			return
+		end
 		local scale = getOrAddUIScale(collectHost)
 		local tw = TweenService:Create(scale, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
 			Scale = 0.01,
@@ -697,6 +716,40 @@ local function hideCollectChrome(row: Frame)
 			collectHost.Visible = false
 			scale.Scale = 1
 		end)
+	end
+end
+
+local function setPendingCollectCount(n: number)
+	pendingCollects = math.max(0, math.floor(n))
+	if collectAllBtn then
+		collectAllBtn.Visible = pendingCollects > 0
+		collectAllBtn.Active = pendingCollects > 0
+	end
+end
+
+local function markAllCachedCollected()
+	for _, cached in stateCache do
+		if typeof(cached) == "table" then
+			if typeof(cached.collected) ~= "table" then
+				cached.collected = {}
+			end
+			if typeof(cached.unlocked) == "table" then
+				for key, on in cached.unlocked do
+					if on then
+						cached.collected[key] = true
+					end
+				end
+			end
+			cached.pendingCollectCount = 0
+		end
+	end
+end
+
+local function hideAllVisibleCollectChrome()
+	for _, row in catalogRows do
+		if row.Parent and row.Visible then
+			hideCollectChrome(row)
+		end
 	end
 end
 
@@ -757,6 +810,11 @@ local function wireCollectButton(row: Frame)
 			cached.collected[IndexConfig.unlockKey(name, mutationId)] = true
 		end
 		hideCollectChrome(row)
+		if typeof(result.pending) == "number" then
+			setPendingCollectCount(result.pending)
+		else
+			setPendingCollectCount(pendingCollects - 1)
+		end
 	end)
 end
 
@@ -886,6 +944,9 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 				if typeof(state.goldenCount) == "number" then math.floor(state.goldenCount) else 0,
 				state.questComplete == true
 			)
+			if typeof(state.pendingCollectCount) == "number" then
+				setPendingCollectCount(state.pendingCollectCount)
+			end
 		end
 	end
 
@@ -951,7 +1012,15 @@ local function patchCachedUnlock(mutationId: string, name: string, payload: any)
 	if not cached or typeof(cached.unlocked) ~= "table" then
 		return
 	end
-	cached.unlocked[IndexConfig.unlockKey(name, mutationId)] = true
+	local key = IndexConfig.unlockKey(name, mutationId)
+	local already = cached.unlocked[key] == true
+	cached.unlocked[key] = true
+	if not already then
+		if typeof(cached.collected) ~= "table" then
+			cached.collected = {}
+		end
+		setPendingCollectCount(pendingCollects + 1)
+	end
 	if typeof(payload.goldenCount) == "number" then
 		cached.goldenCount = math.floor(payload.goldenCount)
 	end
@@ -1207,6 +1276,60 @@ function IndexController.init()
 
 	ensureTooltip()
 
+	local collectAllNode = indexFrame:FindFirstChild("CollectAllButton")
+	if collectAllNode then
+		local btn = if collectAllNode:IsA("GuiButton")
+			then collectAllNode
+			else collectAllNode:FindFirstChildWhichIsA("GuiButton", true)
+		if btn and btn:IsA("GuiButton") then
+			collectAllBtn = btn
+			btn.Active = true
+			pcall(function()
+				(btn :: any).Interactable = true
+			end)
+			btn.Visible = false
+			local collectAllBusy = false
+			UIButtonEffects.wireScaleButtonAnim(btn, function()
+				if collectAllBusy or pendingCollects <= 0 or not collectAllRF then
+					return
+				end
+				collectAllBusy = true
+				local origin = btn.AbsolutePosition + btn.AbsoluteSize * 0.5
+				local LevelController = require(script.Parent.LevelController)
+				if typeof(LevelController.setNextXpOrigin) == "function" then
+					LevelController.setNextXpOrigin(origin)
+				end
+				local ok, result = pcall(function()
+					return collectAllRF:InvokeServer()
+				end)
+				collectAllBusy = false
+				if not ok then
+					warn("[IndexController] CollectAllIndexEntries failed:", result)
+					if typeof(LevelController.clearNextXpOrigin) == "function" then
+						LevelController.clearNextXpOrigin()
+					end
+					return
+				end
+				if typeof(result) ~= "table" or result.ok ~= true then
+					if typeof(LevelController.clearNextXpOrigin) == "function" then
+						LevelController.clearNextXpOrigin()
+					end
+					if typeof(result) == "table" and typeof(result.pending) == "number" then
+						setPendingCollectCount(result.pending)
+					end
+					return
+				end
+				markAllCachedCollected()
+				hideAllVisibleCollectChrome()
+				setPendingCollectCount(if typeof(result.pending) == "number" then result.pending else 0)
+			end)
+		else
+			warn("[IndexController] CollectAllButton has no GuiButton")
+		end
+	else
+		warn("[IndexController] CollectAllButton missing")
+	end
+
 	local typeButtons = indexFrame:FindFirstChild("TypeButtons")
 	if typeButtons then
 		for mutationId, btnName in IndexConfig.TAB_BUTTON_NAME do
@@ -1320,9 +1443,13 @@ function IndexController.init()
 		if remotes then
 			local rf = remotes:WaitForChild("GetIndexState", 30)
 			local collectFn = remotes:WaitForChild("CollectIndexEntry", 30)
+			local collectAllFn = remotes:WaitForChild("CollectAllIndexEntries", 30)
 			local re = remotes:WaitForChild("IndexUnlocked", 30)
 			if collectFn and collectFn:IsA("RemoteFunction") then
 				collectRF = collectFn
+			end
+			if collectAllFn and collectAllFn:IsA("RemoteFunction") then
+				collectAllRF = collectAllFn
 			end
 			if rf and rf:IsA("RemoteFunction") then
 				getStateRF = rf

@@ -392,6 +392,22 @@ local function rarityForEntry(name: string, mutationId: string): string
 end
 
 -- Returns xp granted, or 0 if rejected.
+function M.pendingCollectCount(player: Player): number
+	ensureMaps(player)
+	local unlocked = unlockedByPlayer[player]
+	local collected = collectedByPlayer[player]
+	if not unlocked or not collected then
+		return 0
+	end
+	local n = 0
+	for key, on in unlocked do
+		if on and collected[key] ~= true then
+			n += 1
+		end
+	end
+	return n
+end
+
 function M.tryCollect(player: Player, name: string, mutationId: string): number
 	ensureMaps(player)
 	if typeof(name) ~= "string" or name == "" then
@@ -414,6 +430,46 @@ function M.tryCollect(player: Player, name: string, mutationId: string): number
 	end
 	collected[key] = true
 	return IndexConfig.collectXpFor(rarityForEntry(name, mutationId), mutationId)
+end
+
+local function splitUnlockKey(key: string): (string?, string?)
+	local last: number? = nil
+	local i = 1
+	while true do
+		local found = string.find(key, ":", i, true)
+		if not found then
+			break
+		end
+		last = found
+		i = found + 1
+	end
+	if not last then
+		return nil, nil
+	end
+	return string.sub(key, 1, last - 1), string.sub(key, last + 1)
+end
+
+-- Claim every pending collect; returns total XP and how many entries were claimed.
+function M.tryCollectAll(player: Player): (number, number)
+	ensureMaps(player)
+	local unlocked = unlockedByPlayer[player]
+	local collected = collectedByPlayer[player]
+	if not unlocked or not collected then
+		return 0, 0
+	end
+	local total = 0
+	local claimed = 0
+	for key, on in unlocked do
+		if on and collected[key] ~= true then
+			local name, mutationId = splitUnlockKey(key)
+			if typeof(name) == "string" and name ~= "" and typeof(mutationId) == "string" and IndexConfig.TAB_DISPLAY_NAME[mutationId] then
+				collected[key] = true
+				total += IndexConfig.collectXpFor(rarityForEntry(name, mutationId), mutationId)
+				claimed += 1
+			end
+		end
+	end
+	return total, claimed
 end
 
 function M.collectedMap(player: Player): UnlockMap
@@ -484,6 +540,7 @@ function M.packLuckyBlockStateForClient(player: Player): {
 	return {
 		unlocked = unlocked,
 		collected = M.collectedMap(player),
+		pendingCollectCount = M.pendingCollectCount(player),
 		goldenCount = M.getGoldenCount(player),
 		questComplete = player:GetAttribute("IndexGoldenQuestComplete") == true,
 		catalog = catalog,
@@ -521,6 +578,7 @@ function M.packStateForClient(
 	return {
 		unlocked = unlocked,
 		collected = M.collectedMap(player),
+		pendingCollectCount = M.pendingCollectCount(player),
 		goldenCount = M.getGoldenCount(player),
 		questComplete = player:GetAttribute("IndexGoldenQuestComplete") == true,
 		catalog = catalog,

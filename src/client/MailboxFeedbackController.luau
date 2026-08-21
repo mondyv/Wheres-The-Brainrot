@@ -43,13 +43,6 @@ local function resolveHostPart(root: Instance): BasePart?
 	return root:FindFirstChildWhichIsA("BasePart", true)
 end
 
-local function findMailbox(): Instance?
-	local map = Workspace:FindFirstChild("Map")
-	local showers = map and map:FindFirstChild(SHOWERS_FOLDER_NAME)
-	local mailbox = showers and showers:FindFirstChild(MAILBOX_NAME)
-	return mailbox
-end
-
 local function setOutlineVisible(on: boolean)
 	if highlight and highlight.Parent then
 		highlight.Enabled = on

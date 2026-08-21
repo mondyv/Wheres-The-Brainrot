@@ -46,9 +46,8 @@ function M.launchProgressT(level: number, softCap: number): number
 		return earlyBlend
 	end
 	local over = (lv - cap) / cap
-	local post = over / (1 + over * 0.16)
-	-- Launch keeps climbing after the soft cap so rope throws don't freeze.
-	return earlyBlend + post * 2.15
+	local post = over / (1 + over * 0.24)
+	return earlyBlend + post * 1.45
 end
 
 function M.displayPower(level: number): number
@@ -89,18 +88,18 @@ export type RopeStats = {
 function M.powerStats(powerLevel: number): PowerStats
 	local t = M.progressT(powerLevel, M.POWER_MAX_LEVEL)
 	local lt = M.launchProgressT(powerLevel, M.POWER_MAX_LEVEL)
-	local maxSwingSpeed = 78 + t * 58
+	local maxSwingSpeed = 96 + t * 74
 
 	return {
-		steeringForce = 78 + t * 75,
+		steeringForce = 88 + t * 82,
 		maxSwingSpeed = maxSwingSpeed,
-		swingArcForce = 34 + t * 50,
-		swingSpeedPump = 0.9 + t * 1.4,
+		swingArcForce = 40 + t * 56,
+		swingSpeedPump = 1.05 + t * 1.55,
 		zipToward = 25 + t * 18,
 		launchImpulseBase = 20 + lt * 16,
 		launchMomentumRatio = 0.24 + lt * 0.14,
 		launchVelocityCarry = 0.20 + lt * 0.08,
-		maxLaunchSpeed = 95 + lt * 210,
+		maxLaunchSpeed = maxSwingSpeed + 20 + lt * 34,
 		launchChargeBonus = 14 + lt * 12,
 		launchUpImpulse = 4.5 + lt * 3.5,
 		launchDeadhangImpulse = 22 + lt * 10,

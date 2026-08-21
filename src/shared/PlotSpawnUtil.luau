@@ -750,8 +750,8 @@ function PlotSpawnUtil.streamAndTeleportWithRetries(
 				return
 			end
 			local humanoid = char:FindFirstChildOfClass("Humanoid")
-			if not humanoid or humanoid.Health <= 0 then
-				return
+			if humanoid and humanoid.Health <= 0 then
+				humanoid.Health = math.max(humanoid.MaxHealth, 1)
 			end
 			local dest = targetCf()
 			local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?

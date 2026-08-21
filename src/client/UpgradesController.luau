@@ -5,6 +5,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
@@ -1316,14 +1317,32 @@ local function wireEditPowerFrame(frame: Frame)
 	bindDragTarget(knob)
 
 	local lastActionAt = 0
+	local function cursorXY(input: InputObject): (number, number)
+		if input.UserInputType == Enum.UserInputType.Touch then
+			return input.Position.X, input.Position.Y
+		end
+		local mouse = UserInputService:GetMouseLocation()
+		local inset = GuiService:GetGuiInset()
+		return mouse.X - inset.X, mouse.Y - inset.Y
+	end
+
 	local function pointInHost(host: Instance?, x: number, y: number): boolean
 		if not host or not host:IsA("GuiObject") then
 			return false
 		end
+		local pg = player:FindFirstChildOfClass("PlayerGui")
+		if pg then
+			local hits = pg:GetGuiObjectsAtPosition(x, y)
+			for _, obj in hits do
+				if obj == host or obj:IsDescendantOf(host) then
+					return true
+				end
+			end
+		end
 		local gui = host :: GuiObject
 		local p = gui.AbsolutePosition
 		local s = gui.AbsoluteSize
-		local pad = 10
+		local pad = 12
 		return x >= p.X - pad and x <= p.X + s.X + pad and y >= p.Y - pad and y <= p.Y + s.Y + pad
 	end
 
@@ -1453,8 +1472,7 @@ local function wireEditPowerFrame(frame: Frame)
 		then
 			return
 		end
-		local x = input.Position.X
-		local y = input.Position.Y
+		local x, y = cursorXY(input)
 		if pointInHost(okayHost, x, y) then
 			tryOkay()
 			return

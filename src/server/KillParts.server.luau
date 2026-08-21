@@ -1,7 +1,6 @@
 -- [ACTIVE] KillParts.server
 --[[
-	Map["Land Borders"].Killparts — touching a kill part soft-respawns on the
-	player's plot Base (same as cobweb / Return), not the default baseplate spawn.
+	Map["Land Borders"].Killparts — teleport home alive (same as Base / Return).
 ]]
 
 local Players = game:GetService("Players")
@@ -34,7 +33,7 @@ end
 local function killCharacter(char: Model)
 	local player = Players:GetPlayerFromCharacter(char)
 	if player then
-		ReviveService.softRespawnAtPlotBase(player)
+	ReviveService.softTeleportHomeAlive(player)
 		return
 	end
 	local hum = char:FindFirstChildOfClass("Humanoid")

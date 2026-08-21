@@ -1175,6 +1175,12 @@ end
 
 local function onLocalDeath(character: Model)
 	stopRobloxOofSounds()
+	if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
+		playFrictionlessBlackFade()
+		stopEarRinging()
+		setBgmSlowed(false)
+		return
+	end
 	playDeathSfx()
 	startEarRinging()
 	if shouldShowTryAgainNotif() then
@@ -1343,6 +1349,21 @@ function ReviveController.init()
 		local panel = resolveRevivePanel(main)
 		if panel then
 			panel.Visible = false
+		end
+	end)
+
+	player:GetAttributeChangedSignal(ReviveConfig.HOME_TELEPORT_ATTR):Connect(function()
+		playFrictionlessBlackFade()
+		ReviveController.restoreGameplayAfterSoftDeath()
+		local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
+		MobileTouchGate.restorePlayerMovement()
+		local hum = getHumanoid()
+		if hum then
+			hum.CameraOffset = Vector3.zero
+			if hum.WalkSpeed < 8 then
+				local base = hum:GetAttribute("BrainrotBaseWalkSpeed")
+				hum.WalkSpeed = if typeof(base) == "number" and base > 0 then base else 16
+			end
 		end
 	end)
 

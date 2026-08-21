@@ -336,15 +336,7 @@ local function resolveHitboxSoftRespawnCFrame(): CFrame?
 end
 
 local function softRespawnAtPlotBase(player: Player)
-	if lastSoftRespawnAt[player] and (os.clock() - lastSoftRespawnAt[player]) < 0.35 then
-		return
-	end
-	clearPending(player)
-	lastSoftRespawnAt[player] = os.clock()
-	player:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, nil)
-	-- Clear soft pins — PlotPlayerSpawn CharacterAdded owns the Base/Return teleport.
-	clearReviveSpawnAttrs(player)
-	forceLoadCharacter(player)
+	softTeleportHomeAlive(player)
 end
 
 -- Keep the same character: fade-friendly home teleport (no LoadCharacter hitch).
@@ -364,12 +356,18 @@ local function softTeleportHomeAlive(player: Player)
 	end
 	local hum = character:FindFirstChildOfClass("Humanoid")
 	if hum then
+		pcall(function()
+			hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+		end)
+		hum.BreakJointsOnDeath = false
 		if hum.Health <= 0 then
-			forceLoadCharacter(player)
-			return
+			hum.Health = math.max(hum.MaxHealth, 1)
+			pcall(function()
+				hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+			end)
 		end
-		hum.Health = hum.MaxHealth
 	end
+	player:SetAttribute(ReviveConfig.HOME_TELEPORT_ATTR, Workspace:GetServerTimeNow())
 	PlotSpawnUtil.teleportPlayerHome(player, character, 12)
 end
 
@@ -512,6 +510,19 @@ local function hookCharacter(player: Player, character: Model)
 	end
 
 	startLandTracking(player, character)
+
+	humanoid.BreakJointsOnDeath = false
+	pcall(function()
+		humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+	end)
+
+	humanoid.HealthChanged:Connect(function(hp)
+		if hp > 0 then
+			return
+		end
+		humanoid.Health = math.max(humanoid.MaxHealth, 1)
+		softTeleportHomeAlive(player)
+	end)
 
 	humanoid.Died:Connect(function()
 		local char = humanoid.Parent

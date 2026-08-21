@@ -12,14 +12,14 @@ M.BGM_SLOW_FADE_SECONDS = 1.2
 M.FRICTIONLESS_FADE_HOLD_SECONDS = 1
 M.FRICTIONLESS_FADE_IN_SECONDS = 0.2
 M.FRICTIONLESS_FADE_OUT_SECONDS = 0.35
-M.FAST_RESPAWN_ALL_DEATHS = true -- soft respawn to plot Base (same as Base button)
+M.FAST_RESPAWN_ALL_DEATHS = true -- teleport home like Base/Return (no LoadCharacter)
 M.HITBOX_RESPAWN_CLEARANCE = 5
 M.SOFT_RESPAWN_COOLDOWN_SEC = 1.25
 M.REVIVE_SPAWN_ATTR = "ReviveSpawnCFrame" -- legacy
 M.REVIVE_SPAWN_POS_ATTR = "ReviveSpawnPos"
 M.REVIVE_SPAWN_LOOK_ATTR = "ReviveSpawnLook"
--- Set by wave-web kill remote so soft respawn goes to the player's plot base.
 M.WAVE_WEB_DEATH_ATTR = "WaveWebChaseDeath"
+M.HOME_TELEPORT_ATTR = "PlotHomeTeleportAt"
 M.MAX_LAND = 10
 
 export type ReviveTier = {

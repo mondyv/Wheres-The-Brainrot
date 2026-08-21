@@ -360,80 +360,47 @@ local function classifyTabState(key: string): string?
 	return nil
 end
 
-local function setTabStateNode(node: Instance, on: boolean)
+local function setChromeNode(node: Instance, on: boolean)
 	if node:IsA("UIGradient") then
-		node.Enabled = on
-		return
-	end
-	if node:IsA("UIStroke") then
-		node.Enabled = on
-		return
-	end
-	if node:IsA("Folder") or node:IsA("Configuration") then
-		for _, child in node:GetChildren() do
-			setTabStateNode(child, on)
+		node.Enabled = false
+		if on then
+			node.Enabled = true
 		end
 		return
 	end
 	if node:IsA("GuiObject") then
-		(node :: GuiObject).Visible = on
-	end
-end
-
-local function setDirectTabChrome(tabBtn: Instance, selected: boolean)
-	local sel = tabBtn:FindFirstChild("Selected")
-	local unsel = tabBtn:FindFirstChild("NotSelected")
-	local function apply(node: Instance?, on: boolean)
-		if not node then
-			return
-		end
-		if node:IsA("UIGradient") or node:IsA("UIStroke") then
-			(node :: any).Enabled = on
-			return
-		end
-		if node:IsA("GuiObject") then
-			local gui = node :: GuiObject
-			gui.Visible = on
-			if on then
-				gui.ZIndex = math.max(gui.ZIndex, 3)
-			end
+		local gui = node :: GuiObject
+		gui.Visible = on
+		if on then
+			gui.ZIndex = math.max(gui.ZIndex, 4)
 		end
 		for _, d in node:GetDescendants() do
-			if d:IsA("UIGradient") or d:IsA("UIStroke") then
-				(d :: any).Enabled = on
+			if d:IsA("UIGradient") then
+				d.Enabled = false
+				if on then
+					d.Enabled = true
+				end
 			end
 		end
 	end
-	apply(sel, selected)
-	apply(unsel, not selected)
 end
 
 local function applyTabVisual(tabBtn: Instance, selected: boolean)
-	setDirectTabChrome(tabBtn, selected)
-	local selectedNodes: { Instance } = {}
-	local unselectedNodes: { Instance } = {}
-
-	local function consider(inst: Instance)
-		if inst == tabBtn then
-			return
-		end
-		local kind = classifyTabState(tabNameKey(inst.Name))
-		if kind == "off" then
-			table.insert(unselectedNodes, inst)
-		elseif kind == "on" then
-			table.insert(selectedNodes, inst)
-		end
+	-- Studio chrome is TypeButtons.<Tab>.Selected / .NotSelected (often UIGradients
+	-- on the same button — only one can render, so disable both first).
+	local sel = tabBtn:FindFirstChild("Selected")
+	local unsel = tabBtn:FindFirstChild("NotSelected")
+	if sel then
+		setChromeNode(sel, false)
 	end
-
-	for _, d in tabBtn:GetDescendants() do
-		consider(d)
+	if unsel then
+		setChromeNode(unsel, false)
 	end
-
-	for _, node in selectedNodes do
-		setTabStateNode(node, selected)
+	if sel then
+		setChromeNode(sel, selected)
 	end
-	for _, node in unselectedNodes do
-		setTabStateNode(node, not selected)
+	if unsel then
+		setChromeNode(unsel, not selected)
 	end
 end
 
@@ -472,13 +439,12 @@ local function wireTabInteractions(tabRoot: Instance, mutationId: string)
 	end)
 	local tiltTarget = resolveTabTiltTarget(tabRoot, btn)
 	-- Dedicated scale so PanelSlideScale on the tab root doesn't fight hover.
-	local scaleHost: GuiObject = if tabRoot:IsA("GuiObject") then (tabRoot :: GuiObject) else btn
-	local scale = scaleHost:FindFirstChild("IndexTabHoverScale")
+	local scale = btn:FindFirstChild("IndexTabHoverScale")
 	if not (scale and scale:IsA("UIScale")) then
 		scale = Instance.new("UIScale")
 		scale.Name = "IndexTabHoverScale"
 		scale.Scale = 1
-		scale.Parent = scaleHost
+		scale.Parent = btn
 	end
 	local hoverScale = scale :: UIScale
 
@@ -947,6 +913,11 @@ selectMutation = function(mutationId: string)
 			local btn = typeButtons:FindFirstChild(btnName)
 			if btn then
 				applyTabVisual(btn, mutId == selectedMutation)
+				for _, d in btn:GetDescendants() do
+					if d:FindFirstChild("Selected") or d:FindFirstChild("NotSelected") then
+						applyTabVisual(d, mutId == selectedMutation)
+					end
+				end
 			end
 		end
 	end

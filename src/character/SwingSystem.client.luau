@@ -632,10 +632,9 @@ end
 local function getLaunchScale()
 	local stats = getPowerStats()
 	if stats and typeof(stats.maxLaunchSpeed) == "number" and stats.maxLaunchSpeed > 0 then
-		-- Ratio against a low baseline so high Power keeps adding throw, not flattening at the cap.
-		return math.clamp(stats.maxLaunchSpeed / 88, 0.9, 10)
+		return math.clamp(stats.maxLaunchSpeed / C.LAUNCH_SPEED_CAP, 0.88, 1.72)
 	end
-	return math.clamp(0.9 + (getPowerScale() - 1) * 1.15, 0.9, 8)
+	return math.clamp(0.9 + (getPowerScale() - 1) * 0.55, 0.88, 1.65)
 end
 
 local function getSteerForce()
@@ -655,7 +654,7 @@ local function getMaxSwingSpeed()
 	if stats and typeof(stats.maxSwingSpeed) == "number" and stats.maxSwingSpeed > 0 then
 		return stats.maxSwingSpeed
 	end
-	return C.MAX_SWING_SPEED * getLaunchScale()
+	return C.MAX_SWING_SPEED * math.clamp(getPowerScale(), 0.8, 6.5)
 end
 
 local function getArcForce()
@@ -1098,8 +1097,8 @@ local function createReleaseStyleController(humanoid, hrp)
 		local inputBoost = math.clamp(forwardCharge + forwardHoldBonus * 0.35, 0, 1.35)
 		local momentumBoost = math.clamp(momentum or 0, 0, 1)
 		local cap = C.LAUNCH_SPEED_CAP
-			* math.clamp(0.72 + (launchScale - 1) * 0.95, 0.85, 12)
-			* (1 + momentumBoost * C.SWING_MOMENTUM_LAUNCH_BONUS * 0.86)
+			* math.clamp(0.92 + (launchScale - 1) * 0.7, 0.9, 1.78)
+			* (1 + momentumBoost * C.SWING_MOMENTUM_LAUNCH_BONUS * 0.7)
 
 		local horizontalSpeed = (
 			C.LAUNCH_FORWARD_DV
@@ -1109,6 +1108,7 @@ local function createReleaseStyleController(humanoid, hrp)
 		)
 			* holdMult
 			* launchScale
+			* math.clamp(0.96 + (launchScale - 1) * 0.22, 0.92, 1.35)
 		local upwardSpeed = (
 			C.LAUNCH_UP_DV
 			+ C.LAUNCH_CHARGE_DV * charge * 0.72
@@ -1116,16 +1116,12 @@ local function createReleaseStyleController(humanoid, hrp)
 			+ momentumBoost * 12.5
 		)
 			* holdMult
-			* math.clamp(0.92 + launchScale * 0.18, 1, 2.4)
-			* math.clamp(1 + momentumBoost * 0.22, 1, 1.28)
+			* math.clamp(0.94 + launchScale * 0.08, 1, 1.22)
+			* math.clamp(1 + momentumBoost * 0.18, 1, 1.22)
 		local targetVelocity = launchDir * horizontalSpeed + Vector3.new(0, upwardSpeed, 0)
 
-		local mag = targetVelocity.Magnitude
-		if mag > cap then
-			-- Soft cap: still grow past the reference speed instead of freezing high Power.
-			local extra = mag - cap
-			local soft = cap + extra / (1 + extra / math.max(cap, 1) * 0.42)
-			targetVelocity = targetVelocity.Unit * soft
+		if targetVelocity.Magnitude > cap then
+			targetVelocity = targetVelocity.Unit * cap
 		end
 		hrp.AssemblyLinearVelocity = targetVelocity
 

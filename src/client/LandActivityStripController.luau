@@ -2,7 +2,7 @@
 --[[
 	Outside the safe zone:
 	• Hides SideUI.Right.RandomBrainrot (only restores it inside the safe zone)
-	• Shows a cartoony land radar (L1→L10) with player headshots above luck tokens
+	• Shows a cartoony land radar (luck tokens + Other World) with player headshots
 	Inside safe zone / HUD hidden: strip hides.
 ]]
 
@@ -24,6 +24,9 @@ local LandActivityStripController = {}
 local player = Players.LocalPlayer
 local LAND_ATTR = "CurrentLand"
 local MAX_LAND = 10
+local OTHER_WORLD_SLOT = 11
+local SLOT_COUNT = OTHER_WORLD_SLOT
+local OTHER_WORLD_LABEL = "Other World"
 local POLL_SEC = 0.18
 local SHOW_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local HIDE_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
@@ -126,8 +129,8 @@ local function applyRainbowToTrack(track: Frame): UIGradient?
 end
 
 local function landXScale(land: number): number
-	local t = (math.clamp(land, 1, MAX_LAND) - 1) / (MAX_LAND - 1)
-	return 0.05 + t * 0.9
+	local t = (math.clamp(land, 1, SLOT_COUNT) - 1) / (SLOT_COUNT - 1)
+	return 0.04 + t * 0.92
 end
 
 local function isOutsideSafezone(): boolean
@@ -505,10 +508,14 @@ local function formatLandLuckLabel(land: number): string
 end
 
 local function refreshLandLabels()
-	for land = 1, MAX_LAND do
+	for land = 1, SLOT_COUNT do
 		local label = landLabels[land]
 		if label and label.Parent then
-			label.Text = formatLandLuckLabel(land)
+			if land == OTHER_WORLD_SLOT then
+				label.Text = OTHER_WORLD_LABEL
+			else
+				label.Text = formatLandLuckLabel(land)
+			end
 		end
 	end
 end
@@ -772,7 +779,7 @@ local function buildStrip(parentGui: PlayerGui)
 	table.clear(landTicks)
 	table.clear(landLabels)
 	table.clear(landTokens)
-	for land = 1, MAX_LAND do
+	for land = 1, SLOT_COUNT do
 		local x = landXScale(land)
 
 		local peg = Instance.new("Frame")
@@ -800,7 +807,11 @@ local function buildStrip(parentGui: PlayerGui)
 		token.Name = "Token" .. tostring(land)
 		token.AnchorPoint = Vector2.new(0.5, 0)
 		token.Position = UDim2.new(x, 0, 0.54, 0)
-		token.Size = UDim2.fromOffset(if compact then 34 else 38, if compact then 17 else 18)
+		local isOtherWorld = land == OTHER_WORLD_SLOT
+		token.Size = UDim2.fromOffset(
+			if isOtherWorld then (if compact then 62 else 74) else (if compact then 34 else 38),
+			if compact then 17 else 18
+		)
 		token.BackgroundColor3 = TOKEN
 		token.BackgroundTransparency = 0.18
 		token.BorderSizePixel = 0
@@ -823,11 +834,11 @@ local function buildStrip(parentGui: PlayerGui)
 		label.AnchorPoint = Vector2.new(0.5, 0.5)
 		label.Position = UDim2.fromScale(0.5, 0.5)
 		label.Size = UDim2.fromScale(1, 1)
-		label.Text = formatLandLuckLabel(land)
+		label.Text = if land == OTHER_WORLD_SLOT then OTHER_WORLD_LABEL else formatLandLuckLabel(land)
 		label.TextColor3 = TOKEN_FACE
 		label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 		label.TextStrokeTransparency = 0.15
-		label.TextSize = if compact then 11 else 12
+		label.TextSize = if land == OTHER_WORLD_SLOT then (if compact then 8 else 9) else (if compact then 11 else 12)
 		label.ZIndex = 53
 		UiFonts.applyBody(label)
 		label.Parent = token

@@ -1,7 +1,7 @@
 -- [ACTIVE] WaveWebChaseController
 --[[
 	After every bush brainrot accept: brief delay → spider drop/roar intro →
-	clone EssentialAssets["Wave Web"] mid-map and roll it toward safezone.
+	clone EssentialAssets["Wave Web"] at authored mid-map pose (player X) and roll toward the player.
 	HUD hides during chase; red heartbeat vignette.
 ]]
 
@@ -24,6 +24,7 @@ local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitFor
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local WaveWebChaseConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WaveWebChaseConfig"))
 local SpiderSenseFx = require(script.Parent.SpiderSenseFx)
+local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 
 local C = WaveWebChaseConfig
 local player = Players.LocalPlayer
@@ -121,58 +122,20 @@ local function resolveSpiderSpawn(playerPos: Vector3): Vector3
 	return playerPos + Vector3.new(C.SPIDER_MIN_PLAYER_DISTANCE, 2, 0)
 end
 
--- Average of Land1–10 — fixed mid-map origin (never behind the player).
-local function resolveMapCenter(): Vector3
-	local map = Workspace:FindFirstChild("Map")
-	local lands = map and map:FindFirstChild("Lands")
-	if lands then
-		local sum = Vector3.zero
-		local n = 0
-		for i = 1, 10 do
-			local folder = lands:FindFirstChild("Land" .. tostring(i))
-			if folder then
-				local part: BasePart? = nil
-				if folder:IsA("Model") then
-					part = (folder :: Model).PrimaryPart
-				end
-				if not part then
-					part = folder:FindFirstChildWhichIsA("BasePart", true)
-				end
-				if part then
-					sum += part.Position
-					n += 1
-				end
-			end
-		end
-		if n > 0 then
-			return sum / n
-		end
+-- Authored pose: Y/Z/yaw fixed. X matches the player so the wall lines up with them.
+local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
+	local rest = C.WAVE_SPAWN_POS
+	local spawnPos = Vector3.new(playerPos.X, rest.Y, rest.Z)
+	local toPlayer = flatUnitXZ(spawnPos, playerPos)
+	local safeCenter = SafezoneUtil.getSafezoneCenter()
+	if (Vector3.new(playerPos.X - spawnPos.X, 0, playerPos.Z - spawnPos.Z)).Magnitude < 4 then
+		toPlayer = if safeCenter then flatUnitXZ(spawnPos, safeCenter) else Vector3.new(0, 0, -1)
 	end
-	return SafezoneUtil.getSafezoneCenter() or Vector3.zero
+	return spawnPos, toPlayer
 end
 
--- Fixed corridor: mid-map → safezone. Wave never tracks the player.
-local function computeTsunamiCorridor(_playerPos: Vector3): (Vector3, Vector3)
-	local mapCenter = resolveMapCenter()
-	local safeCenter = SafezoneUtil.getSafezoneCenter() or mapCenter
-	local toSafe = flatUnitXZ(mapCenter, safeCenter)
-	local spawnPos = mapCenter - toSafe * C.WAVE_SPAWN_BACK_FROM_CENTER
-	return spawnPos, toSafe
-end
-
--- Upright facing along chaseDir. Mesh faces you at Studio Orientation 0, -90, 0
--- relative to travel.
-local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
-	local flat = Vector3.new(chaseDir.X, 0, chaseDir.Z)
-	if flat.Magnitude < 0.05 then
-		flat = Vector3.new(0, 0, -1)
-	else
-		flat = flat.Unit
-	end
-	local travelYaw = math.atan2(-flat.X, -flat.Z)
-	return CFrame.new(pos)
-		* CFrame.fromOrientation(0, travelYaw, 0)
-		* CFrame.fromOrientation(0, math.rad(-90), 0)
+local function waveFacingCf(pos: Vector3, _chaseDir: Vector3): CFrame
+	return CFrame.new(pos) * CFrame.fromOrientation(0, math.rad(C.WAVE_SPAWN_YAW_DEG), 0)
 end
 
 local function hideChaseHud()
@@ -181,25 +144,6 @@ local function hideChaseHud()
 		hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker", "LandActivityStripGui" },
 		hideMainChildNames = { "TimCheeseQuestHost" },
 	})
-end
-
-local function groundYAt(x: number, z: number, refY: number): number
-	local origin = Vector3.new(x, refY + 80, z)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	local ignore: { Instance } = {}
-	if activeSpider then
-		table.insert(ignore, activeSpider)
-	end
-	if activeWave then
-		table.insert(ignore, activeWave)
-	end
-	params.FilterDescendantsInstances = ignore
-	local hit = Workspace:Raycast(origin, Vector3.new(0, -220, 0), params)
-	if hit then
-		return hit.Position.Y
-	end
-	return refY
 end
 
 local function stabilizeSpider(model: Model)
@@ -297,13 +241,6 @@ local function playScreechVfx(spider: Model, landPos: Vector3)
 	if host then
 		SpiderSenseFx.attachNamed(C.SPIDER_SPIDEY_SENSES_NAME, host, "WaveSpiderSenses")
 	end
-
-	local hrp = getHRP()
-	local lookAt = if hrp then hrp.Position else landPos + Vector3.new(0, 2, 8)
-	local from = spider:GetPivot().Position + Vector3.new(0, 4, 0)
-	local target = Vector3.new(lookAt.X, from.Y, lookAt.Z)
-	local look = if (target - from).Magnitude > 0.2 then CFrame.lookAt(from, target) else CFrame.new(from)
-	SpiderSenseFx.playNamedAt(C.SPIDER_SHOOTING_WEB_NAME, look, 2.4)
 	SpiderSenseFx.playNamedAt(C.SPIDER_BLOW_VFX_NAME, CFrame.new(landPos + Vector3.new(0, 1.2, 0)), 1.6)
 end
 
@@ -352,8 +289,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	local wave = waveOrErr :: Model
 	prepareWaveModel(wave)
 	local spawnPos, forward = computeTsunamiCorridor(playerPos)
-	local gy = groundYAt(spawnPos.X, spawnPos.Z, playerPos.Y) + 2
-	local pos = Vector3.new(spawnPos.X, gy, spawnPos.Z)
+	local pos = Vector3.new(spawnPos.X, C.WAVE_SPAWN_POS.Y, spawnPos.Z)
 	wave:PivotTo(waveFacingCf(pos, forward))
 	wave.Parent = Workspace
 	activeWave = wave
@@ -633,6 +569,7 @@ local function attachExclamation()
 	}):Play()
 
 	exclamationGui = bb
+	UIInteractionSounds.playNotif()
 
 	local shown = bb
 	local pulseToken = chaseToken
@@ -1174,8 +1111,7 @@ local function runChase(token: number)
 
 		wavePos += forward * speed * dt
 		waveTravelPos = wavePos
-		local gy = groundYAt(wavePos.X, wavePos.Z, pPos.Y) + 2
-		wavePos = Vector3.new(wavePos.X, gy, wavePos.Z)
+		wavePos = Vector3.new(wavePos.X, C.WAVE_SPAWN_POS.Y, wavePos.Z)
 
 		local bob = math.sin(phase * 1.2) * 0.6
 		local targetVisual = wavePos + Vector3.new(0, bob, 0)

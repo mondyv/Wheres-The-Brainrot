@@ -1,11 +1,13 @@
 -- [ACTIVE] KillParts.server
 --[[
-	Map["Land Borders"].Killparts — any BasePart named KillPart (or under Killparts)
-	kills the touching player instantly.
+	Map["Land Borders"].Killparts — touching a kill part soft-respawns on the
+	player's plot Base (same as cobweb / Return), not the default baseplate spawn.
 ]]
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+
+local ReviveService = require(script.Parent:WaitForChild("Modules"):WaitForChild("ReviveService"))
 
 local DEBOUNCE_SEC = 0.75
 -- Longer than soft-respawn teleport retries so falling into Killparts cannot death-loop.
@@ -30,6 +32,11 @@ local function resolveKillpartsFolder(): Instance?
 end
 
 local function killCharacter(char: Model)
+	local player = Players:GetPlayerFromCharacter(char)
+	if player then
+		ReviveService.softRespawnAtPlotBase(player)
+		return
+	end
 	local hum = char:FindFirstChildOfClass("Humanoid")
 	if hum and hum.Health > 0 then
 		hum.Health = 0

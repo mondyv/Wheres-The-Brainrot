@@ -1,7 +1,7 @@
 -- [ACTIVE] WaveWebChaseConfig
 --[[
 	After accepting a bush brainrot: spider intro → clone EssentialAssets["Wave Web"]
-	at mid-map and roll it toward the safezone like a tsunami.
+	at the authored mid-map pose (player X, fixed Y/Z) and roll toward the player.
 	Keep this light — heavy ScaleTo / particle bursts crash clients.
 ]]
 
@@ -32,7 +32,9 @@ M.SPIDER_MAX_PLAYER_DISTANCE = 58
 M.LAND_EDGE_MARGIN = 14
 M.SPIDER_PRELOAD_SEC = 0.35
 
--- Mid-map tsunami: lands centroid, offset away from safezone, then rolls toward base.
+-- Authored Wave Web pose (map middle). X follows the player; Y/Z stay put.
+M.WAVE_SPAWN_POS = Vector3.new(1448.013, 92.301, 205.634)
+M.WAVE_SPAWN_YAW_DEG = 90
 M.WAVE_SPAWN_BACK_FROM_CENTER = 40
 M.WAVE_KILL_DISTANCE = 16
 -- Never ScaleTo the Wave Web mesh — it freezes/crashes Studio & clients.

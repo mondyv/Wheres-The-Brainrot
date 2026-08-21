@@ -6,9 +6,36 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
+
+local function disableDefaultSpawnLocations()
+	local function consider(inst: Instance)
+		if not inst:IsA("SpawnLocation") then
+			return
+		end
+		local inPlot = false
+		local p: Instance? = inst.Parent
+		while p and p ~= Workspace do
+			local n = string.lower(p.Name)
+			if n == "plots" or string.find(n, "plot", 1, true) then
+				inPlot = true
+				break
+			end
+			p = p.Parent
+		end
+		if not inPlot then
+			inst.Enabled = false
+			inst.Neutral = false
+			inst.Duration = 0
+		end
+	end
+	for _, d in Workspace:GetDescendants() do
+		consider(d)
+	end
+end
 
 local function clearReviveSpawnAttrs(player: Player)
 	player:SetAttribute(ReviveConfig.REVIVE_SPAWN_ATTR, nil)
@@ -24,7 +51,6 @@ local function onCharacter(player: Player, character: Model)
 		if not hrp or not character.Parent or not player.Parent then
 			return
 		end
-		-- Soft-respawn pins are ignored — always the Base / Return pad.
 		clearReviveSpawnAttrs(player)
 		PlotSpawnUtil.teleportPlayerHome(player, character)
 	end)
@@ -45,7 +71,6 @@ local function hookPlayer(player: Player)
 			if char and typeof(player:GetAttribute("AssignedPlotSlot")) == "number" then
 				task.defer(function()
 					if char.Parent and player.Parent then
-						-- Plot finished promoting — snap home if still waiting / misplaced.
 						PlotSpawnUtil.teleportPlayerHome(player, char, 20)
 					end
 				end)
@@ -56,6 +81,8 @@ local function hookPlayer(player: Player)
 		onCharacter(player, player.Character)
 	end
 end
+
+disableDefaultSpawnLocations()
 
 Players.PlayerAdded:Connect(hookPlayer)
 for _, plr in Players:GetPlayers() do

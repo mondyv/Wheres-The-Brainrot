@@ -9,6 +9,8 @@ local Workspace = game:GetService("Workspace")
 
 local PlotSpawnUtil = {}
 
+local lastHomeCfByUserId: { [number]: CFrame } = {}
+
 local SPAWN_CLEARANCE = 3
 local STREAM_RETRIES = 40
 local STREAM_RETRY_INTERVAL = 0.2
@@ -611,7 +613,11 @@ function PlotSpawnUtil.getAssignedPlotSpawnCFrame(player: Player): CFrame?
 	if not PlotSpawnUtil.plotHasSpawnPad(plot) then
 		return nil
 	end
-	return PlotSpawnUtil.findFirstFloorSpawnCFrame(plot)
+	local cf = PlotSpawnUtil.findFirstFloorSpawnCFrame(plot)
+	if cf then
+		lastHomeCfByUserId[player.UserId] = cf
+	end
+	return cf
 end
 
 function PlotSpawnUtil.teleportCharacterToCFrame(character: Model, spawnCf: CFrame)
@@ -652,7 +658,11 @@ function PlotSpawnUtil.teleportPlayerHome(player: Player, character: Model, time
 
 	local timeout = if typeof(timeoutSec) == "number" then timeoutSec else 60
 	local deadline = os.clock() + math.max(0.5, timeout)
-	local spawnCf: CFrame? = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player)
+	local spawnCf: CFrame? = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player) or lastHomeCfByUserId[player.UserId]
+	if spawnCf then
+		PlotSpawnUtil.streamAndTeleportWithRetries(player, character, spawnCf, true)
+		return true
+	end
 	while not spawnCf and os.clock() < deadline do
 		if not player.Parent or not character.Parent or player.Character ~= character then
 			if hrp.Parent then

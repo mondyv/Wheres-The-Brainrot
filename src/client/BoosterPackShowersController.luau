@@ -110,18 +110,46 @@ local function playerInGroup(): boolean
 	return ok and inGroup == true
 end
 
-local function findRowButton(row: Instance?): GuiButton?
+local function ensureRowClickCover(row: Instance?): GuiButton?
 	if not row then
 		return nil
 	end
-	if row:IsA("GuiButton") then
-		return row
+	if not row:IsA("GuiObject") then
+		return nil
 	end
-	local nested = row:FindFirstChild("Button")
-	if nested and nested:IsA("GuiButton") then
-		return nested
+	local host = row :: GuiObject
+	local existing = host:FindFirstChild("_FreeRewardClick")
+	if existing and existing:IsA("GuiButton") then
+		return existing
 	end
-	return row:FindFirstChildWhichIsA("GuiButton", true)
+	for _, d in host:GetDescendants() do
+		if d:IsA("GuiButton") then
+			d.Active = false
+			pcall(function()
+				(d :: any).Interactable = false
+			end)
+		end
+	end
+	if host:IsA("GuiButton") then
+		local btn = host :: GuiButton
+		btn.Active = true
+		pcall(function()
+			(btn :: any).Interactable = true
+		end)
+		return btn
+	end
+	local cover = Instance.new("TextButton")
+	cover.Name = "_FreeRewardClick"
+	cover.BackgroundTransparency = 1
+	cover.Text = ""
+	cover.AutoButtonColor = false
+	cover.Size = UDim2.fromScale(1, 1)
+	cover.Position = UDim2.fromScale(0.5, 0.5)
+	cover.AnchorPoint = Vector2.new(0.5, 0.5)
+	cover.ZIndex = 80
+	cover.Active = true
+	cover.Parent = host
+	return cover
 end
 
 local function setCheckVisible(icon: GuiObject?, on: boolean)
@@ -340,15 +368,15 @@ local function wireFreeRewardsPanel()
 		claimNameLabel = claimName :: TextLabel
 	end
 
-	local likeBtn = findRowButton(likeRow)
+	local likeBtn = ensureRowClickCover(likeRow)
 	if likeBtn then
 		UIButtonEffects.wireSubtleScaleButtonAnim(likeBtn, promptLikeGame)
 	end
-	local joinBtn = findRowButton(joinRow)
+	local joinBtn = ensureRowClickCover(joinRow)
 	if joinBtn then
 		UIButtonEffects.wireSubtleScaleButtonAnim(joinBtn, promptJoinGroup)
 	end
-	local claimBtn = findRowButton(claimRow)
+	local claimBtn = ensureRowClickCover(claimRow)
 	if claimBtn then
 		UIButtonEffects.wireSubtleScaleButtonAnim(claimBtn, claimReward)
 	end

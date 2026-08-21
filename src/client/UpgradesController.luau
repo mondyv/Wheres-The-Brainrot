@@ -934,18 +934,46 @@ local function ensureEditButton(powerFrame: Instance): GuiButton?
 	return nil
 end
 
-local function findEditClickButton(host: Instance?): GuiButton?
-	if not host then
-		return nil
-	end
+local function ensureFullClickCover(host: GuiObject): GuiButton
 	if host:IsA("GuiButton") then
-		return host
+		local btn = host :: GuiButton
+		btn.Active = true
+		pcall(function()
+			(btn :: any).Interactable = true
+		end)
+		if btn:IsA("TextButton") then
+			local tb = btn :: TextButton
+			if string.lower(tb.Text) == "button" then
+				tb.Text = ""
+				tb.TextTransparency = 1
+			end
+		end
+		return btn
 	end
-	local nested = host:FindFirstChild("Button")
-	if nested and nested:IsA("GuiButton") then
-		return nested
+	local existing = host:FindFirstChild("_FullClickCover")
+	if existing and existing:IsA("GuiButton") then
+		return existing
 	end
-	return host:FindFirstChildWhichIsA("GuiButton", true)
+	for _, d in host:GetDescendants() do
+		if d:IsA("GuiButton") then
+			d.Active = false
+			pcall(function()
+				(d :: any).Interactable = false
+			end)
+		end
+	end
+	local cover = Instance.new("TextButton")
+	cover.Name = "_FullClickCover"
+	cover.BackgroundTransparency = 1
+	cover.Text = ""
+	cover.AutoButtonColor = false
+	cover.Size = UDim2.fromScale(1, 1)
+	cover.Position = UDim2.fromScale(0.5, 0.5)
+	cover.AnchorPoint = Vector2.new(0.5, 0.5)
+	cover.ZIndex = 80
+	cover.Active = true
+	cover.Parent = host
+	return cover
 end
 
 local function ensureEditActionCaption(host: Instance?, title: string)
@@ -961,8 +989,11 @@ local function ensureEditActionCaption(host: Instance?, title: string)
 	end
 	local named = host:FindFirstChild("Name") or host:FindFirstChild("TextLabel")
 	if named and (named:IsA("TextLabel") or named:IsA("TextButton")) then
-		showLabel(named :: TextLabel)
-		return
+		local label = named :: TextLabel
+		if string.lower(label.Name) ~= "button" and string.lower(label.Text) ~= "button" then
+			showLabel(label)
+			return
+		end
 	end
 	for _, d in host:GetDescendants() do
 		if d:IsA("TextLabel") or d:IsA("TextButton") then
@@ -1001,7 +1032,8 @@ local function hideAuthoredButtonCaption(host: Instance?)
 			end
 		elseif gui:IsA("TextLabel") then
 			local t = string.lower((gui :: TextLabel).Text)
-			if t == "okay" or t == "ok" or t == "cancel" or t == "close" or t == "confirm" then
+			local n = string.lower(gui.Name)
+			if t == "okay" or t == "ok" or t == "cancel" or t == "close" or t == "confirm" or t == "button" or n == "button" then
 				(gui :: TextLabel).TextTransparency = 1
 				(gui :: TextLabel).Visible = false
 			end
@@ -1148,6 +1180,8 @@ local function wireEditPowerFrame(frame: Frame)
 	local headerButtons = header and header:FindFirstChild("Buttons")
 	local closeHost = headerButtons and headerButtons:FindFirstChild("Close")
 	hideAuthoredButtonCaption(closeHost)
+	hideAuthoredButtonCaption(okayHost)
+	hideAuthoredButtonCaption(cancelHost)
 	ensureEditActionCaption(okayHost, "Set")
 	ensureEditActionCaption(cancelHost, "Cancel")
 
@@ -1318,9 +1352,9 @@ local function wireEditPowerFrame(frame: Frame)
 		closeEditBar()
 	end
 
-	local okayBtn = findEditClickButton(okayHost)
-	local cancelBtn = findEditClickButton(cancelHost)
-	local closeBtn = findEditClickButton(closeHost)
+	local okayBtn = if okayHost and okayHost:IsA("GuiObject") then ensureFullClickCover(okayHost) else nil
+	local cancelBtn = if cancelHost and cancelHost:IsA("GuiObject") then ensureFullClickCover(cancelHost) else nil
+	local closeBtn = if closeHost and closeHost:IsA("GuiObject") then ensureFullClickCover(closeHost) else nil
 	if okayBtn then
 		UIButtonEffects.wireScaleButtonAnim(okayBtn, onOkay)
 	elseif okayHost and okayHost:IsA("GuiObject") then

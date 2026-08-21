@@ -320,6 +320,12 @@ local SELECTED_KEYS: { [string]: boolean } = {
 	on = true,
 	active = true,
 	sel = true,
+	green = true,
+	selectedbg = true,
+	selectedbackground = true,
+	onbg = true,
+	highlight = true,
+	glow = true,
 }
 
 local UNSELECTED_KEYS: { [string]: boolean } = {
@@ -330,6 +336,11 @@ local UNSELECTED_KEYS: { [string]: boolean } = {
 	idle = true,
 	inactive = true,
 	unsel = true,
+	gray = true,
+	grey = true,
+	dim = true,
+	unselectedbg = true,
+	offbg = true,
 }
 
 local function classifyTabState(key: string): string?
@@ -342,8 +353,11 @@ local function classifyTabState(key: string): string?
 	then
 		return "off"
 	end
-	if SELECTED_KEYS[key] or string.find(key, "select", 1, true) then
+	if SELECTED_KEYS[key] or string.find(key, "select", 1, true) or string.find(key, "green", 1, true) then
 		return "on"
+	end
+	if string.find(key, "gray", 1, true) or string.find(key, "grey", 1, true) or string.find(key, "dim", 1, true) then
+		return "off"
 	end
 	return nil
 end
@@ -462,6 +476,7 @@ local function wireTabInteractions(tabRoot: Instance, mutationId: string)
 		TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1 }):Play()
 		TweenService:Create(tiltTarget, TILT_RESET, { Rotation = 0 }):Play()
 	end)
+	btn.MouseButton1Down:Connect(fireSelect)
 	btn.Activated:Connect(fireSelect)
 end
 
@@ -847,16 +862,39 @@ local function updateHeader()
 	end
 end
 
+local LUCKY_BLOCK_SELECTED_TINT = Color3.fromRGB(255, 214, 64)
+local LUCKY_BLOCK_IDLE_TINT = Color3.fromRGB(255, 255, 255)
+
 local function applyLuckyBlockHeaderVisual(selected: boolean)
 	if not luckyBlockHeaderBtn then
 		return
 	end
 	applyTabVisual(luckyBlockHeaderBtn, selected)
 	local scale = getOrAddUIScale(luckyBlockHeaderBtn)
-	if selected then
-		scale.Scale = 1.08
-	else
-		scale.Scale = 1
+	TweenService:Create(scale, HOVER_TWEEN, { Scale = if selected then 1.1 else 1 }):Play()
+	for _, d in luckyBlockHeaderBtn:GetDescendants() do
+		if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+			local img = d :: ImageLabel
+			if img:GetAttribute("LuckyIdleTint") == nil then
+				img:SetAttribute("LuckyIdleTint", img.ImageColor3)
+			end
+			local idle = img:GetAttribute("LuckyIdleTint")
+			local from = if typeof(idle) == "Color3" then idle else LUCKY_BLOCK_IDLE_TINT
+			TweenService:Create(img, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				ImageColor3 = if selected then LUCKY_BLOCK_SELECTED_TINT else from,
+			}):Play()
+		elseif d:IsA("UIStroke") then
+			TweenService:Create(d, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Thickness = if selected then 2.4 else 1,
+				Color = if selected then LUCKY_BLOCK_SELECTED_TINT else Color3.fromRGB(255, 255, 255),
+			}):Play()
+		end
+	end
+	if luckyBlockHeaderBtn:IsA("ImageButton") or luckyBlockHeaderBtn:IsA("ImageLabel") then
+		local img = luckyBlockHeaderBtn :: ImageLabel
+		TweenService:Create(img, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			ImageColor3 = if selected then LUCKY_BLOCK_SELECTED_TINT else LUCKY_BLOCK_IDLE_TINT,
+		}):Play()
 	end
 end
 
@@ -1079,16 +1117,12 @@ function IndexController.init()
 					(btn :: any).Interactable = true
 				end)
 				local hoverScale = getOrAddUIScale(btn)
-				btn.MouseButton1Click:Connect(function()
+				btn.MouseButton1Down:Connect(function()
 					UIInteractionSounds.playClick()
 					TweenService:Create(hoverScale, CLICK_TWEEN, { Scale = 0.94 }):Play()
-					task.delay(0.08, function()
-						if hoverScale.Parent then
-							TweenService:Create(hoverScale, HOVER_TWEEN, {
-								Scale = if selectedMutation == IndexConfig.LUCKY_BLOCK_TAB then 1.08 else 1,
-							}):Play()
-						end
-					end)
+					selectMutation(IndexConfig.LUCKY_BLOCK_TAB)
+				end)
+				btn.MouseButton1Click:Connect(function()
 					selectMutation(IndexConfig.LUCKY_BLOCK_TAB)
 				end)
 				btn.MouseEnter:Connect(function()

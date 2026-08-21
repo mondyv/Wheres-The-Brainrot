@@ -1,7 +1,7 @@
 -- [ACTIVE] WaveWebChaseController
 --[[
 	After every bush brainrot accept: brief delay → spider drop/roar intro →
-	clone EssentialAssets["Wave Web"] at authored mid-map pose (player X) and roll toward the player.
+	Wave Web rises close behind you, then rolls toward safezone.
 	HUD hides during chase; red heartbeat vignette.
 ]]
 
@@ -122,16 +122,12 @@ local function resolveSpiderSpawn(playerPos: Vector3): Vector3
 	return playerPos + Vector3.new(C.SPIDER_MIN_PLAYER_DISTANCE, 2, 0)
 end
 
--- Authored pose: Y/Z/yaw fixed. X matches the player so the wall lines up with them.
+-- Close behind the player (away from safezone) so they can sprint home.
 local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
-	local rest = C.WAVE_SPAWN_POS
-	local spawnPos = Vector3.new(playerPos.X, rest.Y, rest.Z)
-	local toPlayer = flatUnitXZ(spawnPos, playerPos)
-	local safeCenter = SafezoneUtil.getSafezoneCenter()
-	if (Vector3.new(playerPos.X - spawnPos.X, 0, playerPos.Z - spawnPos.Z)).Magnitude < 4 then
-		toPlayer = if safeCenter then flatUnitXZ(spawnPos, safeCenter) else Vector3.new(0, 0, -1)
-	end
-	return spawnPos, toPlayer
+	local safeCenter = SafezoneUtil.getSafezoneCenter() or (playerPos + Vector3.new(0, 0, -40))
+	local toSafe = flatUnitXZ(playerPos, safeCenter)
+	local spawnPos = playerPos - toSafe * C.WAVE_BEHIND_STUDS
+	return Vector3.new(spawnPos.X, C.WAVE_CRUISE_Y, spawnPos.Z), toSafe
 end
 
 local function waveFacingCf(pos: Vector3, _chaseDir: Vector3): CFrame
@@ -289,14 +285,37 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	local wave = waveOrErr :: Model
 	prepareWaveModel(wave)
 	local spawnPos, forward = computeTsunamiCorridor(playerPos)
-	local pos = Vector3.new(spawnPos.X, C.WAVE_SPAWN_POS.Y, spawnPos.Z)
-	wave:PivotTo(waveFacingCf(pos, forward))
+	local cruiseY = C.WAVE_CRUISE_Y
+	local startY = cruiseY - C.WAVE_RISE_STUDS
+	local startPos = Vector3.new(spawnPos.X, startY, spawnPos.Z)
+	wave:PivotTo(waveFacingCf(startPos, forward))
 	wave.Parent = Workspace
 	activeWave = wave
-	waveTravelPos = pos
+	waveTravelPos = Vector3.new(spawnPos.X, cruiseY, spawnPos.Z)
 	waveForward = forward
 	enableWaveFx(wave, false, true)
-	return pos, forward
+
+	local nv = Instance.new("NumberValue")
+	nv.Value = 0
+	local riseConn = nv:GetPropertyChangedSignal("Value"):Connect(function()
+		if not wave.Parent then
+			return
+		end
+		local y = startY + (cruiseY - startY) * nv.Value
+		local overshoot = math.sin(nv.Value * math.pi) * 2.4
+		wave:PivotTo(waveFacingCf(Vector3.new(spawnPos.X, y + overshoot, spawnPos.Z), forward))
+	end)
+	local tw = TweenService:Create(nv, TweenInfo.new(C.WAVE_RISE_SEC, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Value = 1,
+	})
+	tw:Play()
+	tw.Completed:Wait()
+	riseConn:Disconnect()
+	nv:Destroy()
+	if wave.Parent then
+		wave:PivotTo(waveFacingCf(waveTravelPos, forward))
+	end
+	return waveTravelPos, forward
 end
 
 local function resolveAnimator(model: Model): Animator?
@@ -1111,7 +1130,7 @@ local function runChase(token: number)
 
 		wavePos += forward * speed * dt
 		waveTravelPos = wavePos
-		wavePos = Vector3.new(wavePos.X, C.WAVE_SPAWN_POS.Y, wavePos.Z)
+		wavePos = Vector3.new(wavePos.X, C.WAVE_CRUISE_Y, wavePos.Z)
 
 		local bob = math.sin(phase * 1.2) * 0.6
 		local targetVisual = wavePos + Vector3.new(0, bob, 0)

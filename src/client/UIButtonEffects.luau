@@ -548,12 +548,8 @@ function M.wireScaleButtonAnim(btn: GuiButton, onActivated: () -> ())
 		end
 	)
 	btn.MouseButton1Down:Connect(function()
-		if not canFireUiTap() then
-			return
-		end
 		UIInteractionSounds.playClick()
 		tweenScale(0.9, CLICK_TWEEN)
-		-- Fire on Down: UIScale shrink cancels Activated/Click if we wait for release.
 		onActivated()
 	end)
 	btn.MouseButton1Up:Connect(function()
@@ -585,9 +581,6 @@ function M.wireSubtleScaleButtonAnim(btn: GuiButton, onActivated: () -> ())
 		end
 	)
 	btn.MouseButton1Down:Connect(function()
-		if not canFireUiTap() then
-			return
-		end
 		UIInteractionSounds.playClick()
 		tweenScale(0.98, clickInfo)
 		onActivated()

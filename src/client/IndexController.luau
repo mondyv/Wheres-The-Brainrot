@@ -70,6 +70,7 @@ local unlockedRE: RemoteEvent? = nil
 local questBarTween: Tween? = nil
 local rowHoverConns: { RBXScriptConnection } = {}
 local collectAllBtn: GuiButton? = nil
+local collectAllHost: GuiObject? = nil
 local pendingCollects = 0
 local selectMutation: (mutationId: string) -> ()
 local stateCache: { [string]: any } = {}
@@ -660,7 +661,7 @@ local function populateRow(
 			local xpLabel = prize and (prize:FindFirstChild("XpAmount") or prize:FindFirstChild("XpAmount", true))
 			if xpLabel and (xpLabel:IsA("TextLabel") or xpLabel:IsA("TextButton")) then
 				local xpAmt = IndexConfig.collectXpFor(entry.rarity, mutationId)
-				(xpLabel :: TextLabel).Text = "+" .. tostring(xpAmt) .. " XP"
+				xpLabel.Text = "+" .. tostring(xpAmt) .. " XP"
 			end
 		end
 	end
@@ -721,9 +722,13 @@ end
 
 local function setPendingCollectCount(n: number)
 	pendingCollects = math.max(0, math.floor(n))
+	local show = pendingCollects > 0
+	if collectAllHost then
+		collectAllHost.Visible = show
+	end
 	if collectAllBtn then
-		collectAllBtn.Visible = pendingCollects > 0
-		collectAllBtn.Active = pendingCollects > 0
+		collectAllBtn.Visible = show
+		collectAllBtn.Active = show
 	end
 end
 
@@ -895,6 +900,9 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 	local token = rebuildToken
 	clearGrid()
 	_gridMutation = selectedMutation
+	if typeof(state.pendingCollectCount) == "number" then
+		setPendingCollectCount(state.pendingCollectCount)
+	end
 
 	local list = buildSortedCatalog(catalog, selectedMutation)
 	local order = 0
@@ -1277,17 +1285,21 @@ function IndexController.init()
 	ensureTooltip()
 
 	local collectAllNode = indexFrame:FindFirstChild("CollectAllButton")
-	if collectAllNode then
+		or indexFrame:FindFirstChild("CollectAllButton", true)
+	if collectAllNode and collectAllNode:IsA("GuiObject") then
+		collectAllHost = collectAllNode :: GuiObject
+		collectAllHost.Visible = false
 		local btn = if collectAllNode:IsA("GuiButton")
 			then collectAllNode
 			else collectAllNode:FindFirstChildWhichIsA("GuiButton", true)
 		if btn and btn:IsA("GuiButton") then
 			collectAllBtn = btn
-			btn.Active = true
+			btn.Active = false
 			pcall(function()
 				(btn :: any).Interactable = true
 			end)
 			btn.Visible = false
+			setPendingCollectCount(0)
 			local collectAllBusy = false
 			UIButtonEffects.wireScaleButtonAnim(btn, function()
 				if collectAllBusy or pendingCollects <= 0 or not collectAllRF then

@@ -41,7 +41,7 @@ local function grantLuckyBlock(player: Player, blockId: string): boolean
 		return false
 	end
 	local ok, success = pcall(function()
-		return bf:Invoke(player, blockId, { equip = true })
+		return bf:Invoke(player, blockId, { equip = false })
 	end)
 	if not ok then
 		warn("[LevelService] GrantLuckyBlock error:", success)
@@ -95,7 +95,7 @@ local function grantLevelRewards(player: Player, newLevel: number): { LevelConfi
 			if typeof(blockId) == "string" and blockId ~= "" then
 				if not grantLuckyBlock(player, blockId) then
 					-- Soft fallback so the level-up still feels rewarding.
-					local fallback = math.max(50_000, math.floor(8_000 * newLevel * newLevel))
+					local fallback = math.max(2_000, math.floor(200 * newLevel * math.sqrt(newLevel)))
 					addCash(player, fallback)
 					cashTotal += fallback
 					warn("[LevelService] lucky block grant failed; gave cash fallback", fallback)

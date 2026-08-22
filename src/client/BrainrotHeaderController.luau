@@ -263,14 +263,9 @@ local function syncHeader(model: Model): boolean
 		bb.Size = DEFAULT_BB_SIZE
 	end
 
-	if adornee.Name == "Head" then
-		bb.StudsOffset = Vector3.new(0, adornee.Size.Y * 0.55 + 1.0, 0)
-	elseif adornee.Name == "UpperTorso" then
-		bb.StudsOffset = Vector3.new(0, adornee.Size.Y * 0.55 + 1.5, 0)
-	else
-		local _, bboxSize = model:GetBoundingBox()
-		bb.StudsOffset = Vector3.new(0, math.max(3, bboxSize.Y * 0.55 + 1.5), 0)
-	end
+	-- SizeRelativeOffset stays on the adornee top as the model scales (StudsOffset from Size/bbox flies up).
+	bb.SizeRelativeOffset = Vector3.new(0, 1, 0)
+	bb.StudsOffset = Vector3.new(0, 0.4, 0)
 
 	local infoFrame = bb:FindFirstChild("Info", true)
 	if infoFrame and infoFrame:IsA("GuiObject") then

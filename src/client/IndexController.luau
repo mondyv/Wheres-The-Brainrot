@@ -71,6 +71,10 @@ local questBarTween: Tween? = nil
 local rowHoverConns: { RBXScriptConnection } = {}
 local collectAllBtn: GuiButton? = nil
 local collectAllHost: GuiObject? = nil
+local collectedToast: GuiObject? = nil
+local collectedAmountLabel: TextLabel? = nil
+local collectedToastToken = 0
+local collectedToastBasePos: UDim2? = nil
 local pendingCollects = 0
 local selectMutation: (mutationId: string) -> ()
 local stateCache: { [string]: any } = {}
@@ -720,6 +724,76 @@ local function hideCollectChrome(row: Frame)
 	end
 end
 
+local function playCollectedXpToast(xp: number)
+	if not collectedToast then
+		return
+	end
+	local n = math.floor(xp)
+	if n <= 0 then
+		return
+	end
+	collectedToastToken += 1
+	local token = collectedToastToken
+	local toast = collectedToast
+	if collectedAmountLabel then
+		collectedAmountLabel.Text = "+" .. tostring(n) .. " XP"
+	elseif toast:IsA("TextLabel") then
+		(toast :: TextLabel).Text = "+" .. tostring(n) .. " XP"
+	end
+	if collectedToastBasePos == nil then
+		collectedToastBasePos = toast.Position
+	end
+	local basePos = collectedToastBasePos :: UDim2
+	toast.Visible = true
+	toast.Position = basePos
+	local scale = getOrAddUIScale(toast)
+	scale.Scale = 0.4
+	TweenService:Create(scale, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Scale = 1,
+	}):Play()
+	local fadeTargets: { GuiObject } = { toast }
+	if collectedAmountLabel then
+		table.insert(fadeTargets, collectedAmountLabel)
+	end
+	for _, node in fadeTargets do
+		if node:IsA("TextLabel") or node:IsA("TextButton") then
+			local lab = node :: TextLabel
+			lab.TextTransparency = 0
+		end
+	end
+	task.delay(1.05, function()
+		if token ~= collectedToastToken or not toast.Parent then
+			return
+		end
+		TweenService:Create(toast, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Position = basePos + UDim2.fromOffset(0, -42),
+		}):Play()
+		TweenService:Create(scale, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Scale = 0.72,
+		}):Play()
+		for _, node in fadeTargets do
+			if node:IsA("TextLabel") or node:IsA("TextButton") then
+				TweenService:Create(node, TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+					TextTransparency = 1,
+				}):Play()
+			end
+		end
+		task.delay(0.42, function()
+			if token ~= collectedToastToken then
+				return
+			end
+			toast.Visible = false
+			toast.Position = basePos
+			scale.Scale = 1
+			for _, node in fadeTargets do
+				if node:IsA("TextLabel") or node:IsA("TextButton") then
+					(node :: TextLabel).TextTransparency = 0
+				end
+			end
+		end)
+	end)
+end
+
 local function setPendingCollectCount(n: number)
 	pendingCollects = math.max(0, math.floor(n))
 	local show = pendingCollects > 0
@@ -815,6 +889,9 @@ local function wireCollectButton(row: Frame)
 			cached.collected[IndexConfig.unlockKey(name, mutationId)] = true
 		end
 		hideCollectChrome(row)
+		if typeof(result.xp) == "number" then
+			playCollectedXpToast(result.xp)
+		end
 		if typeof(result.pending) == "number" then
 			setPendingCollectCount(result.pending)
 		else
@@ -1284,6 +1361,18 @@ function IndexController.init()
 
 	ensureTooltip()
 
+	local collectedRoot = indexFrame:FindFirstChild("Collected")
+	if collectedRoot and collectedRoot:IsA("GuiObject") then
+		collectedToast = collectedRoot
+		collectedToast.Visible = false
+		collectedAmountLabel = findLabel(collectedRoot, {
+			"CollectedAmmount",
+			"CollectedAmount",
+			"Amount",
+			"Text",
+		})
+	end
+
 	local collectAllNode = indexFrame:FindFirstChild("CollectAllButton")
 		or indexFrame:FindFirstChild("CollectAllButton", true)
 	if collectAllNode and collectAllNode:IsA("GuiObject") then
@@ -1333,6 +1422,9 @@ function IndexController.init()
 				end
 				markAllCachedCollected()
 				hideAllVisibleCollectChrome()
+				if typeof(result.xp) == "number" then
+					playCollectedXpToast(result.xp)
+				end
 				setPendingCollectCount(if typeof(result.pending) == "number" then result.pending else 0)
 			end)
 		else

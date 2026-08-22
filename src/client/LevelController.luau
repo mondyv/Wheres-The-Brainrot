@@ -759,8 +759,19 @@ local function refreshLevelInfo(animateBar: boolean?)
 	end
 	local playerLevel, playerXp, playerNeeded = readState()
 	browseLevel = math.clamp(browseLevel, 1, LevelConfig.MAX_LEVEL)
-	local rewards = LevelConfig.rewardsForLevel(browseLevel)
-	local claimed = browseLevel <= playerLevel
+	local rewardLevel = browseLevel
+	local claimed = false
+	if playerLevel >= LevelConfig.MAX_LEVEL then
+		rewardLevel = playerLevel
+		claimed = true
+	elseif browseLevel == playerLevel then
+		-- Current page shows what you get on the next ding, not the already-claimed current level.
+		rewardLevel = math.min(playerLevel + 1, LevelConfig.MAX_LEVEL)
+		claimed = false
+	elseif browseLevel < playerLevel then
+		claimed = true
+	end
+	local rewards = LevelConfig.rewardsForLevel(rewardLevel)
 	local cashIcon = resolveCashIcon()
 
 	local rewardsRoot = levelFrame:FindFirstChild("Rewards")

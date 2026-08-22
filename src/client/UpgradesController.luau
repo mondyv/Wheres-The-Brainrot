@@ -19,6 +19,7 @@ local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
@@ -271,7 +272,12 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 	local powerFrame = row:FindFirstChild("Power")
 	local powerText = powerFrame and (powerFrame:FindFirstChild("Power") or powerFrame:FindFirstChildWhichIsA("TextLabel"))
 	if powerText and powerText:IsA("TextLabel") then
-		powerText.Text = formatPower(def.powerGain)
+		local shown = def.powerGain
+		local rebirthMult = RebirthConfig.getPowerGainMultiplier(player)
+		if rebirthMult > 1 then
+			shown = math.max(1, math.floor(shown * rebirthMult + 1e-6))
+		end
+		powerText.Text = formatPower(shown)
 	end
 
 	local weightFrame = row:FindFirstChild("WeightFrame")
@@ -1685,6 +1691,7 @@ local function init()
 		GearConfig.EQUIPPED_GEAR_ATTR,
 		GearConfig.POWER_ATTR,
 		GearConfig.POWER_EDITED_ATTR,
+		RebirthConfig.POWER_MULT_ATTR,
 	} do
 		player:GetAttributeChangedSignal(attr):Connect(function()
 			if attr == GearConfig.POWER_ATTR or attr == GearConfig.POWER_EDITED_ATTR then

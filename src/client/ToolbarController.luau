@@ -3119,14 +3119,15 @@ local ToolbarController = {}
 	local optimisticBrainrotMoveToHotbar: (number, number) -> ()
 
 	local function firstEmptyHotbarSlot(preferredSlot: number?): number?
+		local startSlot = if findWorkoutGearTool() then 2 else 1
 		if typeof(preferredSlot) == "number" then
-			local preferred = math.clamp(math.floor(preferredSlot), 1, HOTBAR_INVENTORY_SLOTS)
-			if not hotbarSlotIsOccupied(preferred) then
+			local preferred = math.clamp(math.floor(preferredSlot), startSlot, HOTBAR_INVENTORY_SLOTS)
+			if preferred >= startSlot and not hotbarSlotIsOccupied(preferred) then
 				return preferred
 			end
 		end
 
-		for slot = 1, HOTBAR_INVENTORY_SLOTS do
+		for slot = startSlot, HOTBAR_INVENTORY_SLOTS do
 			if not hotbarSlotIsOccupied(slot) then
 				return slot
 			end
@@ -3644,11 +3645,13 @@ local ToolbarController = {}
 		local receivedHotbarSlots = false
 		local previousHotbarSlotByUid: { [string]: number } = {}
 		local previousParkedByUid: { [string]: boolean } = {}
+		local previousKnownUids: { [string]: boolean } = {}
 		local previousBackpackFrontUids: { string } = {}
 
 		for oldIndex, oldEntry in ipairs(brainrotEntries) do
 			if oldEntry and typeof(oldEntry.uid) == "string" and oldEntry.uid ~= "" then
 				local uid = oldEntry.uid :: string
+				previousKnownUids[uid] = true
 				local oldSlot = brainrotHotbarSlotByIndex[oldIndex]
 				if typeof(oldSlot) == "number" then
 					previousHotbarSlotByUid[uid] = oldSlot
@@ -3790,6 +3793,28 @@ local ToolbarController = {}
 				end
 			end
 			brainrotParkedInUI = remappedParked
+		end
+
+		for newIndex, entry in ipairs(brainrotEntries) do
+			if brainrotParkedInUI[newIndex] then
+				continue
+			end
+			if typeof(brainrotHotbarSlotByIndex[newIndex]) == "number" then
+				continue
+			end
+			local uid = if entry then entry.uid else nil
+			if typeof(uid) == "string" and previousKnownUids[uid] == true then
+				continue
+			end
+			local slot = firstEmptyHotbarSlot(nil)
+			if slot then
+				brainrotHotbarSlotByIndex[newIndex] = slot
+				local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
+				local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
+				if parkEv and parkEv:IsA("RemoteEvent") then
+					(parkEv :: RemoteEvent):FireServer(newIndex, false, slot)
+				end
+			end
 		end
 
 		if #previousBackpackFrontUids > 0 then

@@ -50,7 +50,7 @@ function M.bandForPower(power: number): (number, number, number)
 	return last, last, M.MAX_LAND + 1
 end
 
--- 0 = early in a land band (weaker swing), 1 = at the next lock (full swing to cross).
+-- High near BOTH edges of a land band (cross forward AND go back); usable in the middle.
 function M.swingPeakAlpha(power: number): number
 	local prev, nextReq, nextLand = M.bandForPower(power)
 	if nextLand > M.MAX_LAND then
@@ -61,12 +61,14 @@ function M.swingPeakAlpha(power: number): number
 		return 1
 	end
 	local t = math.clamp((power - prev) / span, 0, 1)
-	if t < 0.7 then
-		return 0.12 + 0.28 * (t / 0.7)
+	local distToEdge = math.min(t, 1 - t)
+	local edge = 0.2
+	if distToEdge <= edge then
+		local u = 1 - distToEdge / edge
+		u = u * u * (3 - 2 * u)
+		return 0.58 + 0.42 * u
 	end
-	local u = (t - 0.7) / 0.3
-	u = u * u * (3 - 2 * u)
-	return 0.4 + 0.6 * u
+	return 0.58
 end
 
 function M.meetsLandLock(power: number, land: number): boolean

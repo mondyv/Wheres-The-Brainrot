@@ -125,7 +125,7 @@ function M.boot(deps: BootDeps): Api
 		list: { BrainrotInvEntry },
 		map: { [number]: boolean }
 	): number?
-		for i = 1, HOTBAR_UI_SLOTS do
+		for i = 2, HOTBAR_UI_SLOTS do
 			if isHotbarSlotVisuallyFree(plr, list, map, i) then
 				return i
 			end

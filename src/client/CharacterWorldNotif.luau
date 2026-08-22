@@ -266,7 +266,8 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	bb.MaxDistance = 160
-	bb.Size = UDim2.fromOffset(420, if subtitle and subtitle ~= "" then 72 else 48)
+	local hasSub = subtitle ~= nil and subtitle ~= ""
+	bb.Size = UDim2.fromOffset(440, if hasSub then 108 else 52)
 	bb.StudsOffset = offset
 	bb.Adornee = adornee
 	bb.Parent = char
@@ -277,6 +278,14 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 	root.Size = UDim2.fromScale(1, 1)
 	root.Parent = bb
 
+	local list = Instance.new("UIListLayout")
+	list.FillDirection = Enum.FillDirection.Vertical
+	list.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	list.VerticalAlignment = Enum.VerticalAlignment.Center
+	list.Padding = UDim.new(0, 8)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = root
+
 	local scale = Instance.new("UIScale")
 	scale.Scale = 0.35
 	scale.Parent = root
@@ -284,38 +293,40 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 	local titleLabel = Instance.new("TextLabel")
 	titleLabel.Name = "Title"
 	titleLabel.BackgroundTransparency = 1
-	titleLabel.AnchorPoint = Vector2.new(0.5, 0)
-	titleLabel.Position = UDim2.fromScale(0.5, 0)
-	titleLabel.Size = UDim2.new(1, 0, 0, if subtitle and subtitle ~= "" then 34 else 48)
-	titleLabel.Font = UiFonts.BODY_LEGACY
-	UiFonts.applyBody(titleLabel)
-	titleLabel.TextSize = 22
+	titleLabel.LayoutOrder = 1
+	titleLabel.Size = UDim2.new(1, -8, 0, if hasSub then 40 else 48)
+	titleLabel.Font = UiFonts.DISPLAY_LEGACY
+	UiFonts.applyDisplay(titleLabel)
+	titleLabel.TextSize = 26
 	titleLabel.TextColor3 = textColor
 	titleLabel.TextStrokeColor3 = Color3.fromRGB(20, 10, 0)
 	titleLabel.TextStrokeTransparency = 0.25
 	titleLabel.TextXAlignment = Enum.TextXAlignment.Center
+	titleLabel.TextYAlignment = Enum.TextYAlignment.Center
+	titleLabel.TextWrapped = false
+	titleLabel.TextTruncate = Enum.TextTruncate.AtEnd
 	titleLabel.Text = title
 	titleLabel.TextTransparency = 1
 	titleLabel.Rotation = -12
 	titleLabel.Parent = root
 
 	local subLabel: TextLabel? = nil
-	if subtitle and subtitle ~= "" then
+	if hasSub then
 		local sub = Instance.new("TextLabel")
 		sub.Name = "Subtitle"
 		sub.BackgroundTransparency = 1
-		sub.AnchorPoint = Vector2.new(0.5, 1)
-		sub.Position = UDim2.fromScale(0.5, 1)
-		sub.Size = UDim2.new(1, 0, 0, 32)
-		sub.Font = UiFonts.BODY_LEGACY
-		UiFonts.applyBody(sub)
-		sub.TextSize = 15
+		sub.LayoutOrder = 2
+		sub.Size = UDim2.new(1, -12, 0, 48)
+		sub.Font = UiFonts.DISPLAY_LEGACY
+		UiFonts.applyDisplay(sub)
+		sub.TextSize = 16
 		sub.TextColor3 = Color3.fromRGB(170, 255, 190)
 		sub.TextStrokeColor3 = Color3.fromRGB(10, 18, 12)
 		sub.TextStrokeTransparency = 0.3
 		sub.TextXAlignment = Enum.TextXAlignment.Center
+		sub.TextYAlignment = Enum.TextYAlignment.Top
 		sub.TextWrapped = true
-		sub.Text = subtitle
+		sub.Text = subtitle :: string
 		sub.TextTransparency = 1
 		sub.Parent = root
 		subLabel = sub

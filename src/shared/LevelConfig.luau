@@ -62,7 +62,7 @@ local function luckyReward(id: number, blockId: string, displayName: string): Le
 	}
 end
 
--- Second prize slot: cash most levels; lucky blocks on milestones.
+-- Second prize slot: cash most levels; lucky blocks on bigger milestones only.
 local function secondRewardForLevel(lv: number): LevelReward
 	if lv % 100 == 0 then
 		return luckyReward(2, "Mythic Lucky Block", "Mythic Block")
@@ -72,10 +72,8 @@ local function secondRewardForLevel(lv: number): LevelReward
 		return luckyReward(2, "neon", "Neon Block")
 	elseif lv % 10 == 0 then
 		return luckyReward(2, "troll", "Troll Block")
-	elseif lv % 5 == 0 then
-		return luckyReward(2, "Starter Lucky Block", "Starter Block")
 	end
-	local cashB = math.floor(12_000 * lv * (lv + 3))
+	local cashB = math.floor(80 * lv * math.sqrt(lv))
 	return cashReward(2, cashB)
 end
 
@@ -293,7 +291,7 @@ end
 
 function M.rewardsForLevel(level: number): { LevelReward }
 	local lv = math.max(1, math.floor(level))
-	local cashA = math.floor(20_000 * lv * lv)
+	local cashA = math.floor(140 * lv * math.sqrt(lv))
 	return {
 		cashReward(1, cashA),
 		secondRewardForLevel(lv),

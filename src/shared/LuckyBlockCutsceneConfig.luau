@@ -7,10 +7,10 @@ local M = {}
 
 -- Drop from hand → land on ground.
 M.DROP_SEC = 0.55
--- SoundService.SoundEffects["Luckyblock sfx"]["Block Open"] (~4s: shake then open at the end).
+-- SoundService.SoundEffects["Luckyblock sfx"]["Block Open"] (~4s clip; shake is timed separately).
 M.BLOCK_OPEN_SFX_SEC = 4
--- Shake until the clip's open hit; burst plays in the last beat of the 4s SFX.
-M.GROUND_SHAKE_SEC = 3.72
+-- Short ground shake, then the block unlocks.
+M.GROUND_SHAKE_SEC = 1
 -- Burst VFX + hide block before brainrot appears.
 M.BURST_HOLD_SEC = 0.22
 -- Brainrot rises / settles into hover.

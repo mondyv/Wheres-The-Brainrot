@@ -92,6 +92,20 @@ local function findAsset(path: { string }): Instance?
 	return node
 end
 
+local function findSpiderTemplate(): Instance?
+	local direct = findAsset(C.SPIDER_TEMPLATE_PATH)
+	if direct then
+		return direct
+	end
+	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
+	if not assets then
+		return nil
+	end
+	return assets:FindFirstChild("Spider")
+		or assets:FindFirstChild("spider")
+		or assets:FindFirstChild("Giant Spider")
+end
+
 local function flatUnitXZ(fromPos: Vector3, toPos: Vector3): Vector3
 	local flat = Vector3.new(toPos.X - fromPos.X, 0, toPos.Z - fromPos.Z)
 	if flat.Magnitude < 0.05 then
@@ -116,9 +130,27 @@ local function resolveSpiderSpawn(playerPos: Vector3): Vector3
 		C.LAND_EDGE_MARGIN
 	)
 	if landPos then
-		return landPos
+		local flat = Vector3.new(landPos.X - playerPos.X, 0, landPos.Z - playerPos.Z).Magnitude
+		if flat >= 10 and flat <= 42 then
+			return landPos
+		end
 	end
-	return playerPos + Vector3.new(C.SPIDER_MIN_PLAYER_DISTANCE, 2, 0)
+	local hrp = getHRP()
+	local look = if hrp then Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z) else Vector3.new(0, 0, -1)
+	if look.Magnitude < 0.05 then
+		look = Vector3.new(0, 0, -1)
+	else
+		look = look.Unit
+	end
+	local candidate = playerPos + look * 18 + Vector3.new(0, 2, 0)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { player.Character }
+	local hit = Workspace:Raycast(candidate + Vector3.new(0, 40, 0), Vector3.new(0, -90, 0), params)
+	if hit then
+		return hit.Position + Vector3.new(0, 2, 0)
+	end
+	return candidate
 end
 
 -- Chase along Z toward the player, spawning close behind them (not the far authored rest pose).
@@ -131,9 +163,15 @@ local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
 	return spawnPos, toPlayer
 end
 
-local function waveFacingCf(pos: Vector3, _chaseDir: Vector3): CFrame
-	local o = C.WAVE_SPAWN_ORIENTATION_DEG
-	return CFrame.new(pos) * CFrame.fromOrientation(math.rad(o.X), math.rad(o.Y), math.rad(o.Z))
+local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
+	local dir = Vector3.new(chaseDir.X, 0, chaseDir.Z)
+	if dir.Magnitude < 0.05 then
+		dir = Vector3.new(0, 0, -1)
+	else
+		dir = dir.Unit
+	end
+	local yawOffset = math.rad(C.WAVE_MESH_YAW_OFFSET_DEG or C.WAVE_SPAWN_YAW_DEG or 90)
+	return CFrame.lookAt(pos, pos + dir) * CFrame.Angles(0, yawOffset, 0)
 end
 
 local function hideChaseHud()
@@ -154,7 +192,7 @@ local function stabilizeSpider(model: Model)
 	end
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") then
-			d.Anchored = d == primary
+			d.Anchored = true
 			d.CanCollide = false
 			d.CanQuery = false
 			d.CanTouch = false
@@ -760,23 +798,26 @@ local function requestKill()
 		sg.Parent = pg
 
 		if wave and wave.Parent then
-			fadeWaveOntoLand(wave, 1.05)
+			task.spawn(function()
+				fadeWaveOntoLand(wave, 0.32)
+			end)
+		end
+
+		if killRE then
+			killRE:FireServer()
 		end
 
 		local fadeIn = TweenService:Create(
 			cover,
-			TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 			{ BackgroundTransparency = 0 }
 		)
 		fadeIn:Play()
 		fadeIn.Completed:Wait()
-		if killRE then
-			killRE:FireServer()
-		end
-		task.wait(0.45)
+		task.wait(0.18)
 		local fadeOut = TweenService:Create(
 			cover,
-			TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 			{ BackgroundTransparency = 1 }
 		)
 		fadeOut:Play()
@@ -1006,19 +1047,25 @@ local function runIntro(token: number, playerPos: Vector3)
 
 	local landPos = resolveSpiderSpawn(playerPos)
 	local cobSpawn = computeTsunamiCorridor(playerPos)
-	local spiderTemplate = findAsset(C.SPIDER_TEMPLATE_PATH)
+	local spiderTemplate = findSpiderTemplate()
 	local spider: Model? = nil
-	if spiderTemplate and spiderTemplate:IsA("Model") then
-		local clone = spiderTemplate:Clone()
-		clone.Name = "WaveWebChaseSpider"
-		stabilizeSpider(clone)
-		clone:PivotTo(cfFacingTarget(landPos, playerPos))
-		clone.Parent = Workspace
-		activeSpider = clone
-		spider = clone
-		task.spawn(function()
-			preloadModel(clone)
+	if spiderTemplate then
+		local ok, cloneOrErr = pcall(function()
+			return cloneAsModel(spiderTemplate, "WaveWebChaseSpider")
 		end)
+		if ok and cloneOrErr then
+			local clone = cloneOrErr :: Model
+			stabilizeSpider(clone)
+			clone:PivotTo(cfFacingTarget(landPos, playerPos))
+			clone.Parent = Workspace
+			activeSpider = clone
+			spider = clone
+			task.spawn(function()
+				preloadModel(clone)
+			end)
+		else
+			warn("[WaveWebChaseController] Spider clone failed:", cloneOrErr)
+		end
 	else
 		warn("[WaveWebChaseController] EssentialAssets.Spider missing — skipping intro spider")
 	end

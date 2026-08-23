@@ -6,11 +6,12 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local ReviveService = require(script.Parent:WaitForChild("Modules"):WaitForChild("ReviveService"))
 
 local KILL_REMOTE = "BushSpiderEncounterKill"
-local KILL_COOLDOWN = 2.5
+local KILL_COOLDOWN = 0.8
 
 local lastKillAt: { [Player]: number } = {}
 
@@ -49,6 +50,17 @@ killRE.OnServerEvent:Connect(function(plr: Player)
 	end)
 	if okFunnel and Funnel and typeof(Funnel.waveChaseDied) == "function" then
 		Funnel.waveChaseDied(plr)
+	end
+	-- Drop head-carried brainrots so this plays like a death, then teleport home.
+	local internal = ServerStorage:FindFirstChild("BrainrotInternal")
+	local clearCarry = internal and internal:FindFirstChild("ClearHeadCarry")
+	if clearCarry and clearCarry:IsA("BindableFunction") then
+		local okClear, errClear = pcall(function()
+			(clearCarry :: BindableFunction):Invoke(plr)
+		end)
+		if not okClear then
+			warn("[BushSpiderEncounter] ClearHeadCarry failed:", errClear)
+		end
 	end
 	-- Home teleport without dying — client already faded to black.
 	ReviveService.softTeleportHomeAlive(plr)

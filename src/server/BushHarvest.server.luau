@@ -2382,6 +2382,26 @@ do
 		handleAfterPlotReturn(playerArg :: Player)
 		return true
 	end
+
+	local clearExisting = folder:FindFirstChild("ClearHeadCarry")
+	local clearBf: BindableFunction
+	if clearExisting and clearExisting:IsA("BindableFunction") then
+		clearBf = clearExisting
+	else
+		if clearExisting then
+			clearExisting:Destroy()
+		end
+		clearBf = Instance.new("BindableFunction")
+		clearBf.Name = "ClearHeadCarry"
+		clearBf.Parent = folder
+	end
+	clearBf.OnInvoke = function(playerArg: any): any
+		if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
+			return false
+		end
+		clearPlayerHarvestState(playerArg :: Player)
+		return true
+	end
 end
 
 -- Award spinning (pending float) brainrots when the player touches the safezone wall.

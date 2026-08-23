@@ -1,33 +1,33 @@
 #,id,title,description,kind,target,rewardKind,rewardSummary,rewardLuckyBlock,rewardLuckyBlockCount,rewardCash,rewardBrainrotRarity,trackLand,trackRarity,trackMutation,offerLine,completeLine
-1,land_1,First Land,Get over to Land 1!,reach_land,1,lucky_block,1× Troll Lucky Block,troll,1,,,,,,First job: swing out to Land 1. Go go go!!,You made Land 1!! Here's a Troll Lucky Block!!
-2,land_2,Land Hopper,Upgrade your Power and swing over to Land 2!,reach_land,2,lucky_block,1× Neon Lucky Block,neon,1,,,,,,Land 2 is waiting. Power up and swing over!!,You made Land 2!! Tim Cheese is so proud!!
-3,claim_5,Brainrot Collector,Accept 5 brainrots from bushes.,accept_claims,5,lucky_block,2× Starter Lucky Block,Starter Lucky Block,2,,,,,,,
-4,search_10,Bush Addict,"Search 10 bushes. Tim calls it \""research.\",harvest,10,brainrot,brainrot (uncommon),,,,uncommon,,,,I need MORE bush data. Go touch grass. Literally.,Ten bushes?! You're hired forever!!
-5,claim_6,No Refunds,Accept 6 brainrots from bushes.,accept_claims,6,lucky_block,1× Neon Lucky Block,neon,1,,,,,,Every brainrot you see? TAKE IT. Tim's orders.,Six accepts! That's the Tim Cheese way!!
-6,search_15,Leaf Pusher,Search 15 bushes. Your hands smell like grass now.,harvest,15,cash,"$200,000",,,200_000,,,,,,
-7,land_3,Sky Tourist,Reach Land 3. Tim wants a photo.,reach_land,3,lucky_block,1× One Lucky Block,1,1,,,,,,Land 3 has better vibes. Go check it out.,You made it!! Tim Cheese tourism board approves!!
-8,claim_10,Yes Man,Accept 10 brainrots from bushes.,accept_claims,10,brainrot,brainrot (rare),,,,rare,,,,,
-9,search_25,Bush Connoisseur,Search 25 bushes. Tim thinks you're obsessed.,harvest,25,cash,"$350,000",,,350_000,,,,,,
-10,land_4,Cloud Walker,Reach Land 4. Tim is genuinely impressed.,reach_land,4,lucky_block,1× Mythic Lucky Block,Mythic Lucky Block,1,,,,,,,
-11,claim_15,Brainrot Believer,Accept 15 brainrots. Tim trusts you now.,accept_claims,15,brainrot,brainrot (epic),,,,epic,,,,,
-12,search_40,Tim's Favorite Employee,Search 40 bushes. Tim put your name on a plaque.,harvest,40,lucky_block,1× Purple Lucky Block,purple,1,,,,,,,LEGEND STATUS UNLOCKED!!
-13,land_5,Peak Cheese,Reach Land 5. Tim's final geography lesson.,reach_land,5,lucky_block,1× Yellow Lucky Block,yellow,1,,,,,,Land 5. That's where the real cheese lives.,PEAK CHEESE ACHIEVED!! I'm not crying!!
-14,claim_20,Accept Everything,Accept 20 brainrots. Tim stopped counting.,accept_claims,20,cash,"$750,000",,,750_000,,,,,,
-15,place_5,Stand Builder,Place 5 brainrots on your stands.,place_stands,5,brainrot,brainrot (rare),,,,rare,,,,,
-16,power_3,Power Trip,Upgrade your Power to level 3.,upgrade_power,3,lucky_block,1× Heart Lucky Block,heart,1,,,,,,,
-17,income_1k,Money Printer,"Earn $1,000/sec from placed brainrots.",income_rate,1000,cash,"$500,000",,,500_000,,,,,,
-18,open_block_3,Crack Open,Open 3 Lucky Blocks. Tim wants to watch.,open_lucky_blocks,3,lucky_block,1× Godly Lucky Block,Godly Luckyblock,1,,,,,,,
-19,own_epic_3,Epic Squad,Own 3 Epic brainrots (bag or stands).,own_rarity,3,brainrot,brainrot (epic),,,,epic,,epic,,,
-20,rebirth_1,Born Again,"Rebirth once. Tim says you're \""resetting the cheese.\",rebirth_count,1,lucky_block,1× Chamber Lucky Block,chamber,1,,,,,,Rebirth once. Fresh start. Like a new cheese wheel.,REBORN!! The cheese has been reset!!
-21,spider_survive_1,"Eight Legs, Zero Fear",Survive a bush spider encounter.,spider_survive,1,cash,"$150,000",,,150_000,,,,,Heard there's spiders in the bushes. Go say hi.,You LIVED?! Okay you're actually tough!!
-22,spider_survive_3,Arachnid Veteran,Survive 3 spider encounters.,spider_survive,3,lucky_block,1× Mythic Lucky Block,Mythic Lucky Block,1,,,,,,,
-23,decline_5,Hard Pass,Decline 5 floating brainrot claims.,decline_claims,5,brainrot,brainrot (uncommon),,,,uncommon,,,,Decline some brainrots. Be picky. Like me.,"Wow, standards?? Respect."
-24,golden_1,Shiny Finder,Discover 1 Golden mutation brainrot.,find_mutation,1,lucky_block,1× Rainbow Lucky Block,rainbow,1,,,,,golden,,
-25,steal_1,Cheese Thief,Successfully steal 1 brainrot.,steal_brainrot,1,cash,"$400,000",,,400_000,,,,,,
-26,rope_2,Long Reach,Upgrade your Rope to level 2.,upgrade_rope,2,lucky_block,1× Troll Lucky Block,troll,1,,,,,,,
-27,carry_2,Heavy Hauler,Upgrade your Carry to level 2.,upgrade_carry,2,brainrot,brainrot (rare),,,,rare,,,,,
-28,fill_stands,No Empty Slots,Fill every stand slot on your plot.,fill_stands,1,brainrot,brainrot (epic),,,,epic,,,,,
-29,open_block_2,Double Crack,Open 2 Lucky Blocks.,open_lucky_blocks,2,lucky_block,1× Secret Lucky Block,Secret Lucky Block,1,,,,,,,
-30,harvest_land_20,Homebody,Search 20 bushes on Land 1.,harvest_land,20,cash,"$250,000",,,250_000,,1,,,,
-31,talk_tim_5,Tim's Best Friend,Talk to Tim 5 times while on a quest.,talk_while_quest,5,lucky_block,1× Star Lucky Block,star,1,,,,,,,
-32,claim_rare_1,Jackpot Pull,Accept a Rare-or-higher brainrot from a bush.,claim_min_rarity,1,lucky_block,1× Opposite Lucky Block,1 opposite,1,,,,rare,,,
+1,search_8,Grass Toucher,Search 8 bushes. Tim calls it orientation.,harvest,8,cash,$50000,,,50000,,,,,Warmup: poke some bushes. Don't eat the leaves.,Orientation complete!! Now the REAL jobs.
+2,land_1,First Land,Get over to Land 1!,reach_land,1,lucky_block,Troll Lucky Block,troll,1,,,,,Swing out to Land 1. Go go go!!,You made Land 1!! Here's a Troll Lucky Block!!
+3,claim_5,Brainrot Collector,Accept 5 brainrots from bushes.,accept_claims,5,lucky_block,2x Starter Lucky Block,Starter Lucky Block,2,,,,,See a brainrot? TAKE IT. Intern handbook page 1.,Five accepts!! You're hired. Kind of.
+4,land_2,Land Hopper,Upgrade your Power and swing over to Land 2!,reach_land,2,lucky_block,Neon Lucky Block,neon,1,,,,,Land 2 is waiting. Power up and swing over!!,You made Land 2!! Tim Cheese is so proud!!
+5,search_12,Bush Addict,Search 12 bushes. Tim calls it research.,harvest,12,brainrot,Uncommon Brainrot,,,,uncommon,,,,I need MORE bush data. Go touch grass. Literally.,Twelve bushes?! You're hired forever!!
+6,land_3,Sky Tourist,Upgrade your Power and swing over to Land 3!,reach_land,3,lucky_block,One Lucky Block,1,1,,,,,Land 3 has better vibes. Go check it out.,You made it!! Tim Cheese tourism board approves!!
+7,claim_8,No Refunds,Accept 8 brainrots from bushes.,accept_claims,8,lucky_block,Neon Lucky Block,neon,1,,,,,Every brainrot you see? TAKE IT. Tim's orders.,Eight accepts! That's the Tim Cheese way!!
+8,land_4,Cloud Walker,Upgrade your Power and swing over to Land 4!,reach_land,4,lucky_block,Mythic Lucky Block,Mythic Lucky Block,1,,,,,Land 4. Tim is already impressed if you try.,Land 4!! Genuinely impressed. Don't let it go to your head.
+9,search_18,Leaf Pusher,Search 18 bushes. Your hands smell like grass now.,harvest,18,cash,$200000,,,200000,,,,,,
+10,land_5,Peak Cheese,Upgrade your Power and swing over to Land 5!,reach_land,5,lucky_block,Yellow Lucky Block,yellow,1,,,,,Land 5. That's where the real cheese lives.,PEAK CHEESE ACHIEVED!! I'm not crying!!
+11,place_4,Stand Builder,Place 4 brainrots on your stands.,place_stands,4,brainrot,Rare Brainrot,,,,rare,,,,,
+12,land_6,Far Side,Upgrade your Power and swing over to Land 6!,reach_land,6,lucky_block,Purple Lucky Block,purple,1,,,,,Land 6. Don't look down. Look CHEESE.,Land 6!! Tim's map has you on it now!!
+13,claim_12,Yes Man,Accept 12 brainrots from bushes.,accept_claims,12,brainrot,Rare Brainrot,,,,rare,,,,,
+14,land_7,High Cheese,Upgrade your Power and swing over to Land 7!,reach_land,7,lucky_block,Heart Lucky Block,heart,1,,,,,Land 7. Pack a snack. And Power.,Land 7!! Heart Lucky Block because I have feelings!!
+15,search_25,Bush Connoisseur,Search 25 bushes. Tim thinks you're obsessed.,harvest,25,cash,$350000,,,350000,,,,,,
+16,land_8,Almost Orbit,Upgrade your Power and swing over to Land 8!,reach_land,8,lucky_block,Godly Lucky Block,Godly Luckyblock,1,,,,,Land 8. The air is weird up there. I like it.,Land 8!! Godly block. You earned the sparkle.
+17,income_500,Money Printer,Earn $500/sec from placed brainrots.,income_rate,500,cash,$400000,,,400000,,,,,,
+18,land_9,Cheese Stratosphere,Upgrade your Power and swing over to Land 9!,reach_land,9,lucky_block,Chamber Lucky Block,chamber,1,,,,,Land 9. Almost the top of the cheese.,Land 9!! Chamber block. Don't open it in my face.
+19,spider_survive_1,"Eight Legs, Zero Fear",Survive a bush spider encounter.,spider_survive,1,cash,$150000,,,150000,,,,,Heard there's spiders in the bushes. Go say hi.,You LIVED?! Okay you're actually tough!!
+20,land_10,Final Land,Upgrade your Power and swing over to Land 10!,reach_land,10,lucky_block,Secret Lucky Block,Secret Lucky Block,1,,,,,Land 10. The last stop. Make Tim proud.,LAND 10!! That's the whole map!! SECRET BLOCK TIME!!
+21,own_epic_2,Epic Squad,Own 2 Epic brainrots (bag or stands).,own_rarity,2,brainrot,Epic Brainrot,,,,epic,,epic,,,
+22,open_block_3,Crack Open,Open 3 Lucky Blocks. Tim wants to watch.,open_lucky_blocks,3,lucky_block,Mythic Lucky Block,Mythic Lucky Block,1,,,,,,,
+23,decline_5,Hard Pass,Decline 5 floating brainrot claims.,decline_claims,5,brainrot,Uncommon Brainrot,,,,uncommon,,,,Decline some brainrots. Be picky. Like me.,Wow, standards?? Respect.
+24,golden_1,Shiny Finder,Discover 1 Golden mutation brainrot.,find_mutation,1,lucky_block,Rainbow Lucky Block,rainbow,1,,,,,golden,,
+25,steal_1,Cheese Thief,Successfully steal 1 brainrot.,steal_brainrot,1,cash,$400000,,,400000,,,,,,
+26,power_3,Power Trip,Upgrade your Power to level 3.,upgrade_power,3,lucky_block,Troll Lucky Block,troll,1,,,,,,,
+27,fill_stands,No Empty Slots,Fill every stand slot on your plot.,fill_stands,1,brainrot,Epic Brainrot,,,,epic,,,,,
+28,harvest_land_15,Homebody,Search 15 bushes on Land 1.,harvest_land,15,cash,$250000,,,250000,,1,,,,
+29,talk_tim_4,Tim's Best Friend,Talk to Tim 4 times while on a quest.,talk_while_quest,4,lucky_block,Star Lucky Block,star,1,,,,,,,
+30,claim_rare_1,Jackpot Pull,Accept a Rare-or-higher brainrot from a bush.,claim_min_rarity,1,lucky_block,Opposite Lucky Block,1 opposite,1,,,,rare,,,
+31,rebirth_1,Born Again,Rebirth once. Tim says you're resetting the cheese.,rebirth_count,1,lucky_block,Chamber Lucky Block,chamber,1,,,,,,Rebirth once. Fresh start. Like a new cheese wheel.,REBORN!! The cheese has been reset!!
+32,spider_survive_3,Arachnid Veteran,Survive 3 spider encounters.,spider_survive,3,lucky_block,Mythic Lucky Block,Mythic Lucky Block,1,,,,,,,

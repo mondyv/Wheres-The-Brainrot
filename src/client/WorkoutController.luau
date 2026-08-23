@@ -13,11 +13,13 @@ local GearRainbowFX = require(script.Parent.GearRainbowFX)
 local OtherVfxController = require(script.Parent.OtherVfxController)
 local UpgradesController = require(script.Parent.UpgradesController)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 
 local player = Players.LocalPlayer
 
 local startWorkoutFn: RemoteFunction? = nil
 local stopWorkoutFn: RemoteFunction? = nil
+local claimDoubleTapFn: RemoteFunction? = nil
 
 task.spawn(function()
 	local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
@@ -26,6 +28,7 @@ task.spawn(function()
 	end
 	startWorkoutFn = remotes:WaitForChild("StartWorkout", 30) :: RemoteFunction?
 	stopWorkoutFn = remotes:WaitForChild("StopWorkout", 30) :: RemoteFunction?
+	claimDoubleTapFn = remotes:WaitForChild("ClaimWorkoutDoubleTap", 30) :: RemoteFunction?
 end)
 
 local toolConns: { RBXScriptConnection } = {}
@@ -549,7 +552,7 @@ local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?, la
 	end
 end
 
-local function spawnPowerFloater(gain: number)
+local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	local main = PlayerGuiMain.ensure(player)
 	local layer = ensureFloaterLayer(main)
 	local sideUI = main:FindFirstChild("SideUI")
@@ -614,7 +617,9 @@ local function spawnPowerFloater(gain: number)
 
 	local endPos = toLayerOffset(destScreen())
 	local startPos = endPos
-	if anchor and anchor:IsA("BasePart") then
+	if originScreen then
+		startPos = toLayerOffset(originScreen)
+	elseif anchor and anchor:IsA("BasePart") then
 		local screenPos, onScreen = cam:WorldToViewportPoint(anchor.Position + Vector3.new(0, 1.35, 0))
 		if onScreen then
 			startPos = toLayerOffset(Vector2.new(screenPos.X, screenPos.Y))
@@ -765,7 +770,332 @@ local function spawnPowerFloater(gain: number)
 	end)
 end
 
+local DOUBLE_TAP_ICON = "rbxassetid://118412506619907"
+local DOUBLE_TAP_LIFE = 5
+local doubleTapGen = 0
+local doubleTapHits = 0
+local lastDoubleTapSpawnAt = -100
+local activeDoubleTaps: { Frame } = {}
+local doubleTapGui: ScreenGui? = nil
+local claimDoubleTapBusy = false
+
+local function spawnIntervalForHits(hits: number): number
+	if hits < 3 then
+		return 7 - (hits / 3) * 2
+	end
+	local t = math.clamp((hits - 3) / 5, 0, 1)
+	return 5 - t * 2
+end
+
+local function maxDoubleTapsForHits(hits: number): number
+	return if hits >= 3 then 2 else 1
+end
+
+local function pruneDoubleTaps()
+	for i = #activeDoubleTaps, 1, -1 do
+		if not activeDoubleTaps[i].Parent then
+			table.remove(activeDoubleTaps, i)
+		end
+	end
+end
+
+local function ensureDoubleTapGui(): ScreenGui
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if not pg then
+		pg = player:WaitForChild("PlayerGui", 8) :: PlayerGui?
+	end
+	if doubleTapGui and doubleTapGui.Parent then
+		return doubleTapGui
+	end
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "WorkoutDoubleTapGui"
+	gui.IgnoreGuiInset = true
+	gui.ResetOnSpawn = false
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.DisplayOrder = 115
+	gui.Enabled = true
+	if pg then
+		gui.Parent = pg
+	end
+	doubleTapGui = gui
+	return gui
+end
+
+local function pickDoubleTapPos(gui: ScreenGui, sizePx: number): UDim2
+	local cam = workspace.CurrentCamera
+	local vs = if cam then cam.ViewportSize else Vector2.new(800, 600)
+	local padX = math.max(96, vs.X * 0.16)
+	local padY = math.max(110, vs.Y * 0.2)
+	local minX = padX
+	local maxX = math.max(minX + 8, vs.X - padX)
+	local minY = padY
+	local maxY = math.max(minY + 8, vs.Y - padY)
+	for _ = 1, 10 do
+		local x = minX + math.random() * (maxX - minX)
+		local y = minY + math.random() * (maxY - minY)
+		local ok = true
+		for _, other in activeDoubleTaps do
+			if other.Parent then
+				local p = other.AbsolutePosition + other.AbsoluteSize * 0.5
+				if (Vector2.new(x, y) - p).Magnitude < sizePx * 1.35 then
+					ok = false
+					break
+				end
+			end
+		end
+		if ok then
+			return UDim2.fromOffset(x, y)
+		end
+	end
+	return UDim2.fromOffset((minX + maxX) * 0.5, (minY + maxY) * 0.5)
+end
+
+local function dismissDoubleTap(holder: Frame, clicked: boolean)
+	if holder:GetAttribute("Closing") == true then
+		return
+	end
+	holder:SetAttribute("Closing", true)
+	local scale = holder:FindFirstChild("PopScale")
+	local goalScale = if clicked then 1.28 else 0.15
+	local goalRot = if clicked then holder.Rotation * 0.2 else holder.Rotation + (if holder.Rotation >= 0 then 28 else -28)
+	if scale and scale:IsA("UIScale") then
+		TweenService:Create(
+			scale,
+			TweenInfo.new(if clicked then 0.16 else 0.32, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+			{ Scale = goalScale }
+		):Play()
+	end
+	TweenService:Create(
+		holder,
+		TweenInfo.new(if clicked then 0.16 else 0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+		{ Rotation = goalRot }
+	):Play()
+	for _, d in holder:GetDescendants() do
+		if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+			TweenService:Create(
+				d,
+				TweenInfo.new(if clicked then 0.18 else 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ ImageTransparency = 1 }
+			):Play()
+		elseif d:IsA("TextLabel") then
+			TweenService:Create(
+				d,
+				TweenInfo.new(if clicked then 0.18 else 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ TextTransparency = 1 }
+			):Play()
+			local stroke = d:FindFirstChildOfClass("UIStroke")
+			if stroke then
+				TweenService:Create(
+					stroke,
+					TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					{ Transparency = 1 }
+				):Play()
+			end
+		end
+	end
+	task.delay(if clicked then 0.2 else 0.34, function()
+		if holder.Parent then
+			holder:Destroy()
+		end
+	end)
+end
+
+local function spawnDoubleTapPrompt()
+	pruneDoubleTaps()
+	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+		return
+	end
+	if #activeDoubleTaps >= maxDoubleTapsForHits(doubleTapHits) then
+		return
+	end
+	local gui = ensureDoubleTapGui()
+	if not gui.Parent then
+		return
+	end
+
+	local sizePx = 118
+	local holder = Instance.new("Frame")
+	holder.Name = "DoubleTap"
+	holder.BackgroundTransparency = 1
+	holder.AnchorPoint = Vector2.new(0.5, 0.5)
+	holder.Size = UDim2.fromOffset(sizePx, sizePx)
+	holder.Position = pickDoubleTapPos(gui, sizePx)
+	holder.Rotation = (math.random() - 0.5) * 10
+	holder.ZIndex = 20
+	holder.Parent = gui
+
+	local pop = Instance.new("UIScale")
+	pop.Name = "PopScale"
+	pop.Scale = 0.18
+	pop.Parent = holder
+
+	local btn = Instance.new("ImageButton")
+	btn.Name = "Hit"
+	btn.BackgroundTransparency = 1
+	btn.BorderSizePixel = 0
+	btn.Size = UDim2.fromScale(1, 1)
+	btn.Image = DOUBLE_TAP_ICON
+	btn.ScaleType = Enum.ScaleType.Fit
+	btn.AutoButtonColor = false
+	btn.Active = true
+	btn.Selectable = true
+	btn.ZIndex = 21
+	btn.Parent = holder
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Tag"
+	label.BackgroundTransparency = 1
+	label.AnchorPoint = Vector2.new(0.5, 0.5)
+	label.Position = UDim2.fromScale(0.5, 0.52)
+	label.Size = UDim2.fromScale(0.86, 0.42)
+	label.Text = "2x"
+	label.TextColor3 = Color3.fromRGB(255, 236, 90)
+	label.TextScaled = true
+	label.ZIndex = 22
+	label.Parent = holder
+	UiFonts.applyDisplayLabel(label, 42, 22)
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 2.4
+	stroke.Color = Color3.fromRGB(40, 22, 4)
+	stroke.Parent = label
+
+	table.insert(activeDoubleTaps, holder)
+	UIInteractionSounds.playNotif()
+
+	TweenService:Create(
+		pop,
+		TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1.08 }
+	):Play()
+	task.delay(0.28, function()
+		if holder.Parent and holder:GetAttribute("Closing") ~= true then
+			TweenService:Create(
+				pop,
+				TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Scale = 1 }
+			):Play()
+		end
+	end)
+
+	local born = os.clock()
+	local idleConn: RBXScriptConnection? = nil
+	idleConn = RunService.Heartbeat:Connect(function()
+		if not holder.Parent or holder:GetAttribute("Closing") == true then
+			if idleConn then
+				idleConn:Disconnect()
+				idleConn = nil
+			end
+			return
+		end
+		local t = os.clock() - born
+		holder.Rotation = math.sin(t * 2.35) * 12 + math.sin(t * 5.4) * 3.2
+		pop.Scale = 1 + math.sin(t * 3.15) * 0.055
+	end)
+
+	local consumed = false
+	local function onActivate()
+		if consumed or holder:GetAttribute("Closing") == true then
+			return
+		end
+		consumed = true
+		btn.Active = false
+		UIInteractionSounds.playClick()
+		if idleConn then
+			idleConn:Disconnect()
+			idleConn = nil
+		end
+		local squash = TweenService:Create(
+			pop,
+			TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ Scale = 0.82 }
+		)
+		squash:Play()
+		local center = holder.AbsolutePosition + holder.AbsoluteSize * 0.5
+		task.spawn(function()
+			local gain = 0
+			if claimDoubleTapFn and not claimDoubleTapBusy then
+				claimDoubleTapBusy = true
+				local ok, result = pcall(function()
+					return claimDoubleTapFn:InvokeServer()
+				end)
+				claimDoubleTapBusy = false
+				if ok and typeof(result) == "number" then
+					gain = result
+				end
+			end
+			if gain > 0 then
+				doubleTapHits += 1
+				spawnPowerFloater(gain, center)
+			end
+		end)
+		dismissDoubleTap(holder, true)
+	end
+	btn.Activated:Connect(onActivate)
+	btn.MouseButton1Click:Connect(onActivate)
+
+	task.delay(DOUBLE_TAP_LIFE, function()
+		if holder.Parent and holder:GetAttribute("Closing") ~= true then
+			if idleConn then
+				idleConn:Disconnect()
+				idleConn = nil
+			end
+			dismissDoubleTap(holder, false)
+		end
+	end)
+end
+
+local function stopDoubleTapLoop()
+	doubleTapGen += 1
+	doubleTapHits = 0
+	lastDoubleTapSpawnAt = -100
+	pruneDoubleTaps()
+	for _, holder in activeDoubleTaps do
+		if holder.Parent then
+			holder:Destroy()
+		end
+	end
+	table.clear(activeDoubleTaps)
+	if doubleTapGui then
+		doubleTapGui:Destroy()
+		doubleTapGui = nil
+	end
+end
+
+local function startDoubleTapLoop()
+	doubleTapGen += 1
+	local gen = doubleTapGen
+	doubleTapHits = 0
+	lastDoubleTapSpawnAt = os.clock()
+	ensureDoubleTapGui()
+	task.spawn(function()
+		task.wait(1.15)
+		while gen == doubleTapGen and player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true do
+			pruneDoubleTaps()
+			if #activeDoubleTaps < maxDoubleTapsForHits(doubleTapHits) then
+				local since = os.clock() - lastDoubleTapSpawnAt
+				if since < 0.9 then
+					task.wait(0.9 - since)
+					if gen ~= doubleTapGen then
+						return
+					end
+				end
+				if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+					return
+				end
+				lastDoubleTapSpawnAt = os.clock()
+				spawnDoubleTapPrompt()
+			end
+			local interval = spawnIntervalForHits(doubleTapHits)
+			task.wait(interval)
+			if gen ~= doubleTapGen then
+				return
+			end
+		end
+	end)
+end
+
 local function cleanupWorkoutVisuals()
+	stopDoubleTapLoop()
 	stopWorkoutAnim()
 	clearFootAttach()
 	clearBodyHighlight()
@@ -938,11 +1268,16 @@ local function init()
 	player:GetAttributeChangedSignal(GearConfig.WORKOUT_ACTIVE_ATTR):Connect(function()
 		local on = player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true
 		OtherVfxController.setWorkoutAuraEnabled(on)
-		if not on then
+		if on then
+			startDoubleTapLoop()
+		else
 			cleanupWorkoutVisuals()
 		end
 	end)
 	OtherVfxController.setWorkoutAuraEnabled(player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true)
+	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+		startDoubleTapLoop()
+	end
 end
 
 return {

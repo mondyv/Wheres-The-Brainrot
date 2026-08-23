@@ -259,6 +259,36 @@ function GearService.equipGear(player: Player, gearId: number): (boolean, string
 	return true, nil
 end
 
+local lastDoubleTapAt: { [number]: number } = {}
+
+local function computeTickGain(player: Player, def: any): number
+	local gain = def.powerGain
+	if player:GetAttribute(StoreConfig.ATTR.DOUBLE_POWER_OWNED) == true then
+		gain = math.floor(gain * StoreConfig.DOUBLE_POWER_MULTIPLIER + 0.5)
+	end
+	return math.max(1, math.floor(gain * RebirthConfig.getPowerGainMultiplier(player) + 1e-6))
+end
+
+function GearService.claimWorkoutDoubleTap(player: Player): number
+	local session = workoutSessions[player]
+	if not session then
+		return 0
+	end
+	local now = os.clock()
+	local uid = player.UserId
+	if now - (lastDoubleTapAt[uid] or 0) < 0.75 then
+		return 0
+	end
+	local def = GearConfig.get(session.gearId)
+	if not def then
+		return 0
+	end
+	lastDoubleTapAt[uid] = now
+	local gain = computeTickGain(player, def) * 2
+	WorkoutPower.addPower(player, gain)
+	return gain
+end
+
 function GearService.stopWorkout(player: Player)
 	local session = workoutSessions[player]
 	if not session then
@@ -269,6 +299,7 @@ function GearService.stopWorkout(player: Player)
 		session.conn = nil
 	end
 	workoutSessions[player] = nil
+	lastDoubleTapAt[player.UserId] = nil
 	player:SetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR, false)
 end
 
@@ -396,6 +427,7 @@ function GearService.init()
 		GearService.stopWorkout(player)
 		lastWorkoutGainAt[player.UserId] = nil
 		workoutXpStreak[player.UserId] = nil
+		lastDoubleTapAt[player.UserId] = nil
 		local conns = playerConns[player]
 		if conns then
 			for _, c in conns do

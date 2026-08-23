@@ -50,6 +50,7 @@ local purchaseGearFn = ensureRF("PurchaseGear")
 local equipGearFn = ensureRF("EquipGear")
 local startWorkoutFn = ensureRF("StartWorkout")
 local stopWorkoutFn = ensureRF("StopWorkout")
+local claimDoubleTapFn = ensureRF("ClaimWorkoutDoubleTap")
 local setPowerFn = ensureRF("SetEditedPower")
 local prepareRobuxGearRE = ensureRE("PrepareRobuxGear")
 
@@ -119,6 +120,10 @@ end
 stopWorkoutFn.OnServerInvoke = function(player: Player): boolean
 	GearService.stopWorkout(player)
 	return true
+end
+
+claimDoubleTapFn.OnServerInvoke = function(player: Player): number
+	return GearService.claimWorkoutDoubleTap(player)
 end
 
 setPowerFn.OnServerInvoke = function(player: Player, amountAny: any, editedAny: any): (boolean, string?)

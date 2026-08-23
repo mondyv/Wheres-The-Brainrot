@@ -211,7 +211,7 @@ local function collectBgmSounds()
 		end
 	end
 	addSoundsFrom(sg)
-	for _, folderName in { "WhenHolding", "Safezone" } do
+	for _, folderName in { "WhenHolding", "Safezone", "JungleZone" } do
 		local folder = sg:FindFirstChild(folderName)
 		if folder then
 			addSoundsFrom(folder)

@@ -10,6 +10,7 @@ local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
@@ -419,8 +420,12 @@ end
 
 local function setBgmChase(on: boolean)
 	local function eachBgm(fn: (Sound) -> ())
-		for _, inst in game:GetService("SoundService"):GetDescendants() do
-			if inst:IsA("Sound") and inst.IsPlaying and inst.Looped then
+		local bg = SoundService:FindFirstChild("BackgroundMusic")
+		if not bg then
+			return
+		end
+		for _, inst in bg:GetDescendants() do
+			if inst:IsA("Sound") and inst.IsPlaying then
 				fn(inst)
 			end
 		end

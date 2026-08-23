@@ -3,10 +3,9 @@
 	BackgroundMusicController — context BGM from SoundService.BackgroundMusic:
 	• Booths (UpgradeBooth / SellBooth / BrainrotDealerBooth) — while at a stand shop
 	• WhenHolding — while carrying a bush brainrot on your head
-	• JungleZone — outside safe zone
+	• JungleZone — outside safe zone (Music 1+Background1, Music 2+Background2)
 	• Safezone — default / inside safe zone
-	Picks a random track from the active folder; when it ends, picks another.
---]]
+]]
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -21,6 +20,11 @@ local POLL_INTERVAL = 0.25
 export type BoothKey = "UpgradeBooth" | "SellBooth" | "BrainrotDealerBooth"
 
 type BgmMode = "none" | "safezone" | "jungle" | "holding" | "booth"
+
+type JunglePair = {
+	music: Sound,
+	bed: Sound,
+}
 
 local player = Players.LocalPlayer
 
@@ -40,6 +44,17 @@ local function soundsInFolder(folder: Instance?): { Sound }
 	return list
 end
 
+local function childSound(parent: Instance?, name: string): Sound?
+	if not parent then
+		return nil
+	end
+	local inst = parent:FindFirstChild(name)
+	if inst and inst:IsA("Sound") then
+		return inst
+	end
+	return nil
+end
+
 local function pickRandom(list: { Sound }, avoid: Sound?): Sound?
 	if #list == 0 then
 		return nil
@@ -52,6 +67,25 @@ local function pickRandom(list: { Sound }, avoid: Sound?): Sound?
 		for _ = 1, 4 do
 			local other = list[math.random(1, #list)]
 			if other ~= avoid then
+				return other
+			end
+		end
+	end
+	return choice
+end
+
+local function pickRandomPair(pairs: { JunglePair }, avoidMusic: Sound?): JunglePair?
+	if #pairs == 0 then
+		return nil
+	end
+	if #pairs == 1 then
+		return pairs[1]
+	end
+	local choice = pairs[math.random(1, #pairs)]
+	if avoidMusic and choice.music == avoidMusic then
+		for _ = 1, 4 do
+			local other = pairs[math.random(1, #pairs)]
+			if other.music ~= avoidMusic then
 				return other
 			end
 		end
@@ -93,8 +127,32 @@ function BackgroundMusicController.init()
 	local boothsRoot = bg:FindFirstChild("Booths")
 
 	local safezonePlaylist = soundsInFolder(sg and sg:FindFirstChild("Safezone"))
-	local junglePlaylist = soundsInFolder(sg and sg:FindFirstChild("JungleZone"))
+	local jungleFolder = sg and sg:FindFirstChild("JungleZone")
 	local holdingPlaylist = soundsInFolder(sg and sg:FindFirstChild("WhenHolding"))
+
+	local usedInPair: { [Sound]: boolean } = {}
+	local junglePairs: { JunglePair } = {}
+	local function addJunglePair(musicName: string, bedName: string)
+		local music = childSound(jungleFolder, musicName)
+		local bed = childSound(jungleFolder, bedName)
+		if not music or not bed then
+			return
+		end
+		table.insert(junglePairs, { music = music, bed = bed })
+		usedInPair[music] = true
+		usedInPair[bed] = true
+	end
+	addJunglePair("JungleZone Music 1", "Background1")
+	addJunglePair("JungleZone Music 2", "Background2")
+
+	local junglePlaylist: { Sound } = {}
+	if jungleFolder then
+		for _, c in jungleFolder:GetChildren() do
+			if c:IsA("Sound") and not usedInPair[c] then
+				table.insert(junglePlaylist, c)
+			end
+		end
+	end
 
 	local boothPlaylists: { [BoothKey]: { Sound } } = {
 		UpgradeBooth = soundsInFolder(boothsRoot and boothsRoot:FindFirstChild("UpgradeBooth")),
@@ -110,7 +168,13 @@ function BackgroundMusicController.init()
 		end
 	end
 
-	if #safezonePlaylist == 0 and #junglePlaylist == 0 and #holdingPlaylist == 0 and not hasAnyBooth then
+	if
+		#safezonePlaylist == 0
+		and #junglePlaylist == 0
+		and #junglePairs == 0
+		and #holdingPlaylist == 0
+		and not hasAnyBooth
+	then
 		return
 	end
 
@@ -120,6 +184,10 @@ function BackgroundMusicController.init()
 		for _, s in playlist do
 			table.insert(allSounds, s)
 		end
+	end
+	for _, pair in junglePairs do
+		table.insert(allSounds, pair.music)
+		table.insert(allSounds, pair.bed)
 	end
 	for _, playlist in boothPlaylists do
 		for _, s in playlist do
@@ -132,10 +200,14 @@ function BackgroundMusicController.init()
 			s.SoundGroup = groupRef
 		end
 	end
+	for _, pair in junglePairs do
+		pair.bed.Looped = true
+	end
 
 	local currentMode: BgmMode = "none"
 	local currentBoothKey: BoothKey? = nil
 	local currentSound: Sound? = nil
+	local currentBed: Sound? = nil
 	local endedConn: RBXScriptConnection? = nil
 	local pollAccum = 0.0
 
@@ -148,6 +220,7 @@ function BackgroundMusicController.init()
 			s:Stop()
 		end
 		currentSound = nil
+		currentBed = nil
 		currentBoothKey = nil
 	end
 
@@ -164,7 +237,50 @@ function BackgroundMusicController.init()
 		return {}
 	end
 
-	local function playRandomFromMode(mode: BgmMode, boothKey: BoothKey?)
+	local playRandomFromMode: (BgmMode, BoothKey?) -> ()
+	local playJunglePair: (Sound?) -> ()
+
+	playJunglePair = function(avoidMusic: Sound?)
+		local pair = pickRandomPair(junglePairs, avoidMusic)
+		if not pair then
+			stopAll()
+			currentMode = "none"
+			return
+		end
+
+		if endedConn then
+			endedConn:Disconnect()
+			endedConn = nil
+		end
+		for _, s in allSounds do
+			if s ~= pair.music and s ~= pair.bed then
+				s:Stop()
+			end
+		end
+
+		currentMode = "jungle"
+		currentBoothKey = nil
+		currentSound = pair.music
+		currentBed = pair.bed
+		pair.music.Looped = false
+		pair.bed.Looped = true
+		pair.music.TimePosition = 0
+		pair.bed.TimePosition = 0
+		pair.music:Play()
+		pair.bed:Play()
+		endedConn = pair.music.Ended:Connect(function()
+			if currentMode == "jungle" then
+				playJunglePair(pair.music)
+			end
+		end)
+	end
+
+	playRandomFromMode = function(mode: BgmMode, boothKey: BoothKey?)
+		if mode == "jungle" and #junglePairs > 0 then
+			playJunglePair(currentSound)
+			return
+		end
+
 		local playlist = playlistForMode(mode, boothKey)
 		local nextSound = pickRandom(playlist, currentSound)
 		if not nextSound then
@@ -186,6 +302,7 @@ function BackgroundMusicController.init()
 		currentMode = mode
 		currentBoothKey = if mode == "booth" then boothKey else nil
 		currentSound = nextSound
+		currentBed = nil
 		nextSound.TimePosition = 0
 		nextSound:Play()
 		endedConn = nextSound.Ended:Connect(function()
@@ -205,13 +322,13 @@ function BackgroundMusicController.init()
 		end
 		local char = player.Character
 		local inSafe = if char then SafezoneUtil.isCharacterInSafezone(char) else true
-		if not inSafe and #junglePlaylist > 0 then
+		if not inSafe and (#junglePairs > 0 or #junglePlaylist > 0) then
 			return "jungle", nil
 		end
 		if #safezonePlaylist > 0 then
 			return "safezone", nil
 		end
-		if #junglePlaylist > 0 then
+		if #junglePairs > 0 or #junglePlaylist > 0 then
 			return "jungle", nil
 		end
 		return "none", nil
@@ -220,7 +337,9 @@ function BackgroundMusicController.init()
 	local function applyMode(mode: BgmMode, boothKey: BoothKey?)
 		local sameBooth = mode ~= "booth" or currentBoothKey == boothKey
 		if mode == currentMode and sameBooth and mode ~= "none" and currentSound and currentSound.IsPlaying then
-			return
+			if mode ~= "jungle" or (currentBed and currentBed.IsPlaying) then
+				return
+			end
 		end
 		if mode == "none" then
 			stopAll()
@@ -230,6 +349,8 @@ function BackgroundMusicController.init()
 		if mode ~= currentMode or (mode == "booth" and currentBoothKey ~= boothKey) then
 			playRandomFromMode(mode, boothKey)
 		elseif currentSound and not currentSound.IsPlaying then
+			playRandomFromMode(mode, boothKey)
+		elseif mode == "jungle" and currentBed and not currentBed.IsPlaying then
 			playRandomFromMode(mode, boothKey)
 		end
 	end

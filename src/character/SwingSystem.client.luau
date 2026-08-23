@@ -60,6 +60,9 @@ end
 local waveWebChaseMod: any = nil
 
 local function isGameplayCutsceneActive()
+	if player:GetAttribute("WaveWebDeathLock") == true then
+		return true
+	end
 	local active = false
 	floatingClaimCutsceneMod, active = moduleIsActive(floatingClaimCutsceneMod, "FloatingClaimCutscene")
 	if active then

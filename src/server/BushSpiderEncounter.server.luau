@@ -2,13 +2,14 @@
 --[[
 	Server-authoritative catch-up when wave web reaches the player.
 	Teleports them home alive (no LoadCharacter) so the client can fade.
---]]
+]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local ReviveService = require(script.Parent:WaitForChild("Modules"):WaitForChild("ReviveService"))
+local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 
 local KILL_REMOTE = "BushSpiderEncounterKill"
 local KILL_COOLDOWN = 0.8
@@ -51,7 +52,9 @@ killRE.OnServerEvent:Connect(function(plr: Player)
 	if okFunnel and Funnel and typeof(Funnel.waveChaseDied) == "function" then
 		Funnel.waveChaseDied(plr)
 	end
-	-- Drop head-carried brainrots so this plays like a death, then teleport home.
+
+	plr:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, true)
+
 	local internal = ServerStorage:FindFirstChild("BrainrotInternal")
 	local clearCarry = internal and internal:FindFirstChild("ClearHeadCarry")
 	if clearCarry and clearCarry:IsA("BindableFunction") then
@@ -62,7 +65,7 @@ killRE.OnServerEvent:Connect(function(plr: Player)
 			warn("[BushSpiderEncounter] ClearHeadCarry failed:", errClear)
 		end
 	end
-	-- Home teleport without dying — client already faded to black.
+
 	ReviveService.softTeleportHomeAlive(plr)
 end)
 

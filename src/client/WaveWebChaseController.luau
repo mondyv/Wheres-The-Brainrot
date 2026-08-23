@@ -19,6 +19,7 @@ local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
 local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
+local ReviveController = require(script.Parent.ReviveController)
 local LandAmbushUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandAmbushUtil"))
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
@@ -70,6 +71,7 @@ local function reportWaveEscaped()
 	end
 end
 local killFired = false
+local deathLocked = false
 
 local function getHRP(): BasePart?
 	local char = player.Character
@@ -743,16 +745,65 @@ local function destroyChaseInstances()
 	waveForward = nil
 end
 
+local lockMovement: () -> ()
+
+local function resolveKillRemote(): RemoteEvent?
+	if killRE and killRE.Parent then
+		return killRE
+	end
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+	local re = remotes and remotes:FindFirstChild("BushSpiderEncounterKill")
+	if re and re:IsA("RemoteEvent") then
+		killRE = re
+		return re
+	end
+	return nil
+end
+
 local function requestKill()
 	if killFired then
 		return
 	end
 	killFired = true
+	deathLocked = true
 	chaseActive = false
+	lockMovement()
+	player:SetAttribute("WaveWebDeathLock", true)
+
 	local hum = getHumanoid()
 	if hum then
 		hum.CameraOffset = Vector3.zero
+		hum.WalkSpeed = 0
+		hum.JumpPower = 0
+		hum.JumpHeight = 0
+		hum.AutoRotate = false
+		pcall(function()
+			hum:ChangeState(Enum.HumanoidStateType.PlatformStanding)
+		end)
+		hum.PlatformStand = true
 	end
+	local hrp = getHRP()
+	if hrp then
+		hrp.AssemblyLinearVelocity = Vector3.zero
+		hrp.AssemblyAngularVelocity = Vector3.zero
+	end
+
+	ensurePostFx()
+	if colorFx then
+		colorFx.Enabled = true
+		colorFx.TintColor = Color3.fromRGB(210, 30, 36)
+		colorFx.Contrast = 0.28
+		colorFx.Saturation = -0.15
+	end
+	if blurFx then
+		blurFx.Enabled = true
+		blurFx.Size = 10
+	end
+
+	if typeof(ReviveController.playWorldDeathFx) == "function" then
+		ReviveController.playWorldDeathFx()
+	end
+
 	if activeSpider then
 		activeSpider:Destroy()
 		activeSpider = nil
@@ -768,10 +819,17 @@ local function requestKill()
 		if not pg then
 			pg = player:WaitForChild("PlayerGui", 5) :: PlayerGui?
 		end
+
+		local re = resolveKillRemote()
+		if re then
+			re:FireServer()
+		else
+			warn("[WaveWebChaseController] BushSpiderEncounterKill missing — cannot teleport home")
+		end
+
 		if not pg then
-			if killRE then
-				killRE:FireServer()
-			end
+			deathLocked = false
+			player:SetAttribute("WaveWebDeathLock", nil)
 			return
 		end
 
@@ -783,46 +841,70 @@ local function requestKill()
 		sg.Name = "WaveWebDeathFade"
 		sg.IgnoreGuiInset = true
 		sg.ResetOnSpawn = false
-		sg.DisplayOrder = 2500
+		sg.DisplayOrder = 4000
 		sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+		local red = Instance.new("Frame")
+		red.Name = "Red"
+		red.BackgroundColor3 = Color3.fromRGB(150, 6, 12)
+		red.BackgroundTransparency = 1
+		red.BorderSizePixel = 0
+		red.Size = UDim2.fromScale(1, 1)
+		red.Active = true
+		red.ZIndex = 1
+		red.Parent = sg
 		local cover = Instance.new("Frame")
 		cover.Name = "Cover"
 		cover.BackgroundColor3 = Color3.new(0, 0, 0)
 		cover.BackgroundTransparency = 1
 		cover.BorderSizePixel = 0
 		cover.Size = UDim2.fromScale(1, 1)
-		cover.Active = false
+		cover.Active = true
+		cover.ZIndex = 2
 		cover.Parent = sg
 		sg.Parent = pg
 
 		if wave and wave.Parent then
 			task.spawn(function()
-				fadeWaveOntoLand(wave, 0.32)
+				fadeWaveOntoLand(wave, 0.45)
 			end)
 		end
 
-		if killRE then
-			killRE:FireServer()
-		end
-
+		local redIn = TweenService:Create(
+			red,
+			TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ BackgroundTransparency = 0.28 }
+		)
+		redIn:Play()
+		redIn.Completed:Wait()
 		local fadeIn = TweenService:Create(
 			cover,
-			TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 			{ BackgroundTransparency = 0 }
 		)
 		fadeIn:Play()
 		fadeIn.Completed:Wait()
-		task.wait(0.18)
+		task.wait(1.05)
+		if typeof(ReviveController.stopWorldDeathFx) == "function" then
+			ReviveController.stopWorldDeathFx()
+		end
 		local fadeOut = TweenService:Create(
 			cover,
-			TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ BackgroundTransparency = 1 }
+		)
+		local redOut = TweenService:Create(
+			red,
+			TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 			{ BackgroundTransparency = 1 }
 		)
 		fadeOut:Play()
+		redOut:Play()
 		fadeOut.Completed:Wait()
 		if sg.Parent then
 			sg:Destroy()
 		end
+		player:SetAttribute("WaveWebDeathLock", nil)
+		deathLocked = false
 	end)
 end
 
@@ -832,7 +914,7 @@ local savedJumpHeight: number? = nil
 local savedUseJumpPower: boolean? = nil
 local savedAutoRotate: boolean? = nil
 
-local function lockMovement()
+lockMovement = function()
 	cinematicLocked = true
 	ContextActionService:BindActionAtPriority(
 		MOVE_LOCK_ACTION,
@@ -874,10 +956,12 @@ local function lockMovement()
 	moveLockConn = RunService.Heartbeat:Connect(function()
 		local h = getHumanoid()
 		-- Only while cinematic intro is locked — never during free chase.
-		if h and cinematicLocked then
+		if h and (cinematicLocked or deathLocked) then
 			h.WalkSpeed = 0
 			h.JumpPower = 0
 			h.JumpHeight = 0
+			h.PlatformStand = true
+			h.Jump = false
 		end
 	end)
 end
@@ -979,6 +1063,8 @@ end
 local function finishChase(didHideHud: boolean)
 	chaseActive = false
 	cinematicLocked = false
+	deathLocked = false
+	player:SetAttribute("WaveWebDeathLock", nil)
 	chaseToken += 1
 	destroyChaseInstances()
 	SpiderSenseFx.stopAll()
@@ -1290,6 +1376,9 @@ local function runChase(token: number)
 	while chaseActive and token == chaseToken do
 		task.wait(0.05)
 	end
+	while deathLocked and token == chaseToken do
+		task.wait(0.05)
+	end
 
 	local hum = getHumanoid()
 	if hum then
@@ -1352,12 +1441,12 @@ local function runSequence(_model: Model)
 end
 
 function WaveWebChaseController.isActive(): boolean
-	-- Swing / input gates: only block during cinematic intro lock.
-	return cinematicLocked
+	-- Block swing/input during intro lock and cobweb-death lock.
+	return cinematicLocked or deathLocked
 end
 
 function WaveWebChaseController.isChaseActive(): boolean
-	return chaseActive
+	return chaseActive or deathLocked
 end
 
 function WaveWebChaseController.init()

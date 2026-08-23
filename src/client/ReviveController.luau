@@ -1234,6 +1234,20 @@ function ReviveController.clearDeathPresentation()
 	setBgmSlowed(false)
 end
 
+function ReviveController.playWorldDeathFx()
+	playDeathSfx()
+	startEarRinging()
+	setBgmSlowed(true)
+end
+
+function ReviveController.stopWorldDeathFx()
+	if sessionActive then
+		return
+	end
+	stopEarRinging()
+	setBgmSlowed(false)
+end
+
 function ReviveController.restoreGameplayAfterSoftDeath()
 	if sessionActive then
 		return
@@ -1353,6 +1367,10 @@ function ReviveController.init()
 	end)
 
 	player:GetAttributeChangedSignal(ReviveConfig.HOME_TELEPORT_ATTR):Connect(function()
+		if player:GetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR) == true then
+			-- Wave web chase owns the death fade/lock; don't restore movement here.
+			return
+		end
 		playFrictionlessBlackFade()
 		ReviveController.restoreGameplayAfterSoftDeath()
 		local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))

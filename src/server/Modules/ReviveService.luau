@@ -340,13 +340,26 @@ local function softRespawnAtPlotBase(player: Player)
 end
 
 -- Keep the same character: fade-friendly home teleport (no LoadCharacter hitch).
+local function stripSwingConstraints(character: Model)
+	for _, d in character:GetDescendants() do
+		if (d:IsA("Constraint") or d:IsA("VectorForce") or d:IsA("AlignOrientation") or d:IsA("AlignPosition"))
+			and string.find(d.Name, "Swing", 1, true)
+		then
+			d:Destroy()
+		end
+	end
+end
+
 local function softTeleportHomeAlive(player: Player)
-	if lastSoftRespawnAt[player] and (os.clock() - lastSoftRespawnAt[player]) < 0.45 then
+	local waveDeath = player:GetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR) == true
+	if not waveDeath and lastSoftRespawnAt[player] and (os.clock() - lastSoftRespawnAt[player]) < 0.45 then
 		return
 	end
 	clearPending(player)
 	lastSoftRespawnAt[player] = os.clock()
-	player:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, nil)
+	if not waveDeath then
+		player:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, nil)
+	end
 	clearReviveSpawnAttrs(player)
 
 	local character = player.Character
@@ -354,12 +367,17 @@ local function softTeleportHomeAlive(player: Player)
 		forceLoadCharacter(player)
 		return
 	end
+	stripSwingConstraints(character)
+	player:SetAttribute("IsSwinging", false)
 	local hum = character:FindFirstChildOfClass("Humanoid")
 	if hum then
 		pcall(function()
 			hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
 		end)
 		hum.BreakJointsOnDeath = false
+		hum.WalkSpeed = 0
+		hum.JumpPower = 0
+		hum.JumpHeight = 0
 		if hum.Health <= 0 then
 			hum.Health = math.max(hum.MaxHealth, 1)
 			pcall(function()
@@ -369,6 +387,13 @@ local function softTeleportHomeAlive(player: Player)
 	end
 	player:SetAttribute(ReviveConfig.HOME_TELEPORT_ATTR, Workspace:GetServerTimeNow())
 	PlotSpawnUtil.teleportPlayerHome(player, character, 12)
+	if waveDeath then
+		task.delay(2.5, function()
+			if player.Parent then
+				player:SetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR, nil)
+			end
+		end)
+	end
 end
 
 local function softRespawnAtHitbox(player: Player)

@@ -1065,7 +1065,7 @@ local function startDoubleTapLoop()
 	doubleTapGen += 1
 	local gen = doubleTapGen
 	doubleTapHits = 0
-	lastDoubleTapSpawnAt = os.clock()
+	lastDoubleTapSpawnAt = -100
 	ensureDoubleTapGui()
 	task.spawn(function()
 		task.wait(1.15)

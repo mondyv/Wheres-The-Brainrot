@@ -1180,7 +1180,7 @@ end
 
 local function ensureQuestHud(): GuiObject
 	if questPanel and questPanel.Parent then
-		if questPanel:GetAttribute("StudTicket") == true and questPanel:GetAttribute("HudLayout") == "wide_v8" then
+		if questPanel:GetAttribute("StudTicket") == true and questPanel:GetAttribute("HudLayout") == "phone_v1" then
 			questArrowBtn = questPanel:FindFirstChild("CollapseArrow", true) :: ImageButton?
 			if questArrowBtn then
 				questArrowScale = questArrowBtn:FindFirstChildOfClass("UIScale")
@@ -1204,7 +1204,7 @@ local function ensureQuestHud(): GuiObject
 	shell.Size = UDim2.fromOffset(TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_HEIGHT)
 	shell.AutomaticSize = Enum.AutomaticSize.Y
 	shell:SetAttribute("StudTicket", true)
-	shell:SetAttribute("HudLayout", "wide_v8")
+	shell:SetAttribute("HudLayout", "phone_v1")
 	shell.Visible = false
 	shell.ZIndex = 100
 	shell.ClipsDescendants = false
@@ -1219,6 +1219,12 @@ local function ensureQuestHud(): GuiObject
 	hudMatchScale.Name = "HudMatchScale"
 	hudMatchScale.Scale = 1
 	hudMatchScale.Parent = shell
+
+	local hudMax = Instance.new("UISizeConstraint")
+	hudMax.Name = "HudMaxSize"
+	hudMax.MinSize = Vector2.new(140, 72)
+	hudMax.MaxSize = Vector2.new(380, 180)
+	hudMax.Parent = shell
 
 	local ticket = Instance.new("ImageLabel")
 	ticket.Name = "Ticket"
@@ -1311,6 +1317,9 @@ local function ensureQuestHud(): GuiObject
 	stamp.TextColor3 = Color3.fromRGB(160, 40, 30)
 	stamp.TextXAlignment = Enum.TextXAlignment.Left
 	stamp.Text = "TIM CHEESE JOB"
+	stamp.TextScaled = false
+	stamp.TextWrapped = false
+	stamp.TextTruncate = Enum.TextTruncate.AtEnd
 	stamp.ZIndex = 103
 	stamp.Parent = header
 
@@ -1324,6 +1333,8 @@ local function ensureQuestHud(): GuiObject
 	title.TextColor3 = Color3.fromRGB(30, 24, 10)
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.TextTruncate = Enum.TextTruncate.AtEnd
+	title.TextScaled = false
+	title.TextWrapped = false
 	title.Text = ""
 	title.ZIndex = 103
 	title.Parent = header
@@ -1332,13 +1343,16 @@ local function ensureQuestHud(): GuiObject
 	local body = Instance.new("TextLabel")
 	body.Name = "Body"
 	body.BackgroundTransparency = 1
-	body.Size = UDim2.new(1, 0, 0, 0)
-	body.AutomaticSize = Enum.AutomaticSize.Y
+	body.Size = UDim2.new(1, 0, 0, 36)
+	body.AutomaticSize = Enum.AutomaticSize.None
 	body.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
 	body.TextSize = 12
 	body.TextColor3 = Color3.fromRGB(55, 42, 18)
 	body.TextWrapped = true
+	body.TextScaled = false
+	body.TextTruncate = Enum.TextTruncate.AtEnd
 	body.TextXAlignment = Enum.TextXAlignment.Left
+	body.TextYAlignment = Enum.TextYAlignment.Top
 	body.Text = ""
 	body.LayoutOrder = 2
 	body.ZIndex = 102
@@ -1360,6 +1374,9 @@ local function ensureQuestHud(): GuiObject
 	progress.TextSize = 11
 	progress.TextColor3 = Color3.fromRGB(40, 110, 40)
 	progress.TextXAlignment = Enum.TextXAlignment.Left
+	progress.TextScaled = false
+	progress.TextWrapped = false
+	progress.TextTruncate = Enum.TextTruncate.AtEnd
 	progress.Text = ""
 	progress.ZIndex = 103
 	progress.Parent = progressRow
@@ -1412,6 +1429,9 @@ local function ensureQuestHud(): GuiObject
 	payout.FontFace = Font.fromEnum(Enum.Font.GothamBold)
 	payout.TextSize = 11
 	payout.TextColor3 = Color3.fromRGB(255, 220, 80)
+	payout.TextScaled = false
+	payout.TextWrapped = false
+	payout.TextTruncate = Enum.TextTruncate.AtEnd
 	payout.Text = ""
 	payout.LayoutOrder = 5
 	payout.ZIndex = 102
@@ -1803,6 +1823,71 @@ local function isCompactQuestHud(): boolean
 	return cam ~= nil and cam.ViewportSize.X < 700
 end
 
+local function fitQuestHudLabels(panel: GuiObject, compact: boolean, width: number, vh: number)
+	local title = panel:FindFirstChild("Title", true)
+	local body = panel:FindFirstChild("Body", true)
+	local stamp = panel:FindFirstChild("Stamp", true)
+	local progress = panel:FindFirstChild("Progress", true)
+	local reward = panel:FindFirstChild("Reward", true)
+	local bang = panel:FindFirstChild("Exclaim", true)
+	local header = panel:FindFirstChild("Header", true)
+
+	local titleSize = if compact then 12 else 14
+	local bodySize = if compact then 10 else 12
+	local bodyH = if compact then 32 else 40
+
+	if header and header:IsA("GuiObject") then
+		header.Size = UDim2.new(1, 0, 0, if compact then 26 else 30)
+	end
+	if bang and bang:IsA("GuiObject") then
+		local side = if compact then 22 else 28
+		bang.Size = UDim2.fromOffset(side, side)
+	end
+	if stamp and stamp:IsA("TextLabel") then
+		stamp.TextScaled = false
+		stamp.TextWrapped = false
+		stamp.TextTruncate = Enum.TextTruncate.AtEnd
+		stamp.TextSize = if compact then 9 else 10
+		stamp.Size = UDim2.new(1, -34, 0, if compact then 11 else 12)
+	end
+	if title and title:IsA("TextLabel") then
+		title.TextScaled = false
+		title.TextWrapped = false
+		title.TextTruncate = Enum.TextTruncate.AtEnd
+		UiFonts.applyDisplayLabel(title, titleSize, math.max(9, titleSize - 3))
+		title.Position = UDim2.fromOffset(32, if compact then 10 else 12)
+		title.Size = UDim2.new(1, -34, 0, if compact then 15 else 18)
+	end
+	if body and body:IsA("TextLabel") then
+		body.TextScaled = false
+		body.TextWrapped = true
+		body.TextTruncate = Enum.TextTruncate.AtEnd
+		body.AutomaticSize = Enum.AutomaticSize.None
+		body.TextYAlignment = Enum.TextYAlignment.Top
+		body.TextSize = bodySize
+		UiFonts.ensureTextSizeConstraint(body, bodySize, math.max(8, bodySize - 2))
+		body.Size = UDim2.new(1, 0, 0, bodyH)
+	end
+	if progress and progress:IsA("TextLabel") then
+		progress.TextScaled = false
+		progress.TextWrapped = false
+		progress.TextTruncate = Enum.TextTruncate.AtEnd
+		progress.TextSize = if compact then 10 else 11
+	end
+	if reward and reward:IsA("TextLabel") then
+		reward.TextScaled = false
+		reward.TextWrapped = false
+		reward.TextTruncate = Enum.TextTruncate.AtEnd
+		reward.TextSize = if compact then 10 else 11
+		reward.Size = UDim2.new(1, 0, 0, if compact then 18 else 20)
+	end
+
+	local cap = panel:FindFirstChild("HudMaxSize")
+	if cap and cap:IsA("UISizeConstraint") then
+		cap.MaxSize = Vector2.new(width + 4, math.floor(vh * (if compact then 0.26 else 0.30)))
+	end
+end
+
 layoutQuestHud = function()
 	local panel = questPanel
 	if not panel then
@@ -1849,6 +1934,7 @@ layoutQuestHud = function()
 		screenW = math.clamp(math.floor(vw * 0.24), 290, 380)
 		matchScale = 0.94
 	end
+	fitQuestHudLabels(panel, compact, screenW, vh)
 
 	local rb = resolveRandomBrainrotHud()
 	local usedRb = false
@@ -2135,7 +2221,7 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	ticket.Name = "CheeseTicket"
 	ticket.AnchorPoint = Vector2.new(0.5, 0.5)
 	ticket.Position = UDim2.fromScale(0.5, 0.5)
-	ticket.Size = UDim2.fromOffset(390, 0)
+	ticket.Size = UDim2.fromOffset(if isCompactQuestHud() then 270 else 390, 0)
 	ticket.AutomaticSize = Enum.AutomaticSize.Y
 	ticket.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
 	ticket.BackgroundTransparency = 0.08
@@ -2210,6 +2296,9 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	stamp.TextColor3 = Color3.fromRGB(160, 40, 30)
 	stamp.TextXAlignment = Enum.TextXAlignment.Left
 	stamp.Text = "JOB LOCKED IN"
+	stamp.TextScaled = false
+	stamp.TextWrapped = false
+	stamp.TextTruncate = Enum.TextTruncate.AtEnd
 	stamp.Rotation = 1
 	stamp.Parent = header
 
@@ -2222,20 +2311,24 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	title.TextColor3 = Color3.fromRGB(30, 24, 10)
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.TextTruncate = Enum.TextTruncate.AtEnd
+	title.TextScaled = false
+	title.TextWrapped = false
 	title.Text = quest.title
 	title.Parent = header
-	UiFonts.applyDisplayLabel(title, 22, 16)
+	UiFonts.applyDisplayLabel(title, if isCompactQuestHud() then 16 else 22, 12)
 
 	local body = Instance.new("TextLabel")
 	body.BackgroundTransparency = 1
-	body.Size = UDim2.new(1, 0, 0, 0)
-	body.AutomaticSize = Enum.AutomaticSize.Y
+	body.Size = UDim2.new(1, 0, 0, if isCompactQuestHud() then 40 else 52)
+	body.AutomaticSize = Enum.AutomaticSize.None
 	body.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
-	body.TextSize = 14
+	body.TextSize = if isCompactQuestHud() then 12 else 14
 	body.TextColor3 = Color3.fromRGB(55, 42, 18)
 	body.TextXAlignment = Enum.TextXAlignment.Left
 	body.TextYAlignment = Enum.TextYAlignment.Top
 	body.TextWrapped = true
+	body.TextScaled = false
+	body.TextTruncate = Enum.TextTruncate.AtEnd
 	body.Text = quest.description
 	body.LayoutOrder = 2
 	body.Parent = inner

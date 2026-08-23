@@ -82,6 +82,14 @@ local function formatPower(n: number): string
 	return BrainrotEconomy.formatNumberShort(math.max(0, math.floor(n)))
 end
 
+local function isCompactHud(): boolean
+	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
+		return true
+	end
+	local cam = workspace.CurrentCamera
+	return cam ~= nil and cam.ViewportSize.X < 700
+end
+
 local function waitMain(): ScreenGui
 	return PlayerGuiMain.ensure(player)
 end
@@ -581,35 +589,33 @@ end
 -- Lock Amount TextSize BEFORE reparenting into AutomaticSize cluster.
 -- TextScaled labels collapse to tiny text when their parent shrinks.
 local function lockPowerAmountTextSize(amount: TextLabel)
-	if amount:GetAttribute("PowerAmtSizeLocked") == true then
-		return
-	end
 	amount:SetAttribute("PowerAmtSizeLocked", true)
 
+	local compact = isCompactHud()
 	local ts: number? = nil
 	local counters = amount:FindFirstAncestor("Counters")
 	local cash = counters and counters:FindFirstChild("Cash")
 	local cashAmt = cash and cash:FindFirstChild("Amount", true)
 	if cashAmt and cashAmt:IsA("TextLabel") then
-		if not cashAmt.TextScaled and cashAmt.TextSize >= 14 then
+		if not cashAmt.TextScaled and cashAmt.TextSize >= 12 then
 			ts = cashAmt.TextSize
-		elseif cashAmt.AbsoluteSize.Y > 8 then
-			ts = math.floor(cashAmt.AbsoluteSize.Y * 0.72)
+		elseif cashAmt.Size.Y.Offset >= 12 then
+			ts = math.floor(cashAmt.Size.Y.Offset * 0.72)
 		end
 	end
 	if not ts then
-		if amount.TextScaled and amount.AbsoluteSize.Y > 8 then
-			ts = math.floor(amount.AbsoluteSize.Y * 0.72)
-		elseif amount.TextSize >= 14 then
+		if amount.TextSize >= 12 then
 			ts = amount.TextSize
 		else
-			ts = 28
+			ts = if compact then 16 else 20
 		end
 	end
+	local cap = if compact then 18 else 24
+	local floor = if compact then 13 else 16
 	amount.TextScaled = false
-	amount.TextSize = math.clamp(ts :: number, 18, 48)
-	amount.AutomaticSize = Enum.AutomaticSize.XY
-	amount.Size = UDim2.fromOffset(0, 0)
+	amount.TextSize = math.clamp(ts :: number, floor, cap)
+	amount.AutomaticSize = Enum.AutomaticSize.X
+	amount.Size = UDim2.fromOffset(0, math.ceil(amount.TextSize * 1.2))
 end
 
 -- Scale Amount + muscle only (not Edit / whole SideUI chip) so hits land in the right place.
@@ -669,27 +675,36 @@ local function ensurePulseCluster(powerFrame: GuiObject): Frame
 	end
 	if muscle then
 		muscle.LayoutOrder = 1
-		-- Snapshot size before AutomaticSize cluster collapses scale-based icons.
-		local px = muscle.AbsoluteSize.X
-		local py = muscle.AbsoluteSize.Y
+		-- Use authored Offset size (not AbsoluteSize — that double-applies HUD UIScale).
+		local compact = isCompactHud()
+		local px = muscle.Size.X.Offset
+		local py = muscle.Size.Y.Offset
 		local counters = powerFrame.Parent
 		local cash = counters and counters:FindFirstChild("Cash")
 		local cashIcon = cash
 			and (cash:FindFirstChild("ImageLabel") or cash:FindFirstChildWhichIsA("ImageLabel", true))
-		if cashIcon and cashIcon:IsA("GuiObject") and cashIcon.AbsoluteSize.X >= 20 then
-			px = cashIcon.AbsoluteSize.X
-			py = cashIcon.AbsoluteSize.Y
+		if cashIcon and cashIcon:IsA("GuiObject") then
+			local cx = cashIcon.Size.X.Offset
+			local cy = cashIcon.Size.Y.Offset
+			if cx >= 16 and cy >= 16 then
+				px = cx
+				py = cy
+			end
 		end
-		if px < 36 or py < 36 then
-			px = 52
-			py = 52
+		local cap = if compact then 26 else 32
+		local floor = if compact then 20 else 22
+		if px < floor or px > cap or py < floor or py > cap then
+			px = if compact then 24 else 28
+			py = px
 		end
+		px = math.clamp(math.floor(px + 0.5), floor, cap)
+		py = math.clamp(math.floor(py + 0.5), floor, cap)
 		muscle.AutomaticSize = Enum.AutomaticSize.None
-		muscle.Size = UDim2.fromOffset(math.floor(px + 0.5), math.floor(py + 0.5))
+		muscle.Size = UDim2.fromOffset(px, py)
 		local aspect = muscle:FindFirstChildOfClass("UIAspectRatioConstraint")
 		if aspect then
-			local side = math.max(px, py)
-			muscle.Size = UDim2.fromOffset(math.floor(side + 0.5), math.floor(side + 0.5))
+			local side = math.min(px, py)
+			muscle.Size = UDim2.fromOffset(side, side)
 		end
 		muscle.ScaleType = Enum.ScaleType.Fit
 		muscle.BackgroundTransparency = 1

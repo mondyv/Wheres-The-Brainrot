@@ -11,6 +11,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
+local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
@@ -24,8 +25,8 @@ local LandAmbushUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForC
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local WaveWebChaseConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WaveWebChaseConfig"))
-local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+local BrainrotGradientAnimator = require(script.Parent.BrainrotGradientAnimator)
 local SpiderSenseFx = require(script.Parent.SpiderSenseFx)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 
@@ -201,6 +202,29 @@ local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
 	return CFrame.new(pos) * CFrame.fromOrientation(math.rad(ori.X), math.rad(yaw), math.rad(ori.Z))
 end
 
+local function findStarterGradient(name: string): UIGradient?
+	local folder = StarterGui:FindFirstChild("Gradients")
+	if not folder then
+		local pg = player:FindFirstChildOfClass("PlayerGui")
+		folder = pg and pg:FindFirstChild("Gradients")
+	end
+	if not folder then
+		return nil
+	end
+	local node = folder:FindFirstChild(name)
+	if not node then
+		return nil
+	end
+	if node:IsA("UIGradient") then
+		return node
+	end
+	local nested = node:FindFirstChildOfClass("UIGradient")
+	if nested then
+		return nested
+	end
+	return nil
+end
+
 local function attachWaveTitle(wave: Model)
 	local part = wave.PrimaryPart or wave:FindFirstChildWhichIsA("BasePart", true)
 	if not part then
@@ -208,6 +232,7 @@ local function attachWaveTitle(wave: Model)
 	end
 	local existing = wave:FindFirstChild("WaveWebTitle")
 	if existing then
+		BrainrotGradientAnimator.unregister(existing)
 		existing:Destroy()
 	end
 	local raw = player:GetAttribute("CurrentLand")
@@ -217,7 +242,7 @@ local function attachWaveTitle(wave: Model)
 	bb.Name = "WaveWebTitle"
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
-	bb.Size = UDim2.fromOffset(460, 96)
+	bb.Size = UDim2.fromOffset(680, 118)
 	bb.StudsOffset = Vector3.new(0, 16, 0)
 	bb.MaxDistance = 520
 	bb.Parent = part
@@ -236,7 +261,21 @@ local function attachWaveTitle(wave: Model)
 	stroke.Thickness = 2.6
 	stroke.Color = Color3.fromRGB(18, 10, 6)
 	stroke.Parent = label
-	BrainrotHeaderStyle.applyRarityLabel(label, title.rarity)
+
+	local template = findStarterGradient(title.gradient)
+	if template then
+		for _, child in label:GetChildren() do
+			if child:IsA("UIGradient") then
+				child:Destroy()
+			end
+		end
+		local clone = template:Clone()
+		clone.Enabled = true
+		clone.Parent = label
+		BrainrotGradientAnimator.register(bb)
+	else
+		warn("[WaveWebChaseController] StarterGui.Gradients missing:", title.gradient)
+	end
 end
 
 local function hideChaseHud()
@@ -820,6 +859,7 @@ local function destroyChaseInstances()
 		activeSpider = nil
 	end
 	if activeWave then
+		BrainrotGradientAnimator.unregister(activeWave)
 		activeWave:Destroy()
 		activeWave = nil
 	end
@@ -891,6 +931,9 @@ local function requestKill()
 		activeSpider = nil
 	end
 	local wave = activeWave
+	if wave then
+		BrainrotGradientAnimator.unregister(wave)
+	end
 	activeWave = nil
 	waveTravelPos = nil
 	waveForward = nil
@@ -1288,9 +1331,7 @@ local function runChase(token: number)
 			safezoneTimer = 0
 		end
 
-		local elapsed = os.clock() - chaseStart
 		local speed = C.speedForLand(currentLand())
-		speed *= 0.9 + 0.1 * math.clamp(elapsed / 8, 0, 1)
 
 		wavePos += forward * speed * dt
 		waveTravelPos = wavePos

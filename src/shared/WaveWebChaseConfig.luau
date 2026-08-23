@@ -48,18 +48,32 @@ M.WAVE_KILL_GRACE_SEC = 3.4
 -- Never ScaleTo the Wave Web mesh — it freezes/crashes Studio & clients.
 M.WAVE_SCALE = 1
 
--- Land 1 is jog-away pace; land 10 is pressure, not a teleport.
-M.WAVE_SPEED_LAND1 = 24
-M.WAVE_SPEED_LAND10 = 39
+-- Per-land charge speed (studs/s). Walk is ~18; land 4 should force a real run-home.
+M.WAVE_SPEED_BY_LAND = {
+	26, -- 1 baby
+	30, -- 2 normal
+	34, -- 3 speed
+	39, -- 4 gigantic
+	43, -- 5 titan
+	46, -- 6 colossal
+	49, -- 7 cosmic
+	52, -- 8 infinitum
+	54, -- 9 omega
+	56, -- 10 transcendent
+}
 
--- Billboard names on the cobweb (BrainrotHeaderStyle rarity gradients).
+-- Billboard names + StarterGui.Gradients child names.
 M.WEB_TITLES = {
-	{ minLand = 1, name = "Slow Web", rarity = "common" },
-	{ minLand = 2, name = "Sticky Web", rarity = "uncommon" },
-	{ minLand = 4, name = "Trap Web", rarity = "rare" },
-	{ minLand = 6, name = "Tangled Web", rarity = "epic" },
-	{ minLand = 8, name = "Silk Wave", rarity = "mythic" },
-	{ minLand = 10, name = "Godly Web", rarity = "legendary" },
+	{ name = "👶 baby web 👶", gradient = "Basic/Common" },
+	{ name = "🕸️ normal web 🕸️", gradient = "Green" },
+	{ name = "⚡ speed web ⚡", gradient = "Yellow/Gold" },
+	{ name = "🕷️ gigantic web 🕷️", gradient = "Rare" },
+	{ name = "🔥 titan web 🔥", gradient = "Red" },
+	{ name = "⛰️ colossal web ⛰️", gradient = "Epic" },
+	{ name = "🪐 cosmic web 🪐", gradient = "Diamond" },
+	{ name = "🌌 infinitum web 🌌", gradient = "Rainbow" },
+	{ name = "☄️ omega web ☄️", gradient = "Mythical" },
+	{ name = "♾️ transcendent web ♾️", gradient = "BrainrotGod" },
 }
 
 M.SAFEZONE_CONFIRM_SEC = 0.22
@@ -70,20 +84,13 @@ M.BGM_CHASE_SPEED = 0.72
 M.BGM_RESTORE_FADE = 0.65
 
 function M.speedForLand(land: number): number
-	local t = (math.clamp(land, 1, 10) - 1) / 9
-	-- Ease in so mid lands aren't a sudden jump.
-	t = t * t * (3 - 2 * t)
-	return M.WAVE_SPEED_LAND1 + (M.WAVE_SPEED_LAND10 - M.WAVE_SPEED_LAND1) * t
+	local i = math.clamp(math.floor(land), 1, #M.WAVE_SPEED_BY_LAND)
+	return M.WAVE_SPEED_BY_LAND[i]
 end
 
-function M.titleForLand(land: number): { name: string, rarity: string }
-	local picked = M.WEB_TITLES[1]
-	for _, entry in M.WEB_TITLES do
-		if land >= entry.minLand then
-			picked = entry
-		end
-	end
-	return picked
+function M.titleForLand(land: number): { name: string, gradient: string }
+	local i = math.clamp(math.floor(land), 1, #M.WEB_TITLES)
+	return M.WEB_TITLES[i]
 end
 
 return M

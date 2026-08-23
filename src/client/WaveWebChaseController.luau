@@ -180,20 +180,30 @@ local function hideChaseHud()
 end
 
 local function stabilizeSpider(model: Model)
-	local primary = model.PrimaryPart
+	local primary = model:FindFirstChild("HumanoidRootPart")
+	if not (primary and primary:IsA("BasePart")) then
+		primary = model.PrimaryPart
+	end
 	if not primary then
 		primary = model:FindFirstChildWhichIsA("BasePart", true)
-		if primary then
-			model.PrimaryPart = primary
-		end
 	end
+	if primary and primary:IsA("BasePart") then
+		model.PrimaryPart = primary
+	end
+	-- Only the root stays anchored so Motor6Ds can play the rage clip.
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") then
-			d.Anchored = true
+			d.Anchored = d == primary
 			d.CanCollide = false
 			d.CanQuery = false
 			d.CanTouch = false
+			d.Massless = true
 		end
+	end
+	local hum = model:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum.AutoRotate = false
+		hum.PlatformStand = false
 	end
 end
 
@@ -381,6 +391,9 @@ local function loadTrack(animator: Animator, assetId: string): AnimationTrack?
 	anim.AnimationId = if string.find(assetId, "rbxassetid://", 1, true)
 		then assetId
 		else "rbxassetid://" .. assetId
+	pcall(function()
+		ContentProvider:PreloadAsync({ anim })
+	end)
 	local ok, track = pcall(function()
 		return animator:LoadAnimation(anim)
 	end)
@@ -1200,11 +1213,15 @@ local function runIntro(token: number, playerPos: Vector3)
 		if rageTrack then
 			rageTrack.Priority = Enum.AnimationPriority.Action4
 			rageTrack.Looped = false
-			rageTrack:Play(0.08, 1, C.SPIDER_RAGE_PLAY_SPEED)
+			rageTrack:Play(0.05, 1, C.SPIDER_RAGE_PLAY_SPEED)
+			local loadedAt = os.clock()
+			while rageTrack.Length < 0.05 and os.clock() - loadedAt < 0.45 do
+				task.wait()
+			end
 			local animLen = rageTrack.Length
 			local hold = C.SPIDER_RAGE_WAIT_SEC
 			if animLen > 0.05 then
-				hold = math.clamp(animLen / math.max(C.SPIDER_RAGE_PLAY_SPEED, 0.2), 1.15, 2.6)
+				hold = math.clamp(animLen / math.max(C.SPIDER_RAGE_PLAY_SPEED, 0.2), 1.15, 2.8)
 			end
 			task.wait(hold)
 		else

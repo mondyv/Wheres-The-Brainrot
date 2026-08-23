@@ -79,4 +79,43 @@ function M.onPreferredChanged(callback: (boolean) -> ()): RBXScriptConnection
 	end)
 end
 
+function M.isAcceptHeld(): boolean
+	local ok, held = pcall(function()
+		return UserInputService:IsGamepadButtonPressed(Enum.UserInputType.Gamepad1, M.ACCEPT)
+	end)
+	return ok and held == true
+end
+
+function M.mountHint(host: GuiObject, keyCode: Enum.KeyCode)
+	local hint = host:FindFirstChild("GamepadHotkey")
+	if not (hint and hint:IsA("ImageLabel")) then
+		local label = Instance.new("ImageLabel")
+		label.Name = "GamepadHotkey"
+		label.BackgroundTransparency = 1
+		label.AnchorPoint = Vector2.new(1, 1)
+		label.Position = UDim2.new(1, 2, 1, 2)
+		label.Size = UDim2.fromOffset(22, 22)
+		label.ZIndex = math.max(host.ZIndex + 2, 6)
+		label.ScaleType = Enum.ScaleType.Fit
+		label.Visible = false
+		label.Parent = host
+		hint = label
+	end
+	local function refresh()
+		local show = M.isPreferred()
+		local img = if show then M.faceImage(keyCode) else ""
+		hint.Image = img
+		hint.Visible = show and img ~= ""
+	end
+	refresh()
+	if host:GetAttribute("_GamepadHotkeyWired") ~= true then
+		host:SetAttribute("_GamepadHotkeyWired", true)
+		M.onPreferredChanged(function()
+			if host.Parent then
+				refresh()
+			end
+		end)
+	end
+end
+
 return M

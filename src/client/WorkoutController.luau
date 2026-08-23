@@ -1,5 +1,6 @@
 -- [ACTIVE] WorkoutController
 -- Gear activate: bar across both feet during curl, white flash, +power floaters into HUD.
+local GamepadService = game:GetService("GamepadService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -14,6 +15,7 @@ local OtherVfxController = require(script.Parent.OtherVfxController)
 local UpgradesController = require(script.Parent.UpgradesController)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local GamepadInput = require(script.Parent.GamepadInput)
 
 local player = Players.LocalPlayer
 
@@ -770,7 +772,7 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	end)
 end
 
-local DOUBLE_TAP_ICON = "rbxassetid://118412506619907"
+local DOUBLE_TAP_ICON = "rbxassetid://94931726481451"
 local DOUBLE_TAP_LIFE = 5
 local doubleTapGen = 0
 local doubleTapHits = 0
@@ -995,6 +997,11 @@ local function spawnDoubleTapPrompt()
 	btn.Selectable = true
 	btn.ZIndex = 21
 	btn.Parent = holder
+	if GamepadInput.isPreferred() then
+		pcall(function()
+			GamepadService:EnableGamepadCursor(gui)
+		end)
+	end
 
 	table.insert(activeDoubleTaps, holder)
 	UIInteractionSounds.playClick()
@@ -1068,6 +1075,11 @@ local function spawnDoubleTapPrompt()
 	end
 	btn.Activated:Connect(onActivate)
 	btn.MouseButton1Click:Connect(onActivate)
+	btn.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.Gamepad1 and input.KeyCode == GamepadInput.ACCEPT then
+			onActivate()
+		end
+	end)
 
 	task.delay(DOUBLE_TAP_LIFE, function()
 		if holder.Parent and holder:GetAttribute("Closing") ~= true then

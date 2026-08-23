@@ -42,6 +42,34 @@ local OPEN_DENIED_MESSAGES = {
 
 local LuckyBlockController = {}
 
+local openedBindable: BindableEvent? = nil
+local lastOpenedAt = -1e9
+
+local function getOpenedBindable(): BindableEvent
+	if openedBindable and openedBindable.Parent then
+		return openedBindable
+	end
+	local existing = ReplicatedStorage:FindFirstChild("LuckyBlockOpenFinished")
+	if existing and existing:IsA("BindableEvent") then
+		openedBindable = existing
+		return existing
+	end
+	local be = Instance.new("BindableEvent")
+	be.Name = "LuckyBlockOpenFinished"
+	be.Parent = ReplicatedStorage
+	openedBindable = be
+	return be
+end
+
+local function notifyLuckyBlockOpened()
+	lastOpenedAt = os.clock()
+	getOpenedBindable():Fire()
+end
+
+function LuckyBlockController.lastOpenedAt(): number
+	return lastOpenedAt
+end
+
 local rollRE: RemoteEvent? = nil
 local shakeStartRE: RemoteEvent? = nil
 local denyRE: RemoteEvent? = nil
@@ -1359,6 +1387,7 @@ local function runCutscene(payload: any)
 		waitToken(token, remain)
 	end
 
+	notifyLuckyBlockOpened()
 	endCutscene(token)
 end
 
@@ -1447,6 +1476,7 @@ local function bindToBackpack(bp: Instance)
 end
 
 function LuckyBlockController.init()
+	getOpenedBindable()
 	task.spawn(function()
 		SafezoneUtil.warmCacheAsync()
 	end)

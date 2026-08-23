@@ -1,7 +1,8 @@
 -- [ACTIVE] TimCheeseQuestController
 --[[
 	Tim Cheese quest HUD, claim dialogue, walk-by speech.
-	Quests auto-start 5s after tutorial (quest appearance popup; no Tim fall cutscene).
+	Quests auto-start after tutorial once the starter lucky block is opened
+	(quest appearance popup; no Tim fall cutscene). Falls back if they never open it.
 ]]
 
 local Debris = game:GetService("Debris")
@@ -2714,6 +2715,44 @@ end
 
 local postTutorialQuestToken = 0
 
+local function waitForLuckyBlockOpenOrFallback(token: number)
+	local opened = false
+	local be = ReplicatedStorage:FindFirstChild("LuckyBlockOpenFinished")
+	if not (be and be:IsA("BindableEvent")) then
+		be = Instance.new("BindableEvent")
+		be.Name = "LuckyBlockOpenFinished"
+		be.Parent = ReplicatedStorage
+	end
+	local conn: RBXScriptConnection? = nil
+	if be and be:IsA("BindableEvent") then
+		conn = be.Event:Connect(function()
+			opened = true
+		end)
+	end
+	local fallback = TimCheeseQuestConfig.POST_TUTORIAL_LUCKY_OPEN_FALLBACK_SEC
+	local started = os.clock()
+	while os.clock() - started < fallback do
+		if token ~= postTutorialQuestToken then
+			if conn then
+				conn:Disconnect()
+			end
+			return false
+		end
+		if opened then
+			task.wait(TimCheeseQuestConfig.POST_TUTORIAL_AFTER_OPEN_SEC)
+			if conn then
+				conn:Disconnect()
+			end
+			return true
+		end
+		task.wait(0.12)
+	end
+	if conn then
+		conn:Disconnect()
+	end
+	return true
+end
+
 local function schedulePostTutorialQuests()
 	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
 		return
@@ -2730,8 +2769,15 @@ local function schedulePostTutorialQuests()
 	end
 	postTutorialQuestToken += 1
 	local token = postTutorialQuestToken
-	local delaySec = TimCheeseQuestConfig.POST_TUTORIAL_QUEST_DELAY_SEC
-	task.delay(delaySec, function()
+	task.spawn(function()
+		-- Let the starter lucky block reach the hotbar before we start listening.
+		task.wait(TimCheeseQuestConfig.POST_TUTORIAL_QUEST_DELAY_SEC)
+		if token ~= postTutorialQuestToken then
+			return
+		end
+		if not waitForLuckyBlockOpenOrFallback(token) then
+			return
+		end
 		if token ~= postTutorialQuestToken then
 			return
 		end

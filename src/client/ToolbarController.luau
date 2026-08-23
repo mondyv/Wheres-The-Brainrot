@@ -1045,6 +1045,28 @@ local ToolbarController = {}
 							tool = tool,
 						}
 					end)
+					btn.InputBegan:Connect(function(input)
+						if input.UserInputType ~= Enum.UserInputType.Gamepad1 or input.KeyCode ~= GamepadInput.ACCEPT then
+							return
+						end
+						if not canUseToolbar then
+							return
+						end
+						local tex = toolDisplayTexture(tool)
+						if tex == "" then
+							tex = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+						end
+						activeToolbarDrag = true
+						pendingToolbarDrag = {
+							kind = "backpack_extra",
+							idx = index,
+							start = UserInputService:GetMouseLocation(),
+							texture = tex,
+							rowButton = btn,
+							isExtraTool = true,
+							tool = tool,
+						}
+					end)
 				end
 			else
 				row.Name = "__Extra_" .. tostring(index)
@@ -2796,6 +2818,7 @@ local ToolbarController = {}
 		-- Pin Studio size BEFORE any layout pass mutates it.
 		captureStudioToggleIconSize(iconHost)
 		styleToggleBackpackIcon(btn)
+		GamepadInput.mountHint(iconHost, GamepadInput.SECONDARY)
 		local tiltTarget = resolveToggleBackpackVisual(iconHost, btn)
 		if tiltTarget ~= iconHost then
 			prepareToggleTiltPivot(tiltTarget)
@@ -3428,6 +3451,33 @@ local ToolbarController = {}
 						equippedOnDown = false,
 					}
 				end)
+				btn.InputBegan:Connect(function(input)
+					if input.UserInputType ~= Enum.UserInputType.Gamepad1 or input.KeyCode ~= GamepadInput.ACCEPT then
+						return
+					end
+					if not canUseToolbar or pendingToolbarDrag then
+						return
+					end
+					local listIdx = listIndexForBackpackUiRow(uiRow)
+					local entry = brainrotEntryForBackpackSlot(uiRow)
+					if not listIdx or not entry then
+						return
+					end
+					BrainrotItemTooltip.hide(true)
+					local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+					lastResolvedHotbarDropSlot = nil
+					activeToolbarDrag = true
+					pendingToolbarDrag = {
+						kind = "backpack",
+						idx = listIdx,
+						start = UserInputService:GetMouseLocation(),
+						texture = tex,
+						uid = brainrotUidAtIndex(listIdx),
+						sourceSize = btn.AbsoluteSize,
+						rowButton = btn,
+						equippedOnDown = false,
+					}
+				end)
 
 				btn.InputBegan:Connect(function(input)
 					if input.UserInputType ~= Enum.UserInputType.Touch then
@@ -3997,9 +4047,36 @@ local ToolbarController = {}
 	end
 
 	local HOTBAR_KEY_ACTION = "ToolbarHotbarNumberKeys"
+	local HOTBAR_DPAD_ACTION = "ToolbarHotbarDPadCycle"
+
+	local function cycleHotbarSlot(delta: number)
+		if not canSelectHotbarSlot() then
+			return
+		end
+		local equippedIdx = 0
+		local char = player.Character
+		local equipped = char and char:FindFirstChildOfClass("Tool")
+		if equipped then
+			for i = 1, 9 do
+				if slotTools[i] == equipped then
+					equippedIdx = i
+					break
+				end
+			end
+		end
+		for n = 1, 9 do
+			local idx = ((equippedIdx - 1 + delta * n) % 9) + 1
+			if hotbarSlotHasSelectableContent(idx) then
+				UIInteractionSounds.playHover()
+				selectSlot(idx)
+				return
+			end
+		end
+	end
 
 	local function bindToolbarHotbarKeybinds()
 		ContextActionService:UnbindAction(HOTBAR_KEY_ACTION)
+		ContextActionService:UnbindAction(HOTBAR_DPAD_ACTION)
 		ContextActionService:BindActionAtPriority(
 			HOTBAR_KEY_ACTION,
 			function(_, state, input)
@@ -4037,6 +4114,32 @@ local ToolbarController = {}
 			Enum.KeyCode.Seven,
 			Enum.KeyCode.Eight,
 			Enum.KeyCode.Nine
+		)
+		ContextActionService:BindActionAtPriority(
+			HOTBAR_DPAD_ACTION,
+			function(_, state, input)
+				if state ~= Enum.UserInputState.Begin then
+					return Enum.ContextActionResult.Pass
+				end
+				if UserInputService:GetFocusedTextBox() ~= nil then
+					return Enum.ContextActionResult.Pass
+				end
+				if not GamepadInput.isPreferred() then
+					return Enum.ContextActionResult.Pass
+				end
+				if input.KeyCode == Enum.KeyCode.DPadLeft then
+					cycleHotbarSlot(-1)
+					return Enum.ContextActionResult.Sink
+				elseif input.KeyCode == Enum.KeyCode.DPadRight then
+					cycleHotbarSlot(1)
+					return Enum.ContextActionResult.Sink
+				end
+				return Enum.ContextActionResult.Pass
+			end,
+			false,
+			Enum.ContextActionPriority.High.Value,
+			Enum.KeyCode.DPadLeft,
+			Enum.KeyCode.DPadRight
 		)
 	end
 
@@ -4347,12 +4450,21 @@ local ToolbarController = {}
 					}
 				end
 
-				-- PC: drag starts immediately on mouse down.
+				-- PC: drag starts immediately on mouse down. Console virtual cursor uses A.
 				btn.MouseButton1Down:Connect(function()
 					if not canUseToolbar then
 						return
 					end
 					if dtIsTouchPointerInput() then
+						return
+					end
+					beginHotbarPendingDrag(UserInputService:GetMouseLocation())
+				end)
+				btn.InputBegan:Connect(function(input)
+					if input.UserInputType ~= Enum.UserInputType.Gamepad1 or input.KeyCode ~= GamepadInput.ACCEPT then
+						return
+					end
+					if not canUseToolbar then
 						return
 					end
 					beginHotbarPendingDrag(UserInputService:GetMouseLocation())
@@ -4679,6 +4791,7 @@ local ToolbarController = {}
 					-- so dragging brainrots inside the backpack/hotbar felt completely dead.
 					local stillHolding = input.UserInputType == Enum.UserInputType.Touch
 						or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+						or GamepadInput.isAcceptHeld()
 					if not stillHolding then
 						return
 					end

@@ -12,7 +12,6 @@ M.ENABLED = true
 M.WAVE_WEB_PATH = { "EssentialAssets", "Wave Web" }
 M.SPIDER_TEMPLATE_PATH = { "EssentialAssets", "Spider" }
 M.SPIDER_VFX_FOLDER_PATH = { "EssentialAssets", "SpiderVFX" }
-M.SPIDER_BLOW_VFX_NAME = "Blow"
 M.SPIDER_SPIDEY_SENSES_NAME = "Spidey senses"
 M.SPIDER_SPIDEY_SENSES_HUMAN_NAME = "Spidey senses human"
 M.SPIDER_SHOOTING_WEB_NAME = "Shooting Web"
@@ -31,18 +30,15 @@ M.SPIDER_MIN_PLAYER_DISTANCE = 14
 M.SPIDER_MAX_PLAYER_DISTANCE = 32
 M.LAND_EDGE_MARGIN = 14
 M.SPIDER_PRELOAD_SEC = 0
-M.SPIDER_RAGE_PLAY_SPEED = 1.9
-M.SPIDER_RAGE_WAIT_SEC = 0.4
-M.SPIDER_CHARGE_SEC = 0.4
+M.SPIDER_RAGE_PLAY_SPEED = 1
+M.SPIDER_RAGE_WAIT_SEC = 1.55
+M.SPIDER_CHARGE_SEC = 0.55
 M.SPIDER_CHARGE_STUDS = 34
 
--- Authored Wave Web pose. X follows the player; Y/Z stay on this axis.
--- Studio Orientation must stay 0, 90, 0.
+-- Authored Wave Web pose. Always Orientation 0, 90, 0 — never lookAt-rotate.
 M.WAVE_SPAWN_POS = Vector3.new(1448.013, 92.301, 205.634)
 M.WAVE_SPAWN_ORIENTATION_DEG = Vector3.new(0, 90, 0)
 M.WAVE_SPAWN_YAW_DEG = 90
--- Mesh was authored at yaw 90. lookAt(chaseDir) alone leaves it sideways.
-M.WAVE_MESH_YAW_OFFSET_DEG = 90
 M.WAVE_CRUISE_Y = 92.301
 M.WAVE_BEHIND_STUDS = 34
 M.WAVE_RISE_STUDS = 34
@@ -56,8 +52,8 @@ M.WAVE_SPEED_LAND1 = 30
 M.WAVE_SPEED_LAND10 = 52
 
 M.SAFEZONE_CONFIRM_SEC = 0.22
-M.EXCLAMATION_SEC = 0.7
-M.INTRO_REVEAL_SEC = 0.38
+M.EXCLAMATION_SEC = 1.05
+M.INTRO_REVEAL_SEC = 0.7
 
 M.BGM_CHASE_SPEED = 0.72
 M.BGM_RESTORE_FADE = 0.65

@@ -164,15 +164,9 @@ local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
 	return spawnPos, toPlayer
 end
 
-local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
-	local dir = Vector3.new(chaseDir.X, 0, chaseDir.Z)
-	if dir.Magnitude < 0.05 then
-		dir = Vector3.new(0, 0, -1)
-	else
-		dir = dir.Unit
-	end
-	local yawOffset = math.rad(C.WAVE_MESH_YAW_OFFSET_DEG or C.WAVE_SPAWN_YAW_DEG or 90)
-	return CFrame.lookAt(pos, pos + dir) * CFrame.Angles(0, yawOffset, 0)
+local function waveFacingCf(pos: Vector3, _chaseDir: Vector3): CFrame
+	local ori = C.WAVE_SPAWN_ORIENTATION_DEG
+	return CFrame.new(pos) * CFrame.fromOrientation(math.rad(ori.X), math.rad(ori.Y), math.rad(ori.Z))
 end
 
 local function hideChaseHud()
@@ -271,14 +265,13 @@ local function spiderHostPart(spider: Model): BasePart?
 	return spider.PrimaryPart or spider:FindFirstChildWhichIsA("BasePart", true)
 end
 
-local function playScreechVfx(spider: Model, landPos: Vector3)
-	-- startOnPlayer clears prior sense FX, so attach spider senses after.
+local function playScreechVfx(spider: Model, _landPos: Vector3)
+	-- Rage + spider-sense FX only (no Blow template).
 	SpiderSenseFx.startOnPlayer({ C.SPIDER_SPIDEY_SENSES_HUMAN_NAME })
 	local host = spiderHostPart(spider)
 	if host then
 		SpiderSenseFx.attachNamed(C.SPIDER_SPIDEY_SENSES_NAME, host, "WaveSpiderSenses")
 	end
-	SpiderSenseFx.playNamedAt(C.SPIDER_BLOW_VFX_NAME, CFrame.new(landPos + Vector3.new(0, 1.2, 0)), 1.6)
 end
 
 local function prepareWaveModel(model: Model)
@@ -1095,7 +1088,7 @@ local function runIntro(token: number, playerPos: Vector3)
 		local chest = pPos + Vector3.new(0, 1.55, 0)
 		local spiderLook = chest
 		if spider and spider.Parent then
-			spiderLook = chest:Lerp(spider:GetPivot().Position + Vector3.new(0, 2.1, 0), 0.4)
+			spiderLook = chest:Lerp(spider:GetPivot().Position + Vector3.new(0, 2.4, 0), 0.88)
 		end
 		local wobble = Vector3.new(
 			math.sin(introPhase * 13.5) * 0.26,
@@ -1114,8 +1107,13 @@ local function runIntro(token: number, playerPos: Vector3)
 		if rageTrack then
 			rageTrack.Priority = Enum.AnimationPriority.Action4
 			rageTrack.Looped = false
-			rageTrack:Play(0.04, 1, C.SPIDER_RAGE_PLAY_SPEED)
-			task.wait(math.clamp(C.SPIDER_RAGE_WAIT_SEC, 0.28, 0.55))
+			rageTrack:Play(0.08, 1, C.SPIDER_RAGE_PLAY_SPEED)
+			local animLen = rageTrack.Length
+			local hold = C.SPIDER_RAGE_WAIT_SEC
+			if animLen > 0.05 then
+				hold = math.clamp(animLen / math.max(C.SPIDER_RAGE_PLAY_SPEED, 0.2), 1.15, 2.6)
+			end
+			task.wait(hold)
 		else
 			task.wait(C.SPIDER_RAGE_WAIT_SEC)
 		end

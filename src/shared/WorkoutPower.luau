@@ -34,10 +34,10 @@ function M.reachLevelFromPower(power: number): number
 	if p <= 0 then
 		return 0
 	end
-	-- ~20 → 2, ~200 → 8, ~600 → 14, ~2k → 20, ~50k → 38
-	local level = math.floor(18 * math.log10(1 + p / 110))
+	-- ~20 → 4, ~200 → 16, ~600 → 24, ~2k → 32
+	local level = math.floor(26 * math.log10(1 + p / 70))
 	local peak = LandPowerConfig.swingPeakAlpha(p)
-	level = math.floor(level * (0.74 + 0.26 * peak) + 0.5)
+	level = math.floor(level * (0.86 + 0.14 * peak) + 0.5)
 	return math.clamp(level, 0, 100_000)
 end
 

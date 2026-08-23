@@ -86,6 +86,38 @@ local function headshotUrl(userId: number): string
 	return string.format("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150", userId)
 end
 
+local function applyHeadshot(icon: ImageLabel, userId: number)
+	icon.Image = headshotUrl(userId)
+	icon.ImageTransparency = 0
+	task.spawn(function()
+		local ok, content, _ready = pcall(function()
+			return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size150x150)
+		end)
+		if ok and typeof(content) == "string" and content ~= "" and icon.Parent then
+			icon.Image = content
+		end
+	end)
+end
+
+local function resolveLandForPlayer(plr: Player): number
+	local raw = plr:GetAttribute(LAND_ATTR)
+	if typeof(raw) == "number" then
+		local n = math.floor(raw)
+		if n >= 1 and n <= MAX_LAND then
+			return n
+		end
+	end
+	local character = plr.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		local land = LandResolver.resolveLandAtPosition(hrp.Position)
+		if typeof(land) == "number" and land >= 1 then
+			return math.clamp(math.floor(land), 1, MAX_LAND)
+		end
+	end
+	return 0
+end
+
 local function isMobile(): boolean
 	return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 end
@@ -411,6 +443,7 @@ local function ensureSlot(plr: Player): AvatarSlot?
 	icon.ZIndex = 82
 	icon.Active = false
 	icon.Parent = badge
+	applyHeadshot(icon, plr.UserId)
 	local iconCorner = Instance.new("UICorner")
 	iconCorner.CornerRadius = UDim.new(1, 0)
 	iconCorner.Parent = icon
@@ -565,7 +598,7 @@ local function layoutStacks()
 		end
 	end
 
-	local headY = if isMobile() then 48 else 56
+	local headY = -6
 	for land, list in byLand do
 		local baseX = landXScale(land)
 		for i, slot in ipairs(list) do
@@ -591,8 +624,7 @@ local function layoutStacks()
 end
 
 local function syncPlayerSlot(plr: Player)
-	local landRaw = plr:GetAttribute(LAND_ATTR)
-	local land = if typeof(landRaw) == "number" then math.floor(landRaw) else 0
+	local land = resolveLandForPlayer(plr)
 	if land < 1 or land > MAX_LAND then
 		destroySlot(plr.UserId)
 		layoutStacks()
@@ -852,7 +884,7 @@ local function buildStrip(parentGui: PlayerGui)
 	avatars.Size = UDim2.fromScale(1, 1)
 	avatars.ZIndex = 80
 	avatars.ClipsDescendants = false
-	avatars.Parent = root
+	avatars.Parent = plate
 
 	stripRoot = root
 	stripScale = scale

@@ -15,6 +15,10 @@ local function findVfxFolder(): Instance?
 	return vfx
 end
 
+local missingWarned: { [string]: boolean } = {}
+
+local BLOW_ALIASES = { "Blow", "blow", "Blast", "Hit", "Impact" }
+
 local function findTemplate(name: string): Instance?
 	local folder = findVfxFolder()
 	if not folder then
@@ -28,6 +32,14 @@ local function findTemplate(name: string): Instance?
 	for _, child in folder:GetChildren() do
 		if string.lower(child.Name) == want then
 			return child
+		end
+	end
+	if want == "blow" then
+		for _, alias in BLOW_ALIASES do
+			local hit = folder:FindFirstChild(alias)
+			if hit then
+				return hit
+			end
 		end
 	end
 	return nil
@@ -163,7 +175,10 @@ function SpiderSenseFx.startOnPlayer(templateNames: { string })
 	for i, name in templateNames do
 		local template = findTemplate(name)
 		if not template then
-			warn("[SpiderSenseFx] Missing SpiderVFX template:", name)
+			if not missingWarned[name] then
+				missingWarned[name] = true
+				warn("[SpiderSenseFx] Missing SpiderVFX template:", name)
+			end
 			continue
 		end
 		local attached = attachToHost(template, head, "PlayerSpiderSense_" .. tostring(i))
@@ -183,7 +198,10 @@ end
 function SpiderSenseFx.attachNamed(templateName: string, host: BasePart, cloneName: string): Instance?
 	local template = findTemplate(templateName)
 	if not template then
-		warn("[SpiderSenseFx] Missing SpiderVFX template:", templateName)
+		if not missingWarned[templateName] then
+			missingWarned[templateName] = true
+			warn("[SpiderSenseFx] Missing SpiderVFX template:", templateName)
+		end
 		return nil
 	end
 	local attached = attachToHost(template, host, cloneName)
@@ -198,7 +216,10 @@ end
 function SpiderSenseFx.playNamedAt(templateName: string, worldCf: CFrame, lifetime: number): Instance?
 	local template = findTemplate(templateName)
 	if not template then
-		warn("[SpiderSenseFx] Missing SpiderVFX template:", templateName)
+		if not missingWarned[templateName] then
+			missingWarned[templateName] = true
+			warn("[SpiderSenseFx] Missing SpiderVFX template:", templateName)
+		end
 		return nil
 	end
 	local clone = template:Clone()

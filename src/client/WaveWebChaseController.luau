@@ -121,12 +121,13 @@ local function resolveSpiderSpawn(playerPos: Vector3): Vector3
 	return playerPos + Vector3.new(C.SPIDER_MIN_PLAYER_DISTANCE, 2, 0)
 end
 
--- Authored axis: player X, fixed Y/Z, yaw 90. Chase along Z toward the player.
+-- Chase along Z toward the player, spawning close behind them (not the far authored rest pose).
 local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
 	local rest = C.WAVE_SPAWN_POS
-	local spawnPos = Vector3.new(playerPos.X, rest.Y, rest.Z)
 	local dz = playerPos.Z - rest.Z
 	local toPlayer = if math.abs(dz) >= 4 then Vector3.new(0, 0, math.sign(dz)) else Vector3.new(0, 0, -1)
+	local behind = math.max(22, C.WAVE_BEHIND_STUDS)
+	local spawnPos = Vector3.new(playerPos.X, rest.Y, playerPos.Z) - toPlayer * behind
 	return spawnPos, toPlayer
 end
 
@@ -400,19 +401,17 @@ local function setBgmChase(on: boolean)
 			tw:Play()
 		end)
 	else
-		eachBgm(function(sound)
-			local base = bgmSpeedSaved[sound]
-			if base == nil then
-				return
+		for sound, base in bgmSpeedSaved do
+			if sound.Parent then
+				local prev = bgmSpeedTweens[sound]
+				if prev then
+					prev:Cancel()
+				end
+				local tw = TweenService:Create(sound, TweenInfo.new(C.BGM_RESTORE_FADE), { PlaybackSpeed = base })
+				bgmSpeedTweens[sound] = tw
+				tw:Play()
 			end
-			local prev = bgmSpeedTweens[sound]
-			if prev then
-				prev:Cancel()
-			end
-			local tw = TweenService:Create(sound, TweenInfo.new(C.BGM_RESTORE_FADE), { PlaybackSpeed = base })
-			bgmSpeedTweens[sound] = tw
-			tw:Play()
-		end)
+		end
 		table.clear(bgmSpeedSaved)
 	end
 end
@@ -658,6 +657,56 @@ local function fadeOutSpider(model: Model, duration: number)
 	end
 end
 
+local function fadeWaveOntoLand(model: Model, duration: number)
+	if not model.Parent then
+		return
+	end
+	local hrp = getHRP()
+	local startCf = model:GetPivot()
+	local landPos = if hrp
+		then Vector3.new(hrp.Position.X, hrp.Position.Y + 2.2, hrp.Position.Z)
+		else startCf.Position + Vector3.new(0, -18, 0)
+	local endCf = CFrame.new(landPos) * (startCf - startCf.Position)
+	local info = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			TweenService:Create(d, info, { Transparency = 1 }):Play()
+		elseif d:IsA("Decal") or d:IsA("Texture") then
+			TweenService:Create(d, info, { Transparency = 1 }):Play()
+		elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
+			(d :: any).Enabled = false
+		end
+	end
+	local nv = Instance.new("NumberValue")
+	nv.Value = 0
+	local conn = nv.Changed:Connect(function()
+		if model.Parent then
+			model:PivotTo(startCf:Lerp(endCf, nv.Value))
+		end
+	end)
+	local tw = TweenService:Create(nv, info, { Value = 1 })
+	tw:Play()
+	tw.Completed:Wait()
+	conn:Disconnect()
+	nv:Destroy()
+	if model.Parent then
+		model:Destroy()
+	end
+end
+
+local function destroyChaseInstances()
+	if activeSpider then
+		activeSpider:Destroy()
+		activeSpider = nil
+	end
+	if activeWave then
+		activeWave:Destroy()
+		activeWave = nil
+	end
+	waveTravelPos = nil
+	waveForward = nil
+end
+
 local function requestKill()
 	if killFired then
 		return
@@ -668,7 +717,15 @@ local function requestKill()
 	if hum then
 		hum.CameraOffset = Vector3.zero
 	end
-	destroyChaseInstances()
+	if activeSpider then
+		activeSpider:Destroy()
+		activeSpider = nil
+	end
+	local wave = activeWave
+	activeWave = nil
+	waveTravelPos = nil
+	waveForward = nil
+	setBgmChase(false)
 
 	task.spawn(function()
 		local pg = player:FindFirstChildOfClass("PlayerGui")
@@ -701,6 +758,10 @@ local function requestKill()
 		cover.Active = false
 		cover.Parent = sg
 		sg.Parent = pg
+
+		if wave and wave.Parent then
+			fadeWaveOntoLand(wave, 1.05)
+		end
 
 		local fadeIn = TweenService:Create(
 			cover,
@@ -874,19 +935,6 @@ local function tweenSpiderCharge(spider: Model, fromPos: Vector3, toPos: Vector3
 	if spider.Parent then
 		spider:PivotTo(cfFacingTarget(toPos, toPos + (toPos - fromPos)))
 	end
-end
-
-local function destroyChaseInstances()
-	if activeSpider then
-		activeSpider:Destroy()
-		activeSpider = nil
-	end
-	if activeWave then
-		activeWave:Destroy()
-		activeWave = nil
-	end
-	waveTravelPos = nil
-	waveForward = nil
 end
 
 local function finishChase(didHideHud: boolean)
@@ -1169,9 +1217,10 @@ local function runChase(token: number)
 		local rel = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
 		local along = rel:Dot(forward)
 		local distAhead = math.max(along, 0)
-		local threat = 1 - math.clamp(distAhead / 110, 0, 1)
-		local beat = (math.sin(phase * (2.8 + threat * 3.4)) + 1) * 0.5
-		local pulse = threat * (0.35 + beat * 0.45)
+		local threat = 1 - math.clamp(distAhead / 90, 0, 1)
+		local beat = (math.sin(phase * (2.6 + threat * 3.6)) + 1) * 0.5
+		-- Always a bit heartbeaty; ramps hard as the cobweb closes in.
+		local pulse = 0.2 + threat * (0.32 + beat * 0.48)
 		showHeartbeat(pulse)
 
 		local shake = 0.05 + pulse * 0.4

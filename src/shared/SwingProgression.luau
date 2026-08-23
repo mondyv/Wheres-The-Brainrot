@@ -108,16 +108,16 @@ end
 
 -- Backend reach grows much slower than power/speed (UI display follows reach level).
 -- Base is high enough that new players can swing back from Land 1 without early Reach buys.
-local REACH_STUDS_BASE = 72
-local REACH_STUDS_RANGE = 168
+local REACH_STUDS_BASE = 92
+local REACH_STUDS_RANGE = 210
 
 function M.ropeStats(ropeLevel: number): RopeStats
 	-- Slower than general progressT: early levels barely grow reach; late still has headroom.
 	local cap = math.max(1, M.ROPE_MAX_LEVEL)
 	local lv = math.max(0, math.floor(ropeLevel))
 	local linear = math.clamp(lv / cap, 0, 1)
-	local curved = linear ^ 0.82
-	local t = linear * 0.45 + curved * 0.55
+	local curved = linear ^ 0.68
+	local t = linear * 0.32 + curved * 0.68
 	if lv > cap then
 		local over = (lv - cap) / cap
 		local post = over / (1 + over * 0.45)

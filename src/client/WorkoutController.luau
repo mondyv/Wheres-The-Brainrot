@@ -3,7 +3,6 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -851,28 +850,6 @@ local function pickDoubleTapPos(gui: ScreenGui, sizePx: number): UDim2
 	return UDim2.fromOffset((minX + maxX) * 0.5, (minY + maxY) * 0.5)
 end
 
-local function applyDoubleTapBlueGradient(label: TextLabel)
-	local folder = StarterGui:FindFirstChild("Gradients")
-	local blue = folder and folder:FindFirstChild("Blue")
-	if not blue then
-		return
-	end
-	local function parentClone(src: UIGradient)
-		local g = src:Clone()
-		g.Enabled = true
-		g.Parent = label
-	end
-	if blue:IsA("UIGradient") then
-		parentClone(blue)
-		return
-	end
-	for _, child in blue:GetChildren() do
-		if child:IsA("UIGradient") then
-			parentClone(child)
-		end
-	end
-end
-
 local function dismissDoubleTap(holder: Frame, clicked: boolean)
 	if holder:GetAttribute("Closing") == true then
 		return
@@ -1018,24 +995,6 @@ local function spawnDoubleTapPrompt()
 	btn.Selectable = true
 	btn.ZIndex = 21
 	btn.Parent = holder
-
-	local label = Instance.new("TextLabel")
-	label.Name = "Tag"
-	label.BackgroundTransparency = 1
-	label.AnchorPoint = Vector2.new(1, 0)
-	label.Position = UDim2.fromScale(1.1, -0.08)
-	label.Size = UDim2.fromScale(0.7, 0.4)
-	label.Text = "2x"
-	label.TextColor3 = Color3.fromRGB(255, 255, 255)
-	label.TextScaled = true
-	label.ZIndex = 22
-	label.Parent = holder
-	UiFonts.applyDisplayLabel(label, 42, 22)
-	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = 2.4
-	stroke.Color = Color3.fromRGB(12, 28, 72)
-	stroke.Parent = label
-	applyDoubleTapBlueGradient(label)
 
 	table.insert(activeDoubleTaps, holder)
 	UIInteractionSounds.playClick()

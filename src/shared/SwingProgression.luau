@@ -88,13 +88,13 @@ export type RopeStats = {
 function M.powerStats(powerLevel: number): PowerStats
 	local t = M.progressT(powerLevel, M.POWER_MAX_LEVEL)
 	local lt = M.launchProgressT(powerLevel, M.POWER_MAX_LEVEL)
-	local maxSwingSpeed = 96 + t * 74
+	local maxSwingSpeed = 118 + t * 86
 
 	return {
-		steeringForce = 88 + t * 82,
+		steeringForce = 110 + t * 92,
 		maxSwingSpeed = maxSwingSpeed,
-		swingArcForce = 40 + t * 56,
-		swingSpeedPump = 1.05 + t * 1.55,
+		swingArcForce = 52 + t * 66,
+		swingSpeedPump = 1.12 + t * 1.6,
 		zipToward = 25 + t * 18,
 		launchImpulseBase = 20 + lt * 16,
 		launchMomentumRatio = 0.24 + lt * 0.14,
@@ -108,8 +108,8 @@ end
 
 -- Backend reach grows much slower than power/speed (UI display follows reach level).
 -- Base is high enough that new players can swing back from Land 1 without early Reach buys.
-local REACH_STUDS_BASE = 92
-local REACH_STUDS_RANGE = 210
+local REACH_STUDS_BASE = 128
+local REACH_STUDS_RANGE = 250
 
 function M.ropeStats(ropeLevel: number): RopeStats
 	-- Slower than general progressT: early levels barely grow reach; late still has headroom.

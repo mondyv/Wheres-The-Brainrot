@@ -159,47 +159,64 @@ local function resolveSpiderSpawn(playerPos: Vector3): Vector3
 	return candidate
 end
 
--- Charge along the cobweb mesh axis, toward safezone, from behind the player.
--- Locked at spawn — never retarget / follow after that.
-local function authoredLookFlat(): Vector3
+-- Mesh always stays at authored Orientation (0, 90, 0). Never lookAt / yaw-flip.
+local function authoredWaveCf(pos: Vector3): CFrame
+	local ori = C.WAVE_SPAWN_ORIENTATION_DEG
+	return CFrame.new(pos) * CFrame.fromOrientation(math.rad(ori.X), math.rad(ori.Y), math.rad(ori.Z))
+end
+
+local function chargeAxis(): Vector3
 	local ori = C.WAVE_SPAWN_ORIENTATION_DEG
 	local look = CFrame.fromOrientation(math.rad(ori.X), math.rad(ori.Y), math.rad(ori.Z)).LookVector
 	local flat = Vector3.new(look.X, 0, look.Z)
 	if flat.Magnitude < 0.05 then
 		return Vector3.new(-1, 0, 0)
 	end
-	return flat.Unit
+	flat = flat.Unit
+	if math.abs(flat.X) >= math.abs(flat.Z) then
+		return Vector3.new(if flat.X >= 0 then 1 else -1, 0, 0)
+	end
+	return Vector3.new(0, 0, if flat.Z >= 0 then 1 else -1)
 end
 
-local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
-	local rest = C.WAVE_SPAWN_POS
-	local look = authoredLookFlat()
-	local axis = if math.abs(look.X) >= math.abs(look.Z)
-		then Vector3.new(if look.X >= 0 then 1 else -1, 0, 0)
-		else Vector3.new(0, 0, if look.Z >= 0 then 1 else -1)
+local function landAnchorXZ(playerPos: Vector3): Vector3
+	local raw = player:GetAttribute("CurrentLand")
+	local land = if typeof(raw) == "number" then math.clamp(math.floor(raw), 1, 10) else 1
+	local folder = LandAmbushUtil.findLandFolder(land)
+	if folder then
+		local minB, maxB = LandAmbushUtil.getLandBounds(folder)
+		if minB and maxB then
+			return Vector3.new((minB.X + maxB.X) * 0.5, 0, (minB.Z + maxB.Z) * 0.5)
+		end
+	end
+	return Vector3.new(playerPos.X, 0, playerPos.Z)
+end
 
+-- One locked world axis. Lateral = land center (not the player). Travel = toward safezone.
+local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
+	local axis = chargeAxis()
+	local anchor = landAnchorXZ(playerPos)
 	local safe = SafezoneUtil.getSafezoneCenter()
-	local toSafe = if safe
-		then Vector3.new(safe.X - playerPos.X, 0, safe.Z - playerPos.Z)
-		else -axis
+	local toSafe = if safe then Vector3.new(safe.X - anchor.X, 0, safe.Z - anchor.Z) else axis
 	if toSafe.Magnitude < 1 then
-		toSafe = -axis
+		toSafe = axis
 	else
 		toSafe = toSafe.Unit
 	end
 	local forward = if axis:Dot(toSafe) >= 0 then axis else -axis
-	local behind = math.max(36, C.WAVE_BEHIND_STUDS)
-	local spawnPos = Vector3.new(playerPos.X, rest.Y, playerPos.Z) - forward * behind
-	return spawnPos, forward
-end
 
-local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
-	local ori = C.WAVE_SPAWN_ORIENTATION_DEG
-	local yaw = ori.Y
-	if chaseDir:Dot(authoredLookFlat()) < -0.05 then
-		yaw += 180
+	local perp = Vector3.new(-forward.Z, 0, forward.X)
+	if perp.Magnitude < 0.05 then
+		perp = Vector3.new(0, 0, 1)
+	else
+		perp = perp.Unit
 	end
-	return CFrame.new(pos) * CFrame.fromOrientation(math.rad(ori.X), math.rad(yaw), math.rad(ori.Z))
+
+	local behind = math.max(36, C.WAVE_BEHIND_STUDS)
+	local along = playerPos:Dot(forward) - behind
+	local lateral = anchor:Dot(perp)
+	local flat = forward * along + perp * lateral
+	return Vector3.new(flat.X, C.WAVE_CRUISE_Y, flat.Z), forward
 end
 
 local function findStarterGradient(name: string): UIGradient?
@@ -441,7 +458,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	local cruiseY = C.WAVE_CRUISE_Y
 	local startY = cruiseY - C.WAVE_RISE_STUDS
 	local startPos = Vector3.new(spawnPos.X, startY, spawnPos.Z)
-	wave:PivotTo(waveFacingCf(startPos, forward))
+	wave:PivotTo(authoredWaveCf(startPos))
 	wave.Parent = Workspace
 	activeWave = wave
 	waveTravelPos = Vector3.new(spawnPos.X, cruiseY, spawnPos.Z)
@@ -457,7 +474,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 		end
 		local y = startY + (cruiseY - startY) * nv.Value
 		local overshoot = math.sin(nv.Value * math.pi) * 2.4
-		wave:PivotTo(waveFacingCf(Vector3.new(spawnPos.X, y + overshoot, spawnPos.Z), forward))
+		wave:PivotTo(authoredWaveCf(Vector3.new(spawnPos.X, y + overshoot, spawnPos.Z)))
 	end)
 	local tw = TweenService:Create(nv, TweenInfo.new(C.WAVE_RISE_SEC, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 		Value = 1,
@@ -467,7 +484,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	riseConn:Disconnect()
 	nv:Destroy()
 	if wave.Parent then
-		wave:PivotTo(waveFacingCf(waveTravelPos, forward))
+		wave:PivotTo(authoredWaveCf(waveTravelPos))
 	end
 	return waveTravelPos, forward
 end
@@ -1296,8 +1313,7 @@ local function runChase(token: number)
 	BushHoldInteraction.setBushSearchLocked(true)
 
 	local wavePos = waveTravelPos or spawnPos
-	local smoothPos = wavePos
-	wave:PivotTo(waveFacingCf(wavePos, forward))
+	wave:PivotTo(authoredWaveCf(wavePos))
 
 	pulseCameraShake(0.7, 0.16, token)
 
@@ -1334,18 +1350,9 @@ local function runChase(token: number)
 		local speed = C.speedForLand(currentLand())
 
 		wavePos += forward * speed * dt
-		waveTravelPos = wavePos
 		wavePos = Vector3.new(wavePos.X, C.WAVE_CRUISE_Y, wavePos.Z)
-
-		local bob = math.sin(phase * 1.15) * 0.85 + math.sin(phase * 2.7) * 0.22
-		local side = Vector3.new(-forward.Z, 0, forward.X)
-		local sway = math.sin(phase * 6.3) * 0.55 + math.sin(phase * 11.8) * 0.2
-		local targetVisual = wavePos + Vector3.new(0, bob, 0) + side * sway
-		local blend = 1 - math.exp(-dt * 10)
-		smoothPos = smoothPos:Lerp(targetVisual, blend)
-		local twitchPitch = math.sin(phase * 5.4) * math.rad(1.7) + math.sin(phase * 9.6) * math.rad(0.7)
-		local twitchYaw = math.sin(phase * 7.2) * math.rad(2.3) + math.sin(phase * 13.1) * math.rad(1.05)
-		wave:PivotTo(waveFacingCf(smoothPos, forward) * CFrame.Angles(twitchPitch, twitchYaw, 0))
+		waveTravelPos = wavePos
+		wave:PivotTo(authoredWaveCf(wavePos))
 
 		local rel = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
 		local along = rel:Dot(forward)

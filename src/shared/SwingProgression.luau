@@ -34,20 +34,18 @@ function M.progressT(level: number, softCap: number): number
 	return base + post * 1.15
 end
 
--- Throw/release scales faster at low power so early upgrades feel rewarding.
+-- Throw/release stays mild at low power, then ramps hard toward / past the soft cap.
 function M.launchProgressT(level: number, softCap: number): number
 	local cap = math.max(1, softCap)
 	local lv = floorLevel(level)
 	local linear = math.clamp(lv / cap, 0, 1)
-	local early = linear ^ 0.38
-	local base = M.progressT(math.min(lv, cap), softCap)
-	local earlyBlend = math.clamp(base * 0.35 + early * 0.65, 0, 1)
+	local delayed = linear ^ 1.48
 	if lv <= cap then
-		return earlyBlend
+		return delayed
 	end
 	local over = (lv - cap) / cap
 	local post = over / (1 + over * 0.24)
-	return earlyBlend + post * 1.45
+	return delayed + post * 1.45
 end
 
 function M.displayPower(level: number): number
@@ -96,13 +94,13 @@ function M.powerStats(powerLevel: number): PowerStats
 		swingArcForce = 52 + t * 66,
 		swingSpeedPump = 1.12 + t * 1.6,
 		zipToward = 25 + t * 18,
-		launchImpulseBase = 20 + lt * 16,
-		launchMomentumRatio = 0.24 + lt * 0.14,
-		launchVelocityCarry = 0.20 + lt * 0.08,
-		maxLaunchSpeed = maxSwingSpeed + 36 + lt * 95,
-		launchChargeBonus = 14 + lt * 12,
-		launchUpImpulse = 4.5 + lt * 3.5,
-		launchDeadhangImpulse = 22 + lt * 10,
+		launchImpulseBase = 8 + lt * 30,
+		launchMomentumRatio = 0.16 + lt * 0.22,
+		launchVelocityCarry = 0.12 + lt * 0.16,
+		maxLaunchSpeed = maxSwingSpeed + 16 + lt * 118,
+		launchChargeBonus = 6 + lt * 22,
+		launchUpImpulse = 2.2 + lt * 5.8,
+		launchDeadhangImpulse = 10 + lt * 24,
 	}
 end
 

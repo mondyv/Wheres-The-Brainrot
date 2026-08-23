@@ -94,11 +94,7 @@ local function grantLevelRewards(player: Player, newLevel: number): { LevelConfi
 			local blockId = reward.luckyBlockId
 			if typeof(blockId) == "string" and blockId ~= "" then
 				if not grantLuckyBlock(player, blockId) then
-					-- Soft fallback so the level-up still feels rewarding.
-					local fallback = math.max(2_000, math.floor(200 * newLevel * math.sqrt(newLevel)))
-					addCash(player, fallback)
-					cashTotal += fallback
-					warn("[LevelService] lucky block grant failed; gave cash fallback", fallback)
+					warn("[LevelService] lucky block grant failed for", blockId, "— not substituting cash")
 				end
 			end
 		end

@@ -746,6 +746,7 @@ local function destroyChaseInstances()
 end
 
 local lockMovement: () -> ()
+local restoreCamera: () -> ()
 
 local function resolveKillRemote(): RemoteEvent?
 	if killRE and killRE.Parent then
@@ -777,16 +778,15 @@ local function requestKill()
 		hum.JumpPower = 0
 		hum.JumpHeight = 0
 		hum.AutoRotate = false
-		pcall(function()
-			hum:ChangeState(Enum.HumanoidStateType.PlatformStanding)
-		end)
-		hum.PlatformStand = true
+		hum.PlatformStand = false
 	end
 	local hrp = getHRP()
 	if hrp then
 		hrp.AssemblyLinearVelocity = Vector3.zero
 		hrp.AssemblyAngularVelocity = Vector3.zero
 	end
+
+	restoreCamera()
 
 	ensurePostFx()
 	if colorFx then
@@ -820,14 +820,13 @@ local function requestKill()
 			pg = player:WaitForChild("PlayerGui", 5) :: PlayerGui?
 		end
 
-		local re = resolveKillRemote()
-		if re then
-			re:FireServer()
-		else
-			warn("[WaveWebChaseController] BushSpiderEncounterKill missing — cannot teleport home")
-		end
-
 		if not pg then
+			local reEarly = resolveKillRemote()
+			if reEarly then
+				reEarly:FireServer()
+			else
+				warn("[WaveWebChaseController] BushSpiderEncounterKill missing — cannot teleport home")
+			end
 			deathLocked = false
 			player:SetAttribute("WaveWebDeathLock", nil)
 			return
@@ -883,6 +882,12 @@ local function requestKill()
 		)
 		fadeIn:Play()
 		fadeIn.Completed:Wait()
+		local re = resolveKillRemote()
+		if re then
+			re:FireServer()
+		else
+			warn("[WaveWebChaseController] BushSpiderEncounterKill missing — cannot teleport home")
+		end
 		task.wait(1.05)
 		if typeof(ReviveController.stopWorldDeathFx) == "function" then
 			ReviveController.stopWorldDeathFx()
@@ -960,7 +965,6 @@ lockMovement = function()
 			h.WalkSpeed = 0
 			h.JumpPower = 0
 			h.JumpHeight = 0
-			h.PlatformStand = true
 			h.Jump = false
 		end
 	end)
@@ -1018,24 +1022,27 @@ local function saveCamera(cam: Camera)
 	cam.CameraType = Enum.CameraType.Scriptable
 end
 
-local function restoreCamera()
+restoreCamera = function()
 	if renderConn then
 		renderConn:Disconnect()
 		renderConn = nil
 	end
 	local cam = Workspace.CurrentCamera
-	if cam and savedCameraType then
-		cam.CameraType = savedCameraType
+	local hum = getHumanoid()
+	if cam then
+		cam.CameraType = Enum.CameraType.Custom
 		if savedCameraSubject then
 			cam.CameraSubject = savedCameraSubject
+		elseif hum then
+			cam.CameraSubject = hum
 		end
 		cam.FieldOfView = savedFov
 	end
 	savedCameraType = nil
 	savedCameraSubject = nil
-	local hum = getHumanoid()
 	if hum then
 		hum.CameraOffset = Vector3.zero
+		hum.PlatformStand = false
 	end
 end
 
@@ -1236,10 +1243,7 @@ local function runIntro(token: number, playerPos: Vector3)
 	local revealDur = C.INTRO_REVEAL_SEC
 	local lookHrp = getHRP()
 	local lookPos = if lookHrp then lookHrp.Position else playerPos
-	local waveSpawn, toSafe = spawnTsunami(lookPos)
-	if not waveSpawn or not toSafe then
-		waveSpawn, toSafe = computeTsunamiCorridor(lookPos)
-	end
+	local waveSpawn, toSafe = computeTsunamiCorridor(lookPos)
 	local waveHintPos = waveSpawn
 	local awayFromSafe = -toSafe
 	if renderConn then

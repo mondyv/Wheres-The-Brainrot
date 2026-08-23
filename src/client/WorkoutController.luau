@@ -3,6 +3,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
@@ -850,50 +851,126 @@ local function pickDoubleTapPos(gui: ScreenGui, sizePx: number): UDim2
 	return UDim2.fromOffset((minX + maxX) * 0.5, (minY + maxY) * 0.5)
 end
 
+local function applyDoubleTapBlueGradient(label: TextLabel)
+	local folder = StarterGui:FindFirstChild("Gradients")
+	local blue = folder and folder:FindFirstChild("Blue")
+	if not blue then
+		return
+	end
+	local function parentClone(src: UIGradient)
+		local g = src:Clone()
+		g.Enabled = true
+		g.Parent = label
+	end
+	if blue:IsA("UIGradient") then
+		parentClone(blue)
+		return
+	end
+	for _, child in blue:GetChildren() do
+		if child:IsA("UIGradient") then
+			parentClone(child)
+		end
+	end
+end
+
 local function dismissDoubleTap(holder: Frame, clicked: boolean)
 	if holder:GetAttribute("Closing") == true then
 		return
 	end
 	holder:SetAttribute("Closing", true)
+	UIInteractionSounds.playNotif()
 	local scale = holder:FindFirstChild("PopScale")
-	local goalScale = if clicked then 1.28 else 0.15
-	local goalRot = if clicked then holder.Rotation * 0.2 else holder.Rotation + (if holder.Rotation >= 0 then 28 else -28)
-	if scale and scale:IsA("UIScale") then
+	if clicked then
+		local hit = holder:FindFirstChild("Hit")
+		if hit and (hit:IsA("ImageButton") or hit:IsA("ImageLabel")) then
+			local burst = Instance.new("ImageLabel")
+			burst.Name = "Burst"
+			burst.BackgroundTransparency = 1
+			burst.BorderSizePixel = 0
+			burst.AnchorPoint = Vector2.new(0.5, 0.5)
+			burst.Position = UDim2.fromScale(0.5, 0.5)
+			burst.Size = UDim2.fromScale(1, 1)
+			burst.Image = hit.Image
+			burst.ScaleType = Enum.ScaleType.Fit
+			burst.ImageTransparency = 0.15
+			burst.ZIndex = 19
+			burst.Parent = holder
+			local burstScale = Instance.new("UIScale")
+			burstScale.Scale = 1
+			burstScale.Parent = burst
+			TweenService:Create(
+				burstScale,
+				TweenInfo.new(0.38, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Scale = 2.15 }
+			):Play()
+			TweenService:Create(
+				burst,
+				TweenInfo.new(0.38, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ ImageTransparency = 1 }
+			):Play()
+		end
+		if scale and scale:IsA("UIScale") then
+			TweenService:Create(
+				scale,
+				TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+				{ Scale = 1.38 }
+			):Play()
+			task.delay(0.12, function()
+				if not holder.Parent then
+					return
+				end
+				TweenService:Create(
+					scale,
+					TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+					{ Scale = 0.08 }
+				):Play()
+			end)
+		end
 		TweenService:Create(
-			scale,
-			TweenInfo.new(if clicked then 0.16 else 0.32, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-			{ Scale = goalScale }
+			holder,
+			TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+			{ Rotation = holder.Rotation + (if holder.Rotation >= 0 then 38 else -38) }
+		):Play()
+	else
+		if scale and scale:IsA("UIScale") then
+			TweenService:Create(
+				scale,
+				TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+				{ Scale = 0.15 }
+			):Play()
+		end
+		TweenService:Create(
+			holder,
+			TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ Rotation = holder.Rotation + (if holder.Rotation >= 0 then 28 else -28) }
 		):Play()
 	end
-	TweenService:Create(
-		holder,
-		TweenInfo.new(if clicked then 0.16 else 0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-		{ Rotation = goalRot }
-	):Play()
 	for _, d in holder:GetDescendants() do
-		if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+		if d.Name == "Burst" then
+			-- Burst fades on its own so it can expand while the icon shrinks.
+		elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
 			TweenService:Create(
 				d,
-				TweenInfo.new(if clicked then 0.18 else 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				TweenInfo.new(if clicked then 0.36 else 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 				{ ImageTransparency = 1 }
 			):Play()
 		elseif d:IsA("TextLabel") then
 			TweenService:Create(
 				d,
-				TweenInfo.new(if clicked then 0.18 else 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				TweenInfo.new(if clicked then 0.28 else 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 				{ TextTransparency = 1 }
 			):Play()
 			local stroke = d:FindFirstChildOfClass("UIStroke")
 			if stroke then
 				TweenService:Create(
 					stroke,
-					TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+					TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
 					{ Transparency = 1 }
 				):Play()
 			end
 		end
 	end
-	task.delay(if clicked then 0.2 else 0.34, function()
+	task.delay(if clicked then 0.46 else 0.34, function()
 		if holder.Parent then
 			holder:Destroy()
 		end
@@ -945,22 +1022,23 @@ local function spawnDoubleTapPrompt()
 	local label = Instance.new("TextLabel")
 	label.Name = "Tag"
 	label.BackgroundTransparency = 1
-	label.AnchorPoint = Vector2.new(0.5, 0.5)
-	label.Position = UDim2.fromScale(0.5, 0.52)
-	label.Size = UDim2.fromScale(0.86, 0.42)
+	label.AnchorPoint = Vector2.new(1, 0)
+	label.Position = UDim2.fromScale(1.1, -0.08)
+	label.Size = UDim2.fromScale(0.7, 0.4)
 	label.Text = "2x"
-	label.TextColor3 = Color3.fromRGB(255, 236, 90)
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
 	label.TextScaled = true
 	label.ZIndex = 22
 	label.Parent = holder
 	UiFonts.applyDisplayLabel(label, 42, 22)
 	local stroke = Instance.new("UIStroke")
 	stroke.Thickness = 2.4
-	stroke.Color = Color3.fromRGB(40, 22, 4)
+	stroke.Color = Color3.fromRGB(12, 28, 72)
 	stroke.Parent = label
+	applyDoubleTapBlueGradient(label)
 
 	table.insert(activeDoubleTaps, holder)
-	UIInteractionSounds.playNotif()
+	UIInteractionSounds.playClick()
 
 	TweenService:Create(
 		pop,
@@ -999,7 +1077,6 @@ local function spawnDoubleTapPrompt()
 		end
 		consumed = true
 		btn.Active = false
-		UIInteractionSounds.playClick()
 		if idleConn then
 			idleConn:Disconnect()
 			idleConn = nil

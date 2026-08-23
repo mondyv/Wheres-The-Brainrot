@@ -1,6 +1,7 @@
 -- [ACTIVE] LevelConfig
 -- Player account level / XP / level-up rewards (shared client + server).
 local BrainrotEconomy = require(script.Parent:WaitForChild("BrainrotEconomy"))
+local LuckyBlockCatalog = require(script.Parent:WaitForChild("LuckyBlockCatalog"))
 
 local M = {}
 
@@ -51,7 +52,8 @@ local function cashReward(id: number, amount: number): LevelReward
 	}
 end
 
-local function luckyReward(id: number, blockId: string, displayName: string): LevelReward
+local function luckyReward(id: number, blockId: string): LevelReward
+	local displayName = LuckyBlockCatalog.displayName(blockId)
 	return {
 		id = id,
 		kind = "lucky_block",
@@ -62,19 +64,25 @@ local function luckyReward(id: number, blockId: string, displayName: string): Le
 	}
 end
 
--- Second prize slot: cash most levels; lucky blocks on bigger milestones only.
+-- Slot 1 is always cash. Slot 2 is always a lucky block (never a second cash).
 local function secondRewardForLevel(lv: number): LevelReward
 	if lv % 100 == 0 then
-		return luckyReward(2, "Mythic Lucky Block", "Mythic Block")
+		return luckyReward(2, "Godly Luckyblock")
 	elseif lv % 50 == 0 then
-		return luckyReward(2, "purple", "Purple Block")
+		return luckyReward(2, "Mythic Lucky Block")
 	elseif lv % 25 == 0 then
-		return luckyReward(2, "neon", "Neon Block")
+		return luckyReward(2, "yellow")
+	elseif lv % 15 == 0 then
+		return luckyReward(2, "purple")
 	elseif lv % 10 == 0 then
-		return luckyReward(2, "troll", "Troll Block")
+		return luckyReward(2, "1")
+	elseif lv % 5 == 0 then
+		return luckyReward(2, "neon")
 	end
-	local cashB = math.floor(80 * lv * math.sqrt(lv))
-	return cashReward(2, cashB)
+	if lv % 2 == 0 then
+		return luckyReward(2, "troll")
+	end
+	return luckyReward(2, "Starter Lucky Block")
 end
 
 -- XP required to go from `level` → `level + 1` (index = current level).

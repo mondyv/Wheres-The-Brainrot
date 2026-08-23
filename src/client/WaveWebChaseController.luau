@@ -1,7 +1,7 @@
 -- [ACTIVE] WaveWebChaseController
 --[[
-	After every bush brainrot accept: ! + spider (already on the ground) →
-	fast growl → dash into the cobweb → Wave Web rolls toward safezone.
+	After every bush brainrot accept: ! above the player, then Wave Web
+	rises behind them and charges in one direction toward safezone.
 	HUD hides during chase; red heartbeat vignette.
 ]]
 
@@ -24,6 +24,8 @@ local LandAmbushUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForC
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local WaveWebChaseConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WaveWebChaseConfig"))
+local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
+local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local SpiderSenseFx = require(script.Parent.SpiderSenseFx)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 
@@ -156,19 +158,85 @@ local function resolveSpiderSpawn(playerPos: Vector3): Vector3
 	return candidate
 end
 
--- Chase along Z toward the player, spawning close behind them (not the far authored rest pose).
-local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
-	local rest = C.WAVE_SPAWN_POS
-	local dz = playerPos.Z - rest.Z
-	local toPlayer = if math.abs(dz) >= 4 then Vector3.new(0, 0, math.sign(dz)) else Vector3.new(0, 0, -1)
-	local behind = math.max(22, C.WAVE_BEHIND_STUDS)
-	local spawnPos = Vector3.new(playerPos.X, rest.Y, playerPos.Z) - toPlayer * behind
-	return spawnPos, toPlayer
+-- Charge along the cobweb mesh axis, toward safezone, from behind the player.
+-- Locked at spawn — never retarget / follow after that.
+local function authoredLookFlat(): Vector3
+	local ori = C.WAVE_SPAWN_ORIENTATION_DEG
+	local look = CFrame.fromOrientation(math.rad(ori.X), math.rad(ori.Y), math.rad(ori.Z)).LookVector
+	local flat = Vector3.new(look.X, 0, look.Z)
+	if flat.Magnitude < 0.05 then
+		return Vector3.new(-1, 0, 0)
+	end
+	return flat.Unit
 end
 
-local function waveFacingCf(pos: Vector3, _chaseDir: Vector3): CFrame
+local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
+	local rest = C.WAVE_SPAWN_POS
+	local look = authoredLookFlat()
+	local axis = if math.abs(look.X) >= math.abs(look.Z)
+		then Vector3.new(if look.X >= 0 then 1 else -1, 0, 0)
+		else Vector3.new(0, 0, if look.Z >= 0 then 1 else -1)
+
+	local safe = SafezoneUtil.getSafezoneCenter()
+	local toSafe = if safe
+		then Vector3.new(safe.X - playerPos.X, 0, safe.Z - playerPos.Z)
+		else -axis
+	if toSafe.Magnitude < 1 then
+		toSafe = -axis
+	else
+		toSafe = toSafe.Unit
+	end
+	local forward = if axis:Dot(toSafe) >= 0 then axis else -axis
+	local behind = math.max(36, C.WAVE_BEHIND_STUDS)
+	local spawnPos = Vector3.new(playerPos.X, rest.Y, playerPos.Z) - forward * behind
+	return spawnPos, forward
+end
+
+local function waveFacingCf(pos: Vector3, chaseDir: Vector3): CFrame
 	local ori = C.WAVE_SPAWN_ORIENTATION_DEG
-	return CFrame.new(pos) * CFrame.fromOrientation(math.rad(ori.X), math.rad(ori.Y), math.rad(ori.Z))
+	local yaw = ori.Y
+	if chaseDir:Dot(authoredLookFlat()) < -0.05 then
+		yaw += 180
+	end
+	return CFrame.new(pos) * CFrame.fromOrientation(math.rad(ori.X), math.rad(yaw), math.rad(ori.Z))
+end
+
+local function attachWaveTitle(wave: Model)
+	local part = wave.PrimaryPart or wave:FindFirstChildWhichIsA("BasePart", true)
+	if not part then
+		return
+	end
+	local existing = wave:FindFirstChild("WaveWebTitle")
+	if existing then
+		existing:Destroy()
+	end
+	local raw = player:GetAttribute("CurrentLand")
+	local land = if typeof(raw) == "number" then math.clamp(math.floor(raw), 1, 10) else 1
+	local title = C.titleForLand(land)
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "WaveWebTitle"
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.Size = UDim2.fromOffset(460, 96)
+	bb.StudsOffset = Vector3.new(0, 16, 0)
+	bb.MaxDistance = 520
+	bb.Parent = part
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Title"
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Text = title.name
+	label.TextColor3 = Color3.new(1, 1, 1)
+	label.TextScaled = true
+	label.ZIndex = 5
+	label.Parent = bb
+	UiFonts.applyDisplayLabel(label, 42, 22)
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 2.6
+	stroke.Color = Color3.fromRGB(18, 10, 6)
+	stroke.Parent = label
+	BrainrotHeaderStyle.applyRarityLabel(label, title.rarity)
 end
 
 local function hideChaseHud()
@@ -340,6 +408,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	waveTravelPos = Vector3.new(spawnPos.X, cruiseY, spawnPos.Z)
 	waveForward = forward
 	enableWaveFx(wave, false, true)
+	attachWaveTitle(wave)
 
 	local nv = Instance.new("NumberValue")
 	nv.Value = 0
@@ -1138,157 +1207,19 @@ local function releaseToGameplay(token: number)
 	MobileTouchGate.restorePlayerMovement()
 end
 
-local function runIntro(token: number, playerPos: Vector3)
-	local cam = Workspace.CurrentCamera
-	if not cam then
-		return
-	end
-
+-- ! above the player, then cobweb rises. No spider / screech.
+local function runIntro(token: number, _playerPos: Vector3)
 	ensureFxGui()
 	hideChaseHud()
-	saveCamera(cam)
-	lockMovement()
-
-	local landPos = resolveSpiderSpawn(playerPos)
-	local cobSpawn = computeTsunamiCorridor(playerPos)
-	local spiderTemplate = findSpiderTemplate()
-	local spider: Model? = nil
-	if spiderTemplate then
-		local ok, cloneOrErr = pcall(function()
-			return cloneAsModel(spiderTemplate, "WaveWebChaseSpider")
-		end)
-		if ok and cloneOrErr then
-			local clone = cloneOrErr :: Model
-			stabilizeSpider(clone)
-			clone:PivotTo(cfFacingTarget(landPos, playerPos))
-			clone.Parent = Workspace
-			activeSpider = clone
-			spider = clone
-			task.spawn(function()
-				preloadModel(clone)
-			end)
-		else
-			warn("[WaveWebChaseController] Spider clone failed:", cloneOrErr)
-		end
-	else
-		warn("[WaveWebChaseController] EssentialAssets.Spider missing — skipping intro spider")
-	end
-
-	-- ! + spider on the ground at the same beat; camera sits behind the player.
 	attachExclamation()
-	GameSoundEffects.playSpiderRoar()
-	pulseCameraShake(1.15, 0.28, token)
-
-	local introPhase = 0
-	if renderConn then
-		renderConn:Disconnect()
-	end
-	renderConn = RunService.RenderStepped:Connect(function(dt)
-		if not chaseActive or token ~= chaseToken or not cam then
-			return
-		end
-		introPhase += dt
-		local hrp = getHRP()
-		local pPos = if hrp then hrp.Position else playerPos
-		local look = if hrp then hrp.CFrame.LookVector else Vector3.new(0, 0, -1)
-		local chest = pPos + Vector3.new(0, 1.55, 0)
-		local spiderLook = chest
-		if spider and spider.Parent then
-			spiderLook = chest:Lerp(spider:GetPivot().Position + Vector3.new(0, 2.4, 0), 0.88)
-		end
-		local wobble = Vector3.new(
-			math.sin(introPhase * 13.5) * 0.26,
-			math.cos(introPhase * 10.2) * 0.18,
-			math.sin(introPhase * 8.4) * 0.14
-		)
-		local camPos = pPos - look * 9.2 + Vector3.new(0, 3.6, 0) + wobble
-		cam.CFrame = CFrame.lookAt(camPos, spiderLook)
-		cam.FieldOfView = defaultFov + 6 + math.sin(introPhase * 7.5) * 3.2
-	end)
-
-	if spider and spider.Parent then
-		playScreechVfx(spider, landPos)
-		local animator = resolveAnimator(spider)
-		local rageTrack = if animator then loadTrack(animator, C.SPIDER_ANIM.RAGE) else nil
-		if rageTrack then
-			rageTrack.Priority = Enum.AnimationPriority.Action4
-			rageTrack.Looped = false
-			rageTrack:Play(0.05, 1, C.SPIDER_RAGE_PLAY_SPEED)
-			local loadedAt = os.clock()
-			while rageTrack.Length < 0.05 and os.clock() - loadedAt < 0.45 do
-				task.wait()
-			end
-			local animLen = rageTrack.Length
-			local hold = C.SPIDER_RAGE_WAIT_SEC
-			if animLen > 0.05 then
-				hold = math.clamp(animLen / math.max(C.SPIDER_RAGE_PLAY_SPEED, 0.2), 1.15, 2.8)
-			end
-			task.wait(hold)
-		else
-			task.wait(C.SPIDER_RAGE_WAIT_SEC)
-		end
-
-		if token ~= chaseToken then
-			return
-		end
-
-		-- Face the cobweb, then dash into it and vanish.
-		local webFlat = Vector3.new(cobSpawn.X, landPos.Y, cobSpawn.Z)
-		local toward = flatUnitXZ(landPos, webFlat)
-		local chargeDist = math.min(C.SPIDER_CHARGE_STUDS, math.max(14, (webFlat - landPos).Magnitude * 0.35))
-		local chargeTo = landPos + toward * chargeDist
-		spider:PivotTo(cfFacingTarget(landPos, chargeTo))
-		pulseCameraShake(0.45, 0.38, token)
-
-		local leaving = spider
-		activeSpider = nil
-		task.spawn(function()
-			task.wait(C.SPIDER_CHARGE_SEC * 0.45)
-			fadeOutSpider(leaving, C.SPIDER_CHARGE_SEC * 0.55)
-		end)
-		tweenSpiderCharge(leaving, landPos, chargeTo, C.SPIDER_CHARGE_SEC)
-	else
-		task.wait(0.28)
-	end
-
+	pulseCameraShake(0.55, 0.16, token)
+	task.wait(C.EXCLAMATION_SEC)
 	if token ~= chaseToken then
 		return
 	end
-
-	-- Brief look at the cobweb (Orientation 0, 90, 0), then hand control back.
-	local revealStart = os.clock()
-	local revealDur = C.INTRO_REVEAL_SEC
-	local lookHrp = getHRP()
-	local lookPos = if lookHrp then lookHrp.Position else playerPos
-	local waveSpawn, toSafe = computeTsunamiCorridor(lookPos)
-	local waveHintPos = waveSpawn
-	local awayFromSafe = -toSafe
-	if renderConn then
-		renderConn:Disconnect()
-	end
-	renderConn = RunService.RenderStepped:Connect(function()
-		if not chaseActive or token ~= chaseToken or not cam then
-			return
-		end
-		local t = os.clock()
-		local alpha = math.clamp((t - revealStart) / revealDur, 0, 1)
-		local eased = alpha * alpha * (3 - 2 * alpha)
-		local hrp = getHRP()
-		local pPos = if hrp then hrp.Position else playerPos
-		local chest = pPos + Vector3.new(0, 1.5, 0)
-		local wobble = Vector3.new(math.sin(t * 12) * 0.14, math.cos(t * 9) * 0.1, 0)
-		local overShoulder = chest - awayFromSafe * 6 + Vector3.new(0, 3.2, 0) + wobble
-		local lookBack = CFrame.lookAt(overShoulder, waveHintPos + Vector3.new(0, 8, 0))
-		local startLook = chest + Vector3.new(0, 2.5, 0) - awayFromSafe * 4
-		local startCf = CFrame.lookAt(startLook, waveHintPos + Vector3.new(0, 6, 0))
-		cam.CFrame = startCf:Lerp(lookBack, eased)
-		cam.FieldOfView = defaultFov + 8 * (1 - eased * 0.4)
-	end)
-	task.wait(revealDur)
-
+	clearExclamation()
 	releaseToGameplay(token)
 end
-
 
 local function runChase(token: number)
 	-- Make sure we never re-lock camera mid-chase; unlock swing/move for the run.
@@ -1365,11 +1296,15 @@ local function runChase(token: number)
 		waveTravelPos = wavePos
 		wavePos = Vector3.new(wavePos.X, C.WAVE_CRUISE_Y, wavePos.Z)
 
-		local bob = math.sin(phase * 1.2) * 0.6
-		local targetVisual = wavePos + Vector3.new(0, bob, 0)
+		local bob = math.sin(phase * 1.15) * 0.85 + math.sin(phase * 2.7) * 0.22
+		local side = Vector3.new(-forward.Z, 0, forward.X)
+		local sway = math.sin(phase * 6.3) * 0.55 + math.sin(phase * 11.8) * 0.2
+		local targetVisual = wavePos + Vector3.new(0, bob, 0) + side * sway
 		local blend = 1 - math.exp(-dt * 10)
 		smoothPos = smoothPos:Lerp(targetVisual, blend)
-		wave:PivotTo(waveFacingCf(smoothPos, forward))
+		local twitchPitch = math.sin(phase * 5.4) * math.rad(1.7) + math.sin(phase * 9.6) * math.rad(0.7)
+		local twitchYaw = math.sin(phase * 7.2) * math.rad(2.3) + math.sin(phase * 13.1) * math.rad(1.05)
+		wave:PivotTo(waveFacingCf(smoothPos, forward) * CFrame.Angles(twitchPitch, twitchYaw, 0))
 
 		local rel = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
 		local along = rel:Dot(forward)

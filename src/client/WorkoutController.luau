@@ -410,39 +410,20 @@ local function resolveMuscleIcon(powerFrame: Instance): ImageLabel?
 end
 
 local function resolvePulseCluster(powerFrame: GuiObject): GuiObject
-	local existing = powerFrame:FindFirstChild("PowerPulseCluster")
-	if existing and existing:IsA("GuiObject") then
-		return existing
+	local cluster = powerFrame:FindFirstChild("PowerPulseCluster")
+	if cluster then
+		for _, ch in cluster:GetChildren() do
+			if ch:IsA("GuiObject") then
+				ch.Parent = powerFrame
+			end
+		end
+		cluster:Destroy()
 	end
-	-- UpgradesController usually creates this; build a minimal one if missing.
 	local amount = powerFrame:FindFirstChild("Amount")
-	local muscle = resolveMuscleIcon(powerFrame)
-	local cluster = Instance.new("Frame")
-	cluster.Name = "PowerPulseCluster"
-	cluster.BackgroundTransparency = 1
-	cluster.BorderSizePixel = 0
-	cluster.AutomaticSize = Enum.AutomaticSize.XY
-	cluster.Size = UDim2.fromOffset(0, 0)
-	cluster.AnchorPoint = Vector2.new(0.5, 0.5)
-	cluster.LayoutOrder = if amount and amount:IsA("GuiObject") then amount.LayoutOrder else 0
-	cluster.ZIndex = powerFrame.ZIndex
-	local layout = Instance.new("UIListLayout")
-	layout.FillDirection = Enum.FillDirection.Horizontal
-	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	layout.VerticalAlignment = Enum.VerticalAlignment.Center
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-	layout.Padding = UDim.new(0, 4)
-	layout.Parent = cluster
 	if amount and amount:IsA("GuiObject") then
-		amount.LayoutOrder = 1
-		amount.Parent = cluster
+		return amount
 	end
-	if muscle then
-		muscle.LayoutOrder = 2
-		muscle.Parent = cluster
-	end
-	cluster.Parent = powerFrame
-	return cluster
+	return powerFrame
 end
 
 local function spawnHitLight(layer: Frame, screen: Vector2, strength: number?)

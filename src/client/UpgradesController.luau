@@ -591,96 +591,38 @@ local function resolveMuscleIcon(powerFrame: Instance): ImageLabel?
 	return nil
 end
 
--- Lock Amount TextSize BEFORE reparenting into AutomaticSize cluster.
--- Never rewrite Studio TextSize/Size — that is what broke the PC HUD number.
-local function lockPowerAmountTextSize(amount: TextLabel)
-	amount:SetAttribute("PowerAmtSizeLocked", true)
-	amount.TextScaled = false
+local function restoreStudioPowerLayout(powerFrame: GuiObject)
+	local cluster = powerFrame:FindFirstChild("PowerPulseCluster")
+	if cluster then
+		for _, ch in cluster:GetChildren() do
+			if ch:IsA("GuiObject") then
+				ch.Parent = powerFrame
+			end
+		end
+		cluster:Destroy()
+	end
+	local amount = powerFrame:FindFirstChild("Amount")
+	if amount and amount:IsA("TextLabel") then
+		amount.Visible = true
+		amount.TextTransparency = 0
+		amount.TextScaled = false
+	end
+	local muscle = resolveMuscleIcon(powerFrame)
+	if muscle then
+		muscle.Visible = true
+		muscle.ImageTransparency = 0
+		muscle.Image = GearConfig.WORKOUT_IMAGE
+	end
 end
 
--- Scale Amount + muscle only (not Edit / whole SideUI chip) so hits land in the right place.
-local function ensurePulseCluster(powerFrame: GuiObject): Frame
-	local existing = powerFrame:FindFirstChild("PowerPulseCluster")
+-- Pulse Amount + muscle in the Studio layout. Never reparent (that hid the icon).
+local function ensurePulseCluster(powerFrame: GuiObject): GuiObject
+	restoreStudioPowerLayout(powerFrame)
 	local amount = powerFrame:FindFirstChild("Amount")
-		or (existing and existing:FindFirstChild("Amount"))
-	local muscle = resolveMuscleIcon(powerFrame)
-	if existing and existing:IsA("Frame") then
-		if amount and amount:IsA("GuiObject") and amount.Parent ~= existing then
-			amount.Parent = existing
-		end
-		if muscle and muscle.Parent ~= existing then
-			muscle.Parent = existing
-		end
-	else
-		existing = Instance.new("Frame")
-		existing.Name = "PowerPulseCluster"
-		existing.BackgroundTransparency = 1
-		existing.BorderSizePixel = 0
-		existing.AutomaticSize = Enum.AutomaticSize.XY
-		existing.Size = UDim2.fromOffset(0, 0)
-		existing.AnchorPoint = Vector2.new(0.5, 0.5)
-		local order = 0
-		if muscle then
-			order = muscle.LayoutOrder
-		elseif amount and amount:IsA("GuiObject") then
-			order = amount.LayoutOrder
-		end
-		existing.LayoutOrder = order
-		existing.ZIndex = powerFrame.ZIndex
-
-		local layout = Instance.new("UIListLayout")
-		layout.Name = "PulseLayout"
-		layout.FillDirection = Enum.FillDirection.Horizontal
-		layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
-		layout.VerticalAlignment = Enum.VerticalAlignment.Center
-		layout.SortOrder = Enum.SortOrder.LayoutOrder
-		layout.Padding = UDim.new(0, 8)
-		layout.Parent = existing
-
-		existing.Parent = powerFrame
+	if amount and amount:IsA("GuiObject") then
+		return amount
 	end
-
-	local cluster = existing :: Frame
-	local layout = cluster:FindFirstChild("PulseLayout")
-	if layout and layout:IsA("UIListLayout") then
-		layout.Padding = UDim.new(0, 8)
-		layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
-	end
-
-	-- Icon LEFT, number RIGHT — match Cash icon size so the muscle doesn't vanish.
-	if amount and amount:IsA("TextLabel") and amount.Parent ~= cluster then
-		lockPowerAmountTextSize(amount)
-	elseif amount and amount:IsA("TextLabel") then
-		lockPowerAmountTextSize(amount)
-	end
-	if muscle then
-		muscle.LayoutOrder = 1
-		muscle.ScaleType = Enum.ScaleType.Fit
-		muscle.BackgroundTransparency = 1
-		muscle.Image = GearConfig.WORKOUT_IMAGE
-		muscle.ImageTransparency = 0
-		muscle.ImageColor3 = Color3.new(1, 1, 1)
-		muscle.Visible = true
-		muscle.ZIndex = math.max(muscle.ZIndex, (amount and amount:IsA("GuiObject") and amount.ZIndex or 1) + 1)
-		muscle.Parent = cluster
-	end
-	if amount and amount:IsA("TextLabel") then
-		amount.LayoutOrder = 2
-		amount.TextXAlignment = Enum.TextXAlignment.Left
-		amount.TextYAlignment = Enum.TextYAlignment.Center
-		amount.TextTransparency = 0
-		amount.ClipsDescendants = false
-		local sc = amount:FindFirstChildOfClass("UIScale")
-		if sc and sc.Name ~= "PowerChipScale" then
-			sc.Scale = 1
-		end
-		amount.Parent = cluster
-	elseif amount and amount:IsA("GuiObject") then
-		amount.LayoutOrder = 2
-		amount.Parent = cluster
-	end
-
-	return cluster
+	return powerFrame
 end
 
 local function playPowerGainFlash(amountLabel: TextLabel)
@@ -695,7 +637,7 @@ local function playPowerGainFlash(amountLabel: TextLabel)
 	end
 
 	local cluster = amountLabel.Parent
-	if not (cluster and cluster:IsA("GuiObject") and cluster.Name == "PowerPulseCluster") then
+	if not (cluster and cluster:IsA("GuiObject")) then
 		local powerFrame = amountLabel:FindFirstAncestor("Power")
 		if powerFrame and powerFrame:IsA("GuiObject") then
 			cluster = ensurePulseCluster(powerFrame)
@@ -854,7 +796,8 @@ local function ensurePowerCounter(counters: Instance): TextLabel?
 		return nil
 	end
 
-	-- Studio Power already has Edit + ImageLabel — never crush it to Cash size.
+	-- Studio Power: Amount + ImageLabel + Edit + SPACE + UIListLayout. Do not reparent.
+	restoreStudioPowerLayout(powerFrame)
 	local muscle = resolveMuscleIcon(powerFrame)
 	if muscle then
 		muscle.Image = GearConfig.WORKOUT_IMAGE
@@ -862,9 +805,7 @@ local function ensurePowerCounter(counters: Instance): TextLabel?
 		muscle.Visible = true
 	end
 
-	ensurePulseCluster(powerFrame)
-
-	local amount = powerFrame:FindFirstChild("Amount", true)
+	local amount = powerFrame:FindFirstChild("Amount")
 	if amount and amount:IsA("TextLabel") then
 		amount.TextTransparency = 0
 		local hitScale = amount:FindFirstChild("PowerHitScale")
@@ -1550,34 +1491,22 @@ local function init()
 	updatePowerLabel()
 	local powerFrame = counters:FindFirstChild("Power")
 	if powerFrame then
-		local fakeEdit = powerFrame:FindFirstChild("Edit")
-		if fakeEdit and fakeEdit:IsA("TextButton") and fakeEdit.Text == "Edit" then
-			fakeEdit:Destroy()
-		end
 		local function openPowerEdit()
 			openEditBar(main)
 		end
-		local editBtn = ensureEditButton(powerFrame)
-		if editBtn then
-			editBtn.Active = true
-			pcall(function()
-				(editBtn :: any).Interactable = true
-			end)
-			local icon = editBtn:FindFirstChild("Icon", true) or editBtn:FindFirstChildWhichIsA("ImageLabel", true)
-			local tiltTarget: GuiObject = if icon and icon:IsA("GuiObject") then icon else editBtn
-			-- Same mobile press-hover as HUD sidebar (not PC hover-only).
-			UIButtonEffects.wireTiltHoverButton(editBtn, openPowerEdit, editBtn, tiltTarget, true)
-		elseif powerFrame:IsA("GuiButton") then
-			UIButtonEffects.wireTiltHoverButton(powerFrame, openPowerEdit, powerFrame, powerFrame, true)
-		elseif powerFrame:IsA("GuiObject") then
-			powerFrame.InputBegan:Connect(function(input)
-				if
-					input.UserInputType == Enum.UserInputType.MouseButton1
-					or input.UserInputType == Enum.UserInputType.Touch
-				then
-					openPowerEdit()
-				end
-			end)
+		local editHost = powerFrame:FindFirstChild("Edit")
+		if editHost and editHost:IsA("GuiObject") then
+			local btn = ensureFullClickCover(editHost)
+			UIButtonEffects.wireSidebarButton(btn, openPowerEdit)
+		else
+			local editBtn = ensureEditButton(powerFrame)
+			if editBtn then
+				editBtn.Active = true
+				pcall(function()
+					(editBtn :: any).Interactable = true
+				end)
+				UIButtonEffects.wireSidebarButton(editBtn, openPowerEdit)
+			end
 		end
 	end
 

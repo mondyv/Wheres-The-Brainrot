@@ -159,24 +159,30 @@ local function resolveSpiderSpawn(playerPos: Vector3): Vector3
 	return candidate
 end
 
--- Mesh always stays at authored Orientation (0, 90, 0). Never lookAt / yaw-flip.
-local function authoredWaveCf(pos: Vector3): CFrame
-	local ori = C.WAVE_SPAWN_ORIENTATION_DEG
-	return CFrame.new(pos) * CFrame.fromOrientation(math.rad(ori.X), math.rad(ori.Y), math.rad(ori.Z))
+local function chargeTowardSafezone(fromPos: Vector3): Vector3
+	local safe = SafezoneUtil.getSafezoneCenter()
+	local dx = 0.0
+	local dz = -1.0
+	if safe then
+		dx = safe.X - fromPos.X
+		dz = safe.Z - fromPos.Z
+	end
+	if math.abs(dz) >= math.abs(dx) then
+		return Vector3.new(0, 0, if dz >= 0 then 1 else -1)
+	end
+	return Vector3.new(if dx >= 0 then 1 else -1, 0, 0)
 end
 
-local function chargeAxis(): Vector3
-	local ori = C.WAVE_SPAWN_ORIENTATION_DEG
-	local look = CFrame.fromOrientation(math.rad(ori.X), math.rad(ori.Y), math.rad(ori.Z)).LookVector
-	local flat = Vector3.new(look.X, 0, look.Z)
-	if flat.Magnitude < 0.05 then
-		return Vector3.new(-1, 0, 0)
+-- Face the chase axis. 0,90,0 when traveling -X; yaw 0/180 when traveling along Z.
+local function authoredWaveCf(pos: Vector3, forward: Vector3?): CFrame
+	local dir = if forward and forward.Magnitude > 0.05 then forward.Unit else chargeTowardSafezone(pos)
+	local yawDeg: number
+	if math.abs(dir.X) >= math.abs(dir.Z) then
+		yawDeg = if dir.X < 0 then 90 else -90
+	else
+		yawDeg = if dir.Z < 0 then 180 else 0
 	end
-	flat = flat.Unit
-	if math.abs(flat.X) >= math.abs(flat.Z) then
-		return Vector3.new(if flat.X >= 0 then 1 else -1, 0, 0)
-	end
-	return Vector3.new(0, 0, if flat.Z >= 0 then 1 else -1)
+	return CFrame.new(pos) * CFrame.fromOrientation(0, math.rad(yawDeg), 0)
 end
 
 local function currentLandNumber(): number
@@ -226,13 +232,14 @@ local function lockCorridorZ(land: number, fallbackZ: number): number
 	return fallbackZ
 end
 
--- Spawn behind the land lock: authored X/Y + lock Z. Travel = authored look (never flip).
+-- Spawn at the land lock. Travel toward the safezone (not sideways along look).
 local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
-	local forward = chargeAxis()
 	local land = currentLandNumber()
 	local z = lockCorridorZ(land, playerPos.Z)
 	local authored = C.WAVE_SPAWN_POS
-	return Vector3.new(authored.X, C.WAVE_CRUISE_Y, z), forward
+	local spawn = Vector3.new(authored.X, C.WAVE_CRUISE_Y, z)
+	local forward = chargeTowardSafezone(spawn)
+	return spawn, forward
 end
 
 local function findStarterGradient(name: string): UIGradient?
@@ -474,7 +481,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	local cruiseY = C.WAVE_CRUISE_Y
 	local startY = cruiseY - C.WAVE_RISE_STUDS
 	local startPos = Vector3.new(spawnPos.X, startY, spawnPos.Z)
-	wave:PivotTo(authoredWaveCf(startPos))
+	wave:PivotTo(authoredWaveCf(startPos, forward))
 	wave.Parent = Workspace
 	activeWave = wave
 	waveTravelPos = Vector3.new(spawnPos.X, cruiseY, spawnPos.Z)
@@ -490,7 +497,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 		end
 		local y = startY + (cruiseY - startY) * nv.Value
 		local overshoot = math.sin(nv.Value * math.pi) * 2.4
-		wave:PivotTo(authoredWaveCf(Vector3.new(spawnPos.X, y + overshoot, spawnPos.Z)))
+		wave:PivotTo(authoredWaveCf(Vector3.new(spawnPos.X, y + overshoot, spawnPos.Z), forward))
 	end)
 	local tw = TweenService:Create(nv, TweenInfo.new(C.WAVE_RISE_SEC, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 		Value = 1,
@@ -500,7 +507,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	riseConn:Disconnect()
 	nv:Destroy()
 	if wave.Parent then
-		wave:PivotTo(authoredWaveCf(waveTravelPos))
+		wave:PivotTo(authoredWaveCf(waveTravelPos, forward))
 	end
 	return waveTravelPos, forward
 end
@@ -1383,7 +1390,7 @@ local function runChase(token: number)
 	BushHoldInteraction.setBushSearchLocked(true)
 
 	local wavePos = waveTravelPos or spawnPos
-	wave:PivotTo(authoredWaveCf(wavePos))
+	wave:PivotTo(authoredWaveCf(wavePos, forward))
 
 	pulseCameraShake(0.7, 0.16, token)
 
@@ -1422,7 +1429,7 @@ local function runChase(token: number)
 		wavePos += forward * speed * dt
 		wavePos = Vector3.new(wavePos.X, C.WAVE_CRUISE_Y, wavePos.Z)
 		waveTravelPos = wavePos
-		wave:PivotTo(authoredWaveCf(wavePos))
+		wave:PivotTo(authoredWaveCf(wavePos, forward))
 
 		local rel = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
 		local along = rel:Dot(forward)

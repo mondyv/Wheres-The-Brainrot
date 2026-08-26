@@ -17,6 +17,7 @@ local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
+local LandAmbushUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandAmbushUtil"))
 local TimCheeseQuestConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TimCheeseQuestConfig"))
 
 local LandActivityStripController = {}
@@ -31,6 +32,7 @@ local POLL_SEC = 0.18
 local SHOW_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local HIDE_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local MOVE_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local LOCAL_MOVE_TWEEN = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local INSIDE_STREAK = 2
 local OUTSIDE_STREAK = 2
 
@@ -55,6 +57,7 @@ type AvatarSlot = {
 	stem: Frame?,
 	nameTip: TextLabel?,
 	land: number,
+	meterIndex: number,
 	stackIndex: number,
 }
 
@@ -160,16 +163,46 @@ local function applyRainbowToTrack(track: Frame): UIGradient?
 	return grad
 end
 
-local function landXDim(land: number): UDim
-	-- Track is Size (1, -14) on the plate. Lands 1–10 sit evenly on that rainbow;
-	-- Other World is a trailing chip so it no longer compresses the 10 lands.
+local function landXDim(index: number): UDim
+	-- Track is Size (1, -14) on the plate. Lands 1–10 sit evenly; fractional
+	-- index (3.4) slides between chips as you walk.
 	local pad = 7
-	if land >= OTHER_WORLD_SLOT then
+	if index >= OTHER_WORLD_SLOT then
 		return UDim.new(1, -pad)
 	end
-	local t = (math.clamp(land, 1, MAX_LAND) - 1) / math.max(MAX_LAND - 1, 1)
+	local t = (math.clamp(index, 1, MAX_LAND) - 1) / math.max(MAX_LAND - 1, 1)
 	local u = t * 0.9
 	return UDim.new(u, pad * (1 - 2 * u / 0.9))
+end
+
+local function landXDimFromIndex(index: number): UDim
+	return landXDim(index)
+end
+
+local function fractionalLandAt(worldPos: Vector3, discreteLand: number): number
+	local land = math.clamp(math.floor(discreteLand), 1, MAX_LAND)
+	local folder = LandAmbushUtil.findLandFolder(land)
+	if not folder then
+		return land
+	end
+	local minB, maxB = LandAmbushUtil.getLandBounds(folder)
+	if not minB or not maxB then
+		return land
+	end
+	local z0, z1 = minB.Z, maxB.Z
+	if z1 < z0 then
+		z0, z1 = z1, z0
+	end
+	local span = math.max(z1 - z0, 8)
+	local safe = SafezoneUtil.getSafezoneCenter()
+	local mid = (z0 + z1) * 0.5
+	local t: number
+	if safe and (mid - safe.Z) < 0 then
+		t = (z1 - worldPos.Z) / span
+	else
+		t = (worldPos.Z - z0) / span
+	end
+	return land + math.clamp(t, 0, 0.999)
 end
 
 local function isOutsideSafezone(): boolean
@@ -529,6 +562,7 @@ local function ensureSlot(plr: Player): AvatarSlot?
 		stem = stem,
 		nameTip = tip,
 		land = 0,
+		meterIndex = 1,
 		stackIndex = 0,
 	}
 	slotsByUserId[plr.UserId] = slot
@@ -607,16 +641,17 @@ local function layoutStacks()
 
 	local headY = -6
 	for land, list in byLand do
-		local xd = landXDim(land)
 		for i, slot in ipairs(list) do
 			slot.stackIndex = i
 			local stack = i - 1
 			local xJitter = ((stack % 3) - 1) * 0.012
 			local yLift = stack * (if isMobile() then 14 else 16)
+			local xd = landXDimFromIndex(if typeof(slot.meterIndex) == "number" then slot.meterIndex else land)
 			local goal = UDim2.new(xd.Scale + xJitter, xd.Offset, 0, headY - yLift)
 			slot.root.AnchorPoint = Vector2.new(0.5, 1)
 			slot.root.ZIndex = 80 + stack + (if slot.player == player then 12 else 0)
-			TweenService:Create(slot.root, MOVE_TWEEN, { Position = goal }):Play()
+			local tweenInfo = if slot.player == player then LOCAL_MOVE_TWEEN else MOVE_TWEEN
+			TweenService:Create(slot.root, tweenInfo, { Position = goal }):Play()
 
 			if slot.player == player then
 				slot.ring.Color = YOU_RING
@@ -644,6 +679,13 @@ local function syncPlayerSlot(plr: Player)
 	if not slot then
 		return
 	end
+	local meter = land
+	local character = plr.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		meter = fractionalLandAt(hrp.Position, land)
+	end
+	slot.meterIndex = meter
 	if slot.land ~= land then
 		slot.land = land
 		local scale = getOrAddUIScale(slot.root)

@@ -596,7 +596,8 @@ function M.wireTiltHoverButton(
 	onActivated: () -> (),
 	scaleRoot: GuiObject,
 	tiltTarget: GuiObject,
-	withPolish: boolean?
+	withPolish: boolean?,
+	skipTapGate: boolean?
 )
 	ensureButtonUnclip(btn)
 	local scale = getOrAddUIScale(scaleRoot)
@@ -609,7 +610,7 @@ function M.wireTiltHoverButton(
 	local HOVER_SCALE = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 	local function fireActivated()
-		if not canFireUiTap() then
+		if not skipTapGate and not canFireUiTap() then
 			return
 		end
 		local now = os.clock()

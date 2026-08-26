@@ -1497,7 +1497,10 @@ local function init()
 		local editHost = powerFrame:FindFirstChild("Edit")
 		if editHost and editHost:IsA("GuiObject") then
 			local btn = ensureFullClickCover(editHost)
-			UIButtonEffects.wireSidebarButton(btn, openPowerEdit)
+			local icon = btn:FindFirstChild("Icon", true) or btn:FindFirstChildWhichIsA("ImageLabel", true)
+			local tiltTarget: GuiObject = if icon and icon:IsA("GuiObject") then icon else btn
+			-- Mobile: press = hover polish; still fires after a short camera drag.
+			UIButtonEffects.wireTiltHoverButton(btn, openPowerEdit, btn, tiltTarget, true, true)
 		else
 			local editBtn = ensureEditButton(powerFrame)
 			if editBtn then

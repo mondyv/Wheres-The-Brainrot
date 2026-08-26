@@ -17,9 +17,10 @@ local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
-local MobileHaptics = require(script.Parent.MobileHaptics)
 local PanelSlideIn = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PanelSlideIn"))
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
+local BoostIconsController = require(script.Parent.BoostIconsController)
 
 local player = Players.LocalPlayer
 
@@ -314,7 +315,6 @@ local function ensurePanelBackdrop()
 		local closeBtn = findPanelCloseButton(frame)
 		for _, obj in atPos do
 			if closeBtn and (obj == closeBtn or obj:IsDescendantOf(closeBtn)) then
-				MobileHaptics.tap()
 				HUDController.closeCurrentFrame()
 				return
 			end
@@ -329,7 +329,6 @@ local function ensurePanelBackdrop()
 		if px >= pos.X and px <= pos.X + size.X and py >= pos.Y and py <= pos.Y + size.Y then
 			return
 		end
-		MobileHaptics.tap()
 		HUDController.closeCurrentFrame()
 	end)
 
@@ -387,6 +386,88 @@ local function showPanelChrome()
 	clearPanelBlur()
 	destroyPanelBackdrop()
 	restoreMobileControlsAfterPanel()
+end
+
+local KEEP_SIDE_IN_JUNGLE = {
+	Counters = true,
+	Return = true,
+	Toolbar = true,
+	Top = true,
+	Right = true,
+}
+
+local KEEP_COUNTERS_IN_JUNGLE = {
+	Cash = true,
+	Power = true,
+	SPACE = true,
+}
+
+local explorerHudActive = false
+local explorerSaved: { [GuiObject]: boolean } = {}
+
+local function hideForExplorer(obj: GuiObject)
+	if explorerSaved[obj] == nil then
+		explorerSaved[obj] = obj.Visible
+	end
+	if obj.Visible then
+		obj.Visible = false
+	end
+end
+
+local function restoreExplorerSaved()
+	for obj, wasVisible in explorerSaved do
+		if obj.Parent then
+			obj.Visible = wasVisible
+		end
+	end
+	table.clear(explorerSaved)
+end
+
+local function applyExplorerHud(outside: boolean)
+	ensureHudRoots()
+	local side = sideUI
+	if not side then
+		return
+	end
+	if outside then
+		for _, child in side:GetChildren() do
+			if child:IsA("GuiObject") and not KEEP_SIDE_IN_JUNGLE[child.Name] then
+				hideForExplorer(child)
+			end
+		end
+		local counters = side:FindFirstChild("Counters")
+		if counters then
+			for _, child in counters:GetChildren() do
+				if child:IsA("GuiObject") and not KEEP_COUNTERS_IN_JUNGLE[child.Name] then
+					hideForExplorer(child)
+				end
+			end
+		end
+	else
+		restoreExplorerSaved()
+	end
+	if BoostIconsController.setExplorerHud then
+		BoostIconsController.setExplorerHud(outside)
+	end
+end
+
+local function syncExplorerHud()
+	if GameplayUiVisibility.isHidden() then
+		return
+	end
+	local character = player.Character
+	local outside = false
+	if character and SafezoneUtil.isCacheReady() then
+		outside = not SafezoneUtil.isCharacterInSafezone(character)
+	end
+	if outside == explorerHudActive then
+		if outside then
+			applyExplorerHud(true)
+		end
+		return
+	end
+	explorerHudActive = outside
+	applyExplorerHud(outside)
 end
 
 -- Searches SideUI only (never Main.Frames — that wrongly wired panel-internal buttons).
@@ -815,6 +896,13 @@ function HUDController.init()
 			warn("[HUDController] Cash + / Buy button not found under Counters")
 		end
 	end
+
+	task.spawn(function()
+		while true do
+			task.wait(0.18)
+			syncExplorerHud()
+		end
+	end)
 end
 
 function HUDController.openFrameByName(frameName: string)

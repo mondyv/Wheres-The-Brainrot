@@ -4,7 +4,6 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local MobileHaptics = require(script.Parent.MobileHaptics)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
@@ -737,7 +736,6 @@ function M.wireGlistenCloseButton(btn: GuiButton, onActivated: () -> ())
 		local now = os.clock()
 		if now - lastFire >= 0.08 then
 			lastFire = now
-			MobileHaptics.tap()
 			onActivated()
 		end
 	end)

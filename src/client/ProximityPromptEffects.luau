@@ -18,6 +18,7 @@ local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local CarryGate = require(script.Parent.CarryGate)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local GamepadInput = require(script.Parent.GamepadInput)
+local MobileHaptics = require(script.Parent.MobileHaptics)
 local OtherVfxController = require(script.Parent.OtherVfxController)
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
@@ -1623,6 +1624,7 @@ local function fireManagedBushHoldComplete(prompt: ProximityPrompt)
 		stopBushSharedCardHoldVisual(bushSharedView, true)
 	end
 	UIInteractionSounds.playClick()
+	MobileHaptics.confirm()
 	local function runDefaultBushHoldComplete()
 		local handler = bushHoldCompleteHandler
 		if handler then

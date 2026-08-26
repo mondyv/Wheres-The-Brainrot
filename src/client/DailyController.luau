@@ -23,6 +23,7 @@ local HUDController = require(script.Parent.HUDController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local MobileHaptics = require(script.Parent.MobileHaptics)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
@@ -654,6 +655,7 @@ local function tryClaim(day: number, card: Frame)
 			return
 		end
 		UIInteractionSounds.playClick()
+		MobileHaptics.confirm()
 		if typeof(state) == "table" then
 			applyState(state :: DailyConfig.DailyState)
 		end

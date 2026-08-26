@@ -21,6 +21,7 @@ local ReturnConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local WebTrapConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WebTrapConfig"))
 local TopNotifController = require(script.Parent.TopNotifController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local MobileHaptics = require(script.Parent.MobileHaptics)
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
 
 local ReturnController = {}
@@ -566,6 +567,7 @@ local function onFreeReturnActivated()
 	setButtonsActive(false)
 	stopIdleMotion()
 	UIInteractionSounds.playClick()
+	MobileHaptics.confirm()
 
 	local fadeIn = playFadeIn()
 	waitForTween(fadeIn)
@@ -600,6 +602,7 @@ local function onPaidReturnActivated()
 	setButtonsActive(false)
 	stopIdleMotion()
 	UIInteractionSounds.playClick()
+	MobileHaptics.confirm()
 
 	local productId = ReturnConfig.productIdForCount(n)
 	pendingPaidProductId = productId

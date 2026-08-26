@@ -902,7 +902,6 @@ updateChoiceVisuals = function()
 	end
 	if selectedIndex ~= lastHapticSelectedIndex and choicesReady then
 		lastHapticSelectedIndex = selectedIndex
-		MobileHaptics.select()
 		beginSoulSelectPulse()
 	end
 	choiceEnter.TextColor3 = if selectedIndex == 1 then Color3.fromRGB(255, 255, 0) else Color3.fromRGB(255, 255, 255)

@@ -18,6 +18,7 @@ local MainGradientButtons = require(script.Parent.MainGradientButtons)
 local TopNotifController = require(script.Parent.TopNotifController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local MobileHaptics = require(script.Parent.MobileHaptics)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 
 local player = Players.LocalPlayer
@@ -835,6 +836,7 @@ local function tryRebirth(main: ScreenGui)
 	end
 	if ok then
 		UIInteractionSounds.playClick()
+		MobileHaptics.confirm()
 		HUDController.closeCurrentFrame()
 		fetchAndApply(main)
 	else

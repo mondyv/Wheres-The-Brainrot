@@ -20,6 +20,7 @@ local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"
 local OfflineEarningsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("OfflineEarningsConfig"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
+local MobileHaptics = require(script.Parent.MobileHaptics)
 
 local player = Players.LocalPlayer
 
@@ -555,6 +556,11 @@ local function wireButton(host: GuiObject, onClick: () -> (), alsoScale: GuiObje
 	end)
 	clickBtn.Activated:Connect(function()
 		UIInteractionSounds.playClick()
+		if host.Name == "Decline Button" then
+			MobileHaptics.error()
+		else
+			MobileHaptics.confirm()
+		end
 		onClick()
 	end)
 end

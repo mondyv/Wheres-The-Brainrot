@@ -17,6 +17,7 @@ local IndexConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChil
 local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+local MobileHaptics = require(script.Parent.MobileHaptics)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -893,6 +894,7 @@ local function wireCollectButton(row: Frame)
 			cached.collected[IndexConfig.unlockKey(name, mutationId)] = true
 		end
 		hideCollectChrome(row)
+		MobileHaptics.confirm()
 		if typeof(result.xp) == "number" then
 			playCollectedXpToast(result.xp)
 		end

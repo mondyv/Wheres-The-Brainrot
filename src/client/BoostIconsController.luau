@@ -31,6 +31,10 @@ local POP_TWEEN = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirectio
 
 local BoostIconsController = {}
 
+local explorerHud = false
+local iconsFolderRef: Instance? = nil
+local boostRow: GuiObject? = nil
+
 -- ── Tooltip (one shared frame on Main ScreenGui) ───────────────────────────────
 
 local TOOLTIP_FADE = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -363,6 +367,10 @@ local function hideAllBoostIcons(iconsFolder: Instance)
 end
 
 local function refreshIconsFolderVisible(iconsFolder: Instance)
+	if explorerHud then
+		hideAllBoostIcons(iconsFolder)
+		return
+	end
 	if not iconsFolder:IsA("GuiObject") then
 		return
 	end
@@ -405,6 +413,11 @@ local function setupIcons(iconsFolder: Instance)
 		icon.Visible = false
 		bindTooltip(icon, def.title, def.description, readGuiAccentColor(icon))
 		local function evaluate()
+			if explorerHud then
+				icon.Visible = false
+				refreshIconsFolderVisible(iconsFolder)
+				return
+			end
 			icon.Visible = isGamePassOwned(def)
 			refreshIconsFolderVisible(iconsFolder)
 		end
@@ -515,6 +528,10 @@ local function refreshPowerBoostHud()
 	if not powerBoostHost then
 		return
 	end
+	if explorerHud then
+		powerBoostHost.Visible = false
+		return
+	end
 	local count = RebirthConfig.getRebirthCount(player)
 	local pct = if count > 0 then RebirthConfig.powerPercentDisplayForTier(count) else 0
 	local show = pct > 0
@@ -561,6 +578,12 @@ local function refreshServerLuckFrame()
 	if not serverLuckFrame then
 		return
 	end
+	if explorerHud then
+		if serverLuckFrame.Visible then
+			serverLuckFrame.Visible = false
+		end
+		return
+	end
 	local mult = LuckBoost.serverLuckMultiplier()
 	local endsAt = ReplicatedStorage:GetAttribute(StoreConfig.SERVER_LUCK_ENDS_ATTR)
 	local remaining = if typeof(endsAt) == "number" then endsAt - os.time() else 0
@@ -591,6 +614,28 @@ local function refreshServerLuckFrame()
 	end
 end
 
+function BoostIconsController.setExplorerHud(on: boolean)
+	explorerHud = on
+	if boostRow then
+		boostRow.Visible = not on
+	end
+	if iconsFolderRef then
+		if on then
+			hideAllBoostIcons(iconsFolderRef)
+		else
+			for iconName, def in ICON_DEFS do
+				local icon = resolveBoostIcon(iconsFolderRef, iconName)
+				if icon then
+					icon.Visible = isGamePassOwned(def)
+				end
+			end
+			refreshIconsFolderVisible(iconsFolderRef)
+		end
+	end
+	refreshPowerBoostHud()
+	refreshServerLuckFrame()
+end
+
 -- ── Init ──────────────────────────────────────────────────────────────────────────
 
 local booted = false
@@ -619,6 +664,7 @@ local function init()
 
 	local iconsFolder = counters:WaitForChild("GamepassBoostIcons", 30)
 	if iconsFolder then
+		iconsFolderRef = iconsFolder
 		hideAllBoostIcons(iconsFolder)
 		setupIcons(iconsFolder)
 	else
@@ -626,7 +672,8 @@ local function init()
 	end
 
 	local boost = counters:FindFirstChild("Boost")
-	if boost then
+	if boost and boost:IsA("GuiObject") then
+		boostRow = boost :: GuiObject
 		local currentBoost = boost:FindFirstChild("CurrentBoost")
 		if currentBoost and currentBoost:IsA("GuiObject") then
 			bindTooltip(
@@ -716,6 +763,7 @@ local function init()
 	refreshOverallLuck()
 	refreshServerLuckFrame()
 	refreshPowerBoostHud()
+	BoostIconsController.setExplorerHud(explorerHud)
 
 	-- Live countdown for the server luck timer.
 	local accum = 0

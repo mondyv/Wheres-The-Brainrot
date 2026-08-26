@@ -10,6 +10,7 @@ local TweenService = game:GetService("TweenService")
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local HUDController = require(script.Parent.HUDController)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local MobileHaptics = require(script.Parent.MobileHaptics)
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
@@ -141,6 +142,7 @@ local function wireSellButton(clickBtn: GuiButton, handler: () -> ())
 		end
 		lastAt = now
 		UIInteractionSounds.playClick()
+		MobileHaptics.confirm()
 		handler()
 	end
 	mutePassiveGui(clickBtn)

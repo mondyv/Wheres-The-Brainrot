@@ -1145,7 +1145,7 @@ local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 			return
 		end
 		lastActivatedAt = now
-		MobileHaptics.tap()
+		MobileHaptics.confirm()
 		tryFireUpgrade()
 	end
 	clickable.Activated:Connect(requestUpgrade)

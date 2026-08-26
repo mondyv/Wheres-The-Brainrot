@@ -54,6 +54,7 @@ local blurFx: BlurEffect? = nil
 local exclamationGui: BillboardGui? = nil
 local activeSpider: Model? = nil
 local activeWave: Model? = nil
+local waveTitleGui: BillboardGui? = nil
 local waveTravelPos: Vector3? = nil
 local waveForward: Vector3? = nil
 local bgmSpeedSaved: { [Sound]: number } = {}
@@ -265,15 +266,30 @@ local function findStarterGradient(name: string): UIGradient?
 	return nil
 end
 
+local function destroyWaveTitle()
+	if waveTitleGui then
+		BrainrotGradientAnimator.unregister(waveTitleGui)
+		waveTitleGui:Destroy()
+		waveTitleGui = nil
+	end
+	for _, child in Workspace:GetChildren() do
+		if child:IsA("BillboardGui") and child.Name == "WaveWebTitle" then
+			BrainrotGradientAnimator.unregister(child)
+			child:Destroy()
+		end
+	end
+end
+
 local function attachWaveTitle(wave: Model)
 	local part = wave.PrimaryPart or wave:FindFirstChildWhichIsA("BasePart", true)
 	if not part then
 		return
 	end
-	local existing = wave:FindFirstChild("WaveWebTitle")
-	if existing then
-		BrainrotGradientAnimator.unregister(existing)
-		existing:Destroy()
+	destroyWaveTitle()
+	local nested = wave:FindFirstChild("WaveWebTitle", true)
+	if nested then
+		BrainrotGradientAnimator.unregister(nested)
+		nested:Destroy()
 	end
 	local raw = player:GetAttribute("CurrentLand")
 	local land = if typeof(raw) == "number" then math.clamp(math.floor(raw), 1, 10) else 1
@@ -282,10 +298,15 @@ local function attachWaveTitle(wave: Model)
 	bb.Name = "WaveWebTitle"
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
-	bb.Size = UDim2.fromScale(12, 2.2)
-	bb.StudsOffset = Vector3.new(0, 12, 0)
-	bb.MaxDistance = 520
-	bb.Parent = part
+	bb.ResetOnSpawn = false
+	bb.Active = false
+	bb.Size = UDim2.fromScale(28, 5.2)
+	bb.StudsOffset = Vector3.new(0, 16, 0)
+	bb.MaxDistance = 900
+	bb.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	pcall(function()
+		bb.ExtentsOffset = Vector3.new(0, 1.15, 0)
+	end)
 
 	local label = Instance.new("TextLabel")
 	label.Name = "Title"
@@ -296,9 +317,10 @@ local function attachWaveTitle(wave: Model)
 	label.TextScaled = true
 	label.ZIndex = 5
 	label.Parent = bb
-	UiFonts.applyDisplayLabel(label, 24, 14)
+	UiFonts.applyDisplay(label)
+	UiFonts.ensureTextSizeConstraint(label, 96, 42)
 	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = 2.6
+	stroke.Thickness = 3.2
 	stroke.Color = Color3.fromRGB(18, 10, 6)
 	stroke.Parent = label
 
@@ -312,10 +334,14 @@ local function attachWaveTitle(wave: Model)
 		local clone = template:Clone()
 		clone.Enabled = true
 		clone.Parent = label
-		BrainrotGradientAnimator.register(bb)
 	else
 		warn("[WaveWebChaseController] StarterGui.Gradients missing:", title.gradient)
 	end
+
+	bb.Adornee = part
+	bb.Parent = Workspace
+	waveTitleGui = bb
+	BrainrotGradientAnimator.register(bb)
 end
 
 local function hideChaseHud()
@@ -927,7 +953,7 @@ local function destroyChaseInstances()
 		activeSpider = nil
 	end
 	if activeWave then
-		BrainrotGradientAnimator.unregister(activeWave)
+		destroyWaveTitle()
 		activeWave:Destroy()
 		activeWave = nil
 	end
@@ -999,9 +1025,7 @@ local function requestKill()
 		activeSpider = nil
 	end
 	local wave = activeWave
-	if wave then
-		BrainrotGradientAnimator.unregister(wave)
-	end
+	destroyWaveTitle()
 	activeWave = nil
 	waveTravelPos = nil
 	waveForward = nil

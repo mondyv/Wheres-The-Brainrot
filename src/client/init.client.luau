@@ -30,8 +30,8 @@ task.defer(function()
 	pcall(function()
 		local Workspace = game:GetService("Workspace")
 		if Workspace.StreamingEnabled == true then
-			(Workspace :: any).StreamingMinRadius = 140
-			(Workspace :: any).StreamingTargetRadius = 360
+			(Workspace :: any).StreamingMinRadius = 112
+			(Workspace :: any).StreamingTargetRadius = 280
 		end
 	end)
 

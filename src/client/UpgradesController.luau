@@ -607,13 +607,11 @@ local function lockPowerAmountTextSize(amount: TextLabel)
 		if amount.TextSize >= 12 then
 			ts = amount.TextSize
 		else
-			ts = if compact then 16 else 20
+			ts = if compact then 22 else 24
 		end
 	end
-	local cap = if compact then 18 else 24
-	local floor = if compact then 13 else 16
 	amount.TextScaled = false
-	amount.TextSize = math.clamp(ts :: number, floor, cap)
+	amount.TextSize = math.clamp(ts :: number, 18, 32)
 	amount.AutomaticSize = Enum.AutomaticSize.X
 	amount.Size = UDim2.fromOffset(0, math.ceil(amount.TextSize * 1.2))
 end
@@ -675,8 +673,6 @@ local function ensurePulseCluster(powerFrame: GuiObject): Frame
 	end
 	if muscle then
 		muscle.LayoutOrder = 1
-		-- Use authored Offset size (not AbsoluteSize — that double-applies HUD UIScale).
-		local compact = isCompactHud()
 		local px = muscle.Size.X.Offset
 		local py = muscle.Size.Y.Offset
 		local counters = powerFrame.Parent
@@ -691,14 +687,12 @@ local function ensurePulseCluster(powerFrame: GuiObject): Frame
 				py = cy
 			end
 		end
-		local cap = if compact then 26 else 32
-		local floor = if compact then 20 else 22
-		if px < floor or px > cap or py < floor or py > cap then
-			px = if compact then 24 else 28
-			py = px
+		if px < 28 or py < 28 then
+			px = 40
+			py = 40
 		end
-		px = math.clamp(math.floor(px + 0.5), floor, cap)
-		py = math.clamp(math.floor(py + 0.5), floor, cap)
+		px = math.clamp(math.floor(px + 0.5), 32, 48)
+		py = math.clamp(math.floor(py + 0.5), 32, 48)
 		muscle.AutomaticSize = Enum.AutomaticSize.None
 		muscle.Size = UDim2.fromOffset(px, py)
 		local aspect = muscle:FindFirstChildOfClass("UIAspectRatioConstraint")
@@ -1610,11 +1604,16 @@ local function init()
 		end
 		local editBtn = ensureEditButton(powerFrame)
 		if editBtn then
-			UIButtonEffects.wireScaleButtonAnim(editBtn, openPowerEdit)
-		end
-		-- Pencil on the amount is the edited marker; tap the chip to open Studio Edit Power.
-		if powerFrame:IsA("GuiButton") then
-			UIButtonEffects.wireScaleButtonAnim(powerFrame, openPowerEdit)
+			editBtn.Active = true
+			pcall(function()
+				(editBtn :: any).Interactable = true
+			end)
+			local icon = editBtn:FindFirstChild("Icon", true) or editBtn:FindFirstChildWhichIsA("ImageLabel", true)
+			local tiltTarget: GuiObject = if icon and icon:IsA("GuiObject") then icon else editBtn
+			-- Same mobile press-hover as HUD sidebar (not PC hover-only).
+			UIButtonEffects.wireTiltHoverButton(editBtn, openPowerEdit, editBtn, tiltTarget, true)
+		elseif powerFrame:IsA("GuiButton") then
+			UIButtonEffects.wireTiltHoverButton(powerFrame, openPowerEdit, powerFrame, powerFrame, true)
 		elseif powerFrame:IsA("GuiObject") then
 			powerFrame.InputBegan:Connect(function(input)
 				if

@@ -192,18 +192,11 @@ local function landAnchorXZ(playerPos: Vector3): Vector3
 	return Vector3.new(playerPos.X, 0, playerPos.Z)
 end
 
--- One locked world axis. Lateral = land center (not the player). Travel = toward safezone.
+-- One locked world axis. Lateral = land center. Travel = authored look (never flip toward safezone).
 local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
 	local axis = chargeAxis()
 	local anchor = landAnchorXZ(playerPos)
-	local safe = SafezoneUtil.getSafezoneCenter()
-	local toSafe = if safe then Vector3.new(safe.X - anchor.X, 0, safe.Z - anchor.Z) else axis
-	if toSafe.Magnitude < 1 then
-		toSafe = axis
-	else
-		toSafe = toSafe.Unit
-	end
-	local forward = if axis:Dot(toSafe) >= 0 then axis else -axis
+	local forward = axis
 
 	local perp = Vector3.new(-forward.Z, 0, forward.X)
 	if perp.Magnitude < 0.05 then
@@ -259,8 +252,8 @@ local function attachWaveTitle(wave: Model)
 	bb.Name = "WaveWebTitle"
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
-	bb.Size = UDim2.fromOffset(680, 118)
-	bb.StudsOffset = Vector3.new(0, 16, 0)
+	bb.Size = UDim2.fromScale(12, 2.2)
+	bb.StudsOffset = Vector3.new(0, 12, 0)
 	bb.MaxDistance = 520
 	bb.Parent = part
 
@@ -273,7 +266,7 @@ local function attachWaveTitle(wave: Model)
 	label.TextScaled = true
 	label.ZIndex = 5
 	label.Parent = bb
-	UiFonts.applyDisplayLabel(label, 42, 22)
+	UiFonts.applyDisplayLabel(label, 24, 14)
 	local stroke = Instance.new("UIStroke")
 	stroke.Thickness = 2.6
 	stroke.Color = Color3.fromRGB(18, 10, 6)
@@ -592,16 +585,30 @@ local function setBgmChase(on: boolean)
 	end
 end
 
+local function applyFxGuiFullBleed(gui: ScreenGui)
+	gui.IgnoreGuiInset = true
+	gui.ClipToDeviceSafeArea = false
+	pcall(function()
+		gui.ScreenInsets = Enum.ScreenInsets.None
+	end)
+	gui.DisplayOrder = 80
+	gui.ResetOnSpawn = false
+end
+
 local function ensureFxGui(): ScreenGui
 	if fxGui and fxGui.Parent then
-		return fxGui
+		applyFxGuiFullBleed(fxGui)
+		if heartbeatFrame and heartbeatFrame:FindFirstChild("Wash") then
+			return fxGui
+		end
+		fxGui:Destroy()
+		fxGui = nil
+		heartbeatFrame = nil
 	end
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "WaveWebChaseFx"
-	gui.ResetOnSpawn = false
-	gui.IgnoreGuiInset = true
-	gui.DisplayOrder = 80
 	gui.Enabled = false
+	applyFxGuiFullBleed(gui)
 	gui.Parent = player:WaitForChild("PlayerGui")
 
 	local root = Instance.new("Frame")
@@ -609,7 +616,16 @@ local function ensureFxGui(): ScreenGui
 	root.BackgroundTransparency = 1
 	root.BorderSizePixel = 0
 	root.Size = UDim2.fromScale(1, 1)
+	root.Position = UDim2.fromScale(0, 0)
 	root.Parent = gui
+
+	local wash = Instance.new("Frame")
+	wash.Name = "Wash"
+	wash.BackgroundColor3 = Color3.fromRGB(160, 18, 28)
+	wash.BackgroundTransparency = 1
+	wash.BorderSizePixel = 0
+	wash.Size = UDim2.fromScale(1, 1)
+	wash.Parent = root
 
 	local function edge(name: string, size: UDim2, pos: UDim2, rot: number)
 		local f = Instance.new("Frame")
@@ -623,7 +639,7 @@ local function ensureFxGui(): ScreenGui
 		local g = Instance.new("UIGradient")
 		g.Transparency = NumberSequence.new({
 			NumberSequenceKeypoint.new(0, 0.05),
-			NumberSequenceKeypoint.new(0.55, 0.55),
+			NumberSequenceKeypoint.new(0.5, 0.42),
 			NumberSequenceKeypoint.new(1, 1),
 		})
 		g.Rotation = rot
@@ -631,11 +647,11 @@ local function ensureFxGui(): ScreenGui
 		return f
 	end
 
-	-- Soft red heartbeat edges (not a full-screen wash).
-	edge("Top", UDim2.new(1, 0, 0.22, 0), UDim2.fromScale(0, 0), 90)
-	edge("Bottom", UDim2.new(1, 0, 0.22, 0), UDim2.new(0, 0, 0.78, 0), -90)
-	edge("Left", UDim2.new(0.18, 0, 1, 0), UDim2.fromScale(0, 0), 0)
-	edge("Right", UDim2.new(0.18, 0, 1, 0), UDim2.new(0.82, 0, 0, 0), 180)
+	-- Full-bleed vignette (covers phone safe-area / notch insets).
+	edge("Top", UDim2.new(1, 0, 0.36, 0), UDim2.fromScale(0, 0), 90)
+	edge("Bottom", UDim2.new(1, 0, 0.36, 0), UDim2.new(0, 0, 0.64, 0), -90)
+	edge("Left", UDim2.new(0.28, 0, 1, 0), UDim2.fromScale(0, 0), 0)
+	edge("Right", UDim2.new(0.28, 0, 1, 0), UDim2.new(0.72, 0, 0, 0), 180)
 
 	heartbeatFrame = root
 	fxGui = gui
@@ -679,11 +695,16 @@ local function showHeartbeat(intensity: number)
 	local gui = ensureFxGui()
 	gui.Enabled = true
 	local i = math.clamp(intensity, 0, 1)
-	local edgeAlpha = 1 - math.clamp(0.2 + i * 0.55, 0.2, 0.72)
+	local edgeAlpha = 1 - math.clamp(0.28 + i * 0.58, 0.28, 0.82)
+	local washAlpha = 1 - math.clamp(0.08 + i * 0.22, 0.08, 0.3)
 	if heartbeatFrame then
 		for _, ch in heartbeatFrame:GetChildren() do
 			if ch:IsA("Frame") then
-				ch.BackgroundTransparency = edgeAlpha
+				if ch.Name == "Wash" then
+					ch.BackgroundTransparency = washAlpha
+				else
+					ch.BackgroundTransparency = edgeAlpha
+				end
 			end
 		end
 	end

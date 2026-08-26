@@ -14,6 +14,7 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
@@ -31,13 +32,13 @@ local FEATURE_ENABLED = true
 -- Reparent budget: restore terrain/island first (see restorePriority), a few per frame.
 local REPARENT_PER_YIELD = 3
 local REPARENT_PER_YIELD_SWING = 10
-local FAST_MOVE_SPEED = 28
-local STREAM_AHEAD_STUDS = 240
-local STREAM_FAR_STUDS = 420
+local FAST_MOVE_SPEED = 36
+local STREAM_AHEAD_STUDS = 180
+local STREAM_FAR_STUDS = 320
 local lastStreamAt = 0.0
-local STREAM_COOLDOWN = 0.22
-local GAMEPLAY_STREAM_TARGET = 360
-local SWING_STREAM_TARGET = 480
+local STREAM_COOLDOWN = 0.35
+local GAMEPLAY_STREAM_TARGET = 280
+local SWING_STREAM_TARGET = 420
 local swingStreamBoosted = false
 local wasFastTraveling = false
 
@@ -475,6 +476,15 @@ end
 -- Never force-restore cached grass/props before the island mesh streams in.
 local function softPrewarmAhead()
 	if not Workspace.StreamingEnabled then
+		return
+	end
+	-- Extra RequestStreamAroundAsync hitch phones; let the default streamer catch up.
+	if UserInputService.TouchEnabled then
+		if isFastTraveling() then
+			setSwingStreamBoost(true)
+		else
+			setSwingStreamBoost(false)
+		end
 		return
 	end
 	if not isFastTraveling() then

@@ -7,18 +7,18 @@
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local BrainrotGradientAnimator = require(script.Parent.BrainrotGradientAnimator)
 
 local HEADER_NAME = "BrainrotInfoBillboard"
-local HEADER_MAX_DISTANCE = 90
+local HEADER_MAX_DISTANCE = 140
 local HEADER_TAG = "BrainrotHeaderTarget"
 local ACTIVE_ATTR = "BrainrotHeaderActive"
 local STAND_DISPLAY_ATTR = "BrainrotStandDisplay"
-local DEFAULT_BB_SIZE = UDim2.fromOffset(280, 130)
+-- Studs, not pixels — pixel billboards vanish on phone cameras.
+local DEFAULT_BB_SIZE = UDim2.fromScale(8, 3.6)
 
 local templateCache: BillboardGui? = nil
 local headersByModel: { [Model]: BillboardGui } = {}
@@ -258,15 +258,11 @@ local function syncHeader(model: Model): boolean
 	bb.LightInfluence = 0
 	bb.MaxDistance = HEADER_MAX_DISTANCE
 	bb.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	if template.Size.Y.Offset > 4 then
+	-- Keep Studio studs size. Offset-pixel templates vanish on mobile.
+	if template.Size.X.Scale > 0.05 or template.Size.Y.Scale > 0.05 then
 		bb.Size = template.Size
 	else
 		bb.Size = DEFAULT_BB_SIZE
-	end
-	if UserInputService.TouchEnabled then
-		local w = if bb.Size.X.Offset > 4 then bb.Size.X.Offset else DEFAULT_BB_SIZE.X.Offset
-		local h = if bb.Size.Y.Offset > 4 then bb.Size.Y.Offset else DEFAULT_BB_SIZE.Y.Offset
-		bb.Size = UDim2.fromOffset(math.floor(w * 0.62), math.floor(h * 0.62))
 	end
 
 	-- ExtentsOffset stays on the adornee top as the model scales (raw Size.Y StudsOffset flies up).

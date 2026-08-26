@@ -644,6 +644,9 @@ function M.wireTiltHoverButton(
 		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 6 }):Play()
 		fireActivated()
 	end)
+	btn.Activated:Connect(function()
+		fireActivated()
+	end)
 	btn.MouseButton1Up:Connect(function()
 		TweenService:Create(scale, HOVER_SCALE, { Scale = if hovering then 1.1 else 1 }):Play()
 		if hovering then

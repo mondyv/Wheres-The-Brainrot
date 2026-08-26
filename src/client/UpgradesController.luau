@@ -269,8 +269,21 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 
 	local iconFrame = row:FindFirstChild("IconFrame")
 	if iconFrame and iconFrame:IsA("GuiObject") then
+		local panelVisible = true
+		local p: Instance? = iconFrame
+		while p do
+			if p:IsA("GuiObject") and not (p :: GuiObject).Visible then
+				panelVisible = false
+				break
+			end
+			p = p.Parent
+		end
 		local okMount, mountErr = pcall(function()
-			GearViewportIcon.mount(iconFrame, def.id, { rotate = true })
+			if panelVisible then
+				GearViewportIcon.mount(iconFrame, def.id, { rotate = true })
+			else
+				GearViewportIcon.clear(iconFrame)
+			end
 		end)
 		if not okMount then
 			warn("[UpgradesController] gear icon mount failed:", mountErr)
@@ -1730,6 +1743,14 @@ local function init()
 	upgrades:GetPropertyChangedSignal("Visible"):Connect(function()
 		if upgrades.Visible then
 			refreshAllRows()
+		else
+			for _, def in GearConfig.GEARS do
+				local row = container:FindFirstChild(tostring(def.id))
+				local iconFrame = row and row:FindFirstChild("IconFrame")
+				if iconFrame and iconFrame:IsA("GuiObject") then
+					GearViewportIcon.clear(iconFrame)
+				end
+			end
 		end
 	end)
 

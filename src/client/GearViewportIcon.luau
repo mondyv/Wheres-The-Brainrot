@@ -5,6 +5,7 @@
 -- The 3D mesh always stays inside the slot ViewportFrame (never reparented off the icon).
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local GearRainbowFX = require(script.Parent.GearRainbowFX)
@@ -16,6 +17,23 @@ local PROXY_FOLDER_NAME = "GearIconFxProxies"
 local spinConns: { [ViewportFrame]: RBXScriptConnection } = {}
 local proxyConns: { [GuiObject]: RBXScriptConnection } = {}
 local proxyParts: { [GuiObject]: BasePart } = {}
+
+local function isTouchClient(): boolean
+	return UserInputService.TouchEnabled
+end
+
+local function stripSimulatedFx(root: Instance)
+	for _, d in root:GetDescendants() do
+		if d:IsA("ParticleEmitter") then
+			d.Enabled = false
+			d:Clear()
+		elseif d:IsA("Beam") or d:IsA("Trail") or d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
+			(d :: any).Enabled = false
+		elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+			(d :: Light).Enabled = false
+		end
+	end
+end
 
 local function scaleNumberSequence(seq: NumberSequence, mult: number): NumberSequence
 	local keys = seq.Keypoints
@@ -108,6 +126,10 @@ end
 
 -- Enable / reparent the gear's authored FX only (no synthetic particles).
 local function enableAuthoredFx(root: Instance)
+	if isTouchClient() then
+		stripSimulatedFx(root)
+		return
+	end
 	local primary = if root:IsA("Model") then root.PrimaryPart else nil
 	if not primary and root:IsA("Model") then
 		primary = root:FindFirstChildWhichIsA("BasePart", true)
@@ -151,6 +173,9 @@ end
 
 -- Clone the gear's own ParticleEmitters into world space (VF can't draw them).
 local function mountFxProxy(host: GuiObject, sourceModel: Model)
+	if isTouchClient() then
+		return
+	end
 	clearFxProxy(host)
 
 	local emitters: { ParticleEmitter } = {}
@@ -207,6 +232,17 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model)
 		end)
 	end
 
+	local function setProxyEmittersEnabled(on: boolean)
+		for _, ch in part:GetChildren() do
+			if ch:IsA("ParticleEmitter") then
+				ch.Enabled = on
+				if not on then
+					ch:Clear()
+				end
+			end
+		end
+	end
+
 	proxyConns[host] = RunService.RenderStepped:Connect(function()
 		if not host.Parent or not part.Parent then
 			clearFxProxy(host)
@@ -216,27 +252,30 @@ local function mountFxProxy(host: GuiObject, sourceModel: Model)
 		if not camera then
 			return
 		end
-		if not host.Visible or host.AbsoluteSize.X < 2 or host.AbsoluteSize.Y < 2 then
-			part.CFrame = CFrame.new(0, -1e6, 0)
-			return
-		end
-		local vis = true
-		local p: Instance? = host
-		while p do
-			if p:IsA("GuiObject") and not (p :: GuiObject).Visible then
-				vis = false
-				break
+		local vis = host.Visible and host.AbsoluteSize.X >= 2 and host.AbsoluteSize.Y >= 2
+		if vis then
+			local p: Instance? = host.Parent
+			while p do
+				if p:IsA("GuiObject") and not (p :: GuiObject).Visible then
+					vis = false
+					break
+				end
+				if p:IsA("LayerCollector") then
+					if p:IsA("ScreenGui") and not (p :: ScreenGui).Enabled then
+						vis = false
+					end
+					break
+				end
+				p = p.Parent
 			end
-			if p:IsA("LayerCollector") then
-				break
-			end
-			p = p.Parent
 		end
 		if not vis then
+			setProxyEmittersEnabled(false)
 			part.CFrame = CFrame.new(0, -1e6, 0)
 			return
 		end
 
+		setProxyEmittersEnabled(true)
 		local center = host.AbsolutePosition + host.AbsoluteSize * 0.5
 		local ray = camera:ViewportPointToRay(center.X, center.Y)
 		local depth = 2.4
@@ -382,22 +421,24 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	local maxDim = math.max(size.X, size.Y, size.Z, 0.15)
 	local homePivot = clone:GetPivot()
 
-	local fillLight = Instance.new("PointLight")
-	fillLight.Name = "ViewportFillLight"
-	fillLight.Brightness = 4
-	fillLight.Range = math.max(14, maxDim * 5)
-	fillLight.Color = Color3.fromRGB(255, 250, 240)
-	local lightPart = Instance.new("Part")
-	lightPart.Name = "ViewportLightAnchor"
-	lightPart.Anchored = true
-	lightPart.CanCollide = false
-	lightPart.CanQuery = false
-	lightPart.CanTouch = false
-	lightPart.Transparency = 1
-	lightPart.Size = Vector3.new(0.2, 0.2, 0.2)
-	lightPart.CFrame = CFrame.new(0, maxDim * 0.35, maxDim * 0.4)
-	fillLight.Parent = lightPart
-	lightPart.Parent = world
+	if not isTouchClient() then
+		local fillLight = Instance.new("PointLight")
+		fillLight.Name = "ViewportFillLight"
+		fillLight.Brightness = 4
+		fillLight.Range = math.max(14, maxDim * 5)
+		fillLight.Color = Color3.fromRGB(255, 250, 240)
+		local lightPart = Instance.new("Part")
+		lightPart.Name = "ViewportLightAnchor"
+		lightPart.Anchored = true
+		lightPart.CanCollide = false
+		lightPart.CanQuery = false
+		lightPart.CanTouch = false
+		lightPart.Transparency = 1
+		lightPart.Size = Vector3.new(0.2, 0.2, 0.2)
+		lightPart.CFrame = CFrame.new(0, maxDim * 0.35, maxDim * 0.4)
+		fillLight.Parent = lightPart
+		lightPart.Parent = world
+	end
 
 	local cam = Instance.new("Camera")
 	cam.FieldOfView = 28
@@ -405,7 +446,7 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	vf.CurrentCamera = cam
 
 	local distance = maxDim * 2.15
-	local shouldRotate = not (opts and opts.rotate == false)
+	local shouldRotate = (not isTouchClient()) and not (opts and opts.rotate == false)
 	-- Hotbar: frozen 3/4 view. Shop: same pose as the spin start.
 	local yaw = math.rad(48)
 
@@ -417,22 +458,24 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	end
 	updateCam()
 
-	mountFxProxy(host, clone)
+	if not isTouchClient() then
+		mountFxProxy(host, clone)
+	end
 
-	if gearId == 6 then
+	if gearId == 6 and not isTouchClient() then
 		GearRainbowFX.attach(clone)
 	end
 
-	spinConns[vf] = RunService.RenderStepped:Connect(function(dt)
-		if not vf.Parent then
-			stopSpin(vf)
-			return
-		end
-		if shouldRotate then
+	if shouldRotate then
+		spinConns[vf] = RunService.RenderStepped:Connect(function(dt)
+			if not vf.Parent then
+				stopSpin(vf)
+				return
+			end
 			yaw += dt * 1.05
 			updateCam()
-		end
-	end)
+		end)
+	end
 
 	vf.AncestryChanged:Connect(function(_, parent)
 		if not parent then

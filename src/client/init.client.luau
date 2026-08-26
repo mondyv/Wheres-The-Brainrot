@@ -10,6 +10,7 @@ task.defer(function()
 	local Lighting = game:GetService("Lighting")
 	local StarterGui = game:GetService("StarterGui")
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local UserInputService = game:GetService("UserInputService")
 
 	task.spawn(function()
 		local shared = ReplicatedStorage:WaitForChild("Shared", 30)
@@ -83,39 +84,47 @@ task.defer(function()
 		require(script.RandomBrainrotController):Init()
 	end
 
-	-- Panel innards (Store buy buttons, Index tabs, etc.) — must be ready as soon as HUD opens.
+	-- Panel innards (Store buy buttons, Index tabs, etc.).
+	local panelBootSteps: { () -> () } = {
+		function()
+			require(script.GiftController).init()
+		end,
+		function()
+			require(script.StoreController).init()
+		end,
+		function()
+			require(script.IndexController).init()
+		end,
+		function()
+			require(script.RebirthController).init()
+		end,
+		function()
+			require(script.DailyController).init()
+		end,
+		function()
+			require(script.SettingsController).init()
+		end,
+		function()
+			require(script.SellController).init()
+		end,
+		function()
+			require(script.UpgradesController).init()
+			require(script.WorkoutController).init()
+			require(script.LevelController).init()
+		end,
+		function()
+			require(script.DealerShopController).init()
+		end,
+	}
+
 	local function bootPanelUI()
-		runBootStepsParallel({
-			function()
-				require(script.GiftController).init()
-			end,
-			function()
-				require(script.StoreController).init()
-			end,
-			function()
-				require(script.IndexController).init()
-			end,
-			function()
-				require(script.RebirthController).init()
-			end,
-			function()
-				require(script.DailyController).init()
-			end,
-			function()
-				require(script.SettingsController).init()
-			end,
-			function()
-				require(script.SellController).init()
-			end,
-			function()
-				require(script.UpgradesController).init()
-				require(script.WorkoutController).init()
-				require(script.LevelController).init()
-			end,
-			function()
-				require(script.DealerShopController).init()
-			end,
-		})
+		if UserInputService.TouchEnabled then
+			-- Phones hitch if every shop/index clones in the same frames as HUD reveal.
+			task.wait(0.75)
+			runBootSteps(panelBootSteps, 1)
+			return
+		end
+		runBootStepsParallel(panelBootSteps)
 	end
 
 	local function bootCriticalForRedWall()

@@ -11,6 +11,7 @@ local ContentProvider = game:GetService("ContentProvider")
 local HttpService = game:GetService("HttpService")
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
@@ -1577,6 +1578,16 @@ local function exitLoadingIsolation(playerGui: PlayerGui)
 	end
 
 	setCoreGuisVisible(true)
+
+	local touchGui = playerGui:FindFirstChild("TouchGui")
+	if touchGui and touchGui:IsA("ScreenGui") then
+		touchGui.Enabled = true
+	end
+	pcall(function()
+		local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
+		MobileTouchGate.restorePlayerMovement()
+		MobileTouchGate.ensureTouchControlsVisible(true)
+	end)
 
 	local blurGui = playerGui:FindFirstChild("Blur")
 	if blurGui and blurGui:IsA("ScreenGui") then

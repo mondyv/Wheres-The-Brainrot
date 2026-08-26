@@ -57,13 +57,13 @@ end
 
 local function pickIconFromModel(model: Model): string
 	local function readIconNode(node: Instance): string
-		if node:IsA("ImageLabel") and node.Image ~= "" then
+		if node:IsA("ImageLabel") and node.Image ~= "" and node.Image ~= "rbxasset://textures/ui/GuiImagePlaceholder.png" then
 			return node.Image
 		end
-		if node:IsA("ImageButton") and node.Image ~= "" then
+		if node:IsA("ImageButton") and node.Image ~= "" and node.Image ~= "rbxasset://textures/ui/GuiImagePlaceholder.png" then
 			return node.Image
 		end
-		if node:IsA("Decal") and node.Texture ~= "" then
+		if node:IsA("Decal") and node.Texture ~= "" and node.Texture ~= "rbxasset://textures/ui/GuiImagePlaceholder.png" then
 			return node.Texture
 		end
 		return ""

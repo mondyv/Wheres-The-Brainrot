@@ -160,9 +160,10 @@ local function applyRainbowToTrack(track: Frame): UIGradient?
 	return grad
 end
 
-local function landXScale(land: number): number
-	local t = (math.clamp(land, 1, SLOT_COUNT) - 1) / (SLOT_COUNT - 1)
-	return 0.04 + t * 0.92
+local function landXDim(land: number): UDim
+	-- Match Track Size (1, -14) centered on the plate so chips sit on the rainbow.
+	local t = (math.clamp(land, 1, SLOT_COUNT) - 1) / math.max(SLOT_COUNT - 1, 1)
+	return UDim.new(t, 7 * (1 - 2 * t))
 end
 
 local function isOutsideSafezone(): boolean
@@ -600,13 +601,13 @@ local function layoutStacks()
 
 	local headY = -6
 	for land, list in byLand do
-		local baseX = landXScale(land)
+		local xd = landXDim(land)
 		for i, slot in ipairs(list) do
 			slot.stackIndex = i
 			local stack = i - 1
 			local xJitter = ((stack % 3) - 1) * 0.012
 			local yLift = stack * (if isMobile() then 14 else 16)
-			local goal = UDim2.new(baseX + xJitter, 0, 0, headY - yLift)
+			local goal = UDim2.new(xd.Scale + xJitter, xd.Offset, 0, headY - yLift)
 			slot.root.AnchorPoint = Vector2.new(0.5, 1)
 			slot.root.ZIndex = 80 + stack + (if slot.player == player then 12 else 0)
 			TweenService:Create(slot.root, MOVE_TWEEN, { Position = goal }):Play()
@@ -812,12 +813,12 @@ local function buildStrip(parentGui: PlayerGui)
 	table.clear(landLabels)
 	table.clear(landTokens)
 	for land = 1, SLOT_COUNT do
-		local x = landXScale(land)
+		local xd = landXDim(land)
 
 		local peg = Instance.new("Frame")
 		peg.Name = "Peg" .. tostring(land)
 		peg.AnchorPoint = Vector2.new(0.5, 0.5)
-		peg.Position = UDim2.new(x, 0, 0.34, 0)
+		peg.Position = UDim2.new(xd.Scale, xd.Offset, 0.34, 0)
 		peg.Size = UDim2.fromOffset(7, 7)
 		peg.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		peg.BackgroundTransparency = 0.15
@@ -838,10 +839,10 @@ local function buildStrip(parentGui: PlayerGui)
 		local token = Instance.new("Frame")
 		token.Name = "Token" .. tostring(land)
 		token.AnchorPoint = Vector2.new(0.5, 0)
-		token.Position = UDim2.new(x, 0, 0.54, 0)
+		token.Position = UDim2.new(xd.Scale, xd.Offset, 0.54, 0)
 		local isOtherWorld = land == OTHER_WORLD_SLOT
 		token.Size = UDim2.fromOffset(
-			if isOtherWorld then (if compact then 62 else 74) else (if compact then 34 else 38),
+			if isOtherWorld then (if compact then 62 else 74) else (if compact then 42 else 46),
 			if compact then 17 else 18
 		)
 		token.BackgroundColor3 = TOKEN
@@ -871,8 +872,15 @@ local function buildStrip(parentGui: PlayerGui)
 		label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 		label.TextStrokeTransparency = 0.15
 		label.TextSize = if land == OTHER_WORLD_SLOT then (if compact then 8 else 9) else (if compact then 11 else 12)
+		label.TextScaled = true
+		label.TextTruncate = Enum.TextTruncate.None
 		label.ZIndex = 53
 		UiFonts.applyBody(label)
+		UiFonts.ensureTextSizeConstraint(
+			label,
+			if land == OTHER_WORLD_SLOT then 9 else 12,
+			if compact then 7 else 8
+		)
 		label.Parent = token
 		table.insert(landLabels, label)
 	end

@@ -31,13 +31,13 @@ local FEATURE_ENABLED = true
 -- Reparent budget: restore terrain/island first (see restorePriority), a few per frame.
 local REPARENT_PER_YIELD = 3
 local REPARENT_PER_YIELD_SWING = 10
-local FAST_MOVE_SPEED = 36
-local STREAM_AHEAD_STUDS = 180
-local STREAM_FAR_STUDS = 320
+local FAST_MOVE_SPEED = 28
+local STREAM_AHEAD_STUDS = 240
+local STREAM_FAR_STUDS = 420
 local lastStreamAt = 0.0
-local STREAM_COOLDOWN = 0.35
-local GAMEPLAY_STREAM_TARGET = 280
-local SWING_STREAM_TARGET = 420
+local STREAM_COOLDOWN = 0.22
+local GAMEPLAY_STREAM_TARGET = 360
+local SWING_STREAM_TARGET = 480
 local swingStreamBoosted = false
 local wasFastTraveling = false
 

@@ -333,23 +333,72 @@ local function findChildIgnoreCase(parent: Instance, name: string): Instance?
 	return nil
 end
 
--- Only the named node (or a direct ImageLabel inside it) — never walk mutation siblings.
+local PLACEHOLDER_IMAGE = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+
+local function isUsableImage(img: string?): boolean
+	if typeof(img) ~= "string" or img == "" then
+		return false
+	end
+	if img == PLACEHOLDER_IMAGE or img == "rbxassetid://0" then
+		return false
+	end
+	return true
+end
+
+local function textureFromNode(node: Instance): string
+	if node:IsA("ImageLabel") or node:IsA("ImageButton") then
+		local img = (node :: ImageLabel).Image
+		if isUsableImage(img) then
+			return img
+		end
+	elseif node:IsA("Decal") or node:IsA("Texture") then
+		local tex = (node :: Decal).Texture
+		if isUsableImage(tex) then
+			return tex
+		end
+	elseif node:IsA("MeshPart") then
+		local tex = (node :: MeshPart).TextureID
+		if isUsableImage(tex) then
+			return tex
+		end
+	end
+	return ""
+end
+
+-- Named node, then non-mutation descendants (Studio often nests ImageLabel → Mesh).
 local function readNamedIcon(node: Instance?): string
 	if not node then
 		return ""
 	end
-	if node:IsA("ImageLabel") and node.Image ~= "" then
-		return node.Image
-	end
-	if node:IsA("ImageButton") and node.Image ~= "" then
-		return node.Image
+	local direct = textureFromNode(node)
+	if direct ~= "" then
+		return direct
 	end
 	for _, child in node:GetChildren() do
-		if (child:IsA("ImageLabel") or child:IsA("ImageButton")) and not isMutationIconName(child.Name) then
-			local img = (child :: any).Image
-			if typeof(img) == "string" and img ~= "" then
-				return img
+		if isMutationIconName(child.Name) then
+			continue
+		end
+		local tex = textureFromNode(child)
+		if tex ~= "" then
+			return tex
+		end
+		for _, desc in child:GetDescendants() do
+			if isMutationIconName(desc.Name) then
+				continue
 			end
+			tex = textureFromNode(desc)
+			if tex ~= "" then
+				return tex
+			end
+		end
+	end
+	for _, desc in node:GetDescendants() do
+		if isMutationIconName(desc.Name) then
+			continue
+		end
+		local tex = textureFromNode(desc)
+		if tex ~= "" then
+			return tex
 		end
 	end
 	return ""

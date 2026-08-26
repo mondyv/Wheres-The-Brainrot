@@ -5,6 +5,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
@@ -145,28 +146,27 @@ local function clearFootAttach()
 	restoreToolVisibility()
 end
 
-local function tippyToeWorld(rf: BasePart, lf: BasePart?): CFrame
-	-- Tip of the foot (toes), not the ankle/heel.
-	local function tipOf(foot: BasePart): Vector3
-		return foot.CFrame:PointToWorldSpace(Vector3.new(0, -foot.Size.Y * 0.5 - 0.06, -foot.Size.Z * 0.35))
+local function groundBarCFrame(character: Model, rf: BasePart, lf: BasePart?): CFrame
+	local mid = if lf then (rf.Position + lf.Position) * 0.5 else rf.Position
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = { character }
+	local hit = Workspace:Raycast(mid + Vector3.new(0, 2.4, 0), Vector3.new(0, -10, 0), params)
+	local pos = if hit then hit.Position + Vector3.new(0, 0.16, 0) else Vector3.new(mid.X, mid.Y - 0.08, mid.Z)
+	local across = if lf then lf.Position - rf.Position else rf.CFrame.RightVector
+	across = Vector3.new(across.X, 0, across.Z)
+	if across.Magnitude < 0.05 then
+		across = Vector3.new(rf.CFrame.RightVector.X, 0, rf.CFrame.RightVector.Z)
 	end
-	if lf then
-		local a = tipOf(rf)
-		local b = tipOf(lf)
-		local mid = (a + b) * 0.5
-		local across = b - a
-		if across.Magnitude < 0.05 then
-			across = rf.CFrame.RightVector
-		end
-		local right = across.Unit
-		local up = (rf.CFrame.UpVector + lf.CFrame.UpVector) * 0.5
-		up = if up.Magnitude > 0.1 then up.Unit else Vector3.yAxis
-		local look = right:Cross(up)
-		look = if look.Magnitude > 0.1 then look.Unit else rf.CFrame.LookVector
-		up = look:Cross(right).Unit
-		return CFrame.fromMatrix(mid, right, up)
+	if across.Magnitude < 0.05 then
+		across = Vector3.new(1, 0, 0)
 	end
-	return CFrame.new(tipOf(rf)) * (rf.CFrame - rf.CFrame.Position) * CFrame.Angles(0, math.rad(90), math.rad(90))
+	local right = across.Unit
+	local up = Vector3.yAxis
+	local look = right:Cross(up)
+	look = if look.Magnitude > 0.05 then look.Unit else Vector3.new(0, 0, -1)
+	right = up:Cross(look).Unit
+	return CFrame.fromMatrix(pos, right, up)
 end
 
 -- Move the real equipped tool onto both tippy-toes (break hand grip every frame).
@@ -204,7 +204,7 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		end
 	end)
 
-	local pose0 = tippyToeWorld(anchorFoot, if anchorFoot == rightFoot then leftFoot else rightFoot)
+	local pose0 = groundBarCFrame(character, anchorFoot, if anchorFoot == rightFoot then leftFoot else rightFoot)
 	local motor = Instance.new("Motor6D")
 	motor.Name = "WorkoutFootMotor"
 	motor.Part0 = anchorFoot
@@ -223,7 +223,7 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		if not footA then
 			return
 		end
-		local pose = tippyToeWorld(footA, if footA == rf then lf else rf)
+		local pose = groundBarCFrame(player.Character or character, footA, if footA == rf then lf else rf)
 		-- Keep Part0 as the original anchor if it still exists; else retarget.
 		if motor.Part0 and motor.Part0.Parent then
 			motor.C0 = motor.Part0.CFrame:ToObjectSpace(pose)

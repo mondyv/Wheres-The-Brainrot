@@ -7,6 +7,7 @@
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
@@ -261,6 +262,11 @@ local function syncHeader(model: Model): boolean
 		bb.Size = template.Size
 	else
 		bb.Size = DEFAULT_BB_SIZE
+	end
+	if UserInputService.TouchEnabled then
+		local w = if bb.Size.X.Offset > 4 then bb.Size.X.Offset else DEFAULT_BB_SIZE.X.Offset
+		local h = if bb.Size.Y.Offset > 4 then bb.Size.Y.Offset else DEFAULT_BB_SIZE.Y.Offset
+		bb.Size = UDim2.fromOffset(math.floor(w * 0.62), math.floor(h * 0.62))
 	end
 
 	-- ExtentsOffset stays on the adornee top as the model scales (raw Size.Y StudsOffset flies up).

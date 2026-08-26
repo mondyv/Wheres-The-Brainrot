@@ -30,8 +30,8 @@ task.defer(function()
 	pcall(function()
 		local Workspace = game:GetService("Workspace")
 		if Workspace.StreamingEnabled == true then
-			(Workspace :: any).StreamingMinRadius = 112
-			(Workspace :: any).StreamingTargetRadius = 280
+			(Workspace :: any).StreamingMinRadius = 140
+			(Workspace :: any).StreamingTargetRadius = 360
 		end
 	end)
 
@@ -282,7 +282,9 @@ task.defer(function()
 
 		LoadingScreenController.registerOnGameplayReady(function()
 			pcall(function()
-				require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate")).ensureTouchControlsVisible()
+				local gate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
+				gate.ensureTouchControlsVisible(true)
+				gate.restorePlayerMovement()
 			end)
 		end)
 

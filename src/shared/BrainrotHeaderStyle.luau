@@ -560,6 +560,11 @@ function M.applyInfoFrame(infoFrame: Instance, data: {
 	local nameNode = findInfoChild(infoFrame, "Name")
 	if nameNode then
 		M.setTextOnNode(nameNode, data.name)
+		local nameLabel = M.resolveTextLabel(nameNode)
+		if nameLabel then
+			nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+			nameLabel.TextWrapped = false
+		end
 	end
 
 	local rarityNode = findInfoChild(infoFrame, "Rarity")

@@ -579,8 +579,12 @@ local function populateRow(
 	local frame = row:FindFirstChild("Frame") or row
 	local icon = frame:FindFirstChild("Icon", true)
 	if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
-		if typeof(entry.icon) == "string" and entry.icon ~= "" then
-			(icon :: ImageLabel).Image = entry.icon
+		local tex = if typeof(entry.icon) == "string" then entry.icon else ""
+		if tex == "" or tex == "rbxasset://textures/ui/GuiImagePlaceholder.png" or tex == "rbxassetid://0" then
+			tex = LuckyBlockCatalog.resolveIconAssetId(entry.name or displayName)
+		end
+		if tex ~= "" and tex ~= "rbxasset://textures/ui/GuiImagePlaceholder.png" then
+			(icon :: ImageLabel).Image = tex
 		end
 		setBlackoutOnIcon(icon, not unlocked)
 	end

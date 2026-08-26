@@ -36,6 +36,48 @@ local MODAL_OVERLAY_NAMES = {
 	"PanelModalDim",
 }
 
+function M.recoverLocomotion()
+	local player = Players.LocalPlayer
+	if not player then
+		return
+	end
+	if player:GetAttribute("WaveWebDeathLock") == true then
+		return
+	end
+	if player:GetAttribute("IsSwinging") == true then
+		return
+	end
+	if player:GetAttribute("WorkoutActive") == true then
+		return
+	end
+
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if pg then
+		for _, name in MODAL_OVERLAY_NAMES do
+			local gui = pg:FindFirstChild(name)
+			if gui and gui:IsA("ScreenGui") and gui.Enabled then
+				return
+			end
+		end
+	end
+
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not hum then
+		return
+	end
+	hum.PlatformStand = false
+	hum.AutoRotate = true
+	if hum.UseJumpPower then
+		if hum.JumpPower <= 0 then
+			hum.JumpPower = 50
+		end
+	end
+	if hum.JumpHeight <= 0 then
+		hum.JumpHeight = 7.2
+	end
+end
+
 local function hasModalOverlay(playerGui: Instance): boolean
 	for _, name in MODAL_OVERLAY_NAMES do
 		local gui = playerGui:FindFirstChild(name)
@@ -71,6 +113,8 @@ local function findJumpButton(touchGui: Instance): GuiButton?
 end
 
 function M.restorePlayerMovement()
+	M.recoverLocomotion()
+
 	if not UserInputService.TouchEnabled then
 		return
 	end
@@ -212,6 +256,31 @@ function M.init()
 	end
 	wired = true
 
+	local player = Players.LocalPlayer
+	local function recoverSoon()
+		task.defer(function()
+			M.recoverLocomotion()
+			M.ensureTouchControlsVisible(true)
+		end)
+		task.delay(0.45, function()
+			M.recoverLocomotion()
+			M.ensureTouchControlsVisible(true)
+		end)
+		task.delay(1.8, function()
+			M.recoverLocomotion()
+			M.ensureTouchControlsVisible(true)
+		end)
+	end
+	player.CharacterAdded:Connect(recoverSoon)
+	player:GetAttributeChangedSignal("IsSwinging"):Connect(function()
+		if player:GetAttribute("IsSwinging") ~= true then
+			task.delay(0.12, M.recoverLocomotion)
+		end
+	end)
+	if player.Character then
+		recoverSoon()
+	end
+
 	if not UserInputService.TouchEnabled then
 		return
 	end
@@ -238,15 +307,11 @@ function M.init()
 
 	RunService.Heartbeat:Connect(refreshBlockState)
 
-	local player = Players.LocalPlayer
 	local playerGui = player:WaitForChild("PlayerGui")
 	playerGui.ChildAdded:Connect(function(child)
 		if child.Name == "TouchGui" or child.Name == "Main" then
 			task.defer(M.ensureTouchControlsVisible)
 		end
-	end)
-	player.CharacterAdded:Connect(function()
-		task.defer(M.ensureTouchControlsVisible)
 	end)
 
 	task.defer(M.ensureTouchControlsVisible)

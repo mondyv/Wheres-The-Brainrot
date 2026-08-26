@@ -161,9 +161,15 @@ local function applyRainbowToTrack(track: Frame): UIGradient?
 end
 
 local function landXDim(land: number): UDim
-	-- Match Track Size (1, -14) centered on the plate so chips sit on the rainbow.
-	local t = (math.clamp(land, 1, SLOT_COUNT) - 1) / math.max(SLOT_COUNT - 1, 1)
-	return UDim.new(t, 7 * (1 - 2 * t))
+	-- Track is Size (1, -14) on the plate. Lands 1–10 sit evenly on that rainbow;
+	-- Other World is a trailing chip so it no longer compresses the 10 lands.
+	local pad = 7
+	if land >= OTHER_WORLD_SLOT then
+		return UDim.new(1, -pad)
+	end
+	local t = (math.clamp(land, 1, MAX_LAND) - 1) / math.max(MAX_LAND - 1, 1)
+	local u = t * 0.9
+	return UDim.new(u, pad * (1 - 2 * u / 0.9))
 end
 
 local function isOutsideSafezone(): boolean

@@ -36,7 +36,8 @@ M.SPIDER_CHARGE_SEC = 0.55
 M.SPIDER_CHARGE_STUDS = 34
 
 -- Authored Wave Web pose. Always Orientation 0, 90, 0 — never lookAt or yaw-flip.
-M.WAVE_SPAWN_POS = Vector3.new(1448.013, 92.301, 205.634)
+-- X/Y stay put; Z comes from the land lock behind that land (Land 1 example below).
+M.WAVE_SPAWN_POS = Vector3.new(1453.524, 92.301, 659.303)
 M.WAVE_SPAWN_ORIENTATION_DEG = Vector3.new(0, 90, 0)
 M.WAVE_SPAWN_YAW_DEG = 90
 M.WAVE_CRUISE_Y = 92.301

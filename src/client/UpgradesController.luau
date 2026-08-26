@@ -82,14 +82,6 @@ local function formatPower(n: number): string
 	return BrainrotEconomy.formatNumberShort(math.max(0, math.floor(n)))
 end
 
-local function isCompactHud(): boolean
-	if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-		return true
-	end
-	local cam = workspace.CurrentCamera
-	return cam ~= nil and cam.ViewportSize.X < 700
-end
-
 local function waitMain(): ScreenGui
 	return PlayerGuiMain.ensure(player)
 end
@@ -600,33 +592,10 @@ local function resolveMuscleIcon(powerFrame: Instance): ImageLabel?
 end
 
 -- Lock Amount TextSize BEFORE reparenting into AutomaticSize cluster.
--- TextScaled labels collapse to tiny text when their parent shrinks.
+-- Never rewrite Studio TextSize/Size — that is what broke the PC HUD number.
 local function lockPowerAmountTextSize(amount: TextLabel)
 	amount:SetAttribute("PowerAmtSizeLocked", true)
-
-	local compact = isCompactHud()
-	local ts: number? = nil
-	local counters = amount:FindFirstAncestor("Counters")
-	local cash = counters and counters:FindFirstChild("Cash")
-	local cashAmt = cash and cash:FindFirstChild("Amount", true)
-	if cashAmt and cashAmt:IsA("TextLabel") then
-		if not cashAmt.TextScaled and cashAmt.TextSize >= 12 then
-			ts = cashAmt.TextSize
-		elseif cashAmt.Size.Y.Offset >= 12 then
-			ts = math.floor(cashAmt.Size.Y.Offset * 0.72)
-		end
-	end
-	if not ts then
-		if amount.TextSize >= 12 then
-			ts = amount.TextSize
-		else
-			ts = if compact then 22 else 24
-		end
-	end
 	amount.TextScaled = false
-	amount.TextSize = math.clamp(ts :: number, 18, 32)
-	amount.AutomaticSize = Enum.AutomaticSize.X
-	amount.Size = UDim2.fromOffset(0, math.ceil(amount.TextSize * 1.2))
 end
 
 -- Scale Amount + muscle only (not Edit / whole SideUI chip) so hits land in the right place.
@@ -686,33 +655,6 @@ local function ensurePulseCluster(powerFrame: GuiObject): Frame
 	end
 	if muscle then
 		muscle.LayoutOrder = 1
-		local px = muscle.Size.X.Offset
-		local py = muscle.Size.Y.Offset
-		local counters = powerFrame.Parent
-		local cash = counters and counters:FindFirstChild("Cash")
-		local cashIcon = cash
-			and (cash:FindFirstChild("ImageLabel") or cash:FindFirstChildWhichIsA("ImageLabel", true))
-		if cashIcon and cashIcon:IsA("GuiObject") then
-			local cx = cashIcon.Size.X.Offset
-			local cy = cashIcon.Size.Y.Offset
-			if cx >= 16 and cy >= 16 then
-				px = cx
-				py = cy
-			end
-		end
-		if px < 28 or py < 28 then
-			px = 40
-			py = 40
-		end
-		px = math.clamp(math.floor(px + 0.5), 32, 48)
-		py = math.clamp(math.floor(py + 0.5), 32, 48)
-		muscle.AutomaticSize = Enum.AutomaticSize.None
-		muscle.Size = UDim2.fromOffset(px, py)
-		local aspect = muscle:FindFirstChildOfClass("UIAspectRatioConstraint")
-		if aspect then
-			local side = math.min(px, py)
-			muscle.Size = UDim2.fromOffset(side, side)
-		end
 		muscle.ScaleType = Enum.ScaleType.Fit
 		muscle.BackgroundTransparency = 1
 		muscle.Image = GearConfig.WORKOUT_IMAGE

@@ -49,6 +49,9 @@ local function refreshPlayer(player: Player)
 		return
 	end
 	local land = LandResolver.resolveLandAtPosition(hrp.Position)
+	if typeof(land) ~= "number" or land < 1 then
+		return
+	end
 	setLand(player, math.clamp(math.floor(land), 1, 10))
 end
 

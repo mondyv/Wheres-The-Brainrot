@@ -179,37 +179,60 @@ local function chargeAxis(): Vector3
 	return Vector3.new(0, 0, if flat.Z >= 0 then 1 else -1)
 end
 
-local function landAnchorXZ(playerPos: Vector3): Vector3
+local function currentLandNumber(): number
 	local raw = player:GetAttribute("CurrentLand")
-	local land = if typeof(raw) == "number" then math.clamp(math.floor(raw), 1, 10) else 1
+	if typeof(raw) == "number" then
+		return math.clamp(math.floor(raw), 1, 10)
+	end
+	return 1
+end
+
+local function instanceWorldPos(root: Instance): Vector3?
+	if root:IsA("Model") then
+		return (root :: Model):GetPivot().Position
+	end
+	if root:IsA("BasePart") then
+		return root.Position
+	end
+	local part = root:FindFirstChildWhichIsA("BasePart", true)
+	return if part then part.Position else nil
+end
+
+-- Land N harvest uses "Land (N+1) Lock" (Land 1 → Land 2 Lock). Land 10 uses Land 10 Lock.
+local function findLandLock(land: number): Instance?
+	local map = Workspace:FindFirstChild("Map")
+	local folder = map and map:FindFirstChild("Land Locks")
+	if not folder then
+		return nil
+	end
+	local lockLand = math.clamp(land + 1, 2, 10)
+	local name = "Land " .. tostring(lockLand) .. " Lock"
+	return folder:FindFirstChild(name)
+end
+
+local function lockCorridorZ(land: number, fallbackZ: number): number
+	local lock = findLandLock(land)
+	local pos = lock and instanceWorldPos(lock)
+	if pos then
+		return pos.Z
+	end
 	local folder = LandAmbushUtil.findLandFolder(land)
 	if folder then
 		local minB, maxB = LandAmbushUtil.getLandBounds(folder)
 		if minB and maxB then
-			return Vector3.new((minB.X + maxB.X) * 0.5, 0, (minB.Z + maxB.Z) * 0.5)
+			return (minB.Z + maxB.Z) * 0.5
 		end
 	end
-	return Vector3.new(playerPos.X, 0, playerPos.Z)
+	return fallbackZ
 end
 
--- One locked world axis. Lateral = land center. Travel = authored look (never flip toward safezone).
+-- Spawn behind the land lock: authored X/Y + lock Z. Travel = authored look (never flip).
 local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
-	local axis = chargeAxis()
-	local anchor = landAnchorXZ(playerPos)
-	local forward = axis
-
-	local perp = Vector3.new(-forward.Z, 0, forward.X)
-	if perp.Magnitude < 0.05 then
-		perp = Vector3.new(0, 0, 1)
-	else
-		perp = perp.Unit
-	end
-
-	local behind = math.max(36, C.WAVE_BEHIND_STUDS)
-	local along = playerPos:Dot(forward) - behind
-	local lateral = anchor:Dot(perp)
-	local flat = forward * along + perp * lateral
-	return Vector3.new(flat.X, C.WAVE_CRUISE_Y, flat.Z), forward
+	local forward = chargeAxis()
+	local land = currentLandNumber()
+	local z = lockCorridorZ(land, playerPos.Z)
+	local authored = C.WAVE_SPAWN_POS
+	return Vector3.new(authored.X, C.WAVE_CRUISE_Y, z), forward
 end
 
 local function findStarterGradient(name: string): UIGradient?
@@ -905,7 +928,7 @@ local function destroyChaseInstances()
 	waveForward = nil
 end
 
-local lockMovement: () -> ()
+local lockMovement: (any) -> ()
 local restoreCamera: () -> ()
 
 local function resolveKillRemote(): RemoteEvent?
@@ -1082,7 +1105,13 @@ local savedJumpHeight: number? = nil
 local savedUseJumpPower: boolean? = nil
 local savedAutoRotate: boolean? = nil
 
-lockMovement = function()
+lockMovement = function(handoff: {
+	walkSpeed: number?,
+	jumpPower: number?,
+	jumpHeight: number?,
+	useJumpPower: boolean?,
+	autoRotate: boolean?,
+}?)
 	cinematicLocked = true
 	ContextActionService:BindActionAtPriority(
 		MOVE_LOCK_ACTION,
@@ -1099,6 +1128,23 @@ lockMovement = function()
 	)
 	local hum = getHumanoid()
 	if hum then
+		if handoff then
+			if typeof(handoff.walkSpeed) == "number" and (handoff.walkSpeed :: number) > 0.05 then
+				savedWalkSpeed = handoff.walkSpeed
+			end
+			if typeof(handoff.jumpPower) == "number" then
+				savedJumpPower = handoff.jumpPower
+			end
+			if typeof(handoff.jumpHeight) == "number" then
+				savedJumpHeight = handoff.jumpHeight
+			end
+			if typeof(handoff.useJumpPower) == "boolean" then
+				savedUseJumpPower = handoff.useJumpPower
+			end
+			if typeof(handoff.autoRotate) == "boolean" then
+				savedAutoRotate = handoff.autoRotate
+			end
+		end
 		if savedWalkSpeed == nil then
 			local base = hum:GetAttribute("BrainrotBaseWalkSpeed")
 			if typeof(base) == "number" and base > 0 then
@@ -1108,15 +1154,25 @@ lockMovement = function()
 			else
 				savedWalkSpeed = 16
 			end
-			savedJumpPower = hum.JumpPower
-			savedJumpHeight = hum.JumpHeight
-			savedUseJumpPower = hum.UseJumpPower
-			savedAutoRotate = hum.AutoRotate
+			if savedJumpPower == nil then
+				savedJumpPower = hum.JumpPower
+			end
+			if savedJumpHeight == nil then
+				savedJumpHeight = hum.JumpHeight
+			end
+			if savedUseJumpPower == nil then
+				savedUseJumpPower = hum.UseJumpPower
+			end
+			if savedAutoRotate == nil then
+				savedAutoRotate = hum.AutoRotate
+			end
 		end
 		hum.WalkSpeed = 0
 		hum.JumpPower = 0
 		hum.JumpHeight = 0
+		hum.Jump = false
 		hum.AutoRotate = false
+		hum:Move(Vector3.zero, false)
 	end
 	if moveLockConn then
 		moveLockConn:Disconnect()
@@ -1129,6 +1185,7 @@ lockMovement = function()
 			h.JumpPower = 0
 			h.JumpHeight = 0
 			h.Jump = false
+			h:Move(Vector3.zero, false)
 		end
 	end)
 end
@@ -1269,11 +1326,7 @@ local function preloadModel(model: Model)
 end
 
 local function currentLand(): number
-	local raw = player:GetAttribute("CurrentLand")
-	if typeof(raw) == "number" then
-		return math.clamp(math.floor(raw), 1, 10)
-	end
-	return 1
+	return currentLandNumber()
 end
 
 -- End cinematic: free camera + movement so the player can sprint to safezone.
@@ -1299,14 +1352,10 @@ local function runIntro(token: number, _playerPos: Vector3)
 		return
 	end
 	clearExclamation()
-	releaseToGameplay(token)
 end
 
 local function runChase(token: number)
-	-- Make sure we never re-lock camera mid-chase; unlock swing/move for the run.
-	releaseToGameplay(token)
-	FloatingClaimCutscene.releaseMoveLock()
-	MobileTouchGate.restorePlayerMovement()
+	-- Wave already rose during intro lock; now it charges and the player can run.
 	killFired = false
 
 	local hrp0 = getHRP()
@@ -1416,7 +1465,13 @@ local function runChase(token: number)
 	end
 end
 
-local function runSequence(_model: Model)
+local function runSequence(_model: Model, handoff: {
+	walkSpeed: number?,
+	jumpPower: number?,
+	jumpHeight: number?,
+	useJumpPower: boolean?,
+	autoRotate: boolean?,
+}?)
 	if chaseActive then
 		return
 	end
@@ -1436,6 +1491,7 @@ local function runSequence(_model: Model)
 	chaseToken += 1
 	local token = chaseToken
 	killFired = false
+	lockMovement(handoff)
 
 	local ok, err = pcall(function()
 		task.wait(C.DELAY_AFTER_ACCEPT_SEC)
@@ -1454,6 +1510,11 @@ local function runSequence(_model: Model)
 			return
 		end
 
+		spawnTsunami(playerPos)
+		if token ~= chaseToken then
+			return
+		end
+		releaseToGameplay(token)
 		runChase(token)
 	end)
 
@@ -1509,8 +1570,8 @@ function WaveWebChaseController.init()
 	end)
 
 	BushFloatingClaimController.registerAcceptHook(function(model: Model)
-		FloatingClaimCutscene.releaseMoveLock()
-		task.spawn(runSequence, model)
+		local handoff = FloatingClaimCutscene.takeMoveLockState()
+		task.spawn(runSequence, model, handoff)
 	end)
 end
 

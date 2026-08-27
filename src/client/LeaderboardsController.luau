@@ -162,6 +162,9 @@ function M.init()
 			if
 				child.Name == "LeaderBoards"
 				or child.Name == "Leaderboards"
+				or child.Name == "TimeLeaderboard"
+				or child.Name == "CashLeaderboard"
+				or child.Name == "Spawn And Bases"
 				or child.Name == "GUIPart"
 				or child:IsA("SurfaceGui")
 				or string.find(child.Name, "Stud UI Pack", 1, true)

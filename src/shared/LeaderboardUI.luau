@@ -16,8 +16,10 @@ export type RowEntry = {
 }
 
 local ROW_COUNT = 100
+local AUTHORED_SLOT_MAX = 10
 
 local BOARD_KEYS = { "Cash", "Time" }
+local SPAWN_FOLDER_NAMES = { "Spawn And Bases", "Spawn and Bases", "SpawnAndBases" }
 
 local function _lowerName(inst: Instance): string
 	return string.lower(inst.Name)
@@ -50,6 +52,22 @@ local function boardKeyFromHeaderText(text: string): string?
 end
 
 function M.findLeaderboardsRoot(): Instance?
+	local map = Workspace:FindFirstChild("Map")
+	if map then
+		for _, spawnName in SPAWN_FOLDER_NAMES do
+			local spawn = map:FindFirstChild(spawnName)
+			if spawn then
+				local boards = spawn:FindFirstChild("Leaderboards") or spawn:FindFirstChild("LeaderBoards")
+				if boards then
+					return boards
+				end
+			end
+		end
+		local direct = map:FindFirstChild("Leaderboards") or map:FindFirstChild("LeaderBoards")
+		if direct then
+			return direct
+		end
+	end
 	local buildingAssets = Workspace:FindFirstChild("Building Assets")
 	if buildingAssets then
 		for _, child in buildingAssets:GetChildren() do
@@ -64,30 +82,15 @@ function M.findLeaderboardsRoot(): Instance?
 			end
 		end
 	end
-	-- Cheap fallback: Map / direct children only (never full Workspace:GetDescendants).
-	local map = Workspace:FindFirstChild("Map")
-	if map then
-		local boards = map:FindFirstChild("LeaderBoards", true) or map:FindFirstChild("Leaderboards", true)
-		if boards then
-			return boards
-		end
-	end
 	return nil
 end
 
 local function findBoardFolder(root: Instance, boardName: string): Instance?
-	local aliases = if boardName == "Cash"
-		then { "Cash", "Most Cash", "MostCash", "Money" }
-		else { "Time", "Most Time", "MostTime", "PlayTime", "Play Time" }
-	for _, alias in aliases do
-		local found = root:FindFirstChild(alias, true)
-		if found then
-			return found
-		end
-	end
-	for _, desc in root:GetDescendants() do
-		if boardKeyFromName(desc.Name) == boardName then
-			return desc
+	-- Prefer TimeLeaderboard / CashLeaderboard children. Never recursive-search "Cash"
+	-- or "Time" — those names live on row labels and would bind the wrong board.
+	for _, child in root:GetChildren() do
+		if boardKeyFromName(child.Name) == boardName then
+			return child
 		end
 	end
 	return nil
@@ -136,7 +139,80 @@ local function rowHasScoreColumns(row: Instance): boolean
 	return rankNode ~= nil and userNode ~= nil and amountNode ~= nil
 end
 
+local function numberedSlotCount(root: Instance): number
+	local n = 0
+	for _, child in root:GetChildren() do
+		if child:IsA("GuiObject") and tonumber(child.Name) then
+			n += 1
+		end
+	end
+	return n
+end
+
+local function findAuthoredContainer(surfaceGui: SurfaceGui): Instance?
+	local frame = surfaceGui:FindFirstChild("Frame")
+	if frame then
+		local container = frame:FindFirstChild("Container")
+		if container and numberedSlotCount(container) > 0 then
+			return container
+		end
+		if numberedSlotCount(frame) > 0 then
+			return frame
+		end
+	end
+	local container = surfaceGui:FindFirstChild("Container")
+	if container and numberedSlotCount(container) > 0 then
+		return container
+	end
+	return nil
+end
+
+local function findSurfaceGuiOnBoard(board: Instance): SurfaceGui?
+	local guiPart = board:FindFirstChild("GUIPart")
+	if guiPart then
+		local sg = guiPart:FindFirstChildWhichIsA("SurfaceGui")
+		if sg then
+			return sg
+		end
+		local nested = guiPart:FindFirstChildWhichIsA("SurfaceGui", true)
+		if nested then
+			return nested
+		end
+	end
+	return board:FindFirstChildWhichIsA("SurfaceGui", true)
+end
+
+local function cloneAuthoredLayoutIfNeeded(surfaceGui: SurfaceGui)
+	if findAuthoredContainer(surfaceGui) then
+		return
+	end
+	local root = M.findLeaderboardsRoot()
+	if not root then
+		return
+	end
+	local myKey = M.detectBoardKey(surfaceGui)
+	for _, sibling in root:GetChildren() do
+		if boardKeyFromName(sibling.Name) == nil or boardKeyFromName(sibling.Name) == myKey then
+			continue
+		end
+		local otherGui = findSurfaceGuiOnBoard(sibling)
+		if not otherGui or otherGui == surfaceGui then
+			continue
+		end
+		local srcFrame = otherGui:FindFirstChild("Frame")
+		if srcFrame and numberedSlotCount(srcFrame:FindFirstChild("Container") or srcFrame) > 0 then
+			srcFrame:Clone().Parent = surfaceGui
+			return
+		end
+	end
+end
+
 local function findEntriesRoot(surfaceGui: SurfaceGui): Instance
+	cloneAuthoredLayoutIfNeeded(surfaceGui)
+	local authored = findAuthoredContainer(surfaceGui)
+	if authored then
+		return authored
+	end
 	local scroll = surfaceGui:FindFirstChild("LeaderboardScroll", true)
 	if scroll and scroll:IsA("ScrollingFrame") then
 		return scroll
@@ -145,7 +221,7 @@ local function findEntriesRoot(surfaceGui: SurfaceGui): Instance
 	for _, name in preferred do
 		for _, desc in surfaceGui:GetDescendants() do
 			if desc.Name == name and (desc:IsA("Frame") or desc:IsA("ScrollingFrame")) then
-				if desc:FindFirstChild("1", true) or rowHasScoreColumns(desc) then
+				if desc:FindFirstChild("1") or rowHasScoreColumns(desc) then
 					return desc
 				end
 			end
@@ -159,7 +235,8 @@ local function findRowFrames(surfaceGui: SurfaceGui): { Instance }
 	local rows: { Instance } = {}
 	local seen: { [Instance]: boolean } = {}
 
-	for rank = 1, ROW_COUNT do
+	local slotMax = if numberedSlotCount(root) > 0 then AUTHORED_SLOT_MAX else ROW_COUNT
+	for rank = 1, slotMax do
 		local candidates = {
 			root:FindFirstChild(tostring(rank)),
 			root:FindFirstChild("Row" .. tostring(rank)),
@@ -175,14 +252,14 @@ local function findRowFrames(surfaceGui: SurfaceGui): { Instance }
 	end
 
 	local filled = 0
-	for rank = 1, ROW_COUNT do
+	for rank = 1, slotMax do
 		if rows[rank] then
 			filled += 1
 		end
 	end
-	if filled >= 3 then
+	if filled >= 1 then
 		local ordered: { Instance } = {}
-		for rank = 1, ROW_COUNT do
+		for rank = 1, slotMax do
 			if rows[rank] then
 				table.insert(ordered, rows[rank])
 			end
@@ -202,6 +279,9 @@ local function findRowFrames(surfaceGui: SurfaceGui): { Instance }
 
 	if #rows == 0 then
 		for _, child in root:GetChildren() do
+			if child.Name == "SPACE" or child:IsA("UIBase") then
+				continue
+			end
 			if child:IsA("GuiObject") and (child:IsA("Frame") or child:IsA("ImageLabel") or child:IsA("TextLabel")) then
 				if not seen[child] then
 					seen[child] = true
@@ -335,8 +415,11 @@ local function paintRow(row: Instance, entry: RowEntry?, rank: number)
 		User = row:FindFirstChild("User", true),
 		Name = row:FindFirstChild("Name", true),
 		Player = row:FindFirstChild("Player", true),
+		Username = row:FindFirstChild("Username", true),
+		DisplayName = row:FindFirstChild("DisplayName", true),
 		Amount = row:FindFirstChild("Amount", true),
 		Value = row:FindFirstChild("Value", true),
+		Score = row:FindFirstChild("Score", true),
 		Cash = row:FindFirstChild("Cash", true),
 		Time = row:FindFirstChild("Time", true),
 	}
@@ -361,8 +444,11 @@ local function paintRow(row: Instance, entry: RowEntry?, rank: number)
 	local paintedUser = applyNamed(byName.User, userText)
 		or applyNamed(byName.Name, userText)
 		or applyNamed(byName.Player, userText)
+		or applyNamed(byName.Username, userText)
+		or applyNamed(byName.DisplayName, userText)
 	local paintedAmount = applyNamed(byName.Amount, amountText)
 		or applyNamed(byName.Value, amountText)
+		or applyNamed(byName.Score, amountText)
 		or applyNamed(byName.Cash, amountText)
 		or applyNamed(byName.Time, amountText)
 
@@ -411,6 +497,15 @@ end
 local function ensureScrollableRows(surfaceGui: SurfaceGui): GuiObject?
 	surfaceGui.Enabled = true
 	surfaceGui.Active = true
+	pcall(function()
+		surfaceGui.MaxDistance = math.max(surfaceGui.MaxDistance, 180)
+	end)
+	cloneAuthoredLayoutIfNeeded(surfaceGui)
+	local authored = findAuthoredContainer(surfaceGui)
+	if authored and authored:IsA("GuiObject") then
+		-- Studio already laid out slots 1–10 + SPACE + UIListLayout. Do not wrap or clone 100 rows.
+		return authored
+	end
 	local root = findEntriesRoot(surfaceGui)
 	if not (root and root:IsA("GuiObject")) then
 		return nil

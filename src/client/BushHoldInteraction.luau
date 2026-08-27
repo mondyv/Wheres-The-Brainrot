@@ -1000,7 +1000,10 @@ function BushHoldInteraction.init()
 			return
 		end
 		aimTickAccum = 0
-		tickAim()
+		local ok, err = pcall(tickAim)
+		if not ok then
+			warn("[BushHoldInteraction] tickAim error:", err)
+		end
 	end)
 
 	-- Engine ProximityPrompt hold is blocked while a brainrot Tool is equipped; run the hold ourselves.

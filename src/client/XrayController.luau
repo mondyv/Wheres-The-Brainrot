@@ -68,17 +68,17 @@ local function disconnectActiveBushConns()
 	table.clear(activeBushConns)
 end
 
+-- Never call UserOwnsGamePassAsync from aim/highlight — it yields and freezes bush search.
+local xrayOwnedCached = false
+
+local function refreshXrayOwnedCache()
+	xrayOwnedCached = player:GetAttribute(StoreConfig.ATTR.XRAY_OWNED) == true
+		or player:GetAttribute(StoreConfig.ATTR.GIFTED_XRAY) == true
+		or player:GetAttribute(StoreConfig.ATTR.PURCHASED_XRAY) == true
+end
+
 local function ownsXrayVision(): boolean
-	if player:GetAttribute(StoreConfig.ATTR.XRAY_OWNED) == true then
-		return true
-	end
-	local ok, owned = pcall(function()
-		return MarketplaceService:UserOwnsGamePassAsync(player.UserId, StoreConfig.GAMEPASS.XRAY)
-	end)
-	if not ok then
-		warn("[XrayController] UserOwnsGamePassAsync failed:", owned)
-	end
-	return ok and owned == true
+	return xrayOwnedCached
 end
 
 local function formatRate(income: number): string
@@ -459,21 +459,50 @@ local function bushOutlineGradient(bush: Instance): ColorSequence?
 end
 
 local function init()
+	refreshXrayOwnedCache()
 	buildBillboard()
 	BushHoldInteraction.setBushOutlineGradientProvider(bushOutlineGradient)
 	BushHoldInteraction.onActiveBushChanged(onActiveBushChanged)
 
-	player:GetAttributeChangedSignal(StoreConfig.ATTR.XRAY_OWNED):Connect(function()
+	local function onXrayAttrChanged()
+		refreshXrayOwnedCache()
 		onActiveBushChanged(BushHoldInteraction.getActiveBush())
-	end)
+	end
+	player:GetAttributeChangedSignal(StoreConfig.ATTR.XRAY_OWNED):Connect(onXrayAttrChanged)
+	player:GetAttributeChangedSignal(StoreConfig.ATTR.GIFTED_XRAY):Connect(onXrayAttrChanged)
+	player:GetAttributeChangedSignal(StoreConfig.ATTR.PURCHASED_XRAY):Connect(onXrayAttrChanged)
 
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, gamePassId, wasPurchased)
 		if plr ~= player or not wasPurchased or gamePassId ~= StoreConfig.GAMEPASS.XRAY then
 			return
 		end
+		xrayOwnedCached = true
 		task.defer(function()
 			onActiveBushChanged(BushHoldInteraction.getActiveBush())
 		end)
+	end)
+
+	task.spawn(function()
+		if xrayOwnedCached then
+			return
+		end
+		local ok, owned = pcall(function()
+			return MarketplaceService:UserOwnsGamePassAsync(player.UserId, StoreConfig.GAMEPASS.XRAY)
+		end)
+		if not ok then
+			warn("[XrayController] UserOwnsGamePassAsync failed:", owned)
+			return
+		end
+		if owned ~= true then
+			return
+		end
+		xrayOwnedCached = true
+		local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+		local claim = remotes and remotes:FindFirstChild("ClaimOwnedGamepass")
+		if claim and claim:IsA("RemoteEvent") then
+			claim:FireServer(StoreConfig.GAMEPASS.XRAY)
+		end
+		onActiveBushChanged(BushHoldInteraction.getActiveBush())
 	end)
 end
 

@@ -99,13 +99,17 @@ local function readGuiAccentColor(obj: GuiObject): Color3
 end
 
 local function prepareHoverTarget(obj: GuiObject)
-	-- ImageLabels ignore MouseEnter unless Active; enable input without changing visuals.
-	if not obj:IsA("GuiButton") then
-		obj.Active = true
-	end
+	-- Display-only: Active ImageButtons/Frames here eat world clicks (bush search).
+	obj.Active = false
+	pcall(function()
+		(obj :: any).Interactable = false
+	end)
 	for _, d in obj:GetDescendants() do
-		if d:IsA("GuiObject") and not d:IsA("GuiButton") then
-			d.Active = true
+		if d:IsA("GuiObject") then
+			d.Active = false
+			pcall(function()
+				(d :: any).Interactable = false
+			end)
 		end
 	end
 end
@@ -291,64 +295,88 @@ end
 
 -- ── Gamepass icons ──────────────────────────────────────────────────────────────
 
--- iconName → { gamePassId, ownedAttr, title, description }
+-- Studio child names under SideUI.Counters.GamepassBoostIcons.
 local ICON_DEFS = {
 	["VIP"] = {
 		id = StoreConfig.GAMEPASS.VIP,
 		attr = StoreConfig.ATTR.VIP_OWNED,
 		title = "VIP",
 		description = "1.5× cash income · 4× luck · 2 free steals",
+		aliases = { "vip" },
 	},
 	["2x Cash"] = {
 		id = StoreConfig.GAMEPASS.DOUBLE_CASH,
 		attr = StoreConfig.ATTR.DOUBLE_CASH_OWNED,
 		title = "2× Cash",
 		description = "Double income from all brainrots on your stands",
+		aliases = { "2xcash", "doublecash", "double cash" },
 	},
 	["2x Upgrades"] = {
 		id = StoreConfig.GAMEPASS.DOUBLE_UPGRADES,
 		attr = StoreConfig.ATTR.DOUBLE_UPGRADES_OWNED,
 		title = "2× Upgrades",
 		description = "Each stand upgrade grants +25 levels (Robux)",
+		aliases = { "2xupgrades", "doubleupgrades", "double upgrades" },
 	},
 	["2x Power"] = {
 		id = StoreConfig.GAMEPASS.DOUBLE_POWER,
 		attr = StoreConfig.ATTR.DOUBLE_POWER_OWNED,
 		title = "2× Power",
 		description = "Double Power gained every time you work out",
+		aliases = { "2xpower", "doublepower", "double power" },
 	},
 	["Mega Luck"] = {
 		id = StoreConfig.GAMEPASS.MEGA_LUCK,
 		attr = StoreConfig.ATTR.MEGA_LUCK_OWNED,
 		title = "MEGA Luck",
 		description = "+250% better brainrot chances when harvesting bushes",
+		aliases = { "megaluck", "mega luck" },
 	},
 	["X-Ray Vision"] = {
 		id = StoreConfig.GAMEPASS.XRAY,
 		attr = StoreConfig.ATTR.XRAY_OWNED,
 		title = "X-Ray Vision",
 		description = "See what brainrot is hiding inside targeted bushes",
+		aliases = { "x-rayvision", "xrayvision", "xray", "x-ray" },
 	},
 	["Collect All"] = {
 		id = StoreConfig.GAMEPASS.AUTOCOLLECT,
 		attr = StoreConfig.ATTR.AUTOCOLLECT_OWNED,
 		title = "Collect All",
 		description = "Collect all stand cash at once from your Collect All pad",
+		aliases = { "collectall", "collect all cash", "autocollect", "auto collect" },
 	},
 }
 
 local function normalizeIconName(name: string): string
-	return string.gsub(string.lower(name), "%s+", "")
+	local folded = string.lower(name)
+	folded = string.gsub(folded, "×", "x")
+	folded = string.gsub(folded, "[^%w]+", "")
+	return folded
 end
 
-local function resolveBoostIcon(iconsFolder: Instance, iconName: string): GuiObject?
+local function namesMatch(studioName: string, defName: string, aliases: { string }?): boolean
+	local got = normalizeIconName(studioName)
+	if got == normalizeIconName(defName) then
+		return true
+	end
+	if aliases then
+		for _, alias in aliases do
+			if got == normalizeIconName(alias) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function resolveBoostIcon(iconsFolder: Instance, iconName: string, aliases: { string }?): GuiObject?
 	local direct = iconsFolder:FindFirstChild(iconName)
 	if direct and direct:IsA("GuiObject") then
 		return direct
 	end
-	local want = normalizeIconName(iconName)
 	for _, child in iconsFolder:GetChildren() do
-		if child:IsA("GuiObject") and normalizeIconName(child.Name) == want then
+		if child:IsA("GuiObject") and namesMatch(child.Name, iconName, aliases) then
 			return child
 		end
 	end
@@ -359,10 +387,16 @@ local function hideAllBoostIcons(iconsFolder: Instance)
 	for _, child in iconsFolder:GetChildren() do
 		if child:IsA("GuiObject") then
 			child.Visible = false
+			child.Active = false
 		end
 	end
 	if iconsFolder:IsA("GuiObject") then
-		(iconsFolder :: GuiObject).Visible = false
+		local folderGui = iconsFolder :: GuiObject
+		folderGui.Visible = false
+		folderGui.Active = false
+		pcall(function()
+			(folderGui :: any).Interactable = false
+		end)
 	end
 end
 
@@ -382,6 +416,10 @@ local function refreshIconsFolderVisible(iconsFolder: Instance)
 		end
 	end
 	(iconsFolder :: GuiObject).Visible = anyVisible
+	(iconsFolder :: GuiObject).Active = false
+	pcall(function()
+		((iconsFolder :: GuiObject) :: any).Interactable = false
+	end)
 end
 
 -- Server StoreHandler owns these attrs — don't Marketplace-poll on join (that flashes icons).
@@ -403,14 +441,18 @@ end
 local function setupIcons(iconsFolder: Instance)
 	-- Place file leaves these Visible=true; hide before any ownership work.
 	hideAllBoostIcons(iconsFolder)
+	if iconsFolder:IsA("GuiObject") then
+		prepareHoverTarget(iconsFolder :: GuiObject)
+	end
 
 	for iconName, def in ICON_DEFS do
-		local icon = resolveBoostIcon(iconsFolder, iconName)
+		local icon = resolveBoostIcon(iconsFolder, iconName, def.aliases)
 		if not icon then
 			warn("[BoostIconsController] boost icon not found:", iconName)
 			continue
 		end
 		icon.Visible = false
+		prepareHoverTarget(icon)
 		bindTooltip(icon, def.title, def.description, readGuiAccentColor(icon))
 		local function evaluate()
 			if explorerHud then
@@ -419,9 +461,18 @@ local function setupIcons(iconsFolder: Instance)
 				return
 			end
 			icon.Visible = isGamePassOwned(def)
+			prepareHoverTarget(icon)
 			refreshIconsFolderVisible(iconsFolder)
 		end
 		player:GetAttributeChangedSignal(def.attr):Connect(evaluate)
+		local purchasedAttr = StoreConfig.PURCHASED_GAMEPASS_ATTR_BY_ID[def.id]
+		if typeof(purchasedAttr) == "string" then
+			player:GetAttributeChangedSignal(purchasedAttr):Connect(evaluate)
+		end
+		local giftedAttr = StoreConfig.GIFTED_GAMEPASS_ATTR_BY_ID[def.id]
+		if typeof(giftedAttr) == "string" then
+			player:GetAttributeChangedSignal(giftedAttr):Connect(evaluate)
+		end
 		evaluate()
 	end
 	refreshIconsFolderVisible(iconsFolder)
@@ -431,37 +482,15 @@ local function setupIcons(iconsFolder: Instance)
 			return
 		end
 		-- Already-owned prompts finish with wasPurchased=false — still refresh icons.
-		if not wasPurchased then
-			task.defer(function()
-				for iconName, def in ICON_DEFS do
-					if def.id == gamePassId then
-						local icon = resolveBoostIcon(iconsFolder, iconName)
-						if icon then
-							icon.Visible = isGamePassOwned(def)
-						end
-					end
-				end
-				refreshIconsFolderVisible(iconsFolder)
-			end)
-			return
-		end
-		for iconName, def in ICON_DEFS do
-			if def.id ~= gamePassId then
-				continue
-			end
-			local icon = resolveBoostIcon(iconsFolder, iconName)
-			if icon then
-				icon.Visible = true
-				refreshIconsFolderVisible(iconsFolder)
-			end
-		end
 		task.defer(function()
 			for iconName, def in ICON_DEFS do
-				if def.id == gamePassId then
-					local icon = resolveBoostIcon(iconsFolder, iconName)
-					if icon then
-						icon.Visible = isGamePassOwned(def)
-					end
+				if def.id ~= gamePassId then
+					continue
+				end
+				local icon = resolveBoostIcon(iconsFolder, iconName, def.aliases)
+				if icon then
+					icon.Visible = (wasPurchased == true) or isGamePassOwned(def)
+					prepareHoverTarget(icon)
 				end
 			end
 			refreshIconsFolderVisible(iconsFolder)
@@ -469,6 +498,7 @@ local function setupIcons(iconsFolder: Instance)
 	end)
 
 	-- Claim pre-owned passes so SideUI icons appear without re-buying.
+	-- Stagger Marketplace calls so 7 passes don't hitch the first seconds of play.
 	task.spawn(function()
 		local remotes = ReplicatedStorage:WaitForChild("Remotes", 20)
 		local claim = remotes and remotes:WaitForChild("ClaimOwnedGamepass", 10)
@@ -481,6 +511,10 @@ local function setupIcons(iconsFolder: Instance)
 				continue
 			end
 			seen[def.id] = true
+			task.wait(0.2)
+			if not player.Parent then
+				return
+			end
 			local ok, owned = pcall(function()
 				return MarketplaceService:UserOwnsGamePassAsync(player.UserId, def.id)
 			end)
@@ -618,15 +652,17 @@ function BoostIconsController.setExplorerHud(on: boolean)
 	explorerHud = on
 	if boostRow then
 		boostRow.Visible = not on
+		boostRow.Active = false
 	end
 	if iconsFolderRef then
 		if on then
 			hideAllBoostIcons(iconsFolderRef)
 		else
 			for iconName, def in ICON_DEFS do
-				local icon = resolveBoostIcon(iconsFolderRef, iconName)
+				local icon = resolveBoostIcon(iconsFolderRef, iconName, def.aliases)
 				if icon then
 					icon.Visible = isGamePassOwned(def)
+					prepareHoverTarget(icon)
 				end
 			end
 			refreshIconsFolderVisible(iconsFolderRef)

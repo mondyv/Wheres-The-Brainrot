@@ -165,6 +165,7 @@ local function ensureTooltip(mainGui: ScreenGui)
 	frame.BackgroundColor3 = Color3.fromRGB(8, 8, 16)
 	frame.BackgroundTransparency = 1
 	frame.Visible = false
+	frame.Active = false
 	frame.ZIndex = TOOLTIP_Z
 	frame.BorderSizePixel = 0
 

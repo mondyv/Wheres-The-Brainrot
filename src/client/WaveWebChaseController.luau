@@ -171,9 +171,29 @@ local function chargeAlongZ(fromPos: Vector3): Vector3
 	return Vector3.new(0, 0, if dz >= 0 then 1 else -1)
 end
 
-local function authoredWaveCf(pos: Vector3): CFrame
+local function waveStudioCf(pos: Vector3): CFrame
 	local o = C.WAVE_SPAWN_ORIENTATION_DEG
 	return CFrame.new(pos) * CFrame.fromOrientation(math.rad(o.X), math.rad(o.Y), math.rad(o.Z))
+end
+
+-- Studio Position/Orientation on the primary part (not Model WorldPivot).
+local function applyWaveStudioPose(model: Model, pos: Vector3)
+	local target = waveStudioCf(pos)
+	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if not primary then
+		model:PivotTo(target)
+		return
+	end
+	model.PrimaryPart = primary
+	local delta = target * primary.CFrame:Inverse()
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.CFrame = delta * d.CFrame
+		end
+	end
+	pcall(function()
+		model.WorldPivot = target
+	end)
 end
 
 local function currentLandNumber(): number
@@ -185,11 +205,19 @@ local function currentLandNumber(): number
 end
 
 local function instanceWorldPos(root: Instance): Vector3?
-	if root:IsA("Model") then
-		return (root :: Model):GetPivot().Position
-	end
 	if root:IsA("BasePart") then
 		return root.Position
+	end
+	if root:IsA("Model") then
+		local primary = (root :: Model).PrimaryPart
+		if primary then
+			return primary.Position
+		end
+		local part = root:FindFirstChildWhichIsA("BasePart", true)
+		if part then
+			return part.Position
+		end
+		return (root :: Model):GetPivot().Position
 	end
 	local part = root:FindFirstChildWhichIsA("BasePart", true)
 	return if part then part.Position else nil
@@ -207,41 +235,15 @@ local function findLandLock(land: number): Instance?
 	return folder:FindFirstChild(name)
 end
 
--- Spawn in the player's lane (their X), behind the land on Z, then slide +Z/-Z to safezone.
--- Never use the lock's X — those parts sit to the side of the path, so the wall looks sideways.
-local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
-	local land = currentLandNumber()
-	local lock = findLandLock(land)
+-- Exact lock Position (or authored 1451, 92.3, 699.7). Orientation is applied separately as 0,90,0.
+local function computeTsunamiCorridor(_playerPos: Vector3): (Vector3, Vector3)
+	local lock = findLandLock(currentLandNumber())
+	local pos = C.WAVE_SPAWN_POS
 	local lockPos = if lock then instanceWorldPos(lock) else nil
-	local authored = C.WAVE_SPAWN_POS
-	local safe = SafezoneUtil.getSafezoneCenter()
-	local zTowardSafe = 1.0
-	if safe then
-		zTowardSafe = if (safe.Z - playerPos.Z) >= 0 then 1 else -1
-	end
-
-	local function isBehind(z: number): boolean
-		return (z - playerPos.Z) * zTowardSafe <= 0
-	end
-
-	local spawnZ = authored.Z
-	if lockPos and isBehind(lockPos.Z) then
-		spawnZ = lockPos.Z
-	elseif isBehind(authored.Z) then
-		spawnZ = authored.Z
-	else
-		spawnZ = playerPos.Z - zTowardSafe * C.WAVE_BEHIND_STUDS
-	end
-	if not isBehind(spawnZ) then
-		spawnZ = playerPos.Z - zTowardSafe * C.WAVE_BEHIND_STUDS
-	end
-
-	local spawnY = authored.Y
 	if lockPos then
-		spawnY = lockPos.Y
+		pos = Vector3.new(lockPos.X, lockPos.Y, lockPos.Z)
 	end
-	local spawn = Vector3.new(playerPos.X, spawnY, spawnZ)
-	return spawn, chargeAlongZ(spawn)
+	return pos, chargeAlongZ(pos)
 end
 
 local function findStarterGradient(name: string): UIGradient?
@@ -540,7 +542,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	local cruiseY = spawnPos.Y
 	local startY = cruiseY - C.WAVE_RISE_STUDS
 	local startPos = Vector3.new(spawnPos.X, startY, spawnPos.Z)
-	wave:PivotTo(authoredWaveCf(startPos))
+	applyWaveStudioPose(wave, startPos)
 	wave.Parent = Workspace
 	activeWave = wave
 	waveTravelPos = Vector3.new(spawnPos.X, cruiseY, spawnPos.Z)
@@ -556,7 +558,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 		end
 		local y = startY + (cruiseY - startY) * nv.Value
 		local overshoot = math.sin(nv.Value * math.pi) * 2.4
-		wave:PivotTo(authoredWaveCf(Vector3.new(spawnPos.X, y + overshoot, spawnPos.Z)))
+		applyWaveStudioPose(wave, Vector3.new(spawnPos.X, y + overshoot, spawnPos.Z))
 	end)
 	local tw = TweenService:Create(nv, TweenInfo.new(C.WAVE_RISE_SEC, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 		Value = 1,
@@ -566,7 +568,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	riseConn:Disconnect()
 	nv:Destroy()
 	if wave.Parent then
-		wave:PivotTo(authoredWaveCf(waveTravelPos))
+		applyWaveStudioPose(wave, waveTravelPos)
 	end
 	return waveTravelPos, forward
 end
@@ -1488,7 +1490,7 @@ local function runChase(token: number)
 
 	local wavePos = waveTravelPos or spawnPos
 	local cruiseY = wavePos.Y
-	wave:PivotTo(authoredWaveCf(wavePos))
+	applyWaveStudioPose(wave, wavePos)
 
 	pulseCameraShake(0.7, 0.16, token)
 
@@ -1527,7 +1529,7 @@ local function runChase(token: number)
 		wavePos += forward * speed * dt
 		wavePos = Vector3.new(wavePos.X, cruiseY, wavePos.Z)
 		waveTravelPos = wavePos
-		wave:PivotTo(authoredWaveCf(wavePos))
+		applyWaveStudioPose(wave, wavePos)
 
 		local rel = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
 		local along = rel:Dot(forward)

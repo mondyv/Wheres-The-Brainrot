@@ -41,6 +41,7 @@ local workoutTrack: AnimationTrack? = nil
 local workoutAnim: Animation? = nil
 local footMotor: Motor6D? = nil
 local footProp: Model? = nil
+local footHandle: BasePart? = nil
 local gripKillConn: RBXScriptConnection? = nil
 local gripChildConn: RBXScriptConnection? = nil
 local footPoseConn: RBXScriptConnection? = nil
@@ -161,6 +162,7 @@ local function clearFootAttach()
 		footProp:Destroy()
 		footProp = nil
 	end
+	footHandle = nil
 	restoreToolVisibility()
 end
 
@@ -168,7 +170,11 @@ local function groundBarCFrame(character: Model, rf: BasePart, lf: BasePart?): C
 	local mid = if lf then (rf.Position + lf.Position) * 0.5 else rf.Position
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { character }
+	local exclude: { Instance } = { character }
+	if footProp then
+		table.insert(exclude, footProp)
+	end
+	params.FilterDescendantsInstances = exclude
 	local hit = Workspace:Raycast(mid + Vector3.new(0, 2.4, 0), Vector3.new(0, -10, 0), params)
 	local pos = if hit then hit.Position + Vector3.new(0, 0.16, 0) else Vector3.new(mid.X, mid.Y - 0.08, mid.Z)
 	local across = if lf then lf.Position - rf.Position else rf.CFrame.RightVector
@@ -202,28 +208,27 @@ local function hideEquippedToolMeshes(tool: Tool)
 	end
 end
 
-local function cloneToolAsFootProp(tool: Tool, character: Model): BasePart?
+local function stripCopiedJoints(root: Instance)
+	for _, d in root:GetDescendants() do
+		if d:IsA("Weld") or d:IsA("Motor6D") or d:IsA("WeldConstraint") or d:IsA("RigidConstraint") then
+			d:Destroy()
+		end
+	end
+end
+
+local function cloneToolAsFootProp(tool: Tool): BasePart?
 	local model = Instance.new("Model")
 	model.Name = "WorkoutFootBar"
 	local handleClone: BasePart? = nil
 	for _, child in tool:GetChildren() do
-		local copy = child:Clone()
-		for _, d in copy:GetDescendants() do
-			if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ModuleScript") then
-				d:Destroy()
-			end
-		end
-		if copy:IsA("Script") or copy:IsA("LocalScript") or copy:IsA("ModuleScript") then
-			copy:Destroy()
-		else
-			copy.Parent = model
-			if copy:IsA("BasePart") then
-				copy.Anchored = false
-				copy.CanCollide = false
-				copy.Massless = true
-				copy.CanQuery = false
-				copy.CanTouch = false
-				if copy.Name == "Handle" then
+		if not (child:IsA("LocalScript") or child:IsA("Script") or child:IsA("ModuleScript")) then
+			local copy = child:Clone()
+			stripCopiedJoints(copy)
+			if copy:IsA("LocalScript") or copy:IsA("Script") or copy:IsA("ModuleScript") then
+				copy:Destroy()
+			else
+				copy.Parent = model
+				if copy:IsA("BasePart") and copy.Name == "Handle" then
 					handleClone = copy
 				end
 			end
@@ -238,13 +243,17 @@ local function cloneToolAsFootProp(tool: Tool, character: Model): BasePart?
 	end
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") then
-			d.Transparency = 0
-			d.LocalTransparencyModifier = 0
-			d.Anchored = false
+			d.Anchored = true
 			d.CanCollide = false
 			d.Massless = true
+			d.CanQuery = false
+			d.CanTouch = false
+			d.CastShadow = false
+			d.Transparency = 0
+			d.LocalTransparencyModifier = 0
 		end
 	end
+	stripCopiedJoints(model)
 	model.PrimaryPart = handleClone
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") and d ~= handleClone then
@@ -254,17 +263,17 @@ local function cloneToolAsFootProp(tool: Tool, character: Model): BasePart?
 			weld.Parent = handleClone
 		end
 	end
-	model.Parent = character
+	model.Parent = Workspace
 	footProp = model
+	footHandle = handleClone
 	return handleClone
 end
 
--- Visible bar across both feet. Hide the equipped tool so the curl anim cannot keep it in-hand.
+-- Anchored clone in Workspace at the feet. Equipped tool stays hidden in the hands.
 local function attachGearAcrossFeet(character: Model, tool: Tool)
 	clearFootAttach()
 	local rightFoot, leftFoot = findFeet(character)
-	local handle = tool:FindFirstChild("Handle")
-	if not handle or not handle:IsA("BasePart") then
+	if not tool:FindFirstChild("Handle") then
 		warn("[WorkoutController] Tool missing Handle — cannot attach to feet")
 		return
 	end
@@ -276,10 +285,17 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 
 	hideEquippedToolMeshes(tool)
 	destroyHandGrips(character)
+	if not cloneToolAsFootProp(tool) then
+		warn("[WorkoutController] Could not clone gear onto feet")
+		return
+	end
+
 	gripKillConn = RunService.Heartbeat:Connect(function()
 		local char = player.Character
 		if char then
 			destroyHandGrips(char)
+		end
+		if tool.Parent then
 			hideEquippedToolMeshes(tool)
 		end
 	end)
@@ -296,26 +312,10 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		end
 	end)
 
-	local visual = cloneToolAsFootProp(tool, character)
-	if not visual then
-		visual = handle
-		hideEquippedToolMeshes(tool)
-		handle.Transparency = 0
-		handle.LocalTransparencyModifier = 0
-	end
-
-	local pose0 = groundBarCFrame(character, anchorFoot, if anchorFoot == rightFoot then leftFoot else rightFoot)
-	local motor = Instance.new("Motor6D")
-	motor.Name = "WorkoutFootMotor"
-	motor.Part0 = anchorFoot
-	motor.Part1 = visual
-	motor.C0 = anchorFoot.CFrame:ToObjectSpace(pose0)
-	motor.C1 = CFrame.new()
-	motor.Parent = anchorFoot
-	footMotor = motor
-
-	footPoseConn = RunService.RenderStepped:Connect(function()
-		if not footMotor or footMotor ~= motor or not motor.Parent then
+	local function poseFootBar()
+		local prop = footProp
+		local handlePart = footHandle
+		if not prop or not handlePart or not prop.Parent then
 			return
 		end
 		local rf, lf = findFeet(player.Character or character)
@@ -324,13 +324,17 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 			return
 		end
 		local pose = groundBarCFrame(player.Character or character, footA, if footA == rf then lf else rf)
-		if motor.Part0 and motor.Part0.Parent then
-			motor.C0 = motor.Part0.CFrame:ToObjectSpace(pose)
-		else
-			motor.Part0 = footA
-			motor.C0 = footA.CFrame:ToObjectSpace(pose)
+		local delta = pose * handlePart.CFrame:Inverse()
+		for _, d in prop:GetDescendants() do
+			if d:IsA("BasePart") then
+				d.CFrame = delta * d.CFrame
+				d.Anchored = true
+			end
 		end
-	end)
+	end
+
+	poseFootBar()
+	footPoseConn = RunService.RenderStepped:Connect(poseFootBar)
 end
 
 local function playWorkoutAnim(character: Model)
@@ -1295,12 +1299,13 @@ local function bindTool(tool: Tool)
 		if character and hum then
 			lockMovement(hum, true)
 			playWorkoutAnim(character)
-			-- Defer so RightGrip exists, then steal the real Handle onto tippy-toes.
-			task.defer(function()
+			local function tryAttach()
 				if tool.Parent == character and player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
 					attachGearAcrossFeet(character, tool)
 				end
-			end)
+			end
+			task.defer(tryAttach)
+			task.delay(0.2, tryAttach)
 			if tool:GetAttribute("RainbowGear") == true then
 				GearRainbowFX.attach(tool)
 			end

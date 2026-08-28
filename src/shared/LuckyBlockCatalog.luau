@@ -29,6 +29,8 @@ export type BlockDef = {
 	-- Preferred child under that folder (base / non-mutation icon).
 	-- Nil when Studio has no base child (only Golden/Galaxy/Diamond variants).
 	iconChild: string?,
+	-- Hardcoded Index/toolbar icon when Studio folders are wrong.
+	iconAsset: string?,
 }
 
 -- Ordered weak → strong. Visuals / indexRarity align with rarity colors:
@@ -65,6 +67,7 @@ local BLOCKS: { BlockDef } = {
 		drops = { rare = 58, epic = 37, mythic = 5 },
 		iconFolder = "Neon Lucky Block",
 		iconChild = "Neon Lucky Block",
+		iconAsset = "rbxassetid://99425712742654",
 	},
 	{
 		id = "1",
@@ -468,6 +471,18 @@ end
 -- Resolves rbxassetid from Lucky Block Icons.Normal only (Studio source of truth).
 function M.resolveIconAssetId(blockId: string): string
 	local def = byId[blockId]
+	if not def then
+		local want = string.lower(blockId)
+		for _, d in M.BLOCKS do
+			if string.lower(d.displayName) == want or (d.iconFolder and string.lower(d.iconFolder) == want) then
+				def = d
+				break
+			end
+		end
+	end
+	if def and typeof(def.iconAsset) == "string" and def.iconAsset ~= "" then
+		return def.iconAsset
+	end
 	local root = ReplicatedStorage:FindFirstChild("Lucky Blocks")
 	local icons = root and root:FindFirstChild("Lucky Block Icons")
 	if not icons then

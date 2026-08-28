@@ -944,6 +944,7 @@ local function syncQuestChromeVisibility()
 	if questGui then
 		questGui.Enabled = true
 	end
+	recoverCollapseArrow()
 	if questArrowBtn then
 		questArrowBtn.Visible = true
 	end
@@ -1180,13 +1181,89 @@ local function addStudOverlay(parent: GuiObject, z: number, transparency: number
 	return studs
 end
 
+local function wireCollapseArrow(collapse: ImageButton)
+	questArrowBtn = collapse
+	questArrowScale = collapse:FindFirstChildOfClass("UIScale")
+	if collapse:GetAttribute("QuestArrowWired") == true then
+		return
+	end
+	collapse:SetAttribute("QuestArrowWired", true)
+	if not questArrowScale then
+		local arrowScale = Instance.new("UIScale")
+		arrowScale.Name = "ArrowScale"
+		arrowScale.Scale = 1
+		arrowScale.Parent = collapse
+		questArrowScale = arrowScale
+	end
+	local function setArrowHover(on: boolean)
+		if questAnimBusy or not questArrowScale then
+			return
+		end
+		stopArrowPulse()
+		TweenService:Create(
+			questArrowScale,
+			TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Scale = if on then 1.14 else 1 }
+		):Play()
+		if not on then
+			startArrowPulse()
+		end
+	end
+	collapse.MouseEnter:Connect(function()
+		setArrowHover(true)
+	end)
+	collapse.MouseLeave:Connect(function()
+		setArrowHover(false)
+	end)
+	collapse.Activated:Connect(function()
+		toggleQuestHudCollapsed()
+	end)
+	GamepadInput.mountHint(collapse, Enum.KeyCode.DPadRight)
+end
+
+local function recoverCollapseArrow(): ImageButton?
+	if questArrowBtn and questArrowBtn.Parent then
+		wireCollapseArrow(questArrowBtn)
+		return questArrowBtn
+	end
+	local roots: { Instance? } = { questPanel, questHost, questGui }
+	for _, root in roots do
+		if root then
+			local found = root:FindFirstChild("CollapseArrow", true)
+			if found and found:IsA("ImageButton") then
+				wireCollapseArrow(found)
+				return found
+			end
+		end
+	end
+	local panel = questPanel
+	local ticket = panel and panel:FindFirstChild("Ticket")
+	if not (ticket and ticket:IsA("GuiObject")) then
+		return nil
+	end
+	local collapse = Instance.new("ImageButton")
+	collapse.Name = "CollapseArrow"
+	collapse.BackgroundTransparency = 1
+	collapse.BorderSizePixel = 0
+	collapse.AnchorPoint = Vector2.new(1, 0)
+	collapse.Position = UDim2.new(1, -4, 0, 4)
+	collapse.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
+	collapse.Image = COLLAPSE_ARROW_IMAGE
+	collapse.ImageColor3 = Color3.fromRGB(255, 255, 255)
+	collapse.ScaleType = Enum.ScaleType.Fit
+	collapse.Rotation = 0
+	collapse.ZIndex = 130
+	collapse.AutoButtonColor = false
+	collapse.Visible = canShowQuestChrome()
+	collapse.Parent = ticket
+	wireCollapseArrow(collapse)
+	return collapse
+end
+
 local function ensureQuestHud(): GuiObject
 	if questPanel and questPanel.Parent then
 		if questPanel:GetAttribute("StudTicket") == true and questPanel:GetAttribute("HudLayout") == "phone_v1" then
-			questArrowBtn = questPanel:FindFirstChild("CollapseArrow", true) :: ImageButton?
-			if questArrowBtn then
-				questArrowScale = questArrowBtn:FindFirstChildOfClass("UIScale")
-			end
+			recoverCollapseArrow()
 			cacheHoverTargets()
 			return questPanel
 		end
@@ -1464,34 +1541,8 @@ local function ensureQuestHud(): GuiObject
 	arrowScale.Parent = collapse
 
 	questPanel = shell
-	questArrowBtn = collapse
-	questArrowScale = arrowScale
+	wireCollapseArrow(collapse)
 	cacheHoverTargets()
-
-	local function setArrowHover(on: boolean)
-		if questAnimBusy or not questArrowScale then
-			return
-		end
-		stopArrowPulse()
-		TweenService:Create(
-			questArrowScale,
-			TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-			{ Scale = if on then 1.14 else 1 }
-		):Play()
-		if not on then
-			startArrowPulse()
-		end
-	end
-	collapse.MouseEnter:Connect(function()
-		setArrowHover(true)
-	end)
-	collapse.MouseLeave:Connect(function()
-		setArrowHover(false)
-	end)
-	collapse.Activated:Connect(function()
-		toggleQuestHudCollapsed()
-	end)
-	GamepadInput.mountHint(collapse, Enum.KeyCode.DPadRight)
 	collapse.Visible = false
 	return shell
 end
@@ -1564,6 +1615,7 @@ startArrowPulse = function()
 end
 
 placeArrowOnTicket = function()
+	recoverCollapseArrow()
 	if not questPanel or not questArrowBtn then
 		return
 	end
@@ -1581,6 +1633,7 @@ placeArrowOnTicket = function()
 end
 
 placeArrowParked = function()
+	recoverCollapseArrow()
 	if not questPanel or not questArrowBtn then
 		return
 	end
@@ -2491,6 +2544,7 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 		if questArrowBtn then
 			questArrowBtn.Visible = true
 			questArrowBtn.Rotation = 180
+			placeArrowOnTicket()
 			TweenService:Create(questArrowBtn, slideInfo, { Rotation = 0 }):Play()
 		end
 		local tw = TweenService:Create(panel, slideInfo, { Position = goal })

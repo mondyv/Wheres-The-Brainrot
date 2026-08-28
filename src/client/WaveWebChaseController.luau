@@ -558,10 +558,9 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 			return
 		end
 		local y = startY + (cruiseY - startY) * nv.Value
-		local overshoot = math.sin(nv.Value * math.pi) * 2.4
-		applyWaveStudioPose(wave, Vector3.new(spawnPos.X, y + overshoot, spawnPos.Z))
+		applyWaveStudioPose(wave, Vector3.new(spawnPos.X, y, spawnPos.Z))
 	end)
-	local tw = TweenService:Create(nv, TweenInfo.new(C.WAVE_RISE_SEC, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+	local tw = TweenService:Create(nv, TweenInfo.new(C.WAVE_RISE_SEC, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out), {
 		Value = 1,
 	})
 	tw:Play()
@@ -1448,8 +1447,8 @@ local function releaseToGameplay(token: number)
 	MobileTouchGate.restorePlayerMovement()
 end
 
--- ! above the player, then cobweb rises. No spider / screech.
-local function runIntro(token: number, _playerPos: Vector3)
+-- ! above the player while the cobweb eases up into place. No spider / screech.
+local function runIntro(token: number, playerPos: Vector3)
 	local makeGui = ensureFxGui
 	if makeGui then
 		makeGui()
@@ -1457,7 +1456,7 @@ local function runIntro(token: number, _playerPos: Vector3)
 	hideChaseHud()
 	attachExclamation()
 	pulseCameraShake(0.55, 0.16, token)
-	task.wait(C.EXCLAMATION_SEC)
+	spawnTsunami(playerPos)
 	if token ~= chaseToken then
 		return
 	end
@@ -1620,11 +1619,6 @@ local function runSequence(_model: Model, handoff: {
 
 		local playerPos = liveHrp.Position
 		runIntro(token, playerPos)
-		if token ~= chaseToken then
-			return
-		end
-
-		spawnTsunami(playerPos)
 		if token ~= chaseToken then
 			return
 		end

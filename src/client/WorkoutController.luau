@@ -44,7 +44,6 @@ local footMotor: Motor6D? = nil
 local footProp: Model? = nil
 local gripKillConn: RBXScriptConnection? = nil
 local gripChildConn: RBXScriptConnection? = nil
-local footPoseConn: RBXScriptConnection? = nil
 local bodyHighlight: Highlight? = nil
 local walkSpeedBefore: number? = nil
 local jumpPowerBefore: number? = nil
@@ -132,10 +131,6 @@ local function clearFootAttach()
 		gripChildConn:Disconnect()
 		gripChildConn = nil
 	end
-	if footPoseConn then
-		footPoseConn:Disconnect()
-		footPoseConn = nil
-	end
 	if footMotor then
 		footMotor:Destroy()
 		footMotor = nil
@@ -197,6 +192,8 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 			d.Anchored = false
 			d.CanQuery = false
 			d.CanTouch = false
+			d.CastShadow = false
+			d.CustomPhysicalProperties = PhysicalProperties.new(0.0001, 0.3, 0.5)
 			d.LocalTransparencyModifier = 0
 			if d.Transparency >= 1 then
 				d.Transparency = 0
@@ -290,24 +287,6 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	motor.C1 = CFrame.new()
 	motor.Parent = anchorFoot
 	footMotor = motor
-
-	footPoseConn = RunService.RenderStepped:Connect(function()
-		if not footMotor or footMotor ~= motor or not motor.Parent then
-			return
-		end
-		local rf, lf = findFeet(player.Character or character)
-		local footA = rf or lf
-		if not footA then
-			return
-		end
-		local pose = shinBarCFrame(player.Character or character, footA, if footA == rf then lf else rf)
-		if motor.Part0 and motor.Part0.Parent then
-			motor.C0 = motor.Part0.CFrame:ToObjectSpace(pose)
-		else
-			motor.Part0 = footA
-			motor.C0 = footA.CFrame:ToObjectSpace(pose)
-		end
-	end)
 end
 
 local function playWorkoutAnim(character: Model)

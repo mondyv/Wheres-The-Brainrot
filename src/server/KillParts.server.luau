@@ -51,6 +51,9 @@ local function onKillPartTouched(hit: BasePart)
 	if not player then
 		return
 	end
+	if player:GetAttribute("WorkoutActive") == true then
+		return
+	end
 	local now = os.clock()
 	local immuneUntil = spawnImmuneUntil[player]
 	if immuneUntil and now < immuneUntil then

@@ -329,6 +329,31 @@ local function destroyWaveTitle()
 	end
 end
 
+local function stripAuthoredWaveTitles(model: Model)
+	for _, d in model:GetDescendants() do
+		if d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+			d:Destroy()
+		end
+	end
+end
+
+local function applyWaveTint(model: Model, tint: Color3)
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			if d:GetAttribute("WaveWebOrigColor") == nil then
+				d:SetAttribute("WaveWebOrigColor", d.Color)
+			end
+			d.Color = tint
+		elseif d:IsA("Decal") or d:IsA("Texture") then
+			d.Color3 = tint
+		elseif d:IsA("ParticleEmitter") then
+			d.Color = ColorSequence.new(tint)
+		elseif d:IsA("Beam") or d:IsA("Trail") then
+			(d :: any).Color = ColorSequence.new(tint)
+		end
+	end
+end
+
 local function pickTitleAdornee(wave: Model): BasePart?
 	local best: BasePart? = wave.PrimaryPart
 	local bestVol = 0
@@ -344,24 +369,6 @@ local function pickTitleAdornee(wave: Model): BasePart?
 	return best or wave:FindFirstChildWhichIsA("BasePart", true)
 end
 
-local function setChaseRankTitle(text: string)
-	local makeGui = ensureFxGui
-	if not makeGui then
-		return
-	end
-	local gui = makeGui()
-	gui.Enabled = true
-	if chaseTitleLabel then
-		for _, child in chaseTitleLabel:GetChildren() do
-			if child:IsA("UIGradient") then
-				child:Destroy()
-			end
-		end
-		chaseTitleLabel.Text = text
-		chaseTitleLabel.Visible = true
-	end
-end
-
 local function attachWaveTitle(wave: Model)
 	local part = pickTitleAdornee(wave)
 	if not part then
@@ -375,7 +382,6 @@ local function attachWaveTitle(wave: Model)
 	end
 	local land = currentLandNumber()
 	local title = C.titleForLand(land)
-	setChaseRankTitle(title.name)
 
 	local mobile = UserInputService.TouchEnabled
 	local bb = Instance.new("BillboardGui")
@@ -384,8 +390,8 @@ local function attachWaveTitle(wave: Model)
 	bb.LightInfluence = 0
 	bb.ResetOnSpawn = false
 	bb.Active = false
-	bb.Size = if mobile then UDim2.fromOffset(520, 120) else UDim2.fromOffset(440, 96)
-	bb.StudsOffset = Vector3.new(0, if mobile then 10 else 14, 0)
+	bb.Size = if mobile then UDim2.fromOffset(420, 88) else UDim2.fromOffset(380, 80)
+	bb.StudsOffset = Vector3.zero
 	bb.MaxDistance = 4000
 	bb.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	bb.Adornee = part
@@ -401,7 +407,7 @@ local function attachWaveTitle(wave: Model)
 	label.ZIndex = 5
 	label.Parent = bb
 	UiFonts.applyDisplay(label)
-	UiFonts.ensureTextSizeConstraint(label, if UserInputService.TouchEnabled then 56 else 72, if UserInputService.TouchEnabled then 28 else 32)
+	UiFonts.ensureTextSizeConstraint(label, if mobile then 42 else 52, if mobile then 22 else 26)
 	local stroke = Instance.new("UIStroke")
 	stroke.Thickness = 3.2
 	stroke.Color = Color3.fromRGB(18, 10, 6)
@@ -412,11 +418,6 @@ local function attachWaveTitle(wave: Model)
 		local clone = template:Clone()
 		clone.Enabled = true
 		clone.Parent = label
-		if chaseTitleLabel then
-			local hudGrad = template:Clone()
-			hudGrad.Enabled = true
-			hudGrad.Parent = chaseTitleLabel
-		end
 	else
 		warn("[WaveWebChaseController] StarterGui.Gradients missing:", title.gradient)
 	end
@@ -541,6 +542,7 @@ local function playScreechVfx(spider: Model, _landPos: Vector3)
 end
 
 local function prepareWaveModel(model: Model)
+	stripAuthoredWaveTitles(model)
 	local primary = model.PrimaryPart
 	if not primary then
 		primary = model:FindFirstChildWhichIsA("BasePart", true)
@@ -584,6 +586,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	end
 	local wave = waveOrErr :: Model
 	prepareWaveModel(wave)
+	applyWaveTint(wave, C.titleForLand(currentLandNumber()).tint)
 	local spawnPos, forward = computeTsunamiCorridor(playerPos)
 	local cruiseY = spawnPos.Y
 	local startY = cruiseY - C.WAVE_RISE_STUDS
@@ -1065,6 +1068,83 @@ local function fadeWaveOntoLand(model: Model, duration: number)
 	if model.Parent then
 		model:Destroy()
 	end
+end
+
+local function playWaveEscapeDissolve(wave: Model)
+	if not wave.Parent then
+		return
+	end
+	if renderConn then
+		renderConn:Disconnect()
+		renderConn = nil
+	end
+	local startPos = waveTravelPos
+	if not startPos then
+		local part = wave.PrimaryPart or wave:FindFirstChildWhichIsA("BasePart", true)
+		startPos = if part then part.Position else Vector3.zero
+	end
+	local forward = waveForward or Vector3.new(0, 0, -1)
+	local duration = C.WAVE_ESCAPE_SEC
+	local info = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+
+	if waveTitleGui then
+		local title = waveTitleGui:FindFirstChild("Title")
+		if title and title:IsA("TextLabel") then
+			TweenService:Create(title, info, { TextTransparency = 1 }):Play()
+			local stroke = title:FindFirstChildOfClass("UIStroke")
+			if stroke then
+				TweenService:Create(stroke, info, { Transparency = 1 }):Play()
+			end
+		end
+	end
+
+	local emitted = 0
+	for _, d in wave:GetDescendants() do
+		if d:IsA("BasePart") then
+			TweenService:Create(d, info, { Transparency = 1 }):Play()
+		elseif d:IsA("Decal") or d:IsA("Texture") then
+			TweenService:Create(d, info, { Transparency = 1 }):Play()
+		elseif d:IsA("ParticleEmitter") then
+			if emitted < 8 then
+				emitted += 1
+				pcall(function()
+					d:Emit(10)
+				end)
+			end
+			d.Enabled = false
+		elseif d:IsA("Beam") or d:IsA("Trail") then
+			(d :: any).Enabled = false
+		elseif d:IsA("Sound") then
+			pcall(function()
+				d:Stop()
+			end)
+		end
+	end
+
+	local nv = Instance.new("NumberValue")
+	nv.Value = 0
+	local conn = nv:GetPropertyChangedSignal("Value"):Connect(function()
+		if not wave.Parent then
+			return
+		end
+		local a = nv.Value
+		local pos = startPos - forward * (38 * a) + Vector3.new(0, 14 * a, 0)
+		applyWaveStudioPose(wave, pos)
+	end)
+	local tw = TweenService:Create(nv, info, { Value = 1 })
+	tw:Play()
+	tw.Completed:Wait()
+	conn:Disconnect()
+	nv:Destroy()
+	destroyWaveTitle()
+	if wave.Parent then
+		wave:Destroy()
+	end
+	if activeWave == wave then
+		activeWave = nil
+	end
+	waveTravelPos = nil
+	waveForward = nil
 end
 
 local function destroyChaseInstances()
@@ -1613,9 +1693,18 @@ local function runChase(token: number)
 		task.wait(0.05)
 	end
 
+	if renderConn then
+		renderConn:Disconnect()
+		renderConn = nil
+	end
+
 	local hum = getHumanoid()
 	if hum then
 		hum.CameraOffset = Vector3.zero
+	end
+
+	if escaped and not killFired and activeWave and activeWave.Parent then
+		playWaveEscapeDissolve(activeWave)
 	end
 
 	finishChase(didHideHud)

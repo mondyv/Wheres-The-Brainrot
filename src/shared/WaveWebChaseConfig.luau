@@ -64,21 +64,22 @@ M.WAVE_SPEED_BY_LAND = {
 	37, -- 10 transcendent
 }
 
--- Billboard names + StarterGui.Gradients child names.
+-- Billboard names + StarterGui.Gradients child names + mesh tint.
 M.WEB_TITLES = {
-	{ name = "👶 baby web 👶", gradient = "Basic/Common" },
-	{ name = "🕸️ normal web 🕸️", gradient = "Green" },
-	{ name = "⚡ speed web ⚡", gradient = "Yellow/Gold" },
-	{ name = "🕷️ gigantic web 🕷️", gradient = "Rare" },
-	{ name = "🔥 titan web 🔥", gradient = "Red" },
-	{ name = "⛰️ colossal web ⛰️", gradient = "Epic" },
-	{ name = "🪐 cosmic web 🪐", gradient = "Diamond" },
-	{ name = "🌌 infinitum web 🌌", gradient = "Rainbow" },
-	{ name = "☄️ omega web ☄️", gradient = "Mythical" },
-	{ name = "♾️ transcendent web ♾️", gradient = "BrainrotGod" },
+	{ name = "👶 baby web 👶", gradient = "Basic/Common", tint = Color3.fromRGB(255, 228, 186) },
+	{ name = "🕸️ normal web 🕸️", gradient = "Green", tint = Color3.fromRGB(214, 214, 220) },
+	{ name = "⚡ speed web ⚡", gradient = "Yellow/Gold", tint = Color3.fromRGB(255, 214, 48) },
+	{ name = "🕷️ gigantic web 🕷️", gradient = "Rare", tint = Color3.fromRGB(72, 68, 82) },
+	{ name = "🔥 titan web 🔥", gradient = "Red", tint = Color3.fromRGB(255, 78, 32) },
+	{ name = "🏔️ colossal web 🏔️", gradient = "Epic", tint = Color3.fromRGB(168, 148, 122) },
+	{ name = "🪐 cosmic web 🪐", gradient = "Diamond", tint = Color3.fromRGB(96, 176, 255) },
+	{ name = "🌌 infinitum web 🌌", gradient = "Rainbow", tint = Color3.fromRGB(176, 96, 255) },
+	{ name = "☄️ omega web ☄️", gradient = "Mythical", tint = Color3.fromRGB(64, 220, 255) },
+	{ name = "♾️ transcendent web ♾️", gradient = "BrainrotGod", tint = Color3.fromRGB(255, 72, 210) },
 }
 
 M.SAFEZONE_CONFIRM_SEC = 0.22
+M.WAVE_ESCAPE_SEC = 1.15
 M.EXCLAMATION_SEC = 1.05
 M.INTRO_REVEAL_SEC = 0.7
 
@@ -90,7 +91,7 @@ function M.speedForLand(land: number): number
 	return M.WAVE_SPEED_BY_LAND[i]
 end
 
-function M.titleForLand(land: number): { name: string, gradient: string }
+function M.titleForLand(land: number): { name: string, gradient: string, tint: Color3 }
 	local i = math.clamp(math.floor(land), 1, #M.WEB_TITLES)
 	return M.WEB_TITLES[i]
 end

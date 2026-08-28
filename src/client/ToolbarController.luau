@@ -2220,16 +2220,6 @@ local ToolbarController = {}
 				end
 			end
 			tryAutoSelectReturnedBrainrot()
-			task.defer(function()
-				if not canUseToolbar then
-					return
-				end
-				local char = player.Character
-				local equipped = char and char:FindFirstChildOfClass("Tool")
-				if not equipped and uiHotbarHighlight ~= nil then
-					deselectAllHotbarSlots()
-				end
-			end)
 			refreshToolbarVisibility()
 			updateHotbarSlotVisibility()
 			refreshToggleBackpackIconLayout()
@@ -3021,7 +3011,8 @@ local ToolbarController = {}
 		updateHotbarSlotVisibility()
 		refreshParkedExtraToolsUI()
 
-		-- Highlight follows equipped tool; drop stale ring when that slot no longer has a brainrot (e.g. placed on stand).
+		-- Highlight follows the equipped brainrot's hotbar cell. Never keep a backpack
+		-- outline while the same tool is on the hotbar (that desyncs the rings).
 		local equippedSlot: number? = nil
 		if equipped then
 			local invIdx = equipped:GetAttribute("BrainrotInvIndex")
@@ -3037,11 +3028,13 @@ local ToolbarController = {}
 				end
 			end
 		end
-		if uiBackpackListHighlight ~= nil or uiBackpackExtraHighlight ~= nil then
+		if equippedSlot then
+			uiBackpackListHighlight = nil
+			uiBackpackExtraHighlight = nil
+			uiHotbarHighlight = equippedSlot
+		elseif uiBackpackListHighlight ~= nil or uiBackpackExtraHighlight ~= nil then
 			uiHotbarHighlight = nil
 			_activeSlot = nil
-		elseif equippedSlot then
-			uiHotbarHighlight = equippedSlot
 		elseif uiHotbarHighlight ~= nil then
 			local hi = math.clamp(uiHotbarHighlight, 1, HOTBAR_INVENTORY_SLOTS)
 			local hiBrainrotIdx = brainrotIndexForHotbarSlot(hi)
@@ -4082,7 +4075,7 @@ local ToolbarController = {}
 	end
 
 	-- After deposit, server sends equipSlot = inventory list index of the deposited brainrot.
-	-- Resolve the visible hotbar cell via the slot map (no longer 1:1 with inventory index).
+	-- Resolve the visible hotbar cell via the slot map (never treat that index as a hotbar cell).
 	applyAutoEquipFromSync = function(equipSlot: number)
 		if not canUseToolbar then
 			pendingAutoEquipSlot = equipSlot
@@ -4096,23 +4089,86 @@ local ToolbarController = {}
 			brainrotParkedInUI[invIndex] = nil
 		end
 
+		local function bumpRandomBackpackItemToTop(exceptIdx: number)
+			rebuildBackpackDisplayOrder()
+			local pool: { number } = {}
+			for _, idx in ipairs(backpackDisplayOrder) do
+				if idx ~= exceptIdx then
+					table.insert(pool, idx)
+				end
+			end
+			if #pool == 0 then
+				return
+			end
+			moveBrainrotBackpackDisplayRow(pool[math.random(1, #pool)], 1)
+		end
+
+		local function pickRandomDisplacedHotbarSlot(): number?
+			local pool: { number } = {}
+			local startSlot = 1
+			local gearTool = findWorkoutGearTool()
+			if gearTool and not isExtraToolParked(gearTool) then
+				startSlot = 2
+			end
+			for slot = startSlot, HOTBAR_INVENTORY_SLOTS do
+				local occupant = brainrotIndexForHotbarSlot(slot)
+				if occupant and occupant ~= invIndex and extraToolSlotByIndex[slot] == nil then
+					local tool = slotTools[slot]
+					if not (tool and tool:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true) then
+						table.insert(pool, slot)
+					end
+				end
+			end
+			if #pool == 0 then
+				return nil
+			end
+			return pool[math.random(1, #pool)]
+		end
+
 		local slot = hotbarSlotForBrainrotIndex(invIndex)
 		if not slot then
-			local preferred = if invIndex <= HOTBAR_INVENTORY_SLOTS then invIndex else nil
-			slot = firstEmptyHotbarSlot(preferred)
+			slot = firstEmptyHotbarSlot()
+			if not slot then
+				slot = pickRandomDisplacedHotbarSlot()
+				if slot then
+					local displacedIdx = brainrotIndexForHotbarSlot(slot)
+					if displacedIdx and displacedIdx ~= invIndex then
+						optimisticBrainrotTuckToBackpack(displacedIdx)
+						fireBrainrotPark(displacedIdx, true)
+					end
+				end
+			end
 			if slot then
 				optimisticBrainrotMoveToHotbar(invIndex, slot)
-			else
-				slot = math.clamp(invIndex, 1, HOTBAR_INVENTORY_SLOTS)
+				fireBrainrotPark(invIndex, false, slot)
 			end
 		end
+		if not slot then
+			-- Hotbar still has no cell (gear-only / extras). Equip from the bag without a fake ring.
+			uiBackpackListHighlight = nil
+			uiBackpackExtraHighlight = nil
+			setHotbarSelection(nil, false)
+			requestEquipBrainrotSlot(invIndex, true)
+			bumpRandomBackpackItemToTop(invIndex)
+			task.defer(rebuildSlots)
+			return
+		end
+
+		uiBackpackListHighlight = nil
+		uiBackpackExtraHighlight = nil
 		setHotbarSelection(slot)
+		bumpRandomBackpackItemToTop(invIndex)
 
 		local function tryHoldBrainrot(): boolean
 			rebuildSlots()
 			local hum = getHumanoid()
 			if not hum then
 				return false
+			end
+			local mapped = hotbarSlotForBrainrotIndex(invIndex)
+			if mapped then
+				slot = mapped
+				setHotbarSelection(slot, false)
 			end
 			local tool = slotTools[slot]
 			local char = player.Character
@@ -4121,7 +4177,6 @@ local ToolbarController = {}
 				if equipped ~= tool then
 					hum:EquipTool(tool)
 				end
-				-- Confirm tool matches the intended inventory entry when possible.
 				local toolInv = tool:GetAttribute("BrainrotInvIndex")
 				if typeof(toolInv) == "number" and math.floor(toolInv) ~= invIndex then
 					requestEquipBrainrotSlot(invIndex, true)

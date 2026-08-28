@@ -196,6 +196,24 @@ function M.boot(deps: BootDeps): Api
 		end
 		local destSlot = findLowestFreeHotbarSlot(plr, list, map)
 		if not destSlot then
+			local candidates: { number } = {}
+			for s = 2, HOTBAR_UI_SLOTS do
+				local occupied = inventoryIndexForHotbarSlot(plr, list, map, s)
+				if occupied and occupied ~= srcIdx then
+					table.insert(candidates, s)
+				end
+			end
+			if #candidates > 0 then
+				destSlot = candidates[math.random(1, #candidates)]
+				local displacedIdx = inventoryIndexForHotbarSlot(plr, list, map, destSlot)
+				if displacedIdx then
+					local slotMap = getHotbarSlotMap(plr)
+					slotMap[displacedIdx] = nil
+					map[displacedIdx] = true
+				end
+			end
+		end
+		if not destSlot then
 			return nil
 		end
 		if moveInventoryEntryToExactHotbarSlot(plr, list, map, srcIdx, destSlot) then

@@ -514,7 +514,9 @@ function M.boot(config: BootConfig)
 		local forceEquip = forceArg == true
 		local equippedIdx = config.equipBrainrotSlotForPlayer(player, slot :: number, forceEquip)
 		if equippedIdx then
-			config.notifyClientInventorySync(player, equippedIdx, false)
+			-- Sync inventory only. Passing the slot re-ran auto-equip and made the
+			-- client steal the backpack outline / put the tool back after unequip.
+			config.notifyClientInventorySync(player, nil)
 		end
 	end)
 end

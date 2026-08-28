@@ -1182,7 +1182,6 @@ local ToolbarController = {}
 
 	applyBackpackSlotPanelAppearance = function(btn: GuiButton, occupied: boolean)
 		local defaults = captureBackpackSlotPanelDefaults(btn)
-		local stroke = btn:FindFirstChildOfClass("UIStroke")
 
 		if occupied then
 			local color = BACKPACK_SLOT_PANEL_OCCUPIED
@@ -1194,12 +1193,7 @@ local ToolbarController = {}
 				btn.BackgroundColor3 = color
 			end
 			btn.BackgroundTransparency = defaults.bgTransparency
-			if stroke and stroke.Name ~= "ToolbarSlotSelectStroke" then
-				stroke.Enabled = true
-				if defaults.strokeTransparency ~= nil then
-					stroke.Transparency = defaults.strokeTransparency
-				end
-			end
+			-- Selection stroke (white vs idle) is owned by applyButtonSelectionStyle.
 		else
 			-- Empty backpack cells should still look like real slots.
 			-- Only the icon/rate text gets cleared elsewhere.
@@ -1208,10 +1202,6 @@ local ToolbarController = {}
 				local imageBtn = btn :: ImageButton
 				imageBtn.ImageColor3 = SLOT_BUTTON_IMAGE_TINT
 				imageBtn.ImageTransparency = defaults.imageTransparency or 0
-			end
-			if stroke then
-				stroke.Enabled = true
-				stroke.Transparency = defaults.strokeTransparency or 0.6
 			end
 		end
 	end
@@ -2165,6 +2155,13 @@ local ToolbarController = {}
 			end
 		end
 
+		-- Backpack tap-to-hold must keep the bag outline; inventory sync must not
+		-- promote that item onto the hotbar or re-equip after a deselect.
+		if uiBackpackListHighlight ~= nil or uiBackpackExtraHighlight ~= nil then
+			pendingAutoEquipSlot = nil
+			return
+		end
+
 		if typeof(pendingAutoEquipSlot) == "number" then
 			local invIndex = math.floor(pendingAutoEquipSlot)
 			if brainrotEntries[invIndex] and not brainrotParkedInUI[invIndex] then
@@ -2287,9 +2284,11 @@ local ToolbarController = {}
 	-- Selection uses each slot's authored Button.UIStroke (Studio preset, including hotbar 1).
 	local SLOT_STROKE_SELECTED = 0
 	local SLOT_STROKE_IDLE_FALLBACK = 0.82
+	local SLOT_STROKE_SELECTED_COLOR = Color3.fromRGB(255, 255, 255)
 	local SLOT_SELECTED_SCALE = 1.08
 	local SLOT_IDLE_SCALE = 1.0
 	local SLOT_HOVER_SCALE = 1.12
+	local authoredStrokeLook: { [UIStroke]: { color: Color3 } } = {}
 
 	local function hotbarSlotRestScale(index: number): number
 		if uiHotbarHighlight ~= nil and index == uiHotbarHighlight then
@@ -2338,12 +2337,20 @@ local ToolbarController = {}
 		if not stroke then
 			return
 		end
+		if authoredStrokeLook[stroke] == nil then
+			authoredStrokeLook[stroke] = { color = stroke.Color }
+		end
 		pcall(function()
 			(stroke :: any).BorderStrokePosition = Enum.BorderStrokePosition.Center
 		end)
-		-- Slot 1's Studio stroke is fully opaque; that is the selected look, not idle.
 		stroke.Enabled = true
-		stroke.Transparency = if lit then SLOT_STROKE_SELECTED else SLOT_STROKE_IDLE_FALLBACK
+		if lit then
+			stroke.Color = SLOT_STROKE_SELECTED_COLOR
+			stroke.Transparency = SLOT_STROKE_SELECTED
+		else
+			stroke.Color = authoredStrokeLook[stroke].color
+			stroke.Transparency = SLOT_STROKE_IDLE_FALLBACK
+		end
 	end
 
 	local function setSlotHighlight(index: number?, lit: boolean)
@@ -3479,6 +3486,7 @@ local ToolbarController = {}
 		end
 
 		if uiBackpackListHighlight == listIdx then
+			pendingAutoEquipSlot = nil
 			local hum = getHumanoid()
 			if hum then
 				hum:UnequipTools()
@@ -4158,6 +4166,9 @@ local ToolbarController = {}
 	-- After deposit, server sends equipSlot = inventory list index of the deposited brainrot.
 	-- Resolve the visible hotbar cell via the slot map (never treat that index as a hotbar cell).
 	applyAutoEquipFromSync = function(equipSlot: number)
+		if uiBackpackListHighlight ~= nil or uiBackpackExtraHighlight ~= nil then
+			return
+		end
 		if not canUseToolbar then
 			pendingAutoEquipSlot = equipSlot
 			return
@@ -5122,11 +5133,8 @@ local ToolbarController = {}
 			end
 
 			if (rawEnd - pnd.start).Magnitude < DRAG_THRESHOLD_PX then
-				if pnd.kind == "backpack" then
-					requestEquipFromBackpack(pnd.idx)
-				elseif pnd.kind == "backpack_extra" and pnd.tool then
-					requestEquipFromBackpackExtra(pnd.tool :: Tool)
-				end
+				-- GuiButton.Activated already toggles backpack cells. Firing equip
+				-- again here unequips then the server puts the tool back.
 				clearDragGhost()
 				syncToolbarGamepadCursor()
 				return

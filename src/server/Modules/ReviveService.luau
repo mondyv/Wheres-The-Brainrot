@@ -13,6 +13,8 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
+local ServerStorage = game:GetService("ServerStorage")
+
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
@@ -350,6 +352,19 @@ local function stripSwingConstraints(character: Model)
 	end
 end
 
+local function clearHeadCarry(player: Player)
+	local internal = ServerStorage:FindFirstChild("BrainrotInternal")
+	local clearCarry = internal and internal:FindFirstChild("ClearHeadCarry")
+	if clearCarry and clearCarry:IsA("BindableFunction") then
+		local ok, err = pcall(function()
+			(clearCarry :: BindableFunction):Invoke(player)
+		end)
+		if not ok then
+			warn("[ReviveService] ClearHeadCarry failed:", err)
+		end
+	end
+end
+
 local function softTeleportHomeAlive(player: Player)
 	local waveDeath = player:GetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR) == true
 	if not waveDeath and lastSoftRespawnAt[player] and (os.clock() - lastSoftRespawnAt[player]) < 0.45 then
@@ -368,6 +383,7 @@ local function softTeleportHomeAlive(player: Player)
 		return
 	end
 	stripSwingConstraints(character)
+	clearHeadCarry(player)
 	player:SetAttribute("IsSwinging", false)
 	local hum = character:FindFirstChildOfClass("Humanoid")
 	if hum then

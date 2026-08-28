@@ -50,6 +50,7 @@ local defaultFov = 70
 local fxGui: ScreenGui? = nil
 local heartbeatFrame: Frame? = nil
 local chaseTitleLabel: TextLabel? = nil
+local ensureFxGui: (() -> ScreenGui)? = nil
 local colorFx: ColorCorrectionEffect? = nil
 local blurFx: BlurEffect? = nil
 local exclamationGui: BillboardGui? = nil
@@ -270,7 +271,11 @@ local function pickTitleAdornee(wave: Model): BasePart?
 end
 
 local function setChaseRankTitle(text: string)
-	local gui = ensureFxGui()
+	local makeGui = ensureFxGui
+	if not makeGui then
+		return
+	end
+	local gui = makeGui()
 	gui.Enabled = true
 	if chaseTitleLabel then
 		for _, child in chaseTitleLabel:GetChildren() do
@@ -653,7 +658,7 @@ local function applyFxGuiFullBleed(gui: ScreenGui)
 	gui.ResetOnSpawn = false
 end
 
-local function ensureFxGui(): ScreenGui
+ensureFxGui = function(): ScreenGui
 	if fxGui and fxGui.Parent then
 		applyFxGuiFullBleed(fxGui)
 		if heartbeatFrame and heartbeatFrame:FindFirstChild("Wash") then
@@ -777,7 +782,11 @@ local function clearPostFx()
 end
 
 local function showHeartbeat(intensity: number)
-	local gui = ensureFxGui()
+	local makeGui = ensureFxGui
+	if not makeGui then
+		return
+	end
+	local gui = makeGui()
 	gui.Enabled = true
 	local i = math.clamp(intensity, 0, 1)
 	local edgeAlpha = 1 - math.clamp(0.28 + i * 0.58, 0.28, 0.82)
@@ -1406,7 +1415,10 @@ end
 
 -- ! above the player, then cobweb rises. No spider / screech.
 local function runIntro(token: number, _playerPos: Vector3)
-	ensureFxGui()
+	local makeGui = ensureFxGui
+	if makeGui then
+		makeGui()
+	end
 	hideChaseHud()
 	attachExclamation()
 	pulseCameraShake(0.55, 0.16, token)
@@ -1440,7 +1452,10 @@ local function runChase(token: number)
 	reportWaveStarted()
 
 	ensurePostFx()
-	ensureFxGui()
+	local makeGui = ensureFxGui
+	if makeGui then
+		makeGui()
+	end
 	showHeartbeat(0.35)
 	setBgmChase(true)
 	BushHoldInteraction.setBushSearchLocked(true)

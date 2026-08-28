@@ -77,6 +77,30 @@ type AtmoSnap = {
 	Haze: number,
 }
 
+type LightSnap = {
+	ClockTime: number,
+	Brightness: number,
+	Ambient: Color3,
+	OutdoorAmbient: Color3,
+	ExposureCompensation: number,
+}
+
+local NIGHT_LIGHT: LightSnap = {
+	ClockTime = 0.35,
+	Brightness = 1.2,
+	Ambient = Color3.fromRGB(22, 26, 42),
+	OutdoorAmbient = Color3.fromRGB(14, 18, 32),
+	ExposureCompensation = -0.45,
+}
+
+local NIGHT_LIGHT_LOW: LightSnap = {
+	ClockTime = 0.55,
+	Brightness = 1.45,
+	Ambient = Color3.fromRGB(32, 36, 52),
+	OutdoorAmbient = Color3.fromRGB(22, 26, 40),
+	ExposureCompensation = -0.25,
+}
+
 local SafeZoneLightingController = {}
 
 local player = Players.LocalPlayer
@@ -86,6 +110,7 @@ local wired = false
 local lowGraphics = false
 local _pollConn: RBXScriptConnection? = nil
 local dayAtmo: AtmoSnap? = nil
+local dayLight: LightSnap? = nil
 
 local function cancelTweens()
 	for _, tw in activeTweens do
@@ -152,12 +177,27 @@ local function readAtmo(atmo: Atmosphere): AtmoSnap
 	}
 end
 
+local function readLight(): LightSnap
+	return {
+		ClockTime = Lighting.ClockTime,
+		Brightness = Lighting.Brightness,
+		Ambient = Lighting.Ambient,
+		OutdoorAmbient = Lighting.OutdoorAmbient,
+		ExposureCompensation = Lighting.ExposureCompensation,
+	}
+end
+
 -- Capture place day lighting once. Never call after night/fog has been applied.
 local function captureDayOnce()
-	if dayAtmo then
+	if dayAtmo and dayLight then
 		return
 	end
-	dayAtmo = readAtmo(ensureAtmosphere())
+	if not dayAtmo then
+		dayAtmo = readAtmo(ensureAtmosphere())
+	end
+	if not dayLight then
+		dayLight = readLight()
+	end
 end
 
 local function safezoneAtmo(): AtmoSnap
@@ -180,6 +220,9 @@ local function applyProfile(night: boolean, instant: boolean?)
 	cancelTweens()
 
 	local goal = if night then (if lowGraphics then NIGHT_ATMO_LOW else NIGHT_ATMO) else safezoneAtmo()
+	local lightGoal = if night
+		then (if lowGraphics then NIGHT_LIGHT_LOW else NIGHT_LIGHT)
+		else (dayLight :: LightSnap)
 
 	if instant then
 		atmo.Density = goal.Density
@@ -188,6 +231,11 @@ local function applyProfile(night: boolean, instant: boolean?)
 		atmo.Decay = goal.Decay
 		atmo.Glare = goal.Glare
 		atmo.Haze = goal.Haze
+		Lighting.ClockTime = lightGoal.ClockTime
+		Lighting.Brightness = lightGoal.Brightness
+		Lighting.Ambient = lightGoal.Ambient
+		Lighting.OutdoorAmbient = lightGoal.OutdoorAmbient
+		Lighting.ExposureCompensation = lightGoal.ExposureCompensation
 		return
 	end
 
@@ -199,6 +247,13 @@ local function applyProfile(night: boolean, instant: boolean?)
 		Glare = goal.Glare,
 		Haze = goal.Haze,
 	})
+	playTween(Lighting, {
+		ClockTime = lightGoal.ClockTime,
+		Brightness = lightGoal.Brightness,
+		Ambient = lightGoal.Ambient,
+		OutdoorAmbient = lightGoal.OutdoorAmbient,
+		ExposureCompensation = lightGoal.ExposureCompensation,
+	})
 end
 
 local function readInSafezone(): boolean
@@ -206,7 +261,7 @@ local function readInSafezone(): boolean
 	if not char then
 		return true
 	end
-	return SafezoneUtil.isCharacterInSafezone(char)
+	return SafezoneUtil.isCharacterInSafezonePad(char)
 end
 
 local function setInSafezone(nextIn: boolean, force: boolean?)

@@ -416,10 +416,11 @@ local function refreshIconsFolderVisible(iconsFolder: Instance)
 			break
 		end
 	end
-	(iconsFolder :: GuiObject).Visible = anyVisible
-	(iconsFolder :: GuiObject).Active = false
+	local folderGui = iconsFolder :: GuiObject
+	folderGui.Visible = anyVisible
+	folderGui.Active = false
 	pcall(function()
-		((iconsFolder :: GuiObject) :: any).Interactable = false
+		(folderGui :: any).Interactable = false
 	end)
 end
 

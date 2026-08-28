@@ -324,6 +324,43 @@ function SafezoneUtil.isWorldPointInSafezone(worldPoint: Vector3): boolean
 	return isWorldPointInsideSafezoneParts(worldPoint, cachedInventoryParts)
 end
 
+-- Lighting: standing on the pad only. Do not keep "day" while falling or
+-- walking the jungle just because Y slack is huge for HUD/Return.
+local function isPointInsideSafezonePad(worldPoint: Vector3, part: BasePart): boolean
+	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
+	local half = part.Size * 0.5
+	local xzPad = 5
+	local ySlack = math.max(half.Y + 16, 28)
+	return math.abs(localPt.X) <= half.X + xzPad
+		and math.abs(localPt.Z) <= half.Z + xzPad
+		and math.abs(localPt.Y) <= ySlack
+end
+
+function SafezoneUtil.isWorldPointInSafezonePad(worldPoint: Vector3): boolean
+	ensureCaches()
+	local parts = cachedInventoryParts
+	if not parts or #parts == 0 then
+		return false
+	end
+	for _, part in parts do
+		if part.Parent and isPointInsideSafezonePad(worldPoint, part) then
+			return true
+		end
+	end
+	return false
+end
+
+function SafezoneUtil.isCharacterInSafezonePad(character: Model?): boolean
+	if not character then
+		return false
+	end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return false
+	end
+	return SafezoneUtil.isWorldPointInSafezonePad((hrp :: BasePart).Position)
+end
+
 function SafezoneUtil.isWorldPointInRedWall(worldPoint: Vector3): boolean
 	ensureCaches()
 	return isWorldPointInsideParts(worldPoint, cachedRedWallParts)

@@ -82,6 +82,7 @@ task.defer(function()
 		require(script.LandActivityStripController).init()
 		require(script.LandLocksController).init()
 		require(script.RandomBrainrotController):Init()
+		require(script.SafeZoneLightingController).init()
 	end
 
 	-- Panel innards (Store buy buttons, Index tabs, etc.).

@@ -2341,13 +2341,12 @@ local ToolbarController = {}
 		if not stroke then
 			return
 		end
-		if btn:GetAttribute("ToolbarStrokeIdle") == nil then
-			btn:SetAttribute("ToolbarStrokeIdle", stroke.Transparency)
-		end
-		local idle = btn:GetAttribute("ToolbarStrokeIdle")
-		local idleT = if typeof(idle) == "number" then idle else SLOT_STROKE_IDLE_FALLBACK
+		pcall(function()
+			(stroke :: any).BorderStrokePosition = Enum.BorderStrokePosition.Center
+		end)
+		-- Slot 1's Studio stroke is fully opaque; that is the selected look, not idle.
 		stroke.Enabled = true
-		stroke.Transparency = if lit then SLOT_STROKE_SELECTED else idleT
+		stroke.Transparency = if lit then SLOT_STROKE_SELECTED else SLOT_STROKE_IDLE_FALLBACK
 	end
 
 	local function setSlotHighlight(index: number?, lit: boolean)
@@ -3077,7 +3076,14 @@ local ToolbarController = {}
 			uiHotbarHighlight = nil
 			_activeSlot = nil
 		elseif equippedSlot then
-			uiHotbarHighlight = equippedSlot
+			local equippedTool = slotTools[equippedSlot]
+			local isGear = equippedTool ~= nil and equippedTool:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true
+			-- Gear lives in slot 1; don't treat it as a selected brainrot ring.
+			if not isGear then
+				uiHotbarHighlight = equippedSlot
+			elseif uiHotbarHighlight ~= equippedSlot then
+				uiHotbarHighlight = nil
+			end
 		elseif uiHotbarHighlight ~= nil then
 			local hi = math.clamp(uiHotbarHighlight, 1, HOTBAR_INVENTORY_SLOTS)
 			local hiBrainrotIdx = brainrotIndexForHotbarSlot(hi)
@@ -4570,6 +4576,11 @@ local ToolbarController = {}
 			else
 				warn("[ToolbarController] Slot '" .. i .. "' not found in Hotbar")
 			end
+		end
+
+		table.clear(slotStrokeLit)
+		for i = 1, #slots do
+			setSlotHighlight(i, false)
 		end
 
 		ensureHotbarLayoutPassthrough()

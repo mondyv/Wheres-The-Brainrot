@@ -49,6 +49,7 @@ local savedFov = 70
 local defaultFov = 70
 local fxGui: ScreenGui? = nil
 local heartbeatFrame: Frame? = nil
+local chaseTitleLabel: TextLabel? = nil
 local colorFx: ColorCorrectionEffect? = nil
 local blurFx: BlurEffect? = nil
 local exclamationGui: BillboardGui? = nil
@@ -160,30 +161,18 @@ local function resolveSpiderSpawn(playerPos: Vector3): Vector3
 	return candidate
 end
 
-local function chargeTowardSafezone(fromPos: Vector3): Vector3
+local function chargeAlongZ(fromPos: Vector3): Vector3
 	local safe = SafezoneUtil.getSafezoneCenter()
-	local dx = 0.0
-	local dz = -1.0
+	local dz = 1.0
 	if safe then
-		dx = safe.X - fromPos.X
 		dz = safe.Z - fromPos.Z
 	end
-	if math.abs(dz) >= math.abs(dx) then
-		return Vector3.new(0, 0, if dz >= 0 then 1 else -1)
-	end
-	return Vector3.new(if dx >= 0 then 1 else -1, 0, 0)
+	return Vector3.new(0, 0, if dz >= 0 then 1 else -1)
 end
 
--- Face the chase axis. 0,90,0 when traveling -X; yaw 0/180 when traveling along Z.
-local function authoredWaveCf(pos: Vector3, forward: Vector3?): CFrame
-	local dir = if forward and forward.Magnitude > 0.05 then forward.Unit else chargeTowardSafezone(pos)
-	local yawDeg: number
-	if math.abs(dir.X) >= math.abs(dir.Z) then
-		yawDeg = if dir.X < 0 then 90 else -90
-	else
-		yawDeg = if dir.Z < 0 then 180 else 0
-	end
-	return CFrame.new(pos) * CFrame.fromOrientation(0, math.rad(yawDeg), 0)
+local function authoredWaveCf(pos: Vector3): CFrame
+	local o = C.WAVE_SPAWN_ORIENTATION_DEG
+	return CFrame.new(pos) * CFrame.fromOrientation(math.rad(o.X), math.rad(o.Y), math.rad(o.Z))
 end
 
 local function currentLandNumber(): number
@@ -217,29 +206,14 @@ local function findLandLock(land: number): Instance?
 	return folder:FindFirstChild(name)
 end
 
-local function lockCorridorZ(land: number, fallbackZ: number): number
-	local lock = findLandLock(land)
-	local pos = lock and instanceWorldPos(lock)
-	if pos then
-		return pos.Z
-	end
-	local folder = LandAmbushUtil.findLandFolder(land)
-	if folder then
-		local minB, maxB = LandAmbushUtil.getLandBounds(folder)
-		if minB and maxB then
-			return (minB.Z + maxB.Z) * 0.5
-		end
-	end
-	return fallbackZ
-end
-
--- Spawn at the land lock. Travel toward the safezone (not sideways along look).
-local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
+-- Spawn on the land lock part. Always slide along Z toward the safezone.
+local function computeTsunamiCorridor(_playerPos: Vector3): (Vector3, Vector3)
 	local land = currentLandNumber()
-	local z = lockCorridorZ(land, playerPos.Z)
-	local authored = C.WAVE_SPAWN_POS
-	local spawn = Vector3.new(authored.X, C.WAVE_CRUISE_Y, z)
-	local forward = chargeTowardSafezone(spawn)
+	local fallback = C.WAVE_SPAWN_POS
+	local lock = findLandLock(land)
+	local pos = (lock and instanceWorldPos(lock)) or fallback
+	local spawn = Vector3.new(pos.X, pos.Y, pos.Z)
+	local forward = chargeAlongZ(spawn)
 	return spawn, forward
 end
 
@@ -280,8 +254,37 @@ local function destroyWaveTitle()
 	end
 end
 
+local function pickTitleAdornee(wave: Model): BasePart?
+	local best: BasePart? = wave.PrimaryPart
+	local bestVol = 0
+	for _, d in wave:GetDescendants() do
+		if d:IsA("BasePart") then
+			local vol = d.Size.X * d.Size.Y * d.Size.Z
+			if vol > bestVol then
+				bestVol = vol
+				best = d
+			end
+		end
+	end
+	return best or wave:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function setChaseRankTitle(text: string)
+	local gui = ensureFxGui()
+	gui.Enabled = true
+	if chaseTitleLabel then
+		for _, child in chaseTitleLabel:GetChildren() do
+			if child:IsA("UIGradient") then
+				child:Destroy()
+			end
+		end
+		chaseTitleLabel.Text = text
+		chaseTitleLabel.Visible = true
+	end
+end
+
 local function attachWaveTitle(wave: Model)
-	local part = wave.PrimaryPart or wave:FindFirstChildWhichIsA("BasePart", true)
+	local part = pickTitleAdornee(wave)
 	if not part then
 		return
 	end
@@ -291,22 +294,22 @@ local function attachWaveTitle(wave: Model)
 		BrainrotGradientAnimator.unregister(nested)
 		nested:Destroy()
 	end
-	local raw = player:GetAttribute("CurrentLand")
-	local land = if typeof(raw) == "number" then math.clamp(math.floor(raw), 1, 10) else 1
+	local land = currentLandNumber()
 	local title = C.titleForLand(land)
+	setChaseRankTitle(title.name)
+
+	local pg = player:FindFirstChildOfClass("PlayerGui")
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "WaveWebTitle"
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	bb.ResetOnSpawn = false
 	bb.Active = false
-	bb.Size = UDim2.fromScale(28, 5.2)
-	bb.StudsOffset = Vector3.new(0, 16, 0)
-	bb.MaxDistance = 900
+	bb.Size = UDim2.fromScale(22, 5)
+	bb.StudsOffset = Vector3.new(0, 22, 0)
+	bb.MaxDistance = 2000
 	bb.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	pcall(function()
-		bb.ExtentsOffset = Vector3.new(0, 1.15, 0)
-	end)
+	bb.Adornee = part
 
 	local label = Instance.new("TextLabel")
 	label.Name = "Title"
@@ -318,7 +321,7 @@ local function attachWaveTitle(wave: Model)
 	label.ZIndex = 5
 	label.Parent = bb
 	UiFonts.applyDisplay(label)
-	UiFonts.ensureTextSizeConstraint(label, 96, 42)
+	UiFonts.ensureTextSizeConstraint(label, 72, 32)
 	local stroke = Instance.new("UIStroke")
 	stroke.Thickness = 3.2
 	stroke.Color = Color3.fromRGB(18, 10, 6)
@@ -326,20 +329,19 @@ local function attachWaveTitle(wave: Model)
 
 	local template = findStarterGradient(title.gradient)
 	if template then
-		for _, child in label:GetChildren() do
-			if child:IsA("UIGradient") then
-				child:Destroy()
-			end
-		end
 		local clone = template:Clone()
 		clone.Enabled = true
 		clone.Parent = label
+		if chaseTitleLabel then
+			local hudGrad = template:Clone()
+			hudGrad.Enabled = true
+			hudGrad.Parent = chaseTitleLabel
+		end
 	else
 		warn("[WaveWebChaseController] StarterGui.Gradients missing:", title.gradient)
 	end
 
-	bb.Adornee = part
-	bb.Parent = Workspace
+	bb.Parent = pg or Workspace
 	waveTitleGui = bb
 	BrainrotGradientAnimator.register(bb)
 end
@@ -504,10 +506,10 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	local wave = waveOrErr :: Model
 	prepareWaveModel(wave)
 	local spawnPos, forward = computeTsunamiCorridor(playerPos)
-	local cruiseY = C.WAVE_CRUISE_Y
+	local cruiseY = spawnPos.Y
 	local startY = cruiseY - C.WAVE_RISE_STUDS
 	local startPos = Vector3.new(spawnPos.X, startY, spawnPos.Z)
-	wave:PivotTo(authoredWaveCf(startPos, forward))
+	wave:PivotTo(authoredWaveCf(startPos))
 	wave.Parent = Workspace
 	activeWave = wave
 	waveTravelPos = Vector3.new(spawnPos.X, cruiseY, spawnPos.Z)
@@ -523,7 +525,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 		end
 		local y = startY + (cruiseY - startY) * nv.Value
 		local overshoot = math.sin(nv.Value * math.pi) * 2.4
-		wave:PivotTo(authoredWaveCf(Vector3.new(spawnPos.X, y + overshoot, spawnPos.Z), forward))
+		wave:PivotTo(authoredWaveCf(Vector3.new(spawnPos.X, y + overshoot, spawnPos.Z)))
 	end)
 	local tw = TweenService:Create(nv, TweenInfo.new(C.WAVE_RISE_SEC, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 		Value = 1,
@@ -533,7 +535,7 @@ local function spawnTsunami(playerPos: Vector3): (Vector3?, Vector3?)
 	riseConn:Disconnect()
 	nv:Destroy()
 	if wave.Parent then
-		wave:PivotTo(authoredWaveCf(waveTravelPos, forward))
+		wave:PivotTo(authoredWaveCf(waveTravelPos))
 	end
 	return waveTravelPos, forward
 end
@@ -655,6 +657,10 @@ local function ensureFxGui(): ScreenGui
 	if fxGui and fxGui.Parent then
 		applyFxGuiFullBleed(fxGui)
 		if heartbeatFrame and heartbeatFrame:FindFirstChild("Wash") then
+			local existingTitle = fxGui:FindFirstChild("WebRankTitle")
+			if existingTitle and existingTitle:IsA("TextLabel") then
+				chaseTitleLabel = existingTitle
+			end
 			return fxGui
 		end
 		fxGui:Destroy()
@@ -673,6 +679,7 @@ local function ensureFxGui(): ScreenGui
 	root.BorderSizePixel = 0
 	root.Size = UDim2.fromScale(1, 1)
 	root.Position = UDim2.fromScale(0, 0)
+	root.Active = false
 	root.Parent = gui
 
 	local wash = Instance.new("Frame")
@@ -681,6 +688,7 @@ local function ensureFxGui(): ScreenGui
 	wash.BackgroundTransparency = 1
 	wash.BorderSizePixel = 0
 	wash.Size = UDim2.fromScale(1, 1)
+	wash.Active = false
 	wash.Parent = root
 
 	local function edge(name: string, size: UDim2, pos: UDim2, rot: number)
@@ -691,6 +699,7 @@ local function ensureFxGui(): ScreenGui
 		f.BorderSizePixel = 0
 		f.Size = size
 		f.Position = pos
+		f.Active = false
 		f.Parent = root
 		local g = Instance.new("UIGradient")
 		g.Transparency = NumberSequence.new({
@@ -710,6 +719,26 @@ local function ensureFxGui(): ScreenGui
 	edge("Right", UDim2.new(0.28, 0, 1, 0), UDim2.new(0.72, 0, 0, 0), 180)
 
 	heartbeatFrame = root
+	local title = Instance.new("TextLabel")
+	title.Name = "WebRankTitle"
+	title.BackgroundTransparency = 1
+	title.AnchorPoint = Vector2.new(0.5, 0)
+	title.Position = UDim2.new(0.5, 0, 0.05, 0)
+	title.Size = UDim2.new(0.94, 0, 0.09, 0)
+	title.ZIndex = 50
+	title.Active = false
+	title.Text = ""
+	title.TextColor3 = Color3.new(1, 1, 1)
+	title.TextScaled = true
+	title.Visible = false
+	title.Parent = gui
+	UiFonts.applyDisplay(title)
+	UiFonts.ensureTextSizeConstraint(title, 56, 28)
+	local titleStroke = Instance.new("UIStroke")
+	titleStroke.Thickness = 2.8
+	titleStroke.Color = Color3.fromRGB(18, 10, 6)
+	titleStroke.Parent = title
+	chaseTitleLabel = title
 	fxGui = gui
 	return gui
 end
@@ -777,6 +806,9 @@ end
 local function hideHeartbeat()
 	if fxGui then
 		fxGui.Enabled = false
+	end
+	if chaseTitleLabel then
+		chaseTitleLabel.Visible = false
 	end
 	if heartbeatFrame then
 		for _, ch in heartbeatFrame:GetChildren() do
@@ -1414,7 +1446,8 @@ local function runChase(token: number)
 	BushHoldInteraction.setBushSearchLocked(true)
 
 	local wavePos = waveTravelPos or spawnPos
-	wave:PivotTo(authoredWaveCf(wavePos, forward))
+	local cruiseY = wavePos.Y
+	wave:PivotTo(authoredWaveCf(wavePos))
 
 	pulseCameraShake(0.7, 0.16, token)
 
@@ -1451,9 +1484,9 @@ local function runChase(token: number)
 		local speed = C.speedForLand(currentLand())
 
 		wavePos += forward * speed * dt
-		wavePos = Vector3.new(wavePos.X, C.WAVE_CRUISE_Y, wavePos.Z)
+		wavePos = Vector3.new(wavePos.X, cruiseY, wavePos.Z)
 		waveTravelPos = wavePos
-		wave:PivotTo(authoredWaveCf(wavePos, forward))
+		wave:PivotTo(authoredWaveCf(wavePos))
 
 		local rel = Vector3.new(pPos.X - wavePos.X, 0, pPos.Z - wavePos.Z)
 		local along = rel:Dot(forward)

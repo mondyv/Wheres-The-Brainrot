@@ -209,14 +209,11 @@ function M.ensureTouchControlsVisible(force: boolean?)
 		end
 	end
 
-	-- Main above TouchGui hides jump; lowering Main keeps Roblox touch routing intact.
-	if main and main:IsA("ScreenGui") and touchGui and touchGui:IsA("ScreenGui") then
-		if not hasModalOverlay(playerGui) and main.DisplayOrder >= touchGui.DisplayOrder then
-			if savedMainDisplayOrder == nil then
-				savedMainDisplayOrder = main.DisplayOrder
-			end
-			main.DisplayOrder = math.max(0, touchGui.DisplayOrder - 1)
-		end
+	-- Main stays above TouchGui so HUD buttons receive taps. Empty Active=false
+	-- chrome lets thumbstick/jump clicks pass through to TouchGui underneath.
+	if main and main:IsA("ScreenGui") and savedMainDisplayOrder ~= nil then
+		main.DisplayOrder = savedMainDisplayOrder
+		savedMainDisplayOrder = nil
 	end
 end
 
@@ -238,6 +235,8 @@ local function refreshBlockState()
 	end
 end
 
+local ignoreUiUntil = 0.0
+
 function M.canTapUi(): boolean
 	if not UserInputService.TouchEnabled then
 		return true
@@ -247,6 +246,18 @@ function M.canTapUi(): boolean
 		return true
 	end
 	refreshBlockState()
+	local now = os.clock()
+	local n = 0
+	for _ in activeTouches do
+		n += 1
+	end
+	-- Thumb on the stick must not disable HUD / accept with the other finger.
+	if n >= 2 then
+		return true
+	end
+	if now < ignoreUiUntil then
+		return false
+	end
 	return not blockedUntilAllReleased
 end
 
@@ -297,8 +308,14 @@ function M.init()
 		if input.UserInputType ~= Enum.UserInputType.Touch then
 			return
 		end
+		local startedAt = activeTouches[input]
 		activeTouches[input] = nil
-		if next(activeTouches) == nil then
+		local remaining = next(activeTouches) ~= nil
+		if startedAt and not remaining and (os.clock() - startedAt) >= HOLD_BLOCK_SEC then
+			-- Camera-drag lift must not click whatever is under the finger.
+			ignoreUiUntil = os.clock() + 0.18
+		end
+		if not remaining then
 			blockedUntilAllReleased = false
 		else
 			refreshBlockState()

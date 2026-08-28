@@ -165,11 +165,9 @@ local function soleBarCFrame(_character: Model, rf: BasePart, lf: BasePart?): CF
 		across = Vector3.new(1, 0, 0)
 	end
 	local right = across.Unit
-	local up = Vector3.yAxis
-	local look = right:Cross(up)
-	look = if look.Magnitude > 0.05 then look.Unit else Vector3.new(0, 0, -1)
-	right = up:Cross(look).Unit
-	return CFrame.fromMatrix(pos, right, up)
+	-- World-flat on the soles: yaw only, no pitch/roll from foot tilt.
+	local yaw = math.atan2(right.X, right.Z)
+	return CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
 end
 
 -- Visible clone welded across the soles. Keep the tool's WeldConstraints so
@@ -204,9 +202,7 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 			d.CastShadow = false
 			d.CustomPhysicalProperties = PhysicalProperties.new(0.0001, 0.3, 0.5)
 			d.LocalTransparencyModifier = 0
-			if d.Transparency >= 1 then
-				d.Transparency = 0
-			end
+			-- Keep authored transparency (Handle / PrimaryPart are often invisible).
 		end
 	end
 

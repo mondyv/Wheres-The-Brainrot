@@ -70,7 +70,12 @@ local function revealHiddenMeshes(root: Instance)
 	if visible > 0 then
 		return
 	end
+	local model = if root:IsA("Model") then root :: Model else root:FindFirstAncestorOfClass("Model")
+	local primary = model and model.PrimaryPart
 	for _, p in parts do
+		if p.Name == "Handle" or p == primary then
+			continue
+		end
 		if p.Transparency >= 0.85 then
 			p.Transparency = 0.2
 			if p.Material == Enum.Material.ForceField or p.Material == Enum.Material.Glass then

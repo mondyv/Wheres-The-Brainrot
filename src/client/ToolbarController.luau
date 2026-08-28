@@ -1055,17 +1055,14 @@ local ToolbarController = {}
 					styleToolbarSlotButton(btn)
 					applyBackpackSlotPanelAppearance(btn, true)
 					local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
-					btn.MouseEnter:Connect(function()
-						if not canUseToolbar then
-							return
-						end
-						UIInteractionSounds.playHover()
-						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.1 }):Play()
-					end)
+				btn.MouseEnter:Connect(function()
+					if not canUseToolbar then
+						return
+					end
+					UIInteractionSounds.playHover()
+				end)
 				btn.MouseLeave:Connect(function()
-					TweenService:Create(scale, HIGHLIGHT_TWEEN, {
-						Scale = if uiBackpackExtraHighlight == tool then SLOT_SELECTED_SCALE else SLOT_IDLE_SCALE,
-					}):Play()
+					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = SLOT_IDLE_SCALE }):Play()
 				end)
 				btn.Activated:Connect(function()
 					if not canUseToolbar then
@@ -2289,7 +2286,7 @@ local ToolbarController = {}
 
 	-- Selection uses each slot's authored Button.UIStroke (Studio preset, including hotbar 1).
 	local SLOT_STROKE_SELECTED = 0
-	local SLOT_STROKE_IDLE_FALLBACK = 0.6
+	local SLOT_STROKE_IDLE_FALLBACK = 0.82
 	local SLOT_SELECTED_SCALE = 1.08
 	local SLOT_IDLE_SCALE = 1.0
 	local SLOT_HOVER_SCALE = 1.12
@@ -2410,8 +2407,7 @@ local ToolbarController = {}
 						applyBackpackSlotPanelAppearance(btn, brainrotEntryForBackpackSlot(uiRow) ~= nil)
 						applyButtonSelectionStyle(btn, lit)
 						local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
-						local target = if lit then SLOT_SELECTED_SCALE else SLOT_IDLE_SCALE
-						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = target }):Play()
+						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = SLOT_IDLE_SCALE }):Play()
 					end
 				end
 			end
@@ -2424,7 +2420,7 @@ local ToolbarController = {}
 					applyBackpackSlotPanelAppearance(btn, true)
 					applyButtonSelectionStyle(btn, lit)
 					local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
-					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = if lit then SLOT_SELECTED_SCALE else SLOT_IDLE_SCALE }):Play()
+					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = SLOT_IDLE_SCALE }):Play()
 				end
 			end
 		end
@@ -3482,6 +3478,21 @@ local ToolbarController = {}
 			return
 		end
 
+		if uiBackpackListHighlight == listIdx then
+			local hum = getHumanoid()
+			if hum then
+				hum:UnequipTools()
+			end
+			uiBackpackListHighlight = nil
+			uiBackpackExtraHighlight = nil
+			uiHotbarHighlight = nil
+			_activeSlot = nil
+			syncAllHotbarSelectionStrokes()
+			syncBackpackSelectionStrokes()
+			task.defer(rebuildSlots)
+			return
+		end
+
 		local hum = getHumanoid()
 		if hum then
 			hum:UnequipTools()
@@ -3552,15 +3563,10 @@ local ToolbarController = {}
 						return
 					end
 					UIInteractionSounds.playHover()
-					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.1 }):Play()
 				end)
 				btn.MouseLeave:Connect(function()
 					BrainrotItemTooltip.hide(true)
-					local listIdx = listIndexForBackpackUiRow(uiRow)
-					local selected = typeof(listIdx) == "number" and uiBackpackListHighlight == listIdx
-					TweenService:Create(scale, HIGHLIGHT_TWEEN, {
-						Scale = if selected then SLOT_SELECTED_SCALE else SLOT_IDLE_SCALE,
-					}):Play()
+					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = SLOT_IDLE_SCALE }):Play()
 				end)
 				if btn:GetAttribute("_BrainrotTooltipBound") ~= true then
 					btn:SetAttribute("_BrainrotTooltipBound", true)

@@ -85,8 +85,9 @@ local function findFeet(character: Model): (BasePart?, BasePart?)
 		end
 		return nil
 	end
-	local r = pick({ "RightLowerLeg", "Right Leg", "RightFoot" })
-	local l = pick({ "LeftLowerLeg", "Left Leg", "LeftFoot" })
+	-- Prefer actual feet so the bar sits on the soles, not the shins.
+	local r = pick({ "RightFoot", "Rightfoot", "Right Ankle", "RightLowerLeg", "Right Leg" })
+	local l = pick({ "LeftFoot", "Leftfoot", "Left Ankle", "LeftLowerLeg", "Left Leg" })
 	return r, l
 end
 
@@ -144,10 +145,18 @@ end
 
 local DOUBLE_TAP_ACTION = "WorkoutDoubleTapAccept"
 
-local function shinBarCFrame(_character: Model, rf: BasePart, lf: BasePart?): CFrame
-	local mid = if lf then (rf.Position + lf.Position) * 0.5 else rf.Position
-	local pos = mid + Vector3.new(0, 0.32, 0)
-	local across = if lf then lf.Position - rf.Position else rf.CFrame.RightVector
+local function soleWorldPos(foot: BasePart): Vector3
+	-- R15 Foot -Y faces the ground; this is the underside (sole).
+	return (foot.CFrame * CFrame.new(0, -foot.Size.Y * 0.5, 0)).Position
+end
+
+local function soleBarCFrame(_character: Model, rf: BasePart, lf: BasePart?): CFrame
+	local p0 = soleWorldPos(rf)
+	local p1 = if lf then soleWorldPos(lf) else p0
+	local mid = (p0 + p1) * 0.5
+	-- Sit the bar against the soles, not up in the calves.
+	local pos = mid - Vector3.new(0, 0.08, 0)
+	local across = if lf then p1 - p0 else rf.CFrame.RightVector
 	across = Vector3.new(across.X, 0, across.Z)
 	if across.Magnitude < 0.05 then
 		across = Vector3.new(rf.CFrame.RightVector.X, 0, rf.CFrame.RightVector.Z)
@@ -163,7 +172,7 @@ local function shinBarCFrame(_character: Model, rf: BasePart, lf: BasePart?): CF
 	return CFrame.fromMatrix(pos, right, up)
 end
 
--- Visible clone welded across the shins. Keep the tool's WeldConstraints so
+-- Visible clone welded across the soles. Keep the tool's WeldConstraints so
 -- extra mesh parts stay glued to Handle (stripping them made the bar vanish).
 local function attachGearAcrossFeet(character: Model, tool: Tool)
 	clearFootAttach()
@@ -278,7 +287,7 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	end)
 
 	local otherFoot = if anchorFoot == rightFoot then leftFoot else rightFoot
-	local pose0 = shinBarCFrame(character, anchorFoot, otherFoot)
+	local pose0 = soleBarCFrame(character, anchorFoot, otherFoot)
 	local motor = Instance.new("Motor6D")
 	motor.Name = "WorkoutFootMotor"
 	motor.Part0 = anchorFoot

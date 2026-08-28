@@ -35,7 +35,6 @@ local INDEX_BADGE_SWAY = TweenInfo.new(0.72, Enum.EasingStyle.Sine, Enum.EasingD
 local INDEX_BADGE_INNER_SWAY = TweenInfo.new(0.52, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
 local INDEX_BADGE_INNER_PULSE = TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut, -1, true)
 local TAB_SELECT_IN = TweenInfo.new(0.26, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local TAB_SELECT_OUT = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local INDEX_BADGE_SWAY_DEG = 5
 local INDEX_BADGE_INNER_SWAY_DEG = 2.5
 
@@ -410,19 +409,22 @@ local function cancelOverlayTweens(gui: GuiObject)
 end
 
 local function isSelectedOverlayName(name: string): boolean
-	return name == "Selected" or name == "Sellect" or name == "Select"
+	return name == "Selected" or name == "Sellect"
 end
 
 local function collectSelectedOverlays(tabRoot: Instance): { GuiObject }
 	local out: { GuiObject } = {}
-	for _, d in tabRoot:GetDescendants() do
-		if isSelectedOverlayName(d.Name) and d:IsA("GuiObject") then
-			table.insert(out, d :: GuiObject)
+	local seen: { [Instance]: boolean } = {}
+	local function add(node: Instance?)
+		if node and node:IsA("GuiObject") and not seen[node] then
+			seen[node] = true
+			table.insert(out, node :: GuiObject)
 		end
 	end
-	if isSelectedOverlayName(tabRoot.Name) and tabRoot:IsA("GuiObject") then
-		table.insert(out, tabRoot :: GuiObject)
-	end
+	add(tabRoot:FindFirstChild("Selected"))
+	add(tabRoot:FindFirstChild("Selected", true))
+	add(tabRoot:FindFirstChild("Sellect"))
+	add(tabRoot:FindFirstChild("Sellect", true))
 	return out
 end
 
@@ -438,67 +440,36 @@ local function ensureOverlayScale(gui: GuiObject): UIScale
 	return scale
 end
 
-local function overlayImages(gui: GuiObject): { ImageLabel }
-	local images: { ImageLabel } = {}
-	if gui:IsA("ImageLabel") or gui:IsA("ImageButton") then
-		table.insert(images, gui :: ImageLabel)
-	end
-	for _, d in gui:GetDescendants() do
-		if d:IsA("ImageLabel") or d:IsA("ImageButton") then
-			table.insert(images, d :: ImageLabel)
-		end
-	end
-	return images
-end
-
 local function setSelectedOverlay(gui: GuiObject, on: boolean, instant: boolean?)
 	cancelOverlayTweens(gui)
+	gui.ZIndex = math.max(gui.ZIndex, 12)
+	gui.Active = false
+	pcall(function()
+		(gui :: any).Interactable = false
+	end)
+	local parent = gui.Parent
+	if parent and parent:IsA("GuiObject") then
+		(parent :: GuiObject).ClipsDescendants = false
+	end
 	local scale = ensureOverlayScale(gui)
-	local images = overlayImages(gui)
+	local isImage = gui:IsA("ImageLabel") or gui:IsA("ImageButton")
 	if on then
 		gui.Visible = true
+		if isImage then
+			(gui :: ImageLabel).ImageTransparency = 0
+		end
 		if instant == true then
 			scale.Scale = 1
-			for _, img in images do
-				img.ImageTransparency = 0
-			end
 			return
 		end
-		scale.Scale = 0.78
-		local tweens: { Tween } = {
-			TweenService:Create(scale, TAB_SELECT_IN, { Scale = 1 }),
-		}
-		for _, img in images do
-			img.ImageTransparency = 1
-			table.insert(tweens, TweenService:Create(img, TAB_SELECT_IN, { ImageTransparency = 0 }))
-		end
-		overlayTweens[gui] = tweens
-		for _, tw in tweens do
-			tw:Play()
-		end
-		return
-	end
-	if instant == true or not gui.Visible then
-		gui.Visible = false
-		scale.Scale = 1
-		return
-	end
-	local tweens: { Tween } = {
-		TweenService:Create(scale, TAB_SELECT_OUT, { Scale = 0.86 }),
-	}
-	for _, img in images do
-		table.insert(tweens, TweenService:Create(img, TAB_SELECT_OUT, { ImageTransparency = 1 }))
-	end
-	overlayTweens[gui] = tweens
-	local finisher = tweens[1]
-	finisher.Completed:Once(function()
-		if gui.Parent then
-			gui.Visible = false
-		end
-	end)
-	for _, tw in tweens do
+		scale.Scale = 0.86
+		local tw = TweenService:Create(scale, TAB_SELECT_IN, { Scale = 1 })
+		overlayTweens[gui] = { tw }
 		tw:Play()
+		return
 	end
+	scale.Scale = 1
+	gui.Visible = false
 end
 
 local function applyTabVisual(tabBtn: Instance, selected: boolean, instant: boolean?)
@@ -586,6 +557,7 @@ local function wireTabInteractions(tabRoot: Instance, mutationId: string)
 		TweenService:Create(tiltTarget, TILT_RESET, { Rotation = 0 }):Play()
 	end)
 	btn.MouseButton1Down:Connect(fireSelect)
+	btn.MouseButton1Click:Connect(fireSelect)
 	btn.Activated:Connect(fireSelect)
 end
 

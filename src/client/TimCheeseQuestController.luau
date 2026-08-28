@@ -125,6 +125,7 @@ local startArrowPulse: () -> ()
 local stopArrowPulse: () -> ()
 local stopExclaimPulse: () -> ()
 local stopQuestDots: () -> ()
+local recoverCollapseArrow: () -> ImageButton?
 local refreshQuestHud: (opts: { skipRevealGate: boolean?, playAppear: boolean? }?) -> ()
 local highlight: Highlight? = nil
 local lastOutlineOn: boolean? = nil
@@ -1221,7 +1222,7 @@ local function wireCollapseArrow(collapse: ImageButton)
 	GamepadInput.mountHint(collapse, Enum.KeyCode.DPadRight)
 end
 
-local function recoverCollapseArrow(): ImageButton?
+recoverCollapseArrow = function(): ImageButton?
 	if questArrowBtn and questArrowBtn.Parent then
 		wireCollapseArrow(questArrowBtn)
 		return questArrowBtn

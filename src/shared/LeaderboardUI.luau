@@ -88,10 +88,21 @@ end
 local function findBoardFolder(root: Instance, boardName: string): Instance?
 	-- Prefer TimeLeaderboard / CashLeaderboard children. Never recursive-search "Cash"
 	-- or "Time" — those names live on row labels and would bind the wrong board.
+	local unlabeled: { Instance } = {}
+	local cashChild: Instance? = nil
 	for _, child in root:GetChildren() do
-		if boardKeyFromName(child.Name) == boardName then
+		local key = boardKeyFromName(child.Name)
+		if key == boardName then
 			return child
+		elseif key == "Cash" then
+			cashChild = child
+		elseif key == nil then
+			table.insert(unlabeled, child)
 		end
+	end
+	-- Cash board is named; the other sibling is the time board.
+	if boardName == "Time" and cashChild and #unlabeled == 1 then
+		return unlabeled[1]
 	end
 	return nil
 end
@@ -105,9 +116,11 @@ function M.detectBoardKey(surfaceGui: SurfaceGui): string?
 		end
 		node = node.Parent
 	end
-	for _, desc in surfaceGui:GetDescendants() do
-		if desc:IsA("TextLabel") or desc:IsA("TextButton") then
-			local key = boardKeyFromHeaderText((desc :: TextLabel).Text)
+	local headerNames = { "Header", "Title", "BoardTitle", "BoardName" }
+	for _, name in headerNames do
+		local header = surfaceGui:FindFirstChild(name, true)
+		if header and (header:IsA("TextLabel") or header:IsA("TextButton")) then
+			local key = boardKeyFromHeaderText((header :: TextLabel).Text)
 			if key then
 				return key
 			end
@@ -704,11 +717,21 @@ local function rebuildBoardSurfaceCache()
 		boardCacheBuiltAt = os.clock()
 		return
 	end
-	for _, desc in root:GetDescendants() do
-		if desc:IsA("SurfaceGui") then
-			local key = M.detectBoardKey(desc :: SurfaceGui)
-			if key == "Cash" or key == "Time" then
-				table.insert(cachedSurfaceGuisByBoard[key], desc :: SurfaceGui)
+	for _, child in root:GetChildren() do
+		local folderKey = boardKeyFromName(child.Name)
+		if not folderKey then
+			if findBoardFolder(root, "Time") == child then
+				folderKey = "Time"
+			elseif findBoardFolder(root, "Cash") == child then
+				folderKey = "Cash"
+			end
+		end
+		for _, desc in child:GetDescendants() do
+			if desc:IsA("SurfaceGui") then
+				local key = folderKey or M.detectBoardKey(desc :: SurfaceGui)
+				if key == "Cash" or key == "Time" then
+					table.insert(cachedSurfaceGuisByBoard[key], desc :: SurfaceGui)
+				end
 			end
 		end
 	end

@@ -241,6 +241,32 @@ local function instanceWorldPos(root: Instance): Vector3?
 	return if part then part.Position else nil
 end
 
+local function landFromBush(bush: Model?): number?
+	if not bush then
+		return nil
+	end
+	local node: Instance? = bush
+	while node do
+		local n = node.Name
+		local num = string.match(n, "^Land%s*(%d+)$") or string.match(n, "^Land(%d+)$")
+		if num then
+			local land = tonumber(num)
+			if land and land >= 1 and land <= 10 then
+				return math.floor(land)
+			end
+		end
+		node = node.Parent
+	end
+	local pos = instanceWorldPos(bush)
+	if pos then
+		local fromPos = LandResolver.resolveLandAtPosition(pos)
+		if typeof(fromPos) == "number" and fromPos >= 1 then
+			return math.clamp(math.floor(fromPos), 1, 10)
+		end
+	end
+	return nil
+end
+
 -- Land N harvest uses "Land (N+1) Lock" (Land 1 → Land 2 Lock). Land 10 uses Land 10 Lock.
 local function findLandLock(land: number): Instance?
 	local map = Workspace:FindFirstChild("Map")
@@ -253,15 +279,17 @@ local function findLandLock(land: number): Instance?
 	return folder:FindFirstChild(name)
 end
 
--- Exact lock Position (or authored 1451, 92.3, 699.7). Orientation is applied separately as 0,90,0.
-local function computeTsunamiCorridor(_playerPos: Vector3): (Vector3, Vector3)
+-- Exact lock Position (or behind the player at their height). Orientation is applied separately as 0,90,0.
+local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
 	local lock = findLandLock(currentLandNumber())
-	local pos = C.WAVE_SPAWN_POS
 	local lockPos = if lock then instanceWorldPos(lock) else nil
 	if lockPos then
-		pos = Vector3.new(lockPos.X, lockPos.Y, lockPos.Z)
+		return Vector3.new(lockPos.X, lockPos.Y, lockPos.Z), chargeAlongZ(lockPos)
 	end
-	return pos, chargeAlongZ(pos)
+	local forward = chargeAlongZ(playerPos)
+	local pos = playerPos - forward * C.WAVE_BEHIND_STUDS
+	pos = Vector3.new(pos.X, playerPos.Y + 4, pos.Z)
+	return pos, forward
 end
 
 local function findStarterGradient(name: string): UIGradient?
@@ -1596,7 +1624,7 @@ local function runChase(token: number)
 	end
 end
 
-local function runSequence(_model: Model, handoff: {
+local function runSequence(model: Model, handoff: {
 	walkSpeed: number?,
 	jumpPower: number?,
 	jumpHeight: number?,
@@ -1622,6 +1650,7 @@ local function runSequence(_model: Model, handoff: {
 	chaseToken += 1
 	local token = chaseToken
 	killFired = false
+	chaseRankLand = landFromBush(model) or resolveChaseLand()
 	lockMovement(handoff)
 
 	local ok, err = pcall(function()
@@ -1635,7 +1664,6 @@ local function runSequence(_model: Model, handoff: {
 			return
 		end
 
-		chaseRankLand = resolveChaseLand()
 		local playerPos = liveHrp.Position
 		runIntro(token, playerPos)
 		if token ~= chaseToken then

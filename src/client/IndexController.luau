@@ -34,7 +34,6 @@ local ROW_HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDi
 local INDEX_BADGE_SWAY = TweenInfo.new(0.72, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
 local INDEX_BADGE_INNER_SWAY = TweenInfo.new(0.52, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
 local INDEX_BADGE_INNER_PULSE = TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut, -1, true)
-local TAB_SELECT_IN = TweenInfo.new(0.26, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local INDEX_BADGE_SWAY_DEG = 5
 local INDEX_BADGE_INNER_SWAY_DEG = 2.5
 
@@ -396,18 +395,6 @@ local function setChromeNode(node: Instance, on: boolean)
 	end
 end
 
-local overlayTweens: { [GuiObject]: { Tween } } = {}
-
-local function cancelOverlayTweens(gui: GuiObject)
-	local list = overlayTweens[gui]
-	if list then
-		for _, tw in list do
-			tw:Cancel()
-		end
-		overlayTweens[gui] = nil
-	end
-end
-
 local function isSelectedOverlayName(name: string): boolean
 	return name == "Selected" or name == "Sellect"
 end
@@ -421,7 +408,6 @@ local function collectSelectedOverlays(tabRoot: Instance): { GuiObject }
 			table.insert(out, node :: GuiObject)
 		end
 	end
-	add(tabRoot)
 	for _, child in tabRoot:GetChildren() do
 		add(child)
 	end
@@ -431,64 +417,20 @@ local function collectSelectedOverlays(tabRoot: Instance): { GuiObject }
 	return out
 end
 
-local function ensureOverlayScale(gui: GuiObject): UIScale
-	local existing = gui:FindFirstChild("IndexSelectedScale")
-	if existing and existing:IsA("UIScale") then
-		return existing
-	end
-	local scale = Instance.new("UIScale")
-	scale.Name = "IndexSelectedScale"
-	scale.Scale = 1
-	scale.Parent = gui
-	return scale
-end
-
-local function setOverlayImageShown(img: ImageLabel, on: boolean)
-	img.Visible = on
-	img.ImageTransparency = if on then 0 else 1
-end
-
-local function setSelectedOverlay(gui: GuiObject, on: boolean, instant: boolean?)
-	cancelOverlayTweens(gui)
-	gui.ZIndex = math.max(gui.ZIndex, 12)
+local function setSelectedOverlay(gui: GuiObject, on: boolean, _instant: boolean?)
 	gui.Active = false
 	pcall(function()
 		(gui :: any).Interactable = false
 	end)
-	pcall(function()
-		(gui :: any).Enabled = on
-	end)
-	local scale = ensureOverlayScale(gui)
-	if on then
-		gui.Visible = true
-		if gui:IsA("ImageLabel") or gui:IsA("ImageButton") then
-			setOverlayImageShown(gui :: ImageLabel, true)
-		end
-		for _, d in gui:GetDescendants() do
-			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
-				setOverlayImageShown(d :: ImageLabel, true)
-			end
-		end
-		if instant == true then
-			scale.Scale = 1
-			return
-		end
-		scale.Scale = 0.86
-		local tw = TweenService:Create(scale, TAB_SELECT_IN, { Scale = 1 })
-		overlayTweens[gui] = { tw }
-		tw:Play()
-		return
+	local extraScale = gui:FindFirstChild("IndexSelectedScale")
+	if extraScale then
+		extraScale:Destroy()
 	end
-	scale.Scale = 1
-	gui.Visible = false
+	-- Restore any previously faded Studio image so Visible=true actually shows it.
 	if gui:IsA("ImageLabel") or gui:IsA("ImageButton") then
-		setOverlayImageShown(gui :: ImageLabel, false)
+		(gui :: ImageLabel).ImageTransparency = 0
 	end
-	for _, d in gui:GetDescendants() do
-		if d:IsA("ImageLabel") or d:IsA("ImageButton") then
-			setOverlayImageShown(d :: ImageLabel, false)
-		end
-	end
+	gui.Visible = on
 end
 
 local function applyTabVisual(tabBtn: Instance, selected: boolean, instant: boolean?)
@@ -501,18 +443,34 @@ local function applyTabVisual(tabBtn: Instance, selected: boolean, instant: bool
 	end
 end
 
+local function findTypeButtons(): Instance?
+	if not indexFrame then
+		return nil
+	end
+	return indexFrame:FindFirstChild("TypeButtons") or indexFrame:FindFirstChild("TypeButtons", true)
+end
+
+local function findTabRoot(typeButtons: Instance, btnName: string): Instance?
+	local direct = typeButtons:FindFirstChild(btnName)
+	if direct then
+		return direct
+	end
+	local lower = string.lower(btnName)
+	for _, ch in typeButtons:GetChildren() do
+		if string.lower(ch.Name) == lower then
+			return ch
+		end
+	end
+	return typeButtons:FindFirstChild(btnName, true)
+end
+
 local function syncTypeButtonSelectedOverlays(instant: boolean?)
-	local typeButtons = indexFrame and indexFrame:FindFirstChild("TypeButtons")
+	local typeButtons = findTypeButtons()
 	if not typeButtons then
 		return
 	end
-	for _, d in typeButtons:GetDescendants() do
-		if isSelectedOverlayName(d.Name) and d:IsA("GuiObject") then
-			setSelectedOverlay(d :: GuiObject, false, true)
-		end
-	end
 	for mutId, btnName in IndexConfig.TAB_BUTTON_NAME do
-		local btn = typeButtons:FindFirstChild(btnName)
+		local btn = findTabRoot(typeButtons, btnName)
 		if btn then
 			applyTabVisual(btn, mutId == selectedMutation, instant == true)
 		end
@@ -1523,10 +1481,10 @@ function IndexController.init()
 		warn("[IndexController] CollectAllButton missing")
 	end
 
-	local typeButtons = indexFrame:FindFirstChild("TypeButtons")
+	local typeButtons = findTypeButtons()
 	if typeButtons then
 		for mutationId, btnName in IndexConfig.TAB_BUTTON_NAME do
-			local tabRoot = typeButtons:FindFirstChild(btnName)
+			local tabRoot = findTabRoot(typeButtons, btnName)
 			if tabRoot then
 				wireTabInteractions(tabRoot, mutationId)
 			end
@@ -1586,8 +1544,13 @@ function IndexController.init()
 			hideIndexSidebarBadge()
 			hideTabNotif(selectedMutation)
 			syncTypeButtonSelectedOverlays(true)
+			task.delay(0.45, function()
+				if indexFrame and indexFrame.Visible then
+					syncTypeButtonSelectedOverlays(true)
+				end
+			end)
 			-- Ensure tabs stay clickable after panel open.
-			local typeButtons = indexFrame:FindFirstChild("TypeButtons")
+			local typeButtons = findTypeButtons()
 			if typeButtons then
 				for _, ch in typeButtons:GetChildren() do
 					local slideScale = ch:FindFirstChild("PanelSlideScale")

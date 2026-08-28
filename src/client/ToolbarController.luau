@@ -978,8 +978,6 @@ local ToolbarController = {}
 
 	local SLOT_BUTTON_IMAGE_TINT = Color3.fromRGB(58, 60, 72)
 	local BACKPACK_SLOT_PANEL_OCCUPIED = Color3.fromRGB(26, 28, 34)
-	local BACKPACK_SLOT_PANEL_SELECTED = Color3.fromRGB(78, 62, 28)
-	local SLOT_SELECT_STROKE_COLOR = Color3.fromRGB(255, 214, 90)
 
 	local function styleToolbarSlotButton(btn: GuiButton)
 		enableGuiButtonInput(btn)
@@ -1190,8 +1188,7 @@ local ToolbarController = {}
 		local stroke = btn:FindFirstChildOfClass("UIStroke")
 
 		if occupied then
-			local selected = (btn:GetAttribute("ToolbarBackpackSelected") == true)
-			local color = if selected then BACKPACK_SLOT_PANEL_SELECTED else BACKPACK_SLOT_PANEL_OCCUPIED
+			local color = BACKPACK_SLOT_PANEL_OCCUPIED
 			if btn:IsA("ImageButton") then
 				local imageBtn = btn :: ImageButton
 				imageBtn.ImageColor3 = color
@@ -1200,10 +1197,10 @@ local ToolbarController = {}
 				btn.BackgroundColor3 = color
 			end
 			btn.BackgroundTransparency = defaults.bgTransparency
-			if stroke then
-				stroke.Enabled = not selected
-				if not selected then
-					stroke.Transparency = defaults.strokeTransparency or 0
+			if stroke and stroke.Name ~= "ToolbarSlotSelectStroke" then
+				stroke.Enabled = true
+				if defaults.strokeTransparency ~= nil then
+					stroke.Transparency = defaults.strokeTransparency
 				end
 			end
 		else
@@ -2290,8 +2287,9 @@ local ToolbarController = {}
 
 	-- ── Slot highlight ────────────────────────────────────────────────────────────
 
-	-- Selection overlay = ToolbarSlotSelectStroke (gold). Studio slot art stays untouched.
+	-- Selection uses each slot's authored Button.UIStroke (Studio preset, including hotbar 1).
 	local SLOT_STROKE_SELECTED = 0
+	local SLOT_STROKE_IDLE_FALLBACK = 0.6
 	local SLOT_SELECTED_SCALE = 1.08
 	local SLOT_IDLE_SCALE = 1.0
 	local SLOT_HOVER_SCALE = 1.12
@@ -2325,21 +2323,31 @@ local ToolbarController = {}
 		end
 	end
 
-	local function applyButtonSelectionStyle(btn: GuiObject, lit: boolean)
-		local stroke = btn:FindFirstChild("ToolbarSlotSelectStroke")
-		if not (stroke and stroke:IsA("UIStroke")) then
-			local created = Instance.new("UIStroke")
-			created.Name = "ToolbarSlotSelectStroke"
-			created.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-			created.LineJoinMode = Enum.LineJoinMode.Round
-			created.Parent = btn
-			stroke = created
+	local function authoredSlotStroke(btn: GuiObject): UIStroke?
+		local fake = btn:FindFirstChild("ToolbarSlotSelectStroke")
+		if fake then
+			fake:Destroy()
 		end
+		for _, ch in btn:GetChildren() do
+			if ch:IsA("UIStroke") then
+				return ch
+			end
+		end
+		return nil
+	end
+
+	local function applyButtonSelectionStyle(btn: GuiObject, lit: boolean)
+		local stroke = authoredSlotStroke(btn)
+		if not stroke then
+			return
+		end
+		if btn:GetAttribute("ToolbarStrokeIdle") == nil then
+			btn:SetAttribute("ToolbarStrokeIdle", stroke.Transparency)
+		end
+		local idle = btn:GetAttribute("ToolbarStrokeIdle")
+		local idleT = if typeof(idle) == "number" then idle else SLOT_STROKE_IDLE_FALLBACK
 		stroke.Enabled = true
-		stroke.Color = SLOT_SELECT_STROKE_COLOR
-		stroke.Thickness = 2.8
-		stroke.Transparency = if lit then SLOT_STROKE_SELECTED else 1
-		btn:SetAttribute("ToolbarBackpackSelected", lit)
+		stroke.Transparency = if lit then SLOT_STROKE_SELECTED else idleT
 	end
 
 	local function setSlotHighlight(index: number?, lit: boolean)
@@ -2400,8 +2408,8 @@ local ToolbarController = {}
 					local listIdx = listIndexForBackpackUiRow(uiRow)
 					local lit = typeof(listIdx) == "number" and uiBackpackListHighlight == listIdx
 					if btn then
-						applyButtonSelectionStyle(btn, lit)
 						applyBackpackSlotPanelAppearance(btn, brainrotEntryForBackpackSlot(uiRow) ~= nil)
+						applyButtonSelectionStyle(btn, lit)
 						local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
 						local target = if lit then SLOT_SELECTED_SCALE else SLOT_IDLE_SCALE
 						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = target }):Play()
@@ -2414,8 +2422,8 @@ local ToolbarController = {}
 				local btn = slotPrimaryButton(row)
 				local lit = uiBackpackExtraHighlight == tool
 				if btn then
-					applyButtonSelectionStyle(btn, lit)
 					applyBackpackSlotPanelAppearance(btn, true)
+					applyButtonSelectionStyle(btn, lit)
 					local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
 					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = if lit then SLOT_SELECTED_SCALE else SLOT_IDLE_SCALE }):Play()
 				end

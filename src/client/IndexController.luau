@@ -416,15 +416,18 @@ local function collectSelectedOverlays(tabRoot: Instance): { GuiObject }
 	local out: { GuiObject } = {}
 	local seen: { [Instance]: boolean } = {}
 	local function add(node: Instance?)
-		if node and node:IsA("GuiObject") and not seen[node] then
+		if node and node:IsA("GuiObject") and isSelectedOverlayName(node.Name) and not seen[node] then
 			seen[node] = true
 			table.insert(out, node :: GuiObject)
 		end
 	end
-	add(tabRoot:FindFirstChild("Selected"))
-	add(tabRoot:FindFirstChild("Selected", true))
-	add(tabRoot:FindFirstChild("Sellect"))
-	add(tabRoot:FindFirstChild("Sellect", true))
+	add(tabRoot)
+	for _, child in tabRoot:GetChildren() do
+		add(child)
+	end
+	for _, d in tabRoot:GetDescendants() do
+		add(d)
+	end
 	return out
 end
 
@@ -440,6 +443,11 @@ local function ensureOverlayScale(gui: GuiObject): UIScale
 	return scale
 end
 
+local function setOverlayImageShown(img: ImageLabel, on: boolean)
+	img.Visible = on
+	img.ImageTransparency = if on then 0 else 1
+end
+
 local function setSelectedOverlay(gui: GuiObject, on: boolean, instant: boolean?)
 	cancelOverlayTweens(gui)
 	gui.ZIndex = math.max(gui.ZIndex, 12)
@@ -447,16 +455,19 @@ local function setSelectedOverlay(gui: GuiObject, on: boolean, instant: boolean?
 	pcall(function()
 		(gui :: any).Interactable = false
 	end)
-	local parent = gui.Parent
-	if parent and parent:IsA("GuiObject") then
-		(parent :: GuiObject).ClipsDescendants = false
-	end
+	pcall(function()
+		(gui :: any).Enabled = on
+	end)
 	local scale = ensureOverlayScale(gui)
-	local isImage = gui:IsA("ImageLabel") or gui:IsA("ImageButton")
 	if on then
 		gui.Visible = true
-		if isImage then
-			(gui :: ImageLabel).ImageTransparency = 0
+		if gui:IsA("ImageLabel") or gui:IsA("ImageButton") then
+			setOverlayImageShown(gui :: ImageLabel, true)
+		end
+		for _, d in gui:GetDescendants() do
+			if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+				setOverlayImageShown(d :: ImageLabel, true)
+			end
 		end
 		if instant == true then
 			scale.Scale = 1
@@ -470,6 +481,14 @@ local function setSelectedOverlay(gui: GuiObject, on: boolean, instant: boolean?
 	end
 	scale.Scale = 1
 	gui.Visible = false
+	if gui:IsA("ImageLabel") or gui:IsA("ImageButton") then
+		setOverlayImageShown(gui :: ImageLabel, false)
+	end
+	for _, d in gui:GetDescendants() do
+		if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+			setOverlayImageShown(d :: ImageLabel, false)
+		end
+	end
 end
 
 local function applyTabVisual(tabBtn: Instance, selected: boolean, instant: boolean?)
@@ -479,6 +498,24 @@ local function applyTabVisual(tabBtn: Instance, selected: boolean, instant: bool
 	local unsel = tabBtn:FindFirstChild("NotSelected", true)
 	if unsel and unsel:IsA("GuiObject") and not isSelectedOverlayName(unsel.Name) then
 		(unsel :: GuiObject).Visible = not selected
+	end
+end
+
+local function syncTypeButtonSelectedOverlays(instant: boolean?)
+	local typeButtons = indexFrame and indexFrame:FindFirstChild("TypeButtons")
+	if not typeButtons then
+		return
+	end
+	for _, d in typeButtons:GetDescendants() do
+		if isSelectedOverlayName(d.Name) and d:IsA("GuiObject") then
+			setSelectedOverlay(d :: GuiObject, false, true)
+		end
+	end
+	for mutId, btnName in IndexConfig.TAB_BUTTON_NAME do
+		local btn = typeButtons:FindFirstChild(btnName)
+		if btn then
+			applyTabVisual(btn, mutId == selectedMutation, instant == true)
+		end
 	end
 end
 
@@ -1229,15 +1266,7 @@ selectMutation = function(mutationId: string)
 	selectedMutation = mutationId
 	hideTabNotif(mutationId)
 	updateHeader()
-	local typeButtons = indexFrame and indexFrame:FindFirstChild("TypeButtons")
-	if typeButtons then
-		for mutId, btnName in IndexConfig.TAB_BUTTON_NAME do
-			local btn = typeButtons:FindFirstChild(btnName)
-			if btn then
-				applyTabVisual(btn, mutId == selectedMutation, false)
-			end
-		end
-	end
+	syncTypeButtonSelectedOverlays(false)
 	applyLuckyBlockHeaderVisual(mutationId == IndexConfig.LUCKY_BLOCK_TAB)
 	if tooltipLabel then
 		tooltipLabel.Visible = false
@@ -1500,9 +1529,9 @@ function IndexController.init()
 			local tabRoot = typeButtons:FindFirstChild(btnName)
 			if tabRoot then
 				wireTabInteractions(tabRoot, mutationId)
-				applyTabVisual(tabRoot, mutationId == selectedMutation, true)
 			end
 		end
+		syncTypeButtonSelectedOverlays(true)
 	end
 
 	local header = indexFrame:FindFirstChild("Header") or indexFrame:FindFirstChild("Header", true)
@@ -1556,6 +1585,7 @@ function IndexController.init()
 		if indexFrame.Visible then
 			hideIndexSidebarBadge()
 			hideTabNotif(selectedMutation)
+			syncTypeButtonSelectedOverlays(true)
 			-- Ensure tabs stay clickable after panel open.
 			local typeButtons = indexFrame:FindFirstChild("TypeButtons")
 			if typeButtons then
@@ -1592,15 +1622,7 @@ function IndexController.init()
 	end)
 
 	updateHeader()
-	local typeButtonsInit = indexFrame:FindFirstChild("TypeButtons")
-	if typeButtonsInit then
-		for mutId, btnName in IndexConfig.TAB_BUTTON_NAME do
-			local btn = typeButtonsInit:FindFirstChild(btnName)
-			if btn then
-				applyTabVisual(btn, mutId == selectedMutation, true)
-			end
-		end
-	end
+	syncTypeButtonSelectedOverlays(true)
 
 	task.spawn(function()
 		local remotes = ReplicatedStorage:WaitForChild("IndexRemotes", 60)

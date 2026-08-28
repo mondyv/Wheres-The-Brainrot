@@ -978,6 +978,8 @@ local ToolbarController = {}
 
 	local SLOT_BUTTON_IMAGE_TINT = Color3.fromRGB(58, 60, 72)
 	local BACKPACK_SLOT_PANEL_OCCUPIED = Color3.fromRGB(26, 28, 34)
+	local BACKPACK_SLOT_PANEL_SELECTED = Color3.fromRGB(78, 62, 28)
+	local SLOT_SELECT_STROKE_COLOR = Color3.fromRGB(255, 214, 90)
 
 	local function styleToolbarSlotButton(btn: GuiButton)
 		enableGuiButtonInput(btn)
@@ -1062,10 +1064,23 @@ local ToolbarController = {}
 						UIInteractionSounds.playHover()
 						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.1 }):Play()
 					end)
-					btn.MouseLeave:Connect(function()
-						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
-					end)
-					btn.MouseButton1Down:Connect(function()
+				btn.MouseLeave:Connect(function()
+					TweenService:Create(scale, HIGHLIGHT_TWEEN, {
+						Scale = if uiBackpackExtraHighlight == tool then SLOT_SELECTED_SCALE else SLOT_IDLE_SCALE,
+					}):Play()
+				end)
+				btn.Activated:Connect(function()
+					if not canUseToolbar then
+						return
+					end
+					if dragSuppressedToolbarClick then
+						dragSuppressedToolbarClick = false
+						return
+					end
+					UIInteractionSounds.playClick()
+					requestEquipFromBackpackExtra(tool)
+				end)
+				btn.MouseButton1Down:Connect(function()
 						if not canUseToolbar then
 							return
 						end
@@ -1175,7 +1190,8 @@ local ToolbarController = {}
 		local stroke = btn:FindFirstChildOfClass("UIStroke")
 
 		if occupied then
-			local color = BACKPACK_SLOT_PANEL_OCCUPIED
+			local selected = (btn:GetAttribute("ToolbarBackpackSelected") == true)
+			local color = if selected then BACKPACK_SLOT_PANEL_SELECTED else BACKPACK_SLOT_PANEL_OCCUPIED
 			if btn:IsA("ImageButton") then
 				local imageBtn = btn :: ImageButton
 				imageBtn.ImageColor3 = color
@@ -1185,8 +1201,10 @@ local ToolbarController = {}
 			end
 			btn.BackgroundTransparency = defaults.bgTransparency
 			if stroke then
-				stroke.Enabled = true
-				stroke.Transparency = defaults.strokeTransparency or 0
+				stroke.Enabled = not selected
+				if not selected then
+					stroke.Transparency = defaults.strokeTransparency or 0
+				end
 			end
 		else
 			-- Empty backpack cells should still look like real slots.
@@ -2272,9 +2290,8 @@ local ToolbarController = {}
 
 	-- ── Slot highlight ────────────────────────────────────────────────────────────
 
-	-- Selection = UIStroke only. Never touch the slot's own Image / ImageColor3 (that's the slot art designed in Studio).
+	-- Selection overlay = ToolbarSlotSelectStroke (gold). Studio slot art stays untouched.
 	local SLOT_STROKE_SELECTED = 0
-	local SLOT_STROKE_IDLE = 0.6
 	local SLOT_SELECTED_SCALE = 1.08
 	local SLOT_IDLE_SCALE = 1.0
 	local SLOT_HOVER_SCALE = 1.12
@@ -2309,10 +2326,20 @@ local ToolbarController = {}
 	end
 
 	local function applyButtonSelectionStyle(btn: GuiObject, lit: boolean)
-		local stroke = btn:FindFirstChildOfClass("UIStroke")
-		if stroke then
-			stroke.Transparency = if lit then SLOT_STROKE_SELECTED else SLOT_STROKE_IDLE
+		local stroke = btn:FindFirstChild("ToolbarSlotSelectStroke")
+		if not (stroke and stroke:IsA("UIStroke")) then
+			local created = Instance.new("UIStroke")
+			created.Name = "ToolbarSlotSelectStroke"
+			created.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			created.LineJoinMode = Enum.LineJoinMode.Round
+			created.Parent = btn
+			stroke = created
 		end
+		stroke.Enabled = true
+		stroke.Color = SLOT_SELECT_STROKE_COLOR
+		stroke.Thickness = 2.8
+		stroke.Transparency = if lit then SLOT_STROKE_SELECTED else 1
+		btn:SetAttribute("ToolbarBackpackSelected", lit)
 	end
 
 	local function setSlotHighlight(index: number?, lit: boolean)
@@ -2374,6 +2401,10 @@ local ToolbarController = {}
 					local lit = typeof(listIdx) == "number" and uiBackpackListHighlight == listIdx
 					if btn then
 						applyButtonSelectionStyle(btn, lit)
+						applyBackpackSlotPanelAppearance(btn, brainrotEntryForBackpackSlot(uiRow) ~= nil)
+						local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
+						local target = if lit then SLOT_SELECTED_SCALE else SLOT_IDLE_SCALE
+						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = target }):Play()
 					end
 				end
 			end
@@ -2381,8 +2412,12 @@ local ToolbarController = {}
 		for tool, row in extraToolRowByTool do
 			if row and row.Parent then
 				local btn = slotPrimaryButton(row)
+				local lit = uiBackpackExtraHighlight == tool
 				if btn then
-					applyButtonSelectionStyle(btn, uiBackpackExtraHighlight == tool)
+					applyButtonSelectionStyle(btn, lit)
+					applyBackpackSlotPanelAppearance(btn, true)
+					local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
+					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = if lit then SLOT_SELECTED_SCALE else SLOT_IDLE_SCALE }):Play()
 				end
 			end
 		end
@@ -3028,13 +3063,13 @@ local ToolbarController = {}
 				end
 			end
 		end
-		if equippedSlot then
-			uiBackpackListHighlight = nil
-			uiBackpackExtraHighlight = nil
-			uiHotbarHighlight = equippedSlot
-		elseif uiBackpackListHighlight ~= nil or uiBackpackExtraHighlight ~= nil then
+		-- Keep a backpack outline while that bag item is equipped. Do not steal
+		-- the ring back onto a hotbar cell.
+		if uiBackpackListHighlight ~= nil or uiBackpackExtraHighlight ~= nil then
 			uiHotbarHighlight = nil
 			_activeSlot = nil
+		elseif equippedSlot then
+			uiHotbarHighlight = equippedSlot
 		elseif uiHotbarHighlight ~= nil then
 			local hi = math.clamp(uiHotbarHighlight, 1, HOTBAR_INVENTORY_SLOTS)
 			local hiBrainrotIdx = brainrotIndexForHotbarSlot(hi)
@@ -3149,6 +3184,9 @@ local ToolbarController = {}
 		end
 
 		refreshParkedExtraToolsUI()
+		if typeof(syncBackpackSelectionStrokes) == "function" then
+			syncBackpackSelectionStrokes()
+		end
 	end
 
 	local function findBestBrainrotInventoryIndex(): number?
@@ -3430,16 +3468,16 @@ local ToolbarController = {}
 			return
 		end
 
-		local uiSlot = hotbarSlotForBrainrotIndex(listIdx)
-		if uiSlot and brainrotParkedInUI[listIdx] ~= true then
-			-- Already pinned to the hotbar — that ring tracks equip.
-			setHotbarSelection(uiSlot)
-		else
-			setHotbarSelection(nil, false)
-			uiBackpackListHighlight = listIdx
-			uiBackpackExtraHighlight = nil
-			syncBackpackSelectionStrokes()
+		local hum = getHumanoid()
+		if hum then
+			hum:UnequipTools()
 		end
+		uiHotbarHighlight = nil
+		_activeSlot = nil
+		uiBackpackListHighlight = listIdx
+		uiBackpackExtraHighlight = nil
+		syncAllHotbarSelectionStrokes()
+		syncBackpackSelectionStrokes()
 		requestEquipBrainrotSlot(listIdx, true)
 		task.defer(rebuildSlots)
 		task.delay(0.15, rebuildSlots)
@@ -3504,7 +3542,11 @@ local ToolbarController = {}
 				end)
 				btn.MouseLeave:Connect(function()
 					BrainrotItemTooltip.hide(true)
-					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
+					local listIdx = listIndexForBackpackUiRow(uiRow)
+					local selected = typeof(listIdx) == "number" and uiBackpackListHighlight == listIdx
+					TweenService:Create(scale, HIGHLIGHT_TWEEN, {
+						Scale = if selected then SLOT_SELECTED_SCALE else SLOT_IDLE_SCALE,
+					}):Play()
 				end)
 				if btn:GetAttribute("_BrainrotTooltipBound") ~= true then
 					btn:SetAttribute("_BrainrotTooltipBound", true)
@@ -3514,6 +3556,25 @@ local ToolbarController = {}
 						return if entry then entry.name else nil
 					end)
 				end
+				btn.Activated:Connect(function()
+					if not MobileTouchGate.canTapUi() then
+						return
+					end
+					if not canUseToolbar then
+						return
+					end
+					if dragSuppressedToolbarClick then
+						dragSuppressedToolbarClick = false
+						return
+					end
+					local listIdx = listIndexForBackpackUiRow(uiRow)
+					local entry = brainrotEntryForBackpackSlot(uiRow)
+					if not listIdx or not entry then
+						return
+					end
+					UIInteractionSounds.playClick()
+					requestEquipFromBackpack(listIdx)
+				end)
 				btn.MouseButton1Down:Connect(function()
 					if not canUseToolbar then
 						return

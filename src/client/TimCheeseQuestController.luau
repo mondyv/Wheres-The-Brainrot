@@ -5,6 +5,7 @@
 	(quest appearance popup; no Tim fall cutscene). Falls back if they never open it.
 ]]
 
+local ContextActionService = game:GetService("ContextActionService")
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -29,6 +30,7 @@ local TopNotifController = require(script.Parent.TopNotifController)
 local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
+local GamepadInput = require(script.Parent.GamepadInput)
 
 local function setBushPromptsHiddenForIntro(hidden: boolean)
 	-- Lazy require avoids circular load with BushHoldInteraction → TimCheeseQuestController.
@@ -1489,6 +1491,7 @@ local function ensureQuestHud(): GuiObject
 	collapse.Activated:Connect(function()
 		toggleQuestHudCollapsed()
 	end)
+	GamepadInput.mountHint(collapse, Enum.KeyCode.DPadRight)
 	collapse.Visible = false
 	return shell
 end
@@ -3199,6 +3202,28 @@ function M.init()
 			syncPromptAndOutline()
 		end)
 	end)
+
+	ContextActionService:BindActionAtPriority(
+		"TimCheeseQuestHudToggle",
+		function(_name, state, _input)
+			if state ~= Enum.UserInputState.Begin then
+				return Enum.ContextActionResult.Pass
+			end
+			if dialogueBusy or introPlaying then
+				return Enum.ContextActionResult.Pass
+			end
+			if GameplayCutsceneGate.isAmbushOrChaseActive() then
+				return Enum.ContextActionResult.Pass
+			end
+			toggleQuestHudCollapsed()
+			return Enum.ContextActionResult.Sink
+		end,
+		false,
+		Enum.ContextActionPriority.Default.Value,
+		Enum.KeyCode.J,
+		Enum.KeyCode.DPadRight,
+		Enum.KeyCode.ButtonSelect
+	)
 end
 
 return M

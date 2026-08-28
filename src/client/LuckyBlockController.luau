@@ -18,6 +18,7 @@ local Workspace = game:GetService("Workspace")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CutsceneConfig = require(Shared:WaitForChild("LuckyBlockCutsceneConfig"))
+local GearConfig = require(Shared:WaitForChild("GearConfig"))
 local MobileTouchGate = require(Shared:WaitForChild("MobileTouchGate"))
 local SafezoneUtil = require(Shared:WaitForChild("SafezoneUtil"))
 
@@ -27,6 +28,7 @@ local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local OtherVfxController = require(script.Parent.OtherVfxController)
 local TopNotifController = require(script.Parent.TopNotifController)
+local GamepadInput = require(script.Parent.GamepadInput)
 
 local player = Players.LocalPlayer
 
@@ -1414,6 +1416,72 @@ local function handleShakeStart(payload: any)
 	end)
 end
 
+local function tryRollLuckyTool(tool: Tool)
+	if tool:GetAttribute("LuckyBlockRolling") == true then
+		return
+	end
+	if not canOpenLuckyBlockInZone() then
+		showOpenDeniedNotif(nil)
+		return
+	end
+	if not rollRE then
+		return
+	end
+	rollRE:FireServer(tool)
+end
+
+local function syncLuckyOpenHint(tool: Tool, equipped: boolean)
+	local handle = tool:FindFirstChild("Handle")
+	if not (handle and handle:IsA("BasePart")) then
+		return
+	end
+	local gui = handle:FindFirstChild("LuckyOpenHint")
+	if not equipped then
+		if gui then
+			gui:Destroy()
+		end
+		return
+	end
+	if not (gui and gui:IsA("BillboardGui")) then
+		local billboard = Instance.new("BillboardGui")
+		billboard.Name = "LuckyOpenHint"
+		billboard.Size = UDim2.fromOffset(120, 72)
+		billboard.StudsOffset = Vector3.new(0, 2.2, 0)
+		billboard.AlwaysOnTop = true
+		billboard.LightInfluence = 0
+		billboard.MaxDistance = 32
+		billboard.Parent = handle
+
+		local tip = Instance.new("TextLabel")
+		tip.Name = "Tip"
+		tip.BackgroundTransparency = 1
+		tip.Size = UDim2.new(1, 0, 0, 28)
+		tip.Position = UDim2.fromOffset(0, 0)
+		tip.Font = Enum.Font.GothamBold
+		tip.TextSize = 14
+		tip.TextColor3 = Color3.fromRGB(255, 255, 255)
+		tip.TextStrokeTransparency = 0.4
+		tip.Text = "Click to open"
+		tip.Parent = billboard
+
+		local ring = Instance.new("Frame")
+		ring.Name = "AHost"
+		ring.BackgroundTransparency = 1
+		ring.AnchorPoint = Vector2.new(0.5, 1)
+		ring.Position = UDim2.new(0.5, 0, 1, 0)
+		ring.Size = UDim2.fromOffset(34, 34)
+		ring.Parent = billboard
+		GamepadInput.mountHint(ring, GamepadInput.ACCEPT, true)
+		gui = billboard
+	end
+	local tip = gui:FindFirstChild("Tip")
+	local usePad = GamepadInput.isPreferred()
+	if tip and tip:IsA("TextLabel") then
+		local token = GamepadInput.faceLabel(GamepadInput.ACCEPT)
+		tip.Text = if usePad then ("Press " .. token .. " to open") else "Click to open"
+	end
+end
+
 local function bindTool(tool: Tool)
 	if tool:GetAttribute("__LuckyBlockBound") == true then
 		return
@@ -1422,6 +1490,7 @@ local function bindTool(tool: Tool)
 
 	-- Hold-out SFX once per equip (not retriggerable by spam-equip within the gate).
 	tool.Equipped:Connect(function()
+		syncLuckyOpenHint(tool, true)
 		if tool:GetAttribute("__LuckyHoldSfxPlayed") == true then
 			return
 		end
@@ -1433,20 +1502,11 @@ local function bindTool(tool: Tool)
 	end)
 	tool.Unequipped:Connect(function()
 		tool:SetAttribute("__LuckyHoldSfxPlayed", nil)
+		syncLuckyOpenHint(tool, false)
 	end)
 
 	tool.Activated:Connect(function()
-		if tool:GetAttribute("LuckyBlockRolling") == true then
-			return
-		end
-		if not canOpenLuckyBlockInZone() then
-			showOpenDeniedNotif(nil)
-			return
-		end
-		if not rollRE then
-			return
-		end
-		rollRE:FireServer(tool)
+		tryRollLuckyTool(tool)
 	end)
 end
 
@@ -1526,6 +1586,28 @@ function LuckyBlockController.init()
 			bindToBackpack(c)
 		end
 	end)
+
+	ContextActionService:BindActionAtPriority(
+		"LuckyBlockGamepadOpen",
+		function(_name, state, _input)
+			if state ~= Enum.UserInputState.Begin then
+				return Enum.ContextActionResult.Pass
+			end
+			if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+				return Enum.ContextActionResult.Pass
+			end
+			local char = player.Character
+			local tool = char and char:FindFirstChildOfClass("Tool")
+			if not tool or not isLuckyBlockTool(tool) then
+				return Enum.ContextActionResult.Pass
+			end
+			tryRollLuckyTool(tool)
+			return Enum.ContextActionResult.Sink
+		end,
+		false,
+		Enum.ContextActionPriority.High.Value + 20,
+		Enum.KeyCode.ButtonA
+	)
 end
 
 return LuckyBlockController

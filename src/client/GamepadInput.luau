@@ -86,20 +86,30 @@ function M.isAcceptHeld(): boolean
 	return ok and held == true
 end
 
-function M.mountHint(host: GuiObject, keyCode: Enum.KeyCode)
+function M.mountHint(host: GuiObject, keyCode: Enum.KeyCode, centered: boolean?)
 	local hint = host:FindFirstChild("GamepadHotkey")
 	if not (hint and hint:IsA("ImageLabel")) then
 		local label = Instance.new("ImageLabel")
 		label.Name = "GamepadHotkey"
 		label.BackgroundTransparency = 1
-		label.AnchorPoint = Vector2.new(1, 1)
-		label.Position = UDim2.new(1, 2, 1, 2)
-		label.Size = UDim2.fromOffset(22, 22)
+		if centered == true then
+			label.AnchorPoint = Vector2.new(0.5, 0.5)
+			label.Position = UDim2.fromScale(0.5, 0.5)
+			label.Size = UDim2.fromOffset(26, 26)
+		else
+			label.AnchorPoint = Vector2.new(1, 1)
+			label.Position = UDim2.new(1, 2, 1, 2)
+			label.Size = UDim2.fromOffset(22, 22)
+		end
 		label.ZIndex = math.max(host.ZIndex + 2, 6)
 		label.ScaleType = Enum.ScaleType.Fit
 		label.Visible = false
 		label.Parent = host
 		hint = label
+	elseif centered == true then
+		hint.AnchorPoint = Vector2.new(0.5, 0.5)
+		hint.Position = UDim2.fromScale(0.5, 0.5)
+		hint.Size = UDim2.fromOffset(26, 26)
 	end
 	local function refresh()
 		local show = M.isPreferred()

@@ -75,6 +75,7 @@ local finishing = false
 local cameraConn: RBXScriptConnection? = nil
 local shakeConn: RBXScriptConnection? = nil
 local choiceHoverConn: RBXScriptConnection? = nil
+local stickSelectConn: RBXScriptConnection? = nil
 local touchSelectConn: RBXScriptConnection? = nil
 local touchPanConn: RBXScriptConnection? = nil
 local jumpRequestConn: RBXScriptConnection? = nil
@@ -844,6 +845,10 @@ local function stopInput()
 	pcall(function()
 		ContextActionService:UnbindAction(SELECT_ACTION)
 	end)
+	if stickSelectConn then
+		stickSelectConn:Disconnect()
+		stickSelectConn = nil
+	end
 	stopTouchInput()
 end
 
@@ -924,10 +929,16 @@ updateChoiceVisuals = function()
 	ensureSoulTrackLoop()
 end
 
+local linePauseSkip = false
+
 local function requestSkip()
-	if typingActive and not choicesReady then
+	if choicesReady then
+		return
+	end
+	if typingActive then
 		skipRequested = true
-		conversationSkip = true
+	else
+		linePauseSkip = true
 	end
 end
 
@@ -1723,6 +1734,7 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 	skipRequested = false
 	conversationSkip = false
 	typingActive = false
+	linePauseSkip = false
 	selectedIndex = 1
 	lastHapticSelectedIndex = 0
 	focusModel = brainrot
@@ -1773,24 +1785,24 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 			if state ~= Enum.UserInputState.Begin then
 				return Enum.ContextActionResult.Pass
 			end
-			if typingActive and not choicesReady then
+			if not choicesReady then
 				if
 					input.KeyCode == Enum.KeyCode.Return
 					or input.KeyCode == Enum.KeyCode.Space
 					or input.KeyCode == Enum.KeyCode.ButtonA
+					or input.KeyCode == Enum.KeyCode.DPadDown
+					or input.KeyCode == Enum.KeyCode.DPadUp
 				then
 					requestSkip()
 					return Enum.ContextActionResult.Sink
 				end
-			end
-			if not choicesReady then
 				return Enum.ContextActionResult.Pass
 			end
-			if input.KeyCode == Enum.KeyCode.Up or input.KeyCode == Enum.KeyCode.W then
+			if input.KeyCode == Enum.KeyCode.Up or input.KeyCode == Enum.KeyCode.W or input.KeyCode == Enum.KeyCode.DPadUp then
 				selectedIndex = 1
 				updateChoiceVisuals()
 				return Enum.ContextActionResult.Sink
-			elseif input.KeyCode == Enum.KeyCode.Down or input.KeyCode == Enum.KeyCode.S then
+			elseif input.KeyCode == Enum.KeyCode.Down or input.KeyCode == Enum.KeyCode.S or input.KeyCode == Enum.KeyCode.DPadDown then
 				selectedIndex = 2
 				updateChoiceVisuals()
 				return Enum.ContextActionResult.Sink
@@ -1812,8 +1824,41 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 		Enum.KeyCode.S,
 		Enum.KeyCode.Return,
 		Enum.KeyCode.Space,
-		Enum.KeyCode.ButtonA
+		Enum.KeyCode.ButtonA,
+		Enum.KeyCode.DPadUp,
+		Enum.KeyCode.DPadDown
 	)
+
+	local stickLatch = 0
+	stickSelectConn = UserInputService.InputChanged:Connect(function(input)
+		if not active then
+			return
+		end
+		if input.UserInputType ~= Enum.UserInputType.Gamepad1 or input.KeyCode ~= Enum.KeyCode.Thumbstick1 then
+			return
+		end
+		local y = input.Position.Y
+		if not choicesReady then
+			if math.abs(y) > 0.65 and stickLatch ~= 3 then
+				stickLatch = 3
+				requestSkip()
+			elseif math.abs(y) < 0.25 then
+				stickLatch = 0
+			end
+			return
+		end
+		if y > 0.55 and stickLatch ~= 1 then
+			stickLatch = 1
+			selectedIndex = 1
+			updateChoiceVisuals()
+		elseif y < -0.55 and stickLatch ~= 2 then
+			stickLatch = 2
+			selectedIndex = 2
+			updateChoiceVisuals()
+		elseif math.abs(y) < 0.25 then
+			stickLatch = 0
+		end
+	end)
 
 	startTalkJump(brainrot)
 	for _, line in ipairs(config.lines) do
@@ -1825,7 +1870,8 @@ function StandDialogueCutscene.play(config: StandDialogueConfig, brainrot: Model
 			break
 		end
 		local pauseStart = os.clock()
-		while os.clock() - pauseStart < LINE_PAUSE and active and not conversationSkip do
+		linePauseSkip = false
+		while os.clock() - pauseStart < LINE_PAUSE and active and not conversationSkip and not linePauseSkip do
 			task.wait()
 		end
 	end

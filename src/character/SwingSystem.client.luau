@@ -2607,7 +2607,7 @@ local function boot(character)
 						break
 					end
 				end
-				if inst:IsA("BasePart") and inst.CanCollide and inst.Transparency < 0.55 and inst.Size.Magnitude > 6 then
+				if inst:IsA("BasePart") and inst.CanCollide and inst.Transparency < 0.85 then
 					break
 				end
 				table.insert(ignored, inst)
@@ -3607,7 +3607,7 @@ local function boot(character)
 
 		-- Crosshair ray already proved this vine is under the look — don't fail on screen edge.
 		if isCameraRayHit then
-			if requireLineOfSight and not st.hasLineOfSight(target, attachWorld) then
+			if not st.hasLineOfSight(target, attachWorld) then
 				return false
 			end
 			return true
@@ -3650,7 +3650,7 @@ local function boot(character)
 			end
 		end
 
-		if requireLineOfSight and not st.hasLineOfSight(target, attachWorld) then
+		if not st.hasLineOfSight(target, attachWorld) then
 			return false
 		end
 
@@ -4267,7 +4267,7 @@ local function boot(character)
 			st.markerLabel.Text = "[HOLD SPACE] TO SWING"
 			st.markerLabel.Parent = st.markerGui
 			if GamepadInputMod and typeof(GamepadInputMod.mountHint) == "function" then
-				GamepadInputMod.mountHint(st.markerLabel, Enum.KeyCode.ButtonA)
+				GamepadInputMod.mountHint(ring, Enum.KeyCode.ButtonA, true)
 			end
 		end
 	end
@@ -4372,10 +4372,20 @@ local function boot(character)
 			local readyBob = math.sin(os.clock() * C.READY_TEXT_BOB_SPEED)
 				* C.READY_TEXT_BOB_PIXELS
 				* math.clamp(st.targetReadyVisual, 0, 1)
+			local gamepadPrompt = GamepadInputMod and GamepadInputMod.isPreferred() == true
 			st.markerLabel.TextColor3 = st.targetVisualColor
-			st.markerLabel.TextTransparency = 0
-			st.markerLabel.TextStrokeTransparency = 0.35
-			st.markerLabel.Position = UDim2.new(0, 0, 0.5, 28 - readyBob)
+			if gamepadPrompt then
+				st.markerLabel.TextTransparency = 1
+				st.markerLabel.TextStrokeTransparency = 1
+			else
+				st.markerLabel.TextTransparency = 0
+				st.markerLabel.TextStrokeTransparency = 0.35
+				st.markerLabel.Position = UDim2.new(0, 0, 0.5, 28 - readyBob)
+			end
+			local hotkey = st.markerRing and st.markerRing:FindFirstChild("GamepadHotkey")
+			if hotkey and hotkey:IsA("ImageLabel") then
+				hotkey.Visible = gamepadPrompt == true and hotkey.Image ~= ""
+			end
 
 			if st.markerStroke then
 				st.markerStroke.Color = st.targetVisualColor

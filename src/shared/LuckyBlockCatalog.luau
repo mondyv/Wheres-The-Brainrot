@@ -333,6 +333,36 @@ local function findChildIgnoreCase(parent: Instance, name: string): Instance?
 	return nil
 end
 
+local function findChildFuzzy(parent: Instance, name: string): Instance?
+	local exact = findChildIgnoreCase(parent, name)
+	if exact then
+		return exact
+	end
+	local want = string.lower(name)
+	local compact = string.gsub(want, "%s*lucky%s*blocks?%s*", "")
+	compact = string.gsub(compact, "%s+", "")
+	local best: Instance? = nil
+	local bestScore = 0
+	for _, child in parent:GetChildren() do
+		local ln = string.lower(child.Name)
+		local childCompact = string.gsub(ln, "%s*lucky%s*blocks?%s*", "")
+		childCompact = string.gsub(childCompact, "%s+", "")
+		local score = 0
+		if ln == want or childCompact == compact then
+			score = 3
+		elseif compact ~= "" and (string.find(ln, compact, 1, true) or string.find(childCompact, compact, 1, true)) then
+			score = 2
+		elseif string.find(ln, want, 1, true) or string.find(want, ln, 1, true) then
+			score = 1
+		end
+		if score > bestScore then
+			bestScore = score
+			best = child
+		end
+	end
+	return best
+end
+
 local PLACEHOLDER_IMAGE = "rbxasset://textures/ui/GuiImagePlaceholder.png"
 
 local function isUsableImage(img: string?): boolean
@@ -453,12 +483,20 @@ function M.resolveIconAssetId(blockId: string): string
 		table.insert(preferred, def.displayName)
 	end
 	table.insert(preferred, folderName)
+	if def then
+		table.insert(preferred, def.id)
+	end
+	table.insert(preferred, blockId)
 
-	local style = findChildIgnoreCase(icons, "Normal")
+	local style = findChildIgnoreCase(icons, "Normal") or findChildFuzzy(icons, "Normal")
 	if not style then
 		return ""
 	end
 	local group = findChildIgnoreCase(style, folderName)
+		or findChildFuzzy(style, folderName)
+		or (def and findChildFuzzy(style, def.displayName))
+		or (def and findChildFuzzy(style, def.id))
+		or findChildFuzzy(style, blockId)
 	if not group then
 		return ""
 	end

@@ -583,6 +583,9 @@ local function populateRow(
 		local tex = if typeof(entry.icon) == "string" then entry.icon else ""
 		if tex == "" or tex == "rbxasset://textures/ui/GuiImagePlaceholder.png" or tex == "rbxassetid://0" then
 			tex = LuckyBlockCatalog.resolveIconAssetId(entry.name or displayName)
+			if tex == "" then
+				tex = LuckyBlockCatalog.resolveIconAssetId(displayName)
+			end
 		end
 		if tex ~= "" and tex ~= "rbxasset://textures/ui/GuiImagePlaceholder.png" then
 			(icon :: ImageLabel).Image = tex

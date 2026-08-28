@@ -1,12 +1,12 @@
 -- [ACTIVE] WorkoutController
 -- Gear activate: bar across both feet during curl, white flash, +power floaters into HUD.
+local ContextActionService = game:GetService("ContextActionService")
 local GamepadService = game:GetService("GamepadService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
@@ -86,8 +86,8 @@ local function findFeet(character: Model): (BasePart?, BasePart?)
 		end
 		return nil
 	end
-	local r = pick({ "RightFoot", "Right Leg", "RightLowerLeg" })
-	local l = pick({ "LeftFoot", "Left Leg", "LeftLowerLeg" })
+	local r = pick({ "RightLowerLeg", "Right Leg", "RightFoot" })
+	local l = pick({ "LeftLowerLeg", "Left Leg", "LeftFoot" })
 	return r, l
 end
 
@@ -147,13 +147,11 @@ local function clearFootAttach()
 	restoreToolVisibility()
 end
 
-local function groundBarCFrame(character: Model, rf: BasePart, lf: BasePart?): CFrame
+local DOUBLE_TAP_ACTION = "WorkoutDoubleTapAccept"
+
+local function shinBarCFrame(_character: Model, rf: BasePart, lf: BasePart?): CFrame
 	local mid = if lf then (rf.Position + lf.Position) * 0.5 else rf.Position
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { character }
-	local hit = Workspace:Raycast(mid + Vector3.new(0, 2.4, 0), Vector3.new(0, -10, 0), params)
-	local pos = if hit then hit.Position + Vector3.new(0, 0.16, 0) else Vector3.new(mid.X, mid.Y - 0.08, mid.Z)
+	local pos = mid + Vector3.new(0, 0.32, 0)
 	local across = if lf then lf.Position - rf.Position else rf.CFrame.RightVector
 	across = Vector3.new(across.X, 0, across.Z)
 	if across.Magnitude < 0.05 then
@@ -170,12 +168,13 @@ local function groundBarCFrame(character: Model, rf: BasePart, lf: BasePart?): C
 	return CFrame.fromMatrix(pos, right, up)
 end
 
--- Move the real equipped tool onto both tippy-toes (break hand grip every frame).
+-- Visible clone welded across the shins. Real tool stays equipped but hidden so
+-- the default RightGrip cannot keep the bar in the hands.
 local function attachGearAcrossFeet(character: Model, tool: Tool)
 	clearFootAttach()
 	local rightFoot, leftFoot = findFeet(character)
-	local handle = tool:FindFirstChild("Handle")
-	if not handle or not handle:IsA("BasePart") then
+	local sourceHandle = tool:FindFirstChild("Handle")
+	if not sourceHandle or not sourceHandle:IsA("BasePart") then
 		warn("[WorkoutController] Tool missing Handle — cannot attach to feet")
 		return
 	end
@@ -185,8 +184,57 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		return
 	end
 
-	handle.CanCollide = false
-	handle.Massless = true
+	for _, d in tool:GetDescendants() do
+		if d:IsA("BasePart") then
+			if handleTransparency[d] == nil then
+				handleTransparency[d] = d.LocalTransparencyModifier
+			end
+			d.LocalTransparencyModifier = 1
+			d.CanCollide = false
+			d.Massless = true
+		end
+	end
+
+	local clone = tool:Clone()
+	clone.Name = "WorkoutFootProp"
+	for _, d in clone:GetDescendants() do
+		if d:IsA("BaseScript") or d:IsA("LocalScript") or d:IsA("Script") then
+			d:Destroy()
+		elseif d:IsA("Highlight") or d:IsA("BillboardGui") or d:IsA("ProximityPrompt") then
+			d:Destroy()
+		elseif d:IsA("Motor6D") or d:IsA("Weld") or d:IsA("WeldConstraint") then
+			d:Destroy()
+		elseif d:IsA("BasePart") then
+			d.CanCollide = false
+			d.Massless = true
+			d.Anchored = false
+			d.CanQuery = false
+			d.CanTouch = false
+			d.LocalTransparencyModifier = 0
+		end
+	end
+
+	local model = Instance.new("Model")
+	model.Name = "WorkoutFootProp"
+	for _, child in clone:GetChildren() do
+		child.Parent = model
+	end
+	clone:Destroy()
+
+	local handle = model:FindFirstChild("Handle")
+	if not (handle and handle:IsA("BasePart")) then
+		handle = model:FindFirstChildWhichIsA("BasePart", true)
+	end
+	if not handle or not handle:IsA("BasePart") then
+		model:Destroy()
+		warn("[WorkoutController] Foot prop missing parts")
+		restoreToolVisibility()
+		return
+	end
+	model.PrimaryPart = handle
+	model.Parent = character
+	footProp = model
+
 	destroyHandGrips(character)
 	gripKillConn = RunService.Heartbeat:Connect(function()
 		local char = player.Character
@@ -207,7 +255,8 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		end
 	end)
 
-	local pose0 = groundBarCFrame(character, anchorFoot, if anchorFoot == rightFoot then leftFoot else rightFoot)
+	local otherFoot = if anchorFoot == rightFoot then leftFoot else rightFoot
+	local pose0 = shinBarCFrame(character, anchorFoot, otherFoot)
 	local motor = Instance.new("Motor6D")
 	motor.Name = "WorkoutFootMotor"
 	motor.Part0 = anchorFoot
@@ -226,7 +275,7 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		if not footA then
 			return
 		end
-		local pose = groundBarCFrame(player.Character or character, footA, if footA == rf then lf else rf)
+		local pose = shinBarCFrame(player.Character or character, footA, if footA == rf then lf else rf)
 		if motor.Part0 and motor.Part0.Parent then
 			motor.C0 = motor.Part0.CFrame:ToObjectSpace(pose)
 		else
@@ -983,12 +1032,10 @@ local function spawnDoubleTapPrompt()
 	btn.Selectable = true
 	btn.ZIndex = 21
 	btn.Parent = holder
-	GamepadInput.mountHint(btn, GamepadInput.ACCEPT)
-	if GamepadInput.isPreferred() then
-		pcall(function()
-			GamepadService:EnableGamepadCursor(gui)
-		end)
-	end
+	GamepadInput.mountHint(btn, GamepadInput.ACCEPT, true)
+	pcall(function()
+		GamepadService:DisableGamepadCursor()
+	end)
 
 	table.insert(activeDoubleTaps, holder)
 	UIInteractionSounds.playClick()
@@ -1096,6 +1143,26 @@ local function stopDoubleTapLoop()
 		doubleTapGui:Destroy()
 		doubleTapGui = nil
 	end
+	pcall(function()
+		ContextActionService:UnbindAction(DOUBLE_TAP_ACTION)
+	end)
+	pcall(function()
+		GamepadService:DisableGamepadCursor()
+	end)
+end
+
+local function tryActivateOldestDoubleTap(): boolean
+	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+		return false
+	end
+	pruneDoubleTaps()
+	local holder = activeDoubleTaps[1]
+	local activate = holder and doubleTapActivateByHolder[holder]
+	if activate then
+		activate()
+		return true
+	end
+	return false
 end
 
 local function startDoubleTapLoop()
@@ -1104,6 +1171,21 @@ local function startDoubleTapLoop()
 	doubleTapHits = 0
 	lastDoubleTapSpawnAt = -100
 	ensureDoubleTapGui()
+	ContextActionService:BindActionAtPriority(
+		DOUBLE_TAP_ACTION,
+		function(_name, state, _input)
+			if state ~= Enum.UserInputState.Begin then
+				return Enum.ContextActionResult.Pass
+			end
+			if tryActivateOldestDoubleTap() then
+				return Enum.ContextActionResult.Sink
+			end
+			return Enum.ContextActionResult.Pass
+		end,
+		false,
+		Enum.ContextActionPriority.High.Value + 80,
+		Enum.KeyCode.ButtonA
+	)
 	task.spawn(function()
 		task.wait(1.15)
 		while gen == doubleTapGen and player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true do
@@ -1315,22 +1397,11 @@ local function init()
 		startDoubleTapLoop()
 	end
 
-	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if gameProcessed then
-			return
-		end
+	UserInputService.InputBegan:Connect(function(input, _gameProcessed)
 		if input.UserInputType ~= Enum.UserInputType.Gamepad1 or input.KeyCode ~= GamepadInput.ACCEPT then
 			return
 		end
-		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
-			return
-		end
-		pruneDoubleTaps()
-		local holder = activeDoubleTaps[1]
-		local activate = holder and doubleTapActivateByHolder[holder]
-		if activate then
-			activate()
-		end
+		tryActivateOldestDoubleTap()
 	end)
 end
 

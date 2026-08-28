@@ -780,6 +780,9 @@ local ToolbarController = {}
 		if not gearTool then
 			return
 		end
+		if isExtraToolParked(gearTool) then
+			return
+		end
 
 		if slotHasActiveBrainrot(1) then
 			requestTuckBrainrotHotbarSlot(1)
@@ -801,25 +804,61 @@ local ToolbarController = {}
 	local setBackpackPanelOpen: (boolean) -> ()
 	local findBackpackTemplateRow: (Instance?) -> GuiObject?
 	local applyBackpackSlotPanelAppearance: (GuiButton, boolean) -> ()
+	local requestEquipFromBackpackExtra: (Tool) -> ()
+	local syncBackpackSelectionStrokes: () -> ()
+	local uiBackpackListHighlight: number? = nil
+	local uiBackpackExtraHighlight: Tool? = nil
 	local gamepadCursorEnabled = false
+
+	local function guiObjectTreeVisible(gui: GuiObject): boolean
+		local n: Instance? = gui
+		while n do
+			if n:IsA("GuiObject") and not (n :: GuiObject).Visible then
+				return false
+			end
+			if n:IsA("LayerCollector") and n:IsA("ScreenGui") and not (n :: ScreenGui).Enabled then
+				return false
+			end
+			n = n.Parent
+		end
+		return true
+	end
 
 	local function syncToolbarGamepadCursor()
 		local want = GamepadInput.isPreferred()
 			and canUseToolbar
 			and (isBackpackPanelOpen or pendingToolbarDrag ~= nil or activeToolbarDrag)
-		if want == gamepadCursorEnabled then
+		if not want then
+			if gamepadCursorEnabled then
+				gamepadCursorEnabled = false
+				pcall(function()
+					GamepadService:DisableGamepadCursor()
+				end)
+			end
 			return
 		end
-		gamepadCursorEnabled = want
-		local ok, err = pcall(function()
-			if want then
-				GamepadService:EnableGamepadCursor(backpackFrameRef or toolbar)
-			else
-				GamepadService:DisableGamepadCursor()
+		local host: GuiObject? = nil
+		if backpackFrameRef and backpackFrameRef:IsA("GuiObject") and guiObjectTreeVisible(backpackFrameRef) then
+			host = backpackFrameRef
+		elseif toolbar and toolbar:IsA("GuiObject") and guiObjectTreeVisible(toolbar) then
+			host = toolbar
+		end
+		if not host then
+			if gamepadCursorEnabled then
+				gamepadCursorEnabled = false
+				pcall(function()
+					GamepadService:DisableGamepadCursor()
+				end)
 			end
+			return
+		end
+		gamepadCursorEnabled = true
+		local ok, err = pcall(function()
+			GamepadService:EnableGamepadCursor(host)
 		end)
 		if not ok then
 			warn("[ToolbarController] gamepad cursor sync failed:", err)
+			gamepadCursorEnabled = false
 		end
 	end
 
@@ -1031,6 +1070,8 @@ local ToolbarController = {}
 							return
 						end
 						if GamepadInput.isPreferred() then
+							requestEquipFromBackpackExtra(tool)
+							dragSuppressedToolbarClick = true
 							return
 						end
 						local tex = toolDisplayTexture(tool)
@@ -1052,6 +1093,11 @@ local ToolbarController = {}
 						if input.UserInputType ~= Enum.UserInputType.Gamepad1 or input.KeyCode ~= GamepadInput.ACCEPT then
 							return
 						end
+						if not canUseToolbar then
+							return
+						end
+						requestEquipFromBackpackExtra(tool)
+						dragSuppressedToolbarClick = true
 					end)
 				end
 			else
@@ -1095,6 +1141,9 @@ local ToolbarController = {}
 					key.Text = "LB"
 				end
 			end
+		end
+		if typeof(syncBackpackSelectionStrokes) == "function" then
+			syncBackpackSelectionStrokes()
 		end
 	end
 
@@ -2312,9 +2361,40 @@ local ToolbarController = {}
 		local changed = uiHotbarHighlight ~= index
 		uiHotbarHighlight = index
 		_activeSlot = index
+		if typeof(index) == "number" then
+			uiBackpackListHighlight = nil
+			uiBackpackExtraHighlight = nil
+		end
 		syncAllHotbarSelectionStrokes()
+		if typeof(syncBackpackSelectionStrokes) == "function" then
+			syncBackpackSelectionStrokes()
+		end
 		if animateEquip ~= false and changed and typeof(index) == "number" then
 			playEquipSlotAnimation(index)
+		end
+	end
+
+	syncBackpackSelectionStrokes = function()
+		if backpackContainer then
+			for uiRow = 1, MAX_BACKPACK_BRAINROT_SLOTS do
+				local row = findBackpackRow(backpackContainer, uiRow)
+				if row then
+					local btn = slotPrimaryButton(row)
+					local listIdx = listIndexForBackpackUiRow(uiRow)
+					local lit = typeof(listIdx) == "number" and uiBackpackListHighlight == listIdx
+					if btn then
+						applyButtonSelectionStyle(btn, lit)
+					end
+				end
+			end
+		end
+		for tool, row in extraToolRowByTool do
+			if row and row.Parent then
+				local btn = slotPrimaryButton(row)
+				if btn then
+					applyButtonSelectionStyle(btn, uiBackpackExtraHighlight == tool)
+				end
+			end
 		end
 	end
 
@@ -2883,7 +2963,9 @@ local ToolbarController = {}
 
 		for _, tool in ipairs(extras) do
 			if tool:GetAttribute("WorkoutGearTool") == true then
-				-- Already forced onto slot 1 above — never park gear in the bag.
+				if isExtraToolParked(tool) then
+					continue
+				end
 				removeExtraToolFromParkedList(tool)
 				if not assignedExtras[tool] then
 					extraToolSlotByIndex[1] = tool
@@ -2955,7 +3037,10 @@ local ToolbarController = {}
 				end
 			end
 		end
-		if equippedSlot then
+		if uiBackpackListHighlight ~= nil or uiBackpackExtraHighlight ~= nil then
+			uiHotbarHighlight = nil
+			_activeSlot = nil
+		elseif equippedSlot then
 			uiHotbarHighlight = equippedSlot
 		elseif uiHotbarHighlight ~= nil then
 			local hi = math.clamp(uiHotbarHighlight, 1, HOTBAR_INVENTORY_SLOTS)
@@ -2978,6 +3063,7 @@ local ToolbarController = {}
 			_activeSlot = nil
 		end
 		syncAllHotbarSelectionStrokes()
+		syncBackpackSelectionStrokes()
 
 		refreshToolbarVisibility()
 	end
@@ -3128,7 +3214,11 @@ local ToolbarController = {}
 	local optimisticBrainrotMoveToHotbar: (number, number) -> ()
 
 	local function firstEmptyHotbarSlot(preferredSlot: number?): number?
-		local startSlot = if findWorkoutGearTool() then 2 else 1
+		local startSlot = 1
+		local gearTool = findWorkoutGearTool()
+		if gearTool and not isExtraToolParked(gearTool) then
+			startSlot = 2
+		end
 		if typeof(preferredSlot) == "number" then
 			local preferred = math.clamp(math.floor(preferredSlot), startSlot, HOTBAR_INVENTORY_SLOTS)
 			if preferred >= startSlot and not hotbarSlotIsOccupied(preferred) then
@@ -3314,11 +3404,14 @@ local ToolbarController = {}
 	end
 
 	local function gamepadTuckHotbarSlot(slotIndex: number): boolean
-		if not GamepadInput.isPreferred() or not isBackpackPanelOpen then
+		if not GamepadInput.isPreferred() then
 			return false
 		end
 		local idx = brainrotIndexForHotbarSlot(slotIndex)
 		if idx and brainrotEntries[idx] and not brainrotParkedInUI[idx] then
+			if not isBackpackPanelOpen then
+				setBackpackPanelOpen(true)
+			end
 			optimisticBrainrotTuckToBackpack(idx)
 			fireBrainrotPark(idx, true)
 			UIInteractionSounds.playClick()
@@ -3326,6 +3419,9 @@ local ToolbarController = {}
 		end
 		local extra = extraToolAtHotbarSlot(slotIndex)
 		if extra then
+			if not isBackpackPanelOpen then
+				setBackpackPanelOpen(true)
+			end
 			parkExtraToolInBackpack(extra, slotIndex)
 			refreshParkedExtraToolsUI()
 			UIInteractionSounds.playClick()
@@ -3342,25 +3438,14 @@ local ToolbarController = {}
 		end
 
 		local uiSlot = hotbarSlotForBrainrotIndex(listIdx)
-		local needsHotbar = brainrotParkedInUI[listIdx] == true or uiSlot == nil
-		if needsHotbar then
-			local targetSlot = firstEmptyHotbarSlot(if listIdx <= HOTBAR_INVENTORY_SLOTS then listIdx else nil)
-			if targetSlot then
-				optimisticBrainrotMoveToHotbar(listIdx, targetSlot)
-				local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
-				local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
-				if parkEv and parkEv:IsA("RemoteEvent") then
-					(parkEv :: RemoteEvent):FireServer(listIdx, false, targetSlot)
-				end
-				uiSlot = targetSlot
-			end
-		end
-
-		if uiSlot then
+		if uiSlot and brainrotParkedInUI[listIdx] ~= true then
+			-- Already pinned to the hotbar — that ring tracks equip.
 			setHotbarSelection(uiSlot)
 		else
-			-- Hotbar full — clear selection ring; server still force-equips from bag.
 			setHotbarSelection(nil, false)
+			uiBackpackListHighlight = listIdx
+			uiBackpackExtraHighlight = nil
+			syncBackpackSelectionStrokes()
 		end
 		requestEquipBrainrotSlot(listIdx, true)
 		task.defer(rebuildSlots)
@@ -3368,7 +3453,7 @@ local ToolbarController = {}
 	end
 
 	-- Lucky blocks / extra tools parked in the bag: tap to equip without a hotbar cell.
-	local function requestEquipFromBackpackExtra(tool: Tool)
+	requestEquipFromBackpackExtra = function(tool: Tool)
 		if not canUseToolbar then
 			return
 		end
@@ -3384,17 +3469,17 @@ local ToolbarController = {}
 		if equipped == tool then
 			hum:UnequipTools()
 			setHotbarSelection(nil, false)
+			uiBackpackListHighlight = nil
+			uiBackpackExtraHighlight = nil
+			syncBackpackSelectionStrokes()
 			task.defer(rebuildSlots)
 			return
 		end
-		-- Prefer a free hotbar pin when available so the slot ring tracks equip.
-		local freeSlot = firstEmptyHotbarSlot(nil)
-		if freeSlot and slotCanAcceptExtraToolDrop(freeSlot) then
-			unparkExtraToolToHotbar(tool, freeSlot)
-			setHotbarSelection(freeSlot)
-		else
-			setHotbarSelection(nil, false)
-		end
+		-- Equip from the bag cell; keep the inventory outline.
+		setHotbarSelection(nil, false)
+		uiBackpackListHighlight = nil
+		uiBackpackExtraHighlight = tool
+		syncBackpackSelectionStrokes()
 		hum:EquipTool(tool)
 		UIInteractionSounds.playClick()
 		task.defer(rebuildSlots)

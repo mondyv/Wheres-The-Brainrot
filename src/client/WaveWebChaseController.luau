@@ -13,6 +13,7 @@ local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local BushFloatingClaimController = require(script.Parent.BushFloatingClaimController)
@@ -331,18 +332,19 @@ local function attachWaveTitle(wave: Model)
 	local title = C.titleForLand(land)
 	setChaseRankTitle(title.name)
 
-	local pg = player:FindFirstChildOfClass("PlayerGui")
+	local mobile = UserInputService.TouchEnabled
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "WaveWebTitle"
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	bb.ResetOnSpawn = false
 	bb.Active = false
-	bb.Size = UDim2.fromScale(22, 5)
-	bb.StudsOffset = Vector3.new(0, 22, 0)
-	bb.MaxDistance = 2000
+	bb.Size = if mobile then UDim2.fromOffset(520, 120) else UDim2.fromOffset(440, 96)
+	bb.StudsOffset = Vector3.new(0, if mobile then 10 else 14, 0)
+	bb.MaxDistance = 4000
 	bb.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	bb.Adornee = part
+	bb.Parent = part
 
 	local label = Instance.new("TextLabel")
 	label.Name = "Title"
@@ -354,7 +356,7 @@ local function attachWaveTitle(wave: Model)
 	label.ZIndex = 5
 	label.Parent = bb
 	UiFonts.applyDisplay(label)
-	UiFonts.ensureTextSizeConstraint(label, 72, 32)
+	UiFonts.ensureTextSizeConstraint(label, if UserInputService.TouchEnabled then 56 else 72, if UserInputService.TouchEnabled then 28 else 32)
 	local stroke = Instance.new("UIStroke")
 	stroke.Thickness = 3.2
 	stroke.Color = Color3.fromRGB(18, 10, 6)
@@ -374,7 +376,6 @@ local function attachWaveTitle(wave: Model)
 		warn("[WaveWebChaseController] StarterGui.Gradients missing:", title.gradient)
 	end
 
-	bb.Parent = pg or Workspace
 	waveTitleGui = bb
 	BrainrotGradientAnimator.register(bb)
 end
@@ -686,6 +687,16 @@ local function applyFxGuiFullBleed(gui: ScreenGui)
 	gui.ResetOnSpawn = false
 end
 
+local function layoutChaseTitle(title: TextLabel)
+	local mobile = UserInputService.TouchEnabled
+	title.AnchorPoint = Vector2.new(0.5, 0)
+	title.Position = if mobile then UDim2.new(0.5, 0, 0.1, 8) else UDim2.new(0.5, 0, 0.05, 0)
+	title.Size = if mobile then UDim2.new(0.96, 0, 0.16, 0) else UDim2.new(0.94, 0, 0.09, 0)
+	title.TextScaled = true
+	UiFonts.applyDisplay(title)
+	UiFonts.ensureTextSizeConstraint(title, if mobile then 48 else 56, if mobile then 20 else 28)
+end
+
 ensureFxGui = function(): ScreenGui
 	if fxGui and fxGui.Parent then
 		applyFxGuiFullBleed(fxGui)
@@ -693,6 +704,7 @@ ensureFxGui = function(): ScreenGui
 			local existingTitle = fxGui:FindFirstChild("WebRankTitle")
 			if existingTitle and existingTitle:IsA("TextLabel") then
 				chaseTitleLabel = existingTitle
+				layoutChaseTitle(existingTitle)
 			end
 			return fxGui
 		end
@@ -755,18 +767,13 @@ ensureFxGui = function(): ScreenGui
 	local title = Instance.new("TextLabel")
 	title.Name = "WebRankTitle"
 	title.BackgroundTransparency = 1
-	title.AnchorPoint = Vector2.new(0.5, 0)
-	title.Position = UDim2.new(0.5, 0, 0.05, 0)
-	title.Size = UDim2.new(0.94, 0, 0.09, 0)
 	title.ZIndex = 50
 	title.Active = false
 	title.Text = ""
 	title.TextColor3 = Color3.new(1, 1, 1)
-	title.TextScaled = true
 	title.Visible = false
 	title.Parent = gui
-	UiFonts.applyDisplay(title)
-	UiFonts.ensureTextSizeConstraint(title, 56, 28)
+	layoutChaseTitle(title)
 	local titleStroke = Instance.new("UIStroke")
 	titleStroke.Thickness = 2.8
 	titleStroke.Color = Color3.fromRGB(18, 10, 6)

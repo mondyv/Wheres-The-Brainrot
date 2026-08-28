@@ -168,8 +168,8 @@ local function shinBarCFrame(_character: Model, rf: BasePart, lf: BasePart?): CF
 	return CFrame.fromMatrix(pos, right, up)
 end
 
--- Visible clone welded across the shins. Real tool stays equipped but hidden so
--- the default RightGrip cannot keep the bar in the hands.
+-- Visible clone welded across the shins. Keep the tool's WeldConstraints so
+-- extra mesh parts stay glued to Handle (stripping them made the bar vanish).
 local function attachGearAcrossFeet(character: Model, tool: Tool)
 	clearFootAttach()
 	local rightFoot, leftFoot = findFeet(character)
@@ -184,25 +184,12 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		return
 	end
 
-	for _, d in tool:GetDescendants() do
-		if d:IsA("BasePart") then
-			if handleTransparency[d] == nil then
-				handleTransparency[d] = d.LocalTransparencyModifier
-			end
-			d.LocalTransparencyModifier = 1
-			d.CanCollide = false
-			d.Massless = true
-		end
-	end
-
 	local clone = tool:Clone()
 	clone.Name = "WorkoutFootProp"
 	for _, d in clone:GetDescendants() do
 		if d:IsA("BaseScript") or d:IsA("LocalScript") or d:IsA("Script") then
 			d:Destroy()
 		elseif d:IsA("Highlight") or d:IsA("BillboardGui") or d:IsA("ProximityPrompt") then
-			d:Destroy()
-		elseif d:IsA("Motor6D") or d:IsA("Weld") or d:IsA("WeldConstraint") then
 			d:Destroy()
 		elseif d:IsA("BasePart") then
 			d.CanCollide = false
@@ -211,6 +198,9 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 			d.CanQuery = false
 			d.CanTouch = false
 			d.LocalTransparencyModifier = 0
+			if d.Transparency >= 1 then
+				d.Transparency = 0
+			end
 		end
 	end
 
@@ -228,9 +218,44 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	if not handle or not handle:IsA("BasePart") then
 		model:Destroy()
 		warn("[WorkoutController] Foot prop missing parts")
-		restoreToolVisibility()
 		return
 	end
+
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") and d ~= handle then
+			local welded = false
+			for _, j in model:GetDescendants() do
+				if j:IsA("WeldConstraint") and ((j.Part0 == handle and j.Part1 == d) or (j.Part1 == handle and j.Part0 == d)) then
+					welded = true
+					break
+				elseif j:IsA("Weld") and ((j.Part0 == handle and j.Part1 == d) or (j.Part1 == handle and j.Part0 == d)) then
+					welded = true
+					break
+				elseif j:IsA("Motor6D") and ((j.Part0 == handle and j.Part1 == d) or (j.Part1 == handle and j.Part0 == d)) then
+					welded = true
+					break
+				end
+			end
+			if not welded then
+				local w = Instance.new("WeldConstraint")
+				w.Part0 = handle
+				w.Part1 = d
+				w.Parent = handle
+			end
+		end
+	end
+
+	for _, d in tool:GetDescendants() do
+		if d:IsA("BasePart") then
+			if handleTransparency[d] == nil then
+				handleTransparency[d] = d.LocalTransparencyModifier
+			end
+			d.LocalTransparencyModifier = 1
+			d.CanCollide = false
+			d.Massless = true
+		end
+	end
+
 	model.PrimaryPart = handle
 	model.Parent = character
 	footProp = model

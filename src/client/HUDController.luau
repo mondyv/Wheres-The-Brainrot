@@ -389,7 +389,6 @@ local function showPanelChrome()
 end
 
 local KEEP_SIDE_IN_JUNGLE = {
-	Counters = true,
 	Return = true,
 	Toolbar = true,
 	Top = true,
@@ -397,8 +396,6 @@ local KEEP_SIDE_IN_JUNGLE = {
 }
 
 local KEEP_COUNTERS_IN_JUNGLE = {
-	Cash = true,
-	Power = true,
 	SPACE = true,
 }
 

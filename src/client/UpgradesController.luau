@@ -27,6 +27,13 @@ local GearViewportIcon = require(script.Parent.GearViewportIcon)
 
 local player = Players.LocalPlayer
 
+local function powerHudTextSize(): number
+	if UserInputService.TouchEnabled then
+		return 22
+	end
+	return 34
+end
+
 -- Same private-use Robux glyph the dealer / store UI uses ().
 local ROBUX_ICON = utf8.char(0xE002)
 
@@ -608,7 +615,7 @@ local function restoreStudioPowerLayout(powerFrame: GuiObject)
 		amount.TextScaled = false
 		amount.TextWrapped = false
 		UiFonts.applyBody(amount)
-		amount.TextSize = 34
+		amount.TextSize = powerHudTextSize()
 		local cap = amount:FindFirstChildOfClass("UITextSizeConstraint")
 		if cap then
 			cap:Destroy()
@@ -818,7 +825,7 @@ local function ensurePowerCounter(counters: Instance): TextLabel?
 		amount.TextScaled = false
 		amount.TextWrapped = false
 		UiFonts.applyBody(amount)
-		amount.TextSize = 34
+		amount.TextSize = powerHudTextSize()
 		local hitScale = amount:FindFirstChild("PowerHitScale")
 		if hitScale then
 			hitScale:Destroy()

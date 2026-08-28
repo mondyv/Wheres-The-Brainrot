@@ -1030,6 +1030,9 @@ local ToolbarController = {}
 						if not canUseToolbar then
 							return
 						end
+						if GamepadInput.isPreferred() then
+							return
+						end
 						local tex = toolDisplayTexture(tool)
 						if tex == "" then
 							tex = "rbxasset://textures/ui/GuiImagePlaceholder.png"
@@ -1049,23 +1052,6 @@ local ToolbarController = {}
 						if input.UserInputType ~= Enum.UserInputType.Gamepad1 or input.KeyCode ~= GamepadInput.ACCEPT then
 							return
 						end
-						if not canUseToolbar then
-							return
-						end
-						local tex = toolDisplayTexture(tool)
-						if tex == "" then
-							tex = "rbxasset://textures/ui/GuiImagePlaceholder.png"
-						end
-						activeToolbarDrag = true
-						pendingToolbarDrag = {
-							kind = "backpack_extra",
-							idx = index,
-							start = UserInputService:GetMouseLocation(),
-							texture = tex,
-							rowButton = btn,
-							isExtraTool = true,
-							tool = tool,
-						}
 					end)
 				end
 			else
@@ -3315,7 +3301,38 @@ local ToolbarController = {}
 		end
 	end
 
-	-- Click inventory row: place on hotbar if free, otherwise equip from bag (no hotbar required).
+	local function fireBrainrotPark(listIdx: number, tucked: boolean, hotbarSlot: number?)
+		local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
+		local parkEv = folder and folder:FindFirstChild("BrainrotSetParkedSlot")
+		if parkEv and parkEv:IsA("RemoteEvent") then
+			if typeof(hotbarSlot) == "number" then
+				(parkEv :: RemoteEvent):FireServer(listIdx, tucked, hotbarSlot)
+			else
+				(parkEv :: RemoteEvent):FireServer(listIdx, tucked)
+			end
+		end
+	end
+
+	local function gamepadTuckHotbarSlot(slotIndex: number): boolean
+		if not GamepadInput.isPreferred() or not isBackpackPanelOpen then
+			return false
+		end
+		local idx = brainrotIndexForHotbarSlot(slotIndex)
+		if idx and brainrotEntries[idx] and not brainrotParkedInUI[idx] then
+			optimisticBrainrotTuckToBackpack(idx)
+			fireBrainrotPark(idx, true)
+			UIInteractionSounds.playClick()
+			return true
+		end
+		local extra = extraToolAtHotbarSlot(slotIndex)
+		if extra then
+			parkExtraToolInBackpack(extra, slotIndex)
+			refreshParkedExtraToolsUI()
+			UIInteractionSounds.playClick()
+			return true
+		end
+		return false
+	end
 	local function requestEquipFromBackpack(listIdx: number)
 		if not canUseToolbar then
 			return
@@ -3434,6 +3451,11 @@ local ToolbarController = {}
 					if not listIdx or not entry then
 						return
 					end
+					if GamepadInput.isPreferred() then
+						requestEquipFromBackpack(listIdx)
+						dragSuppressedToolbarClick = true
+						return
+					end
 					UIInteractionSounds.playClick()
 					BrainrotItemTooltip.hide(true)
 					local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
@@ -3463,20 +3485,8 @@ local ToolbarController = {}
 					if not listIdx or not entry then
 						return
 					end
-					BrainrotItemTooltip.hide(true)
-					local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
-					lastResolvedHotbarDropSlot = nil
-					activeToolbarDrag = true
-					pendingToolbarDrag = {
-						kind = "backpack",
-						idx = listIdx,
-						start = UserInputService:GetMouseLocation(),
-						texture = tex,
-						uid = brainrotUidAtIndex(listIdx),
-						sourceSize = btn.AbsoluteSize,
-						rowButton = btn,
-						equippedOnDown = false,
-					}
+					requestEquipFromBackpack(listIdx)
+					dragSuppressedToolbarClick = true
 				end)
 
 				btn.InputBegan:Connect(function(input)
@@ -4450,12 +4460,18 @@ local ToolbarController = {}
 					}
 				end
 
-				-- PC: drag starts immediately on mouse down. Console virtual cursor uses A.
+				-- PC: drag starts immediately on mouse down. Gamepad A tucks into the bag (no drag).
 				btn.MouseButton1Down:Connect(function()
 					if not canUseToolbar then
 						return
 					end
 					if dtIsTouchPointerInput() then
+						return
+					end
+					if GamepadInput.isPreferred() then
+						if gamepadTuckHotbarSlot(i) then
+							dragSuppressedToolbarClick = true
+						end
 						return
 					end
 					beginHotbarPendingDrag(UserInputService:GetMouseLocation())
@@ -4467,7 +4483,9 @@ local ToolbarController = {}
 					if not canUseToolbar then
 						return
 					end
-					beginHotbarPendingDrag(UserInputService:GetMouseLocation())
+					if gamepadTuckHotbarSlot(i) then
+						dragSuppressedToolbarClick = true
+					end
 				end)
 
 				-- Mobile: long-press (or hold + slide) starts drag so short taps still Activate/select.

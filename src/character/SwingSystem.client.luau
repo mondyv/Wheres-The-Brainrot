@@ -119,6 +119,7 @@ local SwingProgression = tryRequireModule(sharedFolder, "SwingProgression")
 local WorkoutPower = tryRequireModule(sharedFolder, "WorkoutPower")
 local WebTrapConfig = tryRequireModule(sharedFolder, "WebTrapConfig")
 local UiFonts = tryRequireModule(sharedFolder, "UiFonts")
+local GamepadInputMod = getClientModule("GamepadInput")
 
 -- Target setup from the original friend script.
 C.SWING_TARGET_TAG = "SwingTarget"
@@ -2592,6 +2593,20 @@ local function boot(character)
 					continue
 				end
 				local inst = hit.Instance
+				if inst:IsA("BasePart") then
+					local walk: Instance? = inst
+					local inLock = false
+					while walk and walk ~= workspace do
+						if walk.Name == "Land Locks" or string.match(walk.Name, "^Land%s*%d+%s*Lock$") then
+							inLock = true
+							break
+						end
+						walk = walk.Parent
+					end
+					if inLock and inst.CanCollide then
+						break
+					end
+				end
 				if inst:IsA("BasePart") and inst.CanCollide and inst.Transparency < 0.55 and inst.Size.Magnitude > 6 then
 					break
 				end
@@ -2894,36 +2909,61 @@ local function boot(character)
 			return true
 		end
 
-		local origin = camera.CFrame.Position
-		local delta = attachWorld - origin
-		if delta.Magnitude < 0.5 then
-			return true
-		end
-
-		local ignored = { st.character }
-		local params = RaycastParams.new()
-		params.FilterType = Enum.RaycastFilterType.Exclude
-
-		for _ = 1, 8 do
-			params.FilterDescendantsInstances = ignored
-			local hit = workspace:Raycast(origin, delta, params)
-			if not hit then
-				return true
-			end
-
-			local inst = hit.Instance
-			if inst == part or inst:IsDescendantOf(part) then
-				return true
-			end
-
-			if inst.CanCollide and inst.Transparency < 0.85 then
+		local function isClosedLandLockPart(inst: Instance): boolean
+			if not inst:IsA("BasePart") then
 				return false
 			end
-
-			table.insert(ignored, inst)
+			local walk: Instance? = inst
+			local inLock = false
+			while walk and walk ~= workspace do
+				if walk.Name == "Land Locks" or string.match(walk.Name, "^Land%s*%d+%s*Lock$") then
+					inLock = true
+					break
+				end
+				walk = walk.Parent
+			end
+			if not inLock then
+				return false
+			end
+			return (inst :: BasePart).CanCollide == true
 		end
 
-		return false
+		local function clearFrom(origin: Vector3): boolean
+			local delta = attachWorld - origin
+			if delta.Magnitude < 0.5 then
+				return true
+			end
+			local ignored = { st.character }
+			local params = RaycastParams.new()
+			params.FilterType = Enum.RaycastFilterType.Exclude
+			for _ = 1, 10 do
+				params.FilterDescendantsInstances = ignored
+				local hit = workspace:Raycast(origin, delta, params)
+				if not hit then
+					return true
+				end
+				local inst = hit.Instance
+				if inst == part or inst:IsDescendantOf(part) then
+					return true
+				end
+				if isClosedLandLockPart(inst) then
+					return false
+				end
+				if inst.CanCollide and inst.Transparency < 0.85 then
+					return false
+				end
+				table.insert(ignored, inst)
+			end
+			return false
+		end
+
+		if not clearFrom(camera.CFrame.Position) then
+			return false
+		end
+		if st.hrp and st.hrp.Parent then
+			return clearFrom(st.hrp.Position + Vector3.new(0, 2, 0))
+		end
+		return true
 	end
 
 	function st.pickSwingTarget(requireLineOfSight, maxDistanceOverride, minLookDotOverride, maxScreenRadiusOverride)
@@ -3679,6 +3719,10 @@ local function boot(character)
 		if not target or not target.Parent or not attachLimit then
 			return false
 		end
+		local _, attachWorld = st.targetDistanceAndPoint(target)
+		if attachWorld and not st.hasLineOfSight(target, attachWorld) then
+			return false
+		end
 		local reach = math.min(attachLimit, st.getEffectiveLatchLimit(target))
 		return st.isSpecificSwingTargetReady(target, false, reach, minLookDot, maxScreenRadius)
 	end
@@ -3744,20 +3788,30 @@ local function boot(character)
 	end
 
 	function st.readyPromptText()
+		local accept = "A"
+		if GamepadInputMod and typeof(GamepadInputMod.faceLabel) == "function" then
+			accept = GamepadInputMod.faceLabel(Enum.KeyCode.ButtonA)
+		end
 		if not st.isHoldToSwingMode() then
 			if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
 				return "[PRESS JUMP] TO SWING"
 			end
+			if GamepadInputMod and GamepadInputMod.isPreferred() then
+				return "[PRESS " .. accept .. "] TO SWING"
+			end
 			if UserInputService.GamepadEnabled and not UserInputService.KeyboardEnabled then
-				return "[PRESS R2] TO SWING"
+				return "[PRESS " .. accept .. "] TO SWING"
 			end
 			return "[PRESS SPACE] TO SWING"
 		end
 		if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
 			return "[HOLD JUMP] TO SWING"
 		end
+		if GamepadInputMod and GamepadInputMod.isPreferred() then
+			return "[HOLD " .. accept .. "] TO SWING"
+		end
 		if UserInputService.GamepadEnabled and not UserInputService.KeyboardEnabled then
-			return "[HOLD R2] TO SWING"
+			return "[HOLD " .. accept .. "] TO SWING"
 		end
 		return "[HOLD SPACE] TO SWING"
 	end
@@ -4212,6 +4266,9 @@ local function boot(character)
 			st.markerLabel.TextStrokeTransparency = 1
 			st.markerLabel.Text = "[HOLD SPACE] TO SWING"
 			st.markerLabel.Parent = st.markerGui
+			if GamepadInputMod and typeof(GamepadInputMod.mountHint) == "function" then
+				GamepadInputMod.mountHint(st.markerLabel, Enum.KeyCode.ButtonA)
+			end
 		end
 	end
 

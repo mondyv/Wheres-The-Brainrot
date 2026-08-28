@@ -207,15 +207,41 @@ local function findLandLock(land: number): Instance?
 	return folder:FindFirstChild(name)
 end
 
--- Spawn on the land lock part. Always slide along Z toward the safezone.
-local function computeTsunamiCorridor(_playerPos: Vector3): (Vector3, Vector3)
+-- Spawn in the player's lane (their X), behind the land on Z, then slide +Z/-Z to safezone.
+-- Never use the lock's X — those parts sit to the side of the path, so the wall looks sideways.
+local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
 	local land = currentLandNumber()
-	local fallback = C.WAVE_SPAWN_POS
 	local lock = findLandLock(land)
-	local pos = (lock and instanceWorldPos(lock)) or fallback
-	local spawn = Vector3.new(pos.X, pos.Y, pos.Z)
-	local forward = chargeAlongZ(spawn)
-	return spawn, forward
+	local lockPos = if lock then instanceWorldPos(lock) else nil
+	local authored = C.WAVE_SPAWN_POS
+	local safe = SafezoneUtil.getSafezoneCenter()
+	local zTowardSafe = 1.0
+	if safe then
+		zTowardSafe = if (safe.Z - playerPos.Z) >= 0 then 1 else -1
+	end
+
+	local function isBehind(z: number): boolean
+		return (z - playerPos.Z) * zTowardSafe <= 0
+	end
+
+	local spawnZ = authored.Z
+	if lockPos and isBehind(lockPos.Z) then
+		spawnZ = lockPos.Z
+	elseif isBehind(authored.Z) then
+		spawnZ = authored.Z
+	else
+		spawnZ = playerPos.Z - zTowardSafe * C.WAVE_BEHIND_STUDS
+	end
+	if not isBehind(spawnZ) then
+		spawnZ = playerPos.Z - zTowardSafe * C.WAVE_BEHIND_STUDS
+	end
+
+	local spawnY = authored.Y
+	if lockPos then
+		spawnY = lockPos.Y
+	end
+	local spawn = Vector3.new(playerPos.X, spawnY, spawnZ)
+	return spawn, chargeAlongZ(spawn)
 end
 
 local function findStarterGradient(name: string): UIGradient?

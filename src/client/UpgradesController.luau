@@ -606,6 +606,13 @@ local function restoreStudioPowerLayout(powerFrame: GuiObject)
 		amount.Visible = true
 		amount.TextTransparency = 0
 		amount.TextScaled = false
+		amount.TextWrapped = false
+		UiFonts.applyBody(amount)
+		amount.TextSize = 34
+		local cap = amount:FindFirstChildOfClass("UITextSizeConstraint")
+		if cap then
+			cap:Destroy()
+		end
 	end
 	local muscle = resolveMuscleIcon(powerFrame)
 	if muscle then
@@ -808,6 +815,10 @@ local function ensurePowerCounter(counters: Instance): TextLabel?
 	local amount = powerFrame:FindFirstChild("Amount")
 	if amount and amount:IsA("TextLabel") then
 		amount.TextTransparency = 0
+		amount.TextScaled = false
+		amount.TextWrapped = false
+		UiFonts.applyBody(amount)
+		amount.TextSize = 34
 		local hitScale = amount:FindFirstChild("PowerHitScale")
 		if hitScale then
 			hitScale:Destroy()
@@ -815,6 +826,10 @@ local function ensurePowerCounter(counters: Instance): TextLabel?
 		local frameScale = powerFrame:FindFirstChild("PowerChipScale") or powerFrame:FindFirstChild("PowerHitScale")
 		if frameScale and frameScale:IsA("UIScale") then
 			frameScale.Scale = 1
+		end
+		local cap = amount:FindFirstChildOfClass("UITextSizeConstraint")
+		if cap then
+			cap:Destroy()
 		end
 		return amount
 	end

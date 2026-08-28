@@ -35,13 +35,14 @@ M.SPIDER_RAGE_WAIT_SEC = 1.55
 M.SPIDER_CHARGE_SEC = 0.55
 M.SPIDER_CHARGE_STUDS = 34
 
--- Authored Wave Web pose. Always Orientation 0, 90, 0. Spawn at the land lock
--- part; slide along Z only (Land 1: 1452, 92.3, 659 → same X/Y, Z toward safezone).
-M.WAVE_SPAWN_POS = Vector3.new(1452.462, 92.301, 659.303)
+-- Authored Wave Web pose. Always Orientation 0, 90, 0.
+-- Spawn behind the land (player X lane, lock/authored Z away from safezone).
+-- Slide along Z only toward the safezone.
+M.WAVE_SPAWN_POS = Vector3.new(1448.013, 92.301, 205.634)
 M.WAVE_SPAWN_ORIENTATION_DEG = Vector3.new(0, 90, 0)
 M.WAVE_SPAWN_YAW_DEG = 90
 M.WAVE_CRUISE_Y = 92.301
-M.WAVE_BEHIND_STUDS = 54
+M.WAVE_BEHIND_STUDS = 72
 M.WAVE_RISE_STUDS = 34
 M.WAVE_RISE_SEC = 0.38
 M.WAVE_KILL_DISTANCE = 5

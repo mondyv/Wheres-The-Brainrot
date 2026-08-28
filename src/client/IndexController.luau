@@ -34,6 +34,8 @@ local ROW_HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDi
 local INDEX_BADGE_SWAY = TweenInfo.new(0.72, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
 local INDEX_BADGE_INNER_SWAY = TweenInfo.new(0.52, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
 local INDEX_BADGE_INNER_PULSE = TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut, -1, true)
+local TAB_SELECT_IN = TweenInfo.new(0.26, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local TAB_SELECT_OUT = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local INDEX_BADGE_SWAY_DEG = 5
 local INDEX_BADGE_INNER_SWAY_DEG = 2.5
 
@@ -395,35 +397,117 @@ local function setChromeNode(node: Instance, on: boolean)
 	end
 end
 
-local function applyTabVisual(tabBtn: Instance, selected: boolean)
-	-- Studio tab highlight is TypeButtons.<Tab>.Sellect (image). Hidden unless selected.
-	local function applySellect(node: Instance)
-		if node.Name == "Sellect" or node.Name == "Select" then
-			if node:IsA("GuiObject") then
-				(node :: GuiObject).Visible = selected
-			end
+local overlayTweens: { [GuiObject]: { Tween } } = {}
+
+local function cancelOverlayTweens(gui: GuiObject)
+	local list = overlayTweens[gui]
+	if list then
+		for _, tw in list do
+			tw:Cancel()
+		end
+		overlayTweens[gui] = nil
+	end
+end
+
+local function isSelectedOverlayName(name: string): boolean
+	return name == "Selected" or name == "Sellect" or name == "Select"
+end
+
+local function collectSelectedOverlays(tabRoot: Instance): { GuiObject }
+	local out: { GuiObject } = {}
+	for _, d in tabRoot:GetDescendants() do
+		if isSelectedOverlayName(d.Name) and d:IsA("GuiObject") then
+			table.insert(out, d :: GuiObject)
 		end
 	end
-	applySellect(tabBtn)
-	for _, d in tabBtn:GetDescendants() do
-		applySellect(d)
+	if isSelectedOverlayName(tabRoot.Name) and tabRoot:IsA("GuiObject") then
+		table.insert(out, tabRoot :: GuiObject)
 	end
+	return out
+end
 
-	-- Studio chrome is TypeButtons.<Tab>.Selected / .NotSelected (often UIGradients
-	-- on the same button — only one can render, so disable both first).
-	local sel = tabBtn:FindFirstChild("Selected")
-	local unsel = tabBtn:FindFirstChild("NotSelected")
-	if sel then
-		setChromeNode(sel, false)
+local function ensureOverlayScale(gui: GuiObject): UIScale
+	local existing = gui:FindFirstChild("IndexSelectedScale")
+	if existing and existing:IsA("UIScale") then
+		return existing
 	end
-	if unsel then
-		setChromeNode(unsel, false)
+	local scale = Instance.new("UIScale")
+	scale.Name = "IndexSelectedScale"
+	scale.Scale = 1
+	scale.Parent = gui
+	return scale
+end
+
+local function overlayImages(gui: GuiObject): { ImageLabel }
+	local images: { ImageLabel } = {}
+	if gui:IsA("ImageLabel") or gui:IsA("ImageButton") then
+		table.insert(images, gui :: ImageLabel)
 	end
-	if sel then
-		setChromeNode(sel, selected)
+	for _, d in gui:GetDescendants() do
+		if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+			table.insert(images, d :: ImageLabel)
+		end
 	end
-	if unsel then
-		setChromeNode(unsel, not selected)
+	return images
+end
+
+local function setSelectedOverlay(gui: GuiObject, on: boolean, instant: boolean?)
+	cancelOverlayTweens(gui)
+	local scale = ensureOverlayScale(gui)
+	local images = overlayImages(gui)
+	if on then
+		gui.Visible = true
+		if instant == true then
+			scale.Scale = 1
+			for _, img in images do
+				img.ImageTransparency = 0
+			end
+			return
+		end
+		scale.Scale = 0.78
+		local tweens: { Tween } = {
+			TweenService:Create(scale, TAB_SELECT_IN, { Scale = 1 }),
+		}
+		for _, img in images do
+			img.ImageTransparency = 1
+			table.insert(tweens, TweenService:Create(img, TAB_SELECT_IN, { ImageTransparency = 0 }))
+		end
+		overlayTweens[gui] = tweens
+		for _, tw in tweens do
+			tw:Play()
+		end
+		return
+	end
+	if instant == true or not gui.Visible then
+		gui.Visible = false
+		scale.Scale = 1
+		return
+	end
+	local tweens: { Tween } = {
+		TweenService:Create(scale, TAB_SELECT_OUT, { Scale = 0.86 }),
+	}
+	for _, img in images do
+		table.insert(tweens, TweenService:Create(img, TAB_SELECT_OUT, { ImageTransparency = 1 }))
+	end
+	overlayTweens[gui] = tweens
+	local finisher = tweens[1]
+	finisher.Completed:Once(function()
+		if gui.Parent then
+			gui.Visible = false
+		end
+	end)
+	for _, tw in tweens do
+		tw:Play()
+	end
+end
+
+local function applyTabVisual(tabBtn: Instance, selected: boolean, instant: boolean?)
+	for _, overlay in collectSelectedOverlays(tabBtn) do
+		setSelectedOverlay(overlay, selected, instant)
+	end
+	local unsel = tabBtn:FindFirstChild("NotSelected", true)
+	if unsel and unsel:IsA("GuiObject") and not isSelectedOverlayName(unsel.Name) then
+		(unsel :: GuiObject).Visible = not selected
 	end
 end
 
@@ -1178,12 +1262,7 @@ selectMutation = function(mutationId: string)
 		for mutId, btnName in IndexConfig.TAB_BUTTON_NAME do
 			local btn = typeButtons:FindFirstChild(btnName)
 			if btn then
-				applyTabVisual(btn, mutId == selectedMutation)
-				for _, d in btn:GetDescendants() do
-					if d:FindFirstChild("Selected") or d:FindFirstChild("NotSelected") then
-						applyTabVisual(d, mutId == selectedMutation)
-					end
-				end
+				applyTabVisual(btn, mutId == selectedMutation, false)
 			end
 		end
 	end
@@ -1449,7 +1528,7 @@ function IndexController.init()
 			local tabRoot = typeButtons:FindFirstChild(btnName)
 			if tabRoot then
 				wireTabInteractions(tabRoot, mutationId)
-				applyTabVisual(tabRoot, mutationId == selectedMutation)
+				applyTabVisual(tabRoot, mutationId == selectedMutation, true)
 			end
 		end
 	end
@@ -1546,7 +1625,7 @@ function IndexController.init()
 		for mutId, btnName in IndexConfig.TAB_BUTTON_NAME do
 			local btn = typeButtonsInit:FindFirstChild(btnName)
 			if btn then
-				applyTabVisual(btn, mutId == selectedMutation)
+				applyTabVisual(btn, mutId == selectedMutation, true)
 			end
 		end
 	end

@@ -49,18 +49,19 @@ M.WAVE_KILL_GRACE_SEC = 3.4
 -- Never ScaleTo the Wave Web mesh — it freezes/crashes Studio & clients.
 M.WAVE_SCALE = 1
 
--- Per-land charge speed (studs/s). Walk is ~18; land 4 should force a real run-home.
+-- Per-land charge speed (studs/s). Walk ~16–18; sprint ~24–32.
+-- Early ranks stay outrunnable; late ranks push you but don't auto-catch a sprint.
 M.WAVE_SPEED_BY_LAND = {
-	26, -- 1 baby
-	30, -- 2 normal
-	34, -- 3 speed
-	39, -- 4 gigantic
-	43, -- 5 titan
-	46, -- 6 colossal
-	49, -- 7 cosmic
-	52, -- 8 infinitum
-	54, -- 9 omega
-	56, -- 10 transcendent
+	20, -- 1 baby
+	22, -- 2 normal
+	24, -- 3 speed
+	26, -- 4 gigantic
+	28, -- 5 titan
+	30, -- 6 colossal
+	32, -- 7 cosmic
+	33, -- 8 infinitum
+	35, -- 9 omega
+	37, -- 10 transcendent
 }
 
 -- Billboard names + StarterGui.Gradients child names.

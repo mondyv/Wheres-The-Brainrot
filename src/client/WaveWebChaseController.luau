@@ -23,6 +23,7 @@ local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local ReviveController = require(script.Parent.ReviveController)
 local LandAmbushUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandAmbushUtil"))
+local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local WaveWebChaseConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WaveWebChaseConfig"))
@@ -42,6 +43,8 @@ local chaseActive = false
 -- True only while intro camera/move lock is on (NOT during free-run chase).
 local cinematicLocked = false
 local chaseToken = 0
+-- Rank/speed locked when the chase starts (CurrentLand drops toward 0 as you run home).
+local chaseRankLand: number? = nil
 local renderConn: RBXScriptConnection? = nil
 local moveLockConn: RBXScriptConnection? = nil
 local savedCameraType: Enum.CameraType? = nil
@@ -197,12 +200,26 @@ local function applyWaveStudioPose(model: Model, pos: Vector3)
 	end)
 end
 
-local function currentLandNumber(): number
+local function resolveChaseLand(): number
 	local raw = player:GetAttribute("CurrentLand")
-	if typeof(raw) == "number" then
+	if typeof(raw) == "number" and raw >= 1 then
 		return math.clamp(math.floor(raw), 1, 10)
 	end
+	local hrp = getHRP()
+	if hrp then
+		local fromPos = LandResolver.resolveLandAtPosition(hrp.Position)
+		if typeof(fromPos) == "number" and fromPos >= 1 then
+			return math.clamp(math.floor(fromPos), 1, 10)
+		end
+	end
 	return 1
+end
+
+local function currentLandNumber(): number
+	if chaseRankLand then
+		return chaseRankLand
+	end
+	return resolveChaseLand()
 end
 
 local function instanceWorldPos(root: Instance): Vector3?
@@ -1397,6 +1414,7 @@ local function finishChase(didHideHud: boolean)
 	chaseActive = false
 	cinematicLocked = false
 	deathLocked = false
+	chaseRankLand = nil
 	player:SetAttribute("WaveWebDeathLock", nil)
 	chaseToken += 1
 	destroyChaseInstances()
@@ -1617,6 +1635,7 @@ local function runSequence(_model: Model, handoff: {
 			return
 		end
 
+		chaseRankLand = resolveChaseLand()
 		local playerPos = liveHrp.Position
 		runIntro(token, playerPos)
 		if token ~= chaseToken then

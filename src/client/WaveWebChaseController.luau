@@ -1019,11 +1019,7 @@ local function fadeWaveOntoLand(model: Model, duration: number)
 	local endCf = CFrame.new(landPos) * (startCf - startCf.Position)
 	local info = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 	for _, d in model:GetDescendants() do
-		if d:IsA("BasePart") then
-			TweenService:Create(d, info, { Transparency = 1 }):Play()
-		elseif d:IsA("Decal") or d:IsA("Texture") then
-			TweenService:Create(d, info, { Transparency = 1 }):Play()
-		elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
+		if d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
 			(d :: any).Enabled = false
 		end
 	end

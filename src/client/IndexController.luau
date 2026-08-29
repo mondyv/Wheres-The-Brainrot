@@ -1246,7 +1246,7 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 				if row.Parent ~= container then
 					row.Parent = container
 				end
-				if row:FindFirstChildWhichIsA("ViewportFrame", true) then
+				if row:GetAttribute("IndexFlat") ~= true then
 					flattenIndexRow3D(row)
 				end
 			else

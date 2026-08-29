@@ -498,7 +498,7 @@ local function resolveTabButton(tabRoot: Instance): GuiButton?
 	return nil
 end
 
-local function resolveTabTiltTarget(tabRoot: Instance, btn: GuiObject): GuiObject
+local function resolveTabTiltTarget(_tabRoot: Instance, btn: GuiObject): GuiObject
 	-- Tilt the tab chrome, not the Name label — label rotation reads as "sway".
 	return btn
 end

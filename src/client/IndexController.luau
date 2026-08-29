@@ -804,6 +804,13 @@ local function populateRow(
 		if rs:IsA("GuiObject") then
 			(rs :: GuiObject).Visible = true
 		end
+		if rs:IsA("UIStroke") then
+			rs.Enabled = true
+		end
+		local highlight = rs.Parent
+		if highlight and highlight:IsA("GuiObject") then
+			highlight.Visible = true
+		end
 	end
 
 	local rowHost = if frame:IsA("GuiObject") then frame :: GuiObject else row

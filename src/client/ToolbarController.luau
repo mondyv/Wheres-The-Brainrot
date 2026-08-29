@@ -3623,6 +3623,7 @@ local ToolbarController = {}
 	end
 	local lastBackpackEquipAt = 0.0
 	local lastBackpackEquipIdx: number? = nil
+	local backpackClickConsumed = false
 	local function requestEquipFromBackpack(listIdx: number)
 		if not canUseToolbar then
 			return
@@ -3755,12 +3756,17 @@ local ToolbarController = {}
 						dragSuppressedToolbarClick = false
 						return
 					end
+					if backpackClickConsumed then
+						backpackClickConsumed = false
+						return
+					end
 					local listIdx = listIndexForBackpackUiRow(uiRow)
 					local entry = brainrotEntryForBackpackSlot(uiRow)
 					if not listIdx or not entry then
 						return
 					end
 					UIInteractionSounds.playClick()
+					backpackClickConsumed = true
 					requestEquipFromBackpack(listIdx)
 				end)
 				btn.MouseButton1Down:Connect(function()
@@ -3785,6 +3791,7 @@ local ToolbarController = {}
 					end
 					BrainrotItemTooltip.hide(true)
 					local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+					backpackClickConsumed = false
 					pendingToolbarPress = {
 						kind = "backpack",
 						idx = listIdx,
@@ -5301,14 +5308,20 @@ local ToolbarController = {}
 				syncToolbarGamepadCursor()
 				return
 			end
+			local press = pendingToolbarPress
 			local pnd = pendingToolbarDrag
 			pendingToolbarDrag = nil
 			pendingToolbarPress = nil
 			activeToolbarDrag = false
-			-- Click / mouse-jitter: GuiButton.Activated equips. Equipping here too
-			-- selects then immediately unequips (extra tools have no debounce).
-			-- A press promoted to "drag" without a ghost is still a click.
+			-- Click / mouse-jitter without a drag ghost. Extra tools use Activated
+			-- only (double-fire unequips). Brainrots often never fire Activated if
+			-- the cursor moved, so mouse-up still equips those.
 			if not pnd or not dragGhostImage then
+				local spec = pnd or press
+				if spec and spec.kind == "backpack" and not backpackClickConsumed then
+					requestEquipFromBackpack(spec.idx)
+					backpackClickConsumed = true
+				end
 				lastResolvedHotbarDropSlot = nil
 				clearDragGhost()
 				syncToolbarGamepadCursor()

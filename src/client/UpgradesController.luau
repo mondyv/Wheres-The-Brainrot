@@ -27,12 +27,7 @@ local GearViewportIcon = require(script.Parent.GearViewportIcon)
 
 local player = Players.LocalPlayer
 
-local function powerHudTextSize(): number
-	if UserInputService.TouchEnabled then
-		return 22
-	end
-	return 34
-end
+-- Power Amount keeps the Studio template TextSize / TextScaled / constraint.
 
 -- Same private-use Robux glyph the dealer / store UI uses ().
 local ROBUX_ICON = utf8.char(0xE002)
@@ -612,14 +607,7 @@ local function restoreStudioPowerLayout(powerFrame: GuiObject)
 	if amount and amount:IsA("TextLabel") then
 		amount.Visible = true
 		amount.TextTransparency = 0
-		amount.TextScaled = false
-		amount.TextWrapped = false
 		UiFonts.applyBody(amount)
-		amount.TextSize = powerHudTextSize()
-		local cap = amount:FindFirstChildOfClass("UITextSizeConstraint")
-		if cap then
-			cap:Destroy()
-		end
 	end
 	local muscle = resolveMuscleIcon(powerFrame)
 	if muscle then
@@ -822,10 +810,7 @@ local function ensurePowerCounter(counters: Instance): TextLabel?
 	local amount = powerFrame:FindFirstChild("Amount")
 	if amount and amount:IsA("TextLabel") then
 		amount.TextTransparency = 0
-		amount.TextScaled = false
-		amount.TextWrapped = false
 		UiFonts.applyBody(amount)
-		amount.TextSize = powerHudTextSize()
 		local hitScale = amount:FindFirstChild("PowerHitScale")
 		if hitScale then
 			hitScale:Destroy()
@@ -833,10 +818,6 @@ local function ensurePowerCounter(counters: Instance): TextLabel?
 		local frameScale = powerFrame:FindFirstChild("PowerChipScale") or powerFrame:FindFirstChild("PowerHitScale")
 		if frameScale and frameScale:IsA("UIScale") then
 			frameScale.Scale = 1
-		end
-		local cap = amount:FindFirstChildOfClass("UITextSizeConstraint")
-		if cap then
-			cap:Destroy()
 		end
 		return amount
 	end

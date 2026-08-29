@@ -165,9 +165,9 @@ local function soleBarCFrame(_character: Model, rf: BasePart, lf: BasePart?): CF
 		across = Vector3.new(1, 0, 0)
 	end
 	local right = across.Unit
-	-- World-flat on the soles: yaw only, no pitch/roll from foot tilt.
-	local yaw = math.atan2(right.X, right.Z)
-	return CFrame.new(pos) * CFrame.Angles(0, yaw, 0)
+	-- X = across the feet, Y = world up. Authored barbells stand on +Y;
+	-- roll 90° so the shaft lies across both soles instead of through the body.
+	return CFrame.fromMatrix(pos, right, Vector3.yAxis) * CFrame.Angles(0, 0, math.pi / 2)
 end
 
 -- Visible clone welded across the soles. Keep the tool's WeldConstraints so
@@ -717,9 +717,13 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	label.LayoutOrder = 1
 	label.ZIndex = 91
 	label.Parent = row
-	UiFonts.applyBodyLabel(label, 30, 18)
+	local hudSize = 16
+	if amountLabel and amountLabel:IsA("TextLabel") then
+		hudSize = math.max(10, (amountLabel :: TextLabel).TextSize)
+	end
+	UiFonts.applyBodyLabel(label, hudSize, math.max(8, hudSize - 4))
 	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = 2.8
+	stroke.Thickness = 2
 	stroke.Color = Color3.fromRGB(35, 24, 6)
 	stroke.Transparency = 0
 	stroke.Parent = label
@@ -727,7 +731,8 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	local muscle = Instance.new("ImageLabel")
 	muscle.Name = "Muscle"
 	muscle.BackgroundTransparency = 1
-	muscle.Size = UDim2.fromOffset(34, 34)
+	local iconPx = math.max(12, hudSize + 2)
+	muscle.Size = UDim2.fromOffset(iconPx, iconPx)
 	muscle.Image = "rbxassetid://73088512205933"
 	muscle.ImageTransparency = 0
 	muscle.ScaleType = Enum.ScaleType.Fit
@@ -741,7 +746,7 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	TweenService:Create(
 		scale,
 		TweenInfo.new(0.1, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = 1.18 }
+		{ Scale = 1 }
 	):Play()
 
 	local startX, startY = startPos.X.Offset, startPos.Y.Offset

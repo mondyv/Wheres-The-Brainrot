@@ -664,6 +664,11 @@ local function sortCatalog(
 )
 	if mutationId == IndexConfig.LUCKY_BLOCK_TAB then
 		table.sort(catalog, function(a, b)
+			local ra = IndexConfig.RARITY_SORT[string.lower(tostring(a.rarity or ""))] or 99
+			local rb = IndexConfig.RARITY_SORT[string.lower(tostring(b.rarity or ""))] or 99
+			if ra ~= rb then
+				return ra < rb
+			end
 			local ta = if typeof(a.tier) == "number" then a.tier else 99
 			local tb = if typeof(b.tier) == "number" then b.tier else 99
 			if ta ~= tb then

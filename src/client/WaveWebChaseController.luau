@@ -182,8 +182,20 @@ end
 
 -- Studio Position/Orientation on the primary part (not Model WorldPivot).
 local function applyWaveStudioPose(model: Model, pos: Vector3)
-	-- Never rewrite every cobweb part's CFrame (thousands of MeshParts = freeze).
-	model:PivotTo(waveStudioCf(pos))
+	local target = waveStudioCf(pos)
+	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if not primary then
+		model:PivotTo(target)
+		return
+	end
+	model.PrimaryPart = primary
+	-- PivotTo uses WorldPivot. This mesh's pivot is not the wall, so a raw
+	-- PivotTo compounds template rotation and sits the web sideways / left.
+	-- Align pivot to the primary part first (does not move parts), then PivotTo.
+	pcall(function()
+		model.WorldPivot = primary.CFrame
+	end)
+	model:PivotTo(target)
 end
 
 local function resolveChaseLand(): number

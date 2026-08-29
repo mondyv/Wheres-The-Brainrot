@@ -47,12 +47,31 @@ task.defer(function()
 		for i, step in steps do
 			local ok, err = pcall(step)
 			if not ok then
-				warn("[init.client] boot step failed:", err)
+				warn("[init.client] boot step failed:", i, err)
 			end
 			if yieldEvery > 0 and i % yieldEvery == 0 then
 				task.wait()
 			end
 		end
+	end
+
+	local function initClientModule(name: string)
+		local child = script:FindFirstChild(name)
+		if not child then
+			error(name .. " missing")
+		end
+		local ok, mod = pcall(require, child)
+		if not ok then
+			error(name .. " failed to load: " .. tostring(mod))
+		end
+		if typeof(mod) ~= "table" then
+			error(name .. " did not return a table")
+		end
+		local initFn = (mod :: any).init or (mod :: any).Init
+		if typeof(initFn) ~= "function" then
+			error(name .. " has no init")
+		end
+		initFn(mod)
 	end
 
 	-- Fire each step in its own thread so one WaitForChild can't stall the rest.
@@ -88,33 +107,33 @@ task.defer(function()
 	-- Panel innards (Store buy buttons, Index tabs, etc.).
 	local panelBootSteps: { () -> () } = {
 		function()
-			require(script.GiftController).init()
+			initClientModule("GiftController")
 		end,
 		function()
-			require(script.StoreController).init()
+			initClientModule("StoreController")
 		end,
 		function()
-			require(script.IndexController).init()
+			initClientModule("IndexController")
 		end,
 		function()
-			require(script.RebirthController).init()
+			initClientModule("RebirthController")
 		end,
 		function()
-			require(script.DailyController).init()
+			initClientModule("DailyController")
 		end,
 		function()
-			require(script.SettingsController).init()
+			initClientModule("SettingsController")
 		end,
 		function()
-			require(script.SellController).init()
+			initClientModule("SellController")
 		end,
 		function()
-			require(script.UpgradesController).init()
-			require(script.WorkoutController).init()
-			require(script.LevelController).init()
+			initClientModule("UpgradesController")
+			initClientModule("WorkoutController")
+			initClientModule("LevelController")
 		end,
 		function()
-			require(script.DealerShopController).init()
+			initClientModule("DealerShopController")
 		end,
 	}
 
@@ -132,46 +151,46 @@ task.defer(function()
 		-- Stagger map walkers so they don't all scan Workspace in the same frames.
 		runBootSteps({
 			function()
-				require(script.StandController).init()
+				initClientModule("StandController")
 			end,
 			function()
-				require(script.ToolbarController).init()
+				initClientModule("ToolbarController")
 			end,
 			function()
-				require(script.PlotMarkerVisibility).init()
+				initClientModule("PlotMarkerVisibility")
 			end,
 			function()
-				require(script.ProximityPromptEffects).init()
+				initClientModule("ProximityPromptEffects")
 			end,
 			function()
-				require(script.BrainrotStandController).init()
+				initClientModule("BrainrotStandController")
 			end,
 			function()
-				require(script.BrainrotHeaderController).init()
+				initClientModule("BrainrotHeaderController")
 			end,
 			function()
-				require(script.BushHoldInteraction).init()
+				initClientModule("BushHoldInteraction")
 			end,
 			function()
-				require(script.VegetationSwayController).init()
+				initClientModule("VegetationSwayController")
 			end,
 			function()
-				require(script.GrassCullController).init()
+				initClientModule("GrassCullController")
 			end,
 			function()
-				require(script.BushSpiderEncounterController).init()
+				initClientModule("BushSpiderEncounterController")
 			end,
 			function()
-				require(script.WaveWebChaseController).init()
+				initClientModule("WaveWebChaseController")
 			end,
 			function()
-				require(script.CurrentAreaController).init()
+				initClientModule("CurrentAreaController")
 			end,
 			function()
-				require(script.ComingSoonZoneController).init()
+				initClientModule("ComingSoonZoneController")
 			end,
 			function()
-				require(script.BaseFloorUnlockClick).init()
+				initClientModule("BaseFloorUnlockClick")
 			end,
 		}, 1)
 	end

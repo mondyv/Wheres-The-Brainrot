@@ -33,8 +33,8 @@ local BUSH_LOOT_PHASE_ATTR = "BushLootPhase"
 local BUSH_COOLDOWN_ENDS_ATTR = "BushCooldownEndsAt"
 local BUSH_LOOT_PHASE_COOLDOWN = "cooldown"
 local BUSH_FLOATING_CLAIM_ATTR = "BushFloatingClaimActive"
-local AIM_TICK_INTERVAL = 0.12
-local PICK_FULL_SCAN_INTERVAL = 0.4
+local AIM_TICK_INTERVAL = if UserInputService.TouchEnabled then 0.22 else 0.12
+local PICK_FULL_SCAN_INTERVAL = if UserInputService.TouchEnabled then 0.7 else 0.4
 local COOLDOWN_VISUAL_SYNC_INTERVAL = 1.0
 local _BUSH_FOLDER_NAMES = { "BushSCRIPTs", "BushSCRIPT" }
 
@@ -533,7 +533,9 @@ local function applyBushHighlight(hl: Highlight, bush: Instance, locked: boolean
 		hl.OutlineTransparency = 0
 		hl.OutlineColor = HIGHLIGHT_LOCKED
 	else
-		local gradientSequence = if bushOutlineGradientProvider then bushOutlineGradientProvider(bush) else nil
+		local gradientSequence = if UserInputService.TouchEnabled
+			then nil
+			else (if bushOutlineGradientProvider then bushOutlineGradientProvider(bush) else nil)
 		if gradientSequence then
 			hl.OutlineTransparency = 0
 			hl.OutlineColor = BrainrotHeaderStyle.sampleColorSequence(gradientSequence, (os.clock() * 0.42) % 1)

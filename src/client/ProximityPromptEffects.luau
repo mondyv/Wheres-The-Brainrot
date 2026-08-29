@@ -1483,7 +1483,7 @@ end
 startIdleSway = function(view: PromptView)
 	stopIdleSway(view)
 
-	if view.displayOnly and isManagedBushPrompt(view.prompt) then
+	if isMobilePlatform() or (view.displayOnly and isManagedBushPrompt(view.prompt)) then
 		view.root.Rotation = 0
 		view.keyBadge.Rotation = 0
 		return

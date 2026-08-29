@@ -440,20 +440,6 @@ function BrainrotHeaderController.init()
 				bb.MaxDistance = HEADER_MAX_DISTANCE
 			end
 		end
-		-- Never Workspace:GetDescendants() — that sync-builds the whole map tree and times out Studio.
-		local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
-		if pg then
-			local scanned = 0
-			for _, d in pg:GetDescendants() do
-				scanned += 1
-				if scanned % 400 == 0 then
-					task.wait()
-				end
-				if d:IsA("BillboardGui") and d.Name == HEADER_NAME then
-					d.MaxDistance = HEADER_MAX_DISTANCE
-				end
-			end
-		end
 	end
 
 	CollectionService:GetInstanceAddedSignal(HEADER_TAG):Connect(onHeaderTarget)

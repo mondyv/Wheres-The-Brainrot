@@ -182,22 +182,8 @@ end
 
 -- Studio Position/Orientation on the primary part (not Model WorldPivot).
 local function applyWaveStudioPose(model: Model, pos: Vector3)
-	local target = waveStudioCf(pos)
-	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-	if not primary then
-		model:PivotTo(target)
-		return
-	end
-	model.PrimaryPart = primary
-	local delta = target * primary.CFrame:Inverse()
-	for _, d in model:GetDescendants() do
-		if d:IsA("BasePart") then
-			d.CFrame = delta * d.CFrame
-		end
-	end
-	pcall(function()
-		model.WorldPivot = target
-	end)
+	-- Never rewrite every cobweb part's CFrame (thousands of MeshParts = freeze).
+	model:PivotTo(waveStudioCf(pos))
 end
 
 local function resolveChaseLand(): number
@@ -849,14 +835,12 @@ end
 
 local function clearPostFx()
 	if colorFx then
-		colorFx.Enabled = false
-		colorFx.TintColor = Color3.new(1, 1, 1)
-		colorFx.Contrast = 0
-		colorFx.Saturation = 0
+		colorFx:Destroy()
+		colorFx = nil
 	end
 	if blurFx then
-		blurFx.Enabled = false
-		blurFx.Size = 0
+		blurFx:Destroy()
+		blurFx = nil
 	end
 end
 
@@ -893,17 +877,10 @@ end
 
 local function hideHeartbeat()
 	if fxGui then
-		fxGui.Enabled = false
-	end
-	if chaseTitleLabel then
-		chaseTitleLabel.Visible = false
-	end
-	if heartbeatFrame then
-		for _, ch in heartbeatFrame:GetChildren() do
-			if ch:IsA("Frame") then
-				ch.BackgroundTransparency = 1
-			end
-		end
+		fxGui:Destroy()
+		fxGui = nil
+		heartbeatFrame = nil
+		chaseTitleLabel = nil
 	end
 	clearPostFx()
 end
@@ -1095,21 +1072,9 @@ local function playWaveEscapeDissolve(wave: Model)
 		end
 	end
 
-	local emitted = 0
+	-- Don't tween/emit on every cobweb MeshPart — that hitch lasts after the wave is gone.
 	for _, d in wave:GetDescendants() do
-		if d:IsA("BasePart") then
-			TweenService:Create(d, info, { Transparency = 1 }):Play()
-		elseif d:IsA("Decal") or d:IsA("Texture") then
-			TweenService:Create(d, info, { Transparency = 1 }):Play()
-		elseif d:IsA("ParticleEmitter") then
-			if emitted < 8 then
-				emitted += 1
-				pcall(function()
-					d:Emit(10)
-				end)
-			end
-			d.Enabled = false
-		elseif d:IsA("Beam") or d:IsA("Trail") then
+		if d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
 			(d :: any).Enabled = false
 		elseif d:IsA("Sound") then
 			pcall(function()
@@ -1522,8 +1487,14 @@ local function finishChase(didHideHud: boolean)
 	chaseRankLand = nil
 	player:SetAttribute("WaveWebDeathLock", nil)
 	chaseToken += 1
+	if renderConn then
+		renderConn:Disconnect()
+		renderConn = nil
+	end
 	destroyChaseInstances()
-	SpiderSenseFx.stopAll()
+	pcall(function()
+		SpiderSenseFx.stopAll()
+	end)
 	clearExclamation()
 	hideHeartbeat()
 	restoreCamera()
@@ -1534,6 +1505,10 @@ local function finishChase(didHideHud: boolean)
 		GameplayUiVisibility.show()
 	end
 	MobileTouchGate.ensureTouchControlsVisible(true)
+	local hum = getHumanoid()
+	if hum then
+		hum.CameraOffset = Vector3.zero
+	end
 end
 
 local function preloadModel(model: Model)

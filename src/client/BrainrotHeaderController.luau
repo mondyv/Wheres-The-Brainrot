@@ -262,12 +262,7 @@ local function syncHeader(model: Model): boolean
 	bb.LightInfluence = 0
 	bb.MaxDistance = HEADER_MAX_DISTANCE
 	bb.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	-- Keep Studio studs size. Offset-pixel templates vanish on mobile.
-	if template.Size.X.Scale > 0.05 or template.Size.Y.Scale > 0.05 then
-		bb.Size = template.Size
-	else
-		bb.Size = DEFAULT_BB_SIZE
-	end
+	bb.Size = template.Size
 
 	-- ExtentsOffset stays on the adornee top as the model scales (raw Size.Y StudsOffset flies up).
 	pcall(function()

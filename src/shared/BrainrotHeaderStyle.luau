@@ -566,34 +566,15 @@ function M.applyInfoFrame(infoFrame: Instance, data: {
 })
 	local nameNode = findInfoChild(infoFrame, "Name")
 	local rarityNode = findInfoChild(infoFrame, "Rarity")
-	local rarityLabel = if rarityNode then M.resolveTextLabel(rarityNode) else nil
 
 	if nameNode then
 		M.setTextOnNode(nameNode, data.name)
 		local nameLabel = M.resolveTextLabel(nameNode)
 		if nameLabel then
-			-- Studio Name rows are often TextScaled in a tall frame, so short names
-			-- blow up bigger than rarity / level / rate.
-			nameLabel.TextScaled = false
-			nameLabel.TextWrapped = false
-			nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
-			local cap = 20
-			if rarityLabel then
-				cap = math.max(14, rarityLabel.TextSize)
+			local leftover = nameLabel:FindFirstChild("HeaderNameSizeLock")
+			if leftover then
+				leftover:Destroy()
 			end
-			nameLabel.TextSize = cap
-			local lock = nameLabel:FindFirstChild("HeaderNameSizeLock")
-			if not (lock and lock:IsA("UITextSizeConstraint")) then
-				if lock then
-					lock:Destroy()
-				end
-				lock = Instance.new("UITextSizeConstraint")
-				lock.Name = "HeaderNameSizeLock"
-				lock.Parent = nameLabel
-			end
-			local sizeLock = lock :: UITextSizeConstraint
-			sizeLock.MaxTextSize = cap
-			sizeLock.MinTextSize = math.min(12, cap)
 		end
 		setGuiVisible(nameNode, true)
 	end

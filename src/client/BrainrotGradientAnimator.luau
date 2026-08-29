@@ -5,6 +5,7 @@
 ]]
 
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local BrainrotGradientAnimator = {}
 
@@ -67,6 +68,9 @@ local function ensureHeartbeat()
 end
 
 function BrainrotGradientAnimator.register(root: Instance)
+	if UserInputService.TouchEnabled then
+		return
+	end
 	for _, desc in root:GetDescendants() do
 		if desc:IsA("UIGradient") and desc.Enabled then
 			local spec = specForGradient(desc)

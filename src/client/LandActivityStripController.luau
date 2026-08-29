@@ -28,7 +28,7 @@ local MAX_LAND = 10
 local OTHER_WORLD_SLOT = 11
 local SLOT_COUNT = OTHER_WORLD_SLOT
 local OTHER_WORLD_LABEL = "Other World"
-local POLL_SEC = 0.18
+local POLL_SEC = if UserInputService.TouchEnabled then 0.45 else 0.18
 local SHOW_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local HIDE_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 local MOVE_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -723,6 +723,9 @@ local function hookPlayer(plr: Player)
 end
 
 local function startLocalPulse()
+	if UserInputService.TouchEnabled then
+		return
+	end
 	pulseToken += 1
 	local token = pulseToken
 	task.spawn(function()
@@ -949,12 +952,21 @@ local function buildStrip(parentGui: PlayerGui)
 	if bobConn then
 		bobConn:Disconnect()
 	end
-	-- Gentle rock + seamless rainbow hue scroll (no Offset wrap snap).
+	-- Phones: skip per-frame ColorSequence rebuilds (layout + GPU). Desktop: 8 Hz.
+	if UserInputService.TouchEnabled then
+		return
+	end
+	local bobAccum = 0.0
 	bobConn = RunService.Heartbeat:Connect(function(dt)
 		if not visibleTarget or not stripRoot then
 			return
 		end
-		bobPhase += dt
+		bobAccum += dt
+		if bobAccum < 0.12 then
+			return
+		end
+		bobAccum = 0
+		bobPhase += 0.12
 		stripRoot.Rotation = math.sin(bobPhase * 0.55) * 0.35
 		local grad = trackRainbow
 		if grad and grad.Parent then

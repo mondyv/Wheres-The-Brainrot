@@ -571,7 +571,7 @@ local function hostTopInset(host: Frame): number
 end
 
 local layoutSyncAccum = 0.0
-local LAYOUT_SYNC_HZ = 10
+local LAYOUT_SYNC_HZ = if Svc.UserInputService.TouchEnabled then 4 else 10
 local lastMobilePanelTopPad: number? = nil
 local lastMobilePanelRightPad: number? = nil
 
@@ -1442,7 +1442,6 @@ local function hasLiveWorldArrow(): boolean
 		and worldArrowBb.Parent ~= nil
 		and worldArrowImg ~= nil
 		and worldArrowImg.Parent ~= nil
-		and arrowAnimConn ~= nil
 end
 
 local function arrowHeight(extra: number?): Vector3
@@ -1501,23 +1500,25 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	local objectOffset = Vector3.new(0, math.max(part.Size.Y * 0.35, 2), 0)
 	setGuideTrailToPart(part, objectOffset)
 
-	-- Continuous sine bob — offset only (don't thrash image Size; that looked broken on mobile).
-	local phase = 0
-	arrowAnimConn = Svc.RunService.RenderStepped:Connect(function(dt)
-		if worldArrowImg ~= img or not img.Parent or not active or chromeSuppressed then
-			return
-		end
-		if not bb.Parent or bb.Adornee == nil then
-			return
-		end
-		phase += dt * ARROW_BOB_HZ * math.pi * 2
-		local wave = math.sin(phase)
-		local t = wave * 0.5 + 0.5
-		local ground = t * t
-		local y = ARROW_BOB_AMP * (1 - ground)
-		bb.StudsOffset = baseOffset + Vector3.new(0, y, 0)
-		bobScale.Scale = 1 + ground * ARROW_SQUASH_AMP * 0.35
-	end)
+	-- Desktop: sine bob on StudsOffset. Mobile: skip RenderStepped layout thrash.
+	if not Svc.UserInputService.TouchEnabled then
+		local phase = 0
+		arrowAnimConn = Svc.RunService.RenderStepped:Connect(function(dt)
+			if worldArrowImg ~= img or not img.Parent or not active or chromeSuppressed then
+				return
+			end
+			if not bb.Parent or bb.Adornee == nil then
+				return
+			end
+			phase += dt * ARROW_BOB_HZ * math.pi * 2
+			local wave = math.sin(phase)
+			local t = wave * 0.5 + 0.5
+			local ground = t * t
+			local y = ARROW_BOB_AMP * (1 - ground)
+			bb.StudsOffset = baseOffset + Vector3.new(0, y, 0)
+			bobScale.Scale = 1 + ground * ARROW_SQUASH_AMP * 0.35
+		end)
+	end
 end
 
 local function cumulativeUiScale(inst: Instance): number

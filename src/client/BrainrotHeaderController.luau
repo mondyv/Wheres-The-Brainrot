@@ -8,12 +8,13 @@ local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
 
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local BrainrotGradientAnimator = require(script.Parent.BrainrotGradientAnimator)
 
 local HEADER_NAME = "BrainrotInfoBillboard"
-local HEADER_MAX_DISTANCE = 140
+local HEADER_MAX_DISTANCE = if UserInputService.TouchEnabled then 72 else 140
 local HEADER_TAG = "BrainrotHeaderTarget"
 local ACTIVE_ATTR = "BrainrotHeaderActive"
 local STAND_DISPLAY_ATTR = "BrainrotStandDisplay"
@@ -257,7 +258,7 @@ local function syncHeader(model: Model): boolean
 	bb.Name = HEADER_NAME
 	bb.Enabled = true
 	bb.ResetOnSpawn = false
-	bb.AlwaysOnTop = true
+	bb.AlwaysOnTop = not UserInputService.TouchEnabled
 	bb.Active = false
 	bb.LightInfluence = 0
 	bb.MaxDistance = HEADER_MAX_DISTANCE
@@ -273,6 +274,9 @@ local function syncHeader(model: Model): boolean
 	local infoFrame = bb:FindFirstChild("Info", true)
 	if infoFrame and infoFrame:IsA("GuiObject") then
 		applyToInfoFrame(infoFrame, data)
+	end
+	-- AlwaysOnTop + UIGradient Heartbeat on every header melts phones.
+	if not UserInputService.TouchEnabled then
 		BrainrotGradientAnimator.register(bb)
 	end
 

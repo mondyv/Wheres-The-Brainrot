@@ -9,6 +9,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local SwingUpgrades = require(Shared:WaitForChild("SwingUpgrades"))
@@ -218,6 +219,10 @@ local function motionForTier(tierIndex: number): TierMotion
 end
 
 local function playLandBurst(token: number, motion: TierMotion, onDone: () -> ())
+	if UserInputService.TouchEnabled then
+		onDone()
+		return
+	end
 	if motion.burstDuration <= 0 or not currentArea or not restPosition then
 		onDone()
 		return
@@ -260,6 +265,9 @@ local function playLandBurst(token: number, motion: TierMotion, onDone: () -> ()
 end
 
 local function startTierIdle(tierIndex: number, motion: TierMotion)
+	if UserInputService.TouchEnabled then
+		return
+	end
 	if motion.idlePosAmp <= 0 or not currentArea or not areaScale or not restPosition then
 		return
 	end

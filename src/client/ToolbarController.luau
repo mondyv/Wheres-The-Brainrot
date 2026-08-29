@@ -205,7 +205,7 @@ local backpackDisplayOrder: { number } = {}
 -- Without this, high inventory indices appear after every lower index, which feels
 -- like the item was thrown to the end instead of the top-left.
 local backpackFrontDisplayOrder: { number } = {}
-local pendingToolbarDrag: {
+type ToolbarDragSpec = {
 	kind: string,
 	idx: number,
 	start: Vector2,
@@ -216,12 +216,12 @@ local pendingToolbarDrag: {
 	isExtraTool: boolean?,
 	tool: Tool?,
 	sourceSize: Vector2?,
-}? =
-	nil
+}
+local pendingToolbarDrag: ToolbarDragSpec? = nil
 -- Mouse-down on a backpack cell before the drag threshold. Promoted to
 -- pendingToolbarDrag only after the cursor actually moves, so a click still
 -- fires GuiButton.Activated / select.
-local pendingToolbarPress: typeof(pendingToolbarDrag) = nil
+local pendingToolbarPress: ToolbarDragSpec? = nil
 -- Drag started inside the safe zone; finish drop even if zone poll flickers before mouse up.
 -- Cached while dragging so mouse-up still lands in the selected slot even if the ghost/touch
 -- endpoint briefly misses the button on the final frame.

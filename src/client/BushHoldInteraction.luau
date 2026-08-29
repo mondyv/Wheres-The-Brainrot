@@ -216,6 +216,20 @@ local function detachPrompt(root: Instance)
 	end
 end
 
+local function landCullCache(): Instance?
+	local scripts = player:FindFirstChild("PlayerScripts")
+	local fromScripts = scripts and scripts:FindFirstChild("LandContentCullCache")
+	if fromScripts then
+		return fromScripts
+	end
+	return player:FindFirstChild("LandContentCullCache")
+end
+
+local function isParkedByLandCull(inst: Instance): boolean
+	local cache = landCullCache()
+	return cache ~= nil and inst:IsDescendantOf(cache)
+end
+
 local function unregisterBush(root: Instance)
 	detachPrompt(root)
 	bushKnown[root] = nil
@@ -371,6 +385,11 @@ local function syncNearbyBushPrompts()
 			unregisterBush(root)
 			continue
 		end
+		-- Parked lands stay instanced in the cull cache; keep them out of the scan list.
+		if isParkedByLandCull(root) then
+			unregisterBush(root)
+			continue
+		end
 		local wp = bushApproxPos(root)
 		if not wp then
 			continue
@@ -390,6 +409,9 @@ end
 
 local function registerBushRootNow(root: Instance)
 	if not BushRootUtil.isDirectBushRoot(root) then
+		return
+	end
+	if isParkedByLandCull(root) then
 		return
 	end
 	if bushKnown[root] then

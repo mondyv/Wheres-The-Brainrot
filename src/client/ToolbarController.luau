@@ -1433,21 +1433,28 @@ local ToolbarController = {}
 
 		table.clear(generatedBackpackRows)
 		local seenIndex: { [number]: GuiObject } = {}
+		local destroyedDupes = 0
 		for _, inst in container:GetDescendants() do
 			if inst:IsA("GuiObject") and inst:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) == true then
 				local rowIndex = inst:GetAttribute(BACKPACK_UI_ROW_ATTRIBUTE)
 				if typeof(rowIndex) ~= "number" then
 					inst:Destroy()
-					continue
-				end
-				local idx = math.floor(rowIndex)
-				if idx < 1 or idx > MAX_BACKPACK_BRAINROT_SLOTS then
-					inst:Destroy()
-				elseif seenIndex[idx] then
-					inst:Destroy()
+					destroyedDupes += 1
 				else
-					seenIndex[idx] = inst :: GuiObject
-					generatedBackpackRows[idx] = inst :: GuiObject
+					local idx = math.floor(rowIndex)
+					if idx < 1 or idx > MAX_BACKPACK_BRAINROT_SLOTS then
+						inst:Destroy()
+						destroyedDupes += 1
+					elseif seenIndex[idx] then
+						inst:Destroy()
+						destroyedDupes += 1
+					else
+						seenIndex[idx] = inst :: GuiObject
+						generatedBackpackRows[idx] = inst :: GuiObject
+					end
+				end
+				if destroyedDupes > 0 and destroyedDupes % 50 == 0 then
+					task.wait(0.05)
 				end
 			end
 		end

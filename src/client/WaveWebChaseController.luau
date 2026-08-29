@@ -648,9 +648,6 @@ local function loadTrack(animator: Animator, assetId: string): AnimationTrack?
 	anim.AnimationId = if string.find(assetId, "rbxassetid://", 1, true)
 		then assetId
 		else "rbxassetid://" .. assetId
-	pcall(function()
-		ContentProvider:PreloadAsync({ anim })
-	end)
 	local ok, track = pcall(function()
 		return animator:LoadAnimation(anim)
 	end)

@@ -550,6 +550,12 @@ function M.prepareFloatTextLabel(label: TextLabel, styleSource: Instance, textSi
 	M.cloneGradientChildren(styleSource, label)
 end
 
+local function setGuiVisible(node: Instance?, on: boolean)
+	if node and node:IsA("GuiObject") then
+		(node :: GuiObject).Visible = on
+	end
+end
+
 function M.applyInfoFrame(infoFrame: Instance, data: {
 	name: string,
 	rarity: string,
@@ -585,61 +591,40 @@ function M.applyInfoFrame(infoFrame: Instance, data: {
 				lock.Name = "HeaderNameSizeLock"
 				lock.Parent = nameLabel
 			end
-			(lock :: UITextSizeConstraint).MaxTextSize = cap
-			(lock :: UITextSizeConstraint).MinTextSize = math.min(12, cap)
+			local sizeLock = lock :: UITextSizeConstraint
+			sizeLock.MaxTextSize = cap
+			sizeLock.MinTextSize = math.min(12, cap)
 		end
-		if nameNode:IsA("GuiObject") then
-			(nameNode :: GuiObject).Visible = true
-		end
+		setGuiVisible(nameNode, true)
 	end
 
 	if rarityNode then
 		M.applyRarityLabel(rarityNode, data.rarity)
-		if rarityNode:IsA("GuiObject") then
-			(rarityNode :: GuiObject).Visible = true
-		end
+		setGuiVisible(rarityNode, true)
 	end
 
 	local hideBrainrotStats = data.luckyBlock == true
 
 	local typeNode = findInfoChild(infoFrame, "Type")
 	if typeNode then
-		if hideBrainrotStats then
-			if typeNode:IsA("GuiObject") then
-				(typeNode :: GuiObject).Visible = false
-			end
-		else
-			if typeNode:IsA("GuiObject") then
-				(typeNode :: GuiObject).Visible = true
-			end
+		setGuiVisible(typeNode, not hideBrainrotStats)
+		if not hideBrainrotStats then
 			M.applyMutationLabel(typeNode, data.mutation)
 		end
 	end
 
 	local levelNode = findInfoChild(infoFrame, "Level")
 	if levelNode then
-		if hideBrainrotStats then
-			if levelNode:IsA("GuiObject") then
-				(levelNode :: GuiObject).Visible = false
-			end
-		else
-			if levelNode:IsA("GuiObject") then
-				(levelNode :: GuiObject).Visible = true
-			end
+		setGuiVisible(levelNode, not hideBrainrotStats)
+		if not hideBrainrotStats then
 			M.applyLevelLabel(levelNode, data.level)
 		end
 	end
 
 	local rateNode = findInfoChild(infoFrame, "Rate")
 	if rateNode then
-		if hideBrainrotStats then
-			if rateNode:IsA("GuiObject") then
-				(rateNode :: GuiObject).Visible = false
-			end
-		else
-			if rateNode:IsA("GuiObject") then
-				(rateNode :: GuiObject).Visible = true
-			end
+		setGuiVisible(rateNode, not hideBrainrotStats)
+		if not hideBrainrotStats then
 			M.applyRateLabel(rateNode, data.rateText)
 		end
 	end

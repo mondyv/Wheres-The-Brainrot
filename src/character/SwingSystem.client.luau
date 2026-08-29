@@ -2045,7 +2045,6 @@ local function boot(character)
 			track.Looped = looped == true
 			return track
 		end
-		warn("[MergedFriendSwingSystem] Failed to load animation:", name or animId, track)
 		return nil
 	end
 

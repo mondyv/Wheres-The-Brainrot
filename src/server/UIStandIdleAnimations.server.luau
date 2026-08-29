@@ -134,7 +134,6 @@ local function playIdle(model: Model, brainrotName: string)
 		return animator:LoadAnimation(anim)
 	end)
 	if not ok or typeof(trackOrErr) ~= "Instance" then
-		warn("[UIStandIdleAnimations] load failed:", trackOrErr)
 		return
 	end
 	local track = trackOrErr :: AnimationTrack

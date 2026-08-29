@@ -66,7 +66,6 @@ local function makeTrack(assetId: number, looped: boolean, priority: Enum.Animat
 	end)
 	anim:Destroy()
 	if not ok or typeof(trackOrErr) ~= "Instance" then
-		warn("[CharacterAnimations] load failed", assetId, trackOrErr)
 		return nil
 	end
 	local track = trackOrErr :: AnimationTrack

@@ -5,6 +5,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local IndexConfig = require(ReplicatedStorage.Shared.IndexConfig)
 local LuckyBlockCatalog = require(ReplicatedStorage.Shared.LuckyBlockCatalog)
 local RebirthConfig = require(ReplicatedStorage.Shared.RebirthConfig)
+local BrainrotsConfig = require(ReplicatedStorage.Shared.BrainrotsConfig)
 local Brainrots = require(script.Parent:WaitForChild("Brainrots"))
 
 local M = {}
@@ -32,7 +33,25 @@ local function getBrainrotsFolder(): Folder?
 	return nil
 end
 
-local function findVariantTemplate(brainrotName: string, mutationId: string): Model?
+local function usableImage(tex: string?): string
+	if typeof(tex) ~= "string" or tex == "" then
+		return ""
+	end
+	if tex == "rbxasset://textures/ui/GuiImagePlaceholder.png" or tex == "rbxassetid://0" then
+		return ""
+	end
+	return tex
+end
+
+local function textureFromImageGui(node: Instance): string
+	if node:IsA("ImageLabel") or node:IsA("ImageButton") then
+		return usableImage((node :: ImageLabel).Image)
+	end
+	return ""
+end
+
+-- ServerStorage.Brainrots/<Name>/<Variant>/ImageLabel — never walk Mesh.
+local function findVariantContainer(brainrotName: string, mutationId: string): Instance?
 	local root = getBrainrotsFolder()
 	if not root then
 		return nil
@@ -43,48 +62,45 @@ local function findVariantTemplate(brainrotName: string, mutationId: string): Mo
 	end
 	for _, variantFolderName in ipairs(Brainrots.mutationTemplateCandidateNames(mutationId)) do
 		local variant = brainrotFolder:FindFirstChild(variantFolderName)
-		if variant and variant:IsA("Model") then
-			return variant
-		end
 		if variant then
-			for _, child in ipairs(variant:GetChildren()) do
-				if child:IsA("Model") then
-					return child
-				end
-			end
+			return variant
 		end
 	end
 	return nil
 end
 
-local function pickIconFromModel(model: Model): string
-	local function readIconNode(node: Instance): string
-		if node:IsA("ImageLabel") and node.Image ~= "" and node.Image ~= "rbxasset://textures/ui/GuiImagePlaceholder.png" then
-			return node.Image
-		end
-		if node:IsA("ImageButton") and node.Image ~= "" and node.Image ~= "rbxasset://textures/ui/GuiImagePlaceholder.png" then
-			return node.Image
-		end
-		if node:IsA("Decal") and node.Texture ~= "" and node.Texture ~= "rbxasset://textures/ui/GuiImagePlaceholder.png" then
-			return node.Texture
-		end
-		return ""
-	end
-	-- Named Icon only (never walk the whole 3D mesh — that hung gold/diamond packs).
-	local iconNode = model:FindFirstChild("Icon", true)
-	if iconNode then
-		local tex = readIconNode(iconNode)
+local function pickIconFromVariant(variant: Instance): string
+	local named = variant:FindFirstChild("ImageLabel") or variant:FindFirstChild("Icon") or variant:FindFirstChild("icon")
+	if named then
+		local tex = textureFromImageGui(named)
 		if tex ~= "" then
 			return tex
 		end
-		for _, d in iconNode:GetDescendants() do
-			tex = readIconNode(d)
+		for _, child in named:GetChildren() do
+			tex = textureFromImageGui(child)
 			if tex ~= "" then
 				return tex
 			end
 		end
 	end
+	local selfTex = textureFromImageGui(variant)
+	if selfTex ~= "" then
+		return selfTex
+	end
+	for _, child in variant:GetChildren() do
+		if child.Name == "Mesh" then
+			continue
+		end
+		local tex = textureFromImageGui(child)
+		if tex ~= "" then
+			return tex
+		end
+	end
 	return ""
+end
+
+local function pickIconFromModel(model: Model): string
+	return pickIconFromVariant(model)
 end
 
 function M.getIconFor(brainrotName: string, mutationId: string): string
@@ -97,14 +113,22 @@ function M.getIconFor(brainrotName: string, mutationId: string): string
 		end
 	end
 	local icon = ""
-	local template = findVariantTemplate(brainrotName, mut)
-	if template then
-		icon = pickIconFromModel(template)
+	local variant = findVariantContainer(brainrotName, mut)
+	if variant then
+		icon = pickIconFromVariant(variant)
 	end
 	if icon == "" and mut ~= "normal" then
-		local fallback = findVariantTemplate(brainrotName, "normal")
+		local fallback = findVariantContainer(brainrotName, "normal")
 		if fallback then
-			icon = pickIconFromModel(fallback)
+			icon = pickIconFromVariant(fallback)
+		end
+	end
+	if icon == "" then
+		local ok, fromConfig = pcall(function()
+			return BrainrotsConfig:GetIcon(brainrotName, mut)
+		end)
+		if ok then
+			icon = usableImage(fromConfig)
 		end
 	end
 	if not byName then
@@ -568,9 +592,8 @@ function M.packStateForClient(
 			unlocked[k] = true
 		end
 	end
-	-- One shared catalog for every mutation tab. Per-variant Icon scans used to
-	-- hang GetIndexState for gold/diamond/etc., so those tabs rendered empty.
-	local catalog = packedCatalogCache.shared
+	-- ImageLabel per mutation folder (cheap). Do not scan Mesh.
+	local catalog = packedCatalogCache[mutationId]
 	if not catalog then
 		catalog = {}
 		for _, def in M.buildCatalog() do
@@ -578,10 +601,10 @@ function M.packStateForClient(
 				name = def.name,
 				rarity = def.rarity,
 				baseIncome = def.baseIncome,
-				icon = M.getIconFor(def.name, "normal"),
+				icon = M.getIconFor(def.name, mutationId),
 			})
 		end
-		packedCatalogCache.shared = catalog
+		packedCatalogCache[mutationId] = catalog
 	end
 	return {
 		unlocked = unlocked,

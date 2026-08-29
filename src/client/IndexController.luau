@@ -732,7 +732,10 @@ local function populateRow(
 			end
 		end
 		if tex ~= "" and tex ~= "rbxasset://textures/ui/GuiImagePlaceholder.png" then
-			(icon :: ImageLabel).Image = tex
+			local img = icon :: ImageLabel
+			img.Image = tex
+			img.Visible = true
+			img.ImageTransparency = 0
 		end
 		setBlackoutOnIcon(icon, not unlocked)
 	end
@@ -1321,15 +1324,6 @@ local function applyCachedState(mutationId: string, animateRows: boolean?)
 	end
 end
 
-local function shareBrainrotState(state: any)
-	if typeof(state) ~= "table" then
-		return
-	end
-	for _, mutId in IndexConfig.MUTATION_TABS do
-		stateCache[mutId] = state
-	end
-end
-
 local function refreshStateInBackground(mutationId: string, animateRows: boolean?)
 	task.spawn(function()
 		-- Wait briefly if remotes aren't ready yet (open can race init).
@@ -1341,19 +1335,12 @@ local function refreshStateInBackground(mutationId: string, animateRows: boolean
 		if not state then
 			return
 		end
-		if mutationId == IndexConfig.LUCKY_BLOCK_TAB then
-			stateCache[mutationId] = state
-		else
-			shareBrainrotState(state)
-		end
+		stateCache[mutationId] = state
 		if not indexFrame or not indexFrame.Visible then
 			return
 		end
 		local showingLucky = selectedMutation == IndexConfig.LUCKY_BLOCK_TAB
 		if mutationId == selectedMutation or (mutationId ~= IndexConfig.LUCKY_BLOCK_TAB and not showingLucky) then
-			if selectedMutation == _gridMutation and gridHasVisibleRows() and animateRows ~= true then
-				return
-			end
 			local view = stateCache[selectedMutation] or state
 			rebuildGrid(view, animateRows)
 		end
@@ -1374,18 +1361,20 @@ local function loadMutationGrid(mutationId: string, animateRows: boolean)
 		return
 	end
 
-	-- Gold/Diamond/etc. share Normal's catalog + unlock map. Never invoke a
-	-- per-mutation GetIndexState — that pack used to hang and leave the tab empty.
-	local source = stateCache[mutationId] or anyBrainrotState()
-	if source then
-		shareBrainrotState(source)
-		rebuildGrid(source, animateRows)
-		refreshStateInBackground("normal", false)
+	local cached = stateCache[mutationId]
+	if cached then
+		applyCachedState(mutationId, animateRows)
+		refreshStateInBackground(mutationId, false)
 		return
 	end
-	clearGrid()
-	_gridMutation = nil
-	refreshStateInBackground("normal", animateRows)
+	local fallback = anyBrainrotState()
+	if fallback then
+		rebuildGrid(fallback, animateRows)
+	else
+		clearGrid()
+		_gridMutation = nil
+	end
+	refreshStateInBackground(mutationId, animateRows)
 end
 
 local function patchCachedUnlock(mutationId: string, name: string, payload: any)
@@ -1617,6 +1606,7 @@ function IndexController.init()
 				warn("[IndexController] Index row template looks like the whole panel — refusing to clone it")
 				rowTemplate = nil
 			else
+				flattenIndexRow3D(rowTemplate)
 				rowTemplate.Visible = false
 				local collectOnTemplate = rowTemplate:FindFirstChild("Collect")
 				if collectOnTemplate and collectOnTemplate:IsA("GuiObject") then
@@ -1865,7 +1855,7 @@ function IndexController.init()
 				-- Warm normal tab cache so first open isn't empty; grid still only builds when visible.
 				local bootState = fetchStateFor("normal")
 				if bootState then
-					shareBrainrotState(bootState)
+					stateCache.normal = bootState
 				end
 				if indexFrame and indexFrame.Visible then
 					loadMutationGrid(selectedMutation, false)

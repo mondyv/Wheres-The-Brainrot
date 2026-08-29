@@ -180,7 +180,7 @@ local BLOCKS: { BlockDef } = {
 		tier = 14,
 		indexRarity = "secret",
 		drops = { legendary = 12, ["brainrot god"] = 33, secret = 55 },
-		iconFolder = "Lucky Block",
+		iconFolder = "Red Lucky Block",
 		iconChild = "Red Lucky Block",
 	},
 	{
@@ -344,6 +344,10 @@ local function findChildFuzzy(parent: Instance, name: string): Instance?
 	local want = string.lower(name)
 	local compact = string.gsub(want, "%s*lucky%s*blocks?%s*", "")
 	compact = string.gsub(compact, "%s+", "")
+	-- "Lucky Block" or short ids ("1") substring-match the wrong folder.
+	if compact == "" or #compact < 3 then
+		return nil
+	end
 	local best: Instance? = nil
 	local bestScore = 0
 	for _, child in parent:GetChildren() do
@@ -367,6 +371,7 @@ local function findChildFuzzy(parent: Instance, name: string): Instance?
 end
 
 local PLACEHOLDER_IMAGE = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+local iconAssetCache: { [string]: string } = {}
 
 local function isUsableImage(img: string?): boolean
 	if typeof(img) ~= "string" or img == "" then
@@ -386,11 +391,6 @@ local function textureFromNode(node: Instance): string
 		end
 	elseif node:IsA("Decal") or node:IsA("Texture") then
 		local tex = (node :: Decal).Texture
-		if isUsableImage(tex) then
-			return tex
-		end
-	elseif node:IsA("MeshPart") then
-		local tex = (node :: MeshPart).TextureID
 		if isUsableImage(tex) then
 			return tex
 		end
@@ -460,8 +460,32 @@ local function resolveFromIconGroup(group: Instance, preferredNames: { string })
 	return ""
 end
 
+local function findIconGroup(style: Instance, names: { string }): Instance?
+	for _, name in names do
+		if name ~= "" then
+			local found = findChildIgnoreCase(style, name)
+			if found then
+				return found
+			end
+		end
+	end
+	for _, name in names do
+		if name ~= "" then
+			local found = findChildFuzzy(style, name)
+			if found then
+				return found
+			end
+		end
+	end
+	return nil
+end
+
 -- Resolves rbxassetid from Lucky Block Icons.Normal only (Studio source of truth).
 function M.resolveIconAssetId(blockId: string): string
+	local cached = iconAssetCache[blockId]
+	if cached ~= nil then
+		return cached
+	end
 	local def = byId[blockId]
 	if not def then
 		local want = string.lower(blockId)
@@ -473,11 +497,13 @@ function M.resolveIconAssetId(blockId: string): string
 		end
 	end
 	if def and typeof(def.iconAsset) == "string" and def.iconAsset ~= "" then
+		iconAssetCache[blockId] = def.iconAsset
 		return def.iconAsset
 	end
 	local root = ReplicatedStorage:FindFirstChild("Lucky Blocks")
 	local icons = root and root:FindFirstChild("Lucky Block Icons")
 	if not icons then
+		iconAssetCache[blockId] = ""
 		return ""
 	end
 
@@ -495,19 +521,19 @@ function M.resolveIconAssetId(blockId: string): string
 	end
 	table.insert(preferred, blockId)
 
-	local style = findChildIgnoreCase(icons, "Normal") or findChildFuzzy(icons, "Normal")
+	local style = findChildIgnoreCase(icons, "Normal")
 	if not style then
+		iconAssetCache[blockId] = ""
 		return ""
 	end
-	local group = findChildIgnoreCase(style, folderName)
-		or findChildFuzzy(style, folderName)
-		or (def and findChildFuzzy(style, def.displayName))
-		or (def and findChildFuzzy(style, def.id))
-		or findChildFuzzy(style, blockId)
+	local group = findIconGroup(style, preferred)
 	if not group then
+		iconAssetCache[blockId] = ""
 		return ""
 	end
-	return resolveFromIconGroup(group, preferred)
+	local result = resolveFromIconGroup(group, preferred)
+	iconAssetCache[blockId] = result
+	return result
 end
 
 return M

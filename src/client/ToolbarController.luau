@@ -112,10 +112,11 @@ applyToolbarInitialHiddenState()
 
 -- Studio backpack/Index slot templates sometimes contain leftover ViewportFrame
 -- meshes. Cloning those per row is what blew client RAM to multiple GB.
+-- Destroy parts too (not Model — that used to delete the slot button).
 local function stripClonedGui3D(row: Instance)
 	local heavy: { Instance } = {}
 	for _, d in row:GetDescendants() do
-		if d:IsA("ViewportFrame") or d:IsA("WorldModel") then
+		if d:IsA("ViewportFrame") or d:IsA("WorldModel") or d:IsA("BasePart") then
 			table.insert(heavy, d)
 		end
 	end
@@ -1393,6 +1394,7 @@ local ToolbarController = {}
 			end
 			local gui = candidate :: GuiObject
 			gui:SetAttribute(BACKPACK_TEMPLATE_ATTRIBUTE, true)
+			stripClonedGui3D(gui)
 			gui.Visible = false
 			gui.LayoutOrder = 100000
 			backpackTemplateRow = gui
@@ -1468,6 +1470,13 @@ local ToolbarController = {}
 				end
 			end
 			if not missing then
+				for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
+					local existing = generatedBackpackRows[idx]
+					if existing and existing:GetAttribute("_Toolbar3DStripped") ~= true then
+						stripClonedGui3D(existing)
+						existing:SetAttribute("_Toolbar3DStripped", true)
+					end
+				end
 				return
 			end
 		else
@@ -1498,8 +1507,12 @@ local ToolbarController = {}
 			if not row or not row.Parent then
 				row = template:Clone()
 				stripClonedGui3D(row)
+				row:SetAttribute("_Toolbar3DStripped", true)
 				row.Visible = false
 				row.Parent = rowsParent
+			elseif row:GetAttribute("_Toolbar3DStripped") ~= true then
+				stripClonedGui3D(row)
+				row:SetAttribute("_Toolbar3DStripped", true)
 			end
 			row.Name = "__ToolbarBP_" .. tostring(idx)
 			row:SetAttribute(BACKPACK_TEMPLATE_ATTRIBUTE, false)
@@ -3655,6 +3668,8 @@ local ToolbarController = {}
 	end
 
 	-- Lucky blocks / extra tools parked in the bag: tap to equip without a hotbar cell.
+	local lastExtraEquipAt = 0.0
+	local lastExtraEquipTool: Tool? = nil
 	requestEquipFromBackpackExtra = function(tool: Tool)
 		if not canUseToolbar then
 			return
@@ -3662,6 +3677,12 @@ local ToolbarController = {}
 		if not tool.Parent then
 			return
 		end
+		local now = os.clock()
+		if lastExtraEquipTool == tool and now - lastExtraEquipAt < 0.18 then
+			return
+		end
+		lastExtraEquipAt = now
+		lastExtraEquipTool = tool
 		local hum = getHumanoid()
 		if not hum then
 			return
@@ -5280,19 +5301,14 @@ local ToolbarController = {}
 				syncToolbarGamepadCursor()
 				return
 			end
-			local press = pendingToolbarPress
 			local pnd = pendingToolbarDrag
 			pendingToolbarDrag = nil
 			pendingToolbarPress = nil
 			activeToolbarDrag = false
-			if not pnd then
-				if press then
-					if press.kind == "backpack" then
-						requestEquipFromBackpack(press.idx)
-					elseif press.tool then
-						requestEquipFromBackpackExtra(press.tool)
-					end
-				end
+			-- Click / mouse-jitter: GuiButton.Activated equips. Equipping here too
+			-- selects then immediately unequips (extra tools have no debounce).
+			-- A press promoted to "drag" without a ghost is still a click.
+			if not pnd or not dragGhostImage then
 				lastResolvedHotbarDropSlot = nil
 				clearDragGhost()
 				syncToolbarGamepadCursor()

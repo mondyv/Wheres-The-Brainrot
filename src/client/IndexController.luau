@@ -38,6 +38,11 @@ local INDEX_BADGE_SWAY_DEG = 2
 local INDEX_BADGE_INNER_SWAY_DEG = 1
 
 local LOCKED_NAME_COLOR = Color3.fromRGB(0, 0, 0)
+local INDEX_PLACEHOLDER_IMAGE = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+
+local function usableIndexIcon(tex: string): boolean
+	return tex ~= "" and tex ~= INDEX_PLACEHOLDER_IMAGE and tex ~= "rbxassetid://0"
+end
 
 local indexFrame: Frame? = nil
 local headerTitle: TextLabel? = nil
@@ -725,18 +730,22 @@ local function populateRow(
 	end
 	if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
 		local tex = if typeof(entry.icon) == "string" then entry.icon else ""
-		if tex == "" or tex == "rbxasset://textures/ui/GuiImagePlaceholder.png" or tex == "rbxassetid://0" then
-			tex = LuckyBlockCatalog.resolveIconAssetId(entry.name or displayName)
-			if tex == "" then
-				tex = LuckyBlockCatalog.resolveIconAssetId(displayName)
+		if not usableIndexIcon(tex) then
+			tex = ""
+			-- Never resolve lucky-block folders for brainrots — leftover / fuzzy
+			-- matches put brainrot art on Lucky Block rows (and vice versa).
+			if isLucky then
+				tex = LuckyBlockCatalog.resolveIconAssetId(entry.name or displayName)
+				if not usableIndexIcon(tex) then
+					tex = LuckyBlockCatalog.resolveIconAssetId(displayName)
+				end
 			end
 		end
-		if tex ~= "" and tex ~= "rbxasset://textures/ui/GuiImagePlaceholder.png" then
-			local img = icon :: ImageLabel
-			img.Image = tex
-			img.Visible = true
-			img.ImageTransparency = 0
-		end
+		local img = icon :: ImageLabel
+		-- Always assign: reused catalog rows keep the previous tab's Image otherwise.
+		img.Image = if usableIndexIcon(tex) then tex else ""
+		img.Visible = true
+		img.ImageTransparency = 0
 		setBlackoutOnIcon(icon, not unlocked)
 	end
 
@@ -1152,14 +1161,20 @@ local function gridHasVisibleRows(): boolean
 	return false
 end
 
+local function indexRowStillHas3D(row: Instance): boolean
+	return row:FindFirstChildWhichIsA("ViewportFrame", true) ~= nil
+		or row:FindFirstChildWhichIsA("WorldModel", true) ~= nil
+		or row:FindFirstChildWhichIsA("BasePart", true) ~= nil
+end
+
 local function flattenIndexRow3D(row: Instance)
-	if row:GetAttribute("IndexFlat") == true then
+	if row:GetAttribute("IndexFlat") == true and not indexRowStillHas3D(row) then
 		return
 	end
-	-- Only ViewportFrame / WorldModel. Destroying Model/BasePart also deleted backpack/Index buttons.
+	-- Viewport / WorldModel / leftover MeshParts. Do not destroy Model (can wrap the row button).
 	local heavy: { Instance } = {}
 	for _, d in row:GetDescendants() do
-		if d:IsA("ViewportFrame") or d:IsA("WorldModel") then
+		if d:IsA("ViewportFrame") or d:IsA("WorldModel") or d:IsA("BasePart") then
 			table.insert(heavy, d)
 		end
 	end
@@ -1272,7 +1287,9 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 		end
 		index = batchEnd + 1
 		if index <= #list then
-			task.wait(0.03)
+			if #list > BATCH then
+				task.wait(0.03)
+			end
 			spawnBatch()
 		else
 			for i = #list + 1, #catalogRows do
@@ -1580,6 +1597,11 @@ function IndexController.init()
 		container = containerInst :: any
 	end
 	if container then
+		for _, ch in container:GetChildren() do
+			if ch:IsA("GuiObject") then
+				flattenIndexRow3D(ch)
+			end
+		end
 		rowTemplate = container:FindFirstChild("1") :: Frame?
 		if not rowTemplate then
 			for _, ch in container:GetChildren() do

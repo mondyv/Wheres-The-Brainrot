@@ -736,6 +736,10 @@ local function populateRow(
 		if unlocked then
 			BrainrotHeaderStyle.setTextOnNode(nameLabel, displayName)
 			nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+			if typeof(entry.rarity) == "string" and entry.rarity ~= "" then
+				BrainrotHeaderStyle.ensureRarityGradient(nameLabel, entry.rarity)
+				BrainrotHeaderStyle.selectGradient(nameLabel, BrainrotHeaderStyle.rarityGradientNames(entry.rarity))
+			end
 		else
 			nameLabel.Text = "???"
 			nameLabel.TextColor3 = LOCKED_NAME_COLOR
@@ -1126,18 +1130,6 @@ local function gridHasVisibleRows(): boolean
 	return false
 end
 
-local function sanitizeIndexRowClone(row: Instance)
-	local heavy: { Instance } = {}
-	for _, d in row:GetDescendants() do
-		if d:IsA("ViewportFrame") or d:IsA("WorldModel") or d:IsA("BasePart") or d:IsA("Model") then
-			table.insert(heavy, d)
-		end
-	end
-	for _, d in heavy do
-		d:Destroy()
-	end
-end
-
 local function anyBrainrotState(): any?
 	local lucky = IndexConfig.LUCKY_BLOCK_TAB
 	local preferred = stateCache[selectedMutation]
@@ -1199,7 +1191,6 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 				end
 			else
 				row = rowTemplate:Clone()
-				sanitizeIndexRowClone(row)
 				row.Name = "Entry_" .. entry.name
 				row.Parent = container
 				catalogRows[i] = row
@@ -1562,7 +1553,6 @@ function IndexController.init()
 				warn("[IndexController] Index row template looks like the whole panel — refusing to clone it")
 				rowTemplate = nil
 			else
-				sanitizeIndexRowClone(rowTemplate)
 				rowTemplate.Visible = false
 				local collectOnTemplate = rowTemplate:FindFirstChild("Collect")
 				if collectOnTemplate and collectOnTemplate:IsA("GuiObject") then

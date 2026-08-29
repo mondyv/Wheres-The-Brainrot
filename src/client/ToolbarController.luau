@@ -4579,6 +4579,8 @@ local ToolbarController = {}
 		end)
 	end
 
+	-- Second register scope: the outer IIFE is at Luau's 200-local cap.
+	(function()
 	local _initialInventoryRevealed = false
 
 	-- After loading, canUseToolbar may already be true from mid-load safezone polls
@@ -5466,6 +5468,7 @@ local ToolbarController = {}
 			requestBrainrotInventoryFromServer()
 		end)
 	end
+	end)()
 end)()
 
 return ToolbarController

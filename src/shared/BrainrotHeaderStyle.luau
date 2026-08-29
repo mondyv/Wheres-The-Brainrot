@@ -423,6 +423,7 @@ function M.applyRarityLabel(node: Instance, rarityId: string)
 end
 
 function M.applyRarityStroke(strokeNode: Instance, rarityId: string)
+	M.ensureRarityGradient(strokeNode, rarityId)
 	M.selectGradient(strokeNode, M.rarityGradientNames(rarityId))
 	if strokeNode:IsA("UIStroke") then
 		strokeNode.Enabled = true

@@ -176,34 +176,52 @@ local function chargeAlongZ(fromPos: Vector3): Vector3
 end
 
 local function waveStudioCf(pos: Vector3): CFrame
-	local o = C.WAVE_SPAWN_ORIENTATION_DEG
-	return CFrame.new(pos) * CFrame.fromOrientation(math.rad(o.X), math.rad(o.Y), math.rad(o.Z))
+	-- Studio Orientation XYZ 0, 90, 0 (fromOrientation == Studio Orientation).
+	return CFrame.new(pos) * CFrame.fromOrientation(0, math.rad(90), 0)
 end
 
--- Studio Position/Orientation on the primary part (not Model WorldPivot).
--- Raw PivotTo compounds the template's pivot and sits the wall sideways / left.
--- Bake the mesh once (same as the working spawn), then PivotTo only translates.
+local function waveWallPart(model: Model): BasePart?
+	if model.PrimaryPart then
+		return model.PrimaryPart
+	end
+	local best: BasePart? = nil
+	local bestVol = -1
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			local vol = d.Size.X * d.Size.Y * d.Size.Z
+			if vol > bestVol then
+				bestVol = vol
+				best = d
+			end
+		end
+	end
+	return best
+end
+
+-- Studio 0, 90, 0 on the wall part. PivotTo uses WorldPivot and compounds the
+-- template, which parked the web sideways / left of the player.
 local function applyWaveStudioPose(model: Model, pos: Vector3)
 	local target = waveStudioCf(pos)
-	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-	if not primary then
+	local wall = waveWallPart(model)
+	if not wall then
 		model:PivotTo(target)
 		return
 	end
-	model.PrimaryPart = primary
+	model.PrimaryPart = wall
 	if model:GetAttribute("WaveStudioPoseBaked") ~= true then
-		local delta = target * primary.CFrame:Inverse()
+		local delta = target * wall.CFrame:Inverse()
 		for _, d in model:GetDescendants() do
 			if d:IsA("BasePart") then
 				d.CFrame = delta * d.CFrame
 			end
 		end
 		pcall(function()
-			model.WorldPivot = target
+			model.WorldPivot = wall.CFrame
 		end)
 		model:SetAttribute("WaveStudioPoseBaked", true)
 		return
 	end
+	-- Wall already at 0,90,0; only slide (WorldPivot == wall).
 	model:PivotTo(target)
 end
 
@@ -550,12 +568,9 @@ end
 
 local function prepareWaveModel(model: Model)
 	stripAuthoredWaveTitles(model)
-	local primary = model.PrimaryPart
-	if not primary then
-		primary = model:FindFirstChildWhichIsA("BasePart", true)
-		if primary then
-			model.PrimaryPart = primary
-		end
+	local wall = waveWallPart(model)
+	if wall then
+		model.PrimaryPart = wall
 	end
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") then

@@ -70,23 +70,15 @@ local function pickIconFromModel(model: Model): string
 		end
 		return ""
 	end
-	-- Only look at an Icon node. Never walk the whole 3D model (that timed out gold/diamond Index packs).
-	local iconNode = model:FindFirstChild("Icon")
+	-- Named Icon only (never walk the whole 3D mesh — that hung gold/diamond packs).
+	local iconNode = model:FindFirstChild("Icon", true)
 	if iconNode then
 		local tex = readIconNode(iconNode)
 		if tex ~= "" then
 			return tex
 		end
-		for _, d in iconNode:GetChildren() do
+		for _, d in iconNode:GetDescendants() do
 			tex = readIconNode(d)
-			if tex ~= "" then
-				return tex
-			end
-		end
-	end
-	for _, child in model:GetChildren() do
-		if child.Name == "Icon" then
-			local tex = readIconNode(child)
 			if tex ~= "" then
 				return tex
 			end

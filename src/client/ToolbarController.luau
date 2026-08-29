@@ -110,7 +110,19 @@ end
 
 applyToolbarInitialHiddenState()
 
--- ── Tween configs ─────────────────────────────────────────────────────────────
+-- Studio backpack/Index slot templates sometimes contain leftover ViewportFrame
+-- meshes. Cloning those per row is what blew client RAM to multiple GB.
+local function stripClonedGui3D(row: Instance)
+	local heavy: { Instance } = {}
+	for _, d in row:GetDescendants() do
+		if d:IsA("ViewportFrame") or d:IsA("WorldModel") or d:IsA("BasePart") or d:IsA("Model") then
+			table.insert(heavy, d)
+		end
+	end
+	for _, d in heavy do
+		d:Destroy()
+	end
+end
 
 local SHOW_TWEEN = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local HIDE_TWEEN = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
@@ -1085,6 +1097,7 @@ local ToolbarController = {}
 			local row = extraToolRowByTool[tool]
 			if not row or not row.Parent then
 				row = (template :: GuiObject):Clone()
+				stripClonedGui3D(row)
 				row:SetAttribute("_ToolbarBackpackTemplate", nil)
 				row:SetAttribute("_ToolbarGeneratedBackpackRow", nil)
 				row:SetAttribute("ToolbarBackpackUiRow", nil)
@@ -1484,6 +1497,7 @@ local ToolbarController = {}
 			local row = generatedBackpackRows[idx]
 			if not row or not row.Parent then
 				row = template:Clone()
+				stripClonedGui3D(row)
 				row.Visible = false
 				row.Parent = rowsParent
 			end

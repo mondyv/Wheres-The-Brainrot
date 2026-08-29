@@ -717,6 +717,12 @@ local function populateRow(
 
 	local frame = row:FindFirstChild("Frame") or row
 	local icon = frame:FindFirstChild("Icon", true)
+	if icon and not (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
+		local inner = icon:FindFirstChildWhichIsA("ImageLabel") or icon:FindFirstChildWhichIsA("ImageButton")
+		if inner then
+			icon = inner
+		end
+	end
 	if icon and (icon:IsA("ImageLabel") or icon:IsA("ImageButton")) then
 		local tex = if typeof(entry.icon) == "string" then entry.icon else ""
 		if tex == "" or tex == "rbxasset://textures/ui/GuiImagePlaceholder.png" or tex == "rbxassetid://0" then
@@ -782,15 +788,21 @@ local function populateRow(
 	end
 
 	local decor = frame:FindFirstChild("Decor", true)
+	local rs: Instance? = nil
 	if decor then
 		local strokeHost = decor:FindFirstChild("Highlight", true)
 		if strokeHost then
-			local rs = strokeHost:FindFirstChild("RarityStroke", true) or strokeHost
-			if unlocked then
-				BrainrotHeaderStyle.applyRarityStroke(rs, entry.rarity)
-			else
-				BrainrotHeaderStyle.selectGradient(rs, nil)
-			end
+			rs = strokeHost:FindFirstChild("RarityStroke", true) or strokeHost
+		end
+	end
+	if not rs then
+		rs = frame:FindFirstChild("RarityStroke", true) or row:FindFirstChild("RarityStroke", true)
+	end
+	if rs and typeof(entry.rarity) == "string" and entry.rarity ~= "" then
+		-- Locked entries still show rarity on the border (name/type stay ???).
+		BrainrotHeaderStyle.applyRarityStroke(rs, entry.rarity)
+		if rs:IsA("GuiObject") then
+			(rs :: GuiObject).Visible = true
 		end
 	end
 
@@ -1130,6 +1142,47 @@ local function gridHasVisibleRows(): boolean
 	return false
 end
 
+local function flattenIndexRow3D(row: Instance)
+	-- Catalog clones must not keep ViewportFrame 3D meshes (that was 8GB+ RAM).
+	-- If Icon is a ViewportFrame, swap it for an ImageLabel first so populateRow
+	-- can still set the texture.
+	local vfIcon: Instance? = nil
+	local iconNode = row:FindFirstChild("Icon", true)
+	if iconNode and iconNode:IsA("ViewportFrame") then
+		vfIcon = iconNode
+	elseif iconNode then
+		vfIcon = iconNode:FindFirstChildWhichIsA("ViewportFrame")
+	end
+	if vfIcon and vfIcon:IsA("ViewportFrame") then
+		local vf = vfIcon :: ViewportFrame
+		local img = Instance.new("ImageLabel")
+		img.Name = "Icon"
+		img.BackgroundTransparency = 1
+		img.BorderSizePixel = 0
+		img.Size = vf.Size
+		img.Position = vf.Position
+		img.AnchorPoint = vf.AnchorPoint
+		img.LayoutOrder = vf.LayoutOrder
+		img.ZIndex = vf.ZIndex
+		img.ScaleType = Enum.ScaleType.Fit
+		local blackout = vf:FindFirstChild("Blackout")
+		if blackout then
+			blackout.Parent = img
+		end
+		img.Parent = vf.Parent
+		vf:Destroy()
+	end
+	local heavy: { Instance } = {}
+	for _, d in row:GetDescendants() do
+		if d:IsA("ViewportFrame") or d:IsA("WorldModel") or d:IsA("BasePart") or d:IsA("Model") then
+			table.insert(heavy, d)
+		end
+	end
+	for _, d in heavy do
+		d:Destroy()
+	end
+end
+
 local function anyBrainrotState(): any?
 	local lucky = IndexConfig.LUCKY_BLOCK_TAB
 	local preferred = stateCache[selectedMutation]
@@ -1189,8 +1242,12 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 				if row.Parent ~= container then
 					row.Parent = container
 				end
+				if row:FindFirstChildWhichIsA("ViewportFrame", true) then
+					flattenIndexRow3D(row)
+				end
 			else
 				row = rowTemplate:Clone()
+				flattenIndexRow3D(row)
 				row.Name = "Entry_" .. entry.name
 				row.Parent = container
 				catalogRows[i] = row

@@ -78,7 +78,7 @@ end
 local function findFeet(character: Model): (BasePart?, BasePart?)
 	local function pick(names: { string }): BasePart?
 		for _, name in names do
-			local p = character:FindFirstChild(name)
+			local p = character:FindFirstChild(name, true)
 			if p and p:IsA("BasePart") then
 				return p
 			end
@@ -182,9 +182,21 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	end
 	local anchorFoot = rightFoot or leftFoot
 	if not anchorFoot then
-		warn("[WorkoutController] Character missing feet — cannot attach gear")
+		local tries = tool:GetAttribute("_FootAttachTries")
+		local n = if typeof(tries) == "number" then tries else 0
+		if n < 8 then
+			tool:SetAttribute("_FootAttachTries", n + 1)
+			task.delay(0.35, function()
+				if tool.Parent == character then
+					attachGearAcrossFeet(character, tool)
+				end
+			end)
+		else
+			warn("[WorkoutController] Character missing feet — cannot attach gear")
+		end
 		return
 	end
+	tool:SetAttribute("_FootAttachTries", nil)
 
 	local clone = tool:Clone()
 	clone.Name = "WorkoutFootProp"
@@ -1296,7 +1308,7 @@ local function bindTool(tool: Tool)
 			lockMovement(hum, true)
 			playWorkoutAnim(character)
 			task.defer(function()
-				if tool.Parent == character and player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+				if tool.Parent == character then
 					attachGearAcrossFeet(character, tool)
 				end
 			end)
@@ -1397,6 +1409,15 @@ local function init()
 		OtherVfxController.setWorkoutAuraEnabled(on)
 		if on then
 			startDoubleTapLoop()
+			local character = player.Character
+			if character then
+				for _, child in character:GetChildren() do
+					if child:IsA("Tool") and child:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
+						attachGearAcrossFeet(character, child)
+						break
+					end
+				end
+			end
 		else
 			cleanupWorkoutVisuals()
 		end

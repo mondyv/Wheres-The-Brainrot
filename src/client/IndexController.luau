@@ -751,6 +751,9 @@ local function populateRow(
 		img.Image = if usableIndexIcon(tex) then tex else ""
 		img.Visible = true
 		img.ImageTransparency = 0
+		if isLucky and not usableIndexIcon(tex) then
+			warn("[IndexController] Lucky Block row has no icon:", displayName, entry.name)
+		end
 		setBlackoutOnIcon(icon, not unlocked)
 	end
 

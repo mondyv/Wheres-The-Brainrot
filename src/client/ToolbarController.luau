@@ -229,6 +229,7 @@ type ToolbarDragSpec = {
 	isExtraTool: boolean?,
 	tool: Tool?,
 	sourceSize: Vector2?,
+	tapSlot: number?,
 }
 local pendingToolbarDrag: ToolbarDragSpec? = nil
 -- Mouse-down on a backpack cell before the drag threshold. Promoted to
@@ -3746,9 +3747,6 @@ local ToolbarController = {}
 					end)
 				end
 				btn.Activated:Connect(function()
-					if not MobileTouchGate.canTapUi() then
-						return
-					end
 					if not canUseToolbar then
 						return
 					end
@@ -3832,30 +3830,19 @@ local ToolbarController = {}
 						return
 					end
 					mobileDragHoldToken += 1
-					local token = mobileDragHoldToken
-					local startPos = Vector2.new(input.Position.X, input.Position.Y)
+					BrainrotItemTooltip.hide(true)
 					local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
-					task.delay(MOBILE_DRAG_HOLD_SEC, function()
-						if token ~= mobileDragHoldToken or pendingToolbarDrag or not canUseToolbar then
-							return
-						end
-						UIInteractionSounds.playClick()
-						BrainrotItemTooltip.hide(true)
-						lastResolvedHotbarDropSlot = nil
-						activeToolbarDrag = true
-						TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
-						pendingToolbarDrag = {
-							kind = "backpack",
-							idx = listIdx,
-							start = startPos,
-							texture = tex,
-							uid = brainrotUidAtIndex(listIdx),
-							sourceSize = btn.AbsoluteSize,
-							rowButton = btn,
-							equippedOnDown = false,
-						}
-						dragSuppressedToolbarClick = true
-					end)
+					backpackClickConsumed = false
+					pendingToolbarPress = {
+						kind = "backpack",
+						idx = listIdx,
+						start = Vector2.new(input.Position.X, input.Position.Y),
+						texture = tex,
+						uid = brainrotUidAtIndex(listIdx),
+						sourceSize = btn.AbsoluteSize,
+						rowButton = btn,
+						equippedOnDown = false,
+					}
 				end)
 				btn.InputEnded:Connect(function(input)
 					if input.UserInputType == Enum.UserInputType.Touch then
@@ -3898,7 +3885,6 @@ local ToolbarController = {}
 						rowButton = btn,
 						equippedOnDown = false,
 					}
-					dragSuppressedToolbarClick = true
 				end)
 			end
 		end
@@ -4831,9 +4817,6 @@ local ToolbarController = {}
 				configureHotbarSlotInput(slot, btn)
 				styleToolbarSlotButton(btn)
 				local function onHotbarSlotTapSelect()
-					if not MobileTouchGate.canTapUi() then
-						return
-					end
 					if not canSelectHotbarSlot() then
 						return
 					end
@@ -4841,10 +4824,15 @@ local ToolbarController = {}
 						dragSuppressedToolbarClick = false
 						return
 					end
+					if backpackClickConsumed then
+						backpackClickConsumed = false
+						return
+					end
 					if not hotbarSlotHasSelectableContent(i) then
 						return
 					end
 					UIInteractionSounds.playClick()
+					backpackClickConsumed = true
 					selectSlot(i)
 				end
 				btn.Activated:Connect(onHotbarSlotTapSelect)
@@ -4876,6 +4864,7 @@ local ToolbarController = {}
 						rowButton = nil,
 						isExtraTool = isExtraTool,
 						equippedOnDown = equippedOnDown,
+						tapSlot = i,
 					}
 				end
 
@@ -4907,7 +4896,7 @@ local ToolbarController = {}
 					end
 				end)
 
-				-- Mobile: long-press (or hold + slide) starts drag so short taps still Activate/select.
+				-- Mobile: remember the press so a tap selects. Drag only starts after the finger moves.
 				btn.InputBegan:Connect(function(input)
 					if input.UserInputType ~= Enum.UserInputType.Touch then
 						return
@@ -4915,22 +4904,25 @@ local ToolbarController = {}
 					if not canUseToolbar then
 						return
 					end
-					if pendingToolbarDrag or not hotbarSlotDragTexture(i) then
+					if pendingToolbarDrag then
 						return
 					end
 					mobileDragHoldToken += 1
-					local token = mobileDragHoldToken
 					local startPos = Vector2.new(input.Position.X, input.Position.Y)
-					task.delay(MOBILE_DRAG_HOLD_SEC, function()
-						if token ~= mobileDragHoldToken then
-							return
-						end
-						if pendingToolbarDrag or not canUseToolbar then
-							return
-						end
-						beginHotbarPendingDrag(startPos)
-						dragSuppressedToolbarClick = true
-					end)
+					local tex = hotbarSlotDragTexture(i)
+					local dragBrainrotIdx = brainrotIndexForHotbarSlot(i)
+					local isExtraTool = dragBrainrotIdx == nil or brainrotParkedInUI[dragBrainrotIdx] == true
+					backpackClickConsumed = false
+					pendingToolbarPress = {
+						kind = "hotbar",
+						idx = if isExtraTool or not dragBrainrotIdx then i else dragBrainrotIdx,
+						start = startPos,
+						texture = tex,
+						uid = if isExtraTool or not dragBrainrotIdx then nil else brainrotUidAtIndex(dragBrainrotIdx),
+						rowButton = nil,
+						isExtraTool = isExtraTool,
+						tapSlot = i,
+					}
 				end)
 				btn.InputEnded:Connect(function(input)
 					if input.UserInputType == Enum.UserInputType.Touch then
@@ -4956,7 +4948,6 @@ local ToolbarController = {}
 					end
 					mobileDragHoldToken += 1
 					beginHotbarPendingDrag(pos)
-					dragSuppressedToolbarClick = true
 				end)
 			else
 				warn(
@@ -5318,9 +5309,20 @@ local ToolbarController = {}
 			-- the cursor moved, so mouse-up still equips those.
 			if not pnd or not dragGhostImage then
 				local spec = pnd or press
-				if spec and spec.kind == "backpack" and not backpackClickConsumed then
-					requestEquipFromBackpack(spec.idx)
-					backpackClickConsumed = true
+				if spec and not backpackClickConsumed then
+					if spec.kind == "backpack" then
+						requestEquipFromBackpack(spec.idx)
+						backpackClickConsumed = true
+					elseif spec.kind == "hotbar" then
+						local slot = spec.tapSlot
+						if typeof(slot) ~= "number" and spec.isExtraTool then
+							slot = spec.idx
+						end
+						if typeof(slot) == "number" and hotbarSlotHasSelectableContent(slot) then
+							selectSlot(slot)
+							backpackClickConsumed = true
+						end
+					end
 				end
 				lastResolvedHotbarDropSlot = nil
 				clearDragGhost()

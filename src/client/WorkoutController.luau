@@ -150,12 +150,10 @@ local function soleWorldPos(foot: BasePart): Vector3
 	return (foot.CFrame * CFrame.new(0, -foot.Size.Y * 0.5, 0)).Position
 end
 
-local function soleBarCFrame(_character: Model, rf: BasePart, lf: BasePart?): CFrame
+local function soleAcross(rf: BasePart, lf: BasePart?): (Vector3, Vector3)
 	local p0 = soleWorldPos(rf)
 	local p1 = if lf then soleWorldPos(lf) else p0
 	local mid = (p0 + p1) * 0.5
-	-- Sit the bar against the soles, not up in the calves.
-	local pos = mid - Vector3.new(0, 0.08, 0)
 	local across = if lf then p1 - p0 else rf.CFrame.RightVector
 	across = Vector3.new(across.X, 0, across.Z)
 	if across.Magnitude < 0.05 then
@@ -164,10 +162,50 @@ local function soleBarCFrame(_character: Model, rf: BasePart, lf: BasePart?): CF
 	if across.Magnitude < 0.05 then
 		across = Vector3.new(1, 0, 0)
 	end
-	local right = across.Unit
-	-- X = across the feet, Y = world up. Authored barbells stand on +Y;
-	-- roll 90° so the shaft lies across both soles instead of through the body.
-	return CFrame.fromMatrix(pos, right, Vector3.yAxis) * CFrame.Angles(0, 0, math.pi / 2)
+	return mid, across.Unit
+end
+
+-- Map the model's longest axis onto `across` (left-right between the feet)
+-- and its thinnest axis onto world up so the gear lies flat on the soles.
+local function footPropMotorFrames(
+	handle: BasePart,
+	model: Model,
+	anchorFoot: BasePart,
+	mid: Vector3,
+	across: Vector3
+): (CFrame, CFrame)
+	local bbCf, bbSize = model:GetBoundingBox()
+	local axes = {
+		{ len = bbSize.X, dir = bbCf.RightVector },
+		{ len = bbSize.Y, dir = bbCf.UpVector },
+		{ len = bbSize.Z, dir = bbCf.LookVector },
+	}
+	table.sort(axes, function(a, b)
+		return a.len > b.len
+	end)
+	local worldLong = axes[1].dir
+	local worldThin = axes[3].dir
+	local localLong = handle.CFrame:VectorToObjectSpace(worldLong)
+	local localThin = handle.CFrame:VectorToObjectSpace(worldThin)
+	if localLong.Magnitude < 0.05 then
+		localLong = Vector3.yAxis
+	end
+	if localThin.Magnitude < 0.05 then
+		localThin = Vector3.xAxis
+	end
+	localLong = localLong.Unit
+	localThin = localThin.Unit
+	if math.abs(localLong:Dot(localThin)) > 0.92 then
+		localThin = localLong:Cross(Vector3.zAxis)
+		if localThin.Magnitude < 0.05 then
+			localThin = localLong:Cross(Vector3.xAxis)
+		end
+		localThin = localThin.Unit
+	end
+	local pos = mid - Vector3.new(0, axes[3].len * 0.5 + 0.02, 0)
+	local target = CFrame.fromMatrix(pos, across, Vector3.yAxis)
+	local c1 = CFrame.fromMatrix(Vector3.zero, localLong, localThin)
+	return anchorFoot.CFrame:ToObjectSpace(target), c1
 end
 
 -- Visible clone welded across the soles. Keep the tool's WeldConstraints so
@@ -289,13 +327,14 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	end)
 
 	local otherFoot = if anchorFoot == rightFoot then leftFoot else rightFoot
-	local pose0 = soleBarCFrame(character, anchorFoot, otherFoot)
+	local mid, across = soleAcross(anchorFoot, otherFoot)
+	local c0, c1 = footPropMotorFrames(handle, model, anchorFoot, mid, across)
 	local motor = Instance.new("Motor6D")
 	motor.Name = "WorkoutFootMotor"
 	motor.Part0 = anchorFoot
 	motor.Part1 = handle
-	motor.C0 = anchorFoot.CFrame:ToObjectSpace(pose0)
-	motor.C1 = CFrame.new()
+	motor.C0 = c0
+	motor.C1 = c1
 	motor.Parent = anchorFoot
 	footMotor = motor
 end

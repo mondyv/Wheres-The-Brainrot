@@ -399,7 +399,7 @@ local function textureFromNode(node: Instance): string
 end
 
 -- Named ImageLabel only. Never GetDescendants (Mesh trees hitch Index).
-local function readNamedIcon(node: Instance?): string
+local function readNamedIcon(node: Instance?, allowMutation: boolean?): string
 	if not node then
 		return ""
 	end
@@ -418,7 +418,7 @@ local function readNamedIcon(node: Instance?): string
 		if child.Name == "Mesh" or child:IsA("BasePart") or child:IsA("Model") or child:IsA("WorldModel") then
 			continue
 		end
-		if isMutationIconName(child.Name) then
+		if not allowMutation and isMutationIconName(child.Name) then
 			continue
 		end
 		local tex = textureFromNode(child)
@@ -434,7 +434,7 @@ local function resolveFromIconGroup(group: Instance, preferredNames: { string })
 		if name ~= "" then
 			local child = findChildIgnoreCase(group, name)
 			if child then
-				local tex = readNamedIcon(child)
+				local tex = readNamedIcon(child, false)
 				if tex ~= "" then
 					return tex
 				end
@@ -443,7 +443,7 @@ local function resolveFromIconGroup(group: Instance, preferredNames: { string })
 	end
 
 	-- Many folders ARE the base ImageLabel, with Golden/Galaxy/Diamond as extra children.
-	local selfTex = readNamedIcon(group)
+	local selfTex = readNamedIcon(group, false)
 	if selfTex ~= "" and (group:IsA("ImageLabel") or group:IsA("ImageButton")) then
 		return selfTex
 	end
@@ -452,12 +452,32 @@ local function resolveFromIconGroup(group: Instance, preferredNames: { string })
 		if isGenericImageName(child.Name) or isMutationIconName(child.Name) then
 			continue
 		end
-		local tex = readNamedIcon(child)
+		local tex = readNamedIcon(child, false)
 		if tex ~= "" then
 			return tex
 		end
 	end
-	return ""
+
+	-- Starter / Mythic / Godly often only have Golden/Galaxy/Diamond children.
+	for _, mutName in { "Golden", "Galaxy", "Diamond", "golden", "galaxy", "diamond" } do
+		local mut = findChildIgnoreCase(group, mutName)
+		if mut then
+			local tex = readNamedIcon(mut, true)
+			if tex ~= "" then
+				return tex
+			end
+		end
+	end
+	for _, child in group:GetChildren() do
+		if child.Name == "Mesh" or child:IsA("BasePart") or child:IsA("Model") or child:IsA("WorldModel") then
+			continue
+		end
+		local tex = readNamedIcon(child, true)
+		if tex ~= "" then
+			return tex
+		end
+	end
+	return readNamedIcon(group, true)
 end
 
 local function findIconGroup(style: Instance, names: { string }): Instance?
@@ -480,7 +500,104 @@ local function findIconGroup(style: Instance, names: { string }): Instance?
 	return nil
 end
 
--- Resolves rbxassetid from Lucky Block Icons.Normal only (Studio source of truth).
+local warnedMissingIcon: { [string]: boolean } = {}
+
+local function folderNameAlts(def: BlockDef?, blockId: string): { string }
+	local names: { string } = {}
+	local function add(name: string?)
+		if typeof(name) ~= "string" or name == "" then
+			return
+		end
+		for _, existing in names do
+			if string.lower(existing) == string.lower(name) then
+				return
+			end
+		end
+		table.insert(names, name)
+	end
+	if def then
+		add(def.iconFolder)
+		add(def.iconChild)
+		add(def.displayName)
+		add(def.id)
+		add(def.variant)
+	end
+	add(blockId)
+	-- Studio folder spellings that don't match catalog ids.
+	add(string.gsub(blockId, "Latern", "Lantern"))
+	add(string.gsub(blockId, "latern", "lantern"))
+	if def and def.iconFolder then
+		add(string.gsub(def.iconFolder, "Latern", "Lantern"))
+	end
+	if def and (def.id == "Starter Lucky Block" or (def.variant and string.lower(def.variant) == "basic")) then
+		add("Basic")
+		add("basic")
+		add("Starter")
+	end
+	if def and (def.id == "Mythic Lucky Block" or def.variant == "67") then
+		add("67")
+		add("67 Lucky Block")
+	end
+	if def and (def.id == "Godly Luckyblock" or (def.variant and string.lower(def.variant) == "blue")) then
+		add("Blue")
+		add("Blue Lucky Block")
+		add("Godly Lucky Block")
+	end
+	if def and def.id == "ruby" then
+		add("Lucky Block")
+		add("Ruby Lucky Block")
+	end
+	if def and def.id == "Secret Lucky Block" then
+		add("Transparent Lucky Block")
+		add("Transparent")
+	end
+	if def and def.id == "chamber" then
+		add("Lantern Lucky Block")
+		add("Chamber Lucky Block")
+	end
+	return names
+end
+
+local function searchStyleFolder(style: Instance, names: { string }): string
+	local group = findIconGroup(style, names)
+	if group then
+		local tex = resolveFromIconGroup(group, names)
+		if tex ~= "" then
+			return tex
+		end
+	end
+	return ""
+end
+
+local function searchBlockModelIcon(root: Instance, def: BlockDef?, names: { string }): string
+	local blocks = root:FindFirstChild("lucky blocks")
+		or root:FindFirstChild("Lucky blocks")
+		or root:FindFirstChild("luckyblocks")
+	if not blocks then
+		return ""
+	end
+	for _, name in names do
+		local folder = findChildIgnoreCase(blocks, name)
+		if folder then
+			local tex = readNamedIcon(folder, true)
+			if tex ~= "" then
+				return tex
+			end
+			if def and def.variant then
+				local variant = findChildIgnoreCase(folder, def.variant)
+				if variant then
+					tex = readNamedIcon(variant, true)
+					if tex ~= "" then
+						return tex
+					end
+				end
+			end
+		end
+	end
+	return ""
+end
+
+-- Resolves rbxassetid from Lucky Block Icons (Normal first, then other styles / models).
 function M.resolveIconAssetId(blockId: string): string
 	local cached = iconAssetCache[blockId]
 	if cached ~= nil then
@@ -502,38 +619,51 @@ function M.resolveIconAssetId(blockId: string): string
 	end
 	local root = ReplicatedStorage:FindFirstChild("Lucky Blocks")
 	local icons = root and root:FindFirstChild("Lucky Block Icons")
-	if not icons then
-		iconAssetCache[blockId] = ""
-		return ""
+	local preferred = folderNameAlts(def, blockId)
+
+	local result = ""
+	if icons then
+		local style = findChildIgnoreCase(icons, "Normal")
+		if style then
+			result = searchStyleFolder(style, preferred)
+		end
+		if result == "" then
+			-- Some places keep icons as direct children of Lucky Block Icons.
+			result = searchStyleFolder(icons, preferred)
+		end
+		if result == "" then
+			for _, styleChild in icons:GetChildren() do
+				if styleChild ~= style then
+					result = searchStyleFolder(styleChild, preferred)
+					if result ~= "" then
+						break
+					end
+				end
+			end
+		end
+	end
+	if result == "" and root then
+		result = searchBlockModelIcon(root, def, preferred)
 	end
 
-	local folderName = if def and def.iconFolder then def.iconFolder elseif def then def.displayName else blockId
-	local preferred: { string } = {}
-	if def and def.iconChild then
-		table.insert(preferred, def.iconChild)
+	if result ~= "" then
+		iconAssetCache[blockId] = result
+		return result
 	end
-	if def and def.displayName then
-		table.insert(preferred, def.displayName)
+	if not warnedMissingIcon[blockId] then
+		warnedMissingIcon[blockId] = true
+		local folderHint = if def and def.iconFolder then def.iconFolder else blockId
+		warn(
+			"[LuckyBlockCatalog] no Index icon for '"
+				.. tostring(blockId)
+				.. "' — searched Lucky Block Icons (Normal + other styles) and lucky blocks models for: "
+				.. table.concat(preferred, ", ")
+				.. " (iconFolder="
+				.. tostring(folderHint)
+				.. ")"
+		)
 	end
-	table.insert(preferred, folderName)
-	if def then
-		table.insert(preferred, def.id)
-	end
-	table.insert(preferred, blockId)
-
-	local style = findChildIgnoreCase(icons, "Normal")
-	if not style then
-		iconAssetCache[blockId] = ""
-		return ""
-	end
-	local group = findIconGroup(style, preferred)
-	if not group then
-		iconAssetCache[blockId] = ""
-		return ""
-	end
-	local result = resolveFromIconGroup(group, preferred)
-	iconAssetCache[blockId] = result
-	return result
+	return ""
 end
 
 return M

@@ -576,7 +576,9 @@ function M.packStateForClient(
 			unlocked[k] = true
 		end
 	end
-	local catalog = packedCatalogCache[mutationId]
+	-- One shared catalog for every mutation tab. Per-variant Icon scans used to
+	-- hang GetIndexState for gold/diamond/etc., so those tabs rendered empty.
+	local catalog = packedCatalogCache.shared
 	if not catalog then
 		catalog = {}
 		for _, def in M.buildCatalog() do
@@ -584,10 +586,10 @@ function M.packStateForClient(
 				name = def.name,
 				rarity = def.rarity,
 				baseIncome = def.baseIncome,
-				icon = M.getIconFor(def.name, mutationId),
+				icon = M.getIconFor(def.name, "normal"),
 			})
 		end
-		packedCatalogCache[mutationId] = catalog
+		packedCatalogCache.shared = catalog
 	end
 	return {
 		unlocked = unlocked,

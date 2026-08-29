@@ -525,31 +525,6 @@ local function findTabRoot(typeButtons: Instance, btnName: string): Instance?
 	return nil
 end
 
-local function collectTypeTabHosts(typeButtons: Instance): { GuiObject }
-	local hosts: { GuiObject } = {}
-	for _, ch in typeButtons:GetChildren() do
-		if
-			ch:IsA("GuiObject")
-			and not isNotifTabName(ch.Name)
-			and not ch:IsA("UIListLayout")
-			and not ch:IsA("UIGridLayout")
-			and not ch:IsA("UIPadding")
-			and not ch:IsA("UIStroke")
-			and not ch:IsA("UICorner")
-			and not ch:IsA("UIGradient")
-		then
-			table.insert(hosts, ch :: GuiObject)
-		end
-	end
-	table.sort(hosts, function(a, b)
-		if a.LayoutOrder ~= b.LayoutOrder then
-			return a.LayoutOrder < b.LayoutOrder
-		end
-		return a.Name < b.Name
-	end)
-	return hosts
-end
-
 local function syncTypeButtonSelectedOverlays(instant: boolean?)
 	local typeButtons = findTypeButtons()
 	if not typeButtons then
@@ -1291,6 +1266,15 @@ local function applyCachedState(mutationId: string, animateRows: boolean?)
 	end
 end
 
+local function shareBrainrotState(state: any)
+	if typeof(state) ~= "table" then
+		return
+	end
+	for _, mutId in IndexConfig.MUTATION_TABS do
+		stateCache[mutId] = state
+	end
+end
+
 local function refreshStateInBackground(mutationId: string, animateRows: boolean?)
 	task.spawn(function()
 		-- Wait briefly if remotes aren't ready yet (open can race init).
@@ -1302,34 +1286,51 @@ local function refreshStateInBackground(mutationId: string, animateRows: boolean
 		if not state then
 			return
 		end
-		stateCache[mutationId] = state
-		if selectedMutation == mutationId and indexFrame and indexFrame.Visible then
-			rebuildGrid(state, animateRows)
+		if mutationId == IndexConfig.LUCKY_BLOCK_TAB then
+			stateCache[mutationId] = state
+		else
+			shareBrainrotState(state)
+		end
+		if not indexFrame or not indexFrame.Visible then
+			return
+		end
+		local showingLucky = selectedMutation == IndexConfig.LUCKY_BLOCK_TAB
+		if mutationId == selectedMutation or (mutationId ~= IndexConfig.LUCKY_BLOCK_TAB and not showingLucky) then
+			if selectedMutation == _gridMutation and gridHasVisibleRows() and animateRows ~= true then
+				return
+			end
+			local view = stateCache[selectedMutation] or state
+			rebuildGrid(view, animateRows)
 		end
 	end)
 end
 
 local function loadMutationGrid(mutationId: string, animateRows: boolean)
-	local cached = stateCache[mutationId]
-	if cached then
-		applyCachedState(mutationId, animateRows)
-		refreshStateInBackground(mutationId, false)
-		return
-	end
-	-- Gold/Diamond/etc. share the same catalog + unlock map as Normal.
-	-- Don't clear the grid and wait on a second GetIndexState — that fetch used to hang
-	-- while scanning 3D templates, so other tabs looked empty.
-	if mutationId ~= IndexConfig.LUCKY_BLOCK_TAB then
-		local fallback = anyBrainrotState()
-		if fallback then
-			rebuildGrid(fallback, animateRows)
+	if mutationId == IndexConfig.LUCKY_BLOCK_TAB then
+		local cached = stateCache[mutationId]
+		if cached then
+			applyCachedState(mutationId, animateRows)
 			refreshStateInBackground(mutationId, false)
 			return
 		end
+		clearGrid()
+		_gridMutation = nil
+		refreshStateInBackground(mutationId, animateRows)
+		return
+	end
+
+	-- Gold/Diamond/etc. share Normal's catalog + unlock map. Never invoke a
+	-- per-mutation GetIndexState — that pack used to hang and leave the tab empty.
+	local source = stateCache[mutationId] or anyBrainrotState()
+	if source then
+		shareBrainrotState(source)
+		rebuildGrid(source, animateRows)
+		refreshStateInBackground("normal", false)
+		return
 	end
 	clearGrid()
 	_gridMutation = nil
-	refreshStateInBackground(mutationId, animateRows)
+	refreshStateInBackground("normal", animateRows)
 end
 
 local function patchCachedUnlock(mutationId: string, name: string, payload: any)
@@ -1687,30 +1688,11 @@ function IndexController.init()
 	local typeButtons = findTypeButtons()
 	if typeButtons then
 		local wiredRoots: { [Instance]: boolean } = {}
-		local wiredMutations: { [string]: boolean } = {}
 		for mutationId, btnName in IndexConfig.TAB_BUTTON_NAME do
 			local tabRoot = findTabRoot(typeButtons, btnName)
 			if tabRoot and not wiredRoots[tabRoot] then
 				wireTabInteractions(tabRoot, mutationId)
 				wiredRoots[tabRoot] = true
-				wiredMutations[mutationId] = true
-			end
-		end
-		-- Studio sometimes names tabs 1/2/3 or Gold Type — map leftover hosts by LayoutOrder.
-		local hosts = collectTypeTabHosts(typeButtons)
-		local hostIndex = 1
-		for _, mutationId in IndexConfig.MUTATION_TABS do
-			if not wiredMutations[mutationId] then
-				while hostIndex <= #hosts and wiredRoots[hosts[hostIndex]] do
-					hostIndex += 1
-				end
-				local host = hosts[hostIndex]
-				if host then
-					wireTabInteractions(host, mutationId)
-					wiredRoots[host] = true
-					wiredMutations[mutationId] = true
-					hostIndex += 1
-				end
 			end
 		end
 		syncTypeButtonSelectedOverlays(true)
@@ -1829,7 +1811,7 @@ function IndexController.init()
 				-- Warm normal tab cache so first open isn't empty; grid still only builds when visible.
 				local bootState = fetchStateFor("normal")
 				if bootState then
-					stateCache.normal = bootState
+					shareBrainrotState(bootState)
 				end
 				if indexFrame and indexFrame.Visible then
 					loadMutationGrid(selectedMutation, false)

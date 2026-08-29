@@ -385,9 +385,12 @@ local function syncNearbyBushPrompts()
 			unregisterBush(root)
 			continue
 		end
-		-- Parked lands stay instanced in the cull cache; keep them out of the scan list.
+		-- Parked lands stay instanced in the cull cache: skip prompts, but keep
+		-- the bush in bushKnown so restore can attach Search again.
 		if isParkedByLandCull(root) then
-			unregisterBush(root)
+			if bushByModel[root] then
+				detachPrompt(root)
+			end
 			continue
 		end
 		local wp = bushApproxPos(root)
@@ -409,9 +412,6 @@ end
 
 local function registerBushRootNow(root: Instance)
 	if not BushRootUtil.isDirectBushRoot(root) then
-		return
-	end
-	if isParkedByLandCull(root) then
 		return
 	end
 	if bushKnown[root] then

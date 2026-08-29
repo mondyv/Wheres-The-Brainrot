@@ -218,6 +218,10 @@ local pendingToolbarDrag: {
 	sourceSize: Vector2?,
 }? =
 	nil
+-- Mouse-down on a backpack cell before the drag threshold. Promoted to
+-- pendingToolbarDrag only after the cursor actually moves, so a click still
+-- fires GuiButton.Activated / select.
+local pendingToolbarPress: typeof(pendingToolbarDrag) = nil
 -- Drag started inside the safe zone; finish drop even if zone poll flickers before mouse up.
 -- Cached while dragging so mouse-up still lands in the selected slot even if the ghost/touch
 -- endpoint briefly misses the button on the final frame.
@@ -827,6 +831,7 @@ local ToolbarController = {}
 	local findBackpackTemplateRow: (Instance?) -> GuiObject?
 	local applyBackpackSlotPanelAppearance: (GuiButton, boolean) -> ()
 	local requestEquipFromBackpackExtra: (Tool) -> ()
+	local wireBrainrotBackpackEquips: () -> ()
 	local syncBackpackSelectionStrokes: () -> ()
 	local uiBackpackListHighlight: number? = nil
 	local uiBackpackExtraHighlight: Tool? = nil
@@ -1128,8 +1133,7 @@ local ToolbarController = {}
 						if tex == "" then
 							tex = "rbxasset://textures/ui/GuiImagePlaceholder.png"
 						end
-						activeToolbarDrag = true
-						pendingToolbarDrag = {
+						pendingToolbarPress = {
 							kind = "backpack_extra",
 							idx = index,
 							start = UserInputService:GetMouseLocation(),
@@ -3318,6 +3322,9 @@ local ToolbarController = {}
 		end
 
 		refreshParkedExtraToolsUI()
+		if not backpackEquipWired and wireBrainrotBackpackEquips then
+			wireBrainrotBackpackEquips()
+		end
 		if typeof(syncBackpackSelectionStrokes) == "function" then
 			syncBackpackSelectionStrokes()
 		end
@@ -3587,6 +3594,8 @@ local ToolbarController = {}
 		end
 		return false
 	end
+	local lastBackpackEquipAt = 0.0
+	local lastBackpackEquipIdx: number? = nil
 	local function requestEquipFromBackpack(listIdx: number)
 		if not canUseToolbar then
 			return
@@ -3594,6 +3603,12 @@ local ToolbarController = {}
 		if not brainrotEntries[listIdx] then
 			return
 		end
+		local now = os.clock()
+		if lastBackpackEquipIdx == listIdx and now - lastBackpackEquipAt < 0.18 then
+			return
+		end
+		lastBackpackEquipAt = now
+		lastBackpackEquipIdx = listIdx
 
 		if uiBackpackListHighlight == listIdx then
 			pendingAutoEquipSlot = nil
@@ -3660,12 +3675,12 @@ local ToolbarController = {}
 		refreshParkedExtraToolsUI()
 	end
 
-	local function wireBrainrotBackpackEquips()
+	wireBrainrotBackpackEquips = function()
 		if backpackEquipWired or not backpackContainer then
 			return
 		end
 		ensureBackpackGeneratedRows(backpackContainer)
-		backpackEquipWired = true
+		local wiredAny = false
 		for uiRow = 1, MAX_BACKPACK_BRAINROT_SLOTS do
 			local row = findBackpackRow(backpackContainer, uiRow)
 			if not row or not row:IsA("GuiObject") then
@@ -3673,6 +3688,7 @@ local ToolbarController = {}
 			end
 			local btn = slotPrimaryButton(row :: GuiObject)
 			if btn then
+				wiredAny = true
 				configureHotbarSlotInput(row :: GuiObject, btn)
 				styleToolbarSlotButton(btn)
 				local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
@@ -3733,13 +3749,9 @@ local ToolbarController = {}
 						dragSuppressedToolbarClick = true
 						return
 					end
-					UIInteractionSounds.playClick()
 					BrainrotItemTooltip.hide(true)
 					local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
-					lastResolvedHotbarDropSlot = nil
-					activeToolbarDrag = true
-					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
-					pendingToolbarDrag = {
+					pendingToolbarPress = {
 						kind = "backpack",
 						idx = listIdx,
 						start = UserInputService:GetMouseLocation(),
@@ -3848,6 +3860,9 @@ local ToolbarController = {}
 					dragSuppressedToolbarClick = true
 				end)
 			end
+		end
+		if wiredAny then
+			backpackEquipWired = true
 		end
 	end
 
@@ -5057,7 +5072,6 @@ local ToolbarController = {}
 
 		local backpackFrame = toolbar:FindFirstChild("Backpack")
 		if backpackFrame then
-			backpackContainer = backpackFrame:FindFirstChild("Container")
 			if backpackFrame:IsA("GuiObject") then
 				local bf = backpackFrame :: GuiObject
 				backpackGuiFrame = bf
@@ -5068,6 +5082,8 @@ local ToolbarController = {}
 				ensureBackpackFadeRoot(bf)
 				ensureBackpackChromeVisible(bf)
 			end
+			backpackContainer = backpackFrame:FindFirstChild("Container")
+				or findBackpackChild(backpackFrame, "Container")
 			backpackHeaderLabel = resolveBackpackHeaderLabel(backpackFrame)
 			refreshInventoryHeaderText()
 			if backpackContainer then
@@ -5146,6 +5162,23 @@ local ToolbarController = {}
 				and input.UserInputType ~= Enum.UserInputType.Gamepad1
 			then
 				return
+			end
+			if pendingToolbarPress and not pendingToolbarDrag then
+				local m0 = UserInputService:GetMouseLocation()
+				if input.UserInputType == Enum.UserInputType.Touch then
+					m0 = Vector2.new(input.Position.X, input.Position.Y)
+				end
+				if (m0 - pendingToolbarPress.start).Magnitude >= DRAG_GHOST_THRESHOLD_PX then
+					local stillHolding = input.UserInputType == Enum.UserInputType.Touch
+						or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+						or GamepadInput.isAcceptHeld()
+					if stillHolding then
+						pendingToolbarDrag = pendingToolbarPress
+						pendingToolbarPress = nil
+						activeToolbarDrag = true
+						lastResolvedHotbarDropSlot = nil
+					end
+				end
 			end
 			local pnd = pendingToolbarDrag
 			if not pnd or not pnd.texture then
@@ -5226,6 +5259,7 @@ local ToolbarController = {}
 			if not toolbarInputAllowed() then
 				activeToolbarDrag = false
 				pendingToolbarDrag = nil
+				pendingToolbarPress = nil
 				lastResolvedHotbarDropSlot = nil
 				clearDragGhost()
 				syncToolbarGamepadCursor()
@@ -5233,6 +5267,7 @@ local ToolbarController = {}
 			end
 			local pnd = pendingToolbarDrag
 			pendingToolbarDrag = nil
+			pendingToolbarPress = nil
 			activeToolbarDrag = false
 			if not pnd then
 				lastResolvedHotbarDropSlot = nil

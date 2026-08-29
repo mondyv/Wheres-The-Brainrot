@@ -691,15 +691,27 @@ local function openFrame(frame: Frame)
 		end
 	end
 	if frame.Name == "Index" then
+		local function activateIndexScrollHost(node: Instance, depth: number)
+			if depth > 5 then
+				return
+			end
+			if node:IsA("ScrollingFrame") or node:IsA("GuiButton") or node:IsA("TextBox") then
+				activateInteractive(node)
+			end
+			-- Catalog rows live under the ScrollingFrame — don't walk those trees.
+			if node:IsA("ScrollingFrame") then
+				return
+			end
+			for _, ch in node:GetChildren() do
+				local n = ch.Name
+				if string.sub(n, 1, 6) ~= "Entry_" then
+					activateIndexScrollHost(ch, depth + 1)
+				end
+			end
+		end
 		for _, child in frame:GetChildren() do
 			if child.Name == "Container" or child.Name == "_ClippedScroll" then
-				activateInteractive(child)
-				if child:IsA("CanvasGroup") then
-					local inner = child:FindFirstChildWhichIsA("ScrollingFrame")
-					if inner then
-						activateInteractive(inner)
-					end
-				end
+				activateIndexScrollHost(child, 0)
 			else
 				activateInteractive(child)
 				for _, d in child:GetDescendants() do

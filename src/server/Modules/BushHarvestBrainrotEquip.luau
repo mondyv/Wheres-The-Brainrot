@@ -185,7 +185,7 @@ function M.createEquipBrainrotSlotForPlayer(deps: EquipDeps): (Player, number, b
 			map = {}
 			deps.brainrotParkedInExpandedBackpack[player] = map
 		end
-		local idx = math.clamp(math.floor(slot), 1, deps.MAX_BACKPACK_BRAINROT_SLOTS)
+		local idx = math.clamp(math.floor(slot), 1, math.max(1, #list))
 		if not list[idx] then
 			return nil
 		end

@@ -16,6 +16,10 @@ local function countOnCharacter(char: Model): number
 	local hasCarryWeld = false
 	for _, d in char:GetDescendants() do
 		if d:IsA("Model") then
+			-- Equipped inventory tools must not count as a bush haul.
+			if d:FindFirstAncestorWhichIsA("Tool") then
+				continue
+			end
 			local phase = d:GetAttribute("BrainrotCarryPhase")
 			if phase == "Carried" or phase == "Floating" or phase == "Pop" then
 				models += 1
@@ -74,6 +78,9 @@ function CarryGate.isCarrying(): boolean
 	end
 	for _, d in char:GetDescendants() do
 		if d:IsA("Model") then
+			if d:FindFirstAncestorWhichIsA("Tool") then
+				continue
+			end
 			local phase = d:GetAttribute("BrainrotCarryPhase")
 			if phase == "Carried" or phase == "Floating" or phase == "Pop" then
 				return true

@@ -161,7 +161,14 @@ end
 
 local function syncHeaderAttributes(
 	model: Model,
-	data: { name: string, rarity: string, mutation: string, level: number, incomePerSecond: number },
+	data: {
+		name: string,
+		rarity: string,
+		mutation: string,
+		level: number,
+		incomePerSecond: number,
+		luckyBlock: boolean?,
+	},
 	opts: { studsOffset: Vector3?, alwaysOnTop: boolean? }?
 )
 	local rarityDef = Brainrots.RARITY_BY_ID[data.rarity]
@@ -181,6 +188,11 @@ local function syncHeaderAttributes(
 	model:SetAttribute("BrainrotHeaderLevel", data.level)
 	model:SetAttribute("BrainrotHeaderIncome", data.incomePerSecond)
 	model:SetAttribute("BrainrotHeaderAlwaysOnTop", if opts and opts.alwaysOnTop == true then true else true)
+	if data.luckyBlock == true then
+		model:SetAttribute("BrainrotHeaderLuckyBlock", true)
+	else
+		model:SetAttribute("BrainrotHeaderLuckyBlock", nil)
+	end
 end
 
 -- Remove header (clears client via tag + attributes).
@@ -202,7 +214,14 @@ end
 --]]
 function M.attach(
 	model: Model,
-	data: { name: string, rarity: string, mutation: string, level: number, incomePerSecond: number },
+	data: {
+		name: string,
+		rarity: string,
+		mutation: string,
+		level: number,
+		incomePerSecond: number,
+		luckyBlock: boolean?,
+	},
 	opts: { studsOffset: Vector3?, alwaysOnTop: boolean? }?
 ): boolean
 	if not model or not model.Parent then

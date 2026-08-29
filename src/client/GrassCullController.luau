@@ -38,6 +38,7 @@ local STREAM_FAR_STUDS = 320
 local lastStreamAt = 0.0
 local STREAM_COOLDOWN = 0.35
 local GAMEPLAY_STREAM_TARGET = 280
+local MOBILE_STREAM_TARGET = 200
 local SWING_STREAM_TARGET = 420
 local swingStreamBoosted = false
 local wasFastTraveling = false
@@ -50,6 +51,10 @@ local accum = 0.0
 local currentLand = 0
 local cullActive = false
 local applyToken = 0
+local applyRunning = false
+local applyQueuedLand: number? = nil
+local lastChildAddedApplyAt = 0.0
+local CHILD_ADDED_APPLY_DEBOUNCE = 0.55
 
 type CullEntry = {
 	inst: Instance,
@@ -216,11 +221,17 @@ local function isFastTraveling(): boolean
 	return Vector3.new(v.X, 0, v.Z).Magnitude >= FAST_MOVE_SPEED
 end
 
-local function shouldKeepLand(landNum: number, playerLand: number): boolean
+-- Safezone sits next to Land 1. Treating land 0 as "keep everything" meant the first
+-- walk toward Land 1 parked Lands 3–10 in one hitch (CPU spike, triangles barely move).
+local function cullLandIndex(playerLand: number): number
 	if playerLand <= 0 then
-		-- Don't touch anything until we know where the player is (avoids mass reparent on join).
-		return true
+		return 1
 	end
+	return playerLand
+end
+
+local function shouldKeepLand(landNum: number, playerLand: number): boolean
+	playerLand = cullLandIndex(playerLand)
 	local radius = keepRadius
 	-- While swinging / fast travel, keep one extra land ahead so tops aren't parked.
 	if not lowGraphics and isFastTraveling() then
@@ -336,11 +347,11 @@ local function registerCullable(landNum: number, inst: Instance)
 end
 
 local function applyForPlayerLand(playerLand: number)
-	if not cullActive or playerLand <= 0 then
+	playerLand = cullLandIndex(playerLand)
+	if not cullActive then
 		return
 	end
 	applyToken += 1
-	local token = applyToken
 	currentLand = playerLand
 
 	-- Park first (cheap: leaving view), then restore slowly (entering view = hitch source).
@@ -356,10 +367,10 @@ local function applyForPlayerLand(playerLand: number)
 
 	local n = 0
 	local parkBudget = if isFastTraveling() then REPARENT_PER_YIELD_SWING else REPARENT_PER_YIELD
+	if UserInputService.TouchEnabled then
+		parkBudget = math.min(parkBudget, 2)
+	end
 	for _, entry in toPark do
-		if token ~= applyToken then
-			return
-		end
 		parkEntry(entry)
 		n += 1
 		if n % parkBudget == 0 then
@@ -378,16 +389,33 @@ local function applyForPlayerLand(playerLand: number)
 
 	n = 0
 	local restoreBudget = if isFastTraveling() then REPARENT_PER_YIELD_SWING else REPARENT_PER_YIELD
+	if UserInputService.TouchEnabled then
+		restoreBudget = math.min(restoreBudget, 2)
+	end
 	for _, entry in toRestore do
-		if token ~= applyToken then
-			return
-		end
 		restoreEntry(entry)
 		n += 1
 		if n % restoreBudget == 0 then
 			RunService.Heartbeat:Wait()
 		end
 	end
+end
+
+-- One in-flight pass; extra requests coalesce so stream-in ChildAdded can't restart reparenting.
+local function requestApplyForPlayerLand(playerLand: number)
+	applyQueuedLand = cullLandIndex(playerLand)
+	if applyRunning then
+		return
+	end
+	applyRunning = true
+	task.spawn(function()
+		while applyQueuedLand do
+			local land = applyQueuedLand
+			applyQueuedLand = nil
+			applyForPlayerLand(land)
+		end
+		applyRunning = false
+	end)
 end
 
 local function hookLandFolder(landFolder: Instance, landNum: number)
@@ -424,8 +452,12 @@ local function hookLandFolder(landFolder: Instance, landNum: number)
 					end
 				end
 			elseif cullActive and currentLand > 0 then
-				-- Land mesh just streamed in — safe to put parked decor back.
-				task.spawn(applyForPlayerLand, currentLand)
+				-- Coalesce: every streamed island/mesh used to restart a full reparent pass.
+				local now = os.clock()
+				if now - lastChildAddedApplyAt >= CHILD_ADDED_APPLY_DEBOUNCE then
+					lastChildAddedApplyAt = now
+					requestApplyForPlayerLand(currentLand)
+				end
 			end
 		end)
 	end)
@@ -457,6 +489,13 @@ local function playerLandNow(): number
 	return land
 end
 
+local function gameplayStreamRadius(): number
+	if UserInputService.TouchEnabled then
+		return MOBILE_STREAM_TARGET
+	end
+	return GAMEPLAY_STREAM_TARGET
+end
+
 local function setSwingStreamBoost(on: boolean)
 	if swingStreamBoosted == on then
 		return
@@ -467,7 +506,7 @@ local function setSwingStreamBoost(on: boolean)
 		if on then
 			wsAny.StreamingTargetRadius = SWING_STREAM_TARGET
 		else
-			wsAny.StreamingTargetRadius = GAMEPLAY_STREAM_TARGET
+			wsAny.StreamingTargetRadius = gameplayStreamRadius()
 		end
 	end)
 end
@@ -556,17 +595,17 @@ local function onHeartbeat(dt: number)
 	local land = playerLandNow()
 	local fast = isFastTraveling()
 	if land ~= currentLand and land > 0 then
-		task.spawn(applyForPlayerLand, land)
+		requestApplyForPlayerLand( land)
 	elseif fast then
 		softPrewarmAhead()
 		-- Expand keep radius once when swing starts so next land tops stay resident.
 		if not wasFastTraveling and (land > 0 or currentLand > 0) then
-			task.spawn(applyForPlayerLand, land > 0 and land or currentLand)
+			requestApplyForPlayerLand( land > 0 and land or currentLand)
 		end
 	elseif wasFastTraveling then
 		setSwingStreamBoost(false)
 		if land > 0 or currentLand > 0 then
-			task.spawn(applyForPlayerLand, land > 0 and land or currentLand)
+			requestApplyForPlayerLand( land > 0 and land or currentLand)
 		end
 	end
 	wasFastTraveling = fast
@@ -580,7 +619,7 @@ local function onLandFolderAdded(landFolder: Instance)
 	hookLandFolder(landFolder, landNum)
 	if cullActive and currentLand > 0 then
 		task.defer(function()
-			task.spawn(applyForPlayerLand, currentLand)
+			requestApplyForPlayerLand( currentLand)
 		end)
 	end
 end
@@ -590,7 +629,7 @@ function M.setEnabled(enabled: boolean)
 	if enabled then
 		scanExistingLands()
 		if cullActive then
-			task.spawn(applyForPlayerLand, playerLandNow())
+			requestApplyForPlayerLand( playerLandNow())
 		end
 		return
 	end
@@ -611,7 +650,7 @@ function M.setLowGraphics(enabled: boolean)
 		local land = playerLandNow()
 		if land > 0 then
 			task.defer(function()
-				task.spawn(applyForPlayerLand, land)
+				requestApplyForPlayerLand( land)
 			end)
 		end
 	end
@@ -655,9 +694,11 @@ function M.init()
 		end
 
 		cullActive = true
-		if land > 0 then
-			applyForPlayerLand(land)
-		end
+		pcall(function()
+			(Workspace :: any).StreamingTargetRadius = gameplayStreamRadius()
+		end)
+		-- Park far lands while still at base so walking into Land 1 isn't a mass reparent.
+		requestApplyForPlayerLand(if land > 0 then land else 1)
 
 		landsChildConn = lands.ChildAdded:Connect(onLandFolderAdded)
 		heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)

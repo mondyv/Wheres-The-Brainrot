@@ -139,6 +139,7 @@ function M.tryOfferBushLuckyBlock(
 		mutation = "normal",
 		level = 1,
 		incomePerSecond = 0,
+		luckyBlock = true,
 	})
 
 	local anchorPos = spawnCf.Position

@@ -167,6 +167,7 @@ local function applyToInfoFrame(infoFrame: Instance, data: {
 	mutationDisplay: string,
 	level: number,
 	incomePerSecond: number,
+	luckyBlock: boolean?,
 })
 	BrainrotHeaderStyle.applyInfoFrame(infoFrame, {
 		name = data.name,
@@ -174,6 +175,7 @@ local function applyToInfoFrame(infoFrame: Instance, data: {
 		mutation = data.mutation,
 		level = data.level,
 		rateText = formatRate(data.incomePerSecond),
+		luckyBlock = data.luckyBlock == true,
 	})
 end
 
@@ -208,6 +210,8 @@ local function readHeaderData(model: Model): any?
 		level = if typeof(level) == "number" then math.max(1, math.floor(level)) else 1,
 		incomePerSecond = if typeof(income) == "number" then income else 0,
 		alwaysOnTop = true,
+		luckyBlock = model:GetAttribute("LuckyBlockCarry") == true
+			or model:GetAttribute("BrainrotHeaderLuckyBlock") == true,
 	}
 end
 
@@ -299,7 +303,7 @@ local HEADER_ATTRS = {
 	"BrainrotHeaderIncome",
 	"BrainrotBaseIncome",
 	"BrainrotHeaderRarityDisplay",
-	"BrainrotHeaderMutationDisplay",
+	"BrainrotHeaderLuckyBlock",
 }
 
 local function watchModel(model: Model)

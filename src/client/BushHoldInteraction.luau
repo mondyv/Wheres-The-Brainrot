@@ -65,12 +65,12 @@ local bushSearchLocked = false
 local PROMPT_ATTACH_RANGE = MAX_RANGE + 22
 local PROMPT_DETACH_RANGE = MAX_RANGE + 40
 local lastPromptProximitySyncAt = 0.0
-local PROMPT_PROXIMITY_SYNC_INTERVAL = 0.2
+local PROMPT_PROXIMITY_SYNC_INTERVAL = if UserInputService.TouchEnabled then 0.45 else 0.2
 
 local pendingBushRoots: { Instance } = {}
 local pendingBushSet: { [Instance]: boolean } = {}
 local bushRegisterBatchConn: RBXScriptConnection? = nil
-local BUSH_REGISTER_PER_TICK = 10
+local BUSH_REGISTER_PER_TICK = if UserInputService.TouchEnabled then 4 else 10
 local bushCooldownConns: { [Instance]: { RBXScriptConnection } } = {}
 
 local activeBush: Instance? = nil

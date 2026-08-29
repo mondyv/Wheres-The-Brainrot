@@ -556,35 +556,92 @@ function M.applyInfoFrame(infoFrame: Instance, data: {
 	mutation: string,
 	level: number,
 	rateText: string,
+	luckyBlock: boolean?,
 })
 	local nameNode = findInfoChild(infoFrame, "Name")
+	local rarityNode = findInfoChild(infoFrame, "Rarity")
+	local rarityLabel = if rarityNode then M.resolveTextLabel(rarityNode) else nil
+
 	if nameNode then
 		M.setTextOnNode(nameNode, data.name)
 		local nameLabel = M.resolveTextLabel(nameNode)
 		if nameLabel then
-			nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+			-- Studio Name rows are often TextScaled in a tall frame, so short names
+			-- blow up bigger than rarity / level / rate.
+			nameLabel.TextScaled = false
 			nameLabel.TextWrapped = false
+			nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+			local cap = 20
+			if rarityLabel then
+				cap = math.max(14, rarityLabel.TextSize)
+			end
+			nameLabel.TextSize = cap
+			local lock = nameLabel:FindFirstChild("HeaderNameSizeLock")
+			if not (lock and lock:IsA("UITextSizeConstraint")) then
+				if lock then
+					lock:Destroy()
+				end
+				lock = Instance.new("UITextSizeConstraint")
+				lock.Name = "HeaderNameSizeLock"
+				lock.Parent = nameLabel
+			end
+			(lock :: UITextSizeConstraint).MaxTextSize = cap
+			(lock :: UITextSizeConstraint).MinTextSize = math.min(12, cap)
+		end
+		if nameNode:IsA("GuiObject") then
+			(nameNode :: GuiObject).Visible = true
 		end
 	end
 
-	local rarityNode = findInfoChild(infoFrame, "Rarity")
 	if rarityNode then
 		M.applyRarityLabel(rarityNode, data.rarity)
+		if rarityNode:IsA("GuiObject") then
+			(rarityNode :: GuiObject).Visible = true
+		end
 	end
+
+	local hideBrainrotStats = data.luckyBlock == true
 
 	local typeNode = findInfoChild(infoFrame, "Type")
 	if typeNode then
-		M.applyMutationLabel(typeNode, data.mutation)
+		if hideBrainrotStats then
+			if typeNode:IsA("GuiObject") then
+				(typeNode :: GuiObject).Visible = false
+			end
+		else
+			if typeNode:IsA("GuiObject") then
+				(typeNode :: GuiObject).Visible = true
+			end
+			M.applyMutationLabel(typeNode, data.mutation)
+		end
 	end
 
 	local levelNode = findInfoChild(infoFrame, "Level")
 	if levelNode then
-		M.applyLevelLabel(levelNode, data.level)
+		if hideBrainrotStats then
+			if levelNode:IsA("GuiObject") then
+				(levelNode :: GuiObject).Visible = false
+			end
+		else
+			if levelNode:IsA("GuiObject") then
+				(levelNode :: GuiObject).Visible = true
+			end
+			M.applyLevelLabel(levelNode, data.level)
+		end
 	end
 
 	local rateNode = findInfoChild(infoFrame, "Rate")
 	if rateNode then
-		M.applyRateLabel(rateNode, data.rateText)
+		if hideBrainrotStats then
+			if rateNode:IsA("GuiObject") then
+				(rateNode :: GuiObject).Visible = false
+			end
+		else
+			if rateNode:IsA("GuiObject") then
+				(rateNode :: GuiObject).Visible = true
+			end
+			M.applyRateLabel(rateNode, data.rateText)
+		end
 	end
 end
 

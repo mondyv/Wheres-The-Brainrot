@@ -24,11 +24,11 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 local OPEN_NOTIF = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_NOTIF = TweenInfo.new(0.12, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
-local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local HOVER_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local TILT_HOVER = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local TILT_CLICK = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local TILT_RESET = TweenInfo.new(0.2, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+local TILT_HOVER = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local TILT_CLICK = TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local TILT_RESET = TweenInfo.new(0.32, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
 local QUEST_BAR_TWEEN = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local ROW_HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local INDEX_BADGE_SWAY = TweenInfo.new(0.72, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
@@ -529,23 +529,23 @@ local function wireTabInteractions(tabRoot: Instance, mutationId: string)
 		end
 		lastFire = now
 		UIInteractionSounds.playClick()
-		TweenService:Create(hoverScale, CLICK_TWEEN, { Scale = 0.86 }):Play()
-		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 3.5 }):Play()
+		TweenService:Create(hoverScale, CLICK_TWEEN, { Scale = 0.78 }):Play()
+		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 14 }):Play()
 		selectMutation(mutationId)
-		task.delay(0.08, function()
+		task.delay(0.09, function()
 			if hoverScale.Parent then
-				TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1.06 }):Play()
+				TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1.18 }):Play()
 			end
 			if tiltTarget.Parent then
-				TweenService:Create(tiltTarget, TILT_RESET, { Rotation = 0 }):Play()
+				TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -10 }):Play()
 			end
 		end)
 	end
 
 	btn.MouseEnter:Connect(function()
 		UIInteractionSounds.playHover()
-		TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1.06 }):Play()
-		TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -4 }):Play()
+		TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1.16 }):Play()
+		TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -12 }):Play()
 	end)
 	btn.MouseLeave:Connect(function()
 		TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1 }):Play()

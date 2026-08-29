@@ -451,22 +451,45 @@ local function findTypeButtons(): Instance?
 end
 
 local function findTabRoot(typeButtons: Instance, btnName: string): Instance?
+	local lower = string.lower(btnName)
+	local aliases: { [string]: { string } } = {
+		gold = { "gold", "golden" },
+	}
+	local names = aliases[lower] or { lower }
+
+	local function nameMatches(instName: string): boolean
+		local n = string.lower(instName)
+		for _, want in names do
+			if n == want then
+				return true
+			end
+		end
+		return false
+	end
+
 	local direct = typeButtons:FindFirstChild(btnName)
 	if direct then
 		return direct
 	end
-	local lower = string.lower(btnName)
-	local fuzzy: Instance? = nil
 	for _, ch in typeButtons:GetChildren() do
-		local n = string.lower(ch.Name)
-		if n == lower then
+		if nameMatches(ch.Name) then
 			return ch
 		end
-		if string.sub(n, 1, 4) ~= "notif" and (string.find(n, lower, 1, true) or string.find(lower, n, 1, true)) then
-			fuzzy = ch
+	end
+	for _, holder in typeButtons:GetChildren() do
+		if holder:IsA("GuiObject") and not nameMatches(holder.Name) then
+			local nested = holder:FindFirstChild(btnName)
+			if nested then
+				return nested
+			end
+			for _, ch in holder:GetChildren() do
+				if nameMatches(ch.Name) then
+					return ch
+				end
+			end
 		end
 	end
-	return fuzzy
+	return nil
 end
 
 local function syncTypeButtonSelectedOverlays(instant: boolean?)
@@ -1051,6 +1074,15 @@ local function buildSortedCatalog(catalog: { any }, mutationId: string): { any }
 	return list
 end
 
+local function gridHasVisibleRows(): boolean
+	for _, row in catalogRows do
+		if row.Parent and row.Visible then
+			return true
+		end
+	end
+	return false
+end
+
 local function rebuildGrid(state: any, animateRows: boolean?)
 	if not container or not rowTemplate then
 		return
@@ -1068,6 +1100,9 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 	local token = rebuildToken
 	clearGrid()
 	_gridMutation = selectedMutation
+	if container:IsA("GuiObject") then
+		(container :: GuiObject).Visible = true
+	end
 	if typeof(state.pendingCollectCount) == "number" then
 		setPendingCollectCount(state.pendingCollectCount)
 	end
@@ -1251,7 +1286,7 @@ selectMutation = function(mutationId: string)
 	if not IndexConfig.TAB_DISPLAY_NAME[mutationId] then
 		return
 	end
-	if selectedMutation == mutationId and _gridMutation == mutationId then
+	if selectedMutation == mutationId and _gridMutation == mutationId and gridHasVisibleRows() then
 		hideTabNotif(mutationId)
 		syncTypeButtonSelectedOverlays(false)
 		applyLuckyBlockHeaderVisual(mutationId == IndexConfig.LUCKY_BLOCK_TAB)
@@ -1370,8 +1405,11 @@ function IndexController.init()
 		return
 	end
 
-	headerTitle = findLabel(indexFrame, { "Title", "HeaderTitle", "Name" })
-		or (indexFrame:FindFirstChild("Header") and findLabel(indexFrame.Header, { "Title", "Name" }))
+	headerTitle = nil
+	local headerInst = indexFrame:FindFirstChild("Header")
+	if headerInst then
+		headerTitle = findLabel(headerInst, { "Title", "HeaderTitle", "Name" })
+	end
 	-- Prefer direct child so we don't grab a nested Decor/Container by mistake.
 	-- After PanelSlideIn wraps scrolls, Container may be a CanvasGroup clip host.
 	local PanelSlideIn = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PanelSlideIn"))

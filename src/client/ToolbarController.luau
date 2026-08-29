@@ -904,15 +904,29 @@ local ToolbarController = {}
 	end
 
 	-- Hotbar / backpack rows often wrap controls in `Button`.
+	-- Hotbar / backpack rows often wrap controls in `Button` (sometimes a Frame).
 	local function slotPrimaryButton(slot: GuiObject): GuiButton?
-		local b = slot:FindFirstChild("Button")
-		if b and b:IsA("GuiButton") then
-			return b
+		local named = slot:FindFirstChild("Button")
+		if named then
+			if named:IsA("GuiButton") then
+				return named
+			end
+			if named:IsA("GuiObject") then
+				local nested = named:FindFirstChildWhichIsA("GuiButton", true)
+				if nested then
+					return nested
+				end
+			end
 		end
 		if slot:IsA("GuiButton") then
 			return slot
 		end
-		return slot:FindFirstChildWhichIsA("GuiButton", true)
+		for _, d in slot:GetDescendants() do
+			if d:IsA("GuiButton") and d.Name ~= "Selected" and d.Name ~= "Sellect" then
+				return d
+			end
+		end
+		return nil
 	end
 
 	local function resolveBackpackActionButton(root: GuiObject): GuiButton?
@@ -3666,7 +3680,7 @@ local ToolbarController = {}
 			end
 			local btn = slotPrimaryButton(row :: GuiObject)
 			if btn then
-				passthroughChildClicks(btn :: GuiObject)
+				configureHotbarSlotInput(row :: GuiObject, btn)
 				styleToolbarSlotButton(btn)
 				local scale = getOrAddUIScale(hotbarSlotScaleHost(row :: GuiObject))
 				btn.MouseEnter:Connect(function()

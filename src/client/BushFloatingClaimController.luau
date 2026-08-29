@@ -20,6 +20,7 @@ local CharacterWorldNotif = require(script.Parent.CharacterWorldNotif)
 local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
 local SpiderSenseFx = require(script.Parent.SpiderSenseFx)
 local MobileHaptics = require(script.Parent.MobileHaptics)
+local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local SpiderEncounterConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SpiderEncounterConfig"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
@@ -1188,6 +1189,7 @@ local function bindChoiceButtonPress(
 		if not MobileTouchGate.canTapUi() then
 			return
 		end
+		UIInteractionSounds.playClick()
 		onActivated()
 	end))
 
@@ -1279,6 +1281,7 @@ local function wireButtonHover(
 		if scale.Scale < 0.5 then
 			return
 		end
+		UIInteractionSounds.playHover()
 		entry.hoverCount += 1
 		tweenBillboardLift(bb, true)
 		TweenService:Create(scale, HOVER_SCALE, { Scale = 1.12 }):Play()

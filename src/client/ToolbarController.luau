@@ -159,7 +159,7 @@ local slotStrokeLit: { [number]: boolean } = {}
 local toolbarShown: boolean = false
 local canUseToolbar: boolean = false
 local safezonePollAccum = 0.0
-local SAFEZONE_POLL_INTERVAL = 0.25
+local SAFEZONE_POLL_INTERVAL = if UserInputService.TouchEnabled then 0.5 else 0.25
 local SAFEZONE_EXIT_POLLS_REQUIRED = 3
 local safezoneOutStreak = 0
 local toolbarVisibilityTween: Tween? = nil
@@ -341,7 +341,17 @@ local ToolbarController = {}
 		return out
 	end
 
+	local slotIconCache: { [GuiObject]: { ImageLabel } } = {}
+
 	local function slotIconTargets(surface: GuiObject): { ImageLabel }
+		local cached = slotIconCache[surface]
+		if cached then
+			local first = cached[1]
+			if first and first.Parent then
+				return cached
+			end
+			slotIconCache[surface] = nil
+		end
 		local out: { ImageLabel } = {}
 		local seen: { [ImageLabel]: boolean } = {}
 		local function push(node: Instance?)
@@ -351,19 +361,29 @@ local ToolbarController = {}
 			end
 		end
 		push(surface:FindFirstChild("Icon"))
-		for _, d in surface:GetDescendants() do
-			if d:IsA("ImageLabel") and d.Name == "Icon" then
-				push(d)
+		if #out == 0 then
+			for _, d in surface:GetChildren() do
+				if d:IsA("ImageLabel") and d.Name == "Icon" then
+					push(d)
+				end
 			end
 		end
 		if #out == 0 then
 			for _, d in surface:GetDescendants() do
+				if d:IsA("ImageLabel") and d.Name == "Icon" then
+					push(d)
+				end
+			end
+		end
+		if #out == 0 then
+			for _, d in surface:GetChildren() do
 				if d:IsA("ImageLabel") then
 					push(d)
 					break
 				end
 			end
 		end
+		slotIconCache[surface] = out
 		return out
 	end
 
@@ -389,7 +409,9 @@ local ToolbarController = {}
 	end
 
 	local function setSlotIcons(surface: GuiObject, image: string, visible: boolean)
-		GearViewportIcon.clear(surface)
+		if surface:FindFirstChild("GearViewport") then
+			GearViewportIcon.clear(surface)
+		end
 		for _, icon in slotIconTargets(surface) do
 			applySlotIconStyle(icon)
 			icon.Image = image
@@ -932,11 +954,15 @@ local ToolbarController = {}
 
 	-- Icon / Rate / Key steal mouse hits unless they are non-interactive.
 	local function passthroughChildClicks(root: GuiObject)
+		if root:GetAttribute("_ToolbarPassClicks") == true then
+			return
+		end
 		for _, d in root:GetDescendants() do
 			if d:IsA("GuiObject") and d ~= root then
 				d.Active = false
 			end
 		end
+		root:SetAttribute("_ToolbarPassClicks", true)
 	end
 
 	-- Parent slot frames and overlay siblings steal mobile taps unless they are explicitly non-interactive.
@@ -1292,6 +1318,9 @@ local ToolbarController = {}
 	local BACKPACK_GENERATED_ATTRIBUTE = "_ToolbarGeneratedBackpackRow"
 	local BACKPACK_UI_ROW_ATTRIBUTE = "ToolbarBackpackUiRow"
 	local backpackTemplateRow: GuiObject? = nil
+	local generatedBackpackRows: { [number]: GuiObject } = {}
+	local backpackRowSig: { [number]: string } = {}
+	local backpackScrollingEnsured = false
 
 	findBackpackTemplateRow = function(container: Instance?): GuiObject?
 		if not container then
@@ -1331,14 +1360,16 @@ local ToolbarController = {}
 		if not container then
 			return nil
 		end
-		for _, inst in container:GetDescendants() do
-			if inst:IsA("GuiObject") and inst:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) == true then
-				local rowIndex = inst:GetAttribute(BACKPACK_UI_ROW_ATTRIBUTE)
-				if typeof(rowIndex) == "number" and math.floor(rowIndex) == index then
-					return inst :: GuiObject
-				end
-			end
+		local cached = generatedBackpackRows[index]
+		if
+			cached
+			and cached.Parent
+			and cached:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) == true
+			and cached:GetAttribute(BACKPACK_UI_ROW_ATTRIBUTE) == index
+		then
+			return cached
 		end
+		generatedBackpackRows[index] = nil
 		return nil
 	end
 
@@ -1387,17 +1418,20 @@ local ToolbarController = {}
 		template.Visible = false
 		template.LayoutOrder = 100000
 
+		table.clear(generatedBackpackRows)
 		for _, inst in rowsParent:GetChildren() do
 			if inst:IsA("GuiObject") and inst:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) == true then
 				local rowIndex = inst:GetAttribute(BACKPACK_UI_ROW_ATTRIBUTE)
 				if typeof(rowIndex) ~= "number" or rowIndex < 1 or rowIndex > MAX_BACKPACK_BRAINROT_SLOTS then
 					inst:Destroy()
+				else
+					generatedBackpackRows[math.floor(rowIndex)] = inst :: GuiObject
 				end
 			end
 		end
 
 		for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
-			local row = findGeneratedBackpackRow(container, idx)
+			local row = generatedBackpackRows[idx]
 			if not row or not row.Parent then
 				row = template:Clone()
 				row.Parent = rowsParent
@@ -1408,6 +1442,7 @@ local ToolbarController = {}
 			row:SetAttribute(BACKPACK_UI_ROW_ATTRIBUTE, idx)
 			row.LayoutOrder = idx
 			row.Visible = false
+			generatedBackpackRows[idx] = row
 		end
 	end
 
@@ -1420,6 +1455,10 @@ local ToolbarController = {}
 	}
 
 	local function ensureBackpackScrollingVisible(root: Instance)
+		if backpackScrollingEnsured then
+			return
+		end
+		backpackScrollingEnsured = true
 		-- Fixes the backpack scrollbar / visible slider being hidden on load.
 		-- This only touches scrolling UI under the backpack frame.
 		for _, inst in root:GetDescendants() do
@@ -3146,26 +3185,27 @@ local ToolbarController = {}
 		refreshToolbarVisibility()
 	end
 
+	local rebuildSlotsQueued = false
+	local function queueRebuildSlots()
+		if rebuildSlotsQueued then
+			return
+		end
+		rebuildSlotsQueued = true
+		task.defer(function()
+			rebuildSlotsQueued = false
+			rebuildSlots()
+		end)
+	end
+
 	refreshBrainrotBackpackUI = function()
 		local container = backpackContainer
 		if not container then
 			return
 		end
-		ensureBackpackGeneratedRows(container)
 		rebuildBackpackDisplayOrder()
 		ensureBackpackContainerTopLeftLayout(container)
 		if backpackFrameRef then
 			ensureBackpackScrollingVisible(backpackFrameRef)
-		end
-
-		-- IMPORTANT: do NOT hide/delete non-numbered children of Container.
-		-- Some UIs keep the actual slots inside Container.Scrolling / Container.Holder.
-		-- Hiding those wrappers makes every brainrot disappear after a refresh.
-		-- Only remove stale cloned extra rows created by older versions.
-		for _, child in container:GetChildren() do
-			if child:IsA("GuiObject") and string.sub(child.Name, 1, 8) == "__Extra_" then
-				child:Destroy()
-			end
 		end
 
 		local hasActiveSearch = normalizedBackpackSearchText() ~= ""
@@ -3176,7 +3216,6 @@ local ToolbarController = {}
 				continue
 			end
 
-			-- Force normal layout order so visible cells start at row 1 / top-left.
 			(row :: GuiObject).LayoutOrder = idx
 
 			local entry = brainrotEntryForBackpackSlot(idx)
@@ -3186,43 +3225,41 @@ local ToolbarController = {}
 				listIdx = nil
 			end
 
-			-- Only generated rows with real brainrots should be visible.
-			-- The original Container["1"] row is a hidden template and must never show.
 			row.Visible = entry ~= nil
+
+			local icon = ""
+			local income = ""
+			local keyText = tostring(idx)
+			if entry then
+				icon = entry.icon ~= "" and entry.icon or "rbxasset://textures/ui/GuiImagePlaceholder.png"
+				income = formatEntryIncomeLabel(entry)
+				keyText = if listIdx then tostring(listIdx) else tostring(idx)
+			end
+			local sig = (if entry then "1" else "0") .. "|" .. tostring(listIdx or 0) .. "|" .. icon .. "|" .. income .. "|" .. keyText
+			if backpackRowSig[idx] == sig then
+				continue
+			end
+			backpackRowSig[idx] = sig
 
 			local surface = toolSlotSurface(row :: GuiObject)
 			local rate = surface:FindFirstChild("Rate")
 			local key = surface:FindFirstChild("Key")
 
 			if entry then
-				setSlotIcons(
-					surface,
-					entry.icon ~= "" and entry.icon or "rbxasset://textures/ui/GuiImagePlaceholder.png",
-					true
-				)
-				for _, icon in slotIconTargets(surface) do
-					icon.AnchorPoint = Vector2.new(0.5, 0.5)
-					icon.Position = UDim2.new(0.5, 0, 0.5, 0)
-				end
+				setSlotIcons(surface, icon, true)
 				if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
-					rate.Text = formatEntryIncomeLabel(entry)
+					rate.Text = income
 				end
 				if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
-					-- Show original server inventory slot on occupied cells, even while
-					-- the backpack grid itself stays packed at the top-left.
-					key.Text = if listIdx then tostring(listIdx) else tostring(idx)
+					key.Text = keyText
 				end
 			else
 				setSlotIcons(surface, "", false)
-				for _, icon in slotIconTargets(surface) do
-					icon.AnchorPoint = Vector2.new(0.5, 0.5)
-					icon.Position = UDim2.new(0.5, 0, 0.5, 0)
-				end
 				if rate and (rate:IsA("TextLabel") or rate:IsA("TextButton")) then
 					rate.Text = ""
 				end
 				if key and (key:IsA("TextLabel") or key:IsA("TextButton")) then
-					key.Text = tostring(idx)
+					key.Text = keyText
 				end
 			end
 
@@ -3317,15 +3354,8 @@ local ToolbarController = {}
 	end
 
 	local function refreshAfterLocalBrainrotMove()
-		for si = 1, #slots do
-			refreshSlotVisual(si)
-		end
-		updateHotbarSlotVisibility()
 		refreshBrainrotBackpackUI()
-		if backpackFrameRef then
-			scrollBackpackToTop(backpackFrameRef)
-		end
-		task.defer(rebuildSlots)
+		queueRebuildSlots()
 	end
 
 	local function _setLocalBrainrotTucked(index: number, tucked: boolean)
@@ -3530,7 +3560,7 @@ local ToolbarController = {}
 			_activeSlot = nil
 			syncAllHotbarSelectionStrokes()
 			syncBackpackSelectionStrokes()
-			task.defer(rebuildSlots)
+			queueRebuildSlots()
 			return
 		end
 
@@ -3545,8 +3575,8 @@ local ToolbarController = {}
 		syncAllHotbarSelectionStrokes()
 		syncBackpackSelectionStrokes()
 		requestEquipBrainrotSlot(listIdx, true)
-		task.defer(rebuildSlots)
-		task.delay(0.15, rebuildSlots)
+		queueRebuildSlots()
+		task.delay(0.2, queueRebuildSlots)
 	end
 
 	-- Lucky blocks / extra tools parked in the bag: tap to equip without a hotbar cell.
@@ -3569,7 +3599,7 @@ local ToolbarController = {}
 			uiBackpackListHighlight = nil
 			uiBackpackExtraHighlight = nil
 			syncBackpackSelectionStrokes()
-			task.defer(rebuildSlots)
+			queueRebuildSlots()
 			return
 		end
 		-- Equip from the bag cell; keep the inventory outline.
@@ -3579,7 +3609,7 @@ local ToolbarController = {}
 		syncBackpackSelectionStrokes()
 		hum:EquipTool(tool)
 		UIInteractionSounds.playClick()
-		task.defer(rebuildSlots)
+		queueRebuildSlots()
 		refreshParkedExtraToolsUI()
 	end
 
@@ -4143,13 +4173,13 @@ local ToolbarController = {}
 			if equipped == tool then
 				hum:UnequipTools()
 				setHotbarSelection(nil, false)
-				task.defer(rebuildSlots)
+				queueRebuildSlots()
 				return
 			end
 			extraToolSlotByIndex[index] = tool
 			setHotbarSelection(index)
 			hum:EquipTool(tool)
-			task.defer(rebuildSlots)
+			queueRebuildSlots()
 			return
 		end
 
@@ -4181,9 +4211,8 @@ local ToolbarController = {}
 				end
 				setHotbarSelection(index)
 				requestEquipBrainrotSlot(brainrotIdx :: number, true)
-				task.defer(rebuildSlots)
-				task.delay(0.15, rebuildSlots)
-				task.delay(0.35, rebuildSlots)
+				queueRebuildSlots()
+				task.delay(0.2, queueRebuildSlots)
 				return
 			end
 			setHotbarSelection(index)
@@ -4193,7 +4222,7 @@ local ToolbarController = {}
 
 		setHotbarSelection(index)
 		hum:EquipTool(tool)
-		task.defer(rebuildSlots)
+		queueRebuildSlots()
 	end
 
 	-- After deposit, server sends equipSlot = inventory list index of the deposited brainrot.
@@ -4275,7 +4304,7 @@ local ToolbarController = {}
 			setHotbarSelection(nil, false)
 			requestEquipBrainrotSlot(invIndex, true)
 			bumpRandomBackpackItemToTop(invIndex)
-			task.defer(rebuildSlots)
+			queueRebuildSlots()
 			return
 		end
 
@@ -4420,17 +4449,32 @@ local ToolbarController = {}
 
 	-- ── Character wiring ──────────────────────────────────────────────────────────
 
+	local characterToolConns: { RBXScriptConnection } = {}
+	local function disconnectCharacterToolConns()
+		for _, conn in characterToolConns do
+			conn:Disconnect()
+		end
+		table.clear(characterToolConns)
+	end
+
 	local function wireCharacter(character: Model)
-		character.ChildAdded:Connect(function(child)
-			if child:IsA("Tool") then
-				task.defer(rebuildSlots)
-			end
-		end)
-		character.ChildRemoved:Connect(function(child)
-			if child:IsA("Tool") then
-				task.defer(rebuildSlots)
-			end
-		end)
+		disconnectCharacterToolConns()
+		table.insert(
+			characterToolConns,
+			character.ChildAdded:Connect(function(child)
+				if child:IsA("Tool") then
+					queueRebuildSlots()
+				end
+			end)
+		)
+		table.insert(
+			characterToolConns,
+			character.ChildRemoved:Connect(function(child)
+				if child:IsA("Tool") then
+					queueRebuildSlots()
+				end
+			end)
+		)
 
 		local humanoid = character:FindFirstChildOfClass("Humanoid")
 		if not humanoid then
@@ -4446,7 +4490,7 @@ local ToolbarController = {}
 			end)
 		end
 
-		task.defer(rebuildSlots)
+		queueRebuildSlots()
 	end
 
 	requestBrainrotInventoryFromServer = function()
@@ -4863,12 +4907,12 @@ local ToolbarController = {}
 		local backpack = player:WaitForChild("Backpack")
 		backpack.ChildAdded:Connect(function(child)
 			if child:IsA("Tool") then
-				task.defer(rebuildSlots)
+				queueRebuildSlots()
 			end
 		end)
 		backpack.ChildRemoved:Connect(function(child)
 			if child:IsA("Tool") then
-				task.defer(rebuildSlots)
+				queueRebuildSlots()
 			end
 		end)
 
@@ -5212,7 +5256,7 @@ local ToolbarController = {}
 					setBackpackPanelOpen(true)
 					if tool then
 						parkExtraToolInBackpack(tool, pnd.idx)
-						task.defer(rebuildSlots)
+						queueRebuildSlots()
 						refreshParkedExtraToolsUI()
 					end
 					UIInteractionSounds.playClick()
@@ -5235,7 +5279,7 @@ local ToolbarController = {}
 					end
 					extraToolSlotByIndex[targetHotbar] = tool
 					sanitizeExtraToolSlotPins()
-					task.defer(rebuildSlots)
+					queueRebuildSlots()
 					refreshParkedExtraToolsUI()
 					UIInteractionSounds.playClick()
 				end
@@ -5250,7 +5294,7 @@ local ToolbarController = {}
 						parkExtraToolInBackpack(occupying, targetHotbar)
 					end
 					if unparkExtraToolToHotbar(tool, targetHotbar) then
-						task.defer(rebuildSlots)
+						queueRebuildSlots()
 						refreshParkedExtraToolsUI()
 						UIInteractionSounds.playClick()
 					end

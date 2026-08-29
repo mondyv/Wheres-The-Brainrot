@@ -9,6 +9,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
@@ -18,7 +19,7 @@ local PlotMarkerVisibility = require(script.Parent:WaitForChild("PlotMarkerVisib
 
 local player = Players.LocalPlayer
 
-local POLL_INTERVAL = 0.12
+local POLL_INTERVAL = if UserInputService.TouchEnabled then 0.4 else 0.12
 -- Invisible on the pad.
 local FADE_NEAR = 18
 -- Fully visible between these distances.

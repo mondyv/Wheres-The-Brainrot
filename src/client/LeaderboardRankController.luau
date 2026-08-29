@@ -7,6 +7,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
@@ -18,7 +19,7 @@ local M = {}
 local DATA_FOLDER_NAME = "LeaderboardData"
 local BOARD_NAMES = { "Cash", "Time" }
 local TAG_ROW_COUNT = 10 -- badges/tags only; boards show top 100
-local SAFEZONE_POLL_INTERVAL = 0.2
+local SAFEZONE_POLL_INTERVAL = if UserInputService.TouchEnabled then 0.55 else 0.2
 
 local localPlayer = Players.LocalPlayer
 

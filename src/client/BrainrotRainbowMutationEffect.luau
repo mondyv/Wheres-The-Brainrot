@@ -7,6 +7,7 @@
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
@@ -125,7 +126,9 @@ local function ensureHeartbeat()
 	if heartbeatConn then
 		return
 	end
-	heartbeatConn = RunService.Heartbeat:Connect(function()
+	local hueAccum = 0
+	local hueStep = if UserInputService.TouchEnabled then 0.12 else 0
+	heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 		if not next(tracked) then
 			if heartbeatConn then
 				heartbeatConn:Disconnect()
@@ -135,6 +138,13 @@ local function ensureHeartbeat()
 		end
 		if not brainrotVfxEnabled() then
 			return
+		end
+		if hueStep > 0 then
+			hueAccum += dt
+			if hueAccum < hueStep then
+				return
+			end
+			hueAccum = 0
 		end
 
 		local hue = (os.clock() * SPEED + phaseSeed) % 1

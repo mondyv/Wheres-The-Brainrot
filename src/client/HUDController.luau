@@ -674,21 +674,42 @@ local function openFrame(frame: Frame)
 	ensurePanelClickSink(frame)
 	ensurePanelCloseOnTop(frame)
 	-- Panel content must receive clicks (ScrollingFrames / buy buttons).
-	for _, d in frame:GetDescendants() do
-		if d.Name == "_PanelClickSink" then
-			continue
+	-- Index catalog clones can be hundreds of instances — don't walk those trees every open.
+	local function activateInteractive(node: Instance)
+		if node.Name == "_PanelClickSink" then
+			return
 		end
-		if d:IsA("GuiButton") or d:IsA("ScrollingFrame") or d:IsA("TextBox") then
-			(d :: GuiObject).Active = true
-			-- Keep interactive controls above the full-panel click sink.
-			if d:IsA("GuiButton") and (d :: GuiObject).ZIndex < 2 then
-				(d :: GuiObject).ZIndex = 2
+		if node:IsA("GuiButton") or node:IsA("ScrollingFrame") or node:IsA("TextBox") then
+			(node :: GuiObject).Active = true
+			if node:IsA("GuiButton") and (node :: GuiObject).ZIndex < 2 then
+				(node :: GuiObject).ZIndex = 2
 			end
-		elseif d:IsA("GuiObject") and not d:IsA("GuiButton") then
-			-- Keep decorative layers from eating camera when they overflow the panel.
-			if d.Name == "__SweepClip" or d.Name == "__GlistenTrack" or d.Name == "__DiagSweep" then
-				(d :: GuiObject).Active = false
+		elseif node:IsA("GuiObject") and not node:IsA("GuiButton") then
+			if node.Name == "__SweepClip" or node.Name == "__GlistenTrack" or node.Name == "__DiagSweep" then
+				(node :: GuiObject).Active = false
 			end
+		end
+	end
+	if frame.Name == "Index" then
+		for _, child in frame:GetChildren() do
+			if child.Name == "Container" or child.Name == "_ClippedScroll" then
+				activateInteractive(child)
+				if child:IsA("CanvasGroup") then
+					local inner = child:FindFirstChildWhichIsA("ScrollingFrame")
+					if inner then
+						activateInteractive(inner)
+					end
+				end
+			else
+				activateInteractive(child)
+				for _, d in child:GetDescendants() do
+					activateInteractive(d)
+				end
+			end
+		end
+	else
+		for _, d in frame:GetDescendants() do
+			activateInteractive(d)
 		end
 	end
 	ensurePanelCloseOnTop(frame)

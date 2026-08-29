@@ -1431,6 +1431,16 @@ local ToolbarController = {}
 			return
 		end
 
+		local template = findBackpackTemplateRow(container)
+		if not template then
+			backpackRowsReady = next(generatedBackpackRows) ~= nil
+			return
+		end
+
+		local rowsParent = template.Parent or container
+		template.Visible = false
+		template.LayoutOrder = 100000
+
 		if backpackRowsReady then
 			local missing = false
 			for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
@@ -1443,45 +1453,28 @@ local ToolbarController = {}
 			if not missing then
 				return
 			end
-		end
-
-		table.clear(generatedBackpackRows)
-		local seenIndex: { [number]: GuiObject } = {}
-		local destroyedDupes = 0
-		for _, inst in container:GetDescendants() do
-			if inst:IsA("GuiObject") and inst:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) == true then
-				local rowIndex = inst:GetAttribute(BACKPACK_UI_ROW_ATTRIBUTE)
-				if typeof(rowIndex) ~= "number" then
-					inst:Destroy()
-					destroyedDupes += 1
-				else
-					local idx = math.floor(rowIndex)
-					if idx < 1 or idx > MAX_BACKPACK_BRAINROT_SLOTS then
-						inst:Destroy()
-						destroyedDupes += 1
-					elseif seenIndex[idx] then
-						inst:Destroy()
-						destroyedDupes += 1
+		else
+			-- One-time: keep at most one generated row per slot among direct children (never GetDescendants).
+			local seenIndex: { [number]: GuiObject } = {}
+			for _, child in rowsParent:GetChildren() do
+				if child:IsA("GuiObject") and child:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) == true then
+					local rowIndex = child:GetAttribute(BACKPACK_UI_ROW_ATTRIBUTE)
+					if typeof(rowIndex) ~= "number" then
+						child:Destroy()
 					else
-						seenIndex[idx] = inst :: GuiObject
-						generatedBackpackRows[idx] = inst :: GuiObject
+						local idx = math.floor(rowIndex)
+						if idx < 1 or idx > MAX_BACKPACK_BRAINROT_SLOTS then
+							child:Destroy()
+						elseif seenIndex[idx] then
+							child:Destroy()
+						else
+							seenIndex[idx] = child :: GuiObject
+							generatedBackpackRows[idx] = child :: GuiObject
+						end
 					end
-				end
-				if destroyedDupes > 0 and destroyedDupes % 50 == 0 then
-					task.wait(0.05)
 				end
 			end
 		end
-
-		local template = findBackpackTemplateRow(container)
-		if not template then
-			backpackRowsReady = next(generatedBackpackRows) ~= nil
-			return
-		end
-
-		local rowsParent = template.Parent or container
-		template.Visible = false
-		template.LayoutOrder = 100000
 
 		for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
 			local row = generatedBackpackRows[idx]

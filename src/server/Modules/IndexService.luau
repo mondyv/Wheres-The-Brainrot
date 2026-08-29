@@ -17,6 +17,8 @@ local goldenNamesByPlayer: { [Player]: { [string]: boolean } } = {}
 
 local brainrotsFolder: Folder? = nil
 local luckyBlocksListFolder: Folder? = nil
+local iconCache: { [string]: { [string]: string } } = {}
+local packedCatalogCache: { [string]: { { name: string, rarity: string, baseIncome: number, icon: string } } } = {}
 
 local function getBrainrotsFolder(): Folder?
 	if brainrotsFolder and brainrotsFolder.Parent then
@@ -68,49 +70,57 @@ local function pickIconFromModel(model: Model): string
 		end
 		return ""
 	end
+	-- Only look at an Icon node. Never walk the whole 3D model (that timed out gold/diamond Index packs).
 	local iconNode = model:FindFirstChild("Icon")
 	if iconNode then
 		local tex = readIconNode(iconNode)
 		if tex ~= "" then
 			return tex
 		end
-		for _, d in iconNode:GetDescendants() do
-			local tex = readIconNode(d)
+		for _, d in iconNode:GetChildren() do
+			tex = readIconNode(d)
 			if tex ~= "" then
 				return tex
 			end
 		end
 	end
-	for _, d in model:GetDescendants() do
-		if d.Name == "Icon" then
-			local tex = readIconNode(d)
+	for _, child in model:GetChildren() do
+		if child.Name == "Icon" then
+			local tex = readIconNode(child)
 			if tex ~= "" then
 				return tex
 			end
-		end
-	end
-	for _, d in model:GetDescendants() do
-		local tex = readIconNode(d)
-		if tex ~= "" then
-			return tex
 		end
 	end
 	return ""
 end
 
 function M.getIconFor(brainrotName: string, mutationId: string): string
-	local template = findVariantTemplate(brainrotName, mutationId)
-	if template then
-		local icon = pickIconFromModel(template)
-		if icon ~= "" then
-			return icon
+	local mut = if mutationId ~= "" then mutationId else "normal"
+	local byName = iconCache[brainrotName]
+	if byName then
+		local cached = byName[mut]
+		if typeof(cached) == "string" then
+			return cached
 		end
 	end
-	local fallback = findVariantTemplate(brainrotName, "normal")
-	if fallback then
-		return pickIconFromModel(fallback)
+	local icon = ""
+	local template = findVariantTemplate(brainrotName, mut)
+	if template then
+		icon = pickIconFromModel(template)
 	end
-	return ""
+	if icon == "" and mut ~= "normal" then
+		local fallback = findVariantTemplate(brainrotName, "normal")
+		if fallback then
+			icon = pickIconFromModel(fallback)
+		end
+	end
+	if not byName then
+		byName = {}
+		iconCache[brainrotName] = byName
+	end
+	byName[mut] = icon
+	return icon
 end
 
 local function getLuckyBlocksList(): Folder?
@@ -566,14 +576,18 @@ function M.packStateForClient(
 			unlocked[k] = true
 		end
 	end
-	local catalog = {}
-	for _, def in M.buildCatalog() do
-		table.insert(catalog, {
-			name = def.name,
-			rarity = def.rarity,
-			baseIncome = def.baseIncome,
-			icon = M.getIconFor(def.name, mutationId),
-		})
+	local catalog = packedCatalogCache[mutationId]
+	if not catalog then
+		catalog = {}
+		for _, def in M.buildCatalog() do
+			table.insert(catalog, {
+				name = def.name,
+				rarity = def.rarity,
+				baseIncome = def.baseIncome,
+				icon = M.getIconFor(def.name, mutationId),
+			})
+		end
+		packedCatalogCache[mutationId] = catalog
 	end
 	return {
 		unlocked = unlocked,

@@ -79,7 +79,6 @@ local collectedToastBasePos: UDim2? = nil
 local pendingCollects = 0
 local selectMutation: (mutationId: string) -> ()
 local stateCache: { [string]: any } = {}
-local sortedCatalogCache: { [string]: { any } } = {}
 local _gridMutation: string? = nil
 local rebuildToken = 0
 local ROW_BATCH_SIZE = 14
@@ -450,6 +449,31 @@ local function findTypeButtons(): Instance?
 	return indexFrame:FindFirstChild("TypeButtons") or indexFrame:FindFirstChild("TypeButtons", true)
 end
 
+local function isNotifTabName(instName: string): boolean
+	return string.sub(string.lower(instName), 1, 5) == "notif"
+end
+
+local function isTabHostInstance(inst: Instance): boolean
+	if isNotifTabName(inst.Name) then
+		return false
+	end
+	if not inst:IsA("GuiObject") then
+		return false
+	end
+	if
+		inst:IsA("UIGradient")
+		or inst:IsA("UIStroke")
+		or inst:IsA("UICorner")
+		or inst:IsA("UIPadding")
+		or inst:IsA("UIListLayout")
+		or inst:IsA("UIGridLayout")
+		or inst:IsA("UIScale")
+	then
+		return false
+	end
+	return true
+end
+
 local function findTabRoot(typeButtons: Instance, btnName: string): Instance?
 	local lower = string.lower(btnName)
 	local aliases: { [string]: { string } } = {
@@ -459,6 +483,9 @@ local function findTabRoot(typeButtons: Instance, btnName: string): Instance?
 
 	local function nameMatches(instName: string): boolean
 		local n = string.lower(instName)
+		if isNotifTabName(n) then
+			return false
+		end
 		for _, want in names do
 			if n == want then
 				return true
@@ -468,28 +495,59 @@ local function findTabRoot(typeButtons: Instance, btnName: string): Instance?
 	end
 
 	local direct = typeButtons:FindFirstChild(btnName)
-	if direct then
+	if direct and isTabHostInstance(direct) then
 		return direct
 	end
 	for _, ch in typeButtons:GetChildren() do
-		if nameMatches(ch.Name) then
+		if nameMatches(ch.Name) and isTabHostInstance(ch) then
 			return ch
 		end
 	end
 	for _, holder in typeButtons:GetChildren() do
-		if holder:IsA("GuiObject") and not nameMatches(holder.Name) then
+		if holder:IsA("GuiObject") and not nameMatches(holder.Name) and isTabHostInstance(holder) then
 			local nested = holder:FindFirstChild(btnName)
-			if nested then
+			if nested and isTabHostInstance(nested) then
 				return nested
 			end
 			for _, ch in holder:GetChildren() do
-				if nameMatches(ch.Name) then
+				if nameMatches(ch.Name) and isTabHostInstance(ch) then
 					return ch
 				end
 			end
 		end
 	end
+	-- Older Studio layouts nested the real tab under TypeButtons.
+	for _, d in typeButtons:GetDescendants() do
+		if isTabHostInstance(d) and nameMatches(d.Name) then
+			return d
+		end
+	end
 	return nil
+end
+
+local function collectTypeTabHosts(typeButtons: Instance): { GuiObject }
+	local hosts: { GuiObject } = {}
+	for _, ch in typeButtons:GetChildren() do
+		if
+			ch:IsA("GuiObject")
+			and not isNotifTabName(ch.Name)
+			and not ch:IsA("UIListLayout")
+			and not ch:IsA("UIGridLayout")
+			and not ch:IsA("UIPadding")
+			and not ch:IsA("UIStroke")
+			and not ch:IsA("UICorner")
+			and not ch:IsA("UIGradient")
+		then
+			table.insert(hosts, ch :: GuiObject)
+		end
+	end
+	table.sort(hosts, function(a, b)
+		if a.LayoutOrder ~= b.LayoutOrder then
+			return a.LayoutOrder < b.LayoutOrder
+		end
+		return a.Name < b.Name
+	end)
+	return hosts
 end
 
 local function syncTypeButtonSelectedOverlays(instant: boolean?)
@@ -912,11 +970,31 @@ local function setPendingCollectCount(n: number)
 	local show = pendingCollects > 0
 	if collectAllHost then
 		collectAllHost.Visible = show
+		local parent = collectAllHost.Parent
+		if parent and parent:IsA("GuiObject") and parent ~= indexFrame then
+			local pn = string.lower(parent.Name)
+			if string.find(pn, "collect", 1, true) then
+				(parent :: GuiObject).Visible = show
+			end
+		end
 	end
 	if collectAllBtn then
 		collectAllBtn.Visible = show
 		collectAllBtn.Active = show
 	end
+end
+
+local function countVisiblePendingCollects(): number
+	local n = 0
+	for _, row in catalogRows do
+		if row.Parent and row.Visible then
+			local collectHost = row:FindFirstChild("Collect")
+			if collectHost and collectHost:IsA("GuiObject") and collectHost.Visible then
+				n += 1
+			end
+		end
+	end
+	return n
 end
 
 local function markAllCachedCollected()
@@ -1006,11 +1084,7 @@ local function wireCollectButton(row: Frame)
 		if typeof(result.xp) == "number" then
 			playCollectedXpToast(result.xp)
 		end
-		if typeof(result.pending) == "number" then
-			setPendingCollectCount(result.pending)
-		else
-			setPendingCollectCount(pendingCollects - 1)
-		end
+		setPendingCollectCount(countVisiblePendingCollects())
 	end)
 end
 
@@ -1058,11 +1132,6 @@ local function clearGrid()
 end
 
 local function buildSortedCatalog(catalog: { any }, mutationId: string): { any }
-	local cached = sortedCatalogCache[mutationId]
-	if cached then
-		return cached
-	end
-
 	local list: { any } = {}
 	for _, e in catalog do
 		if typeof(e) == "table" then
@@ -1070,7 +1139,6 @@ local function buildSortedCatalog(catalog: { any }, mutationId: string): { any }
 		end
 	end
 	sortCatalog(list, mutationId)
-	sortedCatalogCache[mutationId] = list
 	return list
 end
 
@@ -1081,6 +1149,36 @@ local function gridHasVisibleRows(): boolean
 		end
 	end
 	return false
+end
+
+local function sanitizeIndexRowClone(row: Instance)
+	local heavy: { Instance } = {}
+	for _, d in row:GetDescendants() do
+		if d:IsA("ViewportFrame") or d:IsA("WorldModel") or d:IsA("BasePart") or d:IsA("Model") then
+			table.insert(heavy, d)
+		end
+	end
+	for _, d in heavy do
+		d:Destroy()
+	end
+end
+
+local function anyBrainrotState(): any?
+	local lucky = IndexConfig.LUCKY_BLOCK_TAB
+	local preferred = stateCache[selectedMutation]
+	if preferred and typeof(preferred.catalog) == "table" then
+		return preferred
+	end
+	local normal = stateCache.normal
+	if normal and typeof(normal.catalog) == "table" then
+		return normal
+	end
+	for mutId, state in stateCache do
+		if mutId ~= lucky and typeof(state) == "table" and typeof(state.catalog) == "table" then
+			return state
+		end
+	end
+	return nil
 end
 
 local function rebuildGrid(state: any, animateRows: boolean?)
@@ -1099,13 +1197,12 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 	rebuildToken += 1
 	local token = rebuildToken
 	clearGrid()
-	_gridMutation = selectedMutation
+	_gridMutation = nil
 	if container:IsA("GuiObject") then
 		(container :: GuiObject).Visible = true
 	end
-	if typeof(state.pendingCollectCount) == "number" then
-		setPendingCollectCount(state.pendingCollectCount)
-	end
+	-- Don't use the server's global pending count — that includes other tabs.
+	setPendingCollectCount(0)
 
 	local list = buildSortedCatalog(catalog, selectedMutation)
 	local order = 0
@@ -1121,14 +1218,18 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 			local entry = list[i]
 			order += 1
 			local row = catalogRows[i]
-			if not row or not row.Parent then
+			if row and row.Parent then
+				if row.Parent ~= container then
+					row.Parent = container
+				end
+			else
 				row = rowTemplate:Clone()
+				sanitizeIndexRowClone(row)
 				row.Name = "Entry_" .. entry.name
 				row.Parent = container
 				catalogRows[i] = row
-			else
-				row.Name = "Entry_" .. entry.name
 			end
+			row.Name = "Entry_" .. entry.name
 			row.Visible = true
 			row.LayoutOrder = order
 			local key = IndexConfig.unlockKey(entry.name, selectedMutation)
@@ -1136,7 +1237,10 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 			local collectedMap = state.collected
 			local isCollected = typeof(collectedMap) == "table" and collectedMap[key] == true
 			row:SetAttribute("IndexCollected", isCollected)
-			populateRow(row, entry, selectedMutation, isUnlocked, false, i, nil)
+			local popOk, popErr = pcall(populateRow, row, entry, selectedMutation, isUnlocked, false, i, nil)
+			if not popOk then
+				warn("[IndexController] populateRow failed:", entry.name, selectedMutation, popErr)
+			end
 			wireCollectButton(row)
 		end
 		index = batchEnd + 1
@@ -1150,13 +1254,12 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 					extra.Visible = false
 				end
 			end
+			_gridMutation = selectedMutation
 			refreshQuest(
 				if typeof(state.goldenCount) == "number" then math.floor(state.goldenCount) else 0,
 				state.questComplete == true
 			)
-			if typeof(state.pendingCollectCount) == "number" then
-				setPendingCollectCount(state.pendingCollectCount)
-			end
+			setPendingCollectCount(countVisiblePendingCollects())
 		end
 	end
 
@@ -1207,14 +1310,26 @@ local function refreshStateInBackground(mutationId: string, animateRows: boolean
 end
 
 local function loadMutationGrid(mutationId: string, animateRows: boolean)
-	if stateCache[mutationId] then
+	local cached = stateCache[mutationId]
+	if cached then
 		applyCachedState(mutationId, animateRows)
 		refreshStateInBackground(mutationId, false)
-	else
-		clearGrid()
-		_gridMutation = nil
-		refreshStateInBackground(mutationId, animateRows)
+		return
 	end
+	-- Gold/Diamond/etc. share the same catalog + unlock map as Normal.
+	-- Don't clear the grid and wait on a second GetIndexState — that fetch used to hang
+	-- while scanning 3D templates, so other tabs looked empty.
+	if mutationId ~= IndexConfig.LUCKY_BLOCK_TAB then
+		local fallback = anyBrainrotState()
+		if fallback then
+			rebuildGrid(fallback, animateRows)
+			refreshStateInBackground(mutationId, false)
+			return
+		end
+	end
+	clearGrid()
+	_gridMutation = nil
+	refreshStateInBackground(mutationId, animateRows)
 end
 
 local function patchCachedUnlock(mutationId: string, name: string, payload: any)
@@ -1229,7 +1344,6 @@ local function patchCachedUnlock(mutationId: string, name: string, payload: any)
 		if typeof(cached.collected) ~= "table" then
 			cached.collected = {}
 		end
-		setPendingCollectCount(pendingCollects + 1)
 	end
 	if typeof(payload.goldenCount) == "number" then
 		cached.goldenCount = math.floor(payload.goldenCount)
@@ -1439,10 +1553,20 @@ function IndexController.init()
 			end
 		end
 		if rowTemplate then
-			rowTemplate.Visible = false
-			local collectOnTemplate = rowTemplate:FindFirstChild("Collect")
-			if collectOnTemplate and collectOnTemplate:IsA("GuiObject") then
-				collectOnTemplate.Visible = false
+			if
+				rowTemplate:FindFirstChild("TypeButtons", true)
+				or rowTemplate:FindFirstChild("CollectAllButton", true)
+				or rowTemplate:FindFirstChild("Quests", true)
+			then
+				warn("[IndexController] Index row template looks like the whole panel — refusing to clone it")
+				rowTemplate = nil
+			else
+				sanitizeIndexRowClone(rowTemplate)
+				rowTemplate.Visible = false
+				local collectOnTemplate = rowTemplate:FindFirstChild("Collect")
+				if collectOnTemplate and collectOnTemplate:IsA("GuiObject") then
+					collectOnTemplate.Visible = false
+				end
 			end
 		else
 			warn("[IndexController] Index Container has no row template")
@@ -1499,6 +1623,13 @@ function IndexController.init()
 	if collectAllNode and collectAllNode:IsA("GuiObject") then
 		collectAllHost = collectAllNode :: GuiObject
 		collectAllHost.Visible = false
+		local collectParent = collectAllHost.Parent
+		if collectParent and collectParent:IsA("GuiObject") and collectParent ~= indexFrame then
+			local pn = string.lower(collectParent.Name)
+			if string.find(pn, "collect", 1, true) then
+				(collectParent :: GuiObject).Visible = false
+			end
+		end
 		local btn = if collectAllNode:IsA("GuiButton")
 			then collectAllNode
 			else collectAllNode:FindFirstChildWhichIsA("GuiButton", true)
@@ -1536,9 +1667,7 @@ function IndexController.init()
 					if typeof(LevelController.clearNextXpOrigin) == "function" then
 						LevelController.clearNextXpOrigin()
 					end
-					if typeof(result) == "table" and typeof(result.pending) == "number" then
-						setPendingCollectCount(result.pending)
-					end
+					setPendingCollectCount(countVisiblePendingCollects())
 					return
 				end
 				markAllCachedCollected()
@@ -1546,7 +1675,7 @@ function IndexController.init()
 				if typeof(result.xp) == "number" then
 					playCollectedXpToast(result.xp)
 				end
-				setPendingCollectCount(if typeof(result.pending) == "number" then result.pending else 0)
+				setPendingCollectCount(0)
 			end)
 		else
 			warn("[IndexController] CollectAllButton has no GuiButton")
@@ -1557,10 +1686,31 @@ function IndexController.init()
 
 	local typeButtons = findTypeButtons()
 	if typeButtons then
+		local wiredRoots: { [Instance]: boolean } = {}
+		local wiredMutations: { [string]: boolean } = {}
 		for mutationId, btnName in IndexConfig.TAB_BUTTON_NAME do
 			local tabRoot = findTabRoot(typeButtons, btnName)
-			if tabRoot then
+			if tabRoot and not wiredRoots[tabRoot] then
 				wireTabInteractions(tabRoot, mutationId)
+				wiredRoots[tabRoot] = true
+				wiredMutations[mutationId] = true
+			end
+		end
+		-- Studio sometimes names tabs 1/2/3 or Gold Type — map leftover hosts by LayoutOrder.
+		local hosts = collectTypeTabHosts(typeButtons)
+		local hostIndex = 1
+		for _, mutationId in IndexConfig.MUTATION_TABS do
+			if not wiredMutations[mutationId] then
+				while hostIndex <= #hosts and wiredRoots[hosts[hostIndex]] do
+					hostIndex += 1
+				end
+				local host = hosts[hostIndex]
+				if host then
+					wireTabInteractions(host, mutationId)
+					wiredRoots[host] = true
+					wiredMutations[mutationId] = true
+					hostIndex += 1
+				end
 			end
 		end
 		syncTypeButtonSelectedOverlays(true)

@@ -24,18 +24,18 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 local OPEN_NOTIF = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_NOTIF = TweenInfo.new(0.12, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
-local HOVER_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local TILT_HOVER = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local TILT_CLICK = TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local TILT_RESET = TweenInfo.new(0.32, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+local TILT_HOVER = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local TILT_CLICK = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local TILT_RESET = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local QUEST_BAR_TWEEN = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local ROW_HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local INDEX_BADGE_SWAY = TweenInfo.new(0.72, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
 local INDEX_BADGE_INNER_SWAY = TweenInfo.new(0.52, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
 local INDEX_BADGE_INNER_PULSE = TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut, -1, true)
-local INDEX_BADGE_SWAY_DEG = 5
-local INDEX_BADGE_INNER_SWAY_DEG = 2.5
+local INDEX_BADGE_SWAY_DEG = 2
+local INDEX_BADGE_INNER_SWAY_DEG = 1
 
 local LOCKED_NAME_COLOR = Color3.fromRGB(0, 0, 0)
 
@@ -456,12 +456,17 @@ local function findTabRoot(typeButtons: Instance, btnName: string): Instance?
 		return direct
 	end
 	local lower = string.lower(btnName)
+	local fuzzy: Instance? = nil
 	for _, ch in typeButtons:GetChildren() do
-		if string.lower(ch.Name) == lower then
+		local n = string.lower(ch.Name)
+		if n == lower then
 			return ch
 		end
+		if string.sub(n, 1, 4) ~= "notif" and (string.find(n, lower, 1, true) or string.find(lower, n, 1, true)) then
+			fuzzy = ch
+		end
 	end
-	return typeButtons:FindFirstChild(btnName, true)
+	return fuzzy
 end
 
 local function syncTypeButtonSelectedOverlays(instant: boolean?)
@@ -478,82 +483,108 @@ local function syncTypeButtonSelectedOverlays(instant: boolean?)
 end
 
 local function resolveTabButton(tabRoot: Instance): GuiButton?
-	if tabRoot:IsA("GuiButton") then
+	if tabRoot:IsA("GuiButton") and not isSelectedOverlayName(tabRoot.Name) then
 		return tabRoot
 	end
-	local btn = tabRoot:FindFirstChildWhichIsA("GuiButton", true)
-	if btn then
-		return btn
+	local named = tabRoot:FindFirstChild("Button")
+	if named and named:IsA("GuiButton") and not isSelectedOverlayName(named.Name) then
+		return named
+	end
+	for _, d in tabRoot:GetDescendants() do
+		if d:IsA("GuiButton") and not isSelectedOverlayName(d.Name) then
+			return d
+		end
 	end
 	return nil
 end
 
-local function resolveTabTiltTarget(tabRoot: Instance, btn: GuiButton): GuiObject
-	local nameLbl = tabRoot:FindFirstChild("Name", true)
-	if nameLbl and nameLbl:IsA("GuiObject") then
-		return nameLbl :: GuiObject
-	end
-	local icon = btn:FindFirstChild("Icon", true)
-	if icon and icon:IsA("GuiObject") then
-		return icon :: GuiObject
-	end
+local function resolveTabTiltTarget(tabRoot: Instance, btn: GuiObject): GuiObject
+	-- Tilt the tab chrome, not the Name label — label rotation reads as "sway".
 	return btn
 end
 
 local function wireTabInteractions(tabRoot: Instance, mutationId: string)
-	local btn = resolveTabButton(tabRoot)
-	if not btn then
-		warn("[IndexController] no GuiButton under TypeButtons." .. tabRoot.Name)
+	if not tabRoot:IsA("GuiObject") then
 		return
 	end
-	btn.Active = true
+	local rootGui = tabRoot :: GuiObject
+	rootGui.Active = true
 	pcall(function()
-		(btn :: any).Interactable = true
+		(rootGui :: any).Interactable = true
 	end)
-	local tiltTarget = resolveTabTiltTarget(tabRoot, btn)
-	-- Dedicated scale so PanelSlideScale on the tab root doesn't fight hover.
-	local scale = btn:FindFirstChild("IndexTabHoverScale")
+	for _, overlay in collectSelectedOverlays(tabRoot) do
+		overlay.Active = false
+		pcall(function()
+			(overlay :: any).Interactable = false
+		end)
+	end
+
+	local btn = resolveTabButton(tabRoot)
+	if btn then
+		btn.Active = true
+		pcall(function()
+			(btn :: any).Interactable = true
+		end)
+	end
+	local tiltTarget = resolveTabTiltTarget(tabRoot, btn or rootGui)
+	local scaleHost: GuiObject = if btn then btn else rootGui
+	local scale = scaleHost:FindFirstChild("IndexTabHoverScale")
 	if not (scale and scale:IsA("UIScale")) then
 		scale = Instance.new("UIScale")
 		scale.Name = "IndexTabHoverScale"
 		scale.Scale = 1
-		scale.Parent = btn
+		scale.Parent = scaleHost
 	end
 	local hoverScale = scale :: UIScale
 
 	local lastFire = 0
 	local function fireSelect()
 		local now = os.clock()
-		if now - lastFire < 0.15 then
+		if now - lastFire < 0.2 then
 			return
 		end
 		lastFire = now
 		UIInteractionSounds.playClick()
-		TweenService:Create(hoverScale, CLICK_TWEEN, { Scale = 0.78 }):Play()
-		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 14 }):Play()
+		TweenService:Create(hoverScale, CLICK_TWEEN, { Scale = 0.94 }):Play()
+		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 3 }):Play()
 		selectMutation(mutationId)
-		task.delay(0.09, function()
+		task.delay(0.08, function()
 			if hoverScale.Parent then
-				TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1.18 }):Play()
+				TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1.05 }):Play()
 			end
 			if tiltTarget.Parent then
-				TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -10 }):Play()
+				TweenService:Create(tiltTarget, TILT_RESET, { Rotation = 0 }):Play()
 			end
 		end)
 	end
 
-	btn.MouseEnter:Connect(function()
+	local function onEnter()
 		UIInteractionSounds.playHover()
-		TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1.16 }):Play()
-		TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -12 }):Play()
-	end)
-	btn.MouseLeave:Connect(function()
+		TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1.05 }):Play()
+		TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -3 }):Play()
+	end
+	local function onLeave()
 		TweenService:Create(hoverScale, HOVER_TWEEN, { Scale = 1 }):Play()
 		TweenService:Create(tiltTarget, TILT_RESET, { Rotation = 0 }):Play()
+	end
+
+	rootGui.InputBegan:Connect(function(input)
+		if
+			input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch
+		then
+			fireSelect()
+		end
 	end)
-	btn.MouseButton1Down:Connect(fireSelect)
-	btn.MouseButton1Click:Connect(fireSelect)
-	btn.Activated:Connect(fireSelect)
+	rootGui.MouseEnter:Connect(onEnter)
+	rootGui.MouseLeave:Connect(onLeave)
+	if btn and btn ~= rootGui then
+		btn.Activated:Connect(fireSelect)
+		btn.MouseEnter:Connect(onEnter)
+		btn.MouseLeave:Connect(onLeave)
+	elseif btn then
+		btn.Activated:Connect(fireSelect)
+	end
 end
 
 local function incomeForCatalog(entry: { name: string, rarity: string, baseIncome: number }, mutationId: string): number
@@ -1044,7 +1075,7 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 	local list = buildSortedCatalog(catalog, selectedMutation)
 	local order = 0
 	local index = 1
-	local BATCH = math.min(ROW_BATCH_SIZE, 10)
+	local BATCH = ROW_BATCH_SIZE
 
 	local function spawnBatch()
 		if token ~= rebuildToken or not container or not rowTemplate then
@@ -1075,8 +1106,7 @@ local function rebuildGrid(state: any, animateRows: boolean?)
 		end
 		index = batchEnd + 1
 		if index <= #list then
-			-- Real frame yield so tab switches don't hitch.
-			task.wait()
+			task.wait(0.03)
 			spawnBatch()
 		else
 			for i = #list + 1, #catalogRows do
@@ -1219,6 +1249,12 @@ end
 
 selectMutation = function(mutationId: string)
 	if not IndexConfig.TAB_DISPLAY_NAME[mutationId] then
+		return
+	end
+	if selectedMutation == mutationId and _gridMutation == mutationId then
+		hideTabNotif(mutationId)
+		syncTypeButtonSelectedOverlays(false)
+		applyLuckyBlockHeaderVisual(mutationId == IndexConfig.LUCKY_BLOCK_TAB)
 		return
 	end
 	selectedMutation = mutationId

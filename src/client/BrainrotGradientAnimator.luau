@@ -31,6 +31,7 @@ local ANIMATED_BY_NAME: { [string]: AnimSpec } = {
 local tracked: { [UIGradient]: AnimSpec } = {}
 local heartbeatConn: RBXScriptConnection? = nil
 local phaseSeed = math.random() * 1000
+local animAccum = 0.0
 
 local function specForGradient(gradient: UIGradient): AnimSpec?
 	return ANIMATED_BY_NAME[gradient.Name]
@@ -40,7 +41,7 @@ local function ensureHeartbeat()
 	if heartbeatConn then
 		return
 	end
-	heartbeatConn = RunService.Heartbeat:Connect(function()
+	heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 		if not next(tracked) then
 			if heartbeatConn then
 				heartbeatConn:Disconnect()
@@ -48,6 +49,11 @@ local function ensureHeartbeat()
 			end
 			return
 		end
+		animAccum += dt
+		if animAccum < 0.08 then
+			return
+		end
+		animAccum = 0
 
 		local now = os.clock() + phaseSeed
 		for gradient, spec in pairs(tracked) do

@@ -970,9 +970,7 @@ local function buildStrip(parentGui: PlayerGui)
 		stripRoot.Rotation = math.sin(bobPhase * 0.55) * 0.35
 		local grad = trackRainbow
 		if grad and grad.Parent then
-			grad.Rotation = 0
-			grad.Offset = Vector2.zero
-			grad.Color = rainbowColorAt(bobPhase * 0.12)
+			grad.Offset = Vector2.new(math.sin(bobPhase * 0.18) * 0.4, 0)
 		end
 	end)
 

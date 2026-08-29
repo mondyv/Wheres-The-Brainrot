@@ -275,12 +275,6 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	footProp = model
 
 	destroyHandGrips(character)
-	gripKillConn = RunService.Heartbeat:Connect(function()
-		local char = player.Character
-		if char then
-			destroyHandGrips(char)
-		end
-	end)
 	gripChildConn = character.DescendantAdded:Connect(function(child)
 		if
 			(child:IsA("Motor6D") or child:IsA("Weld") or child:IsA("WeldConstraint"))
@@ -1263,15 +1257,14 @@ local function onUnequip()
 end
 
 local function isUpgradesShopOpen(): boolean
-	local ok, main = pcall(function()
-		return PlayerGuiMain.ensure(player)
+	local okHud, hud = pcall(function()
+		return require(script.Parent.HUDController)
 	end)
-	if not ok or not main then
-		return false
+	if okHud and typeof(hud) == "table" and typeof((hud :: any).getCurrentFrame) == "function" then
+		local frame = (hud :: any).getCurrentFrame()
+		return typeof(frame) == "Instance" and frame.Name == "Upgrades" and frame.Visible == true
 	end
-	local frames = main:FindFirstChild("Frames")
-	local upgrades = frames and frames:FindFirstChild("Upgrades")
-	return upgrades ~= nil and upgrades:IsA("GuiObject") and upgrades.Visible == true
+	return false
 end
 
 local function bindTool(tool: Tool)
@@ -1284,38 +1277,47 @@ local function bindTool(tool: Tool)
 	boundTools[tool] = true
 
 	local function startWorkoutFromEquip()
-		local gearId = tool:GetAttribute(GearConfig.GEAR_ID_ATTR)
-		if typeof(gearId) ~= "number" then
-			return
-		end
-		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
-			return
-		end
-		-- Never start curls while browsing the gear shop.
-		if isUpgradesShopOpen() then
-			return
-		end
-		if not startWorkoutFn then
-			return
-		end
-		local ok = startWorkoutFn:InvokeServer(gearId)
-		if not ok then
-			return
-		end
-		local character = player.Character
-		local hum = getHumanoid(character)
-		if character and hum then
-			lockMovement(hum, true)
-			playWorkoutAnim(character)
-			task.defer(function()
-				if tool.Parent == character then
-					attachGearAcrossFeet(character, tool)
-				end
-			end)
-			if tool:GetAttribute("RainbowGear") == true then
-				GearRainbowFX.attach(tool)
+		task.spawn(function()
+			local gearId = tool:GetAttribute(GearConfig.GEAR_ID_ATTR)
+			if typeof(gearId) ~= "number" then
+				return
 			end
-		end
+			if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+				return
+			end
+			if isUpgradesShopOpen() then
+				return
+			end
+			local deadline = os.clock() + 8
+			while not startWorkoutFn and os.clock() < deadline do
+				task.wait(0.2)
+			end
+			if not startWorkoutFn then
+				warn("[WorkoutController] StartWorkout remote missing")
+				return
+			end
+			if tool.Parent ~= player.Character then
+				return
+			end
+			local ok = startWorkoutFn:InvokeServer(gearId)
+			if not ok then
+				return
+			end
+			local character = player.Character
+			local hum = getHumanoid(character)
+			if character and hum then
+				lockMovement(hum, true)
+				playWorkoutAnim(character)
+				task.defer(function()
+					if tool.Parent == character then
+						attachGearAcrossFeet(character, tool)
+					end
+				end)
+				if tool:GetAttribute("RainbowGear") == true then
+					GearRainbowFX.attach(tool)
+				end
+			end
+		end)
 	end
 
 	table.insert(

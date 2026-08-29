@@ -204,20 +204,8 @@ local function findLuckyBlockTemplate(blockId: string, variant: string?): Model?
 end
 
 function M.getLuckyBlockIcon(blockId: string): string
-	-- Prefer curated UI icons from Lucky Block Icons.
-	local fromIcons = LuckyBlockCatalog.resolveIconAssetId(blockId)
-	if fromIcons ~= "" then
-		return fromIcons
-	end
-	local def = LuckyBlockCatalog.get(blockId)
-	local template = findLuckyBlockTemplate(blockId, if def then def.variant else nil)
-	if template then
-		local icon = pickIconFromModel(template)
-		if icon ~= "" then
-			return icon
-		end
-	end
-	return ""
+	-- Only curated UI icons. Never walk lucky-block Mesh templates (that hitch Join).
+	return LuckyBlockCatalog.resolveIconAssetId(blockId)
 end
 
 local function ensureMaps(player: Player)
@@ -549,19 +537,23 @@ function M.packLuckyBlockStateForClient(player: Player): {
 			unlocked[k] = true
 		end
 	end
-	local catalog = {}
-	for _, def in LuckyBlockCatalog.BLOCKS do
-		table.insert(catalog, {
-			name = def.id,
-			displayName = def.displayName,
-			rarity = LuckyBlockCatalog.primaryDropRarity(def.id),
-			baseIncome = 0,
-			icon = M.getLuckyBlockIcon(def.id),
-			tier = def.tier,
-			dropsSummary = LuckyBlockCatalog.formatDropsSummary(def.id),
-			dropsMultiline = LuckyBlockCatalog.formatDropsMultiline(def.id),
-			kind = "luckyblock",
-		})
+	local catalog = packedCatalogCache.luckyblock
+	if not catalog then
+		catalog = {}
+		for _, def in LuckyBlockCatalog.BLOCKS do
+			table.insert(catalog, {
+				name = def.id,
+				displayName = def.displayName,
+				rarity = LuckyBlockCatalog.primaryDropRarity(def.id),
+				baseIncome = 0,
+				icon = M.getLuckyBlockIcon(def.id),
+				tier = def.tier,
+				dropsSummary = LuckyBlockCatalog.formatDropsSummary(def.id),
+				dropsMultiline = LuckyBlockCatalog.formatDropsMultiline(def.id),
+				kind = "luckyblock",
+			})
+		end
+		packedCatalogCache.luckyblock = catalog
 	end
 	return {
 		unlocked = unlocked,

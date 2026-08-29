@@ -115,7 +115,7 @@ applyToolbarInitialHiddenState()
 local function stripClonedGui3D(row: Instance)
 	local heavy: { Instance } = {}
 	for _, d in row:GetDescendants() do
-		if d:IsA("ViewportFrame") or d:IsA("WorldModel") or d:IsA("BasePart") or d:IsA("Model") then
+		if d:IsA("ViewportFrame") or d:IsA("WorldModel") then
 			table.insert(heavy, d)
 		end
 	end
@@ -242,7 +242,7 @@ local activeToolbarDrag = false
 local dragSuppressedToolbarClick = false
 local mobileDragHoldToken = 0
 local DRAG_THRESHOLD_PX = 14
-local DRAG_GHOST_THRESHOLD_PX = 6
+local DRAG_GHOST_THRESHOLD_PX = 18
 -- Shared scale for the single hotbar slot under the cursor while dragging (not the whole bar).
 local HOTBAR_DRAG_HOVER_SCALE = 1.06
 
@@ -3652,7 +3652,6 @@ local ToolbarController = {}
 		syncBackpackSelectionStrokes()
 		requestEquipBrainrotSlot(listIdx, true)
 		queueRebuildSlots()
-		task.delay(0.2, queueRebuildSlots)
 	end
 
 	-- Lucky blocks / extra tools parked in the bag: tap to equip without a hotbar cell.
@@ -5281,11 +5280,19 @@ local ToolbarController = {}
 				syncToolbarGamepadCursor()
 				return
 			end
+			local press = pendingToolbarPress
 			local pnd = pendingToolbarDrag
 			pendingToolbarDrag = nil
 			pendingToolbarPress = nil
 			activeToolbarDrag = false
 			if not pnd then
+				if press then
+					if press.kind == "backpack" then
+						requestEquipFromBackpack(press.idx)
+					elseif press.tool then
+						requestEquipFromBackpackExtra(press.tool)
+					end
+				end
 				lastResolvedHotbarDropSlot = nil
 				clearDragGhost()
 				syncToolbarGamepadCursor()

@@ -1153,44 +1153,38 @@ local function gridHasVisibleRows(): boolean
 end
 
 local function flattenIndexRow3D(row: Instance)
-	-- Catalog clones must not keep ViewportFrame 3D meshes (that was 8GB+ RAM).
-	-- If Icon is a ViewportFrame, swap it for an ImageLabel first so populateRow
-	-- can still set the texture.
-	local vfIcon: Instance? = nil
-	local iconNode = row:FindFirstChild("Icon", true)
-	if iconNode and iconNode:IsA("ViewportFrame") then
-		vfIcon = iconNode
-	elseif iconNode then
-		vfIcon = iconNode:FindFirstChildWhichIsA("ViewportFrame")
+	if row:GetAttribute("IndexFlat") == true then
+		return
 	end
-	if vfIcon and vfIcon:IsA("ViewportFrame") then
-		local vf = vfIcon :: ViewportFrame
-		local img = Instance.new("ImageLabel")
-		img.Name = "Icon"
-		img.BackgroundTransparency = 1
-		img.BorderSizePixel = 0
-		img.Size = vf.Size
-		img.Position = vf.Position
-		img.AnchorPoint = vf.AnchorPoint
-		img.LayoutOrder = vf.LayoutOrder
-		img.ZIndex = vf.ZIndex
-		img.ScaleType = Enum.ScaleType.Fit
-		local blackout = vf:FindFirstChild("Blackout")
-		if blackout then
-			blackout.Parent = img
-		end
-		img.Parent = vf.Parent
-		vf:Destroy()
-	end
+	-- Only ViewportFrame / WorldModel. Destroying Model/BasePart also deleted backpack/Index buttons.
 	local heavy: { Instance } = {}
 	for _, d in row:GetDescendants() do
-		if d:IsA("ViewportFrame") or d:IsA("WorldModel") or d:IsA("BasePart") or d:IsA("Model") then
+		if d:IsA("ViewportFrame") or d:IsA("WorldModel") then
 			table.insert(heavy, d)
 		end
 	end
 	for _, d in heavy do
+		if d.Name == "Icon" and d:IsA("ViewportFrame") then
+			local vf = d :: ViewportFrame
+			local img = Instance.new("ImageLabel")
+			img.Name = "Icon"
+			img.BackgroundTransparency = 1
+			img.BorderSizePixel = 0
+			img.Size = vf.Size
+			img.Position = vf.Position
+			img.AnchorPoint = vf.AnchorPoint
+			img.LayoutOrder = vf.LayoutOrder
+			img.ZIndex = vf.ZIndex
+			img.ScaleType = Enum.ScaleType.Fit
+			local blackout = vf:FindFirstChild("Blackout")
+			if blackout then
+				blackout.Parent = img
+			end
+			img.Parent = vf.Parent
+		end
 		d:Destroy()
 	end
+	row:SetAttribute("IndexFlat", true)
 end
 
 local function anyBrainrotState(): any?
@@ -1339,10 +1333,8 @@ local function refreshStateInBackground(mutationId: string, animateRows: boolean
 		if not indexFrame or not indexFrame.Visible then
 			return
 		end
-		local showingLucky = selectedMutation == IndexConfig.LUCKY_BLOCK_TAB
-		if mutationId == selectedMutation or (mutationId ~= IndexConfig.LUCKY_BLOCK_TAB and not showingLucky) then
-			local view = stateCache[selectedMutation] or state
-			rebuildGrid(view, animateRows)
+		if mutationId == selectedMutation then
+			rebuildGrid(state, animateRows)
 		end
 	end)
 end

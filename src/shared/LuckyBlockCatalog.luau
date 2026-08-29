@@ -398,7 +398,7 @@ local function textureFromNode(node: Instance): string
 	return ""
 end
 
--- Named node, then non-mutation descendants (Studio often nests ImageLabel → Mesh).
+-- Named ImageLabel only. Never GetDescendants (Mesh trees hitch Index).
 local function readNamedIcon(node: Instance?): string
 	if not node then
 		return ""
@@ -407,29 +407,21 @@ local function readNamedIcon(node: Instance?): string
 	if direct ~= "" then
 		return direct
 	end
+	local named = node:FindFirstChild("ImageLabel") or node:FindFirstChild("Icon")
+	if named then
+		local tex = textureFromNode(named)
+		if tex ~= "" then
+			return tex
+		end
+	end
 	for _, child in node:GetChildren() do
+		if child.Name == "Mesh" or child:IsA("BasePart") or child:IsA("Model") or child:IsA("WorldModel") then
+			continue
+		end
 		if isMutationIconName(child.Name) then
 			continue
 		end
 		local tex = textureFromNode(child)
-		if tex ~= "" then
-			return tex
-		end
-		for _, desc in child:GetDescendants() do
-			if isMutationIconName(desc.Name) then
-				continue
-			end
-			tex = textureFromNode(desc)
-			if tex ~= "" then
-				return tex
-			end
-		end
-	end
-	for _, desc in node:GetDescendants() do
-		if isMutationIconName(desc.Name) then
-			continue
-		end
-		local tex = textureFromNode(desc)
 		if tex ~= "" then
 			return tex
 		end

@@ -2866,6 +2866,7 @@ local ToolbarController = {}
 		end
 	end
 
+	local lastBackpackToggleAt = 0.0
 	local function toggleBackpackPanel()
 		if not canUseToolbar then
 			return
@@ -2873,6 +2874,11 @@ local ToolbarController = {}
 		if not backpackFrameRef then
 			return
 		end
+		local now = os.clock()
+		if now - lastBackpackToggleAt < 0.12 then
+			return
+		end
+		lastBackpackToggleAt = now
 		setBackpackPanelOpen(not isBackpackPanelOpen)
 	end
 
@@ -2895,6 +2901,40 @@ local ToolbarController = {}
 		return nil
 	end
 
+	local function ensureToggleBackpackHitButton(iconHost: GuiObject): GuiButton
+		if iconHost:IsA("GuiButton") then
+			return iconHost :: GuiButton
+		end
+		local nested = slotPrimaryButton(iconHost)
+		if nested then
+			nested.Size = UDim2.fromScale(1, 1)
+			nested.Position = UDim2.fromScale(0, 0)
+			nested.BackgroundTransparency = 1
+			if nested:IsA("ImageButton") then
+				(nested :: ImageButton).ImageTransparency = 1
+			end
+			if nested:IsA("TextButton") then
+				(nested :: TextButton).Text = ""
+			end
+			return nested
+		end
+		local existing = iconHost:FindFirstChild("_ToggleHit")
+		if existing and existing:IsA("GuiButton") then
+			return existing
+		end
+		local hit = Instance.new("TextButton")
+		hit.Name = "_ToggleHit"
+		hit.BackgroundTransparency = 1
+		hit.Text = ""
+		hit.AutoButtonColor = false
+		hit.Size = UDim2.fromScale(1, 1)
+		hit.Position = UDim2.fromScale(0, 0)
+		hit.AnchorPoint = Vector2.new(0, 0)
+		hit.ZIndex = iconHost.ZIndex + 8
+		hit.Parent = iconHost
+		return hit
+	end
+
 	local function wireToggleBackpackIcon()
 		local iconHost = findToggleBackpackImageHost()
 		if not iconHost then
@@ -2903,18 +2943,11 @@ local ToolbarController = {}
 		toggleBackpackIconRef = iconHost
 		toggleBackpackRef = iconHost
 
-		local btn: GuiButton? = nil
-		if iconHost:IsA("GuiButton") then
-			btn = iconHost :: GuiButton
-		else
-			btn = slotPrimaryButton(iconHost)
-		end
-		if not btn then
-			warn("[ToolbarController] ToggleBackpackImage has no GuiButton")
-			return
-		end
-
-		disableGuiInputCapture(iconHost)
+		-- Hotbar is non-interactive for slot hit-testing; the icon itself must still receive clicks.
+		-- Studio often uses an ImageLabel here, so clicks were falling through to the world.
+		iconHost.Active = true
+		passthroughChildClicks(iconHost)
+		local btn = ensureToggleBackpackHitButton(iconHost)
 		enableGuiButtonInput(btn)
 		-- Pin Studio size BEFORE any layout pass mutates it.
 		captureStudioToggleIconSize(iconHost)
@@ -2924,8 +2957,8 @@ local ToolbarController = {}
 		if tiltTarget ~= iconHost then
 			prepareToggleTiltPivot(tiltTarget)
 		end
-		-- Tilt + scale hover only (no glisten/spin polish). Don't rewrite Studio Image assets.
-		UIButtonEffects.wireTiltHoverButton(btn, toggleBackpackPanel, iconHost, tiltTarget, false)
+		-- Same toggle as ` / Y. skipTapGate so a camera-drag doesn't eat this click.
+		UIButtonEffects.wireTiltHoverButton(btn, toggleBackpackPanel, iconHost, tiltTarget, false, true)
 		wireToggleBackpackIconResizeSync()
 		task.defer(function()
 			-- Second pin after AbsoluteSize settles (scale-sized Studio icons).
@@ -5002,7 +5035,7 @@ local ToolbarController = {}
 				if not canUseToolbar then
 					return Enum.ContextActionResult.Sink
 				end
-				setBackpackPanelOpen(not isBackpackPanelOpen)
+				toggleBackpackPanel()
 				UIInteractionSounds.playClick()
 				return Enum.ContextActionResult.Sink
 			end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Backquote, GamepadInput.SECONDARY)

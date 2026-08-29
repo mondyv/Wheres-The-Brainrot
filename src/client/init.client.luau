@@ -89,19 +89,19 @@ task.defer(function()
 	-- Core HUD (cash, sidebar) — shown as soon as loading dismisses.
 	local function bootCoreUI()
 		require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate")).init()
-		require(script.HUDController).init()
-		require(script.TopNotifController).init()
-		require(script.CashBoostController).init()
+		initClientModule("HUDController")
+		initClientModule("TopNotifController")
+		initClientModule("CashBoostController")
 		-- Before SideUI is visible: hide unowned gamepass icons (place file defaults Visible).
-		require(script.BoostIconsController).init()
-		require(script.UIEffectsBootstrap).init()
-		require(script.TabScreenController).init()
-		require(script.ReturnController).init()
-		require(script.SafezoneTopButtonsController).init()
-		require(script.LandActivityStripController).init()
-		require(script.LandLocksController).init()
-		require(script.RandomBrainrotController):Init()
-		require(script.SafeZoneLightingController).init()
+		initClientModule("BoostIconsController")
+		initClientModule("UIEffectsBootstrap")
+		initClientModule("TabScreenController")
+		initClientModule("ReturnController")
+		initClientModule("SafezoneTopButtonsController")
+		initClientModule("LandActivityStripController")
+		initClientModule("LandLocksController")
+		initClientModule("RandomBrainrotController")
+		initClientModule("SafeZoneLightingController")
 	end
 
 	-- Panel innards (Store buy buttons, Index tabs, etc.).
@@ -199,64 +199,64 @@ task.defer(function()
 	local function bootBackgroundUI()
 		runBootStepsParallel({
 			function()
-				require(script.ReviveController).init()
+				initClientModule("ReviveController")
 			end,
 			function()
-				require(script.OfflineEarningsController).init()
+				initClientModule("OfflineEarningsController")
 			end,
 			function()
-				require(script.LuckyBlockController).init()
+				initClientModule("LuckyBlockController")
 			end,
 			function()
-				require(script.BrainrotVisualSettings).init()
+				initClientModule("BrainrotVisualSettings")
 			end,
 			function()
-				require(script.BrainrotRainbowMutationEffect).init()
+				initClientModule("BrainrotRainbowMutationEffect")
 			end,
 			function()
-				require(script.AutoCollectController).init()
+				initClientModule("AutoCollectController")
 			end,
 			function()
-				require(script.BoosterPackShowersController).init()
+				initClientModule("BoosterPackShowersController")
 			end,
 			function()
-				require(script.MailboxFeedbackController).init()
+				initClientModule("MailboxFeedbackController")
 			end,
 			function()
-				require(script.StealController).init()
+				initClientModule("StealController")
 			end,
 			function()
-				require(script.XrayController).init()
+				initClientModule("XrayController")
 			end,
 			function()
-				require(script.LeaderboardRankController).init()
+				initClientModule("LeaderboardRankController")
 			end,
 			function()
-				require(script.ChatTagsController).init()
+				initClientModule("ChatTagsController")
 			end,
 			function()
-				require(script.ServerChatTipsController).init()
+				initClientModule("ServerChatTipsController")
 			end,
 			function()
-				require(script.CustomBubbleChatController).init()
+				initClientModule("CustomBubbleChatController")
 			end,
 			function()
-				require(script.AdminCommandBar).init()
+				initClientModule("AdminCommandBar")
 			end,
 			function()
-				require(script.AdminFlyController).init()
+				initClientModule("AdminFlyController")
 			end,
 			function()
-				require(script.AdminSpectateController).init()
+				initClientModule("AdminSpectateController")
 			end,
 			function()
-				require(script.TutorialController).init()
+				initClientModule("TutorialController")
 			end,
 			function()
-				require(script.JumpButtonSwingRing).init()
+				initClientModule("JumpButtonSwingRing")
 			end,
 			function()
-				require(script.TimCheeseQuestController).init()
+				initClientModule("TimCheeseQuestController")
 			end,
 			function()
 				local shared = ReplicatedStorage:WaitForChild("EssentialsShared", 10)
@@ -380,49 +380,49 @@ task.defer(function()
 		task.wait(2)
 		runBootSteps({
 			function()
-				require(script.BackgroundMusicController).init()
+				initClientModule("BackgroundMusicController")
 			end,
 			function()
-				require(script.UIInteractionSounds).init()
+				initClientModule("UIInteractionSounds")
 			end,
 			function()
-				require(script.GameSoundEffects).init()
+				initClientModule("GameSoundEffects")
 			end,
 			function()
-				require(script.BrainrotSFX).init()
+				initClientModule("BrainrotSFX")
 			end,
 			function()
-				require(script.SafeZoneFlashController).init()
+				initClientModule("SafeZoneFlashController")
 			end,
 			function()
-				require(script.SafeZoneLightingController).init()
+				initClientModule("SafeZoneLightingController")
 			end,
 			function()
-				require(script.SafeZoneBeaconController).init()
+				initClientModule("SafeZoneBeaconController")
 			end,
 			function()
-				require(script.PlotOutlineController).init()
+				initClientModule("PlotOutlineController")
 			end,
 			function()
-				require(script.FireflyController).init()
+				initClientModule("FireflyController")
 			end,
 			function()
-				require(script.LowGraphicsController).init()
+				initClientModule("LowGraphicsController")
 			end,
 			function()
-				require(script.WebTrapController).init()
+				initClientModule("WebTrapController")
 			end,
 			function()
-				require(script.BushFloatingClaimController).init()
+				initClientModule("BushFloatingClaimController")
 			end,
 			function()
-				require(script.BaseReturnGuideController).init()
+				initClientModule("BaseReturnGuideController")
 			end,
 			function()
-				require(script.GlobalRaritySpawnController).init()
+				initClientModule("GlobalRaritySpawnController")
 			end,
 			function()
-				require(script.LeaderboardsController).init()
+				initClientModule("LeaderboardsController")
 			end,
 		}, 1)
 	end)

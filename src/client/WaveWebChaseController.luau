@@ -181,6 +181,8 @@ local function waveStudioCf(pos: Vector3): CFrame
 end
 
 -- Studio Position/Orientation on the primary part (not Model WorldPivot).
+-- Raw PivotTo compounds the template's pivot and sits the wall sideways / left.
+-- Bake the mesh once (same as the working spawn), then PivotTo only translates.
 local function applyWaveStudioPose(model: Model, pos: Vector3)
 	local target = waveStudioCf(pos)
 	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
@@ -189,12 +191,19 @@ local function applyWaveStudioPose(model: Model, pos: Vector3)
 		return
 	end
 	model.PrimaryPart = primary
-	-- PivotTo uses WorldPivot. This mesh's pivot is not the wall, so a raw
-	-- PivotTo compounds template rotation and sits the web sideways / left.
-	-- Align pivot to the primary part first (does not move parts), then PivotTo.
-	pcall(function()
-		model.WorldPivot = primary.CFrame
-	end)
+	if model:GetAttribute("WaveStudioPoseBaked") ~= true then
+		local delta = target * primary.CFrame:Inverse()
+		for _, d in model:GetDescendants() do
+			if d:IsA("BasePart") then
+				d.CFrame = delta * d.CFrame
+			end
+		end
+		pcall(function()
+			model.WorldPivot = target
+		end)
+		model:SetAttribute("WaveStudioPoseBaked", true)
+		return
+	end
 	model:PivotTo(target)
 end
 

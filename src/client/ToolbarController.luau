@@ -1321,36 +1321,63 @@ local ToolbarController = {}
 	local generatedBackpackRows: { [number]: GuiObject } = {}
 	local backpackRowSig: { [number]: string } = {}
 	local backpackScrollingEnsured = false
+	local backpackRowsReady = false
+
+	local function isInsideGeneratedBackpackRow(inst: Instance, container: Instance): boolean
+		local p: Instance? = inst.Parent
+		while p and p ~= container do
+			if p:IsA("GuiObject") and (p :: GuiObject):GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) == true then
+				return true
+			end
+			p = p.Parent
+		end
+		return false
+	end
 
 	findBackpackTemplateRow = function(container: Instance?): GuiObject?
 		if not container then
 			return nil
 		end
-		if backpackTemplateRow and backpackTemplateRow:IsDescendantOf(container) then
+		if
+			backpackTemplateRow
+			and backpackTemplateRow.Parent
+			and backpackTemplateRow:GetAttribute(BACKPACK_TEMPLATE_ATTRIBUTE) == true
+			and backpackTemplateRow:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) ~= true
+			and not isInsideGeneratedBackpackRow(backpackTemplateRow, container)
+		then
 			backpackTemplateRow.Visible = false
 			backpackTemplateRow.LayoutOrder = 100000
 			return backpackTemplateRow
 		end
+		backpackTemplateRow = nil
 
-		local candidates: { Instance } = {}
-		local direct = container:FindFirstChild("1")
-		if direct then
-			table.insert(candidates, direct)
-		end
-		for _, inst in container:GetDescendants() do
-			if inst.Name == "1" then
-				table.insert(candidates, inst)
+		local function consider(candidate: Instance?): GuiObject?
+			if
+				not candidate
+				or not candidate:IsA("GuiObject")
+				or candidate:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) == true
+				or isInsideGeneratedBackpackRow(candidate, container)
+			then
+				return nil
 			end
+			local gui = candidate :: GuiObject
+			gui:SetAttribute(BACKPACK_TEMPLATE_ATTRIBUTE, true)
+			gui.Visible = false
+			gui.LayoutOrder = 100000
+			backpackTemplateRow = gui
+			return gui
 		end
 
-		for _, candidate in candidates do
-			if candidate:IsA("GuiObject") and candidate:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) ~= true then
-				local gui = candidate :: GuiObject
-				gui:SetAttribute(BACKPACK_TEMPLATE_ATTRIBUTE, true)
-				gui.Visible = false
-				gui.LayoutOrder = 100000
-				backpackTemplateRow = gui
-				return gui
+		local found = consider(container:FindFirstChild("1"))
+		if found then
+			return found
+		end
+		for _, child in container:GetChildren() do
+			if child:IsA("ScrollingFrame") or child.Name == "Scrolling" or child.Name == "Holder" then
+				found = consider(child:FindFirstChild("1"))
+				if found then
+					return found
+				end
 			end
 		end
 		return nil
@@ -1382,26 +1409,6 @@ local ToolbarController = {}
 		if generated then
 			return generated
 		end
-
-		local rowName = tostring(index)
-		local direct = container:FindFirstChild(rowName)
-		if
-			direct
-			and direct:IsA("GuiObject")
-			and direct:GetAttribute(BACKPACK_TEMPLATE_ATTRIBUTE) ~= true
-			and direct:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) ~= true
-		then
-			return direct :: GuiObject
-		end
-		local nested = container:FindFirstChild(rowName, true)
-		if
-			nested
-			and nested:IsA("GuiObject")
-			and nested:GetAttribute(BACKPACK_TEMPLATE_ATTRIBUTE) ~= true
-			and nested:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) ~= true
-		then
-			return nested :: GuiObject
-		end
 		return nil
 	end
 
@@ -1409,8 +1416,45 @@ local ToolbarController = {}
 		if not container then
 			return
 		end
+
+		if backpackRowsReady then
+			local missing = false
+			for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
+				local row = generatedBackpackRows[idx]
+				if not row or not row.Parent then
+					missing = true
+					break
+				end
+			end
+			if not missing then
+				return
+			end
+		end
+
+		table.clear(generatedBackpackRows)
+		local seenIndex: { [number]: GuiObject } = {}
+		for _, inst in container:GetDescendants() do
+			if inst:IsA("GuiObject") and inst:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) == true then
+				local rowIndex = inst:GetAttribute(BACKPACK_UI_ROW_ATTRIBUTE)
+				if typeof(rowIndex) ~= "number" then
+					inst:Destroy()
+					continue
+				end
+				local idx = math.floor(rowIndex)
+				if idx < 1 or idx > MAX_BACKPACK_BRAINROT_SLOTS then
+					inst:Destroy()
+				elseif seenIndex[idx] then
+					inst:Destroy()
+				else
+					seenIndex[idx] = inst :: GuiObject
+					generatedBackpackRows[idx] = inst :: GuiObject
+				end
+			end
+		end
+
 		local template = findBackpackTemplateRow(container)
 		if not template then
+			backpackRowsReady = next(generatedBackpackRows) ~= nil
 			return
 		end
 
@@ -1418,32 +1462,21 @@ local ToolbarController = {}
 		template.Visible = false
 		template.LayoutOrder = 100000
 
-		table.clear(generatedBackpackRows)
-		for _, inst in rowsParent:GetChildren() do
-			if inst:IsA("GuiObject") and inst:GetAttribute(BACKPACK_GENERATED_ATTRIBUTE) == true then
-				local rowIndex = inst:GetAttribute(BACKPACK_UI_ROW_ATTRIBUTE)
-				if typeof(rowIndex) ~= "number" or rowIndex < 1 or rowIndex > MAX_BACKPACK_BRAINROT_SLOTS then
-					inst:Destroy()
-				else
-					generatedBackpackRows[math.floor(rowIndex)] = inst :: GuiObject
-				end
-			end
-		end
-
 		for idx = 1, MAX_BACKPACK_BRAINROT_SLOTS do
 			local row = generatedBackpackRows[idx]
 			if not row or not row.Parent then
 				row = template:Clone()
+				row.Visible = false
 				row.Parent = rowsParent
 			end
-			row.Name = tostring(idx)
+			row.Name = "__ToolbarBP_" .. tostring(idx)
 			row:SetAttribute(BACKPACK_TEMPLATE_ATTRIBUTE, false)
 			row:SetAttribute(BACKPACK_GENERATED_ATTRIBUTE, true)
 			row:SetAttribute(BACKPACK_UI_ROW_ATTRIBUTE, idx)
 			row.LayoutOrder = idx
-			row.Visible = false
 			generatedBackpackRows[idx] = row
 		end
+		backpackRowsReady = true
 	end
 
 	local BACKPACK_CHROME_NAMES = {

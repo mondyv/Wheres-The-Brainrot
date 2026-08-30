@@ -351,396 +351,541 @@ local _BACKPACK_ROW_DRAG_HOVER_SCALE = 1.0
 
 local ToolbarController = {}
 
--- Luau allows at most 200 locals per function; the module chunk already holds ~100.
--- Wrap helpers + init in an IIFE so they get their own register scope.
-(function()
-	-- ── Helpers ───────────────────────────────────────────────────────────────────
+-- Hoisted out of the init IIFE so that function stays under Luau's 200-local limit.
 
-	local function getOrAddUIScale(parent: Instance): UIScale
-		local s = parent:FindFirstChildOfClass("UIScale")
-		if s then
-			return s
-		end
-		s = Instance.new("UIScale")
-		s.Parent = parent
+local function getOrAddUIScale(parent: Instance): UIScale
+	local s = parent:FindFirstChildOfClass("UIScale")
+	if s then
 		return s
 	end
+	s = Instance.new("UIScale")
+	s.Parent = parent
+	return s
+end
 
-	local function getHumanoid(): Humanoid?
-		local char = player.Character
-		return char and char:FindFirstChildOfClass("Humanoid") :: Humanoid? or nil
+local function getHumanoid(): Humanoid?
+	local char = player.Character
+	return char and char:FindFirstChildOfClass("Humanoid") :: Humanoid? or nil
+end
+
+local function getBackpack(): Folder?
+	return player:FindFirstChildOfClass("Backpack") :: Folder?
+end
+
+-- Mobile: EquipTool during a GUI tap is applied, then the same touch is
+-- treated as a world click and the tool is put away. Highlight stays,
+-- nothing is in the hand. Wait until the finger is up, then keep trying
+-- until the tool is actually on the character.
+local function characterHoldsTool(tool: Tool): boolean
+	local char = player.Character
+	return char ~= nil and tool.Parent == char
+end
+
+local function forceToolIntoHand(tool: Tool)
+	local char = player.Character
+	if not char or not tool.Parent then
+		return
 	end
-
-	local function getBackpack(): Folder?
-		return player:FindFirstChildOfClass("Backpack") :: Folder?
+	if tool.Parent == char then
+		return
 	end
-
-	-- Mobile: EquipTool during a GUI tap is applied, then the same touch is
-	-- treated as a world click and the tool is put away. Highlight stays,
-	-- nothing is in the hand. Wait until the finger is up, then keep trying
-	-- until the tool is actually on the character.
-	local function characterHoldsTool(tool: Tool): boolean
-		local char = player.Character
-		return char ~= nil and tool.Parent == char
+	-- Parenting onto the character survives a mobile GUI tap. EquipTool on the
+	-- same touch is applied then immediately put away, which left the outline on
+	-- and nothing in the hand.
+	tool.Parent = char
+	if tool.Parent == char then
+		return
 	end
-
-	local function holdToolInHand(tool: Tool, stillWanted: () -> boolean)
-		if not tool.Parent then
-			return
-		end
-		task.spawn(function()
-			local waitForLift = UserInputService.TouchEnabled
-				and UserInputService:GetLastInputType() == Enum.UserInputType.Touch
-			local firstTryAt = if waitForLift then os.clock() + 0.12 else os.clock()
-			local deadline = os.clock() + 2.0
-			while os.clock() < deadline do
-				if not stillWanted() or not tool.Parent then
-					return
-				end
-				if characterHoldsTool(tool) then
-					return
-				end
-				if os.clock() >= firstTryAt then
-					local hum = getHumanoid()
-					if hum then
-						hum:EquipTool(tool)
-					end
-				end
-				task.wait(0.1)
-			end
-		end)
+	local hum = getHumanoid()
+	if hum then
+		hum:EquipTool(tool)
 	end
+end
 
-	local function isExtraHotbarTool(tool: Tool): boolean
-		if tool:GetAttribute("BrainrotTool") == true then
-			local invIdx = tool:GetAttribute("BrainrotInvIndex")
-			return typeof(invIdx) ~= "number"
-		end
-		return true
+local function holdToolInHand(tool: Tool, stillWanted: () -> boolean)
+	if not tool.Parent then
+		return
 	end
-
-	local function collectExtraHotbarTools(): { Tool }
-		local seen: { [Tool]: boolean } = {}
-		local out: { Tool } = {}
-		local function addFrom(root: Instance?)
-			if not root then
+	task.spawn(function()
+		local waitForLift = UserInputService.TouchEnabled
+			and UserInputService:GetLastInputType() == Enum.UserInputType.Touch
+		local firstTryAt = if waitForLift then os.clock() + 0.05 else os.clock()
+		local deadline = os.clock() + 2.0
+		while os.clock() < deadline do
+			if not stillWanted() or not tool.Parent then
 				return
 			end
-			for _, item in root:GetChildren() do
-				if item:IsA("Tool") and isExtraHotbarTool(item :: Tool) and not seen[item :: Tool] then
-					seen[item :: Tool] = true
-					table.insert(out, item :: Tool)
-				end
+			if characterHoldsTool(tool) then
+				return
+			end
+			if os.clock() >= firstTryAt then
+				forceToolIntoHand(tool)
+			end
+			task.wait(0.1)
+		end
+	end)
+end
+
+local function isExtraHotbarTool(tool: Tool): boolean
+	if tool:GetAttribute("BrainrotTool") == true then
+		local invIdx = tool:GetAttribute("BrainrotInvIndex")
+		return typeof(invIdx) ~= "number"
+	end
+	return true
+end
+
+local function collectExtraHotbarTools(): { Tool }
+	local seen: { [Tool]: boolean } = {}
+	local out: { Tool } = {}
+	local function addFrom(root: Instance?)
+		if not root then
+			return
+		end
+		for _, item in root:GetChildren() do
+			if item:IsA("Tool") and isExtraHotbarTool(item :: Tool) and not seen[item :: Tool] then
+				seen[item :: Tool] = true
+				table.insert(out, item :: Tool)
 			end
 		end
-		addFrom(getBackpack())
-		addFrom(player.Character)
-		-- Workout gears always first, then ToolbarPriority, then name.
-		table.sort(out, function(a: Tool, b: Tool)
-			local aGear = a:GetAttribute("WorkoutGearTool") == true
-			local bGear = b:GetAttribute("WorkoutGearTool") == true
-			if aGear ~= bGear then
-				return aGear
+	end
+	addFrom(getBackpack())
+	addFrom(player.Character)
+	-- Workout gears always first, then ToolbarPriority, then name.
+	table.sort(out, function(a: Tool, b: Tool)
+		local aGear = a:GetAttribute("WorkoutGearTool") == true
+		local bGear = b:GetAttribute("WorkoutGearTool") == true
+		if aGear ~= bGear then
+			return aGear
+		end
+		local ap = a:GetAttribute("ToolbarPriority")
+		local bp = b:GetAttribute("ToolbarPriority")
+		local an = if typeof(ap) == "number" then ap else 0
+		local bn = if typeof(bp) == "number" then bp else 0
+		if an ~= bn then
+			return an > bn
+		end
+		return a.Name < b.Name
+	end)
+	return out
+end
+
+local slotIconCache: { [GuiObject]: { ImageLabel } } = {}
+
+local function slotIconTargets(surface: GuiObject): { ImageLabel }
+	local cached = slotIconCache[surface]
+	if cached then
+		local first = cached[1]
+		if first and first.Parent then
+			return cached
+		end
+		slotIconCache[surface] = nil
+	end
+	local out: { ImageLabel } = {}
+	local seen: { [ImageLabel]: boolean } = {}
+	local function push(node: Instance?)
+		if node and node:IsA("ImageLabel") and not seen[node :: ImageLabel] then
+			seen[node :: ImageLabel] = true
+			table.insert(out, node :: ImageLabel)
+		end
+	end
+	push(surface:FindFirstChild("Icon"))
+	if #out == 0 then
+		for _, d in surface:GetChildren() do
+			if d:IsA("ImageLabel") and d.Name == "Icon" then
+				push(d)
 			end
-			local ap = a:GetAttribute("ToolbarPriority")
-			local bp = b:GetAttribute("ToolbarPriority")
-			local an = if typeof(ap) == "number" then ap else 0
-			local bn = if typeof(bp) == "number" then bp else 0
-			if an ~= bn then
-				return an > bn
+		end
+	end
+	if #out == 0 then
+		for _, d in surface:GetDescendants() do
+			if d:IsA("ImageLabel") and d.Name == "Icon" then
+				push(d)
 			end
-			return a.Name < b.Name
+		end
+	end
+	if #out == 0 then
+		for _, d in surface:GetChildren() do
+			if d:IsA("ImageLabel") then
+				push(d)
+				break
+			end
+		end
+	end
+	slotIconCache[surface] = out
+	return out
+end
+
+local function applySlotIconStyle(icon: ImageLabel)
+	icon.ScaleType = Enum.ScaleType.Fit
+	icon.BackgroundTransparency = 1
+	icon.ImageColor3 = Color3.new(1, 1, 1)
+	icon.ImageTransparency = 0
+end
+
+local function luckyBlockDisplayLabel(tool: Tool): string
+	local kind = tool:GetAttribute("LuckyBlockKind")
+	if typeof(kind) == "string" and kind ~= "" then
+		local ok, name = pcall(function()
+			return LuckyBlockCatalog.displayName(kind)
 		end)
-		return out
+		if ok and typeof(name) == "string" and name ~= "" then
+			return name
+		end
+		return kind
 	end
+	return tool.Name
+end
 
-	local slotIconCache: { [GuiObject]: { ImageLabel } } = {}
-
-	local function slotIconTargets(surface: GuiObject): { ImageLabel }
-		local cached = slotIconCache[surface]
-		if cached then
-			local first = cached[1]
-			if first and first.Parent then
-				return cached
-			end
-			slotIconCache[surface] = nil
-		end
-		local out: { ImageLabel } = {}
-		local seen: { [ImageLabel]: boolean } = {}
-		local function push(node: Instance?)
-			if node and node:IsA("ImageLabel") and not seen[node :: ImageLabel] then
-				seen[node :: ImageLabel] = true
-				table.insert(out, node :: ImageLabel)
-			end
-		end
-		push(surface:FindFirstChild("Icon"))
-		if #out == 0 then
-			for _, d in surface:GetChildren() do
-				if d:IsA("ImageLabel") and d.Name == "Icon" then
-					push(d)
-				end
-			end
-		end
-		if #out == 0 then
-			for _, d in surface:GetDescendants() do
-				if d:IsA("ImageLabel") and d.Name == "Icon" then
-					push(d)
-				end
-			end
-		end
-		if #out == 0 then
-			for _, d in surface:GetChildren() do
-				if d:IsA("ImageLabel") then
-					push(d)
-					break
-				end
-			end
-		end
-		slotIconCache[surface] = out
-		return out
+local function setSlotIcons(surface: GuiObject, image: string, visible: boolean)
+	if surface:FindFirstChild("GearViewport") then
+		GearViewportIcon.clear(surface)
 	end
-
-	local function applySlotIconStyle(icon: ImageLabel)
-		icon.ScaleType = Enum.ScaleType.Fit
-		icon.BackgroundTransparency = 1
-		icon.ImageColor3 = Color3.new(1, 1, 1)
-		icon.ImageTransparency = 0
+	for _, icon in slotIconTargets(surface) do
+		applySlotIconStyle(icon)
+		icon.Image = image
+		icon.Visible = visible
 	end
+end
 
-	local function luckyBlockDisplayLabel(tool: Tool): string
+local function setSlotGearViewport(surface: GuiObject, gearId: number)
+	for _, icon in slotIconTargets(surface) do
+		icon.Visible = false
+	end
+	GearViewportIcon.mount(surface, gearId, { rotate = false })
+end
+
+local function toolDisplayTexture(tool: Tool): string
+	local attrIcon = tool:GetAttribute("ToolbarIcon")
+	if typeof(attrIcon) == "string" and attrIcon ~= "" then
+		return attrIcon
+	end
+	local tex = (tool :: any).TextureId
+	if typeof(tex) == "string" and tex ~= "" then
+		return tex
+	end
+	if tool:GetAttribute("LuckyBlockTool") == true then
 		local kind = tool:GetAttribute("LuckyBlockKind")
 		if typeof(kind) == "string" and kind ~= "" then
-			local ok, name = pcall(function()
-				return LuckyBlockCatalog.displayName(kind)
+			local ok, asset = pcall(function()
+				return LuckyBlockCatalog.resolveIconAssetId(kind)
 			end)
-			if ok and typeof(name) == "string" and name ~= "" then
-				return name
-			end
-			return kind
-		end
-		return tool.Name
-	end
-
-	local function setSlotIcons(surface: GuiObject, image: string, visible: boolean)
-		if surface:FindFirstChild("GearViewport") then
-			GearViewportIcon.clear(surface)
-		end
-		for _, icon in slotIconTargets(surface) do
-			applySlotIconStyle(icon)
-			icon.Image = image
-			icon.Visible = visible
-		end
-	end
-
-	local function setSlotGearViewport(surface: GuiObject, gearId: number)
-		for _, icon in slotIconTargets(surface) do
-			icon.Visible = false
-		end
-		GearViewportIcon.mount(surface, gearId, { rotate = false })
-	end
-
-	local function toolDisplayTexture(tool: Tool): string
-		local attrIcon = tool:GetAttribute("ToolbarIcon")
-		if typeof(attrIcon) == "string" and attrIcon ~= "" then
-			return attrIcon
-		end
-		local tex = (tool :: any).TextureId
-		if typeof(tex) == "string" and tex ~= "" then
-			return tex
-		end
-		if tool:GetAttribute("LuckyBlockTool") == true then
-			local kind = tool:GetAttribute("LuckyBlockKind")
-			if typeof(kind) == "string" and kind ~= "" then
-				local ok, asset = pcall(function()
-					return LuckyBlockCatalog.resolveIconAssetId(kind)
-				end)
-				if ok and typeof(asset) == "string" and asset ~= "" then
-					return asset
-				end
+			if ok and typeof(asset) == "string" and asset ~= "" then
+				return asset
 			end
 		end
-		return ""
 	end
+	return ""
+end
 
-	local function rebuildBrainrotHotbarReverseMap()
-		brainrotIndexByHotbarSlot = {}
+local function rebuildBrainrotHotbarReverseMap()
+	brainrotIndexByHotbarSlot = {}
 
-		local validMappings: { { idx: number, slot: number } } = {}
-		for rawIdx, rawSlot in pairs(brainrotHotbarSlotByIndex) do
-			local idxNum = if typeof(rawIdx) == "number" then rawIdx else tonumber(rawIdx)
-			if typeof(idxNum) == "number" and typeof(rawSlot) == "number" then
-				local idx = math.floor(idxNum)
-				local slot = math.floor(rawSlot)
-				if
-					idx >= 1
-					and brainrotEntries[idx] ~= nil
-					and brainrotParkedInUI[idx] ~= true
-					and slot >= 1
-					and slot <= HOTBAR_INVENTORY_SLOTS
-				then
-					table.insert(validMappings, { idx = idx, slot = slot })
-				end
-			end
-		end
-
-		-- pairs() order is not stable. Rebuild the maps in inventory order so two
-		-- bad/conflicting mappings never make pets jump into random slots.
-		table.sort(validMappings, function(a, b)
-			return a.idx < b.idx
-		end)
-
-		brainrotHotbarSlotByIndex = {}
-		for _, mapping in ipairs(validMappings) do
-			if brainrotIndexByHotbarSlot[mapping.slot] == nil then
-				brainrotHotbarSlotByIndex[mapping.idx] = mapping.slot
-				brainrotIndexByHotbarSlot[mapping.slot] = mapping.idx
-				brainrotParkedInUI[mapping.idx] = nil
-			else
-				-- Conflict fallback: keep one owner for the hotbar cell and park the other.
-				brainrotParkedInUI[mapping.idx] = true
+	local validMappings: { { idx: number, slot: number } } = {}
+	for rawIdx, rawSlot in pairs(brainrotHotbarSlotByIndex) do
+		local idxNum = if typeof(rawIdx) == "number" then rawIdx else tonumber(rawIdx)
+		if typeof(idxNum) == "number" and typeof(rawSlot) == "number" then
+			local idx = math.floor(idxNum)
+			local slot = math.floor(rawSlot)
+			if
+				idx >= 1
+				and brainrotEntries[idx] ~= nil
+				and brainrotParkedInUI[idx] ~= true
+				and slot >= 1
+				and slot <= HOTBAR_INVENTORY_SLOTS
+			then
+				table.insert(validMappings, { idx = idx, slot = slot })
 			end
 		end
 	end
 
-	local function brainrotIndexForHotbarSlot(slot: number): number?
-		if slot < 1 or slot > HOTBAR_INVENTORY_SLOTS then
-			return nil
+	-- pairs() order is not stable. Rebuild the maps in inventory order so two
+	-- bad/conflicting mappings never make pets jump into random slots.
+	table.sort(validMappings, function(a, b)
+		return a.idx < b.idx
+	end)
+
+	brainrotHotbarSlotByIndex = {}
+	for _, mapping in ipairs(validMappings) do
+		if brainrotIndexByHotbarSlot[mapping.slot] == nil then
+			brainrotHotbarSlotByIndex[mapping.idx] = mapping.slot
+			brainrotIndexByHotbarSlot[mapping.slot] = mapping.idx
+			brainrotParkedInUI[mapping.idx] = nil
+		else
+			-- Conflict fallback: keep one owner for the hotbar cell and park the other.
+			brainrotParkedInUI[mapping.idx] = true
 		end
-		rebuildBrainrotHotbarReverseMap()
-		local explicit = brainrotIndexByHotbarSlot[slot]
-		if explicit and brainrotEntries[explicit] ~= nil then
-			return explicit
-		end
-		-- Legacy/default path: index 1..9 appears in the matching slot unless it
-		-- was tucked or explicitly moved elsewhere.
-		if
-			brainrotEntries[slot] ~= nil
-			and brainrotParkedInUI[slot] ~= true
-			and brainrotHotbarSlotByIndex[slot] == nil
-		then
-			return slot
-		end
+	end
+end
+
+local function brainrotIndexForHotbarSlot(slot: number): number?
+	if slot < 1 or slot > HOTBAR_INVENTORY_SLOTS then
 		return nil
 	end
+	rebuildBrainrotHotbarReverseMap()
+	local explicit = brainrotIndexByHotbarSlot[slot]
+	if explicit and brainrotEntries[explicit] ~= nil then
+		return explicit
+	end
+	-- Legacy/default path: index 1..9 appears in the matching slot unless it
+	-- was tucked or explicitly moved elsewhere.
+	if
+		brainrotEntries[slot] ~= nil
+		and brainrotParkedInUI[slot] ~= true
+		and brainrotHotbarSlotByIndex[slot] == nil
+	then
+		return slot
+	end
+	return nil
+end
 
-	local function hotbarSlotForBrainrotIndex(invIndex: number): number?
-		if invIndex < 1 or brainrotEntries[invIndex] == nil or brainrotParkedInUI[invIndex] == true then
+local function hotbarSlotForBrainrotIndex(invIndex: number): number?
+	if invIndex < 1 or brainrotEntries[invIndex] == nil or brainrotParkedInUI[invIndex] == true then
+		return nil
+	end
+	local mapped = brainrotHotbarSlotByIndex[invIndex]
+	if typeof(mapped) == "number" then
+		local slot = math.floor(mapped)
+		if slot >= 1 and slot <= HOTBAR_INVENTORY_SLOTS then
+			return slot
+		end
+	end
+	if invIndex <= HOTBAR_INVENTORY_SLOTS then
+		rebuildBrainrotHotbarReverseMap()
+		local owner = brainrotIndexByHotbarSlot[invIndex]
+		if owner and owner ~= invIndex then
 			return nil
 		end
-		local mapped = brainrotHotbarSlotByIndex[invIndex]
-		if typeof(mapped) == "number" then
-			local slot = math.floor(mapped)
+		return invIndex
+	end
+	return nil
+end
+
+local function pointOverHotbarHitScan(rawViewport: Vector2?): boolean
+	if rawViewport == nil then
+		return false
+	end
+	local fn = (DropTargets :: any).pointOverHotbarFromGuiHitScan
+	if typeof(fn) ~= "function" then
+		return false
+	end
+	local ok, result = pcall(fn, rawViewport)
+	return ok and result == true
+end
+
+-- Compatibility wrappers: if Studio is still using an older ToolbarDropTargets
+-- module, drag/drop must fail safely instead of throwing an "attempt to call
+-- a nil value" inside the InputEnded callback.
+local function dtScreenPointWithGuiInset(screen: Vector2): Vector2
+	local fn = (DropTargets :: any).screenPointWithGuiInset
+	if typeof(fn) == "function" then
+		local ok, result = pcall(fn, screen)
+		if ok and typeof(result) == "Vector2" then
+			return result
+		end
+	end
+	local inset = GuiService:GetGuiInset()
+	return screen + Vector2.new(inset.X, inset.Y)
+end
+
+local function dtIsTouchPointerInput(): boolean
+	local fn = (DropTargets :: any).isTouchPointerInput
+	if typeof(fn) == "function" then
+		local ok, result = pcall(fn)
+		return ok and result == true
+	end
+	return UserInputService:GetLastInputType() == Enum.UserInputType.Touch
+end
+
+local function dtProbeDragHoverTargets(
+	mouseWindow: Vector2,
+	rawEnd: Vector2,
+	ghostCenter: Vector2?,
+	ghostViewport: Vector2?
+): (boolean, boolean, boolean)
+	local fn = (DropTargets :: any).probeDragHoverTargets
+	if typeof(fn) == "function" then
+		local ok, a, b, c = pcall(fn, mouseWindow, rawEnd, ghostCenter, ghostViewport)
+		if ok then
+			return a == true, b == true, c == true
+		end
+	end
+	return false, false, false
+end
+
+local function dtHotbarSlotIndexFromDropProbes(
+	mouseWindow: Vector2,
+	rawEnd: Vector2,
+	ghostCenter: Vector2?
+): number?
+	local fn = (DropTargets :: any).hotbarSlotIndexFromDropProbes
+	if typeof(fn) == "function" then
+		local ok, result = pcall(fn, mouseWindow, rawEnd, ghostCenter)
+		if ok and typeof(result) == "number" then
+			local slot = math.floor(result)
 			if slot >= 1 and slot <= HOTBAR_INVENTORY_SLOTS then
 				return slot
 			end
 		end
-		if invIndex <= HOTBAR_INVENTORY_SLOTS then
-			rebuildBrainrotHotbarReverseMap()
-			local owner = brainrotIndexByHotbarSlot[invIndex]
-			if owner and owner ~= invIndex then
-				return nil
-			end
-			return invIndex
-		end
-		return nil
 	end
+	return nil
+end
 
-	local function pointOverHotbarHitScan(rawViewport: Vector2?): boolean
-		if rawViewport == nil then
-			return false
+local function dtBackpackRowIndexFromDropProbes(
+	rawEnd: Vector2,
+	mouseWindow: Vector2,
+	ghostViewport: Vector2?
+): number?
+	local fn = (DropTargets :: any).backpackRowIndexFromDropProbes
+	if typeof(fn) == "function" then
+		local ok, result = pcall(fn, rawEnd, mouseWindow, ghostViewport)
+		if ok and typeof(result) == "number" then
+			local row = math.floor(result)
+			if row >= 1 and row <= MAX_BACKPACK_BRAINROT_SLOTS then
+				return row
+			end
 		end
-		local fn = (DropTargets :: any).pointOverHotbarFromGuiHitScan
-		if typeof(fn) ~= "function" then
-			return false
-		end
-		local ok, result = pcall(fn, rawViewport)
+	end
+	return nil
+end
+
+local function dtPointOverHotbarDropZoneProbes(dropPoint: Vector2, rawEnd: Vector2): boolean
+	local fn = (DropTargets :: any).pointOverHotbarDropZoneProbes
+	if typeof(fn) == "function" then
+		local ok, result = pcall(fn, dropPoint, rawEnd)
 		return ok and result == true
 	end
+	return false
+end
 
-	-- Compatibility wrappers: if Studio is still using an older ToolbarDropTargets
-	-- module, drag/drop must fail safely instead of throwing an "attempt to call
-	-- a nil value" inside the InputEnded callback.
-	local function dtScreenPointWithGuiInset(screen: Vector2): Vector2
-		local fn = (DropTargets :: any).screenPointWithGuiInset
-		if typeof(fn) == "function" then
-			local ok, result = pcall(fn, screen)
-			if ok and typeof(result) == "Vector2" then
-				return result
-			end
-		end
-		local inset = GuiService:GetGuiInset()
-		return screen + Vector2.new(inset.X, inset.Y)
-	end
-
-	local function dtIsTouchPointerInput(): boolean
-		local fn = (DropTargets :: any).isTouchPointerInput
-		if typeof(fn) == "function" then
-			local ok, result = pcall(fn)
-			return ok and result == true
-		end
-		return UserInputService:GetLastInputType() == Enum.UserInputType.Touch
-	end
-
-	local function dtProbeDragHoverTargets(
-		mouseWindow: Vector2,
-		rawEnd: Vector2,
-		ghostCenter: Vector2?,
-		ghostViewport: Vector2?
-	): (boolean, boolean, boolean)
-		local fn = (DropTargets :: any).probeDragHoverTargets
-		if typeof(fn) == "function" then
-			local ok, a, b, c = pcall(fn, mouseWindow, rawEnd, ghostCenter, ghostViewport)
-			if ok then
-				return a == true, b == true, c == true
-			end
-		end
-		return false, false, false
-	end
-
-	local function dtHotbarSlotIndexFromDropProbes(
-		mouseWindow: Vector2,
-		rawEnd: Vector2,
-		ghostCenter: Vector2?
-	): number?
-		local fn = (DropTargets :: any).hotbarSlotIndexFromDropProbes
-		if typeof(fn) == "function" then
-			local ok, result = pcall(fn, mouseWindow, rawEnd, ghostCenter)
-			if ok and typeof(result) == "number" then
-				local slot = math.floor(result)
-				if slot >= 1 and slot <= HOTBAR_INVENTORY_SLOTS then
-					return slot
-				end
-			end
-		end
+local function findBrainrotToolAtInvIndex(root: Instance?, invIndex: number): Tool?
+	if not root then
 		return nil
 	end
-
-	local function dtBackpackRowIndexFromDropProbes(
-		rawEnd: Vector2,
-		mouseWindow: Vector2,
-		ghostViewport: Vector2?
-	): number?
-		local fn = (DropTargets :: any).backpackRowIndexFromDropProbes
-		if typeof(fn) == "function" then
-			local ok, result = pcall(fn, rawEnd, mouseWindow, ghostViewport)
-			if ok and typeof(result) == "number" then
-				local row = math.floor(result)
-				if row >= 1 and row <= MAX_BACKPACK_BRAINROT_SLOTS then
-					return row
-				end
+	for _, c in root:GetChildren() do
+		if c:IsA("Tool") and c:GetAttribute("BrainrotTool") == true then
+			c.ManualActivationOnly = true
+			local a = c:GetAttribute("BrainrotInvIndex")
+			if typeof(a) == "number" and math.floor(a) == invIndex then
+				return c
 			end
 		end
-		return nil
 	end
+	return nil
+end
 
-	local function dtPointOverHotbarDropZoneProbes(dropPoint: Vector2, rawEnd: Vector2): boolean
-		local fn = (DropTargets :: any).pointOverHotbarDropZoneProbes
-		if typeof(fn) == "function" then
-			local ok, result = pcall(fn, dropPoint, rawEnd)
-			return ok and result == true
+-- Hotbar / backpack rows often wrap controls in `Button`.
+-- Hotbar / backpack rows often wrap controls in `Button` (sometimes a Frame).
+local function slotPrimaryButton(slot: GuiObject): GuiButton?
+	local named = slot:FindFirstChild("Button")
+	if named then
+		if named:IsA("GuiButton") then
+			return named
 		end
-		return false
+		if named:IsA("GuiObject") then
+			local nested = named:FindFirstChildWhichIsA("GuiButton", true)
+			if nested then
+				return nested
+			end
+		end
 	end
+	if slot:IsA("GuiButton") then
+		return slot
+	end
+	for _, d in slot:GetDescendants() do
+		if d:IsA("GuiButton") and d.Name ~= "Selected" and d.Name ~= "Sellect" then
+			return d
+		end
+	end
+	return nil
+end
+
+local function resolveBackpackActionButton(root: GuiObject): GuiButton?
+	if root:IsA("GuiButton") then
+		return root
+	end
+	return slotPrimaryButton(root)
+end
+
+local function disableGuiInputCapture(gui: GuiObject)
+	gui.Active = false
+	if gui:IsA("GuiButton") then
+		gui.Selectable = false
+	end
+end
+
+local function enableGuiButtonInput(btn: GuiButton)
+	btn.Active = true
+	btn.Selectable = true
+end
+
+-- Studio templates sometimes use a plain Frame named `Button`; resolve a real GuiButton for touch input.
+local function resolveHotbarSlotButton(slot: GuiObject): GuiButton?
+	local named = slot:FindFirstChild("Button")
+	if named then
+		if named:IsA("GuiButton") then
+			return named
+		end
+		if named:IsA("GuiObject") then
+			disableGuiInputCapture(named :: GuiObject)
+		end
+		local nested = named:FindFirstChildWhichIsA("GuiButton", true)
+		if nested then
+			return nested
+		end
+	end
+	return slotPrimaryButton(slot)
+end
+
+-- Icon / Rate / Key steal mouse hits unless they are non-interactive.
+local function passthroughChildClicks(root: GuiObject)
+	if root:GetAttribute("_ToolbarPassClicks") == true then
+		return
+	end
+	for _, d in root:GetDescendants() do
+		if d:IsA("GuiObject") and d ~= root then
+			d.Active = false
+		end
+	end
+	root:SetAttribute("_ToolbarPassClicks", true)
+end
+
+-- Parent slot frames and overlay siblings steal mobile taps unless they are explicitly non-interactive.
+local function configureHotbarSlotInput(slot: GuiObject, btn: GuiButton)
+	disableGuiInputCapture(slot)
+	for _, d in slot:GetDescendants() do
+		if d:IsA("GuiObject") and d ~= btn and not d:IsDescendantOf(btn) then
+			disableGuiInputCapture(d)
+		end
+	end
+	local topZ = btn.ZIndex
+	for _, ch in slot:GetChildren() do
+		if ch:IsA("GuiObject") and ch ~= btn then
+			topZ = math.max(topZ, (ch :: GuiObject).ZIndex)
+		end
+	end
+	btn.ZIndex = topZ + 1
+	passthroughChildClicks(btn)
+	enableGuiButtonInput(btn)
+end
+
+local function toolSlotSurface(slot: GuiObject): GuiObject
+	local b = slotPrimaryButton(slot)
+	return (b and (b :: GuiObject)) or slot
+end
+
+-- UIScale target: slot button (not the whole frame) so hover doesn't resize the hotbar row.
+local function hotbarSlotScaleHost(slot: GuiObject): Instance
+	local btn = slotPrimaryButton(slot)
+	if btn then
+		return btn :: Instance
+	end
+	return slot
+end
+
+-- Luau allows at most 200 locals per function; the module chunk already holds ~100.
+-- Wrap helpers + init in an IIFE so they get their own register scope.
+(function()
+	-- ── Helpers ───────────────────────────────────────────────────────────────────
 
 	local function hotbarSlotDragTexture(index: number): string?
 		local brainrotIdx = brainrotIndexForHotbarSlot(index)
@@ -1002,137 +1147,12 @@ local ToolbarController = {}
 		end
 	end
 
-	-- Defined after hotbarSlotScaleHost (see below).
 	local playEquipSlotAnimation: (number) -> ()
-
-	local function findBrainrotToolAtInvIndex(root: Instance?, invIndex: number): Tool?
-		if not root then
-			return nil
-		end
-		for _, c in root:GetChildren() do
-			if c:IsA("Tool") and c:GetAttribute("BrainrotTool") == true then
-				c.ManualActivationOnly = true
-				local a = c:GetAttribute("BrainrotInvIndex")
-				if typeof(a) == "number" and math.floor(a) == invIndex then
-					return c
-				end
-			end
-		end
-		return nil
-	end
-
-	-- Hotbar / backpack rows often wrap controls in `Button`.
-	-- Hotbar / backpack rows often wrap controls in `Button` (sometimes a Frame).
-	local function slotPrimaryButton(slot: GuiObject): GuiButton?
-		local named = slot:FindFirstChild("Button")
-		if named then
-			if named:IsA("GuiButton") then
-				return named
-			end
-			if named:IsA("GuiObject") then
-				local nested = named:FindFirstChildWhichIsA("GuiButton", true)
-				if nested then
-					return nested
-				end
-			end
-		end
-		if slot:IsA("GuiButton") then
-			return slot
-		end
-		for _, d in slot:GetDescendants() do
-			if d:IsA("GuiButton") and d.Name ~= "Selected" and d.Name ~= "Sellect" then
-				return d
-			end
-		end
-		return nil
-	end
-
-	local function resolveBackpackActionButton(root: GuiObject): GuiButton?
-		if root:IsA("GuiButton") then
-			return root
-		end
-		return slotPrimaryButton(root)
-	end
-
-	local function disableGuiInputCapture(gui: GuiObject)
-		gui.Active = false
-		if gui:IsA("GuiButton") then
-			gui.Selectable = false
-		end
-	end
-
-	local function enableGuiButtonInput(btn: GuiButton)
-		btn.Active = true
-		btn.Selectable = true
-	end
-
-	-- Studio templates sometimes use a plain Frame named `Button`; resolve a real GuiButton for touch input.
-	local function resolveHotbarSlotButton(slot: GuiObject): GuiButton?
-		local named = slot:FindFirstChild("Button")
-		if named then
-			if named:IsA("GuiButton") then
-				return named
-			end
-			if named:IsA("GuiObject") then
-				disableGuiInputCapture(named :: GuiObject)
-			end
-			local nested = named:FindFirstChildWhichIsA("GuiButton", true)
-			if nested then
-				return nested
-			end
-		end
-		return slotPrimaryButton(slot)
-	end
-
-	-- Icon / Rate / Key steal mouse hits unless they are non-interactive.
-	local function passthroughChildClicks(root: GuiObject)
-		if root:GetAttribute("_ToolbarPassClicks") == true then
-			return
-		end
-		for _, d in root:GetDescendants() do
-			if d:IsA("GuiObject") and d ~= root then
-				d.Active = false
-			end
-		end
-		root:SetAttribute("_ToolbarPassClicks", true)
-	end
-
-	-- Parent slot frames and overlay siblings steal mobile taps unless they are explicitly non-interactive.
-	local function configureHotbarSlotInput(slot: GuiObject, btn: GuiButton)
-		disableGuiInputCapture(slot)
-		for _, d in slot:GetDescendants() do
-			if d:IsA("GuiObject") and d ~= btn and not d:IsDescendantOf(btn) then
-				disableGuiInputCapture(d)
-			end
-		end
-		local topZ = btn.ZIndex
-		for _, ch in slot:GetChildren() do
-			if ch:IsA("GuiObject") and ch ~= btn then
-				topZ = math.max(topZ, (ch :: GuiObject).ZIndex)
-			end
-		end
-		btn.ZIndex = topZ + 1
-		passthroughChildClicks(btn)
-		enableGuiButtonInput(btn)
-	end
 
 	local function ensureHotbarLayoutPassthrough()
 		disableGuiInputCapture(hotbar)
 	end
 
-	local function toolSlotSurface(slot: GuiObject): GuiObject
-		local b = slotPrimaryButton(slot)
-		return (b and (b :: GuiObject)) or slot
-	end
-
-	-- UIScale target: slot button (not the whole frame) so hover doesn't resize the hotbar row.
-	local function hotbarSlotScaleHost(slot: GuiObject): Instance
-		local btn = slotPrimaryButton(slot)
-		if btn then
-			return btn :: Instance
-		end
-		return slot
-	end
 
 	local SLOT_BUTTON_IMAGE_TINT = Color3.fromRGB(58, 60, 72)
 	local BACKPACK_SLOT_PANEL_OCCUPIED = Color3.fromRGB(26, 28, 34)
@@ -3841,7 +3861,7 @@ local ToolbarController = {}
 					local tool = findBrainrotToolAtInvIndex(liveChar, listIdx)
 						or findBrainrotToolAtInvIndex(getBackpack(), listIdx)
 					if tool and os.clock() >= firstTryAt and not characterHoldsTool(tool) then
-						hum:EquipTool(tool)
+						forceToolIntoHand(tool)
 					end
 				end
 				task.wait(0.1)
@@ -4474,10 +4494,7 @@ local ToolbarController = {}
 							return
 						end
 						if tool and os.clock() >= firstTryAt then
-							local liveHum = getHumanoid()
-							if liveHum then
-								liveHum:EquipTool(tool)
-							end
+							forceToolIntoHand(tool)
 						end
 						task.wait(0.1)
 					end
@@ -4600,7 +4617,7 @@ local ToolbarController = {}
 			local equipped = char and char:FindFirstChildOfClass("Tool")
 			if tool then
 				if equipped ~= tool then
-					hum:EquipTool(tool)
+					forceToolIntoHand(tool)
 				end
 				local toolInv = tool:GetAttribute("BrainrotInvIndex")
 				if typeof(toolInv) == "number" and math.floor(toolInv) ~= invIndex then

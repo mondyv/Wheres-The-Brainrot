@@ -189,14 +189,25 @@ end
 
 local DOUBLE_TAP_ACTION = "WorkoutDoubleTapAccept"
 
-local function soleWorldPos(foot: BasePart): Vector3
-	-- R15 Foot -Y faces the ground; this is the underside (sole).
-	return (foot.CFrame * CFrame.new(0, -foot.Size.Y * 0.5, 0)).Position
+local function partWorldYRange(part: BasePart): (number, number)
+	local cf = part.CFrame
+	local half = part.Size * 0.5
+	local minY, maxY = math.huge, -math.huge
+	for _, sx in { -1, 1 } do
+		for _, sy in { -1, 1 } do
+			for _, sz in { -1, 1 } do
+				local y = cf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz)).Y
+				minY = math.min(minY, y)
+				maxY = math.max(maxY, y)
+			end
+		end
+	end
+	return minY, maxY
 end
 
-local function soleAcross(rf: BasePart, lf: BasePart?): (Vector3, Vector3)
-	local p0 = soleWorldPos(rf)
-	local p1 = if lf then soleWorldPos(lf) else p0
+local function soleAcross(rf: BasePart, lf: BasePart?): (Vector3, Vector3, number)
+	local p0 = rf.Position
+	local p1 = if lf then lf.Position else p0
 	local mid = (p0 + p1) * 0.5
 	local across = if lf then p1 - p0 else rf.CFrame.RightVector
 	across = Vector3.new(across.X, 0, across.Z)
@@ -206,17 +217,31 @@ local function soleAcross(rf: BasePart, lf: BasePart?): (Vector3, Vector3)
 	if across.Magnitude < 0.05 then
 		across = Vector3.new(1, 0, 0)
 	end
-	return mid, across.Unit
+	-- True lowest corners of the foot parts (not assuming -Y is down).
+	local soleY = (partWorldYRange(rf))
+	if lf then
+		soleY = math.min(soleY, (partWorldYRange(lf)))
+	end
+	local _, topY = partWorldYRange(rf)
+	if lf then
+		local _, otherTop = partWorldYRange(lf)
+		topY = math.min(topY, otherTop)
+	end
+	-- Rest on the shoe, not under the sole and not hovering above the instep.
+	local lift = math.clamp((topY - soleY) * 0.28, 0.03, 0.12)
+	return mid, across.Unit, soleY + lift
 end
 
 -- Map the model's longest axis onto `across` (left-right between the feet)
--- and its thinnest axis onto world up so the gear lies flat on the soles.
+-- and its thinnest axis onto world up so the gear lies flat. Then pin the
+-- actual mesh bottom to the shoe plane so it does not hover.
 local function footPropMotorFrames(
 	handle: BasePart,
 	model: Model,
 	anchorFoot: BasePart,
 	mid: Vector3,
-	across: Vector3
+	across: Vector3,
+	contactY: number
 ): (CFrame, CFrame)
 	local bbCf, bbSize = model:GetBoundingBox()
 	local axes = {
@@ -246,9 +271,32 @@ local function footPropMotorFrames(
 		end
 		localThin = localThin.Unit
 	end
-	local pos = mid - Vector3.new(0, axes[3].len * 0.5 + 0.02, 0)
-	local target = CFrame.fromMatrix(pos, across, Vector3.yAxis)
 	local c1 = CFrame.fromMatrix(Vector3.zero, localLong, localThin)
+	local trialPos = Vector3.new(mid.X, contactY, mid.Z)
+	local trialHandle = CFrame.fromMatrix(trialPos, across, Vector3.yAxis) * c1:Inverse()
+	local handleNow = handle.CFrame
+	local minY = math.huge
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			local rel = handleNow:ToObjectSpace(d.CFrame)
+			local worldCf = trialHandle * rel
+			local half = d.Size * 0.5
+			for _, sx in { -1, 1 } do
+				for _, sy in { -1, 1 } do
+					for _, sz in { -1, 1 } do
+						local y = worldCf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz)).Y
+						minY = math.min(minY, y)
+					end
+				end
+			end
+		end
+	end
+	if minY == math.huge then
+		minY = contactY
+	end
+	-- Nest a hair into the shoe so a one-pixel gap does not read as hovering.
+	local pos = trialPos + Vector3.new(0, contactY - 0.035 - minY, 0)
+	local target = CFrame.fromMatrix(pos, across, Vector3.yAxis)
 	return anchorFoot.CFrame:ToObjectSpace(target), c1
 end
 
@@ -371,8 +419,8 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	end)
 
 	local otherFoot = if anchorFoot == rightFoot then leftFoot else rightFoot
-	local mid, across = soleAcross(anchorFoot, otherFoot)
-	local c0, c1 = footPropMotorFrames(handle, model, anchorFoot, mid, across)
+	local mid, across, contactY = soleAcross(anchorFoot, otherFoot)
+	local c0, c1 = footPropMotorFrames(handle, model, anchorFoot, mid, across, contactY)
 	local motor = Instance.new("Motor6D")
 	motor.Name = "WorkoutFootMotor"
 	motor.Part0 = anchorFoot

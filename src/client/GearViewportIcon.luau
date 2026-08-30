@@ -18,8 +18,11 @@ local spinConns: { [ViewportFrame]: RBXScriptConnection } = {}
 local proxyConns: { [GuiObject]: RBXScriptConnection } = {}
 local proxyParts: { [GuiObject]: BasePart } = {}
 
-local function isTouchClient(): boolean
-	return UserInputService.TouchEnabled
+-- Studio play-solo is not TouchEnabled, so it used to run shop spins, world
+-- particle proxies, and extra lights — that is what pushed Studio to ~8GB
+-- while the published client stayed fine.
+local function isLowCostPreview(): boolean
+	return UserInputService.TouchEnabled or RunService:IsStudio()
 end
 
 local function stripSimulatedFx(root: Instance)
@@ -131,7 +134,7 @@ end
 
 -- Enable / reparent the gear's authored FX only (no synthetic particles).
 local function enableAuthoredFx(root: Instance)
-	if isTouchClient() then
+	if isLowCostPreview() then
 		stripSimulatedFx(root)
 		return
 	end
@@ -178,7 +181,7 @@ end
 
 -- Clone the gear's own ParticleEmitters into world space (VF can't draw them).
 local function mountFxProxy(host: GuiObject, sourceModel: Model)
-	if isTouchClient() then
+	if isLowCostPreview() then
 		return
 	end
 	clearFxProxy(host)
@@ -426,7 +429,7 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	local maxDim = math.max(size.X, size.Y, size.Z, 0.15)
 	local homePivot = clone:GetPivot()
 
-	if not isTouchClient() then
+	if not isLowCostPreview() then
 		local fillLight = Instance.new("PointLight")
 		fillLight.Name = "ViewportFillLight"
 		fillLight.Brightness = 4
@@ -451,7 +454,7 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	vf.CurrentCamera = cam
 
 	local distance = maxDim * 2.15
-	local shouldRotate = (not isTouchClient()) and not (opts and opts.rotate == false)
+	local shouldRotate = (not isLowCostPreview()) and not (opts and opts.rotate == false)
 	-- Hotbar: frozen 3/4 view. Shop: same pose as the spin start.
 	local yaw = math.rad(48)
 
@@ -463,11 +466,11 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	end
 	updateCam()
 
-	if not isTouchClient() then
+	if not isLowCostPreview() then
 		mountFxProxy(host, clone)
 	end
 
-	if gearId == 6 and not isTouchClient() then
+	if gearId == 6 and not isLowCostPreview() then
 		GearRainbowFX.attach(clone)
 	end
 

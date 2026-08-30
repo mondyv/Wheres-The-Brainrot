@@ -25,14 +25,58 @@ local startWorkoutFn: RemoteFunction? = nil
 local stopWorkoutFn: RemoteFunction? = nil
 local claimDoubleTapFn: RemoteFunction? = nil
 
-task.spawn(function()
-	local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
+local function cacheWorkoutRemote(child: Instance?)
+	if not child or not child:IsA("RemoteFunction") then
+		return
+	end
+	if child.Name == "StartWorkout" then
+		startWorkoutFn = child
+	elseif child.Name == "StopWorkout" then
+		stopWorkoutFn = child
+	elseif child.Name == "ClaimWorkoutDoubleTap" then
+		claimDoubleTapFn = child
+	end
+end
+
+local function resolveWorkoutRemotes()
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
 	if not remotes then
 		return
 	end
-	startWorkoutFn = remotes:WaitForChild("StartWorkout", 30) :: RemoteFunction?
-	stopWorkoutFn = remotes:WaitForChild("StopWorkout", 30) :: RemoteFunction?
-	claimDoubleTapFn = remotes:WaitForChild("ClaimWorkoutDoubleTap", 30) :: RemoteFunction?
+	cacheWorkoutRemote(remotes:FindFirstChild("StartWorkout"))
+	cacheWorkoutRemote(remotes:FindFirstChild("StopWorkout"))
+	cacheWorkoutRemote(remotes:FindFirstChild("ClaimWorkoutDoubleTap"))
+end
+
+local function waitForWorkoutRemote(name: string): RemoteFunction?
+	resolveWorkoutRemotes()
+	if name == "StartWorkout" and startWorkoutFn and startWorkoutFn.Parent then
+		return startWorkoutFn
+	end
+	if name == "StopWorkout" and stopWorkoutFn and stopWorkoutFn.Parent then
+		return stopWorkoutFn
+	end
+	if name == "ClaimWorkoutDoubleTap" and claimDoubleTapFn and claimDoubleTapFn.Parent then
+		return claimDoubleTapFn
+	end
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+		or ReplicatedStorage:WaitForChild("Remotes", 8)
+	if not remotes then
+		return nil
+	end
+	local child = remotes:FindFirstChild(name) or remotes:WaitForChild(name, 8)
+	cacheWorkoutRemote(child)
+	if child and child:IsA("RemoteFunction") then
+		return child
+	end
+	return nil
+end
+
+resolveWorkoutRemotes()
+task.spawn(function()
+	waitForWorkoutRemote("StartWorkout")
+	waitForWorkoutRemote("StopWorkout")
+	waitForWorkoutRemote("ClaimWorkoutDoubleTap")
 end)
 
 local toolConns: { RBXScriptConnection } = {}
@@ -1149,6 +1193,7 @@ local function spawnDoubleTapPrompt()
 		local center = holder.AbsolutePosition + holder.AbsoluteSize * 0.5
 		task.spawn(function()
 			local gain = 0
+			waitForWorkoutRemote("ClaimWorkoutDoubleTap")
 			if claimDoubleTapFn and not claimDoubleTapBusy then
 				claimDoubleTapBusy = true
 				local ok, result = pcall(function()
@@ -1284,6 +1329,7 @@ local function cleanupWorkoutVisuals()
 end
 
 local function onUnequip()
+	resolveWorkoutRemotes()
 	if stopWorkoutFn then
 		pcall(function()
 			stopWorkoutFn:InvokeServer()
@@ -1332,11 +1378,7 @@ local function bindTool(tool: Tool)
 			if isUpgradesShopOpen() then
 				return
 			end
-			local deadline = os.clock() + 8
-			while not startWorkoutFn and os.clock() < deadline do
-				task.wait(0.2)
-			end
-			if not startWorkoutFn then
+			if not waitForWorkoutRemote("StartWorkout") or not startWorkoutFn then
 				warn("[WorkoutController] StartWorkout remote missing")
 				return
 			end

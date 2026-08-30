@@ -546,11 +546,23 @@ function M.wireScaleButtonAnim(btn: GuiButton, onActivated: () -> ())
 			tweenScale(1, HOVER_TWEEN)
 		end
 	)
+	local lastFire = 0
+	local function fireActivated()
+		local now = os.clock()
+		if now - lastFire < 0.12 then
+			return
+		end
+		lastFire = now
+		onActivated()
+	end
 	btn.MouseButton1Down:Connect(function()
 		UIInteractionSounds.playClick()
 		tweenScale(0.9, CLICK_TWEEN)
-		onActivated()
+		fireActivated()
 	end)
+	-- Mobile often delivers Activated without a reliable MouseButton1Down
+	-- (especially while another finger is on the thumbstick).
+	btn.Activated:Connect(fireActivated)
 	btn.MouseButton1Up:Connect(function()
 		tweenScale(if hovering then 1.08 else 1, RELEASE_TWEEN)
 	end)

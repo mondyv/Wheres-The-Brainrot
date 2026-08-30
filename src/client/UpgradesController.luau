@@ -37,16 +37,74 @@ local equipFn: RemoteFunction? = nil
 local setPowerFn: RemoteFunction? = nil
 local prepareRobuxGearRE: RemoteEvent? = nil
 
-task.spawn(function()
-	local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
+local function cacheGearRemote(child: Instance?, asEvent: boolean?): boolean
+	if not child then
+		return false
+	end
+	if asEvent then
+		if child:IsA("RemoteEvent") then
+			prepareRobuxGearRE = child
+			return true
+		end
+		return false
+	end
+	if not child:IsA("RemoteFunction") then
+		return false
+	end
+	if child.Name == "PurchaseGear" then
+		purchaseFn = child
+	elseif child.Name == "EquipGear" then
+		equipFn = child
+	elseif child.Name == "SetEditedPower" then
+		setPowerFn = child
+	end
+	return true
+end
+
+local function resolveGearRemotes()
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
 	if not remotes then
-		warn("[UpgradesController] Remotes folder missing")
 		return
 	end
-	purchaseFn = remotes:WaitForChild("PurchaseGear", 30) :: RemoteFunction?
-	equipFn = remotes:WaitForChild("EquipGear", 30) :: RemoteFunction?
-	setPowerFn = remotes:WaitForChild("SetEditedPower", 30) :: RemoteFunction?
-	prepareRobuxGearRE = remotes:WaitForChild("PrepareRobuxGear", 30) :: RemoteEvent?
+	cacheGearRemote(remotes:FindFirstChild("PurchaseGear"))
+	cacheGearRemote(remotes:FindFirstChild("EquipGear"))
+	cacheGearRemote(remotes:FindFirstChild("SetEditedPower"))
+	cacheGearRemote(remotes:FindFirstChild("PrepareRobuxGear"), true)
+end
+
+local function waitForGearRemote(name: string, asEvent: boolean?): Instance?
+	resolveGearRemotes()
+	if name == "PurchaseGear" and purchaseFn and purchaseFn.Parent then
+		return purchaseFn
+	end
+	if name == "EquipGear" and equipFn and equipFn.Parent then
+		return equipFn
+	end
+	if name == "SetEditedPower" and setPowerFn and setPowerFn.Parent then
+		return setPowerFn
+	end
+	if name == "PrepareRobuxGear" and prepareRobuxGearRE and prepareRobuxGearRE.Parent then
+		return prepareRobuxGearRE
+	end
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+		or ReplicatedStorage:WaitForChild("Remotes", 8)
+	if not remotes then
+		return nil
+	end
+	local child = remotes:FindFirstChild(name) or remotes:WaitForChild(name, 8)
+	cacheGearRemote(child, asEvent)
+	return child
+end
+
+resolveGearRemotes()
+task.spawn(function()
+	waitForGearRemote("PurchaseGear")
+	waitForGearRemote("EquipGear")
+	waitForGearRemote("SetEditedPower")
+	waitForGearRemote("PrepareRobuxGear", true)
+	if not purchaseFn then
+		warn("[UpgradesController] PurchaseGear remote missing")
+	end
 end)
 
 local SUCCESS_TWEEN = TweenInfo.new(0.32, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
@@ -406,10 +464,13 @@ local function wireGearRow(row: Instance, def: GearConfig.GearDef, refreshAll: (
 				-- Already equipped — no buy/upgrade SFX.
 				return
 			end
-			if not equipFn then
+			inFlight = true
+			if not waitForGearRemote("EquipGear") or not equipFn then
+				inFlight = false
+				warn("[UpgradesController] EquipGear remote not ready")
+				GameSoundEffects.playErrorNotif()
 				return
 			end
-			inFlight = true
 			local ok, err = equipFn:InvokeServer(def.id)
 			inFlight = false
 			if ok then
@@ -437,12 +498,13 @@ local function wireGearRow(row: Instance, def: GearConfig.GearDef, refreshAll: (
 			end
 			return
 		end
-		if not purchaseFn then
+		inFlight = true
+		if not waitForGearRemote("PurchaseGear") or not purchaseFn then
+			inFlight = false
 			warn("[UpgradesController] PurchaseGear remote not ready")
 			GameSoundEffects.playErrorNotif()
 			return
 		end
-		inFlight = true
 		local ok, err = purchaseFn:InvokeServer(def.id)
 		inFlight = false
 		if ok then

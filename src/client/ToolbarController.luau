@@ -230,6 +230,10 @@ type ToolbarDragSpec = {
 	tool: Tool?,
 	sourceSize: Vector2?,
 	tapSlot: number?,
+	-- The finger/button that started this gesture. Other mobile fingers
+	-- (thumbstick / camera) must not steal or promote it to a drag.
+	sourceInput: InputObject?,
+	fromTouch: boolean?,
 }
 local pendingToolbarDrag: ToolbarDragSpec? = nil
 -- Mouse-down on a backpack cell before the drag threshold. Promoted to
@@ -266,6 +270,39 @@ local function dragGhostThresholdFor(input: InputObject?): number
 		return DRAG_GHOST_THRESHOLD_TOUCH_PX
 	end
 	return DRAG_GHOST_THRESHOLD_PX
+end
+
+local function toolbarGestureOwnsInput(input: InputObject, spec: ToolbarDragSpec?): boolean
+	if not spec then
+		return false
+	end
+	if spec.sourceInput then
+		return input == spec.sourceInput
+	end
+	if spec.fromTouch == true then
+		return input.UserInputType == Enum.UserInputType.Touch
+	end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		return spec.fromTouch ~= true
+	end
+	if input.UserInputType == Enum.UserInputType.Gamepad1 then
+		return true
+	end
+	return false
+end
+
+local function toolbarPointerMatchesPress(input: InputObject, spec: ToolbarDragSpec?): boolean
+	if not spec then
+		return false
+	end
+	if spec.sourceInput then
+		return input == spec.sourceInput
+	end
+	if spec.fromTouch == true then
+		return false
+	end
+	return input.UserInputType == Enum.UserInputType.MouseMovement
+		or input.UserInputType == Enum.UserInputType.Gamepad1
 end
 -- Shared scale for the single hotbar slot under the cursor while dragging (not the whole bar).
 local HOTBAR_DRAG_HOVER_SCALE = 1.06
@@ -1174,6 +1211,9 @@ local ToolbarController = {}
 						if tex == "" then
 							tex = "rbxasset://textures/ui/GuiImagePlaceholder.png"
 						end
+						if dtIsTouchPointerInput() then
+							return
+						end
 						pendingToolbarPress = {
 							kind = "backpack_extra",
 							idx = index,
@@ -1182,6 +1222,7 @@ local ToolbarController = {}
 							rowButton = btn,
 							isExtraTool = true,
 							tool = tool,
+							fromTouch = false,
 						}
 					end)
 					btn.InputBegan:Connect(function(input)
@@ -1193,6 +1234,29 @@ local ToolbarController = {}
 						end
 						requestEquipFromBackpackExtra(tool)
 						dragSuppressedToolbarClick = true
+					end)
+					btn.InputBegan:Connect(function(input)
+						if input.UserInputType ~= Enum.UserInputType.Touch then
+							return
+						end
+						if not canUseToolbar or pendingToolbarDrag then
+							return
+						end
+						local tex = toolDisplayTexture(tool)
+						if tex == "" then
+							tex = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+						end
+						pendingToolbarPress = {
+							kind = "backpack_extra",
+							idx = index,
+							start = toolbarPointerScreen(input),
+							texture = tex,
+							rowButton = btn,
+							isExtraTool = true,
+							tool = tool,
+							sourceInput = input,
+							fromTouch = true,
+						}
 					end)
 				end
 			else
@@ -3596,15 +3660,38 @@ local ToolbarController = {}
 		optimisticBrainrotTuckToBackpack(listIdx)
 	end
 
+	local equipBrainrotSlotEv: RemoteEvent? = nil
 	local function requestEquipBrainrotSlot(slotIdx: number, forceEquip: boolean?)
 		if not forceEquip and not canUseToolbar then
 			return
 		end
-		local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
-		local ev = folder and folder:FindFirstChild("EquipBrainrotSlot")
+		local ev = equipBrainrotSlotEv
+		if not ev or not ev.Parent then
+			local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
+			local found = folder and folder:FindFirstChild("EquipBrainrotSlot")
+			if found and found:IsA("RemoteEvent") then
+				ev = found
+				equipBrainrotSlotEv = ev
+			end
+		end
 		if ev and ev:IsA("RemoteEvent") then
 			ev:FireServer(slotIdx, forceEquip == true)
+			return
 		end
+		-- Remotes can still be streaming in; fire as soon as they exist so a
+		-- mobile tap is not lost until the next attempt.
+		task.spawn(function()
+			local folder = ReplicatedStorage:FindFirstChild("BushRemotes")
+				or ReplicatedStorage:WaitForChild("BushRemotes", 5)
+			if not folder then
+				return
+			end
+			local found = folder:FindFirstChild("EquipBrainrotSlot") or folder:WaitForChild("EquipBrainrotSlot", 5)
+			if found and found:IsA("RemoteEvent") then
+				equipBrainrotSlotEv = found
+				found:FireServer(slotIdx, forceEquip == true)
+			end
+		end)
 	end
 
 	local function fireBrainrotPark(listIdx: number, tucked: boolean, hotbarSlot: number?)
@@ -3855,6 +3942,7 @@ local ToolbarController = {}
 						sourceSize = btn.AbsoluteSize,
 						rowButton = btn,
 						equippedOnDown = false,
+						fromTouch = false,
 					}
 				end)
 				btn.InputBegan:Connect(function(input)
@@ -3898,49 +3986,14 @@ local ToolbarController = {}
 						sourceSize = btn.AbsoluteSize,
 						rowButton = btn,
 						equippedOnDown = false,
+						sourceInput = input,
+						fromTouch = true,
 					}
 				end)
 				btn.InputEnded:Connect(function(input)
 					if input.UserInputType == Enum.UserInputType.Touch then
 						mobileDragHoldToken += 1
 					end
-				end)
-				btn.InputChanged:Connect(function(input)
-					if input.UserInputType ~= Enum.UserInputType.Touch then
-						return
-					end
-					if pendingToolbarDrag or not canUseToolbar then
-						return
-					end
-					local listIdx = listIndexForBackpackUiRow(uiRow)
-					local entry = brainrotEntryForBackpackSlot(uiRow)
-					if not listIdx or not entry then
-						return
-					end
-					local pos = Vector2.new(input.Position.X, input.Position.Y)
-					local btnPos = btn.AbsolutePosition
-					local btnSize = btn.AbsoluteSize
-					local center = btnPos + btnSize * 0.5
-					if (pos - center).Magnitude < math.max(btnSize.X, btnSize.Y) * 0.55 + DRAG_GHOST_THRESHOLD_PX then
-						return
-					end
-					mobileDragHoldToken += 1
-					local tex = (entry.icon ~= "" and entry.icon) or "rbxasset://textures/ui/GuiImagePlaceholder.png"
-					UIInteractionSounds.playClick()
-					BrainrotItemTooltip.hide(true)
-					lastResolvedHotbarDropSlot = nil
-					activeToolbarDrag = true
-					TweenService:Create(scale, HIGHLIGHT_TWEEN, { Scale = 1.0 }):Play()
-					pendingToolbarDrag = {
-						kind = "backpack",
-						idx = listIdx,
-						start = pos,
-						texture = tex,
-						uid = brainrotUidAtIndex(listIdx),
-						sourceSize = btn.AbsoluteSize,
-						rowButton = btn,
-						equippedOnDown = false,
-					}
 				end)
 			end
 		end
@@ -4921,6 +4974,7 @@ local ToolbarController = {}
 						isExtraTool = isExtraTool,
 						equippedOnDown = equippedOnDown,
 						tapSlot = i,
+						fromTouch = false,
 					}
 				end
 
@@ -4978,32 +5032,14 @@ local ToolbarController = {}
 						rowButton = nil,
 						isExtraTool = isExtraTool,
 						tapSlot = i,
+						sourceInput = input,
+						fromTouch = true,
 					}
 				end)
 				btn.InputEnded:Connect(function(input)
 					if input.UserInputType == Enum.UserInputType.Touch then
 						mobileDragHoldToken += 1
 					end
-				end)
-				btn.InputChanged:Connect(function(input)
-					if input.UserInputType ~= Enum.UserInputType.Touch then
-						return
-					end
-					if pendingToolbarDrag or not canUseToolbar then
-						return
-					end
-					local pos = Vector2.new(input.Position.X, input.Position.Y)
-					local btnPos = btn.AbsolutePosition
-					local btnSize = btn.AbsoluteSize
-					local center = btnPos + btnSize * 0.5
-					if (pos - center).Magnitude < math.max(btnSize.X, btnSize.Y) * 0.55 + DRAG_GHOST_THRESHOLD_PX then
-						return
-					end
-					if not hotbarSlotDragTexture(i) then
-						return
-					end
-					mobileDragHoldToken += 1
-					beginHotbarPendingDrag(pos)
 				end)
 			else
 				warn(
@@ -5254,21 +5290,26 @@ local ToolbarController = {}
 				return
 			end
 			if pendingToolbarPress and not pendingToolbarDrag then
-				local m0 = toolbarPointerScreen(input)
-				if (m0 - pendingToolbarPress.start).Magnitude >= dragGhostThresholdFor(input) then
-					local stillHolding = input.UserInputType == Enum.UserInputType.Touch
-						or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-						or GamepadInput.isAcceptHeld()
-					if stillHolding then
-						pendingToolbarDrag = pendingToolbarPress
-						pendingToolbarPress = nil
-						activeToolbarDrag = true
-						lastResolvedHotbarDropSlot = nil
+				if toolbarPointerMatchesPress(input, pendingToolbarPress) then
+					local m0 = toolbarPointerScreen(input)
+					if (m0 - pendingToolbarPress.start).Magnitude >= dragGhostThresholdFor(input) then
+						local stillHolding = input.UserInputType == Enum.UserInputType.Touch
+							or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+							or GamepadInput.isAcceptHeld()
+						if stillHolding then
+							pendingToolbarDrag = pendingToolbarPress
+							pendingToolbarPress = nil
+							activeToolbarDrag = true
+							lastResolvedHotbarDropSlot = nil
+						end
 					end
 				end
 			end
 			local pnd = pendingToolbarDrag
 			if not pnd or not pnd.texture then
+				return
+			end
+			if not toolbarPointerMatchesPress(input, pnd) then
 				return
 			end
 			-- Keep cursor alive while dragging on gamepad so stick moves the ghost.
@@ -5341,20 +5382,35 @@ local ToolbarController = {}
 			if not isPrimaryClick then
 				return
 			end
+			-- Thumbstick / camera finger must not cancel or "click" an inventory tap.
+			-- Synthesized MouseButton1 after Touch must not double-fire either.
+			local pressPeek = pendingToolbarPress
+			local dragPeek = pendingToolbarDrag
+			if not toolbarGestureOwnsInput(input, pressPeek) and not toolbarGestureOwnsInput(input, dragPeek) then
+				return
+			end
 			if not toolbarInputAllowed() then
-				activeToolbarDrag = false
-				pendingToolbarDrag = nil
-				pendingToolbarPress = nil
-				lastResolvedHotbarDropSlot = nil
-				clearDragGhost()
+				if toolbarGestureOwnsInput(input, pressPeek) then
+					pendingToolbarPress = nil
+				end
+				if toolbarGestureOwnsInput(input, dragPeek) then
+					activeToolbarDrag = false
+					pendingToolbarDrag = nil
+					lastResolvedHotbarDropSlot = nil
+					clearDragGhost()
+				end
 				syncToolbarGamepadCursor()
 				return
 			end
-			local press = pendingToolbarPress
-			local pnd = pendingToolbarDrag
-			pendingToolbarDrag = nil
-			pendingToolbarPress = nil
-			activeToolbarDrag = false
+			local press = if toolbarGestureOwnsInput(input, pendingToolbarPress) then pendingToolbarPress else nil
+			local pnd = if toolbarGestureOwnsInput(input, pendingToolbarDrag) then pendingToolbarDrag else nil
+			if press and pendingToolbarPress == press then
+				pendingToolbarPress = nil
+			end
+			if pnd and pendingToolbarDrag == pnd then
+				pendingToolbarDrag = nil
+			end
+			activeToolbarDrag = pendingToolbarDrag ~= nil
 			-- Click / mouse-jitter without a drag ghost. Extra tools use Activated
 			-- only (double-fire unequips). Brainrots often never fire Activated if
 			-- the cursor moved, so mouse-up still equips those.
@@ -5363,6 +5419,9 @@ local ToolbarController = {}
 				if spec and not backpackClickConsumed then
 					if spec.kind == "backpack" then
 						requestEquipFromBackpack(spec.idx)
+						backpackClickConsumed = true
+					elseif spec.kind == "backpack_extra" and spec.tool then
+						requestEquipFromBackpackExtra(spec.tool)
 						backpackClickConsumed = true
 					elseif spec.kind == "hotbar" then
 						local slot = spec.tapSlot
@@ -5400,6 +5459,9 @@ local ToolbarController = {}
 				if not backpackClickConsumed then
 					if pnd.kind == "backpack" then
 						requestEquipFromBackpack(pnd.idx)
+						backpackClickConsumed = true
+					elseif pnd.kind == "backpack_extra" and pnd.tool then
+						requestEquipFromBackpackExtra(pnd.tool)
 						backpackClickConsumed = true
 					elseif pnd.kind == "hotbar" then
 						local slot = pnd.tapSlot

@@ -5,12 +5,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
-local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
-local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
-local GearService = require(script.Parent:WaitForChild("Modules"):WaitForChild("GearService"))
-local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
-local AnalyticsFunnelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
-
+-- Publish remotes before requiring modules. Shop / workout clients wait on these
+-- names; if they are created after a long require chain, Buy looks dead for ~30s.
 local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes") :: Folder?
 if not remotesFolder then
 	remotesFolder = Instance.new("Folder")
@@ -54,6 +50,12 @@ local claimDoubleTapFn = ensureRF("ClaimWorkoutDoubleTap")
 local setPowerFn = ensureRF("SetEditedPower")
 local prepareRobuxGearRE = ensureRE("PrepareRobuxGear")
 
+local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
+local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
+local GearService = require(script.Parent:WaitForChild("Modules"):WaitForChild("GearService"))
+local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
+local AnalyticsFunnelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
+
 local pendingRobuxGear: { [Player]: number } = {}
 
 local function noteFirstGear(player: Player, gearId: number)
@@ -90,8 +92,13 @@ purchaseGearFn.OnServerInvoke = function(player: Player, gearIdAny: any): (boole
 	local ok, err = GearService.purchaseCash(player, gearId)
 	if ok then
 		noteFirstGear(player, gearId)
-		pcall(function()
-			PlayerDataService.savePlayerData(player)
+		task.spawn(function()
+			local saveOk, saveErr = pcall(function()
+				PlayerDataService.savePlayerData(player)
+			end)
+			if not saveOk then
+				warn("[Gears] save after purchase failed:", saveErr)
+			end
 		end)
 	end
 	return ok, err
@@ -138,8 +145,13 @@ setPowerFn.OnServerInvoke = function(player: Player, amountAny: any, editedAny: 
 		markEdited = false
 	end
 	WorkoutPower.setPower(player, amount, markEdited)
-	pcall(function()
-		PlayerDataService.savePlayerData(player)
+	task.spawn(function()
+		local saveOk, saveErr = pcall(function()
+			PlayerDataService.savePlayerData(player)
+		end)
+		if not saveOk then
+			warn("[Gears] save after set power failed:", saveErr)
+		end
 	end)
 	return true, nil
 end

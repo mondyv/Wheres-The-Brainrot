@@ -14,6 +14,7 @@ local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitFor
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
+local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
 local Brainrots = require(script.Parent:WaitForChild("Brainrots"))
 local ItemService = require(script.Parent:WaitForChild("ItemService"))
 local IndexService = require(script.Parent:WaitForChild("IndexService"))
@@ -217,6 +218,8 @@ function M.computeProgress(player: Player, quest: TimCheeseQuestConfig.QuestDef)
 	elseif quest.kind == "upgrade_power" then
 		local lvl = player:GetAttribute(SwingUpgrades.POWER_LEVEL_ATTR)
 		return if typeof(lvl) == "number" then math.floor(lvl) else 0
+	elseif quest.kind == "reach_power" then
+		return math.floor(WorkoutPower.readPower(player))
 	elseif quest.kind == "upgrade_rope" then
 		local lvl = player:GetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR)
 		return if typeof(lvl) == "number" then math.floor(lvl) else 0
@@ -401,6 +404,7 @@ local POLL_KINDS: { [TimCheeseQuestConfig.QuestKind]: boolean } = {
 	reach_land = true,
 	place_stands = true,
 	upgrade_power = true,
+	reach_power = true,
 	upgrade_rope = true,
 	upgrade_carry = true,
 	income_rate = true,

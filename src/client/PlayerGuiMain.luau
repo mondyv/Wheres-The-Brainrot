@@ -13,20 +13,36 @@ local StarterGui = game:GetService("StarterGui")
 
 local PlayerGuiMain = {}
 
--- Studio Index/Toolbar templates sometimes ship ViewportFrame + WorldModel + MeshPart
--- per row. Cloning Main then duplicates that into PlayerGui and Studio hits multiple GB.
+-- Flatten leftover Studio Index/Toolbar row ViewportFrames only.
+-- Never touch LoadingScreen, live GearViewport previews, or the rest of Main.
 function PlayerGuiMain.stripHeavy3D(root: Instance?)
 	if not root then
 		return
 	end
-	local heavy: { Instance } = {}
+	if root.Name == "LoadingScreen" or root:FindFirstAncestor("LoadingScreen") then
+		return
+	end
+	local doomed: { Instance } = {}
 	for _, d in root:GetDescendants() do
-		if d:IsA("ViewportFrame") or d:IsA("WorldModel") or d:IsA("BasePart") or d:IsA("MeshPart") then
-			table.insert(heavy, d)
+		if d.Name == "GearViewport" or d:FindFirstAncestor("GearViewport") then
+			continue
+		end
+		if d.Name == "LoadingScreen" or d:FindFirstAncestor("LoadingScreen") then
+			continue
+		end
+		if d:IsA("ViewportFrame") and d.Name == "Icon" then
+			local has3D = d:FindFirstChildWhichIsA("WorldModel", true) ~= nil
+				or d:FindFirstChildWhichIsA("BasePart", true) ~= nil
+			if has3D then
+				table.insert(doomed, d)
+			end
 		end
 	end
-	for _, inst in heavy do
-		if inst.Name == "Icon" and inst:IsA("ViewportFrame") then
+	for _, inst in doomed do
+		if not inst.Parent then
+			continue
+		end
+		if inst:IsA("ViewportFrame") then
 			local vf = inst :: ViewportFrame
 			local img = Instance.new("ImageLabel")
 			img.Name = "Icon"
@@ -117,6 +133,10 @@ function PlayerGuiMain.hideAdminPanelUnlessAllowed(root: Instance?, _player: Pla
 		main = pg and pg:FindFirstChild("Main")
 	end
 	if not main then
+		return
+	end
+	local plr = _player or Players.LocalPlayer
+	if plr and plr:GetAttribute("AdminPanelAllowed") == true then
 		return
 	end
 	local sideUI = main:FindFirstChild("SideUI")

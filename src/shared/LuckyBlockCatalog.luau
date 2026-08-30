@@ -44,9 +44,8 @@ local BLOCKS: { BlockDef } = {
 		tier = 1,
 		indexRarity = "uncommon",
 		drops = { uncommon = 62, rare = 33, epic = 5 },
-		iconFolder = "Starter Lucky Block",
-		-- Studio only has Golden/Galaxy/Diamond Basic children — use folder image / model fallback.
-		iconChild = nil,
+		iconFolder = "Yellow Lucky Block",
+		iconChild = "Yellow Lucky Block",
 	},
 	{
 		id = "troll",
@@ -530,6 +529,8 @@ local function folderNameAlts(def: BlockDef?, blockId: string): { string }
 		add(string.gsub(def.iconFolder, "Latern", "Lantern"))
 	end
 	if def and (def.id == "Starter Lucky Block" or (def.variant and string.lower(def.variant) == "basic")) then
+		add("Yellow Lucky Block")
+		add("Yellow")
 		add("Basic")
 		add("basic")
 		add("Starter")

@@ -1089,7 +1089,6 @@ local function playWaveEscapeDissolve(wave: Model)
 		local part = wave.PrimaryPart or wave:FindFirstChildWhichIsA("BasePart", true)
 		startPos = if part then part.Position else Vector3.zero
 	end
-	local forward = waveForward or Vector3.new(0, 0, -1)
 	local duration = C.WAVE_ESCAPE_SEC
 	local info = TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
@@ -1122,7 +1121,8 @@ local function playWaveEscapeDissolve(wave: Model)
 			return
 		end
 		local a = nv.Value
-		local pos = startPos - forward * (38 * a) + Vector3.new(0, 14 * a, 0)
+		-- Sink into the ground instead of flying up and away.
+		local pos = startPos + Vector3.new(0, -46 * a, 0)
 		applyWaveStudioPose(wave, pos)
 	end)
 	local tw = TweenService:Create(nv, info, { Value = 1 })
@@ -1707,11 +1707,20 @@ local function runChase(token: number)
 		hum.CameraOffset = Vector3.zero
 	end
 
-	if escaped and not killFired and activeWave and activeWave.Parent then
-		playWaveEscapeDissolve(activeWave)
+	if escaped and not killFired then
+		-- Inventory / HUD should snap back the moment you hit safezone —
+		-- don't wait for the cobweb sink tween.
+		if didHideHud then
+			GameplayUiVisibility.show({ instant = true })
+		end
+		MobileTouchGate.ensureTouchControlsVisible(true)
+		if activeWave and activeWave.Parent then
+			playWaveEscapeDissolve(activeWave)
+		end
+		finishChase(false)
+	else
+		finishChase(didHideHud)
 	end
-
-	finishChase(didHideHud)
 	if not escaped and killFired then
 		-- finishChase already ran; kill remote handles death.
 	end

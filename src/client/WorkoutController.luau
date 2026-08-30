@@ -222,14 +222,20 @@ local function soleAcross(rf: BasePart, lf: BasePart?): (Vector3, Vector3, numbe
 	if lf then
 		soleY = math.min(soleY, (partWorldYRange(lf)))
 	end
-	local _, topY = partWorldYRange(rf)
-	if lf then
-		local _, otherTop = partWorldYRange(lf)
-		topY = math.min(topY, otherTop)
+	-- Sit on the shoe top at the toes, not up the instep/shins.
+	local look = Vector3.new(rf.CFrame.LookVector.X, 0, rf.CFrame.LookVector.Z)
+	if look.Magnitude < 0.05 then
+		look = Vector3.new(0, 0, -1)
+	else
+		look = look.Unit
 	end
-	-- Rest on the shoe, not under the sole and not hovering above the instep.
-	local lift = math.clamp((topY - soleY) * 0.28, 0.03, 0.12)
-	return mid, across.Unit, soleY + lift
+	local function toeOf(foot: BasePart): Vector3
+		return foot.Position + look * (foot.Size.Z * 0.42)
+	end
+	local t0 = toeOf(rf)
+	local t1 = if lf then toeOf(lf) else t0
+	local toeMid = Vector3.new((t0.X + t1.X) * 0.5, mid.Y, (t0.Z + t1.Z) * 0.5)
+	return toeMid, across.Unit, soleY + 0.02
 end
 
 -- Map the model's longest axis onto `across` (left-right between the feet)
@@ -294,8 +300,8 @@ local function footPropMotorFrames(
 	if minY == math.huge then
 		minY = contactY
 	end
-	-- Nest a hair into the shoe so a one-pixel gap does not read as hovering.
-	local pos = trialPos + Vector3.new(0, contactY - 0.035 - minY, 0)
+	-- Rest on the shoe top — do not bury the bar into the legs.
+	local pos = trialPos + Vector3.new(0, contactY - 0.008 - minY, 0)
 	local target = CFrame.fromMatrix(pos, across, Vector3.yAxis)
 	return anchorFoot.CFrame:ToObjectSpace(target), c1
 end

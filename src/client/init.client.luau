@@ -27,13 +27,17 @@ task.defer(function()
 	local LoadingScreenController = require(script.LoadingScreenController)
 	local PlayerGuiMain = require(script.PlayerGuiMain)
 
-	-- Strip leftover Index/Toolbar ViewportFrames from the GUI before any
-	-- controller clones rows. Must run before PlayerGuiMain.ensure.
+	-- Only flatten leftover Index/Toolbar Icon ViewportFrames — never the
+	-- whole PlayerGui (that used to wipe LoadingScreen + live gear previews).
 	pcall(function()
-		PlayerGuiMain.stripHeavy3D(StarterGui)
+		local starterMain = StarterGui:FindFirstChild("Main")
+		if starterMain then
+			PlayerGuiMain.stripHeavy3D(starterMain)
+		end
 		local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
-		if pg then
-			PlayerGuiMain.stripHeavy3D(pg)
+		local playerMain = pg and pg:FindFirstChild("Main")
+		if playerMain then
+			PlayerGuiMain.stripHeavy3D(playerMain)
 		end
 	end)
 

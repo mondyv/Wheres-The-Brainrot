@@ -611,14 +611,24 @@ function M.pickRandomBrainrotForPlot(plot: number, available: ((BrainrotDef) -> 
 	return pool[math.random(1, #pool)], mutation
 end
 
+local function folderHasMeshCatalog(folder: Instance): boolean
+	return folder:FindFirstChildWhichIsA("BasePart", true) ~= nil
+end
+
 function M.getBrainrotsFolder(): Folder?
-	local f = ServerStorage:FindFirstChild("Brainrots")
-	if f and f:IsA("Folder") then
-		return f
+	local ss = ServerStorage:FindFirstChild("Brainrots")
+	if ss and ss:IsA("Folder") and folderHasMeshCatalog(ss) then
+		return ss
 	end
-	local legacy = ReplicatedStorage:FindFirstChild("Brainrots")
-	if legacy and legacy:IsA("Folder") then
-		return legacy
+	local rs = ReplicatedStorage:FindFirstChild("Brainrots")
+	if rs and rs:IsA("Folder") and folderHasMeshCatalog(rs) then
+		return rs
+	end
+	if ss and ss:IsA("Folder") then
+		return ss
+	end
+	if rs and rs:IsA("Folder") then
+		return rs
 	end
 	return nil
 end

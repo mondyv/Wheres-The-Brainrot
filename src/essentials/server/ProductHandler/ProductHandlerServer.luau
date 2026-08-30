@@ -86,7 +86,23 @@ local customReceiptHandlers = {}
 local receiptInterceptors = {}
 
 local RANDOM_BRAINROT_PRODUCT_ID = StoreConfig.PRODUCT.RANDOM_BRAINROT
-local BrainrotsFolder = ServerStorage:FindFirstChild("Brainrots")
+
+local function resolveBrainrotsFolder(): Folder?
+	local ss = ServerStorage:FindFirstChild("Brainrots")
+	if ss and ss:IsA("Folder") and ss:FindFirstChildWhichIsA("BasePart", true) then
+		return ss
+	end
+	local rs = ReplicatedStorage:FindFirstChild("Brainrots")
+	if rs and rs:IsA("Folder") and rs:FindFirstChildWhichIsA("BasePart", true) then
+		return rs
+	end
+	if ss and ss:IsA("Folder") then
+		return ss
+	end
+	return nil
+end
+
+local BrainrotsFolder = resolveBrainrotsFolder()
 
 local DEFAULT_VARIANT = "Normal"
 
@@ -168,6 +184,9 @@ local function _pickRandomVariant(icons: { [string]: string }): string
 end
 
 local function findBrainrotTemplate(brainrotName: string, variantName: string): Model?
+	if not BrainrotsFolder or not BrainrotsFolder:FindFirstChildWhichIsA("BasePart", true) then
+		BrainrotsFolder = resolveBrainrotsFolder()
+	end
 	if not BrainrotsFolder then
 		return nil
 	end

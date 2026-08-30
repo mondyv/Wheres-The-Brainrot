@@ -34,6 +34,7 @@ export type QuestKind =
 	| "reach_land"
 	| "place_stands"
 	| "upgrade_power"
+	| "reach_power"
 	| "upgrade_rope"
 	| "upgrade_carry"
 	| "income_rate"
@@ -88,26 +89,26 @@ local function landQuest(land: number, blockId: string, title: string, offer: st
 	}
 end
 
--- 32 quests. Even slots 2,4,…,20 = Land 1 through Land 10.
+-- 32 quests. Lead with Power + land hops; mix other jobs in between.
 local QUESTS: { QuestDef } = {
 	{
-		id = "search_8",
-		title = "Grass Toucher",
-		description = "Search 8 bushes. Tim calls it orientation.",
-		kind = "harvest",
-		target = 8,
+		id = "power_600",
+		title = "First Pump",
+		description = "Work out until you reach 600 Power.",
+		kind = "reach_power",
+		target = 600,
 		showBar = true,
 		rewardKind = "cash",
-		rewardCash = 50_000,
-		offerLine = "Warmup: poke some bushes. Don't eat the leaves.",
-		completeLine = "Orientation complete!! Now the REAL jobs.",
+		rewardCash = 25_000,
+		offerLine = "Hit 600 Power. Tree Branch. No excuses.",
+		completeLine = "600 Power!! You're actually working out!!",
 	},
 	landQuest(
-		1,
+		2,
 		"troll",
-		"First Land",
-		"Swing out to Land 1. Go go go!!",
-		"You made Land 1!! Here's a Troll Lucky Block!!"
+		"Second Land",
+		"Swing over to Land 2. That's the real start!!",
+		"You made Land 2!! Here's a Troll Lucky Block!!"
 	),
 	{
 		id = "claim_5",
@@ -329,11 +330,11 @@ local QUESTS: { QuestDef } = {
 		rewardCash = 400_000,
 	},
 	{
-		id = "power_3",
+		id = "power_2500",
 		title = "Power Trip",
-		description = "Upgrade your Power to level 3.",
-		kind = "upgrade_power",
-		target = 3,
+		description = "Work out until you reach 2500 Power.",
+		kind = "reach_power",
+		target = 2500,
 		showBar = true,
 		rewardKind = "lucky_block",
 		rewardLuckyBlock = "troll",
@@ -426,7 +427,7 @@ M.COUNTER_QUEST_KINDS = {
 M.INTRO_LINES = {
 	{ text = "Hey!! My name is Tim Cheese!", shake = true },
 	{ text = "I need your help collecting brainrots!", shake = false },
-	{ text = "Warmup bushes first — then we hop lands!!", shake = true },
+	{ text = "Hit 600 Power first — then hop to Land 2!!", shake = true },
 }
 
 M.COMPLETE_LINES = {
@@ -493,7 +494,7 @@ function M.formatProgressLabel(quest: QuestDef, progress: number): string
 	local t = quest.target
 	if quest.kind == "reach_land" then
 		return if p >= t then string.format("Land %d reached!", t) else string.format("Reach Land %d", t)
-	elseif quest.kind == "upgrade_power" then
+	elseif quest.kind == "upgrade_power" or quest.kind == "reach_power" then
 		return string.format("Power %d / %d", p, t)
 	elseif quest.kind == "upgrade_rope" then
 		return string.format("Rope %d / %d", p, t)

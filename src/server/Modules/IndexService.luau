@@ -22,15 +22,14 @@ local iconCache: { [string]: { [string]: string } } = {}
 local packedCatalogCache: { [string]: { { name: string, rarity: string, baseIncome: number, icon: string } } } = {}
 
 local function getBrainrotsFolder(): Folder?
-	if brainrotsFolder and brainrotsFolder.Parent then
+	if brainrotsFolder and brainrotsFolder.Parent and brainrotsFolder:FindFirstChildWhichIsA("BasePart", true) then
 		return brainrotsFolder
 	end
-	local root = ServerStorage:FindFirstChild("Brainrots")
-	if root and root:IsA("Folder") then
+	local root = Brainrots.getBrainrotsFolder()
+	if root then
 		brainrotsFolder = root
-		return root
 	end
-	return nil
+	return root
 end
 
 local function usableImage(tex: string?): string

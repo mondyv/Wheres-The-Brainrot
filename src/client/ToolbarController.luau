@@ -116,6 +116,9 @@ applyToolbarInitialHiddenState()
 local function stripClonedGui3D(row: Instance)
 	local heavy: { Instance } = {}
 	for _, d in row:GetDescendants() do
+		if d.Name == "GearViewport" or d:FindFirstAncestor("GearViewport") then
+			continue
+		end
 		if d:IsA("ViewportFrame") or d:IsA("WorldModel") or d:IsA("BasePart") then
 			table.insert(heavy, d)
 		end

@@ -2352,6 +2352,23 @@ local function isDisallowedTutorialButton(obj: Instance): boolean
 	return false
 end
 
+local function resolveWorkoutHotbarSlot(): GuiObject?
+	local main = PlayerGuiMain.ensure(player)
+	if not main then
+		return nil
+	end
+	local toolbar = main:FindFirstChild("Toolbar")
+	local hotbar = toolbar and toolbar:FindFirstChild("Hotbar")
+	if not hotbar then
+		return nil
+	end
+	local slot = hotbar:FindFirstChild("1")
+	if slot and slot:IsA("GuiObject") then
+		return slot
+	end
+	return nil
+end
+
 local function cacheUpgradesBuyButton()
 	_powerBuyButton = nil
 	local main = PlayerGuiMain.ensure(player)
@@ -2510,11 +2527,9 @@ local function refreshPointersImpl()
 	elseif step.id == "useWorkout" then
 		clearWorldArrow()
 		clearWorldHighlight()
-		-- Point players at hotbar / body — world arrow on character.
-		local char = player.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		if hrp and hrp:IsA("BasePart") then
-			pointAtWorld(hrp, arrowHeight(2))
+		local slot = resolveWorkoutHotbarSlot()
+		if slot then
+			pointAtGui(slot, true)
 		end
 	elseif step.id == "swingLand1" then
 		local swing = resolveLand1SwingTarget()
@@ -2821,6 +2836,11 @@ local function watchStepProgress()
 				elseif not (btn and isGuiTreeVisible(btn)) and not worldHighlight then
 					refreshPointers()
 				end
+			elseif step.id == "useWorkout" then
+				local slot = resolveWorkoutHotbarSlot()
+				if slot and isGuiTreeVisible(slot) and (not uiPointer or uiPointerHost ~= slot) then
+					refreshPointers()
+				end
 			end
 		end
 
@@ -2846,6 +2866,10 @@ local function watchStepProgress()
 				end
 			end
 		elseif step.id == "useWorkout" then
+			local slot = resolveWorkoutHotbarSlot()
+			if slot and isGuiTreeVisible(slot) and (not uiPointer or uiPointerHost ~= slot) then
+				pointAtGui(slot, true)
+			end
 			if player:GetAttribute("WorkoutActive") == true then
 				completeCurrentIf("useWorkout")
 			end

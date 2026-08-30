@@ -27,9 +27,8 @@ end)
 -- Legacy place files kept the whole Brainrots mesh catalog in ReplicatedStorage.
 -- Every client (and Studio play-solo) then holds a second copy of every model.
 -- Templates are server-only; move/destroy the replicated duplicate immediately.
-local function folderHas3D(folder: Instance): boolean
+local function folderHasMeshCatalog(folder: Instance): boolean
 	return folder:FindFirstChildWhichIsA("BasePart", true) ~= nil
-		or folder:FindFirstChildWhichIsA("Model", true) ~= nil
 end
 
 local function unreplicateBrainrotsCatalog()
@@ -38,18 +37,11 @@ local function unreplicateBrainrotsCatalog()
 		return
 	end
 	local ss = ServerStorage:FindFirstChild("Brainrots")
-	if ss and ss:IsA("Folder") and folderHas3D(ss) then
+	-- Rojo can ship an empty ServerStorage.Brainrots. Never destroy the live
+	-- ReplicatedStorage catalog unless ServerStorage already has the meshes.
+	if ss and ss:IsA("Folder") and folderHasMeshCatalog(ss) then
 		rs:Destroy()
-		return
 	end
-	if ss and ss:IsA("Folder") then
-		for _, child in rs:GetChildren() do
-			child.Parent = ss
-		end
-		rs:Destroy()
-		return
-	end
-	rs.Parent = ServerStorage
 end
 
 unreplicateBrainrotsCatalog()

@@ -5,7 +5,6 @@
 -- The 3D mesh always stays inside the slot ViewportFrame (never reparented off the icon).
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local GearRainbowFX = require(script.Parent.GearRainbowFX)
@@ -18,11 +17,10 @@ local spinConns: { [ViewportFrame]: RBXScriptConnection } = {}
 local proxyConns: { [GuiObject]: RBXScriptConnection } = {}
 local proxyParts: { [GuiObject]: BasePart } = {}
 
--- Studio play-solo is not TouchEnabled, so it used to run shop spins, world
--- particle proxies, and extra lights — that is what pushed Studio to ~8GB
--- while the published client stayed fine.
-local function isLowCostPreview(): boolean
-	return UserInputService.TouchEnabled or RunService:IsStudio()
+-- Published clients (including mobile) always get the real gear mesh + VFX.
+-- Studio skips spin / world-space particle proxies to keep play-solo RAM down.
+local function isStudioPreview(): boolean
+	return RunService:IsStudio()
 end
 
 local function stripSimulatedFx(root: Instance)
@@ -134,7 +132,7 @@ end
 
 -- Enable / reparent the gear's authored FX only (no synthetic particles).
 local function enableAuthoredFx(root: Instance)
-	if isLowCostPreview() then
+	if isStudioPreview() then
 		stripSimulatedFx(root)
 		return
 	end
@@ -181,7 +179,7 @@ end
 
 -- Clone the gear's own ParticleEmitters into world space (VF can't draw them).
 local function mountFxProxy(host: GuiObject, sourceModel: Model)
-	if isLowCostPreview() then
+	if isStudioPreview() then
 		return
 	end
 	clearFxProxy(host)
@@ -352,7 +350,7 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 		return existing
 	end
 
-	local clone = if isLowCostPreview() then makeFallbackModel(gearId) else GearConfig.cloneGearModel(gearId)
+	local clone = GearConfig.cloneGearModel(gearId)
 	if not clone then
 		clone = makeFallbackModel(gearId)
 	end
@@ -429,7 +427,7 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	local maxDim = math.max(size.X, size.Y, size.Z, 0.15)
 	local homePivot = clone:GetPivot()
 
-	if not isLowCostPreview() then
+	if not isStudioPreview() then
 		local fillLight = Instance.new("PointLight")
 		fillLight.Name = "ViewportFillLight"
 		fillLight.Brightness = 4
@@ -454,7 +452,7 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	vf.CurrentCamera = cam
 
 	local distance = maxDim * 2.15
-	local shouldRotate = (not isLowCostPreview()) and not (opts and opts.rotate == false)
+	local shouldRotate = (not isStudioPreview()) and not (opts and opts.rotate == false)
 	-- Hotbar: frozen 3/4 view. Shop: same pose as the spin start.
 	local yaw = math.rad(48)
 
@@ -466,11 +464,11 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	end
 	updateCam()
 
-	if not isLowCostPreview() then
+	if not isStudioPreview() then
 		mountFxProxy(host, clone)
 	end
 
-	if gearId == 6 and not isLowCostPreview() then
+	if gearId == 6 and not isStudioPreview() then
 		GearRainbowFX.attach(clone)
 	end
 

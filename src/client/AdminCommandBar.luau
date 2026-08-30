@@ -1536,18 +1536,6 @@ local function highlightOn(host: GuiObject): GuiObject?
 	return nil
 end
 
-local function syncMobileAdminButton()
-	local frame = mobileAdminFrame
-	local host = mobileAdminButtonHost
-	local show = isAdminAllowed() and isPhoneLike()
-	if frame then
-		frame.Visible = show
-	end
-	if host then
-		host.Visible = show
-	end
-end
-
 local function wireMobileAdminButton()
 	if mobileAdminWired then
 		return

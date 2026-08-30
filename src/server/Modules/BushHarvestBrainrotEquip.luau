@@ -227,8 +227,14 @@ function M.createEquipBrainrotSlotForPlayer(deps: EquipDeps): (Player, number, b
 		end
 		removeBrainrotToolAtInventoryIndex(bp, idx)
 		removeBrainrotToolAtInventoryIndex(char, idx)
-		-- Put the tool on the character directly. Backpack + EquipTool is dropped
-		-- on mobile by the same GUI tap that requested the equip.
+		-- Drop whatever is already in hand (other brainrot / workout gear) so
+		-- a hotbar swap is one press, not unequip-then-equip.
+		hum:UnequipTools()
+		for _, child in char:GetChildren() do
+			if child:IsA("Tool") and child ~= tool then
+				child.Parent = bp
+			end
+		end
 		tool.Parent = char
 		if tool.Parent ~= char then
 			tool.Parent = bp

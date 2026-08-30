@@ -1495,6 +1495,22 @@ local function bindCharacter(character: Model)
 		character.ChildAdded:Connect(function(child)
 			if child:IsA("Tool") then
 				bindTool(child)
+				-- Hotbar swap onto a brainrot / lucky block: drop the workout.
+				if child:GetAttribute(GearConfig.GEAR_TOOL_ATTR) ~= true then
+					if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+						onUnequip()
+					end
+				end
+			end
+		end)
+	)
+	table.insert(
+		charConns,
+		character.ChildRemoved:Connect(function(child)
+			if child:IsA("Tool") and child:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
+				if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+					onUnequip()
+				end
 			end
 		end)
 	)

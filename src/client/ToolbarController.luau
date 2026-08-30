@@ -381,6 +381,20 @@ local function characterHoldsTool(tool: Tool): boolean
 	return char ~= nil and tool.Parent == char
 end
 
+local toolHoldGen = 0
+
+local function bumpToolHoldGen(): number
+	toolHoldGen += 1
+	return toolHoldGen
+end
+
+local function clearHeldTools()
+	local hum = getHumanoid()
+	if hum then
+		hum:UnequipTools()
+	end
+end
+
 local function forceToolIntoHand(tool: Tool)
 	local char = player.Character
 	if not char or not tool.Parent then
@@ -392,6 +406,13 @@ local function forceToolIntoHand(tool: Tool)
 	-- Parenting onto the character survives a mobile GUI tap. EquipTool on the
 	-- same touch is applied then immediately put away, which left the outline on
 	-- and nothing in the hand.
+	local equipped = char:FindFirstChildOfClass("Tool")
+	if equipped and equipped ~= tool then
+		local hum = getHumanoid()
+		if hum then
+			hum:UnequipTools()
+		end
+	end
 	tool.Parent = char
 	if tool.Parent == char then
 		return
@@ -406,13 +427,14 @@ local function holdToolInHand(tool: Tool, stillWanted: () -> boolean)
 	if not tool.Parent then
 		return
 	end
+	local gen = bumpToolHoldGen()
 	task.spawn(function()
 		local waitForLift = UserInputService.TouchEnabled
 			and UserInputService:GetLastInputType() == Enum.UserInputType.Touch
 		local firstTryAt = if waitForLift then os.clock() + 0.05 else os.clock()
 		local deadline = os.clock() + 2.0
 		while os.clock() < deadline do
-			if not stillWanted() or not tool.Parent then
+			if gen ~= toolHoldGen or not stillWanted() or not tool.Parent then
 				return
 			end
 			if characterHoldsTool(tool) then
@@ -3817,10 +3839,8 @@ end
 		-- state (mobile tap set the outline, tool never replicated) must retry.
 		if uiBackpackListHighlight == listIdx and holdingThis then
 			pendingAutoEquipSlot = nil
-			local hum = getHumanoid()
-			if hum then
-				hum:UnequipTools()
-			end
+			bumpToolHoldGen()
+			clearHeldTools()
 			uiBackpackListHighlight = nil
 			uiBackpackExtraHighlight = nil
 			uiHotbarHighlight = nil
@@ -3831,6 +3851,8 @@ end
 			return
 		end
 
+		local holdGen = bumpToolHoldGen()
+		clearHeldTools()
 		uiHotbarHighlight = nil
 		_activeSlot = nil
 		uiBackpackListHighlight = listIdx
@@ -3845,7 +3867,7 @@ end
 			local firstTryAt = if waitForLift then os.clock() + 0.12 else os.clock()
 			local deadline = os.clock() + 2.5
 			while os.clock() < deadline do
-				if uiBackpackListHighlight ~= listIdx then
+				if holdGen ~= toolHoldGen or uiBackpackListHighlight ~= listIdx then
 					return
 				end
 				local liveChar = player.Character
@@ -3893,6 +3915,7 @@ end
 		local char = player.Character
 		local equipped = char and char:FindFirstChildOfClass("Tool")
 		if equipped == tool then
+			bumpToolHoldGen()
 			hum:UnequipTools()
 			setHotbarSelection(nil, false)
 			uiBackpackListHighlight = nil
@@ -3902,6 +3925,10 @@ end
 			return
 		end
 		-- Equip from the bag cell; keep the inventory outline.
+		if equipped and equipped ~= tool then
+			bumpToolHoldGen()
+			hum:UnequipTools()
+		end
 		setHotbarSelection(nil, false)
 		uiBackpackListHighlight = nil
 		uiBackpackExtraHighlight = tool
@@ -4426,13 +4453,18 @@ end
 		local char = player.Character
 		local equipped = char and char:FindFirstChildOfClass("Tool")
 
-		-- Extra tool slot (e.g. lucky block) with no brainrot inventory index.
+		-- Extra tool slot (e.g. lucky block / workout gear) with no brainrot index.
 		if tool and not hasBrainrotEntry then
 			if equipped == tool then
+				bumpToolHoldGen()
 				hum:UnequipTools()
 				setHotbarSelection(nil, false)
 				queueRebuildSlots()
 				return
+			end
+			bumpToolHoldGen()
+			if equipped and equipped ~= tool then
+				hum:UnequipTools()
 			end
 			extraToolSlotByIndex[index] = tool
 			setHotbarSelection(index)
@@ -4444,6 +4476,7 @@ end
 		end
 
 		if tool and equipped == tool then
+			bumpToolHoldGen()
 			hum:UnequipTools()
 			setHotbarSelection(nil)
 			return
@@ -4456,6 +4489,7 @@ end
 				holdingThisBrainrot = typeof(inv) == "number" and math.floor(inv) == brainrotIdx
 			end
 			if uiHotbarHighlight == index and holdingThisBrainrot then
+				bumpToolHoldGen()
 				hum:UnequipTools()
 				setHotbarSelection(nil)
 				return
@@ -4469,10 +4503,15 @@ end
 						and math.floor(invIdx) == brainrotIdx
 						and uiHotbarHighlight == index
 					then
+						bumpToolHoldGen()
 						hum:UnequipTools()
 						setHotbarSelection(nil)
 						return
 					end
+				end
+				local holdGen = bumpToolHoldGen()
+				if equipped then
+					hum:UnequipTools()
 				end
 				setHotbarSelection(index)
 				requestEquipBrainrotSlot(brainrotIdx :: number, true)
@@ -4485,7 +4524,7 @@ end
 					local firstTryAt = if waitForLift then os.clock() + 0.12 else os.clock()
 					local deadline = os.clock() + 2.5
 					while os.clock() < deadline do
-						if uiHotbarHighlight ~= index then
+						if holdGen ~= toolHoldGen or uiHotbarHighlight ~= index then
 							return
 						end
 						local tool = findBrainrotToolAtInvIndex(player.Character, wantedIdx)
@@ -4506,6 +4545,10 @@ end
 			return
 		end
 
+		if equipped and equipped ~= tool then
+			bumpToolHoldGen()
+			hum:UnequipTools()
+		end
 		setHotbarSelection(index)
 		holdToolInHand(tool, function()
 			return uiHotbarHighlight == index

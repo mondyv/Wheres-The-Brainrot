@@ -245,6 +245,28 @@ local dragSuppressedToolbarClick = false
 local mobileDragHoldToken = 0
 local DRAG_THRESHOLD_PX = 14
 local DRAG_GHOST_THRESHOLD_PX = 18
+local DRAG_GHOST_THRESHOLD_TOUCH_PX = 40
+
+-- Touch.Position is viewport space; GetMouseLocation includes the top-bar inset.
+-- Mixing them on mobile instantly looks like an 18px+ drag, so the ghost appears
+-- and the tap never equips.
+local function toolbarPointerScreen(input: InputObject?): Vector2
+	if input and input.UserInputType == Enum.UserInputType.Touch then
+		local inset = GuiService:GetGuiInset()
+		return Vector2.new(input.Position.X + inset.X, input.Position.Y + inset.Y)
+	end
+	return UserInputService:GetMouseLocation()
+end
+
+local function dragGhostThresholdFor(input: InputObject?): number
+	if input and input.UserInputType == Enum.UserInputType.Touch then
+		return DRAG_GHOST_THRESHOLD_TOUCH_PX
+	end
+	if UserInputService:GetLastInputType() == Enum.UserInputType.Touch then
+		return DRAG_GHOST_THRESHOLD_TOUCH_PX
+	end
+	return DRAG_GHOST_THRESHOLD_PX
+end
 -- Shared scale for the single hotbar slot under the cursor while dragging (not the whole bar).
 local HOTBAR_DRAG_HOVER_SCALE = 1.06
 
@@ -3836,7 +3858,7 @@ local ToolbarController = {}
 					pendingToolbarPress = {
 						kind = "backpack",
 						idx = listIdx,
-						start = Vector2.new(input.Position.X, input.Position.Y),
+						start = toolbarPointerScreen(input),
 						texture = tex,
 						uid = brainrotUidAtIndex(listIdx),
 						sourceSize = btn.AbsoluteSize,
@@ -4908,7 +4930,7 @@ local ToolbarController = {}
 						return
 					end
 					mobileDragHoldToken += 1
-					local startPos = Vector2.new(input.Position.X, input.Position.Y)
+					local startPos = toolbarPointerScreen(input)
 					local tex = hotbarSlotDragTexture(i)
 					local dragBrainrotIdx = brainrotIndexForHotbarSlot(i)
 					local isExtraTool = dragBrainrotIdx == nil or brainrotParkedInUI[dragBrainrotIdx] == true
@@ -5198,11 +5220,8 @@ local ToolbarController = {}
 				return
 			end
 			if pendingToolbarPress and not pendingToolbarDrag then
-				local m0 = UserInputService:GetMouseLocation()
-				if input.UserInputType == Enum.UserInputType.Touch then
-					m0 = Vector2.new(input.Position.X, input.Position.Y)
-				end
-				if (m0 - pendingToolbarPress.start).Magnitude >= DRAG_GHOST_THRESHOLD_PX then
+				local m0 = toolbarPointerScreen(input)
+				if (m0 - pendingToolbarPress.start).Magnitude >= dragGhostThresholdFor(input) then
 					local stillHolding = input.UserInputType == Enum.UserInputType.Touch
 						or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
 						or GamepadInput.isAcceptHeld()
@@ -5222,12 +5241,9 @@ local ToolbarController = {}
 			if GamepadInput.isPreferred() then
 				syncToolbarGamepadCursor()
 			end
-			local m = UserInputService:GetMouseLocation()
-			if input.UserInputType == Enum.UserInputType.Touch then
-				m = Vector2.new(input.Position.X, input.Position.Y)
-			end
+			local m = toolbarPointerScreen(input)
 			if not dragGhostImage then
-				if (m - pnd.start).Magnitude < DRAG_GHOST_THRESHOLD_PX then
+				if (m - pnd.start).Magnitude < dragGhostThresholdFor(input) then
 					return
 				end
 				if pnd.kind == "backpack" then
@@ -5259,11 +5275,12 @@ local ToolbarController = {}
 				updateDragHoverTargets(overHotbar, overBackpack, overBackpackPanel, hoverSlot)
 				return
 			end
-			local rawEnd = UserInputService:GetMouseLocation()
-			if input.UserInputType == Enum.UserInputType.Touch then
-				rawEnd = Vector2.new(input.Position.X, input.Position.Y)
-			end
-			local mouseWindow = dtScreenPointWithGuiInset(rawEnd)
+			local rawEnd = toolbarPointerScreen(input)
+			local mouseWindow = dtScreenPointWithGuiInset(
+				if input.UserInputType == Enum.UserInputType.Touch
+					then Vector2.new(input.Position.X, input.Position.Y)
+					else UserInputService:GetMouseLocation()
+			)
 			local ghostCenter: Vector2? = nil
 			if dragGhostImage then
 				ghostCenter = dragGhostImage.AbsolutePosition + dragGhostImage.AbsoluteSize * 0.5
@@ -5329,10 +5346,7 @@ local ToolbarController = {}
 				syncToolbarGamepadCursor()
 				return
 			end
-			local rawEnd = UserInputService:GetMouseLocation()
-			if input.UserInputType == Enum.UserInputType.Touch then
-				rawEnd = Vector2.new(input.Position.X, input.Position.Y)
-			end
+			local rawEnd = toolbarPointerScreen(input)
 
 			if pnd.kind == "backpack" or (pnd.kind == "hotbar" and not pnd.isExtraTool) then
 				local resolvedIdx = resolveBrainrotIndexForDrag(pnd.idx, pnd.uid)
@@ -5345,14 +5359,32 @@ local ToolbarController = {}
 				pnd.idx = resolvedIdx
 			end
 
-			if (rawEnd - pnd.start).Magnitude < DRAG_THRESHOLD_PX then
-				-- GuiButton.Activated already toggles backpack cells. Firing equip
-				-- again here unequips then the server puts the tool back.
+			if (rawEnd - pnd.start).Magnitude < dragGhostThresholdFor(input) then
+				-- Ghost can appear from inset mismatch; this is still a tap.
+				-- Activated often does not fire after a ghost on mobile.
 				clearDragGhost()
+				if not backpackClickConsumed then
+					if pnd.kind == "backpack" then
+						requestEquipFromBackpack(pnd.idx)
+						backpackClickConsumed = true
+					elseif pnd.kind == "hotbar" then
+						local slot = pnd.tapSlot
+						if typeof(slot) ~= "number" and pnd.isExtraTool then
+							slot = pnd.idx
+						end
+						if typeof(slot) == "number" and hotbarSlotHasSelectableContent(slot) then
+							selectSlot(slot)
+							backpackClickConsumed = true
+						end
+					end
+				end
 				syncToolbarGamepadCursor()
 				return
 			end
-			local mouseWindow = dtScreenPointWithGuiInset(rawEnd)
+			local probeScreen = if input.UserInputType == Enum.UserInputType.Touch
+				then Vector2.new(input.Position.X, input.Position.Y)
+				else UserInputService:GetMouseLocation()
+			local mouseWindow = dtScreenPointWithGuiInset(probeScreen)
 			local ghostCenter: Vector2? = nil
 			if dragGhostImage then
 				ghostCenter = dragGhostImage.AbsolutePosition + dragGhostImage.AbsoluteSize * 0.5
@@ -5499,10 +5531,25 @@ local ToolbarController = {}
 						UIInteractionSounds.playClick()
 					end
 				elseif droppedOnBackpack and destBackpackRow then
-					-- Backpack → backpack reorder. This only changes the visible backpack
-					-- order; it does not touch Equip Best or hotbar slot mappings.
-					moveBrainrotBackpackDisplayRow(pnd.idx, destBackpackRow)
-					UIInteractionSounds.playClick()
+					local srcRow: number? = nil
+					for row, idx in ipairs(backpackDisplayOrder) do
+						if idx == pnd.idx then
+							srcRow = row
+							break
+						end
+					end
+					if destBackpackRow ~= srcRow then
+						-- Backpack → backpack reorder. This only changes the visible backpack
+						-- order; it does not touch Equip Best or hotbar slot mappings.
+						moveBrainrotBackpackDisplayRow(pnd.idx, destBackpackRow)
+						UIInteractionSounds.playClick()
+					elseif input.UserInputType == Enum.UserInputType.Touch and not backpackClickConsumed then
+						requestEquipFromBackpack(pnd.idx)
+						backpackClickConsumed = true
+					end
+				elseif input.UserInputType == Enum.UserInputType.Touch and not backpackClickConsumed then
+					requestEquipFromBackpack(pnd.idx)
+					backpackClickConsumed = true
 				end
 			end
 			syncToolbarGamepadCursor()

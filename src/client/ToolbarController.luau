@@ -375,6 +375,42 @@ local ToolbarController = {}
 		return player:FindFirstChildOfClass("Backpack") :: Folder?
 	end
 
+	-- Mobile: EquipTool during a GUI tap is applied, then the same touch is
+	-- treated as a world click and the tool is put away. Highlight stays,
+	-- nothing is in the hand. Wait until the finger is up, then keep trying
+	-- until the tool is actually on the character.
+	local function characterHoldsTool(tool: Tool): boolean
+		local char = player.Character
+		return char ~= nil and tool.Parent == char
+	end
+
+	local function holdToolInHand(tool: Tool, stillWanted: () -> boolean)
+		if not tool.Parent then
+			return
+		end
+		task.spawn(function()
+			local waitForLift = UserInputService.TouchEnabled
+				and UserInputService:GetLastInputType() == Enum.UserInputType.Touch
+			local firstTryAt = if waitForLift then os.clock() + 0.12 else os.clock()
+			local deadline = os.clock() + 2.0
+			while os.clock() < deadline do
+				if not stillWanted() or not tool.Parent then
+					return
+				end
+				if characterHoldsTool(tool) then
+					return
+				end
+				if os.clock() >= firstTryAt then
+					local hum = getHumanoid()
+					if hum then
+						hum:EquipTool(tool)
+					end
+				end
+				task.wait(0.1)
+			end
+		end)
+	end
+
 	local function isExtraHotbarTool(tool: Tool): boolean
 		if tool:GetAttribute("BrainrotTool") == true then
 			local invIdx = tool:GetAttribute("BrainrotInvIndex")
@@ -3784,6 +3820,9 @@ local ToolbarController = {}
 		requestEquipBrainrotSlot(listIdx, true)
 		queueRebuildSlots()
 		task.spawn(function()
+			local waitForLift = UserInputService.TouchEnabled
+				and UserInputService:GetLastInputType() == Enum.UserInputType.Touch
+			local firstTryAt = if waitForLift then os.clock() + 0.12 else os.clock()
 			local deadline = os.clock() + 2.5
 			while os.clock() < deadline do
 				if uiBackpackListHighlight ~= listIdx then
@@ -3801,9 +3840,8 @@ local ToolbarController = {}
 					end
 					local tool = findBrainrotToolAtInvIndex(liveChar, listIdx)
 						or findBrainrotToolAtInvIndex(getBackpack(), listIdx)
-					if tool then
+					if tool and os.clock() >= firstTryAt and not characterHoldsTool(tool) then
 						hum:EquipTool(tool)
-						return
 					end
 				end
 				task.wait(0.1)
@@ -3848,7 +3886,9 @@ local ToolbarController = {}
 		uiBackpackListHighlight = nil
 		uiBackpackExtraHighlight = tool
 		syncBackpackSelectionStrokes()
-		hum:EquipTool(tool)
+		holdToolInHand(tool, function()
+			return uiBackpackExtraHighlight == tool
+		end)
 		UIInteractionSounds.playClick()
 		queueRebuildSlots()
 		refreshParkedExtraToolsUI()
@@ -4376,7 +4416,9 @@ local ToolbarController = {}
 			end
 			extraToolSlotByIndex[index] = tool
 			setHotbarSelection(index)
-			hum:EquipTool(tool)
+			holdToolInHand(tool, function()
+				return uiHotbarHighlight == index
+			end)
 			queueRebuildSlots()
 			return
 		end
@@ -4388,7 +4430,12 @@ local ToolbarController = {}
 		end
 
 		if not tool then
-			if uiHotbarHighlight == index then
+			local holdingThisBrainrot = false
+			if equipped and equipped:GetAttribute("BrainrotTool") == true and brainrotIdx then
+				local inv = equipped:GetAttribute("BrainrotInvIndex")
+				holdingThisBrainrot = typeof(inv) == "number" and math.floor(inv) == brainrotIdx
+			end
+			if uiHotbarHighlight == index and holdingThisBrainrot then
 				hum:UnequipTools()
 				setHotbarSelection(nil)
 				return
@@ -4411,6 +4458,30 @@ local ToolbarController = {}
 				requestEquipBrainrotSlot(brainrotIdx :: number, true)
 				queueRebuildSlots()
 				task.delay(0.2, queueRebuildSlots)
+				local wantedIdx = brainrotIdx :: number
+				task.spawn(function()
+					local waitForLift = UserInputService.TouchEnabled
+						and UserInputService:GetLastInputType() == Enum.UserInputType.Touch
+					local firstTryAt = if waitForLift then os.clock() + 0.12 else os.clock()
+					local deadline = os.clock() + 2.5
+					while os.clock() < deadline do
+						if uiHotbarHighlight ~= index then
+							return
+						end
+						local tool = findBrainrotToolAtInvIndex(player.Character, wantedIdx)
+							or findBrainrotToolAtInvIndex(getBackpack(), wantedIdx)
+						if tool and characterHoldsTool(tool) then
+							return
+						end
+						if tool and os.clock() >= firstTryAt then
+							local liveHum = getHumanoid()
+							if liveHum then
+								liveHum:EquipTool(tool)
+							end
+						end
+						task.wait(0.1)
+					end
+				end)
 				return
 			end
 			setHotbarSelection(index)
@@ -4419,7 +4490,9 @@ local ToolbarController = {}
 		end
 
 		setHotbarSelection(index)
-		hum:EquipTool(tool)
+		holdToolInHand(tool, function()
+			return uiHotbarHighlight == index
+		end)
 		queueRebuildSlots()
 	end
 

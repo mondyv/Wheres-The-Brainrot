@@ -228,7 +228,18 @@ function M.createEquipBrainrotSlotForPlayer(deps: EquipDeps): (Player, number, b
 		removeBrainrotToolAtInventoryIndex(bp, idx)
 		removeBrainrotToolAtInventoryIndex(char, idx)
 		tool.Parent = bp
-		hum:EquipTool(tool)
+		-- Same-frame EquipTool is dropped on mobile after the GUI tap that
+		-- requested it. Defer + one retry so the character actually holds it.
+		task.defer(function()
+			if hum.Parent and tool.Parent then
+				hum:EquipTool(tool)
+			end
+		end)
+		task.delay(0.15, function()
+			if hum.Parent and tool.Parent and tool.Parent ~= char then
+				hum:EquipTool(tool)
+			end
+		end)
 		return idx
 	end
 end

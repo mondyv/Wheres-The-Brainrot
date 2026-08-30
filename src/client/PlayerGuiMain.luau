@@ -13,6 +13,41 @@ local StarterGui = game:GetService("StarterGui")
 
 local PlayerGuiMain = {}
 
+-- Studio Index/Toolbar templates sometimes ship ViewportFrame + WorldModel + MeshPart
+-- per row. Cloning Main then duplicates that into PlayerGui and Studio hits multiple GB.
+function PlayerGuiMain.stripHeavy3D(root: Instance?)
+	if not root then
+		return
+	end
+	local heavy: { Instance } = {}
+	for _, d in root:GetDescendants() do
+		if d:IsA("ViewportFrame") or d:IsA("WorldModel") or d:IsA("BasePart") or d:IsA("MeshPart") then
+			table.insert(heavy, d)
+		end
+	end
+	for _, inst in heavy do
+		if inst.Name == "Icon" and inst:IsA("ViewportFrame") then
+			local vf = inst :: ViewportFrame
+			local img = Instance.new("ImageLabel")
+			img.Name = "Icon"
+			img.BackgroundTransparency = 1
+			img.BorderSizePixel = 0
+			img.Size = vf.Size
+			img.Position = vf.Position
+			img.AnchorPoint = vf.AnchorPoint
+			img.LayoutOrder = vf.LayoutOrder
+			img.ZIndex = vf.ZIndex
+			img.ScaleType = Enum.ScaleType.Fit
+			local blackout = vf:FindFirstChild("Blackout")
+			if blackout then
+				blackout.Parent = img
+			end
+			img.Parent = vf.Parent
+		end
+		inst:Destroy()
+	end
+end
+
 local watchedPlayerGui: PlayerGui? = nil
 local childAddedConn: RBXScriptConnection? = nil
 
@@ -166,7 +201,9 @@ local function cloneFromStarter(playerGui: PlayerGui): ScreenGui?
 		return existing
 	end
 
+	PlayerGuiMain.stripHeavy3D(template)
 	local clone = template:Clone()
+	PlayerGuiMain.stripHeavy3D(clone)
 	clone.Name = "Main"
 	clone.ResetOnSpawn = false
 	clone.Parent = playerGui
@@ -188,6 +225,7 @@ function PlayerGuiMain.ensure(player: Player?, timeout: number?): ScreenGui
 	while os.clock() < deadline do
 		local main = PlayerGuiMain.dedupe(playerGui)
 		if main then
+			PlayerGuiMain.stripHeavy3D(main)
 			return main
 		end
 		task.wait(0.05)
@@ -220,6 +258,7 @@ function PlayerGuiMain.finalize(playerGui: PlayerGui?)
 	watchPlayerGui(pg)
 	local main = PlayerGuiMain.dedupe(pg)
 	if main then
+		PlayerGuiMain.stripHeavy3D(main)
 		PlayerGuiMain.hideAdminPanelUnlessAllowed(main)
 		-- LoadingScreen keeps Main disabled until isolation exits; don't fight it here.
 		local loading = pg:FindFirstChild("LoadingScreen")

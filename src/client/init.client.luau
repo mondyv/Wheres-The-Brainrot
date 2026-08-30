@@ -27,6 +27,16 @@ task.defer(function()
 	local LoadingScreenController = require(script.LoadingScreenController)
 	local PlayerGuiMain = require(script.PlayerGuiMain)
 
+	-- Strip leftover Index/Toolbar ViewportFrames from the GUI before any
+	-- controller clones rows. Must run before PlayerGuiMain.ensure.
+	pcall(function()
+		PlayerGuiMain.stripHeavy3D(StarterGui)
+		local pg = Players.LocalPlayer:FindFirstChild("PlayerGui")
+		if pg then
+			PlayerGuiMain.stripHeavy3D(pg)
+		end
+	end)
+
 	-- Client streaming radii (server Workspace values do not drive the local streamer).
 	pcall(function()
 		local Workspace = game:GetService("Workspace")

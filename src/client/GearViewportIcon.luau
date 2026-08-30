@@ -352,7 +352,7 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 		return existing
 	end
 
-	local clone = GearConfig.cloneGearModel(gearId)
+	local clone = if isLowCostPreview() then makeFallbackModel(gearId) else GearConfig.cloneGearModel(gearId)
 	if not clone then
 		clone = makeFallbackModel(gearId)
 	end

@@ -7,6 +7,8 @@
 	112 / 280 ≈ current land + neighbors without pinning 5 lands of decor.
 ]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local STREAM_MIN_RADIUS = 112
@@ -21,3 +23,34 @@ pcall(function()
 	Workspace.StreamingTargetRadius = STREAM_TARGET_RADIUS
 	Workspace.StreamOutBehavior = Enum.StreamOutBehavior.Opportunistic
 end)
+
+-- Legacy place files kept the whole Brainrots mesh catalog in ReplicatedStorage.
+-- Every client (and Studio play-solo) then holds a second copy of every model.
+-- Templates are server-only; move/destroy the replicated duplicate immediately.
+local function folderHas3D(folder: Instance): boolean
+	return folder:FindFirstChildWhichIsA("BasePart", true) ~= nil
+		or folder:FindFirstChildWhichIsA("Model", true) ~= nil
+end
+
+local function unreplicateBrainrotsCatalog()
+	local rs = ReplicatedStorage:FindFirstChild("Brainrots")
+	if not rs or not rs:IsA("Folder") then
+		return
+	end
+	local ss = ServerStorage:FindFirstChild("Brainrots")
+	if ss and ss:IsA("Folder") and folderHas3D(ss) then
+		rs:Destroy()
+		return
+	end
+	if ss and ss:IsA("Folder") then
+		for _, child in rs:GetChildren() do
+			child.Parent = ss
+		end
+		rs:Destroy()
+		return
+	end
+	rs.Parent = ServerStorage
+end
+
+unreplicateBrainrotsCatalog()
+task.defer(unreplicateBrainrotsCatalog)

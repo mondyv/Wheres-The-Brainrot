@@ -766,12 +766,13 @@ local ToolbarController = {}
 	local function sanitizeExtraToolSlotPins()
 		local firstSlotForTool: { [Tool]: number } = {}
 		for idx, tool in pairs(extraToolSlotByIndex) do
+			local gearPinned = idx == 1 and tool:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true
 			if
 				idx < 1
 				or idx > HOTBAR_INVENTORY_SLOTS
 				or not tool.Parent
 				or not isExtraHotbarTool(tool)
-				or not slotCanHoldExtraTool(idx)
+				or (not gearPinned and not slotCanHoldExtraTool(idx))
 			then
 				extraToolSlotByIndex[idx] = nil
 			elseif firstSlotForTool[tool] then
@@ -819,18 +820,23 @@ local ToolbarController = {}
 		return true
 	end
 
+	local function isWorkoutGearTool(tool: Tool): boolean
+		return tool:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true
+	end
+
 	local function findWorkoutGearTool(): Tool?
-		for _, tool in ipairs(collectExtraHotbarTools()) do
-			if tool:GetAttribute("WorkoutGearTool") == true and tool.Parent then
-				return tool
+		local function scan(root: Instance?): Tool?
+			if not root then
+				return nil
 			end
-		end
-		for _, tool in ipairs(parkedExtraTools) do
-			if tool:GetAttribute("WorkoutGearTool") == true and tool.Parent then
-				return tool
+			for _, item in root:GetChildren() do
+				if item:IsA("Tool") and isWorkoutGearTool(item) and item.Parent then
+					return item
+				end
 			end
+			return nil
 		end
-		return nil
+		return scan(player.Character) or scan(getBackpack())
 	end
 
 	-- Dumbbell / workout gear always owns hotbar slot 1; brainrots there go to backpack UI.
@@ -842,9 +848,8 @@ local ToolbarController = {}
 		if not gearTool then
 			return
 		end
-		if isExtraToolParked(gearTool) then
-			return
-		end
+
+		removeExtraToolFromParkedList(gearTool)
 
 		if slotHasActiveBrainrot(1) then
 			requestTuckBrainrotHotbarSlot(1)
@@ -856,7 +861,6 @@ local ToolbarController = {}
 			parkExtraToolInBackpack(occupant, 1)
 		end
 
-		removeExtraToolFromParkedList(gearTool)
 		removeExtraToolFromAllHotbarSlots(gearTool)
 		extraToolSlotByIndex[1] = gearTool
 		slotTools[1] = gearTool
@@ -3170,10 +3174,7 @@ local ToolbarController = {}
 		end
 
 		for _, tool in ipairs(extras) do
-			if tool:GetAttribute("WorkoutGearTool") == true then
-				if isExtraToolParked(tool) then
-					continue
-				end
+			if isWorkoutGearTool(tool) then
 				removeExtraToolFromParkedList(tool)
 				if not assignedExtras[tool] then
 					extraToolSlotByIndex[1] = tool
@@ -3655,13 +3656,23 @@ local ToolbarController = {}
 			return
 		end
 		local now = os.clock()
-		if lastBackpackEquipIdx == listIdx and now - lastBackpackEquipAt < 0.18 then
+		if lastBackpackEquipIdx == listIdx and now - lastBackpackEquipAt < 0.28 then
 			return
 		end
 		lastBackpackEquipAt = now
 		lastBackpackEquipIdx = listIdx
 
-		if uiBackpackListHighlight == listIdx then
+		local char = player.Character
+		local equipped = char and char:FindFirstChildOfClass("Tool")
+		local holdingThis = false
+		if equipped and equipped:GetAttribute("BrainrotTool") == true then
+			local inv = equipped:GetAttribute("BrainrotInvIndex")
+			holdingThis = typeof(inv) == "number" and math.floor(inv) == listIdx
+		end
+
+		-- Only unequip when that brainrot is actually in hand. A highlight-only
+		-- state (mobile tap set the outline, tool never replicated) must retry.
+		if uiBackpackListHighlight == listIdx and holdingThis then
 			pendingAutoEquipSlot = nil
 			local hum = getHumanoid()
 			if hum then
@@ -3677,10 +3688,6 @@ local ToolbarController = {}
 			return
 		end
 
-		local hum = getHumanoid()
-		if hum then
-			hum:UnequipTools()
-		end
 		uiHotbarHighlight = nil
 		_activeSlot = nil
 		uiBackpackListHighlight = listIdx
@@ -3689,6 +3696,33 @@ local ToolbarController = {}
 		syncBackpackSelectionStrokes()
 		requestEquipBrainrotSlot(listIdx, true)
 		queueRebuildSlots()
+		task.spawn(function()
+			local deadline = os.clock() + 2.5
+			while os.clock() < deadline do
+				if uiBackpackListHighlight ~= listIdx then
+					return
+				end
+				local liveChar = player.Character
+				local hum = getHumanoid()
+				if liveChar and hum then
+					local held = liveChar:FindFirstChildOfClass("Tool")
+					if held and held:GetAttribute("BrainrotTool") == true then
+						local inv = held:GetAttribute("BrainrotInvIndex")
+						if typeof(inv) == "number" and math.floor(inv) == listIdx then
+							return
+						end
+					end
+					local tool = findBrainrotToolAtInvIndex(liveChar, listIdx)
+						or findBrainrotToolAtInvIndex(getBackpack(), listIdx)
+					if tool then
+						hum:EquipTool(tool)
+						return
+					end
+				end
+				task.wait(0.1)
+			end
+			warn("[ToolbarController] backpack equip produced no tool for index", listIdx)
+		end)
 	end
 
 	-- Lucky blocks / extra tools parked in the bag: tap to equip without a hotbar cell.

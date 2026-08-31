@@ -265,6 +265,170 @@ local function ensureSweepClip(host: GuiObject, btn: GuiObject): Frame
 	return clip
 end
 
+local TAP_DRAG_MOUSE_PX = 14
+local TAP_DRAG_TOUCH_PX = 22
+local tapUisWired = false
+
+type TapTrack = {
+	tracking: boolean,
+	dragged: boolean,
+	ignoreActivated: boolean,
+	startPos: Vector2?,
+	input: InputObject?,
+	onTap: () -> (),
+	onPressVisual: (() -> ())?,
+	onReleaseVisual: (() -> ())?,
+}
+
+local tapTracks: { [GuiButton]: TapTrack } = {}
+
+local function isPointerInput(input: InputObject): boolean
+	local kind = input.UserInputType
+	return kind == Enum.UserInputType.MouseButton1 or kind == Enum.UserInputType.Touch
+end
+
+local function pointerPos(input: InputObject): Vector2
+	return Vector2.new(input.Position.X, input.Position.Y)
+end
+
+local function finishTapTrack(track: TapTrack, allowFire: boolean)
+	if not track.tracking then
+		return
+	end
+	track.tracking = false
+	track.input = nil
+	track.startPos = nil
+	track.ignoreActivated = true
+	local fire = allowFire and not track.dragged
+	if track.onReleaseVisual then
+		track.onReleaseVisual()
+	end
+	if fire then
+		track.onTap()
+	end
+end
+
+local function ensureTapInputListeners()
+	if tapUisWired then
+		return
+	end
+	tapUisWired = true
+
+	UserInputService.InputChanged:Connect(function(input: InputObject)
+		local kind = input.UserInputType
+		if kind ~= Enum.UserInputType.Touch and kind ~= Enum.UserInputType.MouseMovement then
+			return
+		end
+		local pos = pointerPos(input)
+		local thresh = if kind == Enum.UserInputType.Touch then TAP_DRAG_TOUCH_PX else TAP_DRAG_MOUSE_PX
+		for _, track in tapTracks do
+			if not track.tracking or not track.startPos then
+				continue
+			end
+			local tracked = track.input
+			if kind == Enum.UserInputType.Touch then
+				if tracked ~= input then
+					continue
+				end
+			elseif tracked and tracked.UserInputType ~= Enum.UserInputType.MouseButton1 then
+				continue
+			end
+			if (pos - track.startPos).Magnitude >= thresh then
+				track.dragged = true
+			end
+		end
+	end)
+
+	UserInputService.InputEnded:Connect(function(input: InputObject)
+		if not isPointerInput(input) then
+			return
+		end
+		for _, track in tapTracks do
+			if not track.tracking then
+				continue
+			end
+			local tracked = track.input
+			if tracked and tracked ~= input then
+				if
+					input.UserInputType ~= Enum.UserInputType.MouseButton1
+					or tracked.UserInputType ~= Enum.UserInputType.MouseButton1
+				then
+					continue
+				end
+			end
+			finishTapTrack(track, true)
+		end
+	end)
+end
+
+-- Fire on a clean press+release. Press-and-drag (camera pan) does not activate.
+local function bindTapNotDrag(
+	btn: GuiButton,
+	onTap: () -> (),
+	onPressVisual: (() -> ())?,
+	onReleaseVisual: (() -> ())?
+)
+	ensureTapInputListeners()
+
+	local track: TapTrack = {
+		tracking = false,
+		dragged = false,
+		ignoreActivated = false,
+		startPos = nil,
+		input = nil,
+		onTap = onTap,
+		onPressVisual = onPressVisual,
+		onReleaseVisual = onReleaseVisual,
+	}
+	tapTracks[btn] = track
+
+	btn.InputBegan:Connect(function(input: InputObject, _gameProcessed: boolean)
+		if not isPointerInput(input) then
+			return
+		end
+		track.tracking = true
+		track.dragged = false
+		track.ignoreActivated = false
+		track.input = input
+		track.startPos = pointerPos(input)
+		if track.onPressVisual then
+			track.onPressVisual()
+		end
+	end)
+
+	btn.InputEnded:Connect(function(input: InputObject)
+		if not isPointerInput(input) then
+			return
+		end
+		if track.input and track.input ~= input then
+			return
+		end
+		finishTapTrack(track, true)
+	end)
+
+	btn.MouseLeave:Connect(function()
+		if track.tracking then
+			track.dragged = true
+			finishTapTrack(track, false)
+		end
+	end)
+
+	btn.Activated:Connect(function()
+		if track.tracking then
+			return
+		end
+		if track.ignoreActivated then
+			track.ignoreActivated = false
+			return
+		end
+		onTap()
+	end)
+
+	btn.Destroying:Connect(function()
+		tapTracks[btn] = nil
+	end)
+end
+
 -- MouseEnter does not fire on mobile; mirror hover with touch on the button.
 local function bindPointerHover(btn: GuiButton, onEnter: () -> (), onLeave: () -> ())
 	local hovering = false
@@ -548,24 +712,27 @@ function M.wireScaleButtonAnim(btn: GuiButton, onActivated: () -> ())
 	)
 	local lastFire = 0
 	local function fireActivated()
+		if not canFireUiTap() then
+			return
+		end
 		local now = os.clock()
 		if now - lastFire < 0.12 then
 			return
 		end
 		lastFire = now
+		UIInteractionSounds.playClick()
 		onActivated()
 	end
-	btn.MouseButton1Down:Connect(function()
-		UIInteractionSounds.playClick()
-		tweenScale(0.9, CLICK_TWEEN)
-		fireActivated()
-	end)
-	-- Mobile often delivers Activated without a reliable MouseButton1Down
-	-- (especially while another finger is on the thumbstick).
-	btn.Activated:Connect(fireActivated)
-	btn.MouseButton1Up:Connect(function()
-		tweenScale(if hovering then 1.08 else 1, RELEASE_TWEEN)
-	end)
+	bindTapNotDrag(
+		btn,
+		fireActivated,
+		function()
+			tweenScale(0.9, CLICK_TWEEN)
+		end,
+		function()
+			tweenScale(if hovering then 1.08 else 1, RELEASE_TWEEN)
+		end
+	)
 end
 
 -- Small hover/press for dense panels (Free Rewards). No Back overshoot.
@@ -591,14 +758,29 @@ function M.wireSubtleScaleButtonAnim(btn: GuiButton, onActivated: () -> ())
 			tweenScale(1, hoverInfo)
 		end
 	)
-	btn.MouseButton1Down:Connect(function()
+	local lastFire = 0
+	local function fireActivated()
+		if not canFireUiTap() then
+			return
+		end
+		local now = os.clock()
+		if now - lastFire < 0.12 then
+			return
+		end
+		lastFire = now
 		UIInteractionSounds.playClick()
-		tweenScale(0.98, clickInfo)
 		onActivated()
-	end)
-	btn.MouseButton1Up:Connect(function()
-		tweenScale(if hovering then 1.03 else 1, hoverInfo)
-	end)
+	end
+	bindTapNotDrag(
+		btn,
+		fireActivated,
+		function()
+			tweenScale(0.98, clickInfo)
+		end,
+		function()
+			tweenScale(if hovering then 1.03 else 1, hoverInfo)
+		end
+	)
 end
 
 -- Sidebar buttons: tilt + scale; glisten + sweep only while hovered.
@@ -629,6 +811,7 @@ function M.wireTiltHoverButton(
 			return
 		end
 		lastFire = now
+		UIInteractionSounds.playClick()
 		onActivated()
 	end
 
@@ -650,23 +833,19 @@ function M.wireTiltHoverButton(
 			TweenService:Create(tiltTarget, TILT_LEAVE, { Rotation = 0 }):Play()
 		end
 	)
-	btn.MouseButton1Down:Connect(function()
-		UIInteractionSounds.playClick()
+	local function playPressVisual()
 		TweenService:Create(scale, TILT_CLICK, { Scale = 0.94 }):Play()
 		TweenService:Create(tiltTarget, TILT_CLICK, { Rotation = 6 }):Play()
-		fireActivated()
-	end)
-	btn.Activated:Connect(function()
-		fireActivated()
-	end)
-	btn.MouseButton1Up:Connect(function()
+	end
+	local function playReleaseVisual()
 		TweenService:Create(scale, HOVER_SCALE, { Scale = if hovering then 1.1 else 1 }):Play()
 		if hovering then
 			TweenService:Create(tiltTarget, TILT_HOVER, { Rotation = -10 }):Play()
 		else
 			TweenService:Create(tiltTarget, TILT_LEAVE, { Rotation = 0 }):Play()
 		end
-	end)
+	end
+	bindTapNotDrag(btn, fireActivated, playPressVisual, playReleaseVisual)
 end
 
 function M.wireSidebarButton(btn: GuiButton, onActivated: () -> ())
@@ -696,21 +875,32 @@ function M.wireAccentButton(btn: GuiButton, onActivated: () -> ())
 			TweenService:Create(scale, HOVER_TWEEN, { Scale = 1 }):Play()
 		end
 	)
-	btn.MouseButton1Down:Connect(function()
+	local function fireActivated()
 		if not canFireUiTap() then
 			return
 		end
-		UIInteractionSounds.playClick()
-		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.92 }):Play()
 		local now = os.clock()
-		if now - lastFire >= 0.08 then
-			lastFire = now
-			onActivated()
+		if now - lastFire < 0.08 then
+			return
 		end
-	end)
-	btn.MouseButton1Up:Connect(function()
-		TweenService:Create(scale, if hovering then HOVER_TWEEN else RELEASE_TWEEN, { Scale = if hovering then 1.08 else 1 }):Play()
-	end)
+		lastFire = now
+		UIInteractionSounds.playClick()
+		onActivated()
+	end
+	bindTapNotDrag(
+		btn,
+		fireActivated,
+		function()
+			TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.92 }):Play()
+		end,
+		function()
+			TweenService:Create(
+				scale,
+				if hovering then HOVER_TWEEN else RELEASE_TWEEN,
+				{ Scale = if hovering then 1.08 else 1 }
+			):Play()
+		end
+	)
 end
 
 -- Close (X): scale + thin in-bounds glisten on hover only (no sweep — keeps X readable).
@@ -739,21 +929,32 @@ function M.wireGlistenCloseButton(btn: GuiButton, onActivated: () -> ())
 			TweenService:Create(scale, HOVER_TWEEN, { Scale = 1 }):Play()
 		end
 	)
-	btn.MouseButton1Down:Connect(function()
+	local function fireActivated()
 		if not canFireUiTap() then
 			return
 		end
-		UIInteractionSounds.playClick()
-		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.9 }):Play()
 		local now = os.clock()
-		if now - lastFire >= 0.08 then
-			lastFire = now
-			onActivated()
+		if now - lastFire < 0.08 then
+			return
 		end
-	end)
-	btn.MouseButton1Up:Connect(function()
-		TweenService:Create(scale, if hovering then HOVER_TWEEN else RELEASE_TWEEN, { Scale = if hovering then 1.08 else 1 }):Play()
-	end)
+		lastFire = now
+		UIInteractionSounds.playClick()
+		onActivated()
+	end
+	bindTapNotDrag(
+		btn,
+		fireActivated,
+		function()
+			TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.9 }):Play()
+		end,
+		function()
+			TweenService:Create(
+				scale,
+				if hovering then HOVER_TWEEN else RELEASE_TWEEN,
+				{ Scale = if hovering then 1.08 else 1 }
+			):Play()
+		end
+	)
 end
 
 local function findFrameCloseButton(frame: Instance): GuiButton?

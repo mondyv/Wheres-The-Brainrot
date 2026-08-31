@@ -82,6 +82,14 @@ local bushHoldBeganHandler: ((ProximityPrompt) -> boolean?)? = nil
 local bushHoldCompleteHooks: { (ProximityPrompt, () -> ()) -> boolean } = {}
 local managedBushHoldActive: ProximityPrompt? = nil
 local directBushHoldPrompt: ProximityPrompt? = nil
+local bushPointerHold = {
+	active = false,
+	prompt = nil :: ProximityPrompt?,
+	input = nil :: InputObject?,
+	startPos = nil :: Vector2?,
+	beganAt = 0,
+	fromTouch = false,
+}
 
 -- Post-harvest cooldown banner (clock + seconds) on the bush adornee
 type BushCooldownBannerEntry = {
@@ -120,6 +128,7 @@ local hideView: (prompt: ProximityPrompt, instant: boolean?) -> ()
 local clearBushPerPromptViews: () -> ()
 local hideBushSharedUi: (instant: boolean?) -> ()
 local showBushSharedUi: (prompt: ProximityPrompt) -> boolean
+local resetBushPointerHold: () -> ()
 local wirePromptLiveUpdates: (prompt: ProximityPrompt, view: PromptView) -> ()
 local applyHoldBadgeActive: (view: PromptView) -> ()
 local startHoldRender: (view: PromptView) -> ()
@@ -1613,6 +1622,9 @@ local function fireManagedBushHoldComplete(prompt: ProximityPrompt)
 		return
 	end
 	bushHoldLockUntil = os.clock() + 0.45
+	if bushPointerHold.prompt == prompt then
+		resetBushPointerHold()
+	end
 	managedBushHoldActive = nil
 	if directBushHoldPrompt == prompt then
 		directBushHoldPrompt = nil
@@ -1651,6 +1663,23 @@ end
 
 function ProximityPromptEffects.isBushSearchActive(): boolean
 	return managedBushHoldActive ~= nil and managedBushHoldActive.Parent ~= nil
+end
+
+resetBushPointerHold = function()
+	bushPointerHold.active = false
+	bushPointerHold.prompt = nil
+	bushPointerHold.input = nil
+	bushPointerHold.startPos = nil
+	bushPointerHold.beganAt = 0
+	bushPointerHold.fromTouch = false
+end
+
+local function cancelBushPointerHold()
+	local prompt = bushPointerHold.prompt
+	resetBushPointerHold()
+	if prompt and managedBushHoldActive == prompt then
+		ProximityPromptEffects.endManagedBushHold(prompt, false)
+	end
 end
 
 -- Client-owned bush hold (works while a hotbar brainrot Tool is equipped; engine InputHoldBegin often does not).
@@ -1695,6 +1724,9 @@ function ProximityPromptEffects.beginManagedBushHold(prompt: ProximityPrompt)
 end
 
 function ProximityPromptEffects.endManagedBushHold(prompt: ProximityPrompt, completed: boolean)
+	if bushPointerHold.prompt == prompt then
+		resetBushPointerHold()
+	end
 	if managedBushHoldActive ~= prompt then
 		return
 	end
@@ -1727,7 +1759,7 @@ local function wireBushSharedClickable(view: PromptView)
 
 	view.billboard.Active = true
 	view.root.Active = true
-	view.billboard.AlwaysOnTop = not isMobilePlatform()
+	view.billboard.AlwaysOnTop = true
 
 	local root = view.root
 	local existing = root:FindFirstChild("ClickTarget")
@@ -1752,57 +1784,73 @@ local function wireBushSharedClickable(view: PromptView)
 	touchMin.MinSize = Vector2.new(touchMinPx, touchMinPx)
 	touchMin.Parent = clickBtn
 
-	local pointerHoldActive = false
-	local pointerHoldBeganAt = 0.0
-
 	local function canInteractWithBush(): boolean
 		return managedBushUiEligible(view.prompt)
 	end
 
-	local function beginPointerHold()
+	local function beginPointerHold(input: InputObject?)
 		local prompt = view.prompt
-		if not canInteractWithBush() or pointerHoldActive then
+		if not canInteractWithBush() or bushPointerHold.active then
 			return
 		end
 		if not MobileTouchGate.canTapUi() then
 			return
 		end
-		pointerHoldActive = true
-		pointerHoldBeganAt = os.clock()
+		bushPointerHold.active = true
+		bushPointerHold.prompt = prompt
+		bushPointerHold.input = input
+		bushPointerHold.beganAt = os.clock()
+		bushPointerHold.fromTouch = input ~= nil and input.UserInputType == Enum.UserInputType.Touch
+		if input then
+			bushPointerHold.startPos = Vector2.new(input.Position.X, input.Position.Y)
+		else
+			local mouse = UserInputService:GetMouseLocation()
+			bushPointerHold.startPos = Vector2.new(mouse.X, mouse.Y)
+		end
 		ProximityPromptEffects.beginManagedBushHold(prompt)
+		if managedBushHoldActive ~= prompt then
+			resetBushPointerHold()
+		end
 	end
 
-	local function endPointerHold()
-		if not pointerHoldActive then
+	local function endPointerHold(forceCancel: boolean?)
+		if not bushPointerHold.active or bushPointerHold.prompt ~= view.prompt then
 			return
 		end
-		pointerHoldActive = false
 		local prompt = view.prompt
+		local beganAt = bushPointerHold.beganAt
+		resetBushPointerHold()
 		local dur = prompt.HoldDuration
-		local completed = dur > 0 and (os.clock() - pointerHoldBeganAt) >= dur * 0.92
+		local completed = forceCancel ~= true and dur > 0 and (os.clock() - beganAt) >= dur * 0.92
 		ProximityPromptEffects.endManagedBushHold(prompt, completed)
 	end
 
 	if view.prompt.HoldDuration > 0 then
-		table.insert(view.clickConns, clickBtn.MouseButton1Down:Connect(beginPointerHold))
-		table.insert(view.clickConns, clickBtn.MouseButton1Up:Connect(endPointerHold))
-		table.insert(view.clickConns, clickBtn.MouseLeave:Connect(endPointerHold))
 		table.insert(
 			view.clickConns,
 			clickBtn.InputBegan:Connect(function(input: InputObject)
-				if input.UserInputType == Enum.UserInputType.Touch then
-					beginPointerHold()
+				if
+					input.UserInputType == Enum.UserInputType.Touch
+					or input.UserInputType == Enum.UserInputType.MouseButton1
+				then
+					beginPointerHold(input)
 				end
 			end)
 		)
 		table.insert(
 			view.clickConns,
 			clickBtn.InputEnded:Connect(function(input: InputObject)
-				if input.UserInputType == Enum.UserInputType.Touch then
-					endPointerHold()
+				if
+					input.UserInputType == Enum.UserInputType.Touch
+					or input.UserInputType == Enum.UserInputType.MouseButton1
+				then
+					endPointerHold(false)
 				end
 			end)
 		)
+		table.insert(view.clickConns, clickBtn.MouseLeave:Connect(function()
+			endPointerHold(true)
+		end))
 	else
 		local lastTapAt = 0
 		local function tryTapPrompt()
@@ -2484,7 +2532,12 @@ end
 
 function ProximityPromptEffects.hideBushSearch()
 	if managedBushHoldActive then
-		return
+		if bushPointerHold.active and bushPointerHold.fromTouch and #UserInputService:GetTouches() == 0 then
+			cancelBushPointerHold()
+		end
+		if managedBushHoldActive then
+			return
+		end
 	end
 	activeBushSearchPrompt = nil
 	directBushHoldPrompt = nil
@@ -3337,6 +3390,27 @@ function ProximityPromptEffects.init()
 		bushRefreshAccum += dt
 		if bushRefreshAccum >= 0.25 then
 			bushRefreshAccum = 0
+			if bushPointerHold.active and bushPointerHold.fromTouch then
+				local tracked = bushPointerHold.input
+				local stillDown = false
+				for _, touch in UserInputService:GetTouches() do
+					if touch == tracked then
+						stillDown = true
+						break
+					end
+				end
+				if not stillDown then
+					cancelBushPointerHold()
+				end
+			elseif
+				isMobilePlatform()
+				and managedBushHoldActive
+				and not bushPointerHold.active
+				and not directBushHoldPrompt
+				and #UserInputService:GetTouches() == 0
+			then
+				ProximityPromptEffects.endManagedBushHold(managedBushHoldActive, false)
+			end
 			local bestBushPrompt = resolveManagedBushPrompt()
 			if bestBushPrompt then
 				ProximityPromptEffects.showBushSearchFor(bestBushPrompt)
@@ -3351,6 +3425,30 @@ function ProximityPromptEffects.init()
 				facingRefreshAccum = 0
 				refreshMobileFacingPromptVisibility()
 			end
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input: InputObject)
+		if not bushPointerHold.active or not bushPointerHold.startPos then
+			return
+		end
+		local kind = input.UserInputType
+		if kind ~= Enum.UserInputType.Touch and kind ~= Enum.UserInputType.MouseMovement then
+			return
+		end
+		if bushPointerHold.fromTouch then
+			if kind ~= Enum.UserInputType.Touch then
+				return
+			end
+			if bushPointerHold.input and input ~= bushPointerHold.input then
+				return
+			end
+		elseif kind ~= Enum.UserInputType.MouseMovement then
+			return
+		end
+		local pos = Vector2.new(input.Position.X, input.Position.Y)
+		if (pos - bushPointerHold.startPos).Magnitude >= C.POINTER_HOLD_DRAG_PX then
+			cancelBushPointerHold()
 		end
 	end)
 
@@ -3394,6 +3492,31 @@ function ProximityPromptEffects.init()
 			return
 		end
 		ProximityPromptEffects.endManagedBushHold(prompt, false)
+	end)
+
+	UserInputService.InputEnded:Connect(function(input: InputObject, _processed: boolean)
+		if not bushPointerHold.active then
+			return
+		end
+		if bushPointerHold.fromTouch then
+			if input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			if bushPointerHold.input and input ~= bushPointerHold.input then
+				return
+			end
+		elseif input.UserInputType ~= Enum.UserInputType.MouseButton1 then
+			return
+		end
+		local prompt = bushPointerHold.prompt
+		local beganAt = bushPointerHold.beganAt
+		resetBushPointerHold()
+		if not prompt then
+			return
+		end
+		local dur = prompt.HoldDuration
+		local completed = dur > 0 and (os.clock() - beganAt) >= dur * 0.92
+		ProximityPromptEffects.endManagedBushHold(prompt, completed)
 	end)
 end
 

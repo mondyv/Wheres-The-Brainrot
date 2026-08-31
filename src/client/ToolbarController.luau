@@ -572,11 +572,21 @@ local function setSlotIcons(surface: GuiObject, image: string, visible: boolean)
 	end
 end
 
-local function setSlotGearViewport(surface: GuiObject, gearId: number)
-	for _, icon in slotIconTargets(surface) do
-		icon.Visible = false
+local function setSlotGearIcon(surface: GuiObject, gearId: number)
+	if surface:FindFirstChild("GearViewport") then
+		GearViewportIcon.clear(surface)
 	end
-	GearViewportIcon.mount(surface, gearId, { rotate = false })
+	local image = GearConfig.getIconImage(gearId)
+	if image == "" then
+		image = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+	end
+	for _, icon in slotIconTargets(surface) do
+		applySlotIconStyle(icon)
+		if not GearConfig.applyIconToGui(icon, gearId) then
+			icon.Image = image
+		end
+		icon.Visible = true
+	end
 end
 
 local function toolDisplayTexture(tool: Tool): string
@@ -587,6 +597,15 @@ local function toolDisplayTexture(tool: Tool): string
 	local tex = (tool :: any).TextureId
 	if typeof(tex) == "string" and tex ~= "" then
 		return tex
+	end
+	if tool:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
+		local gearId = tool:GetAttribute(GearConfig.GEAR_ID_ATTR)
+		if typeof(gearId) == "number" then
+			local gearIcon = GearConfig.getIconImage(gearId)
+			if gearIcon ~= "" then
+				return gearIcon
+			end
+		end
 	end
 	if tool:GetAttribute("LuckyBlockTool") == true then
 		local kind = tool:GetAttribute("LuckyBlockKind")
@@ -1353,7 +1372,7 @@ end
 			if tool:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
 				local gearId = tool:GetAttribute(GearConfig.GEAR_ID_ATTR)
 				if typeof(gearId) == "number" then
-					setSlotGearViewport(surface, gearId)
+					setSlotGearIcon(surface, gearId)
 				else
 					setSlotIcons(surface, "rbxasset://textures/ui/GuiImagePlaceholder.png", true)
 				end
@@ -2763,7 +2782,7 @@ end
 			if tool:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
 				local gearId = tool:GetAttribute(GearConfig.GEAR_ID_ATTR)
 				if typeof(gearId) == "number" then
-					setSlotGearViewport(surface, gearId)
+					setSlotGearIcon(surface, gearId)
 				else
 					setSlotIcons(surface, "rbxasset://textures/ui/GuiImagePlaceholder.png", true)
 				end

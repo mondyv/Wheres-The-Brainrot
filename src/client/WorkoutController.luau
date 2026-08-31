@@ -86,6 +86,8 @@ local workoutTrack: AnimationTrack? = nil
 local workoutAnim: Animation? = nil
 local footMotor: Motor6D? = nil
 local footProp: Model? = nil
+local footTool: Tool? = nil
+local savedRequiresHandle: boolean? = nil
 local gripKillConn: RBXScriptConnection? = nil
 local gripChildConn: RBXScriptConnection? = nil
 local bodyHighlight: Highlight? = nil
@@ -142,11 +144,59 @@ local function stopWorkoutAnim()
 	end
 end
 
-local function destroyHandGrips(character: Model)
+local function isArmOrHandPart(part: Instance?): boolean
+	if not part or not part:IsA("BasePart") then
+		return false
+	end
+	local n = string.lower(part.Name)
+	return string.find(n, "hand", 1, true) ~= nil
+		or string.find(n, "arm", 1, true) ~= nil
+		or n == "rightgripattachment"
+		or n == "leftgripattachment"
+end
+
+local function jointParts(j: Instance): (BasePart?, BasePart?)
+	if j:IsA("Motor6D") or j:IsA("Weld") then
+		return j.Part0, j.Part1
+	end
+	if j:IsA("WeldConstraint") then
+		return j.Part0, j.Part1
+	end
+	return nil, nil
+end
+
+local function isHandGripJoint(j: Instance, handle: BasePart?): boolean
+	if j.Name == "WorkoutFootMotor" then
+		return false
+	end
+	if string.find(string.lower(j.Name), "grip", 1, true) then
+		return true
+	end
+	if not handle then
+		return false
+	end
+	local p0, p1 = jointParts(j)
+	if p0 == handle or p1 == handle then
+		local other = if p0 == handle then p1 else p0
+		return isArmOrHandPart(other)
+	end
+	return false
+end
+
+local function destroyHandGrips(character: Model, handle: BasePart?)
 	for _, d in character:GetDescendants() do
 		if d:IsA("Motor6D") or d:IsA("Weld") or d:IsA("WeldConstraint") then
-			if string.find(string.lower(d.Name), "grip", 1, true) then
+			if isHandGripJoint(d, handle) then
 				d:Destroy()
+			end
+		end
+	end
+	if handle then
+		for _, d in handle:GetDescendants() do
+			if d:IsA("Motor6D") or d:IsA("Weld") or d:IsA("WeldConstraint") then
+				if isHandGripJoint(d, handle) then
+					d:Destroy()
+				end
 			end
 		end
 	end
@@ -184,6 +234,11 @@ local function clearFootAttach()
 		footProp:Destroy()
 		footProp = nil
 	end
+	if footTool and footTool.Parent and savedRequiresHandle ~= nil then
+		footTool.RequiresHandle = savedRequiresHandle
+	end
+	footTool = nil
+	savedRequiresHandle = nil
 	restoreToolVisibility()
 end
 
@@ -225,18 +280,53 @@ local function soleAcross(rf: BasePart, lf: BasePart?, forwardHint: Vector3): (V
 	return mid, across.Unit, mid.Y
 end
 
+local function boundsFromRoot(root: Instance): (CFrame, Vector3)
+	if root:IsA("Model") then
+		return (root :: Model):GetBoundingBox()
+	end
+	local minV = Vector3.new(math.huge, math.huge, math.huge)
+	local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
+	local any = false
+	for _, d in root:GetDescendants() do
+		if d:IsA("BasePart") then
+			any = true
+			local cf = d.CFrame
+			local half = d.Size * 0.5
+			for _, corner in {
+				Vector3.new(-1, -1, -1),
+				Vector3.new(-1, -1, 1),
+				Vector3.new(-1, 1, -1),
+				Vector3.new(-1, 1, 1),
+				Vector3.new(1, -1, -1),
+				Vector3.new(1, -1, 1),
+				Vector3.new(1, 1, -1),
+				Vector3.new(1, 1, 1),
+			} do
+				local w = cf:PointToWorldSpace(half * corner)
+				minV = Vector3.new(math.min(minV.X, w.X), math.min(minV.Y, w.Y), math.min(minV.Z, w.Z))
+				maxV = Vector3.new(math.max(maxV.X, w.X), math.max(maxV.Y, w.Y), math.max(maxV.Z, w.Z))
+			end
+		end
+	end
+	if not any then
+		return CFrame.new(), Vector3.new(1, 1, 1)
+	end
+	local size = maxV - minV
+	return CFrame.new((minV + maxV) * 0.5), size
+end
+
 -- Map the model's longest axis onto `across` (left-right between the feet)
 -- and its thinnest axis onto world up so the gear lies flat. Then pin the
 -- actual mesh bottom to the shoe plane so it does not hover.
 local function footPropMotorFrames(
 	handle: BasePart,
-	model: Model,
+	root: Instance,
 	anchorFoot: BasePart,
 	mid: Vector3,
 	across: Vector3,
 	contactY: number
 ): (CFrame, CFrame)
-	local bbCf, bbSize = model:GetBoundingBox()
+	local bbCf, bbSize = boundsFromRoot(root)
 	local axes = {
 		{ len = bbSize.X, dir = bbCf.RightVector },
 		{ len = bbSize.Y, dir = bbCf.UpVector },
@@ -269,7 +359,7 @@ local function footPropMotorFrames(
 	local trialHandle = CFrame.fromMatrix(trialPos, across, Vector3.yAxis) * c1:Inverse()
 	local handleNow = handle.CFrame
 	local minY = math.huge
-	for _, d in model:GetDescendants() do
+	for _, d in root:GetDescendants() do
 		if d:IsA("BasePart") then
 			local rel = handleNow:ToObjectSpace(d.CFrame)
 			local worldCf = trialHandle * rel
@@ -293,8 +383,8 @@ local function footPropMotorFrames(
 	return anchorFoot.CFrame:ToObjectSpace(target), c1
 end
 
--- Visible clone welded across the soles. Keep the tool's WeldConstraints so
--- extra mesh parts stay glued to Handle (stripping them made the bar vanish).
+-- Weld the live tool across the soles. Roblox's default RightGrip would
+-- otherwise keep snapping it back into the hands during the curl anim.
 local function attachGearAcrossFeet(character: Model, tool: Tool)
 	clearFootAttach()
 	local rightFoot, leftFoot = findFeet(character)
@@ -303,6 +393,7 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		warn("[WorkoutController] Tool missing Handle — cannot attach to feet")
 		return
 	end
+	local handle = sourceHandle :: BasePart
 	local anchorFoot = rightFoot or leftFoot
 	if not anchorFoot then
 		local tries = tool:GetAttribute("_FootAttachTries")
@@ -321,93 +412,56 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	end
 	tool:SetAttribute("_FootAttachTries", nil)
 
-	local clone = tool:Clone()
-	clone.Name = "WorkoutFootProp"
-	for _, d in clone:GetDescendants() do
-		if d:IsA("BaseScript") or d:IsA("LocalScript") or d:IsA("Script") then
-			d:Destroy()
-		elseif d:IsA("Highlight") or d:IsA("BillboardGui") or d:IsA("ProximityPrompt") then
-			d:Destroy()
-		elseif d:IsA("BasePart") then
+	footTool = tool
+	if savedRequiresHandle == nil then
+		savedRequiresHandle = tool.RequiresHandle
+	end
+	tool.RequiresHandle = false
+
+	for _, d in tool:GetDescendants() do
+		if d:IsA("BasePart") then
 			d.CanCollide = false
 			d.Massless = true
 			d.Anchored = false
 			d.CanQuery = false
 			d.CanTouch = false
 			d.CastShadow = false
-			d.CustomPhysicalProperties = PhysicalProperties.new(0.0001, 0.3, 0.5)
 			d.LocalTransparencyModifier = 0
-			-- Keep authored transparency (Handle / PrimaryPart are often invisible).
 		end
 	end
 
-	local model = Instance.new("Model")
-	model.Name = "WorkoutFootProp"
-	for _, child in clone:GetChildren() do
-		child.Parent = model
-	end
-	clone:Destroy()
-
-	local handle = model:FindFirstChild("Handle")
-	if not (handle and handle:IsA("BasePart")) then
-		handle = model:FindFirstChildWhichIsA("BasePart", true)
-	end
-	if not handle or not handle:IsA("BasePart") then
-		model:Destroy()
-		warn("[WorkoutController] Foot prop missing parts")
-		return
-	end
-
-	for _, d in model:GetDescendants() do
-		if d:IsA("BasePart") and d ~= handle then
-			local welded = false
-			for _, j in model:GetDescendants() do
-				if j:IsA("WeldConstraint") and ((j.Part0 == handle and j.Part1 == d) or (j.Part1 == handle and j.Part0 == d)) then
-					welded = true
-					break
-				elseif j:IsA("Weld") and ((j.Part0 == handle and j.Part1 == d) or (j.Part1 == handle and j.Part0 == d)) then
-					welded = true
-					break
-				elseif j:IsA("Motor6D") and ((j.Part0 == handle and j.Part1 == d) or (j.Part1 == handle and j.Part0 == d)) then
-					welded = true
-					break
-				end
-			end
-			if not welded then
-				local w = Instance.new("WeldConstraint")
-				w.Part0 = handle
-				w.Part1 = d
-				w.Parent = handle
-			end
-		end
-	end
-
-	for _, d in tool:GetDescendants() do
-		if d:IsA("BasePart") then
-			if handleTransparency[d] == nil then
-				handleTransparency[d] = d.LocalTransparencyModifier
-			end
-			d.LocalTransparencyModifier = 1
-			d.CanCollide = false
-			d.Massless = true
-		end
-	end
-
-	model.PrimaryPart = handle
-	model.Parent = character
-	footProp = model
-
-	destroyHandGrips(character)
+	destroyHandGrips(character, handle)
 	gripChildConn = character.DescendantAdded:Connect(function(child)
-		if
-			(child:IsA("Motor6D") or child:IsA("Weld") or child:IsA("WeldConstraint"))
-			and string.find(string.lower(child.Name), "grip", 1, true)
-		then
-			task.defer(function()
-				if child.Parent then
-					child:Destroy()
-				end
-			end)
+		if child:IsA("Motor6D") or child:IsA("Weld") or child:IsA("WeldConstraint") then
+			if isHandGripJoint(child, handle) then
+				task.defer(function()
+					if child.Parent then
+						child:Destroy()
+					end
+				end)
+			end
+		end
+	end)
+	if gripKillConn then
+		gripKillConn:Disconnect()
+	end
+	local gripAccum = 0
+	gripKillConn = RunService.Heartbeat:Connect(function(dt)
+		if not tool.Parent or tool.Parent ~= character then
+			if gripKillConn then
+				gripKillConn:Disconnect()
+				gripKillConn = nil
+			end
+			return
+		end
+		gripAccum += dt
+		if gripAccum < 0.08 then
+			return
+		end
+		gripAccum = 0
+		destroyHandGrips(character, handle)
+		if tool.RequiresHandle then
+			tool.RequiresHandle = false
 		end
 	end)
 
@@ -415,7 +469,7 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	local hrp = character:FindFirstChild("HumanoidRootPart")
 	local forward = if hrp and hrp:IsA("BasePart") then hrp.CFrame.LookVector else Vector3.zAxis
 	local mid, across, contactY = soleAcross(anchorFoot, otherFoot, forward)
-	local c0, c1 = footPropMotorFrames(handle, model, anchorFoot, mid, across, contactY)
+	local c0, c1 = footPropMotorFrames(handle, tool, anchorFoot, mid, across, contactY)
 	local motor = Instance.new("Motor6D")
 	motor.Name = "WorkoutFootMotor"
 	motor.Part0 = anchorFoot

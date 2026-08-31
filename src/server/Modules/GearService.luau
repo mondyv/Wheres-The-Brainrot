@@ -121,13 +121,22 @@ function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
 			end
 		end
 		-- Keep non-part VFX under the tool (attachments/emitters move with parts).
+		-- Skip 2D ImageLabels — those are shop/inventory icons, not world meshes.
 		for _, d in clone:GetChildren() do
-			if not d:IsA("BasePart") and not d:IsA("Script") and not d:IsA("LocalScript") then
+			if d:IsA("GuiBase") or d:IsA("Script") or d:IsA("LocalScript") then
+				continue
+			end
+			if not d:IsA("BasePart") then
 				d.Parent = tool
 			end
 		end
 		clone:Destroy()
 		handle = main
+		local icon = GearConfig.getIconImage(def.id)
+		if icon ~= "" then
+			tool.TextureId = icon
+			tool:SetAttribute("ToolbarIcon", icon)
+		end
 	else
 		handle = Instance.new("Part")
 		handle.Name = "Handle"
@@ -301,6 +310,10 @@ function GearService.stopWorkout(player: Player)
 	workoutSessions[player] = nil
 	lastDoubleTapAt[player.UserId] = nil
 	player:SetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR, false)
+	local tool = GearService.findGearTool(player, session.gearId)
+	if tool then
+		tool.RequiresHandle = true
+	end
 end
 
 function GearService.startWorkout(player: Player, gearId: number): (boolean, string?)
@@ -321,6 +334,18 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 	GearService.stopWorkout(player)
 	player:SetAttribute(GearConfig.EQUIPPED_GEAR_ATTR, gearId)
 	player:SetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR, true)
+	local equippedTool = GearService.findGearTool(player, gearId)
+	if equippedTool then
+		equippedTool.RequiresHandle = false
+		local char = player.Character
+		if char then
+			for _, d in char:GetDescendants() do
+				if (d:IsA("Motor6D") or d:IsA("Weld")) and string.find(string.lower(d.Name), "grip", 1, true) then
+					d:Destroy()
+				end
+			end
+		end
+	end
 
 	local function applyGainTick()
 		local now = os.clock()

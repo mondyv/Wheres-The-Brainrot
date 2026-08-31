@@ -23,7 +23,6 @@ local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
-local GearViewportIcon = require(script.Parent.GearViewportIcon)
 
 local player = Players.LocalPlayer
 
@@ -304,6 +303,41 @@ local function ensureGearRows(container: Instance)
 	end
 end
 
+local function applyShopGearIcon(iconFrame: GuiObject, gearId: number)
+	local leftover = iconFrame:FindFirstChild("GearViewport")
+	if leftover then
+		leftover:Destroy()
+	end
+	local icon: ImageLabel? = nil
+	local named = iconFrame:FindFirstChild("Icon") or iconFrame:FindFirstChild("ImageLabel")
+	if named and named:IsA("ImageLabel") then
+		icon = named
+	else
+		local any = iconFrame:FindFirstChildWhichIsA("ImageLabel")
+		if any then
+			icon = any
+		end
+	end
+	if not icon then
+		local created = Instance.new("ImageLabel")
+		created.Name = "Icon"
+		created.BackgroundTransparency = 1
+		created.BorderSizePixel = 0
+		created.Size = UDim2.fromScale(1, 1)
+		created.Position = UDim2.fromScale(0.5, 0.5)
+		created.AnchorPoint = Vector2.new(0.5, 0.5)
+		created.ZIndex = iconFrame.ZIndex + 1
+		created.Parent = iconFrame
+		icon = created
+	end
+	icon.Visible = true
+	icon.BackgroundTransparency = 1
+	if not GearConfig.applyIconToGui(icon, gearId) then
+		icon.Image = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+		icon.ScaleType = Enum.ScaleType.Fit
+	end
+end
+
 local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 	local owned = ownedSet()
 	local isOwned = owned[def.id] == true
@@ -321,25 +355,7 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 
 	local iconFrame = row:FindFirstChild("IconFrame")
 	if iconFrame and iconFrame:IsA("GuiObject") then
-		local panelVisible = true
-		local p: Instance? = iconFrame
-		while p do
-			if p:IsA("GuiObject") and not (p :: GuiObject).Visible then
-				panelVisible = false
-				break
-			end
-			p = p.Parent
-		end
-		local okMount, mountErr = pcall(function()
-			if panelVisible then
-				GearViewportIcon.mount(iconFrame, def.id, { rotate = true })
-			else
-				GearViewportIcon.clear(iconFrame)
-			end
-		end)
-		if not okMount then
-			warn("[UpgradesController] gear icon mount failed:", mountErr)
-		end
+		applyShopGearIcon(iconFrame, def.id)
 	end
 
 	local powerFrame = row:FindFirstChild("Power")
@@ -1682,14 +1698,6 @@ local function init()
 	upgrades:GetPropertyChangedSignal("Visible"):Connect(function()
 		if upgrades.Visible then
 			refreshAllRows()
-		else
-			for _, def in GearConfig.GEARS do
-				local row = container:FindFirstChild(tostring(def.id))
-				local iconFrame = row and row:FindFirstChild("IconFrame")
-				if iconFrame and iconFrame:IsA("GuiObject") then
-					GearViewportIcon.clear(iconFrame)
-				end
-			end
 		end
 	end)
 

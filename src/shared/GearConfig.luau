@@ -279,6 +279,50 @@ local function nameMatchesGear(childName: string, def: GearDef): boolean
 	return false
 end
 
+-- Studio gears store a 2D icon at EssentialAssets.Gears["Gear N"].ImageLabel.
+function M.getIconImage(gearId: number): string
+	local src = M.findGearAsset(gearId)
+	if not src then
+		return ""
+	end
+	local label = src:FindFirstChild("ImageLabel")
+	if not label then
+		label = src:FindFirstChild("Icon") or src:FindFirstChild("icon")
+	end
+	if label and (label:IsA("ImageLabel") or label:IsA("ImageButton")) then
+		local img = (label :: ImageLabel).Image
+		if typeof(img) == "string" and img ~= "" then
+			return img
+		end
+	end
+	return ""
+end
+
+function M.applyIconToGui(gui: ImageLabel | ImageButton, gearId: number): boolean
+	local src = M.findGearAsset(gearId)
+	local label = src and src:FindFirstChild("ImageLabel")
+	if not label then
+		label = src and (src:FindFirstChild("Icon") or src:FindFirstChild("icon"))
+	end
+	local image = M.getIconImage(gearId)
+	if image == "" then
+		return false
+	end
+	gui.Image = image
+	gui.ImageColor3 = Color3.new(1, 1, 1)
+	gui.ImageTransparency = 0
+	gui.ScaleType = Enum.ScaleType.Fit
+	if label and (label:IsA("ImageLabel") or label:IsA("ImageButton")) then
+		local srcGui = label :: ImageLabel
+		gui.ImageRectOffset = srcGui.ImageRectOffset
+		gui.ImageRectSize = srcGui.ImageRectSize
+		if srcGui.ResampleMode then
+			gui.ResampleMode = srcGui.ResampleMode
+		end
+	end
+	return true
+end
+
 function M.findGearAsset(gearId: number): Instance?
 	local def = byId[gearId]
 	if not def then

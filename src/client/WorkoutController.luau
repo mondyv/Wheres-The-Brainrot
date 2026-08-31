@@ -497,45 +497,6 @@ local function solidCornerMinY(parts: { BasePart }): number
 	return minY
 end
 
-local function solidAabb(parts: { BasePart }): (Vector3, Vector3)
-	local minV = Vector3.new(math.huge, math.huge, math.huge)
-	local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
-	for _, d in parts do
-		local cf = d.CFrame
-		local half = d.Size * 0.5
-		for _, sx in { -1, 1 } do
-			for _, sy in { -1, 1 } do
-				for _, sz in { -1, 1 } do
-					local w = cf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz))
-					minV = Vector3.new(math.min(minV.X, w.X), math.min(minV.Y, w.Y), math.min(minV.Z, w.Z))
-					maxV = Vector3.new(math.max(maxV.X, w.X), math.max(maxV.Y, w.Y), math.max(maxV.Z, w.Z))
-				end
-			end
-		end
-	end
-	return (minV + maxV) * 0.5, maxV - minV
-end
-
-local function fitGearToFeet(model: Model)
-	local parts = collectSolidParts(model)
-	if #parts == 0 then
-		return
-	end
-	local _, size = solidAabb(parts)
-	local s = 1
-	if size.Y > 1.15 then
-		s = math.min(s, 1.15 / size.Y)
-	end
-	local span = math.max(size.X, size.Z)
-	if span > 2.8 then
-		s = math.min(s, 2.8 / span)
-	end
-	s = math.clamp(s, 0.1, 1)
-	if s < 0.97 then
-		model:ScaleTo(model:GetScale() * s)
-	end
-end
-
 local function poseGearOnFeet(character: Model, model: Model)
 	local rightFoot, leftFoot = findFeet(character)
 	local anchorFoot = rightFoot or leftFoot
@@ -628,7 +589,6 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	end
 	model.PrimaryPart = primary
 	stripFootPropFx(model)
-	fitGearToFeet(model)
 
 	footTool = tool
 	if savedRequiresHandle == nil then

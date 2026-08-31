@@ -3109,11 +3109,149 @@ local function tickWalkby()
 	lockTalkPrompt(2.8)
 end
 
+local function applyHudFromAttributes()
+	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
+		introStartedLocal = true
+	end
+	local liveIdx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+	if typeof(liveIdx) == "number" and liveIdx >= 1 then
+		questHudRevealed = true
+		refreshQuestHud()
+		return
+	end
+	questHudRevealed = false
+	syncQuestChromeVisibility()
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+		schedulePostTutorialQuests()
+	end
+end
+
+local function applyWorldTimState(tim: Model)
+	homePivot = tim:GetPivot()
+	questHitbox = resolveHitbox()
+	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
+		introStartedLocal = true
+		ensureIdle(tim)
+		revealTimForIntro(tim)
+		setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
+		syncPromptAndOutline()
+	else
+		hideTimUntilIntro(tim)
+		syncPromptAndOutline()
+	end
+end
+
 function M.init()
 	if wired then
 		return
 	end
 	wired = true
+
+	-- HUD must not wait for streamed Tim / map NPCs (phones often load him late).
+	applyHudFromAttributes()
+
+	player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_REPLAY_ATTR):Connect(function()
+		introStartedLocal = false
+		introPlaying = false
+		forcedQuestIndex = nil
+		questHudRevealed = false
+		postTutorialQuestToken += 1
+		dialogueBusy = false
+		setQuestHudSuppressed(false)
+		stopIntroTalkJump(timModel)
+		local tim = timModel or resolveTim()
+		if tim then
+			hideTimUntilIntro(tim)
+			setQuestFloatVisible(tim, false)
+			setOutline(tim, false)
+		end
+		syncQuestChromeVisibility()
+		syncPromptAndOutline()
+	end)
+
+	player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR):Connect(function()
+		if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
+			introStartedLocal = true
+			return
+		end
+		if introPlaying then
+			return
+		end
+		introStartedLocal = false
+		questHudRevealed = false
+		forcedQuestIndex = nil
+		local tim = timModel or resolveTim()
+		if tim then
+			hideTimUntilIntro(tim)
+			setQuestFloatVisible(tim, false)
+			setOutline(tim, false)
+		end
+		syncQuestChromeVisibility()
+		syncPromptAndOutline()
+	end)
+
+	player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR):Connect(function()
+		refreshQuestHud()
+		syncPromptAndOutline()
+	end)
+	player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR):Connect(refreshQuestHud)
+	player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR):Connect(function()
+		refreshQuestHud()
+		syncPromptAndOutline()
+		if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR) == true then
+			TopNotifController.showBroadcast("Quest completed! Go visit Tim Cheese")
+		end
+	end)
+	player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR):Connect(function()
+		syncPromptAndOutline()
+		if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+			schedulePostTutorialQuests()
+		end
+	end)
+
+	local viewportConn: RBXScriptConnection? = nil
+	local function wireViewportLayout()
+		if viewportConn then
+			viewportConn:Disconnect()
+			viewportConn = nil
+		end
+		local c = Workspace.CurrentCamera
+		if not c then
+			return
+		end
+		viewportConn = c:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+			if questPanel and questPanel.Visible and not questHoverFlying and questHudRevealed then
+				layoutQuestHud()
+			end
+		end)
+		if questHudRevealed then
+			layoutQuestHud()
+		else
+			syncQuestChromeVisibility()
+		end
+	end
+	wireViewportLayout()
+	Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(wireViewportLayout)
+	startQuestLayoutSync()
+
+	GameplayUiVisibility.onHidden(function()
+		syncQuestHudCutsceneGate()
+	end)
+	GameplayUiVisibility.onRestored(function()
+		syncQuestHudCutsceneGate()
+	end)
+
+	local accum = 0.0
+	RunService.Heartbeat:Connect(function(dt)
+		accum += dt
+		if accum < 0.2 then
+			return
+		end
+		accum = 0
+		tickWalkby()
+		syncQuestHudCutsceneGate()
+		syncPromptAndOutline()
+	end)
 
 	task.spawn(function()
 		local deadline = os.clock() + 90
@@ -3128,137 +3266,7 @@ function M.init()
 			warn("[TimCheeseQuestController] TimCheese missing")
 			return
 		end
-		homePivot = timModel:GetPivot()
-		questHitbox = resolveHitbox()
-
-		if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
-			introStartedLocal = true
-			ensureIdle(timModel)
-			revealTimForIntro(timModel)
-			setQuestFloatVisible(timModel, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
-			syncPromptAndOutline()
-			local liveIdx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
-			if typeof(liveIdx) == "number" and liveIdx >= 1 then
-				questHudRevealed = true
-			else
-				-- Tutorial done earlier but first quest never accepted — start after delay.
-				if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
-					schedulePostTutorialQuests()
-				end
-			end
-			refreshQuestHud()
-		else
-			-- Invisible until post-tutorial quest handoff (no Tim fall appearance).
-			hideTimUntilIntro(timModel)
-			questHudRevealed = false
-			syncQuestChromeVisibility()
-			if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
-				schedulePostTutorialQuests()
-			end
-		end
-
-		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_REPLAY_ATTR):Connect(function()
-			introStartedLocal = false
-			introPlaying = false
-			forcedQuestIndex = nil
-			questHudRevealed = false
-			postTutorialQuestToken += 1
-			dialogueBusy = false
-			setQuestHudSuppressed(false)
-			stopIntroTalkJump(timModel)
-			local tim = timModel or resolveTim()
-			if tim then
-				hideTimUntilIntro(tim)
-				setQuestFloatVisible(tim, false)
-				setOutline(tim, false)
-			end
-			syncQuestChromeVisibility()
-			syncPromptAndOutline()
-		end)
-
-		player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR):Connect(function()
-			if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
-				introStartedLocal = true
-				return
-			end
-			if introPlaying then
-				return
-			end
-			introStartedLocal = false
-			questHudRevealed = false
-			forcedQuestIndex = nil
-			local tim = timModel or resolveTim()
-			if tim then
-				hideTimUntilIntro(tim)
-				setQuestFloatVisible(tim, false)
-				setOutline(tim, false)
-			end
-			syncQuestChromeVisibility()
-			syncPromptAndOutline()
-		end)
-
-		player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR):Connect(function()
-			refreshQuestHud()
-			syncPromptAndOutline()
-		end)
-		player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR):Connect(refreshQuestHud)
-		player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR):Connect(function()
-			refreshQuestHud()
-			syncPromptAndOutline()
-			if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR) == true then
-				TopNotifController.showBroadcast("Quest completed! Go visit Tim Cheese")
-			end
-		end)
-		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR):Connect(function()
-			syncPromptAndOutline()
-			if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
-				schedulePostTutorialQuests()
-			end
-		end)
-
-		local viewportConn: RBXScriptConnection? = nil
-		local function wireViewportLayout()
-			if viewportConn then
-				viewportConn:Disconnect()
-				viewportConn = nil
-			end
-			local c = Workspace.CurrentCamera
-			if not c then
-				return
-			end
-			viewportConn = c:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-				if questPanel and questPanel.Visible and not questHoverFlying and questHudRevealed then
-					layoutQuestHud()
-				end
-			end)
-			if questHudRevealed then
-				layoutQuestHud()
-			else
-				syncQuestChromeVisibility()
-			end
-		end
-		wireViewportLayout()
-		Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(wireViewportLayout)
-		startQuestLayoutSync()
-
-		GameplayUiVisibility.onHidden(function()
-			syncQuestHudCutsceneGate()
-		end)
-		GameplayUiVisibility.onRestored(function()
-			syncQuestHudCutsceneGate()
-		end)
-
-		local accum = 0.0
-		RunService.Heartbeat:Connect(function(dt)
-			accum += dt
-			if accum < 0.2 then
-				return
-			end
-			accum = 0
-			tickWalkby()
-			syncQuestHudCutsceneGate()
-			syncPromptAndOutline()
-		end)
+		applyWorldTimState(timModel)
 	end)
 
 	ContextActionService:BindActionAtPriority(

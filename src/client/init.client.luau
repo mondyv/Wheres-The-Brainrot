@@ -116,6 +116,10 @@ task.defer(function()
 		initClientModule("LandLocksController")
 		initClientModule("RandomBrainrotController")
 		initClientModule("SafeZoneLightingController")
+		-- Quest ticket is HUD chrome — don't wait for background boot / streamed NPCs.
+		task.spawn(function()
+			initClientModule("TimCheeseQuestController")
+		end)
 	end
 
 	-- Panel innards (Store buy buttons, Index tabs, etc.).
@@ -268,9 +272,6 @@ task.defer(function()
 			end,
 			function()
 				initClientModule("JumpButtonSwingRing")
-			end,
-			function()
-				initClientModule("TimCheeseQuestController")
 			end,
 			function()
 				local shared = ReplicatedStorage:WaitForChild("EssentialsShared", 10)

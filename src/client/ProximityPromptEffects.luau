@@ -1727,7 +1727,7 @@ local function wireBushSharedClickable(view: PromptView)
 
 	view.billboard.Active = true
 	view.root.Active = true
-	view.billboard.AlwaysOnTop = not isMobilePlatform()
+	view.billboard.AlwaysOnTop = true
 
 	local root = view.root
 	local existing = root:FindFirstChild("ClickTarget")
@@ -1894,7 +1894,7 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 	-- Desktop: keep billboard non-active so cards don't steal clicks from stand SurfaceGuis.
 	-- Mobile: billboard must be Active or touches never reach the card (Roblox hit-test).
 	billboard.Active = promptBillboardInputActive()
-	billboard.AlwaysOnTop = not isMobilePlatform()
+	billboard.AlwaysOnTop = true
 	billboard.LightInfluence = 0
 	billboard.MaxDistance = promptBillboardMaxDistance(prompt)
 	billboard.Size = UDim2.fromOffset(effectiveMinCardWidth(), C.CARD_H)
@@ -2305,7 +2305,7 @@ local function ensureBushCooldownBanner(bush: Instance, prompt: ProximityPrompt,
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "BushCooldownBanner"
 	bb.Active = false
-	bb.AlwaysOnTop = not isMobilePlatform()
+	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	bb.ResetOnSpawn = false
 	bb.ClipsDescendants = false

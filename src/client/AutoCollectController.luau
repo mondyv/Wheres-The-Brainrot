@@ -45,6 +45,7 @@ local plotWatchConns: { RBXScriptConnection } = {}
 -- GetDescendants() the whole plot (that scan was running several times a second).
 local trackedStands: { [Model]: boolean } = {}
 local marketplaceOwnsAutoCollect = false
+local liveGamepassRobux = AutoCollectConfig.GAMEPASS_PRICE_ROBUX
 
 local wirePadView: (Instance) -> ()
 local syncAllGamepassBillboards: () -> ()
@@ -52,6 +53,41 @@ local syncAllGamepassBillboards: () -> ()
 local CASH_FLOAT_TEXT_SIZE = 42
 local FLOAT_STROKE_SCALE = 1
 local CASH_FLOAT_START_Y_DROP = 0.35
+
+local function formatGamepassPrice(): string
+	return tostring(liveGamepassRobux) .. " Robux"
+end
+
+local function applyPriceToInstance(inst: Instance?)
+	if not inst then
+		return
+	end
+	if inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox") then
+		(inst :: TextLabel).Text = formatGamepassPrice()
+		return
+	end
+	local nested = inst:FindFirstChildWhichIsA("TextLabel", true) or inst:FindFirstChildWhichIsA("TextButton", true)
+	if nested then
+		nested.Text = formatGamepassPrice()
+	end
+end
+
+local function patchTemplatePrice()
+	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
+	local templates = assets and assets:FindFirstChild("Templates")
+	local base = templates and templates:FindFirstChild("Base")
+	local story = base and base:FindFirstChild("1 Story")
+	local thing = story and story:FindFirstChild(AutoCollectConfig.MODEL_NAME)
+	if not thing then
+		return
+	end
+	local btn = thing:FindFirstChild("Button")
+	local gpText = btn and btn:FindFirstChild("GamepassText")
+	local bb = gpText and gpText:FindFirstChild("BillboardGui")
+	local info = bb and bb:FindFirstChild("Info")
+	local price = info and info:FindFirstChild("Price")
+	applyPriceToInstance(price)
+end
 
 local function playerOwnsAutoCollect(): boolean
 	if player:GetAttribute(StoreConfig.ATTR.AUTOCOLLECT_OWNED) == true then
@@ -148,8 +184,8 @@ local function syncGamepassBillboard(view: PadView)
 	local owned = playerOwnsAutoCollect()
 	if view.priceLabel and view.priceLabel.Parent then
 		view.priceLabel.Visible = not owned
-		if not owned and view.priceLabel:IsA("TextLabel") then
-			view.priceLabel.Text = tostring(AutoCollectConfig.GAMEPASS_PRICE_ROBUX) .. " Robux"
+		if not owned then
+			applyPriceToInstance(view.priceLabel)
 		end
 	end
 	if view.discountLabel and view.discountLabel.Parent then
@@ -507,6 +543,20 @@ function M.init()
 	)
 	task.defer(syncAllGamepassBillboards)
 	task.defer(refreshAssignedPlotWatch)
+	task.defer(patchTemplatePrice)
+
+	task.spawn(function()
+		local ok, info = pcall(function()
+			return MarketplaceService:GetProductInfo(StoreConfig.GAMEPASS.AUTOCOLLECT, Enum.InfoType.GamePass)
+		end)
+		if ok and typeof(info) == "table" and typeof(info.PriceInRobux) == "number" and info.PriceInRobux > 0 then
+			liveGamepassRobux = info.PriceInRobux
+		else
+			liveGamepassRobux = AutoCollectConfig.GAMEPASS_PRICE_ROBUX
+		end
+		patchTemplatePrice()
+		syncAllGamepassBillboards()
+	end)
 
 	task.spawn(function()
 		for _, delaySec in { 0, 2, 6, 15 } do

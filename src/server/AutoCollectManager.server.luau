@@ -1,7 +1,7 @@
 -- [ACTIVE] AutoCollectManager.server
 --[[
 	Plot Autocollect gamepass pad (Autocollect Thing under 1 Story).
-	• Not owned: touch GamepassHitbox → purchase prompt (99 Robux).
+	• Not owned: touch GamepassHitbox → purchase prompt (29 Robux).
 	• Owned: touch ButtonPart → collect all stand cash on the plot at once (StandManager).
 	• Cash pad + offline billboard mirror the combined total across occupied stands.
 --]]

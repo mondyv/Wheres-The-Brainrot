@@ -267,6 +267,34 @@ end
 
 -- Gamepass panels are split across two sibling containers ("Gamepasses" and
 -- "Gamepasses2"), so search every provided container for the panel.
+local function applyLiveGamePassPrice(panel: Instance, gamePassId: number)
+	task.spawn(function()
+		local ok, info = pcall(function()
+			return MarketplaceService:GetProductInfo(gamePassId, Enum.InfoType.GamePass)
+		end)
+		if not ok or typeof(info) ~= "table" or typeof(info.PriceInRobux) ~= "number" then
+			return
+		end
+		local robux = info.PriceInRobux :: number
+		if robux <= 0 then
+			return
+		end
+		for _, name in { "Price", "Robux" } do
+			local inst = panel:FindFirstChild(name, true)
+			if inst and (inst:IsA("TextLabel") or inst:IsA("TextButton")) then
+				local label = inst :: TextLabel
+				local current = label.Text
+				local replaced = string.gsub(current, "%d+", tostring(robux), 1)
+				if replaced ~= current and current ~= "" then
+					label.Text = replaced
+				else
+					label.Text = utf8.char(0xE002) .. tostring(robux)
+				end
+			end
+		end
+	end)
+end
+
 local function findGamePassPanel(containers: { Instance? }, panelName: string): Instance?
 	for _, c in containers do
 		if c then
@@ -285,6 +313,7 @@ local function wireGamePass(containers: { Instance? }, panelName: string, gamePa
 		warn("[StoreController] gamepass panel not found:", panelName)
 		return
 	end
+	applyLiveGamePassPrice(panel, gamePassId)
 	local buy = findBuy(panel)
 	if not buy then
 		warn("[StoreController] buy button not found for gamepass panel:", panelName)
@@ -658,6 +687,10 @@ local function init()
 	do
 		local vipBuy = findBuy(container:FindFirstChild("VIP"))
 		if vipBuy then
+			local vipPanel = container:FindFirstChild("VIP")
+			if vipPanel then
+				applyLiveGamePassPrice(vipPanel, StoreConfig.GAMEPASS.VIP)
+			end
 			local vipState = wireBuyButton(vipBuy, function()
 				buyGamepass(StoreConfig.GAMEPASS.VIP)
 			end)
@@ -712,11 +745,14 @@ local function init()
 	end)
 
 	MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, gamePassId, wasPurchased)
-		if plr ~= player or not wasPurchased then
+		if plr ~= player then
 			return
 		end
 		local entry = ownedBuyByGamePassId[gamePassId]
-		if entry then
+		if not entry then
+			return
+		end
+		if wasPurchased then
 			applyOptimisticPurchase(entry)
 		end
 		task.defer(function()

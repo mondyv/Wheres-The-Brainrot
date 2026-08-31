@@ -8,6 +8,6 @@ local AutoCollectConfig = {}
 AutoCollectConfig.MODEL_NAME = "Autocollect Thing"
 AutoCollectConfig.ACCUMULATED_ATTR = "AutoCollectAccumulatedCash"
 AutoCollectConfig.OFFLINE_ATTR = "AutoCollectOfflinePending"
-AutoCollectConfig.GAMEPASS_PRICE_ROBUX = 99
+AutoCollectConfig.GAMEPASS_PRICE_ROBUX = 29
 
 return AutoCollectConfig

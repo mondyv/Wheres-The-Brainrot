@@ -49,20 +49,47 @@ M.WAVE_KILL_GRACE_SEC = 3.4
 -- Never ScaleTo the Wave Web mesh — it freezes/crashes Studio & clients.
 M.WAVE_SCALE = 1
 
--- Per-land charge speed (studs/s). Walk ~16–18; sprint ~24–32.
--- Early ranks stay outrunnable; late ranks push you but don't auto-catch a sprint.
-M.WAVE_SPEED_BY_LAND = {
-	20, -- 1 baby
-	22, -- 2 normal
-	24, -- 3 speed
-	26, -- 4 gigantic
-	28, -- 5 titan
-	30, -- 6 colossal
-	32, -- 7 cosmic
-	33, -- 8 infinitum
-	35, -- 9 omega
-	37, -- 10 transcendent
+-- Per-land charge speed (studs/s). Starts slower so you get a head start,
+-- then eases up. Farther lands are faster, but never instant-catch.
+-- Walk ~16–18; sprint ~24–32.
+M.WAVE_SPEED_START_BY_LAND = {
+	12, -- 1 baby
+	14, -- 2 normal
+	16, -- 3 speed
+	17, -- 4 gigantic
+	18, -- 5 titan
+	20, -- 6 colossal
+	21, -- 7 cosmic
+	22, -- 8 infinitum
+	23, -- 9 omega
+	24, -- 10 transcendent
 }
+
+M.WAVE_SPEED_MAX_BY_LAND = {
+	20, -- 1
+	23, -- 2
+	26, -- 3
+	28, -- 4
+	31, -- 5
+	33, -- 6
+	35, -- 7
+	38, -- 8
+	40, -- 9
+	42, -- 10
+}
+
+-- Seconds from start speed to max (ease-in — stays slow at first).
+M.WAVE_SPEED_RAMP_SEC = 6
+
+function M.speedForLand(land: number, elapsedSec: number?): number
+	local i = math.clamp(math.floor(land), 1, #M.WAVE_SPEED_MAX_BY_LAND)
+	local start = M.WAVE_SPEED_START_BY_LAND[i]
+	local maxSpeed = M.WAVE_SPEED_MAX_BY_LAND[i]
+	local elapsed = if typeof(elapsedSec) == "number" then math.max(0, elapsedSec) else M.WAVE_SPEED_RAMP_SEC
+	local t = math.clamp(elapsed / math.max(M.WAVE_SPEED_RAMP_SEC, 0.1), 0, 1)
+	local eased = t * t
+	return start + (maxSpeed - start) * eased
+end
 
 -- Billboard names + StarterGui.Gradients child names + mesh tint.
 M.WEB_TITLES = {
@@ -85,11 +112,6 @@ M.INTRO_REVEAL_SEC = 0.7
 
 M.BGM_CHASE_SPEED = 0.72
 M.BGM_RESTORE_FADE = 0.65
-
-function M.speedForLand(land: number): number
-	local i = math.clamp(math.floor(land), 1, #M.WAVE_SPEED_BY_LAND)
-	return M.WAVE_SPEED_BY_LAND[i]
-end
 
 function M.titleForLand(land: number): { name: string, gradient: string, tint: Color3 }
 	local i = math.clamp(math.floor(land), 1, #M.WEB_TITLES)

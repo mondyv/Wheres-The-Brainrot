@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
@@ -87,6 +88,7 @@ local workoutAnim: Animation? = nil
 local footMotor: Motor6D? = nil
 local footProp: Model? = nil
 local footTool: Tool? = nil
+local footFollowConn: RBXScriptConnection? = nil
 local savedRequiresHandle: boolean? = nil
 local gripKillConn: RBXScriptConnection? = nil
 local gripChildConn: RBXScriptConnection? = nil
@@ -122,18 +124,15 @@ local function getHumanoid(character: Model?): Humanoid?
 end
 
 local function findFeet(character: Model): (BasePart?, BasePart?)
-	local function pick(names: { string }): BasePart?
-		for _, name in names do
-			local p = character:FindFirstChild(name, true)
-			if p and p:IsA("BasePart") then
-				return p
-			end
+	local function pick(name: string): BasePart?
+		local direct = character:FindFirstChild(name)
+		if direct and direct:IsA("BasePart") then
+			return direct
 		end
 		return nil
 	end
-	-- Feet only — LowerLeg / Leg attach puts the bar through the shins.
-	local r = pick({ "RightFoot", "Rightfoot", "Right Ankle" })
-	local l = pick({ "LeftFoot", "Leftfoot", "Left Ankle" })
+	local r = pick("RightFoot") or pick("Right Ankle")
+	local l = pick("LeftFoot") or pick("Left Ankle")
 	return r, l
 end
 
@@ -225,6 +224,10 @@ local function clearFootAttach()
 	if gripChildConn then
 		gripChildConn:Disconnect()
 		gripChildConn = nil
+	end
+	if footFollowConn then
+		footFollowConn:Disconnect()
+		footFollowConn = nil
 	end
 	if footMotor then
 		footMotor:Destroy()
@@ -384,7 +387,50 @@ local function footPropMotorFrames(
 	return anchorFoot.CFrame:ToObjectSpace(target), c1
 end
 
--- Visible clone of the Studio gear model, welded by Primary across the feet.
+-- Visible clone of the Studio gear, parented in the world (not the character)
+-- so Humanoid cannot weld it to the head. Pivot Primary onto the feet every frame.
+local function ensureWorldFolder(): Folder
+	local folder = Workspace:FindFirstChild("WorkoutGearWorld")
+	if folder and folder:IsA("Folder") then
+		return folder
+	end
+	local created = Instance.new("Folder")
+	created.Name = "WorkoutGearWorld"
+	created.Parent = Workspace
+	return created
+end
+
+local function poseGearOnFeet(character: Model, model: Model)
+	local rightFoot, leftFoot = findFeet(character)
+	local anchorFoot = rightFoot or leftFoot
+	if not anchorFoot then
+		return
+	end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	local forward = if hrp and hrp:IsA("BasePart") then hrp.CFrame.LookVector else Vector3.zAxis
+	local mid, across, contactY = soleAcross(anchorFoot, leftFoot, forward)
+
+	local bbCf, bbSize = model:GetBoundingBox()
+	local pivot = model:GetPivot()
+	-- Put the longest bar axis on X so mapping onto `across` lays it on the shoes.
+	if bbSize.Z >= bbSize.X and bbSize.Z >= bbSize.Y then
+		model:PivotTo(pivot * CFrame.Angles(0, math.rad(90), 0))
+		bbCf, bbSize = model:GetBoundingBox()
+		pivot = model:GetPivot()
+	elseif bbSize.Y >= bbSize.X and bbSize.Y >= bbSize.Z then
+		model:PivotTo(pivot * CFrame.Angles(0, 0, math.rad(90)))
+		bbCf, bbSize = model:GetBoundingBox()
+		pivot = model:GetPivot()
+	end
+
+	local desired = CFrame.fromMatrix(
+		Vector3.new(mid.X, contactY + math.max(bbSize.Y, 0.2) * 0.5, mid.Z),
+		across,
+		Vector3.yAxis
+	)
+	model:PivotTo(desired * bbCf:ToObjectSpace(pivot))
+end
+
 local function attachGearAcrossFeet(character: Model, tool: Tool)
 	clearFootAttach()
 	local rightFoot, leftFoot = findFeet(character)
@@ -425,7 +471,7 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		elseif d:IsA("BasePart") then
 			d.CanCollide = false
 			d.Massless = true
-			d.Anchored = false
+			d.Anchored = true
 			d.CanQuery = false
 			d.CanTouch = false
 			d.CastShadow = false
@@ -440,27 +486,6 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		return
 	end
 	model.PrimaryPart = primary
-
-	for _, d in model:GetDescendants() do
-		if d:IsA("BasePart") and d ~= primary then
-			local welded = false
-			for _, j in model:GetDescendants() do
-				if
-					(j:IsA("WeldConstraint") or j:IsA("Weld") or j:IsA("Motor6D"))
-					and ((j.Part0 == primary and j.Part1 == d) or (j.Part1 == primary and j.Part0 == d))
-				then
-					welded = true
-					break
-				end
-			end
-			if not welded then
-				local w = Instance.new("WeldConstraint")
-				w.Part0 = primary
-				w.Part1 = d
-				w.Parent = primary
-			end
-		end
-	end
 
 	footTool = tool
 	if savedRequiresHandle == nil then
@@ -515,22 +540,23 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		end
 	end)
 
-	model.Parent = character
+	model.Parent = ensureWorldFolder()
 	footProp = model
+	poseGearOnFeet(character, model)
 
-	local otherFoot = if anchorFoot == rightFoot then leftFoot else rightFoot
-	local hrp = character:FindFirstChild("HumanoidRootPart")
-	local forward = if hrp and hrp:IsA("BasePart") then hrp.CFrame.LookVector else Vector3.zAxis
-	local mid, across, contactY = soleAcross(anchorFoot, otherFoot, forward)
-	local c0, c1 = footPropMotorFrames(primary, model, anchorFoot, mid, across, contactY)
-	local motor = Instance.new("Motor6D")
-	motor.Name = "WorkoutFootMotor"
-	motor.Part0 = anchorFoot
-	motor.Part1 = primary
-	motor.C0 = c0
-	motor.C1 = c1
-	motor.Parent = anchorFoot
-	footMotor = motor
+	if footFollowConn then
+		footFollowConn:Disconnect()
+	end
+	footFollowConn = RunService.RenderStepped:Connect(function()
+		if not model.Parent or not character.Parent or tool.Parent ~= character then
+			if footFollowConn then
+				footFollowConn:Disconnect()
+				footFollowConn = nil
+			end
+			return
+		end
+		poseGearOnFeet(character, model)
+	end)
 
 	if tool:GetAttribute("RainbowGear") == true then
 		GearRainbowFX.attach(model)

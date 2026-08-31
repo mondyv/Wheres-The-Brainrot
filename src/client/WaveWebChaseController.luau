@@ -1660,7 +1660,7 @@ local function runChase(token: number)
 			safezoneTimer = 0
 		end
 
-		local speed = C.speedForLand(currentLand())
+		local speed = C.speedForLand(currentLand(), os.clock() - chaseStart)
 
 		wavePos += forward * speed * dt
 		wavePos = Vector3.new(wavePos.X, cruiseY, wavePos.Z)

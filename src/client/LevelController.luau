@@ -999,12 +999,12 @@ local function onLevelUpPulse(rewardsArg: { LevelConfig.LevelReward }?)
 
 	-- Body celebration — do not open Level Info or use top toast.
 	local summary = LevelConfig.formatRewardSummary(rewards)
-	CharacterWorldNotif.showCelebration(player.Character, "LEVEL UP", {
+	CharacterWorldNotif.showCelebration(player.Character, "Level " .. tostring(lv) .. "!", {
 		headline = tostring(lv),
 		subtitle = if summary ~= "" then summary else nil,
-		lifetimeSec = 3.8,
-		color = Color3.fromRGB(255, 214, 70),
-		offset = Vector3.new(0, 3.55, 0),
+		lifetimeSec = 3.5,
+		color = Color3.fromRGB(255, 220, 90),
+		offset = Vector3.new(0, 3.2, 0),
 	})
 
 	if cashTotal > 0 then

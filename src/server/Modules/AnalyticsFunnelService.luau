@@ -19,11 +19,16 @@ local IS_STUDIO = RunService:IsStudio()
 local lastOnboardingStep: { [Player]: number } = {}
 -- funnelName → last completed step number (stable funnels)
 local lastFunnelStep: { [Player]: { [string]: number } } = {}
--- per-attempt sessions (shop / wave chase)
+-- per-attempt sessions (shop / wave chase / this visit)
 local shopSessionId: { [Player]: string } = {}
 local shopSessionStep: { [Player]: number } = {}
 local waveSessionId: { [Player]: string } = {}
 local waveSessionStep: { [Player]: number } = {}
+local playSessionId: { [Player]: string } = {}
+local playSessionStart: { [Player]: number } = {}
+local playSessionStep: { [Player]: number } = {}
+local loopSessionId: { [Player]: string } = {}
+local loopSessionStep: { [Player]: number } = {}
 -- Core-loop / lucky-block: track whether starter block already counted
 local openedNonStarterLucky: { [Player]: boolean } = {}
 
@@ -105,6 +110,9 @@ function M.logOnboardingId(player: Player, stepId: string, opts: { allowSkip: bo
 		return
 	end
 	lastOnboardingStep[player] = def.step
+	if stepId == "opened_bush" or stepId == "claimed_brainrot" or stepId == "placed_on_stand" then
+		M.logSessionLoopId(player, stepId)
+	end
 	if not canSend() then
 		return
 	end
@@ -256,6 +264,7 @@ function M.waveChaseStarted(player: Player)
 	end
 	waveSessionStep[player] = def.step
 	logFunnelStep(player, AnalyticsFunnelConfig.WAVE_CHASE_FUNNEL, id, def.step, def.name)
+	M.logSessionLoopId(player, "chase_started")
 end
 
 function M.waveChaseEscaped(player: Player)
@@ -279,33 +288,11 @@ function M.waveChaseEscaped(player: Player)
 	logFunnelStep(player, AnalyticsFunnelConfig.WAVE_CHASE_FUNNEL, session, def.step, def.name)
 	waveSessionId[player] = nil
 	waveSessionStep[player] = nil
+	M.logSessionLoopId(player, "chase_escaped")
 end
 
 function M.waveChaseDied(player: Player)
-	local session = waveSessionId[player]
-	if not session then
-		M.waveChaseStarted(player)
-		session = waveSessionId[player]
-	end
-	if not session then
-		return
-	end
-	local def = AnalyticsFunnelConfig.waveChaseById("wave_died")
-	if not def then
-		return
-	end
-	local last = waveSessionStep[player] or 0
-	-- Escaped already ended the session; death after escape shouldn't fire.
-	if last >= 2 then
-		waveSessionId[player] = nil
-		waveSessionStep[player] = nil
-		return
-	end
-	if def.step <= last then
-		return
-	end
-	waveSessionStep[player] = def.step
-	logFunnelStep(player, AnalyticsFunnelConfig.WAVE_CHASE_FUNNEL, session, def.step, def.name)
+	-- Unfinished chase session = drop-off after "Chase Started".
 	waveSessionId[player] = nil
 	waveSessionStep[player] = nil
 end
@@ -373,6 +360,69 @@ function M.getLastOnboardingStep(player: Player): number
 	return lastOnboardingStep[player] or 0
 end
 
+----------------------------------------------------------------
+-- Session stay + harvest loop (per join — drop-off means they left)
+----------------------------------------------------------------
+
+function M.logSessionLoopId(player: Player, stepId: string)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return
+	end
+	local def = AnalyticsFunnelConfig.sessionLoopById(stepId)
+	if not def then
+		return
+	end
+	local session = loopSessionId[player]
+	if not session then
+		session = HttpService:GenerateGUID(false)
+		loopSessionId[player] = session
+		loopSessionStep[player] = 0
+	end
+	local last = loopSessionStep[player] or 0
+	if def.step <= last then
+		return
+	end
+	loopSessionStep[player] = def.step
+	logFunnelStep(player, AnalyticsFunnelConfig.SESSION_LOOP_FUNNEL, session, def.step, def.name)
+end
+
+function M.beginPlaySession(player: Player)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then
+		return
+	end
+	if playSessionId[player] then
+		return
+	end
+	local id = HttpService:GenerateGUID(false)
+	playSessionId[player] = id
+	playSessionStart[player] = os.clock()
+	playSessionStep[player] = 0
+	local def = AnalyticsFunnelConfig.SESSION_STAY[1]
+	if def then
+		playSessionStep[player] = def.step
+		logFunnelStep(player, AnalyticsFunnelConfig.SESSION_STAY_FUNNEL, id, def.step, def.name)
+	end
+	M.logSessionLoopId(player, "joined")
+end
+
+function M.tickPlaySession(player: Player)
+	local id = playSessionId[player]
+	local startAt = playSessionStart[player]
+	if not id or typeof(startAt) ~= "number" then
+		return
+	end
+	local elapsed = os.clock() - startAt
+	local last = playSessionStep[player] or 0
+	for _, def in AnalyticsFunnelConfig.SESSION_STAY do
+		local need = if typeof(def.sec) == "number" then def.sec else 0
+		if elapsed >= need and def.step > last then
+			playSessionStep[player] = def.step
+			last = def.step
+			logFunnelStep(player, AnalyticsFunnelConfig.SESSION_STAY_FUNNEL, id, def.step, def.name)
+		end
+	end
+end
+
 Players.PlayerRemoving:Connect(function(player)
 	lastOnboardingStep[player] = nil
 	lastFunnelStep[player] = nil
@@ -380,6 +430,11 @@ Players.PlayerRemoving:Connect(function(player)
 	shopSessionStep[player] = nil
 	waveSessionId[player] = nil
 	waveSessionStep[player] = nil
+	playSessionId[player] = nil
+	playSessionStart[player] = nil
+	playSessionStep[player] = nil
+	loopSessionId[player] = nil
+	loopSessionStep[player] = nil
 	openedNonStarterLucky[player] = nil
 end)
 

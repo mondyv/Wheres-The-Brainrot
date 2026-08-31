@@ -106,6 +106,7 @@ local function onPlayerJoined(player: Player)
 		if not player.Parent then
 			return
 		end
+		AnalyticsFunnelService.beginPlaySession(player)
 		AnalyticsFunnelService.logOnboardingId(player, "player_joined", { allowSkip = true })
 	end)
 end
@@ -128,6 +129,7 @@ task.spawn(function()
 			-- Still track in Studio for local testing of step state; AnalyticsService no-ops inside service.
 		end
 		for _, player in Players:GetPlayers() do
+			AnalyticsFunnelService.tickPlaySession(player)
 			local char = player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
 			if hrp and hrp:IsA("BasePart") then

@@ -22,6 +22,7 @@ export type FunnelStep = {
 	land: number?,
 	questIndex: number?,
 	rebirthCount: number?,
+	sec: number?,
 }
 
 ----------------------------------------------------------------
@@ -65,7 +66,7 @@ M.ONBOARDING_MAX_STEP = 14
 -- World progression — land depth (stable across joins)
 ----------------------------------------------------------------
 
-M.WORLD_FUNNEL = "WorldProgression"
+M.WORLD_FUNNEL = "WorldProgression_v2"
 -- Keep PROGRESSION_FUNNEL alias for older call sites.
 M.PROGRESSION_FUNNEL = M.WORLD_FUNNEL
 
@@ -88,7 +89,7 @@ M.PROGRESSION = M.WORLD
 -- Tim Cheese quests — every claim (stable across joins)
 ----------------------------------------------------------------
 
-M.TIM_QUEST_FUNNEL = "TimCheeseQuests"
+M.TIM_QUEST_FUNNEL = "TimCheeseQuests_v2"
 M.TIM_QUEST_COUNT = 32
 
 local timQuestSteps: { FunnelStep } = {}
@@ -111,7 +112,7 @@ M.TIM_QUEST = timQuestSteps
 -- Rebirth depth
 ----------------------------------------------------------------
 
-M.REBIRTH_FUNNEL = "Rebirth"
+M.REBIRTH_FUNNEL = "Rebirth_v2"
 M.REBIRTH = {
 	{ step = 1, id = "rebirth_1", name = "Rebirth 1", rebirthCount = 1 },
 	{ step = 2, id = "rebirth_2", name = "Rebirth 2", rebirthCount = 2 },
@@ -126,7 +127,7 @@ M.REBIRTH = {
 -- Core economy loop (first-time milestones, typical order)
 ----------------------------------------------------------------
 
-M.CORE_LOOP_FUNNEL = "CoreLoop"
+M.CORE_LOOP_FUNNEL = "CoreLoop_v2"
 M.CORE_LOOP = {
 	{ step = 1, id = "first_sell", name = "First Sell" },
 	{ step = 2, id = "first_return", name = "First Return Home" },
@@ -134,27 +135,51 @@ M.CORE_LOOP = {
 	{ step = 4, id = "first_lucky_block", name = "Opened Non-Starter Lucky Block" },
 } :: { FunnelStep }
 
-----------------------------------------------------------------
--- Wave Web chase (per-chase session)
-----------------------------------------------------------------
-
-M.WAVE_CHASE_FUNNEL = "WaveChase"
+-- Wave Web chase (per-chase). Death / quit = drop-off after Started.
+M.WAVE_CHASE_FUNNEL = "WaveChase_v2"
 M.WAVE_CHASE = {
 	{ step = 1, id = "wave_started", name = "Chase Started" },
 	{ step = 2, id = "wave_escaped", name = "Escaped to Safezone" },
-	{ step = 3, id = "wave_died", name = "Died to Wave" },
 } :: { FunnelStep }
 
 ----------------------------------------------------------------
 -- Store checkout (per-checkout session)
 ----------------------------------------------------------------
 
-M.SHOP_FUNNEL = "StoreCheckout"
+M.SHOP_FUNNEL = "StoreCheckout_v2"
 M.SHOP = {
 	{ step = 1, name = "Opened Store" },
 	{ step = 2, name = "Prompted Purchase" },
 	{ step = 3, name = "Purchase Completed" },
 }
+
+----------------------------------------------------------------
+-- Session stay — drop-off = they left. New session each join.
+----------------------------------------------------------------
+
+M.SESSION_STAY_FUNNEL = "SessionStay_v2"
+M.SESSION_STAY = {
+	{ step = 1, id = "joined", name = "Joined", sec = 0 },
+	{ step = 2, id = "stay_30s", name = "Still here 30s", sec = 30 },
+	{ step = 3, id = "stay_2m", name = "Still here 2 min", sec = 120 },
+	{ step = 4, id = "stay_5m", name = "Still here 5 min", sec = 300 },
+	{ step = 5, id = "stay_10m", name = "Still here 10 min", sec = 600 },
+	{ step = 6, id = "stay_20m", name = "Still here 20 min", sec = 1200 },
+} :: { FunnelStep }
+
+----------------------------------------------------------------
+-- One visit of the harvest loop. Leave / die = drop-off.
+----------------------------------------------------------------
+
+M.SESSION_LOOP_FUNNEL = "SessionLoop_v2"
+M.SESSION_LOOP = {
+	{ step = 1, id = "joined", name = "Joined" },
+	{ step = 2, id = "opened_bush", name = "Opened a Bush" },
+	{ step = 3, id = "chase_started", name = "Cobweb Chase Started" },
+	{ step = 4, id = "chase_escaped", name = "Escaped Cobweb" },
+	{ step = 5, id = "claimed_brainrot", name = "Claimed a Brainrot" },
+	{ step = 6, id = "placed_on_stand", name = "Placed on Stand" },
+} :: { FunnelStep }
 
 ----------------------------------------------------------------
 -- Lookups
@@ -228,6 +253,14 @@ end
 
 function M.waveChaseById(id: string): FunnelStep?
 	return findIn(M.WAVE_CHASE, id)
+end
+
+function M.sessionStayById(id: string): FunnelStep?
+	return findIn(M.SESSION_STAY, id)
+end
+
+function M.sessionLoopById(id: string): FunnelStep?
+	return findIn(M.SESSION_LOOP, id)
 end
 
 return M

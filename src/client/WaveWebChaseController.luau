@@ -1660,7 +1660,24 @@ local function runChase(token: number)
 			safezoneTimer = 0
 		end
 
-		local speed = C.speedForLand(currentLand(), os.clock() - chaseStart)
+		local land = currentLand()
+		local walk = hum.WalkSpeed
+		if walk < 8 then
+			local base = hum:GetAttribute("BrainrotBaseWalkSpeed")
+			if typeof(savedWalkSpeed) == "number" and savedWalkSpeed > 8 then
+				walk = savedWalkSpeed
+			elseif typeof(base) == "number" and base > 8 then
+				walk = base
+			else
+				walk = 18
+			end
+		end
+		local cruise = C.speedForLand(land, os.clock() - chaseStart, walk)
+		local vel = root.AssemblyLinearVelocity
+		local alongVel = math.max(0, Vector3.new(vel.X, 0, vel.Z):Dot(forward))
+		local landI = math.clamp(math.floor(land), 1, #C.WAVE_CATCHUP_BY_LAND)
+		local catchup = C.WAVE_CATCHUP_BY_LAND[landI]
+		local speed = math.min(C.WAVE_SPEED_CAP, math.max(cruise, alongVel + catchup))
 
 		wavePos += forward * speed * dt
 		wavePos = Vector3.new(wavePos.X, cruiseY, wavePos.Z)

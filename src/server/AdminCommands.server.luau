@@ -17,6 +17,7 @@ local AdminBroadcastService = require(script.Parent:WaitForChild("Modules"):Wait
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
+local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
 
 local COMMAND_REMOTE_NAME = "AdminCommand"
 local CATALOG_REMOTE_NAME = "AdminAutocomplete"
@@ -1373,7 +1374,27 @@ commands.setpower = {
 	usage = "setpower <player|me|all> <amount>",
 	description = "Set workout Power (drives swing force + reach).",
 	run = function(sender: Player, args: { string }): (boolean, string)
-		return runSetSwingLevel(sender, args, commands.setpower.usage, "power", "Power")
+		if not args[1] or not args[2] then
+			return false, "Usage: " .. commands.setpower.usage
+		end
+		local amount = tonumber(args[2])
+		if not amount then
+			return false, "Power must be a number."
+		end
+		amount = math.floor(amount)
+		if amount < 0 or amount > MAX_CASH_GRANT then
+			return false, string.format("Power must be 0–%d.", MAX_CASH_GRANT)
+		end
+		local targets, targetErr = resolveTargets(sender, args[1], true)
+		if not targets then
+			return false, targetErr or "No target."
+		end
+		for _, target in targets do
+			PlayerDataService.waitUntilLoaded(target)
+			WorkoutPower.setPowerAbsolute(target, amount, false)
+			PlayerDataService.savePlayerData(target)
+		end
+		return true, string.format("Set Power to %d for %d player(s).", amount, #targets)
 	end,
 }
 commands.power = commands.setpower

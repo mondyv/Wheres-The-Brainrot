@@ -131,8 +131,8 @@ local function findFeet(character: Model): (BasePart?, BasePart?)
 		end
 		return nil
 	end
-	local r = pick("RightFoot") or pick("Right Ankle")
-	local l = pick("LeftFoot") or pick("Left Ankle")
+	local r = pick("RightFoot") or pick("Right Ankle") or pick("Right Leg")
+	local l = pick("LeftFoot") or pick("Left Ankle") or pick("Left Leg")
 	return r, l
 end
 
@@ -237,6 +237,20 @@ local function clearFootAttach()
 		GearRainbowFX.detach(footProp)
 		footProp:Destroy()
 		footProp = nil
+	end
+	if footTool then
+		for _, d in footTool:GetDescendants() do
+			if
+				d:IsA("ParticleEmitter")
+				or d:IsA("Beam")
+				or d:IsA("Trail")
+				or d:IsA("Fire")
+				or d:IsA("Smoke")
+				or d:IsA("Sparkles")
+			then
+				(d :: any).Enabled = true
+			end
+		end
 	end
 	if footTool and footTool.Parent and savedRequiresHandle ~= nil then
 		footTool.RequiresHandle = savedRequiresHandle
@@ -388,7 +402,7 @@ local function footPropMotorFrames(
 end
 
 -- Visible clone of the Studio gear, parented in the world (not the character)
--- so Humanoid cannot weld it to the head. Pivot Primary onto the feet every frame.
+-- so Humanoid cannot weld it to the head. Pivot the solid mesh onto the feet every frame.
 local function ensureWorldFolder(): Folder
 	local folder = Workspace:FindFirstChild("WorkoutGearWorld")
 	if folder and folder:IsA("Folder") then
@@ -400,35 +414,162 @@ local function ensureWorldFolder(): Folder
 	return created
 end
 
+local function looksLikeFxName(name: string): boolean
+	local n = string.lower(name)
+	return string.find(n, "vfx", 1, true) ~= nil
+		or string.find(n, "fx", 1, true) ~= nil
+		or string.find(n, "emitter", 1, true) ~= nil
+		or string.find(n, "particle", 1, true) ~= nil
+		or string.find(n, "hitbox", 1, true) ~= nil
+		or string.find(n, "aura", 1, true) ~= nil
+		or string.find(n, "glow", 1, true) ~= nil
+		or string.find(n, "trail", 1, true) ~= nil
+end
+
+local function isUnderFx(inst: Instance, root: Instance): boolean
+	local p: Instance? = inst
+	while p and p ~= root do
+		if looksLikeFxName(p.Name) then
+			return true
+		end
+		p = p.Parent
+	end
+	return false
+end
+
+local function collectSolidParts(model: Model): { BasePart }
+	local parts: { BasePart } = {}
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") and d.Transparency < 0.7 and not isUnderFx(d, model) then
+			local maxDim = math.max(d.Size.X, d.Size.Y, d.Size.Z)
+			if maxDim <= 12 then
+				table.insert(parts, d)
+			end
+		end
+	end
+	if #parts == 0 then
+		for _, d in model:GetDescendants() do
+			if d:IsA("BasePart") and d.Transparency < 0.95 and not isUnderFx(d, model) then
+				local maxDim = math.max(d.Size.X, d.Size.Y, d.Size.Z)
+				if maxDim <= 16 then
+					table.insert(parts, d)
+				end
+			end
+		end
+	end
+	return parts
+end
+
+local function stripFootPropFx(model: Model)
+	for _, child in model:GetChildren() do
+		if looksLikeFxName(child.Name) then
+			child:Destroy()
+		end
+	end
+	for _, d in model:GetDescendants() do
+		if
+			d:IsA("ParticleEmitter")
+			or d:IsA("Beam")
+			or d:IsA("Trail")
+			or d:IsA("Fire")
+			or d:IsA("Smoke")
+			or d:IsA("Sparkles")
+		then
+			(d :: any).Enabled = false
+		end
+	end
+end
+
+local function solidCornerMinY(parts: { BasePart }): number
+	local minY = math.huge
+	for _, d in parts do
+		local cf = d.CFrame
+		local half = d.Size * 0.5
+		for _, sx in { -1, 1 } do
+			for _, sy in { -1, 1 } do
+				for _, sz in { -1, 1 } do
+					local y = cf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz)).Y
+					minY = math.min(minY, y)
+				end
+			end
+		end
+	end
+	return minY
+end
+
+local function solidAabb(parts: { BasePart }): (Vector3, Vector3)
+	local minV = Vector3.new(math.huge, math.huge, math.huge)
+	local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
+	for _, d in parts do
+		local cf = d.CFrame
+		local half = d.Size * 0.5
+		for _, sx in { -1, 1 } do
+			for _, sy in { -1, 1 } do
+				for _, sz in { -1, 1 } do
+					local w = cf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz))
+					minV = Vector3.new(math.min(minV.X, w.X), math.min(minV.Y, w.Y), math.min(minV.Z, w.Z))
+					maxV = Vector3.new(math.max(maxV.X, w.X), math.max(maxV.Y, w.Y), math.max(maxV.Z, w.Z))
+				end
+			end
+		end
+	end
+	return (minV + maxV) * 0.5, maxV - minV
+end
+
+local function fitGearToFeet(model: Model)
+	local parts = collectSolidParts(model)
+	if #parts == 0 then
+		return
+	end
+	local _, size = solidAabb(parts)
+	local s = 1
+	if size.Y > 1.15 then
+		s = math.min(s, 1.15 / size.Y)
+	end
+	local span = math.max(size.X, size.Z)
+	if span > 2.8 then
+		s = math.min(s, 2.8 / span)
+	end
+	s = math.clamp(s, 0.1, 1)
+	if s < 0.97 then
+		model:ScaleTo(model:GetScale() * s)
+	end
+end
+
 local function poseGearOnFeet(character: Model, model: Model)
 	local rightFoot, leftFoot = findFeet(character)
 	local anchorFoot = rightFoot or leftFoot
 	if not anchorFoot then
 		return
 	end
+	local primary = model.PrimaryPart or GearConfig.resolvePrimaryPart(model)
+	if not primary then
+		return
+	end
+	local parts = collectSolidParts(model)
+	if #parts == 0 then
+		table.insert(parts, primary)
+	end
 	local hrp = character:FindFirstChild("HumanoidRootPart")
 	local forward = if hrp and hrp:IsA("BasePart") then hrp.CFrame.LookVector else Vector3.zAxis
 	local mid, across, contactY = soleAcross(anchorFoot, leftFoot, forward)
 
-	local bbCf, bbSize = model:GetBoundingBox()
-	local pivot = model:GetPivot()
-	-- Put the longest bar axis on X so mapping onto `across` lays it on the shoes.
-	if bbSize.Z >= bbSize.X and bbSize.Z >= bbSize.Y then
-		model:PivotTo(pivot * CFrame.Angles(0, math.rad(90), 0))
-		bbCf, bbSize = model:GetBoundingBox()
-		pivot = model:GetPivot()
-	elseif bbSize.Y >= bbSize.X and bbSize.Y >= bbSize.Z then
-		model:PivotTo(pivot * CFrame.Angles(0, 0, math.rad(90)))
-		bbCf, bbSize = model:GetBoundingBox()
-		pivot = model:GetPivot()
+	-- Lie Primary's longest axis across the shoes (bar on the toes, not a tower).
+	local ps = primary.Size
+	local lieFlat = CFrame.identity
+	if ps.Y >= ps.X and ps.Y >= ps.Z then
+		lieFlat = CFrame.Angles(0, 0, math.rad(90))
+	elseif ps.Z >= ps.X and ps.Z >= ps.Y then
+		lieFlat = CFrame.Angles(0, math.rad(90), 0)
 	end
 
-	local desired = CFrame.fromMatrix(
-		Vector3.new(mid.X, contactY + math.max(bbSize.Y, 0.2) * 0.5, mid.Z),
-		across,
-		Vector3.yAxis
-	)
-	model:PivotTo(desired * bbCf:ToObjectSpace(pivot))
+	local target = CFrame.fromMatrix(Vector3.new(mid.X, contactY, mid.Z), across, Vector3.yAxis) * lieFlat
+	model:PivotTo(target * primary.CFrame:ToObjectSpace(model:GetPivot()))
+
+	local minY = solidCornerMinY(parts)
+	if minY < math.huge then
+		model:PivotTo(model:GetPivot() + Vector3.new(0, contactY - minY, 0))
+	end
 end
 
 local function attachGearAcrossFeet(character: Model, tool: Tool)
@@ -486,6 +627,8 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		return
 	end
 	model.PrimaryPart = primary
+	stripFootPropFx(model)
+	fitGearToFeet(model)
 
 	footTool = tool
 	if savedRequiresHandle == nil then
@@ -498,9 +641,22 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 			if handleTransparency[d] == nil then
 				handleTransparency[d] = d.LocalTransparencyModifier
 			end
+			if handleBaseTransparency[d] == nil then
+				handleBaseTransparency[d] = d.Transparency
+			end
 			d.LocalTransparencyModifier = 1
+			d.Transparency = 1
 			d.CanCollide = false
 			d.Massless = true
+		elseif
+			d:IsA("ParticleEmitter")
+			or d:IsA("Beam")
+			or d:IsA("Trail")
+			or d:IsA("Fire")
+			or d:IsA("Smoke")
+			or d:IsA("Sparkles")
+		then
+			(d :: any).Enabled = false
 		end
 	end
 

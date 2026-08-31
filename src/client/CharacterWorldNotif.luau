@@ -39,6 +39,7 @@ export type CelebrateOpts = {
 	lifetimeSec: number?,
 	hideRankBadges: boolean?,
 	subtitle: string?,
+	headline: string?, -- big number under the tag, e.g. "12"
 }
 
 local function resolveAdornee(character: Model?): BasePart?
@@ -126,10 +127,15 @@ function CharacterWorldNotif.dismiss()
 	setRankBadgeSuppress(false)
 
 	if label.Parent then
-		TweenService:Create(label, FADE_OUT, {
-			TextTransparency = 1,
-			TextStrokeTransparency = 1,
-		}):Play()
+		local canvas = bb:FindFirstChild("Canvas")
+		if canvas and canvas:IsA("CanvasGroup") then
+			TweenService:Create(canvas, FADE_OUT, { GroupTransparency = 1 }):Play()
+		else
+			TweenService:Create(label, FADE_OUT, {
+				TextTransparency = 1,
+				TextStrokeTransparency = 1,
+			}):Play()
+		end
 	end
 	task.delay(FADE_OUT.Time + 0.03, function()
 		if bb.Parent then
@@ -237,7 +243,7 @@ function CharacterWorldNotif.show(character: Model?, message: string, opts: Show
 	end
 end
 
--- Level-up / big reward: pop + rock + float beside the body (no top toast).
+-- Level-up / big reward: gold plate over the body, no wiggle.
 function CharacterWorldNotif.showCelebration(character: Model?, title: string, opts: CelebrateOpts?)
 	if typeof(title) ~= "string" or title == "" then
 		return
@@ -250,128 +256,208 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 
 	CharacterWorldNotif.dismiss()
 
-	local offset = if opts and opts.offset then opts.offset else Vector3.new(0, 3.1, 0)
-	local textColor = if opts and opts.color then opts.color else Color3.fromRGB(255, 220, 90)
-	local lifetimeSec = if opts and typeof(opts.lifetimeSec) == "number" then opts.lifetimeSec else 3.4
+	local offset = if opts and opts.offset then opts.offset else Vector3.new(0, 3.45, 0)
+	local gold = if opts and opts.color then opts.color else Color3.fromRGB(255, 214, 70)
+	local lifetimeSec = if opts and typeof(opts.lifetimeSec) == "number" then opts.lifetimeSec else 3.6
 	local hideBadges = not (opts and opts.hideRankBadges == false)
 	local subtitle = if opts and typeof(opts.subtitle) == "string" then opts.subtitle else nil
+	local headline = if opts and typeof(opts.headline) == "string" and opts.headline ~= "" then opts.headline else nil
+	if not headline then
+		local n = string.match(title, "(%d+)")
+		if n then
+			headline = n
+		end
+	end
+	local tagText = if headline then "LEVEL UP" else string.upper(title)
+	local hasSub = subtitle ~= nil and subtitle ~= ""
+	local hasHeadline = headline ~= nil
 
 	baseText = title
 	if hideBadges then
 		setRankBadgeSuppress(true)
 	end
 
+	local heightPx = 78
+	if hasHeadline then
+		heightPx += 52
+	end
+	if hasSub then
+		heightPx += 36
+	end
+
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "CharacterWorldNotifCelebrate"
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
-	bb.MaxDistance = 160
-	local hasSub = subtitle ~= nil and subtitle ~= ""
-	bb.Size = UDim2.fromOffset(440, if hasSub then 108 else 52)
+	bb.MaxDistance = 180
+	bb.Size = UDim2.fromOffset(280, heightPx)
 	bb.StudsOffset = offset
 	bb.Adornee = adornee
-	bb.Parent = char
 
-	local root = Instance.new("Frame")
-	root.Name = "Root"
-	root.BackgroundTransparency = 1
-	root.Size = UDim2.fromScale(1, 1)
-	root.Parent = bb
+	local canvas = Instance.new("CanvasGroup")
+	canvas.Name = "Canvas"
+	canvas.BackgroundTransparency = 1
+	canvas.Size = UDim2.fromScale(1, 1)
+	canvas.GroupTransparency = 1
+	canvas.Parent = bb
+
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0.42
+	scale.Parent = canvas
+
+	local plate = Instance.new("Frame")
+	plate.Name = "Plate"
+	plate.AnchorPoint = Vector2.new(0.5, 0.5)
+	plate.Position = UDim2.fromScale(0.5, 0.5)
+	plate.Size = UDim2.new(1, -8, 1, -6)
+	plate.BackgroundColor3 = Color3.fromRGB(16, 10, 6)
+	plate.BackgroundTransparency = 0.12
+	plate.BorderSizePixel = 0
+	plate.Parent = canvas
+
+	local plateCorner = Instance.new("UICorner")
+	plateCorner.CornerRadius = UDim.new(0, 18)
+	plateCorner.Parent = plate
+
+	local plateStroke = Instance.new("UIStroke")
+	plateStroke.Color = gold
+	plateStroke.Thickness = 2.4
+	plateStroke.Transparency = 0.15
+	plateStroke.Parent = plate
+
+	local platePad = Instance.new("UIPadding")
+	platePad.PaddingTop = UDim.new(0, 10)
+	platePad.PaddingBottom = UDim.new(0, 10)
+	platePad.PaddingLeft = UDim.new(0, 12)
+	platePad.PaddingRight = UDim.new(0, 12)
+	platePad.Parent = plate
 
 	local list = Instance.new("UIListLayout")
 	list.FillDirection = Enum.FillDirection.Vertical
 	list.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	list.VerticalAlignment = Enum.VerticalAlignment.Center
-	list.Padding = UDim.new(0, 8)
+	list.Padding = UDim.new(0, 2)
 	list.SortOrder = Enum.SortOrder.LayoutOrder
-	list.Parent = root
+	list.Parent = plate
 
-	local scale = Instance.new("UIScale")
-	scale.Scale = 0.35
-	scale.Parent = root
+	local tag = Instance.new("TextLabel")
+	tag.Name = "Tag"
+	tag.BackgroundTransparency = 1
+	tag.LayoutOrder = 1
+	tag.Size = UDim2.new(1, 0, 0, 18)
+	tag.Font = UiFonts.DISPLAY_LEGACY
+	UiFonts.applyDisplay(tag)
+	tag.TextSize = 13
+	tag.TextColor3 = Color3.fromRGB(255, 236, 170)
+	tag.TextStrokeColor3 = Color3.fromRGB(40, 22, 4)
+	tag.TextStrokeTransparency = 0.35
+	tag.TextXAlignment = Enum.TextXAlignment.Center
+	tag.TextYAlignment = Enum.TextYAlignment.Center
+	tag.Text = tagText
+	tag.Parent = plate
 
 	local titleLabel = Instance.new("TextLabel")
 	titleLabel.Name = "Title"
 	titleLabel.BackgroundTransparency = 1
-	titleLabel.LayoutOrder = 1
-	titleLabel.Size = UDim2.new(1, -8, 0, if hasSub then 40 else 48)
+	titleLabel.LayoutOrder = 2
+	titleLabel.Size = UDim2.new(1, 0, 0, if hasHeadline then 52 else 36)
 	titleLabel.Font = UiFonts.DISPLAY_LEGACY
 	UiFonts.applyDisplay(titleLabel)
-	titleLabel.TextSize = 26
-	titleLabel.TextColor3 = textColor
-	titleLabel.TextStrokeColor3 = Color3.fromRGB(20, 10, 0)
-	titleLabel.TextStrokeTransparency = 0.25
+	titleLabel.TextSize = if hasHeadline then 48 else 26
+	titleLabel.TextColor3 = gold
+	titleLabel.TextStrokeColor3 = Color3.fromRGB(18, 8, 0)
+	titleLabel.TextStrokeTransparency = 0.05
 	titleLabel.TextXAlignment = Enum.TextXAlignment.Center
 	titleLabel.TextYAlignment = Enum.TextYAlignment.Center
 	titleLabel.TextWrapped = false
 	titleLabel.TextTruncate = Enum.TextTruncate.AtEnd
-	titleLabel.Text = title
-	titleLabel.TextTransparency = 1
-	titleLabel.Rotation = -12
-	titleLabel.Parent = root
+	titleLabel.Text = if hasHeadline then headline :: string else title
+	titleLabel.Parent = plate
 
-	local subLabel: TextLabel? = nil
+	local titleStroke = Instance.new("UIStroke")
+	titleStroke.Color = Color3.fromRGB(12, 6, 0)
+	titleStroke.Thickness = 3.2
+	titleStroke.Transparency = 0.05
+	titleStroke.LineJoinMode = Enum.LineJoinMode.Round
+	titleStroke.Parent = titleLabel
+
+	local titleGrad = Instance.new("UIGradient")
+	titleGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 248, 210)),
+		ColorSequenceKeypoint.new(0.45, gold),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 168, 40)),
+	})
+	titleGrad.Rotation = 90
+	titleGrad.Parent = titleLabel
+
 	if hasSub then
+		local chip = Instance.new("Frame")
+		chip.Name = "SubChip"
+		chip.LayoutOrder = 3
+		chip.AutomaticSize = Enum.AutomaticSize.X
+		chip.Size = UDim2.fromOffset(0, 26)
+		chip.BackgroundColor3 = Color3.fromRGB(8, 22, 14)
+		chip.BackgroundTransparency = 0.12
+		chip.BorderSizePixel = 0
+		chip.Parent = plate
+
+		local chipCorner = Instance.new("UICorner")
+		chipCorner.CornerRadius = UDim.new(1, 0)
+		chipCorner.Parent = chip
+
+		local chipStroke = Instance.new("UIStroke")
+		chipStroke.Color = Color3.fromRGB(120, 255, 170)
+		chipStroke.Thickness = 1.2
+		chipStroke.Transparency = 0.35
+		chipStroke.Parent = chip
+
+		local chipPad = Instance.new("UIPadding")
+		chipPad.PaddingLeft = UDim.new(0, 12)
+		chipPad.PaddingRight = UDim.new(0, 12)
+		chipPad.Parent = chip
+
 		local sub = Instance.new("TextLabel")
 		sub.Name = "Subtitle"
 		sub.BackgroundTransparency = 1
-		sub.LayoutOrder = 2
-		sub.Size = UDim2.new(1, -12, 0, 48)
+		sub.AnchorPoint = Vector2.new(0.5, 0.5)
+		sub.Position = UDim2.fromScale(0.5, 0.5)
+		sub.Size = UDim2.fromScale(1, 1)
+		sub.AutomaticSize = Enum.AutomaticSize.X
 		sub.Font = UiFonts.DISPLAY_LEGACY
 		UiFonts.applyDisplay(sub)
-		sub.TextSize = 16
-		sub.TextColor3 = Color3.fromRGB(170, 255, 190)
-		sub.TextStrokeColor3 = Color3.fromRGB(10, 18, 12)
-		sub.TextStrokeTransparency = 0.3
+		sub.TextSize = 13
+		sub.TextColor3 = Color3.fromRGB(190, 255, 210)
+		sub.TextStrokeColor3 = Color3.fromRGB(6, 16, 10)
+		sub.TextStrokeTransparency = 0.4
 		sub.TextXAlignment = Enum.TextXAlignment.Center
-		sub.TextYAlignment = Enum.TextYAlignment.Top
-		sub.TextWrapped = true
+		sub.TextYAlignment = Enum.TextYAlignment.Center
 		sub.Text = subtitle :: string
-		sub.TextTransparency = 1
-		sub.Parent = root
-		subLabel = sub
+		sub.Parent = chip
 	end
+
+	bb.Parent = char
 
 	activeBillboard = bb
 	activeLabel = titleLabel
 
-	TweenService:Create(scale, TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1.12 }):Play()
-	task.delay(0.32, function()
-		if scale.Parent then
-			TweenService:Create(scale, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-		end
-	end)
-
-	TweenService:Create(titleLabel, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		TextTransparency = 0,
-		TextStrokeTransparency = 0.25,
-		Rotation = 8,
+	TweenService:Create(canvas, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		GroupTransparency = 0,
 	}):Play()
-	task.delay(0.22, function()
-		if titleLabel.Parent then
-			TweenService:Create(titleLabel, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-				Rotation = -5,
+	TweenService:Create(scale, TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Scale = 1.08,
+	}):Play()
+	task.delay(0.38, function()
+		if scale.Parent then
+			TweenService:Create(scale, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Scale = 1,
 			}):Play()
-			task.delay(0.14, function()
-				if titleLabel.Parent then
-					TweenService:Create(titleLabel, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-						Rotation = 0,
-					}):Play()
-				end
-			end)
 		end
 	end)
-	if subLabel then
-		TweenService:Create(subLabel, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			TextTransparency = 0,
-			TextStrokeTransparency = 0.3,
-		}):Play()
-	end
 
 	local startOffset = offset
-	local endOffset = offset + Vector3.new(0, 1.15, 0)
+	local endOffset = offset + Vector3.new(0, 0.85, 0)
 	local floatStart = os.clock()
-	local floatDur = math.max(0.8, lifetimeSec - 0.35)
+	local floatDur = math.max(0.9, lifetimeSec - 0.25)
 	local token = dismissToken
 	followConn = RunService.RenderStepped:Connect(function()
 		if token ~= dismissToken or not bb.Parent then

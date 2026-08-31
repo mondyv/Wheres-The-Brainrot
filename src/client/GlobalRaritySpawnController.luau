@@ -26,6 +26,7 @@ type MarkerState = {
 	conns: { RBXScriptConnection },
 	bush: Instance?,
 	highlight: Highlight?,
+	anchor: BasePart?,
 }
 
 local timerLabels: { [string]: TextLabel } = {}
@@ -197,7 +198,7 @@ local function findBushByKey(key: string): Instance?
 		end
 		count += 1
 		if count % 500 == 0 then
-			task.wait()
+			task.wait(0.1)
 		end
 	end
 	return nil
@@ -229,7 +230,33 @@ local function destroyMarker()
 	if activeMarker.billboard.Parent then
 		activeMarker.billboard:Destroy()
 	end
+	if activeMarker.anchor and activeMarker.anchor.Parent then
+		activeMarker.anchor:Destroy()
+	end
 	activeMarker = nil
+end
+
+local function readActivePos(): Vector3?
+	local attr = ReplicatedStorage:GetAttribute(C.ACTIVE_POS_ATTR)
+	if typeof(attr) == "Vector3" then
+		return attr
+	end
+	return nil
+end
+
+local function ensureAnchor(pos: Vector3): BasePart
+	local part = Instance.new("Part")
+	part.Name = "GlobalRaritySpawnAnchor"
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.CastShadow = false
+	part.Transparency = 1
+	part.Size = Vector3.new(1, 1, 1)
+	part.Position = pos
+	part.Parent = Workspace
+	return part
 end
 
 local function bushWorldPos(bush: Instance): Vector3?
@@ -317,17 +344,17 @@ local function addBlackStroke(parent: Instance, thickness: number)
 	return stroke
 end
 
-local function buildMarkerUi(rarity: string, _iconImage: string): (BillboardGui, TextLabel)
+local function buildMarkerUi(rarity: string, _iconImage: string, brainrotName: string): (BillboardGui, TextLabel)
 	local tier = C.tierById(rarity)
 	local rarityLabel = if tier then tier.displayName else string.upper(rarity)
 
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "GlobalRaritySpawnMarker"
-	bb.Size = UDim2.fromOffset(88, 96)
-	bb.StudsOffset = Vector3.new(0, 14, 0)
+	bb.Size = UDim2.fromOffset(132, 168)
+	bb.StudsOffset = Vector3.new(0, 16, 0)
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
-	bb.MaxDistance = 2000
+	bb.MaxDistance = 100000
 
 	local layout = Instance.new("UIListLayout")
 	layout.FillDirection = Enum.FillDirection.Vertical
@@ -340,9 +367,9 @@ local function buildMarkerUi(rarity: string, _iconImage: string): (BillboardGui,
 	local rarityText = Instance.new("TextLabel")
 	rarityText.Name = "Rarity"
 	rarityText.LayoutOrder = 1
-	rarityText.Size = UDim2.fromOffset(84, 20)
+	rarityText.Size = UDim2.fromOffset(128, 22)
 	rarityText.BackgroundTransparency = 1
-	UiFonts.applyDisplayLabel(rarityText, 14, 10)
+	UiFonts.applyDisplayLabel(rarityText, 16, 11)
 	rarityText.Text = rarityLabel
 	rarityText.TextColor3 = Color3.fromRGB(255, 255, 255)
 	rarityText.Parent = bb
@@ -353,15 +380,27 @@ local function buildMarkerUi(rarity: string, _iconImage: string): (BillboardGui,
 	icon.Name = "Icon"
 	icon.LayoutOrder = 2
 	icon.BackgroundTransparency = 1
-	icon.Size = UDim2.fromOffset(46, 46)
+	icon.Size = UDim2.fromOffset(72, 72)
 	icon.ScaleType = Enum.ScaleType.Fit
 	updateMarkerIcon(icon, _iconImage, rarity)
 	icon.Parent = bb
 
+	local nameText = Instance.new("TextLabel")
+	nameText.Name = "BrainrotName"
+	nameText.LayoutOrder = 3
+	nameText.Size = UDim2.fromOffset(128, 20)
+	nameText.BackgroundTransparency = 1
+	UiFonts.applyDisplayLabel(nameText, 13, 10)
+	nameText.Text = if brainrotName ~= "" then brainrotName else "Brainrot"
+	nameText.TextColor3 = Color3.fromRGB(255, 255, 255)
+	nameText.TextTruncate = Enum.TextTruncate.AtEnd
+	nameText.Parent = bb
+	addBlackStroke(nameText, 1.5)
+
 	local timer = Instance.new("TextLabel")
 	timer.Name = "Time"
-	timer.LayoutOrder = 3
-	timer.Size = UDim2.fromOffset(84, 18)
+	timer.LayoutOrder = 4
+	timer.Size = UDim2.fromOffset(128, 18)
 	timer.BackgroundTransparency = 1
 	UiFonts.applyDisplayLabel(timer, 13, 10)
 	timer.TextColor3 = Color3.fromRGB(238, 240, 248)
@@ -374,21 +413,29 @@ end
 
 local function trackMarker(bushKey: string, rarity: string, endsAt: number)
 	destroyMarker()
+	local pos = readActivePos()
 	local bush = findBushByKey(bushKey)
-	if not bush then
-		return
+	if not pos and bush then
+		pos = bushWorldPos(bush)
 	end
-	local adornee = adorneeForBush(bush)
+
+	local anchor: BasePart? = nil
+	local adornee: BasePart? = nil
+	if pos then
+		anchor = ensureAnchor(pos)
+		adornee = anchor
+	elseif bush then
+		adornee = adorneeForBush(bush)
+	end
 	if not adornee then
 		return
 	end
 
-	local _iconImage = resolveSpawnIcon(
-		ReplicatedStorage:GetAttribute(C.ACTIVE_ICON_ATTR),
-		ReplicatedStorage:GetAttribute(C.ACTIVE_NAME_ATTR)
-	)
+	local brainrotName = ReplicatedStorage:GetAttribute(C.ACTIVE_NAME_ATTR)
+	local nameStr = if typeof(brainrotName) == "string" then brainrotName else ""
+	local _iconImage = resolveSpawnIcon(ReplicatedStorage:GetAttribute(C.ACTIVE_ICON_ATTR), nameStr)
 
-	local bb, timerLabel = buildMarkerUi(rarity, _iconImage)
+	local bb, timerLabel = buildMarkerUi(rarity, _iconImage, nameStr)
 	bb.Adornee = adornee
 	bb.Parent = player:FindFirstChild("PlayerGui") or Workspace.CurrentCamera
 
@@ -399,17 +446,16 @@ local function trackMarker(bushKey: string, rarity: string, endsAt: number)
 		conns = {},
 		bush = bush,
 		highlight = nil,
+		anchor = anchor,
 	}
 	activeMarker = state
-	ensureOutlineHighlight(state, rarity)
+	if bush then
+		ensureOutlineHighlight(state, rarity)
+	end
 
 	table.insert(
 		state.conns,
 		RunService.Heartbeat:Connect(function()
-			if not bush.Parent then
-				destroyMarker()
-				return
-			end
 			local remaining = math.max(0, endsAt - os.time())
 			if remaining <= 0 then
 				timerLabel.Text = ""
@@ -417,6 +463,16 @@ local function trackMarker(bushKey: string, rarity: string, endsAt: number)
 				return
 			end
 			timerLabel.Text = C.formatCountdown(remaining)
+			if not state.bush or not state.bush.Parent then
+				local found = findBushByKey(bushKey)
+				if found then
+					state.bush = found
+					local bushPos = bushWorldPos(found)
+					if bushPos and state.anchor and state.anchor.Parent then
+						state.anchor.Position = bushPos
+					end
+				end
+			end
 		end)
 	)
 end
@@ -428,8 +484,7 @@ local function trackMarkerWithRetry(bushKey: string, rarity: string, endsAt: num
 			if activeMarker and activeMarker.bushKey == bushKey then
 				return
 			end
-			local bush = findBushByKey(bushKey)
-			if bush then
+			if readActivePos() or findBushByKey(bushKey) then
 				trackMarker(bushKey, rarity, endsAt)
 				return
 			end
@@ -515,6 +570,7 @@ function GlobalRaritySpawnController.init()
 	ReplicatedStorage:GetAttributeChangedSignal(C.ACTIVE_BUSH_KEY_ATTR):Connect(syncFromAttributes)
 	ReplicatedStorage:GetAttributeChangedSignal(C.ACTIVE_ENDS_ATTR):Connect(syncFromAttributes)
 	ReplicatedStorage:GetAttributeChangedSignal(C.ACTIVE_RARITY_ATTR):Connect(syncFromAttributes)
+	ReplicatedStorage:GetAttributeChangedSignal(C.ACTIVE_POS_ATTR):Connect(syncFromAttributes)
 	ReplicatedStorage:GetAttributeChangedSignal(C.ACTIVE_ICON_ATTR):Connect(function()
 		syncFromAttributes()
 		if activeMarker and activeMarker.billboard.Parent then

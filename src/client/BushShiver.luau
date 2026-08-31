@@ -8,6 +8,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
@@ -17,8 +18,8 @@ local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local M = {}
 
--- Flip to true to re-enable ambient bush shiver (dense lands = many PivotTo bursts).
-local FEATURE_ENABLED = false
+-- Ambient shiver + rustle for nearby bushes that have a hidden brainrot.
+local FEATURE_ENABLED = true
 
 local HAS_BRAINROT_ATTR = "HasHiddenBrainrot"
 local ON_COOLDOWN_ATTR = "BushOnCooldown"
@@ -30,15 +31,15 @@ local SHIVER_BURST_MAX_SEC = 1.5
 local SHIVER_IDLE_MIN_SEC = 2
 local SHIVER_IDLE_MAX_SEC = 4.5
 local SHIVER_START_DELAY_MAX_SEC = 2
-local SHIVER_ACTIVE_RANGE = 80
-local MAX_SIMULTANEOUS_SHIVERS = 5
-local GLOBAL_SHIVER_GAP_SEC = 0.65
-local PER_BUSH_SHIVER_GAP_SEC = 3
+local SHIVER_ACTIVE_RANGE = 52
+local MAX_SIMULTANEOUS_SHIVERS = 2
+local GLOBAL_SHIVER_GAP_SEC = 1.15
+local PER_BUSH_SHIVER_GAP_SEC = 4.2
 local HINT_BLOCKED_WAIT_SEC = 0.6
 local GAP_RETRY_WAIT_SEC = 0.2
 local SHIVER_SMOOTH_SPEED = 16
-local COMPANION_SHIVER_CHANCE = 0.55
-local COMPANION_SHIVER_MAX = 2
+local COMPANION_SHIVER_CHANCE = 0.28
+local COMPANION_SHIVER_MAX = 1
 local runSoftBurst: (Instance, number, number, number) -> ()
 
 local SHIVER_POS_AMP = 0.052
@@ -362,7 +363,7 @@ runSoftBurst = function(bush: Instance, token: number, burstSec: number, seed: n
 		if not isBushNearPlayer(bush) or ProximityPromptEffects.isBushSearchActive() then
 			break
 		end
-		task.wait()
+		task.wait(0.05)
 	end
 
 	if burstConn then
@@ -500,13 +501,23 @@ function M.scanMapForBrainrotBushes(map: Instance)
 		end
 		count += 1
 		if count % 400 == 0 then
-			task.wait()
+			task.wait(0.1)
 		end
 	end
 end
 
 function M.init()
-	-- Reserved for BushHoldInteraction boot; scan runs when Map is ready.
+	task.spawn(function()
+		local map = Workspace:WaitForChild("Map", 90)
+		if map then
+			M.scanMapForBrainrotBushes(map)
+			map.DescendantAdded:Connect(function(child)
+				if BushRootUtil.isDirectBushRoot(child) then
+					M.trackBush(child)
+				end
+			end)
+		end
+	end)
 end
 
 return M

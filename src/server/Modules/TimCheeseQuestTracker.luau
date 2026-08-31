@@ -15,6 +15,7 @@ local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
+local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local Brainrots = require(script.Parent:WaitForChild("Brainrots"))
 local ItemService = require(script.Parent:WaitForChild("ItemService"))
 local IndexService = require(script.Parent:WaitForChild("IndexService"))
@@ -220,6 +221,10 @@ function M.computeProgress(player: Player, quest: TimCheeseQuestConfig.QuestDef)
 		return if typeof(lvl) == "number" then math.floor(lvl) else 0
 	elseif quest.kind == "reach_power" then
 		return math.floor(WorkoutPower.readPower(player))
+	elseif quest.kind == "own_gear" then
+		local owned = GearConfig.parseOwned(player:GetAttribute(GearConfig.OWNED_GEARS_ATTR))
+		local gearId = math.floor(quest.target)
+		return if owned[gearId] == true then gearId else 0
 	elseif quest.kind == "upgrade_rope" then
 		local lvl = player:GetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR)
 		return if typeof(lvl) == "number" then math.floor(lvl) else 0
@@ -405,6 +410,7 @@ local POLL_KINDS: { [TimCheeseQuestConfig.QuestKind]: boolean } = {
 	place_stands = true,
 	upgrade_power = true,
 	reach_power = true,
+	own_gear = true,
 	upgrade_rope = true,
 	upgrade_carry = true,
 	income_rate = true,
@@ -427,6 +433,7 @@ function M.watchPlayerAttributes(player: Player)
 		SwingUpgrades.ROPE_LEVEL_ATTR,
 		SwingUpgrades.CARRY_LEVEL_ATTR,
 		RebirthConfig.REBIRTH_COUNT_ATTR,
+		GearConfig.OWNED_GEARS_ATTR,
 		"IndexGoldenCount",
 	}
 	for _, attr in attrs do

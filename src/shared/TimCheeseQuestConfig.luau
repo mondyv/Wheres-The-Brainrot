@@ -48,6 +48,7 @@ export type QuestKind =
 	| "harvest_land"
 	| "talk_while_quest"
 	| "claim_min_rarity"
+	| "own_gear"
 
 export type RewardKind = "cash" | "lucky_block" | "brainrot"
 
@@ -92,16 +93,16 @@ end
 -- 32 quests. Lead with Power + land hops; mix other jobs in between.
 local QUESTS: { QuestDef } = {
 	{
-		id = "power_600",
-		title = "First Pump",
-		description = "Work out until you reach 600 Power.",
-		kind = "reach_power",
-		target = 600,
-		showBar = true,
+		id = "buy_stone",
+		title = "Stone Arms",
+		description = "Buy the Stone Dumbbell from the Upgrade Stand.",
+		kind = "own_gear",
+		target = 2,
+		showBar = false,
 		rewardKind = "cash",
 		rewardCash = 25_000,
-		offerLine = "Hit 600 Power. Tree Branch. No excuses.",
-		completeLine = "600 Power!! You're actually working out!!",
+		offerLine = "Upgrade Stand. Buy the Stone Dumbbell. Go go go!!",
+		completeLine = "STONE DUMBBELL!! Now we're lifting for real!!",
 	},
 	landQuest(
 		2,
@@ -427,7 +428,7 @@ M.COUNTER_QUEST_KINDS = {
 M.INTRO_LINES = {
 	{ text = "Hey!! My name is Tim Cheese!", shake = true },
 	{ text = "I need your help collecting brainrots!", shake = false },
-	{ text = "Hit 600 Power first — then hop to Land 2!!", shake = true },
+	{ text = "Buy the Stone Dumbbell first — then hop lands!!", shake = true },
 }
 
 M.COMPLETE_LINES = {
@@ -518,6 +519,8 @@ function M.formatProgressLabel(quest: QuestDef, progress: number): string
 	elseif quest.kind == "harvest_land" then
 		local land = quest.trackLand or 1
 		return string.format("Land %d: %d / %d", land, p, t)
+	elseif quest.kind == "own_gear" then
+		return if p >= t then "Stone Dumbbell owned!" else "Buy the Stone Dumbbell"
 	else
 		return string.format("%d / %d", p, t)
 	end

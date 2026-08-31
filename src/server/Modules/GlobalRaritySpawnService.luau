@@ -27,6 +27,7 @@ export type ActiveSpawn = {
 	mutation: string,
 	level: number,
 	endsAt: number,
+	pos: Vector3?,
 }
 
 export type GlobalState = {
@@ -110,6 +111,7 @@ local function normalizeState(raw: any): GlobalState
 				mutation = if typeof(a.mutation) == "string" then a.mutation else "normal",
 				level = if typeof(a.level) == "number" then math.max(1, math.floor(a.level)) else 1,
 				endsAt = a.endsAt,
+				pos = if typeof(a.pos) == "Vector3" then a.pos else nil,
 			}
 			if spawned.endsAt <= now then
 				active = nil
@@ -307,6 +309,16 @@ local function publishReplication(state: GlobalState, eventKind: string?, tierId
 		ReplicatedStorage:SetAttribute(C.ACTIVE_NAME_ATTR, active.brainrotName)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_MUTATION_ATTR, active.mutation)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_ICON_ATTR, if ok and typeof(icon) == "string" then icon else "")
+		if typeof(active.pos) == "Vector3" then
+			ReplicatedStorage:SetAttribute(C.ACTIVE_POS_ATTR, active.pos)
+		else
+			local bush = findBushByKey(active.bushKey)
+			if bush then
+				ReplicatedStorage:SetAttribute(C.ACTIVE_POS_ATTR, bushWorldPos(bush))
+			else
+				ReplicatedStorage:SetAttribute(C.ACTIVE_POS_ATTR, nil)
+			end
+		end
 	else
 		ReplicatedStorage:SetAttribute(C.ACTIVE_RARITY_ATTR, nil)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_BUSH_KEY_ATTR, nil)
@@ -314,6 +326,7 @@ local function publishReplication(state: GlobalState, eventKind: string?, tierId
 		ReplicatedStorage:SetAttribute(C.ACTIVE_NAME_ATTR, nil)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_MUTATION_ATTR, nil)
 		ReplicatedStorage:SetAttribute(C.ACTIVE_ICON_ATTR, nil)
+		ReplicatedStorage:SetAttribute(C.ACTIVE_POS_ATTR, nil)
 	end
 
 	local ev = ensureRemotes()
@@ -372,6 +385,7 @@ local function rollGlobalSpawn(tierId: string): (Instance?, ActiveSpawn?)
 		mutation = mutationId,
 		level = level,
 		endsAt = now + C.MARKER_DURATION_SEC,
+		pos = bushWorldPos(bush),
 	}
 	return bush, active
 end

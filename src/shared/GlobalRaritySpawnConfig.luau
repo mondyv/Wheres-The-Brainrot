@@ -73,6 +73,7 @@ M.ACTIVE_ENDS_ATTR = "GlobalRarityActiveEndsAt"
 M.ACTIVE_NAME_ATTR = "GlobalRarityActiveBrainrotName"
 M.ACTIVE_MUTATION_ATTR = "GlobalRarityActiveMutation"
 M.ACTIVE_ICON_ATTR = "GlobalRarityActiveIcon"
+M.ACTIVE_POS_ATTR = "GlobalRarityActivePos"
 
 M.BUSH_GLOBAL_SPAWN_ATTR = "GlobalRaritySpawn"
 M.BUSH_GLOBAL_KEY_ATTR = "GlobalRaritySpawnKey"

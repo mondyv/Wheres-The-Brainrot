@@ -179,29 +179,59 @@ local function landXDimFromIndex(index: number): UDim
 	return landXDim(index)
 end
 
+local function flattenXZ(v: Vector3): Vector3
+	return Vector3.new(v.X, 0, v.Z)
+end
+
+local function landCenterOf(folder: Instance): Vector3?
+	local minB, maxB = LandAmbushUtil.getLandBounds(folder)
+	if not minB or not maxB then
+		return nil
+	end
+	return flattenXZ((minB + maxB) * 0.5)
+end
+
+-- Progress toward the next land along the land-to-land axis (not a side of the AABB).
+-- 0 at this land's center so walking to a side edge of 1x stays on 1x, not 10x.
 local function fractionalLandAt(worldPos: Vector3, discreteLand: number): number
 	local land = math.clamp(math.floor(discreteLand), 1, MAX_LAND)
 	local folder = LandAmbushUtil.findLandFolder(land)
 	if not folder then
 		return land
 	end
-	local minB, maxB = LandAmbushUtil.getLandBounds(folder)
-	if not minB or not maxB then
+	local thisCenter = landCenterOf(folder)
+	if not thisCenter then
 		return land
 	end
-	local z0, z1 = minB.Z, maxB.Z
-	if z1 < z0 then
-		z0, z1 = z1, z0
+
+	local axis: Vector3? = nil
+	if land < MAX_LAND then
+		local nextFolder = LandAmbushUtil.findLandFolder(land + 1)
+		local nextCenter = nextFolder and landCenterOf(nextFolder)
+		if nextCenter then
+			axis = nextCenter - thisCenter
+		end
 	end
-	local span = math.max(z1 - z0, 8)
-	local safe = SafezoneUtil.getSafezoneCenter()
-	local mid = (z0 + z1) * 0.5
-	local t: number
-	if safe and (mid - safe.Z) < 0 then
-		t = (z1 - worldPos.Z) / span
-	else
-		t = (worldPos.Z - z0) / span
+	if not axis or axis.Magnitude < 4 then
+		if land > 1 then
+			local prevFolder = LandAmbushUtil.findLandFolder(land - 1)
+			local prevCenter = prevFolder and landCenterOf(prevFolder)
+			if prevCenter then
+				axis = thisCenter - prevCenter
+			end
+		end
 	end
+	if not axis or axis.Magnitude < 4 then
+		local safe = SafezoneUtil.getSafezoneCenter()
+		if safe then
+			axis = thisCenter - flattenXZ(safe)
+		end
+	end
+	if not axis or axis.Magnitude < 4 then
+		return land
+	end
+
+	local t = (flattenXZ(worldPos) - thisCenter):Dot(axis.Unit) / axis.Magnitude
 	return land + math.clamp(t, 0, 0.999)
 end
 

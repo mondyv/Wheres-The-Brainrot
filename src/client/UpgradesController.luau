@@ -1580,8 +1580,8 @@ local function init()
 			local btn = ensureFullClickCover(editHost)
 			local icon = btn:FindFirstChild("Icon", true) or btn:FindFirstChildWhichIsA("ImageLabel", true)
 			local tiltTarget: GuiObject = if icon and icon:IsA("GuiObject") then icon else btn
-			-- Mobile: clean tap only. Press-and-drag (camera pan) does not open Power edit.
-			UIButtonEffects.wireTiltHoverButton(btn, openPowerEdit, btn, tiltTarget, true)
+			-- Mobile: press = hover polish; still fires after a short camera drag.
+			UIButtonEffects.wireTiltHoverButton(btn, openPowerEdit, btn, tiltTarget, true, true)
 		else
 			local editBtn = ensureEditButton(powerFrame)
 			if editBtn then

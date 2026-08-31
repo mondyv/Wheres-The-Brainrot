@@ -13,6 +13,7 @@ local TweenService = game:GetService("TweenService")
 local SocialService = game:GetService("SocialService")
 local UserInputService = game:GetService("UserInputService")
 
+local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
@@ -70,6 +71,8 @@ end
 -- Tween configs
 local OPEN_TWEEN = TweenInfo.new(0.44, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local CLOSE_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+local HOVER_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local CLICK_TWEEN = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
 -- Button name (searched recursively across all of mainGui) → Frame name in Frames
 local BUTTON_FRAME_MAP = {
@@ -751,11 +754,54 @@ end
 
 -- ── Button helpers ────────────────────────────────────────────────────────────
 
+local TILT_HOVER = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local TILT_LEAVE = TweenInfo.new(0.22, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+local TILT_CLICK = TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
 -- Used by StoreController (Chances) and any other HUD micro-buttons.
 local function applyHoverAndClick(button: GuiButton, onClicked: () -> ())
+	local scale = getOrAddUIScale(button)
 	local icon = button:FindFirstChild("Icon", true)
-	local tiltTarget: GuiObject = if icon and icon:IsA("GuiObject") then icon else button
-	UIButtonEffects.wireTiltHoverButton(button, onClicked, button, tiltTarget, false)
+	local lastFire = 0
+	local function fire()
+		if not MobileTouchGate.canTapUi() then
+			return
+		end
+		local now = os.clock()
+		if now - lastFire < 0.12 then
+			return
+		end
+		lastFire = now
+		onClicked()
+	end
+
+	button.MouseEnter:Connect(function()
+		UIInteractionSounds.playHover()
+		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.10 }):Play()
+		if icon and icon:IsA("GuiObject") then
+			TweenService:Create(icon, TILT_HOVER, { Rotation = -10 }):Play()
+		end
+	end)
+	button.MouseLeave:Connect(function()
+		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.0 }):Play()
+		if icon and icon:IsA("GuiObject") then
+			TweenService:Create(icon, TILT_LEAVE, { Rotation = 0 }):Play()
+		end
+	end)
+	button.MouseButton1Down:Connect(function()
+		UIInteractionSounds.playClick()
+		TweenService:Create(scale, CLICK_TWEEN, { Scale = 0.94 }):Play()
+		if icon and icon:IsA("GuiObject") then
+			TweenService:Create(icon, TILT_CLICK, { Rotation = 6 }):Play()
+		end
+		fire()
+	end)
+	button.MouseButton1Up:Connect(function()
+		TweenService:Create(scale, HOVER_TWEEN, { Scale = 1.10 }):Play()
+		if icon and icon:IsA("GuiObject") then
+			TweenService:Create(icon, TILT_HOVER, { Rotation = -10 }):Play()
+		end
+	end)
 end
 
 local function setupFrameButton(button: GuiButton, frame: Frame)
@@ -768,6 +814,9 @@ local function setupFrameButton(button: GuiButton, frame: Frame)
 			closeFrame(frame)
 		end)
 	end
+
+	-- Visual polish only (open is bound separately).
+	UIButtonEffects.wireSidebarButton(button, function() end)
 
 	button.Active = true
 	pcall(function()
@@ -789,8 +838,7 @@ local function setupFrameButton(button: GuiButton, frame: Frame)
 		openFrame(frame)
 	end
 
-	-- Open on a clean tap; press-and-drag (camera pan) must not open the panel.
-	UIButtonEffects.wireSidebarButton(button, requestOpen)
+	button.MouseButton1Down:Connect(requestOpen)
 
 	wireFrameVisibleBackdropCleanup(frame)
 end

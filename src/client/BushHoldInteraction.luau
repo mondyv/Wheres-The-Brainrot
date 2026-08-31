@@ -777,10 +777,6 @@ local function doHarvest(prompt: ProximityPrompt)
 end
 
 local function tickAim()
-	if bushSearchHoldPrompt and not ProximityPromptEffects.isBushSearchActive() then
-		bushSearchHoldPrompt = nil
-	end
-
 	local hl = aimHighlight
 	local cam = workspace.CurrentCamera
 	if hl and cam and hl.Parent ~= cam then
@@ -975,8 +971,6 @@ function BushHoldInteraction.init()
 		if ok and intercept == true then
 			return true
 		end
-		bushSearchHoldPrompt = prompt
-		bushSearchHoldBeganAt = os.clock()
 		return false
 	end)
 

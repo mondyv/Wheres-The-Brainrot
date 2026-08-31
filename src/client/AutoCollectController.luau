@@ -49,7 +49,7 @@ local marketplaceOwnsAutoCollect = false
 local wirePadView: (Instance) -> ()
 local syncAllGamepassBillboards: () -> ()
 
-local CASH_FLOAT_TEXT_SIZE = 28
+local CASH_FLOAT_TEXT_SIZE = 42
 local FLOAT_STROKE_SCALE = 1
 local CASH_FLOAT_START_Y_DROP = 0.35
 
@@ -248,7 +248,7 @@ local function playCollectFloat(anchor: BasePart, amount: number)
 	local billboard = Instance.new("BillboardGui")
 	billboard.AlwaysOnTop = true
 	billboard.LightInfluence = 0
-	billboard.Size = UDim2.fromOffset(220, 48)
+	billboard.Size = UDim2.fromOffset(300, 72)
 	billboard.StudsOffset = Vector3.new(0, 0.75, 0)
 	billboard.Parent = part
 

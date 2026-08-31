@@ -1033,12 +1033,20 @@ local function markAllCachedCollected()
 	end
 end
 
+local function hideAllTabNotifs()
+	for mutationId in IndexConfig.TAB_NOTIF_NAME do
+		hideTabNotif(mutationId)
+	end
+	hideIndexSidebarBadge()
+end
+
 local function hideAllVisibleCollectChrome()
 	for _, row in catalogRows do
-		if row.Parent and row.Visible then
+		if row.Parent then
 			hideCollectChrome(row)
 		end
 	end
+	hideAllTabNotifs()
 end
 
 local function wireCollectButton(row: Frame)
@@ -1739,6 +1747,7 @@ function IndexController.init()
 				end
 				markAllCachedCollected()
 				hideAllVisibleCollectChrome()
+				hideAllTabNotifs()
 				if typeof(result.xp) == "number" then
 					playCollectedXpToast(result.xp)
 				end

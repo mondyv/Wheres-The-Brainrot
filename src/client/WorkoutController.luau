@@ -129,9 +129,9 @@ local function findFeet(character: Model): (BasePart?, BasePart?)
 		end
 		return nil
 	end
-	-- Prefer actual feet so the bar sits on the soles, not the shins.
-	local r = pick({ "RightFoot", "Rightfoot", "Right Ankle", "RightLowerLeg", "Right Leg" })
-	local l = pick({ "LeftFoot", "Leftfoot", "Left Ankle", "LeftLowerLeg", "Left Leg" })
+	-- Feet only — LowerLeg / Leg attach puts the bar through the shins.
+	local r = pick({ "RightFoot", "Rightfoot", "Right Ankle" })
+	local l = pick({ "LeftFoot", "Leftfoot", "Left Ankle" })
 	return r, l
 end
 
@@ -189,27 +189,32 @@ end
 
 local DOUBLE_TAP_ACTION = "WorkoutDoubleTapAccept"
 
-local function partWorldYRange(part: BasePart): (number, number)
-	local cf = part.CFrame
-	local half = part.Size * 0.5
-	local minY, maxY = math.huge, -math.huge
-	for _, sx in { -1, 1 } do
-		for _, sy in { -1, 1 } do
-			for _, sz in { -1, 1 } do
-				local y = cf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz)).Y
-				minY = math.min(minY, y)
-				maxY = math.max(maxY, y)
-			end
-		end
-	end
-	return minY, maxY
+-- Stable shoe-top / toe points in foot-local space so the bar stays flush
+-- no matter which animation frame the attach happens on.
+local function footSoleToeLocal(foot: BasePart, forwardHint: Vector3): Vector3
+	local size = foot.Size
+	local axisZ = foot.CFrame:VectorToWorldSpace(Vector3.zAxis)
+	local axisX = foot.CFrame:VectorToWorldSpace(Vector3.xAxis)
+	local useZ = math.abs(axisZ:Dot(forwardHint)) >= math.abs(axisX:Dot(forwardHint))
+	local toeAxis = if useZ then Vector3.zAxis else Vector3.xAxis
+	local worldAxis = if useZ then axisZ else axisX
+	local sign = if worldAxis:Dot(forwardHint) >= 0 then 1 else -1
+	local along = if useZ then size.Z else size.X
+	-- Local -Y is the sole on R15 feet. Sit on the shoe top at the toe tip.
+	return Vector3.new(0, -size.Y * 0.5 + 0.04, 0) + toeAxis * (sign * along * 0.38)
 end
 
-local function soleAcross(rf: BasePart, lf: BasePart?): (Vector3, Vector3, number)
-	local p0 = rf.Position
-	local p1 = if lf then lf.Position else p0
-	local mid = (p0 + p1) * 0.5
-	local across = if lf then p1 - p0 else rf.CFrame.RightVector
+local function soleAcross(rf: BasePart, lf: BasePart?, forwardHint: Vector3): (Vector3, Vector3, number)
+	local hint = Vector3.new(forwardHint.X, 0, forwardHint.Z)
+	if hint.Magnitude < 0.05 then
+		hint = Vector3.new(0, 0, -1)
+	else
+		hint = hint.Unit
+	end
+	local t0 = rf.CFrame:PointToWorldSpace(footSoleToeLocal(rf, hint))
+	local t1 = if lf then lf.CFrame:PointToWorldSpace(footSoleToeLocal(lf, hint)) else t0
+	local mid = (t0 + t1) * 0.5
+	local across = t1 - t0
 	across = Vector3.new(across.X, 0, across.Z)
 	if across.Magnitude < 0.05 then
 		across = Vector3.new(rf.CFrame.RightVector.X, 0, rf.CFrame.RightVector.Z)
@@ -217,25 +222,7 @@ local function soleAcross(rf: BasePart, lf: BasePart?): (Vector3, Vector3, numbe
 	if across.Magnitude < 0.05 then
 		across = Vector3.new(1, 0, 0)
 	end
-	-- True lowest corners of the foot parts (not assuming -Y is down).
-	local soleY = (partWorldYRange(rf))
-	if lf then
-		soleY = math.min(soleY, (partWorldYRange(lf)))
-	end
-	-- Sit on the shoe top at the toes, not up the instep/shins.
-	local look = Vector3.new(rf.CFrame.LookVector.X, 0, rf.CFrame.LookVector.Z)
-	if look.Magnitude < 0.05 then
-		look = Vector3.new(0, 0, -1)
-	else
-		look = look.Unit
-	end
-	local function toeOf(foot: BasePart): Vector3
-		return foot.Position + look * (foot.Size.Z * 0.42)
-	end
-	local t0 = toeOf(rf)
-	local t1 = if lf then toeOf(lf) else t0
-	local toeMid = Vector3.new((t0.X + t1.X) * 0.5, mid.Y, (t0.Z + t1.Z) * 0.5)
-	return toeMid, across.Unit, soleY + 0.02
+	return mid, across.Unit, mid.Y
 end
 
 -- Map the model's longest axis onto `across` (left-right between the feet)
@@ -425,7 +412,9 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	end)
 
 	local otherFoot = if anchorFoot == rightFoot then leftFoot else rightFoot
-	local mid, across, contactY = soleAcross(anchorFoot, otherFoot)
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	local forward = if hrp and hrp:IsA("BasePart") then hrp.CFrame.LookVector else Vector3.zAxis
+	local mid, across, contactY = soleAcross(anchorFoot, otherFoot, forward)
 	local c0, c1 = footPropMotorFrames(handle, model, anchorFoot, mid, across, contactY)
 	local motor = Instance.new("Motor6D")
 	motor.Name = "WorkoutFootMotor"
@@ -854,11 +843,11 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	label.LayoutOrder = 1
 	label.ZIndex = 91
 	label.Parent = row
-	local hudSize = 16
+	local hudSize = 32
 	if amountLabel and amountLabel:IsA("TextLabel") then
-		hudSize = math.max(10, (amountLabel :: TextLabel).TextSize)
+		hudSize = math.max(28, (amountLabel :: TextLabel).TextSize)
 	end
-	UiFonts.applyBodyLabel(label, hudSize, math.max(8, hudSize - 4))
+	UiFonts.applyBodyLabel(label, hudSize, math.max(18, hudSize - 8))
 	local stroke = Instance.new("UIStroke")
 	stroke.Thickness = 2
 	stroke.Color = Color3.fromRGB(35, 24, 6)

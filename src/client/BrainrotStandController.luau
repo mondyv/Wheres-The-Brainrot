@@ -221,7 +221,7 @@ end
 -- Short-lived pickup burst: low-cost one-shot particles only.
 local FLOAT_RISE_DURATION = 0.85
 local FLOAT_RISE_STUDS = 3.2
-local CASH_FLOAT_TEXT_SIZE = 26
+local CASH_FLOAT_TEXT_SIZE = 40
 local FLOAT_STROKE_SCALE = 0.55
 local _CASH_FLOAT_BURST_COUNT = 8
 local MAX_ACTIVE_CASH_FLOATS = 2

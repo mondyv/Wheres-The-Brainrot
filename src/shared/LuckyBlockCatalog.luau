@@ -44,8 +44,8 @@ local BLOCKS: { BlockDef } = {
 		tier = 1,
 		indexRarity = "uncommon",
 		drops = { uncommon = 62, rare = 33, epic = 5 },
-		iconFolder = "Yellow Lucky Block",
-		iconChild = "Yellow Lucky Block",
+		iconFolder = "Basic Lucky Block",
+		iconChild = nil,
 	},
 	{
 		id = "troll",
@@ -529,8 +529,7 @@ local function folderNameAlts(def: BlockDef?, blockId: string): { string }
 		add(string.gsub(def.iconFolder, "Latern", "Lantern"))
 	end
 	if def and (def.id == "Starter Lucky Block" or (def.variant and string.lower(def.variant) == "basic")) then
-		add("Yellow Lucky Block")
-		add("Yellow")
+		add("Basic Lucky Block")
 		add("Basic")
 		add("basic")
 		add("Starter")
@@ -624,12 +623,15 @@ function M.resolveIconAssetId(blockId: string): string
 
 	local result = ""
 	if icons then
+		-- Starter icon is Lucky Block Icons["Basic Lucky Block"], not under Normal.
+		if def and def.iconFolder == "Basic Lucky Block" then
+			result = searchStyleFolder(icons, preferred)
+		end
 		local style = findChildIgnoreCase(icons, "Normal")
-		if style then
+		if result == "" and style then
 			result = searchStyleFolder(style, preferred)
 		end
 		if result == "" then
-			-- Some places keep icons as direct children of Lucky Block Icons.
 			result = searchStyleFolder(icons, preferred)
 		end
 		if result == "" then

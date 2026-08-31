@@ -1055,6 +1055,12 @@ local function clearUiPointerImpl()
 	uiPointerForced = false
 	if pointerGui then
 		pointerGui.Enabled = false
+		local root = pointerGui:FindFirstChild("Root")
+		if root then
+			for _, ch in root:GetChildren() do
+				ch:Destroy()
+			end
+		end
 	end
 end
 clearUiPointer = clearUiPointerImpl
@@ -2357,7 +2363,8 @@ local function resolveWorkoutHotbarSlot(): GuiObject?
 	if not main then
 		return nil
 	end
-	local toolbar = main:FindFirstChild("Toolbar")
+	local sideUI = main:FindFirstChild("SideUI")
+	local toolbar = (sideUI and sideUI:FindFirstChild("Toolbar")) or main:FindFirstChild("Toolbar", true)
 	local hotbar = toolbar and toolbar:FindFirstChild("Hotbar")
 	if not hotbar then
 		return nil
@@ -2367,6 +2374,102 @@ local function resolveWorkoutHotbarSlot(): GuiObject?
 		return slot
 	end
 	return nil
+end
+
+local function pointAtHotbarSlot(slot: GuiObject)
+	clearUiPointer()
+	uiPointerForced = true
+	uiPointerHost = slot
+	_ensurePointerGui()
+	local screen = pointerGui
+	local root = _pointerRoot
+	if not screen or not root then
+		pointAtGui(slot, true)
+		return
+	end
+	screen.Enabled = true
+	screen.DisplayOrder = 200
+
+	local ring = Instance.new("Frame")
+	ring.Name = "HotbarTarget"
+	ring.BackgroundTransparency = 1
+	ring.BorderSizePixel = 0
+	ring.AnchorPoint = Vector2.new(0, 0)
+	ring.ZIndex = 10
+	ring.Parent = root
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Name = "TutorialTargetStroke"
+	stroke.Color = Color3.fromRGB(255, 236, 70)
+	stroke.Thickness = 4
+	stroke.Transparency = 0
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.LineJoinMode = Enum.LineJoinMode.Round
+	stroke.Parent = ring
+	uiPointerStroke = stroke
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0.18, 0)
+	corner.Parent = ring
+
+	local pointer = Instance.new("ImageLabel")
+	pointer.Name = "TutorialUiClick"
+	pointer.BackgroundTransparency = 1
+	pointer.Image = TutorialConfig.UI_CLICK_IMAGE
+	pointer.ScaleType = Enum.ScaleType.Fit
+	pointer.Active = false
+	pointer.AnchorPoint = Vector2.new(0.5, 0.5)
+	pointer.Position = UDim2.fromScale(0.5, 0.5)
+	pointer.Size = UDim2.fromOffset(TutorialConfig.UI_CLICK_SIZE, TutorialConfig.UI_CLICK_SIZE)
+	pointer.ZIndex = 12
+	pointer.Parent = ring
+	uiPointer = pointer
+
+	local function syncRing()
+		if not slot.Parent or not ring.Parent then
+			return
+		end
+		local inset = Svc.GuiService:GetGuiInset()
+		ring.Position = UDim2.fromOffset(slot.AbsolutePosition.X + inset.X, slot.AbsolutePosition.Y + inset.Y)
+		ring.Size = UDim2.fromOffset(math.max(36, slot.AbsoluteSize.X), math.max(36, slot.AbsoluteSize.Y))
+	end
+	syncRing()
+	if uiPointerFollowConn then
+		uiPointerFollowConn:Disconnect()
+	end
+	uiPointerFollowConn = Svc.RunService.Heartbeat:Connect(function()
+		if uiPointer ~= pointer or not ring.Parent or not slot.Parent or not active then
+			if uiPointerFollowConn then
+				uiPointerFollowConn:Disconnect()
+				uiPointerFollowConn = nil
+			end
+			return
+		end
+		syncRing()
+	end)
+
+	local clickSize = TutorialConfig.UI_CLICK_SIZE
+	local clickSizeUp = clickSize + 8
+	task.spawn(function()
+		while uiPointer == pointer and pointer.Parent and active and slot.Parent do
+			local up = Svc.TweenService:Create(pointer, CLICK_BOUNCE, {
+				Size = UDim2.fromOffset(clickSizeUp, clickSizeUp),
+				Rotation = -10,
+			})
+			up:Play()
+			up.Completed:Wait()
+			if uiPointer ~= pointer then
+				break
+			end
+			local down = Svc.TweenService:Create(pointer, CLICK_BOUNCE, {
+				Size = UDim2.fromOffset(clickSize, clickSize),
+				Rotation = 6,
+			})
+			down:Play()
+			down.Completed:Wait()
+			task.wait(0.04)
+		end
+	end)
 end
 
 local function cacheUpgradesBuyButton()
@@ -2529,7 +2632,7 @@ local function refreshPointersImpl()
 		clearWorldHighlight()
 		local slot = resolveWorkoutHotbarSlot()
 		if slot then
-			pointAtGui(slot, true)
+			pointAtHotbarSlot(slot)
 		end
 	elseif step.id == "swingLand1" then
 		local swing = resolveLand1SwingTarget()
@@ -2838,7 +2941,7 @@ local function watchStepProgress()
 				end
 			elseif step.id == "useWorkout" then
 				local slot = resolveWorkoutHotbarSlot()
-				if slot and isGuiTreeVisible(slot) and (not uiPointer or uiPointerHost ~= slot) then
+				if slot and (not uiPointer or uiPointerHost ~= slot or not pointerGui or not pointerGui.Enabled) then
 					refreshPointers()
 				end
 			end
@@ -2867,8 +2970,8 @@ local function watchStepProgress()
 			end
 		elseif step.id == "useWorkout" then
 			local slot = resolveWorkoutHotbarSlot()
-			if slot and isGuiTreeVisible(slot) and (not uiPointer or uiPointerHost ~= slot) then
-				pointAtGui(slot, true)
+			if slot and (not uiPointer or uiPointerHost ~= slot or not pointerGui or not pointerGui.Enabled) then
+				pointAtHotbarSlot(slot)
 			end
 			if player:GetAttribute("WorkoutActive") == true then
 				completeCurrentIf("useWorkout")

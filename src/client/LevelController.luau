@@ -299,7 +299,7 @@ local function playCashRewardFx(amount: number)
 		popup.Position = UDim2.new(0.5, 0, 0.18, 0)
 	end
 	popup.Text = "+" .. BrainrotEconomy.formatCashShort(amount)
-	popup.TextSize = 28
+	popup.TextSize = 40
 	popup.Font = Enum.Font.GothamBold
 	popup.TextColor3 = Color3.fromRGB(90, 255, 140)
 	popup.TextStrokeTransparency = 0.35

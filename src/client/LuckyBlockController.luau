@@ -77,6 +77,7 @@ local shakeStartRE: RemoteEvent? = nil
 local denyRE: RemoteEvent? = nil
 local activeAuraSound: Sound? = nil
 local cutsceneToken = 0
+local cutsceneRunning = false
 local lastLocalDenyAt = 0
 
 local cameraConn: RBXScriptConnection? = nil
@@ -574,7 +575,9 @@ local function cloneToolAsWorldModel(tool: Tool, atCf: CFrame): Model?
 				primary = c
 			end
 			for _, ch in c:GetChildren() do
-				if ch:IsA("Decal") or ch:IsA("Texture") then
+				if ch:IsA("BillboardGui") or ch:IsA("SurfaceGui") then
+					ch:Destroy()
+				elseif ch:IsA("Decal") or ch:IsA("Texture") then
 					if c.Transparency >= 1 then
 						ch.Transparency = 1
 					end
@@ -1014,34 +1017,6 @@ local function animateHopToHead(model: Model, durationSec: number, token: number
 	waitToken(token, durationSec)
 end
 
-local function getRightHandWorldCf(): CFrame?
-	local char = player.Character
-	if not char then
-		return nil
-	end
-	local hand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
-	if hand and hand:IsA("BasePart") then
-		return hand.CFrame * CFrame.new(0, -0.12, -0.32)
-	end
-	local hrp = getHRP()
-	if hrp then
-		return hrp.CFrame * CFrame.new(0.9, 0.15, -0.55)
-	end
-	return nil
-end
-
-local function getInventoryFlyTarget(fromPos: Vector3): Vector3
-	local cam = Workspace.CurrentCamera
-	if not cam then
-		return fromPos + Vector3.new(0.6, -1.2, -0.4)
-	end
-	local vp = cam.ViewportSize
-	local screenPt = Vector2.new(vp.X * 0.44, vp.Y * 0.9)
-	local ray = cam:ViewportPointToRay(screenPt.X, screenPt.Y)
-	local dist = (fromPos - cam.CFrame.Position).Magnitude
-	return cam.CFrame.Position + ray.Direction * math.clamp(dist * 0.38, 2.8, 9)
-end
-
 local function spawnCollectSpark(at: Vector3)
 	local spark = Instance.new("Part")
 	spark.Name = "LuckyBlockCollectSpark"
@@ -1070,14 +1045,13 @@ local function animateCollectToInventory(model: Model, durationSec: number, toke
 	pcall(function()
 		startScale = model:GetScale()
 	end)
-	-- Keep camera locked to the player — don't chase the flying model.
+	-- Pop/shrink on the head — never dive through the body.
 	focusPart = nil
 	camSwayAmp = 0
 	camShakeAmp = 0
-	local handPhaseSec = durationSec * 0.52
-	local collectPhaseSec = durationSec - handPhaseSec
+	spawnCollectSpark(startPos)
+	GameSoundEffects.playCashGrab()
 	local t0 = os.clock()
-	local handReached = false
 	disconnect(shrinkConn)
 	shrinkConn = RunService.Heartbeat:Connect(function()
 		if token ~= cutsceneToken or not model.Parent then
@@ -1085,44 +1059,14 @@ local function animateCollectToInventory(model: Model, durationSec: number, toke
 			shrinkConn = nil
 			return
 		end
-		local elapsed = os.clock() - t0
-		local handCf = getRightHandWorldCf()
-		local handPos = if handCf then handCf.Position else (startPos + Vector3.new(0.75, -1.4, -0.35))
-		if elapsed < handPhaseSec then
-			local alpha = math.clamp(elapsed / handPhaseSec, 0, 1)
-			local e = 1 - (1 - alpha) ^ 3
-			local mid = (startPos + handPos) * 0.5 + Vector3.new(0, 1.05, 0)
-			local a = startPos:Lerp(mid, e)
-			local b = mid:Lerp(handPos, e)
-			local pos = a:Lerp(b, e)
-			local spin = alpha * math.pi * 0.7
-			pcall(function()
-				model:ScaleTo(startScale * (0.88 + (1 - alpha) * 0.12))
-			end)
-			model:PivotTo(CFrame.new(pos) * CFrame.Angles(0, spin, 0))
-		else
-			if not handReached then
-				handReached = true
-				spawnCollectSpark(handPos)
-				GameSoundEffects.playCashGrab()
-			end
-			local alpha = math.clamp((elapsed - handPhaseSec) / collectPhaseSec, 0, 1)
-			local e = alpha * alpha * (3 - 2 * alpha)
-			local invTarget = getInventoryFlyTarget(handPos)
-			local mid = handPos + (invTarget - handPos) * 0.45 + Vector3.new(0, 0.4, 0)
-			local a = handPos:Lerp(mid, e)
-			local b = mid:Lerp(invTarget, e)
-			local pos = a:Lerp(b, e)
-			local spin = alpha * math.pi * 1.4
-			pcall(function()
-				model:ScaleTo(math.max(0.02, startScale * (0.88 - e * 0.86)))
-			end)
-			model:PivotTo(CFrame.new(pos) * CFrame.Angles(0, spin, 0))
-			if alpha > 0.2 and alpha < 0.75 and math.random() < 0.1 then
-				spawnCollectSpark(pos)
-			end
-		end
-		if elapsed >= durationSec then
+		local alpha = math.clamp((os.clock() - t0) / durationSec, 0, 1)
+		local e = alpha * alpha * (3 - 2 * alpha)
+		local lift = Vector3.new(0, 0.55 * (1 - e), 0)
+		pcall(function()
+			model:ScaleTo(math.max(0.02, startScale * (1 - e * 0.96)))
+		end)
+		model:PivotTo(CFrame.new(startPos + lift) * CFrame.Angles(0, e * math.pi * 0.8, 0))
+		if alpha >= 1 then
 			disconnect(shrinkConn)
 			shrinkConn = nil
 		end
@@ -1131,11 +1075,27 @@ local function animateCollectToInventory(model: Model, durationSec: number, toke
 	focusPart = nil
 end
 
+local function hideLuckyOpenHints()
+	local function strip(root: Instance?)
+		if not root then
+			return
+		end
+		for _, d in root:GetDescendants() do
+			if d.Name == "LuckyOpenHint" then
+				d:Destroy()
+			end
+		end
+	end
+	strip(player.Character)
+	strip(player:FindFirstChildOfClass("Backpack"))
+end
+
 local function endCutscene(token: number)
 	if token ~= cutsceneToken then
 		return
 	end
 	cutsceneToken += 1
+	cutsceneRunning = false
 	camShakeAmp = 0
 	camSwayAmp = 0
 	focusPart = nil
@@ -1154,8 +1114,10 @@ end
 local function runCutscene(payload: any)
 	cutsceneToken += 1
 	local token = cutsceneToken
+	cutsceneRunning = true
 	stopAnimConns()
 	destroyBlockModel()
+	hideLuckyOpenHints()
 	camShakeAmp = 0
 	camSwayAmp = 1
 
@@ -1402,6 +1364,7 @@ local function handleShakeStart(payload: any)
 		if not ok then
 			warn("[LuckyBlockController] cutscene error:", err)
 			cutsceneToken += 1
+			cutsceneRunning = false
 			stopAnimConns()
 			stopAura()
 			GameSoundEffects.stopLuckyBlockShake()
@@ -1436,7 +1399,7 @@ local function syncLuckyOpenHint(tool: Tool, equipped: boolean)
 		return
 	end
 	local gui = handle:FindFirstChild("LuckyOpenHint")
-	if not equipped then
+	if cutsceneRunning or not equipped then
 		if gui then
 			gui:Destroy()
 		end

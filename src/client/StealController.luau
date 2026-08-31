@@ -7,6 +7,7 @@
 ]]
 
 local CollectionService = game:GetService("CollectionService")
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -32,6 +33,34 @@ local StealController = {}
 local stealPrompts: { [Model]: ProximityPrompt } = {}
 local visibilityAccum = 0
 local visibilityConn: RBXScriptConnection? = nil
+local stealPriceByRarity: { [string]: number } = {}
+
+local function prefetchStealPrices()
+	for rarity, productId in StoreConfig.STEAL_PRODUCT_BY_RARITY do
+		task.spawn(function()
+			local ok, info = pcall(function()
+				return MarketplaceService:GetProductInfo(productId, Enum.InfoType.Product)
+			end)
+			if not ok then
+				warn("[StealController] GetProductInfo failed:", rarity, info)
+				return
+			end
+			if typeof(info) == "table" and typeof(info.PriceInRobux) == "number" then
+				stealPriceByRarity[rarity] = info.PriceInRobux
+				refreshStealPromptVisibility()
+			end
+		end)
+	end
+end
+
+local function liveStealPrice(rarity: string): number?
+	local key = StoreConfig.normalizeStealRarity(rarity)
+	local live = stealPriceByRarity[key]
+	if typeof(live) == "number" then
+		return live
+	end
+	return StoreConfig.getStealPriceRobux(rarity)
+end
 
 local function storeRemotes(): Folder?
 	local folder = ReplicatedStorage:FindFirstChild("StoreRemotes")
@@ -108,7 +137,7 @@ local function stealCostText(stand: Model): string
 	end
 	local rarity = resolveStandRarity(stand)
 	if typeof(rarity) == "string" then
-		local price = StoreConfig.getStealPriceRobux(rarity)
+		local price = liveStealPrice(rarity)
 		if price then
 			return string.format("R$%d", price)
 		end
@@ -372,6 +401,7 @@ local function init()
 		refreshStealPromptVisibility()
 	end)
 
+	prefetchStealPrices()
 	task.defer(refreshStealPromptVisibility)
 end
 

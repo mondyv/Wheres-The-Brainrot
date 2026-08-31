@@ -49,56 +49,59 @@ M.WAVE_KILL_GRACE_SEC = 1.8
 -- Never ScaleTo the Wave Web mesh — it freezes/crashes Studio & clients.
 M.WAVE_SCALE = 1
 
--- Per-land charge speed (studs/s). Starts a hair under a sprint, then ramps
--- past the player. Also scales with actual WalkSpeed so upgrades can't stroll away.
+-- Per-land charge speed (studs/s). Early lands stay well under a jog so
+-- tutorial / land 1–2 are a pressure wave, not a sprint check.
 M.WAVE_SPEED_START_BY_LAND = {
-	20, -- 1 baby
-	24, -- 2 normal
-	28, -- 3 speed
-	34, -- 4 gigantic
-	40, -- 5 titan
-	46, -- 6 colossal
-	52, -- 7 cosmic
+	9, -- 1 baby
+	12, -- 2 normal
+	16, -- 3 speed
+	26, -- 4 gigantic
+	34, -- 5 titan
+	42, -- 6 colossal
+	50, -- 7 cosmic
 	58, -- 8 infinitum
 	64, -- 9 omega
 	72, -- 10 transcendent
 }
 
 M.WAVE_SPEED_MAX_BY_LAND = {
-	32, -- 1
-	40, -- 2
-	48, -- 3
-	56, -- 4
-	64, -- 5
-	72, -- 6
-	80, -- 7
+	13, -- 1
+	18, -- 2
+	24, -- 3
+	40, -- 4
+	52, -- 5
+	64, -- 6
+	76, -- 7
 	88, -- 8
 	96, -- 9
 	108, -- 10
 }
 
--- Always this much faster than the player's along-path speed (studs/s).
--- Runners and swingers cannot outpace it; they have to make safezone.
+-- Catch-up is off on early lands (0). Later lands close on swingers.
 M.WAVE_CATCHUP_BY_LAND = {
-	4,
-	5,
+	0,
+	0,
+	1,
 	6,
 	8,
 	10,
 	12,
 	14,
 	16,
-	18,
-	22,
+	20,
 }
 
 M.WAVE_SPEED_CAP = 160
+M.NO_CATCHUP_MAX_LAND = 2
+M.TUTORIAL_SPEED_MULT = 0.5
+M.TUTORIAL_BEHIND_STUDS = 70
+M.TUTORIAL_KILL_GRACE_SEC = 4.2
 
 M.WAVE_SPEED_START_WALK_MULT = {
-	0.9,
-	0.95,
+	0.45,
+	0.55,
+	0.7,
 	1.0,
-	1.05,
 	1.1,
 	1.15,
 	1.2,
@@ -108,12 +111,12 @@ M.WAVE_SPEED_START_WALK_MULT = {
 }
 
 M.WAVE_SPEED_MAX_WALK_MULT = {
-	1.2,
-	1.3,
-	1.4,
+	0.65,
+	0.8,
+	0.95,
+	1.35,
 	1.5,
-	1.6,
-	1.7,
+	1.65,
 	1.8,
 	1.9,
 	2.0,
@@ -129,11 +132,15 @@ function M.speedForLand(land: number, elapsedSec: number?, walkSpeed: number?): 
 	if typeof(walkSpeed) == "number" and walkSpeed > 8 then
 		walk = math.clamp(walkSpeed, 14, 90)
 	end
-	local start = math.max(M.WAVE_SPEED_START_BY_LAND[i], walk * M.WAVE_SPEED_START_WALK_MULT[i])
-	local maxSpeed = math.max(M.WAVE_SPEED_MAX_BY_LAND[i], walk * M.WAVE_SPEED_MAX_WALK_MULT[i])
+	local start = M.WAVE_SPEED_START_BY_LAND[i]
+	local maxSpeed = M.WAVE_SPEED_MAX_BY_LAND[i]
+	-- Only scale with walk speed from land 4 up — early lands stay authored-slow.
+	if i >= 4 then
+		start = math.max(start, walk * M.WAVE_SPEED_START_WALK_MULT[i])
+		maxSpeed = math.max(maxSpeed, walk * M.WAVE_SPEED_MAX_WALK_MULT[i])
+	end
 	local elapsed = if typeof(elapsedSec) == "number" then math.max(0, elapsedSec) else M.WAVE_SPEED_RAMP_SEC
 	local t = math.clamp(elapsed / math.max(M.WAVE_SPEED_RAMP_SEC, 0.1), 0, 1)
-	-- Mild ease-in so the first second still feels like a head start.
 	local eased = t ^ 1.25
 	return start + (maxSpeed - start) * eased
 end

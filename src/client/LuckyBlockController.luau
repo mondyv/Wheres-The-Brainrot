@@ -101,7 +101,9 @@ local letterBottom: Frame? = nil
 local focusPart: BasePart? = nil
 local blockModel: Model? = nil
 local camShakeAmp = 0
-local camSwayAmp = 1
+local camShotFrom: Vector3? = nil
+local camShotLook: Vector3? = nil
+local camFovGoal = 50
 local hiddenTool: Tool? = nil
 local hiddenToolTrans: { [BasePart]: number } = {}
 local hiddenToolDecalTrans: { [Decal | Texture]: number } = {}
@@ -468,7 +470,8 @@ end
 local function restoreGameplayCamera()
 	stopAnimConns()
 	camShakeAmp = 0
-	camSwayAmp = 0
+	camShotFrom = nil
+	camShotLook = nil
 	focusPart = nil
 
 	local cam = Workspace.CurrentCamera
@@ -673,7 +676,23 @@ local function modelFocus(model: Model): Vector3
 	return model:GetPivot().Position
 end
 
-local function startCinematicCamera(token: number)
+local function pokemonShot(lookAt: Vector3, hrp: BasePart): (Vector3, Vector3)
+	local away = Vector3.new(hrp.Position.X - lookAt.X, 0, hrp.Position.Z - lookAt.Z)
+	if away.Magnitude < 1 then
+		local look = hrp.CFrame.LookVector
+		away = Vector3.new(look.X, 0, look.Z)
+	end
+	if away.Magnitude < 0.05 then
+		away = Vector3.zAxis
+	else
+		away = away.Unit
+	end
+	local side = Vector3.new(-away.Z, 0, away.X)
+	local from = lookAt + away * 7.4 + side * 3.2 + Vector3.new(0, 3.9, 0)
+	return from, lookAt + Vector3.new(0, 1.05, 0)
+end
+
+local function startCinematicCamera(token: number, lookAt: Vector3)
 	local cam = Workspace.CurrentCamera
 	local hrp = getHRP()
 	if not cam or not hrp then
@@ -683,11 +702,16 @@ local function startCinematicCamera(token: number)
 	savedCameraSubject = cam.CameraSubject
 	savedFov = cam.FieldOfView
 	cam.CameraType = Enum.CameraType.Scriptable
-	cam.FieldOfView = 52
+	camFovGoal = 50
+	cam.FieldOfView = 50
+
+	local from, look = pokemonShot(lookAt, hrp)
+	camShotFrom = from
+	camShotLook = look
 
 	local blendFrom = cam.CFrame
 	local blendT0 = os.clock()
-	local blendDur = 0.55
+	local blendDur = 0.7
 	local phase = 0
 
 	disconnect(cameraConn)
@@ -696,9 +720,8 @@ local function startCinematicCamera(token: number)
 			return
 		end
 		local liveCam = Workspace.CurrentCamera
-		local liveHrp = getHRP()
 		local hum = getHumanoid()
-		if not liveCam or not liveHrp then
+		if not liveCam then
 			return
 		end
 		if hum then
@@ -706,40 +729,30 @@ local function startCinematicCamera(token: number)
 		end
 		phase += dt
 
-		local focus = liveHrp.Position + Vector3.new(0, 1.4, 0)
+		local shotFrom = camShotFrom or from
+		local shotLook = camShotLook or look
 		if focusPart and focusPart.Parent then
-			focus = focusPart.Position + Vector3.new(0, 0.9, 0)
-		elseif blockModel and blockModel.Parent then
-			focus = modelFocus(blockModel)
+			shotLook = focusPart.Position + Vector3.new(0, 0.55, 0)
+			camShotLook = shotLook
 		end
 
-		local right = liveHrp.CFrame.RightVector
-		local back = -liveHrp.CFrame.LookVector
-		local camPos = focus + right * 5.8 + Vector3.new(0, 3.6, 0) + back * 4.4
-		-- Subtle orbit sway during shake/hover (fades out before hop/collect).
-		if camSwayAmp > 0.01 then
-			local sway = math.sin(phase * 0.9) * 0.35 * camSwayAmp
-			camPos += right * sway
-		end
-		-- Screen shake while the lucky block is rumbling on the ground.
+		local shake = Vector3.zero
 		if camShakeAmp > 0.001 then
-			local t = phase * 55
+			local t = phase * 18
 			local amp = camShakeAmp
-			camPos += Vector3.new(
-				math.sin(t * 1.17) * amp,
-				math.cos(t * 1.41) * amp * 0.72,
-				math.sin(t * 0.93) * amp * 0.85
-			)
+			shake = Vector3.new(math.sin(t * 1.05) * amp, math.cos(t * 0.82) * amp * 0.45, math.sin(t * 0.7) * amp * 0.35)
 		end
-		local goal = CFrame.lookAt(camPos, focus + Vector3.new(0, 0.4, 0))
 
+		local goal = CFrame.lookAt(shotFrom + shake, shotLook)
 		local blendAlpha = math.clamp((os.clock() - blendT0) / blendDur, 0, 1)
 		local eased = 1 - (1 - blendAlpha) ^ 3
-		liveCam.CFrame = blendFrom:Lerp(goal, eased)
-		if blendAlpha >= 1 then
-			blendFrom = goal
-			blendT0 = os.clock() - blendDur
+		if blendAlpha < 1 then
+			liveCam.CFrame = blendFrom:Lerp(goal, eased)
+		else
+			liveCam.CFrame = goal
 		end
+		local fovNow = liveCam.FieldOfView
+		liveCam.FieldOfView = fovNow + (camFovGoal - fovNow) * math.clamp(dt * 4.2, 0, 1)
 	end)
 end
 
@@ -830,14 +843,14 @@ local function animateGroundShake(model: Model, durationSec: number, token: numb
 		end
 		local elapsed = os.clock() - t0
 		local frac = math.clamp(elapsed / durationSec, 0, 1)
-		local amp = 0.08 + frac * 0.42
-		camShakeAmp = 0.12 + frac * 0.55
-		local t = elapsed * math.pi * 2 * 8.5
-		local jx = math.sin(t * 1.13) * amp
-		local jz = math.cos(t * 0.97) * amp * 0.85
-		local jy = math.abs(math.sin(t * 1.7)) * amp * 0.35
-		local tilt = math.sin(t) * math.rad(7 + frac * 14)
-		model:PivotTo(baseCf * CFrame.new(jx, jy, jz) * CFrame.Angles(tilt * 0.55, tilt * 0.25, -tilt * 0.4))
+		local amp = 0.04 + frac * 0.16
+		camShakeAmp = 0.035 + frac * 0.09
+		local t = elapsed * math.pi * 2 * 3.2
+		local jx = math.sin(t * 1.07) * amp
+		local jz = math.cos(t * 0.91) * amp * 0.7
+		local jy = math.abs(math.sin(t * 1.35)) * amp * 0.18
+		local tilt = math.sin(t) * math.rad(2.5 + frac * 3.5)
+		model:PivotTo(baseCf * CFrame.new(jx, jy, jz) * CFrame.Angles(tilt * 0.4, 0, -tilt * 0.25))
 		if elapsed >= durationSec then
 			model:PivotTo(baseCf)
 			camShakeAmp = 0
@@ -916,13 +929,9 @@ local function animateHover(model: Model, durationSec: number, token: number)
 			return
 		end
 		local elapsed = os.clock() - t0
-		local bob = math.sin(elapsed * 2.8) * 0.38
-		local panX = math.sin(elapsed * 0.75) * 0.45
-		local panZ = math.sin(elapsed * 0.62) * 0.45
-		local yaw = baseYaw + elapsed * 0.55
-		local tilt = math.sin(elapsed * 1.9) * 0.08
-		local pos = anchor + Vector3.new(panX, 1.05 + bob, panZ)
-		model:PivotTo(CFrame.new(pos) * CFrame.Angles(tilt * 0.35, yaw, tilt))
+		local bob = math.sin(elapsed * 1.35) * 0.12
+		local pos = anchor + Vector3.new(0, 1.05 + bob, 0)
+		model:PivotTo(CFrame.new(pos) * CFrame.Angles(0, baseYaw, 0))
 		if elapsed >= durationSec then
 			disconnect(floatConn)
 			floatConn = nil
@@ -962,53 +971,26 @@ local function animateEmerge(model: Model, durationSec: number, token: number)
 	end
 end
 
-local function animateHopToHead(model: Model, durationSec: number, token: number)
-	local char = player.Character
-	if not char then
-		return
-	end
-	local startPos = model:GetPivot().Position
+local function animateHeroPose(model: Model, durationSec: number, token: number)
 	local startCf = model:GetPivot()
 	local _, startYaw, _ = startCf:ToEulerAnglesYXZ()
-	local startScale = 1
-	pcall(function()
-		startScale = model:GetScale()
-	end)
 	local t0 = os.clock()
-
-	local function liveGoal(): Vector3
-		local head = char:FindFirstChild("Head")
-		if head and head:IsA("BasePart") then
-			return head.Position + Vector3.new(0, head.Size.Y * 0.55 + 0.45, 0)
-		end
-		local hrp = getHRP()
-		if hrp then
-			return hrp.Position + Vector3.new(0, 2.85, 0)
-		end
-		return startPos + Vector3.new(0, 3, 0)
+	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if primary then
+		focusPart = primary
 	end
-
+	camFovGoal = 36
 	disconnect(hopConn)
-	-- Clean last-moment leap onto the head (no random body orbit).
 	hopConn = RunService.Heartbeat:Connect(function()
 		if token ~= cutsceneToken or not model.Parent then
 			disconnect(hopConn)
 			hopConn = nil
 			return
 		end
-		local alpha = math.clamp((os.clock() - t0) / durationSec, 0, 1)
-		local e = alpha * alpha * (3 - 2 * alpha)
-		local goalPos = liveGoal()
-		local along = startPos:Lerp(goalPos, e)
-		local hopY = math.sin(alpha * math.pi) * 3.1
-		local pos = along + Vector3.new(0, hopY, 0)
-		local scaleMul = 1 - e * 0.12
-		pcall(function()
-			model:ScaleTo(startScale * scaleMul)
-		end)
-		local spin = startYaw + e * math.pi * 0.35
-		model:PivotTo(CFrame.new(pos) * CFrame.Angles(0, spin, 0))
-		focusPart = nil
+		local elapsed = os.clock() - t0
+		local alpha = math.clamp(elapsed / durationSec, 0, 1)
+		local bob = math.sin(elapsed * 1.15) * 0.08
+		model:PivotTo(CFrame.new(startCf.Position + Vector3.new(0, bob, 0)) * CFrame.Angles(0, startYaw, 0))
 		if alpha >= 1 then
 			disconnect(hopConn)
 			hopConn = nil
@@ -1045,10 +1027,13 @@ local function animateCollectToInventory(model: Model, durationSec: number, toke
 	pcall(function()
 		startScale = model:GetScale()
 	end)
-	-- Pop/shrink on the head — never dive through the body.
-	focusPart = nil
-	camSwayAmp = 0
+	-- Shrink in the hero shot — never hop onto the head.
+	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	if primary then
+		focusPart = primary
+	end
 	camShakeAmp = 0
+	camFovGoal = 34
 	spawnCollectSpark(startPos)
 	GameSoundEffects.playCashGrab()
 	local t0 = os.clock()
@@ -1061,11 +1046,11 @@ local function animateCollectToInventory(model: Model, durationSec: number, toke
 		end
 		local alpha = math.clamp((os.clock() - t0) / durationSec, 0, 1)
 		local e = alpha * alpha * (3 - 2 * alpha)
-		local lift = Vector3.new(0, 0.55 * (1 - e), 0)
+		local lift = Vector3.new(0, 0.85 * e, 0)
 		pcall(function()
 			model:ScaleTo(math.max(0.02, startScale * (1 - e * 0.96)))
 		end)
-		model:PivotTo(CFrame.new(startPos + lift) * CFrame.Angles(0, e * math.pi * 0.8, 0))
+		model:PivotTo(CFrame.new(startPos + lift) * startCf.Rotation)
 		if alpha >= 1 then
 			disconnect(shrinkConn)
 			shrinkConn = nil
@@ -1097,7 +1082,8 @@ local function endCutscene(token: number)
 	cutsceneToken += 1
 	cutsceneRunning = false
 	camShakeAmp = 0
-	camSwayAmp = 0
+	camShotFrom = nil
+	camShotLook = nil
 	focusPart = nil
 	stopAnimConns()
 	stopAura()
@@ -1119,7 +1105,7 @@ local function runCutscene(payload: any)
 	destroyBlockModel()
 	hideLuckyOpenHints()
 	camShakeAmp = 0
-	camSwayAmp = 1
+	camFovGoal = 50
 
 	local dropSec = if typeof(payload.dropSec) == "number" then payload.dropSec else CutsceneConfig.DROP_SEC
 	local groundShakeSec = if typeof(payload.groundShakeSec) == "number"
@@ -1223,7 +1209,7 @@ local function runCutscene(payload: any)
 		blockModel = model
 	end
 
-	startCinematicCamera(token)
+	startCinematicCamera(token, groundCf.Position)
 	-- No looping Godly/angelic bush aura during this cutscene.
 
 	-- Drop to ground in front of the player (or beside the bush for world drops).
@@ -1279,18 +1265,13 @@ local function runCutscene(payload: any)
 
 	GameSoundEffects.stopLuckyBlockShake()
 	stopAura()
-	camShakeAmp = 0.55
-	task.delay(0.22, function()
+	camShakeAmp = 0.22
+	task.delay(0.28, function()
 		if token == cutsceneToken then
 			camShakeAmp = 0
 		end
 	end)
-	-- Soften camera before the reveal / hop so the ending feels clean.
-	task.delay(0.35, function()
-		if token == cutsceneToken then
-			camSwayAmp = 0
-		end
-	end)
+	camFovGoal = 42
 
 	-- Burst.
 	local burstAtPart = focusPart
@@ -1323,16 +1304,14 @@ local function runCutscene(payload: any)
 			endCutscene(token)
 			return
 		end
-		-- Short hover so the floating UI reads, then last-moment hop to head.
+		camFovGoal = 38
 		animateHover(reveal, CutsceneConfig.HOVER_SEC, token)
 		if token ~= cutsceneToken then
 			endCutscene(token)
 			return
 		end
-		camSwayAmp = 0
 		camShakeAmp = 0
-		focusPart = nil
-		animateHopToHead(reveal, CutsceneConfig.HOP_SEC, token)
+		animateHeroPose(reveal, CutsceneConfig.HOP_SEC, token)
 		if token ~= cutsceneToken then
 			endCutscene(token)
 			return

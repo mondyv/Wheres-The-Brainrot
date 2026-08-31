@@ -17,10 +17,10 @@ M.BURST_HOLD_SEC = 0.22
 M.EMERGE_SEC = 0.85
 -- Hover like bush float offer (short — then hop to head).
 M.HOVER_SEC = 0.75
--- Arc hop onto the player's head (last moment collect).
-M.HOP_SEC = 0.72
--- Shrink tiny (into inventory feel).
-M.SHRINK_SEC = 0.45
+-- Reveal pose (was a hop onto the head).
+M.HOP_SEC = 1.05
+-- Shrink in place after the pose.
+M.SHRINK_SEC = 0.55
 -- Camera restore after shrink.
 M.CAM_RESTORE_SEC = 0.45
 

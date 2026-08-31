@@ -64,8 +64,12 @@ local function luckyReward(id: number, blockId: string): LevelReward
 	}
 end
 
--- Slot 1 is always cash. Slot 2 is always a lucky block (never a second cash).
+-- Slot 1 is always cash. Slot 2 is a lucky block from level 3 up (early levels stay cash).
 local function secondRewardForLevel(lv: number): LevelReward
+	if lv <= 2 then
+		local extra = math.floor(90 * lv * math.sqrt(lv))
+		return cashReward(2, extra)
+	end
 	if lv % 100 == 0 then
 		return luckyReward(2, "Godly Luckyblock")
 	elseif lv % 50 == 0 then

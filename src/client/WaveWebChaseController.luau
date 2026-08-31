@@ -27,6 +27,7 @@ local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local WaveWebChaseConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WaveWebChaseConfig"))
+local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local BrainrotGradientAnimator = require(script.Parent.BrainrotGradientAnimator)
 local SpiderSenseFx = require(script.Parent.SpiderSenseFx)
@@ -304,6 +305,10 @@ local function findLandLock(land: number): Instance?
 	return folder:FindFirstChild(name)
 end
 
+local function isTutorialChase(): boolean
+	return player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true
+end
+
 -- Exact lock Position (or behind the player at their height). Orientation is applied separately as 0,90,0.
 local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
 	local lock = findLandLock(currentLandNumber())
@@ -312,7 +317,8 @@ local function computeTsunamiCorridor(playerPos: Vector3): (Vector3, Vector3)
 		return Vector3.new(lockPos.X, lockPos.Y, lockPos.Z), chargeAlongZ(lockPos)
 	end
 	local forward = chargeAlongZ(playerPos)
-	local pos = playerPos - forward * C.WAVE_BEHIND_STUDS
+	local behind = if isTutorialChase() then C.TUTORIAL_BEHIND_STUDS else C.WAVE_BEHIND_STUDS
+	local pos = playerPos - forward * behind
 	pos = Vector3.new(pos.X, playerPos.Y + 4, pos.Z)
 	return pos, forward
 end
@@ -1673,11 +1679,17 @@ local function runChase(token: number)
 			end
 		end
 		local cruise = C.speedForLand(land, os.clock() - chaseStart, walk)
-		local vel = root.AssemblyLinearVelocity
-		local alongVel = math.max(0, Vector3.new(vel.X, 0, vel.Z):Dot(forward))
-		local landI = math.clamp(math.floor(land), 1, #C.WAVE_CATCHUP_BY_LAND)
-		local catchup = C.WAVE_CATCHUP_BY_LAND[landI]
-		local speed = math.min(C.WAVE_SPEED_CAP, math.max(cruise, alongVel + catchup))
+		if isTutorialChase() then
+			cruise *= C.TUTORIAL_SPEED_MULT
+		end
+		local speed = cruise
+		if land > C.NO_CATCHUP_MAX_LAND and not isTutorialChase() then
+			local vel = root.AssemblyLinearVelocity
+			local alongVel = math.max(0, Vector3.new(vel.X, 0, vel.Z):Dot(forward))
+			local landI = math.clamp(math.floor(land), 1, #C.WAVE_CATCHUP_BY_LAND)
+			local catchup = C.WAVE_CATCHUP_BY_LAND[landI]
+			speed = math.min(C.WAVE_SPEED_CAP, math.max(cruise, alongVel + catchup))
+		end
 
 		wavePos += forward * speed * dt
 		wavePos = Vector3.new(wavePos.X, cruiseY, wavePos.Z)
@@ -1700,7 +1712,8 @@ local function runChase(token: number)
 			math.sin(phase * 27) * shake * 0.35
 		)
 
-		if os.clock() - chaseStart >= C.WAVE_KILL_GRACE_SEC and along <= C.WAVE_KILL_DISTANCE then
+		local grace = if isTutorialChase() then C.TUTORIAL_KILL_GRACE_SEC else C.WAVE_KILL_GRACE_SEC
+		if os.clock() - chaseStart >= grace and along <= C.WAVE_KILL_DISTANCE then
 			requestKill()
 			chaseActive = false
 			return

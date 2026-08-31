@@ -323,6 +323,20 @@ function M.applyIconToGui(gui: ImageLabel | ImageButton, gearId: number): boolea
 	return true
 end
 
+function M.resolvePrimaryPart(root: Instance): BasePart?
+	local named = root:FindFirstChild("Primary") or root:FindFirstChild("Primary", true)
+	if named and named:IsA("BasePart") then
+		return named
+	end
+	if root:IsA("Model") and root.PrimaryPart then
+		return root.PrimaryPart
+	end
+	if root:IsA("BasePart") then
+		return root
+	end
+	return root:FindFirstChildWhichIsA("BasePart", true)
+end
+
 function M.findGearAsset(gearId: number): Instance?
 	local def = byId[gearId]
 	if not def then
@@ -394,14 +408,9 @@ function M.cloneGearModel(gearId: number): Model?
 	end
 
 	if not wrapper.PrimaryPart then
-		local primary = wrapper:FindFirstChild("Primary", true)
-		if primary and primary:IsA("BasePart") then
+		local primary = M.resolvePrimaryPart(wrapper)
+		if primary then
 			wrapper.PrimaryPart = primary
-		else
-			local any = wrapper:FindFirstChildWhichIsA("BasePart", true)
-			if any then
-				wrapper.PrimaryPart = any
-			end
 		end
 	end
 	if not wrapper.PrimaryPart then

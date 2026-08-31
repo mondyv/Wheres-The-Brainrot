@@ -28,6 +28,7 @@ export type ActiveSpawn = {
 	level: number,
 	endsAt: number,
 	pos: Vector3?,
+	bush: Instance?,
 }
 
 export type GlobalState = {
@@ -246,20 +247,41 @@ local function clearBushGlobalSpawn(bush: Instance)
 end
 
 local function findBushByKey(key: string): Instance?
+	if typeof(key) ~= "string" or key == "" then
+		return nil
+	end
 	local map = Workspace:FindFirstChild("Map")
 	if not map then
 		return nil
 	end
 	for _, desc in map:GetDescendants() do
-		if
-			isLootableBush(desc)
-			and desc:GetAttribute(C.BUSH_GLOBAL_SPAWN_ATTR) == true
-			and desc:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key
-		then
+		if desc:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key then
 			return desc
 		end
 	end
 	return nil
+end
+
+local function stripGlobalSpawnFromBush(bush: Instance)
+	clearBushGlobalSpawn(bush)
+	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, false)
+	bush:SetAttribute(BUSH_HIDDEN_NAME_ATTR, nil)
+	bush:SetAttribute(BUSH_HIDDEN_RARITY_ATTR, nil)
+	bush:SetAttribute(BUSH_HIDDEN_MUTATION_ATTR, nil)
+	bush:SetAttribute(BUSH_HIDDEN_LEVEL_ATTR, nil)
+	bush:SetAttribute(BUSH_HIDDEN_BASE_INCOME_ATTR, nil)
+end
+
+local function sweepAllGlobalSpawnBushes()
+	local map = Workspace:FindFirstChild("Map")
+	if not map then
+		return
+	end
+	for _, desc in map:GetDescendants() do
+		if desc:GetAttribute(C.BUSH_GLOBAL_SPAWN_ATTR) == true then
+			stripGlobalSpawnFromBush(desc)
+		end
+	end
 end
 
 local function applySpawnToBush(bush: Instance, tierId: string, pick: any, mutationId: string, level: number)
@@ -280,16 +302,15 @@ end
 
 local function clearActiveSpawnState(state: GlobalState, restoreBush: boolean)
 	if state.active and restoreBush then
+		local stored = state.active.bush
+		if stored and stored.Parent then
+			stripGlobalSpawnFromBush(stored)
+		end
 		local bush = findBushByKey(state.active.bushKey)
 		if bush then
-			clearBushGlobalSpawn(bush)
-			bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, false)
-			bush:SetAttribute(BUSH_HIDDEN_NAME_ATTR, nil)
-			bush:SetAttribute(BUSH_HIDDEN_RARITY_ATTR, nil)
-			bush:SetAttribute(BUSH_HIDDEN_MUTATION_ATTR, nil)
-			bush:SetAttribute(BUSH_HIDDEN_LEVEL_ATTR, nil)
-			bush:SetAttribute(BUSH_HIDDEN_BASE_INCOME_ATTR, nil)
+			stripGlobalSpawnFromBush(bush)
 		end
+		sweepAllGlobalSpawnBushes()
 	end
 	state.active = nil
 end
@@ -386,6 +407,7 @@ local function rollGlobalSpawn(tierId: string): (Instance?, ActiveSpawn?)
 		level = level,
 		endsAt = now + C.MARKER_DURATION_SEC,
 		pos = bushWorldPos(bush),
+		bush = bush,
 	}
 	return bush, active
 end

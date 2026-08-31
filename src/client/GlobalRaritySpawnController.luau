@@ -538,6 +538,12 @@ local function ensureTicker()
 	tickerConn = RunService.Heartbeat:Connect(function(dt)
 		refreshTimerLabels()
 		updateProximityOutline(dt)
+		local endsAt = ReplicatedStorage:GetAttribute(C.ACTIVE_ENDS_ATTR)
+		if typeof(endsAt) ~= "number" or os.time() >= endsAt then
+			if activeMarker then
+				destroyMarker()
+			end
+		end
 	end)
 end
 

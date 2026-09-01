@@ -273,9 +273,9 @@ local function footSoleToeLocal(foot: BasePart, forwardHint: Vector3): Vector3
 	local worldAxis = if useZ then axisZ else axisX
 	local sign = if worldAxis:Dot(forwardHint) >= 0 then 1 else -1
 	local along = if useZ then size.Z else size.X
-	-- Local -Y is the sole on R15 feet. Nudge toward the ankle so the bar
-	-- sits on the visual shoe (part box sole is outside the mesh).
-	return Vector3.new(0, -size.Y * 0.5 + 0.2, 0) + toeAxis * (sign * along * 0.38)
+	-- Local -Y is the sole on R15 feet. Contact is on the visual shoe, not the
+	-- oversized foot part box (handstand shot showed ~0.8 stud of air).
+	return Vector3.new(0, -size.Y * 0.5 + 0.85, 0) + toeAxis * (sign * along * 0.38)
 end
 
 local function soleAcross(rf: BasePart, lf: BasePart?, forwardHint: Vector3): (Vector3, Vector3, number)

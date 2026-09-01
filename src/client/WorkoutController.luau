@@ -273,8 +273,9 @@ local function footSoleToeLocal(foot: BasePart, forwardHint: Vector3): Vector3
 	local worldAxis = if useZ then axisZ else axisX
 	local sign = if worldAxis:Dot(forwardHint) >= 0 then 1 else -1
 	local along = if useZ then size.Z else size.X
-	-- Local -Y is the sole on R15 feet. Sit flush on the shoe top at the toe tip.
-	return Vector3.new(0, -size.Y * 0.5, 0) + toeAxis * (sign * along * 0.38)
+	-- Local -Y is the sole on R15 feet. Nudge toward the ankle so the bar
+	-- sits on the visual shoe (part box sole is outside the mesh).
+	return Vector3.new(0, -size.Y * 0.5 + 0.2, 0) + toeAxis * (sign * along * 0.38)
 end
 
 local function soleAcross(rf: BasePart, lf: BasePart?, forwardHint: Vector3): (Vector3, Vector3, number)
@@ -414,58 +415,19 @@ local function ensureWorldFolder(): Folder
 	return created
 end
 
-local function looksLikeFxName(name: string): boolean
-	local n = string.lower(name)
-	return string.find(n, "vfx", 1, true) ~= nil
-		or string.find(n, "fx", 1, true) ~= nil
-		or string.find(n, "emitter", 1, true) ~= nil
-		or string.find(n, "particle", 1, true) ~= nil
-		or string.find(n, "hitbox", 1, true) ~= nil
-		or string.find(n, "aura", 1, true) ~= nil
-		or string.find(n, "glow", 1, true) ~= nil
-		or string.find(n, "trail", 1, true) ~= nil
-end
-
-local function isUnderFx(inst: Instance, root: Instance): boolean
-	local p: Instance? = inst
-	while p and p ~= root do
-		if looksLikeFxName(p.Name) then
-			return true
-		end
-		p = p.Parent
-	end
-	return false
-end
-
 local function collectSolidParts(model: Model): { BasePart }
 	local parts: { BasePart } = {}
 	for _, d in model:GetDescendants() do
-		if d:IsA("BasePart") and d.Transparency < 0.7 and not isUnderFx(d, model) then
-			local maxDim = math.max(d.Size.X, d.Size.Y, d.Size.Z)
-			if maxDim <= 12 then
-				table.insert(parts, d)
-			end
-		end
-	end
-	if #parts == 0 then
-		for _, d in model:GetDescendants() do
-			if d:IsA("BasePart") and d.Transparency < 0.95 and not isUnderFx(d, model) then
-				local maxDim = math.max(d.Size.X, d.Size.Y, d.Size.Z)
-				if maxDim <= 16 then
-					table.insert(parts, d)
-				end
-			end
+		if d:IsA("BasePart") and d.Transparency < 0.95 then
+			table.insert(parts, d)
 		end
 	end
 	return parts
 end
 
 local function stripFootPropFx(model: Model)
-	for _, child in model:GetChildren() do
-		if looksLikeFxName(child.Name) then
-			child:Destroy()
-		end
-	end
+	-- Keep VFX/mesh folders — several gears store real parts under "VFX".
+	-- Only mute particle-style extras.
 	for _, d in model:GetDescendants() do
 		if
 			d:IsA("ParticleEmitter")
@@ -478,23 +440,6 @@ local function stripFootPropFx(model: Model)
 			(d :: any).Enabled = false
 		end
 	end
-end
-
-local function solidCornerMinY(parts: { BasePart }): number
-	local minY = math.huge
-	for _, d in parts do
-		local cf = d.CFrame
-		local half = d.Size * 0.5
-		for _, sx in { -1, 1 } do
-			for _, sy in { -1, 1 } do
-				for _, sz in { -1, 1 } do
-					local y = cf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz)).Y
-					minY = math.min(minY, y)
-				end
-			end
-		end
-	end
-	return minY
 end
 
 local function poseGearOnFeet(character: Model, model: Model)
@@ -513,7 +458,7 @@ local function poseGearOnFeet(character: Model, model: Model)
 	end
 	local hrp = character:FindFirstChild("HumanoidRootPart")
 	local forward = if hrp and hrp:IsA("BasePart") then hrp.CFrame.LookVector else Vector3.zAxis
-	local mid, across, contactY = soleAcross(anchorFoot, leftFoot, forward)
+	local mid, across = soleAcross(anchorFoot, leftFoot, forward)
 
 	-- Lie Primary's longest axis across the shoes (bar on the toes, not a tower).
 	local ps = primary.Size
@@ -524,12 +469,41 @@ local function poseGearOnFeet(character: Model, model: Model)
 		lieFlat = CFrame.Angles(0, math.rad(90), 0)
 	end
 
-	local target = CFrame.fromMatrix(Vector3.new(mid.X, contactY, mid.Z), across, Vector3.yAxis) * lieFlat
+	-- Sole-out (+ away from the ankle) so handstand and standing both sit on the shoes.
+	local soleOut = -anchorFoot.CFrame.UpVector
+	if leftFoot then
+		soleOut -= leftFoot.CFrame.UpVector
+	end
+	if soleOut.Magnitude < 0.05 then
+		soleOut = Vector3.yAxis
+	else
+		soleOut = soleOut.Unit
+	end
+	across = across - soleOut * across:Dot(soleOut)
+	if across.Magnitude < 0.05 then
+		across = Vector3.xAxis
+	else
+		across = across.Unit
+	end
+
+	local target = CFrame.fromMatrix(mid, across, soleOut) * lieFlat
 	model:PivotTo(target * primary.CFrame:ToObjectSpace(model:GetPivot()))
 
-	local minY = solidCornerMinY(parts)
-	if minY < math.huge then
-		model:PivotTo(model:GetPivot() + Vector3.new(0, contactY - minY, 0))
+	local maxOut = -math.huge
+	for _, d in parts do
+		local cf = d.CFrame
+		local half = d.Size * 0.5
+		for _, sx in { -1, 1 } do
+			for _, sy in { -1, 1 } do
+				for _, sz in { -1, 1 } do
+					local p = cf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz))
+					maxOut = math.max(maxOut, (p - mid):Dot(soleOut))
+				end
+			end
+		end
+	end
+	if maxOut > -math.huge then
+		model:PivotTo(model:GetPivot() - soleOut * maxOut)
 	end
 end
 

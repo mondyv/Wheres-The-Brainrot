@@ -2,7 +2,8 @@
 --[[
 	Client purchase prompts for Map.Booster Pack Showers stand hitboxes.
 	Group Stand: stand-style charge bar, then Main.Frames["Free Rewards"]
-	(like game + join group + claim epic Nyan Cat).
+	(favorite game + join group + claim epic Nyan Cat).
+	Roblox cannot detect experience likes — only favorites.
 ]]
 
 local AvatarEditorService = game:GetService("AvatarEditorService")
@@ -158,6 +159,30 @@ local function setCheckVisible(icon: GuiObject?, on: boolean)
 	end
 end
 
+local function relabelLikeRowToFavorite(row: Instance?)
+	if not row then
+		return
+	end
+	local function maybeRelabel(label: TextLabel)
+		local lower = string.lower(label.Text)
+		if string.find(lower, "like", 1, true) then
+			local text = label.Text
+			text = string.gsub(text, "LIKE", "FAVORITE")
+			text = string.gsub(text, "Like", "Favorite")
+			text = string.gsub(text, "like", "favorite")
+			label.Text = text
+		end
+	end
+	if row:IsA("TextLabel") or row:IsA("TextButton") then
+		maybeRelabel(row :: TextLabel)
+	end
+	for _, d in row:GetDescendants() do
+		if d:IsA("TextLabel") or d:IsA("TextButton") then
+			maybeRelabel(d :: TextLabel)
+		end
+	end
+end
+
 local function setClaimLabel(text: string)
 	if claimNameLabel then
 		claimNameLabel.Text = text
@@ -214,7 +239,7 @@ local function promptLikeGame()
 	end)
 	if not ok then
 		warn("[BoosterPackShowersController] PromptSetFavorite failed:", err)
-		TopNotifController.showPersonal("Couldn't open the like prompt.", "legendary", 3)
+		TopNotifController.showPersonal("Couldn't open the favorite prompt.", "legendary", 3)
 	end
 end
 
@@ -256,7 +281,7 @@ local function claimReward()
 	end
 	joinedLocal = joinedLocal or playerInGroup()
 	if not likedSaved() then
-		TopNotifController.showPersonal("Like the game first!", "legendary", 3)
+		TopNotifController.showPersonal("Favorite the game first!", "legendary", 3)
 		return
 	end
 	if not joinedLocal then
@@ -296,7 +321,7 @@ local function claimReward()
 	GameSoundEffects.playErrorNotif()
 	local reason = if typeof(err) == "string" then err else "claim_failed"
 	if reason == "not_liked" then
-		TopNotifController.showPersonal("Like the game first!", "legendary", 3)
+		TopNotifController.showPersonal("Favorite the game first!", "legendary", 3)
 	elseif reason == "not_in_group" then
 		TopNotifController.showPersonal("Join the group first!", "legendary", 3)
 	elseif reason == "already_claimed" then
@@ -363,6 +388,7 @@ local function wireFreeRewardsPanel()
 
 	likeCheck = likeRow and likeRow:FindFirstChild("CheckMarkIcon") :: GuiObject?
 	joinCheck = joinRow and joinRow:FindFirstChild("CheckMarkIcon") :: GuiObject?
+	relabelLikeRowToFavorite(likeRow)
 	local claimName = claimRow and claimRow:FindFirstChild("Name")
 	if claimName and (claimName:IsA("TextLabel") or claimName:IsA("TextButton")) then
 		claimNameLabel = claimName :: TextLabel

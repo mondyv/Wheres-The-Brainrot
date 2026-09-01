@@ -585,6 +585,10 @@ local function processTick()
 	if changed then
 		broadcastState(state, if spawnTier then "spawn" else "sync", spawnTier)
 	end
+	-- Safety: expired/claimed spawns must not leave hidden loot on bushes.
+	if not currentState.active then
+		sweepAllGlobalSpawnBushes()
+	end
 	finish()
 end
 

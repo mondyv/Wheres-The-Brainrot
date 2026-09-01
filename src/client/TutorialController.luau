@@ -3085,84 +3085,6 @@ local function watchStepProgress()
 	end)
 end
 
-local function bindTutorialDeathHook(character: Model)
-	if tutorialDeathConn then
-		tutorialDeathConn:Disconnect()
-		tutorialDeathConn = nil
-	end
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		humanoid = character:WaitForChild("Humanoid", 10) :: Humanoid?
-	end
-	if not humanoid then
-		return
-	end
-	tutorialDeathConn = humanoid.Died:Connect(function()
-		if not active or player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
-			return
-		end
-		local step = currentStep()
-		local hint = resolveStepRetry(step)
-		local ReviveController = require(script.Parent.ReviveController)
-		ReviveController.markTutorialDeath(hint)
-	end)
-end
-
-local function restoreTutorialAfterRespawn()
-	if not active then
-		return
-	end
-	task.defer(function()
-		if not active or not player.Parent then
-			return
-		end
-		local ReviveController = require(script.Parent.ReviveController)
-		ReviveController.clearDeathPresentation()
-		ReviveController.restoreGameplayAfterSoftDeath()
-		HudRescue.run("tutorial-respawn")
-		task.delay(0.55, function()
-			if not active or not player.Parent then
-				return
-			end
-			ReviveController.flushPendingTryAgainNotif()
-		end)
-		-- Character death destroys guide attachments / can orphan the quest panel host.
-		clearGuideTrail()
-		ensureGui()
-		if isCutsceneBusy() then
-			pendingPointerRefresh = true
-			return
-		end
-		setChromeSuppressed(false)
-		pendingPointerRefresh = false
-		if gui then
-			gui.Enabled = true
-		end
-		if panel then
-			panel.Visible = true
-		end
-		if skipTutorialBtn then
-			skipTutorialBtn.Visible = true
-		end
-		syncPanelToSideButtons()
-		local step = currentStep()
-		if step then
-			local retry = resolveStepRetry(step)
-			local text = if step.id == "swingLand1" and typeof(retry) == "string" and retry ~= ""
-				then retry
-				elseif step.id == "goToBase" and swingCoach.goToBaseLite and typeof(retry) == "string" and retry ~= ""
-				then retry
-				else resolveStepText(step)
-			objectiveBaseText = text
-			if objectiveLabel then
-				objectiveLabel.Text = text
-			end
-			startObjectiveDots(text)
-		end
-		refreshPointers()
-	end)
-end
-
 local function bindGameplayHooks()
 	for _, conn in attrConns do
 		conn:Disconnect()
@@ -3343,6 +3265,84 @@ end
 
 function M.init()
 	-- Nested to stay under Luau's 200 main-chunk local register limit.
+	local function bindTutorialDeathHook(character: Model)
+		if tutorialDeathConn then
+			tutorialDeathConn:Disconnect()
+			tutorialDeathConn = nil
+		end
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if not humanoid then
+			humanoid = character:WaitForChild("Humanoid", 10) :: Humanoid?
+		end
+		if not humanoid then
+			return
+		end
+		tutorialDeathConn = humanoid.Died:Connect(function()
+			if not active or player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+				return
+			end
+			local step = currentStep()
+			local hint = resolveStepRetry(step)
+			local ReviveController = require(script.Parent.ReviveController)
+			ReviveController.markTutorialDeath(hint)
+		end)
+	end
+
+	local function restoreTutorialAfterRespawn()
+		if not active then
+			return
+		end
+		task.defer(function()
+			if not active or not player.Parent then
+				return
+			end
+			local ReviveController = require(script.Parent.ReviveController)
+			ReviveController.clearDeathPresentation()
+			ReviveController.restoreGameplayAfterSoftDeath()
+			HudRescue.run("tutorial-respawn")
+			task.delay(0.55, function()
+				if not active or not player.Parent then
+					return
+				end
+				ReviveController.flushPendingTryAgainNotif()
+			end)
+			-- Character death destroys guide attachments / can orphan the quest panel host.
+			clearGuideTrail()
+			ensureGui()
+			if isCutsceneBusy() then
+				pendingPointerRefresh = true
+				return
+			end
+			setChromeSuppressed(false)
+			pendingPointerRefresh = false
+			if gui then
+				gui.Enabled = true
+			end
+			if panel then
+				panel.Visible = true
+			end
+			if skipTutorialBtn then
+				skipTutorialBtn.Visible = true
+			end
+			syncPanelToSideButtons()
+			local step = currentStep()
+			if step then
+				local retry = resolveStepRetry(step)
+				local text = if step.id == "swingLand1" and typeof(retry) == "string" and retry ~= ""
+					then retry
+					elseif step.id == "goToBase" and swingCoach.goToBaseLite and typeof(retry) == "string" and retry ~= ""
+					then retry
+					else resolveStepText(step)
+				objectiveBaseText = text
+				if objectiveLabel then
+					objectiveLabel.Text = text
+				end
+				startObjectiveDots(text)
+			end
+			refreshPointers()
+		end)
+	end
+
 	local function shouldRunTutorial(): boolean
 		if sessionConfettiFired then
 			return false

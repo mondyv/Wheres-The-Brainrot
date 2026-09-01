@@ -103,7 +103,8 @@ local blockModel: Model? = nil
 local camShakeAmp = 0
 local camShotFrom: Vector3? = nil
 local camShotLook: Vector3? = nil
-local camFovGoal = 50
+local camFovGoal = 64
+local camPull = 1
 local hiddenTool: Tool? = nil
 local hiddenToolTrans: { [BasePart]: number } = {}
 local hiddenToolDecalTrans: { [Decal | Texture]: number } = {}
@@ -688,8 +689,10 @@ local function pokemonShot(lookAt: Vector3, hrp: BasePart): (Vector3, Vector3)
 		away = away.Unit
 	end
 	local side = Vector3.new(-away.Z, 0, away.X)
-	local from = lookAt + away * 7.4 + side * 3.2 + Vector3.new(0, 3.9, 0)
-	return from, lookAt + Vector3.new(0, 1.05, 0)
+	local pull = math.clamp(camPull, 1, 1.45)
+	-- Three-quarter wide shot so the drop, burst, and reveal all read on screen.
+	local from = lookAt + away * (14.8 * pull) + side * (6.4 * pull) + Vector3.new(0, 7.2 * pull, 0)
+	return from, lookAt + Vector3.new(0, 1.85, 0)
 end
 
 local function startCinematicCamera(token: number, lookAt: Vector3)
@@ -702,8 +705,8 @@ local function startCinematicCamera(token: number, lookAt: Vector3)
 	savedCameraSubject = cam.CameraSubject
 	savedFov = cam.FieldOfView
 	cam.CameraType = Enum.CameraType.Scriptable
-	camFovGoal = 50
-	cam.FieldOfView = 50
+	camFovGoal = 64
+	cam.FieldOfView = 64
 
 	local from, look = pokemonShot(lookAt, hrp)
 	camShotFrom = from
@@ -729,12 +732,19 @@ local function startCinematicCamera(token: number, lookAt: Vector3)
 		end
 		phase += dt
 
-		local shotFrom = camShotFrom or from
-		local shotLook = camShotLook or look
+		local liveHrp = getHRP()
+		local aim = lookAt
 		if focusPart and focusPart.Parent then
-			shotLook = focusPart.Position + Vector3.new(0, 0.55, 0)
-			camShotLook = shotLook
+			aim = focusPart.Position + Vector3.new(0, 1.35, 0)
 		end
+		local shotFrom, shotLook = from, look
+		if liveHrp then
+			shotFrom, shotLook = pokemonShot(aim, liveHrp)
+		else
+			shotLook = aim
+		end
+		camShotFrom = shotFrom
+		camShotLook = shotLook
 
 		local shake = Vector3.zero
 		if camShakeAmp > 0.001 then
@@ -979,7 +989,7 @@ local function animateHeroPose(model: Model, durationSec: number, token: number)
 	if primary then
 		focusPart = primary
 	end
-	camFovGoal = 36
+	camFovGoal = 58
 	disconnect(hopConn)
 	hopConn = RunService.Heartbeat:Connect(function()
 		if token ~= cutsceneToken or not model.Parent then
@@ -1033,7 +1043,7 @@ local function animateCollectToInventory(model: Model, durationSec: number, toke
 		focusPart = primary
 	end
 	camShakeAmp = 0
-	camFovGoal = 34
+	camFovGoal = 56
 	spawnCollectSpark(startPos)
 	GameSoundEffects.playCashGrab()
 	local t0 = os.clock()
@@ -1082,6 +1092,7 @@ local function endCutscene(token: number)
 	cutsceneToken += 1
 	cutsceneRunning = false
 	camShakeAmp = 0
+	camPull = 1
 	camShotFrom = nil
 	camShotLook = nil
 	focusPart = nil
@@ -1105,7 +1116,8 @@ local function runCutscene(payload: any)
 	destroyBlockModel()
 	hideLuckyOpenHints()
 	camShakeAmp = 0
-	camFovGoal = 50
+	camPull = 1
+	camFovGoal = 64
 
 	local dropSec = if typeof(payload.dropSec) == "number" then payload.dropSec else CutsceneConfig.DROP_SEC
 	local groundShakeSec = if typeof(payload.groundShakeSec) == "number"
@@ -1271,7 +1283,8 @@ local function runCutscene(payload: any)
 			camShakeAmp = 0
 		end
 	end)
-	camFovGoal = 42
+	camPull = 1.18
+	camFovGoal = 60
 
 	-- Burst.
 	local burstAtPart = focusPart
@@ -1304,7 +1317,8 @@ local function runCutscene(payload: any)
 			endCutscene(token)
 			return
 		end
-		camFovGoal = 38
+		camPull = 1.22
+		camFovGoal = 58
 		animateHover(reveal, CutsceneConfig.HOVER_SEC, token)
 		if token ~= cutsceneToken then
 			endCutscene(token)

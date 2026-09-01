@@ -47,7 +47,6 @@ local function prefetchStealPrices()
 			end
 			if typeof(info) == "table" and typeof(info.PriceInRobux) == "number" then
 				stealPriceByRarity[rarity] = info.PriceInRobux
-				refreshStealPromptVisibility()
 			end
 		end)
 	end

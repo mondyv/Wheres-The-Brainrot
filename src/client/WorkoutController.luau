@@ -425,9 +425,8 @@ local function collectSolidParts(model: Model): { BasePart }
 	return parts
 end
 
-local function stripFootPropFx(model: Model)
-	-- Keep VFX/mesh folders — several gears store real parts under "VFX".
-	-- Only mute particle-style extras.
+local function enableFootPropFx(model: Model)
+	-- Gear 8/9 (and others) ARE the portal / beam / particle kits. Keep them on.
 	for _, d in model:GetDescendants() do
 		if
 			d:IsA("ParticleEmitter")
@@ -437,7 +436,9 @@ local function stripFootPropFx(model: Model)
 			or d:IsA("Smoke")
 			or d:IsA("Sparkles")
 		then
-			(d :: any).Enabled = false
+			(d :: any).Enabled = true
+		elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
+			(d :: Light).Enabled = true
 		end
 	end
 end
@@ -562,7 +563,7 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		return
 	end
 	model.PrimaryPart = primary
-	stripFootPropFx(model)
+	enableFootPropFx(model)
 
 	footTool = tool
 	if savedRequiresHandle == nil then

@@ -13,14 +13,14 @@ M.BLOCK_OPEN_SFX_SEC = 4
 M.GROUND_SHAKE_SEC = 1
 -- Burst VFX + hide block before brainrot appears.
 M.BURST_HOLD_SEC = 0.22
--- Brainrot rises / settles into hover.
-M.EMERGE_SEC = 0.85
--- Brief hover, then a snappy Pokemon hop onto the head.
-M.HOVER_SEC = 0.22
--- Reveal pose (hop onto the head).
-M.HOP_SEC = 0.38
--- Settle on the head after the hop.
-M.SHRINK_SEC = 0.22
+-- Brainrot rises and eases into hover (same path the hover continues).
+M.EMERGE_SEC = 0.72
+-- Hold the float long enough to read — bob is the same wave as emerge.
+M.HOVER_SEC = 0.58
+-- Arc onto the head (C1 from hover, no Back-out overshoot).
+M.HOP_SEC = 0.55
+-- Rest on the head after the hop.
+M.SHRINK_SEC = 0.32
 -- Camera restore after shrink.
 M.CAM_RESTORE_SEC = 0.45
 

@@ -447,6 +447,44 @@ local function partWorldMinY(part: BasePart): number
 	return minY
 end
 
+local function dominantMeshCenter(model: Model, primary: BasePart): Vector3
+	local largest = 0
+	local parts: { BasePart } = {}
+	for _, d in model:GetDescendants() do
+		if isPoseMeshPart(d) then
+			local p = d :: BasePart
+			local vol = p.Size.X * p.Size.Y * p.Size.Z
+			largest = math.max(largest, vol)
+			table.insert(parts, p)
+		end
+	end
+	local minV = Vector3.new(math.huge, math.huge, math.huge)
+	local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
+	local any = false
+	for _, p in parts do
+		local vol = p.Size.X * p.Size.Y * p.Size.Z
+		if vol < largest * 0.22 then
+			continue
+		end
+		any = true
+		local cf = p.CFrame
+		local half = p.Size * 0.5
+		for _, sx in { -1, 1 } do
+			for _, sy in { -1, 1 } do
+				for _, sz in { -1, 1 } do
+					local w = cf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz))
+					minV = Vector3.new(math.min(minV.X, w.X), math.min(minV.Y, w.Y), math.min(minV.Z, w.Z))
+					maxV = Vector3.new(math.max(maxV.X, w.X), math.max(maxV.Y, w.Y), math.max(maxV.Z, w.Z))
+				end
+			end
+		end
+	end
+	if not any then
+		return primary.Position
+	end
+	return (minV + maxV) * 0.5
+end
+
 -- Place the authored Studio clone on the shoes using Primary only.
 -- Do not inspect VFX parts for bounds and do not toggle any emitters.
 local function poseGearOnFeet(character: Model, model: Model)
@@ -495,26 +533,10 @@ local function poseGearOnFeet(character: Model, model: Model)
 		model:PivotTo(model:GetPivot() + Vector3.new(0, contactY - minY, 0))
 	end
 
-	-- Height is already on the soles; slide along the left-right axis so the
-	-- visible mesh sits in the middle of both feet (Primary is often one orb).
-	local cx, cz, n = 0, 0, 0
-	for _, d in model:GetDescendants() do
-		if isPoseMeshPart(d) then
-			local p = (d :: BasePart).Position
-			cx += p.X
-			cz += p.Z
-			n += 1
-		end
-	end
-	if n == 0 then
-		cx = primary.Position.X
-		cz = primary.Position.Z
-		n = 1
-	end
-	local along = (Vector3.new(cx / n, 0, cz / n) - Vector3.new(mid.X, 0, mid.Z)):Dot(across)
-	if math.abs(along) > 0.001 then
-		model:PivotTo(model:GetPivot() - across * along)
-	end
+	-- Height is already on the soles. Shift so the dumbbell's real extents
+	-- (not a part-count average that VFX can pull sideways) sit on mid XZ.
+	local vis = dominantMeshCenter(model, primary)
+	model:PivotTo(model:GetPivot() + Vector3.new(mid.X - vis.X, 0, mid.Z - vis.Z))
 end
 
 local function attachGearAcrossFeet(character: Model, tool: Tool)

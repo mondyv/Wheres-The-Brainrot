@@ -923,128 +923,6 @@ local function spawnBurstDebris(at: Vector3)
 	end
 end
 
-local function animateHover(model: Model, durationSec: number, token: number)
-	local anchor = model:GetPivot().Position
-	local _, baseYaw, _ = model:GetPivot():ToEulerAnglesYXZ()
-	local t0 = os.clock()
-	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-	if primary then
-		focusPart = primary
-	end
-	disconnect(floatConn)
-	floatConn = RunService.Heartbeat:Connect(function()
-		if token ~= cutsceneToken or not model.Parent then
-			disconnect(floatConn)
-			floatConn = nil
-			return
-		end
-		local elapsed = os.clock() - t0
-		local bob = math.sin(elapsed * 1.35) * 0.12
-		local pos = anchor + Vector3.new(0, 1.05 + bob, 0)
-		model:PivotTo(CFrame.new(pos) * CFrame.Angles(0, baseYaw, 0))
-		if elapsed >= durationSec then
-			disconnect(floatConn)
-			floatConn = nil
-		end
-	end)
-	waitToken(token, durationSec)
-end
-
-local function animateEmerge(model: Model, durationSec: number, token: number)
-	local startCf = model:GetPivot()
-	-- Shoot upward hard, then settle a bit lower into the hover band.
-	local peakCf = startCf * CFrame.new(0, 4.6, 0)
-	local settleCf = startCf * CFrame.new(0, 2.35, 0)
-	local t0 = os.clock()
-	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-	if primary then
-		focusPart = primary
-	end
-	while os.clock() - t0 < durationSec do
-		if token ~= cutsceneToken or not model.Parent then
-			return
-		end
-		local alpha = math.clamp((os.clock() - t0) / durationSec, 0, 1)
-		if alpha < 0.45 then
-			local a = alpha / 0.45
-			local eased = 1 - (1 - a) ^ 3
-			model:PivotTo(startCf:Lerp(peakCf, eased))
-		else
-			local a = (alpha - 0.45) / 0.55
-			local eased = a * a * (3 - 2 * a)
-			model:PivotTo(peakCf:Lerp(settleCf, eased))
-		end
-		RunService.Heartbeat:Wait()
-	end
-	if model.Parent then
-		model:PivotTo(settleCf)
-	end
-end
-
-local function headCarryCf(): CFrame?
-	local char = player.Character
-	local head = char and char:FindFirstChild("Head")
-	if head and head:IsA("BasePart") then
-		return head.CFrame * CFrame.new(0, head.Size.Y * 0.55 + 1.05, 0)
-	end
-	local hrp = getHRP()
-	if hrp then
-		return hrp.CFrame * CFrame.new(0, 2.35, 0)
-	end
-	return nil
-end
-
-local function animateHeroPose(model: Model, durationSec: number, token: number)
-	local startCf = model:GetPivot()
-	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-	if primary then
-		focusPart = primary
-	end
-	camPull = 1.14
-	camFovGoal = 56
-	local t0 = os.clock()
-	disconnect(hopConn)
-	hopConn = RunService.Heartbeat:Connect(function()
-		if token ~= cutsceneToken or not model.Parent then
-			disconnect(hopConn)
-			hopConn = nil
-			return
-		end
-		local elapsed = os.clock() - t0
-		local alpha = math.clamp(elapsed / math.max(durationSec, 0.05), 0, 1)
-		local dest = headCarryCf() or startCf
-		-- Back-out: overshoots the head then snaps on (Pokemon capture hop).
-		local t = alpha - 1
-		local eased = 1 + 2.70158 * t * t * t + 1.70158 * t * t
-		local pos = startCf.Position + (dest.Position - startCf.Position) * eased
-		pos += Vector3.new(0, math.sin(alpha * math.pi) * 2.8, 0)
-		local rot = startCf.Rotation:Lerp(dest.Rotation, math.clamp(eased, 0, 1))
-		model:PivotTo(CFrame.new(pos) * rot)
-		camPull = 1.08 + math.sin(alpha * math.pi) * 0.22
-		camFovGoal = 54 + (1 - math.sin(alpha * math.pi)) * 6
-		if alpha > 0.72 then
-			camShakeAmp = (1 - alpha) * 0.18
-		end
-		if primary and primary.Parent then
-			focusPart = primary
-		end
-		if alpha >= 1 then
-			disconnect(hopConn)
-			hopConn = nil
-		end
-	end)
-	waitToken(token, durationSec)
-	if model.Parent then
-		local dest = headCarryCf()
-		if dest then
-			model:PivotTo(dest)
-		end
-	end
-	camShakeAmp = 0
-	camPull = 1.12
-	camFovGoal = 60
-end
-
 local function spawnCollectSpark(at: Vector3)
 	local spark = Instance.new("Part")
 	spark.Name = "LuckyBlockCollectSpark"
@@ -1066,43 +944,131 @@ local function spawnCollectSpark(at: Vector3)
 	Debris:AddItem(spark, 0.35)
 end
 
-local function animateCollectToInventory(model: Model, durationSec: number, token: number)
-	-- Settle on the head, then fade into the grant. Never ScaleTo — that last
-	-- frame could pop the brainrot to a colossal size.
+local function smootherstep(alpha: number): number
+	local a = math.clamp(alpha, 0, 1)
+	return a * a * a * (a * (a * 6 - 15) + 10)
+end
+
+local function headCarryCf(): CFrame?
+	local char = player.Character
+	local head = char and char:FindFirstChild("Head")
+	if head and head:IsA("BasePart") then
+		return head.CFrame * CFrame.new(0, head.Size.Y * 0.55 + 1.05, 0)
+	end
+	local hrp = getHRP()
+	if hrp then
+		return hrp.CFrame * CFrame.new(0, 2.35, 0)
+	end
+	return nil
+end
+
+-- One Heartbeat path: emerge → hover → hop → settle. Same bob wave the whole
+-- time so phase handoffs never snap position or rotation.
+local function animateRevealMotion(model: Model, token: number)
+	local startCf = model:GetPivot()
+	local startPos = startCf.Position
+	local hoverHome = startPos + Vector3.new(0, 2.45, 0)
+	local emergeSec = CutsceneConfig.EMERGE_SEC
+	local hoverSec = CutsceneConfig.HOVER_SEC
+	local hopSec = CutsceneConfig.HOP_SEC
+	local settleSec = CutsceneConfig.SHRINK_SEC
+	local hopAt = emergeSec + hoverSec
+	local settleAt = hopAt + hopSec
+	local total = settleAt + settleSec
+	local bobHz = 2.15
+	local bobAmp = 0.16
+
 	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
 	if primary then
 		focusPart = primary
 	end
-	camShakeAmp = 0
-	camPull = 1.18
-	camFovGoal = 62
-	local dest = headCarryCf()
-	if dest then
-		model:PivotTo(dest)
-		spawnCollectSpark(dest.Position)
-	end
-	GameSoundEffects.playCashGrab()
+
+	local hopFrom: Vector3? = nil
+	local hopVel = Vector3.zero
+	local hopLanded = false
 	local t0 = os.clock()
+	local pull0 = camPull
+	local fov0 = camFovGoal
+
+	local function bobY(elapsed: number): number
+		return math.sin(elapsed * bobHz) * bobAmp
+	end
+
+	disconnect(floatConn)
+	disconnect(hopConn)
 	disconnect(shrinkConn)
-	shrinkConn = RunService.Heartbeat:Connect(function()
+	floatConn = RunService.Heartbeat:Connect(function()
 		if token ~= cutsceneToken or not model.Parent then
-			disconnect(shrinkConn)
-			shrinkConn = nil
+			disconnect(floatConn)
+			floatConn = nil
 			return
 		end
-		local live = headCarryCf()
-		if live then
-			model:PivotTo(live)
-			if primary and primary.Parent then
-				focusPart = primary
+		local elapsed = os.clock() - t0
+		local pos: Vector3
+		local spin = CFrame.Angles(0, elapsed * 0.4, 0)
+
+		if elapsed < emergeSec then
+			local a = smootherstep(elapsed / emergeSec)
+			pos = startPos:Lerp(hoverHome, a)
+			pos += Vector3.new(0, bobY(elapsed) * a, 0)
+			camPull = pull0 + (1.16 - pull0) * a
+			camFovGoal = fov0 + (56 - fov0) * a
+		elseif elapsed < hopAt then
+			pos = hoverHome + Vector3.new(0, bobY(elapsed), 0)
+			camPull = 1.16
+			camFovGoal = 56
+		elseif elapsed < settleAt then
+			if hopFrom == nil then
+				hopFrom = model:GetPivot().Position
+				local vy = bobHz * bobAmp * math.cos(hopAt * bobHz)
+				hopVel = Vector3.new(0, vy, 0)
 			end
+			-- Linear hermite keeps hover velocity; bump has 0 slope at both ends.
+			local a = math.clamp((elapsed - hopAt) / hopSec, 0, 1)
+			local dest = headCarryCf()
+			local p0 = hopFrom :: Vector3
+			local p1 = if dest then dest.Position else p0
+			local a2 = a * a
+			local a3 = a2 * a
+			local h00 = 2 * a3 - 3 * a2 + 1
+			local h10 = a3 - 2 * a2 + a
+			local h01 = -2 * a3 + 3 * a2
+			pos = p0 * h00 + (hopVel * hopSec) * h10 + p1 * h01
+			pos += Vector3.new(0, 16 * 2.15 * a2 * (1 - a) * (1 - a), 0)
+			camPull = 1.16 - a * 0.04
+			camFovGoal = 56 + a * 4
+			if a > 0.9 and not hopLanded then
+				hopLanded = true
+				spawnCollectSpark(p1)
+				GameSoundEffects.playCashGrab()
+				camShakeAmp = 0.045
+			end
+			camShakeAmp *= 0.9
+		else
+			local dest = headCarryCf()
+			pos = if dest then dest.Position else (hopFrom or hoverHome)
+			camPull = 1.12
+			camFovGoal = 60
+			camShakeAmp *= 0.84
 		end
-		if os.clock() - t0 >= durationSec then
-			disconnect(shrinkConn)
-			shrinkConn = nil
+
+		model:PivotTo(CFrame.new(pos) * startCf.Rotation * spin)
+		if primary and primary.Parent then
+			focusPart = primary
+		end
+		if elapsed >= total then
+			disconnect(floatConn)
+			floatConn = nil
 		end
 	end)
-	waitToken(token, durationSec)
+
+	while floatConn do
+		if token ~= cutsceneToken then
+			return
+		end
+		RunService.Heartbeat:Wait()
+	end
+	camShakeAmp = 0
 	focusPart = nil
 end
 
@@ -1348,25 +1314,7 @@ local function runCutscene(payload: any)
 			focusPart = primary
 		end
 		-- Floating BrainrotHeader should already be on the reveal (server attach).
-		animateEmerge(reveal, CutsceneConfig.EMERGE_SEC, token)
-		if token ~= cutsceneToken then
-			endCutscene(token)
-			return
-		end
-		camPull = 1.16
-		camFovGoal = 56
-		animateHover(reveal, CutsceneConfig.HOVER_SEC, token)
-		if token ~= cutsceneToken then
-			endCutscene(token)
-			return
-		end
-		camShakeAmp = 0
-		animateHeroPose(reveal, CutsceneConfig.HOP_SEC, token)
-		if token ~= cutsceneToken then
-			endCutscene(token)
-			return
-		end
-		animateCollectToInventory(reveal, CutsceneConfig.SHRINK_SEC, token)
+		animateRevealMotion(reveal, token)
 		if token ~= cutsceneToken then
 			endCutscene(token)
 			return

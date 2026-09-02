@@ -2241,6 +2241,7 @@ local function ensureQuestHudVisibleAfterDialogue()
 end
 
 local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
+	GameSoundEffects.playQuestPopUp()
 	local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 5)
 	if not pg then
 		return

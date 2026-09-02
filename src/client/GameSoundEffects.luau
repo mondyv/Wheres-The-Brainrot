@@ -672,6 +672,16 @@ function GameSoundEffects.playBushRandomShakeAt(bush: Instance)
 	end)
 end
 
+function GameSoundEffects.playQuestPopUp()
+	local root = SoundService:FindFirstChild("SoundEffects")
+	local template = resolveSoundNode(root and root:FindFirstChild("Quest Pop Up"))
+	if not template then
+		warn("[GameSoundEffects] SoundEffects['Quest Pop Up'] missing")
+		return
+	end
+	playTemplate(template)
+end
+
 function GameSoundEffects.playNotification1()
 	if not notification1Template then
 		local root = SoundService:FindFirstChild("SoundEffects")

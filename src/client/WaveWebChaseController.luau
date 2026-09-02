@@ -886,7 +886,12 @@ local function clearPostFx()
 	end
 end
 
+local heartbeatFading = false
+
 local function showHeartbeat(intensity: number)
+	if heartbeatFading then
+		return
+	end
 	local makeGui = ensureFxGui
 	if not makeGui then
 		return
@@ -918,6 +923,7 @@ local function showHeartbeat(intensity: number)
 end
 
 local function hideHeartbeat()
+	heartbeatFading = false
 	if fxGui then
 		fxGui:Destroy()
 		fxGui = nil
@@ -925,6 +931,45 @@ local function hideHeartbeat()
 		chaseTitleLabel = nil
 	end
 	clearPostFx()
+end
+
+local function fadeHeartbeat(durationSec: number)
+	if heartbeatFading then
+		return
+	end
+	heartbeatFading = true
+	local gui = fxGui
+	local frame = heartbeatFrame
+	local color = colorFx
+	local blur = blurFx
+	local fadeInfo = TweenInfo.new(math.max(0.12, durationSec), Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	if frame then
+		for _, ch in frame:GetChildren() do
+			if ch:IsA("Frame") then
+				TweenService:Create(ch, fadeInfo, { BackgroundTransparency = 1 }):Play()
+			end
+		end
+	end
+	if color and color.Parent then
+		TweenService:Create(color, fadeInfo, {
+			Contrast = 0,
+			Saturation = 0,
+			TintColor = Color3.new(1, 1, 1),
+		}):Play()
+	end
+	if blur and blur.Parent then
+		TweenService:Create(blur, fadeInfo, { Size = 0 }):Play()
+	end
+	task.delay(durationSec + 0.02, function()
+		if gui and gui == fxGui then
+			hideHeartbeat()
+		elseif color == colorFx or blur == blurFx then
+			clearPostFx()
+			heartbeatFading = false
+		else
+			heartbeatFading = false
+		end
+	end)
 end
 
 local function clearExclamation()
@@ -1534,7 +1579,9 @@ local function finishChase(didHideHud: boolean)
 		SpiderSenseFx.stopAll()
 	end)
 	clearExclamation()
-	hideHeartbeat()
+	if not heartbeatFading then
+		hideHeartbeat()
+	end
 	restoreCamera()
 	unlockMovement()
 	setBgmChase(false)
@@ -1621,6 +1668,7 @@ local function runChase(token: number)
 
 	reportWaveStarted()
 
+	heartbeatFading = false
 	ensurePostFx()
 	local makeGui = ensureFxGui
 	if makeGui then
@@ -1738,10 +1786,9 @@ local function runChase(token: number)
 	end
 
 	if escaped and not killFired then
-		-- Inventory / HUD should snap back the moment you hit safezone —
-		-- don't wait for the cobweb sink tween.
+		fadeHeartbeat(0.28)
 		if didHideHud then
-			GameplayUiVisibility.show({ instant = true })
+			GameplayUiVisibility.show()
 		end
 		MobileTouchGate.ensureTouchControlsVisible(true)
 		if activeWave and activeWave.Parent then

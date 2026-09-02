@@ -981,15 +981,28 @@ local function animateEmerge(model: Model, durationSec: number, token: number)
 	end
 end
 
+local function headCarryCf(): CFrame?
+	local char = player.Character
+	local head = char and char:FindFirstChild("Head")
+	if head and head:IsA("BasePart") then
+		return head.CFrame * CFrame.new(0, head.Size.Y * 0.55 + 1.05, 0)
+	end
+	local hrp = getHRP()
+	if hrp then
+		return hrp.CFrame * CFrame.new(0, 2.35, 0)
+	end
+	return nil
+end
+
 local function animateHeroPose(model: Model, durationSec: number, token: number)
 	local startCf = model:GetPivot()
-	local _, startYaw, _ = startCf:ToEulerAnglesYXZ()
-	local t0 = os.clock()
 	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
 	if primary then
 		focusPart = primary
 	end
-	camFovGoal = 58
+	camPull = 1.28
+	camFovGoal = 60
+	local t0 = os.clock()
 	disconnect(hopConn)
 	hopConn = RunService.Heartbeat:Connect(function()
 		if token ~= cutsceneToken or not model.Parent then
@@ -998,15 +1011,28 @@ local function animateHeroPose(model: Model, durationSec: number, token: number)
 			return
 		end
 		local elapsed = os.clock() - t0
-		local alpha = math.clamp(elapsed / durationSec, 0, 1)
-		local bob = math.sin(elapsed * 1.15) * 0.08
-		model:PivotTo(CFrame.new(startCf.Position + Vector3.new(0, bob, 0)) * CFrame.Angles(0, startYaw, 0))
+		local alpha = math.clamp(elapsed / math.max(durationSec, 0.05), 0, 1)
+		local dest = headCarryCf() or startCf
+		local eased = alpha * alpha * (3 - 2 * alpha)
+		local pos = startCf.Position:Lerp(dest.Position, eased)
+		pos += Vector3.new(0, math.sin(alpha * math.pi) * 3.4, 0)
+		local rot = startCf.Rotation:Lerp(dest.Rotation, eased)
+		model:PivotTo(CFrame.new(pos) * rot)
+		if primary and primary.Parent then
+			focusPart = primary
+		end
 		if alpha >= 1 then
 			disconnect(hopConn)
 			hopConn = nil
 		end
 	end)
 	waitToken(token, durationSec)
+	if model.Parent then
+		local dest = headCarryCf()
+		if dest then
+			model:PivotTo(dest)
+		end
+	end
 end
 
 local function spawnCollectSpark(at: Vector3)
@@ -1031,20 +1057,20 @@ local function spawnCollectSpark(at: Vector3)
 end
 
 local function animateCollectToInventory(model: Model, durationSec: number, token: number)
-	local startCf = model:GetPivot()
-	local startPos = startCf.Position
-	local startScale = 1
-	pcall(function()
-		startScale = model:GetScale()
-	end)
-	-- Shrink in the hero shot — never hop onto the head.
+	-- Settle on the head, then fade into the grant. Never ScaleTo — that last
+	-- frame could pop the brainrot to a colossal size.
 	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
 	if primary then
 		focusPart = primary
 	end
 	camShakeAmp = 0
-	camFovGoal = 56
-	spawnCollectSpark(startPos)
+	camPull = 1.18
+	camFovGoal = 62
+	local dest = headCarryCf()
+	if dest then
+		model:PivotTo(dest)
+		spawnCollectSpark(dest.Position)
+	end
 	GameSoundEffects.playCashGrab()
 	local t0 = os.clock()
 	disconnect(shrinkConn)
@@ -1054,14 +1080,14 @@ local function animateCollectToInventory(model: Model, durationSec: number, toke
 			shrinkConn = nil
 			return
 		end
-		local alpha = math.clamp((os.clock() - t0) / durationSec, 0, 1)
-		local e = alpha * alpha * (3 - 2 * alpha)
-		local lift = Vector3.new(0, 0.85 * e, 0)
-		pcall(function()
-			model:ScaleTo(math.max(0.02, startScale * (1 - e * 0.96)))
-		end)
-		model:PivotTo(CFrame.new(startPos + lift) * startCf.Rotation)
-		if alpha >= 1 then
+		local live = headCarryCf()
+		if live then
+			model:PivotTo(live)
+			if primary and primary.Parent then
+				focusPart = primary
+			end
+		end
+		if os.clock() - t0 >= durationSec then
 			disconnect(shrinkConn)
 			shrinkConn = nil
 		end

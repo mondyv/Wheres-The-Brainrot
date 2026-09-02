@@ -401,26 +401,71 @@ local KEEP_COUNTERS_IN_JUNGLE = {
 
 local explorerHudActive = false
 local explorerSaved: { [GuiObject]: boolean } = {}
+local explorerBasePos: { [GuiObject]: UDim2 } = {}
+local explorerTweens: { Tween } = {}
+local EXPLORER_OUT = TweenInfo.new(0.18, Enum.EasingStyle.Cubic, Enum.EasingDirection.In)
+local EXPLORER_IN = TweenInfo.new(0.22, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)
 
-local function hideForExplorer(obj: GuiObject)
-	if explorerSaved[obj] == nil then
-		explorerSaved[obj] = obj.Visible
+local function cancelExplorerTweens()
+	for _, tw in explorerTweens do
+		pcall(function()
+			tw:Cancel()
+		end)
 	end
-	if obj.Visible then
-		obj.Visible = false
-	end
+	table.clear(explorerTweens)
 end
 
-local function restoreExplorerSaved()
-	for obj, wasVisible in explorerSaved do
+local function hideForExplorer(obj: GuiObject, animate: boolean)
+	if explorerSaved[obj] == nil then
+		explorerSaved[obj] = obj.Visible
+		explorerBasePos[obj] = obj.Position
+	end
+	if not obj.Visible then
+		return
+	end
+	if not animate then
+		obj.Visible = false
+		return
+	end
+	local base = explorerBasePos[obj] or obj.Position
+	local tw = TweenService:Create(obj, EXPLORER_OUT, {
+		Position = base + UDim2.fromOffset(0, 28),
+	})
+	table.insert(explorerTweens, tw)
+	tw:Play()
+	tw.Completed:Connect(function()
 		if obj.Parent then
-			obj.Visible = wasVisible
+			obj.Visible = false
+			obj.Position = base
+		end
+	end)
+end
+
+local function restoreExplorerSaved(animate: boolean)
+	cancelExplorerTweens()
+	for obj, wasVisible in explorerSaved do
+		if not obj.Parent then
+			continue
+		end
+		local base = explorerBasePos[obj] or obj.Position
+		obj.Position = base
+		if wasVisible then
+			if animate then
+				obj.Visible = true
+				obj.Position = base + UDim2.fromOffset(0, 28)
+				local tw = TweenService:Create(obj, EXPLORER_IN, { Position = base })
+				table.insert(explorerTweens, tw)
+				tw:Play()
+			else
+				obj.Visible = true
+			end
 		end
 	end
 	table.clear(explorerSaved)
+	table.clear(explorerBasePos)
 end
 
-local function applyExplorerHud(outside: boolean)
+local function applyExplorerHud(outside: boolean, animate: boolean)
 	ensureHudRoots()
 	local side = sideUI
 	if not side then
@@ -429,19 +474,19 @@ local function applyExplorerHud(outside: boolean)
 	if outside then
 		for _, child in side:GetChildren() do
 			if child:IsA("GuiObject") and not KEEP_SIDE_IN_JUNGLE[child.Name] then
-				hideForExplorer(child)
+				hideForExplorer(child, animate)
 			end
 		end
 		local counters = side:FindFirstChild("Counters")
 		if counters then
 			for _, child in counters:GetChildren() do
 				if child:IsA("GuiObject") and not KEEP_COUNTERS_IN_JUNGLE[child.Name] then
-					hideForExplorer(child)
+					hideForExplorer(child, animate)
 				end
 			end
 		end
 	else
-		restoreExplorerSaved()
+		restoreExplorerSaved(animate)
 	end
 	if BoostIconsController.setExplorerHud then
 		BoostIconsController.setExplorerHud(outside)
@@ -459,12 +504,12 @@ local function syncExplorerHud()
 	end
 	if outside == explorerHudActive then
 		if outside then
-			applyExplorerHud(true)
+			applyExplorerHud(true, false)
 		end
 		return
 	end
 	explorerHudActive = outside
-	applyExplorerHud(outside)
+	applyExplorerHud(outside, true)
 end
 
 -- Searches SideUI only (never Main.Frames — that wrongly wired panel-internal buttons).

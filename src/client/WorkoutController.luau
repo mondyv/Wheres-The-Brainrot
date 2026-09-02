@@ -495,13 +495,14 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		return
 	end
 	model.Name = "WorkoutFootProp"
-	-- Studio clone as-is. Only strip scripts and turn off collision so it can sit in the world.
+	-- Studio clone as-is. Only strip scripts and make the mesh safe to follow the feet.
 	for _, d in model:GetDescendants() do
 		if d:IsA("Script") or d:IsA("LocalScript") then
 			d:Destroy()
 		elseif d:IsA("BasePart") then
 			d.CanCollide = false
 			d.Massless = true
+			d.Anchored = true
 			d.CanQuery = false
 			d.CanTouch = false
 		end
@@ -585,29 +586,21 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	footProp = model
 	poseGearOnFeet(character, model)
 
-	-- Weld the unchanged Studio clone to the foot. Pivoting every frame
-	-- resets particles/beams so they never look like they do in Studio.
-	for _, d in model:GetDescendants() do
-		if d:IsA("BasePart") and d ~= primary then
-			local inner = Instance.new("WeldConstraint")
-			inner.Name = "WorkoutGearRigid"
-			inner.Part0 = primary
-			inner.Part1 = d
-			inner.Parent = d
-			d.Anchored = false
+	-- Follow both shoes every frame so the bar stays flush in the handstand.
+	-- Authored VFX is never toggled; graphics quality is what shows particles.
+	if footFollowConn then
+		footFollowConn:Disconnect()
+	end
+	footFollowConn = RunService.RenderStepped:Connect(function()
+		if not model.Parent or not character.Parent or tool.Parent ~= character then
+			if footFollowConn then
+				footFollowConn:Disconnect()
+				footFollowConn = nil
+			end
+			return
 		end
-	end
-	primary.Anchored = false
-	if footWeld then
-		footWeld:Destroy()
-		footWeld = nil
-	end
-	local weld = Instance.new("WeldConstraint")
-	weld.Name = "WorkoutFootWeld"
-	weld.Part0 = anchorFoot
-	weld.Part1 = primary
-	weld.Parent = primary
-	footWeld = weld
+		poseGearOnFeet(character, model)
+	end)
 
 	if tool:GetAttribute("RainbowGear") == true then
 		GearRainbowFX.attach(model)
@@ -917,23 +910,28 @@ end
 
 local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	local main = PlayerGuiMain.ensure(player)
+	if not main then
+		return
+	end
 	local layer = ensureFloaterLayer(main)
 	local sideUI = main:FindFirstChild("SideUI")
 	local counters = sideUI and sideUI:FindFirstChild("Counters")
 	local powerFrame = counters and counters:FindFirstChild("Power")
 	if not powerFrame or not powerFrame:IsA("GuiObject") then
-		if typeof(UpgradesController.commitPowerHudFromFloater) == "function" then
-			UpgradesController.commitPowerHudFromFloater()
-		end
-		return
+		-- HUD can still be booting on the first gear tick — show at screen center.
+		powerFrame = nil
 	end
 
-	local cluster = resolvePulseCluster(powerFrame)
-	local amountLabel = cluster:FindFirstChild("Amount") or powerFrame:FindFirstChild("Amount", true)
+	local cluster: GuiObject? = nil
+	local amountLabel: Instance? = nil
+	if powerFrame then
+		cluster = resolvePulseCluster(powerFrame)
+		amountLabel = cluster:FindFirstChild("Amount") or powerFrame:FindFirstChild("Amount", true)
+	end
 	local amountGui: GuiObject? = if amountLabel and amountLabel:IsA("GuiObject")
 		then amountLabel :: GuiObject
 		else nil
-	local iconGui: GuiObject? = resolveMuscleIcon(powerFrame)
+	local iconGui: GuiObject? = if powerFrame then resolveMuscleIcon(powerFrame) else nil
 
 	local hudColor = resolvePowerHudColor(
 		if amountLabel and amountLabel:IsA("TextLabel") then amountLabel :: TextLabel else nil
@@ -949,8 +947,7 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	end
 
 	local function destScreen(): Vector2
-		-- Aim at the amount+muscle cluster, never the full Power row (Edit skews center).
-		if cluster.AbsoluteSize.X > 1 then
+		if cluster and cluster.AbsoluteSize.X > 1 then
 			return absCenter(cluster)
 		end
 		if amountGui and iconGui then
@@ -959,8 +956,10 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 			return absCenter(amountGui)
 		elseif iconGui then
 			return absCenter(iconGui)
+		elseif powerFrame then
+			return absCenter(powerFrame)
 		end
-		return absCenter(powerFrame :: GuiObject)
+		return Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y * 0.22)
 	end
 
 	local function toLayerOffset(screen: Vector2): UDim2
@@ -968,7 +967,7 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 		return UDim2.fromOffset(screen.X - lp.X, screen.Y - lp.Y)
 	end
 
-	if not layer.Parent or not powerFrame.Parent then
+	if not layer.Parent then
 		return
 	end
 
@@ -1106,7 +1105,7 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 				return
 			end
 			row.Position = toLayerOffset(destScreen())
-			pulsePowerHud(amountGui, powerFrame :: GuiObject, layer)
+			pulsePowerHud(amountGui, powerFrame, layer)
 			if typeof(UpgradesController.commitPowerHudFromFloater) == "function" then
 				UpgradesController.commitPowerHudFromFloater()
 			end
@@ -1721,15 +1720,28 @@ local function init()
 		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
 			return
 		end
-		local gain = player:GetAttribute("WorkoutLastGain")
-		local g = if typeof(gain) == "number" then gain else 0
 		local character = player.Character
 		if character then
 			flashWhite(character)
 		end
-		if g > 0 then
-			spawnPowerFloater(g)
+		-- LastGain can replicate a frame after the pulse (first gear especially).
+		local function tryFloater(attempt: number)
+			if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+				return
+			end
+			local gain = player:GetAttribute("WorkoutLastGain")
+			local g = if typeof(gain) == "number" then gain else 0
+			if g > 0 then
+				spawnPowerFloater(g)
+				return
+			end
+			if attempt < 6 then
+				task.delay(0.08, function()
+					tryFloater(attempt + 1)
+				end)
+			end
 		end
+		tryFloater(1)
 		-- Don't snap the power number here — wait until the +N floater lands.
 		if typeof(UpgradesController.snapPowerHud) == "function" then
 			UpgradesController.snapPowerHud()

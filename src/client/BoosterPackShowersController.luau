@@ -58,8 +58,6 @@ local heartbeatConn: RBXScriptConnection? = nil
 local sessionStartedAt = os.clock()
 local SESSION_FAVORITE_DELAY_SEC = 360
 local sessionFavoritePrompted = false
-local inventoryAccessPrompted = false
-local favoriteCheckWarned = false
 
 local likeCheck: GuiObject? = nil
 local joinCheck: GuiObject? = nil
@@ -217,67 +215,13 @@ local function markLiked()
 	refreshPanelState()
 end
 
-local function favoriteItemIds(): { number }
-	local ids: { number } = {}
-	if typeof(game.PlaceId) == "number" and game.PlaceId > 0 then
-		table.insert(ids, game.PlaceId)
-	end
-	if typeof(game.GameId) == "number" and game.GameId > 0 then
-		local seen = false
-		for _, id in ids do
-			if id == game.GameId then
-				seen = true
-				break
-			end
-		end
-		if not seen then
-			table.insert(ids, game.GameId)
-		end
-	end
-	return ids
-end
-
-local function tryFavoriteCheck(): boolean
-	-- Private servers and "already favorited" both work once inventory read is allowed.
-	-- PlaceId and GameId (universe) are both tried — Roblox is inconsistent which one indexes favorites.
-	for _, id in favoriteItemIds() do
-		local ok, favorited = pcall(function()
-			return AvatarEditorService:GetFavoriteAsync(id, Enum.AvatarItemType.Asset)
-		end)
-		if ok and favorited == true then
-			markLiked()
-			return true
-		end
-		if not ok and not favoriteCheckWarned then
-			favoriteCheckWarned = true
-			warn("[BoosterPackShowersController] GetFavoriteAsync failed:", favorited)
-		end
-	end
-	return false
-end
-
-local function requestInventoryRead()
-	if inventoryAccessPrompted then
-		return
-	end
-	inventoryAccessPrompted = true
-	local ok, err = pcall(function()
-		AvatarEditorService:PromptAllowInventoryReadAccess()
-	end)
-	if not ok then
-		warn("[BoosterPackShowersController] PromptAllowInventoryReadAccess failed:", err)
-		inventoryAccessPrompted = false
-	end
-end
-
 local function promptLikeGame()
 	if alreadyClaimed() or likedSaved() then
 		refreshPanelState()
 		return
 	end
-	if tryFavoriteCheck() then
-		return
-	end
+	-- Only the official favorite prompt — never ask to read inventory.
+	-- Completion is saved on the player, so a rejoin keeps the checkmark.
 	local ok, err = pcall(function()
 		AvatarEditorService:PromptSetFavorite(game.PlaceId, Enum.AvatarItemType.Asset, true)
 	end)
@@ -454,16 +398,6 @@ local function wireFreeRewardsPanel()
 	AvatarEditorService.PromptSetFavoriteCompleted:Connect(function(result)
 		if result == Enum.AvatarPromptResult.Success then
 			markLiked()
-		else
-			-- Already favorited often returns Failed; inventory read then confirms it.
-			if not tryFavoriteCheck() then
-				requestInventoryRead()
-			end
-		end
-	end)
-	AvatarEditorService.PromptAllowInventoryReadAccessCompleted:Connect(function(result)
-		if result == Enum.AvatarPromptResult.Success then
-			tryFavoriteCheck()
 		end
 	end)
 
@@ -473,11 +407,6 @@ local function wireFreeRewardsPanel()
 		if frame.Visible then
 			panelOpen = true
 			refreshPanelState()
-			if not likedSaved() and not alreadyClaimed() then
-				if not tryFavoriteCheck() then
-					requestInventoryRead()
-				end
-			end
 			return
 		end
 		if panelOpen then
@@ -630,11 +559,6 @@ local function openFreeRewards()
 	panelOpen = true
 	HUDController.openFrameByName(FRAME_NAME)
 	refreshPanelState()
-	if not likedSaved() and not alreadyClaimed() then
-		if not tryFavoriteCheck() then
-			requestInventoryRead()
-		end
-	end
 end
 
 local function scheduleClose()

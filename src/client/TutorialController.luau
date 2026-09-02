@@ -2822,6 +2822,7 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 	elseif step.id ~= "claimBrainrot" then
 		clearLockedBush()
 	end
+	GameSoundEffects.playQuestPopUp()
 	showPanel(resolveStepText(step), first)
 	refreshPointers()
 	if step.id == "upgradeBrainrot" then
@@ -3455,4 +3456,3 @@ function M.init()
 end
 
 return M
-                                    

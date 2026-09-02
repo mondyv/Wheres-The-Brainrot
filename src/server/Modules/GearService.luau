@@ -80,15 +80,6 @@ function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
 		for _, d in clone:GetDescendants() do
 			if d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ProximityPrompt") then
 				d:Destroy()
-			elseif
-				d:IsA("ParticleEmitter")
-				or d:IsA("Beam")
-				or d:IsA("Trail")
-				or d:IsA("Fire")
-				or d:IsA("Smoke")
-				or d:IsA("Sparkles")
-			then
-				(d :: any).Enabled = true
 			end
 		end
 		local main = getHandlePart(clone)

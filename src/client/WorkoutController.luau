@@ -86,6 +86,7 @@ local boundTools: { [Tool]: boolean } = {}
 local workoutTrack: AnimationTrack? = nil
 local workoutAnim: Animation? = nil
 local footMotor: Motor6D? = nil
+local footWeld: WeldConstraint? = nil
 local footProp: Model? = nil
 local footTool: Tool? = nil
 local footFollowConn: RBXScriptConnection? = nil
@@ -232,6 +233,10 @@ local function clearFootAttach()
 	if footMotor then
 		footMotor:Destroy()
 		footMotor = nil
+	end
+	if footWeld then
+		footWeld:Destroy()
+		footWeld = nil
 	end
 	if footProp then
 		GearRainbowFX.detach(footProp)
@@ -415,56 +420,8 @@ local function ensureWorldFolder(): Folder
 	return created
 end
 
-local function looksLikeFxName(name: string): boolean
-	local n = string.lower(name)
-	if n == " " or n == "" then
-		return true
-	end
-	return string.find(n, "vfx", 1, true) ~= nil
-		or string.find(n, "fx", 1, true) ~= nil
-		or string.find(n, "portal", 1, true) ~= nil
-		or string.find(n, "beam", 1, true) ~= nil
-		or string.find(n, "emitter", 1, true) ~= nil
-		or string.find(n, "particle", 1, true) ~= nil
-		or string.find(n, "hitbox", 1, true) ~= nil
-		or string.find(n, "aura", 1, true) ~= nil
-		or string.find(n, "trail", 1, true) ~= nil
-		or string.find(n, "shockwave", 1, true) ~= nil
-		or string.find(n, "spark", 1, true) ~= nil
-end
-
-local function isUnderFx(inst: Instance, root: Instance): boolean
-	local p: Instance? = inst
-	while p and p ~= root do
-		if looksLikeFxName(p.Name) then
-			return true
-		end
-		p = p.Parent
-	end
-	return false
-end
-
--- Pose using the real gear mesh only. Huge portal/beam parts stay in the clone
--- but must not pull the bar onto the torso.
-local function collectSolidParts(model: Model): { BasePart }
-	local parts: { BasePart } = {}
-	for _, d in model:GetDescendants() do
-		if d:IsA("BasePart") and d.Transparency < 0.7 and not isUnderFx(d, model) then
-			local maxDim = math.max(d.Size.X, d.Size.Y, d.Size.Z)
-			if maxDim <= 10 then
-				table.insert(parts, d)
-			end
-		end
-	end
-	if #parts == 0 then
-		local primary = model.PrimaryPart
-		if primary then
-			table.insert(parts, primary)
-		end
-	end
-	return parts
-end
-
+-- Place the authored Studio clone on the shoes using Primary only.
+-- Do not inspect VFX parts for bounds and do not toggle any emitters.
 local function poseGearOnFeet(character: Model, model: Model)
 	local rightFoot, leftFoot = findFeet(character)
 	local anchorFoot = rightFoot or leftFoot
@@ -475,15 +432,10 @@ local function poseGearOnFeet(character: Model, model: Model)
 	if not primary then
 		return
 	end
-	local parts = collectSolidParts(model)
-	if #parts == 0 then
-		table.insert(parts, primary)
-	end
 	local hrp = character:FindFirstChild("HumanoidRootPart")
 	local forward = if hrp and hrp:IsA("BasePart") then hrp.CFrame.LookVector else Vector3.zAxis
 	local mid, across, contactY = soleAcross(anchorFoot, leftFoot, forward)
 
-	-- Lie Primary's longest axis across the shoes (bar on the toes, not a tower).
 	local ps = primary.Size
 	local lieFlat = CFrame.identity
 	if ps.Y >= ps.X and ps.Y >= ps.Z then
@@ -496,15 +448,13 @@ local function poseGearOnFeet(character: Model, model: Model)
 	model:PivotTo(target * primary.CFrame:ToObjectSpace(model:GetPivot()))
 
 	local minY = math.huge
-	for _, d in parts do
-		local cf = d.CFrame
-		local half = d.Size * 0.5
-		for _, sx in { -1, 1 } do
-			for _, sy in { -1, 1 } do
-				for _, sz in { -1, 1 } do
-					local y = cf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz)).Y
-					minY = math.min(minY, y)
-				end
+	local cf = primary.CFrame
+	local half = primary.Size * 0.5
+	for _, sx in { -1, 1 } do
+		for _, sy in { -1, 1 } do
+			for _, sz in { -1, 1 } do
+				local y = cf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz)).Y
+				minY = math.min(minY, y)
 			end
 		end
 	end
@@ -545,19 +495,15 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		return
 	end
 	model.Name = "WorkoutFootProp"
+	-- Studio clone as-is. Only strip scripts and turn off collision so it can sit in the world.
 	for _, d in model:GetDescendants() do
-		if d:IsA("BaseScript") or d:IsA("LocalScript") or d:IsA("Script") or d:IsA("GuiBase") then
-			d:Destroy()
-		elseif d:IsA("Highlight") or d:IsA("BillboardGui") or d:IsA("ProximityPrompt") then
+		if d:IsA("Script") or d:IsA("LocalScript") then
 			d:Destroy()
 		elseif d:IsA("BasePart") then
 			d.CanCollide = false
 			d.Massless = true
-			d.Anchored = true
 			d.CanQuery = false
 			d.CanTouch = false
-			d.CastShadow = false
-			d.LocalTransparencyModifier = 0
 		end
 	end
 
@@ -639,21 +585,29 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 	footProp = model
 	poseGearOnFeet(character, model)
 
-	-- Stay world-anchored (not welded) so Humanoid cannot steal the mesh to the head.
-	-- Follow the shoes each frame; authored VFX is left exactly as cloned.
-	if footFollowConn then
-		footFollowConn:Disconnect()
-	end
-	footFollowConn = RunService.RenderStepped:Connect(function()
-		if not model.Parent or not character.Parent or tool.Parent ~= character then
-			if footFollowConn then
-				footFollowConn:Disconnect()
-				footFollowConn = nil
-			end
-			return
+	-- Weld the unchanged Studio clone to the foot. Pivoting every frame
+	-- resets particles/beams so they never look like they do in Studio.
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") and d ~= primary then
+			local inner = Instance.new("WeldConstraint")
+			inner.Name = "WorkoutGearRigid"
+			inner.Part0 = primary
+			inner.Part1 = d
+			inner.Parent = d
+			d.Anchored = false
 		end
-		poseGearOnFeet(character, model)
-	end)
+	end
+	primary.Anchored = false
+	if footWeld then
+		footWeld:Destroy()
+		footWeld = nil
+	end
+	local weld = Instance.new("WeldConstraint")
+	weld.Name = "WorkoutFootWeld"
+	weld.Part0 = anchorFoot
+	weld.Part1 = primary
+	weld.Parent = primary
+	footWeld = weld
 
 	if tool:GetAttribute("RainbowGear") == true then
 		GearRainbowFX.attach(model)

@@ -23,19 +23,6 @@ local function isStudioPreview(): boolean
 	return RunService:IsStudio()
 end
 
-local function stripSimulatedFx(root: Instance)
-	for _, d in root:GetDescendants() do
-		if d:IsA("ParticleEmitter") then
-			d.Enabled = false
-			d:Clear()
-		elseif d:IsA("Beam") or d:IsA("Trail") or d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
-			(d :: any).Enabled = false
-		elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-			(d :: Light).Enabled = false
-		end
-	end
-end
-
 local function scaleNumberSequence(seq: NumberSequence, mult: number): NumberSequence
 	local keys = seq.Keypoints
 	local out = table.create(#keys)
@@ -52,38 +39,6 @@ local function looksLikeFxPart(part: BasePart): boolean
 		or string.find(n, "emitter", 1, true) ~= nil
 		or string.find(n, "particle", 1, true) ~= nil
 		or string.find(n, "hitbox", 1, true) ~= nil
-end
-
--- Transparent VFX-only meshes render as empty/black in a ViewportFrame.
-local function revealHiddenMeshes(root: Instance)
-	local parts: { BasePart } = {}
-	for _, d in root:GetDescendants() do
-		if d:IsA("BasePart") then
-			table.insert(parts, d)
-		end
-	end
-	local visible = 0
-	for _, p in parts do
-		if p.Transparency < 0.85 and not looksLikeFxPart(p) then
-			visible += 1
-		end
-	end
-	if visible > 0 then
-		return
-	end
-	local model = if root:IsA("Model") then root :: Model else root:FindFirstAncestorOfClass("Model")
-	local primary = model and model.PrimaryPart
-	for _, p in parts do
-		if p.Name == "Handle" or p == primary then
-			continue
-		end
-		if p.Transparency >= 0.85 then
-			p.Transparency = 0.2
-			if p.Material == Enum.Material.ForceField or p.Material == Enum.Material.Glass then
-				p.Material = Enum.Material.Neon
-			end
-		end
-	end
 end
 
 local function iconPartList(root: Instance): { BasePart }
@@ -128,40 +83,6 @@ local function boundsFromParts(parts: { BasePart }): (Vector3, Vector3)
 		end
 	end
 	return (minV + maxV) * 0.5, maxV - minV
-end
-
--- Enable / reparent the gear's authored FX only (no synthetic particles).
-local function enableAuthoredFx(root: Instance)
-	if isStudioPreview() then
-		stripSimulatedFx(root)
-		return
-	end
-	local primary = if root:IsA("Model") then root.PrimaryPart else nil
-	if not primary and root:IsA("Model") then
-		primary = root:FindFirstChildWhichIsA("BasePart", true)
-	end
-
-	for _, d in root:GetDescendants() do
-		if d:IsA("ParticleEmitter") then
-			d.Enabled = true
-			d.LockedToPart = true
-			if primary and not d:FindFirstAncestorWhichIsA("BasePart") then
-				local att = Instance.new("Attachment")
-				att.Name = "ViewportVfxAttach"
-				att.Parent = primary
-				d.Parent = att
-			end
-		elseif d:IsA("Beam") then
-			d.Enabled = true
-		elseif d:IsA("Trail") then
-			d.Enabled = true
-		elseif d:IsA("Fire") or d:IsA("Smoke") or d:IsA("Sparkles") then
-			local fx = d :: any
-			fx.Enabled = true
-		elseif d:IsA("PointLight") or d:IsA("SpotLight") or d:IsA("SurfaceLight") then
-			(d :: Light).Enabled = true
-		end
-	end
 end
 
 local function clearFxProxy(host: GuiObject)
@@ -392,8 +313,6 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 		end
 	end
 	clone.Parent = world
-	enableAuthoredFx(clone)
-	revealHiddenMeshes(clone)
 
 	local parts = iconPartList(clone)
 	local center, size = boundsFromParts(parts)

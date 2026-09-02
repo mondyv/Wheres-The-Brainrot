@@ -67,7 +67,8 @@ reportOnboardingRE.OnServerEvent:Connect(function(player: Player, stepId: any)
 			return
 		end
 	end
-	AnalyticsFunnelService.logOnboardingId(player, id)
+	local allowSkip = id == "tutorial_completed" or id == "opened_starter_lucky_block"
+	AnalyticsFunnelService.logOnboardingId(player, id, { allowSkip = allowSkip })
 end)
 
 reportShopOpenRE.OnServerEvent:Connect(function(player: Player)
@@ -101,13 +102,29 @@ reportWaveEscapeRE.OnServerEvent:Connect(function(player: Player)
 	AnalyticsFunnelService.waveChaseEscaped(player)
 end)
 
+local function applyCurrentLand(player: Player)
+	local land = player:GetAttribute("CurrentLand")
+	if typeof(land) == "number" and land >= 1 then
+		AnalyticsFunnelService.onReachedLand(player, math.floor(land))
+	end
+end
+
+local function watchLand(player: Player)
+	player:GetAttributeChangedSignal("CurrentLand"):Connect(function()
+		applyCurrentLand(player)
+	end)
+	applyCurrentLand(player)
+end
+
 local function onPlayerJoined(player: Player)
+	watchLand(player)
 	task.defer(function()
 		if not player.Parent then
 			return
 		end
 		AnalyticsFunnelService.beginPlaySession(player)
 		AnalyticsFunnelService.logOnboardingId(player, "player_joined", { allowSkip = true })
+		applyCurrentLand(player)
 	end)
 end
 
@@ -130,11 +147,16 @@ task.spawn(function()
 		end
 		for _, player in Players:GetPlayers() do
 			AnalyticsFunnelService.tickPlaySession(player)
+			local attrLand = player:GetAttribute("CurrentLand")
+			if typeof(attrLand) == "number" and attrLand >= 1 then
+				AnalyticsFunnelService.onReachedLand(player, math.floor(attrLand))
+				continue
+			end
 			local char = player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
 			if hrp and hrp:IsA("BasePart") then
 				local land = LandResolver.resolveLandAtPosition(hrp.Position)
-				if typeof(land) == "number" and land >= 2 then
+				if typeof(land) == "number" and land >= 1 then
 					AnalyticsFunnelService.onReachedLand(player, land)
 				end
 			end

@@ -2749,6 +2749,8 @@ finishTutorial = function(opts: { skipped: boolean? }?)
 		-- One confetti burst for the whole tutorial (guarded inside fireConfettiAndShake).
 		fireConfettiAndShake()
 	end
+	-- Skip still counts as tutorial completion in the onboarding funnel.
+	reportOnboardingStep("tutorial_completed")
 	task.defer(function()
 		if skipped then
 			TopNotifController.showBroadcast("You skipped the tutorial! You got a Starter Lucky Block!")

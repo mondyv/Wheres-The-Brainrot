@@ -93,6 +93,26 @@ end
 -- Onboarding
 ----------------------------------------------------------------
 
+local function emitOnboarding(player: Player, def: AnalyticsFunnelConfig.OnboardingStep, logSessionLoop: boolean)
+	local last = lastOnboardingStep[player] or 0
+	if def.step <= last then
+		return
+	end
+	lastOnboardingStep[player] = def.step
+	if logSessionLoop and (def.id == "opened_bush" or def.id == "claimed_brainrot" or def.id == "placed_on_stand") then
+		M.logSessionLoopId(player, def.id)
+	end
+	if not canSend() then
+		return
+	end
+	local ok, err = pcall(function()
+		AnalyticsService:LogOnboardingFunnelStepEvent(player, def.step, def.name)
+	end)
+	if not ok then
+		warn("[AnalyticsFunnel] onboarding failed:", def.id, err)
+	end
+end
+
 function M.logOnboardingId(player: Player, stepId: string, opts: { allowSkip: boolean? }?)
 	if typeof(player) ~= "Instance" or not player:IsA("Player") then
 		return
@@ -109,19 +129,18 @@ function M.logOnboardingId(player: Player, stepId: string, opts: { allowSkip: bo
 	if not allowSkip and def.step > last + 1 then
 		return
 	end
-	lastOnboardingStep[player] = def.step
-	if stepId == "opened_bush" or stepId == "claimed_brainrot" or stepId == "placed_on_stand" then
-		M.logSessionLoopId(player, stepId)
-	end
-	if not canSend() then
+	-- Skip / jump-ahead must still log every onboarding step in order or
+	-- Creator Hub treats the player as dropped at the last consecutive step.
+	if allowSkip and def.step > last + 1 then
+		for s = last + 1, def.step do
+			local fill = AnalyticsFunnelConfig.onboardingByStep(s)
+			if fill then
+				emitOnboarding(player, fill, s == def.step)
+			end
+		end
 		return
 	end
-	local ok, err = pcall(function()
-		AnalyticsService:LogOnboardingFunnelStepEvent(player, def.step, def.name)
-	end)
-	if not ok then
-		warn("[AnalyticsFunnel] onboarding failed:", stepId, err)
-	end
+	emitOnboarding(player, def, true)
 end
 
 function M.logOnboardingStep(player: Player, stepNumber: number, opts: { allowSkip: boolean? }?)

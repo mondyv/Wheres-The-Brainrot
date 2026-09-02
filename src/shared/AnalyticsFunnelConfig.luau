@@ -66,20 +66,21 @@ M.ONBOARDING_MAX_STEP = 14
 -- World progression — land depth (stable across joins)
 ----------------------------------------------------------------
 
-M.WORLD_FUNNEL = "WorldProgression_v2"
+M.WORLD_FUNNEL = "WorldProgression_v3"
 -- Keep PROGRESSION_FUNNEL alias for older call sites.
 M.PROGRESSION_FUNNEL = M.WORLD_FUNNEL
 
 M.WORLD = {
-	{ step = 1, id = "land_2", name = "Reached Land 2", land = 2 },
-	{ step = 2, id = "land_3", name = "Reached Land 3", land = 3 },
-	{ step = 3, id = "land_4", name = "Reached Land 4", land = 4 },
-	{ step = 4, id = "land_5", name = "Reached Land 5", land = 5 },
-	{ step = 5, id = "land_6", name = "Reached Land 6", land = 6 },
-	{ step = 6, id = "land_7", name = "Reached Land 7", land = 7 },
-	{ step = 7, id = "land_8", name = "Reached Land 8", land = 8 },
-	{ step = 8, id = "land_9", name = "Reached Land 9", land = 9 },
-	{ step = 9, id = "land_10", name = "Reached Land 10", land = 10 },
+	{ step = 1, id = "land_1", name = "Reached Land 1", land = 1 },
+	{ step = 2, id = "land_2", name = "Reached Land 2", land = 2 },
+	{ step = 3, id = "land_3", name = "Reached Land 3", land = 3 },
+	{ step = 4, id = "land_4", name = "Reached Land 4", land = 4 },
+	{ step = 5, id = "land_5", name = "Reached Land 5", land = 5 },
+	{ step = 6, id = "land_6", name = "Reached Land 6", land = 6 },
+	{ step = 7, id = "land_7", name = "Reached Land 7", land = 7 },
+	{ step = 8, id = "land_8", name = "Reached Land 8", land = 8 },
+	{ step = 9, id = "land_9", name = "Reached Land 9", land = 9 },
+	{ step = 10, id = "land_10", name = "Reached Land 10", land = 10 },
 } :: { FunnelStep }
 
 -- Back-compat alias used by older service helpers.

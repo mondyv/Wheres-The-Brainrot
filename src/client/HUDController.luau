@@ -402,67 +402,134 @@ local KEEP_COUNTERS_IN_JUNGLE = {
 local explorerHudActive = false
 local explorerSaved: { [GuiObject]: boolean } = {}
 local explorerBasePos: { [GuiObject]: UDim2 } = {}
+local explorerSlidePos: { [GuiObject]: UDim2 } = {}
 local explorerTweens: { Tween } = {}
-local EXPLORER_OUT = TweenInfo.new(0.18, Enum.EasingStyle.Cubic, Enum.EasingDirection.In)
-local EXPLORER_IN = TweenInfo.new(0.22, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)
+local explorerAnimGen = 0
+local EXPLORER_OUT, EXPLORER_IN = GameplayUiVisibility.slideTweenInfos()
 
-local function cancelExplorerTweens()
+local function cancelExplorerTweens(): number
+	explorerAnimGen += 1
 	for _, tw in explorerTweens do
 		pcall(function()
 			tw:Cancel()
 		end)
 	end
 	table.clear(explorerTweens)
+	return explorerAnimGen
 end
 
-local function hideForExplorer(obj: GuiObject, animate: boolean)
-	if explorerSaved[obj] == nil then
-		explorerSaved[obj] = obj.Visible
+local function collectExplorerTargets(): { GuiObject }
+	local out: { GuiObject } = {}
+	local side = sideUI
+	if not side then
+		return out
+	end
+	for _, child in side:GetChildren() do
+		if child:IsA("GuiObject") and not KEEP_SIDE_IN_JUNGLE[child.Name] then
+			table.insert(out, child :: GuiObject)
+		end
+	end
+	local counters = side:FindFirstChild("Counters")
+	if counters then
+		for _, child in counters:GetChildren() do
+			if child:IsA("GuiObject") and not KEEP_COUNTERS_IN_JUNGLE[child.Name] then
+				table.insert(out, child :: GuiObject)
+			end
+		end
+	end
+	table.sort(out, function(a, b)
+		return GameplayUiVisibility.slideWaveOrder(a) < GameplayUiVisibility.slideWaveOrder(b)
+	end)
+	return out
+end
+
+local function hideForExplorer(obj: GuiObject, animate: boolean, delaySec: number, gen: number)
+	if explorerSaved[obj] ~= nil then
+		if not animate and obj.Visible then
+			local slide = explorerSlidePos[obj] or GameplayUiVisibility.slideDestination(obj)
+			obj.Position = slide
+			obj.Visible = false
+		end
+		return
+	end
+	if explorerBasePos[obj] == nil then
 		explorerBasePos[obj] = obj.Position
 	end
+	explorerSaved[obj] = obj.Visible
+	local base = explorerBasePos[obj]
+	local slide = GameplayUiVisibility.slideDestination(obj)
+	explorerSlidePos[obj] = slide
 	if not obj.Visible then
+		obj.Position = slide
 		return
 	end
 	if not animate then
+		obj.Position = slide
 		obj.Visible = false
 		return
 	end
-	local base = explorerBasePos[obj] or obj.Position
-	local tw = TweenService:Create(obj, EXPLORER_OUT, {
-		Position = base + UDim2.fromOffset(0, 28),
-	})
-	table.insert(explorerTweens, tw)
-	tw:Play()
-	tw.Completed:Connect(function()
-		if obj.Parent then
-			obj.Visible = false
-			obj.Position = base
+	obj.Position = base
+	obj.Visible = true
+	task.delay(delaySec, function()
+		if gen ~= explorerAnimGen or not obj.Parent then
+			return
 		end
+		local tw = TweenService:Create(obj, EXPLORER_OUT, { Position = slide })
+		table.insert(explorerTweens, tw)
+		tw:Play()
+		tw.Completed:Connect(function()
+			if gen ~= explorerAnimGen or not obj.Parent then
+				return
+			end
+			obj.Visible = false
+			obj.Position = slide
+		end)
 	end)
 end
 
 local function restoreExplorerSaved(animate: boolean)
-	cancelExplorerTweens()
+	local gen = cancelExplorerTweens()
+	local pending: { GuiObject } = {}
 	for obj, wasVisible in explorerSaved do
-		if not obj.Parent then
-			continue
-		end
-		local base = explorerBasePos[obj] or obj.Position
-		obj.Position = base
-		if wasVisible then
-			if animate then
-				obj.Visible = true
-				obj.Position = base + UDim2.fromOffset(0, 28)
-				local tw = TweenService:Create(obj, EXPLORER_IN, { Position = base })
-				table.insert(explorerTweens, tw)
-				tw:Play()
-			else
-				obj.Visible = true
-			end
+		if obj.Parent and wasVisible then
+			table.insert(pending, obj)
+		elseif obj.Parent then
+			local base = explorerBasePos[obj] or obj.Position
+			obj.Position = base
+			obj.Visible = false
 		end
 	end
+	table.sort(pending, function(a, b)
+		return GameplayUiVisibility.slideWaveOrder(a) < GameplayUiVisibility.slideWaveOrder(b)
+	end)
+	if not animate then
+		for _, obj in pending do
+			local base = explorerBasePos[obj] or obj.Position
+			obj.Position = base
+			obj.Visible = true
+		end
+		table.clear(explorerSaved)
+		return
+	end
+	local count = #pending
+	for i, obj in pending do
+		local base = explorerBasePos[obj] or obj.Position
+		local slide = explorerSlidePos[obj] or GameplayUiVisibility.slideDestination(obj)
+		obj.Position = slide
+		obj.Visible = true
+		local delaySec = GameplayUiVisibility.slideWaveDelay(i, count)
+		task.delay(delaySec, function()
+			if gen ~= explorerAnimGen or not obj.Parent then
+				return
+			end
+			obj.Position = slide
+			obj.Visible = true
+			local tw = TweenService:Create(obj, EXPLORER_IN, { Position = base })
+			table.insert(explorerTweens, tw)
+			tw:Play()
+		end)
+	end
 	table.clear(explorerSaved)
-	table.clear(explorerBasePos)
 end
 
 local function applyExplorerHud(outside: boolean, animate: boolean)
@@ -472,18 +539,15 @@ local function applyExplorerHud(outside: boolean, animate: boolean)
 		return
 	end
 	if outside then
-		for _, child in side:GetChildren() do
-			if child:IsA("GuiObject") and not KEEP_SIDE_IN_JUNGLE[child.Name] then
-				hideForExplorer(child, animate)
-			end
+		local targets = collectExplorerTargets()
+		local count = #targets
+		local gen = explorerAnimGen
+		if animate then
+			gen = cancelExplorerTweens()
 		end
-		local counters = side:FindFirstChild("Counters")
-		if counters then
-			for _, child in counters:GetChildren() do
-				if child:IsA("GuiObject") and not KEEP_COUNTERS_IN_JUNGLE[child.Name] then
-					hideForExplorer(child, animate)
-				end
-			end
+		for i, child in targets do
+			local delaySec = if animate then GameplayUiVisibility.slideWaveDelay(i, count) else 0
+			hideForExplorer(child, animate, delaySec, gen)
 		end
 	else
 		restoreExplorerSaved(animate)

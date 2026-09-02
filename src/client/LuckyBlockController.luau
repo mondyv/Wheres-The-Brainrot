@@ -1000,8 +1000,8 @@ local function animateHeroPose(model: Model, durationSec: number, token: number)
 	if primary then
 		focusPart = primary
 	end
-	camPull = 1.28
-	camFovGoal = 60
+	camPull = 1.14
+	camFovGoal = 56
 	local t0 = os.clock()
 	disconnect(hopConn)
 	hopConn = RunService.Heartbeat:Connect(function()
@@ -1013,11 +1013,18 @@ local function animateHeroPose(model: Model, durationSec: number, token: number)
 		local elapsed = os.clock() - t0
 		local alpha = math.clamp(elapsed / math.max(durationSec, 0.05), 0, 1)
 		local dest = headCarryCf() or startCf
-		local eased = alpha * alpha * (3 - 2 * alpha)
-		local pos = startCf.Position:Lerp(dest.Position, eased)
-		pos += Vector3.new(0, math.sin(alpha * math.pi) * 3.4, 0)
-		local rot = startCf.Rotation:Lerp(dest.Rotation, eased)
+		-- Back-out: overshoots the head then snaps on (Pokemon capture hop).
+		local t = alpha - 1
+		local eased = 1 + 2.70158 * t * t * t + 1.70158 * t * t
+		local pos = startCf.Position + (dest.Position - startCf.Position) * eased
+		pos += Vector3.new(0, math.sin(alpha * math.pi) * 2.8, 0)
+		local rot = startCf.Rotation:Lerp(dest.Rotation, math.clamp(eased, 0, 1))
 		model:PivotTo(CFrame.new(pos) * rot)
+		camPull = 1.08 + math.sin(alpha * math.pi) * 0.22
+		camFovGoal = 54 + (1 - math.sin(alpha * math.pi)) * 6
+		if alpha > 0.72 then
+			camShakeAmp = (1 - alpha) * 0.18
+		end
 		if primary and primary.Parent then
 			focusPart = primary
 		end
@@ -1033,6 +1040,9 @@ local function animateHeroPose(model: Model, durationSec: number, token: number)
 			model:PivotTo(dest)
 		end
 	end
+	camShakeAmp = 0
+	camPull = 1.12
+	camFovGoal = 60
 end
 
 local function spawnCollectSpark(at: Vector3)
@@ -1343,8 +1353,8 @@ local function runCutscene(payload: any)
 			endCutscene(token)
 			return
 		end
-		camPull = 1.22
-		camFovGoal = 58
+		camPull = 1.16
+		camFovGoal = 56
 		animateHover(reveal, CutsceneConfig.HOVER_SEC, token)
 		if token ~= cutsceneToken then
 			endCutscene(token)

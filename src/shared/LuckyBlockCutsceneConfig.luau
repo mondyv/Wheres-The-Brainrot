@@ -15,12 +15,12 @@ M.GROUND_SHAKE_SEC = 1
 M.BURST_HOLD_SEC = 0.22
 -- Brainrot rises / settles into hover.
 M.EMERGE_SEC = 0.85
--- Hover like bush float offer (short — then hop to head).
-M.HOVER_SEC = 0.75
--- Reveal pose (was a hop onto the head).
-M.HOP_SEC = 1.05
--- Shrink in place after the pose.
-M.SHRINK_SEC = 0.55
+-- Brief hover, then a snappy Pokemon hop onto the head.
+M.HOVER_SEC = 0.22
+-- Reveal pose (hop onto the head).
+M.HOP_SEC = 0.38
+-- Settle on the head after the hop.
+M.SHRINK_SEC = 0.22
 -- Camera restore after shrink.
 M.CAM_RESTORE_SEC = 0.45
 

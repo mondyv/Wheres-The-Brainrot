@@ -307,7 +307,7 @@ C.FOV_MAX = 96
 C.ATTACH_FOV_PUNCH = 5
 C.ATTACH_FOV_TIME = 0.28
 C.ATTACH_CAMERA_SHAKE_TIME = 0.24
-C.ATTACH_CAMERA_SHAKE_STRENGTH = 0.38
+C.ATTACH_CAMERA_SHAKE_STRENGTH = 0.12
 C.LAUNCH_FOV_BOOST = 7
 C.LAUNCH_FOV_TIME = 0.34
 C.LANDING_FOV_KICK = 8
@@ -349,18 +349,18 @@ C.SWING_POSE_FREE_ARM_OUT = math.rad(28)
 C.SWING_POSE_FREE_ARM_SWAY = math.rad(12)
 C.SWING_POSE_FREE_ELBOW = math.rad(22)
 
-C.SWING_CAMERA_ROLL_MAX = math.rad(5)
-C.SWING_CAMERA_LAG_MAX = 0.72
+C.SWING_CAMERA_ROLL_MAX = math.rad(1.6)
+C.SWING_CAMERA_LAG_MAX = 0.22
 C.SWING_CAMERA_EFFECT_SPEED = 7
--- Faint continuous wind buffet while swinging / airborne (keep slight)
-C.SWING_WIND_SHAKE_POS = 0.048
-C.SWING_WIND_SHAKE_ROT = 0.0075
-C.SWING_WIND_SHAKE_SPEED = 8.2
+-- Light in-air buffet — enough to feel airborne, not hard to aim.
+C.SWING_WIND_SHAKE_POS = 0.012
+C.SWING_WIND_SHAKE_ROT = 0.0022
+C.SWING_WIND_SHAKE_SPEED = 3.6
 C.SWING_WIND_SHAKE_MIN_SPEED = 6
 C.SWING_WIND_SHAKE_REF_SPEED = 52
-C.SWING_WIND_SHAKE_HANG = 0.22
+C.SWING_WIND_SHAKE_HANG = 0.06
 C.LAUNCH_CAMERA_SHAKE_TIME = 0.3
-C.LAUNCH_CAMERA_SHAKE_STRENGTH = 0.22
+C.LAUNCH_CAMERA_SHAKE_STRENGTH = 0.10
 C.LANDING_CAMERA_SHAKE_TIME = 0.62
 C.LANDING_CAMERA_SHAKE_STRENGTH = 0.92
 
@@ -5985,11 +5985,11 @@ local function boot(character)
 				math.noise(seed, t * 0.3, 14)
 			)
 			local flutter = Vector3.new(
-				math.noise(seed + 4, t * 1.55, 2),
-				math.noise(seed + 4, t * 1.85, 9),
-				math.noise(seed + 4, t * 1.35, 16)
+				math.noise(seed + 4, t * 0.62, 2),
+				math.noise(seed + 4, t * 0.7, 9),
+				math.noise(seed + 4, t * 0.54, 16)
 			)
-			local wind = gust * 0.7 + flutter * 0.3
+			local wind = gust * 0.88 + flutter * 0.12
 			shakeOffset += wind * C.SWING_WIND_SHAKE_POS * windIntensity
 			shakeRot += wind * C.SWING_WIND_SHAKE_ROT * windIntensity
 		end

@@ -55,9 +55,6 @@ local chargeBillboard: BillboardGui? = nil
 local chargeFill: Frame? = nil
 local chargeFillTween: Tween? = nil
 local heartbeatConn: RBXScriptConnection? = nil
-local sessionStartedAt = os.clock()
-local SESSION_FAVORITE_DELAY_SEC = 360
-local sessionFavoritePrompted = false
 
 local likeCheck: GuiObject? = nil
 local joinCheck: GuiObject? = nil
@@ -573,33 +570,7 @@ local function scheduleClose()
 	end)
 end
 
-local function trySessionFavoritePrompt()
-	if sessionFavoritePrompted then
-		return
-	end
-	if os.clock() - sessionStartedAt < SESSION_FAVORITE_DELAY_SEC then
-		return
-	end
-	if alreadyClaimed() or likedSaved() then
-		sessionFavoritePrompted = true
-		return
-	end
-	if HUDController.getCurrentFrame() then
-		return
-	end
-	local char = player.Character
-	if not char or not SafezoneUtil.isCacheReady() then
-		return
-	end
-	if not SafezoneUtil.isCharacterInSafezone(char) then
-		return
-	end
-	sessionFavoritePrompted = true
-	promptLikeGame()
-end
-
 local function tick(dt: number)
-	trySessionFavoritePrompt()
 	local hrp = getHRP()
 	local hitbox = resolveGroupHitbox()
 	if not hrp or not hitbox then

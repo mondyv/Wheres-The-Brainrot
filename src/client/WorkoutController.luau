@@ -420,6 +420,33 @@ local function ensureWorldFolder(): Folder
 	return created
 end
 
+-- Solid mesh parts only — skip sparks / beams so pose bounds stay on the bar.
+local function isPoseMeshPart(d: Instance): boolean
+	if not d:IsA("BasePart") then
+		return false
+	end
+	if d.Transparency >= 0.95 then
+		return false
+	end
+	local vol = d.Size.X * d.Size.Y * d.Size.Z
+	return vol >= 0.12
+end
+
+local function partWorldMinY(part: BasePart): number
+	local cf = part.CFrame
+	local half = part.Size * 0.5
+	local minY = math.huge
+	for _, sx in { -1, 1 } do
+		for _, sy in { -1, 1 } do
+			for _, sz in { -1, 1 } do
+				local y = cf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz)).Y
+				minY = math.min(minY, y)
+			end
+		end
+	end
+	return minY
+end
+
 -- Place the authored Studio clone on the shoes using Primary only.
 -- Do not inspect VFX parts for bounds and do not toggle any emitters.
 local function poseGearOnFeet(character: Model, model: Model)
@@ -436,6 +463,9 @@ local function poseGearOnFeet(character: Model, model: Model)
 	local forward = if hrp and hrp:IsA("BasePart") then hrp.CFrame.LookVector else Vector3.zAxis
 	local mid, across, contactY = soleAcross(anchorFoot, leftFoot, forward)
 
+	local gearId = model:GetAttribute(GearConfig.GEAR_ID_ATTR)
+	local flip = typeof(gearId) == "number" and GearConfig.flipOnFeet(gearId)
+
 	local ps = primary.Size
 	local lieFlat = CFrame.identity
 	if ps.Y >= ps.X and ps.Y >= ps.Z then
@@ -443,23 +473,47 @@ local function poseGearOnFeet(character: Model, model: Model)
 	elseif ps.Z >= ps.X and ps.Z >= ps.Y then
 		lieFlat = CFrame.Angles(0, math.rad(90), 0)
 	end
+	-- Moon / Jupiter: Primary sits on the wrong pole and hits the legs.
+	if flip then
+		lieFlat = lieFlat * CFrame.Angles(math.rad(180), 0, 0)
+	end
 
 	local target = CFrame.fromMatrix(Vector3.new(mid.X, contactY, mid.Z), across, Vector3.yAxis) * lieFlat
 	model:PivotTo(target * primary.CFrame:ToObjectSpace(model:GetPivot()))
 
 	local minY = math.huge
-	local cf = primary.CFrame
-	local half = primary.Size * 0.5
-	for _, sx in { -1, 1 } do
-		for _, sy in { -1, 1 } do
-			for _, sz in { -1, 1 } do
-				local y = cf:PointToWorldSpace(Vector3.new(half.X * sx, half.Y * sy, half.Z * sz)).Y
-				minY = math.min(minY, y)
+	if flip then
+		for _, d in model:GetDescendants() do
+			if isPoseMeshPart(d) then
+				minY = math.min(minY, partWorldMinY(d :: BasePart))
 			end
 		end
+	else
+		minY = partWorldMinY(primary)
 	end
 	if minY < math.huge then
 		model:PivotTo(model:GetPivot() + Vector3.new(0, contactY - minY, 0))
+	end
+
+	-- Height is already on the soles; slide along the left-right axis so the
+	-- visible mesh sits in the middle of both feet (Primary is often one orb).
+	local cx, cz, n = 0, 0, 0
+	for _, d in model:GetDescendants() do
+		if isPoseMeshPart(d) then
+			local p = (d :: BasePart).Position
+			cx += p.X
+			cz += p.Z
+			n += 1
+		end
+	end
+	if n == 0 then
+		cx = primary.Position.X
+		cz = primary.Position.Z
+		n = 1
+	end
+	local along = (Vector3.new(cx / n, 0, cz / n) - Vector3.new(mid.X, 0, mid.Z)):Dot(across)
+	if math.abs(along) > 0.001 then
+		model:PivotTo(model:GetPivot() - across * along)
 	end
 end
 
@@ -495,6 +549,7 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 		return
 	end
 	model.Name = "WorkoutFootProp"
+	model:SetAttribute(GearConfig.GEAR_ID_ATTR, gearId)
 	-- Studio clone as-is. Only strip scripts and make the mesh safe to follow the feet.
 	for _, d in model:GetDescendants() do
 		if d:IsA("Script") or d:IsA("LocalScript") then

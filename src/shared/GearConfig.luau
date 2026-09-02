@@ -14,6 +14,7 @@ export type GearDef = {
 	robuxPrice: number?, -- display Robux cost (developer product priced in dashboard)
 	robuxProductId: number?, -- nil = cash only
 	assetName: string, -- ReplicatedStorage.EssentialAssets.Gears["Gear N"]
+	flipOnFeet: boolean?, -- Moon / Jupiter: Primary sits on the wrong pole
 }
 
 local GEARS: { GearDef } = {
@@ -148,6 +149,7 @@ local GEARS: { GearDef } = {
 		robuxPrice = 449,
 		robuxProductId = 3696581519,
 		assetName = "Gear 12",
+		flipOnFeet = true,
 	},
 	{
 		id = 13,
@@ -159,6 +161,7 @@ local GEARS: { GearDef } = {
 		robuxPrice = 549,
 		robuxProductId = 3696584468,
 		assetName = "Gear 13",
+		flipOnFeet = true,
 	},
 }
 
@@ -185,6 +188,11 @@ end
 
 function M.get(id: number): GearDef?
 	return byId[id]
+end
+
+function M.flipOnFeet(id: number): boolean
+	local def = byId[id]
+	return def ~= nil and def.flipOnFeet == true
 end
 
 function M.getByProductId(productId: number): GearDef?

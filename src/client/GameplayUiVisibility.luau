@@ -747,4 +747,20 @@ function M.onHidden(callback: () -> ())
 	table.insert(hideCallbacks, callback)
 end
 
+function M.slideTweenInfos(): (TweenInfo, TweenInfo)
+	return SLIDE_OUT, SLIDE_IN
+end
+
+function M.slideDestination(gui: GuiObject): UDim2
+	return computeSlidePos(gui, viewportSize())
+end
+
+function M.slideWaveDelay(index: number, count: number): number
+	return waveDelay(index, count)
+end
+
+function M.slideWaveOrder(gui: GuiObject): number
+	return waveOrderKey(gui, viewportSize())
+end
+
 return M

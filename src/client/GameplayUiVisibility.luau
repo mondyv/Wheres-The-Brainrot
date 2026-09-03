@@ -300,6 +300,7 @@ local function buildKeepSets(opts: HideOpts?)
 	keepScreenNames.TouchGui = true
 	keepScreenNames.WorkoutComboGui = true
 	keepScreenNames.SwingTargetMarker = true
+	keepScreenNames.ServerResetHud = true
 	if opts then
 		if opts.keepScreenGuiNames then
 			for _, name in opts.keepScreenGuiNames do

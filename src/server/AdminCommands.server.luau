@@ -49,8 +49,22 @@ local function ensureRemoteFunction(name: string): RemoteFunction
 	return rf
 end
 
+local function ensureRemoteEvent(name: string): RemoteEvent
+	local folder = getRemotesFolder()
+	local existing = folder:FindFirstChild(name)
+	if existing and existing:IsA("RemoteEvent") then
+		return existing
+	end
+	local ev = Instance.new("RemoteEvent")
+	ev.Name = name
+	ev.Parent = folder
+	return ev
+end
+
+local RESET_HUD_REMOTE_NAME = "ServerResetCountdown"
 local commandRF = ensureRemoteFunction(COMMAND_REMOTE_NAME)
 local catalogRF = ensureRemoteFunction(CATALOG_REMOTE_NAME)
+local resetHudRE = ensureRemoteEvent(RESET_HUD_REMOTE_NAME)
 
 local function syncAdminAccess(player: Player)
 	if not player.Parent then
@@ -244,7 +258,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, grantgear, levelup, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverrestart, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
+			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, grantgear, levelup, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverrestart, resetservers, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -1083,6 +1097,125 @@ commands.serverrestart = {
 commands.restart = commands.serverrestart
 commands.serverreboot = commands.serverrestart
 
+local ADMIN_GLOBAL_RESET_TOPIC = "AdminGlobalServerReset_v1"
+local ALLOWED_RESET_SECONDS: { [number]: boolean } = {
+	[10] = true,
+	[30] = true,
+}
+local globalResetToken = 0
+local globalResetJoinConn: RBXScriptConnection? = nil
+
+local function parseResetSeconds(raw: string?): number?
+	local seconds = parseShutdownSeconds(raw)
+	if not seconds or not ALLOWED_RESET_SECONDS[seconds] then
+		return nil
+	end
+	return seconds
+end
+
+-- Restarts every live server. Saves first — never wipes player data.
+local function beginGlobalServerReset(countdownSec: number, totalSec: number)
+	shutdownToken += 1
+	globalResetToken += 1
+	local token = globalResetToken
+	local remaining = math.max(1, math.floor(countdownSec + 0.5))
+	local endsAtUnix = os.time() + remaining
+	local clientEndsAt = workspace:GetServerTimeNow() + remaining
+	local barTotal = if totalSec > 0 then totalSec else remaining
+
+	if globalResetJoinConn then
+		globalResetJoinConn:Disconnect()
+		globalResetJoinConn = nil
+	end
+
+	if resetHudRE then
+		resetHudRE:FireAllClients(clientEndsAt, barTotal)
+	end
+
+	globalResetJoinConn = Players.PlayerAdded:Connect(function(plr)
+		if token ~= globalResetToken then
+			return
+		end
+		local rem = endsAtUnix - os.time()
+		if rem <= 0 or not resetHudRE then
+			return
+		end
+		resetHudRE:FireClient(plr, workspace:GetServerTimeNow() + rem, barTotal)
+	end)
+
+	task.spawn(function()
+		while token == globalResetToken do
+			if endsAtUnix - os.time() <= 0 then
+				break
+			end
+			task.wait(0.25)
+		end
+
+		if token ~= globalResetToken then
+			return
+		end
+
+		if globalResetJoinConn then
+			globalResetJoinConn:Disconnect()
+			globalResetJoinConn = nil
+		end
+
+		-- Save everyone before teleport so leave races / DataStore limits cannot wipe progress.
+		local saved = PlayerDataService.saveAllOnlinePlayers()
+		warn("[AdminCommands] resetservers pre-leave saved", saved, "players")
+
+		task.wait(0.35)
+		local online = Players:GetPlayers()
+		if #online == 0 then
+			return
+		end
+		local ok, err = pcall(function()
+			TeleportService:TeleportAsync(game.PlaceId, online)
+		end)
+		if not ok then
+			warn("[AdminCommands] resetservers teleport failed:", err)
+			for _, plr in online do
+				plr:Kick("Servers restarting for a new update — please rejoin! Your data is safe.")
+			end
+		end
+	end)
+end
+
+local function publishAndStartGlobalReset(sender: Player, seconds: number): (boolean, string)
+	beginGlobalServerReset(seconds, seconds)
+
+	local pubOk, pubErr = pcall(function()
+		MessagingService:PublishAsync(ADMIN_GLOBAL_RESET_TOPIC, {
+			seconds = seconds,
+			endsAtUnix = os.time() + seconds,
+			sender = sender.Name,
+			senderUserId = sender.UserId,
+			originJobId = game.JobId,
+			sentAt = os.time(),
+		})
+	end)
+	if not pubOk then
+		warn("[AdminCommands] resetservers publish failed:", pubErr)
+		return true, string.format("This server is resetting in %ds. Other live servers may not have received the signal.", seconds)
+	end
+	return true, string.format("All servers resetting in %ds. Player data will be saved — nothing is wiped.", seconds)
+end
+
+commands.resetservers = {
+	usage = "resetservers <10|30>",
+	description = "HUD countdown on ALL servers, save everyone, then teleport into fresh servers. Does not wipe data.",
+	run = function(sender: Player, args: { string }): (boolean, string)
+		local seconds = parseResetSeconds(args[1])
+		if not seconds then
+			return false, "Usage: resetservers 10  or  resetservers 30"
+		end
+		return publishAndStartGlobalReset(sender, seconds)
+	end,
+}
+commands.allrestart = commands.resetservers
+commands.globalrestart = commands.resetservers
+commands.serversreset = commands.resetservers
+
 local MAX_REASON_LEN = 200
 local DEFAULT_KICK_REASON = "You have been kicked by an admin."
 local DEFAULT_BAN_REASON = "You have been banned from this experience."
@@ -1670,3 +1803,32 @@ catalogRF.OnServerInvoke = function(sender: Player)
 	end
 	return buildAutocompleteCatalog(sender)
 end
+
+task.spawn(function()
+	local ok, err = pcall(function()
+		MessagingService:SubscribeAsync(ADMIN_GLOBAL_RESET_TOPIC, function(packet)
+			if typeof(packet) ~= "table" or typeof(packet.Data) ~= "table" then
+				return
+			end
+			local data = packet.Data
+			if typeof(data.originJobId) == "string" and data.originJobId == game.JobId then
+				return
+			end
+			local totalSec = data.seconds
+			if typeof(totalSec) ~= "number" or not ALLOWED_RESET_SECONDS[totalSec] then
+				return
+			end
+			local remaining = totalSec
+			if typeof(data.endsAtUnix) == "number" then
+				remaining = math.max(1, data.endsAtUnix - os.time())
+				if remaining > totalSec then
+					remaining = totalSec
+				end
+			end
+			beginGlobalServerReset(remaining, totalSec)
+		end)
+	end)
+	if not ok then
+		warn("[AdminCommands] resetservers subscribe failed:", err)
+	end
+end)

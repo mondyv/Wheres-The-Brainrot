@@ -154,6 +154,9 @@ local COMMAND_ALIASES: { [string]: string } = {
 	servershut = "servershutdown",
 	restart = "serverrestart",
 	serverreboot = "serverrestart",
+	allrestart = "resetservers",
+	globalrestart = "resetservers",
+	serversreset = "resetservers",
 	sluck = "serverluck",
 	gluck = "globalluck",
 	spawnglobal = "serverspawn",
@@ -197,6 +200,7 @@ local COMMAND_HINTS: { [string]: string } = {
 	globalnotif = "Top notification on all servers",
 	servershutdown = "Countdown then shut down THIS server only",
 	serverrestart = "Countdown then restart THIS server (teleport players back)",
+	resetservers = "Reset ALL servers after a 10s or 30s HUD countdown (saves data)",
 	serverluck = "Set luck on THIS server + announce",
 	globalluck = "Set luck on ALL servers until time runs out (1d / 7d / off)",
 	kick = "Kick a player from this server",
@@ -434,6 +438,8 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "servershutdown 5m", hint = "Shut down this server in 5 minutes" },
 		{ fill = "serverrestart 60", hint = COMMAND_HINTS.serverrestart },
 		{ fill = "serverrestart 5m", hint = "Restart this server in 5 minutes" },
+		{ fill = "resetservers 30", hint = COMMAND_HINTS.resetservers },
+		{ fill = "resetservers 10", hint = "All servers reset in 10 seconds (saves data)" },
 		{ fill = "globalluck 4x 1d", hint = COMMAND_HINTS.globalluck },
 		{ fill = "globalluck 8x 7d", hint = "week-long global luck" },
 		{ fill = "serverluck 4x 10m", hint = COMMAND_HINTS.serverluck },
@@ -667,6 +673,15 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 						prefix .. sample,
 						if cmdName == "serverrestart" then "restart this server" else "this server only"
 					)
+				end
+			end
+		end
+	elseif cmdName == "resetservers" then
+		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
+			for _, sample in { "10", "30" } do
+				if startsWith(sample, partial) then
+					pushSuggestion(out, prefix .. sample, "all servers — saves data, then restarts")
 				end
 			end
 		end

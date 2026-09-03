@@ -124,6 +124,7 @@ task.defer(function()
 		local coreMods = {
 			"HUDController",
 			"TopNotifController",
+			"ServerResetHud",
 			"CashBoostController",
 			"BoostIconsController",
 			"UIEffectsBootstrap",

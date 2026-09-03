@@ -13,15 +13,15 @@ M.BLOCK_OPEN_SFX_SEC = 4
 M.GROUND_SHAKE_SEC = 1
 -- Burst VFX + hide block before brainrot appears.
 M.BURST_HOLD_SEC = 0.22
--- Brainrot rises and eases into hover (same path the hover continues).
-M.EMERGE_SEC = 0.72
--- Hold the float long enough to read — bob is the same wave as emerge.
-M.HOVER_SEC = 0.58
--- Arc onto the head (C1 from hover, no Back-out overshoot).
-M.HOP_SEC = 0.55
--- Rest on the head after the hop.
-M.SHRINK_SEC = 0.32
--- Camera restore after shrink.
+-- Pop out and fly up into a high hover.
+M.EMERGE_SEC = 0.85
+-- Hold the float so you can read the drop.
+M.HOVER_SEC = 0.7
+-- Jump arc onto the head, then snap into the hands.
+M.HOP_SEC = 0.48
+-- Kept at 0 — landing on the head instantly becomes the held tool.
+M.SHRINK_SEC = 0
+-- Camera restore after the hop.
 M.CAM_RESTORE_SEC = 0.45
 
 function M.burstAtSec(): number
@@ -33,16 +33,12 @@ function M.revealSpawnAtSec(): number
 end
 
 function M.grantAtSec(): number
-	return M.revealSpawnAtSec()
-		+ M.EMERGE_SEC
-		+ M.HOVER_SEC
-		+ M.HOP_SEC
-		+ M.SHRINK_SEC
+	-- Grant as the hop lands so the tool is in-hand the instant the head pose ends.
+	return M.revealSpawnAtSec() + M.EMERGE_SEC + M.HOVER_SEC + M.HOP_SEC
 end
 
 function M.totalDurationSec(): number
-	-- Small buffer so client shrink finishes before server destroys the reveal + grants.
-	return M.grantAtSec() + 0.35
+	return M.grantAtSec()
 end
 
 M.REVEAL_FOLDER_NAME = "LuckyBlockReveals"

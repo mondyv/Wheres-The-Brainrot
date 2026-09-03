@@ -11,7 +11,7 @@
 	  2. Server validates ownership + cooldown, picks the brainrot to grant, and replies
 	     with a LuckyBlockShakeStart event ({ durationSec, brainrotName, rarity, …phases }).
 	  3. Mid-cutscene: destroy the lucky block and spawn a temporary workspace reveal model.
-	  4. At cutscene end: destroy the reveal, fire brainrot SFX, and GrantBrainrotAndEquip
+	  4. When the hop lands: destroy the reveal, fire brainrot SFX, and GrantBrainrotAndEquip
 	     (or OfferFloatingBrainrot when floatClaimAfter is set for bush pulls).
 ]]
 

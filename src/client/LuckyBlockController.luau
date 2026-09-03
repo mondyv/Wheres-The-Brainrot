@@ -4,7 +4,7 @@
 	Client side of lucky block tools.
 
 	On activate → LuckyBlockRoll. On LuckyBlockShakeStart → cinematic open:
-	drop block → ground shake → burst → brainrot emerge/hover → hop to head → shrink in.
+	drop block → ground shake → burst → fly up / hover → hop onto head → snap into hands.
 ]]
 
 local ContextActionService = game:GetService("ContextActionService")
@@ -968,21 +968,45 @@ local function headCarryCf(): CFrame?
 	return nil
 end
 
--- One Heartbeat path: emerge → hover → hop → settle. Same bob wave the whole
--- time so phase handoffs never snap position or rotation.
+local function hideRevealLocal(model: Model)
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.LocalTransparencyModifier = 1
+			d.CanCollide = false
+			d.CanQuery = false
+			d.CanTouch = false
+		elseif d:IsA("Decal") or d:IsA("Texture") then
+			d.Transparency = 1
+		elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
+			d.Enabled = false
+		elseif
+			d:IsA("ParticleEmitter")
+			or d:IsA("Beam")
+			or d:IsA("Trail")
+			or d:IsA("Fire")
+			or d:IsA("Smoke")
+			or d:IsA("Sparkles")
+		then
+			(d :: any).Enabled = false
+		end
+	end
+end
+
+-- Fly up → hover in the air → jump onto the head → vanish into the hands.
 local function animateRevealMotion(model: Model, token: number)
 	local startCf = model:GetPivot()
-	local startPos = startCf.Position
-	local hoverHome = startPos + Vector3.new(0, 2.45, 0)
+	-- Server plants the clone slightly underground; lift to the burst so the
+	-- fly-up reads as popping out, not rising through dirt.
+	local groundPos = startCf.Position + Vector3.new(0, 1.35, 0)
+	local hoverHome = groundPos + Vector3.new(0, 4.35, 0)
+	local hoverPeak = hoverHome + Vector3.new(0, 1.15, 0)
 	local emergeSec = CutsceneConfig.EMERGE_SEC
 	local hoverSec = CutsceneConfig.HOVER_SEC
-	local hopSec = CutsceneConfig.HOP_SEC
-	local settleSec = CutsceneConfig.SHRINK_SEC
+	local hopSec = math.max(0.2, CutsceneConfig.HOP_SEC)
 	local hopAt = emergeSec + hoverSec
-	local settleAt = hopAt + hopSec
-	local total = settleAt + settleSec
-	local bobHz = 3.35
-	local bobAmp = 0.38
+	local landAt = hopAt + hopSec
+	local bobHz = 2.85
+	local bobAmp = 0.42
 
 	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
 	if primary then
@@ -1011,27 +1035,30 @@ local function animateRevealMotion(model: Model, token: number)
 		end
 		local elapsed = os.clock() - t0
 		local pos: Vector3
-		local wag = math.sin(elapsed * 6.8) * 0.18
-		local nod = math.sin(elapsed * 5.1) * 0.12
-		local spin = CFrame.Angles(nod, elapsed * 1.15 + math.sin(elapsed * 2.4) * 0.35, wag)
+		local wag = math.sin(elapsed * 5.6) * 0.16
+		local nod = math.sin(elapsed * 4.4) * 0.1
+		local spin = CFrame.Angles(nod, elapsed * 1.05 + math.sin(elapsed * 2.1) * 0.28, wag)
 
 		if elapsed < emergeSec then
 			local a = smootherstep(elapsed / emergeSec)
-			pos = startPos:Lerp(hoverHome, a)
-			pos += Vector3.new(math.sin(elapsed * 7.2) * 0.12 * a, bobY(elapsed) * a, math.cos(elapsed * 5.6) * 0.1 * a)
-			camPull = pull0 + (1.16 - pull0) * a
-			camFovGoal = fov0 + (56 - fov0) * a
+			if a < 0.7 then
+				pos = groundPos:Lerp(hoverPeak, smootherstep(a / 0.7))
+			else
+				pos = hoverPeak:Lerp(hoverHome, smootherstep((a - 0.7) / 0.3))
+			end
+			pos += Vector3.new(math.sin(elapsed * 6.4) * 0.1 * a, bobY(elapsed) * a, math.cos(elapsed * 5.1) * 0.08 * a)
+			camPull = pull0 + (1.2 - pull0) * a
+			camFovGoal = fov0 + (54 - fov0) * a
 		elseif elapsed < hopAt then
-			pos = hoverHome + Vector3.new(math.sin(elapsed * 7.2) * 0.14, bobY(elapsed), math.cos(elapsed * 5.6) * 0.12)
-			camPull = 1.16
-			camFovGoal = 56
-		elseif elapsed < settleAt then
+			pos = hoverHome + Vector3.new(math.sin(elapsed * 6.4) * 0.16, bobY(elapsed), math.cos(elapsed * 5.1) * 0.14)
+			camPull = 1.2
+			camFovGoal = 54
+		elseif elapsed < landAt then
 			if hopFrom == nil then
 				hopFrom = model:GetPivot().Position
 				local vy = bobHz * bobAmp * math.cos(hopAt * bobHz)
-				hopVel = Vector3.new(0, vy, 0)
+				hopVel = Vector3.new(0, math.max(1.2, vy + 2.4), 0)
 			end
-			-- Linear hermite keeps hover velocity; bump has 0 slope at both ends.
 			local a = math.clamp((elapsed - hopAt) / hopSec, 0, 1)
 			local dest = headCarryCf()
 			local p0 = hopFrom :: Vector3
@@ -1042,29 +1069,34 @@ local function animateRevealMotion(model: Model, token: number)
 			local h10 = a3 - 2 * a2 + a
 			local h01 = -2 * a3 + 3 * a2
 			pos = p0 * h00 + (hopVel * hopSec) * h10 + p1 * h01
-			pos += Vector3.new(0, 22 * a2 * (1 - a) * (1 - a) * 2.8, 0)
-			camPull = 1.16 - a * 0.04
-			camFovGoal = 56 + a * 4
-			if a > 0.9 and not hopLanded then
+			pos += Vector3.new(0, 36 * a2 * (1 - a) * (1 - a) * 2.8, 0)
+			camPull = 1.2 - a * 0.06
+			camFovGoal = 54 + a * 6
+			if a >= 0.92 and not hopLanded then
 				hopLanded = true
 				spawnCollectSpark(p1)
 				GameSoundEffects.playCashGrab()
-				camShakeAmp = 0.045
+				camShakeAmp = 0.05
+				hideRevealLocal(model)
 			end
-			camShakeAmp *= 0.9
+			camShakeAmp *= 0.88
 		else
-			local dest = headCarryCf()
-			pos = if dest then dest.Position else (hopFrom or hoverHome)
+			hideRevealLocal(model)
 			camPull = 1.12
 			camFovGoal = 60
-			camShakeAmp *= 0.84
+			camShakeAmp *= 0.8
+			disconnect(floatConn)
+			floatConn = nil
+			return
 		end
 
-		model:PivotTo(CFrame.new(pos) * startCf.Rotation * spin)
+		if not hopLanded then
+			model:PivotTo(CFrame.new(pos) * startCf.Rotation * spin)
+		end
 		if primary and primary.Parent then
 			focusPart = primary
 		end
-		if elapsed >= total then
+		if hopLanded then
 			disconnect(floatConn)
 			floatConn = nil
 		end

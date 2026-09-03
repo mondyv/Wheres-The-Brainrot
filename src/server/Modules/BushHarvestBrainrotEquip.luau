@@ -7,6 +7,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local BrainrotCarryVisual = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotCarryVisual"))
+local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 
 local M = {}
 
@@ -229,6 +230,13 @@ function M.createEquipBrainrotSlotForPlayer(deps: EquipDeps): (Player, number, b
 		removeBrainrotToolAtInventoryIndex(char, idx)
 		-- Drop whatever is already in hand (other brainrot / workout gear) so
 		-- a hotbar swap is one press, not unequip-then-equip.
+		for _, child in char:GetChildren() do
+			if child:IsA("Tool") and child ~= tool then
+				if child:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
+					child.RequiresHandle = true
+				end
+			end
+		end
 		hum:UnequipTools()
 		for _, child in char:GetChildren() do
 			if child:IsA("Tool") and child ~= tool then

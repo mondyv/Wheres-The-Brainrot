@@ -393,6 +393,18 @@ local function bumpToolHoldGen(): number
 end
 
 local function clearHeldTools()
+	local char = player.Character
+	local bp = getBackpack()
+	if char and bp then
+		for _, child in char:GetChildren() do
+			if child:IsA("Tool") then
+				if child:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
+					child.RequiresHandle = true
+				end
+				child.Parent = bp
+			end
+		end
+	end
 	local hum = getHumanoid()
 	if hum then
 		hum:UnequipTools()
@@ -410,19 +422,28 @@ local function forceToolIntoHand(tool: Tool)
 	-- Parenting onto the character survives a mobile GUI tap. EquipTool on the
 	-- same touch is applied then immediately put away, which left the outline on
 	-- and nothing in the hand.
-	local equipped = char:FindFirstChildOfClass("Tool")
-	if equipped and equipped ~= tool then
-		local hum = getHumanoid()
-		if hum then
-			hum:UnequipTools()
+	-- Workout sets RequiresHandle=false, so UnequipTools can leave the gear on
+	-- the character. A second tool then gets no RightGrip and falls through the world.
+	local bp = getBackpack()
+	if bp then
+		for _, child in char:GetChildren() do
+			if child:IsA("Tool") and child ~= tool then
+				if child:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
+					child.RequiresHandle = true
+				end
+				child.Parent = bp
+			end
 		end
+	end
+	local hum = getHumanoid()
+	if hum then
+		hum:UnequipTools()
 	end
 	tool.CanBeDropped = false
 	tool.Parent = char
 	if tool.Parent == char then
 		return
 	end
-	local hum = getHumanoid()
 	if hum then
 		hum:EquipTool(tool)
 	end

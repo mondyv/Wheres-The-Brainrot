@@ -180,18 +180,21 @@ local function isHandGripJoint(j: Instance, handle: BasePart?): boolean
 	if j.Name == "WorkoutFootMotor" then
 		return false
 	end
-	if string.find(string.lower(j.Name), "grip", 1, true) then
-		return true
-	end
+	-- Only the workout gear's own hand weld. A name-only "grip" match was
+	-- destroying the brainrot RightGrip when swapping off slot 1, so the
+	-- equipped pet fell through the world.
 	if not handle then
 		return false
 	end
 	local p0, p1 = jointParts(j)
-	if p0 == handle or p1 == handle then
-		local other = if p0 == handle then p1 else p0
-		return isArmOrHandPart(other)
+	if p0 ~= handle and p1 ~= handle then
+		return false
 	end
-	return false
+	local other = if p0 == handle then p1 else p0
+	if isArmOrHandPart(other) then
+		return true
+	end
+	return string.find(string.lower(j.Name), "grip", 1, true) ~= nil
 end
 
 local function destroyHandGrips(character: Model, handle: BasePart?)
@@ -2624,12 +2627,9 @@ local function cleanupWorkoutVisuals()
 end
 
 local function onUnequip()
-	resolveWorkoutRemotes()
-	if stopWorkoutFn then
-		pcall(function()
-			stopWorkoutFn:InvokeServer()
-		end)
-	end
+	-- Stop the grip-killer before the remote yield so a just-equipped
+	-- brainrot can keep its RightGrip.
+	cleanupWorkoutVisuals()
 	local char = player.Character
 	if char then
 		for _, c in char:GetChildren() do
@@ -2638,7 +2638,12 @@ local function onUnequip()
 			end
 		end
 	end
-	cleanupWorkoutVisuals()
+	resolveWorkoutRemotes()
+	if stopWorkoutFn then
+		pcall(function()
+			stopWorkoutFn:InvokeServer()
+		end)
+	end
 end
 
 local function isUpgradesShopOpen(): boolean
@@ -2741,6 +2746,7 @@ local function bindCharacter(character: Model)
 				bindTool(child)
 				-- Hotbar swap onto a brainrot / lucky block: drop the workout.
 				if child:GetAttribute(GearConfig.GEAR_TOOL_ATTR) ~= true then
+					clearFootAttach()
 					if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
 						onUnequip()
 					end

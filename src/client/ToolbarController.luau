@@ -35,6 +35,7 @@ local _Workspace = game:GetService("Workspace")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local GamepadInput = require(script.Parent.GamepadInput)
+local HUDController = require(script.Parent.HUDController)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local CarryGate = require(script.Parent.CarryGate)
 local DropTargets = require(script.Parent.ToolbarDropTargets)
@@ -1156,6 +1157,7 @@ end
 	local function syncToolbarGamepadCursor()
 		local want = GamepadInput.isPreferred()
 			and canUseToolbar
+			and HUDController.isPanelOpen() ~= true
 			and (isBackpackPanelOpen or pendingToolbarDrag ~= nil or activeToolbarDrag)
 		if not want then
 			if gamepadCursorEnabled then
@@ -2367,7 +2369,7 @@ end
 	end
 
 	local function canSelectHotbarSlot(): boolean
-		return canUseToolbar
+		return canUseToolbar and HUDController.isPanelOpen() ~= true
 	end
 
 	local function hotbarSlotHasSelectableContent(index: number): boolean
@@ -3179,7 +3181,9 @@ end
 		if not canUseToolbar then
 			return
 		end
-		if not backpackFrameRef then
+		if HUDController.isPanelOpen() then
+			return
+		end
 			return
 		end
 		local now = os.clock()
@@ -4455,7 +4459,7 @@ end
 
 	-- ── Equip from slot ───────────────────────────────────────────────────────────
 
-	selectSlot = function(index: number)
+	selectSlot = function(index: number, keepEquipped: boolean?)
 		if not canSelectHotbarSlot() then
 			return
 		end
@@ -4478,6 +4482,10 @@ end
 		-- Extra tool slot (e.g. lucky block / workout gear) with no brainrot index.
 		if tool and not hasBrainrotEntry then
 			if equipped == tool then
+				if keepEquipped == true then
+					setHotbarSelection(index)
+					return
+				end
 				bumpToolHoldGen()
 				hum:UnequipTools()
 				setHotbarSelection(nil, false)
@@ -4498,6 +4506,10 @@ end
 		end
 
 		if tool and equipped == tool then
+			if keepEquipped == true then
+				setHotbarSelection(index)
+				return
+			end
 			bumpToolHoldGen()
 			hum:UnequipTools()
 			setHotbarSelection(nil)
@@ -4511,6 +4523,10 @@ end
 				holdingThisBrainrot = typeof(inv) == "number" and math.floor(inv) == brainrotIdx
 			end
 			if uiHotbarHighlight == index and holdingThisBrainrot then
+				if keepEquipped == true then
+					setHotbarSelection(index)
+					return
+				end
 				bumpToolHoldGen()
 				hum:UnequipTools()
 				setHotbarSelection(nil)
@@ -4525,6 +4541,10 @@ end
 						and math.floor(invIdx) == brainrotIdx
 						and uiHotbarHighlight == index
 					then
+						if keepEquipped == true then
+							setHotbarSelection(index)
+							return
+						end
 						bumpToolHoldGen()
 						hum:UnequipTools()
 						setHotbarSelection(nil)
@@ -4725,7 +4745,7 @@ end
 			local idx = ((equippedIdx - 1 + delta * n) % 9) + 1
 			if hotbarSlotHasSelectableContent(idx) then
 				UIInteractionSounds.playHover()
-				selectSlot(idx)
+				selectSlot(idx, true)
 				return
 			end
 		end
@@ -4734,57 +4754,42 @@ end
 	local function ensureGamepadEquipHint()
 		local existing = hotbar:FindFirstChild("GamepadEquipHint")
 		if existing and existing:IsA("GuiObject") then
-			existing.Visible = GamepadInput.isPreferred()
+			existing.Visible = GamepadInput.isPreferred() and HUDController.isPanelOpen() ~= true
 			return
 		end
 		local hint = Instance.new("Frame")
 		hint.Name = "GamepadEquipHint"
-		hint.BackgroundColor3 = Color3.fromRGB(18, 14, 24)
-		hint.BackgroundTransparency = 0.12
-		hint.BorderSizePixel = 0
-		hint.AnchorPoint = Vector2.new(0.5, 1)
-		hint.Position = UDim2.new(0.5, 0, 0, -6)
-		hint.Size = UDim2.fromOffset(272, 26)
+		hint.BackgroundTransparency = 1
+		hint.AnchorPoint = Vector2.new(0.5, 0.5)
+		hint.Position = UDim2.new(0.5, 0, 0, -10)
+		hint.Size = UDim2.fromOffset(72, 22)
 		hint.ZIndex = HOTBAR_FRONT_ZINDEX + 8
 		hint.Visible = false
 		if hotbar:IsA("GuiObject") then
 			hotbar.ClipsDescendants = false
 		end
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(1, 0)
-		corner.Parent = hint
 		local layout = Instance.new("UIListLayout")
 		layout.FillDirection = Enum.FillDirection.Horizontal
 		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 		layout.VerticalAlignment = Enum.VerticalAlignment.Center
-		layout.Padding = UDim.new(0, 6)
+		layout.Padding = UDim.new(0, 8)
 		layout.Parent = hint
 		local left = Instance.new("Frame")
 		left.Name = "Left"
 		left.BackgroundTransparency = 1
-		left.Size = UDim2.fromOffset(22, 22)
+		left.Size = UDim2.fromOffset(20, 20)
 		left.ZIndex = hint.ZIndex + 1
 		left.Parent = hint
-		local caption = Instance.new("TextLabel")
-		caption.Name = "Caption"
-		caption.BackgroundTransparency = 1
-		caption.Size = UDim2.fromOffset(152, 22)
-		caption.Font = Enum.Font.GothamBold
-		caption.TextSize = 13
-		caption.TextColor3 = Color3.fromRGB(255, 244, 220)
-		caption.Text = "D-Pad to equip"
-		caption.ZIndex = hint.ZIndex + 1
-		caption.Parent = hint
 		local right = Instance.new("Frame")
 		right.Name = "Right"
 		right.BackgroundTransparency = 1
-		right.Size = UDim2.fromOffset(22, 22)
+		right.Size = UDim2.fromOffset(20, 20)
 		right.ZIndex = hint.ZIndex + 1
 		right.Parent = hint
 		hint.Parent = hotbar
 		GamepadInput.mountHint(left, Enum.KeyCode.DPadLeft, true, { contrast = true })
 		GamepadInput.mountHint(right, Enum.KeyCode.DPadRight, true, { contrast = true })
-		hint.Visible = GamepadInput.isPreferred()
+		hint.Visible = GamepadInput.isPreferred() and HUDController.isPanelOpen() ~= true
 	end
 
 	local function bindToolbarHotbarKeybinds()
@@ -4838,6 +4843,9 @@ end
 					return Enum.ContextActionResult.Pass
 				end
 				if not GamepadInput.isPreferred() then
+					return Enum.ContextActionResult.Pass
+				end
+				if HUDController.isPanelOpen() then
 					return Enum.ContextActionResult.Pass
 				end
 				if input.KeyCode == Enum.KeyCode.DPadLeft then
@@ -5415,6 +5423,7 @@ end
 				backpackGuiFrame = bf
 				backpackFrameRef = bf
 				backpackRestPosition = bf.Position
+				GamepadInput.mountHint(bf, GamepadInput.INTERACT, false, { contrast = true })
 				prepareBackpackPanelLayer(bf, false)
 				ensureBackpackFrameOutline(bf)
 				ensureBackpackFadeRoot(bf)
@@ -5477,13 +5486,44 @@ end
 				if UserInputService:GetFocusedTextBox() ~= nil then
 					return Enum.ContextActionResult.Pass
 				end
+				if HUDController.isPanelOpen() then
+					return Enum.ContextActionResult.Pass
+				end
 				if not canUseToolbar then
-					return Enum.ContextActionResult.Sink
+					return Enum.ContextActionResult.Pass
 				end
 				toggleBackpackPanel()
 				UIInteractionSounds.playClick()
 				return Enum.ContextActionResult.Sink
 			end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Backquote, GamepadInput.SECONDARY)
+
+			ContextActionService:BindActionAtPriority("ToolbarBackpackEquipX", function(_, state)
+				if state ~= Enum.UserInputState.Begin then
+					return Enum.ContextActionResult.Pass
+				end
+				if not GamepadInput.isPreferred() then
+					return Enum.ContextActionResult.Pass
+				end
+				if HUDController.isPanelOpen() then
+					return Enum.ContextActionResult.Pass
+				end
+				if not canUseToolbar or not isBackpackPanelOpen then
+					return Enum.ContextActionResult.Pass
+				end
+				local screen = GamepadInput.cursorScreenPosition()
+				local window = dtScreenPointWithGuiInset(screen)
+				local row = dtBackpackRowIndexFromDropProbes(screen, window, nil)
+				if row then
+					requestEquipFromBackpack(row)
+					return Enum.ContextActionResult.Sink
+				end
+				local slot = dtHotbarSlotIndexFromDropProbes(window, screen, nil)
+				if slot then
+					selectSlot(slot, true)
+					return Enum.ContextActionResult.Sink
+				end
+				return Enum.ContextActionResult.Pass
+			end, false, Enum.ContextActionPriority.High.Value + 20, GamepadInput.INTERACT)
 
 			GamepadInput.onPreferredChanged(function()
 				syncToolbarGamepadCursor()

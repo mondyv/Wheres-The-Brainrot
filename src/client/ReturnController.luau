@@ -11,6 +11,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local ContextActionService = game:GetService("ContextActionService")
 
 local CarryGate = require(script.Parent.CarryGate)
 local BushFloatingClaimController = require(script.Parent.BushFloatingClaimController)
@@ -25,6 +26,8 @@ local TopNotifController = require(script.Parent.TopNotifController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local MobileHaptics = require(script.Parent.MobileHaptics)
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
+local GamepadInput = require(script.Parent.GamepadInput)
+local HUDController = require(script.Parent.HUDController)
 
 local ReturnController = {}
 
@@ -824,16 +827,45 @@ function ReturnController.init()
 	local freeDecorReady = freeDecor
 	if freeDecorReady then
 		wireButton(freeDecorReady, onFreeReturnActivated)
+		GamepadInput.mountHint(freeDecorReady.btn, GamepadInput.SECONDARY, false, { contrast = true })
 	end
 	if paidBtn then
 		paidDecor = buildDecor(paidBtn)
 		local paidDecorReady = paidDecor
 		if paidDecorReady then
 			wireButton(paidDecorReady, onPaidReturnActivated)
+			GamepadInput.mountHint(paidDecorReady.btn, GamepadInput.SECONDARY, false, { contrast = true })
 		end
 	else
 		warn("[ReturnController] Return Button With Brainrot missing — paid return disabled")
 	end
+
+	ContextActionService:BindActionAtPriority(
+		"ReturnGamepadY",
+		function(_name, state)
+			if state ~= Enum.UserInputState.Begin then
+				return Enum.ContextActionResult.Pass
+			end
+			if not GamepadInput.isPreferred() then
+				return Enum.ContextActionResult.Pass
+			end
+			if HUDController.isPanelOpen() then
+				return Enum.ContextActionResult.Pass
+			end
+			if not shouldShowReturnChrome() then
+				return Enum.ContextActionResult.Pass
+			end
+			if carryCount() > 0 then
+				onPaidReturnActivated()
+			else
+				onFreeReturnActivated()
+			end
+			return Enum.ContextActionResult.Sink
+		end,
+		false,
+		Enum.ContextActionPriority.High.Value + 10,
+		GamepadInput.SECONDARY
+	)
 
 	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, wasPurchased)
 		if userId ~= player.UserId then

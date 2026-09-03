@@ -10,6 +10,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local ContextActionService = game:GetService("ContextActionService")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
@@ -19,6 +20,8 @@ local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitFor
 local TopNotifController = require(script.Parent.TopNotifController)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
+local GamepadInput = require(script.Parent.GamepadInput)
+local HUDController = require(script.Parent.HUDController)
 
 local SafezoneTopButtonsController = {}
 
@@ -26,6 +29,11 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 local BUTTON_ORDER = { "Sell", "Base", "Upgrade" }
+local NAV_PAD_KEY: { [string]: Enum.KeyCode } = {
+	Sell = Enum.KeyCode.ButtonL1,
+	Upgrade = Enum.KeyCode.ButtonL2,
+	Base = Enum.KeyCode.ButtonR1,
+}
 local VISIBILITY_POLL_SEC = 0.12
 local INSIDE_STREAK_TO_SHOW = 2
 local OUTSIDE_STREAK_TO_HIDE = 2
@@ -521,6 +529,10 @@ local function wireButton(state: BtnState)
 	btn.Activated:Connect(function()
 		onNavActivated(state.name)
 	end)
+	local padKey = NAV_PAD_KEY[state.name]
+	if padKey then
+		GamepadInput.mountHint(state.host, padKey, false, { contrast = true })
+	end
 end
 
 local function resolveUi(): boolean
@@ -599,6 +611,46 @@ function SafezoneTopButtonsController.init()
 	if not resolveUi() then
 		return
 	end
+
+	local function bindNavPad()
+		ContextActionService:UnbindAction("SafezoneTopNavPad")
+		ContextActionService:BindActionAtPriority(
+			"SafezoneTopNavPad",
+			function(_name, state, input)
+				if state ~= Enum.UserInputState.Begin then
+					return Enum.ContextActionResult.Pass
+				end
+				if not GamepadInput.isPreferred() then
+					return Enum.ContextActionResult.Pass
+				end
+				if HUDController.isPanelOpen() then
+					return Enum.ContextActionResult.Pass
+				end
+				if not visibleTarget then
+					return Enum.ContextActionResult.Pass
+				end
+				local dest: string? = nil
+				if input.KeyCode == Enum.KeyCode.ButtonL1 then
+					dest = "Sell"
+				elseif input.KeyCode == Enum.KeyCode.ButtonL2 then
+					dest = "Upgrade"
+				elseif input.KeyCode == Enum.KeyCode.ButtonR1 then
+					dest = "Base"
+				end
+				if not dest then
+					return Enum.ContextActionResult.Pass
+				end
+				onNavActivated(dest)
+				return Enum.ContextActionResult.Sink
+			end,
+			false,
+			Enum.ContextActionPriority.High.Value,
+			Enum.KeyCode.ButtonL1,
+			Enum.KeyCode.ButtonL2,
+			Enum.KeyCode.ButtonR1
+		)
+	end
+	bindNavPad()
 
 	GameplayUiVisibility.onRestored(function()
 		insideStreak = 0

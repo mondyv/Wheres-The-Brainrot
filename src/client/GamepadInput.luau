@@ -5,6 +5,7 @@
 ]]
 
 local UserInputService = game:GetService("UserInputService")
+local GamepadService = game:GetService("GamepadService")
 
 local M = {}
 
@@ -30,6 +31,10 @@ local FALLBACK_FACE: { [Enum.KeyCode]: string } = {
 	[Enum.KeyCode.DPadUp] = "▲",
 	[Enum.KeyCode.DPadDown] = "▼",
 	[Enum.KeyCode.ButtonSelect] = "View",
+	[Enum.KeyCode.ButtonL1] = "LB",
+	[Enum.KeyCode.ButtonR1] = "RB",
+	[Enum.KeyCode.ButtonL2] = "LT",
+	[Enum.KeyCode.ButtonR2] = "RT",
 }
 
 function M.isPreferred(): boolean
@@ -84,9 +89,29 @@ function M.tipToken(keyCode: Enum.KeyCode): string
 end
 
 function M.onPreferredChanged(callback: (boolean) -> ()): RBXScriptConnection
-	return UserInputService.LastInputTypeChanged:Connect(function()
+	local function fire()
 		callback(M.isPreferred())
+	end
+	local conn = UserInputService.LastInputTypeChanged:Connect(fire)
+	UserInputService.GamepadConnected:Connect(function()
+		fire()
 	end)
+	UserInputService.GamepadDisconnected:Connect(function()
+		fire()
+	end)
+	return conn
+end
+
+function M.cursorScreenPosition(): Vector2
+	if M.isPreferred() then
+		local ok, pos = pcall(function()
+			return GamepadService:GetGamepadCursorPosition()
+		end)
+		if ok and typeof(pos) == "Vector2" then
+			return pos
+		end
+	end
+	return UserInputService:GetMouseLocation()
 end
 
 function M.isAcceptHeld(): boolean

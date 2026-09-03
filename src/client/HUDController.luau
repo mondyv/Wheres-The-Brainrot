@@ -12,6 +12,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local SocialService = game:GetService("SocialService")
 local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
+local GamepadService = game:GetService("GamepadService")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
@@ -21,6 +23,7 @@ local PanelSlideIn = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local BoostIconsController = require(script.Parent.BoostIconsController)
+local GamepadInput = require(script.Parent.GamepadInput)
 
 local player = Players.LocalPlayer
 
@@ -85,6 +88,32 @@ local BUTTON_FRAME_MAP = {
 
 local currentFrame: Frame? = nil
 local closeTweenByFrame: { [Frame]: Tween } = {}
+local panelCursorOn = false
+
+local function isCurrentPanelOpen(): boolean
+	return currentFrame ~= nil and currentFrame.Parent ~= nil and currentFrame.Visible == true
+end
+
+local function syncPanelGamepadCursor()
+	local want = GamepadInput.isPreferred() and isCurrentPanelOpen()
+	if want and currentFrame then
+		panelCursorOn = true
+		local ok, err = pcall(function()
+			GamepadService:EnableGamepadCursor(currentFrame)
+		end)
+		if not ok then
+			warn("[HUDController] gamepad cursor failed:", err)
+			panelCursorOn = false
+		end
+		return
+	end
+	if panelCursorOn then
+		panelCursorOn = false
+		pcall(function()
+			GamepadService:DisableGamepadCursor()
+		end)
+	end
+end
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -213,6 +242,7 @@ local function ensurePanelCloseOnTop(frame: Frame)
 	if closeBtn.ZIndex < 50 then
 		closeBtn.ZIndex = 50
 	end
+	GamepadInput.mountHint(closeBtn, GamepadInput.DECLINE, false, { contrast = true })
 	local header = frame:FindFirstChild("Header")
 	if header and header:IsA("GuiObject") and header.ZIndex < 40 then
 		(header :: GuiObject).ZIndex = 40
@@ -661,6 +691,7 @@ local function animateClose(frame: Frame)
 		end
 		if currentFrame == nil then
 			showPanelChrome()
+			syncPanelGamepadCursor()
 		end
 	end)
 	t:Play()
@@ -740,6 +771,7 @@ local function closeFrame(frame: Frame)
 	end
 	animateClose(frame)
 	task.defer(syncFramesInputPassthrough)
+	syncPanelGamepadCursor()
 end
 
 local function openFrame(frame: Frame)
@@ -837,6 +869,7 @@ local function openFrame(frame: Frame)
 	hidePanelChrome()
 	animateOpen(frame)
 	syncFramesInputPassthrough()
+	syncPanelGamepadCursor()
 end
 
 -- Closing via Studio Close under Header, scripts toggling Visible, etc.
@@ -974,6 +1007,29 @@ function HUDController.init()
 	end
 	syncFramesInputPassthrough()
 
+	ContextActionService:BindActionAtPriority(
+		"HUDPanelGamepadBack",
+		function(_name, state)
+			if state ~= Enum.UserInputState.Begin then
+				return Enum.ContextActionResult.Pass
+			end
+			if not GamepadInput.isPreferred() then
+				return Enum.ContextActionResult.Pass
+			end
+			if not isCurrentPanelOpen() then
+				return Enum.ContextActionResult.Pass
+			end
+			HUDController.closeCurrentFrame()
+			return Enum.ContextActionResult.Sink
+		end,
+		false,
+		Enum.ContextActionPriority.High.Value + 60,
+		GamepadInput.DECLINE
+	)
+	GamepadInput.onPreferredChanged(function()
+		syncPanelGamepadCursor()
+	end)
+
 	-- Frame-opening HUD buttons
 	for buttonName, frameName in pairs(BUTTON_FRAME_MAP) do
 		local button = findButton(buttonName)
@@ -1084,6 +1140,7 @@ function HUDController.forceClearPanelModal()
 		main.Enabled = true
 	end
 	syncFramesInputPassthrough()
+	syncPanelGamepadCursor()
 end
 
 function HUDController.syncInputPassthrough()
@@ -1154,6 +1211,10 @@ function HUDController.getCurrentFrame(): Frame?
 	return currentFrame
 end
 
+function HUDController.isPanelOpen(): boolean
+	return isCurrentPanelOpen()
+end
+
 -- Swap the open HUD panel without clearing blur/chrome (e.g. Sell → SellInfo confirm).
 function HUDController.replaceOpenFrame(frame: Frame)
 	ensureHudRoots()
@@ -1191,6 +1252,7 @@ function HUDController.replaceOpenFrame(frame: Frame)
 	hidePanelChrome()
 	animateOpen(frame)
 	syncFramesInputPassthrough()
+	syncPanelGamepadCursor()
 end
 
 HUDController.applyHoverAndClick = applyHoverAndClick

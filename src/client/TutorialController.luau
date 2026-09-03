@@ -1626,6 +1626,11 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			end
 		end
 	end
+	if attachHost:IsA("GuiButton") then
+		GamepadInput.mountHint(attachHost, GamepadInput.ACCEPT, false, { contrast = true })
+	elseif target:IsA("GuiButton") then
+		GamepadInput.mountHint(target, GamepadInput.ACCEPT, false, { contrast = true })
+	end
 
 	-- Accept/Decline: no yellow stroke — keep the checkmark readable.
 	if not claimStyle then

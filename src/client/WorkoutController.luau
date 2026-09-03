@@ -2451,7 +2451,7 @@ local function startDoubleTapLoop()
 			missCombo()
 			return
 		end
-		setComboRingScale(1.42 - t * 0.72)
+		setComboRingScale(1.42 - t * 0.56)
 		paintComboUrgency(t)
 		local holder = comboHolder()
 		if holder and lastComboPos.X > 0 and os.clock() - comboAppearAt > 0.3 then

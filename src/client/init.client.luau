@@ -10,7 +10,18 @@ task.defer(function()
 	local Lighting = game:GetService("Lighting")
 	local StarterGui = game:GetService("StarterGui")
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local RunService = game:GetService("RunService")
 	local UserInputService = game:GetService("UserInputService")
+
+	-- Play-solo is server+client in one process at Automatic/max quality. Live
+	-- Roblox already streams and quality-scales; Studio does not. Session-only.
+	if RunService:IsStudio() then
+		pcall(function()
+			local q = Enum.QualityLevel
+			settings().Rendering.QualityLevel = q.Level08 or q.Level8 or q.Level01
+		end)
+		Lighting.GlobalShadows = false
+	end
 
 	task.spawn(function()
 		local shared = ReplicatedStorage:WaitForChild("Shared", 30)
@@ -45,8 +56,9 @@ task.defer(function()
 	pcall(function()
 		local Workspace = game:GetService("Workspace")
 		if Workspace.StreamingEnabled == true then
-			(Workspace :: any).StreamingMinRadius = 112
-			(Workspace :: any).StreamingTargetRadius = 280
+			local studio = RunService:IsStudio()
+			(Workspace :: any).StreamingMinRadius = if studio then 80 else 112
+			(Workspace :: any).StreamingTargetRadius = if studio then 180 else 280
 		end
 	end)
 
@@ -191,6 +203,10 @@ task.defer(function()
 			end,
 			function()
 				initClientModule("VegetationSwayController")
+			end,
+			function()
+				-- Studio play overlay (quality/cull) before land parking starts.
+				initClientModule("LowGraphicsController")
 			end,
 			function()
 				initClientModule("GrassCullController")

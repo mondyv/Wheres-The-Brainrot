@@ -9,10 +9,14 @@
 	  • GlobalShadows off, lowest saved quality (best-effort)
 	  • Bloom / DoF / SunRays off
 	  • Safer fog via SafeZoneLightingController
+
+	Studio play-solo always uses the lighting/cull overlay (session QualityLevel
+	cap only — never writes SavedQualityLevel).
 ]]
 
 local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local UserSettings = UserSettings
 
 local FireflyController = require(script.Parent.FireflyController)
@@ -92,14 +96,34 @@ local function setSavedQualityLowest(enabled: boolean)
 	end
 end
 
-local function apply(enabled: boolean)
+local function studioPlay(): boolean
+	return RunService:IsStudio()
+end
+
+local function capStudioRenderQuality()
+	if not studioPlay() then
+		return
+	end
+	pcall(function()
+		local q = Enum.QualityLevel
+		settings().Rendering.QualityLevel = q.Level08 or q.Level8 or q.Level01
+	end)
+end
+
+local function apply(userEnabled: boolean)
+	-- Studio play-solo always uses the cheap lighting/cull path. Do not write
+	-- SavedQualityLevel (that persists onto the live Roblox account).
+	local enabled = userEnabled == true or studioPlay()
 	FireflyController.setEnabled(not enabled)
 	VegetationSwayController.setEnabled(not enabled)
 	SafeZoneLightingController.setLowGraphics(enabled)
 	GrassCullController.setLowGraphics(enabled)
 	setHeavyFxEnabled(not enabled)
 	setGlobalShadowsEnabled(not enabled)
-	setSavedQualityLowest(enabled)
+	setSavedQualityLowest(userEnabled == true)
+	if enabled then
+		capStudioRenderQuality()
+	end
 end
 
 local LowGraphicsController = {}
@@ -118,6 +142,7 @@ function LowGraphicsController.init()
 		player:SetAttribute(ATTR, false)
 	end
 
+	capStudioRenderQuality()
 	apply(LowGraphicsController.isEnabled())
 
 	player:GetAttributeChangedSignal(ATTR):Connect(function()
@@ -125,11 +150,11 @@ function LowGraphicsController.init()
 	end)
 
 	Lighting.ChildAdded:Connect(function(child)
-		if not LowGraphicsController.isEnabled() then
+		if not (LowGraphicsController.isEnabled() or studioPlay()) then
 			return
 		end
 		task.defer(function()
-			if not child.Parent or not LowGraphicsController.isEnabled() then
+			if not child.Parent or not (LowGraphicsController.isEnabled() or studioPlay()) then
 				return
 			end
 			if isHeavyFx(child) then

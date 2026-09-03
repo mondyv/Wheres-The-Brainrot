@@ -127,7 +127,7 @@ local function ensureHeartbeat()
 		return
 	end
 	local hueAccum = 0
-	local hueStep = if UserInputService.TouchEnabled then 0.12 else 0
+	local hueStep = if UserInputService.TouchEnabled or RunService:IsStudio() then 0.12 else 0
 	heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 		if not next(tracked) then
 			if heartbeatConn then

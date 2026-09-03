@@ -271,9 +271,14 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 		return existing
 	end
 
-	local clone = GearConfig.cloneGearModel(gearId)
-	if not clone then
+	local clone
+	if isStudioPreview() then
 		clone = makeFallbackModel(gearId)
+	else
+		clone = GearConfig.cloneGearModel(gearId)
+		if not clone then
+			clone = makeFallbackModel(gearId)
+		end
 	end
 
 	M.clear(host)

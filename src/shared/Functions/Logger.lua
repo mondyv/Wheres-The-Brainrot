@@ -29,11 +29,8 @@ local function log(level, message, bypassStudioCheck, ...)
 	end
 end
 
-function Logger.info(message, ...)
-	if RunService:IsStudio() then
-		local args = { ... }
-		log("INFO", message, false, table.unpack(args))
-	end
+function Logger.info(_message, ...)
+	-- Skip INFO in Studio too — debug.traceback() + Output prints hitch play-solo.
 end
 
 function Logger.warn(message, ...)

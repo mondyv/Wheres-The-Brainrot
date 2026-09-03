@@ -74,7 +74,7 @@ local function ensureHeartbeat()
 end
 
 function BrainrotGradientAnimator.register(root: Instance)
-	if UserInputService.TouchEnabled then
+	if UserInputService.TouchEnabled or RunService:IsStudio() then
 		return
 	end
 	for _, desc in root:GetDescendants() do

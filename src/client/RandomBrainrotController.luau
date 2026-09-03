@@ -399,7 +399,7 @@ function Main:_logger(message: string, type: "info" | "warn" | "error"?): (boole
 	end
 
 	if type == "info" then
-		log("INFO", message, false)
+		return true
 	elseif type == "warn" then
 		log("WARN", message, true)
 	else

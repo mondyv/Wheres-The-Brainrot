@@ -27,10 +27,11 @@ local SWING_KEEP_RADIUS = 2
 local keepRadius = DEFAULT_KEEP_RADIUS
 local lowGraphics = false
 local POLL_SEC = 0.45
-local START_DELAY_SEC = 4
+-- Studio play-solo already has the whole place in-process; park immediately.
+local START_DELAY_SEC = if RunService:IsStudio() then 0.4 else 4
 local FEATURE_ENABLED = true
 -- Reparent budget: restore terrain/island first (see restorePriority), a few per frame.
-local REPARENT_PER_YIELD = 3
+local REPARENT_PER_YIELD = if RunService:IsStudio() then 10 else 3
 local REPARENT_PER_YIELD_SWING = 10
 local FAST_MOVE_SPEED = 36
 local STREAM_AHEAD_STUDS = 180
@@ -39,7 +40,9 @@ local lastStreamAt = 0.0
 local STREAM_COOLDOWN = 0.35
 local GAMEPLAY_STREAM_TARGET = 280
 local MOBILE_STREAM_TARGET = 200
+local STUDIO_STREAM_TARGET = 180
 local SWING_STREAM_TARGET = 420
+local STUDIO_SWING_STREAM_TARGET = 240
 local swingStreamBoosted = false
 local wasFastTraveling = false
 
@@ -490,6 +493,9 @@ local function playerLandNow(): number
 end
 
 local function gameplayStreamRadius(): number
+	if RunService:IsStudio() then
+		return STUDIO_STREAM_TARGET
+	end
 	if UserInputService.TouchEnabled then
 		return MOBILE_STREAM_TARGET
 	end
@@ -504,7 +510,7 @@ local function setSwingStreamBoost(on: boolean)
 	pcall(function()
 		local wsAny = Workspace :: any
 		if on then
-			wsAny.StreamingTargetRadius = SWING_STREAM_TARGET
+			wsAny.StreamingTargetRadius = if RunService:IsStudio() then STUDIO_SWING_STREAM_TARGET else SWING_STREAM_TARGET
 		else
 			wsAny.StreamingTargetRadius = gameplayStreamRadius()
 		end
@@ -664,6 +670,11 @@ function M.init()
 
 	if not FEATURE_ENABLED then
 		return
+	end
+
+	if RunService:IsStudio() then
+		lowGraphics = true
+		keepRadius = 0
 	end
 
 	task.spawn(function()

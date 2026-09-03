@@ -39,6 +39,8 @@ local spiderWebShotTemplate: Sound?
 local spiderGettingHitTemplate: Sound?
 local spiderDodgeTemplate: Sound?
 local cobwebLaughTemplate: Sound?
+local comboHitTemplate: Sound?
+local comboFailTemplate: Sound?
 local grassTemplates: { Sound } = {}
 
 local activeAuraSound: Sound?
@@ -131,6 +133,22 @@ local function playTemplate(template: Sound?)
 		return
 	end
 	local clone = prepareClone(template)
+	clone.Parent = SoundService
+	clone:Play()
+	clone.Ended:Once(function()
+		clone:Destroy()
+	end)
+end
+
+local function playTemplatePitched(template: Sound?, playbackSpeed: number)
+	if not template then
+		return
+	end
+	if ClientSFXVolume.getVolume() <= 0 then
+		return
+	end
+	local clone = prepareClone(template)
+	clone.PlaybackSpeed = math.clamp(playbackSpeed, 0.7, 2)
 	clone.Parent = SoundService
 	clone:Play()
 	clone.Ended:Once(function()
@@ -359,6 +377,12 @@ function GameSoundEffects.init()
 	notification1Template = resolveSoundNode(root:FindFirstChild("Notification1"))
 	landMultiplyTemplate = resolveSoundNode(root:FindFirstChild("LandMultiply"))
 
+	local comboFolder = root:FindFirstChild("Working out combo sfx")
+	if comboFolder then
+		comboHitTemplate = resolveSoundNode(comboFolder:FindFirstChild("Hitsound"))
+		comboFailTemplate = resolveSoundNode(comboFolder:FindFirstChild("Failed Combo Sound"))
+	end
+
 	table.clear(grassTemplates)
 	local grassNode = root:FindFirstChild("Grass")
 	if grassNode then
@@ -562,6 +586,37 @@ function GameSoundEffects.playLifting()
 		return
 	end
 	playTemplate(liftingTemplate)
+end
+
+local function resolveComboSfxFolder(): Instance?
+	local root = SoundService:FindFirstChild("SoundEffects")
+	return root and root:FindFirstChild("Working out combo sfx")
+end
+
+function GameSoundEffects.playWorkoutComboHit(combo: number)
+	if not comboHitTemplate then
+		local folder = resolveComboSfxFolder()
+		comboHitTemplate = resolveSoundNode(folder and folder:FindFirstChild("Hitsound"))
+	end
+	if not comboHitTemplate then
+		warn("[GameSoundEffects] SoundEffects['Working out combo sfx'].Hitsound missing")
+		return
+	end
+	local n = math.max(1, math.floor(combo))
+	local pitch = 1 + math.min(n - 1, 22) * 0.032
+	playTemplatePitched(comboHitTemplate, pitch)
+end
+
+function GameSoundEffects.playWorkoutComboFail()
+	if not comboFailTemplate then
+		local folder = resolveComboSfxFolder()
+		comboFailTemplate = resolveSoundNode(folder and folder:FindFirstChild("Failed Combo Sound"))
+	end
+	if not comboFailTemplate then
+		warn("[GameSoundEffects] SoundEffects['Working out combo sfx']['Failed Combo Sound'] missing")
+		return
+	end
+	playTemplate(comboFailTemplate)
 end
 
 function GameSoundEffects.playXpCollect()

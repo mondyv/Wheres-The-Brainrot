@@ -17,7 +17,6 @@ local GearRainbowFX = require(script.Parent.GearRainbowFX)
 local OtherVfxController = require(script.Parent.OtherVfxController)
 local UpgradesController = require(script.Parent.UpgradesController)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
-local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local GamepadInput = require(script.Parent.GamepadInput)
 
 local player = Players.LocalPlayer
@@ -1424,6 +1423,7 @@ local doubleTapGui: ScreenGui? = nil
 local claimDoubleTapBusy = false
 local comboRingConn: RBXScriptConnection? = nil
 local comboPreferredConn: RBXScriptConnection? = nil
+local comboShakeConn: RBXScriptConnection? = nil
 local comboRingBorn = 0.0
 local comboWindow = 1.55
 local comboBusyAnim = false
@@ -1513,6 +1513,47 @@ local function ensureDoubleTapGui(): ScreenGui
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	gui.DisplayOrder = 118
 	gui.Enabled = true
+
+	local trailLayer = Instance.new("Frame")
+	trailLayer.Name = "ApproachTrail"
+	trailLayer.BackgroundTransparency = 1
+	trailLayer.Size = UDim2.fromScale(1, 1)
+	trailLayer.ZIndex = 12
+	trailLayer.Active = false
+	trailLayer.Parent = gui
+	local line = Instance.new("Frame")
+	line.Name = "ApproachLine"
+	line.AnchorPoint = Vector2.new(0.5, 0)
+	line.BackgroundColor3 = Color3.fromRGB(255, 236, 180)
+	line.BackgroundTransparency = 1
+	line.BorderSizePixel = 0
+	line.Size = UDim2.fromOffset(4, 20)
+	line.Visible = false
+	line.ZIndex = 12
+	line.Parent = trailLayer
+	local lineCorner = Instance.new("UICorner")
+	lineCorner.CornerRadius = UDim.new(1, 0)
+	lineCorner.Parent = line
+	for i = 1, 10 do
+		local pip = Instance.new("Frame")
+		pip.Name = "Pip" .. i
+		pip.BackgroundColor3 = Color3.fromRGB(255, 244, 200)
+		pip.BackgroundTransparency = 1
+		pip.BorderSizePixel = 0
+		pip.AnchorPoint = Vector2.new(0.5, 0.5)
+		pip.Size = UDim2.fromOffset(10, 10)
+		pip.Visible = false
+		pip.ZIndex = 13
+		pip.Parent = trailLayer
+		local pipCorner = Instance.new("UICorner")
+		pipCorner.CornerRadius = UDim.new(1, 0)
+		pipCorner.Parent = pip
+		local pipStroke = Instance.new("UIStroke")
+		pipStroke.Color = Color3.fromRGB(255, 214, 74)
+		pipStroke.Thickness = 1.4
+		pipStroke.Transparency = 0.35
+		pipStroke.Parent = pip
+	end
 
 	local holder = Instance.new("Frame")
 	holder.Name = "ComboHold"
@@ -1854,6 +1895,84 @@ local function paintComboIdle()
 	refreshComboHud(comboDisplay())
 end
 
+local function stopComboShake()
+	if comboShakeConn then
+		comboShakeConn:Disconnect()
+		comboShakeConn = nil
+	end
+end
+
+local function shakeComboHold(basePos: UDim2)
+	stopComboShake()
+	local holder = comboHolder()
+	if not holder then
+		return
+	end
+	local born = os.clock()
+	local dur = 0.42
+	comboShakeConn = RunService.Heartbeat:Connect(function()
+		local t = os.clock() - born
+		if t >= dur or not holder.Parent then
+			stopComboShake()
+			if holder.Parent then
+				holder.Position = basePos
+			end
+			return
+		end
+		local fade = 1 - t / dur
+		local mag = 18 * fade * fade
+		holder.Position = basePos + UDim2.fromOffset(math.sin(t * 82) * mag, math.cos(t * 96) * mag * 0.82)
+	end)
+end
+
+local function playComboApproachTrail(from: Vector2, to: Vector2)
+	local gui = doubleTapGui
+	local layer = gui and gui:FindFirstChild("ApproachTrail")
+	if not layer then
+		return
+	end
+	local delta = to - from
+	if delta.Magnitude < 48 then
+		return
+	end
+	local line = layer:FindFirstChild("ApproachLine")
+	if line and line:IsA("Frame") then
+		line.Visible = true
+		line.Position = UDim2.fromOffset(from.X, from.Y)
+		line.Size = UDim2.fromOffset(4, delta.Magnitude)
+		line.Rotation = math.deg(math.atan2(delta.X, delta.Y))
+		line.BackgroundTransparency = 0.28
+		TweenService:Create(line, TweenInfo.new(0.34, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			BackgroundTransparency = 1,
+		}):Play()
+	end
+	local i = 0
+	for _, ch in layer:GetChildren() do
+		if string.sub(ch.Name, 1, 3) ~= "Pip" or not ch:IsA("Frame") then
+			continue
+		end
+		i += 1
+		local alpha = i / 11
+		local p = from:Lerp(to, alpha)
+		local pip = ch :: Frame
+		local size = 8 + alpha * 12
+		pip.Position = UDim2.fromOffset(p.X, p.Y)
+		pip.Size = UDim2.fromOffset(size, size)
+		pip.BackgroundTransparency = 0.05 + alpha * 0.2
+		pip.Visible = true
+		local delaySec = 0.02 * (i - 1)
+		task.delay(delaySec, function()
+			if not pip.Parent then
+				return
+			end
+			TweenService:Create(pip, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Size = UDim2.fromOffset(size + 14, size + 14),
+				BackgroundTransparency = 1,
+			}):Play()
+		end)
+	end
+end
+
 local function placeComboHold()
 	local holder = comboHolder()
 	if not holder then
@@ -1875,8 +1994,12 @@ local function placeComboHold()
 		end
 		pos = candidate
 	end
+	local from = lastComboPos
 	lastComboPos = pos
 	holder.Position = UDim2.fromOffset(pos.X, pos.Y)
+	if from.X > 0 and (pos - from).Magnitude >= 48 then
+		playComboApproachTrail(from, pos)
+	end
 	pickNextComboKey()
 	refreshComboHud(comboDisplay())
 end
@@ -1957,10 +2080,11 @@ local function missCombo()
 	comboBusyAnim = true
 	setComboNumber(1)
 	applyComboAnimSpeed(1)
-	UIInteractionSounds.playNotif()
+	GameSoundEffects.playWorkoutComboFail()
 	local holder = comboHolder()
 	local gen = doubleTapGen
 	if holder then
+		shakeComboHold(holder.Position)
 		local pop = holder:FindFirstChild("PopScale")
 		local ring = holder:FindFirstChild("Ring")
 		local stroke = ring and ring:FindFirstChild("RingStroke")
@@ -2036,7 +2160,7 @@ local function hitCombo()
 	end
 	claimDoubleTapBusy = true
 	burstComboLine()
-	UIInteractionSounds.playClick()
+	GameSoundEffects.playWorkoutComboHit(comboDisplay())
 	placeComboHold()
 	paintComboIdle()
 	pulseComboHold(true)
@@ -2073,6 +2197,7 @@ local function stopDoubleTapLoop()
 		comboPreferredConn:Disconnect()
 		comboPreferredConn = nil
 	end
+	stopComboShake()
 	if doubleTapGui then
 		doubleTapGui:Destroy()
 		doubleTapGui = nil

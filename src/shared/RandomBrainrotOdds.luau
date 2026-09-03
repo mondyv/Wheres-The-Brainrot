@@ -47,9 +47,9 @@ local RARITY_ORDER: { RarityId } = {
 -- Better rarities in each tier are ~3x the old mix. God/secret still only
 -- appear at the highest gates (also blocked by maxAllowedBaseIncome).
 local TIER_WEIGHTS: { [number]: { [RarityId]: number } } = {
-	[1] = { common = 72, uncommon = 22, rare = 6, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[2] = { common = 50, uncommon = 32, rare = 18, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[3] = { common = 30, uncommon = 28, rare = 30, epic = 12, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[1] = { common = 68, uncommon = 22, rare = 6.2, epic = 3, mythic = 0.8, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[2] = { common = 46, uncommon = 30, rare = 16.5, epic = 6, mythic = 1.5, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[3] = { common = 26, uncommon = 26, rare = 28, epic = 16, mythic = 4, legendary = 0, ["brainrot god"] = 0, secret = 0 },
 	[4] = { common = 12, uncommon = 24, rare = 30, epic = 28, mythic = 6, legendary = 0, ["brainrot god"] = 0, secret = 0 },
 	[5] = { common = 4, uncommon = 12, rare = 24, epic = 32, mythic = 28, legendary = 0, ["brainrot god"] = 0, secret = 0 },
 	[6] = { common = 2, uncommon = 6, rare = 16, epic = 28, mythic = 36, legendary = 12, ["brainrot god"] = 0, secret = 0 },
@@ -65,7 +65,7 @@ local TIER_INCOME: { number } = {
 	0, -- 1
 	150, -- 2
 	750, -- 3
-	4_000, -- 4  (tiny mythic tease)
+	4_000, -- 4  (mythic is already a starter tease; this is the real mix)
 	12_000, -- 5  (real mythic odds — ~2 low mythics placed)
 	45_000, -- 6  (legendary tease)
 	150_000, -- 7
@@ -220,15 +220,15 @@ function M.maxAllowedBaseIncome(plotIncomePerSecond: number): number
 	local source = TIER_WEIGHTS[tier] or TIER_WEIGHTS[1]
 	local mins = minIncomeByRarity :: { [RarityId]: number }
 	local need = baseCap
-	-- Plot-relative ceiling so forcing cheapest mythic/legendary never goes crazy.
-	local plotCap = math.floor(ips * 0.65 + 150)
 
+	-- If the odds table includes a rarity, always allow its cheapest unit.
+	-- A plot-relative cap used to zero Epic/Mythical for new players.
 	for _, id in ipairs(RARITY_ORDER) do
 		local w = source[id] or 0
 		if w > 0 and FORCE_CHEAPEST_RARITIES[id] then
 			local minBase = mins[id] or 0
 			if minBase > 0 then
-				need = math.max(need, math.min(minBase, plotCap))
+				need = math.max(need, minBase)
 			end
 		end
 	end

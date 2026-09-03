@@ -2816,6 +2816,7 @@ finishTutorial = function(opts: { skipped: boolean? }?)
 	swingCoach.goToBaseLite = false
 	syncWorkoutGoalBar()
 	GameplayUiVisibility.show({ flourish = true })
+	PlayerGuiMain.hideAdminPanelUnlessAllowed()
 	local skipped = opts ~= nil and opts.skipped == true
 	if not skipped then
 		-- One confetti burst for the whole tutorial (guarded inside fireConfettiAndShake).
@@ -3369,6 +3370,7 @@ function M.stop()
 	swingCoach.goToBaseLite = false
 	syncWorkoutGoalBar()
 	GameplayUiVisibility.show()
+	PlayerGuiMain.hideAdminPanelUnlessAllowed()
 	if tutorialDeathConn then
 		tutorialDeathConn:Disconnect()
 		tutorialDeathConn = nil

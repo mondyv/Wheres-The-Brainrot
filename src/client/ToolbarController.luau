@@ -4743,11 +4743,7 @@ end
 				continue
 			end
 			UIInteractionSounds.playHover()
-			if idx == start then
-				selectSlot(idx)
-			else
-				selectSlot(idx, true)
-			end
+			selectSlot(idx, true)
 			return
 		end
 	end

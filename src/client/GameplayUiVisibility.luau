@@ -610,6 +610,7 @@ local function finishRestoreCleanup()
 	hardRestoreSnaps()
 	table.clear(mainSnaps)
 	table.clear(screenSnaps)
+	PlayerGuiMain.hideAdminPanelUnlessAllowed()
 	fireRestored()
 end
 

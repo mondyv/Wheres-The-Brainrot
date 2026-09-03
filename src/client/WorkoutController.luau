@@ -2464,7 +2464,7 @@ local function hitCombo()
 		if holder then
 			holder.Visible = false
 		end
-		placeComboHold(true)
+		placeComboHold()
 		setComboNumber(nextCount)
 		paintComboIdle()
 		comboBusyAnim = false
@@ -2526,7 +2526,9 @@ local function startDoubleTapLoop()
 	doubleTapGen += 1
 	local gen = doubleTapGen
 	comboBusyAnim = false
-	lastComboPos = Vector2.new(-999, -999)
+	local cam0 = Workspace.CurrentCamera
+	local vs0 = if cam0 then cam0.ViewportSize else Vector2.new(800, 600)
+	lastComboPos = Vector2.new(vs0.X * 0.5, vs0.Y * 0.42)
 	comboPromptKey = COMBO_PAD_KEYS[math.random(1, #COMBO_PAD_KEYS)]
 	ensureDoubleTapGui()
 	placeComboHold()

@@ -2976,6 +2976,9 @@ local function boot(character)
 		end
 
 		local reach = maxDistanceOverride or getSwingRange()
+		if st.isHrpInSafezone() then
+			return nil
+		end
 		local tutorialMod = getClientModule("TutorialController")
 		if tutorialMod and typeof(tutorialMod.getLockedSwingPart) == "function" then
 			local locked = tutorialMod.getLockedSwingPart()
@@ -2986,10 +2989,6 @@ local function boot(character)
 					return locked
 				end
 			end
-		end
-
-		if st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
-			return nil
 		end
 
 		local look = camera.CFrame.LookVector
@@ -3206,7 +3205,7 @@ local function boot(character)
 	end
 
 	function st.pickNearbySwingTarget(maxDistance, preferredTarget)
-		if st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
+		if st.isHrpInSafezone() then
 			return nil, nil, nil
 		end
 		camera = workspace.CurrentCamera or camera
@@ -3257,7 +3256,7 @@ local function boot(character)
 	)
 		local inSafezone = st.isHrpInSafezone()
 		local tutorialOpen = player:GetAttribute("TutorialCompleted") ~= true
-		if inSafezone and not showSafezoneBlocked and not tutorialOpen then
+		if inSafezone and not showSafezoneBlocked then
 			return nil, false
 		end
 		camera = workspace.CurrentCamera or camera
@@ -3290,7 +3289,7 @@ local function boot(character)
 
 		-- Looking down for swing control: cling to the current forward vine instead of
 		-- re-picking whatever sits near screen-center (often a left/side vine).
-		if lookingDown and preferredTarget and (not inSafezone or tutorialOpen) then
+		if lookingDown and preferredTarget and not inSafezone then
 			if passesVisibleChecks(preferredTarget, maxDistance) and preferredStillForward(preferredTarget) then
 				return preferredTarget, passesAttachChecks(preferredTarget, readyDistance)
 			end
@@ -3299,7 +3298,7 @@ local function boot(character)
 		local tutorialMod = getClientModule("TutorialController")
 		if tutorialMod and typeof(tutorialMod.getLockedSwingPart) == "function" then
 			local locked = tutorialMod.getLockedSwingPart()
-			if locked and locked.Parent and (not inSafezone or tutorialOpen) then
+			if locked and locked.Parent and not inSafezone then
 				if passesVisibleChecks(locked, maxDistance) then
 					return locked, passesAttachChecks(locked, readyDistance)
 				end
@@ -3307,16 +3306,16 @@ local function boot(character)
 		end
 
 		local lookedTarget = nil
-		if not inSafezone or tutorialOpen then
+		if not inSafezone then
 			lookedTarget = st.pickSwingTarget(false, maxDistance, minLookDot, maxScreenRadius)
 		end
 		if lookedTarget and passesVisibleChecks(lookedTarget, maxDistance) then
-			return lookedTarget, (not inSafezone or tutorialOpen) and passesAttachChecks(lookedTarget, readyDistance)
+			return lookedTarget, (not inSafezone) and passesAttachChecks(lookedTarget, readyDistance)
 		end
 
 		if preferredTarget and passesVisibleChecks(preferredTarget, maxDistance) then
 			if not lookingDown or preferredStillForward(preferredTarget) then
-				return preferredTarget, (not inSafezone or tutorialOpen) and passesAttachChecks(preferredTarget, readyDistance)
+				return preferredTarget, (not inSafezone) and passesAttachChecks(preferredTarget, readyDistance)
 			end
 		end
 
@@ -3346,7 +3345,7 @@ local function boot(character)
 		end
 		considerVisual(st.returnSwingTarget)
 
-		return best, best ~= nil and (not inSafezone or tutorialOpen) and passesAttachChecks(best, readyDistance)
+		return best, best ~= nil and (not inSafezone) and passesAttachChecks(best, readyDistance)
 	end
 
 	function st.attachCandidateScore(target, dist, point, maxDistance)
@@ -3442,7 +3441,7 @@ local function boot(character)
 	end
 
 	function st.pickAttachSwingTarget(maxDistance, minLookDot, maxScreenRadius)
-		if st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
+		if st.isHrpInSafezone() then
 			return nil
 		end
 		if player:GetAttribute("TutorialCompleted") ~= true then
@@ -3516,10 +3515,7 @@ local function boot(character)
 
 	function st.isVisibleSwingTarget(target, maxDistance, minLookDot)
 		camera = workspace.CurrentCamera or camera
-		if not camera or not st.hrp.Parent then
-			return false
-		end
-		if st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
+		if not camera or not st.hrp.Parent or st.isHrpInSafezone() then
 			return false
 		end
 		if not target or not target.Parent then
@@ -3610,10 +3606,7 @@ local function boot(character)
 		maxScreenRadiusOverride
 	)
 		camera = workspace.CurrentCamera or camera
-		if not camera or not st.hrp.Parent then
-			return false
-		end
-		if st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
+		if not camera or not st.hrp.Parent or st.isHrpInSafezone() then
 			return false
 		end
 
@@ -4054,7 +4047,7 @@ local function boot(character)
 		if not st.previewBeam then
 			return
 		end
-		if (st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true) or st.previewFade <= 0.01 then
+		if st.isHrpInSafezone() or st.previewFade <= 0.01 then
 			st.previewBeam.Enabled = false
 			return
 		end
@@ -4088,7 +4081,7 @@ local function boot(character)
 	end
 
 	function st.updatePreview(target)
-		if (st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true) or st.isSwinging or not target or not target.Parent then
+		if st.isHrpInSafezone() or st.isSwinging or not target or not target.Parent then
 			st.hidePreview()
 			return
 		end
@@ -5055,7 +5048,7 @@ local function boot(character)
 		if st.isWebTrapped() or st.isSwinging or not target or not target.Parent then
 			return
 		end
-		if st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
+		if st.isHrpInSafezone() then
 			return
 		end
 
@@ -5552,7 +5545,7 @@ local function boot(character)
 			end
 		end
 		local trustTutorialLock = false
-		if not target and player:GetAttribute("TutorialCompleted") ~= true then
+		if not target and not st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") ~= true then
 			local tutorialMod = getClientModule("TutorialController")
 			if tutorialMod and typeof(tutorialMod.getLockedSwingPart) == "function" then
 				local locked = tutorialMod.getLockedSwingPart()
@@ -5789,6 +5782,9 @@ local function boot(character)
 			if not st.humanoid then
 				return Enum.ContextActionResult.Pass
 			end
+			if st.isHrpInSafezone() then
+				return Enum.ContextActionResult.Pass
+			end
 			local canLatch = st.scannedVisualCanSwing == true
 			if not canLatch and st.highlightedTarget then
 				canLatch = true
@@ -5801,9 +5797,14 @@ local function boot(character)
 				canLatch = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit) ~= nil
 			end
 			if not canLatch and player:GetAttribute("TutorialCompleted") ~= true then
-				local maxDistance, lookDot, screenLimit = st.getSwingPressAttachLimits()
-				canLatch = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit) ~= nil
-					or st.scannedVisualTarget ~= nil
+				local tutorialMod = getClientModule("TutorialController")
+				if tutorialMod and typeof(tutorialMod.getLockedSwingPart) == "function" then
+					local locked = tutorialMod.getLockedSwingPart()
+					if locked and locked.Parent then
+						canLatch = true
+						st.scannedVisualTarget = locked
+					end
+				end
 			end
 			if not canLatch then
 				return Enum.ContextActionResult.Pass
@@ -6594,9 +6595,7 @@ local function boot(character)
 			end
 
 			local scanMode = "none"
-			if isGameplayCutsceneActive() or player:GetAttribute("WorkoutActive") == true then
-				st.hideSwingTargetUi()
-			elseif st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
+			if isGameplayCutsceneActive() or player:GetAttribute("WorkoutActive") == true or st.isHrpInSafezone() then
 				st.hideSwingTargetUi()
 			elseif st.isAirborneForSwing() then
 				scanMode = "air"

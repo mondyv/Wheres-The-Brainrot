@@ -94,7 +94,10 @@ local function isGameplayCutsceneActive()
 end
 
 local function isSwingInputBlocked()
-	return isTypingBlocked() or isGameplayCutsceneActive()
+	if isTypingBlocked() or isGameplayCutsceneActive() then
+		return true
+	end
+	return player:GetAttribute("WorkoutActive") == true
 end
 
 local sharedFolder = ReplicatedStorage:FindFirstChild("Shared") or ReplicatedStorage:WaitForChild("Shared", 10)
@@ -6591,7 +6594,7 @@ local function boot(character)
 			end
 
 			local scanMode = "none"
-			if isGameplayCutsceneActive() then
+			if isGameplayCutsceneActive() or player:GetAttribute("WorkoutActive") == true then
 				st.hideSwingTargetUi()
 			elseif st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
 				st.hideSwingTargetUi()

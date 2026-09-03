@@ -1968,10 +1968,14 @@ end
 
 local function resolveLand1SwingTarget(): BasePart?
 	refreshVineCache()
-	local origin = playerOrigin()
+	local playerPos = playerOrigin()
+	local corridorOrigin = playerPos
+	local startCf = PlotSpawnUtil.getTutorialStartCFrame()
+	if startCf then
+		corridorOrigin = Vector3.new(startCf.Position.X, playerPos.Y, startCf.Position.Z)
+	end
 	local aim = land1Aim()
-	local toAim = aim - origin
-	local flatToAim = Vector3.new(toAim.X, 0, toAim.Z)
+	local flatToAim = Vector3.new(aim.X - corridorOrigin.X, 0, aim.Z - corridorOrigin.Z)
 	local aimDir = if flatToAim.Magnitude > 1 then flatToAim.Unit else Vector3.new(0, 0, -1)
 	local right = aimDir:Cross(Vector3.yAxis)
 	if right.Magnitude < 0.05 then
@@ -1980,43 +1984,60 @@ local function resolveLand1SwingTarget(): BasePart?
 		right = right.Unit
 	end
 
-	local function isAhead(part: BasePart): boolean
-		local offset = part.Position - origin
-		local dist = offset.Magnitude
-		if dist < 3 or dist > 260 then
-			return false
-		end
-		return offset:Dot(aimDir) >= 0
-	end
-
-	-- Stick to the corridor-middle vine; don't hop to whatever is camera-center.
-	if lockedSwingPart and lockedSwingPart.Parent and isAhead(lockedSwingPart) then
-		return lockedSwingPart
-	end
-	lockedSwingPart = nil
-
-	local best: BasePart? = nil
-	local bestScore = math.huge
+	local rowMin = math.huge
 	for _, part in vineCache do
-		if not part.Parent or not isAhead(part) then
+		if not part.Parent then
 			continue
 		end
-		local offset = part.Position - origin
-		local lateral = math.abs(offset:Dot(right))
-		local score = offset.Magnitude * 0.2 + lateral * 2.8
-		if score < bestScore then
-			bestScore = score
+		local flat = Vector3.new(part.Position.X - corridorOrigin.X, 0, part.Position.Z - corridorOrigin.Z)
+		local along = flat:Dot(aimDir)
+		if along >= 10 and along <= 160 and along < rowMin then
+			rowMin = along
+		end
+	end
+	local row: { BasePart } = {}
+	if rowMin < math.huge then
+		for _, part in vineCache do
+			if not part.Parent then
+				continue
+			end
+			local flat = Vector3.new(part.Position.X - corridorOrigin.X, 0, part.Position.Z - corridorOrigin.Z)
+			local along = flat:Dot(aimDir)
+			if along >= rowMin and along <= rowMin + 24 then
+				table.insert(row, part)
+			end
+		end
+	end
+
+	local function lateralOf(part: BasePart): number
+		local flat = Vector3.new(part.Position.X - corridorOrigin.X, 0, part.Position.Z - corridorOrigin.Z)
+		return math.abs(flat:Dot(right))
+	end
+
+	local best: BasePart? = nil
+	local bestLateral = math.huge
+	for _, part in row do
+		local lateral = lateralOf(part)
+		if lateral < bestLateral then
+			bestLateral = lateral
 			best = part
 		end
 	end
 
+	if lockedSwingPart and lockedSwingPart.Parent and best then
+		local lockedLat = lateralOf(lockedSwingPart)
+		if lockedLat <= bestLateral + 4 then
+			return lockedSwingPart
+		end
+	end
+
 	if not best then
-		bestScore = math.huge
+		bestLateral = math.huge
 		for _, part in vineCache do
 			if part.Parent then
-				local dist = (part.Position - origin).Magnitude
-				if dist < bestScore then
-					bestScore = dist
+				local lateral = lateralOf(part)
+				if lateral < bestLateral then
+					bestLateral = lateral
 					best = part
 				end
 			end
@@ -2063,39 +2084,45 @@ local function resolveReturnSwingTarget(): BasePart?
 	else
 		right = right.Unit
 	end
-	local best: BasePart? = nil
-	local bestScore = math.huge
+	local rowMin = math.huge
 	for _, part in vineCache do
 		if not part.Parent then
 			continue
 		end
-		local offset = part.Position - origin
-		local flat = Vector3.new(offset.X, 0, offset.Z)
-		local dist = flat.Magnitude
-		if dist < 5 or dist > 160 then
-			continue
-		end
+		local flat = Vector3.new(part.Position.X - origin.X, 0, part.Position.Z - origin.Z)
 		local along = flat:Dot(aimDir)
-		-- Must make some progress toward base (not behind you).
-		if along < 2 then
-			continue
+		if along >= 6 and along <= 150 and along < rowMin then
+			rowMin = along
 		end
-		local lateral = math.abs(flat:Dot(right))
-		-- Middle vine = low lateral offset from the player→base corridor.
-		local score = lateral * 2.8 + dist * 0.2 + (part.Position - aim).Magnitude * 0.05
-		if score < bestScore then
-			bestScore = score
-			best = part
+	end
+	local best: BasePart? = nil
+	local bestLateral = math.huge
+	if rowMin < math.huge then
+		for _, part in vineCache do
+			if not part.Parent then
+				continue
+			end
+			local flat = Vector3.new(part.Position.X - origin.X, 0, part.Position.Z - origin.Z)
+			local along = flat:Dot(aimDir)
+			if along < rowMin or along > rowMin + 24 then
+				continue
+			end
+			local lateral = math.abs(flat:Dot(right))
+			if lateral < bestLateral then
+				bestLateral = lateral
+				best = part
+			end
 		end
 	end
 	if not best then
-		bestScore = math.huge
+		bestLateral = math.huge
 		for _, part in vineCache do
 			if part.Parent then
 				local flat = Vector3.new(part.Position.X - origin.X, 0, part.Position.Z - origin.Z)
 				local dist = flat.Magnitude
-				if dist < bestScore and dist > 4 then
-					bestScore = dist
+				local lateral = math.abs(flat:Dot(right))
+				if dist > 4 and lateral < bestLateral then
+					bestLateral = lateral
 					best = part
 				end
 			end

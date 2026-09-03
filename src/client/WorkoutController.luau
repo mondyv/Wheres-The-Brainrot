@@ -1521,6 +1521,11 @@ local function ensureDoubleTapGui(): ScreenGui
 			doubleTapGui:Destroy()
 			doubleTapGui = nil
 		else
+			local halo = oldHold and oldHold:FindFirstChild("Halo")
+			if halo and halo:IsA("Frame") then
+				halo.Size = UDim2.fromScale(0.92, 0.92)
+				halo.BackgroundTransparency = 0.72
+			end
 			return doubleTapGui
 		end
 	end
@@ -1560,6 +1565,7 @@ local function ensureDoubleTapGui(): ScreenGui
 	glow.BorderSizePixel = 0
 	glow.Size = UDim2.fromOffset(26, 20)
 	glow.Visible = false
+	glow.BackgroundTransparency = 1
 	glow.ZIndex = 11
 	glow.Parent = trailLayer
 	local glowCorner = Instance.new("UICorner")
@@ -1641,11 +1647,11 @@ local function ensureDoubleTapGui(): ScreenGui
 	local halo = Instance.new("Frame")
 	halo.Name = "Halo"
 	halo.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
-	halo.BackgroundTransparency = 0.9
+	halo.BackgroundTransparency = 0.72
 	halo.BorderSizePixel = 0
 	halo.AnchorPoint = Vector2.new(0.5, 0.5)
 	halo.Position = UDim2.fromScale(0.5, 0.5)
-	halo.Size = UDim2.fromScale(0.78, 0.78)
+	halo.Size = UDim2.fromScale(0.92, 0.92)
 	halo.ZIndex = 21
 	halo.Parent = holder
 	local haloCorner = Instance.new("UICorner")
@@ -1957,7 +1963,7 @@ local function paintComboUrgency(t: number)
 	local halo = holder:FindFirstChild("Halo")
 	if halo and halo:IsA("Frame") then
 		halo.BackgroundColor3 = color
-		halo.BackgroundTransparency = 0.9 - u * 0.35
+		halo.BackgroundTransparency = 0.72 - u * 0.22
 	end
 	local hit = holder:FindFirstChild("Hit")
 	local hitStroke = hit and hit:FindFirstChild("HitStroke")
@@ -1988,7 +1994,7 @@ local function playComboAppear()
 	local halo = holder:FindFirstChild("Halo")
 	if halo and halo:IsA("GuiObject") then
 		halo.BackgroundTransparency = 1
-		TweenService:Create(halo, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.9 }):Play()
+		TweenService:Create(halo, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.72 }):Play()
 	end
 	local hit = holder:FindFirstChild("Hit")
 	if hit and hit:IsA("GuiObject") then
@@ -2119,8 +2125,6 @@ local function playComboApproachTrail(from: Vector2, to: Vector2)
 		end
 	end
 	local n = math.max(1, #pips)
-	local dist = delta.Magnitude
-	local rot = math.deg(math.atan2(delta.X, delta.Y))
 	local line = layer:FindFirstChild("ApproachLine")
 	local glow = layer:FindFirstChild("ApproachGlow")
 	local born = os.clock()
@@ -2132,18 +2136,15 @@ local function playComboApproachTrail(from: Vector2, to: Vector2)
 		end
 		local t = math.clamp((os.clock() - born) / dur, 0, 1)
 		local ease = t * t * (3 - 2 * t)
-		local remain = 1 - ease
 		local nearHit = math.clamp((ease - 0.52) / 0.48, 0, 1)
 		nearHit *= nearHit
 		if glow and glow:IsA("Frame") then
-			glow.Visible = remain > 0.02 and nearHit < 0.96
-			glow.Position = UDim2.fromOffset(from.X + delta.X * ease, from.Y + delta.Y * ease)
-			glow.Size = UDim2.fromOffset(26 * (1 - nearHit * 0.35), dist * remain)
-			glow.Rotation = rot
-			glow.BackgroundTransparency = 0.28 + nearHit * 0.72
+			glow.Visible = false
+			glow.BackgroundTransparency = 1
 		end
 		if line and line:IsA("Frame") then
 			line.Visible = false
+			line.BackgroundTransparency = 1
 		end
 		for i, pip in pips do
 			local delay = (i - 1) / n * 0.12

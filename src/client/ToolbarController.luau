@@ -4744,22 +4744,17 @@ end
 				end
 			end
 		end
-		local idx = ((start - 1 + delta) % 9) + 1
-		UIInteractionSounds.playHover()
-		-- Always walk all 9 slots, including empty cells and past equipped gear.
-		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
-			local hum = getHumanoid()
-			if hum then
-				bumpToolHoldGen()
-				hum:UnequipTools()
+		for step = 1, 9 do
+			local idx = ((start - 1 + delta * step) % 9) + 1
+			if not hotbarSlotHasSelectableContent(idx) then
+				continue
 			end
-			setHotbarSelection(idx, false)
-			return
-		end
-		if hotbarSlotHasSelectableContent(idx) then
+			if not canSelectHotbarSlot(idx) then
+				continue
+			end
+			UIInteractionSounds.playHover()
 			selectSlot(idx, true)
-		else
-			setHotbarSelection(idx, false)
+			return
 		end
 	end
 

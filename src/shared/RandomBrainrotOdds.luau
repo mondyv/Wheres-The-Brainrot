@@ -44,19 +44,19 @@ local RARITY_ORDER: { RarityId } = {
 	"secret",
 }
 
--- Conservative rarity mix. God/secret only appear at the highest gates,
--- and even then at tiny rates (also blocked by maxAllowedBaseIncome).
+-- Better rarities in each tier are ~3x the old mix. God/secret still only
+-- appear at the highest gates (also blocked by maxAllowedBaseIncome).
 local TIER_WEIGHTS: { [number]: { [RarityId]: number } } = {
-	[1] = { common = 84, uncommon = 14, rare = 2, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[2] = { common = 68, uncommon = 26, rare = 6, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[3] = { common = 48, uncommon = 30, rare = 18, epic = 4, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[4] = { common = 28, uncommon = 30, rare = 28, epic = 12, mythic = 2, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[5] = { common = 14, uncommon = 26, rare = 30, epic = 20, mythic = 10, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-	[6] = { common = 6, uncommon = 16, rare = 28, epic = 28, mythic = 18, legendary = 4, ["brainrot god"] = 0, secret = 0 },
-	[7] = { common = 0, uncommon = 8, rare = 22, epic = 32, mythic = 28, legendary = 10, ["brainrot god"] = 0, secret = 0 },
-	[8] = { common = 0, uncommon = 0, rare = 12, epic = 30, mythic = 34, legendary = 23.5, ["brainrot god"] = 0.5, secret = 0 },
-	[9] = { common = 0, uncommon = 0, rare = 6, epic = 22, mythic = 34, legendary = 36, ["brainrot god"] = 2, secret = 0 },
-	[10] = { common = 0, uncommon = 0, rare = 0, epic = 12, mythic = 28, legendary = 50, ["brainrot god"] = 9.7, secret = 0.3 },
+	[1] = { common = 72, uncommon = 22, rare = 6, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[2] = { common = 50, uncommon = 32, rare = 18, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[3] = { common = 30, uncommon = 28, rare = 30, epic = 12, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[4] = { common = 12, uncommon = 24, rare = 30, epic = 28, mythic = 6, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[5] = { common = 4, uncommon = 12, rare = 24, epic = 32, mythic = 28, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+	[6] = { common = 2, uncommon = 6, rare = 16, epic = 28, mythic = 36, legendary = 12, ["brainrot god"] = 0, secret = 0 },
+	[7] = { common = 0, uncommon = 2, rare = 10, epic = 24, mythic = 36, legendary = 28, ["brainrot god"] = 0, secret = 0 },
+	[8] = { common = 0, uncommon = 0, rare = 6.5, epic = 18, mythic = 32, legendary = 42, ["brainrot god"] = 1.5, secret = 0 },
+	[9] = { common = 0, uncommon = 0, rare = 3, epic = 13, mythic = 30, legendary = 48, ["brainrot god"] = 6, secret = 0 },
+	[10] = { common = 0, uncommon = 0, rare = 0, epic = 6.1, mythic = 19, legendary = 50, ["brainrot god"] = 24, secret = 0.9 },
 }
 
 -- Plot $/s required to reach each odds tier.

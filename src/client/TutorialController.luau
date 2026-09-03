@@ -455,15 +455,34 @@ local function syncWorkoutGoalBar()
 	local step = currentStep()
 	local on = active and step ~= nil and step.id == "useWorkout"
 	if on then
-		if not swingCoach.powerHudOn then
-			swingCoach.powerHudOn = true
-			local counters = GameplayUiVisibility.revealSideChild("Counters")
-			if counters then
-				table.clear(swingCoach.counterChildVis)
+		if not GameplayUiVisibility.isHidden() then
+			GameplayUiVisibility.hide({
+				keepSideChildNames = { "Toolbar" },
+				hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker", "LandActivityStripGui" },
+				keepScreenGuiNames = { "SwingTargetMarker", "WorkoutComboGui" },
+				skipMuffle = true,
+			})
+		end
+		swingCoach.powerHudOn = true
+		local counters = GameplayUiVisibility.revealSideChild("Counters")
+		if counters then
+			if next(swingCoach.counterChildVis) == nil then
 				for _, ch in counters:GetChildren() do
 					if ch:IsA("GuiObject") then
 						swingCoach.counterChildVis[ch] = ch.Visible
-						ch.Visible = ch.Name == "Power"
+					end
+				end
+			end
+			for _, ch in counters:GetChildren() do
+				if ch:IsA("GuiObject") then
+					ch.Visible = ch.Name == "Power"
+				end
+			end
+			local side = counters.Parent
+			if side then
+				for _, ch in side:GetChildren() do
+					if ch:IsA("GuiObject") and ch.Name ~= "Toolbar" and ch.Name ~= "Counters" then
+						ch.Visible = false
 					end
 				end
 			end
@@ -734,11 +753,6 @@ local function ensureGuideTrail(): boolean
 	folder.Name = "TutorialGuideTrail"
 	folder.Parent = Svc.Workspace
 
-	local a0 = Instance.new("Attachment")
-	a0.Name = "TutorialGuidePlayer"
-	a0.Position = Vector3.new(0, 1.2, 0)
-	a0.Parent = hrp
-
 	local goal = Instance.new("Part")
 	goal.Name = "TutorialGuideGoal"
 	goal.Anchored = true
@@ -750,28 +764,34 @@ local function ensureGuideTrail(): boolean
 	goal.CastShadow = false
 	goal.Parent = folder
 
+	local a0 = Instance.new("Attachment")
+	a0.Name = "TutorialGuideGoalAttach"
+	a0.Parent = goal
+
 	local a1 = Instance.new("Attachment")
-	a1.Name = "TutorialGuideGoalAttach"
-	a1.Parent = goal
+	a1.Name = "TutorialGuidePlayer"
+	a1.Position = Vector3.new(0, 1.2, 0)
+	a1.Parent = hrp
 
 	local beam = Instance.new("Beam")
 	beam.Name = "GuideBeam"
+	-- Attachment0 = destination so chevrons in the texture point toward the goal.
 	beam.Attachment0 = a0
 	beam.Attachment1 = a1
 	beam.FaceCamera = true
-	beam.LightEmission = 0.65
+	beam.LightEmission = 0.55
 	beam.LightInfluence = 0
 	beam.Texture = TutorialConfig.GUIDE_BEAM_TEXTURE
-	beam.TextureLength = 8
+	beam.TextureLength = TutorialConfig.GUIDE_BEAM_TEXTURE_LENGTH
 	beam.TextureMode = Enum.TextureMode.Wrap
-	beam.TextureSpeed = -1.85
+	beam.TextureSpeed = TutorialConfig.GUIDE_BEAM_TEXTURE_SPEED
 	beam.Width0 = TutorialConfig.GUIDE_BEAM_WIDTH0
 	beam.Width1 = TutorialConfig.GUIDE_BEAM_WIDTH1
 	beam.Segments = 24
 	beam.Color = ColorSequence.new(TutorialConfig.GUIDE_BEAM_COLOR)
 	beam.Transparency = NumberSequence.new({
-		NumberSequenceKeypoint.new(0, 0.15),
-		NumberSequenceKeypoint.new(0.85, 0.35),
+		NumberSequenceKeypoint.new(0, 0.12),
+		NumberSequenceKeypoint.new(0.82, 0.28),
 		NumberSequenceKeypoint.new(1, 1),
 	})
 	beam.Enabled = true
@@ -779,8 +799,8 @@ local function ensureGuideTrail(): boolean
 
 	guideFolder = folder
 	guideBeam = beam
-	guideAttachPlayer = a0
-	guideAttachGoal = a1
+	guideAttachGoal = a0
+	guideAttachPlayer = a1
 	guideGoalPart = goal
 	return true
 end
@@ -2659,18 +2679,10 @@ local function refreshPointersImpl()
 				end
 			else
 				pointAtWorld(resolvePlayerBaseTarget(), arrowHeight(4))
-				local plot = resolveOwnedPlotForTutorial()
-				if plot then
-					outlineWorld(plot)
-				end
 			end
 			updateMobileJumpTutorialHighlight()
 		else
 			pointAtWorld(resolvePlayerBaseTarget(), arrowHeight(4))
-			local plot = resolveOwnedPlotForTutorial()
-			if plot then
-				outlineWorld(plot)
-			end
 			if swingCoach.goToBaseLite then
 				updateMobileJumpTutorialHighlight()
 			end
@@ -2681,11 +2693,6 @@ local function refreshPointersImpl()
 		local standModel = resolvePlayerPlotStandModel(true)
 		if standModel then
 			outlineWorld(standModel)
-		else
-			local plot = resolveOwnedPlotForTutorial()
-			if plot then
-				outlineWorld(plot)
-			end
 		end
 	elseif step.id == "upgradeBrainrot" then
 		local levelTarget = resolvePlacedStandUpgradeTarget()

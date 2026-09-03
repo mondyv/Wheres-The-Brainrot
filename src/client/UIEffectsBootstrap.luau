@@ -10,6 +10,7 @@ local player = Players.LocalPlayer
 local M = {}
 
 function M.init()
+	UIButtonEffects.init()
 	local main = PlayerGuiMain.ensure(player)
 	local frames = main:WaitForChild("Frames", 30)
 	if not frames then

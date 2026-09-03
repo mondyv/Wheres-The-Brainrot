@@ -21,13 +21,16 @@ local player = Players.LocalPlayer
 
 local POLL_INTERVAL = if UserInputService.TouchEnabled then 0.4 else 0.12
 -- Invisible on the pad.
-local FADE_NEAR = 18
+local FADE_NEAR = 22
 -- Fully visible between these distances.
-local VISIBLE_NEAR = 36
-local VISIBLE_FAR = 120
+local VISIBLE_NEAR = 40
+local VISIBLE_FAR = 140
 -- Fully faded out in the distance (soft, not MaxDistance cut).
-local FADE_FAR = 190
+local FADE_FAR = 220
 local OUTLINE_COLOR = Color3.fromRGB(255, 255, 255)
+local FILL_COLOR = Color3.fromRGB(255, 255, 255)
+local OUTLINE_PEAK = 0.38
+local FILL_PEAK = 0.86
 -- Wide + short so "Your Plot" stays on one line.
 local MARKER_W = 102
 local MARKER_H = 40
@@ -279,6 +282,7 @@ local function ensureOutline(plot: Instance): Highlight?
 		end
 		hl = Instance.new("Highlight")
 		hl.Name = "PlotSafezoneOutline"
+		hl.FillColor = FILL_COLOR
 		hl.FillTransparency = 1
 		hl.OutlineTransparency = 1
 		hl.OutlineColor = OUTLINE_COLOR
@@ -357,6 +361,7 @@ local function tickOutline()
 		if plotHighlight then
 			plotHighlight.Enabled = false
 			plotHighlight.OutlineTransparency = 1
+			plotHighlight.FillTransparency = 1
 		end
 		applyMarkerFade(1, false)
 		return
@@ -391,9 +396,10 @@ local function tickOutline()
 	local hl = ensureOutline(plot)
 	if hl then
 		hl.Enabled = visible
-		hl.OutlineTransparency = transparency
 		hl.OutlineColor = OUTLINE_COLOR
-		hl.FillTransparency = 1
+		hl.FillColor = FILL_COLOR
+		hl.OutlineTransparency = OUTLINE_PEAK + (1 - OUTLINE_PEAK) * transparency
+		hl.FillTransparency = FILL_PEAK + (1 - FILL_PEAK) * transparency
 	end
 	applyMarkerFade(transparency, visible)
 end

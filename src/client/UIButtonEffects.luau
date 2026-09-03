@@ -2,6 +2,7 @@
 -- Shared UI polish: scale hover, in-bounds glisten (hover only), contained diagonal sweep (hover only).
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
@@ -797,6 +798,105 @@ function M.wireAllFrameCloseButtons(framesFolder: Instance, onClose: (Frame) -> 
 			end)
 		end
 	end
+end
+
+local clickRippleGui: ScreenGui? = nil
+local clickRipplePool: { Frame } = {}
+local clickRippleIndex = 0
+local clickRippleConn: RBXScriptConnection? = nil
+local RIPPLE_POOL = 6
+local RIPPLE_TWEEN = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local function ensureClickRippleGui(): ScreenGui?
+	if clickRippleGui and clickRippleGui.Parent then
+		return clickRippleGui
+	end
+	local player = Players.LocalPlayer
+	local pg = player and player:FindFirstChildOfClass("PlayerGui")
+	if not pg then
+		return nil
+	end
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "UiClickRipple"
+	gui.IgnoreGuiInset = true
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 100000
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.Enabled = true
+	for i = 1, RIPPLE_POOL do
+		local ring = Instance.new("Frame")
+		ring.Name = "Ripple" .. i
+		ring.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		ring.BackgroundTransparency = 1
+		ring.BorderSizePixel = 0
+		ring.AnchorPoint = Vector2.new(0.5, 0.5)
+		ring.Size = UDim2.fromOffset(14, 14)
+		ring.Visible = false
+		ring.ZIndex = 10
+		ring.Active = false
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(1, 0)
+		corner.Parent = ring
+		local stroke = Instance.new("UIStroke")
+		stroke.Name = "Stroke"
+		stroke.Color = Color3.fromRGB(255, 255, 255)
+		stroke.Thickness = 2.2
+		stroke.Transparency = 1
+		stroke.Parent = ring
+		ring.Parent = gui
+		clickRipplePool[i] = ring
+	end
+	gui.Parent = pg
+	clickRippleGui = gui
+	return gui
+end
+
+local function playClickRipple(screenPos: Vector2)
+	if not ensureClickRippleGui() then
+		return
+	end
+	clickRippleIndex = (clickRippleIndex % RIPPLE_POOL) + 1
+	local ring = clickRipplePool[clickRippleIndex]
+	if not ring then
+		return
+	end
+	local stroke = ring:FindFirstChild("Stroke")
+	ring.Position = UDim2.fromOffset(screenPos.X, screenPos.Y)
+	ring.Size = UDim2.fromOffset(12, 12)
+	ring.BackgroundTransparency = 0.55
+	ring.Visible = true
+	if stroke and stroke:IsA("UIStroke") then
+		stroke.Transparency = 0.15
+		stroke.Thickness = 2.4
+		TweenService:Create(stroke, RIPPLE_TWEEN, { Transparency = 1, Thickness = 1 }):Play()
+	end
+	local tw = TweenService:Create(ring, RIPPLE_TWEEN, {
+		Size = UDim2.fromOffset(42, 42),
+		BackgroundTransparency = 1,
+	})
+	tw:Play()
+	tw.Completed:Connect(function()
+		if ring.Parent then
+			ring.Visible = false
+		end
+	end)
+end
+
+function M.init()
+	if clickRippleConn then
+		return
+	end
+	ensureClickRippleGui()
+	clickRippleConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if not gameProcessed then
+			return
+		end
+		local kind = input.UserInputType
+		if kind ~= Enum.UserInputType.MouseButton1 and kind ~= Enum.UserInputType.Touch then
+			return
+		end
+		playClickRipple(input.Position)
+	end)
 end
 
 return M

@@ -1512,7 +1512,7 @@ local function ensureDoubleTapGui(): ScreenGui
 	holder.BackgroundTransparency = 1
 	holder.AnchorPoint = Vector2.new(0.5, 0.5)
 	holder.Position = UDim2.new(0.5, 0, 0.74, 0)
-	holder.Size = UDim2.fromOffset(118, 118)
+	holder.Size = UDim2.fromOffset(132, 132)
 	holder.ZIndex = 20
 	holder.Parent = gui
 
@@ -1520,6 +1520,20 @@ local function ensureDoubleTapGui(): ScreenGui
 	pop.Name = "PopScale"
 	pop.Scale = 1
 	pop.Parent = holder
+
+	local shadow = Instance.new("Frame")
+	shadow.Name = "Shadow"
+	shadow.BackgroundColor3 = Color3.fromRGB(8, 6, 14)
+	shadow.BackgroundTransparency = 0.55
+	shadow.BorderSizePixel = 0
+	shadow.AnchorPoint = Vector2.new(0.5, 0.5)
+	shadow.Position = UDim2.new(0.5, 0, 0.5, 6)
+	shadow.Size = UDim2.fromScale(0.78, 0.78)
+	shadow.ZIndex = 20
+	shadow.Parent = holder
+	local shadowCorner = Instance.new("UICorner")
+	shadowCorner.CornerRadius = UDim.new(1, 0)
+	shadowCorner.Parent = shadow
 
 	local ring = Instance.new("Frame")
 	ring.Name = "Ring"
@@ -1535,13 +1549,28 @@ local function ensureDoubleTapGui(): ScreenGui
 	local ringStroke = Instance.new("UIStroke")
 	ringStroke.Name = "RingStroke"
 	ringStroke.Color = Color3.fromRGB(255, 214, 74)
-	ringStroke.Thickness = 6
-	ringStroke.Transparency = 0.08
+	ringStroke.Thickness = 7
+	ringStroke.Transparency = 0.04
+	ringStroke.LineJoinMode = Enum.LineJoinMode.Round
 	ringStroke.Parent = ring
 	local ringScale = Instance.new("UIScale")
 	ringScale.Name = "RingScale"
 	ringScale.Scale = 1.42
 	ringScale.Parent = ring
+
+	local halo = Instance.new("Frame")
+	halo.Name = "Halo"
+	halo.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
+	halo.BackgroundTransparency = 0.88
+	halo.BorderSizePixel = 0
+	halo.AnchorPoint = Vector2.new(0.5, 0.5)
+	halo.Position = UDim2.fromScale(0.5, 0.5)
+	halo.Size = UDim2.fromScale(0.9, 0.9)
+	halo.ZIndex = 21
+	halo.Parent = holder
+	local haloCorner = Instance.new("UICorner")
+	haloCorner.CornerRadius = UDim.new(1, 0)
+	haloCorner.Parent = halo
 
 	local ripple = Instance.new("Frame")
 	ripple.Name = "HitRipple"
@@ -1557,9 +1586,9 @@ local function ensureDoubleTapGui(): ScreenGui
 	rippleCorner.Parent = ripple
 	local rippleStroke = Instance.new("UIStroke")
 	rippleStroke.Name = "RippleStroke"
-	rippleStroke.Color = Color3.fromRGB(255, 236, 120)
-	rippleStroke.Thickness = 5
-	rippleStroke.Transparency = 0.1
+	rippleStroke.Color = Color3.fromRGB(255, 248, 200)
+	rippleStroke.Thickness = 6
+	rippleStroke.Transparency = 0.08
 	rippleStroke.Parent = ripple
 	local rippleScale = Instance.new("UIScale")
 	rippleScale.Name = "RippleScale"
@@ -1568,12 +1597,12 @@ local function ensureDoubleTapGui(): ScreenGui
 
 	local core = Instance.new("ImageButton")
 	core.Name = "Hit"
-	core.BackgroundColor3 = Color3.fromRGB(18, 16, 28)
-	core.BackgroundTransparency = 0.08
+	core.BackgroundColor3 = Color3.fromRGB(22, 16, 38)
+	core.BackgroundTransparency = 0.04
 	core.BorderSizePixel = 0
 	core.AnchorPoint = Vector2.new(0.5, 0.5)
 	core.Position = UDim2.fromScale(0.5, 0.5)
-	core.Size = UDim2.fromScale(0.62, 0.62)
+	core.Size = UDim2.fromScale(0.58, 0.58)
 	core.AutoButtonColor = false
 	core.Image = ""
 	core.Active = true
@@ -1583,10 +1612,19 @@ local function ensureDoubleTapGui(): ScreenGui
 	local coreCorner = Instance.new("UICorner")
 	coreCorner.CornerRadius = UDim.new(1, 0)
 	coreCorner.Parent = core
+	local coreGrad = Instance.new("UIGradient")
+	coreGrad.Name = "HitGrad"
+	coreGrad.Rotation = 90
+	coreGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(48, 36, 78)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(14, 10, 24)),
+	})
+	coreGrad.Parent = core
 	local coreStroke = Instance.new("UIStroke")
-	coreStroke.Color = Color3.fromRGB(255, 255, 255)
-	coreStroke.Thickness = 2
-	coreStroke.Transparency = 0.45
+	coreStroke.Name = "HitStroke"
+	coreStroke.Color = Color3.fromRGB(255, 228, 130)
+	coreStroke.Thickness = 2.5
+	coreStroke.Transparency = 0.12
 	coreStroke.Parent = core
 	GamepadInput.mountHint(core, GamepadInput.ACCEPT, true)
 
@@ -1595,17 +1633,22 @@ local function ensureDoubleTapGui(): ScreenGui
 	num.BackgroundTransparency = 1
 	num.Size = UDim2.fromScale(1, 1)
 	num.Text = "1"
-	num.TextColor3 = Color3.fromRGB(255, 236, 160)
+	num.TextColor3 = Color3.fromRGB(255, 246, 210)
 	num.TextScaled = true
 	num.Font = Enum.Font.GothamBlack
 	num.ZIndex = 23
 	num.Parent = core
 	UiFonts.applyDisplay(num)
+	local numStroke = Instance.new("UIStroke")
+	numStroke.Color = Color3.fromRGB(40, 22, 8)
+	numStroke.Thickness = 2
+	numStroke.Transparency = 0.25
+	numStroke.Parent = num
 	local numPad = Instance.new("UIPadding")
-	numPad.PaddingTop = UDim.new(0, 8)
-	numPad.PaddingBottom = UDim.new(0, 8)
-	numPad.PaddingLeft = UDim.new(0, 6)
-	numPad.PaddingRight = UDim.new(0, 6)
+	numPad.PaddingTop = UDim.new(0, 10)
+	numPad.PaddingBottom = UDim.new(0, 10)
+	numPad.PaddingLeft = UDim.new(0, 8)
+	numPad.PaddingRight = UDim.new(0, 8)
 	numPad.Parent = num
 
 	if pg then
@@ -1676,13 +1719,13 @@ local function paintComboIdle()
 	end
 	local hit = holder:FindFirstChild("Hit")
 	if hit and hit:IsA("GuiObject") then
-		hit.BackgroundColor3 = Color3.fromRGB(18, 16, 28)
-		hit.BackgroundTransparency = 0.08
+		hit.BackgroundColor3 = Color3.fromRGB(22, 16, 38)
+		hit.BackgroundTransparency = 0.04
 	end
 	local num = hit and hit:FindFirstChild("ComboNum")
 	if num and num:IsA("TextLabel") then
 		num.TextTransparency = 0
-		num.TextColor3 = Color3.fromRGB(255, 236, 160)
+		num.TextColor3 = Color3.fromRGB(255, 246, 210)
 	end
 end
 
@@ -1731,16 +1774,16 @@ local function pulseComboHold(ok: boolean)
 	end
 	local hit = holder:FindFirstChild("Hit")
 	if hit and hit:IsA("GuiObject") then
-		hit.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
-		TweenService:Create(hit, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			BackgroundColor3 = Color3.fromRGB(18, 16, 28),
+		hit.BackgroundColor3 = Color3.fromRGB(255, 236, 140)
+		TweenService:Create(hit, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			BackgroundColor3 = Color3.fromRGB(22, 16, 38),
 		}):Play()
 	end
 	local num = hit and hit:FindFirstChild("ComboNum")
 	if num and num:IsA("TextLabel") then
 		num.TextColor3 = Color3.fromRGB(255, 255, 255)
-		TweenService:Create(num, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			TextColor3 = Color3.fromRGB(255, 236, 160),
+		TweenService:Create(num, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			TextColor3 = Color3.fromRGB(255, 246, 210),
 		}):Play()
 	end
 	local ripple = holder:FindFirstChild("HitRipple")

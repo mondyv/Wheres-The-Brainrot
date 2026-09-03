@@ -236,6 +236,24 @@ local function findBuy(panel: Instance?): GuiObject?
 	return nil
 end
 
+local function hideDuplicateGamepassIcons(root: Instance)
+	local scan = root:FindFirstChild("BuyButtons") or root
+	local icons: { GuiObject } = {}
+	for _, d in scan:GetDescendants() do
+		if d:IsA("ImageLabel") or d:IsA("ImageButton") then
+			local n = string.lower(d.Name)
+			if n == "imagelabel" or n == "icon" or n == "gamepass" or n == "robux" or n == "passicon" then
+				if (d :: GuiObject).Visible then
+					table.insert(icons, d :: GuiObject)
+				end
+			end
+		end
+	end
+	for i = 2, #icons do
+		icons[i].Visible = false
+	end
+end
+
 local function refreshOwnedBuy(entry: OwnedBuyEntry)
 	local owned = player:GetAttribute(entry.ownedAttr) == true
 	-- While gifting, keep the button usable even if the buyer already owns the pass —
@@ -337,6 +355,7 @@ local function wireGamePass(containers: { Instance? }, panelName: string, gamePa
 		end)
 		refreshOwnedBuy(entry)
 	end
+	hideDuplicateGamepassIcons(panel)
 end
 
 local function wireProduct(panel: Instance?, productId: number)
@@ -704,6 +723,9 @@ local function init()
 				refreshOwnedBuy(vipEntry)
 			end)
 			refreshOwnedBuy(vipEntry)
+			if vipPanel then
+				hideDuplicateGamepassIcons(vipPanel)
+			end
 		end
 	end
 

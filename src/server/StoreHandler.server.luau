@@ -387,6 +387,21 @@ local function addServerLuck(player: Player?)
 		serverLuckEndsAt
 	)
 	publishServerLuck()
+	if player then
+		local tipsFolder = ReplicatedStorage:FindFirstChild("ServerChatTipsRemotes")
+		local tipRE = tipsFolder and tipsFolder:FindFirstChild("ShowChatTip")
+		if tipRE and tipRE:IsA("RemoteEvent") then
+			local buyer = player.Name
+			local mult = serverLuckMultiplier
+			tipRE:FireAllClients(
+				string.format(
+					"<font color='rgb(120,255,160)'><b>%s</b></font> bought Server Luck! Server is now <font color='rgb(255,220,80)'><b>%dx</b></font> luck!",
+					buyer,
+					mult
+				)
+			)
+		end
+	end
 end
 
 local function ensureStoreInternalBindable(name: string): BindableFunction

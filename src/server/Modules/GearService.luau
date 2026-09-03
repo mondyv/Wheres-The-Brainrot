@@ -8,6 +8,7 @@ local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild
 local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
 local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local LevelService = require(script.Parent:WaitForChild("LevelService"))
 
 local GearService = {}
@@ -271,7 +272,11 @@ end
 
 local function computeTickGain(player: Player, def: any): number
 	local lift = GearConfig.workoutLiftMultiplier(comboOf(player))
-	return math.max(1, math.floor(def.powerGain * RebirthConfig.getPowerGainMultiplier(player) * lift + 1e-6))
+	local rebirth = RebirthConfig.getPowerGainMultiplier(player)
+	local passMult = if player:GetAttribute(StoreConfig.ATTR.DOUBLE_POWER_OWNED) == true
+		then StoreConfig.DOUBLE_POWER_MULTIPLIER
+		else 1
+	return math.max(1, math.floor(def.powerGain * rebirth * lift * passMult + 1e-6))
 end
 
 function GearService.resetWorkoutCombo(player: Player): number

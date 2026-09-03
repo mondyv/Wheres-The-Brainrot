@@ -86,7 +86,7 @@ local selectMutation: (mutationId: string) -> ()
 local stateCache: { [string]: any } = {}
 local _gridMutation: string? = nil
 local rebuildToken = 0
-local ROW_BATCH_SIZE = 14
+local ROW_BATCH_SIZE = 8
 
 local function getOrAddUIScale(obj: GuiObject): UIScale
 	for _, ch in obj:GetChildren() do
@@ -1854,11 +1854,12 @@ function IndexController.init()
 					contScale.Scale = 1
 				end
 			end
-			loadMutationGrid(selectedMutation, false)
+			if _gridMutation == selectedMutation and gridHasVisibleRows() then
+				-- Already built this tab — don't rebuild every open.
+			else
+				loadMutationGrid(selectedMutation, false)
+			end
 		else
-			-- Keep cache; only hide rows so reopen can rebuild without refetch lag.
-			clearGrid()
-			_gridMutation = nil
 			if tooltipLabel then
 				tooltipLabel.Visible = false
 			end

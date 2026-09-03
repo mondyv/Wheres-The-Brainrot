@@ -99,17 +99,12 @@ local function readGuiAccentColor(obj: GuiObject): Color3
 end
 
 local function prepareHoverTarget(obj: GuiObject)
-	-- Display-only: Active ImageButtons/Frames here eat world clicks (bush search).
+	-- Display-only: Active=false lets world clicks pass through. Keep
+	-- Interactable on so MouseEnter still fires for tooltips.
 	obj.Active = false
-	pcall(function()
-		(obj :: any).Interactable = false
-	end)
 	for _, d in obj:GetDescendants() do
 		if d:IsA("GuiObject") then
 			d.Active = false
-			pcall(function()
-				(d :: any).Interactable = false
-			end)
 		end
 	end
 end
@@ -323,7 +318,7 @@ local ICON_DEFS = {
 		id = StoreConfig.GAMEPASS.DOUBLE_POWER,
 		attr = StoreConfig.ATTR.DOUBLE_POWER_OWNED,
 		title = "2× Power",
-		description = "Double Power gained every time you work out",
+		description = "2× workout Power. Stacks with the combo lift (2 → 4 at 3×)",
 		aliases = { "2xpower", "doublepower", "double power" },
 	},
 	["Mega Luck"] = {

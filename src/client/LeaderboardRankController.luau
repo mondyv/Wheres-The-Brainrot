@@ -1,6 +1,6 @@
 -- [ACTIVE] LeaderboardRankController
 --[[
-	Top-10 cash/time overhead badges + chat tags (board itself shows top 100).
+	Top-10 cash/time overhead badges, VIP crown, + chat tags (board itself shows top 100).
 	Reads ReplicatedStorage.LeaderboardData published by Leaderboards.server.
 --]]
 
@@ -12,6 +12,7 @@ local UserInputService = game:GetService("UserInputService")
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
+local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 
 local M = {}
@@ -60,6 +61,17 @@ type BoardRank = {
 	board: string,
 	rank: number,
 }
+
+local VIP_CROWN_EMOJI = "👑"
+local VIP_CROWN_GRADIENT = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 236, 140)),
+	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 196, 60)),
+	ColorSequenceKeypoint.new(1, Color3.fromRGB(210, 140, 30)),
+})
+
+local function playerOwnsVip(player: Player): boolean
+	return player:GetAttribute(StoreConfig.ATTR.VIP_OWNED) == true
+end
 
 local ranksByUserId: { [number]: { BoardRank } } = {}
 local badgeByPlayer: { [Player]: BillboardGui } = {}
@@ -153,7 +165,11 @@ local function buildBadge(player: Player, entries: { BoardRank }): BillboardGui?
 		return nil
 	end
 
-	local count = #entries
+	local showVip = playerOwnsVip(player)
+	local count = #entries + if showVip then 1 else 0
+	if count <= 0 then
+		return nil
+	end
 	local totalW = count * COL_W_STUDS + math.max(0, count - 1) * COL_GAP_STUDS
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "LeaderboardRankBadge"
@@ -181,13 +197,57 @@ local function buildBadge(player: Player, entries: { BoardRank }): BillboardGui?
 	layout.Parent = root
 
 	local colScaleW = COL_W_STUDS / math.max(totalW, 0.01)
+	local order = 0
 
-	for index, info in ipairs(entries) do
+	if showVip then
+		order += 1
+		local col = Instance.new("Frame")
+		col.Name = "VIP"
+		col.BackgroundTransparency = 1
+		col.Size = UDim2.fromScale(colScaleW, 1)
+		col.LayoutOrder = order
+		col.Parent = root
+
+		local crown = Instance.new("TextLabel")
+		crown.Name = "Crown"
+		crown.BackgroundTransparency = 1
+		crown.AnchorPoint = Vector2.new(0.5, 0)
+		crown.Position = UDim2.fromScale(0.5, 0)
+		crown.Size = UDim2.fromScale(1, 0.62)
+		crown.Text = VIP_CROWN_EMOJI
+		crown.TextScaled = true
+		crown.Parent = col
+		UiFonts.applyDisplayLabel(crown, 32, 20)
+
+		local vipLabel = Instance.new("TextLabel")
+		vipLabel.Name = "VIP"
+		vipLabel.BackgroundTransparency = 1
+		vipLabel.AnchorPoint = Vector2.new(0.5, 1)
+		vipLabel.Position = UDim2.fromScale(0.5, 1)
+		vipLabel.Size = UDim2.fromScale(1, 0.42)
+		UiFonts.applyDisplayLabel(vipLabel, 22, 14)
+		vipLabel.TextScaled = true
+		vipLabel.Text = "VIP"
+		vipLabel.TextColor3 = Color3.new(1, 1, 1)
+		vipLabel.Parent = col
+		local vipGrad = Instance.new("UIGradient")
+		vipGrad.Color = VIP_CROWN_GRADIENT
+		vipGrad.Rotation = 90
+		vipGrad.Parent = vipLabel
+		local vipStroke = Instance.new("UIStroke")
+		vipStroke.Thickness = 1.6
+		vipStroke.Color = Color3.fromRGB(10, 14, 18)
+		vipStroke.Transparency = 0.15
+		vipStroke.Parent = vipLabel
+	end
+
+	for _, info in ipairs(entries) do
+		order += 1
 		local col = Instance.new("Frame")
 		col.Name = info.board
 		col.BackgroundTransparency = 1
 		col.Size = UDim2.fromScale(colScaleW, 1)
-		col.LayoutOrder = index
+		col.LayoutOrder = order
 		col.Parent = root
 
 		local icon = Instance.new("ImageLabel")
@@ -251,7 +311,10 @@ local function shouldShowBadge(player: Player): boolean
 		return false
 	end
 	local entries = ranksByUserId[player.UserId]
-	return entries ~= nil and #entries > 0
+	if entries and #entries > 0 then
+		return true
+	end
+	return playerOwnsVip(player)
 end
 
 local function refreshPlayerBadge(player: Player, forceRebuild: boolean?)
@@ -266,8 +329,8 @@ local function refreshPlayerBadge(player: Player, forceRebuild: boolean?)
 		return
 	end
 	destroyBadge(player)
-	local entries = ranksByUserId[player.UserId]
-	if not entries or #entries == 0 then
+	local entries = ranksByUserId[player.UserId] or {}
+	if #entries == 0 and not playerOwnsVip(player) then
 		return
 	end
 	local badge = buildBadge(player, entries)
@@ -316,6 +379,12 @@ local function hookPlayer(player: Player)
 		conns,
 		player:GetAttributeChangedSignal(GearConfig.WORKOUT_ACTIVE_ATTR):Connect(function()
 			refreshPlayerBadge(player)
+		end)
+	)
+	table.insert(
+		conns,
+		player:GetAttributeChangedSignal(StoreConfig.ATTR.VIP_OWNED):Connect(function()
+			refreshPlayerBadge(player, true)
 		end)
 	)
 	playerConns[player] = conns

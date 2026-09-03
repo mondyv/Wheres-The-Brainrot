@@ -60,18 +60,26 @@ local function findBuyTextLabel(buyHost: GuiObject): TextLabel?
 end
 
 local function forEachBuyPriceIcon(buyHost: GuiObject, visit: (GuiObject) -> ())
+	-- Studio templates often put a Robux/gamepass glyph under both Info and
+	-- Price. Only keep the first so buy buttons don't show two icons.
+	local first: GuiObject? = nil
 	local info = buyHost:FindFirstChild("Info")
 	if info then
 		local icon = info:FindFirstChild("ImageLabel")
 		if icon and icon:IsA("GuiObject") then
-			visit(icon :: GuiObject)
+			first = icon :: GuiObject
+			visit(first)
 		end
 	end
 	local price = buyHost:FindFirstChild("Price", true)
 	if price then
 		local nestedIcon = price:FindFirstChild("ImageLabel")
 		if nestedIcon and nestedIcon:IsA("GuiObject") then
-			visit(nestedIcon :: GuiObject)
+			if first and nestedIcon ~= first then
+				(nestedIcon :: GuiObject).Visible = false
+			elseif not first then
+				visit(nestedIcon :: GuiObject)
+			end
 		end
 	end
 end

@@ -363,9 +363,10 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 	if powerText and powerText:IsA("TextLabel") then
 		local shown = def.powerGain
 		local rebirthMult = RebirthConfig.getPowerGainMultiplier(player)
-		if rebirthMult > 1 then
-			shown = math.max(1, math.floor(shown * rebirthMult + 1e-6))
-		end
+		local passMult = if player:GetAttribute(StoreConfig.ATTR.DOUBLE_POWER_OWNED) == true
+			then StoreConfig.DOUBLE_POWER_MULTIPLIER
+			else 1
+		shown = math.max(1, math.floor(shown * rebirthMult * passMult + 1e-6))
 		powerText.Text = formatPower(shown)
 	end
 
@@ -1678,6 +1679,7 @@ local function init()
 		GearConfig.POWER_ATTR,
 		GearConfig.POWER_EDITED_ATTR,
 		RebirthConfig.POWER_MULT_ATTR,
+		StoreConfig.ATTR.DOUBLE_POWER_OWNED,
 	} do
 		player:GetAttributeChangedSignal(attr):Connect(function()
 			if attr == GearConfig.POWER_ATTR or attr == GearConfig.POWER_EDITED_ATTR then

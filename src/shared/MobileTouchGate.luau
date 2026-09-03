@@ -16,7 +16,10 @@ local RunService = game:GetService("RunService")
 local M = {}
 
 local HOLD_BLOCK_SEC = 0.4
+local TAP_SLOP_PX = 32
 local activeTouches: { [InputObject]: number } = {}
+local touchOrigin: { [InputObject]: Vector2 } = {}
+local lastEndedTravelPx = 0
 local blockedUntilAllReleased = false
 local wired = false
 local savedMainDisplayOrder: number? = nil
@@ -261,6 +264,35 @@ function M.canTapUi(): boolean
 	return not blockedUntilAllReleased
 end
 
+function M.touchMovedTooFar(input: InputObject, maxPx: number?): boolean
+	local origin = touchOrigin[input]
+	if not origin then
+		return lastEndedTravelPx > (maxPx or TAP_SLOP_PX)
+	end
+	local pos = Vector2.new(input.Position.X, input.Position.Y)
+	return (pos - origin).Magnitude > (maxPx or TAP_SLOP_PX)
+end
+
+function M.wasLastTouchADrag(maxPx: number?): boolean
+	return lastEndedTravelPx > (maxPx or TAP_SLOP_PX)
+end
+
+function M.anyActiveTouchIsDrag(maxPx: number?): boolean
+	local max = maxPx or TAP_SLOP_PX
+	local any = false
+	for input, origin in touchOrigin do
+		any = true
+		local pos = Vector2.new(input.Position.X, input.Position.Y)
+		if (pos - origin).Magnitude > max then
+			return true
+		end
+	end
+	if not any then
+		return lastEndedTravelPx > max
+	end
+	return false
+end
+
 function M.init()
 	if wired then
 		return
@@ -301,6 +333,7 @@ function M.init()
 			return
 		end
 		activeTouches[input] = os.clock()
+		touchOrigin[input] = Vector2.new(input.Position.X, input.Position.Y)
 		refreshBlockState()
 	end)
 
@@ -309,7 +342,15 @@ function M.init()
 			return
 		end
 		local startedAt = activeTouches[input]
+		local origin = touchOrigin[input]
+		if origin then
+			local pos = Vector2.new(input.Position.X, input.Position.Y)
+			lastEndedTravelPx = (pos - origin).Magnitude
+		else
+			lastEndedTravelPx = 0
+		end
 		activeTouches[input] = nil
+		touchOrigin[input] = nil
 		local remaining = next(activeTouches) ~= nil
 		if startedAt and not remaining and (os.clock() - startedAt) >= HOLD_BLOCK_SEC then
 			-- Camera-drag lift must not click whatever is under the finger.

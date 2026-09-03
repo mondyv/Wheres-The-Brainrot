@@ -1136,9 +1136,17 @@ end
 
 local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 	local lastActivatedAt = -1e9
-	local function requestUpgrade()
+	local function requestUpgrade(input: InputObject?)
 		if not MobileTouchGate.canTapUi() then
 			return
+		end
+		if UserInputService.TouchEnabled then
+			if input and MobileTouchGate.touchMovedTooFar(input) then
+				return
+			end
+			if not input and MobileTouchGate.wasLastTouchADrag() then
+				return
+			end
 		end
 		local now = os.clock()
 		if now - lastActivatedAt < UPGRADE_REQUEST_COOLDOWN then
@@ -1148,20 +1156,20 @@ local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 		MobileHaptics.confirm()
 		tryFireUpgrade()
 	end
-	clickable.Activated:Connect(requestUpgrade)
+	clickable.Activated:Connect(function()
+		requestUpgrade()
+	end)
 	-- Mobile SurfaceGui fallback when Activated does not run on some devices.
+	-- Only count a tap that started and ended without a camera-drag swipe.
 	if UserInputService.TouchEnabled then
 		clickable.InputEnded:Connect(function(input: InputObject)
 			if input.UserInputType ~= Enum.UserInputType.Touch then
 				return
 			end
-			if not MobileTouchGate.canTapUi() then
-				return
-			end
 			if os.clock() - lastActivatedAt < 0.05 then
 				return
 			end
-			requestUpgrade()
+			requestUpgrade(input)
 		end)
 	end
 end
@@ -1343,6 +1351,9 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 		local touchActive = false
 		clickable.InputBegan:Connect(function(input: InputObject)
 			if input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			if not MobileTouchGate.canTapUi() or MobileTouchGate.touchMovedTooFar(input) then
 				return
 			end
 			touchActive = true

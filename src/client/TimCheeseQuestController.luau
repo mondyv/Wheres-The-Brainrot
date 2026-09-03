@@ -1654,7 +1654,7 @@ placeArrowParked = function()
 	end
 	questArrowBtn.Position = UDim2.new(1, -QUEST_ARROW_EDGE_PAD, 0, y)
 	questArrowBtn.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
-	questArrowBtn.Rotation = 0
+	questArrowBtn.Rotation = if GamepadInput.isPreferred() then 0 else 180
 	questArrowBtn.ZIndex = 200
 	questArrowBtn.Visible = canShowQuestChrome()
 end
@@ -1757,9 +1757,11 @@ toggleQuestHudCollapsed = function()
 			arrow.Rotation = 0
 
 			local parked = UDim2.new(1, -QUEST_ARROW_EDGE_PAD, 0, parkedY)
-			local arrowTw = TweenService:Create(arrow, QUEST_EDGE_SLIDE, {
-				Position = parked,
-			})
+			local arrowGoal: { Position: UDim2, Rotation: number? } = { Position = parked }
+			if not GamepadInput.isPreferred() then
+				arrowGoal.Rotation = 180
+			end
+			local arrowTw = TweenService:Create(arrow, QUEST_EDGE_SLIDE, arrowGoal)
 			questArrowTween = arrowTw
 			arrowTw:Play()
 		else
@@ -1812,7 +1814,14 @@ toggleQuestHudCollapsed = function()
 		placeArrowOnTicket()
 		if arrow then
 			arrow.Visible = true
-			arrow.Rotation = 0
+			if GamepadInput.isPreferred() then
+				arrow.Rotation = 0
+			else
+				arrow.Rotation = 180
+				local arrowTw = TweenService:Create(arrow, QUEST_EDGE_SLIDE, { Rotation = 0 })
+				questArrowTween = arrowTw
+				arrowTw:Play()
+			end
 		end
 		local tw = TweenService:Create(panel, QUEST_EDGE_SLIDE, { Position = goal })
 		questCollapseTween = tw

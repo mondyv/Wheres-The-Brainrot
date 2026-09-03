@@ -249,6 +249,15 @@ function M.mountHint(host: GuiObject, keyCode: Enum.KeyCode, centered: boolean?,
 	end
 end
 
+function M.setHintVisible(host: GuiObject, visible: boolean)
+	for _, name in { "GamepadHotkey", "GamepadHotkeyBadge", "GamepadHotkeyText" } do
+		local inst = host:FindFirstChild(name)
+		if inst and inst:IsA("GuiObject") then
+			inst.Visible = visible
+		end
+	end
+end
+
 function M.clearHint(host: GuiObject)
 	host:SetAttribute("_GamepadHotkeyWired", nil)
 	for _, name in { "GamepadHotkey", "GamepadHotkeyBadge", "GamepadHotkeyText" } do

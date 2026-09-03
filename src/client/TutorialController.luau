@@ -13,6 +13,7 @@ local Svc = {
 	Workspace = game:GetService("Workspace"),
 	GuiService = game:GetService("GuiService"),
 	UserInputService = game:GetService("UserInputService"),
+	ContextActionService = game:GetService("ContextActionService"),
 }
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
@@ -1017,6 +1018,7 @@ local function clearUiPointerImpl()
 		uiPointerStroke = nil
 	end
 	if uiPointerHost then
+		uiPointerHost:SetAttribute("_TutorialClaimPointer", nil)
 		GamepadInput.clearHint(uiPointerHost)
 		local hostParent = uiPointerHost.Parent
 		if hostParent and hostParent:IsA("GuiObject") then
@@ -1394,6 +1396,24 @@ local function ensureGui()
 	skipBtn.MouseButton1Click:Connect(function()
 		finishTutorial({ skipped = true })
 	end)
+	GamepadInput.mountHint(skipBtn, GamepadInput.DECLINE, false, { contrast = true })
+	Svc.ContextActionService:UnbindAction("TutorialSkipPad")
+	Svc.ContextActionService:BindActionAtPriority("TutorialSkipPad", function(_, state)
+		if state ~= Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Pass
+		end
+		if not active or chromeSuppressed then
+			return Enum.ContextActionResult.Pass
+		end
+		if not GamepadInput.isPreferred() then
+			return Enum.ContextActionResult.Pass
+		end
+		if BushFloatingClaimController.getActiveOfferUi() ~= nil then
+			return Enum.ContextActionResult.Pass
+		end
+		finishTutorial({ skipped = true })
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.ContextActionPriority.High.Value + 5, GamepadInput.DECLINE)
 
 	-- Parent under Main host so resize stays glued on the right.
 	syncPanelToSideButtons()
@@ -1633,10 +1653,35 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			end
 		end
 	end
-	if attachHost:IsA("GuiButton") then
-		GamepadInput.mountHint(attachHost, GamepadInput.ACCEPT, false, { contrast = true })
-	elseif target:IsA("GuiButton") then
-		GamepadInput.mountHint(target, GamepadInput.ACCEPT, false, { contrast = true })
+	local skipPadHint = claimStyle
+		or attachHost.Name == "Accept"
+		or attachHost.Name == "Decline"
+		or target.Name == "Accept"
+		or target.Name == "Decline"
+	if not skipPadHint then
+		local hintKey = GamepadInput.ACCEPT
+		if
+			attachHost.Name == "Upgrade"
+			or target.Name == "Upgrade"
+			or target.Name == "__UpgradeOverlay"
+		then
+			hintKey = GamepadInput.DECLINE
+		end
+		if attachHost:IsA("GuiButton") then
+			GamepadInput.mountHint(attachHost, hintKey, false, { contrast = true })
+		elseif target:IsA("GuiButton") then
+			GamepadInput.mountHint(target, hintKey, false, { contrast = true })
+		end
+	else
+		target:SetAttribute("_TutorialClaimPointer", true)
+		local hideIcon = target:FindFirstChild("HotkeyIcon")
+		if hideIcon and hideIcon:IsA("GuiObject") then
+			hideIcon.Visible = false
+		end
+		local hideHint = target:FindFirstChild("HotkeyHint")
+		if hideHint and hideHint:IsA("GuiObject") then
+			hideHint.Visible = false
+		end
 	end
 
 	-- Accept/Decline: no yellow stroke — keep the checkmark readable.
@@ -2742,6 +2787,9 @@ finishTutorial = function(opts: { skipped: boolean? }?)
 	clearWorldHighlight()
 	clearUiPointer()
 	clearSpotlight()
+	pcall(function()
+		Svc.ContextActionService:UnbindAction("TutorialSkipPad")
+	end)
 	stopLayoutSync()
 	if heartbeatConn then
 		heartbeatConn:Disconnect()
@@ -3289,6 +3337,9 @@ function M.stop()
 	clearWorldHighlight()
 	clearUiPointer()
 	clearSpotlight()
+	pcall(function()
+		Svc.ContextActionService:UnbindAction("TutorialSkipPad")
+	end)
 	stopLayoutSync()
 	if heartbeatConn then
 		heartbeatConn:Disconnect()

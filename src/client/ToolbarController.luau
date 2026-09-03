@@ -2227,9 +2227,12 @@ end
 				if firstParked then
 					uiBackpackListHighlight = firstParked
 					uiBackpackExtraHighlight = nil
-					if typeof(syncBackpackSelectionStrokes) == "function" then
-						syncBackpackSelectionStrokes()
-					end
+				elseif parkedExtraTools[1] then
+					uiBackpackListHighlight = nil
+					uiBackpackExtraHighlight = parkedExtraTools[1]
+				end
+				if typeof(syncBackpackSelectionStrokes) == "function" then
+					syncBackpackSelectionStrokes()
 				end
 			end
 			syncToolbarGamepadCursor()
@@ -2358,6 +2361,9 @@ end
 	end
 
 	local function canSelectHotbarSlot(): boolean
+		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+			return false
+		end
 		return canUseToolbar and HUDController.isPanelOpen() ~= true
 	end
 
@@ -4713,24 +4719,25 @@ end
 		if not canSelectHotbarSlot() then
 			return
 		end
-		local equippedIdx = 0
-		local char = player.Character
-		local equipped = char and char:FindFirstChildOfClass("Tool")
-		if equipped then
-			for i = 1, 9 do
-				if slotTools[i] == equipped then
-					equippedIdx = i
-					break
+		local start = uiHotbarHighlight or 0
+		if start == 0 then
+			local char = player.Character
+			local equipped = char and char:FindFirstChildOfClass("Tool")
+			if equipped then
+				for i = 1, 9 do
+					if slotTools[i] == equipped then
+						start = i
+						break
+					end
 				end
 			end
 		end
-		for n = 1, 9 do
-			local idx = ((equippedIdx - 1 + delta * n) % 9) + 1
-			if hotbarSlotHasSelectableContent(idx) then
-				UIInteractionSounds.playHover()
-				selectSlot(idx, true)
-				return
-			end
+		local idx = ((start - 1 + delta) % 9) + 1
+		UIInteractionSounds.playHover()
+		if hotbarSlotHasSelectableContent(idx) then
+			selectSlot(idx, true)
+		else
+			setHotbarSelection(idx, false)
 		end
 	end
 
@@ -5489,8 +5496,24 @@ end
 				if hum then
 					hum.Jump = false
 				end
-				if uiHotbarHighlight and hotbarSlotHasSelectableContent(uiHotbarHighlight) and uiBackpackListHighlight == nil then
+				if
+					uiHotbarHighlight
+					and uiBackpackListHighlight == nil
+					and uiBackpackExtraHighlight == nil
+					and hotbarSlotHasSelectableContent(uiHotbarHighlight)
+				then
 					if gamepadTuckHotbarSlot(uiHotbarHighlight) then
+						return Enum.ContextActionResult.Sink
+					end
+				end
+				local extra = uiBackpackExtraHighlight
+				if extra and extra.Parent then
+					local slot = firstEmptyHotbarSlot(uiHotbarHighlight) or uiHotbarHighlight or 2
+					if unparkExtraToolToHotbar(extra, slot) then
+						uiBackpackExtraHighlight = nil
+						refreshParkedExtraToolsUI()
+						queueRebuildSlots()
+						UIInteractionSounds.playClick()
 						return Enum.ContextActionResult.Sink
 					end
 				end
@@ -5517,6 +5540,16 @@ end
 					UIInteractionSounds.playClick()
 					return Enum.ContextActionResult.Sink
 				end
+				if parkedExtraTools[1] then
+					local slot = firstEmptyHotbarSlot(uiHotbarHighlight) or uiHotbarHighlight or 2
+					if unparkExtraToolToHotbar(parkedExtraTools[1], slot) then
+						uiBackpackExtraHighlight = nil
+						refreshParkedExtraToolsUI()
+						queueRebuildSlots()
+						UIInteractionSounds.playClick()
+						return Enum.ContextActionResult.Sink
+					end
+				end
 				return Enum.ContextActionResult.Pass
 			end, false, Enum.ContextActionPriority.High.Value + 40, GamepadInput.ACCEPT)
 
@@ -5533,26 +5566,41 @@ end
 				if input.KeyCode ~= Enum.KeyCode.DPadUp and input.KeyCode ~= Enum.KeyCode.DPadDown then
 					return Enum.ContextActionResult.Pass
 				end
-				local parked: { number } = {}
+				local rows: { { kind: string, idx: number?, tool: Tool? } } = {}
 				for _, idx in ipairs(backpackDisplayOrder) do
 					if brainrotEntries[idx] and (brainrotParkedInUI[idx] == true or hotbarSlotForBrainrotIndex(idx) == nil) then
-						table.insert(parked, idx)
+						table.insert(rows, { kind = "brainrot", idx = idx })
 					end
 				end
-				if #parked == 0 then
+				for _, tool in ipairs(parkedExtraTools) do
+					if tool.Parent then
+						table.insert(rows, { kind = "extra", tool = tool })
+					end
+				end
+				if #rows == 0 then
 					return Enum.ContextActionResult.Sink
 				end
 				local cur = 1
-				for i, idx in ipairs(parked) do
-					if idx == uiBackpackListHighlight then
+				for i, row in ipairs(rows) do
+					if row.kind == "brainrot" and row.idx == uiBackpackListHighlight then
+						cur = i
+						break
+					end
+					if row.kind == "extra" and row.tool == uiBackpackExtraHighlight then
 						cur = i
 						break
 					end
 				end
 				local delta = if input.KeyCode == Enum.KeyCode.DPadDown then 1 else -1
-				cur = ((cur - 1 + delta) % #parked) + 1
-				uiBackpackListHighlight = parked[cur]
-				uiBackpackExtraHighlight = nil
+				cur = ((cur - 1 + delta) % #rows) + 1
+				local picked = rows[cur]
+				if picked.kind == "extra" then
+					uiBackpackListHighlight = nil
+					uiBackpackExtraHighlight = picked.tool
+				else
+					uiBackpackListHighlight = picked.idx
+					uiBackpackExtraHighlight = nil
+				end
 				uiHotbarHighlight = nil
 				_activeSlot = nil
 				syncAllHotbarSelectionStrokes()

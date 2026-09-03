@@ -514,7 +514,7 @@ local promptRefreshAccum = 0
 local lastHRPPosition: Vector3? = nil
 local closestUpgradeStand: Model? = nil
 local UPGRADE_PAD_RANGE = 14
-local STAND_UPGRADE_PAD_ACTION = "StandUpgradeGamepadA"
+local STAND_UPGRADE_PAD_ACTION = "StandUpgradeGamepadB"
 local cachedTaggedStands: { Model } = {}
 local cachedPlotMatch: { [Model]: boolean } = {}
 
@@ -767,6 +767,19 @@ local function updateClosestUpgradeStand(hrpPos: Vector3)
 		end
 	end
 	closestUpgradeStand = best
+	local pad = GamepadInput.isPreferred()
+	for stand, view in pairs(views) do
+		local btn = view.upgradeButton
+		if not (btn and btn.Parent) then
+			continue
+		end
+		if pad and best == stand then
+			GamepadInput.mountHint(btn, GamepadInput.DECLINE, true, { contrast = true })
+			GamepadInput.setHintVisible(btn, true)
+		else
+			GamepadInput.setHintVisible(btn, false)
+		end
+	end
 end
 
 local function fireClosestStandUpgrade()
@@ -1335,7 +1348,6 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 	if clickable:GetAttribute("__UpgradeWired") == true then
 		ensureSurfaceGuiInputChain(clickable)
 		passthroughUpgradePanelClicks(upgradeFrame :: GuiObject, clickable)
-		GamepadInput.mountHint(clickable, GamepadInput.ACCEPT, true, { contrast = true })
 		return clickable
 	end
 	clickable:SetAttribute("__UpgradeWired", true)
@@ -1437,7 +1449,6 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 	end
 
 	bindUpgradeClick(clickable, tryFireUpgrade)
-	GamepadInput.mountHint(clickable, GamepadInput.ACCEPT, true, { contrast = true })
 	return clickable
 end
 
@@ -1987,7 +1998,7 @@ function M.init()
 			return Enum.ContextActionResult.Sink
 		end
 		return Enum.ContextActionResult.Pass
-	end, false, Enum.ContextActionPriority.High.Value + 15, GamepadInput.ACCEPT)
+	end, false, Enum.ContextActionPriority.High.Value + 15, GamepadInput.DECLINE)
 
 	upgradeFeedbackRE.OnClientEvent:Connect(function(ok: boolean, reason: string)
 		if ok then

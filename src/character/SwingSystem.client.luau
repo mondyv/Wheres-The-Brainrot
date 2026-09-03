@@ -5724,7 +5724,12 @@ local function boot(character)
 			st.humanoid.Jump = false
 		elseif st.gamepadHeld or UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1 then
 			-- Console A is jump+swing. Never hop when a vine was in the last scan.
-			if st.scannedVisualCanSwing or st.scannedVisualTarget or now < st.swingPressIntentUntil then
+			if
+				st.scannedVisualCanSwing
+				or st.scannedVisualTarget
+				or st.highlightedTarget
+				or now < st.swingPressIntentUntil
+			then
 				st.humanoid.Jump = false
 			end
 		end
@@ -5759,9 +5764,17 @@ local function boot(character)
 			if not canLatch and st.highlightedTarget then
 				canLatch = true
 			end
+			if not canLatch and st.scannedVisualTarget then
+				canLatch = true
+			end
 			if not canLatch then
 				local maxDistance, lookDot, screenLimit = st.getSwingPressAttachLimits()
 				canLatch = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit) ~= nil
+			end
+			if not canLatch and player:GetAttribute("TutorialCompleted") ~= true then
+				local maxDistance, lookDot, screenLimit = st.getSwingPressAttachLimits()
+				canLatch = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit) ~= nil
+					or st.scannedVisualTarget ~= nil
 			end
 			if not canLatch then
 				return Enum.ContextActionResult.Pass
@@ -5786,7 +5799,7 @@ local function boot(character)
 			return Enum.ContextActionResult.Sink
 		end,
 		false,
-		Enum.ContextActionPriority.High.Value + 8,
+		Enum.ContextActionPriority.High.Value + 25,
 		Enum.KeyCode.ButtonA
 	)
 

@@ -1437,7 +1437,7 @@ local COMBO_GOLD = Color3.fromRGB(255, 214, 74)
 local COMBO_DANGER = Color3.fromRGB(255, 62, 52)
 local COMBO_RING_START = 1.18
 local COMBO_RING_END = 1.0
-local COMBO_CORE_FILL = 0
+local COMBO_CORE_FILL = 0.22
 local PAD_BADGE_COLOR: { [Enum.KeyCode]: Color3 } = {
 	[Enum.KeyCode.ButtonA] = Color3.fromRGB(86, 196, 78),
 	[Enum.KeyCode.ButtonX] = Color3.fromRGB(68, 138, 255),
@@ -1598,11 +1598,11 @@ local function ensureDoubleTapGui(): ScreenGui
 	local shadow = Instance.new("Frame")
 	shadow.Name = "Shadow"
 	shadow.BackgroundColor3 = Color3.fromRGB(8, 6, 14)
-	shadow.BackgroundTransparency = 0.48
+	shadow.BackgroundTransparency = 0.78
 	shadow.BorderSizePixel = 0
 	shadow.AnchorPoint = Vector2.new(0.5, 0.5)
-	shadow.Position = UDim2.new(0.5, 0, 0.5, 6)
-	shadow.Size = UDim2.fromScale(0.72, 0.72)
+	shadow.Position = UDim2.new(0.5, 0, 0.5, 5)
+	shadow.Size = UDim2.fromScale(0.58, 0.58)
 	shadow.ZIndex = 20
 	shadow.Parent = holder
 	local shadowCorner = Instance.new("UICorner")
@@ -1632,24 +1632,10 @@ local function ensureDoubleTapGui(): ScreenGui
 	ringScale.Scale = COMBO_RING_START
 	ringScale.Parent = ring
 
-	local fill = Instance.new("Frame")
-	fill.Name = "Fill"
-	fill.BackgroundColor3 = Color3.fromRGB(16, 12, 28)
-	fill.BackgroundTransparency = 0.12
-	fill.BorderSizePixel = 0
-	fill.AnchorPoint = Vector2.new(0.5, 0.5)
-	fill.Position = UDim2.fromScale(0.5, 0.5)
-	fill.Size = UDim2.fromScale(0.78, 0.78)
-	fill.ZIndex = 21
-	fill.Parent = holder
-	local fillCorner = Instance.new("UICorner")
-	fillCorner.CornerRadius = UDim.new(1, 0)
-	fillCorner.Parent = fill
-
 	local halo = Instance.new("Frame")
 	halo.Name = "Halo"
 	halo.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
-	halo.BackgroundTransparency = 0.72
+	halo.BackgroundTransparency = 0.9
 	halo.BorderSizePixel = 0
 	halo.AnchorPoint = Vector2.new(0.5, 0.5)
 	halo.Position = UDim2.fromScale(0.5, 0.5)
@@ -1881,7 +1867,7 @@ local function refreshComboHud(n: number)
 		comboLabel.Visible = pad or touch
 	end
 	if liftLabel and liftLabel:IsA("TextLabel") then
-		liftLabel.Text = string.format("LIFT x%.2f", lift)
+		liftLabel.Text = string.format("x%.2f", lift)
 		liftLabel.TextColor3 = if lift >= GearConfig.WORKOUT_LIFT_MULT_MAX - 0.05
 			then Color3.fromRGB(255, 236, 120)
 			else Color3.fromRGB(255, 214, 74)
@@ -1892,7 +1878,7 @@ local function refreshComboHud(n: number)
 	end
 	if num and num:IsA("TextLabel") then
 		num.Text = tostring(count)
-		num.Visible = not pad
+		num.Visible = false
 	end
 	if prompt and prompt:IsA("GuiObject") then
 		prompt.Visible = pad
@@ -1965,7 +1951,7 @@ local function paintComboUrgency(t: number)
 	local halo = holder:FindFirstChild("Halo")
 	if halo and halo:IsA("Frame") then
 		halo.BackgroundColor3 = color
-		halo.BackgroundTransparency = 0.72 - u * 0.38
+		halo.BackgroundTransparency = 0.9 - u * 0.35
 	end
 	local hit = holder:FindFirstChild("Hit")
 	local hitStroke = hit and hit:FindFirstChild("HitStroke")
@@ -1996,12 +1982,7 @@ local function playComboAppear()
 	local halo = holder:FindFirstChild("Halo")
 	if halo and halo:IsA("GuiObject") then
 		halo.BackgroundTransparency = 1
-		TweenService:Create(halo, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.72 }):Play()
-	end
-	local fill = holder:FindFirstChild("Fill")
-	if fill and fill:IsA("GuiObject") then
-		fill.BackgroundTransparency = 1
-		TweenService:Create(fill, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.12 }):Play()
+		TweenService:Create(halo, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.9 }):Play()
 	end
 	local hit = holder:FindFirstChild("Hit")
 	if hit and hit:IsA("GuiObject") then
@@ -2035,10 +2016,6 @@ local function paintComboIdle(appear: boolean?)
 	if hit and hit:IsA("GuiObject") then
 		hit.BackgroundColor3 = Color3.fromRGB(22, 16, 38)
 		hit.BackgroundTransparency = COMBO_CORE_FILL
-	end
-	local fill = holder:FindFirstChild("Fill")
-	if fill and fill:IsA("GuiObject") then
-		fill.BackgroundTransparency = 0.12
 	end
 	local num = hit and hit:FindFirstChild("ComboNum")
 	if num and num:IsA("TextLabel") then
@@ -2158,11 +2135,7 @@ local function playComboApproachTrail(from: Vector2, to: Vector2)
 			glow.BackgroundTransparency = 0.42 + ease * 0.5
 		end
 		if line and line:IsA("Frame") then
-			line.Visible = remain > 0.02
-			line.Position = UDim2.fromOffset(from.X + delta.X * ease, from.Y + delta.Y * ease)
-			line.Size = UDim2.fromOffset(11, dist * remain)
-			line.Rotation = rot
-			line.BackgroundTransparency = 0.04 + ease * 0.88
+			line.Visible = false
 		end
 		for i, pip in pips do
 			local delay = (i - 1) / n * 0.12
@@ -2226,10 +2199,10 @@ local function pulseComboHold(ok: boolean)
 	local holder = gui:FindFirstChild("ComboHold")
 	local pop = holder and holder:FindFirstChild("PopScale")
 	if pop and pop:IsA("UIScale") then
-		pop.Scale = if ok then 1.36 else 0.82
+		pop.Scale = if ok then 1.55 else 0.78
 		TweenService:Create(
 			pop,
-			TweenInfo.new(if ok then 0.22 else 0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+			TweenInfo.new(if ok then 0.28 else 0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
 			{ Scale = 1 }
 		):Play()
 	end
@@ -2375,10 +2348,16 @@ local function hitCombo()
 	claimDoubleTapBusy = true
 	burstComboLine()
 	GameSoundEffects.playWorkoutComboHit(comboDisplay())
-	placeComboHold()
-	paintComboIdle(false)
 	pulseComboHold(true)
-	restartComboRing()
+	local gen = doubleTapGen
+	task.delay(0.14, function()
+		if gen ~= doubleTapGen or player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+			return
+		end
+		placeComboHold()
+		paintComboIdle(false)
+		restartComboRing()
+	end)
 	task.spawn(function()
 		waitForWorkoutRemote("ClaimWorkoutDoubleTap")
 		local n = comboDisplay()

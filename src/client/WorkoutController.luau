@@ -1443,12 +1443,14 @@ local PAD_BADGE_COLOR: { [Enum.KeyCode]: Color3 } = {
 
 local function comboWindowFor(n: number): number
 	local lift = GearConfig.workoutLiftMultiplier(n)
-	return math.clamp(1.52 - (lift - 1) * 0.18, 0.95, 1.52)
+	-- Slightly tighter at high lift, but keep a long enough window so the ring
+	-- never slams shut (old floor 0.95s made the close look frantic).
+	return math.clamp(1.58 - (lift - 1) * 0.15, 1.24, 1.58)
 end
 
 local function comboAnimSpeedFor(n: number): number
 	local lift = GearConfig.workoutLiftMultiplier(n)
-	return 1 + (lift - 1) * 0.28
+	return 1 + (lift - 1) * 0.18
 end
 
 local function applyComboAnimSpeed(n: number)
@@ -1858,6 +1860,10 @@ local function refreshComboHud(n: number)
 	local comboLabel = stats and stats:FindFirstChild("ComboLabel")
 	local liftLabel = stats and stats:FindFirstChild("LiftLabel")
 	local pad = GamepadInput.isPreferred()
+	local showStats = pad or UserInputService.TouchEnabled
+	if stats and stats:IsA("GuiObject") then
+		stats.Visible = showStats
+	end
 	if comboLabel and comboLabel:IsA("TextLabel") then
 		comboLabel.Text = "COMBO " .. tostring(count)
 	end

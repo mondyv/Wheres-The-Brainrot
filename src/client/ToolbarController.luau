@@ -2360,23 +2360,8 @@ end
 		t:Play()
 	end
 
-	local function canSelectHotbarSlot(index: number?): boolean
-		if not canUseToolbar or HUDController.isPanelOpen() == true then
-			return false
-		end
-		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
-			return true
-		end
-		-- Mid-workout: only allow putting the current gear away, not swapping slots.
-		if typeof(index) ~= "number" then
-			return false
-		end
-		local char = player.Character
-		local equipped = char and char:FindFirstChildOfClass("Tool")
-		if equipped and slotTools[index] == equipped then
-			return true
-		end
-		return uiHotbarHighlight == index
+	local function canSelectHotbarSlot(_index: number?): boolean
+		return canUseToolbar and HUDController.isPanelOpen() ~= true
 	end
 
 	local function hotbarSlotHasSelectableContent(index: number): boolean
@@ -4479,6 +4464,11 @@ end
 		end
 		local char = player.Character
 		local equipped = char and char:FindFirstChildOfClass("Tool")
+		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true and equipped and slotTools[index] ~= equipped then
+			bumpToolHoldGen()
+			hum:UnequipTools()
+			equipped = nil
+		end
 
 		-- Extra tool slot (e.g. lucky block / workout gear) with no brainrot index.
 		if tool and not hasBrainrotEntry then
@@ -4753,7 +4743,11 @@ end
 				continue
 			end
 			UIInteractionSounds.playHover()
-			selectSlot(idx, true)
+			if idx == start then
+				selectSlot(idx)
+			else
+				selectSlot(idx, true)
+			end
 			return
 		end
 	end

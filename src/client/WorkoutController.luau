@@ -1435,8 +1435,11 @@ local COMBO_PAD_KEYS = { Enum.KeyCode.ButtonA, Enum.KeyCode.ButtonX, Enum.KeyCod
 local comboPromptKey = Enum.KeyCode.ButtonA
 local COMBO_GOLD = Color3.fromRGB(255, 214, 74)
 local COMBO_DANGER = Color3.fromRGB(255, 62, 52)
-local COMBO_RING_START = 1.18
-local COMBO_RING_END = 1.0
+local COMBO_RING_START = 1.12
+local COMBO_RING_END = 0.64
+local COMBO_HALO_IDLE = 0.74
+local COMBO_HALO_SIZE = 0.78
+local COMBO_SHADOW_SIZE = 0.44
 local COMBO_CORE_FILL = 0.22
 local PAD_BADGE_COLOR: { [Enum.KeyCode]: Color3 } = {
 	[Enum.KeyCode.ButtonA] = Color3.fromRGB(86, 196, 78),
@@ -1523,8 +1526,12 @@ local function ensureDoubleTapGui(): ScreenGui
 		else
 			local halo = oldHold and oldHold:FindFirstChild("Halo")
 			if halo and halo:IsA("Frame") then
-				halo.Size = UDim2.fromScale(0.92, 0.92)
-				halo.BackgroundTransparency = 0.72
+				halo.Size = UDim2.fromScale(COMBO_HALO_SIZE, COMBO_HALO_SIZE)
+				halo.BackgroundTransparency = COMBO_HALO_IDLE
+			end
+			local shadow = oldHold and oldHold:FindFirstChild("Shadow")
+			if shadow and shadow:IsA("Frame") then
+				shadow.Size = UDim2.fromScale(COMBO_SHADOW_SIZE, COMBO_SHADOW_SIZE)
 			end
 			return doubleTapGui
 		end
@@ -1614,7 +1621,7 @@ local function ensureDoubleTapGui(): ScreenGui
 	shadow.BorderSizePixel = 0
 	shadow.AnchorPoint = Vector2.new(0.5, 0.5)
 	shadow.Position = UDim2.new(0.5, 0, 0.5, 5)
-	shadow.Size = UDim2.fromScale(0.58, 0.58)
+	shadow.Size = UDim2.fromScale(COMBO_SHADOW_SIZE, COMBO_SHADOW_SIZE)
 	shadow.ZIndex = 20
 	shadow.Parent = holder
 	local shadowCorner = Instance.new("UICorner")
@@ -1647,11 +1654,11 @@ local function ensureDoubleTapGui(): ScreenGui
 	local halo = Instance.new("Frame")
 	halo.Name = "Halo"
 	halo.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
-	halo.BackgroundTransparency = 0.72
+	halo.BackgroundTransparency = COMBO_HALO_IDLE
 	halo.BorderSizePixel = 0
 	halo.AnchorPoint = Vector2.new(0.5, 0.5)
 	halo.Position = UDim2.fromScale(0.5, 0.5)
-	halo.Size = UDim2.fromScale(0.92, 0.92)
+	halo.Size = UDim2.fromScale(COMBO_HALO_SIZE, COMBO_HALO_SIZE)
 	halo.ZIndex = 21
 	halo.Parent = holder
 	local haloCorner = Instance.new("UICorner")
@@ -1963,7 +1970,7 @@ local function paintComboUrgency(t: number)
 	local halo = holder:FindFirstChild("Halo")
 	if halo and halo:IsA("Frame") then
 		halo.BackgroundColor3 = color
-		halo.BackgroundTransparency = 0.72 - u * 0.22
+		halo.BackgroundTransparency = COMBO_HALO_IDLE - u * 0.22
 	end
 	local hit = holder:FindFirstChild("Hit")
 	local hitStroke = hit and hit:FindFirstChild("HitStroke")
@@ -1994,7 +2001,7 @@ local function playComboAppear()
 	local halo = holder:FindFirstChild("Halo")
 	if halo and halo:IsA("GuiObject") then
 		halo.BackgroundTransparency = 1
-		TweenService:Create(halo, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.72 }):Play()
+		TweenService:Create(halo, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = COMBO_HALO_IDLE }):Play()
 	end
 	local hit = holder:FindFirstChild("Hit")
 	if hit and hit:IsA("GuiObject") then
@@ -2170,7 +2177,7 @@ local function playComboApproachTrail(from: Vector2, to: Vector2)
 	end)
 end
 
-local function placeComboHold()
+local function placeComboHold(skipTrail: boolean?)
 	local holder = comboHolder()
 	if not holder then
 		return
@@ -2194,11 +2201,80 @@ local function placeComboHold()
 	local from = lastComboPos
 	lastComboPos = pos
 	holder.Position = UDim2.fromOffset(pos.X, pos.Y)
-	if from.X > 0 and (pos - from).Magnitude >= 36 then
+	if skipTrail ~= true and from.X > 0 and (pos - from).Magnitude >= 36 then
 		playComboApproachTrail(from, pos)
 	end
 	pickNextComboKey()
 	refreshComboHud(comboDisplay())
+end
+
+local function playComboVanish()
+	local holder = comboHolder()
+	if not holder then
+		return
+	end
+	local pop = holder:FindFirstChild("PopScale")
+	local ring = holder:FindFirstChild("Ring")
+	local stroke = ring and ring:FindFirstChild("RingStroke")
+	local halo = holder:FindFirstChild("Halo")
+	local shadow = holder:FindFirstChild("Shadow")
+	local hit = holder:FindFirstChild("Hit")
+	local num = hit and hit:FindFirstChild("ComboNum")
+	local prompt = hit and hit:FindFirstChild("PadPrompt")
+	local ripple = holder:FindFirstChild("HitRipple")
+	local rippleScale = ripple and ripple:FindFirstChild("RippleScale")
+	local rippleStroke = ripple and ripple:FindFirstChild("RippleStroke")
+	if stroke and stroke:IsA("UIStroke") then
+		TweenService:Create(stroke, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Transparency = 1,
+		}):Play()
+	end
+	if halo and halo:IsA("GuiObject") then
+		TweenService:Create(halo, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			BackgroundTransparency = 1,
+		}):Play()
+	end
+	if shadow and shadow:IsA("GuiObject") then
+		TweenService:Create(shadow, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			BackgroundTransparency = 1,
+		}):Play()
+	end
+	if hit and hit:IsA("GuiObject") then
+		hit.BackgroundColor3 = Color3.fromRGB(255, 236, 150)
+		TweenService:Create(hit, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			BackgroundTransparency = 1,
+		}):Play()
+	end
+	if num and num:IsA("TextLabel") then
+		TweenService:Create(num, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			TextTransparency = 1,
+		}):Play()
+	end
+	if prompt and prompt:IsA("GuiObject") then
+		TweenService:Create(prompt, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			BackgroundTransparency = 1,
+		}):Play()
+	end
+	if pop and pop:IsA("UIScale") then
+		TweenService:Create(pop, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+			Scale = 0.08,
+		}):Play()
+	end
+	if ripple and ripple:IsA("GuiObject") and rippleScale and rippleScale:IsA("UIScale") then
+		ripple.Visible = true
+		rippleScale.Scale = 0.7
+		if rippleStroke and rippleStroke:IsA("UIStroke") then
+			rippleStroke.Transparency = 0.04
+			rippleStroke.Thickness = 8
+			TweenService:Create(rippleStroke, TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Transparency = 1,
+				Thickness = 2,
+			}):Play()
+		end
+		TweenService:Create(rippleScale, TweenInfo.new(0.26, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Scale = 2.1,
+		}):Play()
+	end
 end
 
 local function pulseComboHold(ok: boolean)
@@ -2356,21 +2432,14 @@ local function hitCombo()
 		return
 	end
 	claimDoubleTapBusy = true
+	comboBusyAnim = true
 	burstComboLine()
 	GameSoundEffects.playWorkoutComboHit(comboDisplay())
-	pulseComboHold(true)
+	playComboVanish()
 	local gen = doubleTapGen
-	task.delay(0.14, function()
-		if gen ~= doubleTapGen or player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
-			return
-		end
-		placeComboHold()
-		paintComboIdle(false)
-		restartComboRing()
-	end)
+	local nextCount = comboDisplay()
 	task.spawn(function()
 		waitForWorkoutRemote("ClaimWorkoutDoubleTap")
-		local n = comboDisplay()
 		if claimDoubleTapFn and claimDoubleTapFn.Parent then
 			local ok, result = pcall(function()
 				return claimDoubleTapFn:InvokeServer()
@@ -2378,14 +2447,28 @@ local function hitCombo()
 			if not ok then
 				warn("[WorkoutController] combo hit failed:", result)
 			elseif typeof(result) == "number" then
-				n = result
+				nextCount = result
 			end
 		end
 		claimDoubleTapBusy = false
 		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
-			setComboNumber(n)
-			applyComboAnimSpeed(n)
+			applyComboAnimSpeed(nextCount)
 		end
+	end)
+	task.delay(0.24, function()
+		if gen ~= doubleTapGen or player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+			comboBusyAnim = false
+			return
+		end
+		local holder = comboHolder()
+		if holder then
+			holder.Visible = false
+		end
+		placeComboHold(true)
+		setComboNumber(nextCount)
+		paintComboIdle()
+		comboBusyAnim = false
+		restartComboRing()
 	end)
 end
 
@@ -2733,8 +2816,11 @@ local function init()
 			return
 		end
 		local n = comboDisplay()
-		setComboNumber(n)
 		applyComboAnimSpeed(n)
+		if comboBusyAnim then
+			return
+		end
+		setComboNumber(n)
 	end)
 
 	player:GetAttributeChangedSignal(GearConfig.WORKOUT_ACTIVE_ATTR):Connect(function()

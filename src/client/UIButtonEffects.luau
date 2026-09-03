@@ -2,6 +2,7 @@
 -- Shared UI polish: scale hover, in-bounds glisten (hover only), contained diagonal sweep (hover only).
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -851,6 +852,14 @@ local function ensureClickRippleGui(): ScreenGui?
 	return gui
 end
 
+local function screenPosFromInput(input: InputObject): Vector2
+	if input.UserInputType == Enum.UserInputType.Touch then
+		local inset = GuiService:GetGuiInset()
+		return Vector2.new(input.Position.X + inset.X, input.Position.Y + inset.Y)
+	end
+	return UserInputService:GetMouseLocation()
+end
+
 local function playClickRipple(screenPos: Vector2)
 	if not ensureClickRippleGui() then
 		return
@@ -887,15 +896,15 @@ function M.init()
 		return
 	end
 	ensureClickRippleGui()
-	clickRippleConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if not gameProcessed then
+	clickRippleConn = UserInputService.InputBegan:Connect(function(input, _gameProcessed)
+		if UserInputService:GetFocusedTextBox() ~= nil then
 			return
 		end
 		local kind = input.UserInputType
 		if kind ~= Enum.UserInputType.MouseButton1 and kind ~= Enum.UserInputType.Touch then
 			return
 		end
-		playClickRipple(input.Position)
+		playClickRipple(screenPosFromInput(input))
 	end)
 end
 

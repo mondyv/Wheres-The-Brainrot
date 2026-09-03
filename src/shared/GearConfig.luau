@@ -177,14 +177,13 @@ M.POWER_MAX_ATTR = "PowerMax" -- true ceiling; Edit Power can only set active Po
 M.POWER_EDITED_ATTR = "PowerEdited"
 M.WORKOUT_ACTIVE_ATTR = "WorkoutActive"
 M.WORKOUT_LIFT_MULT_MAX = 3
--- Combo count where lift hits the cap. Combo itself can keep climbing after that.
-M.WORKOUT_LIFT_COMBO_FOR_MAX = 10
+M.WORKOUT_LIFT_STEP = 0.15
+-- Combo count where lift first hits the cap (1 + 14 * 0.15 = 3.1, clamped).
+M.WORKOUT_LIFT_COMBO_FOR_MAX = 15
 
 function M.workoutLiftMultiplier(combo: number): number
 	local c = math.max(1, math.floor(combo))
-	local span = math.max(1, M.WORKOUT_LIFT_COMBO_FOR_MAX - 1)
-	local t = (c - 1) / span
-	return math.clamp(1 + t * (M.WORKOUT_LIFT_MULT_MAX - 1), 1, M.WORKOUT_LIFT_MULT_MAX)
+	return math.clamp(1 + (c - 1) * M.WORKOUT_LIFT_STEP, 1, M.WORKOUT_LIFT_MULT_MAX)
 end
 
 local byId: { [number]: GearDef } = {}

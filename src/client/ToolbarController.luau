@@ -4731,6 +4731,62 @@ end
 		end
 	end
 
+	local function ensureGamepadEquipHint()
+		local existing = hotbar:FindFirstChild("GamepadEquipHint")
+		if existing and existing:IsA("GuiObject") then
+			existing.Visible = GamepadInput.isPreferred()
+			return
+		end
+		local hint = Instance.new("Frame")
+		hint.Name = "GamepadEquipHint"
+		hint.BackgroundColor3 = Color3.fromRGB(18, 14, 24)
+		hint.BackgroundTransparency = 0.12
+		hint.BorderSizePixel = 0
+		hint.AnchorPoint = Vector2.new(0.5, 1)
+		hint.Position = UDim2.new(0.5, 0, 0, -6)
+		hint.Size = UDim2.fromOffset(272, 26)
+		hint.ZIndex = HOTBAR_FRONT_ZINDEX + 8
+		hint.Visible = false
+		if hotbar:IsA("GuiObject") then
+			hotbar.ClipsDescendants = false
+		end
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(1, 0)
+		corner.Parent = hint
+		local layout = Instance.new("UIListLayout")
+		layout.FillDirection = Enum.FillDirection.Horizontal
+		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		layout.VerticalAlignment = Enum.VerticalAlignment.Center
+		layout.Padding = UDim.new(0, 6)
+		layout.Parent = hint
+		local left = Instance.new("Frame")
+		left.Name = "Left"
+		left.BackgroundTransparency = 1
+		left.Size = UDim2.fromOffset(22, 22)
+		left.ZIndex = hint.ZIndex + 1
+		left.Parent = hint
+		local caption = Instance.new("TextLabel")
+		caption.Name = "Caption"
+		caption.BackgroundTransparency = 1
+		caption.Size = UDim2.fromOffset(152, 22)
+		caption.Font = Enum.Font.GothamBold
+		caption.TextSize = 13
+		caption.TextColor3 = Color3.fromRGB(255, 244, 220)
+		caption.Text = "D-Pad to equip"
+		caption.ZIndex = hint.ZIndex + 1
+		caption.Parent = hint
+		local right = Instance.new("Frame")
+		right.Name = "Right"
+		right.BackgroundTransparency = 1
+		right.Size = UDim2.fromOffset(22, 22)
+		right.ZIndex = hint.ZIndex + 1
+		right.Parent = hint
+		hint.Parent = hotbar
+		GamepadInput.mountHint(left, Enum.KeyCode.DPadLeft, true, { contrast = true })
+		GamepadInput.mountHint(right, Enum.KeyCode.DPadRight, true, { contrast = true })
+		hint.Visible = GamepadInput.isPreferred()
+	end
+
 	local function bindToolbarHotbarKeybinds()
 		ContextActionService:UnbindAction(HOTBAR_KEY_ACTION)
 		ContextActionService:UnbindAction(HOTBAR_DPAD_ACTION)
@@ -5245,6 +5301,7 @@ end
 		resetAllSlotsToIdle()
 		applyHotbarSlotScales()
 		bindToolbarHotbarKeybinds()
+		ensureGamepadEquipHint()
 
 		-- Backpack changes
 		local backpack = player:WaitForChild("Backpack")
@@ -5430,6 +5487,7 @@ end
 
 			GamepadInput.onPreferredChanged(function()
 				syncToolbarGamepadCursor()
+				ensureGamepadEquipHint()
 			end)
 		end
 

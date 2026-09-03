@@ -15,11 +15,21 @@ M.INTERACT = Enum.KeyCode.ButtonX -- Xbox X / PlayStation Square (bush / prompts
 M.SECONDARY = Enum.KeyCode.ButtonY -- Xbox Y / PlayStation Triangle (backpack, steal)
 M.QTE = Enum.KeyCode.ButtonA -- spider dodge (same as accept / confirm)
 
+export type HintOpts = {
+	contrast: boolean?,
+	imageColor: Color3?,
+}
+
 local FALLBACK_FACE: { [Enum.KeyCode]: string } = {
 	[Enum.KeyCode.ButtonA] = "A",
 	[Enum.KeyCode.ButtonB] = "B",
 	[Enum.KeyCode.ButtonX] = "X",
 	[Enum.KeyCode.ButtonY] = "Y",
+	[Enum.KeyCode.DPadLeft] = "◀",
+	[Enum.KeyCode.DPadRight] = "▶",
+	[Enum.KeyCode.DPadUp] = "▲",
+	[Enum.KeyCode.DPadDown] = "▼",
+	[Enum.KeyCode.ButtonSelect] = "View",
 }
 
 function M.isPreferred(): boolean
@@ -86,7 +96,9 @@ function M.isAcceptHeld(): boolean
 	return ok and held == true
 end
 
-function M.mountHint(host: GuiObject, keyCode: Enum.KeyCode, centered: boolean?)
+function M.mountHint(host: GuiObject, keyCode: Enum.KeyCode, centered: boolean?, opts: HintOpts?)
+	local contrast = opts ~= nil and opts.contrast == true
+	local imageColor = if opts and opts.imageColor then opts.imageColor else Color3.fromRGB(255, 255, 255)
 	local hint = host:FindFirstChild("GamepadHotkey")
 	if not (hint and hint:IsA("ImageLabel")) then
 		local label = Instance.new("ImageLabel")
@@ -101,7 +113,7 @@ function M.mountHint(host: GuiObject, keyCode: Enum.KeyCode, centered: boolean?)
 			label.Position = UDim2.new(1, 2, 1, 2)
 			label.Size = UDim2.fromOffset(22, 22)
 		end
-		label.ZIndex = math.max(host.ZIndex + 2, 6)
+		label.ZIndex = math.max(host.ZIndex + 3, 7)
 		label.ScaleType = Enum.ScaleType.Fit
 		label.Visible = false
 		label.Parent = host
@@ -111,19 +123,68 @@ function M.mountHint(host: GuiObject, keyCode: Enum.KeyCode, centered: boolean?)
 		hint.Position = UDim2.fromScale(0.5, 0.5)
 		hint.Size = UDim2.fromOffset(26, 26)
 	end
+	hint.ImageColor3 = imageColor
+
+	local badge = host:FindFirstChild("GamepadHotkeyBadge")
+	if contrast then
+		if not (badge and badge:IsA("Frame")) then
+			local frame = Instance.new("Frame")
+			frame.Name = "GamepadHotkeyBadge"
+			frame.BackgroundColor3 = Color3.fromRGB(18, 14, 24)
+			frame.BackgroundTransparency = 0.08
+			frame.BorderSizePixel = 0
+			frame.AnchorPoint = hint.AnchorPoint
+			frame.Position = hint.Position
+			frame.Size = UDim2.fromOffset(hint.Size.X.Offset + 8, hint.Size.Y.Offset + 8)
+			frame.ZIndex = math.max(host.ZIndex + 2, 6)
+			frame.Visible = false
+			local corner = Instance.new("UICorner")
+			corner.CornerRadius = UDim.new(1, 0)
+			corner.Parent = frame
+			frame.Parent = host
+			badge = frame
+		end
+	end
+
+	local text = host:FindFirstChild("GamepadHotkeyText")
+	if not (text and text:IsA("TextLabel")) then
+		local label = Instance.new("TextLabel")
+		label.Name = "GamepadHotkeyText"
+		label.BackgroundTransparency = 1
+		label.AnchorPoint = hint.AnchorPoint
+		label.Position = hint.Position
+		label.Size = hint.Size
+		label.Font = Enum.Font.GothamBlack
+		label.TextScaled = true
+		label.TextColor3 = imageColor
+		label.ZIndex = hint.ZIndex + 1
+		label.Visible = false
+		label.Parent = host
+		text = label
+	end
+
 	local function refresh()
+		if not host.Parent then
+			return
+		end
 		local show = M.isPreferred()
 		local img = if show then M.faceImage(keyCode) else ""
+		local caption = M.faceLabel(keyCode)
 		hint.Image = img
 		hint.Visible = show and img ~= ""
+		text.Text = caption
+		text.Visible = show and img == ""
+		if badge and badge:IsA("GuiObject") then
+			badge.Visible = show and contrast
+			badge.AnchorPoint = hint.AnchorPoint
+			badge.Position = hint.Position
+		end
 	end
 	refresh()
 	if host:GetAttribute("_GamepadHotkeyWired") ~= true then
 		host:SetAttribute("_GamepadHotkeyWired", true)
 		M.onPreferredChanged(function()
-			if host.Parent then
-				refresh()
-			end
+			refresh()
 		end)
 	end
 end

@@ -11,6 +11,7 @@ local Workspace = game:GetService("Workspace")
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
+local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 
 local function disableDefaultSpawnLocations()
 	local function consider(inst: Instance)
@@ -52,7 +53,23 @@ local function onCharacter(player: Player, character: Model)
 		if not hrp or not character.Parent or not player.Parent then
 			return
 		end
+		-- Hold still at the default spawn until we know tutorial vs Base pad.
+		-- Otherwise returning players flash onto the tutorial QuestHitbox while data loads.
+		hrp.Anchored = true
+		hrp.AssemblyLinearVelocity = Vector3.zero
+		hrp.AssemblyAngularVelocity = Vector3.zero
 		clearReviveSpawnAttrs(player)
+		local loaded = PlayerDataService.waitUntilLoaded(player)
+		if not hrp.Parent or not character.Parent or not player.Parent or player.Character ~= character then
+			if hrp.Parent then
+				hrp.Anchored = false
+			end
+			return
+		end
+		if not loaded then
+			hrp.Anchored = false
+			return
+		end
 		if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
 			PlotSpawnUtil.teleportTutorialStart(player, character)
 			return

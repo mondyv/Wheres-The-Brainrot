@@ -1222,7 +1222,7 @@ local function wireCollapseArrow(collapse: ImageButton)
 		UIInteractionSounds.playClick()
 		toggleQuestHudCollapsed()
 	end)
-	GamepadInput.mountHint(collapse, Enum.KeyCode.DPadRight)
+	GamepadInput.mountHint(collapse, Enum.KeyCode.ButtonSelect, false, { contrast = true })
 end
 
 recoverCollapseArrow = function(): ImageButton?
@@ -3288,7 +3288,6 @@ function M.init()
 		false,
 		Enum.ContextActionPriority.Default.Value,
 		Enum.KeyCode.J,
-		Enum.KeyCode.DPadRight,
 		Enum.KeyCode.ButtonSelect
 	)
 end

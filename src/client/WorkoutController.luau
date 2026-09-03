@@ -101,6 +101,18 @@ local floaterLayer: Frame? = nil
 local handleTransparency: { [BasePart]: number } = {}
 local handleBaseTransparency: { [BasePart]: number } = {}
 
+type ObservedWorkout = {
+	character: Model,
+	tool: Tool,
+	prop: Model,
+	hidden: { BasePart },
+}
+
+local observedWorkouts: { [Player]: ObservedWorkout } = {}
+local observedFollowConn: RBXScriptConnection? = nil
+local observedPlayerConns: { [Player]: { RBXScriptConnection } } = {}
+local observedCharChildConn: { [Player]: RBXScriptConnection } = {}
+
 -- Match SideUI Power HUD (yellowish gold). Runtime sample overrides if available.
 local POWER_HUD_YELLOW = Color3.fromRGB(255, 214, 90)
 local POWER_HIT_WHITE = Color3.fromRGB(255, 252, 235)
@@ -681,6 +693,221 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 
 	if tool:GetAttribute("RainbowGear") == true then
 		GearRainbowFX.attach(model)
+	end
+end
+
+local function restoreObservedTool(obs: ObservedWorkout)
+	for _, part in obs.hidden do
+		if part.Parent then
+			part.LocalTransparencyModifier = 0
+		end
+	end
+	if obs.tool.Parent then
+		for _, d in obs.tool:GetDescendants() do
+			if
+				d:IsA("ParticleEmitter")
+				or d:IsA("Beam")
+				or d:IsA("Trail")
+				or d:IsA("Fire")
+				or d:IsA("Smoke")
+				or d:IsA("Sparkles")
+			then
+				(d :: any).Enabled = true
+			end
+		end
+	end
+end
+
+local function clearObservedWorkout(plr: Player)
+	local obs = observedWorkouts[plr]
+	if not obs then
+		return
+	end
+	restoreObservedTool(obs)
+	if obs.prop.Parent then
+		GearRainbowFX.detach(obs.prop)
+		obs.prop:Destroy()
+	end
+	observedWorkouts[plr] = nil
+end
+
+local function ensureObservedFollow()
+	if observedFollowConn then
+		return
+	end
+	observedFollowConn = RunService.RenderStepped:Connect(function()
+		for plr, obs in observedWorkouts do
+			if not obs.prop.Parent or not obs.character.Parent or obs.tool.Parent ~= obs.character then
+				clearObservedWorkout(plr)
+			else
+				poseGearOnFeet(obs.character, obs.prop)
+			end
+		end
+		if next(observedWorkouts) == nil and observedFollowConn then
+			observedFollowConn:Disconnect()
+			observedFollowConn = nil
+		end
+	end)
+end
+
+local function findEquippedGearTool(character: Model): Tool?
+	for _, child in character:GetChildren() do
+		if child:IsA("Tool") and child:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
+			return child
+		end
+	end
+	return nil
+end
+
+local attachObservedWorkout: (Player) -> ()
+
+attachObservedWorkout = function(plr: Player)
+	if plr == player then
+		return
+	end
+	if plr:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+		clearObservedWorkout(plr)
+		return
+	end
+	local character = plr.Character
+	if not character then
+		clearObservedWorkout(plr)
+		return
+	end
+	local tool = findEquippedGearTool(character)
+	if not tool then
+		clearObservedWorkout(plr)
+		return
+	end
+	local existing = observedWorkouts[plr]
+	if existing and existing.tool == tool and existing.prop.Parent then
+		return
+	end
+	clearObservedWorkout(plr)
+
+	local rightFoot, leftFoot = findFeet(character)
+	if not (rightFoot or leftFoot) then
+		task.delay(0.4, function()
+			if plr.Parent and plr:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+				attachObservedWorkout(plr)
+			end
+		end)
+		return
+	end
+
+	local gearId = tool:GetAttribute(GearConfig.GEAR_ID_ATTR)
+	if typeof(gearId) ~= "number" then
+		return
+	end
+	local model = GearConfig.cloneGearModel(gearId)
+	if not model then
+		return
+	end
+	model.Name = "WorkoutFootPropOther"
+	model:SetAttribute(GearConfig.GEAR_ID_ATTR, gearId)
+	for _, d in model:GetDescendants() do
+		if d:IsA("Script") or d:IsA("LocalScript") then
+			d:Destroy()
+		elseif d:IsA("BasePart") then
+			d.CanCollide = false
+			d.Massless = true
+			d.Anchored = true
+			d.CanQuery = false
+			d.CanTouch = false
+		end
+	end
+	local primary = GearConfig.resolvePrimaryPart(model)
+	if not primary then
+		model:Destroy()
+		return
+	end
+	model.PrimaryPart = primary
+
+	local hidden: { BasePart } = {}
+	for _, d in tool:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.LocalTransparencyModifier = 1
+			table.insert(hidden, d)
+		elseif
+			d:IsA("ParticleEmitter")
+			or d:IsA("Beam")
+			or d:IsA("Trail")
+			or d:IsA("Fire")
+			or d:IsA("Smoke")
+			or d:IsA("Sparkles")
+		then
+			(d :: any).Enabled = false
+		end
+	end
+
+	model.Parent = ensureWorldFolder()
+	poseGearOnFeet(character, model)
+	observedWorkouts[plr] = {
+		character = character,
+		tool = tool,
+		prop = model,
+		hidden = hidden,
+	}
+	if tool:GetAttribute("RainbowGear") == true then
+		GearRainbowFX.attach(model)
+	end
+	ensureObservedFollow()
+end
+
+local function bindObservedPlayer(plr: Player)
+	if plr == player then
+		return
+	end
+	if observedPlayerConns[plr] then
+		return
+	end
+	local conns: { RBXScriptConnection } = {}
+	observedPlayerConns[plr] = conns
+	table.insert(
+		conns,
+		plr:GetAttributeChangedSignal(GearConfig.WORKOUT_ACTIVE_ATTR):Connect(function()
+			attachObservedWorkout(plr)
+		end)
+	)
+	local function hookCharacter(character: Model)
+		local prev = observedCharChildConn[plr]
+		if prev then
+			prev:Disconnect()
+		end
+		observedCharChildConn[plr] = character.ChildAdded:Connect(function(child)
+			if child:IsA("Tool") and child:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
+				attachObservedWorkout(plr)
+			end
+		end)
+	end
+	table.insert(
+		conns,
+		plr.CharacterAdded:Connect(function(character)
+			task.defer(function()
+				hookCharacter(character)
+				attachObservedWorkout(plr)
+			end)
+		end)
+	)
+	if plr.Character then
+		hookCharacter(plr.Character)
+	end
+	attachObservedWorkout(plr)
+end
+
+local function unbindObservedPlayer(plr: Player)
+	clearObservedWorkout(plr)
+	local conns = observedPlayerConns[plr]
+	if conns then
+		for _, c in conns do
+			c:Disconnect()
+		end
+		observedPlayerConns[plr] = nil
+	end
+	local childConn = observedCharChildConn[plr]
+	if childConn then
+		childConn:Disconnect()
+		observedCharChildConn[plr] = nil
 	end
 end
 
@@ -1846,6 +2073,12 @@ local function init()
 	OtherVfxController.setWorkoutAuraEnabled(player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true)
 	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
 		startDoubleTapLoop()
+	end
+
+	Players.PlayerAdded:Connect(bindObservedPlayer)
+	Players.PlayerRemoving:Connect(unbindObservedPlayer)
+	for _, plr in Players:GetPlayers() do
+		bindObservedPlayer(plr)
 	end
 
 	UserInputService.InputBegan:Connect(function(input, _gameProcessed)

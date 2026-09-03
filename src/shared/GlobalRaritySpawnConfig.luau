@@ -78,6 +78,7 @@ M.ACTIVE_POS_ATTR = "GlobalRarityActivePos"
 M.BUSH_GLOBAL_SPAWN_ATTR = "GlobalRaritySpawn"
 M.BUSH_GLOBAL_KEY_ATTR = "GlobalRaritySpawnKey"
 M.BUSH_GLOBAL_RARITY_ATTR = "GlobalRaritySpawnRarity"
+M.BUSH_TAG = "GlobalRaritySpawnBush"
 
 M.TIMER_ATTR_PREFIX = "GlobalRarityTimer_"
 

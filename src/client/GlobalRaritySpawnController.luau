@@ -5,6 +5,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
@@ -32,6 +33,9 @@ type MarkerState = {
 local timerLabels: { [string]: TextLabel } = {}
 local activeMarker: MarkerState? = nil
 local tickerConn: RBXScriptConnection? = nil
+local markerGen = 0
+local lastTimerRefreshAt = 0
+local TIMER_REFRESH_SEC = 0.25
 
 local RaritySpawnStyle = require(script.Parent:WaitForChild("RaritySpawnStyle"))
 
@@ -176,29 +180,14 @@ local function findBushByKey(key: string): Instance?
 		return nil
 	end
 	local hit = cachedBushByKey[key]
-	if hit and hit.Parent then
+	if hit and hit.Parent and hit:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key then
 		return hit
 	end
 	cachedBushByKey[key] = nil
-
-	local map = Workspace:FindFirstChild("Map")
-	if not map then
-		return nil
-	end
-	local stack = { map }
-	local count = 0
-	while #stack > 0 do
-		local inst = table.remove(stack)
-		if inst:GetAttribute(C.BUSH_GLOBAL_SPAWN_ATTR) == true and inst:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key then
+	for _, inst in CollectionService:GetTagged(C.BUSH_TAG) do
+		if inst:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key then
 			cachedBushByKey[key] = inst
 			return inst
-		end
-		for _, child in inst:GetChildren() do
-			table.insert(stack, child)
-		end
-		count += 1
-		if count % 500 == 0 then
-			task.wait(0.1)
 		end
 	end
 	return nil
@@ -218,6 +207,7 @@ local function adorneeForBush(bush: Instance): BasePart?
 end
 
 local function destroyMarker()
+	markerGen += 1
 	if not activeMarker then
 		return
 	end
@@ -354,7 +344,7 @@ local function buildMarkerUi(rarity: string, _iconImage: string, brainrotName: s
 	bb.StudsOffset = Vector3.new(0, 16, 0)
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
-	bb.MaxDistance = 100000
+	bb.MaxDistance = 2500
 
 	local layout = Instance.new("UIListLayout")
 	layout.FillDirection = Enum.FillDirection.Vertical
@@ -412,7 +402,12 @@ local function buildMarkerUi(rarity: string, _iconImage: string, brainrotName: s
 end
 
 local function trackMarker(bushKey: string, rarity: string, endsAt: number)
+	if os.time() >= endsAt then
+		destroyMarker()
+		return
+	end
 	destroyMarker()
+	local gen = markerGen
 	local pos = readActivePos()
 	local bush = findBushByKey(bushKey)
 	if not pos and bush then
@@ -456,30 +451,22 @@ local function trackMarker(bushKey: string, rarity: string, endsAt: number)
 	table.insert(
 		state.conns,
 		RunService.Heartbeat:Connect(function()
+			if gen ~= markerGen or activeMarker ~= state then
+				return
+			end
 			local remaining = math.max(0, endsAt - os.time())
 			if remaining <= 0 then
-				timerLabel.Text = ""
 				destroyMarker()
 				return
 			end
 			timerLabel.Text = C.formatCountdown(remaining)
-			if not state.bush or not state.bush.Parent then
-				local found = findBushByKey(bushKey)
-				if found then
-					state.bush = found
-					local bushPos = bushWorldPos(found)
-					if bushPos and state.anchor and state.anchor.Parent then
-						state.anchor.Position = bushPos
-					end
-				end
-			end
 		end)
 	)
 end
 
 local function trackMarkerWithRetry(bushKey: string, rarity: string, endsAt: number)
 	task.spawn(function()
-		local deadline = os.clock() + 45
+		local deadline = os.clock() + 12
 		while os.clock() < deadline and os.time() < endsAt do
 			if activeMarker and activeMarker.bushKey == bushKey then
 				return
@@ -488,7 +475,7 @@ local function trackMarkerWithRetry(bushKey: string, rarity: string, endsAt: num
 				trackMarker(bushKey, rarity, endsAt)
 				return
 			end
-			task.wait(0.5)
+			task.wait(0.4)
 		end
 	end)
 end
@@ -536,7 +523,11 @@ local function ensureTicker()
 		return
 	end
 	tickerConn = RunService.Heartbeat:Connect(function(dt)
-		refreshTimerLabels()
+		local nowClock = os.clock()
+		if nowClock - lastTimerRefreshAt >= TIMER_REFRESH_SEC then
+			lastTimerRefreshAt = nowClock
+			refreshTimerLabels()
+		end
 		updateProximityOutline(dt)
 		local endsAt = ReplicatedStorage:GetAttribute(C.ACTIVE_ENDS_ATTR)
 		if typeof(endsAt) ~= "number" or os.time() >= endsAt then

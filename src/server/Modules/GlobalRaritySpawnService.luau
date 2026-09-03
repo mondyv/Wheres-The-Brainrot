@@ -7,6 +7,7 @@
 local MessagingService = game:GetService("MessagingService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 local Workspace = game:GetService("Workspace")
 
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
@@ -250,13 +251,14 @@ local function findBushByKey(key: string): Instance?
 	if typeof(key) ~= "string" or key == "" then
 		return nil
 	end
-	local map = Workspace:FindFirstChild("Map")
-	if not map then
-		return nil
+	for _, inst in CollectionService:GetTagged(C.BUSH_TAG) do
+		if inst:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key then
+			return inst
+		end
 	end
-	for _, desc in map:GetDescendants() do
-		if desc:GetAttribute(C.BUSH_GLOBAL_KEY_ATTR) == key then
-			return desc
+	for _, c in cachedSpawnCandidates do
+		if c.bush.Parent and M.bushKeyForInstance(c.bush) == key then
+			return c.bush
 		end
 	end
 	return nil
@@ -264,6 +266,9 @@ end
 
 local function stripGlobalSpawnFromBush(bush: Instance)
 	clearBushGlobalSpawn(bush)
+	pcall(function()
+		CollectionService:RemoveTag(bush, C.BUSH_TAG)
+	end)
 	bush:SetAttribute(BUSH_HAS_BRAINROT_ATTR, false)
 	bush:SetAttribute(BUSH_HIDDEN_NAME_ATTR, nil)
 	bush:SetAttribute(BUSH_HIDDEN_RARITY_ATTR, nil)
@@ -273,14 +278,8 @@ local function stripGlobalSpawnFromBush(bush: Instance)
 end
 
 local function sweepAllGlobalSpawnBushes()
-	local map = Workspace:FindFirstChild("Map")
-	if not map then
-		return
-	end
-	for _, desc in map:GetDescendants() do
-		if desc:GetAttribute(C.BUSH_GLOBAL_SPAWN_ATTR) == true then
-			stripGlobalSpawnFromBush(desc)
-		end
+	for _, inst in CollectionService:GetTagged(C.BUSH_TAG) do
+		stripGlobalSpawnFromBush(inst)
 	end
 end
 
@@ -297,6 +296,9 @@ local function applySpawnToBush(bush: Instance, tierId: string, pick: any, mutat
 	bush:SetAttribute(C.BUSH_GLOBAL_SPAWN_ATTR, true)
 	bush:SetAttribute(C.BUSH_GLOBAL_KEY_ATTR, key)
 	bush:SetAttribute(C.BUSH_GLOBAL_RARITY_ATTR, tierId)
+	pcall(function()
+		CollectionService:AddTag(bush, C.BUSH_TAG)
+	end)
 	return key
 end
 
@@ -439,7 +441,7 @@ function M.onBushClaimed(bush: Instance)
 	if typeof(key) ~= "string" then
 		return
 	end
-	clearBushGlobalSpawn(bush)
+	stripGlobalSpawnFromBush(bush)
 	if currentState.active and currentState.active.bushKey == key then
 		local state = table.clone(currentState)
 		state.timers = table.clone(currentState.timers)
@@ -584,10 +586,6 @@ local function processTick()
 	local changed, spawnTier = advanceState(state)
 	if changed then
 		broadcastState(state, if spawnTier then "spawn" else "sync", spawnTier)
-	end
-	-- Safety: expired/claimed spawns must not leave hidden loot on bushes.
-	if not currentState.active then
-		sweepAllGlobalSpawnBushes()
 	end
 	finish()
 end

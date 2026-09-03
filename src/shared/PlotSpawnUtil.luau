@@ -5,6 +5,7 @@
 --]]
 
 local PlotPaths = require(script.Parent.PlotPaths)
+local TimCheeseQuestConfig = require(script.Parent.TimCheeseQuestConfig)
 local Workspace = game:GetService("Workspace")
 
 local PlotSpawnUtil = {}
@@ -635,6 +636,40 @@ function PlotSpawnUtil.teleportCharacterToCFrame(character: Model, spawnCf: CFra
 	hrp.CFrame = spawnCf
 	hrp.AssemblyLinearVelocity = Vector3.zero
 	hrp.AssemblyAngularVelocity = Vector3.zero
+	return true
+end
+
+function PlotSpawnUtil.getTutorialStartCFrame(): CFrame?
+	local map = Workspace:FindFirstChild("Map")
+	local folder = map and map:FindFirstChild(TimCheeseQuestConfig.MAP_FOLDER_NAME)
+	if not folder then
+		return nil
+	end
+	local trigger = folder:FindFirstChild(TimCheeseQuestConfig.QUEST_TRIGGER_NAME)
+	local hitbox = trigger and trigger:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME)
+	if not (hitbox and hitbox:IsA("BasePart")) then
+		hitbox = trigger and trigger:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME, true)
+	end
+	if not (hitbox and hitbox:IsA("BasePart")) then
+		return nil
+	end
+	local part = hitbox :: BasePart
+	local topY = worldTopY(part)
+	local pos = Vector3.new(part.Position.X, topY + SPAWN_CLEARANCE, part.Position.Z)
+	local look = Vector3.new(-part.CFrame.LookVector.X, 0, -part.CFrame.LookVector.Z)
+	if look.Magnitude < 0.05 then
+		look = Vector3.new(0, 0, -1)
+	end
+	return CFrame.lookAt(pos, pos + look.Unit)
+end
+
+-- First-join tutorial spawn: QuestHitbox behind the safezone ground text.
+function PlotSpawnUtil.teleportTutorialStart(player: Player, character: Model): boolean
+	local spawnCf = PlotSpawnUtil.getTutorialStartCFrame()
+	if not spawnCf then
+		return PlotSpawnUtil.teleportPlayerHome(player, character, 12)
+	end
+	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, spawnCf, false)
 	return true
 end
 

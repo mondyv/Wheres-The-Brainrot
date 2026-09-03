@@ -912,6 +912,9 @@ local function playWorkoutAnim(character: Model)
 	track.Looped = true
 	track.Priority = Enum.AnimationPriority.Action
 	track:Play(0.15)
+	local comboAttr = player:GetAttribute("WorkoutCombo")
+	local comboN = if typeof(comboAttr) == "number" then comboAttr else 1
+	track:AdjustSpeed(1 + math.min(math.max(comboN, 1) - 1, 10) * 0.045)
 	workoutTrack = track
 end
 
@@ -1415,35 +1418,75 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 	end)
 end
 
-local DOUBLE_TAP_ICON = "rbxassetid://94931726481451"
-local DOUBLE_TAP_LIFE = 5
 local doubleTapGen = 0
-local doubleTapHits = 0
-local lastDoubleTapSpawnAt = -100
-local activeDoubleTaps: { Frame } = {}
-local doubleTapActivateByHolder: { [Frame]: () -> () } = {}
 local doubleTapGui: ScreenGui? = nil
 local claimDoubleTapBusy = false
+local comboRingConn: RBXScriptConnection? = nil
+local comboRingBorn = 0.0
+local comboWindow = 1.55
 
-local function spawnIntervalForHits(hits: number): number
-	if hits < 3 then
-		return 7 - (hits / 3) * 2
+local function comboWindowFor(n: number): number
+	return math.clamp(1.55 - (math.max(n, 1) - 1) * 0.055, 0.92, 1.55)
+end
+
+local function comboAnimSpeedFor(n: number): number
+	return 1 + math.min(math.max(n, 1) - 1, 10) * 0.045
+end
+
+local function applyComboAnimSpeed(n: number)
+	if workoutTrack then
+		workoutTrack:AdjustSpeed(comboAnimSpeedFor(n))
 	end
-	local t = math.clamp((hits - 3) / 5, 0, 1)
-	return 5 - t * 2
 end
 
-local function maxDoubleTapsForHits(hits: number): number
-	return if hits >= 3 then 2 else 1
-end
-
-local function pruneDoubleTaps()
-	for i = #activeDoubleTaps, 1, -1 do
-		if not activeDoubleTaps[i].Parent then
-			doubleTapActivateByHolder[activeDoubleTaps[i]] = nil
-			table.remove(activeDoubleTaps, i)
+local function burstComboLine()
+	if not footProp or not footProp.Parent then
+		return
+	end
+	local part = footProp.PrimaryPart or footProp:FindFirstChildWhichIsA("BasePart", true)
+	if not part then
+		return
+	end
+	local a0 = Instance.new("Attachment")
+	a0.Name = "WorkoutComboBurst0"
+	a0.Position = Vector3.zero
+	local a1 = Instance.new("Attachment")
+	a1.Name = "WorkoutComboBurst1"
+	a1.Position = Vector3.new(0, 9.5, 0)
+	local beam = Instance.new("Beam")
+	beam.Name = "WorkoutComboBurst"
+	beam.Attachment0 = a0
+	beam.Attachment1 = a1
+	beam.FaceCamera = true
+	beam.LightEmission = 0.85
+	beam.LightInfluence = 0
+	beam.Width0 = 0.55
+	beam.Width1 = 0.04
+	beam.Segments = 10
+	beam.Color = ColorSequence.new(Color3.fromRGB(255, 214, 74), Color3.fromRGB(255, 120, 40))
+	beam.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.05),
+		NumberSequenceKeypoint.new(0.7, 0.35),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	a0.Parent = part
+	a1.Parent = part
+	beam.Parent = part
+	TweenService:Create(beam, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Width0 = 0.02,
+		Width1 = 0.01,
+	}):Play()
+	task.delay(0.32, function()
+		if beam.Parent then
+			beam:Destroy()
 		end
-	end
+		if a0.Parent then
+			a0:Destroy()
+		end
+		if a1.Parent then
+			a1:Destroy()
+		end
+	end)
 end
 
 local function ensureDoubleTapGui(): ScreenGui
@@ -1455,12 +1498,91 @@ local function ensureDoubleTapGui(): ScreenGui
 		return doubleTapGui
 	end
 	local gui = Instance.new("ScreenGui")
-	gui.Name = "WorkoutDoubleTapGui"
+	gui.Name = "WorkoutComboGui"
 	gui.IgnoreGuiInset = true
 	gui.ResetOnSpawn = false
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	gui.DisplayOrder = 115
+	gui.DisplayOrder = 118
 	gui.Enabled = true
+
+	local holder = Instance.new("Frame")
+	holder.Name = "ComboHold"
+	holder.BackgroundTransparency = 1
+	holder.AnchorPoint = Vector2.new(0.5, 0.5)
+	holder.Position = UDim2.new(0.5, 0, 0.74, 0)
+	holder.Size = UDim2.fromOffset(118, 118)
+	holder.ZIndex = 20
+	holder.Parent = gui
+
+	local pop = Instance.new("UIScale")
+	pop.Name = "PopScale"
+	pop.Scale = 1
+	pop.Parent = holder
+
+	local ring = Instance.new("Frame")
+	ring.Name = "Ring"
+	ring.BackgroundTransparency = 1
+	ring.AnchorPoint = Vector2.new(0.5, 0.5)
+	ring.Position = UDim2.fromScale(0.5, 0.5)
+	ring.Size = UDim2.fromScale(1, 1)
+	ring.ZIndex = 21
+	ring.Parent = holder
+	local ringCorner = Instance.new("UICorner")
+	ringCorner.CornerRadius = UDim.new(1, 0)
+	ringCorner.Parent = ring
+	local ringStroke = Instance.new("UIStroke")
+	ringStroke.Name = "RingStroke"
+	ringStroke.Color = Color3.fromRGB(255, 214, 74)
+	ringStroke.Thickness = 6
+	ringStroke.Transparency = 0.08
+	ringStroke.Parent = ring
+	local ringScale = Instance.new("UIScale")
+	ringScale.Name = "RingScale"
+	ringScale.Scale = 1.42
+	ringScale.Parent = ring
+
+	local core = Instance.new("ImageButton")
+	core.Name = "Hit"
+	core.BackgroundColor3 = Color3.fromRGB(18, 16, 28)
+	core.BackgroundTransparency = 0.08
+	core.BorderSizePixel = 0
+	core.AnchorPoint = Vector2.new(0.5, 0.5)
+	core.Position = UDim2.fromScale(0.5, 0.5)
+	core.Size = UDim2.fromScale(0.62, 0.62)
+	core.AutoButtonColor = false
+	core.Image = ""
+	core.Active = true
+	core.Selectable = true
+	core.ZIndex = 22
+	core.Parent = holder
+	local coreCorner = Instance.new("UICorner")
+	coreCorner.CornerRadius = UDim.new(1, 0)
+	coreCorner.Parent = core
+	local coreStroke = Instance.new("UIStroke")
+	coreStroke.Color = Color3.fromRGB(255, 255, 255)
+	coreStroke.Thickness = 2
+	coreStroke.Transparency = 0.45
+	coreStroke.Parent = core
+	GamepadInput.mountHint(core, GamepadInput.ACCEPT, true)
+
+	local num = Instance.new("TextLabel")
+	num.Name = "ComboNum"
+	num.BackgroundTransparency = 1
+	num.Size = UDim2.fromScale(1, 1)
+	num.Text = "1"
+	num.TextColor3 = Color3.fromRGB(255, 236, 160)
+	num.TextScaled = true
+	num.Font = Enum.Font.GothamBlack
+	num.ZIndex = 23
+	num.Parent = core
+	UiFonts.applyDisplay(num)
+	local numPad = Instance.new("UIPadding")
+	numPad.PaddingTop = UDim.new(0, 8)
+	numPad.PaddingBottom = UDim.new(0, 8)
+	numPad.PaddingLeft = UDim.new(0, 6)
+	numPad.PaddingRight = UDim.new(0, 6)
+	numPad.Parent = num
+
 	if pg then
 		gui.Parent = pg
 	end
@@ -1468,289 +1590,125 @@ local function ensureDoubleTapGui(): ScreenGui
 	return gui
 end
 
-local function pickDoubleTapPos(gui: ScreenGui, sizePx: number): UDim2
-	local cam = workspace.CurrentCamera
-	local vs = if cam then cam.ViewportSize else Vector2.new(800, 600)
-	local padX = math.max(96, vs.X * 0.16)
-	local padY = math.max(110, vs.Y * 0.2)
-	local minX = padX
-	local maxX = math.max(minX + 8, vs.X - padX)
-	local minY = padY
-	local maxY = math.max(minY + 8, vs.Y - padY)
-	for _ = 1, 10 do
-		local x = minX + math.random() * (maxX - minX)
-		local y = minY + math.random() * (maxY - minY)
-		local ok = true
-		for _, other in activeDoubleTaps do
-			if other.Parent then
-				local p = other.AbsolutePosition + other.AbsoluteSize * 0.5
-				if (Vector2.new(x, y) - p).Magnitude < sizePx * 1.35 then
-					ok = false
-					break
-				end
-			end
-		end
-		if ok then
-			return UDim2.fromOffset(x, y)
-		end
+local function comboDisplay(): number
+	local v = player:GetAttribute("WorkoutCombo")
+	if typeof(v) == "number" then
+		return math.max(1, math.floor(v))
 	end
-	return UDim2.fromOffset((minX + maxX) * 0.5, (minY + maxY) * 0.5)
+	return 1
 end
 
-local function dismissDoubleTap(holder: Frame, clicked: boolean)
-	doubleTapActivateByHolder[holder] = nil
-	if holder:GetAttribute("Closing") == true then
+local function setComboRingScale(scale: number)
+	local gui = doubleTapGui
+	if not gui then
 		return
 	end
-	holder:SetAttribute("Closing", true)
-	UIInteractionSounds.playNotif()
-	local scale = holder:FindFirstChild("PopScale")
-	if clicked then
-		local hit = holder:FindFirstChild("Hit")
-		if hit and (hit:IsA("ImageButton") or hit:IsA("ImageLabel")) then
-			local burst = Instance.new("ImageLabel")
-			burst.Name = "Burst"
-			burst.BackgroundTransparency = 1
-			burst.BorderSizePixel = 0
-			burst.AnchorPoint = Vector2.new(0.5, 0.5)
-			burst.Position = UDim2.fromScale(0.5, 0.5)
-			burst.Size = UDim2.fromScale(1, 1)
-			burst.Image = hit.Image
-			burst.ScaleType = Enum.ScaleType.Fit
-			burst.ImageTransparency = 0.15
-			burst.ZIndex = 19
-			burst.Parent = holder
-			local burstScale = Instance.new("UIScale")
-			burstScale.Scale = 1
-			burstScale.Parent = burst
-			TweenService:Create(
-				burstScale,
-				TweenInfo.new(0.38, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Scale = 2.15 }
-			):Play()
-			TweenService:Create(
-				burst,
-				TweenInfo.new(0.38, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ ImageTransparency = 1 }
-			):Play()
-		end
-		if scale and scale:IsA("UIScale") then
-			TweenService:Create(
-				scale,
-				TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Scale = 1.38 }
-			):Play()
-			task.delay(0.12, function()
-				if not holder.Parent then
-					return
-				end
-				TweenService:Create(
-					scale,
-					TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-					{ Scale = 0.08 }
-				):Play()
-			end)
-		end
-		TweenService:Create(
-			holder,
-			TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-			{ Rotation = holder.Rotation + (if holder.Rotation >= 0 then 38 else -38) }
-		):Play()
-	else
-		if scale and scale:IsA("UIScale") then
-			TweenService:Create(
-				scale,
-				TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-				{ Scale = 0.15 }
-			):Play()
-		end
-		TweenService:Create(
-			holder,
-			TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-			{ Rotation = holder.Rotation + (if holder.Rotation >= 0 then 28 else -28) }
-		):Play()
+	local holder = gui:FindFirstChild("ComboHold")
+	local ring = holder and holder:FindFirstChild("Ring")
+	local ringScale = ring and ring:FindFirstChild("RingScale")
+	if ringScale and ringScale:IsA("UIScale") then
+		ringScale.Scale = scale
 	end
-	for _, d in holder:GetDescendants() do
-		if d.Name == "Burst" then
-			-- Burst fades on its own so it can expand while the icon shrinks.
-		elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
-			TweenService:Create(
-				d,
-				TweenInfo.new(if clicked then 0.36 else 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ ImageTransparency = 1 }
-			):Play()
-		elseif d:IsA("TextLabel") then
-			TweenService:Create(
-				d,
-				TweenInfo.new(if clicked then 0.28 else 0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-				{ TextTransparency = 1 }
-			):Play()
-			local stroke = d:FindFirstChildOfClass("UIStroke")
-			if stroke then
-				TweenService:Create(
-					stroke,
-					TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-					{ Transparency = 1 }
-				):Play()
-			end
-		end
-	end
-	task.delay(if clicked then 0.46 else 0.34, function()
-		if holder.Parent then
-			holder:Destroy()
-		end
-	end)
 end
 
-local function spawnDoubleTapPrompt()
-	pruneDoubleTaps()
+local function setComboNumber(n: number)
+	local gui = doubleTapGui
+	if not gui then
+		return
+	end
+	local holder = gui:FindFirstChild("ComboHold")
+	local hit = holder and holder:FindFirstChild("Hit")
+	local num = hit and hit:FindFirstChild("ComboNum")
+	if num and num:IsA("TextLabel") then
+		num.Text = tostring(math.max(1, math.floor(n)))
+	end
+end
+
+local function pulseComboHold(ok: boolean)
+	local gui = doubleTapGui
+	if not gui then
+		return
+	end
+	local holder = gui:FindFirstChild("ComboHold")
+	local pop = holder and holder:FindFirstChild("PopScale")
+	if not (pop and pop:IsA("UIScale")) then
+		return
+	end
+	pop.Scale = if ok then 1.16 else 0.82
+	TweenService:Create(
+		pop,
+		TweenInfo.new(if ok then 0.18 else 0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1 }
+	):Play()
+end
+
+local function restartComboRing()
+	comboRingBorn = os.clock()
+	comboWindow = comboWindowFor(comboDisplay())
+	setComboRingScale(1.42)
+end
+
+local function missCombo()
 	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
 		return
 	end
-	if #activeDoubleTaps >= maxDoubleTapsForHits(doubleTapHits) then
-		return
-	end
-	local gui = ensureDoubleTapGui()
-	if not gui.Parent then
-		return
-	end
-
-	local sizePx = 118
-	local holder = Instance.new("Frame")
-	holder.Name = "DoubleTap"
-	holder.BackgroundTransparency = 1
-	holder.AnchorPoint = Vector2.new(0.5, 0.5)
-	holder.Size = UDim2.fromOffset(sizePx, sizePx)
-	holder.Position = pickDoubleTapPos(gui, sizePx)
-	holder.Rotation = (math.random() - 0.5) * 10
-	holder.ZIndex = 20
-	holder.Parent = gui
-
-	local pop = Instance.new("UIScale")
-	pop.Name = "PopScale"
-	pop.Scale = 0.18
-	pop.Parent = holder
-
-	local btn = Instance.new("ImageButton")
-	btn.Name = "Hit"
-	btn.BackgroundTransparency = 1
-	btn.BorderSizePixel = 0
-	btn.Size = UDim2.fromScale(1, 1)
-	btn.Image = DOUBLE_TAP_ICON
-	btn.ScaleType = Enum.ScaleType.Fit
-	btn.AutoButtonColor = false
-	btn.Active = true
-	btn.Selectable = true
-	btn.ZIndex = 21
-	btn.Parent = holder
-	GamepadInput.mountHint(btn, GamepadInput.ACCEPT, true)
-	pcall(function()
-		GamepadService:DisableGamepadCursor()
+	setComboNumber(1)
+	applyComboAnimSpeed(1)
+	pulseComboHold(false)
+	UIInteractionSounds.playNotif()
+	restartComboRing()
+	task.spawn(function()
+		waitForWorkoutRemote("ClaimWorkoutDoubleTap")
+		if claimDoubleTapFn and claimDoubleTapFn.Parent then
+			local ok, err = pcall(function()
+				claimDoubleTapFn:InvokeServer(false)
+			end)
+			if not ok then
+				warn("[WorkoutController] combo miss failed:", err)
+			end
+		end
 	end)
+end
 
-	table.insert(activeDoubleTaps, holder)
+local function hitCombo()
+	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+		return
+	end
+	if claimDoubleTapBusy then
+		return
+	end
+	claimDoubleTapBusy = true
+	restartComboRing()
+	pulseComboHold(true)
+	burstComboLine()
 	UIInteractionSounds.playClick()
-
-	TweenService:Create(
-		pop,
-		TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = 1.08 }
-	):Play()
-	task.delay(0.28, function()
-		if holder.Parent and holder:GetAttribute("Closing") ~= true then
-			TweenService:Create(
-				pop,
-				TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-				{ Scale = 1 }
-			):Play()
-		end
-	end)
-
-	local born = os.clock()
-	local idleConn: RBXScriptConnection? = nil
-	idleConn = RunService.Heartbeat:Connect(function()
-		if not holder.Parent or holder:GetAttribute("Closing") == true then
-			if idleConn then
-				idleConn:Disconnect()
-				idleConn = nil
+	task.spawn(function()
+		waitForWorkoutRemote("ClaimWorkoutDoubleTap")
+		local n = comboDisplay()
+		if claimDoubleTapFn and claimDoubleTapFn.Parent then
+			local ok, result = pcall(function()
+				return claimDoubleTapFn:InvokeServer()
+			end)
+			if not ok then
+				warn("[WorkoutController] combo hit failed:", result)
+			elseif typeof(result) == "number" then
+				n = result
 			end
-			return
 		end
-		local t = os.clock() - born
-		holder.Rotation = math.sin(t * 2.35) * 12 + math.sin(t * 5.4) * 3.2
-		pop.Scale = 1 + math.sin(t * 3.15) * 0.055
-	end)
-
-	local consumed = false
-	local function onActivate()
-		if consumed or holder:GetAttribute("Closing") == true then
-			return
-		end
-		consumed = true
-		btn.Active = false
-		if idleConn then
-			idleConn:Disconnect()
-			idleConn = nil
-		end
-		local squash = TweenService:Create(
-			pop,
-			TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-			{ Scale = 0.82 }
-		)
-		squash:Play()
-		local center = holder.AbsolutePosition + holder.AbsoluteSize * 0.5
-		task.spawn(function()
-			local gain = 0
-			waitForWorkoutRemote("ClaimWorkoutDoubleTap")
-			if claimDoubleTapFn and not claimDoubleTapBusy then
-				claimDoubleTapBusy = true
-				local ok, result = pcall(function()
-					return claimDoubleTapFn:InvokeServer()
-				end)
-				claimDoubleTapBusy = false
-				if ok and typeof(result) == "number" then
-					gain = result
-				end
-			end
-			if gain > 0 then
-				doubleTapHits += 1
-				spawnPowerFloater(gain, center)
-			end
-		end)
-		dismissDoubleTap(holder, true)
-	end
-	btn.Activated:Connect(onActivate)
-	btn.MouseButton1Click:Connect(onActivate)
-	btn.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.Gamepad1 and input.KeyCode == GamepadInput.ACCEPT then
-			onActivate()
-		end
-	end)
-	doubleTapActivateByHolder[holder] = onActivate
-
-	task.delay(DOUBLE_TAP_LIFE, function()
-		if holder.Parent and holder:GetAttribute("Closing") ~= true then
-			if idleConn then
-				idleConn:Disconnect()
-				idleConn = nil
-			end
-			dismissDoubleTap(holder, false)
+		claimDoubleTapBusy = false
+		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+			setComboNumber(n)
+			applyComboAnimSpeed(n)
 		end
 	end)
 end
 
 local function stopDoubleTapLoop()
 	doubleTapGen += 1
-	doubleTapHits = 0
-	lastDoubleTapSpawnAt = -100
-	pruneDoubleTaps()
-	for _, holder in activeDoubleTaps do
-		if holder.Parent then
-			holder:Destroy()
-		end
+	if comboRingConn then
+		comboRingConn:Disconnect()
+		comboRingConn = nil
 	end
-	table.clear(activeDoubleTaps)
-	table.clear(doubleTapActivateByHolder)
 	if doubleTapGui then
 		doubleTapGui:Destroy()
 		doubleTapGui = nil
@@ -1767,22 +1725,43 @@ local function tryActivateOldestDoubleTap(): boolean
 	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
 		return false
 	end
-	pruneDoubleTaps()
-	local holder = activeDoubleTaps[1]
-	local activate = holder and doubleTapActivateByHolder[holder]
-	if activate then
-		activate()
-		return true
-	end
-	return false
+	hitCombo()
+	return true
 end
 
 local function startDoubleTapLoop()
+	if comboRingConn then
+		comboRingConn:Disconnect()
+		comboRingConn = nil
+	end
+	if doubleTapGui then
+		doubleTapGui:Destroy()
+		doubleTapGui = nil
+	end
+	pcall(function()
+		ContextActionService:UnbindAction(DOUBLE_TAP_ACTION)
+	end)
 	doubleTapGen += 1
 	local gen = doubleTapGen
-	doubleTapHits = 0
-	lastDoubleTapSpawnAt = -100
 	ensureDoubleTapGui()
+	setComboNumber(comboDisplay())
+	applyComboAnimSpeed(comboDisplay())
+	restartComboRing()
+	if comboRingConn then
+		comboRingConn:Disconnect()
+		comboRingConn = nil
+	end
+	comboRingConn = RunService.Heartbeat:Connect(function()
+		if gen ~= doubleTapGen or player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+			return
+		end
+		local t = (os.clock() - comboRingBorn) / math.max(comboWindow, 0.35)
+		if t >= 1 then
+			missCombo()
+			return
+		end
+		setComboRingScale(1.42 - t * 0.72)
+	end)
 	ContextActionService:BindActionAtPriority(
 		DOUBLE_TAP_ACTION,
 		function(_name, state, _input)
@@ -1798,31 +1777,17 @@ local function startDoubleTapLoop()
 		Enum.ContextActionPriority.High.Value + 80,
 		Enum.KeyCode.ButtonA
 	)
-	task.spawn(function()
-		task.wait(1.15)
-		while gen == doubleTapGen and player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true do
-			pruneDoubleTaps()
-			if #activeDoubleTaps < maxDoubleTapsForHits(doubleTapHits) then
-				local since = os.clock() - lastDoubleTapSpawnAt
-				if since < 0.9 then
-					task.wait(0.9 - since)
-					if gen ~= doubleTapGen then
-						return
-					end
-				end
-				if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
-					return
-				end
-				lastDoubleTapSpawnAt = os.clock()
-				spawnDoubleTapPrompt()
-			end
-			local interval = spawnIntervalForHits(doubleTapHits)
-			task.wait(interval)
+	local gui = doubleTapGui
+	local holder = gui and gui:FindFirstChild("ComboHold")
+	local hit = holder and holder:FindFirstChild("Hit")
+	if hit and hit:IsA("GuiButton") then
+		hit.Activated:Connect(function()
 			if gen ~= doubleTapGen then
 				return
 			end
-		end
-	end)
+			hitCombo()
+		end)
+	end
 end
 
 local function cleanupWorkoutVisuals()
@@ -2024,6 +1989,15 @@ local function init()
 		if typeof(UpgradesController.snapPowerHud) == "function" then
 			UpgradesController.snapPowerHud()
 		end
+	end)
+
+	player:GetAttributeChangedSignal("WorkoutCombo"):Connect(function()
+		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+			return
+		end
+		local n = comboDisplay()
+		setComboNumber(n)
+		applyComboAnimSpeed(n)
 	end)
 
 	player:GetAttributeChangedSignal(GearConfig.WORKOUT_ACTIVE_ATTR):Connect(function()

@@ -38,6 +38,7 @@ local spiderRoarTemplate: Sound?
 local spiderWebShotTemplate: Sound?
 local spiderGettingHitTemplate: Sound?
 local spiderDodgeTemplate: Sound?
+local cobwebLaughTemplate: Sound?
 local grassTemplates: { Sound } = {}
 
 local activeAuraSound: Sound?
@@ -776,6 +777,21 @@ end
 
 function GameSoundEffects.playSpiderDodge()
 	playSpiderSound(spiderDodgeTemplate)
+end
+
+function GameSoundEffects.playCobwebLaugh()
+	if ClientSFXVolume.getVolume() <= 0 then
+		return
+	end
+	if not cobwebLaughTemplate then
+		local root = SoundService:FindFirstChild("SoundEffects")
+		cobwebLaughTemplate = resolveSoundNode(root and root:FindFirstChild("Cobweb Laugh"))
+	end
+	if not cobwebLaughTemplate then
+		warn("[GameSoundEffects] SoundEffects['Cobweb Laugh'] missing")
+		return
+	end
+	playTemplate(cobwebLaughTemplate)
 end
 
 -- Play once when a lucky block is held out. `sfxKey` is the SoundEffects child name

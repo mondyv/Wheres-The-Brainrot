@@ -10,7 +10,6 @@ local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local SoundService = game:GetService("SoundService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -64,8 +63,6 @@ local activeWave: Model? = nil
 local waveTitleGui: BillboardGui? = nil
 local waveTravelPos: Vector3? = nil
 local waveForward: Vector3? = nil
-local bgmSpeedSaved: { [Sound]: number } = {}
-local bgmSpeedTweens: { [Sound]: Tween } = {}
 local killRE: RemoteEvent? = nil
 local waveStartRE: RemoteEvent? = nil
 local waveEscapeRE: RemoteEvent? = nil
@@ -708,45 +705,8 @@ local function pulseCameraShake(duration: number, amp: number, token: number)
 	end)
 end
 
-local function setBgmChase(on: boolean)
-	local function eachBgm(fn: (Sound) -> ())
-		local bg = SoundService:FindFirstChild("BackgroundMusic")
-		if not bg then
-			return
-		end
-		for _, inst in bg:GetDescendants() do
-			if inst:IsA("Sound") and inst.IsPlaying then
-				fn(inst)
-			end
-		end
-	end
-	if on then
-		eachBgm(function(sound)
-			if bgmSpeedSaved[sound] == nil then
-				bgmSpeedSaved[sound] = sound.PlaybackSpeed
-			end
-			local prev = bgmSpeedTweens[sound]
-			if prev then
-				prev:Cancel()
-			end
-			local tw = TweenService:Create(sound, TweenInfo.new(0.45), { PlaybackSpeed = C.BGM_CHASE_SPEED })
-			bgmSpeedTweens[sound] = tw
-			tw:Play()
-		end)
-	else
-		for sound, base in bgmSpeedSaved do
-			if sound.Parent then
-				local prev = bgmSpeedTweens[sound]
-				if prev then
-					prev:Cancel()
-				end
-				local tw = TweenService:Create(sound, TweenInfo.new(C.BGM_RESTORE_FADE), { PlaybackSpeed = base })
-				bgmSpeedTweens[sound] = tw
-				tw:Play()
-			end
-		end
-		table.clear(bgmSpeedSaved)
-	end
+local function setBgmChase(_on: boolean)
+	-- Chase no longer ducks / slows background music.
 end
 
 local function applyFxGuiFullBleed(gui: ScreenGui)
@@ -1026,6 +986,7 @@ local function attachExclamation()
 
 	exclamationGui = bb
 	UIInteractionSounds.playNotif()
+	GameSoundEffects.playCobwebLaugh()
 
 	local shown = bb
 	local pulseToken = chaseToken

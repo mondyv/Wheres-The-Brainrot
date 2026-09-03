@@ -7,7 +7,6 @@ local RunService = game:GetService("RunService")
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
 local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
-local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
 local LevelService = require(script.Parent:WaitForChild("LevelService"))
 
@@ -259,34 +258,38 @@ function GearService.equipGear(player: Player, gearId: number): (boolean, string
 	return true, nil
 end
 
-local lastDoubleTapAt: { [number]: number } = {}
+local lastComboAt: { [number]: number } = {}
+local comboByPlayer: { [Player]: number } = {}
 
 local function computeTickGain(player: Player, def: any): number
-	local gain = def.powerGain
-	if player:GetAttribute(StoreConfig.ATTR.DOUBLE_POWER_OWNED) == true then
-		gain = math.floor(gain * StoreConfig.DOUBLE_POWER_MULTIPLIER + 0.5)
-	end
-	return math.max(1, math.floor(gain * RebirthConfig.getPowerGainMultiplier(player) + 1e-6))
+	return math.max(1, math.floor(def.powerGain * RebirthConfig.getPowerGainMultiplier(player) + 1e-6))
+end
+
+local function comboOf(player: Player): number
+	return math.clamp(comboByPlayer[player] or 1, 1, 15)
+end
+
+function GearService.resetWorkoutCombo(player: Player): number
+	comboByPlayer[player] = 1
+	player:SetAttribute("WorkoutCombo", 1)
+	return 1
 end
 
 function GearService.claimWorkoutDoubleTap(player: Player): number
 	local session = workoutSessions[player]
 	if not session then
-		return 0
+		return GearService.resetWorkoutCombo(player)
 	end
 	local now = os.clock()
 	local uid = player.UserId
-	if now - (lastDoubleTapAt[uid] or 0) < 0.75 then
-		return 0
+	if now - (lastComboAt[uid] or 0) < 0.28 then
+		return comboOf(player)
 	end
-	local def = GearConfig.get(session.gearId)
-	if not def then
-		return 0
-	end
-	lastDoubleTapAt[uid] = now
-	local gain = computeTickGain(player, def) * 2
-	WorkoutPower.addPower(player, gain)
-	return gain
+	lastComboAt[uid] = now
+	local c = math.min(15, comboOf(player) + 1)
+	comboByPlayer[player] = c
+	player:SetAttribute("WorkoutCombo", c)
+	return c
 end
 
 function GearService.stopWorkout(player: Player)
@@ -299,7 +302,9 @@ function GearService.stopWorkout(player: Player)
 		session.conn = nil
 	end
 	workoutSessions[player] = nil
-	lastDoubleTapAt[player.UserId] = nil
+	lastComboAt[player.UserId] = nil
+	comboByPlayer[player] = nil
+	player:SetAttribute("WorkoutCombo", 1)
 	player:SetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR, false)
 	local tool = GearService.findGearTool(player, session.gearId)
 	if tool then
@@ -325,6 +330,8 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 	GearService.stopWorkout(player)
 	player:SetAttribute(GearConfig.EQUIPPED_GEAR_ATTR, gearId)
 	player:SetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR, true)
+	player:SetAttribute("WorkoutCombo", 1)
+	comboByPlayer[player] = 1
 	local equippedTool = GearService.findGearTool(player, gearId)
 	if equippedTool then
 		equippedTool.RequiresHandle = false
@@ -341,14 +348,13 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 	local function applyGainTick()
 		local now = os.clock()
 		local prev = lastWorkoutGainAt[player.UserId] or 0
-		if now - prev < WORKOUT_GAIN_COOLDOWN then
+		local combo = comboOf(player)
+		local cooldown = WORKOUT_GAIN_COOLDOWN / (1 + (combo - 1) * 0.055)
+		if now - prev < cooldown then
 			return false
 		end
 		lastWorkoutGainAt[player.UserId] = now
 		local gain = def.powerGain
-		if player:GetAttribute(StoreConfig.ATTR.DOUBLE_POWER_OWNED) == true then
-			gain = math.floor(gain * StoreConfig.DOUBLE_POWER_MULTIPLIER + 0.5)
-		end
 		gain = math.max(1, math.floor(gain * RebirthConfig.getPowerGainMultiplier(player) + 1e-6))
 		WorkoutPower.addPower(player, gain)
 		player:SetAttribute("WorkoutLastGain", gain)
@@ -386,7 +392,9 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 			return
 		end
 		local now = os.clock()
-		if now - session.lastTick < WORKOUT_GAIN_COOLDOWN then
+		local combo = comboOf(player)
+		local cooldown = WORKOUT_GAIN_COOLDOWN / (1 + (combo - 1) * 0.055)
+		if now - session.lastTick < cooldown then
 			return
 		end
 		if applyGainTick() then
@@ -443,7 +451,8 @@ function GearService.init()
 		GearService.stopWorkout(player)
 		lastWorkoutGainAt[player.UserId] = nil
 		workoutXpStreak[player.UserId] = nil
-		lastDoubleTapAt[player.UserId] = nil
+		lastComboAt[player.UserId] = nil
+		comboByPlayer[player] = nil
 		local conns = playerConns[player]
 		if conns then
 			for _, c in conns do

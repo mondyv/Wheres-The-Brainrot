@@ -10,6 +10,7 @@ local Workspace = game:GetService("Workspace")
 
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
+local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 
 local function disableDefaultSpawnLocations()
 	local function consider(inst: Instance)
@@ -52,6 +53,10 @@ local function onCharacter(player: Player, character: Model)
 			return
 		end
 		clearReviveSpawnAttrs(player)
+		if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+			PlotSpawnUtil.teleportTutorialStart(player, character)
+			return
+		end
 		PlotSpawnUtil.teleportPlayerHome(player, character)
 	end)
 end
@@ -67,6 +72,9 @@ local function hookPlayer(player: Player)
 			onCharacter(player, character)
 		end),
 		player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
+			if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+				return
+			end
 			local char = player.Character
 			if char and typeof(player:GetAttribute("AssignedPlotSlot")) == "number" then
 				task.defer(function()

@@ -1,6 +1,6 @@
 -- [ACTIVE] TutorialController
 --[[
-	First-join objective HUD: right-side panel, world/UI pointers, step machine.
+	First-join objective HUD: top-center panel, world/UI pointers, step machine.
 	Persists completion via PlayerDataService (TutorialCompleted attribute).
 ]]
 
@@ -17,7 +17,6 @@ local Svc = {
 
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
-local HUDController = require(script.Parent.HUDController)
 local StandDialogueCutscene = require(script.Parent.StandDialogueCutscene)
 local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
 local BushFloatingClaimController = require(script.Parent.BushFloatingClaimController)
@@ -43,7 +42,7 @@ local player = Svc.Players.LocalPlayer
 
 local M = {}
 
-local PANEL_OPEN = TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local PANEL_OPEN = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local PANEL_SWAP = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local EXCLAIM_PULSE = TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 local ARROW_BOB_HZ = 1.15
@@ -106,7 +105,6 @@ local swingCoach = {
 local layoutConn: RBXScriptConnection? = nil
 local _panelStroke: UIStroke? = nil
 local chromeSuppressed = false
-local _questHost: Frame? = nil
 local vineCache: { BasePart } = {}
 local vineCacheAt = 0
 local lastPointerRefresh = 0
@@ -451,34 +449,35 @@ local function viewportSize(): Vector2
 	return Vector2.new(1280, 720)
 end
 
-local function ensureQuestHost(): Frame?
-	local main = PlayerGuiMain.ensure(player)
-	if not main then
-		return nil
+local function syncWorkoutGoalBar()
+	if not panel then
+		return
 	end
-	local existing = main:FindFirstChild("TutorialQuestHost")
-	if existing and existing:IsA("Frame") then
-		_questHost = existing
-		return existing
+	local bar = panel:FindFirstChild("WorkoutGoalBar")
+	if not bar or not bar:IsA("Frame") then
+		return
 	end
-	local host = Instance.new("Frame")
-	host.Name = "TutorialQuestHost"
-	host.BackgroundTransparency = 1
-	host.BorderSizePixel = 0
-	host.Size = UDim2.fromScale(1, 1)
-	host.Position = UDim2.fromScale(0, 0)
-	host.AnchorPoint = Vector2.new(0, 0)
-	host.ZIndex = 80
-	host.ClipsDescendants = false
-	host.Active = false
-	host.Parent = main
-	_questHost = host
-	return host
-end
-
-local function isHudPanelOpen(): boolean
-	local frame = HUDController.getCurrentFrame()
-	return frame ~= nil and frame.Parent ~= nil and frame.Visible == true
+	local step = currentStep()
+	local on = active and step ~= nil and step.id == "useWorkout"
+	bar.Visible = on
+	if not on then
+		return
+	end
+	local goal = TutorialConfig.WORKOUT_GOAL_POWER
+	local powerAttr = player:GetAttribute("Power")
+	local power = if typeof(powerAttr) == "number" then math.max(0, powerAttr) else 0
+	local fill = bar:FindFirstChild("Fill")
+	if fill and fill:IsA("Frame") then
+		fill.Size = UDim2.fromScale(math.clamp(power / math.max(goal, 1), 0, 1), 1)
+	end
+	local label = bar:FindFirstChild("GoalLabel")
+	if label and label:IsA("TextLabel") then
+		label.Text = string.format("%d / %d", math.floor(power), goal)
+	end
+	local pad = panel:FindFirstChildOfClass("UIPadding")
+	if pad then
+		pad.PaddingBottom = UDim.new(0, if on then 22 else 10)
+	end
 end
 
 local function isMobileUi(): boolean
@@ -544,46 +543,14 @@ end
 
 local updateMobileJumpTutorialHighlight: () -> ()
 
-local function resolveRandomBrainrotHud(): GuiObject?
-	local main = PlayerGuiMain.ensure(player)
-	local sideUI = main and main:FindFirstChild("SideUI")
-	local right = sideUI and sideUI:FindFirstChild("Right")
-	local rb = right and right:FindFirstChild("RandomBrainrot")
-	if not rb then
-		return nil
-	end
-	local activation = rb:FindFirstChild("Activation")
-	if activation and activation:IsA("GuiObject") and activation.AbsoluteSize.Y > 0 then
-		return activation
-	end
-	if rb:IsA("GuiObject") and rb.AbsoluteSize.Y > 0 then
-		return rb
-	end
-	return nil
-end
-
-local function hostTopInset(host: Frame): number
-	local screen = host:FindFirstAncestorOfClass("ScreenGui")
-	if screen and screen.IgnoreGuiInset then
-		return Svc.GuiService:GetGuiInset().Y
-	end
-	return 0
-end
-
 local layoutSyncAccum = 0.0
 local LAYOUT_SYNC_HZ = if Svc.UserInputService.TouchEnabled then 4 else 10
-local lastMobilePanelTopPad: number? = nil
-local lastMobilePanelRightPad: number? = nil
 
 local function syncPanelToSideButtonsImpl()
 	if not panel or chromeSuppressed then
 		return
 	end
-	if isHudPanelOpen() then
-		panel.Visible = false
-		return
-	end
-	local host = ensureQuestHost()
+	local host = _questRoot
 	if not host then
 		return
 	end
@@ -594,59 +561,25 @@ local function syncPanelToSideButtonsImpl()
 
 	local vp = viewportSize()
 	local mobile = isMobileUi() or vp.X < 700
-	local insetY = hostTopInset(host)
-	local rightPad = TutorialConfig.PANEL_RIGHT_PAD
+	local insetY = Svc.GuiService:GetGuiInset().Y
 	local topPad = TutorialConfig.PANEL_TOP_PAD + insetY
 	local screenW: number
 	local matchScale = 1
-	local anchorY = 0 -- top of panel
 
 	if mobile then
 		local maxW = math.floor(vp.X * TutorialConfig.PANEL_MOBILE_MAX_WIDTH_FRAC)
 		screenW = math.clamp(maxW, TutorialConfig.PANEL_MOBILE_MIN_WIDTH, TutorialConfig.PANEL_MOBILE_MAX_WIDTH)
 		matchScale = TutorialConfig.PANEL_MOBILE_SCALE
-		-- Sit ABOVE RandomBrainrot on the right (not below — that pushed it to the bottom).
-		local rb = resolveRandomBrainrotHud()
-		if rb then
-			local hp = host.AbsolutePosition
-			local rbTop = rb.AbsolutePosition.Y - hp.Y
-			local hostRight = hp.X + host.AbsoluteSize.X
-			local rbRight = rb.AbsolutePosition.X + rb.AbsoluteSize.X
-			local wantRight = math.max(8, hostRight - rbRight)
-			local wantTop = math.max(insetY + 10, rbTop - TutorialConfig.PANEL_MOBILE_GAP_ABOVE_RIGHT)
-			-- Hysteresis: ignore tiny AbsolutePosition jitter that made the panel "breathe" on mobile.
-			if lastMobilePanelRightPad == nil or math.abs(wantRight - lastMobilePanelRightPad) >= 8 then
-				lastMobilePanelRightPad = wantRight
-			end
-			if lastMobilePanelTopPad == nil or math.abs(wantTop - lastMobilePanelTopPad) >= 10 then
-				lastMobilePanelTopPad = wantTop
-			end
-			rightPad = lastMobilePanelRightPad :: number
-			topPad = lastMobilePanelTopPad :: number
-			anchorY = 1
-		else
-			topPad = insetY + 14
-			rightPad = 10
-			anchorY = 0
-			lastMobilePanelTopPad = nil
-			lastMobilePanelRightPad = nil
-		end
 	else
 		local maxW = math.floor(vp.X * TutorialConfig.PANEL_MAX_WIDTH_FRAC)
-		maxW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
 		screenW = math.clamp(maxW, TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_MAX_WIDTH)
 		matchScale = TutorialConfig.PANEL_PC_SCALE
-		topPad = TutorialConfig.PANEL_TOP_PAD + insetY
-		rightPad = TutorialConfig.PANEL_RIGHT_PAD
-		anchorY = 0
-		lastMobilePanelTopPad = nil
-		lastMobilePanelRightPad = nil
 	end
 
-	panel.AnchorPoint = Vector2.new(1, anchorY)
+	panel.AnchorPoint = Vector2.new(0.5, 0)
 	panel.Size = UDim2.fromOffset(screenW, TutorialConfig.PANEL_HEIGHT)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
-	panel.Position = UDim2.new(1, -rightPad, 0, topPad)
+	panel.Position = UDim2.new(0.5, 0, 0, topPad)
 	if hudMatchScale then
 		hudMatchScale.Scale = matchScale
 	end
@@ -658,18 +591,15 @@ local function syncPanelToSideButtonsImpl()
 			skipTutorialBtn.Parent = host
 		end
 		local gap = TutorialConfig.SKIP_BTN_GAP
-		local panelH = math.max(panel.AbsoluteSize.Y, TutorialConfig.PANEL_HEIGHT)
-		local skipY: number
-		if anchorY == 1 then
-			-- Panel grows upward from topPad; sit just above its top edge.
-			skipY = topPad - panelH - gap
-		else
-			skipY = topPad - gap
-		end
-		skipTutorialBtn.AnchorPoint = Vector2.new(1, 1)
-		skipTutorialBtn.Position = UDim2.new(1, -rightPad, 0, skipY)
+		skipTutorialBtn.AnchorPoint = Vector2.new(0.5, 0)
+		skipTutorialBtn.Position = UDim2.new(
+			0.5,
+			0,
+			0,
+			topPad + math.max(panel.AbsoluteSize.Y, TutorialConfig.PANEL_HEIGHT) + gap
+		)
 		skipTutorialBtn.Size = UDim2.fromOffset(
-			math.clamp(math.floor(screenW * 0.55), TutorialConfig.SKIP_BTN_MIN_WIDTH, screenW),
+			math.clamp(math.floor(screenW * 0.42), TutorialConfig.SKIP_BTN_MIN_WIDTH, screenW),
 			TutorialConfig.SKIP_BTN_HEIGHT
 		)
 		if hudMatchScale then
@@ -681,6 +611,7 @@ local function syncPanelToSideButtonsImpl()
 		skipTutorialBtn.ZIndex = 101
 		skipTutorialBtn.Visible = active and not chromeSuppressed and panel.Visible
 	end
+	syncWorkoutGoalBar()
 end
 syncPanelToSideButtons = syncPanelToSideButtonsImpl
 
@@ -805,9 +736,9 @@ local function ensureGuideTrail(): boolean
 	beam.LightEmission = 0.65
 	beam.LightInfluence = 0
 	beam.Texture = TutorialConfig.GUIDE_BEAM_TEXTURE
-	beam.TextureLength = 4
+	beam.TextureLength = 6.5
 	beam.TextureMode = Enum.TextureMode.Wrap
-	beam.TextureSpeed = 2.4
+	beam.TextureSpeed = 1.85
 	beam.Width0 = TutorialConfig.GUIDE_BEAM_WIDTH0
 	beam.Width1 = TutorialConfig.GUIDE_BEAM_WIDTH1
 	beam.Segments = 24
@@ -1153,7 +1084,6 @@ local function ensureGui()
 	hudMatchScale = nil
 	dimOverlay = nil
 	spotlightHole = nil
-	_questHost = nil
 	local pg = player:WaitForChild("PlayerGui", 30)
 	if not pg then
 		return
@@ -1163,7 +1093,7 @@ local function ensureGui()
 	screen.Name = "TutorialObjective"
 	screen.ResetOnSpawn = false
 	screen.IgnoreGuiInset = true
-	screen.DisplayOrder = 80
+	screen.DisplayOrder = 220
 	screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	screen.Enabled = false
 
@@ -1175,8 +1105,8 @@ local function ensureGui()
 
 	local panelFrame = Instance.new("Frame")
 	panelFrame.Name = "ObjectivePanel"
-	panelFrame.AnchorPoint = Vector2.new(1, 0)
-	panelFrame.Position = UDim2.new(1, -TutorialConfig.PANEL_RIGHT_PAD, 0, TutorialConfig.PANEL_TOP_PAD)
+	panelFrame.AnchorPoint = Vector2.new(0.5, 0)
+	panelFrame.Position = UDim2.new(0.5, 0, 0, TutorialConfig.PANEL_TOP_PAD)
 	panelFrame.Size = UDim2.fromOffset(TutorialConfig.PANEL_MIN_WIDTH, TutorialConfig.PANEL_HEIGHT)
 	panelFrame.AutomaticSize = Enum.AutomaticSize.Y
 	panelFrame.BackgroundColor3 = Color3.fromRGB(22, 26, 34)
@@ -1190,9 +1120,9 @@ local function ensureGui()
 	corner.Parent = panelFrame
 
 	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(255, 255, 255)
-	stroke.Thickness = 1
-	stroke.Transparency = 0.82
+	stroke.Color = Color3.fromRGB(255, 214, 74)
+	stroke.Thickness = 1.6
+	stroke.Transparency = 0.35
 	stroke.Parent = panelFrame
 	_panelStroke = stroke
 
@@ -1200,8 +1130,45 @@ local function ensureGui()
 	pad.PaddingLeft = UDim.new(0, 8)
 	pad.PaddingRight = UDim.new(0, 12)
 	pad.PaddingTop = UDim.new(0, 8)
-	pad.PaddingBottom = UDim.new(0, 8)
+	pad.PaddingBottom = UDim.new(0, 16)
 	pad.Parent = panelFrame
+
+	local workoutBar = Instance.new("Frame")
+	workoutBar.Name = "WorkoutGoalBar"
+	workoutBar.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
+	workoutBar.BackgroundTransparency = 0.15
+	workoutBar.BorderSizePixel = 0
+	workoutBar.AnchorPoint = Vector2.new(0, 1)
+	workoutBar.Position = UDim2.new(0, 8, 1, -6)
+	workoutBar.Size = UDim2.new(1, -16, 0, 10)
+	workoutBar.Visible = false
+	workoutBar.ZIndex = 4
+	workoutBar.Parent = panelFrame
+	local workoutBarCorner = Instance.new("UICorner")
+	workoutBarCorner.CornerRadius = UDim.new(1, 0)
+	workoutBarCorner.Parent = workoutBar
+	local workoutFill = Instance.new("Frame")
+	workoutFill.Name = "Fill"
+	workoutFill.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
+	workoutFill.BorderSizePixel = 0
+	workoutFill.Size = UDim2.fromScale(0, 1)
+	workoutFill.ZIndex = 5
+	workoutFill.Parent = workoutBar
+	local workoutFillCorner = Instance.new("UICorner")
+	workoutFillCorner.CornerRadius = UDim.new(1, 0)
+	workoutFillCorner.Parent = workoutFill
+	local workoutBarLabel = Instance.new("TextLabel")
+	workoutBarLabel.Name = "GoalLabel"
+	workoutBarLabel.BackgroundTransparency = 1
+	workoutBarLabel.AnchorPoint = Vector2.new(0.5, 1)
+	workoutBarLabel.Position = UDim2.new(0.5, 0, 0, -2)
+	workoutBarLabel.Size = UDim2.new(1, 0, 0, 14)
+	workoutBarLabel.Text = "0 / 100"
+	workoutBarLabel.TextColor3 = Color3.fromRGB(255, 236, 160)
+	workoutBarLabel.TextSize = 12
+	workoutBarLabel.ZIndex = 6
+	workoutBarLabel.Parent = workoutBar
+	UiFonts.applyBody(workoutBarLabel)
 
 	local scale = Instance.new("UIScale")
 	scale.Name = "ObjectiveScale"
@@ -1314,8 +1281,8 @@ local function ensureGui()
 	local skipBtn = Instance.new("TextButton")
 	skipBtn.Name = "SkipTutorial"
 	skipBtn.AutoButtonColor = true
-	skipBtn.AnchorPoint = Vector2.new(1, 1)
-	skipBtn.Position = UDim2.new(1, -TutorialConfig.PANEL_RIGHT_PAD, 0, TutorialConfig.PANEL_TOP_PAD - TutorialConfig.SKIP_BTN_GAP)
+	skipBtn.AnchorPoint = Vector2.new(0.5, 0)
+	skipBtn.Position = UDim2.new(0.5, 0, 0, TutorialConfig.PANEL_TOP_PAD + TutorialConfig.PANEL_HEIGHT + TutorialConfig.SKIP_BTN_GAP)
 	skipBtn.Size = UDim2.fromOffset(TutorialConfig.SKIP_BTN_MIN_WIDTH, TutorialConfig.SKIP_BTN_HEIGHT)
 	skipBtn.BackgroundColor3 = Color3.fromRGB(28, 32, 42)
 	skipBtn.BackgroundTransparency = 0.2
@@ -1409,13 +1376,14 @@ local function showPanel(text: string, animateIn: boolean)
 	objectiveLabel.Text = ""
 	syncPanelToSideButtons()
 	if animateIn then
-		panelScale.Scale = 0.82
+		panelScale.Scale = 0.62
 		Svc.TweenService:Create(panelScale, PANEL_OPEN, { Scale = 1 }):Play()
 	else
 		panelScale.Scale = 0.92
 		Svc.TweenService:Create(panelScale, PANEL_SWAP, { Scale = 1 }):Play()
 	end
 	typeObjective(text)
+	syncWorkoutGoalBar()
 end
 
 local function hidePanel()
@@ -1430,7 +1398,7 @@ local function hidePanel()
 	local g = gui
 	Svc.TweenService:Create(s, PANEL_SWAP, { Scale = 0.8 }):Play()
 	local tw = Svc.TweenService:Create(p, PANEL_SWAP, {
-		Position = UDim2.new(1, p.Position.X.Offset + 90, 0, p.Position.Y.Offset),
+		Position = UDim2.new(0.5, 0, 0, -90),
 	})
 	tw:Play()
 	tw.Completed:Once(function()
@@ -2744,6 +2712,7 @@ finishTutorial = function(opts: { skipped: boolean? }?)
 	hidePanel()
 	JumpButtonSwingRing.setTutorialCoach(nil)
 	swingCoach.goToBaseLite = false
+	GameplayUiVisibility.show()
 	local skipped = opts ~= nil and opts.skipped == true
 	if not skipped then
 		-- One confetti burst for the whole tutorial (guarded inside fireConfettiAndShake).
@@ -2812,7 +2781,7 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 		clearLockedSwing()
 		swingCoach.goToBaseLite = true
 		setTutorialSoftRespawn(false)
-	elseif step.id == "grantCash" or step.id == "visitUpgrade" or step.id == "buyPower" or step.id == "equipGear" or step.id == "useWorkout" then
+	elseif step.id == "visitUpgrade" or step.id == "buyPower" or step.id == "useWorkout" then
 		setTutorialSoftRespawn(true)
 	elseif step.id == "searchBush" then
 		clearLockedBush()
@@ -2827,24 +2796,6 @@ local function advanceTo(index: number, opts: { celebrate: boolean? }?)
 	GameSoundEffects.playQuestPopUp()
 	showPanel(resolveStepText(step), first)
 	refreshPointers()
-	if step.id == "upgradeBrainrot" then
-		-- LevelPanel / Upgrade often replicates a beat after place — keep pointing.
-		task.delay(0.35, function()
-			if active and currentStep() and currentStep().id == "upgradeBrainrot" then
-				refreshPointers()
-			end
-		end)
-		task.delay(1.0, function()
-			if active and currentStep() and currentStep().id == "upgradeBrainrot" then
-				refreshPointers()
-			end
-		end)
-	end
-	if step.id == "grantCash" then
-		task.spawn(function()
-			runGrantCashStep()
-		end)
-	end
 end
 
 local function completeCurrentIfImpl(id: TutorialConfig.StepId)
@@ -2943,9 +2894,12 @@ local function watchStepProgress()
 					refreshPointers()
 				end
 			elseif step.id == "useWorkout" then
+				syncWorkoutGoalBar()
 				local slot = resolveWorkoutHotbarSlot()
-				if slot and (not uiPointer or uiPointerHost ~= slot or not pointerGui or not pointerGui.Enabled) then
-					refreshPointers()
+				if player:GetAttribute("WorkoutActive") ~= true then
+					if slot and (not uiPointer or uiPointerHost ~= slot or not pointerGui or not pointerGui.Enabled) then
+						refreshPointers()
+					end
 				end
 			end
 		end
@@ -2953,6 +2907,12 @@ local function watchStepProgress()
 		if step.id == "visitUpgrade" and not isCutsceneBusy() then
 			if not worldHighlight then
 				outlineWorld(resolveUpgradeStandModel())
+			end
+			local main = PlayerGuiMain.ensure(player)
+			local frames = main and main:FindFirstChild("Frames")
+			local upgrades = frames and frames:FindFirstChild("Upgrades")
+			if upgrades and upgrades:IsA("GuiObject") and upgrades.Visible then
+				completeCurrentIf("visitUpgrade")
 			end
 		end
 
@@ -2972,11 +2932,19 @@ local function watchStepProgress()
 				end
 			end
 		elseif step.id == "useWorkout" then
+			syncWorkoutGoalBar()
 			local slot = resolveWorkoutHotbarSlot()
-			if slot and (not uiPointer or uiPointerHost ~= slot or not pointerGui or not pointerGui.Enabled) then
+			local working = player:GetAttribute("WorkoutActive") == true
+			if working then
+				if uiPointer then
+					clearUiPointer()
+				end
+			elseif slot and (not uiPointer or uiPointerHost ~= slot or not pointerGui or not pointerGui.Enabled) then
 				pointAtHotbarSlot(slot)
 			end
-			if player:GetAttribute("WorkoutActive") == true then
+			local powerAttr = player:GetAttribute("Power")
+			local power = if typeof(powerAttr) == "number" then powerAttr else 0
+			if power >= TutorialConfig.WORKOUT_GOAL_POWER then
 				completeCurrentIf("useWorkout")
 			end
 		elseif step.id == "swingLand1" and now - lastLandCheck > 0.35 then
@@ -3114,8 +3082,14 @@ local function bindGameplayHooks()
 	)
 	table.insert(
 		attrConns,
-		player:GetAttributeChangedSignal("WorkoutActive"):Connect(function()
-			if player:GetAttribute("WorkoutActive") == true then
+		player:GetAttributeChangedSignal("Power"):Connect(function()
+			if not active then
+				return
+			end
+			syncWorkoutGoalBar()
+			local powerAttr = player:GetAttribute("Power")
+			local power = if typeof(powerAttr) == "number" then powerAttr else 0
+			if power >= TutorialConfig.WORKOUT_GOAL_POWER then
 				completeCurrentIf("useWorkout")
 			end
 		end)
@@ -3231,6 +3205,11 @@ function M.start(force: boolean?)
 		swingCoach.land1EnteredAt = 0
 	end
 	ensureGui()
+	GameplayUiVisibility.hide({
+		keepSideChildNames = { "Toolbar" },
+		hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker", "LandActivityStripGui" },
+		skipMuffle = true,
+	})
 	startLayoutSync()
 	bindGameplayHooks()
 	watchStepProgress()
@@ -3260,6 +3239,7 @@ function M.stop()
 	hidePanel()
 	JumpButtonSwingRing.setTutorialCoach(nil)
 	swingCoach.goToBaseLite = false
+	GameplayUiVisibility.show()
 	if tutorialDeathConn then
 		tutorialDeathConn:Disconnect()
 		tutorialDeathConn = nil

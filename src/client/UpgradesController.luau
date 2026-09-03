@@ -428,7 +428,11 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 			MainGradientButtons.applyPurchasedGradient(host)
 		end
 		if costLabel then
-			costLabel.Text = formatCash(def.cashPrice)
+			if def.cashPrice <= 0 then
+				costLabel.Text = "FREE"
+			else
+				costLabel.Text = formatCash(def.cashPrice)
+			end
 		end
 	end
 	setStateGradients(host, state)

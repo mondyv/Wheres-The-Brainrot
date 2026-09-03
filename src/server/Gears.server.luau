@@ -129,7 +129,10 @@ stopWorkoutFn.OnServerInvoke = function(player: Player): boolean
 	return true
 end
 
-claimDoubleTapFn.OnServerInvoke = function(player: Player): number
+claimDoubleTapFn.OnServerInvoke = function(player: Player, hitAny: any): number
+	if hitAny == false then
+		return GearService.resetWorkoutCombo(player)
+	end
 	return GearService.claimWorkoutDoubleTap(player)
 end
 

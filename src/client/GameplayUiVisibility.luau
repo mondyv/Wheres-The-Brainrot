@@ -19,6 +19,7 @@ local player = Players.LocalPlayer
 local M = {}
 
 local hideCount = 0
+local muffleHeld = false
 local animGen = 0
 -- Soft edge exit/enter — Cubic eases into rest instead of a Quint hard stop.
 local SLIDE_OUT = TweenInfo.new(0.16, Enum.EasingStyle.Cubic, Enum.EasingDirection.InOut)
@@ -56,6 +57,7 @@ local chatWasEnabled = true
 local activeTweens: { Tween } = {}
 local keepScreenNames: { [string]: boolean } = {}
 local keepMainChildNames: { [string]: boolean } = {}
+local keepSideChildNames: { [string]: boolean } = {}
 local sideUIRef: GuiObject? = nil
 local sideUIWasVisible = true
 local restoreCallbacks: { () -> () } = {}
@@ -76,8 +78,10 @@ end
 export type HideOpts = {
 	keepScreenGuiNames: { string }?,
 	keepMainChildNames: { string }?,
+	keepSideChildNames: { string }?,
 	hideScreenGuiNames: { string }?,
 	hideMainChildNames: { string }?,
+	skipMuffle: boolean?,
 }
 
 export type ShowOpts = {
@@ -252,7 +256,7 @@ local function collectTargets(main: Instance): { GuiObject }
 		for _, sub in sideUI:GetChildren() do
 			if sub:IsA("GuiObject") then
 				-- Keep mobile admin entry visible through shop/cutscene HUD hides.
-				if sub.Name == "AdminFrame" then
+				if sub.Name == "AdminFrame" or keepSideChildNames[sub.Name] then
 					continue
 				end
 				addTarget(sub :: GuiObject)
@@ -278,6 +282,7 @@ end
 local function buildKeepSets(opts: HideOpts?)
 	table.clear(keepScreenNames)
 	table.clear(keepMainChildNames)
+	table.clear(keepSideChildNames)
 	-- Frames is the panel host — never slide it (causes offset/missing shop panels)
 	keepMainChildNames.Frames = true
 	keepMainChildNames.TutorialQuestHost = true
@@ -288,6 +293,8 @@ local function buildKeepSets(opts: HideOpts?)
 	keepScreenNames.StandDialogueCutscene = true
 	keepScreenNames.TutorialObjective = true
 	keepScreenNames.TutorialUiPointer = true
+	keepScreenNames.TouchGui = true
+	keepScreenNames.WorkoutComboGui = true
 	if opts then
 		if opts.keepScreenGuiNames then
 			for _, name in opts.keepScreenGuiNames do
@@ -297,6 +304,11 @@ local function buildKeepSets(opts: HideOpts?)
 		if opts.keepMainChildNames then
 			for _, name in opts.keepMainChildNames do
 				keepMainChildNames[name] = true
+			end
+		end
+		if opts.keepSideChildNames then
+			for _, name in opts.keepSideChildNames do
+				keepSideChildNames[name] = true
 			end
 		end
 		if opts.hideScreenGuiNames then
@@ -675,7 +687,10 @@ function M.hide(opts: HideOpts?)
 	hideCount += 1
 	if hideCount == 1 then
 		buildKeepSets(opts)
-		GameplayMusicMuffle.push()
+		if not (opts and opts.skipMuffle) then
+			GameplayMusicMuffle.push()
+			muffleHeld = true
+		end
 		fireHidden()
 		snapshotAndSlideOut()
 	else
@@ -690,6 +705,11 @@ function M.hide(opts: HideOpts?)
 			if opts.keepMainChildNames then
 				for _, name in opts.keepMainChildNames do
 					keepMainChildNames[name] = true
+				end
+			end
+			if opts.keepSideChildNames then
+				for _, name in opts.keepSideChildNames do
+					keepSideChildNames[name] = true
 				end
 			end
 			if opts.hideScreenGuiNames then
@@ -718,7 +738,10 @@ function M.show(opts: ShowOpts?)
 	end
 	hideCount -= 1
 	if hideCount == 0 then
-		GameplayMusicMuffle.pop()
+		if muffleHeld then
+			GameplayMusicMuffle.pop()
+			muffleHeld = false
+		end
 		if opts and opts.instant then
 			instantRestore()
 		else
@@ -729,6 +752,7 @@ end
 
 function M.forceShow()
 	hideCount = 0
+	muffleHeld = false
 	GameplayMusicMuffle.forceClear()
 	instantRestore()
 	nuclearUnparkHud()

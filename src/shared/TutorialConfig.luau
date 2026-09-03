@@ -6,7 +6,7 @@
 local M = {}
 
 M.EXCLAIM_IMAGE = "rbxassetid://82174402168294"
-M.WORLD_ARROW_IMAGE = "rbxassetid://83718910748441"
+M.WORLD_ARROW_IMAGE = "rbxassetid://74385491860116"
 M.UI_CLICK_IMAGE = "rbxassetid://80727309150135"
 
 M.VOICE_PITCH_MIN = 1.15
@@ -16,31 +16,32 @@ M.WORLD_ARROW_ROTATION = 180
 M.WORLD_ARROW_HEIGHT = 16
 M.WORLD_ARROW_SIZE = 56
 M.WORLD_ARROW_SIZE_MOBILE = 88
-M.PANEL_TOP_PAD = 72
+M.PANEL_TOP_PAD = 18
 M.PANEL_RIGHT_PAD = 14
-M.PANEL_HEIGHT = 64
-M.PANEL_MIN_WIDTH = 340
-M.PANEL_MAX_WIDTH = 460
-M.PANEL_MAX_WIDTH_FRAC = 0.42
-M.PANEL_MOBILE_MIN_WIDTH = 200
-M.PANEL_MOBILE_MAX_WIDTH = 280
-M.PANEL_MOBILE_MAX_WIDTH_FRAC = 0.78
+M.PANEL_HEIGHT = 72
+M.PANEL_MIN_WIDTH = 380
+M.PANEL_MAX_WIDTH = 520
+M.PANEL_MAX_WIDTH_FRAC = 0.52
+M.PANEL_MOBILE_MIN_WIDTH = 240
+M.PANEL_MOBILE_MAX_WIDTH = 340
+M.PANEL_MOBILE_MAX_WIDTH_FRAC = 0.88
 M.PANEL_MOBILE_SCALE = 0.94
 M.PANEL_MOBILE_GAP_ABOVE_RIGHT = 10
 M.PANEL_PC_SCALE = 1.08
 M.SKIP_BTN_GAP = 6
 M.SKIP_BTN_HEIGHT = 28
 M.SKIP_BTN_MIN_WIDTH = 118
-M.STARTER_CASH = 500
+M.STARTER_CASH = 0
 M.STARTER_LUCKY_BLOCK = "Starter Lucky Block"
+M.WORKOUT_GOAL_POWER = 100
 M.GO_TO_BASE_DIST = 48
 -- Large finite max — some mobile clients treat 0 oddly for BillboardGui.
 M.WORLD_ARROW_MAX_DISTANCE = 2500
 M.SURFACE_CLICK_MAX_DISTANCE = 2500
--- Body → objective guide beam (flowing chevrons).
-M.GUIDE_BEAM_TEXTURE = "rbxassetid://446111271"
-M.GUIDE_BEAM_WIDTH0 = 0.85
-M.GUIDE_BEAM_WIDTH1 = 0.45
+-- Body → objective guide line (up-arrow tiles along the path).
+M.GUIDE_BEAM_TEXTURE = "rbxassetid://74385491860116"
+M.GUIDE_BEAM_WIDTH0 = 1.45
+M.GUIDE_BEAM_WIDTH1 = 0.7
 M.GUIDE_BEAM_COLOR = Color3.fromRGB(255, 214, 74)
 M.GUIDE_BEAM_HIDE_DIST = 14
 M.UI_CLICK_SIZE = 34
@@ -50,17 +51,14 @@ M.UI_CLICK_SIZE_CLAIM = 26
 M.UI_CLICK_SIZE_UPGRADE_UI = 30
 
 export type StepId =
-	"grantCash"
-	| "visitUpgrade"
-	| "buyPower"
-	| "equipGear"
-	| "useWorkout"
-	| "swingLand1"
+	"swingLand1"
 	| "searchBush"
 	| "claimBrainrot"
 	| "goToBase"
 	| "placeOnPlot"
-	| "upgradeBrainrot"
+	| "visitUpgrade"
+	| "buyPower"
+	| "useWorkout"
 
 export type StepDef = {
 	id: StepId,
@@ -74,48 +72,17 @@ export type StepDef = {
 
 M.STEPS = {
 	{
-		id = "grantCash",
-		text = "Here's $500!",
-		speak = nil,
-	},
-	{
-		id = "visitUpgrade",
-		text = "Go to the Upgrade Stand",
-		speak = "HEAD TO THE UPGRADE STAND!!",
-	},
-	{
-		id = "buyPower",
-		text = "Buy your first workout gear",
-		speak = "TAP BUY ON TREE BRANCH!!",
-		controllerText = "Select Buy on Tree Branch with the cursor, then press A / ✕",
-		controllerSpeak = "SELECT BUY ON TREE BRANCH!!",
-	},
-	{
-		id = "equipGear",
-		text = "Equip your Tree Branch",
-		speak = "TAP EQUIP ON TREE BRANCH!!",
-		controllerText = "Select Equip on Tree Branch, then press A / ✕",
-		controllerSpeak = "SELECT EQUIP!!",
-	},
-	{
-		id = "useWorkout",
-		text = "Tap the workout gear on your hotbar!",
-		speak = "TAP THE GEAR ON YOUR HOTBAR TO WORK OUT!!",
-		controllerText = "Select the workout gear on your hotbar, then press A / ✕",
-		controllerSpeak = "SELECT YOUR HOTBAR GEAR TO WORK OUT!!",
-	},
-	{
 		id = "swingLand1",
-		text = "Look at a vine, then press jump to swing over!",
-		speak = "LOOK AT A VINE AND PRESS JUMP TO SWING OVER!!",
-		retryText = "Press jump again to let go, then land on the next land!",
+		text = "Look at a vine, then jump to swing over!",
+		speak = "SWING OVER TO THE JUNGLE!!",
+		retryText = "Jump again to let go, then land!",
 		controllerText = "Aim at a vine, then press A / ✕ to swing!",
 		controllerSpeak = "AIM AT A VINE AND PRESS A TO SWING!!",
-		controllerRetryText = "Press A / ✕ again to let go, then land on the next land!",
+		controllerRetryText = "Press A / ✕ again to let go, then land!",
 	},
 	{
 		id = "searchBush",
-		text = "Open a bush for a brainrot",
+		text = "Search a bush for a brainrot",
 		speak = "OPEN A BUSH AND FIND A BRAINROT!!",
 		controllerText = "Hold X / □ near a bush to search",
 		controllerSpeak = "HOLD X NEAR A BUSH TO SEARCH!!",
@@ -129,9 +96,9 @@ M.STEPS = {
 	},
 	{
 		id = "goToBase",
-		text = "Go back to your base",
+		text = "Swing back to your base",
 		speak = "HEAD HOME TO YOUR BASE!!",
-		retryText = "Press jump near a vine to swing back!",
+		retryText = "Jump near a vine to swing back!",
 		controllerRetryText = "Press A / ✕ near a vine to swing back!",
 	},
 	{
@@ -142,11 +109,23 @@ M.STEPS = {
 		controllerSpeak = "PRESS X TO PLACE ON A STAND!!",
 	},
 	{
-		id = "upgradeBrainrot",
-		text = "Upgrade your brainrot",
-		speak = "TAP UPGRADE ON YOUR BRAINROT!!",
-		controllerText = "Select Upgrade on your brainrot, then press A / ✕",
-		controllerSpeak = "SELECT UPGRADE ON YOUR BRAINROT!!",
+		id = "visitUpgrade",
+		text = "Go to the Weights shop",
+		speak = "HEAD TO THE WEIGHTS SHOP!!",
+	},
+	{
+		id = "buyPower",
+		text = "Grab your free Tree Branch",
+		speak = "TAP FREE ON TREE BRANCH!!",
+		controllerText = "Select Free on Tree Branch, then press A / ✕",
+		controllerSpeak = "SELECT FREE ON TREE BRANCH!!",
+	},
+	{
+		id = "useWorkout",
+		text = "Work out until you hit 100 Power!",
+		speak = "KEEP WORKING OUT TO 100 POWER!!",
+		controllerText = "Work out until you hit 100 Power!",
+		controllerSpeak = "KEEP WORKING OUT TO 100 POWER!!",
 	},
 }
 

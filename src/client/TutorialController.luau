@@ -476,7 +476,7 @@ local function syncWorkoutGoalBar()
 	end
 	local pad = panel:FindFirstChildOfClass("UIPadding")
 	if pad then
-		pad.PaddingBottom = UDim.new(0, if on then 22 else 10)
+		pad.PaddingBottom = UDim.new(0, 10)
 	end
 end
 
@@ -738,7 +738,7 @@ local function ensureGuideTrail(): boolean
 	beam.Texture = TutorialConfig.GUIDE_BEAM_TEXTURE
 	beam.TextureLength = 6.5
 	beam.TextureMode = Enum.TextureMode.Wrap
-	beam.TextureSpeed = 1.85
+	beam.TextureSpeed = -1.85
 	beam.Width0 = TutorialConfig.GUIDE_BEAM_WIDTH0
 	beam.Width1 = TutorialConfig.GUIDE_BEAM_WIDTH1
 	beam.Segments = 24
@@ -1130,19 +1130,35 @@ local function ensureGui()
 	pad.PaddingLeft = UDim.new(0, 8)
 	pad.PaddingRight = UDim.new(0, 12)
 	pad.PaddingTop = UDim.new(0, 8)
-	pad.PaddingBottom = UDim.new(0, 16)
+	pad.PaddingBottom = UDim.new(0, 10)
 	pad.Parent = panelFrame
+
+	local list = Instance.new("UIListLayout")
+	list.Name = "PanelList"
+	list.FillDirection = Enum.FillDirection.Vertical
+	list.HorizontalAlignment = Enum.HorizontalAlignment.Left
+	list.VerticalAlignment = Enum.VerticalAlignment.Top
+	list.Padding = UDim.new(0, 8)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = panelFrame
+
+	local header = Instance.new("Frame")
+	header.Name = "Header"
+	header.BackgroundTransparency = 1
+	header.Size = UDim2.new(1, 0, 0, 36)
+	header.AutomaticSize = Enum.AutomaticSize.Y
+	header.LayoutOrder = 1
+	header.Parent = panelFrame
 
 	local workoutBar = Instance.new("Frame")
 	workoutBar.Name = "WorkoutGoalBar"
 	workoutBar.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
 	workoutBar.BackgroundTransparency = 0.15
 	workoutBar.BorderSizePixel = 0
-	workoutBar.AnchorPoint = Vector2.new(0, 1)
-	workoutBar.Position = UDim2.new(0, 8, 1, -6)
-	workoutBar.Size = UDim2.new(1, -16, 0, 10)
+	workoutBar.Size = UDim2.new(1, 0, 0, 16)
 	workoutBar.Visible = false
 	workoutBar.ZIndex = 4
+	workoutBar.LayoutOrder = 2
 	workoutBar.Parent = panelFrame
 	local workoutBarCorner = Instance.new("UICorner")
 	workoutBarCorner.CornerRadius = UDim.new(1, 0)
@@ -1160,9 +1176,9 @@ local function ensureGui()
 	local workoutBarLabel = Instance.new("TextLabel")
 	workoutBarLabel.Name = "GoalLabel"
 	workoutBarLabel.BackgroundTransparency = 1
-	workoutBarLabel.AnchorPoint = Vector2.new(0.5, 1)
-	workoutBarLabel.Position = UDim2.new(0.5, 0, 0, -2)
-	workoutBarLabel.Size = UDim2.new(1, 0, 0, 14)
+	workoutBarLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+	workoutBarLabel.Position = UDim2.fromScale(0.5, 0.5)
+	workoutBarLabel.Size = UDim2.fromScale(1, 1)
 	workoutBarLabel.Text = "0 / 100"
 	workoutBarLabel.TextColor3 = Color3.fromRGB(255, 236, 160)
 	workoutBarLabel.TextSize = 12
@@ -1184,23 +1200,23 @@ local function ensureGui()
 	bang.Name = "Exclaim"
 	bang.BackgroundTransparency = 1
 	bang.AnchorPoint = Vector2.new(0, 0)
-	bang.Position = UDim2.new(0, 6, 0, 4)
+	bang.Position = UDim2.fromOffset(0, 0)
 	bang.Size = UDim2.fromOffset(36, 36)
 	bang.Image = TutorialConfig.EXCLAIM_IMAGE
 	bang.ScaleType = Enum.ScaleType.Fit
 	bang.ZIndex = 3
-	bang.Parent = panelFrame
+	bang.Parent = header
 
 	local textRow = Instance.new("Frame")
 	textRow.Name = "TextRow"
 	textRow.BackgroundTransparency = 1
 	textRow.AnchorPoint = Vector2.new(0, 0)
-	textRow.Position = UDim2.new(0, 46, 0, 2)
-	textRow.Size = UDim2.new(1, -52, 0, 0)
+	textRow.Position = UDim2.new(0, 42, 0, 0)
+	textRow.Size = UDim2.new(1, -42, 0, 0)
 	textRow.AutomaticSize = Enum.AutomaticSize.Y
 	textRow.ClipsDescendants = false
 	textRow.ZIndex = 3
-	textRow.Parent = panelFrame
+	textRow.Parent = header
 
 	local label = Instance.new("TextLabel")
 	label.Name = "ObjectiveText"
@@ -1844,47 +1860,53 @@ local function refreshVineCache()
 end
 
 local function resolveLand1SwingTarget(): BasePart?
-	-- Stick to one middle vine so the arrow doesn't jump between targets.
-	if lockedSwingPart and lockedSwingPart.Parent then
-		return lockedSwingPart
-	end
-	lockedSwingPart = nil
-
 	refreshVineCache()
 	local origin = playerOrigin()
 	local aim = land1Aim()
 	local toAim = aim - origin
 	local aimDir = if toAim.Magnitude > 1 then toAim.Unit else Vector3.new(0, 0, -1)
-	local right = aimDir:Cross(Vector3.yAxis)
-	if right.Magnitude < 0.05 then
-		right = Vector3.new(1, 0, 0)
-	else
-		right = right.Unit
+	local cam = Svc.Workspace.CurrentCamera
+	local vs = if cam then cam.ViewportSize else Vector2.new(1280, 720)
+	local cx = vs.X * 0.5
+	local cy = vs.Y * 0.5
+
+	local function isAhead(part: BasePart): boolean
+		local offset = part.Position - origin
+		local dist = offset.Magnitude
+		if dist < 8 or dist > 220 then
+			return false
+		end
+		return offset:Dot(aimDir) >= 6
 	end
+
+	-- Stick to the current lock only while it's still the vine in the camera center.
+	if lockedSwingPart and lockedSwingPart.Parent and isAhead(lockedSwingPart) and cam then
+		local vp, onScreen = cam:WorldToViewportPoint(lockedSwingPart.Position)
+		if onScreen and vp.Z > 0 then
+			local r = (Vector2.new(vp.X, vp.Y) - Vector2.new(cx, cy)).Magnitude
+			if r <= math.max(vs.Y * 0.16, 90) then
+				return lockedSwingPart
+			end
+		end
+	end
+	lockedSwingPart = nil
 
 	local best: BasePart? = nil
 	local bestScore = math.huge
-
 	for _, part in vineCache do
-		if not part.Parent then
+		if not part.Parent or not isAhead(part) then
 			continue
 		end
-		local offset = part.Position - origin
-		local dist = offset.Magnitude
-		if dist < 8 or dist > 200 then
-			continue
+		local score = (part.Position - origin).Magnitude * 0.15
+		if cam then
+			local vp, onScreen = cam:WorldToViewportPoint(part.Position)
+			if onScreen and vp.Z > 0 then
+				local r = (Vector2.new(vp.X, vp.Y) - Vector2.new(cx, cy)).Magnitude
+				score = r
+			else
+				score += 400
+			end
 		end
-		local along = offset:Dot(aimDir)
-		-- Must be ahead toward Land 1.
-		if along < 6 then
-			continue
-		end
-		local land = LandResolver.resolveLandAtPosition(part.Position)
-		-- Prefer vines still near spawn / between spawn and Land 1 (not already on Land 1 deep).
-		local landPenalty = if land == 1 then 55 else 0
-		local lateral = math.abs(offset:Dot(right))
-		-- Middle vine = low lateral offset from the spawn→Land1 corridor.
-		local score = lateral * 2.8 + dist * 0.2 + landPenalty + (part.Position - aim).Magnitude * 0.05
 		if score < bestScore then
 			bestScore = score
 			best = part
@@ -1892,7 +1914,6 @@ local function resolveLand1SwingTarget(): BasePart?
 	end
 
 	if not best then
-		-- Absolute nearest vine as last resort
 		bestScore = math.huge
 		for _, part in vineCache do
 			if part.Parent then
@@ -2712,7 +2733,7 @@ finishTutorial = function(opts: { skipped: boolean? }?)
 	hidePanel()
 	JumpButtonSwingRing.setTutorialCoach(nil)
 	swingCoach.goToBaseLite = false
-	GameplayUiVisibility.show()
+	GameplayUiVisibility.show({ flourish = true })
 	local skipped = opts ~= nil and opts.skipped == true
 	if not skipped then
 		-- One confetti burst for the whole tutorial (guarded inside fireConfettiAndShake).
@@ -2870,7 +2891,9 @@ local function watchStepProgress()
 				if not worldHighlight or (not worldArrowBb and not uiPointer) then
 					refreshPointers()
 				end
-			elseif step.id == "swingLand1" or step.id == "placeOnPlot" or step.id == "goToBase" then
+			elseif step.id == "swingLand1" then
+				refreshPointers()
+			elseif step.id == "placeOnPlot" or step.id == "goToBase" then
 				if (not worldArrowBb and not uiPointer) or not worldHighlight then
 					refreshPointers()
 				end
@@ -3208,6 +3231,7 @@ function M.start(force: boolean?)
 	GameplayUiVisibility.hide({
 		keepSideChildNames = { "Toolbar" },
 		hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker", "LandActivityStripGui" },
+		keepScreenGuiNames = { "SwingTargetMarker" },
 		skipMuffle = true,
 	})
 	startLayoutSync()

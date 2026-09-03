@@ -121,22 +121,32 @@ task.defer(function()
 	-- Core HUD (cash, sidebar) — shown as soon as loading dismisses.
 	local function bootCoreUI()
 		require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate")).init()
-		initClientModule("HUDController")
-		initClientModule("TopNotifController")
-		initClientModule("CashBoostController")
-		-- Before SideUI is visible: hide unowned gamepass icons (place file defaults Visible).
-		initClientModule("BoostIconsController")
-		initClientModule("UIEffectsBootstrap")
-		initClientModule("TabScreenController")
-		initClientModule("ReturnController")
-		initClientModule("SafezoneTopButtonsController")
-		initClientModule("LandActivityStripController")
-		initClientModule("LandLocksController")
-		initClientModule("RandomBrainrotController")
-		initClientModule("SafeZoneLightingController")
+		local coreMods = {
+			"HUDController",
+			"TopNotifController",
+			"CashBoostController",
+			"BoostIconsController",
+			"UIEffectsBootstrap",
+			"TabScreenController",
+			"ReturnController",
+			"SafezoneTopButtonsController",
+			"LandActivityStripController",
+			"LandLocksController",
+			"RandomBrainrotController",
+			"SafeZoneLightingController",
+		}
+		for _, name in coreMods do
+			local ok, err = pcall(initClientModule, name)
+			if not ok then
+				warn("[init.client] Core module failed:", name, err)
+			end
+		end
 		-- Quest ticket is HUD chrome — don't wait for background boot / streamed NPCs.
 		task.spawn(function()
-			initClientModule("TimCheeseQuestController")
+			local ok, err = pcall(initClientModule, "TimCheeseQuestController")
+			if not ok then
+				warn("[init.client] Core module failed:", "TimCheeseQuestController", err)
+			end
 		end)
 	end
 

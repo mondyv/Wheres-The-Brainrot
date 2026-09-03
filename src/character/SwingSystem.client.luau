@@ -166,8 +166,8 @@ C.LOOK_DOWN_FORWARD_DOT = 0.12
 C.MIN_TARGET_HEIGHT_OFFSET = -8
 -- Aim scoring: crosshair / screen-center dominates, but nearer vines along look must win.
 C.TARGET_SCORE_ALIGN = 4.8
-C.TARGET_SCORE_CENTER = 5.2
-C.TARGET_SCORE_CENTER_LOOK_DOWN = 3.2
+C.TARGET_SCORE_CENTER = 8.4
+C.TARGET_SCORE_CENTER_LOOK_DOWN = 4.6
 C.TARGET_SCORE_DIST_WEIGHT = 1.15
 C.TARGET_SCORE_PREFER_NEAR_STUDS = 90
 C.TARGET_SCORE_PREFER_NEAR_REACH_FRAC = 0.32
@@ -175,9 +175,9 @@ C.TARGET_SCORE_NEAR_AIM_BONUS = 1.8
 C.TARGET_SCORE_LATERAL = 8.5
 C.TARGET_SCORE_LATERAL_WORLD = 5.5
 C.TARGET_SCORE_BEHIND_REJECT = 0.05
-C.TARGET_CAMERA_RAY_BONUS = 25
-C.TARGET_SCREEN_LOCK_RADIUS = 0.22
-C.TARGET_SCREEN_LOCK_BONUS = 22
+C.TARGET_CAMERA_RAY_BONUS = 12
+C.TARGET_SCREEN_LOCK_RADIUS = 0.18
+C.TARGET_SCREEN_LOCK_BONUS = 28
 -- Look-cone for "first vine in front of camera" (angular, clamped — not depth*loose).
 C.TARGET_LOOK_CONE_TAN = 0.16
 C.TARGET_LOOK_CONE_MIN_LATERAL = 5.5
@@ -3236,7 +3236,8 @@ local function boot(character)
 		maxScreenRadius
 	)
 		local inSafezone = st.isHrpInSafezone()
-		if inSafezone and not showSafezoneBlocked then
+		local tutorialOpen = player:GetAttribute("TutorialCompleted") ~= true
+		if inSafezone and not showSafezoneBlocked and not tutorialOpen then
 			return nil, false
 		end
 		camera = workspace.CurrentCamera or camera
@@ -3269,23 +3270,23 @@ local function boot(character)
 
 		-- Looking down for swing control: cling to the current forward vine instead of
 		-- re-picking whatever sits near screen-center (often a left/side vine).
-		if lookingDown and preferredTarget and not inSafezone then
+		if lookingDown and preferredTarget and (not inSafezone or tutorialOpen) then
 			if passesVisibleChecks(preferredTarget, maxDistance) and preferredStillForward(preferredTarget) then
 				return preferredTarget, passesAttachChecks(preferredTarget, readyDistance)
 			end
 		end
 
 		local lookedTarget = nil
-		if not inSafezone then
+		if not inSafezone or tutorialOpen then
 			lookedTarget = st.pickSwingTarget(false, maxDistance, minLookDot, maxScreenRadius)
 		end
 		if lookedTarget and passesVisibleChecks(lookedTarget, maxDistance) then
-			return lookedTarget, (not inSafezone) and passesAttachChecks(lookedTarget, readyDistance)
+			return lookedTarget, (not inSafezone or tutorialOpen) and passesAttachChecks(lookedTarget, readyDistance)
 		end
 
 		if preferredTarget and passesVisibleChecks(preferredTarget, maxDistance) then
 			if not lookingDown or preferredStillForward(preferredTarget) then
-				return preferredTarget, (not inSafezone) and passesAttachChecks(preferredTarget, readyDistance)
+				return preferredTarget, (not inSafezone or tutorialOpen) and passesAttachChecks(preferredTarget, readyDistance)
 			end
 		end
 
@@ -3315,7 +3316,7 @@ local function boot(character)
 		end
 		considerVisual(st.returnSwingTarget)
 
-		return best, best ~= nil and not inSafezone and passesAttachChecks(best, readyDistance)
+		return best, best ~= nil and (not inSafezone or tutorialOpen) and passesAttachChecks(best, readyDistance)
 	end
 
 	function st.attachCandidateScore(target, dist, point, maxDistance)
@@ -5009,7 +5010,7 @@ local function boot(character)
 		if st.isWebTrapped() or st.isSwinging or not target or not target.Parent then
 			return
 		end
-		if st.isHrpInSafezone() then
+		if st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
 			return
 		end
 

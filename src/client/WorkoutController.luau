@@ -1424,6 +1424,8 @@ local claimDoubleTapBusy = false
 local comboRingConn: RBXScriptConnection? = nil
 local comboRingBorn = 0.0
 local comboWindow = 1.55
+local comboBusyAnim = false
+local lastComboPos = Vector2.new(-999, -999)
 
 local function comboWindowFor(n: number): number
 	return math.clamp(1.55 - (math.max(n, 1) - 1) * 0.055, 0.92, 1.55)
@@ -1624,6 +1626,68 @@ local function setComboNumber(n: number)
 	end
 end
 
+local function comboHolder(): Frame?
+	local gui = doubleTapGui
+	local holder = gui and gui:FindFirstChild("ComboHold")
+	if holder and holder:IsA("Frame") then
+		return holder
+	end
+	return nil
+end
+
+local function paintComboIdle()
+	local holder = comboHolder()
+	if not holder then
+		return
+	end
+	holder.Visible = true
+	local pop = holder:FindFirstChild("PopScale")
+	if pop and pop:IsA("UIScale") then
+		pop.Scale = 1
+	end
+	local ring = holder:FindFirstChild("Ring")
+	local stroke = ring and ring:FindFirstChild("RingStroke")
+	if stroke and stroke:IsA("UIStroke") then
+		stroke.Color = Color3.fromRGB(255, 214, 74)
+		stroke.Transparency = 0.08
+	end
+	local hit = holder:FindFirstChild("Hit")
+	if hit and hit:IsA("GuiObject") then
+		hit.BackgroundColor3 = Color3.fromRGB(18, 16, 28)
+		hit.BackgroundTransparency = 0.08
+	end
+	local num = hit and hit:FindFirstChild("ComboNum")
+	if num and num:IsA("TextLabel") then
+		num.TextTransparency = 0
+		num.TextColor3 = Color3.fromRGB(255, 236, 160)
+	end
+end
+
+local function placeComboHold()
+	local holder = comboHolder()
+	if not holder then
+		return
+	end
+	local cam = Workspace.CurrentCamera
+	local vs = if cam then cam.ViewportSize else Vector2.new(800, 600)
+	local padX = math.max(110, vs.X * 0.16)
+	local padY = math.max(140, vs.Y * 0.2)
+	local spanX = math.max(8, vs.X - padX * 2)
+	local spanY = math.max(8, vs.Y - padY * 2)
+	local minJump = math.min(170, vs.Y * 0.24)
+	local pos = lastComboPos
+	for _ = 1, 16 do
+		local candidate = Vector2.new(padX + math.random() * spanX, padY + math.random() * spanY)
+		if (candidate - lastComboPos).Magnitude >= minJump then
+			pos = candidate
+			break
+		end
+		pos = candidate
+	end
+	lastComboPos = pos
+	holder.Position = UDim2.fromOffset(pos.X, pos.Y)
+end
+
 local function pulseComboHold(ok: boolean)
 	local gui = doubleTapGui
 	if not gui then
@@ -1649,14 +1713,50 @@ local function restartComboRing()
 end
 
 local function missCombo()
+	if comboBusyAnim then
+		return
+	end
 	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
 		return
 	end
+	comboBusyAnim = true
 	setComboNumber(1)
 	applyComboAnimSpeed(1)
-	pulseComboHold(false)
 	UIInteractionSounds.playNotif()
-	restartComboRing()
+	local holder = comboHolder()
+	local gen = doubleTapGen
+	if holder then
+		local pop = holder:FindFirstChild("PopScale")
+		local ring = holder:FindFirstChild("Ring")
+		local stroke = ring and ring:FindFirstChild("RingStroke")
+		local hit = holder:FindFirstChild("Hit")
+		local num = hit and hit:FindFirstChild("ComboNum")
+		if stroke and stroke:IsA("UIStroke") then
+			stroke.Color = Color3.fromRGB(255, 72, 72)
+			TweenService:Create(stroke, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				Transparency = 1,
+			}):Play()
+		end
+		if hit and hit:IsA("GuiObject") then
+			hit.BackgroundColor3 = Color3.fromRGB(90, 18, 22)
+			TweenService:Create(hit, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				BackgroundTransparency = 1,
+			}):Play()
+		end
+		if num and num:IsA("TextLabel") then
+			num.TextColor3 = Color3.fromRGB(255, 120, 120)
+			TweenService:Create(num, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+				TextTransparency = 1,
+			}):Play()
+		end
+		if pop and pop:IsA("UIScale") then
+			TweenService:Create(
+				pop,
+				TweenInfo.new(0.34, Enum.EasingStyle.Back, Enum.EasingDirection.In),
+				{ Scale = 0.12 }
+			):Play()
+		end
+	end
 	task.spawn(function()
 		waitForWorkoutRemote("ClaimWorkoutDoubleTap")
 		if claimDoubleTapFn and claimDoubleTapFn.Parent then
@@ -1668,9 +1768,31 @@ local function missCombo()
 			end
 		end
 	end)
+	task.delay(0.38, function()
+		if gen ~= doubleTapGen then
+			return
+		end
+		local gone = comboHolder()
+		if gone then
+			gone.Visible = false
+		end
+	end)
+	task.delay(1.05, function()
+		if gen ~= doubleTapGen or player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+			comboBusyAnim = false
+			return
+		end
+		placeComboHold()
+		paintComboIdle()
+		comboBusyAnim = false
+		restartComboRing()
+	end)
 end
 
 local function hitCombo()
+	if comboBusyAnim then
+		return
+	end
 	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
 		return
 	end
@@ -1678,10 +1800,12 @@ local function hitCombo()
 		return
 	end
 	claimDoubleTapBusy = true
-	restartComboRing()
 	pulseComboHold(true)
 	burstComboLine()
 	UIInteractionSounds.playClick()
+	placeComboHold()
+	paintComboIdle()
+	restartComboRing()
 	task.spawn(function()
 		waitForWorkoutRemote("ClaimWorkoutDoubleTap")
 		local n = comboDisplay()
@@ -1705,6 +1829,7 @@ end
 
 local function stopDoubleTapLoop()
 	doubleTapGen += 1
+	comboBusyAnim = false
 	if comboRingConn then
 		comboRingConn:Disconnect()
 		comboRingConn = nil
@@ -1743,7 +1868,11 @@ local function startDoubleTapLoop()
 	end)
 	doubleTapGen += 1
 	local gen = doubleTapGen
+	comboBusyAnim = false
+	lastComboPos = Vector2.new(-999, -999)
 	ensureDoubleTapGui()
+	placeComboHold()
+	paintComboIdle()
 	setComboNumber(comboDisplay())
 	applyComboAnimSpeed(comboDisplay())
 	restartComboRing()
@@ -1753,6 +1882,9 @@ local function startDoubleTapLoop()
 	end
 	comboRingConn = RunService.Heartbeat:Connect(function()
 		if gen ~= doubleTapGen or player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+			return
+		end
+		if comboBusyAnim then
 			return
 		end
 		local t = (os.clock() - comboRingBorn) / math.max(comboWindow, 0.35)

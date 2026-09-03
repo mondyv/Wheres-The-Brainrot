@@ -111,7 +111,12 @@ local function resolveMeterForPlayer(plr: Player): (number, number)
 	local character = plr.Character
 	local hrp = character and character:FindFirstChild("HumanoidRootPart")
 	if hrp and hrp:IsA("BasePart") then
-		if SafezoneUtil.isCacheReady() and SafezoneUtil.isCharacterInSafezone(character) then
+		local cacheReady = true
+		local isReady = (SafezoneUtil :: any).isCacheReady
+		if typeof(isReady) == "function" then
+			cacheReady = isReady() == true
+		end
+		if cacheReady and SafezoneUtil.isCharacterInSafezone(character) then
 			local m = meterAlongPath(hrp.Position)
 			return math.clamp(m, SAFEZONE_SLOT, 0.4), SAFEZONE_SLOT
 		end

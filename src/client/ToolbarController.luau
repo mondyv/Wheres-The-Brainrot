@@ -2296,7 +2296,7 @@ end
 		if LoadingScreenController.isActive() then
 			return
 		end
-		if GameplayUiVisibility.isHidden() then
+		if GameplayUiVisibility.isHidden() and not GameplayUiVisibility.allowsToolbar() then
 			return
 		end
 		if toolbarShown then
@@ -4895,7 +4895,7 @@ end
 		refreshToggleBackpackIconLayout()
 		if canUseToolbar then
 			-- Force show even if an earlier mid-load showToolbar no-op'd.
-			if GameplayUiVisibility.isHidden() then
+			if GameplayUiVisibility.isHidden() and not GameplayUiVisibility.allowsToolbar() then
 				toolbarShown = true
 				return true
 			end

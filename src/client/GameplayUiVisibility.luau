@@ -20,11 +20,14 @@ local M = {}
 
 local hideCount = 0
 local muffleHeld = false
+local restoreFlourish = false
 local animGen = 0
 -- Soft edge exit/enter — Cubic eases into rest instead of a Quint hard stop.
 local SLIDE_OUT = TweenInfo.new(0.16, Enum.EasingStyle.Cubic, Enum.EasingDirection.InOut)
 local SLIDE_IN = TweenInfo.new(0.2, Enum.EasingStyle.Cubic, Enum.EasingDirection.Out)
+local SLIDE_IN_FLOURISH = TweenInfo.new(0.48, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local WAVE_STAGGER = 0.012
+local FLOURISH_STAGGER = 0.028
 local MAX_WAVE_SPAN = 0.085
 
 type GuiSnap = {
@@ -86,6 +89,7 @@ export type HideOpts = {
 
 export type ShowOpts = {
 	instant: boolean?,
+	flourish: boolean?,
 }
 
 local function cancelTweens()
@@ -295,6 +299,7 @@ local function buildKeepSets(opts: HideOpts?)
 	keepScreenNames.TutorialUiPointer = true
 	keepScreenNames.TouchGui = true
 	keepScreenNames.WorkoutComboGui = true
+	keepScreenNames.SwingTargetMarker = true
 	if opts then
 		if opts.keepScreenGuiNames then
 			for _, name in opts.keepScreenGuiNames do
@@ -328,7 +333,11 @@ local function waveDelay(index: number, count: number): number
 	if count <= 1 then
 		return 0
 	end
-	local stagger = math.min(WAVE_STAGGER, MAX_WAVE_SPAN / (count - 1))
+	local stagger = if restoreFlourish then FLOURISH_STAGGER else WAVE_STAGGER
+	stagger = math.min(stagger, MAX_WAVE_SPAN / (count - 1))
+	if restoreFlourish then
+		stagger = math.min(FLOURISH_STAGGER, 0.22 / (count - 1))
+	end
 	return (index - 1) * stagger
 end
 
@@ -653,7 +662,8 @@ local function slideInAndRestore()
 				end
 				entry.inst.Position = entry.slidePos
 				entry.inst.Visible = true
-				playTween(entry.inst, SLIDE_IN, { Position = entry.basePos })
+				local info = if restoreFlourish then SLIDE_IN_FLOURISH else SLIDE_IN
+				playTween(entry.inst, info, { Position = entry.basePos })
 			end)
 		elseif entry.inst.Parent then
 			entry.inst.Position = entry.basePos
@@ -668,11 +678,13 @@ local function slideInAndRestore()
 		restoreScreenGuis()
 	end)
 
-	local totalIn = SLIDE_IN.Time + waveDelay(count, count) + 0.04
+	local info = if restoreFlourish then SLIDE_IN_FLOURISH else SLIDE_IN
+	local totalIn = info.Time + waveDelay(count, count) + 0.06
 	task.delay(totalIn, function()
 		if gen ~= animGen or hideCount > 0 then
 			return
 		end
+		restoreFlourish = false
 		finishRestoreCleanup()
 	end)
 end
@@ -738,11 +750,13 @@ function M.show(opts: ShowOpts?)
 	end
 	hideCount -= 1
 	if hideCount == 0 then
+		restoreFlourish = opts ~= nil and opts.flourish == true
 		if muffleHeld then
 			GameplayMusicMuffle.pop()
 			muffleHeld = false
 		end
 		if opts and opts.instant then
+			restoreFlourish = false
 			instantRestore()
 		else
 			slideInAndRestore()
@@ -761,6 +775,10 @@ end
 
 function M.isHidden(): boolean
 	return hideCount > 0
+end
+
+function M.allowsToolbar(): boolean
+	return keepSideChildNames.Toolbar == true
 end
 
 function M.onRestored(callback: () -> ())

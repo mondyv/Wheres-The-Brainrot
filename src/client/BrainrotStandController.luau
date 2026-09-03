@@ -12,6 +12,7 @@
 --]]
 
 local CollectionService = game:GetService("CollectionService")
+local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -34,6 +35,7 @@ local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild(
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local MobileHaptics = require(script.Parent.MobileHaptics)
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
+local GamepadInput = require(script.Parent.GamepadInput)
 
 local STAND_TAG = "BrainrotStand"
 local STAND_ACCUMULATED_ATTR = "StandAccumulatedCash"
@@ -510,6 +512,9 @@ local standPlacePromptConns: { [Model]: { RBXScriptConnection } } = {}
 local charPlacePromptConns: { RBXScriptConnection } = {}
 local promptRefreshAccum = 0
 local lastHRPPosition: Vector3? = nil
+local closestUpgradeStand: Model? = nil
+local UPGRADE_PAD_RANGE = 14
+local STAND_UPGRADE_PAD_ACTION = "StandUpgradeGamepadA"
 local cachedTaggedStands: { Model } = {}
 local cachedPlotMatch: { [Model]: boolean } = {}
 
@@ -732,6 +737,55 @@ local function unregisterTaggedStand(stand: Model)
 end
 
 -- Only one stand prompt visible at a time (closest). Hide pick-up while holding a brainrot.
+local function updateClosestUpgradeStand(hrpPos: Vector3)
+	local best: Model? = nil
+	local bestDist = UPGRADE_PAD_RANGE
+	for _, stand in ipairs(cachedTaggedStands) do
+		if not cachedPlotMatch[stand] then
+			continue
+		end
+		if stand:GetAttribute("BrainrotStandLocked") == true then
+			continue
+		end
+		if not standHasBrainrot(stand) then
+			continue
+		end
+		local level = stand:GetAttribute("BrainrotLevel")
+		if typeof(level) == "number" and math.floor(level) >= BRAINROT_MAX_LEVEL then
+			continue
+		end
+		local okPivot, pivot = pcall(function()
+			return stand:GetPivot()
+		end)
+		if not okPivot or typeof(pivot) ~= "CFrame" then
+			continue
+		end
+		local d = ((pivot :: CFrame).Position - hrpPos).Magnitude
+		if d < bestDist then
+			bestDist = d
+			best = stand
+		end
+	end
+	closestUpgradeStand = best
+end
+
+local function fireClosestStandUpgrade()
+	local stand = closestUpgradeStand
+	if not stand or not stand.Parent then
+		return false
+	end
+	local now = os.clock()
+	if (lastUpgradeRequestAt[stand] or 0) + UPGRADE_REQUEST_COOLDOWN > now then
+		return false
+	end
+	lastUpgradeRequestAt[stand] = now
+	if upgradeRE then
+		upgradeRE:FireServer(stand)
+		return true
+	end
+	return false
+end
+
 local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -740,6 +794,7 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 	end
 	local hrpPos = hrp.Position
 	if not forceRefresh and lastHRPPosition and (hrpPos - lastHRPPosition).Magnitude < PROMPT_MOVE_SKIP_THRESHOLD then
+		updateClosestUpgradeStand(hrpPos)
 		return
 	end
 	local holdingTool = canShowPlaceBrainrotPrompt()
@@ -865,6 +920,7 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 	end
 
 	lastHRPPosition = hrpPos
+	updateClosestUpgradeStand(hrpPos)
 end
 
 local function bumpPromptRefreshFromMovement()
@@ -1279,6 +1335,7 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 	if clickable:GetAttribute("__UpgradeWired") == true then
 		ensureSurfaceGuiInputChain(clickable)
 		passthroughUpgradePanelClicks(upgradeFrame :: GuiObject, clickable)
+		GamepadInput.mountHint(clickable, GamepadInput.ACCEPT, true, { contrast = true })
 		return clickable
 	end
 	clickable:SetAttribute("__UpgradeWired", true)
@@ -1380,6 +1437,7 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 	end
 
 	bindUpgradeClick(clickable, tryFireUpgrade)
+	GamepadInput.mountHint(clickable, GamepadInput.ACCEPT, true, { contrast = true })
 	return clickable
 end
 
@@ -1910,6 +1968,26 @@ function M.init()
 		warn("[BrainrotStandController] stand remotes missing after wait; init aborted")
 		return
 	end
+
+	ContextActionService:BindActionAtPriority(STAND_UPGRADE_PAD_ACTION, function(_, state)
+		if state ~= Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Pass
+		end
+		if not GamepadInput.isPreferred() then
+			return Enum.ContextActionResult.Pass
+		end
+		if not closestUpgradeStand or not closestUpgradeStand.Parent then
+			return Enum.ContextActionResult.Pass
+		end
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum then
+			hum.Jump = false
+		end
+		if fireClosestStandUpgrade() then
+			return Enum.ContextActionResult.Sink
+		end
+		return Enum.ContextActionResult.Pass
+	end, false, Enum.ContextActionPriority.High.Value + 15, GamepadInput.ACCEPT)
 
 	upgradeFeedbackRE.OnClientEvent:Connect(function(ok: boolean, reason: string)
 		if ok then

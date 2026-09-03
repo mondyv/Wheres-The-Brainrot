@@ -417,6 +417,7 @@ local function forceToolIntoHand(tool: Tool)
 			hum:UnequipTools()
 		end
 	end
+	tool.CanBeDropped = false
 	tool.Parent = char
 	if tool.Parent == char then
 		return
@@ -1155,41 +1156,13 @@ end
 	end
 
 	local function syncToolbarGamepadCursor()
-		local want = GamepadInput.isPreferred()
-			and canUseToolbar
-			and HUDController.isPanelOpen() ~= true
-			and (isBackpackPanelOpen or pendingToolbarDrag ~= nil or activeToolbarDrag)
-		if not want then
-			if gamepadCursorEnabled then
-				gamepadCursorEnabled = false
-				pcall(function()
-					GamepadService:DisableGamepadCursor()
-				end)
-			end
-			return
-		end
-		local host: GuiObject? = nil
-		if backpackFrameRef and backpackFrameRef:IsA("GuiObject") and guiObjectTreeVisible(backpackFrameRef) then
-			host = backpackFrameRef
-		elseif toolbar and toolbar:IsA("GuiObject") and guiObjectTreeVisible(toolbar) then
-			host = toolbar
-		end
-		if not host then
-			if gamepadCursorEnabled then
-				gamepadCursorEnabled = false
-				pcall(function()
-					GamepadService:DisableGamepadCursor()
-				end)
-			end
-			return
-		end
-		gamepadCursorEnabled = true
-		local ok, err = pcall(function()
-			GamepadService:EnableGamepadCursor(host)
-		end)
-		if not ok then
-			warn("[ToolbarController] gamepad cursor sync failed:", err)
+		-- Console backpack uses D-pad + A, not the virtual cursor (cursor-picking
+		-- also fights jump / swing on the same face button).
+		if gamepadCursorEnabled then
 			gamepadCursorEnabled = false
+			pcall(function()
+				GamepadService:DisableGamepadCursor()
+			end)
 		end
 	end
 
@@ -2243,6 +2216,22 @@ end
 			sc.Scale = BACKPACK_OPEN_START_SCALE
 			ensureBackpackChromeVisible(f)
 			scrollBackpackToTop(f)
+			if GamepadInput.isPreferred() then
+				local firstParked: number? = nil
+				for _, idx in ipairs(backpackDisplayOrder) do
+					if brainrotEntries[idx] and (brainrotParkedInUI[idx] == true or hotbarSlotForBrainrotIndex(idx) == nil) then
+						firstParked = idx
+						break
+					end
+				end
+				if firstParked then
+					uiBackpackListHighlight = firstParked
+					uiBackpackExtraHighlight = nil
+					if typeof(syncBackpackSelectionStrokes) == "function" then
+						syncBackpackSelectionStrokes()
+					end
+				end
+			end
 			syncToolbarGamepadCursor()
 			task.defer(function()
 				if not isBackpackPanelOpen or backpackFrameRef ~= f then
@@ -4037,8 +4026,6 @@ end
 						return
 					end
 					if GamepadInput.isPreferred() then
-						requestEquipFromBackpack(listIdx)
-						dragSuppressedToolbarClick = true
 						return
 					end
 					BrainrotItemTooltip.hide(true)
@@ -4060,16 +4047,8 @@ end
 					if input.UserInputType ~= Enum.UserInputType.Gamepad1 or input.KeyCode ~= GamepadInput.ACCEPT then
 						return
 					end
-					if not canUseToolbar or pendingToolbarDrag then
-						return
-					end
-					local listIdx = listIndexForBackpackUiRow(uiRow)
-					local entry = brainrotEntryForBackpackSlot(uiRow)
-					if not listIdx or not entry then
-						return
-					end
-					requestEquipFromBackpack(listIdx)
-					dragSuppressedToolbarClick = true
+					-- Console A is handled by ToolbarBackpackAccept (no cursor pick).
+					return
 				end)
 
 				btn.InputBegan:Connect(function(input)
@@ -4463,6 +4442,12 @@ end
 		end
 		if not hotbarSlotHasSelectableContent(index) then
 			return
+		end
+		if GamepadInput.isPreferred() then
+			local humPad = getHumanoid()
+			if humPad then
+				humPad.Jump = false
+			end
 		end
 
 		local brainrotIdx = brainrotIndexForHotbarSlot(index)
@@ -5204,9 +5189,6 @@ end
 						return
 					end
 					if GamepadInput.isPreferred() then
-						if gamepadTuckHotbarSlot(i) then
-							dragSuppressedToolbarClick = true
-						end
 						return
 					end
 					beginHotbarPendingDrag(UserInputService:GetMouseLocation())
@@ -5215,12 +5197,7 @@ end
 					if input.UserInputType ~= Enum.UserInputType.Gamepad1 or input.KeyCode ~= GamepadInput.ACCEPT then
 						return
 					end
-					if not canUseToolbar then
-						return
-					end
-					if gamepadTuckHotbarSlot(i) then
-						dragSuppressedToolbarClick = true
-					end
+					return
 				end)
 
 				-- Mobile: remember the press so a tap selects. Drag only starts after the finger moves.
@@ -5421,7 +5398,7 @@ end
 				backpackGuiFrame = bf
 				backpackFrameRef = bf
 				backpackRestPosition = bf.Position
-				GamepadInput.mountHint(bf, GamepadInput.INTERACT, false, { contrast = true })
+				GamepadInput.mountHint(bf, GamepadInput.ACCEPT, false, { contrast = true })
 				prepareBackpackPanelLayer(bf, false)
 				ensureBackpackFrameOutline(bf)
 				ensureBackpackFadeRoot(bf)
@@ -5495,7 +5472,7 @@ end
 				return Enum.ContextActionResult.Sink
 			end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.Backquote, GamepadInput.SECONDARY)
 
-			ContextActionService:BindActionAtPriority("ToolbarBackpackEquipX", function(_, state)
+			ContextActionService:BindActionAtPriority("ToolbarBackpackAccept", function(_, state)
 				if state ~= Enum.UserInputState.Begin then
 					return Enum.ContextActionResult.Pass
 				end
@@ -5508,20 +5485,83 @@ end
 				if not canUseToolbar or not isBackpackPanelOpen then
 					return Enum.ContextActionResult.Pass
 				end
-				local screen = GamepadInput.cursorScreenPosition()
-				local window = dtScreenPointWithGuiInset(screen)
-				local row = dtBackpackRowIndexFromDropProbes(screen, window, nil)
-				if row then
-					requestEquipFromBackpack(row)
-					return Enum.ContextActionResult.Sink
+				local hum = getHumanoid()
+				if hum then
+					hum.Jump = false
 				end
-				local slot = dtHotbarSlotIndexFromDropProbes(window, screen, nil)
-				if slot then
-					selectSlot(slot, true)
+				if uiHotbarHighlight and hotbarSlotHasSelectableContent(uiHotbarHighlight) and uiBackpackListHighlight == nil then
+					if gamepadTuckHotbarSlot(uiHotbarHighlight) then
+						return Enum.ContextActionResult.Sink
+					end
+				end
+				local listIdx = uiBackpackListHighlight
+				if not listIdx then
+					for _, idx in ipairs(backpackDisplayOrder) do
+						if brainrotEntries[idx] and (brainrotParkedInUI[idx] == true or hotbarSlotForBrainrotIndex(idx) == nil) then
+							listIdx = idx
+							break
+						end
+					end
+				end
+				if listIdx and brainrotEntries[listIdx] then
+					local slot = firstEmptyHotbarSlot(uiHotbarHighlight)
+					if not slot then
+						slot = uiHotbarHighlight
+					end
+					if not slot then
+						slot = 1
+					end
+					optimisticBrainrotMoveToHotbar(listIdx, slot)
+					fireBrainrotPark(listIdx, false, slot)
+					uiBackpackListHighlight = nil
+					UIInteractionSounds.playClick()
 					return Enum.ContextActionResult.Sink
 				end
 				return Enum.ContextActionResult.Pass
-			end, false, Enum.ContextActionPriority.High.Value + 20, GamepadInput.INTERACT)
+			end, false, Enum.ContextActionPriority.High.Value + 40, GamepadInput.ACCEPT)
+
+			ContextActionService:BindActionAtPriority("ToolbarBackpackDPadNav", function(_, state, input)
+				if state ~= Enum.UserInputState.Begin then
+					return Enum.ContextActionResult.Pass
+				end
+				if not GamepadInput.isPreferred() or not canUseToolbar or not isBackpackPanelOpen then
+					return Enum.ContextActionResult.Pass
+				end
+				if HUDController.isPanelOpen() then
+					return Enum.ContextActionResult.Pass
+				end
+				if input.KeyCode ~= Enum.KeyCode.DPadUp and input.KeyCode ~= Enum.KeyCode.DPadDown then
+					return Enum.ContextActionResult.Pass
+				end
+				local parked: { number } = {}
+				for _, idx in ipairs(backpackDisplayOrder) do
+					if brainrotEntries[idx] and (brainrotParkedInUI[idx] == true or hotbarSlotForBrainrotIndex(idx) == nil) then
+						table.insert(parked, idx)
+					end
+				end
+				if #parked == 0 then
+					return Enum.ContextActionResult.Sink
+				end
+				local cur = 1
+				for i, idx in ipairs(parked) do
+					if idx == uiBackpackListHighlight then
+						cur = i
+						break
+					end
+				end
+				local delta = if input.KeyCode == Enum.KeyCode.DPadDown then 1 else -1
+				cur = ((cur - 1 + delta) % #parked) + 1
+				uiBackpackListHighlight = parked[cur]
+				uiBackpackExtraHighlight = nil
+				uiHotbarHighlight = nil
+				_activeSlot = nil
+				syncAllHotbarSelectionStrokes()
+				if typeof(syncBackpackSelectionStrokes) == "function" then
+					syncBackpackSelectionStrokes()
+				end
+				UIInteractionSounds.playHover()
+				return Enum.ContextActionResult.Sink
+			end, false, Enum.ContextActionPriority.High.Value + 30, Enum.KeyCode.DPadUp, Enum.KeyCode.DPadDown)
 
 			GamepadInput.onPreferredChanged(function()
 				syncToolbarGamepadCursor()

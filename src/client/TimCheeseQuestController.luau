@@ -1654,7 +1654,7 @@ placeArrowParked = function()
 	end
 	questArrowBtn.Position = UDim2.new(1, -QUEST_ARROW_EDGE_PAD, 0, y)
 	questArrowBtn.Size = UDim2.fromOffset(COLLAPSE_ARROW_SIZE, COLLAPSE_ARROW_SIZE)
-	questArrowBtn.Rotation = 180
+	questArrowBtn.Rotation = 0
 	questArrowBtn.ZIndex = 200
 	questArrowBtn.Visible = canShowQuestChrome()
 end
@@ -1759,7 +1759,6 @@ toggleQuestHudCollapsed = function()
 			local parked = UDim2.new(1, -QUEST_ARROW_EDGE_PAD, 0, parkedY)
 			local arrowTw = TweenService:Create(arrow, QUEST_EDGE_SLIDE, {
 				Position = parked,
-				Rotation = 180,
 			})
 			questArrowTween = arrowTw
 			arrowTw:Play()
@@ -1813,10 +1812,7 @@ toggleQuestHudCollapsed = function()
 		placeArrowOnTicket()
 		if arrow then
 			arrow.Visible = true
-			arrow.Rotation = 180
-			local arrowTw = TweenService:Create(arrow, QUEST_EDGE_SLIDE, { Rotation = 0 })
-			questArrowTween = arrowTw
-			arrowTw:Play()
+			arrow.Rotation = 0
 		end
 		local tw = TweenService:Create(panel, QUEST_EDGE_SLIDE, { Position = goal })
 		questCollapseTween = tw
@@ -2548,9 +2544,8 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 		local slideInfo = TweenInfo.new(0.48, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 		if questArrowBtn then
 			questArrowBtn.Visible = true
-			questArrowBtn.Rotation = 180
+			questArrowBtn.Rotation = 0
 			placeArrowOnTicket()
-			TweenService:Create(questArrowBtn, slideInfo, { Rotation = 0 }):Play()
 		end
 		local tw = TweenService:Create(panel, slideInfo, { Position = goal })
 		tw.Completed:Connect(function(playbackState)

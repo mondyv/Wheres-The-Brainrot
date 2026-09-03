@@ -748,9 +748,13 @@ local function startCinematicCamera(token: number, lookAt: Vector3)
 
 		local shake = Vector3.zero
 		if camShakeAmp > 0.001 then
-			local t = phase * 18
+			local t = phase
 			local amp = camShakeAmp
-			shake = Vector3.new(math.sin(t * 1.05) * amp, math.cos(t * 0.82) * amp * 0.45, math.sin(t * 0.7) * amp * 0.35)
+			shake = Vector3.new(
+				(math.sin(t * 23.1) + math.sin(t * 41.7) * 0.45) * amp,
+				(math.cos(t * 19.4) + math.sin(t * 53.2) * 0.35) * amp * 0.55,
+				(math.sin(t * 17.8) + math.cos(t * 29.6) * 0.4) * amp * 0.4
+			)
 		end
 
 		local goal = CFrame.lookAt(shotFrom + shake, shotLook)
@@ -853,14 +857,16 @@ local function animateGroundShake(model: Model, durationSec: number, token: numb
 		end
 		local elapsed = os.clock() - t0
 		local frac = math.clamp(elapsed / durationSec, 0, 1)
-		local amp = 0.04 + frac * 0.16
-		camShakeAmp = 0.035 + frac * 0.09
-		local t = elapsed * math.pi * 2 * 3.2
-		local jx = math.sin(t * 1.07) * amp
-		local jz = math.cos(t * 0.91) * amp * 0.7
-		local jy = math.abs(math.sin(t * 1.35)) * amp * 0.18
-		local tilt = math.sin(t) * math.rad(2.5 + frac * 3.5)
-		model:PivotTo(baseCf * CFrame.new(jx, jy, jz) * CFrame.Angles(tilt * 0.4, 0, -tilt * 0.25))
+		local amp = 0.07 + frac * 0.28
+		camShakeAmp = 0.05 + frac * 0.16
+		local t = elapsed * math.pi * 2
+		local jx = math.sin(t * 7.3) * amp + math.sin(t * 13.1) * amp * 0.35
+		local jz = math.cos(t * 6.1) * amp * 0.85 + math.sin(t * 11.4) * amp * 0.28
+		local jy = math.abs(math.sin(t * 9.2)) * amp * 0.32
+		local tilt = math.sin(t * 5.4) * math.rad(5 + frac * 8)
+		local roll = math.cos(t * 4.7) * math.rad(4 + frac * 6)
+		local yaw = math.sin(t * 3.3) * math.rad(6 + frac * 4)
+		model:PivotTo(baseCf * CFrame.new(jx, jy, jz) * CFrame.Angles(tilt, yaw, roll))
 		if elapsed >= durationSec then
 			model:PivotTo(baseCf)
 			camShakeAmp = 0
@@ -975,8 +981,8 @@ local function animateRevealMotion(model: Model, token: number)
 	local hopAt = emergeSec + hoverSec
 	local settleAt = hopAt + hopSec
 	local total = settleAt + settleSec
-	local bobHz = 2.15
-	local bobAmp = 0.16
+	local bobHz = 3.35
+	local bobAmp = 0.38
 
 	local primary = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
 	if primary then
@@ -1005,16 +1011,18 @@ local function animateRevealMotion(model: Model, token: number)
 		end
 		local elapsed = os.clock() - t0
 		local pos: Vector3
-		local spin = CFrame.Angles(0, elapsed * 0.4, 0)
+		local wag = math.sin(elapsed * 6.8) * 0.18
+		local nod = math.sin(elapsed * 5.1) * 0.12
+		local spin = CFrame.Angles(nod, elapsed * 1.15 + math.sin(elapsed * 2.4) * 0.35, wag)
 
 		if elapsed < emergeSec then
 			local a = smootherstep(elapsed / emergeSec)
 			pos = startPos:Lerp(hoverHome, a)
-			pos += Vector3.new(0, bobY(elapsed) * a, 0)
+			pos += Vector3.new(math.sin(elapsed * 7.2) * 0.12 * a, bobY(elapsed) * a, math.cos(elapsed * 5.6) * 0.1 * a)
 			camPull = pull0 + (1.16 - pull0) * a
 			camFovGoal = fov0 + (56 - fov0) * a
 		elseif elapsed < hopAt then
-			pos = hoverHome + Vector3.new(0, bobY(elapsed), 0)
+			pos = hoverHome + Vector3.new(math.sin(elapsed * 7.2) * 0.14, bobY(elapsed), math.cos(elapsed * 5.6) * 0.12)
 			camPull = 1.16
 			camFovGoal = 56
 		elseif elapsed < settleAt then
@@ -1034,7 +1042,7 @@ local function animateRevealMotion(model: Model, token: number)
 			local h10 = a3 - 2 * a2 + a
 			local h01 = -2 * a3 + 3 * a2
 			pos = p0 * h00 + (hopVel * hopSec) * h10 + p1 * h01
-			pos += Vector3.new(0, 16 * 2.15 * a2 * (1 - a) * (1 - a), 0)
+			pos += Vector3.new(0, 22 * a2 * (1 - a) * (1 - a) * 2.8, 0)
 			camPull = 1.16 - a * 0.04
 			camFovGoal = 56 + a * 4
 			if a > 0.9 and not hopLanded then
@@ -1238,10 +1246,12 @@ local function runCutscene(payload: any)
 				return
 			end
 			local alpha = math.clamp((os.clock() - t0) / dropSec, 0, 1)
-			local eased = alpha * alpha
+			local eased = alpha * alpha * (3 - 2 * alpha)
 			local mid = startDrop:Lerp(groundCf, eased)
-			local bounce = math.sin(alpha * math.pi) * 1.15 * (1 - alpha)
-			dropModel:PivotTo(mid * CFrame.new(0, bounce, 0))
+			local bounce = math.sin(alpha * math.pi) * 2.35 * (1 - alpha * 0.35)
+			local wiggle = math.sin(alpha * math.pi * 5) * (1 - alpha) * 0.22
+			local spin = CFrame.Angles(wiggle * 0.35, alpha * 1.15, -wiggle)
+			dropModel:PivotTo(mid * CFrame.new(0, bounce, 0) * spin)
 			local primary = dropModel.PrimaryPart or dropModel:FindFirstChildWhichIsA("BasePart", true)
 			if primary then
 				focusPart = primary

@@ -178,7 +178,7 @@ M.POWER_EDITED_ATTR = "PowerEdited"
 M.WORKOUT_ACTIVE_ATTR = "WorkoutActive"
 M.WORKOUT_LIFT_MULT_MAX = 3
 -- Combo count where lift first hits the cap.
-M.WORKOUT_LIFT_COMBO_FOR_MAX = 25
+M.WORKOUT_LIFT_COMBO_FOR_MAX = 16
 
 function M.workoutLiftMultiplier(combo: number): number
 	local c = math.max(1, math.floor(combo))

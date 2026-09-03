@@ -355,7 +355,7 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 		local prev = lastWorkoutGainAt[player.UserId] or 0
 		local combo = comboOf(player)
 		local lift = GearConfig.workoutLiftMultiplier(combo)
-		local cooldown = WORKOUT_GAIN_COOLDOWN / (0.82 + 0.18 * lift)
+		local cooldown = WORKOUT_GAIN_COOLDOWN / (0.72 + 0.32 * lift)
 		if now - prev < cooldown then
 			return false
 		end
@@ -399,7 +399,7 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 		local now = os.clock()
 		local combo = comboOf(player)
 		local lift = GearConfig.workoutLiftMultiplier(combo)
-		local cooldown = WORKOUT_GAIN_COOLDOWN / (0.82 + 0.18 * lift)
+		local cooldown = WORKOUT_GAIN_COOLDOWN / (0.72 + 0.32 * lift)
 		if now - session.lastTick < cooldown then
 			return
 		end

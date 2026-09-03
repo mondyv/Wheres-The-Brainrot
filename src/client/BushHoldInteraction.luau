@@ -1065,7 +1065,7 @@ function BushHoldInteraction.init()
 			local token = bushSearchHoldToken
 			local holdPrompt = prompt
 
-			ProximityPromptEffects.beginManagedBushHold(holdPrompt)
+			ProximityPromptEffects.beginManagedBushHold(holdPrompt, true)
 			-- Tim intro (and similar) can abort the hold before it starts — clear phantom hold
 			-- so later searches aren't stuck waiting on a dead token / locked UI.
 			if not ProximityPromptEffects.isBushSearchActive() then

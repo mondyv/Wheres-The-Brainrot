@@ -58,6 +58,7 @@ export type StepId =
 	| "claimBrainrot"
 	| "goToBase"
 	| "placeOnPlot"
+	| "upgradeBrainrot"
 	| "visitUpgrade"
 	| "buyPower"
 	| "useWorkout"
@@ -109,6 +110,13 @@ M.STEPS = {
 		speak = "PUT IT DOWN ON A STAND!!",
 		controllerText = "Stand near a plot and press X / □ to place",
 		controllerSpeak = "PRESS X TO PLACE ON A STAND!!",
+	},
+	{
+		id = "upgradeBrainrot",
+		text = "Upgrade your brainrot on the stand",
+		speak = "TAP UPGRADE ON YOUR STAND!!",
+		controllerText = "Stand close and press A / ✕ on Upgrade",
+		controllerSpeak = "PRESS A TO UPGRADE YOUR STAND!!",
 	},
 	{
 		id = "visitUpgrade",

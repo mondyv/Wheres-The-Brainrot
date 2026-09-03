@@ -140,6 +140,7 @@ function M.mountHint(host: GuiObject, keyCode: Enum.KeyCode, centered: boolean?,
 		end
 		label.ZIndex = math.max(host.ZIndex + 3, 7)
 		label.ScaleType = Enum.ScaleType.Fit
+		label.ClipsDescendants = false
 		label.Visible = false
 		label.Parent = host
 		hint = label
@@ -149,25 +150,57 @@ function M.mountHint(host: GuiObject, keyCode: Enum.KeyCode, centered: boolean?,
 		hint.Size = UDim2.fromOffset(26, 26)
 	end
 	hint.ImageColor3 = imageColor
+	local staleChild = hint:FindFirstChild("GamepadHotkeyBadge")
+	if staleChild then
+		staleChild:Destroy()
+	end
+
+	local function shadowPos(): UDim2
+		return UDim2.new(
+			hint.Position.X.Scale,
+			hint.Position.X.Offset + 2,
+			hint.Position.Y.Scale,
+			hint.Position.Y.Offset + 3
+		)
+	end
+	local function shadowSize(): UDim2
+		local w = hint.Size.X.Offset
+		local h = hint.Size.Y.Offset
+		if w <= 0 then
+			w = 22
+		end
+		if h <= 0 then
+			h = 22
+		end
+		return UDim2.fromOffset(w + 6, h + 6)
+	end
 
 	local badge = host:FindFirstChild("GamepadHotkeyBadge")
 	if contrast then
 		if not (badge and badge:IsA("Frame")) then
 			local frame = Instance.new("Frame")
 			frame.Name = "GamepadHotkeyBadge"
-			frame.BackgroundColor3 = Color3.fromRGB(18, 14, 24)
-			frame.BackgroundTransparency = 0.08
+			frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+			frame.BackgroundTransparency = 0.58
 			frame.BorderSizePixel = 0
 			frame.AnchorPoint = hint.AnchorPoint
-			frame.Position = hint.Position
-			frame.Size = UDim2.fromOffset(hint.Size.X.Offset + 8, hint.Size.Y.Offset + 8)
-			frame.ZIndex = math.max(host.ZIndex + 2, 6)
+			frame.Position = shadowPos()
+			frame.Size = shadowSize()
+			frame.ZIndex = math.max(hint.ZIndex - 1, 1)
 			frame.Visible = false
 			local corner = Instance.new("UICorner")
 			corner.CornerRadius = UDim.new(1, 0)
 			corner.Parent = frame
 			frame.Parent = host
 			badge = frame
+		end
+		if badge and badge:IsA("Frame") then
+			badge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+			badge.BackgroundTransparency = 0.58
+			badge.AnchorPoint = hint.AnchorPoint
+			badge.Position = shadowPos()
+			badge.Size = shadowSize()
+			badge.ZIndex = math.max(hint.ZIndex - 1, 1)
 		end
 	end
 
@@ -202,7 +235,9 @@ function M.mountHint(host: GuiObject, keyCode: Enum.KeyCode, centered: boolean?,
 		if badge and badge:IsA("GuiObject") then
 			badge.Visible = show and contrast
 			badge.AnchorPoint = hint.AnchorPoint
-			badge.Position = hint.Position
+			badge.Position = shadowPos()
+			badge.Size = shadowSize()
+			badge.ZIndex = math.max(hint.ZIndex - 1, 1)
 		end
 	end
 	refresh()
@@ -211,6 +246,20 @@ function M.mountHint(host: GuiObject, keyCode: Enum.KeyCode, centered: boolean?,
 		M.onPreferredChanged(function()
 			refresh()
 		end)
+	end
+end
+
+function M.clearHint(host: GuiObject)
+	host:SetAttribute("_GamepadHotkeyWired", nil)
+	for _, name in { "GamepadHotkey", "GamepadHotkeyBadge", "GamepadHotkeyText" } do
+		local inst = host:FindFirstChild(name)
+		if inst then
+			inst:Destroy()
+		end
+	end
+	local nested = host:FindFirstChild("GamepadHotkey")
+	if nested then
+		nested:Destroy()
 	end
 end
 

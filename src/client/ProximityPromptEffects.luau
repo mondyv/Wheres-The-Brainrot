@@ -81,6 +81,7 @@ local bushHoldCompleteHandler: ((ProximityPrompt) -> ())? = nil
 local bushHoldBeganHandler: ((ProximityPrompt) -> boolean?)? = nil
 local bushHoldCompleteHooks: { (ProximityPrompt, () -> ()) -> boolean } = {}
 local managedBushHoldActive: ProximityPrompt? = nil
+local managedBushHoldFromClient = false
 local directBushHoldPrompt: ProximityPrompt? = nil
 
 -- Post-harvest cooldown banner (clock + seconds) on the bush adornee
@@ -1654,14 +1655,16 @@ function ProximityPromptEffects.isBushSearchActive(): boolean
 end
 
 -- Client-owned bush hold (works while a hotbar brainrot Tool is equipped; engine InputHoldBegin often does not).
-function ProximityPromptEffects.beginManagedBushHold(prompt: ProximityPrompt)
+function ProximityPromptEffects.beginManagedBushHold(prompt: ProximityPrompt, fromClient: boolean?)
 	if not isManagedBushPrompt(prompt) or CarryGate.isFull() or not prompt.Enabled then
 		return
 	end
 	if managedBushHoldActive and managedBushHoldActive.Parent == nil then
 		managedBushHoldActive = nil
+		managedBushHoldFromClient = false
 	end
 	if managedBushHoldActive == prompt then
+		managedBushHoldFromClient = managedBushHoldFromClient or fromClient == true
 		return
 	end
 	if
@@ -1681,6 +1684,7 @@ function ProximityPromptEffects.beginManagedBushHold(prompt: ProximityPrompt)
 		end
 	end
 	managedBushHoldActive = prompt
+	managedBushHoldFromClient = fromClient == true
 	activeBushSearchPrompt = prompt
 	if not bushSharedView or not bushSharedView.billboard.Enabled then
 		ProximityPromptEffects.showBushSearchFor(prompt)
@@ -1699,6 +1703,7 @@ function ProximityPromptEffects.endManagedBushHold(prompt: ProximityPrompt, comp
 		return
 	end
 	managedBushHoldActive = nil
+	managedBushHoldFromClient = false
 	if directBushHoldPrompt == prompt then
 		directBushHoldPrompt = nil
 	end
@@ -2763,6 +2768,11 @@ local function onHoldEnded(prompt: ProximityPrompt, triggerPlayer: Player)
 		return
 	end
 	if isManagedBushPrompt(prompt) then
+		-- Walking out of engine range ends the engine hold, but client CAS still owns
+		-- the search — keep wobble/SFX running until the player actually releases.
+		if managedBushHoldFromClient and managedBushHoldActive == prompt then
+			return
+		end
 		ProximityPromptEffects.endManagedBushHold(prompt, false)
 		return
 	end
@@ -2785,6 +2795,7 @@ local function onPromptTriggered(prompt: ProximityPrompt, triggerPlayer: Player)
 	end
 	if isManagedBushPrompt(prompt) then
 		managedBushHoldActive = nil
+		managedBushHoldFromClient = false
 		if directBushHoldPrompt == prompt then
 			directBushHoldPrompt = nil
 		end

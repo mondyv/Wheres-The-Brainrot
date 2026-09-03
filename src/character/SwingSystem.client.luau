@@ -2,6 +2,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
+local ContextActionService = game:GetService("ContextActionService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
@@ -5567,8 +5568,19 @@ local function boot(character)
 		end
 
 		if isSwingInputBlocked() or processed then
-			st.spaceHeld = false
-			st.gamepadHeld = false
+			if
+				processed
+				and input.UserInputType == Enum.UserInputType.Gamepad1
+				and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
+				and st.scannedVisualCanSwing
+			then
+				st.gamepadHeld = true
+				st.humanoid.Jump = false
+				st.tryAttach()
+			else
+				st.spaceHeld = false
+				st.gamepadHeld = false
+			end
 			return
 		end
 
@@ -5710,6 +5722,11 @@ local function boot(character)
 			return
 		elseif st.isAirborneForSwing() then
 			st.humanoid.Jump = false
+		elseif st.gamepadHeld or UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1 then
+			-- Console A is jump+swing. Never hop when a vine was in the last scan.
+			if st.scannedVisualCanSwing or st.scannedVisualTarget or now < st.swingPressIntentUntil then
+				st.humanoid.Jump = false
+			end
 		end
 
 		st.stopTrack(st.landedTrack, 0.08)
@@ -5722,6 +5739,56 @@ local function boot(character)
 			st.tryAttach()
 		end
 	end))
+
+	ContextActionService:BindActionAtPriority(
+		"SwingSystemGamepadA",
+		function(_, state)
+			if state ~= Enum.UserInputState.Begin then
+				return Enum.ContextActionResult.Pass
+			end
+			if isSwingInputBlocked() then
+				return Enum.ContextActionResult.Pass
+			end
+			if st.isWebTrapped() then
+				return Enum.ContextActionResult.Pass
+			end
+			if not st.humanoid then
+				return Enum.ContextActionResult.Pass
+			end
+			local canLatch = st.scannedVisualCanSwing == true
+			if not canLatch and st.highlightedTarget then
+				canLatch = true
+			end
+			if not canLatch then
+				local maxDistance, lookDot, screenLimit = st.getSwingPressAttachLimits()
+				canLatch = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit) ~= nil
+			end
+			if not canLatch then
+				return Enum.ContextActionResult.Pass
+			end
+			st.noteJumpPressed()
+			if not st.isHoldToSwingMode() and st.isSwinging then
+				st.tryReleaseSwingFromJump()
+				return Enum.ContextActionResult.Sink
+			end
+			if st.isToggleAttachBlocked() then
+				st.gamepadHeld = true
+				return Enum.ContextActionResult.Sink
+			end
+			st.gamepadHeld = true
+			st.humanoid.Jump = false
+			if st.isGroundedForSwing() or st.hasFloorSupportForSwing() then
+				st.swingPressIntentUntil = os.clock() + 0.22
+			else
+				st.swingPressIntentUntil = -1e9
+			end
+			st.tryAttach()
+			return Enum.ContextActionResult.Sink
+		end,
+		false,
+		Enum.ContextActionPriority.High.Value + 8,
+		Enum.KeyCode.ButtonA
+	)
 
 	if C.PRE_SIMULATION_SIGNAL then
 		st.addConn(C.PRE_SIMULATION_SIGNAL:Connect(function(dt)
@@ -6592,6 +6659,9 @@ local function boot(character)
 	return function()
 		pcall(function()
 			RunService:UnbindFromRenderStep(st.renderBindName)
+		end)
+		pcall(function()
+			ContextActionService:UnbindAction("SwingSystemGamepadA")
 		end)
 		for _, conn in ipairs(st.conns) do
 			conn:Disconnect()

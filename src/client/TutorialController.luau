@@ -457,7 +457,7 @@ local function syncWorkoutGoalBar()
 	if on then
 		if not GameplayUiVisibility.isHidden() then
 			GameplayUiVisibility.hide({
-				keepSideChildNames = { "Toolbar" },
+				keepSideChildNames = { "Toolbar", "Counters" },
 				hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker", "LandActivityStripGui" },
 				keepScreenGuiNames = { "SwingTargetMarker", "WorkoutComboGui" },
 				skipMuffle = true,
@@ -475,7 +475,7 @@ local function syncWorkoutGoalBar()
 			end
 			for _, ch in counters:GetChildren() do
 				if ch:IsA("GuiObject") then
-					ch.Visible = ch.Name == "Power"
+					ch.Visible = true
 				end
 			end
 			local side = counters.Parent
@@ -1015,6 +1015,13 @@ local function clearUiPointerImpl()
 	if uiPointerStroke then
 		uiPointerStroke:Destroy()
 		uiPointerStroke = nil
+	end
+	if uiPointerHost then
+		GamepadInput.clearHint(uiPointerHost)
+		local hostParent = uiPointerHost.Parent
+		if hostParent and hostParent:IsA("GuiObject") then
+			GamepadInput.clearHint(hostParent)
+		end
 	end
 	if uiPointer then
 		uiPointer:Destroy()
@@ -3260,9 +3267,9 @@ function M.start(force: boolean?)
 	end
 	ensureGui()
 	GameplayUiVisibility.hide({
-		keepSideChildNames = { "Toolbar" },
+		keepSideChildNames = { "Toolbar", "Counters" },
 		hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker", "LandActivityStripGui" },
-		keepScreenGuiNames = { "SwingTargetMarker" },
+		keepScreenGuiNames = { "SwingTargetMarker", "WorkoutComboGui" },
 		skipMuffle = true,
 	})
 	startLayoutSync()

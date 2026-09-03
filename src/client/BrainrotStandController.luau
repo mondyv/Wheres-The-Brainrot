@@ -1144,7 +1144,7 @@ local function bindUpgradeClick(clickable: GuiButton, tryFireUpgrade: () -> ())
 			if input and MobileTouchGate.touchMovedTooFar(input) then
 				return
 			end
-			if not input and MobileTouchGate.wasLastTouchADrag() then
+			if not input and MobileTouchGate.anyActiveTouchIsDrag() then
 				return
 			end
 		end

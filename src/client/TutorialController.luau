@@ -101,6 +101,8 @@ local swingCoach = {
 	releaseHintShown = false,
 	greatJobShown = false,
 	goToBaseLite = false,
+	powerHudOn = false,
+	counterChildVis = {} :: { [GuiObject]: boolean },
 }
 local layoutConn: RBXScriptConnection? = nil
 local _panelStroke: UIStroke? = nil
@@ -141,7 +143,7 @@ local function currentStep(): TutorialConfig.StepDef?
 end
 
 local function isDialogueOrSpiderCutscene(): boolean
-	return StandDialogueCutscene.isActive() or GameplayCutsceneGate.isAmbushOrChaseActive()
+	return StandDialogueCutscene.isActive() or GameplayCutsceneGate.isSpiderEncounterActive()
 end
 
 local function isClaimCutscene(): boolean
@@ -450,6 +452,32 @@ local function viewportSize(): Vector2
 end
 
 local function syncWorkoutGoalBar()
+	local step = currentStep()
+	local on = active and step ~= nil and step.id == "useWorkout"
+	if on then
+		if not swingCoach.powerHudOn then
+			swingCoach.powerHudOn = true
+			local counters = GameplayUiVisibility.revealSideChild("Counters")
+			if counters then
+				table.clear(swingCoach.counterChildVis)
+				for _, ch in counters:GetChildren() do
+					if ch:IsA("GuiObject") then
+						swingCoach.counterChildVis[ch] = ch.Visible
+						ch.Visible = ch.Name == "Power"
+					end
+				end
+			end
+		end
+	elseif swingCoach.powerHudOn then
+		swingCoach.powerHudOn = false
+		for ch, vis in swingCoach.counterChildVis do
+			if ch.Parent then
+				ch.Visible = vis
+			end
+		end
+		table.clear(swingCoach.counterChildVis)
+		GameplayUiVisibility.reparkSideChild("Counters")
+	end
 	if not panel then
 		return
 	end
@@ -457,8 +485,6 @@ local function syncWorkoutGoalBar()
 	if not bar or not bar:IsA("Frame") then
 		return
 	end
-	local step = currentStep()
-	local on = active and step ~= nil and step.id == "useWorkout"
 	bar.Visible = on
 	if not on then
 		return
@@ -736,7 +762,7 @@ local function ensureGuideTrail(): boolean
 	beam.LightEmission = 0.65
 	beam.LightInfluence = 0
 	beam.Texture = TutorialConfig.GUIDE_BEAM_TEXTURE
-	beam.TextureLength = 6.5
+	beam.TextureLength = 8
 	beam.TextureMode = Enum.TextureMode.Wrap
 	beam.TextureSpeed = -1.85
 	beam.Width0 = TutorialConfig.GUIDE_BEAM_WIDTH0
@@ -748,6 +774,7 @@ local function ensureGuideTrail(): boolean
 		NumberSequenceKeypoint.new(0.85, 0.35),
 		NumberSequenceKeypoint.new(1, 1),
 	})
+	beam.Enabled = true
 	beam.Parent = folder
 
 	guideFolder = folder
@@ -769,15 +796,11 @@ local function setGuideTrailToPart(part: BasePart?, offset: Vector3?)
 	guideAdorneePart = part
 	guideGoalOffset = offset or Vector3.zero
 	local goal = guideGoalPart
-	local beam = guideBeam
-	if not goal or not beam then
-		return
+	if goal then
+		goal.CFrame = CFrame.new(worldPosForGuide(part, guideGoalOffset))
 	end
-	goal.CFrame = CFrame.new(worldPosForGuide(part, guideGoalOffset))
-
 	if guideFollowConn then
-		guideFollowConn:Disconnect()
-		guideFollowConn = nil
+		return
 	end
 	guideFollowConn = Svc.RunService.Heartbeat:Connect(function()
 		if not active or chromeSuppressed or not guideGoalPart or not guideBeam then
@@ -786,18 +809,17 @@ local function setGuideTrailToPart(part: BasePart?, offset: Vector3?)
 		local char = player.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
 		if not hrp or not hrp:IsA("BasePart") then
-			guideBeam.Enabled = false
 			return
 		end
 		local adornee = guideAdorneePart
 		if not adornee or not adornee.Parent then
-			guideBeam.Enabled = false
 			return
 		end
 		local targetPos = worldPosForGuide(adornee, guideGoalOffset)
 		guideGoalPart.CFrame = CFrame.new(targetPos)
-		local dist = (hrp.Position - targetPos).Magnitude
-		guideBeam.Enabled = dist >= TutorialConfig.GUIDE_BEAM_HIDE_DIST
+		local close = (hrp.Position - targetPos).Magnitude < TutorialConfig.GUIDE_BEAM_HIDE_DIST
+		guideBeam.Width0 = if close then 0.04 else TutorialConfig.GUIDE_BEAM_WIDTH0
+		guideBeam.Width1 = if close then 0.04 else TutorialConfig.GUIDE_BEAM_WIDTH1
 	end)
 end
 
@@ -1439,7 +1461,6 @@ local function arrowHeight(extra: number?): Vector3
 end
 
 local function pointAtWorld(adornee: Instance?, offset: Vector3?)
-	clearWorldArrow()
 	if chromeSuppressed or isCutsceneBusy() then
 		return
 	end
@@ -1457,6 +1478,23 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	end
 
 	local baseOffset = offset or arrowHeight()
+	local objectOffset = Vector3.new(0, math.max(part.Size.Y * 0.35, 2), 0)
+	if worldArrowBb and worldArrowBb.Parent and worldArrowBb.Adornee == part and worldArrowImg then
+		worldArrowBb.StudsOffset = baseOffset
+		setGuideTrailToPart(part, objectOffset)
+		return
+	end
+
+	if arrowAnimConn then
+		arrowAnimConn:Disconnect()
+		arrowAnimConn = nil
+	end
+	if worldArrowBb then
+		worldArrowBb:Destroy()
+		worldArrowBb = nil
+		worldArrowImg = nil
+	end
+
 	local arrowPx = if isMobileUi() then TutorialConfig.WORLD_ARROW_SIZE_MOBILE else TutorialConfig.WORLD_ARROW_SIZE
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "TutorialWorldArrow"
@@ -1544,32 +1582,38 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 
 	-- Prefer the Buy / Upgrade host so stroke + hand sit on the real clickable.
 	local attachHost = target
-	local buyAncestor = target:FindFirstAncestor("Buy")
-	if buyAncestor and buyAncestor:IsA("GuiObject") then
-		attachHost = buyAncestor
-	elseif target.Name == "Buy" and target:IsA("GuiObject") then
-		attachHost = target
-	elseif target.Name == "__UpgradeOverlay" then
-		-- Brainrot stand: overlay is full-size; outline the Upgrade parent, hand on overlay.
-		local upgradeParent = target.Parent
-		if upgradeParent and upgradeParent:IsA("GuiObject") then
-			attachHost = upgradeParent
-		end
-	elseif target.Name == "Upgrade" and target:IsA("GuiObject") then
+	local inUpgrades = target:FindFirstAncestor("Upgrades") ~= nil
+	if inUpgrades then
 		attachHost = target
 	else
-		local upgradeAncestor = target:FindFirstAncestor("Upgrade")
-		if upgradeAncestor and upgradeAncestor:IsA("GuiObject") then
-			attachHost = upgradeAncestor
+		local buyAncestor = target:FindFirstAncestor("Buy")
+		if buyAncestor and buyAncestor:IsA("GuiObject") then
+			attachHost = buyAncestor
+		elseif target.Name == "Buy" and target:IsA("GuiObject") then
+			attachHost = target
+		elseif target.Name == "__UpgradeOverlay" then
+			-- Brainrot stand: overlay is full-size; outline the Upgrade parent, hand on overlay.
+			local upgradeParent = target.Parent
+			if upgradeParent and upgradeParent:IsA("GuiObject") then
+				attachHost = upgradeParent
+			end
+		elseif target.Name == "Upgrade" and target:IsA("GuiObject") then
+			attachHost = target
+		else
+			local upgradeAncestor = target:FindFirstAncestor("Upgrade")
+			if upgradeAncestor and upgradeAncestor:IsA("GuiObject") then
+				attachHost = upgradeAncestor
+			end
 		end
 	end
 
 	-- Accept/Decline: no yellow stroke — keep the checkmark readable.
 	if not claimStyle then
+		attachHost.ClipsDescendants = false
 		local stroke = Instance.new("UIStroke")
 		stroke.Name = "TutorialTargetStroke"
 		stroke.Color = Color3.fromRGB(255, 236, 70)
-		stroke.Thickness = 3.2
+		stroke.Thickness = if inUpgrades then 4.4 else 3.2
 		stroke.Transparency = 0
 		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		stroke.LineJoinMode = Enum.LineJoinMode.Round
@@ -1610,14 +1654,15 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 	local clickSizeUp = clickSize + (if claimStyle then 3 else 6)
 
 	-- Claim: sit bottom-right and angle in so the checkmark stays visible.
+	-- Shop / hotbar: sit in the left corner so the button art stays readable.
 	if claimStyle then
 		pointer.AnchorPoint = Vector2.new(0.15, 0.1)
 		pointer.Position = UDim2.fromScale(0.88, 0.9)
 		pointer.Rotation = -38
 	else
-		pointer.AnchorPoint = Vector2.new(0.5, 0.5)
-		pointer.Position = UDim2.fromScale(0.5, 0.5)
-		pointer.Rotation = 0
+		pointer.AnchorPoint = Vector2.new(0.12, 0.12)
+		pointer.Position = UDim2.fromScale(0.04, 0.08)
+		pointer.Rotation = -18
 	end
 	pointer.Size = UDim2.fromOffset(clickSize, clickSize)
 
@@ -1673,9 +1718,9 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 		uiPointer = pointer
 	end
 
-	local baseRot = if claimStyle then -38 else 0
-	local tipRot = if claimStyle then -28 else -10
-	local downRot = if claimStyle then -42 else 6
+	local baseRot = if claimStyle then -38 else -18
+	local tipRot = if claimStyle then -28 else -28
+	local downRot = if claimStyle then -42 else -8
 
 	task.spawn(function()
 		while uiPointer == pointer and pointer.Parent and active and target.Parent do
@@ -1864,11 +1909,14 @@ local function resolveLand1SwingTarget(): BasePart?
 	local origin = playerOrigin()
 	local aim = land1Aim()
 	local toAim = aim - origin
-	local aimDir = if toAim.Magnitude > 1 then toAim.Unit else Vector3.new(0, 0, -1)
-	local cam = Svc.Workspace.CurrentCamera
-	local vs = if cam then cam.ViewportSize else Vector2.new(1280, 720)
-	local cx = vs.X * 0.5
-	local cy = vs.Y * 0.5
+	local flatToAim = Vector3.new(toAim.X, 0, toAim.Z)
+	local aimDir = if flatToAim.Magnitude > 1 then flatToAim.Unit else Vector3.new(0, 0, -1)
+	local right = aimDir:Cross(Vector3.yAxis)
+	if right.Magnitude < 0.05 then
+		right = Vector3.new(1, 0, 0)
+	else
+		right = right.Unit
+	end
 
 	local function isAhead(part: BasePart): boolean
 		local offset = part.Position - origin
@@ -1879,15 +1927,9 @@ local function resolveLand1SwingTarget(): BasePart?
 		return offset:Dot(aimDir) >= 6
 	end
 
-	-- Stick to the current lock only while it's still the vine in the camera center.
-	if lockedSwingPart and lockedSwingPart.Parent and isAhead(lockedSwingPart) and cam then
-		local vp, onScreen = cam:WorldToViewportPoint(lockedSwingPart.Position)
-		if onScreen and vp.Z > 0 then
-			local r = (Vector2.new(vp.X, vp.Y) - Vector2.new(cx, cy)).Magnitude
-			if r <= math.max(vs.Y * 0.16, 90) then
-				return lockedSwingPart
-			end
-		end
+	-- Stick to the corridor-middle vine; don't hop to whatever is camera-center.
+	if lockedSwingPart and lockedSwingPart.Parent and isAhead(lockedSwingPart) then
+		return lockedSwingPart
 	end
 	lockedSwingPart = nil
 
@@ -1897,16 +1939,9 @@ local function resolveLand1SwingTarget(): BasePart?
 		if not part.Parent or not isAhead(part) then
 			continue
 		end
-		local score = (part.Position - origin).Magnitude * 0.15
-		if cam then
-			local vp, onScreen = cam:WorldToViewportPoint(part.Position)
-			if onScreen and vp.Z > 0 then
-				local r = (Vector2.new(vp.X, vp.Y) - Vector2.new(cx, cy)).Magnitude
-				score = r
-			else
-				score += 400
-			end
-		end
+		local offset = part.Position - origin
+		local lateral = math.abs(offset:Dot(right))
+		local score = offset.Magnitude * 0.2 + lateral * 2.8
 		if score < bestScore then
 			bestScore = score
 			best = part
@@ -2407,8 +2442,9 @@ local function pointAtHotbarSlot(slot: GuiObject)
 	pointer.Image = TutorialConfig.UI_CLICK_IMAGE
 	pointer.ScaleType = Enum.ScaleType.Fit
 	pointer.Active = false
-	pointer.AnchorPoint = Vector2.new(0.5, 0.5)
-	pointer.Position = UDim2.fromScale(0.5, 0.5)
+	pointer.AnchorPoint = Vector2.new(0.12, 0.12)
+	pointer.Position = UDim2.fromScale(0.04, 0.08)
+	pointer.Rotation = -18
 	pointer.Size = UDim2.fromOffset(TutorialConfig.UI_CLICK_SIZE, TutorialConfig.UI_CLICK_SIZE)
 	pointer.ZIndex = 12
 	pointer.Parent = ring
@@ -2443,7 +2479,7 @@ local function pointAtHotbarSlot(slot: GuiObject)
 		while uiPointer == pointer and pointer.Parent and active and slot.Parent do
 			local up = Svc.TweenService:Create(pointer, CLICK_BOUNCE, {
 				Size = UDim2.fromOffset(clickSizeUp, clickSizeUp),
-				Rotation = -10,
+				Rotation = -28,
 			})
 			up:Play()
 			up.Completed:Wait()
@@ -2452,7 +2488,7 @@ local function pointAtHotbarSlot(slot: GuiObject)
 			end
 			local down = Svc.TweenService:Create(pointer, CLICK_BOUNCE, {
 				Size = UDim2.fromOffset(clickSize, clickSize),
-				Rotation = 6,
+				Rotation = -8,
 			})
 			down:Play()
 			down.Completed:Wait()
@@ -2489,47 +2525,11 @@ local function cacheUpgradesBuyButton()
 	end
 	-- Cash buy / equip host (never BuyRobux / Close).
 	local buy = buyButtons:FindFirstChild("Buy/Equip/Equipped/Locked") or buyButtons:FindFirstChild("Buy")
-	if not buy then
+	if not buy or not buy:IsA("GuiObject") or isDisallowedTutorialButton(buy) then
 		return nil
 	end
-
-	local btn: GuiObject? = nil
-	if buy:IsA("GuiButton") and not isDisallowedTutorialButton(buy) then
-		btn = buy
-	else
-		local best: GuiButton? = nil
-		local bestScore = -1
-		for _, d in buy:GetDescendants() do
-			if d:IsA("GuiButton") and not isDisallowedTutorialButton(d) then
-				local underDecor = false
-				local p: Instance? = d.Parent
-				while p and p ~= buy do
-					if p.Name == "Decor" then
-						underDecor = true
-						break
-					end
-					p = p.Parent
-				end
-				if not underDecor then
-					local area = math.max(d.AbsoluteSize.X * d.AbsoluteSize.Y, 1)
-					local score = area + (if d:IsA("ImageButton") or d:IsA("TextButton") then 1e6 else 0)
-					if score > bestScore then
-						bestScore = score
-						best = d
-					end
-				end
-			end
-		end
-		btn = best
-		if not btn and buy:IsA("GuiObject") then
-			btn = buy
-		end
-	end
-	if btn and btn:IsA("GuiObject") and not isDisallowedTutorialButton(btn) then
-		_powerBuyButton = btn
-		return btn
-	end
-	return nil
+	_powerBuyButton = buy
+	return buy
 end
 
 local function refreshPointersImpl()
@@ -2583,6 +2583,8 @@ local function refreshPointersImpl()
 			clearLockedBush()
 			clearWorldArrow()
 		end
+	elseif (step.id == "swingLand1" or step.id == "goToBase") and worldArrowBb and lockedSwingPart and lockedSwingPart.Parent then
+		keepWorld = true
 	end
 
 	if not keepWorld then
@@ -2733,6 +2735,7 @@ finishTutorial = function(opts: { skipped: boolean? }?)
 	hidePanel()
 	JumpButtonSwingRing.setTutorialCoach(nil)
 	swingCoach.goToBaseLite = false
+	syncWorkoutGoalBar()
 	GameplayUiVisibility.show({ flourish = true })
 	local skipped = opts ~= nil and opts.skipped == true
 	if not skipped then
@@ -2892,7 +2895,9 @@ local function watchStepProgress()
 					refreshPointers()
 				end
 			elseif step.id == "swingLand1" then
-				refreshPointers()
+				if not worldArrowBb then
+					refreshPointers()
+				end
 			elseif step.id == "placeOnPlot" or step.id == "goToBase" then
 				if (not worldArrowBb and not uiPointer) or not worldHighlight then
 					refreshPointers()
@@ -2911,7 +2916,7 @@ local function watchStepProgress()
 				end
 			elseif step.id == "buyPower" or step.id == "equipGear" then
 				local btn = cacheUpgradesBuyButton()
-				if btn and isGuiTreeVisible(btn) and not uiPointerStroke then
+				if btn and isGuiTreeVisible(btn) and (not uiPointerStroke or uiPointerStroke.Parent == nil) then
 					refreshPointers()
 				elseif not (btn and isGuiTreeVisible(btn)) and not worldHighlight then
 					refreshPointers()
@@ -3205,6 +3210,20 @@ local function bindGameplayHooks()
 	end)
 end
 
+function M.getLockedSwingPart(): BasePart?
+	if not active then
+		return nil
+	end
+	local step = currentStep()
+	if not step or (step.id ~= "swingLand1" and step.id ~= "goToBase") then
+		return nil
+	end
+	if lockedSwingPart and lockedSwingPart.Parent then
+		return lockedSwingPart
+	end
+	return nil
+end
+
 function M.start(force: boolean?)
 	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true and not force then
 		return
@@ -3263,6 +3282,7 @@ function M.stop()
 	hidePanel()
 	JumpButtonSwingRing.setTutorialCoach(nil)
 	swingCoach.goToBaseLite = false
+	syncWorkoutGoalBar()
 	GameplayUiVisibility.show()
 	if tutorialDeathConn then
 		tutorialDeathConn:Disconnect()

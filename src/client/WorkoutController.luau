@@ -1543,6 +1543,29 @@ local function ensureDoubleTapGui(): ScreenGui
 	ringScale.Scale = 1.42
 	ringScale.Parent = ring
 
+	local ripple = Instance.new("Frame")
+	ripple.Name = "HitRipple"
+	ripple.BackgroundTransparency = 1
+	ripple.AnchorPoint = Vector2.new(0.5, 0.5)
+	ripple.Position = UDim2.fromScale(0.5, 0.5)
+	ripple.Size = UDim2.fromScale(1, 1)
+	ripple.Visible = false
+	ripple.ZIndex = 21
+	ripple.Parent = holder
+	local rippleCorner = Instance.new("UICorner")
+	rippleCorner.CornerRadius = UDim.new(1, 0)
+	rippleCorner.Parent = ripple
+	local rippleStroke = Instance.new("UIStroke")
+	rippleStroke.Name = "RippleStroke"
+	rippleStroke.Color = Color3.fromRGB(255, 236, 120)
+	rippleStroke.Thickness = 5
+	rippleStroke.Transparency = 0.1
+	rippleStroke.Parent = ripple
+	local rippleScale = Instance.new("UIScale")
+	rippleScale.Name = "RippleScale"
+	rippleScale.Scale = 0.7
+	rippleScale.Parent = ripple
+
 	local core = Instance.new("ImageButton")
 	core.Name = "Hit"
 	core.BackgroundColor3 = Color3.fromRGB(18, 16, 28)
@@ -1695,15 +1718,57 @@ local function pulseComboHold(ok: boolean)
 	end
 	local holder = gui:FindFirstChild("ComboHold")
 	local pop = holder and holder:FindFirstChild("PopScale")
-	if not (pop and pop:IsA("UIScale")) then
+	if pop and pop:IsA("UIScale") then
+		pop.Scale = if ok then 1.28 else 0.82
+		TweenService:Create(
+			pop,
+			TweenInfo.new(if ok then 0.22 else 0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+			{ Scale = 1 }
+		):Play()
+	end
+	if not ok or not holder then
 		return
 	end
-	pop.Scale = if ok then 1.16 else 0.82
-	TweenService:Create(
-		pop,
-		TweenInfo.new(if ok then 0.18 else 0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-		{ Scale = 1 }
-	):Play()
+	local hit = holder:FindFirstChild("Hit")
+	if hit and hit:IsA("GuiObject") then
+		hit.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
+		TweenService:Create(hit, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			BackgroundColor3 = Color3.fromRGB(18, 16, 28),
+		}):Play()
+	end
+	local num = hit and hit:FindFirstChild("ComboNum")
+	if num and num:IsA("TextLabel") then
+		num.TextColor3 = Color3.fromRGB(255, 255, 255)
+		TweenService:Create(num, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			TextColor3 = Color3.fromRGB(255, 236, 160),
+		}):Play()
+	end
+	local ripple = holder:FindFirstChild("HitRipple")
+	local rippleScale = ripple and ripple:FindFirstChild("RippleScale")
+	local rippleStroke = ripple and ripple:FindFirstChild("RippleStroke")
+	if ripple and ripple:IsA("GuiObject") and rippleScale and rippleScale:IsA("UIScale") then
+		ripple.Visible = true
+		rippleScale.Scale = 0.62
+		if rippleStroke and rippleStroke:IsA("UIStroke") then
+			rippleStroke.Transparency = 0.05
+			rippleStroke.Thickness = 7
+			TweenService:Create(rippleStroke, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Transparency = 1,
+				Thickness = 2,
+			}):Play()
+		end
+		local tw = TweenService:Create(
+			rippleScale,
+			TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Scale = 1.85 }
+		)
+		tw:Play()
+		tw.Completed:Connect(function()
+			if ripple.Parent then
+				ripple.Visible = false
+			end
+		end)
+	end
 end
 
 local function restartComboRing()
@@ -1800,11 +1865,11 @@ local function hitCombo()
 		return
 	end
 	claimDoubleTapBusy = true
-	pulseComboHold(true)
 	burstComboLine()
 	UIInteractionSounds.playClick()
 	placeComboHold()
 	paintComboIdle()
+	pulseComboHold(true)
 	restartComboRing()
 	task.spawn(function()
 		waitForWorkoutRemote("ClaimWorkoutDoubleTap")

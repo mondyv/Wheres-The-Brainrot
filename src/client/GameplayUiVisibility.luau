@@ -781,6 +781,46 @@ function M.allowsToolbar(): boolean
 	return keepSideChildNames.Toolbar == true
 end
 
+function M.revealSideChild(name: string): GuiObject?
+	local main = PlayerGuiMain.ensure(player)
+	local side = main and main:FindFirstChild("SideUI")
+	local child = side and side:FindFirstChild(name)
+	if not (child and child:IsA("GuiObject")) then
+		return nil
+	end
+	local g = child :: GuiObject
+	for _, entry in mainSnaps do
+		if entry.inst == g then
+			g.Position = entry.basePos
+			g.Visible = true
+			return g
+		end
+	end
+	local base = lastingBasePos[g]
+	if base then
+		g.Position = base
+	end
+	g.Visible = true
+	return g
+end
+
+function M.reparkSideChild(name: string)
+	local main = PlayerGuiMain.ensure(player)
+	local side = main and main:FindFirstChild("SideUI")
+	local child = side and side:FindFirstChild(name)
+	if not (child and child:IsA("GuiObject")) then
+		return
+	end
+	local g = child :: GuiObject
+	for _, entry in mainSnaps do
+		if entry.inst == g then
+			g.Position = entry.slidePos
+			g.Visible = false
+			return
+		end
+	end
+end
+
 function M.onRestored(callback: () -> ())
 	table.insert(restoreCallbacks, callback)
 end

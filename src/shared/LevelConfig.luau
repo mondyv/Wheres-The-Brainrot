@@ -86,7 +86,8 @@ local function secondRewardForLevel(lv: number): LevelReward
 	if lv % 2 == 0 then
 		return luckyReward(2, "troll")
 	end
-	return luckyReward(2, "Starter Lucky Block")
+	-- Odd levels: extra cash. Starter Lucky Block is granted once by the tutorial.
+	return cashReward(2, math.floor(120 * lv * math.sqrt(lv)))
 end
 
 -- XP required to go from `level` → `level + 1` (index = current level).

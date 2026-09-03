@@ -12,7 +12,7 @@ M.UI_CLICK_IMAGE = "rbxassetid://80727309150135"
 M.VOICE_PITCH_MIN = 1.15
 M.VOICE_PITCH_MAX = 1.5
 M.OBJECTIVE_TYPE_DELAY = 0.048
-M.WORLD_ARROW_ROTATION = 0
+M.WORLD_ARROW_ROTATION = 180
 M.WORLD_ARROW_HEIGHT = 16
 M.WORLD_ARROW_SIZE = 56
 M.WORLD_ARROW_SIZE_MOBILE = 88
@@ -73,11 +73,11 @@ export type StepDef = {
 M.STEPS = {
 	{
 		id = "swingLand1",
-		text = "Look at a vine, then jump to swing over!",
-		speak = "SWING OVER TO THE JUNGLE!!",
+		text = "Look at the middle vine, then jump to swing over!",
+		speak = "SWING THE MIDDLE VINE TO THE JUNGLE!!",
 		retryText = "Jump again to let go, then land!",
-		controllerText = "Aim at a vine, then press A / ✕ to swing!",
-		controllerSpeak = "AIM AT A VINE AND PRESS A TO SWING!!",
+		controllerText = "Aim at the middle vine, then press A / ✕ to swing!",
+		controllerSpeak = "AIM AT THE MIDDLE VINE AND PRESS A TO SWING!!",
 		controllerRetryText = "Press A / ✕ again to let go, then land!",
 	},
 	{

@@ -107,41 +107,6 @@ local function applyHeadshot(icon: ImageLabel, userId: number)
 	end)
 end
 
-local function resolveMeterForPlayer(plr: Player): (number, number)
-	local character = plr.Character
-	local hrp = character and character:FindFirstChild("HumanoidRootPart")
-	if hrp and hrp:IsA("BasePart") then
-		local cacheReady = true
-		local isReady = (SafezoneUtil :: any).isCacheReady
-		if typeof(isReady) == "function" then
-			cacheReady = isReady() == true
-		end
-		if cacheReady and SafezoneUtil.isCharacterInSafezone(character) then
-			local m = meterAlongPath(hrp.Position)
-			return math.clamp(m, SAFEZONE_SLOT, 0.4), SAFEZONE_SLOT
-		end
-		if isInComingSoon(hrp.Position) then
-			return OTHER_WORLD_SLOT, OTHER_WORLD_SLOT
-		end
-		local meter = meterAlongPath(hrp.Position)
-		local discrete = math.clamp(math.floor(meter + 0.001), SAFEZONE_SLOT, OTHER_WORLD_SLOT)
-		if discrete >= 1 and discrete <= MAX_LAND then
-			return meter, discrete
-		end
-		return meter, discrete
-	end
-	local raw = plr:GetAttribute(LAND_ATTR)
-	if typeof(raw) == "number" then
-		local n = math.floor(raw)
-		if n < 1 then
-			return SAFEZONE_SLOT, SAFEZONE_SLOT
-		end
-		n = math.clamp(n, 1, MAX_LAND)
-		return n, n
-	end
-	return SAFEZONE_SLOT, SAFEZONE_SLOT
-end
-
 local function isMobile(): boolean
 	return UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 end
@@ -287,6 +252,41 @@ local function meterAlongPath(worldPos: Vector3): number
 		end
 	end
 	return math.clamp(bestMeter, SAFEZONE_SLOT, OTHER_WORLD_SLOT)
+end
+
+local function resolveMeterForPlayer(plr: Player): (number, number)
+	local character = plr.Character
+	local hrp = character and character:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		local cacheReady = true
+		local isReady = (SafezoneUtil :: any).isCacheReady
+		if typeof(isReady) == "function" then
+			cacheReady = isReady() == true
+		end
+		if cacheReady and SafezoneUtil.isCharacterInSafezone(character) then
+			local m = meterAlongPath(hrp.Position)
+			return math.clamp(m, SAFEZONE_SLOT, 0.4), SAFEZONE_SLOT
+		end
+		if isInComingSoon(hrp.Position) then
+			return OTHER_WORLD_SLOT, OTHER_WORLD_SLOT
+		end
+		local meter = meterAlongPath(hrp.Position)
+		local discrete = math.clamp(math.floor(meter + 0.001), SAFEZONE_SLOT, OTHER_WORLD_SLOT)
+		if discrete >= 1 and discrete <= MAX_LAND then
+			return meter, discrete
+		end
+		return meter, discrete
+	end
+	local raw = plr:GetAttribute(LAND_ATTR)
+	if typeof(raw) == "number" then
+		local n = math.floor(raw)
+		if n < 1 then
+			return SAFEZONE_SLOT, SAFEZONE_SLOT
+		end
+		n = math.clamp(n, 1, MAX_LAND)
+		return n, n
+	end
+	return SAFEZONE_SLOT, SAFEZONE_SLOT
 end
 
 local function isOutsideSafezone(): boolean

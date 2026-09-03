@@ -14,6 +14,8 @@ local TweenService = game:GetService("TweenService")
 
 local CarryGate = require(script.Parent.CarryGate)
 local BushFloatingClaimController = require(script.Parent.BushFloatingClaimController)
+local FloatingClaimCutscene = require(script.Parent.FloatingClaimCutscene)
+local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
@@ -411,6 +413,12 @@ end
 
 local function shouldShowReturnChrome(): boolean
 	if teleportBusy then
+		return false
+	end
+	if GameplayUiVisibility.isHidden() then
+		return false
+	end
+	if FloatingClaimCutscene.isActive() then
 		return false
 	end
 	-- Stuck in a spider web — no free/paid escape hatch.

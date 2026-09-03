@@ -2967,14 +2967,30 @@ local function boot(character)
 
 	function st.pickSwingTarget(requireLineOfSight, maxDistanceOverride, minLookDotOverride, maxScreenRadiusOverride)
 		camera = workspace.CurrentCamera or camera
-		if not camera or not st.hrp.Parent or st.isHrpInSafezone() then
+		if not camera or not st.hrp.Parent then
+			return nil
+		end
+
+		local reach = maxDistanceOverride or getSwingRange()
+		local tutorialMod = getClientModule("TutorialController")
+		if tutorialMod and typeof(tutorialMod.getLockedSwingPart) == "function" then
+			local locked = tutorialMod.getLockedSwingPart()
+			if locked and locked.Parent then
+				local attachWorld = st.closestAttachWorldOnPart(locked)
+				local dist = (attachWorld - st.hrp.Position).Magnitude
+				if dist >= 2 and dist <= reach then
+					return locked
+				end
+			end
+		end
+
+		if st.isHrpInSafezone() then
 			return nil
 		end
 
 		local look = camera.CFrame.LookVector
 		local lookingDown = look.Y <= C.LOOK_DOWN_PITCH
 		local flatLook = flatUnit(look) or flatUnit(st.hrp.CFrame.LookVector)
-		local reach = maxDistanceOverride or getSwingRange()
 		local minLookDot = minLookDotOverride or C.MIN_LOOK_DOT
 		local maxScreenRadius = maxScreenRadiusOverride or C.TARGET_SCREEN_RADIUS_LIMIT
 		local maxDx = C.TARGET_MAX_SCREEN_DX
@@ -3273,6 +3289,16 @@ local function boot(character)
 		if lookingDown and preferredTarget and (not inSafezone or tutorialOpen) then
 			if passesVisibleChecks(preferredTarget, maxDistance) and preferredStillForward(preferredTarget) then
 				return preferredTarget, passesAttachChecks(preferredTarget, readyDistance)
+			end
+		end
+
+		local tutorialMod = getClientModule("TutorialController")
+		if tutorialMod and typeof(tutorialMod.getLockedSwingPart) == "function" then
+			local locked = tutorialMod.getLockedSwingPart()
+			if locked and locked.Parent and (not inSafezone or tutorialOpen) then
+				if passesVisibleChecks(locked, maxDistance) then
+					return locked, passesAttachChecks(locked, readyDistance)
+				end
 			end
 		end
 

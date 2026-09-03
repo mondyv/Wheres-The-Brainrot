@@ -37,14 +37,36 @@ local FALLBACK_FACE: { [Enum.KeyCode]: string } = {
 	[Enum.KeyCode.ButtonR2] = "RT",
 }
 
-function M.isPreferred(): boolean
-	if UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1 then
-		return true
-	end
+function M.lastInputIsGamepad(): boolean
+	local last = UserInputService:GetLastInputType()
+	return string.sub(last.Name, 1, 7) == "Gamepad"
+end
+
+function M.preferredInput(): Enum.PreferredInput?
 	local ok, preferred = pcall(function()
 		return (UserInputService :: any).PreferredInput
 	end)
-	if ok and preferred == Enum.PreferredInput.Gamepad then
+	if ok then
+		return preferred
+	end
+	return nil
+end
+
+function M.hasGamepadHardware(): boolean
+	if UserInputService.GamepadEnabled then
+		return true
+	end
+	local ok, pads = pcall(function()
+		return UserInputService:GetConnectedGamepads()
+	end)
+	return ok and typeof(pads) == "table" and #pads > 0
+end
+
+function M.isPreferred(): boolean
+	if M.lastInputIsGamepad() then
+		return true
+	end
+	if M.preferredInput() == Enum.PreferredInput.Gamepad then
 		return true
 	end
 	-- Console-style: gamepad present, no keyboard/touch driving UI.
@@ -98,6 +120,9 @@ function M.onPreferredChanged(callback: (boolean) -> ()): RBXScriptConnection
 	end)
 	UserInputService.GamepadDisconnected:Connect(function()
 		fire()
+	end)
+	pcall(function()
+		UserInputService:GetPropertyChangedSignal("PreferredInput"):Connect(fire)
 	end)
 	return conn
 end

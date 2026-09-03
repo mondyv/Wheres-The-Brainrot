@@ -1433,6 +1433,10 @@ local comboAppearAt = 0.0
 local comboWindow = 1.55
 local comboBusyAnim = false
 local lastComboPos = Vector2.new(-999, -999)
+-- Farmers who ignore circles: mute fail SFX after this many timeouts; any press unmutes.
+local COMBO_FAIL_SFX_MUTE_AFTER = 4
+local comboFailSfxStreak = 0
+local comboFailSfxMuted = false
 -- Face buttons only. Never B (cancel / back) or bumpers / D-pad (hotbar unequip).
 local COMBO_PAD_KEYS = { Enum.KeyCode.ButtonA, Enum.KeyCode.ButtonX, Enum.KeyCode.ButtonY }
 local comboPromptKey = Enum.KeyCode.ButtonA
@@ -2346,7 +2350,28 @@ local function restartComboRing()
 	setComboRingScale(COMBO_RING_START)
 end
 
-local function missCombo()
+local function resetComboFailSfx()
+	comboFailSfxStreak = 0
+	comboFailSfxMuted = false
+end
+
+local function playComboFailSfx(fromPress: boolean)
+	if fromPress then
+		resetComboFailSfx()
+		GameSoundEffects.playWorkoutComboFail()
+		return
+	end
+	if comboFailSfxMuted then
+		return
+	end
+	GameSoundEffects.playWorkoutComboFail()
+	comboFailSfxStreak += 1
+	if comboFailSfxStreak >= COMBO_FAIL_SFX_MUTE_AFTER then
+		comboFailSfxMuted = true
+	end
+end
+
+local function missCombo(fromPress: boolean?)
 	if comboBusyAnim then
 		return
 	end
@@ -2356,7 +2381,7 @@ local function missCombo()
 	comboBusyAnim = true
 	setComboNumber(1)
 	applyComboAnimSpeed(1)
-	GameSoundEffects.playWorkoutComboFail()
+	playComboFailSfx(fromPress == true)
 	local holder = comboHolder()
 	local gen = doubleTapGen
 	if holder then
@@ -2436,6 +2461,7 @@ local function hitCombo()
 	end
 	claimDoubleTapBusy = true
 	comboBusyAnim = true
+	resetComboFailSfx()
 	burstComboLine()
 	GameSoundEffects.playWorkoutComboHit(comboDisplay())
 	playComboVanish()
@@ -2478,6 +2504,7 @@ end
 local function stopDoubleTapLoop()
 	doubleTapGen += 1
 	comboBusyAnim = false
+	resetComboFailSfx()
 	if comboRingConn then
 		comboRingConn:Disconnect()
 		comboRingConn = nil
@@ -2529,6 +2556,7 @@ local function startDoubleTapLoop()
 	doubleTapGen += 1
 	local gen = doubleTapGen
 	comboBusyAnim = false
+	resetComboFailSfx()
 	local cam0 = Workspace.CurrentCamera
 	local vs0 = if cam0 then cam0.ViewportSize else Vector2.new(800, 600)
 	lastComboPos = Vector2.new(vs0.X * 0.5, vs0.Y * 0.42)
@@ -2585,7 +2613,7 @@ local function startDoubleTapLoop()
 					return Enum.ContextActionResult.Sink
 				end
 				if isComboPadKey(code) then
-					missCombo()
+					missCombo(true)
 					return Enum.ContextActionResult.Sink
 				end
 				return Enum.ContextActionResult.Pass

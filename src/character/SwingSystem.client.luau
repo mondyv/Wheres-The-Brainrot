@@ -125,6 +125,37 @@ local WebTrapConfig = tryRequireModule(sharedFolder, "WebTrapConfig")
 local UiFonts = tryRequireModule(sharedFolder, "UiFonts")
 local GamepadInputMod = getClientModule("GamepadInput")
 
+local function lastInputIsGamepad(): boolean
+	if GamepadInputMod and typeof(GamepadInputMod.lastInputIsGamepad) == "function" then
+		return GamepadInputMod.lastInputIsGamepad() == true
+	end
+	local last = UserInputService:GetLastInputType()
+	return string.sub(last.Name, 1, 7) == "Gamepad"
+end
+
+local function preferredIsGamepad(): boolean
+	if GamepadInputMod and typeof(GamepadInputMod.isPreferred) == "function" and GamepadInputMod.isPreferred() then
+		return true
+	end
+	if GamepadInputMod and typeof(GamepadInputMod.preferredInput) == "function" then
+		return GamepadInputMod.preferredInput() == Enum.PreferredInput.Gamepad
+	end
+	local ok, preferred = pcall(function()
+		return (UserInputService :: any).PreferredInput
+	end)
+	return ok and preferred == Enum.PreferredInput.Gamepad
+end
+
+local function isConsoleSwingInput(): boolean
+	if preferredIsGamepad() or lastInputIsGamepad() then
+		return true
+	end
+	if UserInputService.GamepadEnabled and not UserInputService.KeyboardEnabled then
+		return true
+	end
+	return false
+end
+
 -- Target setup from the original friend script.
 C.SWING_TARGET_TAG = "SwingTarget"
 C.SWING_TARGET_NAME = "SwingTarget"
@@ -5044,12 +5075,65 @@ local function boot(character)
 		playOptionalSound("Wind Loop")
 	end
 
+	function st.getTutorialLockedSwingPart(ignoreSafezone: boolean?): BasePart?
+		if player:GetAttribute("TutorialCompleted") == true then
+			return nil
+		end
+		if not ignoreSafezone and st.isHrpInSafezone() then
+			return nil
+		end
+		local tutorialMod = getClientModule("TutorialController")
+		if tutorialMod and typeof(tutorialMod.getLockedSwingPart) == "function" then
+			local locked = tutorialMod.getLockedSwingPart()
+			if locked and locked.Parent then
+				return locked
+			end
+		end
+		return nil
+	end
+
+	function st.tutorialLockInLatchRange(): BasePart?
+		local locked = st.getTutorialLockedSwingPart(true)
+		if not locked then
+			return nil
+		end
+		local readyDist = select(1, st.targetDistanceAndPoint(locked))
+		local latchLimit = st.getEffectiveLatchLimit(locked)
+		if readyDist and readyDist >= 2 and readyDist <= latchLimit then
+			return locked
+		end
+		return nil
+	end
+
+	function st.shouldStealJumpForSwing(): boolean
+		if st.isWebTrapped() or st.isSwinging or isSwingInputBlocked() then
+			return false
+		end
+		if st.scannedVisualCanSwing and st.scannedVisualTarget and st.scannedVisualTarget.Parent then
+			return true
+		end
+		if player:GetAttribute("SwingPromptReady") == true then
+			return true
+		end
+		if st.tutorialLockInLatchRange() then
+			return true
+		end
+		if isConsoleSwingInput() and (st.highlightedTarget or st.scannedVisualTarget) then
+			return true
+		end
+		return false
+	end
+
 	function st.startSwing(target, trustReady: boolean?)
 		if st.isWebTrapped() or st.isSwinging or not target or not target.Parent then
 			return
 		end
 		if st.isHrpInSafezone() then
-			return
+			-- First tutorial vine often sits in the safezone's extra slack.
+			local locked = st.getTutorialLockedSwingPart(true)
+			if not (trustReady and locked and target == locked) then
+				return
+			end
 		end
 
 		local now = os.clock()
@@ -5545,14 +5629,11 @@ local function boot(character)
 			end
 		end
 		local trustTutorialLock = false
-		if not target and not st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") ~= true then
-			local tutorialMod = getClientModule("TutorialController")
-			if tutorialMod and typeof(tutorialMod.getLockedSwingPart) == "function" then
-				local locked = tutorialMod.getLockedSwingPart()
-				if locked and locked.Parent then
-					target = locked
-					trustTutorialLock = true
-				end
+		if not target then
+			local locked = st.getTutorialLockedSwingPart(true)
+			if locked then
+				target = locked
+				trustTutorialLock = true
 			end
 		end
 		if not target then
@@ -5590,12 +5671,10 @@ local function boot(character)
 		end
 
 		if isSwingInputBlocked() or processed then
-			if
-				processed
-				and input.UserInputType == Enum.UserInputType.Gamepad1
-				and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
-				and st.scannedVisualCanSwing
-			then
+			local consoleJump = input.KeyCode == Enum.KeyCode.ButtonR2
+				or input.KeyCode == Enum.KeyCode.ButtonA
+				or (isConsoleSwingInput() and input.KeyCode == Enum.KeyCode.Space)
+			if processed and consoleJump and st.shouldStealJumpForSwing() then
 				st.gamepadHeld = true
 				st.humanoid.Jump = false
 				st.tryAttach()
@@ -5625,8 +5704,15 @@ local function boot(character)
 			end
 			st.tryAttach()
 		elseif
-			input.UserInputType == Enum.UserInputType.Gamepad1
-			and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
+			(
+				string.sub(input.UserInputType.Name, 1, 7) == "Gamepad"
+				and (input.KeyCode == Enum.KeyCode.ButtonR2 or input.KeyCode == Enum.KeyCode.ButtonA)
+			)
+			or (
+				isConsoleSwingInput()
+				and input.UserInputType == Enum.UserInputType.Keyboard
+				and input.KeyCode == Enum.KeyCode.Space
+			)
 		then
 			st.noteJumpPressed()
 			if not st.isHoldToSwingMode() and st.isSwinging then
@@ -5731,7 +5817,11 @@ local function boot(character)
 				liveTarget = st.highlightedTarget
 			end
 		end
+		if not liveTarget then
+			liveTarget = st.tutorialLockInLatchRange()
+		end
 		local grounded = st.isGroundedForSwing() or st.hasFloorSupportForSwing()
+		local consoleJump = st.gamepadHeld or isConsoleSwingInput()
 		if liveTarget then
 			st.humanoid.Jump = false
 			if grounded then
@@ -5744,12 +5834,14 @@ local function boot(character)
 			return
 		elseif st.isAirborneForSwing() then
 			st.humanoid.Jump = false
-		elseif st.gamepadHeld or UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1 then
+		elseif consoleJump then
 			-- Console A is jump+swing. Never hop when a vine was in the last scan.
+			-- Studio console mode often has no Gamepad1 LastInputType until you toggle PC↔console.
 			if
 				st.scannedVisualCanSwing
 				or st.scannedVisualTarget
 				or st.highlightedTarget
+				or st.shouldStealJumpForSwing()
 				or now < st.swingPressIntentUntil
 			then
 				st.humanoid.Jump = false
@@ -5782,7 +5874,7 @@ local function boot(character)
 			if not st.humanoid then
 				return Enum.ContextActionResult.Pass
 			end
-			if st.isHrpInSafezone() then
+			if st.isHrpInSafezone() and not st.tutorialLockInLatchRange() then
 				return Enum.ContextActionResult.Pass
 			end
 			local canLatch = st.scannedVisualCanSwing == true
@@ -5796,14 +5888,11 @@ local function boot(character)
 				local maxDistance, lookDot, screenLimit = st.getSwingPressAttachLimits()
 				canLatch = st.pickAttachSwingTarget(maxDistance, lookDot, screenLimit) ~= nil
 			end
-			if not canLatch and player:GetAttribute("TutorialCompleted") ~= true then
-				local tutorialMod = getClientModule("TutorialController")
-				if tutorialMod and typeof(tutorialMod.getLockedSwingPart) == "function" then
-					local locked = tutorialMod.getLockedSwingPart()
-					if locked and locked.Parent then
-						canLatch = true
-						st.scannedVisualTarget = locked
-					end
+			if not canLatch then
+				local locked = st.tutorialLockInLatchRange()
+				if locked then
+					canLatch = true
+					st.scannedVisualTarget = locked
 				end
 			end
 			if not canLatch then
@@ -5910,6 +5999,17 @@ local function boot(character)
 			st.airborneStartedClock = os.clock()
 			if not st.isSwinging and (st.isLaunched or st.landedFromSwing) then
 				st.playFallingAnim()
+			end
+			-- Studio console often hops via Humanoid.Jump without Gamepad1 events until
+			-- you toggle PC↔console. Steal that hop when a vine is actually latchable.
+			if
+				newState == Enum.HumanoidStateType.Jumping
+				and not st.isSwinging
+				and (isConsoleSwingInput() or player:GetAttribute("TutorialCompleted") ~= true)
+				and st.shouldStealJumpForSwing()
+			then
+				st.humanoid.Jump = false
+				st.tryAttach()
 			end
 		elseif newState == Enum.HumanoidStateType.Landed then
 			st.isAirborne = false

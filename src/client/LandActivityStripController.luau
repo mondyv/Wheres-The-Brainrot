@@ -2,7 +2,7 @@
 --[[
 	Outside the safe zone:
 	• Hides SideUI.Right.RandomBrainrot (only restores it inside the safe zone)
-	• Shows a cartoony land radar (Base → luck lands → Other World) with player headshots
+	• Shows a cartoony land radar (Safezone → luck lands → Other World) with player headshots
 	Inside safe zone / HUD hidden: strip hides.
 ]]
 

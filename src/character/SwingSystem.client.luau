@@ -21,6 +21,7 @@ local camera = workspace.CurrentCamera
 local floatingClaimCutsceneMod = nil
 local spiderEncounterMod = nil
 local standDialogueCutsceneMod = nil
+local lastLandShowcaseMod = nil
 
 local function getClientModule(name)
 	local ps = player:FindFirstChild("PlayerScripts")
@@ -81,9 +82,13 @@ local function isGameplayCutsceneActive()
 	if active then
 		return true
 	end
+	lastLandShowcaseMod, active = moduleIsActive(lastLandShowcaseMod, "LastLandShowcaseCutscene")
+	if active then
+		return true
+	end
 	local pg = player:FindFirstChild("PlayerGui")
 	if pg then
-		for _, name in { "FloatingClaimCutscene", "BushSpiderCutscene", "StandDialogueCutscene" } do
+		for _, name in { "FloatingClaimCutscene", "BushSpiderCutscene", "StandDialogueCutscene", "LastLandShowcaseCutscene" } do
 			local gui = pg:FindFirstChild(name)
 			if gui and gui:IsA("ScreenGui") and gui.Enabled then
 				return true

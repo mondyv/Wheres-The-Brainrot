@@ -41,4 +41,9 @@ function GameplayCutsceneGate.isAmbushOrChaseActive(): boolean
 	return GameplayCutsceneGate.isSpiderEncounterActive() or GameplayCutsceneGate.isWaveWebChaseActive()
 end
 
+function GameplayCutsceneGate.isLastLandShowcaseActive(): boolean
+	local mod = controller("LastLandShowcaseCutscene")
+	return mod ~= nil and typeof(mod.isActive) == "function" and mod.isActive() == true
+end
+
 return GameplayCutsceneGate

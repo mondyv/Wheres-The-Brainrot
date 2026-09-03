@@ -38,6 +38,7 @@ local UiFonts = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChil
 local SafezoneUtil = require(Svc.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local JumpButtonSwingRing = require(script.Parent:WaitForChild("JumpButtonSwingRing"))
 local GamepadInput = require(script.Parent.GamepadInput)
+local LastLandShowcaseCutscene = require(script.Parent.LastLandShowcaseCutscene)
 
 local player = Svc.Players.LocalPlayer
 
@@ -2815,22 +2816,10 @@ finishTutorial = function(opts: { skipped: boolean? }?)
 	JumpButtonSwingRing.setTutorialCoach(nil)
 	swingCoach.goToBaseLite = false
 	syncWorkoutGoalBar()
-	GameplayUiVisibility.show({ flourish = true })
 	PlayerGuiMain.hideAdminPanelUnlessAllowed()
 	local skipped = opts ~= nil and opts.skipped == true
-	if not skipped then
-		-- One confetti burst for the whole tutorial (guarded inside fireConfettiAndShake).
-		fireConfettiAndShake()
-	end
 	-- Skip still counts as tutorial completion in the onboarding funnel.
 	reportOnboardingStep("tutorial_completed")
-	task.defer(function()
-		if skipped then
-			TopNotifController.showBroadcast("You skipped the tutorial! You got a Starter Lucky Block!")
-		else
-			TopNotifController.showBroadcast("Tutorial completed! You got a Starter Lucky Block!")
-		end
-	end)
 	local rf = getCompleteRemote()
 	if rf then
 		task.spawn(function()
@@ -2844,6 +2833,26 @@ finishTutorial = function(opts: { skipped: boolean? }?)
 	else
 		player:SetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR, true)
 	end
+	task.spawn(function()
+		local played = false
+		local okPlay, playErr = pcall(function()
+			played = LastLandShowcaseCutscene.play() == true
+		end)
+		if not okPlay then
+			warn("[TutorialController] last land showcase failed:", playErr)
+		end
+		if not played then
+			GameplayUiVisibility.show({ flourish = true })
+		end
+		if not skipped then
+			fireConfettiAndShake()
+		end
+		if skipped then
+			TopNotifController.showBroadcast("You skipped the tutorial! You got a Starter Lucky Block!")
+		else
+			TopNotifController.showBroadcast("Tutorial completed! You got a Starter Lucky Block!")
+		end
+	end)
 end
 
 local function stepIndexById(id: TutorialConfig.StepId): number?

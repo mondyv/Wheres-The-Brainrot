@@ -2929,6 +2929,13 @@ local function schedulePostTutorialQuests()
 	postTutorialQuestToken += 1
 	local token = postTutorialQuestToken
 	task.spawn(function()
+		local showcaseWait = os.clock()
+		while GameplayCutsceneGate.isLastLandShowcaseActive() and os.clock() - showcaseWait < 12 do
+			if token ~= postTutorialQuestToken then
+				return
+			end
+			task.wait(0.15)
+		end
 		-- Let the starter lucky block reach the hotbar before we start listening.
 		task.wait(TimCheeseQuestConfig.POST_TUTORIAL_QUEST_DELAY_SEC)
 		if token ~= postTutorialQuestToken then

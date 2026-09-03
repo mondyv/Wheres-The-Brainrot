@@ -467,7 +467,15 @@ end
 local function trackMarkerWithRetry(bushKey: string, rarity: string, endsAt: number)
 	task.spawn(function()
 		local deadline = os.clock() + 12
-		while os.clock() < deadline and os.time() < endsAt do
+		while os.clock() < deadline do
+			local liveEnds = ReplicatedStorage:GetAttribute(C.ACTIVE_ENDS_ATTR)
+			local liveKey = ReplicatedStorage:GetAttribute(C.ACTIVE_BUSH_KEY_ATTR)
+			if typeof(liveEnds) ~= "number" or liveEnds ~= endsAt or os.time() >= liveEnds then
+				return
+			end
+			if typeof(liveKey) ~= "string" or liveKey ~= bushKey then
+				return
+			end
 			if activeMarker and activeMarker.bushKey == bushKey then
 				return
 			end

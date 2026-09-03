@@ -2,10 +2,11 @@
 --[[
 	Outside the safe zone:
 	• Hides SideUI.Right.RandomBrainrot (only restores it inside the safe zone)
-	• Shows a cartoony land radar (luck tokens + Other World) with player headshots
+	• Shows a cartoony land radar (Base → luck lands → Other World) with player headshots
 	Inside safe zone / HUD hidden: strip hides.
 ]]
 
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -25,14 +26,18 @@ local LandActivityStripController = {}
 local player = Players.LocalPlayer
 local LAND_ATTR = "CurrentLand"
 local MAX_LAND = 10
+local SAFEZONE_SLOT = 0
 local OTHER_WORLD_SLOT = 11
-local SLOT_COUNT = OTHER_WORLD_SLOT
 local OTHER_WORLD_LABEL = "Other World"
+local SAFEZONE_LABEL = "Safezone"
+local COMING_SOON_TAG = "ComingSoonZone"
 local POLL_SEC = if UserInputService.TouchEnabled then 0.45 else 0.18
 local SHOW_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local HIDE_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-local MOVE_TWEEN = TweenInfo.new(0.38, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-local LOCAL_MOVE_TWEEN = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local MOVE_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local CLUSTER_METER = 0.12
+local PEEK_PX = 13
+local HEAD_Y = -4
 local INSIDE_STREAK = 2
 local OUTSIDE_STREAK = 2
 
@@ -55,10 +60,10 @@ type AvatarSlot = {
 	icon: ImageLabel,
 	ring: UIStroke,
 	stem: Frame?,
-	nameTip: TextLabel?,
 	land: number,
 	meterIndex: number,
 	stackIndex: number,
+	moveTween: Tween?,
 }
 
 local randomBrainrotFrame: GuiObject? = nil
@@ -67,9 +72,9 @@ local stripRoot: Frame? = nil
 local stripScale: UIScale? = nil
 local plateFrame: Frame? = nil
 local avatarsHost: Frame? = nil
-local landTicks: { Frame } = {}
-local landLabels: { TextLabel } = {}
-local landTokens: { Frame } = {}
+local landTicks: { [number]: Frame } = {}
+local landLabels: { [number]: TextLabel } = {}
+local landTokens: { [number]: Frame } = {}
 local trackRainbow: UIGradient? = nil
 local trackFrame: Frame? = nil
 
@@ -102,23 +107,34 @@ local function applyHeadshot(icon: ImageLabel, userId: number)
 	end)
 end
 
-local function resolveLandForPlayer(plr: Player): number
-	local raw = plr:GetAttribute(LAND_ATTR)
-	if typeof(raw) == "number" then
-		local n = math.floor(raw)
-		if n >= 1 and n <= MAX_LAND then
-			return n
-		end
-	end
+local function resolveMeterForPlayer(plr: Player): (number, number)
 	local character = plr.Character
 	local hrp = character and character:FindFirstChild("HumanoidRootPart")
 	if hrp and hrp:IsA("BasePart") then
-		local land = LandResolver.resolveLandAtPosition(hrp.Position)
-		if typeof(land) == "number" and land >= 1 then
-			return math.clamp(math.floor(land), 1, MAX_LAND)
+		if SafezoneUtil.isCacheReady() and SafezoneUtil.isCharacterInSafezone(character) then
+			local m = meterAlongPath(hrp.Position)
+			return math.clamp(m, SAFEZONE_SLOT, 0.4), SAFEZONE_SLOT
 		end
+		if isInComingSoon(hrp.Position) then
+			return OTHER_WORLD_SLOT, OTHER_WORLD_SLOT
+		end
+		local meter = meterAlongPath(hrp.Position)
+		local discrete = math.clamp(math.floor(meter + 0.001), SAFEZONE_SLOT, OTHER_WORLD_SLOT)
+		if discrete >= 1 and discrete <= MAX_LAND then
+			return meter, discrete
+		end
+		return meter, discrete
 	end
-	return 0
+	local raw = plr:GetAttribute(LAND_ATTR)
+	if typeof(raw) == "number" then
+		local n = math.floor(raw)
+		if n < 1 then
+			return SAFEZONE_SLOT, SAFEZONE_SLOT
+		end
+		n = math.clamp(n, 1, MAX_LAND)
+		return n, n
+	end
+	return SAFEZONE_SLOT, SAFEZONE_SLOT
 end
 
 local function isMobile(): boolean
@@ -164,19 +180,10 @@ local function applyRainbowToTrack(track: Frame): UIGradient?
 end
 
 local function landXDim(index: number): UDim
-	-- Track is Size (1, -14) on the plate. Lands 1–10 sit evenly; fractional
-	-- index (3.4) slides between chips as you walk.
+	-- Track is Size (1, -14) on the plate. Base (0) … lands … Other World (11).
 	local pad = 7
-	if index >= OTHER_WORLD_SLOT then
-		return UDim.new(1, -pad)
-	end
-	local t = (math.clamp(index, 1, MAX_LAND) - 1) / math.max(MAX_LAND - 1, 1)
-	local u = t * 0.9
-	return UDim.new(u, pad * (1 - 2 * u / 0.9))
-end
-
-local function landXDimFromIndex(index: number): UDim
-	return landXDim(index)
+	local t = math.clamp(index, SAFEZONE_SLOT, OTHER_WORLD_SLOT) / OTHER_WORLD_SLOT
+	return UDim.new(t, pad * (1 - 2 * t))
 end
 
 local function flattenXZ(v: Vector3): Vector3
@@ -191,48 +198,90 @@ local function landCenterOf(folder: Instance): Vector3?
 	return flattenXZ((minB + maxB) * 0.5)
 end
 
--- Progress toward the next land along the land-to-land axis (not a side of the AABB).
--- 0 at this land's center so walking to a side edge of 1x stays on 1x, not 10x.
-local function fractionalLandAt(worldPos: Vector3, discreteLand: number): number
-	local land = math.clamp(math.floor(discreteLand), 1, MAX_LAND)
-	local folder = LandAmbushUtil.findLandFolder(land)
-	if not folder then
-		return land
-	end
-	local thisCenter = landCenterOf(folder)
-	if not thisCenter then
-		return land
-	end
-
-	local axis: Vector3? = nil
-	if land < MAX_LAND then
-		local nextFolder = LandAmbushUtil.findLandFolder(land + 1)
-		local nextCenter = nextFolder and landCenterOf(nextFolder)
-		if nextCenter then
-			axis = nextCenter - thisCenter
+local function comingSoonCenter(): Vector3?
+	local sum = Vector3.zero
+	local n = 0
+	for _, inst in CollectionService:GetTagged(COMING_SOON_TAG) do
+		if inst:IsA("BasePart") and inst.Parent then
+			sum += inst.Position
+			n += 1
 		end
 	end
-	if not axis or axis.Magnitude < 4 then
-		if land > 1 then
-			local prevFolder = LandAmbushUtil.findLandFolder(land - 1)
-			local prevCenter = prevFolder and landCenterOf(prevFolder)
-			if prevCenter then
-				axis = thisCenter - prevCenter
+	if n == 0 then
+		return nil
+	end
+	return flattenXZ(sum / n)
+end
+
+local function isInComingSoon(worldPos: Vector3): boolean
+	for _, inst in CollectionService:GetTagged(COMING_SOON_TAG) do
+		if inst:IsA("BasePart") and inst.Parent then
+			local localPt = inst.CFrame:PointToObjectSpace(worldPos)
+			local half = inst.Size * 0.5 + Vector3.new(6, 80, 6)
+			if math.abs(localPt.X) <= half.X and math.abs(localPt.Y) <= half.Y and math.abs(localPt.Z) <= half.Z then
+				return true
 			end
 		end
 	end
-	if not axis or axis.Magnitude < 4 then
-		local safe = SafezoneUtil.getSafezoneCenter()
-		if safe then
-			axis = thisCenter - flattenXZ(safe)
+	return false
+end
+
+local function landCenter(land: number): Vector3?
+	local folder = LandAmbushUtil.findLandFolder(land)
+	if not folder then
+		return nil
+	end
+	return landCenterOf(folder)
+end
+
+local cachedPath: { Vector3 }? = nil
+local cachedPathAt = 0.0
+
+local function pathWaypoints(): { Vector3 }
+	if cachedPath and (os.clock() - cachedPathAt) < 1.25 then
+		return cachedPath
+	end
+	local pts: { Vector3 } = table.create(OTHER_WORLD_SLOT + 1)
+	local safe = SafezoneUtil.getSafezoneCenter()
+	pts[1] = flattenXZ(if safe then safe else Vector3.zero)
+	local prev = pts[1]
+	for land = 1, MAX_LAND do
+		local c = landCenter(land)
+		pts[land + 1] = c or prev
+		prev = pts[land + 1]
+	end
+	pts[OTHER_WORLD_SLOT + 1] = comingSoonCenter() or prev
+	cachedPath = pts
+	cachedPathAt = os.clock()
+	return pts
+end
+
+-- Continuous 0 (Base) → 11 (Other World) along the land path, not AABB sides.
+local function meterAlongPath(worldPos: Vector3): number
+	local pts = pathWaypoints()
+	local flat = flattenXZ(worldPos)
+	local bestMeter = 0
+	local bestDist = math.huge
+	for i = 1, OTHER_WORLD_SLOT do
+		local a = pts[i]
+		local b = pts[i + 1]
+		if not a or not b then
+			continue
+		end
+		local ab = b - a
+		local mag = ab.Magnitude
+		local t = 0
+		if mag >= 2 then
+			t = math.clamp((flat - a):Dot(ab.Unit) / mag, 0, 1)
+		end
+		local closest = if mag >= 2 then a + ab * t else a
+		local dist = (flat - closest).Magnitude
+		if dist < bestDist then
+			bestDist = dist
+			bestMeter = (i - 1) + t
 		end
 	end
-	if not axis or axis.Magnitude < 4 then
-		return land
-	end
-
-	local t = (flattenXZ(worldPos) - thisCenter):Dot(axis.Unit) / axis.Magnitude
-	return land + math.clamp(t, 0, 0.999)
+	return math.clamp(bestMeter, SAFEZONE_SLOT, OTHER_WORLD_SLOT)
 end
 
 local function isOutsideSafezone(): boolean
@@ -428,6 +477,10 @@ local function destroySlot(userId: number)
 	if not slot then
 		return
 	end
+	if slot.moveTween then
+		slot.moveTween:Cancel()
+		slot.moveTween = nil
+	end
 	slotsByUserId[userId] = nil
 	if slot.root.Parent then
 		slot.root:Destroy()
@@ -451,7 +504,7 @@ local function ensureSlot(plr: Player): AvatarSlot?
 	root.BackgroundTransparency = 1
 	root.BorderSizePixel = 0
 	root.ZIndex = 80
-	root.Active = true
+	root.Active = false
 	root.Parent = avatarsHost
 
 	-- Stick/stem down to the land token.
@@ -549,51 +602,16 @@ local function ensureSlot(plr: Player): AvatarSlot?
 		pinStroke.Parent = pin
 	end
 
-	local tip = Instance.new("TextLabel")
-	tip.Name = "NameTip"
-	tip.BackgroundColor3 = Color3.fromRGB(28, 18, 10)
-	tip.BackgroundTransparency = 0.08
-	tip.Size = UDim2.new(0, 84, 0, 16)
-	tip.Position = UDim2.new(0.5, 0, 0, -18)
-	tip.AnchorPoint = Vector2.new(0.5, 1)
-	tip.Text = plr.DisplayName
-	tip.TextColor3 = TOKEN_FACE
-	tip.TextStrokeTransparency = 1
-	tip.TextSize = 10
-	tip.TextTruncate = Enum.TextTruncate.AtEnd
-	tip.Visible = false
-	tip.ZIndex = 80
-	UiFonts.applyBody(tip)
-	tip.Parent = root
-	local tipCorner = Instance.new("UICorner")
-	tipCorner.CornerRadius = UDim.new(0, 7)
-	tipCorner.Parent = tip
-	local tipStroke = Instance.new("UIStroke")
-	tipStroke.Thickness = 2
-	tipStroke.Color = TOKEN_FACE
-	tipStroke.Parent = tip
-	local tipPad = Instance.new("UIPadding")
-	tipPad.PaddingLeft = UDim.new(0, 6)
-	tipPad.PaddingRight = UDim.new(0, 6)
-	tipPad.Parent = tip
-
-	root.MouseEnter:Connect(function()
-		tip.Visible = true
-	end)
-	root.MouseLeave:Connect(function()
-		tip.Visible = false
-	end)
-
 	local slot: AvatarSlot = {
 		player = plr,
 		root = root,
 		icon = icon,
 		ring = ring,
 		stem = stem,
-		nameTip = tip,
-		land = 0,
-		meterIndex = 1,
+		land = SAFEZONE_SLOT,
+		meterIndex = SAFEZONE_SLOT,
 		stackIndex = 0,
+		moveTween = nil,
 	}
 	slotsByUserId[plr.UserId] = slot
 	return slot
@@ -612,10 +630,12 @@ local function formatLandLuckLabel(land: number): string
 end
 
 local function refreshLandLabels()
-	for land = 1, SLOT_COUNT do
+	for land = SAFEZONE_SLOT, OTHER_WORLD_SLOT do
 		local label = landLabels[land]
 		if label and label.Parent then
-			if land == OTHER_WORLD_SLOT then
+			if land == SAFEZONE_SLOT then
+				label.Text = SAFEZONE_LABEL
+			elseif land == OTHER_WORLD_SLOT then
 				label.Text = OTHER_WORLD_LABEL
 			else
 				label.Text = formatLandLuckLabel(land)
@@ -626,18 +646,14 @@ end
 
 -- Only your current land: slightly whiter / brighter token stroke (not other players).
 local function refreshYouLandHighlight()
-	local raw = player:GetAttribute(LAND_ATTR)
-	local land = if typeof(raw) == "number" then math.floor(raw) else 0
-	if land < 1 or land > MAX_LAND then
-		land = 0
-	end
-	highlightedLand = land
+	local _, discrete = resolveMeterForPlayer(player)
+	highlightedLand = discrete
 	for i, token in landTokens do
 		local stroke = token:FindFirstChildOfClass("UIStroke")
 		if not stroke then
 			continue
 		end
-		local isYou = i == land
+		local isYou = i == discrete
 		stroke:SetAttribute("YouLand", isYou)
 		if isYou then
 			stroke.Color = TOKEN_EDGE_YOU
@@ -651,37 +667,67 @@ local function refreshYouLandHighlight()
 	end
 end
 
-local function layoutStacks()
-	local byLand: { [number]: { AvatarSlot } } = {}
-	for _, slot in slotsByUserId do
-		if slot.land < 1 then
-			continue
-		end
-		local list = byLand[slot.land]
-		if not list then
-			list = {}
-			byLand[slot.land] = list
-		end
-		if slot.player == player then
-			table.insert(list, 1, slot)
-		else
-			table.insert(list, slot)
-		end
+local function cancelMove(slot: AvatarSlot)
+	local tw = slot.moveTween
+	if tw then
+		tw:Cancel()
+		slot.moveTween = nil
 	end
+end
 
-	local headY = -6
-	for land, list in byLand do
-		for i, slot in ipairs(list) do
-			slot.stackIndex = i
-			local stack = i - 1
-			local xJitter = ((stack % 3) - 1) * 0.012
-			local yLift = stack * (if isMobile() then 14 else 16)
-			local xd = landXDimFromIndex(if typeof(slot.meterIndex) == "number" then slot.meterIndex else land)
-			local goal = UDim2.new(xd.Scale + xJitter, xd.Offset, 0, headY - yLift)
+local function moveSlot(slot: AvatarSlot, goal: UDim2)
+	cancelMove(slot)
+	if slot.player == player then
+		slot.root.Position = goal
+		return
+	end
+	local cur = slot.root.Position
+	local dx = math.abs((cur.X.Scale - goal.X.Scale) * 480 + (cur.X.Offset - goal.X.Offset))
+	if dx < 3 then
+		slot.root.Position = goal
+		return
+	end
+	local tw = TweenService:Create(slot.root, MOVE_TWEEN, { Position = goal })
+	slot.moveTween = tw
+	tw:Play()
+end
+
+-- Overlap on the track (peek behind), never stack upward.
+local function layoutStacks()
+	local list: { AvatarSlot } = {}
+	for _, slot in slotsByUserId do
+		table.insert(list, slot)
+	end
+	table.sort(list, function(a, b)
+		if math.abs(a.meterIndex - b.meterIndex) > 1e-4 then
+			return a.meterIndex < b.meterIndex
+		end
+		if a.player == player then
+			return false
+		end
+		if b.player == player then
+			return true
+		end
+		return a.player.UserId < b.player.UserId
+	end)
+
+	local i = 1
+	while i <= #list do
+		local j = i
+		while j + 1 <= #list and math.abs(list[j + 1].meterIndex - list[j].meterIndex) <= CLUSTER_METER do
+			j += 1
+		end
+		local clusterCount = j - i + 1
+		for k = i, j do
+			local slot = list[k]
+			local behind = j - k
+			slot.stackIndex = behind
+			local xd = landXDim(slot.meterIndex)
+			local peek = (if isMobile() then 11 else PEEK_PX) * behind
+			local goal = UDim2.new(xd.Scale, xd.Offset - peek, 0, HEAD_Y)
 			slot.root.AnchorPoint = Vector2.new(0.5, 1)
-			slot.root.ZIndex = 80 + stack + (if slot.player == player then 12 else 0)
-			local tweenInfo = if slot.player == player then LOCAL_MOVE_TWEEN else MOVE_TWEEN
-			TweenService:Create(slot.root, tweenInfo, { Position = goal }):Play()
+			slot.root.ZIndex = 80 + (clusterCount - behind) + (if slot.player == player then 24 else 0)
+			moveSlot(slot, goal)
 
 			if slot.player == player then
 				slot.ring.Color = YOU_RING
@@ -692,32 +738,19 @@ local function layoutStacks()
 			end
 			slot.ring.Transparency = 0
 		end
+		i = j + 1
 	end
 end
 
 local function syncPlayerSlot(plr: Player)
-	local land = resolveLandForPlayer(plr)
-	if land < 1 or land > MAX_LAND then
-		destroySlot(plr.UserId)
-		layoutStacks()
-		if plr == player then
-			refreshYouLandHighlight()
-		end
-		return
-	end
+	local meter, discrete = resolveMeterForPlayer(plr)
 	local slot = ensureSlot(plr)
 	if not slot then
 		return
 	end
-	local meter = land
-	local character = plr.Character
-	local hrp = character and character:FindFirstChild("HumanoidRootPart")
-	if hrp and hrp:IsA("BasePart") then
-		meter = fractionalLandAt(hrp.Position, land)
-	end
 	slot.meterIndex = meter
-	if slot.land ~= land then
-		slot.land = land
+	if slot.land ~= discrete then
+		slot.land = discrete
 		local scale = getOrAddUIScale(slot.root)
 		scale.Scale = 0.7
 		TweenService:Create(scale, SHOW_TWEEN, { Scale = 1 }):Play()
@@ -785,7 +818,7 @@ local function buildStrip(parentGui: PlayerGui)
 	local compact = isMobile()
 	local plateH = if compact then 36 else 40
 	local height = if compact then 94 else 104
-	local widthScale = if compact then 0.84 else 0.6
+	local widthScale = if compact then 0.9 else 0.68
 
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "LandActivityStripGui"
@@ -893,8 +926,9 @@ local function buildStrip(parentGui: PlayerGui)
 	table.clear(landTicks)
 	table.clear(landLabels)
 	table.clear(landTokens)
-	for land = 1, SLOT_COUNT do
+	for land = SAFEZONE_SLOT, OTHER_WORLD_SLOT do
 		local xd = landXDim(land)
+		local isNamedChip = land == SAFEZONE_SLOT or land == OTHER_WORLD_SLOT
 
 		local peg = Instance.new("Frame")
 		peg.Name = "Peg" .. tostring(land)
@@ -915,17 +949,19 @@ local function buildStrip(parentGui: PlayerGui)
 		pegStroke.Transparency = 0.75
 		pegStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		pegStroke.Parent = peg
-		table.insert(landTicks, peg)
+		landTicks[land] = peg
 
 		local token = Instance.new("Frame")
 		token.Name = "Token" .. tostring(land)
 		token.AnchorPoint = Vector2.new(0.5, 0)
 		token.Position = UDim2.new(xd.Scale, xd.Offset, 0.54, 0)
-		local isOtherWorld = land == OTHER_WORLD_SLOT
-		token.Size = UDim2.fromOffset(
-			if isOtherWorld then (if compact then 62 else 74) else (if compact then 42 else 46),
-			if compact then 17 else 18
-		)
+		local chipW = if compact then 40 else 44
+		if land == OTHER_WORLD_SLOT then
+			chipW = if compact then 62 else 74
+		elseif land == SAFEZONE_SLOT then
+			chipW = if compact then 52 else 58
+		end
+		token.Size = UDim2.fromOffset(chipW, if compact then 17 else 18)
 		token.BackgroundColor3 = TOKEN
 		token.BackgroundTransparency = 0.18
 		token.BorderSizePixel = 0
@@ -940,7 +976,7 @@ local function buildStrip(parentGui: PlayerGui)
 		tokenStroke.Transparency = 0.78
 		tokenStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		tokenStroke.Parent = token
-		table.insert(landTokens, token)
+		landTokens[land] = token
 
 		local label = Instance.new("TextLabel")
 		label.Name = "L" .. tostring(land)
@@ -948,22 +984,28 @@ local function buildStrip(parentGui: PlayerGui)
 		label.AnchorPoint = Vector2.new(0.5, 0.5)
 		label.Position = UDim2.fromScale(0.5, 0.5)
 		label.Size = UDim2.fromScale(1, 1)
-		label.Text = if land == OTHER_WORLD_SLOT then OTHER_WORLD_LABEL else formatLandLuckLabel(land)
+		if land == SAFEZONE_SLOT then
+			label.Text = SAFEZONE_LABEL
+		elseif land == OTHER_WORLD_SLOT then
+			label.Text = OTHER_WORLD_LABEL
+		else
+			label.Text = formatLandLuckLabel(land)
+		end
 		label.TextColor3 = TOKEN_FACE
 		label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 		label.TextStrokeTransparency = 0.15
-		label.TextSize = if land == OTHER_WORLD_SLOT then (if compact then 8 else 9) else (if compact then 11 else 12)
+		label.TextSize = if isNamedChip then (if compact then 8 else 9) else (if compact then 11 else 12)
 		label.TextScaled = true
 		label.TextTruncate = Enum.TextTruncate.None
 		label.ZIndex = 53
 		UiFonts.applyBody(label)
 		UiFonts.ensureTextSizeConstraint(
 			label,
-			if land == OTHER_WORLD_SLOT then 9 else 12,
+			if isNamedChip then 9 else 12,
 			if compact then 7 else 8
 		)
 		label.Parent = token
-		table.insert(landLabels, label)
+		landLabels[land] = label
 	end
 	refreshYouLandHighlight()
 

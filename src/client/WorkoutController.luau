@@ -1435,9 +1435,12 @@ local COMBO_PAD_KEYS = { Enum.KeyCode.ButtonA, Enum.KeyCode.ButtonX, Enum.KeyCod
 local comboPromptKey = Enum.KeyCode.ButtonA
 local COMBO_GOLD = Color3.fromRGB(255, 214, 74)
 local COMBO_DANGER = Color3.fromRGB(255, 62, 52)
-local COMBO_RING_START = 1.18
+local COMBO_RING_START = 1.2
 local COMBO_RING_END = 1.0
-local COMBO_CORE_FILL = 0.22
+local COMBO_CORE_FILL = 0.08
+local COMBO_SHADOW_IDLE = 0.36
+local COMBO_GLOW_IDLE = 0.62
+local COMBO_HALO_IDLE = 0.48
 local PAD_BADGE_COLOR: { [Enum.KeyCode]: Color3 } = {
 	[Enum.KeyCode.ButtonA] = Color3.fromRGB(86, 196, 78),
 	[Enum.KeyCode.ButtonX] = Color3.fromRGB(68, 138, 255),
@@ -1586,7 +1589,7 @@ local function ensureDoubleTapGui(): ScreenGui
 	holder.BackgroundTransparency = 1
 	holder.AnchorPoint = Vector2.new(0.5, 0.5)
 	holder.Position = UDim2.new(0.5, 0, 0.74, 0)
-	holder.Size = UDim2.fromOffset(132, 132)
+	holder.Size = UDim2.fromOffset(158, 158)
 	holder.ZIndex = 20
 	holder.Parent = gui
 
@@ -1595,14 +1598,36 @@ local function ensureDoubleTapGui(): ScreenGui
 	pop.Scale = 1
 	pop.Parent = holder
 
+	local glow = Instance.new("Frame")
+	glow.Name = "Glow"
+	glow.BackgroundColor3 = Color3.fromRGB(255, 196, 64)
+	glow.BackgroundTransparency = COMBO_GLOW_IDLE
+	glow.BorderSizePixel = 0
+	glow.AnchorPoint = Vector2.new(0.5, 0.5)
+	glow.Position = UDim2.fromScale(0.5, 0.5)
+	glow.Size = UDim2.fromScale(1.34, 1.34)
+	glow.ZIndex = 19
+	glow.Parent = holder
+	local glowCorner = Instance.new("UICorner")
+	glowCorner.CornerRadius = UDim.new(1, 0)
+	glowCorner.Parent = glow
+	local glowGrad = Instance.new("UIGradient")
+	glowGrad.Rotation = 90
+	glowGrad.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.15),
+		NumberSequenceKeypoint.new(0.55, 0.05),
+		NumberSequenceKeypoint.new(1, 0.35),
+	})
+	glowGrad.Parent = glow
+
 	local shadow = Instance.new("Frame")
 	shadow.Name = "Shadow"
-	shadow.BackgroundColor3 = Color3.fromRGB(8, 6, 14)
-	shadow.BackgroundTransparency = 0.78
+	shadow.BackgroundColor3 = Color3.fromRGB(6, 4, 12)
+	shadow.BackgroundTransparency = COMBO_SHADOW_IDLE
 	shadow.BorderSizePixel = 0
 	shadow.AnchorPoint = Vector2.new(0.5, 0.5)
-	shadow.Position = UDim2.new(0.5, 0, 0.5, 5)
-	shadow.Size = UDim2.fromScale(0.58, 0.58)
+	shadow.Position = UDim2.new(0.5, 0, 0.5, 10)
+	shadow.Size = UDim2.fromScale(1.02, 1.02)
 	shadow.ZIndex = 20
 	shadow.Parent = holder
 	local shadowCorner = Instance.new("UICorner")
@@ -1635,11 +1660,11 @@ local function ensureDoubleTapGui(): ScreenGui
 	local halo = Instance.new("Frame")
 	halo.Name = "Halo"
 	halo.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
-	halo.BackgroundTransparency = 0.9
+	halo.BackgroundTransparency = COMBO_HALO_IDLE
 	halo.BorderSizePixel = 0
 	halo.AnchorPoint = Vector2.new(0.5, 0.5)
 	halo.Position = UDim2.fromScale(0.5, 0.5)
-	halo.Size = UDim2.fromScale(0.78, 0.78)
+	halo.Size = UDim2.fromScale(0.98, 0.98)
 	halo.ZIndex = 21
 	halo.Parent = holder
 	local haloCorner = Instance.new("UICorner")
@@ -1713,8 +1738,8 @@ local function ensureDoubleTapGui(): ScreenGui
 	UiFonts.applyDisplay(num)
 	local numStroke = Instance.new("UIStroke")
 	numStroke.Color = Color3.fromRGB(40, 22, 8)
-	numStroke.Thickness = 2
-	numStroke.Transparency = 0.25
+	numStroke.Thickness = 2.6
+	numStroke.Transparency = 0.12
 	numStroke.Parent = num
 	local numPad = Instance.new("UIPadding")
 	numPad.PaddingTop = UDim.new(0, 10)
@@ -1878,7 +1903,7 @@ local function refreshComboHud(n: number)
 	end
 	if num and num:IsA("TextLabel") then
 		num.Text = tostring(count)
-		num.Visible = false
+		num.Visible = not pad
 	end
 	if prompt and prompt:IsA("GuiObject") then
 		prompt.Visible = pad
@@ -1948,10 +1973,19 @@ local function paintComboUrgency(t: number)
 		stroke.Transparency = 0.08
 		stroke.Thickness = 7 + u * 3.5
 	end
+	local glow = holder:FindFirstChild("Glow")
+	if glow and glow:IsA("Frame") then
+		glow.BackgroundColor3 = color
+		glow.BackgroundTransparency = COMBO_GLOW_IDLE - u * 0.18
+	end
 	local halo = holder:FindFirstChild("Halo")
 	if halo and halo:IsA("Frame") then
 		halo.BackgroundColor3 = color
-		halo.BackgroundTransparency = 0.9 - u * 0.35
+		halo.BackgroundTransparency = COMBO_HALO_IDLE - u * 0.16
+	end
+	local shadow = holder:FindFirstChild("Shadow")
+	if shadow and shadow:IsA("Frame") then
+		shadow.BackgroundTransparency = COMBO_SHADOW_IDLE - u * 0.08
 	end
 	local hit = holder:FindFirstChild("Hit")
 	local hitStroke = hit and hit:FindFirstChild("HitStroke")
@@ -1979,10 +2013,20 @@ local function playComboAppear()
 		stroke.Transparency = 1
 		TweenService:Create(stroke, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Transparency = 0.08 }):Play()
 	end
+	local glow = holder:FindFirstChild("Glow")
+	if glow and glow:IsA("GuiObject") then
+		glow.BackgroundTransparency = 1
+		TweenService:Create(glow, TweenInfo.new(0.34, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = COMBO_GLOW_IDLE }):Play()
+	end
 	local halo = holder:FindFirstChild("Halo")
 	if halo and halo:IsA("GuiObject") then
 		halo.BackgroundTransparency = 1
-		TweenService:Create(halo, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0.9 }):Play()
+		TweenService:Create(halo, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = COMBO_HALO_IDLE }):Play()
+	end
+	local shadow = holder:FindFirstChild("Shadow")
+	if shadow and shadow:IsA("GuiObject") then
+		shadow.BackgroundTransparency = 1
+		TweenService:Create(shadow, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = COMBO_SHADOW_IDLE }):Play()
 	end
 	local hit = holder:FindFirstChild("Hit")
 	if hit and hit:IsA("GuiObject") then

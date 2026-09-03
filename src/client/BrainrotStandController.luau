@@ -515,6 +515,11 @@ local lastHRPPosition: Vector3? = nil
 local closestUpgradeStand: Model? = nil
 local UPGRADE_PAD_RANGE = 14
 local STAND_UPGRADE_PAD_ACTION = "StandUpgradeGamepadB"
+local upgradeHintGui: BillboardGui? = nil
+local upgradeHintHost: Frame? = nil
+local upgradeHintBobConn: RBXScriptConnection? = nil
+local upgradeHintStand: Model? = nil
+local UPGRADE_HINT_BASE = Vector3.new(2.7, 1.42, 0)
 local cachedTaggedStands: { Model } = {}
 local cachedPlotMatch: { [Model]: boolean } = {}
 
@@ -736,6 +741,148 @@ local function unregisterTaggedStand(stand: Model)
 	cachedPlotMatch[stand] = nil
 end
 
+local function findUpgradeAdornee(stand: Model): BasePart?
+	local panel = stand:FindFirstChild("LevelPanel")
+	local level = panel and panel:FindFirstChild("Level")
+	if level and level:IsA("BasePart") then
+		return level
+	end
+	local view = views[stand]
+	if view and view.buttonPart then
+		return view.buttonPart
+	end
+	return nil
+end
+
+local function stopUpgradeHintBob()
+	if upgradeHintBobConn then
+		upgradeHintBobConn:Disconnect()
+		upgradeHintBobConn = nil
+	end
+end
+
+local function hideUpgradePadHint()
+	stopUpgradeHintBob()
+	upgradeHintStand = nil
+	if upgradeHintGui then
+		upgradeHintGui.Enabled = false
+		upgradeHintGui.Adornee = nil
+	end
+end
+
+local function ensureUpgradePadHint(): (BillboardGui, Frame)
+	if upgradeHintGui and upgradeHintGui.Parent and upgradeHintHost and upgradeHintHost.Parent then
+		return upgradeHintGui, upgradeHintHost
+	end
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if not pg then
+		pg = player:WaitForChild("PlayerGui", 8) :: PlayerGui?
+	end
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "StandUpgradePadHint"
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.ResetOnSpawn = false
+	bb.MaxDistance = 20
+	bb.Size = UDim2.fromOffset(92, 110)
+	bb.StudsOffset = UPGRADE_HINT_BASE
+	bb.Enabled = false
+
+	local aura = Instance.new("Frame")
+	aura.Name = "Aura"
+	aura.BackgroundColor3 = Color3.fromRGB(255, 210, 70)
+	aura.BackgroundTransparency = 0.72
+	aura.BorderSizePixel = 0
+	aura.AnchorPoint = Vector2.new(0.5, 0.35)
+	aura.Position = UDim2.fromScale(0.5, 0.38)
+	aura.Size = UDim2.fromOffset(78, 78)
+	aura.ZIndex = 1
+	local auraCorner = Instance.new("UICorner")
+	auraCorner.CornerRadius = UDim.new(1, 0)
+	auraCorner.Parent = aura
+	aura.Parent = bb
+
+	local host = Instance.new("Frame")
+	host.Name = "HintHost"
+	host.BackgroundColor3 = Color3.fromRGB(12, 10, 22)
+	host.BackgroundTransparency = 0.08
+	host.BorderSizePixel = 0
+	host.AnchorPoint = Vector2.new(0.5, 0.35)
+	host.Position = UDim2.fromScale(0.5, 0.38)
+	host.Size = UDim2.fromOffset(52, 52)
+	host.ZIndex = 3
+	local hostCorner = Instance.new("UICorner")
+	hostCorner.CornerRadius = UDim.new(1, 0)
+	hostCorner.Parent = host
+	local hostStroke = Instance.new("UIStroke")
+	hostStroke.Color = Color3.fromRGB(255, 220, 96)
+	hostStroke.Thickness = 2.4
+	hostStroke.Transparency = 0.08
+	hostStroke.Parent = host
+	host.Parent = bb
+
+	local caption = Instance.new("TextLabel")
+	caption.Name = "Caption"
+	caption.BackgroundTransparency = 1
+	caption.AnchorPoint = Vector2.new(0.5, 0)
+	caption.Position = UDim2.new(0.5, 0, 0.72, 0)
+	caption.Size = UDim2.new(1, 0, 0, 22)
+	caption.Font = Enum.Font.GothamBlack
+	caption.Text = "UPGRADE"
+	caption.TextColor3 = Color3.fromRGB(255, 236, 170)
+	caption.TextScaled = true
+	caption.ZIndex = 4
+	caption.Parent = bb
+	UiFonts.applyDisplay(caption)
+	local capStroke = Instance.new("UIStroke")
+	capStroke.Color = Color3.fromRGB(20, 12, 6)
+	capStroke.Thickness = 1.6
+	capStroke.Transparency = 0.15
+	capStroke.Parent = caption
+
+	if pg then
+		bb.Parent = pg
+	end
+	GamepadInput.mountHint(host, GamepadInput.DECLINE, true, { contrast = true })
+	upgradeHintGui = bb
+	upgradeHintHost = host
+	return bb, host
+end
+
+local function showUpgradePadHint(stand: Model)
+	local adornee = findUpgradeAdornee(stand)
+	if not adornee then
+		hideUpgradePadHint()
+		return
+	end
+	local bb, host = ensureUpgradePadHint()
+	bb.Adornee = adornee
+	bb.Enabled = true
+	GamepadInput.mountHint(host, GamepadInput.DECLINE, true, { contrast = true })
+	local glyph = host:FindFirstChild("GamepadHotkey")
+	if glyph and glyph:IsA("GuiObject") then
+		glyph.Size = UDim2.fromOffset(34, 34)
+	end
+	local glyphText = host:FindFirstChild("GamepadHotkeyText")
+	if glyphText and glyphText:IsA("GuiObject") then
+		glyphText.Size = UDim2.fromOffset(34, 34)
+	end
+	GamepadInput.setHintVisible(host, true)
+	if upgradeHintStand == stand and upgradeHintBobConn then
+		return
+	end
+	upgradeHintStand = stand
+	stopUpgradeHintBob()
+	local born = os.clock()
+	upgradeHintBobConn = RunService.Heartbeat:Connect(function()
+		if not bb.Parent or bb.Enabled ~= true then
+			return
+		end
+		local wave = math.sin((os.clock() - born) * 2.55)
+		bb.StudsOffset = UPGRADE_HINT_BASE + Vector3.new(0, wave * 0.2, 0)
+	end)
+end
+
 -- Only one stand prompt visible at a time (closest). Hide pick-up while holding a brainrot.
 local function updateClosestUpgradeStand(hrpPos: Vector3)
 	local best: Model? = nil
@@ -768,17 +915,16 @@ local function updateClosestUpgradeStand(hrpPos: Vector3)
 	end
 	closestUpgradeStand = best
 	local pad = GamepadInput.isPreferred()
-	for stand, view in pairs(views) do
+	for _, view in pairs(views) do
 		local btn = view.upgradeButton
-		if not (btn and btn.Parent) then
-			continue
+		if btn and btn.Parent then
+			GamepadInput.clearHint(btn)
 		end
-		if pad and best == stand then
-			GamepadInput.mountHint(btn, GamepadInput.DECLINE, true, { contrast = true })
-			GamepadInput.setHintVisible(btn, true)
-		else
-			GamepadInput.setHintVisible(btn, false)
-		end
+	end
+	if pad and best then
+		showUpgradePadHint(best)
+	else
+		hideUpgradePadHint()
 	end
 end
 
@@ -803,6 +949,7 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
+		hideUpgradePadHint()
 		return
 	end
 	local hrpPos = hrp.Position

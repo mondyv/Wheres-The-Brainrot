@@ -2360,11 +2360,23 @@ end
 		t:Play()
 	end
 
-	local function canSelectHotbarSlot(): boolean
-		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+	local function canSelectHotbarSlot(index: number?): boolean
+		if not canUseToolbar or HUDController.isPanelOpen() == true then
 			return false
 		end
-		return canUseToolbar and HUDController.isPanelOpen() ~= true
+		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+			return true
+		end
+		-- Mid-workout: only allow putting the current gear away, not swapping slots.
+		if typeof(index) ~= "number" then
+			return false
+		end
+		local char = player.Character
+		local equipped = char and char:FindFirstChildOfClass("Tool")
+		if equipped and slotTools[index] == equipped then
+			return true
+		end
+		return uiHotbarHighlight == index
 	end
 
 	local function hotbarSlotHasSelectableContent(index: number): boolean
@@ -4443,7 +4455,7 @@ end
 	-- ── Equip from slot ───────────────────────────────────────────────────────────
 
 	selectSlot = function(index: number, keepEquipped: boolean?)
-		if not canSelectHotbarSlot() then
+		if not canSelectHotbarSlot(index) then
 			return
 		end
 		if not hotbarSlotHasSelectableContent(index) then
@@ -4716,6 +4728,13 @@ end
 	local HOTBAR_DPAD_ACTION = "ToolbarHotbarDPadCycle"
 
 	local function cycleHotbarSlot(delta: number)
+		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+			local current = uiHotbarHighlight
+			if typeof(current) == "number" then
+				selectSlot(current)
+			end
+			return
+		end
 		if not canSelectHotbarSlot() then
 			return
 		end
@@ -4801,7 +4820,7 @@ end
 				if not idx then
 					return Enum.ContextActionResult.Pass
 				end
-				if not canSelectHotbarSlot() then
+				if not canSelectHotbarSlot(idx) then
 					return Enum.ContextActionResult.Pass
 				end
 				if not hotbarSlotHasSelectableContent(idx) then
@@ -5135,7 +5154,7 @@ end
 				configureHotbarSlotInput(slot, btn)
 				styleToolbarSlotButton(btn)
 				local function onHotbarSlotTapSelect()
-					if not canSelectHotbarSlot() then
+					if not canSelectHotbarSlot(i) then
 						return
 					end
 					if dragSuppressedToolbarClick then

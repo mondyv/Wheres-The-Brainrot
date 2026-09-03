@@ -1653,27 +1653,14 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			end
 		end
 	end
-	local skipPadHint = claimStyle
-		or attachHost.Name == "Accept"
+	local isAcceptDecline = attachHost.Name == "Accept"
 		or attachHost.Name == "Decline"
 		or target.Name == "Accept"
 		or target.Name == "Decline"
-	if not skipPadHint then
-		local hintKey = GamepadInput.ACCEPT
-		if
-			attachHost.Name == "Upgrade"
-			or target.Name == "Upgrade"
-			or target.Name == "__UpgradeOverlay"
-		then
-			hintKey = GamepadInput.DECLINE
-		end
-		if attachHost:IsA("GuiButton") then
-			GamepadInput.mountHint(attachHost, hintKey, false, { contrast = true })
-		elseif target:IsA("GuiButton") then
-			GamepadInput.mountHint(target, hintKey, false, { contrast = true })
-		end
-	else
-		target:SetAttribute("_TutorialClaimPointer", true)
+	local isUpgrade = attachHost.Name == "Upgrade"
+		or target.Name == "Upgrade"
+		or target.Name == "__UpgradeOverlay"
+	if claimStyle or isAcceptDecline then
 		local hideIcon = target:FindFirstChild("HotkeyIcon")
 		if hideIcon and hideIcon:IsA("GuiObject") then
 			hideIcon.Visible = false
@@ -1681,6 +1668,30 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 		local hideHint = target:FindFirstChild("HotkeyHint")
 		if hideHint and hideHint:IsA("GuiObject") then
 			hideHint.Visible = false
+		end
+		if attachHost ~= target then
+			local hostIcon = attachHost:FindFirstChild("HotkeyIcon")
+			if hostIcon and hostIcon:IsA("GuiObject") then
+				hostIcon.Visible = false
+			end
+			local hostHint = attachHost:FindFirstChild("HotkeyHint")
+			if hostHint and hostHint:IsA("GuiObject") then
+				hostHint.Visible = false
+			end
+		end
+	end
+	-- Claim keeps the click-hand only. Upgrade B lives on the world hover prompt.
+	if claimStyle then
+		target:SetAttribute("_TutorialClaimPointer", true)
+	elseif not isUpgrade then
+		local hintKey = GamepadInput.ACCEPT
+		if attachHost.Name == "Decline" or target.Name == "Decline" then
+			hintKey = GamepadInput.DECLINE
+		end
+		if attachHost:IsA("GuiButton") then
+			GamepadInput.mountHint(attachHost, hintKey, false, { contrast = true })
+		elseif target:IsA("GuiButton") then
+			GamepadInput.mountHint(target, hintKey, false, { contrast = true })
 		end
 	end
 

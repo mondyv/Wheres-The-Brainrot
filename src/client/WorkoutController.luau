@@ -914,7 +914,8 @@ local function playWorkoutAnim(character: Model)
 	track:Play(0.15)
 	local comboAttr = player:GetAttribute("WorkoutCombo")
 	local comboN = if typeof(comboAttr) == "number" then comboAttr else 1
-	track:AdjustSpeed(1 + math.min(math.max(comboN, 1) - 1, 10) * 0.045)
+	local lift = GearConfig.workoutLiftMultiplier(comboN)
+	track:AdjustSpeed(1 + (lift - 1) * 0.28)
 	workoutTrack = track
 end
 
@@ -1422,17 +1423,23 @@ local doubleTapGen = 0
 local doubleTapGui: ScreenGui? = nil
 local claimDoubleTapBusy = false
 local comboRingConn: RBXScriptConnection? = nil
+local comboPreferredConn: RBXScriptConnection? = nil
 local comboRingBorn = 0.0
 local comboWindow = 1.55
 local comboBusyAnim = false
 local lastComboPos = Vector2.new(-999, -999)
+-- Face buttons only. Never B (cancel / back) or bumpers / D-pad (hotbar unequip).
+local COMBO_PAD_KEYS = { Enum.KeyCode.ButtonA, Enum.KeyCode.ButtonX, Enum.KeyCode.ButtonY }
+local comboPromptKey = Enum.KeyCode.ButtonA
 
 local function comboWindowFor(n: number): number
-	return math.clamp(1.55 - (math.max(n, 1) - 1) * 0.055, 0.92, 1.55)
+	local lift = GearConfig.workoutLiftMultiplier(n)
+	return math.clamp(1.52 - (lift - 1) * 0.18, 0.95, 1.52)
 end
 
 local function comboAnimSpeedFor(n: number): number
-	return 1 + math.min(math.max(n, 1) - 1, 10) * 0.045
+	local lift = GearConfig.workoutLiftMultiplier(n)
+	return 1 + (lift - 1) * 0.28
 end
 
 local function applyComboAnimSpeed(n: number)
@@ -1651,6 +1658,64 @@ local function ensureDoubleTapGui(): ScreenGui
 	numPad.PaddingRight = UDim.new(0, 8)
 	numPad.Parent = num
 
+	local prompt = Instance.new("ImageLabel")
+	prompt.Name = "PadPrompt"
+	prompt.BackgroundTransparency = 1
+	prompt.AnchorPoint = Vector2.new(0.5, 0.5)
+	prompt.Position = UDim2.fromScale(0.5, 0.5)
+	prompt.Size = UDim2.fromOffset(40, 40)
+	prompt.ScaleType = Enum.ScaleType.Fit
+	prompt.Visible = false
+	prompt.ZIndex = 24
+	prompt.Parent = core
+
+	local stats = Instance.new("Frame")
+	stats.Name = "ComboStats"
+	stats.BackgroundTransparency = 1
+	stats.AnchorPoint = Vector2.new(0.5, 0)
+	stats.Position = UDim2.new(0.5, 0, 1, 8)
+	stats.Size = UDim2.fromOffset(220, 52)
+	stats.ZIndex = 24
+	stats.Parent = holder
+	local statsList = Instance.new("UIListLayout")
+	statsList.FillDirection = Enum.FillDirection.Vertical
+	statsList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	statsList.VerticalAlignment = Enum.VerticalAlignment.Top
+	statsList.Padding = UDim.new(0, 0)
+	statsList.Parent = stats
+	local comboLabel = Instance.new("TextLabel")
+	comboLabel.Name = "ComboLabel"
+	comboLabel.BackgroundTransparency = 1
+	comboLabel.Size = UDim2.new(1, 0, 0, 26)
+	comboLabel.Text = "COMBO 1"
+	comboLabel.TextColor3 = Color3.fromRGB(255, 246, 210)
+	comboLabel.TextScaled = true
+	comboLabel.Font = Enum.Font.GothamBlack
+	comboLabel.ZIndex = 24
+	comboLabel.Parent = stats
+	UiFonts.applyDisplay(comboLabel)
+	local comboStroke = Instance.new("UIStroke")
+	comboStroke.Color = Color3.fromRGB(20, 12, 6)
+	comboStroke.Thickness = 1.6
+	comboStroke.Transparency = 0.2
+	comboStroke.Parent = comboLabel
+	local liftLabel = Instance.new("TextLabel")
+	liftLabel.Name = "LiftLabel"
+	liftLabel.BackgroundTransparency = 1
+	liftLabel.Size = UDim2.new(1, 0, 0, 24)
+	liftLabel.Text = "LIFT x1.0"
+	liftLabel.TextColor3 = Color3.fromRGB(255, 214, 74)
+	liftLabel.TextScaled = true
+	liftLabel.Font = Enum.Font.GothamBlack
+	liftLabel.ZIndex = 24
+	liftLabel.Parent = stats
+	UiFonts.applyDisplay(liftLabel)
+	local liftStroke = Instance.new("UIStroke")
+	liftStroke.Color = Color3.fromRGB(20, 12, 6)
+	liftStroke.Thickness = 1.6
+	liftStroke.Transparency = 0.2
+	liftStroke.Parent = liftLabel
+
 	if pg then
 		gui.Parent = pg
 	end
@@ -1664,6 +1729,64 @@ local function comboDisplay(): number
 		return math.max(1, math.floor(v))
 	end
 	return 1
+end
+
+local function isComboPadKey(code: Enum.KeyCode): boolean
+	for _, key in COMBO_PAD_KEYS do
+		if key == code then
+			return true
+		end
+	end
+	return false
+end
+
+local function pickNextComboKey()
+	local choices: { Enum.KeyCode } = {}
+	for _, key in COMBO_PAD_KEYS do
+		if key ~= comboPromptKey then
+			table.insert(choices, key)
+		end
+	end
+	if #choices == 0 then
+		comboPromptKey = Enum.KeyCode.ButtonA
+		return
+	end
+	comboPromptKey = choices[math.random(1, #choices)]
+end
+
+local function refreshComboHud(n: number)
+	local gui = doubleTapGui
+	local holder = gui and gui:FindFirstChild("ComboHold")
+	if not (holder and holder:IsA("Frame")) then
+		return
+	end
+	local count = math.max(1, math.floor(n))
+	local lift = GearConfig.workoutLiftMultiplier(count)
+	local hit = holder:FindFirstChild("Hit")
+	local num = hit and hit:FindFirstChild("ComboNum")
+	local prompt = hit and hit:FindFirstChild("PadPrompt")
+	local stats = holder:FindFirstChild("ComboStats")
+	local comboLabel = stats and stats:FindFirstChild("ComboLabel")
+	local liftLabel = stats and stats:FindFirstChild("LiftLabel")
+	local pad = GamepadInput.isPreferred()
+	if comboLabel and comboLabel:IsA("TextLabel") then
+		comboLabel.Text = "COMBO " .. tostring(count)
+	end
+	if liftLabel and liftLabel:IsA("TextLabel") then
+		liftLabel.Text = string.format("LIFT x%.1f", lift)
+		liftLabel.TextColor3 = if lift >= GearConfig.WORKOUT_LIFT_MULT_MAX - 0.05
+			then Color3.fromRGB(255, 236, 120)
+			else Color3.fromRGB(255, 214, 74)
+	end
+	if num and num:IsA("TextLabel") then
+		num.Text = tostring(count)
+		num.Visible = not pad
+	end
+	if prompt and prompt:IsA("ImageLabel") then
+		local img = if pad then GamepadInput.faceImage(comboPromptKey) else ""
+		prompt.Image = img
+		prompt.Visible = pad and img ~= ""
+	end
 end
 
 local function setComboRingScale(scale: number)
@@ -1690,6 +1813,7 @@ local function setComboNumber(n: number)
 	if num and num:IsA("TextLabel") then
 		num.Text = tostring(math.max(1, math.floor(n)))
 	end
+	refreshComboHud(n)
 end
 
 local function comboHolder(): Frame?
@@ -1727,6 +1851,7 @@ local function paintComboIdle()
 		num.TextTransparency = 0
 		num.TextColor3 = Color3.fromRGB(255, 246, 210)
 	end
+	refreshComboHud(comboDisplay())
 end
 
 local function placeComboHold()
@@ -1752,6 +1877,8 @@ local function placeComboHold()
 	end
 	lastComboPos = pos
 	holder.Position = UDim2.fromOffset(pos.X, pos.Y)
+	pickNextComboKey()
+	refreshComboHud(comboDisplay())
 end
 
 local function pulseComboHold(ok: boolean)
@@ -1942,6 +2069,10 @@ local function stopDoubleTapLoop()
 		comboRingConn:Disconnect()
 		comboRingConn = nil
 	end
+	if comboPreferredConn then
+		comboPreferredConn:Disconnect()
+		comboPreferredConn = nil
+	end
 	if doubleTapGui then
 		doubleTapGui:Destroy()
 		doubleTapGui = nil
@@ -1974,10 +2105,15 @@ local function startDoubleTapLoop()
 	pcall(function()
 		ContextActionService:UnbindAction(DOUBLE_TAP_ACTION)
 	end)
+	if comboPreferredConn then
+		comboPreferredConn:Disconnect()
+		comboPreferredConn = nil
+	end
 	doubleTapGen += 1
 	local gen = doubleTapGen
 	comboBusyAnim = false
 	lastComboPos = Vector2.new(-999, -999)
+	comboPromptKey = COMBO_PAD_KEYS[math.random(1, #COMBO_PAD_KEYS)]
 	ensureDoubleTapGui()
 	placeComboHold()
 	paintComboIdle()
@@ -2002,20 +2138,40 @@ local function startDoubleTapLoop()
 		end
 		setComboRingScale(1.42 - t * 0.72)
 	end)
+	comboPreferredConn = GamepadInput.onPreferredChanged(function()
+		if gen == doubleTapGen then
+			refreshComboHud(comboDisplay())
+		end
+	end)
 	ContextActionService:BindActionAtPriority(
 		DOUBLE_TAP_ACTION,
-		function(_name, state, _input)
+		function(_name, state, input)
 			if state ~= Enum.UserInputState.Begin then
 				return Enum.ContextActionResult.Pass
 			end
-			if tryActivateOldestDoubleTap() then
-				return Enum.ContextActionResult.Sink
+			if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+				return Enum.ContextActionResult.Pass
 			end
+			local code = if input then input.KeyCode else comboPromptKey
+			if GamepadInput.isPreferred() then
+				if code == comboPromptKey then
+					hitCombo()
+					return Enum.ContextActionResult.Sink
+				end
+				if isComboPadKey(code) then
+					missCombo()
+					return Enum.ContextActionResult.Sink
+				end
+				return Enum.ContextActionResult.Pass
+			end
+			-- Keyboard / mouse: don't steal jump (A) or other face buttons.
 			return Enum.ContextActionResult.Pass
 		end,
 		false,
 		Enum.ContextActionPriority.High.Value + 80,
-		Enum.KeyCode.ButtonA
+		Enum.KeyCode.ButtonA,
+		Enum.KeyCode.ButtonX,
+		Enum.KeyCode.ButtonY
 	)
 	local gui = doubleTapGui
 	local holder = gui and gui:FindFirstChild("ComboHold")
@@ -2023,6 +2179,9 @@ local function startDoubleTapLoop()
 	if hit and hit:IsA("GuiButton") then
 		hit.Activated:Connect(function()
 			if gen ~= doubleTapGen then
+				return
+			end
+			if GamepadInput.isPreferred() then
 				return
 			end
 			hitCombo()
@@ -2268,13 +2427,6 @@ local function init()
 	for _, plr in Players:GetPlayers() do
 		bindObservedPlayer(plr)
 	end
-
-	UserInputService.InputBegan:Connect(function(input, _gameProcessed)
-		if input.UserInputType ~= Enum.UserInputType.Gamepad1 or input.KeyCode ~= GamepadInput.ACCEPT then
-			return
-		end
-		tryActivateOldestDoubleTap()
-	end)
 end
 
 return {

@@ -10,8 +10,8 @@
 	  • Bloom / DoF / SunRays off
 	  • Safer fog via SafeZoneLightingController
 
-	Studio play-solo always uses the lighting/cull overlay (session QualityLevel
-	cap only — never writes SavedQualityLevel).
+	Studio play-solo caps session QualityLevel and uses the heavier land cull.
+	It does not strip shadows/bloom or rewrite atmosphere (that looked wrong).
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -111,17 +111,17 @@ local function capStudioRenderQuality()
 end
 
 local function apply(userEnabled: boolean)
-	-- Studio play-solo always uses the cheap lighting/cull path. Do not write
-	-- SavedQualityLevel (that persists onto the live Roblox account).
-	local enabled = userEnabled == true or studioPlay()
-	FireflyController.setEnabled(not enabled)
-	VegetationSwayController.setEnabled(not enabled)
-	SafeZoneLightingController.setLowGraphics(enabled)
-	GrassCullController.setLowGraphics(enabled)
-	setHeavyFxEnabled(not enabled)
-	setGlobalShadowsEnabled(not enabled)
-	setSavedQualityLowest(userEnabled == true)
-	if enabled then
+	local userOn = userEnabled == true
+	local studio = studioPlay()
+	-- Studio keeps shadows/bloom/atmosphere. Only land cull + quality cap for FPS.
+	FireflyController.setEnabled(not (userOn or studio))
+	VegetationSwayController.setEnabled(not (userOn or studio))
+	GrassCullController.setLowGraphics(userOn or studio)
+	SafeZoneLightingController.setLowGraphics(userOn)
+	setHeavyFxEnabled(not userOn)
+	setGlobalShadowsEnabled(not userOn)
+	setSavedQualityLowest(userOn)
+	if studio then
 		capStudioRenderQuality()
 	end
 end
@@ -150,11 +150,11 @@ function LowGraphicsController.init()
 	end)
 
 	Lighting.ChildAdded:Connect(function(child)
-		if not (LowGraphicsController.isEnabled() or studioPlay()) then
+		if not LowGraphicsController.isEnabled() then
 			return
 		end
 		task.defer(function()
-			if not child.Parent or not (LowGraphicsController.isEnabled() or studioPlay()) then
+			if not child.Parent or not LowGraphicsController.isEnabled() then
 				return
 			end
 			if isHeavyFx(child) then

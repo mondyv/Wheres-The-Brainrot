@@ -15,12 +15,12 @@ task.defer(function()
 
 	-- Play-solo is server+client in one process at Automatic/max quality. Live
 	-- Roblox already streams and quality-scales; Studio does not. Session-only.
+	-- Do not strip shadows/bloom here — that made Studio lighting look wrong.
 	if RunService:IsStudio() then
 		pcall(function()
 			local q = Enum.QualityLevel
 			settings().Rendering.QualityLevel = q.Level08 or q.Level8 or q.Level01
 		end)
-		Lighting.GlobalShadows = false
 	end
 
 	task.spawn(function()
@@ -57,8 +57,14 @@ task.defer(function()
 		local Workspace = game:GetService("Workspace")
 		if Workspace.StreamingEnabled == true then
 			local studio = RunService:IsStudio()
-			(Workspace :: any).StreamingMinRadius = if studio then 80 else 112
-			(Workspace :: any).StreamingTargetRadius = if studio then 180 else 280
+			local wsAny = Workspace :: any
+			if studio then
+				wsAny.StreamingMinRadius = 80
+				wsAny.StreamingTargetRadius = 180
+			else
+				wsAny.StreamingMinRadius = 112
+				wsAny.StreamingTargetRadius = 280
+			end
 		end
 	end)
 

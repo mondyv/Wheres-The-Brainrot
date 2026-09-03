@@ -279,31 +279,15 @@ end
 
 local DOUBLE_TAP_ACTION = "WorkoutDoubleTapAccept"
 
--- Stable shoe-top / toe points in foot-local space so the bar stays flush
--- no matter which animation frame the attach happens on.
-local function footSoleToeLocal(foot: BasePart, forwardHint: Vector3): Vector3
+-- Stable shoe-top center in foot-local space (R15 local -Y is the sole).
+local function footTopCenterLocal(foot: BasePart): Vector3
 	local size = foot.Size
-	local axisZ = foot.CFrame:VectorToWorldSpace(Vector3.zAxis)
-	local axisX = foot.CFrame:VectorToWorldSpace(Vector3.xAxis)
-	local useZ = math.abs(axisZ:Dot(forwardHint)) >= math.abs(axisX:Dot(forwardHint))
-	local toeAxis = if useZ then Vector3.zAxis else Vector3.xAxis
-	local worldAxis = if useZ then axisZ else axisX
-	local sign = if worldAxis:Dot(forwardHint) >= 0 then 1 else -1
-	local along = if useZ then size.Z else size.X
-	-- Local -Y is the sole on R15 feet. Tiny nudge onto the visual shoe top
-	-- (not toward the shin — a large +Y put the bar on the torso).
-	return Vector3.new(0, -size.Y * 0.5 + 0.12, 0) + toeAxis * (sign * along * 0.38)
+	return Vector3.new(0, -size.Y * 0.5 + 0.12, 0)
 end
 
-local function soleAcross(rf: BasePart, lf: BasePart?, forwardHint: Vector3): (Vector3, Vector3, number)
-	local hint = Vector3.new(forwardHint.X, 0, forwardHint.Z)
-	if hint.Magnitude < 0.05 then
-		hint = Vector3.new(0, 0, -1)
-	else
-		hint = hint.Unit
-	end
-	local t0 = rf.CFrame:PointToWorldSpace(footSoleToeLocal(rf, hint))
-	local t1 = if lf then lf.CFrame:PointToWorldSpace(footSoleToeLocal(lf, hint)) else t0
+local function soleAcross(rf: BasePart, lf: BasePart?, _forwardHint: Vector3): (Vector3, Vector3, number)
+	local t0 = rf.CFrame:PointToWorldSpace(footTopCenterLocal(rf))
+	local t1 = if lf then lf.CFrame:PointToWorldSpace(footTopCenterLocal(lf)) else t0
 	local mid = (t0 + t1) * 0.5
 	local across = t1 - t0
 	across = Vector3.new(across.X, 0, across.Z)
@@ -460,25 +444,15 @@ local function partWorldMinY(part: BasePart): number
 end
 
 local function dominantMeshCenter(model: Model, primary: BasePart): Vector3
-	local largest = 0
-	local parts: { BasePart } = {}
-	for _, d in model:GetDescendants() do
-		if isPoseMeshPart(d) then
-			local p = d :: BasePart
-			local vol = p.Size.X * p.Size.Y * p.Size.Z
-			largest = math.max(largest, vol)
-			table.insert(parts, p)
-		end
-	end
 	local minV = Vector3.new(math.huge, math.huge, math.huge)
 	local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
 	local any = false
-	for _, p in parts do
-		local vol = p.Size.X * p.Size.Y * p.Size.Z
-		if vol < largest * 0.22 then
+	for _, d in model:GetDescendants() do
+		if not isPoseMeshPart(d) then
 			continue
 		end
 		any = true
+		local p = d :: BasePart
 		local cf = p.CFrame
 		local half = p.Size * 0.5
 		for _, sx in { -1, 1 } do

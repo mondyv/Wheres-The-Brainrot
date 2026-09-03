@@ -772,7 +772,12 @@ end
 
 local function ensureUpgradePadHint(): (BillboardGui, Frame)
 	if upgradeHintGui and upgradeHintGui.Parent and upgradeHintHost and upgradeHintHost.Parent then
-		return upgradeHintGui, upgradeHintHost
+		if upgradeHintHost:FindFirstChild("PadLetter") then
+			return upgradeHintGui, upgradeHintHost
+		end
+		upgradeHintGui:Destroy()
+		upgradeHintGui = nil
+		upgradeHintHost = nil
 	end
 	local pg = player:FindFirstChildOfClass("PlayerGui")
 	if not pg then
@@ -821,6 +826,29 @@ local function ensureUpgradePadHint(): (BillboardGui, Frame)
 	hostStroke.Parent = host
 	host.Parent = bb
 
+	local letter = Instance.new("TextLabel")
+	letter.Name = "PadLetter"
+	letter.BackgroundTransparency = 1
+	letter.Size = UDim2.fromScale(1, 1)
+	letter.Font = Enum.Font.GothamBlack
+	letter.TextScaled = true
+	letter.TextColor3 = Color3.fromRGB(255, 255, 255)
+	letter.Text = GamepadInput.faceLabel(GamepadInput.DECLINE)
+	letter.ZIndex = 5
+	letter.Parent = host
+	UiFonts.applyDisplay(letter)
+	local letterStroke = Instance.new("UIStroke")
+	letterStroke.Color = Color3.fromRGB(18, 10, 6)
+	letterStroke.Thickness = 2.2
+	letterStroke.Transparency = 0.05
+	letterStroke.Parent = letter
+	local letterPad = Instance.new("UIPadding")
+	letterPad.PaddingTop = UDim.new(0, 8)
+	letterPad.PaddingBottom = UDim.new(0, 8)
+	letterPad.PaddingLeft = UDim.new(0, 8)
+	letterPad.PaddingRight = UDim.new(0, 8)
+	letterPad.Parent = letter
+
 	local caption = Instance.new("TextLabel")
 	caption.Name = "Caption"
 	caption.BackgroundTransparency = 1
@@ -843,7 +871,6 @@ local function ensureUpgradePadHint(): (BillboardGui, Frame)
 	if pg then
 		bb.Parent = pg
 	end
-	GamepadInput.mountHint(host, GamepadInput.DECLINE, true, { contrast = true })
 	upgradeHintGui = bb
 	upgradeHintHost = host
 	return bb, host
@@ -858,16 +885,11 @@ local function showUpgradePadHint(stand: Model)
 	local bb, host = ensureUpgradePadHint()
 	bb.Adornee = adornee
 	bb.Enabled = true
-	GamepadInput.mountHint(host, GamepadInput.DECLINE, true, { contrast = true })
-	local glyph = host:FindFirstChild("GamepadHotkey")
-	if glyph and glyph:IsA("GuiObject") then
-		glyph.Size = UDim2.fromOffset(34, 34)
+	local letter = host:FindFirstChild("PadLetter")
+	if letter and letter:IsA("TextLabel") then
+		letter.Text = GamepadInput.faceLabel(GamepadInput.DECLINE)
+		letter.Visible = true
 	end
-	local glyphText = host:FindFirstChild("GamepadHotkeyText")
-	if glyphText and glyphText:IsA("GuiObject") then
-		glyphText.Size = UDim2.fromOffset(34, 34)
-	end
-	GamepadInput.setHintVisible(host, true)
 	if upgradeHintStand == stand and upgradeHintBobConn then
 		return
 	end

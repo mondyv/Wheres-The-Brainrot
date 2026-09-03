@@ -1653,44 +1653,18 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			end
 		end
 	end
-	local isAcceptDecline = attachHost.Name == "Accept"
-		or attachHost.Name == "Decline"
-		or target.Name == "Accept"
-		or target.Name == "Decline"
 	local isUpgrade = attachHost.Name == "Upgrade"
 		or target.Name == "Upgrade"
 		or target.Name == "__UpgradeOverlay"
-	if claimStyle or isAcceptDecline then
-		local hideIcon = target:FindFirstChild("HotkeyIcon")
-		if hideIcon and hideIcon:IsA("GuiObject") then
-			hideIcon.Visible = false
-		end
-		local hideHint = target:FindFirstChild("HotkeyHint")
-		if hideHint and hideHint:IsA("GuiObject") then
-			hideHint.Visible = false
-		end
-		if attachHost ~= target then
-			local hostIcon = attachHost:FindFirstChild("HotkeyIcon")
-			if hostIcon and hostIcon:IsA("GuiObject") then
-				hostIcon.Visible = false
-			end
-			local hostHint = attachHost:FindFirstChild("HotkeyHint")
-			if hostHint and hostHint:IsA("GuiObject") then
-				hostHint.Visible = false
-			end
-		end
-	end
-	-- Claim keeps the click-hand only. Upgrade B lives on the world hover prompt.
-	if claimStyle then
-		target:SetAttribute("_TutorialClaimPointer", true)
-	elseif not isUpgrade then
+	-- Claim Accept/Decline keep their built-in A/B. Upgrade B is the world hover prompt.
+	if not claimStyle and not isUpgrade then
 		local hintKey = GamepadInput.ACCEPT
 		if attachHost.Name == "Decline" or target.Name == "Decline" then
 			hintKey = GamepadInput.DECLINE
 		end
-		if attachHost:IsA("GuiButton") then
+		if attachHost:IsA("GuiObject") then
 			GamepadInput.mountHint(attachHost, hintKey, false, { contrast = true })
-		elseif target:IsA("GuiButton") then
+		elseif target:IsA("GuiObject") then
 			GamepadInput.mountHint(target, hintKey, false, { contrast = true })
 		end
 	end
@@ -1958,7 +1932,7 @@ local function land1Aim(): Vector3
 end
 
 local function refreshVineCache()
-	if os.clock() - vineCacheAt < 2.5 and #vineCache > 0 then
+	if os.clock() - vineCacheAt < 0.4 and #vineCache > 0 then
 		return
 	end
 	vineCacheAt = os.clock()
@@ -2009,10 +1983,10 @@ local function resolveLand1SwingTarget(): BasePart?
 	local function isAhead(part: BasePart): boolean
 		local offset = part.Position - origin
 		local dist = offset.Magnitude
-		if dist < 8 or dist > 220 then
+		if dist < 3 or dist > 260 then
 			return false
 		end
-		return offset:Dot(aimDir) >= 6
+		return offset:Dot(aimDir) >= 0
 	end
 
 	-- Stick to the corridor-middle vine; don't hop to whatever is camera-center.
@@ -3293,11 +3267,14 @@ function M.getLockedSwingPart(): BasePart?
 		return nil
 	end
 	local step = currentStep()
-	if not step or (step.id ~= "swingLand1" and step.id ~= "goToBase") then
+	if not step then
 		return nil
 	end
-	if lockedSwingPart and lockedSwingPart.Parent then
-		return lockedSwingPart
+	if step.id == "swingLand1" then
+		return resolveLand1SwingTarget()
+	end
+	if step.id == "goToBase" then
+		return resolveReturnSwingTarget()
 	end
 	return nil
 end

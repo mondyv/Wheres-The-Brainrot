@@ -2985,7 +2985,7 @@ local function boot(character)
 			end
 		end
 
-		if st.isHrpInSafezone() then
+		if st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
 			return nil
 		end
 
@@ -3203,7 +3203,7 @@ local function boot(character)
 	end
 
 	function st.pickNearbySwingTarget(maxDistance, preferredTarget)
-		if st.isHrpInSafezone() then
+		if st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
 			return nil, nil, nil
 		end
 		camera = workspace.CurrentCamera or camera
@@ -3439,8 +3439,17 @@ local function boot(character)
 	end
 
 	function st.pickAttachSwingTarget(maxDistance, minLookDot, maxScreenRadius)
-		if st.isHrpInSafezone() then
+		if st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
 			return nil
+		end
+		if player:GetAttribute("TutorialCompleted") ~= true then
+			local tutorialMod = getClientModule("TutorialController")
+			if tutorialMod and typeof(tutorialMod.getLockedSwingPart) == "function" then
+				local locked = tutorialMod.getLockedSwingPart()
+				if locked and locked.Parent then
+					return locked
+				end
+			end
 		end
 		camera = workspace.CurrentCamera or camera
 
@@ -3504,7 +3513,10 @@ local function boot(character)
 
 	function st.isVisibleSwingTarget(target, maxDistance, minLookDot)
 		camera = workspace.CurrentCamera or camera
-		if not camera or not st.hrp.Parent or st.isHrpInSafezone() then
+		if not camera or not st.hrp.Parent then
+			return false
+		end
+		if st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
 			return false
 		end
 		if not target or not target.Parent then
@@ -3595,7 +3607,10 @@ local function boot(character)
 		maxScreenRadiusOverride
 	)
 		camera = workspace.CurrentCamera or camera
-		if not camera or not st.hrp.Parent or st.isHrpInSafezone() then
+		if not camera or not st.hrp.Parent then
+			return false
+		end
+		if st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
 			return false
 		end
 
@@ -4036,7 +4051,7 @@ local function boot(character)
 		if not st.previewBeam then
 			return
 		end
-		if st.isHrpInSafezone() or st.previewFade <= 0.01 then
+		if (st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true) or st.previewFade <= 0.01 then
 			st.previewBeam.Enabled = false
 			return
 		end
@@ -4070,7 +4085,7 @@ local function boot(character)
 	end
 
 	function st.updatePreview(target)
-		if st.isHrpInSafezone() or st.isSwinging or not target or not target.Parent then
+		if (st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true) or st.isSwinging or not target or not target.Parent then
 			st.hidePreview()
 			return
 		end
@@ -5533,6 +5548,17 @@ local function boot(character)
 				target = st.highlightedTarget
 			end
 		end
+		local trustTutorialLock = false
+		if not target and player:GetAttribute("TutorialCompleted") ~= true then
+			local tutorialMod = getClientModule("TutorialController")
+			if tutorialMod and typeof(tutorialMod.getLockedSwingPart) == "function" then
+				local locked = tutorialMod.getLockedSwingPart()
+				if locked and locked.Parent then
+					target = locked
+					trustTutorialLock = true
+				end
+			end
+		end
 		if not target then
 			if not (groundedAttempt and now - st.lastGroundJumpClock < 0.25) then
 				st.lastTryClock = now
@@ -5542,7 +5568,7 @@ local function boot(character)
 
 		st.lastTryClock = now
 		st.humanoid.Jump = false
-		st.startSwing(target, false)
+		st.startSwing(target, trustTutorialLock)
 	end
 
 	-- Mobile fallback removed to keep Luau boot() under the 200 local-register limit.
@@ -6565,7 +6591,9 @@ local function boot(character)
 			end
 
 			local scanMode = "none"
-			if isGameplayCutsceneActive() or st.isHrpInSafezone() then
+			if isGameplayCutsceneActive() then
+				st.hideSwingTargetUi()
+			elseif st.isHrpInSafezone() and player:GetAttribute("TutorialCompleted") == true then
 				st.hideSwingTargetUi()
 			elseif st.isAirborneForSwing() then
 				scanMode = "air"

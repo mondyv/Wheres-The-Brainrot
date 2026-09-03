@@ -4728,14 +4728,7 @@ end
 	local HOTBAR_DPAD_ACTION = "ToolbarHotbarDPadCycle"
 
 	local function cycleHotbarSlot(delta: number)
-		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
-			local current = uiHotbarHighlight
-			if typeof(current) == "number" then
-				selectSlot(current)
-			end
-			return
-		end
-		if not canSelectHotbarSlot() then
+		if not canUseToolbar or HUDController.isPanelOpen() == true then
 			return
 		end
 		local start = uiHotbarHighlight or 0
@@ -4753,6 +4746,16 @@ end
 		end
 		local idx = ((start - 1 + delta) % 9) + 1
 		UIInteractionSounds.playHover()
+		-- Always walk all 9 slots, including empty cells and past equipped gear.
+		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+			local hum = getHumanoid()
+			if hum then
+				bumpToolHoldGen()
+				hum:UnequipTools()
+			end
+			setHotbarSelection(idx, false)
+			return
+		end
 		if hotbarSlotHasSelectableContent(idx) then
 			selectSlot(idx, true)
 		else

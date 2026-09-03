@@ -365,7 +365,7 @@ local function clearHeadCarry(player: Player)
 	end
 end
 
-local function softTeleportHomeAlive(player: Player)
+local function softTeleportAlive(player: Player, tutorialHitbox: boolean)
 	local waveDeath = player:GetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR) == true
 	if not waveDeath and lastSoftRespawnAt[player] and (os.clock() - lastSoftRespawnAt[player]) < 0.45 then
 		return
@@ -402,7 +402,14 @@ local function softTeleportHomeAlive(player: Player)
 		end
 	end
 	player:SetAttribute(ReviveConfig.HOME_TELEPORT_ATTR, Workspace:GetServerTimeNow())
-	PlotSpawnUtil.teleportPlayerHome(player, character, 12)
+	if tutorialHitbox then
+		local ok = PlotSpawnUtil.teleportTutorialStart(player, character)
+		if not ok then
+			PlotSpawnUtil.teleportPlayerHome(player, character, 12)
+		end
+	else
+		PlotSpawnUtil.teleportPlayerHome(player, character, 12)
+	end
 	if waveDeath then
 		task.delay(2.5, function()
 			if player.Parent then
@@ -412,22 +419,12 @@ local function softTeleportHomeAlive(player: Player)
 	end
 end
 
+local function softTeleportHomeAlive(player: Player)
+	softTeleportAlive(player, false)
+end
+
 local function softRespawnAtHitbox(player: Player)
-	-- Prefer Base pad whenever fast-respawn mode is on (same as Return / My Base).
-	if ReviveConfig.FAST_RESPAWN_ALL_DEATHS then
-		softRespawnAtPlotBase(player)
-		return
-	end
-	clearPending(player)
-	lastSoftRespawnAt[player] = os.clock()
-	local spawnCf = resolveHitboxSoftRespawnCFrame()
-	if spawnCf then
-		storeReviveSpawnAttrs(player, spawnCf)
-	else
-		clearReviveSpawnAttrs(player)
-		warn("[ReviveService] QuestHitbox missing — soft respawn without pinned CFrame")
-	end
-	forceLoadCharacter(player)
+	softTeleportAlive(player, true)
 end
 
 local function isFrictionlessDeathActive(player: Player): boolean
@@ -447,6 +444,12 @@ local function onHumanoidDied(player: Player, character: Model)
 	-- Wave Web chase kill → plot Base (not Tim Cheese hitbox).
 	if player:GetAttribute(ReviveConfig.WAVE_WEB_DEATH_ATTR) == true then
 		softRespawnAtPlotBase(player)
+		return
+	end
+
+	-- Tutorial deaths always return to the QuestHitbox, not the plot Base pad.
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+		softRespawnAtHitbox(player)
 		return
 	end
 

@@ -205,17 +205,6 @@ local CLAIM_DECLINE_ACTION = "FloatingClaimGamepadDecline"
 local claimHotkeysBound = false
 
 local function applyHotkeyHint(btn: TextButton, keyCode: Enum.KeyCode, show: boolean)
-	if btn:GetAttribute("_TutorialClaimPointer") == true then
-		local icon = btn:FindFirstChild("HotkeyIcon")
-		if icon and icon:IsA("GuiObject") then
-			icon.Visible = false
-		end
-		local hintHide = btn:FindFirstChild("HotkeyHint")
-		if hintHide and hintHide:IsA("GuiObject") then
-			hintHide.Visible = false
-		end
-		return
-	end
 	local hint = btn:FindFirstChild("HotkeyHint")
 	local icon = btn:FindFirstChild("HotkeyIcon")
 	local img = GamepadInput.faceImage(keyCode)

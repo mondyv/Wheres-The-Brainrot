@@ -3184,8 +3184,6 @@ end
 		if HUDController.isPanelOpen() then
 			return
 		end
-			return
-		end
 		local now = os.clock()
 		if now - lastBackpackToggleAt < 0.12 then
 			return

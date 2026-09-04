@@ -34,7 +34,7 @@ local BADGE_SWAY_DEG = 5
 local BADGE_INNER_SWAY_DEG = 2.5
 local CLICK_OVERLAY_NAME = "__RebirthClickOverlay"
 
-local SKIP_SUBTITLE_TEXT = "[Keep Your Speed]"
+local SKIP_SUBTITLE_TEXT = "[Keep Your Powers]"
 
 local RARITY_GRADIENT_NAMES: { [string]: string } = {
 	common = "Common",

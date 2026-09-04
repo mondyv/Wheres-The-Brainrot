@@ -105,6 +105,7 @@ type ObservedWorkout = {
 	tool: Tool,
 	prop: Model,
 	hidden: { BasePart },
+	hiddenBase: { [BasePart]: number },
 }
 
 local observedWorkouts: { [Player]: ObservedWorkout } = {}
@@ -676,6 +677,10 @@ local function restoreObservedTool(obs: ObservedWorkout)
 	for _, part in obs.hidden do
 		if part.Parent then
 			part.LocalTransparencyModifier = 0
+			local base = obs.hiddenBase[part]
+			if typeof(base) == "number" then
+				part.Transparency = base
+			end
 		end
 	end
 	if obs.tool.Parent then
@@ -711,12 +716,22 @@ local function ensureObservedFollow()
 	if observedFollowConn then
 		return
 	end
-	observedFollowConn = RunService.RenderStepped:Connect(function()
+	local gripAccum = 0
+	observedFollowConn = RunService.RenderStepped:Connect(function(dt)
+		gripAccum += dt
+		local killGrips = gripAccum >= 0.08
+		if killGrips then
+			gripAccum = 0
+		end
 		for plr, obs in observedWorkouts do
 			if not obs.prop.Parent or not obs.character.Parent or obs.tool.Parent ~= obs.character then
 				clearObservedWorkout(plr)
 			else
 				poseGearOnFeet(obs.character, obs.prop)
+				if killGrips then
+					local handle = obs.tool:FindFirstChild("Handle")
+					destroyHandGrips(obs.character, if handle and handle:IsA("BasePart") then handle else nil)
+				end
 			end
 		end
 		if next(observedWorkouts) == nil and observedFollowConn then
@@ -800,9 +815,14 @@ attachObservedWorkout = function(plr: Player)
 	model.PrimaryPart = primary
 
 	local hidden: { BasePart } = {}
+	local hiddenBase: { [BasePart]: number } = {}
 	for _, d in tool:GetDescendants() do
 		if d:IsA("BasePart") then
+			hiddenBase[d] = d.Transparency
 			d.LocalTransparencyModifier = 1
+			d.Transparency = 1
+			d.CanCollide = false
+			d.Massless = true
 			table.insert(hidden, d)
 		elseif
 			d:IsA("ParticleEmitter")
@@ -815,6 +835,8 @@ attachObservedWorkout = function(plr: Player)
 			(d :: any).Enabled = false
 		end
 	end
+	tool.RequiresHandle = false
+	destroyHandGrips(character, tool:FindFirstChild("Handle") :: BasePart?)
 
 	model.Parent = ensureWorldFolder()
 	poseGearOnFeet(character, model)
@@ -823,6 +845,7 @@ attachObservedWorkout = function(plr: Player)
 		tool = tool,
 		prop = model,
 		hidden = hidden,
+		hiddenBase = hiddenBase,
 	}
 	if tool:GetAttribute("RainbowGear") == true then
 		GearRainbowFX.attach(model)
@@ -2809,10 +2832,6 @@ local function init()
 	player.CharacterAdded:Connect(function(character)
 		OtherVfxController.clearLevelUpVfx()
 		bindCharacter(character)
-		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
-			OtherVfxController.setWorkoutAuraEnabled(false)
-			OtherVfxController.setWorkoutAuraEnabled(true)
-		end
 	end)
 
 	player:GetAttributeChangedSignal("WorkoutPowerPulse"):Connect(function()
@@ -2861,7 +2880,6 @@ local function init()
 
 	player:GetAttributeChangedSignal(GearConfig.WORKOUT_ACTIVE_ATTR):Connect(function()
 		local on = player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true
-		OtherVfxController.setWorkoutAuraEnabled(on)
 		if on then
 			startDoubleTapLoop()
 			local character = player.Character
@@ -2877,7 +2895,9 @@ local function init()
 			cleanupWorkoutVisuals()
 		end
 	end)
-	OtherVfxController.setWorkoutAuraEnabled(player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true)
+	if typeof(OtherVfxController.startComboWorldWatch) == "function" then
+		OtherVfxController.startComboWorldWatch()
+	end
 	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
 		startDoubleTapLoop()
 	end

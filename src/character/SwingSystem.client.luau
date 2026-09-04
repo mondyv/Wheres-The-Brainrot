@@ -155,7 +155,15 @@ local function isConsoleSwingInput(): boolean
 	if preferredIsGamepad() or lastInputIsGamepad() then
 		return true
 	end
-	if UserInputService.GamepadEnabled and not UserInputService.KeyboardEnabled then
+	if GamepadInputMod then
+		if typeof(GamepadInputMod.shouldShowPadHints) == "function" and GamepadInputMod.shouldShowPadHints() then
+			return true
+		end
+		if typeof(GamepadInputMod.hasGamepadHardware) == "function" and GamepadInputMod.hasGamepadHardware() then
+			return true
+		end
+	end
+	if UserInputService.GamepadEnabled then
 		return true
 	end
 	return false
@@ -5672,9 +5680,10 @@ local function boot(character)
 		end
 
 		if isSwingInputBlocked() or processed then
+			-- Studio console often fires Space (not Gamepad1) until you toggle PC↔console.
 			local consoleJump = input.KeyCode == Enum.KeyCode.ButtonR2
 				or input.KeyCode == Enum.KeyCode.ButtonA
-				or (isConsoleSwingInput() and input.KeyCode == Enum.KeyCode.Space)
+				or input.KeyCode == Enum.KeyCode.Space
 			if processed and consoleJump and st.shouldStealJumpForSwing() then
 				st.gamepadHeld = true
 				st.humanoid.Jump = false

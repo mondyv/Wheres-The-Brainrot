@@ -12,6 +12,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local Brainrots = require(script.Parent:WaitForChild("Modules"):WaitForChild("Brainrots"))
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 
@@ -199,6 +200,9 @@ local function setCooldown(plr: Player, standKey: string)
 end
 
 local function tryRunPrompt(plr: Player, standKey: string, onPrompt: (Player) -> (), _source: string): boolean
+	if plr:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+		return false
+	end
 	if isOnCooldown(plr, standKey) then
 		return false
 	end
@@ -334,19 +338,14 @@ local function exclusiveProductForStand(standName: string): number?
 	return nil
 end
 
-local function wireExclusiveStand(stand: Instance, productId: number)
-	ensureHitboxWired(stand, function(plr: Player)
-		if plr:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) == true then
-			return
-		end
-		promptProductPurchase(plr, productId, "exclusive:" .. stand.Name)
-	end, true)
+local function wireExclusiveStand(stand: Instance, _productId: number)
+	-- Client owns the charge bar, then prompts the exclusive product.
+	wiredStands[stand] = true
 end
 
-local function wirePackStand(stand: Instance, pack: typeof(StoreConfig.PACKS[1]))
-	ensureHitboxWired(stand, function(plr: Player)
-		promptPackPurchase(plr, pack)
-	end, true)
+local function wirePackStand(stand: Instance, _pack: typeof(StoreConfig.PACKS[1]))
+	-- Client owns the charge bar, then prompts the pack product.
+	wiredStands[stand] = true
 end
 
 local function wireGroupStand(stand: Instance)

@@ -15,6 +15,7 @@ local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
+local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
 local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotHeaderStyle"))
 local PurchasePrompt = require(ReplicatedStorage:WaitForChild("EssentialsShared"):WaitForChild("PurchasePrompt"))
@@ -32,8 +33,16 @@ local REMOTE_NAME = "BoosterShowerProductPrompt"
 local GROUP_CLAIM_REMOTE_NAME = "GroupStandClaim"
 local GROUP_LIKED_REMOTE_NAME = "GroupStandLiked"
 local FRAME_NAME = StoreConfig.FREE_REWARDS_FRAME
-local CHARGE_DURATION = 0.55
-local CHARGE_GUI_NAME = "GroupStandPadCharge"
+local GROUP_CHARGE_DURATION = 0.55
+local PACK_CHARGE_DURATION = 0.8
+local CHARGE_GUI_NAME = "ShowerStandPadCharge"
+local EXCLUSIVE_STAND_NAME = "StrawberryElephantStand"
+local STAND_FRAME_NAMES: { [string]: string } = {
+	["Starter Stand"] = "StarterPack",
+	["Mythic Stand"] = "MythicPack",
+	["Godly Stand"] = "GodlyPack",
+	["Secret Stand"] = "SecretPack",
+}
 local CHARGE_TWEEN = TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local CLOSE_DEBOUNCE = 0.22
 local SHOWERS_FOLDER_NAME = "Booster Pack Showers"
@@ -45,9 +54,10 @@ local likedLocal = false
 local joinedLocal = false
 local panelWired = false
 local claimInFlight = false
-local groupHitbox: BasePart? = nil
+local activeChargeStand: Instance? = nil
 local panelOpen = false
 local dismissedUntilLeave = false
+local packDismissedStand: Instance? = nil
 local closePending: thread? = nil
 local chargeAmount = 0
 local charging = false
@@ -59,6 +69,19 @@ local heartbeatConn: RBXScriptConnection? = nil
 local likeCheck: GuiObject? = nil
 local joinCheck: GuiObject? = nil
 local claimNameLabel: TextLabel? = nil
+
+local packByFrameName: { [string]: typeof(StoreConfig.PACKS[1]) } = {}
+for _, pack in StoreConfig.PACKS do
+	packByFrameName[pack.frameName] = pack
+end
+
+type ShowerKind = "group" | "pack" | "exclusive"
+type ShowerTarget = {
+	stand: Instance,
+	hitbox: BasePart,
+	kind: ShowerKind,
+	productId: number?,
+}
 
 local function onPromptProduct(productId: number, productKind: string?)
 	if typeof(productId) ~= "number" then
@@ -529,18 +552,68 @@ local function findStandHitbox(stand: Instance): BasePart?
 	return nil
 end
 
-local function resolveGroupHitbox(): BasePart?
-	if groupHitbox and groupHitbox.Parent then
-		return groupHitbox
-	end
+local function showersRoot(): Instance?
 	local map = Workspace:FindFirstChild("Map")
 	local showers = map and map:FindFirstChild(SHOWERS_FOLDER_NAME)
-	local stand = showers and showers:FindFirstChild(StoreConfig.GROUP_STAND_NAME)
-	if not stand then
+	return showers
+end
+
+local function isStrawberryElephantStandName(name: string): boolean
+	local lower = string.lower(name)
+	return string.find(lower, "elephant", 1, true) ~= nil
+		and string.find(lower, "stand", 1, true) ~= nil
+		and string.find(lower, "straw", 1, true) ~= nil
+end
+
+local function exclusiveProductForStand(standName: string): number?
+	if standName == EXCLUSIVE_STAND_NAME or isStrawberryElephantStandName(standName) then
+		return StoreConfig.PRODUCT.EXCLUSIVE_BRAINROT
+	end
+	return nil
+end
+
+local function tutorialBlocksShowers(): boolean
+	return player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true
+end
+
+local function classifyStand(stand: Instance): (ShowerKind, number?)?
+	if stand.Name == StoreConfig.GROUP_STAND_NAME then
+		return "group", nil
+	end
+	local frameName = STAND_FRAME_NAMES[stand.Name]
+	if frameName then
+		local pack = packByFrameName[frameName]
+		if pack then
+			return "pack", pack.productId
+		end
+	end
+	local exclusiveId = exclusiveProductForStand(stand.Name)
+	if exclusiveId then
+		return "exclusive", exclusiveId
+	end
+	return nil
+end
+
+local function resolveInsideShower(hrp: BasePart): ShowerTarget?
+	local showers = showersRoot()
+	if not showers then
 		return nil
 	end
-	groupHitbox = findStandHitbox(stand)
-	return groupHitbox
+	for _, stand in showers:GetChildren() do
+		local kind, productId = classifyStand(stand)
+		if kind then
+			local hitbox = findStandHitbox(stand)
+			if hitbox and isPointInsidePartOBB(hrp.Position, hitbox, 2.75) then
+				return {
+					stand = stand,
+					hitbox = hitbox,
+					kind = kind,
+					productId = productId,
+				}
+			end
+		end
+	end
+	return nil
 end
 
 local function cancelPendingClose()
@@ -558,6 +631,21 @@ local function openFreeRewards()
 	refreshPanelState()
 end
 
+local function fireShowerCharge(target: ShowerTarget)
+	if target.kind == "group" then
+		openFreeRewards()
+		return
+	end
+	if target.kind == "exclusive" and player:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) == true then
+		return
+	end
+	local productId = target.productId
+	if typeof(productId) == "number" then
+		packDismissedStand = target.stand
+		PurchasePrompt.promptProduct(productId)
+	end
+end
+
 local function scheduleClose()
 	cancelPendingClose()
 	closePending = task.delay(CLOSE_DEBOUNCE, function()
@@ -572,35 +660,58 @@ end
 
 local function tick(dt: number)
 	local hrp = getHRP()
-	local hitbox = resolveGroupHitbox()
-	if not hrp or not hitbox then
-		resetCharge()
+	if not hrp or tutorialBlocksShowers() then
+		if charging then
+			resetCharge()
+		end
+		activeChargeStand = nil
 		return
 	end
-	local inside = isPointInsidePartOBB(hrp.Position, hitbox, 2.75)
-	if inside then
-		cancelPendingClose()
-		if dismissedUntilLeave or panelOpen then
+	local target = resolveInsideShower(hrp)
+	if target then
+		if target.kind ~= "group" and packDismissedStand == target.stand then
 			resetCharge()
+			activeChargeStand = target.stand
 			return
 		end
-		local current = HUDController.getCurrentFrame()
-		if current and current.Name == FRAME_NAME then
-			panelOpen = true
+		if target.kind == "group" then
+			cancelPendingClose()
+			if dismissedUntilLeave or panelOpen then
+				resetCharge()
+				activeChargeStand = target.stand
+				return
+			end
+			local current = HUDController.getCurrentFrame()
+			if current and current.Name == FRAME_NAME then
+				panelOpen = true
+				resetCharge()
+				activeChargeStand = target.stand
+				return
+			end
+		elseif target.kind == "exclusive" and player:GetAttribute(StoreConfig.ATTR.EXCLUSIVE_OWNED) == true then
 			resetCharge()
+			activeChargeStand = target.stand
 			return
+		end
+		if activeChargeStand ~= target.stand then
+			resetCharge()
+			activeChargeStand = target.stand
 		end
 		if not charging then
 			charging = true
 			chargeAmount = 0
 		end
-		chargeAmount += dt / CHARGE_DURATION
+		local duration = if target.kind == "group" then GROUP_CHARGE_DURATION else PACK_CHARGE_DURATION
+		chargeAmount += dt / duration
 		setChargeVisual(chargeAmount)
 		if chargeAmount >= 1 then
 			resetCharge()
-			openFreeRewards()
+			activeChargeStand = target.stand
+			fireShowerCharge(target)
 		end
 	else
+		activeChargeStand = nil
+		packDismissedStand = nil
 		dismissedUntilLeave = false
 		resetCharge()
 		if panelOpen and not closePending then

@@ -47,9 +47,6 @@ local M = {}
 local PANEL_OPEN = TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local PANEL_SWAP = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local EXCLAIM_PULSE = TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
-local ARROW_BOB_HZ = 1.15
-local ARROW_BOB_AMP = 2.35
-local ARROW_SQUASH_AMP = 0.1
 local CLICK_BOUNCE = TweenInfo.new(0.38, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
 
 local active = false
@@ -1528,7 +1525,7 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	local baseOffset = offset or arrowHeight()
 	local objectOffset = Vector3.new(0, math.max(part.Size.Y * 0.35, 2), 0)
 	if worldArrowBb and worldArrowBb.Parent and worldArrowBb.Adornee == part and worldArrowImg then
-		worldArrowBb.StudsOffset = baseOffset
+		-- Keep the live bob. Resetting StudsOffset here teleports the arrow every refresh.
 		setGuideTrailToPart(part, objectOffset)
 		return
 	end
@@ -1576,25 +1573,19 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 	local objectOffset = Vector3.new(0, math.max(part.Size.Y * 0.35, 2), 0)
 	setGuideTrailToPart(part, objectOffset)
 
-	-- Desktop: sine bob on StudsOffset. Mobile: skip RenderStepped layout thrash.
-	if not Svc.UserInputService.TouchEnabled then
-		local phase = 0
-		arrowAnimConn = Svc.RunService.RenderStepped:Connect(function(dt)
-			if worldArrowImg ~= img or not img.Parent or not active or chromeSuppressed then
-				return
-			end
-			if not bb.Parent or bb.Adornee == nil then
-				return
-			end
-			phase += dt * ARROW_BOB_HZ * math.pi * 2
-			local wave = math.sin(phase)
-			local t = wave * 0.5 + 0.5
-			local ground = t * t
-			local y = ARROW_BOB_AMP * (1 - ground)
-			bb.StudsOffset = baseOffset + Vector3.new(0, y, 0)
-			bobScale.Scale = 1 + ground * ARROW_SQUASH_AMP * 0.35
-		end)
-	end
+	-- Same gentle sine bob as the stand upgrade B hint — no squash-teleport.
+	local born = os.clock()
+	arrowAnimConn = Svc.RunService.Heartbeat:Connect(function()
+		if worldArrowImg ~= img or not img.Parent or not active or chromeSuppressed then
+			return
+		end
+		if not bb.Parent or bb.Adornee == nil then
+			return
+		end
+		local wave = math.sin((os.clock() - born) * 2.55)
+		bb.StudsOffset = baseOffset + Vector3.new(0, wave * 0.2, 0)
+		bobScale.Scale = 1
+	end)
 end
 
 local function cumulativeUiScale(inst: Instance): number

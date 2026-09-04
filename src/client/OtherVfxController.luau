@@ -1363,13 +1363,452 @@ function OtherVfxController.clearLevelUpVfx()
 	end
 end
 
---- Workout body VFX disabled — only real level-ups play the Level Up template.
+--- Legacy lines aura — ComboVFX world auras replaced this.
 function OtherVfxController.setWorkoutAuraEnabled(_on: boolean)
 	workoutAuraEnabled = false
 	destroyWorkoutLines()
 	local folder = Workspace:FindFirstChild("WorkoutLinesVfxWorld")
 	if folder then
 		folder:Destroy()
+	end
+end
+
+local COMBO_TEXT_MIN = 6
+local COMBO_AURA_MIN = 5
+local COMBO_FADE_IN_SEC = 0.42
+local COMBO_FADE_OUT_SEC = 0.28
+local COMBO_POP_IN = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local COMBO_POP_SETTLE = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local COMBO_FADE_TWEEN = TweenInfo.new(COMBO_FADE_IN_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local COMBO_FADE_OUT_TWEEN = TweenInfo.new(COMBO_FADE_OUT_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+
+type ComboWatch = {
+	conns: { RBXScriptConnection },
+	auraRoot: Instance?,
+	auraName: string?,
+	billboard: BillboardGui?,
+	label: TextLabel?,
+	scale: UIScale?,
+	lastShown: number,
+	token: number,
+}
+
+local comboWatches: { [Player]: ComboWatch } = {}
+local comboWatchStarted = false
+
+local function comboAuraFolderName(n: number): string?
+	if n < COMBO_AURA_MIN then
+		return nil
+	end
+	if n < 10 then
+		return "5-10"
+	end
+	if n < 15 then
+		return "10-15"
+	end
+	if n < 20 then
+		return "15-20"
+	end
+	return "20+"
+end
+
+local function findComboVfxFolder(): Instance?
+	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
+	local combo = assets and assets:FindFirstChild("ComboVFX")
+	return combo
+end
+
+local function ensureComboWorldFolder(): Folder
+	local existing = Workspace:FindFirstChild("ComboVfxWorld")
+	if existing and existing:IsA("Folder") then
+		return existing
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = "ComboVfxWorld"
+	folder.Parent = Workspace
+	return folder
+end
+
+local function comboNumber(plr: Player): number
+	local v = plr:GetAttribute("WorkoutCombo")
+	if typeof(v) == "number" then
+		return math.max(0, math.floor(v))
+	end
+	return 0
+end
+
+local function comboTextColor(n: number): Color3
+	if n >= 20 then
+		return Color3.fromRGB(255, 120, 255)
+	end
+	if n >= 15 then
+		return Color3.fromRGB(255, 90, 70)
+	end
+	if n >= 10 then
+		return Color3.fromRGB(255, 160, 60)
+	end
+	return Color3.fromRGB(255, 220, 80)
+end
+
+local function snapshotComboFx(root: Instance)
+	local function snap(inst: Instance)
+		if inst:IsA("ParticleEmitter") then
+			inst:SetAttribute("__ComboRate", inst.Rate)
+		elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+			inst:SetAttribute("__ComboBright", inst.Brightness)
+		elseif inst:IsA("Beam") then
+			inst:SetAttribute("__ComboW0", inst.Width0)
+			inst:SetAttribute("__ComboW1", inst.Width1)
+		end
+	end
+	snap(root)
+	for _, d in root:GetDescendants() do
+		snap(d)
+	end
+end
+
+local function applyComboFade(root: Instance, alpha: number)
+	local a = math.clamp(alpha, 0, 1)
+	local function apply(inst: Instance)
+		if inst:IsA("ParticleEmitter") then
+			local orig = inst:GetAttribute("__ComboRate")
+			if typeof(orig) == "number" then
+				inst.Rate = orig * a
+			end
+		elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+			local orig = inst:GetAttribute("__ComboBright")
+			if typeof(orig) == "number" then
+				inst.Brightness = orig * a
+			end
+		elseif inst:IsA("Beam") then
+			local w0 = inst:GetAttribute("__ComboW0")
+			local w1 = inst:GetAttribute("__ComboW1")
+			if typeof(w0) == "number" then
+				inst.Width0 = w0 * a
+			end
+			if typeof(w1) == "number" then
+				inst.Width1 = w1 * a
+			end
+		end
+	end
+	apply(root)
+	for _, d in root:GetDescendants() do
+		apply(d)
+	end
+end
+
+local function tweenComboFade(root: Instance, fromAlpha: number, toAlpha: number, info: TweenInfo)
+	applyComboFade(root, fromAlpha)
+	setFxEnabled(root, true)
+	local function tweenInst(inst: Instance)
+		if inst:IsA("ParticleEmitter") then
+			local orig = inst:GetAttribute("__ComboRate")
+			if typeof(orig) == "number" then
+				TweenService:Create(inst, info, { Rate = orig * toAlpha }):Play()
+			end
+		elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
+			local orig = inst:GetAttribute("__ComboBright")
+			if typeof(orig) == "number" then
+				TweenService:Create(inst, info, { Brightness = orig * toAlpha }):Play()
+			end
+		elseif inst:IsA("Beam") then
+			local w0 = inst:GetAttribute("__ComboW0")
+			local w1 = inst:GetAttribute("__ComboW1")
+			local goals: { [string]: number } = {}
+			if typeof(w0) == "number" then
+				goals.Width0 = w0 * toAlpha
+			end
+			if typeof(w1) == "number" then
+				goals.Width1 = w1 * toAlpha
+			end
+			if next(goals) then
+				TweenService:Create(inst, info, goals):Play()
+			end
+		end
+	end
+	tweenInst(root)
+	for _, d in root:GetDescendants() do
+		tweenInst(d)
+	end
+end
+
+local function parentLooseComboAttachments(clone: Instance, character: Model)
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	local back = character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso") or hrp
+	if not (hrp and hrp:IsA("BasePart")) then
+		return
+	end
+	local loose: { Attachment } = {}
+	if clone:IsA("Attachment") then
+		table.insert(loose, clone)
+	end
+	for _, d in clone:GetDescendants() do
+		if d:IsA("Attachment") and d.Parent and not d.Parent:IsA("BasePart") then
+			table.insert(loose, d)
+		end
+	end
+	for _, att in loose do
+		local host: Instance? = hrp
+		local n = string.lower(att.Name)
+		if string.find(n, "back", 1, true) and back and back:IsA("BasePart") then
+			host = back
+		end
+		att.Parent = host
+	end
+end
+
+local function cloneComboAura(folderName: string): Instance?
+	local root = findComboVfxFolder()
+	local template = root and root:FindFirstChild(folderName)
+	if not template then
+		return nil
+	end
+	local clone = template:Clone()
+	clone.Name = "ComboAura_" .. folderName
+	for _, d in clone:GetDescendants() do
+		if d:IsA("Humanoid") or d:IsA("Animator") or d:IsA("Script") or d:IsA("LocalScript") then
+			d:Destroy()
+		elseif d:IsA("Motor6D") or d:IsA("Weld") then
+			d:Destroy()
+		end
+	end
+	return clone
+end
+
+local function destroyComboAura(watch: ComboWatch, fade: boolean)
+	local root = watch.auraRoot
+	watch.auraRoot = nil
+	watch.auraName = nil
+	if not (root and root.Parent) then
+		return
+	end
+	if fade then
+		local token = watch.token
+		tweenComboFade(root, 1, 0, COMBO_FADE_OUT_TWEEN)
+		task.delay(COMBO_FADE_OUT_SEC, function()
+			if watch.token ~= token then
+				return
+			end
+			if root.Parent then
+				root:Destroy()
+			end
+		end)
+		return
+	end
+	root:Destroy()
+end
+
+local function attachComboAura(plr: Player, watch: ComboWatch, character: Model, folderName: string)
+	if watch.auraName == folderName and watch.auraRoot and watch.auraRoot.Parent then
+		return
+	end
+	destroyComboAura(watch, watch.auraRoot ~= nil)
+	local clone = cloneComboAura(folderName)
+	if not clone then
+		return
+	end
+	clone.Parent = ensureComboWorldFolder()
+	if clone:IsA("BasePart") or clone:FindFirstChildWhichIsA("BasePart", true) then
+		if not weldCloneToCharacter(clone, character) then
+			clone:Destroy()
+			return
+		end
+	end
+	parentLooseComboAttachments(clone, character)
+	snapshotComboFx(clone)
+	disableAllFx(clone)
+	watch.auraRoot = clone
+	watch.auraName = folderName
+	tweenComboFade(clone, 0, 1, COMBO_FADE_TWEEN)
+end
+
+local function ensureComboBillboard(character: Model, watch: ComboWatch): (TextLabel?, UIScale?)
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not (hrp and hrp:IsA("BasePart")) then
+		return nil, nil
+	end
+	if watch.billboard and watch.billboard.Parent == hrp and watch.label and watch.scale then
+		return watch.label, watch.scale
+	end
+	if watch.billboard then
+		watch.billboard:Destroy()
+	end
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "WorkoutWorldCombo"
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.MaxDistance = 90
+	bb.Size = UDim2.fromOffset(160, 52)
+	bb.StudsOffset = Vector3.new(0, 3.35, 0)
+	bb.Adornee = hrp
+	bb.ResetOnSpawn = false
+
+	local scale = Instance.new("UIScale")
+	scale.Scale = 1
+	scale.Parent = bb
+
+	local label = Instance.new("TextLabel")
+	label.Name = "Combo"
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Font = Enum.Font.GothamBlack
+	label.TextScaled = true
+	label.Text = ""
+	label.TextColor3 = Color3.fromRGB(255, 220, 80)
+	label.Parent = bb
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(20, 8, 4)
+	stroke.Thickness = 2.4
+	stroke.Transparency = 0.05
+	stroke.Parent = label
+
+	bb.Parent = hrp
+	watch.billboard = bb
+	watch.label = label
+	watch.scale = scale
+	return label, scale
+end
+
+local function popComboLabel(watch: ComboWatch)
+	local scale = watch.scale
+	if not scale then
+		return
+	end
+	scale.Scale = 0.42
+	local tweenIn = TweenService:Create(scale, COMBO_POP_IN, { Scale = 1.18 })
+	tweenIn:Play()
+	tweenIn.Completed:Once(function()
+		if watch.scale == scale and scale.Parent then
+			TweenService:Create(scale, COMBO_POP_SETTLE, { Scale = 1 }):Play()
+		end
+	end)
+end
+
+local function refreshComboVisual(plr: Player)
+	local watch = comboWatches[plr]
+	if not watch then
+		return
+	end
+	local workoutOn = plr:GetAttribute("WorkoutActive") == true
+	local n = comboNumber(plr)
+	local character = plr.Character
+	if not workoutOn or not character or not character.Parent then
+		if watch.billboard then
+			watch.billboard.Enabled = false
+		end
+		destroyComboAura(watch, true)
+		watch.lastShown = 0
+		return
+	end
+
+	local folderName = comboAuraFolderName(n)
+	if folderName then
+		attachComboAura(plr, watch, character, folderName)
+	else
+		destroyComboAura(watch, true)
+	end
+
+	local label, scale = ensureComboBillboard(character, watch)
+	if not label then
+		return
+	end
+	if n >= COMBO_TEXT_MIN then
+		if watch.billboard then
+			watch.billboard.Enabled = true
+		end
+		label.Text = "x" .. tostring(n)
+		label.TextColor3 = comboTextColor(n)
+		if n > watch.lastShown then
+			popComboLabel(watch)
+		elseif scale then
+			scale.Scale = 1
+		end
+		watch.lastShown = n
+	else
+		if watch.billboard then
+			watch.billboard.Enabled = false
+		end
+		watch.lastShown = n
+	end
+end
+
+local function unbindComboPlayer(plr: Player)
+	local watch = comboWatches[plr]
+	if not watch then
+		return
+	end
+	watch.token += 1
+	for _, c in watch.conns do
+		c:Disconnect()
+	end
+	if watch.billboard then
+		watch.billboard:Destroy()
+	end
+	destroyComboAura(watch, false)
+	comboWatches[plr] = nil
+end
+
+local function bindComboPlayer(plr: Player)
+	if comboWatches[plr] then
+		refreshComboVisual(plr)
+		return
+	end
+	local watch: ComboWatch = {
+		conns = {},
+		auraRoot = nil,
+		auraName = nil,
+		billboard = nil,
+		label = nil,
+		scale = nil,
+		lastShown = 0,
+		token = 0,
+	}
+	comboWatches[plr] = watch
+	table.insert(
+		watch.conns,
+		plr:GetAttributeChangedSignal("WorkoutCombo"):Connect(function()
+			refreshComboVisual(plr)
+		end)
+	)
+	table.insert(
+		watch.conns,
+		plr:GetAttributeChangedSignal("WorkoutActive"):Connect(function()
+			refreshComboVisual(plr)
+		end)
+	)
+	table.insert(
+		watch.conns,
+		plr.CharacterAdded:Connect(function()
+			watch.token += 1
+			if watch.auraRoot and watch.auraRoot.Parent then
+				watch.auraRoot:Destroy()
+			end
+			watch.auraRoot = nil
+			watch.auraName = nil
+			if watch.billboard then
+				watch.billboard:Destroy()
+			end
+			watch.billboard = nil
+			watch.label = nil
+			watch.scale = nil
+			watch.lastShown = 0
+			task.defer(function()
+				refreshComboVisual(plr)
+			end)
+		end)
+	)
+	refreshComboVisual(plr)
+end
+
+function OtherVfxController.startComboWorldWatch()
+	if comboWatchStarted then
+		return
+	end
+	comboWatchStarted = true
+	Players.PlayerAdded:Connect(bindComboPlayer)
+	Players.PlayerRemoving:Connect(unbindComboPlayer)
+	for _, plr in Players:GetPlayers() do
+		bindComboPlayer(plr)
 	end
 end
 

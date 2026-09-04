@@ -35,10 +35,11 @@ local TOGGLE_KEYS = {
 }
 
 local MAX_HISTORY = 25
-local HEADER_HEIGHT = 44
-local INPUT_HEIGHT = 42
-local STATUS_HEIGHT = 26
-local CONTENT_PAD = 14
+local HEADER_HEIGHT = 46
+local INPUT_HEIGHT = 40
+local STATUS_HEIGHT = 24
+local CONTENT_PAD = 12
+local MAX_BUILT_ROWS = 12
 
 -- Desktop defaults; mobile overrides applied in applyLayout().
 local MAX_SUGGESTION_ROWS = 8
@@ -49,33 +50,34 @@ local ROOT_WIDTH_SCALE = 0
 local IS_MOBILE_LAYOUT = false
 
 local COLORS = {
-	panel = Color3.fromRGB(14, 18, 26),
-	panelTop = Color3.fromRGB(22, 30, 42),
-	accent = Color3.fromRGB(220, 228, 240),
-	accentDim = Color3.fromRGB(140, 150, 165),
+	panel = Color3.fromRGB(14, 10, 14),
+	panelTop = Color3.fromRGB(28, 16, 22),
+	accent = Color3.fromRGB(255, 214, 96),
+	accentDim = Color3.fromRGB(186, 140, 72),
 	success = Color3.fromRGB(140, 210, 165),
-	inputBg = Color3.fromRGB(10, 14, 20),
-	hoverBg = Color3.fromRGB(255, 255, 255),
-	hoverBgTransparency = 0.9,
-	hoverStroke = Color3.fromRGB(48, 58, 72),
-	hoverStrokeTransparency = 0.4,
-	idleBg = Color3.fromRGB(24, 30, 40),
-	idleBgTransparency = 0.35,
-	idleStroke = Color3.fromRGB(48, 58, 72),
-	idleStrokeTransparency = 0.5,
-	selectedBg = Color3.fromRGB(255, 255, 255),
-	selectedBgTransparency = 0.88,
-	runBtn = Color3.fromRGB(230, 235, 245),
-	runBtnHover = Color3.fromRGB(245, 248, 255),
-	textPrimary = Color3.fromRGB(245, 250, 255),
-	textMuted = Color3.fromRGB(150, 165, 185),
+	inputBg = Color3.fromRGB(8, 7, 10),
+	hoverBg = Color3.fromRGB(42, 28, 22),
+	hoverBgTransparency = 0.12,
+	hoverStroke = Color3.fromRGB(255, 214, 96),
+	hoverStrokeTransparency = 0.35,
+	idleBg = Color3.fromRGB(22, 16, 20),
+	idleBgTransparency = 0.2,
+	idleStroke = Color3.fromRGB(62, 42, 48),
+	idleStrokeTransparency = 0.45,
+	selectedBg = Color3.fromRGB(48, 32, 22),
+	selectedBgTransparency = 0.04,
+	runBtn = Color3.fromRGB(255, 214, 96),
+	runBtnHover = Color3.fromRGB(255, 228, 140),
+	textPrimary = Color3.fromRGB(255, 246, 230),
+	textMuted = Color3.fromRGB(168, 148, 140),
 	danger = Color3.fromRGB(255, 95, 110),
-	panelStroke = Color3.fromRGB(48, 58, 72),
-	rootBgTransparency = 0.42,
+	panelStroke = Color3.fromRGB(255, 214, 96),
+	rootBgTransparency = 0.06,
+	headerText = Color3.fromRGB(255, 214, 96),
 }
 
-local OPEN_TWEEN = TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-local CLOSE_TWEEN = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local OPEN_TWEEN = TweenInfo.new(0.16, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+local CLOSE_TWEEN = TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
 local gui: ScreenGui? = nil
 local backdrop: TextButton? = nil
@@ -95,6 +97,7 @@ local suggestionRows: {
 		stroke: UIStroke,
 		cmdLabel: TextLabel,
 		hintLabel: TextLabel,
+		tick: Frame,
 	}
 } =
 	{}
@@ -106,7 +109,7 @@ local backdropGuardUntil = 0
 local selectedSuggestionIndex = 1
 local hoveredSuggestionIndex = 0
 local scrollOffset = 0
-local currentMatches: { { fill: string, hint: string } } = {}
+local currentMatches: { { fill: string, hint: string, kind: string? } } = {}
 local commandHistory: { string } = {}
 local historyIndex = 0
 local mobileAdminFrame: GuiObject? = nil
@@ -413,11 +416,90 @@ local function resolveCommandName(raw: string): string
 	return COMMAND_ALIASES[lower] or lower
 end
 
-local function pushSuggestion(out: { { fill: string, hint: string } }, fill: string, hint: string)
+local function pushSuggestion(out: { { fill: string, hint: string, kind: string? } }, fill: string, hint: string, kind: string?)
 	if #out >= 200 then
 		return
 	end
-	table.insert(out, { fill = fill, hint = hint })
+	table.insert(out, { fill = fill, hint = hint, kind = kind })
+end
+
+local function isHeaderMatch(match: { fill: string, hint: string, kind: string? }?): boolean
+	return match ~= nil and match.kind == "header"
+end
+
+local CATALOG_SECTIONS: {
+	{
+		title: string,
+		items: { { fill: string, hint: string } },
+	}
+} = {
+	{
+		title = "PLAYERS",
+		items = {
+			{ fill = "tp PlayerName", hint = "Teleport to a player" },
+			{ fill = "spectate PlayerName", hint = "Watch a player" },
+			{ fill = "fly", hint = "Toggle fly" },
+			{ fill = "kick PlayerName", hint = "Kick off this server" },
+			{ fill = "ban PlayerName 7d", hint = "Ban from the game" },
+			{ fill = "unban PlayerName", hint = "Lift a ban" },
+		},
+	},
+	{
+		title = "GIVE",
+		items = {
+			{ fill = "addcash me 1000000", hint = "Grant cash" },
+			{ fill = "addinventory me NoobiniPizzanini", hint = "Grant a brainrot" },
+			{ fill = 'addluckyblock me "Starter Lucky Block"', hint = "Grant a lucky block" },
+		},
+	},
+	{
+		title = "PROGRESS",
+		items = {
+			{ fill = "rebirth me", hint = "Force a rebirth" },
+			{ fill = "setpower me 500", hint = "Set workout Power" },
+			{ fill = "grantgear me 1", hint = "Grant workout gear" },
+			{ fill = "levelup me", hint = "Grant account levels" },
+			{ fill = "resetdata me", hint = "Wipe a save" },
+			{ fill = "playtutorial", hint = "Replay the tutorial" },
+		},
+	},
+	{
+		title = "WORLD",
+		items = {
+			{ fill = "tpland 1", hint = "Teleport to a land pad" },
+			{ fill = "serverspawn mythic", hint = "Spawn rarity here" },
+			{ fill = "globalspawn mythic", hint = "Spawn rarity everywhere" },
+			{ fill = "serverluck 4x 10m", hint = "Luck on this server" },
+			{ fill = "globalluck 4x 1d", hint = "Luck on all servers" },
+		},
+	},
+	{
+		title = "BROADCAST",
+		items = {
+			{ fill = "polls", hint = "Open the poll composer" },
+			{ fill = "servernotif Event starting now!", hint = "Toast this server" },
+			{ fill = "globalnotif Double luck weekend!", hint = "Toast every server" },
+		},
+	},
+	{
+		title = "SERVERS",
+		items = {
+			{ fill = "servershutdown 60", hint = "Shut down this server" },
+			{ fill = "serverrestart 60", hint = "Restart this server" },
+			{ fill = "resetservers 30", hint = "Restart every server" },
+		},
+	},
+}
+
+local function browseCatalog(): { { fill: string, hint: string, kind: string? } }
+	local out: { { fill: string, hint: string, kind: string? } } = {}
+	for _, section in CATALOG_SECTIONS do
+		pushSuggestion(out, section.title, "", "header")
+		for _, item in section.items do
+			pushSuggestion(out, item.fill, item.hint, "cmd")
+		end
+	end
+	return out
 end
 
 local function baseCommandExamples(): { { fill: string, hint: string } }
@@ -474,7 +556,7 @@ end
 local function buildSuggestions(text: string): { { fill: string, hint: string } }
 	local trimmed = (string.gsub(text, "^%s+", ""))
 	if trimmed == "" then
-		return baseCommandExamples()
+		return browseCatalog()
 	end
 
 	local lower = string.lower(trimmed)
@@ -730,15 +812,51 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 		end
 	end
 
-	local deduped: { { fill: string, hint: string } } = {}
+	local deduped: { { fill: string, hint: string, kind: string? } } = {}
 	local seen: { [string]: boolean } = {}
 	for _, item in out do
-		if not seen[item.fill] then
-			seen[item.fill] = true
+		local key = (item.kind or "cmd") .. ":" .. item.fill
+		if not seen[key] then
+			seen[key] = true
 			table.insert(deduped, item)
 		end
 	end
 	return deduped
+end
+
+local function firstSelectableIndex(): number
+	for i, match in currentMatches do
+		if not isHeaderMatch(match) then
+			return i
+		end
+	end
+	return 1
+end
+
+local function nextSelectableIndex(from: number, delta: number): number
+	local total = #currentMatches
+	if total == 0 then
+		return 1
+	end
+	local i = from
+	for _ = 1, total do
+		i += delta
+		if i < 1 then
+			i = total
+		elseif i > total then
+			i = 1
+		end
+		if not isHeaderMatch(currentMatches[i]) then
+			return i
+		end
+	end
+	return from
+end
+
+local function snapOffHeader()
+	if isHeaderMatch(currentMatches[selectedSuggestionIndex]) then
+		selectedSuggestionIndex = nextSelectableIndex(selectedSuggestionIndex, 1)
+	end
 end
 
 local function ensureSelectionVisible()
@@ -749,6 +867,7 @@ local function ensureSelectionVisible()
 		return
 	end
 	selectedSuggestionIndex = math.clamp(selectedSuggestionIndex, 1, total)
+	snapOffHeader()
 	if selectedSuggestionIndex < scrollOffset + 1 then
 		scrollOffset = selectedSuggestionIndex - 1
 	elseif selectedSuggestionIndex > scrollOffset + MAX_SUGGESTION_ROWS then
@@ -795,9 +914,32 @@ local function styleSuggestionRow(visibleIndex: number)
 		return
 	end
 	local matchIndex = scrollOffset + visibleIndex
+	local match = currentMatches[matchIndex]
+	local header = isHeaderMatch(match)
 	local hovered = matchIndex == hoveredSuggestionIndex
 	local selected = matchIndex == selectedSuggestionIndex
-	local active = hovered or selected
+	local active = (hovered or selected) and not header
+
+	row.tick.Visible = active
+	row.hintLabel.Visible = not header
+	row.button.Active = not header
+
+	if header then
+		row.stroke.Transparency = 1
+		row.button.BackgroundTransparency = 1
+		row.cmdLabel.TextColor3 = COLORS.headerText
+		row.cmdLabel.Position = UDim2.fromOffset(4, 0)
+		row.cmdLabel.Size = UDim2.new(1, -8, 1, 0)
+		UiFonts.applyBody(row.cmdLabel)
+		row.cmdLabel.TextSize = 11
+		return
+	end
+
+	row.cmdLabel.TextColor3 = COLORS.textPrimary
+	row.cmdLabel.Position = UDim2.fromOffset(14, 0)
+	row.cmdLabel.Size = UDim2.new(0.58, -14, 1, 0)
+	UiFonts.applyButton(row.cmdLabel)
+	row.cmdLabel.TextSize = 13
 	row.stroke.Color = if active then COLORS.hoverStroke else COLORS.idleStroke
 	row.stroke.Transparency = if active then COLORS.hoverStrokeTransparency else COLORS.idleStrokeTransparency
 	row.button.BackgroundColor3 = if selected
@@ -923,14 +1065,14 @@ end
 local function applyLayoutMetrics()
 	IS_MOBILE_LAYOUT = isPhoneLike()
 	if IS_MOBILE_LAYOUT then
-		MAX_SUGGESTION_ROWS = 4
-		ROW_HEIGHT = 36
+		MAX_SUGGESTION_ROWS = 5
+		ROW_HEIGHT = 34
 		ROOT_WIDTH = 0
 		ROOT_WIDTH_SCALE = 0.86
 		BASE_HEIGHT = HEADER_HEIGHT + CONTENT_PAD + INPUT_HEIGHT + 12 + STATUS_HEIGHT + 4
 	else
-		MAX_SUGGESTION_ROWS = 8
-		ROW_HEIGHT = 34
+		MAX_SUGGESTION_ROWS = 11
+		ROW_HEIGHT = 32
 		ROOT_WIDTH = 620
 		ROOT_WIDTH_SCALE = 0
 		BASE_HEIGHT = HEADER_HEIGHT + CONTENT_PAD + INPUT_HEIGHT + 10 + STATUS_HEIGHT
@@ -948,6 +1090,9 @@ refreshSuggestions = function()
 	end
 
 	currentMatches = buildSuggestions(box.Text)
+	if selectedSuggestionIndex < 1 or isHeaderMatch(currentMatches[selectedSuggestionIndex]) then
+		selectedSuggestionIndex = firstSelectableIndex()
+	end
 	ensureSelectionVisible()
 
 	local visibleCount = math.min(#currentMatches, MAX_SUGGESTION_ROWS)
@@ -976,7 +1121,7 @@ local function applySelectedSuggestion()
 		return
 	end
 	local match = currentMatches[selectedSuggestionIndex]
-	if not match then
+	if not match or isHeaderMatch(match) then
 		return
 	end
 	box.Text = match.fill
@@ -992,7 +1137,7 @@ local function cycleSuggestion(delta: number)
 	if #currentMatches == 0 then
 		return
 	end
-	selectedSuggestionIndex = math.clamp(selectedSuggestionIndex + delta, 1, #currentMatches)
+	selectedSuggestionIndex = nextSelectableIndex(selectedSuggestionIndex, delta)
 	hoveredSuggestionIndex = 0
 	ensureSelectionVisible()
 	refreshSuggestions()
@@ -1088,11 +1233,11 @@ local function setOpen(open: boolean)
 		scrollOffset = 0
 		historyIndex = 0
 		local hint = if IS_MOBILE_LAYOUT
-			then "Drag list to scroll · Tap suggestion · Run · X to close"
-			else "Tab fill · ↑↓ navigate · Enter run · Esc close"
+			then "Scroll the list · tap a command · GO"
+			else "Type to filter · Tab fill · Enter to run"
 		setStatus(hint, nil)
 		if titleLabel then
-			titleLabel.Text = if IS_MOBILE_LAYOUT then "ADMIN COMMANDS" else "ADMIN"
+			titleLabel.Text = "OPS DESK"
 		end
 		animateOpen(true)
 		task.defer(fetchCatalog)
@@ -1179,36 +1324,46 @@ local function createSuggestionRow(parent: Frame, index: number)
 	rowButton.BackgroundColor3 = COLORS.idleBg
 	rowButton.BackgroundTransparency = COLORS.idleBgTransparency
 	rowButton.BorderSizePixel = 0
-	rowButton.Size = UDim2.new(1, 0, 0, ROW_HEIGHT - 4)
-	rowButton.Position = UDim2.fromOffset(0, (index - 1) * ROW_HEIGHT + 2)
+	rowButton.Size = UDim2.new(1, 0, 0, ROW_HEIGHT - 3)
+	rowButton.Position = UDim2.fromOffset(0, (index - 1) * ROW_HEIGHT + 1)
 	rowButton.ZIndex = 2
 
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
+	corner.CornerRadius = UDim.new(0, 4)
 	corner.Parent = rowButton
 
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = COLORS.idleStroke
 	stroke.Transparency = COLORS.idleStrokeTransparency
-	stroke.Thickness = 1.2
+	stroke.Thickness = 1
 	stroke.Parent = rowButton
+
+	local tick = Instance.new("Frame")
+	tick.Name = "Tick"
+	tick.BackgroundColor3 = COLORS.accent
+	tick.BorderSizePixel = 0
+	tick.Size = UDim2.new(0, 3, 1, -8)
+	tick.Position = UDim2.fromOffset(3, 4)
+	tick.Visible = false
+	tick.ZIndex = 4
+	tick.Parent = rowButton
 
 	local cmdLabel = Instance.new("TextLabel")
 	cmdLabel.Name = "Command"
 	cmdLabel.BackgroundTransparency = 1
-	UiFonts.applyButtonLabel(cmdLabel, 11, 8)
+	UiFonts.applyButtonLabel(cmdLabel, 13, 9)
 	cmdLabel.TextColor3 = COLORS.textPrimary
 	cmdLabel.TextXAlignment = Enum.TextXAlignment.Left
 	cmdLabel.TextTruncate = Enum.TextTruncate.AtEnd
-	cmdLabel.Position = UDim2.fromOffset(12, 0)
-	cmdLabel.Size = UDim2.new(0.58, -12, 1, 0)
+	cmdLabel.Position = UDim2.fromOffset(14, 0)
+	cmdLabel.Size = UDim2.new(0.58, -14, 1, 0)
 	cmdLabel.ZIndex = 3
 	cmdLabel.Parent = rowButton
 
 	local hintLabel = Instance.new("TextLabel")
 	hintLabel.Name = "Hint"
 	hintLabel.BackgroundTransparency = 1
-	UiFonts.applyButtonLabel(hintLabel, 9, 7)
+	UiFonts.applyButtonLabel(hintLabel, 11, 8)
 	hintLabel.TextColor3 = COLORS.textMuted
 	hintLabel.TextXAlignment = Enum.TextXAlignment.Right
 	hintLabel.TextTruncate = Enum.TextTruncate.AtEnd
@@ -1218,7 +1373,11 @@ local function createSuggestionRow(parent: Frame, index: number)
 	hintLabel.Parent = rowButton
 
 	rowButton.MouseEnter:Connect(function()
-		hoveredSuggestionIndex = scrollOffset + index
+		local matchIndex = scrollOffset + index
+		if isHeaderMatch(currentMatches[matchIndex]) then
+			return
+		end
+		hoveredSuggestionIndex = matchIndex
 		selectedSuggestionIndex = hoveredSuggestionIndex
 		refreshSuggestions()
 	end)
@@ -1234,7 +1393,11 @@ local function createSuggestionRow(parent: Frame, index: number)
 		if suppressSuggestionRowTap then
 			return
 		end
-		selectedSuggestionIndex = scrollOffset + index
+		local matchIndex = scrollOffset + index
+		if isHeaderMatch(currentMatches[matchIndex]) then
+			return
+		end
+		selectedSuggestionIndex = matchIndex
 		applySelectedSuggestion()
 	end)
 
@@ -1244,6 +1407,7 @@ local function createSuggestionRow(parent: Frame, index: number)
 		stroke = stroke,
 		cmdLabel = cmdLabel,
 		hintLabel = hintLabel,
+		tick = tick,
 	})
 end
 
@@ -1296,20 +1460,28 @@ local function buildGui(parent: PlayerGui)
 	scale.Parent = root
 
 	local rootCorner = Instance.new("UICorner")
-	rootCorner.CornerRadius = UDim.new(0, 16)
+	rootCorner.CornerRadius = UDim.new(0, 6)
 	rootCorner.Parent = root
 
 	local rootStroke = Instance.new("UIStroke")
 	rootStroke.Color = COLORS.panelStroke
-	rootStroke.Transparency = 0.52
-	rootStroke.Thickness = 1.25
+	rootStroke.Transparency = 0.45
+	rootStroke.Thickness = 1.5
 	rootStroke.Parent = root
+
+	local goldCap = Instance.new("Frame")
+	goldCap.Name = "GoldCap"
+	goldCap.Size = UDim2.new(1, 0, 0, 3)
+	goldCap.BackgroundColor3 = COLORS.accent
+	goldCap.BorderSizePixel = 0
+	goldCap.ZIndex = 6
+	goldCap.Parent = root
 
 	local header = Instance.new("Frame")
 	header.Name = "Header"
 	header.Size = UDim2.new(1, 0, 0, HEADER_HEIGHT)
 	header.BackgroundColor3 = COLORS.panelTop
-	header.BackgroundTransparency = 0.35
+	header.BackgroundTransparency = 0.12
 	header.BorderSizePixel = 0
 	header.ZIndex = 3
 	header.Parent = root
@@ -1318,8 +1490,8 @@ local function buildGui(parent: PlayerGui)
 	headerAccent.Name = "AccentBar"
 	headerAccent.Size = UDim2.new(1, 0, 0, 1)
 	headerAccent.Position = UDim2.new(0, 0, 1, -1)
-	headerAccent.BackgroundColor3 = COLORS.panelStroke
-	headerAccent.BackgroundTransparency = 0.45
+	headerAccent.BackgroundColor3 = COLORS.accent
+	headerAccent.BackgroundTransparency = 0.55
 	headerAccent.BorderSizePixel = 0
 	headerAccent.ZIndex = 4
 	headerAccent.Parent = header
@@ -1327,90 +1499,111 @@ local function buildGui(parent: PlayerGui)
 	local title = Instance.new("TextLabel")
 	title.Name = "Title"
 	title.BackgroundTransparency = 1
-	UiFonts.applyButtonLabel(title, 13, 10)
-	title.Text = "ADMIN"
-	title.TextColor3 = COLORS.textPrimary
+	UiFonts.applyDisplay(title)
+	title.TextSize = 16
+	title.Text = "OPS DESK"
+	title.TextColor3 = COLORS.accent
 	title.TextXAlignment = Enum.TextXAlignment.Left
-	title.Position = UDim2.fromOffset(16, 0)
-	title.Size = UDim2.new(1, -70, 1, 0)
+	title.Position = UDim2.fromOffset(16, 2)
+	title.Size = UDim2.new(1, -70, 0, 24)
 	title.ZIndex = 4
 	title.Parent = header
+
+	local subtitle = Instance.new("TextLabel")
+	subtitle.Name = "Subtitle"
+	subtitle.BackgroundTransparency = 1
+	UiFonts.applyBody(subtitle)
+	subtitle.TextSize = 9
+	subtitle.Text = "F5  OR  ;   ·   LIVE COMMANDS"
+	subtitle.TextColor3 = COLORS.textMuted
+	subtitle.TextXAlignment = Enum.TextXAlignment.Left
+	subtitle.Position = UDim2.fromOffset(16, 24)
+	subtitle.Size = UDim2.new(1, -70, 0, 16)
+	subtitle.ZIndex = 4
+	subtitle.Parent = header
 
 	local closeBtn = Instance.new("TextButton")
 	closeBtn.Name = "Close"
 	closeBtn.AutoButtonColor = false
-	closeBtn.Text = "X"
-	UiFonts.applyButtonLabel(closeBtn, 16, 11)
+	closeBtn.Text = "×"
+	UiFonts.applyButtonLabel(closeBtn, 22, 14)
 	closeBtn.TextColor3 = COLORS.textMuted
-	closeBtn.BackgroundColor3 = Color3.fromRGB(30, 36, 48)
-	closeBtn.BackgroundTransparency = 0.2
+	closeBtn.BackgroundTransparency = 1
 	closeBtn.BorderSizePixel = 0
 	closeBtn.AnchorPoint = Vector2.new(1, 0.5)
-	closeBtn.Position = UDim2.new(1, -12, 0.5, 0)
-	closeBtn.Size = UDim2.fromOffset(32, 32)
+	closeBtn.Position = UDim2.new(1, -10, 0.5, 0)
+	closeBtn.Size = UDim2.fromOffset(28, 28)
 	closeBtn.ZIndex = 5
 	closeBtn.Parent = header
-	local closeCorner = Instance.new("UICorner")
-	closeCorner.CornerRadius = UDim.new(0, 8)
-	closeCorner.Parent = closeBtn
 	closeBtn.MouseButton1Click:Connect(function()
 		UIInteractionSounds.playClick()
 		setOpen(false)
 	end)
 	closeBtn.MouseEnter:Connect(function()
 		closeBtn.TextColor3 = COLORS.danger
-		TweenService:Create(closeBtn, TweenInfo.new(0.1), { BackgroundTransparency = 0 }):Play()
 	end)
 	closeBtn.MouseLeave:Connect(function()
 		closeBtn.TextColor3 = COLORS.textMuted
-		TweenService:Create(closeBtn, TweenInfo.new(0.1), { BackgroundTransparency = 0.2 }):Play()
 	end)
 
 	local box = Instance.new("TextBox")
 	box.Name = "CommandInput"
 	box.ClearTextOnFocus = false
 	UiFonts.applyInput(box)
-	box.PlaceholderText = "Type a command…  e.g. tpland 3"
+	box.PlaceholderText = "command"
 	box.Text = ""
 	box.TextColor3 = COLORS.textPrimary
-	box.PlaceholderColor3 = Color3.fromRGB(110, 125, 145)
-	box.TextSize = 17
+	box.PlaceholderColor3 = Color3.fromRGB(120, 100, 96)
+	box.TextSize = 16
 	box.TextXAlignment = Enum.TextXAlignment.Left
 	box.BackgroundColor3 = COLORS.inputBg
 	box.BorderSizePixel = 0
 	box.Position = UDim2.fromOffset(14, HEADER_HEIGHT + CONTENT_PAD)
-	box.Size = UDim2.new(1, -108, 0, INPUT_HEIGHT)
+	box.Size = UDim2.new(1, -100, 0, INPUT_HEIGHT)
 	box.ZIndex = 3
 
 	local boxPadding = Instance.new("UIPadding")
-	boxPadding.PaddingLeft = UDim.new(0, 12)
-	boxPadding.PaddingRight = UDim.new(0, 12)
+	boxPadding.PaddingLeft = UDim.new(0, 22)
+	boxPadding.PaddingRight = UDim.new(0, 10)
 	boxPadding.Parent = box
 
+	local prompt = Instance.new("TextLabel")
+	prompt.Name = "Prompt"
+	prompt.BackgroundTransparency = 1
+	prompt.Text = ">"
+	prompt.TextColor3 = COLORS.accent
+	prompt.TextSize = 16
+	UiFonts.applyDisplay(prompt)
+	prompt.Position = UDim2.fromOffset(8, 0)
+	prompt.Size = UDim2.new(0, 14, 1, 0)
+	prompt.ZIndex = 4
+	prompt.Parent = box
+
 	local boxCorner = Instance.new("UICorner")
-	boxCorner.CornerRadius = UDim.new(0, 10)
+	boxCorner.CornerRadius = UDim.new(0, 4)
 	boxCorner.Parent = box
 
 	local boxStroke = Instance.new("UIStroke")
-	boxStroke.Color = COLORS.idleStroke
-	boxStroke.Transparency = 0.35
-	boxStroke.Thickness = 1.2
+	boxStroke.Color = COLORS.accent
+	boxStroke.Transparency = 0.55
+	boxStroke.Thickness = 1.1
 	boxStroke.Parent = box
 
 	local runBtn = Instance.new("TextButton")
 	runBtn.Name = "Run"
 	runBtn.AutoButtonColor = false
-	runBtn.Text = "Run"
-	UiFonts.applyButtonLabel(runBtn, 12, 9)
-	runBtn.TextColor3 = Color3.fromRGB(18, 22, 30)
+	runBtn.Text = "GO"
+	UiFonts.applyDisplay(runBtn)
+	runBtn.TextSize = 14
+	runBtn.TextColor3 = Color3.fromRGB(22, 14, 8)
 	runBtn.BackgroundColor3 = COLORS.runBtn
 	runBtn.BorderSizePixel = 0
 	runBtn.AnchorPoint = Vector2.new(1, 0)
 	runBtn.Position = UDim2.new(1, -14, 0, HEADER_HEIGHT + CONTENT_PAD)
-	runBtn.Size = UDim2.fromOffset(80, INPUT_HEIGHT)
+	runBtn.Size = UDim2.fromOffset(72, INPUT_HEIGHT)
 	runBtn.ZIndex = 3
 	local runCorner = Instance.new("UICorner")
-	runCorner.CornerRadius = UDim.new(0, 10)
+	runCorner.CornerRadius = UDim.new(0, 4)
 	runCorner.Parent = runBtn
 	runBtn.MouseButton1Click:Connect(function()
 		UIInteractionSounds.playClick()
@@ -1438,7 +1631,7 @@ local function buildGui(parent: PlayerGui)
 	panel.ZIndex = 2
 
 	-- Pre-create enough rows for desktop max; mobile shows fewer via MAX_SUGGESTION_ROWS.
-	for index = 1, 8 do
+	for index = 1, MAX_BUILT_ROWS do
 		createSuggestionRow(panel, index)
 	end
 

@@ -140,6 +140,19 @@ local function shouldKeepChild(inst: Instance): boolean
 		or ak == "baseplate"
 		or ak == "landmesh"
 		or ak == "land"
+		or ak == "cliff"
+		or ak == "cliffs"
+		or ak == "side"
+		or ak == "sides"
+		or ak == "wall"
+		or ak == "walls"
+		or ak == "rim"
+		or ak == "dirt"
+		or ak == "soil"
+		or ak == "rockface"
+		or ak == "underside"
+		or string.find(ak, "cliff", 1, true)
+		or string.find(ak, "landside", 1, true)
 	then
 		return true
 	end
@@ -435,6 +448,30 @@ local function requestApplyForPlayerLand(playerLand: number)
 	end)
 end
 
+local function restoreKeptLandNow(landNum: number)
+	if not cullActive or currentLand <= 0 then
+		return
+	end
+	if not shouldKeepLand(landNum, currentLand) then
+		return
+	end
+	if not landFolderHasWalkMesh(landNum) then
+		return
+	end
+	task.spawn(function()
+		local n = 0
+		for _, entry in entries do
+			if entry.land == landNum and not shouldParkEntry(entry, currentLand) then
+				restoreEntry(entry)
+				n += 1
+				if n % 8 == 0 then
+					RunService.Heartbeat:Wait()
+				end
+			end
+		end
+	end)
+end
+
 local function hookLandFolder(landFolder: Instance, landNum: number)
 	landFolders[landNum] = landFolder
 
@@ -469,7 +506,9 @@ local function hookLandFolder(landFolder: Instance, landNum: number)
 					end
 				end
 			elseif cullActive and currentLand > 0 then
-				-- Coalesce: every streamed island/mesh used to restart a full reparent pass.
+				-- Island/mesh just streamed: put this land's props back now, don't wait
+				-- on the 0.55s coalesce that used to leave a blank box in front of you.
+				restoreKeptLandNow(landNum)
 				local now = os.clock()
 				if now - lastChildAddedApplyAt >= CHILD_ADDED_APPLY_DEBOUNCE then
 					lastChildAddedApplyAt = now

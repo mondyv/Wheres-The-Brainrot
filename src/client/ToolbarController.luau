@@ -1153,6 +1153,7 @@ end
 
 	local refreshParkedExtraToolsUI: () -> ()
 	local setBackpackPanelOpen: (boolean) -> ()
+	local refreshGamepadHotbarHints: () -> ()
 	local findBackpackTemplateRow: (Instance?) -> GuiObject?
 	local applyBackpackSlotPanelAppearance: (GuiButton, boolean) -> ()
 	local requestEquipFromBackpackExtra: (Tool) -> ()
@@ -2209,6 +2210,9 @@ end
 			isBackpackPanelOpen = false
 			isBackpackPanelClosing = true
 			BrainrotItemTooltip.hide(true)
+		end
+		if typeof(refreshGamepadHotbarHints) == "function" then
+			refreshGamepadHotbarHints()
 		end
 		local f = backpackFrameRef :: GuiObject
 		cancelBackpackPanelTweens()
@@ -4769,45 +4773,82 @@ end
 		end
 	end
 
-	local function ensureGamepadEquipHint()
-		local existing = hotbar:FindFirstChild("GamepadEquipHint")
-		if existing and existing:IsA("GuiObject") then
-			existing.Visible = GamepadInput.isPreferred() and HUDController.isPanelOpen() ~= true
-			return
+	refreshGamepadHotbarHints = function()
+		local showPad = GamepadInput.shouldShowPadHints()
+		local hudOpen = HUDController.isPanelOpen() == true
+		local cycle = hotbar:FindFirstChild("GamepadEquipHint")
+		if cycle and cycle:IsA("GuiObject") then
+			cycle.Visible = showPad and not hudOpen
 		end
-		local hint = Instance.new("Frame")
-		hint.Name = "GamepadEquipHint"
-		hint.BackgroundTransparency = 1
-		hint.AnchorPoint = Vector2.new(0.5, 0.5)
-		hint.Position = UDim2.new(0.5, 0, 0, -10)
-		hint.Size = UDim2.fromOffset(72, 22)
-		hint.ZIndex = HOTBAR_FRONT_ZINDEX + 8
-		hint.Visible = false
+		local unequip = hotbar:FindFirstChild("GamepadUnequipHint")
+		if unequip and unequip:IsA("GuiObject") then
+			unequip.Visible = showPad and not hudOpen and not isBackpackPanelOpen
+		end
+	end
+
+	local function ensureGamepadEquipHint()
 		if hotbar:IsA("GuiObject") then
 			hotbar.ClipsDescendants = false
 		end
-		local layout = Instance.new("UIListLayout")
-		layout.FillDirection = Enum.FillDirection.Horizontal
-		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-		layout.VerticalAlignment = Enum.VerticalAlignment.Center
-		layout.Padding = UDim.new(0, 8)
-		layout.Parent = hint
-		local left = Instance.new("Frame")
-		left.Name = "Left"
-		left.BackgroundTransparency = 1
-		left.Size = UDim2.fromOffset(20, 20)
-		left.ZIndex = hint.ZIndex + 1
-		left.Parent = hint
-		local right = Instance.new("Frame")
-		right.Name = "Right"
-		right.BackgroundTransparency = 1
-		right.Size = UDim2.fromOffset(20, 20)
-		right.ZIndex = hint.ZIndex + 1
-		right.Parent = hint
-		hint.Parent = hotbar
-		GamepadInput.mountHint(left, Enum.KeyCode.DPadLeft, true, { contrast = true })
-		GamepadInput.mountHint(right, Enum.KeyCode.DPadRight, true, { contrast = true })
-		hint.Visible = GamepadInput.isPreferred() and HUDController.isPanelOpen() ~= true
+		local existing = hotbar:FindFirstChild("GamepadEquipHint")
+		if not (existing and existing:IsA("GuiObject") and existing:FindFirstChild("Left") and existing:FindFirstChild("Right")) then
+			if existing then
+				existing:Destroy()
+			end
+			local hint = Instance.new("Frame")
+			hint.Name = "GamepadEquipHint"
+			hint.BackgroundTransparency = 1
+			hint.AnchorPoint = Vector2.new(0.5, 0.5)
+			hint.Position = UDim2.new(0.5, 0, 0, -10)
+			hint.Size = UDim2.fromOffset(72, 22)
+			hint.ZIndex = HOTBAR_FRONT_ZINDEX + 8
+			hint.Visible = false
+			local layout = Instance.new("UIListLayout")
+			layout.FillDirection = Enum.FillDirection.Horizontal
+			layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+			layout.VerticalAlignment = Enum.VerticalAlignment.Center
+			layout.Padding = UDim.new(0, 8)
+			layout.Parent = hint
+			local left = Instance.new("Frame")
+			left.Name = "Left"
+			left.BackgroundTransparency = 1
+			left.Size = UDim2.fromOffset(20, 20)
+			left.ZIndex = hint.ZIndex + 1
+			left.Parent = hint
+			local right = Instance.new("Frame")
+			right.Name = "Right"
+			right.BackgroundTransparency = 1
+			right.Size = UDim2.fromOffset(20, 20)
+			right.ZIndex = hint.ZIndex + 1
+			right.Parent = hint
+			hint.Parent = hotbar
+			GamepadInput.mountHint(left, Enum.KeyCode.DPadLeft, true, { contrast = true })
+			GamepadInput.mountHint(right, Enum.KeyCode.DPadRight, true, { contrast = true })
+		end
+
+		local unequip = hotbar:FindFirstChild("GamepadUnequipHint")
+		if not (unequip and unequip:IsA("GuiObject") and unequip:FindFirstChild("Down")) then
+			if unequip then
+				unequip:Destroy()
+			end
+			local downHost = Instance.new("Frame")
+			downHost.Name = "GamepadUnequipHint"
+			downHost.BackgroundTransparency = 1
+			downHost.AnchorPoint = Vector2.new(0.5, 0)
+			downHost.Position = UDim2.new(0.5, 0, 1, 6)
+			downHost.Size = UDim2.fromOffset(22, 22)
+			downHost.ZIndex = HOTBAR_FRONT_ZINDEX + 8
+			downHost.Visible = false
+			local down = Instance.new("Frame")
+			down.Name = "Down"
+			down.BackgroundTransparency = 1
+			down.Size = UDim2.fromScale(1, 1)
+			down.ZIndex = downHost.ZIndex + 1
+			down.Parent = downHost
+			downHost.Parent = hotbar
+			GamepadInput.mountHint(down, Enum.KeyCode.DPadDown, true, { contrast = true })
+		end
+		refreshGamepadHotbarHints()
 	end
 
 	local function bindToolbarHotbarKeybinds()
@@ -4872,13 +4913,21 @@ end
 				elseif input.KeyCode == Enum.KeyCode.DPadRight then
 					cycleHotbarSlot(1)
 					return Enum.ContextActionResult.Sink
+				elseif input.KeyCode == Enum.KeyCode.DPadDown then
+					if isBackpackPanelOpen then
+						return Enum.ContextActionResult.Pass
+					end
+					deselectAllHotbarSlots()
+					UIInteractionSounds.playHover()
+					return Enum.ContextActionResult.Sink
 				end
 				return Enum.ContextActionResult.Pass
 			end,
 			false,
 			Enum.ContextActionPriority.High.Value,
 			Enum.KeyCode.DPadLeft,
-			Enum.KeyCode.DPadRight
+			Enum.KeyCode.DPadRight,
+			Enum.KeyCode.DPadDown
 		)
 	end
 

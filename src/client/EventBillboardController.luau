@@ -284,7 +284,7 @@ local function ensureTimerGui(host: BasePart)
 
 	-- Sit the plaque above the panel (world-up) so it never clips into the grass.
 	local guiHeight = 3.4
-	local gap = 1.45
+	local gap = 0.32
 	local topWorldY = host.Position.Y + host.Size.Y * 0.5
 	if boundRoot and boundRoot:IsA("Model") then
 		local boxCf, boxSize = (boundRoot :: Model):GetBoundingBox()

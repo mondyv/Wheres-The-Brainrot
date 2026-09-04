@@ -8,6 +8,7 @@ local Players = game:GetService("Players")
 local ProximityPromptService = game:GetService("ProximityPromptService")
 local RunService = game:GetService("RunService")
 local SocialService = game:GetService("SocialService")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
@@ -21,6 +22,7 @@ local player = Players.LocalPlayer
 local PROMPT_NAME = "EventJoinPrompt"
 local HIGHLIGHT_NAME = "EventBillboardHighlight"
 local TIMER_GUI_NAME = "EventCountdownGui"
+local SHINE_GUI_NAME = "EventBillboardShineGui"
 -- Match the studded maroon frame on Map.EventBillboard.
 local FRAME = Color3.fromRGB(68, 26, 42)
 local FRAME_EDGE = Color3.fromRGB(32, 10, 20)
@@ -51,6 +53,10 @@ local hiddenConn: RBXScriptConnection? = nil
 local ancestryConn: RBXScriptConnection? = nil
 local swayConn: RBXScriptConnection? = nil
 local restCf: CFrame? = nil
+local shineGui: SurfaceGui? = nil
+local shineGrad: UIGradient? = nil
+local shineTween: Tween? = nil
+local shineToken = 0
 local timerToken = 0
 local prompting = false
 local studioHintShown = false
@@ -169,6 +175,16 @@ local function destroyBound()
 		swayConn:Disconnect()
 		swayConn = nil
 	end
+	shineToken += 1
+	if shineTween then
+		shineTween:Cancel()
+		shineTween = nil
+	end
+	if shineGui then
+		shineGui:Destroy()
+		shineGui = nil
+	end
+	shineGrad = nil
 	if boundRoot and boundRoot:IsA("Model") and restCf then
 		(boundRoot :: Model):PivotTo(restCf)
 	end
@@ -473,6 +489,120 @@ local function startTimerLoop()
 	end)
 end
 
+local function resolvePosterFace(host: BasePart): Enum.NormalId
+	local fallback: SurfaceGui? = nil
+	for _, d in host:GetDescendants() do
+		if d:IsA("SurfaceGui") and d.Name ~= SHINE_GUI_NAME then
+			if d:FindFirstChildWhichIsA("ImageLabel", true) then
+				return d.Face
+			end
+			fallback = d
+		end
+	end
+	if fallback then
+		return fallback.Face
+	end
+	for _, d in host:GetChildren() do
+		if (d:IsA("Decal") or d:IsA("Texture")) and d.Transparency < 0.95 then
+			return d.Face
+		end
+	end
+	return Enum.NormalId.Front
+end
+
+local function playerNearHost(host: BasePart): boolean
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not (hrp and hrp:IsA("BasePart")) then
+		return true
+	end
+	return (hrp.Position - host.Position).Magnitude <= EventBillboardConfig.SHINE_MAX_DISTANCE
+end
+
+local function ensureShineOverlay(host: BasePart)
+	local existing = host:FindFirstChild(SHINE_GUI_NAME)
+	if existing then
+		existing:Destroy()
+	end
+
+	local sheet = Instance.new("Frame")
+	sheet.Name = "Sheen"
+	sheet.BackgroundColor3 = Color3.fromRGB(255, 250, 240)
+	sheet.BackgroundTransparency = 0
+	sheet.BorderSizePixel = 0
+	sheet.Size = UDim2.fromScale(1, 1)
+
+	local grad = Instance.new("UIGradient")
+	grad.Rotation = EventBillboardConfig.SHINE_ROTATION
+	grad.Color = ColorSequence.new(Color3.fromRGB(255, 252, 245))
+	grad.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(0.38, 1),
+		NumberSequenceKeypoint.new(0.46, 0.88),
+		NumberSequenceKeypoint.new(0.5, 0.58),
+		NumberSequenceKeypoint.new(0.54, 0.88),
+		NumberSequenceKeypoint.new(0.62, 1),
+		NumberSequenceKeypoint.new(1, 1),
+	})
+	grad.Offset = Vector2.new(-1.2, 0)
+	grad.Parent = sheet
+
+	local sg = Instance.new("SurfaceGui")
+	sg.Name = SHINE_GUI_NAME
+	sg.Face = resolvePosterFace(host)
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	sg.PixelsPerStud = 40
+	sg.LightInfluence = 0
+	sg.AlwaysOnTop = false
+	sg.MaxDistance = EventBillboardConfig.SHINE_MAX_DISTANCE
+	sg.Active = false
+	sg.ResetOnSpawn = false
+	sg.ZOffset = 1.4
+	sg.ClipsDescendants = true
+	sheet.Parent = sg
+	sg.Adornee = host
+	sg.Parent = host
+
+	shineGui = sg
+	shineGrad = grad
+end
+
+local function startShineLoop(host: BasePart)
+	shineToken += 1
+	local token = shineToken
+	local grad = shineGrad
+	if not grad then
+		return
+	end
+	local sweepInfo = TweenInfo.new(
+		EventBillboardConfig.SHINE_DURATION,
+		Enum.EasingStyle.Sine,
+		Enum.EasingDirection.InOut
+	)
+	task.spawn(function()
+		task.wait(1.1)
+		while token == shineToken and grad.Parent do
+			if not host.Parent then
+				return
+			end
+			if playerNearHost(host) then
+				grad.Offset = Vector2.new(-1.2, 0)
+				local tw = TweenService:Create(grad, sweepInfo, { Offset = Vector2.new(1.2, 0) })
+				shineTween = tw
+				tw:Play()
+				tw.Completed:Wait()
+				if shineTween == tw then
+					shineTween = nil
+				end
+			end
+			if token ~= shineToken then
+				return
+			end
+			task.wait(EventBillboardConfig.SHINE_PAUSE)
+		end
+	end)
+end
+
 local function openEventJoin()
 	if prompting then
 		return
@@ -565,6 +695,8 @@ local function bindBillboard(root: Instance)
 	ensureTimerGui(host)
 	startTimerLoop()
 	startFloatSway(root)
+	ensureShineOverlay(host)
+	startShineLoop(host)
 
 	pcall(function()
 		ProximityPromptEffects.stylePrompt(pp)

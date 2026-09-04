@@ -13,6 +13,7 @@ local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+local AdminPollConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AdminPollConfig"))
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
@@ -181,6 +182,7 @@ local COMMAND_ALIASES: { [string]: string } = {
 	reach = "setreach",
 	rope = "setreach",
 	setrope = "setreach",
+	poll = "polls",
 }
 
 local COMMAND_HINTS: { [string]: string } = {
@@ -214,6 +216,7 @@ local COMMAND_HINTS: { [string]: string } = {
 	setreach = "Set Reach via Power (legacy)",
 	playtutorial = "Replay the first-join tutorial",
 	fly = "Toggle fly mode for yourself",
+	polls = "Open the poll composer (server or global)",
 }
 
 local function isPhoneLike(): boolean
@@ -464,6 +467,7 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "forcespectate PlayerA PlayerB", hint = COMMAND_HINTS.forcespectate },
 		{ fill = "forcespectate PlayerA off", hint = "Clear forced spectate" },
 		{ fill = "fly", hint = COMMAND_HINTS.fly },
+		{ fill = "polls", hint = COMMAND_HINTS.polls },
 	}
 end
 
@@ -1151,6 +1155,12 @@ local function submitCommand()
 
 	pushHistory(command)
 	if typeof(response) == "table" then
+		if response.ok == true and response.message == AdminPollConfig.OPEN_SIGNAL then
+			setOpen(false)
+			local composer = require(script.Parent.AdminPollComposer)
+			composer.open()
+			return
+		end
 		setStatus(tostring(response.message or ""), response.ok == true)
 	else
 		setStatus(tostring(response), nil)

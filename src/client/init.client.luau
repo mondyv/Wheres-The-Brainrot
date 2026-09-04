@@ -298,6 +298,12 @@ task.defer(function()
 				initClientModule("AdminCommandBar")
 			end,
 			function()
+				initClientModule("AdminPollController")
+			end,
+			function()
+				initClientModule("AdminPollComposer")
+			end,
+			function()
 				initClientModule("AdminFlyController")
 			end,
 			function()

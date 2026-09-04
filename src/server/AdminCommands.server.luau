@@ -14,6 +14,7 @@ local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local AdminBroadcastService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminBroadcastService"))
+local AdminPollConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AdminPollConfig"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
@@ -258,7 +259,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, grantgear, levelup, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, servershutdown, serverrestart, resetservers, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
+			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, grantgear, levelup, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, polls, servershutdown, serverrestart, resetservers, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -1749,6 +1750,15 @@ commands.playtutorial = {
 }
 commands.tutorial = commands.playtutorial
 commands.replaytutorial = commands.playtutorial
+
+commands.polls = {
+	usage = "polls",
+	description = "Open the poll composer (server or global).",
+	run = function(_sender: Player, _args: { string }): (boolean, string)
+		return true, AdminPollConfig.OPEN_SIGNAL
+	end,
+}
+commands.poll = commands.polls
 
 commands.fly = {
 	usage = "fly",

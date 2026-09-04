@@ -1400,16 +1400,16 @@ local function comboAuraFolderName(n: number): string?
 	if n < COMBO_AURA_MIN then
 		return nil
 	end
-	if n < 10 then
-		return "5-10"
-	end
 	if n < 15 then
-		return "10-15"
+		return "5-15"
 	end
-	if n < 20 then
-		return "15-20"
+	if n < 30 then
+		return "15-30"
 	end
-	return "20+"
+	if n < 45 then
+		return "30-45"
+	end
+	return "45+"
 end
 
 local comboTemplateWarned = false
@@ -1439,13 +1439,13 @@ local function comboNumber(plr: Player): number
 end
 
 local function comboTextColor(n: number): Color3
-	if n >= 20 then
+	if n >= 45 then
 		return Color3.fromRGB(255, 120, 255)
 	end
-	if n >= 15 then
+	if n >= 30 then
 		return Color3.fromRGB(255, 90, 70)
 	end
-	if n >= 10 then
+	if n >= 15 then
 		return Color3.fromRGB(255, 160, 60)
 	end
 	return Color3.fromRGB(255, 220, 80)
@@ -1688,6 +1688,8 @@ local function ensureComboBillboard(character: Model, watch: ComboWatch): (TextL
 		return nil, nil
 	end
 	if watch.billboard and watch.billboard.Parent == hrp and watch.label and watch.scale then
+		-- Studs size so the counter shrinks with the character when the camera pulls out.
+		watch.billboard.Size = UDim2.new(4.2, 0, 1.35, 0)
 		return watch.label, watch.scale
 	end
 	if watch.billboard then
@@ -1698,7 +1700,7 @@ local function ensureComboBillboard(character: Model, watch: ComboWatch): (TextL
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	bb.MaxDistance = 90
-	bb.Size = UDim2.fromOffset(160, 52)
+	bb.Size = UDim2.new(4.2, 0, 1.35, 0)
 	bb.StudsOffset = Vector3.new(0, 3.35, 0)
 	bb.Adornee = hrp
 	bb.ResetOnSpawn = false

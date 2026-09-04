@@ -784,7 +784,19 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 		-- Missing tutorialCompleted: only skip for profiles that already have real
 		-- progress (pre-tutorial ship). Do NOT infer from cash alone — starter
 		-- tutorial cash would otherwise skip first-join tutorials.
-		tutorialCompleted = if typeof(raw.tutorialCompleted) == "boolean"
+		-- Explicit false: recover veterans who saved before Tim Cheese existed
+		-- (or with a stuck flag). Stands / rebirth / level 5+ are past tutorial.
+		tutorialCompleted = if raw.tutorialCompleted == true
+			then true
+			elseif raw.tutorialCompleted == false
+				and (
+					floorNum(raw.rebirthCount, 0) > 0
+					or floorNum(raw.playerLevel, 1) >= 5
+					or (typeof(raw.stands) == "table" and next(raw.stands) ~= nil)
+					or floorNum(raw.totalPlayTimeSeconds, 0) > 1800
+				)
+			then true
+			elseif typeof(raw.tutorialCompleted) == "boolean"
 			then raw.tutorialCompleted
 			else (
 				floorNum(raw.rebirthCount, 0) > 0

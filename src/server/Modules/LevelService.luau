@@ -2,7 +2,9 @@
 -- Server authority for player XP / level-ups / auto-granted rewards.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+local Workspace = game:GetService("Workspace")
 
+local CashBoostUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("CashBoostUtil"))
 local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
 
 local LevelService = {}
@@ -97,6 +99,24 @@ local function grantLevelRewards(player: Player, newLevel: number): { LevelConfi
 					warn("[LevelService] lucky block grant failed for", blockId, "— not substituting cash")
 				end
 			end
+		elseif reward.kind == "cash_boost" then
+			local pct = if typeof(reward.amount) == "number" then math.max(0, math.floor(reward.amount)) else 0
+			if pct > 0 then
+				local cur = player:GetAttribute(CashBoostUtil.DAILY_BOOST_ATTR)
+				local c = if typeof(cur) == "number" then cur else 0
+				player:SetAttribute(CashBoostUtil.DAILY_BOOST_ATTR, c + pct)
+			end
+		elseif reward.kind == "luck_boost" then
+			local mult = if typeof(reward.luckMult) == "number" then math.max(1, reward.luckMult) else 1.25
+			local sec = if typeof(reward.luckSec) == "number" then math.max(30, reward.luckSec) else 480
+			local now = Workspace:GetServerTimeNow()
+			local existingUntil = player:GetAttribute(LevelConfig.LEVEL_LUCK_UNTIL_ATTR)
+			local existingMult = player:GetAttribute(LevelConfig.LEVEL_LUCK_MULT_ATTR)
+			local keepMult = if typeof(existingMult) == "number" and typeof(existingUntil) == "number" and existingUntil > now
+				then existingMult
+				else 1
+			player:SetAttribute(LevelConfig.LEVEL_LUCK_MULT_ATTR, math.max(keepMult, mult))
+			player:SetAttribute(LevelConfig.LEVEL_LUCK_UNTIL_ATTR, now + sec)
 		end
 	end
 	player:SetAttribute(LevelConfig.LAST_LEVEL_CASH_ATTR, cashTotal)

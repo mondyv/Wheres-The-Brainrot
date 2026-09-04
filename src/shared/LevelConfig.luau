@@ -13,6 +13,8 @@ M.LAST_XP_GAIN_ATTR = "LastXpGain"
 M.LEVEL_UP_PULSE_ATTR = "LevelUpPulse"
 M.LEVEL_UP_TO_ATTR = "LevelUpTo"
 M.LAST_LEVEL_CASH_ATTR = "LastLevelRewardCash"
+M.LEVEL_LUCK_MULT_ATTR = "LevelLuckMultiplier"
+M.LEVEL_LUCK_UNTIL_ATTR = "LevelLuckUntil"
 
 -- Hard cap; Level 200 requirement is 1000 XP.
 M.MAX_LEVEL = 200
@@ -31,12 +33,14 @@ M.XP = {
 }
 M.WORKOUT_XP_EVERY_GAINS = 5
 
-export type LevelRewardKind = "cash" | "lucky_block"
+export type LevelRewardKind = "cash" | "lucky_block" | "cash_boost" | "luck_boost"
 
 export type LevelReward = {
 	id: number,
 	kind: LevelRewardKind,
-	amount: number?, -- cash only
+	amount: number?, -- cash, or cash_boost percent
+	luckMult: number?, -- luck_boost only
+	luckSec: number?, -- luck_boost only
 	luckyBlockId: string?, -- lucky_block only (LuckyBlockCatalog id)
 	displayAmount: string,
 	displayName: string,
@@ -64,30 +68,61 @@ local function luckyReward(id: number, blockId: string): LevelReward
 	}
 end
 
--- Slot 1 is always cash. Slot 2 is a lucky block from level 3 up (early levels stay cash).
+local function cashBoostReward(id: number, percent: number): LevelReward
+	local p = math.max(1, math.floor(percent))
+	return {
+		id = id,
+		kind = "cash_boost",
+		amount = p,
+		displayAmount = string.format("+%d%% Cash Boost", p),
+		displayName = "Cash Boost",
+	}
+end
+
+local function luckBoostReward(id: number, mult: number, sec: number): LevelReward
+	local minutes = math.max(1, math.floor(sec / 60 + 0.5))
+	return {
+		id = id,
+		kind = "luck_boost",
+		luckMult = mult,
+		luckSec = sec,
+		displayAmount = string.format("%.2gx Luck %dm", mult, minutes),
+		displayName = "Luck Boost",
+	}
+end
+
+-- Millions by the 40s; early levels stay modest.
+local function cashForLevel(lv: number): number
+	return math.max(250, math.floor(40 * (lv ^ 3.25) + 200 * lv))
+end
+
+-- Lucky blocks start at 10, then sparse milestones. Quests handle most blocks.
 local function secondRewardForLevel(lv: number): LevelReward
-	if lv <= 2 then
-		local extra = math.floor(90 * lv * math.sqrt(lv))
-		return cashReward(2, extra)
+	if lv < 10 then
+		return cashReward(2, math.floor(cashForLevel(lv) * 0.35))
 	end
-	if lv % 100 == 0 then
-		return luckyReward(2, "Godly Luckyblock")
-	elseif lv % 50 == 0 then
-		return luckyReward(2, "Mythic Lucky Block")
-	elseif lv % 25 == 0 then
-		return luckyReward(2, "yellow")
-	elseif lv % 15 == 0 then
-		return luckyReward(2, "purple")
-	elseif lv % 10 == 0 then
-		return luckyReward(2, "1")
-	elseif lv % 5 == 0 then
-		return luckyReward(2, "neon")
-	end
-	if lv % 2 == 0 then
+	if lv == 10 then
 		return luckyReward(2, "troll")
+	elseif lv == 40 then
+		return luckyReward(2, "neon")
+	elseif lv == 60 then
+		return luckyReward(2, "1")
+	elseif lv == 80 then
+		return luckyReward(2, "purple")
+	elseif lv == 100 then
+		return luckyReward(2, "Mythic Lucky Block")
+	elseif lv == 150 then
+		return luckyReward(2, "yellow")
+	elseif lv == 200 then
+		return luckyReward(2, "Godly Luckyblock")
 	end
-	-- Odd levels: extra cash. Starter Lucky Block is granted once by the tutorial.
-	return cashReward(2, math.floor(120 * lv * math.sqrt(lv)))
+	if lv % 12 == 0 then
+		return luckBoostReward(2, 1.25, 8 * 60)
+	end
+	if lv % 8 == 0 then
+		return cashBoostReward(2, if lv >= 80 then 2 else 1)
+	end
+	return cashReward(2, math.floor(cashForLevel(lv) * 0.4))
 end
 
 -- XP required to go from `level` → `level + 1` (index = current level).
@@ -304,9 +339,8 @@ end
 
 function M.rewardsForLevel(level: number): { LevelReward }
 	local lv = math.max(1, math.floor(level))
-	local cashA = math.floor(140 * lv * math.sqrt(lv))
 	return {
-		cashReward(1, cashA),
+		cashReward(1, cashForLevel(lv)),
 		secondRewardForLevel(lv),
 	}
 end
@@ -324,11 +358,7 @@ end
 function M.formatRewardSummary(rewards: { LevelReward }): string
 	local parts = {}
 	for _, reward in rewards do
-		if reward.kind == "cash" then
-			table.insert(parts, reward.displayAmount)
-		else
-			table.insert(parts, reward.displayName)
-		end
+		table.insert(parts, reward.displayAmount)
 	end
 	return table.concat(parts, "  ·  ")
 end

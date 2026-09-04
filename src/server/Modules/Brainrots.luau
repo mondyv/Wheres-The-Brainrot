@@ -371,44 +371,44 @@ M.MAX_PLOT = 10
 
 M.PLOT_CHANCES = {
 	[1] = {
-		categories = { common = 75, uncommon = 25, rare = 0, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-		mutations  = { normal = 70, golden = 22, diamond = 6, lava = 1.5, galaxy = 0.4, rainbow = 0.1 },
+		categories = { common = 78, uncommon = 20, rare = 2, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+		mutations = { normal = 82, golden = 14, diamond = 3, lava = 0.8, galaxy = 0.15, rainbow = 0.05 },
 	},
 	[2] = {
-		categories = { common = 55, uncommon = 35, rare = 10, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-		mutations  = { normal = 66, golden = 23, diamond = 7.5, lava = 2.4, galaxy = 0.8, rainbow = 0.3 },
+		categories = { common = 52, uncommon = 34, rare = 12, epic = 2, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+		mutations = { normal = 76, golden = 16, diamond = 5, lava = 2, galaxy = 0.7, rainbow = 0.3 },
 	},
 	[3] = {
-		categories = { common = 35, uncommon = 35, rare = 22, epic = 8, mythic = 0, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-		mutations  = { normal = 62, golden = 24, diamond = 9, lava = 3.2, galaxy = 1.3, rainbow = 0.5 },
+		categories = { common = 28, uncommon = 34, rare = 26, epic = 10, mythic = 2, legendary = 0, ["brainrot god"] = 0, secret = 0 },
+		mutations = { normal = 70, golden = 18, diamond = 7, lava = 3.2, galaxy = 1.2, rainbow = 0.6 },
 	},
 	[4] = {
-		categories = { common = 25, uncommon = 28, rare = 25, epic = 15, mythic = 7, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-		mutations  = { normal = 58, golden = 25, diamond = 10.5, lava = 4.2, galaxy = 1.6, rainbow = 0.7 },
+		categories = { common = 12, uncommon = 24, rare = 30, epic = 22, mythic = 11, legendary = 1, ["brainrot god"] = 0, secret = 0 },
+		mutations = { normal = 64, golden = 20, diamond = 9, lava = 4.2, galaxy = 1.8, rainbow = 1 },
 	},
 	[5] = {
-		categories = { common = 0, uncommon = 25, rare = 30, epic = 25, mythic = 20, legendary = 0, ["brainrot god"] = 0, secret = 0 },
-		mutations  = { normal = 54, golden = 26, diamond = 12, lava = 5.2, galaxy = 2, rainbow = 0.8 },
+		categories = { common = 0, uncommon = 12, rare = 28, epic = 30, mythic = 22, legendary = 8, ["brainrot god"] = 0, secret = 0 },
+		mutations = { normal = 58, golden = 22, diamond = 11, lava = 5.2, galaxy = 2.4, rainbow = 1.4 },
 	},
 	[6] = {
-		categories = { common = 0, uncommon = 0, rare = 30, epic = 28, mythic = 27, legendary = 15, ["brainrot god"] = 0, secret = 0 },
-		mutations  = { normal = 50, golden = 27, diamond = 13.5, lava = 6, galaxy = 2.5, rainbow = 1 },
+		categories = { common = 0, uncommon = 0, rare = 14, epic = 26, mythic = 32, legendary = 22, ["brainrot god"] = 6, secret = 0 },
+		mutations = { normal = 52, golden = 24, diamond = 12, lava = 6.5, galaxy = 3.5, rainbow = 2 },
 	},
 	[7] = {
-		categories = { common = 0, uncommon = 0, rare = 0, epic = 30, mythic = 30, legendary = 25, ["brainrot god"] = 15, secret = 0 },
-		mutations  = { normal = 38, golden = 30, diamond = 17, lava = 9, galaxy = 4, rainbow = 2 },
+		categories = { common = 0, uncommon = 0, rare = 0, epic = 12, mythic = 28, legendary = 36, ["brainrot god"] = 20, secret = 4 },
+		mutations = { normal = 48, golden = 24, diamond = 14, lava = 7.5, galaxy = 4, rainbow = 2.5 },
 	},
 	[8] = {
-		categories = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 35, legendary = 30, ["brainrot god"] = 25, secret = 10 },
-		mutations  = { normal = 32, golden = 31, diamond = 18, lava = 10, galaxy = 5.5, rainbow = 3.5 },
+		categories = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 16, legendary = 38, ["brainrot god"] = 34, secret = 12 },
+		mutations = { normal = 44, golden = 25, diamond = 15, lava = 8, galaxy = 5, rainbow = 3 },
 	},
 	[9] = {
-		categories = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 0, legendary = 35, ["brainrot god"] = 40, secret = 25 },
-		mutations  = { normal = 26, golden = 32, diamond = 20, lava = 11, galaxy = 6.5, rainbow = 4.5 },
+		categories = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 0, legendary = 32, ["brainrot god"] = 48, secret = 20 },
+		mutations = { normal = 42, golden = 26, diamond = 16, lava = 8.5, galaxy = 4.5, rainbow = 3 },
 	},
 	[10] = {
-		categories = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 0, legendary = 0, ["brainrot god"] = 55, secret = 45 },
-		mutations  = { normal = 20, golden = 32, diamond = 22, lava = 12, galaxy = 8, rainbow = 6 },
+		categories = { common = 0, uncommon = 0, rare = 0, epic = 0, mythic = 0, legendary = 28, ["brainrot god"] = 52, secret = 20 },
+		mutations = { normal = 40, golden = 28, diamond = 16, lava = 8, galaxy = 5, rainbow = 3 },
 	},
 } :: { [number]: PlotChanceDef }
 
@@ -513,6 +513,73 @@ local function weightedPick(weights: { [string]: number }): string?
 end
 M.weightedPick = weightedPick
 
+local CATEGORY_ORDER: { RarityId } = { "common", "uncommon", "rare", "epic", "mythic", "legendary", "brainrot god", "secret" }
+local MUTATION_ORDER: { MutationId } = { "normal", "golden", "diamond", "lava", "galaxy", "rainbow" }
+
+-- 1x → 0, 10x → ~0.38, 50x → ~0.65, 450x → ~0.94
+function M.luckMixT(displayLuck: number): number
+	local d = math.max(1, displayLuck)
+	if d <= 1.01 then
+		return 0
+	end
+	return math.clamp(math.log10(d) / math.log10(500), 0, 0.94)
+end
+
+local function mixNumber(a: number, b: number, t: number): number
+	return a * (1 - t) + b * t
+end
+
+local function mixWeights(a: { [string]: number }, b: { [string]: number }, t: number, keys: { string }): { [string]: number }
+	local out = {}
+	for _, k in keys do
+		out[k] = mixNumber(a[k] or 0, b[k] or 0, t)
+	end
+	return out
+end
+
+-- Move a slice of each lower rarity/mutation into the next one so last-land luck still matters.
+local function shiftTowardEnd(weights: { [string]: number }, keys: { string }, t: number)
+	if t <= 0 then
+		return
+	end
+	local moveFrac = 0.22 * math.clamp(t, 0, 1)
+	for i = #keys, 2, -1 do
+		local prev = keys[i - 1]
+		local cur = keys[i]
+		local take = (weights[prev] or 0) * moveFrac
+		if take > 0 then
+			weights[prev] = (weights[prev] or 0) - take
+			weights[cur] = (weights[cur] or 0) + take
+		end
+	end
+end
+
+function M.chancesWithLuck(plot: number, displayLuck: number?): PlotChanceDef
+	local basePlot = math.clamp(math.floor(plot), 1, M.MAX_PLOT)
+	local t = M.luckMixT(if typeof(displayLuck) == "number" then displayLuck else 1)
+	local a = M.PLOT_CHANCES[basePlot]
+	local nextPlot = math.min(basePlot + 1, M.MAX_PLOT)
+	local next2Plot = math.min(basePlot + 2, M.MAX_PLOT)
+	local b = M.PLOT_CHANCES[nextPlot]
+	local c = M.PLOT_CHANCES[next2Plot]
+	local t2 = t * t * 0.35
+	local t1 = t * (1 - t2)
+	local categories = mixWeights(a.categories, b.categories, t1, CATEGORY_ORDER)
+	local mutations = mixWeights(a.mutations, b.mutations, t1, MUTATION_ORDER)
+	if t2 > 0.002 then
+		categories = mixWeights(categories, c.categories, t2, CATEGORY_ORDER)
+		mutations = mixWeights(mutations, c.mutations, t2, MUTATION_ORDER)
+	end
+	if nextPlot == basePlot then
+		shiftTowardEnd(categories, CATEGORY_ORDER, t)
+		shiftTowardEnd(mutations, MUTATION_ORDER, t * 0.55)
+	end
+	return {
+		categories = categories :: any,
+		mutations = mutations :: any,
+	}
+end
+
 local function weightedLevelInRange(minLevel: number, maxLevel: number): number
 	local total = 0
 	local entries: { { level: number, weight: number } } = {}
@@ -544,11 +611,8 @@ function M.rollBushHarvestLevel(): number
 	return weightedLevelInRange(10, 20)
 end
 
-function M.rollMutation(plot: number): MutationId
-	local chances = M.PLOT_CHANCES[plot]
-	if not chances then
-		return "normal"
-	end
+function M.rollMutation(plot: number, displayLuck: number?): MutationId
+	local chances = M.chancesWithLuck(plot, displayLuck)
 	local pick = weightedPick(chances.mutations)
 	if pick then
 		return pick :: MutationId
@@ -556,11 +620,8 @@ function M.rollMutation(plot: number): MutationId
 	return "normal"
 end
 
-function M.rollRarity(plot: number): RarityId?
-	local chances = M.PLOT_CHANCES[plot]
-	if not chances then
-		return nil
-	end
+function M.rollRarity(plot: number, displayLuck: number?): RarityId?
+	local chances = M.chancesWithLuck(plot, displayLuck)
 	local pick = weightedPick(chances.categories)
 	if pick then
 		return pick :: RarityId
@@ -583,24 +644,29 @@ function M.brainrotsOfRarity(rarity: RarityId, available: ((BrainrotDef) -> bool
 	return out
 end
 
-function M.pickRandomBrainrotForPlot(plot: number, available: ((BrainrotDef) -> boolean)?): (BrainrotDef?, MutationId)
-	local mutation: MutationId = M.rollMutation(plot)
-	local rarity = M.rollRarity(plot)
+function M.pickRandomBrainrotForPlot(plot: number, available: ((BrainrotDef) -> boolean)?, displayLuck: number?): (BrainrotDef?, MutationId)
+	local mutation: MutationId = M.rollMutation(plot, displayLuck)
+	local rarity = M.rollRarity(plot, displayLuck)
 	if not rarity then
 		return nil, mutation
 	end
 	local pool = M.brainrotsOfRarity(rarity, available)
 	if #pool == 0 and available ~= nil then
-		-- Fallback: ignore availability filter for this rarity rather than fail outright.
 		pool = M.brainrotsOfRarity(rarity, nil)
 	end
 	if #pool == 0 then
-		-- Cascade down rarity table until we find something playable.
-		for i = #M.RARITIES, 1, -1 do
+		-- Fall downward from the rolled rarity — never jump to secret first.
+		local startIdx = 1
+		for i, def in ipairs(M.RARITIES) do
+			if def.id == rarity then
+				startIdx = i
+				break
+			end
+		end
+		for i = startIdx - 1, 1, -1 do
 			local r = M.RARITIES[i].id
 			pool = M.brainrotsOfRarity(r, available)
 			if #pool > 0 then
-				rarity = r
 				break
 			end
 		end

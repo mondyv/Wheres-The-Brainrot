@@ -1121,11 +1121,10 @@ end
 local function resolveHarvestPlot(worldPos: Vector3, luckMultiplier: number?): (number, number, number)
 	local basePlot = resolvePlotForBushPos(worldPos)
 	local displayLuck = resolveDisplayLuckForPos(worldPos)
-	-- Gamepass / server-wide luck scales the effective plot luck (VIP, Super/Mega, Server Luck).
+	-- Land stays the land. Luck mixes rarer drops inside that land's table (see Brainrots.chancesWithLuck).
 	local mult = if typeof(luckMultiplier) == "number" and luckMultiplier > 1 then luckMultiplier else 1
-	local effectiveDisplayLuck = math.max(displayLuck, displayLuck * mult)
-	local plot = PlotLuck.effectivePlot(basePlot, effectiveDisplayLuck, Brainrots.MAX_PLOT)
-	return plot, basePlot, displayLuck
+	local rollLuck = math.max(1, displayLuck * math.max(1, mult))
+	return basePlot, rollLuck, displayLuck
 end
 
 local function bushTopWorldY(bush: Model?, fallbackY: number): number
@@ -1513,11 +1512,11 @@ local function rollHiddenBrainrotLoot(bush: Instance)
 		return
 	end
 	local pos = if bush:IsA("BasePart") then bush.Position else (bush :: Model):GetPivot().Position
-	local plot = resolveHarvestPlot(pos, LuckBoost.serverLuckMultiplier())
+	local plot, rollLuck = resolveHarvestPlot(pos, LuckBoost.serverLuckMultiplier())
 	local function brainrotIsAvailable(def)
 		return Brainrots.isPlayableBrainrotName(def.name) and brainrotHasTemplate(brainrots :: Folder, def.name)
 	end
-	local pick, mutationId = Brainrots.pickRandomBrainrotForPlot(plot, brainrotIsAvailable)
+	local pick, mutationId = Brainrots.pickRandomBrainrotForPlot(plot, brainrotIsAvailable, rollLuck)
 	if not pick then
 		return
 	end
@@ -1785,14 +1784,18 @@ local function beginHarvestOutcome(player: Player, worldPosition: Vector3, bushR
 			)
 		)
 	end
-	local plot, _basePlot, displayLuck = resolveHarvestPlot(worldPosition, luckMultiplier)
+	local plot, rollLuck, displayLuck = resolveHarvestPlot(worldPosition, luckMultiplier)
 
 	local function brainrotIsAvailable(def)
 		return Brainrots.isPlayableBrainrotName(def.name) and brainrotHasTemplate(brainrots :: Folder, def.name)
 	end
-	local pick, mutationId = resolveHiddenBrainrotPick(bushRef, brainrots :: Folder, brainrotIsAvailable)
+	-- Global rarity markers keep their pre-rolled identity. Normal bushes re-roll with the harvester's luck.
+	local pick, mutationId
+	if bushRef and bushRef:GetAttribute("GlobalRaritySpawn") == true then
+		pick, mutationId = resolveHiddenBrainrotPick(bushRef, brainrots :: Folder, brainrotIsAvailable)
+	end
 	if not pick then
-		pick, mutationId = Brainrots.pickRandomBrainrotForPlot(plot, brainrotIsAvailable)
+		pick, mutationId = Brainrots.pickRandomBrainrotForPlot(plot, brainrotIsAvailable, rollLuck)
 	end
 	if not pick then
 		-- Last-resort: pick any template under Brainrots/ with a child Model.
@@ -1967,7 +1970,7 @@ local function spawnFloatingClaimForPick(
 
 	local harvestLevel = if opts and typeof(opts.level) == "number" then math.max(1, math.floor(opts.level)) else 1
 	local luckMultiplier = LuckBoost.totalLuckMultiplier(player)
-	local plot, _basePlot, displayLuck = resolveHarvestPlot(worldPosition, luckMultiplier)
+	local plot, _rollLuck, displayLuck = resolveHarvestPlot(worldPosition, luckMultiplier)
 
 	local clone = template:Clone()
 	clone.Name = pick.name

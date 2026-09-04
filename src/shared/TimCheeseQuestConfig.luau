@@ -21,11 +21,7 @@ M.DROP_HEIGHT = 78
 M.FALL_DURATION = 0.78
 M.WALKBY_COOLDOWN_SEC = 22
 M.PROGRESS_POLL_SEC = 0.85
--- After tutorial completes, wait this long then show the quest-accept appearance (no Tim fall).
--- Prefer waiting until the starter lucky block is actually opened; this is the fallback.
 M.POST_TUTORIAL_QUEST_DELAY_SEC = 5
-M.POST_TUTORIAL_LUCKY_OPEN_FALLBACK_SEC = 55
-M.POST_TUTORIAL_AFTER_OPEN_SEC = 0.55
 
 export type QuestKind =
 	"harvest"

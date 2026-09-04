@@ -7,13 +7,16 @@
 	• VIP gamepass        → VIPLuckMultiplier attribute (4x)
 	• MEGA Luck gamepass  → MegaLuckOwned attribute     (3.5x)
 	• Server Luck product → ReplicatedStorage ServerLuckMultiplier attribute
+	• Timed level-up luck → LevelLuckMultiplier while LevelLuckUntil is in the future
 
 	The server reads this when rolling bush harvests; the client reads it for the
 	"Overall Luck" HUD display so both stay in sync.
 --]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
+local LevelConfig = require(script.Parent.LevelConfig)
 local StoreConfig = require(script.Parent.StoreConfig)
 
 local LuckBoost = {}
@@ -36,6 +39,14 @@ function LuckBoost.playerLuckMultiplier(player: Player): number
 
 	if player:GetAttribute(StoreConfig.ATTR.MEGA_LUCK_OWNED) == true then
 		mult *= StoreConfig.MEGA_LUCK_MULTIPLIER
+	end
+
+	local untilT = player:GetAttribute(LevelConfig.LEVEL_LUCK_UNTIL_ATTR)
+	local extra = player:GetAttribute(LevelConfig.LEVEL_LUCK_MULT_ATTR)
+	if typeof(untilT) == "number" and typeof(extra) == "number" and extra > 1 then
+		if Workspace:GetServerTimeNow() < untilT then
+			mult *= extra
+		end
 	end
 
 	return mult

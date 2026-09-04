@@ -2874,42 +2874,23 @@ end
 
 local postTutorialQuestToken = 0
 
-local function waitForLuckyBlockOpenOrFallback(token: number)
-	local opened = false
-	local be = ReplicatedStorage:FindFirstChild("LuckyBlockOpenFinished")
-	if not (be and be:IsA("BindableEvent")) then
-		be = Instance.new("BindableEvent")
-		be.Name = "LuckyBlockOpenFinished"
-		be.Parent = ReplicatedStorage
+local function worldTimShouldShow(): boolean
+	if introStartedLocal then
+		return true
 	end
-	local conn: RBXScriptConnection? = nil
-	if be and be:IsA("BindableEvent") then
-		conn = be.Event:Connect(function()
-			opened = true
-		end)
+	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
+		return true
 	end
-	local fallback = TimCheeseQuestConfig.POST_TUTORIAL_LUCKY_OPEN_FALLBACK_SEC
-	local started = os.clock()
-	while os.clock() - started < fallback do
-		if token ~= postTutorialQuestToken then
-			if conn then
-				conn:Disconnect()
-			end
-			return false
-		end
-		if opened then
-			task.wait(TimCheeseQuestConfig.POST_TUTORIAL_AFTER_OPEN_SEC)
-			if conn then
-				conn:Disconnect()
-			end
-			return true
-		end
-		task.wait(0.12)
-	end
-	if conn then
-		conn:Disconnect()
-	end
-	return true
+	local idx = player:GetAttribute(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR)
+	return typeof(idx) == "number" and idx >= 1
+end
+
+local function revealWorldTimIfReady(tim: Model)
+	introStartedLocal = true
+	ensureIdle(tim)
+	revealTimForIntro(tim)
+	setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
+	syncPromptAndOutline()
 end
 
 local function schedulePostTutorialQuests()
@@ -2936,14 +2917,7 @@ local function schedulePostTutorialQuests()
 			end
 			task.wait(0.15)
 		end
-		-- Let the starter lucky block reach the hotbar before we start listening.
 		task.wait(TimCheeseQuestConfig.POST_TUTORIAL_QUEST_DELAY_SEC)
-		if token ~= postTutorialQuestToken then
-			return
-		end
-		if not waitForLuckyBlockOpenOrFallback(token) then
-			return
-		end
 		if token ~= postTutorialQuestToken then
 			return
 		end
@@ -3141,12 +3115,8 @@ end
 local function applyWorldTimState(tim: Model)
 	homePivot = tim:GetPivot()
 	questHitbox = resolveHitbox()
-	if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
-		introStartedLocal = true
-		ensureIdle(tim)
-		revealTimForIntro(tim)
-		setQuestFloatVisible(tim, true, TimCheeseQuestConfig.NO_QUEST_OVERHEAD)
-		syncPromptAndOutline()
+	if worldTimShouldShow() then
+		revealWorldTimIfReady(tim)
 	else
 		hideTimUntilIntro(tim)
 		syncPromptAndOutline()
@@ -3184,6 +3154,11 @@ function M.init()
 	player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR):Connect(function()
 		if player:GetAttribute(PlayerDataSchema.TIM_CHEESE_INTRO_ATTR) == true then
 			introStartedLocal = true
+			local tim = timModel or resolveTim()
+			if tim then
+				timModel = tim
+				revealWorldTimIfReady(tim)
+			end
 			return
 		end
 		if introPlaying then
@@ -3205,6 +3180,13 @@ function M.init()
 	player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_QUEST_INDEX_ATTR):Connect(function()
 		refreshQuestHud()
 		syncPromptAndOutline()
+		if worldTimShouldShow() then
+			local tim = timModel or resolveTim()
+			if tim then
+				timModel = tim
+				revealWorldTimIfReady(tim)
+			end
+		end
 	end)
 	player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_QUEST_PROGRESS_ATTR):Connect(refreshQuestHud)
 	player:GetAttributeChangedSignal(PlayerDataSchema.TIM_CHEESE_QUEST_READY_ATTR):Connect(function()

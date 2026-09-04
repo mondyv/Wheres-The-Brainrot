@@ -27,6 +27,9 @@ local LOCK_ACTION = "LastLandShowcaseLock"
 local EXPORT_NAME = "Last Land Camera"
 local HOLD_LAST_SEC = 3.35
 local PLAYBACK_SCALE = 1.42
+local FADE_TO_BLACK_SEC = 0.55
+local BLACK_HOLD_SEC = 0.3
+local FADE_IN_SEC = 0.85
 local TITLE_LEAD_SEC = 0.45
 local RETURN_SEC = 0.2
 
@@ -43,6 +46,7 @@ local cutsceneToken = 0
 local renderConn: RBXScriptConnection? = nil
 local inputConn: RBXScriptConnection? = nil
 local jumpConn: RBXScriptConnection? = nil
+local fadeTweenConn: RBXScriptConnection? = nil
 local cutsceneGui: ScreenGui? = nil
 local doneEvent: BindableEvent? = nil
 local hudHidden = false
@@ -350,12 +354,66 @@ local function getHumanoid(): Humanoid?
 	return char and char:FindFirstChildOfClass("Humanoid")
 end
 
+local function restoreGameplayLocomotion()
+	local hum = getHumanoid()
+	if not hum then
+		return
+	end
+	local base = hum:GetAttribute("BrainrotBaseWalkSpeed")
+	if typeof(base) ~= "number" or base <= 0 then
+		base = 16
+	end
+	local slowOn = player:GetAttribute("SlowWalkEnabled") == true
+	hum.WalkSpeed = (base :: number) * (if slowOn then 0.8 else 1.15)
+	hum.AutoRotate = true
+	hum.Jump = false
+	hum.PlatformStand = false
+	if hum.UseJumpPower then
+		hum.JumpPower = 50
+	end
+	if hum.JumpHeight <= 0 then
+		hum.JumpHeight = 7.2
+	end
+end
+
+local function stopWorkoutIfActive()
+	local ok, workout = pcall(function()
+		return require(script.Parent.WorkoutController)
+	end)
+	if ok and workout and typeof(workout.stopActiveWorkout) == "function" then
+		local stopOk, stopErr = pcall(workout.stopActiveWorkout)
+		if not stopOk then
+			warnErr("stopActiveWorkout", stopErr)
+		end
+	elseif not ok then
+		warnErr("WorkoutController", workout)
+	end
+end
+
 local function lockMovement()
 	local hum = getHumanoid()
 	if hum then
-		savedWalkSpeed = hum.WalkSpeed
-		savedJumpPower = hum.JumpPower
-		savedJumpHeight = hum.JumpHeight
+		if hum.WalkSpeed > 0.05 then
+			savedWalkSpeed = hum.WalkSpeed
+		elseif savedWalkSpeed == nil then
+			local base = hum:GetAttribute("BrainrotBaseWalkSpeed")
+			if typeof(base) == "number" and base > 0 then
+				local slowOn = player:GetAttribute("SlowWalkEnabled") == true
+				savedWalkSpeed = (base :: number) * (if slowOn then 0.8 else 1.15)
+			else
+				savedWalkSpeed = 16 * 1.15
+			end
+		end
+		if hum.JumpPower > 0 then
+			savedJumpPower = hum.JumpPower
+		elseif savedJumpPower == nil then
+			savedJumpPower = 50
+		end
+		if hum.JumpHeight > 0 then
+			savedJumpHeight = hum.JumpHeight
+		elseif savedJumpHeight == nil then
+			savedJumpHeight = 7.2
+		end
 		savedUseJumpPower = hum.UseJumpPower
 		savedAutoRotate = hum.AutoRotate
 		hum.WalkSpeed = 0
@@ -419,26 +477,20 @@ local function unlockMovement()
 	elseif not okHold then
 		warnErr("BushHoldInteraction unlock", hold)
 	end
+	restoreGameplayLocomotion()
 	local hum = getHumanoid()
 	if hum then
-		if typeof(savedWalkSpeed) == "number" and savedWalkSpeed > 0 then
-			hum.WalkSpeed = savedWalkSpeed
-		elseif hum.WalkSpeed <= 0 then
-			hum.WalkSpeed = 16
-		end
 		if typeof(savedUseJumpPower) == "boolean" then
 			hum.UseJumpPower = savedUseJumpPower
 		end
-		if typeof(savedJumpPower) == "number" then
-			hum.JumpPower = if savedJumpPower > 0 then savedJumpPower else 50
+		if typeof(savedJumpPower) == "number" and savedJumpPower > 0 then
+			hum.JumpPower = savedJumpPower
 		end
-		if typeof(savedJumpHeight) == "number" then
-			hum.JumpHeight = if savedJumpHeight > 0 then savedJumpHeight else 7.2
+		if typeof(savedJumpHeight) == "number" and savedJumpHeight > 0 then
+			hum.JumpHeight = savedJumpHeight
 		end
 		if typeof(savedAutoRotate) == "boolean" then
 			hum.AutoRotate = savedAutoRotate
-		else
-			hum.AutoRotate = true
 		end
 	end
 	savedWalkSpeed = nil
@@ -514,6 +566,10 @@ local function stopConns()
 	if inputConn then
 		inputConn:Disconnect()
 		inputConn = nil
+	end
+	if fadeTweenConn then
+		fadeTweenConn:Disconnect()
+		fadeTweenConn = nil
 	end
 end
 
@@ -622,7 +678,7 @@ local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabe
 	local fade = Instance.new("Frame")
 	fade.Name = "Fade"
 	fade.BackgroundColor3 = Color3.new(0, 0, 0)
-	fade.BackgroundTransparency = 0
+	fade.BackgroundTransparency = 1
 	fade.BorderSizePixel = 0
 	fade.Size = UDim2.fromScale(1, 1)
 	fade.ZIndex = 40
@@ -706,6 +762,45 @@ local function smootherstep(t: number): number
 	return t * t * t * (t * (t * 6 - 15) + 10)
 end
 
+local function tweenFadeAmount(fade: Frame, fromAmount: number, toAmount: number, dur: number, token: number): boolean
+	if fadeTweenConn then
+		fadeTweenConn:Disconnect()
+		fadeTweenConn = nil
+	end
+	local done = Instance.new("BindableEvent")
+	local t0 = os.clock()
+	local fired = false
+	fadeTweenConn = RunService.RenderStepped:Connect(function()
+		if token ~= cutsceneToken or not active then
+			if fadeTweenConn then
+				fadeTweenConn:Disconnect()
+				fadeTweenConn = nil
+			end
+			if not fired then
+				fired = true
+				done:Fire(false)
+			end
+			return
+		end
+		local u = math.clamp((os.clock() - t0) / math.max(dur, 0.05), 0, 1)
+		local amount = fromAmount + (toAmount - fromAmount) * smootherstep(u)
+		fade.BackgroundTransparency = 1 - amount
+		if u >= 1 then
+			if fadeTweenConn then
+				fadeTweenConn:Disconnect()
+				fadeTweenConn = nil
+			end
+			if not fired then
+				fired = true
+				done:Fire(true)
+			end
+		end
+	end)
+	local ok = done.Event:Wait()
+	done:Destroy()
+	return ok == true
+end
+
 local function finish()
 	if not active then
 		return
@@ -756,11 +851,9 @@ function M.play(): boolean
 	active = true
 	cutsceneToken += 1
 	local token = cutsceneToken
-	savedCameraType = cam.CameraType
-	savedCameraSubject = cam.CameraSubject
-	savedFov = cam.FieldOfView
-	cam.CameraType = Enum.CameraType.Scriptable
-	cam.CameraSubject = nil
+
+	local ev = Instance.new("BindableEvent")
+	doneEvent = ev
 
 	GameplayUiVisibility.hide({
 		keepScreenGuiNames = { GUI_NAME },
@@ -779,16 +872,65 @@ function M.play(): boolean
 	hudHidden = true
 	hideHudCountersNow()
 	forceHideOtherGuis()
-	lockMovement()
 
 	local gui, fade, top, bottom, title, sub, pop = ensureGui()
+	fade.BackgroundTransparency = 1
+	top.Size = UDim2.new(1, 0, 0, 0)
+	bottom.Size = UDim2.new(1, 0, 0, 0)
 	gui.Enabled = true
+
+	if not tweenFadeAmount(fade, 0, 1, FADE_TO_BLACK_SEC, token) then
+		if active and token == cutsceneToken then
+			finish()
+		end
+		if doneEvent == ev then
+			doneEvent = nil
+		end
+		ev:Destroy()
+		return false
+	end
+	if token ~= cutsceneToken or not active then
+		if doneEvent == ev then
+			doneEvent = nil
+		end
+		ev:Destroy()
+		return false
+	end
+
+	stopWorkoutIfActive()
+	task.wait(BLACK_HOLD_SEC)
+	if token ~= cutsceneToken or not active then
+		if doneEvent == ev then
+			doneEvent = nil
+		end
+		ev:Destroy()
+		return false
+	end
+
+	local liveCam = Workspace.CurrentCamera
+	if not liveCam then
+		finish()
+		if doneEvent == ev then
+			doneEvent = nil
+		end
+		ev:Destroy()
+		return false
+	end
+
+	savedCameraType = liveCam.CameraType
+	savedCameraSubject = liveCam.CameraSubject
+	savedFov = liveCam.FieldOfView
+	liveCam.CameraType = Enum.CameraType.Scriptable
+	liveCam.CameraSubject = nil
+	liveCam.CFrame = track.frames[1]
+	liveCam.FieldOfView = track.fov[1]
+	liveCam.Focus = track.frames[1]
+	lockMovement()
+
 	pcall(function()
 		GameSoundEffects.playQuestPopUp()
 	end)
 
-	local ev = Instance.new("BindableEvent")
-	doneEvent = ev
 	local started = os.clock()
 	local titleStinger = false
 	local total = track.totalSec
@@ -847,8 +989,8 @@ function M.play(): boolean
 		bottom.Size = UDim2.new(1, 0, 0.118 * box, 0)
 
 		local fadeA = 0
-		if t < 0.34 then
-			fadeA = 1 - smootherstep(t / 0.34)
+		if t < FADE_IN_SEC then
+			fadeA = 1 - smootherstep(t / FADE_IN_SEC)
 		elseif t > total - 0.42 then
 			fadeA = smootherstep((t - (total - 0.42)) / 0.42)
 		end

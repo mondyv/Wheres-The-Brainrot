@@ -2896,4 +2896,7 @@ return {
 			warn("[WorkoutController] init error:", err)
 		end
 	end,
+	stopActiveWorkout = function()
+		onUnequip()
+	end,
 }

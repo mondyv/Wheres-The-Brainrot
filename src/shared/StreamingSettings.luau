@@ -3,7 +3,8 @@
 	Small guaranteed bubble, opportunistic fill, never pause the player.
 	Studio's 256/512 + LowMemory + PauseOutsideLoadedArea is what froze swings
 	and sat at ~9GB. Do not RequestStreamAroundAsync from gameplay — that dumps
-	the next land's grass in one hitch.
+	Studio play-solo: do not touch Workspace streaming. The whole place is already
+	in-process; shrinking the bubble cannot free ~9GB and froze the character.
 ]]
 
 local RunService = game:GetService("RunService")
@@ -33,6 +34,11 @@ function M.gameplayTarget(): number
 end
 
 function M.apply(workspaceInst: Workspace)
+	-- Play-solo already has the whole place in-process. Shrinking the bubble
+	-- and reparenting grass is what froze movement and did not free RAM.
+	if RunService:IsStudio() then
+		return
+	end
 	if workspaceInst.StreamingEnabled ~= true then
 		workspaceInst.StreamingEnabled = true
 	end

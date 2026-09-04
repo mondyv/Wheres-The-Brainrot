@@ -417,14 +417,6 @@ local function hookLandFolder(landFolder: Instance, landNum: number)
 
 	for _, child in landFolder:GetChildren() do
 		registerCullable(landNum, child)
-		-- One level deep: grass folders parented under Island/etc.
-		if not shouldKeepChild(child) then
-			for _, nested in child:GetChildren() do
-				if isLowGfxDecorName(nested.Name) then
-					registerCullable(landNum, nested)
-				end
-			end
-		end
 	end
 
 	landChildConns[landNum] = landFolder.ChildAdded:Connect(function(child)
@@ -433,13 +425,7 @@ local function hookLandFolder(landFolder: Instance, landNum: number)
 				return
 			end
 			registerCullable(landNum, child)
-			if not shouldKeepChild(child) then
-				for _, nested in child:GetChildren() do
-					if isLowGfxDecorName(nested.Name) then
-						registerCullable(landNum, nested)
-					end
-				end
-			elseif cullActive and currentLand > 0 then
+			if shouldKeepChild(child) and cullActive and currentLand > 0 then
 				-- Coalesce: a new island mesh should not dump every parked prop in one frame.
 				local now = os.clock()
 				if now - lastChildAddedApplyAt >= CHILD_ADDED_APPLY_DEBOUNCE then
@@ -548,6 +534,12 @@ function M.init()
 		return
 	end
 	wired = true
+
+	-- Studio play-solo holds the entire place in RAM already. Reparenting every
+	-- land's grass 0.4s after spawn freezes the character and does not drop 9GB.
+	if RunService:IsStudio() then
+		return
+	end
 
 	if not FEATURE_ENABLED then
 		return

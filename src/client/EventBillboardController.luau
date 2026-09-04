@@ -282,15 +282,17 @@ local function ensureTimerGui(host: BasePart)
 		existing:Destroy()
 	end
 
-	-- Sit the plaque above the panel (world-up) so it never clips into the grass.
+	-- Sit the plaque just above the banner; part-local offset lets it lean with the sway.
 	local guiHeight = 3.4
-	local gap = 0.32
+	local gap = 0.58
+	local follow = 0.42
 	local topWorldY = host.Position.Y + host.Size.Y * 0.5
 	if boundRoot and boundRoot:IsA("Model") then
 		local boxCf, boxSize = (boundRoot :: Model):GetBoundingBox()
 		topWorldY = boxCf.Position.Y + boxSize.Y * 0.5
 	end
 	local offsetY = (topWorldY - host.Position.Y) + gap + guiHeight * 0.5
+	local localUp = host.CFrame:VectorToObjectSpace(Vector3.yAxis)
 
 	local bb = Instance.new("BillboardGui")
 	bb.Name = TIMER_GUI_NAME
@@ -298,8 +300,8 @@ local function ensureTimerGui(host: BasePart)
 	bb.LightInfluence = 0
 	bb.MaxDistance = 110
 	bb.Size = UDim2.fromScale(10.4, guiHeight)
-	bb.StudsOffset = Vector3.zero
-	bb.StudsOffsetWorldSpace = Vector3.new(0, offsetY, 0)
+	bb.StudsOffset = localUp * (offsetY * follow)
+	bb.StudsOffsetWorldSpace = Vector3.yAxis * (offsetY * (1 - follow))
 	bb.Adornee = host
 	bb.ResetOnSpawn = false
 

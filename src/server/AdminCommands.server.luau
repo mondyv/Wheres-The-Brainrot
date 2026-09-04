@@ -289,7 +289,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, grantgear, levelup, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, polls, rewardpolls, servershutdown, serverrestart, resetservers, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
+			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, grantgear, levelup, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, polls, rewardpolls, servershutdown, serverrestart, resetserver, resetservers, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -1286,6 +1286,27 @@ local function publishAndStartGlobalReset(sender: Player, seconds: number): (boo
 	end
 	return true, string.format("All servers moving to the latest published update in %ds. Player data is saved — nothing is wiped.", seconds)
 end
+
+commands.resetserver = {
+	usage = "resetserver [10|30]",
+	description = "HUD countdown on THIS server only, save everyone, then move them onto the latest published update. Other servers are untouched.",
+	run = function(_sender: Player, args: { string }): (boolean, string)
+		local seconds: number?
+		if args[1] == nil or args[1] == "" then
+			seconds = 10
+		else
+			seconds = parseResetSeconds(args[1])
+		end
+		if not seconds then
+			return false, "Usage: resetserver  or  resetserver 10  or  resetserver 30"
+		end
+		beginGlobalServerReset(seconds, seconds)
+		return true, string.format("This server only is resetting in %ds. Other servers are not affected. Player data is saved.", seconds)
+	end,
+}
+commands.resetsv = commands.resetserver
+commands.thisserver = commands.resetserver
+commands.restartthis = commands.resetserver
 
 commands.resetservers = {
 	usage = "resetservers <10|30>",

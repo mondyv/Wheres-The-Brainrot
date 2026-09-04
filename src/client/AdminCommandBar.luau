@@ -159,6 +159,9 @@ local COMMAND_ALIASES: { [string]: string } = {
 	servershut = "servershutdown",
 	restart = "serverrestart",
 	serverreboot = "serverrestart",
+	resetsv = "resetserver",
+	thisserver = "resetserver",
+	restartthis = "resetserver",
 	allrestart = "resetservers",
 	globalrestart = "resetservers",
 	serversreset = "resetservers",
@@ -209,6 +212,7 @@ local COMMAND_HINTS: { [string]: string } = {
 	globalnotif = "Top notification on all servers",
 	servershutdown = "Countdown then shut down THIS server only",
 	serverrestart = "Countdown, save, then move THIS server onto the latest published update",
+	resetserver = "HUD countdown on THIS server only, then move everyone here onto the latest update",
 	resetservers = "Countdown on ALL servers, save, then move everyone onto the latest published update",
 	serverluck = "Set luck on THIS server + announce",
 	globalluck = "Set luck on ALL servers until time runs out (1d / 7d / off)",
@@ -492,7 +496,8 @@ local CATALOG_SECTIONS: {
 		title = "SERVERS",
 		items = {
 			{ fill = "servershutdown 60", hint = "Shut down this server" },
-			{ fill = "serverrestart 60", hint = "Restart this server" },
+			{ fill = "resetserver 10", hint = "Restart this server only" },
+			{ fill = "serverrestart 60", hint = "Restart this server (top notif)" },
 			{ fill = "resetservers 30", hint = "Restart every server" },
 		},
 	},
@@ -535,6 +540,9 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "servershutdown 5m", hint = "Shut down this server in 5 minutes" },
 		{ fill = "serverrestart 60", hint = COMMAND_HINTS.serverrestart },
 		{ fill = "serverrestart 5m", hint = "Restart this server in 5 minutes" },
+		{ fill = "resetserver", hint = COMMAND_HINTS.resetserver },
+		{ fill = "resetserver 10", hint = "This server only in 10 seconds (saves data)" },
+		{ fill = "resetserver 30", hint = "This server only in 30 seconds (saves data)" },
 		{ fill = "resetservers 30", hint = COMMAND_HINTS.resetservers },
 		{ fill = "resetservers 10", hint = "All servers reset in 10 seconds (saves data)" },
 		{ fill = "globalluck 4x 1d", hint = COMMAND_HINTS.globalluck },
@@ -773,6 +781,15 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 						prefix .. sample,
 						if cmdName == "serverrestart" then "restart this server" else "this server only"
 					)
+				end
+			end
+		end
+	elseif cmdName == "resetserver" then
+		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
+			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
+			for _, sample in { "10", "30" } do
+				if startsWith(sample, partial) then
+					pushSuggestion(out, prefix .. sample, "this server only — latest published update")
 				end
 			end
 		end

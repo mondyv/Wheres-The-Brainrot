@@ -1,6 +1,6 @@
 -- [ACTIVE] ServerResetHud
 --[[
-	Full-width HUD countdown when admins run resetservers.
+	Full-width HUD countdown when admins run resetserver (this job) or resetservers (all jobs).
 	UI is created once and reused. Heartbeat is disconnected when the banner hides.
 ]]
 

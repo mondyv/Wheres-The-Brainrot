@@ -480,6 +480,28 @@ function M.isPositionWithinLandSpawn(worldPos: Vector3): boolean
 	return false
 end
 
+function M.getLandCenter(land: number): Vector3?
+	ensureDiscovery()
+	local want = math.clamp(math.floor(land), 1, MAX_LAND)
+	local cached = landCenters[want]
+	if cached then
+		return cached
+	end
+	local folder = findLandFolder(want)
+	if not folder then
+		return nil
+	end
+	local part = if folder:IsA("Model") then (folder :: Model).PrimaryPart else nil
+	if not part then
+		part = folder:FindFirstChildWhichIsA("BasePart", true)
+	end
+	if not part then
+		return nil
+	end
+	landCenters[want] = part.Position
+	return part.Position
+end
+
 function M.getSpawnCFrameForLand(land: number): CFrame?
 	local folder = findLandFolder(land)
 	if not folder then

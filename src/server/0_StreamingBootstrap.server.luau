@@ -4,8 +4,9 @@
 	so the live place cannot silently run Studio's huge 256/512 and keep half the
 	map + grass resident (high tris).
 
-	Live: 112 / 280 ≈ current land + neighbors without pinning 5 lands of decor.
-	Studio play-solo: 80 / 180 so the in-process client+server does not keep the map.
+	Live: 112 / 380 — modest guaranteed bubble, farther opportunistic fill so the
+	next land in front actually streams without stalling join on a huge min radius.
+	Studio play-solo: 80 / 220.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -14,7 +15,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local STREAM_MIN_RADIUS = if RunService:IsStudio() then 80 else 112
-local STREAM_TARGET_RADIUS = if RunService:IsStudio() then 180 else 280
+local STREAM_TARGET_RADIUS = if RunService:IsStudio() then 220 else 380
 
 if not Workspace.StreamingEnabled then
 	Workspace.StreamingEnabled = true

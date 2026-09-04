@@ -10,7 +10,8 @@
 	  • Bloom / DoF / SunRays off
 	  • Safer fog via SafeZoneLightingController
 
-	Studio play-solo caps session QualityLevel and uses the heavier land cull.
+	Studio play-solo caps session QualityLevel only. It does not force the
+	heavier land cull — that parked the next island and looked "unloaded".
 	It does not strip shadows/bloom or rewrite atmosphere (that looked wrong).
 ]]
 
@@ -116,7 +117,7 @@ local function apply(userEnabled: boolean)
 	-- Studio keeps shadows/bloom/atmosphere. Only land cull + quality cap for FPS.
 	FireflyController.setEnabled(not (userOn or studio))
 	VegetationSwayController.setEnabled(not (userOn or studio))
-	GrassCullController.setLowGraphics(userOn or studio)
+	GrassCullController.setLowGraphics(userOn)
 	SafeZoneLightingController.setLowGraphics(userOn)
 	setHeavyFxEnabled(not userOn)
 	setGlobalShadowsEnabled(not userOn)

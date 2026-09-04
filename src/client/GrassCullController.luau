@@ -39,18 +39,15 @@ local STREAM_FAR_STUDS = 360
 local lastStreamAt = 0.0
 local STREAM_COOLDOWN = 0.28
 local MOBILE_STREAM_COOLDOWN = 0.55
-local GAMEPLAY_STREAM_MIN = 160
-local GAMEPLAY_STREAM_TARGET = 320
-local MOBILE_STREAM_MIN = 140
-local MOBILE_STREAM_TARGET = 260
-local STUDIO_STREAM_MIN = 112
-local STUDIO_STREAM_TARGET = 220
-local SWING_STREAM_MIN = 220
-local SWING_STREAM_TARGET = 480
-local MOBILE_SWING_STREAM_MIN = 180
-local MOBILE_SWING_STREAM_TARGET = 360
-local STUDIO_SWING_STREAM_MIN = 150
-local STUDIO_SWING_STREAM_TARGET = 280
+local GAMEPLAY_STREAM_MIN = 112
+local GAMEPLAY_STREAM_TARGET = 280
+local MOBILE_STREAM_MIN = 96
+local MOBILE_STREAM_TARGET = 200
+local STUDIO_STREAM_MIN = 80
+local STUDIO_STREAM_TARGET = 180
+local SWING_STREAM_TARGET = 420
+local MOBILE_SWING_STREAM_TARGET = 280
+local STUDIO_SWING_STREAM_TARGET = 240
 local swingStreamBoosted = false
 local wasFastTraveling = false
 
@@ -520,16 +517,6 @@ local function gameplayStreamRadius(): number
 	return GAMEPLAY_STREAM_TARGET
 end
 
-local function swingStreamMin(): number
-	if RunService:IsStudio() then
-		return STUDIO_SWING_STREAM_MIN
-	end
-	if UserInputService.TouchEnabled then
-		return MOBILE_SWING_STREAM_MIN
-	end
-	return SWING_STREAM_MIN
-end
-
 local function swingStreamRadius(): number
 	if RunService:IsStudio() then
 		return STUDIO_SWING_STREAM_TARGET
@@ -548,7 +535,6 @@ local function setSwingStreamBoost(on: boolean)
 	pcall(function()
 		local wsAny = Workspace :: any
 		if on then
-			wsAny.StreamingMinRadius = swingStreamMin()
 			wsAny.StreamingTargetRadius = swingStreamRadius()
 		else
 			wsAny.StreamingMinRadius = gameplayStreamMin()

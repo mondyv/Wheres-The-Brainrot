@@ -30,6 +30,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
+local TweenService = game:GetService("TweenService")
 
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
@@ -450,6 +451,7 @@ type StandState = {
 	lastCashDisplayAt: number,
 	cashDisplayPhase: number,
 	touchDebouncePerPlayer: { [Player]: number },
+	hopCleanup: (() -> ())?,
 }
 
 local stands: { [Model]: StandState } = {}
@@ -831,9 +833,177 @@ local function playStandIdleAnimation(state: StandState, model: Model, brainrotN
 	state.idleTrack = track
 end
 
+local HOP_IN_HEIGHT = 6.2
+local HOP_IN_SEC = 0.48
+local HOP_OFF_HEIGHT = 5.4
+local HOP_OFF_FORWARD = 3.6
+local HOP_OFF_SEC = 0.4
+
+local function cancelHop(state: StandState)
+	local cleanup = state.hopCleanup
+	state.hopCleanup = nil
+	if cleanup then
+		cleanup()
+	end
+end
+
+local function hopPivot(model: Model, cf: CFrame)
+	if model.PrimaryPart then
+		model:PivotTo(cf)
+	else
+		model:MoveTo(cf.Position)
+	end
+end
+
+local function playHopIn(state: StandState, model: Model, restCf: CFrame, brainrotName: string)
+	cancelHop(state)
+	if not model.Parent then
+		playStandIdleAnimation(state, model, brainrotName)
+		return
+	end
+	local startCf = restCf + Vector3.new(0, HOP_IN_HEIGHT, 0)
+	hopPivot(model, startCf)
+	local proxy = Instance.new("NumberValue")
+	proxy.Value = 0
+	local tween = TweenService:Create(
+		proxy,
+		TweenInfo.new(HOP_IN_SEC, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out),
+		{ Value = 1 }
+	)
+	local conn = proxy:GetPropertyChangedSignal("Value"):Connect(function()
+		if not model.Parent then
+			return
+		end
+		hopPivot(model, startCf:Lerp(restCf, proxy.Value))
+	end)
+	local function stopTween()
+		conn:Disconnect()
+		tween:Cancel()
+		proxy:Destroy()
+	end
+	state.hopCleanup = function()
+		stopTween()
+		if model.Parent then
+			hopPivot(model, restCf)
+		end
+	end
+	tween.Completed:Connect(function(playbackState)
+		if playbackState ~= Enum.PlaybackState.Completed then
+			return
+		end
+		if state.hopCleanup == nil then
+			return
+		end
+		state.hopCleanup = nil
+		stopTween()
+		if model.Parent then
+			hopPivot(model, restCf)
+			playStandIdleAnimation(state, model, brainrotName)
+		end
+	end)
+	tween:Play()
+end
+
+local function playHopOffThenDestroy(state: StandState, model: Model, restCf: CFrame)
+	cancelHop(state)
+	if not model.Parent then
+		return
+	end
+	stopStandIdleAnimation(state)
+	local forward = restCf.LookVector
+	local frontPart = findFrontReferencePart(state)
+	if frontPart then
+		local delta = Vector3.new(frontPart.Position.X - restCf.Position.X, 0, frontPart.Position.Z - restCf.Position.Z)
+		if delta.Magnitude > 0.05 then
+			forward = delta.Unit
+		end
+	end
+	local landCf = restCf + forward * HOP_OFF_FORWARD + Vector3.new(0, -0.5, 0)
+	local proxy = Instance.new("NumberValue")
+	proxy.Value = 0
+	local tween = TweenService:Create(
+		proxy,
+		TweenInfo.new(HOP_OFF_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Value = 1 }
+	)
+	local conn = proxy:GetPropertyChangedSignal("Value"):Connect(function()
+		if not model.Parent then
+			return
+		end
+		local t = proxy.Value
+		local pos = restCf.Position:Lerp(landCf.Position, t) + Vector3.new(0, 4 * HOP_OFF_HEIGHT * t * (1 - t), 0)
+		hopPivot(model, CFrame.new(pos) * restCf.Rotation)
+	end)
+	local function stopTween()
+		conn:Disconnect()
+		tween:Cancel()
+		proxy:Destroy()
+	end
+	local function destroyModel()
+		BrainrotHeader.remove(model)
+		if model.Parent then
+			model:Destroy()
+		end
+	end
+	state.hopCleanup = function()
+		stopTween()
+		destroyModel()
+	end
+	tween.Completed:Connect(function(playbackState)
+		if playbackState ~= Enum.PlaybackState.Completed then
+			return
+		end
+		if state.hopCleanup == nil then
+			return
+		end
+		state.hopCleanup = nil
+		stopTween()
+		destroyModel()
+	end)
+	tween:Play()
+end
+
 -- ── Stand placement / removal ────────────────────────────────────────────────
 
-local function clearDisplayModel(state: StandState)
+local function clearDisplayModel(state: StandState, hopOff: boolean?)
+	if hopOff == true then
+		cancelHop(state)
+		local hopping = state.displayModel
+		if hopping and hopping.Parent then
+			state.displayModel = nil
+			stopStandIdleAnimation(state)
+			local restCf = hopping:GetPivot()
+			local stand = state.stand
+			local toDestroy: { Model } = {}
+			local seen: { [Model]: boolean } = { [hopping] = true }
+
+			local function queue(model: Model)
+				if seen[model] then
+					return
+				end
+				seen[model] = true
+				table.insert(toDestroy, model)
+			end
+
+			for _, desc in stand:GetDescendants() do
+				if desc:IsA("Model") and desc:GetAttribute("BrainrotStandDisplay") == true then
+					queue(desc :: Model)
+				end
+			end
+
+			for _, model in toDestroy do
+				BrainrotHeader.remove(model)
+				if model.Parent then
+					model:Destroy()
+				end
+			end
+
+			playHopOffThenDestroy(state, hopping, restCf)
+			return
+		end
+	end
+
+	cancelHop(state)
 	stopStandIdleAnimation(state)
 	local stand = state.stand
 	local toDestroy: { Model } = {}
@@ -936,7 +1106,7 @@ local function repositionDisplayOnSpawn(state: StandState)
 end
 
 -- Place the configured brainrot model on the Spawn part with header billboard.
-local function rebuildDisplay(state: StandState)
+local function rebuildDisplay(state: StandState, hopIn: boolean?)
 	clearDisplayModel(state)
 	if not state.brainrotName then
 		return
@@ -1024,7 +1194,11 @@ local function rebuildDisplay(state: StandState)
 	state.displayModel = clone
 	PlotStandPlaceholders.hideSpawnShellOnStand(state.stand)
 	refreshHeader(state)
-	playStandIdleAnimation(state, clone, state.brainrotName :: string)
+	if hopIn == true then
+		playHopIn(state, clone, pivotCf, state.brainrotName :: string)
+	else
+		playStandIdleAnimation(state, clone, state.brainrotName :: string)
+	end
 end
 
 local function applyStandFromSave(
@@ -1343,9 +1517,9 @@ local function placedIncomeForPlayer(player: Player): number
 	return total
 end
 
-local function clearStandState(state: StandState, notifyPlayer: Player?)
+local function clearStandState(state: StandState, notifyPlayer: Player?, hopOff: boolean?)
 	local ownerBefore = state.ownerUserId
-	clearDisplayModel(state)
+	clearDisplayModel(state, hopOff)
 	state.ownerUserId = nil
 	state.brainrotName = nil
 	state.rarity = nil
@@ -1505,7 +1679,7 @@ local function placeBrainrotOnStand(player: Player, state: StandState)
 	state.stand:SetAttribute("BrainrotLevel", state.level)
 	state.stand:SetAttribute("BrainrotBaseIncome", state.baseIncome)
 
-	rebuildDisplay(state)
+	rebuildDisplay(state, true)
 	setPromptText(state)
 	refreshLabels(state)
 	notifyStandBrainrotChanged(player)
@@ -1582,7 +1756,7 @@ local function removeBrainrotFromStand(player: Player, state: StandState)
 		collectVFXRE:FireClient(player, state.stand, payout)
 	end
 
-	clearStandState(state)
+	clearStandState(state, nil, true)
 end
 
 -- ── Cash accumulation / collection ───────────────────────────────────────────
@@ -2076,6 +2250,7 @@ local function initStand(stand: Model)
 		sourcePath = "",
 		displayModel = nil,
 		idleTrack = nil,
+		hopCleanup = nil,
 		accumulated = 0,
 		lastTickAt = os.clock(),
 		lastCollectAt = 0,
@@ -2465,6 +2640,7 @@ local function rebuildIncomeStandOrder()
 	table.clear(incomeStandOrder)
 	for stand, state in pairs(stands) do
 		if not stand.Parent then
+			cancelHop(state)
 			stands[stand] = nil
 			continue
 		end

@@ -45,6 +45,7 @@ type QueuedMessage = {
 	senderName: string?,
 	senderUserId: number?,
 	typewriter: boolean?,
+	gift: boolean?,
 }
 
 type BroadcastBanner = {
@@ -266,6 +267,31 @@ local function applyRarityPanelStyle(rarityId: string)
 	end
 	panelStroke.Transparency = savedPanelStrokeTransparency or panelStroke.Transparency
 	setPanelAccent(RaritySpawnStyle.accentColor(rarityId), nil)
+end
+
+local function applyGiftStyle(textLabel: TextLabel)
+	disableDecorativeStrokes()
+	textLabel.TextStrokeTransparency = 1
+	textLabel.TextColor3 = Color3.fromRGB(255, 236, 96)
+	disableOtherGradients(textLabel, "RaritySpawnGradient")
+	local existing = textLabel:FindFirstChild("RaritySpawnGradient")
+	local grad = if existing and existing:IsA("UIGradient") then existing :: UIGradient else Instance.new("UIGradient")
+	grad.Name = "RaritySpawnGradient"
+	grad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 252, 210)),
+		ColorSequenceKeypoint.new(0.45, Color3.fromRGB(255, 214, 64)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 168, 36)),
+	})
+	grad.Rotation = 0
+	grad.Offset = Vector2.zero
+	grad.Enabled = true
+	grad.Parent = textLabel
+	ensureBlackTextOutline()
+	if panelStroke then
+		panelStroke.Enabled = true
+		panelStroke.Transparency = savedPanelStrokeTransparency or 0
+	end
+	setPanelAccent(Color3.fromRGB(255, 196, 64), nil)
 end
 
 local function applyRarityStyle(textLabel: TextLabel, rarityId: string)
@@ -781,6 +807,9 @@ processQueue = function()
 	if entry.isError then
 		applyErrorStyle(label)
 		animScale.Scale = 1
+	elseif entry.gift == true then
+		applyGiftStyle(label)
+		animScale.Scale = 0.6
 	else
 		applyRarityStyle(label, entry.rarityId or "legendary")
 		animScale.Scale = 0.6
@@ -802,7 +831,7 @@ processQueue = function()
 		if labelStroke then
 			TweenService:Create(labelStroke, TEXT_IN, { Transparency = 0 }):Play()
 		end
-		if entry.typewriter == true then
+		if entry.typewriter == true or entry.gift == true then
 			label.MaxVisibleGraphemes = 0
 			local letters = graphemeCount(entry.message)
 			local delaySec = if letters > 70 then 0.018 elseif letters > 36 then 0.024 else 0.032
@@ -927,7 +956,8 @@ local function enqueue(
 	lifetimeSec: number?,
 	senderName: string?,
 	senderUserId: number?,
-	typewriter: boolean?
+	typewriter: boolean?,
+	gift: boolean?
 )
 	table.insert(messageQueue, {
 		message = message,
@@ -937,6 +967,7 @@ local function enqueue(
 		senderName = senderName,
 		senderUserId = senderUserId,
 		typewriter = typewriter == true,
+		gift = gift == true,
 	})
 	processQueue()
 end
@@ -974,7 +1005,7 @@ function TopNotifController.showGift(message: string, rarityId: string?, lifetim
 		TopNotifController.init()
 	end
 	UIInteractionSounds.playNotif()
-	enqueue(message, false, rarityId or "legendary", lifetimeSec, nil, nil, true)
+	enqueue(message, false, rarityId or "legendary", lifetimeSec, nil, nil, true, true)
 end
 
 function TopNotifController.showBroadcast(

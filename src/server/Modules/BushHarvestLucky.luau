@@ -10,6 +10,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local BushLuckyBlockConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushLuckyBlockConfig"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
+local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 
 local M = {}
 
@@ -57,6 +58,10 @@ function M.tryOfferBushLuckyBlock(
 	worldPosition: Vector3,
 	bushRef: Instance?
 ): (boolean, string?)
+	-- Tutorial players only get brainrots from bushes; lucky blocks resume after TutorialCompleted.
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+		return false, nil
+	end
 	if not bushRef or bushRef:GetAttribute(M.HAS_ATTR) ~= true then
 		return false, nil
 	end

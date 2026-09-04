@@ -15,6 +15,7 @@ local BrainrotHeaderStyle = require(ReplicatedStorage:WaitForChild("Shared"):Wai
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local BushRootUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BushRootUtil"))
 local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
+local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local BushHoldInteraction = require(script.Parent.BushHoldInteraction)
 local PromptConfig = require(script.Parent.ProximityPromptEffectsConfig)
 
@@ -231,7 +232,8 @@ local function readHiddenLoot(bush: Instance): {
 	incomePerSecond: number,
 	isLuckyBlock: boolean,
 }
-	local hasLucky = bush:GetAttribute(BUSH_HAS_LUCKY_ATTR) == true
+	local tutorialActive = player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true
+	local hasLucky = not tutorialActive and bush:GetAttribute(BUSH_HAS_LUCKY_ATTR) == true
 	local luckyKind = bush:GetAttribute(BUSH_HIDDEN_LUCKY_KIND_ATTR)
 	if hasLucky and typeof(luckyKind) == "string" and luckyKind ~= "" then
 		return {

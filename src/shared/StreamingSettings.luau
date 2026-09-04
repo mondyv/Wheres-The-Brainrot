@@ -1,8 +1,8 @@
 -- [ACTIVE] StreamingSettings
 --[[
-	Small guaranteed bubble, opportunistic fill, never pause the player.
-	Studio's 256/512 + LowMemory + PauseOutsideLoadedArea is what froze swings
-	and sat at ~9GB. Do not RequestStreamAroundAsync from gameplay — that dumps
+	Live: modest guaranteed bubble + predictive fill so trees stay visible while
+	swinging. Never pause the player (Integrity Disabled).
+
 	Studio play-solo: do not touch Workspace streaming. The whole place is already
 	in-process; shrinking the bubble cannot free ~9GB and froze the character.
 ]]
@@ -17,20 +17,20 @@ function M.gameplayMin(): number
 		return 64
 	end
 	if UserInputService.TouchEnabled then
-		return 64
+		return 80
 	end
-	return 80
+	return 96
 end
 
 function M.gameplayTarget(): number
-	-- Current land + ~2 ahead so those islands are not empty shells.
+	-- Current land + ~2–3 ahead so trees fill before you land.
 	if RunService:IsStudio() then
 		return 140
 	end
 	if UserInputService.TouchEnabled then
-		return 240
+		return 280
 	end
-	return 300
+	return 360
 end
 
 function M.apply(workspaceInst: Workspace)
@@ -58,8 +58,9 @@ function M.apply(workspaceInst: Workspace)
 	end)
 	pcall(function()
 		local pred = (Enum :: any).PredictiveStreamingMode
-		if pred and pred.Disabled then
-			wsAny.PredictiveStreamingMode = pred.Disabled
+		-- Stream along velocity so trees appear while swinging, not after landing.
+		if pred and pred.Enabled then
+			wsAny.PredictiveStreamingMode = pred.Enabled
 		end
 	end)
 end

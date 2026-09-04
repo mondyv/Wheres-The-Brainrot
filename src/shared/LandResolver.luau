@@ -480,10 +480,32 @@ function M.isPositionWithinLandSpawn(worldPos: Vector3): boolean
 	return false
 end
 
+local function publishedLandCenter(land: number): Vector3?
+	local folder = ReplicatedStorage:FindFirstChild("LandStreamCenters")
+	if not folder then
+		return nil
+	end
+	local attr = folder:GetAttribute("Land" .. tostring(land))
+	if typeof(attr) == "Vector3" then
+		return attr
+	end
+	return nil
+end
+
 function M.getLandCenter(land: number): Vector3?
-	ensureDiscovery()
 	local want = math.clamp(math.floor(land), 1, MAX_LAND)
 	local cached = landCenters[want]
+	if cached then
+		return cached
+	end
+	-- Published from the server so we can stream a land before any of its parts exist here.
+	local published = publishedLandCenter(want)
+	if published then
+		landCenters[want] = published
+		return published
+	end
+	ensureDiscovery()
+	cached = landCenters[want]
 	if cached then
 		return cached
 	end

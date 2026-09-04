@@ -3,11 +3,12 @@
 	Client-only land content cull (kept name for init wiring).
 
 	Island / ground stay in Workspace so you can see far platforms.
-	Grass / trees / rocks stay on the current land plus two ahead (and one behind)
-	so the next islands are not empty boxes. Still skip restore mid-swing.
+	Grass / trees / rocks stay on the current land plus two ahead (and one behind).
+	While swinging, keep the predicted destination too and trickle-restore so
+	trees are not empty boxes in the air.
 
 	From the safezone this treats you as Land 1 and streams Land 1–3 so the
-	second island is not an empty box.
+	second island is not an empty box. Respawn streams those lands again.
 
 	Studio play-solo skips this entirely (full place is already in RAM).
 ]]
@@ -27,13 +28,19 @@ local M = {}
 local lowGraphics = false
 local KEEP_BEHIND = 1
 local KEEP_AHEAD = 2
+local SWING_KEEP_AHEAD = 3
 local LOW_GFX_KEEP_AHEAD = 1
 local POLL_SEC = 0.45
 -- Studio play-solo already has the whole place in-process; park immediately.
-local START_DELAY_SEC = if RunService:IsStudio() then 0.4 else 4
+local START_DELAY_SEC = if RunService:IsStudio() then 0.4 else 2
 local FEATURE_ENABLED = true
 local REPARENT_PER_YIELD = 2
+local SWING_REPARENT_PER_YIELD = 1
 local FAST_MOVE_SPEED = 36
+local LOOKAHEAD_DIST = 180
+local LOOKAHEAD_COOLDOWN = 0.85
+local LOOKAHEAD_TIMEOUT = 1
+local START_STREAM_MAX_LAND = 3
 
 local player = Players.LocalPlayer
 local wired = false
@@ -49,9 +56,12 @@ local lastChildAddedApplyAt = 0.0
 local CHILD_ADDED_APPLY_DEBOUNCE = 0.55
 local wasFastTraveling = false
 local startStreamAt = 0.0
-local startStreamBusy = false
+local streamBusy = false
 local startStreamLand = 1
 local START_STREAM_COOLDOWN = 1.4
+local lastLookaheadAt = 0.0
+local lastPredLand = 0
+local charAddedConn: RBXScriptConnection? = nil
 
 type CullEntry = {
 	inst: Instance,
@@ -231,6 +241,46 @@ local function isFastTraveling(): boolean
 	return Vector3.new(v.X, 0, v.Z).Magnitude >= FAST_MOVE_SPEED
 end
 
+local function predictedLandFromHrp(): number
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return if currentLand > 0 then currentLand else 1
+	end
+	local here = 1
+	if SafezoneUtil.isCharacterInSafezone(char) then
+		here = 1
+	else
+		here = math.floor(LandResolver.resolveLandAtPosition(hrp.Position))
+		if here < 1 then
+			here = if currentLand > 0 then currentLand else 1
+		end
+	end
+	if not isFastTraveling() then
+		return here
+	end
+	local vel = (hrp :: BasePart).AssemblyLinearVelocity
+	local horiz = Vector3.new(vel.X, 0, vel.Z)
+	local dir: Vector3
+	if horiz.Magnitude >= 12 then
+		dir = horiz.Unit
+	else
+		local look = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
+		if look.Magnitude < 0.05 then
+			return here
+		end
+		dir = look.Unit
+	end
+	local best = here
+	for _, dist in { 90, LOOKAHEAD_DIST, 280 } do
+		local land = math.floor(LandResolver.resolveLandAtPosition(hrp.Position + dir * dist))
+		if land > best then
+			best = land
+		end
+	end
+	return best
+end
+
 -- Safezone sits next to Land 1. Treating land 0 as "keep everything" meant the first
 -- walk toward Land 1 parked Lands 3–10 in one hitch (CPU spike, triangles barely move).
 local function cullLandIndex(playerLand: number): number
@@ -248,7 +298,13 @@ local function shouldParkEntry(entry: CullEntry, playerLand: number): boolean
 		behind = 0
 		ahead = LOW_GFX_KEEP_AHEAD
 	end
-	if entry.land < playerLand - behind or entry.land > playerLand + ahead then
+	local lo = playerLand - behind
+	local hi = playerLand + ahead
+	if isFastTraveling() then
+		local pred = predictedLandFromHrp()
+		hi = math.max(hi, pred + 1, playerLand + SWING_KEEP_AHEAD)
+	end
+	if entry.land < lo or entry.land > hi then
 		return true
 	end
 	-- Low Graphics: hide grass/trees/rocks even on the land you're standing on.
@@ -382,10 +438,9 @@ local function applyForPlayerLand(playerLand: number)
 		end
 	end
 
-	-- Never parent a Grass folder in while swinging — that hitch is the freeze.
-	if isFastTraveling() then
-		return
-	end
+	-- Trickle restore even while swinging — skipping it left empty trees until you landed.
+	-- One folder per frame in the air so a whole Grass dump cannot freeze the client.
+	local restoreBudget = if isFastTraveling() then SWING_REPARENT_PER_YIELD else REPARENT_PER_YIELD
 
 	table.sort(toRestore, function(a, b)
 		local pa = restorePriority(a)
@@ -400,7 +455,7 @@ local function applyForPlayerLand(playerLand: number)
 	for _, entry in toRestore do
 		restoreEntry(entry)
 		n += 1
-		if n % REPARENT_PER_YIELD == 0 then
+		if n % restoreBudget == 0 then
 			RunService.Heartbeat:Wait()
 		end
 	end
@@ -485,6 +540,25 @@ local function playerLandNow(): number
 end
 
 -- Standing in safezone / land 1, pull Land 1–3 so the second island is not a blank box.
+local function requestStreamAt(focus: Vector3, timeoutSec: number)
+	if not Workspace.StreamingEnabled then
+		return
+	end
+	if streamBusy then
+		return
+	end
+	streamBusy = true
+	task.spawn(function()
+		local ok, err = pcall(function()
+			player:RequestStreamAroundAsync(focus, timeoutSec)
+		end)
+		if not ok then
+			warn("[GrassCullController] RequestStreamAroundAsync failed:", err)
+		end
+		streamBusy = false
+	end)
+end
+
 local function prewarmStartLands()
 	if not Workspace.StreamingEnabled then
 		return
@@ -497,30 +571,54 @@ local function prewarmStartLands()
 		return
 	end
 	local now = os.clock()
-	if startStreamBusy or now - startStreamAt < START_STREAM_COOLDOWN then
+	if streamBusy or now - startStreamAt < START_STREAM_COOLDOWN then
 		return
 	end
-	local want = math.clamp(startStreamLand, 1, 3)
-	startStreamLand = want % 3 + 1
+	local want = math.clamp(startStreamLand, 1, START_STREAM_MAX_LAND)
+	startStreamLand = want % START_STREAM_MAX_LAND + 1
 	local focus = LandResolver.getLandCenter(want)
 	if not focus then
 		return
 	end
 	startStreamAt = now
-	startStreamBusy = true
-	task.spawn(function()
-		local ok, err = pcall(function()
-			player:RequestStreamAroundAsync(focus, 2)
-		end)
-		if not ok then
-			warn("[GrassCullController] start-land stream failed:", err)
-		end
-		startStreamBusy = false
-	end)
+	requestStreamAt(focus, 2)
+end
+
+local function softPrewarmAlongVelocity()
+	if not Workspace.StreamingEnabled then
+		return
+	end
+	if not isFastTraveling() then
+		return
+	end
+	local now = os.clock()
+	if streamBusy or now - lastLookaheadAt < LOOKAHEAD_COOLDOWN then
+		return
+	end
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hrp:IsA("BasePart") then
+		return
+	end
+	local vel = (hrp :: BasePart).AssemblyLinearVelocity
+	local horiz = Vector3.new(vel.X, 0, vel.Z)
+	if horiz.Magnitude < 12 then
+		return
+	end
+	local focus = hrp.Position + horiz.Unit * LOOKAHEAD_DIST + Vector3.new(0, math.clamp(vel.Y, -20, 40), 0)
+	lastLookaheadAt = now
+	requestStreamAt(focus, LOOKAHEAD_TIMEOUT)
 end
 
 local function onHeartbeat(dt: number)
-	if not FEATURE_ENABLED or not cullActive then
+	if not FEATURE_ENABLED then
+		return
+	end
+	-- Look-ahead runs even before cull starts so the first swing is not empty.
+	if isFastTraveling() then
+		softPrewarmAlongVelocity()
+	end
+	if not cullActive then
 		return
 	end
 	accum += dt
@@ -532,12 +630,18 @@ local function onHeartbeat(dt: number)
 	prewarmStartLands()
 	local land = playerLandNow()
 	local fast = isFastTraveling()
+	local pred = if fast then predictedLandFromHrp() else land
 	if land ~= currentLand and land > 0 then
 		requestApplyForPlayerLand(land)
+		lastPredLand = pred
+	elseif pred ~= lastPredLand and pred > 0 then
+		requestApplyForPlayerLand(land > 0 and land or pred)
+		lastPredLand = pred
 	elseif wasFastTraveling and not fast then
 		if land > 0 or currentLand > 0 then
 			requestApplyForPlayerLand(land > 0 and land or currentLand)
 		end
+		lastPredLand = pred
 	end
 	wasFastTraveling = fast
 end
@@ -602,7 +706,19 @@ function M.init()
 		return
 	end
 
-	-- From spawn, start pulling Land 1–3 immediately (don't wait for the 4s cull delay).
+	charAddedConn = player.CharacterAdded:Connect(function()
+		task.defer(function()
+			if not cullActive then
+				return
+			end
+			-- Server PlotSpawnUtil already streams the pad + Land 1–3.
+			-- Re-apply here so parked trees come back after the new character exists.
+			requestApplyForPlayerLand(playerLandNow())
+		end)
+	end)
+	heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
+
+	-- From spawn / respawn, start pulling Land 1–3 immediately (don't wait for cull delay).
 	task.spawn(function()
 		for _ = 1, 8 do
 			if not player.Parent then
@@ -648,7 +764,6 @@ function M.init()
 		requestApplyForPlayerLand(if land > 0 then land else 1)
 
 		landsChildConn = lands.ChildAdded:Connect(onLandFolderAdded)
-		heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
 	end)
 end
 

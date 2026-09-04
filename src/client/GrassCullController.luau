@@ -7,6 +7,8 @@
 	Restoring a whole Grass folder mid-swing is what froze the game.
 
 	Never Destroy — park far grass, restore after you land.
+
+	Studio play-solo skips this entirely (full place is already in RAM).
 ]]
 
 local Players = game:GetService("Players")

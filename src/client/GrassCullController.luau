@@ -28,7 +28,7 @@ local POLL_SEC = 0.45
 -- Studio play-solo already has the whole place in-process; park immediately.
 local START_DELAY_SEC = if RunService:IsStudio() then 0.4 else 4
 local FEATURE_ENABLED = true
-local REPARENT_PER_YIELD = 1
+local REPARENT_PER_YIELD = 2
 local FAST_MOVE_SPEED = 36
 
 local player = Players.LocalPlayer

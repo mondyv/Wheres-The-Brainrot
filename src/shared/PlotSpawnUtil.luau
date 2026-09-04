@@ -6,7 +6,6 @@
 
 local PlotPaths = require(script.Parent.PlotPaths)
 local LandResolver = require(script.Parent.LandResolver)
-local StreamingSettings = require(script.Parent.StreamingSettings)
 local TimCheeseQuestConfig = require(script.Parent.TimCheeseQuestConfig)
 local Workspace = game:GetService("Workspace")
 
@@ -810,20 +809,18 @@ function PlotSpawnUtil.streamAndTeleportWithRetries(
 			if not ok then
 				warn("[PlotSpawnUtil] RequestStreamAroundAsync failed:", err)
 			end
-			-- Custom streaming: also pull Land 1–3. When that flag is off, Roblox fills them.
-			if StreamingSettings.isCustomEnabled() then
-				for n = 1, 3 do
-					if not player.Parent then
-						return
-					end
-					local focus = LandResolver.getLandCenter(n)
-					if focus then
-						local landOk, landErr = pcall(function()
-							player:RequestStreamAroundAsync(focus, 1)
-						end)
-						if not landOk then
-							warn("[PlotSpawnUtil] land stream failed:", n, landErr)
-						end
+			-- Pull Land 1–3 so the plot is not an empty map after teleport.
+			for n = 1, 3 do
+				if not player.Parent then
+					return
+				end
+				local focus = LandResolver.getLandCenter(n)
+				if focus then
+					local landOk, landErr = pcall(function()
+						player:RequestStreamAroundAsync(focus, 1)
+					end)
+					if not landOk then
+						warn("[PlotSpawnUtil] land stream failed:", n, landErr)
 					end
 				end
 			end

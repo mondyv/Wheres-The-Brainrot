@@ -11,7 +11,8 @@
 	second island is not an empty box. Respawn streams those lands again.
 
 	Studio play-solo skips this entirely (full place is already in RAM).
-	Gated by StreamingSettings.CUSTOM_ENABLED — currently off so Roblox streams natively.
+	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
+	Look-ahead streaming still runs so swinging is not empty air.
 ]]
 
 local Players = game:GetService("Players")
@@ -38,9 +39,9 @@ local FEATURE_ENABLED = StreamingSettings.isCustomEnabled()
 local REPARENT_PER_YIELD = 2
 local SWING_REPARENT_PER_YIELD = 1
 local FAST_MOVE_SPEED = 36
-local LOOKAHEAD_DIST = 180
-local LOOKAHEAD_COOLDOWN = 0.85
-local LOOKAHEAD_TIMEOUT = 1
+local LOOKAHEAD_DIST = 260
+local LOOKAHEAD_COOLDOWN = 0.35
+local LOOKAHEAD_TIMEOUT = 0.55
 local START_STREAM_MAX_LAND = 3
 
 local player = Players.LocalPlayer
@@ -61,6 +62,7 @@ local streamBusy = false
 local startStreamLand = 1
 local START_STREAM_COOLDOWN = 1.4
 local lastLookaheadAt = 0.0
+local lookAheadSide = 1
 local lastPredLand = 0
 local charAddedConn: RBXScriptConnection? = nil
 
@@ -606,21 +608,19 @@ local function softPrewarmAlongVelocity()
 	if horiz.Magnitude < 12 then
 		return
 	end
-	local focus = hrp.Position + horiz.Unit * LOOKAHEAD_DIST + Vector3.new(0, math.clamp(vel.Y, -20, 40), 0)
+	local focus = hrp.Position
+		+ horiz.Unit * LOOKAHEAD_DIST
+		+ hrp.CFrame.RightVector * (55 * lookAheadSide)
+		+ Vector3.new(0, math.clamp(vel.Y, -20, 40), 0)
+	lookAheadSide *= -1
 	lastLookaheadAt = now
 	requestStreamAt(focus, LOOKAHEAD_TIMEOUT)
 end
 
 local function onHeartbeat(dt: number)
-	if not FEATURE_ENABLED then
-		return
-	end
-	-- Look-ahead runs even before cull starts so the first swing is not empty.
+	-- Look-ahead always runs (even with cull off) so fast swings are not empty.
 	if isFastTraveling() then
 		softPrewarmAlongVelocity()
-	end
-	if not cullActive then
-		return
 	end
 	accum += dt
 	if accum < POLL_SEC then
@@ -629,6 +629,9 @@ local function onHeartbeat(dt: number)
 	accum = 0
 
 	prewarmStartLands()
+	if not FEATURE_ENABLED or not cullActive then
+		return
+	end
 	local land = playerLandNow()
 	local fast = isFastTraveling()
 	local pred = if fast then predictedLandFromHrp() else land
@@ -703,6 +706,23 @@ function M.init()
 		return
 	end
 
+	pcall(function()
+		StreamingSettings.apply(Workspace)
+	end)
+
+	heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
+
+	-- From spawn / respawn, start pulling Land 1–3 immediately.
+	task.spawn(function()
+		for _ = 1, 8 do
+			if not player.Parent then
+				return
+			end
+			prewarmStartLands()
+			task.wait(1.2)
+		end
+	end)
+
 	if not FEATURE_ENABLED then
 		return
 	end
@@ -716,18 +736,6 @@ function M.init()
 			-- Re-apply here so parked trees come back after the new character exists.
 			requestApplyForPlayerLand(playerLandNow())
 		end)
-	end)
-	heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
-
-	-- From spawn / respawn, start pulling Land 1–3 immediately (don't wait for cull delay).
-	task.spawn(function()
-		for _ = 1, 8 do
-			if not player.Parent then
-				return
-			end
-			prewarmStartLands()
-			task.wait(1.2)
-		end
 	end)
 
 	task.spawn(function()

@@ -3,9 +3,10 @@
 	Streaming must stay enabled. Radii and stream-out are set here on purpose
 	so the live place cannot silently run Studio's 256/512 + LowMemory.
 
-	Custom land cull / radius overrides are gated by StreamingSettings.CUSTOM_ENABLED.
-	When that is off, apply() is a no-op and Roblox uses the place file radii.
-	Studio play-solo does not override Workspace. Never pause the player.
+	Live always applies gameplay radii (192 / 512, mobile 128 / 400), opportunistic
+	stream-out, predictive fill, and Integrity Disabled so swings are not empty.
+	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
+	Studio play-solo does not override Workspace.
 	Also publishes LandStreamCenters so clients can stream lands that are not in yet.
 ]]
 

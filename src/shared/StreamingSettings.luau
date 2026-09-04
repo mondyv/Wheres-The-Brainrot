@@ -1,11 +1,12 @@
 -- [ACTIVE] StreamingSettings
 --[[
-	ONE SWITCH for custom land cull + radius overrides + look-ahead streams:
-	M.CUSTOM_ENABLED. False = leave streaming to Roblox (no park/restore, no
-	radius shrink). Flip true to restore the custom system.
+	Live always applies a real stream bubble + predictive fill + no pause.
+	Turning that off last time left the published place on PauseOutsideLoadedArea
+	with a tiny bubble, so swinging showed empty air.
 
-	Studio play-solo: apply() never touches Workspace. The whole place is already
-	in-process; shrinking the bubble cannot free ~9GB and froze the character.
+	CUSTOM_CULL_ENABLED parks grass/trees. Leave that false unless we need it again.
+
+	Studio play-solo: apply() never touches Workspace.
 ]]
 
 local RunService = game:GetService("RunService")
@@ -13,11 +14,11 @@ local UserInputService = game:GetService("UserInputService")
 
 local M = {}
 
--- Set true to turn custom streaming / GrassCull back on.
-M.CUSTOM_ENABLED = false
+-- Park/restore land grass. Streaming radii still apply when this is false.
+M.CUSTOM_CULL_ENABLED = false
 
 function M.isCustomEnabled(): boolean
-	return M.CUSTOM_ENABLED == true
+	return M.CUSTOM_CULL_ENABLED == true
 end
 
 function M.gameplayMin(): number
@@ -25,28 +26,24 @@ function M.gameplayMin(): number
 		return 64
 	end
 	if UserInputService.TouchEnabled then
-		return 80
+		return 128
 	end
-	return 96
+	return 192
 end
 
 function M.gameplayTarget(): number
-	-- Current land + ~2–3 ahead so trees fill before you land.
 	if RunService:IsStudio() then
 		return 140
 	end
 	if UserInputService.TouchEnabled then
-		return 280
+		return 400
 	end
-	return 360
+	return 512
 end
 
 function M.apply(workspaceInst: Workspace)
 	-- Play-solo already has the whole place in-process. Shrinking the bubble
 	-- and reparenting grass is what froze movement and did not free RAM.
-	if not M.isCustomEnabled() then
-		return
-	end
 	if RunService:IsStudio() then
 		return
 	end
@@ -69,7 +66,6 @@ function M.apply(workspaceInst: Workspace)
 	end)
 	pcall(function()
 		local pred = (Enum :: any).PredictiveStreamingMode
-		-- Stream along velocity so trees appear while swinging, not after landing.
 		if pred and pred.Enabled then
 			wsAny.PredictiveStreamingMode = pred.Enabled
 		end

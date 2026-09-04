@@ -360,3 +360,16 @@ end
 
 unreplicateBrainrotsCatalog()
 task.defer(unreplicateBrainrotsCatalog)
+
+task.spawn(function()
+	local map = Workspace:FindFirstChild("Map") or Workspace:WaitForChild("Map", 120)
+	if not map then
+		return
+	end
+	publishLandCenters()
+	map.ChildAdded:Connect(function(child)
+		if child.Name == "Lands" then
+			publishLandCenters()
+		end
+	end)
+end)

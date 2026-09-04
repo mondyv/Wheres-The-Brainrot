@@ -42,6 +42,9 @@ local LEGACY_STORE_NAMES = if RunService:IsStudio()
 local AUTOSAVE_INTERVAL_SEC = 180
 -- Starter cash is granted by the tutorial (GrantTutorialCash), not on load.
 local DEFAULT_CASH = 0
+-- Live inventory cap. Old saves sometimes stored more and cloned a Tool per row.
+local MAX_BRAINROT_INVENTORY = 100
+local MAX_STAND_SAVE_ENTRIES = 24
 local LOADED_ATTR = PlayerDataSchema.LOADED_ATTR
 local LOAD_FAILED_ATTR = PlayerDataSchema.LOAD_FAILED_ATTR
 local PLAY_TIME_ATTR = PlayerDataSchema.TOTAL_PLAY_TIME_ATTR
@@ -134,15 +137,37 @@ end
 
 local function readStringArray(raw: any): { string }
 	local out: { string } = {}
+	local seen: { [string]: boolean } = {}
 	if typeof(raw) ~= "table" then
 		return out
 	end
 	for _, v in raw do
-		if typeof(v) == "string" and v ~= "" then
+		if typeof(v) == "string" and v ~= "" and not seen[v] then
+			seen[v] = true
 			table.insert(out, v)
 		end
 	end
 	return out
+end
+
+local function inventoryEntryValue(entry: PlayerDataSchema.BrainrotInvSaveEntry): number
+	local income = if typeof(entry.baseIncome) == "number" then entry.baseIncome else 0
+	local level = if typeof(entry.level) == "number" then entry.level else 1
+	return income * math.max(1, level)
+end
+
+local function capInventory(list: { PlayerDataSchema.BrainrotInvSaveEntry }): { PlayerDataSchema.BrainrotInvSaveEntry }
+	if #list <= MAX_BRAINROT_INVENTORY then
+		return list
+	end
+	table.sort(list, function(a, b)
+		return inventoryEntryValue(a) > inventoryEntryValue(b)
+	end)
+	local kept: { PlayerDataSchema.BrainrotInvSaveEntry } = {}
+	for i = 1, MAX_BRAINROT_INVENTORY do
+		kept[i] = list[i]
+	end
+	return kept
 end
 
 local function readBool(raw: any, default: boolean): boolean
@@ -742,6 +767,17 @@ local function normalizeLoadedData(raw: any): PlayerDataSchema.PlayerSaveData?
 				})
 			end
 		end
+	end
+
+	if #inventory > MAX_BRAINROT_INVENTORY then
+		inventory = capInventory(inventory)
+	end
+	if #stands > MAX_STAND_SAVE_ENTRIES then
+		local keptStands: { PlayerDataSchema.StandSaveEntry } = {}
+		for i = 1, MAX_STAND_SAVE_ENTRIES do
+			keptStands[i] = stands[i]
+		end
+		stands = keptStands
 	end
 
 	return {

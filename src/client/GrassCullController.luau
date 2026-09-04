@@ -12,7 +12,8 @@
 
 	Studio play-solo skips this entirely (full place is already in RAM).
 	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
-	Look-ahead streaming still runs so swinging is not empty air.
+	Look-ahead streaming runs outside the safezone so later lands (50x+) load,
+	then stops in the lobby so the spawn forest is not pulled back in.
 ]]
 
 local Players = game:GetService("Players")
@@ -547,7 +548,8 @@ local function playerLandNow(): number
 	return land
 end
 
--- Standing in safezone / land 1, pull Land 1–3 so the second island is not a blank box.
+-- Standing outside the lobby, pull the current land plus one/two ahead.
+-- Never from the safezone — that was slamming the spawn forest into RAM.
 local function pumpStreamQueue()
 	if streamBusy then
 		return
@@ -588,26 +590,31 @@ local function prewarmStartLands()
 	if not Workspace.StreamingEnabled then
 		return
 	end
+	local char = player.Character
+	if not char or SafezoneUtil.isCharacterInSafezone(char) then
+		return
+	end
 	if isFastTraveling() then
 		return
 	end
-	-- Use live position, not a stale currentLand from an old island.
 	local land = playerLandNow()
-	if land > 2 then
+	if land < 1 then
 		return
 	end
 	local now = os.clock()
 	if #streamQueue > 6 or now - startStreamAt < START_STREAM_COOLDOWN then
 		return
 	end
-	local want = math.clamp(startStreamLand, 1, START_STREAM_MAX_LAND)
-	startStreamLand = want % START_STREAM_MAX_LAND + 1
+	local ahead = if land >= 3 then 2 else 1
+	local offset = startStreamLand % (ahead + 1)
+	startStreamLand += 1
+	local want = math.clamp(land + offset, 1, 10)
 	local focus = LandResolver.getLandCenter(want)
 	if not focus then
 		return
 	end
 	startStreamAt = now
-	requestStreamAt(focus, 2)
+	requestStreamAt(focus, if land >= 3 then 1.25 else 0.8)
 end
 
 local function softPrewarmAlongVelocity()
@@ -617,12 +624,15 @@ local function softPrewarmAlongVelocity()
 	if not isFastTraveling() then
 		return
 	end
+	local char = player.Character
+	if not char or SafezoneUtil.isCharacterInSafezone(char) then
+		return
+	end
 	local now = os.clock()
 	if #streamQueue > 4 or now - lastLookaheadAt < LOOKAHEAD_COOLDOWN then
 		return
 	end
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local hrp = char:FindFirstChild("HumanoidRootPart")
 	if not hrp or not hrp:IsA("BasePart") then
 		return
 	end
@@ -631,13 +641,15 @@ local function softPrewarmAlongVelocity()
 	if horiz.Magnitude < 12 then
 		return
 	end
+	local land = playerLandNow()
+	local dist = if land >= 3 then LOOKAHEAD_DIST * 1.7 else LOOKAHEAD_DIST
 	local focus = hrp.Position
-		+ horiz.Unit * LOOKAHEAD_DIST
+		+ horiz.Unit * dist
 		+ hrp.CFrame.RightVector * (LOOKAHEAD_SIDE * lookAheadSide)
 		+ Vector3.new(0, math.clamp(vel.Y, -20, 40), 0)
 	lookAheadSide *= -1
 	lastLookaheadAt = now
-	requestStreamAt(focus, LOOKAHEAD_TIMEOUT)
+	requestStreamAt(focus, if land >= 3 then 0.7 else LOOKAHEAD_TIMEOUT)
 end
 
 local function prewarmPublishedTrees()
@@ -812,8 +824,17 @@ function M.setLowGraphics(enabled: boolean)
 end
 
 function M.init()
-	-- Custom land cull / tree preload / look-ahead streaming is disabled.
-	return
+	-- Cull stays off. Look-ahead streaming runs so later lands actually load,
+	-- but never RequestStreamAroundAsync from the safezone.
+	if wired then
+		return
+	end
+	wired = true
+	if heartbeatConn then
+		heartbeatConn:Disconnect()
+		heartbeatConn = nil
+	end
+	heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
 end
 
 return M

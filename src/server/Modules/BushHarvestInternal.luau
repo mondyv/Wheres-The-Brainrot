@@ -214,6 +214,9 @@ function M.install(config: InstallConfig)
 					end
 				end
 			end
+			while #rebuilt > 100 do
+				table.remove(rebuilt)
+			end
 			config.brainrotInventories[plr] = rebuilt
 			local parked: { [number]: boolean } = {}
 			if typeof(payload.parkedSlots) == "table" then
@@ -224,6 +227,11 @@ function M.install(config: InstallConfig)
 				end
 			end
 			config.brainrotParkedInExpandedBackpack[plr] = parked
+			if next(parked) == nil and #rebuilt > config.HOTBAR_UI_SLOTS then
+				for i = config.HOTBAR_UI_SLOTS + 1, #rebuilt do
+					parked[i] = true
+				end
+			end
 			local hotbarSlots: { [number]: number } = {}
 			if typeof(payload.hotbarSlots) == "table" then
 				for rawIdx, rawSlot in pairs(payload.hotbarSlots :: any) do
@@ -244,6 +252,7 @@ function M.install(config: InstallConfig)
 			if equipSlot then
 				plr:SetAttribute("BrainrotEquipSlot", equipSlot)
 			end
+			config.destroyAllBrainrotToolsForPlayer(plr)
 			local sync = config.ensureInventoryRemotes()
 			sync:FireClient(plr, config.packInventoryForClient(plr, rebuilt, equipSlot))
 			return true

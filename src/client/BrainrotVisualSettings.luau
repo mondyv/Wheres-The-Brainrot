@@ -109,7 +109,9 @@ local function applyInstance(root: Instance, inst: Instance)
 	local hideOthers = shouldHideFromOthers(root)
 	local vfxOn = brainrotVfxEnabled()
 	if inst:IsA("BasePart") then
-		applyPartVisibility(inst :: BasePart, hideOthers)
+		local part = inst :: BasePart
+		part.CastShadow = false
+		applyPartVisibility(part, hideOthers)
 	end
 	applyVfxInstance(inst, vfxOn)
 end
@@ -120,11 +122,13 @@ local function applyToRoot(root: Instance)
 
 	for _, d in root:GetDescendants() do
 		if d:IsA("BasePart") then
+			(d :: BasePart).CastShadow = false
 			applyPartVisibility(d :: BasePart, hideOthers)
 		end
 		applyVfxInstance(d, vfxOn)
 	end
 	if root:IsA("BasePart") then
+		(root :: BasePart).CastShadow = false
 		applyPartVisibility(root :: BasePart, hideOthers)
 	end
 end

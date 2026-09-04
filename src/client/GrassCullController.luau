@@ -24,6 +24,7 @@ local Workspace = game:GetService("Workspace")
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StreamingSettings"))
+local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ReviveConfig"))
 
 local M = {}
 
@@ -60,7 +61,7 @@ local wasFastTraveling = false
 local startStreamAt = 0.0
 local streamBusy = false
 local startStreamLand = 1
-local START_STREAM_COOLDOWN = 1.4
+local START_STREAM_COOLDOWN = 0.7
 local lastLookaheadAt = 0.0
 local lookAheadSide = 1
 local lastPredLand = 0
@@ -569,7 +570,8 @@ local function prewarmStartLands()
 	if isFastTraveling() then
 		return
 	end
-	local land = if currentLand > 0 then currentLand else playerLandNow()
+	-- Use live position, not a stale currentLand from an old island.
+	local land = playerLandNow()
 	if land > 2 then
 		return
 	end
@@ -711,6 +713,29 @@ function M.init()
 	end)
 
 	heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
+
+	player:GetAttributeChangedSignal(ReviveConfig.HOME_TELEPORT_ATTR):Connect(function()
+		task.defer(function()
+			local char = player.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if hrp and hrp:IsA("BasePart") then
+				requestStreamAt((hrp :: BasePart).Position, 2)
+			end
+			local land1 = LandResolver.getLandCenter(1)
+			if land1 and not streamBusy then
+				requestStreamAt(land1, 2)
+			end
+		end)
+	end)
+
+	player.CharacterAdded:Connect(function(character)
+		task.defer(function()
+			local hrp = character:FindFirstChild("HumanoidRootPart") or character:WaitForChild("HumanoidRootPart", 8)
+			if hrp and hrp:IsA("BasePart") then
+				requestStreamAt((hrp :: BasePart).Position, 2)
+			end
+		end)
+	end)
 
 	-- From spawn / respawn, start pulling Land 1–3 immediately.
 	task.spawn(function()

@@ -3,9 +3,10 @@
 	Keep land luck hitboxes (1xHitbox, 10xHitbox, …) available under streaming
 	so CurrentArea / meters still resolve on far lands like Land 9.
 
-	CRITICAL: never mark Land*/Island/Map ancestors Persistent — that pinned
-	entire lands (including grass) in memory and blew triangle counts.
-	Only a tiny dedicated wrapper model around each hitbox is Persistent.
+	CRITICAL: never mark Land2–Land10 / Island / Map ancestors Persistent — that
+	pinned entire lands (including grass) in memory and blew triangle counts.
+	Land 1 is allowed Persistent (safezone neighbor). Only a tiny dedicated
+	wrapper model around each luck hitbox is Persistent.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -16,8 +17,9 @@ local PERSIST_TAG = "LandLuckHitboxPersistent"
 local WRAPPER_NAME = "_LandLuckHitboxPersist"
 
 local function isUnsafePersistName(name: string): boolean
-	if string.match(name, "^Land%d+$") then
-		return true
+	local landNum = tonumber(string.match(name, "^Land(%d+)$"))
+	if landNum then
+		return landNum ~= 1
 	end
 	local ak = string.gsub(string.lower(name), "[^a-z0-9]", "")
 	return ak == "island"

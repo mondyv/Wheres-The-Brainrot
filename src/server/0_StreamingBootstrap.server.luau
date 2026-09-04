@@ -8,8 +8,8 @@
 	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
 	Studio play-solo does not override Workspace.
 	Also publishes LandStreamCenters so clients can stream lands that are not in yet.
-	Pins Map["Huge trees"] / Map.Vine (and borders) Persistent so swinging does not
-	unload the forest. Never pins Map, Map.Lands, or Land Locks (power opens those).
+	Pins Map["Huge trees"] / Map.Vine / Spawn And Bases / Land 1 Persistent so
+	coming back to the safezone is not empty. Never pins Map, Land 2–10, or Land Locks.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -80,8 +80,8 @@ task.spawn(function()
 	publishLandCenters()
 end)
 
--- Map.Lands grass stays Default (too heavy to pin). The forest and vines sit
--- beside Lands — Map["Huge trees"], Map.Vine — so the land bubble never kept them.
+-- Map.Lands 2–10 grass stays Default (too heavy to pin). Land 1 + Spawn And Bases
+-- stay loaded so returning to the safezone is not an empty wait.
 local PERSIST_MAP_CHILD_KEYS: { [string]: boolean } = {
 	hugetrees = true,
 	vine = true,
@@ -89,6 +89,10 @@ local PERSIST_MAP_CHILD_KEYS: { [string]: boolean } = {
 	landborders = true,
 	eventbillboard = true,
 	spawntimers = true,
+}
+-- Models only — wrapping SafeZoneHitbox / Spawn pads broke names last time.
+local PERSIST_MODELS_ONLY_KEYS: { [string]: boolean } = {
+	spawnandbases = true,
 }
 
 local function persistKey(name: string): string
@@ -143,15 +147,62 @@ local function persistContainer(container: Instance)
 	end)
 end
 
+local function persistModelsOnly(container: Instance)
+	if container:IsA("Model") then
+		persistModel(container)
+	end
+	for _, child in container:GetChildren() do
+		if child:IsA("Model") then
+			persistModel(child)
+		end
+	end
+	container.ChildAdded:Connect(function(child)
+		if child:IsA("Model") then
+			persistModel(child)
+		end
+	end)
+end
+
+local function landNumberFromName(name: string): number?
+	local n = tonumber(string.match(name, "^Land(%d+)$"))
+	if n then
+		return n
+	end
+	return tonumber(string.match(name, "^Land%s*(%d+)$"))
+end
+
+local function persistLandOne(lands: Instance)
+	for _, child in lands:GetChildren() do
+		if landNumberFromName(child.Name) == 1 then
+			persistModelsOnly(child)
+		end
+	end
+	lands.ChildAdded:Connect(function(child)
+		if landNumberFromName(child.Name) == 1 then
+			persistModelsOnly(child)
+		end
+	end)
+end
+
 local function hookMapScenery(map: Instance)
 	for _, child in map:GetChildren() do
-		if PERSIST_MAP_CHILD_KEYS[persistKey(child.Name)] then
+		local key = persistKey(child.Name)
+		if PERSIST_MAP_CHILD_KEYS[key] then
 			persistContainer(child)
+		elseif PERSIST_MODELS_ONLY_KEYS[key] then
+			persistModelsOnly(child)
+		elseif key == "lands" then
+			persistLandOne(child)
 		end
 	end
 	map.ChildAdded:Connect(function(child)
-		if PERSIST_MAP_CHILD_KEYS[persistKey(child.Name)] then
+		local key = persistKey(child.Name)
+		if PERSIST_MAP_CHILD_KEYS[key] then
 			persistContainer(child)
+		elseif PERSIST_MODELS_ONLY_KEYS[key] then
+			persistModelsOnly(child)
+		elseif key == "lands" then
+			persistLandOne(child)
 		end
 	end)
 end

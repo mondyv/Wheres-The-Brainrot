@@ -15,6 +15,7 @@ local Workspace = game:GetService("Workspace")
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local BackgroundMusicController = require(script.Parent.BackgroundMusicController)
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 
@@ -806,6 +807,9 @@ local function finish()
 	cutsceneToken += 1
 	stopConns()
 	unlockMovement()
+	pcall(function()
+		BackgroundMusicController.setLastLandShowcase(false)
+	end)
 	beginFastReturnToCharacter()
 	restoreForcedGuis()
 	if hudHidden then
@@ -852,7 +856,11 @@ function M.play(): boolean
 	local ev = Instance.new("BindableEvent")
 	doneEvent = ev
 
+	pcall(function()
+		BackgroundMusicController.setLastLandShowcase(true)
+	end)
 	GameplayUiVisibility.hide({
+		skipMuffle = true,
 		keepScreenGuiNames = { GUI_NAME },
 		hideScreenGuiNames = {
 			"TutorialObjective",

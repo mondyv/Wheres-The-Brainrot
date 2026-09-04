@@ -16,6 +16,10 @@ local CarryGate = require(script.Parent.CarryGate)
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
 local POLL_INTERVAL = 0.25
+local LAST_LAND_TRACK_NAME = "JungleZone Music 1"
+local LAST_LAND_PLAYBACK_SPEED = 0.82
+
+local lastLandShowcaseOn = false
 
 export type BoothKey = "UpgradeBooth" | "SellBooth" | "BrainrotDealerBooth"
 
@@ -118,6 +122,20 @@ function BackgroundMusicController.getActiveBooth(): BoothKey?
 	return activeBoothKey
 end
 
+function BackgroundMusicController.setLastLandShowcase(on: boolean)
+	local nextOn = on == true
+	if lastLandShowcaseOn == nextOn then
+		if resolveAndApplyFn then
+			resolveAndApplyFn()
+		end
+		return
+	end
+	lastLandShowcaseOn = nextOn
+	if resolveAndApplyFn then
+		resolveAndApplyFn()
+	end
+end
+
 function BackgroundMusicController.init()
 	local bg = SoundService:FindFirstChild("BackgroundMusic")
 	if not bg then
@@ -210,6 +228,10 @@ function BackgroundMusicController.init()
 	local currentBed: Sound? = nil
 	local endedConn: RBXScriptConnection? = nil
 	local pollAccum = 0.0
+	local showcaseSound: Sound? = nil
+	local showcaseSpeedWas: number? = nil
+	local showcaseLoopedWas: boolean? = nil
+	local lastLandTrack = childSound(jungleFolder, LAST_LAND_TRACK_NAME)
 
 	local function stopAll()
 		if endedConn then
@@ -334,6 +356,49 @@ function BackgroundMusicController.init()
 		return "none", nil
 	end
 
+	local function restoreShowcaseMutations()
+		local s = showcaseSound
+		if s then
+			s.PlaybackSpeed = if typeof(showcaseSpeedWas) == "number" then showcaseSpeedWas else 1
+			s.Looped = if showcaseLoopedWas == true then true else false
+		end
+		showcaseSound = nil
+		showcaseSpeedWas = nil
+		showcaseLoopedWas = nil
+	end
+
+	local function applyLastLandShowcase()
+		local music = lastLandTrack
+		if not music then
+			return
+		end
+		if endedConn then
+			endedConn:Disconnect()
+			endedConn = nil
+		end
+		for _, s in allSounds do
+			if s ~= music then
+				s:Stop()
+			end
+		end
+		if showcaseSound ~= music then
+			restoreShowcaseMutations()
+			showcaseSound = music
+			showcaseSpeedWas = music.PlaybackSpeed
+			showcaseLoopedWas = music.Looped
+		end
+		currentMode = "none"
+		currentBoothKey = nil
+		currentSound = music
+		currentBed = nil
+		music.Looped = true
+		music.PlaybackSpeed = LAST_LAND_PLAYBACK_SPEED
+		if not music.IsPlaying then
+			music.TimePosition = 0
+			music:Play()
+		end
+	end
+
 	local function applyMode(mode: BgmMode, boothKey: BoothKey?)
 		local sameBooth = mode ~= "booth" or currentBoothKey == boothKey
 		if mode == currentMode and sameBooth and mode ~= "none" and currentSound and currentSound.IsPlaying then
@@ -356,6 +421,15 @@ function BackgroundMusicController.init()
 	end
 
 	local function pollState()
+		if lastLandShowcaseOn then
+			applyLastLandShowcase()
+			return
+		end
+		if showcaseSound then
+			restoreShowcaseMutations()
+			stopAll()
+			currentMode = "none"
+		end
 		local mode, boothKey = resolveMode()
 		applyMode(mode, boothKey)
 	end

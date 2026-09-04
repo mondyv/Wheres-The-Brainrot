@@ -3,8 +3,8 @@
 	Streaming must stay enabled. Radii and stream-out are set here on purpose
 	so the live place cannot silently run Studio's 256/512 + LowMemory.
 
-	Live: 80 / 180. Studio play-solo: 64 / 140. Mobile: 64 / 140.
-	Never pause the player (Integrity Disabled). Opportunistic stream-out.
+	Live: 80 / 300 so current + two lands ahead can fill. Mobile: 64 / 240.
+	Studio play-solo does not override Workspace. Never pause the player.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

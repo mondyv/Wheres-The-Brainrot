@@ -23,14 +23,14 @@ function M.gameplayMin(): number
 end
 
 function M.gameplayTarget(): number
-	-- Far enough to see the next island shell (~150–180 studs), not 3 lands of grass.
+	-- Current land + ~2 ahead so those islands are not empty shells.
 	if RunService:IsStudio() then
 		return 140
 	end
 	if UserInputService.TouchEnabled then
-		return 140
+		return 240
 	end
-	return 180
+	return 300
 end
 
 function M.apply(workspaceInst: Workspace)

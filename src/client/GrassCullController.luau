@@ -2,11 +2,9 @@
 --[[
 	Client-only land content cull (kept name for init wiring).
 
-	Island / ground of nearby lands stay in Workspace so you can see the next
-	platform. Grass / trees / rocks only live on the land you are standing on.
-	Restoring a whole Grass folder mid-swing is what froze the game.
-
-	Never Destroy — park far grass, restore after you land.
+	Island / ground stay in Workspace so you can see far platforms.
+	Grass / trees / rocks stay on the current land plus two ahead (and one behind)
+	so the next islands are not empty boxes. Still skip restore mid-swing.
 
 	Studio play-solo skips this entirely (full place is already in RAM).
 ]]
@@ -23,6 +21,9 @@ local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitF
 local M = {}
 
 local lowGraphics = false
+local KEEP_BEHIND = 1
+local KEEP_AHEAD = 2
+local LOW_GFX_KEEP_AHEAD = 1
 local POLL_SEC = 0.45
 -- Studio play-solo already has the whole place in-process; park immediately.
 local START_DELAY_SEC = if RunService:IsStudio() then 0.4 else 4
@@ -233,7 +234,13 @@ end
 
 local function shouldParkEntry(entry: CullEntry, playerLand: number): boolean
 	playerLand = cullLandIndex(playerLand)
-	if entry.land ~= playerLand then
+	local behind = KEEP_BEHIND
+	local ahead = KEEP_AHEAD
+	if lowGraphics then
+		behind = 0
+		ahead = LOW_GFX_KEEP_AHEAD
+	end
+	if entry.land < playerLand - behind or entry.land > playerLand + ahead then
 		return true
 	end
 	-- Low Graphics: hide grass/trees/rocks even on the land you're standing on.

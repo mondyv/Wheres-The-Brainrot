@@ -1,20 +1,35 @@
 -- [ACTIVE] StreamingSettings
 --[[
-	Place files often still have Studio's 256/512 + LowMemory + PauseOutsideLoadedArea.
-	That keeps half the map resident and pauses you when you swing into an
-	unloaded land. Gameplay uses a small guaranteed bubble and opportunistic fill.
+	Small guaranteed bubble, opportunistic fill, never pause the player.
+	Studio's 256/512 + LowMemory + PauseOutsideLoadedArea is what froze swings
+	and sat at ~9GB. Do not RequestStreamAroundAsync from gameplay — that dumps
+	the next land's grass in one hitch.
 ]]
 
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local M = {}
 
 function M.gameplayMin(): number
-	return if RunService:IsStudio() then 80 else 112
+	if RunService:IsStudio() then
+		return 64
+	end
+	if UserInputService.TouchEnabled then
+		return 64
+	end
+	return 80
 end
 
 function M.gameplayTarget(): number
-	return if RunService:IsStudio() then 200 else 320
+	-- Far enough to see the next island shell (~150–180 studs), not 3 lands of grass.
+	if RunService:IsStudio() then
+		return 140
+	end
+	if UserInputService.TouchEnabled then
+		return 140
+	end
+	return 180
 end
 
 function M.apply(workspaceInst: Workspace)
@@ -22,25 +37,23 @@ function M.apply(workspaceInst: Workspace)
 		workspaceInst.StreamingEnabled = true
 	end
 	local wsAny = workspaceInst :: any
-	local minR = M.gameplayMin()
-	local targetR = M.gameplayTarget()
 	pcall(function()
-		wsAny.StreamingMinRadius = minR
-		wsAny.StreamingTargetRadius = targetR
+		wsAny.StreamingMinRadius = M.gameplayMin()
+		wsAny.StreamingTargetRadius = M.gameplayTarget()
 	end)
 	pcall(function()
 		workspaceInst.StreamOutBehavior = Enum.StreamOutBehavior.Opportunistic
 	end)
 	pcall(function()
 		local mode = (Enum :: any).StreamingIntegrityMode
-		if mode and mode.MinimumRadiusPause then
-			wsAny.StreamingIntegrityMode = mode.MinimumRadiusPause
+		if mode and mode.Disabled then
+			wsAny.StreamingIntegrityMode = mode.Disabled
 		end
 	end)
 	pcall(function()
 		local pred = (Enum :: any).PredictiveStreamingMode
-		if pred and pred.Enabled then
-			wsAny.PredictiveStreamingMode = pred.Enabled
+		if pred and pred.Disabled then
+			wsAny.PredictiveStreamingMode = pred.Disabled
 		end
 	end)
 end

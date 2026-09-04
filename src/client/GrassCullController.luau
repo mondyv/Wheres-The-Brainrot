@@ -2,13 +2,11 @@
 --[[
 	Client-only land content cull (kept name for init wiring).
 
-	Default: keep previous land, current, and two ahead. Unload farther lands.
-	Low Graphics: keep current + next land, and park grass/trees/rocks on them.
-	Never Destroy — restore when range/settings change.
+	Island / ground of nearby lands stay in Workspace so you can see the next
+	platform. Grass / trees / rocks only live on the land you are standing on.
+	Restoring a whole Grass folder mid-swing is what froze the game.
 
-	Never restore parked grass/props until that land's walk mesh (Island/ground)
-	is present. Force-restoring from the local cache before the island streams
-	in is what spawned high-tri decor with no land mass underneath.
+	Never Destroy — park far grass, restore after you land.
 ]]
 
 local Players = game:GetService("Players")
@@ -22,39 +20,13 @@ local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitF
 
 local M = {}
 
--- Keep previous land, current, and two ahead so the island you're looking at
--- is not parked. Unload only when outside that window.
-local KEEP_BEHIND = 1
-local KEEP_AHEAD = 2
-local LOW_GFX_KEEP_AHEAD = 1
-local SWING_KEEP_AHEAD = 2
 local lowGraphics = false
 local POLL_SEC = 0.45
 -- Studio play-solo already has the whole place in-process; park immediately.
 local START_DELAY_SEC = if RunService:IsStudio() then 0.4 else 4
 local FEATURE_ENABLED = true
--- Reparent budget: restore slowly so a land filling in doesn't hitch the frame.
-local REPARENT_PER_YIELD = if RunService:IsStudio() then 4 else 2
-local REPARENT_PER_YIELD_SWING = 3
+local REPARENT_PER_YIELD = 1
 local FAST_MOVE_SPEED = 36
-local STREAM_AHEAD_STUDS = 200
-local LOOK_AHEAD_STUDS = 180
-local lastStreamAt = 0.0
-local STREAM_COOLDOWN = 0.45
-local MOBILE_STREAM_COOLDOWN = 0.7
-local IDLE_STREAM_COOLDOWN = 2.2
-local GAMEPLAY_STREAM_MIN = 112
-local GAMEPLAY_STREAM_TARGET = 320
-local MOBILE_STREAM_MIN = 96
-local MOBILE_STREAM_TARGET = 240
-local STUDIO_STREAM_MIN = 80
-local STUDIO_STREAM_TARGET = 200
-local SWING_STREAM_TARGET = 380
-local MOBILE_SWING_STREAM_TARGET = 280
-local STUDIO_SWING_STREAM_TARGET = 240
-local swingStreamBoosted = false
-local wasFastTraveling = false
-local idleStreamBusy = false
 
 local player = Players.LocalPlayer
 local wired = false
@@ -68,6 +40,7 @@ local applyRunning = false
 local applyQueuedLand: number? = nil
 local lastChildAddedApplyAt = 0.0
 local CHILD_ADDED_APPLY_DEBOUNCE = 0.55
+local wasFastTraveling = false
 
 type CullEntry = {
 	inst: Instance,
@@ -256,25 +229,12 @@ local function cullLandIndex(playerLand: number): number
 	return playerLand
 end
 
-local function shouldKeepLand(landNum: number, playerLand: number): boolean
-	playerLand = cullLandIndex(playerLand)
-	local behind = KEEP_BEHIND
-	local ahead = KEEP_AHEAD
-	if lowGraphics then
-		behind = 0
-		ahead = LOW_GFX_KEEP_AHEAD
-	end
-	if isFastTraveling() then
-		ahead = math.max(ahead, SWING_KEEP_AHEAD)
-	end
-	return landNum >= playerLand - behind and landNum <= playerLand + ahead
-end
-
 local function shouldParkEntry(entry: CullEntry, playerLand: number): boolean
-	if not shouldKeepLand(entry.land, playerLand) then
+	playerLand = cullLandIndex(playerLand)
+	if entry.land ~= playerLand then
 		return true
 	end
-	-- Low Graphics: also dump grass/trees/rocks on the land you're standing on.
+	-- Low Graphics: hide grass/trees/rocks even on the land you're standing on.
 	if lowGraphics and isLowGfxDecorName(entry.inst.Name) then
 		return true
 	end
@@ -396,16 +356,18 @@ local function applyForPlayerLand(playerLand: number)
 	end
 
 	local n = 0
-	local parkBudget = if isFastTraveling() then REPARENT_PER_YIELD_SWING else REPARENT_PER_YIELD
-	if UserInputService.TouchEnabled then
-		parkBudget = math.min(parkBudget, 3)
-	end
+	local parkBudget = if UserInputService.TouchEnabled then 4 else 8
 	for _, entry in toPark do
 		parkEntry(entry)
 		n += 1
 		if n % parkBudget == 0 then
 			RunService.Heartbeat:Wait()
 		end
+	end
+
+	-- Never parent a Grass folder in while swinging — that hitch is the freeze.
+	if isFastTraveling() then
+		return
 	end
 
 	table.sort(toRestore, function(a, b)
@@ -418,14 +380,10 @@ local function applyForPlayerLand(playerLand: number)
 	end)
 
 	n = 0
-	local restoreBudget = if isFastTraveling() then REPARENT_PER_YIELD_SWING else REPARENT_PER_YIELD
-	if UserInputService.TouchEnabled then
-		restoreBudget = math.min(restoreBudget, 2)
-	end
 	for _, entry in toRestore do
 		restoreEntry(entry)
 		n += 1
-		if n % restoreBudget == 0 then
+		if n % REPARENT_PER_YIELD == 0 then
 			RunService.Heartbeat:Wait()
 		end
 	end
@@ -519,169 +477,12 @@ local function playerLandNow(): number
 	return land
 end
 
-local function gameplayStreamMin(): number
-	if RunService:IsStudio() then
-		return STUDIO_STREAM_MIN
-	end
-	if UserInputService.TouchEnabled then
-		return MOBILE_STREAM_MIN
-	end
-	return GAMEPLAY_STREAM_MIN
-end
-
-local function gameplayStreamRadius(): number
-	if RunService:IsStudio() then
-		return STUDIO_STREAM_TARGET
-	end
-	if UserInputService.TouchEnabled then
-		return MOBILE_STREAM_TARGET
-	end
-	return GAMEPLAY_STREAM_TARGET
-end
-
-local function swingStreamRadius(): number
-	if RunService:IsStudio() then
-		return STUDIO_SWING_STREAM_TARGET
-	end
-	if UserInputService.TouchEnabled then
-		return MOBILE_SWING_STREAM_TARGET
-	end
-	return SWING_STREAM_TARGET
-end
-
-local function setSwingStreamBoost(on: boolean)
-	if swingStreamBoosted == on then
-		return
-	end
-	swingStreamBoosted = on
-	pcall(function()
-		local wsAny = Workspace :: any
-		if on then
-			wsAny.StreamingTargetRadius = swingStreamRadius()
-		else
-			wsAny.StreamingMinRadius = gameplayStreamMin()
-			wsAny.StreamingTargetRadius = gameplayStreamRadius()
-		end
-	end)
-end
-
--- Soft-prewarm: request Roblox streaming ahead along swing velocity.
--- Never force-restore cached grass/props before the island mesh streams in.
-local function softPrewarmAhead()
-	if not Workspace.StreamingEnabled then
-		return
-	end
-	if not isFastTraveling() then
-		setSwingStreamBoost(false)
-		return
-	end
-
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if not hrp or not hrp:IsA("BasePart") then
-		return
-	end
-
-	local vel = (hrp :: BasePart).AssemblyLinearVelocity
-	local horiz = Vector3.new(vel.X, 0, vel.Z)
-	local look = Vector3.new((hrp :: BasePart).CFrame.LookVector.X, 0, (hrp :: BasePart).CFrame.LookVector.Z)
-	local dir: Vector3
-	if horiz.Magnitude >= FAST_MOVE_SPEED * 0.35 then
-		dir = horiz.Unit
-	elseif look.Magnitude > 0.05 then
-		dir = look.Unit
-	else
-		return
-	end
-
-	setSwingStreamBoost(true)
-
-	local now = os.clock()
-	local cooldown = if UserInputService.TouchEnabled then MOBILE_STREAM_COOLDOWN else STREAM_COOLDOWN
-	if now - lastStreamAt < cooldown then
-		return
-	end
-	lastStreamAt = now
-
-	local origin = (hrp :: BasePart).Position
-	local near = origin + dir * STREAM_AHEAD_STUDS
-	task.spawn(function()
-		local okNear, errNear = pcall(function()
-			player:RequestStreamAroundAsync(near, 1)
-		end)
-		if not okNear then
-			warn("[GrassCullController] RequestStreamAroundAsync failed:", errNear)
-		end
-	end)
-end
-
--- While standing, trickle-stream the next land (one request). Big games keep
--- the bubble filling in the background instead of dumping two stream calls at once.
-local function prewarmInFront()
-	if not Workspace.StreamingEnabled then
-		return
-	end
-	if isFastTraveling() then
-		return
-	end
-	setSwingStreamBoost(false)
-
-	local now = os.clock()
-	if now - lastStreamAt < IDLE_STREAM_COOLDOWN then
-		return
-	end
-	if idleStreamBusy then
-		return
-	end
-
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if not hrp or not hrp:IsA("BasePart") then
-		return
-	end
-
-	local land = cullLandIndex(if currentLand > 0 then currentLand else playerLandNow())
-	local focus = LandResolver.getLandCenter(land + 1)
-	if not focus then
-		local cam = Workspace.CurrentCamera
-		local look = Vector3.new(0, 0, 0)
-		if cam then
-			look = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
-		end
-		if look.Magnitude < 0.05 then
-			look = Vector3.new((hrp :: BasePart).CFrame.LookVector.X, 0, (hrp :: BasePart).CFrame.LookVector.Z)
-		end
-		if look.Magnitude < 0.05 then
-			return
-		end
-		focus = (hrp :: BasePart).Position + look.Unit * LOOK_AHEAD_STUDS
-	end
-
-	lastStreamAt = now
-	idleStreamBusy = true
-	task.spawn(function()
-		local ok, err = pcall(function()
-			player:RequestStreamAroundAsync(focus, 1)
-		end)
-		if not ok then
-			warn("[GrassCullController] next-land stream failed:", err)
-		end
-		idleStreamBusy = false
-	end)
-end
-
 local function onHeartbeat(dt: number)
 	if not FEATURE_ENABLED or not cullActive then
 		return
 	end
 	accum += dt
 	if accum < POLL_SEC then
-		-- Between polls, trickle prewarm while swinging so boundary hits stay light.
-		if isFastTraveling() then
-			softPrewarmAhead()
-		else
-			prewarmInFront()
-		end
 		return
 	end
 	accum = 0
@@ -689,21 +490,11 @@ local function onHeartbeat(dt: number)
 	local land = playerLandNow()
 	local fast = isFastTraveling()
 	if land ~= currentLand and land > 0 then
-		lastStreamAt = 0
 		requestApplyForPlayerLand(land)
-	elseif fast then
-		softPrewarmAhead()
-		-- Expand keep radius once when swing starts so next land tops stay resident.
-		if not wasFastTraveling and (land > 0 or currentLand > 0) then
-			requestApplyForPlayerLand(land > 0 and land or currentLand)
-		end
-	elseif wasFastTraveling then
-		setSwingStreamBoost(false)
+	elseif wasFastTraveling and not fast then
 		if land > 0 or currentLand > 0 then
 			requestApplyForPlayerLand(land > 0 and land or currentLand)
 		end
-	else
-		prewarmInFront()
 	end
 	wasFastTraveling = fast
 end
@@ -792,9 +583,6 @@ function M.init()
 		cullActive = true
 		pcall(function()
 			StreamingSettings.apply(Workspace)
-			local wsAny = Workspace :: any
-			wsAny.StreamingMinRadius = gameplayStreamMin()
-			wsAny.StreamingTargetRadius = gameplayStreamRadius()
 		end)
 		-- Park far lands while still at base so walking into Land 1 isn't a mass reparent.
 		requestApplyForPlayerLand(if land > 0 then land else 1)

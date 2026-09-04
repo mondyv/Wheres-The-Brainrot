@@ -4,6 +4,7 @@
 	`global` fans out to every live server (online players only).
 ]]
 
+local Debris = game:GetService("Debris")
 local MessagingService = game:GetService("MessagingService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -35,11 +36,13 @@ type VisualPayload = {
 	rarity: string,
 	reason: string,
 	variant: string?,
+	templateName: string?,
 }
 
 local dropRE: RemoteEvent? = nil
 local messagingReady = false
 local started = false
+local templateSerial = 0
 
 local function getRemotesFolder(): Folder
 	local folder = ReplicatedStorage:FindFirstChild("Remotes")
@@ -201,6 +204,85 @@ function M.labelFor(spec: GiftSpec): string
 	return if vis then vis.displayName else spec.id
 end
 
+local function templateFolder(): Folder
+	local existing = ReplicatedStorage:FindFirstChild(AdminGiftConfig.TEMPLATE_FOLDER)
+	if existing and existing:IsA("Folder") then
+		return existing
+	end
+	local folder = Instance.new("Folder")
+	folder.Name = AdminGiftConfig.TEMPLATE_FOLDER
+	folder.Parent = ReplicatedStorage
+	return folder
+end
+
+local function stripClone(model: Model)
+	local remove: { Instance } = {}
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+			d.CanCollide = false
+			d.CanQuery = false
+			d.CanTouch = false
+			d.Massless = true
+		elseif d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ProximityPrompt") then
+			table.insert(remove, d)
+		end
+	end
+	for _, d in remove do
+		d:Destroy()
+	end
+	if not model.PrimaryPart then
+		model.PrimaryPart = model:FindFirstChildWhichIsA("BasePart", true)
+	end
+end
+
+local function cloneBrainrotTemplate(name: string, mutation: string?): Model?
+	local root = Brainrots.getBrainrotsFolder()
+	if not root then
+		return nil
+	end
+	local nameFolder = Brainrots.findBrainrotStorageFolder(root, name)
+	if not nameFolder then
+		return nil
+	end
+	local template: Model? = nil
+	for _, variantName in ipairs(Brainrots.mutationTemplateCandidateNames(mutation or "normal")) do
+		local v = nameFolder:FindFirstChild(variantName)
+		if v and v:IsA("Model") then
+			template = v
+			break
+		end
+		if v then
+			local nested = v:FindFirstChildWhichIsA("Model")
+			if nested then
+				template = nested
+				break
+			end
+		end
+	end
+	if not template then
+		local normal = nameFolder:FindFirstChild("Normal")
+		if normal and normal:IsA("Model") then
+			template = normal
+		else
+			template = nameFolder:FindFirstChildWhichIsA("Model", true)
+		end
+	end
+	if not template then
+		return nil
+	end
+	local clone = template:Clone()
+	templateSerial += 1
+	clone.Name = "AdminGiftDrop_" .. tostring(templateSerial)
+	stripClone(clone)
+	if not clone.PrimaryPart then
+		clone:Destroy()
+		return nil
+	end
+	clone.Parent = templateFolder()
+	return clone
+end
+
 local function present(player: Player, spec: GiftSpec)
 	if not dropRE then
 		dropRE = ensureEvent(AdminGiftConfig.DROP_REMOTE)
@@ -209,7 +291,29 @@ local function present(player: Player, spec: GiftSpec)
 	if not vis then
 		return
 	end
-	dropRE:FireClient(player, vis)
+	local template: Model? = nil
+	if spec.kind == "brainrot" then
+		template = cloneBrainrotTemplate(spec.id, spec.mutation)
+	end
+	if template then
+		vis.templateName = template.Name
+		-- Replication must land before FireClient or the client gets nil.
+		task.delay(0.15, function()
+			if not player.Parent then
+				if template.Parent then
+					template:Destroy()
+				end
+				return
+			end
+			if not dropRE then
+				return
+			end
+			dropRE:FireClient(player, vis, template)
+			Debris:AddItem(template, 10)
+		end)
+	else
+		dropRE:FireClient(player, vis)
+	end
 end
 
 local function grantBrainrot(player: Player, spec: GiftSpec): number

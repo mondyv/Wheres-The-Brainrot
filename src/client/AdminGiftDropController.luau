@@ -66,6 +66,7 @@ local function destroyLive()
 end
 
 local function freezeModel(model: Model)
+	local remove: { Instance } = {}
 	for _, d in model:GetDescendants() do
 		if d:IsA("BasePart") then
 			d.Anchored = true
@@ -73,23 +74,36 @@ local function freezeModel(model: Model)
 			d.CanQuery = false
 			d.CanTouch = false
 			d.Massless = true
+		elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
+			d.Enabled = false
 		elseif d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ProximityPrompt") then
-			d:Destroy()
+			table.insert(remove, d)
 		end
+	end
+	for _, d in remove do
+		d:Destroy()
 	end
 	if not model.PrimaryPart then
 		model.PrimaryPart = model:FindFirstChildWhichIsA("BasePart", true)
 	end
 end
 
-local function fitDropModel(model: Model)
+local function fitDropModel(model: Model, maxStuds: number)
 	if not model.PrimaryPart then
 		return
 	end
-	local size = model:GetExtentsSize()
-	local longest = math.max(size.X, size.Y, size.Z)
-	if longest > 5.5 then
-		model:ScaleTo(model:GetScale() * (5.5 / longest))
+	local ok, cf, size = pcall(function()
+		return model:GetBoundingBox()
+	end)
+	if ok and typeof(cf) == "CFrame" then
+		model:PivotTo(cf)
+		model.WorldPivot = cf
+	end
+	local extents = if ok and typeof(size) == "Vector3" then size else model:GetExtentsSize()
+	local longest = math.max(extents.X, extents.Y, extents.Z)
+	local cap = math.max(1.2, maxStuds)
+	if longest > cap then
+		model:ScaleTo(model:GetScale() * (cap / longest))
 	end
 end
 
@@ -136,8 +150,27 @@ local function cloneLuckyBlock(blockId: string, variant: string?): Model?
 		clone:Destroy()
 		return nil
 	end
-	fitDropModel(clone)
+	fitDropModel(clone, 4)
 	return clone
+end
+
+local function stripDropFx(model: Model)
+	local remove: { Instance } = {}
+	for _, child in model:GetChildren() do
+		local n = string.lower(child.Name)
+		local looksFx = string.find(n, "vfx", 1, true)
+			or string.find(n, "fx", 1, true)
+			or string.find(n, "effect", 1, true)
+			or string.find(n, "particle", 1, true)
+		if looksFx and child ~= model.PrimaryPart then
+			table.insert(remove, child)
+		end
+	end
+	for _, d in remove do
+		if d.Parent then
+			d:Destroy()
+		end
+	end
 end
 
 local function cloneGear(gearId: number): Model?
@@ -146,32 +179,81 @@ local function cloneGear(gearId: number): Model?
 		return nil
 	end
 	clone.Name = "AdminGiftDrop"
+	stripDropFx(clone)
 	freezeModel(clone)
 	if not clone.PrimaryPart then
 		clone:Destroy()
 		return nil
 	end
-	fitDropModel(clone)
+	fitDropModel(clone, 2.35)
 	return clone
 end
 
-local function cloneBrainrot(name: string): Model?
-	local folder = ReplicatedStorage:FindFirstChild("Brainrots")
-	if not (folder and folder:IsA("Folder")) then
+local function resolveDropTemplate(template: any, templateName: any): Model?
+	if typeof(template) == "Instance" and template:IsA("Model") then
+		return template
+	end
+	if typeof(templateName) ~= "string" or templateName == "" then
 		return nil
 	end
-	local node = folder:FindFirstChild(name, true)
-	if not (node and node:IsA("Model")) then
+	local folder = ReplicatedStorage:FindFirstChild(AdminGiftConfig.TEMPLATE_FOLDER)
+	if not folder then
+		folder = ReplicatedStorage:WaitForChild(AdminGiftConfig.TEMPLATE_FOLDER, 2)
+	end
+	if not folder then
 		return nil
 	end
-	local clone = node:Clone()
+	local found = folder:FindFirstChild(templateName)
+	if not found then
+		found = folder:WaitForChild(templateName, 2)
+	end
+	if found and found:IsA("Model") then
+		return found
+	end
+	return nil
+end
+
+local function takeTemplateModel(template: Instance?): Model?
+	if not (template and template:IsA("Model")) then
+		return nil
+	end
+	local clone = template:Clone()
 	clone.Name = "AdminGiftDrop"
 	freezeModel(clone)
 	if not clone.PrimaryPart then
 		clone:Destroy()
 		return nil
 	end
-	fitDropModel(clone)
+	fitDropModel(clone, 5.2)
+	return clone
+end
+
+local function cloneBrainrot(name: string, template: any, templateName: any): Model?
+	local fromServer = takeTemplateModel(resolveDropTemplate(template, templateName))
+	if fromServer then
+		return fromServer
+	end
+	local folder = ReplicatedStorage:FindFirstChild("Brainrots")
+	if not (folder and folder:IsA("Folder")) then
+		return nil
+	end
+	local node = folder:FindFirstChild(name)
+		or folder:FindFirstChild(name, true)
+	if not node then
+		return nil
+	end
+	local model: Model? = if node:IsA("Model") then node else node:FindFirstChildWhichIsA("Model", true)
+	if not model then
+		return nil
+	end
+	local clone = model:Clone()
+	clone.Name = "AdminGiftDrop"
+	freezeModel(clone)
+	if not clone.PrimaryPart then
+		clone:Destroy()
+		return nil
+	end
+	fitDropModel(clone, 5.2)
 	return clone
 end
 
@@ -280,6 +362,7 @@ end
 
 local function suckIntoBody(token: number, model: Model, fromCf: CFrame)
 	local startScale = model:GetScale()
+	local lastScale = startScale
 	local t0 = os.clock()
 	dropConn = RunService.Heartbeat:Connect(function()
 		if token ~= dropToken or liveModel ~= model or not model.Parent then
@@ -288,14 +371,24 @@ local function suckIntoBody(token: number, model: Model, fromCf: CFrame)
 		end
 		local char = player.Character
 		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		local dest = if hrp and hrp:IsA("BasePart")
-			then hrp.Position + Vector3.new(0, 1.15, 0)
-			else fromCf.Position
+		local dest = fromCf.Position
+		if hrp and hrp:IsA("BasePart") then
+			local look = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
+			if look.Magnitude < 0.05 then
+				look = Vector3.new(0, 0, -1)
+			else
+				look = look.Unit
+			end
+			dest = hrp.Position + look * 1.15 + Vector3.new(0, 0.35, 0)
+		end
 		local alpha = math.clamp((os.clock() - t0) / SUCK_SEC, 0, 1)
-		local eased = alpha * alpha
-		local goal = fromCf:Lerp(CFrame.new(dest), eased) * CFrame.Angles(0, alpha * 7.5, alpha * 1.8)
+		local goal = fromCf:Lerp(CFrame.new(dest), alpha) * CFrame.Angles(0, alpha * 1.55, alpha * 0.28)
 		model:PivotTo(goal)
-		model:ScaleTo(math.max(0.04, startScale * (1 - eased * 0.96)))
+		local nextScale = math.max(0.06, startScale * (1 - alpha * 0.92))
+		if math.abs(nextScale - lastScale) >= 0.03 or alpha >= 1 then
+			model:ScaleTo(nextScale)
+			lastScale = nextScale
+		end
 		if alpha >= 1 then
 			disconnectDrop()
 			destroyLive()
@@ -373,7 +466,7 @@ local function landingCf(): (CFrame, Vector3)
 	return CFrame.new(ground) * CFrame.Angles(0, math.atan2(-look.X, -look.Z), 0), ground
 end
 
-local function playDrop(payload: any)
+local function playDrop(payload: any, template: any)
 	if typeof(payload) ~= "table" then
 		return
 	end
@@ -397,7 +490,7 @@ local function playDrop(payload: any)
 	elseif kind == "gear" then
 		model = cloneGear(tonumber(id) or 0)
 	elseif kind == "brainrot" then
-		model = cloneBrainrot(id)
+		model = cloneBrainrot(id, template, payload.templateName)
 	end
 	if not model then
 		local color = if kind == "gear"
@@ -446,6 +539,7 @@ local function playDrop(payload: any)
 					subtitle = subtitle,
 					lifetimeSec = 3.4,
 					color = Color3.fromRGB(255, 214, 96),
+					rainbow = not isPoll,
 				})
 				TopNotifController.showGift(toast, rarity, 3.8)
 				suckIntoBody(holdToken, landed, landCf)

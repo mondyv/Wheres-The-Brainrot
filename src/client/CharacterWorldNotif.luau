@@ -42,6 +42,7 @@ export type CelebrateOpts = {
 	hideRankBadges: boolean?,
 	subtitle: string?,
 	headline: string?, -- big number under the tag, e.g. "12"
+	rainbow: boolean?,
 }
 
 local function resolveAdornee(character: Model?): BasePart?
@@ -274,6 +275,7 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 	local hideBadges = not (opts and opts.hideRankBadges == false)
 	local subtitle = if opts and typeof(opts.subtitle) == "string" then opts.subtitle else nil
 	local headline = if opts and typeof(opts.headline) == "string" and opts.headline ~= "" then opts.headline else nil
+	local useRainbow = opts ~= nil and opts.rainbow == true
 	local displayTitle = title
 	if headline then
 		displayTitle = "Level " .. headline .. "!"
@@ -356,6 +358,22 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 		sub.MaxVisibleGraphemes = 0
 		sub.Parent = root
 		subLabel = sub
+		if useRainbow then
+			sub.TextColor3 = Color3.fromRGB(255, 255, 255)
+			local grad = Instance.new("UIGradient")
+			grad.Name = "Rainbow"
+			grad.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromHSV(0, 0.9, 1)),
+				ColorSequenceKeypoint.new(1 / 6, Color3.fromHSV(1 / 6, 0.9, 1)),
+				ColorSequenceKeypoint.new(2 / 6, Color3.fromHSV(2 / 6, 0.9, 1)),
+				ColorSequenceKeypoint.new(3 / 6, Color3.fromHSV(3 / 6, 0.9, 1)),
+				ColorSequenceKeypoint.new(4 / 6, Color3.fromHSV(4 / 6, 0.9, 1)),
+				ColorSequenceKeypoint.new(5 / 6, Color3.fromHSV(5 / 6, 0.9, 1)),
+				ColorSequenceKeypoint.new(1, Color3.fromHSV(0, 0.9, 1)),
+			})
+			grad.Rotation = 18
+			grad.Parent = sub
+		end
 	end
 
 	bb.Parent = char
@@ -390,6 +408,7 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 	local floatStart = os.clock()
 	local floatDur = math.max(0.85, lifetimeSec - 0.3)
 	local token = dismissToken
+	local rainbowGrad = if subLabel then subLabel:FindFirstChild("Rainbow") else nil
 	followConn = RunService.RenderStepped:Connect(function()
 		if token ~= dismissToken or not bb.Parent then
 			stopFollow()
@@ -407,6 +426,11 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 		local ease = 1 - (1 - t) * (1 - t)
 		bb.StudsOffset = startOffset:Lerp(endOffset, ease)
 		titleLabel.Rotation = math.sin((os.clock() - floatStart) * 8.5) * 2.8
+		if rainbowGrad and rainbowGrad:IsA("UIGradient") and rainbowGrad.Parent then
+			local now = os.clock() - floatStart
+			rainbowGrad.Rotation = (now * 48) % 360
+			rainbowGrad.Offset = Vector2.new(math.sin(now * 0.9) * 0.42, 0)
+		end
 	end)
 
 	local function typeGraphemes(label: TextLabel, text: string, delaySec: number)

@@ -70,9 +70,9 @@
       "$properties": {
         "FilteringEnabled": true,
         "StreamingEnabled": true,
-        "StreamingMinRadius": 4096,
-        "StreamingTargetRadius": 4096,
-        "StreamOutBehavior": "LowMemory",
+        "StreamingMinRadius": 512,
+        "StreamingTargetRadius": 1080,
+        "StreamOutBehavior": "Opportunistic",
         "StreamingIntegrityMode": "Disabled",
         "PredictiveStreamingMode": "Enabled",
         "ModelStreamingBehavior": "Improved"

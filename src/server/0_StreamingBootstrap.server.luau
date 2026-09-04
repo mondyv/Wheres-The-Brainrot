@@ -3,7 +3,7 @@
 	Streaming must stay enabled. Radii and stream-out are set here on purpose
 	so the live place cannot silently run Studio's 256/512 + LowMemory.
 
-	Live always applies gameplay radii (4096 / 4096), LowMemory stream-out,
+	Live always applies gameplay radii (512 / 1080), opportunistic stream-out,
 	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
 	Studio play-solo does not override Workspace.
 	Also publishes LandStreamCenters so clients can stream lands that are not in yet.

@@ -1,10 +1,11 @@
 -- [ACTIVE] StreamingSettings
 --[[
-	Place-file streaming is what the client boots with. Opportunistic + a small
-	bubble + MinimumRadiusPause dumps Huge trees and pauses join.
+	Keep a playable bubble and dump far islands. 4096 + LowMemory held the
+	whole map and ran at ~12 FPS.
 
-	apply() runs in Studio and live so Play-solo matches the published game.
-	CUSTOM_CULL_ENABLED stays off. Persist of trees is a separate live pin.
+	Huge trees stay Persistent (separate pin) so the forest does not vanish
+	on swing. Integrity Disabled so join does not pause. Predictive on so
+	the next island fills while you fly.
 ]]
 
 local M = {}
@@ -16,11 +17,11 @@ function M.isCustomEnabled(): boolean
 end
 
 function M.gameplayMin(): number
-	return 4096
+	return 512
 end
 
 function M.gameplayTarget(): number
-	return 4096
+	return 1080
 end
 
 function M.apply(workspaceInst: Workspace)
@@ -33,12 +34,7 @@ function M.apply(workspaceInst: Workspace)
 		wsAny.StreamingTargetRadius = M.gameplayTarget()
 	end)
 	pcall(function()
-		local behavior = Enum.StreamOutBehavior
-		if behavior.LowMemory then
-			workspaceInst.StreamOutBehavior = behavior.LowMemory
-		elseif behavior.Default then
-			workspaceInst.StreamOutBehavior = behavior.Default
-		end
+		workspaceInst.StreamOutBehavior = Enum.StreamOutBehavior.Opportunistic
 	end)
 	pcall(function()
 		local mode = (Enum :: any).StreamingIntegrityMode

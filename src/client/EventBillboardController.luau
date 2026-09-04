@@ -557,7 +557,7 @@ local function ensureShineOverlay(host: BasePart)
 	sg.MaxDistance = EventBillboardConfig.SHINE_MAX_DISTANCE
 	sg.Active = false
 	sg.ResetOnSpawn = false
-	sg.ZOffset = 1.4
+	sg.ZOffset = 0.08
 	sg.ClipsDescendants = true
 	sheet.Parent = sg
 	sg.Adornee = host

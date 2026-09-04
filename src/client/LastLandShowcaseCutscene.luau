@@ -1,14 +1,14 @@
 -- [ACTIVE] LastLandShowcaseCutscene
 --[[
-	~7s cinematic after tutorial: First Gate → elephant head → Gate2 → portal.
-	HUD hides, letterbox, title card. Streams Last land before the camera moves.
+	Plays ServerStorage["Last Land Camera"] (mirrored to ReplicatedStorage)
+	after tutorial: Moon Frames + FOV, then a longer last-frame breathe on the portal.
 ]]
 
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
+local StarterGui = game:GetService("StarterGui")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
@@ -23,16 +23,17 @@ local M = {}
 
 local GUI_NAME = "LastLandShowcaseCutscene"
 local LOCK_ACTION = "LastLandShowcaseLock"
-local TOTAL_SEC = 7.05
-local ATTR = {
-	firstGate = "LastLandShowcase_FirstGate",
-	elephant = "LastLandShowcase_Elephant",
-	gate2 = "LastLandShowcase_Gate2",
-	portal = "LastLandShowcase_Portal",
-	firstGateLook = "LastLandShowcase_FirstGateLook",
-	elephantLook = "LastLandShowcase_ElephantLook",
-	gate2Look = "LastLandShowcase_Gate2Look",
-	portalLook = "LastLandShowcase_PortalLook",
+local EXPORT_NAME = "Last Land Camera"
+local HOLD_LAST_SEC = 1.85
+local PLAYBACK_SCALE = 1.42
+local TITLE_LEAD_SEC = 0.35
+
+type MoonTrack = {
+	frames: { CFrame },
+	fov: { number },
+	fps: number,
+	clipSec: number,
+	totalSec: number,
 }
 
 local active = false
@@ -43,6 +44,7 @@ local jumpConn: RBXScriptConnection? = nil
 local cutsceneGui: ScreenGui? = nil
 local doneEvent: BindableEvent? = nil
 local hudHidden = false
+local extraDisabledGuis: { ScreenGui } = {}
 
 local savedCameraType: Enum.CameraType? = nil
 local savedCameraSubject: Instance? = nil
@@ -53,15 +55,6 @@ local savedJumpHeight: number? = nil
 local savedUseJumpPower: boolean? = nil
 local savedAutoRotate: boolean? = nil
 
-type Shot = {
-	t0: number,
-	t1: number,
-	a: CFrame,
-	b: CFrame,
-	fov0: number,
-	fov1: number,
-}
-
 local function warnErr(context: string, err: any)
 	warn("[LastLandShowcaseCutscene]", context, err)
 end
@@ -70,392 +63,270 @@ function M.isActive(): boolean
 	return active
 end
 
-local function findChildCI(parent: Instance, aliases: { string }): Instance?
-	local want: { [string]: boolean } = {}
-	for _, name in aliases do
-		want[string.lower(name)] = true
+local function frameIndexFromName(name: string): number?
+	local direct = tonumber(name)
+	if direct then
+		return direct
 	end
-	for _, child in parent:GetChildren() do
-		if want[string.lower(child.Name)] then
-			return child
+	local digits = string.match(name, "%d+")
+	return if digits then tonumber(digits) else nil
+end
+
+local function cframeFromFrameFolder(frameFolder: Instance): CFrame?
+	if frameFolder:IsA("CFrameValue") then
+		return frameFolder.Value
+	end
+	local attr = frameFolder:GetAttribute("CFrame")
+	if typeof(attr) == "CFrame" then
+		return attr
+	end
+	for _, name in { "CFrame", "CF", "Value" } do
+		local ch = frameFolder:FindFirstChild(name)
+		if ch and ch:IsA("CFrameValue") then
+			return ch.Value
+		end
+	end
+	for _, desc in frameFolder:GetDescendants() do
+		if desc:IsA("CFrameValue") then
+			return desc.Value
 		end
 	end
 	return nil
 end
 
-local function findDescendantCI(parent: Instance, aliases: { string }): Instance?
-	local want: { [string]: boolean } = {}
-	for _, name in aliases do
-		want[string.lower(name)] = true
+local function numberFromFovFolder(folder: Instance): number?
+	if folder:IsA("NumberValue") or folder:IsA("IntValue") then
+		return folder.Value
 	end
-	if want[string.lower(parent.Name)] then
-		return parent
+	local attr = folder:GetAttribute("Value") or folder:GetAttribute("FOV")
+	if typeof(attr) == "number" then
+		return attr
 	end
-	for _, d in parent:GetDescendants() do
-		if want[string.lower(d.Name)] then
-			return d
+	for _, desc in folder:GetDescendants() do
+		if desc:IsA("NumberValue") or desc:IsA("IntValue") then
+			return desc.Value
 		end
 	end
 	return nil
 end
 
-local function instanceCFrame(inst: Instance?): CFrame?
-	if not inst or not inst.Parent then
-		return nil
-	end
-	if inst:IsA("BasePart") then
-		return inst.CFrame
-	end
-	if inst:IsA("Model") then
-		local ok, pivot = pcall(function()
-			return (inst :: Model):GetPivot()
-		end)
-		if ok and typeof(pivot) == "CFrame" then
-			return pivot
+local function parseNumberedCFrames(framesFolder: Instance): { CFrame }
+	local keyed: { { sortKey: number, cf: CFrame } } = {}
+	for _, child in framesFolder:GetChildren() do
+		local idx = frameIndexFromName(child.Name)
+		if idx == nil then
+			continue
+		end
+		local cf = cframeFromFrameFolder(child)
+		if cf then
+			table.insert(keyed, { sortKey = idx, cf = cf })
 		end
 	end
-	local part = inst:FindFirstChildWhichIsA("BasePart", true)
-	return if part then part.CFrame else nil
+	table.sort(keyed, function(a, b)
+		return a.sortKey < b.sortKey
+	end)
+	local frames: { CFrame } = {}
+	for _, item in ipairs(keyed) do
+		table.insert(frames, item.cf)
+	end
+	return frames
 end
 
-local function attrCFrame(posName: string, lookName: string): CFrame?
-	local pos = ReplicatedStorage:GetAttribute(posName)
-	if typeof(pos) ~= "Vector3" then
-		return nil
+local function parseNumberedFov(fovFolder: Instance?, frameCount: number, defaultFov: number): { number }
+	local fovs = table.create(frameCount, defaultFov)
+	if not fovFolder or frameCount <= 0 then
+		return fovs
 	end
-	local look = ReplicatedStorage:GetAttribute(lookName)
-	if typeof(look) == "Vector3" and look.Magnitude > 0.05 then
-		return CFrame.lookAt(pos, pos + look.Unit)
+	for _, child in fovFolder:GetChildren() do
+		local idx = frameIndexFromName(child.Name)
+		local value = numberFromFovFolder(child)
+		if idx ~= nil and typeof(value) == "number" then
+			local slot = idx
+			if slot >= 0 and slot < frameCount then
+				slot += 1
+			end
+			if slot >= 1 and slot <= frameCount then
+				fovs[slot] = value
+			end
+		end
 	end
-	return CFrame.new(pos)
+	for i = 2, frameCount do
+		if fovs[i] == defaultFov then
+			fovs[i] = fovs[i - 1]
+		end
+	end
+	return fovs
 end
 
-local function resolveLastLand(): Instance?
-	local map = Workspace:FindFirstChild("Map")
-	local lands = map and map:FindFirstChild("Lands")
-	if not lands then
+local function readReferenceCFrame(settings: Instance?): CFrame?
+	if not settings then
 		return nil
 	end
-	return findChildCI(lands, { "Last land", "Last Land", "LastLand" })
+	local ref = settings:FindFirstChild("Reference")
+	if not ref then
+		return nil
+	end
+	if ref:IsA("Camera") then
+		return ref.CFrame
+	end
+	if ref:IsA("CFrameValue") then
+		return ref.Value
+	end
+	if ref:IsA("ObjectValue") and ref.Value then
+		local val = ref.Value
+		if val:IsA("Camera") then
+			return val.CFrame
+		end
+		if val:IsA("BasePart") then
+			return val.CFrame
+		end
+	end
+	local cam = ref:FindFirstChildWhichIsA("Camera", true)
+	return if cam then cam.CFrame else nil
 end
 
-local function resolveTargets(): { firstGate: CFrame?, elephant: CFrame?, gate2: CFrame?, portal: CFrame? }
-	local lastLand = resolveLastLand()
-	local firstGate: CFrame? = nil
-	local elephant: CFrame? = nil
-	local gate2: CFrame? = nil
-	local portal: CFrame? = nil
-	if lastLand then
-		firstGate = instanceCFrame(findDescendantCI(lastLand, { "First Gate", "FirstGate", "first gate" }))
-		local temple = findChildCI(lastLand, { "Temple" })
-		if temple then
-			elephant = instanceCFrame(findDescendantCI(temple, {
-				"Elephand HEad",
-				"Elephand Head",
-				"Elephant Head",
-				"Elephant HEad",
-				"ElephandHEad",
-			}))
-			gate2 = instanceCFrame(findDescendantCI(temple, { "Gate2", "Gate 2", "gate2" }))
-		end
-		if not elephant then
-			elephant = instanceCFrame(findDescendantCI(lastLand, {
-				"Elephand HEad",
-				"Elephand Head",
-				"Elephant Head",
-			}))
-		end
-		if not gate2 then
-			gate2 = instanceCFrame(findDescendantCI(lastLand, { "Gate2", "Gate 2" }))
-		end
-		portal = instanceCFrame(findDescendantCI(lastLand, { "portal 1", "Portal 1", "Portal1", "portal1" }))
+local function readSettingNumber(settings: Instance?, names: { string }): number?
+	if not settings then
+		return nil
 	end
-	firstGate = firstGate or attrCFrame(ATTR.firstGate, ATTR.firstGateLook)
-	elephant = elephant or attrCFrame(ATTR.elephant, ATTR.elephantLook)
-	gate2 = gate2 or attrCFrame(ATTR.gate2, ATTR.gate2Look)
-	portal = portal or attrCFrame(ATTR.portal, ATTR.portalLook)
+	for _, name in names do
+		local ch = settings:FindFirstChild(name)
+		if ch and (ch:IsA("NumberValue") or ch:IsA("IntValue")) then
+			return ch.Value
+		end
+	end
+	for _, desc in settings:GetDescendants() do
+		if desc:IsA("NumberValue") or desc:IsA("IntValue") then
+			local lower = string.lower(desc.Name)
+			for _, name in names do
+				if lower == string.lower(name) then
+					return desc.Value
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function framesHaveMotion(frames: { CFrame }): boolean
+	if #frames < 2 then
+		return false
+	end
+	local first = frames[1]
+	for i = 2, #frames do
+		local cf = frames[i]
+		if (cf.Position - first.Position).Magnitude > 0.35 then
+			return true
+		end
+		if cf.LookVector:Dot(first.LookVector) < 0.998 then
+			return true
+		end
+	end
+	return false
+end
+
+local function normalizeFrames(frames: { CFrame }, refCf: CFrame?): { CFrame }
+	if #frames == 0 then
+		return frames
+	end
+	local maxPos = 0
+	for _, cf in frames do
+		maxPos = math.max(maxPos, cf.Position.Magnitude)
+	end
+	if maxPos < 120 and refCf and refCf.Position.Magnitude > 50 then
+		local out: { CFrame } = table.create(#frames)
+		for i, cf in ipairs(frames) do
+			out[i] = refCf * cf
+		end
+		if framesHaveMotion(out) then
+			return out
+		end
+	end
+	return frames
+end
+
+local function loadMoonTrack(export: Instance): MoonTrack?
+	local framesFolder = export:FindFirstChild("Frames")
+	if not framesFolder then
+		return nil
+	end
+	local frames = parseNumberedCFrames(framesFolder)
+	if #frames < 2 then
+		return nil
+	end
+	local settings = export:FindFirstChild("Settings")
+	frames = normalizeFrames(frames, readReferenceCFrame(settings))
+	if not framesHaveMotion(frames) then
+		return nil
+	end
+	local fps = readSettingNumber(settings, { "FPS", "Framerate", "FrameRate", "fps" }) or 60
+	fps = math.clamp(fps, 12, 120)
+	local defaultFov = 70
+	local refCam = settings and settings:FindFirstChildWhichIsA("Camera", true)
+	if refCam then
+		defaultFov = refCam.FieldOfView
+	end
+	local fovs = parseNumberedFov(export:FindFirstChild("FOV"), #frames, defaultFov)
+	local clipSec = ((#frames - 1) / fps) * PLAYBACK_SCALE
 	return {
-		firstGate = firstGate,
-		elephant = elephant,
-		gate2 = gate2,
-		portal = portal,
+		frames = frames,
+		fov = fovs,
+		fps = fps,
+		clipSec = clipSec,
+		totalSec = clipSec + HOLD_LAST_SEC,
 	}
 end
 
-local function lookShot(focus: CFrame, back: number, height: number, side: number, lookHeight: number): CFrame
-	local origin = focus.Position
-	local flat = Vector3.new(focus.LookVector.X, 0, focus.LookVector.Z)
-	if flat.Magnitude < 0.08 then
-		flat = Vector3.new(0, 0, -1)
-	else
-		flat = flat.Unit
+local function sampleTrack(track: MoonTrack, elapsed: number): (CFrame, number, boolean)
+	local count = #track.frames
+	local clip = track.clipSec
+	if elapsed >= clip then
+		return track.frames[count], track.fov[count], true
 	end
-	local right = flat:Cross(Vector3.yAxis)
-	if right.Magnitude < 0.08 then
-		right = Vector3.new(1, 0, 0)
-	else
-		right = right.Unit
+	local t = math.clamp(elapsed / clip, 0, 1)
+	local framePos = t * (count - 1)
+	local idx0 = math.clamp(math.floor(framePos), 0, count - 1)
+	local idx1 = math.min(idx0 + 1, count - 1)
+	local alpha = framePos - idx0
+	-- Ease the last stretch so it settles on the portal instead of slamming.
+	if t > 0.82 then
+		local tail = (t - 0.82) / 0.18
+		alpha = alpha + (1 - alpha) * (tail * tail * (3 - 2 * tail)) * 0.35
 	end
-	local pos = origin - flat * back + Vector3.yAxis * height + right * side
-	return CFrame.lookAt(pos, origin + Vector3.yAxis * lookHeight)
+	local cf = track.frames[idx0 + 1]:Lerp(track.frames[idx1 + 1], math.clamp(alpha, 0, 1))
+	local fov = track.fov[idx0 + 1] + (track.fov[idx1 + 1] - track.fov[idx0 + 1]) * math.clamp(alpha, 0, 1)
+	return cf, fov, false
 end
 
-local function smootherstep(t: number): number
-	t = math.clamp(t, 0, 1)
-	return t * t * t * (t * (t * 6 - 15) + 10)
+local function breathe(cf: CFrame, holdAge: number): CFrame
+	local s = math.sin(holdAge * 1.12)
+	local c = math.cos(holdAge * 0.74)
+	local pos = cf.Position + cf.UpVector * (s * 0.28) + cf.RightVector * (c * 0.14)
+	local at = pos + cf.LookVector + cf.RightVector * (s * 0.012) + cf.UpVector * (c * 0.01)
+	return CFrame.lookAt(pos, at)
 end
 
-local function getHumanoid(): Humanoid?
-	local char = player.Character
-	return char and char:FindFirstChildOfClass("Humanoid")
-end
-
-local function getHRP(): BasePart?
-	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if hrp and hrp:IsA("BasePart") then
-		return hrp
+local function waitForExport(): Instance?
+	local existing = ReplicatedStorage:FindFirstChild(EXPORT_NAME)
+	if existing then
+		return existing
 	end
-	return nil
+	local found = ReplicatedStorage:WaitForChild(EXPORT_NAME, 4)
+	return found
 end
 
 local function streamAround(pos: Vector3)
 	local ok, err = pcall(function()
-		player:RequestStreamAroundAsync(pos, 5)
+		player:RequestStreamAroundAsync(pos, 6)
 	end)
 	if not ok then
 		warnErr("RequestStreamAroundAsync", err)
 	end
 end
 
-local function waitForTargets(): { firstGate: CFrame?, elephant: CFrame?, gate2: CFrame?, portal: CFrame? }
-	for _, name in { ATTR.firstGate, ATTR.elephant, ATTR.gate2, ATTR.portal } do
-		local pos = ReplicatedStorage:GetAttribute(name)
-		if typeof(pos) == "Vector3" then
-			streamAround(pos)
-		end
-	end
-	local first = resolveTargets()
-	if first.firstGate then
-		streamAround(first.firstGate.Position)
-	end
-	if first.portal then
-		streamAround(first.portal.Position)
-	end
-	if first.elephant then
-		streamAround(first.elephant.Position)
-	end
-	if first.gate2 then
-		streamAround(first.gate2.Position)
-	end
-	local t0 = os.clock()
-	while os.clock() - t0 < 2.2 do
-		local got = resolveTargets()
-		local n = 0
-		if got.firstGate then
-			n += 1
-		end
-		if got.elephant then
-			n += 1
-		end
-		if got.gate2 then
-			n += 1
-		end
-		if got.portal then
-			n += 1
-		end
-		if n >= 3 then
-			return got
-		end
-		task.wait(0.2)
-	end
-	return resolveTargets()
-end
-
-local function buildShots(targets: { firstGate: CFrame?, elephant: CFrame?, gate2: CFrame?, portal: CFrame? }): { Shot }
-	local shots: { Shot } = {}
-	local gate = targets.firstGate
-	local head = targets.elephant
-	local g2 = targets.gate2
-	local portal = targets.portal
-	if gate then
-		table.insert(shots, {
-			t0 = 0,
-			t1 = 1.55,
-			a = lookShot(gate, 92, 38, -18, 10),
-			b = lookShot(gate, 36, 14, -4, 6),
-			fov0 = 74,
-			fov1 = 58,
-		})
-	end
-	if head then
-		table.insert(shots, {
-			t0 = 1.55,
-			t1 = 3.1,
-			a = lookShot(head, 42, 4, 22, 18),
-			b = lookShot(head, 28, 16, -8, 22),
-			fov0 = 56,
-			fov1 = 48,
-		})
-	end
-	if g2 and portal then
-		table.insert(shots, {
-			t0 = 3.1,
-			t1 = 4.55,
-			a = lookShot(g2, 34, 10, 10, 5),
-			b = lookShot(g2, 8, 6, 0, 3),
-			fov0 = 64,
-			fov1 = 70,
-		})
-		table.insert(shots, {
-			t0 = 4.55,
-			t1 = TOTAL_SEC,
-			a = lookShot(portal, 48, 12, 6, 4),
-			b = lookShot(portal, 16, 5, 0, 2),
-			fov0 = 68,
-			fov1 = 46,
-		})
-	elseif g2 then
-		table.insert(shots, {
-			t0 = 3.1,
-			t1 = TOTAL_SEC,
-			a = lookShot(g2, 40, 12, 8, 5),
-			b = lookShot(g2, 12, 6, 0, 3),
-			fov0 = 64,
-			fov1 = 50,
-		})
-	elseif portal then
-		table.insert(shots, {
-			t0 = 3.1,
-			t1 = TOTAL_SEC,
-			a = lookShot(portal, 56, 16, 10, 5),
-			b = lookShot(portal, 16, 5, 0, 2),
-			fov0 = 70,
-			fov1 = 46,
-		})
-	end
-	return shots
-end
-
-local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabel, UIScale)
-	if cutsceneGui and cutsceneGui.Parent then
-		local fade = cutsceneGui:FindFirstChild("Fade")
-		local top = cutsceneGui:FindFirstChild("LetterTop")
-		local bottom = cutsceneGui:FindFirstChild("LetterBottom")
-		local title = cutsceneGui:FindFirstChild("Title")
-		local sub = cutsceneGui:FindFirstChild("Subtitle")
-		local scale = title and title:FindFirstChild("PopScale")
-		if
-			fade
-			and fade:IsA("Frame")
-			and top
-			and top:IsA("Frame")
-			and bottom
-			and bottom:IsA("Frame")
-			and title
-			and title:IsA("TextLabel")
-			and sub
-			and sub:IsA("TextLabel")
-			and scale
-			and scale:IsA("UIScale")
-		then
-			return cutsceneGui, fade, top, bottom, title, sub, scale
-		end
-	end
-	if cutsceneGui then
-		cutsceneGui:Destroy()
-		cutsceneGui = nil
-	end
-
-	local gui = Instance.new("ScreenGui")
-	gui.Name = GUI_NAME
-	gui.IgnoreGuiInset = true
-	gui.ResetOnSpawn = false
-	gui.DisplayOrder = 960
-	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	gui.Enabled = true
-
-	local fade = Instance.new("Frame")
-	fade.Name = "Fade"
-	fade.BackgroundColor3 = Color3.new(0, 0, 0)
-	fade.BackgroundTransparency = 1
-	fade.BorderSizePixel = 0
-	fade.Size = UDim2.fromScale(1, 1)
-	fade.ZIndex = 40
-	fade.Active = false
-
-	local top = Instance.new("Frame")
-	top.Name = "LetterTop"
-	top.BackgroundColor3 = Color3.new(0, 0, 0)
-	top.BorderSizePixel = 0
-	top.AnchorPoint = Vector2.new(0.5, 0)
-	top.Position = UDim2.fromScale(0.5, 0)
-	top.Size = UDim2.new(1, 0, 0, 0)
-	top.ZIndex = 30
-	top.Active = false
-
-	local bottom = Instance.new("Frame")
-	bottom.Name = "LetterBottom"
-	bottom.BackgroundColor3 = Color3.new(0, 0, 0)
-	bottom.BorderSizePixel = 0
-	bottom.AnchorPoint = Vector2.new(0.5, 1)
-	bottom.Position = UDim2.fromScale(0.5, 1)
-	bottom.Size = UDim2.new(1, 0, 0, 0)
-	bottom.ZIndex = 30
-	bottom.Active = false
-
-	local title = Instance.new("TextLabel")
-	title.Name = "Title"
-	title.BackgroundTransparency = 1
-	title.AnchorPoint = Vector2.new(0.5, 0.5)
-	title.Position = UDim2.new(0.5, 0, 0.78, 0)
-	title.Size = UDim2.new(0.86, 0, 0, 54)
-	title.Text = "A NEW WORLD AWAITS"
-	title.TextColor3 = Color3.fromRGB(255, 226, 132)
-	title.TextStrokeColor3 = Color3.fromRGB(18, 10, 4)
-	title.TextStrokeTransparency = 0.15
-	title.TextTransparency = 1
-	title.TextScaled = true
-	title.ZIndex = 50
-	UiFonts.applyDisplay(title)
-	local titleConstraint = Instance.new("UITextSizeConstraint")
-	titleConstraint.MaxTextSize = 42
-	titleConstraint.MinTextSize = 18
-	titleConstraint.Parent = title
-	local pop = Instance.new("UIScale")
-	pop.Name = "PopScale"
-	pop.Scale = 0.86
-	pop.Parent = title
-
-	local sub = Instance.new("TextLabel")
-	sub.Name = "Subtitle"
-	sub.BackgroundTransparency = 1
-	sub.AnchorPoint = Vector2.new(0.5, 0)
-	sub.Position = UDim2.new(0.5, 0, 0.78, 28)
-	sub.Size = UDim2.new(0.7, 0, 0, 28)
-	sub.Text = "The last land"
-	sub.TextColor3 = Color3.fromRGB(255, 244, 210)
-	sub.TextStrokeColor3 = Color3.fromRGB(10, 6, 4)
-	sub.TextStrokeTransparency = 0.35
-	sub.TextTransparency = 1
-	sub.TextScaled = true
-	sub.ZIndex = 50
-	UiFonts.applyBody(sub)
-	local subConstraint = Instance.new("UITextSizeConstraint")
-	subConstraint.MaxTextSize = 18
-	subConstraint.MinTextSize = 10
-	subConstraint.Parent = sub
-
-	fade.Parent = gui
-	top.Parent = gui
-	bottom.Parent = gui
-	title.Parent = gui
-	sub.Parent = gui
-	local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 8)
-	gui.Parent = pg
-
-	cutsceneGui = gui
-	return gui, fade, top, bottom, title, sub, pop
+local function getHumanoid(): Humanoid?
+	local char = player.Character
+	return char and char:FindFirstChildOfClass("Humanoid")
 end
 
 local function lockMovement()
@@ -590,6 +461,161 @@ local function stopConns()
 	end
 end
 
+local function forceHideOtherGuis()
+	table.clear(extraDisabledGuis)
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if not pg then
+		return
+	end
+	for _, ch in pg:GetChildren() do
+		if ch:IsA("ScreenGui") and ch.Enabled and ch.Name ~= GUI_NAME and ch.Name ~= "Main" then
+			ch.Enabled = false
+			table.insert(extraDisabledGuis, ch)
+		end
+	end
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Chat, false)
+	end)
+end
+
+local function restoreForcedGuis()
+	for _, gui in extraDisabledGuis do
+		if gui.Parent then
+			gui.Enabled = true
+		end
+	end
+	table.clear(extraDisabledGuis)
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, true)
+	end)
+end
+
+local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabel, UIScale)
+	if cutsceneGui and cutsceneGui.Parent then
+		local fade = cutsceneGui:FindFirstChild("Fade")
+		local top = cutsceneGui:FindFirstChild("LetterTop")
+		local bottom = cutsceneGui:FindFirstChild("LetterBottom")
+		local title = cutsceneGui:FindFirstChild("Title")
+		local sub = cutsceneGui:FindFirstChild("Subtitle")
+		local scale = title and title:FindFirstChild("PopScale")
+		if
+			fade
+			and fade:IsA("Frame")
+			and top
+			and top:IsA("Frame")
+			and bottom
+			and bottom:IsA("Frame")
+			and title
+			and title:IsA("TextLabel")
+			and sub
+			and sub:IsA("TextLabel")
+			and scale
+			and scale:IsA("UIScale")
+		then
+			return cutsceneGui, fade, top, bottom, title, sub, scale
+		end
+	end
+	if cutsceneGui then
+		cutsceneGui:Destroy()
+		cutsceneGui = nil
+	end
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = GUI_NAME
+	gui.IgnoreGuiInset = true
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 2000
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	gui.Enabled = true
+
+	local fade = Instance.new("Frame")
+	fade.Name = "Fade"
+	fade.BackgroundColor3 = Color3.new(0, 0, 0)
+	fade.BackgroundTransparency = 0
+	fade.BorderSizePixel = 0
+	fade.Size = UDim2.fromScale(1, 1)
+	fade.ZIndex = 40
+	fade.Active = false
+
+	local top = Instance.new("Frame")
+	top.Name = "LetterTop"
+	top.BackgroundColor3 = Color3.new(0, 0, 0)
+	top.BorderSizePixel = 0
+	top.AnchorPoint = Vector2.new(0.5, 0)
+	top.Position = UDim2.fromScale(0.5, 0)
+	top.Size = UDim2.new(1, 0, 0, 0)
+	top.ZIndex = 30
+	top.Active = false
+
+	local bottom = Instance.new("Frame")
+	bottom.Name = "LetterBottom"
+	bottom.BackgroundColor3 = Color3.new(0, 0, 0)
+	bottom.BorderSizePixel = 0
+	bottom.AnchorPoint = Vector2.new(0.5, 1)
+	bottom.Position = UDim2.fromScale(0.5, 1)
+	bottom.Size = UDim2.new(1, 0, 0, 0)
+	bottom.ZIndex = 30
+	bottom.Active = false
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.BackgroundTransparency = 1
+	title.AnchorPoint = Vector2.new(0.5, 0.5)
+	title.Position = UDim2.new(0.5, 0, 0.76, 0)
+	title.Size = UDim2.new(0.86, 0, 0, 54)
+	title.Text = "A NEW WORLD AWAITS"
+	title.TextColor3 = Color3.fromRGB(255, 226, 132)
+	title.TextStrokeColor3 = Color3.fromRGB(18, 10, 4)
+	title.TextStrokeTransparency = 0.15
+	title.TextTransparency = 1
+	title.TextScaled = true
+	title.ZIndex = 50
+	UiFonts.applyDisplay(title)
+	local titleConstraint = Instance.new("UITextSizeConstraint")
+	titleConstraint.MaxTextSize = 42
+	titleConstraint.MinTextSize = 18
+	titleConstraint.Parent = title
+	local pop = Instance.new("UIScale")
+	pop.Name = "PopScale"
+	pop.Scale = 0.86
+	pop.Parent = title
+
+	local sub = Instance.new("TextLabel")
+	sub.Name = "Subtitle"
+	sub.BackgroundTransparency = 1
+	sub.AnchorPoint = Vector2.new(0.5, 0)
+	sub.Position = UDim2.new(0.5, 0, 0.76, 28)
+	sub.Size = UDim2.new(0.7, 0, 0, 28)
+	sub.Text = "The last land"
+	sub.TextColor3 = Color3.fromRGB(255, 244, 210)
+	sub.TextStrokeColor3 = Color3.fromRGB(10, 6, 4)
+	sub.TextStrokeTransparency = 0.35
+	sub.TextTransparency = 1
+	sub.TextScaled = true
+	sub.ZIndex = 50
+	UiFonts.applyBody(sub)
+	local subConstraint = Instance.new("UITextSizeConstraint")
+	subConstraint.MaxTextSize = 18
+	subConstraint.MinTextSize = 10
+	subConstraint.Parent = sub
+
+	fade.Parent = gui
+	top.Parent = gui
+	bottom.Parent = gui
+	title.Parent = gui
+	sub.Parent = gui
+	local pg = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui", 8)
+	gui.Parent = pg
+	cutsceneGui = gui
+	return gui, fade, top, bottom, title, sub, pop
+end
+
+local function smootherstep(t: number): number
+	t = math.clamp(t, 0, 1)
+	return t * t * t * (t * (t * 6 - 15) + 10)
+end
+
 local function finish()
 	if not active then
 		return
@@ -599,6 +625,7 @@ local function finish()
 	stopConns()
 	unlockMovement()
 	restoreCamera()
+	restoreForcedGuis()
 	if hudHidden then
 		GameplayUiVisibility.show({ flourish = true })
 		hudHidden = false
@@ -614,55 +641,18 @@ local function finish()
 	end
 end
 
-local function titleAlpha(t: number): number
-	if t < 4.75 then
-		return 0
-	end
-	if t < 5.15 then
-		return smootherstep((t - 4.75) / 0.4)
-	end
-	if t < 6.45 then
-		return 1
-	end
-	if t < 6.95 then
-		return 1 - smootherstep((t - 6.45) / 0.5)
-	end
-	return 0
-end
-
-local function fadeAlpha(t: number): number
-	if t < 0.28 then
-		return 1 - smootherstep(t / 0.28)
-	end
-	if t >= 1.48 and t < 1.64 then
-		return math.sin(((t - 1.48) / 0.16) * math.pi)
-	end
-	if t >= 3.02 and t < 3.18 then
-		return math.sin(((t - 3.02) / 0.16) * math.pi)
-	end
-	if t > TOTAL_SEC - 0.42 then
-		return smootherstep((t - (TOTAL_SEC - 0.42)) / 0.42)
-	end
-	return 0
-end
-
-local function letterboxAlpha(t: number): number
-	if t < 0.34 then
-		return smootherstep(t / 0.34)
-	end
-	if t > TOTAL_SEC - 0.4 then
-		return 1 - smootherstep((t - (TOTAL_SEC - 0.4)) / 0.4)
-	end
-	return 1
-end
-
 function M.play(): boolean
 	if active then
 		return false
 	end
-	local targets = waitForTargets()
-	local shots = buildShots(targets)
-	if #shots == 0 then
+	local export = waitForExport()
+	if not export then
+		warnErr("export missing", EXPORT_NAME)
+		return false
+	end
+	local track = loadMoonTrack(export)
+	if not track then
+		warnErr("could not parse", EXPORT_NAME)
 		return false
 	end
 
@@ -670,6 +660,11 @@ function M.play(): boolean
 	if not cam then
 		return false
 	end
+
+	streamAround(track.frames[1].Position)
+	streamAround(track.frames[math.clamp(math.floor(#track.frames * 0.55), 1, #track.frames)].Position)
+	streamAround(track.frames[#track.frames].Position)
+	task.wait(0.25)
 
 	active = true
 	cutsceneToken += 1
@@ -682,10 +677,20 @@ function M.play(): boolean
 
 	GameplayUiVisibility.hide({
 		keepScreenGuiNames = { GUI_NAME },
-		hideScreenGuiNames = { "TimCheeseQuestHud", "TimCheeseQuestTracker" },
-		hideMainChildNames = { "TimCheeseQuestHost" },
+		hideScreenGuiNames = {
+			"TutorialObjective",
+			"TutorialUiPointer",
+			"WorkoutComboGui",
+			"SwingTargetMarker",
+			"ServerResetHud",
+			"TouchGui",
+			"TimCheeseQuestHud",
+			"TimCheeseQuestTracker",
+		},
+		hideMainChildNames = { "TutorialQuestHost", "TimCheeseQuestHost", "Frames" },
 	})
 	hudHidden = true
+	forceHideOtherGuis()
 	lockMovement()
 
 	local gui, fade, top, bottom, title, sub, pop = ensureGui()
@@ -698,6 +703,7 @@ function M.play(): boolean
 	doneEvent = ev
 	local started = os.clock()
 	local titleStinger = false
+	local total = track.totalSec
 
 	inputConn = UserInputService.InputBegan:Connect(function(input, processed)
 		if processed or token ~= cutsceneToken then
@@ -715,7 +721,7 @@ function M.play(): boolean
 		end
 	end)
 
-	task.delay(TOTAL_SEC + 1.25, function()
+	task.delay(total + 1.2, function()
 		if token == cutsceneToken and active then
 			finish()
 		end
@@ -730,7 +736,7 @@ function M.play(): boolean
 			return
 		end
 		local t = os.clock() - started
-		if t >= TOTAL_SEC then
+		if t >= total then
 			finish()
 			return
 		end
@@ -738,24 +744,39 @@ function M.play(): boolean
 		if not liveCam then
 			return
 		end
-		local shot = shots[#shots]
-		for _, s in shots do
-			if t >= s.t0 and t <= s.t1 then
-				shot = s
-				break
-			end
+		local cf, fov, onLast = sampleTrack(track, t)
+		if onLast then
+			cf = breathe(cf, t - track.clipSec)
 		end
-		local span = math.max(shot.t1 - shot.t0, 0.05)
-		local u = smootherstep((t - shot.t0) / span)
-		liveCam.CFrame = shot.a:Lerp(shot.b, u)
-		liveCam.FieldOfView = shot.fov0 + (shot.fov1 - shot.fov0) * u
+		liveCam.CFrame = cf
+		liveCam.FieldOfView = fov
+		liveCam.Focus = cf
 
-		local box = letterboxAlpha(t)
+		local boxIn = smootherstep(math.clamp(t / 0.32, 0, 1))
+		local boxOut = if t > total - 0.4 then 1 - smootherstep((t - (total - 0.4)) / 0.4) else 1
+		local box = math.min(boxIn, boxOut)
 		top.Size = UDim2.new(1, 0, 0.118 * box, 0)
 		bottom.Size = UDim2.new(1, 0, 0.118 * box, 0)
-		fade.BackgroundTransparency = 1 - fadeAlpha(t)
 
-		local ta = titleAlpha(t)
+		local fadeA = 0
+		if t < 0.34 then
+			fadeA = 1 - smootherstep(t / 0.34)
+		elseif t > total - 0.42 then
+			fadeA = smootherstep((t - (total - 0.42)) / 0.42)
+		end
+		fade.BackgroundTransparency = 1 - fadeA
+
+		local titleT = t - (track.clipSec - TITLE_LEAD_SEC)
+		local ta = 0
+		if titleT > 0 then
+			if titleT < 0.38 then
+				ta = smootherstep(titleT / 0.38)
+			elseif t < total - 0.42 then
+				ta = 1
+			else
+				ta = 1 - smootherstep((t - (total - 0.42)) / 0.42)
+			end
+		end
 		if ta > 0.12 and not titleStinger then
 			titleStinger = true
 			pcall(function()

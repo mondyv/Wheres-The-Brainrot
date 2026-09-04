@@ -5080,11 +5080,11 @@ local function boot(character)
 		playOptionalSound("Wind Loop")
 	end
 
-	function st.getTutorialLockedSwingPart(ignoreSafezone: boolean?): BasePart?
+	function st.getTutorialLockedSwingPart(_ignoreSafezone: boolean?): BasePart?
 		if player:GetAttribute("TutorialCompleted") == true then
 			return nil
 		end
-		if not ignoreSafezone and st.isHrpInSafezone() then
+		if st.isHrpInSafezone() then
 			return nil
 		end
 		local tutorialMod = getClientModule("TutorialController")
@@ -5098,7 +5098,7 @@ local function boot(character)
 	end
 
 	function st.tutorialLockInLatchRange(): BasePart?
-		local locked = st.getTutorialLockedSwingPart(true)
+		local locked = st.getTutorialLockedSwingPart(false)
 		if not locked then
 			return nil
 		end
@@ -5111,7 +5111,7 @@ local function boot(character)
 	end
 
 	function st.shouldStealJumpForSwing(): boolean
-		if st.isWebTrapped() or st.isSwinging or isSwingInputBlocked() then
+		if st.isWebTrapped() or st.isSwinging or isSwingInputBlocked() or st.isHrpInSafezone() then
 			return false
 		end
 		if st.scannedVisualCanSwing and st.scannedVisualTarget and st.scannedVisualTarget.Parent then
@@ -5134,11 +5134,7 @@ local function boot(character)
 			return
 		end
 		if st.isHrpInSafezone() then
-			-- First tutorial vine often sits in the safezone's extra slack.
-			local locked = st.getTutorialLockedSwingPart(true)
-			if not (trustReady and locked and target == locked) then
-				return
-			end
+			return
 		end
 
 		local now = os.clock()
@@ -5635,7 +5631,7 @@ local function boot(character)
 		end
 		local trustTutorialLock = false
 		if not target then
-			local locked = st.getTutorialLockedSwingPart(true)
+			local locked = st.getTutorialLockedSwingPart(false)
 			if locked then
 				target = locked
 				trustTutorialLock = true
@@ -5879,7 +5875,7 @@ local function boot(character)
 			if not st.humanoid then
 				return Enum.ContextActionResult.Pass
 			end
-			if st.isHrpInSafezone() and not st.tutorialLockInLatchRange() then
+			if st.isHrpInSafezone() then
 				return Enum.ContextActionResult.Pass
 			end
 			local canLatch = st.scannedVisualCanSwing == true

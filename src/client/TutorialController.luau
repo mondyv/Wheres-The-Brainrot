@@ -2776,9 +2776,18 @@ local function refreshPointersImpl()
 				outlineWorld(standModel)
 			end
 		end
-		local upgradeBtn = resolveStandUpgradeButton()
-		if upgradeBtn then
-			pointAtGui(upgradeBtn)
+		if GamepadInput.isPreferred() then
+			local pg = player:FindFirstChildOfClass("PlayerGui")
+			local hintBb = pg and pg:FindFirstChild("StandUpgradePadHint")
+			local hintHost = hintBb and hintBb:FindFirstChild("HintHost")
+			if hintHost and hintHost:IsA("GuiObject") and hintBb and hintBb:IsA("BillboardGui") and hintBb.Enabled then
+				pointAtGui(hintHost, true)
+			end
+		else
+			local upgradeBtn = resolveStandUpgradeButton()
+			if upgradeBtn then
+				pointAtGui(upgradeBtn)
+			end
 		end
 	end
 end
@@ -2813,6 +2822,12 @@ finishTutorial = function(opts: { skipped: boolean? }?)
 	end
 	table.clear(attrConns)
 	hidePanel()
+	if gui then
+		gui.Enabled = false
+	end
+	if pointerGui then
+		pointerGui.Enabled = false
+	end
 	JumpButtonSwingRing.setTutorialCoach(nil)
 	swingCoach.goToBaseLite = false
 	syncWorkoutGoalBar()

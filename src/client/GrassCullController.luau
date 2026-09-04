@@ -34,15 +34,23 @@ local FEATURE_ENABLED = true
 local REPARENT_PER_YIELD = if RunService:IsStudio() then 10 else 3
 local REPARENT_PER_YIELD_SWING = 10
 local FAST_MOVE_SPEED = 36
-local STREAM_AHEAD_STUDS = 180
-local STREAM_FAR_STUDS = 320
+local STREAM_AHEAD_STUDS = 220
+local STREAM_FAR_STUDS = 360
 local lastStreamAt = 0.0
-local STREAM_COOLDOWN = 0.35
-local GAMEPLAY_STREAM_TARGET = 280
-local MOBILE_STREAM_TARGET = 200
-local STUDIO_STREAM_TARGET = 180
-local SWING_STREAM_TARGET = 420
-local STUDIO_SWING_STREAM_TARGET = 240
+local STREAM_COOLDOWN = 0.28
+local MOBILE_STREAM_COOLDOWN = 0.55
+local GAMEPLAY_STREAM_MIN = 160
+local GAMEPLAY_STREAM_TARGET = 320
+local MOBILE_STREAM_MIN = 140
+local MOBILE_STREAM_TARGET = 260
+local STUDIO_STREAM_MIN = 112
+local STUDIO_STREAM_TARGET = 220
+local SWING_STREAM_MIN = 220
+local SWING_STREAM_TARGET = 480
+local MOBILE_SWING_STREAM_MIN = 180
+local MOBILE_SWING_STREAM_TARGET = 360
+local STUDIO_SWING_STREAM_MIN = 150
+local STUDIO_SWING_STREAM_TARGET = 280
 local swingStreamBoosted = false
 local wasFastTraveling = false
 
@@ -492,6 +500,16 @@ local function playerLandNow(): number
 	return land
 end
 
+local function gameplayStreamMin(): number
+	if RunService:IsStudio() then
+		return STUDIO_STREAM_MIN
+	end
+	if UserInputService.TouchEnabled then
+		return MOBILE_STREAM_MIN
+	end
+	return GAMEPLAY_STREAM_MIN
+end
+
 local function gameplayStreamRadius(): number
 	if RunService:IsStudio() then
 		return STUDIO_STREAM_TARGET
@@ -502,6 +520,26 @@ local function gameplayStreamRadius(): number
 	return GAMEPLAY_STREAM_TARGET
 end
 
+local function swingStreamMin(): number
+	if RunService:IsStudio() then
+		return STUDIO_SWING_STREAM_MIN
+	end
+	if UserInputService.TouchEnabled then
+		return MOBILE_SWING_STREAM_MIN
+	end
+	return SWING_STREAM_MIN
+end
+
+local function swingStreamRadius(): number
+	if RunService:IsStudio() then
+		return STUDIO_SWING_STREAM_TARGET
+	end
+	if UserInputService.TouchEnabled then
+		return MOBILE_SWING_STREAM_TARGET
+	end
+	return SWING_STREAM_TARGET
+end
+
 local function setSwingStreamBoost(on: boolean)
 	if swingStreamBoosted == on then
 		return
@@ -510,8 +548,10 @@ local function setSwingStreamBoost(on: boolean)
 	pcall(function()
 		local wsAny = Workspace :: any
 		if on then
-			wsAny.StreamingTargetRadius = if RunService:IsStudio() then STUDIO_SWING_STREAM_TARGET else SWING_STREAM_TARGET
+			wsAny.StreamingMinRadius = swingStreamMin()
+			wsAny.StreamingTargetRadius = swingStreamRadius()
 		else
+			wsAny.StreamingMinRadius = gameplayStreamMin()
 			wsAny.StreamingTargetRadius = gameplayStreamRadius()
 		end
 	end)
@@ -521,15 +561,6 @@ end
 -- Never force-restore cached grass/props before the island mesh streams in.
 local function softPrewarmAhead()
 	if not Workspace.StreamingEnabled then
-		return
-	end
-	-- Extra RequestStreamAroundAsync hitch phones; let the default streamer catch up.
-	if UserInputService.TouchEnabled then
-		if isFastTraveling() then
-			setSwingStreamBoost(true)
-		else
-			setSwingStreamBoost(false)
-		end
 		return
 	end
 	if not isFastTraveling() then
@@ -558,7 +589,8 @@ local function softPrewarmAhead()
 	setSwingStreamBoost(true)
 
 	local now = os.clock()
-	if now - lastStreamAt < STREAM_COOLDOWN then
+	local cooldown = if UserInputService.TouchEnabled then MOBILE_STREAM_COOLDOWN else STREAM_COOLDOWN
+	if now - lastStreamAt < cooldown then
 		return
 	end
 	lastStreamAt = now
@@ -566,18 +598,22 @@ local function softPrewarmAhead()
 	local origin = (hrp :: BasePart).Position
 	local near = origin + dir * STREAM_AHEAD_STUDS
 	local far = origin + dir * STREAM_FAR_STUDS
+	local mobile = UserInputService.TouchEnabled
 	task.spawn(function()
-		local ok1, err1 = pcall(function()
-			player:RequestStreamAroundAsync(near, 4)
+		local okNear, errNear = pcall(function()
+			player:RequestStreamAroundAsync(near, if mobile then 2 else 3)
 		end)
-		if not ok1 then
-			warn("[GrassCullController] RequestStreamAroundAsync failed:", err1)
+		if not okNear then
+			warn("[GrassCullController] RequestStreamAroundAsync failed:", errNear)
 		end
-		local ok2, err2 = pcall(function()
-			player:RequestStreamAroundAsync(far, 4)
+		if mobile then
+			return
+		end
+		local okFar, errFar = pcall(function()
+			player:RequestStreamAroundAsync(far, 3)
 		end)
-		if not ok2 then
-			warn("[GrassCullController] RequestStreamAroundAsync far failed:", err2)
+		if not okFar then
+			warn("[GrassCullController] RequestStreamAroundAsync far failed:", errFar)
 		end
 	end)
 end
@@ -706,7 +742,9 @@ function M.init()
 
 		cullActive = true
 		pcall(function()
-			(Workspace :: any).StreamingTargetRadius = gameplayStreamRadius()
+			local wsAny = Workspace :: any
+			wsAny.StreamingMinRadius = gameplayStreamMin()
+			wsAny.StreamingTargetRadius = gameplayStreamRadius()
 		end)
 		-- Park far lands while still at base so walking into Land 1 isn't a mass reparent.
 		requestApplyForPlayerLand(if land > 0 then land else 1)

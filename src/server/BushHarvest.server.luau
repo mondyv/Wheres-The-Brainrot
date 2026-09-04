@@ -567,7 +567,28 @@ local function sourcePathForTemplate(root: Folder, template: Model): string
 	return ""
 end
 
--- Match variant Models stored as Brainrots/<Name>/<Variant>; if matched we treat parent folder name as the brainrot name.
+-- Must live above enrichEntryFromBrainrotsFolder — a later `local function` is nil here.
+local function mutationTemplateForEntry(root: Folder, brainrotName: string, mutationId: string): Model?
+	local nameFolder = Brainrots.findBrainrotStorageFolder(root, brainrotName)
+	if not nameFolder or Brainrots.isRetiredBrainrotInstance(nameFolder) then
+		return nil
+	end
+	for _, variantName in ipairs(Brainrots.mutationTemplateCandidateNames(mutationId)) do
+		local v = nameFolder:FindFirstChild(variantName)
+		if v and v:IsA("Model") and not Brainrots.isRetiredBrainrotInstance(v) then
+			return v :: Model
+		end
+		if v then
+			for _, child in ipairs(v:GetChildren()) do
+				if child:IsA("Model") and not Brainrots.isRetiredBrainrotInstance(child) then
+					return child :: Model
+				end
+			end
+		end
+	end
+	return nil
+end
+
 local VARIANT_FOLDER_NAMES = { Normal = true, Gold = true, Golden = true, Diamond = true, Lava = true, Galaxy = true, Rainbow = true }
 
 local function enrichEntryFromBrainrotsFolder(root: Folder?, entry: BrainrotInvEntry)
@@ -575,7 +596,7 @@ local function enrichEntryFromBrainrotsFolder(root: Folder?, entry: BrainrotInvE
 		return
 	end
 	local mut = if entry.mutation ~= "" then entry.mutation else "normal"
-	local template: Model? = findBrainrotModelByNameAndMutation(root, entry.name, mut)
+	local template: Model? = mutationTemplateForEntry(root, entry.name, mut)
 	if not template and entry.sourcePath ~= "" then
 		template = findTemplateBySourcePath(root, entry.sourcePath)
 	end

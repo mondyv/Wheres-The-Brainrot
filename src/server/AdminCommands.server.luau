@@ -1004,6 +1004,117 @@ local function formatCountdown(totalSec: number): string
 	return string.format("%ds", sec)
 end
 
+-- New server instances always boot the currently published place version.
+-- Bare TeleportAsync(placeId) can matchmake back onto an old live server.
+-- Reserved teleport creates a brand-new instance (latest version), then we hop
+-- that party to a fresh public server once the old public instances have emptied.
+local LATEST_RESET_FLAG = "WTBLatestPlaceReset"
+local RESERVED_DRAIN_SEC = 10
+local STRAGGLER_KICK_SEC = 3
+local LATEST_UPDATE_KICK = "Servers restarted for the latest update — rejoin! Your data is safe."
+
+local function teleportToLatestPublished(players: { Player }): boolean
+	if #players == 0 then
+		return true
+	end
+	local options = Instance.new("TeleportOptions")
+	options.ShouldReserveServer = true
+	options:SetTeleportData({
+		[LATEST_RESET_FLAG] = true,
+		fromPlaceVersion = game.PlaceVersion,
+	})
+	local ok, err = pcall(function()
+		TeleportService:TeleportAsync(game.PlaceId, players, options)
+	end)
+	if ok then
+		return true
+	end
+	warn("[AdminCommands] latest-version reserved teleport failed:", err)
+	return false
+end
+
+local function kickStragglersAfterTeleport()
+	task.delay(STRAGGLER_KICK_SEC, function()
+		for _, plr in Players:GetPlayers() do
+			plr:Kick(LATEST_UPDATE_KICK)
+		end
+	end)
+end
+
+local function isReservedMatchServer(): boolean
+	local ownerId = game.PrivateServerOwnerId
+	return game.PrivateServerId ~= "" and (typeof(ownerId) ~= "number" or ownerId == 0)
+end
+
+local function cameFromLatestReset(player: Player): boolean
+	local joinData = player:GetJoinData()
+	if typeof(joinData) ~= "table" then
+		return false
+	end
+	local td = (joinData :: any).TeleportData
+	return typeof(td) == "table" and td[LATEST_RESET_FLAG] == true
+end
+
+local function teleportToFreshPublicServer(players: { Player }): boolean
+	if #players == 0 then
+		return true
+	end
+	local options = Instance.new("TeleportOptions")
+	options.ShouldReserveServer = false
+	local ok, err = pcall(function()
+		TeleportService:TeleportAsync(game.PlaceId, players, options)
+	end)
+	if ok then
+		return true
+	end
+	warn("[AdminCommands] public hop after reset failed:", err)
+	ok, err = pcall(function()
+		TeleportService:TeleportAsync(game.PlaceId, players)
+	end)
+	if not ok then
+		warn("[AdminCommands] public hop fallback failed:", err)
+		return false
+	end
+	return true
+end
+
+local function beginReservedLatestResetHopBack()
+	if not isReservedMatchServer() then
+		return
+	end
+	task.spawn(function()
+		local found = false
+		for _ = 1, 80 do
+			for _, plr in Players:GetPlayers() do
+				if cameFromLatestReset(plr) then
+					found = true
+					break
+				end
+			end
+			if found then
+				break
+			end
+			task.wait(0.25)
+		end
+		if not found then
+			return
+		end
+		-- Let origin public servers empty so matchmaking cannot send us back onto them.
+		task.wait(RESERVED_DRAIN_SEC)
+		local online = Players:GetPlayers()
+		if #online == 0 then
+			return
+		end
+		if not teleportToFreshPublicServer(online) then
+			for _, plr in online do
+				plr:Kick(LATEST_UPDATE_KICK)
+			end
+			return
+		end
+		kickStragglersAfterTeleport()
+	end)
+end
+
 local function startServerMaintenanceCountdown(
 	sender: Player,
 	seconds: number,
@@ -1049,13 +1160,11 @@ local function startServerMaintenanceCountdown(
 			if #online == 0 then
 				return
 			end
-			local ok, err = pcall(function()
-				TeleportService:TeleportAsync(game.PlaceId, online)
-			end)
-			if not ok then
-				warn("[AdminCommands] serverrestart teleport failed:", err)
+			if teleportToLatestPublished(online) then
+				kickStragglersAfterTeleport()
+			else
 				for _, plr in online do
-					plr:Kick("Server restart — please rejoin!")
+					plr:Kick(LATEST_UPDATE_KICK)
 				end
 			end
 			return
@@ -1085,7 +1194,7 @@ commands.servershut = commands.servershutdown
 
 commands.serverrestart = {
 	usage = "serverrestart <seconds|30s|5m>",
-	description = "Countdown top notif on THIS server, save everyone, then teleport them into a fresh server.",
+	description = "Countdown on THIS server, save everyone, then move them onto the latest published update.",
 	run = function(sender: Player, args: { string }): (boolean, string)
 		local seconds = parseShutdownSeconds(args[1])
 		if not seconds then
@@ -1169,13 +1278,11 @@ local function beginGlobalServerReset(countdownSec: number, totalSec: number)
 		if #online == 0 then
 			return
 		end
-		local ok, err = pcall(function()
-			TeleportService:TeleportAsync(game.PlaceId, online)
-		end)
-		if not ok then
-			warn("[AdminCommands] resetservers teleport failed:", err)
+		if teleportToLatestPublished(online) then
+			kickStragglersAfterTeleport()
+		else
 			for _, plr in online do
-				plr:Kick("Servers restarting for a new update — please rejoin! Your data is safe.")
+				plr:Kick(LATEST_UPDATE_KICK)
 			end
 		end
 	end)
@@ -1198,12 +1305,12 @@ local function publishAndStartGlobalReset(sender: Player, seconds: number): (boo
 		warn("[AdminCommands] resetservers publish failed:", pubErr)
 		return true, string.format("This server is resetting in %ds. Other live servers may not have received the signal.", seconds)
 	end
-	return true, string.format("All servers resetting in %ds. Player data will be saved — nothing is wiped.", seconds)
+	return true, string.format("All servers moving to the latest published update in %ds. Player data is saved — nothing is wiped.", seconds)
 end
 
 commands.resetservers = {
 	usage = "resetservers <10|30>",
-	description = "HUD countdown on ALL servers, save everyone, then teleport into fresh servers. Does not wipe data.",
+	description = "HUD countdown on ALL servers, save everyone, then move them onto the latest published update. Does not wipe data.",
 	run = function(sender: Player, args: { string }): (boolean, string)
 		local seconds = parseResetSeconds(args[1])
 		if not seconds then
@@ -1832,3 +1939,5 @@ task.spawn(function()
 		warn("[AdminCommands] resetservers subscribe failed:", err)
 	end
 end)
+
+beginReservedLatestResetHopBack()

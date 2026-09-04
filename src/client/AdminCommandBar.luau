@@ -200,8 +200,8 @@ local COMMAND_HINTS: { [string]: string } = {
 	servernotif = "Top notification on this server",
 	globalnotif = "Top notification on all servers",
 	servershutdown = "Countdown then shut down THIS server only",
-	serverrestart = "Countdown then restart THIS server (teleport players back)",
-	resetservers = "Reset ALL servers after a 10s or 30s HUD countdown (saves data)",
+	serverrestart = "Countdown, save, then move THIS server onto the latest published update",
+	resetservers = "Countdown on ALL servers, save, then move everyone onto the latest published update",
 	serverluck = "Set luck on THIS server + announce",
 	globalluck = "Set luck on ALL servers until time runs out (1d / 7d / off)",
 	kick = "Kick a player from this server",
@@ -685,7 +685,7 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
 			for _, sample in { "10", "30" } do
 				if startsWith(sample, partial) then
-					pushSuggestion(out, prefix .. sample, "all servers — saves data, then restarts")
+					pushSuggestion(out, prefix .. sample, "all servers — latest published update")
 				end
 			end
 		end

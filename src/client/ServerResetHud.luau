@@ -259,7 +259,7 @@ local function buildHud()
 	sub.AnchorPoint = Vector2.new(0.5, 0)
 	sub.Position = UDim2.new(0.5, 0, 0, if compact then 86 else 100)
 	sub.Size = UDim2.new(0.92, 0, 0, if compact then 16 else 18)
-	sub.Text = "New update incoming — your data is safe"
+	sub.Text = "Moving you to the latest published update — your data is safe"
 	sub.TextXAlignment = Enum.TextXAlignment.Center
 	sub.TextColor3 = Color3.fromRGB(230, 210, 190)
 	sub.TextTransparency = 0.08

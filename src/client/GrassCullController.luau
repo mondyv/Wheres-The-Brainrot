@@ -18,6 +18,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
+local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StreamingSettings"))
 
 local M = {}
 
@@ -790,6 +791,7 @@ function M.init()
 
 		cullActive = true
 		pcall(function()
+			StreamingSettings.apply(Workspace)
 			local wsAny = Workspace :: any
 			wsAny.StreamingMinRadius = gameplayStreamMin()
 			wsAny.StreamingTargetRadius = gameplayStreamRadius()

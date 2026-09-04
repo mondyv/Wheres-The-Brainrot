@@ -1,31 +1,19 @@
 -- [ACTIVE] 0_StreamingBootstrap.server
 --[[
-	Streaming must stay enabled. Radii are set here on purpose (server-authoritative)
-	so the live place cannot silently run Studio's huge 256/512 and keep half the
-	map + grass resident (high tris).
+	Streaming must stay enabled. Radii and stream-out are set here on purpose
+	so the live place cannot silently run Studio's 256/512 + LowMemory.
 
-	Live: 112 / 320 — keep the guaranteed bubble small, let the next land fill
-	in the background. Dumping a 380 bubble at once is what hitching felt like.
-	Studio play-solo: 80 / 200.
+	Live: 112 / 320. Studio play-solo: 80 / 200.
+	StreamOut: Opportunistic. Integrity: MinimumRadiusPause (not PauseOutsideLoadedArea).
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
-local STREAM_MIN_RADIUS = if RunService:IsStudio() then 80 else 112
-local STREAM_TARGET_RADIUS = if RunService:IsStudio() then 200 else 320
+local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StreamingSettings"))
 
-if not Workspace.StreamingEnabled then
-	Workspace.StreamingEnabled = true
-end
-
-pcall(function()
-	Workspace.StreamingMinRadius = STREAM_MIN_RADIUS
-	Workspace.StreamingTargetRadius = STREAM_TARGET_RADIUS
-	Workspace.StreamOutBehavior = Enum.StreamOutBehavior.Opportunistic
-end)
+StreamingSettings.apply(Workspace)
 
 -- Legacy place files kept the whole Brainrots mesh catalog in ReplicatedStorage.
 -- Every client (and Studio play-solo) then holds a second copy of every model.

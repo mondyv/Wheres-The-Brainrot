@@ -19,6 +19,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StreamingSettings"))
 
 local MIN_DISPLAY_SEC = 1.6
 local HOLD_AT_FULL_SEC = 0.4
@@ -33,10 +34,7 @@ local MOON_PLAYBACK_SCALE = 4 / 3
 -- Keep stream bubble on the player while the cinematic camera flies elsewhere.
 local LOADING_STREAM_MIN_RADIUS = 64
 local LOADING_STREAM_TARGET_RADIUS = 96
--- After loading, force these (Studio place often still has 256/512 which keeps
--- half the map + grass resident = high tris). Server Workspace props don't drive client streaming.
-local GAMEPLAY_STREAM_MIN_RADIUS = 112
-local GAMEPLAY_STREAM_TARGET_RADIUS = 320
+-- After loading, StreamingSettings.apply overrides Studio's saved 256/512 + LowMemory.
 
 local DEFAULT_CAMERA_POS = Vector3.new(1452.568, 100.564, 518.559)
 local DEFAULT_CAMERA_RAD = Vector3.new(math.rad(4.555), math.rad(18.409), 0)
@@ -185,20 +183,9 @@ local function endLoadingStreamingGuard(player: Player?)
 		return
 	end
 	streamingGuardActive = false
-	-- Always restore to gameplay radii — ignore Studio's saved 256/512.
-	-- Nested pcall: some Studio builds lack StreamingMinRadius entirely.
+	-- Always restore gameplay streaming — ignore Studio's saved 256/512 + LowMemory.
 	local ok, err = pcall(function()
-		local ws = Workspace :: any
-		local minOk, minR = pcall(function()
-			return ws.StreamingMinRadius
-		end)
-		local targetOk, targetR = pcall(function()
-			return ws.StreamingTargetRadius
-		end)
-		if minOk and targetOk and typeof(minR) == "number" and typeof(targetR) == "number" then
-			ws.StreamingMinRadius = GAMEPLAY_STREAM_MIN_RADIUS
-			ws.StreamingTargetRadius = GAMEPLAY_STREAM_TARGET_RADIUS
-		end
+		StreamingSettings.apply(Workspace)
 	end)
 	if not ok then
 		if typeof(err) == "string" and not string.find(err, "StreamingMinRadius", 1, true) and not string.find(err, "rawget", 1, true) then

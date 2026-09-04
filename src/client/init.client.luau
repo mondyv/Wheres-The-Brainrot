@@ -52,19 +52,13 @@ task.defer(function()
 		end
 	end)
 
-	-- Client streaming radii (server Workspace values do not drive the local streamer).
+	-- Client streaming (place file 256/512 + LowMemory does not get overwritten
+	-- by server Workspace values — the local streamer reads these on the client).
 	pcall(function()
 		local Workspace = game:GetService("Workspace")
 		if Workspace.StreamingEnabled == true then
-			local studio = RunService:IsStudio()
-			local wsAny = Workspace :: any
-			if studio then
-				wsAny.StreamingMinRadius = 80
-				wsAny.StreamingTargetRadius = 200
-			else
-				wsAny.StreamingMinRadius = 112
-				wsAny.StreamingTargetRadius = 320
-			end
+			local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StreamingSettings"))
+			StreamingSettings.apply(Workspace)
 		end
 	end)
 

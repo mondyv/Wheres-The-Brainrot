@@ -1540,12 +1540,12 @@ local function pointAtWorld(adornee: Instance?, offset: Vector3?)
 		worldArrowImg = nil
 	end
 
-	local arrowPx = if isMobileUi() then TutorialConfig.WORLD_ARROW_SIZE_MOBILE else TutorialConfig.WORLD_ARROW_SIZE
+	local arrowStuds = if isMobileUi() then TutorialConfig.WORLD_ARROW_STUDS_MOBILE else TutorialConfig.WORLD_ARROW_STUDS
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "TutorialWorldArrow"
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
-	bb.Size = UDim2.fromOffset(arrowPx, arrowPx)
+	bb.Size = UDim2.fromScale(arrowStuds, arrowStuds)
 	bb.StudsOffset = baseOffset
 	bb.MaxDistance = TutorialConfig.WORLD_ARROW_MAX_DISTANCE
 	bb.Adornee = part
@@ -1738,7 +1738,7 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			bb.AlwaysOnTop = true
 			bb.Active = false
 			bb.LightInfluence = 0
-			bb.Size = UDim2.fromOffset(clickSize + 8, clickSize + 8)
+			bb.Size = UDim2.fromScale(2.05, 2.05)
 			-- Nudge off-center so Cost/Upgrade text stays readable.
 			bb.StudsOffset = Vector3.new(0.55, -0.2, 0)
 			bb.MaxDistance = TutorialConfig.SURFACE_CLICK_MAX_DISTANCE

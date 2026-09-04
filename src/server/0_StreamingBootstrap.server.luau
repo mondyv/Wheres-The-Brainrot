@@ -1,9 +1,8 @@
 -- [ACTIVE] 0_StreamingBootstrap.server
 --[[
 	Streaming custom cull / persist / radius overrides stay off.
-	Forces StreamOutBehavior Opportunistic so leaving spawn does not dump the
-	forest (return hitch + dead inventory). Publishes SafezoneBounds. Unreplicates
-	a duplicate Brainrots catalog.
+	Publishes SafezoneBounds so lobby inventory still works if the hitbox
+	streams out. Unreplicates a duplicate Brainrots catalog.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

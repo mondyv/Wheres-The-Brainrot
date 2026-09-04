@@ -71,8 +71,7 @@
         "FilteringEnabled": true,
         "StreamingEnabled": true,
         "StreamingMinRadius": 512,
-        "StreamingTargetRadius": 2048,
-        "StreamOutBehavior": "Opportunistic"
+        "StreamingTargetRadius": 1024
       },
       "Baseplate": {
         "$className": "Part",

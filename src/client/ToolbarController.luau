@@ -251,6 +251,18 @@ local lastResolvedHotbarDropSlot: number? = nil
 local activeToolbarDrag = false
 local dragSuppressedToolbarClick = false
 local backpackClickConsumed = false
+local backpackClickToken = 0
+
+local function markBackpackClickConsumed()
+	backpackClickConsumed = true
+	backpackClickToken += 1
+	local token = backpackClickToken
+	task.delay(0.25, function()
+		if backpackClickToken == token then
+			backpackClickConsumed = false
+		end
+	end)
+end
 local mobileDragHoldToken = 0
 local DRAG_THRESHOLD_PX = 14
 local DRAG_GHOST_THRESHOLD_PX = 18
@@ -2020,22 +2032,9 @@ end
 		resetBackpackDragHover()
 	end
 
-	local function pointerStillHeld(): boolean
-		if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-			return true
-		end
-		if GamepadInput.isAcceptHeld() then
-			return true
-		end
-		return #UserInputService:GetTouches() > 0
-	end
-
 	-- Stream-in hitches can drop InputEnded, leaving a stuck drag that eats every inventory click.
 	local function clearStaleToolbarGesture()
 		if not pendingToolbarPress and not pendingToolbarDrag and not activeToolbarDrag then
-			return
-		end
-		if pointerStillHeld() then
 			return
 		end
 		pendingToolbarPress = nil
@@ -2615,7 +2614,6 @@ end
 	end
 
 	local function pollSafezonePresence()
-		clearStaleToolbarGesture()
 		local character = player.Character
 		local inZone = isCharacterInToolbarAccessZone(character)
 		if inZone then
@@ -4063,15 +4061,18 @@ end
 						return
 					end
 					UIInteractionSounds.playClick()
-					backpackClickConsumed = true
+					markBackpackClickConsumed()
 					requestEquipFromBackpack(listIdx)
 				end)
 				btn.MouseButton1Down:Connect(function()
 					if not canUseToolbar then
 						return
 					end
-					if pendingToolbarDrag then
+					if pendingToolbarDrag and dragGhostImage then
 						return
+					end
+					if pendingToolbarDrag or pendingToolbarPress then
+						clearStaleToolbarGesture()
 					end
 					if dtIsTouchPointerInput() then
 						return
@@ -5255,7 +5256,7 @@ end
 						return
 					end
 					UIInteractionSounds.playClick()
-					backpackClickConsumed = true
+					markBackpackClickConsumed()
 					selectSlot(i)
 				end
 				btn.Activated:Connect(onHotbarSlotTapSelect)
@@ -5302,6 +5303,9 @@ end
 					end
 					if GamepadInput.isPreferred() then
 						return
+					end
+					if pendingToolbarDrag and not dragGhostImage then
+						clearStaleToolbarGesture()
 					end
 					beginHotbarPendingDrag(UserInputService:GetMouseLocation())
 				end)
@@ -5722,6 +5726,17 @@ end
 			end)
 		end
 
+		UserInputService.InputBegan:Connect(function(input, _gp)
+			local isPrimary = input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch
+				or (input.UserInputType == Enum.UserInputType.Gamepad1 and input.KeyCode == GamepadInput.ACCEPT)
+			if not isPrimary then
+				return
+			end
+			-- Hitch-stuck consume flag was eating every later hotbar / backpack click.
+			backpackClickConsumed = false
+		end)
+
 		UserInputService.InputChanged:Connect(function(input, _gp)
 			if not toolbarInputAllowed() then
 				return
@@ -5863,10 +5878,10 @@ end
 				if spec and not backpackClickConsumed then
 					if spec.kind == "backpack" then
 						requestEquipFromBackpack(spec.idx)
-						backpackClickConsumed = true
+						markBackpackClickConsumed()
 					elseif spec.kind == "backpack_extra" and spec.tool then
 						requestEquipFromBackpackExtra(spec.tool)
-						backpackClickConsumed = true
+						markBackpackClickConsumed()
 					elseif spec.kind == "hotbar" then
 						local slot = spec.tapSlot
 						if typeof(slot) ~= "number" and spec.isExtraTool then
@@ -5874,7 +5889,7 @@ end
 						end
 						if typeof(slot) == "number" and hotbarSlotHasSelectableContent(slot) then
 							selectSlot(slot)
-							backpackClickConsumed = true
+							markBackpackClickConsumed()
 						end
 					end
 				end
@@ -5903,10 +5918,10 @@ end
 				if not backpackClickConsumed then
 					if pnd.kind == "backpack" then
 						requestEquipFromBackpack(pnd.idx)
-						backpackClickConsumed = true
+						markBackpackClickConsumed()
 					elseif pnd.kind == "backpack_extra" and pnd.tool then
 						requestEquipFromBackpackExtra(pnd.tool)
-						backpackClickConsumed = true
+						markBackpackClickConsumed()
 					elseif pnd.kind == "hotbar" then
 						local slot = pnd.tapSlot
 						if typeof(slot) ~= "number" and pnd.isExtraTool then
@@ -5914,7 +5929,7 @@ end
 						end
 						if typeof(slot) == "number" and hotbarSlotHasSelectableContent(slot) then
 							selectSlot(slot)
-							backpackClickConsumed = true
+							markBackpackClickConsumed()
 						end
 					end
 				end
@@ -6085,11 +6100,11 @@ end
 						UIInteractionSounds.playClick()
 					elseif input.UserInputType == Enum.UserInputType.Touch and not backpackClickConsumed then
 						requestEquipFromBackpack(pnd.idx)
-						backpackClickConsumed = true
+						markBackpackClickConsumed()
 					end
 				elseif input.UserInputType == Enum.UserInputType.Touch and not backpackClickConsumed then
 					requestEquipFromBackpack(pnd.idx)
-					backpackClickConsumed = true
+					markBackpackClickConsumed()
 				end
 			end
 			syncToolbarGamepadCursor()

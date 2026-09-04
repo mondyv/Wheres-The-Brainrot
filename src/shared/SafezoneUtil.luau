@@ -325,12 +325,18 @@ function SafezoneUtil.publishServerBounds()
 		local processed = 0
 		while #stack > 0 do
 			local inst = table.remove(stack)
+			-- Plots are huge. Only the lobby hitboxes matter for inventory.
+			if string.match(inst.Name, "^Plot_") then
+				continue
+			end
 			if inst:IsA("BasePart") and INVENTORY_ZONE_NAMES[inst.Name] == true then
 				table.insert(frames, inst.CFrame)
 				table.insert(sizes, inst.Size)
 			end
 			for _, child in inst:GetChildren() do
-				table.insert(stack, child)
+				if not string.match(child.Name, "^Plot_") then
+					table.insert(stack, child)
+				end
 			end
 			processed += 1
 			if processed % SCAN_YIELD_EVERY == 0 then

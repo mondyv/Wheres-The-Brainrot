@@ -1736,6 +1736,7 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 			local bb = Instance.new("BillboardGui")
 			bb.Name = "TutorialUiClickBillboard"
 			bb.AlwaysOnTop = true
+			bb.Active = false
 			bb.LightInfluence = 0
 			bb.Size = UDim2.fromOffset(clickSize + 8, clickSize + 8)
 			-- Nudge off-center so Cost/Upgrade text stays readable.

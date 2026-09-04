@@ -14,6 +14,7 @@
 local CollectionService = game:GetService("CollectionService")
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
+local GuiService = game:GetService("GuiService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
@@ -789,6 +790,7 @@ local function ensureUpgradePadHint(): (BillboardGui, Frame)
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "StandUpgradePadHint"
 	bb.AlwaysOnTop = true
+	bb.Active = false
 	bb.LightInfluence = 0
 	bb.ResetOnSpawn = false
 	bb.MaxDistance = 20
@@ -798,6 +800,7 @@ local function ensureUpgradePadHint(): (BillboardGui, Frame)
 
 	local aura = Instance.new("Frame")
 	aura.Name = "Aura"
+	aura.Active = false
 	aura.BackgroundColor3 = Color3.fromRGB(255, 210, 70)
 	aura.BackgroundTransparency = 0.72
 	aura.BorderSizePixel = 0
@@ -812,6 +815,7 @@ local function ensureUpgradePadHint(): (BillboardGui, Frame)
 
 	local host = Instance.new("Frame")
 	host.Name = "HintHost"
+	host.Active = false
 	host.BackgroundColor3 = Color3.fromRGB(12, 10, 22)
 	host.BackgroundTransparency = 0.08
 	host.BorderSizePixel = 0
@@ -836,6 +840,7 @@ local function ensureUpgradePadHint(): (BillboardGui, Frame)
 	local letter = Instance.new("TextLabel")
 	letter.Name = "PadLetter"
 	letter.BackgroundTransparency = 1
+	letter.Active = false
 	letter.Size = UDim2.fromScale(1, 1)
 	letter.Font = Enum.Font.GothamBlack
 	letter.TextScaled = true
@@ -859,6 +864,7 @@ local function ensureUpgradePadHint(): (BillboardGui, Frame)
 	local caption = Instance.new("TextLabel")
 	caption.Name = "Caption"
 	caption.BackgroundTransparency = 1
+	caption.Active = false
 	caption.AnchorPoint = Vector2.new(0.5, 0)
 	caption.Position = UDim2.new(0.5, 0, 0.72, 0)
 	caption.Size = UDim2.new(1, 0, 0, 22)
@@ -1023,9 +1029,21 @@ local function updateClosestUpgradeStand(hrpPos: Vector3)
 	end
 end
 
-local function fireClosestStandUpgrade()
-	local stand = closestUpgradeStand
-	if not stand or not stand.Parent then
+local function fireStandUpgrade(stand: Model): boolean
+	if not stand.Parent then
+		return false
+	end
+	if not standMatchesAssignedPlotCached(stand) then
+		return false
+	end
+	if stand:GetAttribute("BrainrotStandLocked") == true then
+		return false
+	end
+	if not standHasBrainrot(stand) then
+		return false
+	end
+	local level = stand:GetAttribute("BrainrotLevel")
+	if typeof(level) == "number" and math.floor(level) >= BRAINROT_MAX_LEVEL then
 		return false
 	end
 	local now = os.clock()
@@ -1034,11 +1052,107 @@ local function fireClosestStandUpgrade()
 	end
 	lastUpgradeRequestAt[stand] = now
 	if upgradeRE then
-		playUpgradeHintPress()
+		if upgradeHintStand == stand then
+			playUpgradeHintPress()
+		end
 		upgradeRE:FireServer(stand)
 		return true
 	end
 	return false
+end
+
+local function fireClosestStandUpgrade()
+	local stand = closestUpgradeStand
+	if not stand then
+		return false
+	end
+	return fireStandUpgrade(stand)
+end
+
+local function instanceIsUnderLevelPanel(inst: Instance): boolean
+	local x: Instance? = inst
+	while x do
+		if x.Name == "LevelPanel" then
+			return true
+		end
+		x = x.Parent
+	end
+	return false
+end
+
+local function findStandFromInstance(inst: Instance): Model?
+	local x: Instance? = inst
+	while x do
+		if x:IsA("Model") and (x:HasTag("BrainrotStand") or x:GetAttribute("BrainrotStand") == true) then
+			return x
+		end
+		x = x.Parent
+	end
+	return nil
+end
+
+local function touchHitsBlockingHud(screenPos: Vector2): boolean
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if not pg then
+		return false
+	end
+	local inset = GuiService:GetGuiInset()
+	local objs = pg:GetGuiObjectsAtPosition(screenPos.X - inset.X, screenPos.Y - inset.Y)
+	for _, obj in objs do
+		if not obj:IsA("GuiObject") or not obj.Active or not obj.Visible then
+			continue
+		end
+		local layer = obj:FindFirstAncestorWhichIsA("LayerCollector")
+		if not (layer and layer:IsA("ScreenGui") and layer.Enabled) then
+			continue
+		end
+		local name = layer.Name
+		if name == "CustomProximityPrompt" or name == "StandUpgradePadHint" or name == "TutorialUiClickBillboard" then
+			continue
+		end
+		if name == "TouchGui" or name == "Main" or name == "WorkoutComboGui" or name == "Hud" then
+			return true
+		end
+	end
+	return false
+end
+
+local function tryUpgradeFromTouchRay(input: InputObject)
+	if not UserInputService.TouchEnabled then
+		return
+	end
+	if not MobileTouchGate.canTapUi() then
+		return
+	end
+	if MobileTouchGate.touchMovedTooFar(input) then
+		return
+	end
+	local cam = Workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	local pos = Vector2.new(input.Position.X, input.Position.Y)
+	if touchHitsBlockingHud(pos) then
+		return
+	end
+	local ray = cam:ScreenPointToRay(pos.X, pos.Y)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local char = player.Character
+	if char then
+		params.FilterDescendantsInstances = { char }
+	end
+	local result = Workspace:Raycast(ray.Origin, ray.Direction * 36, params)
+	if not result then
+		return
+	end
+	if not instanceIsUnderLevelPanel(result.Instance) then
+		return
+	end
+	local stand = findStandFromInstance(result.Instance)
+	if stand then
+		fireStandUpgrade(stand)
+	end
 end
 
 local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
@@ -2372,6 +2486,15 @@ function M.init()
 
 	bumpPromptRefreshFromMovement()
 	PlotMarkerVisibility.onAfterInteractiveApply(reapplyUpgradeInputForAllViews)
+
+	if UserInputService.TouchEnabled then
+		UserInputService.InputEnded:Connect(function(input: InputObject, _processed: boolean)
+			if input.UserInputType ~= Enum.UserInputType.Touch then
+				return
+			end
+			tryUpgradeFromTouchRay(input)
+		end)
+	end
 end
 
 return M

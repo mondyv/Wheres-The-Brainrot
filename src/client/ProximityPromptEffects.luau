@@ -514,7 +514,12 @@ local function hidePlacePromptViewsIfNeeded()
 end
 
 local function promptBillboardInputActive(): boolean
-	return true
+	-- Desktop: cards must not eat stand SurfaceGui clicks (upgrade).
+	-- Mobile: Active is required or the card itself never receives taps.
+	if prefersGamepadInput() then
+		return false
+	end
+	return UserInputService.TouchEnabled
 end
 
 local function wirePromptHover(view: PromptView)
@@ -1908,6 +1913,10 @@ local function buildPromptView(prompt: ProximityPrompt, displayOnly: boolean?): 
 		applyBushBillboardPlacement(billboard, prompt, adornee)
 	elseif prompt:GetAttribute("BrainrotFloatingClaim") == true and adornee and adornee:IsA("BasePart") then
 		applyFloatingClaimBillboardPlacement(billboard, prompt, adornee :: BasePart)
+	elseif isStandProximityPrompt(prompt) then
+		-- Sit above the pet so the card does not cover LevelPanel / Upgrade on mobile.
+		billboard.StudsOffset = Vector3.new(0, 3.6, 0)
+		billboard.StudsOffsetWorldSpace = Vector3.zero
 	else
 		billboard.StudsOffset = Vector3.new(0, 1.8, 0)
 		billboard.StudsOffsetWorldSpace = Vector3.zero

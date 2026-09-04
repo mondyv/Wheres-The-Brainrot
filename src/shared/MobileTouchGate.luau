@@ -279,16 +279,11 @@ end
 
 function M.anyActiveTouchIsDrag(maxPx: number?): boolean
 	local max = maxPx or TAP_SLOP_PX
-	local any = false
 	for input, origin in touchOrigin do
-		any = true
 		local pos = Vector2.new(input.Position.X, input.Position.Y)
 		if (pos - origin).Magnitude > max then
 			return true
 		end
-	end
-	if not any then
-		return lastEndedTravelPx > max
 	end
 	return false
 end

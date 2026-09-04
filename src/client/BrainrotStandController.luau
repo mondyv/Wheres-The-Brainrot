@@ -33,6 +33,7 @@ local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local PlotMarkerVisibility = require(script.Parent.PlotMarkerVisibility)
 local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
+local PlotStandPlaceholders = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotStandPlaceholders"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
 local MobileHaptics = require(script.Parent.MobileHaptics)
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
@@ -2004,6 +2005,7 @@ local function hopStandBrainrot(stand: Model)
 end
 
 local function wireCashPadLabel(view: StandView)
+	PlotStandPlaceholders.fixStandGuiAdornees(view.stand)
 	view.totalLabel = findTotalCashLabel(view.stand)
 	if view.accumulatedConn then
 		view.accumulatedConn:Disconnect()

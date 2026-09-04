@@ -157,6 +157,33 @@ function M.hideSpawnShellOnStand(stand: Model)
 	end
 end
 
+-- Cloned plots often keep SurfaceGui/BillboardGui Adornee pointing at the
+-- source stand, so cash and level text draw on a random other slot.
+function M.fixStandGuiAdornees(stand: Model)
+	for _, d in ipairs(stand:GetDescendants()) do
+		if d:IsA("SurfaceGui") then
+			local parent = d.Parent
+			if parent and parent:IsA("BasePart") then
+				local gui = d :: SurfaceGui
+				if gui.Adornee ~= nil and gui.Adornee ~= parent then
+					gui.Adornee = parent
+				end
+			end
+		elseif d:IsA("BillboardGui") then
+			local gui = d :: BillboardGui
+			local adornee = gui.Adornee
+			if adornee and not adornee:IsDescendantOf(stand) then
+				local parent = d.Parent
+				if parent and parent:IsA("BasePart") then
+					gui.Adornee = parent
+				elseif parent and parent:IsA("Attachment") then
+					gui.Adornee = parent
+				end
+			end
+		end
+	end
+end
+
 function M.ensureStandVisible(stand: Model)
 	local decor = stand:FindFirstChild("Decor")
 	local button = stand:FindFirstChild("Button")
@@ -194,6 +221,7 @@ function M.ensureStandVisible(stand: Model)
 			end
 		end
 	end
+	M.fixStandGuiAdornees(stand)
 	M.hideSpawnShellOnStand(stand)
 end
 

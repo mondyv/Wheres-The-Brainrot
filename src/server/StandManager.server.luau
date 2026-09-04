@@ -610,7 +610,7 @@ local function recomputeIncomePerSecond(state: StandState): number
 	elseif typeof(state.rarity) == "string" then
 		state.rarity = Brainrots.normalizeRarityId(state.rarity)
 	end
-	if not state.rarity then
+	if typeof(state.rarity) ~= "string" or state.rarity == "" then
 		return 0
 	end
 	local def = {
@@ -2459,21 +2459,36 @@ end)
 
 local incomeStandOrder: { StandState } = {}
 local incomeTickCursor = 1
-local nextIncomeOrderRebuildAt = 0
+local nextEmptyIncomeRebuildAt = 0
 
 local function rebuildIncomeStandOrder()
 	table.clear(incomeStandOrder)
-	for _, state in pairs(stands) do
-		table.insert(incomeStandOrder, state)
+	for stand, state in pairs(stands) do
+		if not stand.Parent then
+			stands[stand] = nil
+			continue
+		end
+		-- Only occupied stands earn. Ticking every empty pad on every plot (plus
+		-- hidden floors) made the 1s rebuild restart before the tail ever ran,
+		-- so some placed brainrots stayed at $0 while earlier slots kept earning.
+		if typeof(state.brainrotName) == "string" and state.brainrotName ~= "" then
+			table.insert(incomeStandOrder, state)
+		end
 	end
 	incomeTickCursor = 1
-	nextIncomeOrderRebuildAt = os.clock() + 1
 end
 
 RunService.Heartbeat:Connect(function()
 	local now = os.clock()
-	if now >= nextIncomeOrderRebuildAt or incomeTickCursor > #incomeStandOrder then
+	if incomeTickCursor > #incomeStandOrder then
+		if #incomeStandOrder == 0 and now < nextEmptyIncomeRebuildAt then
+			return
+		end
 		rebuildIncomeStandOrder()
+		if #incomeStandOrder == 0 then
+			nextEmptyIncomeRebuildAt = now + 0.25
+			return
+		end
 	end
 	local count = #incomeStandOrder
 	if count == 0 then
@@ -2485,7 +2500,7 @@ RunService.Heartbeat:Connect(function()
 		local state = incomeStandOrder[incomeTickCursor]
 		incomeTickCursor += 1
 		processed += 1
-		if state.stand.Parent then
+		if state.stand.Parent and typeof(state.brainrotName) == "string" and state.brainrotName ~= "" then
 			local elapsed = now - state.lastTickAt
 			if elapsed >= INCOME_TICK_INTERVAL then
 				state.lastTickAt = now

@@ -2073,7 +2073,8 @@ local function playStandDisplayHop(stand: Model, kind: string, restCf: CFrame)
 				local y = if t < 0.58
 					then 11.5 * (1 - easeOutCubic(dropT))
 					else math.sin(bounceT * math.pi) * 2.15 * (1 - bounceT)
-				local yaw = easeOutCubic(dropT) * math.rad(400)
+				-- Small wiggle that returns to 0 at landing — a full spin snapped upright.
+				local yaw = math.sin(dropT * math.pi) * math.rad(16) * (1 - bounceT)
 				local scaleMul = 1
 				if t >= 0.52 and t < 0.7 then
 					local squash = math.clamp((t - 0.52) / 0.18, 0, 1)

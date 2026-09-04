@@ -7,10 +7,9 @@
 	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
 	Studio play-solo does not override Workspace.
 	Also publishes LandStreamCenters so clients can stream lands that are not in yet.
-	Does not Persistent-pin the whole forest — that queued every tree mesh at
-	join, so they only popped in after a long load. Each Huge trees child is
-	Atomic; clients RequestStreamAroundAsync published tree focuses on join.
-	Vines stay Persistent (swing targets). Never pins Land 2–10 or Land Locks.
+	Pins each Huge trees / Vine child Persistent so the forest stays in while
+	you swing. Never packs the whole forest into one model. Never pins Land 2–10
+	or Land Locks. Never Destroy map folders.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -82,9 +81,10 @@ task.spawn(function()
 	publishLandCenters()
 end)
 
--- Folders cannot be Persistent. Pin each vine child (swing targets).
--- Huge trees stay Atomic + join stream-requests — persist-all delayed every tree.
+-- Folders cannot be Persistent. Pin each Bent_tree / Willow_tree / vine child.
+-- Do NOT pack the whole forest into one Persistent model — that stopped replicating.
 local PERSIST_EACH_CHILD_KEYS: { [string]: boolean } = {
+	hugetrees = true,
 	vine = true,
 }
 local PERSIST_MAP_CHILD_KEYS: { [string]: boolean } = {
@@ -185,32 +185,6 @@ local function publishTreeFocuses(hugeTrees: Instance)
 	end
 end
 
-local function markForestAtomic(container: Instance)
-	local wraps: { Model } = {}
-	for _, child in container:GetChildren() do
-		if child:IsA("Model") and child.Name == "_SceneryPersist" then
-			table.insert(wraps, child)
-		end
-	end
-	for _, wrap in wraps do
-		for _, inner in wrap:GetChildren() do
-			inner.Parent = container
-		end
-		wrap:Destroy()
-	end
-	local function apply(child: Instance)
-		if child:IsA("Model") then
-			pcall(function()
-				child.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
-			end)
-		end
-	end
-	for _, child in container:GetChildren() do
-		apply(child)
-	end
-	container.ChildAdded:Connect(apply)
-end
-
 local function persistEachChild(container: Instance)
 	for _, child in container:GetChildren() do
 		if child:IsA("Model") then
@@ -288,11 +262,11 @@ end
 local function hookMapScenery(map: Instance)
 	for _, child in map:GetChildren() do
 		local key = persistKey(child.Name)
-		if key == "hugetrees" then
-			markForestAtomic(child)
-			publishTreeFocuses(child)
-		elseif PERSIST_EACH_CHILD_KEYS[key] then
+		if PERSIST_EACH_CHILD_KEYS[key] then
 			persistEachChild(child)
+			if key == "hugetrees" then
+				publishTreeFocuses(child)
+			end
 		elseif PERSIST_MAP_CHILD_KEYS[key] then
 			persistContainer(child)
 		elseif PERSIST_MODELS_ONLY_KEYS[key] then
@@ -303,11 +277,11 @@ local function hookMapScenery(map: Instance)
 	end
 	map.ChildAdded:Connect(function(child)
 		local key = persistKey(child.Name)
-		if key == "hugetrees" then
-			markForestAtomic(child)
-			publishTreeFocuses(child)
-		elseif PERSIST_EACH_CHILD_KEYS[key] then
+		if PERSIST_EACH_CHILD_KEYS[key] then
 			persistEachChild(child)
+			if key == "hugetrees" then
+				publishTreeFocuses(child)
+			end
 		elseif PERSIST_MAP_CHILD_KEYS[key] then
 			persistContainer(child)
 		elseif PERSIST_MODELS_ONLY_KEYS[key] then

@@ -652,12 +652,12 @@ end
 local function getSwingRange()
 	local ropeStats = getRopeStats()
 	if ropeStats and typeof(ropeStats.reachStuds) == "number" and ropeStats.reachStuds > 0 then
-		return math.clamp(ropeStats.reachStuds, 40, 380)
+		return math.clamp(ropeStats.reachStuds, 40, 700)
 	end
 
 	local rangeAttr = getFirstNumberAttribute({ "SwingRange", "ReachDistance", "Reach_Distance" })
 	if rangeAttr and rangeAttr > 0 then
-		return math.clamp(rangeAttr, 40, 380)
+		return math.clamp(rangeAttr, 40, 700)
 	end
 
 	local powerScale = getPowerScale()

@@ -104,10 +104,9 @@ function M.powerStats(powerLevel: number): PowerStats
 	}
 end
 
--- Backend reach grows much slower than power/speed (UI display follows reach level).
--- Base is high enough that new players can swing back from Land 1 without early Reach buys.
+-- Backend reach grows with power so late lands are latchable; Land 1 still starts modest.
 local REACH_STUDS_BASE = 128
-local REACH_STUDS_RANGE = 250
+local REACH_STUDS_RANGE = 420
 
 function M.ropeStats(ropeLevel: number): RopeStats
 	-- Slower than general progressT: early levels barely grow reach; late still has headroom.
@@ -118,8 +117,8 @@ function M.ropeStats(ropeLevel: number): RopeStats
 	local t = linear * 0.32 + curved * 0.68
 	if lv > cap then
 		local over = (lv - cap) / cap
-		local post = over / (1 + over * 0.45)
-		t += post * 0.55
+		local post = over / (1 + over * 0.38)
+		t += post * 0.85
 	end
 	return {
 		reachStuds = REACH_STUDS_BASE + t * REACH_STUDS_RANGE,

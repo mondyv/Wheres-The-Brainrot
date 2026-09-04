@@ -701,53 +701,36 @@ local function preloadVisibleTrees()
 		if not trees then
 			return
 		end
-		local seen: { [Instance]: boolean } = {}
-		local batch: { Instance } = {}
-		local function flush()
-			if #batch == 0 then
+		-- One of each mesh is enough — Bent_tree / Willow_tree share MeshIds.
+		-- Preloading every copy serialized the CDN and made the forest trickle in.
+		local loadedNames: { [string]: boolean } = {}
+		local function tryPreload(inst: Instance)
+			if loadedNames[inst.Name] then
 				return
 			end
+			if not (inst:IsA("Model") or inst:IsA("MeshPart") or inst:IsA("BasePart")) then
+				return
+			end
+			loadedNames[inst.Name] = true
 			local ok, err = pcall(function()
-				ContentProvider:PreloadAsync(batch)
+				ContentProvider:PreloadAsync({ inst })
 			end)
 			if not ok then
+				loadedNames[inst.Name] = false
 				warn("[GrassCullController] tree preload failed:", err)
 			end
-			table.clear(batch)
 		end
-		local function consider(inst: Instance)
-			if seen[inst] then
-				return
-			end
-			if inst:IsA("MeshPart") or inst:IsA("BasePart") then
-				seen[inst] = true
-				table.insert(batch, inst)
-			end
+		for _, child in trees:GetChildren() do
+			tryPreload(child)
 		end
-		local addedConn = trees.DescendantAdded:Connect(consider)
-		for _, d in trees:GetDescendants() do
-			consider(d)
-		end
-		local deadline = os.clock() + 14
-		while player.Parent and os.clock() < deadline do
-			while #batch >= 24 do
-				local slice: { Instance } = {}
-				for i = 1, 24 do
-					slice[i] = table.remove(batch, 1)
-				end
-				local ok, err = pcall(function()
-					ContentProvider:PreloadAsync(slice)
-				end)
-				if not ok then
-					warn("[GrassCullController] tree preload failed:", err)
-				end
-				task.wait(0.2)
-			end
-			flush()
-			task.wait(0.8)
-		end
-		flush()
-		addedConn:Disconnect()
+		local addedConn = trees.ChildAdded:Connect(function(child)
+			task.spawn(function()
+				tryPreload(child)
+			end)
+		end)
+		task.delay(25, function()
+			addedConn:Disconnect()
+		end)
 	end)
 end
 

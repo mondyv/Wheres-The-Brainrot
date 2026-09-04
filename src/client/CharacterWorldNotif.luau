@@ -8,6 +8,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local UiFonts = require(game:GetService("ReplicatedStorage"):WaitForChild("Shared"):WaitForChild("UiFonts"))
+local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 
 local player = Players.LocalPlayer
 
@@ -17,6 +18,7 @@ local activeBillboard: BillboardGui? = nil
 local activeLabel: TextLabel? = nil
 local dotsConn: RBXScriptConnection? = nil
 local followConn: RBXScriptConnection? = nil
+local typewriterThread: thread? = nil
 local baseText = ""
 local dismissToken = 0
 
@@ -83,9 +85,17 @@ local function setRankBadgeSuppress(suppressed: boolean)
 	end
 end
 
+local function stopTypewriter()
+	if typewriterThread then
+		task.cancel(typewriterThread)
+		typewriterThread = nil
+	end
+end
+
 local function destroyActive()
 	stopDots()
 	stopFollow()
+	stopTypewriter()
 	dismissToken += 1
 	if activeBillboard then
 		activeBillboard:Destroy()
@@ -321,6 +331,7 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 	titleLabel.TextTruncate = Enum.TextTruncate.AtEnd
 	titleLabel.Text = displayTitle
 	titleLabel.TextTransparency = 1
+	titleLabel.MaxVisibleGraphemes = 0
 	titleLabel.Parent = root
 
 	local subLabel: TextLabel? = nil
@@ -342,6 +353,7 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 		sub.TextWrapped = true
 		sub.Text = subtitle :: string
 		sub.TextTransparency = 1
+		sub.MaxVisibleGraphemes = 0
 		sub.Parent = root
 		subLabel = sub
 	end
@@ -394,6 +406,38 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 		local t = math.clamp((os.clock() - floatStart) / floatDur, 0, 1)
 		local ease = 1 - (1 - t) * (1 - t)
 		bb.StudsOffset = startOffset:Lerp(endOffset, ease)
+		titleLabel.Rotation = math.sin((os.clock() - floatStart) * 8.5) * 2.8
+	end)
+
+	local function typeGraphemes(label: TextLabel, text: string, delaySec: number)
+		local i = 0
+		for first, last in utf8.graphemes(text) do
+			if token ~= dismissToken or not label.Parent then
+				return
+			end
+			i += 1
+			label.MaxVisibleGraphemes = i
+			local g = string.sub(text, first, last)
+			if g ~= " " and g ~= "\n" and g ~= "\t" then
+				UIInteractionSounds.playTypewriterTick()
+			end
+			task.wait(delaySec)
+		end
+		if token == dismissToken and label.Parent then
+			label.MaxVisibleGraphemes = -1
+		end
+	end
+
+	typewriterThread = task.spawn(function()
+		task.wait(0.08)
+		typeGraphemes(titleLabel, displayTitle, 0.034)
+		if token ~= dismissToken then
+			return
+		end
+		if subLabel and subtitle then
+			task.wait(0.08)
+			typeGraphemes(subLabel, subtitle, 0.022)
+		end
 	end)
 
 	if lifetimeSec > 0 then

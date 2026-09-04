@@ -1002,7 +1002,7 @@ local function onLevelUpPulse(rewardsArg: { LevelConfig.LevelReward }?)
 	CharacterWorldNotif.showCelebration(player.Character, "Level " .. tostring(lv) .. "!", {
 		headline = tostring(lv),
 		subtitle = if summary ~= "" then summary else nil,
-		lifetimeSec = 3.5,
+		lifetimeSec = 4.2,
 		color = Color3.fromRGB(255, 220, 90),
 		offset = Vector3.new(0, 3.2, 0),
 	})

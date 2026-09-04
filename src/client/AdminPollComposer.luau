@@ -6,10 +6,14 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ContextActionService = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local AdminPollConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AdminPollConfig"))
+local BrainrotsConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotsConfig"))
+local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
+local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
@@ -65,9 +69,9 @@ local KIND_LABEL = {
 	gear = "GEAR",
 }
 local KIND_PLACEHOLDER = {
-	brainrot = "Brainrot name",
-	luckyBlock = "Lucky block name",
-	gear = "Gear id or name",
+	brainrot = "Search brainrot · Tab",
+	luckyBlock = "Search lucky block · Tab",
+	gear = "Search gear · Tab",
 }
 local optionRows: {
 	{
@@ -83,6 +87,16 @@ local optionRows: {
 local sending = false
 local closeToken = 0
 local initialized = false
+local TAB_ACTION = "AdminPollComposerTabFill"
+local SUGGEST_COUNT = 8
+type SuggestItem = { fill: string, label: string }
+local catalogCache: { [string]: { SuggestItem } } = {}
+local suggestPanel: Frame? = nil
+local suggestButtons: { TextButton } = {}
+local suggestMatches: { SuggestItem } = {}
+local suggestCursor = 0
+local suggestRowIndex = 0
+local tabBound = false
 
 local function isAdmin(): boolean
 	return player:GetAttribute("AdminPanelAllowed") == true
@@ -183,7 +197,7 @@ local function paintMode()
 		questionHeader.Text = if pollMode == "reward" then "TITLE  ·  optional" else "QUESTION"
 	end
 	if optionsHeader then
-		optionsHeader.Text = if pollMode == "reward" then "REWARDS  ·  tap kind to cycle" else "OPTIONS  ·  uncheck to hide"
+		optionsHeader.Text = if pollMode == "reward" then "REWARDS  ·  type to search  ·  Tab to fill" else "OPTIONS  ·  uncheck to hide"
 	end
 	if questionBox then
 		questionBox.PlaceholderText = if pollMode == "reward" then "Pick your reward" else "Ask anything…"
@@ -193,6 +207,9 @@ local function paintMode()
 	end
 	for i = 1, #optionRows do
 		paintOptionRow(i)
+	end
+	if pollMode ~= "reward" and suggestPanel then
+		suggestPanel.Visible = false
 	end
 end
 
@@ -239,6 +256,189 @@ local function collectRewards(): { { kind: string, id: string } }
 	return out
 end
 
+local function catalogForKind(kind: string): { SuggestItem }
+	local cached = catalogCache[kind]
+	if cached then
+		return cached
+	end
+	local items: { SuggestItem } = {}
+	if kind == "brainrot" then
+		local names = BrainrotsConfig:GetNames()
+		for _, name in names do
+			table.insert(items, { fill = name, label = name })
+		end
+	elseif kind == "luckyBlock" then
+		for _, def in LuckyBlockCatalog.BLOCKS do
+			table.insert(items, { fill = def.id, label = def.displayName })
+		end
+	elseif kind == "gear" then
+		for _, def in GearConfig.GEARS do
+			table.insert(items, { fill = tostring(def.id), label = def.name .. "  #" .. tostring(def.id) })
+		end
+	end
+	catalogCache[kind] = items
+	return items
+end
+
+local function filterCatalog(kind: string, query: string): { SuggestItem }
+	local q = string.lower((string.gsub(query, "^%s*(.-)%s*$", "%1")))
+	local items = catalogForKind(kind)
+	if q == "" then
+		local slice = {}
+		for i = 1, math.min(SUGGEST_COUNT, #items) do
+			table.insert(slice, items[i])
+		end
+		return slice
+	end
+	local prefix: { SuggestItem } = {}
+	local mid: { SuggestItem } = {}
+	for _, item in items do
+		local fillL = string.lower(item.fill)
+		local labelL = string.lower(item.label)
+		if string.sub(fillL, 1, #q) == q or string.sub(labelL, 1, #q) == q then
+			table.insert(prefix, item)
+		elseif string.find(fillL, q, 1, true) or string.find(labelL, q, 1, true) then
+			table.insert(mid, item)
+		end
+	end
+	local out = prefix
+	for _, item in mid do
+		if #out >= SUGGEST_COUNT then
+			break
+		end
+		table.insert(out, item)
+	end
+	return out
+end
+
+local function hideSuggestions()
+	if suggestPanel then
+		suggestPanel.Visible = false
+	end
+	suggestMatches = {}
+	suggestCursor = 0
+	suggestRowIndex = 0
+end
+
+local function paintSuggestHighlight()
+	for i, btn in suggestButtons do
+		local on = i == suggestCursor
+		btn.BackgroundColor3 = if on then COLORS.accent else COLORS.idle
+		btn.TextColor3 = if on then Color3.fromRGB(22, 14, 8) else COLORS.text
+	end
+end
+
+local function placeSuggestPanel(box: TextBox)
+	if not suggestPanel then
+		return
+	end
+	local abs = box.AbsolutePosition
+	local size = box.AbsoluteSize
+	suggestPanel.Position = UDim2.fromOffset(abs.X, abs.Y + size.Y + 4)
+	suggestPanel.Size = UDim2.fromOffset(math.max(240, size.X), 0)
+end
+
+local refreshSuggestions: (number) -> ()
+
+local function tabFill(delta: number)
+	if pollMode ~= "reward" then
+		return
+	end
+	local focused = UserInputService:GetFocusedTextBox()
+	local rowIndex = 0
+	for i, row in optionRows do
+		if row.box == focused then
+			rowIndex = i
+			break
+		end
+	end
+	if rowIndex == 0 then
+		return
+	end
+	if suggestRowIndex ~= rowIndex or #suggestMatches == 0 then
+		refreshSuggestions(rowIndex)
+	end
+	if #suggestMatches == 0 then
+		return
+	end
+	if suggestCursor <= 0 then
+		suggestCursor = 1
+	else
+		suggestCursor += delta
+		if suggestCursor < 1 then
+			suggestCursor = #suggestMatches
+		elseif suggestCursor > #suggestMatches then
+			suggestCursor = 1
+		end
+	end
+	paintSuggestHighlight()
+	local item = suggestMatches[suggestCursor]
+	if item then
+		local row = optionRows[rowIndex]
+		row.box.Text = item.fill
+		row.box.CursorPosition = #item.fill + 1
+	end
+end
+
+refreshSuggestions = function(rowIndex: number)
+	local row = optionRows[rowIndex]
+	if not row or pollMode ~= "reward" or not row.enabled then
+		hideSuggestions()
+		return
+	end
+	suggestRowIndex = rowIndex
+	suggestMatches = filterCatalog(row.rewardKind, row.box.Text)
+	if not suggestPanel then
+		return
+	end
+	for i = 1, SUGGEST_COUNT do
+		local btn = suggestButtons[i]
+		local item = suggestMatches[i]
+		if item and btn then
+			btn.Visible = true
+			btn.Text = item.label
+			btn.LayoutOrder = i
+		elseif btn then
+			btn.Visible = false
+		end
+	end
+	if #suggestMatches == 0 then
+		hideSuggestions()
+		return
+	end
+	suggestCursor = 0
+	paintSuggestHighlight()
+	placeSuggestPanel(row.box)
+	suggestPanel.Visible = true
+end
+
+local function bindTabFill()
+	if tabBound then
+		return
+	end
+	tabBound = true
+	ContextActionService:BindActionAtPriority(TAB_ACTION, function(_name, state)
+		if state ~= Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Pass
+		end
+		if not gui or not gui.Enabled or pollMode ~= "reward" then
+			return Enum.ContextActionResult.Pass
+		end
+		local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+		tabFill(if shift then -1 else 1)
+		return Enum.ContextActionResult.Sink
+	end, false, 20000, Enum.KeyCode.Tab)
+end
+
+local function unbindTabFill()
+	if not tabBound then
+		return
+	end
+	tabBound = false
+	ContextActionService:UnbindAction(TAB_ACTION)
+	hideSuggestions()
+end
+
 local function setOpen(open: boolean)
 	if not gui or not root or not rootScale then
 		return
@@ -255,7 +455,8 @@ local function setOpen(open: boolean)
 		TweenService:Create(rootScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 			Scale = 1,
 		}):Play()
-		setStatus(if pollMode == "reward" then "Each player claims one prize. Tap kind to cycle." else "Uncheck a row to drop that option.", nil)
+		setStatus(if pollMode == "reward" then "Type to search rewards. Tab fills, Shift+Tab cycles." else "Uncheck a row to drop that option.", nil)
+		bindTabFill()
 		if not IS_TOUCH then
 			task.defer(function()
 				if questionBox and gui and gui.Enabled then
@@ -264,6 +465,7 @@ local function setOpen(open: boolean)
 			end)
 		end
 	else
+		unbindTabFill()
 		closeToken += 1
 		local token = closeToken
 		if questionBox then
@@ -808,6 +1010,28 @@ local function buildGui(parent: PlayerGui)
 			entry.rewardKind = KIND_ORDER[(idx % #KIND_ORDER) + 1]
 			paintOptionRow(i)
 			UIInteractionSounds.playClick()
+			if UserInputService:GetFocusedTextBox() == box then
+				refreshSuggestions(i)
+			end
+		end)
+		box.Focused:Connect(function()
+			if pollMode == "reward" and entry.enabled then
+				refreshSuggestions(i)
+			end
+		end)
+		box.FocusLost:Connect(function()
+			task.delay(0.12, function()
+				if UserInputService:GetFocusedTextBox() ~= box then
+					if suggestRowIndex == i then
+						hideSuggestions()
+					end
+				end
+			end)
+		end)
+		box:GetPropertyChangedSignal("Text"):Connect(function()
+			if pollMode == "reward" and UserInputService:GetFocusedTextBox() == box then
+				refreshSuggestions(i)
+			end
 		end)
 		paintOptionRow(i)
 	end
@@ -849,6 +1073,61 @@ local function buildGui(parent: PlayerGui)
 	status.ZIndex = 3
 	status.Parent = body
 	statusLabel = status
+
+	local suggest = Instance.new("Frame")
+	suggest.Name = "Suggest"
+	suggest.BackgroundColor3 = COLORS.panel
+	suggest.BorderSizePixel = 0
+	suggest.Visible = false
+	suggest.ZIndex = 20
+	suggest.AutomaticSize = Enum.AutomaticSize.Y
+	suggest.Size = UDim2.fromOffset(280, 0)
+	addCorner(suggest, 4)
+	addStroke(suggest, COLORS.stroke, 1.2, 0.4)
+	local suggestList = Instance.new("UIListLayout")
+	suggestList.FillDirection = Enum.FillDirection.Vertical
+	suggestList.SortOrder = Enum.SortOrder.LayoutOrder
+	suggestList.Padding = UDim.new(0, 2)
+	suggestList.Parent = suggest
+	local suggestPad = Instance.new("UIPadding")
+	suggestPad.PaddingTop = UDim.new(0, 4)
+	suggestPad.PaddingBottom = UDim.new(0, 4)
+	suggestPad.PaddingLeft = UDim.new(0, 4)
+	suggestPad.PaddingRight = UDim.new(0, 4)
+	suggestPad.Parent = suggest
+	for i = 1, SUGGEST_COUNT do
+		local btn = Instance.new("TextButton")
+		btn.Name = "Hit" .. i
+		btn.AutoButtonColor = false
+		btn.BackgroundColor3 = COLORS.idle
+		btn.Size = UDim2.new(1, 0, 0, if IS_TOUCH then 36 else 28)
+		btn.Text = ""
+		btn.TextColor3 = COLORS.text
+		btn.TextSize = 13
+		btn.TextXAlignment = Enum.TextXAlignment.Left
+		btn.FontFace = UiFonts.DISPLAY_FACE
+		btn.Visible = false
+		btn.ZIndex = 21
+		addCorner(btn, 3)
+		local pad = Instance.new("UIPadding")
+		pad.PaddingLeft = UDim.new(0, 8)
+		pad.Parent = btn
+		btn.Parent = suggest
+		suggestButtons[i] = btn
+		local captured = i
+		btn.MouseButton1Click:Connect(function()
+			local item = suggestMatches[captured]
+			local row = optionRows[suggestRowIndex]
+			if item and row then
+				row.box.Text = item.fill
+				row.box.CursorPosition = #item.fill + 1
+				hideSuggestions()
+				UIInteractionSounds.playClick()
+			end
+		end)
+	end
+	suggest.Parent = screen
+	suggestPanel = suggest
 
 	panel.Parent = screen
 	screen.Parent = parent

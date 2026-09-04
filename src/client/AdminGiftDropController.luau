@@ -5,6 +5,7 @@
 ]]
 
 local Debris = game:GetService("Debris")
+local Lighting = game:GetService("Lighting")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -18,19 +19,21 @@ local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("U
 
 local CharacterWorldNotif = require(script.Parent.CharacterWorldNotif)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
-local OtherVfxController = require(script.Parent.OtherVfxController)
 local TopNotifController = require(script.Parent.TopNotifController)
 
 local player = Players.LocalPlayer
 
-local DROP_SEC = 0.58
-local HOLD_SEC = 0.55
-local FALL_HEIGHT = 22
+local DROP_SEC = 0.92
+local IMPACT_SEC = 0.26
+local HOLD_SEC = 0.18
+local SUCK_SEC = 0.46
+local FALL_HEIGHT = 28
 local FORWARD = 7
 
 local AdminGiftDropController = {}
 
 local dropConn: RBXScriptConnection? = nil
+local shakeConn: RBXScriptConnection? = nil
 local dropToken = 0
 local liveModel: Model? = nil
 local initialized = false
@@ -48,6 +51,10 @@ local function disconnectDrop()
 	if dropConn then
 		dropConn:Disconnect()
 		dropConn = nil
+	end
+	if shakeConn then
+		shakeConn:Disconnect()
+		shakeConn = nil
 	end
 end
 
@@ -202,6 +209,100 @@ local function makeFallbackCrate(displayName: string, color: Color3): Model
 	return model
 end
 
+local function playImpactFrames(token: number)
+	local cam = Workspace.CurrentCamera
+	local char = player.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if cam then
+		local origFov = cam.FieldOfView
+		cam.FieldOfView = origFov + 12
+		TweenService:Create(cam, TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			FieldOfView = origFov - 7,
+		}):Play()
+		task.delay(0.1, function()
+			if token ~= dropToken then
+				return
+			end
+			TweenService:Create(cam, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				FieldOfView = origFov,
+			}):Play()
+		end)
+	end
+
+	local flash = Instance.new("ColorCorrectionEffect")
+	flash.Name = "AdminGiftImpact"
+	flash.Brightness = 1.55
+	flash.Contrast = 0.4
+	flash.Saturation = -0.2
+	flash.TintColor = Color3.fromRGB(255, 236, 210)
+	flash.Parent = Lighting
+	TweenService:Create(flash, TweenInfo.new(0.24, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Brightness = 0,
+		Contrast = 0,
+		Saturation = 0,
+		TintColor = Color3.fromRGB(255, 255, 255),
+	}):Play()
+	Debris:AddItem(flash, 0.4)
+
+	if not (hum and hum:IsA("Humanoid")) then
+		return
+	end
+	if shakeConn then
+		shakeConn:Disconnect()
+		shakeConn = nil
+	end
+	local t0 = os.clock()
+	local humanoid = hum
+	shakeConn = RunService.RenderStepped:Connect(function()
+		if token ~= dropToken or not humanoid.Parent then
+			if shakeConn then
+				shakeConn:Disconnect()
+				shakeConn = nil
+			end
+			if humanoid.Parent then
+				humanoid.CameraOffset = Vector3.zero
+			end
+			return
+		end
+		local t = os.clock() - t0
+		if t >= IMPACT_SEC then
+			humanoid.CameraOffset = Vector3.zero
+			if shakeConn then
+				shakeConn:Disconnect()
+				shakeConn = nil
+			end
+			return
+		end
+		local fade = 1 - (t / IMPACT_SEC)
+		humanoid.CameraOffset = Vector3.new((math.random() - 0.5) * 1.6 * fade, (math.random() - 0.5) * 1.2 * fade, 0)
+	end)
+end
+
+local function suckIntoBody(token: number, model: Model, fromCf: CFrame)
+	local startScale = model:GetScale()
+	local t0 = os.clock()
+	dropConn = RunService.Heartbeat:Connect(function()
+		if token ~= dropToken or liveModel ~= model or not model.Parent then
+			disconnectDrop()
+			return
+		end
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		local dest = if hrp and hrp:IsA("BasePart")
+			then hrp.Position + Vector3.new(0, 1.15, 0)
+			else fromCf.Position
+		local alpha = math.clamp((os.clock() - t0) / SUCK_SEC, 0, 1)
+		local eased = alpha * alpha
+		local goal = fromCf:Lerp(CFrame.new(dest), eased) * CFrame.Angles(0, alpha * 7.5, alpha * 1.8)
+		model:PivotTo(goal)
+		model:ScaleTo(math.max(0.04, startScale * (1 - eased * 0.96)))
+		if alpha >= 1 then
+			disconnectDrop()
+			destroyLive()
+		end
+	end)
+end
+
 local function spawnBurstDebris(at: Vector3)
 	local ring = Instance.new("Part")
 	ring.Name = "AdminGiftBurstRing"
@@ -327,36 +428,27 @@ local function playDrop(payload: any)
 			disconnectDrop()
 			liveModel:PivotTo(landCf)
 			spawnBurstDebris(ground)
-			OtherVfxController.playLuckyBlockOpen(landCf)
+			playImpactFrames(token)
 			GameSoundEffects.playGroundSmash(1)
 			GameSoundEffects.playDrop(rarity)
 			local isPoll = reason == AdminGiftConfig.REASON_REWARD_POLL
 			local toast = if isPoll
 				then ("You claimed " .. displayName .. "!")
-				else ("Admin gifted you " .. displayName .. "!")
-			CharacterWorldNotif.showCelebration(player.Character, displayName, {
-				subtitle = if isPoll then "You picked this prize" else "Admin gifted you this",
-				lifetimeSec = 3.2,
-				color = Color3.fromRGB(255, 214, 96),
-			})
-			TopNotifController.showPersonal(toast, rarity, 3.6)
+				else ("Admin has gifted u " .. displayName .. "!")
+			local subtitle = if isPoll then "You picked this prize" else "Admin has gifted u this"
+			local landed = liveModel
 			local holdToken = token
 			task.delay(HOLD_SEC, function()
-				if holdToken ~= dropToken then
+				if holdToken ~= dropToken or landed ~= liveModel or not landed then
 					return
 				end
-				local fading = liveModel
-				if fading then
-					for _, d in fading:GetDescendants() do
-						if d:IsA("BasePart") then
-							TweenService:Create(d, TweenInfo.new(0.28), { Transparency = 1 }):Play()
-						end
-					end
-					Debris:AddItem(fading, 0.35)
-				end
-				if liveModel == fading then
-					liveModel = nil
-				end
+				CharacterWorldNotif.showCelebration(player.Character, displayName, {
+					subtitle = subtitle,
+					lifetimeSec = 3.4,
+					color = Color3.fromRGB(255, 214, 96),
+				})
+				TopNotifController.showGift(toast, rarity, 3.8)
+				suckIntoBody(holdToken, landed, landCf)
 			end)
 		end
 	end)

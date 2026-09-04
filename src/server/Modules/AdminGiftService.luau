@@ -295,21 +295,59 @@ function M.giveToPlayer(player: Player, spec: GiftSpec): (boolean, string?)
 		return false, "Player left."
 	end
 	PlayerDataService.waitUntilLoaded(player)
-	local granted = 0
-	if spec.kind == "brainrot" then
-		granted = grantBrainrot(player, spec)
-	elseif spec.kind == "luckyBlock" then
-		granted = grantLuckyBlock(player, spec)
-	elseif spec.kind == "gear" then
-		granted = grantGear(player, spec)
-	end
-	if granted <= 0 then
-		return false, "Grant failed."
-	end
-	if player:GetAttribute("PlayerDataLoaded") == true then
-		PlayerDataService.savePlayerData(player)
+	if spec.kind == "brainrot" and not resolveBrainrot(spec.id) then
+		return false, "Unknown brainrot."
+	elseif spec.kind == "luckyBlock" and not resolveLuckyBlock(spec.id) then
+		return false, "Unknown lucky block."
+	elseif spec.kind == "gear" and not resolveGear(spec.id) then
+		return false, "Unknown gear."
 	end
 	present(player, spec)
+
+	local finished = false
+	local function commitGrant()
+		if finished then
+			return
+		end
+		finished = true
+		if not player.Parent then
+			return
+		end
+		local granted = 0
+		if spec.kind == "brainrot" then
+			granted = grantBrainrot(player, spec)
+		elseif spec.kind == "luckyBlock" then
+			granted = grantLuckyBlock(player, spec)
+		elseif spec.kind == "gear" then
+			granted = grantGear(player, spec)
+		end
+		if granted <= 0 then
+			warn("[AdminGiftService] delayed grant failed for", player.Name, spec.kind, spec.id)
+			return
+		end
+		if player:GetAttribute("PlayerDataLoaded") == true then
+			PlayerDataService.savePlayerData(player)
+		end
+	end
+
+	local leavingConn: RBXScriptConnection? = nil
+	leavingConn = Players.PlayerRemoving:Connect(function(leaving)
+		if leaving ~= player then
+			return
+		end
+		if leavingConn then
+			leavingConn:Disconnect()
+			leavingConn = nil
+		end
+		commitGrant()
+	end)
+	task.delay(AdminGiftConfig.GRANT_DELAY_SEC, function()
+		if leavingConn then
+			leavingConn:Disconnect()
+			leavingConn = nil
+		end
+		commitGrant()
+	end)
 	return true, M.labelFor(spec)
 end
 

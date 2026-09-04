@@ -36,6 +36,7 @@ local tickerConn: RBXScriptConnection? = nil
 local markerGen = 0
 local lastTimerRefreshAt = 0
 local TIMER_REFRESH_SEC = 0.25
+local markerGui: ScreenGui? = nil
 
 local RaritySpawnStyle = require(script.Parent:WaitForChild("RaritySpawnStyle"))
 
@@ -44,6 +45,25 @@ local OUTLINE_RANGE = 42
 local OUTLINE_RANGE_SQ = OUTLINE_RANGE * OUTLINE_RANGE
 local PROXIMITY_TICK = 0.12
 local proximityAccum = 0
+
+local function ensureMarkerGui(): ScreenGui?
+	if markerGui and markerGui.Parent then
+		return markerGui
+	end
+	local playerGui = player:FindFirstChild("PlayerGui")
+	if not (playerGui and playerGui:IsA("PlayerGui")) then
+		return nil
+	end
+	local screen = Instance.new("ScreenGui")
+	screen.Name = "GlobalRaritySpawnMarkers"
+	screen.ResetOnSpawn = false
+	screen.IgnoreGuiInset = true
+	screen.DisplayOrder = 70
+	screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screen.Parent = playerGui
+	markerGui = screen
+	return screen
+end
 
 local function pulseColor(rarity: string): Color3
 	return RaritySpawnStyle.accentColor(rarity)
@@ -340,8 +360,8 @@ local function buildMarkerUi(rarity: string, _iconImage: string, brainrotName: s
 
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "GlobalRaritySpawnMarker"
-	bb.Size = UDim2.fromOffset(132, 168)
-	bb.StudsOffset = Vector3.new(0, 16, 0)
+	bb.Size = UDim2.fromOffset(160, 210)
+	bb.StudsOffset = Vector3.new(0, 8.5, 0)
 	bb.AlwaysOnTop = true
 	bb.LightInfluence = 0
 	bb.MaxDistance = 2500
@@ -370,7 +390,7 @@ local function buildMarkerUi(rarity: string, _iconImage: string, brainrotName: s
 	icon.Name = "Icon"
 	icon.LayoutOrder = 2
 	icon.BackgroundTransparency = 1
-	icon.Size = UDim2.fromOffset(72, 72)
+	icon.Size = UDim2.fromOffset(96, 96)
 	icon.ScaleType = Enum.ScaleType.Fit
 	updateMarkerIcon(icon, _iconImage, rarity)
 	icon.Parent = bb
@@ -432,7 +452,8 @@ local function trackMarker(bushKey: string, rarity: string, endsAt: number)
 
 	local bb, timerLabel = buildMarkerUi(rarity, _iconImage, nameStr)
 	bb.Adornee = adornee
-	bb.Parent = player:FindFirstChild("PlayerGui") or Workspace.CurrentCamera
+	local host = ensureMarkerGui()
+	bb.Parent = host or Workspace.CurrentCamera
 
 	local state: MarkerState = {
 		bushKey = bushKey,
@@ -466,24 +487,26 @@ end
 
 local function trackMarkerWithRetry(bushKey: string, rarity: string, endsAt: number)
 	task.spawn(function()
-		local deadline = os.clock() + 12
+		local deadline = os.clock() + 20
 		while os.clock() < deadline do
 			local liveEnds = ReplicatedStorage:GetAttribute(C.ACTIVE_ENDS_ATTR)
 			local liveKey = ReplicatedStorage:GetAttribute(C.ACTIVE_BUSH_KEY_ATTR)
-			if typeof(liveEnds) ~= "number" or liveEnds ~= endsAt or os.time() >= liveEnds then
+			if typeof(liveEnds) ~= "number" or os.time() >= liveEnds then
 				return
 			end
-			if typeof(liveKey) ~= "string" or liveKey ~= bushKey then
+			if typeof(liveKey) == "string" and liveKey ~= bushKey then
 				return
 			end
-			if activeMarker and activeMarker.bushKey == bushKey then
+			if activeMarker and activeMarker.bushKey == bushKey and activeMarker.billboard.Parent then
 				return
 			end
 			if readActivePos() or findBushByKey(bushKey) then
 				trackMarker(bushKey, rarity, endsAt)
-				return
+				if activeMarker and activeMarker.bushKey == bushKey then
+					return
+				end
 			end
-			task.wait(0.4)
+			task.wait(0.25)
 		end
 	end)
 end
@@ -504,10 +527,18 @@ local function onSpawnEvent(rarityId: string?, brainrotName: string?)
 	local endsAt = ReplicatedStorage:GetAttribute(C.ACTIVE_ENDS_ATTR)
 	TopNotifController.showRaritySpawn(message, rarityId)
 
-	local bushKey = ReplicatedStorage:GetAttribute(C.ACTIVE_BUSH_KEY_ATTR)
-	if typeof(bushKey) == "string" and typeof(endsAt) == "number" then
-		trackMarkerWithRetry(bushKey, rarityId, endsAt)
-	end
+	task.defer(function()
+		local deadline = os.clock() + 6
+		while os.clock() < deadline do
+			local bushKey = ReplicatedStorage:GetAttribute(C.ACTIVE_BUSH_KEY_ATTR)
+			local liveEnds = ReplicatedStorage:GetAttribute(C.ACTIVE_ENDS_ATTR)
+			if typeof(bushKey) == "string" and bushKey ~= "" and typeof(liveEnds) == "number" then
+				trackMarkerWithRetry(bushKey, rarityId, liveEnds)
+				return
+			end
+			task.wait(0.15)
+		end
+	end)
 end
 
 local function syncFromAttributes()
@@ -550,6 +581,7 @@ function GlobalRaritySpawnController.init()
 	TopNotifController.init()
 	findTimerLabels()
 	refreshTimerLabels()
+	ensureMarkerGui()
 	ensureTicker()
 	syncFromAttributes()
 

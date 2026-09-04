@@ -42,7 +42,6 @@ local BAR_TWEEN = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirectio
 local POP_IN = TweenInfo.new(0.34, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 local POP_OUT = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.In)
 local PAD_ACTION = "AdminPollGamepadVote"
-local KEY_ACTION = "AdminPollKeyboardVote"
 
 local AdminPollController = {}
 
@@ -67,7 +66,7 @@ local rootScale: UIScale? = nil
 local questionLabel: TextLabel? = nil
 local metaLabel: TextLabel? = nil
 local timerLabel: TextLabel? = nil
-local timerPill: Frame? = nil
+local timerPill: GuiObject? = nil
 local hintLabel: TextLabel? = nil
 local controlsLabel: TextLabel? = nil
 local rows: { OptionRow } = {}
@@ -85,6 +84,8 @@ local lastCounts: { number } = { 0, 0, 0, 0 }
 local hideToken = 0
 local initialized = false
 local inputBound = false
+local collapsed = false
+local resultsRevealed = false
 
 local vote: (number) -> ()
 
@@ -187,11 +188,22 @@ local function refreshControlsHint()
 		)
 	elseif UserInputService.KeyboardEnabled and not IS_TOUCH then
 		controlsLabel.Visible = true
-		controlsLabel.Text = "1 – 4 to vote"
+		controlsLabel.Text = "Click to vote"
 	else
 		controlsLabel.Visible = false
 		controlsLabel.Text = ""
 	end
+end
+
+local function isLocalAdmin(): boolean
+	return player:GetAttribute("AdminPanelAllowed") == true
+end
+
+local function countsVisible(): boolean
+	if pollMode ~= "reward" then
+		return true
+	end
+	return resultsRevealed or isLocalAdmin()
 end
 
 local function unbindPollInput()
@@ -200,7 +212,6 @@ local function unbindPollInput()
 	end
 	inputBound = false
 	ContextActionService:UnbindAction(PAD_ACTION)
-	ContextActionService:UnbindAction(KEY_ACTION)
 end
 
 local function bindPollInput()
@@ -233,35 +244,6 @@ local function bindPollInput()
 		end
 		return Enum.ContextActionResult.Pass
 	end, false, Enum.ContextActionPriority.High.Value + 80, Enum.KeyCode.DPadUp, Enum.KeyCode.DPadDown, GamepadInput.ACCEPT)
-
-	ContextActionService:BindActionAtPriority(KEY_ACTION, function(_name, state, input)
-		if state ~= Enum.UserInputState.Begin then
-			return Enum.ContextActionResult.Pass
-		end
-		if not pollId or not gui or not gui.Enabled then
-			return Enum.ContextActionResult.Pass
-		end
-		if Workspace:GetServerTimeNow() >= endsAt then
-			return Enum.ContextActionResult.Pass
-		end
-		local map: { [Enum.KeyCode]: number } = {
-			[Enum.KeyCode.One] = 1,
-			[Enum.KeyCode.Two] = 2,
-			[Enum.KeyCode.Three] = 3,
-			[Enum.KeyCode.Four] = 4,
-			[Enum.KeyCode.KeypadOne] = 1,
-			[Enum.KeyCode.KeypadTwo] = 2,
-			[Enum.KeyCode.KeypadThree] = 3,
-			[Enum.KeyCode.KeypadFour] = 4,
-		}
-		local index = map[input.KeyCode]
-		if typeof(index) ~= "number" then
-			return Enum.ContextActionResult.Pass
-		end
-		focusIndex = index
-		vote(index)
-		return Enum.ContextActionResult.Sink
-	end, false, Enum.ContextActionPriority.High.Value + 80, Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four, Enum.KeyCode.KeypadOne, Enum.KeyCode.KeypadTwo, Enum.KeyCode.KeypadThree, Enum.KeyCode.KeypadFour)
 end
 
 local function setCountText(row: OptionRow, value: number)
@@ -306,8 +288,17 @@ local function applyCounts(counts: { number }, total: number)
 		lastCounts[i] = votes
 		tweenCount(row, votes)
 		local pct = if total > 0 then votes / total else 0
-		tweenBar(row, pct)
-		row.percent.Text = if total > 0 then string.format("%d%%", math.floor(pct * 100 + 0.5)) else "0%"
+		if countsVisible() then
+			tweenBar(row, pct)
+			row.percent.Text = if total > 0 then string.format("%d%%", math.floor(pct * 100 + 0.5)) else "0%"
+			row.percent.Visible = true
+			row.count.Visible = true
+		else
+			tweenBar(row, 0)
+			row.percent.Text = ""
+			row.percent.Visible = false
+			row.count.Visible = false
+		end
 	end
 	if hintLabel then
 		if pollMode == "reward" then
@@ -320,6 +311,60 @@ local function applyCounts(counts: { number }, total: number)
 	end
 end
 
+local function setCollapsed(on: boolean)
+	collapsed = on
+	if questionLabel then
+		questionLabel.Visible = not on
+	end
+	for i, row in rows do
+		row.root.Visible = (not on) and i <= optionCount
+	end
+	if hintLabel then
+		hintLabel.Visible = not on
+	end
+	if controlsLabel then
+		controlsLabel.Visible = (not on) and GamepadInput.isPreferred()
+	end
+	if on then
+		unbindPollInput()
+		if hintLabel and pollMode == "reward" then
+			hintLabel.Text = "Tap the timer for results"
+		end
+	else
+		if pollId and Workspace:GetServerTimeNow() < endsAt and not (pollMode == "reward" and claimedReward) then
+			bindPollInput()
+		end
+		refreshControlsHint()
+		applyCounts(lastCounts, (function()
+			local t = 0
+			for i = 1, optionCount do
+				t += lastCounts[i] or 0
+			end
+			return t
+		end)())
+	end
+end
+
+local function toggleResultsFromTimer()
+	if not pollId then
+		return
+	end
+	resultsRevealed = true
+	UIInteractionSounds.playClick()
+	if collapsed then
+		setCollapsed(false)
+	else
+		setCollapsed(true)
+	end
+	applyCounts(lastCounts, (function()
+		local t = 0
+		for i = 1, optionCount do
+			t += lastCounts[i] or 0
+		end
+		return t
+	end)())
+end
+
 local function hideHud(immediate: boolean?)
 	hideToken += 1
 	local token = hideToken
@@ -329,6 +374,8 @@ local function hideHud(immediate: boolean?)
 	myVote = nil
 	pollMode = "question"
 	claimedReward = false
+	collapsed = false
+	resultsRevealed = false
 	endsAt = 0
 	if immediate == true or not root or not rootScale or not gui or not gui.Enabled then
 		if root then
@@ -356,6 +403,8 @@ end
 local function finishPoll()
 	local highlight = myVote
 	if pollMode ~= "reward" then
+		resultsRevealed = true
+		setCollapsed(false)
 		local best = 1
 		local bestVotes = -1
 		for i = 1, optionCount do
@@ -463,6 +512,9 @@ vote = function(index: number)
 		if hintLabel then
 			hintLabel.Text = "Claimed — watch the drop"
 		end
+		if not isLocalAdmin() then
+			setCollapsed(true)
+		end
 	end
 	paintVoteHighlight()
 	UIInteractionSounds.playClick()
@@ -485,6 +537,8 @@ local function showPoll(payload: any)
 	myVote = nil
 	claimedReward = false
 	pollMode = if payload.mode == "reward" then "reward" else "question"
+	collapsed = false
+	resultsRevealed = isLocalAdmin()
 	endsAt = if typeof(payload.endsAt) == "number" then payload.endsAt else Workspace:GetServerTimeNow() + AdminPollConfig.DURATION_SEC
 	optionCount = math.clamp(#payload.options, 0, 4)
 	if optionCount < 2 then
@@ -555,6 +609,7 @@ local function showPoll(payload: any)
 		applyCounts(counts, total)
 	end
 	startTimer()
+	setCollapsed(false)
 end
 
 local function onUpdate(payload: any)
@@ -627,8 +682,10 @@ local function buildHud(parent: PlayerGui)
 	outlineText(meta, 2)
 	meta.Parent = header
 
-	local pill = Instance.new("Frame")
+	local pill = Instance.new("TextButton")
 	pill.Name = "TimerPill"
+	pill.AutoButtonColor = false
+	pill.Text = ""
 	pill.AnchorPoint = Vector2.new(1, 0.5)
 	pill.Position = UDim2.new(1, 0, 0.5, 0)
 	pill.Size = UDim2.fromOffset(if IS_TOUCH then 78 else 70, if IS_TOUCH then 30 else 26)
@@ -637,6 +694,7 @@ local function buildHud(parent: PlayerGui)
 	addCorner(pill, 10)
 	addBlackStroke(pill, 3)
 	pill.Parent = header
+	pill.MouseButton1Click:Connect(toggleResultsFromTimer)
 	local timer = Instance.new("TextLabel")
 	timer.BackgroundTransparency = 1
 	timer.Size = UDim2.fromScale(1, 1)

@@ -7,6 +7,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
@@ -43,6 +44,7 @@ type QueuedMessage = {
 	lifetimeSec: number?,
 	senderName: string?,
 	senderUserId: number?,
+	typewriter: boolean?,
 }
 
 type BroadcastBanner = {
@@ -81,6 +83,7 @@ local activeIsError = false
 local activeIsBroadcast = false
 local errorHideThread: thread? = nil
 local typewriterThread: thread? = nil
+local classicWaveConn: RBXScriptConnection? = nil
 local broadcastConn: RBXScriptConnection? = nil
 local _defaultPanelStrokeColor: Color3? = nil
 local thumbnailCache: { [number]: string } = {}
@@ -329,6 +332,14 @@ local function cancelTypewriterThread()
 		task.cancel(typewriterThread)
 		typewriterThread = nil
 	end
+	if classicWaveConn then
+		classicWaveConn:Disconnect()
+		classicWaveConn = nil
+	end
+	if label then
+		label.Rotation = 0
+		label.MaxVisibleGraphemes = -1
+	end
 end
 
 local function hideClassicHost()
@@ -338,6 +349,7 @@ local function hideClassicHost()
 	if label then
 		label.Visible = false
 		label.Rotation = 0
+		label.MaxVisibleGraphemes = -1
 	end
 	if animScale then
 		animScale.Scale = 1
@@ -790,6 +802,42 @@ processQueue = function()
 		if labelStroke then
 			TweenService:Create(labelStroke, TEXT_IN, { Transparency = 0 }):Play()
 		end
+		if entry.typewriter == true then
+			label.MaxVisibleGraphemes = 0
+			local letters = graphemeCount(entry.message)
+			local delaySec = if letters > 70 then 0.018 elseif letters > 36 then 0.024 else 0.032
+			local waveLabel = label
+			local waveT0 = os.clock()
+			classicWaveConn = RunService.Heartbeat:Connect(function()
+				if not waveLabel.Parent then
+					if classicWaveConn then
+						classicWaveConn:Disconnect()
+						classicWaveConn = nil
+					end
+					return
+				end
+				waveLabel.Rotation = math.sin((os.clock() - waveT0) * 9.5) * 2.4
+			end)
+			typewriterThread = task.spawn(function()
+				task.wait(0.08)
+				local i = 0
+				for first, last in utf8.graphemes(entry.message) do
+					if token ~= hideToken or not label then
+						return
+					end
+					i += 1
+					label.MaxVisibleGraphemes = i
+					local g = string.sub(entry.message, first, last)
+					if g ~= " " and g ~= "\n" and g ~= "\t" then
+						UIInteractionSounds.playTypewriterTick()
+					end
+					task.wait(delaySec)
+				end
+				if token == hideToken and label then
+					label.MaxVisibleGraphemes = -1
+				end
+			end)
+		end
 	end
 
 	local lifetime = if entry.isError
@@ -803,6 +851,7 @@ processQueue = function()
 		if token ~= hideToken or not host or not label or not animScale then
 			return
 		end
+		cancelTypewriterThread()
 		cancelActiveTween()
 		activeFadeTween = TweenService:Create(animScale, FADE_OUT, { Scale = 0.55 })
 		activeFadeTween:Play()
@@ -877,7 +926,8 @@ local function enqueue(
 	rarityId: string?,
 	lifetimeSec: number?,
 	senderName: string?,
-	senderUserId: number?
+	senderUserId: number?,
+	typewriter: boolean?
 )
 	table.insert(messageQueue, {
 		message = message,
@@ -886,6 +936,7 @@ local function enqueue(
 		lifetimeSec = lifetimeSec,
 		senderName = senderName,
 		senderUserId = senderUserId,
+		typewriter = typewriter == true,
 	})
 	processQueue()
 end
@@ -916,6 +967,14 @@ end
 
 function TopNotifController.showPersonal(message: string, rarityId: string?, lifetimeSec: number?)
 	TopNotifController.showRaritySpawn(message, rarityId or "legendary", lifetimeSec, true)
+end
+
+function TopNotifController.showGift(message: string, rarityId: string?, lifetimeSec: number?)
+	if not host then
+		TopNotifController.init()
+	end
+	UIInteractionSounds.playNotif()
+	enqueue(message, false, rarityId or "legendary", lifetimeSec, nil, nil, true)
 end
 
 function TopNotifController.showBroadcast(

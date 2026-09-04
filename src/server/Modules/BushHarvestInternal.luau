@@ -276,15 +276,33 @@ function M.install(config: InstallConfig)
 			if typeof(playerArg) ~= "Instance" or not (playerArg :: any):IsA("Player") then
 				return false
 			end
-			if typeof(entryArg) ~= "table" then
-				return false
-			end
 			local plr = playerArg :: Player
 			if not config.brainrotInventories[plr] then
 				config.brainrotInventories[plr] = {}
 			end
 			if not config.brainrotParkedInExpandedBackpack[plr] then
 				config.brainrotParkedInExpandedBackpack[plr] = {}
+			end
+
+			local skipSync = typeof(opts) == "table" and opts.skipSync == true
+			local syncOnly = typeof(opts) == "table" and opts.syncOnly == true
+			if syncOnly then
+				-- Gift batches leave leftover 3D tools in Backpack; wipe those so
+				-- the toolbar can select the new rows. Keep whatever is in-hand.
+				local bp = plr:FindFirstChildOfClass("Backpack")
+				if bp then
+					for _, c in ipairs(bp:GetChildren()) do
+						if c:IsA("Tool") and c:GetAttribute("BrainrotTool") == true then
+							c:Destroy()
+						end
+					end
+				end
+				config.notifyClientInventorySync(plr, nil)
+				return true
+			end
+
+			if typeof(entryArg) ~= "table" then
+				return false
 			end
 			local incoming = entryArg :: any
 			local name = if typeof(incoming.name) == "string" then incoming.name else nil
@@ -309,9 +327,13 @@ function M.install(config: InstallConfig)
 				baseIncome = baseIncome,
 			}
 
-			local brainrotsFolder = config.Brainrots.getBrainrotsFolder()
-			if brainrotsFolder and brainrotsFolder:IsA("Folder") then
-				config.enrichEntryFromBrainrotsFolder(brainrotsFolder :: Folder, entry)
+			-- Folder mesh lookup is expensive; catalog + index icon is enough to stash
+			-- the row. The tool clone happens later when the player actually equips.
+			if not skipSync then
+				local brainrotsFolder = config.Brainrots.getBrainrotsFolder()
+				if brainrotsFolder and brainrotsFolder:IsA("Folder") then
+					config.enrichEntryFromBrainrotsFolder(brainrotsFolder :: Folder, entry)
+				end
 			end
 			config.enrichEntryFromCatalog(entry)
 			if entry.icon == "" then
@@ -335,11 +357,13 @@ function M.install(config: InstallConfig)
 			if typeof(opts) == "table" and opts.equip == false then
 				forceEquip = false
 			end
-			local syncSlot = newSlot
+			if skipSync then
+				return true
+			end
 			if forceEquip then
 				local equippedIdx = config.equipBrainrotSlotForPlayer(plr, newSlot, true)
 				if typeof(equippedIdx) == "number" then
-					syncSlot = equippedIdx
+					config.notifyClientInventorySync(plr, equippedIdx, false)
 				else
 					task.spawn(function()
 						for _ = 1, 24 do
@@ -351,9 +375,13 @@ function M.install(config: InstallConfig)
 							task.wait(0.25)
 						end
 					end)
+					config.notifyClientInventorySync(plr, newSlot, false)
 				end
+			else
+				-- Do not pass a slot: notifyClientInventorySync auto-equips in spawn
+				-- and would clone a 3D tool per gift (lag + unselectable duplicates).
+				config.notifyClientInventorySync(plr, nil)
 			end
-			config.notifyClientInventorySync(plr, syncSlot, false)
 			return true
 		end
 	end

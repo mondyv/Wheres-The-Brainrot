@@ -340,12 +340,21 @@ local function grantBrainrot(player: Player, spec: GiftSpec): number
 				level = level,
 			}, {
 				equip = false,
+				skipSync = true,
 			})
 		end)
 		if not ok then
 			warn("[AdminGiftService] brainrot grant failed:", result)
 		elseif result then
 			granted += 1
+		end
+	end
+	if granted > 0 then
+		local syncOk, syncErr = pcall(function()
+			return grant:Invoke(player, {}, { syncOnly = true })
+		end)
+		if not syncOk then
+			warn("[AdminGiftService] inventory sync failed:", syncErr)
 		end
 	end
 	return granted

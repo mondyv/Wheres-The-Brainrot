@@ -22,6 +22,17 @@ local typewriterThread: thread? = nil
 local baseText = ""
 local dismissToken = 0
 
+local function rainbowScrollSequence(phase: number): ColorSequence
+	-- Extra keypoints so RGB lerp between hues stays close to a real rainbow.
+	local n = 12
+	local keys = table.create(n + 1)
+	for i = 0, n do
+		local t = i / n
+		keys[i + 1] = ColorSequenceKeypoint.new(t, Color3.fromHSV((t - phase) % 1, 0.92, 1))
+	end
+	return ColorSequence.new(keys)
+end
+
 local FADE_IN = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local FADE_OUT = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 
@@ -362,16 +373,9 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 			sub.TextColor3 = Color3.fromRGB(255, 255, 255)
 			local grad = Instance.new("UIGradient")
 			grad.Name = "Rainbow"
-			grad.Color = ColorSequence.new({
-				ColorSequenceKeypoint.new(0, Color3.fromHSV(0, 0.9, 1)),
-				ColorSequenceKeypoint.new(1 / 6, Color3.fromHSV(1 / 6, 0.9, 1)),
-				ColorSequenceKeypoint.new(2 / 6, Color3.fromHSV(2 / 6, 0.9, 1)),
-				ColorSequenceKeypoint.new(3 / 6, Color3.fromHSV(3 / 6, 0.9, 1)),
-				ColorSequenceKeypoint.new(4 / 6, Color3.fromHSV(4 / 6, 0.9, 1)),
-				ColorSequenceKeypoint.new(5 / 6, Color3.fromHSV(5 / 6, 0.9, 1)),
-				ColorSequenceKeypoint.new(1, Color3.fromHSV(0, 0.9, 1)),
-			})
-			grad.Rotation = 18
+			grad.Color = rainbowScrollSequence(0)
+			grad.Rotation = 0
+			grad.Offset = Vector2.zero
 			grad.Parent = sub
 		end
 	end
@@ -409,6 +413,7 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 	local floatDur = math.max(0.85, lifetimeSec - 0.3)
 	local token = dismissToken
 	local rainbowGrad = if subLabel then subLabel:FindFirstChild("Rainbow") else nil
+	local lastRainbowAt = -1
 	followConn = RunService.RenderStepped:Connect(function()
 		if token ~= dismissToken or not bb.Parent then
 			stopFollow()
@@ -428,8 +433,12 @@ function CharacterWorldNotif.showCelebration(character: Model?, title: string, o
 		titleLabel.Rotation = math.sin((os.clock() - floatStart) * 8.5) * 2.8
 		if rainbowGrad and rainbowGrad:IsA("UIGradient") and rainbowGrad.Parent then
 			local now = os.clock() - floatStart
-			rainbowGrad.Rotation = (now * 48) % 360
-			rainbowGrad.Offset = Vector2.new(math.sin(now * 0.9) * 0.42, 0)
+			if now - lastRainbowAt >= 0.04 then
+				lastRainbowAt = now
+				rainbowGrad.Rotation = 0
+				rainbowGrad.Offset = Vector2.zero
+				rainbowGrad.Color = rainbowScrollSequence(now * 0.28)
+			end
 		end
 	end)
 

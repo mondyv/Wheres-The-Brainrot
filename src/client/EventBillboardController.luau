@@ -21,9 +21,16 @@ local player = Players.LocalPlayer
 local PROMPT_NAME = "EventJoinPrompt"
 local HIGHLIGHT_NAME = "EventBillboardHighlight"
 local TIMER_GUI_NAME = "EventCountdownGui"
-local LIVE_GOLD = Color3.fromRGB(255, 214, 74)
-local LIVE_GREEN = Color3.fromRGB(90, 230, 160)
-local ENDED_GRAY = Color3.fromRGB(168, 178, 192)
+-- Match the studded maroon frame on Map.EventBillboard.
+local FRAME = Color3.fromRGB(68, 26, 42)
+local FRAME_EDGE = Color3.fromRGB(32, 10, 20)
+local FRAME_GLOW = Color3.fromRGB(214, 132, 156)
+local STUD = Color3.fromRGB(108, 46, 66)
+local SCREEN = Color3.fromRGB(14, 8, 12)
+local INK = Color3.fromRGB(255, 250, 246)
+local DUST = Color3.fromRGB(214, 176, 186)
+local LIVE_ROSE = Color3.fromRGB(255, 108, 128)
+local ENDED_GRAY = Color3.fromRGB(168, 150, 158)
 
 local EventBillboardController = {}
 
@@ -32,7 +39,12 @@ local prompt: ProximityPrompt? = nil
 local highlight: Highlight? = nil
 local timerGui: BillboardGui? = nil
 local titleLabel: TextLabel? = nil
-local timeLabel: TextLabel? = nil
+local windowLabel: TextLabel? = nil
+local endedLabel: TextLabel? = nil
+local chipRow: Frame? = nil
+local livePip: Frame? = nil
+local chipNums: { TextLabel } = {}
+local chipUnits: { TextLabel } = {}
 local promptConn: RBXScriptConnection? = nil
 local shownConn: RBXScriptConnection? = nil
 local hiddenConn: RBXScriptConnection? = nil
@@ -69,19 +81,16 @@ local function setOutlineVisible(on: boolean)
 	end
 end
 
-local function formatRemain(sec: number): string
+local function remainParts(sec: number): ({ string }, { string })
 	local n = math.max(0, math.floor(sec + 0.5))
 	local d = math.floor(n / 86400)
 	local h = math.floor((n % 86400) / 3600)
 	local m = math.floor((n % 3600) / 60)
 	local s = n % 60
 	if d > 0 then
-		return string.format("%dd %02dh %02dm", d, h, m)
+		return { tostring(d), string.format("%02d", h), string.format("%02d", m) }, { "DAYS", "HRS", "MIN" }
 	end
-	if h > 0 then
-		return string.format("%dh %02dm %02ds", h, m, s)
-	end
-	return string.format("%02dm %02ds", m, s)
+	return { string.format("%02d", h), string.format("%02d", m), string.format("%02d", s) }, { "HRS", "MIN", "SEC" }
 end
 
 local function eventPhase(): ("upcoming" | "live" | "ended", number)
@@ -97,26 +106,41 @@ end
 
 local function paintTimer()
 	local title = titleLabel
-	local clock = timeLabel
-	if not (title and clock) then
+	if not title or #chipNums < 3 then
 		return
 	end
 	local phase, remain = eventPhase()
+	local showChips = phase ~= "ended"
+	if chipRow then
+		chipRow.Visible = showChips
+	end
+	if endedLabel then
+		endedLabel.Visible = not showChips
+	end
+	if windowLabel then
+		windowLabel.TextColor3 = if phase == "ended" then ENDED_GRAY else DUST
+	end
+	if livePip then
+		livePip.Visible = phase == "live"
+	end
 	if phase == "upcoming" then
 		title.Text = "STARTS IN"
-		title.TextColor3 = LIVE_GOLD
-		clock.Text = formatRemain(remain)
-		clock.TextColor3 = Color3.fromRGB(255, 246, 220)
+		title.TextColor3 = DUST
 	elseif phase == "live" then
-		title.Text = "LIVE — ENDS IN"
-		title.TextColor3 = LIVE_GREEN
-		clock.Text = formatRemain(remain)
-		clock.TextColor3 = LIVE_GREEN
+		title.Text = "LIVE  ·  ENDS IN"
+		title.TextColor3 = LIVE_ROSE
 	else
 		title.Text = "EVENT ENDED"
 		title.TextColor3 = ENDED_GRAY
-		clock.Text = "Thanks for coming"
-		clock.TextColor3 = ENDED_GRAY
+	end
+	if showChips then
+		local nums, units = remainParts(remain)
+		for i = 1, 3 do
+			chipNums[i].Text = nums[i]
+			chipNums[i].TextColor3 = if phase == "live" then LIVE_ROSE else INK
+			chipUnits[i].Text = units[i]
+			chipUnits[i].TextColor3 = DUST
+		end
 	end
 	if prompt and prompt.Parent then
 		prompt.Enabled = phase ~= "ended"
@@ -161,9 +185,79 @@ local function destroyBound()
 		timerGui = nil
 	end
 	titleLabel = nil
-	timeLabel = nil
+	windowLabel = nil
+	endedLabel = nil
+	chipRow = nil
+	livePip = nil
+	table.clear(chipNums)
+	table.clear(chipUnits)
 	restCf = nil
 	boundRoot = nil
+end
+
+local function addCorner(gui: GuiObject, scale: number)
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(scale, 0)
+	corner.Parent = gui
+end
+
+local function addStud(parent: Frame, xScale: number, yScale: number)
+	local stud = Instance.new("Frame")
+	stud.Name = "Stud"
+	stud.BackgroundColor3 = STUD
+	stud.BorderSizePixel = 0
+	stud.AnchorPoint = Vector2.new(0.5, 0.5)
+	stud.Position = UDim2.fromScale(xScale, yScale)
+	stud.Size = UDim2.fromScale(0.052, 0.15)
+	stud.ZIndex = 6
+	addCorner(stud, 0.32)
+	stud.Parent = parent
+end
+
+local function makeChip(parent: Frame, order: number): (TextLabel, TextLabel)
+	local chip = Instance.new("Frame")
+	chip.Name = "Chip" .. order
+	chip.BackgroundColor3 = FRAME_EDGE
+	chip.BackgroundTransparency = 0.12
+	chip.BorderSizePixel = 0
+	chip.LayoutOrder = order
+	chip.Size = UDim2.new(0.31, 0, 1, 0)
+	chip.ZIndex = 3
+	addCorner(chip, 0.14)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = STUD
+	stroke.Thickness = 1.2
+	stroke.Transparency = 0.28
+	stroke.Parent = chip
+
+	local num = Instance.new("TextLabel")
+	num.Name = "Value"
+	num.BackgroundTransparency = 1
+	num.Position = UDim2.fromScale(0.04, 0.02)
+	num.Size = UDim2.fromScale(0.92, 0.66)
+	num.FontFace = UiFonts.DISPLAY_FACE
+	num.Text = "—"
+	num.TextColor3 = INK
+	num.TextScaled = true
+	num.TextStrokeColor3 = FRAME_EDGE
+	num.TextStrokeTransparency = 0.35
+	num.ZIndex = 4
+	num.Parent = chip
+
+	local unit = Instance.new("TextLabel")
+	unit.Name = "Unit"
+	unit.BackgroundTransparency = 1
+	unit.Position = UDim2.fromScale(0.06, 0.66)
+	unit.Size = UDim2.fromScale(0.88, 0.28)
+	unit.FontFace = UiFonts.DISPLAY_FACE
+	unit.Text = "—"
+	unit.TextColor3 = DUST
+	unit.TextScaled = true
+	unit.ZIndex = 4
+	unit.Parent = chip
+
+	chip.Parent = parent
+	return num, unit
 end
 
 local function ensureTimerGui(host: BasePart)
@@ -172,11 +266,11 @@ local function ensureTimerGui(host: BasePart)
 		existing:Destroy()
 	end
 
-	-- Hang the countdown under the panel so it never covers the poster art.
-	local below = host.Size.Y * 0.5 + 2.35
+	-- Hang the plaque under the panel so it never covers the poster art.
+	local below = host.Size.Y * 0.5 + 2.6
 	if boundRoot and boundRoot:IsA("Model") then
 		local _, size = (boundRoot :: Model):GetBoundingBox()
-		below = size.Y * 0.5 + 2.2
+		below = size.Y * 0.5 + 2.55
 	end
 
 	local bb = Instance.new("BillboardGui")
@@ -184,76 +278,146 @@ local function ensureTimerGui(host: BasePart)
 	bb.AlwaysOnTop = false
 	bb.LightInfluence = 0
 	bb.MaxDistance = 110
-	bb.Size = UDim2.fromScale(8.6, 2.7)
+	bb.Size = UDim2.fromScale(10.4, 3.55)
 	bb.StudsOffset = Vector3.new(0, -below, 0)
 	bb.Adornee = host
 	bb.ResetOnSpawn = false
 
-	local root = Instance.new("Frame")
-	root.Name = "Root"
-	root.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
-	root.BackgroundTransparency = 0.18
-	root.BorderSizePixel = 0
-	root.Size = UDim2.fromScale(1, 1)
-	root.Parent = bb
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0.16, 0)
-	corner.Parent = root
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(255, 214, 74)
-	stroke.Thickness = 1.6
-	stroke.Transparency = 0.18
-	stroke.Parent = root
-	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0.05, 0)
-	pad.PaddingRight = UDim.new(0.05, 0)
-	pad.PaddingTop = UDim.new(0.08, 0)
-	pad.PaddingBottom = UDim.new(0.08, 0)
-	pad.Parent = root
-	local list = Instance.new("UIListLayout")
-	list.FillDirection = Enum.FillDirection.Vertical
-	list.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	list.VerticalAlignment = Enum.VerticalAlignment.Center
-	list.Padding = UDim.new(0.02, 0)
-	list.Parent = root
+	local plaque = Instance.new("Frame")
+	plaque.Name = "Plaque"
+	plaque.BackgroundColor3 = FRAME
+	plaque.BorderSizePixel = 0
+	plaque.Size = UDim2.fromScale(1, 1)
+	addCorner(plaque, 0.07)
+	local plaqueStroke = Instance.new("UIStroke")
+	plaqueStroke.Color = FRAME_EDGE
+	plaqueStroke.Thickness = 2.4
+	plaqueStroke.Transparency = 0.05
+	plaqueStroke.Parent = plaque
+	local plaqueGrad = Instance.new("UIGradient")
+	plaqueGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(92, 38, 56)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(48, 16, 30)),
+	})
+	plaqueGrad.Rotation = 110
+	plaqueGrad.Parent = plaque
+
+	addStud(plaque, 0.07, 0.14)
+	addStud(plaque, 0.93, 0.14)
+	addStud(plaque, 0.07, 0.86)
+	addStud(plaque, 0.93, 0.86)
+
+	local screen = Instance.new("Frame")
+	screen.Name = "Screen"
+	screen.BackgroundColor3 = SCREEN
+	screen.BorderSizePixel = 0
+	screen.Position = UDim2.fromScale(0.055, 0.1)
+	screen.Size = UDim2.fromScale(0.89, 0.8)
+	screen.ZIndex = 2
+	addCorner(screen, 0.08)
+	local screenStroke = Instance.new("UIStroke")
+	screenStroke.Color = Color3.fromRGB(186, 132, 148)
+	screenStroke.Thickness = 1.15
+	screenStroke.Transparency = 0.55
+	screenStroke.Parent = screen
+	local screenPad = Instance.new("UIPadding")
+	screenPad.PaddingLeft = UDim.new(0.045, 0)
+	screenPad.PaddingRight = UDim.new(0.045, 0)
+	screenPad.PaddingTop = UDim.new(0.07, 0)
+	screenPad.PaddingBottom = UDim.new(0.07, 0)
+	screenPad.Parent = screen
+
+	local header = Instance.new("Frame")
+	header.Name = "Header"
+	header.BackgroundTransparency = 1
+	header.Size = UDim2.new(1, 0, 0.2, 0)
+	header.ZIndex = 3
+	header.Parent = screen
+
+	local pip = Instance.new("Frame")
+	pip.Name = "LivePip"
+	pip.BackgroundColor3 = LIVE_ROSE
+	pip.BorderSizePixel = 0
+	pip.AnchorPoint = Vector2.new(0, 0.5)
+	pip.Position = UDim2.new(0.02, 0, 0.5, 0)
+	pip.Size = UDim2.fromScale(0.08, 0.55)
+	pip.Visible = false
+	pip.ZIndex = 5
+	addCorner(pip, 1)
+	local pipAspect = Instance.new("UIAspectRatioConstraint")
+	pipAspect.AspectRatio = 1
+	pipAspect.Parent = pip
+	pip.Parent = header
 
 	local title = Instance.new("TextLabel")
 	title.Name = "Title"
 	title.BackgroundTransparency = 1
-	title.Size = UDim2.new(1, 0, 0.28, 0)
+	title.Size = UDim2.fromScale(1, 1)
+	title.FontFace = UiFonts.DISPLAY_FACE
 	title.Text = "STARTS IN"
-	title.TextColor3 = LIVE_GOLD
+	title.TextColor3 = DUST
 	title.TextScaled = true
-	title.ZIndex = 2
-	title.Parent = root
-	UiFonts.applyDisplay(title)
+	title.TextXAlignment = Enum.TextXAlignment.Center
+	title.ZIndex = 4
+	title.Parent = header
 
-	local clock = Instance.new("TextLabel")
-	clock.Name = "Time"
-	clock.BackgroundTransparency = 1
-	clock.Size = UDim2.new(1, 0, 0.42, 0)
-	clock.Text = "—"
-	clock.TextColor3 = Color3.fromRGB(255, 246, 220)
-	clock.TextScaled = true
-	clock.ZIndex = 2
-	clock.Parent = root
-	UiFonts.applyDisplay(clock)
+	local chips = Instance.new("Frame")
+	chips.Name = "Chips"
+	chips.BackgroundTransparency = 1
+	chips.Position = UDim2.fromScale(0, 0.22)
+	chips.Size = UDim2.fromScale(1, 0.54)
+	chips.ZIndex = 3
+	chips.Parent = screen
+	local chipList = Instance.new("UIListLayout")
+	chipList.FillDirection = Enum.FillDirection.Horizontal
+	chipList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	chipList.VerticalAlignment = Enum.VerticalAlignment.Center
+	chipList.Padding = UDim.new(0.03, 0)
+	chipList.Parent = chips
+
+	table.clear(chipNums)
+	table.clear(chipUnits)
+	for i = 1, 3 do
+		local num, unit = makeChip(chips, i)
+		chipNums[i] = num
+		chipUnits[i] = unit
+	end
+
+	local thanks = Instance.new("TextLabel")
+	thanks.Name = "Ended"
+	thanks.BackgroundTransparency = 1
+	thanks.Position = UDim2.fromScale(0, 0.22)
+	thanks.Size = UDim2.fromScale(1, 0.54)
+	thanks.FontFace = UiFonts.DISPLAY_FACE
+	thanks.Text = "Thanks for coming"
+	thanks.TextColor3 = ENDED_GRAY
+	thanks.TextScaled = true
+	thanks.Visible = false
+	thanks.ZIndex = 4
+	thanks.Parent = screen
 
 	local sub = Instance.new("TextLabel")
 	sub.Name = "Window"
 	sub.BackgroundTransparency = 1
-	sub.Size = UDim2.new(1, 0, 0.24, 0)
+	sub.Position = UDim2.fromScale(0, 0.78)
+	sub.Size = UDim2.fromScale(1, 0.2)
+	sub.FontFace = UiFonts.DISPLAY_FACE
 	sub.Text = EventBillboardConfig.WINDOW_LABEL
-	sub.TextColor3 = Color3.fromRGB(200, 208, 220)
+	sub.TextColor3 = DUST
 	sub.TextScaled = true
-	sub.ZIndex = 2
-	sub.Parent = root
-	UiFonts.applyDisplay(sub)
+	sub.ZIndex = 3
+	sub.Parent = screen
 
+	screen.Parent = plaque
+	plaque.Parent = bb
 	bb.Parent = host
+
 	timerGui = bb
 	titleLabel = title
-	timeLabel = clock
+	windowLabel = sub
+	endedLabel = thanks
+	chipRow = chips
+	livePip = pip
 	paintTimer()
 end
 
@@ -382,7 +546,7 @@ local function bindBillboard(root: Instance)
 	local hl = Instance.new("Highlight")
 	hl.Name = HIGHLIGHT_NAME
 	hl.FillTransparency = 1
-	hl.OutlineColor = LIVE_GOLD
+	hl.OutlineColor = FRAME_GLOW
 	hl.OutlineTransparency = 0.05
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	hl.Enabled = false

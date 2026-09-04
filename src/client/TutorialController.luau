@@ -606,7 +606,10 @@ local function syncPanelToSideButtonsImpl()
 	local vp = viewportSize()
 	local mobile = isMobileUi() or vp.X < 700
 	local insetY = Svc.GuiService:GetGuiInset().Y
-	local topPad = TutorialConfig.PANEL_TOP_PAD + insetY
+	-- IgnoreGuiInset is on; only use part of the inset so the panel sits higher.
+	local topPad = if mobile
+		then 8 + math.floor(insetY * 0.28)
+		else TutorialConfig.PANEL_TOP_PAD + math.floor(insetY * 0.4)
 	local screenW: number
 	local matchScale = 1
 

@@ -16,6 +16,7 @@ local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("U
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local UIButtonEffects = require(script.Parent.UIButtonEffects)
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local LastLandShowcaseCutscene = require(script.Parent.LastLandShowcaseCutscene)
 
 local M = {}
 
@@ -238,6 +239,9 @@ local function syncMobileAdminButton()
 	local frame = mobileAdminFrame
 	local host = mobileAdminButtonHost
 	local show = isAdminAllowed() and isPhoneLike()
+	if LastLandShowcaseCutscene.isActive() then
+		show = false
+	end
 	if frame then
 		frame.Visible = show
 		-- Cutscene HUD hide can park SideUI children off-screen; snap AdminFrame back.

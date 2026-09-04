@@ -620,7 +620,7 @@ local function hideHudCountersNow()
 	local side = main:FindFirstChild("SideUI")
 	if side and side:IsA("GuiObject") then
 		for _, ch in side:GetChildren() do
-			if ch:IsA("GuiObject") and ch.Name ~= "AdminFrame" then
+			if ch:IsA("GuiObject") then
 				hideGui(ch)
 			end
 		end
@@ -671,7 +671,7 @@ local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabe
 		local sub = cutsceneGui:FindFirstChild("Subtitle")
 		local scale = title and title:FindFirstChild("PopScale")
 		if
-			cutsceneGui:GetAttribute("Style") == "fullBleed_v1"
+			cutsceneGui:GetAttribute("Style") == "fullBleed_v2"
 			and fade
 			and fade:IsA("Frame")
 			and top
@@ -701,7 +701,7 @@ local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabe
 	gui.DisplayOrder = 2000
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	gui.Enabled = true
-	gui:SetAttribute("Style", "fullBleed_v1")
+	gui:SetAttribute("Style", "fullBleed_v2")
 	applyFullBleed(gui)
 
 	local fade = Instance.new("Frame")
@@ -713,7 +713,19 @@ local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabe
 	fade.AnchorPoint = Vector2.new(0.5, 0.5)
 	fade.Position = UDim2.fromScale(0.5, 0.5)
 	fade.ZIndex = 40
-	fade.Active = false
+	fade.Active = true
+
+	local sink = Instance.new("TextButton")
+	sink.Name = "InputSink"
+	sink.Text = ""
+	sink.AutoButtonColor = false
+	sink.BackgroundTransparency = 1
+	sink.BorderSizePixel = 0
+	sink.Size = UDim2.fromScale(1.4, 1.2)
+	sink.AnchorPoint = Vector2.new(0.5, 0.5)
+	sink.Position = UDim2.fromScale(0.5, 0.5)
+	sink.ZIndex = 80
+	sink.Active = true
 
 	local barW = letterboxWidth()
 	local top = Instance.new("Frame")
@@ -779,6 +791,7 @@ local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabe
 	subConstraint.Parent = sub
 
 	fade.Parent = gui
+	sink.Parent = gui
 	top.Parent = gui
 	bottom.Parent = gui
 	title.Parent = gui
@@ -905,6 +918,7 @@ function M.play(): boolean
 			"TouchGui",
 			"TimCheeseQuestHud",
 			"TimCheeseQuestTracker",
+			"AdminCommandBar",
 		},
 		hideMainChildNames = { "TutorialQuestHost", "TimCheeseQuestHost", "Frames" },
 	})
@@ -974,22 +988,6 @@ function M.play(): boolean
 	local started = os.clock()
 	local titleStinger = false
 	local total = track.totalSec
-
-	inputConn = UserInputService.InputBegan:Connect(function(input, processed)
-		if processed or token ~= cutsceneToken then
-			return
-		end
-		if os.clock() - started < 0.45 then
-			return
-		end
-		local skip = input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch
-			or input.KeyCode == Enum.KeyCode.Space
-			or input.KeyCode == Enum.KeyCode.ButtonA
-		if skip then
-			finish()
-		end
-	end)
 
 	task.delay(total + 1.2, function()
 		if token == cutsceneToken and active then

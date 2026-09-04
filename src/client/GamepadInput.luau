@@ -76,6 +76,15 @@ function M.isPreferred(): boolean
 	return false
 end
 
+-- World pad glyphs (stand Upgrade B): show whenever a gamepad is actually connected.
+-- Studio console tests often still have KeyboardEnabled, so isPreferred() stays false.
+function M.shouldShowPadHints(): boolean
+	if M.isPreferred() then
+		return true
+	end
+	return M.hasGamepadHardware()
+end
+
 function M.isGamepadKeyCode(keyCode: Enum.KeyCode): boolean
 	local name = keyCode.Name
 	return string.sub(name, 1, 6) == "Button" or string.sub(name, 1, 6) == "Thumb" or string.find(name, "Trigger", 1, true) ~= nil

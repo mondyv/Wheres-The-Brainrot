@@ -377,16 +377,13 @@ local function restoreGameplayLocomotion()
 end
 
 local function stopWorkoutIfActive()
-	local ok, workout = pcall(function()
-		return require(script.Parent.WorkoutController)
-	end)
-	if ok and workout and typeof(workout.stopActiveWorkout) == "function" then
-		local stopOk, stopErr = pcall(workout.stopActiveWorkout)
-		if not stopOk then
-			warnErr("stopActiveWorkout", stopErr)
-		end
-	elseif not ok then
-		warnErr("WorkoutController", workout)
+	if player:GetAttribute("WorkoutActive") ~= true then
+		return
+	end
+	-- Unequip fires WorkoutController.onUnequip without requiring that huge module here.
+	local hum = getHumanoid()
+	if hum then
+		hum:UnequipTools()
 	end
 end
 

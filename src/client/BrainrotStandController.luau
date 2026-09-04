@@ -751,7 +751,10 @@ local function findUpgradeAdornee(stand: Model): BasePart?
 	if view and view.buttonPart then
 		return view.buttonPart
 	end
-	return nil
+	if stand.PrimaryPart then
+		return stand.PrimaryPart
+	end
+	return stand:FindFirstChildWhichIsA("BasePart", true)
 end
 
 local function stopUpgradeHintBob()
@@ -936,7 +939,7 @@ local function updateClosestUpgradeStand(hrpPos: Vector3)
 		end
 	end
 	closestUpgradeStand = best
-	local pad = GamepadInput.isPreferred()
+	local pad = GamepadInput.shouldShowPadHints()
 	for _, view in pairs(views) do
 		local btn = view.upgradeButton
 		if btn and btn.Parent then
@@ -2153,7 +2156,7 @@ function M.init()
 		if state ~= Enum.UserInputState.Begin then
 			return Enum.ContextActionResult.Pass
 		end
-		if not GamepadInput.isPreferred() then
+		if not GamepadInput.shouldShowPadHints() then
 			return Enum.ContextActionResult.Pass
 		end
 		if not closestUpgradeStand or not closestUpgradeStand.Parent then
@@ -2270,6 +2273,9 @@ function M.init()
 		refreshLocalStandUpgradeWiring()
 		task.defer(reapplyUpgradeInputForAllViews)
 		task.defer(queuePlotStandAffordIfChanged)
+		bumpPromptRefreshFromMovement()
+	end)
+	GamepadInput.onPreferredChanged(function()
 		bumpPromptRefreshFromMovement()
 	end)
 	player:GetAttributeChangedSignal("Cash"):Connect(queuePlotStandAffordIfChanged)

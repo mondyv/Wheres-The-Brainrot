@@ -639,21 +639,17 @@ function PlotSpawnUtil.teleportCharacterToCFrame(character: Model, spawnCf: CFra
 	return true
 end
 
-function PlotSpawnUtil.getTutorialStartCFrame(): CFrame?
-	local map = Workspace:FindFirstChild("Map")
-	local folder = map and map:FindFirstChild(TimCheeseQuestConfig.MAP_FOLDER_NAME)
-	if not folder then
+local function cframeFromTutorialHitbox(hitbox: Instance): CFrame?
+	local part: BasePart? = nil
+	if hitbox:IsA("BasePart") then
+		part = hitbox
+	elseif hitbox:IsA("Model") then
+		local model = hitbox :: Model
+		part = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+	end
+	if not part then
 		return nil
 	end
-	local trigger = folder:FindFirstChild(TimCheeseQuestConfig.QUEST_TRIGGER_NAME)
-	local hitbox = trigger and trigger:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME)
-	if not (hitbox and hitbox:IsA("BasePart")) then
-		hitbox = trigger and trigger:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME, true)
-	end
-	if not (hitbox and hitbox:IsA("BasePart")) then
-		return nil
-	end
-	local part = hitbox :: BasePart
 	local topY = worldTopY(part)
 	local pos = Vector3.new(part.Position.X, topY + SPAWN_CLEARANCE, part.Position.Z)
 	local look = Vector3.new(-part.CFrame.LookVector.X, 0, -part.CFrame.LookVector.Z)
@@ -663,11 +659,64 @@ function PlotSpawnUtil.getTutorialStartCFrame(): CFrame?
 	return CFrame.lookAt(pos, pos + look.Unit)
 end
 
--- First-join tutorial spawn: QuestHitbox behind the safezone ground text.
-function PlotSpawnUtil.teleportTutorialStart(player: Player, character: Model): boolean
-	local spawnCf = PlotSpawnUtil.getTutorialStartCFrame()
+function PlotSpawnUtil.getTutorialStartCFrame(): CFrame?
+	local map = Workspace:FindFirstChild("Map")
+	local folder = map and map:FindFirstChild(TimCheeseQuestConfig.MAP_FOLDER_NAME)
+	if not folder then
+		return nil
+	end
+	local trigger = folder:FindFirstChild(TimCheeseQuestConfig.QUEST_TRIGGER_NAME)
+	local hitbox = trigger and trigger:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME)
+	if not hitbox then
+		hitbox = trigger and trigger:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME, true)
+	end
+	if not hitbox then
+		return nil
+	end
+	return cframeFromTutorialHitbox(hitbox)
+end
+
+function PlotSpawnUtil.waitForTutorialStartCFrame(timeoutSec: number): CFrame?
+	local existing = PlotSpawnUtil.getTutorialStartCFrame()
+	if existing then
+		return existing
+	end
+	local timeout = math.max(0.5, timeoutSec)
+	local remain = timeout
+	local map = Workspace:FindFirstChild("Map") or Workspace:WaitForChild("Map", remain)
+	if not map then
+		return nil
+	end
+	remain = math.max(0.2, timeout - 0.05)
+	local folder = map:FindFirstChild(TimCheeseQuestConfig.MAP_FOLDER_NAME)
+		or map:WaitForChild(TimCheeseQuestConfig.MAP_FOLDER_NAME, remain)
+	if not folder then
+		return nil
+	end
+	remain = math.max(0.2, timeout - 0.05)
+	local trigger = folder:FindFirstChild(TimCheeseQuestConfig.QUEST_TRIGGER_NAME)
+		or folder:WaitForChild(TimCheeseQuestConfig.QUEST_TRIGGER_NAME, remain)
+	if not trigger then
+		return nil
+	end
+	remain = math.max(0.2, timeout - 0.05)
+	local hitbox = trigger:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME)
+		or trigger:WaitForChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME, remain)
+	if not hitbox then
+		hitbox = trigger:FindFirstChild(TimCheeseQuestConfig.QUEST_HITBOX_NAME, true)
+	end
+	if not hitbox then
+		return PlotSpawnUtil.getTutorialStartCFrame()
+	end
+	return cframeFromTutorialHitbox(hitbox) or PlotSpawnUtil.getTutorialStartCFrame()
+end
+
+-- First-join / unfinished tutorial: QuestHitbox only. Never the plot or baseplate.
+function PlotSpawnUtil.teleportTutorialStart(player: Player, character: Model, timeoutSec: number?): boolean
+	local spawnCf = PlotSpawnUtil.waitForTutorialStartCFrame(if typeof(timeoutSec) == "number" then timeoutSec else 12)
 	if not spawnCf then
-		return PlotSpawnUtil.teleportPlayerHome(player, character, 12)
+		warn("[PlotSpawnUtil] tutorial QuestHitbox missing; staying put")
+		return false
 	end
 	PlotSpawnUtil.streamAndTeleportWithRetries(player, character, spawnCf, false)
 	return true
@@ -710,11 +759,9 @@ function PlotSpawnUtil.teleportPlayerHome(player: Player, character: Model, time
 	end
 
 	if not spawnCf then
-		if hrp.Parent then
-			hrp.Anchored = false
-		end
+		-- Stay frozen off the default baseplate until the real pad exists.
 		warn(
-			"[PlotSpawnUtil] teleportPlayerHome: no Base Spawn pad for",
+			"[PlotSpawnUtil] teleportPlayerHome: no Base Spawn pad yet for",
 			player.Name,
 			"(AssignedPlotSlot=",
 			player:GetAttribute("AssignedPlotSlot"),

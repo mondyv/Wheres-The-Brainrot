@@ -2781,7 +2781,7 @@ local function refreshPointersImpl()
 				outlineWorld(standModel)
 			end
 		end
-		if GamepadInput.isPreferred() then
+		if GamepadInput.shouldShowPadHints() then
 			local pg = player:FindFirstChildOfClass("PlayerGui")
 			local hintBb = pg and pg:FindFirstChild("StandUpgradePadHint")
 			local hintHost = hintBb and hintBb:FindFirstChild("HintHost")

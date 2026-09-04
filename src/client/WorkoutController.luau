@@ -2897,6 +2897,8 @@ return {
 		end
 	end,
 	stopActiveWorkout = function()
-		onUnequip()
+		if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true or walkSpeedBefore ~= nil then
+			onUnequip()
+		end
 	end,
 }

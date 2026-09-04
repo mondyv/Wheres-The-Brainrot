@@ -15,8 +15,10 @@ local uiNotifSound: Sound?
 local uiSoundsOn = true
 local lastHoverClock = 0.0
 local lastClickClock = 0.0
+local lastTypewriterClock = 0.0
 local HOVER_DEBOUNCE = 0.055
 local CLICK_DEBOUNCE = 0.08
+local TYPEWRITER_DEBOUNCE = 0.024
 
 local UIInteractionSounds = {}
 
@@ -87,6 +89,18 @@ function UIInteractionSounds.playStoreClick()
 	end
 	lastClickClock = now
 	storeClickSound:Play()
+end
+
+function UIInteractionSounds.playTypewriterTick()
+	if not uiSoundsOn or not hoverSound then
+		return
+	end
+	local now = os.clock()
+	if now - lastTypewriterClock < TYPEWRITER_DEBOUNCE then
+		return
+	end
+	lastTypewriterClock = now
+	hoverSound:Play()
 end
 
 function UIInteractionSounds.playNotif()

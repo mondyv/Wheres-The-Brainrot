@@ -77,6 +77,8 @@ local updateConn: RBXScriptConnection? = nil
 local pollId: string? = nil
 local optionCount = 0
 local myVote: number? = nil
+local pollMode: "question" | "reward" = "question"
+local claimedReward = false
 local focusIndex = 1
 local endsAt = 0
 local lastCounts: { number } = { 0, 0, 0, 0 }
@@ -308,7 +310,13 @@ local function applyCounts(counts: { number }, total: number)
 		row.percent.Text = if total > 0 then string.format("%d%%", math.floor(pct * 100 + 0.5)) else "0%"
 	end
 	if hintLabel then
-		hintLabel.Text = if total == 1 then "1 vote" else string.format("%d votes", total)
+		if pollMode == "reward" then
+			if claimedReward then
+				hintLabel.Text = "Claimed — watch the drop"
+			end
+		else
+			hintLabel.Text = if total == 1 then "1 vote" else string.format("%d votes", total)
+		end
 	end
 end
 
@@ -319,6 +327,8 @@ local function hideHud(immediate: boolean?)
 	unbindPollInput()
 	pollId = nil
 	myVote = nil
+	pollMode = "question"
+	claimedReward = false
 	endsAt = 0
 	if immediate == true or not root or not rootScale or not gui or not gui.Enabled then
 		if root then
@@ -344,19 +354,24 @@ local function hideHud(immediate: boolean?)
 end
 
 local function finishPoll()
-	local best = 1
-	local bestVotes = -1
-	for i = 1, optionCount do
-		if (lastCounts[i] or 0) > bestVotes then
-			bestVotes = lastCounts[i] or 0
-			best = i
+	local highlight = myVote
+	if pollMode ~= "reward" then
+		local best = 1
+		local bestVotes = -1
+		for i = 1, optionCount do
+			if (lastCounts[i] or 0) > bestVotes then
+				bestVotes = lastCounts[i] or 0
+				best = i
+			end
 		end
+		highlight = best
 	end
+	local shown = highlight or 1
 	for i, row in rows do
 		if i > optionCount then
 			continue
 		end
-		if i == best then
+		if i == shown then
 			row.root.BackgroundColor3 = OPTION_COLORS[i]
 			row.stroke.Thickness = 5
 			row.scale.Scale = 1.08
@@ -369,7 +384,11 @@ local function finishPoll()
 		end
 	end
 	if hintLabel then
-		hintLabel.Text = "Winner · " .. (rows[best] and rows[best].label.Text or LETTERS[best])
+		if pollMode == "reward" then
+			hintLabel.Text = if claimedReward then "Prize claimed" else "Picks closed"
+		else
+			hintLabel.Text = "Winner · " .. (rows[shown] and rows[shown].label.Text or LETTERS[shown])
+		end
 	end
 	if controlsLabel then
 		controlsLabel.Visible = false
@@ -380,7 +399,7 @@ local function finishPoll()
 		timerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 	end
 	if timerPill then
-		timerPill.BackgroundColor3 = OPTION_COLORS[best]
+		timerPill.BackgroundColor3 = OPTION_COLORS[shown]
 	end
 	local token = hideToken
 	task.delay(AdminPollConfig.END_HOLD_SEC, function()
@@ -431,11 +450,20 @@ vote = function(index: number)
 	if index < 1 or index > optionCount then
 		return
 	end
+	if pollMode == "reward" and claimedReward then
+		return
+	end
 	local ev = getRemote(AdminPollConfig.VOTE_REMOTE)
 	if not ev then
 		return
 	end
 	myVote = index
+	if pollMode == "reward" then
+		claimedReward = true
+		if hintLabel then
+			hintLabel.Text = "Claimed — watch the drop"
+		end
+	end
 	paintVoteHighlight()
 	UIInteractionSounds.playClick()
 	ev:FireServer(pollId, index)
@@ -455,6 +483,8 @@ local function showPoll(payload: any)
 	disconnectTimer()
 	pollId = payload.id
 	myVote = nil
+	claimedReward = false
+	pollMode = if payload.mode == "reward" then "reward" else "question"
 	endsAt = if typeof(payload.endsAt) == "number" then payload.endsAt else Workspace:GetServerTimeNow() + AdminPollConfig.DURATION_SEC
 	optionCount = math.clamp(#payload.options, 0, 4)
 	if optionCount < 2 then
@@ -466,10 +496,16 @@ local function showPoll(payload: any)
 	end
 	if metaLabel then
 		local scope = if payload.scope == "global" then "ALL SERVERS" else "THIS SERVER"
-		metaLabel.Text = "POLL  ·  " .. scope
+		if payload.mode == "reward" then
+			metaLabel.Text = "PICK A PRIZE  ·  " .. scope
+		else
+			metaLabel.Text = "POLL  ·  " .. scope
+		end
 	end
 	if hintLabel then
-		hintLabel.Text = if IS_TOUCH then "Tap an option" else "Pick an option"
+		hintLabel.Text = if payload.mode == "reward"
+			then (if IS_TOUCH then "Tap the prize you want" else "Pick the prize you want")
+			else (if IS_TOUCH then "Tap an option" else "Pick an option")
 	end
 	if timerPill then
 		timerPill.BackgroundColor3 = Color3.fromRGB(255, 214, 64)

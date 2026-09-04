@@ -1,7 +1,8 @@
 -- [ACTIVE] AdminPollService
 --[[
 	Admin polls: this server or every server (MessagingService).
-	One active poll at a time. Players vote once (can change). Counts sync live.
+	One active poll at a time. Question polls can change vote.
+	Reward polls grant the picked prize once (sky-drop).
 ]]
 
 local HttpService = game:GetService("HttpService")
@@ -11,6 +12,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local AdminAllowlist = require(script.Parent:WaitForChild("AdminAllowlist"))
+local AdminGiftService = require(script.Parent:WaitForChild("AdminGiftService"))
+local AdminGiftConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AdminGiftConfig"))
 local AdminPollConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AdminPollConfig"))
 
 local M = {}
@@ -22,6 +25,9 @@ type ActivePoll = {
 	question: string,
 	options: { string },
 	scope: "server" | "global",
+	mode: "question" | "reward",
+	rewards: { any }?,
+	claimed: { [number]: boolean },
 	endsAt: number,
 	localVotes: VoteMap,
 	foreignByJob: { [string]: VoteMap },
@@ -118,6 +124,7 @@ local function publicPayload(poll: ActivePoll, includeCounts: boolean): { [strin
 		question = poll.question,
 		options = poll.options,
 		scope = poll.scope,
+		mode = poll.mode,
 		endsAt = poll.endsAt,
 	}
 	if includeCounts then
@@ -207,13 +214,26 @@ local function scheduleEnd(poll: ActivePoll)
 	end)
 end
 
-local function beginPoll(question: string, options: { string }, scope: "server" | "global", fromNetwork: boolean, idOverride: string?, endsAtOverride: number?)
+local function beginPoll(
+	question: string,
+	options: { string },
+	scope: "server" | "global",
+	fromNetwork: boolean,
+	idOverride: string?,
+	endsAtOverride: number?,
+	mode: "question" | "reward"?,
+	rewards: { any }?
+)
 	local now = Workspace:GetServerTimeNow()
+	local pollMode: "question" | "reward" = if mode == "reward" then "reward" else "question"
 	local poll: ActivePoll = {
 		id = idOverride or HttpService:GenerateGUID(false),
 		question = question,
 		options = options,
 		scope = scope,
+		mode = pollMode,
+		rewards = if pollMode == "reward" then rewards else nil,
+		claimed = {},
 		endsAt = endsAtOverride or (now + AdminPollConfig.DURATION_SEC),
 		localVotes = {},
 		foreignByJob = {},
@@ -229,6 +249,8 @@ local function beginPoll(question: string, options: { string }, scope: "server" 
 			question = poll.question,
 			options = poll.options,
 			endsAt = poll.endsAt,
+			mode = poll.mode,
+			rewards = poll.rewards,
 		})
 	end
 end
@@ -266,7 +288,26 @@ local function applyRemoteStart(data: any)
 	if endsAt <= Workspace:GetServerTimeNow() + 0.5 then
 		return
 	end
-	beginPoll(question, options, "global", true, data.id, endsAt)
+	local mode: "question" | "reward" = if data.mode == "reward" then "reward" else "question"
+	local rewards = {}
+	if mode == "reward" and typeof(data.rewards) == "table" then
+		for _, row in data.rewards do
+			if typeof(row) == "table" then
+				local spec = select(1, AdminGiftService.parseReward(row.kind, row.id))
+				if spec then
+					table.insert(rewards, spec)
+				end
+			end
+		end
+		if #rewards < AdminPollConfig.MIN_OPTIONS then
+			return
+		end
+		options = {}
+		for _, spec in rewards do
+			table.insert(options, AdminGiftService.labelFor(spec))
+		end
+	end
+	beginPoll(question, options, "global", true, data.id, endsAt, mode, rewards)
 end
 
 local function applyRemoteVotes(data: any)
@@ -294,28 +335,56 @@ function M.createFromAdmin(sender: Player, payload: any): (boolean, string)
 	if typeof(payload) ~= "table" then
 		return false, "Invalid poll."
 	end
+	local mode: "question" | "reward" = if payload.mode == "reward" then "reward" else "question"
 	local question = cleanText(payload.question, AdminPollConfig.MAX_QUESTION)
 	if not question then
-		return false, "Enter a question."
+		if mode == "reward" then
+			question = "Pick your reward"
+		else
+			return false, "Enter a question."
+		end
 	end
 	local scope = payload.scope
 	if scope ~= "global" then
 		scope = "server"
 	end
 	local options: { string } = {}
-	if typeof(payload.options) == "table" then
-		for _, opt in payload.options do
-			local cleaned = cleanText(opt, AdminPollConfig.MAX_OPTION)
-			if cleaned then
-				table.insert(options, cleaned)
-			end
-			if #options >= AdminPollConfig.MAX_OPTIONS then
-				break
+	local rewards = {}
+	if mode == "reward" then
+		if typeof(payload.rewards) == "table" then
+			for _, row in payload.rewards do
+				if typeof(row) == "table" then
+					local spec, parseErr = AdminGiftService.parseReward(row.kind, row.id)
+					if spec then
+						table.insert(rewards, spec)
+						table.insert(options, AdminGiftService.labelFor(spec))
+					elseif parseErr then
+						warn("[AdminPollService] skip reward:", parseErr)
+					end
+				end
+				if #rewards >= AdminPollConfig.MAX_OPTIONS then
+					break
+				end
 			end
 		end
-	end
-	if #options < AdminPollConfig.MIN_OPTIONS then
-		return false, "Need at least two options."
+		if #rewards < AdminPollConfig.MIN_OPTIONS then
+			return false, "Need at least two valid rewards."
+		end
+	else
+		if typeof(payload.options) == "table" then
+			for _, opt in payload.options do
+				local cleaned = cleanText(opt, AdminPollConfig.MAX_OPTION)
+				if cleaned then
+					table.insert(options, cleaned)
+				end
+				if #options >= AdminPollConfig.MAX_OPTIONS then
+					break
+				end
+			end
+		end
+		if #options < AdminPollConfig.MIN_OPTIONS then
+			return false, "Need at least two options."
+		end
 	end
 	local durationSec = AdminPollConfig.DURATION_SEC
 	if typeof(payload.durationSec) == "number" then
@@ -323,7 +392,13 @@ function M.createFromAdmin(sender: Player, payload: any): (boolean, string)
 	end
 	durationSec = math.clamp(durationSec, AdminPollConfig.MIN_DURATION_SEC, AdminPollConfig.MAX_DURATION_SEC)
 	local endsAt = Workspace:GetServerTimeNow() + durationSec
-	beginPoll(question, options, scope :: "server" | "global", false, nil, endsAt)
+	beginPoll(question, options, scope :: "server" | "global", false, nil, endsAt, mode, rewards)
+	if mode == "reward" then
+		if scope == "global" then
+			return true, "Global reward poll sent."
+		end
+		return true, "Reward poll sent."
+	end
 	if scope == "global" then
 		return true, "Global poll sent."
 	end
@@ -346,6 +421,41 @@ local function onVote(player: Player, pollId: any, choice: any)
 	end
 	local index = math.floor(choice)
 	if index < 1 or index > #poll.options then
+		return
+	end
+	if poll.mode == "reward" then
+		if poll.claimed[player.UserId] == true then
+			return
+		end
+		poll.claimed[player.UserId] = true
+		poll.localVotes[player.UserId] = index
+		poll.voteDirty = true
+		fireUpdate(poll)
+		local rewards = poll.rewards
+		local spec = rewards and rewards[index]
+		if spec then
+			local grantSpec = table.clone(spec)
+			grantSpec.reason = AdminGiftConfig.REASON_REWARD_POLL
+			local pollId = poll.id
+			task.spawn(function()
+				local ok, granted, err = pcall(function()
+					return AdminGiftService.giveToPlayer(player, grantSpec)
+				end)
+				if not ok then
+					warn("[AdminPollService] reward grant failed:", err or granted)
+					local live = active
+					if live and live.id == pollId then
+						live.claimed[player.UserId] = nil
+					end
+				elseif granted == false then
+					warn("[AdminPollService] reward grant failed:", err)
+					local live = active
+					if live and live.id == pollId then
+						live.claimed[player.UserId] = nil
+					end
+				end
+			end)
+		end
 		return
 	end
 	poll.localVotes[player.UserId] = index

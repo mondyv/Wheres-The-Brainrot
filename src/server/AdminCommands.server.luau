@@ -14,7 +14,9 @@ local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForCh
 local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
 local SwingUpgrades = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SwingUpgrades"))
 local AdminBroadcastService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminBroadcastService"))
+local AdminGiftService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AdminGiftService"))
 local AdminPollConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AdminPollConfig"))
+local AdminGiftConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AdminGiftConfig"))
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
 local PlotSpawnUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotSpawnUtil"))
 local LuckyBlockCatalog = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LuckyBlockCatalog"))
@@ -149,6 +151,9 @@ local function resolveTargets(sender: Player, query: string, allowAll: boolean):
 	if allowAll and q == "all" then
 		return Players:GetPlayers(), nil
 	end
+	if allowAll and (q == "global" or q == "world" or q == "everyone") then
+		return Players:GetPlayers(), nil
+	end
 
 	local exact: Player? = nil
 	local partial: { Player } = {}
@@ -175,6 +180,39 @@ local function resolveTargets(sender: Player, query: string, allowAll: boolean):
 	return nil, "Player not found in this server."
 end
 
+local function isGlobalGrantToken(query: string): boolean
+	local q = string.lower(query)
+	return q == "global" or q == "world" or q == "everyone"
+end
+
+local function deliverGift(sender: Player, targetQuery: string, spec: any): (boolean, string)
+	spec.reason = spec.reason or AdminGiftConfig.REASON_ADMIN
+	if isGlobalGrantToken(targetQuery) then
+		local count = spec.count
+		if typeof(count) == "number" then
+			spec.count = math.clamp(math.floor(count), 1, AdminGiftConfig.GLOBAL_MAX_COUNT)
+		end
+		local n = AdminGiftService.giveToOnline(spec)
+		AdminGiftService.publishGlobal(spec)
+		return true, string.format("Gifted %s to %d player(s) here — every other live server too.", AdminGiftService.labelFor(spec), n)
+	end
+	local targets, targetErr = resolveTargets(sender, targetQuery, true)
+	if not targets then
+		return false, targetErr or "No target."
+	end
+	local okCount = 0
+	for _, target in targets do
+		local ok = AdminGiftService.giveToPlayer(target, spec)
+		if ok then
+			okCount += 1
+		end
+	end
+	if okCount <= 0 then
+		return false, "Grant failed."
+	end
+	return true, string.format("Gifted %s to %d player(s).", AdminGiftService.labelFor(spec), okCount)
+end
+
 local function waitForBindable(folderName: string, bindableName: string, timeoutSec: number?): BindableFunction?
 	local deadline = os.clock() + (timeoutSec or 10)
 	while os.clock() < deadline do
@@ -186,14 +224,6 @@ local function waitForBindable(folderName: string, bindableName: string, timeout
 		task.wait(0.1)
 	end
 	return nil
-end
-
-local function waitForBrainrotBindable(name: string): BindableFunction?
-	return waitForBindable("BrainrotInternal", name, 10)
-end
-
-local function waitForLuckyBlockBindable(name: string): BindableFunction?
-	return waitForBindable("LuckyBlockInternal", name, 10)
 end
 
 local function waitForRebirthBindable(name: string): BindableFunction?
@@ -229,7 +259,7 @@ end
 local MUTATION_NAMES = { "normal", "golden", "diamond", "lava", "galaxy", "rainbow" }
 
 local function buildAutocompleteCatalog(sender: Player)
-	local players = { "me", "all" }
+	local players = { "me", "all", "global" }
 	for _, plr in Players:GetPlayers() do
 		-- Suggest usernames only (DisplayName still resolves if typed exactly).
 		table.insert(players, plr.Name)
@@ -259,7 +289,7 @@ commands.help = {
 	description = "List admin commands.",
 	run = function(_sender: Player, _args: { string }): (boolean, string)
 		return true,
-			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, grantgear, levelup, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, polls, servershutdown, serverrestart, resetservers, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
+			"Commands: addinventory, addcash, giftpass, addluckyblock, resetdata, rebirth, setpower, grantgear, levelup, setcarry, setreach, tp, tpland, spectate, forcespectate, serverspawn, globalspawn, servernotif, globalnotif, polls, rewardpolls, servershutdown, serverrestart, resetservers, serverluck, globalluck, kick, ban, unban, playtutorial, fly, help"
 	end,
 }
 
@@ -459,16 +489,11 @@ commands.teleport = commands.tp
 commands["goto"] = commands.tp
 
 commands.addinventory = {
-	usage = "addinventory <player|me|all> <brainrot> [count] [mutation] [level]",
-	description = "Grant a brainrot to a player's inventory.",
+	usage = "addinventory <player|me|all|global> <brainrot> [count] [mutation] [level]",
+	description = "Grant a brainrot (sky-drop). global = every online player on every server.",
 	run = function(sender: Player, args: { string }): (boolean, string)
 		if not args[1] or not args[2] then
 			return false, "Usage: " .. commands.addinventory.usage
-		end
-
-		local targets, targetErr = resolveTargets(sender, args[1], true)
-		if not targets then
-			return false, targetErr or "No target."
 		end
 
 		local def = resolveBrainrot(args[2])
@@ -488,34 +513,13 @@ commands.addinventory = {
 			level = if tonumber(args[4]) then math.max(1, math.floor(tonumber(args[4]) :: number)) else level
 		end
 
-		local grant = waitForBrainrotBindable("GrantBrainrotAndEquip")
-		if not grant then
-			return false, "Inventory grant service is not ready."
-		end
-
-		local granted = 0
-		for _, target in targets do
-			PlayerDataService.waitUntilLoaded(target)
-			for _ = 1, count do
-				local ok = (grant :: BindableFunction):Invoke(target, {
-					name = def.name,
-					rarity = def.rarity,
-					baseIncome = def.baseIncome,
-					mutation = mutation,
-					level = level,
-				}, {
-					equip = true,
-				})
-				if ok then
-					granted += 1
-				end
-			end
-			if target:GetAttribute("PlayerDataLoaded") == true then
-				PlayerDataService.savePlayerData(target)
-			end
-		end
-
-		return true, string.format("Granted %dx %s to %d player(s).", granted, def.name, #targets)
+		return deliverGift(sender, args[1], {
+			kind = "brainrot",
+			id = def.name,
+			count = count,
+			mutation = mutation,
+			level = level,
+		})
 	end,
 }
 
@@ -654,16 +658,11 @@ commands.giftpass = {
 }
 
 commands.addluckyblock = {
-	usage = 'addluckyblock <player|me|all> "<blockName>" [count] [variant]',
-	description = "Grant a lucky block tool.",
+	usage = 'addluckyblock <player|me|all|global> "<blockName>" [count] [variant]',
+	description = "Grant a lucky block (sky-drop). global = every online player on every server.",
 	run = function(sender: Player, args: { string }): (boolean, string)
 		if not args[1] or not args[2] then
 			return false, "Usage: " .. commands.addluckyblock.usage
-		end
-
-		local targets, targetErr = resolveTargets(sender, args[1], true)
-		if not targets then
-			return false, targetErr or "No target."
 		end
 
 		local blockName, nextIndex, blockErr = resolveLuckyBlockName(args, 2)
@@ -684,33 +683,12 @@ commands.addluckyblock = {
 			variant = LuckyBlockCatalog.defaultVariant(blockName)
 		end
 
-		local grant = waitForLuckyBlockBindable("GrantLuckyBlock")
-		if not grant then
-			return false, "Lucky block grant service is not ready."
-		end
-
-		local granted = 0
-		for _, target in targets do
-			PlayerDataService.waitUntilLoaded(target)
-			for _ = 1, count do
-				local invokeOk, ok = pcall(function()
-					return (grant :: BindableFunction):Invoke(target, blockName, {
-						equip = true,
-						variant = variant,
-					})
-				end)
-				if not invokeOk then
-					warn("[AdminCommands] addluckyblock invoke failed:", ok)
-				elseif ok then
-					granted += 1
-				end
-			end
-		end
-
-		if granted <= 0 then
-			return false, string.format("Failed to grant '%s' (check Backpack / Lucky Blocks templates).", blockName)
-		end
-		return true, string.format("Granted %d lucky block(s) (%s) to %d player(s).", granted, blockName, #targets)
+		return deliverGift(sender, args[1], {
+			kind = "luckyBlock",
+			id = blockName,
+			count = count,
+			variant = variant,
+		})
 	end,
 }
 
@@ -1642,38 +1620,35 @@ commands.power = commands.setpower
 commands.setforce = commands.setpower
 
 commands.grantgear = {
-	usage = "grantgear <player|me|all> <gearId>",
-	description = "Grant a workout gear by id (1-13).",
+		usage = "grantgear <player|me|all|global> <gearId|name>",
+	description = "Grant workout gear (sky-drop). global = every online player on every server.",
 	run = function(sender: Player, args: { string }): (boolean, string)
 		if not args[1] or not args[2] then
 			return false, "Usage: " .. commands.grantgear.usage
 		end
-		local gearId = tonumber(args[2])
-		if not gearId then
-			return false, "Gear id must be a number (1-13)."
-		end
-		gearId = math.floor(gearId)
 		local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
-		local GearService = require(script.Parent:WaitForChild("Modules"):WaitForChild("GearService"))
-		if not GearConfig.get(gearId) then
-			return false, "Unknown gear id."
-		end
-		local targets, targetErr = resolveTargets(sender, args[1], true)
-		if not targets then
-			return false, targetErr or "No target."
-		end
-		for _, target in targets do
-			PlayerDataService.waitUntilLoaded(target)
-			-- Unlock path: grant 1..gearId
-			for i = 1, gearId do
-				GearService.grantGear(target, i)
+		local gearRaw = table.concat(args, " ", 2)
+		local def = GearConfig.get(tonumber(args[2]) and math.floor(tonumber(args[2]) :: number) or -1)
+		if not def then
+			local key = string.lower(gearRaw)
+			for _, gear in GearConfig.GEARS do
+				if string.lower(gear.name) == key or string.lower(gear.assetName) == key then
+					def = gear
+					break
+				end
 			end
-			PlayerDataService.savePlayerData(target)
 		end
-		return true, string.format("Granted gear %d (and prerequisites) to %d player(s).", gearId, #targets)
+		if not def then
+			return false, "Unknown gear. Use id 1-13 or the gear name."
+		end
+		return deliverGift(sender, args[1], {
+			kind = "gear",
+			id = tostring(def.id),
+		})
 	end,
 }
 commands.gear = commands.grantgear
+commands.givegear = commands.grantgear
 
 commands.levelup = {
 	usage = "levelup [player|me|all] [levels]",
@@ -1759,6 +1734,16 @@ commands.polls = {
 	end,
 }
 commands.poll = commands.polls
+
+commands.rewardpolls = {
+	usage = "rewardpolls",
+	description = "Open the reward poll composer — players pick a prize and get it.",
+	run = function(_sender: Player, _args: { string }): (boolean, string)
+		return true, AdminPollConfig.OPEN_REWARD_SIGNAL
+	end,
+}
+commands.rewardpoll = commands.rewardpolls
+commands.reward = commands.rewardpolls
 
 commands.fly = {
 	usage = "fly",

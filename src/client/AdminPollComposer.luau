@@ -49,14 +49,35 @@ local sendButton: TextButton? = nil
 local serverBtn: TextButton? = nil
 local globalBtn: TextButton? = nil
 local durationBtns: { TextButton } = {}
+local questionModeBtn: TextButton? = nil
+local rewardModeBtn: TextButton? = nil
+local titleLabel: TextLabel? = nil
+local subtitleLabel: TextLabel? = nil
+local questionHeader: TextLabel? = nil
+local optionsHeader: TextLabel? = nil
 local scope: "server" | "global" = "server"
+local pollMode: "question" | "reward" = "question"
 local durationSec = AdminPollConfig.DURATION_SEC
+local KIND_ORDER = { "brainrot", "luckyBlock", "gear" }
+local KIND_LABEL = {
+	brainrot = "BR",
+	luckyBlock = "BLOCK",
+	gear = "GEAR",
+}
+local KIND_PLACEHOLDER = {
+	brainrot = "Brainrot name",
+	luckyBlock = "Lucky block name",
+	gear = "Gear id or name",
+}
 local optionRows: {
 	{
 		enabled: boolean,
 		toggle: TextButton,
 		box: TextBox,
 		row: Frame,
+		letter: TextLabel,
+		kindBtn: TextButton,
+		rewardKind: string,
 	}
 } = {}
 local sending = false
@@ -126,6 +147,53 @@ local function paintOptionRow(index: number)
 	row.box.TextEditable = row.enabled
 	row.box.TextTransparency = if row.enabled then 0 else 0.45
 	row.row.BackgroundTransparency = if row.enabled then 0.12 else 0.4
+	local reward = pollMode == "reward"
+	row.letter.Visible = not reward
+	row.kindBtn.Visible = reward
+	row.kindBtn.Text = KIND_LABEL[row.rewardKind] or "BR"
+	if reward then
+		row.box.PlaceholderText = KIND_PLACEHOLDER[row.rewardKind] or "Reward"
+		row.box.Position = UDim2.fromOffset(if IS_TOUCH then 118 else 112, 6)
+		row.box.Size = UDim2.new(1, if IS_TOUCH then -128 else -122, 1, -12)
+	else
+		row.box.PlaceholderText = "Option " .. OPTION_LETTERS[index]
+		row.box.Position = UDim2.fromOffset(if IS_TOUCH then 70 else 66, 6)
+		row.box.Size = UDim2.new(1, if IS_TOUCH then -82 else -78, 1, -12)
+	end
+end
+
+local function paintMode()
+	if questionModeBtn then
+		local on = pollMode == "question"
+		questionModeBtn.BackgroundColor3 = if on then COLORS.accent else COLORS.idle
+		questionModeBtn.TextColor3 = if on then Color3.fromRGB(22, 14, 8) else COLORS.muted
+	end
+	if rewardModeBtn then
+		local on = pollMode == "reward"
+		rewardModeBtn.BackgroundColor3 = if on then COLORS.accent else COLORS.idle
+		rewardModeBtn.TextColor3 = if on then Color3.fromRGB(22, 14, 8) else COLORS.muted
+	end
+	if titleLabel then
+		titleLabel.Text = if pollMode == "reward" then "REWARD POLL" else "POLL DESK"
+	end
+	if subtitleLabel then
+		subtitleLabel.Text = if pollMode == "reward" then "PICK  ·  CLAIM  ·  SKY DROP" else "SERVER  ·  GLOBAL  ·  TIMER"
+	end
+	if questionHeader then
+		questionHeader.Text = if pollMode == "reward" then "TITLE  ·  optional" else "QUESTION"
+	end
+	if optionsHeader then
+		optionsHeader.Text = if pollMode == "reward" then "REWARDS  ·  tap kind to cycle" else "OPTIONS  ·  uncheck to hide"
+	end
+	if questionBox then
+		questionBox.PlaceholderText = if pollMode == "reward" then "Pick your reward" else "Ask anything…"
+	end
+	if sendButton then
+		sendButton.Text = if pollMode == "reward" then "SEND REWARD POLL" else "SEND POLL"
+	end
+	for i = 1, #optionRows do
+		paintOptionRow(i)
+	end
 end
 
 local function addCorner(guiObj: GuiObject, px: number)
@@ -155,6 +223,22 @@ local function collectOptions(): { string }
 	return out
 end
 
+local function collectRewards(): { { kind: string, id: string } }
+	local out = {}
+	for _, row in optionRows do
+		if row.enabled then
+			local text = string.gsub(row.box.Text, "^%s*(.-)%s*$", "%1")
+			if text ~= "" then
+				table.insert(out, {
+					kind = row.rewardKind,
+					id = text,
+				})
+			end
+		end
+	end
+	return out
+end
+
 local function setOpen(open: boolean)
 	if not gui or not root or not rootScale then
 		return
@@ -171,7 +255,7 @@ local function setOpen(open: boolean)
 		TweenService:Create(rootScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 			Scale = 1,
 		}):Play()
-		setStatus("Uncheck a row to drop that option.", nil)
+		setStatus(if pollMode == "reward" then "Each player claims one prize. Tap kind to cycle." else "Uncheck a row to drop that option.", nil)
 		if not IS_TOUCH then
 			task.defer(function()
 				if questionBox and gui and gui.Enabled then
@@ -208,6 +292,57 @@ local function sendPoll()
 		return
 	end
 	local q = questionBox and string.gsub(questionBox.Text, "^%s*(.-)%s*$", "%1") or ""
+	if pollMode == "reward" then
+		if q == "" then
+			q = "Pick your reward"
+		end
+		local rewards = collectRewards()
+		if #rewards < AdminPollConfig.MIN_OPTIONS then
+			setStatus("Need at least two filled, checked rewards.", false)
+			return
+		end
+		local rf = getCreateRemote()
+		if not rf then
+			setStatus("Poll service is not ready.", false)
+			return
+		end
+		sending = true
+		setStatus("Sending...", nil)
+		if sendButton then
+			sendButton.Active = false
+		end
+		local clamped = math.clamp(durationSec, AdminPollConfig.MIN_DURATION_SEC, AdminPollConfig.MAX_DURATION_SEC)
+		task.spawn(function()
+			local ok, response = pcall(function()
+				return rf:InvokeServer({
+					question = q,
+					mode = "reward",
+					rewards = rewards,
+					scope = scope,
+					durationSec = clamped,
+				})
+			end)
+			sending = false
+			if sendButton then
+				sendButton.Active = true
+			end
+			if not ok then
+				warn("[AdminPollComposer] create invoke failed:", response)
+				setStatus("Send failed. Check output.", false)
+				return
+			end
+			if typeof(response) == "table" and response.ok == true then
+				setStatus(tostring(response.message or "Sent."), true)
+				TopNotifController.showPersonal(tostring(response.message or "Reward poll sent."), "legendary", 2.6)
+				UIInteractionSounds.playClick()
+				setOpen(false)
+			else
+				local msg = if typeof(response) == "table" then tostring(response.message or "Could not send.") else "Could not send."
+				setStatus(msg, false)
+			end
+		end)
+		return
+	end
 	if q == "" then
 		setStatus("Write a question first.", false)
 		return
@@ -235,6 +370,7 @@ local function sendPoll()
 				options = options,
 				scope = scope,
 				durationSec = clamped,
+				mode = "question",
 			})
 		end)
 		sending = false
@@ -353,6 +489,7 @@ local function buildGui(parent: PlayerGui)
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.ZIndex = 4
 	title.Parent = header
+	titleLabel = title
 	local subtitle = Instance.new("TextLabel")
 	subtitle.BackgroundTransparency = 1
 	subtitle.Position = UDim2.fromOffset(18, 30)
@@ -364,6 +501,7 @@ local function buildGui(parent: PlayerGui)
 	subtitle.TextXAlignment = Enum.TextXAlignment.Left
 	subtitle.ZIndex = 4
 	subtitle.Parent = header
+	subtitleLabel = subtitle
 
 	local close = Instance.new("TextButton")
 	close.Name = "Close"
@@ -410,12 +548,53 @@ local function buildGui(parent: PlayerGui)
 	bodyPad.PaddingRight = UDim.new(0, 8)
 	bodyPad.Parent = body
 
-	makeSectionLabel(body, "SCOPE", 1)
+	makeSectionLabel(body, "TYPE", 1)
+
+	local modeRow = Instance.new("Frame")
+	modeRow.BackgroundTransparency = 1
+	modeRow.Size = UDim2.new(1, 0, 0, CHIP_H)
+	modeRow.LayoutOrder = 2
+	modeRow.ZIndex = 3
+	modeRow.Parent = body
+	local modeLayout = Instance.new("UIListLayout")
+	modeLayout.FillDirection = Enum.FillDirection.Horizontal
+	modeLayout.Padding = UDim.new(0, 10)
+	modeLayout.Parent = modeRow
+	local function makeModeChip(name: string, labelText: string): TextButton
+		local btn = Instance.new("TextButton")
+		btn.Name = name
+		btn.AutoButtonColor = false
+		btn.Size = UDim2.new(0.5, -5, 1, 0)
+		btn.BackgroundColor3 = COLORS.idle
+		btn.Text = labelText
+		btn.TextColor3 = COLORS.muted
+		btn.TextSize = if IS_TOUCH then 14 else 15
+		btn.FontFace = UiFonts.DISPLAY_FACE
+		btn.ZIndex = 4
+		addCorner(btn, 4)
+		addStroke(btn, COLORS.stroke, 1.1, 0.55)
+		btn.Parent = modeRow
+		return btn
+	end
+	questionModeBtn = makeModeChip("QuestionMode", "QUESTION POLL")
+	rewardModeBtn = makeModeChip("RewardMode", "REWARD POLL")
+	questionModeBtn.MouseButton1Click:Connect(function()
+		pollMode = "question"
+		paintMode()
+		UIInteractionSounds.playClick()
+	end)
+	rewardModeBtn.MouseButton1Click:Connect(function()
+		pollMode = "reward"
+		paintMode()
+		UIInteractionSounds.playClick()
+	end)
+
+	makeSectionLabel(body, "SCOPE", 3)
 
 	local scopeRow = Instance.new("Frame")
 	scopeRow.BackgroundTransparency = 1
 	scopeRow.Size = UDim2.new(1, 0, 0, CHIP_H)
-	scopeRow.LayoutOrder = 2
+	scopeRow.LayoutOrder = 4
 	scopeRow.ZIndex = 3
 	scopeRow.Parent = body
 	local scopeLayout = Instance.new("UIListLayout")
@@ -453,12 +632,12 @@ local function buildGui(parent: PlayerGui)
 		UIInteractionSounds.playClick()
 	end)
 
-	makeSectionLabel(body, "TIMER", 3)
+	makeSectionLabel(body, "TIMER", 5)
 
 	local timerRow = Instance.new("Frame")
 	timerRow.BackgroundTransparency = 1
 	timerRow.Size = UDim2.new(1, 0, 0, if IS_TOUCH then CHIP_H * 2 + 8 else CHIP_H)
-	timerRow.LayoutOrder = 4
+	timerRow.LayoutOrder = 6
 	timerRow.ZIndex = 3
 	timerRow.Parent = body
 	if IS_TOUCH then
@@ -503,7 +682,7 @@ local function buildGui(parent: PlayerGui)
 		end)
 	end
 
-	makeSectionLabel(body, "QUESTION", 5)
+	questionHeader = makeSectionLabel(body, "QUESTION", 7)
 
 	local qBox = Instance.new("TextBox")
 	qBox.Name = "Question"
@@ -517,7 +696,7 @@ local function buildGui(parent: PlayerGui)
 	qBox.TextSize = 16
 	qBox.TextXAlignment = Enum.TextXAlignment.Left
 	UiFonts.applyInput(qBox)
-	qBox.LayoutOrder = 6
+	qBox.LayoutOrder = 8
 	qBox.ZIndex = 4
 	addCorner(qBox, 4)
 	addStroke(qBox, COLORS.stroke, 1.1, 0.55)
@@ -528,7 +707,7 @@ local function buildGui(parent: PlayerGui)
 	qBox.Parent = body
 	questionBox = qBox
 
-	makeSectionLabel(body, "OPTIONS  ·  uncheck to hide", 7)
+	optionsHeader = makeSectionLabel(body, "OPTIONS  ·  uncheck to hide", 9)
 
 	for i = 1, AdminPollConfig.MAX_OPTIONS do
 		local row = Instance.new("Frame")
@@ -536,7 +715,7 @@ local function buildGui(parent: PlayerGui)
 		row.BackgroundColor3 = COLORS.idle
 		row.BackgroundTransparency = 0.12
 		row.Size = UDim2.new(1, 0, 0, ROW_H)
-		row.LayoutOrder = 7 + i
+		row.LayoutOrder = 9 + i
 		row.ZIndex = 3
 		addCorner(row, 4)
 		addStroke(row, Color3.fromRGB(62, 42, 48), 1, 0.45)
@@ -567,6 +746,22 @@ local function buildGui(parent: PlayerGui)
 		letter.ZIndex = 4
 		letter.Parent = row
 
+		local kindBtn = Instance.new("TextButton")
+		kindBtn.Name = "Kind"
+		kindBtn.AutoButtonColor = false
+		kindBtn.Position = UDim2.fromOffset(if IS_TOUCH then 46 else 42, math.floor((ROW_H - 28) / 2))
+		kindBtn.Size = UDim2.fromOffset(if IS_TOUCH then 64 else 62, if IS_TOUCH then 32 else 28)
+		kindBtn.BackgroundColor3 = COLORS.inputBg
+		kindBtn.Text = "BR"
+		kindBtn.TextColor3 = COLORS.accent
+		kindBtn.TextSize = 11
+		kindBtn.FontFace = UiFonts.DISPLAY_FACE
+		kindBtn.Visible = false
+		kindBtn.ZIndex = 4
+		addCorner(kindBtn, 4)
+		addStroke(kindBtn, COLORS.stroke, 1, 0.55)
+		kindBtn.Parent = row
+
 		local box = Instance.new("TextBox")
 		box.Name = "Text"
 		box.ClearTextOnFocus = false
@@ -592,10 +787,25 @@ local function buildGui(parent: PlayerGui)
 			toggle = toggle,
 			box = box,
 			row = row,
+			letter = letter,
+			kindBtn = kindBtn,
+			rewardKind = "brainrot",
 		}
 		optionRows[i] = entry
 		toggle.MouseButton1Click:Connect(function()
 			entry.enabled = not entry.enabled
+			paintOptionRow(i)
+			UIInteractionSounds.playClick()
+		end)
+		kindBtn.MouseButton1Click:Connect(function()
+			local idx = 1
+			for k, name in KIND_ORDER do
+				if name == entry.rewardKind then
+					idx = k
+					break
+				end
+			end
+			entry.rewardKind = KIND_ORDER[(idx % #KIND_ORDER) + 1]
 			paintOptionRow(i)
 			UIInteractionSounds.playClick()
 		end)
@@ -647,15 +857,18 @@ local function buildGui(parent: PlayerGui)
 	rootScale = scale
 	paintScope()
 	paintDuration()
+	paintMode()
 end
 
-function AdminPollComposer.open()
+function AdminPollComposer.open(mode: string?)
 	if not initialized then
 		AdminPollComposer.init()
 	end
 	if not isAdmin() then
 		return
 	end
+	pollMode = if mode == "reward" then "reward" else "question"
+	paintMode()
 	setOpen(true)
 end
 

@@ -304,6 +304,9 @@ task.defer(function()
 				initClientModule("AdminPollComposer")
 			end,
 			function()
+				initClientModule("AdminGiftDropController")
+			end,
+			function()
 				initClientModule("AdminFlyController")
 			end,
 			function()

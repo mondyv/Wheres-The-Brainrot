@@ -186,13 +186,16 @@ local COMMAND_ALIASES: { [string]: string } = {
 	rope = "setreach",
 	setrope = "setreach",
 	poll = "polls",
+	rewardpoll = "rewardpolls",
+	reward = "rewardpolls",
 }
 
 local COMMAND_HINTS: { [string]: string } = {
 	help = "List every command",
-	addinventory = "Grant a brainrot to inventory",
+	addinventory = "Gift a brainrot (sky-drop). Use global for every live server",
+	addluckyblock = "Gift a lucky block (sky-drop). Use global for every live server",
+	grantgear = "Gift workout gear (sky-drop). Use global for every live server",
 	addcash = "Add cash to a player",
-	addluckyblock = "Grant a lucky block tool",
 	resetdata = "Wipe saved player data",
 	rebirth = "Force rebirth (skip requirements)",
 	tp = "Teleport to a player, or teleport players to someone",
@@ -213,13 +216,13 @@ local COMMAND_HINTS: { [string]: string } = {
 	ban = "Ban a player from the experience",
 	unban = "Remove an experience ban",
 	setpower = "Set workout Power amount",
-	grantgear = "Grant workout gear (1-13)",
 	levelup = "Grant account levels (test VFX)",
 	setcarry = "Set Carry (disabled — always 1)",
 	setreach = "Set Reach via Power (legacy)",
 	playtutorial = "Replay the first-join tutorial",
 	fly = "Toggle fly mode for yourself",
 	polls = "Open the poll composer (server or global)",
+	rewardpolls = "Open a reward poll — players pick a prize and get it",
 }
 
 local function isPhoneLike(): boolean
@@ -448,8 +451,12 @@ local CATALOG_SECTIONS: {
 		title = "GIVE",
 		items = {
 			{ fill = "addcash me 1000000", hint = "Grant cash" },
-			{ fill = "addinventory me NoobiniPizzanini", hint = "Grant a brainrot" },
-			{ fill = 'addluckyblock me "Starter Lucky Block"', hint = "Grant a lucky block" },
+			{ fill = "addinventory me NoobiniPizzanini", hint = "Gift a brainrot (sky-drop)" },
+			{ fill = "addinventory global NoobiniPizzanini", hint = "Gift every online player" },
+			{ fill = 'addluckyblock me "Starter Lucky Block"', hint = "Gift a lucky block" },
+			{ fill = 'addluckyblock global "Starter Lucky Block"', hint = "Lucky block to every live server" },
+			{ fill = "grantgear me 4", hint = "Gift workout gear" },
+			{ fill = "grantgear global 4", hint = "Gear to every online player" },
 		},
 	},
 	{
@@ -457,7 +464,6 @@ local CATALOG_SECTIONS: {
 		items = {
 			{ fill = "rebirth me", hint = "Force a rebirth" },
 			{ fill = "setpower me 500", hint = "Set workout Power" },
-			{ fill = "grantgear me 1", hint = "Grant workout gear" },
 			{ fill = "levelup me", hint = "Grant account levels" },
 			{ fill = "resetdata me", hint = "Wipe a save" },
 			{ fill = "playtutorial", hint = "Replay the tutorial" },
@@ -477,6 +483,7 @@ local CATALOG_SECTIONS: {
 		title = "BROADCAST",
 		items = {
 			{ fill = "polls", hint = "Open the poll composer" },
+			{ fill = "rewardpolls", hint = "Players pick a prize and get it" },
 			{ fill = "servernotif Event starting now!", hint = "Toast this server" },
 			{ fill = "globalnotif Double luck weekend!", hint = "Toast every server" },
 		},
@@ -511,7 +518,8 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "tpland 1", hint = COMMAND_HINTS.tpland },
 		{ fill = "tpland PlayerName 3", hint = "Teleport a player to a land" },
 		{ fill = "tpland all 1", hint = "Teleport everyone to a land" },
-		{ fill = "addinventory me NoobiniPizzanini", hint = "Give brainrot (equipped)" },
+		{ fill = "addinventory me NoobiniPizzanini", hint = "Gift a brainrot (sky-drop)" },
+		{ fill = "addinventory global NoobiniPizzanini", hint = "Gift every online player" },
 		{ fill = "addinventory me NoobiniPizzanini 3 golden 5", hint = "Count, mutation, level" },
 		{ fill = "addcash me 1000000", hint = COMMAND_HINTS.addcash },
 		{ fill = 'addluckyblock me "Starter Lucky Block"', hint = COMMAND_HINTS.addluckyblock },
@@ -550,6 +558,7 @@ local function baseCommandExamples(): { { fill: string, hint: string } }
 		{ fill = "forcespectate PlayerA off", hint = "Clear forced spectate" },
 		{ fill = "fly", hint = COMMAND_HINTS.fly },
 		{ fill = "polls", hint = COMMAND_HINTS.polls },
+		{ fill = "rewardpolls", hint = COMMAND_HINTS.rewardpolls },
 	}
 end
 
@@ -613,8 +622,9 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 		if argIndex == 1 and (#tokens > 1 or endsWithSpace) then
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(1, #tokens - 1))
 			for _, playerName in filterByPrefix(catalog.players, partial) do
-				if playerName ~= "all" or (cmdName ~= "kick" and cmdName ~= "ban" and cmdName ~= "unban" and cmdName ~= "spectate" and cmdName ~= "forcespectate") then
-					pushSuggestion(out, prefix .. playerName, "player target")
+				local hideAllish = playerName == "all" or playerName == "global"
+				if not hideAllish or (cmdName ~= "kick" and cmdName ~= "ban" and cmdName ~= "unban" and cmdName ~= "spectate" and cmdName ~= "forcespectate") then
+					pushSuggestion(out, prefix .. playerName, if playerName == "global" then "every live server" else "player target")
 				end
 			end
 			if cmdName == "tp" and startsWith("to", partial) then
@@ -1320,6 +1330,12 @@ local function submitCommand()
 			setOpen(false)
 			local composer = require(script.Parent.AdminPollComposer)
 			composer.open()
+			return
+		end
+		if response.ok == true and response.message == AdminPollConfig.OPEN_REWARD_SIGNAL then
+			setOpen(false)
+			local composer = require(script.Parent.AdminPollComposer)
+			composer.open("reward")
 			return
 		end
 		setStatus(tostring(response.message or ""), response.ok == true)

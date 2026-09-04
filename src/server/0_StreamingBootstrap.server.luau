@@ -1,15 +1,8 @@
 -- [ACTIVE] 0_StreamingBootstrap.server
 --[[
-	Streaming must stay enabled. Radii and stream-out are set here on purpose
-	so the live place cannot silently run Studio's 256/512 + LowMemory.
-
-	Live always applies gameplay radii (640 / 1080), opportunistic stream-out,
-	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
-	Studio play-solo does not override Workspace.
-	Also publishes LandStreamCenters so clients can stream lands that are not in yet.
-	Pins Huge trees near spawn Persistent so the safezone forest is not stuck
-	behind a 100-tree join queue. Far trees stream with the bubble. Never packs
-	the whole forest into one model. Never pins Land 2–10 or Land Locks.
+	Streaming custom radii / persist / lag-avoidance are disabled.
+	Workspace uses the place file (Roblox defaults). This script only
+	unreplicates a duplicate Brainrots catalog.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -19,7 +12,7 @@ local Workspace = game:GetService("Workspace")
 
 local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StreamingSettings"))
 
-StreamingSettings.apply(Workspace)
+-- apply() is a no-op (custom streaming disabled).
 
 -- Server has the full map. Clients often cannot find Land 2's center until it
 -- streams in — chicken-and-egg. Attributes on ReplicatedStorage always replicate.
@@ -69,17 +62,7 @@ local function publishLandCenters()
 	end
 end
 
-publishLandCenters()
-task.spawn(function()
-	local map = Workspace:FindFirstChild("Map") or Workspace:WaitForChild("Map", 60)
-	if not map then
-		return
-	end
-	if not map:FindFirstChild("Lands") then
-		map:WaitForChild("Lands", 30)
-	end
-	publishLandCenters()
-end)
+-- LandStreamCenters / tree persist disabled with custom streaming.
 
 -- Folders cannot be Persistent. Pin vines (swing targets) and nearby Huge trees
 -- (safezone forest). Far trees stay Default so they do not clog the join queue.
@@ -352,37 +335,8 @@ local function hookMapSceneryOnce(map: Instance)
 	end
 end
 
--- Pin nearby trees even in Studio (property-only). Full scenery persist is live-only.
-local function pinSafezoneTrees(map: Instance)
-	local trees = map:FindFirstChild("Huge trees")
-	if not trees then
-		return
-	end
-	persistNearbyTrees(trees, homePosition(map))
-	publishTreeFocuses(trees)
-end
-
-local mapNow = Workspace:FindFirstChild("Map")
-if mapNow then
-	if RunService:IsStudio() then
-		pinSafezoneTrees(mapNow)
-	else
-		hookMapSceneryOnce(mapNow)
-	end
-else
-	task.spawn(function()
-		local map = Workspace:WaitForChild("Map", 120)
-		if not map then
-			warn("[StreamingBootstrap] Workspace.Map missing — Huge trees / Vine persist skipped")
-			return
-		end
-		if RunService:IsStudio() then
-			pinSafezoneTrees(map)
-		else
-			hookMapSceneryOnce(map)
-		end
-	end)
-end
+-- Custom tree persist / scenery pinning is disabled so Roblox default
+-- streaming can be tested without our join-queue or Atomic/Persistent pins.
 
 -- Legacy place files kept the whole Brainrots mesh catalog in ReplicatedStorage.
 -- Every client (and Studio play-solo) then holds a second copy of every model.

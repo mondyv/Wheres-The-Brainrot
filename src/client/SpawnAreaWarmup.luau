@@ -17,17 +17,8 @@ local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 
 local SpawnAreaWarmup = {}
 
-local function streamAround(player: Player, position: Vector3)
-	if not Workspace.StreamingEnabled then
-		return
-	end
-	local ok, err = pcall(function()
-		-- Match PlotSpawnUtil window so console clients hold the pad long enough.
-		player:RequestStreamAroundAsync(position, 4)
-	end)
-	if not ok then
-		warn("[SpawnAreaWarmup] RequestStreamAroundAsync failed:", err)
-	end
+local function streamAround(_player: Player, _position: Vector3)
+	-- Custom spawn streaming is disabled (test Roblox defaults).
 end
 
 local function resolveAssignedPlot(player: Player, folder: Instance): Instance?

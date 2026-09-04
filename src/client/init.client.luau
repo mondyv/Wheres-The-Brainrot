@@ -10,17 +10,8 @@ task.defer(function()
 	local Lighting = game:GetService("Lighting")
 	local StarterGui = game:GetService("StarterGui")
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
-	local RunService = game:GetService("RunService")
 
-	-- Play-solo is server+client in one process at Automatic/max quality. Live
-	-- Roblox already streams and quality-scales; Studio does not. Session-only.
-	-- Do not strip shadows/bloom here — that made Studio lighting look wrong.
-	if RunService:IsStudio() then
-		pcall(function()
-			local q = Enum.QualityLevel
-			settings().Rendering.QualityLevel = q.Level08 or q.Level8 or q.Level01
-		end)
-	end
+	-- Play-solo uses Studio's own quality. Do not cap it here.
 
 	task.spawn(function()
 		local shared = ReplicatedStorage:WaitForChild("Shared", 30)
@@ -51,15 +42,7 @@ task.defer(function()
 		end
 	end)
 
-	-- Client streamer boots from the place file. Apply immediately so Studio's
-	-- 512/1080 + Opportunistic + MinimumRadiusPause cannot dump the forest.
-	pcall(function()
-		local Workspace = game:GetService("Workspace")
-		if Workspace.StreamingEnabled == true then
-			local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StreamingSettings"))
-			StreamingSettings.apply(Workspace)
-		end
-	end)
+	-- Custom streaming overrides are disabled. Place-file / Roblox defaults win.
 
 	LoadingScreenController.showEarly()
 

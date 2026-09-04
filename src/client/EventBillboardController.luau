@@ -283,6 +283,9 @@ local function ensureTimerGui(host: BasePart)
 	end
 
 	-- Sit the plaque just above the banner; part-local offset lets it lean with the sway.
+	if boundRoot and boundRoot:IsA("Model") then
+		(boundRoot :: Model):PivotTo(restCFrame())
+	end
 	local guiHeight = 3.4
 	local gap = 0.58
 	local follow = 0.42

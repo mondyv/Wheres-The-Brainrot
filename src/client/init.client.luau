@@ -274,6 +274,9 @@ task.defer(function()
 				initClientModule("MailboxFeedbackController")
 			end,
 			function()
+				initClientModule("EventBillboardController")
+			end,
+			function()
 				initClientModule("StealController")
 			end,
 			function()

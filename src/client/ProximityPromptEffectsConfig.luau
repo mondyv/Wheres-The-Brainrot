@@ -105,7 +105,10 @@ M.BUSH_MANAGED_ATTR = "BushManagedPrompt"
 M.STAND_TAG = "BrainrotStand"
 M.COOLDOWN_BANNER_VIEW_RANGE = 64
 M.BUSH_BILLBOARD_LIFT_SCALE = 0.66
-M.BUSH_BILLBOARD_MIN_MAX_DISTANCE = 40
+-- Camera zoom (not player range) hides BillboardGuis past MaxDistance.
+-- Keep a small cap so the card is not visible across the map.
+M.BUSH_BILLBOARD_MIN_MAX_DISTANCE = 100
+M.BUSH_BILLBOARD_MAX_MAX_DISTANCE = 128
 M.BUSH_UI_STATIC_OFFSET = Vector3.new(0, 0.35, 0)
 M.BUSH_XRAY_UI_OFFSET = Vector3.new(0, 3.05, 0)
 M.BUSH_SEARCH_BADGE_BG_TRANSPARENCY = 0.45

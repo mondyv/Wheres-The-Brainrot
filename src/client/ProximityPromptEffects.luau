@@ -184,7 +184,11 @@ local function applyBushSearchCardStyle(view: PromptView)
 end
 
 local function bushBillboardMaxDistance(prompt: ProximityPrompt): number
-	return math.max(prompt.MaxActivationDistance * 1.5, C.BUSH_BILLBOARD_MIN_MAX_DISTANCE)
+	return math.clamp(
+		math.max(prompt.MaxActivationDistance * 1.5, C.BUSH_BILLBOARD_MIN_MAX_DISTANCE),
+		C.BUSH_BILLBOARD_MIN_MAX_DISTANCE,
+		C.BUSH_BILLBOARD_MAX_MAX_DISTANCE
+	)
 end
 
 -- Must be above promptBillboardMaxDistance / refreshKeyLabel (Luau local scope).

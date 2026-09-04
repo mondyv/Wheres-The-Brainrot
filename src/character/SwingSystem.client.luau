@@ -299,12 +299,12 @@ C.ZIP_SPRING_MAX_ACCEL = 700
 C.ATTACH_ZIP_DV = 13
 C.ZIP_PULL_TIME = 0.5
 
-C.LAUNCH_FORWARD_DV = 124
+C.LAUNCH_FORWARD_DV = 148
 C.LAUNCH_MOMENTUM_RATIO = 0.12
-C.LAUNCH_UP_DV = 62
+C.LAUNCH_UP_DV = 68
 C.LAUNCH_CHARGE_DV = 22
-C.LAUNCH_FORWARD_INPUT_DV = 68
-C.LAUNCH_SPEED_CAP = 175
+C.LAUNCH_FORWARD_INPUT_DV = 78
+C.LAUNCH_SPEED_CAP = 240
 -- After a launch, always allow re-latch onto the vine you came from (even past normal reach).
 C.RETURN_SWING_REACH_MULT = 5.0
 C.RETURN_SWING_REACH_BONUS = 280
@@ -652,12 +652,12 @@ end
 local function getSwingRange()
 	local ropeStats = getRopeStats()
 	if ropeStats and typeof(ropeStats.reachStuds) == "number" and ropeStats.reachStuds > 0 then
-		return math.clamp(ropeStats.reachStuds, 40, 700)
+		return math.clamp(ropeStats.reachStuds, 40, 850)
 	end
 
 	local rangeAttr = getFirstNumberAttribute({ "SwingRange", "ReachDistance", "Reach_Distance" })
 	if rangeAttr and rangeAttr > 0 then
-		return math.clamp(rangeAttr, 40, 700)
+		return math.clamp(rangeAttr, 40, 850)
 	end
 
 	local powerScale = getPowerScale()
@@ -689,9 +689,9 @@ end
 local function getLaunchScale()
 	local stats = getPowerStats()
 	if stats and typeof(stats.maxLaunchSpeed) == "number" and stats.maxLaunchSpeed > 0 then
-		return math.clamp(stats.maxLaunchSpeed / 145, 0.92, 2.55)
+		return math.clamp(stats.maxLaunchSpeed / 145, 0.92, 3.4)
 	end
-	return math.clamp(0.92 + (getPowerScale() - 1) * 0.72, 0.92, 2.4)
+	return math.clamp(0.92 + (getPowerScale() - 1) * 0.72, 0.92, 3.2)
 end
 
 local function getSteerForce()
@@ -1154,7 +1154,7 @@ local function createReleaseStyleController(humanoid, hrp)
 		local inputBoost = math.clamp(forwardCharge + forwardHoldBonus * 0.35, 0, 1.35)
 		local momentumBoost = math.clamp(momentum or 0, 0, 1)
 		local cap = C.LAUNCH_SPEED_CAP
-			* math.clamp(0.95 + (launchScale - 1) * 0.82, 0.95, 2.45)
+			* math.clamp(0.95 + (launchScale - 1) * 0.82, 0.95, 3.15)
 			* (1 + momentumBoost * C.SWING_MOMENTUM_LAUNCH_BONUS * 0.75)
 
 		local horizontalSpeed = (
@@ -1165,7 +1165,7 @@ local function createReleaseStyleController(humanoid, hrp)
 		)
 			* holdMult
 			* launchScale
-			* math.clamp(0.96 + (launchScale - 1) * 0.28, 0.94, 1.55)
+			* math.clamp(0.96 + (launchScale - 1) * 0.28, 0.94, 1.85)
 		local upwardSpeed = (
 			C.LAUNCH_UP_DV
 			+ C.LAUNCH_CHARGE_DV * charge * 0.72

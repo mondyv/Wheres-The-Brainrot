@@ -94,10 +94,10 @@ function M.powerStats(powerLevel: number): PowerStats
 		swingArcForce = 52 + t * 66,
 		swingSpeedPump = 1.12 + t * 1.6,
 		zipToward = 25 + t * 18,
-		launchImpulseBase = 8 + lt * 30,
+		launchImpulseBase = 8 + lt * 42,
 		launchMomentumRatio = 0.16 + lt * 0.22,
 		launchVelocityCarry = 0.12 + lt * 0.16,
-		maxLaunchSpeed = maxSwingSpeed + 16 + lt * 118,
+		maxLaunchSpeed = maxSwingSpeed + 16 + lt * 165,
 		launchChargeBonus = 6 + lt * 22,
 		launchUpImpulse = 2.2 + lt * 5.8,
 		launchDeadhangImpulse = 10 + lt * 24,
@@ -106,7 +106,7 @@ end
 
 -- Backend reach grows with power so late lands are latchable; Land 1 still starts modest.
 local REACH_STUDS_BASE = 128
-local REACH_STUDS_RANGE = 420
+local REACH_STUDS_RANGE = 520
 
 function M.ropeStats(ropeLevel: number): RopeStats
 	-- Slower than general progressT: early levels barely grow reach; late still has headroom.

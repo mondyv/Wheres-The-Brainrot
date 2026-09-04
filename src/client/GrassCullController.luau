@@ -642,7 +642,7 @@ local function softPrewarmAlongVelocity()
 		return
 	end
 	local land = playerLandNow()
-	local dist = if land >= 3 then LOOKAHEAD_DIST * 1.7 else LOOKAHEAD_DIST
+	local dist = if land >= 3 then LOOKAHEAD_DIST * 2.2 else LOOKAHEAD_DIST
 	local focus = hrp.Position
 		+ horiz.Unit * dist
 		+ hrp.CFrame.RightVector * (LOOKAHEAD_SIDE * lookAheadSide)
@@ -674,7 +674,7 @@ local function prewarmPublishedTrees()
 			hrp = arrived and (arrived:FindFirstChild("HumanoidRootPart") or arrived:WaitForChild("HumanoidRootPart", 8))
 		end
 		if hrp and hrp:IsA("BasePart") then
-			requestStreamAt((hrp :: BasePart).Position, 2)
+			requestStreamAt((hrp :: BasePart).Position, 1.25)
 		end
 		local folder = ReplicatedStorage:FindFirstChild("TreeStreamFocuses")
 			or ReplicatedStorage:WaitForChild("TreeStreamFocuses", 12)
@@ -697,11 +697,11 @@ local function prewarmPublishedTrees()
 		table.sort(scored, function(a, b)
 			return a.dist < b.dist
 		end)
-		for i = 1, math.min(4, #scored) do
+		for i = 1, math.min(8, #scored) do
 			if not player.Parent then
 				return
 			end
-			requestStreamAt(scored[i].focus, 0.55)
+			requestStreamAt(scored[i].focus, 0.7)
 		end
 	end)
 end
@@ -824,8 +824,9 @@ function M.setLowGraphics(enabled: boolean)
 end
 
 function M.init()
-	-- Cull stays off. Look-ahead streaming runs so later lands actually load,
-	-- but never RequestStreamAroundAsync from the safezone.
+	-- Cull stays off. Look-ahead streaming runs outside the lobby so later lands
+	-- load. Join still streams the spawn HRP + nearby published trees so the
+	-- first swing is not empty vines.
 	if wired then
 		return
 	end
@@ -835,6 +836,7 @@ function M.init()
 		heartbeatConn = nil
 	end
 	heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
+	prewarmPublishedTrees()
 end
 
 return M

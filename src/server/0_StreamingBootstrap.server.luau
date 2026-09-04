@@ -1,12 +1,12 @@
 -- [ACTIVE] 0_StreamingBootstrap.server
 --[[
-	Streaming custom cull / persist / radius overrides stay off.
 	Publishes SafezoneBounds so lobby inventory still works if the hitbox
 	streams out. Unreplicates a duplicate Brainrots catalog.
+	Pins spawn vines + nearby Huge tree models so the first swing is not empty.
+	Does not write Workspace streaming radii — Studio owns those.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
@@ -62,22 +62,14 @@ local function publishLandCenters()
 	end
 end
 
--- LandStreamCenters / tree persist disabled with custom streaming.
+-- LandStreamCenters always publish so later islands can stream before they exist.
+-- On join, pin spawn vines + nearby Huge tree models so the first swing is not empty air.
 
 -- Folders cannot be Persistent. Pin vines (swing targets) and nearby Huge trees
 -- (safezone forest). Far trees stay Default so they do not clog the join queue.
-local PERSIST_EACH_CHILD_KEYS: { [string]: boolean } = {
+local PERSIST_NEAR_SPAWN_KEYS: { [string]: boolean } = {
 	vine = true,
-}
-local PERSIST_MAP_CHILD_KEYS: { [string]: boolean } = {
-	invisibleborders = true,
-	landborders = true,
-	eventbillboard = true,
-	spawntimers = true,
-}
--- Models only — wrapping SafeZoneHitbox / Spawn pads broke names last time.
-local PERSIST_MODELS_ONLY_KEYS: { [string]: boolean } = {
-	spawnandbases = true,
+	hugetrees = true,
 }
 
 local function persistKey(name: string): string
@@ -133,11 +125,13 @@ local function instanceFocus(inst: Instance): Vector3?
 	return nil
 end
 
-local function publishTreeFocuses(hugeTrees: Instance)
+local SPAWN_TREE_RADIUS = 320
+
+local function publishTreeFocuses(hugeTrees: Instance, home: Vector3?)
 	local points: { Vector3 } = {}
 	for _, child in hugeTrees:GetChildren() do
 		local pos = instanceFocus(child)
-		if pos then
+		if pos and (not home or (pos - home).Magnitude <= SPAWN_TREE_RADIUS) then
 			table.insert(points, pos)
 		end
 	end
@@ -149,9 +143,8 @@ local function publishTreeFocuses(hugeTrees: Instance)
 		folder = Instance.new("Folder")
 		folder.Name = "TreeStreamFocuses"
 	end
-	-- Spread samples across the forest so join can RequestStreamAroundAsync
-	-- before any Bent_tree instance exists on the client.
-	local want = math.min(32, #points)
+	-- Nearby spawn trees only — clients RequestStreamAroundAsync these on join.
+	local want = math.min(16, #points)
 	local step = math.max(1, math.floor(#points / want))
 	local n = 0
 	for i = 1, #points, step do
@@ -167,36 +160,43 @@ local function publishTreeFocuses(hugeTrees: Instance)
 	end
 end
 
-local SPAWN_TREE_RADIUS = 850
-
 local function homePosition(map: Instance): Vector3?
+	local sab = map:FindFirstChild("Spawn And Bases")
+	if sab then
+		for _, name in { "SafeZoneHitbox", "SafezoneHitbox" } do
+			local hit = sab:FindFirstChild(name)
+			if hit and hit:IsA("BasePart") then
+				return hit.Position
+			end
+		end
+		local pos = instanceFocus(sab)
+		if pos then
+			return pos
+		end
+	end
 	local lands = map:FindFirstChild("Lands")
 	if lands then
 		local land1 = lands:FindFirstChild("Land1") or lands:FindFirstChild("Land 1")
 		if land1 then
-			local pos = instanceFocus(land1)
-			if pos then
-				return pos
-			end
+			return instanceFocus(land1)
 		end
-	end
-	local sab = map:FindFirstChild("Spawn And Bases")
-	if sab then
-		return instanceFocus(sab)
 	end
 	return nil
 end
 
 local function persistNearbyTrees(container: Instance, home: Vector3?)
+	if not home then
+		return
+	end
 	local function apply(child: Instance)
 		if child:IsA("Model") then
 			local pos = instanceFocus(child)
-			if home and pos and (pos - home).Magnitude > SPAWN_TREE_RADIUS then
+			if not pos or (pos - home).Magnitude > SPAWN_TREE_RADIUS then
 				return
 			end
 			persistModel(child)
 		elseif child:IsA("BasePart") then
-			if home and (child.Position - home).Magnitude > SPAWN_TREE_RADIUS then
+			if (child.Position - home).Magnitude > SPAWN_TREE_RADIUS then
 				return
 			end
 			persistLoosePart(child)
@@ -208,111 +208,22 @@ local function persistNearbyTrees(container: Instance, home: Vector3?)
 	container.ChildAdded:Connect(apply)
 end
 
-local function persistEachChild(container: Instance)
-	for _, child in container:GetChildren() do
-		if child:IsA("Model") then
-			persistModel(child)
-		elseif child:IsA("BasePart") then
-			persistLoosePart(child)
+local function hookJoinSwingScenery(map: Instance)
+	local home = homePosition(map)
+	local function apply(child: Instance)
+		local key = persistKey(child.Name)
+		if not PERSIST_NEAR_SPAWN_KEYS[key] then
+			return
+		end
+		persistNearbyTrees(child, home)
+		if key == "hugetrees" then
+			publishTreeFocuses(child, home)
 		end
 	end
-	container.ChildAdded:Connect(function(child)
-		if child:IsA("Model") then
-			persistModel(child)
-		elseif child:IsA("BasePart") then
-			persistLoosePart(child)
-		end
-	end)
-end
-
-local function persistContainer(container: Instance)
-	if container:IsA("Model") then
-		persistModel(container)
-	end
-	for _, child in container:GetChildren() do
-		if child:IsA("Model") then
-			persistModel(child)
-		elseif child:IsA("BasePart") then
-			persistLoosePart(child)
-		end
-	end
-	container.ChildAdded:Connect(function(child)
-		if child:IsA("Model") then
-			persistModel(child)
-		elseif child:IsA("BasePart") then
-			persistLoosePart(child)
-		end
-	end)
-end
-
-local function persistModelsOnly(container: Instance)
-	if container:IsA("Model") then
-		persistModel(container)
-	end
-	for _, child in container:GetChildren() do
-		if child:IsA("Model") then
-			persistModel(child)
-		end
-	end
-	container.ChildAdded:Connect(function(child)
-		if child:IsA("Model") then
-			persistModel(child)
-		end
-	end)
-end
-
-local function landNumberFromName(name: string): number?
-	local n = tonumber(string.match(name, "^Land(%d+)$"))
-	if n then
-		return n
-	end
-	return tonumber(string.match(name, "^Land%s*(%d+)$"))
-end
-
-local function persistLandOne(lands: Instance)
-	for _, child in lands:GetChildren() do
-		if landNumberFromName(child.Name) == 1 then
-			persistModelsOnly(child)
-		end
-	end
-	lands.ChildAdded:Connect(function(child)
-		if landNumberFromName(child.Name) == 1 then
-			persistModelsOnly(child)
-		end
-	end)
-end
-
-local function hookMapScenery(map: Instance)
 	for _, child in map:GetChildren() do
-		local key = persistKey(child.Name)
-		if key == "hugetrees" then
-			persistNearbyTrees(child, homePosition(map))
-			publishTreeFocuses(child)
-		elseif PERSIST_EACH_CHILD_KEYS[key] then
-			persistEachChild(child)
-		elseif PERSIST_MAP_CHILD_KEYS[key] then
-			persistContainer(child)
-		elseif PERSIST_MODELS_ONLY_KEYS[key] then
-			persistModelsOnly(child)
-		elseif key == "lands" then
-			persistLandOne(child)
-		end
+		apply(child)
 	end
-	map.ChildAdded:Connect(function(child)
-		local key = persistKey(child.Name)
-		if key == "hugetrees" then
-			persistNearbyTrees(child, homePosition(map))
-			publishTreeFocuses(child)
-		elseif PERSIST_EACH_CHILD_KEYS[key] then
-			persistEachChild(child)
-		elseif PERSIST_MAP_CHILD_KEYS[key] then
-			persistContainer(child)
-		elseif PERSIST_MODELS_ONLY_KEYS[key] then
-			persistModelsOnly(child)
-		elseif key == "lands" then
-			persistLandOne(child)
-		end
-	end)
+	map.ChildAdded:Connect(apply)
 end
 
 local mapSceneryHooked = false
@@ -321,7 +232,7 @@ local function hookMapSceneryOnce(map: Instance)
 		return
 	end
 	mapSceneryHooked = true
-	hookMapScenery(map)
+	hookJoinSwingScenery(map)
 	local locks = map:FindFirstChild("Land Locks")
 	if locks then
 		for _, child in locks:GetChildren() do
@@ -334,9 +245,6 @@ local function hookMapSceneryOnce(map: Instance)
 		end
 	end
 end
-
--- Custom tree persist / scenery pinning is disabled so Roblox default
--- streaming can be tested without our join-queue or Atomic/Persistent pins.
 
 -- Legacy place files kept the whole Brainrots mesh catalog in ReplicatedStorage.
 -- Every client (and Studio play-solo) then holds a second copy of every model.
@@ -366,7 +274,11 @@ task.spawn(function()
 	if not map then
 		return
 	end
+	if not map:FindFirstChild("Spawn And Bases") then
+		map:WaitForChild("Spawn And Bases", 30)
+	end
 	publishLandCenters()
+	hookMapSceneryOnce(map)
 	map.ChildAdded:Connect(function(child)
 		if child.Name == "Lands" then
 			publishLandCenters()

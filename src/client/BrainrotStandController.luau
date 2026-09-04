@@ -822,6 +822,10 @@ local function ensureUpgradePadHint(): (BillboardGui, Frame)
 	local hostCorner = Instance.new("UICorner")
 	hostCorner.CornerRadius = UDim.new(1, 0)
 	hostCorner.Parent = host
+	local hostScale = Instance.new("UIScale")
+	hostScale.Name = "PressScale"
+	hostScale.Scale = 1
+	hostScale.Parent = host
 	local hostStroke = Instance.new("UIStroke")
 	hostStroke.Color = Color3.fromRGB(255, 220, 96)
 	hostStroke.Thickness = 2.4
@@ -908,6 +912,72 @@ local function showUpgradePadHint(stand: Model)
 	end)
 end
 
+local upgradeHintPressToken = 0
+
+local function playUpgradeHintPress()
+	local bb = upgradeHintGui
+	local host = upgradeHintHost
+	if not bb or not host or not bb.Parent or bb.Enabled ~= true then
+		return
+	end
+	local scale = host:FindFirstChild("PressScale")
+	if not (scale and scale:IsA("UIScale")) then
+		local created = Instance.new("UIScale")
+		created.Name = "PressScale"
+		created.Scale = 1
+		created.Parent = host
+		scale = created
+	end
+	local stroke = host:FindFirstChildOfClass("UIStroke")
+	local aura = bb:FindFirstChild("Aura")
+	upgradeHintPressToken += 1
+	local token = upgradeHintPressToken
+	local PRESS = TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local POP = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+	local SETTLE = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	TweenService:Create(scale, PRESS, { Scale = 0.68 }):Play()
+	TweenService:Create(host, PRESS, { Rotation = -10 }):Play()
+	if stroke then
+		TweenService:Create(stroke, PRESS, {
+			Thickness = 4.4,
+			Color = Color3.fromRGB(255, 255, 220),
+			Transparency = 0,
+		}):Play()
+	end
+	if aura and aura:IsA("Frame") then
+		TweenService:Create(aura, PRESS, {
+			BackgroundTransparency = 0.35,
+			Size = UDim2.fromOffset(92, 92),
+		}):Play()
+	end
+	task.delay(0.08, function()
+		if token ~= upgradeHintPressToken or not host.Parent then
+			return
+		end
+		TweenService:Create(scale, POP, { Scale = 1.16 }):Play()
+		TweenService:Create(host, POP, { Rotation = 0 }):Play()
+		if stroke then
+			TweenService:Create(stroke, POP, {
+				Thickness = 2.4,
+				Color = Color3.fromRGB(255, 220, 96),
+				Transparency = 0.08,
+			}):Play()
+		end
+		if aura and aura.Parent and aura:IsA("Frame") then
+			TweenService:Create(aura, POP, {
+				BackgroundTransparency = 0.72,
+				Size = UDim2.fromOffset(78, 78),
+			}):Play()
+		end
+		task.delay(0.18, function()
+			if token ~= upgradeHintPressToken or not scale.Parent then
+				return
+			end
+			TweenService:Create(scale, SETTLE, { Scale = 1 }):Play()
+		end)
+	end)
+end
+
 -- Only one stand prompt visible at a time (closest). Hide pick-up while holding a brainrot.
 local function updateClosestUpgradeStand(hrpPos: Vector3)
 	local best: Model? = nil
@@ -964,6 +1034,7 @@ local function fireClosestStandUpgrade()
 	end
 	lastUpgradeRequestAt[stand] = now
 	if upgradeRE then
+		playUpgradeHintPress()
 		upgradeRE:FireServer(stand)
 		return true
 	end
@@ -1616,6 +1687,9 @@ local function wireUpgradeButton(stand: Model): GuiButton?
 		end
 		lastUpgradeRequestAt[stand] = now
 		if upgradeRE then
+			if upgradeHintStand == stand then
+				playUpgradeHintPress()
+			end
 			upgradeRE:FireServer(stand)
 		end
 	end

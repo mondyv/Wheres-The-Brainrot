@@ -1123,20 +1123,39 @@ local function getButtonPanelStroke(btn: TextButton): UIStroke?
 	return nil
 end
 
-local function punchButton(scale: UIScale, btn: TextButton, bright: Color3)
-	TweenService:Create(scale, PUNCH, { Scale = 0.88 }):Play()
-	task.delay(0.12, function()
-		if scale.Parent then
-			TweenService:Create(scale, PUNCH, { Scale = 1 }):Play()
+local function punchButton(scale: UIScale, btn: TextButton, bright: Color3, tiltSign: number)
+	local PRESS = TweenInfo.new(0.07, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local kick = (if tiltSign < 0 then -1 else 1) * 12
+	TweenService:Create(scale, PRESS, { Scale = 0.7 }):Play()
+	TweenService:Create(btn, PRESS, { Rotation = kick }):Play()
+	local panel = btn:FindFirstChild("Panel")
+	if panel and panel:IsA("Frame") then
+		TweenService:Create(panel, PRESS, { BackgroundTransparency = 0.04, Rotation = kick * 0.28 }):Play()
+	end
+	task.delay(0.08, function()
+		if not scale.Parent then
+			return
 		end
+		TweenService:Create(scale, PUNCH, { Scale = 1.14 }):Play()
+		TweenService:Create(btn, PUNCH, { Rotation = 0 }):Play()
+		if panel and panel.Parent and panel:IsA("Frame") then
+			TweenService:Create(panel, PUNCH, { Rotation = 0 }):Play()
+		end
+		task.delay(0.16, function()
+			if scale.Parent then
+				TweenService:Create(scale, HOVER_OUT, { Scale = 1 }):Play()
+			end
+		end)
 	end)
 	local stroke = getButtonPanelStroke(btn)
 	if stroke then
 		local orig = stroke.Color
+		local origThick = stroke.Thickness
 		stroke.Color = bright
-		task.delay(0.18, function()
+		stroke.Thickness = origThick + 1.4
+		task.delay(0.2, function()
 			if stroke.Parent then
-				TweenService:Create(stroke, FADE, { Color = orig }):Play()
+				TweenService:Create(stroke, FADE, { Color = orig, Thickness = origThick }):Play()
 			end
 		end)
 	end
@@ -1189,7 +1208,6 @@ local function bindChoiceButtonPress(
 		if not MobileTouchGate.canTapUi() then
 			return
 		end
-		UIInteractionSounds.playClick()
 		onActivated()
 	end))
 
@@ -1500,9 +1518,14 @@ local function trackModel(model: Model)
 		entry.acceptedOffer = true
 		local keepLockedForSpider = false
 		clearOfferPresentation(keepLockedForSpider)
-		punchButton(entry.acceptScale, entry.acceptBtn, Color3.fromRGB(160, 255, 190))
+		pressButtonVisual(entry.acceptScale, entry.acceptBtn, entry.acceptPanelScale)
+		punchButton(entry.acceptScale, entry.acceptBtn, Color3.fromRGB(160, 255, 190), -1)
+		if entry.acceptBb then
+			tweenBillboardLift(entry.acceptBb, true)
+		end
 		MobileHaptics.confirm()
 		GameSoundEffects.playProximityPromptAppear()
+		UIInteractionSounds.playClick()
 		BushHoldInteraction.suppressBushSearchBriefly(2.5)
 		ProximityPromptEffects.hideBushSearch()
 		fireDecision(model, "accept")
@@ -1511,7 +1534,12 @@ local function trackModel(model: Model)
 			entry.acceptHooksFired = true
 			fireAcceptHooks(model)
 		end
-		animateOfferOut(entry, false, true)
+		task.delay(0.16, function()
+			if tracked[model] ~= entry then
+				return
+			end
+			animateOfferOut(entry, false, true)
+		end)
 	end
 
 	local function onDeclinePressed()
@@ -1522,12 +1550,22 @@ local function trackModel(model: Model)
 		lockDecision(entry)
 		noteAmbushDeclined(model)
 		clearOfferPresentation()
-		punchButton(entry.declineScale, entry.declineBtn, Color3.fromRGB(255, 170, 160))
+		pressButtonVisual(entry.declineScale, entry.declineBtn, entry.declinePanelScale)
+		punchButton(entry.declineScale, entry.declineBtn, Color3.fromRGB(255, 170, 160), 1)
+		if entry.declineBb then
+			tweenBillboardLift(entry.declineBb, true)
+		end
 		MobileHaptics.error()
 		GameSoundEffects.playErrorNotif()
-		animateOfferOut(entry, true)
+		UIInteractionSounds.playClick()
 		fireDecision(model, "decline")
 		fireDeclineHooks(model)
+		task.delay(0.16, function()
+			if tracked[model] ~= entry then
+				return
+			end
+			animateOfferOut(entry, true)
+		end)
 	end
 
 	entry.invokeAccept = onAcceptPressed

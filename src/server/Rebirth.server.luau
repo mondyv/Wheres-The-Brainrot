@@ -194,8 +194,11 @@ local function performRebirth(player: Player, opts: { skipRequirements: boolean?
 	end
 
 	-- Rebirth only wipes cash, workout Power, and gear. Index / stands / floors stay.
+	-- Skip-rebirth (Robux) keeps current Power; a normal rebirth still resets it.
 	player:SetAttribute("Cash", 0)
-	WorkoutPower.setPowerAbsolute(player, 0, false)
+	if options.keepUpgrades ~= true then
+		WorkoutPower.setPowerAbsolute(player, 0, false)
+	end
 	GearService.resetLoadout(player)
 	task.defer(function()
 		if player.Parent then

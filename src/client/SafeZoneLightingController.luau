@@ -39,33 +39,56 @@ local NIGHT_ATMO_LOW = {
 	Haze = 1.25,
 }
 
--- Faint mist inside safe zone — softens distance so the base isn't crystal-clear
+-- Warm, clearer safezone — light haze, not a gray soup.
 local SAFEZONE_FOG = {
-	densityAdd = 0.18,
-	densityMin = 0.22,
-	densityMax = 0.34,
-	hazeAdd = 0.85,
-	hazeMin = 0.9,
-	hazeMax = 1.55,
-	offsetBias = -0.04,
-	glareMax = 0.035,
-	mistColor = Color3.fromRGB(198, 204, 210),
-	mistDecay = Color3.fromRGB(155, 160, 166),
-	mistMix = 0.28,
+	densityAdd = 0.07,
+	densityMin = 0.1,
+	densityMax = 0.22,
+	hazeAdd = 0.32,
+	hazeMin = 0.28,
+	hazeMax = 0.85,
+	offsetBias = 0.02,
+	glareMax = 0.08,
+	mistColor = Color3.fromRGB(255, 236, 208),
+	mistDecay = Color3.fromRGB(214, 176, 128),
+	mistMix = 0.16,
 }
 
 local SAFEZONE_FOG_LOW = {
-	densityAdd = 0.14,
-	densityMin = 0.2,
-	densityMax = 0.3,
-	hazeAdd = 0.65,
-	hazeMin = 0.75,
-	hazeMax = 1.35,
-	offsetBias = -0.03,
-	glareMax = 0.03,
-	mistColor = Color3.fromRGB(198, 204, 210),
-	mistDecay = Color3.fromRGB(155, 160, 166),
-	mistMix = 0.22,
+	densityAdd = 0.06,
+	densityMin = 0.1,
+	densityMax = 0.2,
+	hazeAdd = 0.24,
+	hazeMin = 0.22,
+	hazeMax = 0.7,
+	offsetBias = 0.01,
+	glareMax = 0.06,
+	mistColor = Color3.fromRGB(255, 236, 208),
+	mistDecay = Color3.fromRGB(214, 176, 128),
+	mistMix = 0.12,
+}
+
+local LOOK_CC_NAME = "SafeZoneLookCC"
+local LOOK_BLOOM_NAME = "SafeZoneLookBloom"
+
+local SAFEZONE_CC = {
+	Brightness = 0.06,
+	Contrast = 0.1,
+	Saturation = 0.16,
+	TintColor = Color3.fromRGB(255, 244, 224),
+}
+
+local NIGHT_CC = {
+	Brightness = -0.03,
+	Contrast = 0.05,
+	Saturation = -0.06,
+	TintColor = Color3.fromRGB(214, 222, 236),
+}
+
+local SAFEZONE_BLOOM = {
+	Intensity = 0.22,
+	Size = 16,
+	Threshold = 0.9,
 }
 
 type AtmoSnap = {
@@ -141,6 +164,50 @@ local function ensureAtmosphere(): Atmosphere
 	return atmo
 end
 
+local function ensureLookCC(): ColorCorrectionEffect
+	local existing = Lighting:FindFirstChild(LOOK_CC_NAME)
+	if existing and existing:IsA("ColorCorrectionEffect") then
+		return existing
+	end
+	if existing then
+		existing:Destroy()
+	end
+	local cc = Instance.new("ColorCorrectionEffect")
+	cc.Name = LOOK_CC_NAME
+	cc.Brightness = 0
+	cc.Contrast = 0
+	cc.Saturation = 0
+	cc.TintColor = Color3.new(1, 1, 1)
+	cc.Enabled = true
+	cc.Parent = Lighting
+	return cc
+end
+
+local function ensureLookBloom(): BloomEffect?
+	if lowGraphics then
+		local old = Lighting:FindFirstChild(LOOK_BLOOM_NAME)
+		if old then
+			old:Destroy()
+		end
+		return nil
+	end
+	local existing = Lighting:FindFirstChild(LOOK_BLOOM_NAME)
+	if existing and existing:IsA("BloomEffect") then
+		return existing
+	end
+	if existing then
+		existing:Destroy()
+	end
+	local bloom = Instance.new("BloomEffect")
+	bloom.Name = LOOK_BLOOM_NAME
+	bloom.Intensity = 0
+	bloom.Size = SAFEZONE_BLOOM.Size
+	bloom.Threshold = SAFEZONE_BLOOM.Threshold
+	bloom.Enabled = true
+	bloom.Parent = Lighting
+	return bloom
+end
+
 local function readAtmo(atmo: Atmosphere): AtmoSnap
 	return {
 		Density = atmo.Density,
@@ -181,6 +248,11 @@ local function applyProfile(night: boolean, instant: boolean?)
 
 	local goal = if night then (if lowGraphics then NIGHT_ATMO_LOW else NIGHT_ATMO) else safezoneAtmo()
 
+	local cc = ensureLookCC()
+	local bloom = ensureLookBloom()
+	local ccGoal = if night then NIGHT_CC else SAFEZONE_CC
+	local bloomIntensity = if night or lowGraphics then 0 else SAFEZONE_BLOOM.Intensity
+
 	if instant then
 		atmo.Density = goal.Density
 		atmo.Offset = goal.Offset
@@ -188,6 +260,15 @@ local function applyProfile(night: boolean, instant: boolean?)
 		atmo.Decay = goal.Decay
 		atmo.Glare = goal.Glare
 		atmo.Haze = goal.Haze
+		cc.Brightness = ccGoal.Brightness
+		cc.Contrast = ccGoal.Contrast
+		cc.Saturation = ccGoal.Saturation
+		cc.TintColor = ccGoal.TintColor
+		if bloom then
+			bloom.Intensity = bloomIntensity
+			bloom.Size = SAFEZONE_BLOOM.Size
+			bloom.Threshold = SAFEZONE_BLOOM.Threshold
+		end
 		return
 	end
 
@@ -199,6 +280,19 @@ local function applyProfile(night: boolean, instant: boolean?)
 		Glare = goal.Glare,
 		Haze = goal.Haze,
 	})
+	playTween(cc, {
+		Brightness = ccGoal.Brightness,
+		Contrast = ccGoal.Contrast,
+		Saturation = ccGoal.Saturation,
+		TintColor = ccGoal.TintColor,
+	})
+	if bloom then
+		playTween(bloom, {
+			Intensity = bloomIntensity,
+			Size = SAFEZONE_BLOOM.Size,
+			Threshold = SAFEZONE_BLOOM.Threshold,
+		})
+	end
 end
 
 local function readInSafezone(): boolean

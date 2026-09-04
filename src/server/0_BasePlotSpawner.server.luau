@@ -21,7 +21,7 @@ local MAX_SLOTS = 7
 local POS_NAME_PREFIX = "BasePOSPart"
 local SPAWNED_ATTR = "_PlotTemplatesSpawned"
 local SPAWN_VERSION_ATTR = "_PlotSpawnVersion"
-local SPAWN_VERSION = 15
+local SPAWN_VERSION = 16
 local STUB_ATTR = "PlotFloorStub"
 
 local slotToBase: { [number]: Instance } = {}
@@ -213,28 +213,15 @@ local function setupPlotGuiOnStory1(plot: Instance)
 	end
 end
 
-local function collectExistingPlots(folder: Instance): boolean
-	table.clear(slotToBase)
-	local any = false
-	for slot = 1, MAX_SLOTS do
-		local plot = folder:FindFirstChild("Plot_" .. tostring(slot))
-		if plot and (plot:IsA("Model") or plot:IsA("Folder")) then
-			local owner = plot:GetAttribute("PlotOwnerUserId")
-			if typeof(owner) == "number" and not Players:GetPlayerByUserId(owner) then
-				plot:SetAttribute("PlotOwnerUserId", nil)
-			end
-			setupPlotGuiOnStory1(plot)
-			slotToBase[slot] = plot
-			any = true
-		end
-	end
-	return any
+local function isPlotUsernameInstance(inst: Instance): boolean
+	local key = string.gsub(string.lower(inst.Name), "%s+", "")
+	return key == "plotusername" or key == "plotusernamelabel" or key == "usernamesign"
 end
 
 local function sanitizeStubFloor(floorFolder: Instance)
 	local toDestroy: { Instance } = {}
 	for _, d in ipairs(floorFolder:GetDescendants()) do
-		if d.Name == "Stands" or d.Name == "stands" then
+		if d.Name == "Stands" or d.Name == "stands" or isPlotUsernameInstance(d) then
 			table.insert(toDestroy, d)
 		elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then
 			table.insert(toDestroy, d)
@@ -297,9 +284,8 @@ local function spawnFullPlot(template: Instance, pos: BasePart, slot: number, fo
 	clone.Name = "Plot_" .. tostring(slot)
 	clone:SetAttribute("PlotSlotId", slot)
 	clone:SetAttribute(STUB_ATTR, nil)
-	if typeof(ownerUserId) == "number" then
-		clone:SetAttribute("PlotOwnerUserId", ownerUserId)
-	end
+	-- Clone copies template attributes; never inherit a leftover owner onto every slot.
+	clone:SetAttribute("PlotOwnerUserId", if typeof(ownerUserId) == "number" then ownerUserId else nil)
 	setupPlotGuiOnStory1(clone)
 	PlotRuntimeTune.tune(clone)
 	clone.Parent = folder
@@ -362,44 +348,126 @@ local function promoteStubToFullPlot(slot: number, player: Player)
 	player:SetAttribute("AssignedPlotSlot", slot)
 end
 
+local function destroySlotPlot(folder: Instance, slot: number)
+	local named = folder:FindFirstChild("Plot_" .. tostring(slot))
+	if named then
+		named:Destroy()
+	end
+	local replacing = folder:FindFirstChild("Plot_" .. tostring(slot) .. "_Replacing")
+	if replacing then
+		replacing:Destroy()
+	end
+end
+
+local function spawnStubAtSlot(folder: Instance, template: Instance, slot: number): Model?
+	local pos = folder:FindFirstChild(POS_NAME_PREFIX .. tostring(slot))
+	if not pos or not pos:IsA("BasePart") then
+		return nil
+	end
+	destroySlotPlot(folder, slot)
+	local stub = spawnFloorStub(template, pos, slot, folder)
+	slotToBase[slot] = stub
+	return stub
+end
+
+local function liveOwnerUserId(plot: Instance): number?
+	local uid = plot:GetAttribute("PlotOwnerUserId")
+	if typeof(uid) ~= "number" then
+		return nil
+	end
+	if not Players:GetPlayerByUserId(uid) then
+		plot:SetAttribute("PlotOwnerUserId", nil)
+		return nil
+	end
+	return uid
+end
+
+-- Published places often save leftover full Plot_N clones (and the same PlotOwnerUserId
+-- copied from Templates.Base). Empty slots must be floor stubs; one player owns one plot.
+local function reconcileExistingPlots(folder: Instance, template: Instance): boolean
+	table.clear(slotToBase)
+	local claimedBy: { [number]: number } = {}
+	local any = false
+	for slot = 1, MAX_SLOTS do
+		local pos = folder:FindFirstChild(POS_NAME_PREFIX .. tostring(slot))
+		if not pos or not pos:IsA("BasePart") then
+			continue
+		end
+		local plot = folder:FindFirstChild("Plot_" .. tostring(slot))
+		if not (plot and (plot:IsA("Model") or plot:IsA("Folder"))) then
+			spawnStubAtSlot(folder, template, slot)
+			any = true
+			continue
+		end
+
+		local uid = liveOwnerUserId(plot)
+		if uid and claimedBy[uid] ~= nil then
+			plot:SetAttribute("PlotOwnerUserId", nil)
+			uid = nil
+		elseif uid then
+			claimedBy[uid] = slot
+		end
+
+		if uid == nil and plot:GetAttribute(STUB_ATTR) ~= true then
+			spawnStubAtSlot(folder, template, slot)
+		else
+			setupPlotGuiOnStory1(plot)
+			slotToBase[slot] = plot
+		end
+		any = true
+	end
+	return any
+end
+
+local function stripLeftoverTemplateClones(folder: Instance)
+	local toDestroy: { Instance } = {}
+	for _, ch in ipairs(folder:GetChildren()) do
+		if PlotPaths.isPlotRoot(ch) then
+			continue
+		end
+		if ch:IsA("BasePart") and string.sub(ch.Name, 1, #POS_NAME_PREFIX) == POS_NAME_PREFIX then
+			continue
+		end
+		if firstStoryFolder(ch) then
+			table.insert(toDestroy, ch)
+		end
+	end
+	for _, inst in ipairs(toDestroy) do
+		inst:Destroy()
+	end
+end
+
 local function spawnBasesOnce(folder: Instance): boolean
+	local template = getBaseTemplate()
+	if not template then
+		return false
+	end
+
+	stripLeftoverTemplateClones(folder)
+
 	if folder:GetAttribute(SPAWN_VERSION_ATTR) ~= SPAWN_VERSION then
 		for slot = 1, MAX_SLOTS do
-			local plot = folder:FindFirstChild("Plot_" .. tostring(slot))
-			if plot then
-				plot:Destroy()
-			end
+			destroySlotPlot(folder, slot)
 		end
 		table.clear(slotToBase)
 		folder:SetAttribute(SPAWNED_ATTR, false)
 	end
 
 	if folder:GetAttribute(SPAWNED_ATTR) == true then
-		if collectExistingPlots(folder) then
+		if reconcileExistingPlots(folder, template) then
+			folder:SetAttribute(SPAWN_VERSION_ATTR, SPAWN_VERSION)
 			return true
 		end
 		folder:SetAttribute(SPAWNED_ATTR, false)
 	end
 
-	local template = getBaseTemplate()
-	if not template then
-		return false
-	end
-
 	local any = false
-	local stubCount = 0
 	for slot = 1, MAX_SLOTS do
 		local pos = folder:FindFirstChild(POS_NAME_PREFIX .. tostring(slot))
 		if not pos or not pos:IsA("BasePart") then
 			continue
 		end
-		local existing = folder:FindFirstChild("Plot_" .. tostring(slot))
-		if existing then
-			existing:Destroy()
-		end
-		local stub = spawnFloorStub(template, pos, slot, folder)
-		slotToBase[slot] = stub
-		stubCount += 1
+		spawnStubAtSlot(folder, template, slot)
 		any = true
 		if slot < MAX_SLOTS then
 			task.wait()
@@ -420,6 +488,22 @@ local function tryAssignPlayer(player: Player)
 	if next(slotToBase) == nil then
 		return
 	end
+
+	-- Bind to a plot this player already uniquely owns (don't claim a second pad).
+	for slot = 1, MAX_SLOTS do
+		local base = slotToBase[slot]
+		if base and base.Parent and base:GetAttribute("PlotOwnerUserId") == player.UserId then
+			playerToSlot[player] = slot
+			if base:GetAttribute(STUB_ATTR) == true then
+				promoteStubToFullPlot(slot, player)
+			else
+				player:SetAttribute("AssignedPlotSlot", slot)
+				notifyPlotVisibilityRefresh(base)
+			end
+			return
+		end
+	end
+
 	for slot = 1, MAX_SLOTS do
 		local base = slotToBase[slot]
 		if base and base.Parent then

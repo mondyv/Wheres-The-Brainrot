@@ -7,6 +7,7 @@
 	First story name: "1 Story" / "1st Story" (spacing + case tolerant).
 --]]
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
@@ -53,7 +54,10 @@ end
 
 local function plotIsClaimed(plot: Instance): boolean
 	local uid = plot:GetAttribute("PlotOwnerUserId")
-	return typeof(uid) == "number"
+	if typeof(uid) ~= "number" then
+		return false
+	end
+	return Players:GetPlayerByUserId(uid) ~= nil
 end
 
 local function stashPartProps(p: BasePart)

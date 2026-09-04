@@ -118,7 +118,8 @@ local function ownerDisplayName(plot: Instance): string
 	if plr then
 		return plr.DisplayName
 	end
-	return "Player"
+	-- Stale / leftover owner id (template clone, published place) — don't stamp "Player" on empty pads.
+	return "Empty"
 end
 
 local function refreshPlotUsername(plot: Instance)
@@ -133,10 +134,11 @@ local function refreshPlotUsername(plot: Instance)
 	end
 
 	local uid = plot:GetAttribute("PlotOwnerUserId")
-	if typeof(uid) == "number" then
-		setPortraitImage(portrait, avatarHeadshotUrl(uid))
+	local plr = if typeof(uid) == "number" then Players:GetPlayerByUserId(uid) else nil
+	if plr then
+		setPortraitImage(portrait, avatarHeadshotUrl(plr.UserId))
 	else
-		-- Unclaimed: clear placeholder so it isn't a random stock head.
+		-- Unclaimed or leftover owner id: clear placeholder so it isn't a random stock head.
 		setPortraitImage(portrait, "")
 	end
 end

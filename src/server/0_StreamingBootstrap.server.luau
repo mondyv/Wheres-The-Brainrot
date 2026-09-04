@@ -3,13 +3,13 @@
 	Streaming must stay enabled. Radii and stream-out are set here on purpose
 	so the live place cannot silently run Studio's 256/512 + LowMemory.
 
-	Live always applies gameplay radii (512 / 1080), opportunistic stream-out,
+	Live always applies gameplay radii (640 / 1080), opportunistic stream-out,
 	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
 	Studio play-solo does not override Workspace.
 	Also publishes LandStreamCenters so clients can stream lands that are not in yet.
-	Pins each Huge trees / Vine child Persistent so the forest stays in while
-	you swing. Never packs the whole forest into one model. Never pins Land 2–10
-	or Land Locks. Never Destroy map folders.
+	Pins Huge trees near spawn Persistent so the safezone forest is not stuck
+	behind a 100-tree join queue. Far trees stream with the bubble. Never packs
+	the whole forest into one model. Never pins Land 2–10 or Land Locks.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -81,10 +81,9 @@ task.spawn(function()
 	publishLandCenters()
 end)
 
--- Folders cannot be Persistent. Pin each Bent_tree / Willow_tree / vine child.
--- Do NOT pack the whole forest into one Persistent model — that stopped replicating.
+-- Folders cannot be Persistent. Pin vines (swing targets) and nearby Huge trees
+-- (safezone forest). Far trees stay Default so they do not clog the join queue.
 local PERSIST_EACH_CHILD_KEYS: { [string]: boolean } = {
-	hugetrees = true,
 	vine = true,
 }
 local PERSIST_MAP_CHILD_KEYS: { [string]: boolean } = {
@@ -185,6 +184,47 @@ local function publishTreeFocuses(hugeTrees: Instance)
 	end
 end
 
+local SPAWN_TREE_RADIUS = 850
+
+local function homePosition(map: Instance): Vector3?
+	local lands = map:FindFirstChild("Lands")
+	if lands then
+		local land1 = lands:FindFirstChild("Land1") or lands:FindFirstChild("Land 1")
+		if land1 then
+			local pos = instanceFocus(land1)
+			if pos then
+				return pos
+			end
+		end
+	end
+	local sab = map:FindFirstChild("Spawn And Bases")
+	if sab then
+		return instanceFocus(sab)
+	end
+	return nil
+end
+
+local function persistNearbyTrees(container: Instance, home: Vector3?)
+	local function apply(child: Instance)
+		if child:IsA("Model") then
+			local pos = instanceFocus(child)
+			if home and pos and (pos - home).Magnitude > SPAWN_TREE_RADIUS then
+				return
+			end
+			persistModel(child)
+		elseif child:IsA("BasePart") then
+			if home and (child.Position - home).Magnitude > SPAWN_TREE_RADIUS then
+				return
+			end
+			persistLoosePart(child)
+		end
+	end
+	for _, child in container:GetChildren() do
+		apply(child)
+	end
+	container.ChildAdded:Connect(apply)
+end
+
 local function persistEachChild(container: Instance)
 	for _, child in container:GetChildren() do
 		if child:IsA("Model") then
@@ -262,11 +302,11 @@ end
 local function hookMapScenery(map: Instance)
 	for _, child in map:GetChildren() do
 		local key = persistKey(child.Name)
-		if PERSIST_EACH_CHILD_KEYS[key] then
+		if key == "hugetrees" then
+			persistNearbyTrees(child, homePosition(map))
+			publishTreeFocuses(child)
+		elseif PERSIST_EACH_CHILD_KEYS[key] then
 			persistEachChild(child)
-			if key == "hugetrees" then
-				publishTreeFocuses(child)
-			end
 		elseif PERSIST_MAP_CHILD_KEYS[key] then
 			persistContainer(child)
 		elseif PERSIST_MODELS_ONLY_KEYS[key] then
@@ -277,11 +317,11 @@ local function hookMapScenery(map: Instance)
 	end
 	map.ChildAdded:Connect(function(child)
 		local key = persistKey(child.Name)
-		if PERSIST_EACH_CHILD_KEYS[key] then
+		if key == "hugetrees" then
+			persistNearbyTrees(child, homePosition(map))
+			publishTreeFocuses(child)
+		elseif PERSIST_EACH_CHILD_KEYS[key] then
 			persistEachChild(child)
-			if key == "hugetrees" then
-				publishTreeFocuses(child)
-			end
 		elseif PERSIST_MAP_CHILD_KEYS[key] then
 			persistContainer(child)
 		elseif PERSIST_MODELS_ONLY_KEYS[key] then
@@ -312,21 +352,36 @@ local function hookMapSceneryOnce(map: Instance)
 	end
 end
 
--- Pin trees before the first player replicates, not after a deferred wait.
-if not RunService:IsStudio() then
-	local mapNow = Workspace:FindFirstChild("Map")
-	if mapNow then
-		hookMapSceneryOnce(mapNow)
-	else
-		task.spawn(function()
-			local map = Workspace:WaitForChild("Map", 120)
-			if map then
-				hookMapSceneryOnce(map)
-			else
-				warn("[StreamingBootstrap] Workspace.Map missing — Huge trees / Vine persist skipped")
-			end
-		end)
+-- Pin nearby trees even in Studio (property-only). Full scenery persist is live-only.
+local function pinSafezoneTrees(map: Instance)
+	local trees = map:FindFirstChild("Huge trees")
+	if not trees then
+		return
 	end
+	persistNearbyTrees(trees, homePosition(map))
+	publishTreeFocuses(trees)
+end
+
+local mapNow = Workspace:FindFirstChild("Map")
+if mapNow then
+	if RunService:IsStudio() then
+		pinSafezoneTrees(mapNow)
+	else
+		hookMapSceneryOnce(mapNow)
+	end
+else
+	task.spawn(function()
+		local map = Workspace:WaitForChild("Map", 120)
+		if not map then
+			warn("[StreamingBootstrap] Workspace.Map missing — Huge trees / Vine persist skipped")
+			return
+		end
+		if RunService:IsStudio() then
+			pinSafezoneTrees(map)
+		else
+			hookMapSceneryOnce(map)
+		end
+	end)
 end
 
 -- Legacy place files kept the whole Brainrots mesh catalog in ReplicatedStorage.

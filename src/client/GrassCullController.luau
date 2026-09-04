@@ -817,15 +817,16 @@ function M.init()
 	end
 	wired = true
 
-	-- Studio play-solo holds the entire place in RAM already. Reparenting every
-	-- land's grass 0.4s after spawn freezes the character and does not drop 9GB.
-	if RunService:IsStudio() then
-		return
-	end
-
 	pcall(function()
 		StreamingSettings.apply(Workspace)
 	end)
+
+	-- Studio skips land parking (that froze play-solo). Still preload the
+	-- three tree meshes so the safezone forest is not empty boxes.
+	if RunService:IsStudio() then
+		preloadVisibleTrees()
+		return
+	end
 
 	heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
 	prewarmPublishedTrees()

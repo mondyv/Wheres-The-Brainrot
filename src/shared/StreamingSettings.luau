@@ -3,9 +3,8 @@
 	Keep a playable bubble and dump far islands. 4096 + LowMemory held the
 	whole map and ran at ~12 FPS.
 
-	Huge trees stay Persistent (separate pin) so the forest does not vanish
-	on swing. Integrity Disabled so join does not pause. Predictive on so
-	the next island fills while you fly.
+	MinimumRadiusPause waits until the spawn bubble (including safezone trees)
+	exists before you can walk. Predictive fills the next island while you swing.
 ]]
 
 local M = {}
@@ -17,7 +16,7 @@ function M.isCustomEnabled(): boolean
 end
 
 function M.gameplayMin(): number
-	return 512
+	return 640
 end
 
 function M.gameplayTarget(): number
@@ -38,8 +37,8 @@ function M.apply(workspaceInst: Workspace)
 	end)
 	pcall(function()
 		local mode = (Enum :: any).StreamingIntegrityMode
-		if mode and mode.Disabled then
-			wsAny.StreamingIntegrityMode = mode.Disabled
+		if mode and mode.MinimumRadiusPause then
+			wsAny.StreamingIntegrityMode = mode.MinimumRadiusPause
 		end
 	end)
 	pcall(function()

@@ -70,7 +70,7 @@
       "$properties": {
         "FilteringEnabled": true,
         "StreamingEnabled": true,
-        "StreamingMinRadius": 512,
+        "StreamingMinRadius": 640,
         "StreamingTargetRadius": 1080
       },
       "Baseplate": {

@@ -992,7 +992,7 @@ local RESERVED_DRAIN_SEC = 10
 local STRAGGLER_KICK_SEC = 3
 local LATEST_UPDATE_KICK = "Servers restarted for the latest update — rejoin! Your data is safe."
 
-local function teleportToLatestPublished(players: { Player }): boolean
+local function teleportToLatestPublished(players: { Player }, hopToPublic: boolean?): boolean
 	if #players == 0 then
 		return true
 	end
@@ -1000,6 +1000,7 @@ local function teleportToLatestPublished(players: { Player }): boolean
 	options.ShouldReserveServer = true
 	options:SetTeleportData({
 		[LATEST_RESET_FLAG] = true,
+		hopToPublic = hopToPublic ~= false,
 		fromPlaceVersion = game.PlaceVersion,
 	})
 	local ok, err = pcall(function()
@@ -1032,6 +1033,18 @@ local function cameFromLatestReset(player: Player): boolean
 	end
 	local td = (joinData :: any).TeleportData
 	return typeof(td) == "table" and td[LATEST_RESET_FLAG] == true
+end
+
+local function resetWantsPublicHop(player: Player): boolean
+	local joinData = player:GetJoinData()
+	if typeof(joinData) ~= "table" then
+		return true
+	end
+	local td = (joinData :: any).TeleportData
+	if typeof(td) ~= "table" then
+		return true
+	end
+	return td.hopToPublic ~= false
 end
 
 local function teleportToFreshPublicServer(players: { Player }): boolean
@@ -1076,6 +1089,17 @@ local function beginReservedLatestResetHopBack()
 			task.wait(0.25)
 		end
 		if not found then
+			return
+		end
+		local hopPublic = true
+		for _, plr in Players:GetPlayers() do
+			if cameFromLatestReset(plr) and not resetWantsPublicHop(plr) then
+				hopPublic = false
+				break
+			end
+		end
+		if not hopPublic then
+			warn("[AdminCommands] this-server reset staying on reserved latest PlaceVersion", game.PlaceVersion, "— not hopping to public (that would rejoin old servers)")
 			return
 		end
 		-- Let origin public servers empty so matchmaking cannot send us back onto them.
@@ -1139,7 +1163,7 @@ local function startServerMaintenanceCountdown(
 			if #online == 0 then
 				return
 			end
-			if teleportToLatestPublished(online) then
+			if teleportToLatestPublished(online, false) then
 				kickStragglersAfterTeleport()
 			else
 				for _, plr in online do
@@ -1201,8 +1225,8 @@ local function parseResetSeconds(raw: string?): number?
 	return seconds
 end
 
--- Restarts every live server. Saves first — never wipes player data.
-local function beginGlobalServerReset(countdownSec: number, totalSec: number)
+-- Restarts this job, or every live server when called via publish. Saves first.
+local function beginGlobalServerReset(countdownSec: number, totalSec: number, thisServerOnly: boolean?)
 	shutdownToken += 1
 	globalResetToken += 1
 	local token = globalResetToken
@@ -1210,6 +1234,7 @@ local function beginGlobalServerReset(countdownSec: number, totalSec: number)
 	local endsAtUnix = os.time() + remaining
 	local clientEndsAt = workspace:GetServerTimeNow() + remaining
 	local barTotal = if totalSec > 0 then totalSec else remaining
+	local thisOnly = thisServerOnly == true
 
 	if globalResetJoinConn then
 		globalResetJoinConn:Disconnect()
@@ -1217,7 +1242,7 @@ local function beginGlobalServerReset(countdownSec: number, totalSec: number)
 	end
 
 	if resetHudRE then
-		resetHudRE:FireAllClients(clientEndsAt, barTotal)
+		resetHudRE:FireAllClients(clientEndsAt, barTotal, thisOnly)
 	end
 
 	globalResetJoinConn = Players.PlayerAdded:Connect(function(plr)
@@ -1228,7 +1253,7 @@ local function beginGlobalServerReset(countdownSec: number, totalSec: number)
 		if rem <= 0 or not resetHudRE then
 			return
 		end
-		resetHudRE:FireClient(plr, workspace:GetServerTimeNow() + rem, barTotal)
+		resetHudRE:FireClient(plr, workspace:GetServerTimeNow() + rem, barTotal, thisOnly)
 	end)
 
 	task.spawn(function()
@@ -1248,18 +1273,20 @@ local function beginGlobalServerReset(countdownSec: number, totalSec: number)
 			globalResetJoinConn = nil
 		end
 
-		-- Save everyone before teleport so leave races / DataStore limits cannot wipe progress.
 		local saved = PlayerDataService.saveAllOnlinePlayers()
-		warn("[AdminCommands] resetservers pre-leave saved", saved, "players")
+		warn("[AdminCommands] reset pre-leave saved", saved, "players thisServerOnly=", thisOnly)
 
 		task.wait(0.35)
 		local online = Players:GetPlayers()
 		if #online == 0 then
+			warn("[AdminCommands] reset countdown ended with nobody to teleport")
 			return
 		end
-		if teleportToLatestPublished(online) then
+		if teleportToLatestPublished(online, not thisOnly) then
+			warn("[AdminCommands] reset teleported", #online, "players to a reserved latest-version server hopToPublic=", not thisOnly)
 			kickStragglersAfterTeleport()
 		else
+			warn("[AdminCommands] reset teleport failed — kicking so they rejoin the latest version")
 			for _, plr in online do
 				plr:Kick(LATEST_UPDATE_KICK)
 			end
@@ -1300,7 +1327,7 @@ commands.resetserver = {
 		if not seconds then
 			return false, "Usage: resetserver  or  resetserver 10  or  resetserver 30"
 		end
-		beginGlobalServerReset(seconds, seconds)
+		beginGlobalServerReset(seconds, seconds, true)
 		return true, string.format("This server only is resetting in %ds. Other servers are not affected. Player data is saved.", seconds)
 	end,
 }

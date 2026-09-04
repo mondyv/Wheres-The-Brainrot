@@ -18,6 +18,7 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ContentProvider = game:GetService("ContentProvider")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
@@ -40,9 +41,11 @@ local FEATURE_ENABLED = StreamingSettings.isCustomEnabled()
 local REPARENT_PER_YIELD = 2
 local SWING_REPARENT_PER_YIELD = 1
 local FAST_MOVE_SPEED = 36
-local LOOKAHEAD_DIST = 260
-local LOOKAHEAD_COOLDOWN = 0.35
-local LOOKAHEAD_TIMEOUT = 0.55
+local LOOKAHEAD_DIST = 420
+local LOOKAHEAD_COOLDOWN = 0.28
+local LOOKAHEAD_TIMEOUT = 0.4
+local LOOKAHEAD_SIDE = 160
+local STREAM_QUEUE_CAP = 24
 local START_STREAM_MAX_LAND = 3
 
 local player = Players.LocalPlayer
@@ -60,6 +63,7 @@ local CHILD_ADDED_APPLY_DEBOUNCE = 0.55
 local wasFastTraveling = false
 local startStreamAt = 0.0
 local streamBusy = false
+local streamQueue: { { focus: Vector3, timeout: number } } = {}
 local startStreamLand = 1
 local START_STREAM_COOLDOWN = 0.7
 local lastLookaheadAt = 0.0
@@ -544,23 +548,40 @@ local function playerLandNow(): number
 end
 
 -- Standing in safezone / land 1, pull Land 1–3 so the second island is not a blank box.
-local function requestStreamAt(focus: Vector3, timeoutSec: number)
-	if not Workspace.StreamingEnabled then
+local function pumpStreamQueue()
+	if streamBusy then
 		return
 	end
-	if streamBusy then
+	if not Workspace.StreamingEnabled then
+		table.clear(streamQueue)
+		return
+	end
+	local item = table.remove(streamQueue, 1)
+	if not item then
 		return
 	end
 	streamBusy = true
 	task.spawn(function()
 		local ok, err = pcall(function()
-			player:RequestStreamAroundAsync(focus, timeoutSec)
+			player:RequestStreamAroundAsync(item.focus, item.timeout)
 		end)
 		if not ok then
 			warn("[GrassCullController] RequestStreamAroundAsync failed:", err)
 		end
 		streamBusy = false
+		pumpStreamQueue()
 	end)
+end
+
+local function requestStreamAt(focus: Vector3, timeoutSec: number)
+	if not Workspace.StreamingEnabled then
+		return
+	end
+	if #streamQueue >= STREAM_QUEUE_CAP then
+		return
+	end
+	table.insert(streamQueue, { focus = focus, timeout = timeoutSec })
+	pumpStreamQueue()
 end
 
 local function prewarmStartLands()
@@ -576,7 +597,7 @@ local function prewarmStartLands()
 		return
 	end
 	local now = os.clock()
-	if streamBusy or now - startStreamAt < START_STREAM_COOLDOWN then
+	if #streamQueue > 6 or now - startStreamAt < START_STREAM_COOLDOWN then
 		return
 	end
 	local want = math.clamp(startStreamLand, 1, START_STREAM_MAX_LAND)
@@ -597,7 +618,7 @@ local function softPrewarmAlongVelocity()
 		return
 	end
 	local now = os.clock()
-	if streamBusy or now - lastLookaheadAt < LOOKAHEAD_COOLDOWN then
+	if #streamQueue > 4 or now - lastLookaheadAt < LOOKAHEAD_COOLDOWN then
 		return
 	end
 	local char = player.Character
@@ -612,11 +633,94 @@ local function softPrewarmAlongVelocity()
 	end
 	local focus = hrp.Position
 		+ horiz.Unit * LOOKAHEAD_DIST
-		+ hrp.CFrame.RightVector * (55 * lookAheadSide)
+		+ hrp.CFrame.RightVector * (LOOKAHEAD_SIDE * lookAheadSide)
 		+ Vector3.new(0, math.clamp(vel.Y, -20, 40), 0)
 	lookAheadSide *= -1
 	lastLookaheadAt = now
 	requestStreamAt(focus, LOOKAHEAD_TIMEOUT)
+end
+
+local function prewarmPublishedTrees()
+	if not Workspace.StreamingEnabled then
+		return
+	end
+	task.spawn(function()
+		local folder = ReplicatedStorage:FindFirstChild("TreeStreamFocuses")
+			or ReplicatedStorage:WaitForChild("TreeStreamFocuses", 20)
+		if not folder or not player.Parent then
+			return
+		end
+		local count = folder:GetAttribute("Count")
+		if typeof(count) ~= "number" or count < 1 then
+			return
+		end
+		for i = 1, math.floor(count) do
+			if not player.Parent then
+				return
+			end
+			local focus = folder:GetAttribute("P" .. tostring(i))
+			if typeof(focus) == "Vector3" then
+				requestStreamAt(focus, 0.45)
+			end
+		end
+	end)
+end
+
+local function preloadVisibleTrees()
+	task.spawn(function()
+		local map = Workspace:FindFirstChild("Map") or Workspace:WaitForChild("Map", 30)
+		local trees = map and (map:FindFirstChild("Huge trees") or map:WaitForChild("Huge trees", 20))
+		if not trees then
+			return
+		end
+		local seen: { [Instance]: boolean } = {}
+		local batch: { Instance } = {}
+		local function flush()
+			if #batch == 0 then
+				return
+			end
+			local ok, err = pcall(function()
+				ContentProvider:PreloadAsync(batch)
+			end)
+			if not ok then
+				warn("[GrassCullController] tree preload failed:", err)
+			end
+			table.clear(batch)
+		end
+		local function consider(inst: Instance)
+			if seen[inst] then
+				return
+			end
+			if inst:IsA("MeshPart") or inst:IsA("BasePart") then
+				seen[inst] = true
+				table.insert(batch, inst)
+			end
+		end
+		local addedConn = trees.DescendantAdded:Connect(consider)
+		for _, d in trees:GetDescendants() do
+			consider(d)
+		end
+		local deadline = os.clock() + 14
+		while player.Parent and os.clock() < deadline do
+			while #batch >= 24 do
+				local slice: { Instance } = {}
+				for i = 1, 24 do
+					slice[i] = table.remove(batch, 1)
+				end
+				local ok, err = pcall(function()
+					ContentProvider:PreloadAsync(slice)
+				end)
+				if not ok then
+					warn("[GrassCullController] tree preload failed:", err)
+				end
+				task.wait(0.2)
+			end
+			flush()
+			task.wait(0.8)
+		end
+		flush()
+		addedConn:Disconnect()
+	end)
 end
 
 local function onHeartbeat(dt: number)
@@ -713,6 +817,8 @@ function M.init()
 	end)
 
 	heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
+	prewarmPublishedTrees()
+	preloadVisibleTrees()
 
 	player:GetAttributeChangedSignal(ReviveConfig.HOME_TELEPORT_ATTR):Connect(function()
 		task.defer(function()
@@ -722,7 +828,7 @@ function M.init()
 				requestStreamAt((hrp :: BasePart).Position, 2)
 			end
 			local land1 = LandResolver.getLandCenter(1)
-			if land1 and not streamBusy then
+			if land1 then
 				requestStreamAt(land1, 2)
 			end
 		end)

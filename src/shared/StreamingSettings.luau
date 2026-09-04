@@ -21,11 +21,11 @@ function M.isCustomEnabled(): boolean
 end
 
 function M.gameplayMin(): number
-	return 512
+	return 640
 end
 
 function M.gameplayTarget(): number
-	return 1080
+	return 1280
 end
 
 function M.apply(workspaceInst: Workspace)

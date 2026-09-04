@@ -24,7 +24,9 @@ local PULSE_BACK = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirecti
 local SLIDE_IN = TweenInfo.new(0.42, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 
 local KICKER_TEXT = "LIVE UPDATE"
-local TITLE_TEXT = "ALL SERVERS RESETTING"
+local TITLE_THIS_SERVER = "THIS SERVER RESETTING"
+local TITLE_ALL_SERVERS = "ALL SERVERS RESETTING"
+local bannerTitle = TITLE_ALL_SERVERS
 local SUB_IDLE = "New update incoming — your data is safe"
 local SUB_NOW = "Saving your data — sending you to a fresh server"
 
@@ -89,7 +91,7 @@ local function playIntroTypewriter()
 	end
 	if titleLabel then
 		titleLabel.MaxVisibleGraphemes = 0
-		titleLabel.Text = TITLE_TEXT
+		titleLabel.Text = bannerTitle
 	end
 	if subLabel then
 		subLabel.MaxVisibleGraphemes = 0
@@ -105,7 +107,7 @@ local function playIntroTypewriter()
 		end
 		task.wait(0.06)
 		if titleLabel then
-			typeGraphemes(titleLabel, TITLE_TEXT, 0.028, token)
+			typeGraphemes(titleLabel, bannerTitle, 0.028, token)
 		end
 		if token ~= typewriterToken then
 			return
@@ -237,9 +239,13 @@ local function refreshHud()
 	end
 end
 
-local function showHud(newEndsAt: number, barTotal: number)
+local function showHud(newEndsAt: number, barTotal: number, thisServerOnly: boolean?)
 	if typeof(newEndsAt) ~= "number" or newEndsAt <= Workspace:GetServerTimeNow() then
 		return
+	end
+	bannerTitle = if thisServerOnly == true then TITLE_THIS_SERVER else TITLE_ALL_SERVERS
+	if titleLabel then
+		titleLabel.Text = bannerTitle
 	end
 	local wasVisible = root ~= nil and root.Visible
 	endsAt = newEndsAt
@@ -338,7 +344,7 @@ local function buildHud()
 	title.AnchorPoint = Vector2.new(0.5, 0)
 	title.Position = UDim2.new(0.5, 0, 0, if compact then 26 else 30)
 	title.Size = UDim2.new(0.94, 0, 0, if compact then 22 else 26)
-	title.Text = TITLE_TEXT
+	title.Text = bannerTitle
 	title.TextXAlignment = Enum.TextXAlignment.Center
 	title.TextColor3 = Color3.fromRGB(255, 246, 230)
 	title.TextScaled = true
@@ -442,11 +448,11 @@ local function bindRemote()
 		warn("[ServerResetHud] ServerResetCountdown remote missing")
 		return
 	end
-	ev.OnClientEvent:Connect(function(clientEndsAt: any, barTotal: any)
+	ev.OnClientEvent:Connect(function(clientEndsAt: any, barTotal: any, thisServerOnly: any)
 		if typeof(clientEndsAt) ~= "number" then
 			return
 		end
-		showHud(clientEndsAt, if typeof(barTotal) == "number" then barTotal else 30)
+		showHud(clientEndsAt, if typeof(barTotal) == "number" then barTotal else 30, thisServerOnly == true)
 	end)
 end
 

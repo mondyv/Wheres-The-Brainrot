@@ -23,7 +23,7 @@ local function streamAround(player: Player, position: Vector3)
 	end
 	local ok, err = pcall(function()
 		-- Match PlotSpawnUtil window so console clients hold the pad long enough.
-		player:RequestStreamAroundAsync(position, 14)
+		player:RequestStreamAroundAsync(position, 2.2)
 	end)
 	if not ok then
 		warn("[SpawnAreaWarmup] RequestStreamAroundAsync failed:", err)

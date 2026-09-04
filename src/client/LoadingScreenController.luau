@@ -2120,6 +2120,35 @@ function M.showEarly()
 
 	enterLoadingIsolation(playerGui)
 
+	task.spawn(function()
+		if not Workspace.StreamingEnabled then
+			return
+		end
+		local folder = ReplicatedStorage:FindFirstChild("TreeStreamFocuses")
+			or ReplicatedStorage:WaitForChild("TreeStreamFocuses", 12)
+		if not folder or not loadingActive or not player.Parent then
+			return
+		end
+		local count = folder:GetAttribute("Count")
+		if typeof(count) ~= "number" or count < 1 then
+			return
+		end
+		for i = 1, math.floor(count) do
+			if not loadingActive or not player.Parent then
+				return
+			end
+			local focus = folder:GetAttribute("P" .. tostring(i))
+			if typeof(focus) == "Vector3" then
+				local ok, err = pcall(function()
+					player:RequestStreamAroundAsync(focus, 0.4)
+				end)
+				if not ok then
+					warn("[LoadingScreenController] tree stream failed:", err)
+				end
+			end
+		end
+	end)
+
 	local guiForBootstrap = loadingGui
 	task.defer(function()
 		if not loadingActive then

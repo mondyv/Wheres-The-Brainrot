@@ -3,14 +3,15 @@
 	Streaming must stay enabled. Radii and stream-out are set here on purpose
 	so the live place cannot silently run Studio's 256/512 + LowMemory.
 
-	Live always applies gameplay radii (512 / 1080), opportunistic
+	Live always applies gameplay radii (640 / 1280), opportunistic
 	stream-out, predictive fill, and Integrity Disabled so swings are not empty.
 	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
 	Studio play-solo does not override Workspace.
 	Also publishes LandStreamCenters so clients can stream lands that are not in yet.
-	Pins each Huge trees / Vine child Persistent (never the whole folder as one
-	model — that packed the forest into one blob and clients showed nothing).
-	Never pins Land 2–10 or Land Locks. Never Destroy map folders.
+	Does not Persistent-pin the whole forest — that queued every tree mesh at
+	join, so they only popped in after a long load. Each Huge trees child is
+	Atomic; clients RequestStreamAroundAsync published tree focuses on join.
+	Vines stay Persistent (swing targets). Never pins Land 2–10 or Land Locks.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -82,10 +83,9 @@ task.spawn(function()
 	publishLandCenters()
 end)
 
--- Folders cannot be Persistent. Pin each Bent_tree / Willow_tree / vine child.
--- Do NOT pack the whole forest into one Persistent model — that stopped replicating.
+-- Folders cannot be Persistent. Pin each vine child (swing targets).
+-- Huge trees stay Atomic + join stream-requests — persist-all delayed every tree.
 local PERSIST_EACH_CHILD_KEYS: { [string]: boolean } = {
-	hugetrees = true,
 	vine = true,
 }
 local PERSIST_MAP_CHILD_KEYS: { [string]: boolean } = {
@@ -133,6 +133,85 @@ end
 
 -- Pin each tree/vine in place. Never Destroy the parent. Never Persistent the
 -- parent that holds every tree (clients dropped that giant model).
+local function instanceFocus(inst: Instance): Vector3?
+	if inst:IsA("BasePart") then
+		return inst.Position
+	end
+	if inst:IsA("Model") then
+		local ok, pivot = pcall(function()
+			return (inst :: Model):GetPivot()
+		end)
+		if ok and typeof(pivot) == "CFrame" then
+			return pivot.Position
+		end
+		local part = (inst :: Model).PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
+		if part then
+			return part.Position
+		end
+	end
+	return nil
+end
+
+local function publishTreeFocuses(hugeTrees: Instance)
+	local points: { Vector3 } = {}
+	for _, child in hugeTrees:GetChildren() do
+		local pos = instanceFocus(child)
+		if pos then
+			table.insert(points, pos)
+		end
+	end
+	if #points == 0 then
+		return
+	end
+	local folder = ReplicatedStorage:FindFirstChild("TreeStreamFocuses")
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "TreeStreamFocuses"
+	end
+	-- Spread samples across the forest so join can RequestStreamAroundAsync
+	-- before any Bent_tree instance exists on the client.
+	local want = math.min(32, #points)
+	local step = math.max(1, math.floor(#points / want))
+	local n = 0
+	for i = 1, #points, step do
+		n += 1
+		folder:SetAttribute("P" .. tostring(n), points[i])
+		if n >= want then
+			break
+		end
+	end
+	folder:SetAttribute("Count", n)
+	if folder.Parent ~= ReplicatedStorage then
+		folder.Parent = ReplicatedStorage
+	end
+end
+
+local function markForestAtomic(container: Instance)
+	local wraps: { Model } = {}
+	for _, child in container:GetChildren() do
+		if child:IsA("Model") and child.Name == "_SceneryPersist" then
+			table.insert(wraps, child)
+		end
+	end
+	for _, wrap in wraps do
+		for _, inner in wrap:GetChildren() do
+			inner.Parent = container
+		end
+		wrap:Destroy()
+	end
+	local function apply(child: Instance)
+		if child:IsA("Model") then
+			pcall(function()
+				child.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
+			end)
+		end
+	end
+	for _, child in container:GetChildren() do
+		apply(child)
+	end
+	container.ChildAdded:Connect(apply)
+end
+
 local function persistEachChild(container: Instance)
 	for _, child in container:GetChildren() do
 		if child:IsA("Model") then
@@ -210,7 +289,10 @@ end
 local function hookMapScenery(map: Instance)
 	for _, child in map:GetChildren() do
 		local key = persistKey(child.Name)
-		if PERSIST_EACH_CHILD_KEYS[key] then
+		if key == "hugetrees" then
+			markForestAtomic(child)
+			publishTreeFocuses(child)
+		elseif PERSIST_EACH_CHILD_KEYS[key] then
 			persistEachChild(child)
 		elseif PERSIST_MAP_CHILD_KEYS[key] then
 			persistContainer(child)
@@ -222,7 +304,10 @@ local function hookMapScenery(map: Instance)
 	end
 	map.ChildAdded:Connect(function(child)
 		local key = persistKey(child.Name)
-		if PERSIST_EACH_CHILD_KEYS[key] then
+		if key == "hugetrees" then
+			markForestAtomic(child)
+			publishTreeFocuses(child)
+		elseif PERSIST_EACH_CHILD_KEYS[key] then
 			persistEachChild(child)
 		elseif PERSIST_MAP_CHILD_KEYS[key] then
 			persistContainer(child)
@@ -234,19 +319,13 @@ local function hookMapScenery(map: Instance)
 	end)
 end
 
-task.spawn(function()
-	-- Play-solo already holds the whole place. Pinning Huge trees + plots + Land 1
-	-- and wrapping parts at boot is what started "connection lost" kicks.
-	if RunService:IsStudio() then
+local mapSceneryHooked = false
+local function hookMapSceneryOnce(map: Instance)
+	if mapSceneryHooked then
 		return
 	end
-	local map = Workspace:FindFirstChild("Map") or Workspace:WaitForChild("Map", 120)
-	if not map then
-		warn("[StreamingBootstrap] Workspace.Map missing — Huge trees / Vine persist skipped")
-		return
-	end
+	mapSceneryHooked = true
 	hookMapScenery(map)
-	-- Earlier persist wrapped Land N Lock parts as _SceneryPersist and power could not open them.
 	local locks = map:FindFirstChild("Land Locks")
 	if locks then
 		for _, child in locks:GetChildren() do
@@ -258,7 +337,24 @@ task.spawn(function()
 			end
 		end
 	end
-end)
+end
+
+-- Pin trees before the first player replicates, not after a deferred wait.
+if not RunService:IsStudio() then
+	local mapNow = Workspace:FindFirstChild("Map")
+	if mapNow then
+		hookMapSceneryOnce(mapNow)
+	else
+		task.spawn(function()
+			local map = Workspace:WaitForChild("Map", 120)
+			if map then
+				hookMapSceneryOnce(map)
+			else
+				warn("[StreamingBootstrap] Workspace.Map missing — Huge trees / Vine persist skipped")
+			end
+		end)
+	end
+end
 
 -- Legacy place files kept the whole Brainrots mesh catalog in ReplicatedStorage.
 -- Every client (and Studio play-solo) then holds a second copy of every model.

@@ -1412,21 +1412,22 @@ local function comboAuraFolderName(n: number): string?
 	return "20+"
 end
 
+local comboTemplateWarned = false
+
 local function findComboVfxFolder(): Instance?
 	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
 	local combo = assets and assets:FindFirstChild("ComboVFX")
 	return combo
 end
 
-local function ensureComboWorldFolder(): Folder
-	local existing = Workspace:FindFirstChild("ComboVfxWorld")
-	if existing and existing:IsA("Folder") then
-		return existing
+local function waitForComboVfxFolder(): Instance?
+	local assets = ReplicatedStorage:FindFirstChild("EssentialAssets")
+		or ReplicatedStorage:WaitForChild("EssentialAssets", 30)
+	if not assets then
+		return nil
 	end
-	local folder = Instance.new("Folder")
-	folder.Name = "ComboVfxWorld"
-	folder.Parent = Workspace
-	return folder
+	local combo = assets:FindFirstChild("ComboVFX") or assets:WaitForChild("ComboVFX", 30)
+	return combo
 end
 
 local function comboNumber(plr: Player): number
@@ -1453,9 +1454,22 @@ end
 local function snapshotComboFx(root: Instance)
 	local function snap(inst: Instance)
 		if inst:IsA("ParticleEmitter") then
-			inst:SetAttribute("__ComboRate", inst.Rate)
+			local rate = inst.Rate
+			if rate <= 0 then
+				local count = inst:GetAttribute("EmitCount")
+				if typeof(count) == "number" and count > 0 then
+					rate = math.clamp(count, 4, 48)
+				else
+					rate = 14
+				end
+			end
+			inst:SetAttribute("__ComboRate", rate)
 		elseif inst:IsA("PointLight") or inst:IsA("SpotLight") or inst:IsA("SurfaceLight") then
-			inst:SetAttribute("__ComboBright", inst.Brightness)
+			local bright = inst.Brightness
+			if bright <= 0 then
+				bright = 2
+			end
+			inst:SetAttribute("__ComboBright", bright)
 		elseif inst:IsA("Beam") then
 			inst:SetAttribute("__ComboW0", inst.Width0)
 			inst:SetAttribute("__ComboW1", inst.Width1)
@@ -1561,6 +1575,10 @@ local function cloneComboAura(folderName: string): Instance?
 	local root = findComboVfxFolder()
 	local template = root and root:FindFirstChild(folderName)
 	if not template then
+		if not comboTemplateWarned then
+			comboTemplateWarned = true
+			warn("[OtherVfxController] ComboVFX template missing:", folderName, "root=", root)
+		end
 		return nil
 	end
 	local clone = template:Clone()
@@ -1568,11 +1586,58 @@ local function cloneComboAura(folderName: string): Instance?
 	for _, d in clone:GetDescendants() do
 		if d:IsA("Humanoid") or d:IsA("Animator") or d:IsA("Script") or d:IsA("LocalScript") then
 			d:Destroy()
-		elseif d:IsA("Motor6D") or d:IsA("Weld") then
-			d:Destroy()
 		end
 	end
 	return clone
+end
+
+local function weldComboCloneToCharacter(clone: Instance, character: Model): boolean
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not (hrp and hrp:IsA("BasePart")) then
+		hrp = character:FindFirstChildWhichIsA("BasePart")
+	end
+	if not hrp then
+		return false
+	end
+	if clone:IsA("Model") then
+		pcall(function()
+			(clone :: Model):PivotTo(hrp.CFrame)
+		end)
+	elseif clone:IsA("BasePart") then
+		clone.CFrame = hrp.CFrame
+	else
+		local first = clone:FindFirstChildWhichIsA("BasePart", true)
+		if first then
+			local delta = hrp.CFrame * first.CFrame:Inverse()
+			for _, d in clone:GetDescendants() do
+				if d:IsA("BasePart") then
+					d.CFrame = delta * d.CFrame
+				end
+			end
+		end
+	end
+	local function prepPart(part: BasePart)
+		part.Anchored = false
+		part.CanCollide = false
+		part.CanQuery = false
+		part.CanTouch = false
+		part.Massless = true
+		part.CastShadow = false
+		part.Transparency = 1
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = hrp
+		weld.Part1 = part
+		weld.Parent = part
+	end
+	if clone:IsA("BasePart") then
+		prepPart(clone)
+	end
+	for _, d in clone:GetDescendants() do
+		if d:IsA("BasePart") then
+			prepPart(d)
+		end
+	end
+	return true
 end
 
 local function destroyComboAura(watch: ComboWatch, fade: boolean)
@@ -1607,13 +1672,8 @@ local function attachComboAura(plr: Player, watch: ComboWatch, character: Model,
 	if not clone then
 		return
 	end
-	clone.Parent = ensureComboWorldFolder()
-	if clone:IsA("BasePart") or clone:FindFirstChildWhichIsA("BasePart", true) then
-		if not weldCloneToCharacter(clone, character) then
-			clone:Destroy()
-			return
-		end
-	end
+	clone.Parent = character
+	weldComboCloneToCharacter(clone, character)
 	parentLooseComboAttachments(clone, character)
 	snapshotComboFx(clone)
 	disableAllFx(clone)
@@ -1810,6 +1870,17 @@ function OtherVfxController.startComboWorldWatch()
 	for _, plr in Players:GetPlayers() do
 		bindComboPlayer(plr)
 	end
+	task.spawn(function()
+		waitForComboVfxFolder()
+		for plr, watch in comboWatches do
+			watch.auraName = nil
+			if watch.auraRoot and watch.auraRoot.Parent then
+				watch.auraRoot:Destroy()
+			end
+			watch.auraRoot = nil
+			refreshComboVisual(plr)
+		end
+	end)
 end
 
 --- One-shot body VFX on real level-ups (including mid-workout).

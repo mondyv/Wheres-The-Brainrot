@@ -75,11 +75,10 @@ for _, pack in StoreConfig.PACKS do
 	packByFrameName[pack.frameName] = pack
 end
 
-type ShowerKind = "group" | "pack" | "exclusive"
 type ShowerTarget = {
 	stand: Instance,
 	hitbox: BasePart,
-	kind: ShowerKind,
+	kind: string,
 	productId: number?,
 }
 
@@ -576,7 +575,7 @@ local function tutorialBlocksShowers(): boolean
 	return player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true
 end
 
-local function classifyStand(stand: Instance): (ShowerKind, number?)?
+local function classifyStand(stand: Instance): (string?, number?)
 	if stand.Name == StoreConfig.GROUP_STAND_NAME then
 		return "group", nil
 	end

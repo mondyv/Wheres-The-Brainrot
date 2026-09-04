@@ -10,7 +10,6 @@
 ]]
 
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 
 local M = {}
 
@@ -22,23 +21,11 @@ function M.isCustomEnabled(): boolean
 end
 
 function M.gameplayMin(): number
-	if RunService:IsStudio() then
-		return 64
-	end
-	if UserInputService.TouchEnabled then
-		return 128
-	end
-	return 192
+	return 512
 end
 
 function M.gameplayTarget(): number
-	if RunService:IsStudio() then
-		return 140
-	end
-	if UserInputService.TouchEnabled then
-		return 400
-	end
-	return 512
+	return 1080
 end
 
 function M.apply(workspaceInst: Workspace)

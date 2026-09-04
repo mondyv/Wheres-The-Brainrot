@@ -3,7 +3,7 @@
 	Streaming must stay enabled. Radii and stream-out are set here on purpose
 	so the live place cannot silently run Studio's 256/512 + LowMemory.
 
-	Live always applies gameplay radii (192 / 512, mobile 128 / 400), opportunistic
+	Live always applies gameplay radii (512 / 1080), opportunistic
 	stream-out, predictive fill, and Integrity Disabled so swings are not empty.
 	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
 	Studio play-solo does not override Workspace.
@@ -13,6 +13,7 @@
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
@@ -208,6 +209,11 @@ local function hookMapScenery(map: Instance)
 end
 
 task.spawn(function()
+	-- Play-solo already holds the whole place. Pinning Huge trees + plots + Land 1
+	-- and wrapping parts at boot is what started "connection lost" kicks.
+	if RunService:IsStudio() then
+		return
+	end
 	local map = Workspace:FindFirstChild("Map") or Workspace:WaitForChild("Map", 120)
 	if not map then
 		warn("[StreamingBootstrap] Workspace.Map missing — Huge trees / Vine persist skipped")

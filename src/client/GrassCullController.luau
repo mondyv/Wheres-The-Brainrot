@@ -6,6 +6,9 @@
 	Grass / trees / rocks stay on the current land plus two ahead (and one behind)
 	so the next islands are not empty boxes. Still skip restore mid-swing.
 
+	From the safezone this treats you as Land 1 and streams Land 1–3 so the
+	second island is not an empty box.
+
 	Studio play-solo skips this entirely (full place is already in RAM).
 ]]
 
@@ -16,6 +19,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local LandResolver = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LandResolver"))
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StreamingSettings"))
 
 local M = {}
@@ -44,6 +48,10 @@ local applyQueuedLand: number? = nil
 local lastChildAddedApplyAt = 0.0
 local CHILD_ADDED_APPLY_DEBOUNCE = 0.55
 local wasFastTraveling = false
+local startStreamAt = 0.0
+local startStreamBusy = false
+local startStreamLand = 1
+local START_STREAM_COOLDOWN = 1.4
 
 type CullEntry = {
 	inst: Instance,
@@ -465,11 +473,50 @@ local function playerLandNow(): number
 	if not hrp or not hrp:IsA("BasePart") then
 		return currentLand
 	end
+	-- From the base you should see Land 1 + two ahead, not an empty second island.
+	if SafezoneUtil.isCharacterInSafezone(char) then
+		return 1
+	end
 	local land = math.floor(LandResolver.resolveLandAtPosition(hrp.Position))
 	if land < 1 then
-		return currentLand
+		return if currentLand > 0 then currentLand else 1
 	end
 	return land
+end
+
+-- Standing in safezone / land 1, pull Land 1–3 so the second island is not a blank box.
+local function prewarmStartLands()
+	if not Workspace.StreamingEnabled then
+		return
+	end
+	if isFastTraveling() then
+		return
+	end
+	local land = if currentLand > 0 then currentLand else playerLandNow()
+	if land > 2 then
+		return
+	end
+	local now = os.clock()
+	if startStreamBusy or now - startStreamAt < START_STREAM_COOLDOWN then
+		return
+	end
+	local want = math.clamp(startStreamLand, 1, 3)
+	startStreamLand = want % 3 + 1
+	local focus = LandResolver.getLandCenter(want)
+	if not focus then
+		return
+	end
+	startStreamAt = now
+	startStreamBusy = true
+	task.spawn(function()
+		local ok, err = pcall(function()
+			player:RequestStreamAroundAsync(focus, 2)
+		end)
+		if not ok then
+			warn("[GrassCullController] start-land stream failed:", err)
+		end
+		startStreamBusy = false
+	end)
 end
 
 local function onHeartbeat(dt: number)
@@ -482,6 +529,7 @@ local function onHeartbeat(dt: number)
 	end
 	accum = 0
 
+	prewarmStartLands()
 	local land = playerLandNow()
 	local fast = isFastTraveling()
 	if land ~= currentLand and land > 0 then
@@ -553,6 +601,17 @@ function M.init()
 	if not FEATURE_ENABLED then
 		return
 	end
+
+	-- From spawn, start pulling Land 1–3 immediately (don't wait for the 4s cull delay).
+	task.spawn(function()
+		for _ = 1, 8 do
+			if not player.Parent then
+				return
+			end
+			prewarmStartLands()
+			task.wait(1.2)
+		end
+	end)
 
 	task.spawn(function()
 		-- Never reparent map content during loading / first frames.

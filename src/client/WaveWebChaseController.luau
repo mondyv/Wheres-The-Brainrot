@@ -299,7 +299,7 @@ local function findLandLock(land: number): Instance?
 	end
 	local lockLand = math.clamp(land + 1, 2, 10)
 	local name = "Land " .. tostring(lockLand) .. " Lock"
-	return folder:FindFirstChild(name)
+	return folder:FindFirstChild(name) or folder:FindFirstChild(name, true)
 end
 
 local function isTutorialChase(): boolean

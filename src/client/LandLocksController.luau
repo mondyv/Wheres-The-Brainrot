@@ -139,10 +139,17 @@ local function registerLock(inst: Instance)
 	openByLand[land] = nil
 end
 
+local function registerLockTree(inst: Instance)
+	registerLock(inst)
+	for _, ch in inst:GetChildren() do
+		registerLockTree(ch)
+	end
+end
+
 local function scanFolder(folder: Instance)
 	table.clear(lockByLand)
 	for _, ch in folder:GetChildren() do
-		registerLock(ch)
+		registerLockTree(ch)
 	end
 	refreshLocks(true)
 end
@@ -162,7 +169,7 @@ function M.init()
 		locksFolder = folder
 		scanFolder(folder)
 		folder.ChildAdded:Connect(function(ch)
-			registerLock(ch)
+			registerLockTree(ch)
 			refreshLocks(true)
 		end)
 		folder.ChildRemoved:Connect(function(ch)

@@ -9,7 +9,7 @@
 	Studio play-solo does not override Workspace.
 	Also publishes LandStreamCenters so clients can stream lands that are not in yet.
 	Pins Map["Huge trees"] / Map.Vine (and borders) Persistent so swinging does not
-	unload the forest. Never pins Map or Map.Lands.
+	unload the forest. Never pins Map, Map.Lands, or Land Locks (power opens those).
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -87,7 +87,6 @@ local PERSIST_MAP_CHILD_KEYS: { [string]: boolean } = {
 	vine = true,
 	invisibleborders = true,
 	landborders = true,
-	landlocks = true,
 	eventbillboard = true,
 	spawntimers = true,
 }
@@ -105,6 +104,10 @@ end
 local function persistLoosePart(part: BasePart)
 	local parent = part.Parent
 	if not parent then
+		return
+	end
+	-- Land lock parts must keep their names as direct children of Land Locks.
+	if parent.Name == "Land Locks" or string.match(part.Name, "^Land%s*%d+%s*Lock$") then
 		return
 	end
 	if parent:IsA("Model") and parent.Name == "_SceneryPersist" then
@@ -160,6 +163,18 @@ task.spawn(function()
 		return
 	end
 	hookMapScenery(map)
+	-- Earlier persist wrapped Land N Lock parts as _SceneryPersist and power could not open them.
+	local locks = map:FindFirstChild("Land Locks")
+	if locks then
+		for _, child in locks:GetChildren() do
+			if child:IsA("Model") and child.Name == "_SceneryPersist" then
+				for _, inner in child:GetChildren() do
+					inner.Parent = locks
+				end
+				child:Destroy()
+			end
+		end
+	end
 end)
 
 -- Legacy place files kept the whole Brainrots mesh catalog in ReplicatedStorage.

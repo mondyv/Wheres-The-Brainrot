@@ -4,6 +4,7 @@
 	bubbly option cards, and count-up bars like the level / quest meters.
 ]]
 
+local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -14,6 +15,7 @@ local Workspace = game:GetService("Workspace")
 local AdminPollConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("AdminPollConfig"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
+local GamepadInput = require(script.Parent.GamepadInput)
 
 local player = Players.LocalPlayer
 local IS_TOUCH = UserInputService.TouchEnabled
@@ -38,6 +40,9 @@ local BAR_H = if IS_TOUCH then 14 else 12
 local COUNT_TWEEN = TweenInfo.new(0.62, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local BAR_TWEEN = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 local POP_IN = TweenInfo.new(0.34, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+local POP_OUT = TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+local PAD_ACTION = "AdminPollGamepadVote"
+local KEY_ACTION = "AdminPollKeyboardVote"
 
 local AdminPollController = {}
 
@@ -64,6 +69,7 @@ local metaLabel: TextLabel? = nil
 local timerLabel: TextLabel? = nil
 local timerPill: Frame? = nil
 local hintLabel: TextLabel? = nil
+local controlsLabel: TextLabel? = nil
 local rows: { OptionRow } = {}
 local timerConn: RBXScriptConnection? = nil
 local startConn: RBXScriptConnection? = nil
@@ -71,10 +77,14 @@ local updateConn: RBXScriptConnection? = nil
 local pollId: string? = nil
 local optionCount = 0
 local myVote: number? = nil
+local focusIndex = 1
 local endsAt = 0
 local lastCounts: { number } = { 0, 0, 0, 0 }
 local hideToken = 0
 local initialized = false
+local inputBound = false
+
+local vote: (number) -> ()
 
 local function getRemote(name: string): RemoteEvent?
 	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
@@ -139,13 +149,117 @@ local function formatRemain(sec: number): string
 end
 
 local function paintVoteHighlight()
+	local pad = GamepadInput.isPreferred()
 	for i, row in rows do
 		local chosen = myVote == i
-		row.stroke.Color = Color3.fromRGB(12, 10, 16)
-		row.stroke.Thickness = if chosen then 5 else 3.4
+		local focused = pad and focusIndex == i and i <= optionCount
+		if chosen then
+			row.stroke.Color = Color3.fromRGB(12, 10, 16)
+			row.stroke.Thickness = 5
+			row.root.BackgroundColor3 = OPTION_COLORS[i]
+		elseif focused then
+			row.stroke.Color = Color3.fromRGB(255, 214, 64)
+			row.stroke.Thickness = 4.4
+			row.root.BackgroundColor3 = OPTION_SHADES[i]
+		else
+			row.stroke.Color = Color3.fromRGB(12, 10, 16)
+			row.stroke.Thickness = 3.4
+			row.root.BackgroundColor3 = OPTION_SHADES[i]
+		end
 		row.stroke.Transparency = 0
-		row.root.BackgroundColor3 = if chosen then OPTION_COLORS[i] else OPTION_SHADES[i]
+		GamepadInput.setHintVisible(row.root, focused)
 	end
+end
+
+local function refreshControlsHint()
+	if not controlsLabel then
+		return
+	end
+	if GamepadInput.isPreferred() then
+		controlsLabel.Visible = true
+		controlsLabel.Text = string.format(
+			"%s / %s select   ·   %s vote",
+			GamepadInput.tipToken(Enum.KeyCode.DPadUp),
+			GamepadInput.tipToken(Enum.KeyCode.DPadDown),
+			GamepadInput.tipToken(GamepadInput.ACCEPT)
+		)
+	elseif UserInputService.KeyboardEnabled and not IS_TOUCH then
+		controlsLabel.Visible = true
+		controlsLabel.Text = "1 – 4 to vote"
+	else
+		controlsLabel.Visible = false
+		controlsLabel.Text = ""
+	end
+end
+
+local function unbindPollInput()
+	if not inputBound then
+		return
+	end
+	inputBound = false
+	ContextActionService:UnbindAction(PAD_ACTION)
+	ContextActionService:UnbindAction(KEY_ACTION)
+end
+
+local function bindPollInput()
+	unbindPollInput()
+	inputBound = true
+	ContextActionService:BindActionAtPriority(PAD_ACTION, function(_name, state, input)
+		if state ~= Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Pass
+		end
+		if not pollId or not gui or not gui.Enabled then
+			return Enum.ContextActionResult.Pass
+		end
+		if Workspace:GetServerTimeNow() >= endsAt then
+			return Enum.ContextActionResult.Pass
+		end
+		local key = input.KeyCode
+		if key == Enum.KeyCode.DPadUp then
+			focusIndex = if focusIndex <= 1 then optionCount else focusIndex - 1
+			paintVoteHighlight()
+			UIInteractionSounds.playClick()
+			return Enum.ContextActionResult.Sink
+		elseif key == Enum.KeyCode.DPadDown then
+			focusIndex = if focusIndex >= optionCount then 1 else focusIndex + 1
+			paintVoteHighlight()
+			UIInteractionSounds.playClick()
+			return Enum.ContextActionResult.Sink
+		elseif key == GamepadInput.ACCEPT then
+			vote(focusIndex)
+			return Enum.ContextActionResult.Sink
+		end
+		return Enum.ContextActionResult.Pass
+	end, false, Enum.ContextActionPriority.High.Value + 80, Enum.KeyCode.DPadUp, Enum.KeyCode.DPadDown, GamepadInput.ACCEPT)
+
+	ContextActionService:BindActionAtPriority(KEY_ACTION, function(_name, state, input)
+		if state ~= Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Pass
+		end
+		if not pollId or not gui or not gui.Enabled then
+			return Enum.ContextActionResult.Pass
+		end
+		if Workspace:GetServerTimeNow() >= endsAt then
+			return Enum.ContextActionResult.Pass
+		end
+		local map: { [Enum.KeyCode]: number } = {
+			[Enum.KeyCode.One] = 1,
+			[Enum.KeyCode.Two] = 2,
+			[Enum.KeyCode.Three] = 3,
+			[Enum.KeyCode.Four] = 4,
+			[Enum.KeyCode.KeypadOne] = 1,
+			[Enum.KeyCode.KeypadTwo] = 2,
+			[Enum.KeyCode.KeypadThree] = 3,
+			[Enum.KeyCode.KeypadFour] = 4,
+		}
+		local index = map[input.KeyCode]
+		if typeof(index) ~= "number" then
+			return Enum.ContextActionResult.Pass
+		end
+		focusIndex = index
+		vote(index)
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.ContextActionPriority.High.Value + 80, Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three, Enum.KeyCode.Four, Enum.KeyCode.KeypadOne, Enum.KeyCode.KeypadTwo, Enum.KeyCode.KeypadThree, Enum.KeyCode.KeypadFour)
 end
 
 local function setCountText(row: OptionRow, value: number)
@@ -198,18 +312,35 @@ local function applyCounts(counts: { number }, total: number)
 	end
 end
 
-local function hideHud()
+local function hideHud(immediate: boolean?)
 	hideToken += 1
+	local token = hideToken
 	disconnectTimer()
+	unbindPollInput()
 	pollId = nil
 	myVote = nil
 	endsAt = 0
-	if root then
-		root.Visible = false
+	if immediate == true or not root or not rootScale or not gui or not gui.Enabled then
+		if root then
+			root.Visible = false
+		end
+		if gui then
+			gui.Enabled = false
+		end
+		return
 	end
-	if gui then
-		gui.Enabled = false
-	end
+	TweenService:Create(rootScale, POP_OUT, { Scale = 0.86 }):Play()
+	task.delay(0.3, function()
+		if token ~= hideToken then
+			return
+		end
+		if root then
+			root.Visible = false
+		end
+		if gui then
+			gui.Enabled = false
+		end
+	end)
 end
 
 local function finishPoll()
@@ -240,6 +371,10 @@ local function finishPoll()
 	if hintLabel then
 		hintLabel.Text = "Winner · " .. (rows[best] and rows[best].label.Text or LETTERS[best])
 	end
+	if controlsLabel then
+		controlsLabel.Visible = false
+	end
+	unbindPollInput()
 	if timerLabel then
 		timerLabel.Text = "DONE"
 		timerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -286,7 +421,7 @@ local function startTimer()
 	end)
 end
 
-local function vote(index: number)
+vote = function(index: number)
 	if not pollId then
 		return
 	end
@@ -334,11 +469,14 @@ local function showPoll(payload: any)
 		metaLabel.Text = "POLL  ·  " .. scope
 	end
 	if hintLabel then
-		hintLabel.Text = "Tap an option"
+		hintLabel.Text = if IS_TOUCH then "Tap an option" else "Pick an option"
 	end
 	if timerPill then
 		timerPill.BackgroundColor3 = Color3.fromRGB(255, 214, 64)
 	end
+	focusIndex = 1
+	refreshControlsHint()
+	bindPollInput()
 
 	for i = 1, 4 do
 		local row = rows[i]
@@ -495,7 +633,7 @@ local function buildHud(parent: PlayerGui)
 		btn.BorderSizePixel = 0
 		btn.Size = UDim2.new(1, 0, 0, ROW_H)
 		btn.LayoutOrder = 2 + i
-		btn.ClipsDescendants = true
+		btn.ClipsDescendants = false
 		addCorner(btn, 12)
 		local rowStroke = addBlackStroke(btn, 3.4)
 
@@ -534,26 +672,27 @@ local function buildHud(parent: PlayerGui)
 		local label = Instance.new("TextLabel")
 		label.BackgroundTransparency = 1
 		label.Position = UDim2.fromOffset(44, 4)
-		label.Size = UDim2.new(1, -130, 0, 26)
+		label.Size = UDim2.new(1, -150, 0, 26)
 		label.FontFace = UiFonts.DISPLAY_FACE
 		label.Text = ""
 		label.TextSize = if IS_TOUCH then 17 else 16
 		label.TextXAlignment = Enum.TextXAlignment.Left
 		label.TextTruncate = Enum.TextTruncate.AtEnd
-		label.ZIndex = 2
+		label.ZIndex = 4
 		outlineText(label, 1.8)
 		label.Parent = btn
 
 		local percent = Instance.new("TextLabel")
 		percent.BackgroundTransparency = 1
-		percent.Position = UDim2.fromOffset(44, 30)
-		percent.Size = UDim2.new(0.4, 0, 0, 14)
+		percent.AnchorPoint = Vector2.new(1, 0)
+		percent.Position = UDim2.new(1, -84, 0, 8)
+		percent.Size = UDim2.fromOffset(52, 24)
 		percent.FontFace = UiFonts.DISPLAY_FACE
 		percent.Text = "0%"
-		percent.TextSize = 12
-		percent.TextXAlignment = Enum.TextXAlignment.Left
-		percent.ZIndex = 2
-		outlineText(percent, 1.4)
+		percent.TextSize = if IS_TOUCH then 15 else 14
+		percent.TextXAlignment = Enum.TextXAlignment.Right
+		percent.ZIndex = 5
+		outlineText(percent, 1.8)
 		percent.Parent = btn
 
 		local count = Instance.new("TextLabel")
@@ -565,7 +704,7 @@ local function buildHud(parent: PlayerGui)
 		count.Text = "0"
 		count.TextSize = if IS_TOUCH then 28 else 26
 		count.TextXAlignment = Enum.TextXAlignment.Right
-		count.ZIndex = 3
+		count.ZIndex = 5
 		outlineText(count, 2.4)
 		count.Parent = btn
 		local countScale = Instance.new("UIScale")
@@ -605,6 +744,8 @@ local function buildHud(parent: PlayerGui)
 		btn.MouseButton1Click:Connect(function()
 			vote(index)
 		end)
+		GamepadInput.mountHint(btn, GamepadInput.ACCEPT, false, { contrast = true })
+		GamepadInput.setHintVisible(btn, false)
 
 		rows[i] = {
 			root = btn,
@@ -632,6 +773,17 @@ local function buildHud(parent: PlayerGui)
 	outlineText(hint, 1.6)
 	hint.Parent = panel
 
+	local controls = Instance.new("TextLabel")
+	controls.BackgroundTransparency = 1
+	controls.Size = UDim2.new(1, 0, 0, 16)
+	controls.FontFace = UiFonts.DISPLAY_FACE
+	controls.Text = ""
+	controls.TextSize = 12
+	controls.LayoutOrder = 9
+	controls.Visible = false
+	outlineText(controls, 1.4)
+	controls.Parent = panel
+
 	panel.Parent = screen
 	screen.Parent = parent
 	gui = screen
@@ -642,6 +794,7 @@ local function buildHud(parent: PlayerGui)
 	timerLabel = timer
 	timerPill = pill
 	hintLabel = hint
+	controlsLabel = controls
 end
 
 function AdminPollController.init()
@@ -655,6 +808,12 @@ function AdminPollController.init()
 		return
 	end
 	buildHud(playerGui)
+	GamepadInput.onPreferredChanged(function()
+		if pollId then
+			refreshControlsHint()
+			paintVoteHighlight()
+		end
+	end)
 
 	task.spawn(function()
 		local startRE = waitForRemote(AdminPollConfig.START_REMOTE, 30)

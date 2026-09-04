@@ -42,7 +42,7 @@ local function killCharacter(char: Model)
 	end
 end
 
-local function onKillPartTouched(hit: BasePart)
+local function onKillPartTouched(killPart: BasePart, hit: BasePart)
 	local char = hit:FindFirstAncestorOfClass("Model")
 	if not char then
 		return
@@ -53,6 +53,23 @@ local function onKillPartTouched(hit: BasePart)
 	end
 	if player:GetAttribute("WorkoutActive") == true then
 		return
+	end
+	if player:GetAttribute("IsSwinging") == true then
+		return
+	end
+	if player:GetAttribute("AdminFlyEnabled") == true then
+		return
+	end
+	-- Hair / rope / tool grazing a kill volume while swinging used to look like a random respawn.
+	if hit.Name ~= "HumanoidRootPart" and hit.Name ~= "LowerTorso" and hit.Name ~= "Torso" then
+		return
+	end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		local topY = killPart.Position.Y + killPart.Size.Y * 0.5 + 24
+		if hrp.Position.Y > topY then
+			return
+		end
 	end
 	local now = os.clock()
 	local immuneUntil = spawnImmuneUntil[player]
@@ -73,7 +90,11 @@ local function wireKillPart(part: BasePart)
 	end
 	wired[part] = true
 	part.CanTouch = true
-	part.Touched:Connect(onKillPartTouched)
+	part.Touched:Connect(function(hit)
+		if hit:IsA("BasePart") then
+			onKillPartTouched(part, hit)
+		end
+	end)
 end
 
 local function isKillPartCandidate(inst: Instance): boolean

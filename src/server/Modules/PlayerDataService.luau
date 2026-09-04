@@ -108,10 +108,17 @@ end
 
 local function invokeInternal(name: string, ...: any): any
 	local bf = getInternalFolder():FindFirstChild(name)
-	if bf and bf:IsA("BindableFunction") then
-		return (bf :: BindableFunction):Invoke(...)
+	if not (bf and bf:IsA("BindableFunction")) then
+		return nil
 	end
-	return nil
+	local ok, result = pcall(function(...)
+		return (bf :: BindableFunction):Invoke(...)
+	end, ...)
+	if not ok then
+		warn("[PlayerDataService] invokeInternal failed:", name, result)
+		return nil
+	end
+	return result
 end
 
 function M.isPersistenceEnabled(): boolean
@@ -122,8 +129,12 @@ function M.waitUntilLoaded(player: Player): boolean
 	if not persistenceEnabled then
 		return true
 	end
-	while player.Parent and player:GetAttribute(LOADED_ATTR) ~= true do
-		player:GetAttributeChangedSignal(LOADED_ATTR):Wait()
+	if player:GetAttribute(LOADED_ATTR) == true then
+		return true
+	end
+	local deadline = os.clock() + 20
+	while player.Parent and player:GetAttribute(LOADED_ATTR) ~= true and os.clock() < deadline do
+		task.wait(0.1)
 	end
 	return player.Parent ~= nil and player:GetAttribute(LOADED_ATTR) == true
 end
@@ -1722,7 +1733,10 @@ function M.bindPlayer(player: Player)
 	if not persistenceEnabled then
 		sessionCanSave[player] = false
 		local fresh = M.makeDefaultSaveData(player)
-		M.applyLoadedData(player, fresh)
+		local okApply, errApply = pcall(M.applyLoadedData, player, fresh)
+		if not okApply then
+			warn("[PlayerDataService] applyLoadedData failed:", player.Name, errApply)
+		end
 		M.markLoaded(player)
 		return
 	end
@@ -1739,16 +1753,21 @@ function M.bindPlayer(player: Player)
 	end
 
 	sessionCanSave[player] = true
-	if result.status == "loaded" and result.data then
-		M.applyLoadedData(player, result.data)
-		lastGoodPayload[player.UserId] = result.data
-		rememberGoodStands(player.UserId, result.data.stands)
-	else
-		-- Confirmed new player (key missing after legacy migration attempt).
-		local fresh = M.makeDefaultSaveData(player)
-		M.applyLoadedData(player, fresh)
-		lastGoodPayload[player.UserId] = fresh
-		lastGoodStands[player.UserId] = {}
+	local applyOk, applyErr = pcall(function()
+		if result.status == "loaded" and result.data then
+			M.applyLoadedData(player, result.data)
+			lastGoodPayload[player.UserId] = result.data
+			rememberGoodStands(player.UserId, result.data.stands)
+		else
+			-- Confirmed new player (key missing after legacy migration attempt).
+			local fresh = M.makeDefaultSaveData(player)
+			M.applyLoadedData(player, fresh)
+			lastGoodPayload[player.UserId] = fresh
+			lastGoodStands[player.UserId] = {}
+		end
+	end)
+	if not applyOk then
+		warn("[PlayerDataService] applyLoadedData failed:", player.Name, applyErr)
 	end
 	M.markLoaded(player)
 end

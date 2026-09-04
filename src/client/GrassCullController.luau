@@ -707,19 +707,14 @@ local function preloadVisibleTrees()
 end
 
 local function onHeartbeat(dt: number)
-	-- Look-ahead always runs (even with cull off) so fast swings are not empty.
-	if isFastTraveling() then
-		softPrewarmAlongVelocity()
+	if not FEATURE_ENABLED or not cullActive then
+		return
 	end
 	accum += dt
 	if accum < POLL_SEC then
 		return
 	end
 	accum = 0
-
-	if not FEATURE_ENABLED or not cullActive then
-		return
-	end
 	local land = playerLandNow()
 	local fast = isFastTraveling()
 	local pred = if fast then predictedLandFromHrp() else land
@@ -783,9 +778,8 @@ function M.setLowGraphics(enabled: boolean)
 end
 
 function M.init()
-	-- Cull stays off. Look-ahead streaming runs outside the lobby so later lands
-	-- load. Join still streams the spawn HRP + nearby published trees so the
-	-- first swing is not empty vines.
+	-- Cull stays off. Do not RequestStreamAroundAsync along swing velocity —
+	-- that hitch is the fast-swing FPS drop. Join still prewarms spawn trees.
 	if wired then
 		return
 	end
@@ -794,7 +788,9 @@ function M.init()
 		heartbeatConn:Disconnect()
 		heartbeatConn = nil
 	end
-	heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
+	if FEATURE_ENABLED then
+		heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
+	end
 	prewarmPublishedTrees()
 end
 

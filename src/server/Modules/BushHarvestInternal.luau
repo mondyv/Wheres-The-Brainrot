@@ -37,6 +37,7 @@ export type InstallConfig = {
 	notifyClientInventorySync: (Player, number?, boolean?) -> (),
 	notifyIndexDeposited: (Player, BrainrotInvEntry) -> (),
 	HOTBAR_UI_SLOTS: number,
+	destroyAllBrainrotToolsForPlayer: ((Player) -> ())?,
 }
 
 export type BootConfig = {
@@ -96,6 +97,29 @@ local function ensureBindable(name: string): BindableFunction
 end
 
 function M.install(config: InstallConfig)
+	local function wipeBrainrotTools(plr: Player)
+		local wipe = config.destroyAllBrainrotToolsForPlayer
+		if typeof(wipe) == "function" then
+			wipe(plr)
+			return
+		end
+		local bp = plr:FindFirstChildOfClass("Backpack")
+		if bp then
+			for _, c in ipairs(bp:GetChildren()) do
+				if c:IsA("Tool") and c:GetAttribute("BrainrotTool") == true then
+					c:Destroy()
+				end
+			end
+		end
+		local char = plr.Character
+		if char then
+			for _, c in ipairs(char:GetChildren()) do
+				if c:IsA("Tool") and c:GetAttribute("BrainrotTool") == true then
+					c:Destroy()
+				end
+			end
+		end
+	end
 	do
 		local consumeBF = ensureBindable("ConsumeInventoryEntry")
 		consumeBF.OnInvoke = function(player: any, idx: any): any
@@ -252,7 +276,7 @@ function M.install(config: InstallConfig)
 			if equipSlot then
 				plr:SetAttribute("BrainrotEquipSlot", equipSlot)
 			end
-			config.destroyAllBrainrotToolsForPlayer(plr)
+			wipeBrainrotTools(plr)
 			local sync = config.ensureInventoryRemotes()
 			sync:FireClient(plr, config.packInventoryForClient(plr, rebuilt, equipSlot))
 			return true
@@ -531,6 +555,7 @@ function M.boot(config: BootConfig)
 		notifyClientInventorySync = config.notifyClientInventorySync,
 		notifyIndexDeposited = config.notifyIndexDeposited,
 		HOTBAR_UI_SLOTS = config.HOTBAR_UI_SLOTS,
+		destroyAllBrainrotToolsForPlayer = config.destroyAllBrainrotToolsForPlayer,
 	})
 
 	if typeof(config.offerFloatingBrainrot) == "function" then

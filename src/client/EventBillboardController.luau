@@ -37,6 +37,8 @@ local promptConn: RBXScriptConnection? = nil
 local shownConn: RBXScriptConnection? = nil
 local hiddenConn: RBXScriptConnection? = nil
 local ancestryConn: RBXScriptConnection? = nil
+local swayConn: RBXScriptConnection? = nil
+local restCf: CFrame? = nil
 local timerToken = 0
 local prompting = false
 local studioHintShown = false
@@ -53,6 +55,12 @@ local function resolveHostPart(root: Instance): BasePart?
 		return root.PrimaryPart or root:FindFirstChildWhichIsA("BasePart", true)
 	end
 	return root:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function restCFrame(): CFrame
+	local ori = EventBillboardConfig.REST_ORIENTATION_DEG
+	return CFrame.new(EventBillboardConfig.REST_POSITION)
+		* CFrame.fromOrientation(math.rad(ori.X), math.rad(ori.Y), math.rad(ori.Z))
 end
 
 local function setOutlineVisible(on: boolean)
@@ -133,6 +141,13 @@ local function destroyBound()
 		ancestryConn:Disconnect()
 		ancestryConn = nil
 	end
+	if swayConn then
+		swayConn:Disconnect()
+		swayConn = nil
+	end
+	if boundRoot and boundRoot:IsA("Model") and restCf then
+		(boundRoot :: Model):PivotTo(restCf)
+	end
 	if highlight then
 		highlight:Destroy()
 		highlight = nil
@@ -147,6 +162,7 @@ local function destroyBound()
 	end
 	titleLabel = nil
 	timeLabel = nil
+	restCf = nil
 	boundRoot = nil
 end
 
@@ -156,34 +172,41 @@ local function ensureTimerGui(host: BasePart)
 		existing:Destroy()
 	end
 
+	-- Hang the countdown under the panel so it never covers the poster art.
+	local below = host.Size.Y * 0.5 + 2.35
+	if boundRoot and boundRoot:IsA("Model") then
+		local _, size = (boundRoot :: Model):GetBoundingBox()
+		below = size.Y * 0.5 + 2.2
+	end
+
 	local bb = Instance.new("BillboardGui")
 	bb.Name = TIMER_GUI_NAME
-	bb.AlwaysOnTop = true
+	bb.AlwaysOnTop = false
 	bb.LightInfluence = 0
-	bb.MaxDistance = 140
-	bb.Size = UDim2.fromScale(14, 4.4)
-	bb.StudsOffset = Vector3.new(0, 7.2, 0)
+	bb.MaxDistance = 110
+	bb.Size = UDim2.fromScale(8.6, 2.7)
+	bb.StudsOffset = Vector3.new(0, -below, 0)
 	bb.Adornee = host
 	bb.ResetOnSpawn = false
 
 	local root = Instance.new("Frame")
 	root.Name = "Root"
 	root.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
-	root.BackgroundTransparency = 0.28
+	root.BackgroundTransparency = 0.18
 	root.BorderSizePixel = 0
 	root.Size = UDim2.fromScale(1, 1)
 	root.Parent = bb
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0.12, 0)
+	corner.CornerRadius = UDim.new(0.16, 0)
 	corner.Parent = root
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = Color3.fromRGB(255, 214, 74)
-	stroke.Thickness = 1.8
-	stroke.Transparency = 0.2
+	stroke.Thickness = 1.6
+	stroke.Transparency = 0.18
 	stroke.Parent = root
 	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0.04, 0)
-	pad.PaddingRight = UDim.new(0.04, 0)
+	pad.PaddingLeft = UDim.new(0.05, 0)
+	pad.PaddingRight = UDim.new(0.05, 0)
 	pad.PaddingTop = UDim.new(0.08, 0)
 	pad.PaddingBottom = UDim.new(0.08, 0)
 	pad.Parent = root
@@ -232,6 +255,43 @@ local function ensureTimerGui(host: BasePart)
 	titleLabel = title
 	timeLabel = clock
 	paintTimer()
+end
+
+local function startFloatSway(root: Instance)
+	if swayConn then
+		swayConn:Disconnect()
+		swayConn = nil
+	end
+	if not root:IsA("Model") then
+		return
+	end
+	local model = root :: Model
+	local base = restCFrame()
+	restCf = base
+	model:PivotTo(base)
+
+	swayConn = RunService.Heartbeat:Connect(function()
+		if not model.Parent or restCf ~= base then
+			return
+		end
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if hrp and hrp:IsA("BasePart") then
+			if (hrp.Position - base.Position).Magnitude > EventBillboardConfig.SWAY_MAX_DISTANCE then
+				model:PivotTo(base)
+				return
+			end
+		end
+		local t = os.clock()
+		local bob = math.sin(t * EventBillboardConfig.FLOAT_BOB_SPEED) * EventBillboardConfig.FLOAT_BOB_STUDS
+		local drift = math.sin(t * EventBillboardConfig.FLOAT_DRIFT_SPEED + 0.7)
+			* EventBillboardConfig.FLOAT_DRIFT_STUDS
+		local yaw = math.rad(EventBillboardConfig.FLOAT_YAW_DEG)
+			* math.sin(t * EventBillboardConfig.FLOAT_YAW_SPEED)
+		local roll = math.rad(EventBillboardConfig.FLOAT_ROLL_DEG)
+			* math.sin(t * EventBillboardConfig.FLOAT_ROLL_SPEED + 1.1)
+		model:PivotTo(base * CFrame.new(drift, bob, 0) * CFrame.Angles(roll, yaw, 0))
+	end)
 end
 
 local function startTimerLoop()
@@ -336,6 +396,7 @@ local function bindBillboard(root: Instance)
 
 	ensureTimerGui(host)
 	startTimerLoop()
+	startFloatSway(root)
 
 	pcall(function()
 		ProximityPromptEffects.stylePrompt(pp)

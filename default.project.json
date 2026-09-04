@@ -70,8 +70,12 @@
       "$properties": {
         "FilteringEnabled": true,
         "StreamingEnabled": true,
-        "StreamingMinRadius": 2048,
-        "StreamingTargetRadius": 4096
+        "StreamingMinRadius": 4096,
+        "StreamingTargetRadius": 4096,
+        "StreamOutBehavior": "LowMemory",
+        "StreamingIntegrityMode": "Disabled",
+        "PredictiveStreamingMode": "Enabled",
+        "ModelStreamingBehavior": "Improved"
       },
       "Baseplate": {
         "$className": "Part",

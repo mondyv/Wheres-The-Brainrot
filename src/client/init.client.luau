@@ -51,8 +51,8 @@ task.defer(function()
 		end
 	end)
 
-	-- Client streaming (place file 256/512 + LowMemory does not get overwritten
-	-- by server Workspace values — the local streamer reads these on the client).
+	-- Client streamer boots from the place file. Apply immediately so Studio's
+	-- 512/1080 + Opportunistic + MinimumRadiusPause cannot dump the forest.
 	pcall(function()
 		local Workspace = game:GetService("Workspace")
 		if Workspace.StreamingEnabled == true then

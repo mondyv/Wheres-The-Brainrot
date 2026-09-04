@@ -11,6 +11,7 @@ local SocialService = game:GetService("SocialService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalizationService = game:GetService("LocalizationService")
 
 local EventBillboardConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("EventBillboardConfig"))
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
@@ -97,6 +98,28 @@ local function remainParts(sec: number): ({ string }, { string })
 		return { tostring(d), string.format("%02d", h), string.format("%02d", m) }, { "DAYS", "HRS", "MIN" }
 	end
 	return { string.format("%02d", h), string.format("%02d", m), string.format("%02d", s) }, { "HRS", "MIN", "SEC" }
+end
+
+local function localWindowLabel(): string
+	local locale = LocalizationService.RobloxLocaleId
+	if typeof(locale) ~= "string" or locale == "" then
+		locale = "en-us"
+	end
+	local ok, text = pcall(function()
+		local startDt = DateTime.fromUnixTimestamp(EventBillboardConfig.START_UNIX)
+		local endDt = DateTime.fromUnixTimestamp(EventBillboardConfig.END_UNIX)
+		local day = startDt:FormatLocalTime("ddd, MMM D", locale)
+		local startClock = startDt:FormatLocalTime("LT", locale)
+		local endClock = endDt:FormatLocalTime("LT", locale)
+		return string.format("%s · %s – %s", day, startClock, endClock)
+	end)
+	if ok and typeof(text) == "string" and text ~= "" then
+		return text
+	end
+	if not ok then
+		warn("[EventBillboardController] local window label:", text)
+	end
+	return EventBillboardConfig.WINDOW_LABEL
 end
 
 local function eventPhase(): ("upcoming" | "live" | "ended", number)
@@ -427,7 +450,7 @@ local function ensureTimerGui(host: BasePart)
 	sub.Position = UDim2.fromScale(0, 0.78)
 	sub.Size = UDim2.fromScale(1, 0.2)
 	sub.FontFace = UiFonts.DISPLAY_FACE
-	sub.Text = EventBillboardConfig.WINDOW_LABEL
+	sub.Text = localWindowLabel()
 	sub.TextColor3 = DUST
 	sub.TextScaled = true
 	sub.ZIndex = 3

@@ -13,30 +13,22 @@ local ReviveConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local PlayerDataSchema = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlayerDataSchema"))
 local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
 
+local function disableSpawnLocation(inst: Instance)
+	if not inst:IsA("SpawnLocation") then
+		return
+	end
+	-- Roblox LoadCharacter picks a random Enabled/Neutral pad. Plot pads must stay
+	-- Disabled too — otherwise join dumps you on someone else's base.
+	inst.Enabled = false
+	inst.Neutral = false
+	inst.Duration = 0
+end
+
 local function disableDefaultSpawnLocations()
-	local function consider(inst: Instance)
-		if not inst:IsA("SpawnLocation") then
-			return
-		end
-		local inPlot = false
-		local p: Instance? = inst.Parent
-		while p and p ~= Workspace do
-			local n = string.lower(p.Name)
-			if n == "plots" or string.find(n, "plot", 1, true) then
-				inPlot = true
-				break
-			end
-			p = p.Parent
-		end
-		if not inPlot then
-			inst.Enabled = false
-			inst.Neutral = false
-			inst.Duration = 0
-		end
-	end
 	for _, d in Workspace:GetDescendants() do
-		consider(d)
+		disableSpawnLocation(d)
 	end
+	Workspace.DescendantAdded:Connect(disableSpawnLocation)
 end
 
 local function clearReviveSpawnAttrs(player: Player)
@@ -51,6 +43,25 @@ local function stillThisCharacter(player: Player, character: Model, hrp: Instanc
 		and character.Parent ~= nil
 		and player.Character == character
 		and (hrp == nil or hrp.Parent ~= nil)
+end
+
+local function shouldUseTutorialSpawn(player: Player): boolean
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+		return false
+	end
+	-- Failed DataStore load: never assume they're new (that dumps veterans at QuestHitbox).
+	if player:GetAttribute(PlayerDataSchema.LOAD_FAILED_ATTR) == true then
+		return false
+	end
+	-- Unknown until save data is applied.
+	if player:GetAttribute(PlayerDataSchema.LOADED_ATTR) ~= true then
+		return false
+	end
+	return true
+end
+
+local function sendToHome(player: Player, character: Model, timeoutSec: number): boolean
+	return PlotSpawnUtil.teleportPlayerHome(player, character, timeoutSec)
 end
 
 local function onCharacter(player: Player, character: Model)
@@ -68,12 +79,11 @@ local function onCharacter(player: Player, character: Model)
 		clearReviveSpawnAttrs(player)
 
 		-- Wait for save data so returning players don't get the tutorial hitbox.
-		-- Never unanchor on a failed/slow load — that dumps them on the baseplate.
 		local loaded = false
 		task.spawn(function()
 			loaded = PlayerDataService.waitUntilLoaded(player) == true
 		end)
-		local loadDeadline = os.clock() + 20
+		local loadDeadline = os.clock() + 60
 		while os.clock() < loadDeadline do
 			if not stillThisCharacter(player, character, hrp) then
 				return
@@ -90,12 +100,12 @@ local function onCharacter(player: Player, character: Model)
 		local deadline = os.clock() + 45
 		local firstTry = true
 		while stillThisCharacter(player, character, hrp) and os.clock() < deadline do
-			if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+			if shouldUseTutorialSpawn(player) then
 				if PlotSpawnUtil.teleportTutorialStart(player, character, if firstTry then 12 else 0.4) then
 					return
 				end
 			else
-				if PlotSpawnUtil.teleportPlayerHome(player, character, if firstTry then 2 else 0.4) then
+				if sendToHome(player, character, if firstTry then 8 else 0.4) then
 					return
 				end
 			end
@@ -105,13 +115,32 @@ local function onCharacter(player: Player, character: Model)
 		if not stillThisCharacter(player, character, hrp) then
 			return
 		end
-		-- Last try: tutorial hitbox vs plot. Stay anchored if both fail.
-		if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
-			PlotSpawnUtil.teleportTutorialStart(player, character, 8)
+		-- Last try. If data never arrived, still prefer Base over the tutorial hitbox.
+		if shouldUseTutorialSpawn(player) then
+			if not PlotSpawnUtil.teleportTutorialStart(player, character, 8) then
+				sendToHome(player, character, 8)
+			end
 		else
-			PlotSpawnUtil.teleportPlayerHome(player, character, 8)
+			sendToHome(player, character, 8)
 		end
 	end)
+end
+
+local function tryPlaceNow(player: Player)
+	local char = player.Character
+	if not (char and char.Parent and player.Parent) then
+		return
+	end
+	if shouldUseTutorialSpawn(player) then
+		PlotSpawnUtil.teleportTutorialStart(player, char, 8)
+		return
+	end
+	if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true
+		or player:GetAttribute(PlayerDataSchema.LOAD_FAILED_ATTR) == true
+		or typeof(player:GetAttribute("AssignedPlotSlot")) == "number"
+	then
+		PlotSpawnUtil.teleportPlayerHome(player, char, 20)
+	end
 end
 
 local playerConns: { [Player]: { RBXScriptConnection } } = {}
@@ -125,17 +154,26 @@ local function hookPlayer(player: Player)
 			onCharacter(player, character)
 		end),
 		player:GetAttributeChangedSignal("AssignedPlotSlot"):Connect(function()
-			if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) ~= true then
+			if shouldUseTutorialSpawn(player) then
 				return
 			end
-			local char = player.Character
-			if char and typeof(player:GetAttribute("AssignedPlotSlot")) == "number" then
+			if typeof(player:GetAttribute("AssignedPlotSlot")) == "number" then
 				task.defer(function()
-					if char.Parent and player.Parent then
-						PlotSpawnUtil.teleportPlayerHome(player, char, 20)
-					end
+					tryPlaceNow(player)
 				end)
 			end
+		end),
+		player:GetAttributeChangedSignal(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR):Connect(function()
+			if player:GetAttribute(PlayerDataSchema.TUTORIAL_COMPLETED_ATTR) == true then
+				task.defer(function()
+					tryPlaceNow(player)
+				end)
+			end
+		end),
+		player:GetAttributeChangedSignal(PlayerDataSchema.LOADED_ATTR):Connect(function()
+			task.defer(function()
+				tryPlaceNow(player)
+			end)
 		end),
 	}
 	if player.Character then

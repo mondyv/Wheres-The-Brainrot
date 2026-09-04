@@ -266,20 +266,24 @@ local function ensureTimerGui(host: BasePart)
 		existing:Destroy()
 	end
 
-	-- Hang the plaque under the panel so it never covers the poster art.
-	local below = host.Size.Y * 0.5 + 2.6
+	-- Sit the plaque above the panel (world-up) so it never clips into the grass.
+	local guiHeight = 3.4
+	local gap = 1.45
+	local topWorldY = host.Position.Y + host.Size.Y * 0.5
 	if boundRoot and boundRoot:IsA("Model") then
-		local _, size = (boundRoot :: Model):GetBoundingBox()
-		below = size.Y * 0.5 + 2.55
+		local boxCf, boxSize = (boundRoot :: Model):GetBoundingBox()
+		topWorldY = boxCf.Position.Y + boxSize.Y * 0.5
 	end
+	local offsetY = (topWorldY - host.Position.Y) + gap + guiHeight * 0.5
 
 	local bb = Instance.new("BillboardGui")
 	bb.Name = TIMER_GUI_NAME
 	bb.AlwaysOnTop = false
 	bb.LightInfluence = 0
 	bb.MaxDistance = 110
-	bb.Size = UDim2.fromScale(10.4, 3.55)
-	bb.StudsOffset = Vector3.new(0, -below, 0)
+	bb.Size = UDim2.fromScale(10.4, guiHeight)
+	bb.StudsOffset = Vector3.zero
+	bb.StudsOffsetWorldSpace = Vector3.new(0, offsetY, 0)
 	bb.Adornee = host
 	bb.ResetOnSpawn = false
 

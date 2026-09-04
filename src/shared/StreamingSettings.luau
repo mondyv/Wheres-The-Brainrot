@@ -1,8 +1,7 @@
 -- [ACTIVE] StreamingSettings
 --[[
-	Do not write StreamOutBehavior / PredictiveStreamingMode — this Studio
-	build does not expose those Workspace members (apply used to warn every join).
-	Radii live in the place file / default.project.json.
+	Never writes Workspace streaming properties. Studio / the place file owns
+	MinRadius, TargetRadius, StreamOutBehavior, and PredictiveStreamingMode.
 ]]
 
 local M = {}
@@ -14,7 +13,7 @@ function M.isCustomEnabled(): boolean
 end
 
 function M.gameplayMin(): number
-	return 512
+	return 64
 end
 
 function M.gameplayTarget(): number

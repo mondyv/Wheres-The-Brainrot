@@ -10,10 +10,8 @@ local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
-local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StreamingSettings"))
 local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
-StreamingSettings.apply(Workspace)
 SafezoneUtil.publishServerBounds()
 
 -- Server has the full map. Clients often cannot find Land 2's center until it

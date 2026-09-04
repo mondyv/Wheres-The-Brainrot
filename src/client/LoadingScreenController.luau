@@ -2,8 +2,7 @@
 --[[
 	LoadingScreenController — full-screen join overlay:
 	Moon camera flyover + blur, logo wobble, bottom tips.
-	Streaming stays pinned to the player (tight radii + ReplicationFocus) so the
-	flyover camera does not pull distant map chunks. No lava blob UI.
+	Does not write Workspace streaming radii, ReplicationFocus, or RequestStreamAroundAsync.
 	StarterGui.LoadingScreen + GameNameImage. Moon export: "Camera loading" (Frames/0..N).
 --]]
 
@@ -19,7 +18,6 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
-local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StreamingSettings"))
 
 local MIN_DISPLAY_SEC = 1.6
 local HOLD_AT_FULL_SEC = 0.4
@@ -30,11 +28,6 @@ local RESOLVE_TIMEOUT = 45
 local MAX_LOADING_DISPLAY_SEC = 5.5
 -- >1 slows the flyover. Was 2 (half speed); 1.5x faster than that → ~1.33.
 local MOON_PLAYBACK_SCALE = 4 / 3
-
--- Keep stream bubble on the player while the cinematic camera flies elsewhere.
-local LOADING_STREAM_MIN_RADIUS = 64
-local LOADING_STREAM_TARGET_RADIUS = 96
--- After loading, StreamingSettings.apply is a no-op (this Studio has no StreamOutBehavior).
 
 local DEFAULT_CAMERA_POS = Vector3.new(1452.568, 100.564, 518.559)
 local DEFAULT_CAMERA_RAD = Vector3.new(math.rad(4.555), math.rad(18.409), 0)
@@ -127,85 +120,15 @@ local characterHideConn: RBXScriptConnection? = nil
 local hiddenCharacterParts: { [BasePart]: number }? = nil
 local earlyVisualsReady = false
 local _loadingProgress = 0
-local savedStreamingMinRadius: number? = nil
-local savedStreamingTargetRadius: number? = nil
-local streamingGuardActive = false
 
 local function defaultLoadingCFrame(): CFrame
 	return CFrame.new(DEFAULT_CAMERA_POS) * CFrame.fromOrientation(DEFAULT_CAMERA_RAD.X, DEFAULT_CAMERA_RAD.Y, DEFAULT_CAMERA_RAD.Z)
 end
 
-local function beginLoadingStreamingGuard(player: Player)
-	if streamingGuardActive then
-		return
-	end
-	streamingGuardActive = true
-	-- Some Studio/runtime builds expose StreamingEnabled but not Min/Target radius.
-	-- Never read those properties outside pcall — it aborts the whole loading screen.
-	local okStream = pcall(function()
-		if Workspace.StreamingEnabled ~= true then
-			return
-		end
-		-- Custom streaming is off: do not shrink the bubble during the flyover.
-		if not StreamingSettings.isCustomEnabled() then
-			return
-		end
-		-- Property may be missing on some Studio builds — only touch inside pcall.
-		local wsAny = Workspace :: any
-		local minOk, minR = pcall(function()
-			return wsAny.StreamingMinRadius
-		end)
-		local targetOk, targetR = pcall(function()
-			return wsAny.StreamingTargetRadius
-		end)
-		if not minOk or not targetOk or typeof(minR) ~= "number" or typeof(targetR) ~= "number" then
-			return
-		end
-		savedStreamingMinRadius = minR
-		savedStreamingTargetRadius = targetR
-		wsAny.StreamingMinRadius = LOADING_STREAM_MIN_RADIUS
-		wsAny.StreamingTargetRadius = LOADING_STREAM_TARGET_RADIUS
-	end)
-	if not okStream then
-		savedStreamingMinRadius = nil
-		savedStreamingTargetRadius = nil
-	end
-	local char = player.Character
-	local focusPart = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-	if focusPart and focusPart:IsA("BasePart") then
-		local okFocus, errFocus = pcall(function()
-			player.ReplicationFocus = focusPart
-		end)
-		if not okFocus then
-			warn("[LoadingScreenController] ReplicationFocus pin failed:", errFocus)
-		end
-	end
+local function beginLoadingStreamingGuard(_player: Player)
 end
 
-local function endLoadingStreamingGuard(player: Player?)
-	if not streamingGuardActive then
-		return
-	end
-	streamingGuardActive = false
-	-- Always restore gameplay streaming — ignore Studio's saved 256/512 + LowMemory.
-	local ok, err = pcall(function()
-		StreamingSettings.apply(Workspace)
-	end)
-	if not ok then
-		if typeof(err) == "string" and not string.find(err, "StreamingMinRadius", 1, true) and not string.find(err, "rawget", 1, true) then
-			warn("[LoadingScreenController] streaming radius restore failed:", err)
-		end
-	end
-	savedStreamingMinRadius = nil
-	savedStreamingTargetRadius = nil
-	if player and player.Parent then
-		local okFocus, errFocus = pcall(function()
-			player.ReplicationFocus = nil
-		end)
-		if not okFocus then
-			warn("[LoadingScreenController] ReplicationFocus clear failed:", errFocus)
-		end
-	end
+local function endLoadingStreamingGuard(_player: Player?)
 end
 
 local function findReferenceCamera(root: Instance?): Camera?
@@ -2119,40 +2042,6 @@ function M.showEarly()
 	end
 
 	enterLoadingIsolation(playerGui)
-
-	task.spawn(function()
-		if not Workspace.StreamingEnabled then
-			return
-		end
-		-- One spawn-centered pull. Cycling far tree points starved nearby
-		-- streaming on mobile and made the world look empty after the overlay.
-		local char = player.Character
-		if not char then
-			local arrived: Model? = nil
-			local added = player.CharacterAdded:Connect(function(c)
-				arrived = c
-			end)
-			local deadline = os.clock() + 8
-			while not arrived and player.Parent and os.clock() < deadline do
-				arrived = player.Character
-				if arrived then
-					break
-				end
-				task.wait(0.1)
-			end
-			added:Disconnect()
-			char = arrived
-		end
-		local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 8))
-		if hrp and hrp:IsA("BasePart") and loadingActive and player.Parent then
-			local ok, err = pcall(function()
-				player:RequestStreamAroundAsync((hrp :: BasePart).Position, 5)
-			end)
-			if not ok then
-				warn("[LoadingScreenController] spawn stream failed:", err)
-			end
-		end
-	end)
 
 	local guiForBootstrap = loadingGui
 	task.defer(function()

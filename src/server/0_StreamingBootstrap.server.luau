@@ -8,8 +8,8 @@
 	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
 	Studio play-solo does not override Workspace.
 	Also publishes LandStreamCenters so clients can stream lands that are not in yet.
-	Pins Map["Huge trees"] / Map.Vine / Spawn And Bases / Land 1 Persistent so
-	coming back to the safezone is not empty. Never pins Map, Land 2–10, or Land Locks.
+	Pins Map["Huge trees"] / Map.Vine / Lands.grass as one Persistent model each
+	so the forest around the map cannot stream out. Never pins Land 2–10 or Land Locks.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -81,11 +81,18 @@ task.spawn(function()
 	publishLandCenters()
 end)
 
--- Map.Lands 2–10 grass stays Default (too heavy to pin). Land 1 + Spawn And Bases
--- stay loaded so returning to the safezone is not an empty wait.
-local PERSIST_MAP_CHILD_KEYS: { [string]: boolean } = {
+-- Folders cannot be Persistent. Huge trees / Vine / Lands.grass are folders of
+-- parts and models, so they streamed out even when we tagged child Models.
+local PERSIST_PIN_FOLDER_KEYS: { [string]: boolean } = {
 	hugetrees = true,
 	vine = true,
+}
+local LANDS_DECOR_KEYS: { [string]: boolean } = {
+	grass = true,
+	stuff = true,
+	idk = true,
+}
+local PERSIST_MAP_CHILD_KEYS: { [string]: boolean } = {
 	invisibleborders = true,
 	landborders = true,
 	eventbillboard = true,
@@ -104,6 +111,46 @@ local function persistModel(model: Model)
 	pcall(function()
 		model.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
 	end)
+end
+
+-- Roblox only honors Persistent on Models. A Folder named "Huge trees" silently
+-- ignores streaming mode, so Bent_tree / Willow_tree dump as soon as you swing.
+local function pinAsPersistentModel(container: Instance): Model?
+	if container:IsA("Model") then
+		persistModel(container)
+		for _, d in container:GetDescendants() do
+			if d:IsA("Model") then
+				persistModel(d)
+			end
+		end
+		return container
+	end
+	local parent = container.Parent
+	if not parent then
+		return nil
+	end
+	local model = Instance.new("Model")
+	model.Name = container.Name
+	pcall(function()
+		model.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
+	end)
+	local kids = container:GetChildren()
+	model.Parent = parent
+	local n = 0
+	for _, child in kids do
+		child.Parent = model
+		n += 1
+		if n % 80 == 0 then
+			RunService.Heartbeat:Wait()
+		end
+	end
+	container:Destroy()
+	for _, d in model:GetDescendants() do
+		if d:IsA("Model") then
+			persistModel(d)
+		end
+	end
+	return model
 end
 
 local function persistLoosePart(part: BasePart)
@@ -174,13 +221,19 @@ end
 
 local function persistLandOne(lands: Instance)
 	for _, child in lands:GetChildren() do
+		local key = persistKey(child.Name)
 		if landNumberFromName(child.Name) == 1 then
 			persistModelsOnly(child)
+		elseif LANDS_DECOR_KEYS[key] then
+			pinAsPersistentModel(child)
 		end
 	end
 	lands.ChildAdded:Connect(function(child)
+		local key = persistKey(child.Name)
 		if landNumberFromName(child.Name) == 1 then
 			persistModelsOnly(child)
+		elseif LANDS_DECOR_KEYS[key] then
+			pinAsPersistentModel(child)
 		end
 	end)
 end
@@ -188,7 +241,9 @@ end
 local function hookMapScenery(map: Instance)
 	for _, child in map:GetChildren() do
 		local key = persistKey(child.Name)
-		if PERSIST_MAP_CHILD_KEYS[key] then
+		if PERSIST_PIN_FOLDER_KEYS[key] then
+			pinAsPersistentModel(child)
+		elseif PERSIST_MAP_CHILD_KEYS[key] then
 			persistContainer(child)
 		elseif PERSIST_MODELS_ONLY_KEYS[key] then
 			persistModelsOnly(child)
@@ -198,7 +253,9 @@ local function hookMapScenery(map: Instance)
 	end
 	map.ChildAdded:Connect(function(child)
 		local key = persistKey(child.Name)
-		if PERSIST_MAP_CHILD_KEYS[key] then
+		if PERSIST_PIN_FOLDER_KEYS[key] then
+			pinAsPersistentModel(child)
+		elseif PERSIST_MAP_CHILD_KEYS[key] then
 			persistContainer(child)
 		elseif PERSIST_MODELS_ONLY_KEYS[key] then
 			persistModelsOnly(child)

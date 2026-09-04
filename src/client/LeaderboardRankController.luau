@@ -62,7 +62,7 @@ type BoardRank = {
 	rank: number,
 }
 
-local VIP_CROWN_EMOJI = "👑"
+local VIP_CROWN_IMAGE = "rbxassetid://116503139363169"
 local VIP_CROWN_GRADIENT = ColorSequence.new({
 	ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 236, 140)),
 	ColorSequenceKeypoint.new(0.5, Color3.fromRGB(255, 196, 60)),
@@ -208,16 +208,15 @@ local function buildBadge(player: Player, entries: { BoardRank }): BillboardGui?
 		col.LayoutOrder = order
 		col.Parent = root
 
-		local crown = Instance.new("TextLabel")
+		local crown = Instance.new("ImageLabel")
 		crown.Name = "Crown"
 		crown.BackgroundTransparency = 1
 		crown.AnchorPoint = Vector2.new(0.5, 0)
 		crown.Position = UDim2.fromScale(0.5, 0)
 		crown.Size = UDim2.fromScale(1, 0.62)
-		crown.Text = VIP_CROWN_EMOJI
-		crown.TextScaled = true
+		crown.Image = VIP_CROWN_IMAGE
+		crown.ScaleType = Enum.ScaleType.Fit
 		crown.Parent = col
-		UiFonts.applyDisplayLabel(crown, 32, 20)
 
 		local vipLabel = Instance.new("TextLabel")
 		vipLabel.Name = "VIP"

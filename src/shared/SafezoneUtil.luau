@@ -12,6 +12,8 @@
 --]]
 
 local CollectionService = game:GetService("CollectionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local SafezoneUtil = {}
 
@@ -36,7 +38,9 @@ local rebuildInProgress = false
 local depositHookConnected = false
 local spawnBasesHookConnected = false
 local mapHookConnected = false
+local hookedSpawnBasesFolder: Instance? = nil
 local SCAN_YIELD_EVERY = 400
+local BOUNDS_FOLDER_NAME = "SafezoneBounds"
 
 local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolean
 	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
@@ -46,16 +50,41 @@ local function isPointInsidePartOBB(worldPoint: Vector3, part: BasePart): boolea
 		and math.abs(localPt.Z) <= half.Z
 end
 
--- Safezone volumes are flat pads. Falling through an unstreamed floor (or slight
--- Y drift) must still count as "in base" — otherwise Return / land strip flash on.
-local function isPointInsideSafezonePart(worldPoint: Vector3, part: BasePart): boolean
-	local localPt = part.CFrame:PointToObjectSpace(worldPoint)
-	local half = part.Size * 0.5
+local function isPointInsideSafezoneOBB(worldPoint: Vector3, cf: CFrame, size: Vector3): boolean
+	local localPt = cf:PointToObjectSpace(worldPoint)
+	local half = size * 0.5
 	local xzPad = 5
 	local ySlack = math.max(half.Y + 64, 120)
 	return math.abs(localPt.X) <= half.X + xzPad
 		and math.abs(localPt.Z) <= half.Z + xzPad
 		and math.abs(localPt.Y) <= ySlack
+end
+
+-- Safezone volumes are flat pads. Falling through an unstreamed floor (or slight
+-- Y drift) must still count as "in base" — otherwise Return / land strip flash on.
+local function isPointInsideSafezonePart(worldPoint: Vector3, part: BasePart): boolean
+	return isPointInsideSafezoneOBB(worldPoint, part.CFrame, part.Size)
+end
+
+local function isWorldPointInsideReplicatedSafezone(worldPoint: Vector3): boolean
+	local folder = ReplicatedStorage:FindFirstChild(BOUNDS_FOLDER_NAME)
+	if not folder then
+		return false
+	end
+	local count = folder:GetAttribute("Count")
+	if typeof(count) ~= "number" or count < 1 then
+		return false
+	end
+	for i = 1, math.floor(count) do
+		local cf = folder:GetAttribute("CF" .. tostring(i))
+		local size = folder:GetAttribute("Size" .. tostring(i))
+		if typeof(cf) == "CFrame" and typeof(size) == "Vector3" then
+			if isPointInsideSafezoneOBB(worldPoint, cf, size) then
+				return true
+			end
+		end
+	end
+	return false
 end
 
 local function getSpawnBasesFolder(): Instance?
@@ -151,9 +180,10 @@ local function connectDepositTagListener()
 end
 
 local function hookSpawnBasesFolder(folder: Instance)
-	if spawnBasesHookConnected then
+	if hookedSpawnBasesFolder == folder then
 		return
 	end
+	hookedSpawnBasesFolder = folder
 	spawnBasesHookConnected = true
 	folder.DescendantAdded:Connect(function(desc)
 		if desc:IsA("BasePart") and isZonePartName(desc.Name) then
@@ -267,7 +297,68 @@ function SafezoneUtil.invalidateCache()
 	cachesBuilt = false
 	rebuildInProgress = false
 	spawnBasesHookConnected = false
+	hookedSpawnBasesFolder = nil
 	startBackgroundScan()
+end
+
+-- Server only. Replicates SafeZoneHitbox OBBs so the client can still detect
+-- "in lobby" after the hitbox instance streams out (forest dump/reload).
+function SafezoneUtil.publishServerBounds()
+	if not RunService:IsServer() then
+		return
+	end
+	task.spawn(function()
+		local spawnBases = getSpawnBasesFolder()
+		if not spawnBases then
+			local map = workspace:WaitForChild("Map", 120)
+			if map then
+				spawnBases = map:WaitForChild("Spawn And Bases", 60)
+			end
+		end
+		if not spawnBases then
+			return
+		end
+
+		local frames: { CFrame } = {}
+		local sizes: { Vector3 } = {}
+		local stack: { Instance } = { spawnBases }
+		local processed = 0
+		while #stack > 0 do
+			local inst = table.remove(stack)
+			if inst:IsA("BasePart") and INVENTORY_ZONE_NAMES[inst.Name] == true then
+				table.insert(frames, inst.CFrame)
+				table.insert(sizes, inst.Size)
+			end
+			for _, child in inst:GetChildren() do
+				table.insert(stack, child)
+			end
+			processed += 1
+			if processed % SCAN_YIELD_EVERY == 0 then
+				task.wait()
+			end
+		end
+
+		local folder = ReplicatedStorage:FindFirstChild(BOUNDS_FOLDER_NAME)
+		if not folder then
+			folder = Instance.new("Folder")
+			folder.Name = BOUNDS_FOLDER_NAME
+		end
+		local prevCount = folder:GetAttribute("Count")
+		if typeof(prevCount) == "number" then
+			for i = 1, math.floor(prevCount) do
+				folder:SetAttribute("CF" .. tostring(i), nil)
+				folder:SetAttribute("Size" .. tostring(i), nil)
+			end
+		end
+		folder:SetAttribute("Count", #frames)
+		for i, cf in frames do
+			folder:SetAttribute("CF" .. tostring(i), cf)
+			folder:SetAttribute("Size" .. tostring(i), sizes[i])
+		end
+		if folder.Parent ~= ReplicatedStorage then
+			folder.Parent = ReplicatedStorage
+		end
+	end)
 end
 
 local function isWorldPointInsideParts(worldPoint: Vector3, parts: { BasePart }?): boolean
@@ -321,7 +412,10 @@ end
 
 function SafezoneUtil.isWorldPointInSafezone(worldPoint: Vector3): boolean
 	ensureCaches()
-	return isWorldPointInsideSafezoneParts(worldPoint, cachedInventoryParts)
+	if isWorldPointInsideSafezoneParts(worldPoint, cachedInventoryParts) then
+		return true
+	end
+	return isWorldPointInsideReplicatedSafezone(worldPoint)
 end
 
 -- Lighting: standing on the pad only. Do not keep "day" while falling or
@@ -395,14 +489,33 @@ end
 function SafezoneUtil.getSafezoneCenter(): Vector3?
 	ensureCaches()
 	local parts = cachedInventoryParts
-	if not parts or #parts == 0 then
+	if parts then
+		local sum = Vector3.zero
+		local n = 0
+		for _, part in parts do
+			if part.Parent then
+				sum += part.Position
+				n += 1
+			end
+		end
+		if n > 0 then
+			return sum / n
+		end
+	end
+	local folder = ReplicatedStorage:FindFirstChild(BOUNDS_FOLDER_NAME)
+	if not folder then
+		return nil
+	end
+	local count = folder:GetAttribute("Count")
+	if typeof(count) ~= "number" or count < 1 then
 		return nil
 	end
 	local sum = Vector3.zero
 	local n = 0
-	for _, part in parts do
-		if part.Parent then
-			sum += part.Position
+	for i = 1, math.floor(count) do
+		local cf = folder:GetAttribute("CF" .. tostring(i))
+		if typeof(cf) == "CFrame" then
+			sum += cf.Position
 			n += 1
 		end
 	end

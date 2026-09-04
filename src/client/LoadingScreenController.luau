@@ -34,7 +34,7 @@ local MOON_PLAYBACK_SCALE = 4 / 3
 -- Keep stream bubble on the player while the cinematic camera flies elsewhere.
 local LOADING_STREAM_MIN_RADIUS = 64
 local LOADING_STREAM_TARGET_RADIUS = 96
--- After loading, StreamingSettings.apply overrides Studio's saved 256/512 + LowMemory.
+-- After loading, StreamingSettings.apply restores StreamOutBehavior.
 
 local DEFAULT_CAMERA_POS = Vector3.new(1452.568, 100.564, 518.559)
 local DEFAULT_CAMERA_RAD = Vector3.new(math.rad(4.555), math.rad(18.409), 0)

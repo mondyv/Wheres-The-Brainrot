@@ -250,6 +250,7 @@ local pendingToolbarPress: ToolbarDragSpec? = nil
 local lastResolvedHotbarDropSlot: number? = nil
 local activeToolbarDrag = false
 local dragSuppressedToolbarClick = false
+local backpackClickConsumed = false
 local mobileDragHoldToken = 0
 local DRAG_THRESHOLD_PX = 14
 local DRAG_GHOST_THRESHOLD_PX = 18
@@ -2019,6 +2020,33 @@ end
 		resetBackpackDragHover()
 	end
 
+	local function pointerStillHeld(): boolean
+		if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+			return true
+		end
+		if GamepadInput.isAcceptHeld() then
+			return true
+		end
+		return #UserInputService:GetTouches() > 0
+	end
+
+	-- Stream-in hitches can drop InputEnded, leaving a stuck drag that eats every inventory click.
+	local function clearStaleToolbarGesture()
+		if not pendingToolbarPress and not pendingToolbarDrag and not activeToolbarDrag then
+			return
+		end
+		if pointerStillHeld() then
+			return
+		end
+		pendingToolbarPress = nil
+		pendingToolbarDrag = nil
+		activeToolbarDrag = false
+		dragSuppressedToolbarClick = false
+		backpackClickConsumed = false
+		lastResolvedHotbarDropSlot = nil
+		clearDragGhost()
+	end
+
 	local function startDragGhost(texture: string, screenPos: Vector2, sourceSize: Vector2?)
 		clearDragGhost()
 		local sg = Instance.new("ScreenGui")
@@ -2587,6 +2615,7 @@ end
 	end
 
 	local function pollSafezonePresence()
+		clearStaleToolbarGesture()
 		local character = player.Character
 		local inZone = isCharacterInToolbarAccessZone(character)
 		if inZone then
@@ -3853,7 +3882,6 @@ end
 	end
 	local lastBackpackEquipAt = 0.0
 	local lastBackpackEquipIdx: number? = nil
-	local backpackClickConsumed = false
 	local function requestEquipFromBackpack(listIdx: number)
 		if not canUseToolbar then
 			return

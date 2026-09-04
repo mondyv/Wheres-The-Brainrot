@@ -1,8 +1,9 @@
 -- [ACTIVE] 0_StreamingBootstrap.server
 --[[
-	Streaming custom radii / persist / lag-avoidance are disabled.
-	Workspace uses the place file (Roblox defaults). This script only
-	unreplicates a duplicate Brainrots catalog.
+	Streaming custom cull / persist / radius overrides stay off.
+	Forces StreamOutBehavior Opportunistic so leaving spawn does not dump the
+	forest (return hitch + dead inventory). Publishes SafezoneBounds. Unreplicates
+	a duplicate Brainrots catalog.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,8 +12,10 @@ local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local StreamingSettings = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StreamingSettings"))
+local SafezoneUtil = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SafezoneUtil"))
 
--- apply() is a no-op (custom streaming disabled).
+StreamingSettings.apply(Workspace)
+SafezoneUtil.publishServerBounds()
 
 -- Server has the full map. Clients often cannot find Land 2's center until it
 -- streams in — chicken-and-egg. Attributes on ReplicatedStorage always replicate.

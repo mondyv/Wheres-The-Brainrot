@@ -30,7 +30,6 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
-local TweenService = game:GetService("TweenService")
 
 local Modules = script.Parent:WaitForChild("Modules")
 local Brainrots = require(Modules:WaitForChild("Brainrots"))
@@ -102,6 +101,7 @@ local upgradeRE = ensureRemoteEvent(remotesFolder, "UpgradeStandBrainrot") -- (s
 local prepareRobuxStandUpgradeRE = ensureRemoteEvent(remotesFolder, "PrepareRobuxStandUpgrade") -- (standModel, mode)
 local upgradeFeedbackRE = ensureRemoteEvent(remotesFolder, "StandUpgradeFeedback") -- server → client (ok, reason)
 local collectVFXRE = ensureRemoteEvent(remotesFolder, "StandCashCollectedFX") -- server → client (standModel, cashAmount)
+local hopDisplayRE = ensureRemoteEvent(remotesFolder, "StandDisplayHop") -- server → client (stand, kind, restCf)
 local _autoCollectVFXRE = ensureRemoteEvent(remotesFolder, "AutoCollectCashCollectedFX") -- server → client (autocollectModel, totalCash)
 local showOfflineEarningsRE = ensureRemoteEvent(remotesFolder, "ShowOfflineEarnings") -- server → client (amount)
 local declineOfflineEarningsRE = ensureRemoteEvent(remotesFolder, "DeclineOfflineEarnings") -- client → server
@@ -833,11 +833,7 @@ local function playStandIdleAnimation(state: StandState, model: Model, brainrotN
 	state.idleTrack = track
 end
 
-local HOP_IN_HEIGHT = 2.4
-local HOP_IN_SEC = 0.3
-local HOP_OFF_HEIGHT = 2.9
-local HOP_OFF_FORWARD = 0.7
-local HOP_OFF_SEC = 0.26
+local HOP_OFF_SEC = BrainrotStandConfig.HOP_OFF_SEC
 
 local function cancelHop(state: StandState)
 	local cleanup = state.hopCleanup
@@ -855,53 +851,22 @@ local function hopPivot(model: Model, cf: CFrame)
 	end
 end
 
+local function fireDisplayHop(stand: Instance, kind: string, restCf: CFrame)
+	if not hopDisplayRE then
+		return
+	end
+	hopDisplayRE:FireAllClients(stand, kind, restCf)
+end
+
 local function playHopIn(state: StandState, model: Model, restCf: CFrame, brainrotName: string)
 	cancelHop(state)
 	if not model.Parent then
 		playStandIdleAnimation(state, model, brainrotName)
 		return
 	end
-	local startCf = restCf + Vector3.new(0, HOP_IN_HEIGHT, 0)
-	hopPivot(model, startCf)
-	local proxy = Instance.new("NumberValue")
-	proxy.Value = 0
-	local tween = TweenService:Create(
-		proxy,
-		TweenInfo.new(HOP_IN_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Value = 1 }
-	)
-	local conn = proxy:GetPropertyChangedSignal("Value"):Connect(function()
-		if not model.Parent then
-			return
-		end
-		hopPivot(model, startCf:Lerp(restCf, proxy.Value))
-	end)
-	local function stopTween()
-		conn:Disconnect()
-		tween:Cancel()
-		proxy:Destroy()
-	end
-	state.hopCleanup = function()
-		stopTween()
-		if model.Parent then
-			hopPivot(model, restCf)
-		end
-	end
-	tween.Completed:Connect(function(playbackState)
-		if playbackState ~= Enum.PlaybackState.Completed then
-			return
-		end
-		if state.hopCleanup == nil then
-			return
-		end
-		state.hopCleanup = nil
-		stopTween()
-		if model.Parent then
-			hopPivot(model, restCf)
-			playStandIdleAnimation(state, model, brainrotName)
-		end
-	end)
-	tween:Play()
+	hopPivot(model, restCf)
+	playStandIdleAnimation(state, model, brainrotName)
+	fireDisplayHop(state.stand, "in", restCf)
 end
 
 local function playHopOffThenDestroy(state: StandState, model: Model, restCf: CFrame)
@@ -910,58 +875,29 @@ local function playHopOffThenDestroy(state: StandState, model: Model, restCf: CF
 		return
 	end
 	stopStandIdleAnimation(state)
-	local forward = restCf.LookVector
-	local frontPart = findFrontReferencePart(state)
-	if frontPart then
-		local delta = Vector3.new(frontPart.Position.X - restCf.Position.X, 0, frontPart.Position.Z - restCf.Position.Z)
-		if delta.Magnitude > 0.05 then
-			forward = delta.Unit
-		end
-	end
-	local proxy = Instance.new("NumberValue")
-	proxy.Value = 0
-	local tween = TweenService:Create(
-		proxy,
-		TweenInfo.new(HOP_OFF_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Value = 1 }
-	)
-	local conn = proxy:GetPropertyChangedSignal("Value"):Connect(function()
-		if not model.Parent then
-			return
-		end
-		local t = proxy.Value
-		-- Jump up and vanish at the peak — do not come back down or slide.
-		local y = math.sin(t * math.pi * 0.55) * HOP_OFF_HEIGHT
-		local pos = restCf.Position + forward * (HOP_OFF_FORWARD * t) + Vector3.new(0, y, 0)
-		hopPivot(model, CFrame.new(pos) * restCf.Rotation)
-	end)
-	local function stopTween()
-		conn:Disconnect()
-		tween:Cancel()
-		proxy:Destroy()
-	end
+	fireDisplayHop(state.stand, "off", restCf)
 	local function destroyModel()
 		BrainrotHeader.remove(model)
 		if model.Parent then
 			model:Destroy()
 		end
 	end
+	local done = false
 	state.hopCleanup = function()
-		stopTween()
+		if done then
+			return
+		end
+		done = true
 		destroyModel()
 	end
-	tween.Completed:Connect(function(playbackState)
-		if playbackState ~= Enum.PlaybackState.Completed then
+	task.delay(HOP_OFF_SEC, function()
+		if done then
 			return
 		end
-		if state.hopCleanup == nil then
-			return
-		end
+		done = true
 		state.hopCleanup = nil
-		stopTween()
 		destroyModel()
 	end)
-	tween:Play()
 end
 
 -- ── Stand placement / removal ────────────────────────────────────────────────

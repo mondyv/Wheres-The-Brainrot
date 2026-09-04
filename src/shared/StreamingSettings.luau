@@ -6,6 +6,9 @@
 
 	CUSTOM_CULL_ENABLED parks grass/trees. Leave that false unless we need it again.
 
+	No mobile-smaller bubble — phones use the same radii as desktop.
+	Stream-out is LowMemory so the world stays once it has loaded.
+
 	Studio play-solo: apply() never touches Workspace.
 ]]
 
@@ -21,11 +24,11 @@ function M.isCustomEnabled(): boolean
 end
 
 function M.gameplayMin(): number
-	return 640
+	return 2048
 end
 
 function M.gameplayTarget(): number
-	return 1280
+	return 4096
 end
 
 function M.apply(workspaceInst: Workspace)
@@ -42,8 +45,10 @@ function M.apply(workspaceInst: Workspace)
 		wsAny.StreamingMinRadius = M.gameplayMin()
 		wsAny.StreamingTargetRadius = M.gameplayTarget()
 	end)
+	-- Keep streamed instances. Opportunistic was dumping trees on mobile.
 	pcall(function()
-		workspaceInst.StreamOutBehavior = Enum.StreamOutBehavior.Opportunistic
+		local behavior = Enum.StreamOutBehavior
+		workspaceInst.StreamOutBehavior = behavior.LowMemory or behavior.Default
 	end)
 	pcall(function()
 		local mode = (Enum :: any).StreamingIntegrityMode

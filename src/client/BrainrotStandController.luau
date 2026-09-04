@@ -35,6 +35,7 @@ local ProximityPromptEffects = require(script.Parent.ProximityPromptEffects)
 local PlotPaths = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotPaths"))
 local PlotStandPlaceholders = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PlotStandPlaceholders"))
 local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
+local BrainrotStandConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotStandConfig"))
 local MobileHaptics = require(script.Parent.MobileHaptics)
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
 local GamepadInput = require(script.Parent.GamepadInput)
@@ -59,7 +60,7 @@ local lastEnabledStandPrompts: { [ProximityPrompt]: boolean } = {}
 local player = Players.LocalPlayer
 local _MONEY_VFX_HOLD_SEC = 0.14
 local CHILD_WAIT_TIMEOUT = 8 -- seconds; stand children may not have replicated when the tag arrives
-local BRAINROT_HOP_HEIGHT = 0.34
+local BRAINROT_HOP_HEIGHT = 1.35
 local BRAINROT_HOP_COOLDOWN = 0.08
 
 local M = {}
@@ -79,6 +80,7 @@ local remotes: Folder? = nil
 local upgradeRE: RemoteEvent? = nil
 local upgradeFeedbackRE: RemoteEvent? = nil
 local collectFXRE: RemoteEvent? = nil
+local hopDisplayRE: RemoteEvent? = nil
 
 -- ── VFX setup ────────────────────────────────────────────────────────────────
 
@@ -1949,6 +1951,166 @@ local function findStandDisplayModel(stand: Model): Model?
 	return nil
 end
 
+local displayHopConns: { [Model]: RBXScriptConnection } = {}
+local displayHopBaseScale: { [Model]: number } = {}
+
+local function easeOutCubic(t: number): number
+	local u = 1 - math.clamp(t, 0, 1)
+	return 1 - u * u * u
+end
+
+local function stopDisplayHop(model: Model, restoreScale: boolean)
+	local conn = displayHopConns[model]
+	if conn then
+		conn:Disconnect()
+		displayHopConns[model] = nil
+	end
+	local scale = displayHopBaseScale[model]
+	displayHopBaseScale[model] = nil
+	if restoreScale and typeof(scale) == "number" and model.Parent then
+		pcall(function()
+			model:ScaleTo(scale)
+		end)
+	end
+end
+
+local function hopPivotLocal(model: Model, cf: CFrame)
+	if model.PrimaryPart then
+		model:PivotTo(cf)
+	else
+		model:MoveTo(cf.Position)
+	end
+end
+
+local function waitStandDisplayModel(stand: Model, timeoutSec: number): Model?
+	local existing = findStandDisplayModel(stand)
+	if existing then
+		return existing
+	end
+	local found: Model? = nil
+	local conn = stand.ChildAdded:Connect(function(ch)
+		if found then
+			return
+		end
+		if ch:IsA("Model") and ch:GetAttribute("BrainrotStandDisplay") == true then
+			found = ch
+		end
+	end)
+	local deadline = os.clock() + timeoutSec
+	while not found and stand.Parent and os.clock() < deadline do
+		found = findStandDisplayModel(stand)
+		if found then
+			break
+		end
+		task.wait(0.05)
+	end
+	conn:Disconnect()
+	return found
+end
+
+local function playStandDisplayHop(stand: Model, kind: string, restCf: CFrame)
+	task.spawn(function()
+		local model = waitStandDisplayModel(stand, 1.2)
+		if not model or not model.Parent then
+			return
+		end
+		stopDisplayHop(model, true)
+		local baseScale = 1
+		local okScale, gotScale = pcall(function()
+			return model:GetScale()
+		end)
+		if okScale and typeof(gotScale) == "number" and gotScale > 0 then
+			baseScale = gotScale
+		end
+		displayHopBaseScale[model] = baseScale
+
+		local start = os.clock()
+		local dur = if kind == "off" then BrainrotStandConfig.HOP_OFF_SEC else BrainrotStandConfig.HOP_IN_SEC
+		local restRot = restCf - restCf.Position
+		local forward = Vector3.new(restCf.LookVector.X, 0, restCf.LookVector.Z)
+		if forward.Magnitude < 0.05 then
+			forward = Vector3.new(0, 0, -1)
+		else
+			forward = forward.Unit
+		end
+
+		local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		local nearby = true
+		if hrp and hrp:IsA("BasePart") then
+			nearby = (hrp.Position - restCf.Position).Magnitude < 110
+		end
+		if nearby then
+			if kind == "off" then
+				GameSoundEffects.playLifting()
+			else
+				GameSoundEffects.playRelease()
+			end
+			MobileHaptics.confirm()
+		end
+		local landed = false
+
+		local conn = RunService.Heartbeat:Connect(function()
+			if not model.Parent then
+				stopDisplayHop(model, false)
+				return
+			end
+			local t = math.clamp((os.clock() - start) / dur, 0, 1)
+			if kind == "off" then
+				local launchT = math.clamp((t - 0.16) / 0.84, 0, 1)
+				local y = if t < 0.16 then -0.12 * (t / 0.16) else easeOutCubic(launchT) * 12.5
+				local ahead = if t < 0.16 then 0 else easeOutCubic(launchT) * 3.2
+				local yaw = launchT * math.rad(540)
+				local scaleMul = if t < 0.16 then 1 - (t / 0.16) * 0.12 else 1 - easeOutCubic(launchT) * 0.72
+				pcall(function()
+					model:PivotTo(CFrame.new(restCf.Position + Vector3.new(0, y, 0) + forward * ahead) * restRot * CFrame.Angles(0, yaw, 0))
+				end)
+				pcall(function()
+					model:ScaleTo(baseScale * math.max(0.22, scaleMul))
+				end)
+			else
+				local dropT = math.clamp(t / 0.58, 0, 1)
+				local bounceT = math.clamp((t - 0.58) / 0.42, 0, 1)
+				local y = if t < 0.58
+					then 11.5 * (1 - easeOutCubic(dropT))
+					else math.sin(bounceT * math.pi) * 2.15 * (1 - bounceT)
+				local yaw = easeOutCubic(dropT) * math.rad(400)
+				local scaleMul = 1
+				if t >= 0.52 and t < 0.7 then
+					local squash = math.clamp((t - 0.52) / 0.18, 0, 1)
+					scaleMul = 1 - math.sin(squash * math.pi) * 0.22
+					if not landed and nearby and squash > 0.35 then
+						landed = true
+						GameSoundEffects.playGroundSmash(0.55)
+					end
+				elseif t >= 0.7 then
+					scaleMul = 1 + math.sin(bounceT * math.pi) * 0.08
+				end
+				pcall(function()
+					model:PivotTo(CFrame.new(restCf.Position + Vector3.new(0, y, 0)) * restRot * CFrame.Angles(0, yaw, 0))
+				end)
+				pcall(function()
+					model:ScaleTo(baseScale * scaleMul)
+				end)
+			end
+			if t >= 1 then
+				if kind == "in" then
+					hopPivotLocal(model, restCf)
+					pcall(function()
+						model:ScaleTo(baseScale)
+					end)
+				end
+				stopDisplayHop(model, kind == "in")
+			end
+		end)
+		displayHopConns[model] = conn
+		model.AncestryChanged:Once(function(_, parent)
+			if parent == nil then
+				stopDisplayHop(model, false)
+			end
+		end)
+	end)
+end
+
 local function resolveStandUpgradeVfxHost(stand: Model): BasePart?
 	local display = findStandDisplayModel(stand)
 	if display then
@@ -1977,6 +2139,9 @@ local function hopStandBrainrot(stand: Model)
 	if not model or not model.Parent then
 		return
 	end
+	if displayHopConns[model] then
+		return
+	end
 	lastBrainrotHopAt[stand] = now
 	local baseCf = model:GetPivot()
 	local hopProxy = Instance.new("NumberValue")
@@ -1986,12 +2151,13 @@ local function hopStandBrainrot(stand: Model)
 			return
 		end
 		local t = hopProxy.Value
-		local y = if t < 0.42 then (t / 0.42) * BRAINROT_HOP_HEIGHT else ((1 - t) / 0.58) * BRAINROT_HOP_HEIGHT
-		model:PivotTo(baseCf + Vector3.new(0, y, 0))
+		local y = if t < 0.38 then (t / 0.38) * BRAINROT_HOP_HEIGHT else ((1 - t) / 0.62) * BRAINROT_HOP_HEIGHT
+		local yaw = math.sin(t * math.pi) * 0.28
+		model:PivotTo(baseCf * CFrame.Angles(0, yaw, 0) + Vector3.new(0, y, 0))
 	end)
 	local hopTween = TweenService:Create(
 		hopProxy,
-		TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Value = 1 }
 	)
 	hopTween.Completed:Connect(function()
@@ -2337,6 +2503,7 @@ function M.init()
 	upgradeRE = (remotes :: Folder):WaitForChild("UpgradeStandBrainrot", 45) :: RemoteEvent
 	upgradeFeedbackRE = (remotes :: Folder):WaitForChild("StandUpgradeFeedback", 45) :: RemoteEvent
 	collectFXRE = (remotes :: Folder):WaitForChild("StandCashCollectedFX", 45) :: RemoteEvent
+	hopDisplayRE = (remotes :: Folder):WaitForChild("StandDisplayHop", 45) :: RemoteEvent
 	if not upgradeRE or not upgradeFeedbackRE or not collectFXRE then
 		warn("[BrainrotStandController] stand remotes missing after wait; init aborted")
 		return
@@ -2395,6 +2562,27 @@ function M.init()
 		end
 		playCashCollectPresentation(view, amount)
 	end)
+
+	if hopDisplayRE then
+		hopDisplayRE.OnClientEvent:Connect(function(stand: any, kind: any, restCf: any)
+			if typeof(stand) ~= "Instance" or not (stand :: Instance):IsA("Model") then
+				return
+			end
+			if typeof(kind) ~= "string" then
+				return
+			end
+			local cf = if typeof(restCf) == "CFrame" then restCf else nil
+			if not cf then
+				local display = findStandDisplayModel(stand :: Model)
+				if display then
+					cf = display:GetPivot()
+				end
+			end
+			if cf then
+				playStandDisplayHop(stand :: Model, kind, cf)
+			end
+		end)
+	end
 
 	rebuildCachedTaggedStands()
 	task.spawn(function()

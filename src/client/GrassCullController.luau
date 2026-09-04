@@ -645,8 +645,27 @@ local function prewarmPublishedTrees()
 		return
 	end
 	task.spawn(function()
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not (hrp and hrp:IsA("BasePart")) then
+			local arrived: Model? = player.Character
+			if not arrived then
+				local added = player.CharacterAdded:Connect(function(c)
+					arrived = c
+				end)
+				local deadline = os.clock() + 8
+				while not arrived and player.Parent and os.clock() < deadline do
+					task.wait(0.1)
+				end
+				added:Disconnect()
+			end
+			hrp = arrived and (arrived:FindFirstChild("HumanoidRootPart") or arrived:WaitForChild("HumanoidRootPart", 8))
+		end
+		if hrp and hrp:IsA("BasePart") then
+			requestStreamAt((hrp :: BasePart).Position, 2)
+		end
 		local folder = ReplicatedStorage:FindFirstChild("TreeStreamFocuses")
-			or ReplicatedStorage:WaitForChild("TreeStreamFocuses", 20)
+			or ReplicatedStorage:WaitForChild("TreeStreamFocuses", 12)
 		if not folder or not player.Parent then
 			return
 		end
@@ -654,14 +673,23 @@ local function prewarmPublishedTrees()
 		if typeof(count) ~= "number" or count < 1 then
 			return
 		end
+		local origin = if hrp and hrp:IsA("BasePart") then (hrp :: BasePart).Position else nil
+		local scored: { { focus: Vector3, dist: number } } = {}
 		for i = 1, math.floor(count) do
+			local focus = folder:GetAttribute("P" .. tostring(i))
+			if typeof(focus) == "Vector3" then
+				local dist = if origin then (focus - origin).Magnitude else i
+				table.insert(scored, { focus = focus, dist = dist })
+			end
+		end
+		table.sort(scored, function(a, b)
+			return a.dist < b.dist
+		end)
+		for i = 1, math.min(4, #scored) do
 			if not player.Parent then
 				return
 			end
-			local focus = folder:GetAttribute("P" .. tostring(i))
-			if typeof(focus) == "Vector3" then
-				requestStreamAt(focus, 0.45)
-			end
+			requestStreamAt(scored[i].focus, 0.55)
 		end
 	end)
 end

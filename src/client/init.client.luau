@@ -11,7 +11,6 @@ task.defer(function()
 	local StarterGui = game:GetService("StarterGui")
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
 	local RunService = game:GetService("RunService")
-	local UserInputService = game:GetService("UserInputService")
 
 	-- Play-solo is server+client in one process at Automatic/max quality. Live
 	-- Roblox already streams and quality-scales; Studio does not. Session-only.
@@ -179,12 +178,6 @@ task.defer(function()
 	}
 
 	local function bootPanelUI()
-		if UserInputService.TouchEnabled then
-			-- Phones hitch if every shop/index clones in the same frames as HUD reveal.
-			task.wait(0.75)
-			runBootSteps(panelBootSteps, 1)
-			return
-		end
 		runBootStepsParallel(panelBootSteps)
 	end
 

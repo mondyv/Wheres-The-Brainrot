@@ -14,4 +14,8 @@ M.PLUS_25_DEV_PRODUCT_ID = 3602369225
 -- Robux: complete one cash upgrade when the player cannot afford it.
 M.CANT_AFFORD_DEV_PRODUCT_ID = 3602369815
 
+-- Client place/remove hop (server waits this long before idle / destroy).
+M.HOP_IN_SEC = 0.62
+M.HOP_OFF_SEC = 0.55
+
 return M

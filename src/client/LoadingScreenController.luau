@@ -2124,27 +2124,32 @@ function M.showEarly()
 		if not Workspace.StreamingEnabled then
 			return
 		end
-		local folder = ReplicatedStorage:FindFirstChild("TreeStreamFocuses")
-			or ReplicatedStorage:WaitForChild("TreeStreamFocuses", 12)
-		if not folder or not loadingActive or not player.Parent then
-			return
-		end
-		local count = folder:GetAttribute("Count")
-		if typeof(count) ~= "number" or count < 1 then
-			return
-		end
-		for i = 1, math.floor(count) do
-			if not loadingActive or not player.Parent then
-				return
-			end
-			local focus = folder:GetAttribute("P" .. tostring(i))
-			if typeof(focus) == "Vector3" then
-				local ok, err = pcall(function()
-					player:RequestStreamAroundAsync(focus, 0.4)
-				end)
-				if not ok then
-					warn("[LoadingScreenController] tree stream failed:", err)
+		-- One spawn-centered pull. Cycling far tree points starved nearby
+		-- streaming on mobile and made the world look empty after the overlay.
+		local char = player.Character
+		if not char then
+			local arrived: Model? = nil
+			local added = player.CharacterAdded:Connect(function(c)
+				arrived = c
+			end)
+			local deadline = os.clock() + 8
+			while not arrived and player.Parent and os.clock() < deadline do
+				arrived = player.Character
+				if arrived then
+					break
 				end
+				task.wait(0.1)
+			end
+			added:Disconnect()
+			char = arrived
+		end
+		local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart", 8))
+		if hrp and hrp:IsA("BasePart") and loadingActive and player.Parent then
+			local ok, err = pcall(function()
+				player:RequestStreamAroundAsync((hrp :: BasePart).Position, 5)
+			end)
+			if not ok then
+				warn("[LoadingScreenController] spawn stream failed:", err)
 			end
 		end
 	end)

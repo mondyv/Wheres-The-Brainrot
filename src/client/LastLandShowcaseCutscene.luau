@@ -635,6 +635,33 @@ local function hideHudCountersNow()
 	end
 end
 
+local function applyFullBleed(gui: ScreenGui)
+	gui.IgnoreGuiInset = true
+	pcall(function()
+		(gui :: any).ClipToDeviceSafeArea = false
+	end)
+	pcall(function()
+		(gui :: any).SafeAreaCompatibility = Enum.SafeAreaCompatibility.None
+	end)
+	pcall(function()
+		(gui :: any).ScreenInsets = Enum.ScreenInsets.None
+	end)
+end
+
+local function letterboxHeight(): number
+	if UserInputService.TouchEnabled then
+		return 0.22
+	end
+	return 0.118
+end
+
+local function letterboxWidth(): number
+	if UserInputService.TouchEnabled then
+		return 1.4
+	end
+	return 1.2
+end
+
 local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabel, UIScale)
 	if cutsceneGui and cutsceneGui.Parent then
 		local fade = cutsceneGui:FindFirstChild("Fade")
@@ -644,7 +671,8 @@ local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabe
 		local sub = cutsceneGui:FindFirstChild("Subtitle")
 		local scale = title and title:FindFirstChild("PopScale")
 		if
-			fade
+			cutsceneGui:GetAttribute("Style") == "fullBleed_v1"
+			and fade
 			and fade:IsA("Frame")
 			and top
 			and top:IsA("Frame")
@@ -657,6 +685,7 @@ local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabe
 			and scale
 			and scale:IsA("UIScale")
 		then
+			applyFullBleed(cutsceneGui)
 			return cutsceneGui, fade, top, bottom, title, sub, scale
 		end
 	end
@@ -672,23 +701,28 @@ local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabe
 	gui.DisplayOrder = 2000
 	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	gui.Enabled = true
+	gui:SetAttribute("Style", "fullBleed_v1")
+	applyFullBleed(gui)
 
 	local fade = Instance.new("Frame")
 	fade.Name = "Fade"
 	fade.BackgroundColor3 = Color3.new(0, 0, 0)
 	fade.BackgroundTransparency = 1
 	fade.BorderSizePixel = 0
-	fade.Size = UDim2.fromScale(1, 1)
+	fade.Size = UDim2.fromScale(1.4, 1.2)
+	fade.AnchorPoint = Vector2.new(0.5, 0.5)
+	fade.Position = UDim2.fromScale(0.5, 0.5)
 	fade.ZIndex = 40
 	fade.Active = false
 
+	local barW = letterboxWidth()
 	local top = Instance.new("Frame")
 	top.Name = "LetterTop"
 	top.BackgroundColor3 = Color3.new(0, 0, 0)
 	top.BorderSizePixel = 0
 	top.AnchorPoint = Vector2.new(0.5, 0)
-	top.Position = UDim2.fromScale(0.5, 0)
-	top.Size = UDim2.new(1, 0, 0, 0)
+	top.Position = UDim2.new(0.5, 0, -0.04, 0)
+	top.Size = UDim2.new(barW, 0, 0, 0)
 	top.ZIndex = 30
 	top.Active = false
 
@@ -697,8 +731,8 @@ local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabe
 	bottom.BackgroundColor3 = Color3.new(0, 0, 0)
 	bottom.BorderSizePixel = 0
 	bottom.AnchorPoint = Vector2.new(0.5, 1)
-	bottom.Position = UDim2.fromScale(0.5, 1)
-	bottom.Size = UDim2.new(1, 0, 0, 0)
+	bottom.Position = UDim2.new(0.5, 0, 1.04, 0)
+	bottom.Size = UDim2.new(barW, 0, 0, 0)
 	bottom.ZIndex = 30
 	bottom.Active = false
 
@@ -880,8 +914,9 @@ function M.play(): boolean
 
 	local gui, fade, top, bottom, title, sub, pop = ensureGui()
 	fade.BackgroundTransparency = 1
-	top.Size = UDim2.new(1, 0, 0, 0)
-	bottom.Size = UDim2.new(1, 0, 0, 0)
+	local barW = letterboxWidth()
+	top.Size = UDim2.new(barW, 0, 0, 0)
+	bottom.Size = UDim2.new(barW, 0, 0, 0)
 	gui.Enabled = true
 
 	if not tweenFadeAmount(fade, 0, 1, FADE_TO_BLACK_SEC, token) then
@@ -990,8 +1025,10 @@ function M.play(): boolean
 		local boxIn = smootherstep(math.clamp(t / 0.32, 0, 1))
 		local boxOut = if t > total - 0.4 then 1 - smootherstep((t - (total - 0.4)) / 0.4) else 1
 		local box = math.min(boxIn, boxOut)
-		top.Size = UDim2.new(1, 0, 0.118 * box, 0)
-		bottom.Size = UDim2.new(1, 0, 0.118 * box, 0)
+		local barW = letterboxWidth()
+		local barH = letterboxHeight() * box
+		top.Size = UDim2.new(barW, 0, barH, 0)
+		bottom.Size = UDim2.new(barW, 0, barH, 0)
 
 		local fadeA = 0
 		if t < FADE_IN_SEC then

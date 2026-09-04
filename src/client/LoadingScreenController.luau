@@ -146,6 +146,10 @@ local function beginLoadingStreamingGuard(player: Player)
 		if Workspace.StreamingEnabled ~= true then
 			return
 		end
+		-- Custom streaming is off: do not shrink the bubble during the flyover.
+		if not StreamingSettings.isCustomEnabled() then
+			return
+		end
 		-- Property may be missing on some Studio builds — only touch inside pcall.
 		local wsAny = Workspace :: any
 		local minOk, minR = pcall(function()

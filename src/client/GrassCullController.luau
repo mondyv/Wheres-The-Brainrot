@@ -11,6 +11,7 @@
 	second island is not an empty box. Respawn streams those lands again.
 
 	Studio play-solo skips this entirely (full place is already in RAM).
+	Gated by StreamingSettings.CUSTOM_ENABLED — currently off so Roblox streams natively.
 ]]
 
 local Players = game:GetService("Players")
@@ -33,7 +34,7 @@ local LOW_GFX_KEEP_AHEAD = 1
 local POLL_SEC = 0.45
 -- Studio play-solo already has the whole place in-process; park immediately.
 local START_DELAY_SEC = if RunService:IsStudio() then 0.4 else 2
-local FEATURE_ENABLED = true
+local FEATURE_ENABLED = StreamingSettings.isCustomEnabled()
 local REPARENT_PER_YIELD = 2
 local SWING_REPARENT_PER_YIELD = 1
 local FAST_MOVE_SPEED = 36

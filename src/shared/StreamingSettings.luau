@@ -1,9 +1,10 @@
 -- [ACTIVE] StreamingSettings
 --[[
-	Live: modest guaranteed bubble + predictive fill so trees stay visible while
-	swinging. Never pause the player (Integrity Disabled).
+	ONE SWITCH for custom land cull + radius overrides + look-ahead streams:
+	M.CUSTOM_ENABLED. False = leave streaming to Roblox (no park/restore, no
+	radius shrink). Flip true to restore the custom system.
 
-	Studio play-solo: do not touch Workspace streaming. The whole place is already
+	Studio play-solo: apply() never touches Workspace. The whole place is already
 	in-process; shrinking the bubble cannot free ~9GB and froze the character.
 ]]
 
@@ -11,6 +12,13 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local M = {}
+
+-- Set true to turn custom streaming / GrassCull back on.
+M.CUSTOM_ENABLED = false
+
+function M.isCustomEnabled(): boolean
+	return M.CUSTOM_ENABLED == true
+end
 
 function M.gameplayMin(): number
 	if RunService:IsStudio() then
@@ -36,6 +44,9 @@ end
 function M.apply(workspaceInst: Workspace)
 	-- Play-solo already has the whole place in-process. Shrinking the bubble
 	-- and reparenting grass is what froze movement and did not free RAM.
+	if not M.isCustomEnabled() then
+		return
+	end
 	if RunService:IsStudio() then
 		return
 	end

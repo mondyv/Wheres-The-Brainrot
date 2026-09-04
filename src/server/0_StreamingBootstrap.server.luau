@@ -8,6 +8,8 @@
 	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
 	Studio play-solo does not override Workspace.
 	Also publishes LandStreamCenters so clients can stream lands that are not in yet.
+	Pins Map["Huge trees"] / Map.Vine (and borders) Persistent so swinging does not
+	unload the forest. Never pins Map or Map.Lands.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -76,6 +78,88 @@ task.spawn(function()
 		map:WaitForChild("Lands", 30)
 	end
 	publishLandCenters()
+end)
+
+-- Map.Lands grass stays Default (too heavy to pin). The forest and vines sit
+-- beside Lands — Map["Huge trees"], Map.Vine — so the land bubble never kept them.
+local PERSIST_MAP_CHILD_KEYS: { [string]: boolean } = {
+	hugetrees = true,
+	vine = true,
+	invisibleborders = true,
+	landborders = true,
+	landlocks = true,
+	eventbillboard = true,
+	spawntimers = true,
+}
+
+local function persistKey(name: string): string
+	return (string.gsub(string.lower(name), "%s+", ""))
+end
+
+local function persistModel(model: Model)
+	pcall(function()
+		model.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
+	end)
+end
+
+local function persistLoosePart(part: BasePart)
+	local parent = part.Parent
+	if not parent then
+		return
+	end
+	if parent:IsA("Model") and parent.Name == "_SceneryPersist" then
+		persistModel(parent)
+		return
+	end
+	local wrap = Instance.new("Model")
+	wrap.Name = "_SceneryPersist"
+	pcall(function()
+		wrap.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
+	end)
+	wrap.Parent = parent
+	part.Parent = wrap
+end
+
+local function persistContainer(container: Instance)
+	if container:IsA("Model") then
+		persistModel(container)
+	end
+	for _, child in container:GetChildren() do
+		if child:IsA("Model") then
+			persistModel(child)
+		elseif child:IsA("BasePart") then
+			persistLoosePart(child)
+		end
+	end
+	container.ChildAdded:Connect(function(child)
+		if child:IsA("Model") then
+			persistModel(child)
+		elseif child:IsA("BasePart") then
+			persistLoosePart(child)
+		end
+	end)
+end
+
+local function hookMapScenery(map: Instance)
+	for _, child in map:GetChildren() do
+		if PERSIST_MAP_CHILD_KEYS[persistKey(child.Name)] then
+			persistContainer(child)
+		end
+	end
+	map.ChildAdded:Connect(function(child)
+		if PERSIST_MAP_CHILD_KEYS[persistKey(child.Name)] then
+			persistContainer(child)
+		end
+	end)
+end
+
+task.spawn(function()
+	local map = Workspace:FindFirstChild("Map") or Workspace:WaitForChild("Map", 120)
+	if not map then
+		warn("[StreamingBootstrap] Workspace.Map missing — Huge trees / Vine persist skipped")
+		return
+	end
+	hookMapScenery(map)
 end)
 
 -- Legacy place files kept the whole Brainrots mesh catalog in ReplicatedStorage.

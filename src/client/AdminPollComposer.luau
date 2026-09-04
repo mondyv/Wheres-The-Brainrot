@@ -1,7 +1,7 @@
 -- [ACTIVE] AdminPollComposer
 --[[
 	Admin-only poll builder. Opened by the `polls` command.
-	Unchecked option rows are omitted (2–4 answers).
+	OPS DESK styling. Unchecked option rows are omitted (2–4 answers).
 ]]
 
 local Players = game:GetService("Players")
@@ -16,16 +16,17 @@ local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 local TopNotifController = require(script.Parent.TopNotifController)
 
 local player = Players.LocalPlayer
+local IS_TOUCH = UserInputService.TouchEnabled
 
 local COLORS = {
-	panel = Color3.fromRGB(14, 18, 26),
-	panelTop = Color3.fromRGB(24, 32, 46),
+	panel = Color3.fromRGB(14, 10, 14),
+	panelTop = Color3.fromRGB(28, 16, 22),
 	accent = Color3.fromRGB(255, 214, 96),
-	inputBg = Color3.fromRGB(10, 14, 20),
-	idle = Color3.fromRGB(28, 36, 48),
-	text = Color3.fromRGB(245, 250, 255),
-	muted = Color3.fromRGB(150, 165, 185),
-	stroke = Color3.fromRGB(48, 58, 72),
+	inputBg = Color3.fromRGB(8, 7, 10),
+	idle = Color3.fromRGB(22, 16, 20),
+	text = Color3.fromRGB(255, 246, 230),
+	muted = Color3.fromRGB(168, 148, 140),
+	stroke = Color3.fromRGB(255, 214, 96),
 	success = Color3.fromRGB(140, 210, 165),
 	danger = Color3.fromRGB(255, 95, 110),
 	server = Color3.fromRGB(110, 190, 255),
@@ -33,6 +34,9 @@ local COLORS = {
 }
 
 local OPTION_LETTERS = { "A", "B", "C", "D" }
+local ROW_H = if IS_TOUCH then 52 else 44
+local CHIP_H = if IS_TOUCH then 44 else 38
+local SEND_H = if IS_TOUCH then 52 else 46
 
 local AdminPollComposer = {}
 
@@ -44,7 +48,9 @@ local statusLabel: TextLabel? = nil
 local sendButton: TextButton? = nil
 local serverBtn: TextButton? = nil
 local globalBtn: TextButton? = nil
+local durationBtns: { TextButton } = {}
 local scope: "server" | "global" = "server"
+local durationSec = AdminPollConfig.DURATION_SEC
 local optionRows: {
 	{
 		enabled: boolean,
@@ -88,14 +94,24 @@ local function paintScope()
 	if serverBtn then
 		local on = scope == "server"
 		serverBtn.BackgroundColor3 = if on then COLORS.server else COLORS.idle
-		serverBtn.BackgroundTransparency = if on then 0.12 else 0.35
+		serverBtn.BackgroundTransparency = if on then 0.08 else 0.2
 		serverBtn.TextColor3 = if on then Color3.fromRGB(8, 16, 28) else COLORS.muted
 	end
 	if globalBtn then
 		local on = scope == "global"
 		globalBtn.BackgroundColor3 = if on then COLORS.global else COLORS.idle
-		globalBtn.BackgroundTransparency = if on then 0.08 else 0.35
+		globalBtn.BackgroundTransparency = if on then 0.04 else 0.2
 		globalBtn.TextColor3 = if on then Color3.fromRGB(28, 14, 6) else COLORS.muted
+	end
+end
+
+local function paintDuration()
+	for _, btn in durationBtns do
+		local sec = btn:GetAttribute("DurationSec")
+		local on = typeof(sec) == "number" and sec == durationSec
+		btn.BackgroundColor3 = if on then COLORS.accent else COLORS.idle
+		btn.BackgroundTransparency = if on then 0 else 0.18
+		btn.TextColor3 = if on then Color3.fromRGB(22, 14, 8) else COLORS.muted
 	end
 end
 
@@ -109,7 +125,7 @@ local function paintOptionRow(index: number)
 	row.toggle.TextColor3 = Color3.fromRGB(18, 16, 10)
 	row.box.TextEditable = row.enabled
 	row.box.TextTransparency = if row.enabled then 0 else 0.45
-	row.row.BackgroundTransparency = if row.enabled then 0.28 else 0.55
+	row.row.BackgroundTransparency = if row.enabled then 0.12 else 0.4
 end
 
 local function addCorner(guiObj: GuiObject, px: number)
@@ -156,11 +172,13 @@ local function setOpen(open: boolean)
 			Scale = 1,
 		}):Play()
 		setStatus("Uncheck a row to drop that option.", nil)
-		task.defer(function()
-			if questionBox and gui and gui.Enabled then
-				questionBox:CaptureFocus()
-			end
-		end)
+		if not IS_TOUCH then
+			task.defer(function()
+				if questionBox and gui and gui.Enabled then
+					questionBox:CaptureFocus()
+				end
+			end)
+		end
 	else
 		closeToken += 1
 		local token = closeToken
@@ -209,12 +227,14 @@ local function sendPoll()
 	if sendButton then
 		sendButton.Active = false
 	end
+	local clamped = math.clamp(durationSec, AdminPollConfig.MIN_DURATION_SEC, AdminPollConfig.MAX_DURATION_SEC)
 	task.spawn(function()
 		local ok, response = pcall(function()
 			return rf:InvokeServer({
 				question = q,
 				options = options,
 				scope = scope,
+				durationSec = clamped,
 			})
 		end)
 		sending = false
@@ -236,6 +256,21 @@ local function sendPoll()
 			setStatus(msg, false)
 		end
 	end)
+end
+
+local function makeSectionLabel(parent: Instance, text: string, order: number): TextLabel
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.new(1, 0, 0, 16)
+	label.FontFace = UiFonts.DISPLAY_FACE
+	label.Text = text
+	label.TextColor3 = COLORS.muted
+	label.TextSize = 12
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.LayoutOrder = order
+	label.ZIndex = 3
+	label.Parent = parent
+	return label
 end
 
 local function buildGui(parent: PlayerGui)
@@ -265,70 +300,104 @@ local function buildGui(parent: PlayerGui)
 	panel.Name = "Root"
 	panel.AnchorPoint = Vector2.new(0.5, 0.5)
 	panel.Position = UDim2.fromScale(0.5, 0.5)
-	panel.Size = UDim2.fromOffset(520, 560)
+	if IS_TOUCH then
+		panel.Size = UDim2.new(0.92, 0, 0.86, 0)
+	else
+		panel.Size = UDim2.fromOffset(520, 640)
+	end
 	panel.BackgroundColor3 = COLORS.panel
-	panel.BackgroundTransparency = 0.08
+	panel.BackgroundTransparency = 0.06
 	panel.BorderSizePixel = 0
 	panel.ZIndex = 2
-	addCorner(panel, 16)
-	addStroke(panel, COLORS.stroke, 1.4, 0.25)
+	addCorner(panel, 6)
+	addStroke(panel, COLORS.stroke, 1.5, 0.45)
+
 	local scale = Instance.new("UIScale")
 	scale.Name = "AnimScale"
 	scale.Scale = 1
 	scale.Parent = panel
-	if UserInputService.TouchEnabled then
-		scale.Scale = 0.92
-		panel.Size = UDim2.fromOffset(500, 580)
-	end
+
+	local goldCap = Instance.new("Frame")
+	goldCap.Name = "GoldCap"
+	goldCap.Size = UDim2.new(1, 0, 0, 3)
+	goldCap.BackgroundColor3 = COLORS.accent
+	goldCap.BorderSizePixel = 0
+	goldCap.ZIndex = 6
+	goldCap.Parent = panel
 
 	local header = Instance.new("Frame")
 	header.Name = "Header"
 	header.BackgroundColor3 = COLORS.panelTop
+	header.BackgroundTransparency = 0.12
 	header.BorderSizePixel = 0
 	header.Size = UDim2.new(1, 0, 0, 56)
 	header.ZIndex = 3
-	addCorner(header, 16)
 	header.Parent = panel
-	local headerClip = Instance.new("Frame")
-	headerClip.BackgroundColor3 = COLORS.panelTop
-	headerClip.BorderSizePixel = 0
-	headerClip.Position = UDim2.new(0, 0, 1, -16)
-	headerClip.Size = UDim2.new(1, 0, 0, 16)
-	headerClip.ZIndex = 3
-	headerClip.Parent = header
+	local headerAccent = Instance.new("Frame")
+	headerAccent.Size = UDim2.new(1, 0, 0, 1)
+	headerAccent.Position = UDim2.new(0, 0, 1, -1)
+	headerAccent.BackgroundColor3 = COLORS.accent
+	headerAccent.BackgroundTransparency = 0.55
+	headerAccent.BorderSizePixel = 0
+	headerAccent.ZIndex = 4
+	headerAccent.Parent = header
+
 	local title = Instance.new("TextLabel")
 	title.BackgroundTransparency = 1
-	title.Position = UDim2.fromOffset(22, 0)
-	title.Size = UDim2.new(1, -80, 1, 0)
+	title.Position = UDim2.fromOffset(18, 4)
+	title.Size = UDim2.new(1, -70, 0, 26)
 	title.FontFace = UiFonts.DISPLAY_FACE
-	title.Text = "CREATE POLL"
+	title.Text = "POLL DESK"
 	title.TextColor3 = COLORS.accent
-	title.TextSize = 20
+	title.TextSize = 18
 	title.TextXAlignment = Enum.TextXAlignment.Left
 	title.ZIndex = 4
 	title.Parent = header
+	local subtitle = Instance.new("TextLabel")
+	subtitle.BackgroundTransparency = 1
+	subtitle.Position = UDim2.fromOffset(18, 30)
+	subtitle.Size = UDim2.new(1, -70, 0, 18)
+	UiFonts.applyBody(subtitle)
+	subtitle.Text = "SERVER  ·  GLOBAL  ·  TIMER"
+	subtitle.TextColor3 = COLORS.muted
+	subtitle.TextSize = 9
+	subtitle.TextXAlignment = Enum.TextXAlignment.Left
+	subtitle.ZIndex = 4
+	subtitle.Parent = header
+
 	local close = Instance.new("TextButton")
 	close.Name = "Close"
 	close.AutoButtonColor = false
 	close.AnchorPoint = Vector2.new(1, 0.5)
-	close.Position = UDim2.new(1, -16, 0.5, 0)
-	close.Size = UDim2.fromOffset(32, 32)
-	close.BackgroundColor3 = COLORS.idle
-	close.Text = "X"
-	close.TextColor3 = COLORS.text
-	close.TextSize = 16
+	close.Position = UDim2.new(1, -10, 0.5, 0)
+	close.Size = UDim2.fromOffset(if IS_TOUCH then 40 else 32, if IS_TOUCH then 40 else 32)
+	close.BackgroundTransparency = 1
+	close.Text = "×"
+	close.TextColor3 = COLORS.muted
+	close.TextSize = 22
 	close.ZIndex = 4
-	addCorner(close, 8)
 	close.Parent = header
 	close.MouseButton1Click:Connect(function()
 		setOpen(false)
 	end)
+	close.MouseEnter:Connect(function()
+		close.TextColor3 = COLORS.danger
+	end)
+	close.MouseLeave:Connect(function()
+		close.TextColor3 = COLORS.muted
+	end)
 
-	local body = Instance.new("Frame")
+	local body = Instance.new("ScrollingFrame")
 	body.Name = "Body"
 	body.BackgroundTransparency = 1
-	body.Position = UDim2.fromOffset(20, 68)
-	body.Size = UDim2.new(1, -40, 1, -86)
+	body.BorderSizePixel = 0
+	body.Position = UDim2.fromOffset(18, 64)
+	body.Size = UDim2.new(1, -36, 1, -76)
+	body.CanvasSize = UDim2.new(0, 0, 0, 0)
+	body.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	body.ScrollBarThickness = if IS_TOUCH then 6 else 4
+	body.ScrollBarImageColor3 = COLORS.accent
+	body.ScrollingDirection = Enum.ScrollingDirection.Y
 	body.ZIndex = 3
 	body.Parent = panel
 	local layout = Instance.new("UIListLayout")
@@ -336,22 +405,16 @@ local function buildGui(parent: PlayerGui)
 	layout.Padding = UDim.new(0, 10)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = body
+	local bodyPad = Instance.new("UIPadding")
+	bodyPad.PaddingBottom = UDim.new(0, 12)
+	bodyPad.PaddingRight = UDim.new(0, 8)
+	bodyPad.Parent = body
 
-	local scopeLabel = Instance.new("TextLabel")
-	scopeLabel.BackgroundTransparency = 1
-	scopeLabel.Size = UDim2.new(1, 0, 0, 16)
-	scopeLabel.FontFace = UiFonts.DISPLAY_FACE
-	scopeLabel.Text = "SCOPE"
-	scopeLabel.TextColor3 = COLORS.muted
-	scopeLabel.TextSize = 12
-	scopeLabel.TextXAlignment = Enum.TextXAlignment.Left
-	scopeLabel.LayoutOrder = 1
-	scopeLabel.ZIndex = 3
-	scopeLabel.Parent = body
+	makeSectionLabel(body, "SCOPE", 1)
 
 	local scopeRow = Instance.new("Frame")
 	scopeRow.BackgroundTransparency = 1
-	scopeRow.Size = UDim2.new(1, 0, 0, 40)
+	scopeRow.Size = UDim2.new(1, 0, 0, CHIP_H)
 	scopeRow.LayoutOrder = 2
 	scopeRow.ZIndex = 3
 	scopeRow.Parent = body
@@ -366,14 +429,14 @@ local function buildGui(parent: PlayerGui)
 		btn.AutoButtonColor = false
 		btn.Size = UDim2.new(0.5, -5, 1, 0)
 		btn.BackgroundColor3 = COLORS.idle
-		btn.BackgroundTransparency = 0.35
+		btn.BackgroundTransparency = 0.2
 		btn.Text = labelText
 		btn.TextColor3 = COLORS.muted
-		btn.TextSize = 15
+		btn.TextSize = if IS_TOUCH then 14 else 15
 		btn.FontFace = UiFonts.DISPLAY_FACE
 		btn.ZIndex = 4
-		addCorner(btn, 10)
-		addStroke(btn, COLORS.stroke, 1.1, 0.35)
+		addCorner(btn, 4)
+		addStroke(btn, COLORS.stroke, 1.1, 0.55)
 		btn.Parent = scopeRow
 		return btn
 	end
@@ -390,34 +453,74 @@ local function buildGui(parent: PlayerGui)
 		UIInteractionSounds.playClick()
 	end)
 
-	local qLabel = Instance.new("TextLabel")
-	qLabel.BackgroundTransparency = 1
-	qLabel.Size = UDim2.new(1, 0, 0, 16)
-	qLabel.FontFace = UiFonts.DISPLAY_FACE
-	qLabel.Text = "QUESTION"
-	qLabel.TextColor3 = COLORS.muted
-	qLabel.TextSize = 12
-	qLabel.TextXAlignment = Enum.TextXAlignment.Left
-	qLabel.LayoutOrder = 3
-	qLabel.ZIndex = 3
-	qLabel.Parent = body
+	makeSectionLabel(body, "TIMER", 3)
+
+	local timerRow = Instance.new("Frame")
+	timerRow.BackgroundTransparency = 1
+	timerRow.Size = UDim2.new(1, 0, 0, if IS_TOUCH then CHIP_H * 2 + 8 else CHIP_H)
+	timerRow.LayoutOrder = 4
+	timerRow.ZIndex = 3
+	timerRow.Parent = body
+	if IS_TOUCH then
+		local timerGrid = Instance.new("UIGridLayout")
+		timerGrid.CellSize = UDim2.new(1 / 3, -6, 0, CHIP_H)
+		timerGrid.CellPadding = UDim2.fromOffset(8, 8)
+		timerGrid.FillDirectionMaxCells = 3
+		timerGrid.SortOrder = Enum.SortOrder.LayoutOrder
+		timerGrid.Parent = timerRow
+	else
+		local timerLayout = Instance.new("UIListLayout")
+		timerLayout.FillDirection = Enum.FillDirection.Horizontal
+		timerLayout.Padding = UDim.new(0, 6)
+		timerLayout.Parent = timerRow
+	end
+
+	local presets = AdminPollConfig.DURATION_PRESETS
+	local chipCount = #presets
+	for i, sec in ipairs(presets) do
+		local btn = Instance.new("TextButton")
+		btn.Name = "Dur" .. tostring(sec)
+		btn.AutoButtonColor = false
+		btn.Size = UDim2.new(1 / chipCount, -5, 1, 0)
+		btn.BackgroundColor3 = COLORS.idle
+		btn.BackgroundTransparency = 0.18
+		btn.Text = tostring(sec) .. "s"
+		btn.TextColor3 = COLORS.muted
+		btn.TextSize = if IS_TOUCH then 15 else 14
+		btn.FontFace = UiFonts.DISPLAY_FACE
+		btn.ZIndex = 4
+		btn.LayoutOrder = i
+		btn:SetAttribute("DurationSec", sec)
+		addCorner(btn, 4)
+		addStroke(btn, COLORS.stroke, 1, 0.6)
+		btn.Parent = timerRow
+		durationBtns[i] = btn
+		local picked = sec
+		btn.MouseButton1Click:Connect(function()
+			durationSec = picked
+			paintDuration()
+			UIInteractionSounds.playClick()
+		end)
+	end
+
+	makeSectionLabel(body, "QUESTION", 5)
 
 	local qBox = Instance.new("TextBox")
 	qBox.Name = "Question"
 	qBox.ClearTextOnFocus = false
-	qBox.Size = UDim2.new(1, 0, 0, 44)
+	qBox.Size = UDim2.new(1, 0, 0, ROW_H)
 	qBox.BackgroundColor3 = COLORS.inputBg
 	qBox.Text = ""
 	qBox.PlaceholderText = "Ask anything…"
-	qBox.PlaceholderColor3 = Color3.fromRGB(90, 102, 118)
+	qBox.PlaceholderColor3 = Color3.fromRGB(120, 100, 96)
 	qBox.TextColor3 = COLORS.text
 	qBox.TextSize = 16
 	qBox.TextXAlignment = Enum.TextXAlignment.Left
-	qBox.FontFace = UiFonts.DISPLAY_FACE
-	qBox.LayoutOrder = 4
+	UiFonts.applyInput(qBox)
+	qBox.LayoutOrder = 6
 	qBox.ZIndex = 4
-	addCorner(qBox, 10)
-	addStroke(qBox, COLORS.stroke, 1.1, 0.3)
+	addCorner(qBox, 4)
+	addStroke(qBox, COLORS.stroke, 1.1, 0.55)
 	local qPad = Instance.new("UIPadding")
 	qPad.PaddingLeft = UDim.new(0, 12)
 	qPad.PaddingRight = UDim.new(0, 12)
@@ -425,48 +528,38 @@ local function buildGui(parent: PlayerGui)
 	qBox.Parent = body
 	questionBox = qBox
 
-	local oLabel = Instance.new("TextLabel")
-	oLabel.BackgroundTransparency = 1
-	oLabel.Size = UDim2.new(1, 0, 0, 16)
-	oLabel.FontFace = UiFonts.DISPLAY_FACE
-	oLabel.Text = "OPTIONS  ·  uncheck to hide"
-	oLabel.TextColor3 = COLORS.muted
-	oLabel.TextSize = 12
-	oLabel.TextXAlignment = Enum.TextXAlignment.Left
-	oLabel.LayoutOrder = 5
-	oLabel.ZIndex = 3
-	oLabel.Parent = body
+	makeSectionLabel(body, "OPTIONS  ·  uncheck to hide", 7)
 
 	for i = 1, AdminPollConfig.MAX_OPTIONS do
 		local row = Instance.new("Frame")
 		row.Name = "Option" .. i
 		row.BackgroundColor3 = COLORS.idle
-		row.BackgroundTransparency = 0.28
-		row.Size = UDim2.new(1, 0, 0, 44)
-		row.LayoutOrder = 5 + i
+		row.BackgroundTransparency = 0.12
+		row.Size = UDim2.new(1, 0, 0, ROW_H)
+		row.LayoutOrder = 7 + i
 		row.ZIndex = 3
-		addCorner(row, 10)
-		addStroke(row, COLORS.stroke, 1, 0.4)
+		addCorner(row, 4)
+		addStroke(row, Color3.fromRGB(62, 42, 48), 1, 0.45)
 		row.Parent = body
 
 		local toggle = Instance.new("TextButton")
 		toggle.Name = "Toggle"
 		toggle.AutoButtonColor = false
-		toggle.Position = UDim2.fromOffset(8, 8)
-		toggle.Size = UDim2.fromOffset(28, 28)
+		toggle.Position = UDim2.fromOffset(8, math.floor((ROW_H - 28) / 2))
+		toggle.Size = UDim2.fromOffset(if IS_TOUCH then 32 else 28, if IS_TOUCH then 32 else 28)
 		toggle.BackgroundColor3 = COLORS.accent
 		toggle.Text = "✓"
 		toggle.TextColor3 = Color3.fromRGB(18, 16, 10)
 		toggle.TextSize = 16
 		toggle.FontFace = UiFonts.DISPLAY_FACE
 		toggle.ZIndex = 4
-		addCorner(toggle, 7)
+		addCorner(toggle, 4)
 		toggle.Parent = row
 
 		local letter = Instance.new("TextLabel")
 		letter.BackgroundTransparency = 1
-		letter.Position = UDim2.fromOffset(42, 0)
-		letter.Size = UDim2.fromOffset(22, 44)
+		letter.Position = UDim2.fromOffset(if IS_TOUCH then 46 else 42, 0)
+		letter.Size = UDim2.fromOffset(22, ROW_H)
 		letter.FontFace = UiFonts.DISPLAY_FACE
 		letter.Text = OPTION_LETTERS[i]
 		letter.TextColor3 = COLORS.accent
@@ -477,18 +570,18 @@ local function buildGui(parent: PlayerGui)
 		local box = Instance.new("TextBox")
 		box.Name = "Text"
 		box.ClearTextOnFocus = false
-		box.Position = UDim2.fromOffset(66, 6)
-		box.Size = UDim2.new(1, -78, 1, -12)
+		box.Position = UDim2.fromOffset(if IS_TOUCH then 70 else 66, 6)
+		box.Size = UDim2.new(1, if IS_TOUCH then -82 else -78, 1, -12)
 		box.BackgroundColor3 = COLORS.inputBg
 		box.Text = ""
 		box.PlaceholderText = "Option " .. OPTION_LETTERS[i]
-		box.PlaceholderColor3 = Color3.fromRGB(90, 102, 118)
+		box.PlaceholderColor3 = Color3.fromRGB(120, 100, 96)
 		box.TextColor3 = COLORS.text
 		box.TextSize = 15
 		box.TextXAlignment = Enum.TextXAlignment.Left
-		box.FontFace = UiFonts.DISPLAY_FACE
+		UiFonts.applyInput(box)
 		box.ZIndex = 4
-		addCorner(box, 8)
+		addCorner(box, 4)
 		local boxPad = Instance.new("UIPadding")
 		boxPad.PaddingLeft = UDim.new(0, 10)
 		boxPad.Parent = box
@@ -512,15 +605,15 @@ local function buildGui(parent: PlayerGui)
 	local send = Instance.new("TextButton")
 	send.Name = "Send"
 	send.AutoButtonColor = false
-	send.Size = UDim2.new(1, 0, 0, 46)
+	send.Size = UDim2.new(1, 0, 0, SEND_H)
 	send.BackgroundColor3 = COLORS.accent
 	send.Text = "SEND POLL"
-	send.TextColor3 = Color3.fromRGB(22, 18, 8)
+	send.TextColor3 = Color3.fromRGB(22, 14, 8)
 	send.TextSize = 18
 	send.FontFace = UiFonts.DISPLAY_FACE
-	send.LayoutOrder = 12
+	send.LayoutOrder = 14
 	send.ZIndex = 4
-	addCorner(send, 12)
+	addCorner(send, 6)
 	send.Parent = body
 	sendButton = send
 	local wired = false
@@ -542,7 +635,7 @@ local function buildGui(parent: PlayerGui)
 	status.Text = ""
 	status.TextColor3 = COLORS.muted
 	status.TextSize = 13
-	status.LayoutOrder = 13
+	status.LayoutOrder = 15
 	status.ZIndex = 3
 	status.Parent = body
 	statusLabel = status
@@ -553,6 +646,7 @@ local function buildGui(parent: PlayerGui)
 	root = panel
 	rootScale = scale
 	paintScope()
+	paintDuration()
 end
 
 function AdminPollComposer.open()

@@ -317,7 +317,13 @@ function M.createFromAdmin(sender: Player, payload: any): (boolean, string)
 	if #options < AdminPollConfig.MIN_OPTIONS then
 		return false, "Need at least two options."
 	end
-	beginPoll(question, options, scope :: "server" | "global", false)
+	local durationSec = AdminPollConfig.DURATION_SEC
+	if typeof(payload.durationSec) == "number" then
+		durationSec = math.floor(payload.durationSec + 0.5)
+	end
+	durationSec = math.clamp(durationSec, AdminPollConfig.MIN_DURATION_SEC, AdminPollConfig.MAX_DURATION_SEC)
+	local endsAt = Workspace:GetServerTimeNow() + durationSec
+	beginPoll(question, options, scope :: "server" | "global", false, nil, endsAt)
 	if scope == "global" then
 		return true, "Global poll sent."
 	end

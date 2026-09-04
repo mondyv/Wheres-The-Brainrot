@@ -1,6 +1,7 @@
 -- [ACTIVE] AdminPollController
 --[[
-	Live poll HUD for everyone. Bars fill and vote counts ease up as people vote.
+	Live poll HUD for everyone. Chunky HUD style: thick black outlines,
+	bubbly option cards, and count-up bars like the level / quest meters.
 ]]
 
 local Players = game:GetService("Players")
@@ -15,14 +16,24 @@ local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("U
 local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 
 local player = Players.LocalPlayer
+local IS_TOUCH = UserInputService.TouchEnabled
 
+-- Sell green, My Base blue, Upgrade orange, quest gold.
 local OPTION_COLORS = {
-	Color3.fromRGB(86, 196, 255),
-	Color3.fromRGB(255, 196, 72),
-	Color3.fromRGB(255, 112, 152),
-	Color3.fromRGB(110, 230, 164),
+	Color3.fromRGB(72, 210, 92),
+	Color3.fromRGB(48, 168, 255),
+	Color3.fromRGB(255, 148, 42),
+	Color3.fromRGB(255, 214, 64),
+}
+local OPTION_SHADES = {
+	Color3.fromRGB(28, 92, 42),
+	Color3.fromRGB(22, 72, 128),
+	Color3.fromRGB(128, 68, 18),
+	Color3.fromRGB(128, 96, 18),
 }
 local LETTERS = { "A", "B", "C", "D" }
+local ROW_H = if IS_TOUCH then 70 else 62
+local BAR_H = if IS_TOUCH then 14 else 12
 
 local COUNT_TWEEN = TweenInfo.new(0.62, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local BAR_TWEEN = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
@@ -31,7 +42,7 @@ local POP_IN = TweenInfo.new(0.34, Enum.EasingStyle.Back, Enum.EasingDirection.O
 local AdminPollController = {}
 
 type OptionRow = {
-	root: Frame,
+	root: TextButton,
 	fill: Frame,
 	label: TextLabel,
 	count: TextLabel,
@@ -51,6 +62,7 @@ local rootScale: UIScale? = nil
 local questionLabel: TextLabel? = nil
 local metaLabel: TextLabel? = nil
 local timerLabel: TextLabel? = nil
+local timerPill: Frame? = nil
 local hintLabel: TextLabel? = nil
 local rows: { OptionRow } = {}
 local timerConn: RBXScriptConnection? = nil
@@ -102,6 +114,26 @@ local function addCorner(guiObj: GuiObject, px: number)
 	c.Parent = guiObj
 end
 
+local function addBlackStroke(guiObj: GuiObject, thickness: number): UIStroke
+	local s = Instance.new("UIStroke")
+	s.Color = Color3.fromRGB(12, 10, 16)
+	s.Thickness = thickness
+	s.Transparency = 0
+	s.Parent = guiObj
+	return s
+end
+
+local function outlineText(guiObj: TextLabel | TextButton, thickness: number)
+	guiObj.TextColor3 = Color3.fromRGB(255, 255, 255)
+	guiObj.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	guiObj.TextStrokeTransparency = 0
+	local s = Instance.new("UIStroke")
+	s.Color = Color3.fromRGB(0, 0, 0)
+	s.Thickness = thickness
+	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+	s.Parent = guiObj
+end
+
 local function formatRemain(sec: number): string
 	return string.format("%ds", math.max(0, math.ceil(sec)))
 end
@@ -109,10 +141,10 @@ end
 local function paintVoteHighlight()
 	for i, row in rows do
 		local chosen = myVote == i
-		row.stroke.Color = if chosen then OPTION_COLORS[i] else Color3.fromRGB(48, 58, 72)
-		row.stroke.Thickness = if chosen then 2.1 else 1.1
-		row.stroke.Transparency = if chosen then 0.05 else 0.4
-		row.root.BackgroundTransparency = if chosen then 0.08 else 0.18
+		row.stroke.Color = Color3.fromRGB(12, 10, 16)
+		row.stroke.Thickness = if chosen then 5 else 3.4
+		row.stroke.Transparency = 0
+		row.root.BackgroundColor3 = if chosen then OPTION_COLORS[i] else OPTION_SHADES[i]
 	end
 end
 
@@ -194,16 +226,15 @@ local function finishPoll()
 			continue
 		end
 		if i == best then
-			row.stroke.Color = OPTION_COLORS[i]
-			row.stroke.Thickness = 2.4
-			row.stroke.Transparency = 0
+			row.root.BackgroundColor3 = OPTION_COLORS[i]
+			row.stroke.Thickness = 5
 			row.scale.Scale = 1.08
 			TweenService:Create(row.scale, TweenInfo.new(0.4, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out), {
 				Scale = 1,
 			}):Play()
 		else
-			row.root.BackgroundTransparency = 0.45
-			row.fill.BackgroundTransparency = 0.55
+			row.root.BackgroundColor3 = OPTION_SHADES[i]:Lerp(Color3.fromRGB(20, 18, 24), 0.45)
+			row.fill.BackgroundTransparency = 0.35
 		end
 	end
 	if hintLabel then
@@ -211,7 +242,10 @@ local function finishPoll()
 	end
 	if timerLabel then
 		timerLabel.Text = "DONE"
-		timerLabel.TextColor3 = OPTION_COLORS[best]
+		timerLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	end
+	if timerPill then
+		timerPill.BackgroundColor3 = OPTION_COLORS[best]
 	end
 	local token = hideToken
 	task.delay(AdminPollConfig.END_HOLD_SEC, function()
@@ -232,10 +266,17 @@ local function startTimer()
 		if timerLabel then
 			if remain <= 0 then
 				timerLabel.Text = "0s"
-				timerLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
 			else
 				timerLabel.Text = formatRemain(remain)
-				timerLabel.TextColor3 = if remain <= 8 then Color3.fromRGB(255, 196, 96) else Color3.fromRGB(220, 230, 240)
+			end
+		end
+		if timerPill then
+			if remain <= 0 then
+				timerPill.BackgroundColor3 = Color3.fromRGB(255, 92, 92)
+			elseif remain <= 8 then
+				timerPill.BackgroundColor3 = Color3.fromRGB(255, 168, 48)
+			else
+				timerPill.BackgroundColor3 = Color3.fromRGB(255, 214, 64)
 			end
 		end
 		if remain <= 0 then
@@ -290,23 +331,27 @@ local function showPoll(payload: any)
 	end
 	if metaLabel then
 		local scope = if payload.scope == "global" then "ALL SERVERS" else "THIS SERVER"
-		metaLabel.Text = "LIVE POLL  ·  " .. scope
+		metaLabel.Text = "POLL  ·  " .. scope
 	end
 	if hintLabel then
 		hintLabel.Text = "Tap an option"
+	end
+	if timerPill then
+		timerPill.BackgroundColor3 = Color3.fromRGB(255, 214, 64)
 	end
 
 	for i = 1, 4 do
 		local row = rows[i]
 		local on = i <= optionCount
 		row.root.Visible = on
-		row.root.BackgroundTransparency = 0.18
-		row.fill.BackgroundTransparency = 0.35
+		row.root.BackgroundColor3 = OPTION_SHADES[i]
+		row.fill.BackgroundTransparency = 0
 		row.fill.Size = UDim2.fromScale(0, 1)
 		row.countValue.Value = 0
 		setCountText(row, 0)
 		row.percent.Text = "0%"
 		row.scale.Scale = 0.86
+		row.stroke.Thickness = 3.4
 		if on then
 			row.label.Text = tostring(payload.options[i])
 			lastCounts[i] = 0
@@ -361,24 +406,28 @@ local function buildHud(parent: PlayerGui)
 	local panel = Instance.new("Frame")
 	panel.Name = "Root"
 	panel.AnchorPoint = Vector2.new(0.5, 0)
-	panel.Position = UDim2.new(0.5, 0, 0, if UserInputService.TouchEnabled then 58 else 72)
-	panel.Size = UDim2.fromOffset(if UserInputService.TouchEnabled then 420 else 460, 0)
+	-- Sit under Sell / My Base / Upgrade.
+	panel.Position = UDim2.new(0.5, 0, 0, if IS_TOUCH then 108 else 124)
+	if IS_TOUCH then
+		panel.Size = UDim2.new(0.92, 0, 0, 0)
+	else
+		panel.Size = UDim2.fromOffset(460, 0)
+	end
 	panel.AutomaticSize = Enum.AutomaticSize.Y
-	panel.BackgroundColor3 = Color3.fromRGB(10, 14, 22)
-	panel.BackgroundTransparency = 0.08
+	panel.BackgroundColor3 = Color3.fromRGB(28, 24, 36)
+	panel.BackgroundTransparency = 0.04
 	panel.BorderSizePixel = 0
 	panel.Visible = false
-	addCorner(panel, 16)
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.fromRGB(255, 214, 96)
-	stroke.Thickness = 1.4
-	stroke.Transparency = 0.35
-	stroke.Parent = panel
+	addCorner(panel, 14)
+	addBlackStroke(panel, 4)
+	local maxWidth = Instance.new("UISizeConstraint")
+	maxWidth.MaxSize = Vector2.new(480, 4000)
+	maxWidth.Parent = panel
 	local pad = Instance.new("UIPadding")
-	pad.PaddingTop = UDim.new(0, 14)
-	pad.PaddingBottom = UDim.new(0, 14)
-	pad.PaddingLeft = UDim.new(0, 16)
-	pad.PaddingRight = UDim.new(0, 16)
+	pad.PaddingTop = UDim.new(0, 12)
+	pad.PaddingBottom = UDim.new(0, 12)
+	pad.PaddingLeft = UDim.new(0, 14)
+	pad.PaddingRight = UDim.new(0, 14)
 	pad.Parent = panel
 	local list = Instance.new("UIListLayout")
 	list.FillDirection = Enum.FillDirection.Vertical
@@ -391,29 +440,37 @@ local function buildHud(parent: PlayerGui)
 
 	local header = Instance.new("Frame")
 	header.BackgroundTransparency = 1
-	header.Size = UDim2.new(1, 0, 0, 18)
+	header.Size = UDim2.new(1, 0, 0, if IS_TOUCH then 34 else 30)
 	header.LayoutOrder = 1
 	header.Parent = panel
 	local meta = Instance.new("TextLabel")
 	meta.BackgroundTransparency = 1
-	meta.Size = UDim2.new(1, -64, 1, 0)
+	meta.Size = UDim2.new(1, -88, 1, 0)
 	meta.FontFace = UiFonts.DISPLAY_FACE
-	meta.Text = "LIVE POLL"
-	meta.TextColor3 = Color3.fromRGB(255, 214, 96)
-	meta.TextSize = 13
+	meta.Text = "POLL"
+	meta.TextSize = if IS_TOUCH then 16 else 15
 	meta.TextXAlignment = Enum.TextXAlignment.Left
+	outlineText(meta, 2)
 	meta.Parent = header
+
+	local pill = Instance.new("Frame")
+	pill.Name = "TimerPill"
+	pill.AnchorPoint = Vector2.new(1, 0.5)
+	pill.Position = UDim2.new(1, 0, 0.5, 0)
+	pill.Size = UDim2.fromOffset(if IS_TOUCH then 78 else 70, if IS_TOUCH then 30 else 26)
+	pill.BackgroundColor3 = Color3.fromRGB(255, 214, 64)
+	pill.BorderSizePixel = 0
+	addCorner(pill, 10)
+	addBlackStroke(pill, 3)
+	pill.Parent = header
 	local timer = Instance.new("TextLabel")
 	timer.BackgroundTransparency = 1
-	timer.AnchorPoint = Vector2.new(1, 0)
-	timer.Position = UDim2.fromScale(1, 0)
-	timer.Size = UDim2.new(0, 64, 1, 0)
+	timer.Size = UDim2.fromScale(1, 1)
 	timer.FontFace = UiFonts.DISPLAY_FACE
 	timer.Text = "45s"
-	timer.TextColor3 = Color3.fromRGB(220, 230, 240)
-	timer.TextSize = 14
-	timer.TextXAlignment = Enum.TextXAlignment.Right
-	timer.Parent = header
+	timer.TextSize = if IS_TOUCH then 16 else 15
+	outlineText(timer, 2)
+	timer.Parent = pill
 
 	local question = Instance.new("TextLabel")
 	question.BackgroundTransparency = 1
@@ -421,11 +478,11 @@ local function buildHud(parent: PlayerGui)
 	question.AutomaticSize = Enum.AutomaticSize.Y
 	question.FontFace = UiFonts.DISPLAY_FACE
 	question.Text = ""
-	question.TextColor3 = Color3.fromRGB(250, 252, 255)
-	question.TextSize = 20
+	question.TextSize = if IS_TOUCH then 22 else 20
 	question.TextWrapped = true
 	question.TextXAlignment = Enum.TextXAlignment.Left
 	question.LayoutOrder = 2
+	outlineText(question, 2.2)
 	question.Parent = panel
 
 	for i = 1, 4 do
@@ -434,78 +491,106 @@ local function buildHud(parent: PlayerGui)
 		btn.Name = "Option" .. i
 		btn.AutoButtonColor = false
 		btn.Text = ""
-		btn.BackgroundColor3 = Color3.fromRGB(18, 24, 34)
-		btn.BackgroundTransparency = 0.18
-		btn.Size = UDim2.new(1, 0, 0, 52)
+		btn.BackgroundColor3 = OPTION_SHADES[i]
+		btn.BorderSizePixel = 0
+		btn.Size = UDim2.new(1, 0, 0, ROW_H)
 		btn.LayoutOrder = 2 + i
 		btn.ClipsDescendants = true
 		addCorner(btn, 12)
-		local rowStroke = Instance.new("UIStroke")
-		rowStroke.Color = Color3.fromRGB(48, 58, 72)
-		rowStroke.Thickness = 1.1
-		rowStroke.Transparency = 0.4
-		rowStroke.Parent = btn
+		local rowStroke = addBlackStroke(btn, 3.4)
 
-		local fill = Instance.new("Frame")
-		fill.Name = "Fill"
-		fill.BackgroundColor3 = color
-		fill.BackgroundTransparency = 0.35
-		fill.BorderSizePixel = 0
-		fill.Size = UDim2.fromScale(0, 1)
-		fill.ZIndex = 1
-		addCorner(fill, 12)
-		fill.Parent = btn
+		local gloss = Instance.new("UIGradient")
+		gloss.Color = ColorSequence.new({
+			ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+			ColorSequenceKeypoint.new(0.45, Color3.fromRGB(220, 220, 220)),
+			ColorSequenceKeypoint.new(1, Color3.fromRGB(160, 160, 160)),
+		})
+		gloss.Rotation = 90
+		gloss.Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0.72),
+			NumberSequenceKeypoint.new(1, 0.92),
+		})
+		gloss.Parent = btn
 
+		local letterBadge = Instance.new("Frame")
+		letterBadge.BackgroundColor3 = color
+		letterBadge.BorderSizePixel = 0
+		letterBadge.Position = UDim2.fromOffset(8, 8)
+		letterBadge.Size = UDim2.fromOffset(28, 28)
+		letterBadge.ZIndex = 2
+		addCorner(letterBadge, 8)
+		addBlackStroke(letterBadge, 2.4)
+		letterBadge.Parent = btn
 		local letter = Instance.new("TextLabel")
 		letter.BackgroundTransparency = 1
-		letter.Position = UDim2.fromOffset(10, 0)
-		letter.Size = UDim2.fromOffset(28, 52)
+		letter.Size = UDim2.fromScale(1, 1)
 		letter.FontFace = UiFonts.DISPLAY_FACE
 		letter.Text = LETTERS[i]
-		letter.TextColor3 = color
-		letter.TextSize = 18
-		letter.ZIndex = 2
-		letter.Parent = btn
+		letter.TextSize = 16
+		letter.ZIndex = 3
+		outlineText(letter, 1.8)
+		letter.Parent = letterBadge
 
 		local label = Instance.new("TextLabel")
 		label.BackgroundTransparency = 1
-		label.Position = UDim2.fromOffset(40, 4)
-		label.Size = UDim2.new(1, -150, 0, 24)
+		label.Position = UDim2.fromOffset(44, 4)
+		label.Size = UDim2.new(1, -130, 0, 26)
 		label.FontFace = UiFonts.DISPLAY_FACE
 		label.Text = ""
-		label.TextColor3 = Color3.fromRGB(245, 248, 255)
-		label.TextSize = 16
+		label.TextSize = if IS_TOUCH then 17 else 16
 		label.TextXAlignment = Enum.TextXAlignment.Left
 		label.TextTruncate = Enum.TextTruncate.AtEnd
 		label.ZIndex = 2
+		outlineText(label, 1.8)
 		label.Parent = btn
 
 		local percent = Instance.new("TextLabel")
 		percent.BackgroundTransparency = 1
-		percent.Position = UDim2.fromOffset(40, 26)
-		percent.Size = UDim2.new(0.4, 0, 0, 20)
+		percent.Position = UDim2.fromOffset(44, 30)
+		percent.Size = UDim2.new(0.4, 0, 0, 14)
 		percent.FontFace = UiFonts.DISPLAY_FACE
 		percent.Text = "0%"
-		percent.TextColor3 = Color3.fromRGB(170, 184, 200)
-		percent.TextSize = 13
+		percent.TextSize = 12
 		percent.TextXAlignment = Enum.TextXAlignment.Left
 		percent.ZIndex = 2
+		outlineText(percent, 1.4)
 		percent.Parent = btn
 
 		local count = Instance.new("TextLabel")
 		count.BackgroundTransparency = 1
-		count.AnchorPoint = Vector2.new(1, 0.5)
-		count.Position = UDim2.new(1, -14, 0.5, 0)
-		count.Size = UDim2.fromOffset(72, 40)
+		count.AnchorPoint = Vector2.new(1, 0)
+		count.Position = UDim2.new(1, -10, 0, 4)
+		count.Size = UDim2.fromOffset(72, 32)
 		count.FontFace = UiFonts.DISPLAY_FACE
 		count.Text = "0"
-		count.TextColor3 = color
-		count.TextSize = 26
+		count.TextSize = if IS_TOUCH then 28 else 26
 		count.TextXAlignment = Enum.TextXAlignment.Right
 		count.ZIndex = 3
+		outlineText(count, 2.4)
 		count.Parent = btn
 		local countScale = Instance.new("UIScale")
 		countScale.Parent = count
+
+		local track = Instance.new("Frame")
+		track.Name = "Track"
+		track.AnchorPoint = Vector2.new(0, 1)
+		track.Position = UDim2.new(0, 8, 1, -8)
+		track.Size = UDim2.new(1, -16, 0, BAR_H)
+		track.BackgroundColor3 = Color3.fromRGB(12, 10, 16)
+		track.BorderSizePixel = 0
+		track.ZIndex = 2
+		addCorner(track, 6)
+		addBlackStroke(track, 2)
+		track.Parent = btn
+
+		local fill = Instance.new("Frame")
+		fill.Name = "Fill"
+		fill.BackgroundColor3 = color
+		fill.BorderSizePixel = 0
+		fill.Size = UDim2.fromScale(0, 1)
+		fill.ZIndex = 3
+		addCorner(fill, 6)
+		fill.Parent = track
 
 		local nv = Instance.new("NumberValue")
 		nv.Name = "DisplayCount"
@@ -539,12 +624,12 @@ local function buildHud(parent: PlayerGui)
 
 	local hint = Instance.new("TextLabel")
 	hint.BackgroundTransparency = 1
-	hint.Size = UDim2.new(1, 0, 0, 16)
+	hint.Size = UDim2.new(1, 0, 0, 18)
 	hint.FontFace = UiFonts.DISPLAY_FACE
 	hint.Text = "Tap an option"
-	hint.TextColor3 = Color3.fromRGB(150, 165, 185)
 	hint.TextSize = 13
 	hint.LayoutOrder = 8
+	outlineText(hint, 1.6)
 	hint.Parent = panel
 
 	panel.Parent = screen
@@ -555,6 +640,7 @@ local function buildHud(parent: PlayerGui)
 	questionLabel = question
 	metaLabel = meta
 	timerLabel = timer
+	timerPill = pill
 	hintLabel = hint
 end
 

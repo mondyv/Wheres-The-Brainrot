@@ -6,7 +6,6 @@ local ContextActionService = game:GetService("ContextActionService")
 local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
@@ -84,6 +83,7 @@ local backdrop: TextButton? = nil
 local rootFrame: Frame? = nil
 local rootScale: UIScale? = nil
 local inputBox: TextBox? = nil
+local inputHost: Frame? = nil
 local _runButton: TextButton? = nil
 local _closeButton: TextButton? = nil
 local statusLabel: TextLabel? = nil
@@ -1066,20 +1066,33 @@ local function applyLayoutMetrics()
 	IS_MOBILE_LAYOUT = isPhoneLike()
 	if IS_MOBILE_LAYOUT then
 		MAX_SUGGESTION_ROWS = 5
-		ROW_HEIGHT = 34
+		ROW_HEIGHT = 36
 		ROOT_WIDTH = 0
-		ROOT_WIDTH_SCALE = 0.86
+		ROOT_WIDTH_SCALE = 0.9
+		INPUT_HEIGHT = 46
 		BASE_HEIGHT = HEADER_HEIGHT + CONTENT_PAD + INPUT_HEIGHT + 12 + STATUS_HEIGHT + 4
 	else
 		MAX_SUGGESTION_ROWS = 11
 		ROW_HEIGHT = 32
 		ROOT_WIDTH = 620
 		ROOT_WIDTH_SCALE = 0
+		INPUT_HEIGHT = 40
 		BASE_HEIGHT = HEADER_HEIGHT + CONTENT_PAD + INPUT_HEIGHT + 10 + STATUS_HEIGHT
 	end
 	for index, row in suggestionRows do
 		row.button.Size = UDim2.new(1, 0, 0, ROW_HEIGHT - 4)
 		row.button.Position = UDim2.fromOffset(0, (index - 1) * ROW_HEIGHT + 2)
+	end
+	if inputHost then
+		inputHost.Size = UDim2.new(1, -100, 0, INPUT_HEIGHT)
+		inputHost.Position = UDim2.fromOffset(14, HEADER_HEIGHT + CONTENT_PAD)
+	end
+	if _runButton then
+		_runButton.Size = UDim2.fromOffset(if IS_MOBILE_LAYOUT then 80 else 72, INPUT_HEIGHT)
+		_runButton.Position = UDim2.new(1, -14, 0, HEADER_HEIGHT + CONTENT_PAD)
+	end
+	if suggestionPanel then
+		suggestionPanel.Position = UDim2.fromOffset(14, HEADER_HEIGHT + CONTENT_PAD + INPUT_HEIGHT + 8)
 	end
 end
 refreshSuggestions = function()
@@ -1220,6 +1233,9 @@ end
 
 local function setOpen(open: boolean)
 	if not gui or not inputBox then
+		return
+	end
+	if open and not isAdminAllowed() then
 		return
 	end
 	applyLayoutMetrics()
@@ -1546,6 +1562,37 @@ local function buildGui(parent: PlayerGui)
 		closeBtn.TextColor3 = COLORS.textMuted
 	end)
 
+	local host = Instance.new("Frame")
+	host.Name = "InputHost"
+	host.BackgroundColor3 = COLORS.inputBg
+	host.BorderSizePixel = 0
+	host.Position = UDim2.fromOffset(14, HEADER_HEIGHT + CONTENT_PAD)
+	host.Size = UDim2.new(1, -100, 0, INPUT_HEIGHT)
+	host.ZIndex = 3
+
+	local hostCorner = Instance.new("UICorner")
+	hostCorner.CornerRadius = UDim.new(0, 4)
+	hostCorner.Parent = host
+
+	local hostStroke = Instance.new("UIStroke")
+	hostStroke.Color = COLORS.accent
+	hostStroke.Transparency = 0.55
+	hostStroke.Thickness = 1.1
+	hostStroke.Parent = host
+
+	local prompt = Instance.new("TextLabel")
+	prompt.Name = "Prompt"
+	prompt.BackgroundTransparency = 1
+	prompt.Text = ">"
+	prompt.TextColor3 = COLORS.accent
+	prompt.TextSize = 16
+	prompt.TextXAlignment = Enum.TextXAlignment.Center
+	UiFonts.applyDisplay(prompt)
+	prompt.Position = UDim2.fromOffset(0, 0)
+	prompt.Size = UDim2.new(0, 22, 1, 0)
+	prompt.ZIndex = 4
+	prompt.Parent = host
+
 	local box = Instance.new("TextBox")
 	box.Name = "CommandInput"
 	box.ClearTextOnFocus = false
@@ -1556,38 +1603,17 @@ local function buildGui(parent: PlayerGui)
 	box.PlaceholderColor3 = Color3.fromRGB(120, 100, 96)
 	box.TextSize = 16
 	box.TextXAlignment = Enum.TextXAlignment.Left
-	box.BackgroundColor3 = COLORS.inputBg
+	box.BackgroundTransparency = 1
 	box.BorderSizePixel = 0
-	box.Position = UDim2.fromOffset(14, HEADER_HEIGHT + CONTENT_PAD)
-	box.Size = UDim2.new(1, -100, 0, INPUT_HEIGHT)
-	box.ZIndex = 3
+	box.Position = UDim2.fromOffset(22, 0)
+	box.Size = UDim2.new(1, -22, 1, 0)
+	box.ZIndex = 4
+	box.Parent = host
 
 	local boxPadding = Instance.new("UIPadding")
-	boxPadding.PaddingLeft = UDim.new(0, 22)
+	boxPadding.PaddingLeft = UDim.new(0, 4)
 	boxPadding.PaddingRight = UDim.new(0, 10)
 	boxPadding.Parent = box
-
-	local prompt = Instance.new("TextLabel")
-	prompt.Name = "Prompt"
-	prompt.BackgroundTransparency = 1
-	prompt.Text = ">"
-	prompt.TextColor3 = COLORS.accent
-	prompt.TextSize = 16
-	UiFonts.applyDisplay(prompt)
-	prompt.Position = UDim2.fromOffset(8, 0)
-	prompt.Size = UDim2.new(0, 14, 1, 0)
-	prompt.ZIndex = 4
-	prompt.Parent = box
-
-	local boxCorner = Instance.new("UICorner")
-	boxCorner.CornerRadius = UDim.new(0, 4)
-	boxCorner.Parent = box
-
-	local boxStroke = Instance.new("UIStroke")
-	boxStroke.Color = COLORS.accent
-	boxStroke.Transparency = 0.55
-	boxStroke.Thickness = 1.1
-	boxStroke.Parent = box
 
 	local runBtn = Instance.new("TextButton")
 	runBtn.Name = "Run"
@@ -1698,7 +1724,7 @@ local function buildGui(parent: PlayerGui)
 	end)
 
 	root.Parent = screen
-	box.Parent = root
+	host.Parent = root
 	runBtn.Parent = root
 	panel.Parent = root
 	label.Parent = root
@@ -1709,6 +1735,7 @@ local function buildGui(parent: PlayerGui)
 	rootFrame = root
 	rootScale = scale
 	inputBox = box
+	inputHost = host
 	_runButton = runBtn
 	_closeButton = closeBtn
 	statusLabel = label
@@ -1904,8 +1931,7 @@ function M.init()
 
 	local lastToggleAt = 0
 	local function onToggleAdmin()
-		if not isAdminAllowed() and not RunService:IsStudio() then
-			-- Attribute may still be syncing; allow Studio always via allowlist server-side.
+		if not isAdminAllowed() then
 			return
 		end
 		local now = os.clock()

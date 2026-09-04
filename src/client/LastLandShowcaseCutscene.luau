@@ -13,6 +13,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local GameplayUiVisibility = require(script.Parent.GameplayUiVisibility)
+local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
 local MobileTouchGate = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MobileTouchGate"))
@@ -24,9 +25,10 @@ local M = {}
 local GUI_NAME = "LastLandShowcaseCutscene"
 local LOCK_ACTION = "LastLandShowcaseLock"
 local EXPORT_NAME = "Last Land Camera"
-local HOLD_LAST_SEC = 1.85
+local HOLD_LAST_SEC = 3.35
 local PLAYBACK_SCALE = 1.42
-local TITLE_LEAD_SEC = 0.35
+local TITLE_LEAD_SEC = 0.45
+local RETURN_SEC = 0.2
 
 type MoonTrack = {
 	frames: { CFrame },
@@ -45,6 +47,7 @@ local cutsceneGui: ScreenGui? = nil
 local doneEvent: BindableEvent? = nil
 local hudHidden = false
 local extraDisabledGuis: { ScreenGui } = {}
+local extraHiddenHud: { GuiObject } = {}
 
 local savedCameraType: Enum.CameraType? = nil
 local savedCameraSubject: Instance? = nil
@@ -299,11 +302,27 @@ local function sampleTrack(track: MoonTrack, elapsed: number): (CFrame, number, 
 end
 
 local function breathe(cf: CFrame, holdAge: number): CFrame
-	local s = math.sin(holdAge * 1.12)
-	local c = math.cos(holdAge * 0.74)
-	local pos = cf.Position + cf.UpVector * (s * 0.28) + cf.RightVector * (c * 0.14)
-	local at = pos + cf.LookVector + cf.RightVector * (s * 0.012) + cf.UpVector * (c * 0.01)
+	local s = math.sin(holdAge * 1.05)
+	local c = math.cos(holdAge * 0.68)
+	local pos = cf.Position + cf.UpVector * (s * 0.55) + cf.RightVector * (c * 0.32)
+	local at = pos + cf.LookVector + cf.RightVector * (s * 0.018) + cf.UpVector * (c * 0.014)
 	return CFrame.lookAt(pos, at)
+end
+
+local function gameplayCameraCFrame(): CFrame?
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not (hrp and hrp:IsA("BasePart")) then
+		return nil
+	end
+	local look = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
+	if look.Magnitude < 0.05 then
+		look = Vector3.new(0, 0, -1)
+	else
+		look = look.Unit
+	end
+	local pos = hrp.Position - look * 12.5 + Vector3.new(0, 5.4, 0)
+	return CFrame.lookAt(pos, hrp.Position + Vector3.new(0, 1.5, 0))
 end
 
 local function waitForExport(): Instance?
@@ -316,12 +335,14 @@ local function waitForExport(): Instance?
 end
 
 local function streamAround(pos: Vector3)
-	local ok, err = pcall(function()
-		player:RequestStreamAroundAsync(pos, 6)
+	task.spawn(function()
+		local ok, err = pcall(function()
+			player:RequestStreamAroundAsync(pos, 3)
+		end)
+		if not ok then
+			warnErr("RequestStreamAroundAsync", err)
+		end
 	end)
-	if not ok then
-		warnErr("RequestStreamAroundAsync", err)
-	end
 end
 
 local function getHumanoid(): Humanoid?
@@ -450,6 +471,41 @@ local function restoreCamera()
 	savedFov = nil
 end
 
+local function beginFastReturnToCharacter()
+	local cam = Workspace.CurrentCamera
+	local from = if cam then cam.CFrame else nil
+	local startFov = if cam then cam.FieldOfView else 70
+	local goalFov = savedFov or 70
+	local t0 = os.clock()
+	if renderConn then
+		renderConn:Disconnect()
+		renderConn = nil
+	end
+	if not cam or not from then
+		restoreCamera()
+		return
+	end
+	renderConn = RunService.RenderStepped:Connect(function()
+		local live = Workspace.CurrentCamera
+		if not live then
+			return
+		end
+		local u = math.clamp((os.clock() - t0) / RETURN_SEC, 0, 1)
+		local eased = 1 - (1 - u) * (1 - u)
+		local goal = gameplayCameraCFrame() or from
+		live.CameraType = Enum.CameraType.Scriptable
+		live.CFrame = from:Lerp(goal, eased)
+		live.FieldOfView = startFov + (goalFov - startFov) * eased
+		if u >= 1 then
+			if renderConn then
+				renderConn:Disconnect()
+				renderConn = nil
+			end
+			restoreCamera()
+		end
+	end)
+end
+
 local function stopConns()
 	if renderConn then
 		renderConn:Disconnect()
@@ -486,9 +542,43 @@ local function restoreForcedGuis()
 		end
 	end
 	table.clear(extraDisabledGuis)
+	for _, g in extraHiddenHud do
+		if g.Parent then
+			g.Visible = true
+		end
+	end
+	table.clear(extraHiddenHud)
 	pcall(function()
 		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, true)
 	end)
+end
+
+local function hideHudCountersNow()
+	table.clear(extraHiddenHud)
+	local main = PlayerGuiMain.ensure(player)
+	local function hideGui(g: GuiObject)
+		if not g.Visible then
+			return
+		end
+		table.insert(extraHiddenHud, g)
+		g.Visible = false
+	end
+	local side = main:FindFirstChild("SideUI")
+	if side and side:IsA("GuiObject") then
+		for _, ch in side:GetChildren() do
+			if ch:IsA("GuiObject") and ch.Name ~= "AdminFrame" then
+				hideGui(ch)
+			end
+		end
+	end
+	for _, d in main:GetChildren() do
+		if d:IsA("GuiObject") then
+			local n = string.lower(d.Name)
+			if n == "counters" or n == "cash" or n == "top" or n == "right" then
+				hideGui(d)
+			end
+		end
+	end
 end
 
 local function ensureGui(): (ScreenGui, Frame, Frame, Frame, TextLabel, TextLabel, UIScale)
@@ -624,10 +714,10 @@ local function finish()
 	cutsceneToken += 1
 	stopConns()
 	unlockMovement()
-	restoreCamera()
+	beginFastReturnToCharacter()
 	restoreForcedGuis()
 	if hudHidden then
-		GameplayUiVisibility.show({ flourish = true })
+		GameplayUiVisibility.forceShow()
 		hudHidden = false
 	end
 	if cutsceneGui then
@@ -662,9 +752,6 @@ function M.play(): boolean
 	end
 
 	streamAround(track.frames[1].Position)
-	streamAround(track.frames[math.clamp(math.floor(#track.frames * 0.55), 1, #track.frames)].Position)
-	streamAround(track.frames[#track.frames].Position)
-	task.wait(0.25)
 
 	active = true
 	cutsceneToken += 1
@@ -690,6 +777,7 @@ function M.play(): boolean
 		hideMainChildNames = { "TutorialQuestHost", "TimCheeseQuestHost", "Frames" },
 	})
 	hudHidden = true
+	hideHudCountersNow()
 	forceHideOtherGuis()
 	lockMovement()
 

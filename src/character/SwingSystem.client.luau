@@ -5957,6 +5957,24 @@ local function boot(character)
 		end))
 	end
 
+	st.addConn(st.humanoid:GetPropertyChangedSignal("Jump"):Connect(function()
+		if not st.humanoid.Jump or st.isSwinging or st.isHrpInSafezone() or isSwingInputBlocked() then
+			return
+		end
+		if not (isConsoleSwingInput() or player:GetAttribute("TutorialCompleted") ~= true) then
+			return
+		end
+		if
+			st.shouldStealJumpForSwing()
+			or st.tutorialLockInLatchRange() ~= nil
+			or st.scannedVisualTarget ~= nil
+			or st.highlightedTarget ~= nil
+		then
+			st.humanoid.Jump = false
+			st.tryAttach()
+		end
+	end))
+
 	st.addConn(st.humanoid.StateChanged:Connect(function(_, newState)
 		if st.isSwingLandingRecoveryState(newState) then
 			-- Fast angled landings can put the Humanoid into Roblox's get-up/ragdoll states.
@@ -6006,8 +6024,14 @@ local function boot(character)
 			if
 				newState == Enum.HumanoidStateType.Jumping
 				and not st.isSwinging
+				and not st.isHrpInSafezone()
 				and (isConsoleSwingInput() or player:GetAttribute("TutorialCompleted") ~= true)
-				and st.shouldStealJumpForSwing()
+				and (
+					st.shouldStealJumpForSwing()
+					or st.tutorialLockInLatchRange() ~= nil
+					or st.scannedVisualTarget ~= nil
+					or st.highlightedTarget ~= nil
+				)
 			then
 				st.humanoid.Jump = false
 				st.tryAttach()

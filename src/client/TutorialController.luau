@@ -1625,6 +1625,7 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 	end
 
 	local claimStyle = style == "claim"
+	local upgradePadStyle = style == "upgradePad"
 	uiPointerForced = force == true
 	uiPointerHost = target
 
@@ -1658,7 +1659,11 @@ local function pointAtGui(target: GuiObject?, force: boolean?, strokeOnly: boole
 		or target.Name == "Upgrade"
 		or target.Name == "__UpgradeOverlay"
 	-- Claim Accept/Decline keep their built-in A/B. Upgrade B is the world hover prompt.
-	if not claimStyle and not isUpgrade then
+	if upgradePadStyle then
+		-- HintHost already shows B. Never overlay an A glyph.
+		GamepadInput.clearHint(attachHost)
+		GamepadInput.clearHint(target)
+	elseif not claimStyle and not isUpgrade then
 		local hintKey = GamepadInput.ACCEPT
 		if attachHost.Name == "Decline" or target.Name == "Decline" then
 			hintKey = GamepadInput.DECLINE
@@ -2781,7 +2786,7 @@ local function refreshPointersImpl()
 			local hintBb = pg and pg:FindFirstChild("StandUpgradePadHint")
 			local hintHost = hintBb and hintBb:FindFirstChild("HintHost")
 			if hintHost and hintHost:IsA("GuiObject") and hintBb and hintBb:IsA("BillboardGui") and hintBb.Enabled then
-				pointAtGui(hintHost, true)
+				pointAtGui(hintHost, true, false, "upgradePad")
 			end
 		else
 			local upgradeBtn = resolveStandUpgradeButton()
@@ -2856,9 +2861,7 @@ finishTutorial = function(opts: { skipped: boolean? }?)
 		if not okPlay then
 			warn("[TutorialController] last land showcase failed:", playErr)
 		end
-		if not played then
-			GameplayUiVisibility.show({ flourish = true })
-		end
+		GameplayUiVisibility.forceShow()
 		if not skipped then
 			fireConfettiAndShake()
 		end

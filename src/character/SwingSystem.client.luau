@@ -127,7 +127,12 @@ local SwingUpgrades = tryRequireModule(sharedFolder, "SwingUpgrades")
 local SwingProgression = tryRequireModule(sharedFolder, "SwingProgression")
 local WorkoutPower = tryRequireModule(sharedFolder, "WorkoutPower")
 local WebTrapConfig = tryRequireModule(sharedFolder, "WebTrapConfig")
+local ReviveConfig = tryRequireModule(sharedFolder, "ReviveConfig")
 local UiFonts = tryRequireModule(sharedFolder, "UiFonts")
+local HOME_TELEPORT_ATTR = if ReviveConfig and typeof(ReviveConfig.HOME_TELEPORT_ATTR) == "string"
+	then ReviveConfig.HOME_TELEPORT_ATTR
+	else "PlotHomeTeleportAt"
+local HOME_TELEPORT_SETTLE_SEC = 0.85
 local GamepadInputMod = getClientModule("GamepadInput")
 
 local function lastInputIsGamepad(): boolean
@@ -1930,6 +1935,46 @@ local function boot(character)
 			return false
 		end
 		return player:GetAttribute(WebTrapConfig.TRAPPED_ATTR) == true
+	end
+
+	function st.isHomeTeleportSettling(): boolean
+		local at = player:GetAttribute(HOME_TELEPORT_ATTR)
+		if typeof(at) ~= "number" then
+			return false
+		end
+		return workspace:GetServerTimeNow() - at < HOME_TELEPORT_SETTLE_SEC
+	end
+
+	function st.abortSwingFromHomeTeleport()
+		st.pendingSwingParams = nil
+		st.returnSwingTarget = nil
+		st.mobileJumpHeld = false
+		st.spaceHeld = false
+		st.gamepadHeld = false
+		st.swingPressIntentUntil = -1e9
+		st.toggleNeedsJumpRelease = true
+		if st.isSwinging then
+			st.stopSwing(false)
+		else
+			st.destroySwingObjects()
+			st.releaseStyle.cancel()
+		end
+		st.isLaunched = false
+		st.landedFromSwing = false
+		st.landingSpeed = 0
+		pcall(function()
+			player:SetAttribute("IsSwinging", false)
+		end)
+		if st.hrp and st.hrp.Parent then
+			st.hrp.AssemblyLinearVelocity = Vector3.zero
+			st.hrp.AssemblyAngularVelocity = Vector3.zero
+		end
+		st.forceSwingHumanoidControl()
+		st.hideSwingTargetUi()
+		st.stopHangAnim(0)
+		st.stopFallingAnim()
+		stopWindLoopSfx()
+		st.resetFovNow()
 	end
 
 	function st.resetFovNow()
@@ -5119,7 +5164,7 @@ local function boot(character)
 	end
 
 	function st.shouldStealJumpForSwing(): boolean
-		if st.isWebTrapped() or st.isSwinging or isSwingInputBlocked() or st.isHrpInSafezone() then
+		if st.isWebTrapped() or st.isHomeTeleportSettling() or st.isSwinging or isSwingInputBlocked() or st.isHrpInSafezone() then
 			return false
 		end
 		if st.scannedVisualCanSwing and st.scannedVisualTarget and st.scannedVisualTarget.Parent then
@@ -5138,7 +5183,7 @@ local function boot(character)
 	end
 
 	function st.startSwing(target, trustReady: boolean?)
-		if st.isWebTrapped() or st.isSwinging or not target or not target.Parent then
+		if st.isWebTrapped() or st.isHomeTeleportSettling() or st.isSwinging or not target or not target.Parent then
 			return
 		end
 		if st.isHrpInSafezone() then
@@ -5577,7 +5622,7 @@ local function boot(character)
 	end
 
 	function st.tryAttach()
-		if st.isWebTrapped() or st.isSwinging or not st.hrp.Parent then
+		if st.isWebTrapped() or st.isHomeTeleportSettling() or st.isSwinging or not st.hrp.Parent then
 			return
 		end
 		if isSwingInputBlocked() then
@@ -5673,6 +5718,10 @@ local function boot(character)
 			end
 		end))
 	end
+
+	st.addConn(player:GetAttributeChangedSignal(HOME_TELEPORT_ATTR):Connect(function()
+		st.abortSwingFromHomeTeleport()
+	end))
 
 	st.addConn(UserInputService.InputBegan:Connect(function(input, processed)
 		if st.isWebTrapped() then
@@ -6278,6 +6327,16 @@ local function boot(character)
 				st.stopSwing(false)
 			end
 			st.hideSwingTargetUi()
+			if player:GetAttribute("IsSwinging") ~= false then
+				player:SetAttribute("IsSwinging", false)
+			end
+			return
+		end
+
+		if st.isHomeTeleportSettling() then
+			if st.isSwinging or st.isLaunched or st.pendingSwingParams then
+				st.abortSwingFromHomeTeleport()
+			end
 			if player:GetAttribute("IsSwinging") ~= false then
 				player:SetAttribute("IsSwinging", false)
 			end

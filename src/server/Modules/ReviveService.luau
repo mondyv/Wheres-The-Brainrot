@@ -410,6 +410,18 @@ local function softTeleportAlive(player: Player, tutorialHitbox: boolean)
 	else
 		PlotSpawnUtil.teleportPlayerHome(player, character, 12)
 	end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		hrp.AssemblyLinearVelocity = Vector3.zero
+		hrp.AssemblyAngularVelocity = Vector3.zero
+	end
+	if hum then
+		pcall(function()
+			hum.PlatformStand = false
+			hum.AutoRotate = true
+			hum.Sit = false
+		end)
+	end
 	if waveDeath then
 		task.delay(2.5, function()
 			if player.Parent then

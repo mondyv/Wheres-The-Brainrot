@@ -38,6 +38,7 @@ export type EquipDeps = {
 	getMainPart: (Model) -> BasePart?,
 	findTemplateBySourcePath: (Folder, string) -> Model?,
 	findFirstTemplateByModelName: (Folder, string) -> Model?,
+	findMutationTemplate: (Folder, string, string) -> Model?,
 }
 
 local function removeBrainrotToolAtInventoryIndex(parent: Instance, invIndex: number)
@@ -206,8 +207,10 @@ function M.createEquipBrainrotSlotForPlayer(deps: EquipDeps): (Player, number, b
 		if not brainrots then
 			return nil
 		end
-		local template: Model? = nil
-		if entry.sourcePath ~= "" then
+		local mut = if typeof(entry.mutation) == "string" and entry.mutation ~= "" then entry.mutation else "normal"
+		-- Mutation mesh first (Gold/Diamond/etc). sourcePath often still points at Normal.
+		local template: Model? = deps.findMutationTemplate(brainrots, entry.name, mut)
+		if not template and entry.sourcePath ~= "" then
 			template = deps.findTemplateBySourcePath(brainrots, entry.sourcePath)
 		end
 		if not template then

@@ -574,8 +574,9 @@ local function enrichEntryFromBrainrotsFolder(root: Folder?, entry: BrainrotInvE
 	if not root then
 		return
 	end
-	local template: Model? = nil
-	if entry.sourcePath ~= "" then
+	local mut = if entry.mutation ~= "" then entry.mutation else "normal"
+	local template: Model? = findBrainrotModelByNameAndMutation(root, entry.name, mut)
+	if not template and entry.sourcePath ~= "" then
 		template = findTemplateBySourcePath(root, entry.sourcePath)
 	end
 	if not template then
@@ -591,9 +592,7 @@ local function enrichEntryFromBrainrotsFolder(root: Folder?, entry: BrainrotInvE
 		end
 		return
 	end
-	if entry.sourcePath == "" then
-		entry.sourcePath = sourcePathForTemplate(root, template)
-	end
+	entry.sourcePath = sourcePathForTemplate(root, template)
 	local icon = pickIconFromTemplateModel(template)
 	if icon ~= "" then
 		entry.icon = icon
@@ -2756,6 +2755,7 @@ equipBrainrotSlotForPlayer = BushHarvestBrainrotEquip.createEquipBrainrotSlotFor
 	getMainPart = getMainPart,
 	findTemplateBySourcePath = findTemplateBySourcePath,
 	findFirstTemplateByModelName = findFirstTemplateByModelName,
+	findMutationTemplate = findBrainrotModelByNameAndMutation,
 })
 
 require(Modules:WaitForChild("BushHarvestInternal")).boot({

@@ -12,6 +12,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
+local UIInteractionSounds = require(script.Parent.UIInteractionSounds)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -20,22 +21,114 @@ local HUD_NAME = "ServerResetHud"
 local REMOTE_NAME = "ServerResetCountdown"
 local PULSE_INFO = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local PULSE_BACK = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+local SLIDE_IN = TweenInfo.new(0.42, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+
+local KICKER_TEXT = "LIVE UPDATE"
+local TITLE_TEXT = "ALL SERVERS RESETTING"
+local SUB_IDLE = "New update incoming — your data is safe"
+local SUB_NOW = "Saving your data — sending you to a fresh server"
 
 local gui: ScreenGui? = nil
 local root: Frame? = nil
+local kickerLabel: TextLabel? = nil
 local titleLabel: TextLabel? = nil
 local timerLabel: TextLabel? = nil
 local subLabel: TextLabel? = nil
 local fillBar: Frame? = nil
 local timerScale: UIScale? = nil
+local goldGlow: UIGradient? = nil
+local bannerHeight = 136
 
 local heartbeatConn: RBXScriptConnection? = nil
 local pulseTween: Tween? = nil
+local slideTween: Tween? = nil
+local typewriterThread: thread? = nil
+local typewriterToken = 0
 local endsAt = 0
 local totalSeconds = 30
 local lastShownSec = -1
+local typedNowCopy = false
 
 local ServerResetHud = {}
+
+local function stopTypewriter()
+	if typewriterThread then
+		task.cancel(typewriterThread)
+		typewriterThread = nil
+	end
+end
+
+local function typeGraphemes(label: TextLabel, text: string, delaySec: number, token: number)
+	label.Text = text
+	label.MaxVisibleGraphemes = 0
+	local i = 0
+	for first, last in utf8.graphemes(text) do
+		if token ~= typewriterToken or not label.Parent then
+			return
+		end
+		i += 1
+		label.MaxVisibleGraphemes = i
+		local g = string.sub(text, first, last)
+		if g ~= " " and g ~= "\n" and g ~= "\t" then
+			UIInteractionSounds.playTypewriterTick()
+		end
+		task.wait(delaySec)
+	end
+	if token == typewriterToken and label.Parent then
+		label.MaxVisibleGraphemes = -1
+	end
+end
+
+local function playIntroTypewriter()
+	stopTypewriter()
+	typewriterToken += 1
+	local token = typewriterToken
+	if kickerLabel then
+		kickerLabel.MaxVisibleGraphemes = 0
+		kickerLabel.Text = KICKER_TEXT
+	end
+	if titleLabel then
+		titleLabel.MaxVisibleGraphemes = 0
+		titleLabel.Text = TITLE_TEXT
+	end
+	if subLabel then
+		subLabel.MaxVisibleGraphemes = 0
+		subLabel.Text = SUB_IDLE
+	end
+	typewriterThread = task.spawn(function()
+		task.wait(0.12)
+		if kickerLabel then
+			typeGraphemes(kickerLabel, KICKER_TEXT, 0.038, token)
+		end
+		if token ~= typewriterToken then
+			return
+		end
+		task.wait(0.06)
+		if titleLabel then
+			typeGraphemes(titleLabel, TITLE_TEXT, 0.028, token)
+		end
+		if token ~= typewriterToken then
+			return
+		end
+		task.wait(0.08)
+		if subLabel then
+			typeGraphemes(subLabel, SUB_IDLE, 0.018, token)
+		end
+	end)
+end
+
+local function playNowTypewriter()
+	if typedNowCopy or not subLabel then
+		return
+	end
+	typedNowCopy = true
+	stopTypewriter()
+	typewriterToken += 1
+	local token = typewriterToken
+	typewriterThread = task.spawn(function()
+		typeGraphemes(subLabel, SUB_NOW, 0.02, token)
+	end)
+end
 
 local function disconnectHeartbeat()
 	if heartbeatConn then
@@ -73,17 +166,34 @@ end
 
 local function hideHud()
 	disconnectHeartbeat()
+	stopTypewriter()
+	typewriterToken += 1
 	endsAt = 0
 	lastShownSec = -1
+	typedNowCopy = false
 	if pulseTween then
 		pulseTween:Cancel()
 		pulseTween = nil
 	end
+	if slideTween then
+		slideTween:Cancel()
+		slideTween = nil
+	end
 	if timerScale then
 		timerScale.Scale = 1
 	end
+	if kickerLabel then
+		kickerLabel.MaxVisibleGraphemes = -1
+	end
+	if titleLabel then
+		titleLabel.MaxVisibleGraphemes = -1
+	end
+	if subLabel then
+		subLabel.MaxVisibleGraphemes = -1
+	end
 	if root then
 		root.Visible = false
+		root.Position = UDim2.new(0.5, 0, 0, -bannerHeight)
 	end
 end
 
@@ -103,12 +213,15 @@ local function refreshHud()
 	if not root or not timerLabel or not fillBar or not subLabel then
 		return
 	end
+	if goldGlow then
+		goldGlow.Offset = Vector2.new(math.sin(os.clock() * 1.8) * 0.42, 0)
+	end
 	local remaining = endsAt - Workspace:GetServerTimeNow()
 	if remaining <= 0 then
 		timerLabel.Text = "NOW"
-		subLabel.Text = "Saving your data — sending you to a fresh server"
 		fillBar.Size = UDim2.new(0, 0, 1, 0)
 		applyUrgentStyle(true)
+		playNowTypewriter()
 		disconnectHeartbeat()
 		return
 	end
@@ -128,14 +241,24 @@ local function showHud(newEndsAt: number, barTotal: number)
 	if typeof(newEndsAt) ~= "number" or newEndsAt <= Workspace:GetServerTimeNow() then
 		return
 	end
+	local wasVisible = root ~= nil and root.Visible
 	endsAt = newEndsAt
 	totalSeconds = if typeof(barTotal) == "number" and barTotal > 0 then barTotal else 30
 	lastShownSec = -1
+	typedNowCopy = false
 	if root then
 		root.Visible = true
-	end
-	if subLabel then
-		subLabel.Text = "New update incoming — your data is safe"
+		if not wasVisible then
+			if slideTween then
+				slideTween:Cancel()
+			end
+			root.Position = UDim2.new(0.5, 0, 0, -bannerHeight)
+			slideTween = TweenService:Create(root, SLIDE_IN, {
+				Position = UDim2.new(0.5, 0, 0, 0),
+			})
+			slideTween:Play()
+			playIntroTypewriter()
+		end
 	end
 	refreshHud()
 	if not heartbeatConn then
@@ -145,7 +268,8 @@ end
 
 local function buildHud()
 	local compact = UserInputService.TouchEnabled
-	local bannerH = if compact then 118 else 136
+	bannerHeight = if compact then 118 else 136
+	local bannerH = bannerHeight
 
 	local screen = Instance.new("ScreenGui")
 	screen.Name = HUD_NAME
@@ -158,7 +282,7 @@ local function buildHud()
 	local banner = Instance.new("Frame")
 	banner.Name = "Banner"
 	banner.AnchorPoint = Vector2.new(0.5, 0)
-	banner.Position = UDim2.new(0.5, 0, 0, 0)
+	banner.Position = UDim2.new(0.5, 0, 0, -bannerH)
 	banner.Size = UDim2.new(1, 0, 0, bannerH)
 	banner.BackgroundColor3 = Color3.fromRGB(18, 8, 10)
 	banner.BackgroundTransparency = 0.08
@@ -185,13 +309,13 @@ local function buildHud()
 	goldLine.ZIndex = 12
 	goldLine.Parent = banner
 
-	local goldGlow = Instance.new("UIGradient")
-	goldGlow.Transparency = NumberSequence.new({
+	local glow = Instance.new("UIGradient")
+	glow.Transparency = NumberSequence.new({
 		NumberSequenceKeypoint.new(0, 0.85),
 		NumberSequenceKeypoint.new(0.5, 0),
 		NumberSequenceKeypoint.new(1, 0.85),
 	})
-	goldGlow.Parent = goldLine
+	glow.Parent = goldLine
 
 	local kicker = Instance.new("TextLabel")
 	kicker.Name = "Kicker"
@@ -199,7 +323,7 @@ local function buildHud()
 	kicker.AnchorPoint = Vector2.new(0.5, 0)
 	kicker.Position = UDim2.new(0.5, 0, 0, if compact then 10 else 12)
 	kicker.Size = UDim2.new(0.92, 0, 0, if compact then 14 else 16)
-	kicker.Text = "LIVE UPDATE"
+	kicker.Text = KICKER_TEXT
 	kicker.TextXAlignment = Enum.TextXAlignment.Center
 	kicker.TextColor3 = Color3.fromRGB(255, 196, 72)
 	kicker.TextTransparency = 0.05
@@ -214,7 +338,7 @@ local function buildHud()
 	title.AnchorPoint = Vector2.new(0.5, 0)
 	title.Position = UDim2.new(0.5, 0, 0, if compact then 26 else 30)
 	title.Size = UDim2.new(0.94, 0, 0, if compact then 22 else 26)
-	title.Text = "ALL SERVERS RESETTING"
+	title.Text = TITLE_TEXT
 	title.TextXAlignment = Enum.TextXAlignment.Center
 	title.TextColor3 = Color3.fromRGB(255, 246, 230)
 	title.TextScaled = true
@@ -259,7 +383,7 @@ local function buildHud()
 	sub.AnchorPoint = Vector2.new(0.5, 0)
 	sub.Position = UDim2.new(0.5, 0, 0, if compact then 86 else 100)
 	sub.Size = UDim2.new(0.92, 0, 0, if compact then 16 else 18)
-	sub.Text = "Moving you to the latest published update — your data is safe"
+	sub.Text = SUB_IDLE
 	sub.TextXAlignment = Enum.TextXAlignment.Center
 	sub.TextColor3 = Color3.fromRGB(230, 210, 190)
 	sub.TextTransparency = 0.08
@@ -298,11 +422,13 @@ local function buildHud()
 
 	gui = screen
 	root = banner
+	kickerLabel = kicker
 	titleLabel = title
 	timerLabel = timer
 	subLabel = sub
 	fillBar = fill
 	timerScale = scale
+	goldGlow = glow
 end
 
 local function bindRemote()

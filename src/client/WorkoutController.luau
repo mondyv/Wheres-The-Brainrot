@@ -1455,6 +1455,7 @@ local comboRingBorn = 0.0
 local comboAppearAt = 0.0
 local comboWindow = 1.55
 local comboBusyAnim = false
+local comboMaxLocked = false
 local lastComboPos = Vector2.new(-999, -999)
 -- Farmers who ignore circles: mute fail SFX after this many timeouts; any press unmutes.
 local COMBO_FAIL_SFX_MUTE_AFTER = 4
@@ -1749,6 +1750,15 @@ local function ensureDoubleTapGui(): ScreenGui
 	coreStroke.Thickness = 2.5
 	coreStroke.Transparency = 0.12
 	coreStroke.Parent = core
+	local coreStrokeGrad = Instance.new("UIGradient")
+	coreStrokeGrad.Name = "HitStrokeGrad"
+	coreStrokeGrad.Enabled = false
+	coreStrokeGrad.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 236, 120)),
+		ColorSequenceKeypoint.new(0.45, Color3.fromRGB(255, 90, 220)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 214, 74)),
+	})
+	coreStrokeGrad.Parent = coreStroke
 	local num = Instance.new("TextLabel")
 	num.Name = "ComboNum"
 	num.BackgroundTransparency = 1
@@ -1857,6 +1867,26 @@ local function ensureDoubleTapGui(): ScreenGui
 	liftStroke.Transparency = 0.2
 	liftStroke.Parent = liftLabel
 
+	local maxTag = Instance.new("TextLabel")
+	maxTag.Name = "MaxTag"
+	maxTag.BackgroundTransparency = 1
+	maxTag.AnchorPoint = Vector2.new(0.5, 1)
+	maxTag.Position = UDim2.new(0.5, 0, 0, -6)
+	maxTag.Size = UDim2.fromOffset(160, 22)
+	maxTag.Text = "MAX"
+	maxTag.TextColor3 = Color3.fromRGB(255, 236, 140)
+	maxTag.TextScaled = true
+	maxTag.Font = Enum.Font.GothamBlack
+	maxTag.Visible = false
+	maxTag.ZIndex = 24
+	maxTag.Parent = holder
+	UiFonts.applyDisplay(maxTag)
+	local maxStroke = Instance.new("UIStroke")
+	maxStroke.Color = Color3.fromRGB(70, 20, 8)
+	maxStroke.Thickness = 1.6
+	maxStroke.Transparency = 0.15
+	maxStroke.Parent = maxTag
+
 	if pg then
 		gui.Parent = pg
 	end
@@ -1912,25 +1942,36 @@ local function refreshComboHud(n: number)
 	local pad = GamepadInput.isPreferred()
 	local touch = UserInputService.TouchEnabled and not pad
 	if comboLabel and comboLabel:IsA("TextLabel") then
-		comboLabel.Text = "COMBO " .. tostring(count)
-		comboLabel.Visible = pad or touch
+		if count >= GearConfig.WORKOUT_COMBO_MAX then
+			comboLabel.Text = "MAX COMBO"
+			comboLabel.Visible = true
+		else
+			comboLabel.Text = "COMBO " .. tostring(count)
+			comboLabel.Visible = pad or touch
+		end
 	end
 	if liftLabel and liftLabel:IsA("TextLabel") then
-		liftLabel.Text = string.format("x%.2f", lift)
-		liftLabel.TextColor3 = if lift >= GearConfig.WORKOUT_LIFT_MULT_MAX - 0.05
-			then Color3.fromRGB(255, 236, 120)
-			else Color3.fromRGB(255, 214, 74)
-		liftLabel.Visible = true
+		if count >= GearConfig.WORKOUT_COMBO_MAX then
+			liftLabel.Text = "LOCKED"
+			liftLabel.TextColor3 = Color3.fromRGB(255, 236, 120)
+			liftLabel.Visible = true
+		else
+			liftLabel.Text = string.format("x%.2f", lift)
+			liftLabel.TextColor3 = if lift >= GearConfig.WORKOUT_LIFT_MULT_MAX - 0.05
+				then Color3.fromRGB(255, 236, 120)
+				else Color3.fromRGB(255, 214, 74)
+			liftLabel.Visible = true
+		end
 	end
 	if stats and stats:IsA("GuiObject") then
 		stats.Visible = true
 	end
 	if num and num:IsA("TextLabel") then
 		num.Text = tostring(count)
-		num.Visible = not pad
+		num.Visible = (not pad) or count >= GearConfig.WORKOUT_COMBO_MAX
 	end
 	if prompt and prompt:IsA("GuiObject") then
-		prompt.Visible = pad
+		prompt.Visible = pad and count < GearConfig.WORKOUT_COMBO_MAX
 		if prompt:IsA("Frame") then
 			prompt.BackgroundColor3 = PAD_BADGE_COLOR[comboPromptKey] or Color3.fromRGB(86, 196, 78)
 		end
@@ -2071,9 +2112,106 @@ local function paintComboIdle(appear: boolean?)
 		num.TextTransparency = 0
 		num.TextColor3 = Color3.fromRGB(255, 246, 210)
 	end
+	local maxTag = holder:FindFirstChild("MaxTag")
+	if maxTag and maxTag:IsA("GuiObject") then
+		maxTag.Visible = false
+	end
+	local hitStroke = hit and hit:FindFirstChild("HitStroke")
+	local grad = hitStroke and hitStroke:FindFirstChild("HitStrokeGrad")
+	if grad and grad:IsA("UIGradient") then
+		grad.Enabled = false
+	end
 	refreshComboHud(comboDisplay())
 	if appear ~= false then
 		playComboAppear()
+	end
+end
+
+local function isComboCapped(n: number?): boolean
+	local count = n or comboDisplay()
+	return comboMaxLocked or count >= GearConfig.WORKOUT_COMBO_MAX
+end
+
+local function enterMaxComboHold()
+	comboMaxLocked = true
+	comboBusyAnim = false
+	stopComboShake()
+	stopComboTrail()
+	local holder = comboHolder()
+	if not holder then
+		return
+	end
+	holder.Visible = true
+	local pop = holder:FindFirstChild("PopScale")
+	if pop and pop:IsA("UIScale") then
+		pop.Scale = 1.12
+	end
+	local maxTag = holder:FindFirstChild("MaxTag")
+	if maxTag and maxTag:IsA("GuiObject") then
+		maxTag.Visible = true
+	end
+	local hit = holder:FindFirstChild("Hit")
+	if hit and hit:IsA("GuiObject") then
+		hit.BackgroundTransparency = COMBO_CORE_FILL
+		hit.BackgroundColor3 = Color3.fromRGB(48, 22, 62)
+	end
+	local hitStroke = hit and hit:FindFirstChild("HitStroke")
+	local grad = hitStroke and hitStroke:FindFirstChild("HitStrokeGrad")
+	if grad and grad:IsA("UIGradient") then
+		grad.Enabled = true
+	end
+	local num = hit and hit:FindFirstChild("ComboNum")
+	if num and num:IsA("TextLabel") then
+		num.TextTransparency = 0
+		num.TextColor3 = Color3.fromRGB(255, 246, 210)
+	end
+	setComboRingScale(1.08)
+	setComboNumber(GearConfig.WORKOUT_COMBO_MAX)
+	paintComboUrgency(0)
+end
+
+local function paintMaxComboPulse()
+	local holder = comboHolder()
+	if not holder then
+		return
+	end
+	local pulse = 0.5 + 0.5 * math.sin(os.clock() * 5.4)
+	local pop = holder:FindFirstChild("PopScale")
+	if pop and pop:IsA("UIScale") then
+		pop.Scale = 1.08 + pulse * 0.1
+	end
+	setComboRingScale(1.04 + pulse * 0.1)
+	local hue = (os.clock() * 0.28) % 1
+	local color = Color3.fromHSV(hue, 0.72, 1)
+	local ring = holder:FindFirstChild("Ring")
+	local stroke = ring and ring:FindFirstChild("RingStroke")
+	if stroke and stroke:IsA("UIStroke") then
+		stroke.Color = color
+		stroke.Transparency = 0.02
+		stroke.Thickness = 8 + pulse * 2.4
+	end
+	local halo = holder:FindFirstChild("Halo")
+	if halo and halo:IsA("Frame") then
+		halo.BackgroundColor3 = color
+		halo.BackgroundTransparency = 0.62 - pulse * 0.22
+	end
+	local hit = holder:FindFirstChild("Hit")
+	local hitStroke = hit and hit:FindFirstChild("HitStroke")
+	if hitStroke and hitStroke:IsA("UIStroke") then
+		hitStroke.Color = Color3.fromRGB(255, 236, 150)
+		hitStroke.Thickness = 3 + pulse * 1.6
+		local grad = hitStroke:FindFirstChild("HitStrokeGrad")
+		if grad and grad:IsA("UIGradient") then
+			grad.Rotation = (os.clock() * 140) % 360
+		end
+	end
+	local maxTag = holder:FindFirstChild("MaxTag")
+	if maxTag and maxTag:IsA("TextLabel") then
+		maxTag.TextTransparency = 0.08 + pulse * 0.12
+	end
+	if lastComboPos.X > 0 then
+		local bob = math.sin(os.clock() * 2.4) * 5
+		holder.Position = UDim2.fromOffset(lastComboPos.X, lastComboPos.Y + bob)
 	end
 end
 
@@ -2395,7 +2533,11 @@ local function playComboFailSfx(fromPress: boolean)
 end
 
 local function missCombo(fromPress: boolean?)
-	if comboBusyAnim then
+	if comboBusyAnim or comboMaxLocked then
+		return
+	end
+	if comboDisplay() >= GearConfig.WORKOUT_COMBO_MAX then
+		enterMaxComboHold()
 		return
 	end
 	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
@@ -2473,10 +2615,14 @@ local function missCombo(fromPress: boolean?)
 end
 
 local function hitCombo()
-	if comboBusyAnim then
+	if comboBusyAnim or comboMaxLocked then
 		return
 	end
 	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
+		return
+	end
+	if comboDisplay() >= GearConfig.WORKOUT_COMBO_MAX then
+		enterMaxComboHold()
 		return
 	end
 	if claimDoubleTapBusy then
@@ -2487,7 +2633,12 @@ local function hitCombo()
 	resetComboFailSfx()
 	burstComboLine()
 	GameSoundEffects.playWorkoutComboHit(comboDisplay())
-	playComboVanish()
+	local reachingMax = comboDisplay() >= GearConfig.WORKOUT_COMBO_MAX - 1
+	if not reachingMax then
+		playComboVanish()
+	else
+		pulseComboHold(true)
+	end
 	local gen = doubleTapGen
 	local nextCount = comboDisplay()
 	task.spawn(function()
@@ -2512,6 +2663,11 @@ local function hitCombo()
 			comboBusyAnim = false
 			return
 		end
+		if reachingMax or nextCount >= GearConfig.WORKOUT_COMBO_MAX then
+			setComboNumber(GearConfig.WORKOUT_COMBO_MAX)
+			enterMaxComboHold()
+			return
+		end
 		local holder = comboHolder()
 		if holder then
 			holder.Visible = false
@@ -2527,6 +2683,7 @@ end
 local function stopDoubleTapLoop()
 	doubleTapGen += 1
 	comboBusyAnim = false
+	comboMaxLocked = false
 	resetComboFailSfx()
 	if comboRingConn then
 		comboRingConn:Disconnect()
@@ -2579,6 +2736,7 @@ local function startDoubleTapLoop()
 	doubleTapGen += 1
 	local gen = doubleTapGen
 	comboBusyAnim = false
+	comboMaxLocked = false
 	resetComboFailSfx()
 	local cam0 = Workspace.CurrentCamera
 	local vs0 = if cam0 then cam0.ViewportSize else Vector2.new(800, 600)
@@ -2589,7 +2747,11 @@ local function startDoubleTapLoop()
 	paintComboIdle()
 	setComboNumber(comboDisplay())
 	applyComboAnimSpeed(comboDisplay())
-	restartComboRing()
+	if comboDisplay() >= GearConfig.WORKOUT_COMBO_MAX then
+		enterMaxComboHold()
+	else
+		restartComboRing()
+	end
 	if comboRingConn then
 		comboRingConn:Disconnect()
 		comboRingConn = nil
@@ -2599,6 +2761,13 @@ local function startDoubleTapLoop()
 			return
 		end
 		if comboBusyAnim then
+			return
+		end
+		if isComboCapped() then
+			if not comboMaxLocked then
+				enterMaxComboHold()
+			end
+			paintMaxComboPulse()
 			return
 		end
 		local t = (os.clock() - comboRingBorn) / math.max(comboWindow, 0.35)
@@ -2631,6 +2800,9 @@ local function startDoubleTapLoop()
 			end
 			local code = if input then input.KeyCode else comboPromptKey
 			if GamepadInput.isPreferred() then
+				if isComboCapped() then
+					return Enum.ContextActionResult.Sink
+				end
 				if code == comboPromptKey then
 					hitCombo()
 					return Enum.ContextActionResult.Sink
@@ -2872,6 +3044,12 @@ local function init()
 		end
 		local n = comboDisplay()
 		applyComboAnimSpeed(n)
+		if n >= GearConfig.WORKOUT_COMBO_MAX then
+			if not comboMaxLocked then
+				enterMaxComboHold()
+			end
+			return
+		end
 		if comboBusyAnim then
 			return
 		end

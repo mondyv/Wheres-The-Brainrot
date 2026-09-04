@@ -179,6 +179,8 @@ M.WORKOUT_ACTIVE_ATTR = "WorkoutActive"
 M.WORKOUT_LIFT_MULT_MAX = 3
 -- Combo count where lift first hits the cap.
 M.WORKOUT_LIFT_COMBO_FOR_MAX = 16
+-- Combo button locks here until the workout stops (no more taps / misses).
+M.WORKOUT_COMBO_MAX = 50
 
 function M.workoutLiftMultiplier(combo: number): number
 	local c = math.max(1, math.floor(combo))

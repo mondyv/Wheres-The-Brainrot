@@ -296,7 +296,14 @@ function GearService.claimWorkoutDoubleTap(player: Player): number
 		return comboOf(player)
 	end
 	lastComboAt[uid] = now
-	local c = math.min(999, comboOf(player) + 1)
+	local cap = GearConfig.WORKOUT_COMBO_MAX
+	local current = comboOf(player)
+	if current >= cap then
+		comboByPlayer[player] = cap
+		player:SetAttribute("WorkoutCombo", cap)
+		return cap
+	end
+	local c = math.min(cap, current + 1)
 	comboByPlayer[player] = c
 	player:SetAttribute("WorkoutCombo", c)
 	return c

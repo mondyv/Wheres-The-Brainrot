@@ -1439,6 +1439,9 @@ local function comboNumber(plr: Player): number
 end
 
 local function comboTextColor(n: number): Color3
+	if n >= 50 then
+		return Color3.fromRGB(255, 236, 160)
+	end
 	if n >= 45 then
 		return Color3.fromRGB(255, 120, 255)
 	end

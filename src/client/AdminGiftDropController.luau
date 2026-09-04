@@ -185,7 +185,7 @@ local function cloneGear(gearId: number): Model?
 		clone:Destroy()
 		return nil
 	end
-	fitDropModel(clone, 2.35)
+	fitDropModel(clone, 1.85)
 	return clone
 end
 
@@ -384,8 +384,12 @@ local function suckIntoBody(token: number, model: Model, fromCf: CFrame)
 		local alpha = math.clamp((os.clock() - t0) / SUCK_SEC, 0, 1)
 		local goal = fromCf:Lerp(CFrame.new(dest), alpha) * CFrame.Angles(0, alpha * 1.55, alpha * 0.28)
 		model:PivotTo(goal)
-		local nextScale = math.max(0.06, startScale * (1 - alpha * 0.92))
-		if math.abs(nextScale - lastScale) >= 0.03 or alpha >= 1 then
+		local nextScale = startScale * (1 - alpha * 0.94)
+		if nextScale > lastScale then
+			nextScale = lastScale
+		end
+		nextScale = math.max(startScale * 0.04, nextScale)
+		if math.abs(nextScale - lastScale) >= 0.012 or alpha >= 1 then
 			model:ScaleTo(nextScale)
 			lastScale = nextScale
 		end

@@ -833,11 +833,11 @@ local function playStandIdleAnimation(state: StandState, model: Model, brainrotN
 	state.idleTrack = track
 end
 
-local HOP_IN_HEIGHT = 6.2
-local HOP_IN_SEC = 0.48
-local HOP_OFF_HEIGHT = 5.4
-local HOP_OFF_FORWARD = 3.6
-local HOP_OFF_SEC = 0.4
+local HOP_IN_HEIGHT = 2.4
+local HOP_IN_SEC = 0.3
+local HOP_OFF_HEIGHT = 2.9
+local HOP_OFF_FORWARD = 0.7
+local HOP_OFF_SEC = 0.26
 
 local function cancelHop(state: StandState)
 	local cleanup = state.hopCleanup
@@ -867,7 +867,7 @@ local function playHopIn(state: StandState, model: Model, restCf: CFrame, brainr
 	proxy.Value = 0
 	local tween = TweenService:Create(
 		proxy,
-		TweenInfo.new(HOP_IN_SEC, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out),
+		TweenInfo.new(HOP_IN_SEC, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Value = 1 }
 	)
 	local conn = proxy:GetPropertyChangedSignal("Value"):Connect(function()
@@ -918,7 +918,6 @@ local function playHopOffThenDestroy(state: StandState, model: Model, restCf: CF
 			forward = delta.Unit
 		end
 	end
-	local landCf = restCf + forward * HOP_OFF_FORWARD + Vector3.new(0, -0.5, 0)
 	local proxy = Instance.new("NumberValue")
 	proxy.Value = 0
 	local tween = TweenService:Create(
@@ -931,7 +930,9 @@ local function playHopOffThenDestroy(state: StandState, model: Model, restCf: CF
 			return
 		end
 		local t = proxy.Value
-		local pos = restCf.Position:Lerp(landCf.Position, t) + Vector3.new(0, 4 * HOP_OFF_HEIGHT * t * (1 - t), 0)
+		-- Jump up and vanish at the peak — do not come back down or slide.
+		local y = math.sin(t * math.pi * 0.55) * HOP_OFF_HEIGHT
+		local pos = restCf.Position + forward * (HOP_OFF_FORWARD * t) + Vector3.new(0, y, 0)
 		hopPivot(model, CFrame.new(pos) * restCf.Rotation)
 	end)
 	local function stopTween()

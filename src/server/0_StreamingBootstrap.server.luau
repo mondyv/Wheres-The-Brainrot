@@ -4,9 +4,9 @@
 	so the live place cannot silently run Studio's huge 256/512 and keep half the
 	map + grass resident (high tris).
 
-	Live: 112 / 380 — modest guaranteed bubble, farther opportunistic fill so the
-	next land in front actually streams without stalling join on a huge min radius.
-	Studio play-solo: 80 / 220.
+	Live: 112 / 320 — keep the guaranteed bubble small, let the next land fill
+	in the background. Dumping a 380 bubble at once is what hitching felt like.
+	Studio play-solo: 80 / 200.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -15,7 +15,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local STREAM_MIN_RADIUS = if RunService:IsStudio() then 80 else 112
-local STREAM_TARGET_RADIUS = if RunService:IsStudio() then 220 else 380
+local STREAM_TARGET_RADIUS = if RunService:IsStudio() then 200 else 320
 
 if not Workspace.StreamingEnabled then
 	Workspace.StreamingEnabled = true

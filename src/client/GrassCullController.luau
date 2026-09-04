@@ -32,26 +32,25 @@ local POLL_SEC = 0.45
 -- Studio play-solo already has the whole place in-process; park immediately.
 local START_DELAY_SEC = if RunService:IsStudio() then 0.4 else 4
 local FEATURE_ENABLED = true
--- Reparent budget: restore terrain/island first (see restorePriority), a few per frame.
-local REPARENT_PER_YIELD = if RunService:IsStudio() then 12 else 8
-local REPARENT_PER_YIELD_SWING = 12
+-- Reparent budget: restore slowly so a land filling in doesn't hitch the frame.
+local REPARENT_PER_YIELD = if RunService:IsStudio() then 4 else 2
+local REPARENT_PER_YIELD_SWING = 3
 local FAST_MOVE_SPEED = 36
-local STREAM_AHEAD_STUDS = 220
-local STREAM_FAR_STUDS = 360
-local LOOK_AHEAD_STUDS = 200
+local STREAM_AHEAD_STUDS = 200
+local LOOK_AHEAD_STUDS = 180
 local lastStreamAt = 0.0
-local STREAM_COOLDOWN = 0.28
-local MOBILE_STREAM_COOLDOWN = 0.55
-local IDLE_STREAM_COOLDOWN = 0.9
+local STREAM_COOLDOWN = 0.45
+local MOBILE_STREAM_COOLDOWN = 0.7
+local IDLE_STREAM_COOLDOWN = 2.2
 local GAMEPLAY_STREAM_MIN = 112
-local GAMEPLAY_STREAM_TARGET = 380
+local GAMEPLAY_STREAM_TARGET = 320
 local MOBILE_STREAM_MIN = 96
-local MOBILE_STREAM_TARGET = 300
+local MOBILE_STREAM_TARGET = 240
 local STUDIO_STREAM_MIN = 80
-local STUDIO_STREAM_TARGET = 220
-local SWING_STREAM_TARGET = 420
-local MOBILE_SWING_STREAM_TARGET = 320
-local STUDIO_SWING_STREAM_TARGET = 280
+local STUDIO_STREAM_TARGET = 200
+local SWING_STREAM_TARGET = 380
+local MOBILE_SWING_STREAM_TARGET = 280
+local STUDIO_SWING_STREAM_TARGET = 240
 local swingStreamBoosted = false
 local wasFastTraveling = false
 local idleStreamBusy = false
@@ -398,7 +397,7 @@ local function applyForPlayerLand(playerLand: number)
 	local n = 0
 	local parkBudget = if isFastTraveling() then REPARENT_PER_YIELD_SWING else REPARENT_PER_YIELD
 	if UserInputService.TouchEnabled then
-		parkBudget = math.min(parkBudget, 4)
+		parkBudget = math.min(parkBudget, 3)
 	end
 	for _, entry in toPark do
 		parkEntry(entry)
@@ -420,7 +419,7 @@ local function applyForPlayerLand(playerLand: number)
 	n = 0
 	local restoreBudget = if isFastTraveling() then REPARENT_PER_YIELD_SWING else REPARENT_PER_YIELD
 	if UserInputService.TouchEnabled then
-		restoreBudget = math.min(restoreBudget, 4)
+		restoreBudget = math.min(restoreBudget, 2)
 	end
 	for _, entry in toRestore do
 		restoreEntry(entry)
@@ -445,30 +444,6 @@ local function requestApplyForPlayerLand(playerLand: number)
 			applyForPlayerLand(land)
 		end
 		applyRunning = false
-	end)
-end
-
-local function restoreKeptLandNow(landNum: number)
-	if not cullActive or currentLand <= 0 then
-		return
-	end
-	if not shouldKeepLand(landNum, currentLand) then
-		return
-	end
-	if not landFolderHasWalkMesh(landNum) then
-		return
-	end
-	task.spawn(function()
-		local n = 0
-		for _, entry in entries do
-			if entry.land == landNum and not shouldParkEntry(entry, currentLand) then
-				restoreEntry(entry)
-				n += 1
-				if n % 8 == 0 then
-					RunService.Heartbeat:Wait()
-				end
-			end
-		end
 	end)
 end
 
@@ -506,9 +481,7 @@ local function hookLandFolder(landFolder: Instance, landNum: number)
 					end
 				end
 			elseif cullActive and currentLand > 0 then
-				-- Island/mesh just streamed: put this land's props back now, don't wait
-				-- on the 0.55s coalesce that used to leave a blank box in front of you.
-				restoreKeptLandNow(landNum)
+				-- Coalesce: a new island mesh should not dump every parked prop in one frame.
 				local now = os.clock()
 				if now - lastChildAddedApplyAt >= CHILD_ADDED_APPLY_DEBOUNCE then
 					lastChildAddedApplyAt = now
@@ -631,29 +604,18 @@ local function softPrewarmAhead()
 
 	local origin = (hrp :: BasePart).Position
 	local near = origin + dir * STREAM_AHEAD_STUDS
-	local far = origin + dir * STREAM_FAR_STUDS
-	local mobile = UserInputService.TouchEnabled
 	task.spawn(function()
 		local okNear, errNear = pcall(function()
-			player:RequestStreamAroundAsync(near, if mobile then 2 else 3)
+			player:RequestStreamAroundAsync(near, 1)
 		end)
 		if not okNear then
 			warn("[GrassCullController] RequestStreamAroundAsync failed:", errNear)
 		end
-		if mobile then
-			return
-		end
-		local okFar, errFar = pcall(function()
-			player:RequestStreamAroundAsync(far, 3)
-		end)
-		if not okFar then
-			warn("[GrassCullController] RequestStreamAroundAsync far failed:", errFar)
-		end
 	end)
 end
 
--- While standing, pull in the island you're looking at and the next land center
--- so Land N+1 isn't a blank box at ~150 studs. Does not raise StreamingMinRadius.
+-- While standing, trickle-stream the next land (one request). Big games keep
+-- the bubble filling in the background instead of dumping two stream calls at once.
 local function prewarmInFront()
 	if not Workspace.StreamingEnabled then
 		return
@@ -677,41 +639,31 @@ local function prewarmInFront()
 		return
 	end
 
-	local cam = Workspace.CurrentCamera
-	local look = Vector3.new(0, 0, 0)
-	if cam then
-		look = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+	local land = cullLandIndex(if currentLand > 0 then currentLand else playerLandNow())
+	local focus = LandResolver.getLandCenter(land + 1)
+	if not focus then
+		local cam = Workspace.CurrentCamera
+		local look = Vector3.new(0, 0, 0)
+		if cam then
+			look = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z)
+		end
+		if look.Magnitude < 0.05 then
+			look = Vector3.new((hrp :: BasePart).CFrame.LookVector.X, 0, (hrp :: BasePart).CFrame.LookVector.Z)
+		end
+		if look.Magnitude < 0.05 then
+			return
+		end
+		focus = (hrp :: BasePart).Position + look.Unit * LOOK_AHEAD_STUDS
 	end
-	if look.Magnitude < 0.05 then
-		look = Vector3.new((hrp :: BasePart).CFrame.LookVector.X, 0, (hrp :: BasePart).CFrame.LookVector.Z)
-	end
-	if look.Magnitude < 0.05 then
-		return
-	end
-	look = look.Unit
+
 	lastStreamAt = now
 	idleStreamBusy = true
-
-	local origin = (hrp :: BasePart).Position
-	local ahead = origin + look * LOOK_AHEAD_STUDS
-	local land = cullLandIndex(if currentLand > 0 then currentLand else playerLandNow())
-	local nextCenter = LandResolver.getLandCenter(land + 1)
-	local timeoutSec = 2
-
 	task.spawn(function()
-		local okAhead, errAhead = pcall(function()
-			player:RequestStreamAroundAsync(ahead, timeoutSec)
+		local ok, err = pcall(function()
+			player:RequestStreamAroundAsync(focus, 1)
 		end)
-		if not okAhead then
-			warn("[GrassCullController] look-ahead stream failed:", errAhead)
-		end
-		if nextCenter then
-			local okNext, errNext = pcall(function()
-				player:RequestStreamAroundAsync(nextCenter, timeoutSec)
-			end)
-			if not okNext then
-				warn("[GrassCullController] next-land stream failed:", errNext)
-			end
+		if not ok then
+			warn("[GrassCullController] next-land stream failed:", err)
 		end
 		idleStreamBusy = false
 	end)

@@ -60,10 +60,10 @@ task.defer(function()
 			local wsAny = Workspace :: any
 			if studio then
 				wsAny.StreamingMinRadius = 80
-				wsAny.StreamingTargetRadius = 220
+				wsAny.StreamingTargetRadius = 200
 			else
 				wsAny.StreamingMinRadius = 112
-				wsAny.StreamingTargetRadius = 380
+				wsAny.StreamingTargetRadius = 320
 			end
 		end
 	end)

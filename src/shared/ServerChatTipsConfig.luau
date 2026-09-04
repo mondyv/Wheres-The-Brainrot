@@ -21,18 +21,20 @@ end
 function M.buildMessages(): { string }
 	local discord = M.DISCORD_INVITE
 	return {
-		tip("ENJOYING THE GAME?", "rgb(110,200,255)", "Drop a like on the experience — it helps a ton!"),
-		tip("SUPPORT US", "rgb(255,110,140)", "Like the game & join the group for free rewards!"),
-		tip("DISCORD", "rgb(120,140,255)", string.format("Join our Discord community → %s", discord)),
-		tip("GROUP", "rgb(90,230,160)", "Join the group for updates, drops, and exclusive rewards!"),
-		tip("FAVORITE", "rgb(255,210,80)", "Favorite the game so you can find it again easily!"),
-		tip("FRIENDS", "rgb(255,170,90)", "Invite your friends — swing, steal, and grow together!"),
-		tip("TIP", "rgb(180,140,255)", "Upgrade brainrots on your stands for bigger $/s!"),
-		tip("TIP", "rgb(90,210,255)", "Rebirth to unlock more power, floors, and progression!"),
-		tip("CONTROLLER", "rgb(120,200,255)", "On controller: open inventory with Y / △, accept claims with A / ✕, decline with B / ○."),
-		tip("CONTROLLER", "rgb(160,180,255)", "Spider dodge: press A / ✕ when the ring turns green — no free-look needed!"),
+		tip("ENJOYING THE GAME?", "rgb(110,200,255)", "Like the experience — it really helps us keep updates coming!"),
+		tip("SUPPORT US", "rgb(255,110,140)", "Like the game and join the group for free rewards!"),
+		tip("DISCORD", "rgb(120,140,255)", string.format("Hang with the community → %s", discord)),
+		tip("GROUP", "rgb(90,230,160)", "Join the group for drops, news, and exclusive rewards!"),
+		tip("FAVORITE", "rgb(255,210,80)", "Favorite the game so you can jump back in anytime!"),
+		tip("FRIENDS", "rgb(255,170,90)", "Bring friends — more plots, more swings, more brainrots!"),
+		tip("TIP", "rgb(180,140,255)", "Upgrade the brainrots on your stands to stack bigger $/s!"),
+		tip("TIP", "rgb(90,210,255)", "Rebirth to unlock more floors, luck, and progression!"),
+		tip("TIP", "rgb(255,170,70)", "Working out? Hit the combo button — it stacks all the way to 50!"),
+		tip("TIP", "rgb(90,230,190)", "Search bushes for brainrots. Lucky blocks start dropping after the tutorial!"),
+		tip("TIP", "rgb(255,120,160)", "Claim a brainrot? Race home — a wave web chase is coming!"),
+		tip("CONTROLLER", "rgb(120,200,255)", "On controller: inventory with Y / △, accept claims with A / ✕, decline with B / ○."),
 		tip("COMMUNITY", "rgb(120,140,255)", string.format("Codes, news & hangouts in Discord → %s", discord)),
-		tip("THANKS", "rgb(255,200,120)", "Thanks for playing Where's the Brainrot — have fun out there!"),
+		tip("THANKS", "rgb(255,200,120)", "Thanks for playing Where's the Brainrot — go find those brainrots!"),
 	}
 end
 

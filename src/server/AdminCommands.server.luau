@@ -46,6 +46,9 @@ local function ensureRemoteFunction(name: string): RemoteFunction
 	if existing and existing:IsA("RemoteFunction") then
 		return existing
 	end
+	if existing then
+		existing:Destroy()
+	end
 	local rf = Instance.new("RemoteFunction")
 	rf.Name = name
 	rf.Parent = folder
@@ -85,10 +88,20 @@ Players.PlayerAdded:Connect(function(player)
 	task.defer(function()
 		syncAdminAccess(player)
 	end)
+	player.CharacterAdded:Connect(function()
+		task.defer(function()
+			syncAdminAccess(player)
+		end)
+	end)
 end)
 for _, plr in Players:GetPlayers() do
 	task.defer(function()
 		syncAdminAccess(plr)
+	end)
+	plr.CharacterAdded:Connect(function()
+		task.defer(function()
+			syncAdminAccess(plr)
+		end)
 	end)
 end
 

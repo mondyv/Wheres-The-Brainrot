@@ -111,6 +111,7 @@ task.defer(function()
 			"LandLocksController",
 			"RandomBrainrotController",
 			"SafeZoneLightingController",
+			"AdminCommandBar",
 		}
 		for _, name in coreMods do
 			local ok, err = pcall(initClientModule, name)
@@ -263,9 +264,6 @@ task.defer(function()
 			end,
 			function()
 				initClientModule("CustomBubbleChatController")
-			end,
-			function()
-				initClientModule("AdminCommandBar")
 			end,
 			function()
 				initClientModule("AdminPollController")

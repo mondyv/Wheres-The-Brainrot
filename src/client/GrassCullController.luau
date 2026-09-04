@@ -7,13 +7,10 @@
 	While swinging, keep the predicted destination too and trickle-restore so
 	trees are not empty boxes in the air.
 
-	From the safezone this treats you as Land 1 and streams Land 1–3 so the
-	second island is not an empty box. Respawn streams those lands again.
-
 	Studio play-solo skips this entirely (full place is already in RAM).
 	Grass park/restore is gated by StreamingSettings.CUSTOM_CULL_ENABLED (off).
-	Look-ahead streaming runs outside the safezone so later lands (50x+) load,
-	then stops in the lobby so the spawn forest is not pulled back in.
+	While swinging, stream a short look-ahead along velocity. Do not pull extra
+	lands just because you left the lobby or reached land 3.
 ]]
 
 local Players = game:GetService("Players")
@@ -42,12 +39,11 @@ local FEATURE_ENABLED = StreamingSettings.isCustomEnabled()
 local REPARENT_PER_YIELD = 2
 local SWING_REPARENT_PER_YIELD = 1
 local FAST_MOVE_SPEED = 36
-local LOOKAHEAD_DIST = 420
-local LOOKAHEAD_COOLDOWN = 0.28
-local LOOKAHEAD_TIMEOUT = 0.4
-local LOOKAHEAD_SIDE = 160
-local STREAM_QUEUE_CAP = 24
-local START_STREAM_MAX_LAND = 3
+local LOOKAHEAD_DIST = 320
+local LOOKAHEAD_COOLDOWN = 0.55
+local LOOKAHEAD_TIMEOUT = 0.35
+local LOOKAHEAD_SIDE = 80
+local STREAM_QUEUE_CAP = 8
 
 local player = Players.LocalPlayer
 local wired = false
@@ -62,11 +58,8 @@ local applyQueuedLand: number? = nil
 local lastChildAddedApplyAt = 0.0
 local CHILD_ADDED_APPLY_DEBOUNCE = 0.55
 local wasFastTraveling = false
-local startStreamAt = 0.0
 local streamBusy = false
 local streamQueue: { { focus: Vector3, timeout: number } } = {}
-local startStreamLand = 1
-local START_STREAM_COOLDOWN = 0.7
 local lastLookaheadAt = 0.0
 local lookAheadSide = 1
 local lastPredLand = 0
@@ -548,8 +541,8 @@ local function playerLandNow(): number
 	return land
 end
 
--- Standing outside the lobby, pull the current land plus one/two ahead.
--- Never from the safezone — that was slamming the spawn forest into RAM.
+-- Standing outside the lobby used to cycle RequestStreamAroundAsync on current
+-- + ahead land centers. That hitch is why leaving the safezone felt frozen.
 local function pumpStreamQueue()
 	if streamBusy then
 		return
@@ -586,37 +579,6 @@ local function requestStreamAt(focus: Vector3, timeoutSec: number)
 	pumpStreamQueue()
 end
 
-local function prewarmStartLands()
-	if not Workspace.StreamingEnabled then
-		return
-	end
-	local char = player.Character
-	if not char or SafezoneUtil.isCharacterInSafezone(char) then
-		return
-	end
-	if isFastTraveling() then
-		return
-	end
-	local land = playerLandNow()
-	if land < 1 then
-		return
-	end
-	local now = os.clock()
-	if #streamQueue > 6 or now - startStreamAt < START_STREAM_COOLDOWN then
-		return
-	end
-	local ahead = if land >= 3 then 2 else 1
-	local offset = startStreamLand % (ahead + 1)
-	startStreamLand += 1
-	local want = math.clamp(land + offset, 1, 10)
-	local focus = LandResolver.getLandCenter(want)
-	if not focus then
-		return
-	end
-	startStreamAt = now
-	requestStreamAt(focus, if land >= 3 then 1.25 else 0.8)
-end
-
 local function softPrewarmAlongVelocity()
 	if not Workspace.StreamingEnabled then
 		return
@@ -641,15 +603,13 @@ local function softPrewarmAlongVelocity()
 	if horiz.Magnitude < 12 then
 		return
 	end
-	local land = playerLandNow()
-	local dist = if land >= 3 then LOOKAHEAD_DIST * 2.2 else LOOKAHEAD_DIST
 	local focus = hrp.Position
-		+ horiz.Unit * dist
+		+ horiz.Unit * LOOKAHEAD_DIST
 		+ hrp.CFrame.RightVector * (LOOKAHEAD_SIDE * lookAheadSide)
 		+ Vector3.new(0, math.clamp(vel.Y, -20, 40), 0)
 	lookAheadSide *= -1
 	lastLookaheadAt = now
-	requestStreamAt(focus, if land >= 3 then 0.7 else LOOKAHEAD_TIMEOUT)
+	requestStreamAt(focus, LOOKAHEAD_TIMEOUT)
 end
 
 local function prewarmPublishedTrees()
@@ -757,7 +717,6 @@ local function onHeartbeat(dt: number)
 	end
 	accum = 0
 
-	prewarmStartLands()
 	if not FEATURE_ENABLED or not cullActive then
 		return
 	end

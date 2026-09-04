@@ -25,7 +25,7 @@ local AUTOCOMPLETE_ACTION_NAME = "AdminCommandBarAutocomplete"
 local COMMAND_REMOTE_NAME = "AdminCommand"
 local CATALOG_REMOTE_NAME = "AdminAutocomplete"
 local ADMIN_ALLOWED_ATTR = "AdminPanelAllowed"
-local BIND_PRIORITY = Enum.ContextActionPriority.High.Value + 1
+local BIND_PRIORITY = Enum.ContextActionPriority.High.Value + 50
 local AUTOCOMPLETE_PRIORITY = 10000
 
 local TOGGLE_KEYS = {
@@ -275,7 +275,16 @@ local refreshSuggestions: () -> ()
 
 local function getRemote(name: string): RemoteFunction?
 	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-	local rf = remotes and remotes:FindFirstChild(name)
+	if not remotes then
+		remotes = ReplicatedStorage:WaitForChild("Remotes", 20)
+	end
+	if not remotes then
+		return nil
+	end
+	local rf = remotes:FindFirstChild(name)
+	if not (rf and rf:IsA("RemoteFunction")) then
+		rf = remotes:WaitForChild(name, 15)
+	end
 	if rf and rf:IsA("RemoteFunction") then
 		return rf
 	end
@@ -2042,9 +2051,18 @@ function M.init()
 		if input.UserInputType ~= Enum.UserInputType.Keyboard then
 			return
 		end
-		if isToggleKey(input.KeyCode) and not gameProcessed then
+		-- Chat / CoreGui often marks ; and F5 as processed. Still open the bar.
+		if isToggleKey(input.KeyCode) then
+			if isAdminInputFocused() then
+				return
+			end
 			onToggleAdmin()
-		elseif input.KeyCode == Enum.KeyCode.Escape and gui and gui.Enabled then
+			return
+		end
+		if gameProcessed then
+			return
+		end
+		if input.KeyCode == Enum.KeyCode.Escape and gui and gui.Enabled then
 			setOpen(false)
 		elseif isAdminInputFocused() and gui and gui.Enabled then
 			if input.KeyCode == Enum.KeyCode.Tab then

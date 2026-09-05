@@ -83,7 +83,7 @@ local function onCharacter(player: Player, character: Model)
 		task.spawn(function()
 			loaded = PlayerDataService.waitUntilLoaded(player) == true
 		end)
-		local loadDeadline = os.clock() + 60
+		local loadDeadline = os.clock() + 8
 		while os.clock() < loadDeadline do
 			if not stillThisCharacter(player, character, hrp) then
 				return
@@ -97,7 +97,7 @@ local function onCharacter(player: Player, character: Model)
 			return
 		end
 
-		local deadline = os.clock() + 45
+		local deadline = os.clock() + 12
 		local firstTry = true
 		while stillThisCharacter(player, character, hrp) and os.clock() < deadline do
 			if shouldUseTutorialSpawn(player) then
@@ -122,6 +122,10 @@ local function onCharacter(player: Player, character: Model)
 			end
 		else
 			sendToHome(player, character, 8)
+		end
+		if stillThisCharacter(player, character, hrp) and hrp:IsA("BasePart") and (hrp :: BasePart).Anchored then
+			PlotSpawnUtil.releaseCharacterHold(character)
+			warn("[PlotPlayerSpawn] spawn pad never ready — released movement hold")
 		end
 	end)
 end

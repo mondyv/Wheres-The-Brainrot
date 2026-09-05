@@ -12,6 +12,7 @@ local GuiService = game:GetService("GuiService")
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local M = {}
 
@@ -78,6 +79,18 @@ function M.recoverLocomotion()
 	end
 	if hum.JumpHeight <= 0 then
 		hum.JumpHeight = 7.2
+	end
+
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") and hrp.Anchored then
+		local homeAt = player:GetAttribute("PlotHomeTeleportAt")
+		local now = Workspace:GetServerTimeNow()
+		if typeof(homeAt) ~= "number" or (now - homeAt) > 2 then
+			hrp.Anchored = false
+		end
+	end
+	if hum.WalkSpeed <= 0 then
+		hum.WalkSpeed = 16
 	end
 end
 

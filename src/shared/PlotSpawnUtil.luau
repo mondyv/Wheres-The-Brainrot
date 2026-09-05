@@ -639,6 +639,36 @@ function PlotSpawnUtil.teleportCharacterToCFrame(character: Model, spawnCf: CFra
 	return true
 end
 
+function PlotSpawnUtil.releaseCharacterHold(character: Model)
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if hrp and hrp:IsA("BasePart") then
+		hrp.Anchored = false
+	end
+	local hum = character:FindFirstChildOfClass("Humanoid")
+	if hum then
+		hum.PlatformStand = false
+		hum.AutoRotate = true
+		if hum.WalkSpeed <= 0 then
+			hum.WalkSpeed = 16
+		end
+	end
+end
+
+local function lobbyFallbackCFrame(): CFrame?
+	local map = Workspace:FindFirstChild("Map")
+	local sab = map and map:FindFirstChild("Spawn And Bases")
+	if not sab then
+		return nil
+	end
+	for _, name in { "SafeZoneHitbox", "SafezoneHitbox" } do
+		local hit = sab:FindFirstChild(name)
+		if hit and hit:IsA("BasePart") then
+			return CFrame.new(hit.Position + Vector3.new(0, 8, 0))
+		end
+	end
+	return nil
+end
+
 local function cframeFromTutorialHitbox(hitbox: Instance): CFrame?
 	local part: BasePart? = nil
 	if hitbox:IsA("BasePart") then
@@ -741,6 +771,9 @@ function PlotSpawnUtil.teleportPlayerHome(player: Player, character: Model, time
 	hrp.AssemblyAngularVelocity = Vector3.zero
 
 	local timeout = if typeof(timeoutSec) == "number" then timeoutSec else 60
+	if typeof(player:GetAttribute("AssignedPlotSlot")) ~= "number" then
+		timeout = math.min(timeout, 1.25)
+	end
 	local deadline = os.clock() + math.max(0.5, timeout)
 	local spawnCf: CFrame? = PlotSpawnUtil.getAssignedPlotSpawnCFrame(player) or lastHomeCfByUserId[player.UserId]
 	if spawnCf then
@@ -759,13 +792,20 @@ function PlotSpawnUtil.teleportPlayerHome(player: Player, character: Model, time
 	end
 
 	if not spawnCf then
-		-- Stay frozen off the default baseplate until the real pad exists.
+		-- Studio often has no full Base pad (Rojo / missing template). Never leave HRP
+		-- Anchored — that is "I can't move in Studio but live Roblox works."
+		local fallback = lastHomeCfByUserId[player.UserId] or lobbyFallbackCFrame()
+		if fallback then
+			PlotSpawnUtil.teleportCharacterToCFrame(character, fallback)
+			return true
+		end
+		PlotSpawnUtil.releaseCharacterHold(character)
 		warn(
 			"[PlotSpawnUtil] teleportPlayerHome: no Base Spawn pad yet for",
 			player.Name,
 			"(AssignedPlotSlot=",
 			player:GetAttribute("AssignedPlotSlot"),
-			")"
+			") — unanchored so they can walk"
 		)
 		return false
 	end

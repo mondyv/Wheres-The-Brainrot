@@ -1380,10 +1380,15 @@ function ReviveController.init()
 		local hum = getHumanoid()
 		if hum then
 			hum.CameraOffset = Vector3.zero
-			if hum.WalkSpeed < 8 then
-				local base = hum:GetAttribute("BrainrotBaseWalkSpeed")
-				hum.WalkSpeed = if typeof(base) == "number" and base > 0 then base else 16
+			local base = hum:GetAttribute("BrainrotBaseWalkSpeed")
+			if typeof(base) ~= "number" or base <= 0 then
+				base = 16
 			end
+			local slowOn = player:GetAttribute("SlowWalkEnabled") == true
+			hum.WalkSpeed = (base :: number) * (if slowOn then 0.8 else 1.15)
+			hum.UseJumpPower = true
+			hum.JumpPower = 50
+			hum.JumpHeight = 7.2
 		end
 	end)
 

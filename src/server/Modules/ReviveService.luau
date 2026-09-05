@@ -28,6 +28,25 @@ type PendingRevive = {
 }
 
 local pendingByPlayer: { [Player]: PendingRevive } = {}
+
+local FAST_WALK_MULT = 1.15
+local SLOW_WALK_MULT = 0.8
+
+local function restoreHumanoidLocomotion(player: Player, hum: Humanoid)
+	local base = hum:GetAttribute("BrainrotBaseWalkSpeed")
+	if typeof(base) ~= "number" or base <= 0 then
+		base = 16
+	end
+	local slowOn = player:GetAttribute("SlowWalkEnabled") == true
+	hum.WalkSpeed = (base :: number) * (if slowOn then SLOW_WALK_MULT else FAST_WALK_MULT)
+	hum.UseJumpPower = true
+	hum.JumpPower = 50
+	hum.JumpHeight = 7.2
+	hum.PlatformStand = false
+	hum.AutoRotate = true
+	hum.Sit = false
+end
+
 local lastGoodLand: { [Player]: number } = {}
 local lastGoodPos: { [Player]: Vector3 } = {}
 local landTrackThreads: { [Player]: thread } = {}
@@ -416,11 +435,21 @@ local function softTeleportAlive(player: Player, tutorialHitbox: boolean)
 		hrp.AssemblyAngularVelocity = Vector3.zero
 	end
 	if hum then
-		pcall(function()
-			hum.PlatformStand = false
-			hum.AutoRotate = true
-			hum.Sit = false
-		end)
+		if waveDeath then
+			local ok, err = pcall(function()
+				hum.PlatformStand = false
+				hum.AutoRotate = true
+				hum.Sit = false
+			end)
+			if not ok then
+				warn("[ReviveService] restore stance error:", err)
+			end
+		else
+			local ok, err = pcall(restoreHumanoidLocomotion, player, hum)
+			if not ok then
+				warn("[ReviveService] restore locomotion error:", err)
+			end
+		end
 	end
 	if waveDeath then
 		task.delay(2.5, function()

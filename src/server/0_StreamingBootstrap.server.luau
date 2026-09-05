@@ -3,9 +3,7 @@
 	Publishes SafezoneBounds so lobby inventory still works if the hitbox
 	streams out. Unreplicates a duplicate Brainrots catalog.
 	Pins spawn vines so the first swing has latch targets.
-	Huge trees stay Atomic (whole model in/out) — not Persistent. Persistent
-	on a dense forest clogged the join queue so trees trickled in even with a
-	large StreamingMinRadius. Studio owns streaming radii.
+	Does not stream, persist, or Atomic Huge trees — Studio radii own that.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -66,7 +64,6 @@ end
 
 -- LandStreamCenters always publish so later islands can stream before they exist.
 -- Folders cannot be Persistent. Pin nearby vines (swing targets) only.
--- Huge trees use Atomic so each tree appears as one model inside the stream bubble.
 local PERSIST_NEAR_SPAWN_KEYS: { [string]: boolean } = {
 	vine = true,
 }
@@ -81,9 +78,9 @@ local function persistModel(model: Model)
 	end)
 end
 
-local function atomicModel(model: Model)
+local function defaultModel(model: Model)
 	pcall(function()
-		model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
+		model.ModelStreamingMode = Enum.ModelStreamingMode.Default
 	end)
 end
 
@@ -109,8 +106,7 @@ local function persistLoosePart(part: BasePart)
 	part.Parent = wrap
 end
 
--- Pin each tree/vine in place. Never Destroy the parent. Never Persistent the
--- parent that holds every tree (clients dropped that giant model).
+-- Pin nearby vines in place. Never Destroy the parent folder.
 local function instanceFocus(inst: Instance): Vector3?
 	if inst:IsA("BasePart") then
 		return inst.Position
@@ -130,7 +126,7 @@ local function instanceFocus(inst: Instance): Vector3?
 	return nil
 end
 
-local SPAWN_TREE_RADIUS = 320
+local SPAWN_VINE_RADIUS = 320
 
 local function homePosition(map: Instance): Vector3?
 	local sab = map:FindFirstChild("Spawn And Bases")
@@ -163,12 +159,12 @@ local function persistNearbyVines(container: Instance, home: Vector3?)
 	local function apply(child: Instance)
 		if child:IsA("Model") then
 			local pos = instanceFocus(child)
-			if not pos or (pos - home).Magnitude > SPAWN_TREE_RADIUS then
+			if not pos or (pos - home).Magnitude > SPAWN_VINE_RADIUS then
 				return
 			end
 			persistModel(child)
 		elseif child:IsA("BasePart") then
-			if (child.Position - home).Magnitude > SPAWN_TREE_RADIUS then
+			if (child.Position - home).Magnitude > SPAWN_VINE_RADIUS then
 				return
 			end
 			persistLoosePart(child)
@@ -180,29 +176,39 @@ local function persistNearbyVines(container: Instance, home: Vector3?)
 	container.ChildAdded:Connect(apply)
 end
 
--- Atomic per tree — never Atomic/Persistent the Huge trees parent (that stalled join).
-local function atomicHugeTrees(container: Instance)
-	for _, child in container:GetChildren() do
-		if child:IsA("Model") and child.Name == "_SceneryPersist" then
-			for _, inner in child:GetChildren() do
-				inner.Parent = container
+-- Undo Persistent/Atomic leftovers from older builds so StreamingMinRadius can fill trees.
+local function releaseHugeTrees(container: Instance)
+	local wraps: { Model } = {}
+	for _, desc in container:GetDescendants() do
+		if desc:IsA("Model") and desc.Name == "_SceneryPersist" then
+			table.insert(wraps, desc)
+		end
+	end
+	for _, wrap in wraps do
+		local parent = wrap.Parent
+		if parent then
+			for _, inner in wrap:GetChildren() do
+				inner.Parent = parent
 			end
-			child:Destroy()
+		end
+		wrap:Destroy()
+	end
+	if container:IsA("Model") then
+		defaultModel(container)
+	end
+	for _, desc in container:GetDescendants() do
+		if desc:IsA("Model") then
+			defaultModel(desc)
 		end
 	end
-	local function apply(child: Instance)
-		if child:IsA("Model") then
-			atomicModel(child)
-		end
-	end
-	for _, child in container:GetChildren() do
-		apply(child)
-	end
-	container.ChildAdded:Connect(apply)
 end
 
 local function hookJoinSwingScenery(map: Instance)
 	local home = homePosition(map)
+	local leftoverFocuses = ReplicatedStorage:FindFirstChild("TreeStreamFocuses")
+	if leftoverFocuses then
+		leftoverFocuses:Destroy()
+	end
 	local function apply(child: Instance)
 		local key = persistKey(child.Name)
 		if PERSIST_NEAR_SPAWN_KEYS[key] then
@@ -210,7 +216,7 @@ local function hookJoinSwingScenery(map: Instance)
 			return
 		end
 		if key == "hugetrees" then
-			atomicHugeTrees(child)
+			releaseHugeTrees(child)
 		end
 	end
 	for _, child in map:GetChildren() do

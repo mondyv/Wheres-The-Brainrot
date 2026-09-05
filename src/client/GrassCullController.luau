@@ -683,8 +683,7 @@ function M.setLowGraphics(enabled: boolean)
 end
 
 function M.init()
-	-- Cull stays off. Do not RequestStreamAroundAsync for trees on join —
-	-- that stole stream focus from the player and made a 512 min bubble fill slowly.
+	-- Cull stays off. Trees are not streamed or parked from here.
 	if wired then
 		return
 	end

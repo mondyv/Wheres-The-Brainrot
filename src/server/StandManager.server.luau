@@ -441,6 +441,7 @@ type StandState = {
 	sourcePath: string,
 	-- Cached so we don't have to re-search inventory; if owner re-enters world, level is still on stand attrs.
 	displayModel: Model?,
+	displayRestCf: CFrame?,
 	idleTrack: AnimationTrack?,
 	accumulated: number,
 	lastTickAt: number,
@@ -682,6 +683,24 @@ local function findFrontReferencePart(state: StandState): BasePart?
 	return nil
 end
 
+-- Facing toward the cash pad / stand front. Never take this from GetPivot() while Idle is playing.
+local function standFacingRotation(state: StandState): CFrame
+	local frontPart = findFrontReferencePart(state)
+	local baseRot: CFrame
+	if frontPart then
+		local lookTarget = Vector3.new(frontPart.Position.X, state.spawnPart.Position.Y, frontPart.Position.Z)
+		local from = state.spawnPart.Position
+		if (lookTarget - from).Magnitude < 0.05 then
+			baseRot = state.spawnPart.CFrame.Rotation
+		else
+			baseRot = CFrame.lookAt(from, lookTarget).Rotation
+		end
+	else
+		baseRot = state.spawnPart.CFrame.Rotation
+	end
+	return baseRot * CFrame.Angles(STAND_PITCH_OFFSET, STAND_YAW_OFFSET, STAND_ROLL_OFFSET)
+end
+
 local function refreshHeader(state: StandState)
 	if not state.displayModel or not state.displayModel.Parent then
 		return
@@ -903,6 +922,7 @@ end
 -- ── Stand placement / removal ────────────────────────────────────────────────
 
 local function clearDisplayModel(state: StandState, hopOff: boolean?)
+	state.displayRestCf = nil
 	if hopOff == true then
 		cancelHop(state)
 		local hopping = state.displayModel
@@ -1033,13 +1053,29 @@ local function repositionDisplayOnSpawn(state: StandState)
 	if not clone or not clone.Parent or not state.spawnPart then
 		return
 	end
+	-- Snap rotation to the stand every upgrade. GetPivot() during Idle bakes a turn
+	-- into the model, so high-level brainrots end up facing sideways.
+	local rot = standFacingRotation(state)
+	local rest = state.displayRestCf
+	local x = if rest then rest.Position.X else state.spawnPart.Position.X
+	local z = if rest then rest.Position.Z else state.spawnPart.Position.Z
+	local provisional = CFrame.new(x, state.spawnPart.Position.Y, z) * rot
+	if clone.PrimaryPart then
+		clone:PivotTo(provisional)
+	else
+		clone:MoveTo(provisional.Position)
+	end
 	local rotatedCenter, rotatedSize = clone:GetBoundingBox()
 	local minY = rotatedCenter.Y - rotatedSize.Y * 0.5
 	local desiredMinY = state.spawnPart.Position.Y + state.spawnPart.Size.Y * 0.5 + 0.05
 	local yShift = desiredMinY - minY
-	if math.abs(yShift) > 0.005 then
-		clone:PivotTo(clone:GetPivot() + Vector3.new(0, yShift, 0))
+	local pivotCf = provisional + Vector3.new(0, yShift, 0)
+	if clone.PrimaryPart then
+		clone:PivotTo(pivotCf)
+	else
+		clone:MoveTo(pivotCf.Position)
 	end
+	state.displayRestCf = pivotCf
 end
 
 -- Place the configured brainrot model on the Spawn part with header billboard.
@@ -1082,27 +1118,11 @@ local function rebuildDisplay(state: StandState, hopIn: boolean?)
 
 	BrainrotCarryVisual.applyScaleForLevel(clone, state.level)
 
-	-- Build orientation. Prefer auto-facing toward the cash pad / front of the stand so the brainrot
-	-- always looks at the player. Fall back to the Spawn part's own rotation if no reference exists.
-	local frontPart = findFrontReferencePart(state)
-	local baseRot: CFrame
-	if frontPart then
-		local lookTarget = Vector3.new(frontPart.Position.X, state.spawnPart.Position.Y, frontPart.Position.Z)
-		local from = state.spawnPart.Position
-		if (lookTarget - from).Magnitude < 0.05 then
-			baseRot = state.spawnPart.CFrame.Rotation
-		else
-			baseRot = CFrame.lookAt(from, lookTarget).Rotation
-		end
-	else
-		baseRot = state.spawnPart.CFrame.Rotation
-	end
+	local baseRot = standFacingRotation(state)
 
 	-- Pivot once with a provisional Y, then re-measure the post-rotation bounding box and lift so the
 	-- model rests flush on the spawn pad rather than sinking or floating.
-	local provisionalCf = CFrame.new(state.spawnPart.Position)
-		* baseRot
-		* CFrame.Angles(STAND_PITCH_OFFSET, STAND_YAW_OFFSET, STAND_ROLL_OFFSET)
+	local provisionalCf = CFrame.new(state.spawnPart.Position) * baseRot
 	if clone.PrimaryPart then
 		clone:PivotTo(provisionalCf)
 	else
@@ -1119,6 +1139,7 @@ local function rebuildDisplay(state: StandState, hopIn: boolean?)
 	else
 		clone:MoveTo(pivotCf.Position)
 	end
+	state.displayRestCf = pivotCf
 
 	setAllPartsAnchored(clone, true)
 	for _, d in ipairs(clone:GetDescendants()) do
@@ -2186,6 +2207,7 @@ local function initStand(stand: Model)
 		baseIncome = 0,
 		sourcePath = "",
 		displayModel = nil,
+		displayRestCf = nil,
 		idleTrack = nil,
 		hopCleanup = nil,
 		accumulated = 0,

@@ -61,7 +61,7 @@ local player = Players.LocalPlayer
 local _MONEY_VFX_HOLD_SEC = 0.14
 local CHILD_WAIT_TIMEOUT = 8 -- seconds; stand children may not have replicated when the tag arrives
 local BRAINROT_HOP_HEIGHT = 1.35
-local BRAINROT_HOP_COOLDOWN = 0.08
+local BRAINROT_HOP_DURATION = 0.32
 
 local M = {}
 
@@ -503,6 +503,10 @@ type StandView = {
 local views: { [Model]: StandView } = {}
 local upgradeScaleTweens: { [Instance]: Tween } = {}
 local lastBrainrotHopAt: { [Model]: number } = {}
+local upgradeHopRestCf: { [Model]: CFrame } = {}
+local upgradeHopTweens: { [Model]: Tween } = {}
+local upgradeHopConns: { [Model]: RBXScriptConnection } = {}
+local upgradeHopProxies: { [Model]: NumberValue } = {}
 local lastUpgradeRequestAt: { [Model]: number } = {}
 local affordVisualByView: { [StandView]: string } = {}
 local cashAffordToken = 0
@@ -2131,11 +2135,43 @@ local function playStandUpgradeVfx(stand: Model)
 	OtherVfxController.playBrainrotUpgrade(host)
 end
 
-local function hopStandBrainrot(stand: Model)
-	local now = os.clock()
-	if (lastBrainrotHopAt[stand] or 0) + BRAINROT_HOP_COOLDOWN > now then
-		return
+local function flattenUprightCf(cf: CFrame): CFrame
+	local pos = cf.Position
+	local look = Vector3.new(cf.LookVector.X, 0, cf.LookVector.Z)
+	if look.Magnitude < 0.05 then
+		return CFrame.new(pos)
 	end
+	return CFrame.lookAt(pos, pos + look.Unit)
+end
+
+local function stopUpgradeHop(stand: Model, restore: boolean)
+	local tw = upgradeHopTweens[stand]
+	if tw then
+		tw:Cancel()
+		upgradeHopTweens[stand] = nil
+	end
+	local conn = upgradeHopConns[stand]
+	if conn then
+		conn:Disconnect()
+		upgradeHopConns[stand] = nil
+	end
+	local proxy = upgradeHopProxies[stand]
+	if proxy then
+		proxy:Destroy()
+		upgradeHopProxies[stand] = nil
+	end
+	if restore then
+		local model = findStandDisplayModel(stand)
+		local rest = upgradeHopRestCf[stand]
+		if model and model.Parent and rest then
+			pcall(function()
+				model:PivotTo(rest)
+			end)
+		end
+	end
+end
+
+local function hopStandBrainrot(stand: Model)
 	local model = findStandDisplayModel(stand)
 	if not model or not model.Parent then
 		return
@@ -2143,10 +2179,21 @@ local function hopStandBrainrot(stand: Model)
 	if displayHopConns[model] then
 		return
 	end
-	lastBrainrotHopAt[stand] = now
-	local baseCf = model:GetPivot()
+	-- Finish any in-flight hop on the stored rest — never snapshot mid-spin as the new facing.
+	stopUpgradeHop(stand, true)
+	local rest = upgradeHopRestCf[stand]
+	if not rest then
+		rest = flattenUprightCf(model:GetPivot())
+		upgradeHopRestCf[stand] = rest
+	else
+		local cur = model:GetPivot()
+		rest = CFrame.new(rest.Position.X, cur.Position.Y, rest.Position.Z) * (rest - rest.Position)
+		upgradeHopRestCf[stand] = rest
+	end
+	lastBrainrotHopAt[stand] = os.clock()
 	local hopProxy = Instance.new("NumberValue")
 	hopProxy.Value = 0
+	upgradeHopProxies[stand] = hopProxy
 	local hopConn = hopProxy:GetPropertyChangedSignal("Value"):Connect(function()
 		if not model.Parent then
 			return
@@ -2154,18 +2201,26 @@ local function hopStandBrainrot(stand: Model)
 		local t = hopProxy.Value
 		local y = if t < 0.38 then (t / 0.38) * BRAINROT_HOP_HEIGHT else ((1 - t) / 0.62) * BRAINROT_HOP_HEIGHT
 		local yaw = math.sin(t * math.pi) * 0.28
-		model:PivotTo(baseCf * CFrame.Angles(0, yaw, 0) + Vector3.new(0, y, 0))
+		model:PivotTo(rest * CFrame.Angles(0, yaw, 0) + Vector3.new(0, y, 0))
 	end)
+	upgradeHopConns[stand] = hopConn
 	local hopTween = TweenService:Create(
 		hopProxy,
-		TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		TweenInfo.new(BRAINROT_HOP_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
 		{ Value = 1 }
 	)
+	upgradeHopTweens[stand] = hopTween
 	hopTween.Completed:Connect(function()
+		if upgradeHopTweens[stand] ~= hopTween then
+			return
+		end
+		upgradeHopTweens[stand] = nil
+		upgradeHopConns[stand] = nil
+		upgradeHopProxies[stand] = nil
 		hopConn:Disconnect()
 		hopProxy:Destroy()
 		if model.Parent then
-			model:PivotTo(baseCf)
+			model:PivotTo(rest)
 		end
 	end)
 	hopTween:Play()
@@ -2305,7 +2360,15 @@ local function hookStandLevelPulse(stand: Model, view: StandView)
 		pulseUpgradeButton(view)
 		affordVisualByView[view] = nil
 		refreshStandUpgradeAfford(view)
-		hopStandBrainrot(stand)
+		-- Restore facing before recapture — nilling rest while a hop is mid-spin
+		-- used to freeze that yaw as the new rest.
+		stopUpgradeHop(stand, true)
+		upgradeHopRestCf[stand] = nil
+		task.defer(function()
+			if stand.Parent then
+				hopStandBrainrot(stand)
+			end
+		end)
 		playStandUpgradeVfx(stand)
 	end)
 end
@@ -2331,6 +2394,8 @@ local function hookStandUpgradeAfford(stand: Model, view: StandView)
 		conns,
 		stand:GetAttributeChangedSignal("BrainrotName"):Connect(function()
 			affordVisualByView[view] = nil
+			upgradeHopRestCf[stand] = nil
+			stopUpgradeHop(stand, false)
 			refreshStandUpgradeAfford(view)
 		end)
 	)
@@ -2631,6 +2696,8 @@ function M.init()
 			standPromptCache[standModel] = nil
 			views[standModel] = nil
 			lastBrainrotHopAt[standModel] = nil
+			upgradeHopRestCf[standModel] = nil
+			stopUpgradeHop(standModel, false)
 			lastUpgradeRequestAt[standModel] = nil
 			if view then
 				lastCashCollectVfxAt[view] = nil

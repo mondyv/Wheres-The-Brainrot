@@ -2,8 +2,10 @@
 --[[
 	Publishes SafezoneBounds so lobby inventory still works if the hitbox
 	streams out. Unreplicates a duplicate Brainrots catalog.
-	Pins spawn vines + nearby Huge tree models so the first swing is not empty.
-	Does not write Workspace streaming radii — Studio owns those.
+	Pins spawn vines so the first swing has latch targets.
+	Huge trees stay Atomic (whole model in/out) — not Persistent. Persistent
+	on a dense forest clogged the join queue so trees trickled in even with a
+	large StreamingMinRadius. Studio owns streaming radii.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -63,13 +65,10 @@ local function publishLandCenters()
 end
 
 -- LandStreamCenters always publish so later islands can stream before they exist.
--- On join, pin spawn vines + nearby Huge tree models so the first swing is not empty air.
-
--- Folders cannot be Persistent. Pin vines (swing targets) and nearby Huge trees
--- (safezone forest). Far trees stay Default so they do not clog the join queue.
+-- Folders cannot be Persistent. Pin nearby vines (swing targets) only.
+-- Huge trees use Atomic so each tree appears as one model inside the stream bubble.
 local PERSIST_NEAR_SPAWN_KEYS: { [string]: boolean } = {
 	vine = true,
-	hugetrees = true,
 }
 
 local function persistKey(name: string): string
@@ -79,6 +78,12 @@ end
 local function persistModel(model: Model)
 	pcall(function()
 		model.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
+	end)
+end
+
+local function atomicModel(model: Model)
+	pcall(function()
+		model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
 	end)
 end
 
@@ -127,39 +132,6 @@ end
 
 local SPAWN_TREE_RADIUS = 320
 
-local function publishTreeFocuses(hugeTrees: Instance, home: Vector3?)
-	local points: { Vector3 } = {}
-	for _, child in hugeTrees:GetChildren() do
-		local pos = instanceFocus(child)
-		if pos and (not home or (pos - home).Magnitude <= SPAWN_TREE_RADIUS) then
-			table.insert(points, pos)
-		end
-	end
-	if #points == 0 then
-		return
-	end
-	local folder = ReplicatedStorage:FindFirstChild("TreeStreamFocuses")
-	if not folder then
-		folder = Instance.new("Folder")
-		folder.Name = "TreeStreamFocuses"
-	end
-	-- Nearby spawn trees only — clients RequestStreamAroundAsync these on join.
-	local want = math.min(16, #points)
-	local step = math.max(1, math.floor(#points / want))
-	local n = 0
-	for i = 1, #points, step do
-		n += 1
-		folder:SetAttribute("P" .. tostring(n), points[i])
-		if n >= want then
-			break
-		end
-	end
-	folder:SetAttribute("Count", n)
-	if folder.Parent ~= ReplicatedStorage then
-		folder.Parent = ReplicatedStorage
-	end
-end
-
 local function homePosition(map: Instance): Vector3?
 	local sab = map:FindFirstChild("Spawn And Bases")
 	if sab then
@@ -184,7 +156,7 @@ local function homePosition(map: Instance): Vector3?
 	return nil
 end
 
-local function persistNearbyTrees(container: Instance, home: Vector3?)
+local function persistNearbyVines(container: Instance, home: Vector3?)
 	if not home then
 		return
 	end
@@ -208,16 +180,37 @@ local function persistNearbyTrees(container: Instance, home: Vector3?)
 	container.ChildAdded:Connect(apply)
 end
 
+-- Atomic per tree — never Atomic/Persistent the Huge trees parent (that stalled join).
+local function atomicHugeTrees(container: Instance)
+	for _, child in container:GetChildren() do
+		if child:IsA("Model") and child.Name == "_SceneryPersist" then
+			for _, inner in child:GetChildren() do
+				inner.Parent = container
+			end
+			child:Destroy()
+		end
+	end
+	local function apply(child: Instance)
+		if child:IsA("Model") then
+			atomicModel(child)
+		end
+	end
+	for _, child in container:GetChildren() do
+		apply(child)
+	end
+	container.ChildAdded:Connect(apply)
+end
+
 local function hookJoinSwingScenery(map: Instance)
 	local home = homePosition(map)
 	local function apply(child: Instance)
 		local key = persistKey(child.Name)
-		if not PERSIST_NEAR_SPAWN_KEYS[key] then
+		if PERSIST_NEAR_SPAWN_KEYS[key] then
+			persistNearbyVines(child, home)
 			return
 		end
-		persistNearbyTrees(child, home)
 		if key == "hugetrees" then
-			publishTreeFocuses(child, home)
+			atomicHugeTrees(child)
 		end
 	end
 	for _, child in map:GetChildren() do

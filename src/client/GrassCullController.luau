@@ -16,7 +16,6 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ContentProvider = game:GetService("ContentProvider")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
@@ -612,100 +611,6 @@ local function softPrewarmAlongVelocity()
 	requestStreamAt(focus, LOOKAHEAD_TIMEOUT)
 end
 
-local function prewarmPublishedTrees()
-	if not Workspace.StreamingEnabled then
-		return
-	end
-	task.spawn(function()
-		local char = player.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		if not (hrp and hrp:IsA("BasePart")) then
-			local arrived: Model? = player.Character
-			if not arrived then
-				local added = player.CharacterAdded:Connect(function(c)
-					arrived = c
-				end)
-				local deadline = os.clock() + 8
-				while not arrived and player.Parent and os.clock() < deadline do
-					task.wait(0.1)
-				end
-				added:Disconnect()
-			end
-			hrp = arrived and (arrived:FindFirstChild("HumanoidRootPart") or arrived:WaitForChild("HumanoidRootPart", 8))
-		end
-		if hrp and hrp:IsA("BasePart") then
-			requestStreamAt((hrp :: BasePart).Position, 1.25)
-		end
-		local folder = ReplicatedStorage:FindFirstChild("TreeStreamFocuses")
-			or ReplicatedStorage:WaitForChild("TreeStreamFocuses", 12)
-		if not folder or not player.Parent then
-			return
-		end
-		local count = folder:GetAttribute("Count")
-		if typeof(count) ~= "number" or count < 1 then
-			return
-		end
-		local origin = if hrp and hrp:IsA("BasePart") then (hrp :: BasePart).Position else nil
-		local scored: { { focus: Vector3, dist: number } } = {}
-		for i = 1, math.floor(count) do
-			local focus = folder:GetAttribute("P" .. tostring(i))
-			if typeof(focus) == "Vector3" then
-				local dist = if origin then (focus - origin).Magnitude else i
-				table.insert(scored, { focus = focus, dist = dist })
-			end
-		end
-		table.sort(scored, function(a, b)
-			return a.dist < b.dist
-		end)
-		for i = 1, math.min(8, #scored) do
-			if not player.Parent then
-				return
-			end
-			requestStreamAt(scored[i].focus, 0.7)
-		end
-	end)
-end
-
-local function preloadVisibleTrees()
-	task.spawn(function()
-		local map = Workspace:FindFirstChild("Map") or Workspace:WaitForChild("Map", 30)
-		local trees = map and (map:FindFirstChild("Huge trees") or map:WaitForChild("Huge trees", 20))
-		if not trees then
-			return
-		end
-		-- One of each mesh is enough — Bent_tree / Willow_tree share MeshIds.
-		-- Preloading every copy serialized the CDN and made the forest trickle in.
-		local loadedNames: { [string]: boolean } = {}
-		local function tryPreload(inst: Instance)
-			if loadedNames[inst.Name] then
-				return
-			end
-			if not (inst:IsA("Model") or inst:IsA("MeshPart") or inst:IsA("BasePart")) then
-				return
-			end
-			loadedNames[inst.Name] = true
-			local ok, err = pcall(function()
-				ContentProvider:PreloadAsync({ inst })
-			end)
-			if not ok then
-				loadedNames[inst.Name] = false
-				warn("[GrassCullController] tree preload failed:", err)
-			end
-		end
-		for _, child in trees:GetChildren() do
-			tryPreload(child)
-		end
-		local addedConn = trees.ChildAdded:Connect(function(child)
-			task.spawn(function()
-				tryPreload(child)
-			end)
-		end)
-		task.delay(25, function()
-			addedConn:Disconnect()
-		end)
-	end)
-end
-
 local function onHeartbeat(dt: number)
 	if not FEATURE_ENABLED or not cullActive then
 		return
@@ -778,8 +683,8 @@ function M.setLowGraphics(enabled: boolean)
 end
 
 function M.init()
-	-- Cull stays off. Do not RequestStreamAroundAsync along swing velocity —
-	-- that hitch is the fast-swing FPS drop. Join still prewarms spawn trees.
+	-- Cull stays off. Do not RequestStreamAroundAsync for trees on join —
+	-- that stole stream focus from the player and made a 512 min bubble fill slowly.
 	if wired then
 		return
 	end
@@ -791,7 +696,6 @@ function M.init()
 	if FEATURE_ENABLED then
 		heartbeatConn = RunService.Heartbeat:Connect(onHeartbeat)
 	end
-	prewarmPublishedTrees()
 end
 
 return M

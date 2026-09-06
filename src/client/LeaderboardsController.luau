@@ -15,6 +15,9 @@ local DATA_FOLDER_NAME = "LeaderboardData"
 local BOARD_NAMES = { "Cash", "Time" }
 local ROW_COUNT = 100
 local RETRY_INTERVAL_SEC = 8
+local PAINT_DEBOUNCE_SEC = 0.25
+
+local paintScheduled = false
 
 local function readRows(boardFolder: Folder): { LeaderboardUI.RowEntry }
 	local rows: { LeaderboardUI.RowEntry } = {}
@@ -54,57 +57,24 @@ local function paintAllFromData(dataFolder: Folder): boolean
 	return LeaderboardUI.renderAllBoards(readAllBoardData(dataFolder))
 end
 
-local function hookRowFolder(boardName: string, rowFolder: Folder)
-	for _, child in rowFolder:GetChildren() do
-		if child:IsA("StringValue") then
-			child.Changed:Connect(function()
-				local boardFolder = rowFolder.Parent
-				if boardFolder and boardFolder:IsA("Folder") then
-					local dataFolder = boardFolder.Parent
-					if dataFolder and dataFolder:IsA("Folder") then
-						task.defer(function()
-							paintAllFromData(dataFolder :: Folder)
-						end)
-					end
-				end
-			end)
-		end
+local function schedulePaint(dataFolder: Folder)
+	if paintScheduled then
+		return
 	end
-	rowFolder.ChildAdded:Connect(function(child)
-		if child:IsA("StringValue") then
-			child.Changed:Connect(function()
-				local boardFolder = rowFolder.Parent
-				if boardFolder and boardFolder:IsA("Folder") then
-					local dataFolder = boardFolder.Parent
-					if dataFolder and dataFolder:IsA("Folder") then
-						task.defer(function()
-							paintAllFromData(dataFolder :: Folder)
-						end)
-					end
-				end
-			end)
+	paintScheduled = true
+	task.delay(PAINT_DEBOUNCE_SEC, function()
+		paintScheduled = false
+		if dataFolder.Parent then
+			paintAllFromData(dataFolder)
 		end
 	end)
 end
 
-local function hookBoardFolder(boardName: string, boardFolder: Folder)
-	for rank = 1, ROW_COUNT do
-		local rowFolder = boardFolder:FindFirstChild(tostring(rank))
-		if rowFolder and rowFolder:IsA("Folder") then
-			hookRowFolder(boardName, rowFolder)
-		end
-	end
-	boardFolder.ChildAdded:Connect(function(child)
-		if child:IsA("Folder") then
-			hookRowFolder(boardName, child)
-		end
-	end)
+local function hookBoardFolder(_boardName: string, boardFolder: Folder)
 	boardFolder:GetAttributeChangedSignal("UpdatedAt"):Connect(function()
 		local dataFolder = boardFolder.Parent
 		if dataFolder and dataFolder:IsA("Folder") then
-			task.defer(function()
-				paintAllFromData(dataFolder :: Folder)
-			end)
+			schedulePaint(dataFolder)
 		end
 	end)
 end
@@ -119,9 +89,7 @@ local function hookDataFolder(dataFolder: Folder)
 	dataFolder.ChildAdded:Connect(function(child)
 		if child:IsA("Folder") and table.find(BOARD_NAMES, child.Name) then
 			hookBoardFolder(child.Name, child :: Folder)
-			task.defer(function()
-				paintAllFromData(dataFolder)
-			end)
+			schedulePaint(dataFolder)
 		end
 	end)
 end
@@ -154,21 +122,37 @@ function M.init()
 		local dataFolder = waitForDataFolder()
 		local function onWorldChange()
 			LeaderboardUI.invalidateBoardCache()
-			task.defer(function()
-				paintAllFromData(dataFolder)
-			end)
+			schedulePaint(dataFolder)
+		end
+		local function isLeaderboardWorldInst(inst: Instance): boolean
+			local n = inst.Name
+			if
+				n == "LeaderBoards"
+				or n == "Leaderboards"
+				or n == "TimeLeaderboard"
+				or n == "CashLeaderboard"
+			then
+				return true
+			end
+			if inst:IsA("SurfaceGui") then
+				local p = inst.Parent
+				while p and p ~= Workspace do
+					local pn = p.Name
+					if
+						pn == "LeaderBoards"
+						or pn == "Leaderboards"
+						or pn == "TimeLeaderboard"
+						or pn == "CashLeaderboard"
+					then
+						return true
+					end
+					p = p.Parent
+				end
+			end
+			return false
 		end
 		Workspace.DescendantAdded:Connect(function(child)
-			if
-				child.Name == "LeaderBoards"
-				or child.Name == "Leaderboards"
-				or child.Name == "TimeLeaderboard"
-				or child.Name == "CashLeaderboard"
-				or child.Name == "Spawn And Bases"
-				or child.Name == "GUIPart"
-				or child:IsA("SurfaceGui")
-				or string.find(child.Name, "Stud UI Pack", 1, true)
-			then
+			if isLeaderboardWorldInst(child) then
 				onWorldChange()
 			end
 		end)

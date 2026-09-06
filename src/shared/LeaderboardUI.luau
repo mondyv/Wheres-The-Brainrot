@@ -16,7 +16,6 @@ export type RowEntry = {
 }
 
 local ROW_COUNT = 100
-local AUTHORED_SLOT_MAX = 10
 
 local BOARD_KEYS = { "Cash", "Time" }
 local SPAWN_FOLDER_NAMES = { "Spawn And Bases", "Spawn and Bases", "SpawnAndBases" }
@@ -224,6 +223,13 @@ local function findEntriesRoot(surfaceGui: SurfaceGui): Instance
 	cloneAuthoredLayoutIfNeeded(surfaceGui)
 	local authored = findAuthoredContainer(surfaceGui)
 	if authored then
+		local nested = authored:FindFirstChild("LeaderboardScroll")
+		if nested and nested:IsA("ScrollingFrame") then
+			return nested
+		end
+		if authored:IsA("ScrollingFrame") then
+			return authored
+		end
 		return authored
 	end
 	local scroll = surfaceGui:FindFirstChild("LeaderboardScroll", true)
@@ -248,7 +254,8 @@ local function findRowFrames(surfaceGui: SurfaceGui): { Instance }
 	local rows: { Instance } = {}
 	local seen: { [Instance]: boolean } = {}
 
-	local slotMax = if numberedSlotCount(root) > 0 then AUTHORED_SLOT_MAX else ROW_COUNT
+	local slotCount = numberedSlotCount(root)
+	local slotMax = if slotCount > 0 then math.clamp(slotCount, 1, ROW_COUNT) else ROW_COUNT
 	for rank = 1, slotMax do
 		local candidates = {
 			root:FindFirstChild(tostring(rank)),
@@ -515,12 +522,14 @@ local function ensureScrollableRows(surfaceGui: SurfaceGui): GuiObject?
 	end)
 	cloneAuthoredLayoutIfNeeded(surfaceGui)
 	local authored = findAuthoredContainer(surfaceGui)
-	if authored and authored:IsA("GuiObject") then
-		-- Studio already laid out slots 1–10 + SPACE + UIListLayout. Do not wrap or clone 100 rows.
-		return authored
+	local root: GuiObject? = if authored and authored:IsA("GuiObject") then authored else nil
+	if not root then
+		local found = findEntriesRoot(surfaceGui)
+		if found and found:IsA("GuiObject") then
+			root = found
+		end
 	end
-	local root = findEntriesRoot(surfaceGui)
-	if not (root and root:IsA("GuiObject")) then
+	if not root then
 		return nil
 	end
 
@@ -540,11 +549,12 @@ local function ensureScrollableRows(surfaceGui: SurfaceGui): GuiObject?
 			sf.BorderSizePixel = 0
 			sf.Size = UDim2.fromScale(1, 1)
 			sf.Position = UDim2.fromScale(0, 0)
-			sf.ScrollBarThickness = 8
+			sf.ScrollBarThickness = 12
 			sf.ScrollingDirection = Enum.ScrollingDirection.Y
 			sf.ScrollingEnabled = true
 			sf.Active = true
 			sf.Selectable = true
+			sf.ClipsDescendants = true
 			sf.CanvasSize = UDim2.fromOffset(0, 0)
 			pcall(function()
 				(sf :: any).AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -552,9 +562,11 @@ local function ensureScrollableRows(surfaceGui: SurfaceGui): GuiObject?
 			-- Move existing row children into the scroll pane.
 			local toMove: { Instance } = {}
 			for _, child in root:GetChildren() do
-				if child:IsA("GuiObject") then
+				if child:IsA("UIListLayout") or child:IsA("UIPadding") then
+					table.insert(toMove, child)
+				elseif child:IsA("GuiObject") then
 					local n = child.Name
-					if tonumber(n) or string.match(n, "^Row%d+") or string.match(n, "^Slot%d+") then
+					if n == "SPACE" or tonumber(n) or string.match(n, "^Row%d+") or string.match(n, "^Slot%d+") then
 						table.insert(toMove, child)
 					elseif rowHasScoreColumns(child) then
 						table.insert(toMove, child)

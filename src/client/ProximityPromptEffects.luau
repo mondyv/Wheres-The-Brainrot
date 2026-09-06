@@ -197,8 +197,13 @@ local function isStealProximityPrompt(prompt: ProximityPrompt): boolean
 end
 
 local function promptBillboardMaxDistance(prompt: ProximityPrompt): number
-	-- Steal used to cap at MaxActivation+1, which hid the card while still in range.
-	return bushBillboardMaxDistance(prompt)
+	-- Bush cards need extra camera zoom room. Everything else (Tim Cheese, stands)
+	-- used that same 100–128 cap and showed across the lobby on mobile.
+	if CarryGate.isBushSearchPrompt(prompt) then
+		return bushBillboardMaxDistance(prompt)
+	end
+	local pad = if isStealProximityPrompt(prompt) then 8 else 4
+	return math.clamp(prompt.MaxActivationDistance + pad, 10, 36)
 end
 
 local getPromptFocusWorld: (ProximityPrompt) -> Vector3?
@@ -236,6 +241,10 @@ local function isBushSearchInPlayerRange(prompt: ProximityPrompt): boolean
 	return (root.Position - focus).Magnitude <= prompt.MaxActivationDistance + 1.25
 end
 
+local function isPromptInPlayerRange(prompt: ProximityPrompt): boolean
+	return isBushSearchInPlayerRange(prompt)
+end
+
 function ProximityPromptEffects.isBushSearchInViewRange(prompt: ProximityPrompt): boolean
 	return isBushSearchInPlayerRange(prompt) or isBushSearchInCameraRange(prompt)
 end
@@ -257,6 +266,9 @@ local function shouldShowPromptUi(prompt: ProximityPrompt): boolean
 	end
 	if managedBushUiEligible(prompt) then
 		return true
+	end
+	if not isPromptInPlayerRange(prompt) then
+		return false
 	end
 	if not isPromptFacingCamera(prompt) then
 		return false
@@ -2649,6 +2661,7 @@ local function onPromptShown(prompt: ProximityPrompt, inputType: Enum.ProximityP
 	end
 
 	view.billboard.Enabled = true
+	view.billboard.MaxDistance = promptBillboardMaxDistance(prompt)
 	view.inputType = inputType
 	if isBushPrompt(prompt) then
 		local adornee = getBushBillboardAdornee(prompt)

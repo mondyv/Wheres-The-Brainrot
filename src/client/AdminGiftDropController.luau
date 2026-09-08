@@ -19,6 +19,7 @@ local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("U
 
 local CharacterWorldNotif = require(script.Parent.CharacterWorldNotif)
 local GameSoundEffects = require(script.Parent.GameSoundEffects)
+local GearRainbowFX = require(script.Parent.GearRainbowFX)
 local TopNotifController = require(script.Parent.TopNotifController)
 
 local player = Players.LocalPlayer
@@ -60,6 +61,7 @@ end
 
 local function destroyLive()
 	if liveModel then
+		GearRainbowFX.detach(liveModel)
 		liveModel:Destroy()
 		liveModel = nil
 	end
@@ -186,6 +188,9 @@ local function cloneGear(gearId: number): Model?
 		return nil
 	end
 	fitDropModel(clone, 1.85)
+	if clone:GetAttribute("EventGear") == true then
+		GearRainbowFX.attachEventLabel(clone)
+	end
 	return clone
 end
 

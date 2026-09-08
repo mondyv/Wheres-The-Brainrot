@@ -98,17 +98,7 @@ local function resolveLuckyBlock(name: string): string?
 end
 
 local function resolveGear(raw: string): any
-	local asNum = tonumber(raw)
-	if asNum then
-		return GearConfig.get(math.floor(asNum))
-	end
-	local key = normalizeKey(raw)
-	for _, def in GearConfig.GEARS do
-		if normalizeKey(def.name) == key or normalizeKey(def.assetName) == key then
-			return def
-		end
-	end
-	return nil
+	return GearConfig.findByQuery(raw)
 end
 
 local function waitForBindable(folderName: string, bindableName: string, timeoutSec: number?): BindableFunction?
@@ -397,8 +387,19 @@ local function grantGear(player: Player, spec: GiftSpec): number
 	if not def then
 		return 0
 	end
+	-- Event / hidden gears are one-off gifts. Shop ids still fill 1..id so
+	-- grantgear 10 matches the old "own everything up to this slot" behavior.
+	if not GearConfig.isShopListed(def) then
+		if GearService.grantGear(player, def.id, true) then
+			return 1
+		end
+		return 0
+	end
 	for i = 1, def.id do
-		GearService.grantGear(player, i, false)
+		local listed = GearConfig.get(i)
+		if listed and GearConfig.isShopListed(listed) then
+			GearService.grantGear(player, i, false)
+		end
 	end
 	return 1
 end
@@ -466,10 +467,13 @@ end
 
 function M.giveToOnline(spec: GiftSpec): number
 	local n = 0
-	for _, player in Players:GetPlayers() do
+	for i, player in Players:GetPlayers() do
 		local ok = M.giveToPlayer(player, spec)
 		if ok then
 			n += 1
+		end
+		if i % 8 == 0 then
+			task.wait(0.05)
 		end
 	end
 	return n

@@ -74,6 +74,9 @@ function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
 	if def.id == 6 then
 		tool:SetAttribute("RainbowGear", true)
 	end
+	if def.eventLabel == true then
+		tool:SetAttribute("EventGear", true)
+	end
 
 	local handle: BasePart
 	if clone then
@@ -431,6 +434,9 @@ function GearService.purchaseCash(player: Player, gearId: number): (boolean, str
 	local owned = GearService.getOwnedSet(player)
 	if owned[gearId] then
 		return false, "Already owned"
+	end
+	if not GearConfig.isShopListed(def) then
+		return false, "Not for sale"
 	end
 	local cash = player:GetAttribute("Cash")
 	if typeof(cash) ~= "number" or cash < def.cashPrice then

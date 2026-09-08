@@ -15,6 +15,10 @@ export type GearDef = {
 	robuxProductId: number?, -- nil = cash only
 	assetName: string, -- ReplicatedStorage.EssentialAssets.Gears["Gear N"]
 	flipOnFeet: boolean?, -- Moon / Jupiter: Primary sits on the wrong pole
+	hiddenFromShop: boolean?, -- event / admin-only; still grantable
+	eventLabel: boolean?, -- "EVENT GEAR" rainbow banner on the mesh
+	-- Studio Orientation degrees applied when the gear is posed on the feet.
+	workoutOrientation: Vector3?,
 }
 
 local GEARS: { GearDef } = {
@@ -163,6 +167,20 @@ local GEARS: { GearDef } = {
 		assetName = "Gear 13",
 		flipOnFeet = true,
 	},
+	{
+		id = 14,
+		name = "The Bus",
+		rarity = "epic",
+		weightLbs = 9000,
+		powerGain = 7000,
+		cashPrice = 0,
+		robuxPrice = nil,
+		robuxProductId = nil,
+		assetName = "The Bus",
+		hiddenFromShop = true,
+		eventLabel = true,
+		workoutOrientation = Vector3.new(90, 58.986, 0),
+	},
 }
 
 M.GEARS = GEARS
@@ -201,9 +219,52 @@ function M.get(id: number): GearDef?
 	return byId[id]
 end
 
+function M.isShopListed(def: GearDef): boolean
+	return def.hiddenFromShop ~= true
+end
+
+function M.findByQuery(raw: string): GearDef?
+	local trimmed = string.gsub(raw, "^%s*(.-)%s*$", "%1")
+	if trimmed == "" then
+		return nil
+	end
+	local asNum = tonumber(trimmed)
+	if asNum then
+		return byId[math.floor(asNum)]
+	end
+	local key = string.lower((string.gsub(trimmed, "[%s_%-%p]", "")))
+	for _, g in M.GEARS do
+		if string.lower((string.gsub(g.name, "[%s_%-%p]", ""))) == key then
+			return g
+		end
+		if string.lower((string.gsub(g.assetName, "[%s_%-%p]", ""))) == key then
+			return g
+		end
+	end
+	local lower = string.lower(trimmed)
+	if #lower >= 3 then
+		for _, g in M.GEARS do
+			if string.find(string.lower(g.name), lower, 1, true) then
+				return g
+			end
+		end
+	end
+	return nil
+end
+
 function M.flipOnFeet(id: number): boolean
 	local def = byId[id]
 	return def ~= nil and def.flipOnFeet == true
+end
+
+-- Studio Orientation (degrees) → CFrame. Uses YXZ fromOrientation, not Angles.
+function M.workoutPoseCFrame(id: number): CFrame?
+	local def = byId[id]
+	local o = def and def.workoutOrientation
+	if not o then
+		return nil
+	end
+	return CFrame.fromOrientation(math.rad(o.X), math.rad(o.Y), math.rad(o.Z))
 end
 
 function M.getByProductId(productId: number): GearDef?
@@ -377,6 +438,105 @@ function M.findGearAsset(gearId: number): Instance?
 	return nil
 end
 
+local EVENT_LABEL_ATTR = "EventGearLabeled"
+
+local function rainbowSequence(): ColorSequence
+	return ColorSequence.new({
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 70, 90)),
+		ColorSequenceKeypoint.new(0.2, Color3.fromRGB(255, 200, 50)),
+		ColorSequenceKeypoint.new(0.4, Color3.fromRGB(80, 255, 120)),
+		ColorSequenceKeypoint.new(0.6, Color3.fromRGB(60, 200, 255)),
+		ColorSequenceKeypoint.new(0.8, Color3.fromRGB(160, 90, 255)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 70, 90)),
+	})
+end
+
+local function pickEventLabelPart(model: Model): BasePart?
+	local primary = model.PrimaryPart
+	local best: BasePart? = nil
+	local bestVol = -1
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") and d ~= primary then
+			local vol = d.Size.X * d.Size.Y * d.Size.Z
+			if vol > bestVol then
+				bestVol = vol
+				best = d
+			end
+		end
+	end
+	if best then
+		return best
+	end
+	return M.resolvePrimaryPart(model)
+end
+
+-- One-time "EVENT GEAR" banners on the mesh. Safe to call on clones; skips if already labeled.
+function M.applyEventGearLabel(model: Model)
+	if model:GetAttribute(EVENT_LABEL_ATTR) == true then
+		return
+	end
+	if model:FindFirstChild("EventGearBanner", true) then
+		model:SetAttribute(EVENT_LABEL_ATTR, true)
+		return
+	end
+	local part = pickEventLabelPart(model)
+	if not part then
+		return
+	end
+	local faces: { Enum.NormalId }
+	if part.Size.Z >= part.Size.X then
+		faces = { Enum.NormalId.Left, Enum.NormalId.Right }
+	else
+		faces = { Enum.NormalId.Front, Enum.NormalId.Back }
+	end
+	for i, face in faces do
+		local gui = Instance.new("SurfaceGui")
+		gui.Name = "EventGearBanner"
+		gui.Face = face
+		gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+		gui.PixelsPerStud = 40
+		gui.LightInfluence = 0
+		gui.AlwaysOnTop = true
+		gui.MaxDistance = 90
+		gui.ZOffset = 1
+		gui.ResetOnSpawn = false
+		local label = Instance.new("TextLabel")
+		label.Name = "Title"
+		label.BackgroundTransparency = 1
+		label.Size = UDim2.fromScale(1, 1)
+		label.AnchorPoint = Vector2.new(0.5, 0.5)
+		label.Position = UDim2.fromScale(0.5, 0.5)
+		label.Font = Enum.Font.GothamBlack
+		label.Text = "EVENT GEAR"
+		label.TextColor3 = Color3.new(1, 1, 1)
+		label.TextStrokeColor3 = Color3.fromRGB(20, 10, 30)
+		label.TextStrokeTransparency = 0.2
+		label.TextScaled = true
+		label.TextWrapped = false
+		local cap = Instance.new("UITextSizeConstraint")
+		cap.MaxTextSize = 42
+		cap.MinTextSize = 14
+		cap.Parent = label
+		local pad = Instance.new("UIPadding")
+		pad.PaddingLeft = UDim.new(0.06, 0)
+		pad.PaddingRight = UDim.new(0.06, 0)
+		pad.PaddingTop = UDim.new(0.18, 0)
+		pad.PaddingBottom = UDim.new(0.18, 0)
+		pad.Parent = label
+		local grad = Instance.new("UIGradient")
+		grad.Name = "EventRainbow"
+		grad.Color = rainbowSequence()
+		grad.Rotation = 0
+		grad:SetAttribute("EventGearRainbow", true)
+		grad.Parent = label
+		label.Parent = gui
+		gui.Parent = part
+		gui.LayoutOrder = i
+	end
+	model:SetAttribute(EVENT_LABEL_ATTR, true)
+	model:SetAttribute("EventGear", true)
+end
+
 -- Clone Studio gear (Model / Folder / Tool / Part) into a fresh Model for tools/viewports.
 -- Always keep sibling VFX / Attachment folders — never clone only the nested Model.
 function M.cloneGearModel(gearId: number): Model?
@@ -435,6 +595,9 @@ function M.cloneGearModel(gearId: number): Model?
 	if not wrapper.PrimaryPart then
 		wrapper:Destroy()
 		return nil
+	end
+	if def and def.eventLabel == true then
+		M.applyEventGearLabel(wrapper)
 	end
 	return wrapper
 end

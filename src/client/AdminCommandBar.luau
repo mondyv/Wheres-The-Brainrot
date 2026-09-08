@@ -674,7 +674,7 @@ local function buildSuggestions(text: string): { { fill: string, hint: string } 
 			local prefix = joinPrefix(tokens, if endsWithSpace then #tokens else math.max(2, #tokens - 1))
 			local samples = if cmdName == "setcarry"
 				then { "1", "5", "10" }
-				elseif cmdName == "grantgear" then { "1", "5", "13" }
+				elseif cmdName == "grantgear" then { "1", "5", "13", "14", "The Bus" }
 				elseif cmdName == "levelup" then { "1", "5", "10" }
 				else { "10", "25", "50", "100", "1000" }
 			for _, sample in samples do

@@ -395,6 +395,10 @@ function M.mount(host: GuiObject, gearId: number, opts: { rotate: boolean?, size
 	if gearId == 6 and not isStudioPreview() then
 		GearRainbowFX.attach(clone)
 	end
+	local def = GearConfig.get(gearId)
+	if def and def.eventLabel == true and not isStudioPreview() then
+		GearRainbowFX.attachEventLabel(clone)
+	end
 
 	if shouldRotate then
 		spinConns[vf] = RunService.RenderStepped:Connect(function(dt)

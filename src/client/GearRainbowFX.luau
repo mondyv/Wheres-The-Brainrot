@@ -9,6 +9,7 @@ type TrackState = {
 	emitters: { ParticleEmitter },
 	beams: { Beam },
 	trails: { Trail },
+	gradients: { UIGradient },
 	hue: number,
 }
 
@@ -53,6 +54,12 @@ local function ensureLoop()
 					trail.Enabled = true
 				end
 			end
+			local offset = Vector2.new((state.hue * 2) % 1 - 0.5, 0)
+			for _, grad in state.gradients do
+				if grad.Parent then
+					grad.Offset = offset
+				end
+			end
 		end
 		if not any and conn then
 			conn:Disconnect()
@@ -94,6 +101,40 @@ function M.attach(root: Instance)
 		emitters = emitters,
 		beams = beams,
 		trails = trails,
+		gradients = {},
+		hue = 0,
+	}
+	ensureLoop()
+end
+
+local function collectEventGradients(root: Instance): { UIGradient }
+	local grads: { UIGradient } = {}
+	for _, d in root:GetDescendants() do
+		if d:IsA("UIGradient") and d:GetAttribute("EventGearRainbow") == true then
+			table.insert(grads, d)
+		end
+	end
+	return grads
+end
+
+-- Scroll rainbow on EVENT GEAR labels only — never recolor the mesh.
+function M.attachEventLabel(root: Instance)
+	local grads = collectEventGradients(root)
+	if #grads == 0 then
+		return
+	end
+	local existing = tracked[root]
+	if existing then
+		existing.gradients = grads
+		ensureLoop()
+		return
+	end
+	tracked[root] = {
+		parts = {},
+		emitters = {},
+		beams = {},
+		trails = {},
+		gradients = grads,
 		hue = 0,
 	}
 	ensureLoop()

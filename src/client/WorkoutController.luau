@@ -492,16 +492,19 @@ local function poseGearOnFeet(character: Model, model: Model)
 
 	local gearId = model:GetAttribute(GearConfig.GEAR_ID_ATTR)
 	local flip = typeof(gearId) == "number" and GearConfig.flipOnFeet(gearId)
+	local customPose = if typeof(gearId) == "number" then GearConfig.workoutPoseCFrame(gearId) else nil
 
 	local ps = primary.Size
 	local lieFlat = CFrame.identity
-	if ps.Y >= ps.X and ps.Y >= ps.Z then
+	if customPose then
+		lieFlat = customPose
+	elseif ps.Y >= ps.X and ps.Y >= ps.Z then
 		lieFlat = CFrame.Angles(0, 0, math.rad(90))
 	elseif ps.Z >= ps.X and ps.Z >= ps.Y then
 		lieFlat = CFrame.Angles(0, math.rad(90), 0)
 	end
 	-- Moon / Jupiter: Primary sits on the wrong pole and hits the legs.
-	if flip then
+	if flip and not customPose then
 		lieFlat = lieFlat * CFrame.Angles(math.rad(180), 0, 0)
 	end
 
@@ -509,7 +512,8 @@ local function poseGearOnFeet(character: Model, model: Model)
 	model:PivotTo(target * primary.CFrame:ToObjectSpace(model:GetPivot()))
 
 	local minY = math.huge
-	if flip then
+	local snapFullModel = flip or customPose ~= nil
+	if snapFullModel then
 		for _, d in model:GetDescendants() do
 			if isPoseMeshPart(d) then
 				minY = math.min(minY, partWorldMinY(d :: BasePart))
@@ -670,6 +674,9 @@ local function attachGearAcrossFeet(character: Model, tool: Tool)
 
 	if tool:GetAttribute("RainbowGear") == true then
 		GearRainbowFX.attach(model)
+	end
+	if tool:GetAttribute("EventGear") == true then
+		GearRainbowFX.attachEventLabel(model)
 	end
 end
 
@@ -849,6 +856,9 @@ attachObservedWorkout = function(plr: Player)
 	}
 	if tool:GetAttribute("RainbowGear") == true then
 		GearRainbowFX.attach(model)
+	end
+	if tool:GetAttribute("EventGear") == true then
+		GearRainbowFX.attachEventLabel(model)
 	end
 	ensureObservedFollow()
 end
@@ -2856,7 +2866,7 @@ local function onUnequip()
 	local char = player.Character
 	if char then
 		for _, c in char:GetChildren() do
-			if c:IsA("Tool") and c:GetAttribute("RainbowGear") == true then
+			if c:IsA("Tool") and (c:GetAttribute("RainbowGear") == true or c:GetAttribute("EventGear") == true) then
 				GearRainbowFX.detach(c)
 			end
 		end

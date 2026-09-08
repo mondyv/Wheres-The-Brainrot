@@ -266,8 +266,15 @@ local function ensureGearRows(container: Instance)
 		warn("[UpgradesController] No gear row template under Container")
 		return
 	end
-	for i = 1, #GearConfig.GEARS do
-		local name = tostring(i)
+	for _, def in GearConfig.GEARS do
+		if not GearConfig.isShopListed(def) then
+			local hidden = container:FindFirstChild(tostring(def.id))
+			if hidden and hidden:IsA("GuiObject") then
+				hidden.Visible = false
+			end
+			continue
+		end
+		local name = tostring(def.id)
 		local row = container:FindFirstChild(name)
 		if not row then
 			row = template:Clone()
@@ -276,7 +283,7 @@ local function ensureGearRows(container: Instance)
 		end
 		if row:IsA("GuiObject") then
 			local gui = row :: GuiObject
-			gui.LayoutOrder = i
+			gui.LayoutOrder = def.id
 			gui.Visible = true
 		end
 	end
@@ -284,8 +291,11 @@ local function ensureGearRows(container: Instance)
 	for _, child in container:GetChildren() do
 		if child:IsA("GuiObject") then
 			local asNum = tonumber(child.Name)
-			if asNum and (asNum < 1 or asNum > #GearConfig.GEARS) then
-				child.Visible = false
+			if asNum then
+				local listed = GearConfig.get(asNum)
+				if not listed or not GearConfig.isShopListed(listed) then
+					child.Visible = false
+				end
 			elseif
 				child.Name == "Power10"
 				or child.Name == "Power25"
@@ -1634,6 +1644,9 @@ local function init()
 
 	local function refreshAllRows()
 		for _, def in GearConfig.GEARS do
+			if not GearConfig.isShopListed(def) then
+				continue
+			end
 			local row = container:FindFirstChild(tostring(def.id))
 			if row then
 				refreshGearRow(row, def)
@@ -1654,6 +1667,9 @@ local function init()
 	end
 
 	for _, def in GearConfig.GEARS do
+		if not GearConfig.isShopListed(def) then
+			continue
+		end
 		local row = container:FindFirstChild(tostring(def.id))
 		if row then
 			wireGearRow(row, def, refreshAllRows)

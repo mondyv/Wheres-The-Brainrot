@@ -214,10 +214,13 @@ local function deliverGift(sender: Player, targetQuery: string, spec: any): (boo
 		return false, targetErr or "No target."
 	end
 	local okCount = 0
-	for _, target in targets do
+	for i, target in targets do
 		local ok = AdminGiftService.giveToPlayer(target, spec)
 		if ok then
 			okCount += 1
+		end
+		if i % 8 == 0 then
+			task.wait(0.05)
 		end
 	end
 	if okCount <= 0 then
@@ -1689,18 +1692,9 @@ commands.grantgear = {
 		end
 		local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 		local gearRaw = table.concat(args, " ", 2)
-		local def = GearConfig.get(tonumber(args[2]) and math.floor(tonumber(args[2]) :: number) or -1)
+		local def = GearConfig.findByQuery(gearRaw)
 		if not def then
-			local key = string.lower(gearRaw)
-			for _, gear in GearConfig.GEARS do
-				if string.lower(gear.name) == key or string.lower(gear.assetName) == key then
-					def = gear
-					break
-				end
-			end
-		end
-		if not def then
-			return false, "Unknown gear. Use id 1-13 or the gear name."
+			return false, "Unknown gear. Use an id, name, or The Bus."
 		end
 		return deliverGift(sender, args[1], {
 			kind = "gear",

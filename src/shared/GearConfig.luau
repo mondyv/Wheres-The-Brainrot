@@ -223,6 +223,14 @@ function M.isShopListed(def: GearDef): boolean
 	return def.hiddenFromShop ~= true
 end
 
+-- Regular shop gears always. Admin/event gears only after they have been granted.
+function M.showsInShop(def: GearDef, owned: { [number]: boolean }): boolean
+	if def.hiddenFromShop ~= true then
+		return true
+	end
+	return owned[def.id] == true
+end
+
 local function compactName(value: string): string
 	return string.lower((string.gsub(value, "[%s_%-%p]", "")))
 end

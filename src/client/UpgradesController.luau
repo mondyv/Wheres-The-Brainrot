@@ -267,13 +267,6 @@ local function ensureGearRows(container: Instance)
 		return
 	end
 	for _, def in GearConfig.GEARS do
-		if not GearConfig.isShopListed(def) then
-			local hidden = container:FindFirstChild(tostring(def.id))
-			if hidden and hidden:IsA("GuiObject") then
-				hidden.Visible = false
-			end
-			continue
-		end
 		local name = tostring(def.id)
 		local row = container:FindFirstChild(name)
 		if not row then
@@ -284,7 +277,7 @@ local function ensureGearRows(container: Instance)
 		if row:IsA("GuiObject") then
 			local gui = row :: GuiObject
 			gui.LayoutOrder = def.id
-			gui.Visible = true
+			gui.Visible = GearConfig.showsInShop(def, ownedSet())
 		end
 	end
 	-- Hide leftover non-gear upgrade rows from old place files.
@@ -293,7 +286,7 @@ local function ensureGearRows(container: Instance)
 			local asNum = tonumber(child.Name)
 			if asNum then
 				local listed = GearConfig.get(asNum)
-				if not listed or not GearConfig.isShopListed(listed) then
+				if not listed then
 					child.Visible = false
 				end
 			elseif
@@ -514,6 +507,10 @@ local function wireGearRow(row: Instance, def: GearConfig.GearDef, refreshAll: (
 					warn("[UpgradesController] Equip failed:", err)
 				end
 			end
+			return
+		end
+
+		if not GearConfig.isShopListed(def) then
 			return
 		end
 
@@ -1643,12 +1640,17 @@ local function init()
 	)
 
 	local function refreshAllRows()
+		local owned = ownedSet()
 		for _, def in GearConfig.GEARS do
-			if not GearConfig.isShopListed(def) then
+			local row = container:FindFirstChild(tostring(def.id))
+			if not row then
 				continue
 			end
-			local row = container:FindFirstChild(tostring(def.id))
-			if row then
+			local show = GearConfig.showsInShop(def, owned)
+			if row:IsA("GuiObject") then
+				(row :: GuiObject).Visible = show
+			end
+			if show then
 				refreshGearRow(row, def)
 			end
 		end
@@ -1667,9 +1669,6 @@ local function init()
 	end
 
 	for _, def in GearConfig.GEARS do
-		if not GearConfig.isShopListed(def) then
-			continue
-		end
 		local row = container:FindFirstChild(tostring(def.id))
 		if row then
 			wireGearRow(row, def, refreshAllRows)

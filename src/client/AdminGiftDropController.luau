@@ -76,17 +76,34 @@ local function freezeModel(model: Model)
 			d.CanQuery = false
 			d.CanTouch = false
 			d.Massless = true
+			d.CastShadow = false
+		elseif
+			d:IsA("Humanoid")
+			or d:IsA("Animator")
+			or d:IsA("AnimationController")
+			or d:IsA("Script")
+			or d:IsA("LocalScript")
+			or d:IsA("ProximityPrompt")
+			or d:IsA("ForceField")
+			or d:IsA("ImageLabel")
+			or d:IsA("BillboardGui")
+			or d:IsA("ScreenGui")
+		then
+			table.insert(remove, d)
 		elseif d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
 			d.Enabled = false
-		elseif d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ProximityPrompt") then
-			table.insert(remove, d)
 		end
 	end
 	for _, d in remove do
 		d:Destroy()
 	end
 	if not model.PrimaryPart then
-		model.PrimaryPart = model:FindFirstChildWhichIsA("BasePart", true)
+		local named = model:FindFirstChild("Primary")
+		if named and named:IsA("BasePart") then
+			model.PrimaryPart = named
+		else
+			model.PrimaryPart = model:FindFirstChildWhichIsA("BasePart", true)
+		end
 	end
 end
 
@@ -105,7 +122,12 @@ local function fitDropModel(model: Model, maxStuds: number)
 	local longest = math.max(extents.X, extents.Y, extents.Z)
 	local cap = math.max(1.2, maxStuds)
 	if longest > cap then
-		model:ScaleTo(model:GetScale() * (cap / longest))
+		local okScale, scaleErr = pcall(function()
+			model:ScaleTo(model:GetScale() * (cap / longest))
+		end)
+		if not okScale then
+			warn("[AdminGiftDrop] ScaleTo failed:", scaleErr)
+		end
 	end
 end
 
@@ -187,7 +209,7 @@ local function cloneGear(gearId: number): Model?
 		clone:Destroy()
 		return nil
 	end
-	fitDropModel(clone, 1.85)
+	fitDropModel(clone, 3.2)
 	if clone:GetAttribute("EventGear") == true then
 		GearRainbowFX.attachEventLabel(clone)
 	end
@@ -366,8 +388,12 @@ local function playImpactFrames(token: number)
 end
 
 local function suckIntoBody(token: number, model: Model, fromCf: CFrame)
-	local startScale = model:GetScale()
-	local lastScale = startScale
+	local parts: { BasePart } = {}
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			table.insert(parts, d)
+		end
+	end
 	local t0 = os.clock()
 	dropConn = RunService.Heartbeat:Connect(function()
 		if token ~= dropToken or liveModel ~= model or not model.Parent then
@@ -380,7 +406,7 @@ local function suckIntoBody(token: number, model: Model, fromCf: CFrame)
 		if hrp and hrp:IsA("BasePart") then
 			local look = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
 			if look.Magnitude < 0.05 then
-				look = Vector3.new(0, 0, -1)
+				look = Vector3.zAxis * -1
 			else
 				look = look.Unit
 			end
@@ -389,14 +415,11 @@ local function suckIntoBody(token: number, model: Model, fromCf: CFrame)
 		local alpha = math.clamp((os.clock() - t0) / SUCK_SEC, 0, 1)
 		local goal = fromCf:Lerp(CFrame.new(dest), alpha) * CFrame.Angles(0, alpha * 1.55, alpha * 0.28)
 		model:PivotTo(goal)
-		local nextScale = startScale * (1 - alpha * 0.94)
-		if nextScale > lastScale then
-			nextScale = lastScale
-		end
-		nextScale = math.max(startScale * 0.04, nextScale)
-		if math.abs(nextScale - lastScale) >= 0.012 or alpha >= 1 then
-			model:ScaleTo(nextScale)
-			lastScale = nextScale
+		local fade = alpha * 0.92
+		for _, p in parts do
+			if p.Parent then
+				p.LocalTransparencyModifier = fade
+			end
 		end
 		if alpha >= 1 then
 			disconnectDrop()
@@ -425,7 +448,7 @@ local function spawnBurstDebris(at: Vector3)
 	}):Play()
 	Debris:AddItem(ring, 0.55)
 
-	for i = 1, 40 do
+	for i = 1, 12 do
 		local chip = Instance.new("Part")
 		chip.Name = "AdminGiftStone"
 		local scale = 0.5 + math.random() * 1.2
@@ -497,17 +520,13 @@ local function playDrop(payload: any, template: any)
 	if kind == "luckyBlock" then
 		model = cloneLuckyBlock(id, payload.variant)
 	elseif kind == "gear" then
-		if payload.lightDrop == true then
-			model = nil
+		local cloneOk, cloneResult = pcall(function()
+			return cloneGear(tonumber(id) or 0)
+		end)
+		if cloneOk then
+			model = cloneResult
 		else
-			local cloneOk, cloneResult = pcall(function()
-				return cloneGear(tonumber(id) or 0)
-			end)
-			if cloneOk then
-				model = cloneResult
-			else
-				warn("[AdminGiftDrop] gear clone failed:", cloneResult)
-			end
+			warn("[AdminGiftDrop] gear clone failed:", cloneResult)
 		end
 	elseif kind == "brainrot" then
 		model = cloneBrainrot(id, template, payload.templateName)

@@ -401,6 +401,9 @@ function M.getIconImage(gearId: number): string
 	end
 	local label = src:FindFirstChild("ImageLabel")
 	if not label then
+		label = src:FindFirstChild("ImageLabel", true)
+	end
+	if not label then
 		label = src:FindFirstChild("Icon") or src:FindFirstChild("icon")
 	end
 	if label and (label:IsA("ImageLabel") or label:IsA("ImageButton")) then
@@ -415,6 +418,9 @@ end
 function M.applyIconToGui(gui: ImageLabel | ImageButton, gearId: number): boolean
 	local src = M.findGearAsset(gearId)
 	local label = src and src:FindFirstChild("ImageLabel")
+	if not label then
+		label = src and src:FindFirstChild("ImageLabel", true)
+	end
 	if not label then
 		label = src and (src:FindFirstChild("Icon") or src:FindFirstChild("icon"))
 	end
@@ -576,7 +582,6 @@ function M.applyEventGearLabel(model: Model)
 		grad.Parent = label
 		label.Parent = gui
 		gui.Parent = part
-		gui.LayoutOrder = i
 	end
 	model:SetAttribute(EVENT_LABEL_ATTR, true)
 	model:SetAttribute("EventGear", true)
@@ -621,6 +626,9 @@ function M.cloneGearModel(gearId: number): Model?
 	for _, d in wrapper:GetDescendants() do
 		if d:IsA("Humanoid") or d:IsA("Animator") or d:IsA("Script") or d:IsA("LocalScript") then
 			table.insert(strip, d)
+		elseif d:IsA("ImageLabel") or d:IsA("ImageButton") or d:IsA("BillboardGui") or d:IsA("ScreenGui") then
+			-- Shop/hotbar icons live on the template; never bring them into the 3D clone.
+			table.insert(strip, d)
 		end
 	end
 	for _, d in strip do
@@ -660,7 +668,12 @@ function M.cloneGearModel(gearId: number): Model?
 		return nil
 	end
 	if def and def.eventLabel == true then
-		M.applyEventGearLabel(wrapper)
+		local ok, err = pcall(function()
+			M.applyEventGearLabel(wrapper)
+		end)
+		if not ok then
+			warn("[GearConfig] applyEventGearLabel failed:", err)
+		end
 	end
 	return wrapper
 end

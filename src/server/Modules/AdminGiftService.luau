@@ -37,7 +37,6 @@ type VisualPayload = {
 	reason: string,
 	variant: string?,
 	templateName: string?,
-	lightDrop: boolean?,
 }
 
 local dropRE: RemoteEvent? = nil
@@ -154,7 +153,6 @@ local function visualFor(spec: GiftSpec): VisualPayload?
 			displayName = def.name,
 			rarity = def.rarity,
 			reason = reason,
-			lightDrop = def.eventLabel == true or def.hiddenFromShop == true,
 		}
 	end
 	return nil
@@ -216,7 +214,15 @@ local function stripClone(model: Model)
 			d.CanQuery = false
 			d.CanTouch = false
 			d.Massless = true
-		elseif d:IsA("Script") or d:IsA("LocalScript") or d:IsA("ProximityPrompt") then
+		elseif
+			d:IsA("Humanoid")
+			or d:IsA("Animator")
+			or d:IsA("AnimationController")
+			or d:IsA("Script")
+			or d:IsA("LocalScript")
+			or d:IsA("ProximityPrompt")
+			or d:IsA("ForceField")
+		then
 			table.insert(remove, d)
 		end
 	end

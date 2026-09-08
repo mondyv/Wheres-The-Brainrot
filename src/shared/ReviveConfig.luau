@@ -15,6 +15,11 @@ M.FRICTIONLESS_FADE_OUT_SECONDS = 0.35
 M.FAST_RESPAWN_ALL_DEATHS = true -- teleport home like Base/Return (no LoadCharacter)
 M.HITBOX_RESPAWN_CLEARANCE = 5
 M.SOFT_RESPAWN_COOLDOWN_SEC = 1.25
+-- Below this world Y, always send home even if kill parts never fire.
+M.VOID_Y_THRESHOLD = -50
+-- Drop this far below the last safe stand without a kill-part touch → same as falling in the void.
+M.VOID_FALL_BELOW_STUDS = 85
+M.VOID_SWING_FALL_BELOW_STUDS = 220
 M.REVIVE_SPAWN_ATTR = "ReviveSpawnCFrame" -- legacy
 M.REVIVE_SPAWN_POS_ATTR = "ReviveSpawnPos"
 M.REVIVE_SPAWN_LOOK_ATTR = "ReviveSpawnLook"

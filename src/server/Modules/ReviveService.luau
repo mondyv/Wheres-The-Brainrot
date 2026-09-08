@@ -53,6 +53,7 @@ local landTrackThreads: { [Player]: thread } = {}
 local fulfillingByPlayer: { [Player]: boolean } = {}
 local declineTimeoutThreads: { [Player]: thread } = {}
 local loadingCharacter: { [Player]: boolean } = {}
+local softTeleportHomeAlive: (Player) -> ()
 
 local revivePromptRE: RemoteEvent
 local reviveDeclinedRE: RemoteEvent
@@ -174,7 +175,7 @@ local function sampleLand(player: Player, character: Model)
 		return
 	end
 	local pos = hrp.Position
-	if pos.Y < MIN_SANE_Y then
+	if pos.Y < ReviveConfig.VOID_Y_THRESHOLD then
 		return
 	end
 	local land = LandResolver.resolveLandAtPosition(pos)
@@ -182,6 +183,31 @@ local function sampleLand(player: Player, character: Model)
 		lastGoodLand[player] = ReviveConfig.clampLand(land)
 		lastGoodPos[player] = pos
 	end
+end
+
+local function shouldRescueFromVoid(player: Player, character: Model): boolean
+	if player:GetAttribute("AdminFlyEnabled") == true then
+		return false
+	end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not (hrp and hrp:IsA("BasePart")) then
+		return true
+	end
+	local y = hrp.Position.Y
+	if y < ReviveConfig.VOID_Y_THRESHOLD then
+		return true
+	end
+	local good = lastGoodPos[player]
+	if typeof(good) ~= "Vector3" then
+		return false
+	end
+	local drop = good.Y - y
+	local falling = hrp.AssemblyLinearVelocity.Y < -12
+	local swinging = player:GetAttribute("IsSwinging") == true
+	if swinging then
+		return falling and drop > ReviveConfig.VOID_SWING_FALL_BELOW_STUDS
+	end
+	return falling and drop > ReviveConfig.VOID_FALL_BELOW_STUDS
 end
 
 local function startLandTracking(player: Player, character: Model)
@@ -194,8 +220,13 @@ local function startLandTracking(player: Player, character: Model)
 			if not humanoid or humanoid.Health <= 0 then
 				break
 			end
-			sampleLand(player, character)
-			task.wait(0.35)
+			if shouldRescueFromVoid(player, character) then
+				softTeleportHomeAlive(player)
+				task.wait(0.8)
+			else
+				sampleLand(player, character)
+				task.wait(0.2)
+			end
 		end
 		if landTrackThreads[player] == thread then
 			landTrackThreads[player] = nil
@@ -460,7 +491,7 @@ local function softTeleportAlive(player: Player, tutorialHitbox: boolean)
 	end
 end
 
-local function softTeleportHomeAlive(player: Player)
+softTeleportHomeAlive = function(player: Player)
 	softTeleportAlive(player, false)
 end
 

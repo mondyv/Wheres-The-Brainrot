@@ -55,7 +55,15 @@ local function onKillPartTouched(killPart: BasePart, hit: BasePart)
 		return
 	end
 	if player:GetAttribute("IsSwinging") == true then
-		return
+		local hrp = char:FindFirstChild("HumanoidRootPart")
+		local falling = hrp and hrp:IsA("BasePart") and (hrp :: BasePart).AssemblyLinearVelocity.Y < -35
+		local belowKill = false
+		if hrp and hrp:IsA("BasePart") then
+			belowKill = (hrp :: BasePart).Position.Y < killPart.Position.Y + killPart.Size.Y * 0.5
+		end
+		if not falling and not belowKill then
+			return
+		end
 	end
 	if player:GetAttribute("AdminFlyEnabled") == true then
 		return

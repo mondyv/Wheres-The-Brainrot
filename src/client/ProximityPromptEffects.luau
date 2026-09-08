@@ -197,13 +197,13 @@ local function isStealProximityPrompt(prompt: ProximityPrompt): boolean
 end
 
 local function promptBillboardMaxDistance(prompt: ProximityPrompt): number
-	-- Bush cards need extra camera zoom room. Everything else (Tim Cheese, stands)
-	-- used that same 100–128 cap and showed across the lobby on mobile.
+	-- Bush cards need extra camera zoom room.
 	if CarryGate.isBushSearchPrompt(prompt) then
 		return bushBillboardMaxDistance(prompt)
 	end
-	local pad = if isStealProximityPrompt(prompt) then 8 else 4
-	return math.clamp(prompt.MaxActivationDistance + pad, 10, 36)
+	-- Player-range already gates the card. Billboard MaxDistance is camera
+	-- distance — a 36-stud cap hid steal/pickup cards on zoomed-out phones.
+	return math.clamp(math.max(prompt.MaxActivationDistance * 3.5, 72), 56, 110)
 end
 
 local getPromptFocusWorld: (ProximityPrompt) -> Vector3?
@@ -270,8 +270,14 @@ local function shouldShowPromptUi(prompt: ProximityPrompt): boolean
 	if not isPromptInPlayerRange(prompt) then
 		return false
 	end
+	-- Phones look down at stands; skip the facing gate when you are already in grab range.
 	if not isPromptFacingCamera(prompt) then
-		return false
+		local root = getCharacterRootPart()
+		local focus = getPromptFocusWorld(prompt)
+		local dist = if root and focus then (root.Position - focus).Magnitude else math.huge
+		if dist > 11 then
+			return false
+		end
 	end
 	if CarryGate.isBushSearchPrompt(prompt) then
 		return false
@@ -3310,7 +3316,11 @@ function ProximityPromptEffects.init()
 		if desc:IsA("ProximityPrompt") then
 			-- Lock Custom immediately so streamed/enabled prompts never flash Default UI.
 			desc.Style = Enum.ProximityPromptStyle.Custom
-			ProximityPromptEffects.stylePrompt(desc)
+			task.defer(function()
+				if desc.Parent then
+					ProximityPromptEffects.stylePrompt(desc)
+				end
+			end)
 		end
 	end)
 

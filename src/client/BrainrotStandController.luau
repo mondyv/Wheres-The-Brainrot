@@ -1248,7 +1248,7 @@ local function refreshStandProximityPromptVisibility(forceRefresh: boolean?)
 			continue
 		end
 
-		if not ProximityPromptEffects.isPromptFacingCamera(pp) then
+		if dist > 11 and not ProximityPromptEffects.isPromptFacingCamera(pp) then
 			continue
 		end
 

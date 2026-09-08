@@ -352,7 +352,7 @@ local function refreshGearRow(row: Instance, def: GearConfig.GearDef)
 	local nameLabel = info and info:FindFirstChild("Name")
 	if nameLabel and (nameLabel:IsA("TextLabel") or nameLabel:IsA("TextButton")) then
 		local gearNameLabel = nameLabel :: TextLabel
-		gearNameLabel.Text = def.name
+		gearNameLabel.Text = GearConfig.uiName(def)
 	end
 	applyRarityGradients(row, def.rarity)
 

@@ -211,7 +211,7 @@ local function refreshStealPromptVisibility()
 			continue
 		end
 
-		if not ProximityPromptEffects.isPromptFacingCamera(prompt) then
+		if dist > 11 and not ProximityPromptEffects.isPromptFacingCamera(prompt) then
 			if prompt.Enabled then
 				prompt.Enabled = false
 				ProximityPromptEffects.forceHide(prompt)

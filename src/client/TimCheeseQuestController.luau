@@ -1897,12 +1897,12 @@ local function fitQuestHudLabels(panel: GuiObject, compact: boolean, width: numb
 	local bang = panel:FindFirstChild("Exclaim", true)
 	local header = panel:FindFirstChild("Header", true)
 
-	local titleSize = if compact then 12 else 14
-	local bodySize = if compact then 10 else 12
-	local bodyH = if compact then 32 else 40
+	local titleSize = if compact then 11 else 14
+	local bodySize = if compact then 9 else 12
+	local bodyH = if compact then 26 else 40
 
 	if header and header:IsA("GuiObject") then
-		header.Size = UDim2.new(1, 0, 0, if compact then 26 else 30)
+		header.Size = UDim2.new(1, 0, 0, if compact then 22 else 30)
 	end
 	if bang and bang:IsA("GuiObject") then
 		local side = if compact then 22 else 28
@@ -1949,7 +1949,7 @@ local function fitQuestHudLabels(panel: GuiObject, compact: boolean, width: numb
 
 	local cap = panel:FindFirstChild("HudMaxSize")
 	if cap and cap:IsA("UISizeConstraint") then
-		cap.MaxSize = Vector2.new(width + 4, math.floor(vh * (if compact then 0.26 else 0.30)))
+		cap.MaxSize = Vector2.new(width + 4, math.floor(vh * (if compact then 0.18 else 0.28)))
 	end
 end
 
@@ -1992,12 +1992,12 @@ layoutQuestHud = function()
 	local matchScale = 1
 
 	if compact then
-		local maxW = math.floor(vw * 0.72)
-		screenW = math.clamp(maxW, 180, 260)
-		matchScale = if vh < 700 then 0.88 else 0.92
+		local maxW = math.floor(vw * 0.46)
+		screenW = math.clamp(maxW, 132, 176)
+		matchScale = if vh < 700 then 0.68 else 0.74
 	else
-		screenW = math.clamp(math.floor(vw * 0.24), 290, 380)
-		matchScale = 0.94
+		screenW = math.clamp(math.floor(vw * 0.22), 260, 340)
+		matchScale = 0.9
 	end
 	fitQuestHudLabels(panel, compact, screenW, vh)
 
@@ -2287,7 +2287,7 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	ticket.Name = "CheeseTicket"
 	ticket.AnchorPoint = Vector2.new(0.5, 0.5)
 	ticket.Position = UDim2.fromScale(0.5, 0.5)
-	ticket.Size = UDim2.fromOffset(if isCompactQuestHud() then 270 else 390, 0)
+	ticket.Size = UDim2.fromOffset(if isCompactQuestHud() then 188 else 390, 0)
 	ticket.AutomaticSize = Enum.AutomaticSize.Y
 	ticket.BackgroundColor3 = Color3.fromRGB(255, 214, 74)
 	ticket.BackgroundTransparency = 0.08
@@ -2381,14 +2381,14 @@ local function playQuestAcceptPopup(quest: TimCheeseQuestConfig.QuestDef)
 	title.TextWrapped = false
 	title.Text = quest.title
 	title.Parent = header
-	UiFonts.applyDisplayLabel(title, if isCompactQuestHud() then 16 else 22, 12)
+	UiFonts.applyDisplayLabel(title, if isCompactQuestHud() then 13 else 22, 11)
 
 	local body = Instance.new("TextLabel")
 	body.BackgroundTransparency = 1
-	body.Size = UDim2.new(1, 0, 0, if isCompactQuestHud() then 40 else 52)
+	body.Size = UDim2.new(1, 0, 0, if isCompactQuestHud() then 32 else 52)
 	body.AutomaticSize = Enum.AutomaticSize.None
 	body.FontFace = Font.fromEnum(Enum.Font.GothamMedium)
-	body.TextSize = if isCompactQuestHud() then 12 else 14
+	body.TextSize = if isCompactQuestHud() then 10 else 14
 	body.TextColor3 = Color3.fromRGB(55, 42, 18)
 	body.TextXAlignment = Enum.TextXAlignment.Left
 	body.TextYAlignment = Enum.TextYAlignment.Top

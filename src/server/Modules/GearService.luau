@@ -71,7 +71,7 @@ function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
 		clone = cloneResult
 	end
 	local tool = Instance.new("Tool")
-	tool.Name = def.name
+	tool.Name = GearConfig.uiName(def)
 	tool.RequiresHandle = true
 	tool.CanBeDropped = false
 	tool.ManualActivationOnly = false

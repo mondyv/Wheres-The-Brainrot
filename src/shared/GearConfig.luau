@@ -223,6 +223,13 @@ function M.isShopListed(def: GearDef): boolean
 	return def.hiddenFromShop ~= true
 end
 
+function M.uiName(def: GearDef): string
+	if def.eventLabel == true then
+		return "EVENT GEAR"
+	end
+	return def.name
+end
+
 -- Regular shop gears always. Admin/event gears only after they have been granted.
 function M.showsInShop(def: GearDef, owned: { [number]: boolean }): boolean
 	if def.hiddenFromShop ~= true then

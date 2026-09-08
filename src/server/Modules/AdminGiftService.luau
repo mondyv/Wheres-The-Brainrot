@@ -37,6 +37,7 @@ type VisualPayload = {
 	reason: string,
 	variant: string?,
 	templateName: string?,
+	lightDrop: boolean?,
 }
 
 local dropRE: RemoteEvent? = nil
@@ -153,6 +154,7 @@ local function visualFor(spec: GiftSpec): VisualPayload?
 			displayName = def.name,
 			rarity = def.rarity,
 			reason = reason,
+			lightDrop = def.eventLabel == true or def.hiddenFromShop == true,
 		}
 	end
 	return nil
@@ -428,20 +430,39 @@ function M.giveToPlayer(player: Player, spec: GiftSpec): (boolean, string?)
 			return
 		end
 		local granted = 0
-		if spec.kind == "brainrot" then
-			granted = grantBrainrot(player, spec)
-		elseif spec.kind == "luckyBlock" then
-			granted = grantLuckyBlock(player, spec)
-		elseif spec.kind == "gear" then
-			granted = grantGear(player, spec)
+		local grantOk, grantResult = pcall(function()
+			if spec.kind == "brainrot" then
+				return grantBrainrot(player, spec)
+			elseif spec.kind == "luckyBlock" then
+				return grantLuckyBlock(player, spec)
+			elseif spec.kind == "gear" then
+				return grantGear(player, spec)
+			end
+			return 0
+		end)
+		if not grantOk then
+			warn("[AdminGiftService] grant errored for", player.Name, spec.kind, spec.id, grantResult)
+			return
 		end
+		granted = grantResult or 0
 		if granted <= 0 then
 			warn("[AdminGiftService] delayed grant failed for", player.Name, spec.kind, spec.id)
 			return
 		end
 		if player:GetAttribute("PlayerDataLoaded") == true then
-			PlayerDataService.savePlayerData(player)
+			task.defer(function()
+				if player.Parent then
+					PlayerDataService.savePlayerData(player)
+				end
+			end)
 		end
+	end
+
+	-- Gears go into the backpack right away so a heavy sky-drop clone
+	-- cannot hide a successful grant. Brainrots keep the drop delay.
+	if spec.kind == "gear" then
+		commitGrant()
+		return true, M.labelFor(spec)
 	end
 
 	local leavingConn: RBXScriptConnection? = nil
@@ -466,16 +487,23 @@ function M.giveToPlayer(player: Player, spec: GiftSpec): (boolean, string?)
 end
 
 function M.giveToOnline(spec: GiftSpec): number
-	local n = 0
-	for i, player in Players:GetPlayers() do
-		local ok = M.giveToPlayer(player, spec)
-		if ok then
-			n += 1
+	local list = Players:GetPlayers()
+	local n = #list
+	task.spawn(function()
+		for i, player in list do
+			if player.Parent then
+				local ok, err = pcall(function()
+					M.giveToPlayer(player, spec)
+				end)
+				if not ok then
+					warn("[AdminGiftService] giveToOnline failed:", player.Name, err)
+				end
+			end
+			if i < n then
+				task.wait(0.12)
+			end
 		end
-		if i % 8 == 0 then
-			task.wait(0.05)
-		end
-	end
+	end)
 	return n
 end
 

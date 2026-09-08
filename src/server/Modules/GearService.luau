@@ -61,7 +61,15 @@ function GearService.findGearTool(player: Player, gearId: number): Tool?
 end
 
 function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
-	local clone = GearConfig.cloneGearModel(def.id)
+	local clone: Model? = nil
+	local cloneOk, cloneResult = pcall(function()
+		return GearConfig.cloneGearModel(def.id)
+	end)
+	if not cloneOk then
+		warn("[GearService] cloneGearModel failed for", def.name, cloneResult)
+	else
+		clone = cloneResult
+	end
 	local tool = Instance.new("Tool")
 	tool.Name = def.name
 	tool.RequiresHandle = true
@@ -102,29 +110,21 @@ function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
 		main.Massless = true
 		main.CanCollide = false
 		main.Parent = tool
+		-- Keep the authored model tree. Reparenting every mesh onto the Tool
+		-- (old path) hitches hard on big event gears like The Bus.
 		for _, p in parts do
 			if p ~= main then
 				p.Anchored = false
 				p.Massless = true
 				p.CanCollide = false
-				p.Parent = tool
 				local w = Instance.new("WeldConstraint")
 				w.Part0 = main
 				w.Part1 = p
 				w.Parent = main
 			end
 		end
-		-- Keep non-part VFX under the tool (attachments/emitters move with parts).
-		-- Skip 2D ImageLabels — those are shop/inventory icons, not world meshes.
-		for _, d in clone:GetChildren() do
-			if d:IsA("GuiBase") or d:IsA("Script") or d:IsA("LocalScript") then
-				continue
-			end
-			if not d:IsA("BasePart") then
-				d.Parent = tool
-			end
-		end
-		clone:Destroy()
+		clone.Name = "GearModel"
+		clone.Parent = tool
 		handle = main
 		local icon = GearConfig.getIconImage(def.id)
 		if icon ~= "" then

@@ -214,13 +214,25 @@ local function deliverGift(sender: Player, targetQuery: string, spec: any): (boo
 		return false, targetErr or "No target."
 	end
 	local okCount = 0
-	for i, target in targets do
-		local ok = AdminGiftService.giveToPlayer(target, spec)
-		if ok then
-			okCount += 1
-		end
-		if i % 8 == 0 then
-			task.wait(0.05)
+	if #targets > 3 then
+		task.spawn(function()
+			for i, target in targets do
+				AdminGiftService.giveToPlayer(target, spec)
+				if i < #targets then
+					task.wait(0.12)
+				end
+			end
+		end)
+		okCount = #targets
+	else
+		for i, target in targets do
+			local ok = AdminGiftService.giveToPlayer(target, spec)
+			if ok then
+				okCount += 1
+			end
+			if i % 8 == 0 then
+				task.wait(0.05)
+			end
 		end
 	end
 	if okCount <= 0 then
@@ -1693,8 +1705,11 @@ commands.grantgear = {
 		local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 		local gearRaw = table.concat(args, " ", 2)
 		local def = GearConfig.findByQuery(gearRaw)
+		if not def and args[2] then
+			def = GearConfig.findByQuery(args[#args])
+		end
 		if not def then
-			return false, "Unknown gear. Use an id, name, or The Bus."
+			return false, "Unknown gear '" .. gearRaw .. "'. Try: 14, bus, or The Bus."
 		end
 		return deliverGift(sender, args[1], {
 			kind = "gear",

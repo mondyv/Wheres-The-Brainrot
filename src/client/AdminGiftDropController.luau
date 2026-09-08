@@ -497,7 +497,18 @@ local function playDrop(payload: any, template: any)
 	if kind == "luckyBlock" then
 		model = cloneLuckyBlock(id, payload.variant)
 	elseif kind == "gear" then
-		model = cloneGear(tonumber(id) or 0)
+		if payload.lightDrop == true then
+			model = nil
+		else
+			local cloneOk, cloneResult = pcall(function()
+				return cloneGear(tonumber(id) or 0)
+			end)
+			if cloneOk then
+				model = cloneResult
+			else
+				warn("[AdminGiftDrop] gear clone failed:", cloneResult)
+			end
+		end
 	elseif kind == "brainrot" then
 		model = cloneBrainrot(id, template, payload.templateName)
 	end

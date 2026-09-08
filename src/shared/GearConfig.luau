@@ -223,28 +223,62 @@ function M.isShopListed(def: GearDef): boolean
 	return def.hiddenFromShop ~= true
 end
 
+local function compactName(value: string): string
+	return string.lower((string.gsub(value, "[%s_%-%p]", "")))
+end
+
+local GEAR_QUERY_ALIASES: { [string]: number } = {
+	bus = 14,
+	thebus = 14,
+	schoolbus = 14,
+	eventbus = 14,
+	eventgear = 14,
+}
+
 function M.findByQuery(raw: string): GearDef?
 	local trimmed = string.gsub(raw, "^%s*(.-)%s*$", "%1")
 	if trimmed == "" then
 		return nil
 	end
+	trimmed = string.gsub(trimmed, "^[\"'](.*)[\"']$", "%1")
 	local asNum = tonumber(trimmed)
 	if asNum then
 		return byId[math.floor(asNum)]
 	end
-	local key = string.lower((string.gsub(trimmed, "[%s_%-%p]", "")))
+	local key = compactName(trimmed)
+	local aliasId = GEAR_QUERY_ALIASES[key]
+	if aliasId then
+		return byId[aliasId]
+	end
 	for _, g in M.GEARS do
-		if string.lower((string.gsub(g.name, "[%s_%-%p]", ""))) == key then
+		if compactName(g.name) == key or compactName(g.assetName) == key then
 			return g
 		end
-		if string.lower((string.gsub(g.assetName, "[%s_%-%p]", ""))) == key then
-			return g
+	end
+	-- Last word ("bus") and each token, skipping filler like "the".
+	for token in string.gmatch(string.lower(trimmed), "%w+") do
+		if #token >= 3 and token ~= "the" and token ~= "gear" then
+			local tokenAlias = GEAR_QUERY_ALIASES[token]
+			if tokenAlias then
+				return byId[tokenAlias]
+			end
+			for _, g in M.GEARS do
+				if compactName(g.name) == token or compactName(g.assetName) == token then
+					return g
+				end
+				if string.find(compactName(g.name), token, 1, true) then
+					return g
+				end
+			end
 		end
 	end
 	local lower = string.lower(trimmed)
 	if #lower >= 3 then
 		for _, g in M.GEARS do
 			if string.find(string.lower(g.name), lower, 1, true) then
+				return g
+			end
+			if string.find(string.lower(g.assetName), lower, 1, true) then
 				return g
 			end
 		end
@@ -352,7 +386,7 @@ local function nameMatchesGear(childName: string, def: GearDef): boolean
 		the = true,
 	}
 	for token in string.gmatch(string.lower(def.name), "%w+") do
-		if #token >= 4 and not skip[token] and string.find(lower, token, 1, true) then
+		if #token >= 3 and not skip[token] and string.find(lower, token, 1, true) then
 			return true
 		end
 	end
@@ -426,9 +460,20 @@ function M.findGearAsset(gearId: number): Instance?
 	if not folder then
 		return nil
 	end
-	local exact = folder:FindFirstChild(def.assetName)
+	local exact = folder:FindFirstChild(def.assetName) or folder:FindFirstChild(def.name)
 	if exact then
 		return exact
+	end
+	local wantAsset = compactName(def.assetName)
+	local wantName = compactName(def.name)
+	for _, child in folder:GetDescendants() do
+		if not (child:IsA("Model") or child:IsA("BasePart") or child:IsA("Folder") or child:IsA("Tool")) then
+			continue
+		end
+		local n = compactName(child.Name)
+		if n == wantAsset or n == wantName then
+			return child
+		end
 	end
 	for _, child in folder:GetChildren() do
 		if nameMatchesGear(child.Name, def) then
@@ -562,6 +607,24 @@ function M.cloneGearModel(gearId: number): Model?
 			end
 			bag:Destroy()
 		end
+	end
+
+	-- Nested folder/model wrappers from Studio packages.
+	if not wrapper.PrimaryPart then
+		local nested = wrapper:FindFirstChildWhichIsA("Model")
+		if nested and nested.PrimaryPart then
+			wrapper.PrimaryPart = nested.PrimaryPart
+		end
+	end
+
+	local strip: { Instance } = {}
+	for _, d in wrapper:GetDescendants() do
+		if d:IsA("Humanoid") or d:IsA("Animator") or d:IsA("Script") or d:IsA("LocalScript") then
+			table.insert(strip, d)
+		end
+	end
+	for _, d in strip do
+		d:Destroy()
 	end
 
 	-- Pull sibling FX folders in EssentialAssets.Gears (often named "Gear N VFX" / "FX").

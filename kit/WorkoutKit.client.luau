@@ -1,6 +1,6 @@
 -- Paste into StarterPlayerScripts on the SELLABLE baseplate only.
 -- MUST be a LocalScript (not a ModuleScript, not a server Script).
-print("[WorkoutKit] booting…")
+print("[WorkoutKit] CLIENT booting — if you do not see this, Output is filtered to Server only (click All)")
 local parent = script.Parent
 local ServerScriptService = game:GetService("ServerScriptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,20 +12,13 @@ end
 for _, name in { "Gears", "GearService", "WorkoutCash", "WorkoutSetup", "WorkoutCheck", "WorkoutLicense" } do
 	local wrong = parent:FindFirstChild(name) or parent:FindFirstChild(name .. " ")
 	if wrong then
-		warn("[WorkoutKit] MOVE", name, "out of StarterPlayerScripts into ServerScriptService (server Script / ModuleScript). It does nothing here.")
+		warn("[WorkoutKit] MOVE", name, "out of StarterPlayerScripts into ServerScriptService.")
 	end
 end
 
 if ServerScriptService:FindFirstChild("Gears", true) == nil then
-	warn("[WorkoutKit] ServerScriptService has no Gears Script. Drag StarterPlayerScripts.Gears into ServerScriptService.")
+	warn("[WorkoutKit] ServerScriptService has no Gears Script.")
 end
-
-task.spawn(function()
-	local remotes = ReplicatedStorage:WaitForChild("Remotes", 6)
-	if not (remotes and remotes:FindFirstChild("StartWorkout")) then
-		warn("[WorkoutKit] StartWorkout remote missing. Equip will do nothing until Gears is a server Script in ServerScriptService.")
-	end
-end)
 
 local function boot(name: string)
 	local child = parent:FindFirstChild(name)
@@ -46,14 +39,29 @@ local function boot(name: string)
 		local initOk, initErr = pcall(mod.init, mod)
 		if not initOk then
 			warn("[WorkoutKit]", name, "init failed:", initErr)
+		else
+			print("[WorkoutKit] started", name)
 		end
 	end
 end
 
-boot("GameSoundEffects")
+-- Shop first so SFX cannot block the SHOP button.
 boot("WeightUpgradesController")
 if not parent:FindFirstChild("WeightUpgradesController") then
 	boot("UpgradesController")
 end
 boot("WorkoutController")
-print("[WorkoutKit] done — look top-left for Power + SHOP")
+task.spawn(function()
+	boot("GameSoundEffects")
+end)
+
+task.spawn(function()
+	local remotes = ReplicatedStorage:WaitForChild("Remotes", 8)
+	if not (remotes and remotes:FindFirstChild("StartWorkout")) then
+		warn("[WorkoutKit] StartWorkout remote missing. Equip will do nothing.")
+	else
+		print("[WorkoutKit] remotes ok")
+	end
+end)
+
+print("[WorkoutKit] done — look TOP-LEFT for a gold Power number and a green SHOP button")

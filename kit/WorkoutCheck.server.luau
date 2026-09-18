@@ -19,6 +19,7 @@ local function bad(msg: string)
 end
 
 print("========== WORKOUT KIT CHECK ==========")
+task.wait(0.5)
 
 if not script:IsDescendantOf(ServerScriptService) then
 	bad("MOVE WorkoutCheck into ServerScriptService (it is in the wrong folder)")

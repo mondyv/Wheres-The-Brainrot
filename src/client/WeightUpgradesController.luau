@@ -384,7 +384,7 @@ local function createMinimalPowerHud(): (ScreenGui, Frame, TextLabel)
 		amount.Name = "Amount"
 		amount.BackgroundTransparency = 1
 		amount.Position = UDim2.fromOffset(54, 4)
-		amount.Size = UDim2.fromOffset(160, 48)
+		amount.Size = UDim2.fromOffset(118, 48)
 		amount.Font = Enum.Font.GothamBold
 		amount.TextSize = 28
 		amount.TextXAlignment = Enum.TextXAlignment.Left
@@ -424,9 +424,7 @@ local function addShopButton(parent: GuiObject, main: ScreenGui?)
 	corner.CornerRadius = UDim.new(0, 6)
 	corner.Parent = btn
 	btn.Activated:Connect(function()
-		if main then
-			openNamedFrame("Upgrades")
-		end
+		openNamedFrame("Upgrades")
 	end)
 end
 
@@ -1873,6 +1871,17 @@ local function wirePowerEdit(powerFrame: Instance, main: ScreenGui?)
 end
 
 local function init()
+	if not HUD then
+		local _hud, kitPower, kitAmount = createMinimalPowerHud()
+		powerAmountLabel = kitAmount
+		updatePowerLabel()
+		if kitPower:IsA("GuiObject") then
+			wirePowerEdit(kitPower, nil)
+			addShopButton(kitPower, nil)
+			print("[WeightUpgrades] Power + SHOP should be top-left of the screen")
+		end
+	end
+
 	local main = waitMain()
 	if main then
 		MainGradientButtons.init(main)
@@ -1921,7 +1930,9 @@ local function init()
 	updatePowerLabel()
 	if powerFrame and powerFrame:IsA("GuiObject") then
 		wirePowerEdit(powerFrame, main)
-		addShopButton(powerFrame :: GuiObject, main)
+		if HUD then
+			addShopButton(powerFrame :: GuiObject, main)
+		end
 	end
 
 	MarketplaceService.PromptProductPurchaseFinished:Connect(

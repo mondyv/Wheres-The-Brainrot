@@ -3145,12 +3145,14 @@ local function bindCharacter(character: Model)
 end
 
 local function init()
-	if typeof(GameSoundEffects.init) == "function" then
-		local sfxOk, sfxErr = pcall(GameSoundEffects.init)
-		if not sfxOk then
-			warn("[WorkoutController] GameSoundEffects.init failed:", sfxErr)
+	task.spawn(function()
+		if typeof(GameSoundEffects.init) == "function" then
+			local sfxOk, sfxErr = pcall(GameSoundEffects.init)
+			if not sfxOk then
+				warn("[WorkoutController] GameSoundEffects.init failed:", sfxErr)
+			end
 		end
-	end
+	end)
 	local backpack = player:WaitForChild("Backpack")
 	scanTools(backpack)
 	backpack.ChildAdded:Connect(function(child)

@@ -3,6 +3,7 @@
 local Players = game:GetService("Players")
 
 local STARTING_CASH = 1_000_000
+print("[WorkoutCash] starting cash =", STARTING_CASH)
 
 local function setup(player: Player)
 	if player:GetAttribute("Cash") == nil then

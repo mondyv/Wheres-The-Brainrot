@@ -337,7 +337,7 @@ end
 function GameSoundEffects.init()
 	ClientSFXVolume.syncFromSoundService()
 
-	local root = SoundService:WaitForChild("SoundEffects", 30)
+	local root = SoundService:FindFirstChild("SoundEffects") or SoundService:WaitForChild("SoundEffects", 5)
 	if not root then
 		warn("[GameSoundEffects] SoundService.SoundEffects missing")
 		return

@@ -62,6 +62,7 @@ local stopWorkoutFn = ensureRF("StopWorkout")
 local claimDoubleTapFn = ensureRF("ClaimWorkoutDoubleTap")
 local setPowerFn = ensureRF("SetEditedPower")
 local prepareRobuxGearRE = ensureRE("PrepareRobuxGear")
+print("[Gears] remotes created under ReplicatedStorage.Remotes")
 
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
@@ -84,7 +85,13 @@ local function requireGearService(): any
 	error("[Gears] GearService missing — put the ModuleScript in ServerScriptService next to Gears")
 end
 
-local GearService = requireGearService()
+local gsOk, gsOrErr = pcall(requireGearService)
+if not gsOk then
+	warn("[Gears] GearService failed to load:", gsOrErr)
+	return
+end
+local GearService = gsOrErr
+print("[Gears] GearService loaded")
 local PlayerDataService = WorkoutCompat.tryRequire(script.Parent:FindFirstChild("Modules"), "PlayerDataService")
 	or WorkoutCompat.tryRequire(script.Parent, "PlayerDataService")
 local AnalyticsFunnelService = WorkoutCompat.tryRequire(script.Parent:FindFirstChild("Modules"), "AnalyticsFunnelService")
@@ -135,6 +142,7 @@ local function initPlayer(player: Player)
 		GearService.grantGear(player, 1, true)
 	end
 	GearService.ensureTools(player)
+	print("[Gears] tools ready for", player.Name, "equipped", player:GetAttribute(GearConfig.EQUIPPED_GEAR_ATTR))
 end
 
 GearService.init()

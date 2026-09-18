@@ -1,10 +1,16 @@
 -- Paste into StarterPlayerScripts on the SELLABLE baseplate only.
--- Do not add this to the live game — init.client already boots WorkoutController.
+-- MUST be a LocalScript (not a ModuleScript, not a server Script).
+print("[WorkoutKit] booting…")
 local parent = script.Parent
 
 local function boot(name: string)
 	local child = parent:FindFirstChild(name)
 	if not child then
+		warn("[WorkoutKit] missing ModuleScript:", name)
+		return
+	end
+	if not child:IsA("ModuleScript") then
+		warn("[WorkoutKit]", name, "must be a ModuleScript — you pasted it as a", child.ClassName)
 		return
 	end
 	local ok, mod = pcall(require, child)
@@ -26,3 +32,4 @@ if not parent:FindFirstChild("WeightUpgradesController") then
 	boot("UpgradesController")
 end
 boot("WorkoutController")
+print("[WorkoutKit] done — look top-left for Power + SHOP")

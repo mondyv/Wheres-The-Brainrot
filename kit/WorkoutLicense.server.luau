@@ -1,0 +1,20 @@
+-- WorkoutLicense
+-- Paste as a Script in ServerScriptService on the sold / baseplate place.
+--
+-- LICENSE (workout kit)
+-- Copyright (c) Mondyv. All rights reserved.
+--
+-- You MAY:
+--   • Use this kit in Roblox games you own or develop
+--   • Edit scripts, meshes, UI, prices, and animations for those games
+--   • Publish those games on Roblox
+--
+-- You may NOT:
+--   • Resell, redistribute, or share this kit (files, place, or copies)
+--   • Upload it as your own model / kit / paid product
+--   • Give it to other developers except people working on YOUR game
+--   • Claim you made the original workout system
+--
+-- No warranty. Provided as-is.
+
+print("[WorkoutLicense] This workout kit is licensed for use in your games only. Do not resell or share the kit.")

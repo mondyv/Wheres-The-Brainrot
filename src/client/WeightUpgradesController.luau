@@ -323,26 +323,16 @@ local function closeNamedFrame(name: string)
 	end
 end
 
--- Kit only (no HUDController): keep Cash + Power, hide the rest of Main's HUD.
+-- Kit only (no HUDController): hide the full game HUD. Power + SHOP live on WorkoutPowerHud.
 local function stripKitHud(main: ScreenGui)
 	if HUD then
 		return
 	end
+	main.Enabled = true
+	main.ResetOnSpawn = false
 	local side = main:FindFirstChild("SideUI")
-	if side then
-		for _, ch in side:GetChildren() do
-			if ch.Name ~= "Counters" and ch:IsA("GuiObject") then
-				(ch :: GuiObject).Visible = false
-			end
-		end
-		local counters = side:FindFirstChild("Counters")
-		if counters then
-			for _, ch in counters:GetChildren() do
-				if ch:IsA("GuiObject") and ch.Name ~= "Power" and ch.Name ~= "Cash" then
-					(ch :: GuiObject).Visible = false
-				end
-			end
-		end
+	if side and side:IsA("GuiObject") then
+		(side :: GuiObject).Visible = false
 	end
 	local frames = main:FindFirstChild("Frames")
 	if frames then
@@ -362,7 +352,8 @@ local function createMinimalPowerHud(): (ScreenGui, Frame, TextLabel)
 		created.Name = "WorkoutPowerHud"
 		created.ResetOnSpawn = false
 		created.IgnoreGuiInset = true
-		created.DisplayOrder = 40
+		created.DisplayOrder = 250
+		created.Enabled = true
 		created.Parent = pg
 		gui = created
 	end
@@ -376,7 +367,7 @@ local function createMinimalPowerHud(): (ScreenGui, Frame, TextLabel)
 		frame.BorderSizePixel = 0
 		frame.AnchorPoint = Vector2.new(0, 0)
 		frame.Position = UDim2.fromOffset(16, 16)
-		frame.Size = UDim2.fromOffset(220, 56)
+		frame.Size = UDim2.fromOffset(280, 64)
 		frame.Parent = screen
 		local corner = Instance.new("UICorner")
 		corner.CornerRadius = UDim.new(0, 10)
@@ -423,9 +414,10 @@ local function addShopButton(parent: GuiObject, main: ScreenGui?)
 	btn.TextSize = 14
 	btn.TextColor3 = Color3.new(1, 1, 1)
 	btn.BackgroundColor3 = Color3.fromRGB(40, 120, 70)
-	btn.Size = UDim2.fromOffset(64, 28)
-	btn.AnchorPoint = Vector2.new(1, 0)
-	btn.Position = UDim2.new(1, -6, 0, 6)
+	btn.Size = UDim2.fromOffset(72, 32)
+	btn.Position = UDim2.new(1, -8, 0.5, 0)
+	btn.AnchorPoint = Vector2.new(1, 0.5)
+	btn.ZIndex = 20
 	btn.AutoButtonColor = true
 	btn.Parent = parent
 	local corner = Instance.new("UICorner")
@@ -1901,27 +1893,30 @@ local function init()
 
 	local amountLabel: TextLabel? = nil
 	local powerFrame: Instance? = nil
-	local sideUI = main and main:FindFirstChild("SideUI")
-	local counters = sideUI and sideUI:FindFirstChild("Counters")
-	if counters then
-		local cashFrame = counters:FindFirstChild("Cash")
-		local cashAmount = cashFrame and cashFrame:FindFirstChild("Amount")
-		if cashAmount and cashAmount:IsA("TextLabel") then
-			amountLabel = cashAmount
-			cashAmountLabel = cashAmount
-			amountBaseColor = cashAmount.TextColor3
-			local cash0 = player:GetAttribute("Cash")
-			lastShownCash = if typeof(cash0) == "number" then cash0 else 0
-			cashAmount.Text = formatCash(lastShownCash)
+	if HUD then
+		local sideUI = main and main:FindFirstChild("SideUI")
+		local counters = sideUI and sideUI:FindFirstChild("Counters")
+		if counters then
+			local cashFrame = counters:FindFirstChild("Cash")
+			local cashAmount = cashFrame and cashFrame:FindFirstChild("Amount")
+			if cashAmount and cashAmount:IsA("TextLabel") then
+				amountLabel = cashAmount
+				cashAmountLabel = cashAmount
+				amountBaseColor = cashAmount.TextColor3
+				local cash0 = player:GetAttribute("Cash")
+				lastShownCash = if typeof(cash0) == "number" then cash0 else 0
+				cashAmount.Text = formatCash(lastShownCash)
+			end
+			powerAmountLabel = ensurePowerCounter(counters)
+			powerFrame = counters:FindFirstChild("Power")
 		end
-		powerAmountLabel = ensurePowerCounter(counters)
-		powerFrame = counters:FindFirstChild("Power")
 	end
 
 	if not powerAmountLabel then
 		local _hud, kitPower, kitAmount = createMinimalPowerHud()
 		powerAmountLabel = kitAmount
 		powerFrame = kitPower
+		print("[WeightUpgrades] Power HUD + SHOP ready (top-left)")
 	end
 	updatePowerLabel()
 	if powerFrame and powerFrame:IsA("GuiObject") then

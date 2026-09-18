@@ -16,6 +16,10 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local RunService = game:GetService("RunService")
 
+if not script:IsDescendantOf(ServerScriptService) then
+	warn("[Gears] This Script is in", script.Parent and script.Parent:GetFullName(), "— MOVE it to ServerScriptService or remotes/tools will not exist")
+end
+
 local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes") :: Folder?
 if not remotesFolder then
 	remotesFolder = Instance.new("Folder")
@@ -64,14 +68,20 @@ local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChi
 local WorkoutCompat = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutCompat"))
 
 local function requireGearService(): any
+	local StarterPlayer = game:GetService("StarterPlayer")
+	local candidates: { Instance? } = {}
 	local modules = script.Parent:FindFirstChild("Modules")
-	local fromModules = modules and modules:FindFirstChild("GearService")
-	local sibling = script.Parent:FindFirstChild("GearService")
-	local target = fromModules or sibling
-	if not target then
-		error("[Gears] GearService missing — put it in Modules/ or next to this script")
+	table.insert(candidates, modules and modules:FindFirstChild("GearService"))
+	table.insert(candidates, script.Parent:FindFirstChild("GearService"))
+	table.insert(candidates, ServerScriptService:FindFirstChild("GearService"))
+	local sps = StarterPlayer:FindFirstChild("StarterPlayerScripts")
+	table.insert(candidates, sps and sps:FindFirstChild("GearService"))
+	for _, target in candidates do
+		if target and target:IsA("ModuleScript") then
+			return require(target)
+		end
 	end
-	return require(target)
+	error("[Gears] GearService missing — put the ModuleScript in ServerScriptService next to Gears")
 end
 
 local GearService = requireGearService()

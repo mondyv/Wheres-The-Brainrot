@@ -185,7 +185,10 @@ local GEARS: { GearDef } = {
 
 M.GEARS = GEARS
 M.WORKOUT_IMAGE = "rbxassetid://73088512205933"
+-- R6 curl. Re-upload for a sold kit and paste the new rbxassetid.
 M.WORKOUT_ANIMATION_ID = "rbxassetid://118202501576957"
+-- R15 curl. Empty = use WORKOUT_ANIMATION_ID (will look wrong on R15).
+M.WORKOUT_ANIMATION_ID_R15 = ""
 M.GEAR_TOOL_ATTR = "WorkoutGearTool"
 M.GEAR_ID_ATTR = "WorkoutGearId"
 M.OWNED_GEARS_ATTR = "OwnedGears" -- comma-separated ids e.g. "1,3,5"
@@ -199,6 +202,16 @@ M.WORKOUT_LIFT_MULT_MAX = 3
 M.WORKOUT_LIFT_COMBO_FOR_MAX = 16
 -- Combo button locks here until the workout stops (no more taps / misses).
 M.WORKOUT_COMBO_MAX = 50
+
+function M.workoutAnimationIdFor(humanoid: Humanoid): string
+	if humanoid.RigType == Enum.HumanoidRigType.R15 then
+		local r15 = M.WORKOUT_ANIMATION_ID_R15
+		if typeof(r15) == "string" and r15 ~= "" then
+			return r15
+		end
+	end
+	return M.WORKOUT_ANIMATION_ID
+end
 
 function M.workoutLiftMultiplier(combo: number): number
 	local c = math.max(1, math.floor(combo))

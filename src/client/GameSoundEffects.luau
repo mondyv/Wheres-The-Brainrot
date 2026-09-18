@@ -10,7 +10,30 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 
-local ClientSFXVolume = require(script.Parent.ClientSFXVolume)
+local volumeModule = script.Parent:FindFirstChild("ClientSFXVolume")
+local ClientSFXVolume: any = nil
+if volumeModule then
+	local ok, mod = pcall(require, volumeModule)
+	if ok then
+		ClientSFXVolume = mod
+	else
+		warn("[GameSoundEffects] ClientSFXVolume failed:", mod)
+	end
+end
+if not ClientSFXVolume then
+	ClientSFXVolume = {
+		syncFromSoundService = function()
+			return 1
+		end,
+		getVolume = function()
+			return 1
+		end,
+		getSoundGroup = function()
+			return nil
+		end,
+		setVolume = function() end,
+	}
+end
 
 local player = Players.LocalPlayer
 

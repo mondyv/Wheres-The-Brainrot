@@ -77,7 +77,8 @@ function GearService.buildGearTool(def: GearConfig.GearDef): Tool?
 	tool.Name = GearConfig.uiName(def)
 	tool.RequiresHandle = true
 	tool.CanBeDropped = false
-	tool.ManualActivationOnly = false
+	-- Clicks go to the combo UI; activating the tool would unequip on a default hotbar.
+	tool.ManualActivationOnly = true
 	tool:SetAttribute(GearConfig.GEAR_TOOL_ATTR, true)
 	tool:SetAttribute(GearConfig.GEAR_ID_ATTR, def.id)
 	-- Highest toolbar priority — custom hotbar keeps workout gear in slot 1.
@@ -334,9 +335,14 @@ function GearService.stopWorkout(player: Player)
 	player:SetAttribute("WorkoutCombo", 1)
 	player:SetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR, false)
 	local tool = GearService.findGearTool(player, session.gearId)
-	if tool then
+	if tool and tool.Parent and tool.Parent:IsA("Backpack") then
 		tool.RequiresHandle = true
 	end
+	task.defer(function()
+		if player.Parent then
+			GearService.ensureTools(player)
+		end
+	end)
 end
 
 function GearService.startWorkout(player: Player, gearId: number): (boolean, string?)

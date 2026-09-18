@@ -79,6 +79,7 @@ if not GamepadInput then
 end
 
 local player = Players.LocalPlayer
+local hasCustomToolbar = WorkoutCompat.tryRequire(script.Parent, "ToolbarController") ~= nil
 
 local startWorkoutFn: RemoteFunction? = nil
 local stopWorkoutFn: RemoteFunction? = nil
@@ -990,10 +991,17 @@ local function playWorkoutAnim(character: Model)
 		animator = Instance.new("Animator")
 		animator.Parent = humanoid
 	end
-	if not workoutAnim then
+	local animId = GearConfig.WORKOUT_ANIMATION_ID
+	if typeof(GearConfig.workoutAnimationIdFor) == "function" then
+		animId = GearConfig.workoutAnimationIdFor(humanoid)
+	end
+	if not workoutAnim or workoutAnim.AnimationId ~= animId then
+		if workoutAnim then
+			workoutAnim:Destroy()
+		end
 		workoutAnim = Instance.new("Animation")
 		workoutAnim.Name = "WorkoutBarbellCurl"
-		workoutAnim.AnimationId = GearConfig.WORKOUT_ANIMATION_ID
+		workoutAnim.AnimationId = animId
 	end
 	local ok, trackOrErr = pcall(function()
 		return (animator :: Animator):LoadAnimation(workoutAnim :: Animation)
@@ -3048,10 +3056,41 @@ local function bindTool(tool: Tool)
 			startWorkoutFromEquip()
 		end)
 	)
+	-- Live game has a custom toolbar — unequip means stop. On a baseplate the
+	-- default hotbar / RightGrip fight can unequip the tool mid-curl; put it back.
 	table.insert(
 		toolConns,
 		tool.Unequipped:Connect(function()
-			onUnequip()
+			if hasCustomToolbar then
+				onUnequip()
+				return
+			end
+			task.defer(function()
+				local character = player.Character
+				if not character then
+					onUnequip()
+					return
+				end
+				for _, child in character:GetChildren() do
+					if child:IsA("Tool") then
+						onUnequip()
+						return
+					end
+				end
+				if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+					local backpack = player:FindFirstChildOfClass("Backpack")
+					local hum = getHumanoid(character)
+					if hum and backpack and tool.Parent == backpack then
+						tool.ManualActivationOnly = true
+						tool.RequiresHandle = false
+						pcall(function()
+							hum:EquipTool(tool)
+						end)
+						return
+					end
+				end
+				onUnequip()
+			end)
 		end)
 	)
 
@@ -3097,7 +3136,7 @@ local function bindCharacter(character: Model)
 		charConns,
 		character.ChildRemoved:Connect(function(child)
 			if child:IsA("Tool") and child:GetAttribute(GearConfig.GEAR_TOOL_ATTR) == true then
-				if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
+				if hasCustomToolbar and player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
 					onUnequip()
 				end
 			end
@@ -3106,6 +3145,12 @@ local function bindCharacter(character: Model)
 end
 
 local function init()
+	if typeof(GameSoundEffects.init) == "function" then
+		local sfxOk, sfxErr = pcall(GameSoundEffects.init)
+		if not sfxOk then
+			warn("[WorkoutController] GameSoundEffects.init failed:", sfxErr)
+		end
+	end
 	local backpack = player:WaitForChild("Backpack")
 	scanTools(backpack)
 	backpack.ChildAdded:Connect(function(child)

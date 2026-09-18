@@ -13,6 +13,8 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local RunService = game:GetService("RunService")
 
 local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes") :: Folder?
 if not remotesFolder then
@@ -227,6 +229,22 @@ local function fulfillRobuxGear(player: Player, gearId: number?): boolean
 	return true
 end
 
+prepareRobuxGearRE.OnServerEvent:Connect(function(player: Player, gearIdAny: any)
+	if not RunService:IsStudio() then
+		return
+	end
+	if ServerScriptService:FindFirstChild("EssentialsServer") then
+		return
+	end
+	if typeof(gearIdAny) ~= "number" then
+		return
+	end
+	local def = GearConfig.get(math.floor(gearIdAny))
+	if def and def.robuxProductId then
+		fulfillRobuxGear(player, def.id)
+	end
+end)
+
 local function ensureInternalFolder(): Folder
 	local existing = ServerStorage:FindFirstChild("GameInternal")
 	if existing and existing:IsA("Folder") then
@@ -253,8 +271,27 @@ end
 end
 
 task.spawn(function()
-	local essentials = ServerScriptService:WaitForChild("EssentialsServer", 120)
-	local handlerFolder = essentials and essentials:WaitForChild("ProductHandler", 30)
+	local essentials = ServerScriptService:FindFirstChild("EssentialsServer")
+	if not essentials then
+		-- Sold kit / baseplate: own ProcessReceipt so Robux gears grant.
+		MarketplaceService.ProcessReceipt = function(receiptInfo)
+			local def = GearConfig.getByProductId(receiptInfo.ProductId)
+			if not def then
+				return Enum.ProductPurchaseDecision.NotProcessedYet
+			end
+			local player = Players:GetPlayerByUserId(receiptInfo.PlayerId)
+			if not player then
+				return Enum.ProductPurchaseDecision.NotProcessedYet
+			end
+			local ok = fulfillRobuxGear(player, def.id)
+			if ok then
+				return Enum.ProductPurchaseDecision.PurchaseGranted
+			end
+			return Enum.ProductPurchaseDecision.NotProcessedYet
+		end
+		return
+	end
+	local handlerFolder = essentials:WaitForChild("ProductHandler", 30)
 	local moduleScript = handlerFolder and handlerFolder:WaitForChild("ProductHandlerServer", 30)
 	if not moduleScript or not moduleScript:IsA("ModuleScript") then
 		warn("[Gears] ProductHandlerServer unavailable; gear Robux products not registered")

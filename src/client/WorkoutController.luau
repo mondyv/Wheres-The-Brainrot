@@ -1,5 +1,7 @@
 -- [ACTIVE] WorkoutController
 -- Gear activate: bar across both feet during curl, white flash, +power floaters into HUD.
+-- Optional modules (HUD, sfx, fonts) are skipped on a baseplate kit so this
+-- still boots. This game already has every module, so play is unchanged.
 local ContextActionService = game:GetService("ContextActionService")
 local GamepadService = game:GetService("GamepadService")
 local Players = game:GetService("Players")
@@ -9,15 +11,72 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
-local PlayerGuiMain = require(script.Parent.PlayerGuiMain)
+local WorkoutCompat = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutCompat"))
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
-local BrainrotEconomy = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("BrainrotEconomy"))
-local UiFonts = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiFonts"))
-local GearRainbowFX = require(script.Parent.GearRainbowFX)
-local OtherVfxController = require(script.Parent.OtherVfxController)
-local UpgradesController = require(script.Parent.UpgradesController)
-local GameSoundEffects = require(script.Parent.GameSoundEffects)
-local GamepadInput = require(script.Parent.GamepadInput)
+local PlayerGuiMain = WorkoutCompat.tryRequire(script.Parent, "PlayerGuiMain")
+local BrainrotEconomy = WorkoutCompat.shared("BrainrotEconomy")
+local UiFonts = WorkoutCompat.shared("UiFonts")
+local GearRainbowFX = WorkoutCompat.tryRequire(script.Parent, "GearRainbowFX")
+local OtherVfxController = WorkoutCompat.tryRequire(script.Parent, "OtherVfxController")
+local UpgradesController = WorkoutCompat.tryRequire(script.Parent, "UpgradesController")
+	or WorkoutCompat.tryRequire(script.Parent, "WeightUpgradesController")
+local GameSoundEffects = WorkoutCompat.tryRequire(script.Parent, "GameSoundEffects")
+local GamepadInput = WorkoutCompat.tryRequire(script.Parent, "GamepadInput")
+
+if not BrainrotEconomy then
+	BrainrotEconomy = {
+		formatNumberShort = WorkoutCompat.formatNumber,
+	}
+end
+
+if not UiFonts then
+	UiFonts = {
+		applyBodyLabel = function() end,
+		applyDisplay = function() end,
+	}
+end
+
+if not GearRainbowFX then
+	GearRainbowFX = {
+		attach = function() end,
+		attachEventLabel = function() end,
+		detach = function() end,
+	}
+end
+
+if not OtherVfxController then
+	OtherVfxController = {
+		clearLevelUpVfx = function() end,
+		startComboWorldWatch = function() end,
+	}
+end
+
+if not UpgradesController then
+	UpgradesController = {}
+end
+
+if not GameSoundEffects then
+	GameSoundEffects = {
+		playLifting = function() end,
+		playWorkoutComboFail = function() end,
+		playWorkoutComboHit = function() end,
+	}
+end
+
+if not GamepadInput then
+	local padDummy = Instance.new("BindableEvent")
+	GamepadInput = {
+		isPreferred = function()
+			return false
+		end,
+		faceLabel = function()
+			return "A"
+		end,
+		onPreferredChanged = function(_cb: (boolean) -> ()): RBXScriptConnection
+			return padDummy.Event:Connect(function() end)
+		end,
+	}
+end
 
 local player = Players.LocalPlayer
 
@@ -1225,16 +1284,56 @@ local function pulsePowerHud(amountLabel: GuiObject?, powerFrame: GuiObject?, la
 	end
 end
 
+local function resolveHudGui(): ScreenGui?
+	local pg = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 8)
+	if not pg then
+		return nil
+	end
+	local main = pg:FindFirstChild("Main")
+	if main and main:IsA("ScreenGui") then
+		return main
+	end
+	local kit = pg:FindFirstChild("WorkoutPowerHud")
+	if kit and kit:IsA("ScreenGui") then
+		return kit
+	end
+	if PlayerGuiMain and typeof(PlayerGuiMain.ensure) == "function" then
+		local ok, gui = pcall(PlayerGuiMain.ensure, player)
+		if ok and gui and gui:IsA("ScreenGui") then
+			return gui
+		end
+	end
+	kit = pg:WaitForChild("WorkoutPowerHud", 4)
+	if kit and kit:IsA("ScreenGui") then
+		return kit
+	end
+	return nil
+end
+
+local function findPowerFrame(host: ScreenGui): GuiObject?
+	if host.Name == "WorkoutPowerHud" then
+		local direct = host:FindFirstChild("Power")
+		if direct and direct:IsA("GuiObject") then
+			return direct
+		end
+	end
+	local sideUI = host:FindFirstChild("SideUI")
+	local counters = sideUI and sideUI:FindFirstChild("Counters")
+	local powerFrame = counters and counters:FindFirstChild("Power")
+	if powerFrame and powerFrame:IsA("GuiObject") then
+		return powerFrame
+	end
+	return nil
+end
+
 local function spawnPowerFloater(gain: number, originScreen: Vector2?)
-	local main = PlayerGuiMain.ensure(player)
+	local main = resolveHudGui()
 	if not main then
 		return
 	end
 	local layer = ensureFloaterLayer(main)
-	local sideUI = main:FindFirstChild("SideUI")
-	local counters = sideUI and sideUI:FindFirstChild("Counters")
-	local powerFrame = counters and counters:FindFirstChild("Power")
-	if not powerFrame or not powerFrame:IsA("GuiObject") then
+	local powerFrame = findPowerFrame(main)
+	if not powerFrame then
 		-- HUD can still be booting on the first gear tick — show at screen center.
 		powerFrame = nil
 	end
@@ -2880,6 +2979,13 @@ local function onUnequip()
 end
 
 local function isUpgradesShopOpen(): boolean
+	local pg = player:FindFirstChild("PlayerGui")
+	local main = pg and pg:FindFirstChild("Main")
+	local frames = main and main:FindFirstChild("Frames")
+	local upgrades = frames and frames:FindFirstChild("Upgrades")
+	if upgrades and upgrades:IsA("GuiObject") and (upgrades :: GuiObject).Visible == true then
+		return true
+	end
 	local okHud, hud = pcall(function()
 		return require(script.Parent.HUDController)
 	end)

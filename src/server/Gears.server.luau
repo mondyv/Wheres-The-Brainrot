@@ -1,12 +1,19 @@
--- [ACTIVE] Gears.server
--- Cash/Robux gear purchases, equip, workout start/stop remotes.
+-- Gears
+-- Server entry for the workout kit. Creates remotes first so the shop doesn't
+-- sit there dead for 30s waiting on a late require.
+--
+-- Put this Script in ServerScriptService (folder name doesn't matter).
+-- GearService should sit in a sibling Modules folder, or next to this script.
+--
+-- Remotes (names are hardcoded — don't rename):
+--   PurchaseGear, EquipGear, StartWorkout, StopWorkout,
+--   ClaimWorkoutDoubleTap, SetEditedPower  (RemoteFunctions)
+--   PrepareRobuxGear (RemoteEvent)
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
--- Publish remotes before requiring modules. Shop / workout clients wait on these
--- names; if they are created after a long require chain, Buy looks dead for ~30s.
 local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes") :: Folder?
 if not remotesFolder then
 	remotesFolder = Instance.new("Folder")
@@ -52,9 +59,26 @@ local prepareRobuxGearRE = ensureRE("PrepareRobuxGear")
 
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
-local GearService = require(script.Parent:WaitForChild("Modules"):WaitForChild("GearService"))
-local PlayerDataService = require(script.Parent:WaitForChild("Modules"):WaitForChild("PlayerDataService"))
-local AnalyticsFunnelService = require(script.Parent:WaitForChild("Modules"):WaitForChild("AnalyticsFunnelService"))
+local WorkoutCompat = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutCompat"))
+
+local function requireGearService(): any
+	local modules = script.Parent:FindFirstChild("Modules")
+	local fromModules = modules and modules:FindFirstChild("GearService")
+	local sibling = script.Parent:FindFirstChild("GearService")
+	local target = fromModules or sibling
+	if not target then
+		error("[Gears] GearService missing — put it in Modules/ or next to this script")
+	end
+	return require(target)
+end
+
+local GearService = requireGearService()
+local PlayerDataService = WorkoutCompat.tryRequire(script.Parent:FindFirstChild("Modules"), "PlayerDataService")
+	or WorkoutCompat.tryRequire(script.Parent, "PlayerDataService")
+local AnalyticsFunnelService = WorkoutCompat.tryRequire(script.Parent:FindFirstChild("Modules"), "AnalyticsFunnelService")
+	or WorkoutCompat.tryRequire(script.Parent, "AnalyticsFunnelService")
+local WorkoutData = WorkoutCompat.tryRequire(script.Parent:FindFirstChild("Modules"), "WorkoutData")
+	or WorkoutCompat.tryRequire(script.Parent, "WorkoutData")
 
 local pendingRobuxGear: { [Player]: number } = {}
 
@@ -62,12 +86,42 @@ local function noteFirstGear(player: Player, gearId: number)
 	if gearId ~= 1 then
 		return
 	end
-	AnalyticsFunnelService.logOnboardingId(player, "bought_power", { allowSkip = true })
+	if AnalyticsFunnelService and typeof(AnalyticsFunnelService.logOnboardingId) == "function" then
+		AnalyticsFunnelService.logOnboardingId(player, "bought_power", { allowSkip = true })
+	end
+end
+
+local function saveWorkout(player: Player)
+	if PlayerDataService and typeof(PlayerDataService.savePlayerData) == "function" then
+		local saveOk, saveErr = pcall(function()
+			PlayerDataService.savePlayerData(player)
+		end)
+		if not saveOk then
+			warn("[Gears] save after purchase failed:", saveErr)
+		end
+		return
+	end
+	if WorkoutData and typeof(WorkoutData.savePlayer) == "function" then
+		local saveOk, saveErr = pcall(function()
+			WorkoutData.savePlayer(player)
+		end)
+		if not saveOk then
+			warn("[Gears] WorkoutData save failed:", saveErr)
+		end
+	end
 end
 
 local function initPlayer(player: Player)
-	PlayerDataService.waitUntilLoaded(player)
+	if PlayerDataService and typeof(PlayerDataService.waitUntilLoaded) == "function" then
+		PlayerDataService.waitUntilLoaded(player)
+	elseif WorkoutData and typeof(WorkoutData.waitUntilLoaded) == "function" then
+		WorkoutData.waitUntilLoaded(player)
+	end
 	WorkoutPower.initPlayerPower(player)
+	-- Baseplate only. This game already sells Gear 1 for $0 in the shop.
+	if not PlayerDataService and not GearService.owns(player, 1) then
+		GearService.grantGear(player, 1, true)
+	end
 	GearService.ensureTools(player)
 end
 
@@ -93,12 +147,7 @@ purchaseGearFn.OnServerInvoke = function(player: Player, gearIdAny: any): (boole
 	if ok then
 		noteFirstGear(player, gearId)
 		task.spawn(function()
-			local saveOk, saveErr = pcall(function()
-				PlayerDataService.savePlayerData(player)
-			end)
-			if not saveOk then
-				warn("[Gears] save after purchase failed:", saveErr)
-			end
+			saveWorkout(player)
 		end)
 	end
 	return ok, err
@@ -149,12 +198,7 @@ setPowerFn.OnServerInvoke = function(player: Player, amountAny: any, editedAny: 
 	end
 	WorkoutPower.setPower(player, amount, markEdited)
 	task.spawn(function()
-		local saveOk, saveErr = pcall(function()
-			PlayerDataService.savePlayerData(player)
-		end)
-		if not saveOk then
-			warn("[Gears] save after set power failed:", saveErr)
-		end
+		saveWorkout(player)
 	end)
 	return true, nil
 end
@@ -179,9 +223,7 @@ local function fulfillRobuxGear(player: Player, gearId: number?): boolean
 	-- Auto-equip swaps the hotbar tool; does not put it in the character's hand.
 	GearService.grantGear(player, id, true)
 	noteFirstGear(player, id)
-	pcall(function()
-		PlayerDataService.savePlayerData(player)
-	end)
+	saveWorkout(player)
 	return true
 end
 

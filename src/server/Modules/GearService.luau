@@ -1,15 +1,18 @@
--- [ACTIVE] GearService
--- Owns gear grant/equip/tools + workout power ticks (server).
+-- GearService
+-- Server owner of tools, cash buys, and the per-second Power tick while curling.
+-- Lives in ServerScriptService.Server.Modules (or next to Gears if you flatten the folder).
+-- Level / rebirth / store modules are optional.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local GearConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GearConfig"))
 local WorkoutPower = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutPower"))
-local LevelConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("LevelConfig"))
-local RebirthConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("RebirthConfig"))
-local StoreConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("StoreConfig"))
-local LevelService = require(script.Parent:WaitForChild("LevelService"))
+local WorkoutCompat = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("WorkoutCompat"))
+local LevelConfig = WorkoutCompat.shared("LevelConfig")
+local RebirthConfig = WorkoutCompat.shared("RebirthConfig")
+local StoreConfig = WorkoutCompat.shared("StoreConfig")
+local LevelService = WorkoutCompat.tryRequire(script.Parent, "LevelService")
 
 local GearService = {}
 
@@ -275,10 +278,14 @@ end
 
 local function computeTickGain(player: Player, def: any): number
 	local lift = GearConfig.workoutLiftMultiplier(comboOf(player))
-	local rebirth = RebirthConfig.getPowerGainMultiplier(player)
-	local passMult = if player:GetAttribute(StoreConfig.ATTR.DOUBLE_POWER_OWNED) == true
-		then StoreConfig.DOUBLE_POWER_MULTIPLIER
-		else 1
+	local rebirth = 1
+	if RebirthConfig and typeof(RebirthConfig.getPowerGainMultiplier) == "function" then
+		rebirth = RebirthConfig.getPowerGainMultiplier(player)
+	end
+	local passMult = 1
+	if StoreConfig and StoreConfig.ATTR and player:GetAttribute(StoreConfig.ATTR.DOUBLE_POWER_OWNED) == true then
+		passMult = StoreConfig.DOUBLE_POWER_MULTIPLIER or 2
+	end
 	return math.max(1, math.floor(def.powerGain * rebirth * lift * passMult + 1e-6))
 end
 
@@ -381,12 +388,18 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 		local pulse = player:GetAttribute("WorkoutPowerPulse")
 		player:SetAttribute("WorkoutPowerPulse", (if typeof(pulse) == "number" then pulse else 0) + 1)
 		local uid = player.UserId
-		local streak = (workoutXpStreak[uid] or 0) + 1
-		if streak >= LevelConfig.WORKOUT_XP_EVERY_GAINS then
-			workoutXpStreak[uid] = 0
-			LevelService.addXp(player, LevelConfig.XP.workout, "workout")
-		else
-			workoutXpStreak[uid] = streak
+		if LevelConfig and LevelService and typeof(LevelService.addXp) == "function" then
+			local every = LevelConfig.WORKOUT_XP_EVERY_GAINS
+			local xpAmt = LevelConfig.XP and LevelConfig.XP.workout
+			if typeof(every) == "number" and typeof(xpAmt) == "number" then
+				local streak = (workoutXpStreak[uid] or 0) + 1
+				if streak >= every then
+					workoutXpStreak[uid] = 0
+					LevelService.addXp(player, xpAmt, "workout")
+				else
+					workoutXpStreak[uid] = streak
+				end
+			end
 		end
 		return true
 	end

@@ -1,10 +1,14 @@
--- [ACTIVE] WorkoutPower
--- Workout Power drives swing force + reach (combined). Carry stays fixed at 1.
--- PowerMax = true ceiling from workouts; Power = active (may be edited down).
-local SwingProgression = require(script.Parent:WaitForChild("SwingProgression"))
-local SwingUpgrades = require(script.Parent:WaitForChild("SwingUpgrades"))
+-- WorkoutPower
+-- Player attrs: Power (what HUD shows), PowerMax (true ceiling), PowerEdited.
+-- Curls raise Max. Edit bar can drop active Power without wiping Max.
+--
+-- Put this in ReplicatedStorage.Shared. Swing modules are optional — on a
+-- baseplate without vines we just skip those attrs.
+local WorkoutCompat = require(script.Parent:WaitForChild("WorkoutCompat"))
 local GearConfig = require(script.Parent:WaitForChild("GearConfig"))
-local LandPowerConfig = require(script.Parent:WaitForChild("LandPowerConfig"))
+local SwingProgression = WorkoutCompat.tryRequire(script.Parent, "SwingProgression")
+local SwingUpgrades = WorkoutCompat.tryRequire(script.Parent, "SwingUpgrades")
+local LandPowerConfig = WorkoutCompat.tryRequire(script.Parent, "LandPowerConfig")
 
 local M = {}
 
@@ -23,7 +27,10 @@ function M.swingLevelFromPower(power: number): number
 	end
 	-- ~20 → 8, ~200 → 28, ~600 → 36, ~2k → 54
 	local level = math.floor(36 * math.log10(1 + p / 38))
-	local peak = LandPowerConfig.swingPeakAlpha(p)
+	local peak = 1
+	if LandPowerConfig and typeof(LandPowerConfig.swingPeakAlpha) == "function" then
+		peak = LandPowerConfig.swingPeakAlpha(p)
+	end
 	level = math.floor(level * (0.78 + 0.22 * peak) + 0.5)
 	return math.clamp(level, 0, 100_000)
 end
@@ -36,7 +43,10 @@ function M.reachLevelFromPower(power: number): number
 	end
 	-- ~20 → 8, ~200 → 26, ~600 → 38, ~2k → 52
 	local level = math.floor(40 * math.log10(1 + p / 40))
-	local peak = LandPowerConfig.swingPeakAlpha(p)
+	local peak = 1
+	if LandPowerConfig and typeof(LandPowerConfig.swingPeakAlpha) == "function" then
+		peak = LandPowerConfig.swingPeakAlpha(p)
+	end
 	level = math.floor(level * (0.90 + 0.10 * peak) + 0.5)
 	return math.clamp(level, 0, 100_000)
 end
@@ -75,6 +85,9 @@ function M.isEdited(player: Player): boolean
 end
 
 function M.migratePowerFromLegacyLevels(powerLevel: number, ropeLevel: number): number
+	if not SwingProgression then
+		return 0
+	end
 	local p = SwingProgression.displayPower(powerLevel)
 	local r = SwingProgression.displayReach(ropeLevel)
 	-- Combined seed so existing players keep roughly the same swing feel.
@@ -82,6 +95,9 @@ function M.migratePowerFromLegacyLevels(powerLevel: number, ropeLevel: number): 
 end
 
 function M.syncSwingFromPower(player: Player)
+	if not SwingUpgrades or not SwingProgression then
+		return
+	end
 	local power = M.readPower(player)
 	local forceLevel = M.swingLevelFromPower(power)
 	local reachLevel = M.reachLevelFromPower(power)
@@ -147,10 +163,14 @@ end
 
 function M.initPlayerPower(player: Player)
 	if player:GetAttribute(M.POWER_ATTR) == nil then
-		local powerLevel = player:GetAttribute(SwingUpgrades.POWER_LEVEL_ATTR)
-		local ropeLevel = player:GetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR)
-		local pl = if typeof(powerLevel) == "number" then powerLevel else 0
-		local rl = if typeof(ropeLevel) == "number" then ropeLevel else 0
+		local pl = 0
+		local rl = 0
+		if SwingUpgrades then
+			local powerLevel = player:GetAttribute(SwingUpgrades.POWER_LEVEL_ATTR)
+			local ropeLevel = player:GetAttribute(SwingUpgrades.ROPE_LEVEL_ATTR)
+			pl = if typeof(powerLevel) == "number" then powerLevel else 0
+			rl = if typeof(ropeLevel) == "number" then ropeLevel else 0
+		end
 		player:SetAttribute(M.POWER_ATTR, M.migratePowerFromLegacyLevels(pl, rl))
 	end
 	if player:GetAttribute(M.POWER_MAX_ATTR) == nil then

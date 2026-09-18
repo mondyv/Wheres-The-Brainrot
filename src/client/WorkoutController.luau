@@ -3153,7 +3153,11 @@ local function init()
 			end
 		end
 	end)
-	local backpack = player:WaitForChild("Backpack")
+	local backpack = player:FindFirstChildOfClass("Backpack") or player:WaitForChild("Backpack", 8)
+	if not backpack then
+		warn("[WorkoutController] Backpack missing")
+		return
+	end
 	scanTools(backpack)
 	backpack.ChildAdded:Connect(function(child)
 		if child:IsA("Tool") then

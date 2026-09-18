@@ -283,13 +283,14 @@ local function waitMain(): ScreenGui?
 		end
 	end
 	local starter = StarterGui:FindFirstChild("Main")
-	if starter and PlayerGuiMain and typeof(PlayerGuiMain.ensure) == "function" then
-		local ok, main = pcall(PlayerGuiMain.ensure, player)
-		if ok and main and main:IsA("ScreenGui") then
-			return main
+	if starter and starter:IsA("ScreenGui") then
+		local pgMain = pg:FindFirstChild("Main")
+		if pgMain and pgMain:IsA("ScreenGui") then
+			return pgMain
 		end
+		-- Don't call PlayerGuiMain.ensure here — it can wait 120s on a kit.
 	end
-	local waited = pg:WaitForChild("Main", 4)
+	local waited = pg:WaitForChild("Main", 2)
 	if waited and waited:IsA("ScreenGui") then
 		return waited
 	end

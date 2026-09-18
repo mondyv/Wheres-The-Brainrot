@@ -414,7 +414,7 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 	applyGainTick()
 
 	local last = lastWorkoutGainAt[player.UserId] or 0
-	local session = { gearId = gearId, conn = nil :: RBXScriptConnection?, lastTick = last }
+	local session = { gearId = gearId, conn = nil :: RBXScriptConnection?, lastTick = last, droppedAt = nil :: number? }
 	session.conn = RunService.Heartbeat:Connect(function()
 		if not player.Parent then
 			GearService.stopWorkout(player)
@@ -427,8 +427,30 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 		end
 		local tool = GearService.findGearTool(player, gearId)
 		if not tool or tool.Parent ~= char then
-			GearService.stopWorkout(player)
-			return
+			local backpack = player:FindFirstChildOfClass("Backpack")
+			local kit = player:GetAttribute("WorkoutKit") == true
+			if kit and tool and backpack and tool.Parent == backpack then
+				local hum = char:FindFirstChildOfClass("Humanoid")
+				if hum then
+					pcall(function()
+						hum:EquipTool(tool)
+					end)
+				end
+				session.droppedAt = nil
+			else
+				local droppedAt = session.droppedAt
+				if droppedAt == nil then
+					session.droppedAt = os.clock()
+					return
+				end
+				if os.clock() - droppedAt < 0.6 then
+					return
+				end
+				GearService.stopWorkout(player)
+				return
+			end
+		else
+			session.droppedAt = nil
 		end
 		local now = os.clock()
 		local combo = comboOf(player)

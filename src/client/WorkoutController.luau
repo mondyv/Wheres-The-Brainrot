@@ -18,8 +18,6 @@ local BrainrotEconomy = WorkoutCompat.shared("BrainrotEconomy")
 local UiFonts = WorkoutCompat.shared("UiFonts")
 local GearRainbowFX = WorkoutCompat.tryRequire(script.Parent, "GearRainbowFX")
 local OtherVfxController = WorkoutCompat.tryRequire(script.Parent, "OtherVfxController")
-local UpgradesController = WorkoutCompat.tryRequire(script.Parent, "UpgradesController")
-	or WorkoutCompat.tryRequire(script.Parent, "WeightUpgradesController")
 local GameSoundEffects = WorkoutCompat.tryRequire(script.Parent, "GameSoundEffects")
 local GamepadInput = WorkoutCompat.tryRequire(script.Parent, "GamepadInput")
 
@@ -51,10 +49,6 @@ if not OtherVfxController then
 	}
 end
 
-if not UpgradesController then
-	UpgradesController = {}
-end
-
 if not GameSoundEffects then
 	GameSoundEffects = {
 		playLifting = function() end,
@@ -79,6 +73,11 @@ if not GamepadInput then
 end
 
 local player = Players.LocalPlayer
+local function shopHud(): any
+	return WorkoutCompat.tryRequire(script.Parent, "UpgradesController")
+		or WorkoutCompat.tryRequire(script.Parent, "WeightUpgradesController")
+		or {}
+end
 local hasCustomToolbar = WorkoutCompat.tryRequire(script.Parent, "ToolbarController") ~= nil
 
 local startWorkoutFn: RemoteFunction? = nil
@@ -1530,8 +1529,9 @@ local function spawnPowerFloater(gain: number, originScreen: Vector2?)
 			end
 			row.Position = toLayerOffset(destScreen())
 			pulsePowerHud(amountGui, powerFrame, layer)
-			if typeof(UpgradesController.commitPowerHudFromFloater) == "function" then
-				UpgradesController.commitPowerHudFromFloater()
+			local shop = shopHud()
+			if typeof(shop.commitPowerHudFromFloater) == "function" then
+				shop.commitPowerHudFromFloater()
 			end
 			local suck = TweenService:Create(
 				scale,
@@ -2660,6 +2660,13 @@ local function missCombo(fromPress: boolean?)
 	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
 		return
 	end
+	-- Kit (no custom toolbar): a miss must not kill the workout or wipe combo.
+	-- Keep curling / power ticks; only restart the hit window. Cap is still 50.
+	if not hasCustomToolbar then
+		playComboFailSfx(fromPress == true)
+		restartComboRing()
+		return
+	end
 	comboBusyAnim = true
 	setComboNumber(1)
 	applyComboAnimSpeed(1)
@@ -2995,7 +3002,7 @@ local function isUpgradesShopOpen(): boolean
 		return true
 	end
 	local okHud, hud = pcall(function()
-		return require(script.Parent.HUDController)
+		return WorkoutCompat.tryRequire(script.Parent, "HUDController")
 	end)
 	if okHud and typeof(hud) == "table" and typeof((hud :: any).getCurrentFrame) == "function" then
 		local frame = (hud :: any).getCurrentFrame()
@@ -3200,8 +3207,9 @@ local function init()
 		end
 		tryFloater(1)
 		-- Don't snap the power number here — wait until the +N floater lands.
-		if typeof(UpgradesController.snapPowerHud) == "function" then
-			UpgradesController.snapPowerHud()
+		local shop = shopHud()
+		if typeof(shop.snapPowerHud) == "function" then
+			shop.snapPowerHud()
 		end
 	end)
 

@@ -264,7 +264,9 @@ local function formatPower(n: number): string
 	return BrainrotEconomy.formatNumberShort(math.max(0, math.floor(n)))
 end
 
-local HUD = WorkoutCompat.tryRequire(script.Parent, "HUDController")
+-- Portable kit HUD. Ignore HUDController even if it was copied into the place —
+-- that module hides the SHOP button and never builds WorkoutPowerHud.
+local HUD = nil
 
 local function waitMain(): ScreenGui?
 	local pg = player:FindFirstChild("PlayerGui") or player:WaitForChild("PlayerGui", 15)
@@ -307,6 +309,10 @@ local function openNamedFrame(name: string)
 	local frame = frames and frames:FindFirstChild(name)
 	if frame and frame:IsA("GuiObject") then
 		(frame :: GuiObject).Visible = true
+		if main then
+			main.Enabled = true
+			main.DisplayOrder = 5000
+		end
 	end
 end
 
@@ -331,6 +337,7 @@ local function stripKitHud(main: ScreenGui)
 	end
 	main.Enabled = true
 	main.ResetOnSpawn = false
+	main.DisplayOrder = 10
 	local side = main:FindFirstChild("SideUI")
 	if side and side:IsA("GuiObject") then
 		(side :: GuiObject).Visible = false
@@ -338,8 +345,10 @@ local function stripKitHud(main: ScreenGui)
 	local frames = main:FindFirstChild("Frames")
 	if frames then
 		for _, ch in frames:GetChildren() do
-			if ch:IsA("GuiObject") and ch.Name ~= "Upgrades" and ch.Name ~= "Edit Power" then
-				(ch :: GuiObject).Visible = false
+			if ch:IsA("GuiObject") then
+				if ch.Name ~= "Edit Power" then
+					(ch :: GuiObject).Visible = false
+				end
 			end
 		end
 	end
@@ -353,8 +362,11 @@ local function createMinimalPowerHud(): (ScreenGui, Frame, TextLabel)
 		created.Name = "WorkoutPowerHud"
 		created.ResetOnSpawn = false
 		created.IgnoreGuiInset = true
-		created.DisplayOrder = 250
+		created.DisplayOrder = 10000
 		created.Enabled = true
+		created.ResetOnSpawn = false
+		created.IgnoreGuiInset = true
+		created.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 		created.Parent = pg
 		gui = created
 	end
@@ -369,6 +381,8 @@ local function createMinimalPowerHud(): (ScreenGui, Frame, TextLabel)
 		frame.AnchorPoint = Vector2.new(0, 0)
 		frame.Position = UDim2.fromOffset(16, 16)
 		frame.Size = UDim2.fromOffset(280, 64)
+		frame.Visible = true
+		frame.ZIndex = 50
 		frame.Parent = screen
 		local corner = Instance.new("UICorner")
 		corner.CornerRadius = UDim.new(0, 10)
@@ -1931,9 +1945,15 @@ local function init()
 	updatePowerLabel()
 	if powerFrame and powerFrame:IsA("GuiObject") then
 		wirePowerEdit(powerFrame, main)
-		if HUD then
-			addShopButton(powerFrame :: GuiObject, main)
-		end
+		addShopButton(powerFrame :: GuiObject, if HUD then main else nil)
+	end
+
+	if not HUD then
+		player.CharacterAdded:Connect(function()
+			task.defer(function()
+				createMinimalPowerHud()
+			end)
+		end)
 	end
 
 	MarketplaceService.PromptProductPurchaseFinished:Connect(

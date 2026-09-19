@@ -2652,13 +2652,6 @@ local function missCombo(fromPress: boolean?)
 	if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) ~= true then
 		return
 	end
-	-- Kit (no custom toolbar): a miss must not kill the workout or wipe combo.
-	-- Keep curling / power ticks; only restart the hit window. Cap is still 50.
-	if not hasCustomToolbar then
-		playComboFailSfx(fromPress == true)
-		restartComboRing()
-		return
-	end
 	comboBusyAnim = true
 	setComboNumber(1)
 	applyComboAnimSpeed(1)
@@ -3060,36 +3053,7 @@ local function bindTool(tool: Tool)
 	table.insert(
 		toolConns,
 		tool.Unequipped:Connect(function()
-			if hasCustomToolbar then
-				onUnequip()
-				return
-			end
-			task.defer(function()
-				local character = player.Character
-				if not character then
-					onUnequip()
-					return
-				end
-				for _, child in character:GetChildren() do
-					if child:IsA("Tool") then
-						onUnequip()
-						return
-					end
-				end
-				if player:GetAttribute(GearConfig.WORKOUT_ACTIVE_ATTR) == true then
-					local backpack = player:FindFirstChildOfClass("Backpack")
-					local hum = getHumanoid(character)
-					if hum and backpack and tool.Parent == backpack then
-						tool.ManualActivationOnly = true
-						tool.RequiresHandle = false
-						pcall(function()
-							hum:EquipTool(tool)
-						end)
-						return
-					end
-				end
-				onUnequip()
-			end)
+			onUnequip()
 		end)
 	)
 

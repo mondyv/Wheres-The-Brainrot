@@ -426,27 +426,8 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 			return
 		end
 		local tool = GearService.findGearTool(player, gearId)
-		local backpack = player:FindFirstChildOfClass("Backpack")
-		local kit = player:GetAttribute("WorkoutKit") == true or LevelService == nil
-		if kit then
-			if not tool then
-				GearService.ensureTools(player)
-				tool = GearService.findGearTool(player, gearId)
-			end
-			if tool and backpack and tool.Parent == backpack then
-				local hum = char:FindFirstChildOfClass("Humanoid")
-				if hum then
-					pcall(function()
-						hum:EquipTool(tool)
-					end)
-				end
-			end
-			if tool then
-				tool.RequiresHandle = false
-				tool.ManualActivationOnly = true
-			end
-			session.droppedAt = nil
-		elseif not tool or tool.Parent ~= char then
+		if not tool or tool.Parent ~= char then
+			-- Brief backpack flicker is ok; a real unequip stops after 0.6s.
 			local droppedAt = session.droppedAt
 			if droppedAt == nil then
 				session.droppedAt = os.clock()
@@ -457,9 +438,8 @@ function GearService.startWorkout(player: Player, gearId: number): (boolean, str
 			end
 			GearService.stopWorkout(player)
 			return
-		else
-			session.droppedAt = nil
 		end
+		session.droppedAt = nil
 		local now = os.clock()
 		local combo = comboOf(player)
 		local lift = GearConfig.workoutLiftMultiplier(combo)

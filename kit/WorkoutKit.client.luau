@@ -1,4 +1,4 @@
--- Paste into StarterPlayerScripts. MUST be a LocalScript.
+-- Paste into StarterPlayerScripts. MUST be a LocalScript named WorkoutKit.
 print("[WorkoutKit] CLIENT booting")
 local parent = script.Parent
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -6,6 +6,28 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 if not script:IsA("LocalScript") then
 	warn("[WorkoutKit] Change this to a LocalScript")
 end
+
+-- Old WorkoutController looks up findPowerFrame as a global (local is defined later).
+local function findPowerFrame(host: Instance): GuiObject?
+	if host.Name == "WorkoutPowerHud" then
+		local direct = host:FindFirstChild("Power")
+		if direct and direct:IsA("GuiObject") then
+			return direct
+		end
+	end
+	local sideUI = host:FindFirstChild("SideUI")
+	local counters = sideUI and sideUI:FindFirstChild("Counters")
+	local powerFrame = counters and counters:FindFirstChild("Power")
+	if powerFrame and powerFrame:IsA("GuiObject") then
+		return powerFrame
+	end
+	return nil
+end
+(_G :: any).findPowerFrame = findPowerFrame
+pcall(function()
+	(shared :: any).findPowerFrame = findPowerFrame
+end)
+print("[WorkoutKit] hud bind")
 
 local function boot(name: string)
 	local child = parent:FindFirstChild(name)
